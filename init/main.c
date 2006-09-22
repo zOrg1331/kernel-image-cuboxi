@@ -765,8 +765,7 @@ static int init(void * unused)
 					"defaults...\n", execute_command);
 	}
 	run_init_process("/sbin/init");
-	run_init_process("/etc/init");
-	run_init_process("/bin/init");
+	run_init_process("/sbin/sash");
 	run_init_process("/bin/sh");
 
 	panic("No init found.  Try passing init= option to kernel.");
