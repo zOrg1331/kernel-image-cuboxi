@@ -1394,6 +1394,16 @@ config UFS_DEBUG
 	  Y here.  This will result in _many_ additional debugging messages to be
 	  written to the system log.
 
+config UNION_FS
+	tristate "Union fs support"
+	depends on EXPERIMENTAL
+	help
+	  Unionfs is a stackable unification file system, which can
+	  appear to merge the contents of several directories (branches),
+	  while keeping their physical content separate.
+
+	  see <http://www.fsl.cs.sunysb.edu/project-unionfs.html> for details
+
 endmenu
 
 menu "Network File Systems"
