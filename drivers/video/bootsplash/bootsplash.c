@@ -1,12 +1,12 @@
-/* 
- *           linux/drivers/video/bootsplash/bootsplash.c - 
+/*
+ *           linux/drivers/video/bootsplash/bootsplash.c -
  *                 splash screen handling functions.
- *	
+ *
  *	(w) 2001-2004 by Volker Poplawski, <volker@poplawski.de>,
  * 		    Stefan Reinauer, <stepan@suse.de>,
  * 		    Steffen Winterfeldt, <snwint@suse.de>,
  *                  Michael Schroeder <mls@suse.de>
- * 		    
+ *
  *        Ideas & SuSE screen work by Ken Wimer, <wimer@suse.de>
  *
  *  For more information on this code check http://www.bootsplash.org/
@@ -28,20 +28,20 @@
 #include "bootsplash.h"
 #include "decode-jpg.h"
 
-/* extern struct fb_ops vesafb_ops; */
+extern struct fb_ops vesafb_ops;
 extern signed char con2fb_map[MAX_NR_CONSOLES];
 
 #define SPLASH_VERSION "3.1.6-2004/03/31"
 
 /* These errors have to match fbcon-jpegdec.h */
 static unsigned char *jpg_errors[] = {
-	"no SOI found", 
-	"not 8 bit", 
-	"height mismatch", 
+	"no SOI found",
+	"not 8 bit",
+	"height mismatch",
 	"width mismatch",
-	"bad width or height", 
-	"too many COMPPs", 
-	"illegal HV", 
+	"bad width or height",
+	"too many COMPPs",
+	"illegal HV",
 	"quant table selector",
 	"picture is not YCBCR 221111",
 	"unknow CID in scan",
@@ -399,6 +399,7 @@ static int splash_getraw(unsigned char *start, unsigned char *end, int *update)
     struct vc_data *vc;
     struct fb_info *info;
     struct splash_data *sd;
+    int oldpercent, oldsilent;
 
     if (update)
 	*update = -1;
@@ -515,8 +516,13 @@ static int splash_getraw(unsigned char *start, unsigned char *end, int *update)
 		    silentsize = 0;
 		}
 	}
-	if (vc->vc_splash_data)
+	oldpercent = -1;
+	oldsilent = -1;
+	if (vc->vc_splash_data) {
+	    oldpercent = vc->vc_splash_data->splash_percent;
+	    oldsilent = vc->vc_splash_data->splash_dosilent;
 	    splash_free(vc, info);
+	}
 	vc->vc_splash_data = sd = vmalloc(sizeof(*sd) + splash_size + (version < 3 ? 2 * 12 : 0));
 	if (!sd)
 	    break;
@@ -540,7 +546,7 @@ static int splash_getraw(unsigned char *start, unsigned char *end, int *update)
 	sd->splash_text_yo = splash_gets(ndata, SPLASH_OFF_YO);
 	sd->splash_text_wi = splash_gets(ndata, SPLASH_OFF_WI);
 	sd->splash_text_he = splash_gets(ndata, SPLASH_OFF_HE);
-	sd->splash_percent = splash_gets(ndata, SPLASH_OFF_PERCENT);
+	sd->splash_percent = oldpercent == -1 ? splash_gets(ndata, SPLASH_OFF_PERCENT) : oldpercent;
 	if (version == 1) {
 	    sd->splash_text_xo *= 8;
 	    sd->splash_text_wi *= 8;
@@ -555,11 +561,11 @@ static int splash_getraw(unsigned char *start, unsigned char *end, int *update)
 	    printk(KERN_INFO " found, but has oversized text area!\n");
 	    return -1;
 	}
-/*	if (!vc_cons[unit].d || info->fbops != &vesafb_ops) {
+	if (!vc_cons[unit].d || info->fbops->fb_imageblit != cfb_imageblit) {
 	    splash_free(vc, info);
 	    printk(KERN_INFO " found, but framebuffer can't handle it!\n");
 	    return -1;
-	} */
+	}
 	printk(KERN_INFO "...found (%dx%d, %d bytes, v%d).\n", width, height, splash_size, version);
 	if (version == 1) {
 	    printk(KERN_WARNING "bootsplash: Using deprecated v1 header. Updating your splash utility recommended.\n");
@@ -578,14 +584,14 @@ static int splash_getraw(unsigned char *start, unsigned char *end, int *update)
 	sd->splash_palette = sd->splash_boxes + boxcnt * 12;
 	sd->splash_jpeg = sd->splash_palette + palcnt;
 	sd->splash_palcnt = palcnt / 3;
-	sd->splash_dosilent = sd->splash_silentjpeg != 0;
+	sd->splash_dosilent = sd->splash_silentjpeg != 0 ? (oldsilent == -1 ? 1 : oldsilent) : 0;
 	return unit;
     }
     printk(KERN_INFO "...no good signature found.\n");
     return -1;
 }
 
-int splash_verbose(void) 
+int splash_verbose(void)
 {
     struct vc_data *vc;
     struct fb_info *info;
@@ -662,7 +668,7 @@ int splash_prepare(struct vc_data *vc, struct fb_info *info)
 
 	if (vc->vc_splash_data->splash_silentjpeg && vc->vc_splash_data->splash_dosilent) {
 		/* fill area after framebuffer with other jpeg */
-		if ((err = jpeg_decode(vc->vc_splash_data->splash_silentjpeg, info->splash_pic, 
+		if ((err = jpeg_decode(vc->vc_splash_data->splash_silentjpeg, info->splash_pic,
 			 ((width + 15) & ~15), ((height + 15) & ~15), depth, decdata))) {
 			printk(KERN_INFO "bootsplash: error while decompressing silent picture: %s (%d)\n", jpg_errors[err - 1], err);
 			if (info->silent_screen_base)
@@ -670,7 +676,7 @@ int splash_prepare(struct vc_data *vc, struct fb_info *info)
 			vc->vc_splash_data->splash_dosilent = 0;
 		} else {
 			if (vc->vc_splash_data->splash_sboxcount)
-				boxit(info->splash_pic, sbytes, vc->vc_splash_data->splash_sboxes, 
+				boxit(info->splash_pic, sbytes, vc->vc_splash_data->splash_sboxes,
 					vc->vc_splash_data->splash_sboxcount, vc->vc_splash_data->splash_percent, 0);
 
 			if (!info->silent_screen_base)
@@ -681,7 +687,7 @@ int splash_prepare(struct vc_data *vc, struct fb_info *info)
 	} else if (info->silent_screen_base)
 		info->screen_base = info->silent_screen_base;
 
-	if ((err = jpeg_decode(vc->vc_splash_data->splash_jpeg, info->splash_pic, 
+	if ((err = jpeg_decode(vc->vc_splash_data->splash_jpeg, info->splash_pic,
 		 ((width + 15) & ~15), ((height + 15) & ~15), depth, decdata))) {
 		printk(KERN_INFO "bootsplash: error while decompressing picture: %s (%d) .\n", jpg_errors[err - 1], err);
 		splash_off(info);
@@ -721,7 +727,8 @@ static int splash_recolor(struct vc_data *vc)
 	    return 0;
 	con_remap_def_color(vc, vc->vc_splash_data->splash_color << 4 | vc->vc_splash_data->splash_fg_color);
 	if (fg_console == vc->vc_num) {
-		update_region(vc, vc->vc_origin + vc->vc_size_row * vc->vc_top,
+		update_region(vc,
+			      vc->vc_origin + vc->vc_size_row * vc->vc_top,
 			      vc->vc_size_row * (vc->vc_bottom - vc->vc_top) / 2);
 	}
 	return 0;
@@ -740,7 +747,8 @@ static int splash_status(struct vc_data *vc)
 		/* vc_resize also calls con_switch which resets yscroll */
 		vc_resize(vc, vc->vc_splash_data->splash_text_wi / vc->vc_font.width, vc->vc_splash_data->splash_text_he / vc->vc_font.height);
 		if (fg_console == vc->vc_num) {
-			update_region(vc, vc->vc_origin + vc->vc_size_row * vc->vc_top,
+			update_region(vc,
+				      vc->vc_origin + vc->vc_size_row * vc->vc_top,
 				      vc->vc_size_row * (vc->vc_bottom - vc->vc_top) / 2);
 			splash_clear_margins(vc->vc_splash_data, vc, info, 0);
 		}
@@ -774,20 +782,76 @@ static int splash_read_proc(char *buffer, char **start, off_t offset, int size,
 	return (size < begin + len - offset ? size : begin + len - offset);
 }
 
+void splash_set_percent(struct vc_data *vc, int pe)
+{
+	struct fb_info *info;
+	struct fbcon_ops *ops;
+	int oldpe;
+
+	if (pe < 0)
+		pe = 0;
+	if (pe > 65535)
+		pe = 65535;
+	pe += pe > 32767;;
+
+	if (!vc->vc_splash_data || vc->vc_splash_data->splash_percent == pe)
+		return;
+
+	oldpe = vc->vc_splash_data->splash_percent;
+	vc->vc_splash_data->splash_percent = pe;
+	if (fg_console != vc->vc_num || !vc->vc_splash_data->splash_state) {
+		return;
+	}
+	info = registered_fb[(int) con2fb_map[vc->vc_num]];
+	ops = info->fbcon_par;
+	if (ops->blank_state)
+		return;
+	if (!vc->vc_splash_data->splash_overpaintok || pe == 65536 || pe < oldpe) {
+		if (splash_hasinter(vc->vc_splash_data->splash_boxes, vc->vc_splash_data->splash_boxcount))
+			splash_status(vc);
+		else
+			splash_prepare(vc, info);
+	} else {
+		if (vc->vc_splash_data->splash_silentjpeg && vc->vc_splash_data->splash_dosilent && info->silent_screen_base)
+			boxit(info->silent_screen_base, info->fix.line_length, vc->vc_splash_data->splash_sboxes, vc->vc_splash_data->splash_sboxcount, vc->vc_splash_data->splash_percent, 1);
+		boxit(info->screen_base, info->fix.line_length, vc->vc_splash_data->splash_boxes, vc->vc_splash_data->splash_boxcount, vc->vc_splash_data->splash_percent, 1);
+	}
+}
+
 static int splash_write_proc(struct file *file, const char *buffer,
 		      unsigned long count, void *data)
 {
         int new, unit;
 	struct vc_data *vc;
-	
+
 	if (!buffer || !splash_default)
 		return count;
 
 	acquire_console_sem();
+	unit = 0;
+        if (buffer[0] == '@' && buffer[1] >= '0' && buffer[1] <= '9') {
+		unit = buffer[1] - '0';
+		buffer += 2;
+		if (*buffer >= '0' && *buffer <= '9') {
+			unit = unit * 10 + *buffer - '0';
+			buffer++;
+		}
+		if (*buffer == ' ')
+			buffer++;
+		if (unit >= MAX_NR_CONSOLES || !vc_cons[unit].d) {
+			release_console_sem();
+			return count;
+		}
+	}
+	vc = vc_cons[unit].d;
+	if (!strncmp(buffer, "redraw", 6)) {
+		splash_status(vc);
+		release_console_sem();
+		return count;
+	}
 	if (!strncmp(buffer, "show", 4) || !strncmp(buffer, "hide", 4)) {
-		int pe, oldpe;
+		int pe;
 
-		vc = vc_cons[0].d;
 		if (buffer[4] == ' ' && buffer[5] == 'p')
 			pe = 0;
 		else if (buffer[4] == '\n')
@@ -800,39 +864,11 @@ static int splash_write_proc(struct file *file, const char *buffer,
 			pe = 65535;
 		if (*buffer == 'h')
 			pe = 65535 - pe;
-		pe += pe > 32767;
-		if (vc->vc_splash_data && vc->vc_splash_data->splash_percent != pe) {
-			struct fb_info *info;
-			struct fbcon_ops *ops;
-
-			oldpe = vc->vc_splash_data->splash_percent;
-			vc->vc_splash_data->splash_percent = pe;
-			if (fg_console != 0 || !vc->vc_splash_data->splash_state) {
-				release_console_sem();
-				return count;
-			}
-			info = registered_fb[(int) con2fb_map[vc->vc_num]];
-			ops = info->fbcon_par;
-			if (ops->blank_state) {
-				release_console_sem();
-				return count;
-			}
-			if (!vc->vc_splash_data->splash_overpaintok || pe == 65536 || pe < oldpe) {
-				if (splash_hasinter(vc->vc_splash_data->splash_boxes, vc->vc_splash_data->splash_boxcount))
-					splash_status(vc);
-				else
-					splash_prepare(vc, info);
-			} else {
-				if (vc->vc_splash_data->splash_silentjpeg && vc->vc_splash_data->splash_dosilent && info->silent_screen_base)
-					boxit(info->silent_screen_base, info->fix.line_length, vc->vc_splash_data->splash_sboxes, vc->vc_splash_data->splash_sboxcount, vc->vc_splash_data->splash_percent, 1);
-				boxit(info->screen_base, info->fix.line_length, vc->vc_splash_data->splash_boxes, vc->vc_splash_data->splash_boxcount, vc->vc_splash_data->splash_percent, 1);
-			}
-		}
+		splash_set_percent(vc, pe);
 		release_console_sem();
 		return count;
 	}
 	if (!strncmp(buffer,"silent\n",7) || !strncmp(buffer,"verbose\n",8)) {
-		vc = vc_cons[0].d;
 		if (vc->vc_splash_data && vc->vc_splash_data->splash_silentjpeg) {
 		    if (vc->vc_splash_data->splash_dosilent != (buffer[0] == 's')) {
 			vc->vc_splash_data->splash_dosilent = buffer[0] == 's';
@@ -843,7 +879,6 @@ static int splash_write_proc(struct file *file, const char *buffer,
 		return count;
 	}
 	if (!strncmp(buffer,"freesilent\n",11)) {
-		vc = vc_cons[0].d;
 		if (vc->vc_splash_data && vc->vc_splash_data->splash_silentjpeg) {
 		    printk(KERN_INFO "bootsplash: freeing silent jpeg\n");
 		    vc->vc_splash_data->splash_silentjpeg = 0;
@@ -879,7 +914,6 @@ static int splash_write_proc(struct file *file, const char *buffer,
 	    release_console_sem();
 	    return count;
 	}
-	vc = vc_cons[0].d;
 	if (!vc->vc_splash_data) {
 		release_console_sem();
 		return count;

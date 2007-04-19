@@ -91,7 +91,6 @@
 #endif
 
 #include "fbcon.h"
-
 #ifdef CONFIG_BOOTSPLASH
 #include "../bootsplash/bootsplash.h"
 #endif
@@ -109,7 +108,12 @@ enum {
 };
 
 static struct display fb_display[MAX_NR_CONSOLES];
+
+#ifdef CONFIG_BOOTSPLASH
 signed char con2fb_map[MAX_NR_CONSOLES];
+#else
+static signed char con2fb_map[MAX_NR_CONSOLES];
+#endif
 static signed char con2fb_map_boot[MAX_NR_CONSOLES];
 static int logo_height;
 static int logo_lines;
@@ -1142,7 +1146,7 @@ static void fbcon_init(struct vc_data *vc, int init)
 		con_remap_def_color(vc, vc->vc_splash_data->splash_color << 4 | vc->vc_splash_data->splash_fg_color);
 	}
 #endif
-				
+
 	vc_resize(vc, new_cols, new_rows);
 
 	/*
@@ -1876,12 +1880,12 @@ static int fbcon_scroll(struct vc_data *vc, int t, int b, int dir,
 	case SM_DOWN:
 		if (count > vc->vc_rows)	/* Maximum realistic size */
 			count = vc->vc_rows;
+		if (logo_shown >= 0)
+			goto redraw_down;
 #ifdef CONFIG_BOOTSPLASH
 		if (info->splash_data)
 			goto redraw_down;
 #endif
-		if (logo_shown >= 0)
-			goto redraw_down;
 		switch (p->scrollmode) {
 		case SCROLL_MOVE:
 			ops->bmove(vc, info, t, 0, t + count, 0,
@@ -2464,19 +2468,16 @@ static int fbcon_do_set_font(struct vc_data *vc, int w, int h,
 	if (resize) {
 		int cols, rows;
 
-		u32 xres = info->var.xres, yres = info->var.yres;
 		cols = FBCON_SWAP(ops->rotate, info->var.xres, info->var.yres);
 		rows = FBCON_SWAP(ops->rotate, info->var.yres, info->var.xres);
-		cols /= w;
-		rows /= h;
-
 #ifdef CONFIG_BOOTSPLASH
 		if (info->splash_data) {
-			xres = info->splash_data->splash_text_wi;
-			yres = info->splash_data->splash_text_he;
+			cols = info->splash_data->splash_text_wi;
+			rows = info->splash_data->splash_text_he;
 		}
 #endif
-					
+		cols /= w;
+		rows /= h;
 		vc_resize(vc, cols, rows);
 		if (CON_IS_VISIBLE(vc) && softback_buf)
 			fbcon_update_softback(vc);
