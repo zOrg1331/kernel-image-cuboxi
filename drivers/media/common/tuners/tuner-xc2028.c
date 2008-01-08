@@ -99,6 +99,7 @@ struct xc2028_data {
 	if (size != _rc)						\
 		tuner_info("i2c output error: rc = %d (should be %d)\n",\
 			   _rc, (int)size);				\
+	msleep(priv->ctrl.msleep);					\
 	_rc;								\
 })
 
@@ -118,6 +119,7 @@ struct xc2028_data {
 	if (isize != _rc)						\
 		tuner_err("i2c input error: rc = %d (should be %d)\n",	\
 			   _rc, (int)isize); 				\
+	msleep(priv->ctrl.msleep);					\
 	_rc;								\
 })
 
@@ -129,7 +131,7 @@ struct xc2028_data {
 						_val, sizeof(_val)))) {	\
 		tuner_err("Error on line %d: %d\n", __LINE__, _rc);	\
 	} else 								\
-		msleep(10);						\
+		msleep(priv->ctrl.msleep);				\
 	_rc;								\
 })
 
@@ -957,6 +959,7 @@ static int generic_set_freq(struct dvb_frontend *fe, u32 freq /* in HZ */,
 	   The reset CLK is needed only with tm6000.
 	   Driver should work fine even if this fails.
 	 */
+	msleep(priv->ctrl.msleep);
 	do_tuner_callback(fe, XC2028_RESET_CLK, 1);
 
 	msleep(10);
