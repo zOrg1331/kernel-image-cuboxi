@@ -1,0 +1,17 @@
+object 49914084e797530d9baaf51df9eda77babc98fa8
+type commit
+tag v2.6.24
+tagger Linus Torvalds <torvalds@woody.linux-foundation.org> 1201215533 -0800
+
+Linux 2.6.24
+
+No new name? What's up with that? Have we run out of ridiculous animals
+or human behaviour? Talk like a pirate day was long long ago.  We need
+the bug-free Weasel-series naming back!
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v1.4.7 (GNU/Linux)
+
+iD8DBQBHmRicF3YsRnbiHLsRAlnXAKCa3e/2uC+RcDQqCBdm7DI9b/jCPACgkTyz
+e1OxfflpaPb0dkjuV2mjuQQ=
+=zcA9
+-----END PGP SIGNATURE-----

@@ -1,2 +1,2 @@
 spec: kernel-source.spec
-tar.bz2: v2.6.18:. name=linux-2.6.18
+tar.bz2: v2.6.24:. name=linux-2.6.24
