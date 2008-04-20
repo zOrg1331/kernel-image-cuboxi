@@ -1,5 +1,5 @@
-%define original_kernel_version	2.6.24
-%define kernel_version		2.6.24
+%define original_kernel_version	2.6.25
+%define kernel_version		2.6.25
 %define patch_level		%nil
 
 %define testing			0
@@ -51,6 +51,9 @@ tar --owner=root --group=root --mode=u+w,go-w,go+rX -cjf \
 %kernel_src/kernel-source-%kernel_version.tar.bz2
 
 %changelog
+* Sun Apr 20 2008 Michail Yakushin <silicium@altlinux.ru> 1.0.0-alt1
+- 2.6.25 
+
 * Fri Jan 25 2008 Sergey Vlasov <vsu@altlinux.ru> 1.0.0-alt1
 - 2.6.24
 
