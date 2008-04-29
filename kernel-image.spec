@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.25
-Release: alt0.1
+Release: alt1
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -377,6 +377,9 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 %endif
 
 %changelog
+* Tue Apr 29 2008 Valery Inozemtsev <shrek@altlinux.ru> 2.6.25-alt1
+- 2.6.25
+
 * Mon Mar 31 2008 Michail Yanushin <silicium@altlinux.ru> 2.6.24-alt7
 -turn off v4l (moved to separate package)
 -turn on many partition table support(i.e mac partion and amiga patition (bug #1599))
