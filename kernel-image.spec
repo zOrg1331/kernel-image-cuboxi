@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.25
-Release: alt1
+Release: alt2
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -377,6 +377,9 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 %endif
 
 %changelog
+* Thu May 01 2008 Valery Inozemtsev <shrek@altlinux.ru> 2.6.25-alt2
+- bootsplash support
+
 * Tue Apr 29 2008 Valery Inozemtsev <shrek@altlinux.ru> 2.6.25-alt1
 - 2.6.25
 
