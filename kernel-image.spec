@@ -1,6 +1,6 @@
-Name: kernel-image-std-ng
+Name: kernel-image-std-def
 Version: 2.6.25
-Release: alt4
+Release: alt1
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -377,26 +377,16 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 %endif
 
 %changelog
-* Wed May 07 2008 Valery Inozemtsev <shrek@altlinux.ru> 2.6.25-alt4
+* Wed May 07 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt1
 - 2.6.25.2
   + CVE-2008-1669: fix SMP ordering hole in fcntl_setlk()
-
-* Fri May 02 2008 Valery Inozemtsev <shrek@altlinux.ru> 2.6.25-alt3
-- 2.6.25.1:
   + CVE-2008-1375: fix dnotify/close race
-
-* Thu May 01 2008 Valery Inozemtsev <shrek@altlinux.ru> 2.6.25-alt2
-- bootsplash support
-
-* Tue Apr 29 2008 Valery Inozemtsev <shrek@altlinux.ru> 2.6.25-alt1
-- 2.6.25
 
 * Mon Mar 31 2008 Michail Yanushin <silicium@altlinux.ru> 2.6.24-alt7
 -turn off v4l (moved to separate package)
 -turn on many partition table support(i.e mac partion and amiga patition (bug #1599))
 -turn off support ucb1400_ts to turn off ac97_bus.ko
 -exclude alsa headers from kernel-headers-modules
-- 
 
 * Mon Mar 24 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.24-alt6
 - 2.6.24.4
