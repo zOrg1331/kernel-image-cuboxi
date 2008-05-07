@@ -1,0 +1,17 @@
+v4l
+alsa
+fglrx
+drm
+nvidia 
+ndiswrapper
+tp_smapi
+madwifi
+madwifi-dfs
+kqemu
+lirc
+acerhk
+subfs
+m560x
+uvcvideo
+zaptel
+igb
