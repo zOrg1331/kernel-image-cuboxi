@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.25
-Release: alt3
+Release: alt4
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -377,6 +377,10 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 %endif
 
 %changelog
+* Wed May 07 2008 Valery Inozemtsev <shrek@altlinux.ru> 2.6.25-alt4
+- 2.6.25.2
+  + CVE-2008-1669: fix SMP ordering hole in fcntl_setlk()
+
 * Fri May 02 2008 Valery Inozemtsev <shrek@altlinux.ru> 2.6.25-alt3
 - 2.6.25.1:
   + CVE-2008-1375: fix dnotify/close race
