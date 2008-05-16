@@ -378,6 +378,7 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 
 %changelog
 * Wed May 07 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt1
+- 2.6.25.4
 - 2.6.25.2
   + CVE-2008-1669: fix SMP ordering hole in fcntl_setlk()
   + CVE-2008-1375: fix dnotify/close race
