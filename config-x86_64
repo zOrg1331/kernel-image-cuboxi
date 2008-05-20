@@ -1,12 +1,13 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.25-std-ng-alt4
-# Wed May  7 15:43:44 2008
+# Linux kernel version: 2.6.25-std-def-alt1
+# Tue May 20 12:55:12 2008
 #
 CONFIG_64BIT=y
 # CONFIG_X86_32 is not set
 CONFIG_X86_64=y
 CONFIG_X86=y
+CONFIG_DEFCONFIG_LIST="arch/x86/configs/x86_64_defconfig"
 # CONFIG_GENERIC_LOCKBREAK is not set
 CONFIG_GENERIC_TIME=y
 CONFIG_GENERIC_CMOS_UPDATE=y
@@ -50,7 +51,6 @@ CONFIG_X86_64_SMP=y
 CONFIG_X86_HT=y
 CONFIG_X86_TRAMPOLINE=y
 # CONFIG_KTIME_SCALAR is not set
-CONFIG_DEFCONFIG_LIST="/lib/modules/$UNAME_RELEASE/.config"
 
 #
 # General setup
@@ -851,7 +851,15 @@ CONFIG_BAYCOM_SER_FDX=m
 CONFIG_BAYCOM_SER_HDX=m
 CONFIG_BAYCOM_PAR=m
 CONFIG_YAM=m
-# CONFIG_CAN is not set
+CONFIG_CAN=m
+CONFIG_CAN_RAW=m
+CONFIG_CAN_BCM=m
+
+#
+# CAN Device Drivers
+#
+CONFIG_CAN_VCAN=m
+# CONFIG_CAN_DEBUG_DEVICES is not set
 CONFIG_IRDA=m
 
 #
