@@ -121,6 +121,7 @@ struct dentry *sysfs_get_dentry(struct sysfs_dirent *sd)
 	}
 	return dentry;
 }
+EXPORT_SYMBOL(sysfs_get_dentry);
 
 /**
  *	sysfs_get_active - get an active reference to sysfs_dirent
