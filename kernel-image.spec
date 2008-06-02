@@ -1,4 +1,4 @@
-Name: kernel-image-std-def
+Name: kernel-image-std-srv
 Version: 2.6.25
 Release: alt1
 
@@ -21,7 +21,7 @@ Release: alt1
 %define kgcc_version	4.1
 
 # Enable/disable SGML docs formatting
-%def_enable docs
+%def_disable docs
 
 ## Don't edit below this line ##################################
 
@@ -87,6 +87,9 @@ should support wide range of hardware, but does not contain patches
 which are useful only for some special applications (and may have
 undesirable side effects in other cases).  This is the default 2.6.x
 kernel variant for ALT Linux distributions.
+
+This kernel build for servers. It supports NUMA, optimized for thuoughtput
+and so on. 
 
 %package -n kernel-modules-oss-%flavour
 Summary: OSS sound driver modules (obsolete)
@@ -377,17 +380,11 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 %endif
 
 %changelog
-* Wed May 07 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt1
-- 2.6.25.4
-- 2.6.25.2
-  + CVE-2008-1669: fix SMP ordering hole in fcntl_setlk()
-  + CVE-2008-1375: fix dnotify/close race
+* Mon Jun 02 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt1
+- 2.6.25 
 
-* Mon Mar 31 2008 Michail Yanushin <silicium@altlinux.ru> 2.6.24-alt7
--turn off v4l (moved to separate package)
--turn on many partition table support(i.e mac partion and amiga patition (bug #1599))
--turn off support ucb1400_ts to turn off ac97_bus.ko
--exclude alsa headers from kernel-headers-modules
+* Wed Mar 26 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.24-alt1
+- inital release. Based on std-def-alt6
 
 * Mon Mar 24 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.24-alt6
 - 2.6.24.4
