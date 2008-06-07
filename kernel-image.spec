@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.25
-Release: alt1
+Release: alt2
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -377,6 +377,10 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 %endif
 
 %changelog
+* Sat Jun 07 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt2
+- 2.6.25.5:
+  - fix CVE-2008-1673
+
 * Wed May 07 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt1
 - 2.6.25.4
 - 2.6.25.2
