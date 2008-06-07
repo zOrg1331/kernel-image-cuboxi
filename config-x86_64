@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.25-std-def-alt1
-# Tue May 20 12:55:12 2008
+# Linux kernel version: 2.6.25-std-def-alt2
+# Sat Jun  7 14:47:22 2008
 #
 CONFIG_64BIT=y
 # CONFIG_X86_32 is not set
@@ -2420,7 +2420,7 @@ CONFIG_SENSORS_W83L785TS=m
 CONFIG_SENSORS_W83L786NG=m
 CONFIG_SENSORS_W83627HF=m
 CONFIG_SENSORS_W83627EHF=m
-CONFIG_SENSORS_HDAPS=m
+# CONFIG_SENSORS_HDAPS is not set
 CONFIG_SENSORS_APPLESMC=m
 # CONFIG_HWMON_DEBUG_CHIP is not set
 CONFIG_THERMAL=y
