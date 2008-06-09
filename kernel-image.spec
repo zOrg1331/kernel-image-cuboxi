@@ -388,8 +388,18 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 * Mon Jun 02 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt1
 - 2.6.25 
 
-* Wed Mar 26 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.24-alt1
-- inital release. Based on std-def-alt6
+* Wed May 07 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt1
+- 2.6.25.4
+- 2.6.25.2
+  + CVE-2008-1669: fix SMP ordering hole in fcntl_setlk()
+  + CVE-2008-1375: fix dnotify/close race
+
+* Mon Mar 31 2008 Michail Yanushin <silicium@altlinux.ru> 2.6.24-alt7
+-turn off v4l (moved to separate package)
+-turn on many partition table support(i.e mac partion and amiga patition (bug #1599))
+-turn off support ucb1400_ts to turn off ac97_bus.ko
+-exclude alsa headers from kernel-headers-modules
+>>>>>>> kernel-image-std-def:kernel-image.spec
 
 * Mon Mar 24 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.24-alt6
 - 2.6.24.4
