@@ -1,6 +1,6 @@
 Name: kernel-image-std-srv
 Version: 2.6.25
-Release: alt2
+Release: alt3
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -380,6 +380,9 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 %endif
 
 %changelog
+* Mon Jun 16 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt3
+- 2.6.25.6 
+
 * Sat Jun 07 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt2
 - 2.6.25.5:
   - fix CVE-2008-1673
@@ -399,7 +402,6 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 -turn on many partition table support(i.e mac partion and amiga patition (bug #1599))
 -turn off support ucb1400_ts to turn off ac97_bus.ko
 -exclude alsa headers from kernel-headers-modules
->>>>>>> kernel-image-std-def:kernel-image.spec
 
 * Mon Mar 24 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.24-alt6
 - 2.6.24.4
