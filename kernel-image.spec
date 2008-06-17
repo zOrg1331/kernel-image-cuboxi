@@ -378,6 +378,7 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 
 %changelog
 * Mon Jun 16 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt3
+- 2.6.25.7
 - 2.6.25.6 
 
 * Sat Jun 07 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt2
