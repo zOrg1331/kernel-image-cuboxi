@@ -7,6 +7,7 @@ ndiswrapper
 tp_smapi
 madwifi
 madwifi-dfs
+madwifi-ar5007
 kqemu
 lirc
 acerhk
@@ -15,3 +16,6 @@ m560x
 uvcvideo
 zaptel
 igb
+virtualbox
+virtualbox-vfs
+virtualbox-addition
