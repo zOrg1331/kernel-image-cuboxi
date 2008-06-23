@@ -377,9 +377,14 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 
 %changelog
 * Mon Jun 23 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt4
+- l2tp: Fix potential memory corruption in pppol2tp_recvmsg()
 - 2.6.25.8
 - intel_agp: Add support for Intel 4 series chipsets
-
+- config-i586:
+  + turn off Voluntary Preemption
+  + turn on EISA and EISA drivers for hardware
+  + flat memory model
+  + some cleanups
 
 * Mon Jun 16 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt3
 - 2.6.25.7
