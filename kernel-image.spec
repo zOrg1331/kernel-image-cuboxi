@@ -377,7 +377,10 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 
 %changelog
 * Mon Jun 23 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt4
-- l2tp: Fix potential memory corruption in pppol2tp_recvmsg()
+- Security related fixes:
+	+ l2tp: Fix potential memory corruption in pppol2tp_recvmsg()
+	+ Reinstate ZERO_PAGE optimization in 'get_user_pages()' and fix XIP
+	+ sctp: Make sure N * sizeof(union sctp_addr) does not overflow.
 - 2.6.25.8
 - intel_agp: Add support for Intel 4 series chipsets
 - config-i586:
