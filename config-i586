@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.25-std-pae-alt2
-# Sat Jun  7 16:03:28 2008
+# Linux kernel version: 2.6.25-std-pae-alt4
+# Tue Jun 24 11:50:35 2008
 #
 # CONFIG_64BIT is not set
 CONFIG_X86_32=y
@@ -256,7 +256,6 @@ CONFIG_HIGHMEM64G=y
 CONFIG_PAGE_OFFSET=0xC0000000
 CONFIG_HIGHMEM=y
 CONFIG_X86_PAE=y
-CONFIG_NEED_NODE_MEMMAP_SIZE=y
 CONFIG_ARCH_FLATMEM_ENABLE=y
 CONFIG_ARCH_SPARSEMEM_ENABLE=y
 CONFIG_ARCH_SELECT_MEMORY_MODEL=y
