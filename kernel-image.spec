@@ -20,7 +20,7 @@ Release: alt4
 %define kgcc_version	4.1
 
 # Enable/disable SGML docs formatting
-%def_enable docs
+%def_disable docs
 
 ## Don't edit below this line ##################################
 
