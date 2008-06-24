@@ -12,7 +12,6 @@ kqemu
 lirc
 acerhk
 subfs
-m560x
 uvcvideo
 zaptel
 igb

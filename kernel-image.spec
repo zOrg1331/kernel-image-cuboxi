@@ -1,7 +1,6 @@
 Name: kernel-image-std-pae
 Version: 2.6.25
-Release: alt3
-
+Release: alt4
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -380,6 +379,19 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 %endif
 
 %changelog
+* Mon Jun 23 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt4
+- Security related fixes:
+	+ l2tp: Fix potential memory corruption in pppol2tp_recvmsg()
+	+ Reinstate ZERO_PAGE optimization in 'get_user_pages()' and fix XIP
+	+ sctp: Make sure N * sizeof(union sctp_addr) does not overflow.
+- 2.6.25.8
+- intel_agp: Add support for Intel 4 series chipsets
+- config-i586:
+  + turn off Voluntary Preemption
+  + turn on EISA and EISA drivers for hardware
+  + flat memory model
+  + some cleanups
+
 * Mon Jun 16 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt3
 - 2.6.25.7
 - 2.6.25.6 
