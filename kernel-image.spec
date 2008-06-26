@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.25
-Release: alt4
+Release: alt5
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -376,6 +376,9 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 %endif
 
 %changelog
+* Fri Jun 27 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt5
+- 2.6.25.9 
+
 * Mon Jun 23 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt4
 - Security related fixes:
 	+ l2tp: Fix potential memory corruption in pppol2tp_recvmsg()
