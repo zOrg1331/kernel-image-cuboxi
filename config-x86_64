@@ -1,13 +1,13 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.25-std-def-alt2
-# Sat Jun  7 14:47:22 2008
+# Linux kernel version: 2.6.25-std-def-alt5
+# Fri Jun 27 10:58:48 2008
 #
 CONFIG_64BIT=y
 # CONFIG_X86_32 is not set
 CONFIG_X86_64=y
 CONFIG_X86=y
-CONFIG_DEFCONFIG_LIST="arch/x86/configs/x86_64_defconfig"
+CONFIG_ARCH_DEFCONFIG="arch/x86/configs/x86_64_defconfig"
 # CONFIG_GENERIC_LOCKBREAK is not set
 CONFIG_GENERIC_TIME=y
 CONFIG_GENERIC_CMOS_UPDATE=y
@@ -51,6 +51,7 @@ CONFIG_X86_64_SMP=y
 CONFIG_X86_HT=y
 CONFIG_X86_TRAMPOLINE=y
 # CONFIG_KTIME_SCALAR is not set
+CONFIG_DEFCONFIG_LIST="/lib/modules/$UNAME_RELEASE/.config"
 
 #
 # General setup
@@ -1648,9 +1649,7 @@ CONFIG_NETDEV_1000=y
 CONFIG_ACENIC=m
 # CONFIG_ACENIC_OMIT_TIGON_I is not set
 CONFIG_DL2K=m
-CONFIG_E1000=m
-CONFIG_E1000_NAPI=y
-# CONFIG_E1000_DISABLE_PACKET_SPLIT is not set
+# CONFIG_E1000 is not set
 CONFIG_E1000E=m
 CONFIG_E1000E_ENABLED=y
 CONFIG_IP1000=m

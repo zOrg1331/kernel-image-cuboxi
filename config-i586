@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.25-std-def-alt4
-# Mon Jun 23 14:33:18 2008
+# Linux kernel version: 2.6.25-std-def-alt5
+# Fri Jun 27 11:01:00 2008
 #
 # CONFIG_64BIT is not set
 CONFIG_X86_32=y
@@ -1774,9 +1774,7 @@ CONFIG_NETDEV_1000=y
 CONFIG_ACENIC=m
 # CONFIG_ACENIC_OMIT_TIGON_I is not set
 CONFIG_DL2K=m
-CONFIG_E1000=m
-CONFIG_E1000_NAPI=y
-# CONFIG_E1000_DISABLE_PACKET_SPLIT is not set
+# CONFIG_E1000 is not set
 CONFIG_E1000E=m
 CONFIG_E1000E_ENABLED=y
 CONFIG_IP1000=m
