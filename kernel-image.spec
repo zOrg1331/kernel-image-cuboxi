@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.25
-Release: alt5
+Release: alt6
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -376,6 +376,10 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 %endif
 
 %changelog
+* Thu Jul 03 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt6
+- 2.6.25.10
+- moved e1000 drivers to kernel-image-e1000
+
 * Fri Jun 27 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt5
 - 2.6.25.9 
 
