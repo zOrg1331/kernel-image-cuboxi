@@ -3966,11 +3966,26 @@ int ata_std_prereset(struct ata_link *link, unsigned long deadline)
 
 	/* if SATA, resume link */
 	if (ap->flags & ATA_FLAG_SATA) {
+		u32 sstatus;
+
 		rc = sata_link_resume(link, timing, deadline);
 		/* whine about phy resume failure but proceed */
 		if (rc && rc != -EOPNOTSUPP)
 			ata_link_printk(link, KERN_WARNING, "failed to resume "
 					"link for reset (errno=%d)\n", rc);
+
+		/* force hardreset if the link is sleeping */
+		if (sata_scr_read(link, SCR_STATUS, &sstatus) == 0) {
+			u8 ipm = sstatus >> 8;
+
+			if (ipm == 2 || ipm == 6) {
+				ata_link_printk(link, KERN_INFO,
+						"link in %s mode, forcing hardreset\n",
+						ipm == 2 ? "partial" : "slumber");
+				ehc->i.action |= ATA_EH_HARDRESET;
+				return 0;
+			}
+		}
 	}
 
 	/* Wait for !BSY if the controller can wait for the first D2H
