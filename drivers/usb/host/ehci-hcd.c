@@ -1052,6 +1052,9 @@ static int __init ehci_hcd_init(void)
 {
 	int retval = 0;
 
+	if (usb_disabled())
+		return -ENODEV;
+
 	pr_debug("%s: block sizes: qh %Zd qtd %Zd itd %Zd sitd %Zd\n",
 		 hcd_name,
 		 sizeof(struct ehci_qh), sizeof(struct ehci_qtd),
