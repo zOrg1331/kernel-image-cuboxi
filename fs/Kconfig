@@ -1455,6 +1455,14 @@ config SQUASHFS_FRAGMENT_CACHE_SIZE
 	  Note there must be at least one cached fragment.  Anything
 	  much more than three will probably not make much difference.
 
+config SQUASHFS_LZMA
+	bool "Enable LZMA support in squashfs"
+	depends on SQUASHFS
+	default n
+	help
+	  LZMA can compress much better then gzip, which is used in squashfs now.
+	  Select this to enable support for LZMA in squashfs.
+
 config VXFS_FS
 	tristate "FreeVxFS file system support (VERITAS VxFS(TM) compatible)"
 	depends on BLOCK
