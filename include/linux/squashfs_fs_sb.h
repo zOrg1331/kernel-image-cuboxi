@@ -24,6 +24,9 @@
  */
 
 #include <linux/squashfs_fs.h>
+#ifdef CONFIG_SQUASHFS_LZMA
+#include "sqlzma.h"
+#endif
 
 struct squashfs_cache {
 	long long	block;
@@ -54,7 +57,9 @@ struct squashfs_sb_info {
 	long long		*fragment_index;
 	unsigned int		*fragment_index_2;
 	char			*read_page;
+#ifndef CONFIG_SQUASHFS_LZMA
 	struct mutex		read_data_mutex;
+#endif
 	struct mutex		read_page_mutex;
 	struct mutex		block_cache_mutex;
 	struct mutex		fragment_mutex;
@@ -62,7 +67,9 @@ struct squashfs_sb_info {
 	wait_queue_head_t	waitq;
 	wait_queue_head_t	fragment_wait_queue;
 	struct meta_index	*meta_index;
+#ifndef CONFIG_SQUASHFS_LZMA
 	z_stream		stream;
+#endif
 	long long		*inode_lookup_table;
 	int			unused_cache_blks;
 	int			unused_frag_blks;
