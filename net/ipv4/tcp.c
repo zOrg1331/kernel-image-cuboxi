@@ -727,6 +727,7 @@ new_segment:
 			if (!skb)
 				goto wait_for_memory;
 			ub_skb_set_charge(skb, sk, chargesize, UB_TCPSNDBUF);
+			chargesize = 0;
 
 			skb_entail(sk, skb);
 			copy = size_goal;
@@ -919,6 +920,7 @@ new_segment:
 					goto wait_for_memory;
 				ub_skb_set_charge(skb, sk, chargesize,
 						UB_TCPSNDBUF);
+				chargesize = 0;
 
 				/*
 				 * Check whether we can use HW checksum.
