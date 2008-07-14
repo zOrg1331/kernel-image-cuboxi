@@ -377,21 +377,22 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 
 %changelog
 * Mon Jul 07 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt7
-- add fedora patches:
-    	+ linux-2.6-netdev-tehuti-move-ioctl-perm-check-closer-to-function-start.patch
-    	+ linux-2.6-netdev-tehuti-check-register-size.patch
-	+ linux-2.6-netdev-atl2.patch adds suport ATL2
-	+ linux-2.6-sata-eeepc-faster.patch
-	+ linux-2.6-e1000-ich9.patch add support e1000e network card on ich9 chipset
-	+ linux-2.6-at76.patch add suporrt wifi USB Card
-	+ linux-2.6-rt2x00-configure_filter.patch bufix
-	+ linux-2.6-wireless-pending-too.patch many bugfixes
-	+ linux-2.6-wireless-pending.patch big wifi update
-	+ linux-2.6-libata-force-hardreset-in-sleep-mode.patch fix SATA and sleep
-	+ linux-2.6-serial-460800.patch 
-	+ linux-2.6-debug-sizeof-structs.patch some  debug
-	+ linux-2.6-usb-ehci-hcd-respect-nousb.patch
-	+ linux-2.6-ms-wireless-receiver.patch fix hardware support
+-2.6.25.11:
+	+x86: fix ldt limit for 64 bit
+- add lzma support to squashfs (stanv@)
+- Merged changes from FC:
+	+ add atl2 support
+	+ add at76 support
+	+ add e1000e network card on ich9 chipset support
+	+ update wireless support
+	+ fix tehuti driver
+	+ fix eeepc sata driver (now it must should faster)
+	+ fix rt2x00
+	+ fix libata sleep mode
+	+ fix serial port support
+	+ add verbosity (print sizeof main structs at startup)
+	+ fix ehci (now it respects nousb)
+	+ fix MS wireless receiver support
 
 
 * Thu Jul 03 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt6
