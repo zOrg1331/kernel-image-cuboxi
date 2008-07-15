@@ -380,6 +380,7 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 -2.6.25.11:
 	+x86: fix ldt limit for 64 bit
 - add lzma support to squashfs (stanv@)
+- compile-in cramfs support (#9019)
 - Merged changes from FC:
 	+ add atl2 support
 	+ add at76 support
