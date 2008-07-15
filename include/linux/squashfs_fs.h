@@ -341,7 +341,11 @@ struct squashfs_dir_entry {
 	unsigned int		offset:13;
 	unsigned int		type:3;
 	unsigned int		size:8;
+#ifdef CONFIG_SQUASHFS_LZMA
+	unsigned int		inode_number:16;
+#else
 	int			inode_number:16;
+#endif
 	char			name[0];
 } __attribute__ ((packed));
 
