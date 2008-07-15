@@ -587,7 +587,7 @@ static const struct hid_blacklist {
 	{ USB_VENDOR_ID_LOGITECH, USB_DEVICE_ID_LOGITECH_CORDLESS_DESKTOP_LX500, HID_QUIRK_LOGITECH_IGNORE_DOUBLED_WHEEL | HID_QUIRK_LOGITECH_EXPANDED_KEYMAP },
 
 	{ USB_VENDOR_ID_MICROSOFT, USB_DEVICE_ID_MS_NE4K, HID_QUIRK_MICROSOFT_KEYS },
-	{ USB_VENDOR_ID_MICROSOFT, USB_DEVICE_ID_MS_LK6K, HID_QUIRK_MICROSOFT_KEYS },
+	{ USB_VENDOR_ID_MICROSOFT, USB_DEVICE_ID_MS_LK6K, HID_QUIRK_MICROSOFT_KEYS | HID_QUIRK_RDESC_USAGE_NOT_PHYSICAL },
 
 	{ USB_VENDOR_ID_APPLE, USB_DEVICE_ID_APPLE_MIGHTYMOUSE, HID_QUIRK_MIGHTYMOUSE | HID_QUIRK_INVERT_HWHEEL },
 
@@ -1089,6 +1089,28 @@ static void usbhid_fixup_button_consumer_descriptor(unsigned char *rdesc, int rs
 	}
 }
 
+/*
+ * Microsoft Wireless Desktop Receiver (Model 1028) has several
+ * 'Usage Min/Max' where it ought to have 'Physical Min/Max'
+ */
+static void usbhid_fixup_microsoft_descriptor(unsigned char *rdesc, int rsize)
+{
+	if (rsize == 571 && rdesc[284] == 0x19
+	                 && rdesc[286] == 0x2a
+	                 && rdesc[304] == 0x19
+	                 && rdesc[306] == 0x29
+	                 && rdesc[352] == 0x1a
+	                 && rdesc[355] == 0x2a
+			 && rdesc[557] == 0x19
+			 && rdesc[559] == 0x29) {
+		printk(KERN_INFO "Fixing up Microsoft Wireless Receiver Model 1028 report descriptor\n");
+		rdesc[284] = rdesc[304] = rdesc[558] = 0x35;
+		rdesc[352] = 0x36;
+		rdesc[286] = rdesc[355] = 0x46;
+		rdesc[306] = rdesc[559] = 0x45;
+	}
+}
+
 static void __usbhid_fixup_report_descriptor(__u32 quirks, char *rdesc, unsigned rsize)
 {
 	if ((quirks & HID_QUIRK_RDESC_CYMOTION))
@@ -1112,6 +1134,8 @@ static void __usbhid_fixup_report_descriptor(__u32 quirks, char *rdesc, unsigned
 	if (quirks & HID_QUIRK_RDESC_SAMSUNG_REMOTE)
 		usbhid_fixup_samsung_irda_descriptor(rdesc, rsize);
 
+	if (quirks & HID_QUIRK_RDESC_USAGE_NOT_PHYSICAL)
+		usbhid_fixup_microsoft_descriptor(rdesc, rsize);
 }
 
 /**

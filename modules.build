@@ -12,10 +12,10 @@ kqemu
 lirc
 acerhk
 subfs
-m560x
 uvcvideo
 zaptel
 igb
 virtualbox
 virtualbox-vfs
 virtualbox-addition
+e1000

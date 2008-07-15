@@ -1,7 +1,6 @@
 Name: kernel-image-std-srv
 Version: 2.6.25
-Release: alt3
-
+Release: alt7
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -380,6 +379,46 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 %endif
 
 %changelog
+* Mon Jul 07 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt7
+-2.6.25.11:
+	+x86: fix ldt limit for 64 bit
+- add lzma support to squashfs (stanv@)
+- compile-in cramfs support (#9019)
+- Merged changes from FC:
+	+ add atl2 support
+	+ add at76 support
+	+ add e1000e network card on ich9 chipset support
+	+ update wireless support
+	+ fix tehuti driver
+	+ fix eeepc sata driver (now it must should faster)
+	+ fix rt2x00
+	+ fix libata sleep mode
+	+ fix serial port support
+	+ add verbosity (print sizeof main structs at startup)
+	+ fix ehci (now it respects nousb)
+	+ fix MS wireless receiver support
+
+
+* Thu Jul 03 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt6
+- 2.6.25.10
+- moved e1000 drivers to kernel-image-e1000
+
+* Fri Jun 27 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt5
+- 2.6.25.9 
+
+* Mon Jun 23 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt4
+- Security related fixes:
+	+ l2tp: Fix potential memory corruption in pppol2tp_recvmsg()
+	+ Reinstate ZERO_PAGE optimization in 'get_user_pages()' and fix XIP
+	+ sctp: Make sure N * sizeof(union sctp_addr) does not overflow.
+- 2.6.25.8
+- intel_agp: Add support for Intel 4 series chipsets
+- config-i586:
+  + turn off Voluntary Preemption
+  + turn on EISA and EISA drivers for hardware
+  + flat memory model
+  + some cleanups
+
 * Mon Jun 16 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt3
 - 2.6.25.7
 - 2.6.25.6 
