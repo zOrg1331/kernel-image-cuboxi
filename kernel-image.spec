@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.25
-Release: alt7
+Release: alt8
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -376,6 +376,9 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 %endif
 
 %changelog
+* Thu Jul 24 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt8
+- add Intel AMT support 
+
 * Mon Jul 07 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt7
 -2.6.25.11:
 	+x86: fix ldt limit for 64 bit
