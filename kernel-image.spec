@@ -376,7 +376,8 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 %endif
 
 %changelog
-* Thu Jul 24 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt8
+* Thu Jul 25 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt8
+- 2.6.25.12
 - add Intel AMT support 
 
 * Mon Jul 07 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt7
