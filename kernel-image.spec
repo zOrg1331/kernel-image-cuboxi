@@ -377,8 +377,10 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 
 %changelog
 * Thu Jul 25 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt8
-- 2.6.25.12
+- 2.6.25.16
 - add Intel AMT support 
+- revert squashfs lzma patch, it`s full of bugs
+- update unionfs
 
 * Mon Jul 07 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt7
 -2.6.25.11:
