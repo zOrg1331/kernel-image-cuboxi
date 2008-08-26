@@ -1129,8 +1129,8 @@ static int ieee80211_tx(struct net_device *dev, struct sk_buff *skb,
 	struct ieee80211_local *local = wdev_priv(dev->ieee80211_ptr);
 	struct sta_info *sta;
 	ieee80211_tx_handler *handler;
-	struct ieee80211_txrx_data tx;
-	ieee80211_txrx_result res = TXRX_DROP, res_prepare;
+	struct ieee80211_tx_data tx;
+	ieee80211_tx_result res = TX_DROP, res_prepare;
 	int ret, i, retries = 0;
 
 	WARN_ON(__ieee80211_queue_pending(local, control->queue));
