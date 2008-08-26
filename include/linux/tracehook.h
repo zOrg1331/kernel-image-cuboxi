@@ -49,6 +49,7 @@
 #include <linux/sched.h>
 #include <linux/ptrace.h>
 #include <linux/security.h>
+#include <linux/utrace.h>
 struct linux_binprm;
 
 /**
@@ -63,6 +64,8 @@ struct linux_binprm;
  */
 static inline int tracehook_expect_breakpoints(struct task_struct *task)
 {
+	if (unlikely(task_utrace_flags(task) & UTRACE_EVENT(SIGNAL_CORE)))
+		return 1;
 	return (task_ptrace(task) & PT_PTRACED) != 0;
 }
 
@@ -111,6 +114,9 @@ static inline void ptrace_report_syscall(struct pt_regs *regs)
 static inline __must_check int tracehook_report_syscall_entry(
 	struct pt_regs *regs)
 {
+	if ((task_utrace_flags(current) & UTRACE_EVENT(SYSCALL_ENTRY)) &&
+	    utrace_report_syscall_entry(regs))
+		return 1;
 	ptrace_report_syscall(regs);
 	return 0;
 }
@@ -134,6 +140,8 @@ static inline __must_check int tracehook_report_syscall_entry(
  */
 static inline void tracehook_report_syscall_exit(struct pt_regs *regs, int step)
 {
+	if (task_utrace_flags(current) & UTRACE_EVENT(SYSCALL_EXIT))
+		utrace_report_syscall_exit(regs);
 	ptrace_report_syscall(regs);
 }
 
@@ -155,6 +163,8 @@ static inline int tracehook_unsafe_exec(struct task_struct *task)
 		else
 			unsafe |= LSM_UNSAFE_PTRACE;
 	}
+	if (unlikely(task_utrace_flags(task)))
+		unsafe |= utrace_unsafe_exec(task);
 	return unsafe;
 }
 
@@ -173,6 +183,8 @@ static inline struct task_struct *tracehook_tracer_task(struct task_struct *tsk)
 {
 	if (task_ptrace(tsk) & PT_PTRACED)
 		return rcu_dereference(tsk->parent);
+	if (unlikely(task_utrace_flags(tsk)))
+		return utrace_tracer_task(tsk);
 	return NULL;
 }
 
@@ -194,6 +206,8 @@ static inline void tracehook_report_exec(struct linux_binfmt *fmt,
 					 struct linux_binprm *bprm,
 					 struct pt_regs *regs)
 {
+	if (unlikely(task_utrace_flags(current) & UTRACE_EVENT(EXEC)))
+		utrace_report_exec(fmt, bprm, regs);
 	if (!ptrace_event(PT_TRACE_EXEC, PTRACE_EVENT_EXEC, 0) &&
 	    unlikely(task_ptrace(current) & PT_PTRACED))
 		send_sig(SIGTRAP, current, 0);
@@ -211,6 +225,8 @@ static inline void tracehook_report_exec(struct linux_binfmt *fmt,
  */
 static inline void tracehook_report_exit(long *exit_code)
 {
+	if (unlikely(task_utrace_flags(current) & UTRACE_EVENT(EXIT)))
+		utrace_report_exit(exit_code);
 	ptrace_event(PT_TRACE_EXIT, PTRACE_EVENT_EXIT, *exit_code);
 }
 
@@ -254,6 +270,7 @@ static inline int tracehook_prepare_clone(unsigned clone_flags)
 static inline void tracehook_finish_clone(struct task_struct *child,
 					  unsigned long clone_flags, int trace)
 {
+	utrace_init_task(child);
 	ptrace_init_task(child, (clone_flags & CLONE_PTRACE) || trace);
 }
 
@@ -280,6 +297,8 @@ static inline void tracehook_report_clone(int trace, struct pt_regs *regs,
 					  unsigned long clone_flags,
 					  pid_t pid, struct task_struct *child)
 {
+	if (unlikely(task_utrace_flags(current) & UTRACE_EVENT(CLONE)))
+		utrace_report_clone(clone_flags, child);
 	if (unlikely(trace) || unlikely(clone_flags & CLONE_PTRACE)) {
 		/*
 		 * The child starts up with an immediate SIGSTOP.
@@ -311,6 +330,9 @@ static inline void tracehook_report_clone_complete(int trace,
 						   pid_t pid,
 						   struct task_struct *child)
 {
+	if (unlikely(task_utrace_flags(current) & UTRACE_EVENT(CLONE)) &&
+	    (clone_flags & CLONE_VFORK))
+		utrace_finish_vfork(current);
 	if (unlikely(trace))
 		ptrace_event(0, trace, pid);
 }
@@ -345,6 +367,9 @@ static inline void tracehook_report_vfork_done(struct task_struct *child,
  */
 static inline void tracehook_prepare_release_task(struct task_struct *task)
 {
+	smp_mb();
+	if (task_utrace_struct(task) != NULL)
+		utrace_release_task(task);
 }
 
 /**
@@ -358,7 +383,21 @@ static inline void tracehook_prepare_release_task(struct task_struct *task)
  */
 static inline void tracehook_finish_release_task(struct task_struct *task)
 {
+	int bad = 0;
 	ptrace_release_task(task);
+	BUG_ON(task->exit_state != EXIT_DEAD);
+	if (unlikely(task_utrace_struct(task) != NULL)) {
+		/*
+		 * In a race condition, utrace_attach() will temporarily set
+		 * it, but then check @task->exit_state and clear it.  It does
+		 * all this under task_lock(), so we take the lock to check
+		 * that there is really a bug and not just that known race.
+		 */
+		task_lock(task);
+		bad = unlikely(task_utrace_struct(task) != NULL);
+		task_unlock(task);
+	}
+	BUG_ON(bad);
 }
 
 /**
@@ -380,6 +419,8 @@ static inline void tracehook_signal_handler(int sig, siginfo_t *info,
 					    const struct k_sigaction *ka,
 					    struct pt_regs *regs, int stepping)
 {
+	if (task_utrace_flags(current))
+		utrace_signal_handler(current, stepping);
 	if (stepping)
 		ptrace_notify(SIGTRAP);
 }
@@ -400,6 +441,8 @@ static inline int tracehook_consider_ignored_signal(struct task_struct *task,
 						    int sig,
 						    void __user *handler)
 {
+	if (unlikely(task_utrace_flags(task) & UTRACE_EVENT(SIGNAL_IGN)))
+		return 1;
 	return (task_ptrace(task) & PT_PTRACED) != 0;
 }
 
@@ -421,6 +464,9 @@ static inline int tracehook_consider_fatal_signal(struct task_struct *task,
 						  int sig,
 						  void __user *handler)
 {
+	if (unlikely(task_utrace_flags(task) & (UTRACE_EVENT(SIGNAL_TERM) |
+						UTRACE_EVENT(SIGNAL_CORE))))
+		return 1;
 	return (task_ptrace(task) & PT_PTRACED) != 0;
 }
 
@@ -435,6 +481,8 @@ static inline int tracehook_consider_fatal_signal(struct task_struct *task,
  */
 static inline int tracehook_force_sigpending(void)
 {
+	if (unlikely(task_utrace_flags(current)))
+		return utrace_interrupt_pending();
 	return 0;
 }
 
@@ -464,6 +512,8 @@ static inline int tracehook_get_signal(struct task_struct *task,
 				       siginfo_t *info,
 				       struct k_sigaction *return_ka)
 {
+	if (unlikely(task_utrace_flags(task)))
+		return utrace_get_signal(task, regs, info, return_ka);
 	return 0;
 }
 
@@ -484,6 +534,8 @@ static inline int tracehook_get_signal(struct task_struct *task,
  */
 static inline int tracehook_notify_jctl(int notify, int why)
 {
+	if (task_utrace_flags(current) & UTRACE_EVENT(JCTL))
+		utrace_report_jctl(notify, why);
 	return notify || (current->ptrace & PT_PTRACED);
 }
 
@@ -507,6 +559,8 @@ static inline int tracehook_notify_jctl(int notify, int why)
 static inline int tracehook_notify_death(struct task_struct *task,
 					 void **death_cookie, int group_dead)
 {
+	*death_cookie = task_utrace_struct(task);
+
 	if (task->exit_signal == -1)
 		return task->ptrace ? SIGCHLD : DEATH_REAP;
 
@@ -543,6 +597,10 @@ static inline void tracehook_report_death(struct task_struct *task,
 					  int signal, void *death_cookie,
 					  int group_dead)
 {
+	smp_mb();
+	if (task_utrace_flags(task) & (UTRACE_EVENT(DEATH) |
+				       UTRACE_EVENT(QUIESCE)))
+		utrace_report_death(task, death_cookie, group_dead, signal);
 }
 
 #ifdef TIF_NOTIFY_RESUME
@@ -572,10 +630,14 @@ static inline void set_notify_resume(struct task_struct *task)
  * asynchronously, this will be called again before we return to
  * user mode.
  *
- * Called without locks.
+ * Called without locks.  However, on some machines this may be
+ * called with interrupts disabled.
  */
 static inline void tracehook_notify_resume(struct pt_regs *regs)
 {
+	struct task_struct *task = current;
+	if (task_utrace_flags(task))
+		utrace_resume(task, regs);
 }
 #endif	/* TIF_NOTIFY_RESUME */
 
