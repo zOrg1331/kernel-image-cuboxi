@@ -1,5 +1,5 @@
-%define original_kernel_version	2.6.25
-%define kernel_version		2.6.25
+%define original_kernel_version	2.6.26
+%define kernel_version		2.6.26
 %define patch_level		%nil
 
 %define testing			0
@@ -24,11 +24,10 @@ Summary: Linux kernel %kernel_fullversion sources
 License: GPL
 Group: Development/Kernel
 Packager: Kernel Maintainers Team <kernel@packages.altlinux.org>
+BuildArch: noarch
+BuildPreReq: rpm-build-kernel
 
 Source0: linux-%original_kernel_version.tar.bz2
-
-BuildArch: noarch
-BuildPreReq: kernel-build-tools
 
 %description
 Kernel sources for Linux kernel %kernel_fullversion
@@ -51,6 +50,9 @@ tar --owner=root --group=root --mode=u+w,go-w,go+rX -cjf \
 %kernel_src/kernel-source-%kernel_version.tar.bz2
 
 %changelog
+* Tue Sep 02 2008 Dmitry V. Levin <ldv@altlinux.org> 1.0.0-alt1
+- 2.6.26
+
 * Sun Apr 20 2008 Michail Yakushin <silicium@altlinux.ru> 1.0.0-alt1
 - 2.6.25 
 
