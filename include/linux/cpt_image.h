@@ -119,6 +119,8 @@ struct cpt_major_hdr
 #define CPT_VERSION_20		0x400
 #define CPT_VERSION_24		0x500
 #define CPT_VERSION_26		0x600
+#define CPT_VERSION_27		0x700
+#define CPT_VERSION_32		0x800
 	__u16	cpt_os_arch;		/* Architecture */
 #define CPT_OS_ARCH_I386	0
 #define CPT_OS_ARCH_EMT64	1
