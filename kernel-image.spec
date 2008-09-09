@@ -1,6 +1,6 @@
 Name: kernel-image-std-ll
 Version: 2.6.25
-Release: alt9
+Release: alt9.M41.1
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -27,7 +27,7 @@ Release: alt9
 %define kversion	%kernel_base_version%kernel_extra_version
 
 %changelog
-* Mon Sep 08 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt9
+* Mon Sep 08 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt8.M41.1
 - 2.6.25.17
 - add atl1e network card support (stanv@)
 - Allow recursion in binfmt_script and binfmt_misc. (kas@)
