@@ -377,6 +377,11 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 
 %changelog
 * Mon Sep 08 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt9
+- Rewrite configs based on std-def.  The only differences from std-def are:
+  + PAE support on i586
+  + turn off NOHZ
+  + HZ=1000
+  + turn on PREEMPT
 - 2.6.25.17
 - add atl1e network card support (stanv@)
 - Allow recursion in binfmt_script and binfmt_misc. (kas@)
