@@ -34,7 +34,10 @@ struct linux_binprm{
 #endif
 	struct mm_struct *mm;
 	unsigned long p; /* current top of mem */
-	int sh_bang;
+	unsigned char recursion_depth;
+#ifdef __alpha__
+	unsigned int taso:1;
+#endif
 	struct file * file;
 	int e_uid, e_gid;
 	kernel_cap_t cap_inheritable, cap_permitted;
@@ -58,6 +61,7 @@ struct linux_binprm{
 #define BINPRM_FLAGS_EXECFD_BIT 1
 #define BINPRM_FLAGS_EXECFD (1 << BINPRM_FLAGS_EXECFD_BIT)
 
+#define BINPRM_MAX_RECURSION 4
 
 /*
  * This structure defines the functions that are used to load the binary formats that
