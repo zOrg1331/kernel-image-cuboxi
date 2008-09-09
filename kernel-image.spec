@@ -381,7 +381,7 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 %changelog
 * Mon Jul 07 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt7
 - Rewrite configs based on std-def.  The only differences from std-def are:
-  + NUMA and PAE support on i586
+  + PAE support on i586
   + turn off NOHZ
   + HZ=100
 - 2.6.25.11:
