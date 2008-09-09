@@ -1,6 +1,6 @@
 Name: kernel-image-std-srv
 Version: 2.6.25
-Release: alt7
+Release: alt9
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -379,6 +379,18 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 %endif
 
 %changelog
+* Mon Sep 08 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt9
+- 2.6.25.17
+- add atl1e network card support (stanv@)
+- Allow recursion in binfmt_script and binfmt_misc. (kas@)
+- merge kernel-modules-e1000 into kernel-image
+
+* Thu Jul 25 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt8
+- 2.6.25.16
+- add Intel AMT support 
+- revert squashfs lzma patch, it`s full of bugs
+- update unionfs
+
 * Mon Jul 07 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt7
 - Rewrite configs based on std-def.  The only differences from std-def are:
   + PAE support on i586
