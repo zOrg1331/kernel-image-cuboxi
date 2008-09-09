@@ -1,6 +1,6 @@
 Name: kernel-image-std-ll
 Version: 2.6.25
-Release: alt9.M41.1
+Release: alt8.M41.1
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
