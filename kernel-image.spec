@@ -377,6 +377,7 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 
 %changelog
 * Mon Sep 08 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt9
+- 2.6.25.17
 - add atl1e network card support (stanv@)
 - Allow recursion in binfmt_script and binfmt_misc. (kas@)
 - merge kernel-modules-e1000 into kernel-image
