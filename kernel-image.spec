@@ -1,4 +1,4 @@
-Name: kernel-image-std-def
+Name: kernel-image-std-ll
 Version: 2.6.25
 Release: alt7
 %define kernel_base_version	%version
@@ -20,7 +20,7 @@ Release: alt7
 %define kgcc_version	4.1
 
 # Enable/disable SGML docs formatting
-%def_enable docs
+%def_disable docs
 
 ## Don't edit below this line ##################################
 
@@ -31,7 +31,7 @@ Release: alt7
 %define kbuild_dir	%_prefix/src/linux-%kversion-%flavour-%krelease
 %define old_kbuild_dir	%_prefix/src/linux-%kversion-%flavour
 
-Summary: The Linux kernel (the core of the Linux operating system)
+Summary: The Linux kernel (the core of the Linux operating system) low latency version
 License: GPL
 Group: System/Kernel and hardware
 Url: http://www.kernel.org/
