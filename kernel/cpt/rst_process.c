@@ -1599,7 +1599,7 @@ int rst_restore_process(struct cpt_context *ctx)
 		else if (ti->cpt_state & (EXIT_ZOMBIE|EXIT_DEAD)) {
 			tsk->signal->it_virt_expires = 0;
 			tsk->signal->it_prof_expires = 0;
-			if (tsk->state != EXIT_DEAD)
+			if (tsk->state != TASK_DEAD)
 				eprintk_ctx("oops, schedule() did not make us dead\n");
 		}
 

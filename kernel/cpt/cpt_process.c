@@ -779,7 +779,7 @@ static int dump_one_process(cpt_object_t *obj, struct cpt_context *ctx)
 	}
 	if (tsk->exit_state) {
 		v->cpt_state = tsk->exit_state;
-		if (tsk->state != EXIT_DEAD) {
+		if (tsk->state != TASK_DEAD) {
 			eprintk_ctx("invalid tsk->state %ld/%d on" CPT_FID "\n",
 				tsk->state, tsk->exit_state, CPT_TID(tsk));
 			cpt_release_buf(ctx);
