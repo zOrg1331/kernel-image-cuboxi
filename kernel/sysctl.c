@@ -182,40 +182,6 @@ static struct ctl_table_header root_table_header = {
 };
 
 #ifdef CONFIG_VE
-static struct ctl_table_set empty_set = {
-	.list = LIST_HEAD_INIT(empty_set.list),
-};
-
-static struct ctl_table_set *sysctl_default_lookup(struct ctl_table_root *r,
-		struct nsproxy *namespaces)
-{
-	if (ve_is_super(get_exec_env()))
-		return &r->default_set;
-
-	BUG_ON(!list_empty(&empty_set.list));
-	return &empty_set;
-}
-
-/*
- * default root:
- * all new tables go to one by default
- * visible rw in ve0 only
- */
-static struct ctl_table_root sysctl_default_root = {
-	.default_set.list =
-			LIST_HEAD_INIT(sysctl_default_root.default_set.list),
-	.lookup		= sysctl_default_lookup,
-};
-
-/*
- * virtual root:
- * visible rw everywhere (glob 1)
- */
-static struct ctl_table_root sysctl_virt_root = {
-	.default_set.list =
-			LIST_HEAD_INIT(sysctl_virt_root.default_set.list),
-};
-
 static int sysctl_root_perms(struct ctl_table_root *root,
 			struct nsproxy *namespaces, struct ctl_table *table)
 {
@@ -224,17 +190,19 @@ static int sysctl_root_perms(struct ctl_table_root *root,
 	else
 		return table->mode & ~0222;
 }
+
+static struct ctl_table_root sysctl_table_groot = {
+	.root_list = LIST_HEAD_INIT(sysctl_table_root.root_list),
+	.default_set.list = LIST_HEAD_INIT(sysctl_table_groot.default_set.list),
+	.default_set.parent = &sysctl_table_root.default_set,
+};
 #else
-#define sysctl_default_root	sysctl_table_root
-#define sysctl_root_perms	NULL
+#define sysctl_root_perms NULL
+#define sysctl_table_groot sysctl_table_root
 #endif
 
-/*
- * classical root:
- * visible ro in ve and rw in ve0 (glob 0 && root_table_header)
- */
 static struct ctl_table_root sysctl_table_root = {
-	.root_list = LIST_HEAD_INIT(sysctl_table_root.root_list),
+	.root_list = LIST_HEAD_INIT(sysctl_table_groot.root_list),
 	.default_set.list = LIST_HEAD_INIT(root_table_header.ctl_entry),
 	.permissions = sysctl_root_perms,
 };
@@ -1792,10 +1760,6 @@ static void sysctl_set_parent(struct ctl_table *parent, struct ctl_table *table)
 
 static __init int sysctl_init(void)
 {
-#ifdef CONFIG_VE
-	register_sysctl_root(&sysctl_default_root);
-	register_sysctl_root(&sysctl_virt_root);
-#endif
 	sysctl_set_parent(NULL, root_table);
 #ifdef CONFIG_SYSCTL_SYSCALL_CHECK
 	{
@@ -2017,16 +1981,25 @@ struct ctl_table_header *__register_sysctl_paths(
 struct ctl_table_header *register_sysctl_paths(const struct ctl_path *path,
 						struct ctl_table *table)
 {
-	return __register_sysctl_paths(&sysctl_default_root, current->nsproxy,
+	if (!ve_is_super(get_exec_env())) {
+		WARN_ON(1);
+		return NULL;
+	}
+
+	return __register_sysctl_paths(&sysctl_table_root, current->nsproxy,
 					path, table);
 }
 
 struct ctl_table_header *register_sysctl_glob_paths(const struct ctl_path *path,
 		struct ctl_table *table, int virtual_handler)
 {
-	return __register_sysctl_paths(virtual_handler ? 
-			&sysctl_virt_root : &sysctl_table_root,
-			current->nsproxy, path, table);
+	if (!ve_is_super(get_exec_env())) {
+		WARN_ON(1);
+		return NULL;
+	}
+
+	return __register_sysctl_paths(&sysctl_table_groot, current->nsproxy,
+					path, table);
 }
 
 /**
