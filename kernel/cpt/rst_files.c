@@ -493,7 +493,7 @@ static int fixup_reg_data(struct file *file, loff_t pos, loff_t end,
 		return -EINVAL;
 	}
 
-	atomic_inc(&file->f_count);
+	atomic_long_inc(&file->f_count);
 
 	while (pos < end) {
 		loff_t opos;
