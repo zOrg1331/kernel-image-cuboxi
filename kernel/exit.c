@@ -865,7 +865,7 @@ static struct task_struct *find_new_reaper(struct task_struct *father)
 	struct task_struct *thread;
 
 	thread = father;
-	while_each_thread(father, thread) {
+	while_each_thread_ve(father, thread) {
 		if (thread->flags & PF_EXITING)
 			continue;
 		if (unlikely(pid_ns->child_reaper == father))

@@ -278,7 +278,7 @@ static int meminfo_read_proc(char *page, char **start, off_t off,
 		K(mi.committed_space),
 		K(mi.vmalloc_total),
 		K(mi.vmalloc_used),
-		K(mi.vmalloc_largest)
+		K(mi.vmalloc_largest),
 		K(quicklist_total_size())
 		);
 

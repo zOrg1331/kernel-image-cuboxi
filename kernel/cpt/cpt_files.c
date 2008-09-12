@@ -318,8 +318,8 @@ int cpt_collect_files(cpt_context_t * ctx)
 		struct file *parent;
 		cpt_object_t *ino_obj;
 
-		if (obj->o_count != atomic_read(&file->f_count)) {
-			eprintk_ctx("file struct is referenced outside %d %d\n", obj->o_count, atomic_read(&file->f_count));
+		if (obj->o_count != atomic_long_read(&file->f_count)) {
+			eprintk_ctx("file struct is referenced outside %d %ld\n", obj->o_count, atomic_long_read(&file->f_count));
 			cpt_printk_dentry(file->f_dentry, file->f_vfsmnt);
 			return -EBUSY;
 		}
@@ -646,7 +646,7 @@ static int dump_content_regular(struct file *file, struct cpt_context *ctx)
 			return PTR_ERR(file);
 		}
 	} else {
-		atomic_inc(&file->f_count);
+		atomic_long_inc(&file->f_count);
 	}
 
 	for (;;) {

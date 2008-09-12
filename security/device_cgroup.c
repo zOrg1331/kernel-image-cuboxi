@@ -333,9 +333,10 @@ static int devcgroup_seq_read(struct cgroup *cgroup, struct cftype *cft,
 			seq_printf(m, "%c %s:%s %s\n", type_to_char(wh->type),
 					maj, min, acc);
 		else if (!(wh->access & ACC_HIDDEN))
-			seq_printf(m, "%10u %c %03o %s:%s\n", (int)m->private,
-					type_to_char(wh->type),
-					convert_bits(wh->access), maj, min);
+			seq_printf(m, "%10u %c %03o %s:%s\n",
+				   (unsigned)(unsigned long)m->private,
+				   type_to_char(wh->type),
+				   convert_bits(wh->access), maj, min);
 	}
 	rcu_read_unlock();
 
@@ -557,8 +558,6 @@ static int __devcgroup_inode_permission(int blk, dev_t device, int mask)
 
 	if (!device)
 		return 0;
-	if (!S_ISBLK(inode->i_mode) && !S_ISCHR(inode->i_mode))
-		return 0;
 
 	rcu_read_lock();
 	dev_cgroup = task_devcgroup(current);
@@ -696,7 +695,7 @@ int devperms_seq_show(struct seq_file *m, void *v)
 		return 0;
 	}
 
-	m->private = (void *)ve->veid;
+	m->private = (void *)(unsigned long)ve->veid;
 	return devcgroup_seq_read(ve->ve_cgroup, NULL, m);
 }
 EXPORT_SYMBOL(devperms_seq_show);

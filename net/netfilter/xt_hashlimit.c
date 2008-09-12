@@ -1043,8 +1043,10 @@ static int init_xt_hashlimit(void)
 
 	return 0;
 
+#if defined(CONFIG_IP6_NF_IPTABLES) || defined(CONFIG_IP6_NF_IPTABLES_MODULE)
 err3:
 	remove_proc_entry("ipt_hashlimit", proc_net);
+#endif
 err2:
 #if defined(CONFIG_VE_IPTABLES)
 	kfree(ve->_xt_hashlimit);
