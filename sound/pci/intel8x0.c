@@ -2023,6 +2023,12 @@ static struct ac97_quirk ac97_quirks[] __devinitdata = {
 	},
 	{
 		.subvendor = 0x8086,
+		.subdevice = 0x0102,
+		.name = "Intel D845GRG",		/* AD1981A */
+		.type = AC97_TUNE_HP_ONLY
+	},
+	{
+		.subvendor = 0x8086,
 		.subdevice = 0x2000,
 		.mask = 0xfff0,
 		.name = "Intel ICH5/AD1985",
