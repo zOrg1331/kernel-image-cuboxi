@@ -66,6 +66,12 @@ static unsigned char swapbits(unsigned char val)
 	}
 	return res;
 }
+static inline void put_unaligned_le32(u32 val, void *p)
+{
+	        val = cpu_to_le32(val);
+		        put_unaligned(val, (u32 *)p);
+}
+
 
 int snd_cs8427_reg_write(struct snd_i2c_device *device, unsigned char reg,
 			 unsigned char val)
