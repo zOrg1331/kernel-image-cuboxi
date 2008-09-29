@@ -1,4 +1,3 @@
-#include "adriver.h"
 /*
  *  Advanced Linux Sound Architecture
  *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
@@ -25,6 +24,7 @@
 #include <linux/time.h>
 #include <linux/device.h>
 #include <linux/moduleparam.h>
+#include <linux/version.h>
 #include <sound/core.h>
 #include <sound/minors.h>
 #include <sound/info.h>
