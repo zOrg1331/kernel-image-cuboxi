@@ -20,4 +20,4 @@ obj-$(CONFIG_MSM_CPU_FREQ_SCREEN) += cpufreq.o
 
 obj-$(CONFIG_MACH_TROUT) += board-dream.o
 obj-$(CONFIG_MACH_HALIBUT) += board-halibut.o board-halibut-keypad.o
-obj-$(CONFIG_MACH_TROUT) += htc_akm_cal.o
+obj-$(CONFIG_MACH_TROUT) += htc_akm_cal.o htc_wifi_nvs.o
