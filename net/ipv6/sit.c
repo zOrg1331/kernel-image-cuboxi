@@ -32,6 +32,7 @@
 #include <linux/init.h>
 #include <linux/netfilter_ipv4.h>
 #include <linux/if_ether.h>
+#include <linux/vzcalluser.h>
 
 #include <net/sock.h>
 #include <net/snmp.h>
@@ -86,6 +87,9 @@ static struct ip_tunnel * ipip6_tunnel_lookup(struct net *net,
 	unsigned h1 = HASH(local);
 	struct ip_tunnel *t;
 	struct sit_net *sitn = net_generic(net, sit_net_id);
+
+	if (sitn == NULL)
+		return NULL;
 
 	for (t = sitn->tunnels_r_l[h0^h1]; t; t = t->next) {
 		if (local == t->parms.iph.saddr &&
@@ -1005,6 +1009,9 @@ static int sit_init_net(struct net *net)
 	int err;
 	struct sit_net *sitn;
 
+	if (!(get_exec_env()->features & VE_FEATURE_SIT))
+		return 0;
+
 	err = -ENOMEM;
 	sitn = kzalloc(sizeof(struct sit_net), GFP_KERNEL);
 	if (sitn == NULL)
@@ -1049,6 +1056,9 @@ static void sit_exit_net(struct net *net)
 	struct sit_net *sitn;
 
 	sitn = net_generic(net, sit_net_id);
+	if (sitn == NULL) /* no VE_FEATURE_SIT */
+		return;
+
 	rtnl_lock();
 	sit_destroy_tunnels(sitn);
 	unregister_netdevice(sitn->fb_tunnel_dev);
