@@ -31,12 +31,12 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/vmalloc.h>
-#include <linux/byteorder/generic.h>
 
 #include <linux/interrupt.h>
 #include <linux/proc_fs.h>
 #include <linux/i2c.h>
 #include <linux/i2c-algo-bit.h>
+#include "compat.h"
 #include <linux/videodev.h>
 #include <linux/spinlock.h>
 #include <linux/sem.h>
@@ -47,6 +47,7 @@
 #include <linux/delay.h>
 #include <linux/wait.h>
 
+#include <asm/byteorder.h>
 #include <asm/io.h>
 
 #include "videocodec.h"
@@ -58,9 +59,8 @@
 		   ZR36057_ISR_GIRQ1 | \
 		   ZR36057_ISR_JPEGRepIRQ )
 
-extern const struct zoran_format zoran_formats[];
-
-static int lml33dpath = 0;	/* 1 will use digital path in capture
+static int lml33dpath;		/* default = 0
+				 * 1 will use digital path in capture
 				 * mode instead of analog. It can be
 				 * used for picture adjustments using
 				 * tool like xawtv while watching image
@@ -376,7 +376,7 @@ zr36057_set_vfe (struct zoran              *zr,
 
 	/* horizontal */
 	VidWinWid = video_width;
-	X = (VidWinWid * 64 + tvn->Wa - 1) / tvn->Wa;
+	X = DIV_ROUND_UP(VidWinWid * 64, tvn->Wa);
 	We = (VidWinWid * 64) / X;
 	HorDcm = 64 - X;
 	hcrop1 = 2 * ((tvn->Wa - We) / 4);
@@ -402,7 +402,7 @@ zr36057_set_vfe (struct zoran              *zr,
 	/* Vertical */
 	DispMode = !(video_height > BUZ_MAX_HEIGHT / 2);
 	VidWinHt = DispMode ? video_height : video_height / 2;
-	Y = (VidWinHt * 64 * 2 + tvn->Ha - 1) / tvn->Ha;
+	Y = DIV_ROUND_UP(VidWinHt * 64 * 2, tvn->Ha);
 	He = (VidWinHt * 64) / Y;
 	VerDcm = 64 - Y;
 	vcrop1 = (tvn->Ha / 2 - He) / 2;
@@ -927,11 +927,6 @@ count_reset_interrupt (struct zoran *zr)
 	return isr;
 }
 
-/* hack */
-extern void zr36016_write (struct videocodec *codec,
-			   u16                reg,
-			   u32                val);
-
 void
 jpeg_start (struct zoran *zr)
 {
@@ -987,7 +982,7 @@ void
 zr36057_enable_jpg (struct zoran          *zr,
 		    enum zoran_codec_mode  mode)
 {
-	static int zero = 0;
+	static int zero;
 	static int one = 1;
 	struct vfe_settings cap;
 	int field_size =
@@ -1324,7 +1319,7 @@ error_handler (struct zoran *zr,
 			if (i) {
 				/* Rotate stat_comm entries to make current entry first */
 				int j;
-				u32 bus_addr[BUZ_NUM_STAT_COM];
+				__le32 bus_addr[BUZ_NUM_STAT_COM];
 
 				/* Here we are copying the stat_com array, which
 				 * is already in little endian format, so
@@ -1378,7 +1373,12 @@ error_handler (struct zoran *zr,
 
 irqreturn_t
 zoran_irq (int             irq,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+	   void           *dev_id,
+	   struct pt_regs *regs)
+#else
 	   void           *dev_id)
+#endif
 {
 	u32 stat, astat;
 	int count;
@@ -1726,7 +1726,7 @@ decoder_command (struct zoran *zr,
 		return -EIO;
 
 	if (zr->card.type == LML33 &&
-	    (cmd == DECODER_SET_NORM || DECODER_SET_INPUT)) {
+	    (cmd == DECODER_SET_NORM || cmd == DECODER_SET_INPUT)) {
 		int res;
 
 		// Bt819 needs to reset its FIFO buffer using #FRST pin and

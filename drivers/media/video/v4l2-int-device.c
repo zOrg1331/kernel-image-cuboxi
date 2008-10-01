@@ -28,6 +28,7 @@
 #include <linux/string.h>
 
 #include <media/v4l2-int-device.h>
+#include "compat.h"
 
 static DEFINE_MUTEX(mutex);
 static LIST_HEAD(int_list);

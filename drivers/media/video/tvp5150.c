@@ -6,7 +6,8 @@
  */
 
 #include <linux/i2c.h>
-#include <linux/videodev.h>
+#include "compat.h"
+#include <linux/videodev2.h>
 #include <linux/delay.h>
 #include <linux/video_decoder.h>
 #include <media/v4l2-common.h>
@@ -27,7 +28,7 @@ static unsigned short normal_i2c[] = {
 
 I2C_CLIENT_INSMOD;
 
-static int debug = 0;
+static int debug;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0-1)");
 
@@ -231,6 +232,10 @@ static void dump_reg(struct i2c_client *c)
 					tvp5150_read(c, TVP5150_STATUS_REG_3),
 					tvp5150_read(c, TVP5150_STATUS_REG_4),
 					tvp5150_read(c, TVP5150_STATUS_REG_5));
+#if 0 /* This will pop a value from vbi reg */
+	printk("tvp5150: VBI FIFO read data = 0x%02x\n",
+					tvp5150_read(c, TVP5150_VBI_FIFO_READ_DATA));
+#endif
 
 	dump_reg_range(c,"Teletext filter 1",   TVP5150_TELETEXT_FIL1_INI,
 						TVP5150_TELETEXT_FIL1_END,8);
@@ -516,7 +521,7 @@ static struct i2c_vbi_ram_value vbi_ram_default[] =
 {
 	/* FIXME: Current api doesn't handle all VBI types, those not
 	   yet supported are placed under #if 0 */
-#if 0
+#if 0 /* keep */
 	{0x010, /* Teletext, SECAM, WST System A */
 		{V4L2_SLICED_TELETEXT_SECAM,6,23,1},
 		{ 0xaa, 0xaa, 0xff, 0xff, 0xe7, 0x2e, 0x20, 0x26,
@@ -528,7 +533,7 @@ static struct i2c_vbi_ram_value vbi_ram_default[] =
 		{ 0xaa, 0xaa, 0xff, 0xff, 0x27, 0x2e, 0x20, 0x2b,
 		  0xa6, 0x72, 0x10, 0x00, 0x00, 0x00, 0x10, 0x00 }
 	},
-#if 0
+#if 0 /* keep */
 	{0x050, /* Teletext, PAL, WST System C */
 		{V4L2_SLICED_TELETEXT_PAL_C,6,22,1},
 		{ 0xaa, 0xaa, 0xff, 0xff, 0xe7, 0x2e, 0x20, 0x22,
@@ -565,7 +570,7 @@ static struct i2c_vbi_ram_value vbi_ram_default[] =
 		{ 0x5b, 0x55, 0xc5, 0xff, 0x00, 0x71, 0x6e, 0x42,
 		  0xa6, 0xcd, 0x0f, 0x00, 0x00, 0x00, 0x3a, 0x00 }
 	},
-#if 0
+#if 0 /* keep */
 	{0x130, /* Wide Screen Signal, NTSC C */
 		{V4L2_SLICED_WSS_525,20,20,1},
 		{ 0x38, 0x00, 0x3f, 0x00, 0x00, 0x71, 0x6e, 0x43,
@@ -587,6 +592,13 @@ static struct i2c_vbi_ram_value vbi_ram_default[] =
 		{ 0xaa, 0xaa, 0xff, 0xff, 0xba, 0xce, 0x2b, 0x0d,
 		  0xa6, 0xda, 0x0b, 0x00, 0x00, 0x00, 0x60, 0x00 }
 	},
+#if 0
+	{0x1b0, /* Gemstar Custom 1 */
+		{/* What values should be here? */}
+		{ 0xcc, 0xcc, 0xff, 0xff, 0x05, 0x51, 0x6e, 0x05,
+		  0x69, 0x19, 0x13, 0x00, 0x00, 0x00, 0x60, 0x00 }
+	},
+#endif
 	/* 0x1d0 User programmable */
 
 	/* End of struct */
@@ -739,6 +751,17 @@ static int tvp5150_get_vbi(struct i2c_client *c,
 
 	return type;
 }
+#if 0
+static int decode_vbi_data(struct i2c_client *c, vbi)
+{
+	count=tvp5150_read(c, TVP5150_FIFO_WORD_COUNT);
+
+	for (i=0;i<count;i++) {
+		*p=tvp5150_read(c, TVP5150_VBI_FIFO_READ_DATA);
+		p++;
+	}
+}
+#endif
 static int tvp5150_set_std(struct i2c_client *c, v4l2_std_id std)
 {
 	struct tvp5150 *decoder = i2c_get_clientdata(c);
@@ -959,6 +982,53 @@ static int tvp5150_command(struct i2c_client *c,
 		svbi->service_set=mask;
 		break;
 	}
+#if 0
+	/* This will not work for USB devices */
+	case VIDIOC_INT_G_VBI_DATA:
+	{
+		struct v4l2_sliced_vbi_data *data = arg;
+		u8 status;
+
+		status=tvp5150_read(c, TVP5150_VDP_STATUS_REG);
+
+		if (data->id & V4L2_SLICED_CAPTION) {
+			if (!field && (status&0x10)) {
+				data->data[0]=tvp5150_read(c, TVP5150_CC_DATA_INI);
+				data->data[1]=tvp5150_read(c, TVP5150_CC_DATA_INI+1);
+			} if (field && (status&0x8)) {
+				data->data[0]=tvp5150_read(c, TVP5150_CC_DATA_INI+2);
+				data->data[1]=tvp5150_read(c, TVP5150_CC_DATA_INI+3);
+			} else data->id=0;
+			return 0;
+		} else if (data->id & V4L2_SLICED_WSS) {
+		} else if (data->id & V4L2_SLICED_VPS) {
+		}
+		break;
+	}
+	case VIDIOC_INT_DECODE_VBI_LINE:
+	{
+		struct v4l2_decode_vbi_line *vbi = arg;
+		u8 status;
+
+		status=tvp5150_read(c, TVP5150_VDP_STATUS_REG);
+
+		if (status&0x80) {
+			tvp5150_err("Full field error");
+			status&=0x7f;
+			tvp5150_write(c, TVP5150_VDP_STATUS_REG,status);
+		}
+
+		/* FIFO */
+		/* Current V4L2 API allows sliced VBI only with fifo mode,
+		   since line and types are not provided on other means
+		   on tvp5150.
+		 */
+		if (!(status&0x40)) 	/* Has FIFO data */
+			decode_vbi_data(c,vbi);
+
+		break;
+	}
+#endif
 
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 	case VIDIOC_DBG_G_REGISTER:
@@ -1145,6 +1215,12 @@ static struct i2c_driver driver = {
 	.detach_client = tvp5150_detach_client,
 
 	.command = tvp5150_command,
+#if 0
+	.driver = {
+		   .suspend = tvp5150_suspend,
+		   .resume = tvp5150_resume,
+		   },
+#endif
 };
 
 static int __init tvp5150_init(void)

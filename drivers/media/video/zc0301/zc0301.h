@@ -23,8 +23,10 @@
 
 #include <linux/version.h>
 #include <linux/usb.h>
+#include "compat.h"
 #include <linux/videodev2.h>
 #include <media/v4l2-common.h>
+#include <media/v4l2-ioctl.h>
 #include <linux/device.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
@@ -160,7 +162,7 @@ do {                                                                          \
 			dev_info(&cam->usbdev->dev, fmt "\n", ## args);       \
 		else if ((level) >= 3)                                        \
 			dev_info(&cam->usbdev->dev, "[%s:%s:%d] " fmt "\n",   \
-				 __FILE__, __FUNCTION__, __LINE__ , ## args); \
+				 __FILE__, __func__, __LINE__ , ## args); \
 	}                                                                     \
 } while (0)
 #	define KDBG(level, fmt, args...)                                      \
@@ -170,7 +172,7 @@ do {                                                                          \
 			pr_info("zc0301: " fmt "\n", ## args);                \
 		else if ((level) == 3)                                        \
 			pr_debug("sn9c102: [%s:%s:%d] " fmt "\n", __FILE__,   \
-				 __FUNCTION__, __LINE__ , ## args);           \
+				 __func__, __LINE__ , ## args);           \
 	}                                                                     \
 } while (0)
 #	define V4LDBG(level, name, cmd)                                       \
@@ -186,7 +188,7 @@ do {                                                                          \
 
 #undef PDBG
 #define PDBG(fmt, args...)                                                    \
-dev_info(&cam->usbdev->dev, "[%s:%s:%d] " fmt "\n", __FILE__, __FUNCTION__,   \
+dev_info(&cam->usbdev->dev, "[%s:%s:%d] " fmt "\n", __FILE__, __func__,   \
 	 __LINE__ , ## args)
 
 #undef PDBGG

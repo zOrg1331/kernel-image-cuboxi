@@ -36,6 +36,7 @@
 #include <linux/pci.h>
 #include <linux/i2c.h>
 #include <linux/i2c-algo-bit.h>
+#include "compat.h"
 #include <linux/videodev.h>
 #include <linux/spinlock.h>
 #include <linux/sem.h>
@@ -137,7 +138,11 @@ static int zoran_open(struct inode *inode, struct file *file)
 static ssize_t zoran_write(struct file *file, const char __user *buffer,
 			size_t count, loff_t *ppos)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	struct zoran *zr = PDE(file->f_dentry->d_inode)->data;
+#else
 	struct zoran *zr = PDE(file->f_path.dentry->d_inode)->data;
+#endif
 	char *string, *sp;
 	char *line, *ldelim, *varname, *svar, *tdelim;
 
@@ -157,8 +162,13 @@ static ssize_t zoran_write(struct file *file, const char __user *buffer,
 		return -EFAULT;
 	}
 	string[count] = 0;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	dprintk(4, KERN_INFO "%s: write_proc: name=%s count=%zu zr=%p\n",
+		ZR_DEVNAME(zr), file->f_dentry->d_name.name, count, zr);
+#else
 	dprintk(4, KERN_INFO "%s: write_proc: name=%s count=%zu zr=%p\n",
 		ZR_DEVNAME(zr), file->f_path.dentry->d_name.name, count, zr);
+#endif
 	ldelim = " \t\n";
 	tdelim = "=";
 	line = strpbrk(sp, ldelim);
@@ -180,6 +190,7 @@ static ssize_t zoran_write(struct file *file, const char __user *buffer,
 }
 
 static const struct file_operations zoran_operations = {
+	.owner		= THIS_MODULE,
 	.open		= zoran_open,
 	.read		= seq_read,
 	.write		= zoran_write,
@@ -195,10 +206,8 @@ zoran_proc_init (struct zoran *zr)
 	char name[8];
 
 	snprintf(name, 7, "zoran%d", zr->id);
-	if ((zr->zoran_proc = create_proc_entry(name, 0, NULL))) {
-		zr->zoran_proc->data = zr;
-		zr->zoran_proc->owner = THIS_MODULE;
-		zr->zoran_proc->proc_fops = &zoran_operations;
+	zr->zoran_proc = proc_create_data(name, 0, NULL, &zoran_operations, zr);
+	if (zr->zoran_proc != NULL) {
 		dprintk(2,
 			KERN_INFO
 			"%s: procfs entry /proc/%s allocated. data=%p\n",

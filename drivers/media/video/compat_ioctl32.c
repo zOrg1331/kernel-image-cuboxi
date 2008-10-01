@@ -17,7 +17,8 @@
 #include <linux/videodev2.h>
 #include <linux/module.h>
 #include <linux/smp_lock.h>
-#include <media/v4l2-common.h>
+#include <media/v4l2-ioctl.h>
+#include "compat.h"
 
 #ifdef CONFIG_COMPAT
 
@@ -58,6 +59,55 @@ static int put_video_tuner32(struct video_tuner *kp, struct video_tuner32 __user
 	return 0;
 }
 
+#if 0 /*FIXME */
+struct video_audio32 {
+	compat_int_t audio;
+	__u16        volume;
+	__u16        bass, treble;
+	__u32        flags;
+	__u8         name[16];
+//	char         name[16];
+	__u16        mode;
+	__u16        balance;
+	__u16        step;
+};
+
+static int get_video_audio32(struct video_audio *kp,
+			     struct video_audio32 __user *up)
+{
+	if (!access_ok(VERIFY_READ, up, sizeof(struct video_audio32)) ||
+		get_user(kp->audio, &up->audio) ||
+		get_user(kp->volume, &up->volume) ||
+		get_user(kp->bass, &up->bass) ||
+		get_user(kp->treble, &up->treble) ||
+		get_user(kp->flags, &up->flags) ||
+		copy_from_user(kp->name, up->name, sizeof(up->name)) ||
+		get_user(kp->mode, &up->mode) ||
+		get_user(kp->balance, &up->balance) ||
+		get_user(kp->step, &up->step))
+			return -EFAULT;
+
+	return 0;
+}
+
+static int put_video_audio32(struct video_audio *kp,
+			     struct video_audio32 __user *up)
+{
+	if (!access_ok(VERIFY_WRITE, up, sizeof(struct video_audio32)) ||
+		put_user(kp->audio, &up->audio) ||
+		put_user(kp->volume, &up->volume) ||
+		put_user(kp->bass, &up->bass) ||
+		put_user(kp->treble, &up->treble) ||
+		put_user(kp->flags, &up->flags) ||
+		copy_to_user(kp->name, up->name, sizeof(up->name)) ||
+		put_user(kp->mode, &up->mode) ||
+		put_user(kp->balance, &up->balance) ||
+		put_user(kp->step, &up->step))
+			return -EFAULT;
+
+	return 0;
+}
+#endif
 
 struct video_buffer32 {
 	compat_caddr_t base;
@@ -118,7 +168,11 @@ static int native_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		ret = file->f_op->unlocked_ioctl(file, cmd, arg);
 	else if (file->f_op->ioctl) {
 		lock_kernel();
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+		ret = file->f_op->ioctl(file->f_dentry->d_inode, file, cmd, arg);
+#else
 		ret = file->f_op->ioctl(file->f_path.dentry->d_inode, file, cmd, arg);
+#endif
 		unlock_kernel();
 	}
 
@@ -678,6 +732,12 @@ static int do_video_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 		compatible_arg = 0;
 		break;
 
+#if 0 /*FIXME*/
+	case VIDIOCSAUDIO:
+		err = get_video_audio32(&karg.va, up);
+		compatible_arg = 0;
+		break;
+#endif
 
 	case VIDIOCSFREQ:
 #endif
@@ -776,6 +836,11 @@ static int do_video_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 		case VIDIOCGFBUF:
 			err = put_video_buffer32(&karg.vb, up);
 			break;
+#if 0 /*FIXME*/
+		case VIDIOCGAUDIO:
+			err = put_video_audio32(&karg.va, up);
+			break;
+#endif
 
 #endif
 		case VIDIOC_G_FBUF:
@@ -884,6 +949,7 @@ long v4l_compat_ioctl32(struct file *file, unsigned int cmd, unsigned long arg)
 	case VIDIOC_G_INPUT32:
 	case VIDIOC_S_INPUT32:
 	case VIDIOC_TRY_FMT32:
+	case VIDIOC_S_HW_FREQ_SEEK:
 		ret = do_video_ioctl(file, cmd, arg);
 		break;
 

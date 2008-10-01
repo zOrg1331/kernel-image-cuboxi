@@ -37,8 +37,10 @@
 #include <linux/delay.h>	/* udelay			*/
 #include <asm/io.h>		/* outb, outb_p			*/
 #include <asm/uaccess.h>	/* copy to/from user		*/
+#include "compat.h"
 #include <linux/videodev2.h>	/* V4L2 API defs		*/
 #include <media/v4l2-common.h>
+#include <media/v4l2-ioctl.h>
 #include <linux/param.h>
 #include <linux/pnp.h>
 
@@ -69,13 +71,13 @@ static struct v4l2_queryctrl radio_qctrl[] = {
 
 static int io=-1;		/* default to isapnp activation */
 static int radio_nr = -1;
-static int users=0;
-static int curtuner=0;
-static int tunestat=0;
-static int sigstrength=0;
+static int users;
+static int curtuner;
+static int tunestat;
+static int sigstrength;
 static wait_queue_head_t read_queue;
 static struct timer_list readtimer;
-static __u8 rdsin=0,rdsout=0,rdsstat=0;
+static __u8 rdsin, rdsout, rdsstat;
 static unsigned char rdsbuf[RDS_BUFFER];
 static spinlock_t cadet_io_lock;
 
@@ -88,6 +90,35 @@ static int cadet_probe(void);
  */
 static __u16 sigtable[2][4]={{5,10,30,150},{28,40,63,1000}};
 
+#if 0
+/*
+Note: cadet_getrds() is not used at the moment. It will be useful for future
+extensions, e.g. an ioctl to query RDS reception quality. - Hans J. Koch
+*/
+static int
+cadet_getrds(void)
+{
+	int rds_mbs_stat=0;
+
+	spin_lock(&cadet_io_lock);
+	outb(3,io);                 /* Select Decoder Control/Status */
+	outb(inb(io+1)&0x7f,io+1);  /* Reset RDS detection */
+	spin_unlock(&cadet_io_lock);
+
+	msleep(100);
+
+	spin_lock(&cadet_io_lock);
+	outb(3,io);                 /* Select Decoder Control/Status */
+	if((inb(io+1)&0x80)!=0) {
+		rds_mbs_stat |= RDS_RX_FLAG;
+	}
+	if((inb(io+1)&0x10)!=0) {
+		rds_mbs_stat |= MBS_RX_FLAG;
+	}
+	spin_unlock(&cadet_io_lock);
+	return rds_mbs_stat;
+}
+#endif
 
 static int
 cadet_getstereo(void)
@@ -563,16 +594,13 @@ static const struct file_operations cadet_fops = {
 	.read		= cadet_read,
 	.ioctl		= video_ioctl2,
 	.poll		= cadet_poll,
+#ifdef CONFIG_COMPAT
 	.compat_ioctl	= v4l_compat_ioctl32,
+#endif
 	.llseek         = no_llseek,
 };
 
-static struct video_device cadet_radio=
-{
-	.owner		= THIS_MODULE,
-	.name		= "Cadet radio",
-	.type		= VID_TYPE_TUNER,
-	.fops           = &cadet_fops,
+static const struct v4l2_ioctl_ops cadet_ioctl_ops = {
 	.vidioc_querycap    = vidioc_querycap,
 	.vidioc_g_tuner     = vidioc_g_tuner,
 	.vidioc_s_tuner     = vidioc_s_tuner,
@@ -585,6 +613,13 @@ static struct video_device cadet_radio=
 	.vidioc_s_audio     = vidioc_s_audio,
 	.vidioc_g_input     = vidioc_g_input,
 	.vidioc_s_input     = vidioc_s_input,
+};
+
+static struct video_device cadet_radio = {
+	.name		= "Cadet radio",
+	.fops           = &cadet_fops,
+	.ioctl_ops 	= &cadet_ioctl_ops,
+	.release	= video_device_release_empty,
 };
 
 #ifdef CONFIG_PNP
@@ -678,7 +713,7 @@ static int __init cadet_init(void)
 	}
 	if (!request_region(io,2,"cadet"))
 		goto fail;
-	if(video_register_device(&cadet_radio,VFL_TYPE_RADIO,radio_nr)==-1) {
+	if (video_register_device(&cadet_radio, VFL_TYPE_RADIO, radio_nr) < 0) {
 		release_region(io,2);
 		goto fail;
 	}

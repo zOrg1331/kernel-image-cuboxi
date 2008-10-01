@@ -1,6 +1,5 @@
 /*
  *
- *  $Id$
  *
  *  Copyright (C) 2005 Mike Isely <isely@pobox.com>
  *  Copyright (C) 2004 Aurelien Alleaume <slts@free.fr>
@@ -37,6 +36,7 @@
 #include <media/v4l2-common.h>
 #include <linux/errno.h>
 #include <linux/slab.h>
+#include "compat.h"
 
 struct pvr2_v4l_wm8775 {
 	struct pvr2_i2c_handler handler;

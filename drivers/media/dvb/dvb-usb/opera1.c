@@ -46,6 +46,12 @@ MODULE_PARM_DESC(debug,
 		 "set debugging level (1=info,xfer=2,pll=4,ts=8,err=16,rc=32,fw=64 (or-able))."
 		 DVB_USB_DEBUG_STATUS);
 
+DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
+
+#if 0
+struct mutex mymutex;
+#endif
+
 static int opera1_xilinx_rw(struct usb_device *dev, u8 request, u16 value,
 			    u8 * data, u16 len, int flags)
 {
@@ -57,6 +63,11 @@ static int opera1_xilinx_rw(struct usb_device *dev, u8 request, u16 value,
 		usb_rcvctrlpipe(dev,0) : usb_sndctrlpipe(dev, 0);
 	u8 request_type = (flags == OPERA_READ_MSG) ? USB_DIR_IN : USB_DIR_OUT;
 
+#if 0
+	if (mutex_lock_interruptible(&mymutex)) {
+		return -EAGAIN;
+	}
+#endif
 	if (flags == OPERA_WRITE_MSG)
 		memcpy(u8buf, data, len);
 	ret =
@@ -71,6 +82,9 @@ static int opera1_xilinx_rw(struct usb_device *dev, u8 request, u16 value,
 	}
 	if (flags == OPERA_READ_MSG)
 		memcpy(data, u8buf, len);
+#if 0
+	mutex_unlock(&mymutex);
+#endif
 	return ret;
 }
 
@@ -243,7 +257,7 @@ static struct stv0299_config opera1_stv0299_config = {
 	.mclk = 88000000UL,
 	.invert = 1,
 	.skip_reinit = 0,
-	.lock_output = STV0229_LOCKOUTPUT_0,
+	.lock_output = STV0299_LOCKOUTPUT_0,
 	.volt13_op0_op1 = STV0299_VOLT13_OP0,
 	.inittab = opera1_inittab,
 	.set_symbol_rate = opera1_stv0299_set_symbol_rate,
@@ -548,7 +562,8 @@ static int opera1_probe(struct usb_interface *intf,
 		return -EINVAL;
 	}
 
-	if (dvb_usb_device_init(intf, &opera1_properties, THIS_MODULE, NULL) != 0)
+	if (0 != dvb_usb_device_init(intf, &opera1_properties,
+				     THIS_MODULE, NULL, adapter_nr))
 		return -EINVAL;
 	return 0;
 }
@@ -563,6 +578,9 @@ static struct usb_driver opera1_driver = {
 static int __init opera1_module_init(void)
 {
 	int result = 0;
+#if 0
+	mutex_init(&mymutex);
+#endif
 	if ((result = usb_register(&opera1_driver))) {
 		err("usb_register failed. Error number %d", result);
 	}

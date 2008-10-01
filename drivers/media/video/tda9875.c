@@ -25,11 +25,11 @@
 #include <linux/delay.h>
 #include <linux/errno.h>
 #include <linux/slab.h>
-#include <linux/videodev.h>
+#include <linux/videodev2.h>
 #include <media/v4l2-common.h>
 #include <linux/i2c.h>
 #include <linux/init.h>
-
+#include "compat.h"
 
 #include <media/i2c-addr.h>
 
@@ -42,6 +42,7 @@ static unsigned short normal_i2c[] =  {
     I2C_ADDR_TDA9875 >> 1,
     I2C_CLIENT_END
 };
+
 I2C_CLIENT_INSMOD;
 
 /* This is a superset of the TDA9875 */
@@ -120,6 +121,19 @@ static int tda9875_write(struct i2c_client *client, int subaddr, unsigned char v
 	return 0;
 }
 
+#if 0
+static int tda9875_read(struct i2c_client *client)
+{
+	unsigned char buffer;
+	v4l_dbg(2, debug,client,"In tda9875_read\n");
+	if (1 != i2c_master_recv(client,&buffer,1)) {
+		v4l_err(client,"I/O error, trying (read)\n");
+		return -1;
+	}
+	v4l_dbg(1, debug,client,"Read 0x%02x\n", buffer);
+	return buffer;
+}
+#endif
 
 static int i2c_read_register(struct i2c_adapter *adap, int addr, int reg)
 {

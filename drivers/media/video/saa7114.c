@@ -47,6 +47,7 @@
 
 #include <linux/videodev.h>
 #include <linux/video_decoder.h>
+#include "compat.h"
 
 MODULE_DESCRIPTION("Philips SAA7114H video decoder driver");
 MODULE_AUTHOR("Maxim Yevtyushkin");
@@ -56,7 +57,7 @@ MODULE_LICENSE("GPL");
 #define I2C_NAME(x) (x)->name
 
 
-static int debug = 0;
+static int debug;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0-1)");
 

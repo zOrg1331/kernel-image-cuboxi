@@ -25,6 +25,7 @@
 #include <linux/pci.h>
 #include <linux/sched.h>
 #include <linux/spinlock.h>
+#include "compat.h"
 #include <linux/mutex.h>
 
 #include "bt848.h"
@@ -128,7 +129,7 @@ struct bt878 {
 	dma_addr_t buf_dma;
 
 	u32 risc_size;
-	u32 *risc_cpu;
+	__le32 *risc_cpu;
 	dma_addr_t risc_dma;
 	u32 risc_pos;
 

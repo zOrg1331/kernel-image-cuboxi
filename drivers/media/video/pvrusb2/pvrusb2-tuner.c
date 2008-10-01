@@ -1,6 +1,5 @@
 /*
  *
- *  $Id$
  *
  *  Copyright (C) 2005 Mike Isely <isely@pobox.com>
  *  Copyright (C) 2004 Aurelien Alleaume <slts@free.fr>
@@ -25,6 +24,7 @@
 #include "pvrusb2-tuner.h"
 #include "pvrusb2-hdw-internal.h"
 #include "pvrusb2-debug.h"
+#include "compat.h"
 #include <linux/videodev2.h>
 #include <media/tuner.h>
 #include <media/v4l2-common.h>

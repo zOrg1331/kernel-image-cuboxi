@@ -51,14 +51,19 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/i2c.h>
-#include <linux/videodev.h>
 #include <linux/videodev2.h>
 #include <media/v4l2-common.h>
+#include <media/v4l2-ioctl.h>
 #include <media/v4l2-i2c-drv-legacy.h>
 #include <media/tvaudio.h>
 #include <media/msp3400.h>
 #include <linux/kthread.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 20)
+#include <linux/suspend.h>
+#else
 #include <linux/freezer.h>
+#endif
+#include "compat.h"
 #include "msp3400-driver.h"
 
 /* ---------------------------------------------------------------------- */
@@ -110,6 +115,7 @@ MODULE_PARM_DESC(dolby, "Activates Dolby processsing");
 
 /* Addresses to scan */
 static unsigned short normal_i2c[] = { 0x80 >> 1, 0x88 >> 1, I2C_CLIENT_END };
+
 I2C_CLIENT_INSMOD;
 
 /* ----------------------------------------------------------------------- */
@@ -333,7 +339,6 @@ void msp_set_audio(struct i2c_client *client)
 
 /* ------------------------------------------------------------------------ */
 
-
 static void msp_wake_thread(struct i2c_client *client)
 {
 	struct msp_state *state = i2c_get_clientdata(client);
@@ -366,7 +371,7 @@ int msp_sleep(struct msp_state *state, int timeout)
 }
 
 /* ------------------------------------------------------------------------ */
-#ifdef CONFIG_VIDEO_V4L1
+#ifdef CONFIG_VIDEO_ALLOW_V4L1
 static int msp_mode_v4l2_to_v4l1(int rxsubchans, int audmode)
 {
 	if (rxsubchans == V4L2_TUNER_SUB_MONO)
@@ -514,7 +519,7 @@ static int msp_command(struct i2c_client *client, unsigned int cmd, void *arg)
 	/* --- v4l ioctls --- */
 	/* take care: bttv does userspace copying, we'll get a
 	   kernel pointer here... */
-#ifdef CONFIG_VIDEO_V4L1
+#ifdef CONFIG_VIDEO_ALLOW_V4L1
 	case VIDIOCGAUDIO:
 	{
 		struct video_audio *va = arg;
@@ -805,7 +810,7 @@ static int msp_resume(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
-static int msp_probe(struct i2c_client *client)
+static int msp_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	struct msp_state *state;
 	int (*thread_func)(void *data) = NULL;
@@ -815,7 +820,12 @@ static int msp_probe(struct i2c_client *client)
 	int msp_product, msp_prod_hi, msp_prod_lo;
 	int msp_rom;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
 	snprintf(client->name, sizeof(client->name) - 1, "msp3400");
+#else
+	if (!id)
+		strlcpy(client->name, "msp3400", sizeof(client->name));
+#endif
 
 	if (msp_reset(client) == -1) {
 		v4l_dbg(1, msp_debug, client, "msp3400 not found\n");
@@ -855,6 +865,10 @@ static int msp_probe(struct i2c_client *client)
 		return -ENODEV;
 	}
 
+#if 0
+	/* this will turn on a 1kHz beep - might be useful for debugging... */
+	msp_write_dsp(client, 0x0014, 0x1040);
+#endif
 	msp_set_audio(client);
 
 	msp_family = ((state->rev1 >> 4) & 0x0f) + 3;
@@ -864,9 +878,11 @@ static int msp_probe(struct i2c_client *client)
 	msp_revision = (state->rev1 & 0x0f) + '@';
 	msp_hard = ((state->rev1 >> 8) & 0xff) + '@';
 	msp_rom = state->rev2 & 0x1f;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
 	snprintf(client->name, sizeof(client->name), "MSP%d4%02d%c-%c%d",
 			msp_family, msp_product,
 			msp_revision, msp_hard, msp_rom);
+#endif
 	/* Rev B=2, C=3, D=4, G=7 */
 	state->ident = msp_family * 10000 + 4000 + msp_product * 10 +
 			msp_revision - '@';
@@ -931,7 +947,9 @@ static int msp_probe(struct i2c_client *client)
 	}
 
 	/* hello world :-) */
-	v4l_info(client, "%s found @ 0x%x (%s)\n", client->name,
+	v4l_info(client, "MSP%d4%02d%c-%c%d found @ 0x%x (%s)\n",
+			msp_family, msp_product,
+			msp_revision, msp_hard, msp_rom,
 			client->addr << 1, client->adapter->name);
 	v4l_info(client, "%s ", client->name);
 	if (state->has_nicam && state->has_radio)
@@ -987,6 +1005,14 @@ static int msp_remove(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
+static const struct i2c_device_id msp_id[] = {
+	{ "msp3400", 0 },
+	{ }
+};
+MODULE_DEVICE_TABLE(i2c, msp_id);
+
+#endif
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "msp3400",
 	.driverid = I2C_DRIVERID_MSP3400,
@@ -995,8 +1021,10 @@ static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.remove = msp_remove,
 	.suspend = msp_suspend,
 	.resume = msp_resume,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
+	.id_table = msp_id,
+#endif
 };
-
 
 /*
  * Overrides for Emacs so that we follow Linus's tabbing style.

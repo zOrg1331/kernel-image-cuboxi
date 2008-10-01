@@ -43,6 +43,7 @@
 
 #include <linux/videodev.h>
 #include <linux/video_encoder.h>
+#include "compat.h"
 
 MODULE_DESCRIPTION("Analog Devices ADV7175 video encoder driver");
 MODULE_AUTHOR("Dave Perks");
@@ -52,7 +53,7 @@ MODULE_LICENSE("GPL");
 #define I2C_NAME(s) (s)->name
 
 
-static int debug = 0;
+static int debug;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0-1)");
 

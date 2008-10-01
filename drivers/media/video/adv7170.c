@@ -45,6 +45,7 @@
 #include <asm/page.h>
 #include <asm/uaccess.h>
 
+#include "compat.h"
 #include <linux/videodev.h>
 #include <linux/video_encoder.h>
 
@@ -56,7 +57,7 @@ MODULE_LICENSE("GPL");
 #define I2C_NAME(x) (x)->name
 
 
-static int debug = 0;
+static int debug;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0-1)");
 
@@ -237,7 +238,7 @@ adv7170_command (struct i2c_client *client,
 	switch (cmd) {
 
 	case 0:
-#if 0
+#if 0 /* keep */
 		/* This is just for testing!!! */
 		adv7170_write_block(client, init_common,
 				    sizeof(init_common));

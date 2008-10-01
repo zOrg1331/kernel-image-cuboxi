@@ -41,14 +41,19 @@
 #include <linux/videodev.h>
 #include <linux/usb.h>
 #include <linux/vmalloc.h>
+#include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/mutex.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
+#include <linux/firmware.h>
+#include <linux/ihex.h>
+#endif
 #include "usbvideo.h"
 
 // #define VICAM_DEBUG
 
 #ifdef VICAM_DEBUG
-#define ADBG(lineno,fmt,args...) printk(fmt, jiffies, __FUNCTION__, lineno, ##args)
+#define ADBG(lineno,fmt,args...) printk(fmt, jiffies, __func__, lineno, ##args)
 #define DBG(fmt,args...) ADBG((__LINE__),KERN_DEBUG __FILE__"(%ld):%s (%d):"fmt,##args)
 #else
 #define DBG(fmn,args...) do {} while(0)
@@ -70,12 +75,7 @@
 
 #define VICAM_HEADER_SIZE       64
 
-#define clamp( x, l, h )        max_t( __typeof__( x ),         \
-				       ( l ),                   \
-				       min_t( __typeof__( x ),  \
-					      ( h ),            \
-					      ( x ) ) )
-
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 /* Not sure what all the bytes in these char
  * arrays do, but they're necessary to make
  * the camera work.
@@ -354,6 +354,7 @@ static unsigned char setup5[] = {
 	0x46, 0x05, 0x6C, 0x05, 0x00, 0x00
 };
 
+#endif
 /* rvmalloc / rvfree copied from usbvideo.c
  *
  * Not sure why these are not yet non-statics which I can reference through
@@ -470,6 +471,7 @@ static int send_control_msg(struct vicam_camera *cam,
 static int
 initialize_camera(struct vicam_camera *cam)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	const struct {
 		u8 *data;
 		u32 size;
@@ -484,14 +486,41 @@ initialize_camera(struct vicam_camera *cam)
 	};
 
 	int err, i;
+#else
+	int err;
+	const struct ihex_binrec *rec;
+	const struct firmware *fw;
 
+	err = request_ihex_firmware(&fw, "vicam/firmware.fw", &cam->udev->dev);
+	if (err) {
+		printk(KERN_ERR "Failed to load \"vicam/firmware.fw\": %d\n",
+		       err);
+		return err;
+	}
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	for (i = 0, err = 0; firmware[i].data && !err; i++) {
 		memcpy(cam->cntrlbuf, firmware[i].data, firmware[i].size);
+#else
+	for (rec = (void *)fw->data; rec; rec = ihex_next_binrec(rec)) {
+		memcpy(cam->cntrlbuf, rec->data, be16_to_cpu(rec->len));
+#endif
 
 		err = send_control_msg(cam, 0xff, 0, 0,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 				       cam->cntrlbuf, firmware[i].size);
+#else
+				       cam->cntrlbuf, be16_to_cpu(rec->len));
+		if (err)
+			break;
+#endif
 	}
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
+	release_firmware(fw);
+
+#endif
 	return err;
 }
 
@@ -753,9 +782,8 @@ vicam_ioctl(struct inode *inode, struct file *file, unsigned int ioctlnr, unsign
 static int
 vicam_open(struct inode *inode, struct file *file)
 {
-	struct video_device *dev = video_devdata(file);
-	struct vicam_camera *cam =
-	    (struct vicam_camera *) dev->priv;
+	struct vicam_camera *cam = video_drvdata(file);
+
 	DBG("open\n");
 
 	if (!cam) {
@@ -769,20 +797,24 @@ vicam_open(struct inode *inode, struct file *file)
 	 * rely on this fact forever.
 	 */
 
+	lock_kernel();
 	if (cam->open_count > 0) {
 		printk(KERN_INFO
 		       "vicam_open called on already opened camera");
+		unlock_kernel();
 		return -EBUSY;
 	}
 
 	cam->raw_image = kmalloc(VICAM_MAX_READ_SIZE, GFP_KERNEL);
 	if (!cam->raw_image) {
+		unlock_kernel();
 		return -ENOMEM;
 	}
 
 	cam->framebuf = rvmalloc(VICAM_MAX_FRAME_SIZE * VICAM_FRAMES);
 	if (!cam->framebuf) {
 		kfree(cam->raw_image);
+		unlock_kernel();
 		return -ENOMEM;
 	}
 
@@ -790,6 +822,7 @@ vicam_open(struct inode *inode, struct file *file)
 	if (!cam->cntrlbuf) {
 		kfree(cam->raw_image);
 		rvfree(cam->framebuf, VICAM_MAX_FRAME_SIZE * VICAM_FRAMES);
+		unlock_kernel();
 		return -ENOMEM;
 	}
 
@@ -807,6 +840,7 @@ vicam_open(struct inode *inode, struct file *file)
 	cam->open_count++;
 
 	file->private_data = cam;
+	unlock_kernel();
 
 	return 0;
 }
@@ -1066,16 +1100,17 @@ static const struct file_operations vicam_fops = {
 	.read		= vicam_read,
 	.mmap		= vicam_mmap,
 	.ioctl		= vicam_ioctl,
+#ifdef CONFIG_COMPAT
 	.compat_ioctl	= v4l_compat_ioctl32,
+#endif
 	.llseek		= no_llseek,
 };
 
 static struct video_device vicam_template = {
-	.owner 		= THIS_MODULE,
 	.name 		= "ViCam-based USB Camera",
-	.type 		= VID_TYPE_CAPTURE,
 	.fops 		= &vicam_fops,
 	.minor 		= -1,
+	.release 	= video_device_release_empty,
 };
 
 /* table of devices that work with this driver */
@@ -1140,14 +1175,13 @@ vicam_probe( struct usb_interface *intf, const struct usb_device_id *id)
 
 	mutex_init(&cam->cam_lock);
 
-	memcpy(&cam->vdev, &vicam_template,
-	       sizeof (vicam_template));
-	cam->vdev.priv = cam;	// sort of a reverse mapping for those functions that get vdev only
+	memcpy(&cam->vdev, &vicam_template, sizeof(vicam_template));
+	video_set_drvdata(&cam->vdev, cam);
 
 	cam->udev = dev;
 	cam->bulkEndpoint = bulkEndpoint;
 
-	if (video_register_device(&cam->vdev, VFL_TYPE_GRABBER, -1) == -1) {
+	if (video_register_device(&cam->vdev, VFL_TYPE_GRABBER, -1) < 0) {
 		kfree(cam);
 		printk(KERN_WARNING "video_register_device failed\n");
 		return -EIO;
@@ -1230,3 +1264,6 @@ module_exit(usb_vicam_exit);
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL");
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
+MODULE_FIRMWARE("vicam/firmware.fw");
+#endif

@@ -11,6 +11,7 @@
 #include <linux/i2c.h>		/* for i2c subsystem */
 #include <asm/io.h>		/* for accessing devices */
 #include <linux/stringify.h>
+#include "compat.h"
 #include <linux/mutex.h>
 #include <linux/scatterlist.h>
 
@@ -30,7 +31,7 @@ extern unsigned int saa7146_debug;
 	#define DEBUG_VARIABLE saa7146_debug
 #endif
 
-#define DEBUG_PROLOG printk("%s: %s(): ",KBUILD_MODNAME,__FUNCTION__)
+#define DEBUG_PROLOG printk("%s: %s(): ",KBUILD_MODNAME, __func__)
 #define INFO(x) { printk("%s: ",KBUILD_MODNAME); printk x; }
 
 #define ERR(x) { DEBUG_PROLOG; printk x; }
@@ -53,7 +54,7 @@ struct saa7146_vv;
 /* saa7146 page table */
 struct saa7146_pgtable {
 	unsigned int	size;
-	u32		*cpu;
+	__le32		*cpu;
 	dma_addr_t	dma;
 	/* used for offsets for u,v planes for planar capture modes */
 	unsigned long	offset;
@@ -101,7 +102,7 @@ struct saa7146_extension
 struct saa7146_dma
 {
 	dma_addr_t	dma_handle;
-	u32		*cpu_addr;
+	__le32		*cpu_addr;
 };
 
 struct saa7146_dev

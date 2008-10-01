@@ -15,9 +15,14 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,18)
 #include <linux/usb/input.h>
+#else
+#include <linux/usb_input.h>
+#endif
 
 #include "usbvideo.h"
+#include "compat.h"
 
 #define MAX_BRIGHTNESS	108
 #define MAX_CONTRAST	108
@@ -57,11 +62,11 @@ static struct usbvideo *cams;
 static int debug;
 #define DEBUG(n, format, arg...) \
 	if (n <= debug) {	 \
-		printk(KERN_DEBUG __FILE__ ":%s(): " format "\n", __FUNCTION__ , ## arg); \
+		printk(KERN_DEBUG __FILE__ ":%s(): " format "\n", __func__ , ## arg); \
 	}
 #else
 #define DEBUG(n, arg...)
-static const int debug = 0;
+static const int debug;
 #endif
 
 
@@ -236,7 +241,11 @@ static void konicawc_register_input(struct konicawc *cam, struct usb_device *dev
 	input_dev->name = "Konicawc snapshot button";
 	input_dev->phys = cam->input_physname;
 	usb_to_input_id(dev, &input_dev->id);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 	input_dev->dev.parent = &dev->dev;
+#else
+	input_dev->cdev.dev = &dev->dev;
+#endif
 
 	input_dev->evbit[0] = BIT_MASK(EV_KEY);
 	input_dev->keybit[BIT_WORD(BTN_0)] = BIT_MASK(BTN_0);
@@ -385,7 +394,11 @@ static void resubmit_urb(struct uvd *uvd, struct urb *urb)
 }
 
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void konicawc_isoc_irq(struct urb *urb, struct pt_regs *regs)
+#else
 static void konicawc_isoc_irq(struct urb *urb)
+#endif
 {
 	struct uvd *uvd = urb->context;
 	struct konicawc *cam = (struct konicawc *)uvd->user_data;

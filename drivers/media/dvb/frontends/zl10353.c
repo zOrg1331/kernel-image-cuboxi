@@ -25,6 +25,7 @@
 #include <linux/delay.h>
 #include <linux/string.h>
 #include <linux/slab.h>
+#include "compat.h"
 #include <asm/div64.h>
 
 #include "dvb_frontend.h"
@@ -46,7 +47,9 @@ static int debug;
 		if (debug) printk(KERN_DEBUG "zl10353: " args); \
 	} while (0)
 
-static int debug_regs = 0;
+#if 1
+static int debug_regs;
+#endif
 
 static int zl10353_single_write(struct dvb_frontend *fe, u8 reg, u8 val)
 {
@@ -88,13 +91,14 @@ static int zl10353_read_register(struct zl10353_state *state, u8 reg)
 
 	if (ret != 2) {
 		printk("%s: readreg error (reg=%d, ret==%i)\n",
-		       __FUNCTION__, reg, ret);
+		       __func__, reg, ret);
 		return ret;
 	}
 
 	return b1[0];
 }
 
+#if 1
 static void zl10353_dump_regs(struct dvb_frontend *fe)
 {
 	struct zl10353_state *state = fe->demodulator_priv;
@@ -120,6 +124,7 @@ static void zl10353_dump_regs(struct dvb_frontend *fe)
 	}
 	printk(KERN_DEBUG "%s\n", buf);
 }
+#endif
 
 static void zl10353_calc_nominal_rate(struct dvb_frontend *fe,
 				      enum fe_bandwidth bandwidth,
@@ -152,7 +157,7 @@ static void zl10353_calc_nominal_rate(struct dvb_frontend *fe,
 	*nominal_rate = value;
 
 	dprintk("%s: bw %d, adc_clock %d => 0x%x\n",
-		__FUNCTION__, bw, adc_clock, *nominal_rate);
+		__func__, bw, adc_clock, *nominal_rate);
 }
 
 static void zl10353_calc_input_freq(struct dvb_frontend *fe,
@@ -181,7 +186,7 @@ static void zl10353_calc_input_freq(struct dvb_frontend *fe,
 	*input_freq = -value;
 
 	dprintk("%s: if2 %d, ife %d, adc_clock %d => %d / 0x%x\n",
-		__FUNCTION__, if2, ife, adc_clock, -(int)value, *input_freq);
+		__func__, if2, ife, adc_clock, -(int)value, *input_freq);
 }
 
 static int zl10353_sleep(struct dvb_frontend *fe)
@@ -529,8 +534,10 @@ static int zl10353_read_snr(struct dvb_frontend *fe, u16 *snr)
 	struct zl10353_state *state = fe->demodulator_priv;
 	u8 _snr;
 
+#if 1
 	if (debug_regs)
 		zl10353_dump_regs(fe);
+#endif
 
 	_snr = zl10353_read_register(state, SNR);
 	*snr = (_snr << 8) | _snr;
@@ -565,8 +572,10 @@ static int zl10353_init(struct dvb_frontend *fe)
 	u8 zl10353_reset_attach[6] = { 0x50, 0x03, 0x64, 0x46, 0x15, 0x0F };
 	int rc = 0;
 
+#if 1
 	if (debug_regs)
 		zl10353_dump_regs(fe);
+#endif
 	if (state->config.parallel_ts)
 		zl10353_reset_attach[2] &= ~0x20;
 
@@ -575,8 +584,10 @@ static int zl10353_init(struct dvb_frontend *fe)
 	    zl10353_read_register(state, 0x51) != zl10353_reset_attach[2]) {
 		rc = zl10353_write(fe, zl10353_reset_attach,
 				   sizeof(zl10353_reset_attach));
+#if 1
 		if (debug_regs)
 			zl10353_dump_regs(fe);
+#endif
 	}
 
 	return 0;
@@ -667,8 +678,10 @@ static struct dvb_frontend_ops zl10353_ops = {
 module_param(debug, int, 0644);
 MODULE_PARM_DESC(debug, "Turn on/off frontend debugging (default:off).");
 
+#if 1
 module_param(debug_regs, int, 0644);
 MODULE_PARM_DESC(debug_regs, "Turn on/off frontend register dumps (default:off).");
+#endif
 
 MODULE_DESCRIPTION("Zarlink ZL10353 DVB-T demodulator driver");
 MODULE_AUTHOR("Chris Pascoe");
