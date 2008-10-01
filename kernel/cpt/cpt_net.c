@@ -187,7 +187,7 @@ int cpt_dump_link(struct cpt_context * ctx)
 		hw.cpt_object = CPT_OBJ_NET_HWADDR;
 		hw.cpt_hdrlen = sizeof(hw);
 		hw.cpt_content = CPT_CONTENT_VOID;
-		BUG_ON(sizeof(hw.cpt_dev_addr) != sizeof(dev->dev_addr));
+		BUILD_BUG_ON(sizeof(hw.cpt_dev_addr) != sizeof(dev->dev_addr));
 		memcpy(hw.cpt_dev_addr, dev->dev_addr, sizeof(hw.cpt_dev_addr));
 		ctx->write(&hw, sizeof(hw), ctx);
 		cpt_close_object(ctx);
