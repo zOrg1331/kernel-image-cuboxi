@@ -370,7 +370,7 @@ static int rst_restore_tuntap(loff_t start, struct cpt_netdev_image *di,
 				&hw, ctx);
 		if (err)
 			goto out;
-		BUG_ON(sizeof(hw.cpt_dev_addr) != sizeof(dev->dev_addr));
+		BUILD_BUG_ON(sizeof(hw.cpt_dev_addr) != sizeof(dev->dev_addr));
 		memcpy(dev->dev_addr, hw.cpt_dev_addr,
 				sizeof(hw.cpt_dev_addr));
 	}
@@ -581,8 +581,8 @@ int rst_restore_netdev(struct cpt_context *ctx)
 							pos, &hw, ctx);
 					if (err)
 						goto out;
-				BUG_ON(sizeof(hw.cpt_dev_addr) !=
-						sizeof(dev->dev_addr));
+					BUILD_BUG_ON(sizeof(hw.cpt_dev_addr) !=
+							sizeof(dev->dev_addr));
 					memcpy(dev->dev_addr, hw.cpt_dev_addr,
 							sizeof(hw.cpt_dev_addr));
 				} else if (hdr.cpt_object == CPT_OBJ_NET_STATS) {
