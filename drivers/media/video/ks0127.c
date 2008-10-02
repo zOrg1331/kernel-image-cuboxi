@@ -48,7 +48,7 @@
 
 #include <linux/i2c.h>
 #include <linux/video_decoder.h>
-#include "compat.h"
+#include <media/compat.h>
 
 #define dprintk     if (debug) printk
 

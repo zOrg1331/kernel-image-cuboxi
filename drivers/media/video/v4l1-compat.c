@@ -39,7 +39,7 @@
 #ifdef CONFIG_KMOD
 #include <linux/kmod.h>
 #endif
-#include "compat.h"
+#include <media/compat.h>
 
 static unsigned int debug;
 module_param(debug, int, 0644);

@@ -45,7 +45,7 @@
 #include <asm/page.h>
 #include <asm/uaccess.h>
 
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev.h>
 #include <linux/video_encoder.h>
 

@@ -42,7 +42,7 @@ MODULE_LICENSE("GPL");
 
 #define I2C_NAME(s) (s)->name
 
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev.h>
 #include <media/v4l2-common.h>
 #include <linux/video_decoder.h>

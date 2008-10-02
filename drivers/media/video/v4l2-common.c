@@ -65,7 +65,7 @@
 #endif
 
 #include <linux/videodev2.h>
-#include "compat.h"
+#include <media/compat.h>
 
 MODULE_AUTHOR("Bill Dirks, Justin Schoeman, Gerd Knorr");
 MODULE_DESCRIPTION("misc helper functions for v4l2 device drivers");

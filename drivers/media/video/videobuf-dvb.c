@@ -28,7 +28,7 @@
 
 #include <media/videobuf-core.h>
 #include <media/videobuf-dvb.h>
-#include "compat.h"
+#include <media/compat.h>
 
 /* ------------------------------------------------------------------ */
 

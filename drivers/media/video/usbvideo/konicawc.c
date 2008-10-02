@@ -22,7 +22,7 @@
 #endif
 
 #include "usbvideo.h"
-#include "compat.h"
+#include <media/compat.h>
 
 #define MAX_BRIGHTNESS	108
 #define MAX_CONTRAST	108

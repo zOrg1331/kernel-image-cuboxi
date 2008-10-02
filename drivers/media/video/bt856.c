@@ -46,7 +46,7 @@
 #include <asm/page.h>
 #include <asm/uaccess.h>
 
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev.h>
 
 MODULE_DESCRIPTION("Brooktree-856A video encoder driver");

@@ -32,7 +32,7 @@
 #include <media/msp3400.h>
 #include <linux/kthread.h>
 #include <linux/suspend.h>
-#include "compat.h"
+#include <media/compat.h>
 #include "msp3400-driver.h"
 
 /* this one uses the automatic sound standard detection of newer msp34xx

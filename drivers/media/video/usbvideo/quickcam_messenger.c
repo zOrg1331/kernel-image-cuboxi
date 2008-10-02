@@ -41,7 +41,7 @@
 
 #include "usbvideo.h"
 #include "quickcam_messenger.h"
-#include "compat.h"
+#include <media/compat.h>
 
 /*
  * Version Information

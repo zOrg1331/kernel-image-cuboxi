@@ -63,7 +63,7 @@
 #else
 #include <linux/freezer.h>
 #endif
-#include "compat.h"
+#include <media/compat.h>
 #include "msp3400-driver.h"
 
 /* ---------------------------------------------------------------------- */

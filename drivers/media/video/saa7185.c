@@ -43,7 +43,7 @@
 
 #include <linux/videodev.h>
 #include <linux/video_encoder.h>
-#include "compat.h"
+#include <media/compat.h>
 
 MODULE_DESCRIPTION("Philips SAA7185 video encoder driver");
 MODULE_AUTHOR("Dave Perks");

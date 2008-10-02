@@ -31,7 +31,7 @@
 
 #define I2C_NAME(x) (x)->name
 
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev.h>
 #include <media/v4l2-common.h>
 #include <linux/video_decoder.h>

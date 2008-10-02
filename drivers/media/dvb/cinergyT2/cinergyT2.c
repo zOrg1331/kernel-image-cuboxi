@@ -28,7 +28,7 @@
 #include <linux/usb.h>
 #include <linux/input.h>
 #include <linux/dvb/frontend.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/mutex.h>
 #include <linux/mm.h>
 #include <asm/io.h>

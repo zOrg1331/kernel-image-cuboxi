@@ -29,7 +29,7 @@
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,20)
 #include <linux/freezer.h>
 #endif
-#include "compat.h"
+#include <media/compat.h>
 
 #include <media/tvaudio.h>
 #include <media/v4l2-common.h>

@@ -25,7 +25,7 @@
 #include <linux/freezer.h>
 #endif
 #include <linux/mm.h>
-#include "compat.h"
+#include <media/compat.h>
 #include "dvbdev.h"
 #include "pvrusb2-debug.h"
 #include "pvrusb2-hdw-internal.h"

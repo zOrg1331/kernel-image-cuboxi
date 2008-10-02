@@ -48,7 +48,7 @@
 #include <linux/videodev.h>
 #include <linux/video_decoder.h>
 
-#include "compat.h"
+#include <media/compat.h>
 
 MODULE_DESCRIPTION("Brooktree-819 video decoder driver");
 MODULE_AUTHOR("Mike Bernson & Dave Perks");

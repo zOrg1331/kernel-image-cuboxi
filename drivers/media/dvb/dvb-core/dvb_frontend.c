@@ -44,7 +44,7 @@
 
 #include "dvb_frontend.h"
 #include "dvbdev.h"
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/dvb/version.h>
 
 static int dvb_frontend_debug;
