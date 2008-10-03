@@ -19,7 +19,7 @@
  * 02110-1301, USA.
  */
 
-
+#include <linux/version.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>

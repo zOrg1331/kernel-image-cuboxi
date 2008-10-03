@@ -11,7 +11,7 @@
  * chipset is used in Intel YC76 camera.
  *
  */
-
+#include <linux/version.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>

@@ -15,7 +15,7 @@
 #include <linux/cdev.h>
 #include <linux/mutex.h>
 #include <linux/videodev2.h>
-
+#include <linux/version.h>
 #define VIDEO_MAJOR	81
 
 /* Minor device allocation */

@@ -4,7 +4,7 @@
 
 #ifndef _COMPAT_H
 #define _COMPAT_H
-
+#include <linux/version.h>
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 24)
 #define	KERN_CONT	""
 #endif

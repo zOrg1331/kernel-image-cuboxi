@@ -13,7 +13,7 @@
  *   debug - set to 1 if you'd like to see debug messages
  *
  */
-
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>

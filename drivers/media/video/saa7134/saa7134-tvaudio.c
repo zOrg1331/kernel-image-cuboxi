@@ -19,7 +19,7 @@
  *  along with this program; if not, write to the Free Software
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
-
+#include <linux/version.h>
 #include <linux/init.h>
 #include <linux/list.h>
 #include <linux/module.h>

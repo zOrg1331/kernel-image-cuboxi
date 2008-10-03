@@ -34,7 +34,7 @@
     along with this program; if not, write to the Free Software
     Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 */
-
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/errno.h>
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)

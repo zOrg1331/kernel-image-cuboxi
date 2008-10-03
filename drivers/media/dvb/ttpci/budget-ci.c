@@ -28,7 +28,7 @@
  *
  * the project's page is at http://www.linuxtv.org/dvb/
  */
-
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/errno.h>
 #include <linux/slab.h>

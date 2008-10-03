@@ -12,7 +12,7 @@
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
  */
-
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/device.h>

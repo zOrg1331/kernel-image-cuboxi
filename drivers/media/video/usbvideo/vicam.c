@@ -34,7 +34,7 @@
  * Pavel Machek and Chris Cheney who worked on reverse engineering the
  *    camera controls and wrote the first generation driver.
  */
-
+#include <linux/version.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
