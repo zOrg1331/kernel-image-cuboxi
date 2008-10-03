@@ -24,7 +24,7 @@
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/init.h>
-#include "compat.h"
+#include <media/compat.h>
 #include <sound/core.h>
 #include <sound/tea575x-tuner.h>
 

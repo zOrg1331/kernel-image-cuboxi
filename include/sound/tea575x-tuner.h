@@ -22,7 +22,7 @@
  *
  */
 
-#include "compat.h"
+#include <media/compat.h>
 #include <linux/videodev.h>
 #include <media/v4l2-dev.h>
 
