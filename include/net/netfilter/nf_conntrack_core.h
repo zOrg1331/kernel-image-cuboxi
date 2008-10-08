@@ -66,6 +66,8 @@ extern int __nf_conntrack_confirm(struct sk_buff *skb);
 #if defined(CONFIG_VE_IPTABLES) && defined(CONFIG_SYSCTL)
 #define ve_nf_ct_sysctl_header		\
 		(get_exec_env()->_nf_conntrack->_nf_ct_sysctl_header)
+#define ve_nf_ct_netfilter_header		\
+		(get_exec_env()->_nf_conntrack->_nf_ct_netfilter_header)
 #define ve_nf_ct_sysctl_table		\
 		(get_exec_env()->_nf_conntrack->_nf_ct_sysctl_table)
 #define ve_nf_ct_netfilter_table	\
@@ -76,6 +78,7 @@ extern void nf_ct_proto_generic_sysctl_cleanup(void);
 extern int nf_ct_proto_generic_sysctl_init(void);
 #else
 #define ve_nf_ct_sysctl_header		nf_ct_sysctl_header
+#define ve_nf_ct_netfilter_header	nf_ct_netfilter_header
 #define ve_nf_ct_sysctl_table		nf_ct_sysctl_table
 #define ve_nf_ct_netfilter_table	nf_ct_netfilter_table
 #define ve_nf_ct_net_table		nf_ct_net_table

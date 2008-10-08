@@ -111,6 +111,7 @@ struct ve_nf_conntrack {
 	struct nf_conntrack_l3proto	*_nf_ct_l3protos[AF_MAX];
 	/* sysctl standalone stuff: */
 	struct ctl_table_header		*_nf_ct_sysctl_header;
+	struct ctl_table_header		*_nf_ct_netfilter_header;
 	ctl_table			*_nf_ct_sysctl_table;
 	ctl_table			*_nf_ct_netfilter_table;
 	ctl_table			*_nf_ct_net_table;

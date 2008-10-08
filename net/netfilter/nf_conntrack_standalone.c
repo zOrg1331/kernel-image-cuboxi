@@ -332,6 +332,11 @@ EXPORT_SYMBOL_GPL(nf_conntrack_checksum);
 static int log_invalid_proto_min = 0;
 static int log_invalid_proto_max = 255;
 
+#if ! (defined(CONFIG_VE_IPTABLES) && defined(CONFIG_SYSCTL))
+static struct ctl_table_header *nf_ct_sysctl_header;
+static struct ctl_table_header *nf_ct_netfilter_header;
+#endif
+
 static ctl_table nf_ct_sysctl_table[] = {
 	{
 		.ctl_name	= NET_NF_CONNTRACK_MAX,
@@ -411,6 +416,7 @@ EXPORT_SYMBOL_GPL(nf_ct_log_invalid);
 static int nf_conntrack_standalone_init_sysctl(void)
 {
 	struct ctl_table *nf_table, *ct_table;
+	struct net *net = get_exec_env()->ve_netns;
 
 	nf_table = nf_ct_netfilter_table;
 	ct_table = nf_ct_sysctl_table;
@@ -425,11 +431,9 @@ static int nf_conntrack_standalone_init_sysctl(void)
 				GFP_KERNEL);
 		if (ct_table == NULL)
 			goto err_ctt;
-
-		nf_table[0].child = ct_table;
 	}
 
-	nf_table[1].data = &ve_nf_conntrack_max;
+	nf_table[0].data = &ve_nf_conntrack_max;
 	ct_table[0].data = &ve_nf_conntrack_max;
 	ct_table[1].data = &ve_nf_conntrack_count;
 	/* nf_conntrack_htable_size is shared and readonly */
@@ -437,15 +441,23 @@ static int nf_conntrack_standalone_init_sysctl(void)
 	ct_table[4].data = &ve_nf_ct_log_invalid;
 	ct_table[5].data = &ve_nf_ct_expect_max;
 
-	ve_nf_ct_sysctl_header = register_net_sysctl_table(get_exec_env()->ve_netns,
+	ve_nf_ct_netfilter_header = register_net_sysctl_table(net,
 							   nf_ct_path, nf_table);
-	if (ve_nf_ct_sysctl_header == NULL)
-		goto err_reg;
+	if (!ve_nf_ct_netfilter_header)
+		goto err_reg_nf_table;
 
+	ve_nf_ct_sysctl_header =
+		register_net_sysctl_table(net,
+					  nf_net_netfilter_sysctl_path,
+					  ct_table);
+	if (!ve_nf_ct_sysctl_header)
+		goto err_reg_ct_table;
 
 	return 0;
 
-err_reg:
+err_reg_ct_table:
+	unregister_net_sysctl_table(ve_nf_ct_netfilter_header);
+err_reg_nf_table:
 	if (ct_table != nf_ct_sysctl_table)
 		kfree(ct_table);
 err_ctt:
@@ -459,14 +471,15 @@ out:
 static void nf_conntrack_standalone_fini_sysctl(void)
 {
 	struct ctl_table *table = ve_nf_ct_sysctl_header->ctl_table_arg;
+	struct ctl_table *table2 = ve_nf_ct_netfilter_header->ctl_table_arg;
 
 	unregister_net_sysctl_table(ve_nf_ct_sysctl_header);
+	unregister_net_sysctl_table(ve_nf_ct_netfilter_header);
 
 	if (!ve_is_super(get_exec_env())) {
-		kfree(table[0].child);
 		kfree(table);
+		kfree(table2);
 	}
-
 }
 #else
 static int nf_conntrack_standalone_init_sysctl(void)
