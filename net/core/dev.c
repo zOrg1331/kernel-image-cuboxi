@@ -5442,7 +5442,9 @@ int __dev_change_net_namespace(struct net_device *dev, struct net *net, const ch
 	dev_unicast_flush(dev);
 	dev_addr_discard(dev);
 
+	set_exec_env(src_ve);
 	netdev_unregister_kobject(dev);
+	set_exec_env(cur_ve);
 
 	/* Actually switch the network namespace */
 	dev_net_set(dev, net);
@@ -5460,7 +5462,9 @@ int __dev_change_net_namespace(struct net_device *dev, struct net *net, const ch
 	}
 
 	/* Fixup kobjects */
+	set_exec_env(dst_ve);
 	err = netdev_register_kobject(dev);
+	set_exec_env(cur_ve);
 	WARN_ON(err);
 
 	/* Add the device back in the hashes */
