@@ -1518,7 +1518,6 @@ extern unsigned		dev_get_flags(const struct net_device *);
 extern int		dev_change_flags(struct net_device *, unsigned);
 extern int		dev_change_name(struct net_device *, const char *);
 int __dev_change_net_namespace(struct net_device *, struct net *, const char *,
-			struct ve_struct *src_ve, struct ve_struct *dst_ve,
 			struct user_beancounter *exec_ub);
 extern int		dev_set_alias(struct net_device *, const char *, size_t);
 extern int		dev_change_net_namespace(struct net_device *,
