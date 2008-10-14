@@ -365,6 +365,9 @@ ip6t_do_table(struct sk_buff *skb,
 	struct ip6t_entry *e, *back;
 	struct xt_table_info *private;
 
+	if (!table)		/* VE is not allowed to have this xtable */
+		return NF_ACCEPT;
+
 	/* Initialization */
 	indev = in ? in->name : nulldevname;
 	outdev = out ? out->name : nulldevname;
