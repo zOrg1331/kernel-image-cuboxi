@@ -68,6 +68,9 @@ int nf_conntrack_acct_init(void)
 {
 	int ret;
 
+	if (!ve_is_super(get_exec_env()))
+		return 0;
+
 #ifdef CONFIG_NF_CT_ACCT
 	printk(KERN_WARNING "CONFIG_NF_CT_ACCT is deprecated and will be removed soon. Plase use\n");
 	printk(KERN_WARNING "nf_conntrack.acct=1 kernel paramater, acct=1 nf_conntrack module option or\n");
@@ -97,6 +100,8 @@ int nf_conntrack_acct_init(void)
 
 void nf_conntrack_acct_fini(void)
 {
+	if (!ve_is_super(get_exec_env()))
+		return;
 #ifdef CONFIG_SYSCTL
 	unregister_sysctl_table(acct_sysctl_header);
 #endif
