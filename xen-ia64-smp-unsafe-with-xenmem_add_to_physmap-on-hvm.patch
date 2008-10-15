@@ -1,0 +1,171 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Tue, 12 Aug 2008 15:37:32 -0400
+Subject: [xen] ia64: SMP-unsafe with XENMEM_add_to_physmap on HVM
+Message-id: 48A1E67C.7040306@redhat.com
+O-Subject: [RHEL5.3 PATCH] xen-ia64: Fix SMP-unsafe with XENMEM_add_to_physmap on HVM
+Bugzilla: 457137
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+BZ457137
+https://bugzilla.redhat.com/show_bug.cgi?id=457137
+
+[Description]
+On ia64/xen, repeating to create/destroy Windows guest can cause Dom0
+crash because XENMEM_add_to_physmap hypercall which is used by pv driver
+on HVM is SMP-unsafe.
+This is fixed by the patch in the upstream.
+- [IA64] Fix SMP-unsafe with XENMEM_add_to_physmap on HVM
+  http://xenbits.xensource.com/xen-unstable.hg?rev/eb0fc71cfc72
+
+[Upstream Status]
+The patch was applied in the upstream a month ago.
+
+[brew ID]
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1427615
+
+[Test Status]
+I've tested this patch with kernel-103 on ia64 box and the result is:
+w/o fix: Dom0 crashed after repeating to create/destroy for 468 times.
+w/  fix: Dom0 did not crash on repeating to create/destroy for more than
+         1500 times.
+
+Please review and ACK.
+
+Regards,
+
+Tetsu Yamamoto
+
+# HG changeset patch
+# User Isaku Yamahata <yamahata@valinux.co.jp>
+# Date 1215484903 -32400
+# Node ID eb0fc71cfc72ed15ed35fa17617b7cab32164029
+# Parent  00721ef8d8ef3fee031faf974682ba91c5d67ef6
+[IA64] Fix SMP-unsafe with XENMEM_add_to_physmap on HVM
+
+XENMEM_add_to_physmap hypercall on HVM is SMP-unsafe
+and may cause a xen crash.
+Actually I've met:
+
+(XEN) ia64_fault, vector=0x18, ifa=0xe0000165c98814f0, iip=0xf0000000040a1b80, ipsr=0x0000121008226010, isr=0x0000008000000030
+(XEN) General Exception: IA-64 Reserved Register/Field fault (data access).
+...
+(XEN) ****************************************
+(XEN) Panic on CPU 2:
+(XEN) Fault in Xen.
+(XEN) ****************************************
+
+This patch fixes it.
+
+Signed-off-by: Kouya Shimura <kouya@jp.fujitsu.com>
+
+diff --git a/arch/ia64/vmx/vtlb.c b/arch/ia64/vmx/vtlb.c
+index 15feab5..c03c5aa 100644
+--- a/arch/ia64/vmx/vtlb.c
++++ b/arch/ia64/vmx/vtlb.c
+@@ -619,6 +619,30 @@ void thash_purge_all(VCPU *v)
+     local_flush_tlb_all();
+ }
+ 
++static void __thash_purge_all(void *arg)
++{
++    struct vcpu *v = arg;
++
++    BUG_ON(vcpu_runnable(v) || v->is_running);
++    thash_purge_all(v);
++}
++
++void vmx_vcpu_flush_vtlb_all(VCPU *v)
++{
++    if (v == current) {
++        thash_purge_all(v);
++        return;
++    }
++
++    /* SMP safe */
++    vcpu_pause(v);
++    if (v->processor == smp_processor_id())
++        __thash_purge_all(v);
++    else
++        smp_call_function_single(v->processor, __thash_purge_all, v, 1, 1);
++    vcpu_unpause(v);
++}
++
+ 
+ /*
+  * Lookup the hash table and its collision chain to find an entry
+diff --git a/arch/ia64/xen/vhpt.c b/arch/ia64/xen/vhpt.c
+index 55eed6e..052570e 100644
+--- a/arch/ia64/xen/vhpt.c
++++ b/arch/ia64/xen/vhpt.c
+@@ -220,31 +220,20 @@ domain_purge_swtc_entries_vcpu_dirty_mask(struct domain* d,
+ // (e.g. vcpu == current), smp_mb() is unnecessary.
+ void vcpu_flush_vtlb_all(struct vcpu *v)
+ {
+-	if (VMX_DOMAIN(v)) {
+-		/* This code may be call for remapping shared_info and
+-		   grant_table share page from guest_physmap_remove_page()
+-		   in arch_memory_op() XENMEM_add_to_physmap to realize
+-		   PV-on-HVM feature. */
+-		/* FIXME: This is not SMP-safe yet about p2m table */
+-		/* Purge vTLB for VT-i domain */
+-		thash_purge_all(v);
+-	}
+-	else {
+-		/* First VCPU tlb.  */
+-		vcpu_purge_tr_entry(&PSCBX(v,dtlb));
+-		vcpu_purge_tr_entry(&PSCBX(v,itlb));
+-		smp_mb();
++	/* First VCPU tlb.  */
++	vcpu_purge_tr_entry(&PSCBX(v,dtlb));
++	vcpu_purge_tr_entry(&PSCBX(v,itlb));
++	smp_mb();
+ 
+-		/* Then VHPT.  */
+-		if (HAS_PERVCPU_VHPT(v->domain))
+-			vcpu_vhpt_flush(v);
+-		else
+-			local_vhpt_flush();
+-		smp_mb();
++	/* Then VHPT.  */
++	if (HAS_PERVCPU_VHPT(v->domain))
++		vcpu_vhpt_flush(v);
++	else
++		local_vhpt_flush();
++	smp_mb();
+ 
+-		/* Then mTLB.  */
+-		local_flush_tlb_all();
+-	}
++	/* Then mTLB.  */
++	local_flush_tlb_all();
+ 
+ 	/* We could clear bit in d->domain_dirty_cpumask only if domain d in
+ 	   not running on this processor.  There is currently no easy way to
+@@ -268,6 +257,15 @@ void domain_flush_vtlb_all(struct domain* d)
+ 		if (!v->is_initialised)
+ 			continue;
+ 
++		if (VMX_DOMAIN(v)) {
++			// This code may be called for remapping shared_info
++			// and grant_table from guest_physmap_remove_page()
++			// in arch_memory_op() XENMEM_add_to_physmap to realize
++			// PV-on-HVM feature.
++			vmx_vcpu_flush_vtlb_all(v);
++			continue;
++		}
++
+ 		if (v->processor == cpu)
+ 			vcpu_flush_vtlb_all(v);
+ 		else
+diff --git a/include/asm-ia64/vmmu.h b/include/asm-ia64/vmmu.h
+index 5710837..8e96f5d 100644
+--- a/include/asm-ia64/vmmu.h
++++ b/include/asm-ia64/vmmu.h
+@@ -277,6 +277,7 @@ extern void thash_purge_and_insert(struct vcpu *v, u64 pte, u64 itir, u64 ifa, i
+  *
+  */
+ extern void thash_purge_all(struct vcpu *v);
++extern void vmx_vcpu_flush_vtlb_all(struct vcpu *v);
+ 
+ /*
+  * Lookup the hash table and its collision chain to find an entry

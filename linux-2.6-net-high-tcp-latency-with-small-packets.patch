@@ -1,0 +1,76 @@
+From: Thomas Graf <tgraf@redhat.com>
+Subject: [RHEL5.1 BZ229909] high TCP latency with small packets
+Date: Wed, 9 May 2007 20:29:12 +0200
+Bugzilla: 229908
+Message-Id: <20070509182912.GA14100@lsx.localdomain>
+Changelog: [net] high TCP latency with small packets
+
+
+Backport of upstream patch, no modification was necessary. Please ACK.
+
+commit 1ef9696c909060ccdae3ade245ca88692b49285b
+Author: Alexey Kuznetsov <kuznet@ms2.inr.ac.ru>
+
+    [TCP]: Send ACKs each 2nd received segment.
+    
+    It does not affect either mss-sized connections (obviously) or
+    connections controlled by Nagle (because there is only one small
+    segment in flight).
+    
+    The idea is to record the fact that a small segment arrives on a
+    connection, where one small segment has already been received and
+    still not-ACKed. In this case ACK is forced after tcp_recvmsg() drains
+    receive buffer.
+    
+    In other words, it is a "soft" each-2nd-segment ACK, which is enough
+    to preserve ACK clock even when ABC is enabled.
+    
+    Signed-off-by: Alexey Kuznetsov <kuznet@ms2.inr.ac.ru>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Index: linux-2.6.18.noarch/include/net/inet_connection_sock.h
+===================================================================
+--- linux-2.6.18.noarch.orig/include/net/inet_connection_sock.h	2007-05-09 16:48:10.000000000 +0200
++++ linux-2.6.18.noarch/include/net/inet_connection_sock.h	2007-05-09 20:24:01.000000000 +0200
+@@ -147,7 +147,8 @@ extern struct sock *inet_csk_clone(struc
+ enum inet_csk_ack_state_t {
+ 	ICSK_ACK_SCHED	= 1,
+ 	ICSK_ACK_TIMER  = 2,
+-	ICSK_ACK_PUSHED = 4
++	ICSK_ACK_PUSHED = 4,
++	ICSK_ACK_PUSHED2 = 8
+ };
+ 
+ extern void inet_csk_init_xmit_timers(struct sock *sk,
+Index: linux-2.6.18.noarch/net/ipv4/tcp.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/ipv4/tcp.c	2007-05-09 16:48:10.000000000 +0200
++++ linux-2.6.18.noarch/net/ipv4/tcp.c	2007-05-09 20:24:01.000000000 +0200
+@@ -955,8 +955,11 @@ void tcp_cleanup_rbuf(struct sock *sk, i
+ 		     * receive buffer and there was a small segment
+ 		     * in queue.
+ 		     */
+-		    (copied > 0 && (icsk->icsk_ack.pending & ICSK_ACK_PUSHED) &&
+-		     !icsk->icsk_ack.pingpong && !atomic_read(&sk->sk_rmem_alloc)))
++		    (copied > 0 &&
++		     ((icsk->icsk_ack.pending & ICSK_ACK_PUSHED2) ||
++		      ((icsk->icsk_ack.pending & ICSK_ACK_PUSHED) &&
++		       !icsk->icsk_ack.pingpong)) &&
++		      !atomic_read(&sk->sk_rmem_alloc)))
+ 			time_to_ack = 1;
+ 	}
+ 
+Index: linux-2.6.18.noarch/net/ipv4/tcp_input.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/ipv4/tcp_input.c	2007-05-09 16:48:10.000000000 +0200
++++ linux-2.6.18.noarch/net/ipv4/tcp_input.c	2007-05-09 20:24:01.000000000 +0200
+@@ -156,6 +156,8 @@ static void tcp_measure_rcv_mss(struct s
+ 				return;
+ 			}
+ 		}
++		if (icsk->icsk_ack.pending & ICSK_ACK_PUSHED)
++			icsk->icsk_ack.pending |= ICSK_ACK_PUSHED2;
+ 		icsk->icsk_ack.pending |= ICSK_ACK_PUSHED;
+ 	}
+ }
+

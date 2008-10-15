@@ -1,0 +1,369 @@
+From: Ed Pollard <epollard@redhat.com>
+Date: Tue, 22 Jan 2008 15:42:32 -0500
+Subject: [scsi] sym53c8xx: add PCI error recovery callbacks
+Message-id: 47965538.5090408@redhat.com
+O-Subject: Re: [RHEL5 PATCH] RHBZ 207977: Patch to add PCI error recovery callbacks to sym53c8xx driver
+Bugzilla: 207977
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=207977
+
+Description:
+------------
+Re-post/re-work to address concerns raised about being closer to upstream solution.
+
+Patch submitted by IBM to add PCI error recovery callbacks to the sym53c8xx driver.
+This includes a backport of upstream
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;a=commitdiff;h=e39fbaf61538e9d05d57273dda81c81127f78e67
+
+There are some differences between this and upstream...
+  RHEL uses:  if (pdev->error_state != pci_channel_io_normal) {
+  Upstream has a new macro to simplify this:  if (pci_channel_offline(pdev)) {
+ I did not backport the macro as it would have made the changes more complex and touched more files.
+
+RHEL Version Found:
+------------------
+RHEL5.1
+
+kABI Status:
+------------
+No symbols were harmed.
+
+Upstream Status:
+----------------
+part of this patch came from upstream http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;a=commitdiff;h=e39fbaf61538e9d05d57273dda81c81127f78e67
+other parts of it are a backport of what is already upstream.
+
+Test Status:
+------------
+being tested now but wanted to post so that it can be looked over while tests run. This logic was
+tested previously just need this version of the patch checked.
+
+I am currently running iozone, dd, and bonnie++ and will continue to run them overnight.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-72.el5
+
+diff --git a/drivers/scsi/sym53c8xx_2/sym_glue.c b/drivers/scsi/sym53c8xx_2/sym_glue.c
+index 1346627..8a3abc9 100644
+--- a/drivers/scsi/sym53c8xx_2/sym_glue.c
++++ b/drivers/scsi/sym53c8xx_2/sym_glue.c
+@@ -138,7 +138,7 @@ struct sym_ucmd {		/* Override the SCSI pointer structure */
+ 	unsigned char	data_mapped;
+ 	unsigned char	to_do;			/* For error handling */
+ 	void (*old_done)(struct scsi_cmnd *);	/* For error handling */
+-	struct completion *eh_done;		/* For error handling */
++	struct completion *eh_done;		/* SCSI error handling */
+ };
+ 
+ #define SYM_UCMD_PTR(cmd)  ((struct sym_ucmd *)(&(cmd)->SCp))
+@@ -657,6 +657,11 @@ static irqreturn_t sym53c8xx_intr(int irq, void *dev_id, struct pt_regs * regs)
+ 	unsigned long flags;
+ 	struct sym_hcb *np = (struct sym_hcb *)dev_id;
+ 
++	/* Avoid spinloop trying to handle interrupts on frozen device */
++	if (np->s.device->error_state != pci_channel_io_normal)
++		return IRQ_NONE;
++
++
+ 	if (DEBUG_FLAGS & DEBUG_TINY) printf_debug ("[");
+ 
+ 	spin_lock_irqsave(np->s.host->host_lock, flags);
+@@ -719,6 +724,7 @@ static int sym_eh_handler(int op, char *opname, struct scsi_cmnd *cmd)
+ 	struct sym_hcb *np = SYM_SOFTC_PTR(cmd);
+ 	struct sym_ucmd *ucmd = SYM_UCMD_PTR(cmd);
+ 	struct Scsi_Host *host = cmd->device->host;
++	struct pci_dev *pdev = np->s.device;
+ 	SYM_QUEHEAD *qp;
+ 	int to_do = SYM_EH_DO_IGNORE;
+ 	int sts = -1;
+@@ -726,6 +732,39 @@ static int sym_eh_handler(int op, char *opname, struct scsi_cmnd *cmd)
+ 
+ 	dev_warn(&cmd->device->sdev_gendev, "%s operation started.\n", opname);
+ 
++	/* We may be in an error condition because the PCI bus
++ 	 * went down. In this case, we need to wait until the
++ 	 * PCI bus is reset, the card is reset, and only then
++ 	 * proceed with the scsi error recovery.  There's no
++ 	 * point in hurrying; take a leisurely wait.
++ 	 */
++#define WAIT_FOR_PCI_RECOVERY  35
++	if (pdev->error_state != pci_channel_io_normal) {
++		struct host_data *hostdata = host->shost_data;
++		int finished_reset = 0;
++		init_completion(&eh_done);
++		spin_lock_irq(host->host_lock);
++		/* Make sure we didn't race */
++		if (pdev->error_state != pci_channel_io_normal) {
++			BUG_ON(hostdata->io_reset);
++			hostdata->io_reset = &eh_done;
++		} else {
++			finished_reset = 1;
++		}
++
++		spin_unlock_irq(host->host_lock);
++		if (!finished_reset)
++			finished_reset = wait_for_completion_timeout
++				(hostdata->io_reset,
++				WAIT_FOR_PCI_RECOVERY*HZ);
++		spin_lock_irq(host->host_lock);
++		hostdata->io_reset = NULL;
++		spin_unlock_irq(host->host_lock);
++		if (!finished_reset)
++			return SCSI_FAILED;
++	}
++
++
+ 	spin_lock_irq(host->host_lock);
+ 	/* This one is queued in some place -> to wait for completion */
+ 	FOR_EACH_QUEUED_ELEMENT(&np->busy_ccbq, qp) {
+@@ -759,7 +798,7 @@ static int sym_eh_handler(int op, char *opname, struct scsi_cmnd *cmd)
+ 		break;
+ 	case SYM_EH_HOST_RESET:
+ 		sym_reset_scsi_bus(np, 0);
+-		sym_start_up (np, 1);
++		sym_start_up(np, 1);
+ 		sts = 0;
+ 		break;
+ 	default:
+@@ -1565,7 +1604,7 @@ static struct Scsi_Host * __devinit sym_attach(struct scsi_host_template *tpnt,
+ 	/*
+ 	 *  Start the SCRIPTS.
+ 	 */
+-	sym_start_up (np, 1);
++	sym_start_up(np, 1);
+ 
+ 	/*
+ 	 *  Start the timer daemon
+@@ -1948,6 +1987,133 @@ static void __devexit sym2_remove(struct pci_dev *pdev)
+ 	attach_count--;
+ }
+ 
++/**
++ * sym2_io_error_detected() - called when PCI error is detected
++ * @pdev: pointer to PCI device
++ * @state: current state of the PCI slot
++ */
++static pci_ers_result_t sym2_io_error_detected(struct pci_dev *pdev,
++						enum pci_channel_state state)
++{
++	/* If slot is permanently frozen, turn everything off */
++	if (state == pci_channel_io_perm_failure) {
++		sym2_remove(pdev);
++		return PCI_ERS_RESULT_DISCONNECT;
++	}
++
++	disable_irq(pdev->irq);
++	pci_disable_device(pdev);
++
++	/* Request that MMIO be enabled, so register dump can be taken. */
++	return PCI_ERS_RESULT_CAN_RECOVER;
++}
++
++/**
++ * sym2_io_slot_dump - Enable MMIO and dump debug registers
++ * @pdev: pointer to PCI device
++ */
++static pci_ers_result_t sym2_io_slot_dump(struct pci_dev *pdev)
++{
++struct sym_hcb *np = pci_get_drvdata(pdev);
++
++	sym_dump_registers(np);
++
++	/* Request a slot reset. */
++	return PCI_ERS_RESULT_NEED_RESET;
++}
++
++/**
++ * sym2_reset_workarounds - hardware-specific work-arounds
++ *
++ * This routine is similar to sym_set_workarounds(), except
++ * that, at this point, we already know that the device was
++ * succesfully intialized at least once before, and so most
++ * of the steps taken there are un-needed here.
++ */
++static void sym2_reset_workarounds(struct pci_dev *pdev)
++{
++	u_char revision;
++	u_short status_reg;
++	struct sym_chip *chip;
++
++	pci_read_config_byte(pdev, PCI_CLASS_REVISION, &revision);
++	chip = sym_lookup_chip_table(pdev->device, revision);
++
++	/* Work around for errant bit in 895A, in a fashion
++ 	* similar to what is done in sym_set_workarounds().
++ 	*/
++	pci_read_config_word(pdev, PCI_STATUS, &status_reg);
++	if (!(chip->features & FE_66MHZ) && (status_reg & PCI_STATUS_66MHZ)) {
++		status_reg = PCI_STATUS_66MHZ;
++		pci_write_config_word(pdev, PCI_STATUS, status_reg);
++		pci_read_config_word(pdev, PCI_STATUS, &status_reg);
++	}
++}
++
++/**
++ * sym2_io_slot_reset() - called when the pci bus has been reset.
++ * @pdev: pointer to PCI device
++ *
++ * Restart the card from scratch.
++ */
++static pci_ers_result_t sym2_io_slot_reset(struct pci_dev *pdev)
++{
++	struct sym_hcb *np = pci_get_drvdata(pdev);
++
++	printk(KERN_INFO "%s: recovering from a PCI slot reset\n",
++		sym_name(np));
++
++	if (pci_enable_device(pdev)) {
++		printk(KERN_ERR "%s: Unable to enable after PCI reset\n",
++			sym_name(np));
++		return PCI_ERS_RESULT_DISCONNECT;
++	}
++
++	pci_set_master(pdev);
++	enable_irq(pdev->irq);
++
++	/* If the chip can do Memory Write Invalidate, enable it */
++	if (np->features & FE_WRIE) {
++		if (pci_set_mwi(pdev))
++			return PCI_ERS_RESULT_DISCONNECT;
++	}
++
++	/* Perform work-arounds, analogous to sym_set_workarounds() */
++	sym2_reset_workarounds(pdev);
++
++	/* Perform host reset only on one instance of the card */
++	if (PCI_FUNC(pdev->devfn) == 0) {
++		if (sym_reset_scsi_bus(np, 0)) {
++			printk(KERN_ERR "%s: Unable to reset scsi host\n",
++				sym_name(np));
++			return PCI_ERS_RESULT_DISCONNECT;
++		}
++		sym_start_up(np, 1);
++	}
++
++	return PCI_ERS_RESULT_RECOVERED;
++}
++
++/**
++ * sym2_io_resume() - resume normal ops after PCI reset
++ * @pdev: pointer to PCI device
++ *
++ * Called when the error recovery driver tells us that its
++ * OK to resume normal operation. Use completion to allow
++ * halted scsi ops to resume.
++ */
++static void sym2_io_resume(struct pci_dev *pdev)
++{
++	struct sym_hcb *np = pci_get_drvdata(pdev);
++	struct Scsi_Host *shost = np->s.host;
++	struct host_data *hostdata = shost->shost_data;
++
++	spin_lock_irq(shost->host_lock);
++	if (hostdata->io_reset)
++		complete_all(hostdata->io_reset);
++	spin_unlock_irq(shost->host_lock);
++}
++
+ static void sym2_get_signalling(struct Scsi_Host *shost)
+ {
+ 	struct sym_hcb *np = sym_get_hcb(shost);
+@@ -2110,11 +2276,19 @@ static struct pci_device_id sym2_id_table[] __devinitdata = {
+ 
+ MODULE_DEVICE_TABLE(pci, sym2_id_table);
+ 
++static struct pci_error_handlers sym2_err_handler = {
++	.error_detected = sym2_io_error_detected,
++	.mmio_enabled   = sym2_io_slot_dump,
++	.slot_reset     = sym2_io_slot_reset,
++	.resume         = sym2_io_resume,
++};
++
+ static struct pci_driver sym2_driver = {
+ 	.name		= NAME53C8XX,
+ 	.id_table	= sym2_id_table,
+ 	.probe		= sym2_probe,
+ 	.remove		= __devexit_p(sym2_remove),
++	.err_handler    = &sym2_err_handler,
+ };
+ 
+ static int __init sym2_init(void)
+diff --git a/drivers/scsi/sym53c8xx_2/sym_glue.h b/drivers/scsi/sym53c8xx_2/sym_glue.h
+index e022d3c..c3f9bcb 100644
+--- a/drivers/scsi/sym53c8xx_2/sym_glue.h
++++ b/drivers/scsi/sym53c8xx_2/sym_glue.h
+@@ -40,6 +40,7 @@
+ #ifndef SYM_GLUE_H
+ #define SYM_GLUE_H
+ 
++#include <linux/completion.h>
+ #include <linux/delay.h>
+ #include <linux/ioport.h>
+ #include <linux/pci.h>
+@@ -221,6 +222,7 @@ struct sym_device {
+  */
+ struct host_data {
+ 	struct sym_hcb *ncb;
++	struct completion *io_reset;            /* PCI error handling */
+ };
+ 
+ static inline struct sym_hcb * sym_get_hcb(struct Scsi_Host *host)
+@@ -266,5 +268,6 @@ void sym_xpt_async_bus_reset(struct sym_hcb *np);
+ void sym_xpt_async_sent_bdr(struct sym_hcb *np, int target);
+ int  sym_setup_data_and_start (struct sym_hcb *np, struct scsi_cmnd *csio, struct sym_ccb *cp);
+ void sym_log_bus_error(struct sym_hcb *np);
++void sym_dump_registers(struct sym_hcb *np);
+ 
+ #endif /* SYM_GLUE_H */
+diff --git a/drivers/scsi/sym53c8xx_2/sym_hipd.c b/drivers/scsi/sym53c8xx_2/sym_hipd.c
+index 940fa1e..9a5d8e5 100644
+--- a/drivers/scsi/sym53c8xx_2/sym_hipd.c
++++ b/drivers/scsi/sym53c8xx_2/sym_hipd.c
+@@ -1180,10 +1180,10 @@ static void sym_log_hard_error(struct sym_hcb *np, u_short sist, u_char dstat)
+ 			scr_to_cpu((int) *(u32 *)(script_base + script_ofs)));
+ 	}
+ 
+-        printf ("%s: regdump:", sym_name(np));
+-        for (i=0; i<24;i++)
+-            printf (" %02x", (unsigned)INB_OFF(np, i));
+-        printf (".\n");
++	printf("%s: regdump:", sym_name(np));
++	for (i = 0; i < 24; i++)
++		printf(" %02x", (unsigned)INB_OFF(np, i));
++	printf(".\n");
+ 
+ 	/*
+ 	 *  PCI BUS error.
+@@ -1192,6 +1192,16 @@ static void sym_log_hard_error(struct sym_hcb *np, u_short sist, u_char dstat)
+ 		sym_log_bus_error(np);
+ }
+ 
++void sym_dump_registers(struct sym_hcb *np)
++{
++	u_short sist;
++	u_char dstat;
++
++	sist = INW(np, nc_sist);
++	dstat = INB(np, nc_dstat);
++	sym_log_hard_error(np, sist, dstat);
++}
++
+ static struct sym_chip sym_dev_table[] = {
+  {PCI_DEVICE_ID_NCR_53C810, 0x0f, "810", 4, 8, 4, 64,
+  FE_ERL}
+@@ -2809,6 +2819,12 @@ void sym_interrupt (struct sym_hcb *np)
+ 			dstat |= INB(np, nc_dstat);
+ 		istatc = INB(np, nc_istat);
+ 		istat |= istatc;
++		/* Prevent deadlock waiting on a condition that may
++		 * never clear. */
++		if (unlikely(sist == 0xffff && dstat == 0xff)) {
++			if (np->s.device->error_state != pci_channel_io_normal)
++				return;
++		}
+ 	} while (istatc & (SIP|DIP));
+ 
+ 	if (DEBUG_FLAGS & DEBUG_TINY)

@@ -1,0 +1,428 @@
+From: Konrad Rzeszutek <konradr@redhat.com>
+Subject: [RHEL5 PATCH] RHBZ #244711 Update netxen_nic driver to version 3.x.x 	(post 5.1-Beta)
+Date: Wed, 20 Jun 2007 11:42:50 -0400
+Bugzilla: 244711
+Message-Id: <20070620154250.GA27601@localhost.localdomain>
+Changelog: [net] Update netxen_nic driver to version 3.x.x
+
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=244711
+
+Description:
+------------
+Bug-fixes for the NetXen driver.
+
+1. netxen.failover.patch        : Accepted by Jeff : 
+http://www.spinics.net/lists/netdev/msg33479.html
+"NetXen: Fix incorrect link status even with switch turned OFF.
+NetXen driver failed to accurately indicate when a link is up or down. 
+This was encountered during failover testing, when the first port 
+indicated that the link was up even when the 10G switch it was assigned
+to in the Bladecenter was turned off completely. "
+
+
+2. netxen.rhel46.patch  : Accepted by Jeff :
+http://www.spinics.net/lists/netdev/msg33256.html
+NetXen: Add NETXEN prefixes to macros to clean them up.
+This is a cleanup patch which adds NETXEN prefix to some stand 
+alone macro names.
+These posed compile errors when NetXen driver was backported to 2.6.9
+on PPC architecture as macros like USER_START are defined in file
+arch/ppc64/mm/hash_utils.c
+
+3. netxen1.rc3.patch    : Accepted by Jeff :
+http://www.spinics.net/lists/netdev/msg33255.html
+NetXen: Fix initialization and subsequent ping issue on 3.4.19 firmware
+This patch fixes the ping problem seen X/PBlades after the adapter's 
+firmware was moved to 3.4.19. After configured interface up, ping 
+failed. 
+NetXen adapter couldn't accept ARP broadcast packet. Manual addition of
+MAC address in the ARP table, made ping work.
+NetXen adapter should finish initilization after system boot. But looks
+NetXen adapter didn't initilization correctly after system boot up.
+So have to re-load the firmware again in probe routine.
+Also re-initilization netxen_config_0 and netxen_config_1 registers.
+
+
+RHEL Version Found:
+------------------
+RHEL5 U1
+
+Upstream Status:
+----------------
+Upstream.
+
+kABI:
+-----
+No kABI breakage.
+
+Test Status:
+------------
+Tasts ran overnight with 3.4.23 firmware. Right now I am testing with
+3.4.19 firmware as well (since that is version those cards GA with).
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-29.el5 kernel:
+
+diff -uNpr linux-2.6.18.i386.orig/drivers/net/netxen/netxen_nic_ethtool.c linux-2.6.18.i386/drivers/net/netxen/netxen_nic_ethtool.c
+--- linux-2.6.18.i386.orig/drivers/net/netxen/netxen_nic_ethtool.c	2007-06-19 16:54:28.000000000 -0400
++++ linux-2.6.18.i386/drivers/net/netxen/netxen_nic_ethtool.c	2007-06-19 16:58:01.000000000 -0400
+@@ -94,7 +94,7 @@ static const char netxen_nic_gstrings_te
+ 
+ static int netxen_nic_get_eeprom_len(struct net_device *dev)
+ {
+-	return FLASH_TOTAL_SIZE;
++	return NETXEN_FLASH_TOTAL_SIZE;
+ }
+ 
+ static void
+@@ -470,7 +470,7 @@ netxen_nic_set_eeprom(struct net_device 
+ 		return 0;
+ 	}
+ 
+-	if (offset == BOOTLD_START) {
++	if (offset == NETXEN_BOOTLD_START) {
+ 		ret = netxen_flash_erase_primary(adapter);
+ 		if (ret != FLASH_SUCCESS) {
+ 			printk(KERN_ERR "%s: Flash erase failed.\n",
+@@ -478,10 +478,10 @@ netxen_nic_set_eeprom(struct net_device 
+ 			return ret;
+ 		}
+ 
+-		ret = netxen_rom_se(adapter, USER_START);
++		ret = netxen_rom_se(adapter, NETXEN_USER_START);
+ 		if (ret != FLASH_SUCCESS)
+ 			return ret;
+-		ret = netxen_rom_se(adapter, FIXED_START);
++		ret = netxen_rom_se(adapter, NETXEN_FIXED_START);
+ 		if (ret != FLASH_SUCCESS)
+ 			return ret;
+ 
+diff -uNpr linux-2.6.18.i386.orig/drivers/net/netxen/netxen_nic.h linux-2.6.18.i386/drivers/net/netxen/netxen_nic.h
+--- linux-2.6.18.i386.orig/drivers/net/netxen/netxen_nic.h	2007-06-19 16:54:28.000000000 -0400
++++ linux-2.6.18.i386/drivers/net/netxen/netxen_nic.h	2007-06-19 16:58:06.000000000 -0400
+@@ -68,9 +68,10 @@
+ #define _NETXEN_NIC_LINUX_SUBVERSION 2
+ #define NETXEN_NIC_LINUX_VERSIONID  "3.4.2"
+ 
+-#define NUM_FLASH_SECTORS (64)
+-#define FLASH_SECTOR_SIZE (64 * 1024)
+-#define FLASH_TOTAL_SIZE  (NUM_FLASH_SECTORS * FLASH_SECTOR_SIZE)
++#define NETXEN_NUM_FLASH_SECTORS (64)
++#define NETXEN_FLASH_SECTOR_SIZE (64 * 1024)
++#define NETXEN_FLASH_TOTAL_SIZE  (NETXEN_NUM_FLASH_SECTORS \
++					* NETXEN_FLASH_SECTOR_SIZE)
+ 
+ #define PHAN_VENDOR_ID 0x4040
+ 
+@@ -673,28 +674,28 @@ struct netxen_new_user_info {
+ 
+ /* Flash memory map */
+ typedef enum {
+-	CRBINIT_START = 0,	/* Crbinit section */
+-	BRDCFG_START = 0x4000,	/* board config */
+-	INITCODE_START = 0x6000,	/* pegtune code */
+-	BOOTLD_START = 0x10000,	/* bootld */
+-	IMAGE_START = 0x43000,	/* compressed image */
+-	SECONDARY_START = 0x200000,	/* backup images */
+-	PXE_START = 0x3E0000,	/* user defined region */
+-	USER_START = 0x3E8000,	/* User defined region for new boards */
+-	FIXED_START = 0x3F0000	/* backup of crbinit */
++	NETXEN_CRBINIT_START = 0,	/* Crbinit section */
++	NETXEN_BRDCFG_START = 0x4000,	/* board config */
++	NETXEN_INITCODE_START = 0x6000,	/* pegtune code */
++	NETXEN_BOOTLD_START = 0x10000,	/* bootld */
++	NETXEN_IMAGE_START = 0x43000,	/* compressed image */
++	NETXEN_SECONDARY_START = 0x200000,	/* backup images */
++	NETXEN_PXE_START = 0x3E0000,	/* user defined region */
++	NETXEN_USER_START = 0x3E8000,	/* User defined region for new boards */
++	NETXEN_FIXED_START = 0x3F0000	/* backup of crbinit */
+ } netxen_flash_map_t;
+ 
+-#define USER_START_OLD PXE_START	/* for backward compatibility */
++#define NETXEN_USER_START_OLD NETXEN_PXE_START	/* for backward compatibility */
+ 
+-#define FLASH_START		(CRBINIT_START)
+-#define INIT_SECTOR		(0)
+-#define PRIMARY_START 		(BOOTLD_START)
+-#define FLASH_CRBINIT_SIZE 	(0x4000)
+-#define FLASH_BRDCFG_SIZE 	(sizeof(struct netxen_board_info))
+-#define FLASH_USER_SIZE		(sizeof(struct netxen_user_info)/sizeof(u32))
+-#define FLASH_SECONDARY_SIZE 	(USER_START-SECONDARY_START)
+-#define NUM_PRIMARY_SECTORS	(0x20)
+-#define NUM_CONFIG_SECTORS 	(1)
++#define NETXEN_FLASH_START		(NETXEN_CRBINIT_START)
++#define NETXEN_INIT_SECTOR		(0)
++#define NETXEN_PRIMARY_START 		(NETXEN_BOOTLD_START)
++#define NETXEN_FLASH_CRBINIT_SIZE 	(0x4000)
++#define NETXEN_FLASH_BRDCFG_SIZE 	(sizeof(struct netxen_board_info))
++#define NETXEN_FLASH_USER_SIZE		(sizeof(struct netxen_user_info)/sizeof(u32))
++#define NETXEN_FLASH_SECONDARY_SIZE 	(NETXEN_USER_START-NETXEN_SECONDARY_START)
++#define NETXEN_NUM_PRIMARY_SECTORS	(0x20)
++#define NETXEN_NUM_CONFIG_SECTORS 	(1)
+ #define PFX "NetXen: "
+ extern char netxen_nic_driver_name[];
+ 
+@@ -1032,6 +1033,7 @@ int netxen_rom_se(struct netxen_adapter 
+ int netxen_do_rom_se(struct netxen_adapter *adapter, int addr);
+ 
+ /* Functions from netxen_nic_isr.c */
++int netxen_nic_link_ok(struct netxen_adapter *adapter);
+ void netxen_nic_isr_other(struct netxen_adapter *adapter);
+ void netxen_indicate_link_status(struct netxen_adapter *adapter, u32 link);
+ void netxen_handle_port_int(struct netxen_adapter *adapter, u32 enable);
+diff -uNpr linux-2.6.18.i386.orig/drivers/net/netxen/netxen_nic_hw.c linux-2.6.18.i386/drivers/net/netxen/netxen_nic_hw.c
+--- linux-2.6.18.i386.orig/drivers/net/netxen/netxen_nic_hw.c	2007-06-19 16:54:28.000000000 -0400
++++ linux-2.6.18.i386/drivers/net/netxen/netxen_nic_hw.c	2007-06-19 16:58:01.000000000 -0400
+@@ -255,7 +255,7 @@ u64 ctx_addr_sig_regs[][3] = {
+ #define ADDR_IN_RANGE(addr, low, high)	\
+ 	(((addr) <= (high)) && ((addr) >= (low)))
+ 
+-#define NETXEN_FLASH_BASE	(BOOTLD_START)
++#define NETXEN_FLASH_BASE	(NETXEN_BOOTLD_START)
+ #define NETXEN_PHANTOM_MEM_BASE	(NETXEN_FLASH_BASE)
+ #define NETXEN_MAX_MTU		8000 + NETXEN_ENET_HEADER_SIZE + NETXEN_ETH_FCS_SIZE
+ #define NETXEN_MIN_MTU		64
+@@ -610,7 +610,7 @@ int netxen_get_flash_mac_addr(struct net
+ 	u32 *pmac = (u32 *) & mac[0];
+ 
+ 	if (netxen_get_flash_block(adapter,
+-				   USER_START +
++				   NETXEN_USER_START +
+ 				   offsetof(struct netxen_new_user_info,
+ 					    mac_addr),
+ 				   FLASH_NUM_PORTS * sizeof(u64), pmac) == -1) {
+@@ -618,7 +618,7 @@ int netxen_get_flash_mac_addr(struct net
+ 	}
+ 	if (*mac == ~0ULL) {
+ 		if (netxen_get_flash_block(adapter,
+-					   USER_START_OLD +
++					   NETXEN_USER_START_OLD +
+ 					   offsetof(struct netxen_user_old_info,
+ 						    mac_addr),
+ 					   FLASH_NUM_PORTS * sizeof(u64),
+@@ -941,7 +941,7 @@ netxen_nic_pci_set_window(struct netxen_
+ int
+ netxen_nic_erase_pxe(struct netxen_adapter *adapter)
+ {
+-	if (netxen_rom_fast_write(adapter, PXE_START, 0) == -1) {
++	if (netxen_rom_fast_write(adapter, NETXEN_PXE_START, 0) == -1) {
+ 		printk(KERN_ERR "%s: erase pxe failed\n",
+ 			netxen_nic_driver_name);
+ 		return -1;
+@@ -952,7 +952,7 @@ netxen_nic_erase_pxe(struct netxen_adapt
+ int netxen_nic_get_board_info(struct netxen_adapter *adapter)
+ {
+ 	int rv = 0;
+-	int addr = BRDCFG_START;
++	int addr = NETXEN_BRDCFG_START;
+ 	struct netxen_board_info *boardinfo;
+ 	int index;
+ 	u32 *ptr32;
+@@ -1114,7 +1114,7 @@ void netxen_nic_flash_print(struct netxe
+ 	u32 fw_build = 0;
+ 	char brd_name[NETXEN_MAX_SHORT_NAME];
+ 	struct netxen_new_user_info user_info;
+-	int i, addr = USER_START;
++	int i, addr = NETXEN_USER_START;
+ 	__le32 *ptr32;
+ 
+ 	struct netxen_board_info *board_info = &(adapter->ahw.boardcfg);
+diff -uNpr linux-2.6.18.i386.orig/drivers/net/netxen/netxen_nic_init.c linux-2.6.18.i386/drivers/net/netxen/netxen_nic_init.c
+--- linux-2.6.18.i386.orig/drivers/net/netxen/netxen_nic_init.c	2007-06-19 16:54:28.000000000 -0400
++++ linux-2.6.18.i386/drivers/net/netxen/netxen_nic_init.c	2007-06-19 16:58:06.000000000 -0400
+@@ -585,7 +585,7 @@ int netxen_backup_crbinit(struct netxen_
+ {
+ 	int ret = FLASH_SUCCESS;
+ 	int val;
+-	char *buffer = kmalloc(FLASH_SECTOR_SIZE, GFP_KERNEL);
++	char *buffer = kmalloc(NETXEN_FLASH_SECTOR_SIZE, GFP_KERNEL);
+ 
+ 	if (!buffer)
+ 		return -ENOMEM;
+@@ -601,13 +601,15 @@ int netxen_backup_crbinit(struct netxen_
+ 		goto out_kfree;
+ 
+ 	/* copy  sector 0 to sector 63 */
+-	ret = netxen_rom_fast_read_words(adapter, CRBINIT_START,
+-						buffer, FLASH_SECTOR_SIZE);
++	ret = netxen_rom_fast_read_words(adapter, NETXEN_CRBINIT_START,
++						buffer, 
++						NETXEN_FLASH_SECTOR_SIZE);
+ 	if (ret != FLASH_SUCCESS)
+ 		goto out_kfree;
+ 
+-	ret = netxen_rom_fast_write_words(adapter, FIXED_START,
+-						buffer, FLASH_SECTOR_SIZE);
++	ret = netxen_rom_fast_write_words(adapter, NETXEN_FIXED_START,
++						buffer, 
++						NETXEN_FLASH_SECTOR_SIZE);
+ 	if (ret != FLASH_SUCCESS)
+ 		goto out_kfree;
+ 
+@@ -654,7 +656,8 @@ void check_erased_flash(struct netxen_ad
+ 	int count = 0, erased_errors = 0;
+ 	int range;
+ 
+-	range = (addr == USER_START) ? FIXED_START : addr + FLASH_SECTOR_SIZE;
++	range = (addr == NETXEN_USER_START) ? 
++		NETXEN_FIXED_START : addr + NETXEN_FLASH_SECTOR_SIZE;
+ 
+ 	for (i = addr; i < range; i += 4) {
+ 		netxen_rom_fast_read(adapter, i, &val);
+@@ -689,7 +692,7 @@ netxen_flash_erase_sections(struct netxe
+ 	int i;
+ 
+ 	for (i = start; i < end; i++) {
+-		ret = netxen_rom_se(adapter, i * FLASH_SECTOR_SIZE);
++		ret = netxen_rom_se(adapter, i * NETXEN_FLASH_SECTOR_SIZE);
+ 		if (ret)
+ 			break;
+ 		ret = netxen_rom_wip_poll(adapter);
+@@ -706,8 +709,8 @@ netxen_flash_erase_secondary(struct netx
+ 	int ret = FLASH_SUCCESS;
+ 	int start, end;
+ 
+-	start = SECONDARY_START / FLASH_SECTOR_SIZE;
+-	end   = USER_START / FLASH_SECTOR_SIZE;
++	start = NETXEN_SECONDARY_START / NETXEN_FLASH_SECTOR_SIZE;
++	end   = NETXEN_USER_START / NETXEN_FLASH_SECTOR_SIZE;
+ 	ret = netxen_flash_erase_sections(adapter, start, end);
+ 
+ 	return ret;
+@@ -719,8 +722,8 @@ netxen_flash_erase_primary(struct netxen
+ 	int ret = FLASH_SUCCESS;
+ 	int start, end;
+ 
+-	start = PRIMARY_START / FLASH_SECTOR_SIZE;
+-	end   = SECONDARY_START / FLASH_SECTOR_SIZE;
++	start = NETXEN_PRIMARY_START / NETXEN_FLASH_SECTOR_SIZE;
++	end   = NETXEN_SECONDARY_START / NETXEN_FLASH_SECTOR_SIZE;
+ 	ret = netxen_flash_erase_sections(adapter, start, end);
+ 
+ 	return ret;
+@@ -1036,18 +1039,23 @@ void netxen_watchdog_task(unsigned long 
+ 	if ((adapter->portnum  == 0) && netxen_nic_check_temp(adapter))
+ 		return;
+ 
++	if (adapter->handle_phy_intr)
++		adapter->handle_phy_intr(adapter);
++
+ 	netdev = adapter->netdev;
+-	if ((netif_running(netdev)) && !netif_carrier_ok(netdev)) {
+-		printk(KERN_INFO "%s port %d, %s carrier is now ok\n",
+-		       netxen_nic_driver_name, adapter->portnum, netdev->name);
++	if ((netif_running(netdev)) && !netif_carrier_ok(netdev) &&
++			netxen_nic_link_ok(adapter) ) {
++		printk(KERN_INFO "%s %s (port %d), Link is up\n",
++			       netxen_nic_driver_name, netdev->name, adapter->portnum);
+ 		netif_carrier_on(netdev);
+-	}
+-
+-	if (netif_queue_stopped(netdev))
+ 		netif_wake_queue(netdev);
++	} else if(!(netif_running(netdev)) && netif_carrier_ok(netdev)) {
++		printk(KERN_ERR "%s %s Link is Down\n",
++				netxen_nic_driver_name, netdev->name);
++		netif_carrier_off(netdev);
++		netif_stop_queue(netdev);
++	}
+ 
+-	if (adapter->handle_phy_intr)
+-		adapter->handle_phy_intr(adapter);
+ 	mod_timer(&adapter->watchdog_timer, jiffies + 2 * HZ);
+ }
+ 
+diff -uNpr linux-2.6.18.i386.orig/drivers/net/netxen/netxen_nic_isr.c linux-2.6.18.i386/drivers/net/netxen/netxen_nic_isr.c
+--- linux-2.6.18.i386.orig/drivers/net/netxen/netxen_nic_isr.c	2007-06-19 16:54:28.000000000 -0400
++++ linux-2.6.18.i386/drivers/net/netxen/netxen_nic_isr.c	2007-06-19 16:58:06.000000000 -0400
+@@ -169,6 +169,24 @@ void netxen_nic_gbe_handle_phy_intr(stru
+ 	netxen_nic_isr_other(adapter);
+ }
+ 
++int netxen_nic_link_ok(struct netxen_adapter *adapter)
++{
++	switch (adapter->ahw.board_type) {
++	case NETXEN_NIC_GBE:
++		return ((adapter->ahw.qg_linksup) & 1);
++
++	case NETXEN_NIC_XGBE:
++		return ((adapter->ahw.xg_linkup) & 1);
++
++	default:
++		printk(KERN_ERR"%s: Function: %s, Unknown board type\n",
++			netxen_nic_driver_name, __FUNCTION__);
++		break;
++	}
++
++	return 0;
++}
++
+ void netxen_nic_xgbe_handle_phy_intr(struct netxen_adapter *adapter)
+ {
+ 	struct net_device *netdev = adapter->netdev;
+@@ -183,6 +201,10 @@ void netxen_nic_xgbe_handle_phy_intr(str
+ 		printk(KERN_INFO "%s: %s NIC Link is down\n",
+ 		       netxen_nic_driver_name, netdev->name);
+ 		adapter->ahw.xg_linkup = 0;
++		if (netif_running(netdev)) {
++			netif_carrier_off(netdev);
++			netif_stop_queue(netdev);
++		}
+ 		/* read twice to clear sticky bits */
+ 		/* WINDOW = 0 */
+ 		netxen_nic_read_w0(adapter, NETXEN_NIU_XG_STATUS, &val1);
+@@ -196,5 +218,7 @@ void netxen_nic_xgbe_handle_phy_intr(str
+ 		printk(KERN_INFO "%s: %s NIC Link is up\n",
+ 		       netxen_nic_driver_name, netdev->name);
+ 		adapter->ahw.xg_linkup = 1;
++		netif_carrier_on(netdev);
++		netif_wake_queue(netdev);
+ 	}
+ }
+diff -uNpr linux-2.6.18.i386.orig/drivers/net/netxen/netxen_nic_main.c linux-2.6.18.i386/drivers/net/netxen/netxen_nic_main.c
+--- linux-2.6.18.i386.orig/drivers/net/netxen/netxen_nic_main.c	2007-06-19 16:54:28.000000000 -0400
++++ linux-2.6.18.i386/drivers/net/netxen/netxen_nic_main.c	2007-06-19 16:58:13.000000000 -0400
+@@ -551,6 +551,13 @@ netxen_nic_probe(struct pci_dev *pdev, c
+ 				NETXEN_ROMUSB_GLB_PEGTUNE_DONE));
+ 		/* Handshake with the card before we register the devices. */
+ 		netxen_phantom_init(adapter, NETXEN_NIC_PEG_TUNE);
++
++	       /* leave the hw in the same state as reboot */
++	       writel(0, NETXEN_CRB_NORMALIZE(adapter, CRB_CMDPEG_STATE));
++	       netxen_pinit_from_rom(adapter, 0);
++	       udelay(500);
++	       netxen_load_firmware(adapter);
++	       netxen_phantom_init(adapter, NETXEN_NIC_PEG_TUNE);
+ 	}
+ 
+ 	/*
+diff -uNpr linux-2.6.18.i386.orig/drivers/net/netxen/netxen_nic_niu.c linux-2.6.18.i386/drivers/net/netxen/netxen_nic_niu.c
+--- linux-2.6.18.i386.orig/drivers/net/netxen/netxen_nic_niu.c	2007-06-19 16:54:28.000000000 -0400
++++ linux-2.6.18.i386/drivers/net/netxen/netxen_nic_niu.c	2007-06-19 16:58:13.000000000 -0400
+@@ -454,16 +454,12 @@ int netxen_niu_gbe_init_port(struct netx
+ 
+ int netxen_niu_xg_init_port(struct netxen_adapter *adapter, int port)
+ {
+-	u32 reg;
+ 	u32 portnum = physical_port[adapter->portnum];
+ 
+ 	netxen_crb_writelit_adapter(adapter,
+-		NETXEN_NIU_XGE_CONFIG_0+(0x10000*portnum), 0x5);
+-	netxen_nic_hw_read_wx(adapter,
+-		NETXEN_NIU_XGE_CONFIG_1+(0x10000*portnum), &reg, 4);
+-	reg = (reg & ~0x2000UL);
++		NETXEN_NIU_XGE_CONFIG_1+(0x10000*portnum), 0x1447);
+ 	netxen_crb_writelit_adapter(adapter,
+-		NETXEN_NIU_XGE_CONFIG_1+(0x10000*portnum), reg);
++		NETXEN_NIU_XGE_CONFIG_0+(0x10000*portnum), 0x5);
+ 
+ 	return 0;
+ }
+-- 
+Konrad Rzeszutek 1-(978)-392-3903 or 1-(617)-693-1718
+IBM on-site partner.  
+

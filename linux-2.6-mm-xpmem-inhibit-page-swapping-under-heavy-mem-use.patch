@@ -1,0 +1,83 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Thu, 24 Jul 2008 17:06:44 -0400
+Subject: [mm] xpmem: inhibit page swapping under heavy mem use
+Message-id: 4888EEE4.9040609@redhat.com
+O-Subject: [PATCH RHEL5.3] silent memory corruptions with xpmen
+Bugzilla: 456574
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+Inhibit swaping of pages under active xpmem management.
+
+IT#191772
+BZ#456574
+
+It has been discovered that under heavy memory
+pressure pages can be swapped out from under
+SGI's xpmem driver leading to silent data corruption
+in the kernel with all the issues of correctness
+and security that entails.
+
+SGI is planning to go public with this in a few
+days time; please keep as confidential until then.
+
+This patch inhibits swapping while a page is under
+active management by the xpmem driver and has been
+tested against rhel5.2ga and other kernel versions.
+
+This patch is *not* upstream.  The problem will be
+fixed in future kernels via Andrea Archangeli's
+mmy_notifier.
+
+It should be noted that under the heavy memory
+pressure and oversubscribing of cpus needed to
+reproduce the failure the patch does lead to an
+increase in softlockups.  So far we have not
+seen this when the system is not heavily stressed.
+
+Please comment or ACK.
+
+Thanks, George
+
+diff --git a/include/linux/page-flags.h b/include/linux/page-flags.h
+index dc67b9b..63c8e4c 100644
+--- a/include/linux/page-flags.h
++++ b/include/linux/page-flags.h
+@@ -86,6 +86,7 @@
+ #define PG_reclaim		17	/* To be reclaimed asap */
+ #define PG_nosave_free		18	/* Free, should not be written */
+ #define PG_buddy		19	/* Page is free, on buddy lists */
++#define PG_xpmem		27	/* Testing for xpmem. */
+ 
+ /* PG_owner_priv_1 users should have descriptive aliases */
+ #define PG_checked              PG_owner_priv_1 /* Used by some filesystems */
+@@ -272,6 +273,14 @@
+ #define SetPageUncached(page)	set_bit(PG_uncached, &(page)->flags)
+ #define ClearPageUncached(page)	clear_bit(PG_uncached, &(page)->flags)
+ 
++#if defined(CONFIG_IA64) || defined(CONFIG_X86_64)
++#define PageXpmem(page) test_bit(PG_xpmem, &(page)->flags)
++#define SetPageXpmem(page) set_bit(PG_xpmem, &(page)->flags)
++#define ClearPageXpmem(page) clear_bit(PG_xpmem, &(page)->flags)
++#else
++#define PageXpmem(page)	0
++#endif
++
+ struct page;	/* forward declaration */
+ 
+ int test_clear_page_dirty(struct page *page);
+diff --git a/mm/rmap.c b/mm/rmap.c
+index 8b4800a..b44fbdb 100644
+--- a/mm/rmap.c
++++ b/mm/rmap.c
+@@ -926,6 +926,9 @@ int try_to_unmap(struct page *page, int migration)
+ 
+ 	BUG_ON(!PageLocked(page));
+ 
++	if (PageXpmem(page))
++		return SWAP_FAIL;
++
+ 	if (PageAnon(page))
+ 		ret = try_to_unmap_anon(page, migration);
+ 	else

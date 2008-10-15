@@ -1,0 +1,41 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Subject: [RHEL5.1 PATCH] Support mobile processors in fid/did to frequency 	conversion
+Date: Mon, 6 Aug 2007 11:30:42 -0400
+Bugzilla: 250833
+Message-Id: <20070806152801.15742.41087.sendpatchset@allegro.boston.redhat.com>
+Changelog: [x86] Support mobile processors in fid/did to frequency conversion
+
+
+Resolves BZ 250833
+
+This patch makes the frequency calculation family dependant, to ensure the 
+frequency reported by the mobile processor in the _PSS objects matches the 
+frequencies the kernel can identify. Otherwise the driver assumes that the
+ACPI data is bad and Power Now! will not function on the mobile processors.
+
+Further, only processors that use the hardware p-state driver have fid/did;
+family 0xf processors (K8) use fid/vid.  In otherwords this change does not
+affect the dual core K8 processor code path.
+
+Patch applies to -36.el5 cleanly, here is the brew build.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=907955
+ 
+Patch tested on mobile platform by AMD.
+
+The patch has been submitted to Dave Jones on the cpufreq mailing list.
+ 
+--- linux-2.6.18.x86_64/arch/i386/kernel/cpu/cpufreq/powernow-k8.c.didorig	2007-08-06 08:13:11.000000000 -0400
++++ linux-2.6.18.x86_64/arch/i386/kernel/cpu/cpufreq/powernow-k8.c	2007-08-06 08:16:40.000000000 -0400
+@@ -79,7 +79,10 @@ static u32 find_khz_freq_from_fid(u32 fi
+ /* Return a frequency in MHz, given an input fid and did */
+ static u32 find_freq_from_fiddid(u32 fid, u32 did)
+ {
+-	return 100 * (fid + 0x10) >> did;
++	if (current_cpu_data.x86 == 0x10)
++		return 100 * (fid + 0x10) >> did;
++	else
++		return 100 * (fid + 0x8) >> did;
+ }
+ 
+ static u32 find_khz_freq_from_fiddid(u32 fid, u32 did)
+

@@ -1,0 +1,24 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Subject: [Bug 246123][IBM/QLogic][RHEL 5.1 bug]Read iSCSI target disk fail 	with qla3xxx + Open iSCSI software initiator
+Date: Mon, 27 Aug 2007 19:01:57 -0400
+Bugzilla: 246123
+Message-Id: <20070827230157.3313.55097.sendpatchset@shell.boston.redhat.com>
+Changelog: [net] qla3xxx: Read iSCSI target disk fail
+
+
+
+
+BZ 246123.
+
+Marcus
+--- a/drivers/net/qla3xxx.c	2007-08-10 16:21:30.000000000 +0800
++++ b/drivers/net/qla3xxx.c	2007-08-10 16:22:12.000000000 +0800
+@@ -2261,6 +2261,7 @@ static int ql_tx_rx_clean(struct ql3_ada
+ 		qdev->rsp_consumer_index) && (work_done < work_to_do)) {
+ 
+ 		net_rsp = qdev->rsp_current;
++		rmb();
+ 		switch (net_rsp->opcode) {
+ 
+ 		case OPCODE_OB_MAC_IOCB_FN0:
+

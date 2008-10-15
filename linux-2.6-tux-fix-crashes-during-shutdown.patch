@@ -1,0 +1,87 @@
+From: Ernie Petrides <petrides@redhat.com>
+Date: Fri, 3 Aug 2007 17:37:34 -0400
+Subject: [tux] fix crashes during shutdown
+Message-id: 200708032137.l73LbYOB019751@pasta.boston.redhat.com
+O-Subject: [RHEL5.2 patch] fix for tux crashes during shutdown
+Bugzilla: 244439
+
+It is trivial to crash RHEL5 when tux is being shut down due to the
+dereference of a NULL pointer in tux_flush_workqueue().  This is due
+to a missing tux fix, which was present in the original release of RHEL4.
+
+Upon looking through all tux fixes made during RHEL4 updates, I also
+found another pair of fixes for the analogous problem in ftp_send_file()
+that are missing in RHEL5.
+
+The patch below forward-ports all three fixes from RHEL4 to RHEL5.
+
+It was tested simply by starting tux, repeatedly accessing a file
+under /var/www/html from a remote client, and shutting down tux while
+continually reloading the page remotely.  Before the fix, I got 3
+crashes in 3 runs.  After the fix, I repeated the test scenario 5
+times with no crashes (the client gets a "connection refused" error).
+
+This fix addresses RHEL5 BZ 244439:
+
+	kernel panic during tux shutdown on rhel5
+
+(For reference, the associated RHEL4 BZs are 140916 and 172598, although
+the latter has a bogus description due to being cloned from a different
+tux bug.  These bugs do not exist in RHEL3.)
+
+Please ack/nak as appropriate.
+
+Thanks.  -ernie
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Dave Jones <davej@redhat.com>
+---
+ net/tux/input.c     |    3 ++-
+ net/tux/proto_ftp.c |    9 ++++++---
+ 2 files changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/net/tux/input.c b/net/tux/input.c
+index 792ffb4..34275b1 100644
+--- a/net/tux/input.c
++++ b/net/tux/input.c
+@@ -601,7 +601,8 @@ restart:
+ #ifdef CONFIG_TUX_DEBUG
+ 		req->bytes_expected = 0;
+ #endif
+-		req->in_file->f_pos = 0;
++		if (req->in_file)
++			req->in_file->f_pos = 0;
+ 		req->atom_idx = 0;
+ 		clear_keepalive(req);
+ 		req->status = -1;
+diff --git a/net/tux/proto_ftp.c b/net/tux/proto_ftp.c
+index 03ad4f5..2d56416 100644
+--- a/net/tux/proto_ftp.c
++++ b/net/tux/proto_ftp.c
+@@ -623,8 +623,10 @@ void ftp_send_file (tux_req_t *req, int cachemiss)
+ 	SET_TIMESTAMP(req->output_timestamp);
+ repeat:
+ 	ret = generic_send_file(req, req->data_sock, cachemiss);
+-	update_bandwidth(req, req->in_file->f_pos - req->prev_pos);
+-	req->prev_pos = req->in_file->f_pos;
++	if (req->in_file) {
++		update_bandwidth(req, req->in_file->f_pos - req->prev_pos);
++		req->prev_pos = req->in_file->f_pos;
++	}
+ 
+ 	switch (ret) {
+ 		case -5:
+@@ -645,7 +647,8 @@ repeat:
+ 		case -1:
+ 			break;
+ 		default:
+-			req->in_file->f_pos = 0;
++			if (req->in_file)
++				req->in_file->f_pos = 0;
+ 
+ 			if (tux_ftp_wait_close) {
+ 				req->data_sock->ops->shutdown(req->data_sock, SEND_SHUTDOWN);
+-- 
+1.5.3.5.645.gbb47
+

@@ -1,0 +1,444 @@
+From: Jeff Garzik <jgarzik@redhat.com>
+Date: Wed, 19 Dec 2007 07:23:47 -0500
+Subject: [sata] rhel5.2 general kernel prep
+Message-id: 20071219122347.GA25477@devserv.devel.redhat.com
+O-Subject: [RHEL5.2 PATCH 1/2] SATA update - general kernel prep
+Bugzilla: 184884 307911
+
+Prep work for next patch, which addresses 184884 and 307911
+among others.
+
+This is from upstream, except for minor differences:
+
+* kABI requires a shadow struct when "adding" to struct scsi_device
+
+* minor kobject_uevent_env() tweaks for backporting
+
+ drivers/scsi/scsi_lib.c    |  196 +++++++++++++++++++++++++++++++++++++++++++++
+ drivers/scsi/scsi_sysfs.c  |    4
+ include/linux/kobject.h    |    2
+ include/linux/pci_ids.h    |    3
+ include/scsi/scsi_cmnd.h   |    4
+ include/scsi/scsi_device.h |   33 +++++++
+ lib/kobject_uevent.c       |   35 ++++++--
+ 7 files changed, 270 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/scsi/scsi_lib.c b/drivers/scsi/scsi_lib.c
+index a869408..9cd2d39 100644
+--- a/drivers/scsi/scsi_lib.c
++++ b/drivers/scsi/scsi_lib.c
+@@ -1994,6 +1994,202 @@ scsi_device_set_state(struct scsi_device *sdev, enum scsi_device_state state)
+ EXPORT_SYMBOL(scsi_device_set_state);
+ 
+ /**
++ * 	sdev_evt_emit - emit a single SCSI device uevent
++ *	@sdev: associated SCSI device
++ *	@evt: event to emit
++ *
++ *	Send a single uevent (scsi_event) to the associated scsi_device.
++ */
++static void scsi_evt_emit(struct scsi_device *sdev, struct scsi_event *evt)
++{
++	int idx = 0;
++	char *envp[3];
++
++	switch (evt->evt_type) {
++	case SDEV_EVT_MEDIA_CHANGE:
++		envp[idx++] = "SDEV_MEDIA_CHANGE=1";
++		break;
++
++	default:
++		/* do nothing */
++		break;
++	}
++
++	envp[idx++] = NULL;
++
++	kobject_uevent_env(&sdev->sdev_gendev.kobj, KOBJ_CHANGE, envp);
++}
++
++/**
++ * 	sdev_evt_thread - send a uevent for each scsi event
++ *	@work: work struct for scsi_device
++ *
++ *	Dispatch queued events to their associated scsi_device kobjects
++ *	as uevents.
++ */
++void scsi_evt_thread(void *opaque)
++{
++	struct scsi_device *sdev = opaque;
++	struct scsi_device_shadow *shdev = sdev_shadow(sdev);
++	LIST_HEAD(event_list);
++
++	if (!shdev)
++		return;
++
++	while (1) {
++		struct scsi_event *evt;
++		struct list_head *this, *tmp;
++		unsigned long flags;
++
++		spin_lock_irqsave(&sdev->list_lock, flags);
++		list_splice_init(&shdev->event_list, &event_list);
++		spin_unlock_irqrestore(&sdev->list_lock, flags);
++
++		if (list_empty(&event_list))
++			break;
++
++		list_for_each_safe(this, tmp, &event_list) {
++			evt = list_entry(this, struct scsi_event, node);
++			list_del(&evt->node);
++			scsi_evt_emit(sdev, evt);
++			kfree(evt);
++		}
++	}
++}
++
++/**
++ * 	sdev_evt_send - send asserted event to uevent thread
++ *	@sdev: scsi_device event occurred on
++ *	@evt: event to send
++ *
++ *	Assert scsi device event asynchronously.
++ */
++void sdev_evt_send(struct scsi_device *sdev, struct scsi_event *evt)
++{
++	struct scsi_device_shadow *shdev = sdev_shadow(sdev);
++	unsigned long flags;
++
++	if (!shdev)
++		return;
++
++	if (!test_bit(evt->evt_type, shdev->supported_events)) {
++		kfree(evt);
++		return;
++	}
++
++	spin_lock_irqsave(&sdev->list_lock, flags);
++	list_add_tail(&evt->node, &shdev->event_list);
++	schedule_work(&shdev->event_work);
++	spin_unlock_irqrestore(&sdev->list_lock, flags);
++}
++EXPORT_SYMBOL_GPL(sdev_evt_send);
++
++/**
++ * 	sdev_evt_alloc - allocate a new scsi event
++ *	@evt_type: type of event to allocate
++ *	@gfpflags: GFP flags for allocation
++ *
++ *	Allocates and returns a new scsi_event.
++ */
++struct scsi_event *sdev_evt_alloc(enum scsi_device_event evt_type,
++				  gfp_t gfpflags)
++{
++	struct scsi_event *evt = kzalloc(sizeof(struct scsi_event), gfpflags);
++	if (!evt)
++		return NULL;
++
++	evt->evt_type = evt_type;
++	INIT_LIST_HEAD(&evt->node);
++
++	/* evt_type-specific initialization, if any */
++	switch (evt_type) {
++	case SDEV_EVT_MEDIA_CHANGE:
++	default:
++		/* do nothing */
++		break;
++	}
++
++	return evt;
++}
++EXPORT_SYMBOL_GPL(sdev_evt_alloc);
++
++/**
++ * 	sdev_evt_send_simple - send asserted event to uevent thread
++ *	@sdev: scsi_device event occurred on
++ *	@evt_type: type of event to send
++ *	@gfpflags: GFP flags for allocation
++ *
++ *	Assert scsi device event asynchronously, given an event type.
++ */
++void sdev_evt_send_simple(struct scsi_device *sdev,
++			  enum scsi_device_event evt_type, gfp_t gfpflags)
++{
++	struct scsi_event *evt = sdev_evt_alloc(evt_type, gfpflags);
++	if (!evt) {
++		sdev_printk(KERN_ERR, sdev, "event %d eaten due to OOM\n",
++			    evt_type);
++		return;
++	}
++
++	sdev_evt_send(sdev, evt);
++}
++EXPORT_SYMBOL_GPL(sdev_evt_send_simple);
++
++static LIST_HEAD(sdev_shadow_list);
++
++struct scsi_device_shadow *sdev_shadow(struct scsi_device *sdev)
++{
++	struct scsi_device_shadow *shdev;
++
++	list_for_each_entry(shdev, &sdev_shadow_list, shadow_node) {
++		if (shdev->sdev == sdev)
++			return shdev;
++	}
++
++	shdev = kzalloc(sizeof(*shdev), GFP_ATOMIC);
++	if (shdev) {
++		shdev->sdev = sdev;
++		INIT_LIST_HEAD(&shdev->event_list);
++		INIT_WORK(&shdev->event_work, scsi_evt_thread, sdev);
++		INIT_LIST_HEAD(&shdev->shadow_node);
++
++		list_add(&shdev->shadow_node, &sdev_shadow_list);
++	}
++
++	return shdev;
++}
++
++EXPORT_SYMBOL(sdev_shadow);
++
++void sdev_shadow_release(struct scsi_device *sdev)
++{
++	struct scsi_device_shadow *shdev = NULL, *shtmp;
++	struct list_head *this, *tmp;
++
++	list_for_each_entry(shtmp, &sdev_shadow_list, shadow_node) {
++		if (shtmp->sdev == sdev) {
++			shdev = shtmp;
++			break;
++		}
++	}
++	if (!shdev)
++		return;
++
++	flush_scheduled_work();
++
++	list_for_each_safe(this, tmp, &shdev->event_list) {
++		struct scsi_event *evt;
++
++		evt = list_entry(this, struct scsi_event, node);
++		list_del(&evt->node);
++		kfree(evt);
++	}
++
++	list_del(&shdev->shadow_node);
++	kfree(shdev);
++}
++
++/**
+  *	scsi_device_quiesce - Block user issued commands.
+  *	@sdev:	scsi device to quiesce.
+  *
+diff --git a/drivers/scsi/scsi_sysfs.c b/drivers/scsi/scsi_sysfs.c
+index e7fe565..48676b7 100644
+--- a/drivers/scsi/scsi_sysfs.c
++++ b/drivers/scsi/scsi_sysfs.c
+@@ -216,6 +216,8 @@ static void scsi_device_cls_release(struct class_device *class_dev)
+ 	put_device(&sdev->sdev_gendev);
+ }
+ 
++extern void sdev_shadow_release(struct scsi_device *sdev);
++
+ static void scsi_device_dev_release_usercontext(void *data)
+ {
+ 	struct device *dev = data;
+@@ -235,6 +237,8 @@ static void scsi_device_dev_release_usercontext(void *data)
+ 	list_del(&sdev->starved_entry);
+ 	spin_unlock_irqrestore(sdev->host->host_lock, flags);
+ 
++	sdev_shadow_release(sdev);
++
+ 	if (sdev->request_queue) {
+ 		sdev->request_queue->queuedata = NULL;
+ 		/* user context needed to free queue */
+diff --git a/include/linux/kobject.h b/include/linux/kobject.h
+index 2d22932..0b69c70 100644
+--- a/include/linux/kobject.h
++++ b/include/linux/kobject.h
+@@ -262,6 +262,8 @@ extern int subsys_create_file(struct subsystem * , struct subsys_attribute *);
+ 
+ #if defined(CONFIG_HOTPLUG)
+ void kobject_uevent(struct kobject *kobj, enum kobject_action action);
++int kobject_uevent_env(struct kobject *kobj, enum kobject_action action,
++			char *envp[]);
+ 
+ int add_uevent_var(char **envp, int num_envp, int *cur_index,
+ 			char *buffer, int buffer_size, int *cur_len,
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+index 4a41a2c..1edb2a8 100644
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -1226,6 +1226,8 @@
+ #define PCI_DEVICE_ID_NVIDIA_NVENET_26              0x054E
+ #define PCI_DEVICE_ID_NVIDIA_NVENET_27              0x054F
+ #define PCI_DEVICE_ID_NVIDIA_NFORCE_MCP67_IDE       0x0560
++#define PCI_DEVICE_ID_NVIDIA_NFORCE_MCP73_IDE       0x056C
++#define PCI_DEVICE_ID_NVIDIA_NFORCE_MCP77_IDE       0x0759
+ 
+ #define PCI_VENDOR_ID_IMS		0x10e0
+ #define PCI_DEVICE_ID_IMS_TT128		0x9128
+@@ -1336,6 +1338,7 @@
+ #define PCI_DEVICE_ID_VIA_8231_4	0x8235
+ #define PCI_DEVICE_ID_VIA_8365_1	0x8305
+ #define PCI_DEVICE_ID_VIA_CX700		0x8324
++#define PCI_DEVICE_ID_VIA_VX800		0x8353
+ #define PCI_DEVICE_ID_VIA_8371_1	0x8391
+ #define PCI_DEVICE_ID_VIA_82C598_1	0x8598
+ #define PCI_DEVICE_ID_VIA_838X_1	0xB188
+diff --git a/include/scsi/scsi_device.h b/include/scsi/scsi_device.h
+index fd75b43..af224bb 100644
+--- a/include/scsi/scsi_device.h
++++ b/include/scsi/scsi_device.h
+@@ -45,6 +45,22 @@ enum scsi_device_state {
+ 				 * to the scsi lld. */
+ };
+ 
++enum scsi_device_event {
++	SDEV_EVT_MEDIA_CHANGE	= 1,	/* media has changed */
++
++	SDEV_EVT_LAST		= SDEV_EVT_MEDIA_CHANGE,
++	SDEV_EVT_MAXBITS	= SDEV_EVT_LAST + 1
++};
++
++struct scsi_event {
++	enum scsi_device_event	evt_type;
++	struct list_head	node;
++
++	/* put union of data structures, for non-simple event types,
++	 * here
++	 */
++};
++
+ struct scsi_device {
+ 	struct Scsi_Host *host;
+ 	struct request_queue *request_queue;
+@@ -161,6 +177,17 @@ struct scsi_device {
+ #define scmd_printk(prefix, scmd, fmt, a...)	\
+ 	dev_printk(prefix, &(scmd)->device->sdev_gendev, fmt, ##a)
+ 
++struct scsi_device_shadow {
++#ifndef __GENKSYMS__
++	struct scsi_device	*sdev;
++	DECLARE_BITMAP(supported_events, SDEV_EVT_MAXBITS); /* supported events */
++	struct list_head	event_list;	/* asserted events */
++	struct work_struct	event_work;
++
++	struct list_head	shadow_node;
++#endif
++};
++
+ enum scsi_target_state {
+ 	STARGET_RUNNING = 1,
+ 	STARGET_DEL,
+@@ -203,6 +230,7 @@ static inline struct scsi_target *scsi_target(struct scsi_device *sdev)
+ #define starget_printk(prefix, starget, fmt, a...)	\
+ 	dev_printk(prefix, &(starget)->dev, fmt, ##a)
+ 
++extern struct scsi_device_shadow *sdev_shadow(struct scsi_device *);
+ extern struct scsi_device *__scsi_add_device(struct Scsi_Host *,
+ 		uint, uint, uint, void *hostdata);
+ extern int scsi_add_device(struct Scsi_Host *host, uint channel,
+@@ -275,6 +303,11 @@ extern int scsi_test_unit_ready(struct scsi_device *sdev, int timeout,
+ 				int retries);
+ extern int scsi_device_set_state(struct scsi_device *sdev,
+ 				 enum scsi_device_state state);
++extern struct scsi_event *sdev_evt_alloc(enum scsi_device_event evt_type,
++					  gfp_t gfpflags);
++extern void sdev_evt_send(struct scsi_device *sdev, struct scsi_event *evt);
++extern void sdev_evt_send_simple(struct scsi_device *sdev,
++			  enum scsi_device_event evt_type, gfp_t gfpflags);
+ extern int scsi_device_quiesce(struct scsi_device *sdev);
+ extern void scsi_device_resume(struct scsi_device *sdev);
+ extern void scsi_target_quiesce(struct scsi_target *);
+diff --git a/lib/kobject_uevent.c b/lib/kobject_uevent.c
+index 7f20e7b..b8db06b 100644
+--- a/lib/kobject_uevent.c
++++ b/lib/kobject_uevent.c
+@@ -61,7 +61,8 @@ static char *action_to_string(enum kobject_action action)
+  * @action: action that is happening (usually KOBJ_ADD and KOBJ_REMOVE)
+  * @kobj: struct kobject that the action is happening to
+  */
+-void kobject_uevent(struct kobject *kobj, enum kobject_action action)
++int kobject_uevent_env(struct kobject *kobj, enum kobject_action action,
++		       char *envp_ext[])
+ {
+ 	char **envp;
+ 	char *buffer;
+@@ -74,14 +75,14 @@ void kobject_uevent(struct kobject *kobj, enum kobject_action action)
+ 	struct kset_uevent_ops *uevent_ops;
+ 	u64 seq;
+ 	char *seq_buff;
+-	int i = 0;
++	int i = 0, j;
+ 	int retval;
+ 
+ 	pr_debug("%s\n", __FUNCTION__);
+ 
+ 	action_string = action_to_string(action);
+ 	if (!action_string)
+-		return;
++		return 0;
+ 
+ 	/* search the kset we belong to */
+ 	top_kobj = kobj;
+@@ -91,7 +92,7 @@ void kobject_uevent(struct kobject *kobj, enum kobject_action action)
+ 		} while (!top_kobj->kset && top_kobj->parent);
+ 	}
+ 	if (!top_kobj->kset)
+-		return;
++		return 0;
+ 
+ 	kset = top_kobj->kset;
+ 	uevent_ops = kset->uevent_ops;
+@@ -99,12 +100,12 @@ void kobject_uevent(struct kobject *kobj, enum kobject_action action)
+ 	/*  skip the event, if the filter returns zero. */
+ 	if (uevent_ops && uevent_ops->filter)
+ 		if (!uevent_ops->filter(kset, kobj))
+-			return;
++			return 0;
+ 
+ 	/* environment index */
+ 	envp = kzalloc(NUM_ENVP * sizeof (char *), GFP_KERNEL);
+ 	if (!envp)
+-		return;
++		return -ENOMEM;
+ 
+ 	/* environment values */
+ 	buffer = kmalloc(BUFFER_SIZE, GFP_KERNEL);
+@@ -139,6 +140,11 @@ void kobject_uevent(struct kobject *kobj, enum kobject_action action)
+ 	envp[i++] = seq_buff = scratch;
+ 	scratch += strlen("SEQNUM=18446744073709551616") + 1;
+ 
++	/* keys passed in from the caller */
++	if (envp_ext)
++		for (j = 0; envp_ext[j]; j++)
++			envp[i++] = envp_ext[j];
++
+ 	/* let the kset specific function add its stuff */
+ 	if (uevent_ops && uevent_ops->uevent) {
+ 		retval = uevent_ops->uevent(kset, kobj,
+@@ -198,7 +204,22 @@ exit:
+ 	kfree(devpath);
+ 	kfree(buffer);
+ 	kfree(envp);
+-	return;
++	return 0;
++}
++EXPORT_SYMBOL_GPL(kobject_uevent_env);
++
++/**
++ * kobject_uevent - notify userspace by ending an uevent
++ *
++ * @action: action that is happening
++ * @kobj: struct kobject that the action is happening to
++ *
++ * Returns 0 if kobject_uevent() is completed with success or the
++ * corresponding error when it fails.
++ */
++void kobject_uevent(struct kobject *kobj, enum kobject_action action)
++{
++	kobject_uevent_env(kobj, action, NULL);
+ }
+ EXPORT_SYMBOL_GPL(kobject_uevent);
+ 

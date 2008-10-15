@@ -1,0 +1,228 @@
+From: Brian Maly <bmaly@redhat.com>
+Subject: Re: [RHEL5.1 patch] rtc support for HPET legacy replacement mode
+Date: Thu, 14 Jun 2007 11:52:39 -0400
+Bugzilla: 220196
+Message-Id: <46716447.5060701@redhat.com>
+Changelog: [x86] rtc support for HPET legacy replacement mode
+
+
+Don Zickus wrote:
+>On Wed, Jun 06, 2007 at 08:43:03PM -0400, Brian Maly wrote:
+>  
+>>resolves BZ 220196
+>>
+>>The IBM x460/x3950 platform does not support HPET Legacy Replacement 
+>>mode for rtc. With HPET enabled, the RTC driver currently doesn't 
+>>correctly handle legacy replacement mode in its HPET emulation code. 
+>>This is a generic issue and a patch is being developed to submit upstream.
+>>
+>>When an HPET is present the RTC driver relies on the HPET's capabality 
+>>to emulate update/periodic/alarm interrupts for the RTC. This is 
+>>necessary when the HPET operates in legacy replacement mode where the 
+>>RTC interrupt line is not connected. However if the HPET is not in 
+>>legacy replacement mode the RTC still has its own interrupt line 
+>>connected and is expected to generate its own interrupts. Currently the 
+>>RTC driver checks for the presence of an HPET using the 
+>>is_hpet_enabled() function. In cases where the HPET is not in legacy 
+>>replacement mode this leads to no RTC interrupts being generated at all 
+>>and to the failure of commands that rely on them such as hwclock. The 
+>>attached patch addresses this situation by having the RTC check for
+>>the presence of an HPET and for legacy replacement support. It does so 
+>>through the introduction of a new function is_hpet_legacy_int_enabled() 
+>>which is used only in conjuction with the HPET RTC emulation code.  The 
+>>patch fixes a problem that affects all systems that use an HPET and 
+>>where the HPET doesn't use the Legacy Replacement option for interrupt 
+>>mapping.
+>>
+>>
+>>Ive tested that this patch works on out x460, and IBM completed in house 
+>>testing of this patch on affected hardware without any problems.
+>>    
+>
+
+--- linux-2.6.18.noarch/arch/x86_64/kernel/time.c.orig	2007-06-06 13:21:54.000000000 -0400
++++ linux-2.6.18.noarch/arch/x86_64/kernel/time.c	2007-06-06 14:24:47.000000000 -0400
+@@ -1166,6 +1166,11 @@ int is_hpet_enabled(void)
+ 	return vxtime.hpet_address != 0;
+ }
+ 
++int is_hpet_legacy_int_enabled()
++{
++	return (is_hpet_enabled() && hpet_use_timer);
++}
++
+ /*
+  * Timer 1 for RTC, we do not use periodic interrupt feature,
+  * even if HPET supports periodic interrupts on Timer 1.
+@@ -1182,7 +1187,7 @@ int hpet_rtc_timer_init(void)
+ 	unsigned int cfg, cnt;
+ 	unsigned long flags;
+ 
+-	if (!is_hpet_enabled())
++	if (!is_hpet_legacy_int_enabled())
+ 		return 0;
+ 	/*
+ 	 * Set the counter 1 and enable the interrupts.
+@@ -1237,7 +1242,7 @@ static void hpet_rtc_timer_reinit(void)
+  */
+ int hpet_mask_rtc_irq_bit(unsigned long bit_mask)
+ {
+-	if (!is_hpet_enabled())
++	if (!is_hpet_legacy_int_enabled())
+ 		return 0;
+ 
+ 	if (bit_mask & RTC_UIE)
+@@ -1254,7 +1259,7 @@ int hpet_set_rtc_irq_bit(unsigned long b
+ {
+ 	int timer_init_reqd = 0;
+ 
+-	if (!is_hpet_enabled())
++	if (!is_hpet_legacy_int_enabled())
+ 		return 0;
+ 
+ 	if (!(PIE_on | AIE_on | UIE_on))
+@@ -1279,7 +1284,7 @@ int hpet_set_rtc_irq_bit(unsigned long b
+ 
+ int hpet_set_alarm_time(unsigned char hrs, unsigned char min, unsigned char sec)
+ {
+-	if (!is_hpet_enabled())
++	if (!is_hpet_legacy_int_enabled())
+ 		return 0;
+ 
+ 	alarm_time.tm_hour = hrs;
+@@ -1291,7 +1296,7 @@ int hpet_set_alarm_time(unsigned char hr
+ 
+ int hpet_set_periodic_freq(unsigned long freq)
+ {
+-	if (!is_hpet_enabled())
++	if (!is_hpet_legacy_int_enabled())
+ 		return 0;
+ 
+ 	PIE_freq = freq;
+@@ -1302,7 +1307,7 @@ int hpet_set_periodic_freq(unsigned long
+ 
+ int hpet_rtc_dropped_irq(void)
+ {
+-	if (!is_hpet_enabled())
++	if (!is_hpet_legacy_int_enabled())
+ 		return 0;
+ 
+ 	return 1;
+--- linux-2.6.18.noarch/arch/i386/kernel/time_hpet.c.orig	2007-06-06 13:21:47.000000000 -0400
++++ linux-2.6.18.noarch/arch/i386/kernel/time_hpet.c	2007-06-06 14:24:47.000000000 -0400
+@@ -224,6 +224,11 @@ int is_hpet_enabled(void)
+ 	return use_hpet;
+ }
+ 
++int is_hpet_legacy_int_enabled()
++{
++	return (is_hpet_enabled() && hpet_use_timer);
++}
++
+ int is_hpet_capable(void)
+ {
+ 	if (!boot_hpet_disable && hpet_address)
+@@ -292,7 +297,7 @@ int hpet_rtc_timer_init(void)
+ 	unsigned int cfg, cnt;
+ 	unsigned long flags;
+ 
+-	if (!is_hpet_enabled())
++	if (!is_hpet_legacy_int_enabled())
+ 		return 0;
+ 	/*
+ 	 * Set the counter 1 and enable the interrupts.
+@@ -347,7 +352,7 @@ static void hpet_rtc_timer_reinit(void)
+  */
+ int hpet_mask_rtc_irq_bit(unsigned long bit_mask)
+ {
+-	if (!is_hpet_enabled())
++	if (!is_hpet_legacy_int_enabled())
+ 		return 0;
+ 
+ 	if (bit_mask & RTC_UIE)
+@@ -364,7 +369,7 @@ int hpet_set_rtc_irq_bit(unsigned long b
+ {
+ 	int timer_init_reqd = 0;
+ 
+-	if (!is_hpet_enabled())
++	if (!is_hpet_legacy_int_enabled())
+ 		return 0;
+ 
+ 	if (!(PIE_on | AIE_on | UIE_on))
+@@ -389,7 +394,7 @@ int hpet_set_rtc_irq_bit(unsigned long b
+ 
+ int hpet_set_alarm_time(unsigned char hrs, unsigned char min, unsigned char sec)
+ {
+-	if (!is_hpet_enabled())
++	if (!is_hpet_legacy_int_enabled())
+ 		return 0;
+ 
+ 	alarm_time.tm_hour = hrs;
+@@ -401,7 +406,7 @@ int hpet_set_alarm_time(unsigned char hr
+ 
+ int hpet_set_periodic_freq(unsigned long freq)
+ {
+-	if (!is_hpet_enabled())
++	if (!is_hpet_legacy_int_enabled())
+ 		return 0;
+ 
+ 	PIE_freq = freq;
+@@ -412,7 +417,7 @@ int hpet_set_periodic_freq(unsigned long
+ 
+ int hpet_rtc_dropped_irq(void)
+ {
+-	if (!is_hpet_enabled())
++	if (!is_hpet_legacy_int_enabled())
+ 		return 0;
+ 
+ 	return 1;
+--- linux-2.6.18.noarch/drivers/char/rtc.c.orig	2007-06-06 14:23:50.000000000 -0400
++++ linux-2.6.18.noarch/drivers/char/rtc.c	2007-06-06 14:24:47.000000000 -0400
+@@ -106,7 +106,7 @@ static int rtc_has_irq = 1;
+ #endif
+ 
+ #ifndef CONFIG_HPET_EMULATE_RTC
+-#define is_hpet_enabled()			0
++#define is_hpet_legacy_int_enabled()		0
+ #define hpet_set_alarm_time(hrs, min, sec) 	0
+ #define hpet_set_periodic_freq(arg) 		0
+ #define hpet_mask_rtc_irq_bit(arg) 		0
+@@ -241,7 +241,7 @@ irqreturn_t rtc_interrupt(int irq, void 
+ 	spin_lock (&rtc_lock);
+ 	rtc_irq_data += 0x100;
+ 	rtc_irq_data &= ~0xff;
+-	if (is_hpet_enabled()) {
++	if (is_hpet_legacy_int_enabled()) {
+ 		/*
+ 		 * In this case it is HPET RTC interrupt handler
+ 		 * calling us, with the interrupt information
+@@ -988,7 +988,7 @@ no_irq:
+ 	}
+ 
+ #ifdef RTC_IRQ
+-	if (is_hpet_enabled()) {
++	if (is_hpet_legacy_int_enabled()) {
+ 		rtc_int_handler_ptr = hpet_rtc_interrupt;
+ 	} else {
+ 		rtc_int_handler_ptr = rtc_interrupt;
+--- linux-2.6.18.noarch/include/asm-x86_64/hpet.h.orig	2007-06-06 14:24:07.000000000 -0400
++++ linux-2.6.18.noarch/include/asm-x86_64/hpet.h	2007-06-06 14:24:47.000000000 -0400
+@@ -54,6 +54,7 @@
+ #define HPET_TICK_RATE (HZ * 100000UL)
+ 
+ extern int is_hpet_enabled(void);
++extern int is_hpet_legacy_int_enabled(void);
+ extern int hpet_rtc_timer_init(void);
+ extern int apic_is_clustered_box(void);
+ 
+--- linux-2.6.18.noarch/include/asm-i386/hpet.h.orig	2007-06-06 14:24:00.000000000 -0400
++++ linux-2.6.18.noarch/include/asm-i386/hpet.h	2007-06-06 14:24:47.000000000 -0400
+@@ -98,6 +98,7 @@ extern int hpet_rtc_timer_init(void);
+ extern int hpet_enable(void);
+ extern int hpet_reenable(void);
+ extern int is_hpet_enabled(void);
++extern int is_hpet_legacy_int_enabled(void);
+ extern int is_hpet_capable(void);
+ extern int hpet_readl(unsigned long a);
+ 
+

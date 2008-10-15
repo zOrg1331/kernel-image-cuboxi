@@ -1,0 +1,64 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 16 Nov 2007 13:56:34 +0100
+Subject: [s390] qeth: crash during activation of OSA-cards
+Message-id: 20071116125634.GO6053@redhat.com
+O-Subject: [RHEL5 U2 PATCH 7/14] s390 - qeth: crash during activation of OSA-cards
+Bugzilla: 380981
+
+Description
+============
+
+If qeth_set_multicast_list() is performed on 2 CPUs in
+parallel, card->ip_list may end corrupted.
+
+How the patch addresses this problem:
+
+In function __qeth_delete_all_mc()
+remove card->ip_list entry before invoking
+qeth_deregister_addr_entry(). Thus a 2nd invocation of
+qeth_set_multicast_list() cannot try to remove the
+same entry twice.
+
+Bugzilla
+=========
+
+BZ 380981
+https://bugzilla.redhat.com/show_bug.cgi?id=380981
+
+Upstream status of the patch:
+=============================
+Patch has been submitted upstream:
+http://www.mail-archive.com/netdev@vger.kernel.org/msg49675.html
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index 0150f93..51f9fd9 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -803,14 +803,16 @@ __qeth_delete_all_mc(struct qeth_card *card, unsigned long *flags)
+ again:
+ 	list_for_each_entry_safe(addr, tmp, &card->ip_list, entry) {
+ 		if (addr->is_multicast) {
++			list_del(&addr->entry);
+ 			spin_unlock_irqrestore(&card->ip_lock, *flags);
+ 			rc = qeth_deregister_addr_entry(card, addr);
+ 			spin_lock_irqsave(&card->ip_lock, *flags);
+ 			if (!rc) {
+-				list_del(&addr->entry);
+ 				kfree(addr);
+ 				goto again;
+ 			}
++			else
++				list_add(&addr->entry, &card->ip_list);
+ 		}
+ 	}
+ }

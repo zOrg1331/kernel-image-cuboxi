@@ -1,0 +1,107 @@
+From: Neil Horman <nhorman@redhat.com>
+Subject: [RHEL5] Patch: allow HP ZX1 systems to initalize swiotlb in kdump
+Date: Mon, 18 Dec 2006 14:03:42 -0500
+Bugzilla: 220064
+Message-Id: <20061218190342.GA18584@hmsendeavour.rdu.redhat.com>
+Changelog: ia64: allow HP ZX1 systems to initalize swiotlb in kdump
+
+
+Hey all-
+	HP sent me this patch today and I wanted to get it posted ASAP.  This
+patch will auto initalize the swiotlb on HP ZX1 systems.  Without this patch
+these systems hang on kdump kernel boots.  We currently work around this via a
+hack in kexec-tools, but we'd really like to remove that if we can.  This has
+been tested successfully by Terry L. at HP and from my review is fairly well
+isolated to HP code, and so is harmless to anyone else.  Fixes BZ 220064.
+Please ACK. 
+
+Neil
+
+
+--- linux-2.6.18.noarch/arch/ia64/kernel/setup.c.orig	2006-11-15 13:46:24.000000000 -0500
++++ linux-2.6.18.noarch/arch/ia64/kernel/setup.c	2006-12-18 13:57:35.000000000 -0500
+@@ -62,6 +62,7 @@
+ #include <asm/system.h>
+ #include <asm/unistd.h>
+ #include <asm/system.h>
++#include <asm/kexec.h>
+ #ifdef CONFIG_XEN
+ #include <asm/hypervisor.h>
+ #endif
+@@ -131,6 +132,8 @@ EXPORT_SYMBOL(ia64_iobase);
+ struct io_space io_space[MAX_IO_SPACES];
+ EXPORT_SYMBOL(io_space);
+ unsigned int num_io_spaces;
++int kdump_kernel;
++EXPORT_SYMBOL(kdump_kernel);
+ 
+ /*
+  * "flush_icache_range()" needs to know what processor dependent stride size to use
+@@ -540,6 +543,8 @@ setup_arch (char **cmdline_p)
+ 	*cmdline_p = __va(ia64_boot_param->command_line);
+ 	strlcpy(saved_command_line, *cmdline_p, COMMAND_LINE_SIZE);
+ 
++	kdump_kernel = (strstr(saved_command_line, "elfcorehdr=") != NULL);
++
+ 	efi_init();
+ 	io_port_init();
+ 
+--- linux-2.6.18.noarch/arch/ia64/hp/common/sba_iommu.c.orig	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.noarch/arch/ia64/hp/common/sba_iommu.c	2006-12-18 13:57:35.000000000 -0500
+@@ -40,9 +40,12 @@
+ #include <asm/page.h>		/* PAGE_OFFSET */
+ #include <asm/dma.h>
+ #include <asm/system.h>		/* wmb() */
++#include <asm/kexec.h>
+ 
+ #include <asm/acpi-ext.h>
+ 
++extern int swiotlb_late_init_with_default_size (size_t size);
++
+ #define PFX "IOC: "
+ 
+ /*
+@@ -2030,11 +2033,22 @@ sba_init(void)
+ 	if (!ia64_platform_is("hpzx1") && !ia64_platform_is("hpzx1_swiotlb"))
+ 		return 0;
+ 
++    /* If we are booting a kdump kernel, the sba_iommu will
++	 * cause devices that were not shutdown properly to MCA
++     * as soon as they are turned back on.  Our only option for
++	 * a successful kdump kernel boot is to use the swiotlb:
++	 */
++	if (kdump_kernel) {
++		if (swiotlb_late_init_with_default_size(64 * (1<<20)) != 0)
++			panic("Unable to initialize software I/O TLB:"
++				" Try machvec=dig boot option");
++		machvec_init("dig");
++		return 0;
++	}
++
+ 	acpi_bus_register_driver(&acpi_sba_ioc_driver);
+ 	if (!ioc_list) {
+ #ifdef CONFIG_IA64_GENERIC
+-		extern int swiotlb_late_init_with_default_size (size_t size);
+-
+ 		/*
+ 		 * If we didn't find something sba_iommu can claim, we
+ 		 * need to setup the swiotlb and switch to the dig machvec.
+--- linux-2.6.18.noarch/include/asm-ia64/kexec.h.orig	2006-11-15 13:46:21.000000000 -0500
++++ linux-2.6.18.noarch/include/asm-ia64/kexec.h	2006-12-18 13:57:35.000000000 -0500
+@@ -49,5 +49,6 @@ extern unsigned long kdump_find_rsvd_reg
+ extern void kdump_cpu_freeze(struct unw_frame_info *info, void *arg);
+ extern int kdump_status[];
+ extern atomic_t kdump_cpu_freezed;
++extern int kdump_kernel;
+ 
+ #endif /* _ASM_IA64_KEXEC_H */
+-- 
+/***************************************************
+ *Neil Horman
+ *Software Engineer
+ *Red Hat, Inc.
+ *nhorman@redhat.com
+ *gpg keyid: 1024D / 0x92A74FA1
+ *http://pgp.mit.edu
+ ***************************************************/
+

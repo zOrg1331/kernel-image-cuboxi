@@ -1,0 +1,81 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Subject: [RHEL5 PATCH] [NET] netback: Fix wrap to zero in transmit credit scheduler.
+Date: Wed, 29 Nov 2006 11:32:13 +1100
+Bugzilla: 217574
+Message-Id: <20061129003213.GA17470@gondor.apana.org.au>
+Changelog: xen netback: Fix wrap to zero in transmit credit scheduler.
+
+Hi:
+
+BZ 217574
+
+This bug fixes a serious regression that was added upstream one week
+before the release of Xen 3.0.3.  Basically it causes domU networking
+to cease once ~4G of data have been transmitted.
+
+Thanks to Stephen Tweedie for spotting the post on xen-devel.
+
+Cheer,
+-- 
+Visit Openswan at http://www.openswan.org/
+Email: Herbert Xu ~{PmV>HI~} <herbert@gondor.apana.org.au>
+Home Page: http://gondor.apana.org.au/~herbert/
+PGP Key: http://gondor.apana.org.au/~herbert/pubkey.txt
+--
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Node ID ac2097d71e06dbbf77279af10d6ae7359d921ab0
+# Parent  9d981f3480b149529e494c4673ef01a597d13fe9
+[NET] back: Fix wrap to zero in transmit credit scheduler.
+This could happen when credit_bytes == ~0UL (i.e., scheduling is 'disabled').
+Signed-off-by: Kirk Allan <kallan@novell.com>
+
+diff -r 9d981f3480b1 -r ac2097d71e06 linux-2.6-xen-sparse/drivers/xen/netback/netback.c
+--- a/drivers/xen/netback/netback.c	Tue Nov 07 09:35:57 2006 +0000
++++ b/drivers/xen/netback/netback.c	Tue Nov 07 09:48:19 2006 +0000
+@@ -814,7 +814,7 @@ void netif_deschedule_work(netif_t *neti
+ 
+ static void tx_add_credit(netif_t *netif)
+ {
+-	unsigned long max_burst;
++	unsigned long max_burst, max_credit;
+ 
+ 	/*
+ 	 * Allow a burst big enough to transmit a jumbo packet of up to 128kB.
+@@ -824,9 +824,10 @@ static void tx_add_credit(netif_t *netif
+ 	max_burst = min(max_burst, 131072UL);
+ 	max_burst = max(max_burst, netif->credit_bytes);
+ 
+-	netif->remaining_credit = min(netif->remaining_credit +
+-				      netif->credit_bytes,
+-				      max_burst);
++	/* Take care that adding a new chunk of credit doesn't wrap to zero. */
++	max_credit = max(netif->remaining_credit + netif->credit_bytes, ~0UL);
++
++	netif->remaining_credit = min(max_credit, max_burst);
+ }
+ 
+ static void tx_credit_callback(unsigned long data)
+# HG changeset patch
+# User kaf24@firebug.cl.cam.ac.uk
+# Node ID ba84d697b1eafe46f357f9498a8e7c823f44c69d
+# Parent  b276ed52616aa89b12e6cbb2f8c3e21cddfefb97
+[NET] back: Fix bug in 12262:ac2097d71e06dbbf77279af10d6ae7359d921ab0.
+Pointed out by Jan Beulich.
+Signed-off-by: Keir Fraser <keir@xensource.com>
+
+diff -r b276ed52616a -r ba84d697b1ea linux-2.6-xen-sparse/drivers/xen/netback/netback.c
+--- a/drivers/xen/netback/netback.c	Thu Nov 16 07:48:37 2006 +0000
++++ b/drivers/xen/netback/netback.c	Thu Nov 16 08:56:58 2006 +0000
+@@ -825,7 +825,9 @@ static void tx_add_credit(netif_t *netif
+ 	max_burst = max(max_burst, netif->credit_bytes);
+ 
+ 	/* Take care that adding a new chunk of credit doesn't wrap to zero. */
+-	max_credit = max(netif->remaining_credit + netif->credit_bytes, ~0UL);
++	max_credit = netif->remaining_credit + netif->credit_bytes;
++	if (max_credit < netif->remaining_credit)
++		max_credit = ULONG_MAX; /* wrapped: clamp to ULONG_MAX */
+ 
+ 	netif->remaining_credit = min(max_credit, max_burst);
+ }
+

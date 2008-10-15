@@ -1,0 +1,35 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Fri, 7 Dec 2007 19:02:12 -0500
+Subject: [net] s2io: correct VLAN frame reception
+Message-id: 20071208000210.GH28709@gospo.usersys.redhat.com
+O-Subject: [RHEL5.2 PATCH 2/2] s2io: correct VLAN frame reception
+Bugzilla: 354451
+
+This was a recently discovered problem with initialization of s2io
+interfaces.  By default, the current hardware strips VLAN tags from all
+frames.  The vlan_strip_flag is used by the driver to determine how to
+receive a frame -- it was not in sync with the hardware before applying
+this patch.  vlan_strip_flag would be zero and frames would come out
+without a tag.
+
+This was posted upstream today and Jeff agreed to add it to netdev
+during his next round.
+
+This will resolve BZ 354451.
+
+diff --git a/drivers/net/s2io.c b/drivers/net/s2io.c
+index 5b146ee..bd5d336 100644
+--- a/drivers/net/s2io.c
++++ b/drivers/net/s2io.c
+@@ -2058,6 +2058,11 @@ static int start_nic(struct s2io_nic *nic)
+ 		val64 &= ~RX_PA_CFG_STRIP_VLAN_TAG;
+ 		writeq(val64, &bar0->rx_pa_cfg);
+ 		vlan_strip_flag = 0;
++	} else {
++		val64 = readq(&bar0->rx_pa_cfg);
++		val64 |= RX_PA_CFG_STRIP_VLAN_TAG;
++		writeq(val64, &bar0->rx_pa_cfg);
++		vlan_strip_flag = 1;
+ 	}
+ 
+ 	/*

@@ -1,0 +1,564 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH] XFRM: BZ 209520 Config Change Auditing
+Date: Mon, 18 Dec 2006 15:48:23 -0500
+Bugzilla: 209520
+Message-Id: <1166474904.20187.35.camel@localhost.localdomain>
+Changelog: XFRM: Config Change Auditing
+
+
+BZ 209520 (yes it's a blocker)
+
+LSPP certification requires auditing of all security policy changes on a
+system.  Since XFRM is used to label network traffic changes to how that
+labeling takes place is a security policy change.  Thus it must be
+audited.  The following patch, which is upstream I believe in 2.6.20,
+emits an audit record for config changes.
+
+http://www.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=161a09e737f0761ca064ee6a907313402f7a54b6
+http://www.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=c9204d9ca79baac564b49d36d0228a69d7ded084
+
+This patch has been in the LSPP kernel for a couple weeks and has not
+had any complaints from IBM or HP during their testing.
+
+I'm cheating and throwing in a 3rd upstream patch which isn't actually
+related to this BZ.  It simply updates the networking documentation
+index and creates a new file called generic_netlink.txt which points to
+documentation for netlink.  In 5 years when I forget all about this
+labeled networking stuff having a link to the documentation isn't a bad
+thing!  (also upstream in 2.6.20 and has ZERO risk)  If you want to be
+really picky and make things a tiny bit harder down the road you can
+drop the first 2 files of this patch.
+
+http://www.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=b9e3dd0ea167df1d7c118170551e08e8e28f27b6
+
+-Eric
+
+diff -Naupr linux-2.6.18.i686.xfrm.audit/Documentation/networking/00-INDEX linux-2.6.18.i686/Documentation/networking/00-INDEX
+--- linux-2.6.18.i686.xfrm.audit/Documentation/networking/00-INDEX	2006-12-08 15:34:15.000000000 -0500
++++ linux-2.6.18.i686/Documentation/networking/00-INDEX	2006-12-08 17:00:11.000000000 -0500
+@@ -58,6 +58,8 @@ fore200e.txt
+ 	- FORE Systems PCA-200E/SBA-200E ATM NIC driver info.
+ framerelay.txt
+ 	- info on using Frame Relay/Data Link Connection Identifier (DLCI).
++generic_netlink.txt
++	- info on Generic Netlink
+ ip-sysctl.txt
+ 	- /proc/sys/net/ipv4/* variables
+ ip_dynaddr.txt
+diff -Naupr linux-2.6.18.i686.xfrm.audit/Documentation/networking/generic_netlink.txt linux-2.6.18.i686/Documentation/networking/generic_netlink.txt
+--- linux-2.6.18.i686.xfrm.audit/Documentation/networking/generic_netlink.txt	1969-12-31 19:00:00.000000000 -0500
++++ linux-2.6.18.i686/Documentation/networking/generic_netlink.txt	2006-12-08 17:00:11.000000000 -0500
+@@ -0,0 +1,3 @@
++A wiki document on how to use Generic Netlink can be found here:
++
++ * http://linux-net.osdl.org/index.php/Generic_Netlink_HOWTO
+diff -Naupr linux-2.6.18.i686.xfrm.audit/include/linux/audit.h linux-2.6.18.i686/include/linux/audit.h
+--- linux-2.6.18.i686.xfrm.audit/include/linux/audit.h	2006-12-08 15:34:50.000000000 -0500
++++ linux-2.6.18.i686/include/linux/audit.h	2006-12-08 15:41:00.000000000 -0500
+@@ -100,6 +100,10 @@
+ #define AUDIT_MAC_CIPSOV4_DEL	1408	/* NetLabel: del CIPSOv4 DOI entry */
+ #define AUDIT_MAC_MAP_ADD	1409	/* NetLabel: add LSM domain mapping */
+ #define AUDIT_MAC_MAP_DEL	1410	/* NetLabel: del LSM domain mapping */
++#define AUDIT_MAC_IPSEC_ADDSA	1411	/* Add a XFRM state */
++#define AUDIT_MAC_IPSEC_DELSA	1412	/* Delete a XFRM state */
++#define AUDIT_MAC_IPSEC_ADDSPD	1413	/* Add a XFRM policy */
++#define AUDIT_MAC_IPSEC_DELSPD	1414	/* Delete a XFRM policy */
+ 
+ #define AUDIT_FIRST_KERN_ANOM_MSG   1700
+ #define AUDIT_LAST_KERN_ANOM_MSG    1799
+@@ -376,6 +380,7 @@ extern void auditsc_get_stamp(struct aud
+ 			      struct timespec *t, unsigned int *serial);
+ extern int  audit_set_loginuid(struct task_struct *task, uid_t loginuid);
+ extern uid_t audit_get_loginuid(struct audit_context *ctx);
++extern void audit_log_task_context(struct audit_buffer *ab);
+ extern int __audit_ipc_obj(struct kern_ipc_perm *ipcp);
+ extern int __audit_ipc_set_perm(unsigned long qbytes, uid_t uid, gid_t gid, mode_t mode);
+ extern int audit_bprm(struct linux_binprm *bprm);
+@@ -448,6 +453,7 @@ extern int audit_n_rules;
+ #define audit_inode_update(i) do { ; } while (0)
+ #define auditsc_get_stamp(c,t,s) do { BUG(); } while (0)
+ #define audit_get_loginuid(c) ({ -1; })
++#define audit_log_task_context(b) do { ; } while (0)
+ #define audit_ipc_obj(i) ({ 0; })
+ #define audit_ipc_set_perm(q,u,g,m) ({ 0; })
+ #define audit_bprm(p) ({ 0; })
+diff -Naupr linux-2.6.18.i686.xfrm.audit/include/net/xfrm.h linux-2.6.18.i686/include/net/xfrm.h
+--- linux-2.6.18.i686.xfrm.audit/include/net/xfrm.h	2006-12-08 15:34:53.000000000 -0500
++++ linux-2.6.18.i686/include/net/xfrm.h	2006-12-08 16:32:06.000000000 -0500
+@@ -374,6 +374,20 @@ extern int xfrm_unregister_km(struct xfr
+ 
+ extern struct xfrm_policy *xfrm_policy_list[XFRM_POLICY_MAX*2];
+ 
++/* Audit Information */
++struct xfrm_audit
++{
++	uid_t	loginuid;
++	u32	secid;
++};
++
++#ifdef CONFIG_AUDITSYSCALL
++extern void xfrm_audit_log(uid_t auid, u32 secid, int type, int result,
++		    struct xfrm_policy *xp, struct xfrm_state *x);
++#else
++#define xfrm_audit_log(a,s,t,r,p,x) do { ; } while (0)
++#endif /* CONFIG_AUDITSYSCALL */
++
+ static inline void xfrm_pol_hold(struct xfrm_policy *policy)
+ {
+ 	if (likely(policy != NULL))
+@@ -904,7 +918,7 @@ extern int xfrm_state_update(struct xfrm
+ extern struct xfrm_state *xfrm_state_lookup(xfrm_address_t *daddr, u32 spi, u8 proto, unsigned short family);
+ extern struct xfrm_state *xfrm_find_acq_byseq(u32 seq);
+ extern int xfrm_state_delete(struct xfrm_state *x);
+-extern void xfrm_state_flush(u8 proto);
++extern void xfrm_state_flush(u8 proto, struct xfrm_audit *audit_info);
+ extern int xfrm_replay_check(struct xfrm_state *x, u32 seq);
+ extern void xfrm_replay_advance(struct xfrm_state *x, u32 seq);
+ extern void xfrm_replay_notify(struct xfrm_state *x, int event);
+@@ -952,13 +966,13 @@ int xfrm_policy_insert(int dir, struct x
+ struct xfrm_policy *xfrm_policy_bysel_ctx(int dir, struct xfrm_selector *sel,
+ 					  struct xfrm_sec_ctx *ctx, int delete);
+ struct xfrm_policy *xfrm_policy_byid(int dir, u32 id, int delete);
+-void xfrm_policy_flush(void);
++void xfrm_policy_flush(struct xfrm_audit *audit_info);
+ u32 xfrm_get_acqseq(void);
+ void xfrm_alloc_spi(struct xfrm_state *x, u32 minspi, u32 maxspi);
+-struct xfrm_state * xfrm_find_acq(u8 mode, u32 reqid, u8 proto, 
+-				  xfrm_address_t *daddr, xfrm_address_t *saddr, 
++struct xfrm_state * xfrm_find_acq(u8 mode, u32 reqid, u8 proto,
++				  xfrm_address_t *daddr, xfrm_address_t *saddr,
+ 				  int create, unsigned short family);
+-extern void xfrm_policy_flush(void);
++extern void xfrm_policy_flush(struct xfrm_audit *audit_info);
+ extern int xfrm_sk_policy_insert(struct sock *sk, int dir, struct xfrm_policy *pol);
+ extern int xfrm_flush_bundles(void);
+ extern void xfrm_flush_all_bundles(void);
+diff -Naupr linux-2.6.18.i686.xfrm.audit/kernel/auditsc.c linux-2.6.18.i686/kernel/auditsc.c
+--- linux-2.6.18.i686.xfrm.audit/kernel/auditsc.c	2006-12-08 15:32:48.000000000 -0500
++++ linux-2.6.18.i686/kernel/auditsc.c	2006-12-08 15:41:00.000000000 -0500
+@@ -730,7 +730,7 @@ static inline void audit_free_context(st
+ 		printk(KERN_ERR "audit: freed %d contexts\n", count);
+ }
+ 
+-static void audit_log_task_context(struct audit_buffer *ab)
++void audit_log_task_context(struct audit_buffer *ab)
+ {
+ 	char *ctx = NULL;
+ 	ssize_t len = 0;
+@@ -759,6 +759,8 @@ error_path:
+ 	return;
+ }
+ 
++EXPORT_SYMBOL(audit_log_task_context);
++
+ static void audit_log_task_info(struct audit_buffer *ab, struct task_struct *tsk)
+ {
+ 	char name[sizeof(tsk->comm)];
+@@ -1489,6 +1491,8 @@ uid_t audit_get_loginuid(struct audit_co
+ 	return ctx ? ctx->loginuid : -1;
+ }
+ 
++EXPORT_SYMBOL(audit_get_loginuid);
++
+ /**
+  * __audit_mq_open - record audit data for a POSIX MQ open
+  * @oflag: open flag
+diff -Naupr linux-2.6.18.i686.xfrm.audit/net/key/af_key.c linux-2.6.18.i686/net/key/af_key.c
+--- linux-2.6.18.i686.xfrm.audit/net/key/af_key.c	2006-12-08 15:34:28.000000000 -0500
++++ linux-2.6.18.i686/net/key/af_key.c	2006-12-08 16:53:24.000000000 -0500
+@@ -27,6 +27,7 @@
+ #include <linux/proc_fs.h>
+ #include <linux/init.h>
+ #include <net/xfrm.h>
++#include <linux/audit.h>
+ 
+ #include <net/sock.h>
+ 
+@@ -1420,6 +1421,9 @@ static int pfkey_add(struct sock *sk, st
+ 	else
+ 		err = xfrm_state_update(x);
+ 
++	xfrm_audit_log(audit_get_loginuid(current->audit_context), 0,
++		       AUDIT_MAC_IPSEC_ADDSA, err ? 0 : 1, NULL, x);
++
+ 	if (err < 0) {
+ 		x->km.state = XFRM_STATE_DEAD;
+ 		__xfrm_state_put(x);
+@@ -1460,8 +1464,12 @@ static int pfkey_delete(struct sock *sk,
+ 		err = -EPERM;
+ 		goto out;
+ 	}
+-	
++
+ 	err = xfrm_state_delete(x);
++
++	xfrm_audit_log(audit_get_loginuid(current->audit_context), 0,
++		       AUDIT_MAC_IPSEC_DELSA, err ? 0 : 1, NULL, x);
++
+ 	if (err < 0)
+ 		goto out;
+ 
+@@ -1637,12 +1645,15 @@ static int pfkey_flush(struct sock *sk, 
+ {
+ 	unsigned proto;
+ 	struct km_event c;
++	struct xfrm_audit audit_info;
+ 
+ 	proto = pfkey_satype2proto(hdr->sadb_msg_satype);
+ 	if (proto == 0)
+ 		return -EINVAL;
+ 
+-	xfrm_state_flush(proto);
++	audit_info.loginuid = audit_get_loginuid(current->audit_context);
++	audit_info.secid = 0;
++	xfrm_state_flush(proto, &audit_info);
+ 	c.data.proto = proto;
+ 	c.seq = hdr->sadb_msg_seq;
+ 	c.pid = hdr->sadb_msg_pid;
+@@ -2194,6 +2205,9 @@ static int pfkey_spdadd(struct sock *sk,
+ 	err = xfrm_policy_insert(pol->sadb_x_policy_dir-1, xp,
+ 				 hdr->sadb_msg_type != SADB_X_SPDUPDATE);
+ 
++	xfrm_audit_log(audit_get_loginuid(current->audit_context), 0,
++		       AUDIT_MAC_IPSEC_ADDSPD, err ? 0 : 1, xp, NULL);
++
+ 	if (err)
+ 		goto out;
+ 
+@@ -2270,6 +2284,10 @@ static int pfkey_spddelete(struct sock *
+ 
+ 	xp = xfrm_policy_bysel_ctx(pol->sadb_x_policy_dir-1, &sel, tmp.security, 1);
+ 	security_xfrm_policy_free(&tmp);
++
++	xfrm_audit_log(audit_get_loginuid(current->audit_context), 0,
++		       AUDIT_MAC_IPSEC_DELSPD, (xp) ? 1 : 0, xp, NULL);
++
+ 	if (xp == NULL)
+ 		return -ENOENT;
+ 
+@@ -2404,8 +2422,11 @@ static int key_notify_policy_flush(struc
+ static int pfkey_spdflush(struct sock *sk, struct sk_buff *skb, struct sadb_msg *hdr, void **ext_hdrs)
+ {
+ 	struct km_event c;
++	struct xfrm_audit audit_info;
+ 
+-	xfrm_policy_flush();
++	audit_info.loginuid = audit_get_loginuid(current->audit_context);
++	audit_info.secid = 0;
++	xfrm_policy_flush(&audit_info);
+ 	c.event = XFRM_MSG_FLUSHPOLICY;
+ 	c.pid = hdr->sadb_msg_pid;
+ 	c.seq = hdr->sadb_msg_seq;
+diff -Naupr linux-2.6.18.i686.xfrm.audit/net/xfrm/xfrm_policy.c linux-2.6.18.i686/net/xfrm/xfrm_policy.c
+--- linux-2.6.18.i686.xfrm.audit/net/xfrm/xfrm_policy.c	2006-12-08 15:34:31.000000000 -0500
++++ linux-2.6.18.i686/net/xfrm/xfrm_policy.c	2006-12-08 16:32:06.000000000 -0500
+@@ -24,6 +24,7 @@
+ #include <linux/module.h>
+ #include <net/xfrm.h>
+ #include <net/ip.h>
++#include <linux/audit.h>
+ 
+ DEFINE_MUTEX(xfrm_cfg_mutex);
+ EXPORT_SYMBOL(xfrm_cfg_mutex);
+@@ -541,7 +542,7 @@ struct xfrm_policy *xfrm_policy_byid(int
+ }
+ EXPORT_SYMBOL(xfrm_policy_byid);
+ 
+-void xfrm_policy_flush(void)
++void xfrm_policy_flush(struct xfrm_audit *audit_info)
+ {
+ 	struct xfrm_policy *xp;
+ 	int dir;
+@@ -552,6 +553,9 @@ void xfrm_policy_flush(void)
+ 			xfrm_policy_list[dir] = xp->next;
+ 			write_unlock_bh(&xfrm_policy_lock);
+ 
++			xfrm_audit_log(audit_info->loginuid, audit_info->secid,
++					AUDIT_MAC_IPSEC_DELSPD, 1, xp, NULL);
++
+ 			xfrm_policy_kill(xp);
+ 
+ 			write_lock_bh(&xfrm_policy_lock);
+@@ -1367,6 +1371,117 @@ int xfrm_bundle_ok(struct xfrm_policy *p
+ 
+ EXPORT_SYMBOL(xfrm_bundle_ok);
+ 
++#ifdef CONFIG_AUDITSYSCALL
++/* Audit addition and deletion of SAs and ipsec policy */
++
++void xfrm_audit_log(uid_t auid, u32 sid, int type, int result,
++		    struct xfrm_policy *xp, struct xfrm_state *x)
++{
++
++	char *secctx;
++	u32 secctx_len;
++	struct xfrm_sec_ctx *sctx = NULL;
++	struct audit_buffer *audit_buf;
++	int family;
++	extern int audit_enabled;
++
++	if (audit_enabled == 0)
++		return;
++
++	audit_buf = audit_log_start(current->audit_context, GFP_ATOMIC, type);
++	if (audit_buf == NULL)
++	return;
++
++	switch(type) {
++	case AUDIT_MAC_IPSEC_ADDSA:
++		audit_log_format(audit_buf, "SAD add: auid=%u", auid);
++		break;
++	case AUDIT_MAC_IPSEC_DELSA:
++		audit_log_format(audit_buf, "SAD delete: auid=%u", auid);
++		break;
++	case AUDIT_MAC_IPSEC_ADDSPD:
++		audit_log_format(audit_buf, "SPD add: auid=%u", auid);
++		break;
++	case AUDIT_MAC_IPSEC_DELSPD:
++		audit_log_format(audit_buf, "SPD delete: auid=%u", auid);
++		break;
++	default:
++		return;
++	}
++
++	if (sid != 0 &&
++		security_secid_to_secctx(sid, &secctx, &secctx_len) == 0)
++		audit_log_format(audit_buf, " subj=%s", secctx);
++	else
++		audit_log_task_context(audit_buf);
++
++	if (xp) {
++		family = xp->selector.family;
++		if (xp->security)
++			sctx = xp->security;
++	} else {
++		family = x->props.family;
++		if (x->security)
++			sctx = x->security;
++	}
++
++	if (sctx)
++		audit_log_format(audit_buf,
++				" sec_alg=%u sec_doi=%u sec_obj=%s",
++				sctx->ctx_alg, sctx->ctx_doi, sctx->ctx_str);
++
++	switch(family) {
++	case AF_INET:
++		{
++			struct in_addr saddr, daddr;
++			if (xp) {
++				saddr.s_addr = xp->selector.saddr.a4;
++				daddr.s_addr = xp->selector.daddr.a4;
++			} else {
++				saddr.s_addr = x->props.saddr.a4;
++				daddr.s_addr = x->id.daddr.a4;
++			}
++			audit_log_format(audit_buf,
++					 " src=%u.%u.%u.%u dst=%u.%u.%u.%u",
++					 NIPQUAD(saddr), NIPQUAD(daddr));
++		}
++			break;
++	case AF_INET6:
++		{
++			struct in6_addr saddr6, daddr6;
++			if (xp) {
++				memcpy(&saddr6, xp->selector.saddr.a6,
++					sizeof(struct in6_addr));
++				memcpy(&daddr6, xp->selector.daddr.a6,
++					sizeof(struct in6_addr));
++			} else {
++				memcpy(&saddr6, x->props.saddr.a6,
++					sizeof(struct in6_addr));
++				memcpy(&daddr6, x->id.daddr.a6,
++					sizeof(struct in6_addr));
++			}
++			audit_log_format(audit_buf,
++					 " src=" NIP6_FMT "dst=" NIP6_FMT,
++					 NIP6(saddr6), NIP6(daddr6));
++		}
++		break;
++	}
++
++	if (x)
++		audit_log_format(audit_buf, " spi=%lu(0x%lx) protocol=%s",
++				(unsigned long)ntohl(x->id.spi),
++				(unsigned long)ntohl(x->id.spi),
++				x->id.proto == IPPROTO_AH ? "AH" :
++				(x->id.proto == IPPROTO_ESP ?
++				"ESP" : "IPCOMP"));
++
++	audit_log_format(audit_buf, " res=%u", result);
++	audit_log_end(audit_buf);
++}
++
++EXPORT_SYMBOL(xfrm_audit_log);
++#endif /* CONFIG_AUDITSYSCALL */
++
+ int xfrm_policy_register_afinfo(struct xfrm_policy_afinfo *afinfo)
+ {
+ 	int err = 0;
+diff -Naupr linux-2.6.18.i686.xfrm.audit/net/xfrm/xfrm_state.c linux-2.6.18.i686/net/xfrm/xfrm_state.c
+--- linux-2.6.18.i686.xfrm.audit/net/xfrm/xfrm_state.c	2006-12-08 15:34:31.000000000 -0500
++++ linux-2.6.18.i686/net/xfrm/xfrm_state.c	2006-12-08 16:32:06.000000000 -0500
+@@ -19,6 +19,7 @@
+ #include <linux/ipsec.h>
+ #include <linux/module.h>
+ #include <asm/uaccess.h>
++#include <linux/audit.h>
+ 
+ struct sock *xfrm_nl;
+ EXPORT_SYMBOL(xfrm_nl);
+@@ -123,6 +124,7 @@ static void xfrm_timer_handler(unsigned 
+ 	unsigned long now = (unsigned long)xtime.tv_sec;
+ 	long next = LONG_MAX;
+ 	int warn = 0;
++	int err = 0;
+ 
+ 	spin_lock(&x->lock);
+ 	if (x->km.state == XFRM_STATE_DEAD)
+@@ -180,9 +182,14 @@ expired:
+ 		next = 2;
+ 		goto resched;
+ 	}
+-	if (!__xfrm_state_delete(x) && x->id.spi)
++
++	err = __xfrm_state_delete(x);
++	if (!err && x->id.spi)
+ 		km_state_expired(x, 1, 0);
+ 
++	xfrm_audit_log(audit_get_loginuid(current->audit_context), 0,
++		       AUDIT_MAC_IPSEC_DELSA, err ? 0 : 1, NULL, x);
++
+ out:
+ 	spin_unlock(&x->lock);
+ 	xfrm_state_put(x);
+@@ -284,9 +291,10 @@ int xfrm_state_delete(struct xfrm_state 
+ }
+ EXPORT_SYMBOL(xfrm_state_delete);
+ 
+-void xfrm_state_flush(u8 proto)
++void xfrm_state_flush(u8 proto, struct xfrm_audit *audit_info)
+ {
+ 	int i;
++	int err = 0;
+ 	struct xfrm_state *x;
+ 
+ 	spin_lock_bh(&xfrm_state_lock);
+@@ -298,7 +306,11 @@ restart:
+ 				xfrm_state_hold(x);
+ 				spin_unlock_bh(&xfrm_state_lock);
+ 
+-				xfrm_state_delete(x);
++				err = xfrm_state_delete(x);
++				xfrm_audit_log(audit_info->loginuid,
++					       audit_info->secid,
++					       AUDIT_MAC_IPSEC_DELSA,
++					       err ? 0 : 1, NULL, x);
+ 				xfrm_state_put(x);
+ 
+ 				spin_lock_bh(&xfrm_state_lock);
+diff -Naupr linux-2.6.18.i686.xfrm.audit/net/xfrm/xfrm_user.c linux-2.6.18.i686/net/xfrm/xfrm_user.c
+--- linux-2.6.18.i686.xfrm.audit/net/xfrm/xfrm_user.c	2006-12-08 15:34:31.000000000 -0500
++++ linux-2.6.18.i686/net/xfrm/xfrm_user.c	2006-12-08 16:31:52.000000000 -0500
+@@ -27,6 +27,7 @@
+ #include <net/xfrm.h>
+ #include <net/netlink.h>
+ #include <asm/uaccess.h>
++#include <linux/audit.h>
+ 
+ static int verify_one_alg(struct rtattr **xfrma, enum xfrm_attr_type_t type)
+ {
+@@ -400,6 +401,9 @@ static int xfrm_add_sa(struct sk_buff *s
+ 	else
+ 		err = xfrm_state_update(x);
+ 
++	xfrm_audit_log(NETLINK_CB(skb).loginuid, NETLINK_CB(skb).sid,
++		       AUDIT_MAC_IPSEC_ADDSA, err ? 0 : 1, NULL, x);
++
+ 	if (err < 0) {
+ 		x->km.state = XFRM_STATE_DEAD;
+ 		__xfrm_state_put(x);
+@@ -436,6 +440,10 @@ static int xfrm_del_sa(struct sk_buff *s
+ 	}
+ 
+ 	err = xfrm_state_delete(x);
++
++	xfrm_audit_log(NETLINK_CB(skb).loginuid, NETLINK_CB(skb).sid,
++		       AUDIT_MAC_IPSEC_DELSA, err ? 0 : 1, NULL, x);
++
+ 	if (err < 0)
+ 		goto out;
+ 
+@@ -860,6 +868,9 @@ static int xfrm_add_policy(struct sk_buf
+ 	 * a type XFRM_MSG_UPDPOLICY - JHS */
+ 	excl = nlh->nlmsg_type == XFRM_MSG_NEWPOLICY;
+ 	err = xfrm_policy_insert(p->dir, xp, excl);
++	xfrm_audit_log(NETLINK_CB(skb).loginuid, NETLINK_CB(skb).sid,
++		       AUDIT_MAC_IPSEC_DELSPD, err ? 0 : 1, xp, NULL);
++
+ 	if (err) {
+ 		security_xfrm_policy_free(xp);
+ 		kfree(xp);
+@@ -1055,6 +1066,10 @@ static int xfrm_get_policy(struct sk_buf
+ 		xp = xfrm_policy_bysel_ctx(p->dir, &p->sel, tmp.security, delete);
+ 		security_xfrm_policy_free(&tmp);
+ 	}
++	if (delete)
++		xfrm_audit_log(NETLINK_CB(skb).loginuid, NETLINK_CB(skb).sid,
++			       AUDIT_MAC_IPSEC_DELSPD, (xp) ? 1 : 0, xp, NULL);
++
+ 	if (xp == NULL)
+ 		return -ENOENT;
+ 
+@@ -1089,8 +1104,11 @@ static int xfrm_flush_sa(struct sk_buff 
+ {
+ 	struct km_event c;
+ 	struct xfrm_usersa_flush *p = NLMSG_DATA(nlh);
++	struct xfrm_audit audit_info;
+ 
+-	xfrm_state_flush(p->proto);
++	audit_info.loginuid = NETLINK_CB(skb).loginuid;
++	audit_info.secid = NETLINK_CB(skb).sid;
++	xfrm_state_flush(p->proto, &audit_info);
+ 	c.data.proto = p->proto;
+ 	c.event = nlh->nlmsg_type;
+ 	c.seq = nlh->nlmsg_seq;
+@@ -1235,9 +1253,12 @@ out:
+ 
+ static int xfrm_flush_policy(struct sk_buff *skb, struct nlmsghdr *nlh, void **xfrma)
+ {
+-struct km_event c;
++	struct km_event c;
++	struct xfrm_audit audit_info;
+ 
+-	xfrm_policy_flush();
++	audit_info.loginuid = NETLINK_CB(skb).loginuid;
++	audit_info.secid = NETLINK_CB(skb).sid;
++	xfrm_policy_flush(&audit_info);
+ 	c.event = nlh->nlmsg_type;
+ 	c.seq = nlh->nlmsg_seq;
+ 	c.pid = nlh->nlmsg_pid;
+@@ -1286,6 +1307,9 @@ static int xfrm_add_pol_expire(struct sk
+ 	err = 0;
+ 	if (up->hard) {
+ 		xfrm_policy_delete(xp, p->dir);
++		xfrm_audit_log(NETLINK_CB(skb).loginuid, NETLINK_CB(skb).sid,
++				AUDIT_MAC_IPSEC_DELSPD, 1, xp, NULL);
++
+ 	} else {
+ 		// reset the timers here?
+ 		printk("Dont know what to do with soft policy expire\n");
+@@ -1317,8 +1341,11 @@ static int xfrm_add_sa_expire(struct sk_
+ 		goto out;
+ 	km_state_expired(x, ue->hard, current->pid);
+ 
+-	if (ue->hard)
++	if (ue->hard) {
+ 		__xfrm_state_delete(x);
++		xfrm_audit_log(NETLINK_CB(skb).loginuid, NETLINK_CB(skb).sid,
++			       AUDIT_MAC_IPSEC_DELSA, 1, NULL, x);
++	}
+ out:
+ 	spin_unlock_bh(&x->lock);
+ 	xfrm_state_put(x);
+

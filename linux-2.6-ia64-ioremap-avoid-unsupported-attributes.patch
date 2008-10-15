@@ -1,0 +1,171 @@
+From: Jarod Wilson <jwilson@redhat.com>
+Date: Tue, 7 Aug 2007 12:00:06 -0400
+Subject: [ia64] ioremap: avoid unsupported attributes
+Message-id: 46B89706.4020803@redhat.com
+O-Subject: [RHEL5.1 PATCH 3/5] ia64: validate and remap mmap requests
+Bugzilla: 240006
+
+This is a multi-part message in MIME format.
+Make ioremap avoid unsupportable attributes.
+
+Upstream commit comments:
+
+[PATCH] ia64: make ioremap avoid unsupported attributes
+
+Example memory map (from HP sx1000 with VGA enabled):
+    0x00000 - 0x9FFFF supports only WB (cacheable) access
+    0xA0000 - 0xBFFFF supports only UC (uncacheable) access
+    0xC0000 - 0xFFFFF supports only WB (cacheable) access
+
+pci_read_rom() indirectly uses ioremap(0xC0000) to read the shadow VGA
+option ROM.  ioremap() used to default to a 16MB or 64MB UC kernel
+identity mapping, which would cause an MCA when reading 0xC0000 since
+only WB is supported there.
+
+X uses reads the option ROM to initialize devices.  A smaller test case is:
+  # echo 1 > /sys/bus/pci/devices/0000:aa:03.0/rom
+  # cp /sys/bus/pci/devices/0000:aa:03.0/rom x
+
+To avoid this, we can use the same ioremap_page_range() strategy that
+most architectures use for all ioremaps.  These page table mappings come
+out of the vmalloc area.  On ia64, these are in region 5 (0xA...
+addresses) and typically use 16KB or 64KB mappings instead of 16MB or
+64MB mappings.  The smaller mappings give more flexibility to use the
+correct attributes.
+
+Signed-off-by: Bjorn Helgaas <bjorn.helgaas@hp.com>
+
+--
+Jarod Wilson
+jwilson@redhat.com
+
+[PATCH] ia64: make ioremap avoid unsupported attributes
+
+Example memory map (from HP sx1000 with VGA enabled):
+    0x00000 - 0x9FFFF supports only WB (cacheable) access
+    0xA0000 - 0xBFFFF supports only UC (uncacheable) access
+    0xC0000 - 0xFFFFF supports only WB (cacheable) access
+
+pci_read_rom() indirectly uses ioremap(0xC0000) to read the shadow VGA option
+ROM.  ioremap() used to default to a 16MB or 64MB UC kernel identity mapping,
+which would cause an MCA when reading 0xC0000 since only WB is supported there.
+
+X uses reads the option ROM to initialize devices.  A smaller test case is:
+  # echo 1 > /sys/bus/pci/devices/0000:aa:03.0/rom
+  # cp /sys/bus/pci/devices/0000:aa:03.0/rom x
+
+To avoid this, we can use the same ioremap_page_range() strategy that most
+architectures use for all ioremaps.  These page table mappings come out of the
+vmalloc area.  On ia64, these are in region 5 (0xA... addresses) and typically
+use 16KB or 64KB mappings instead of 16MB or 64MB mappings.  The smaller
+mappings give more flexibility to use the correct attributes.
+
+Signed-off-by: Bjorn Helgaas <bjorn.helgaas@hp.com>
+
+Acked-by: Steven Rostedt <srostedt@redhat.com>
+
+diff --git a/arch/ia64/mm/ioremap.c b/arch/ia64/mm/ioremap.c
+index e0006c0..7e876e0 100644
+--- a/arch/ia64/mm/ioremap.c
++++ b/arch/ia64/mm/ioremap.c
+@@ -1,5 +1,5 @@
+ /*
+- * (c) Copyright 2006 Hewlett-Packard Development Company, L.P.
++ * (c) Copyright 2006, 2007 Hewlett-Packard Development Company, L.P.
+  *	Bjorn Helgaas <bjorn.helgaas@hp.com>
+  *
+  * This program is free software; you can redistribute it and/or modify
+@@ -10,6 +10,8 @@
+ #include <linux/compiler.h>
+ #include <linux/module.h>
+ #include <linux/efi.h>
++#include <linux/io.h>
++#include <linux/vmalloc.h>
+ #include <asm/io.h>
+ #include <asm/meminit.h>
+ 
+@@ -27,8 +29,13 @@ __ioremap (unsigned long phys_addr, unsigned long size)
+ void __iomem *
+ ioremap (unsigned long phys_addr, unsigned long size)
+ {
++	void __iomem *addr;
++	struct vm_struct *area;
++	unsigned long offset;
++	pgprot_t prot;
+ 	u64 attr;
+ 	unsigned long gran_base, gran_size;
++	unsigned long page_base;
+ 
+ 	/*
+ 	 * For things in kern_memmap, we must use the same attribute
+@@ -50,6 +57,41 @@ ioremap (unsigned long phys_addr, unsigned long size)
+ 	if (efi_mem_attribute(gran_base, gran_size) & EFI_MEMORY_WB)
+ 		return (void __iomem *) phys_to_virt(phys_addr);
+ 
++	/*
++	 * WB is not supported for the whole granule, so we can't use
++	 * the region 7 identity mapping.  If we can safely cover the
++	 * area with kernel page table mappings, we can use those
++	 * instead.
++	 */
++	page_base = phys_addr & PAGE_MASK;
++	size = PAGE_ALIGN(phys_addr + size) - page_base;
++	if (efi_mem_attribute(page_base, size) & EFI_MEMORY_WB) {
++		prot = PAGE_KERNEL;
++
++		/*
++		 * Mappings have to be page-aligned
++		 */
++		offset = phys_addr & ~PAGE_MASK;
++		phys_addr &= PAGE_MASK;
++
++		/*
++		 * Ok, go for it..
++		 */
++		area = get_vm_area(size, VM_IOREMAP);
++		if (!area)
++			return NULL;
++
++		area->phys_addr = phys_addr;
++		addr = (void __iomem *) area->addr;
++		if (ioremap_page_range((unsigned long) addr,
++				(unsigned long) addr + size, phys_addr, prot)) {
++			vunmap((void __force *) addr);
++			return NULL;
++		}
++
++		return (void __iomem *) (offset + (char __iomem *)addr);
++	}
++
+ 	return __ioremap(phys_addr, size);
+ }
+ EXPORT_SYMBOL(ioremap);
+@@ -63,3 +105,11 @@ ioremap_nocache (unsigned long phys_addr, unsigned long size)
+ 	return __ioremap(phys_addr, size);
+ }
+ EXPORT_SYMBOL(ioremap_nocache);
++
++void
++iounmap (volatile void __iomem *addr)
++{
++	if (REGION_NUMBER(addr) == RGN_GATE)
++		vunmap((void *) ((unsigned long) addr & PAGE_MASK));
++}
++EXPORT_SYMBOL(iounmap);
+diff --git a/include/asm-ia64/io.h b/include/asm-ia64/io.h
+index 061a9d6..c8a9b65 100644
+--- a/include/asm-ia64/io.h
++++ b/include/asm-ia64/io.h
+@@ -458,11 +458,7 @@ __writeq (unsigned long val, volatile void __iomem *addr)
+ 
+ extern void __iomem * ioremap(unsigned long offset, unsigned long size);
+ extern void __iomem * ioremap_nocache (unsigned long offset, unsigned long size);
+-
+-static inline void
+-iounmap (volatile void __iomem *addr)
+-{
+-}
++extern void iounmap (volatile void __iomem *addr);
+ 
+ /* Use normal IO mappings for DMI */
+ #define dmi_ioremap ioremap

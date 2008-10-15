@@ -1,0 +1,48 @@
+From: Kimball Murray <kmurray@redhat.com>
+Subject: [RHEL5 U1 Patch 1/1 (updated)] ACPI acpi_prt list incomplete (BZ-214439)
+Date: Wed, 6 Jun 2007 14:50:15 -0400
+Bugzilla: 214439
+Message-Id: <20070606184507.27887.53877.sendpatchset@dhcp83-86.boston.redhat.com>
+Changelog: [acpi] acpi_prt list incomplete
+
+
+The following patch fixes BZ-214439, which was also an issue in RHEL4.
+
+The basic problem as that when we are hotplugging pci busses that contain
+ioapics there's a host of new interrupt routes that come into play.  Our
+system BIOS knows about them (PRT tables), but if Linux does not see these
+busses at boot time, it fails to add the PRT BIOS entries to its own acpi_prt
+list.
+
+This means we need to add/delete them later.  In RHEL4, we did this in a
+kludgy way by exporting the acpi_prt list, and then stitching in the
+new entries by hand from a kernel module when the new bus arrived.
+
+But in RHEL5, we can do this in a less objectionable way by using the two
+functions acpi_pci_irq_add_prt, and acpi_pci_irq_del_prt.  Note: the
+latter function wasn't even present in RHEL4.
+
+So the patch merely exports these functions so Stratus can now add/delete
+PRT entries without needing direct access to the acpi_prt list.
+
+-------------------------- snip ------------------------
+diff -Naur linux-2.6.18.x86_64.orig/drivers/acpi/pci_irq.c linux-2.6.18.x86_64/drivers/acpi/pci_irq.c
+--- linux-2.6.18.x86_64.orig/drivers/acpi/pci_irq.c	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/acpi/pci_irq.c	2007-06-06 14:20:44.000000000 -0400
+@@ -225,6 +225,7 @@
+ 
+ 	return 0;
+ }
++EXPORT_SYMBOL_GPL(acpi_pci_irq_add_prt);
+ 
+ void acpi_pci_irq_del_prt(int segment, int bus)
+ {
+@@ -246,6 +247,7 @@
+ 	}
+ 	spin_unlock(&acpi_prt_lock);
+ }
++EXPORT_SYMBOL_GPL(acpi_pci_irq_del_prt);
+ 
+ /* --------------------------------------------------------------------------
+                           PCI Interrupt Routing Support
+

@@ -1,0 +1,680 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: Re: [RHEL5.1 PATCH]: BZ 227839 Fix various data declarations in sound/drivers
+Date: Thu, 15 Mar 2007 10:40:35 -0400
+Bugzilla: 227839
+Message-Id: <45F95AE3.2030501@redhat.com>
+Changelog: [sound] Fix various data declarations in sound/drivers
+
+On Wed, Feb 14, 2007 at 10:38:24AM -0500, Prarit Bhargava wrote:
+  
+__devinit and __devexit fixups to resolve MODPOST warnings:
+
+WARNING: sound/drivers/snd-dummy.o - Section mismatch: reference to
+.init.text:snd_dummy_probe from .data.rel.local between 'snd_dummy_driver' 
+(at offset 0x0) and 'snd_dummy_controls'
+WARNING: sound/drivers/snd-mtpav.o - Section mismatch: reference to
+.init.text:snd_mtpav_probe from .data.rel.local between 'snd_mtpav_driver' 
+(at offset 0x0) and 'snd_mtpav_input'
+WARNING: sound/drivers/snd-virmidi.o - Section mismatch: reference to
+.init.text:snd_virmidi_probe from .data.rel.local after 
+'snd_virmidi_driver' (at offset 0x0)
+
+
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/aoa/soundbus/core.c linux-2.6.18.ia64/sound/aoa/soundbus/core.c
+--- linux-2.6.18.ia64.orig/sound/aoa/soundbus/core.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/aoa/soundbus/core.c	2007-03-15 10:31:09.000000000 -0400
+@@ -34,7 +34,7 @@ void soundbus_dev_put(struct soundbus_de
+ }
+ EXPORT_SYMBOL_GPL(soundbus_dev_put);
+ 
+-static int soundbus_probe(struct device *dev)
++static int __devinit soundbus_probe(struct device *dev)
+ {
+ 	int error = -ENODEV;
+ 	struct soundbus_driver *drv;
+@@ -134,7 +134,7 @@ static int soundbus_uevent(struct device
+ 	return 0;
+ }
+ 
+-static int soundbus_device_remove(struct device *dev)
++static int __devexit soundbus_device_remove(struct device *dev)
+ {
+ 	struct soundbus_dev * soundbus_dev = to_soundbus_device(dev);
+ 	struct soundbus_driver * drv = to_soundbus_driver(dev->driver);
+@@ -185,7 +185,7 @@ static struct bus_type soundbus_bus_type
+ 	.name		= "aoa-soundbus",
+ 	.probe		= soundbus_probe,
+ 	.uevent		= soundbus_uevent,
+-	.remove		= soundbus_device_remove,
++	.remove		= __devexit_p(soundbus_device_remove),
+ 	.shutdown	= soundbus_device_shutdown,
+ #ifdef CONFIG_PM
+ 	.suspend	= soundbus_device_suspend,
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/aoa/soundbus/i2sbus/i2sbus-core.c linux-2.6.18.ia64/sound/aoa/soundbus/i2sbus/i2sbus-core.c
+--- linux-2.6.18.ia64.orig/sound/aoa/soundbus/i2sbus/i2sbus-core.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/aoa/soundbus/i2sbus/i2sbus-core.c	2007-03-15 10:31:09.000000000 -0400
+@@ -322,7 +322,7 @@ static int i2sbus_add_dev(struct macio_d
+ 	return 0;
+ }
+ 
+-static int i2sbus_probe(struct macio_dev* dev, const struct of_device_id *match)
++static int __devinit i2sbus_probe(struct macio_dev* dev, const struct of_device_id *match)
+ {
+ 	struct device_node *np = NULL;
+ 	int got = 0, err;
+@@ -354,7 +354,7 @@ static int i2sbus_probe(struct macio_dev
+ 	return 0;
+ }
+ 
+-static int i2sbus_remove(struct macio_dev* dev)
++static int __devexit i2sbus_remove(struct macio_dev* dev)
+ {
+ 	struct i2sbus_control *control = dev->ofdev.dev.driver_data;
+ 	struct i2sbus_dev *i2sdev, *tmp;
+@@ -433,7 +433,7 @@ static struct macio_driver i2sbus_drv = 
+ 	.owner = THIS_MODULE,
+ 	.match_table = i2sbus_match,
+ 	.probe = i2sbus_probe,
+-	.remove = i2sbus_remove,
++	.remove = __devexit_p(i2sbus_remove),
+ #ifdef CONFIG_PM
+ 	.suspend = i2sbus_suspend,
+ 	.resume = i2sbus_resume,
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/arm/pxa2xx-ac97.c linux-2.6.18.ia64/sound/arm/pxa2xx-ac97.c
+--- linux-2.6.18.ia64.orig/sound/arm/pxa2xx-ac97.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/arm/pxa2xx-ac97.c	2007-03-15 10:31:09.000000000 -0400
+@@ -305,7 +305,7 @@ static int pxa2xx_ac97_resume(struct pla
+ #define pxa2xx_ac97_resume	NULL
+ #endif
+ 
+-static int pxa2xx_ac97_probe(struct platform_device *dev)
++static int __devinit pxa2xx_ac97_probe(struct platform_device *dev)
+ {
+ 	struct snd_card *card;
+ 	struct snd_ac97_bus *ac97_bus;
+@@ -369,7 +369,7 @@ static int pxa2xx_ac97_probe(struct plat
+ 	return ret;
+ }
+ 
+-static int pxa2xx_ac97_remove(struct platform_device *dev)
++static int __devexit pxa2xx_ac97_remove(struct platform_device *dev)
+ {
+ 	struct snd_card *card = platform_get_drvdata(dev);
+ 
+@@ -386,7 +386,7 @@ static int pxa2xx_ac97_remove(struct pla
+ 
+ static struct platform_driver pxa2xx_ac97_driver = {
+ 	.probe		= pxa2xx_ac97_probe,
+-	.remove		= pxa2xx_ac97_remove,
++	.remove		= __devexit_p(pxa2xx_ac97_remove),
+ 	.suspend	= pxa2xx_ac97_suspend,
+ 	.resume		= pxa2xx_ac97_resume,
+ 	.driver		= {
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/drivers/dummy.c linux-2.6.18.ia64/sound/drivers/dummy.c
+--- linux-2.6.18.ia64.orig/sound/drivers/dummy.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/drivers/dummy.c	2007-03-15 10:31:09.000000000 -0400
+@@ -422,7 +422,7 @@ static struct snd_pcm_ops snd_card_dummy
+ 	.pointer =		snd_card_dummy_pcm_pointer,
+ };
+ 
+-static int __init snd_card_dummy_pcm(struct snd_dummy *dummy, int device, int substreams)
++static int __devinit snd_card_dummy_pcm(struct snd_dummy *dummy, int device, int substreams)
+ {
+ 	struct snd_pcm *pcm;
+ 	int err;
+@@ -556,7 +556,7 @@ DUMMY_VOLUME("CD Volume", 0, MIXER_ADDR_
+ DUMMY_CAPSRC("CD Capture Switch", 0, MIXER_ADDR_MASTER)
+ };
+ 
+-static int __init snd_card_dummy_new_mixer(struct snd_dummy *dummy)
++static int __devinit snd_card_dummy_new_mixer(struct snd_dummy *dummy)
+ {
+ 	struct snd_card *card = dummy->card;
+ 	unsigned int idx;
+@@ -573,7 +573,7 @@ static int __init snd_card_dummy_new_mix
+ 	return 0;
+ }
+ 
+-static int __init snd_dummy_probe(struct platform_device *devptr)
++static int __devinit snd_dummy_probe(struct platform_device *devptr)
+ {
+ 	struct snd_card *card;
+ 	struct snd_dummy *dummy;
+@@ -611,7 +611,7 @@ static int __init snd_dummy_probe(struct
+ 	return err;
+ }
+ 
+-static int snd_dummy_remove(struct platform_device *devptr)
++static int __devexit snd_dummy_remove(struct platform_device *devptr)
+ {
+ 	snd_card_free(platform_get_drvdata(devptr));
+ 	platform_set_drvdata(devptr, NULL);
+@@ -642,7 +642,7 @@ static int snd_dummy_resume(struct platf
+ 
+ static struct platform_driver snd_dummy_driver = {
+ 	.probe		= snd_dummy_probe,
+-	.remove		= snd_dummy_remove,
++	.remove		= __devexit_p(snd_dummy_remove),
+ #ifdef CONFIG_PM
+ 	.suspend	= snd_dummy_suspend,
+ 	.resume		= snd_dummy_resume,
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/drivers/mtpav.c linux-2.6.18.ia64/sound/drivers/mtpav.c
+--- linux-2.6.18.ia64.orig/sound/drivers/mtpav.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/drivers/mtpav.c	2007-03-15 10:31:09.000000000 -0400
+@@ -583,7 +583,7 @@ static irqreturn_t snd_mtpav_irqh(int ir
+ /*
+  * get ISA resources
+  */
+-static int __init snd_mtpav_get_ISA(struct mtpav * mcard)
++static int __devinit snd_mtpav_get_ISA(struct mtpav * mcard)
+ {
+ 	if ((mcard->res_port = request_region(port, 3, "MotuMTPAV MIDI")) == NULL) {
+ 		snd_printk("MTVAP port 0x%lx is busy\n", port);
+@@ -619,7 +619,7 @@ static struct snd_rawmidi_ops snd_mtpav_
+  * get RAWMIDI resources
+  */
+ 
+-static void __init snd_mtpav_set_name(struct mtpav *chip,
++static void __devinit snd_mtpav_set_name(struct mtpav *chip,
+ 				      struct snd_rawmidi_substream *substream)
+ {
+ 	if (substream->number >= 0 && substream->number < chip->num_ports)
+@@ -634,7 +634,7 @@ static void __init snd_mtpav_set_name(st
+ 		strcpy(substream->name, "MTP broadcast");
+ }
+ 
+-static int __init snd_mtpav_get_RAWMIDI(struct mtpav *mcard)
++static int __devinit snd_mtpav_get_RAWMIDI(struct mtpav *mcard)
+ {
+ 	int rval;
+ 	struct snd_rawmidi *rawmidi;
+@@ -691,7 +691,7 @@ static void snd_mtpav_free(struct snd_ca
+ 
+ /*
+  */
+-static int __init snd_mtpav_probe(struct platform_device *dev)
++static int __devinit snd_mtpav_probe(struct platform_device *dev)
+ {
+ 	struct snd_card *card;
+ 	int err;
+@@ -745,7 +745,7 @@ static int __init snd_mtpav_probe(struct
+ 	return err;
+ }
+ 
+-static int snd_mtpav_remove(struct platform_device *devptr)
++static int __devexit snd_mtpav_remove(struct platform_device *devptr)
+ {
+ 	snd_card_free(platform_get_drvdata(devptr));
+ 	platform_set_drvdata(devptr, NULL);
+@@ -756,7 +756,7 @@ static int snd_mtpav_remove(struct platf
+ 
+ static struct platform_driver snd_mtpav_driver = {
+ 	.probe		= snd_mtpav_probe,
+-	.remove		= snd_mtpav_remove,
++	.remove		= __devexit_p(snd_mtpav_remove),
+ 	.driver		= {
+ 		.name	= SND_MTPAV_DRIVER
+ 	},
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/drivers/serial-u16550.c linux-2.6.18.ia64/sound/drivers/serial-u16550.c
+--- linux-2.6.18.ia64.orig/sound/drivers/serial-u16550.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/drivers/serial-u16550.c	2007-03-15 10:31:12.000000000 -0400
+@@ -326,7 +326,7 @@ static void snd_uart16550_buffer_timer(u
+  *  return 0 if found
+  *  return negative error if not found
+  */
+-static int __init snd_uart16550_detect(snd_uart16550_t *uart)
++static int __devinit snd_uart16550_detect(snd_uart16550_t *uart)
+ {
+ 	unsigned long io_base = uart->base;
+ 	int ok;
+@@ -762,7 +762,7 @@ static int snd_uart16550_dev_free(struct
+ 	return snd_uart16550_free(uart);
+ }
+ 
+-static int __init snd_uart16550_create(struct snd_card *card,
++static int __devinit snd_uart16550_create(struct snd_card *card,
+ 				       unsigned long iobase,
+ 				       int irq,
+ 				       unsigned int speed,
+@@ -841,7 +841,7 @@ static int __init snd_uart16550_create(s
+ 	return 0;
+ }
+ 
+-static void __init snd_uart16550_substreams(struct snd_rawmidi_str *stream)
++static void __devinit snd_uart16550_substreams(struct snd_rawmidi_str *stream)
+ {
+ 	struct list_head *list;
+ 
+@@ -851,7 +851,7 @@ static void __init snd_uart16550_substre
+ 	}
+ }
+ 
+-static int __init snd_uart16550_rmidi(snd_uart16550_t *uart, int device, int outs, int ins, struct snd_rawmidi **rmidi)
++static int __devinit snd_uart16550_rmidi(snd_uart16550_t *uart, int device, int outs, int ins, struct snd_rawmidi **rmidi)
+ {
+ 	struct snd_rawmidi *rrawmidi;
+ 	int err;
+@@ -872,7 +872,7 @@ static int __init snd_uart16550_rmidi(sn
+ 	return 0;
+ }
+ 
+-static int __init snd_serial_probe(struct platform_device *devptr)
++static int __devinit snd_serial_probe(struct platform_device *devptr)
+ {
+ 	struct snd_card *card;
+ 	snd_uart16550_t *uart;
+@@ -956,7 +956,7 @@ static int __init snd_serial_probe(struc
+ 	return err;
+ }
+ 
+-static int snd_serial_remove(struct platform_device *devptr)
++static int __devexit snd_serial_remove(struct platform_device *devptr)
+ {
+ 	snd_card_free(platform_get_drvdata(devptr));
+ 	platform_set_drvdata(devptr, NULL);
+@@ -967,7 +967,7 @@ static int snd_serial_remove(struct plat
+ 
+ static struct platform_driver snd_serial_driver = {
+ 	.probe		= snd_serial_probe,
+-	.remove		= snd_serial_remove,
++	.remove		= __devexit_p( snd_serial_remove),
+ 	.driver		= {
+ 		.name	= SND_SERIAL_DRIVER
+ 	},
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/drivers/virmidi.c linux-2.6.18.ia64/sound/drivers/virmidi.c
+--- linux-2.6.18.ia64.orig/sound/drivers/virmidi.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/drivers/virmidi.c	2007-03-15 10:31:12.000000000 -0400
+@@ -85,7 +85,7 @@ struct snd_card_virmidi {
+ static struct platform_device *devices[SNDRV_CARDS];
+ 
+ 
+-static int __init snd_virmidi_probe(struct platform_device *devptr)
++static int __devinit snd_virmidi_probe(struct platform_device *devptr)
+ {
+ 	struct snd_card *card;
+ 	struct snd_card_virmidi *vmidi;
+@@ -129,7 +129,7 @@ static int __init snd_virmidi_probe(stru
+ 	return err;
+ }
+ 
+-static int snd_virmidi_remove(struct platform_device *devptr)
++static int __devexit snd_virmidi_remove(struct platform_device *devptr)
+ {
+ 	snd_card_free(platform_get_drvdata(devptr));
+ 	platform_set_drvdata(devptr, NULL);
+@@ -140,7 +140,7 @@ static int snd_virmidi_remove(struct pla
+ 
+ static struct platform_driver snd_virmidi_driver = {
+ 	.probe		= snd_virmidi_probe,
+-	.remove		= snd_virmidi_remove,
++	.remove		= __devexit_p(snd_virmidi_remove),
+ 	.driver		= {
+ 		.name	= SND_VIRMIDI_DRIVER
+ 	},
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/isa/cmi8330.c linux-2.6.18.ia64/sound/isa/cmi8330.c
+--- linux-2.6.18.ia64.orig/sound/isa/cmi8330.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/isa/cmi8330.c	2007-03-15 10:31:12.000000000 -0400
+@@ -572,7 +572,7 @@ static int __devinit snd_cmi8330_nonpnp_
+ 	return 0;
+ }
+ 
+-static int snd_cmi8330_nonpnp_remove(struct platform_device *devptr)
++static int __devexit snd_cmi8330_nonpnp_remove(struct platform_device *devptr)
+ {
+ 	snd_card_free(platform_get_drvdata(devptr));
+ 	platform_set_drvdata(devptr, NULL);
+@@ -595,7 +595,7 @@ static int snd_cmi8330_nonpnp_resume(str
+ 
+ static struct platform_driver snd_cmi8330_driver = {
+ 	.probe		= snd_cmi8330_nonpnp_probe,
+-	.remove		= snd_cmi8330_nonpnp_remove,
++	.remove		= __devexit_p(snd_cmi8330_nonpnp_remove),
+ #ifdef CONFIG_PM
+ 	.suspend	= snd_cmi8330_nonpnp_suspend,
+ 	.resume		= snd_cmi8330_nonpnp_resume,
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/isa/es1688/es1688.c linux-2.6.18.ia64/sound/isa/es1688/es1688.c
+--- linux-2.6.18.ia64.orig/sound/isa/es1688/es1688.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/isa/es1688/es1688.c	2007-03-15 10:31:12.000000000 -0400
+@@ -73,7 +73,7 @@ static struct platform_device *devices[S
+ 
+ #define PFX	"es1688: "
+ 
+-static int __init snd_es1688_probe(struct platform_device *pdev)
++static int __devinit snd_es1688_probe(struct platform_device *pdev)
+ {
+ 	int dev = pdev->id;
+ 	static int possible_irqs[] = {5, 9, 10, 7, -1};
+@@ -171,7 +171,7 @@ static int __init snd_es1688_probe(struc
+ 	return err;
+ }
+ 
+-static int snd_es1688_remove(struct platform_device *devptr)
++static int __devexit snd_es1688_remove(struct platform_device *devptr)
+ {
+ 	snd_card_free(platform_get_drvdata(devptr));
+ 	platform_set_drvdata(devptr, NULL);
+@@ -182,7 +182,7 @@ static int snd_es1688_remove(struct plat
+ 
+ static struct platform_driver snd_es1688_driver = {
+ 	.probe		= snd_es1688_probe,
+-	.remove		= snd_es1688_remove,
++	.remove		= __devexit_p(snd_es1688_remove),
+ 	/* FIXME: suspend/resume */
+ 	.driver		= {
+ 		.name	= ES1688_DRIVER
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/isa/gus/gusclassic.c linux-2.6.18.ia64/sound/isa/gus/gusclassic.c
+--- linux-2.6.18.ia64.orig/sound/isa/gus/gusclassic.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/isa/gus/gusclassic.c	2007-03-15 10:31:12.000000000 -0400
+@@ -103,7 +103,7 @@ static void __init snd_gusclassic_init(i
+ 	gus->joystick_dac = joystick_dac[dev];
+ }
+ 
+-static int __init snd_gusclassic_probe(struct platform_device *pdev)
++static int __devinit snd_gusclassic_probe(struct platform_device *pdev)
+ {
+ 	int dev = pdev->id;
+ 	static int possible_irqs[] = {5, 11, 12, 9, 7, 15, 3, 4, -1};
+@@ -211,7 +211,7 @@ static int __init snd_gusclassic_probe(s
+ 	return err;
+ }
+ 
+-static int snd_gusclassic_remove(struct platform_device *devptr)
++static int __devexit snd_gusclassic_remove(struct platform_device *devptr)
+ {
+ 	snd_card_free(platform_get_drvdata(devptr));
+ 	platform_set_drvdata(devptr, NULL);
+@@ -222,7 +222,7 @@ static int snd_gusclassic_remove(struct 
+ 
+ static struct platform_driver snd_gusclassic_driver = {
+ 	.probe		= snd_gusclassic_probe,
+-	.remove		= snd_gusclassic_remove,
++	.remove		= __devexit_p(snd_gusclassic_remove),
+ 	/* FIXME: suspend/resume */
+ 	.driver		= {
+ 		.name	= GUSCLASSIC_DRIVER
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/isa/gus/gusextreme.c linux-2.6.18.ia64/sound/isa/gus/gusextreme.c
+--- linux-2.6.18.ia64.orig/sound/isa/gus/gusextreme.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/isa/gus/gusextreme.c	2007-03-15 10:31:12.000000000 -0400
+@@ -92,7 +92,7 @@ static struct platform_device *devices[S
+ 
+ #define PFX	"gusextreme: "
+ 
+-static int __init snd_gusextreme_detect(int dev,
++static int __devinit snd_gusextreme_detect(int dev,
+ 					struct snd_card *card,
+ 					struct snd_gus_card * gus,
+ 					struct snd_es1688 *es1688)
+@@ -142,12 +142,12 @@ static int __init snd_gusextreme_detect(
+ 	return 0;
+ }
+ 
+-static void __init snd_gusextreme_init(int dev, struct snd_gus_card * gus)
++static void __devinit snd_gusextreme_init(int dev, struct snd_gus_card * gus)
+ {
+ 	gus->joystick_dac = joystick_dac[dev];
+ }
+ 
+-static int __init snd_gusextreme_mixer(struct snd_es1688 *chip)
++static int __devinit snd_gusextreme_mixer(struct snd_es1688 *chip)
+ {
+ 	struct snd_card *card = chip->card;
+ 	struct snd_ctl_elem_id id1, id2;
+@@ -169,7 +169,7 @@ static int __init snd_gusextreme_mixer(s
+ 	return 0;
+ }
+ 
+-static int __init snd_gusextreme_probe(struct platform_device *pdev)
++static int __devinit snd_gusextreme_probe(struct platform_device *pdev)
+ {
+ 	int dev = pdev->id;
+ 	static int possible_ess_irqs[] = {5, 9, 10, 7, -1};
+@@ -321,7 +321,7 @@ static int __init snd_gusextreme_probe(s
+ 	return err;
+ }
+ 
+-static int snd_gusextreme_remove(struct platform_device *devptr)
++static int __devexit snd_gusextreme_remove(struct platform_device *devptr)
+ {
+ 	snd_card_free(platform_get_drvdata(devptr));
+ 	platform_set_drvdata(devptr, NULL);
+@@ -332,7 +332,7 @@ static int snd_gusextreme_remove(struct 
+ 
+ static struct platform_driver snd_gusextreme_driver = {
+ 	.probe		= snd_gusextreme_probe,
+-	.remove		= snd_gusextreme_remove,
++	.remove		= __devexit_p(snd_gusextreme_remove),
+ 	/* FIXME: suspend/resume */
+ 	.driver		= {
+ 		.name	= GUSEXTREME_DRIVER
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/isa/gus/gusmax.c linux-2.6.18.ia64/sound/isa/gus/gusmax.c
+--- linux-2.6.18.ia64.orig/sound/isa/gus/gusmax.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/isa/gus/gusmax.c	2007-03-15 10:31:12.000000000 -0400
+@@ -85,7 +85,7 @@ struct snd_gusmax {
+ 
+ #define PFX	"gusmax: "
+ 
+-static int __init snd_gusmax_detect(struct snd_gus_card * gus)
++static int __devinit snd_gusmax_detect(struct snd_gus_card * gus)
+ {
+ 	unsigned char d;
+ 
+@@ -127,7 +127,7 @@ static irqreturn_t snd_gusmax_interrupt(
+ 	return IRQ_RETVAL(handled);
+ }
+ 
+-static void __init snd_gusmax_init(int dev, struct snd_card *card, struct snd_gus_card * gus)
++static void __devinit snd_gusmax_init(int dev, struct snd_card *card, struct snd_gus_card * gus)
+ {
+ 	gus->equal_irq = 1;
+ 	gus->codec_flag = 1;
+@@ -145,7 +145,7 @@ static void __init snd_gusmax_init(int d
+ #define CS4231_PRIVATE( left, right, shift, mute ) \
+ 			((left << 24)|(right << 16)|(shift<<8)|mute)
+ 
+-static int __init snd_gusmax_mixer(struct snd_cs4231 *chip)
++static int __devinit snd_gusmax_mixer(struct snd_cs4231 *chip)
+ {
+ 	struct snd_card *card = chip->card;
+ 	struct snd_ctl_elem_id id1, id2;
+@@ -204,7 +204,7 @@ static void snd_gusmax_free(struct snd_c
+ 		free_irq(maxcard->irq, (void *)maxcard);
+ }
+ 
+-static int __init snd_gusmax_probe(struct platform_device *pdev)
++static int __devinit snd_gusmax_probe(struct platform_device *pdev)
+ {
+ 	int dev = pdev->id;
+ 	static int possible_irqs[] = {5, 11, 12, 9, 7, 15, 3, -1};
+@@ -348,7 +348,7 @@ static int __init snd_gusmax_probe(struc
+ 	return err;
+ }
+ 
+-static int snd_gusmax_remove(struct platform_device *devptr)
++static int __devexit snd_gusmax_remove(struct platform_device *devptr)
+ {
+ 	snd_card_free(platform_get_drvdata(devptr));
+ 	platform_set_drvdata(devptr, NULL);
+@@ -359,7 +359,7 @@ static int snd_gusmax_remove(struct plat
+ 
+ static struct platform_driver snd_gusmax_driver = {
+ 	.probe		= snd_gusmax_probe,
+-	.remove		= snd_gusmax_remove,
++	.remove		= __devexit_p(snd_gusmax_remove),
+ 	/* FIXME: suspend/resume */
+ 	.driver		= {
+ 		.name	= GUSMAX_DRIVER
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/isa/opl3sa2.c linux-2.6.18.ia64/sound/isa/opl3sa2.c
+--- linux-2.6.18.ia64.orig/sound/isa/opl3sa2.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/isa/opl3sa2.c	2007-03-15 10:31:12.000000000 -0400
+@@ -897,7 +897,7 @@ static int __devinit snd_opl3sa2_nonpnp_
+ 	return 0;
+ }
+ 
+-static int snd_opl3sa2_nonpnp_remove(struct platform_device *devptr)
++static int __devexit snd_opl3sa2_nonpnp_remove(struct platform_device *devptr)
+ {
+ 	snd_card_free(platform_get_drvdata(devptr));
+ 	platform_set_drvdata(devptr, NULL);
+@@ -920,7 +920,7 @@ static int snd_opl3sa2_nonpnp_resume(str
+ 
+ static struct platform_driver snd_opl3sa2_nonpnp_driver = {
+ 	.probe		= snd_opl3sa2_nonpnp_probe,
+-	.remove		= snd_opl3sa2_nonpnp_remove,
++	.remove		= __devexit( snd_opl3sa2_nonpnp_remove),
+ #ifdef CONFIG_PM
+ 	.suspend	= snd_opl3sa2_nonpnp_suspend,
+ 	.resume		= snd_opl3sa2_nonpnp_resume,
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/isa/sb/sb8.c linux-2.6.18.ia64/sound/isa/sb/sb8.c
+--- linux-2.6.18.ia64.orig/sound/isa/sb/sb8.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/isa/sb/sb8.c	2007-03-15 10:31:12.000000000 -0400
+@@ -83,7 +83,7 @@ static void snd_sb8_free(struct snd_card
+ 	release_and_free_resource(acard->fm_res);
+ }
+ 
+-static int __init snd_sb8_probe(struct platform_device *pdev)
++static int __devinit snd_sb8_probe(struct platform_device *pdev)
+ {
+ 	int dev = pdev->id;
+ 	struct snd_sb *chip;
+@@ -193,7 +193,7 @@ static int __init snd_sb8_probe(struct p
+ 	return err;
+ }
+ 
+-static int snd_sb8_remove(struct platform_device *pdev)
++static int __devexit snd_sb8_remove(struct platform_device *pdev)
+ {
+ 	snd_card_free(platform_get_drvdata(pdev));
+ 	platform_set_drvdata(pdev, NULL);
+@@ -230,7 +230,7 @@ static int snd_sb8_resume(struct platfor
+ 
+ static struct platform_driver snd_sb8_driver = {
+ 	.probe		= snd_sb8_probe,
+-	.remove		= snd_sb8_remove,
++	.remove		= __devexit_p(snd_sb8_remove),
+ #ifdef CONFIG_PM
+ 	.suspend	= snd_sb8_suspend,
+ 	.resume		= snd_sb8_resume,
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/oss/nm256_audio.c linux-2.6.18.ia64/sound/oss/nm256_audio.c
+--- linux-2.6.18.ia64.orig/sound/oss/nm256_audio.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/oss/nm256_audio.c	2007-03-15 10:31:12.000000000 -0400
+@@ -1237,7 +1237,7 @@ nm256_probe(struct pci_dev *pcidev,const
+     return -1; /* should not come here ... */
+ }
+ 
+-static void __devinit
++static void __devexit
+ nm256_remove(struct pci_dev *pcidev) {
+     struct nm256_info *xcard = pci_get_drvdata(pcidev);
+     struct nm256_info *card,*next_card = NULL;
+@@ -1633,7 +1633,7 @@ static struct pci_driver nm256_pci_drive
+ 	.name		= "nm256_audio",
+ 	.id_table	= nm256_pci_tbl,
+ 	.probe		= nm256_probe,
+-	.remove		= nm256_remove,
++	.remove		= __devexit_p(nm256_remove),
+ };
+ 
+ module_param(usecache, bool, 0);
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/oss/sb_card.c linux-2.6.18.ia64/sound/oss/sb_card.c
+--- linux-2.6.18.ia64.orig/sound/oss/sb_card.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/oss/sb_card.c	2007-03-15 10:31:12.000000000 -0400
+@@ -237,7 +237,7 @@ static void sb_dev2cfg(struct pnp_dev *d
+ static unsigned int sb_pnp_devices;
+ 
+ /* Probe callback function for the PnP API */
+-static int sb_pnp_probe(struct pnp_card_link *card, const struct pnp_card_device_id *card_id)
++static int __devinit sb_pnp_probe(struct pnp_card_link *card, const struct pnp_card_device_id *card_id)
+ {
+ 	struct sb_card_config *scc;
+ 	struct sb_module_options sbmo = {0}; /* Default to 0 for PnP */
+@@ -271,7 +271,7 @@ static int sb_pnp_probe(struct pnp_card_
+ 	return sb_register_oss(scc, &sbmo);
+ }
+ 
+-static void sb_pnp_remove(struct pnp_card_link *card)
++static void __devexit sb_pnp_remove(struct pnp_card_link *card)
+ {
+ 	struct sb_card_config *scc = pnp_get_card_drvdata(card);
+ 
+@@ -287,7 +287,7 @@ static struct pnp_card_driver sb_pnp_dri
+ 	.name          = "OSS SndBlstr", /* 16 character limit */
+ 	.id_table      = sb_pnp_card_table,
+ 	.probe         = sb_pnp_probe,
+-	.remove        = sb_pnp_remove,
++	.remove        = __devexit_p( sb_pnp_remove),
+ };
+ MODULE_DEVICE_TABLE(pnp_card, sb_pnp_card_table);
+ #endif /* CONFIG_PNP */
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/parisc/harmony.c linux-2.6.18.ia64/sound/parisc/harmony.c
+--- linux-2.6.18.ia64.orig/sound/parisc/harmony.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/parisc/harmony.c	2007-03-15 10:31:12.000000000 -0400
+@@ -1020,7 +1020,7 @@ static struct parisc_driver snd_harmony_
+ 	.name = "harmony",
+ 	.id_table = snd_harmony_devtable,
+ 	.probe = snd_harmony_probe,
+-	.remove = snd_harmony_remove,
++	.remove = __devexit_p(snd_harmony_remove),
+ };
+ 
+ static int __init 
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/pcmcia/pdaudiocf/pdaudiocf.c linux-2.6.18.ia64/sound/pcmcia/pdaudiocf/pdaudiocf.c
+--- linux-2.6.18.ia64.orig/sound/pcmcia/pdaudiocf/pdaudiocf.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/pcmcia/pdaudiocf/pdaudiocf.c	2007-03-15 10:31:12.000000000 -0400
+@@ -90,7 +90,7 @@ static int snd_pdacf_dev_free(struct snd
+ /*
+  * snd_pdacf_attach - attach callback for cs
+  */
+-static int snd_pdacf_probe(struct pcmcia_device *link)
++static int __devinit snd_pdacf_probe(struct pcmcia_device *link)
+ {
+ 	int i;
+ 	struct snd_pdacf *pdacf;
+@@ -196,7 +196,7 @@ static int snd_pdacf_assign_resources(st
+ /*
+  * snd_pdacf_detach - detach callback for cs
+  */
+-static void snd_pdacf_detach(struct pcmcia_device *link)
++static void __devexit snd_pdacf_detach(struct pcmcia_device *link)
+ {
+ 	struct snd_pdacf *chip = link->priv;
+ 
+@@ -310,7 +310,7 @@ static struct pcmcia_driver pdacf_cs_dri
+ 		.name	= "snd-pdaudiocf",
+ 	},
+ 	.probe		= snd_pdacf_probe,
+-	.remove		= snd_pdacf_detach,
++	.remove		= __devexit_p(snd_pdacf_detach),
+ 	.id_table	= snd_pdacf_ids,
+ #ifdef CONFIG_PM
+ 	.suspend	= pdacf_suspend,
+diff -urNp -X linux-2.6.18.ia64/Documentation/dontdiff linux-2.6.18.ia64.orig/sound/pcmcia/vx/vxpocket.c linux-2.6.18.ia64/sound/pcmcia/vx/vxpocket.c
+--- linux-2.6.18.ia64.orig/sound/pcmcia/vx/vxpocket.c	2007-03-15 10:30:04.000000000 -0400
++++ linux-2.6.18.ia64/sound/pcmcia/vx/vxpocket.c	2007-03-15 10:31:12.000000000 -0400
+@@ -308,7 +308,7 @@ static int vxp_resume(struct pcmcia_devi
+ 
+ /*
+  */
+-static int vxpocket_probe(struct pcmcia_device *p_dev)
++static int __devinit vxpocket_probe(struct pcmcia_device *p_dev)
+ {
+ 	struct snd_card *card;
+ 	struct snd_vxpocket *vxp;
+@@ -348,7 +348,7 @@ static int vxpocket_probe(struct pcmcia_
+ 	return vxpocket_config(p_dev);
+ }
+ 
+-static void vxpocket_detach(struct pcmcia_device *link)
++static void __devexit vxpocket_detach(struct pcmcia_device *link)
+ {
+ 	struct snd_vxpocket *vxp;
+ 	struct vx_core *chip;
+@@ -382,7 +382,7 @@ static struct pcmcia_driver vxp_cs_drive
+ 		.name	= "snd-vxpocket",
+ 	},
+ 	.probe		= vxpocket_probe,
+-	.remove		= vxpocket_detach,
++	.remove		= __devexit_p(vxpocket_detach),
+ 	.id_table	= vxp_ids,
+ #ifdef CONFIG_PM
+ 	.suspend	= vxp_suspend,
+

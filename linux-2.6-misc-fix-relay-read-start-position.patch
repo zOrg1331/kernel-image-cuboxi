@@ -1,0 +1,70 @@
+From: Masami Hiramatsu <mhiramat@redhat.com>
+Date: Fri, 7 Sep 2007 15:47:44 -0400
+Subject: [misc] Fix relay read start position
+Message-id: 46E1AAE0.4030907@redhat.com
+O-Subject: [RHEL5.2 PATCH 1/2] Fix relay read() start position
+Bugzilla: 250706
+
+Hello,
+
+This patch fixes a bug in the relay read interface causing the
+number of consumed bytes to be set incorrectly.
+
+When the relay file is closed and opened again, the read position is set to 0.
+However, since the relay does not care this situation, it read again
+the buffers which are already read.
+To solve this problem, this patch re-calculate the read position from the
+consumed bytes(which shows how many bytes are already read) if the
+read position is 0.
+
+The original patch was merged into upstream kernel.
+Commit:     8d62fdebdaf9b866c7e236a8f5cfe90e6dba5773
+http://www.mail-archive.com/git-commits-head@vger.kernel.org/msg14969.html
+
+This patch can be applied for 2.6.18-44.el5 and resolves bz #250706
+
+Testing: I built a test kernel, made a test script for this patch and tested:
+
+---(testfill1.sh)
+#!/bin/sh
+
+stap - -m fillup -p4 << EOF
+global counter=0
+probe timer.ms(1) {
+counter++;
+printf("%08d\n", counter);
+}
+EOF
+mv fillup.ko /tmp/fillup.ko
+staprun -L /tmp/fillup.ko -o /dev/null
+sleep 1
+count1=`cat /sys/kernel/debug/systemtap/fillup/trace0 | tail -n 1`
+sleep 1
+count2=`cat /sys/kernel/debug/systemtap/fillup/trace0 | head -n 1`
+/sbin/rmmod fillup.ko
+rm /tmp/fillup.ko
+
+if [ `expr $count1 + 1` -eq $count2 ]; then
+        echo "test success"
+else
+        echo "test fail:" $count1 $count2
+fi
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: Josef Bacik <jbacik@redhat.com>
+
+diff --git a/kernel/relay.c b/kernel/relay.c
+index 85786ff..026dee7 100644
+--- a/kernel/relay.c
++++ b/kernel/relay.c
+@@ -829,7 +829,10 @@ static size_t relay_file_read_start_pos(size_t read_pos,
+ 	size_t read_subbuf, padding, padding_start, padding_end;
+ 	size_t subbuf_size = buf->chan->subbuf_size;
+ 	size_t n_subbufs = buf->chan->n_subbufs;
++	size_t consumed = buf->subbufs_consumed % n_subbufs;
+ 
++	if (!read_pos)
++		read_pos = consumed * subbuf_size + buf->bytes_consumed;
+ 	read_subbuf = read_pos / subbuf_size;
+ 	padding = buf->padding[read_subbuf];
+ 	padding_start = (read_subbuf + 1) * subbuf_size - padding;

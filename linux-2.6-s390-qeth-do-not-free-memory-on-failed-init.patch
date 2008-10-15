@@ -1,0 +1,101 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 30 Oct 2007 17:11:15 +0100
+Subject: [s390] qeth: do not free memory on failed init
+Message-id: 20071030161115.GJ6604@redhat.com
+O-Subject: [RHEL5.2 PATCH 5/5] s390 qeth: crash during reboot after failing online setting
+Bugzilla: 330211
+
+Problem:
+=========
+
+Online setting of a qeth device may fail for instance
+because of:
+    - out-of-memory condition when allocating qdio queues
+    - IDX ACTIVATE problem
+This leads to a kernel panic in qeth_reboot_event.
+
+Such a device is still returned in a driver_for_each_device loop processed
+in qeth_reboot_event(), which calls qeth_clear_qdio_buffers().
+Make sure qeth_clear_output_buffer() is called only, if
+the qdio queues have been successfully allocated
+during initialization of a qeth device.
+
+Bugzilla
+=========
+
+BZ 330211
+https://bugzilla.redhat.com/show_bug.cgi?id=330211
+
+Upstream status of the patch:
+=============================
+
+Patch posted on linux-netdev
+
+http://marc.info/?l=linux-netdev&m=118838285704791&w=2
+
+Test status:
+============
+
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index 1a9f8c2..22a0c0e 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -3177,10 +3177,12 @@ out_freeoutq:
+ 	while (i > 0)
+ 		kfree(card->qdio.out_qs[--i]);
+ 	kfree(card->qdio.out_qs);
++	card->qdio.out_qs = NULL;
+ out_freepool:
+ 	qeth_free_buffer_pool(card);
+ out_freeinq:
+ 	kfree(card->qdio.in_q);
++	card->qdio.in_q = NULL;
+ out_nomem:
+ 	atomic_set(&card->qdio.state, QETH_QDIO_UNINITIALIZED);
+ 	return -ENOMEM;
+@@ -3195,17 +3197,22 @@ qeth_free_qdio_buffers(struct qeth_card *card)
+ 	if (atomic_swap(&card->qdio.state, QETH_QDIO_UNINITIALIZED) ==
+ 		QETH_QDIO_UNINITIALIZED)
+ 		return;
+-	kfree(card->qdio.in_q);
++	if (card->qdio.in_q) {
++		kfree(card->qdio.in_q);
++		card->qdio.in_q = NULL;
++	}
+ 	/* inbound buffer pool */
+ 	qeth_free_buffer_pool(card);
+ 	/* free outbound qdio_qs */
+-	for (i = 0; i < card->qdio.no_out_queues; ++i){
+-		for (j = 0; j < QDIO_MAX_BUFFERS_PER_Q; ++j)
+-			qeth_clear_output_buffer(card->qdio.out_qs[i],
++	if (card->qdio.out_qs) {
++		for (i = 0; i < card->qdio.no_out_queues; ++i){
++			for (j = 0; j < QDIO_MAX_BUFFERS_PER_Q; ++j)
++				qeth_clear_output_buffer(card->qdio.out_qs[i],
+ 					&card->qdio.out_qs[i]->bufs[j]);
+-		kfree(card->qdio.out_qs[i]);
++			kfree(card->qdio.out_qs[i]);
++		}
++		kfree(card->qdio.out_qs);
+ 	}
+-	kfree(card->qdio.out_qs);
+ }
+ 
+ static void
+@@ -3216,7 +3223,7 @@ qeth_clear_qdio_buffers(struct qeth_card *card)
+ 	QETH_DBF_TEXT(trace, 2, "clearqdbf");
+ 	/* clear outbound buffers to free skbs */
+ 	for (i = 0; i < card->qdio.no_out_queues; ++i)
+-		if (card->qdio.out_qs[i]){
++		if (card->qdio.out_qs && card->qdio.out_qs[i]){
+ 			for (j = 0; j < QDIO_MAX_BUFFERS_PER_Q; ++j)
+ 				qeth_clear_output_buffer(card->qdio.out_qs[i],
+ 						&card->qdio.out_qs[i]->bufs[j]);

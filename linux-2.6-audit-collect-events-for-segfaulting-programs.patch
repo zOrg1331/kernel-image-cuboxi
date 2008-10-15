@@ -1,0 +1,152 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Mon, 1 Oct 2007 17:52:57 -0400
+Subject: [audit] collect events for segfaulting programs
+Message-id: 1191275577.9506.5.camel@localhost.localdomain
+O-Subject: [PATCH RHEL5.2] BZ 239061 - audit segfaulting programs
+Bugzilla: 239061
+
+BZ 239061
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=0a4ff8c2598b72f2fa9d50aae9e1809e684dbf41
+
+Upsteam commit log:
+
+I have been working on some code that detects abnormal events based on audit
+system events. One kind of event that we currently have no visibility for is
+when a program terminates due to segfault - which should never happen on a
+production machine. And if it did, you'd want to investigate it. Attached is a
+patch that collects these events and sends them into the audit system.
+
+Signed-off-by: Steve Grubb <sgrubb@redhat.com>
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+
+I tested this patch against a RHEL5 kernel and it appears to work:
+[root@nec-em8 ~]# cat core.c
+int main (void)
+{
+        int i[10];
+        int j;
+        for (j = 0; j < 100; j++) {
+                i[j] = j;
+        }
+        return j;
+}
+[root@nec-em8 ~]# ./core
+Segmentation fault
+[root@nec-em8 ~]# cat /var/log/audit/audit.log
+
+type=ANOM_ABEND msg=audit(1191275049.320:14): auid=0 uid=0 gid=0 subj=root:system_r:unconfined_t:s0-s0:c0.c1023 pid=4463 comm="core" sig=11
+
+-Eric
+
+Acked-by: James Morris <jmorris@redhat.com>
+---
+ fs/exec.c               |    2 ++
+ include/linux/audit.h   |    3 +++
+ include/linux/selinux.h |    1 +
+ kernel/auditsc.c        |   39 +++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 45 insertions(+), 0 deletions(-)
+
+diff --git a/fs/exec.c b/fs/exec.c
+index a06b4fe..53e057b 100644
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -1467,6 +1467,8 @@ int do_coredump(long signr, int exit_code, struct pt_regs * regs)
+ 	int fsuid = current->fsuid;
+ 	int flag = 0;
+ 
++	audit_core_dumps(signr);
++
+ 	binfmt = current->binfmt;
+ 	if (!binfmt || !binfmt->core_dump)
+ 		goto fail;
+diff --git a/include/linux/audit.h b/include/linux/audit.h
+index 961a823..1ab1314 100644
+--- a/include/linux/audit.h
++++ b/include/linux/audit.h
+@@ -112,6 +112,7 @@
+ #define AUDIT_FIRST_KERN_ANOM_MSG   1700
+ #define AUDIT_LAST_KERN_ANOM_MSG    1799
+ #define AUDIT_ANOM_PROMISCUOUS      1700 /* Device changed promiscuous mode */
++#define AUDIT_ANOM_ABEND            1701 /* Process ended abnormally */
+ 
+ #define AUDIT_KERNEL		2000	/* Asynchronous audit record. NOT A REQUEST. */
+ 
+@@ -382,6 +383,7 @@ static inline void audit_inode_child(const char *dname,
+ 	if (unlikely(!audit_dummy_context()))
+ 		__audit_inode_child(dname, inode, parent);
+ }
++void audit_core_dumps(long signr);
+ 
+ static inline void audit_ptrace(struct task_struct *t)
+ {
+@@ -464,6 +466,7 @@ extern int audit_signals;
+ #define __audit_inode_child(d,i,p) do { ; } while (0)
+ #define audit_inode(n,d) do { ; } while (0)
+ #define audit_inode_child(d,i,p) do { ; } while (0)
++#define audit_core_dumps(i) do { ; } while (0)
+ #define auditsc_get_stamp(c,t,s) do { BUG(); } while (0)
+ #define audit_get_loginuid(c) ({ -1; })
+ #define audit_log_task_context(b) do { ; } while (0)
+diff --git a/include/linux/selinux.h b/include/linux/selinux.h
+index aad4e39..5939133 100644
+--- a/include/linux/selinux.h
++++ b/include/linux/selinux.h
+@@ -90,6 +90,7 @@ void selinux_task_ctxid(struct task_struct *tsk, u32 *ctxid);
+  *     kfree() on it after use.
+  */
+ int selinux_ctxid_to_string(u32 ctxid, char **ctx, u32 *ctxlen);
++#define selinux_sid_to_string(sid,ctx,ctxlen) selinux_ctxid_to_string((sid),(ctx),(ctxlen))
+ 
+ /**
+  *     selinux_get_inode_sid - get the inode's security context ID
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index 4d8c9f3..7fec531 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -2165,3 +2165,42 @@ int __audit_signal_info(int sig, struct task_struct *t)
+ 
+ 	return 0;
+ }
++
++/**
++ * audit_core_dumps - record information about processes that end abnormally
++ * @sig: signal value
++ *
++ * If a process ends with a core dump, something fishy is going on and we
++ * should record the event for investigation.
++ */
++void audit_core_dumps(long signr)
++{
++	struct audit_buffer *ab;
++	u32 sid;
++
++	if (!audit_enabled)
++		return;
++
++	if (signr == SIGQUIT)	/* don't care for those */
++		return;
++
++	ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_ANOM_ABEND);
++	audit_log_format(ab, "auid=%u uid=%u gid=%u",
++			audit_get_loginuid(current->audit_context),
++			current->uid, current->gid);
++	selinux_get_task_sid(current, &sid);
++	if (sid) {
++		char *ctx = NULL;
++		u32 len;
++
++		if (selinux_sid_to_string(sid, &ctx, &len))
++			audit_log_format(ab, " ssid=%u", sid);
++		else
++			audit_log_format(ab, " subj=%s", ctx);
++		kfree(ctx);
++	}
++	audit_log_format(ab, " pid=%d comm=", current->pid);
++	audit_log_untrustedstring(ab, current->comm);
++	audit_log_format(ab, " sig=%ld", signr);
++	audit_log_end(ab);
++}
+-- 
+1.5.3.5.645.gbb47
+

@@ -1,0 +1,54 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 31 Jan 2008 11:21:53 +0100
+Subject: [s390] dasd: set online fails if initial probe fails
+Message-id: 20080131102153.GA16660@redhat.com
+O-Subject: [RHEL5 U2 PATCH 1/4] s390 - setting a dasd online fails if the initial probe failed
+Bugzilla: 429583
+
+Description
+============
+
+Setting a dasd online fails, if the initial probe failed (e.g. because of
+missing module). Therefor  "chccwdev -e 4711" will fail.
+
+The problem is fixed returning 0 for dasd_generic_probe even if set_online fails
+
+Bugzilla
+=========
+
+BZ 429583
+https://bugzilla.redhat.com/show_bug.cgi?id=429583
+
+Upstream status of the patch:
+=============================
+Patched posted upstream: http://lkml.org/lkml/2007/12/20/292
+and contained in linux-2.6 as git commit de3e0da1270bccb046885fbf1baa9140721de7e0
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/drivers/s390/block/dasd.c b/drivers/s390/block/dasd.c
+index c9f0fe6..7a65b13 100644
+--- a/drivers/s390/block/dasd.c
++++ b/drivers/s390/block/dasd.c
+@@ -1958,8 +1958,9 @@ dasd_generic_probe (struct ccw_device *cdev,
+ 	if (ret)
+ 		printk(KERN_WARNING
+ 		       "dasd_generic_probe: could not initially online "
+-		       "ccw-device %s\n", cdev->dev.bus_id);
+-	return ret;
++		       "ccw-device %s, return code: %d\n", cdev->dev.bus_id,
++			ret);
++	return 0;
+ }
+ 
+ /*

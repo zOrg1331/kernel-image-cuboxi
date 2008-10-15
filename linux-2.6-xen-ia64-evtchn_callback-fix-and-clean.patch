@@ -1,0 +1,214 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5.1 PATCH 8/21] evtchn_callback fix and clean
+Date: Thu, 07 Jun 2007 03:37:55 -0400
+Bugzilla: 242126
+Message-Id: <4667B5D3.6080305@redhat.com>
+Changelog: [xen] ia64: evtchn_callback fix and clean
+
+
+bz242126
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=242126
+
+Backport of cset#13084.
+
+Since we had changed to use event callback to deliver interrupts,
+
+1. The pending_interruption is changed to pending_event.
+
+2. get_ivr, set_tpr, get_trp and set_eoi are not used or only used
+   in the initialization phase. There is no need to write this code
+   in assembly.  This code is deleted.
+
+3. hyper_ssm_i needs to be rewritten to jump to entchn_callback_handler
+   instead of iva+0x3000 interrupt handler.  I will do this later.
+
+Thanks,
+Kei
+
+
+
+rh bug 242126
+
+# HG changeset patch
+# User awilliam@xenbuild2.aw
+# Date 1166462434 25200
+# Node ID ea2dc4a3c8eb5ee780dbbc6d12447b6bda2ee2b4
+# Parent  893b786cc66ae67bf761fbe1ff814435dae30210
+[IA64] evtchn_callback fix and clean
+
+Since we had changed to use event callback to deliver interrupts,
+
+1. The pending_interruption is changed to pending_event.
+
+2. get_ivr, set_tpr, get_trp and set_eoi are not used or only used
+   in the initialization phase. There is no need to write this code
+   in assembly.  This code is deleted.
+
+3. hyper_ssm_i needs to be rewritten to jump to entchn_callback_handler
+   instead of iva+0x3000 interrupt handler.  I will do this later.
+
+Signed-off-by: Anthony Xu  <anthony.xu@intel.com>
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/kernel/asm-offsets.c |    1 
+ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/kernel/gate.S        |    9 ++-
+ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/hypercall.S      |   14 ++---
+ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/xenivt.S         |   25 ++++++----
+ linux-2.6.18-21.el5-gerd-order-kei/include/asm-ia64/xen/privop.h  |    3 -
+ 5 files changed, 31 insertions(+), 21 deletions(-)
+
+diff -puN arch/ia64/kernel/asm-offsets.c~13084-IA64_evtchn_callback_fix_and_clean arch/ia64/kernel/asm-offsets.c
+--- linux-2.6.18-21.el5-gerd-order/arch/ia64/kernel/asm-offsets.c~13084-IA64_evtchn_callback_fix_and_clean	2007-06-07 02:44:29.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/kernel/asm-offsets.c	2007-06-07 02:44:29.000000000 -0400
+@@ -288,7 +288,6 @@ void foo(void)
+ 	DEFINE_MAPPED_REG_OFS(XSI_IHA_OFS, iha);
+ 	DEFINE_MAPPED_REG_OFS(XSI_ITIR_OFS, itir);
+ 	DEFINE_MAPPED_REG_OFS(XSI_PSR_IC_OFS, interrupt_collection_enabled);
+-	DEFINE_MAPPED_REG_OFS(XSI_PEND_OFS, pending_interruption);
+ 	DEFINE_MAPPED_REG_OFS(XSI_INCOMPL_REGFR_OFS, incomplete_regframe);
+ 	DEFINE_MAPPED_REG_OFS(XSI_BANKNUM_OFS, banknum);
+ 	DEFINE_MAPPED_REG_OFS(XSI_BANK0_R16_OFS, bank0_regs[0]);
+diff -puN arch/ia64/kernel/gate.S~13084-IA64_evtchn_callback_fix_and_clean arch/ia64/kernel/gate.S
+--- linux-2.6.18-21.el5-gerd-order/arch/ia64/kernel/gate.S~13084-IA64_evtchn_callback_fix_and_clean	2007-06-07 02:44:29.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/kernel/gate.S	2007-06-07 02:44:29.000000000 -0400
+@@ -126,9 +126,9 @@ GLOBAL_ENTRY(__kernel_syscall_via_epc)
+ 	;;
+ #ifdef CONFIG_XEN_IA64_VDSO_PARAVIRT
+ 	// r20 = 1
+-	// r22 = &vcpu->evtchn_mask
++	// r22 = &vcpu->vcpu_info->evtchn_upcall_mask
+ 	// r23 = &vpsr.ic
+-	// r24 = &vcpu->pending_interruption
++	// r24 = &vcpu->vcpu_info->evtchn_upcall_pending
+ 	// r25 = tmp
+ 	// r28 = &running_on_xen
+ 	// r30 = running_on_xen
+@@ -142,8 +142,11 @@ GLOBAL_ENTRY(__kernel_syscall_via_epc)
+ #define isRaw	p13
+ 	LOAD_RUNNING_ON_XEN(r28)
+ 	movl r22=XSI_PSR_I_ADDR
++	;;
++	ld8 r22=[r22]
++	;;
+ 	movl r23=XSI_PSR_IC
+-	movl r24=XSI_PSR_I_ADDR+(XSI_PEND_OFS-XSI_PSR_I_ADDR_OFS)
++	adds r24=-1,r22
+ 	mov r20=1
+ 	;;
+ 	ld4 r30=[r28]
+diff -puN arch/ia64/xen/hypercall.S~13084-IA64_evtchn_callback_fix_and_clean arch/ia64/xen/hypercall.S
+--- linux-2.6.18-21.el5-gerd-order/arch/ia64/xen/hypercall.S~13084-IA64_evtchn_callback_fix_and_clean	2007-06-07 02:44:29.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/hypercall.S	2007-06-07 02:44:29.000000000 -0400
+@@ -355,8 +355,6 @@ END(xen_send_ipi)
+ // Those are vdso specialized.
+ // In fsys mode, call, ret can't be used.
+ GLOBAL_ENTRY(xen_rsm_be_i)
+-	ld8 r22=[r22]
+-	;; 
+ 	st1 [r22]=r20
+ 	st4 [r23]=r0
+ 	XEN_HYPER_RSM_BE
+@@ -379,23 +377,23 @@ GLOBAL_ENTRY(xen_get_psr)
+ END(xen_get_psr)
+ 
+ 	// see xen_ssm_i() in privop.h
+-	// r22 = &vcpu->evtchn_mask
++	// r22 = &vcpu->vcpu_info->evtchn_upcall_mask
+ 	// r23 = &vpsr.ic
+-	// r24 = &vcpu->pending_interruption
++	// r24 = &vcpu->vcpu_info->evtchn_upcall_pending
+ 	// r25 = tmp
+ 	// r31 = tmp
+ 	// p11 = tmp
+ 	// p14 = tmp
+ #define XEN_SET_PSR_I			\
+-	ld4 r31=[r22];			\
+-	ld4 r25=[r24];			\
++	ld1 r31=[r22];			\
++	ld1 r25=[r24];			\
+ 	;;				\
+-	st4 [r22]=r0;			\
++	st1 [r22]=r0;			\
+ 	cmp.ne.unc p14,p0=r0,r31;	\
+ 	;;				\
+ (p14)	cmp.ne.unc p11,p0=r0,r25;	\
+ 	;;				\
+-(p11)	st4 [r22]=r20;			\
++(p11)	st1 [r22]=r20;			\
+ (p11)	st4 [r23]=r0;			\
+ (p11)	XEN_HYPER_SSM_I;
+ 		
+diff -puN arch/ia64/xen/xenivt.S~13084-IA64_evtchn_callback_fix_and_clean arch/ia64/xen/xenivt.S
+--- linux-2.6.18-21.el5-gerd-order/arch/ia64/xen/xenivt.S~13084-IA64_evtchn_callback_fix_and_clean	2007-06-07 02:44:29.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/xenivt.S	2007-06-07 02:44:29.000000000 -0400
+@@ -735,10 +735,10 @@ xen_page_fault:
+ 	;;
+ (p15)	ld8 r3=[r3]
+ 	;;
+-(p15)	st1 [r3]=r0,XSI_PEND_OFS-XSI_PSR_I_ADDR_OFS	// if (p15) vpsr.i = 1
++(p15)	st1 [r3]=r0,-1	// if (p15) vpsr.i = 1
+ 	mov r14=r0
+ 	;;
+-(p15)	ld4 r14=[r3]				// if (pending_interrupts)
++(p15)	ld1 r14=[r3]				// if (pending_events)
+ 	adds r3=8,r2				// re-set up second base pointer
+ 	;;
+ (p15)	cmp.ne	p15,p0=r14,r0
+@@ -1168,10 +1168,10 @@ ENTRY(break_fault)
+ #ifdef CONFIG_XEN
+ (p15)	ld8 r16=[r16]				// vpsr.i
+ 	;;
+-(p15)	st1 [r16]=r0,XSI_PEND_OFS-XSI_PSR_I_ADDR_OFS	// if (p15) vpsr.i = 1
++(p15)	st1 [r16]=r0,-1		// if (p15) vpsr.i = 1
+ 	mov r2=r0
+ 	;;
+-(p15)	ld4 r2=[r16]				// if (pending_interrupts)
++(p15)	ld1 r2=[r16]				// if (pending_events)
+ 	;;
+ 	cmp.ne	p6,p0=r2,r0
+ 	;;
+@@ -2157,13 +2157,22 @@ GLOBAL_ENTRY(xen_event_callback)
+ 	;;
+ 	SAVE_REST
+ 	;;
++1:
+ 	alloc r14=ar.pfs,0,0,1,0 // must be first in an insn group
+ 	add out0=16,sp		// pass pointer to pt_regs as first arg
+ 	;;
+-	srlz.d			// make sure we see the effect of cr.ivr
+-	movl r14=ia64_leave_kernel
++	br.call.sptk.many b0=evtchn_do_upcall
+ 	;;
+-	mov rp=r14
+-	br.call.sptk.many b6=evtchn_do_upcall
++	movl r20=XSI_PSR_I_ADDR
++	;;
++	ld8 r20=[r20]
++	;;
++	adds r20=-1,r20		// vcpu_info->evtchn_upcall_pending
++	;;
++	ld1 r20=[r20]
++	;;
++	cmp.ne p6,p0=r20,r0	// if there are pending events,
++	(p6) br.spnt.few 1b	// call evtchn_do_upcall again.
++	br.sptk.many ia64_leave_kernel
+ END(xen_event_callback)
+ #endif
+diff -puN include/asm-ia64/xen/privop.h~13084-IA64_evtchn_callback_fix_and_clean include/asm-ia64/xen/privop.h
+--- linux-2.6.18-21.el5-gerd-order/include/asm-ia64/xen/privop.h~13084-IA64_evtchn_callback_fix_and_clean	2007-06-07 02:44:29.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/include/asm-ia64/xen/privop.h	2007-06-07 02:44:29.000000000 -0400
+@@ -113,7 +113,8 @@ extern void xen_set_eflag(unsigned long)
+ 	({ XSI_PSR_I = (uint8_t)(_val) ? 0 : 1; })
+ #define xen_set_virtual_psr_ic(_val)	\
+ 	({ XEN_MAPPEDREGS->interrupt_collection_enabled = _val ? 1 : 0; })
+-#define xen_get_virtual_pend()		(XEN_MAPPEDREGS->pending_interruption)
++#define xen_get_virtual_pend()		\
++	(*(((uint8_t *)XEN_MAPPEDREGS->interrupt_mask_addr) - 1))
+ 
+ /* Hyperprivops are "break" instructions with a well-defined API.
+  * In particular, the virtual psr.ic bit must be off; in this way
+
+_
+

@@ -1,0 +1,172 @@
+From: Jan Glauber <jglauber@redhat.com>
+Date: Thu, 7 Feb 2008 17:09:39 +0100
+Subject: [module] fix module loader race
+Message-id: 1202400579.8974.40.camel@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH] fix module loader race
+Bugzilla: 429909
+
+BZ 429909
+
+On s390 (but not limited to s390) we've seen warning messages from the kernel module loader
+about "qeth: Unknown symbols" for some time. This problem is also present in 2.6.24.
+On RHEL5.2 it not only prints the warning but actually causes the network interface to not
+come up, since qeth starts running even if qdio is not finished loading.
+
+I believe it is a race condition in the module loader code. If there are dependent
+modules (like qeth depends on qdio) the module loader can start loading both modules at the
+same time (that is what is observable from the kernel, I have no idea about the user-space
+part that triggers sys_init_module).
+
+Loading happens like:
+
+sys_init_module()
+
+  mutex_lock(module_mutex)
+  load_module()
+    mod->state = MODULE_STATE_COMING
+  mutex_unlock(module_mutex)
+
+  mod->init()
+
+  mutex_lock(module_mutex)
+  mod->state = MODULE_STATE_LIVE
+  mutex_unlock(module_mutex)
+
+Now after load_module is finished the module_mutex is given up. If the init() function of
+qdio takes some time qeth can run get the mutex and run load_module(). Since qdio is
+still in state MODULE_STATE_COMING the lookup for the qdio symbols fails because of:
+
+strong_try_module_get(struct module *mod)
+ {
+ 	if (mod && mod->state == MODULE_STATE_COMING)
+		return 0;
+  ...
+
+There is an upstream patch from Rusty that introduces a waitqueue to wait for dependent
+modules: c9a3ba55bb5da03fc7d707709a7fe078fe1aa0a0
+
+Unfortunatelly this patch does not solve the issue, since the wait happens while
+holding the module_mutex. The other module has therefore no chance to change its
+state to MODULE_STATE_LIVE.
+
+This patch is similar to Rusty's patch but gives up the mutex before waiting and
+tries to reacquire the mutex at wake-up. I've not seen anything break due to
+giving up the mutex in load_module() but I wouldn't vouch for it either.
+
+Testing is currently ongoing, my test machine did reboot ~2000 time without
+freezing or getting the unknown symbol warning.
+
+Please review,
+
+Jan
+--
+jglauber@redhat.com
+jang@de.ibm.com
+
+Acked-by: Peter Martuccelli <peterm@redhat.com>
+Acked-by: Jon Masters <jcm@redhat.com>
+Acked-by: Peter Martuccelli <peterm@redhat.com>
+
+diff --git a/kernel/module.c b/kernel/module.c
+index 6fc16de..69ef2fd 100644
+--- a/kernel/module.c
++++ b/kernel/module.c
+@@ -84,8 +84,12 @@ EXPORT_SYMBOL(unregister_module_notifier);
+ static inline int strong_try_module_get(struct module *mod)
+ {
+ 	if (mod && mod->state == MODULE_STATE_COMING)
++		return -EBUSY;
++
++	if (try_module_get(mod))
+ 		return 0;
+-	return try_module_get(mod);
++	else
++		return -ENOENT;
+ }
+ 
+ static inline void add_taint_module(struct module *mod, unsigned flag)
+@@ -534,13 +538,41 @@ static int already_uses(struct module *a, struct module *b)
+ 	return 0;
+ }
+ 
++/* Waiting for a module to finish initializing? */
++static DECLARE_WAIT_QUEUE_HEAD(module_wq);
++
+ /* Module a uses b */
+ static int use_module(struct module *a, struct module *b)
+ {
+ 	struct module_use *use;
++	int err, retries = 5;
++
+ 	if (b == NULL || already_uses(a, b)) return 1;
+ 
+-	if (!strong_try_module_get(b))
++retry:
++	retries--;
++	if (retries == 0) {
++		printk("%s: gave up waiting for module %s to become alive\n",
++		       a->name, b->name);
++		return 0;
++	}
++
++	err = strong_try_module_get(b);
++        if (err == -EBUSY) {
++                printk("%s: waiting for %s to get alive\n", a->name, b->name);
++		/* a must give up mutex so b gets a chance to finish */
++                mutex_unlock(&module_mutex);
++                if (wait_event_interruptible_timeout(module_wq,
++                    (b->state == MODULE_STATE_LIVE), 30 * HZ) <= 0) {
++                        mutex_lock(&module_mutex);
++                        return 0;
++                }
++                mutex_lock(&module_mutex);
++                goto retry;
++        }
++
++	/* If strong_try_module_get() returned a different error, we fail. */
++	if (err)
+ 		return 0;
+ 
+ 	DEBUGP("Allocating new usage for %s.\n", a->name);
+@@ -804,7 +836,7 @@ static inline void module_unload_free(struct module *mod)
+ 
+ static inline int use_module(struct module *a, struct module *b)
+ {
+-	return strong_try_module_get(b);
++	return strong_try_module_get(b) == 0;
+ }
+ 
+ static inline void module_unload_init(struct module *mod)
+@@ -1149,7 +1181,7 @@ void *__symbol_get(const char *symbol)
+ 
+ 	spin_lock_irqsave(&modlist_lock, flags);
+ 	value = __find_symbol(symbol, &owner, &crc, 1);
+-	if (value && !strong_try_module_get(owner))
++	if (value && strong_try_module_get(owner) != 0)
+ 		value = 0;
+ 	spin_unlock_irqrestore(&modlist_lock, flags);
+ 
+@@ -1946,6 +1978,7 @@ sys_init_module(void __user *umod,
+ 			mutex_lock(&module_mutex);
+ 			free_module(mod);
+ 			mutex_unlock(&module_mutex);
++			wake_up(&module_wq);
+ 		}
+ 		return ret;
+ 	}
+@@ -1953,6 +1986,7 @@ sys_init_module(void __user *umod,
+ 	/* Now it's a first class citizen! */
+ 	mutex_lock(&module_mutex);
+ 	mod->state = MODULE_STATE_LIVE;
++
+ 	/* Drop initial reference. */
+ 	module_put(mod);
+ 	unwind_remove_table(mod->unwind_info, 1);
+@@ -1961,6 +1995,7 @@ sys_init_module(void __user *umod,
+ 	mod->init_size = 0;
+ 	mod->init_text_size = 0;
+ 	mutex_unlock(&module_mutex);
++	wake_up(&module_wq);
+ 
+ 	return 0;
+ }

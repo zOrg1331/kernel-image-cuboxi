@@ -1,0 +1,1595 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL 5.1] [GFS2] Resend of: Fix sign problem in quota/statfs and cleanup _host structures (bz #239686)
+Date: Thu, 14 Jun 2007 16:49:08 +0100
+Bugzilla: 239686
+Message-Id: <1181836148.8765.39.camel@quoit>
+Changelog: [GFS2] quota/statfs sign problem and cleanup _host structures
+
+
+Hi,
+
+For some reason the original got an extra character in it (a \0) which
+caused my mail client to truncate it. Here is the complete, correct
+patch. The original description was:
+
+This resolves some signed/unsigned problems which were accidentally
+introduced during the endianess annotation process. Its taken directly
+from upstream and it also cleans up the _host structures.
+
+There are no functional changes aside from the bugs which are fixed by
+the signed/unsigned changes, and this patch has been tested as part of
+the upstream kernel. This patch needs to be applied after the patches
+for bugs #242584 & #201011.
+
+Steve.
+
+----------------------------------------------------------------------------
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Fsteve%2Fgfs2-2.6-nmw.git;a=commitdiff_plain;h=87d96e952b5b9128515ae27eac78209e24b19c0c
+
+[GFS2] Fix sign problem in quota/statfs and cleanup _host structures
+
+This patch fixes some sign issues which were accidentally introduced
+into the quota & statfs code during the endianess annotation process.
+Also included is a general clean up which moves all of the _host
+structures out of gfs2_ondisk.h (where they should not have been to
+start with) and into the places where they are actually used (often only
+one place). Also those _host structures which are not required any more
+are removed entirely (which is the eventual plan for all of them).
+
+The conversion routines from ondisk.c are also moved into the places
+where they are actually used, which for almost every one, was just one
+single place, so all those are now static functions. This also cleans up
+the end of gfs2_ondisk.h which no longer needs the #ifdef __KERNEL__.
+
+The net result is a reduction of about 100 lines of code, many functions
+now marked static plus the bug fixes as mentioned above. For good
+measure I ran the code through sparse after making these changes to
+check that there are no warnings generated.
+
+This fixes Red Hat bz #239686
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+---
+
+diff --git a/fs/gfs2/Makefile b/fs/gfs2/Makefile
+index e3f1ada..04ad0ca 100644
+--- a/fs/gfs2/Makefile
++++ b/fs/gfs2/Makefile
+@@ -1,7 +1,7 @@
+ obj-$(CONFIG_GFS2_FS) += gfs2.o
+ gfs2-y := acl.o bmap.o daemon.o dir.o eaops.o eattr.o glock.o \
+ 	glops.o inode.o lm.o log.o lops.o locking.o main.o meta_io.o \
+-	mount.o ondisk.o ops_address.o ops_dentry.o ops_export.o ops_file.o \
++	mount.o ops_address.o ops_dentry.o ops_export.o ops_file.o \
+ 	ops_fstype.o ops_inode.o ops_super.o ops_vm.o quota.o \
+ 	recovery.o rgrp.o super.o sys.o trans.o util.o
+ 
+diff --git a/fs/gfs2/bmap.c b/fs/gfs2/bmap.c
+index e76a887..b784cf3 100644
+--- a/fs/gfs2/bmap.c
++++ b/fs/gfs2/bmap.c
+@@ -718,7 +718,7 @@ static int do_strip(struct gfs2_inode *ip, struct buffer_head *dibh,
+ 	for (x = 0; x < rlist.rl_rgrps; x++) {
+ 		struct gfs2_rgrpd *rgd;
+ 		rgd = rlist.rl_ghs[x].gh_gl->gl_object;
+-		rg_blocks += rgd->rd_ri.ri_length;
++		rg_blocks += rgd->rd_length;
+ 	}
+ 
+ 	error = gfs2_glock_nq_m(rlist.rl_rgrps, rlist.rl_ghs);
+@@ -824,7 +824,7 @@ static int do_grow(struct gfs2_inode *ip, u64 size)
+ 		goto out_gunlock_q;
+ 
+ 	error = gfs2_trans_begin(sdp,
+-			sdp->sd_max_height + al->al_rgd->rd_ri.ri_length +
++			sdp->sd_max_height + al->al_rgd->rd_length +
+ 			RES_JDATA + RES_DINODE + RES_STATFS + RES_QUOTA, 0);
+ 	if (error)
+ 		goto out_ipres;
+diff --git a/fs/gfs2/dir.c b/fs/gfs2/dir.c
+index 9cdd71c..2f15404 100644
+--- a/fs/gfs2/dir.c
++++ b/fs/gfs2/dir.c
+@@ -1897,7 +1897,7 @@ static int leaf_dealloc(struct gfs2_inode *dip, u32 index, u32 len,
+ 	for (x = 0; x < rlist.rl_rgrps; x++) {
+ 		struct gfs2_rgrpd *rgd;
+ 		rgd = rlist.rl_ghs[x].gh_gl->gl_object;
+-		rg_blocks += rgd->rd_ri.ri_length;
++		rg_blocks += rgd->rd_length;
+ 	}
+ 
+ 	error = gfs2_glock_nq_m(rlist.rl_rgrps, rlist.rl_ghs);
+diff --git a/fs/gfs2/eattr.c b/fs/gfs2/eattr.c
+index 5b83ca6..40e1d37 100644
+--- a/fs/gfs2/eattr.c
++++ b/fs/gfs2/eattr.c
+@@ -254,7 +254,7 @@ static int ea_dealloc_unstuffed(struct gfs2_inode *ip, struct buffer_head *bh,
+ 	if (error)
+ 		return error;
+ 
+-	error = gfs2_trans_begin(sdp, rgd->rd_ri.ri_length + RES_DINODE +
++	error = gfs2_trans_begin(sdp, rgd->rd_length + RES_DINODE +
+ 				 RES_EATTR + RES_STATFS + RES_QUOTA, blks);
+ 	if (error)
+ 		goto out_gunlock;
+@@ -700,7 +700,7 @@ static int ea_alloc_skeleton(struct gfs2_inode *ip, struct gfs2_ea_request *er,
+ 		goto out_gunlock_q;
+ 
+ 	error = gfs2_trans_begin(GFS2_SB(&ip->i_inode),
+-				 blks + al->al_rgd->rd_ri.ri_length +
++				 blks + al->al_rgd->rd_length +
+ 				 RES_DINODE + RES_STATFS + RES_QUOTA, 0);
+ 	if (error)
+ 		goto out_ipres;
+@@ -1352,7 +1352,7 @@ static int ea_dealloc_indirect(struct gfs2_inode *ip)
+ 	for (x = 0; x < rlist.rl_rgrps; x++) {
+ 		struct gfs2_rgrpd *rgd;
+ 		rgd = rlist.rl_ghs[x].gh_gl->gl_object;
+-		rg_blocks += rgd->rd_ri.ri_length;
++		rg_blocks += rgd->rd_length;
+ 	}
+ 
+ 	error = gfs2_glock_nq_m(rlist.rl_rgrps, rlist.rl_ghs);
+diff --git a/fs/gfs2/incore.h b/fs/gfs2/incore.h
+index b2079fc..e5069b9 100644
+--- a/fs/gfs2/incore.h
++++ b/fs/gfs2/incore.h
+@@ -28,6 +28,14 @@ struct gfs2_sbd;
+ 
+ typedef void (*gfs2_glop_bh_t) (struct gfs2_glock *gl, unsigned int ret);
+ 
++struct gfs2_log_header_host {
++	u64 lh_sequence;	/* Sequence number of this transaction */
++	u32 lh_flags;		/* GFS2_LOG_HEAD_... */
++	u32 lh_tail;		/* Block number of log tail */
++	u32 lh_blkno;
++	u32 lh_hash;
++};
++
+ /*
+  * Structure of operations that are associated with each
+  * type of element in the log.
+@@ -60,12 +68,23 @@ struct gfs2_bitmap {
+ 	u32 bi_len;
+ };
+ 
++struct gfs2_rgrp_host {
++	u32 rg_flags;
++	u32 rg_free;
++	u32 rg_dinodes;
++	u64 rg_igeneration;
++};
++
+ struct gfs2_rgrpd {
+ 	struct list_head rd_list;	/* Link with superblock */
+ 	struct list_head rd_list_mru;
+ 	struct list_head rd_recent;	/* Recently used rgrps */
+ 	struct gfs2_glock *rd_gl;	/* Glock for this rgrp */
+-	struct gfs2_rindex_host rd_ri;
++	u64 rd_addr;			/* grp block disk address */
++	u64 rd_data0;			/* first data location */
++	u32 rd_length;			/* length of rgrp header in fs blocks */
++	u32 rd_data;			/* num of data blocks in rgrp */
++	u32 rd_bitbytes;		/* number of bytes in data bitmaps */
+ 	struct gfs2_rgrp_host rd_rg;
+ 	u64 rd_rg_vn;
+ 	struct gfs2_bitmap *rd_bits;
+@@ -211,6 +230,20 @@ enum {
+ 	GIF_SW_PAGED		= 3,
+ };
+ 
++struct gfs2_dinode_host {
++	u64 di_size;		/* number of bytes in file */
++	u64 di_blocks;		/* number of blocks in file */
++	u64 di_goal_meta;	/* rgrp to alloc from next */
++	u64 di_goal_data;	/* data block goal */
++	u64 di_generation;	/* generation number for NFS */
++	u32 di_flags;		/* GFS2_DIF_... */
++	u16 di_height;		/* height of metadata */
++	/* These only apply to directories  */
++	u16 di_depth;		/* Number of bits in the table */
++	u32 di_entries;		/* The number of entries in the directory */
++	u64 di_eattr;		/* extended attribute block number */
++};
++
+ struct gfs2_inode {
+ 	struct inode i_inode;
+ 	u64 i_no_addr;
+@@ -346,6 +379,12 @@ struct gfs2_jdesc {
+ 	unsigned int jd_blocks;
+ };
+ 
++struct gfs2_statfs_change_host {
++	s64 sc_total;
++	s64 sc_free;
++	s64 sc_dinodes;
++};
++
+ #define GFS2_GLOCKD_DEFAULT	1
+ #define GFS2_GLOCKD_MAX		16
+ 
+@@ -418,6 +457,28 @@ enum {
+ 
+ #define GFS2_FSNAME_LEN		256
+ 
++struct gfs2_inum_host {
++	u64 no_formal_ino;
++	u64 no_addr;
++};
++
++struct gfs2_sb_host {
++	u32 sb_magic;
++	u32 sb_type;
++	u32 sb_format;
++
++	u32 sb_fs_format;
++	u32 sb_multihost_format;
++	u32 sb_bsize;
++	u32 sb_bsize_shift;
++
++	struct gfs2_inum_host sb_master_dir;
++	struct gfs2_inum_host sb_root_dir;
++
++	char sb_lockproto[GFS2_LOCKNAME_LEN];
++	char sb_locktable[GFS2_LOCKNAME_LEN];
++};
++
+ struct gfs2_sbd {
+ 	struct super_block *sd_vfs;
+ 	struct super_block *sd_vfs_meta;
+diff --git a/fs/gfs2/inode.c b/fs/gfs2/inode.c
+index 58f5a67..a31a4b8 100644
+--- a/fs/gfs2/inode.c
++++ b/fs/gfs2/inode.c
+@@ -38,6 +38,11 @@
+ #include "trans.h"
+ #include "util.h"
+ 
++struct gfs2_inum_range_host {
++	u64 ir_start;
++	u64 ir_length;
++};
++
+ static int iget_test(struct inode *inode, void *opaque)
+ {
+ 	struct gfs2_inode *ip = GFS2_I(inode);
+@@ -402,6 +407,22 @@ out:
+ 	return inode ? inode : ERR_PTR(error);
+ }
+ 
++static void gfs2_inum_range_in(struct gfs2_inum_range_host *ir, const void *buf)
++{
++	const struct gfs2_inum_range *str = buf;
++
++	ir->ir_start = be64_to_cpu(str->ir_start);
++	ir->ir_length = be64_to_cpu(str->ir_length);
++}
++
++static void gfs2_inum_range_out(const struct gfs2_inum_range_host *ir, void *buf)
++{
++	struct gfs2_inum_range *str = buf;
++
++	str->ir_start = cpu_to_be64(ir->ir_start);
++	str->ir_length = cpu_to_be64(ir->ir_length);
++}
++
+ static int pick_formal_ino_1(struct gfs2_sbd *sdp, u64 *formal_ino)
+ {
+ 	struct gfs2_inode *ip = GFS2_I(sdp->sd_ir_inode);
+@@ -741,7 +762,7 @@ static int link_dinode(struct gfs2_inode *dip, const struct qstr *name,
+ 			goto fail_quota_locks;
+ 
+ 		error = gfs2_trans_begin(sdp, sdp->sd_max_dirres +
+-					 al->al_rgd->rd_ri.ri_length +
++					 al->al_rgd->rd_length +
+ 					 2 * RES_DINODE +
+ 					 RES_STATFS + RES_QUOTA, 0);
+ 		if (error)
+@@ -1234,3 +1255,63 @@ int gfs2_setattr_simple(struct gfs2_inode *ip, struct iattr *attr)
+ 	return error;
+ }
+ 
++void gfs2_dinode_out(const struct gfs2_inode *ip, void *buf)
++{
++	const struct gfs2_dinode_host *di = &ip->i_di;
++	struct gfs2_dinode *str = buf;
++
++	str->di_header.mh_magic = cpu_to_be32(GFS2_MAGIC);
++	str->di_header.mh_type = cpu_to_be32(GFS2_METATYPE_DI);
++	str->di_header.__pad0 = 0;
++	str->di_header.mh_format = cpu_to_be32(GFS2_FORMAT_DI);
++	str->di_header.__pad1 = 0;
++	str->di_num.no_addr = cpu_to_be64(ip->i_no_addr);
++	str->di_num.no_formal_ino = cpu_to_be64(ip->i_no_formal_ino);
++	str->di_mode = cpu_to_be32(ip->i_inode.i_mode);
++	str->di_uid = cpu_to_be32(ip->i_inode.i_uid);
++	str->di_gid = cpu_to_be32(ip->i_inode.i_gid);
++	str->di_nlink = cpu_to_be32(ip->i_inode.i_nlink);
++	str->di_size = cpu_to_be64(di->di_size);
++	str->di_blocks = cpu_to_be64(di->di_blocks);
++	str->di_atime = cpu_to_be64(ip->i_inode.i_atime.tv_sec);
++	str->di_mtime = cpu_to_be64(ip->i_inode.i_mtime.tv_sec);
++	str->di_ctime = cpu_to_be64(ip->i_inode.i_ctime.tv_sec);
++
++	str->di_goal_meta = cpu_to_be64(di->di_goal_meta);
++	str->di_goal_data = cpu_to_be64(di->di_goal_data);
++	str->di_generation = cpu_to_be64(di->di_generation);
++
++	str->di_flags = cpu_to_be32(di->di_flags);
++	str->di_height = cpu_to_be16(di->di_height);
++	str->di_payload_format = cpu_to_be32(S_ISDIR(ip->i_inode.i_mode) &&
++					     !(ip->i_di.di_flags & GFS2_DIF_EXHASH) ?
++					     GFS2_FORMAT_DE : 0);
++	str->di_depth = cpu_to_be16(di->di_depth);
++	str->di_entries = cpu_to_be32(di->di_entries);
++
++	str->di_eattr = cpu_to_be64(di->di_eattr);
++}
++
++void gfs2_dinode_print(const struct gfs2_inode *ip)
++{
++	const struct gfs2_dinode_host *di = &ip->i_di;
++
++	printk(KERN_INFO "  no_formal_ino = %llu\n",
++	       (unsigned long long)ip->i_no_formal_ino);
++	printk(KERN_INFO "  no_addr = %llu\n",
++	       (unsigned long long)ip->i_no_addr);
++	printk(KERN_INFO "  di_size = %llu\n", (unsigned long long)di->di_size);
++	printk(KERN_INFO "  di_blocks = %llu\n",
++	       (unsigned long long)di->di_blocks);
++	printk(KERN_INFO "  di_goal_meta = %llu\n",
++	       (unsigned long long)di->di_goal_meta);
++	printk(KERN_INFO "  di_goal_data = %llu\n",
++	       (unsigned long long)di->di_goal_data);
++	printk(KERN_INFO "  di_flags = 0x%.8X\n", di->di_flags);
++	printk(KERN_INFO "  di_height = %u\n", di->di_height);
++	printk(KERN_INFO "  di_depth = %u\n", di->di_depth);
++	printk(KERN_INFO "  di_entries = %u\n", di->di_entries);
++	printk(KERN_INFO "  di_eattr = %llu\n",
++	       (unsigned long long)di->di_eattr);
++}
++
+diff --git a/fs/gfs2/inode.h b/fs/gfs2/inode.h
+index 05fc095..35375fc 100644
+--- a/fs/gfs2/inode.h
++++ b/fs/gfs2/inode.h
+@@ -38,6 +38,14 @@ static inline int gfs2_check_inum(const struct gfs2_inode *ip, u64 no_addr,
+ 	return ip->i_no_addr == no_addr && ip->i_no_formal_ino == no_formal_ino;
+ }
+ 
++static inline void gfs2_inum_out(const struct gfs2_inode *ip,
++				 struct gfs2_dirent *dent)
++{
++	dent->de_inum.no_formal_ino = cpu_to_be64(ip->i_no_formal_ino);
++	dent->de_inum.no_addr = cpu_to_be64(ip->i_no_addr);
++}
++
++
+ void gfs2_inode_attr_in(struct gfs2_inode *ip);
+ struct inode *gfs2_inode_lookup(struct super_block *sb, u64 no_addr, unsigned type);
+ struct inode *gfs2_ilookup(struct super_block *sb, u64 no_addr);
+@@ -59,6 +67,8 @@ int gfs2_readlinki(struct gfs2_inode *ip, char **buf, unsigned int *len);
+ int gfs2_glock_nq_atime(struct gfs2_holder *gh);
+ int gfs2_setattr_simple(struct gfs2_inode *ip, struct iattr *attr);
+ struct inode *gfs2_lookup_simple(struct inode *dip, const char *name);
++void gfs2_dinode_out(const struct gfs2_inode *ip, void *buf);
++void gfs2_dinode_print(const struct gfs2_inode *ip);
+ 
+ #endif /* __INODE_DOT_H__ */
+ 
+diff --git a/fs/gfs2/ondisk.c b/fs/gfs2/ondisk.c
+deleted file mode 100644
+index a5b05ea..0000000
+--- a/fs/gfs2/ondisk.c
++++ /dev/null
+@@ -1,246 +0,0 @@
+-/*
+- * Copyright (C) Sistina Software, Inc.  1997-2003 All rights reserved.
+- * Copyright (C) 2004-2006 Red Hat, Inc.  All rights reserved.
+- *
+- * This copyrighted material is made available to anyone wishing to use,
+- * modify, copy, or redistribute it subject to the terms and conditions
+- * of the GNU General Public License version 2.
+- */
+-
+-#include <linux/slab.h>
+-#include <linux/spinlock.h>
+-#include <linux/completion.h>
+-#include <linux/buffer_head.h>
+-
+-#include "gfs2.h"
+-#include <linux/gfs2_ondisk.h>
+-#include <linux/lm_interface.h>
+-#include "incore.h"
+-
+-#define pv(struct, member, fmt) printk(KERN_INFO "  "#member" = "fmt"\n", \
+-				       struct->member);
+-
+-/*
+- * gfs2_xxx_in - read in an xxx struct
+- * first arg: the cpu-order structure
+- * buf: the disk-order buffer
+- *
+- * gfs2_xxx_out - write out an xxx struct
+- * first arg: the cpu-order structure
+- * buf: the disk-order buffer
+- *
+- * gfs2_xxx_print - print out an xxx struct
+- * first arg: the cpu-order structure
+- */
+-
+-void gfs2_inum_out(const struct gfs2_inode *ip, struct gfs2_dirent *dent)
+-{
+-	dent->de_inum.no_formal_ino = cpu_to_be64(ip->i_no_formal_ino);
+-	dent->de_inum.no_addr = cpu_to_be64(ip->i_no_addr);
+-}
+-
+-static void gfs2_meta_header_in(struct gfs2_meta_header_host *mh, const void *buf)
+-{
+-	const struct gfs2_meta_header *str = buf;
+-
+-	mh->mh_magic = be32_to_cpu(str->mh_magic);
+-	mh->mh_type = be32_to_cpu(str->mh_type);
+-	mh->mh_format = be32_to_cpu(str->mh_format);
+-}
+-
+-void gfs2_sb_in(struct gfs2_sb_host *sb, const void *buf)
+-{
+-	const struct gfs2_sb *str = buf;
+-
+-	gfs2_meta_header_in(&sb->sb_header, buf);
+-
+-	sb->sb_fs_format = be32_to_cpu(str->sb_fs_format);
+-	sb->sb_multihost_format = be32_to_cpu(str->sb_multihost_format);
+-	sb->sb_bsize = be32_to_cpu(str->sb_bsize);
+-	sb->sb_bsize_shift = be32_to_cpu(str->sb_bsize_shift);
+-	sb->sb_master_dir.no_addr = be64_to_cpu(str->sb_master_dir.no_addr);
+-	sb->sb_master_dir.no_formal_ino = be64_to_cpu(str->sb_master_dir.no_formal_ino);
+-	sb->sb_root_dir.no_addr = be64_to_cpu(str->sb_root_dir.no_addr);
+-	sb->sb_root_dir.no_formal_ino = be64_to_cpu(str->sb_root_dir.no_formal_ino);
+-
+-	memcpy(sb->sb_lockproto, str->sb_lockproto, GFS2_LOCKNAME_LEN);
+-	memcpy(sb->sb_locktable, str->sb_locktable, GFS2_LOCKNAME_LEN);
+-}
+-
+-void gfs2_rindex_in(struct gfs2_rindex_host *ri, const void *buf)
+-{
+-	const struct gfs2_rindex *str = buf;
+-
+-	ri->ri_addr = be64_to_cpu(str->ri_addr);
+-	ri->ri_length = be32_to_cpu(str->ri_length);
+-	ri->ri_data0 = be64_to_cpu(str->ri_data0);
+-	ri->ri_data = be32_to_cpu(str->ri_data);
+-	ri->ri_bitbytes = be32_to_cpu(str->ri_bitbytes);
+-
+-}
+-
+-void gfs2_rindex_print(const struct gfs2_rindex_host *ri)
+-{
+-	printk(KERN_INFO "  ri_addr = %llu\n", (unsigned long long)ri->ri_addr);
+-	pv(ri, ri_length, "%u");
+-
+-	printk(KERN_INFO "  ri_data0 = %llu\n", (unsigned long long)ri->ri_data0);
+-	pv(ri, ri_data, "%u");
+-
+-	pv(ri, ri_bitbytes, "%u");
+-}
+-
+-void gfs2_rgrp_in(struct gfs2_rgrp_host *rg, const void *buf)
+-{
+-	const struct gfs2_rgrp *str = buf;
+-
+-	rg->rg_flags = be32_to_cpu(str->rg_flags);
+-	rg->rg_free = be32_to_cpu(str->rg_free);
+-	rg->rg_dinodes = be32_to_cpu(str->rg_dinodes);
+-	rg->rg_igeneration = be64_to_cpu(str->rg_igeneration);
+-}
+-
+-void gfs2_rgrp_out(const struct gfs2_rgrp_host *rg, void *buf)
+-{
+-	struct gfs2_rgrp *str = buf;
+-
+-	str->rg_flags = cpu_to_be32(rg->rg_flags);
+-	str->rg_free = cpu_to_be32(rg->rg_free);
+-	str->rg_dinodes = cpu_to_be32(rg->rg_dinodes);
+-	str->__pad = cpu_to_be32(0);
+-	str->rg_igeneration = cpu_to_be64(rg->rg_igeneration);
+-	memset(&str->rg_reserved, 0, sizeof(str->rg_reserved));
+-}
+-
+-void gfs2_quota_in(struct gfs2_quota_host *qu, const void *buf)
+-{
+-	const struct gfs2_quota *str = buf;
+-
+-	qu->qu_limit = be64_to_cpu(str->qu_limit);
+-	qu->qu_warn = be64_to_cpu(str->qu_warn);
+-	qu->qu_value = be64_to_cpu(str->qu_value);
+-}
+-
+-void gfs2_quota_out(const struct gfs2_quota_host *qu, void *buf)
+-{
+-	struct gfs2_quota *str = buf;
+-
+-	str->qu_limit = cpu_to_be64(qu->qu_limit);
+-	str->qu_warn = cpu_to_be64(qu->qu_warn);
+-	str->qu_value = cpu_to_be64(qu->qu_value);
+-	memset(&str->qu_reserved, 0, sizeof(str->qu_reserved));
+-}
+-
+-void gfs2_dinode_out(const struct gfs2_inode *ip, void *buf)
+-{
+-	const struct gfs2_dinode_host *di = &ip->i_di;
+-	struct gfs2_dinode *str = buf;
+-
+-	str->di_header.mh_magic = cpu_to_be32(GFS2_MAGIC);
+-	str->di_header.mh_type = cpu_to_be32(GFS2_METATYPE_DI);
+-	str->di_header.__pad0 = 0;
+-	str->di_header.mh_format = cpu_to_be32(GFS2_FORMAT_DI);
+-	str->di_header.__pad1 = 0;
+-	str->di_num.no_addr = cpu_to_be64(ip->i_no_addr);
+-	str->di_num.no_formal_ino = cpu_to_be64(ip->i_no_formal_ino);
+-	str->di_mode = cpu_to_be32(ip->i_inode.i_mode);
+-	str->di_uid = cpu_to_be32(ip->i_inode.i_uid);
+-	str->di_gid = cpu_to_be32(ip->i_inode.i_gid);
+-	str->di_nlink = cpu_to_be32(ip->i_inode.i_nlink);
+-	str->di_size = cpu_to_be64(di->di_size);
+-	str->di_blocks = cpu_to_be64(di->di_blocks);
+-	str->di_atime = cpu_to_be64(ip->i_inode.i_atime.tv_sec);
+-	str->di_mtime = cpu_to_be64(ip->i_inode.i_mtime.tv_sec);
+-	str->di_ctime = cpu_to_be64(ip->i_inode.i_ctime.tv_sec);
+-
+-	str->di_goal_meta = cpu_to_be64(di->di_goal_meta);
+-	str->di_goal_data = cpu_to_be64(di->di_goal_data);
+-	str->di_generation = cpu_to_be64(di->di_generation);
+-
+-	str->di_flags = cpu_to_be32(di->di_flags);
+-	str->di_height = cpu_to_be16(di->di_height);
+-	str->di_payload_format = cpu_to_be32(S_ISDIR(ip->i_inode.i_mode) &&
+-					     !(ip->i_di.di_flags & GFS2_DIF_EXHASH) ?
+-					     GFS2_FORMAT_DE : 0);
+-	str->di_depth = cpu_to_be16(di->di_depth);
+-	str->di_entries = cpu_to_be32(di->di_entries);
+-
+-	str->di_eattr = cpu_to_be64(di->di_eattr);
+-}
+-
+-void gfs2_dinode_print(const struct gfs2_inode *ip)
+-{
+-	const struct gfs2_dinode_host *di = &ip->i_di;
+-
+-	printk(KERN_INFO "  no_formal_ino = %llu\n", (unsigned long long)ip->i_no_formal_ino);
+-	printk(KERN_INFO "  no_addr = %llu\n", (unsigned long long)ip->i_no_addr);
+-
+-	printk(KERN_INFO "  di_size = %llu\n", (unsigned long long)di->di_size);
+-	printk(KERN_INFO "  di_blocks = %llu\n", (unsigned long long)di->di_blocks);
+-	printk(KERN_INFO "  di_goal_meta = %llu\n", (unsigned long long)di->di_goal_meta);
+-	printk(KERN_INFO "  di_goal_data = %llu\n", (unsigned long long)di->di_goal_data);
+-
+-	pv(di, di_flags, "0x%.8X");
+-	pv(di, di_height, "%u");
+-
+-	pv(di, di_depth, "%u");
+-	pv(di, di_entries, "%u");
+-
+-	printk(KERN_INFO "  di_eattr = %llu\n", (unsigned long long)di->di_eattr);
+-}
+-
+-void gfs2_log_header_in(struct gfs2_log_header_host *lh, const void *buf)
+-{
+-	const struct gfs2_log_header *str = buf;
+-
+-	gfs2_meta_header_in(&lh->lh_header, buf);
+-	lh->lh_sequence = be64_to_cpu(str->lh_sequence);
+-	lh->lh_flags = be32_to_cpu(str->lh_flags);
+-	lh->lh_tail = be32_to_cpu(str->lh_tail);
+-	lh->lh_blkno = be32_to_cpu(str->lh_blkno);
+-	lh->lh_hash = be32_to_cpu(str->lh_hash);
+-}
+-
+-void gfs2_inum_range_in(struct gfs2_inum_range_host *ir, const void *buf)
+-{
+-	const struct gfs2_inum_range *str = buf;
+-
+-	ir->ir_start = be64_to_cpu(str->ir_start);
+-	ir->ir_length = be64_to_cpu(str->ir_length);
+-}
+-
+-void gfs2_inum_range_out(const struct gfs2_inum_range_host *ir, void *buf)
+-{
+-	struct gfs2_inum_range *str = buf;
+-
+-	str->ir_start = cpu_to_be64(ir->ir_start);
+-	str->ir_length = cpu_to_be64(ir->ir_length);
+-}
+-
+-void gfs2_statfs_change_in(struct gfs2_statfs_change_host *sc, const void *buf)
+-{
+-	const struct gfs2_statfs_change *str = buf;
+-
+-	sc->sc_total = be64_to_cpu(str->sc_total);
+-	sc->sc_free = be64_to_cpu(str->sc_free);
+-	sc->sc_dinodes = be64_to_cpu(str->sc_dinodes);
+-}
+-
+-void gfs2_statfs_change_out(const struct gfs2_statfs_change_host *sc, void *buf)
+-{
+-	struct gfs2_statfs_change *str = buf;
+-
+-	str->sc_total = cpu_to_be64(sc->sc_total);
+-	str->sc_free = cpu_to_be64(sc->sc_free);
+-	str->sc_dinodes = cpu_to_be64(sc->sc_dinodes);
+-}
+-
+-void gfs2_quota_change_in(struct gfs2_quota_change_host *qc, const void *buf)
+-{
+-	const struct gfs2_quota_change *str = buf;
+-
+-	qc->qc_change = be64_to_cpu(str->qc_change);
+-	qc->qc_flags = be32_to_cpu(str->qc_flags);
+-	qc->qc_id = be32_to_cpu(str->qc_id);
+-}
+-
+diff --git a/fs/gfs2/ops_export.c b/fs/gfs2/ops_export.c
+index 51a8a14..d07230e 100644
+--- a/fs/gfs2/ops_export.c
++++ b/fs/gfs2/ops_export.c
+@@ -22,10 +22,18 @@
+ #include "glops.h"
+ #include "inode.h"
+ #include "ops_dentry.h"
+-#include "ops_export.h"
++#include "ops_fstype.h"
+ #include "rgrp.h"
+ #include "util.h"
+ 
++#define GFS2_SMALL_FH_SIZE 4
++#define GFS2_LARGE_FH_SIZE 10
++
++struct gfs2_fh_obj {
++	struct gfs2_inum_host this;
++	u32 imode;
++};
++
+ static struct dentry *gfs2_decode_fh(struct super_block *sb,
+ 				     __u32 *p,
+ 				     int fh_len,
+diff --git a/fs/gfs2/ops_export.h b/fs/gfs2/ops_export.h
+deleted file mode 100644
+index f925a95..0000000
+--- a/fs/gfs2/ops_export.h
++++ /dev/null
+@@ -1,22 +0,0 @@
+-/*
+- * Copyright (C) Sistina Software, Inc.  1997-2003 All rights reserved.
+- * Copyright (C) 2004-2006 Red Hat, Inc.  All rights reserved.
+- *
+- * This copyrighted material is made available to anyone wishing to use,
+- * modify, copy, or redistribute it subject to the terms and conditions
+- * of the GNU General Public License version 2.
+- */
+-
+-#ifndef __OPS_EXPORT_DOT_H__
+-#define __OPS_EXPORT_DOT_H__
+-
+-#define GFS2_SMALL_FH_SIZE 4
+-#define GFS2_LARGE_FH_SIZE 10
+-
+-extern struct export_operations gfs2_export_ops;
+-struct gfs2_fh_obj {
+-	struct gfs2_inum_host this;
+-	__u32            imode;
+-};
+-
+-#endif /* __OPS_EXPORT_DOT_H__ */
+diff --git a/fs/gfs2/ops_fstype.c b/fs/gfs2/ops_fstype.c
+index c682371..0443e25 100644
+--- a/fs/gfs2/ops_fstype.c
++++ b/fs/gfs2/ops_fstype.c
+@@ -27,7 +27,6 @@
+ #include "inode.h"
+ #include "lm.h"
+ #include "mount.h"
+-#include "ops_export.h"
+ #include "ops_fstype.h"
+ #include "ops_super.h"
+ #include "recovery.h"
+@@ -116,7 +115,6 @@ static void init_vfs(struct super_block *sb, unsigned noatime)
+ 
+ static int init_names(struct gfs2_sbd *sdp, int silent)
+ {
+-	struct page *page;
+ 	char *proto, *table;
+ 	int error = 0;
+ 
+@@ -126,14 +124,9 @@ static int init_names(struct gfs2_sbd *sdp, int silent)
+ 	/*  Try to autodetect  */
+ 
+ 	if (!proto[0] || !table[0]) {
+-		struct gfs2_sb *sb;
+-		page = gfs2_read_super(sdp->sd_vfs, GFS2_SB_ADDR >> sdp->sd_fsb2bb_shift);
+-		if (!page)
+-			return -ENOBUFS;
+-		sb = kmap(page);
+-		gfs2_sb_in(&sdp->sd_sb, sb);
+-		kunmap(page);
+-		__free_page(page);
++		error = gfs2_read_super(sdp, GFS2_SB_ADDR >> sdp->sd_fsb2bb_shift);
++		if (error)
++			return error;
+ 
+ 		error = gfs2_check_sb(sdp, &sdp->sd_sb, silent);
+ 		if (error)
+diff --git a/fs/gfs2/ops_fstype.h b/fs/gfs2/ops_fstype.h
+index 7cc2c29..407029b 100644
+--- a/fs/gfs2/ops_fstype.h
++++ b/fs/gfs2/ops_fstype.h
+@@ -14,5 +14,6 @@
+ 
+ extern struct file_system_type gfs2_fs_type;
+ extern struct file_system_type gfs2meta_fs_type;
++extern struct export_operations gfs2_export_ops;
+ 
+ #endif /* __OPS_FSTYPE_DOT_H__ */
+diff --git a/fs/gfs2/ops_inode.c b/fs/gfs2/ops_inode.c
+index f8ecfec..919a661 100644
+--- a/fs/gfs2/ops_inode.c
++++ b/fs/gfs2/ops_inode.c
+@@ -206,7 +206,7 @@ static int gfs2_link(struct dentry *old_dentry, struct inode *dir,
+ 			goto out_gunlock_q;
+ 
+ 		error = gfs2_trans_begin(sdp, sdp->sd_max_dirres +
+-					 al->al_rgd->rd_ri.ri_length +
++					 al->al_rgd->rd_length +
+ 					 2 * RES_DINODE + RES_STATFS +
+ 					 RES_QUOTA, 0);
+ 		if (error)
+@@ -711,7 +711,7 @@ static int gfs2_rename(struct inode *odir, struct dentry *odentry,
+ 			goto out_gunlock_q;
+ 
+ 		error = gfs2_trans_begin(sdp, sdp->sd_max_dirres +
+-					 al->al_rgd->rd_ri.ri_length +
++					 al->al_rgd->rd_length +
+ 					 4 * RES_DINODE + 4 * RES_LEAF +
+ 					 RES_STATFS + RES_QUOTA + 4, 0);
+ 		if (error)
+diff --git a/fs/gfs2/ops_vm.c b/fs/gfs2/ops_vm.c
+index aa0dbd2..404b7cc 100644
+--- a/fs/gfs2/ops_vm.c
++++ b/fs/gfs2/ops_vm.c
+@@ -66,7 +66,7 @@ static int alloc_page_backing(struct gfs2_inode *ip, struct page *page)
+ 	if (error)
+ 		goto out_gunlock_q;
+ 
+-	error = gfs2_trans_begin(sdp, al->al_rgd->rd_ri.ri_length +
++	error = gfs2_trans_begin(sdp, al->al_rgd->rd_length +
+ 				 ind_blocks + RES_DINODE +
+ 				 RES_STATFS + RES_QUOTA, 0);
+ 	if (error)
+diff --git a/fs/gfs2/quota.c b/fs/gfs2/quota.c
+index 8a58815..6e546ee 100644
+--- a/fs/gfs2/quota.c
++++ b/fs/gfs2/quota.c
+@@ -66,6 +66,18 @@
+ #define QUOTA_USER 1
+ #define QUOTA_GROUP 0
+ 
++struct gfs2_quota_host {
++	u64 qu_limit;
++	u64 qu_warn;
++	s64 qu_value;
++};
++
++struct gfs2_quota_change_host {
++	u64 qc_change;
++	u32 qc_flags; /* GFS2_QCF_... */
++	u32 qc_id;
++};
++
+ static u64 qd2offset(struct gfs2_quota_data *qd)
+ {
+ 	u64 offset;
+@@ -561,6 +573,25 @@ static void do_qc(struct gfs2_quota_data *qd, s64 change)
+ 	mutex_unlock(&sdp->sd_quota_mutex);
+ }
+ 
++static void gfs2_quota_in(struct gfs2_quota_host *qu, const void *buf)
++{
++	const struct gfs2_quota *str = buf;
++
++	qu->qu_limit = be64_to_cpu(str->qu_limit);
++	qu->qu_warn = be64_to_cpu(str->qu_warn);
++	qu->qu_value = be64_to_cpu(str->qu_value);
++}
++
++static void gfs2_quota_out(const struct gfs2_quota_host *qu, void *buf)
++{
++	struct gfs2_quota *str = buf;
++
++	str->qu_limit = cpu_to_be64(qu->qu_limit);
++	str->qu_warn = cpu_to_be64(qu->qu_warn);
++	str->qu_value = cpu_to_be64(qu->qu_value);
++	memset(&str->qu_reserved, 0, sizeof(str->qu_reserved));
++}
++
+ /**
+  * gfs2_adjust_quota
+  *
+@@ -694,7 +725,7 @@ static int do_sync(unsigned int num_qd, struct gfs2_quota_data **qda)
+ 			goto out_alloc;
+ 
+ 		error = gfs2_trans_begin(sdp,
+-					 al->al_rgd->rd_ri.ri_length +
++					 al->al_rgd->rd_length +
+ 					 num_qd * data_blocks +
+ 					 nalloc * ind_blocks +
+ 					 RES_DINODE + num_qd +
+@@ -1055,6 +1086,15 @@ int gfs2_quota_refresh(struct gfs2_sbd *sdp, int user, u32 id)
+ 	return error;
+ }
+ 
++static void gfs2_quota_change_in(struct gfs2_quota_change_host *qc, const void *buf)
++{
++	const struct gfs2_quota_change *str = buf;
++
++	qc->qc_change = be64_to_cpu(str->qc_change);
++	qc->qc_flags = be32_to_cpu(str->qc_flags);
++	qc->qc_id = be32_to_cpu(str->qc_id);
++}
++
+ int gfs2_quota_init(struct gfs2_sbd *sdp)
+ {
+ 	struct gfs2_inode *ip = GFS2_I(sdp->sd_qc_inode);
+diff --git a/fs/gfs2/recovery.c b/fs/gfs2/recovery.c
+index 8bc182c..5ada38c 100644
+--- a/fs/gfs2/recovery.c
++++ b/fs/gfs2/recovery.c
+@@ -116,6 +116,22 @@ void gfs2_revoke_clean(struct gfs2_sbd *sdp)
+ 	}
+ }
+ 
++static int gfs2_log_header_in(struct gfs2_log_header_host *lh, const void *buf)
++{
++	const struct gfs2_log_header *str = buf;
++
++	if (str->lh_header.mh_magic != cpu_to_be32(GFS2_MAGIC) ||
++	    str->lh_header.mh_type != cpu_to_be32(GFS2_METATYPE_LH))
++		return 1;
++
++	lh->lh_sequence = be64_to_cpu(str->lh_sequence);
++	lh->lh_flags = be32_to_cpu(str->lh_flags);
++	lh->lh_tail = be32_to_cpu(str->lh_tail);
++	lh->lh_blkno = be32_to_cpu(str->lh_blkno);
++	lh->lh_hash = be32_to_cpu(str->lh_hash);
++	return 0;
++}
++
+ /**
+  * get_log_header - read the log header for a given segment
+  * @jd: the journal
+@@ -147,12 +163,10 @@ static int get_log_header(struct gfs2_jdesc *jd, unsigned int blk,
+ 					     sizeof(u32));
+ 	hash = crc32_le(hash, (unsigned char const *)&nothing, sizeof(nothing));
+ 	hash ^= (u32)~0;
+-	gfs2_log_header_in(&lh, bh->b_data);
++	error = gfs2_log_header_in(&lh, bh->b_data);
+ 	brelse(bh);
+ 
+-	if (lh.lh_header.mh_magic != GFS2_MAGIC ||
+-	    lh.lh_header.mh_type != GFS2_METATYPE_LH ||
+-	    lh.lh_blkno != blk || lh.lh_hash != hash)
++	if (error || lh.lh_blkno != blk || lh.lh_hash != hash)
+ 		return 1;
+ 
+ 	*head = lh;
+diff --git a/fs/gfs2/rgrp.c b/fs/gfs2/rgrp.c
+index 30eb428..027f6ec 100644
+--- a/fs/gfs2/rgrp.c
++++ b/fs/gfs2/rgrp.c
+@@ -204,7 +204,7 @@ void gfs2_rgrp_verify(struct gfs2_rgrpd *rgd)
+ {
+ 	struct gfs2_sbd *sdp = rgd->rd_sbd;
+ 	struct gfs2_bitmap *bi = NULL;
+-	u32 length = rgd->rd_ri.ri_length;
++	u32 length = rgd->rd_length;
+ 	u32 count[4], tmp;
+ 	int buf, x;
+ 
+@@ -227,7 +227,7 @@ void gfs2_rgrp_verify(struct gfs2_rgrpd *rgd)
+ 		return;
+ 	}
+ 
+-	tmp = rgd->rd_ri.ri_data -
++	tmp = rgd->rd_data -
+ 		rgd->rd_rg.rg_free -
+ 		rgd->rd_rg.rg_dinodes;
+ 	if (count[1] + count[2] != tmp) {
+@@ -253,10 +253,10 @@ void gfs2_rgrp_verify(struct gfs2_rgrpd *rgd)
+ 
+ }
+ 
+-static inline int rgrp_contains_block(struct gfs2_rindex_host *ri, u64 block)
++static inline int rgrp_contains_block(struct gfs2_rgrpd *rgd, u64 block)
+ {
+-	u64 first = ri->ri_data0;
+-	u64 last = first + ri->ri_data;
++	u64 first = rgd->rd_data0;
++	u64 last = first + rgd->rd_data;
+ 	return first <= block && block < last;
+ }
+ 
+@@ -275,7 +275,7 @@ struct gfs2_rgrpd *gfs2_blk2rgrpd(struct gfs2_sbd *sdp, u64 blk)
+ 	spin_lock(&sdp->sd_rindex_spin);
+ 
+ 	list_for_each_entry(rgd, &sdp->sd_rindex_mru_list, rd_list_mru) {
+-		if (rgrp_contains_block(&rgd->rd_ri, blk)) {
++		if (rgrp_contains_block(rgd, blk)) {
+ 			list_move(&rgd->rd_list_mru, &sdp->sd_rindex_mru_list);
+ 			spin_unlock(&sdp->sd_rindex_spin);
+ 			return rgd;
+@@ -354,6 +354,15 @@ void gfs2_clear_rgrpd(struct gfs2_sbd *sdp)
+ 	mutex_unlock(&sdp->sd_rindex_mutex);
+ }
+ 
++static void gfs2_rindex_print(const struct gfs2_rgrpd *rgd)
++{
++	printk(KERN_INFO "  ri_addr = %llu\n", (unsigned long long)rgd->rd_addr);
++	printk(KERN_INFO "  ri_length = %u\n", rgd->rd_length);
++	printk(KERN_INFO "  ri_data0 = %llu\n", (unsigned long long)rgd->rd_data0);
++	printk(KERN_INFO "  ri_data = %u\n", rgd->rd_data);
++	printk(KERN_INFO "  ri_bitbytes = %u\n", rgd->rd_bitbytes);
++}
++
+ /**
+  * gfs2_compute_bitstructs - Compute the bitmap sizes
+  * @rgd: The resource group descriptor
+@@ -367,7 +376,7 @@ static int compute_bitstructs(struct gfs2_rgrpd *rgd)
+ {
+ 	struct gfs2_sbd *sdp = rgd->rd_sbd;
+ 	struct gfs2_bitmap *bi;
+-	u32 length = rgd->rd_ri.ri_length; /* # blocks in hdr & bitmap */
++	u32 length = rgd->rd_length; /* # blocks in hdr & bitmap */
+ 	u32 bytes_left, bytes;
+ 	int x;
+ 
+@@ -378,7 +387,7 @@ static int compute_bitstructs(struct gfs2_rgrpd *rgd)
+ 	if (!rgd->rd_bits)
+ 		return -ENOMEM;
+ 
+-	bytes_left = rgd->rd_ri.ri_bitbytes;
++	bytes_left = rgd->rd_bitbytes;
+ 
+ 	for (x = 0; x < length; x++) {
+ 		bi = rgd->rd_bits + x;
+@@ -399,14 +408,14 @@ static int compute_bitstructs(struct gfs2_rgrpd *rgd)
+ 		} else if (x + 1 == length) {
+ 			bytes = bytes_left;
+ 			bi->bi_offset = sizeof(struct gfs2_meta_header);
+-			bi->bi_start = rgd->rd_ri.ri_bitbytes - bytes_left;
++			bi->bi_start = rgd->rd_bitbytes - bytes_left;
+ 			bi->bi_len = bytes;
+ 		/* other blocks */
+ 		} else {
+ 			bytes = sdp->sd_sb.sb_bsize -
+ 				sizeof(struct gfs2_meta_header);
+ 			bi->bi_offset = sizeof(struct gfs2_meta_header);
+-			bi->bi_start = rgd->rd_ri.ri_bitbytes - bytes_left;
++			bi->bi_start = rgd->rd_bitbytes - bytes_left;
+ 			bi->bi_len = bytes;
+ 		}
+ 
+@@ -418,9 +427,9 @@ static int compute_bitstructs(struct gfs2_rgrpd *rgd)
+ 		return -EIO;
+ 	}
+ 	bi = rgd->rd_bits + (length - 1);
+-	if ((bi->bi_start + bi->bi_len) * GFS2_NBBY != rgd->rd_ri.ri_data) {
++	if ((bi->bi_start + bi->bi_len) * GFS2_NBBY != rgd->rd_data) {
+ 		if (gfs2_consist_rgrpd(rgd)) {
+-			gfs2_rindex_print(&rgd->rd_ri);
++			gfs2_rindex_print(rgd);
+ 			fs_err(sdp, "start=%u len=%u offset=%u\n",
+ 			       bi->bi_start, bi->bi_len, bi->bi_offset);
+ 		}
+@@ -439,7 +449,6 @@ u64 gfs2_ri_total(struct gfs2_sbd *sdp)
+ 	u64 total_data = 0;	
+ 	struct inode *inode = sdp->sd_rindex;
+ 	struct gfs2_inode *ip = GFS2_I(inode);
+-	struct gfs2_rindex_host ri;
+ 	char buf[sizeof(struct gfs2_rindex)];
+ 	struct file_ra_state ra_state;
+ 	int error, rgrps;
+@@ -455,13 +464,23 @@ u64 gfs2_ri_total(struct gfs2_sbd *sdp)
+ 					   sizeof(struct gfs2_rindex));
+ 		if (error != sizeof(struct gfs2_rindex))
+ 			break;
+-		gfs2_rindex_in(&ri, buf);
+-		total_data += ri.ri_data;
++		total_data += be32_to_cpu(((struct gfs2_rindex *)buf)->ri_data);
+ 	}
+ 	mutex_unlock(&sdp->sd_rindex_mutex);
+ 	return total_data;
+ }
+ 
++static void gfs2_rindex_in(struct gfs2_rgrpd *rgd, const void *buf)
++{
++	const struct gfs2_rindex *str = buf;
++
++	rgd->rd_addr = be64_to_cpu(str->ri_addr);
++	rgd->rd_length = be32_to_cpu(str->ri_length);
++	rgd->rd_data0 = be64_to_cpu(str->ri_data0);
++	rgd->rd_data = be32_to_cpu(str->ri_data);
++	rgd->rd_bitbytes = be32_to_cpu(str->ri_bitbytes);
++}
++
+ /**
+  * read_rindex_entry - Pull in a new resource index entry from the disk
+  * @gl: The glock covering the rindex inode
+@@ -500,12 +519,12 @@ static int read_rindex_entry(struct gfs2_inode *ip,
+ 	list_add_tail(&rgd->rd_list, &sdp->sd_rindex_list);
+ 	list_add_tail(&rgd->rd_list_mru, &sdp->sd_rindex_mru_list);
+ 
+-	gfs2_rindex_in(&rgd->rd_ri, buf);
++	gfs2_rindex_in(rgd, buf);
+ 	error = compute_bitstructs(rgd);
+ 	if (error)
+ 		return error;
+ 
+-	error = gfs2_glock_get(sdp, rgd->rd_ri.ri_addr,
++	error = gfs2_glock_get(sdp, rgd->rd_addr,
+ 			       &gfs2_rgrp_glops, CREATE, &rgd->rd_gl);
+ 	if (error)
+ 		return error;
+@@ -626,6 +645,28 @@ int gfs2_rindex_hold(struct gfs2_sbd *sdp, struct gfs2_holder *ri_gh)
+ 	return error;
+ }
+ 
++static void gfs2_rgrp_in(struct gfs2_rgrp_host *rg, const void *buf)
++{
++	const struct gfs2_rgrp *str = buf;
++
++	rg->rg_flags = be32_to_cpu(str->rg_flags);
++	rg->rg_free = be32_to_cpu(str->rg_free);
++	rg->rg_dinodes = be32_to_cpu(str->rg_dinodes);
++	rg->rg_igeneration = be64_to_cpu(str->rg_igeneration);
++}
++
++static void gfs2_rgrp_out(const struct gfs2_rgrp_host *rg, void *buf)
++{
++	struct gfs2_rgrp *str = buf;
++
++	str->rg_flags = cpu_to_be32(rg->rg_flags);
++	str->rg_free = cpu_to_be32(rg->rg_free);
++	str->rg_dinodes = cpu_to_be32(rg->rg_dinodes);
++	str->__pad = cpu_to_be32(0);
++	str->rg_igeneration = cpu_to_be64(rg->rg_igeneration);
++	memset(&str->rg_reserved, 0, sizeof(str->rg_reserved));
++}
++
+ /**
+  * gfs2_rgrp_bh_get - Read in a RG's header and bitmaps
+  * @rgd: the struct gfs2_rgrpd describing the RG to read in
+@@ -640,7 +681,7 @@ int gfs2_rgrp_bh_get(struct gfs2_rgrpd *rgd)
+ {
+ 	struct gfs2_sbd *sdp = rgd->rd_sbd;
+ 	struct gfs2_glock *gl = rgd->rd_gl;
+-	unsigned int length = rgd->rd_ri.ri_length;
++	unsigned int length = rgd->rd_length;
+ 	struct gfs2_bitmap *bi;
+ 	unsigned int x, y;
+ 	int error;
+@@ -658,7 +699,7 @@ int gfs2_rgrp_bh_get(struct gfs2_rgrpd *rgd)
+ 
+ 	for (x = 0; x < length; x++) {
+ 		bi = rgd->rd_bits + x;
+-		error = gfs2_meta_read(gl, rgd->rd_ri.ri_addr + x, 0, &bi->bi_bh);
++		error = gfs2_meta_read(gl, rgd->rd_addr + x, 0, &bi->bi_bh);
+ 		if (error)
+ 			goto fail;
+ 	}
+@@ -720,7 +761,7 @@ void gfs2_rgrp_bh_hold(struct gfs2_rgrpd *rgd)
+ void gfs2_rgrp_bh_put(struct gfs2_rgrpd *rgd)
+ {
+ 	struct gfs2_sbd *sdp = rgd->rd_sbd;
+-	int x, length = rgd->rd_ri.ri_length;
++	int x, length = rgd->rd_length;
+ 
+ 	spin_lock(&sdp->sd_rindex_spin);
+ 	gfs2_assert_warn(rgd->rd_sbd, rgd->rd_bh_count);
+@@ -743,7 +784,7 @@ void gfs2_rgrp_bh_put(struct gfs2_rgrpd *rgd)
+ void gfs2_rgrp_repolish_clones(struct gfs2_rgrpd *rgd)
+ {
+ 	struct gfs2_sbd *sdp = rgd->rd_sbd;
+-	unsigned int length = rgd->rd_ri.ri_length;
++	unsigned int length = rgd->rd_length;
+ 	unsigned int x;
+ 
+ 	for (x = 0; x < length; x++) {
+@@ -826,7 +867,7 @@ static struct gfs2_rgrpd *recent_rgrp_first(struct gfs2_sbd *sdp,
+ 		goto first;
+ 
+ 	list_for_each_entry(rgd, &sdp->sd_rindex_recent_list, rd_recent) {
+-		if (rgd->rd_ri.ri_addr == rglast)
++		if (rgd->rd_addr == rglast)
+ 			goto out;
+ 	}
+ 
+@@ -1037,7 +1078,7 @@ static int get_local_rgrp(struct gfs2_inode *ip)
+ 	}
+ 
+ out:
+-	ip->i_last_rg_alloc = rgd->rd_ri.ri_addr;
++	ip->i_last_rg_alloc = rgd->rd_addr;
+ 
+ 	if (begin) {
+ 		recent_rgrp_add(rgd);
+@@ -1128,8 +1169,8 @@ unsigned char gfs2_get_block_type(struct gfs2_rgrpd *rgd, u64 block)
+ 	unsigned int buf;
+ 	unsigned char type;
+ 
+-	length = rgd->rd_ri.ri_length;
+-	rgrp_block = block - rgd->rd_ri.ri_data0;
++	length = rgd->rd_length;
++	rgrp_block = block - rgd->rd_data0;
+ 
+ 	for (buf = 0; buf < length; buf++) {
+ 		bi = rgd->rd_bits + buf;
+@@ -1171,7 +1212,7 @@ static u32 rgblk_search(struct gfs2_rgrpd *rgd, u32 goal,
+ 			     unsigned char old_state, unsigned char new_state)
+ {
+ 	struct gfs2_bitmap *bi = NULL;
+-	u32 length = rgd->rd_ri.ri_length;
++	u32 length = rgd->rd_length;
+ 	u32 blk = 0;
+ 	unsigned int buf, x;
+ 
+@@ -1247,9 +1288,9 @@ static struct gfs2_rgrpd *rgblk_free(struct gfs2_sbd *sdp, u64 bstart,
+ 		return NULL;
+ 	}
+ 
+-	length = rgd->rd_ri.ri_length;
++	length = rgd->rd_length;
+ 
+-	rgrp_blk = bstart - rgd->rd_ri.ri_data0;
++	rgrp_blk = bstart - rgd->rd_data0;
+ 
+ 	while (blen--) {
+ 		for (buf = 0; buf < length; buf++) {
+@@ -1293,15 +1334,15 @@ u64 gfs2_alloc_data(struct gfs2_inode *ip)
+ 	u32 goal, blk;
+ 	u64 block;
+ 
+-	if (rgrp_contains_block(&rgd->rd_ri, ip->i_di.di_goal_data))
+-		goal = ip->i_di.di_goal_data - rgd->rd_ri.ri_data0;
++	if (rgrp_contains_block(rgd, ip->i_di.di_goal_data))
++		goal = ip->i_di.di_goal_data - rgd->rd_data0;
+ 	else
+ 		goal = rgd->rd_last_alloc_data;
+ 
+ 	blk = rgblk_search(rgd, goal, GFS2_BLKST_FREE, GFS2_BLKST_USED);
+ 	rgd->rd_last_alloc_data = blk;
+ 
+-	block = rgd->rd_ri.ri_data0 + blk;
++	block = rgd->rd_data0 + blk;
+ 	ip->i_di.di_goal_data = block;
+ 
+ 	gfs2_assert_withdraw(sdp, rgd->rd_rg.rg_free);
+@@ -1337,15 +1378,15 @@ u64 gfs2_alloc_meta(struct gfs2_inode *ip)
+ 	u32 goal, blk;
+ 	u64 block;
+ 
+-	if (rgrp_contains_block(&rgd->rd_ri, ip->i_di.di_goal_meta))
+-		goal = ip->i_di.di_goal_meta - rgd->rd_ri.ri_data0;
++	if (rgrp_contains_block(rgd, ip->i_di.di_goal_meta))
++		goal = ip->i_di.di_goal_meta - rgd->rd_data0;
+ 	else
+ 		goal = rgd->rd_last_alloc_meta;
+ 
+ 	blk = rgblk_search(rgd, goal, GFS2_BLKST_FREE, GFS2_BLKST_USED);
+ 	rgd->rd_last_alloc_meta = blk;
+ 
+-	block = rgd->rd_ri.ri_data0 + blk;
++	block = rgd->rd_data0 + blk;
+ 	ip->i_di.di_goal_meta = block;
+ 
+ 	gfs2_assert_withdraw(sdp, rgd->rd_rg.rg_free);
+@@ -1387,7 +1428,7 @@ u64 gfs2_alloc_di(struct gfs2_inode *dip, u64 *generation)
+ 
+ 	rgd->rd_last_alloc_meta = blk;
+ 
+-	block = rgd->rd_ri.ri_data0 + blk;
++	block = rgd->rd_data0 + blk;
+ 
+ 	gfs2_assert_withdraw(sdp, rgd->rd_rg.rg_free);
+ 	rgd->rd_rg.rg_free--;
+diff --git a/fs/gfs2/super.c b/fs/gfs2/super.c
+index faccffd..f916b97 100644
+--- a/fs/gfs2/super.c
++++ b/fs/gfs2/super.c
+@@ -95,8 +95,8 @@ int gfs2_check_sb(struct gfs2_sbd *sdp, struct gfs2_sb_host *sb, int silent)
+ {
+ 	unsigned int x;
+ 
+-	if (sb->sb_header.mh_magic != GFS2_MAGIC ||
+-	    sb->sb_header.mh_type != GFS2_METATYPE_SB) {
++	if (sb->sb_magic != GFS2_MAGIC ||
++	    sb->sb_type != GFS2_METATYPE_SB) {
+ 		if (!silent)
+ 			printk(KERN_WARNING "GFS2: not a GFS2 filesystem\n");
+ 		return -EINVAL;
+@@ -174,10 +174,31 @@ static int end_bio_io_page(struct bio *bio, unsigned int bytes_done, int error)
+ 	return 0;
+ }
+ 
++static void gfs2_sb_in(struct gfs2_sb_host *sb, const void *buf)
++{
++	const struct gfs2_sb *str = buf;
++
++	sb->sb_magic = be32_to_cpu(str->sb_header.mh_magic);
++	sb->sb_type = be32_to_cpu(str->sb_header.mh_type);
++	sb->sb_format = be32_to_cpu(str->sb_header.mh_format);
++	sb->sb_fs_format = be32_to_cpu(str->sb_fs_format);
++	sb->sb_multihost_format = be32_to_cpu(str->sb_multihost_format);
++	sb->sb_bsize = be32_to_cpu(str->sb_bsize);
++	sb->sb_bsize_shift = be32_to_cpu(str->sb_bsize_shift);
++	sb->sb_master_dir.no_addr = be64_to_cpu(str->sb_master_dir.no_addr);
++	sb->sb_master_dir.no_formal_ino = be64_to_cpu(str->sb_master_dir.no_formal_ino);
++	sb->sb_root_dir.no_addr = be64_to_cpu(str->sb_root_dir.no_addr);
++	sb->sb_root_dir.no_formal_ino = be64_to_cpu(str->sb_root_dir.no_formal_ino);
++
++	memcpy(sb->sb_lockproto, str->sb_lockproto, GFS2_LOCKNAME_LEN);
++	memcpy(sb->sb_locktable, str->sb_locktable, GFS2_LOCKNAME_LEN);
++}
++
+ /**
+  * gfs2_read_super - Read the gfs2 super block from disk
+- * @sb: The VFS super block
++ * @sdp: The GFS2 super block
+  * @sector: The location of the super block
++ * @error: The error code to return
+  *
+  * This uses the bio functions to read the super block from disk
+  * because we want to be 100% sure that we never read cached data.
+@@ -189,17 +210,19 @@ static int end_bio_io_page(struct bio *bio, unsigned int bytes_done, int error)
+  * the master directory (contains pointers to journals etc) and the
+  * root directory.
+  *
+- * Returns: A page containing the sb or NULL
++ * Returns: 0 on success or error
+  */
+ 
+-struct page *gfs2_read_super(struct super_block *sb, sector_t sector)
++int gfs2_read_super(struct gfs2_sbd *sdp, sector_t sector)
+ {
++	struct super_block *sb = sdp->sd_vfs;
++	struct gfs2_sb *p;
+ 	struct page *page;
+ 	struct bio *bio;
+ 
+ 	page = alloc_page(GFP_KERNEL);
+ 	if (unlikely(!page))
+-		return NULL;
++		return -ENOBUFS;
+ 
+ 	ClearPageUptodate(page);
+ 	ClearPageDirty(page);
+@@ -208,7 +231,7 @@ struct page *gfs2_read_super(struct super_block *sb, sector_t sector)
+ 	bio = bio_alloc(GFP_KERNEL, 1);
+ 	if (unlikely(!bio)) {
+ 		__free_page(page);
+-		return NULL;
++		return -ENOBUFS;
+ 	}
+ 
+ 	bio->bi_sector = sector * (sb->s_blocksize >> 9);
+@@ -222,9 +245,13 @@ struct page *gfs2_read_super(struct super_block *sb, sector_t sector)
+ 	bio_put(bio);
+ 	if (!PageUptodate(page)) {
+ 		__free_page(page);
+-		return NULL;
++		return -EIO;
+ 	}
+-	return page;
++	p = kmap(page);
++	gfs2_sb_in(&sdp->sd_sb, p);
++	kunmap(page);
++	__free_page(page);
++	return 0;
+ }
+ 
+ /**
+@@ -241,19 +268,13 @@ int gfs2_read_sb(struct gfs2_sbd *sdp, struct gfs2_glock *gl, int silent)
+ 	u32 tmp_blocks;
+ 	unsigned int x;
+ 	int error;
+-	struct page *page;
+-	char *sb;
+ 
+-	page = gfs2_read_super(sdp->sd_vfs, GFS2_SB_ADDR >> sdp->sd_fsb2bb_shift);
+-	if (!page) {
++	error = gfs2_read_super(sdp, GFS2_SB_ADDR >> sdp->sd_fsb2bb_shift);
++	if (error) {
+ 		if (!silent)
+ 			fs_err(sdp, "can't read superblock\n");
+-		return -EIO;
++		return error;
+ 	}
+-	sb = kmap(page);
+-	gfs2_sb_in(&sdp->sd_sb, sb);
+-	kunmap(page);
+-	__free_page(page);
+ 
+ 	error = gfs2_check_sb(sdp, &sdp->sd_sb, silent);
+ 	if (error)
+@@ -593,6 +614,24 @@ int gfs2_make_fs_ro(struct gfs2_sbd *sdp)
+ 	return error;
+ }
+ 
++static void gfs2_statfs_change_in(struct gfs2_statfs_change_host *sc, const void *buf)
++{
++	const struct gfs2_statfs_change *str = buf;
++
++	sc->sc_total = be64_to_cpu(str->sc_total);
++	sc->sc_free = be64_to_cpu(str->sc_free);
++	sc->sc_dinodes = be64_to_cpu(str->sc_dinodes);
++}
++
++static void gfs2_statfs_change_out(const struct gfs2_statfs_change_host *sc, void *buf)
++{
++	struct gfs2_statfs_change *str = buf;
++
++	str->sc_total = cpu_to_be64(sc->sc_total);
++	str->sc_free = cpu_to_be64(sc->sc_free);
++	str->sc_dinodes = cpu_to_be64(sc->sc_dinodes);
++}
++
+ int gfs2_statfs_init(struct gfs2_sbd *sdp)
+ {
+ 	struct gfs2_inode *m_ip = GFS2_I(sdp->sd_statfs_inode);
+@@ -772,7 +811,7 @@ static int statfs_slow_fill(struct gfs2_rgrpd *rgd,
+ 			    struct gfs2_statfs_change_host *sc)
+ {
+ 	gfs2_rgrp_verify(rgd);
+-	sc->sc_total += rgd->rd_ri.ri_data;
++	sc->sc_total += rgd->rd_data;
+ 	sc->sc_free += rgd->rd_rg.rg_free;
+ 	sc->sc_dinodes += rgd->rd_rg.rg_dinodes;
+ 	return 0;
+diff --git a/fs/gfs2/super.h b/fs/gfs2/super.h
+index e590b2d..60a870e 100644
+--- a/fs/gfs2/super.h
++++ b/fs/gfs2/super.h
+@@ -16,7 +16,7 @@ void gfs2_tune_init(struct gfs2_tune *gt);
+ 
+ int gfs2_check_sb(struct gfs2_sbd *sdp, struct gfs2_sb_host *sb, int silent);
+ int gfs2_read_sb(struct gfs2_sbd *sdp, struct gfs2_glock *gl, int silent);
+-struct page *gfs2_read_super(struct super_block *sb, sector_t sector);
++int gfs2_read_super(struct gfs2_sbd *sdp, sector_t sector);
+ 
+ static inline unsigned int gfs2_jindex_size(struct gfs2_sbd *sdp)
+ {
+diff --git a/fs/gfs2/util.c b/fs/gfs2/util.c
+index 3f5edc5..424a077 100644
+--- a/fs/gfs2/util.c
++++ b/fs/gfs2/util.c
+@@ -137,7 +137,7 @@ int gfs2_consist_rgrpd_i(struct gfs2_rgrpd *rgd, int cluster_wide,
+ 		"GFS2: fsid=%s:   RG = %llu\n"
+ 		"GFS2: fsid=%s:   function = %s, file = %s, line = %u\n",
+ 		sdp->sd_fsname,
+-		sdp->sd_fsname, (unsigned long long)rgd->rd_ri.ri_addr,
++		sdp->sd_fsname, (unsigned long long)rgd->rd_addr,
+ 		sdp->sd_fsname, function, file, line);
+ 	return rv;
+ }
+diff --git a/include/linux/gfs2_ondisk.h b/include/linux/gfs2_ondisk.h
+index 01cc359..2c4e24f 100644
+--- a/include/linux/gfs2_ondisk.h
++++ b/include/linux/gfs2_ondisk.h
+@@ -54,11 +54,6 @@ struct gfs2_inum {
+ 	__be64 no_addr;
+ };
+ 
+-struct gfs2_inum_host {
+-	__u64 no_formal_ino;
+-	__u64 no_addr;
+-};
+-
+ /*
+  * Generic metadata head structure
+  * Every inplace buffer logged in the journal must start with this.
+@@ -87,12 +82,6 @@ struct gfs2_meta_header {
+ 	__be32 __pad1;		/* Was incarnation number in gfs1 */
+ };
+ 
+-struct gfs2_meta_header_host {
+-	__u32 mh_magic;
+-	__u32 mh_type;
+-	__u32 mh_format;
+-};
+-
+ /*
+  * super-block structure
+  *
+@@ -132,23 +121,6 @@ struct gfs2_sb {
+ 	/* In gfs1, quota and license dinodes followed */
+ };
+ 
+-struct gfs2_sb_host {
+-	struct gfs2_meta_header_host sb_header;
+-
+-	__u32 sb_fs_format;
+-	__u32 sb_multihost_format;
+-
+-	__u32 sb_bsize;
+-	__u32 sb_bsize_shift;
+-
+-	struct gfs2_inum_host sb_master_dir; /* Was jindex dinode in gfs1 */
+-	struct gfs2_inum_host sb_root_dir;
+-
+-	char sb_lockproto[GFS2_LOCKNAME_LEN];
+-	char sb_locktable[GFS2_LOCKNAME_LEN];
+-	/* In gfs1, quota and license dinodes followed */
+-};
+-
+ /*
+  * resource index structure
+  */
+@@ -166,14 +138,6 @@ struct gfs2_rindex {
+ 	__u8 ri_reserved[64];
+ };
+ 
+-struct gfs2_rindex_host {
+-	__u64 ri_addr;	/* grp block disk address */
+-	__u64 ri_data0;	/* first data location */
+-	__u32 ri_length;	/* length of rgrp header in fs blocks */
+-	__u32 ri_data;	/* num of data blocks in rgrp */
+-	__u32 ri_bitbytes;	/* number of bytes in data bitmaps */
+-};
+-
+ /*
+  * resource group header structure
+  */
+@@ -205,13 +169,6 @@ struct gfs2_rgrp {
+ 	__u8 rg_reserved[80]; /* Several fields from gfs1 now reserved */
+ };
+ 
+-struct gfs2_rgrp_host {
+-	__u32 rg_flags;
+-	__u32 rg_free;
+-	__u32 rg_dinodes;
+-	__u64 rg_igeneration;
+-};
+-
+ /*
+  * quota structure
+  */
+@@ -223,12 +180,6 @@ struct gfs2_quota {
+ 	__u8 qu_reserved[64];
+ };
+ 
+-struct gfs2_quota_host {
+-	__u64 qu_limit;
+-	__u64 qu_warn;
+-	__u64 qu_value;
+-};
+-
+ /*
+  * dinode structure
+  */
+@@ -312,27 +263,6 @@ struct gfs2_dinode {
+ 	__u8 di_reserved[56];
+ };
+ 
+-struct gfs2_dinode_host {
+-	__u64 di_size;	/* number of bytes in file */
+-	__u64 di_blocks;	/* number of blocks in file */
+-
+-	/* This section varies from gfs1. Padding added to align with
+-         * remainder of dinode
+-	 */
+-	__u64 di_goal_meta;	/* rgrp to alloc from next */
+-	__u64 di_goal_data;	/* data block goal */
+-	__u64 di_generation;	/* generation number for NFS */
+-
+-	__u32 di_flags;	/* GFS2_DIF_... */
+-	__u16 di_height;	/* height of metadata */
+-
+-	/* These only apply to directories  */
+-	__u16 di_depth;	/* Number of bits in the table */
+-	__u32 di_entries;	/* The number of entries in the directory */
+-
+-	__u64 di_eattr;	/* extended attribute block number */
+-};
+-
+ /*
+  * directory structure - many of these per directory file
+  */
+@@ -407,16 +337,6 @@ struct gfs2_log_header {
+ 	__be32 lh_hash;
+ };
+ 
+-struct gfs2_log_header_host {
+-	struct gfs2_meta_header_host lh_header;
+-
+-	__u64 lh_sequence;	/* Sequence number of this transaction */
+-	__u32 lh_flags;	/* GFS2_LOG_HEAD_... */
+-	__u32 lh_tail;		/* Block number of log tail */
+-	__u32 lh_blkno;
+-	__u32 lh_hash;
+-};
+-
+ /*
+  * Log type descriptor
+  */
+@@ -457,11 +377,6 @@ struct gfs2_inum_range {
+ 	__be64 ir_length;
+ };
+ 
+-struct gfs2_inum_range_host {
+-	__u64 ir_start;
+-	__u64 ir_length;
+-};
+-
+ /*
+  * Statfs change
+  * Describes an change to the pool of free and allocated
+@@ -474,12 +389,6 @@ struct gfs2_statfs_change {
+ 	__be64 sc_dinodes;
+ };
+ 
+-struct gfs2_statfs_change_host {
+-	__u64 sc_total;
+-	__u64 sc_free;
+-	__u64 sc_dinodes;
+-};
+-
+ /*
+  * Quota change
+  * Describes an allocation change for a particular
+@@ -494,12 +403,6 @@ struct gfs2_quota_change {
+ 	__be32 qc_id;
+ };
+ 
+-struct gfs2_quota_change_host {
+-	__u64 qc_change;
+-	__u32 qc_flags;	/* GFS2_QCF_... */
+-	__u32 qc_id;
+-};
+-
+ struct gfs2_quota_lvb {
+         __be32 qb_magic;
+         __u32 __pad;
+@@ -508,34 +411,4 @@ struct gfs2_quota_lvb {
+         __be64 qb_value;       /* Current # blocks allocated */
+ };
+ 
+-#ifdef __KERNEL__
+-/* Translation functions */
+-struct gfs2_inode;
+-
+-extern void gfs2_inum_out(const struct gfs2_inode *ip, struct gfs2_dirent *dent);
+-extern void gfs2_sb_in(struct gfs2_sb_host *sb, const void *buf);
+-extern void gfs2_rindex_in(struct gfs2_rindex_host *ri, const void *buf);
+-extern void gfs2_rindex_out(const struct gfs2_rindex_host *ri, void *buf);
+-extern void gfs2_rgrp_in(struct gfs2_rgrp_host *rg, const void *buf);
+-extern void gfs2_rgrp_out(const struct gfs2_rgrp_host *rg, void *buf);
+-extern void gfs2_quota_in(struct gfs2_quota_host *qu, const void *buf);
+-extern void gfs2_quota_out(const struct gfs2_quota_host *qu, void *buf);
+-struct gfs2_inode;
+-extern void gfs2_dinode_out(const struct gfs2_inode *ip, void *buf);
+-extern void gfs2_ea_header_in(struct gfs2_ea_header *ea, const void *buf);
+-extern void gfs2_ea_header_out(const struct gfs2_ea_header *ea, void *buf);
+-extern void gfs2_log_header_in(struct gfs2_log_header_host *lh, const void *buf);
+-extern void gfs2_inum_range_in(struct gfs2_inum_range_host *ir, const void *buf);
+-extern void gfs2_inum_range_out(const struct gfs2_inum_range_host *ir, void *buf);
+-extern void gfs2_statfs_change_in(struct gfs2_statfs_change_host *sc, const void *buf);
+-extern void gfs2_statfs_change_out(const struct gfs2_statfs_change_host *sc, void *buf);
+-extern void gfs2_quota_change_in(struct gfs2_quota_change_host *qc, const void *buf);
+-
+-/* Printing functions */
+-
+-extern void gfs2_rindex_print(const struct gfs2_rindex_host *ri);
+-extern void gfs2_dinode_print(const struct gfs2_inode *ip);
+-
+-#endif /* __KERNEL__ */
+-
+ #endif /* __GFS2_ONDISK_DOT_H__ */
+

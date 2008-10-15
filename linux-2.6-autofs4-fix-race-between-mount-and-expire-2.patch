@@ -1,0 +1,131 @@
+From: Ian Kent <ikent@redhat.com>
+Subject: Re: [RHEL 5.1 PATCH 1/2] autofs4 - patch correction - fix race 	between mount and expire
+Date: Tue, 02 Oct 2007 01:52:58 +0800
+Bugzilla: 354621
+Message-Id: <1191261178.23256.9.camel@raven.themaw.net>
+Changelog: [autofs4] fix race between mount and expire
+
+
+On Wed, 2007-04-18 at 16:04 +0800, Ian Kent wrote:
+> Hi all,
+> 
+> Investigation of bug 174821 lead to the discovery of a race between
+> mount and expire. This issue is also present in RHEL5 so I created the
+> tracking bug 236875 as a clone of 174821. The attached patch is included
+> in the 2.6.21 rc series at present.
+> 
+> Explaination.
+> 
+> What happens is that during an expire the situation can arise that a
+> directory is removed and another lookup is done before the expire issues
+> a completion status to the kernel module. In this case, since the the
+> lookup gets a new dentry, it doesn't know that there is an expire in
+> progress and when it posts its mount request, matches the existing
+> expire request and waits for its completion.  ENOENT is then returned to
+> user space from lookup (as the dentry passed in remains negative)
+> without having performed the mount request.
+> 
+> The solution is to keep track of dentrys in this unhashed state and
+> reuse them, if possible, in order to preserve the flags.
+
+During the QA of the above bug, 236875 a couple of problems were
+uncovered. Somehow, while posted to the bug, two patches didn't make it
+into the kernel. A failure due to this was discovered during scheduled
+regression testing of autofs and I've since verified these missing
+patches resolve the problem.
+
+This patch is the first of the two patches.
+
+Quoting from the bug:
+
+Due to a problem uncovered during QA of this patch for a RHEL-4 Z-Stream
+update I've had to revisit this issue.
+
+There are a couple of patches now that depend on this patch and there is
+a risk of some confusion regarding the various patches. To try and avoid
+this we should be able to use the same patches everywhere so we need
+to sync the source of the various kernels with upstream.
+
+This patch wasn't needed for this originally but is now needed by the
+fix for the problem identified above during QA and for other bugs that
+depend on these patches (for example see bug #253231).
+
+Ian
+
+---
+--- linux-2.6.18.noarch/fs/autofs4/root.c.lookup-check-unhashed	2007-08-22 18:37:11.000000000 +0800
++++ linux-2.6.18.noarch/fs/autofs4/root.c	2007-08-22 18:42:40.000000000 +0800
+@@ -655,14 +655,29 @@ static struct dentry *autofs4_lookup(str
+ 
+ 	/*
+ 	 * If this dentry is unhashed, then we shouldn't honour this
+-	 * lookup even if the dentry is positive.  Returning ENOENT here
+-	 * doesn't do the right thing for all system calls, but it should
+-	 * be OK for the operations we permit from an autofs.
++	 * lookup.  Returning ENOENT here doesn't do the right thing
++	 * for all system calls, but it should be OK for the operations
++	 * we permit from an autofs.
+ 	 */
+ 	if (dentry->d_inode && d_unhashed(dentry)) {
++		/*
++		 * A user space application can (and has done in the past)
++		 * remove and re-create this directory during the callback.
++		 * This can leave us with an unhashed dentry, but a
++		 * successful mount!  So we need to perform another
++		 * cached lookup in case the dentry now exists.
++		 */
++		struct dentry *parent = dentry->d_parent;
++		struct dentry *new = d_lookup(parent, &dentry->d_name);
++		if (new != NULL)
++			dentry = new;
++		else
++			dentry = ERR_PTR(-ENOENT);
++
+ 		if (unhashed)
+ 			dput(unhashed);
+-		return ERR_PTR(-ENOENT);
++
++		return dentry;
+ 	}
+ 
+ 	if (unhashed)
+
+
+
+This patch is the second of the two patches.
+
+Quoting from the bug:
+
+This patch fixes a fail reported during QA testing for a Z-Stream
+release for RHEL 4.
+
+It is in fact a hunk from another autofs4 patch that resolves a deadlock
+during directory creation under load (see bug #253231 for info). The
+deadlock patch delays hashing of dentrys at directory creation until the
+actual create operation and so dentrys remain unhashed for a relatively
+long time so the code in this patch was needed their. With the
+expire/mount race fix here, dentrys are unhashed for a relatively brief
+time so the code in this patch was not identified as needed during
+development. However, if there are many process concurrently accessing
+directories it's possible there will be two or more waiters in the
+queue. Only one of the waiters will have the dentry required to
+complete the lookup and the others need to perform a d_lookup to get the
+correct dentry.
+
+This patch allows these processes to perform the needed d_lookup.
+
+Ian
+
+---
+--- linux-2.6.18.noarch/fs/autofs4/root.c.lookup-expire-race-fix-4	2007-08-27 19:29:13.000000000 +0800
++++ linux-2.6.18.noarch/fs/autofs4/root.c	2007-08-27 19:31:13.000000000 +0800
+@@ -659,7 +659,7 @@ static struct dentry *autofs4_lookup(str
+ 	 * for all system calls, but it should be OK for the operations
+ 	 * we permit from an autofs.
+ 	 */
+-	if (dentry->d_inode && d_unhashed(dentry)) {
++	if (!oz_mode && d_unhashed(dentry)) {
+ 		/*
+ 		 * A user space application can (and has done in the past)
+ 		 * remove and re-create this directory during the callback.
+

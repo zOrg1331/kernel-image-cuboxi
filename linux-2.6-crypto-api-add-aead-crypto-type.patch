@@ -1,0 +1,1097 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Sun, 6 Jan 2008 16:09:21 +1100
+Subject: [crypto] api: add aead crypto type
+Message-id: E1JBNlB-0001Ac-00@gondolin.me.apana.org.au
+O-Subject: [PATCH 7/32] [CRYPTO] api: Add aead crypto type
+Bugzilla: 253051
+
+[CRYPTO] api: Add aead crypto type
+
+This patch adds crypto_aead which is the interface for AEAD
+(Authenticated Encryption with Associated Data) algorithms.
+
+AEAD algorithms perform authentication and encryption in one
+step.  Traditionally users (such as IPsec) would use two
+different crypto algorithms to perform these.  With AEAD
+this comes down to one algorithm and one operation.
+
+Of course if traditional algorithms were used we'd still
+be doing two operations underneath.  However, real AEAD
+algorithms may allow the underlying operations to be
+optimised as well.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/crypto/Kconfig b/crypto/Kconfig
+index 6245bad..aff47c9 100644
+--- a/crypto/Kconfig
++++ b/crypto/Kconfig
+@@ -22,6 +22,11 @@ config CRYPTO_ALGAPI
+ 	help
+ 	  This option provides the API for cryptographic algorithms.
+ 
++config CRYPTO_AEAD
++	tristate
++	depends on CRYPTO
++	select CRYPTO_ALGAPI
++
+ config CRYPTO_BLKCIPHER
+ 	tristate
+ 	depends on CRYPTO
+diff --git a/crypto/Makefile b/crypto/Makefile
+index 7ed240b..104ddf9 100644
+--- a/crypto/Makefile
++++ b/crypto/Makefile
+@@ -10,6 +10,8 @@ obj-$(CONFIG_CRYPTO) += api.o scatterwalk.o cipher.o digest.o compress.o \
+ crypto_algapi-objs := algapi.o nscatterwalk.o
+ obj-$(CONFIG_CRYPTO_ALGAPI) += crypto_algapi.o
+ 
++obj-$(CONFIG_CRYPTO_AEAD) += aead.o
++
+ crypto_blkcipher-objs := ablkcipher.o
+ crypto_blkcipher-objs += blkcipher.o
+ obj-$(CONFIG_CRYPTO_BLKCIPHER) += crypto_blkcipher.o
+diff --git a/crypto/aead.c b/crypto/aead.c
+new file mode 100644
+index 0000000..67c2462
+--- /dev/null
++++ b/crypto/aead.c
+@@ -0,0 +1,490 @@
++/*
++ * AEAD: Authenticated Encryption with Associated Data
++ * 
++ * This file provides API support for AEAD algorithms.
++ *
++ * Copyright (c) 2007 Herbert Xu <herbert@gondor.apana.org.au>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the Free
++ * Software Foundation; either version 2 of the License, or (at your option) 
++ * any later version.
++ *
++ */
++
++#include <crypto/internal/aead.h>
++#include <linux/err.h>
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/rtnetlink.h>
++#include <linux/slab.h>
++#include <linux/seq_file.h>
++
++#include "ninternal.h"
++
++static int setkey_unaligned(struct crypto_aead *tfm, const u8 *key,
++			    unsigned int keylen)
++{
++	struct aead_alg *aead = crypto_aead_alg(tfm);
++	unsigned long alignmask = crypto_aead_alignmask(tfm);
++	int ret;
++	u8 *buffer, *alignbuffer;
++	unsigned long absize;
++
++	absize = keylen + alignmask;
++	buffer = kmalloc(absize, GFP_ATOMIC);
++	if (!buffer)
++		return -ENOMEM;
++
++	alignbuffer = (u8 *)ALIGN((unsigned long)buffer, alignmask + 1);
++	memcpy(alignbuffer, key, keylen);
++	ret = aead->setkey(tfm, alignbuffer, keylen);
++	memset(alignbuffer, 0, keylen);
++	kfree(buffer);
++	return ret;
++}
++
++static int setkey(struct crypto_aead *tfm, const u8 *key, unsigned int keylen)
++{
++	struct aead_alg *aead = crypto_aead_alg(tfm);
++	unsigned long alignmask = crypto_aead_alignmask(tfm);
++
++	if ((unsigned long)key & alignmask)
++		return setkey_unaligned(tfm, key, keylen);
++
++	return aead->setkey(tfm, key, keylen);
++}
++
++int crypto_aead_setauthsize(struct crypto_aead *tfm, unsigned int authsize)
++{
++	struct aead_tfm *crt = crypto_aead_crt(tfm);
++	int err;
++
++	if (authsize > crypto_aead_alg(tfm)->maxauthsize)
++		return -EINVAL;
++
++	if (crypto_aead_alg(tfm)->setauthsize) {
++		err = crypto_aead_alg(tfm)->setauthsize(crt->base, authsize);
++		if (err)
++			return err;
++	}
++
++	crypto_aead_crt(crt->base)->authsize = authsize;
++	crt->authsize = authsize;
++	return 0;
++}
++EXPORT_SYMBOL_GPL(crypto_aead_setauthsize);
++
++static unsigned int crypto_aead_ctxsize(struct ncrypto_alg *alg, u32 type,
++					u32 mask)
++{
++	return alg->cra_ctxsize;
++}
++
++static int no_givcrypt(struct aead_givcrypt_request *req)
++{
++	return -ENOSYS;
++}
++
++static int crypto_init_aead_ops(struct ncrypto_tfm *tfm, u32 type, u32 mask)
++{
++	struct aead_alg *alg = &tfm->__crt_alg->cra_aead;
++	struct aead_tfm *crt = &tfm->crt_aead;
++
++	if (max(alg->maxauthsize, alg->ivsize) > PAGE_SIZE / 8)
++		return -EINVAL;
++
++	crt->setkey = tfm->__crt_alg->cra_flags & NCRYPTO_ALG_GENIV ?
++		      alg->setkey : setkey;
++	crt->encrypt = alg->encrypt;
++	crt->decrypt = alg->decrypt;
++	crt->givencrypt = alg->givencrypt ?: no_givcrypt;
++	crt->givdecrypt = alg->givdecrypt ?: no_givcrypt;
++	crt->base = __crypto_aead_cast(tfm);
++	crt->ivsize = alg->ivsize;
++	crt->authsize = alg->maxauthsize;
++
++	return 0;
++}
++
++static void crypto_aead_show(struct seq_file *m, struct ncrypto_alg *alg)
++	__attribute__ ((unused));
++static void crypto_aead_show(struct seq_file *m, struct ncrypto_alg *alg)
++{
++	struct aead_alg *aead = &alg->cra_aead;
++
++	seq_printf(m, "type         : aead\n");
++	seq_printf(m, "async        : %s\n", alg->cra_flags &
++					     NCRYPTO_ALG_ASYNC ?  "yes" : "no");
++	seq_printf(m, "blocksize    : %u\n", alg->cra_blocksize);
++	seq_printf(m, "ivsize       : %u\n", aead->ivsize);
++	seq_printf(m, "maxauthsize  : %u\n", aead->maxauthsize);
++	seq_printf(m, "geniv        : %s\n", aead->geniv ?: "<built-in>");
++}
++
++const struct crypto_type crypto_aead_type = {
++	.ctxsize = crypto_aead_ctxsize,
++	.init = crypto_init_aead_ops,
++#ifdef CONFIG_PROC_FS
++	.show = crypto_aead_show,
++#endif
++};
++EXPORT_SYMBOL_GPL(crypto_aead_type);
++
++static int aead_null_givencrypt(struct aead_givcrypt_request *req)
++{
++	return crypto_aead_encrypt(&req->areq);
++}
++
++static int aead_null_givdecrypt(struct aead_givcrypt_request *req)
++{
++	return crypto_aead_decrypt(&req->areq);
++}
++
++static int crypto_init_nivaead_ops(struct ncrypto_tfm *tfm, u32 type, u32 mask)
++{
++	struct aead_alg *alg = &tfm->__crt_alg->cra_aead;
++	struct aead_tfm *crt = &tfm->crt_aead;
++
++	if (max(alg->maxauthsize, alg->ivsize) > PAGE_SIZE / 8)
++		return -EINVAL;
++
++	crt->setkey = setkey;
++	crt->encrypt = alg->encrypt;
++	crt->decrypt = alg->decrypt;
++	if (!alg->ivsize) {
++		crt->givencrypt = aead_null_givencrypt;
++		crt->givdecrypt = aead_null_givdecrypt;
++	}
++	crt->base = __crypto_aead_cast(tfm);
++	crt->ivsize = alg->ivsize;
++	crt->authsize = alg->maxauthsize;
++
++	return 0;
++}
++
++static void crypto_nivaead_show(struct seq_file *m, struct ncrypto_alg *alg)
++	__attribute__ ((unused));
++static void crypto_nivaead_show(struct seq_file *m, struct ncrypto_alg *alg)
++{
++	struct aead_alg *aead = &alg->cra_aead;
++
++	seq_printf(m, "type         : nivaead\n");
++	seq_printf(m, "async        : %s\n", alg->cra_flags &
++					     NCRYPTO_ALG_ASYNC ?  "yes" : "no");
++	seq_printf(m, "blocksize    : %u\n", alg->cra_blocksize);
++	seq_printf(m, "ivsize       : %u\n", aead->ivsize);
++	seq_printf(m, "maxauthsize  : %u\n", aead->maxauthsize);
++	seq_printf(m, "geniv        : %s\n", aead->geniv);
++}
++
++const struct crypto_type crypto_nivaead_type = {
++	.ctxsize = crypto_aead_ctxsize,
++	.init = crypto_init_nivaead_ops,
++#ifdef CONFIG_PROC_FS
++	.show = crypto_nivaead_show,
++#endif
++};
++EXPORT_SYMBOL_GPL(crypto_nivaead_type);
++
++static int crypto_grab_nivaead(struct crypto_aead_spawn *spawn,
++			       const char *name, u32 type, u32 mask)
++{
++	struct ncrypto_alg *alg;
++	int err;
++
++	type &= ~(NCRYPTO_ALG_TYPE_MASK | NCRYPTO_ALG_GENIV);
++	type |= NCRYPTO_ALG_TYPE_AEAD;
++	mask |= NCRYPTO_ALG_TYPE_MASK | NCRYPTO_ALG_GENIV;
++
++	alg = ncrypto_alg_mod_lookup(name, type, mask);
++	if (IS_ERR(alg))
++		return PTR_ERR(alg);
++
++	err = crypto_init_spawn(&spawn->base, alg, spawn->base.inst, mask);
++	crypto_mod_put(alg);
++	return err;
++}
++
++struct crypto_instance *aead_geniv_alloc(struct crypto_template *tmpl,
++					 struct rtattr **tb, u32 type,
++					 u32 mask)
++{
++	const char *name;
++	struct crypto_aead_spawn *spawn;
++	struct crypto_attr_type *algt;
++	struct crypto_instance *inst;
++	struct ncrypto_alg *alg;
++	int err;
++
++	algt = crypto_get_attr_type(tb);
++	err = PTR_ERR(algt);
++	if (IS_ERR(algt))
++		return ERR_PTR(err);
++
++	if ((algt->type ^ (NCRYPTO_ALG_TYPE_AEAD | NCRYPTO_ALG_GENIV)) &
++	    algt->mask)
++		return ERR_PTR(-EINVAL);
++
++	name = crypto_attr_alg_name(tb[1]);
++	err = PTR_ERR(name);
++	if (IS_ERR(name))
++		return ERR_PTR(err);
++
++	inst = kzalloc(sizeof(*inst) + sizeof(*spawn), GFP_KERNEL);
++	if (!inst)
++		return ERR_PTR(-ENOMEM);
++
++	spawn = crypto_instance_ctx(inst);
++
++	/* Ignore async algorithms if necessary. */
++	mask |= crypto_requires_sync(algt->type, algt->mask);
++
++	crypto_set_aead_spawn(spawn, inst);
++	err = crypto_grab_nivaead(spawn, name, type, mask);
++	if (err)
++		goto err_free_inst;
++
++	alg = crypto_aead_spawn_alg(spawn);
++
++	err = -EINVAL;
++	if (!alg->cra_aead.ivsize)
++		goto err_drop_alg;
++
++	/*
++	 * This is only true if we're constructing an algorithm with its
++	 * default IV generator.  For the default generator we elide the
++	 * template name and double-check the IV generator.
++	 */
++	if (algt->mask & NCRYPTO_ALG_GENIV) {
++		if (strcmp(tmpl->name, alg->cra_aead.geniv))
++			goto err_drop_alg;
++
++		memcpy(inst->alg.cra_name, alg->cra_name, CRYPTO_MAX_ALG_NAME);
++		memcpy(inst->alg.cra_driver_name, alg->cra_driver_name,
++		       CRYPTO_MAX_ALG_NAME);
++	} else {
++		err = -ENAMETOOLONG;
++		if (snprintf(inst->alg.cra_name, CRYPTO_MAX_ALG_NAME,
++			     "%s(%s)", tmpl->name, alg->cra_name) >=
++		    CRYPTO_MAX_ALG_NAME)
++			goto err_drop_alg;
++		if (snprintf(inst->alg.cra_driver_name, CRYPTO_MAX_ALG_NAME,
++			     "%s(%s)", tmpl->name, alg->cra_driver_name) >=
++		    CRYPTO_MAX_ALG_NAME)
++			goto err_drop_alg;
++	}
++
++	inst->alg.cra_flags = NCRYPTO_ALG_TYPE_AEAD | NCRYPTO_ALG_GENIV;
++	inst->alg.cra_flags |= alg->cra_flags & NCRYPTO_ALG_ASYNC;
++	inst->alg.cra_priority = alg->cra_priority;
++	inst->alg.cra_blocksize = alg->cra_blocksize;
++	inst->alg.cra_alignmask = alg->cra_alignmask;
++	inst->alg.cra_type = &crypto_aead_type;
++
++	inst->alg.cra_aead.ivsize = alg->cra_aead.ivsize;
++	inst->alg.cra_aead.maxauthsize = alg->cra_aead.maxauthsize;
++	inst->alg.cra_aead.geniv = alg->cra_aead.geniv;
++
++	inst->alg.cra_aead.setkey = alg->cra_aead.setkey;
++	inst->alg.cra_aead.setauthsize = alg->cra_aead.setauthsize;
++	inst->alg.cra_aead.encrypt = alg->cra_aead.encrypt;
++	inst->alg.cra_aead.decrypt = alg->cra_aead.decrypt;
++
++out:
++	return inst;
++
++err_drop_alg:
++	crypto_drop_aead(spawn);
++err_free_inst:
++	kfree(inst);
++	inst = ERR_PTR(err);
++	goto out;
++}
++EXPORT_SYMBOL_GPL(aead_geniv_alloc);
++
++void aead_geniv_free(struct crypto_instance *inst)
++{
++	crypto_drop_aead(crypto_instance_ctx(inst));
++	kfree(inst);
++}
++EXPORT_SYMBOL_GPL(aead_geniv_free);
++
++int aead_geniv_init(struct ncrypto_tfm *tfm)
++{
++	struct crypto_instance *inst = (void *)tfm->__crt_alg;
++	struct crypto_aead *aead;
++
++	aead = crypto_spawn_aead(crypto_instance_ctx(inst));
++	if (IS_ERR(aead))
++		return PTR_ERR(aead);
++
++	tfm->crt_aead.base = aead;
++	tfm->crt_aead.reqsize += crypto_aead_reqsize(aead);
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(aead_geniv_init);
++
++void aead_geniv_exit(struct ncrypto_tfm *tfm)
++{
++	crypto_free_aead(tfm->crt_aead.base);
++}
++EXPORT_SYMBOL_GPL(aead_geniv_exit);
++
++static int crypto_nivaead_default(struct ncrypto_alg *alg, u32 type, u32 mask)
++{
++	struct rtattr *tb[3];
++	struct {
++		struct rtattr attr;
++		struct crypto_attr_type data;
++	} ptype;
++	struct {
++		struct rtattr attr;
++		struct crypto_attr_alg data;
++	} palg;
++	struct crypto_template *tmpl;
++	struct crypto_instance *inst;
++	struct ncrypto_alg *larval;
++	const char *geniv;
++	int err;
++
++	larval = crypto_larval_lookup(alg->cra_driver_name,
++				      NCRYPTO_ALG_TYPE_AEAD | NCRYPTO_ALG_GENIV,
++				      NCRYPTO_ALG_TYPE_MASK |
++				      NCRYPTO_ALG_GENIV);
++	err = PTR_ERR(larval);
++	if (IS_ERR(larval))
++		goto out;
++
++	err = -EAGAIN;
++	if (!crypto_is_larval(larval))
++		goto drop_larval;
++
++	ptype.attr.rta_len = sizeof(ptype);
++	ptype.attr.rta_type = CRYPTOA_TYPE;
++	ptype.data.type = type | NCRYPTO_ALG_GENIV;
++	/* GENIV tells the template that we're making a default geniv. */
++	ptype.data.mask = mask | NCRYPTO_ALG_GENIV;
++	tb[0] = &ptype.attr;
++
++	palg.attr.rta_len = sizeof(palg);
++	palg.attr.rta_type = CRYPTOA_ALG;
++	/* Must use the exact name to locate ourselves. */
++	memcpy(palg.data.name, alg->cra_driver_name, CRYPTO_MAX_ALG_NAME);
++	tb[1] = &palg.attr;
++
++	tb[2] = NULL;
++
++	geniv = alg->cra_aead.geniv;
++
++	tmpl = crypto_lookup_template(geniv);
++	err = -ENOENT;
++	if (!tmpl)
++		goto kill_larval;
++
++	inst = tmpl->alloc(tb);
++	err = PTR_ERR(inst);
++	if (IS_ERR(inst))
++		goto put_tmpl;
++
++	if ((err = crypto_register_instance(tmpl, inst))) {
++		tmpl->free(inst);
++		goto put_tmpl;
++	}
++
++	/* Redo the lookup to use the instance we just registered. */
++	err = -EAGAIN;
++
++put_tmpl:
++	crypto_tmpl_put(tmpl);
++kill_larval:
++	crypto_larval_kill(larval);
++drop_larval:
++	crypto_mod_put(larval);
++out:
++	crypto_mod_put(alg);
++	return err;
++}
++
++static struct ncrypto_alg *crypto_lookup_aead(const char *name, u32 type,
++					     u32 mask)
++{
++	struct ncrypto_alg *alg;
++
++	alg = ncrypto_alg_mod_lookup(name, type, mask);
++	if (IS_ERR(alg))
++		return alg;
++
++	if (alg->cra_type == &crypto_aead_type)
++		return alg;
++
++	if (!alg->cra_aead.ivsize)
++		return alg;
++
++	return ERR_PTR(crypto_nivaead_default(alg, type, mask));
++}
++
++int crypto_grab_aead(struct crypto_aead_spawn *spawn, const char *name,
++		     u32 type, u32 mask)
++{
++	struct ncrypto_alg *alg;
++	int err;
++
++	type &= ~(NCRYPTO_ALG_TYPE_MASK | NCRYPTO_ALG_GENIV);
++	type |= NCRYPTO_ALG_TYPE_AEAD;
++	mask &= ~(NCRYPTO_ALG_TYPE_MASK | NCRYPTO_ALG_GENIV);
++	mask |= NCRYPTO_ALG_TYPE_MASK;
++
++	alg = crypto_lookup_aead(name, type, mask);
++	if (IS_ERR(alg))
++		return PTR_ERR(alg);
++
++	err = crypto_init_spawn(&spawn->base, alg, spawn->base.inst, mask);
++	crypto_mod_put(alg);
++	return err;
++}
++EXPORT_SYMBOL_GPL(crypto_grab_aead);
++
++struct crypto_aead *crypto_alloc_aead(const char *alg_name, u32 type, u32 mask)
++{
++	struct ncrypto_tfm *tfm;
++	int err;
++
++	type &= ~(NCRYPTO_ALG_TYPE_MASK | NCRYPTO_ALG_GENIV);
++	type |= NCRYPTO_ALG_TYPE_AEAD;
++	mask &= ~(NCRYPTO_ALG_TYPE_MASK | NCRYPTO_ALG_GENIV);
++	mask |= NCRYPTO_ALG_TYPE_MASK;
++
++	for (;;) {
++		struct ncrypto_alg *alg;
++
++		alg = crypto_lookup_aead(alg_name, type, mask);
++		if (IS_ERR(alg)) {
++			err = PTR_ERR(alg);
++			goto err;
++		}
++
++		tfm = __crypto_alloc_tfm(alg, type, mask);
++		if (!IS_ERR(tfm))
++			return __crypto_aead_cast(tfm);
++
++		crypto_mod_put(alg);
++		err = PTR_ERR(tfm);
++
++err:
++		if (err != -EAGAIN)
++			break;
++		if (signal_pending(current)) {
++			err = -EINTR;
++			break;
++		}
++	}
++
++	return ERR_PTR(err);
++}
++EXPORT_SYMBOL_GPL(crypto_alloc_aead);
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("Authenticated Encryption with Associated Data (AEAD)");
+diff --git a/include/crypto/aead.h b/include/crypto/aead.h
+new file mode 100644
+index 0000000..a631301
+--- /dev/null
++++ b/include/crypto/aead.h
+@@ -0,0 +1,105 @@
++/*
++ * AEAD: Authenticated Encryption with Associated Data
++ * 
++ * Copyright (c) 2007 Herbert Xu <herbert@gondor.apana.org.au>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the Free
++ * Software Foundation; either version 2 of the License, or (at your option) 
++ * any later version.
++ *
++ */
++
++#ifndef _CRYPTO_AEAD_H
++#define _CRYPTO_AEAD_H
++
++#include <linux/ncrypto.h>
++#include <linux/kernel.h>
++#include <linux/slab.h>
++
++/**
++ *	struct aead_givcrypt_request - AEAD request with IV generation
++ *	@seq: Sequence number for IV generation
++ *	@giv: Space for generated IV
++ *	@areq: The AEAD request itself
++ */
++struct aead_givcrypt_request {
++	u64 seq;
++	u8 *giv;
++
++	struct aead_request areq;
++};
++
++static inline struct crypto_aead *aead_givcrypt_reqtfm(
++	struct aead_givcrypt_request *req)
++{
++	return crypto_aead_reqtfm(&req->areq);
++}
++
++static inline int crypto_aead_givencrypt(struct aead_givcrypt_request *req)
++{
++	struct aead_tfm *crt = crypto_aead_crt(aead_givcrypt_reqtfm(req));
++	return crt->givencrypt(req);
++};
++
++static inline int crypto_aead_givdecrypt(struct aead_givcrypt_request *req)
++{
++	struct aead_tfm *crt = crypto_aead_crt(aead_givcrypt_reqtfm(req));
++	return crt->givdecrypt(req);
++};
++
++static inline void aead_givcrypt_set_tfm(struct aead_givcrypt_request *req,
++					 struct crypto_aead *tfm)
++{
++	req->areq.base.tfm = crypto_aead_tfm(tfm);
++}
++
++static inline struct aead_givcrypt_request *aead_givcrypt_alloc(
++	struct crypto_aead *tfm, gfp_t gfp)
++{
++	struct aead_givcrypt_request *req;
++
++	req = kmalloc(sizeof(struct aead_givcrypt_request) +
++		      crypto_aead_reqsize(tfm), gfp);
++
++	if (likely(req))
++		aead_givcrypt_set_tfm(req, tfm);
++
++	return req;
++}
++
++static inline void aead_givcrypt_free(struct aead_givcrypt_request *req)
++{
++	kfree(req);
++}
++
++static inline void aead_givcrypt_set_callback(
++	struct aead_givcrypt_request *req, u32 flags,
++	crypto_completion_t complete, void *data)
++{
++	aead_request_set_callback(&req->areq, flags, complete, data);
++}
++
++static inline void aead_givcrypt_set_crypt(struct aead_givcrypt_request *req,
++					   struct scatterlist *src,
++					   struct scatterlist *dst,
++					   unsigned int nbytes, void *iv)
++{
++	aead_request_set_crypt(&req->areq, src, dst, nbytes, iv);
++}
++
++static inline void aead_givcrypt_set_assoc(struct aead_givcrypt_request *req,
++					   struct scatterlist *assoc,
++					   unsigned int assoclen)
++{
++	aead_request_set_assoc(&req->areq, assoc, assoclen);
++}
++
++static inline void aead_givcrypt_set_giv(struct aead_givcrypt_request *req,
++					 u8 *giv, u64 seq)
++{
++	req->giv = giv;
++	req->seq = seq;
++}
++
++#endif	/* _CRYPTO_AEAD_H */
+diff --git a/include/crypto/algapi.h b/include/crypto/algapi.h
+index 0f7d92a..4eca679 100644
+--- a/include/crypto/algapi.h
++++ b/include/crypto/algapi.h
+@@ -95,6 +95,7 @@ struct blkcipher_walk {
+ };
+ 
+ extern const struct crypto_type crypto_ablkcipher_type;
++extern const struct crypto_type crypto_aead_type;
+ extern const struct crypto_type crypto_blkcipher_type;
+ 
+ void crypto_mod_put(struct ncrypto_alg *alg);
+@@ -183,6 +184,22 @@ static inline void *crypto_ablkcipher_ctx_aligned(struct crypto_ablkcipher *tfm)
+ 	return crypto_tfm_ctx_aligned(&tfm->base);
+ }
+ 
++static inline struct aead_alg *crypto_aead_alg(struct crypto_aead *tfm)
++{
++	return &crypto_aead_tfm(tfm)->__crt_alg->cra_aead;
++}
++
++static inline void *crypto_aead_ctx(struct crypto_aead *tfm)
++{
++	return ncrypto_tfm_ctx(&tfm->base);
++}
++
++static inline struct crypto_instance *crypto_aead_alg_instance(
++	struct crypto_aead *aead)
++{
++	return crypto_tfm_alg_instance(&aead->base);
++}
++
+ static inline struct crypto_blkcipher *crypto_spawn_blkcipher(
+ 	struct crypto_spawn *spawn)
+ {
+@@ -247,6 +264,21 @@ static inline int ablkcipher_tfm_in_queue(struct crypto_queue *queue,
+ 	return crypto_tfm_in_queue(queue, crypto_ablkcipher_tfm(tfm));
+ }
+ 
++static inline void *aead_request_ctx(struct aead_request *req)
++{
++	return req->__ctx;
++}
++
++static inline void aead_request_complete(struct aead_request *req, int err)
++{
++	req->base.complete(&req->base, err);
++}
++
++static inline u32 aead_request_flags(struct aead_request *req)
++{
++	return req->base.flags;
++}
++
+ static inline struct ncrypto_alg *crypto_get_attr_alg(struct rtattr **tb,
+ 						      u32 type, u32 mask)
+ {
+diff --git a/include/crypto/internal/aead.h b/include/crypto/internal/aead.h
+new file mode 100644
+index 0000000..81ae417
+--- /dev/null
++++ b/include/crypto/internal/aead.h
+@@ -0,0 +1,80 @@
++/*
++ * AEAD: Authenticated Encryption with Associated Data
++ * 
++ * Copyright (c) 2007 Herbert Xu <herbert@gondor.apana.org.au>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the Free
++ * Software Foundation; either version 2 of the License, or (at your option) 
++ * any later version.
++ *
++ */
++
++#ifndef _CRYPTO_INTERNAL_AEAD_H
++#define _CRYPTO_INTERNAL_AEAD_H
++
++#include <crypto/aead.h>
++#include <crypto/algapi.h>
++#include <linux/types.h>
++
++struct rtattr;
++
++struct crypto_aead_spawn {
++	struct crypto_spawn base;
++};
++
++extern const struct crypto_type crypto_nivaead_type;
++
++static inline void crypto_set_aead_spawn(
++	struct crypto_aead_spawn *spawn, struct crypto_instance *inst)
++{
++	crypto_set_spawn(&spawn->base, inst);
++}
++
++int crypto_grab_aead(struct crypto_aead_spawn *spawn, const char *name,
++		     u32 type, u32 mask);
++
++static inline void crypto_drop_aead(struct crypto_aead_spawn *spawn)
++{
++	crypto_drop_spawn(&spawn->base);
++}
++
++static inline struct ncrypto_alg *crypto_aead_spawn_alg(
++	struct crypto_aead_spawn *spawn)
++{
++	return spawn->base.alg;
++}
++
++static inline struct crypto_aead *crypto_spawn_aead(
++	struct crypto_aead_spawn *spawn)
++{
++	return __crypto_aead_cast(
++		crypto_spawn_tfm(&spawn->base, NCRYPTO_ALG_TYPE_AEAD,
++				 NCRYPTO_ALG_TYPE_MASK));
++}
++
++struct crypto_instance *aead_geniv_alloc(struct crypto_template *tmpl,
++					 struct rtattr **tb, u32 type,
++					 u32 mask);
++void aead_geniv_free(struct crypto_instance *inst);
++int aead_geniv_init(struct ncrypto_tfm *tfm);
++void aead_geniv_exit(struct ncrypto_tfm *tfm);
++
++static inline struct crypto_aead *aead_geniv_base(struct crypto_aead *geniv)
++{
++	return crypto_aead_crt(geniv)->base;
++}
++
++static inline void *aead_givcrypt_reqctx(struct aead_givcrypt_request *req)
++{
++	return aead_request_ctx(&req->areq);
++}
++
++static inline void aead_givcrypt_complete(struct aead_givcrypt_request *req,
++					  int err)
++{
++	aead_request_complete(&req->areq, err);
++}
++
++#endif	/* _CRYPTO_INTERNAL_AEAD_H */
++
+diff --git a/include/linux/ncrypto.h b/include/linux/ncrypto.h
+index 2dc4121..8f26206 100644
+--- a/include/linux/ncrypto.h
++++ b/include/linux/ncrypto.h
+@@ -31,6 +31,7 @@
+ #define NCRYPTO_ALG_TYPE_ABLKCIPHER	0x00000005
+ #define NCRYPTO_ALG_TYPE_GIVCIPHER	0x00000006
+ #define NCRYPTO_ALG_TYPE_COMPRESS	0x00000008
++#define NCRYPTO_ALG_TYPE_AEAD		0x00000009
+ 
+ #define NCRYPTO_ALG_TYPE_BLKCIPHER_MASK	0x0000000c
+ 
+@@ -82,10 +83,12 @@
+ 
+ struct crypto_ablkcipher;
+ struct crypto_async_request;
++struct crypto_aead;
+ struct crypto_blkcipher;
+ struct ncrypto_tfm;
+ struct crypto_type;
+ struct module;
++struct aead_givcrypt_request;
+ struct skcipher_givcrypt_request;
+ 
+ typedef void (*crypto_completion_t)(struct crypto_async_request *req, int err);
+@@ -112,6 +115,32 @@ struct ablkcipher_request {
+ 	void *__ctx[] CRYPTO_MINALIGN_ATTR;
+ };
+ 
++/**
++ *	struct aead_request - AEAD request
++ *	@base: Common attributes for async crypto requests
++ *	@assoclen: Length in bytes of associated data for authentication
++ *	@cryptlen: Length of data to be encrypted or decrypted
++ *	@iv: Initialisation vector
++ *	@assoc: Associated data
++ *	@src: Source data
++ *	@dst: Destination data
++ *	@__ctx: Start of private context data
++ */
++struct aead_request {
++	struct crypto_async_request base;
++
++	unsigned int assoclen;
++	unsigned int cryptlen;
++
++	u8 *iv;
++
++	struct scatterlist *assoc;
++	struct scatterlist *src;
++	struct scatterlist *dst;
++
++	void *__ctx[] CRYPTO_MINALIGN_ATTR;
++};
++
+ struct blkcipher_desc {
+ 	struct crypto_blkcipher *tfm;
+ 	void *info;
+@@ -133,6 +162,21 @@ struct ablkcipher_alg {
+ 	unsigned int ivsize;
+ };
+ 
++struct aead_alg {
++	int (*setkey)(struct crypto_aead *tfm, const u8 *key,
++	              unsigned int keylen);
++	int (*setauthsize)(struct crypto_aead *tfm, unsigned int authsize);
++	int (*encrypt)(struct aead_request *req);
++	int (*decrypt)(struct aead_request *req);
++	int (*givencrypt)(struct aead_givcrypt_request *req);
++	int (*givdecrypt)(struct aead_givcrypt_request *req);
++
++	const char *geniv;
++
++	unsigned int ivsize;
++	unsigned int maxauthsize;
++};
++
+ struct blkcipher_alg {
+ 	int (*setkey)(struct ncrypto_tfm *tfm, const u8 *key,
+ 	              unsigned int keylen);
+@@ -151,6 +195,7 @@ struct blkcipher_alg {
+ };
+ 
+ #define cra_ablkcipher	cra_u.ablkcipher
++#define cra_aead	cra_u.aead
+ #define cra_blkcipher	cra_u.blkcipher
+ 
+ struct ncrypto_alg {
+@@ -172,6 +217,7 @@ struct ncrypto_alg {
+ 
+ 	union {
+ 		struct ablkcipher_alg ablkcipher;
++		struct aead_alg aead;
+ 		struct blkcipher_alg blkcipher;
+ 	} cra_u;
+ 
+@@ -214,6 +260,21 @@ struct ablkcipher_tfm {
+ 	unsigned int reqsize;
+ };
+ 
++struct aead_tfm {
++	int (*setkey)(struct crypto_aead *tfm, const u8 *key,
++	              unsigned int keylen);
++	int (*encrypt)(struct aead_request *req);
++	int (*decrypt)(struct aead_request *req);
++	int (*givencrypt)(struct aead_givcrypt_request *req);
++	int (*givdecrypt)(struct aead_givcrypt_request *req);
++
++	struct crypto_aead *base;
++
++	unsigned int ivsize;
++	unsigned int authsize;
++	unsigned int reqsize;
++};
++
+ struct blkcipher_tfm {
+ 	void *iv;
+ 	int (*setkey)(struct ncrypto_tfm *tfm, const u8 *key,
+@@ -225,6 +286,7 @@ struct blkcipher_tfm {
+ };
+ 
+ #define crt_ablkcipher	crt_u.ablkcipher
++#define crt_aead	crt_u.aead
+ #define crt_blkcipher	crt_u.blkcipher
+ 
+ struct ncrypto_tfm {
+@@ -233,6 +295,7 @@ struct ncrypto_tfm {
+ 	
+ 	union {
+ 		struct ablkcipher_tfm ablkcipher;
++		struct aead_tfm aead;
+ 		struct blkcipher_tfm blkcipher;
+ 	} crt_u;
+ 	
+@@ -245,6 +308,10 @@ struct crypto_ablkcipher {
+ 	struct ncrypto_tfm base;
+ };
+ 
++struct crypto_aead {
++	struct ncrypto_tfm base;
++};
++
+ struct crypto_blkcipher {
+ 	struct ncrypto_tfm base;
+ };
+@@ -531,6 +598,146 @@ static inline void ablkcipher_request_set_crypt(
+ 	req->info = iv;
+ }
+ 
++static inline struct crypto_aead *__crypto_aead_cast(struct ncrypto_tfm *tfm)
++{
++	return (struct crypto_aead *)tfm;
++}
++
++struct crypto_aead *crypto_alloc_aead(const char *alg_name, u32 type, u32 mask);
++
++static inline struct ncrypto_tfm *crypto_aead_tfm(struct crypto_aead *tfm)
++{
++	return &tfm->base;
++}
++
++static inline void crypto_free_aead(struct crypto_aead *tfm)
++{
++	ncrypto_free_tfm(crypto_aead_tfm(tfm));
++}
++
++static inline struct aead_tfm *crypto_aead_crt(struct crypto_aead *tfm)
++{
++	return &crypto_aead_tfm(tfm)->crt_aead;
++}
++
++static inline unsigned int crypto_aead_ivsize(struct crypto_aead *tfm)
++{
++	return crypto_aead_crt(tfm)->ivsize;
++}
++
++static inline unsigned int crypto_aead_authsize(struct crypto_aead *tfm)
++{
++	return crypto_aead_crt(tfm)->authsize;
++}
++
++static inline unsigned int crypto_aead_blocksize(struct crypto_aead *tfm)
++{
++	return ncrypto_tfm_alg_blocksize(crypto_aead_tfm(tfm));
++}
++
++static inline unsigned int crypto_aead_alignmask(struct crypto_aead *tfm)
++{
++	return ncrypto_tfm_alg_alignmask(crypto_aead_tfm(tfm));
++}
++
++static inline u32 crypto_aead_get_flags(struct crypto_aead *tfm)
++{
++	return ncrypto_tfm_get_flags(crypto_aead_tfm(tfm));
++}
++
++static inline void crypto_aead_set_flags(struct crypto_aead *tfm, u32 flags)
++{
++	ncrypto_tfm_set_flags(crypto_aead_tfm(tfm), flags);
++}
++
++static inline void crypto_aead_clear_flags(struct crypto_aead *tfm, u32 flags)
++{
++	ncrypto_tfm_clear_flags(crypto_aead_tfm(tfm), flags);
++}
++
++static inline int crypto_aead_setkey(struct crypto_aead *tfm, const u8 *key,
++				     unsigned int keylen)
++{
++	struct aead_tfm *crt = crypto_aead_crt(tfm);
++
++	return crt->setkey(crt->base, key, keylen);
++}
++
++int crypto_aead_setauthsize(struct crypto_aead *tfm, unsigned int authsize);
++
++static inline struct crypto_aead *crypto_aead_reqtfm(struct aead_request *req)
++{
++	return __crypto_aead_cast(req->base.tfm);
++}
++
++static inline int crypto_aead_encrypt(struct aead_request *req)
++{
++	return crypto_aead_crt(crypto_aead_reqtfm(req))->encrypt(req);
++}
++
++static inline int crypto_aead_decrypt(struct aead_request *req)
++{
++	return crypto_aead_crt(crypto_aead_reqtfm(req))->decrypt(req);
++}
++
++static inline unsigned int crypto_aead_reqsize(struct crypto_aead *tfm)
++{
++	return crypto_aead_crt(tfm)->reqsize;
++}
++
++static inline void aead_request_set_tfm(struct aead_request *req,
++					struct crypto_aead *tfm)
++{
++	req->base.tfm = crypto_aead_tfm(crypto_aead_crt(tfm)->base);
++}
++
++static inline struct aead_request *aead_request_alloc(struct crypto_aead *tfm,
++						      gfp_t gfp)
++{
++	struct aead_request *req;
++
++	req = kmalloc(sizeof(*req) + crypto_aead_reqsize(tfm), gfp);
++
++	if (likely(req))
++		aead_request_set_tfm(req, tfm);
++
++	return req;
++}
++
++static inline void aead_request_free(struct aead_request *req)
++{
++	kfree(req);
++}
++
++static inline void aead_request_set_callback(struct aead_request *req,
++					     u32 flags,
++					     crypto_completion_t complete,
++					     void *data)
++{
++	req->base.complete = complete;
++	req->base.data = data;
++	req->base.flags = flags;
++}
++
++static inline void aead_request_set_crypt(struct aead_request *req,
++					  struct scatterlist *src,
++					  struct scatterlist *dst,
++					  unsigned int cryptlen, u8 *iv)
++{
++	req->src = src;
++	req->dst = dst;
++	req->cryptlen = cryptlen;
++	req->iv = iv;
++}
++
++static inline void aead_request_set_assoc(struct aead_request *req,
++					  struct scatterlist *assoc,
++					  unsigned int assoclen)
++{
++	req->assoc = assoc;
++	req->assoclen = assoclen;
++}
++
+ static inline struct crypto_blkcipher *__crypto_blkcipher_cast(
+ 	struct ncrypto_tfm *tfm)
+ {

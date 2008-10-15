@@ -1,0 +1,88 @@
+From: Dave Anderson <anderson@redhat.com>
+Date: Wed, 23 Jan 2008 15:19:03 -0500
+Subject: [misc] kprobes: inatomic __get_user and __put_user
+Message-id: 4797A137.2080100@redhat.com
+O-Subject: [RHEL5.2 PATCH 3/4] kprobes: BZ #232489: need kprobes improvement patches
+Bugzilla: 232489
+
+BZ #232489: need kprobes improvement patches
+https://bugzilla.redhat.com/show_bug.cgi?id=232489
+linux-2.6.git-e68c825bb016703eda94aac99be96de73b482d61
+
+Direct backport of this powerpc commit, which will only
+be used by Systemtap-generated modules to allow atomic
+access to userspace:
+
+   commit e68c825bb016703eda94aac99be96de73b482d61
+   Author: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+   Date:   Wed Apr 11 16:13:19 2007 +1000
+
+   [POWERPC] Add inatomic versions of __get_user and __put_user
+
+   Those are needed by things like alignment exception fixup handlers
+   since those can now be triggered by copy_tofrom_user_inatomic.
+
+   Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+   Signed-off-by: Paul Mackerras <paulus@samba.org>
+
+Tested on ppc64 by: Ananth N Mavinakayanahalli (ananth@in.ibm.com)
+
+diff --git a/include/asm-powerpc/uaccess.h b/include/asm-powerpc/uaccess.h
+index d83fc29..c5e12cf 100644
+--- a/include/asm-powerpc/uaccess.h
++++ b/include/asm-powerpc/uaccess.h
+@@ -110,12 +110,18 @@ struct exception_table_entry {
+ 	__get_user_nocheck((x), (ptr), sizeof(*(ptr)))
+ #define __put_user(x, ptr) \
+ 	__put_user_nocheck((__typeof__(*(ptr)))(x), (ptr), sizeof(*(ptr)))
++
+ #ifndef __powerpc64__
+ #define __get_user64(x, ptr) \
+ 	__get_user64_nocheck((x), (ptr), sizeof(*(ptr)))
+ #define __put_user64(x, ptr) __put_user(x, ptr)
+ #endif
+ 
++#define __get_user_inatomic(x, ptr) \
++	__get_user_nosleep((x), (ptr), sizeof(*(ptr)))
++#define __put_user_inatomic(x, ptr) \
++	__put_user_nosleep((__typeof__(*(ptr)))(x), (ptr), sizeof(*(ptr)))
++
+ #define __get_user_unaligned __get_user
+ #define __put_user_unaligned __put_user
+ 
+@@ -198,6 +204,16 @@ do {								\
+ 	__pu_err;							\
+ })
+ 
++#define __put_user_nosleep(x, ptr, size)			\
++({								\
++	long __pu_err;						\
++	__typeof__(*(ptr)) __user *__pu_addr = (ptr);		\
++	__chk_user_ptr(ptr);					\
++	__put_user_size((x), __pu_addr, (size), __pu_err);	\
++	__pu_err;						\
++})
++
++
+ extern long __get_user_bad(void);
+ 
+ #define __get_user_asm(x, addr, err, op)		\
+@@ -297,6 +313,18 @@ do {								\
+ 	__gu_err;							\
+ })
+ 
++#define __get_user_nosleep(x, ptr, size)			\
++({								\
++	long __gu_err;						\
++	unsigned long __gu_val;					\
++	const __typeof__(*(ptr)) __user *__gu_addr = (ptr);	\
++	__chk_user_ptr(ptr);					\
++	__get_user_size(__gu_val, __gu_addr, (size), __gu_err);	\
++	(x) = (__typeof__(*(ptr)))__gu_val;			\
++	__gu_err;						\
++})
++
++
+ /* more complex routines */
+ 
+ extern unsigned long __copy_tofrom_user(void __user *to,

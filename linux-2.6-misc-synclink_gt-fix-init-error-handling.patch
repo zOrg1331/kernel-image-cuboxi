@@ -1,0 +1,48 @@
+From: Eric Sandeen<sandeen@redhat.com>
+Subject: [RHEL 5.1 PATCH] bz# 210389 PPC:synclink_gt modprobe/insmod drops  into xmon (list_add corruption (fwd)
+Date: Tue, 27 Feb 2007 13:28:27 -0500 (Eastern Standard Time)
+Bugzilla: 210389
+Message-Id: <Pine.WNT.4.64.0702271328030.5180@IBM-3MTQI3AXJFW>
+Changelog: [misc] synclink_gt: fix init error handling 
+
+
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=210389
+
+Description:
+------------
+Issuing the command "modprobe synclink_gt" two times causes the driver to 
+abort with:
+Unable to handle kernel paging request for data at address 0xd0000000009ecc38
+	Faulting instruction address: 0xc0000000001ab858
+	cpu 0x1: Vector: 300 (Data Access) at [c0000000025bf5e0]
+	    pc: c0000000001ab858: .__list_add+0x48/0xa4
+	...
+
+commit 36499dc2bc8025bc931a0fb22bbe0ac0e46ffb14
+Author: Akinobu Mita <akinobu.mita@gmail.com>
+Date:   Wed Dec 6 20:39:06 2006 -0800
+
+    [PATCH] synclink_gt: fix init error handling
+    
+    Initialization synclink_gt forgot to unregister pci driver on error path.
+    
+    Signed-off-by: Akinobu Mita <akinobu.mita@gmail.com>
+    Cc: Paul Fulghum <paulkf@microgate.com>
+    Signed-off-by: Andrew Morton <akpm@osdl.org>
+    Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+
+diff --git a/drivers/char/synclink_gt.c b/drivers/char/synclink_gt.c
+index 07f34d4..83b5d37 100644
+--- a/drivers/char/synclink_gt.c
++++ b/drivers/char/synclink_gt.c
+@@ -3522,6 +3522,7 @@ static int __init slgt_init(void)
+ 
+ 	if (!slgt_device_list) {
+ 		printk("%s no devices found\n",driver_name);
++		pci_unregister_driver(&pci_driver);
+ 		return -ENODEV;
+ 	}
+ 

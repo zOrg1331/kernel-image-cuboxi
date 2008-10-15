@@ -1,0 +1,337 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Tue, 29 Jul 2008 14:03:10 -0400
+Subject: [ppc] Event Queue overflow on eHCA adapters
+Message-id: 20080729180310.8623.41936.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.3] Event Queue overflow on eHCA adapters
+Bugzilla: 446713
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=446713
+
+Description:
+===========
+If a lot of QPs fall into Error state at once and the EQ of the respective
+HCA is too small, it might overrun, causing the eHCA driver to stop
+processing completion events and call application software's completion
+handlers, effectively causing traffic to stop.
+
+Fix this by limiting available QPs and CQs to a customizable max count,
+and determining EQ size based on these counts and a worst-case assumption.
+
+RHEL Version Found:
+================
+RHEL 5.2
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1385512
+
+Upstream Status:
+================
+Upstream accepted:
+http://lkml.org/lkml/2008/4/29/471
+
+Test Status:
+============
+Tested by forking off 20 user-space threads all doing intense network io.
+Brad Peters 7/29/08
+
+===============================================================
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+
+Proposed Patch:
+===============
+This patch is based on 2.6.18-95.el5
+
+diff --git a/drivers/infiniband/hw/ehca/ehca_classes.h b/drivers/infiniband/hw/ehca/ehca_classes.h
+index 2cdae8b..7e725ba 100644
+--- a/drivers/infiniband/hw/ehca/ehca_classes.h
++++ b/drivers/infiniband/hw/ehca/ehca_classes.h
+@@ -66,6 +66,7 @@ struct ehca_av;
+ #include "ehca_irq.h"
+ 
+ #define EHCA_EQE_CACHE_SIZE 20
++#define EHCA_MAX_NUM_QUEUES 0xffff
+ 
+ struct ehca_eqe_cache_entry {
+ 	struct ehca_eqe *eqe;
+@@ -127,6 +128,8 @@ struct ehca_shca {
+ 	/* MR pgsize: bit 0-3 means 4K, 64K, 1M, 16M respectively */
+ 	u32 hca_cap_mr_pgsize;
+ 	int max_mtu;
++	atomic_t num_cqs;
++	atomic_t num_qps;
+ };
+ 
+ struct ehca_pd {
+@@ -345,6 +348,8 @@ extern int ehca_use_hp_mr;
+ extern int ehca_scaling_code;
+ extern int ehca_lock_hcalls;
+ extern int ehca_nr_ports;
++extern int ehca_max_cq;
++extern int ehca_max_qp;
+ 
+ struct ipzu_queue_resp {
+ 	u32 qe_size;      /* queue entry size */
+diff --git a/drivers/infiniband/hw/ehca/ehca_cq.c b/drivers/infiniband/hw/ehca/ehca_cq.c
+index 0467c15..776e2d0 100644
+--- a/drivers/infiniband/hw/ehca/ehca_cq.c
++++ b/drivers/infiniband/hw/ehca/ehca_cq.c
+@@ -134,10 +134,19 @@ struct ib_cq *ehca_create_cq(struct ib_device *device, int cqe, int comp_vector,
+ 	if (cqe >= 0xFFFFFFFF - 64 - additional_cqe)
+ 		return ERR_PTR(-EINVAL);
+ 
++	if (!atomic_add_unless(&shca->num_cqs, 1, ehca_max_cq)) {
++		ehca_err(device, "Unable to create CQ, max number of %i "
++			"CQs reached.", ehca_max_cq);
++		ehca_err(device, "To increase the maximum number of CQs "
++			"use the number_of_cqs module parameter.\n");
++		return ERR_PTR(-ENOSPC);
++	}
++
+ 	my_cq = kmem_cache_zalloc(cq_cache, GFP_KERNEL);
+ 	if (!my_cq) {
+ 		ehca_err(device, "Out of memory for ehca_cq struct device=%p",
+ 			 device);
++		atomic_dec(&shca->num_cqs);
+ 		return ERR_PTR(-ENOMEM);
+ 	}
+ 
+@@ -308,6 +317,7 @@ create_cq_exit2:
+ create_cq_exit1:
+ 	kmem_cache_free(cq_cache, my_cq);
+ 
++	atomic_dec(&shca->num_cqs);
+ 	return cq;
+ }
+ 
+@@ -369,6 +379,7 @@ int ehca_destroy_cq(struct ib_cq *cq)
+ 	ipz_queue_dtor(NULL, &my_cq->ipz_queue);
+ 	kmem_cache_free(cq_cache, my_cq);
+ 
++	atomic_dec(&shca->num_cqs);
+ 	return 0;
+ }
+ 
+diff --git a/drivers/infiniband/hw/ehca/ehca_main.c b/drivers/infiniband/hw/ehca/ehca_main.c
+index 3f5954b..b9f2b9f 100644
+--- a/drivers/infiniband/hw/ehca/ehca_main.c
++++ b/drivers/infiniband/hw/ehca/ehca_main.c
+@@ -68,6 +68,8 @@ int ehca_static_rate   = -1;
+ int ehca_scaling_code  = 0;
+ int ehca_mr_largepage  = 1;
+ int ehca_lock_hcalls   = -1;
++int ehca_max_cq        = -1;
++int ehca_max_qp        = -1;
+ 
+ module_param_named(open_aqp1,     ehca_open_aqp1,     int, S_IRUGO);
+ module_param_named(debug_level,   ehca_debug_level,   int, S_IRUGO);
+@@ -80,6 +82,8 @@ module_param_named(static_rate,   ehca_static_rate,   int, S_IRUGO);
+ module_param_named(scaling_code,  ehca_scaling_code,  int, S_IRUGO);
+ module_param_named(mr_largepage,  ehca_mr_largepage,  int, S_IRUGO);
+ module_param_named(lock_hcalls,   ehca_lock_hcalls,   bool, S_IRUGO);
++module_param_named(number_of_cqs, ehca_max_cq,        int,  S_IRUGO);
++module_param_named(number_of_qps, ehca_max_qp,        int,  S_IRUGO);
+ 
+ MODULE_PARM_DESC(open_aqp1,
+ 		 "AQP1 on startup (0: no (default), 1: yes)");
+@@ -109,6 +113,12 @@ MODULE_PARM_DESC(mr_largepage,
+ MODULE_PARM_DESC(lock_hcalls,
+ 		 "serialize all hCalls made by the driver "
+ 		 "(default: autodetect)");
++MODULE_PARM_DESC(number_of_cqs,
++		"Max number of CQs which can be allocated "
++		"(default: autodetect)");
++MODULE_PARM_DESC(number_of_qps,
++		"Max number of QPs which can be allocated "
++		"(default: autodetect)");
+ 
+ DEFINE_RWLOCK(ehca_qp_idr_lock);
+ DEFINE_RWLOCK(ehca_cq_idr_lock);
+@@ -355,6 +365,25 @@ static int ehca_sense_attributes(struct ehca_shca *shca)
+ 				shca->hca_cap_mr_pgsize |= pgsize_map[i + 1];
+ 	}
+ 
++	/* Set maximum number of CQs and QPs to calculate EQ size */
++	if (ehca_max_qp == -1)
++		ehca_max_qp = min_t(int, rblock->max_qp, EHCA_MAX_NUM_QUEUES);
++	else if (ehca_max_qp < 1 || ehca_max_qp > rblock->max_qp) {
++		ehca_gen_err("Requested number of QPs is out of range (1 - %i) "
++			"specified by HW", rblock->max_qp);
++		ret = -EINVAL;
++		goto sense_attributes1;
++	}
++
++	if (ehca_max_cq == -1)
++		ehca_max_cq = min_t(int, rblock->max_cq, EHCA_MAX_NUM_QUEUES);
++	else if (ehca_max_cq < 1 || ehca_max_cq > rblock->max_cq) {
++		ehca_gen_err("Requested number of CQs is out of range (1 - %i) "
++			"specified by HW", rblock->max_cq);
++		ret = -EINVAL;
++		goto sense_attributes1;
++	}
++
+ 	/* query max MTU from first port -- it's the same for all ports */
+ 	port = (struct hipz_query_port *)rblock;
+ 	h_ret = hipz_h_query_port(shca->ipz_hca_handle, 1, port);
+@@ -689,7 +718,7 @@ static int __devinit ehca_probe(struct ibmebus_dev *dev,
+ 	struct ehca_shca *shca;
+ 	const u64 *handle;
+ 	struct ib_pd *ibpd;
+-	int ret, i;
++	int ret, i, eq_size;
+ 
+ 	handle = of_get_property(dev->ofdev.node, "ibm,hca-handle", NULL);
+ 	if (!handle) {
+@@ -710,6 +739,8 @@ static int __devinit ehca_probe(struct ibmebus_dev *dev,
+ 		return -ENOMEM;
+ 	}
+ 	mutex_init(&shca->modify_mutex);
++	atomic_set(&shca->num_cqs, 0);
++	atomic_set(&shca->num_qps, 0);
+ 	for (i = 0; i < ARRAY_SIZE(shca->sport); i++)
+ 		spin_lock_init(&shca->sport[i].mod_sqp_lock);
+ 
+@@ -729,8 +760,9 @@ static int __devinit ehca_probe(struct ibmebus_dev *dev,
+ 		goto probe1;
+ 	}
+ 
++	eq_size = 2 * ehca_max_cq + 4 * ehca_max_qp;
+ 	/* create event queues */
+-	ret = ehca_create_eq(shca, &shca->eq, EHCA_EQ, 2048);
++	ret = ehca_create_eq(shca, &shca->eq, EHCA_EQ, eq_size);
+ 	if (ret) {
+ 		ehca_err(&shca->ib_device, "Cannot create EQ.");
+ 		goto probe1;
+diff --git a/drivers/infiniband/hw/ehca/ehca_qp.c b/drivers/infiniband/hw/ehca/ehca_qp.c
+index 1012f15..162ce6f 100644
+--- a/drivers/infiniband/hw/ehca/ehca_qp.c
++++ b/drivers/infiniband/hw/ehca/ehca_qp.c
+@@ -424,6 +424,14 @@ static struct ehca_qp *internal_create_qp(
+ 	u32 swqe_size = 0, rwqe_size = 0, ib_qp_num;
+ 	unsigned long flags;
+ 
++	if (!atomic_add_unless(&shca->num_qps, 1, ehca_max_qp)) {
++		ehca_err(pd->device, "Unable to create QP, max number of %i "
++			 "QPs reached.", ehca_max_qp);
++		ehca_err(pd->device, "To increase the maximum number of QPs "
++			 "use the number_of_qps module parameter.\n");
++		return ERR_PTR(-ENOSPC);
++	}
++
+ 	memset(&parms, 0, sizeof(parms));
+ 	qp_type = init_attr->qp_type;
+ 
+@@ -431,6 +439,7 @@ static struct ehca_qp *internal_create_qp(
+ 		init_attr->sq_sig_type != IB_SIGNAL_ALL_WR) {
+ 		ehca_err(pd->device, "init_attr->sg_sig_type=%x not allowed",
+ 			 init_attr->sq_sig_type);
++		atomic_dec(&shca->num_qps);
+ 		return ERR_PTR(-EINVAL);
+ 	}
+ 
+@@ -455,6 +464,7 @@ static struct ehca_qp *internal_create_qp(
+ 
+ 	if (is_llqp && has_srq) {
+ 		ehca_err(pd->device, "LLQPs can't have an SRQ");
++		atomic_dec(&shca->num_qps);
+ 		return ERR_PTR(-EINVAL);
+ 	}
+ 
+@@ -466,6 +476,7 @@ static struct ehca_qp *internal_create_qp(
+ 			ehca_err(pd->device, "no more than three SGEs "
+ 				 "supported for SRQ  pd=%p  max_sge=%x",
+ 				 pd, init_attr->cap.max_recv_sge);
++			atomic_dec(&shca->num_qps);
+ 			return ERR_PTR(-EINVAL);
+ 		}
+ 	}
+@@ -477,6 +488,7 @@ static struct ehca_qp *internal_create_qp(
+ 	    qp_type != IB_QPT_SMI &&
+ 	    qp_type != IB_QPT_GSI) {
+ 		ehca_err(pd->device, "wrong QP Type=%x", qp_type);
++		atomic_dec(&shca->num_qps);
+ 		return ERR_PTR(-EINVAL);
+ 	}
+ 
+@@ -490,6 +502,7 @@ static struct ehca_qp *internal_create_qp(
+ 					 "or max_rq_wr=%x for RC LLQP",
+ 					 init_attr->cap.max_send_wr,
+ 					 init_attr->cap.max_recv_wr);
++				atomic_dec(&shca->num_qps);
+ 				return ERR_PTR(-EINVAL);
+ 			}
+ 			break;
+@@ -497,6 +510,7 @@ static struct ehca_qp *internal_create_qp(
+ 			if (!EHCA_BMASK_GET(HCA_CAP_UD_LL_QP, shca->hca_cap)) {
+ 				ehca_err(pd->device, "UD LLQP not supported "
+ 					 "by this adapter");
++				atomic_dec(&shca->num_qps);
+ 				return ERR_PTR(-ENOSYS);
+ 			}
+ 			if (!(init_attr->cap.max_send_sge <= 5
+@@ -508,20 +522,22 @@ static struct ehca_qp *internal_create_qp(
+ 					 "or max_recv_sge=%x for UD LLQP",
+ 					 init_attr->cap.max_send_sge,
+ 					 init_attr->cap.max_recv_sge);
++				atomic_dec(&shca->num_qps);
+ 				return ERR_PTR(-EINVAL);
+ 			} else if (init_attr->cap.max_send_wr > 255) {
+ 				ehca_err(pd->device,
+ 					 "Invalid Number of "
+ 					 "max_send_wr=%x for UD QP_TYPE=%x",
+ 					 init_attr->cap.max_send_wr, qp_type);
++				atomic_dec(&shca->num_qps);
+ 				return ERR_PTR(-EINVAL);
+ 			}
+ 			break;
+ 		default:
+ 			ehca_err(pd->device, "unsupported LL QP Type=%x",
+ 				 qp_type);
++			atomic_dec(&shca->num_qps);
+ 			return ERR_PTR(-EINVAL);
+-			break;
+ 		}
+ 	} else {
+ 		int max_sge = (qp_type == IB_QPT_UD || qp_type == IB_QPT_SMI
+@@ -533,6 +549,7 @@ static struct ehca_qp *internal_create_qp(
+ 				 "send_sge=%x recv_sge=%x max_sge=%x",
+ 				 init_attr->cap.max_send_sge,
+ 				 init_attr->cap.max_recv_sge, max_sge);
++			atomic_dec(&shca->num_qps);
+ 			return ERR_PTR(-EINVAL);
+ 		}
+ 	}
+@@ -543,6 +560,7 @@ static struct ehca_qp *internal_create_qp(
+ 	my_qp = kmem_cache_zalloc(qp_cache, GFP_KERNEL);
+ 	if (!my_qp) {
+ 		ehca_err(pd->device, "pd=%p not enough memory to alloc qp", pd);
++		atomic_dec(&shca->num_qps);
+ 		return ERR_PTR(-ENOMEM);
+ 	}
+ 
+@@ -822,6 +840,7 @@ create_qp_exit1:
+ 
+ create_qp_exit0:
+ 	kmem_cache_free(qp_cache, my_qp);
++	atomic_dec(&shca->num_qps);
+ 	return ERR_PTR(ret);
+ }
+ 
+@@ -1990,6 +2009,7 @@ static int internal_destroy_qp(struct ib_device *dev, struct ehca_qp *my_qp,
+ 	if (HAS_SQ(my_qp))
+ 		ipz_queue_dtor(my_pd, &my_qp->ipz_squeue);
+ 	kmem_cache_free(qp_cache, my_qp);
++	atomic_dec(&shca->num_qps);
+ 	return 0;
+ }
+ 

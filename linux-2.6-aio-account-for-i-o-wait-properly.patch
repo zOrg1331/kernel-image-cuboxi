@@ -1,0 +1,58 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 18 Dec 2007 13:07:50 -0500
+Subject: [aio] account for I/O wait properly
+Message-id: x49ve6vri4p.fsf@segfault.boston.devel.redhat.com
+O-Subject: [rhel5 updated patch] aio: account for I/O wait properly
+Bugzilla: 253337
+
+Hi,
+
+There was a problem found upstream with the patch I posted for this
+issue.  It turns out that if a process goes to sleep in io_getevents
+when there is no pending I/O, the time is incorrectly attributed to
+io_wait.  This is a valid thing to do, of course, so should be
+addressed.  The fix is quite simple: just check to see if there are
+any pending I/Os in the aio context before going to sleep.  If so,
+account io_wait time.
+
+This patch was accepted into Linus' tree as git commit:
+  e00ba3dae077f54cfd2af42e939a618caa7a3bca
+
+It is related to bug 253337: AIO not shown by iostat, top, etc.
+
+The discussion surrounding this problem can be found here:
+  http://www.mail-archive.com/linux-kernel@vger.kernel.org/msg236279.html
+
+I tested this on RHEL5 both by using the UML reproducer mentioned in
+the upstream discussion and by crafting a program that just issues an
+io_getevents call on an empty context.  Without the patch, the kernel
+shows 100% iowait time.  With the patch, the iowait time is the same
+before and after invoking the test program.
+
+Reviews are greatly appreciated.
+
+Cheers,
+
+Jeff
+
+Acked-by: Peter Staubach <staubach@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+
+diff --git a/fs/aio.c b/fs/aio.c
+index a590865..fcf2874 100644
+--- a/fs/aio.c
++++ b/fs/aio.c
+@@ -1176,7 +1176,12 @@ retry:
+ 			ret = 0;
+ 			if (to.timed_out)	/* Only check after read evt */
+ 				break;
+-			io_schedule();
++			/* Try to only show up in io wait if there are ops
++			 *  in flight */
++			if (ctx->reqs_active)
++				io_schedule();
++			else
++				schedule();
+ 			if (signal_pending(tsk)) {
+ 				ret = -EINTR;
+ 				break;

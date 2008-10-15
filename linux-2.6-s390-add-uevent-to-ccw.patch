@@ -1,0 +1,165 @@
+Date: Tue, 19 Sep 2006 20:32:54 -0700
+From: Pete Zaitcev <zaitcev@redhat.com>
+Subject: [RHEL5 patch] Add uevent to ccw on s390
+
+This patch actually changes existing uevent support to contain MODALIAS.
+Bug #199994.
+
+Although it seems incredible that anything would work with this bug
+at all, we did not notice it for a while, because initrd always
+loads all that you need, then networking loads with /etc/module.conf.
+I forgot to ask Bill what he did to hit it, maybe used nameif.
+
+Anyway, it seems like a patch we obviously should have. I tested that
+it works, and looked it over for sanity (e.g. blatant overflows after
+sprintf).
+
+This is not in Linus' tree as of 2.6.18-rc7, and wasn't even sent yet.
+But I think it shouldn't be a problem. IBMers have this patch registered.
+If it were Fedora, I'd hold until IBM posted it properly, but Bill
+says he needs this now.
+
+Please ack.
+
+-- Pete
+
+--- linux-2.6.17-1.2519.4.26.el5/drivers/s390/cio/device.c	2006-09-19 18:44:44.000000000 -0400
++++ linux-2.6.17-1.2519.4.26.el5.t1/drivers/s390/cio/device.c	2006-09-19 22:28:23.000000000 -0400
+@@ -52,53 +52,81 @@ ccw_bus_match (struct device * dev, stru
+ 	return 1;
+ }
+ 
+-/*
+- * Hotplugging interface for ccw devices.
+- * Heavily modeled on pci and usb hotplug.
+- */
+-static int
+-ccw_uevent (struct device *dev, char **envp, int num_envp,
+-	     char *buffer, int buffer_size)
++/* Store modalias string delimited by prefix/suffix string into buffer with
++ * specified size. Return length of resulting string (excluding trailing '\0')
++ * even if string doesn't fit buffer (snprintf semantics). */
++static int snprint_alias(char *buf, size_t size, const char *prefix,
++			 struct ccw_device_id *id, const char *suffix)
++{
++	int len;
++
++	len = snprintf(buf, size, "%sccw:t%04Xm%02X", prefix, id->cu_type,
++		       id->cu_model);
++	if (len > size)
++		return len;
++	buf += len;
++	size -= len;
++
++	if (id->dev_type != 0)
++		len += snprintf(buf, size, "dt%04Xdm%02X%s", id->dev_type,
++				id->dev_model, suffix);
++	else
++		len += snprintf(buf, size, "dtdm%s", suffix);
++
++	return len;
++}
++
++/* Set up environment variables for ccw device uevent. Return 0 on success,
++ * non-zero otherwise. */
++static int ccw_uevent(struct device *dev, char **envp, int num_envp,
++		      char *buffer, int buffer_size)
+ {
+ 	struct ccw_device *cdev = to_ccwdev(dev);
++	struct ccw_device_id *id = &(cdev->id);
+ 	int i = 0;
+-	int length = 0;
++	int len;
+ 
+-	if (!cdev)
+-		return -ENODEV;
+-
+-	/* what we want to pass to /sbin/hotplug */
+-
+-	envp[i++] = buffer;
+-	length += scnprintf(buffer, buffer_size - length, "CU_TYPE=%04X",
+-			   cdev->id.cu_type);
+-	if ((buffer_size - length <= 0) || (i >= num_envp))
++	/* CU_TYPE= */
++	len = snprintf(buffer, buffer_size, "CU_TYPE=%04X", id->cu_type) + 1;
++	if (len > buffer_size || i >= num_envp)
+ 		return -ENOMEM;
+-	++length;
+-	buffer += length;
+-
+ 	envp[i++] = buffer;
+-	length += scnprintf(buffer, buffer_size - length, "CU_MODEL=%02X",
+-			   cdev->id.cu_model);
+-	if ((buffer_size - length <= 0) || (i >= num_envp))
++	buffer += len;
++	buffer_size -= len;
++
++	/* CU_MODEL= */
++	len = snprintf(buffer, buffer_size, "CU_MODEL=%02X", id->cu_model) + 1;
++	if (len > buffer_size || i >= num_envp)
+ 		return -ENOMEM;
+-	++length;
+-	buffer += length;
++	envp[i++] = buffer;
++	buffer += len;
++	buffer_size -= len;
+ 
+ 	/* The next two can be zero, that's ok for us */
+-	envp[i++] = buffer;
+-	length += scnprintf(buffer, buffer_size - length, "DEV_TYPE=%04X",
+-			   cdev->id.dev_type);
+-	if ((buffer_size - length <= 0) || (i >= num_envp))
++	/* DEV_TYPE= */
++	len = snprintf(buffer, buffer_size, "DEV_TYPE=%04X", id->dev_type) + 1;
++	if (len > buffer_size || i >= num_envp)
+ 		return -ENOMEM;
+-	++length;
+-	buffer += length;
++	envp[i++] = buffer;
++	buffer += len;
++	buffer_size -= len;
+ 
++	/* DEV_MODEL= */
++	len = snprintf(buffer, buffer_size, "DEV_MODEL=%02X",
++			(unsigned char) id->dev_model) + 1;
++	if (len > buffer_size || i >= num_envp)
++		return -ENOMEM;
+ 	envp[i++] = buffer;
+-	length += scnprintf(buffer, buffer_size - length, "DEV_MODEL=%02X",
+-			   cdev->id.dev_model);
+-	if ((buffer_size - length <= 0) || (i >= num_envp))
++	buffer += len;
++	buffer_size -= len;
++
++	/* MODALIAS=  */
++	len = snprint_alias(buffer, buffer_size, "MODALIAS=", id, "") + 1;
++	if (len > buffer_size || i >= num_envp)
+ 		return -ENOMEM;
++	envp[i++] = buffer;
++	buffer += len;
++	buffer_size -= len;
+ 
+ 	envp[i] = NULL;
+ 
+@@ -251,16 +279,11 @@ modalias_show (struct device *dev, struc
+ {
+ 	struct ccw_device *cdev = to_ccwdev(dev);
+ 	struct ccw_device_id *id = &(cdev->id);
+-	int ret;
++	int len;
+ 
+-	ret = sprintf(buf, "ccw:t%04Xm%02X",
+-			id->cu_type, id->cu_model);
+-	if (id->dev_type != 0)
+-		ret += sprintf(buf + ret, "dt%04Xdm%02X\n",
+-				id->dev_type, id->dev_model);
+-	else
+-		ret += sprintf(buf + ret, "dtdm\n");
+-	return ret;
++	len = snprint_alias(buf, PAGE_SIZE, "", id, "\n") + 1;
++
++	return len > PAGE_SIZE ? PAGE_SIZE : len;
+ }
+ 
+ static ssize_t
+

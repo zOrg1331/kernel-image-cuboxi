@@ -1,0 +1,31 @@
+From: Aristeu Rozanski <arozansk@redhat.com>
+Date: Mon, 17 Dec 2007 12:17:50 -0500
+Subject: [usb] wacom: fix 'side' and 'extra' mouse buttons
+Message-id: 20071217171750.GB7032@redhat.com
+O-Subject: [RHEL5 PATCH] wacom: fix "side" and "extra" mouse buttons for Intuos3* tablets
+Bugzilla: 249415
+
+https://bugzilla.redhat.com/show_bug.cgi?id=249415
+
+This patch fixes the reporting of "side" and "extra" buttons while using
+the mouse tool on larger Intuos3 tablets. The problem was noticed on a
+Intuos3 12x12 and tested by me on the same tablet with success.
+
+This change is upstream but there's no direct commit related to it.
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/drivers/usb/input/wacom.c b/drivers/usb/input/wacom.c
+index 369461a..2886ec0 100644
+--- a/drivers/usb/input/wacom.c
++++ b/drivers/usb/input/wacom.c
+@@ -702,7 +702,8 @@ static void wacom_intuos_irq(struct urb *urb, struct pt_regs *regs)
+ 						 - ((data[8] & 0x02) >> 1));
+ 
+ 			/* I3 2D mouse side buttons */
+-			if (wacom->features->type == INTUOS3) {
++			if (wacom->features->type >= INTUOS3 &&
++			    wacom->features->type <= INTUOS319) {
+ 				input_report_key(dev, BTN_SIDE,   data[8] & 0x40);
+ 				input_report_key(dev, BTN_EXTRA,  data[8] & 0x20);
+ 			}

@@ -1,0 +1,127 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [PATCH RHEL5u1] [ppc] bz251370 kernel panic on DLPAR remove of eHEA 	logical port [repost]
+Date: Thu, 16 Aug 2007 15:43:21 -0400 (EDT)
+Bugzilla: 251370
+Message-Id: <Pine.LNX.4.64.0708161457210.30310@squad5-lp1.lab.boston.redhat.com>
+Changelog: [net] fix DLPAR remove of eHEA logical port
+
+
+This is a repost of the same patch that I posted earlier, but with an
+improved description and justification.
+
+RHBZ#: 251370
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=251370
+
+Description:
+------------
+On RHEL 5.1 beta1 during verification of DLPAR functions the following
+2 problems were found:
+ 1. the driver is currently using hex values where the user space tool is
+expecting decimal values.
+ 2.  eHEA driver and OpenFirmware service cause kernel panic when DLPAR is
+  trying to remove a previously added eHEA logical port.
+
+In (Open Firmware) of_device.c there is a function called
+of_device_register.  This function is called by the eHEA driver. 
+It adds a property to the of_device, and sets the properties name as:
+   new_prop->name = "linux,device";
+
+On device removal, of_node_release is called, which calls of_node_release,
+which ends up doing a kfree on the static "linux,device" property. This
+causes kernel panic.
+
+The solution below simply does not call of_node_put on removal of the
+device from the system.  This is a simple fix contained within the eHEA
+driver so as to avoid negative affects on other drivers or the kernel.
+The workaround has been fully tested by the driver team and they believe
+it is the correct solution to make DLPAR function for RHEL 5u1.
+
+This does cause a small memory leak on add and remove of a eHEA port.
+This operation is rare, occuring only when a user removes a device from
+the system.  Thus, there is only a minimal amount of memory lost even on
+repeated inserts and removes.
+
+Upstream Status:
+----------------
+This bug is fixed upstream.  The fix is in git commit
+980ffd3258dbcdb011e929de5d658ec81febba8d [1].  I do believe that is the
+correct fix, but it has not been tested when applied to RHEL5u1.  Because
+it has a larger scope than the change described above we are hesitant to
+suggest it now.
+
+RHEL Version Found:
+-------------------
+2.6.18-39.el5
+
+Test Status:
+------------
+To ensure cross-platform build, this code has been built with brew
+--scratch against a 2.6.18-39.el5 kernel and is available at [5].
+
+This build has been tested by Thomas Klein of IBM.  A full regression test
+suite has been run on the built kernel and verification of hot plug add
+and remove has been done.
+
+--
+[1] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=980ffd3258dbcdb011e929de5d658ec81febba8d
+[2] http://brewweb.devel.redhat.com/brew/taskinfo?taskID=917509
+---
+ drivers/net/ehea/ehea.h      |    2 +-
+ drivers/net/ehea/ehea_main.c |    9 ++++-----
+ 2 files changed, 5 insertions(+), 6 deletions(-)
+Index: b/drivers/net/ehea/ehea.h
+===================================================================
+--- a/drivers/net/ehea/ehea.h
++++ b/drivers/net/ehea/ehea.h
+@@ -39,7 +39,7 @@
+ #include <asm/io.h>
+ 
+ #define DRV_NAME	"ehea"
+-#define DRV_VERSION	"EHEA_0058-01"
++#define DRV_VERSION	"EHEA_0058-03"
+ 
+ #define EHEA_MSG_DEFAULT (NETIF_MSG_LINK | NETIF_MSG_TIMER \
+ 	| NETIF_MSG_RX_ERR | NETIF_MSG_TX_ERR)
+Index: b/drivers/net/ehea/ehea_main.c
+===================================================================
+--- a/drivers/net/ehea/ehea_main.c
++++ b/drivers/net/ehea/ehea_main.c
+@@ -2393,7 +2393,7 @@ static ssize_t ehea_show_port_id(struct 
+ 				 struct device_attribute *attr, char *buf)
+ {
+ 	struct ehea_port *port = container_of(dev, struct ehea_port, ofdev.dev);
+-	return sprintf(buf, "0x%X", port->logical_port_id);
++	return sprintf(buf, "%d", port->logical_port_id);
+ }
+ 
+ static DEVICE_ATTR(log_port_id, S_IRUSR | S_IRGRP | S_IROTH, ehea_show_port_id,
+@@ -2401,8 +2401,7 @@ static DEVICE_ATTR(log_port_id, S_IRUSR 
+ 
+ static void __devinit logical_port_release(struct device *dev)
+ {
+-	struct ehea_port *port = container_of(dev, struct ehea_port, ofdev.dev);
+-	of_node_put(port->ofdev.node);
++	return;
+ }
+ 
+ static int ehea_driver_sysfs_add(struct device *dev,
+@@ -2668,7 +2667,7 @@ static ssize_t ehea_probe_port(struct de
+ 
+ 	u32 logical_port_id;
+ 
+-	sscanf(buf, "%X", &logical_port_id);
++	sscanf(buf, "%d", &logical_port_id);
+ 
+ 	port = ehea_get_port(adapter, logical_port_id);
+ 
+@@ -2721,7 +2720,7 @@ static ssize_t ehea_remove_port(struct d
+ 	int i;
+ 	u32 logical_port_id;
+ 
+-	sscanf(buf, "%X", &logical_port_id);
++	sscanf(buf, "%d", &logical_port_id);
+ 
+ 	port = ehea_get_port(adapter, logical_port_id);
+ 
+

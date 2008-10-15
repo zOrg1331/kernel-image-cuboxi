@@ -1,0 +1,76 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] BZ 226858 : declare functions __init to avoid  compile warnings
+Date: Mon, 19 Feb 2007 13:49:10 -0500
+Bugzilla: 226858
+Message-Id: <45D9F126.5060504@redhat.com>
+Changelog: [x86] declare functions __init to avoid  compile warnings
+
+Backport of
+
+http://marc.theaimsgroup.com/?l=linux-kernel&m=116650542207893&w=2
+
+Resolves BZ 226858.
+
+Tested successfully by me.
+
+--- linux-2.6.18.x86_64.orig/arch/i386/kernel/acpi/boot.c	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.x86_64//arch/i386/kernel/acpi/boot.c	2007-02-19 13:46:16.000000000 -0500
+@@ -63,7 +63,7 @@ static inline int gsi_irq_sharing(int gs
+ 
+ #define PREFIX			"ACPI: "
+ 
+-int acpi_noirq __initdata;	/* skip ACPI IRQ initialization */
++int acpi_noirq;	/* skip ACPI IRQ initialization */
+ int acpi_pci_disabled __initdata;	/* skip ACPI PCI scan and IRQ initialization */
+ int acpi_ht __initdata = 1;	/* enable HT */
+ 
+@@ -73,7 +73,7 @@ int acpi_strict;
+ EXPORT_SYMBOL(acpi_strict);
+ 
+ acpi_interrupt_flags acpi_sci_flags __initdata;
+-int acpi_sci_override_gsi __initdata;
++int acpi_sci_override_gsi;
+ int acpi_skip_timer_override __initdata;
+ 
+ #ifdef CONFIG_X86_LOCAL_APIC
+@@ -325,7 +325,7 @@ acpi_parse_ioapic(acpi_table_entry_heade
+ /*
+  * Parse Interrupt Source Override for the ACPI SCI
+  */
+-static void acpi_sci_ioapic_setup(u32 gsi, u16 polarity, u16 trigger)
++static void __init acpi_sci_ioapic_setup(u32 gsi, u16 polarity, u16 trigger)
+ {
+ 	if (trigger == 0)	/* compatible SCI trigger is level */
+ 		trigger = 3;
+--- linux-2.6.18.i386.orig/arch/i386/kernel/acpi/boot-xen.c	2007-02-01 16:08:21.000000000 -0500
++++ linux-2.6.18.i386/arch/i386/kernel/acpi/boot-xen.c	2007-02-13 11:26:23.000000000 -0500
+@@ -63,7 +63,7 @@ static inline int gsi_irq_sharing(int gs
+ 
+ #define PREFIX			"ACPI: "
+ 
+-int acpi_noirq __initdata;	/* skip ACPI IRQ initialization */
++int acpi_noirq;	/* skip ACPI IRQ initialization */
+ int acpi_pci_disabled __initdata;	/* skip ACPI PCI scan and IRQ initialization */
+ int acpi_ht __initdata = 1;	/* enable HT */
+ 
+@@ -327,7 +327,7 @@ acpi_parse_ioapic(acpi_table_entry_heade
+ /*
+  * Parse Interrupt Source Override for the ACPI SCI
+  */
+-static void acpi_sci_ioapic_setup(u32 gsi, u16 polarity, u16 trigger)
++static void __init acpi_sci_ioapic_setup(u32 gsi, u16 polarity, u16 trigger)
+ {
+ 	if (trigger == 0)	/* compatible SCI trigger is level */
+ 		trigger = 3;
+--- linux-2.6.18.i386.orig/init/main.c	2007-02-13 11:27:41.000000000 -0500
++++ linux-2.6.18.i386/init/main.c	2007-02-02 13:17:12.000000000 -0500
+@@ -709,7 +709,7 @@ static int __init nosoftlockup_setup(cha
+ }
+ __setup("nosoftlockup", nosoftlockup_setup);
+ 
+-static void do_pre_smp_initcalls(void)
++static void __init do_pre_smp_initcalls(void)
+ {
+ 	extern int spawn_ksoftirqd(void);
+ #ifdef CONFIG_SMP
+

@@ -1,0 +1,71 @@
+From: Bruce Allan <ballan@redhat.com>
+Subject: Re: [RHEL5 PATCH] e1000: add (2) device ids
+Date: Tue, 14 Nov 2006 11:37:28 -0800
+Bugzilla: 184864
+Message-Id: <455A1AF8.1010009@redhat.com>
+Changelog: e1000: add (2) device ids
+
+
+Argh, yes e1000_main.c needs a hunk too.  Updated patch attached.
+
+This is part of a patch committed to Jeff Garzik's upstream netdev git 
+tree 
+http://git2.kernel.org/git/?p=linux/kernel/git/jgarzik/netdev-2.6.git;a=commit;h=6c4fe249db1a317aa3c03265010b9c73c4b05df1
+
+Bruce Allan
+Intel LAN Access Division
+2111 NE 25th Avenue
+Hillsboro, OR  97124
+503-712-5943
+
+
+John W. Linville wrote:
+>On Fri, Nov 10, 2006 at 12:55:02PM -0800, Bruce Allan wrote:
+>>Simple patch to the e1000 driver to add two more device ids to the 
+>>current ICH8 family of LOMs.  This enables support for these additional 
+>>SKUs using existing code in the driver.  This addresses RHIT#86992.
+>>
+>>FWIW, these same device ids are already in the upstream pci.ids database 
+>>on SourceForge.
+>
+>This seems fine, pending upstream submission.  But, don't you need
+>a hunk for e1000_main.c as well?
+>
+
+diff -urp linux-2.6.18-1.2747.el5/drivers/net/e1000/e1000_hw.c linux-2.6.18-1.2747.el5-rhit86992/drivers/net/e1000/e1000_hw.c
+--- linux-2.6.18-1.2747.el5/drivers/net/e1000/e1000_hw.c	2006-11-10 14:00:06.000000000 -0500
++++ linux-2.6.18-1.2747.el5-rhit86992/drivers/net/e1000/e1000_hw.c	2006-11-10 14:08:37.000000000 -0500
+@@ -414,6 +414,8 @@ e1000_set_mac_type(struct e1000_hw *hw)
+     case E1000_DEV_ID_ICH8_IGP_AMT:
+     case E1000_DEV_ID_ICH8_IGP_C:
+     case E1000_DEV_ID_ICH8_IFE:
++    case E1000_DEV_ID_ICH8_IFE_GT:
++    case E1000_DEV_ID_ICH8_IFE_G:
+     case E1000_DEV_ID_ICH8_IGP_M:
+         hw->mac_type = e1000_ich8lan;
+         break;
+diff -urp linux-2.6.18-1.2747.el5/drivers/net/e1000/e1000_hw.h linux-2.6.18-1.2747.el5-rhit86992/drivers/net/e1000/e1000_hw.h
+--- linux-2.6.18-1.2747.el5/drivers/net/e1000/e1000_hw.h	2006-11-10 14:00:06.000000000 -0500
++++ linux-2.6.18-1.2747.el5-rhit86992/drivers/net/e1000/e1000_hw.h	2006-11-10 14:07:15.000000000 -0500
+@@ -489,6 +489,8 @@ int32_t e1000_check_phy_reset_block(stru
+ #define E1000_DEV_ID_ICH8_IGP_AMT        0x104A
+ #define E1000_DEV_ID_ICH8_IGP_C          0x104B
+ #define E1000_DEV_ID_ICH8_IFE            0x104C
++#define E1000_DEV_ID_ICH8_IFE_GT         0x10C4
++#define E1000_DEV_ID_ICH8_IFE_G          0x10C5
+ #define E1000_DEV_ID_ICH8_IGP_M          0x104D
+ 
+ 
+diff -urp linux-2.6.18-1.2747.el5/drivers/net/e1000/e1000_main.c linux-2.6.18-1.2747.el5-rhit86992/drivers/net/e1000/e1000_main.c
+--- linux-2.6.18-1.2747.el5/drivers/net/e1000/e1000_main.c	2006-11-10 14:00:06.000000000 -0500
++++ linux-2.6.18-1.2747.el5-rhit86992/drivers/net/e1000/e1000_main.c	2006-11-14 10:31:45.000000000 -0500
+@@ -105,6 +105,8 @@ static struct pci_device_id e1000_pci_tb
+ 	INTEL_E1000_ETHERNET_DEVICE(0x10BA),
+ 	INTEL_E1000_ETHERNET_DEVICE(0x10BB),
+ 	INTEL_E1000_ETHERNET_DEVICE(0x10BC),
++	INTEL_E1000_ETHERNET_DEVICE(0x10C4),
++	INTEL_E1000_ETHERNET_DEVICE(0x10C5),
+ 	/* required last entry */
+ 	{0,}
+ };
+

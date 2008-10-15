@@ -1,0 +1,14 @@
+--- ./fs/gfs/ops_address.c.orig	2007-05-16 10:18:22.000000000 +0400
++++ ./fs/gfs/ops_address.c	2007-05-16 10:21:39.000000000 +0400
+@@ -389,8 +389,10 @@ gfs_commit_write(struct file *file, stru
+ 
+ 		SetPageUptodate(page);
+ 
+-		if (inode->i_size < file_size)
++		if (inode->i_size < file_size) {
+ 			i_size_write(inode, file_size);
++			mark_inode_dirty(inode);
++		}
+ 	} else {
+ 		error = generic_commit_write(file, page, from, to);
+ 		if (error)

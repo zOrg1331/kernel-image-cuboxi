@@ -1,0 +1,190 @@
+From: Jarod Wilson <jwilson@redhat.com>
+Subject: [RHEL5 PATCH] PPC64/KDUMP (repost): fix booting kdump env. w/maxcpus=1 on power5
+Date: Mon, 8 Jan 2007 14:32:08 -0500
+Bugzilla: 207300
+Message-Id: <200701081432.12303.jwilson@redhat.com>
+Changelog: ppc64: fix booting kdump env. w/maxcpus=1 on power5
+
+
+The attached patch fixes problems with booting the kdump kernel with maxcpus=1 
+on power5 systems. Without the patch, power5 systems try to distribute irqs 
+among all cpus instead of just the boot cpu, leading to all sorts of badness. 
+Can also be worked around via the 'noirqdistrib' boot param, but this patch 
+fixes it properly. Patch is in the upstream powerpc git tree. This resolves 
+bugzilla #207300, which already has all necessary *_ack's.
+
+---
+
+Pretty-please ACK?
+
+-- 
+Jarod Wilson
+jwilson@redhat.com
+
+On Fri, Nov 17, 2006 at 02:36:16AM +1100, Anton Blanchard wrote:
+> 
+> Hi,
+> 
+> Thanks for fixing this problem. One thing I noticed in the patch:
+> 
+> > +	np = cpuid_to_of_node(boot_cpuid);
+> > +	BUG_ON(!np);
+> > +	ireg = get_property(np, "ibm,ppc-interrupt-gserver#s", &ilen);
+> > +	hcpuid = get_hard_smp_processor_id(boot_cpuid);
+> > +
+> > +	if (ireg[0] == hcpuid)
+> > +		default_distrib_server = ireg[1];
+> > +	else
+> > +		default_distrib_server = ireg[3];
+> 
+> While this will work on current firmware it would be more robust to loop
+> through interrupt-gserver#s until you find your cpuid. For example we
+> set up multiple interrupt-gserver#s entries in the lab so we can have
+> chip, node local and global targets:
+> 
+> ibm,ppc-interrupt-server#s
+> 	00000002 00000003
+> 
+> ibm,ppc-interrupt-gserver#s
+> 	00000002 000000ff 00000003 000000ff 00000002 000000f7
+> 	00000003 000000f7 00000002 000000d7
+> 	00000003 000000d7
+> 
+> We always put the global target at the end (0xd7 in this case) because
+> the current code in Linux just grabs the last entry in the array to get
+> the global server. So the question is, do we look for the first or the
+> last entry that matches your cpuid to find the global server?
+> 
+> It might be worth getting something added to the architecture (PAPR) to
+> clear it up. To match what current Linux does, we would want servers to
+> go from including the least to the most cpus, so the global one is at
+> the end.
+> 
+
+Thanks Anton,
+
+I have modified the patch to loop through ibm,ppc-interrupt-gserver#s
+property to find the global distribution server from the last entry
+that matches with boot cpuid. So this patch will work with above
+situation also.
+
+o The following patch allows any secondary CPU thread also to become
+  boot cpu for POWER5. The patch is required to solve kdump boot issue
+  when the kdump kernel is booted with parameter "maxcpus=1". XICS init
+  code tries to match the current boot cpu id with "reg" property in
+  each CPU node in the device tree. But CPU node is created only for
+  primary thread CPU ids and "reg" property only reflects primary CPU
+  ids. So when a kernel is booted on a secondary cpu thread above
+  condition will never meet and the default distribution server is left
+  as zero. This leads to route the interrupts to CPU 0, but which is not
+  online at this time.
+
+o The patch uses ibm,ppc-interrupt-server#s to check for both primary
+  and secondary CPU ids. Accordingly default distribution server value
+  is initialized from "ibm,ppc-interrupt-gserver#s" property.
+
+Signed-off-by: Mohan Kumar M <mohan@in.ibm.com>
+Rediffed-for-RHEL5-by: Jarod Wilson <jwilson@redhat.com>
+---
+ arch/powerpc/platforms/pseries/xics.c |   68 ++++++++++++++++++++++++----------
+ 1 file changed, 49 insertions(+), 19 deletions(-)
+
+Index: linux-2.6.18.ppc64/arch/powerpc/platforms/pseries/xics.c
+===================================================================
+--- linux-2.6.18.ppc64.orig/arch/powerpc/platforms/pseries/xics.c
++++ linux-2.6.18.ppc64/arch/powerpc/platforms/pseries/xics.c
+@@ -676,12 +676,38 @@
+ 	set_irq_chained_handler(cascade, pseries_8259_cascade);
+ }
+ 
++static struct device_node *cpuid_to_of_node(int cpu)
++{
++	struct device_node *np;
++	u32 hcpuid = get_hard_smp_processor_id(cpu);
++
++	for_each_node_by_type(np, "cpu") {
++		int i, len;
++		const u32 *intserv;
++
++		intserv = get_property(np, "ibm,ppc-interrupt-server#s", &len);
++
++		if (!intserv)
++			intserv = get_property(np, "reg", &len);
++
++		i = len / sizeof(u32);
++
++		while (i--)
++			if (intserv[i] == hcpuid)
++				return np;
++	}
++
++	return NULL;
++}
++
+ void __init xics_init_IRQ(void)
+ {
+-	int i;
++	int i, j;
+ 	struct device_node *np;
+-	u32 *ireg, ilen, indx = 0;
++	u32 ilen, indx = 0;
++	const u32 *ireg, *isize;
+ 	int found = 0;
++	u32 hcpuid;
+ 
+ 	ppc64_boot_msg(0x20, "XICS Init");
+ 
+@@ -702,27 +728,32 @@
+ 	xics_init_host();
+ 
+ 	/* Find the server numbers for the boot cpu. */
+-	for (np = of_find_node_by_type(NULL, "cpu");
+-	     np;
+-	     np = of_find_node_by_type(np, "cpu")) {
+-		ireg = (u32 *)get_property(np, "reg", &ilen);
+-		if (ireg && ireg[0] == get_hard_smp_processor_id(boot_cpuid)) {
+-			ireg = (u32 *)get_property(np,
+-						  "ibm,ppc-interrupt-gserver#s",
+-						   &ilen);
+-			i = ilen / sizeof(int);
+-			if (ireg && i > 0) {
+-				default_server = ireg[0];
+-				/* take last element */
+-				default_distrib_server = ireg[i-1];
+-			}
+-			ireg = (u32 *)get_property(np,
++	np = cpuid_to_of_node(boot_cpuid);
++	BUG_ON(!np);
++	ireg = get_property(np, "ibm,ppc-interrupt-gserver#s", &ilen);
++	if (!ireg)
++		goto skip_gserver_check;
++	i = ilen / sizeof(int);
++	hcpuid = get_hard_smp_processor_id(boot_cpuid);
++
++	/* Global interrupt distribution server is specified in the last
++	 * entry of "ibm,ppc-interrupt-gserver#s" property. Get the last
++	 * entry fom this property for current boot cpu id and use it as
++	 * default distribution server
++	 */
++	for (j = 0; j < i; j += 2) {
++		if (ireg[j] == hcpuid) {
++			default_server = hcpuid;
++			default_distrib_server = ireg[j+1];
++
++			isize = get_property(np,
++
+ 					"ibm,interrupt-server#-size", NULL);
+-			if (ireg)
+-				interrupt_server_size = *ireg;
+-			break;
++			if (isize)
++				interrupt_server_size = *isize;
+ 		}
+ 	}
++skip_gserver_check:
+ 	of_node_put(np);
+ 
+ 	if (firmware_has_feature(FW_FEATURE_LPAR))
+
+
+

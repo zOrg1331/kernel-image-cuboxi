@@ -1,0 +1,44 @@
+From: Doug Chapman <dchapman@redhat.com>
+Subject: [RHEL5 PATCH] increase ACPI_MAX_REFERENCE_COUNT
+Date: Fri, 22 Dec 2006 11:16:31 -0500
+Bugzilla: 217741
+Message-Id: <1166804191.32232.8.camel@deimos.americas.hpqcorp.net>
+Changelog: acpi: increase ACPI_MAX_REFERENCE_COUNT
+
+
+Fixes BZ 217741
+
+This patch increases the value of ACPI_MAX_REFERENCE_COUNT.  This value
+is used only for debugging in that if it sees a refcount larger than
+this on an ACPI object (in this case an address handler) it assumes that
+can't be right and spits out a debug message.  On some of our new very
+large systems in HP this causes many thousands of debug messages to be
+spit out on bootup which can cause the system to take approx 3 hours to
+boot.
+
+This is a _zero_ risk fix since this is an arbitrary limit and only
+controls a debug message for things that "don't look right".  More
+details in the BZ.
+
+It has already been accepted upstream:
+
+http://marc.theaimsgroup.com/?l=linux-acpi&m=116672291713654&w=2
+
+Sorry for the late notice on this.  We only truly understood the nature
+of the problem yesterday.  HP _really_ needs this in RHEL5.0 in order to
+enable our newer large systems.
+
+
+diff -Naupr linux-2.6.18.orig/include/acpi/acconfig.h linux-2.6.18.fixed/include/acpi/acconfig.h
+--- linux-2.6.18.orig/include/acpi/acconfig.h	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.fixed/include/acpi/acconfig.h	2006-12-21 11:00:59.000000000 -0500
+@@ -105,7 +105,7 @@
+ 
+ /* Maximum object reference count (detects object deletion issues) */
+ 
+-#define ACPI_MAX_REFERENCE_COUNT        0x800
++#define ACPI_MAX_REFERENCE_COUNT        0x1000
+ 
+ /* Size of cached memory mapping for system memory operation region */
+ 
+

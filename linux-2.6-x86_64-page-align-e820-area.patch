@@ -1,0 +1,89 @@
+Date: Mon, 16 Oct 2006 14:28:36 -0400
+From: Vivek Goyal <vgoyal@redhat.com>
+Subject: [PATCH][RHEL5] BZ#210499: Avoid bss stomping by bootmem allocator
+ initialization code
+
+This patch was discussed on LKML sometime back regarding one of the 
+x86_64 boot problems. It solves the issue for BZ#210499. Posting it for 
+inclusion in RHEL5.
+
+http://marc.theaimsgroup.com/?l=linux-netdev&m=116016517332266&w=2
+
+I have forwarded the patch again to Andrew for inclusion in -mm.
+
+Thanks
+Vivek
+
+
+
+o Currently some code pieces assume that address returned by find_e820_area()
+  are page aligned. But looks like find_e820_area() had no such intention
+  and hence one might end up stomping over some of the data. One such
+  case is bootmem allocator initialization code stomped over bss.
+
+o This patch modified find_e820_area() to return page aligned address. This
+  might be little wasteful of memory but at the same time probably it is
+  easier to handle page aligned memory. 
+
+Signed-off-by: Vivek Goyal <vgoyal@in.ibm.com>
+---
+
+ arch/x86_64/kernel/e820.c |   14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff -puN arch/x86_64/kernel/e820.c~x86_64-return-page-aligned-phy-addr-from-find-e820-area arch/x86_64/kernel/e820.c
+--- linux-2.6.19-rc1-1M/arch/x86_64/kernel/e820.c~x86_64-return-page-aligned-phy-addr-from-find-e820-area	2006-10-06 15:28:13.000000000 -0400
++++ linux-2.6.19-rc1-1M-root/arch/x86_64/kernel/e820.c	2006-10-06 15:44:45.000000000 -0400
+@@ -54,13 +54,13 @@ static inline int bad_addr(unsigned long
+ 
+ 	/* various gunk below that needed for SMP startup */
+ 	if (addr < 0x8000) { 
+-		*addrp = 0x8000;
++		*addrp = PAGE_ALIGN(0x8000);
+ 		return 1; 
+ 	}
+ 
+ 	/* direct mapping tables of the kernel */
+ 	if (last >= table_start<<PAGE_SHIFT && addr < table_end<<PAGE_SHIFT) { 
+-		*addrp = table_end << PAGE_SHIFT; 
++		*addrp = PAGE_ALIGN(table_end << PAGE_SHIFT);
+ 		return 1;
+ 	} 
+
+@@ -65,7 +65,7 @@ static inline int bad_addr(unsigned long
+ #ifdef CONFIG_BLK_DEV_INITRD
+ 	if (LOADER_TYPE && INITRD_START && last >= INITRD_START && 
+ 	    addr < INITRD_START+INITRD_SIZE) { 
+-		*addrp = INITRD_START + INITRD_SIZE; 
++		*addrp = PAGE_ALIGN(INITRD_START + INITRD_SIZE);
+ 		return 1;
+ 	} 
+ #endif
+@@ -75,13 +75,13 @@ static inline int bad_addr(unsigned long
+ 		*addrp = 1024*1024;
+ 		return 1;
+ 	}
+-	if (last >= __pa_symbol(&_text) && last < __pa_symbol(&_end)) {
+-		*addrp = __pa_symbol(&_end);
++	if (last >= __pa_symbol(&_text) && addr < __pa_symbol(&_end)) {
++		*addrp = PAGE_ALIGN(__pa_symbol(&_end));
+ 		return 1;
+ 	}
+ 
+ 	if (last >= ebda_addr && addr < ebda_addr + ebda_size) {
+-		*addrp = ebda_addr + ebda_size;
++		*addrp = PAGE_ALIGN(ebda_addr + ebda_size);
+ 		return 1;
+ 	}
+ 
+@@ -152,7 +152,7 @@ unsigned long __init find_e820_area(unsi
+ 			continue; 
+ 		while (bad_addr(&addr, size) && addr+size <= ei->addr+ei->size)
+ 			;
+-		last = addr + size;
++		last = PAGE_ALIGN(addr) + size;
+ 		if (last > ei->addr + ei->size)
+ 			continue;
+ 		if (last > end) 
+_
+

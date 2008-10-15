@@ -1,0 +1,104 @@
+From: David Milburn <dmilburn@redhat.com>
+Subject: [RHEL5.1] libata-scsi-ata_task_ioctl-should-return-ata-registers (RESEND)
+Date: Wed, 28 Mar 2007 16:58:59 -0500
+Bugzilla: 218553
+Message-Id: <20070328215859.GA9761@dhcp-210.hsv.redhat.com>
+Changelog: [scsi] ata_task_ioctl should return ata registers
+
+
+This patch fixes HDIO_DRIVE_TASK ioctl to copy ATA registers
+back to user-space. This was causing the smartctl application
+to report that overall health was good even when there was
+a disk failure. This patch fixes ata_task_ioctl() to report
+back failure status and to copy over upper four LBA bits
+passed in from the ioctl before executing the command. Both
+changes are upstream, please ACK or comment.
+
+Thanks,
+David
+
+--- linux-2.6.18.i686/drivers/scsi/libata-scsi.c.smart
++++ linux-2.6.18.i686/drivers/scsi/libata-scsi.c
+@@ -241,8 +241,8 @@ int ata_task_ioctl(struct scsi_device *s
+ {
+ 	int rc = 0;
+ 	u8 scsi_cmd[MAX_COMMAND_SIZE];
+-	u8 args[7];
+-	struct scsi_sense_hdr sshdr;
++	u8 args[7], *sensebuf = NULL;
++	int cmd_result;
+ 
+ 	if (arg == NULL)
+ 		return -EINVAL;
+@@ -250,24 +250,64 @@ int ata_task_ioctl(struct scsi_device *s
+ 	if (copy_from_user(args, arg, sizeof(args)))
+ 		return -EFAULT;
+ 
++	sensebuf = kzalloc(SCSI_SENSE_BUFFERSIZE, GFP_NOIO);
++	if (!sensebuf)
++		return -ENOMEM;
++
+ 	memset(scsi_cmd, 0, sizeof(scsi_cmd));
+ 	scsi_cmd[0]  = ATA_16;
+ 	scsi_cmd[1]  = (3 << 1); /* Non-data */
+-	/* scsi_cmd[2] is already 0 -- no off.line, cc, or data xfer */
++	scsi_cmd[2]  = 0x20;     /* cc but no off.line or data xfer */
+ 	scsi_cmd[4]  = args[1];
+ 	scsi_cmd[6]  = args[2];
+ 	scsi_cmd[8]  = args[3];
+ 	scsi_cmd[10] = args[4];
+ 	scsi_cmd[12] = args[5];
++	scsi_cmd[13] = args[6] & 0x0f;
+ 	scsi_cmd[14] = args[0];
+ 
+ 	/* Good values for timeout and retries?  Values below
+ 	   from scsi_ioctl_send_command() for default case... */
+-	if (scsi_execute_req(scsidev, scsi_cmd, DMA_NONE, NULL, 0, &sshdr,
+-			     (10*HZ), 5))
++	cmd_result = scsi_execute(scsidev, scsi_cmd, DMA_NONE, NULL, 0,
++				  sensebuf, (10*HZ), 5, 0);
++
++	if (driver_byte(cmd_result) == DRIVER_SENSE) {/* sense data available */
++		u8 *desc = sensebuf + 8;
++		cmd_result &= ~(0xFF<<24); /* DRIVER_SENSE is not an error */
++		
++		/* If we set cc the ATA pass-through will cause a
++		 * check condition even if no error. Filter that. */
++		if (cmd_result & SAM_STAT_CHECK_CONDITION) {
++			struct scsi_sense_hdr sshdr;
++			scsi_normalize_sense(sensebuf, SCSI_SENSE_BUFFERSIZE,
++					     &sshdr);
++			if (sshdr.sense_key==0 && 
++			    sshdr.asc==0 && sshdr.ascq==0)
++				cmd_result &= ~SAM_STAT_CHECK_CONDITION;
++		}
++
++		/* Send userspace ATA registers */
++		if (sensebuf[0] == 0x72 &&     /* format is "descriptor" */
++		    desc[0] ==0x09) {          /* code is "ATA Descriptor" */
++			args[0] = desc[13];    /* status */
++			args[1] = desc[3];     /* error */
++			args[2] = desc[5];     /* sector count (0:7) */
++			args[3] = desc[7];     /* lbal */
++			args[4] = desc[9];     /* lbam */
++			args[5] = desc[11];    /* lbah */
++			args[6] = desc[12];    /* select */
++			if (copy_to_user(arg, args, sizeof(args)))
++				rc = -EFAULT;
++		}
++	}
++
++	if (cmd_result) {
+ 		rc = -EIO;
++		goto error;
++	}
+ 
+-	/* Need code to retrieve data from check condition? */
++ error:
++	kfree(sensebuf);
+ 	return rc;
+ }
+ 
+
+
+

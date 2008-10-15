@@ -1,0 +1,166 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5 PATCH] dlm: don't accept replies to old recovery messages
+Date: Mon, 27 Nov 2006 12:21:08 -0600
+Bugzilla: 215430
+Message-Id: <20061127182108.GE18093@redhat.com>
+Changelog: dlm: don't accept replies to old recovery messages
+
+
+bz 215430
+patch 2 of 2
+
+We often abort a recovery after sending a status request to a remote node.
+We want to ignore any potential status reply we get from the remote node.
+If we get one of these unwanted replies, we've often moved on to the next
+recovery message and incremented the message sequence counter, so the
+reply will be ignored due to the seq number.  In some cases, we've not
+moved on to the next message so the seq number of the reply we want to
+ignore is still correct, causing the reply to be accepted.  The next
+recovery message will then mistake this old reply as a new one.
+
+To fix this, we add the flag RCOM_WAIT to indicate when we can accept a
+new reply.  We clear this flag if we abort recovery while waiting for a
+reply.  Before the flag is set again (to allow new replies) we know that
+any old replies will be rejected due to their sequence number.  We also
+initialize the recovery-message sequence number to a random value when a
+lockspace is first created.  This makes it clear when messages are being
+rejected from an old instance of a lockspace that has since been
+recreated.
+
+
+Index: latest/fs/dlm/rcom.c
+===================================================================
+--- latest.orig/fs/dlm/rcom.c
++++ latest/fs/dlm/rcom.c
+@@ -90,13 +90,28 @@ static int check_config(struct dlm_ls *l
+ 	return 0;
+ }
+ 
++static void allow_sync_reply(struct dlm_ls *ls, uint64_t *new_seq)
++{
++	spin_lock(&ls->ls_rcom_spin);
++	*new_seq = ++ls->ls_rcom_seq;
++	set_bit(LSFL_RCOM_WAIT, &ls->ls_flags);
++	spin_unlock(&ls->ls_rcom_spin);
++}
++
++static void disallow_sync_reply(struct dlm_ls *ls)
++{
++	spin_lock(&ls->ls_rcom_spin);
++	clear_bit(LSFL_RCOM_WAIT, &ls->ls_flags);
++	clear_bit(LSFL_RCOM_READY, &ls->ls_flags);
++	spin_unlock(&ls->ls_rcom_spin);
++}
++
+ int dlm_rcom_status(struct dlm_ls *ls, int nodeid)
+ {
+ 	struct dlm_rcom *rc;
+ 	struct dlm_mhandle *mh;
+ 	int error = 0;
+ 
+-	memset(ls->ls_recover_buf, 0, dlm_config.buffer_size);
+ 	ls->ls_recover_nodeid = nodeid;
+ 
+ 	if (nodeid == dlm_our_nodeid()) {
+@@ -108,12 +123,14 @@ int dlm_rcom_status(struct dlm_ls *ls, i
+ 	error = create_rcom(ls, nodeid, DLM_RCOM_STATUS, 0, &rc, &mh);
+ 	if (error)
+ 		goto out;
+-	rc->rc_id = ++ls->ls_rcom_seq;
++
++	allow_sync_reply(ls, &rc->rc_id);
++	memset(ls->ls_recover_buf, 0, dlm_config.buffer_size);
+ 
+ 	send_rcom(ls, mh, rc);
+ 
+ 	error = dlm_wait_function(ls, &rcom_response);
+-	clear_bit(LSFL_RCOM_READY, &ls->ls_flags);
++	disallow_sync_reply(ls);
+ 	if (error)
+ 		goto out;
+ 
+@@ -150,14 +167,20 @@ static void receive_rcom_status(struct d
+ 
+ static void receive_sync_reply(struct dlm_ls *ls, struct dlm_rcom *rc_in)
+ {
+-	if (rc_in->rc_id != ls->ls_rcom_seq) {
+-		log_debug(ls, "reject old reply %d got %llx wanted %llx",
+-			  rc_in->rc_type, rc_in->rc_id, ls->ls_rcom_seq);
+-		return;
++	spin_lock(&ls->ls_rcom_spin);
++	if (!test_bit(LSFL_RCOM_WAIT, &ls->ls_flags) ||
++	    rc_in->rc_id != ls->ls_rcom_seq) {
++		log_debug(ls, "reject reply %d from %d seq %llx expect %llx",
++			  rc_in->rc_type, rc_in->rc_header.h_nodeid,
++			  rc_in->rc_id, ls->ls_rcom_seq);
++		goto out;
+ 	}
+ 	memcpy(ls->ls_recover_buf, rc_in, rc_in->rc_header.h_length);
+ 	set_bit(LSFL_RCOM_READY, &ls->ls_flags);
++	clear_bit(LSFL_RCOM_WAIT, &ls->ls_flags);
+ 	wake_up(&ls->ls_wait_general);
++ out:
++	spin_unlock(&ls->ls_rcom_spin);
+ }
+ 
+ static void receive_rcom_status_reply(struct dlm_ls *ls, struct dlm_rcom *rc_in)
+@@ -171,7 +194,6 @@ int dlm_rcom_names(struct dlm_ls *ls, in
+ 	struct dlm_mhandle *mh;
+ 	int error = 0, len = sizeof(struct dlm_rcom);
+ 
+-	memset(ls->ls_recover_buf, 0, dlm_config.buffer_size);
+ 	ls->ls_recover_nodeid = nodeid;
+ 
+ 	if (nodeid == dlm_our_nodeid()) {
+@@ -185,12 +207,14 @@ int dlm_rcom_names(struct dlm_ls *ls, in
+ 	if (error)
+ 		goto out;
+ 	memcpy(rc->rc_buf, last_name, last_len);
+-	rc->rc_id = ++ls->ls_rcom_seq;
++
++	allow_sync_reply(ls, &rc->rc_id);
++	memset(ls->ls_recover_buf, 0, dlm_config.buffer_size);
+ 
+ 	send_rcom(ls, mh, rc);
+ 
+ 	error = dlm_wait_function(ls, &rcom_response);
+-	clear_bit(LSFL_RCOM_READY, &ls->ls_flags);
++	disallow_sync_reply(ls);
+  out:
+ 	return error;
+ }
+Index: latest/fs/dlm/dlm_internal.h
+===================================================================
+--- latest.orig/fs/dlm/dlm_internal.h
++++ latest/fs/dlm/dlm_internal.h
+@@ -471,6 +471,7 @@ struct dlm_ls {
+ 	char			*ls_recover_buf;
+ 	int			ls_recover_nodeid; /* for debugging */
+ 	uint64_t		ls_rcom_seq;
++	spinlock_t		ls_rcom_spin;
+ 	struct list_head	ls_recover_list;
+ 	spinlock_t		ls_recover_list_lock;
+ 	int			ls_recover_list_count;
+@@ -488,7 +489,8 @@ struct dlm_ls {
+ #define LSFL_RUNNING		1
+ #define LSFL_RECOVERY_STOP	2
+ #define LSFL_RCOM_READY		3
+-#define LSFL_UEVENT_WAIT	4
++#define LSFL_RCOM_WAIT		4
++#define LSFL_UEVENT_WAIT	5
+ 
+ /* much of this is just saving user space pointers associated with the
+    lock that we pass back to the user lib with an ast */
+Index: latest/fs/dlm/lockspace.c
+===================================================================
+--- latest.orig/fs/dlm/lockspace.c
++++ latest/fs/dlm/lockspace.c
+@@ -473,6 +473,8 @@ static int new_lockspace(char *name, int
+ 	ls->ls_recoverd_task = NULL;
+ 	mutex_init(&ls->ls_recoverd_active);
+ 	spin_lock_init(&ls->ls_recover_lock);
++	spin_lock_init(&ls->ls_rcom_spin);
++	get_random_bytes(&ls->ls_rcom_seq, sizeof(uint64_t));
+ 	ls->ls_recover_status = 0;
+ 	ls->ls_recover_seq = 0;
+ 	ls->ls_recover_args = NULL;

@@ -1,0 +1,117 @@
+From: Daniel P. Berrange <berrange@redhat.com>
+Date: Tue, 8 Jan 2008 20:43:54 +0000
+Subject: [xen] incorrect calculation leads to wrong nr_cpus
+Message-id: 20080108204354.GP21294@redhat.com
+O-Subject: Re: [RHEL5.2 PATCH]: 3/2: NUMA xen tools and hypervisor fixes
+Bugzilla: 336011
+
+On Mon, Jan 07, 2008 at 12:57:00PM -0500, Bill Burns wrote:
+>
+> Note: Dan Berrange's 7 patch set had 3 kernel parts
+> and not two. Thus this part 3 of 2 for the kernel.
+> As with the others this was originally posted only
+> to virtualist (as patch 5/7), so I am posting it here
+> for Dan.
+>  - Bill
+>
+> This patch addresses:
+>
+>  BZ 336011: Xen Hypervisor: Incorrect calculation of sockets_per_node leads to
+> incorrect nr_cpus
+>
+> The XEN_SYSCTL_physinfo hypercall currently does not explicitly return a
+> value for 'nr_cpus' even though the hypervisor knows it. Instead it returns
+> sockets_per_node and lets userspace use that in combo with cores_per_socket
+> and threads_per_core and nr_nodes to figure out total CPU count. This is
+> inaccurate if the NUMA topology is only partially populated / asymetric.
+> This patch adjusts the XEN_SYSCTL_physinfo hypercall so that it can return
+> the 'nr_cpus' value directly.
+>
+> This based off  upstream changeset
+>
+>   changeset:   16145:6df47366830c
+>   user:        Keir Fraser <keir xensource com>
+>   date:        Fri Oct 19 18:00:10 2007 +0100
+>   description:
+>   Replace sysctl.physinfo.sockets_per_node with more directly useful
+>   sysctl.physinfo.nr_cpus. This also avoids miscalculation of
+>   sockets_per_node by Xen where the number of CPUs in the system is
+>   clipped.
+>   From: Elizabeth Kon <eak us ibm com>
+>   Signed-off-by: Keir Fraser <keir xensource com>
+>
+> Unfortunately the upstream changeset broke ABI by re-naming the struct
+> field and also increases XEN_SYSCTL_INTERFACE_VERSION so we can't use
+> it as is. So, as with the extension for NUMA topology this patch detects
+> which interface version the userspace is asking for and returns the
+> appropriate information in each case. So if old userspace runs on the
+> new hypervisor it still gets  'sockets_per_core' as expected. If new
+> userspace runs on new hypevisor it gets 'nr_cpus' in the 'sockets_per_core'
+> field of the struct. Ugly but it provides 100% ABI compatability.
+>
+>  ia64/xen/dom0_ops.c |   12 ++++++++++--
+>  x86/sysctl.c        |   13 +++++++++++--
+>  2 files changed, 21 insertions(+), 4 deletions(-)
+
+Attached is an update which fixes the typo which Jarod found broke ia64
+compiles
+
+Regards,
+Dan.
+--
+|=- Red Hat, Engineering, Emerging Technologies, Boston.  +1 978 392 2496 -=|
+|=-           Perl modules: http://search.cpan.org/~danberr/              -=|
+|=-               Projects: http://freshmeat.net/~danielpb/               -=|
+|=-  GnuPG: 7D3B9505   F3C9 553F A1DA 4AC2 5648 23C1 B3DF F742 7D3B 9505  -=|
+
+Acked-by: Bill Burns <bburns@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+
+diff --git a/arch/ia64/xen/dom0_ops.c b/arch/ia64/xen/dom0_ops.c
+index c2bf6c6..054c0c3 100644
+--- a/arch/ia64/xen/dom0_ops.c
++++ b/arch/ia64/xen/dom0_ops.c
+@@ -250,8 +250,16 @@ long arch_do_sysctl(xen_sysctl_t *op, XEN_GUEST_HANDLE(xen_sysctl_t) u_sysctl)
+         pi->cores_per_socket =
+             cpus_weight(cpu_core_map[0]) / pi->threads_per_core;
+         pi->nr_nodes         = num_online_nodes();
+-        pi->sockets_per_node = num_online_cpus() /
+-            (pi->nr_nodes * pi->cores_per_socket * pi->threads_per_core);
++        /*
++         * RHEL5 ABI compat:
++         * Newer userspace expects 'sockets_per_node' to actually
++         * contain 'nr_cpus' data.
++         */
++        if (op->interface_version > XEN_SYSCTL_INTERFACE_VERSION)
++            pi->sockets_per_node = (u32)num_online_cpus();
++        else
++            pi->sockets_per_node = num_online_cpus() /
++                (pi->nr_nodes * pi->cores_per_socket * pi->threads_per_core);
+         pi->total_pages      = total_pages; 
+         pi->free_pages       = avail_domheap_pages();
+         pi->scrub_pages      = avail_scrub_pages();
+diff --git a/arch/x86/sysctl.c b/arch/x86/sysctl.c
+index 3b646b9..c0cf163 100644
+--- a/arch/x86/sysctl.c
++++ b/arch/x86/sysctl.c
+@@ -47,8 +47,17 @@ long arch_do_sysctl(
+         pi->cores_per_socket =
+             cpus_weight(cpu_core_map[0]) / pi->threads_per_core;
+         pi->nr_nodes = num_online_nodes();
+-        pi->sockets_per_node = num_online_cpus() /
+-            (pi->nr_nodes * pi->cores_per_socket * pi->threads_per_core);
++
++        /*
++         * RHEL5 ABI compat:
++         * Newer userspace expects 'sockets_per_node' to actually
++         * contain 'nr_cpus' data.
++         */
++        if (sysctl->interface_version > XEN_SYSCTL_INTERFACE_VERSION)
++            pi->sockets_per_node = (u32)num_online_cpus();
++        else
++            pi->sockets_per_node = num_online_cpus() /
++                (pi->nr_nodes * pi->cores_per_socket * pi->threads_per_core);
+ 
+         pi->total_pages      = total_pages;
+         pi->free_pages       = avail_domheap_pages();

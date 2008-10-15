@@ -1,0 +1,515 @@
+diff --git a/drivers/char/agp/agp.h b/drivers/char/agp/agp.h
+index 3c623b6..8b3317f 100644
+--- a/drivers/char/agp/agp.h
++++ b/drivers/char/agp/agp.h
+@@ -117,7 +117,7 @@ struct agp_bridge_driver {
+ };
+ 
+ struct agp_bridge_data {
+-	struct agp_version *version;
++	const struct agp_version *version;
+ 	struct agp_bridge_driver *driver;
+ 	struct vm_operations_struct *vm_ops;
+ 	void *previous_size;
+diff --git a/drivers/char/agp/backend.c b/drivers/char/agp/backend.c
+index 509adc4..d59e037 100644
+--- a/drivers/char/agp/backend.c
++++ b/drivers/char/agp/backend.c
+@@ -44,7 +44,7 @@ #include "agp.h"
+  * past 0.99 at all due to some boolean logic error. */
+ #define AGPGART_VERSION_MAJOR 0
+ #define AGPGART_VERSION_MINOR 101
+-static struct agp_version agp_current_version =
++static const struct agp_version agp_current_version =
+ {
+ 	.major = AGPGART_VERSION_MAJOR,
+ 	.minor = AGPGART_VERSION_MINOR,
+diff --git a/drivers/char/agp/efficeon-agp.c b/drivers/char/agp/efficeon-agp.c
+index b788b0a..30f730f 100644
+--- a/drivers/char/agp/efficeon-agp.c
++++ b/drivers/char/agp/efficeon-agp.c
+@@ -337,13 +337,6 @@ static struct agp_bridge_driver efficeon
+ 	.agp_destroy_page	= agp_generic_destroy_page,
+ };
+ 
+-
+-static int agp_efficeon_resume(struct pci_dev *pdev)
+-{
+-	printk(KERN_DEBUG PFX "agp_efficeon_resume()\n");
+-	return efficeon_configure();
+-}
+-
+ static int __devinit agp_efficeon_probe(struct pci_dev *pdev,
+ 				     const struct pci_device_id *ent)
+ {
+@@ -414,11 +407,18 @@ static void __devexit agp_efficeon_remov
+ 	agp_put_bridge(bridge);
+ }
+ 
++#ifdef CONFIG_PM
+ static int agp_efficeon_suspend(struct pci_dev *dev, pm_message_t state)
+ {
+ 	return 0;
+ }
+ 
++static int agp_efficeon_resume(struct pci_dev *pdev)
++{
++	printk(KERN_DEBUG PFX "agp_efficeon_resume()\n");
++	return efficeon_configure();
++}
++#endif
+ 
+ static struct pci_device_id agp_efficeon_pci_table[] = {
+ 	{
+@@ -439,8 +439,10 @@ static struct pci_driver agp_efficeon_pc
+ 	.id_table	= agp_efficeon_pci_table,
+ 	.probe		= agp_efficeon_probe,
+ 	.remove		= agp_efficeon_remove,
++#ifdef CONFIG_PM
+ 	.suspend	= agp_efficeon_suspend,
+ 	.resume		= agp_efficeon_resume,
++#endif
+ };
+ 
+ static int __init agp_efficeon_init(void)
+diff --git a/drivers/char/agp/frontend.c b/drivers/char/agp/frontend.c
+index d9c5a91..0f2ed2a 100644
+--- a/drivers/char/agp/frontend.c
++++ b/drivers/char/agp/frontend.c
+@@ -151,35 +151,12 @@ static void agp_add_seg_to_client(struct
+ 	client->segments = seg;
+ }
+ 
+-/* Originally taken from linux/mm/mmap.c from the array
+- * protection_map.
+- * The original really should be exported to modules, or
+- * some routine which does the conversion for you
+- */
+-
+-static const pgprot_t my_protect_map[16] =
+-{
+-	__P000, __P001, __P010, __P011, __P100, __P101, __P110, __P111,
+-	__S000, __S001, __S010, __S011, __S100, __S101, __S110, __S111
+-};
+-
+ static pgprot_t agp_convert_mmap_flags(int prot)
+ {
+-#define _trans(x,bit1,bit2) \
+-((bit1==bit2)?(x&bit1):(x&bit1)?bit2:0)
+-
+ 	unsigned long prot_bits;
+-	pgprot_t temp;
+-
+-	prot_bits = _trans(prot, PROT_READ, VM_READ) |
+-	    _trans(prot, PROT_WRITE, VM_WRITE) |
+-	    _trans(prot, PROT_EXEC, VM_EXEC);
+-
+-	prot_bits |= VM_SHARED;
+ 
+-	temp = my_protect_map[prot_bits & 0x0000000f];
+-
+-	return temp;
++	prot_bits = calc_vm_prot_bits(prot) | VM_SHARED;
++	return vm_get_page_prot(prot_bits);
+ }
+ 
+ static int agp_create_segment(struct agp_client *client, struct agp_region *region)
+diff --git a/drivers/char/agp/generic.c b/drivers/char/agp/generic.c
+index cc5ea34..0dcdb36 100644
+--- a/drivers/char/agp/generic.c
++++ b/drivers/char/agp/generic.c
+@@ -568,25 +568,34 @@ static void agp_v3_parse_one(u32 *reques
+ 		*bridge_agpstat &= ~(AGPSTAT3_4X | AGPSTAT3_RSVD);
+ 		goto done;
+ 
++	} else if (*requested_mode & AGPSTAT3_4X) {
++		*bridge_agpstat &= ~(AGPSTAT3_8X | AGPSTAT3_RSVD);
++		*bridge_agpstat |= AGPSTAT3_4X;
++		goto done;
++
+ 	} else {
+ 
+ 		/*
+-		 * If we didn't specify AGPx8, we can only do x4.
+-		 * If the hardware can't do x4, we're up shit creek, and never
+-		 *  should have got this far.
++		 * If we didn't specify an AGP mode, we see if both
++		 * the graphics card, and the bridge can do x8, and use if so.
++		 * If not, we fall back to x4 mode.
+ 		 */
+-		*bridge_agpstat &= ~(AGPSTAT3_8X | AGPSTAT3_RSVD);
+-		if ((*bridge_agpstat & AGPSTAT3_4X) && (*vga_agpstat & AGPSTAT3_4X))
+-			*bridge_agpstat |= AGPSTAT3_4X;
+-		else {
+-			printk(KERN_INFO PFX "Badness. Don't know which AGP mode to set. "
+-							"[bridge_agpstat:%x vga_agpstat:%x fell back to:- bridge_agpstat:%x vga_agpstat:%x]\n",
+-							origbridge, origvga, *bridge_agpstat, *vga_agpstat);
+-			if (!(*bridge_agpstat & AGPSTAT3_4X))
+-				printk(KERN_INFO PFX "Bridge couldn't do AGP x4.\n");
+-			if (!(*vga_agpstat & AGPSTAT3_4X))
+-				printk(KERN_INFO PFX "Graphic card couldn't do AGP x4.\n");
+-			return;
++		if ((*bridge_agpstat & AGPSTAT3_8X) && (*vga_agpstat & AGPSTAT3_8X)) {
++			printk(KERN_INFO PFX "No AGP mode specified. Setting to highest mode supported by bridge & card (x8).\n");
++			*bridge_agpstat &= ~(AGPSTAT3_4X | AGPSTAT3_RSVD);
++			*vga_agpstat &= ~(AGPSTAT3_4X | AGPSTAT3_RSVD);
++		} else {
++			printk(KERN_INFO PFX "Fell back to AGPx4 mode because");
++			if (!(*bridge_agpstat & AGPSTAT3_8X)) {
++				printk(KERN_INFO PFX "bridge couldn't do x8. bridge_agpstat:%x (orig=%x)\n", *bridge_agpstat, origbridge);
++				*bridge_agpstat &= ~(AGPSTAT3_8X | AGPSTAT3_RSVD);
++				*bridge_agpstat |= AGPSTAT3_4X;
++			}
++			if (!(*vga_agpstat & AGPSTAT3_8X)) {
++				printk(KERN_INFO PFX "graphics card couldn't do x8. vga_agpstat:%x (orig=%x)\n", *vga_agpstat, origvga);
++				*vga_agpstat &= ~(AGPSTAT3_8X | AGPSTAT3_RSVD);
++				*vga_agpstat |= AGPSTAT3_4X;
++			}
+ 		}
+ 	}
+ 
+diff --git a/drivers/char/agp/intel-agp.c b/drivers/char/agp/intel-agp.c
+index 61ac380..d1ede7d 100644
+--- a/drivers/char/agp/intel-agp.c
++++ b/drivers/char/agp/intel-agp.c
+@@ -2,14 +2,6 @@
+  * Intel AGPGART routines.
+  */
+ 
+-/*
+- * Intel(R) 855GM/852GM and 865G support added by David Dawes
+- * <dawes@tungstengraphics.com>.
+- *
+- * Intel(R) 915G/915GM support added by Alan Hourihane
+- * <alanh@tungstengraphics.com>.
+- */
+-
+ #include <linux/module.h>
+ #include <linux/pci.h>
+ #include <linux/init.h>
+@@ -17,6 +9,21 @@ #include <linux/pagemap.h>
+ #include <linux/agp_backend.h>
+ #include "agp.h"
+ 
++#define PCI_DEVICE_ID_INTEL_82946GZ_HB      0x2970
++#define PCI_DEVICE_ID_INTEL_82946GZ_IG      0x2972
++#define PCI_DEVICE_ID_INTEL_82965G_1_HB     0x2980
++#define PCI_DEVICE_ID_INTEL_82965G_1_IG     0x2982
++#define PCI_DEVICE_ID_INTEL_82965Q_HB       0x2990
++#define PCI_DEVICE_ID_INTEL_82965Q_IG       0x2992
++#define PCI_DEVICE_ID_INTEL_82965G_HB       0x29A0
++#define PCI_DEVICE_ID_INTEL_82965G_IG       0x29A2
++
++#define IS_I965 (agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82946GZ_HB || \
++                 agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82965G_1_HB || \
++                 agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82965Q_HB || \
++                 agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82965G_HB)
++
++
+ /* Intel 815 register */
+ #define INTEL_815_APCONT	0x51
+ #define INTEL_815_ATTBASE_MASK	~0x1FFFFFFF
+@@ -40,6 +47,8 @@ #define I915_PTEADDR	0x1C
+ #define I915_GMCH_GMS_STOLEN_48M	(0x6 << 4)
+ #define I915_GMCH_GMS_STOLEN_64M	(0x7 << 4)
+ 
++/* Intel 965G registers */
++#define I965_MSAC 0x62
+ 
+ /* Intel 7505 registers */
+ #define INTEL_I7505_APSIZE	0x74
+@@ -354,6 +363,7 @@ static struct aper_size_info_fixed intel
+ 	/* The 64M mode still requires a 128k gatt */
+ 	{64, 16384, 5},
+ 	{256, 65536, 6},
++	{512, 131072, 7},
+ };
+ 
+ static struct _intel_i830_private {
+@@ -377,7 +387,11 @@ static void intel_i830_init_gtt_entries(
+ 	/* We obtain the size of the GTT, which is also stored (for some
+ 	 * reason) at the top of stolen memory. Then we add 4KB to that
+ 	 * for the video BIOS popup, which is also stored in there. */
+-	size = agp_bridge->driver->fetch_size() + 4;
++
++	if (IS_I965)
++		size = 512 + 4;
++	else
++		size = agp_bridge->driver->fetch_size() + 4;
+ 
+ 	if (agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82830_HB ||
+ 	    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82845G_HB) {
+@@ -423,7 +437,7 @@ static void intel_i830_init_gtt_entries(
+ 			if (agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82915G_HB ||
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82915GM_HB ||
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945G_HB ||
+-			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945GM_HB)
++			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945GM_HB || IS_I965 )
+ 				gtt_entries = MB(48) - KB(size);
+ 			else
+ 				gtt_entries = 0;
+@@ -433,7 +447,7 @@ static void intel_i830_init_gtt_entries(
+ 			if (agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82915G_HB ||
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82915GM_HB ||
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945G_HB ||
+-			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945GM_HB)
++			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945GM_HB || IS_I965)
+ 				gtt_entries = MB(64) - KB(size);
+ 			else
+ 				gtt_entries = 0;
+@@ -791,6 +805,77 @@ static int intel_i915_create_gatt_table(
+ 
+ 	return 0;
+ }
++static int intel_i965_fetch_size(void)
++{
++       struct aper_size_info_fixed *values;
++       u32 offset = 0;
++       u8 temp;
++
++#define I965_512MB_ADDRESS_MASK (3<<1)
++
++       values = A_SIZE_FIX(agp_bridge->driver->aperture_sizes);
++
++       pci_read_config_byte(intel_i830_private.i830_dev, I965_MSAC, &temp);
++       temp &= I965_512MB_ADDRESS_MASK;
++       switch (temp) {
++       case 0x00:
++               offset = 0; /* 128MB */
++               break;
++       case 0x06:
++               offset = 3; /* 512MB */
++               break;
++       default:
++       case 0x02:
++               offset = 2; /* 256MB */
++               break;
++       }
++
++       agp_bridge->previous_size = agp_bridge->current_size = (void *)(values + offset);
++
++       return values[offset].size;
++}
++
++/* The intel i965 automatically initializes the agp aperture during POST.
+++ * Use the memory already set aside for in the GTT.
+++ */
++static int intel_i965_create_gatt_table(struct agp_bridge_data *bridge)
++{
++       int page_order;
++       struct aper_size_info_fixed *size;
++       int num_entries;
++       u32 temp;
++
++       size = agp_bridge->current_size;
++       page_order = size->page_order;
++       num_entries = size->num_entries;
++       agp_bridge->gatt_table_real = NULL;
++
++       pci_read_config_dword(intel_i830_private.i830_dev, I915_MMADDR, &temp);
++
++       temp &= 0xfff00000;
++       intel_i830_private.gtt = ioremap((temp + (512 * 1024)) , 512 * 1024);
++
++       if (!intel_i830_private.gtt)
++               return -ENOMEM;
++
++
++       intel_i830_private.registers = ioremap(temp,128 * 4096);
++       if (!intel_i830_private.registers)
++               return -ENOMEM;
++
++       temp = readl(intel_i830_private.registers+I810_PGETBL_CTL) & 0xfffff000;
++       global_cache_flush();   /* FIXME: ? */
++
++       /* we have to call this as early as possible after the MMIO base address is known */
++       intel_i830_init_gtt_entries();
++
++       agp_bridge->gatt_table = NULL;
++
++       agp_bridge->gatt_bus_addr = temp;
++
++       return 0;
++}
++
+ 
+ static int intel_fetch_size(void)
+ {
+@@ -1307,7 +1392,7 @@ static struct agp_bridge_driver intel_83
+ 	.owner			= THIS_MODULE,
+ 	.aperture_sizes		= intel_i830_sizes,
+ 	.size_type		= FIXED_APER_SIZE,
+-	.num_aperture_sizes	= 3,
++	.num_aperture_sizes	= 4,
+ 	.needs_scratch_page	= TRUE,
+ 	.configure		= intel_i830_configure,
+ 	.fetch_size		= intel_i830_fetch_size,
+@@ -1469,7 +1554,7 @@ static struct agp_bridge_driver intel_91
+ 	.owner			= THIS_MODULE,
+ 	.aperture_sizes		= intel_i830_sizes,
+ 	.size_type		= FIXED_APER_SIZE,
+-	.num_aperture_sizes	= 3,
++	.num_aperture_sizes	= 4,
+ 	.needs_scratch_page	= TRUE,
+ 	.configure		= intel_i915_configure,
+ 	.fetch_size		= intel_i915_fetch_size,
+@@ -1489,6 +1574,29 @@ static struct agp_bridge_driver intel_91
+ 	.agp_destroy_page	= agp_generic_destroy_page,
+ };
+ 
++static struct agp_bridge_driver intel_i965_driver = {
++       .owner                  = THIS_MODULE,
++       .aperture_sizes         = intel_i830_sizes,
++       .size_type              = FIXED_APER_SIZE,
++       .num_aperture_sizes     = 4,
++       .needs_scratch_page     = TRUE,
++       .configure              = intel_i915_configure,
++       .fetch_size             = intel_i965_fetch_size,
++       .cleanup                = intel_i915_cleanup,
++       .tlb_flush              = intel_i810_tlbflush,
++       .mask_memory            = intel_i810_mask_memory,
++       .masks                  = intel_i810_masks,
++       .agp_enable             = intel_i810_agp_enable,
++       .cache_flush            = global_cache_flush,
++       .create_gatt_table      = intel_i965_create_gatt_table,
++       .free_gatt_table        = intel_i830_free_gatt_table,
++       .insert_memory          = intel_i915_insert_entries,
++       .remove_memory          = intel_i915_remove_entries,
++       .alloc_by_type          = intel_i830_alloc_by_type,
++       .free_by_type           = intel_i810_free_by_type,
++       .agp_alloc_page         = agp_generic_alloc_page,
++       .agp_destroy_page       = agp_generic_destroy_page,
++};
+ 
+ static struct agp_bridge_driver intel_7505_driver = {
+ 	.owner			= THIS_MODULE,
+@@ -1684,6 +1792,35 @@ static int __devinit agp_intel_probe(str
+ 			bridge->driver = &intel_845_driver;
+ 		name = "945GM";
+ 		break;
++	case PCI_DEVICE_ID_INTEL_82946GZ_HB:
++		if (find_i830(PCI_DEVICE_ID_INTEL_82946GZ_IG))
++			bridge->driver = &intel_i965_driver;
++		else
++			bridge->driver = &intel_845_driver;
++		name = "946GZ";
++		break;
++	case PCI_DEVICE_ID_INTEL_82965G_1_HB:
++		if (find_i830(PCI_DEVICE_ID_INTEL_82965G_1_IG))
++			bridge->driver = &intel_i965_driver;
++		else
++			bridge->driver = &intel_845_driver;
++		name = "965G";
++		break;
++	case PCI_DEVICE_ID_INTEL_82965Q_HB:
++		if (find_i830(PCI_DEVICE_ID_INTEL_82965Q_IG))
++			bridge->driver = &intel_i965_driver;
++		else
++			bridge->driver = &intel_845_driver;
++		name = "965Q";
++		break;
++	case PCI_DEVICE_ID_INTEL_82965G_HB:
++		if (find_i830(PCI_DEVICE_ID_INTEL_82965G_IG))
++			bridge->driver = &intel_i965_driver;
++		else
++			bridge->driver = &intel_845_driver;
++		name = "965G";
++		break;
++
+ 	case PCI_DEVICE_ID_INTEL_7505_0:
+ 		bridge->driver = &intel_7505_driver;
+ 		name = "E7505";
+@@ -1766,6 +1903,7 @@ static void __devexit agp_intel_remove(s
+ 	agp_put_bridge(bridge);
+ }
+ 
++#ifdef CONFIG_PM
+ static int agp_intel_resume(struct pci_dev *pdev)
+ {
+ 	struct agp_bridge_data *bridge = pci_get_drvdata(pdev);
+@@ -1786,9 +1924,12 @@ static int agp_intel_resume(struct pci_d
+ 		intel_i830_configure();
+ 	else if (bridge->driver == &intel_810_driver)
+ 		intel_i810_configure();
++	else if (bridge->driver == &intel_i965_driver)
++		intel_i915_configure();
+ 
+ 	return 0;
+ }
++#endif
+ 
+ static struct pci_device_id agp_intel_pci_table[] = {
+ #define ID(x)						\
+@@ -1825,6 +1966,10 @@ #define ID(x)						\
+ 	ID(PCI_DEVICE_ID_INTEL_82915GM_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_82945G_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_82945GM_HB),
++	ID(PCI_DEVICE_ID_INTEL_82946GZ_HB),
++	ID(PCI_DEVICE_ID_INTEL_82965G_1_HB),
++	ID(PCI_DEVICE_ID_INTEL_82965Q_HB),
++	ID(PCI_DEVICE_ID_INTEL_82965G_HB),
+ 	{ }
+ };
+ 
+@@ -1835,7 +1980,9 @@ static struct pci_driver agp_intel_pci_d
+ 	.id_table	= agp_intel_pci_table,
+ 	.probe		= agp_intel_probe,
+ 	.remove		= __devexit_p(agp_intel_remove),
++#ifdef CONFIG_PM
+ 	.resume		= agp_intel_resume,
++#endif
+ };
+ 
+ static int __init agp_intel_init(void)
+diff --git a/drivers/char/agp/via-agp.c b/drivers/char/agp/via-agp.c
+index b8ec25d..c149ac9 100644
+--- a/drivers/char/agp/via-agp.c
++++ b/drivers/char/agp/via-agp.c
+@@ -9,7 +9,7 @@ #include <linux/init.h>
+ #include <linux/agp_backend.h>
+ #include "agp.h"
+ 
+-static struct pci_device_id agp_via_pci_table[];
++static const struct pci_device_id agp_via_pci_table[];
+ 
+ #define VIA_GARTCTRL	0x80
+ #define VIA_APSIZE	0x84
+@@ -485,7 +485,7 @@ static int agp_via_resume(struct pci_dev
+ #endif /* CONFIG_PM */
+ 
+ /* must be the same order as name table above */
+-static struct pci_device_id agp_via_pci_table[] = {
++static const struct pci_device_id agp_via_pci_table[] = {
+ #define ID(x) \
+ 	{						\
+ 	.class		= (PCI_CLASS_BRIDGE_HOST << 8),	\
+diff --git a/include/linux/mm.h b/include/linux/mm.h
+index f0b135c..224178a 100644
+--- a/include/linux/mm.h
++++ b/include/linux/mm.h
+@@ -1013,6 +1013,7 @@ static inline unsigned long vma_pages(st
+ 	return (vma->vm_end - vma->vm_start) >> PAGE_SHIFT;
+ }
+ 
++pgprot_t vm_get_page_prot(unsigned long vm_flags);
+ struct vm_area_struct *find_extend_vma(struct mm_struct *, unsigned long addr);
+ struct page *vmalloc_to_page(void *addr);
+ unsigned long vmalloc_to_pfn(void *addr);
+diff --git a/mm/mmap.c b/mm/mmap.c
+index c1868ec..c7ed061 100644
+--- a/mm/mmap.c
++++ b/mm/mmap.c
+@@ -60,6 +60,13 @@ pgprot_t protection_map[16] = {
+ 	__S000, __S001, __S010, __S011, __S100, __S101, __S110, __S111
+ };
+ 
++pgprot_t vm_get_page_prot(unsigned long vm_flags)
++{
++	return protection_map[vm_flags &
++				(VM_READ|VM_WRITE|VM_EXEC|VM_SHARED)];
++}
++EXPORT_SYMBOL(vm_get_page_prot);
++
+ int sysctl_overcommit_memory = OVERCOMMIT_GUESS;  /* heuristic overcommit */
+ int sysctl_overcommit_ratio = 50;	/* default is 50% */
+ int sysctl_max_map_count __read_mostly = DEFAULT_MAX_MAP_COUNT;

@@ -1,0 +1,138 @@
+From: Abhijith Das <adas@redhat.com>
+Date: Fri, 14 Mar 2008 09:39:18 -0600
+Subject: [GFS2] gfs2_adjust_quota has broken unstuffing code
+Message-id: 47DA9C26.5080401@redhat.com
+O-Subject: Re: [RHEL5.2 PATCH][GFS2] - bz434736: gfs2_adjust_quota has broken unstuffing code - RE-REVISED PATCH
+Bugzilla: 434736
+
+This patch combines the 2 patches in bug 434736 to correct the lock ordering in
+the unstuffing of the quota inode in gfs2_adjust_quota and adjusting the number
+of revokes in gfs2_write_jdata_pagevec
+
+Acked-by: Bob Peterson <rpeterso@redhat.com>
+Acked-by: Josef Bacik <jbacik@redhat.com>
+
+diff --git a/fs/gfs2/ops_address.c b/fs/gfs2/ops_address.c
+index 9699278..7a8c900 100644
+--- a/fs/gfs2/ops_address.c
++++ b/fs/gfs2/ops_address.c
+@@ -19,7 +19,6 @@
+ #include <linux/writeback.h>
+ #include <linux/gfs2_ondisk.h>
+ #include <linux/lm_interface.h>
+-#include <linux/pagevec.h>
+ 
+ #include "gfs2.h"
+ #include "incore.h"
+@@ -274,7 +273,7 @@ static int gfs2_write_jdata_pagevec(struct address_space *mapping,
+ 	int i;
+ 	int ret;
+ 
+-	ret = gfs2_trans_begin(sdp, nrblocks, 0);
++	ret = gfs2_trans_begin(sdp, nrblocks, nrblocks);
+ 	if (ret < 0)
+ 		return ret;
+ 
+diff --git a/fs/gfs2/quota.c b/fs/gfs2/quota.c
+index 88fe784..b6b96fc 100644
+--- a/fs/gfs2/quota.c
++++ b/fs/gfs2/quota.c
+@@ -617,16 +617,9 @@ static int gfs2_adjust_quota(struct gfs2_inode *ip, loff_t loc,
+ 	s64 value;
+ 	int err = -EIO;
+ 
+-	if (gfs2_is_stuffed(ip)) {
+-		struct gfs2_alloc *al = NULL;
+-		al = gfs2_alloc_get(ip);
+-		/* just request 1 blk */
+-		al->al_requested = 1;
+-		gfs2_inplace_reserve(ip);
++	if (gfs2_is_stuffed(ip))
+ 		gfs2_unstuff_dinode(ip, NULL);
+-		gfs2_inplace_release(ip);
+-		gfs2_alloc_put(ip);
+-	}
++
+ 	page = grab_cache_page(mapping, index);
+ 	if (!page)
+ 		return -ENOMEM;
+@@ -691,7 +684,7 @@ static int do_sync(unsigned int num_qd, struct gfs2_quota_data **qda)
+ 	unsigned int qx, x;
+ 	struct gfs2_quota_data *qd;
+ 	loff_t offset;
+-	unsigned int nalloc = 0;
++	unsigned int nalloc = 0, blocks;
+ 	struct gfs2_alloc *al = NULL;
+ 	int error;
+ 
+@@ -728,30 +721,34 @@ static int do_sync(unsigned int num_qd, struct gfs2_quota_data **qda)
+ 			nalloc++;
+ 	}
+ 
+-	if (nalloc) {
+-		al = gfs2_alloc_get(ip);
++	al = gfs2_alloc_get(ip);
++	if (!al) {
++		error = -ENOMEM;
++		goto out_gunlock;
++	}
++	/*
++	 * 1 blk for unstuffing inode if stuffed. We add this extra
++	 * block to the reservation unconditionally. If the inode
++	 * doesn't need unstuffing, the block will be released to the
++	 * rgrp since it won't be allocated during the transaction
++	 */
++	al->al_requested = 1;
++	/* +1 in the end for block requested above for unstuffing */
++	blocks = num_qd * data_blocks + RES_DINODE + num_qd + 1;
+ 
+-		al->al_requested = nalloc * (data_blocks + ind_blocks);
++	if (nalloc)
++		al->al_requested += nalloc * (data_blocks + ind_blocks);
+ 
+-		error = gfs2_inplace_reserve(ip);
+-		if (error)
+-			goto out_alloc;
+-
+-		error = gfs2_trans_begin(sdp,
+-					 al->al_rgd->rd_length +
+-					 num_qd * data_blocks +
+-					 nalloc * ind_blocks +
+-					 RES_DINODE + num_qd +
+-					 RES_STATFS, 0);
+-		if (error)
+-			goto out_ipres;
+-	} else {
+-		error = gfs2_trans_begin(sdp,
+-					 num_qd * data_blocks +
+-					 RES_DINODE + num_qd, 0);
+-		if (error)
+-			goto out_gunlock;
+-	}
++	error = gfs2_inplace_reserve(ip);
++	if (error)
++		goto out_alloc;
++
++	if (nalloc)
++		blocks += al->al_rgd->rd_length + nalloc * ind_blocks + RES_STATFS;
++
++	error = gfs2_trans_begin(sdp, blocks, 0);
++	if (error)
++		goto out_ipres;
+ 
+ 	for (x = 0; x < num_qd; x++) {
+ 		qd = qda[x];
+@@ -770,11 +767,9 @@ static int do_sync(unsigned int num_qd, struct gfs2_quota_data **qda)
+ out_end_trans:
+ 	gfs2_trans_end(sdp);
+ out_ipres:
+-	if (nalloc)
+-		gfs2_inplace_release(ip);
++	gfs2_inplace_release(ip);
+ out_alloc:
+-	if (nalloc)
+-		gfs2_alloc_put(ip);
++	gfs2_alloc_put(ip);
+ out_gunlock:
+ 	gfs2_glock_dq_uninit(&i_gh);
+ out:

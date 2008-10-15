@@ -1,0 +1,128 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Sat, 23 Feb 2008 17:46:54 +0100
+Subject: [s390] add missing TLB flush to hugetlb_cow
+Message-id: 20080223164654.GA31850@redhat.com
+O-Subject: [RHEL5 U2 PATCH] s390 - add missing TLB flush to hugetlb_cow().
+Bugzilla: 433799
+
+Description
+============
+
+cow break on a hugetlbfs page with page_count > 1 will set a new pte
+with set_huge_pte_at(), w/o any tlb flush operation. The old pte will
+remain in the tlb and subsequent write access to the page will result
+in a page fault loop, for as long as it may take until the tlb is
+flushed from somewhere else. Depending on the architecture, this may
+happen sooner or later, on s390 it can take a very long time.
+
+A memory write access to a private large page mapping can take minutes
+instead of milliseconds.
+
+This patch introduces an architecture-specific huge_ptep_clear_flush()
+function, which is called before the set_huge_pte_at() in
+hugetlb_cow().
+
+On s390 this function invalidates the pte, other architectures are
+not changed by this patch.
+
+The following test scenario can be used to reproduce the problem:
+- You need about 600 MB of available large page memory.
+- hugetlbfs needs to mounted.
+- One process should mmap 256 MB shared large page memory via hugetlbfs
+  (MAP_SHARED) and write to the complete mapping.
+- While the first process is still holding its mmap reference to the large page
+  memory, another process should do the very same, but with a private mapping
+  (MAP_PRIVATE).
+- The second process can take over a minute to complete, because of the page
+  fault loop due to the missing TLB flush (the first process will complete
+  in a few milliseconds).
+
+You can also reproduce it with smaller mappings, but the time difference will
+be less notable. It should also be possible to reproduce on other architectures,
+but we didn't find a big delay on Intel e.g.
+
+Bugzilla
+=========
+
+BZ 433799
+https://bugzilla.redhat.com/show_bug.cgi?id=433799
+
+Upstream status of the patch:
+=============================
+
+There is no upstream fix for this common code bug yet, probably because it seems
+to have little effect on other architectures than s390.
+
+Test status:
+============
+Kernel with patch was built and successfully tested by IBM.
+
+To ensure cross platform build, a brew scratch build has been done against
+kernel-2.6.18-83
+
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1181306
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+diff --git a/include/asm-s390/page.h b/include/asm-s390/page.h
+index 4c45958..58b6643 100644
+--- a/include/asm-s390/page.h
++++ b/include/asm-s390/page.h
+@@ -26,6 +26,7 @@
+ #define ARCH_HAS_SETCLEAR_HUGE_PTE
+ #define ARCH_HAS_HUGE_PTE_TYPE
+ #define ARCH_HAS_PREPARE_HUGEPAGE
++#define ARCH_HAS_HUGEPAGE_CLEAR_FLUSH
+ 
+ #ifdef __KERNEL__
+ #include <asm/setup.h>
+diff --git a/include/asm-s390/pgtable.h b/include/asm-s390/pgtable.h
+index acbca01..3515ed8 100644
+--- a/include/asm-s390/pgtable.h
++++ b/include/asm-s390/pgtable.h
+@@ -867,6 +867,12 @@ static inline void huge_ptep_invalidate(unsigned long address, pte_t *ptep)
+ 				huge_pte_wrprotect(__pte));		\
+ 	}								\
+ })
++
++static inline void huge_ptep_clear_flush(struct vm_area_struct *vma,
++                                        unsigned long address, pte_t *ptep)
++{
++       huge_ptep_invalidate(address, ptep);
++}
+ #endif /* __s390x__ */
+ 
+ /*
+diff --git a/include/linux/hugetlb.h b/include/linux/hugetlb.h
+index 884467c..a2b2bd3 100644
+--- a/include/linux/hugetlb.h
++++ b/include/linux/hugetlb.h
+@@ -91,6 +91,10 @@ int arch_prepare_hugepage(struct page *page);
+ void arch_release_hugepage(struct page *page);
+ #endif
+ 
++#ifndef ARCH_HAS_HUGEPAGE_CLEAR_FLUSH
++#define huge_ptep_clear_flush(vma, addr, ptep) do { } while (0)
++#endif
++
+ #ifndef ARCH_HAS_SETCLEAR_HUGE_PTE
+ #define set_huge_pte_at(mm, addr, ptep, pte)	set_pte_at(mm, addr, ptep, pte)
+ #define huge_ptep_get_and_clear(mm, addr, ptep) ptep_get_and_clear(mm, addr, ptep)
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index 3992662..56fd437 100644
+--- a/mm/hugetlb.c
++++ b/mm/hugetlb.c
+@@ -478,6 +478,7 @@ static int hugetlb_cow(struct mm_struct *mm, struct vm_area_struct *vma,
+ 	ptep = huge_pte_offset(mm, address & HPAGE_MASK);
+ 	if (likely(pte_same(huge_ptep_get(ptep), pte))) {
+ 		/* Break COW */
++		huge_ptep_clear_flush(vma, address, ptep);
+ 		set_huge_pte_at(mm, address, ptep,
+ 				make_huge_pte(vma, new_page, 1));
+ 		/* Make the old page be freed below */

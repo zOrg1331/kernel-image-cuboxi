@@ -1,0 +1,43 @@
+From: Jeff Layton <jlayton@redhat.com>
+Subject: [RHEL5 PATCH] RPC: simplify and fix adding of integrity data to 	end of rpc message (BZ 237374)
+Date: Wed, 9 May 2007 09:14:54 -0400
+Bugzilla: 237374
+Message-Id: <20070509131453.GJ16394@dantu.rdu.redhat.com>
+Changelog: [net] RPC: simplify data check, remove BUG_ON
+
+
+At connectathon, we noticed that when people were testing NFSv2/3 with krb5i
+against our servers, we'd occasionally trip a BUG_ON(). Neil Brown looked at
+the oops and pointed out that that BUG_ON() can fire in completely legitimate
+situations and should be removed.
+
+To quote Neil -- "If a readdir finds zero entries, then there will be some
+trailer information in the 'tail', but page_len will be 0." This patch
+removes the special casing for adding the integrity data to the head section
+of an RPC reply, making it so that it always goes into the tail section. The
+tail will now immediately follow the head if it's not been reserved yet. This
+also removes the improper BUG_ON() call.
+
+Unfortunately, this is a relatively hard bug to reproduce on RHEL5, so I was
+never able to completely verify this fix. This patch now in -mm.
+
+diff --git a/net/sunrpc/auth_gss/svcauth_gss.c b/net/sunrpc/auth_gss/svcauth_gss.c
+index 94217ec..350b428 100644
+--- a/net/sunrpc/auth_gss/svcauth_gss.c
++++ b/net/sunrpc/auth_gss/svcauth_gss.c
+@@ -1179,13 +1179,7 @@ svcauth_gss_wrap_resp_integ(struct svc_rqst *rqstp)
+ 	if (xdr_buf_subsegment(resbuf, &integ_buf, integ_offset,
+ 				integ_len))
+ 		BUG();
+-	if (resbuf->page_len == 0
+-			&& resbuf->head[0].iov_len + RPC_MAX_AUTH_SIZE
+-			< PAGE_SIZE) {
+-		BUG_ON(resbuf->tail[0].iov_len);
+-		/* Use head for everything */
+-		resv = &resbuf->head[0];
+-	} else if (resbuf->tail[0].iov_base == NULL) {
++	if (resbuf->tail[0].iov_base == NULL) {
+ 		if (resbuf->head[0].iov_len + RPC_MAX_AUTH_SIZE > PAGE_SIZE)
+ 			goto out_err;
+ 		resbuf->tail[0].iov_base = resbuf->head[0].iov_base
+

@@ -1,0 +1,82 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Tue, 1 Apr 2008 14:08:59 -0400
+Subject: [xen] check num of segments in block backend driver
+Message-id: 20080401180859.9044.80725.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH] Xen CVE-2007-5598 Missing sanity check in xen block backend driver
+Bugzilla: 378291
+
+Fixes bz 378291 (CVE-2007-5498)
+
+This adds a sanity check to not exceed the maximum
+numnber of segments for a transfer. Was posted upstream
+by our own Gerd Hoffman.
+
+Upstream changeset in 3.1.2:
+
+http://xenbits.xensource.com/xen-3.1-testing.hg/log?rev=15500
+
+Built and tested on local system.
+
+Brew build at:
+
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1235290
+
+Please review and ACK.
+
+Thanks,
+ Bill
+
+# HG changeset patch
+# User Keir Fraser <keir@xensource.com>
+# Date 1194546736 0
+# Node ID aa5d92821bb28a42d02c85daf20ba8d4de986478
+# Parent  d000dead48c493898be1ea3ec8e400db0e5f4670
+blkback: Sanity-check nr_segments parameter.
+From: Gerd Hoffmann <kraxel@redhat.com>
+Signed-off-by: Keir Fraser <keir.fraser@eu.citrix.com>
+linux-2.6.18-xen changeset:   309:cf8b6cafa2f0a8ba698322786cc78ae28a1b0f60
+linux-2.6.18-xen date:        Thu Nov 08 18:26:08 2007 +0000
+
+Acked-by: Markus Armbruster <armbru@redhat.com>
+Acked-by: Chris Lalancette <clalance@redhat.com>
+
+diff --git a/include/xen/blkif.h b/include/xen/blkif.h
+index 4d6c663..de8b583 100644
+--- a/include/xen/blkif.h
++++ b/include/xen/blkif.h
+@@ -72,25 +72,31 @@ enum blkif_protocol {
+ 
+ static void inline blkif_get_x86_32_req(blkif_request_t *dst, blkif_x86_32_request_t *src)
+ {
+-	int i;
++	int i, n = BLKIF_MAX_SEGMENTS_PER_REQUEST;
++
+ 	dst->operation = src->operation;
+ 	dst->nr_segments = src->nr_segments;
+ 	dst->handle = src->handle;
+ 	dst->id = src->id;
+ 	dst->sector_number = src->sector_number;
+-	for (i = 0; i < src->nr_segments; i++)
++	if (n > src->nr_segments)
++		n = src->nr_segments;
++	for (i = 0; i < n; i++)
+ 		dst->seg[i] = src->seg[i];
+ }
+ 
+ static void inline blkif_get_x86_64_req(blkif_request_t *dst, blkif_x86_64_request_t *src)
+ {
+-	int i;
++	int i, n = BLKIF_MAX_SEGMENTS_PER_REQUEST;
++
+ 	dst->operation = src->operation;
+ 	dst->nr_segments = src->nr_segments;
+ 	dst->handle = src->handle;
+ 	dst->id = src->id;
+ 	dst->sector_number = src->sector_number;
+-	for (i = 0; i < src->nr_segments; i++)
++	if (n > src->nr_segments)
++		n = src->nr_segments;
++	for (i = 0; i < n; i++)
+ 		dst->seg[i] = src->seg[i];
+ }
+ 

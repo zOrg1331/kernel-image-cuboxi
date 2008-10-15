@@ -1,0 +1,43 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5.1] GFS2: Fix bz 224686, missing unlock_page()
+Date: Mon, 26 Feb 2007 14:54:13 +0000
+Bugzilla: 224686
+Message-Id: <1172501653.11001.599.camel@quoit.chygwyn.com>
+Changelog: [gfs2] fix missing unlock_page()
+
+
+Hi,
+
+This fix is upstream in Linus' kernel and fixes a problem where a page
+was not getting unlocked. It fixes bz 224686,
+
+Steve.
+
+>From 2d72e7101cc7fff5c1eb21bfcbba51c8002418d2 Mon Sep 17 00:00:00 2001
+
+When the try lock of the glock failed in prepare_write we were
+incorrectly exiting this function with the page still locked.
+This was resulting in further I/O to this page hanging.
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+
+diff --git a/fs/gfs2/ops_address.c b/fs/gfs2/ops_address.c
+index 9ddf975..5e9653c 100644
+--- a/fs/gfs2/ops_address.c
++++ b/fs/gfs2/ops_address.c
+@@ -360,8 +360,10 @@ static int gfs2_prepare_write(struct file *file, struct page *page,
+ 	gfs2_holder_init(ip->i_gl, LM_ST_EXCLUSIVE, GL_ATIME|LM_FLAG_TRY_1CB, &ip->i_gh);
+ 	error = gfs2_glock_nq_atime(&ip->i_gh);
+ 	if (unlikely(error)) {
+-		if (error == GLR_TRYFAILED)
++		if (error == GLR_TRYFAILED) {
++			unlock_page(page);
+ 			error = AOP_TRUNCATED_PAGE;
++		}
+ 		goto out_uninit;
+ 	}
+ 
+-- 
+1.4.4.2
+
+

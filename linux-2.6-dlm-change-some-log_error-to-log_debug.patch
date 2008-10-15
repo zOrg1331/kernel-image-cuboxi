@@ -1,0 +1,136 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5 PATCH] dlm: change some log_error to log_debug
+Date: Wed, 3 Jan 2007 17:26:30 -0600
+Bugzilla: 221326
+Message-Id: <20070103232630.GB11485@redhat.com>
+Changelog: dlm: change some log_error to log_debug
+
+
+bz 221326
+2 of 2 (1 of 2 was "dlm: disable debugging output")
+
+There are a number of common messages printed with log_error() instead of
+log_debug().  Use log_debug() for these common messages instead of
+log_error() so we don't frighten users with normal dlm activity.
+
+
+Index: linux-2.6.19-git19-quilt/fs/dlm/rcom.c
+===================================================================
+--- linux-2.6.19-git19-quilt.orig/fs/dlm/rcom.c	2006-12-13 09:35:24.000000000 -0600
++++ linux-2.6.19-git19-quilt/fs/dlm/rcom.c	2007-01-03 17:13:43.000000000 -0600
+@@ -435,7 +435,7 @@
+ 		seq = ls->ls_recover_seq;
+ 		spin_unlock(&ls->ls_recover_lock);
+ 		if (rc->rc_seq_reply != seq) {
+-			log_error(ls, "ignoring old reply %x from %d "
++			log_debug(ls, "ignoring old reply %x from %d "
+ 				      "seq_reply %llx expect %llx",
+ 				      rc->rc_type, rc->rc_header.h_nodeid,
+ 				      (unsigned long long)rc->rc_seq_reply,
+@@ -469,7 +469,7 @@
+ 	}
+ 
+ 	if (dlm_recovery_stopped(ls) && (rc->rc_type != DLM_RCOM_STATUS)) {
+-		log_error(ls, "ignoring recovery message %x from %d",
++		log_debug(ls, "ignoring recovery message %x from %d",
+ 			  rc->rc_type, nodeid);
+ 		goto out;
+ 	}
+Index: linux-2.6.19-git19-quilt/fs/dlm/recoverd.c
+===================================================================
+--- linux-2.6.19-git19-quilt.orig/fs/dlm/recoverd.c	2006-12-13 09:20:50.000000000 -0600
++++ linux-2.6.19-git19-quilt/fs/dlm/recoverd.c	2007-01-03 17:12:04.000000000 -0600
+@@ -77,7 +77,7 @@
+ 
+ 	error = dlm_recover_members(ls, rv, &neg);
+ 	if (error) {
+-		log_error(ls, "recover_members failed %d", error);
++		log_debug(ls, "recover_members failed %d", error);
+ 		goto fail;
+ 	}
+ 	start = jiffies;
+@@ -89,7 +89,7 @@
+ 
+ 	error = dlm_recover_directory(ls);
+ 	if (error) {
+-		log_error(ls, "recover_directory failed %d", error);
++		log_debug(ls, "recover_directory failed %d", error);
+ 		goto fail;
+ 	}
+ 
+@@ -99,7 +99,7 @@
+ 
+ 	error = dlm_recover_directory_wait(ls);
+ 	if (error) {
+-		log_error(ls, "recover_directory_wait failed %d", error);
++		log_debug(ls, "recover_directory_wait failed %d", error);
+ 		goto fail;
+ 	}
+ 
+@@ -129,7 +129,7 @@
+ 
+ 		error = dlm_recover_masters(ls);
+ 		if (error) {
+-			log_error(ls, "recover_masters failed %d", error);
++			log_debug(ls, "recover_masters failed %d", error);
+ 			goto fail;
+ 		}
+ 
+@@ -139,13 +139,13 @@
+ 
+ 		error = dlm_recover_locks(ls);
+ 		if (error) {
+-			log_error(ls, "recover_locks failed %d", error);
++			log_debug(ls, "recover_locks failed %d", error);
+ 			goto fail;
+ 		}
+ 
+ 		error = dlm_recover_locks_wait(ls);
+ 		if (error) {
+-			log_error(ls, "recover_locks_wait failed %d", error);
++			log_debug(ls, "recover_locks_wait failed %d", error);
+ 			goto fail;
+ 		}
+ 
+@@ -166,7 +166,7 @@
+ 
+ 		error = dlm_recover_locks_wait(ls);
+ 		if (error) {
+-			log_error(ls, "recover_locks_wait failed %d", error);
++			log_debug(ls, "recover_locks_wait failed %d", error);
+ 			goto fail;
+ 		}
+ 	}
+@@ -184,7 +184,7 @@
+ 	dlm_set_recover_status(ls, DLM_RS_DONE);
+ 	error = dlm_recover_done_wait(ls);
+ 	if (error) {
+-		log_error(ls, "recover_done_wait failed %d", error);
++		log_debug(ls, "recover_done_wait failed %d", error);
+ 		goto fail;
+ 	}
+ 
+@@ -192,19 +192,19 @@
+ 
+ 	error = enable_locking(ls, rv->seq);
+ 	if (error) {
+-		log_error(ls, "enable_locking failed %d", error);
++		log_debug(ls, "enable_locking failed %d", error);
+ 		goto fail;
+ 	}
+ 
+ 	error = dlm_process_requestqueue(ls);
+ 	if (error) {
+-		log_error(ls, "process_requestqueue failed %d", error);
++		log_debug(ls, "process_requestqueue failed %d", error);
+ 		goto fail;
+ 	}
+ 
+ 	error = dlm_recover_waiters_post(ls);
+ 	if (error) {
+-		log_error(ls, "recover_waiters_post failed %d", error);
++		log_debug(ls, "recover_waiters_post failed %d", error);
+ 		goto fail;
+ 	}
+ 
+

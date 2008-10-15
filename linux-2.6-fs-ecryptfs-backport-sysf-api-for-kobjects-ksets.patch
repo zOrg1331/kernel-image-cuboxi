@@ -1,0 +1,58 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 18 Dec 2007 12:10:43 -0600
+Subject: [fs] ecryptfs: backport sysf API for kobjects/ksets
+Message-id: 47680D23.6010803@redhat.com
+O-Subject: [RHEL 5.2 PATCH] 6/15: eCryptfs: backport sysf API for kobjects/ksets
+Bugzilla: 228341
+
+Backport to sysfs API for kobjects/ksets
+
+diff --git a/fs/ecryptfs/main.c b/fs/ecryptfs/main.c
+index b83a512..f25da62 100644
+--- a/fs/ecryptfs/main.c
++++ b/fs/ecryptfs/main.c
+@@ -834,7 +834,7 @@ static int do_sysfs_registration(void)
+ 		       "Unable to register ecryptfs sysfs subsystem\n");
+ 		goto out;
+ 	}
+-	rc = sysfs_create_file(&ecryptfs_subsys.kobj,
++	rc = sysfs_create_file(&ecryptfs_subsys.kset.kobj,
+ 			       &sysfs_attr_version.attr);
+ 	if (rc) {
+ 		printk(KERN_ERR
+@@ -842,12 +842,12 @@ static int do_sysfs_registration(void)
+ 		subsystem_unregister(&ecryptfs_subsys);
+ 		goto out;
+ 	}
+-	rc = sysfs_create_file(&ecryptfs_subsys.kobj,
++	rc = sysfs_create_file(&ecryptfs_subsys.kset.kobj,
+ 			       &sysfs_attr_version_str.attr);
+ 	if (rc) {
+ 		printk(KERN_ERR
+ 		       "Unable to create ecryptfs version_str attribute\n");
+-		sysfs_remove_file(&ecryptfs_subsys.kobj,
++		sysfs_remove_file(&ecryptfs_subsys.kset.kobj,
+ 				  &sysfs_attr_version.attr);
+ 		subsystem_unregister(&ecryptfs_subsys);
+ 		goto out;
+@@ -858,9 +858,9 @@ out:
+ 
+ static void do_sysfs_unregistration(void)
+ {
+-	sysfs_remove_file(&ecryptfs_subsys.kobj,
++	sysfs_remove_file(&ecryptfs_subsys.kset.kobj,
+ 			  &sysfs_attr_version.attr);
+-	sysfs_remove_file(&ecryptfs_subsys.kobj,
++	sysfs_remove_file(&ecryptfs_subsys.kset.kobj,
+ 			  &sysfs_attr_version_str.attr);
+ 	subsystem_unregister(&ecryptfs_subsys);
+ }
+@@ -890,7 +890,7 @@ static int __init ecryptfs_init(void)
+ 		printk(KERN_ERR "Failed to register filesystem\n");
+ 		goto out_free_kmem_caches;
+ 	}
+-	kobj_set_kset_s(&ecryptfs_subsys, fs_subsys);
++	kobj_set_kset_s(&ecryptfs_subsys.kset, fs_subsys);
+ 	rc = do_sysfs_registration();
+ 	if (rc) {
+ 		printk(KERN_ERR "sysfs registration failed\n");

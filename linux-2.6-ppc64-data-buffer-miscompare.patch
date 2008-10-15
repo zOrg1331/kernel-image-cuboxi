@@ -1,0 +1,90 @@
+From: Konrad Rzeszutek <konradr@redhat.com>
+Subject: [RHEL5 PATCH] RHBZ #LTC35379-Maui-GA3:E80010200 -Data buffer 	miscompare, RHEL5, on HTX run.
+Date: Fri, 22 Jun 2007 13:52:44 -0400
+Bugzilla: 245332
+Message-Id: <20070622175243.GA23170@localhost.localdomain>
+Changelog: [ppc64] Data buffer miscompare
+
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=245332
+
+Description:
+------------
+When running a floating point exerciser with stresses the
+floating point unit in the processor chip, the test
+application (which runs fine on AIX and RHEL4 U6) reports data
+miscompare.
+
+The impact is that is that 64-bit applications which use
+floating point could get an incorrect context and have
+corrupted signal handlers.
+
+The detail explanation is:
+When a page fault or timer interrupt is executed during one of the
+__copy_from_user calls in restore_sigcontext - the ones that write to
+current->thread.fpr and current->thread.vr the context gets corrupted.
+The reason for that is since the kernel is not clearing MSR_FP and 
+MSR_VEC until after the copy, switching to another process during the 
+copy will overwrite current->thread.fpr (assuming the signal handler used 
+floating-point instructions).  If we clear those MSR 
+bits before copying into current->thread.fpr and/or current->thread.vr, like 
+the 32-bit code already does, we are safe.
+
+
+RHEL Version Found:
+------------------
+RHEL5 GA 
+
+Upstream Status:
+----------------
+Not upstream. IBM LTC is posting it there.
+
+kABI status:
+----------
+No kABI breaks.
+
+Test Status:
+------------
+The IBM system P has been testing this on two JS21 and one
+Squad 2 for the last 8 hours and had no trouble (before that they
+could hit the problem within 10 minutes). I am building a brew kernel
+that I will toss on RHTS to run stress tests over the weekend.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-29.el5
+
+diff -uNrp linux-2.6.18.ppc64.orig/arch/powerpc/kernel/signal_64.c linux-2.6.18.ppc64/arch/powerpc/kernel/signal_64.c
+--- linux-2.6.18.ppc64.orig/arch/powerpc/kernel/signal_64.c	2007-06-22 13:34:46.000000000 -0400
++++ linux-2.6.18.ppc64/arch/powerpc/kernel/signal_64.c	2007-06-22 13:35:16.000000000 -0400
+@@ -175,9 +175,14 @@ static long restore_sigcontext(struct pt
+ 	 * and another task grabs the FPU/Altivec, it won't be
+ 	 * tempted to save the current CPU state into the thread_struct
+ 	 * and corrupt what we are writing there.
++	 * Note that we have to clear MSR_FP and MSR_VEC explicitly
++	 * since discard_lazy_cpu_state does nothing on SMP.
+ 	 */
+ 	discard_lazy_cpu_state();
+ 
++	/* Force reload of FP/VEC */
++	regs->msr &= ~(MSR_FP | MSR_FE0 | MSR_FE1 | MSR_VEC);
++
+ 	err |= __copy_from_user(&current->thread.fpr, &sc->fp_regs, FP_REGS_SIZE);
+ 
+ #ifdef CONFIG_ALTIVEC
+@@ -199,9 +204,6 @@ static long restore_sigcontext(struct pt
+ 		current->thread.vrsave = 0;
+ #endif /* CONFIG_ALTIVEC */
+ 
+-	/* Force reload of FP/VEC */
+-	regs->msr &= ~(MSR_FP | MSR_FE0 | MSR_FE1 | MSR_VEC);
+-
+ 	return err;
+ }
+ 
+-- 
+Konrad Rzeszutek 1-(978)-392-3903 or 1-(617)-693-1718
+IBM on-site partner.  
+

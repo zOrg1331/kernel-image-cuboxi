@@ -1,0 +1,54 @@
+From: Ian Kent <ikent@redhat.com>
+Subject: Re: [RHEL 5.1 PATCH] autofs4 - fix race between mount and expire
+Date: Thu, 23 Aug 2007 18:05:46 +0800
+Bugzilla: 236875
+Message-Id: <1187863546.3150.26.camel@raven.themaw.net>
+Changelog: [autofs] autofs4 - fix race between mount and expire
+
+
+On Wed, 2007-04-18 at 16:04 +0800, Ian Kent wrote:
+> 
+> Explaination.
+> 
+> What happens is that during an expire the situation can arise that a
+> directory is removed and another lookup is done before the expire issues
+> a completion status to the kernel module. In this case, since the the
+> lookup gets a new dentry, it doesn't know that there is an expire in
+> progress and when it posts its mount request, matches the existing
+> expire request and waits for its completion.  ENOENT is then returned to
+> user space from lookup (as the dentry passed in remains negative)
+> without having performed the mount request.
+> 
+> The solution is to keep track of dentrys in this unhashed state and
+> reuse them, if possible, in order to preserve the flags.
+
+Original patch snipped...
+
+The problem with the original patch arises because when a dentry is
+rehashed after catching the race the process wake up order is not
+determined. It's possible for the process requesting the mount to fail
+to send a mount request to the daemon if the AUTOFS_INF_EXPIRING flag
+hasn't been cleared soon enough. This can happen when the mount
+requester process proceeds before the expire requester process when the
+waiters are woken up as there's a finite time between this event and the
+clearing of the flag.
+
+This patch resolves the problem.
+
+---
+--- linux-2.6.18.noarch/fs/autofs4/root.c.lookup-expire-race-fix-2	2007-08-20 19:37:17.000000000 +0800
++++ linux-2.6.18.noarch/fs/autofs4/root.c	2007-08-20 19:39:52.000000000 +0800
+@@ -608,8 +608,11 @@ static struct dentry *autofs4_lookup(str
+ 		 * If we are racing with expire the request might not
+ 		 * be quite complete but the directory has been removed
+ 		 * so it must have been successful, so just wait for it.
++		 * We need to ensure the AUTOFS_INF_EXPIRING flag is clear
++		 * before continuing as revalidate may fail when calling
++		 * try_to_fill_dentry (returning EAGAIN) if we don't.
+ 		 */
+-		if (ino && (ino->flags & AUTOFS_INF_EXPIRING)) {
++		while (ino && (ino->flags & AUTOFS_INF_EXPIRING)) {
+ 			DPRINTK("wait for incomplete expire %p name=%.*s",
+ 				unhashed, unhashed->d_name.len,
+ 				unhashed->d_name.name);
+

@@ -1,0 +1,57 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Fri, 7 Mar 2008 18:19:07 -0500
+Subject: [ppc64] SLB: serialize invalidation against loading
+Message-id: 47D1CD6B.4050304@redhat.com
+O-Subject: [RHEL 5.2 Patch 1/2] Fix data corruption on SLB update - remove SLB flush race condition
+Bugzilla: 436336
+
+Subject: serialize SLB invalidation against SLB loading
+
+There is a potential race between flushes of the entire SLB
+in the MFC and the point where new entries are being established.
+The problem is that we might put a ESID entry into the MFC SLB
+when the VSID entry has just been cleared by the global
+flush.
+
+This can be circumvented by holding the register_lock
+throughout both the flushing and the creation of SLB entries.
+
+Signed-off-by: Arnd Bergmann <arnd@arndb.de>
+
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/arch/powerpc/platforms/cell/spu_base.c b/arch/powerpc/platforms/cell/spu_base.c
+index 9c64e3d..425617b 100644
+--- a/arch/powerpc/platforms/cell/spu_base.c
++++ b/arch/powerpc/platforms/cell/spu_base.c
+@@ -71,9 +71,12 @@ static DEFINE_MUTEX(spu_full_list_mutex);
+ void spu_invalidate_slbs(struct spu *spu)
+ {
+ 	struct spu_priv2 __iomem *priv2 = spu->priv2;
++	unsigned long flags;
+ 
++	spin_lock_irqsave(&spu->register_lock, flags);
+ 	if (spu_mfc_sr1_get(spu) & MFC_STATE1_RELOCATE_MASK)
+ 		out_be64(&priv2->slb_invalidate_all_W, 0UL);
++	spin_unlock_irqrestore(&spu->register_lock, flags);
+ }
+ EXPORT_SYMBOL_GPL(spu_invalidate_slbs);
+ 
+@@ -287,13 +290,14 @@ spu_irq_class_1(int irq, void *data, struct pt_regs *regs)
+ 	if (stat & 2) /* mapping fault */
+ 		spu_mfc_dsisr_set(spu, 0ul);
+ 	spu_int_stat_clear(spu, 1, stat);
++	if (stat & 1) /* segment fault */
++		__spu_trap_data_seg(spu, dar);
++
+ 	spin_unlock(&spu->register_lock);
++
+ 	pr_debug("%s: %lx %lx %lx %lx\n", __FUNCTION__, mask, stat,
+ 			dar, dsisr);
+ 
+-	if (stat & 1) /* segment fault */
+-		__spu_trap_data_seg(spu, dar);
+-
+ 	if (stat & 2) { /* mapping fault */
+ 		__spu_trap_data_map(spu, dar, dsisr);
+ 	}

@@ -1,0 +1,84 @@
+From: Konrad Rzeszutek <konradr@redhat.com>
+Subject: Re: [RHEL5 U1 PATCH] RHBZ#247658: Don't allow the stack to grow into 	hugetlb reserved regions
+Date: Thu, 26 Jul 2007 15:09:03 -0400
+Bugzilla: 247658
+Message-Id: <20070726190903.GA16356@mars.boston.redhat.com>
+Changelog: [mm] Prevent the stack growth into hugetlb reserved regions
+
+
+On Thu, Jul 26, 2007 at 01:00:26PM -0400, Konrad Rzeszutek wrote:
+> On Thu, Jul 26, 2007 at 11:11:57AM -0400, Prarit Bhargava wrote:
+> > 
+> > 
+> > Konrad Rzeszutek wrote:
+> > >RHBZ#:
+> > >------
+> > >https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=247658
+> > >
+> > >Description:
+> > >------------
+> > >[PATCH] Don't allow the stack to grow into hugetlb reserved regions
+> > >    
+> > >    When expanding the stack, we don't currently check if the VMA will 
+> > >    cross
+> > >    into an area of the address space that is reserved for hugetlb pages.
+> > >    Subsequent faults on the expanded portion of such a VMA will confuse 
+> > >    the
+> > >    low-level MMU code, resulting in an OOPS.  Check for this.
+> > >
+> > >
+> > >RHEL Version Found:
+> > >------------------
+> > >RHEL5 GA
+> > >
+> > >Upstream Status:
+> > >----------------
+> > >git 0d59a01bc461bbab4017ff449b8401151ef44cf6
+> > >
+> > >Test Status:
+> > >------------
+> > >Built in brew:
+> > >http://brewweb.devel.redhat.com/brew/taskinfo?taskID=875760
+> > >and the IBM folks have tested it and verified that the problem
+> > >is fixed with this patch. I am testing the patch and will
+> > >post my results shortly.
+> > >
+> > >kABI
+> > >-----
+> > >No symbols were hurt in the process.
+> > >
+> > >Proposed Patch:
+> > >---------------
+> 
+> Patch based on 2.6.18-36.el5 kernel.
+> 
+diff -uNrp linux-2.6.18.i386.orig/mm/mmap.c linux-2.6.18.i386/mm/mmap.c
+--- linux-2.6.18.i386.orig/mm/mmap.c	2007-07-26 11:23:10.000000000 -0400
++++ linux-2.6.18.i386/mm/mmap.c	2007-07-26 15:07:17.000000000 -0400
+@@ -1562,7 +1562,7 @@ static int acct_stack_growth(struct vm_a
+ {
+ 	struct mm_struct *mm = vma->vm_mm;
+ 	struct rlimit *rlim = current->signal->rlim;
+-
++	unsigned long new_start;
+ 	/* address space limit tests */
+ 	if (!may_expand_vm(mm, grow))
+ 		return -ENOMEM;
+@@ -1580,7 +1580,11 @@ static int acct_stack_growth(struct vm_a
+ 		if (locked > limit && !capable(CAP_IPC_LOCK))
+ 			return -ENOMEM;
+ 	}
+-
++	/* Check to ensure the stack will not grow into a hugetlb-only region */
++	new_start = (vma->vm_flags & VM_GROWSUP) ? vma->vm_start :
++			vma->vm_end - size;
++	if (is_hugepage_only_range(vma->vm_mm, new_start, size))
++		return -EFAULT;
+ 	/*
+ 	 * Overcommit..  This must be the final test, as it will
+ 	 * update security statistics.
+
+-- 
+Konrad Rzeszutek 1-(978)-392-3903 or 1-(617)-693-1718
+IBM on-site partner.  
+

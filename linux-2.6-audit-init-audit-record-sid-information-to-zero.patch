@@ -1,0 +1,29 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH] BZ 223918 Initialize audit record sid information to 	zero
+Date: Sun, 03 Jun 2007 17:17:59 -0400
+Bugzilla: 223918
+Message-Id: <1180905479.31147.5.camel@localhost.localdomain>
+Changelog: [audit] Initialize audit record sid information to zero
+
+
+BZ 223918 
+
+Audit contexts can be reused, so initialize a name's osid to the default
+in audit_getname(). This ensures we don't log a bogus object label when
+no inode data is collected for a name.
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=e41e8bde43026d5d2e41464e6105a50b31e34102
+
+In the LSPP kernel for quite some time and fixes the problem.
+
+--- linux-2.6.18.i686/kernel/auditsc.c.pre.223918	2007-02-15 15:32:14.000000000 -0500
++++ linux-2.6.18.i686/kernel/auditsc.c	2007-02-15 17:17:22.000000000 -0500
+@@ -1215,6 +1215,7 @@ void __audit_getname(const char *name)
+ 	context->names[context->name_count].name_len = AUDIT_NAME_FULL;
+ 	context->names[context->name_count].name_put = 1;
+ 	context->names[context->name_count].ino  = (unsigned long)-1;
++	context->names[context->name_count].osid = 0;
+ 	++context->name_count;
+ 	if (!context->pwd) {
+ 		read_lock(&current->fs->lock);
+

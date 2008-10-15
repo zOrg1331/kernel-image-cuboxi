@@ -1,0 +1,65 @@
+From: Ivan Vecera <ivecera@redhat.com>
+Date: Tue, 15 Jan 2008 16:55:05 +0100
+Subject: [md] avoid reading past end of bitmap file
+Message-id: 478CD759.5030701@redhat.com
+O-Subject: Re: [RHEL5] - MD: read past end of bitmap file causes md device initialization to fail
+Bugzilla: 237326
+
+Description:
+The size of MD array bitmap file is not checked when reading the superblock
+and
+MD always tries to read PAGE_SIZE bytes.
+
+Issues:
+1) Create MD array with a bitmap file where bitmap file is on a filesystem
+with
+  block size smaller than page size - MD will try to read past the end of
+the
+  file that causes the MD array to fail.
+2) Create MD array with a bitmap file such that the size of the bitmap file
+is close
+  to the page size - Reading past the end of the file also occurs and MD
+array also
+  fails.
+
+Upstream status:
+commit#f49d5e62d9352d33b30c9befbaf0fd9c88265ec1
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=f49d5e62d9352d33b30c9befbaf0fd9c88265ec1
+
+Test status:
+- compilation successful
+- issues reproduced
+- patch fixes them
+
+=====
+
+diff --git a/drivers/md/bitmap.c b/drivers/md/bitmap.c
+index 3d0e764..57bc10a 100644
+--- a/drivers/md/bitmap.c
++++ b/drivers/md/bitmap.c
+@@ -479,9 +479,12 @@ static int bitmap_read_sb(struct bitmap *bitmap)
+ 	int err = -EINVAL;
+ 
+ 	/* page 0 is the superblock, read it... */
+-	if (bitmap->file)
+-		bitmap->sb_page = read_page(bitmap->file, 0, bitmap, PAGE_SIZE);
+-	else {
++	if (bitmap->file) {
++		loff_t isize = i_size_read(bitmap->file->f_mapping->host);
++		int bytes = isize > PAGE_SIZE ? PAGE_SIZE : isize;
++
++		bitmap->sb_page = read_page(bitmap->file, 0, bitmap, bytes);
++	} else {
+ 		bitmap->sb_page = read_sb_page(bitmap->mddev, bitmap->offset, 0);
+ 	}
+ 	if (IS_ERR(bitmap->sb_page)) {
+@@ -875,7 +878,8 @@ static int bitmap_init_from_disk(struct bitmap *bitmap, sector_t start)
+ 			int count;
+ 			/* unmap the old page, we're done with it */
+ 			if (index == num_pages-1)
+-				count = bytes - index * PAGE_SIZE;
++				count = bytes + sizeof(bitmap_super_t)
++					- index * PAGE_SIZE;
+ 			else
+ 				count = PAGE_SIZE;
+ 			if (index == 0) {

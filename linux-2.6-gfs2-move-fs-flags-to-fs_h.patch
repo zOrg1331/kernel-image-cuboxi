@@ -1,0 +1,353 @@
+Date: Fri, 20 Oct 2006 12:55:04 +0100
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5] GFS2 shouldn't use obsolete iflags.h (bz #211583)
+
+Hi,
+
+In the GFS2 tree we were carrying a new header file, iflags.h, which
+contained fs independent flags used by a number of filesystems. David
+Howells beat me to the upstream merge though with a similar set of
+constants in fs.h.
+
+As a result the upstream version of GFS2 and indeed, all other
+filesystems now use the constants in fs.h, so that iflags.h only exists
+in RHEL5/FC-6 due to the base copy of the GFS2 in RHEL-6/FC-6 code being
+dated slightly before the upstream GFS2 merge.
+
+To avoid future problems with people using iflags.h (which is now
+obsolete), this patch removes it in favour of the flags in fs.h. I've
+borrowed only the part of David Howells' patch which adds the new
+constants to fs.h. There didn't seem any need to modify any other
+filesystems, after all the values are all the same and cannot change
+since they were set in stone by ext2/3.
+
+So this is the combination of two changes which are already upstream.
+The bugzilla is #211583
+
+Dave: You might want to take this for FC-6, although my main concern at
+the moment is RHEL-5.
+
+Steve.
+
+
+
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -217,6 +217,45 @@ extern int dir_notify_enable;
+ #define FIBMAP	   _IO(0x00,1)	/* bmap access */
+ #define FIGETBSZ   _IO(0x00,2)	/* get the block size used for bmap */
+ 
++#define	FS_IOC_GETFLAGS			_IOR('f', 1, long)
++#define	FS_IOC_SETFLAGS			_IOW('f', 2, long)
++#define	FS_IOC_GETVERSION		_IOR('v', 1, long)
++#define	FS_IOC_SETVERSION		_IOW('v', 2, long)
++#define FS_IOC32_GETFLAGS		_IOR('f', 1, int)
++#define FS_IOC32_SETFLAGS		_IOW('f', 2, int)
++#define FS_IOC32_GETVERSION		_IOR('v', 1, int)
++#define FS_IOC32_SETVERSION		_IOW('v', 2, int)
++
++/*
++ * Inode flags (FS_IOC_GETFLAGS / FS_IOC_SETFLAGS)
++ */
++#define	FS_SECRM_FL			0x00000001 /* Secure deletion */
++#define	FS_UNRM_FL			0x00000002 /* Undelete */
++#define	FS_COMPR_FL			0x00000004 /* Compress file */
++#define FS_SYNC_FL			0x00000008 /* Synchronous updates */
++#define FS_IMMUTABLE_FL			0x00000010 /* Immutable file */
++#define FS_APPEND_FL			0x00000020 /* writes to file may only append */
++#define FS_NODUMP_FL			0x00000040 /* do not dump file */
++#define FS_NOATIME_FL			0x00000080 /* do not update atime */
++/* Reserved for compression usage... */
++#define FS_DIRTY_FL			0x00000100
++#define FS_COMPRBLK_FL			0x00000200 /* One or more compressed clusters */
++#define FS_NOCOMP_FL			0x00000400 /* Don't compress */
++#define FS_ECOMPR_FL			0x00000800 /* Compression error */
++/* End compression flags --- maybe not all used */
++#define FS_BTREE_FL			0x00001000 /* btree format dir */
++#define FS_INDEX_FL			0x00001000 /* hash-indexed directory */
++#define FS_IMAGIC_FL			0x00002000 /* AFS directory */
++#define FS_JOURNAL_DATA_FL		0x00004000 /* Reserved for ext3 */
++#define FS_NOTAIL_FL			0x00008000 /* file tail should not be merged */
++#define FS_DIRSYNC_FL			0x00010000 /* dirsync behaviour (directories only) */
++#define FS_TOPDIR_FL			0x00020000 /* Top of directory hierarchies*/
++#define FS_RESERVED_FL			0x80000000 /* reserved for ext2 lib */
++
++#define FS_FL_USER_VISIBLE		0x0003DFFF /* User visible flags */
++#define FS_FL_USER_MODIFIABLE		0x000380FF /* User modifiable flags */
++
++
+ #define SYNC_FILE_RANGE_WAIT_BEFORE	1
+ #define SYNC_FILE_RANGE_WRITE		2
+ #define SYNC_FILE_RANGE_WAIT_AFTER	4
+From: Steven Whitehouse <swhiteho@redhat.com>
+Date: Mon, 2 Oct 2006 15:24:43 +0000 (-0400)
+Subject: [GFS2] Remove iflags.h, use FS_
+X-Git-Tag: v2.6.19-rc1
+X-Git-Url: http://www.kernel.org/git/?p=linux/kernel/git/steve/gfs2-2.6-fixes.git;a=commitdiff;h=128e5ebaf8abbda375bba82690b09630003c9213
+
+[GFS2] Remove iflags.h, use FS_
+
+Update GFS2 in the light of David Howells' patch:
+
+[PATCH] BLOCK: Move common FS-specific ioctls to linux/fs.h [try #6]
+36695673b012096228ebdc1b39a6a5850daa474e
+
+which calls the filesystem independant flags FS_..._FL. As a result
+we no longer need the flags.h file and the conversion routine is
+moved into the GFS2 source code.
+
+Userland programs which used to include iflags.h should now include
+fs.h and use the new flag names.
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+---
+
+--- a/fs/gfs2/ops_file.c
++++ b/fs/gfs2/ops_file.c
+@@ -21,7 +21,6 @@
+ #include <linux/gfs2_ondisk.h>
+ #include <linux/ext2_fs.h>
+ #include <linux/crc32.h>
+-#include <linux/iflags.h>
+ #include <linux/lm_interface.h>
+ #include <asm/uaccess.h>
+ 
+@@ -201,27 +200,48 @@ static int gfs2_readdir(struct file *fil
+ 	return error;
+ }
+ 
+-
+-static const u32 iflags_to_gfs2[32] = {
+-	[iflag_Sync] = GFS2_DIF_SYNC,
+-	[iflag_Immutable] = GFS2_DIF_IMMUTABLE,
+-	[iflag_Append] = GFS2_DIF_APPENDONLY,
+-	[iflag_NoAtime] = GFS2_DIF_NOATIME,
+-	[iflag_Index] = GFS2_DIF_EXHASH,
+-	[iflag_JournalData] = GFS2_DIF_JDATA,
+-	[iflag_DirectIO] = GFS2_DIF_DIRECTIO,
++/**
++ * fsflags_cvt
++ * @table: A table of 32 u32 flags
++ * @val: a 32 bit value to convert
++ *
++ * This function can be used to convert between fsflags values and
++ * GFS2's own flags values.
++ *
++ * Returns: the converted flags
++ */
++static u32 fsflags_cvt(const u32 *table, u32 val)
++{
++	u32 res = 0;
++	while(val) {
++		if (val & 1)
++			res |= *table;
++		table++;
++		val >>= 1;
++	}
++	return res;
++}
++
++static const u32 fsflags_to_gfs2[32] = {
++	[3] = GFS2_DIF_SYNC,
++	[4] = GFS2_DIF_IMMUTABLE,
++	[5] = GFS2_DIF_APPENDONLY,
++	[7] = GFS2_DIF_NOATIME,
++	[12] = GFS2_DIF_EXHASH,
++	[14] = GFS2_DIF_JDATA,
++	[20] = GFS2_DIF_DIRECTIO,
+ };
+ 
+-static const u32 gfs2_to_iflags[32] = {
+-	[gfs2fl_Sync] = IFLAG_SYNC,
+-	[gfs2fl_Immutable] = IFLAG_IMMUTABLE,
+-	[gfs2fl_AppendOnly] = IFLAG_APPEND,
+-	[gfs2fl_NoAtime] = IFLAG_NOATIME,
+-	[gfs2fl_ExHash] = IFLAG_INDEX,
+-	[gfs2fl_Jdata] = IFLAG_JOURNAL_DATA,
+-	[gfs2fl_Directio] = IFLAG_DIRECTIO,
+-	[gfs2fl_InheritDirectio] = IFLAG_DIRECTIO,
+-	[gfs2fl_InheritJdata] = IFLAG_JOURNAL_DATA,
++static const u32 gfs2_to_fsflags[32] = {
++	[gfs2fl_Sync] = FS_SYNC_FL,
++	[gfs2fl_Immutable] = FS_IMMUTABLE_FL,
++	[gfs2fl_AppendOnly] = FS_APPEND_FL,
++	[gfs2fl_NoAtime] = FS_NOATIME_FL,
++	[gfs2fl_ExHash] = FS_INDEX_FL,
++	[gfs2fl_Jdata] = FS_JOURNAL_DATA_FL,
++	[gfs2fl_Directio] = FS_DIRECTIO_FL,
++	[gfs2fl_InheritDirectio] = FS_DIRECTIO_FL,
++	[gfs2fl_InheritJdata] = FS_JOURNAL_DATA_FL,
+ };
+ 
+ static int gfs2_get_flags(struct file *filp, u32 __user *ptr)
+@@ -230,15 +250,15 @@ static int gfs2_get_flags(struct file *f
+ 	struct gfs2_inode *ip = GFS2_I(inode);
+ 	struct gfs2_holder gh;
+ 	int error;
+-	u32 iflags;
++	u32 fsflags;
+ 
+ 	gfs2_holder_init(ip->i_gl, LM_ST_SHARED, GL_ATIME, &gh);
+ 	error = gfs2_glock_nq_m_atime(1, &gh);
+ 	if (error)
+ 		return error;
+ 
+-	iflags = iflags_cvt(gfs2_to_iflags, ip->i_di.di_flags);
+-	if (put_user(iflags, ptr))
++	fsflags = fsflags_cvt(gfs2_to_fsflags, ip->i_di.di_flags);
++	if (put_user(fsflags, ptr))
+ 		error = -EFAULT;
+ 
+ 	gfs2_glock_dq_m(1, &gh);
+@@ -327,19 +347,19 @@ out:
+ 
+ static int gfs2_set_flags(struct file *filp, u32 __user *ptr)
+ {
+-	u32 iflags, gfsflags;
+-	if (get_user(iflags, ptr))
++	u32 fsflags, gfsflags;
++	if (get_user(fsflags, ptr))
+ 		return -EFAULT;
+-	gfsflags = iflags_cvt(iflags_to_gfs2, iflags);
++	gfsflags = fsflags_cvt(fsflags_to_gfs2, fsflags);
+ 	return do_gfs2_set_flags(filp, gfsflags, ~0);
+ }
+ 
+ static long gfs2_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+ {
+ 	switch(cmd) {
+-	case IFLAGS_GET_IOC:
++	case FS_IOC_GETFLAGS:
+ 		return gfs2_get_flags(filp, (u32 __user *)arg);
+-	case IFLAGS_SET_IOC:
++	case FS_IOC_SETFLAGS:
+ 		return gfs2_set_flags(filp, (u32 __user *)arg);
+ 	}
+ 	return -ENOTTY;
+--- a/include/linux/Kbuild
++++ b/include/linux/Kbuild
+@@ -223,7 +223,6 @@ unifdef-y += hpet.h
+ unifdef-y += i2c.h
+ unifdef-y += i2o-dev.h
+ unifdef-y += icmpv6.h
+-unifdef-y += iflags.h
+ unifdef-y += if_bridge.h
+ unifdef-y += if_ec.h
+ unifdef-y += if_eql.h
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -250,6 +250,8 @@ extern int dir_notify_enable;
+ #define FS_NOTAIL_FL			0x00008000 /* file tail should not be merged */
+ #define FS_DIRSYNC_FL			0x00010000 /* dirsync behaviour (directories only) */
+ #define FS_TOPDIR_FL			0x00020000 /* Top of directory hierarchies*/
++#define FS_EXTENT_FL			0x00080000 /* Extents */
++#define FS_DIRECTIO_FL			0x00100000 /* Use direct i/o */
+ #define FS_RESERVED_FL			0x80000000 /* reserved for ext2 lib */
+ 
+ #define FS_FL_USER_VISIBLE		0x0003DFFF /* User visible flags */
+--- a/include/linux/iflags.h
++++ /dev/null
+@@ -1,102 +0,0 @@
+-#ifndef _LINUX_IFLAGS_H
+-#define _LINUX_IFLAGS_H
+-
+-/*
+- * A universal set of inode flags.
+- *
+- * Originally taken from ext2/3 with additions for other filesystems.
+- * Filesystems supporting this interface should interoperate with
+- * the lsattr and chattr command line tools.
+- *
+- * This interface is supported in whole or in part by:
+- * ext2
+- * ext3
+- * xfs
+- * jfs
+- * gfs2
+- *
+- */
+-
+-#define IFLAGS_GET_IOC		_IOR('f', 1, long)
+-#define IFLAGS_SET_IOC		_IOW('f', 2, long)
+-
+-/*
+- * These values are provided for use as indices of an array
+- * for use with the iflags_cvt function below
+- */
+-enum {
+-	iflag_SecureRm		= 0,	/* Secure deletion */
+-	iflag_Unrm		= 1,	/* Undelete */
+-	iflag_Compress		= 2,	/* Compress file */
+-	iflag_Sync		= 3,	/* Synchronous updates */
+-	iflag_Immutable	= 4,	/* Immutable */
+-	iflag_Append		= 5,	/* Append */
+-	iflag_NoDump		= 6,	/* Don't dump file */
+-	iflag_NoAtime		= 7,	/* No atime updates */
+-	/* Reserved for compression usage */
+-	iflag_Dirty		= 8,
+-	iflag_ComprBlk		= 9,	/* One or more compressed clusters */
+-	iflag_NoComp		= 10,	/* Don't compress */
+-	iflag_Ecompr		= 11,	/* Compression error */
+-	/* End of compression flags */
+-	iflag_Btree		= 12,	/* btree format dir */
+-	iflag_Index		= 12,	/* hash-indexed directory */
+-	iflag_Imagic		= 13,	/* AFS directory */
+-	iflag_JournalData	= 14,	/* file data should be journaled */
+-	iflag_NoTail		= 15,	/* file tail should not be merged */
+-	iflag_DirSync		= 16,	/* dirsync behaviour */
+-	iflag_TopDir		= 17,	/* Top of directory hierarchies */
+-	iflag_Extent		= 19,	/* Extents */
+-	iflag_DirectIO		= 20,	/* Always use direct I/O on this file */
+-	iflag_Reserved		= 31	/* reserved for ext2/3 lib */
+-};
+-
+-#define __IFL(x) (1<<(iflag_##x))
+-#define IFLAG_SECRM		__IFL(SecureRm)		/* 0x00000001 */
+-#define IFLAG_UNRM		__IFL(Unrm)		/* 0x00000002 */
+-#define IFLAG_COMPR		__IFL(Compr)		/* 0x00000004 */
+-#define IFLAG_SYNC		__IFL(Sync)		/* 0x00000008 */
+-#define IFLAG_IMMUTABLE		__IFL(Immutable)	/* 0x00000010 */
+-#define IFLAG_APPEND		__IFL(Append)		/* 0x00000020 */
+-#define IFLAG_NODUMP		__IFL(NoDump)		/* 0x00000040 */
+-#define IFLAG_NOATIME		__IFL(NoAtime)		/* 0x00000080 */
+-#define IFLAG_DIRTY		__IFL(Dirty)		/* 0x00000100 */
+-#define IFLAG_COMPRBLK		__IFL(ComprBlk)		/* 0x00000200 */
+-#define IFLAG_NOCOMP		__IFL(NoComp)		/* 0x00000400 */
+-#define IFLAG_ECOMPR		__IFL(Ecompr)		/* 0x00000800 */
+-#define IFLAG_BTREE		__IFL(Btree)		/* 0x00001000 */
+-#define IFLAG_INDEX		__IFL(Index)		/* 0x00001000 */
+-#define IFLAG_IMAGIC		__IFL(Imagic)		/* 0x00002000 */
+-#define IFLAG_JOURNAL_DATA	__IFL(JournalData)	/* 0x00004000 */
+-#define IFLAG_NOTAIL		__IFL(NoTail)		/* 0x00008000 */
+-#define IFLAG_DIRSYNC		__IFL(DirSync)		/* 0x00010000 */
+-#define IFLAG_TOPDIR		__IFL(TopDir)		/* 0x00020000 */
+-#define IFLAG_EXTENT		__IFL(Extent)		/* 0x00080000 */
+-#define IFLAG_DIRECTIO		__IFL(DirectIO)		/* 0x00100000 */
+-#define IFLAG_RESERVED		__IFL(Reserved)		/* 0x80000000 */
+-
+-#ifdef __KERNEL__
+-/**
+- * iflags_cvt
+- * @table: A table of 32 u32 flags
+- * @val: a 32 bit value to convert
+- *
+- * This function can be used to convert between IFLAGS values and
+- * the filesystem's own flags values.
+- *
+- * Returns: the converted flags
+- */
+-static inline u32 iflags_cvt(const u32 *table, u32 val)
+-{
+-	u32 res = 0;
+-	while(val) {
+-		if (val & 1)
+-			res |= *table;
+-		table++;
+-		val >>= 1;
+-	}
+-	return res;
+-}
+-#endif /* __KERNEL__ */
+-
+-#endif /* _LINUX_IFLAGS_H */
+

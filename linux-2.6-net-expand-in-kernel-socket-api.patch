@@ -1,0 +1,185 @@
+From: Neil Horman <nhorman@redhat.com>
+Subject: [RHEL 5.1] PATCH: expand in-kernel socket api
+Date: Wed, 11 Apr 2007 13:23:38 -0400
+Bugzilla: 213287
+Message-Id: <20070411172338.GB19373@hmsendeavour.rdu.redhat.com>
+Changelog: [net] expand in-kernel socket api
+
+
+Hey all-
+	This is an upstream backport to expand the in-kernel sockets api.  dlm
+has a potential to hang due to some processing latency.  While the hang issue
+can in and of itself be solved with some socket buffer size tuning, further
+performance gains and code improvements can be made using the sctp peeloff
+operation, which is implemented as a socket option.  Since dlm is in-kernel, we
+need a clean method for accessing socket operations from the kernel, and this
+backport provides that.  Fixes bz 213287.
+
+Thanks & Regards
+Neil
+
+
+--- linux-2.6.18.noarch/include/linux/net.h.orig	2007-04-11 11:10:38.000000000 -0400
++++ linux-2.6.18.noarch/include/linux/net.h	2007-04-11 11:20:45.000000000 -0400
+@@ -209,6 +209,25 @@ extern int   	     kernel_recvmsg(struct
+ 				    struct kvec *vec, size_t num,
+ 				    size_t len, int flags);
+ 
++extern int kernel_bind(struct socket *sock, struct sockaddr *addr,
++		       int addrlen);
++extern int kernel_listen(struct socket *sock, int backlog);
++extern int kernel_accept(struct socket *sock, struct socket **newsock,
++			 int flags);
++extern int kernel_connect(struct socket *sock, struct sockaddr *addr,
++			  int addrlen, int flags);
++extern int kernel_getsockname(struct socket *sock, struct sockaddr *addr,
++			      int *addrlen);
++extern int kernel_getpeername(struct socket *sock, struct sockaddr *addr,
++			      int *addrlen);
++extern int kernel_getsockopt(struct socket *sock, int level, int optname,
++			     char *optval, int *optlen);
++extern int kernel_setsockopt(struct socket *sock, int level, int optname,
++			     char *optval, int optlen);
++extern int kernel_sendpage(struct socket *sock, struct page *page, int offset,
++			   size_t size, int flags);
++extern int kernel_sock_ioctl(struct socket *sock, int cmd, unsigned long arg);
++
+ #ifndef CONFIG_SMP
+ #define SOCKOPS_WRAPPED(name) name
+ #define SOCKOPS_WRAP(name, fam)
+--- linux-2.6.18.noarch/net/socket.c.orig	2007-04-11 11:11:28.000000000 -0400
++++ linux-2.6.18.noarch/net/socket.c	2007-04-11 11:20:45.000000000 -0400
+@@ -2226,6 +2226,109 @@ static long compat_sock_ioctl(struct fil
+ }
+ #endif
+ 
++int kernel_bind(struct socket *sock, struct sockaddr *addr, int addrlen)
++{
++	return sock->ops->bind(sock, addr, addrlen);
++}
++
++int kernel_listen(struct socket *sock, int backlog)
++{
++	return sock->ops->listen(sock, backlog);
++}
++
++int kernel_accept(struct socket *sock, struct socket **newsock, int flags)
++{
++	struct sock *sk = sock->sk;
++	int err;
++
++	err = sock_create_lite(sk->sk_family, sk->sk_type, sk->sk_protocol,
++			       newsock);
++	if (err < 0)
++		goto done;
++
++	err = sock->ops->accept(sock, *newsock, flags);
++	if (err < 0) {
++		sock_release(*newsock);
++		goto done;
++	}
++
++	(*newsock)->ops = sock->ops;
++
++done:
++	return err;
++}
++
++int kernel_connect(struct socket *sock, struct sockaddr *addr, int addrlen,
++                   int flags)
++{
++	return sock->ops->connect(sock, addr, addrlen, flags);
++}
++
++int kernel_getsockname(struct socket *sock, struct sockaddr *addr,
++			 int *addrlen)
++{
++	return sock->ops->getname(sock, addr, addrlen, 0);
++}
++
++int kernel_getpeername(struct socket *sock, struct sockaddr *addr,
++			 int *addrlen)
++{
++	return sock->ops->getname(sock, addr, addrlen, 1);
++}
++
++int kernel_getsockopt(struct socket *sock, int level, int optname,
++			char *optval, int *optlen)
++{
++	mm_segment_t oldfs = get_fs();
++	int err;
++
++	set_fs(KERNEL_DS);
++	if (level == SOL_SOCKET)
++		err = sock_getsockopt(sock, level, optname, optval, optlen);
++	else
++		err = sock->ops->getsockopt(sock, level, optname, optval,
++					    optlen);
++	set_fs(oldfs);
++	return err;
++}
++
++int kernel_setsockopt(struct socket *sock, int level, int optname,
++			char *optval, int optlen)
++{
++	mm_segment_t oldfs = get_fs();
++	int err;
++
++	set_fs(KERNEL_DS);
++	if (level == SOL_SOCKET)
++		err = sock_setsockopt(sock, level, optname, optval, optlen);
++	else
++		err = sock->ops->setsockopt(sock, level, optname, optval,
++					    optlen);
++	set_fs(oldfs);
++	return err;
++}
++
++int kernel_sendpage(struct socket *sock, struct page *page, int offset,
++		    size_t size, int flags)
++{
++	if (sock->ops->sendpage)
++		return sock->ops->sendpage(sock, page, offset, size, flags);
++
++	return sock_no_sendpage(sock, page, offset, size, flags);
++}
++
++int kernel_sock_ioctl(struct socket *sock, int cmd, unsigned long arg)
++{
++	mm_segment_t oldfs = get_fs();
++	int err;
++
++	set_fs(KERNEL_DS);
++	err = sock->ops->ioctl(sock, cmd, arg);
++	set_fs(oldfs);
++
++	return err;
++}
++
+ /* ABI emulation layers need these two */
+ EXPORT_SYMBOL(move_addr_to_kernel);
+ EXPORT_SYMBOL(move_addr_to_user);
+@@ -2242,3 +2345,13 @@ EXPORT_SYMBOL(sock_wake_async);
+ EXPORT_SYMBOL(sockfd_lookup);
+ EXPORT_SYMBOL(kernel_sendmsg);
+ EXPORT_SYMBOL(kernel_recvmsg);
++EXPORT_SYMBOL(kernel_bind);
++EXPORT_SYMBOL(kernel_listen);
++EXPORT_SYMBOL(kernel_accept);
++EXPORT_SYMBOL(kernel_connect);
++EXPORT_SYMBOL(kernel_getsockname);
++EXPORT_SYMBOL(kernel_getpeername);
++EXPORT_SYMBOL(kernel_getsockopt);
++EXPORT_SYMBOL(kernel_setsockopt);
++EXPORT_SYMBOL(kernel_sendpage);
++EXPORT_SYMBOL(kernel_sock_ioctl);
+-- 
+/***************************************************
+ *Neil Horman
+ *Software Engineer
+ *Red Hat, Inc.
+ *nhorman@redhat.com
+ *gpg keyid: 1024D / 0x92A74FA1
+ *http://pgp.mit.edu
+ ***************************************************/
+

@@ -1,0 +1,51 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 16 Dec 2007 23:55:30 +0100
+Subject: [scsi] areca driver update rhel part
+Message-id: 4765ACE2.7000504@redhat.com
+O-Subject: [RHEL5.2 PATCH] bz363961: Areca driver update 2/2
+Bugzilla: 363961
+
+And here the second part:
+
+Acked-by: Milan Broz <mbroz@redhat.com>
+
+diff --git a/Documentation/scsi/ChangeLog.arcmsr b/Documentation/scsi/ChangeLog.arcmsr
+index 8aee358..85b83bc 100644
+--- a/Documentation/scsi/ChangeLog.arcmsr
++++ b/Documentation/scsi/ChangeLog.arcmsr
+@@ -97,4 +97,10 @@
+ **						5.add the conditional check if arcmsr_build_ccb()
+ **						returns FAILED
+ **						This is quoted as the methodology in arcmsr.1.20.00.13.
++** 1.20.00.15.RH   12/04/2007	     Erich Chen & Nick Cheng
++**						1. modify arcmsr_drain_donequeue() to ignore unknown 
++**						command and let kernel process command timeout. 
++**						This could handle IO request violating max. segments 
++**						while Linux XFS over DM-CRYPT. 
++**						Thanks to Milan Broz's comments <mbroz@redhat.com>
+ **************************************************************************
+diff --git a/drivers/scsi/arcmsr/arcmsr.h b/drivers/scsi/arcmsr/arcmsr.h
+index ed8a75b..b948d7f 100644
+--- a/drivers/scsi/arcmsr/arcmsr.h
++++ b/drivers/scsi/arcmsr/arcmsr.h
+@@ -48,7 +48,7 @@ struct class_device_attribute;
+ /*The limit of outstanding scsi command that firmware can handle*/
+ #define ARCMSR_MAX_OUTSTANDING_CMD						256
+ #define ARCMSR_MAX_FREECCB_NUM							320
+-#define ARCMSR_DRIVER_VERSION		     "Driver Version 1.20.00.15.RH 2007/11/06"
++#define ARCMSR_DRIVER_VERSION		     "Driver Version 1.20.00.15.RH 2007/12/04"
+ #define ARCMSR_SCSI_INITIATOR_ID						255
+ #define ARCMSR_MAX_XFER_SECTORS							512
+ #define ARCMSR_MAX_XFER_SECTORS_B						4096
+diff --git a/drivers/scsi/arcmsr/arcmsr_hba.c b/drivers/scsi/arcmsr/arcmsr_hba.c
+index 3fc6deb..479ad3b 100644
+--- a/drivers/scsi/arcmsr/arcmsr_hba.c
++++ b/drivers/scsi/arcmsr/arcmsr_hba.c
+@@ -748,6 +748,7 @@ static void arcmsr_drain_donequeue(struct AdapterControlBlock *acb, uint32_t fla
+ 				, ccb->startdone
+ 				, atomic_read(&acb->ccboutstandingcount));
+ 		}
++	else
+ 	arcmsr_report_ccb_state(acb, ccb, flag_ccb);
+ }
+ 

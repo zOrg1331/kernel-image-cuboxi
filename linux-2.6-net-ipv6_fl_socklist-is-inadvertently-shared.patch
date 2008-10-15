@@ -1,0 +1,66 @@
+From: David S. Miller <davem@redhat.com>
+Subject: [RHEL5]: Fix ipv6 OOPS triggerable by any user.
+Date: Tue, 20 Mar 2007 01:54:33 -0400 (EDT)
+Bugzilla: 233088
+Message-Id: <20070320.015433.60806669.davem@redhat.com>
+Changelog: [net] ipv6_fl_socklist is inadvertently shared
+
+
+
+We accidently copy the ipv6 flow list to child sockets of listening
+TCP sockets, but don't bump the reference count, clone the object,
+etc.  And the list linkage of this object is not built such that
+multiple sockets can point to it anyways.
+
+Therefore if a listening socket has a flow list attached,
+when a child connection closes we'll OOPS or double free
+the flow list entry.
+
+Any user can trigger this.
+
+Writing a reproducer should be simple:
+
+1) Open listening IPV6 TCP socket
+2) Attach a flowlabel with IPV6_FLOWLABEL_MGR socket option,
+   freq->flr_action == IPV6_FL_A_GET and appropriate metadata.
+3) Connect to that listening socket, and close()
+
+Instant oops.  The fix is to simply not inherit this ipv6
+socket option.
+
+This was discovered and merged upstream right before this
+past weekend.  See:
+
+	http://marc.info/?l=linux-netdev&m=117406721731891&w=2
+
+Please ACK.
+
+Commit d35690beda1429544d46c8eb34b2e3a8c37ab299
+Author: Masayuki Nakagawa <nakagawa.msy@ncos.nec.co.jp>
+
+    [IPV6]: ipv6_fl_socklist is inadvertently shared.
+    
+    The ipv6_fl_socklist from listening socket is inadvertently shared
+    with new socket created for connection.  This leads to a variety of
+    interesting, but fatal, bugs. For example, removing one of the
+    sockets may lead to the other socket's encountering a page fault
+    when the now freed list is referenced.
+    
+    The fix is to not share the flow label list with the new socket.
+    
+    Signed-off-by: Masayuki Nakagawa <nakagawa.msy@ncos.nec.co.jp>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/net/ipv6/tcp_ipv6.c b/net/ipv6/tcp_ipv6.c
+index f57a9ba..92f9992 100644
+--- a/net/ipv6/tcp_ipv6.c
++++ b/net/ipv6/tcp_ipv6.c
+@@ -975,6 +975,7 @@ static struct sock * tcp_v6_syn_recv_soc
+ 	   First: no IPv4 options.
+ 	 */
+ 	newinet->opt = NULL;
++	newnp->ipv6_fl_list = NULL;
+ 
+ 	/* Clone RX bits */
+ 	newnp->rxopt.all = np->rxopt.all;
+

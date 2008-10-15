@@ -1,0 +1,253 @@
+Date: Mon, 14 Aug 2006 17:27:49 -0400
+From: Eric Paris <eparis@redhat.com>
+
+Subject: selinux: enable configuration of max policy version
+From: Stephen Smalley <sds@tycho.nsa.gov>
+
+Enable configuration of SELinux maximum supported policy version to support
+legacy userland (init) that does not gracefully handle kernels that support
+newer policy versions two or more beyond the installed policy, as in FC3
+and FC4.
+
+Signed-off-by: Stephen Smalley <sds@tycho.nsa.gov>
+Acked-by: James Morris <jmorris@namei.org>
+Acked-by: Eric Paris <eparis@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ security/selinux/Kconfig            |   33 ++++++++++++++++++++++++++
+ security/selinux/include/security.h |    6 +++-
+ 2 files changed, 38 insertions(+), 1 deletion(-)
+
+diff -puN security/selinux/Kconfig~selinux-enable-configuration-of-max-policy-version security/selinux/Kconfig
+--- a/security/selinux/Kconfig~selinux-enable-configuration-of-max-policy-version
++++ a/security/selinux/Kconfig
+@@ -124,3 +124,36 @@ config SECURITY_SELINUX_ENABLE_SECMARK_D
+ 
+ 	  If you are unsure what do do here, select N.
+ 
++config SECURITY_SELINUX_POLICYDB_VERSION_MAX
++	bool "NSA SELinux maximum supported policy format version"
++	depends on SECURITY_SELINUX
++	default n
++	help
++	  This option enables the maximum policy format version supported
++	  by SELinux to be set to a particular value.  This value is reported
++	  to userspace via /selinux/policyvers and used at policy load time.
++	  It can be adjusted downward to support legacy userland (init) that
++	  does not correctly handle kernels that support newer policy versions.
++
++	  Examples:  For FC3 or FC4, enable this option and set the value via
++	  the next option.  For FC5 and later, do not enable this option.
++
++	  If you are unsure how to answer this question, answer N.
++
++config SECURITY_SELINUX_POLICYDB_VERSION_MAX_VALUE
++	int "NSA SELinux maximum supported policy format version value"
++	depends on SECURITY_SELINUX_POLICYDB_VERSION_MAX
++	range 15 20
++	default 19
++	help
++	  This option sets the value for the maximum policy format version
++	  supported by SELinux.
++
++	  Examples:  For FC3, use 18.  For FC4, use 19.
++
++	  If you are unsure how to answer this question, look for the
++	  policy format version supported by your policy toolchain, by
++	  running 'checkpolicy -V'. Or look at what policy you have
++	  installed under /etc/selinux/$SELINUXTYPE/policy, where
++	  SELINUXTYPE is defined in your /etc/selinux/config.
++
+diff -puN security/selinux/include/security.h~selinux-enable-configuration-of-max-policy-version security/selinux/include/security.h
+--- a/security/selinux/include/security.h~selinux-enable-configuration-of-max-policy-version
++++ a/security/selinux/include/security.h
+@@ -27,7 +27,11 @@
+ 
+ /* Range of policy versions we understand*/
+ #define POLICYDB_VERSION_MIN   POLICYDB_VERSION_BASE
+-#define POLICYDB_VERSION_MAX   POLICYDB_VERSION_AVTAB
++#ifdef CONFIG_SECURITY_SELINUX_POLICYDB_VERSION_MAX
++#define POLICYDB_VERSION_MAX	CONFIG_SECURITY_SELINUX_POLICYDB_VERSION_MAX_VALUE
++#else
++#define POLICYDB_VERSION_MAX	POLICYDB_VERSION_AVTAB
++#endif
+ 
+ extern int selinux_enabled;
+ extern int selinux_mls_enabled;
+
+Date: Mon, 14 Aug 2006 17:27:51 -0400
+From: Eric Paris <eparis@redhat.com>
+
+Subject: selinux: add support for range transitions on object classes
+From: Darrel Goeddel <dgoeddel@TrustedCS.com>
+
+Introduces support for policy version 21.  This version of the binary
+kernel policy allows for defining range transitions on security classes
+other than the process security class.  As always, backwards compatibility
+for older formats is retained.  The security class is read in as specified
+when using the new format, while the "process" security class is assumed
+when using an older policy format.
+
+Signed-off-by: Darrel Goeddel <dgoeddel@trustedcs.com>
+Signed-off-by: Stephen Smalley <sds@tycho.nsa.gov>
+Acked-by: James Morris <jmorris@namei.org>
+Acked-by: Eric Paris <eparis@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ security/selinux/Kconfig            |    2 -
+ security/selinux/include/security.h |    3 +-
+ security/selinux/ss/mls.c           |   21 +++++++++-----------
+ security/selinux/ss/policydb.c      |   27 +++++++++++++++++++-------
+ security/selinux/ss/policydb.h      |    7 +++---
+ 5 files changed, 37 insertions(+), 23 deletions(-)
+
+diff -puN security/selinux/Kconfig~selinux-add-support-for-range-transitions-on-object security/selinux/Kconfig
+--- a/security/selinux/Kconfig~selinux-add-support-for-range-transitions-on-object
++++ a/security/selinux/Kconfig
+@@ -143,7 +143,7 @@ config SECURITY_SELINUX_POLICYDB_VERSION
+ config SECURITY_SELINUX_POLICYDB_VERSION_MAX_VALUE
+ 	int "NSA SELinux maximum supported policy format version value"
+ 	depends on SECURITY_SELINUX_POLICYDB_VERSION_MAX
+-	range 15 20
++	range 15 21
+ 	default 19
+ 	help
+ 	  This option sets the value for the maximum policy format version
+diff -puN security/selinux/include/security.h~selinux-add-support-for-range-transitions-on-object security/selinux/include/security.h
+--- a/security/selinux/include/security.h~selinux-add-support-for-range-transitions-on-object
++++ a/security/selinux/include/security.h
+@@ -24,13 +24,14 @@
+ #define POLICYDB_VERSION_VALIDATETRANS	19
+ #define POLICYDB_VERSION_MLS		19
+ #define POLICYDB_VERSION_AVTAB		20
++#define POLICYDB_VERSION_RANGETRANS	21
+ 
+ /* Range of policy versions we understand*/
+ #define POLICYDB_VERSION_MIN   POLICYDB_VERSION_BASE
+ #ifdef CONFIG_SECURITY_SELINUX_POLICYDB_VERSION_MAX
+ #define POLICYDB_VERSION_MAX	CONFIG_SECURITY_SELINUX_POLICYDB_VERSION_MAX_VALUE
+ #else
+-#define POLICYDB_VERSION_MAX	POLICYDB_VERSION_AVTAB
++#define POLICYDB_VERSION_MAX	POLICYDB_VERSION_RANGETRANS
+ #endif
+ 
+ extern int selinux_enabled;
+diff -puN security/selinux/ss/mls.c~selinux-add-support-for-range-transitions-on-object security/selinux/ss/mls.c
+--- a/security/selinux/ss/mls.c~selinux-add-support-for-range-transitions-on-object
++++ a/security/selinux/ss/mls.c
+@@ -530,22 +530,21 @@ int mls_compute_sid(struct context *scon
+ 		    u32 specified,
+ 		    struct context *newcontext)
+ {
++	struct range_trans *rtr;
++
+ 	if (!selinux_mls_enabled)
+ 		return 0;
+ 
+ 	switch (specified) {
+ 	case AVTAB_TRANSITION:
+-		if (tclass == SECCLASS_PROCESS) {
+-			struct range_trans *rangetr;
+-			/* Look for a range transition rule. */
+-			for (rangetr = policydb.range_tr; rangetr;
+-			     rangetr = rangetr->next) {
+-				if (rangetr->dom == scontext->type &&
+-				    rangetr->type == tcontext->type) {
+-					/* Set the range from the rule */
+-					return mls_range_set(newcontext,
+-					                     &rangetr->range);
+-				}
++		/* Look for a range transition rule. */
++		for (rtr = policydb.range_tr; rtr; rtr = rtr->next) {
++			if (rtr->source_type == scontext->type &&
++			    rtr->target_type == tcontext->type &&
++			    rtr->target_class == tclass) {
++				/* Set the range from the rule */
++				return mls_range_set(newcontext,
++				                     &rtr->target_range);
+ 			}
+ 		}
+ 		/* Fallthrough */
+diff -puN security/selinux/ss/policydb.c~selinux-add-support-for-range-transitions-on-object security/selinux/ss/policydb.c
+--- a/security/selinux/ss/policydb.c~selinux-add-support-for-range-transitions-on-object
++++ a/security/selinux/ss/policydb.c
+@@ -96,6 +96,11 @@ static struct policydb_compat_info polic
+ 		.sym_num        = SYM_NUM,
+ 		.ocon_num       = OCON_NUM,
+ 	},
++	{
++		.version        = POLICYDB_VERSION_RANGETRANS,
++		.sym_num        = SYM_NUM,
++		.ocon_num       = OCON_NUM,
++	},
+ };
+ 
+ static struct policydb_compat_info *policydb_lookup_compat(int version)
+@@ -645,15 +650,15 @@ void policydb_destroy(struct policydb *p
+ 
+ 	for (rt = p->range_tr; rt; rt = rt -> next) {
+ 		if (lrt) {
+-			ebitmap_destroy(&lrt->range.level[0].cat);
+-			ebitmap_destroy(&lrt->range.level[1].cat);
++			ebitmap_destroy(&lrt->target_range.level[0].cat);
++			ebitmap_destroy(&lrt->target_range.level[1].cat);
+ 			kfree(lrt);
+ 		}
+ 		lrt = rt;
+ 	}
+ 	if (lrt) {
+-		ebitmap_destroy(&lrt->range.level[0].cat);
+-		ebitmap_destroy(&lrt->range.level[1].cat);
++		ebitmap_destroy(&lrt->target_range.level[0].cat);
++		ebitmap_destroy(&lrt->target_range.level[1].cat);
+ 		kfree(lrt);
+ 	}
+ 
+@@ -1829,6 +1834,7 @@ int policydb_read(struct policydb *p, vo
+ 	}
+ 
+ 	if (p->policyvers >= POLICYDB_VERSION_MLS) {
++		int new_rangetr = p->policyvers >= POLICYDB_VERSION_RANGETRANS;
+ 		rc = next_entry(buf, fp, sizeof(u32));
+ 		if (rc < 0)
+ 			goto bad;
+@@ -1847,9 +1853,16 @@ int policydb_read(struct policydb *p, vo
+ 			rc = next_entry(buf, fp, (sizeof(u32) * 2));
+ 			if (rc < 0)
+ 				goto bad;
+-			rt->dom = le32_to_cpu(buf[0]);
+-			rt->type = le32_to_cpu(buf[1]);
+-			rc = mls_read_range_helper(&rt->range, fp);
++			rt->source_type = le32_to_cpu(buf[0]);
++			rt->target_type = le32_to_cpu(buf[1]);
++			if (new_rangetr) {
++				rc = next_entry(buf, fp, sizeof(u32));
++				if (rc < 0)
++					goto bad;
++				rt->target_class = le32_to_cpu(buf[0]);
++			} else
++				rt->target_class = SECCLASS_PROCESS;
++			rc = mls_read_range_helper(&rt->target_range, fp);
+ 			if (rc)
+ 				goto bad;
+ 			lrt = rt;
+diff -puN security/selinux/ss/policydb.h~selinux-add-support-for-range-transitions-on-object security/selinux/ss/policydb.h
+--- a/security/selinux/ss/policydb.h~selinux-add-support-for-range-transitions-on-object
++++ a/security/selinux/ss/policydb.h
+@@ -106,9 +106,10 @@ struct cat_datum {
+ };
+ 
+ struct range_trans {
+-	u32 dom;			/* current process domain */
+-	u32 type;			/* program executable type */
+-	struct mls_range range;		/* new range */
++	u32 source_type;
++	u32 target_type;
++	u32 target_class;
++	struct mls_range target_range;
+ 	struct range_trans *next;
+ };
+ 
+

@@ -1,0 +1,38 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Thu, 20 Dec 2007 23:26:20 -0600
+Subject: [fs] ecryptfs: redo dget,mntget on dentry_open fail
+Message-id: 476B4E7C.2000906@redhat.com
+O-Subject: [RHEL 5.2 PATCH] 16/15: eCryptfs: redo dget,mntget on dentry_open failure
+Bugzilla: 228341
+
+Thanks to Jeff Moyer for pointing this out.
+
+If the RDWR dentry_open() in ecryptfs_init_persistent_file fails,
+it will do a dput/mntput.  Need to re-take references if we
+retry as RDONLY.
+
+Signed-off-by: Eric Sandeen <sandeen@redhat.com>
+Acked-by: Mike Halcrow <mhalcrow@us.ibm.com>
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+
+diff --git a/fs/ecryptfs/main.c b/fs/ecryptfs/main.c
+index 7ed9eee..7533868 100644
+--- a/fs/ecryptfs/main.c
++++ b/fs/ecryptfs/main.c
+@@ -138,11 +138,14 @@ int ecryptfs_init_persistent_file(struct dentry *ecryptfs_dentry)
+ 		inode_info->lower_file = dentry_open(lower_dentry,
+ 						     lower_mnt,
+ 						     (O_RDWR | O_LARGEFILE));
+-		if (IS_ERR(inode_info->lower_file))
++		if (IS_ERR(inode_info->lower_file)) {
++			dget(lower_dentry);
++			mntget(lower_mnt);
+ 			inode_info->lower_file = dentry_open(lower_dentry,
+ 							     lower_mnt,
+ 							     (O_RDONLY
+ 							      | O_LARGEFILE));
++		}
+ 		if (IS_ERR(inode_info->lower_file)) {
+ 			printk(KERN_ERR "Error opening lower persistent file "
+ 			       "for lower_dentry [0x%p] and lower_mnt [0x%p]\n",

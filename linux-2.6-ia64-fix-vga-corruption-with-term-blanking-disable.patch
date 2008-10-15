@@ -1,0 +1,86 @@
+From: Jarod Wilson <jwilson@redhat.com>
+Date: Thu, 25 Oct 2007 11:31:35 -0400
+Subject: [ia64] fix vga corruption with term blanking disabled
+Message-id: 4720B6D7.8010804@redhat.com
+O-Subject: [RHEL5.2 PATCH] fix ia64 vga corruption with term blanking disabled (version 2)
+Bugzilla: 291421
+
+Bugzilla #291421: [5.2] Graphic corruption issue
+https://bugzilla.redhat.com/show_bug.cgi?id=291421
+
+Description
+-----------
+If console blanking is disabled (setterm -blank 0), attempting to write
+data out to /dev/console can result in video corruption.
+
+Test status
+-----------
+1. enable VGA console, disable serial console (if any)
+2. boot into run level 3 and login as root
+3. disable console blanking (setterm -blank 0)
+4. startx
+5. shutdown X
+6. startx again
+7. open the gnome-terminal and redirect some output to /dev/console.
+
+With 2.6.18-53.el5.ia64 on my ia64 workstation, vga goes out to lunch. X
+pegs the cpu and the image on screen is frozen. I can ssh in and kill X,
+but the on screen image remains frozen until a reboot. A kernel with the
+attached patch has no such problem, everything continues to work as
+expected.
+
+Also sanity-checked on i686 and x86_64 w/o any regressions (problem only
+manifests on ia64, but patch is in common code).
+
+Upstream
+--------
+Slightly different change (due to code drift) went in upstream a few
+months ago:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=b6e8f00fcd56b426371334d722d1f3fb251b7290
+
+Please ACK
+
+--
+Jarod Wilson
+jwilson@redhat.com
+
+Acked-by: Aristeu Rozanski <arozansk@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+---
+ drivers/char/vt.c |    8 +++++---
+ 1 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/char/vt.c b/drivers/char/vt.c
+index 4941c95..8bce52f 100644
+--- a/drivers/char/vt.c
++++ b/drivers/char/vt.c
+@@ -3301,9 +3301,6 @@ void do_blank_screen(int entering_gfx)
+ 		}
+ 		return;
+ 	}
+-	if (blank_state != blank_normal_wait)
+-		return;
+-	blank_state = blank_off;
+ 
+ 	/* entering graphics mode? */
+ 	if (entering_gfx) {
+@@ -3311,10 +3308,15 @@ void do_blank_screen(int entering_gfx)
+ 		save_screen(vc);
+ 		vc->vc_sw->con_blank(vc, -1, 1);
+ 		console_blanked = fg_console + 1;
++		blank_state = blank_off;
+ 		set_origin(vc);
+ 		return;
+ 	}
+ 
++	if (blank_state != blank_normal_wait)
++		return;
++	blank_state = blank_off;
++
+ 	/* don't blank graphics */
+ 	if (vc->vc_mode != KD_TEXT) {
+ 		console_blanked = fg_console + 1;
+-- 
+1.5.3.5.645.gbb47
+

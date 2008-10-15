@@ -1,0 +1,30 @@
+From: Josef Whiter <jwhiter@redhat.com>
+Subject: [PATCH 5.1] gfs2 does a mutex_lock instead of a mutex_unlock
+Date: Tue, 20 Feb 2007 13:17:35 -0500
+Bugzilla: 229376
+Message-Id: <20070220181734.GC4451@korben.rdu.redhat.com>
+Changelog: [gfs2] does a mutex_lock instead of a mutex_unlock
+
+
+Hello,
+
+In the gfs2 quota code, there is a mistake where we do a mutex_lock isntead of a
+mutex_unlock.  The problem was introduced with commit #
+f55ab26a8f92a23988c3e6da28dae4741933a4e2.  This resolves bz 229376.  I have
+posted this upstream as well.  Thank you,
+
+Josef
+
+
+--- linux-2.6.18.i386/fs/gfs2/quota.c.josef	2007-02-20 14:07:53.000000000 -0500
++++ linux-2.6.18.i386/fs/gfs2/quota.c	2007-02-20 14:08:05.000000000 -0500
+@@ -278,7 +278,7 @@ static int bh_get(struct gfs2_quota_data
+ 		(bh->b_data + sizeof(struct gfs2_meta_header) +
+ 		 offset * sizeof(struct gfs2_quota_change));
+ 
+-	mutex_lock(&sdp->sd_quota_mutex);
++	mutex_unlock(&sdp->sd_quota_mutex);
+ 
+ 	return 0;
+ 
+

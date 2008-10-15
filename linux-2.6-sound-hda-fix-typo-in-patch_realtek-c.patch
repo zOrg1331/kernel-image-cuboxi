@@ -1,0 +1,35 @@
+From: "John W. Linville" <linville@redhat.com>
+Subject: [rhel5 patch] hda: fix typo in patch_realtek.c (screws-up audio for HP xw4400)
+Date: Wed, 1 Nov 2006 10:44:14 -0500
+Bugzilla: 210691
+Message-Id: <20061101154414.GC30394@redhat.com>
+Changelog: sound-hda: fix typo in patch_realtek.c
+
+
+Upstream changed device fixup table for ALC262 in patch_realtek.c
+to use PCI sub-device IDs to match boxes, instead of treating
+all ALC262-equipped HP boxes the same (as was done in the past).
+Whoever did the conversion had a typo in the ID for the HP xw4400.
+
+Without this patch, the xw4400 audio is miswired, so controls do not
+work as they should and/or may not be available at all.
+
+Testing by cww confirms the fix.  I'll send this patch to Takashi &
+friends today.
+
+ sound/pci/hda/patch_realtek.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+Index: latest/sound/pci/hda/patch_realtek.c
+===================================================================
+--- latest.orig/sound/pci/hda/patch_realtek.c
++++ latest/sound/pci/hda/patch_realtek.c
+@@ -5769,7 +5769,7 @@ static struct hda_board_config alc262_cf
+ 	{ .modelname = "fujitsu", .config = ALC262_FUJITSU },
+ 	{ .pci_subvendor = 0x10cf, .pci_subdevice = 0x1397,
+ 	  .config = ALC262_FUJITSU },
+-	{ .pci_subvendor = 0x103c, .pci_subdevice = 0x208c,
++	{ .pci_subvendor = 0x103c, .pci_subdevice = 0x280c,
+ 	  .config = ALC262_HP_BPC }, /* xw4400 */
+ 	{ .pci_subvendor = 0x103c, .pci_subdevice = 0x3014,
+ 	  .config = ALC262_HP_BPC }, /* xw6400 */

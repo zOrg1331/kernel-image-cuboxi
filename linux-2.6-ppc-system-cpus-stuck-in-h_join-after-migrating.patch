@@ -1,0 +1,225 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [PATCH RHEL5u1.z] bz377901 System cpus stuck in H_JOIN after migrating
+Date: Mon, 12 Nov 2007 10:21:37 -0500 (EST)
+Bugzilla: 377901
+Message-Id: <Pine.LNX.4.64.0711121020500.23421@squad5-lp1.lab.boston.redhat.com>
+Changelog: [ppc] System cpus stuck in H_JOIN after migrating
+
+
+Bug 377901 [1]
+---------------
+Reposting this under bug number. Previously posted under issue tracker.
+
+Description:
+-----------
+Problem summary:
+
+During a live partition migration the CPUs are suspended on the source
+system and started on the target system.  For this bug, the CPUs may not
+resume and the system will be completely unresponsive.
+
+It is possible to enter xmon with an NMI.  In xmon you will find some CPUs
+in the H_CEDE call (see bug for xmon backtraces).
+
+The likelihood of hitting this bug increases as the number of CPUs
+assigned to the parition increase.
+
+Workaround:
+
+These is no workaround however the risk can be mitigated by reducing the
+number of CPUs configured during a migration.  Customers can use the
+Dynamic Logical Partition capabilities to remove all but one of their
+cpus, perform the migration and then add the cpus back to the partition
+with the Dynamic Logical Partition capabilities.
+
+Kernel Version:
+--------------
+Patch built against 2.6.18-54
+
+Upstream Status:
+---------------
+this was posted for upstream review at [2].  It has been in
+test at IBM since November 4th.  There is not yet a final version of the
+patch posted upstream
+
+Test Status:
+----
+To ensure cross platform build, a brew scratch build has been done against
+2.6.18-54 at [3].
+
+This patch has been tested extensively by a IBM in Live Partition
+Migration tests
+
+--
+ arch/powerpc/kernel/rtas.c |   96 +++++++++++++++++++++++++++------------
+ 1 file changed, 68 insertions(+), 28 deletions(-)
+Index: b/arch/powerpc/kernel/rtas.c
+===================================================================
+--- a/arch/powerpc/kernel/rtas.c
++++ b/arch/powerpc/kernel/rtas.c
+@@ -19,6 +19,9 @@
+ #include <linux/init.h>
+ #include <linux/capability.h>
+ #include <linux/delay.h>
++#include <linux/smp.h>
++#include <linux/completion.h>
++#include <linux/mutex.h>
+ 
+ #include <asm/prom.h>
+ #include <asm/rtas.h>
+@@ -34,6 +37,7 @@
+ #include <asm/lmb.h>
+ #include <asm/udbg.h>
+ #include <asm/syscalls.h>
++#include <asm/atomic.h>
+ 
+ struct rtas_t rtas = {
+ 	.lock = SPIN_LOCK_UNLOCKED
+@@ -41,10 +45,23 @@ struct rtas_t rtas = {
+ EXPORT_SYMBOL(rtas);
+ 
+ struct rtas_suspend_me_data {
+-	long waiting;
++	int joined;
++	atomic_t working;
+ 	struct rtas_args *args;
++	struct completion done;
++	int error;
+ };
+ 
++static void rtas_suspend_me_data_init(struct rtas_suspend_me_data *rsmd,
++				      struct rtas_args *args)
++{
++	rsmd->joined = 0;
++	atomic_set(&rsmd->working, 0);
++	init_completion(&rsmd->done);
++	rsmd->error = 0;
++	rsmd->args = args;
++}
++
+ DEFINE_SPINLOCK(rtas_data_buf_lock);
+ EXPORT_SYMBOL(rtas_data_buf_lock);
+ 
+@@ -652,45 +669,66 @@ static void rtas_percpu_suspend_me(void 
+ 		(struct rtas_suspend_me_data *)info;
+ 
+ 	/*
+-	 * We use "waiting" to indicate our state.  As long
+-	 * as it is >0, we are still trying to all join up.
+-	 * If it goes to 0, we have successfully joined up and
+-	 * one thread got H_CONTINUE.  If any error happens,
+-	 * we set it to <0.
++	 * We use data->joined to indicate our state.  As long
++	 * as it is false, we are still trying to all join up.
++	 * If it is true, we have successfully joined up and
++	 * one thread got H_CONTINUE.
+ 	 */
+ 	local_irq_save(flags);
++	atomic_inc(&data->working);
+ 	do {
+ 		rc = plpar_hcall_norets(H_JOIN);
+-		smp_rmb();
+-	} while (rc == H_SUCCESS && data->waiting > 0);
++		smp_rmb(); /* needed before testing data->(joined,error) */
++	} while (rc == H_SUCCESS && !data->joined && !data->error);
++
+ 	if (rc == H_SUCCESS)
++		/* join is complete and this cpu was prodded */
+ 		goto out;
+ 
+ 	if (rc == H_CONTINUE) {
+-		data->waiting = 0;
++		printk("Linux suspends from hypervisor at %lld "
++		       "(cpu %u (hwid%u)).\n", sched_clock(),
++		       smp_processor_id(), hard_smp_processor_id());
++
++		/* this cpu does the join */
+ 		data->args->args[data->args->nargs] =
+ 			rtas_call(ibm_suspend_me_token, 0, 1, NULL);
+-		for_each_possible_cpu(i)
+-			plpar_hcall_norets(H_PROD,i);
++		data->joined = 1;
++
++		printk("Linux reconnects with hypervisor at %lld "
++		       "(cpu %u (hwid%u)).\n", sched_clock(),
++		       smp_processor_id(), hard_smp_processor_id());
+ 	} else {
+-		data->waiting = -EBUSY;
++		data->error = -EBUSY;
+ 		printk(KERN_ERR "Error on H_JOIN hypervisor call\n");
+ 	}
+ 
++	/* this cpu updated data->joined or data->error */
++	smp_wmb();
++
++	/* If this cpu did the join or got an error we need to prod
++	 * everyone else.  Extra prods are harmless.
++	 */
++	for_each_possible_cpu(i)
++		plpar_hcall_norets(H_PROD, get_hard_smp_processor_id(i));
++
+ out:
++	if (atomic_dec_return(&data->working) == 0)
++		complete(&data->done);
+ 	local_irq_restore(flags);
+ 	return;
+ }
+ 
++static DEFINE_MUTEX(rsm_lock); /* protects rsm_data */
++static struct rtas_suspend_me_data rsm_data;
++
+ static int rtas_ibm_suspend_me(struct rtas_args *args)
+ {
+-	int i;
++	int err;
+ 	long state;
+ 	long rc;
+ 	unsigned long dummy;
+ 
+-	struct rtas_suspend_me_data data;
+-
+ 	/* Make sure the state is valid */
+ 	rc = plpar_hcall(H_VASI_STATE,
+ 			 ((u64)args->args[0] << 32) | args->args[1],
+@@ -710,25 +748,27 @@ static int rtas_ibm_suspend_me(struct rt
+ 		return 0;
+ 	}
+ 
+-	data.waiting = 1;
+-	data.args = args;
++	mutex_lock(&rsm_lock);
++
++	rtas_suspend_me_data_init(&rsm_data, args);
+ 
+-	/* Call function on all CPUs.  One of us will make the
+-	 * rtas call
++	/* Call function on all CPUs.  One of us (but not necessarily
++	 * this one) will make the ibm,suspend-me call.
+ 	 */
+-	if (on_each_cpu(rtas_percpu_suspend_me, &data, 1, 0))
+-		data.waiting = -EINVAL;
++	if (on_each_cpu(rtas_percpu_suspend_me, &rsm_data, 1, 0))
++		rsm_data.error = -EINVAL;
+ 
+-	if (data.waiting != 0)
++	/* Must wait for all IPIs to complete before unlocking */
++	wait_for_completion(&rsm_data.done);
++
++	if (rsm_data.error != 0)
+ 		printk(KERN_ERR "Error doing global join\n");
+ 
+-	/* Prod each CPU.  This won't hurt, and will wake
+-	 * anyone we successfully put to sleep with H_JOIN.
+-	 */
+-	for_each_possible_cpu(i)
+-		plpar_hcall_norets(H_PROD, i);
++	err = rsm_data.error;
++
++	mutex_unlock(&rsm_lock);
+ 
+-	return data.waiting;
++	return err;
+ }
+ #else /* CONFIG_PPC_PSERIES */
+ static int rtas_ibm_suspend_me(struct rtas_args *args)
+

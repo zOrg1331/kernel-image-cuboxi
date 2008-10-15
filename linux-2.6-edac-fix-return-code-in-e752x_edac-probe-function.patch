@@ -1,0 +1,42 @@
+From: Aristeu Rozanski <arozansk@redhat.com>
+Date: Mon, 15 Oct 2007 17:45:01 -0400
+Subject: [edac] fix return code in e752x_edac probe function
+Message-id: 20071015214501.GA32371@redhat.com
+O-Subject: [RHEL5.2 PATCH] EDAC: fix return code in e752x_edac probe function
+Bugzilla: 231608
+
+https://bugzilla.redhat.com/show_bug.cgi?id=231608
+
+In case of device 0 function 1 being hidden by BIOS, it's not safe to access
+the error registers because the BIOS may expect to have exclusive access. If
+the module parameter force_function_unhide wasn't specified, a message
+is printed and the probe returns an error. Currently in RHEL-5, the
+error code is -ENOMEM, which is wrong. Also, if a PCI driver returns
+something different than -ENODEV, it'll print another error message that
+was found that may cause needless support calls:
+	e752x_edac: probe of 0000:00:00.0 failed with error -12
+	e752x_edac: probe of 0000:00:00.0 failed with error -12
+
+This solution isn't needed for RHEL-4.
+
+Upstream: f9b5a5d193c3f0bc2a8331d95e0e74d76eb8ee2c
+
+Tested by me using hp-dl360g4-01.rhts.boston.redhat.com
+
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: Alan Cox <alan@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/drivers/edac/e752x_edac.c b/drivers/edac/e752x_edac.c
+index c82bc0e..05d6795 100644
+--- a/drivers/edac/e752x_edac.c
++++ b/drivers/edac/e752x_edac.c
+@@ -946,7 +946,7 @@ static int e752x_probe1(struct pci_dev *pdev, int dev_idx)
+ 	if (!force_function_unhide && !(stat8 & (1 << 5))) {
+ 		printk(KERN_INFO "Contact your BIOS vendor to see if the "
+ 			"E752x error registers can be safely un-hidden\n");
+-		return -ENOMEM;
++		return -ENODEV;
+ 	}
+ 	stat8 |= (1 << 5);
+ 	pci_write_config_byte(pdev, E752X_DEVPRES1, stat8);

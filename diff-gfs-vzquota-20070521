@@ -1,0 +1,877 @@
+diff -urp ./fs/gfs/bmap.c ./fs/gfs/bmap.c
+--- ./fs/gfs/bmap.c	2006-12-22 00:55:42.000000000 +0300
++++ ./fs/gfs/bmap.c	2007-05-20 19:12:24.000000000 +0400
+@@ -166,6 +166,7 @@ gfs_unstuff_dinode(struct gfs_inode *ip,
+ 	if (ip->i_di.di_size) {
+ 		*(uint64_t *)(dibh->b_data + sizeof(struct gfs_dinode)) = cpu_to_gfs64(block);
+ 		ip->i_di.di_blocks++;
++		gfs_dquot_incr(ip);
+ 	}
+ 
+ 	ip->i_di.di_height = 1;
+@@ -289,6 +290,7 @@ build_height(struct gfs_inode *ip, int h
+ 		if (new_block) {
+ 			*(uint64_t *)(dibh->b_data + sizeof(struct gfs_dinode)) = cpu_to_gfs64(block);
+ 			ip->i_di.di_blocks++;
++			gfs_dquot_incr(ip);
+ 		}
+ 
+ 		ip->i_di.di_height++;
+@@ -444,6 +446,7 @@ get_metablock(struct gfs_inode *ip,
+ 
+ 	*ptr = cpu_to_gfs64(*block);
+ 	ip->i_di.di_blocks++;
++	gfs_dquot_incr(ip);
+ 
+ 	*new = 1;
+ 
+@@ -495,6 +498,7 @@ get_datablock(struct gfs_inode *ip,
+ 
+ 	*ptr = cpu_to_gfs64(*block);
+ 	ip->i_di.di_blocks++;
++	gfs_dquot_incr(ip);
+ 
+ 	*new = 1;
+ 
+@@ -654,6 +658,9 @@ do_grow(struct gfs_inode *ip, uint64_t s
+ 	error = gfs_quota_check(ip, ip->i_di.di_uid, ip->i_di.di_gid);
+ 	if (error)
+ 		goto out_gunlock_q;
++	error = gfs_dquot_check(ip);
++	if (error)
++		goto out_gunlock_q;
+ 
+ 	if (journaled)
+ 		al->al_requested_meta = sdp->sd_max_height + 1;
+@@ -924,6 +931,7 @@ do_strip(struct gfs_inode *ip, struct bu
+ 		if (!ip->i_di.di_blocks)
+ 			gfs_consist_inode(ip);
+ 		ip->i_di.di_blocks--;
++		gfs_dquot_decr(ip);
+ 	}
+ 	if (bstart) {
+ 		if (metadata)
+diff -urp ./fs/gfs/dir.c ./fs/gfs/dir.c
+--- ./fs/gfs/dir.c	2006-12-22 00:55:42.000000000 +0300
++++ ./fs/gfs/dir.c	2007-05-18 18:01:50.000000000 +0400
+@@ -671,6 +676,7 @@ dir_make_exhash(struct gfs_inode *dip)
+ 	dip->i_di.di_blocks++;
+ 	dip->i_di.di_flags |= GFS_DIF_EXHASH;
+ 	dip->i_di.di_payload_format = 0;
++	gfs_dquot_incr(dip);
+ 
+ 	for (x = sdp->sd_hash_ptrs, y = -1; x; x >>= 1, y++) ;
+ 	dip->i_di.di_depth = y;
+@@ -852,6 +858,7 @@ dir_split_leaf(struct gfs_inode *dip, ui
+ 	error = gfs_get_inode_buffer(dip, &dibh);
+ 	if (!gfs_assert_withdraw(dip->i_sbd, !error)) {
+ 		dip->i_di.di_blocks++;
++		gfs_dquot_incr(dip);
+ 		gfs_dinode_out(&dip->i_di, dibh->b_data);
+ 		brelse(dibh);
+ 	}
+@@ -1464,6 +1471,7 @@ dir_e_add(struct gfs_inode *dip, struct 
+ 				gfs_dirent_alloc(dip, nbh, filename->len, &dent);
+ 
+ 				dip->i_di.di_blocks++;
++				gfs_dquot_incr(dip);
+ 
+ 				brelse(bh);
+ 
+@@ -2208,6 +2216,7 @@ leaf_free(struct gfs_inode *dip,
+ 		if (!dip->i_di.di_blocks)
+ 			gfs_consist_inode(dip);
+ 		dip->i_di.di_blocks--;
++		gfs_dquot_decr(dip);
+ 	}
+ 
+ 	error = gfs_writei(dip, ht, index * sizeof (uint64_t), size, gfs_zero_blocks, NULL);
+diff -urp ./fs/gfs/eattr.c ./fs/gfs/eattr.c
+--- ./fs/gfs/eattr.c	2006-12-22 00:55:42.000000000 +0300
++++ ./fs/gfs/eattr.c	2007-05-18 18:02:08.000000000 +0400
+@@ -355,6 +355,7 @@ ea_dealloc_unstuffed(struct gfs_inode *i
+ 		if (!ip->i_di.di_blocks)
+ 			gfs_consist_inode(ip);
+ 		ip->i_di.di_blocks--;
++		gfs_dquot_decr(ip);
+ 	}
+ 	if (bstart)
+ 		gfs_metafree(ip, bstart, blen);
+@@ -786,6 +787,7 @@ ea_alloc_blk(struct gfs_inode *ip,
+ 	ea->ea_num_ptrs = 0;
+ 
+ 	ip->i_di.di_blocks++;
++	gfs_dquot_incr(ip);
+ 
+ 	return 0;
+ }
+@@ -844,6 +846,7 @@ ea_write(struct gfs_inode *ip,
+ 			gfs_trans_add_bh(ip->i_gl, bh);
+ 			gfs_metatype_set(bh, GFS_METATYPE_ED, GFS_FORMAT_ED);
+ 			ip->i_di.di_blocks++;
++			gfs_dquot_incr(ip);
+ 
+ 			copy = (data_len > sdp->sd_jbsize) ? sdp->sd_jbsize : data_len;
+ 			memcpy(bh->b_data + sizeof(struct gfs_meta_header),
+@@ -895,6 +898,9 @@ ea_alloc_skeleton(struct gfs_inode *ip, 
+ 	error = gfs_quota_check(ip, ip->i_di.di_uid, ip->i_di.di_gid);
+ 	if (error)
+ 		goto out_gunlock_q;
++	error = gfs_dquot_check(ip);
++	if (error)
++		goto out_gunlock_q;
+ 
+ 	al->al_requested_meta = blks;
+ 
+@@ -1267,6 +1273,7 @@ ea_set_block(struct gfs_inode *ip,
+ 		ip->i_di.di_eattr = blk;
+ 		ip->i_di.di_flags |= GFS_DIF_EA_INDIRECT;
+ 		ip->i_di.di_blocks++;
++		gfs_dquot_incr(ip);
+ 
+ 		eablk++;
+ 	}
+@@ -1837,6 +1844,7 @@ ea_dealloc_indirect(struct gfs_inode *ip
+ 		if (!ip->i_di.di_blocks)
+ 			gfs_consist_inode(ip);
+ 		ip->i_di.di_blocks--;
++		gfs_dquot_decr(ip);
+ 	}
+ 	if (bstart)
+ 		gfs_metafree(ip, bstart, blen);
+@@ -1900,6 +1908,7 @@ ea_dealloc_block(struct gfs_inode *ip)
+ 	if (!ip->i_di.di_blocks)
+ 		gfs_consist_inode(ip);
+ 	ip->i_di.di_blocks--;
++	gfs_dquot_decr(ip);
+ 
+ 	error = gfs_get_inode_buffer(ip, &dibh);
+ 	if (!error) {
+diff -urp ./fs/gfs/inode.c ./fs/gfs/inode.c
+--- ./fs/gfs/inode.c	2006-12-22 00:55:42.000000000 +0300
++++ ./fs/gfs/inode.c	2007-05-18 18:16:23.000000000 +0400
+@@ -19,6 +19,7 @@
+ #include <linux/completion.h>
+ #include <linux/buffer_head.h>
+ #include <linux/posix_acl.h>
++#include <linux/quotaops.h>
+ 
+ #include "gfs.h"
+ #include "acl.h"
+@@ -123,9 +124,12 @@ gfs_inode_attr_in(struct gfs_inode *ip)
+ {
+ 	struct inode *inode;
+ 
+-	inode = gfs_iget(ip, NO_CREATE);
++	inode = gfs_iget(ip, NO_CREATE, NULL);
+ 	if (inode) {
++		blkcnt_t blocks = inode->i_blocks;
+ 		inode_attr_in(ip, inode);
++		if (inode->i_blocks != blocks)
++			printk("GFS: inode changed under us: %lu %lu\n", blocks, inode->i_blocks);
+ 		iput(inode);
+ 	}
+ 
+@@ -168,7 +172,7 @@ gfs_inode_attr_out(struct gfs_inode *ip)
+  */
+ 
+ struct inode *
+-gfs_iget(struct gfs_inode *ip, int create)
++gfs_iget(struct gfs_inode *ip, int create, struct inode *prealloc)
+ {
+ 	struct inode *inode = NULL, *tmp;
+ 
+@@ -177,10 +181,25 @@ gfs_iget(struct gfs_inode *ip, int creat
+ 		inode = igrab(ip->i_vnode);
+ 	spin_unlock(&ip->i_spin);
+ 
+-	if (inode || !create)
++	if (inode) {
++		if (prealloc) {
++			printk("Raced GFS inode create\n");
++			DQUOT_FREE_INODE(prealloc);
++			DQUOT_DROP(prealloc);
++			prealloc->i_flags |= S_NOQUOTA;
++			iput(prealloc);
++		}
+ 		return inode;
++	}
++
++	if (!create) {
++		BUG_ON(prealloc);
++		return NULL;
++	}
+ 
+-	tmp = new_inode(ip->i_sbd->sd_vfs);
++	tmp = prealloc;
++	if (!tmp)
++		tmp = new_inode(ip->i_sbd->sd_vfs);
+ 	if (!tmp)
+ 		return NULL;
+ 
+@@ -219,6 +238,9 @@ gfs_iget(struct gfs_inode *ip, int creat
+ 		spin_unlock(&ip->i_spin);
+ 
+ 		if (inode) {
++			if (prealloc) {
++				printk("Raced GFS inode create 2\n");
++			}
+ 			iput(tmp);
+ 			return inode;
+ 		}
+@@ -1269,6 +1291,9 @@ inode_init_and_link(struct gfs_inode *di
+ 		error = gfs_quota_check(dip, dip->i_di.di_uid, dip->i_di.di_gid);
+ 		if (error)
+ 			goto fail_gunlock_q;
++		error = gfs_dquot_check(dip);
++		if (error)
++			goto fail_gunlock_q;
+ 
+ 		al->al_requested_meta = sdp->sd_max_dirres + acl_blocks;
+ 
+@@ -1932,7 +1957,7 @@ gfs_try_toss_vnode(struct gfs_inode *ip)
+ {
+ 	struct inode *inode;
+ 
+-	inode = gfs_iget(ip, NO_CREATE);
++	inode = gfs_iget(ip, NO_CREATE, NULL);
+ 	if (!inode)
+ 		return;
+ 
+diff -urp ./fs/gfs/inode.h ./fs/gfs/inode.h
+--- ./fs/gfs/inode.h	2006-12-22 00:55:42.000000000 +0300
++++ ./fs/gfs/inode.h	2007-05-18 18:02:50.000000000 +0400
+@@ -16,7 +16,7 @@
+ 
+ void gfs_inode_attr_in(struct gfs_inode *ip);
+ void gfs_inode_attr_out(struct gfs_inode *ip);
+-struct inode *gfs_iget(struct gfs_inode *ip, int create);
++struct inode *gfs_iget(struct gfs_inode *ip, int create, struct inode *);
+ 
+ int gfs_copyin_dinode(struct gfs_inode *ip);
+ 
+diff -urp ./fs/gfs/ops_export.c ./fs/gfs/ops_export.c
+--- ./fs/gfs/ops_export.c	2006-12-22 00:55:42.000000000 +0300
++++ ./fs/gfs/ops_export.c	2007-05-18 18:03:55.000000000 +0400
+@@ -259,7 +259,7 @@ gfs_get_parent(struct dentry *child)
+ 	gfs_glock_dq_uninit(&d_gh);
+ 	gfs_glock_dq_uninit(&i_gh);
+ 
+-	inode = gfs_iget(ip, CREATE);
++	inode = gfs_iget(ip, CREATE, NULL);
+ 	gfs_inode_put(ip);
+ 
+ 	if (!inode)
+@@ -371,7 +371,7 @@ gfs_get_dentry(struct super_block *sb, v
+ 	atomic_inc(&sdp->sd_fh2dentry_misses);
+ 
+  out:
+-	inode = gfs_iget(ip, CREATE);
++	inode = gfs_iget(ip, CREATE, NULL);
+ 	gfs_inode_put(ip);
+ 
+ 	gfs_glock_dq_uninit(&i_gh);
+diff -urp ./fs/gfs/ops_file.c ./fs/gfs/ops_file.c
+--- ./fs/gfs/ops_file.c	2007-05-20 19:18:19.000000000 +0400
++++ ./fs/gfs/ops_file.c	2007-05-20 16:46:08.000000000 +0400
+@@ -519,6 +519,9 @@ do_write_direct_alloc(struct file *file,
+ 	error = gfs_quota_check(ip, ip->i_di.di_uid, ip->i_di.di_gid);
+ 	if (error)
+ 		goto fail_gunlock_q;
++	error = gfs_dquot_check(ip);
++	if (error)
++		goto fail_gunlock_q;
+ 
+ 	al->al_requested_meta = ind_blocks;
+ 	al->al_requested_data = data_blocks;
+@@ -549,7 +552,9 @@ do_write_direct_alloc(struct file *file,
+ 		brelse(dibh);
+ 	}
+ 
+-	if (gfs_is_stuffed(ip)) { error = gfs_unstuff_dinode(ip, gfs_unstuffer_sync, NULL); if (error)
++	if (gfs_is_stuffed(ip)) {
++		error = gfs_unstuff_dinode(ip, gfs_unstuffer_sync, NULL);
++		if (error)
+ 			goto fail_end_trans;
+ 	}
+ 
+@@ -799,6 +804,9 @@ do_do_write_buf(struct file *file, char 
+ 		error = gfs_quota_check(ip, ip->i_di.di_uid, ip->i_di.di_gid);
+ 		if (error)
+ 			goto fail_gunlock_q;
++		error = gfs_dquot_check(ip);
++		if (error)
++			goto fail_gunlock_q;
+ 
+ 		if (journaled)
+ 			al->al_requested_meta = ind_blocks + data_blocks;
+diff -urp ./fs/gfs/ops_fstype.c ./fs/gfs/ops_fstype.c
+--- ./fs/gfs/ops_fstype.c	2007-05-20 19:18:19.000000000 +0400
++++ ./fs/gfs/ops_fstype.c	2007-05-18 18:04:14.000000000 +0400
+@@ -341,7 +341,7 @@ static int init_sb(struct gfs_sbd *sdp, 
+ 	}
+ 	/*  Get the root inode/dentry  */
+ 
+-	inode = gfs_iget(sdp->sd_rooti, CREATE);
++	inode = gfs_iget(sdp->sd_rooti, CREATE, NULL);
+ 	if (!inode) {
+ 		printk("GFS: fsid=%s: can't get root inode\n", sdp->sd_fsname);
+ 		error = -ENOMEM;
+diff -urp ./fs/gfs/ops_inode.c ./fs/gfs/ops_inode.c
+--- ./fs/gfs/ops_inode.c	2007-05-20 19:18:19.000000000 +0400
++++ ./fs/gfs/ops_inode.c	2007-05-20 00:43:03.000000000 +0400
+@@ -25,6 +25,7 @@
+ #include <linux/xattr.h>
+ #include <linux/posix_acl.h>
+ #include <linux/security.h>
++#include <linux/quotaops.h>
+ 
+ #include "gfs.h"
+ #include "acl.h"
+@@ -87,6 +88,57 @@ gfs_security_init(struct gfs_inode *dip,
+ 	return err;
+ }
+ 
++static void init_owner(struct inode *inode, struct gfs_inode *dip)
++{
++	struct gfs_sbd *sdp = dip->i_sbd;
++
++	inode->i_uid = current->fsuid;
++	if (sdp->sd_args.ar_suiddir &&
++	    (dip->i_di.di_mode & S_ISUID) &&
++	    dip->i_di.di_uid)
++		inode->i_uid = dip->i_di.di_uid;
++
++	inode->i_gid = current->fsgid;
++	if (dip->i_di.di_mode & S_ISGID)
++		inode->i_gid = dip->i_di.di_gid;
++}
++
++static struct inode *prealloc_inode(struct inode *dir)
++{
++	struct gfs_inode *dip = get_v2ip(dir);
++	struct inode *inode;
++
++	inode = new_inode(dir->i_sb);
++	if (inode == NULL)
++		return ERR_PTR(-ENOMEM);
++
++	init_owner(inode, dip);
++
++	if (DQUOT_ALLOC_INODE(inode))
++		goto out_drop;
++	if (DQUOT_ALLOC_SPACE_NODIRTY(inode, 1<<dip->i_sbd->sd_sb.sb_bsize_shift))
++		goto out_err_noblock;
++
++	return inode;
++
++out_err_noblock:
++	DQUOT_FREE_INODE(inode);
++out_drop:
++	DQUOT_DROP(inode);
++	inode->i_flags |= S_NOQUOTA;
++	iput(inode);
++	return ERR_PTR(-EDQUOT);
++}
++
++static void drop_inode(struct inode *inode)
++{
++	DQUOT_FREE_SPACE_NODIRTY(inode, inode->i_blocks<<9);
++	DQUOT_FREE_INODE(inode);
++	DQUOT_DROP(inode);
++	inode->i_flags |= S_NOQUOTA;
++}
++
++
+ /**
+  * gfs_create - Create a file
+  * @dir: The directory in which to create the file
+@@ -107,6 +159,10 @@ gfs_create(struct inode *dir, struct den
+ 	int new = TRUE;
+ 	int error;
+ 
++	inode = prealloc_inode(dir);
++	if (IS_ERR(inode))
++		return PTR_ERR(inode);
++
+ 	atomic_inc(&sdp->sd_ops_inode);
+ 
+ 	gfs_unlinked_limit(sdp);
+@@ -122,7 +178,7 @@ gfs_create(struct inode *dir, struct den
+ 		else if (error != -EEXIST ||
+ 			 (nd && (nd->intent.open.flags & O_EXCL))) {
+ 			gfs_holder_uninit(&d_gh);
+-			return error;
++			goto out_drop;
+ 		}
+ 
+ 		error = gfs_lookupi(&d_gh, &dentry->d_name,
+@@ -134,7 +190,7 @@ gfs_create(struct inode *dir, struct den
+ 			}
+ 		} else {
+ 			gfs_holder_uninit(&d_gh);
+-			return error;
++			goto out_drop;
+ 		}
+ 	}
+ 
+@@ -149,7 +205,7 @@ gfs_create(struct inode *dir, struct den
+ 		gfs_alloc_put(dip);
+ 	}
+ 
+-	inode = gfs_iget(ip, CREATE);
++	inode = gfs_iget(ip, CREATE, inode);
+ 	gfs_inode_put(ip);
+ 
+ 	if (!inode)
+@@ -149,13 +205,19 @@ gfs_create(struct inode *dir, struct den
+ 	gfs_glock_dq_uninit(&i_gh);
+ 
+ 	if (error)
+-		return error;
++		goto out_err;
+ 
+ 	d_instantiate(dentry, inode);
+ 	if (new)
+ 		mark_inode_dirty(inode);
+ 
+ 	return 0;
++
++out_drop:
++	drop_inode(inode);
++out_err:
++	iput(inode);
++	return error;
+ }
+ 
+ /**
+@@ -339,7 +402,7 @@ gfs_lookup(struct inode *dir, struct den
+ 		gfs_glock_dq_uninit(&d_gh);
+ 		gfs_glock_dq_uninit(&i_gh);
+ 
+-		inode = gfs_iget(ip, CREATE);
++		inode = gfs_iget(ip, CREATE, NULL);
+ 		gfs_inode_put(ip);
+ 
+ 		if (!inode)
+@@ -439,6 +502,9 @@ gfs_link(struct dentry *old_dentry, stru
+ 		error = gfs_quota_check(dip, dip->i_di.di_uid, dip->i_di.di_gid);
+ 		if (error)
+ 			goto fail_gunlock_q;
++		error = gfs_dquot_check(dip);
++		if (error)
++			goto fail_gunlock_q;
+ 
+ 		al->al_requested_meta = sdp->sd_max_dirres;
+ 
+@@ -538,6 +604,8 @@ gfs_unlink(struct inode *dir, struct den
+ 	struct gfs_holder ghs[2];
+ 	int error;
+ 
++	DQUOT_INIT(dentry->d_inode);
++
+ 	atomic_inc(&sdp->sd_ops_inode);
+ 
+ 	gfs_unlinked_limit(sdp);
+@@ -607,14 +675,20 @@ gfs_symlink(struct inode *dir, struct de
+ 	int size;
+ 	int error;
+ 
++	inode = prealloc_inode(dir);
++	if (IS_ERR(inode))
++		return PTR_ERR(inode);
++
+ 	atomic_inc(&sdp->sd_ops_inode);
+ 
+ 	gfs_unlinked_limit(sdp);
+ 
+ 	/* Must be stuffed with a null terminator for gfs_follow_link() */
+ 	size = strlen(symname);
+-	if (size > sdp->sd_sb.sb_bsize - sizeof(struct gfs_dinode) - 1)
+-	        return -ENAMETOOLONG;
++	if (size > sdp->sd_sb.sb_bsize - sizeof(struct gfs_dinode) - 1) {
++		error = -ENAMETOOLONG;
++		goto out_drop;
++	}
+ 
+ 	gfs_holder_init(dip->i_gl, 0, 0, &d_gh);
+ 
+@@ -623,7 +697,7 @@ gfs_symlink(struct inode *dir, struct de
+ 			    &i_gh);
+ 	if (error) {
+ 		gfs_holder_uninit(&d_gh);
+-		return error;
++		goto out_drop;
+ 	}
+ 
+ 	ip = get_gl2ip(i_gh.gh_gl);
+@@ -645,24 +719,31 @@ gfs_symlink(struct inode *dir, struct de
+ 	gfs_unlinked_unlock(sdp, dip->i_alloc->al_ul);
+ 	gfs_alloc_put(dip);
+ 
+-	inode = gfs_iget(ip, CREATE);
++	inode = gfs_iget(ip, CREATE, inode);
+ 	gfs_inode_put(ip);
+ 
+-	error = gfs_security_init(dip, ip);
++	if (inode)
++		error = gfs_security_init(dip, ip);
+ 
+ 	gfs_glock_dq_uninit(&d_gh);
+ 	gfs_glock_dq_uninit(&i_gh);
+ 
+-	if (error)
+-		return error;
+-
+ 	if (!inode)
+ 		return -ENOMEM;
+ 
++	if (error)
++		goto out_err;
++
+ 	d_instantiate(dentry, inode);
+ 	mark_inode_dirty(inode);
+ 
+ 	return 0;
++
++out_drop:
++	drop_inode(inode);
++out_err:
++	iput(inode);
++	return error;
+ }
+ 
+ /**
+@@ -684,6 +765,10 @@ gfs_mkdir(struct inode *dir, struct dent
+ 	struct buffer_head *dibh;
+ 	int error;
+ 
++	inode = prealloc_inode(dir);
++	if (IS_ERR(inode))
++		return PTR_ERR(inode);
++
+ 	atomic_inc(&sdp->sd_ops_inode);
+ 
+ 	gfs_unlinked_limit(sdp);
+@@ -695,7 +780,7 @@ gfs_mkdir(struct inode *dir, struct dent
+ 			    &i_gh);
+ 	if (error) {
+ 		gfs_holder_uninit(&d_gh);
+-		return error;
++		goto out_drop;
+ 	}
+ 
+ 	ip = get_gl2ip(i_gh.gh_gl);
+@@ -744,24 +829,31 @@ gfs_mkdir(struct inode *dir, struct dent
+ 	gfs_unlinked_unlock(sdp, dip->i_alloc->al_ul);
+ 	gfs_alloc_put(dip);
+ 
+-	inode = gfs_iget(ip, CREATE);
++	inode = gfs_iget(ip, CREATE, inode);
+ 	gfs_inode_put(ip);
+ 
+-	if (!inode)
+-		return -ENOMEM;
+-
+-	error = gfs_security_init(dip, ip);
++	if (inode)
++		error = gfs_security_init(dip, ip);
+ 
+ 	gfs_glock_dq_uninit(&d_gh);
+ 	gfs_glock_dq_uninit(&i_gh);
+ 
++	if (!inode)
++		return -ENOMEM;
++
+ 	if (error)
+-		return error;
++		goto out_err;
+ 
+ 	d_instantiate(dentry, inode);
+ 	mark_inode_dirty(inode);
+ 
+ 	return 0;
++
++out_drop:
++	drop_inode(inode);
++out_err:
++	iput(inode);
++	return error;
+ }
+ 
+ /**
+@@ -783,6 +875,8 @@ gfs_rmdir(struct inode *dir, struct dent
+ 	struct gfs_holder ghs[2];
+ 	int error;
+ 
++	DQUOT_INIT(dentry->d_inode);
++
+ 	atomic_inc(&sdp->sd_ops_inode);
+ 
+ 	gfs_unlinked_limit(sdp);
+@@ -865,6 +959,10 @@ gfs_mknod(struct inode *dir, struct dent
+ 	uint32_t major = 0, minor = 0;
+ 	int error;
+ 
++	inode = prealloc_inode(dir);
++	if (IS_ERR(inode))
++		return PTR_ERR(inode);
++
+ 	atomic_inc(&sdp->sd_ops_inode);
+ 
+ 	gfs_unlinked_limit(sdp);
+@@ -889,7 +987,8 @@ gfs_mknod(struct inode *dir, struct dent
+ 	default:
+ 		printk("GFS: fsid=%s: mknod() with invalid type (%d)\n",
+ 		       sdp->sd_fsname, mode);
+-		return -EINVAL;
++		error = -EINVAL;
++		goto out_drop;
+ 	};
+ 
+ 	gfs_holder_init(dip->i_gl, 0, 0, &d_gh);
+@@ -899,7 +998,7 @@ gfs_mknod(struct inode *dir, struct dent
+ 			    &i_gh);
+ 	if (error) {
+ 		gfs_holder_uninit(&d_gh);
+-		return error;
++		goto out_drop;
+ 	}
+ 
+ 	ip = get_gl2ip(i_gh.gh_gl);
+@@ -921,24 +1020,31 @@ gfs_mknod(struct inode *dir, struct dent
+ 	gfs_unlinked_unlock(sdp, dip->i_alloc->al_ul);
+ 	gfs_alloc_put(dip);
+ 
+-	inode = gfs_iget(ip, CREATE);
++	inode = gfs_iget(ip, CREATE, inode);
+ 	gfs_inode_put(ip);
+ 
+-	error = gfs_security_init(dip, ip);
++	if (inode)
++		error = gfs_security_init(dip, ip);
+ 
+ 	gfs_glock_dq_uninit(&d_gh);
+ 	gfs_glock_dq_uninit(&i_gh);
+ 
+-	if (error)
+-		return error;
+-
+ 	if (!inode)
+ 		return -ENOMEM;
+ 
++	if (error)
++		goto out_err;
++
+ 	d_instantiate(dentry, inode);
+ 	mark_inode_dirty(inode);
+ 
+ 	return 0;
++
++out_drop:
++	drop_inode(inode);
++out_err:
++	iput(inode);
++	return error;
+ }
+ 
+ /**
+@@ -969,6 +1075,9 @@ gfs_rename(struct inode *odir, struct de
+ 	unsigned int x;
+ 	int error;
+ 
++	if (ndentry->d_inode)
++		DQUOT_INIT(ndentry->d_inode);
++
+ 	atomic_inc(&sdp->sd_ops_inode);
+ 
+ 	gfs_unlinked_limit(sdp);
+@@ -1082,6 +1191,9 @@ gfs_rename(struct inode *odir, struct de
+ 		error = gfs_quota_check(ndip, ndip->i_di.di_uid, ndip->i_di.di_gid);
+ 		if (error)
+ 			goto fail_gunlock_q;
++		error = gfs_dquot_check(ndip);
++		if (error)
++			goto fail_gunlock_q;
+ 
+ 		al->al_requested_meta = sdp->sd_max_dirres;
+ 
+@@ -1428,6 +1543,9 @@ gfs_setattr(struct dentry *dentry, struc
+ 			error = gfs_quota_check(ip, nuid, ngid);
+ 			if (error)
+ 				goto fail_gunlock_q;
++			error = DQUOT_TRANSFER(inode, attr) ? -EDQUOT : 0;
++			if (error)
++				goto fail_gunlock_q;
+ 		}
+ 
+ 		/* Trans may require:
+@@ -1517,6 +1635,8 @@ gfs_getattr(struct vfsmount *mnt, struct
+ 	error = gfs_glock_nq_init(ip->i_gl, LM_ST_SHARED, LM_FLAG_ANY, &gh);
+ 	if (!error) {
+ 		generic_fillattr(inode, stat);
++		if (inode->i_blocks != (ip->i_di.di_blocks<<(ip->i_sbd->sd_sb.sb_bsize_shift - GFS_BASIC_BLOCK_SHIFT)))
++			printk("STAT: %lu %lu\n", inode->i_blocks, ip->i_di.di_blocks);
+ 		gfs_glock_dq_uninit(&gh);
+ 	}
+ 
+diff -urp ./fs/gfs/ops_super.c ./fs/gfs/ops_super.c
+--- ./fs/gfs/ops_super.c	2007-05-20 19:18:19.000000000 +0400
++++ ./fs/gfs/ops_super.c	2007-05-18 18:35:43.000000000 +0400
+@@ -22,6 +22,7 @@
+ #include <linux/statfs.h>
+ #include <linux/seq_file.h>
+ #include <linux/mount.h>
++#include <linux/quotaops.h>
+ 
+ #include "gfs.h"
+ #include "dio.h"
+@@ -395,6 +396,33 @@ gfs_clear_inode(struct inode *inode)
+ 	}
+ }
+ 
++/* Added only to hook DQUOT_FREE_INODE. --ANK */
++
++void gfs_delete_inode (struct inode * inode)
++{
++	struct gfs_inode *ip = get_v2ip(inode);
++
++	truncate_inode_pages(&inode->i_data, 0);
++
++	if (is_bad_inode(inode))
++		goto no_delete;
++
++	WARN_ON(ip == NULL);
++	if (ip) {
++		WARN_ON(ip->i_di.di_nlink);
++		if (inode->i_blocks != (ip->i_di.di_blocks<<(ip->i_sbd->sd_sb.sb_bsize_shift - GFS_BASIC_BLOCK_SHIFT)))
++			printk("gfs_delete_inode: %lu %lu\n", inode->i_blocks, ip->i_di.di_blocks);
++	}
++	if (inode->i_blocks)
++		DQUOT_FREE_SPACE_NODIRTY(inode, (qsize_t)inode->i_blocks<<9);
++	DQUOT_FREE_INODE(inode);
++	DQUOT_DROP(inode);
++	inode->i_flags |= S_NOQUOTA;
++
++no_delete:
++	clear_inode(inode);
++}
++
+ /**
+  * gfs_show_options - Show mount options for /proc/mounts
+  * @s: seq_file structure
+@@ -458,6 +486,7 @@ struct super_operations gfs_super_ops = 
+ 	.unlockfs = gfs_unlockfs,
+ 	.statfs = gfs_statfs,
+ 	.remount_fs = gfs_remount_fs,
++	.delete_inode = gfs_delete_inode,
+ 	.clear_inode = gfs_clear_inode,
+ 	.show_options = gfs_show_options,
+ };
+diff -urp ./fs/gfs/ops_vm.c ./fs/gfs/ops_vm.c
+--- ./fs/gfs/ops_vm.c	2006-12-22 00:55:42.000000000 +0300
++++ ./fs/gfs/ops_vm.c	2007-05-18 17:50:23.000000000 +0400
+@@ -115,6 +115,9 @@ alloc_page_backing(struct gfs_inode *ip,
+ 	error = gfs_quota_check(ip, ip->i_di.di_uid, ip->i_di.di_gid);
+ 	if (error)
+ 		goto out_gunlock_q;
++	error = gfs_dquot_check(ip);
++	if (error)
++		goto out_gunlock_q;
+ 
+ 	gfs_write_calc_reserv(ip, PAGE_CACHE_SIZE,
+ 			      &al->al_requested_data, &al->al_requested_meta);
+diff -urp ./fs/gfs/page.c ./fs/gfs/page.c
+--- ./fs/gfs/page.c	2006-12-22 00:55:42.000000000 +0300
++++ ./fs/gfs/page.c	2007-05-18 18:07:42.000000000 +0400
+@@ -46,7 +46,7 @@ gfs_inval_pte(struct gfs_glock *gl)
+ 	if (!test_bit(GIF_PAGED, &ip->i_flags))
+ 		return;
+ 
+-	inode = gfs_iget(ip, NO_CREATE);
++	inode = gfs_iget(ip, NO_CREATE, NULL);
+ 	if (inode) {
+ 		unmap_shared_mapping_range(inode->i_mapping, 0, 0);
+ 		iput(inode);
+@@ -75,7 +75,7 @@ gfs_inval_page(struct gfs_glock *gl)
+ 	    ip->i_di.di_type != GFS_FILE_REG)
+ 		return;
+ 
+-	inode = gfs_iget(ip, NO_CREATE);
++	inode = gfs_iget(ip, NO_CREATE, NULL);
+ 	if (inode) {
+ 		struct address_space *mapping = inode->i_mapping;
+ 
+@@ -131,7 +131,7 @@ gfs_sync_page(struct gfs_glock *gl, int 
+ 	    ip->i_di.di_type != GFS_FILE_REG)
+ 		return;
+ 
+-	inode = gfs_iget(ip, NO_CREATE);
++	inode = gfs_iget(ip, NO_CREATE, NULL);
+ 	if (inode) {
+ 		gfs_sync_page_i(inode, flags);
+ 		iput(inode);
+diff -urp ./fs/gfs/quota.c ./fs/gfs/quota.c
+--- ./fs/gfs/quota.c	2006-12-22 00:55:42.000000000 +0300
++++ ./fs/gfs/quota.c	2007-05-20 18:33:15.000000000 +0400
+@@ -19,6 +19,8 @@
+ #include <linux/completion.h>
+ #include <linux/buffer_head.h>
+ #include <linux/tty.h>
++#include <linux/quotaops.h>
++#include <linux/vzquota.h>
+ 
+ #include "gfs.h"
+ #include "bmap.h"
+@@ -1150,3 +1152,38 @@ gfs_quota_read(struct gfs_sbd *sdp, int 
+ 
+ 	return error;
+ }
++
++int gfs_dquot_check(struct gfs_inode *ip)
++{
++	if (ip->i_vnode == NULL)
++		return 0;
++	if (DQUOT_ALLOC_SPACE_NODIRTY(ip->i_vnode, 512))
++		return -EDQUOT;
++	DQUOT_FREE_SPACE_NODIRTY(ip->i_vnode, 512);
++	return 0;
++}
++
++void gfs_dquot_incr(struct gfs_inode *ip)
++{
++	struct inode * inode = ip->i_vnode;
++	unsigned int oneblock;
++
++	if (inode == NULL)
++		return;
++
++	oneblock = 1<<ip->i_sbd->sd_sb.sb_bsize_shift;
++
++	if (sb_any_quota_enabled(inode->i_sb))
++		inode->i_sb->dq_op->alloc_space(inode, oneblock,
++						DQUOT_CMD_FORCE);
++	else
++		inode_add_bytes(inode, oneblock);
++}
++
++void gfs_dquot_decr(struct gfs_inode *ip)
++{
++	struct inode * inode = ip->i_vnode;
++
++	if (inode)
++		DQUOT_FREE_SPACE_NODIRTY(inode, 1<<ip->i_sbd->sd_sb.sb_bsize_shift);
++}
+diff -urp ./fs/gfs/quota.h ./fs/gfs/quota.h
+--- ./fs/gfs/quota.h	2006-12-22 00:55:42.000000000 +0300
++++ ./fs/gfs/quota.h	2007-05-18 17:50:21.000000000 +0400
+@@ -32,6 +32,9 @@ int gfs_quota_lock_m(struct gfs_inode *i
+ void gfs_quota_unlock_m(struct gfs_inode *ip);
+ 
+ int gfs_quota_check(struct gfs_inode *ip, uint32_t uid, uint32_t gid);
++int gfs_dquot_check(struct gfs_inode *);
++void gfs_dquot_incr(struct gfs_inode *);
++void gfs_dquot_decr(struct gfs_inode *);
+ 
+ int gfs_quota_sync(struct gfs_sbd *sdp);
+ int gfs_quota_refresh(struct gfs_sbd *sdp, int user, uint32_t id);

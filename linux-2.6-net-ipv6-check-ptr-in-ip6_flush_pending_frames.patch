@@ -1,0 +1,33 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Thu, 27 Mar 2008 10:39:22 -0400
+Subject: [net] ipv6: check ptr in ip6_flush_pending_frames
+Message-id: 20080327143922.GA29675@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL 5.2 PATCH] fix Null pointer dereference in ip6_flush_pending_frames (bz 439059)
+Bugzilla: 439059
+
+Hey-
+Backport of upstream commit e1f52208bb968291f7d9142eff60b62984b4a511 to fix a
+NULL pointer dereference in ip6_flush_pending_frames.  Fixes bz 439059.
+
+Regards
+Neil
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Thomas Graf <tgraf@redhat.com>
+
+diff --git a/net/ipv6/ip6_output.c b/net/ipv6/ip6_output.c
+index 373cc8a..920625f 100644
+--- a/net/ipv6/ip6_output.c
++++ b/net/ipv6/ip6_output.c
+@@ -1353,8 +1353,9 @@ void ip6_flush_pending_frames(struct sock *sk)
+ 	struct sk_buff *skb;
+ 
+ 	while ((skb = __skb_dequeue_tail(&sk->sk_write_queue)) != NULL) {
+-		IP6_INC_STATS(ip6_dst_idev(skb->dst),
+-			      IPSTATS_MIB_OUTDISCARDS);
++		if (skb->dst)
++			IP6_INC_STATS(ip6_dst_idev(skb->dst),
++				      IPSTATS_MIB_OUTDISCARDS);
+ 		kfree_skb(skb);
+ 	}
+ 

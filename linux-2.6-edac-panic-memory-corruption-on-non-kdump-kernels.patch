@@ -1,0 +1,56 @@
+From: Don Zickus <dzickus@redhat.com>
+Subject: [RHEL-5.1 PATCH] x86: allow edac to panic with memory corruption on non-kdump kernels
+Date: Thu, 12 Jul 2007 12:15:44 -0400
+Bugzilla: 237950
+Message-Id: <20070712161544.GL22926@redhat.com>
+Changelog: [edac] allow edac to panic with memory corruption on non-kdump kernels
+
+
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=237950
+
+This patch reverts part of a previous patch that disables a memory
+corruption failure on a non-kdump kernel using the edac module.
+
+The initial reason for disabling the panic was that kdump kernels were
+panicing in the AGP subsystem, most likely due to in-flight dma requests
+from the previous kernel.  This breaks the idea of kdump.  So a change to
+a printk was made.
+
+Upon thinking about it, this is really a bad idea.  Memory corruption is
+something that kernel should _not_ continue to run with.  The hack below
+allows the panic for non-kdump kernels, but continues to only offer
+printks for the kdump kernel on x86 arches.
+
+Hopefully, a more correct solution will present itself for 5.2 but that is
+still being fleshed out upstream and will not be ready for 5.1.  Hence the
+temporary solution proposed here.
+
+Please ACK for 5.1.  Yeah this is about as late as it gets...
+
+Thanks to Alan for noticing this flaw.
+
+Thanks to Konrad for testing on a system that could reproduce the original
+problem.
+
+Cheers,
+Don
+
+
+--- linux-2.6.18.noarch/drivers/edac/k8_edac.c.orig	2007-06-22 11:05:00.000000000 -0400
++++ linux-2.6.18.noarch/drivers/edac/k8_edac.c	2007-06-22 11:05:06.000000000 -0400
+@@ -1749,8 +1749,12 @@
+ 		edac_mc_handle_ue_no_info(mci, "UE bit is set\n");
+ 	}
+ 
+-	if (regs->nbsh & BIT(25))
+-		k8_mc_printk(mci, KERN_CRIT, "processor context corrupt\n");
++	if (regs->nbsh & BIT(25)) {
++		if (reset_devices == 0)
++			panic("MC%d: processor context corrupt", mci->mc_idx);
++		else
++			k8_mc_printk(mci, KERN_CRIT, "processor context corrupt\n");
++	}
+ 
+ 	return 1;
+ }
+

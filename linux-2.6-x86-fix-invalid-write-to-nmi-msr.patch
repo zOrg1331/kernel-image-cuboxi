@@ -1,0 +1,235 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5.1 PATCH]: BZ 221671 Fix write invalid to MSR
+Date: Wed, 11 Apr 2007 09:43:53 -0400
+Bugzilla: 221671
+Message-Id: <20070411134353.12398.71459.sendpatchset@prarit.boston.redhat.com>
+Changelog: [x86] Fix invalid write to nmi MSR
+
+
+Patch from Venkatesh Pallipadi of Intel (who authored the patches above).
+
+Tested successfully on i386, x86_64, and i386 on x86_64, by me.
+
+diff -urNp -X linux-2.6.18.x86_64/Documentation/dontdiff linux-2.6.18.x86_64.orig/arch/i386/kernel/nmi.c linux-2.6.18.x86_64/arch/i386/kernel/nmi.c
+--- linux-2.6.18.x86_64.orig/arch/i386/kernel/nmi.c	2007-04-10 08:45:32.000000000 -0400
++++ linux-2.6.18.x86_64/arch/i386/kernel/nmi.c	2007-04-10 08:45:41.000000000 -0400
+@@ -118,6 +118,28 @@ static __init void nmi_cpu_busy(void *da
+ }
+ #endif
+ 
++static unsigned int adjust_for_32bit_ctr(unsigned int hz)
++{
++	u64 counter_val;
++	unsigned int retval = hz;
++
++	/*
++	 * On Intel CPUs with P6/ARCH_PERFMON only 32 bits in the counter
++	 * are writable, with higher bits sign extending from bit 31.
++	 * So, we can only program the counter with 31 bit values and
++	 * 32nd bit should be 1, for 33.. to be 1.
++	 * Find the appropriate nmi_hz
++	 */
++	counter_val = (u64)cpu_khz * 1000;
++	do_div(counter_val, retval);
++	if (counter_val > 0x7fffffffULL) {
++		u64 count = (u64)cpu_khz * 1000;
++		do_div(count, 0x7fffffffUL);
++		retval = count + 1;
++	}
++	return retval;
++}
++
+ static int __init check_nmi_watchdog(void)
+ {
+ 	volatile int endflag = 0;
+@@ -165,8 +187,14 @@ static int __init check_nmi_watchdog(voi
+ 
+ 	/* now that we know it works we can reduce NMI frequency to
+ 	   something more reasonable; makes a difference in some configs */
+-	if (nmi_watchdog == NMI_LOCAL_APIC)
++	if (nmi_watchdog == NMI_LOCAL_APIC) {
++
+ 		nmi_hz = 1;
++		if (nmi_perfctr_msr == MSR_P6_PERFCTR0 ||
++		    nmi_perfctr_msr == MSR_ARCH_PERFMON_PERFCTR0) {
++			nmi_hz = adjust_for_32bit_ctr(nmi_hz);
++		}
++	}
+ 
+ 	kfree(prev_nmi_count);
+ 	return 0;
+@@ -371,6 +399,16 @@ static void write_watchdog_counter(const
+ 	wrmsrl(nmi_perfctr_msr, 0 - count);
+ }
+ 
++static void write_watchdog_counter32(const char *descr)
++{
++	u64 count = (u64)cpu_khz * 1000;
++
++	do_div(count, nmi_hz);
++	if(descr)
++		Dprintk("setting %s to -0x%08Lx\n", descr, count);
++	wrmsr(nmi_perfctr_msr, (u32)(-count), 0);
++}
++
+ static void setup_k7_watchdog(void)
+ {
+ 	unsigned int evntsel;
+@@ -407,7 +445,8 @@ static void setup_p6_watchdog(void)
+ 		| P6_NMI_EVENT;
+ 
+ 	wrmsr(MSR_P6_EVNTSEL0, evntsel, 0);
+-	write_watchdog_counter("P6_PERFCTR0");
++	nmi_hz = adjust_for_32bit_ctr(nmi_hz);
++	write_watchdog_counter32("P6_PERFCTR0");
+ 	apic_write(APIC_LVTPC, APIC_DM_NMI);
+ 	evntsel |= P6_EVNTSEL0_ENABLE;
+ 	wrmsr(MSR_P6_EVNTSEL0, evntsel, 0);
+@@ -493,7 +532,8 @@ static int setup_intel_arch_watchdog(voi
+ 		| ARCH_PERFMON_NMI_EVENT_UMASK;
+ 
+ 	wrmsr(MSR_ARCH_PERFMON_EVENTSEL0, evntsel, 0);
+-	write_watchdog_counter("INTEL_ARCH_PERFCTR0");
++	nmi_hz = adjust_for_32bit_ctr(nmi_hz);
++	write_watchdog_counter32("INTEL_ARCH_PERFCTR0");
+ 	apic_write(APIC_LVTPC, APIC_DM_NMI);
+ 	evntsel |= ARCH_PERFMON_EVENTSEL0_ENABLE;
+ 	wrmsr(MSR_ARCH_PERFMON_EVENTSEL0, evntsel, 0);
+@@ -617,6 +657,7 @@ void nmi_watchdog_tick (struct pt_regs *
+ 			 */
+ 			wrmsr(MSR_P4_IQ_CCCR0, nmi_p4_cccr_val, 0);
+ 			apic_write(APIC_LVTPC, APIC_DM_NMI);
++			write_watchdog_counter(NULL);
+ 		}
+ 		else if (nmi_perfctr_msr == MSR_P6_PERFCTR0 ||
+ 		         nmi_perfctr_msr == MSR_ARCH_PERFMON_PERFCTR0) {
+@@ -624,8 +665,10 @@ void nmi_watchdog_tick (struct pt_regs *
+ 			 * the apic vector but it doesn't hurt
+ 			 * other P6 variant */
+ 			apic_write(APIC_LVTPC, APIC_DM_NMI);
++			write_watchdog_counter32(NULL);
++		} else {
++			write_watchdog_counter(NULL);
+ 		}
+-		write_watchdog_counter(NULL);
+ 	}
+ }
+ 
+diff -urNp -X linux-2.6.18.x86_64/Documentation/dontdiff linux-2.6.18.x86_64.orig/arch/i386/oprofile/op_model_ppro.c linux-2.6.18.x86_64/arch/i386/oprofile/op_model_ppro.c
+--- linux-2.6.18.x86_64.orig/arch/i386/oprofile/op_model_ppro.c	2007-04-10 08:45:32.000000000 -0400
++++ linux-2.6.18.x86_64/arch/i386/oprofile/op_model_ppro.c	2007-04-10 08:45:41.000000000 -0400
+@@ -23,7 +23,7 @@
+ #define NUM_CONTROLS 2
+ 
+ #define CTR_READ(l,h,msrs,c) do {rdmsr(msrs->counters[(c)].addr, (l), (h));} while (0)
+-#define CTR_WRITE(l,msrs,c) do {wrmsr(msrs->counters[(c)].addr, -(u32)(l), -1);} while (0)
++#define CTR_32BIT_WRITE(l,msrs,c) do {wrmsr(msrs->counters[(c)].addr, -(u32)(l), 0);} while (0)
+ #define CTR_OVERFLOWED(n) (!((n) & (1U<<31)))
+ 
+ #define CTRL_READ(l,h,msrs,c) do {rdmsr((msrs->controls[(c)].addr), (l), (h));} while (0)
+@@ -63,7 +63,7 @@ static void ppro_setup_ctrs(struct op_ms
+ 	
+ 	/* avoid a false detection of ctr overflows in NMI handler */
+ 	for (i = 0; i < NUM_COUNTERS; ++i) {
+-		CTR_WRITE(1, msrs, i);
++		CTR_32BIT_WRITE(1, msrs, i);
+ 	}
+ 
+ 	/* enable active counters */
+@@ -71,7 +71,7 @@ static void ppro_setup_ctrs(struct op_ms
+ 		if (counter_config[i].enabled) {
+ 			reset_value[i] = counter_config[i].count;
+ 
+-			CTR_WRITE(counter_config[i].count, msrs, i);
++			CTR_32BIT_WRITE(counter_config[i].count, msrs, i);
+ 
+ 			CTRL_READ(low, high, msrs, i);
+ 			CTRL_CLEAR(low);
+@@ -96,7 +96,7 @@ static int ppro_check_ctrs(struct pt_reg
+ 		CTR_READ(low, high, msrs, i);
+ 		if (CTR_OVERFLOWED(low)) {
+ 			oprofile_add_sample(regs, i);
+-			CTR_WRITE(reset_value[i], msrs, i);
++			CTR_32BIT_WRITE(reset_value[i], msrs, i);
+ 		}
+ 	}
+ 
+diff -urNp -X linux-2.6.18.x86_64/Documentation/dontdiff linux-2.6.18.x86_64.orig/arch/x86_64/kernel/nmi.c linux-2.6.18.x86_64/arch/x86_64/kernel/nmi.c
+--- linux-2.6.18.x86_64.orig/arch/x86_64/kernel/nmi.c	2007-04-10 08:45:32.000000000 -0400
++++ linux-2.6.18.x86_64/arch/x86_64/kernel/nmi.c	2007-04-10 08:45:41.000000000 -0400
+@@ -141,6 +141,23 @@ static __init void nmi_cpu_busy(void *da
+ }
+ #endif
+ 
++static unsigned int adjust_for_32bit_ctr(unsigned int hz)
++{
++	unsigned int retval = hz;
++
++	/*
++	 * On Intel CPUs with ARCH_PERFMON only 32 bits in the counter
++	 * are writable, with higher bits sign extending from bit 31.
++	 * So, we can only program the counter with 31 bit values and
++	 * 32nd bit should be 1, for 33.. to be 1.
++	 * Find the appropriate nmi_hz
++	 */
++	if ((((u64)cpu_khz * 1000) / retval) > 0x7fffffffULL) {
++		retval = ((u64)cpu_khz * 1000) / 0x7fffffffUL + 1;
++	}
++	return retval;
++}
++
+ int __init check_nmi_watchdog (void)
+ {
+ 	volatile int endflag = 0;
+@@ -182,8 +199,13 @@ int __init check_nmi_watchdog (void)
+ 
+ 	/* now that we know it works we can reduce NMI frequency to
+ 	   something more reasonable; makes a difference in some configs */
+-	if (nmi_watchdog == NMI_LOCAL_APIC)
++	if (nmi_watchdog == NMI_LOCAL_APIC) {
++
+ 		nmi_hz = 1;
++		if (nmi_perfctr_msr == MSR_ARCH_PERFMON_PERFCTR0) {
++			nmi_hz = adjust_for_32bit_ctr(nmi_hz);
++		}
++	}
+ 
+ 	kfree(counts);
+ 	return 0;
+@@ -419,7 +441,10 @@ static int setup_intel_arch_watchdog(voi
+ 		| ARCH_PERFMON_NMI_EVENT_UMASK;
+ 
+ 	wrmsr(MSR_ARCH_PERFMON_EVENTSEL0, evntsel, 0);
+-	wrmsrl(MSR_ARCH_PERFMON_PERFCTR0, -((u64)cpu_khz * 1000 / nmi_hz));
++
++	nmi_hz = adjust_for_32bit_ctr(nmi_hz);
++	wrmsr(nmi_perfctr_msr, (u32)(-((u64)cpu_khz * 1000 / nmi_hz)), 0);
++
+ 	apic_write(APIC_LVTPC, APIC_DM_NMI);
+ 	evntsel |= ARCH_PERFMON_EVENTSEL0_ENABLE;
+ 	wrmsr(MSR_ARCH_PERFMON_EVENTSEL0, evntsel, 0);
+@@ -573,6 +598,8 @@ void __kprobes nmi_watchdog_tick(struct 
+  			 */
+  			wrmsr(MSR_P4_IQ_CCCR0, nmi_p4_cccr_val, 0);
+  			apic_write(APIC_LVTPC, APIC_DM_NMI);
++			wrmsrl(nmi_perfctr_msr,
++			       -((u64)cpu_khz * 1000 / nmi_hz));
+  		} else if (nmi_perfctr_msr == MSR_ARCH_PERFMON_PERFCTR0) {
+ 			/*
+ 			 * For Intel based architectural perfmon
+@@ -580,8 +607,13 @@ void __kprobes nmi_watchdog_tick(struct 
+ 			 *   unmasked by the LVTPC handler.
+ 			 */
+ 			apic_write(APIC_LVTPC, APIC_DM_NMI);
++			/* ARCH PERFMON has 32 bit counter writes */
++			wrmsr(nmi_perfctr_msr,
++			       (u32)(-((u64)cpu_khz * 1000 / nmi_hz)), 0);
++		} else {
++			wrmsrl(nmi_perfctr_msr,
++			       -((u64)cpu_khz * 1000 / nmi_hz));
+ 		}
+-		wrmsrl(nmi_perfctr_msr, -((u64)cpu_khz * 1000 / nmi_hz));
+ 	}
+ }
+ 
+

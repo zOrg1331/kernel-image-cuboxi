@@ -1,0 +1,57 @@
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [RHEL5.1] [PATCH] NFS - Re-enable force umount
+Date: Fri, 13 Jul 2007 10:12:38 -0400
+Bugzilla: 244949
+Message-Id: <46978856.9020404@RedHat.com>
+Changelog: [NFS] Re-enable force umount
+
+
+This is a regression with regards RHEL4... The ability to forcible
+unmount NFS file systems was lost with the when the shared
+super blocks were introduce in the 2.6.18 kernel.
+
+This patch re-enables this functionality.
+
+The bz is:
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=244949
+
+Please ACK...
+
+steved.
+
+
+commit fc6ae3cf482c385a6fe87ba119d399bb85aa670b
+Author: Trond Myklebust <Trond.Myklebust@netapp.com>
+Date:   Tue Jun 5 19:13:47 2007 -0400
+
+    NFS: Re-enable forced umounts
+    
+    They disappeared some time around 2.6.18.
+    
+    Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+--- linux-2.6.18.i686/fs/nfs/super.c.orig	2007-07-12 22:19:40.000000000 -0400
++++ linux-2.6.18.i686/fs/nfs/super.c	2007-07-13 09:57:01.000000000 -0400
+@@ -432,7 +432,20 @@ static int nfs_show_stats(struct seq_fil
+  */
+ static void nfs_umount_begin(struct vfsmount *vfsmnt, int flags)
+ {
++	struct nfs_server *server = NFS_SB(vfsmnt->mnt_sb);
++	struct rpc_clnt *rpc;
++
+ 	shrink_submounts(vfsmnt, &nfs_automount_list);
++	
++	if (!(flags & MNT_FORCE))
++		return;
++	/* -EIO all pending I/O */
++	rpc = server->client_acl;
++	if (!IS_ERR(rpc))
++		rpc_killall_tasks(rpc);
++	rpc = server->client;
++	if (!IS_ERR(rpc))
++		rpc_killall_tasks(rpc);
+ }
+ 
+ /*
+
+

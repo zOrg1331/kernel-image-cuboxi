@@ -1,0 +1,11 @@
+--- ./sound/pci/hda/hda_intel.c.ve5555	2007-11-18 17:41:05.000000000 +0300
++++ ./sound/pci/hda/hda_intel.c	2007-12-14 17:27:58.000000000 +0300
+@@ -1518,7 +1518,7 @@ static int azx_dev_free(struct snd_devic
+ /*
+  * white/black-listing for position_fix
+  */
+-static const struct snd_pci_quirk position_fix_list[] __devinitdata = {
++static const struct snd_pci_quirk position_fix_list[] = {
+ 	SND_PCI_QUIRK(0x1028, 0x01cc, "Dell D820", POS_FIX_NONE),
+ 	{}
+ };

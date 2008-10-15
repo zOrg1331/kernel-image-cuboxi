@@ -1,0 +1,31 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Tue, 29 Jan 2008 12:32:45 -0500
+Subject: [scsi] qla25xx: incorrect firmware loaded
+Message-id: 20080129173245.25220.90391.sendpatchset@shell.boston.redhat.com
+O-Subject: [Bug 430725] [QLogic] [RHEL5.2 bug] UPDATED: qla2xxx - Incorrect firmware loaded for qla25xx
+Bugzilla: 430725
+
+BZ 430725
+
+Fix incorrect firmware loaded for 25xx.
+
+A typo caused the 24xx firmware to be loaded into the
+25xx cards. The typo was fixed and tested by observing
+proper link bring-up and much I/O was performed.
+
+Without this fix the newer 8 Gb/S adapters will not work
+and many OEMs will be testing this in 5.2 beta.
+
+diff --git a/drivers/scsi/qla2xxx/qla_os.c b/drivers/scsi/qla2xxx/qla_os.c
+index 3c794c7..00c7c9b 100644
+--- a/drivers/scsi/qla2xxx/qla_os.c
++++ b/drivers/scsi/qla2xxx/qla_os.c
+@@ -2822,7 +2822,7 @@ qla2x00_down_timeout(struct semaphore *sema, unsigned long timeout)
+ #define FW_ISP2300	2
+ #define FW_ISP2322	3
+ #define FW_ISP24XX	4
+-#define FW_ISP25XX	4
++#define FW_ISP25XX	5
+ 
+ static DECLARE_MUTEX(qla_fw_lock);
+ 

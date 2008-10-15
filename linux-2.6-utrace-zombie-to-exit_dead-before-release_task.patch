@@ -1,0 +1,81 @@
+From: Roland McGrath <roland@redhat.com>
+Subject: Re: [rhel5.1 patch] set zombie leader to EXIT_DEAD before release_task (BZ 248621)
+Date: Fri, 20 Jul 2007 00:08:07 -0700 (PDT)
+Bugzilla: 248621
+Message-Id: <20070720070807.E6A4F4D05CF@magilla.localdomain>
+Changelog: [utrace] set zombie leader to EXIT_DEAD before release_task
+
+
+This change should resolve 248621/247709.
+
+Thanks,
+Roland
+
+
+
+[PATCH] Call tracehook_check_released outside of locks.
+
+---
+ include/linux/tracehook.h |    1 -
+ kernel/exit.c             |    2 +-
+ 2 files changed, 1 insertions(+), 2 deletions(-)
+
+diff --git a/include/linux/tracehook.h b/include/linux/tracehook.h
+index 9e17c4d..c8af59b 100644
+--- a/include/linux/tracehook.h
++++ b/include/linux/tracehook.h
+@@ -120,7 +120,6 @@ static inline void tracehook_release_task(struct task_struct *p)
+  * Return nonzero to trigger a BUG_ON crash in release_task.
+  * This should verify that there is no tracing-related state
+  * still affecting the task_struct about to be released.
+- * Called with tasklist_lock held for writing.
+  */
+ static inline int tracehook_check_released(struct task_struct *p)
+ {
+diff --git a/kernel/exit.c b/kernel/exit.c
+index 2044ddf..ab02712 100644
+--- a/kernel/exit.c
++++ b/kernel/exit.c
+@@ -158,8 +158,8 @@ void release_task(struct task_struct * p)
+ repeat:
+ 	tracehook_release_task(p);
+ 	atomic_dec(&p->user->processes);
+-	write_lock_irq(&tasklist_lock);
+ 	BUG_ON(tracehook_check_released(p));
++	write_lock_irq(&tasklist_lock);
+ 	__exit_signal(p);
+ 
+ 	/*
+
+[PATCH] Set zombie leader exit_state to EXIT_DEAD before calling release_task.
+
+This preserves the invariant that release_task is always passed a task in
+EXIT_DEAD state, which the utrace code expects.
+
+Signed-off-by: Roland McGrath <roland@redhat.com>
+---
+ kernel/exit.c |    8 ++++++++
+ 1 files changed, 8 insertions(+), 0 deletions(-)
+
+diff --git a/kernel/exit.c b/kernel/exit.c
+index e42b0be..3a4ccda 100644
+--- a/kernel/exit.c
++++ b/kernel/exit.c
+@@ -187,6 +187,14 @@ repeat:
+ 		 * that case.
+ 		 */
+ 		zap_leader = (leader->exit_signal == -1);
++		if (zap_leader) {
++			/*
++			 * Preserve the invariant that release_task()
++			 * can only be called on a task in EXIT_DEAD.
++			 */
++			zap_leader = xchg(&leader->exit_state, EXIT_DEAD);
++			BUG_ON(zap_leader != EXIT_ZOMBIE);
++		}
+ 	}
+ 
+ 	write_unlock_irq(&tasklist_lock);
+-- 
+1.5.2.2
+

@@ -1,0 +1,89 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Thu, 31 Jan 2008 10:55:39 -0500
+Subject: [xen] ia64: domHVM with pagesize 4k hangs part2
+Message-id: 47A1EF7B.9040100@redhat.com
+O-Subject: Re: [RHEL5.2 PATCH] [Xen] domHVM with pagesize 4k hangs
+Bugzilla: 428124
+
+Hi,
+
+This patch set was included in -73 kernel, but it lacks a patch to
+implement PAL procedures:
+
+> - 16288: Implement some PAL procedures (from IT#135794)
+>   http://xenbits.xensource.com/ext/ia64/xen-unstable.hg/rev/41c1731c9125
+>      This implements some PAL procedures necessary for Windows 2008.
+
+Attached is the same one as previously posted.  Could you check and add it?
+
+Regards,
+
+Tetsu Yamamoto
+
+# HG changeset patch
+# User KUWAMURA Shin'ya <kuwa@jp.fujitsu.com>
+# Date 1198723126 -32400
+# Node ID e17936106c7226a408a6394be561c418f7a00cd3
+# Parent  8c2e1e71e3dd5a626ee9ea49aa1bfae83f5bcaf7
+16288: Implement some PAL procedures
+
+diff --git a/arch/ia64/xen/fw_emul.c b/arch/ia64/xen/fw_emul.c
+index a49ae88..ceaa07e 100644
+--- a/arch/ia64/xen/fw_emul.c
++++ b/arch/ia64/xen/fw_emul.c
+@@ -512,6 +512,19 @@ remote_pal_cache_flush(void *v)
+ 		args->status = status;
+ }
+ 
++static void
++remote_pal_prefetch_visibility(void *v)
++{
++	s64 trans_type = (s64)v;
++	ia64_pal_prefetch_visibility(trans_type);
++}
++
++static void
++remote_pal_mc_drain(void *v)
++{
++	ia64_pal_mc_drain();
++}
++
+ struct ia64_pal_retval
+ xen_pal_emulator(unsigned long index, u64 in1, u64 in2, u64 in3)
+ {
+@@ -780,7 +793,35 @@ xen_pal_emulator(unsigned long index, u64 in1, u64 in2, u64 in3)
+ 		if (VMX_DOMAIN(current))
+ 			status = PAL_STATUS_SUCCESS;
+ 		break;
++	    case PAL_PREFETCH_VISIBILITY:
++		status = ia64_pal_prefetch_visibility(in1);
++		if (status == 0) {
++			/* must be performed on all remote processors 
++			   in the coherence domain. */
++			smp_call_function(remote_pal_prefetch_visibility,
++					  (void *)in1, 1, 1);
++			status = 1; /* no more necessary on remote processor */
++		}
++		break;
++	    case PAL_MC_DRAIN:
++		status = ia64_pal_mc_drain();
++		/* FIXME: All vcpus likely call PAL_MC_DRAIN.
++		   That causes the congestion. */
++		smp_call_function(remote_pal_mc_drain, NULL, 1, 1);
++		break;
++	    case PAL_BRAND_INFO:
++		if (in1 == 0) {
++			char brand_info[128];
++			status = ia64_pal_get_brand_info(brand_info);
++			if (status == PAL_STATUS_SUCCESS)
++				copy_to_user((void *)in2, brand_info, 128);
++		} else {
++			status = PAL_STATUS_EINVAL;
++		}
++		break;
+ 	    case PAL_LOGICAL_TO_PHYSICAL:
++	    case PAL_GET_PSTATE:
++	    case PAL_CACHE_SHARED_INFO:
+ 		/* Optional, no need to complain about being unimplemented */
+ 		break;
+ 	    default:

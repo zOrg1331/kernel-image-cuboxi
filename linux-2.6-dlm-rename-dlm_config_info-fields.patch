@@ -1,0 +1,285 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] dlm: rename dlm_config_info fields
+Date: Thu, 25 Jan 2007 09:13:54 -0600
+Bugzilla: 239040
+Message-Id: <20070125151354.GB21980@redhat.com>
+Changelog: [dlm] rename dlm_config_info fields
+
+
+bz 221326
+(patch 1 of 3)
+
+Add a "ci_" prefix to the fields in the dlm_config_info struct so that we
+can use macros to add configfs functions to access them (in a later
+patch).  No functional changes in this patch, just naming changes.
+
+patch is in upstream gfs2 git tree
+
+
+Index: linux-rhel5-quilt/fs/dlm/config.c
+===================================================================
+--- linux-rhel5-quilt.orig/fs/dlm/config.c	2007-01-24 14:42:04.000000000 -0600
++++ linux-rhel5-quilt/fs/dlm/config.c	2007-01-24 14:58:29.000000000 -0600
+@@ -777,13 +777,13 @@
+ #define DEFAULT_SCAN_SECS          5
+ 
+ struct dlm_config_info dlm_config = {
+-	.tcp_port = DEFAULT_TCP_PORT,
+-	.buffer_size = DEFAULT_BUFFER_SIZE,
+-	.rsbtbl_size = DEFAULT_RSBTBL_SIZE,
+-	.lkbtbl_size = DEFAULT_LKBTBL_SIZE,
+-	.dirtbl_size = DEFAULT_DIRTBL_SIZE,
+-	.recover_timer = DEFAULT_RECOVER_TIMER,
+-	.toss_secs = DEFAULT_TOSS_SECS,
+-	.scan_secs = DEFAULT_SCAN_SECS
++	.ci_tcp_port = DEFAULT_TCP_PORT,
++	.ci_buffer_size = DEFAULT_BUFFER_SIZE,
++	.ci_rsbtbl_size = DEFAULT_RSBTBL_SIZE,
++	.ci_lkbtbl_size = DEFAULT_LKBTBL_SIZE,
++	.ci_dirtbl_size = DEFAULT_DIRTBL_SIZE,
++	.ci_recover_timer = DEFAULT_RECOVER_TIMER,
++	.ci_toss_secs = DEFAULT_TOSS_SECS,
++	.ci_scan_secs = DEFAULT_SCAN_SECS
+ };
+ 
+Index: linux-rhel5-quilt/fs/dlm/config.h
+===================================================================
+--- linux-rhel5-quilt.orig/fs/dlm/config.h	2007-01-24 14:42:04.000000000 -0600
++++ linux-rhel5-quilt/fs/dlm/config.h	2007-01-24 14:58:29.000000000 -0600
+@@ -17,14 +17,14 @@
+ #define DLM_MAX_ADDR_COUNT 3
+ 
+ struct dlm_config_info {
+-	int tcp_port;
+-	int buffer_size;
+-	int rsbtbl_size;
+-	int lkbtbl_size;
+-	int dirtbl_size;
+-	int recover_timer;
+-	int toss_secs;
+-	int scan_secs;
++	int ci_tcp_port;
++	int ci_buffer_size;
++	int ci_rsbtbl_size;
++	int ci_lkbtbl_size;
++	int ci_dirtbl_size;
++	int ci_recover_timer;
++	int ci_toss_secs;
++	int ci_scan_secs;
+ };
+ 
+ extern struct dlm_config_info dlm_config;
+Index: linux-rhel5-quilt/fs/dlm/lock.c
+===================================================================
+--- linux-rhel5-quilt.orig/fs/dlm/lock.c	2007-01-24 14:57:10.000000000 -0600
++++ linux-rhel5-quilt/fs/dlm/lock.c	2007-01-24 14:58:29.000000000 -0600
+@@ -810,7 +810,7 @@
+ 		list_for_each_entry_reverse(r, &ls->ls_rsbtbl[b].toss,
+ 					    res_hashchain) {
+ 			if (!time_after_eq(jiffies, r->res_toss_time +
+-					   dlm_config.toss_secs * HZ))
++					   dlm_config.ci_toss_secs * HZ))
+ 				continue;
+ 			found = 1;
+ 			break;
+Index: linux-rhel5-quilt/fs/dlm/lockspace.c
+===================================================================
+--- linux-rhel5-quilt.orig/fs/dlm/lockspace.c	2007-01-24 14:42:10.000000000 -0600
++++ linux-rhel5-quilt/fs/dlm/lockspace.c	2007-01-24 14:58:29.000000000 -0600
+@@ -231,7 +231,7 @@
+ 	while (!kthread_should_stop()) {
+ 		list_for_each_entry(ls, &lslist, ls_list)
+ 			dlm_scan_rsbs(ls);
+-		schedule_timeout_interruptible(dlm_config.scan_secs * HZ);
++		schedule_timeout_interruptible(dlm_config.ci_scan_secs * HZ);
+ 	}
+ 	return 0;
+ }
+@@ -417,7 +417,7 @@
+ 	ls->ls_count = 0;
+ 	ls->ls_flags = 0;
+ 
+-	size = dlm_config.rsbtbl_size;
++	size = dlm_config.ci_rsbtbl_size;
+ 	ls->ls_rsbtbl_size = size;
+ 
+ 	ls->ls_rsbtbl = kmalloc(sizeof(struct dlm_rsbtable) * size, GFP_KERNEL);
+@@ -429,7 +429,7 @@
+ 		rwlock_init(&ls->ls_rsbtbl[i].lock);
+ 	}
+ 
+-	size = dlm_config.lkbtbl_size;
++	size = dlm_config.ci_lkbtbl_size;
+ 	ls->ls_lkbtbl_size = size;
+ 
+ 	ls->ls_lkbtbl = kmalloc(sizeof(struct dlm_lkbtable) * size, GFP_KERNEL);
+@@ -441,7 +441,7 @@
+ 		ls->ls_lkbtbl[i].counter = 1;
+ 	}
+ 
+-	size = dlm_config.dirtbl_size;
++	size = dlm_config.ci_dirtbl_size;
+ 	ls->ls_dirtbl_size = size;
+ 
+ 	ls->ls_dirtbl = kmalloc(sizeof(struct dlm_dirtable) * size, GFP_KERNEL);
+@@ -484,7 +484,7 @@
+ 	mutex_init(&ls->ls_requestqueue_mutex);
+ 	mutex_init(&ls->ls_clear_proc_locks);
+ 
+-	ls->ls_recover_buf = kmalloc(dlm_config.buffer_size, GFP_KERNEL);
++	ls->ls_recover_buf = kmalloc(dlm_config.ci_buffer_size, GFP_KERNEL);
+ 	if (!ls->ls_recover_buf)
+ 		goto out_dirfree;
+ 
+Index: linux-rhel5-quilt/fs/dlm/lowcomms-sctp.c
+===================================================================
+--- linux-rhel5-quilt.orig/fs/dlm/lowcomms-sctp.c	2007-01-24 14:42:04.000000000 -0600
++++ linux-rhel5-quilt/fs/dlm/lowcomms-sctp.c	2007-01-24 14:58:29.000000000 -0600
+@@ -626,7 +626,7 @@
+ 
+ 	if (result < 0)
+ 		log_print("Can't bind to port %d addr number %d",
+-			  dlm_config.tcp_port, num);
++			  dlm_config.ci_tcp_port, num);
+ 
+ 	return result;
+ }
+@@ -702,7 +702,7 @@
+ 	/* Bind to all interfaces. */
+ 	for (i = 0; i < dlm_local_count; i++) {
+ 		memcpy(&localaddr, dlm_local_addr[i], sizeof(localaddr));
+-		make_sockaddr(&localaddr, dlm_config.tcp_port, &addr_len);
++		make_sockaddr(&localaddr, dlm_config.ci_tcp_port, &addr_len);
+ 
+ 		result = add_bind_addr(&localaddr, addr_len, num);
+ 		if (result)
+@@ -860,7 +860,7 @@
+ 		return;
+ 	}
+ 
+-	make_sockaddr(&rem_addr, dlm_config.tcp_port, &addrlen);
++	make_sockaddr(&rem_addr, dlm_config.ci_tcp_port, &addrlen);
+ 
+ 	outmessage.msg_name = &rem_addr;
+ 	outmessage.msg_namelen = addrlen;
+Index: linux-rhel5-quilt/fs/dlm/lowcomms-tcp.c
+===================================================================
+--- linux-rhel5-quilt.orig/fs/dlm/lowcomms-tcp.c	2007-01-24 14:42:04.000000000 -0600
++++ linux-rhel5-quilt/fs/dlm/lowcomms-tcp.c	2007-01-24 14:58:29.000000000 -0600
+@@ -567,7 +567,7 @@
+ 	sock->sk->sk_user_data = con;
+ 	con->rx_action = receive_from_sock;
+ 
+-	make_sockaddr(&saddr, dlm_config.tcp_port, &addr_len);
++	make_sockaddr(&saddr, dlm_config.ci_tcp_port, &addr_len);
+ 
+ 	add_sock(sock, con);
+ 
+@@ -639,10 +639,10 @@
+ 	con->sock = sock;
+ 
+ 	/* Bind to our port */
+-	make_sockaddr(saddr, dlm_config.tcp_port, &addr_len);
++	make_sockaddr(saddr, dlm_config.ci_tcp_port, &addr_len);
+ 	result = sock->ops->bind(sock, (struct sockaddr *) saddr, addr_len);
+ 	if (result < 0) {
+-		printk("dlm: Can't bind to port %d\n", dlm_config.tcp_port);
++		printk("dlm: Can't bind to port %d\n", dlm_config.ci_tcp_port);
+ 		sock_release(sock);
+ 		sock = NULL;
+ 		con->sock = NULL;
+@@ -660,7 +660,8 @@
+ 
+ 	result = sock->ops->listen(sock, 5);
+ 	if (result < 0) {
+-		printk("dlm: Can't listen on port %d\n", dlm_config.tcp_port);
++		printk("dlm: Can't listen on port %d\n",
++		       dlm_config.ci_tcp_port);
+ 		sock_release(sock);
+ 		sock = NULL;
+ 		goto create_out;
+Index: linux-rhel5-quilt/fs/dlm/midcomms.c
+===================================================================
+--- linux-rhel5-quilt.orig/fs/dlm/midcomms.c	2007-01-24 14:42:04.000000000 -0600
++++ linux-rhel5-quilt/fs/dlm/midcomms.c	2007-01-24 14:58:29.000000000 -0600
+@@ -82,7 +82,7 @@
+ 		if (msglen < sizeof(struct dlm_header))
+ 			break;
+ 		err = -E2BIG;
+-		if (msglen > dlm_config.buffer_size) {
++		if (msglen > dlm_config.ci_buffer_size) {
+ 			log_print("message size %d from %d too big, buf len %d",
+ 				  msglen, nodeid, len);
+ 			break;
+@@ -103,7 +103,7 @@
+ 
+ 		if (msglen > sizeof(__tmp) &&
+ 		    msg == (struct dlm_header *) __tmp) {
+-			msg = kmalloc(dlm_config.buffer_size, GFP_KERNEL);
++			msg = kmalloc(dlm_config.ci_buffer_size, GFP_KERNEL);
+ 			if (msg == NULL)
+ 				return ret;
+ 		}
+Index: linux-rhel5-quilt/fs/dlm/rcom.c
+===================================================================
+--- linux-rhel5-quilt.orig/fs/dlm/rcom.c	2007-01-24 14:42:13.000000000 -0600
++++ linux-rhel5-quilt/fs/dlm/rcom.c	2007-01-24 14:58:29.000000000 -0600
+@@ -138,7 +138,7 @@
+ 		goto out;
+ 
+ 	allow_sync_reply(ls, &rc->rc_id);
+-	memset(ls->ls_recover_buf, 0, dlm_config.buffer_size);
++	memset(ls->ls_recover_buf, 0, dlm_config.ci_buffer_size);
+ 
+ 	send_rcom(ls, mh, rc);
+ 
+@@ -212,7 +212,7 @@
+ 	if (nodeid == dlm_our_nodeid()) {
+ 		dlm_copy_master_names(ls, last_name, last_len,
+ 		                      ls->ls_recover_buf + len,
+-		                      dlm_config.buffer_size - len, nodeid);
++		                      dlm_config.ci_buffer_size - len, nodeid);
+ 		goto out;
+ 	}
+ 
+@@ -222,7 +222,7 @@
+ 	memcpy(rc->rc_buf, last_name, last_len);
+ 
+ 	allow_sync_reply(ls, &rc->rc_id);
+-	memset(ls->ls_recover_buf, 0, dlm_config.buffer_size);
++	memset(ls->ls_recover_buf, 0, dlm_config.ci_buffer_size);
+ 
+ 	send_rcom(ls, mh, rc);
+ 
+@@ -240,7 +240,7 @@
+ 
+ 	nodeid = rc_in->rc_header.h_nodeid;
+ 	inlen = rc_in->rc_header.h_length - sizeof(struct dlm_rcom);
+-	outlen = dlm_config.buffer_size - sizeof(struct dlm_rcom);
++	outlen = dlm_config.ci_buffer_size - sizeof(struct dlm_rcom);
+ 
+ 	error = create_rcom(ls, nodeid, DLM_RCOM_NAMES_REPLY, outlen, &rc, &mh);
+ 	if (error)
+Index: linux-rhel5-quilt/fs/dlm/recover.c
+===================================================================
+--- linux-rhel5-quilt.orig/fs/dlm/recover.c	2007-01-24 14:42:04.000000000 -0600
++++ linux-rhel5-quilt/fs/dlm/recover.c	2007-01-24 14:58:29.000000000 -0600
+@@ -44,7 +44,7 @@
+ static void dlm_wait_timer_fn(unsigned long data)
+ {
+ 	struct dlm_ls *ls = (struct dlm_ls *) data;
+-	mod_timer(&ls->ls_timer, jiffies + (dlm_config.recover_timer * HZ));
++	mod_timer(&ls->ls_timer, jiffies + (dlm_config.ci_recover_timer * HZ));
+ 	wake_up(&ls->ls_wait_general);
+ }
+ 
+@@ -55,7 +55,7 @@
+ 	init_timer(&ls->ls_timer);
+ 	ls->ls_timer.function = dlm_wait_timer_fn;
+ 	ls->ls_timer.data = (long) ls;
+-	ls->ls_timer.expires = jiffies + (dlm_config.recover_timer * HZ);
++	ls->ls_timer.expires = jiffies + (dlm_config.ci_recover_timer * HZ);
+ 	add_timer(&ls->ls_timer);
+ 
+ 	wait_event(ls->ls_wait_general, testfn(ls) || dlm_recovery_stopped(ls));
+

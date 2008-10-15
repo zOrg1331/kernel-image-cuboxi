@@ -1,0 +1,136 @@
+From: Pete Zaitcev <zaitcev@redhat.com>
+Date: Mon, 10 Dec 2007 21:35:31 -0800
+Subject: [usb] fix for error path in rndis
+Message-id: 20071210213531.0c37bc29.zaitcev@redhat.com
+O-Subject: [RHEL 5.2] Patch for error path in rndis (236719)
+Bugzilla: 236719
+
+The explanation is going to be unusually long, so if someone is not
+particularly interested, please skip to the clause "Testing".
+
+https://bugzilla.redhat.com/show_bug.cgi?id=236719
+
+Story
+=====
+
+Nokia ships a number of phones which support so-called "RNDIS", which
+stands for "Remote NDIS". Roughly, it's Microsoft NIC driver API over USB.
+If you plug such a phone into a RHEL-5 box, the system oopses.
+
+This happens because the phone has two modes: a Hayes modem and RNDIS.
+If Hayes mode is in effect, the phone advertises that it's RNDIS capable
+through proper USB descriptors, but an attempt to initialize RNDIS ends
+with an error (which is fine). The system oopses when usbnet and its
+subdriver rndis_host finish the failed ->probe method.
+
+In most USB drivers, driver itself is not involved into the binding to
+an interface (USB drivers bind to interfaces, not devices; this way you
+can have a keyboard with an SD slot served by both hid and usb-storage
+simultaneously). Framework binds, then calls ->probe, then unbinds in
+case of an error. However, RNDIS requires a driver to attach to two
+interfaces. The rndis_host looks to which interface it got bound by the
+framework, and binds to the other one explicitly. When subsequent initia-
+lization fails, it has to unbind explicitly.
+
+Unfortunately, in normal circumstances unbinding disconnects a driver,
+and so the ->disconnect method is invoked. In our case, it leads to
+->disconnect called from ->probe (through an unbind).
+
+I thought it would be neater to find a way for an unbind operation not
+to invoke the disconnect at all, but it seems too involved. So, I went
+with the upstream way of doing it. The disconnect checks if its interface
+has a private structure attached, and if it's not, it quietly exits.
+
+Thus, the main part of the fix is usb_set_intfdata(data_intf, NULL).
+You can see that the old code had usb_driver_release_interface near
+the label "fail:", but it was not enough, in fact it caused an oops.
+
+Testing
+=======
+
+I built the patch on a branch. The customer tested the branch RPM.
+
+Upstream
+========
+
+This is the upstream backport, although I only took one specific fix.
+
+Please ack.
+
+-- Pete
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+Acked-by: Alan Cox <alan@redhat.com>
+
+diff --git a/drivers/usb/net/rndis_host.c b/drivers/usb/net/rndis_host.c
+index c2a28d8..48d8ed3 100644
+--- a/drivers/usb/net/rndis_host.c
++++ b/drivers/usb/net/rndis_host.c
+@@ -379,6 +379,7 @@ static int rndis_bind(struct usbnet *dev, struct usb_interface *intf)
+ {
+ 	int			retval;
+ 	struct net_device	*net = dev->net;
++	struct cdc_state	*info = (void *) &dev->data;
+ 	union {
+ 		void			*buf;
+ 		struct rndis_msg_hdr	*header;
+@@ -397,7 +398,7 @@ static int rndis_bind(struct usbnet *dev, struct usb_interface *intf)
+ 		return -ENOMEM;
+ 	retval = usbnet_generic_cdc_bind(dev, intf);
+ 	if (retval < 0)
+-		goto done;
++		goto fail;
+ 
+ 	net->hard_header_len += sizeof (struct rndis_data_hdr);
+ 
+@@ -412,10 +413,7 @@ static int rndis_bind(struct usbnet *dev, struct usb_interface *intf)
+ 	if (unlikely(retval < 0)) {
+ 		/* it might not even be an RNDIS device!! */
+ 		dev_err(&intf->dev, "RNDIS init failed, %d\n", retval);
+-fail:
+-		usb_driver_release_interface(driver_of(intf),
+-			((struct cdc_state *)&(dev->data))->data);
+-		goto done;
++		goto fail_and_release;
+ 	}
+ 	dev->hard_mtu = le32_to_cpu(u.init_c->max_transfer_size);
+ 	/* REVISIT:  peripheral "alignment" request is ignored ... */
+@@ -431,7 +429,7 @@ fail:
+ 	retval = rndis_command(dev, u.header);
+ 	if (unlikely(retval < 0)) {
+ 		dev_err(&intf->dev, "rndis get ethaddr, %d\n", retval);
+-		goto fail;
++		goto fail_and_release;
+ 	}
+ 	tmp = le32_to_cpu(u.get_c->offset);
+ 	if (unlikely((tmp + 8) > (1024 - ETH_ALEN)
+@@ -439,7 +437,7 @@ fail:
+ 		dev_err(&intf->dev, "rndis ethaddr off %d len %d ?\n",
+ 			tmp, le32_to_cpu(u.get_c->len));
+ 		retval = -EDOM;
+-		goto fail;
++		goto fail_and_release;
+ 	}
+ 	memcpy(net->dev_addr, tmp + (char *)&u.get_c->request_id, ETH_ALEN);
+ 
+@@ -455,11 +453,16 @@ fail:
+ 	retval = rndis_command(dev, u.header);
+ 	if (unlikely(retval < 0)) {
+ 		dev_err(&intf->dev, "rndis set packet filter, %d\n", retval);
+-		goto fail;
++		goto fail_and_release;
+ 	}
+ 
+-	retval = 0;
+-done:
++	kfree(u.buf);
++	return 0;
++
++fail_and_release:
++	usb_set_intfdata(info->data, NULL);
++	usb_driver_release_interface(driver_of(intf), info->data);
++fail:
+ 	kfree(u.buf);
+ 	return retval;
+ }

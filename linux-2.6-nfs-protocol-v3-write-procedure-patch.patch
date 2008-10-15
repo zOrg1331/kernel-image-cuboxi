@@ -1,0 +1,149 @@
+From: Peter Staubach <staubach@redhat.com>
+Subject: [PATCH RHEL-5] nfs protocol V3 :write procedure patch
+Date: Mon, 21 May 2007 11:44:48 -0400
+Bugzilla: 228854
+Message-Id: <4651BE70.9080407@redhat.com>
+Changelog: [nfs] protocol V3 :write procedure patch
+
+
+Hi.
+
+The attached patch is to address bz228854, "nfs protocol V3 :write
+procedure patch".  This bugzilla describes a protocol compliance
+problem with RHEL-5 in that the NFS server does not correctly handle
+some over the wire WRITE requests.  In particular, it will
+incorrectly reject a zero length WRITE request.
+
+The patch corrects the handling of zero length WRITE requests and
+also adds some bounds checking to ensure some basic consistency of
+the WRITE request.
+
+This patch has been accepted upstream.
+
+   Thanx...
+
+      ps
+
+--- linux-2.6.18.i686/fs/nfsd/nfsxdr.c.org
++++ linux-2.6.18.i686/fs/nfsd/nfsxdr.c
+@@ -277,8 +277,9 @@ int
+ nfssvc_decode_writeargs(struct svc_rqst *rqstp, u32 *p,
+ 					struct nfsd_writeargs *args)
+ {
+-	unsigned int len;
++	unsigned int len, hdr, dlen;
+ 	int v;
++
+ 	if (!(p = decode_fh(p, &args->fh)))
+ 		return 0;
+ 
+@@ -286,11 +287,29 @@ nfssvc_decode_writeargs(struct svc_rqst 
+ 	args->offset = ntohl(*p++);	/* offset */
+ 	p++;				/* totalcount */
+ 	len = args->len = ntohl(*p++);
++	/*
++	 * The protocol specifies a maximum of NFS_MAXDATA bytes.
++	 */
++	if (len > NFS_MAXDATA)
++		return 0;
++
++	/*
++	 * Check to make sure that we got the right number of
++	 * bytes.
++	 */
++	hdr = (void*)p - rqstp->rq_arg.head[0].iov_base;
++	dlen = rqstp->rq_arg.head[0].iov_len + rqstp->rq_arg.page_len
++		- hdr;
++	/*
++	 * Round the length of the data which was specified up to
++	 * the next multiple of XDR units and then compare that
++	 * against the length which was actually received.
++	 */
++	if (dlen != XDR_QUADLEN(len) * 4)
++		return 0;
++
+ 	args->vec[0].iov_base = (void*)p;
+-	args->vec[0].iov_len = rqstp->rq_arg.head[0].iov_len -
+-				(((void*)p) - rqstp->rq_arg.head[0].iov_base);
+-	if (len > NFSSVC_MAXBLKSIZE)
+-		len = NFSSVC_MAXBLKSIZE;
++	args->vec[0].iov_len = rqstp->rq_arg.head[0].iov_len - hdr;
+ 	v = 0;
+ 	while (len > args->vec[v].iov_len) {
+ 		len -= args->vec[v].iov_len;
+@@ -299,8 +318,8 @@ nfssvc_decode_writeargs(struct svc_rqst 
+ 		args->vec[v].iov_len = PAGE_SIZE;
+ 	}
+ 	args->vec[v].iov_len = len;
+-	args->vlen = v+1;
+-	return args->vec[0].iov_len > 0;
++	args->vlen = v + 1;
++	return 1;
+ }
+ 
+ int
+--- linux-2.6.18.i686/fs/nfsd/nfs3xdr.c.org
++++ linux-2.6.18.i686/fs/nfsd/nfs3xdr.c
+@@ -358,7 +358,7 @@ int
+ nfs3svc_decode_writeargs(struct svc_rqst *rqstp, u32 *p,
+ 					struct nfsd3_writeargs *args)
+ {
+-	unsigned int len, v, hdr;
++	unsigned int len, v, hdr, dlen;
+ 
+ 	if (!(p = decode_fh(p, &args->fh))
+ 	 || !(p = xdr_decode_hyper(p, &args->offset)))
+@@ -367,18 +367,34 @@ nfs3svc_decode_writeargs(struct svc_rqst
+ 	args->count = ntohl(*p++);
+ 	args->stable = ntohl(*p++);
+ 	len = args->len = ntohl(*p++);
++	/*
++	 * The count must equal the amount of data passed.
++	 */
++	if (args->count != args->len)
++		return 0;
+ 
++	/*
++	 * Check to make sure that we got the right number of
++	 * bytes.
++	 */
+ 	hdr = (void*)p - rqstp->rq_arg.head[0].iov_base;
+-	if (rqstp->rq_arg.len < hdr ||
+-	    rqstp->rq_arg.len - hdr < len)
++	dlen = rqstp->rq_arg.head[0].iov_len + rqstp->rq_arg.page_len
++		- hdr;
++	/*
++	 * Round the length of the data which was specified up to
++	 * the next multiple of XDR units and then compare that
++	 * against the length which was actually received.
++	 */
++	if (dlen != XDR_QUADLEN(len) * 4)
+ 		return 0;
+ 
++	if (args->count > NFSSVC_MAXBLKSIZE) {
++		args->count = NFSSVC_MAXBLKSIZE;
++		len = args->len = NFSSVC_MAXBLKSIZE;
++	}
+ 	args->vec[0].iov_base = (void*)p;
+ 	args->vec[0].iov_len = rqstp->rq_arg.head[0].iov_len - hdr;
+-
+-	if (len > NFSSVC_MAXBLKSIZE)
+-		len = NFSSVC_MAXBLKSIZE;
+-	v=  0;
++	v = 0;
+ 	while (len > args->vec[v].iov_len) {
+ 		len -= args->vec[v].iov_len;
+ 		v++;
+@@ -386,9 +402,8 @@ nfs3svc_decode_writeargs(struct svc_rqst
+ 		args->vec[v].iov_len = PAGE_SIZE;
+ 	}
+ 	args->vec[v].iov_len = len;
+-	args->vlen = v+1;
+-
+-	return args->count == args->len && args->vec[0].iov_len > 0;
++	args->vlen = v + 1;
++	return 1;
+ }
+ 
+ int
+

@@ -1,0 +1,119 @@
+From: Pete Zaitcev <zaitcev@redhat.com>
+Date: Thu, 6 Dec 2007 15:33:39 -0800
+Subject: [usb] reset LEDs on Dell keyboards
+Message-id: 20071206153339.a55fb831.zaitcev@redhat.com
+O-Subject: Re: [RHEL5 U2] bz#228674 Reset LEDs on Dell keyboards
+Bugzilla: 228674
+
+This will be the easiest patch to ack. It is very safe because it only
+activates for specific hardware, and it is upstream. I've built a test
+kernel for Dell, it worked. I also re-verified that the patch still
+applies to the today's RHEL-5 tip (2.6.18-54.el5).
+
+Now, for the record, the issue is that if BIOS leaves NumLock on, on
+some keyboards a USB reset does not clear it. At first I tried to be
+too clever and get the current state from BIOS memory area, then
+persuade the input layer to start with nonzero shift state. It turned
+out to be much more difficult than it looked, for very marginal
+benefit. So, the patch "simply" makes sure that a USB reset clears
+LEDs and thus avoids patching half of the drivers/input.
+
+BTW, this is a reminder how useful blacklists are. If we created a
+generic solution which tracked BIOS's shift state, we'd end with a pile
+of fragile code which we could never remove. But all this stuff will
+be gone in a few years, when incorrently working keyboards get retired.
+
+Please ACK.
+
+-- Pete
+
+diff --git a/drivers/usb/input/hid-core.c b/drivers/usb/input/hid-core.c
+index e8038f8..73a9310 100644
+--- a/drivers/usb/input/hid-core.c
++++ b/drivers/usb/input/hid-core.c
+@@ -1411,6 +1411,45 @@ void hid_init_reports(struct hid_device *hid)
+ 		warn("timeout initializing reports");
+ }
+ 
++/*
++ * Reset LEDs which BIOS might have left on. For now, just NumLock (0x01).
++ */
++
++static int hid_find_field_early(struct hid_device *hid, unsigned int page,
++    unsigned int hid_code, struct hid_field **pfield)
++{
++	struct hid_report *report;
++	struct hid_field *field;
++	struct hid_usage *usage;
++	int i, j;
++
++	list_for_each_entry(report, &hid->report_enum[HID_OUTPUT_REPORT].report_list, list) {
++		for (i = 0; i < report->maxfield; i++) {
++			field = report->field[i];
++			for (j = 0; j < field->maxusage; j++) {
++				usage = &field->usage[j];
++				if ((usage->hid & HID_USAGE_PAGE) == page &&
++				    (usage->hid & 0xFFFF) == hid_code) {
++					*pfield = field;
++					return j;
++				}
++			}
++		}
++	}
++	return -1;
++}
++
++static void hid_set_leds(struct hid_device *hid)
++{
++	struct hid_field *field;
++	int offset;
++
++	if ((offset = hid_find_field_early(hid, HID_UP_LED, 0x01, &field)) != -1) {
++		hid_set_field(field, offset, 0);
++		hid_submit_report(hid, field->report, USB_DIR_OUT);
++	}
++}
++
+ #define USB_VENDOR_ID_GTCO		0x078c
+ #define USB_DEVICE_ID_GTCO_90		0x0090
+ #define USB_DEVICE_ID_GTCO_100		0x0100
+@@ -1594,6 +1633,9 @@ void hid_init_reports(struct hid_device *hid)
+ #define USB_VENDOR_ID_SUN		0x0430
+ #define USB_DEVICE_ID_RARITAN_KVM_DONGLE	0xcdab
+ 
++#define USB_VENDOR_ID_DELL		0x413c
++#define USB_DEVICE_ID_DELL_W7658	0x2005
++
+ /*
+  * Alphabetically sorted blacklist by quirk type.
+  */
+@@ -1752,6 +1794,8 @@ static const struct hid_blacklist {
+ 	{ USB_VENDOR_ID_PANJIT, 0x0003, HID_QUIRK_IGNORE },
+ 	{ USB_VENDOR_ID_PANJIT, 0x0004, HID_QUIRK_IGNORE },
+ 
++	{ USB_VENDOR_ID_DELL, USB_DEVICE_ID_DELL_W7658, HID_QUIRK_RESET_LEDS },
++
+ 	{ 0, 0 }
+ };
+ 
+@@ -2065,6 +2109,8 @@ static int hid_probe(struct usb_interface *intf, const struct usb_device_id *id)
+ 
+ 	hid_init_reports(hid);
+ 	hid_dump_device(hid);
++	if (hid->quirks & HID_QUIRK_RESET_LEDS)
++		hid_set_leds(hid);
+ 
+ 	if (!hidinput_connect(hid))
+ 		hid->claimed |= HID_CLAIMED_INPUT;
+diff --git a/drivers/usb/input/hid.h b/drivers/usb/input/hid.h
+index aa85d0b..928d8a3 100644
+--- a/drivers/usb/input/hid.h
++++ b/drivers/usb/input/hid.h
+@@ -261,6 +261,7 @@ struct hid_item {
+ #define HID_QUIRK_POWERBOOK_FN_ON		0x00002000
+ #define HID_QUIRK_INVERT_HWHEEL			0x00004000
+ #define HID_QUIRK_POWERBOOK_ISO_KEYBOARD	0x00010000
++#define HID_QUIRK_RESET_LEDS			0x00400000
+ 
+ /*
+  * This is the global environment of the parser. This information is

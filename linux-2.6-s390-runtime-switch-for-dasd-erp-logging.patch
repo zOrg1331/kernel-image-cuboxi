@@ -1,0 +1,239 @@
+From: Jan Glauber <jglauber@redhat.com>
+Subject: [RHEL5.1 PATCH] s390: runtime switch for dasd erp logging
+Date: Tue, 20 Feb 2007 15:51:26 +0100
+Bugzilla: 228034
+Message-Id: <1171983086.6031.30.camel@localhost.localdomain>
+Changelog: [s390] runtime switch for dasd erp logging
+
+
+BZ 228034
+
+This patch reworks the dasd driver erp (error recovery procedure) logging
+to be switchable via a sysfs attribute.
+
+The patch also fixes a build warning from a misplaced __exit (I would not have 
+opened a bugzilla for it but compile warnings are annoying to me).
+
+Jan
+-- 
+jglauber@redhat.com
+jang@de.ibm.com
+
+ arch/s390/kernel/vmlinux.lds.S     |    2 -
+ drivers/s390/block/dasd.c          |    8 ++---
+ drivers/s390/block/dasd_3990_erp.c |   23 ++++++-----------
+ drivers/s390/block/dasd_devmap.c   |   50 +++++++++++++++++++++++++++++++++++++
+ drivers/s390/block/dasd_eer.c      |    2 -
+ drivers/s390/block/dasd_int.h      |    4 --
+ include/asm-s390/dasd.h            |    1 
+ 7 files changed, 66 insertions(+), 24 deletions(-)
+
+diff -urNp linux-2.6.18.s390/arch/s390/kernel/vmlinux.lds.S linux-2.6.18.s390.dasd/arch/s390/kernel/vmlinux.lds.S
+--- linux-2.6.18.s390/arch/s390/kernel/vmlinux.lds.S	2007-02-20 14:55:41.000000000 +0100
++++ linux-2.6.18.s390.dasd/arch/s390/kernel/vmlinux.lds.S	2007-02-20 15:06:34.000000000 +0100
+@@ -118,7 +118,7 @@ SECTIONS
+ 
+   /* Sections to be discarded */
+   /DISCARD/ : {
+-	*(.exitcall.exit)
++	*(.exit.text) *(.exit.data) *(.exitcall.exit)
+ 	}
+ 
+   /* Stabs debugging sections.  */
+diff -urNp linux-2.6.18.s390/drivers/s390/block/dasd.c linux-2.6.18.s390.dasd/drivers/s390/block/dasd.c
+--- linux-2.6.18.s390/drivers/s390/block/dasd.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18.s390.dasd/drivers/s390/block/dasd.c	2007-02-20 15:05:28.000000000 +0100
+@@ -1051,10 +1051,10 @@ dasd_int_handler(struct ccw_device *cdev
+ 		}
+ 	} else {		/* error */
+ 		memcpy(&cqr->irb, irb, sizeof (struct irb));
+-#ifdef ERP_DEBUG
+-		/* dump sense data */
+-		dasd_log_sense(cqr, irb);
+-#endif
++		if (device->features & DASD_FEATURE_ERPLOG) {
++			/* dump sense data */
++			dasd_log_sense(cqr, irb);
++		}
+ 		switch (era) {
+ 		case dasd_era_fatal:
+ 			cqr->status = DASD_CQR_FAILED;
+diff -urNp linux-2.6.18.s390/drivers/s390/block/dasd_3990_erp.c linux-2.6.18.s390.dasd/drivers/s390/block/dasd_3990_erp.c
+--- linux-2.6.18.s390/drivers/s390/block/dasd_3990_erp.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18.s390.dasd/drivers/s390/block/dasd_3990_erp.c	2007-02-20 15:05:28.000000000 +0100
+@@ -2641,14 +2641,12 @@ dasd_3990_erp_action(struct dasd_ccw_req
+ 	struct dasd_ccw_req *erp = NULL;
+ 	struct dasd_device *device = cqr->device;
+ 	__u32 cpa = cqr->irb.scsw.cpa;
++	struct dasd_ccw_req *temp_erp = NULL;
+ 
+-#ifdef ERP_DEBUG
+-	/* print current erp_chain */
+-	DEV_MESSAGE(KERN_ERR, device, "%s",
+-		    "ERP chain at BEGINNING of ERP-ACTION");
+-	{
+-		struct dasd_ccw_req *temp_erp = NULL;
+-
++	if (device->features & DASD_FEATURE_ERPLOG) {
++		/* print current erp_chain */
++		DEV_MESSAGE(KERN_ERR, device, "%s",
++			    "ERP chain at BEGINNING of ERP-ACTION");
+ 		for (temp_erp = cqr;
+ 		     temp_erp != NULL; temp_erp = temp_erp->refers) {
+ 
+@@ -2658,7 +2656,6 @@ dasd_3990_erp_action(struct dasd_ccw_req
+ 				    temp_erp->refers);
+ 		}
+ 	}
+-#endif				/* ERP_DEBUG */
+ 
+ 	/* double-check if current erp/cqr was successfull */
+ 	if ((cqr->irb.scsw.cstat == 0x00) &&
+@@ -2695,11 +2692,10 @@ dasd_3990_erp_action(struct dasd_ccw_req
+ 		erp = dasd_3990_erp_handle_match_erp(cqr, erp);
+ 	}
+ 
+-#ifdef ERP_DEBUG
+-	/* print current erp_chain */
+-	DEV_MESSAGE(KERN_ERR, device, "%s", "ERP chain at END of ERP-ACTION");
+-	{
+-		struct dasd_ccw_req *temp_erp = NULL;
++	if (device->features & DASD_FEATURE_ERPLOG) {
++		/* print current erp_chain */
++		DEV_MESSAGE(KERN_ERR, device, "%s",
++			    "ERP chain at END of ERP-ACTION");
+ 		for (temp_erp = erp;
+ 		     temp_erp != NULL; temp_erp = temp_erp->refers) {
+ 
+@@ -2709,7 +2705,6 @@ dasd_3990_erp_action(struct dasd_ccw_req
+ 				    temp_erp->refers);
+ 		}
+ 	}
+-#endif				/* ERP_DEBUG */
+ 
+ 	if (erp->status == DASD_CQR_FAILED)
+ 		dasd_log_ccw(erp, 1, cpa);
+diff -urNp linux-2.6.18.s390/drivers/s390/block/dasd_devmap.c linux-2.6.18.s390.dasd/drivers/s390/block/dasd_devmap.c
+--- linux-2.6.18.s390/drivers/s390/block/dasd_devmap.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18.s390.dasd/drivers/s390/block/dasd_devmap.c	2007-02-20 15:05:28.000000000 +0100
+@@ -202,6 +202,8 @@ dasd_feature_list(char *str, char **endp
+ 			features |= DASD_FEATURE_READONLY;
+ 		else if (len == 4 && !strncmp(str, "diag", 4))
+ 			features |= DASD_FEATURE_USEDIAG;
++		else if (len == 6 && !strncmp(str, "erplog", 6))
++			features |= DASD_FEATURE_ERPLOG;
+ 		else {
+ 			MESSAGE(KERN_WARNING,
+ 				"unsupported feature: %*s, "
+@@ -681,6 +683,53 @@ dasd_ro_store(struct device *dev, struct
+ static DEVICE_ATTR(readonly, 0644, dasd_ro_show, dasd_ro_store);
+ 
+ /*
++ * erplog controls the logging of ERP related data
++ * (e.g. failing channel programs).
++ */
++static ssize_t
++dasd_erplog_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct dasd_devmap *devmap;
++	int erplog;
++
++	devmap = dasd_find_busid(dev->bus_id);
++	if (!IS_ERR(devmap))
++		erplog = (devmap->features & DASD_FEATURE_ERPLOG) != 0;
++	else
++		erplog = (DASD_FEATURE_DEFAULT & DASD_FEATURE_ERPLOG) != 0;
++	return snprintf(buf, PAGE_SIZE, erplog ? "1\n" : "0\n");
++}
++
++static ssize_t
++dasd_erplog_store(struct device *dev, struct device_attribute *attr,
++	      const char *buf, size_t count)
++{
++	struct dasd_devmap *devmap;
++	int val;
++	char *endp;
++
++	devmap = dasd_devmap_from_cdev(to_ccwdev(dev));
++	if (IS_ERR(devmap))
++		return PTR_ERR(devmap);
++
++	val = simple_strtoul(buf, &endp, 0);
++	if (((endp + 1) < (buf + count)) || (val > 1))
++		return -EINVAL;
++
++	spin_lock(&dasd_devmap_lock);
++	if (val)
++		devmap->features |= DASD_FEATURE_ERPLOG;
++	else
++		devmap->features &= ~DASD_FEATURE_ERPLOG;
++	if (devmap->device)
++		devmap->device->features = devmap->features;
++	spin_unlock(&dasd_devmap_lock);
++	return count;
++}
++
++static DEVICE_ATTR(erplog, 0644, dasd_erplog_show, dasd_erplog_store);
++
++/*
+  * use_diag controls whether the driver should use diag rather than ssch
+  * to talk to the device
+  */
+@@ -854,6 +903,7 @@ static struct attribute * dasd_attrs[] =
+ 	&dev_attr_uid.attr,
+ 	&dev_attr_use_diag.attr,
+ 	&dev_attr_eer_enabled.attr,
++	&dev_attr_erplog.attr,
+ 	NULL,
+ };
+ 
+diff -urNp linux-2.6.18.s390/drivers/s390/block/dasd_eer.c linux-2.6.18.s390.dasd/drivers/s390/block/dasd_eer.c
+--- linux-2.6.18.s390/drivers/s390/block/dasd_eer.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18.s390.dasd/drivers/s390/block/dasd_eer.c	2007-02-20 15:06:34.000000000 +0100
+@@ -678,7 +678,7 @@ int __init dasd_eer_init(void)
+ 	return 0;
+ }
+ 
+-void __exit dasd_eer_exit(void)
++void dasd_eer_exit(void)
+ {
+ 	WARN_ON(misc_deregister(&dasd_eer_dev) != 0);
+ }
+diff -urNp linux-2.6.18.s390/drivers/s390/block/dasd_int.h linux-2.6.18.s390.dasd/drivers/s390/block/dasd_int.h
+--- linux-2.6.18.s390/drivers/s390/block/dasd_int.h	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18.s390.dasd/drivers/s390/block/dasd_int.h	2007-02-20 15:05:28.000000000 +0100
+@@ -13,10 +13,6 @@
+ 
+ #ifdef __KERNEL__
+ 
+-/* erp debugging in dasd.c and dasd_3990_erp.c */
+-#define ERP_DEBUG
+-
+-
+ /* we keep old device allocation scheme; IOW, minors are still in 0..255 */
+ #define DASD_PER_MAJOR (1U << (MINORBITS - DASD_PARTN_BITS))
+ #define DASD_PARTN_MASK ((1 << DASD_PARTN_BITS) - 1)
+diff -urNp linux-2.6.18.s390/include/asm-s390/dasd.h linux-2.6.18.s390.dasd/include/asm-s390/dasd.h
+--- linux-2.6.18.s390/include/asm-s390/dasd.h	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18.s390.dasd/include/asm-s390/dasd.h	2007-02-20 15:05:28.000000000 +0100
+@@ -74,6 +74,7 @@ typedef struct dasd_information2_t {
+ #define DASD_FEATURE_READONLY	     0x01
+ #define DASD_FEATURE_USEDIAG	     0x02
+ #define DASD_FEATURE_INITIAL_ONLINE  0x04
++#define DASD_FEATURE_ERPLOG	     0x08
+ 
+ #define DASD_PARTN_BITS 2
+ 
+
+--- linux-rhel5/arch/s390/hypfs/hypfs_diag.c.exit
++++ linux-rhel5/arch/s390/hypfs/hypfs_diag.c
+@@ -531,7 +531,7 @@ __init int hypfs_diag_init(void)
+ 	return rc;
+ }
+ 
+-__exit void hypfs_diag_exit(void)
++void hypfs_diag_exit(void)
+ {
+ 	diag224_delete_name_table();
+ 	diag204_free_buffer();
+

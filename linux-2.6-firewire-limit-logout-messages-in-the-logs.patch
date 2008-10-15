@@ -1,0 +1,49 @@
+From: Jay Fenlason <fenlason@redhat.com>
+Date: Wed, 14 Nov 2007 11:52:48 -0500
+Subject: [firewire] limit logout messages in the logs
+Message-id: 20071114165248.GA21001@redhat.com
+O-Subject: [patch RHEL5.2] bz#304981 firewire_sbp2: management write failed, rcode 0x13
+Bugzilla: 304981
+
+This is a backport of the patch that upstream accepted.  I tested it on my
+x86_64 and i386 systems.
+
+Acked-by: Jon Masters <jcm@redhat.com>
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/drivers/firewire/fw-sbp2.c b/drivers/firewire/fw-sbp2.c
+index 9cc1061..f97ef20 100644
+--- a/drivers/firewire/fw-sbp2.c
++++ b/drivers/firewire/fw-sbp2.c
+@@ -473,14 +473,26 @@ sbp2_send_management_orb(struct fw_unit *unit, int node_id, int generation,
+ 
+ 	retval = -EIO;
+ 	if (sbp2_cancel_orbs(unit) == 0) {
+-		fw_error("orb reply timed out, rcode=0x%02x\n",
+-			 orb->base.rcode);
++		/*
++		 * logout requests frequently get sent to devices that aren't
++		 * there any more, resulting in extraneous error messages in
++		 * the logs.  Unfortunately, this means logout requests that
++		 * actually fail don't get logged.
++		 */
++		if (function != SBP2_LOGOUT_REQUEST)
++			fw_error("orb reply timed out, rcode=0x%02x\n",
++				 orb->base.rcode);
+ 		goto out;
+ 	}
+ 
+ 	if (orb->base.rcode != RCODE_COMPLETE) {
+-		fw_error("management write failed, rcode 0x%02x\n",
+-			 orb->base.rcode);
++		/*
++                 * On device removal from the bus, sometimes the logout
++		 * request times out, sometimes it just fails.
++		 */
++		if (function != SBP2_LOGOUT_REQUEST)
++			fw_error("management write failed, rcode 0x%02x\n",
++				 orb->base.rcode);
+ 		goto out;
+ 	}
+ 

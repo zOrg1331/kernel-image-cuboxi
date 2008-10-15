@@ -1,0 +1,37 @@
+From: Abhijith Das <adas@redhat.com>
+Subject: [RHEL5.1 PATCH][GFS2] - bz 253921: GFS2: NULL superblock pointer 	causes panic after bad mount option
+Date: Fri, 24 Aug 2007 08:19:51 -0500
+Bugzilla: 253921
+Message-Id: <46CEDAF7.8070109@redhat.com>
+Changelog: [GFS2] bad mount option causes panic with NULL superblock pointer
+
+
+Hi,
+When you try to mount gfs2 with -o garbage, the mount fails and the gfs2
+superblock is deallocated and becomes NULL. The vfs comes around later
+on and calls gfs2_kill_sb. At this point the hidden gfs2 superblock
+pointer (sb->s_fs_info) is NULL and dereferencing it through
+gfs2_meta_syncfs causes the panic. (the other function call to
+gfs2_delete_debugfs_file() succeeds because this function already checks
+for a NULL pointer).
+
+Signed-off-by: Abhijith Das <adas@redhat.com>
+
+Index: linux-rhel51-quilt/fs/gfs2/ops_fstype.c
+===================================================================
+--- linux-rhel51-quilt.orig/fs/gfs2/ops_fstype.c	2007-08-23 11:07:37.000000000 -0500
++++ linux-rhel51-quilt/fs/gfs2/ops_fstype.c	2007-08-23 11:39:56.000000000 -0500
+@@ -888,8 +888,10 @@
+ 
+ static void gfs2_kill_sb(struct super_block *sb)
+ {
+-	gfs2_delete_debugfs_file(sb->s_fs_info);
+-	gfs2_meta_syncfs(sb->s_fs_info);
++	if (sb->s_fs_info) {
++		gfs2_delete_debugfs_file(sb->s_fs_info);
++		gfs2_meta_syncfs(sb->s_fs_info);
++	}
+ 	kill_block_super(sb);
+ }
+ 
+

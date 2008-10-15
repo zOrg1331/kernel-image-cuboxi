@@ -1,0 +1,1504 @@
+From: Tom Coughlan <coughlan@redhat.com>
+Subject: [RHEL 5.0 Patch] Emulex lpfc update to 8.1.10.2
+Date: Sun, 03 Dec 2006 22:11:50 -0500
+Bugzilla: 218243
+Message-Id: <1165201910.4144.90.camel@localhost.localdomain>
+Changelog: Emulex lpfc update to 8.1.10.2
+
+
+This patch updates the driver from 8.1.10.1 to 8.1.10.2. It includes a
+number of bug fixes that are important for GA: 
+
+Infinite loop in LUN reset
+Check if mlist is still initialized before dereferencing in lpfc_ct.c
+Added code to prevent starting discovery of a node if discovery is in progress.
+Make lpfc_multi_ring_support function properly
+Memory leak associated with mbox cmds READ_LA, READ_SPARAM, REG_LOGIN
+Prevent references to NULL node list element in reset routines.
+Update discovery logic to send RFF to Fabric on link up
+Reset card on Port Error 5
+Don't perform nport confirmation for fabric ports
+Add ndlp to plogi list prior to issuing the plogi els command
+
+As usual, it also brings along some non-critical fixes. These are low
+risk and their impact is contained within the driver: 
+
+Fixed sparse error in ioctl code
+Fix printk format warning
+Code improvement for lpfc_findnode_did().
+Handling of LOG_FCP logging
+Add MSI (Message Signalled Interrupts) support - module param to enable
+Removed lpfc driver dependency on subsystem id of HBAs
+Add soft_wwnn sysfs attribute, rename soft_wwn_enable
+sli_iocb_type_array incomplete
+Cosmetic changes to make multi ring support more generic
+
+I believe it is better for us to take the whole update, so we stay in
+synch with Emulex, and take advantage of their testing, rather than
+split this up.
+
+These changes have been posted upstream:
+
+http://marc.theaimsgroup.com/?l=linux-scsi&m=116507571122181&w=2
+
+They are not in yet.
+
+I have built this, and will make sure it gets tested in our lab. Emulex
+has also tested it with RHEL 5.
+
+BZ 218243. 
+
+
+diff -urpN a/drivers/scsi/lpfc/lpfc_attr.c b/drivers/scsi/lpfc/lpfc_attr.c
+--- a/drivers/scsi/lpfc/lpfc_attr.c	2006-12-01 16:02:41.861525000 -0500
++++ b/drivers/scsi/lpfc/lpfc_attr.c	2006-12-01 16:02:42.044534000 -0500
+@@ -552,10 +552,10 @@ static CLASS_DEVICE_ATTR(board_mode, S_I
+ static CLASS_DEVICE_ATTR(issue_reset, S_IWUSR, NULL, lpfc_issue_reset);
+ 
+ 
+-static char *lpfc_soft_wwpn_key = "C99G71SL8032A";
++static char *lpfc_soft_wwn_key = "C99G71SL8032A";
+ 
+ static ssize_t
+-lpfc_soft_wwpn_enable_store(struct class_device *cdev, const char *buf,
++lpfc_soft_wwn_enable_store(struct class_device *cdev, const char *buf,
+ 				size_t count)
+ {
+ 	struct Scsi_Host *host = class_to_shost(cdev);
+@@ -579,22 +579,23 @@ lpfc_soft_wwpn_enable_store(struct class
+ 	if (buf[cnt-1] == '\n')
+ 		cnt--;
+ 
+-	if ((cnt != strlen(lpfc_soft_wwpn_key)) ||
+-	    (strncmp(buf, lpfc_soft_wwpn_key, strlen(lpfc_soft_wwpn_key)) != 0))
++	if ((cnt != strlen(lpfc_soft_wwn_key)) ||
++	    (strncmp(buf, lpfc_soft_wwn_key, strlen(lpfc_soft_wwn_key)) != 0))
+ 		return -EINVAL;
+ 
+-	phba->soft_wwpn_enable = 1;
++	phba->soft_wwn_enable = 1;
+ 	return count;
+ }
+-static CLASS_DEVICE_ATTR(lpfc_soft_wwpn_enable, S_IWUSR, NULL,
+-				lpfc_soft_wwpn_enable_store);
++static CLASS_DEVICE_ATTR(lpfc_soft_wwn_enable, S_IWUSR, NULL,
++				lpfc_soft_wwn_enable_store);
+ 
+ static ssize_t
+ lpfc_soft_wwpn_show(struct class_device *cdev, char *buf)
+ {
+ 	struct Scsi_Host *host = class_to_shost(cdev);
+ 	struct lpfc_hba *phba = (struct lpfc_hba*)host->hostdata;
+-	return snprintf(buf, PAGE_SIZE, "0x%llx\n", phba->cfg_soft_wwpn);
++	return snprintf(buf, PAGE_SIZE, "0x%llx\n",
++			(unsigned long long)phba->cfg_soft_wwpn);
+ }
+ 
+ 
+@@ -612,12 +613,12 @@ lpfc_soft_wwpn_store(struct class_device
+ 	if (buf[cnt-1] == '\n')
+ 		cnt--;
+ 
+-	if (!phba->soft_wwpn_enable || (cnt < 16) || (cnt > 18) ||
++	if (!phba->soft_wwn_enable || (cnt < 16) || (cnt > 18) ||
+ 	    ((cnt == 17) && (*buf++ != 'x')) ||
+ 	    ((cnt == 18) && ((*buf++ != '0') || (*buf++ != 'x'))))
+ 		return -EINVAL;
+ 
+-	phba->soft_wwpn_enable = 0;
++	phba->soft_wwn_enable = 0;
+ 
+ 	memset(wwpn, 0, sizeof(wwpn));
+ 
+@@ -638,6 +639,8 @@ lpfc_soft_wwpn_store(struct class_device
+ 	}
+ 	phba->cfg_soft_wwpn = wwn_to_u64(wwpn);
+ 	fc_host_port_name(host) = phba->cfg_soft_wwpn;
++	if (phba->cfg_soft_wwnn)
++		fc_host_node_name(host) = phba->cfg_soft_wwnn;
+ 
+ 	dev_printk(KERN_NOTICE, &phba->pcidev->dev,
+ 		   "lpfc%d: Reinitializing to use soft_wwpn\n", phba->brd_no);
+@@ -663,6 +666,66 @@ lpfc_soft_wwpn_store(struct class_device
+ static CLASS_DEVICE_ATTR(lpfc_soft_wwpn, S_IRUGO | S_IWUSR,\
+ 			 lpfc_soft_wwpn_show, lpfc_soft_wwpn_store);
+ 
++static ssize_t
++lpfc_soft_wwnn_show(struct class_device *cdev, char *buf)
++{
++	struct Scsi_Host *host = class_to_shost(cdev);
++	struct lpfc_hba *phba = (struct lpfc_hba*)host->hostdata;
++	return snprintf(buf, PAGE_SIZE, "0x%llx\n",
++			(unsigned long long)phba->cfg_soft_wwnn);
++}
++
++
++static ssize_t
++lpfc_soft_wwnn_store(struct class_device *cdev, const char *buf, size_t count)
++{
++	struct Scsi_Host *host = class_to_shost(cdev);
++	struct lpfc_hba *phba = (struct lpfc_hba*)host->hostdata;
++	unsigned int i, j, cnt=count;
++	u8 wwnn[8];
++
++	/* count may include a LF at end of string */
++	if (buf[cnt-1] == '\n')
++		cnt--;
++
++	if (!phba->soft_wwn_enable || (cnt < 16) || (cnt > 18) ||
++	    ((cnt == 17) && (*buf++ != 'x')) ||
++	    ((cnt == 18) && ((*buf++ != '0') || (*buf++ != 'x'))))
++		return -EINVAL;
++
++	/*
++	 * Allow wwnn to be set many times, as long as the enable is set.
++	 * However, once the wwpn is set, everything locks.
++	 */
++
++	memset(wwnn, 0, sizeof(wwnn));
++
++	/* Validate and store the new name */
++	for (i=0, j=0; i < 16; i++) {
++		if ((*buf >= 'a') && (*buf <= 'f'))
++			j = ((j << 4) | ((*buf++ -'a') + 10));
++		else if ((*buf >= 'A') && (*buf <= 'F'))
++			j = ((j << 4) | ((*buf++ -'A') + 10));
++		else if ((*buf >= '0') && (*buf <= '9'))
++			j = ((j << 4) | (*buf++ -'0'));
++		else
++			return -EINVAL;
++		if (i % 2) {
++			wwnn[i/2] = j & 0xff;
++			j = 0;
++		}
++	}
++	phba->cfg_soft_wwnn = wwn_to_u64(wwnn);
++
++	dev_printk(KERN_NOTICE, &phba->pcidev->dev,
++		   "lpfc%d: soft_wwnn set. Value will take effect upon "
++		   "setting of the soft_wwpn\n", phba->brd_no);
++
++	return count;
++}
++static CLASS_DEVICE_ATTR(lpfc_soft_wwnn, S_IRUGO | S_IWUSR,\
++			 lpfc_soft_wwnn_show, lpfc_soft_wwnn_store);
++
+ 
+ static int lpfc_poll = 0;
+ module_param(lpfc_poll, int, 0);
+@@ -801,12 +864,11 @@ static CLASS_DEVICE_ATTR(lpfc_devloss_tm
+ # LOG_MBOX                      0x4        Mailbox events
+ # LOG_INIT                      0x8        Initialization events
+ # LOG_LINK_EVENT                0x10       Link events
+-# LOG_IP                        0x20       IP traffic history
+ # LOG_FCP                       0x40       FCP traffic history
+ # LOG_NODE                      0x80       Node table events
+ # LOG_MISC                      0x400      Miscellaneous events
+ # LOG_SLI                       0x800      SLI events
+-# LOG_CHK_COND                  0x1000     FCP Check condition flag
++# LOG_FCP_ERROR                 0x1000     Only log FCP errors
+ # LOG_LIBDFC                    0x2000     LIBDFC events
+ # LOG_ALL_MSG                   0xffff     LOG all messages
+ */
+@@ -915,6 +977,22 @@ LPFC_ATTR_R(multi_ring_support, 1, 1, 2,
+ 		"SLI rings to spread IOCB entries across");
+ 
+ /*
++# lpfc_multi_ring_rctl:  If lpfc_multi_ring_support is enabled, this
++# identifies what rctl value to configure the additional ring for.
++# Value range is [1,0xff]. Default value is 4 (Unsolicated Data).
++*/
++LPFC_ATTR_R(multi_ring_rctl, FC_UNSOL_DATA, 1,
++	     255, "Identifies RCTL for additional ring configuration");
++
++/*
++# lpfc_multi_ring_type:  If lpfc_multi_ring_support is enabled, this
++# identifies what type value to configure the additional ring for.
++# Value range is [1,0xff]. Default value is 5 (LLC/SNAP).
++*/
++LPFC_ATTR_R(multi_ring_type, FC_LLC_SNAP, 1,
++	     255, "Identifies TYPE for additional ring configuration");
++
++/*
+ # lpfc_fdmi_on: controls FDMI support.
+ #       0 = no FDMI support
+ #       1 = support FDMI without attribute of hostname
+@@ -945,6 +1023,15 @@ LPFC_ATTR_R(max_luns, 255, 0, 65535,
+ LPFC_ATTR_RW(poll_tmo, 10, 1, 255,
+ 	     "Milliseconds driver will wait between polling FCP ring");
+ 
++/*
++# lpfc_use_msi: Use MSI (Message Signaled Interrupts) in systems that
++#		support this feature
++#       0  = MSI disabled (default)
++#       1  = MSI enabled
++# Value range is [0,1]. Default value is 0.
++*/
++LPFC_ATTR_R(use_msi, 0, 0, 1, "Use Message Signaled Interrupts, if possible");
++
+ 
+ struct class_device_attribute *lpfc_host_attrs[] = {
+ 	&class_device_attr_info,
+@@ -973,6 +1060,8 @@ struct class_device_attribute *lpfc_host
+ 	&class_device_attr_lpfc_cr_delay,
+ 	&class_device_attr_lpfc_cr_count,
+ 	&class_device_attr_lpfc_multi_ring_support,
++	&class_device_attr_lpfc_multi_ring_rctl,
++	&class_device_attr_lpfc_multi_ring_type,
+ 	&class_device_attr_lpfc_fdmi_on,
+ 	&class_device_attr_lpfc_max_luns,
+ 	&class_device_attr_nport_evt_cnt,
+@@ -981,8 +1070,10 @@ struct class_device_attribute *lpfc_host
+ 	&class_device_attr_issue_reset,
+ 	&class_device_attr_lpfc_poll,
+ 	&class_device_attr_lpfc_poll_tmo,
++	&class_device_attr_lpfc_use_msi,
++	&class_device_attr_lpfc_soft_wwnn,
+ 	&class_device_attr_lpfc_soft_wwpn,
+-	&class_device_attr_lpfc_soft_wwpn_enable,
++	&class_device_attr_lpfc_soft_wwn_enable,
+ 	NULL,
+ };
+ 
+@@ -1770,6 +1861,8 @@ lpfc_get_cfgparam(struct lpfc_hba *phba)
+ 	lpfc_cr_delay_init(phba, lpfc_cr_delay);
+ 	lpfc_cr_count_init(phba, lpfc_cr_count);
+ 	lpfc_multi_ring_support_init(phba, lpfc_multi_ring_support);
++	lpfc_multi_ring_rctl_init(phba, lpfc_multi_ring_rctl);
++	lpfc_multi_ring_type_init(phba, lpfc_multi_ring_type);
+ 	lpfc_lun_queue_depth_init(phba, lpfc_lun_queue_depth);
+ 	lpfc_fcp_class_init(phba, lpfc_fcp_class);
+ 	lpfc_use_adisc_init(phba, lpfc_use_adisc);
+@@ -1781,9 +1874,11 @@ lpfc_get_cfgparam(struct lpfc_hba *phba)
+ 	lpfc_discovery_threads_init(phba, lpfc_discovery_threads);
+ 	lpfc_max_luns_init(phba, lpfc_max_luns);
+ 	lpfc_poll_tmo_init(phba, lpfc_poll_tmo);
++	lpfc_use_msi_init(phba, lpfc_use_msi);
+ 	lpfc_devloss_tmo_init(phba, lpfc_devloss_tmo);
+ 	lpfc_nodev_tmo_init(phba, lpfc_nodev_tmo);
+ 	phba->cfg_poll = lpfc_poll;
++	phba->cfg_soft_wwnn = 0L;
+ 	phba->cfg_soft_wwpn = 0L;
+ 
+ 	/*
+diff -urpN a/drivers/scsi/lpfc/lpfc_ct.c b/drivers/scsi/lpfc/lpfc_ct.c
+--- a/drivers/scsi/lpfc/lpfc_ct.c	2006-12-01 16:02:41.871540000 -0500
++++ b/drivers/scsi/lpfc/lpfc_ct.c	2006-12-01 16:02:42.063526000 -0500
+@@ -188,7 +188,8 @@ lpfc_alloc_ct_rsp(struct lpfc_hba * phba
+ 
+ 		if (!mp->virt) {
+ 			kfree(mp);
+-			lpfc_free_ct_rsp(phba, mlist);
++			if (mlist)
++				lpfc_free_ct_rsp(phba, mlist);
+ 			return NULL;
+ 		}
+ 
+@@ -557,6 +558,14 @@ lpfc_cmpl_ct_cmd_rsnn_nn(struct lpfc_hba
+ 	return;
+ }
+ 
++static void
++lpfc_cmpl_ct_cmd_rff_id(struct lpfc_hba * phba, struct lpfc_iocbq * cmdiocb,
++			 struct lpfc_iocbq * rspiocb)
++{
++	lpfc_cmpl_ct_cmd_rft_id(phba, cmdiocb, rspiocb);
++	return;
++}
++
+ void
+ lpfc_get_hba_sym_node_name(struct lpfc_hba * phba, uint8_t * symbp)
+ {
+@@ -628,6 +637,8 @@ lpfc_ns_cmd(struct lpfc_hba * phba, stru
+ 		bpl->tus.f.bdeSize = RNN_REQUEST_SZ;
+ 	else if (cmdcode == SLI_CTNS_RSNN_NN)
+ 		bpl->tus.f.bdeSize = RSNN_REQUEST_SZ;
++	else if (cmdcode == SLI_CTNS_RFF_ID)
++		bpl->tus.f.bdeSize = RFF_REQUEST_SZ;
+ 	else
+ 		bpl->tus.f.bdeSize = 0;
+ 	bpl->tus.w = le32_to_cpu(bpl->tus.w);
+@@ -659,6 +670,17 @@ lpfc_ns_cmd(struct lpfc_hba * phba, stru
+ 		cmpl = lpfc_cmpl_ct_cmd_rft_id;
+ 		break;
+ 
++	case SLI_CTNS_RFF_ID:
++		CtReq->CommandResponse.bits.CmdRsp =
++			be16_to_cpu(SLI_CTNS_RFF_ID);
++		CtReq->un.rff.PortId = be32_to_cpu(phba->fc_myDID);
++		CtReq->un.rff.feature_res = 0;
++		CtReq->un.rff.feature_tgt = 0;
++		CtReq->un.rff.type_code = FC_FCP_DATA;
++		CtReq->un.rff.feature_init = 1;
++		cmpl = lpfc_cmpl_ct_cmd_rff_id;
++		break;
++
+ 	case SLI_CTNS_RNN_ID:
+ 		CtReq->CommandResponse.bits.CmdRsp =
+ 		    be16_to_cpu(SLI_CTNS_RNN_ID);
+diff -urpN a/drivers/scsi/lpfc/lpfc_els.c b/drivers/scsi/lpfc/lpfc_els.c
+--- a/drivers/scsi/lpfc/lpfc_els.c	2006-12-01 16:02:41.884526000 -0500
++++ b/drivers/scsi/lpfc/lpfc_els.c	2006-12-01 16:02:42.086530000 -0500
+@@ -243,6 +243,7 @@ lpfc_cmpl_els_flogi_fabric(struct lpfc_h
+ 		struct serv_parm *sp, IOCB_t *irsp)
+ {
+ 	LPFC_MBOXQ_t *mbox;
++	struct lpfc_dmabuf *mp;
+ 	int rc;
+ 
+ 	spin_lock_irq(phba->host->host_lock);
+@@ -307,10 +308,14 @@ lpfc_cmpl_els_flogi_fabric(struct lpfc_h
+ 
+ 	rc = lpfc_sli_issue_mbox(phba, mbox, MBX_NOWAIT | MBX_STOP_IOCB);
+ 	if (rc == MBX_NOT_FINISHED)
+-		goto fail_free_mbox;
++		goto fail_issue_reg_login;
+ 
+ 	return 0;
+ 
++ fail_issue_reg_login:
++	mp = (struct lpfc_dmabuf *) mbox->context1;
++	lpfc_mbuf_free(phba, mp->virt, mp->phys);
++	kfree(mp);
+  fail_free_mbox:
+ 	mempool_free(mbox, phba->mbox_mem_pool);
+  fail:
+@@ -657,6 +662,12 @@ lpfc_plogi_confirm_nport(struct lpfc_hba
+ 	uint8_t name[sizeof (struct lpfc_name)];
+ 	uint32_t rc;
+ 
++	/* Fabric nodes can have the same WWPN so we don't bother searching
++	 * by WWPN.  Just return the ndlp that was given to us.
++	 */
++	if (ndlp->nlp_type & NLP_FABRIC)
++		return ndlp;
++
+ 	lp = (uint32_t *) prsp->virt;
+ 	sp = (struct serv_parm *) ((uint8_t *) lp + sizeof (uint32_t));
+ 	memset(name, 0, sizeof (struct lpfc_name));
+@@ -1122,7 +1133,7 @@ lpfc_cmpl_els_adisc(struct lpfc_hba * ph
+ 						mempool_free(mbox,
+ 						     phba->mbox_mem_pool);
+ 						lpfc_disc_flush_list(phba);
+-						psli->ring[(psli->ip_ring)].
++						psli->ring[(psli->extra_ring)].
+ 						    flag &=
+ 						    ~LPFC_STOP_IOCB_EVENT;
+ 						psli->ring[(psli->fcp_ring)].
+@@ -1851,6 +1862,7 @@ lpfc_cmpl_els_acc(struct lpfc_hba * phba
+ 	IOCB_t *irsp;
+ 	struct lpfc_nodelist *ndlp;
+ 	LPFC_MBOXQ_t *mbox = NULL;
++	struct lpfc_dmabuf *mp;
+ 
+ 	irsp = &rspiocb->iocb;
+ 
+@@ -1862,6 +1874,11 @@ lpfc_cmpl_els_acc(struct lpfc_hba * phba
+ 	/* Check to see if link went down during discovery */
+ 	if ((lpfc_els_chk_latt(phba)) || !ndlp) {
+ 		if (mbox) {
++			mp = (struct lpfc_dmabuf *) mbox->context1;
++			if (mp) {
++				lpfc_mbuf_free(phba, mp->virt, mp->phys);
++				kfree(mp);
++			}
+ 			mempool_free( mbox, phba->mbox_mem_pool);
+ 		}
+ 		goto out;
+@@ -1893,9 +1910,7 @@ lpfc_cmpl_els_acc(struct lpfc_hba * phba
+ 			}
+ 			/* NOTE: we should have messages for unsuccessful
+ 			   reglogin */
+-			mempool_free( mbox, phba->mbox_mem_pool);
+ 		} else {
+-			mempool_free( mbox, phba->mbox_mem_pool);
+ 			/* Do not call NO_LIST for lpfc_els_abort'ed ELS cmds */
+ 			if (!((irsp->ulpStatus == IOSTAT_LOCAL_REJECT) &&
+ 			      ((irsp->un.ulpWord[4] == IOERR_SLI_ABORTED) ||
+@@ -1907,6 +1922,12 @@ lpfc_cmpl_els_acc(struct lpfc_hba * phba
+ 				}
+ 			}
+ 		}
++		mp = (struct lpfc_dmabuf *) mbox->context1;
++		if (mp) {
++			lpfc_mbuf_free(phba, mp->virt, mp->phys);
++			kfree(mp);
++		}
++		mempool_free(mbox, phba->mbox_mem_pool);
+ 	}
+ out:
+ 	if (ndlp) {
+@@ -2644,6 +2665,7 @@ lpfc_els_handle_rscn(struct lpfc_hba * p
+ 			ndlp->nlp_type |= NLP_FABRIC;
+ 			ndlp->nlp_prev_state = ndlp->nlp_state;
+ 			ndlp->nlp_state = NLP_STE_PLOGI_ISSUE;
++			lpfc_nlp_list(phba, ndlp, NLP_PLOGI_LIST);
+ 			lpfc_issue_els_plogi(phba, NameServer_DID, 0);
+ 			/* Wait for NameServer login cmpl before we can
+ 			   continue */
+@@ -3039,7 +3061,7 @@ lpfc_els_rcv_farp(struct lpfc_hba * phba
+ 	/* FARP-REQ received from DID <did> */
+ 	lpfc_printf_log(phba,
+ 			 KERN_INFO,
+-			 LOG_IP,
++			 LOG_ELS,
+ 			 "%d:0601 FARP-REQ received from DID x%x\n",
+ 			 phba->brd_no, did);
+ 
+@@ -3101,7 +3123,7 @@ lpfc_els_rcv_farpr(struct lpfc_hba * phb
+ 	/* FARP-RSP received from DID <did> */
+ 	lpfc_printf_log(phba,
+ 			 KERN_INFO,
+-			 LOG_IP,
++			 LOG_ELS,
+ 			 "%d:0600 FARP-RSP received from DID x%x\n",
+ 			 phba->brd_no, did);
+ 
+diff -urpN a/drivers/scsi/lpfc/lpfc.h b/drivers/scsi/lpfc/lpfc.h
+--- a/drivers/scsi/lpfc/lpfc.h	2006-12-01 16:02:41.887529000 -0500
++++ b/drivers/scsi/lpfc/lpfc.h	2006-12-01 16:02:42.092534000 -0500
+@@ -296,13 +296,17 @@ struct lpfc_hba {
+ 	uint32_t cfg_cr_delay;
+ 	uint32_t cfg_cr_count;
+ 	uint32_t cfg_multi_ring_support;
++	uint32_t cfg_multi_ring_rctl;
++	uint32_t cfg_multi_ring_type;
+ 	uint32_t cfg_fdmi_on;
+ 	uint32_t cfg_discovery_threads;
+ 	uint32_t cfg_max_luns;
+ 	uint32_t cfg_poll;
+ 	uint32_t cfg_poll_tmo;
++	uint32_t cfg_use_msi;
+ 	uint32_t cfg_sg_seg_cnt;
+ 	uint32_t cfg_sg_dma_buf_size;
++	uint64_t cfg_soft_wwnn;
+ 	uint64_t cfg_soft_wwpn;
+ 
+ 	uint32_t dev_loss_tmo_changed;
+@@ -355,7 +359,7 @@ struct lpfc_hba {
+ #define VPD_PORT            0x8         /* valid vpd port data */
+ #define VPD_MASK            0xf         /* mask for any vpd data */
+ 
+-	uint8_t soft_wwpn_enable;
++	uint8_t soft_wwn_enable;
+ 
+ 	struct timer_list fcp_poll_timer;
+ 	struct timer_list els_tmofunc;
+diff -urpN a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c	2006-12-01 16:02:41.895530000 -0500
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c	2006-12-01 16:02:42.106527000 -0500
+@@ -526,7 +526,7 @@ lpfc_mbx_cmpl_clear_la(struct lpfc_hba *
+ 	psli = &phba->sli;
+ 	mb = &pmb->mb;
+ 	/* Since we don't do discovery right now, turn these off here */
+-	psli->ring[psli->ip_ring].flag &= ~LPFC_STOP_IOCB_EVENT;
++	psli->ring[psli->extra_ring].flag &= ~LPFC_STOP_IOCB_EVENT;
+ 	psli->ring[psli->fcp_ring].flag &= ~LPFC_STOP_IOCB_EVENT;
+ 	psli->ring[psli->next_ring].flag &= ~LPFC_STOP_IOCB_EVENT;
+ 
+@@ -642,7 +642,7 @@ out:
+ 	if (rc == MBX_NOT_FINISHED) {
+ 		mempool_free(pmb, phba->mbox_mem_pool);
+ 		lpfc_disc_flush_list(phba);
+-		psli->ring[(psli->ip_ring)].flag &= ~LPFC_STOP_IOCB_EVENT;
++		psli->ring[(psli->extra_ring)].flag &= ~LPFC_STOP_IOCB_EVENT;
+ 		psli->ring[(psli->fcp_ring)].flag &= ~LPFC_STOP_IOCB_EVENT;
+ 		psli->ring[(psli->next_ring)].flag &= ~LPFC_STOP_IOCB_EVENT;
+ 		phba->hba_state = LPFC_HBA_READY;
+@@ -673,6 +673,8 @@ lpfc_mbx_cmpl_read_sparam(struct lpfc_hb
+ 
+ 	memcpy((uint8_t *) & phba->fc_sparam, (uint8_t *) mp->virt,
+ 	       sizeof (struct serv_parm));
++	if (phba->cfg_soft_wwnn)
++		u64_to_wwn(phba->cfg_soft_wwnn, phba->fc_sparam.nodeName.u.wwn);
+ 	if (phba->cfg_soft_wwpn)
+ 		u64_to_wwn(phba->cfg_soft_wwpn, phba->fc_sparam.portName.u.wwn);
+ 	memcpy((uint8_t *) & phba->fc_nodename,
+@@ -697,7 +699,7 @@ out:
+ 		    == MBX_NOT_FINISHED) {
+ 			mempool_free( pmb, phba->mbox_mem_pool);
+ 			lpfc_disc_flush_list(phba);
+-			psli->ring[(psli->ip_ring)].flag &=
++			psli->ring[(psli->extra_ring)].flag &=
+ 			    ~LPFC_STOP_IOCB_EVENT;
+ 			psli->ring[(psli->fcp_ring)].flag &=
+ 			    ~LPFC_STOP_IOCB_EVENT;
+@@ -716,6 +718,9 @@ lpfc_mbx_process_link_up(struct lpfc_hba
+ {
+ 	int i;
+ 	LPFC_MBOXQ_t *sparam_mbox, *cfglink_mbox;
++	struct lpfc_dmabuf *mp;
++	int rc;
++
+ 	sparam_mbox = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
+ 	cfglink_mbox = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
+ 
+@@ -794,16 +799,27 @@ lpfc_mbx_process_link_up(struct lpfc_hba
+ 	if (sparam_mbox) {
+ 		lpfc_read_sparam(phba, sparam_mbox);
+ 		sparam_mbox->mbox_cmpl = lpfc_mbx_cmpl_read_sparam;
+-		lpfc_sli_issue_mbox(phba, sparam_mbox,
++		rc = lpfc_sli_issue_mbox(phba, sparam_mbox,
+ 						(MBX_NOWAIT | MBX_STOP_IOCB));
++		if (rc == MBX_NOT_FINISHED) {
++			mp = (struct lpfc_dmabuf *) sparam_mbox->context1;
++			lpfc_mbuf_free(phba, mp->virt, mp->phys);
++			kfree(mp);
++			mempool_free(sparam_mbox, phba->mbox_mem_pool);
++			if (cfglink_mbox)
++				mempool_free(cfglink_mbox, phba->mbox_mem_pool);
++			return;
++		}
+ 	}
+ 
+ 	if (cfglink_mbox) {
+ 		phba->hba_state = LPFC_LOCAL_CFG_LINK;
+ 		lpfc_config_link(phba, cfglink_mbox);
+ 		cfglink_mbox->mbox_cmpl = lpfc_mbx_cmpl_local_config_link;
+-		lpfc_sli_issue_mbox(phba, cfglink_mbox,
++		rc = lpfc_sli_issue_mbox(phba, cfglink_mbox,
+ 						(MBX_NOWAIT | MBX_STOP_IOCB));
++		if (rc == MBX_NOT_FINISHED)
++			mempool_free(cfglink_mbox, phba->mbox_mem_pool);
+ 	}
+ }
+ 
+@@ -1068,6 +1084,7 @@ lpfc_mbx_cmpl_ns_reg_login(struct lpfc_h
+ 		lpfc_ns_cmd(phba, ndlp, SLI_CTNS_RNN_ID);
+ 		lpfc_ns_cmd(phba, ndlp, SLI_CTNS_RSNN_NN);
+ 		lpfc_ns_cmd(phba, ndlp, SLI_CTNS_RFT_ID);
++		lpfc_ns_cmd(phba, ndlp, SLI_CTNS_RFF_ID);
+ 	}
+ 
+ 	phba->fc_ns_retry = 0;
+@@ -1424,7 +1441,7 @@ lpfc_check_sli_ndlp(struct lpfc_hba * ph
+ 			if (iocb->context1 == (uint8_t *) ndlp)
+ 				return 1;
+ 		}
+-	} else if (pring->ringno == psli->ip_ring) {
++	} else if (pring->ringno == psli->extra_ring) {
+ 
+ 	} else if (pring->ringno == psli->fcp_ring) {
+ 		/* Skip match check if waiting to relogin to FCP target */
+@@ -1681,112 +1698,38 @@ lpfc_matchdid(struct lpfc_hba * phba, st
+ struct lpfc_nodelist *
+ lpfc_findnode_did(struct lpfc_hba * phba, uint32_t order, uint32_t did)
+ {
+-	struct lpfc_nodelist *ndlp, *next_ndlp;
++	struct lpfc_nodelist *ndlp;
++	struct list_head *lists[]={&phba->fc_nlpunmap_list,
++				   &phba->fc_nlpmap_list,
++				   &phba->fc_plogi_list,
++				   &phba->fc_adisc_list,
++				   &phba->fc_reglogin_list,
++				   &phba->fc_prli_list,
++				   &phba->fc_npr_list,
++				   &phba->fc_unused_list};
++	uint32_t search[]={NLP_SEARCH_UNMAPPED,
++			   NLP_SEARCH_MAPPED,
++			   NLP_SEARCH_PLOGI,
++			   NLP_SEARCH_ADISC,
++			   NLP_SEARCH_REGLOGIN,
++			   NLP_SEARCH_PRLI,
++			   NLP_SEARCH_NPR,
++			   NLP_SEARCH_UNUSED};
++	int i;
+ 	uint32_t data1;
+ 
+ 	spin_lock_irq(phba->host->host_lock);
+-	if (order & NLP_SEARCH_UNMAPPED) {
+-		list_for_each_entry_safe(ndlp, next_ndlp,
+-					 &phba->fc_nlpunmap_list, nlp_listp) {
+-			if (lpfc_matchdid(phba, ndlp, did)) {
+-				data1 = (((uint32_t) ndlp->nlp_state << 24) |
+-					 ((uint32_t) ndlp->nlp_xri << 16) |
+-					 ((uint32_t) ndlp->nlp_type << 8) |
+-					 ((uint32_t) ndlp->nlp_rpi & 0xff));
+-				/* FIND node DID unmapped */
+-				lpfc_printf_log(phba, KERN_INFO, LOG_NODE,
+-						"%d:0929 FIND node DID unmapped"
+-						" Data: x%p x%x x%x x%x\n",
+-						phba->brd_no,
+-						ndlp, ndlp->nlp_DID,
+-						ndlp->nlp_flag, data1);
+-				spin_unlock_irq(phba->host->host_lock);
+-				return ndlp;
+-			}
+-		}
+-	}
+-
+-	if (order & NLP_SEARCH_MAPPED) {
+-		list_for_each_entry_safe(ndlp, next_ndlp, &phba->fc_nlpmap_list,
+-					nlp_listp) {
+-			if (lpfc_matchdid(phba, ndlp, did)) {
+-
+-				data1 = (((uint32_t) ndlp->nlp_state << 24) |
+-					 ((uint32_t) ndlp->nlp_xri << 16) |
+-					 ((uint32_t) ndlp->nlp_type << 8) |
+-					 ((uint32_t) ndlp->nlp_rpi & 0xff));
+-				/* FIND node DID mapped */
+-				lpfc_printf_log(phba, KERN_INFO, LOG_NODE,
+-						"%d:0930 FIND node DID mapped "
+-						"Data: x%p x%x x%x x%x\n",
+-						phba->brd_no,
+-						ndlp, ndlp->nlp_DID,
+-						ndlp->nlp_flag, data1);
+-				spin_unlock_irq(phba->host->host_lock);
+-				return ndlp;
+-			}
+-		}
+-	}
+-
+-	if (order & NLP_SEARCH_PLOGI) {
+-		list_for_each_entry_safe(ndlp, next_ndlp, &phba->fc_plogi_list,
+-					nlp_listp) {
+-			if (lpfc_matchdid(phba, ndlp, did)) {
+-
+-				data1 = (((uint32_t) ndlp->nlp_state << 24) |
+-					 ((uint32_t) ndlp->nlp_xri << 16) |
+-					 ((uint32_t) ndlp->nlp_type << 8) |
+-					 ((uint32_t) ndlp->nlp_rpi & 0xff));
+-				/* LOG change to PLOGI */
+-				/* FIND node DID plogi */
+-				lpfc_printf_log(phba, KERN_INFO, LOG_NODE,
+-						"%d:0908 FIND node DID plogi "
+-						"Data: x%p x%x x%x x%x\n",
+-						phba->brd_no,
+-						ndlp, ndlp->nlp_DID,
+-						ndlp->nlp_flag, data1);
+-				spin_unlock_irq(phba->host->host_lock);
+-				return ndlp;
+-			}
+-		}
+-	}
+-
+-	if (order & NLP_SEARCH_ADISC) {
+-		list_for_each_entry_safe(ndlp, next_ndlp, &phba->fc_adisc_list,
+-					nlp_listp) {
+-			if (lpfc_matchdid(phba, ndlp, did)) {
+-
+-				data1 = (((uint32_t) ndlp->nlp_state << 24) |
+-					 ((uint32_t) ndlp->nlp_xri << 16) |
+-					 ((uint32_t) ndlp->nlp_type << 8) |
+-					 ((uint32_t) ndlp->nlp_rpi & 0xff));
+-				/* LOG change to ADISC */
+-				/* FIND node DID adisc */
+-				lpfc_printf_log(phba, KERN_INFO, LOG_NODE,
+-						"%d:0931 FIND node DID adisc "
+-						"Data: x%p x%x x%x x%x\n",
+-						phba->brd_no,
+-						ndlp, ndlp->nlp_DID,
+-						ndlp->nlp_flag, data1);
+-				spin_unlock_irq(phba->host->host_lock);
+-				return ndlp;
+-			}
+-		}
+-	}
+-
+-	if (order & NLP_SEARCH_REGLOGIN) {
+-		list_for_each_entry_safe(ndlp, next_ndlp,
+-					 &phba->fc_reglogin_list, nlp_listp) {
++	for (i = 0; i < ARRAY_SIZE(lists); i++ ) {
++		if (!(order & search[i]))
++			continue;
++		list_for_each_entry(ndlp, lists[i], nlp_listp) {
+ 			if (lpfc_matchdid(phba, ndlp, did)) {
+-
+ 				data1 = (((uint32_t) ndlp->nlp_state << 24) |
+ 					 ((uint32_t) ndlp->nlp_xri << 16) |
+ 					 ((uint32_t) ndlp->nlp_type << 8) |
+ 					 ((uint32_t) ndlp->nlp_rpi & 0xff));
+-				/* LOG change to REGLOGIN */
+-				/* FIND node DID reglogin */
+ 				lpfc_printf_log(phba, KERN_INFO, LOG_NODE,
+-						"%d:0901 FIND node DID reglogin"
++						"%d:0929 FIND node DID "
+ 						" Data: x%p x%x x%x x%x\n",
+ 						phba->brd_no,
+ 						ndlp, ndlp->nlp_DID,
+@@ -1796,86 +1739,12 @@ lpfc_findnode_did(struct lpfc_hba * phba
+ 			}
+ 		}
+ 	}
+-
+-	if (order & NLP_SEARCH_PRLI) {
+-		list_for_each_entry_safe(ndlp, next_ndlp, &phba->fc_prli_list,
+-					nlp_listp) {
+-			if (lpfc_matchdid(phba, ndlp, did)) {
+-
+-				data1 = (((uint32_t) ndlp->nlp_state << 24) |
+-					 ((uint32_t) ndlp->nlp_xri << 16) |
+-					 ((uint32_t) ndlp->nlp_type << 8) |
+-					 ((uint32_t) ndlp->nlp_rpi & 0xff));
+-				/* LOG change to PRLI */
+-				/* FIND node DID prli */
+-				lpfc_printf_log(phba, KERN_INFO, LOG_NODE,
+-						"%d:0902 FIND node DID prli "
+-						"Data: x%p x%x x%x x%x\n",
+-						phba->brd_no,
+-						ndlp, ndlp->nlp_DID,
+-						ndlp->nlp_flag, data1);
+-				spin_unlock_irq(phba->host->host_lock);
+-				return ndlp;
+-			}
+-		}
+-	}
+-
+-	if (order & NLP_SEARCH_NPR) {
+-		list_for_each_entry_safe(ndlp, next_ndlp, &phba->fc_npr_list,
+-					nlp_listp) {
+-			if (lpfc_matchdid(phba, ndlp, did)) {
+-
+-				data1 = (((uint32_t) ndlp->nlp_state << 24) |
+-					 ((uint32_t) ndlp->nlp_xri << 16) |
+-					 ((uint32_t) ndlp->nlp_type << 8) |
+-					 ((uint32_t) ndlp->nlp_rpi & 0xff));
+-				/* LOG change to NPR */
+-				/* FIND node DID npr */
+-				lpfc_printf_log(phba, KERN_INFO, LOG_NODE,
+-						"%d:0903 FIND node DID npr "
+-						"Data: x%p x%x x%x x%x\n",
+-						phba->brd_no,
+-						ndlp, ndlp->nlp_DID,
+-						ndlp->nlp_flag, data1);
+-				spin_unlock_irq(phba->host->host_lock);
+-				return ndlp;
+-			}
+-		}
+-	}
+-
+-	if (order & NLP_SEARCH_UNUSED) {
+-		list_for_each_entry_safe(ndlp, next_ndlp, &phba->fc_adisc_list,
+-					nlp_listp) {
+-			if (lpfc_matchdid(phba, ndlp, did)) {
+-
+-				data1 = (((uint32_t) ndlp->nlp_state << 24) |
+-					 ((uint32_t) ndlp->nlp_xri << 16) |
+-					 ((uint32_t) ndlp->nlp_type << 8) |
+-					 ((uint32_t) ndlp->nlp_rpi & 0xff));
+-				/* LOG change to UNUSED */
+-				/* FIND node DID unused */
+-				lpfc_printf_log(phba, KERN_INFO, LOG_NODE,
+-						"%d:0905 FIND node DID unused "
+-						"Data: x%p x%x x%x x%x\n",
+-						phba->brd_no,
+-						ndlp, ndlp->nlp_DID,
+-						ndlp->nlp_flag, data1);
+-				spin_unlock_irq(phba->host->host_lock);
+-				return ndlp;
+-			}
+-		}
+-	}
+-
+ 	spin_unlock_irq(phba->host->host_lock);
+ 
+ 	/* FIND node did <did> NOT FOUND */
+-	lpfc_printf_log(phba,
+-			KERN_INFO,
+-			LOG_NODE,
++	lpfc_printf_log(phba, KERN_INFO, LOG_NODE,
+ 			"%d:0932 FIND node did x%x NOT FOUND Data: x%x\n",
+ 			phba->brd_no, did, order);
+-
+-	/* no match found */
+ 	return NULL;
+ }
+ 
+@@ -2037,7 +1906,7 @@ lpfc_disc_start(struct lpfc_hba * phba)
+ 			if (rc == MBX_NOT_FINISHED) {
+ 				mempool_free( mbox, phba->mbox_mem_pool);
+ 				lpfc_disc_flush_list(phba);
+-				psli->ring[(psli->ip_ring)].flag &=
++				psli->ring[(psli->extra_ring)].flag &=
+ 					~LPFC_STOP_IOCB_EVENT;
+ 				psli->ring[(psli->fcp_ring)].flag &=
+ 					~LPFC_STOP_IOCB_EVENT;
+@@ -2416,7 +2285,7 @@ lpfc_disc_timeout_handler(struct lpfc_hb
+ 
+ 	if (clrlaerr) {
+ 		lpfc_disc_flush_list(phba);
+-		psli->ring[(psli->ip_ring)].flag &= ~LPFC_STOP_IOCB_EVENT;
++		psli->ring[(psli->extra_ring)].flag &= ~LPFC_STOP_IOCB_EVENT;
+ 		psli->ring[(psli->fcp_ring)].flag &= ~LPFC_STOP_IOCB_EVENT;
+ 		psli->ring[(psli->next_ring)].flag &= ~LPFC_STOP_IOCB_EVENT;
+ 		phba->hba_state = LPFC_HBA_READY;
+diff -urpN a/drivers/scsi/lpfc/lpfc_hw.h b/drivers/scsi/lpfc/lpfc_hw.h
+--- a/drivers/scsi/lpfc/lpfc_hw.h	2006-12-01 16:02:41.905530000 -0500
++++ b/drivers/scsi/lpfc/lpfc_hw.h	2006-12-01 16:02:42.122526000 -0500
+@@ -42,14 +42,14 @@
+ #define FCELSSIZE             1024	/* maximum ELS transfer size */
+ 
+ #define LPFC_FCP_RING            0	/* ring 0 for FCP initiator commands */
+-#define LPFC_IP_RING             1	/* ring 1 for IP commands */
++#define LPFC_EXTRA_RING          1	/* ring 1 for other protocols */
+ #define LPFC_ELS_RING            2	/* ring 2 for ELS commands */
+ #define LPFC_FCP_NEXT_RING       3
+ 
+ #define SLI2_IOCB_CMD_R0_ENTRIES    172	/* SLI-2 FCP command ring entries */
+ #define SLI2_IOCB_RSP_R0_ENTRIES    134	/* SLI-2 FCP response ring entries */
+-#define SLI2_IOCB_CMD_R1_ENTRIES      4	/* SLI-2 IP command ring entries */
+-#define SLI2_IOCB_RSP_R1_ENTRIES      4	/* SLI-2 IP response ring entries */
++#define SLI2_IOCB_CMD_R1_ENTRIES      4	/* SLI-2 extra command ring entries */
++#define SLI2_IOCB_RSP_R1_ENTRIES      4	/* SLI-2 extra response ring entries */
+ #define SLI2_IOCB_CMD_R1XTRA_ENTRIES 36	/* SLI-2 extra FCP cmd ring entries */
+ #define SLI2_IOCB_RSP_R1XTRA_ENTRIES 52	/* SLI-2 extra FCP rsp ring entries */
+ #define SLI2_IOCB_CMD_R2_ENTRIES     20	/* SLI-2 ELS command ring entries */
+@@ -121,6 +121,20 @@ struct lpfc_sli_ct_request {
+ 
+ 			uint32_t rsvd[7];
+ 		} rft;
++		struct rff {
++			uint32_t PortId;
++			uint8_t reserved[2];
++#ifdef __BIG_ENDIAN_BITFIELD
++			uint8_t feature_res:6;
++			uint8_t feature_init:1;
++			uint8_t feature_tgt:1;
++#else  /*  __LITTLE_ENDIAN_BITFIELD */
++			uint8_t feature_tgt:1;
++			uint8_t feature_init:1;
++			uint8_t feature_res:6;
++#endif
++			uint8_t type_code;     /* type=8 for FCP */
++		} rff;
+ 		struct rnn {
+ 			uint32_t PortId;	/* For RNN_ID requests */
+ 			uint8_t wwnn[8];
+@@ -136,6 +150,7 @@ struct lpfc_sli_ct_request {
+ #define  SLI_CT_REVISION        1
+ #define  GID_REQUEST_SZ         (sizeof(struct lpfc_sli_ct_request) - 260)
+ #define  RFT_REQUEST_SZ         (sizeof(struct lpfc_sli_ct_request) - 228)
++#define  RFF_REQUEST_SZ         (sizeof(struct lpfc_sli_ct_request) - 235)
+ #define  RNN_REQUEST_SZ         (sizeof(struct lpfc_sli_ct_request) - 252)
+ #define  RSNN_REQUEST_SZ        (sizeof(struct lpfc_sli_ct_request))
+ 
+@@ -225,6 +240,7 @@ struct lpfc_sli_ct_request {
+ #define  SLI_CTNS_RNN_ID      0x0213
+ #define  SLI_CTNS_RCS_ID      0x0214
+ #define  SLI_CTNS_RFT_ID      0x0217
++#define  SLI_CTNS_RFF_ID      0x021F
+ #define  SLI_CTNS_RSPN_ID     0x0218
+ #define  SLI_CTNS_RPT_ID      0x021A
+ #define  SLI_CTNS_RIP_NN      0x0235
+@@ -1089,12 +1105,6 @@ typedef struct {
+ #define PCI_DEVICE_ID_ZEPHYR_SCSP   0xfe11
+ #define PCI_DEVICE_ID_ZEPHYR_DCSP   0xfe12
+ 
+-#define PCI_SUBSYSTEM_ID_LP11000S      0xfc11
+-#define PCI_SUBSYSTEM_ID_LP11002S      0xfc12
+-#define PCI_SUBSYSTEM_ID_LPE11000S     0xfc21
+-#define PCI_SUBSYSTEM_ID_LPE11002S     0xfc22
+-#define PCI_SUBSYSTEM_ID_LPE11010S     0xfc2A
+-
+ #define JEDEC_ID_ADDRESS            0x0080001c
+ #define FIREFLY_JEDEC_ID            0x1ACC
+ #define SUPERFLY_JEDEC_ID           0x0020
+@@ -1284,6 +1294,10 @@ typedef struct {		/* FireFly BIU registe
+ #define CMD_FCP_IREAD_CX        0x1B
+ #define CMD_FCP_ICMND_CR        0x1C
+ #define CMD_FCP_ICMND_CX        0x1D
++#define CMD_FCP_TSEND_CX        0x1F
++#define CMD_FCP_TRECEIVE_CX     0x21
++#define CMD_FCP_TRSP_CX	        0x23
++#define CMD_FCP_AUTO_TRSP_CX    0x29
+ 
+ #define CMD_ADAPTER_MSG         0x20
+ #define CMD_ADAPTER_DUMP        0x22
+@@ -1310,6 +1324,9 @@ typedef struct {		/* FireFly BIU registe
+ #define CMD_FCP_IREAD64_CX      0x9B
+ #define CMD_FCP_ICMND64_CR      0x9C
+ #define CMD_FCP_ICMND64_CX      0x9D
++#define CMD_FCP_TSEND64_CX      0x9F
++#define CMD_FCP_TRECEIVE64_CX   0xA1
++#define CMD_FCP_TRSP64_CX       0xA3
+ 
+ #define CMD_GEN_REQUEST64_CR    0xC2
+ #define CMD_GEN_REQUEST64_CX    0xC3
+diff -urpN a/drivers/scsi/lpfc/lpfc_init.c b/drivers/scsi/lpfc/lpfc_init.c
+--- a/drivers/scsi/lpfc/lpfc_init.c	2006-12-01 16:02:41.914525000 -0500
++++ b/drivers/scsi/lpfc/lpfc_init.c	2006-12-01 16:02:42.133528000 -0500
+@@ -269,6 +269,8 @@ lpfc_config_port_post(struct lpfc_hba * 
+ 	kfree(mp);
+ 	pmb->context1 = NULL;
+ 
++	if (phba->cfg_soft_wwnn)
++		u64_to_wwn(phba->cfg_soft_wwnn, phba->fc_sparam.nodeName.u.wwn);
+ 	if (phba->cfg_soft_wwpn)
+ 		u64_to_wwn(phba->cfg_soft_wwpn, phba->fc_sparam.portName.u.wwn);
+ 	memcpy(&phba->fc_nodename, &phba->fc_sparam.nodeName,
+@@ -350,8 +352,8 @@ lpfc_config_port_post(struct lpfc_hba * 
+ 	phba->hba_state = LPFC_LINK_DOWN;
+ 
+ 	/* Only process IOCBs on ring 0 till hba_state is READY */
+-	if (psli->ring[psli->ip_ring].cmdringaddr)
+-		psli->ring[psli->ip_ring].flag |= LPFC_STOP_IOCB_EVENT;
++	if (psli->ring[psli->extra_ring].cmdringaddr)
++		psli->ring[psli->extra_ring].flag |= LPFC_STOP_IOCB_EVENT;
+ 	if (psli->ring[psli->fcp_ring].cmdringaddr)
+ 		psli->ring[psli->fcp_ring].flag |= LPFC_STOP_IOCB_EVENT;
+ 	if (psli->ring[psli->next_ring].cmdringaddr)
+@@ -518,7 +520,8 @@ lpfc_handle_eratt(struct lpfc_hba * phba
+ 	struct lpfc_sli_ring  *pring;
+ 	uint32_t event_data;
+ 
+-	if (phba->work_hs & HS_FFER6) {
++	if (phba->work_hs & HS_FFER6 ||
++	    phba->work_hs & HS_FFER5) {
+ 		/* Re-establishing Link */
+ 		lpfc_printf_log(phba, KERN_INFO, LOG_LINK_EVENT,
+ 				"%d:1301 Re-establishing Link "
+@@ -612,7 +615,7 @@ lpfc_handle_latt(struct lpfc_hba * phba)
+ 	pmb->mbox_cmpl = lpfc_mbx_cmpl_read_la;
+ 	rc = lpfc_sli_issue_mbox (phba, pmb, (MBX_NOWAIT | MBX_STOP_IOCB));
+ 	if (rc == MBX_NOT_FINISHED)
+-		goto lpfc_handle_latt_free_mp;
++		goto lpfc_handle_latt_free_mbuf;
+ 
+ 	/* Clear Link Attention in HA REG */
+ 	spin_lock_irq(phba->host->host_lock);
+@@ -622,6 +625,8 @@ lpfc_handle_latt(struct lpfc_hba * phba)
+ 
+ 	return;
+ 
++lpfc_handle_latt_free_mbuf:
++	lpfc_mbuf_free(phba, mp->virt, mp->phys);
+ lpfc_handle_latt_free_mp:
+ 	kfree(mp);
+ lpfc_handle_latt_free_pmb:
+@@ -803,19 +808,13 @@ lpfc_get_hba_model_desc(struct lpfc_hba 
+ {
+ 	lpfc_vpd_t *vp;
+ 	uint16_t dev_id = phba->pcidev->device;
+-	uint16_t dev_subid = phba->pcidev->subsystem_device;
+-	uint8_t hdrtype;
+ 	int max_speed;
+-	char * ports;
+ 	struct {
+ 		char * name;
+ 		int    max_speed;
+-		char * ports;
+ 		char * bus;
+-	} m = {"<Unknown>", 0, "", ""};
++	} m = {"<Unknown>", 0, ""};
+ 
+-	pci_read_config_byte(phba->pcidev, PCI_HEADER_TYPE, &hdrtype);
+-	ports = (hdrtype == 0x80) ? "2-port " : "";
+ 	if (mdp && mdp[0] != '\0'
+ 		&& descp && descp[0] != '\0')
+ 		return;
+@@ -835,130 +834,93 @@ lpfc_get_hba_model_desc(struct lpfc_hba 
+ 
+ 	switch (dev_id) {
+ 	case PCI_DEVICE_ID_FIREFLY:
+-		m = (typeof(m)){"LP6000", max_speed, "", "PCI"};
++		m = (typeof(m)){"LP6000", max_speed, "PCI"};
+ 		break;
+ 	case PCI_DEVICE_ID_SUPERFLY:
+ 		if (vp->rev.biuRev >= 1 && vp->rev.biuRev <= 3)
+-			m = (typeof(m)){"LP7000", max_speed, "", "PCI"};
++			m = (typeof(m)){"LP7000", max_speed,  "PCI"};
+ 		else
+-			m = (typeof(m)){"LP7000E", max_speed, "", "PCI"};
++			m = (typeof(m)){"LP7000E", max_speed, "PCI"};
+ 		break;
+ 	case PCI_DEVICE_ID_DRAGONFLY:
+-		m = (typeof(m)){"LP8000", max_speed, "", "PCI"};
++		m = (typeof(m)){"LP8000", max_speed, "PCI"};
+ 		break;
+ 	case PCI_DEVICE_ID_CENTAUR:
+ 		if (FC_JEDEC_ID(vp->rev.biuRev) == CENTAUR_2G_JEDEC_ID)
+-			m = (typeof(m)){"LP9002", max_speed, "", "PCI"};
++			m = (typeof(m)){"LP9002", max_speed, "PCI"};
+ 		else
+-			m = (typeof(m)){"LP9000", max_speed, "", "PCI"};
++			m = (typeof(m)){"LP9000", max_speed, "PCI"};
+ 		break;
+ 	case PCI_DEVICE_ID_RFLY:
+-		m = (typeof(m)){"LP952", max_speed, "", "PCI"};
++		m = (typeof(m)){"LP952", max_speed, "PCI"};
+ 		break;
+ 	case PCI_DEVICE_ID_PEGASUS:
+-		m = (typeof(m)){"LP9802", max_speed, "", "PCI-X"};
++		m = (typeof(m)){"LP9802", max_speed, "PCI-X"};
+ 		break;
+ 	case PCI_DEVICE_ID_THOR:
+-		if (hdrtype == 0x80)
+-			m = (typeof(m)){"LP10000DC",
+-					max_speed, ports, "PCI-X"};
+-		else
+-			m = (typeof(m)){"LP10000",
+-					max_speed, ports, "PCI-X"};
++		m = (typeof(m)){"LP10000", max_speed, "PCI-X"};
+ 		break;
+ 	case PCI_DEVICE_ID_VIPER:
+-		m = (typeof(m)){"LPX1000", max_speed, "", "PCI-X"};
++		m = (typeof(m)){"LPX1000", max_speed,  "PCI-X"};
+ 		break;
+ 	case PCI_DEVICE_ID_PFLY:
+-		m = (typeof(m)){"LP982", max_speed, "", "PCI-X"};
++		m = (typeof(m)){"LP982", max_speed, "PCI-X"};
+ 		break;
+ 	case PCI_DEVICE_ID_TFLY:
+-		if (hdrtype == 0x80)
+-			m = (typeof(m)){"LP1050DC", max_speed, ports, "PCI-X"};
+-		else
+-			m = (typeof(m)){"LP1050", max_speed, ports, "PCI-X"};
++		m = (typeof(m)){"LP1050", max_speed, "PCI-X"};
+ 		break;
+ 	case PCI_DEVICE_ID_HELIOS:
+-		if (hdrtype == 0x80)
+-			m = (typeof(m)){"LP11002", max_speed, ports, "PCI-X2"};
+-		else
+-			m = (typeof(m)){"LP11000", max_speed, ports, "PCI-X2"};
++		m = (typeof(m)){"LP11000", max_speed, "PCI-X2"};
+ 		break;
+ 	case PCI_DEVICE_ID_HELIOS_SCSP:
+-		m = (typeof(m)){"LP11000-SP", max_speed, ports, "PCI-X2"};
++		m = (typeof(m)){"LP11000-SP", max_speed, "PCI-X2"};
+ 		break;
+ 	case PCI_DEVICE_ID_HELIOS_DCSP:
+-		m = (typeof(m)){"LP11002-SP", max_speed, ports, "PCI-X2"};
++		m = (typeof(m)){"LP11002-SP", max_speed, "PCI-X2"};
+ 		break;
+ 	case PCI_DEVICE_ID_NEPTUNE:
+-		if (hdrtype == 0x80)
+-			m = (typeof(m)){"LPe1002", max_speed, ports, "PCIe"};
+-		else
+-			m = (typeof(m)){"LPe1000", max_speed, ports, "PCIe"};
++		m = (typeof(m)){"LPe1000", max_speed, "PCIe"};
+ 		break;
+ 	case PCI_DEVICE_ID_NEPTUNE_SCSP:
+-		m = (typeof(m)){"LPe1000-SP", max_speed, ports, "PCIe"};
++		m = (typeof(m)){"LPe1000-SP", max_speed, "PCIe"};
+ 		break;
+ 	case PCI_DEVICE_ID_NEPTUNE_DCSP:
+-		m = (typeof(m)){"LPe1002-SP", max_speed, ports, "PCIe"};
++		m = (typeof(m)){"LPe1002-SP", max_speed, "PCIe"};
+ 		break;
+ 	case PCI_DEVICE_ID_BMID:
+-		m = (typeof(m)){"LP1150", max_speed, ports, "PCI-X2"};
++		m = (typeof(m)){"LP1150", max_speed, "PCI-X2"};
+ 		break;
+ 	case PCI_DEVICE_ID_BSMB:
+-		m = (typeof(m)){"LP111", max_speed, ports, "PCI-X2"};
++		m = (typeof(m)){"LP111", max_speed, "PCI-X2"};
+ 		break;
+ 	case PCI_DEVICE_ID_ZEPHYR:
+-		if (hdrtype == 0x80)
+-			m = (typeof(m)){"LPe11002", max_speed, ports, "PCIe"};
+-		else
+-			m = (typeof(m)){"LPe11000", max_speed, ports, "PCIe"};
++		m = (typeof(m)){"LPe11000", max_speed, "PCIe"};
+ 		break;
+ 	case PCI_DEVICE_ID_ZEPHYR_SCSP:
+-		m = (typeof(m)){"LPe11000", max_speed, ports, "PCIe"};
++		m = (typeof(m)){"LPe11000", max_speed, "PCIe"};
+ 		break;
+ 	case PCI_DEVICE_ID_ZEPHYR_DCSP:
+-		m = (typeof(m)){"LPe11002-SP", max_speed, ports, "PCIe"};
++		m = (typeof(m)){"LPe11002-SP", max_speed, "PCIe"};
+ 		break;
+ 	case PCI_DEVICE_ID_ZMID:
+-		m = (typeof(m)){"LPe1150", max_speed, ports, "PCIe"};
++		m = (typeof(m)){"LPe1150", max_speed, "PCIe"};
+ 		break;
+ 	case PCI_DEVICE_ID_ZSMB:
+-		m = (typeof(m)){"LPe111", max_speed, ports, "PCIe"};
++		m = (typeof(m)){"LPe111", max_speed, "PCIe"};
+ 		break;
+ 	case PCI_DEVICE_ID_LP101:
+-		m = (typeof(m)){"LP101", max_speed, ports, "PCI-X"};
++		m = (typeof(m)){"LP101", max_speed, "PCI-X"};
+ 		break;
+ 	case PCI_DEVICE_ID_LP10000S:
+-		m = (typeof(m)){"LP10000-S", max_speed, ports, "PCI"};
++		m = (typeof(m)){"LP10000-S", max_speed, "PCI"};
+ 		break;
+ 	case PCI_DEVICE_ID_LP11000S:
++		m = (typeof(m)){"LP11000-S", max_speed,
++			"PCI-X2"};
++		break;
+ 	case PCI_DEVICE_ID_LPE11000S:
+-		switch (dev_subid) {
+-		case PCI_SUBSYSTEM_ID_LP11000S:
+-			m = (typeof(m)){"LP11000-S", max_speed,
+-					ports, "PCI-X2"};
+-			break;
+-		case PCI_SUBSYSTEM_ID_LP11002S:
+-			m = (typeof(m)){"LP11002-S", max_speed,
+-					ports, "PCI-X2"};
+-			break;
+-		case PCI_SUBSYSTEM_ID_LPE11000S:
+-			m = (typeof(m)){"LPe11000-S", max_speed,
+-					ports, "PCIe"};
+-			break;
+-		case PCI_SUBSYSTEM_ID_LPE11002S:
+-			m = (typeof(m)){"LPe11002-S", max_speed,
+-					ports, "PCIe"};
+-			break;
+-		case PCI_SUBSYSTEM_ID_LPE11010S:
+-			m = (typeof(m)){"LPe11010-S", max_speed,
+-					"10-port ", "PCIe"};
+-			break;
+-		default:
+-			m = (typeof(m)){ NULL };
+-			break;
+-		}
++		m = (typeof(m)){"LPe11000-S", max_speed,
++			"PCIe"};
+ 		break;
+ 	default:
+ 		m = (typeof(m)){ NULL };
+@@ -969,8 +931,8 @@ lpfc_get_hba_model_desc(struct lpfc_hba 
+ 		snprintf(mdp, 79,"%s", m.name);
+ 	if (descp && descp[0] == '\0')
+ 		snprintf(descp, 255,
+-			 "Emulex %s %dGb %s%s Fibre Channel Adapter",
+-			 m.name, m.max_speed, m.ports, m.bus);
++			 "Emulex %s %dGb %s Fibre Channel Adapter",
++			 m.name, m.max_speed, m.bus);
+ }
+ 
+ /**************************************************/
+@@ -1652,6 +1614,14 @@ lpfc_pci_probe_one(struct pci_dev *pdev,
+ 	if (error)
+ 		goto out_remove_host;
+ 
++	if (phba->cfg_use_msi) {
++		error = pci_enable_msi(phba->pcidev);
++		if (error)
++			lpfc_printf_log(phba, KERN_INFO, LOG_INIT, "%d:0452 "
++					"Enable MSI failed, continuing with "
++					"IRQ\n", phba->brd_no);
++	}
++
+ 	error =	request_irq(phba->pcidev->irq, lpfc_intr_handler, IRQF_SHARED,
+ 							LPFC_DRIVER_NAME, phba);
+ 	if (error) {
+@@ -1742,6 +1712,7 @@ out_free_irq:
+ 	lpfc_stop_timer(phba);
+ 	phba->work_hba_events = 0;
+ 	free_irq(phba->pcidev->irq, phba);
++	pci_disable_msi(phba->pcidev);
+ out_free_sysfs_attr:
+ 	lpfc_free_sysfs_attr(phba);
+ out_remove_host:
+@@ -1811,6 +1782,7 @@ lpfc_pci_remove_one(struct pci_dev *pdev
+ 
+ 	/* Release the irq reservation */
+ 	free_irq(phba->pcidev->irq, phba);
++	pci_disable_msi(phba->pcidev);
+ 
+ 	lpfc_cleanup(phba, 0);
+ 	lpfc_stop_timer(phba);
+diff -urpN a/drivers/scsi/lpfc/lpfc_ioctl.c b/drivers/scsi/lpfc/lpfc_ioctl.c
+--- a/drivers/scsi/lpfc/lpfc_ioctl.c	2006-12-01 16:02:41.922528000 -0500
++++ b/drivers/scsi/lpfc/lpfc_ioctl.c	2006-12-01 16:02:42.147527000 -0500
+@@ -963,7 +963,7 @@ lpfc_ioctl_hba_get_event(struct lpfc_hba
+ 	if (evt_dat->len > cip->lpfc_outsz)
+ 		evt_dat->len = cip->lpfc_outsz;
+ 
+-	if (copy_to_user(cip->lpfc_arg2, &evt_dat->immed_dat,
++	if (copy_to_user((void __user *)cip->lpfc_arg2, &evt_dat->immed_dat,
+ 		sizeof (uint32_t)) ||
+ 	    copy_to_user((void __user *)cip->lpfc_arg1, &evt_dat->len,
+ 			 sizeof (uint32_t))) {
+diff -urpN a/drivers/scsi/lpfc/lpfc_logmsg.h b/drivers/scsi/lpfc/lpfc_logmsg.h
+--- a/drivers/scsi/lpfc/lpfc_logmsg.h	2006-12-01 16:02:41.927525000 -0500
++++ b/drivers/scsi/lpfc/lpfc_logmsg.h	2006-12-01 16:02:42.151535000 -0500
+@@ -28,7 +28,7 @@
+ #define LOG_NODE                      0x80	/* Node table events */
+ #define LOG_MISC                      0x400	/* Miscellaneous events */
+ #define LOG_SLI                       0x800	/* SLI events */
+-#define LOG_CHK_COND                  0x1000	/* FCP Check condition flag */
++#define LOG_FCP_ERROR                 0x1000	/* log errors, not underruns */
+ #define LOG_LIBDFC                    0x2000	/* Libdfc events */
+ #define LOG_ALL_MSG                   0xffff	/* LOG all messages */
+ 
+diff -urpN a/drivers/scsi/lpfc/lpfc_nportdisc.c b/drivers/scsi/lpfc/lpfc_nportdisc.c
+--- a/drivers/scsi/lpfc/lpfc_nportdisc.c	2006-12-01 16:02:41.940528000 -0500
++++ b/drivers/scsi/lpfc/lpfc_nportdisc.c	2006-12-01 16:02:42.177531000 -0500
+@@ -739,7 +739,7 @@ lpfc_cmpl_plogi_plogi_issue(struct lpfc_
+ 			    uint32_t evt)
+ {
+ 	struct lpfc_iocbq *cmdiocb, *rspiocb;
+-	struct lpfc_dmabuf *pcmd, *prsp;
++	struct lpfc_dmabuf *pcmd, *prsp, *mp;
+ 	uint32_t *lp;
+ 	IOCB_t *irsp;
+ 	struct serv_parm *sp;
+@@ -829,6 +829,9 @@ lpfc_cmpl_plogi_plogi_issue(struct lpfc_
+ 				      NLP_REGLOGIN_LIST);
+ 			return ndlp->nlp_state;
+ 		}
++		mp = (struct lpfc_dmabuf *)mbox->context1;
++		lpfc_mbuf_free(phba, mp->virt, mp->phys);
++		kfree(mp);
+ 		mempool_free(mbox, phba->mbox_mem_pool);
+ 	} else {
+ 		mempool_free(mbox, phba->mbox_mem_pool);
+@@ -1620,8 +1623,8 @@ lpfc_rcv_padisc_npr_node(struct lpfc_hba
+ 	 * or discovery in progress for this node. Starting discovery
+ 	 * here will affect the counting of discovery threads.
+ 	 */
+-	if ((!(ndlp->nlp_flag & NLP_DELAY_TMO)) &&
+-		(ndlp->nlp_flag & NLP_NPR_2B_DISC)){
++	if (!(ndlp->nlp_flag & NLP_DELAY_TMO) &&
++		!(ndlp->nlp_flag & NLP_NPR_2B_DISC)){
+ 		if (ndlp->nlp_flag & NLP_NPR_ADISC) {
+ 			ndlp->nlp_prev_state = NLP_STE_NPR_NODE;
+ 			ndlp->nlp_state = NLP_STE_ADISC_ISSUE;
+diff -urpN a/drivers/scsi/lpfc/lpfc_scsi.c b/drivers/scsi/lpfc/lpfc_scsi.c
+--- a/drivers/scsi/lpfc/lpfc_scsi.c	2006-12-01 16:02:41.945527000 -0500
++++ b/drivers/scsi/lpfc/lpfc_scsi.c	2006-12-01 16:02:42.192529000 -0500
+@@ -297,8 +297,10 @@ lpfc_handle_fcp_err(struct lpfc_scsi_buf
+ 	uint32_t fcpi_parm = lpfc_cmd->cur_iocbq.iocb.un.fcpi.fcpi_parm;
+ 	uint32_t resp_info = fcprsp->rspStatus2;
+ 	uint32_t scsi_status = fcprsp->rspStatus3;
++	uint32_t *lp;
+ 	uint32_t host_status = DID_OK;
+ 	uint32_t rsplen = 0;
++	uint32_t logit = LOG_FCP | LOG_FCP_ERROR;
+ 
+ 	/*
+ 	 *  If this is a task management command, there is no
+@@ -310,10 +312,25 @@ lpfc_handle_fcp_err(struct lpfc_scsi_buf
+ 		goto out;
+ 	}
+ 
+-	lpfc_printf_log(phba, KERN_WARNING, LOG_FCP,
+-			"%d:0730 FCP command failed: RSP "
+-			"Data: x%x x%x x%x x%x x%x x%x\n",
+-			phba->brd_no, resp_info, scsi_status,
++	if ((resp_info & SNS_LEN_VALID) && fcprsp->rspSnsLen) {
++		uint32_t snslen = be32_to_cpu(fcprsp->rspSnsLen);
++		if (snslen > SCSI_SENSE_BUFFERSIZE)
++			snslen = SCSI_SENSE_BUFFERSIZE;
++
++		if (resp_info & RSP_LEN_VALID)
++		  rsplen = be32_to_cpu(fcprsp->rspRspLen);
++		memcpy(cmnd->sense_buffer, &fcprsp->rspInfo0 + rsplen, snslen);
++	}
++	lp = (uint32_t *)cmnd->sense_buffer;
++
++	if (!scsi_status && (resp_info & RESID_UNDER))
++		logit = LOG_FCP;
++
++	lpfc_printf_log(phba, KERN_WARNING, logit,
++			"%d:0730 FCP command x%x failed: x%x SNS x%x x%x "
++			"Data: x%x x%x x%x x%x x%x\n",
++			phba->brd_no, cmnd->cmnd[0], scsi_status,
++			be32_to_cpu(*lp), be32_to_cpu(*(lp + 3)), resp_info,
+ 			be32_to_cpu(fcprsp->rspResId),
+ 			be32_to_cpu(fcprsp->rspSnsLen),
+ 			be32_to_cpu(fcprsp->rspRspLen),
+@@ -328,14 +345,6 @@ lpfc_handle_fcp_err(struct lpfc_scsi_buf
+ 		}
+ 	}
+ 
+-	if ((resp_info & SNS_LEN_VALID) && fcprsp->rspSnsLen) {
+-		uint32_t snslen = be32_to_cpu(fcprsp->rspSnsLen);
+-		if (snslen > SCSI_SENSE_BUFFERSIZE)
+-			snslen = SCSI_SENSE_BUFFERSIZE;
+-
+-		memcpy(cmnd->sense_buffer, &fcprsp->rspInfo0 + rsplen, snslen);
+-	}
+-
+ 	cmnd->resid = 0;
+ 	if (resp_info & RESID_UNDER) {
+ 		cmnd->resid = be32_to_cpu(fcprsp->rspResId);
+@@ -378,7 +387,7 @@ lpfc_handle_fcp_err(struct lpfc_scsi_buf
+ 	 */
+ 	} else if ((scsi_status == SAM_STAT_GOOD) && fcpi_parm &&
+ 			(cmnd->sc_data_direction == DMA_FROM_DEVICE)) {
+-		lpfc_printf_log(phba, KERN_WARNING, LOG_FCP,
++		lpfc_printf_log(phba, KERN_WARNING, LOG_FCP | LOG_FCP_ERROR,
+ 			"%d:0734 FCP Read Check Error Data: "
+ 			"x%x x%x x%x x%x\n", phba->brd_no,
+ 			be32_to_cpu(fcpcmd->fcpDl),
+@@ -670,6 +679,9 @@ lpfc_scsi_tgt_reset(struct lpfc_scsi_buf
+ 	struct lpfc_iocbq *iocbqrsp;
+ 	int ret;
+ 
++	if (!rdata->pnode)
++		return FAILED;
++
+ 	lpfc_cmd->rdata = rdata;
+ 	ret = lpfc_scsi_prep_task_mgmt_cmd(phba, lpfc_cmd, lun,
+ 					   FCP_TARGET_RESET);
+@@ -976,20 +988,34 @@ lpfc_reset_lun_handler(struct scsi_cmnd 
+ 
+ 	lpfc_block_error_handler(cmnd);
+ 	spin_lock_irq(shost->host_lock);
++	loopcnt = 0;
+ 	/*
+ 	 * If target is not in a MAPPED state, delay the reset until
+ 	 * target is rediscovered or devloss timeout expires.
+ 	 */
+ 	while ( 1 ) {
+ 		if (!pnode)
+-			break;
++			return FAILED;
+ 
+ 		if (pnode->nlp_state != NLP_STE_MAPPED_NODE) {
+ 			spin_unlock_irq(phba->host->host_lock);
+ 			schedule_timeout_uninterruptible(msecs_to_jiffies(500));
+ 			spin_lock_irq(phba->host->host_lock);
++			loopcnt++;
++			rdata = cmnd->device->hostdata;
++			if (!rdata ||
++				(loopcnt > ((phba->cfg_devloss_tmo * 2) + 1))) {
++				lpfc_printf_log(phba, KERN_ERR, LOG_FCP,
++		   			"%d:0721 LUN Reset rport failure:"
++					" cnt x%x rdata x%p\n",
++		   			phba->brd_no, loopcnt, rdata);
++				goto out;
++			}
++			pnode = rdata->pnode;
++			if (!pnode)
++				return FAILED;
+ 		}
+-		if ((pnode) && (pnode->nlp_state == NLP_STE_MAPPED_NODE))
++		if (pnode->nlp_state == NLP_STE_MAPPED_NODE)
+ 			break;
+ 	}
+ 
+diff -urpN a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+--- a/drivers/scsi/lpfc/lpfc_sli.c	2006-12-01 16:02:41.983528000 -0500
++++ b/drivers/scsi/lpfc/lpfc_sli.c	2006-12-01 16:02:42.215525000 -0500
+@@ -117,6 +117,10 @@ lpfc_sli_iocb_cmd_type(uint8_t iocb_cmnd
+ 	case CMD_FCP_IREAD_CX:
+ 	case CMD_FCP_ICMND_CR:
+ 	case CMD_FCP_ICMND_CX:
++	case CMD_FCP_TSEND_CX:
++	case CMD_FCP_TRSP_CX:
++	case CMD_FCP_TRECEIVE_CX:
++	case CMD_FCP_AUTO_TRSP_CX:
+ 	case CMD_ADAPTER_MSG:
+ 	case CMD_ADAPTER_DUMP:
+ 	case CMD_XMIT_SEQUENCE64_CR:
+@@ -131,6 +135,9 @@ lpfc_sli_iocb_cmd_type(uint8_t iocb_cmnd
+ 	case CMD_FCP_IREAD64_CX:
+ 	case CMD_FCP_ICMND64_CR:
+ 	case CMD_FCP_ICMND64_CX:
++	case CMD_FCP_TSEND64_CX:
++	case CMD_FCP_TRSP64_CX:
++	case CMD_FCP_TRECEIVE64_CX:
+ 	case CMD_GEN_REQUEST64_CR:
+ 	case CMD_GEN_REQUEST64_CX:
+ 	case CMD_XMIT_ELS_RSP64_CX:
+@@ -1098,6 +1105,7 @@ lpfc_sli_handle_fast_ring_event(struct l
+ 		lpfc_sli_pcimem_bcopy((uint32_t *) entry,
+ 				      (uint32_t *) &rspiocbq.iocb,
+ 				      sizeof (IOCB_t));
++		INIT_LIST_HEAD(&(rspiocbq.list));
+ 		irsp = &rspiocbq.iocb;
+ 
+ 		type = lpfc_sli_iocb_cmd_type(irsp->ulpCommand & CMD_IOCB_MASK);
+@@ -1149,6 +1157,11 @@ lpfc_sli_handle_fast_ring_event(struct l
+ 				}
+ 			}
+ 			break;
++		case LPFC_UNSOL_IOCB:
++			spin_unlock_irqrestore(phba->host->host_lock, iflag);
++			lpfc_sli_process_unsol_iocb(phba, pring, &rspiocbq);
++			spin_lock_irqsave(phba->host->host_lock, iflag);
++			break;
+ 		default:
+ 			if (irsp->ulpCommand == CMD_ADAPTER_MSG) {
+ 				char adaptermsg[LPFC_MAX_ADPTMSG];
+@@ -2472,13 +2485,17 @@ lpfc_extra_ring_setup( struct lpfc_hba *
+ 	psli = &phba->sli;
+ 
+ 	/* Adjust cmd/rsp ring iocb entries more evenly */
++
++	/* Take some away from the FCP ring */
+ 	pring = &psli->ring[psli->fcp_ring];
+ 	pring->numCiocb -= SLI2_IOCB_CMD_R1XTRA_ENTRIES;
+ 	pring->numRiocb -= SLI2_IOCB_RSP_R1XTRA_ENTRIES;
+ 	pring->numCiocb -= SLI2_IOCB_CMD_R3XTRA_ENTRIES;
+ 	pring->numRiocb -= SLI2_IOCB_RSP_R3XTRA_ENTRIES;
+ 
+-	pring = &psli->ring[1];
++	/* and give them to the extra ring */
++	pring = &psli->ring[psli->extra_ring];
++
+ 	pring->numCiocb += SLI2_IOCB_CMD_R1XTRA_ENTRIES;
+ 	pring->numRiocb += SLI2_IOCB_RSP_R1XTRA_ENTRIES;
+ 	pring->numCiocb += SLI2_IOCB_CMD_R3XTRA_ENTRIES;
+@@ -2488,8 +2505,8 @@ lpfc_extra_ring_setup( struct lpfc_hba *
+ 	pring->iotag_max = 4096;
+ 	pring->num_mask = 1;
+ 	pring->prt[0].profile = 0;      /* Mask 0 */
+-	pring->prt[0].rctl = FC_UNSOL_DATA;
+-	pring->prt[0].type = 5;
++	pring->prt[0].rctl = phba->cfg_multi_ring_rctl;
++	pring->prt[0].type = phba->cfg_multi_ring_type;
+ 	pring->prt[0].lpfc_sli_rcv_unsol_event = NULL;
+ 	return 0;
+ }
+@@ -2505,7 +2522,7 @@ lpfc_sli_setup(struct lpfc_hba *phba)
+ 	psli->sli_flag = 0;
+ 	psli->fcp_ring = LPFC_FCP_RING;
+ 	psli->next_ring = LPFC_FCP_NEXT_RING;
+-	psli->ip_ring = LPFC_IP_RING;
++	psli->extra_ring = LPFC_EXTRA_RING;
+ 
+ 	psli->iocbq_lookup = NULL;
+ 	psli->iocbq_lookup_len = 0;
+@@ -2528,7 +2545,7 @@ lpfc_sli_setup(struct lpfc_hba *phba)
+ 			pring->fast_iotag = pring->iotag_max;
+ 			pring->num_mask = 0;
+ 			break;
+-		case LPFC_IP_RING:	/* ring 1 - IP */
++		case LPFC_EXTRA_RING:	/* ring 1 - EXTRA */
+ 			/* numCiocb and numRiocb are used in config_port */
+ 			pring->numCiocb = SLI2_IOCB_CMD_R1_ENTRIES;
+ 			pring->numRiocb = SLI2_IOCB_RSP_R1_ENTRIES;
+@@ -3238,6 +3255,21 @@ lpfc_intr_handler(int irq, void *dev_id,
+ 		lpfc_sli_handle_fast_ring_event(phba,
+ 						&phba->sli.ring[LPFC_FCP_RING],
+ 						status);
++
++	if (phba->cfg_multi_ring_support == 2) {
++		/*
++		 * Process all events on extra ring.  Take the optimized path
++		 * for extra ring IO.  Any other IO is slow path and is handled
++		 * by the worker thread.
++		 */
++		status = (ha_copy & (HA_RXMASK  << (4*LPFC_EXTRA_RING)));
++		status >>= (4*LPFC_EXTRA_RING);
++		if (status & HA_RXATT) {
++			lpfc_sli_handle_fast_ring_event(phba,
++					&phba->sli.ring[LPFC_EXTRA_RING],
++					status);
++		}
++	}
+ 	return IRQ_HANDLED;
+ 
+ } /* lpfc_intr_handler */
+diff -urpN a/drivers/scsi/lpfc/lpfc_sli.h b/drivers/scsi/lpfc/lpfc_sli.h
+--- a/drivers/scsi/lpfc/lpfc_sli.h	2006-12-01 16:02:41.986525000 -0500
++++ b/drivers/scsi/lpfc/lpfc_sli.h	2006-12-01 16:02:42.220526000 -0500
+@@ -198,7 +198,7 @@ struct lpfc_sli {
+ 	int fcp_ring;		/* ring used for FCP initiator commands */
+ 	int next_ring;
+ 
+-	int ip_ring;		/* ring used for IP network drv cmds */
++	int extra_ring;		/* extra ring used for other protocols */
+ 
+ 	struct lpfc_sli_stat slistat;	/* SLI statistical info */
+ 	struct list_head mboxq;
+diff -urpN a/drivers/scsi/lpfc/lpfc_version.h b/drivers/scsi/lpfc/lpfc_version.h
+--- a/drivers/scsi/lpfc/lpfc_version.h	2006-12-01 16:02:41.989524000 -0500
++++ b/drivers/scsi/lpfc/lpfc_version.h	2006-12-01 16:02:42.221532000 -0500
+@@ -18,7 +18,7 @@
+  * included with this package.                                     *
+  *******************************************************************/
+ 
+-#define LPFC_DRIVER_VERSION "8.1.10.1"
++#define LPFC_DRIVER_VERSION "8.1.10.2"
+ 
+ #define LPFC_DRIVER_NAME "lpfc"
+ 
+

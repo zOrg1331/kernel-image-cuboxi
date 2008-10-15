@@ -1,0 +1,123 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 18 Dec 2007 12:08:34 -0600
+Subject: [fs] ecryptfs: backport f_path to f_dentry
+Message-id: 47680CA2.5020509@redhat.com
+O-Subject: [RHEL 5.2 PATCH] 4/15: ecryptfs: backport f_path to f_dentry
+Bugzilla: 228341
+
+RHEL5 kernels have no f_path in struct file; convert to
+using f_dentry vs. f_path.dentry
+
+ file.c  |   12 ++++++------
+ inode.c |    4 ++--
+ mmap.c  |    8 ++++----
+ 3 files changed, 12 insertions(+), 12 deletions(-)
+
+diff --git a/fs/ecryptfs/file.c b/fs/ecryptfs/file.c
+index c98c469..94efb9d 100644
+--- a/fs/ecryptfs/file.c
++++ b/fs/ecryptfs/file.c
+@@ -59,8 +59,8 @@ static ssize_t ecryptfs_read_update_atime(struct kiocb *iocb,
+ 	if (-EIOCBQUEUED == rc)
+ 		rc = wait_on_sync_kiocb(iocb);
+ 	if (rc >= 0) {
+-		lower_dentry = ecryptfs_dentry_to_lower(file->f_path.dentry);
+-		lower_vfsmount = ecryptfs_dentry_to_lower_mnt(file->f_path.dentry);
++		lower_dentry = ecryptfs_dentry_to_lower(file->f_dentry);
++		lower_vfsmount = ecryptfs_dentry_to_lower_mnt(file->f_dentry);
+ 		touch_atime(lower_vfsmount, lower_dentry);
+ 	}
+ 	return rc;
+@@ -119,10 +119,10 @@ static int ecryptfs_readdir(struct file *file, void *dirent, filldir_t filldir)
+ 
+ 	lower_file = ecryptfs_file_to_lower(file);
+ 	lower_file->f_pos = file->f_pos;
+-	inode = file->f_path.dentry->d_inode;
++	inode = file->f_dentry->d_inode;
+ 	memset(&buf, 0, sizeof(buf));
+ 	buf.dirent = dirent;
+-	buf.dentry = file->f_path.dentry;
++	buf.dentry = file->f_dentry;
+ 	buf.filldir = filldir;
+ retry:
+ 	buf.filldir_called = 0;
+@@ -135,7 +135,7 @@ retry:
+ 		goto retry;
+ 	file->f_pos = lower_file->f_pos;
+ 	if (rc >= 0)
+-		fsstack_copy_attr_atime(inode, lower_file->f_path.dentry->d_inode);
++		fsstack_copy_attr_atime(inode, lower_file->f_dentry->d_inode);
+ 	return rc;
+ }
+ 
+@@ -155,7 +155,7 @@ static int ecryptfs_open(struct inode *inode, struct file *file)
+ 	int rc = 0;
+ 	struct ecryptfs_crypt_stat *crypt_stat = NULL;
+ 	struct ecryptfs_mount_crypt_stat *mount_crypt_stat;
+-	struct dentry *ecryptfs_dentry = file->f_path.dentry;
++	struct dentry *ecryptfs_dentry = file->f_dentry;
+ 	/* Private value of ecryptfs_dentry allocated in
+ 	 * ecryptfs_lookup() */
+ 	struct dentry *lower_dentry = ecryptfs_dentry_to_lower(ecryptfs_dentry);
+diff --git a/fs/ecryptfs/inode.c b/fs/ecryptfs/inode.c
+index 0b1ab01..c83990d 100644
+--- a/fs/ecryptfs/inode.c
++++ b/fs/ecryptfs/inode.c
+@@ -166,7 +166,7 @@ static int grow_file(struct dentry *ecryptfs_dentry)
+ 	int rc = 0;
+ 
+ 	memset(&fake_file, 0, sizeof(fake_file));
+-	fake_file.f_path.dentry = ecryptfs_dentry;
++	fake_file.f_dentry = ecryptfs_dentry;
+ 	memset(&tmp_file_info, 0, sizeof(tmp_file_info));
+ 	ecryptfs_set_file_private(&fake_file, &tmp_file_info);
+ 	ecryptfs_set_file_lower(
+@@ -752,7 +752,7 @@ int ecryptfs_truncate(struct dentry *dentry, loff_t new_length)
+ 	 * the file in the underlying filesystem so that the
+ 	 * truncation has an effect there as well. */
+ 	memset(&fake_ecryptfs_file, 0, sizeof(fake_ecryptfs_file));
+-	fake_ecryptfs_file.f_path.dentry = dentry;
++	fake_ecryptfs_file.f_dentry = dentry;
+ 	/* Released at out_free: label */
+ 	ecryptfs_set_file_private(&fake_ecryptfs_file,
+ 				  kmem_cache_alloc(ecryptfs_file_info_cache,
+diff --git a/fs/ecryptfs/mmap.c b/fs/ecryptfs/mmap.c
+index 16a7a55..c1f1454 100644
+--- a/fs/ecryptfs/mmap.c
++++ b/fs/ecryptfs/mmap.c
+@@ -51,7 +51,7 @@ struct page *ecryptfs_get_locked_page(struct file *file, loff_t index)
+ 	struct address_space *mapping;
+ 	struct page *page;
+ 
+-	dentry = file->f_path.dentry;
++	dentry = file->f_dentry;
+ 	inode = dentry->d_inode;
+ 	mapping = inode->i_mapping;
+ 	page = read_mapping_page(mapping, index, (void *)file);
+@@ -191,7 +191,7 @@ out:
+ static int ecryptfs_readpage(struct file *file, struct page *page)
+ {
+ 	struct ecryptfs_crypt_stat *crypt_stat =
+-		&ecryptfs_inode_to_private(file->f_path.dentry->d_inode)->crypt_stat;
++		&ecryptfs_inode_to_private(file->f_dentry->d_inode)->crypt_stat;
+ 	int rc = 0;
+ 
+ 	if (!crypt_stat
+@@ -288,7 +288,7 @@ static int ecryptfs_prepare_write(struct file *file, struct page *page,
+ 			(((loff_t)page->index << PAGE_CACHE_SHIFT) - 1);
+ 
+ 		if (end_of_prev_pg_pos > i_size_read(page->mapping->host)) {
+-			rc = ecryptfs_truncate(file->f_path.dentry,
++			rc = ecryptfs_truncate(file->f_dentry,
+ 					       end_of_prev_pg_pos);
+ 			if (rc) {
+ 				printk(KERN_ERR "Error on attempt to "
+@@ -407,7 +407,7 @@ static int ecryptfs_commit_write(struct file *file, struct page *page,
+ 	loff_t pos;
+ 	struct inode *ecryptfs_inode = page->mapping->host;
+ 	struct ecryptfs_crypt_stat *crypt_stat =
+-		&ecryptfs_inode_to_private(file->f_path.dentry->d_inode)->crypt_stat;
++		&ecryptfs_inode_to_private(file->f_dentry->d_inode)->crypt_stat;
+ 	int rc;
+ 
+ 	if (crypt_stat->flags & ECRYPTFS_NEW_FILE) {

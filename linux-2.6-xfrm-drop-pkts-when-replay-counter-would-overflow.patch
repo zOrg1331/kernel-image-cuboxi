@@ -1,0 +1,87 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Sun, 6 Jan 2008 16:09:48 +1100
+Subject: [xfrm] drop pkts when replay counter would overflow
+Message-id: E1JBNlc-0001DZ-00@gondolin.me.apana.org.au
+O-Subject: [PATCH 32/32] [XFRM]: Drop packets when replay counter would overflow
+Bugzilla: 427877
+
+[XFRM]: Drop packets when replay counter would overflow
+
+According to RFC4303, section 3.3.3 we need to drop outgoing packets which
+cause the replay counter to overflow:
+
+   3.3.3.  Sequence Number Generation
+
+   The sender's counter is initialized to 0 when an SA is established.
+   The sender increments the sequence number (or ESN) counter for this
+   SA and inserts the low-order 32 bits of the value into the Sequence
+   Number field.  Thus, the first packet sent using a given SA will
+   contain a sequence number of 1.
+
+   If anti-replay is enabled (the default), the sender checks to ensure
+   that the counter has not cycled before inserting the new value in the
+   Sequence Number field.  In other words, the sender MUST NOT send a
+   packet on an SA if doing so would cause the sequence number to cycle.
+   An attempt to transmit a packet that would result in sequence number
+   overflow is an auditable event.  The audit log entry for this event
+   SHOULD include the SPI value, current date/time, Source Address,
+   Destination Address, and (in IPv6) the cleartext Flow ID.
+
+Signed-off-by: Paul Moore <paul.moore@hp.com>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: James Morris <jmorris@redhat.com>
+
+diff --git a/net/ipv4/esp4.c b/net/ipv4/esp4.c
+index 4c6945c..7f457e3 100644
+--- a/net/ipv4/esp4.c
++++ b/net/ipv4/esp4.c
+@@ -194,8 +194,12 @@ static int esp_output(struct xfrm_state *x, struct sk_buff *skb)
+ 
+ 	esph->spi = x->id.spi;
+ 	esph->seq_no = htonl(++x->replay.oseq);
+-	if (unlikely(x->replay.oseq) == 0)
++	if (unlikely(x->replay.oseq) == 0) {
++		x->replay.oseq--;
+ 		xfrm_audit_state_replay_overflow(x, skb);
++		err = -EOVERFLOW;
++		goto free_tmp;
++	}
+ 	xfrm_aevent_doreplay(x);
+ 
+ 	sg_init_table(sg, nfrags);
+@@ -217,6 +221,7 @@ static int esp_output(struct xfrm_state *x, struct sk_buff *skb)
+ 	if (err == -EBUSY)
+ 		err = NET_XMIT_DROP;
+ 
++free_tmp:
+ 	kfree(tmp);
+ 
+ 	ip_send_check(top_iph);
+diff --git a/net/ipv6/esp6.c b/net/ipv6/esp6.c
+index 32ca641..8434b56 100644
+--- a/net/ipv6/esp6.c
++++ b/net/ipv6/esp6.c
+@@ -196,8 +196,12 @@ static int esp6_output(struct xfrm_state *x, struct sk_buff *skb)
+ 
+ 	esph->spi = x->id.spi;
+ 	esph->seq_no = htonl(++x->replay.oseq);
+-	if (unlikely(x->replay.oseq) == 0)
++	if (unlikely(x->replay.oseq) == 0) {
++		x->replay.oseq--;
+ 		xfrm_audit_state_replay_overflow(x, skb);
++		err = -EOVERFLOW;
++		goto free_tmp;
++	}
+ 	xfrm_aevent_doreplay(x);
+ 
+ 	sg_init_table(sg, nfrags);
+@@ -219,6 +223,7 @@ static int esp6_output(struct xfrm_state *x, struct sk_buff *skb)
+ 	if (err == -EBUSY)
+ 		err = NET_XMIT_DROP;
+ 
++free_tmp:
+ 	kfree(tmp);
+ 
+ error:

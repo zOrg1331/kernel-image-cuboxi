@@ -1,0 +1,64 @@
+From: Peter Martuccelli <peterm@redhat.com>
+Date: Mon, 10 Dec 2007 16:48:21 -0500
+Subject: [ipmi] legacy ioport setup changes
+Message-id: 200712102148.lBALmLe6021301@redrum.boston.redhat.com
+O-Subject: [RHEL 5.2][Patch 5/7] IPMI: Legacy ioport setup changes
+Bugzilla: 279191
+
+The setup code on pseries systems needs to prevent non-whitelist entries from
+probing the default IPMI ports.  Upstream has already combined the platform
+specific setup code functions into a common setup routine.  While this approach
+resolved the problem, it broke kABI.  The following patch is a backport of the
+common upstream setup code, (arch/powerpc/kernel/setup-common.c).  This
+allows pseries systems without any underlying IPMI hardware support to fail
+the loading of the ipmi_si driver in a graceful manner.  Without this patch
+pseries systems will panic on the port_inb() call while probing the default
+IPMI port addresses.  The remaining PPC platform specific check_legacy_ioport()
+functions already return -ENODEV by default, so no additional setup routines
+need to be changed.
+
+IBM has verified the fix, (thanks to Scott for testing).
+
+Please review and ACK.
+
+diff --git a/arch/powerpc/platforms/pseries/setup.c b/arch/powerpc/platforms/pseries/setup.c
+index 9e3f580..0ff332c 100644
+--- a/arch/powerpc/platforms/pseries/setup.c
++++ b/arch/powerpc/platforms/pseries/setup.c
+@@ -390,27 +390,27 @@ static void __init pSeries_init_early(void)
+ 
+ static int pSeries_check_legacy_ioport(unsigned int baseport)
+ {
+-	struct device_node *np;
++	struct device_node *np = NULL;
++	int ret = -ENODEV;
+ 
+ #define I8042_DATA_REG	0x60
+ #define FDC_BASE	0x3f0
+ 
+-
+ 	switch(baseport) {
+ 	case I8042_DATA_REG:
+ 		np = of_find_node_by_type(NULL, "8042");
+-		if (np == NULL)
+-			return -ENODEV;
+-		of_node_put(np);
+ 		break;
+ 	case FDC_BASE:
+ 		np = of_find_node_by_type(NULL, "fdc");
+-		if (np == NULL)
+-			return -ENODEV;
+-		of_node_put(np);
++		break;
++	default:
++		/* ipmi is supposed to fail here */
+ 		break;
+ 	}
+-	return 0;
++	if (!np)
++		return ret;
++	of_node_put(np);
++	return ret;
+ }
+ 
+ /*

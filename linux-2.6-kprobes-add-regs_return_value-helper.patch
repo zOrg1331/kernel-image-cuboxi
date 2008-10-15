@@ -1,0 +1,62 @@
+diff -rup a/include/asm-i386/ptrace.h b/include/asm-i386/ptrace.h
+--- a/include/asm-i386/ptrace.h	2006-06-18 01:49:35.000000000 +0000
++++ b/include/asm-i386/ptrace.h	2006-08-25 16:36:01.426620000 +0000
+@@ -79,7 +79,10 @@ static inline int user_mode_vm(struct pt
+ {
+ 	return ((regs->xcs & 3) | (regs->eflags & VM_MASK)) != 0;
+ }
++
+ #define instruction_pointer(regs) ((regs)->eip)
++#define regs_return_value(regs) ((regs)->eax)
++
+ #if defined(CONFIG_SMP) && defined(CONFIG_FRAME_POINTER)
+ extern unsigned long profile_pc(struct pt_regs *regs);
+ #else
+diff -rup a/include/asm-ia64/ptrace.h b/include/asm-ia64/ptrace.h
+--- a/include/asm-ia64/ptrace.h	2006-08-25 15:57:41.053661000 +0000
++++ b/include/asm-ia64/ptrace.h	2006-08-25 16:32:00.910820000 +0000
+@@ -237,6 +237,9 @@ struct switch_stack {
+  * the canonical representation by adding to instruction pointer.
+  */
+ # define instruction_pointer(regs) ((regs)->cr_iip + ia64_psr(regs)->ri)
++
++#define regs_return_value(regs) ((regs)->r8)
++
+ /* Conserve space in histogram by encoding slot bits in address
+  * bits 2 and 3 rather than bits 0 and 1.
+  */
+diff -rup a/include/asm-powerpc/ptrace.h b/include/asm-powerpc/ptrace.h
+--- a/include/asm-powerpc/ptrace.h	2006-08-25 15:57:44.472720000 +0000
++++ b/include/asm-powerpc/ptrace.h	2006-08-25 16:32:00.916820000 +0000
+@@ -73,6 +73,8 @@ struct pt_regs {
+ #ifndef __ASSEMBLY__
+ 
+ #define instruction_pointer(regs) ((regs)->nip)
++#define regs_return_value(regs) ((regs)->gpr[3])
++
+ #ifdef CONFIG_SMP
+ extern unsigned long profile_pc(struct pt_regs *regs);
+ #else
+diff -rup a/include/asm-s390/ptrace.h b/include/asm-s390/ptrace.h
+--- a/include/asm-s390/ptrace.h	2006-08-25 15:57:44.980740000 +0000
++++ b/include/asm-s390/ptrace.h	2006-08-25 16:32:00.933820000 +0000
+@@ -472,6 +472,7 @@ struct user_regs_struct
+ 
+ #define user_mode(regs) (((regs)->psw.mask & PSW_MASK_PSTATE) != 0)
+ #define instruction_pointer(regs) ((regs)->psw.addr & PSW_ADDR_INSN)
++#define regs_return_value(regs)((regs)->gprs[2])
+ #define profile_pc(regs) instruction_pointer(regs)
+ extern void show_regs(struct pt_regs * regs);
+ #endif
+diff -rup a/include/asm-x86_64/ptrace.h b/include/asm-x86_64/ptrace.h
+--- a/include/asm-x86_64/ptrace.h	2006-06-18 01:49:35.000000000 +0000
++++ b/include/asm-x86_64/ptrace.h	2006-08-25 16:32:00.960820000 +0000
+@@ -84,6 +84,8 @@ struct pt_regs {
+ #define user_mode(regs) (!!((regs)->cs & 3))
+ #define user_mode_vm(regs) user_mode(regs)
+ #define instruction_pointer(regs) ((regs)->rip)
++#define regs_return_value(regs) ((regs)->rax)
++
+ extern unsigned long profile_pc(struct pt_regs *regs);
+ void signal_fault(struct pt_regs *regs, void __user *frame, char *where);
+ 

@@ -1,0 +1,73 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL 5.1] [GFS2] Fix lock ordering of unlink (bz #253609)
+Date: Sun, 26 Aug 2007 14:49:18 +0100
+Bugzilla: 253609
+Message-Id: <1188136158.8765.981.camel@quoit>
+Changelog: [GFS2] Fix lock ordering of unlink
+
+
+Hi,
+
+The following is the upstream patch which fixes this problem. Its been
+tested to verify that it does solve the issue (the incorrect lock order
+was resulting in deadlocks under certain circumstances). This fixes bz
+#253609.
+
+Steve.
+
+diff --git a/fs/gfs2/ops_inode.c b/fs/gfs2/ops_inode.c
+index 5b8b994..2cbe5a3 100644
+--- a/fs/gfs2/ops_inode.c
++++ b/fs/gfs2/ops_inode.c
+@@ -278,17 +278,25 @@ static int gfs2_unlink(struct inode *dir, struct dentry *dentry)
+ 	gfs2_holder_init(rgd->rd_gl, LM_ST_EXCLUSIVE, 0, ghs + 2);
+ 
+ 
+-	error = gfs2_glock_nq_m(3, ghs);
++	error = gfs2_glock_nq(ghs); /* parent */
+ 	if (error)
+-		goto out;
++		goto out_parent;
++
++	error = gfs2_glock_nq(ghs + 1); /* child */
++	if (error)
++		goto out_child;
++
++	error = gfs2_glock_nq(ghs + 2); /* rgrp */
++	if (error)
++		goto out_rgrp;
+ 
+ 	error = gfs2_unlink_ok(dip, &dentry->d_name, ip);
+ 	if (error)
+-		goto out_gunlock;
++		goto out_rgrp;
+ 
+ 	error = gfs2_trans_begin(sdp, 2*RES_DINODE + RES_LEAF + RES_RG_BIT, 0);
+ 	if (error)
+-		goto out_gunlock;
++		goto out_rgrp;
+ 
+ 	error = gfs2_dir_del(dip, &dentry->d_name);
+         if (error)
+@@ -298,12 +306,15 @@ static int gfs2_unlink(struct inode *dir, struct dentry *dentry)
+ 
+ out_end_trans:
+ 	gfs2_trans_end(sdp);
+-out_gunlock:
+-	gfs2_glock_dq_m(3, ghs);
+-out:
+-	gfs2_holder_uninit(ghs);
+-	gfs2_holder_uninit(ghs + 1);
++	gfs2_glock_dq(ghs + 2);
++out_rgrp:
+ 	gfs2_holder_uninit(ghs + 2);
++	gfs2_glock_dq(ghs + 1);
++out_child:
++	gfs2_holder_uninit(ghs + 1);
++	gfs2_glock_dq(ghs);
++out_parent:
++	gfs2_holder_uninit(ghs);
+ 	gfs2_glock_dq_uninit(&ri_gh);
+ 	return error;
+ }
+

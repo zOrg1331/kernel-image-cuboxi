@@ -1,0 +1,73 @@
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [RHEL5.1][PATCH] add nordirplus option to NFS client 
+Date: Thu, 17 May 2007 13:50:26 -0400
+Bugzilla: 240126
+Message-Id: <464C95E2.8090502@RedHat.com>
+Changelog: [nfs] add nordirplus option to NFS client 
+
+
+This upstream patch is the result of the Tru64 NFS server
+being severely broken when it comes to maintaining
+consistent FSIDs on Advfs filesystems.
+
+Its seems the fsids that are returned in the READDIRPLUS
+ops are different that the ones returned in the LOOKUP
+ops which causes Linux clients to misinterpret the file
+type. The reason other clients do have a similar problem,
+is they appear to ignore the fsid that is returned,
+something we did until the end of last year.
+
+The bz is:
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=240126
+
+steved.
+
+
+commit 74dd34e6e8bb127ff4c182423154b294729b663b
+Author: Steve Dickson <steved@redhat.com>
+
+    NFS: Added support to turn off the NFSv3 READDIRPLUS RPC.
+    
+    READDIRPLUS can be a performance hindrance when the client is working with
+    large directories. In addition, some servers still have bugs in their
+    implementations (e.g. Tru64 returns wrong values for the fsid).
+    
+    Add a mount flag to enable users to turn it off at mount time following the
+    implementation in Apple's NFS client.
+    
+    Signed-off-by: Steve Dickson <steved@redhat.com>
+    Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+--- linux-2.6.18.i686/fs/nfs/client.c.orig	2007-05-17 09:09:46.209193000 -0400
++++ linux-2.6.18.i686/fs/nfs/client.c	2007-05-17 10:45:06.342871000 -0400
+@@ -620,7 +620,8 @@ static int nfs_init_server(struct nfs_se
+ 	if (clp->cl_nfsversion == 3) {
+ 		if (server->namelen == 0 || server->namelen > NFS3_MAXNAMLEN)
+ 			server->namelen = NFS3_MAXNAMLEN;
+-		server->caps |= NFS_CAP_READDIRPLUS;
++		if (!(data->flags & NFS_MOUNT_NORDIRPLUS))
++			server->caps |= NFS_CAP_READDIRPLUS;
+ 	} else {
+ 		if (server->namelen == 0 || server->namelen > NFS2_MAXNAMLEN)
+ 			server->namelen = NFS2_MAXNAMLEN;
+--- linux-2.6.18.i686/fs/nfs/super.c.orig	2007-05-17 09:09:32.066363000 -0400
++++ linux-2.6.18.i686/fs/nfs/super.c	2007-05-17 10:46:13.815953000 -0400
+@@ -291,6 +291,7 @@ static void nfs_show_mount_options(struc
+ 		{ NFS_MOUNT_NONLM, ",nolock", "" },
+ 		{ NFS_MOUNT_NOACL, ",noacl", "" },
+ 		{ NFS_MOUNT_FSCACHE, ",fsc", "" },
++		{ NFS_MOUNT_NORDIRPLUS, ",nordirplus", "" },
+ 		{ 0, NULL, NULL }
+ 	};
+ 	const struct proc_nfs_info *nfs_infop;
+--- linux-2.6.18.i686/include/linux/nfs_mount.h.orig	2007-05-17 09:09:31.385431000 -0400
++++ linux-2.6.18.i686/include/linux/nfs_mount.h	2007-05-17 10:47:08.936730000 -0400
+@@ -62,6 +62,7 @@ struct nfs_mount_data {
+ #define NFS_MOUNT_STRICTLOCK	0x1000	/* reserved for NFSv4 */
+ #define NFS_MOUNT_SECFLAVOUR	0x2000	/* 5 */
+ #define NFS_MOUNT_FSCACHE	0x4000
++#define NFS_MOUNT_NORDIRPLUS	0x8000	/* 5 */
+ #define NFS_MOUNT_FLAGMASK	0xFFFF
+ 
+ #endif
+

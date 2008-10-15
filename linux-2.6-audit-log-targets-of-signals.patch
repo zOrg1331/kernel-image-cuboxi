@@ -1,0 +1,746 @@
+From: Alexander Viro <aviro@redhat.com>
+Subject: [5.1] patch for bz#228366
+Date: Thu, 24 May 2007 03:43:01 -0400
+Bugzilla: 228366
+Message-Id: <20070524074301.GF27042@devserv.devel.redhat.com>
+Changelog: [audit] log targets of signals
+
+
+	Combined variant of Amy's two-parter from LSPP kernel, backported
+to 2.6.18-20.el5.  Log targets of signals when watching for signal-related
+syscalls.
+
+diff --git a/arch/ia64/ia32/audit.c b/arch/ia64/ia32/audit.c
+index 92d7d0c..8850fe4 100644
+--- a/arch/ia64/ia32/audit.c
++++ b/arch/ia64/ia32/audit.c
+@@ -20,6 +20,11 @@ unsigned ia32_read_class[] = {
+ ~0U
+ };
+ 
++unsigned ia32_signal_class[] = {
++#include <asm-generic/audit_signal.h>
++~0U
++};
++
+ int ia32_classify_syscall(unsigned syscall)
+ {
+ 	switch(syscall) {
+diff --git a/arch/ia64/kernel/audit.c b/arch/ia64/kernel/audit.c
+index 0468255..f3802ae 100644
+--- a/arch/ia64/kernel/audit.c
++++ b/arch/ia64/kernel/audit.c
+@@ -23,6 +23,20 @@ static unsigned chattr_class[] = {
+ ~0U
+ };
+ 
++static unsigned signal_class[] = {
++#include <asm-generic/audit_signal.h>
++~0U
++};
++
++int audit_classify_arch(int arch)
++{
++#ifdef CONFIG_IA32_SUPPORT
++	if (arch == AUDIT_ARCH_I386)
++		return 1;
++#endif
++	return 0;
++}
++
+ int audit_classify_syscall(int abi, unsigned syscall)
+ {
+ #ifdef CONFIG_IA32_SUPPORT
+@@ -49,15 +63,18 @@ static int __init audit_classes_init(void)
+ 	extern __u32 ia32_write_class[];
+ 	extern __u32 ia32_read_class[];
+ 	extern __u32 ia32_chattr_class[];
++	extern __u32 ia32_signal_class[];
+ 	audit_register_class(AUDIT_CLASS_WRITE_32, ia32_write_class);
+ 	audit_register_class(AUDIT_CLASS_READ_32, ia32_read_class);
+ 	audit_register_class(AUDIT_CLASS_DIR_WRITE_32, ia32_dir_class);
+ 	audit_register_class(AUDIT_CLASS_CHATTR_32, ia32_chattr_class);
++	audit_register_class(AUDIT_CLASS_SIGNAL_32, ia32_signal_class);
+ #endif
+ 	audit_register_class(AUDIT_CLASS_WRITE, write_class);
+ 	audit_register_class(AUDIT_CLASS_READ, read_class);
+ 	audit_register_class(AUDIT_CLASS_DIR_WRITE, dir_class);
+ 	audit_register_class(AUDIT_CLASS_CHATTR, chattr_class);
++	audit_register_class(AUDIT_CLASS_SIGNAL, signal_class);
+ 	return 0;
+ }
+ 
+diff --git a/arch/powerpc/kernel/audit.c b/arch/powerpc/kernel/audit.c
+index 7fe5e63..a4dab7c 100644
+--- a/arch/powerpc/kernel/audit.c
++++ b/arch/powerpc/kernel/audit.c
+@@ -23,6 +23,20 @@ static unsigned chattr_class[] = {
+ ~0U
+ };
+ 
++static unsigned signal_class[] = {
++#include <asm-generic/audit_signal.h>
++~0U
++};
++
++int audit_classify_arch(int arch)
++{
++#ifdef CONFIG_PPC64
++	if (arch == AUDIT_ARCH_PPC)
++		return 1;
++#endif
++	return 0;
++}
++
+ int audit_classify_syscall(int abi, unsigned syscall)
+ {
+ #ifdef CONFIG_PPC64
+@@ -51,15 +65,18 @@ static int __init audit_classes_init(void)
+ 	extern __u32 ppc32_write_class[];
+ 	extern __u32 ppc32_read_class[];
+ 	extern __u32 ppc32_chattr_class[];
++	extern __u32 ppc32_signal_class[];
+ 	audit_register_class(AUDIT_CLASS_WRITE_32, ppc32_write_class);
+ 	audit_register_class(AUDIT_CLASS_READ_32, ppc32_read_class);
+ 	audit_register_class(AUDIT_CLASS_DIR_WRITE_32, ppc32_dir_class);
+ 	audit_register_class(AUDIT_CLASS_CHATTR_32, ppc32_chattr_class);
++	audit_register_class(AUDIT_CLASS_SIGNAL_32, ppc32_signal_class);
+ #endif
+ 	audit_register_class(AUDIT_CLASS_WRITE, write_class);
+ 	audit_register_class(AUDIT_CLASS_READ, read_class);
+ 	audit_register_class(AUDIT_CLASS_DIR_WRITE, dir_class);
+ 	audit_register_class(AUDIT_CLASS_CHATTR, chattr_class);
++	audit_register_class(AUDIT_CLASS_SIGNAL, signal_class);
+ 	return 0;
+ }
+ 
+diff --git a/arch/powerpc/kernel/compat_audit.c b/arch/powerpc/kernel/compat_audit.c
+index 640d4bb..108ff14 100644
+--- a/arch/powerpc/kernel/compat_audit.c
++++ b/arch/powerpc/kernel/compat_audit.c
+@@ -21,6 +21,11 @@ unsigned ppc32_read_class[] = {
+ ~0U
+ };
+ 
++unsigned ppc32_signal_class[] = {
++#include <asm-generic/audit_signal.h>
++~0U
++};
++
+ int ppc32_classify_syscall(unsigned syscall)
+ {
+ 	switch(syscall) {
+diff --git a/arch/s390/kernel/audit.c b/arch/s390/kernel/audit.c
+index 0741d91..d1c76fe 100644
+--- a/arch/s390/kernel/audit.c
++++ b/arch/s390/kernel/audit.c
+@@ -23,6 +23,20 @@ static unsigned chattr_class[] = {
+ ~0U
+ };
+ 
++static unsigned signal_class[] = {
++#include <asm-generic/audit_signal.h>
++~0U
++};
++
++int audit_classify_arch(int arch)
++{
++#ifdef CONFIG_COMPAT
++	if (arch == AUDIT_ARCH_S390)
++		return 1;
++#endif
++	return 0;
++}
++
+ int audit_classify_syscall(int abi, unsigned syscall)
+ {
+ #ifdef CONFIG_COMPAT
+@@ -51,15 +65,18 @@ static int __init audit_classes_init(void)
+ 	extern __u32 s390_write_class[];
+ 	extern __u32 s390_read_class[];
+ 	extern __u32 s390_chattr_class[];
++	extern __u32 s390_signal_class[];
+ 	audit_register_class(AUDIT_CLASS_WRITE_32, s390_write_class);
+ 	audit_register_class(AUDIT_CLASS_READ_32, s390_read_class);
+ 	audit_register_class(AUDIT_CLASS_DIR_WRITE_32, s390_dir_class);
+ 	audit_register_class(AUDIT_CLASS_CHATTR_32, s390_chattr_class);
++	audit_register_class(AUDIT_CLASS_SIGNAL_32, s390_signal_class);
+ #endif
+ 	audit_register_class(AUDIT_CLASS_WRITE, write_class);
+ 	audit_register_class(AUDIT_CLASS_READ, read_class);
+ 	audit_register_class(AUDIT_CLASS_DIR_WRITE, dir_class);
+ 	audit_register_class(AUDIT_CLASS_CHATTR, chattr_class);
++	audit_register_class(AUDIT_CLASS_SIGNAL, signal_class);
+ 	return 0;
+ }
+ 
+diff --git a/arch/s390/kernel/compat_audit.c b/arch/s390/kernel/compat_audit.c
+index 16d9436..0569f51 100644
+--- a/arch/s390/kernel/compat_audit.c
++++ b/arch/s390/kernel/compat_audit.c
+@@ -21,6 +21,11 @@ unsigned s390_read_class[] = {
+ ~0U
+ };
+ 
++unsigned s390_signal_class[] = {
++#include <asm-generic/audit_signal.h>
++~0U
++};
++
+ int s390_classify_syscall(unsigned syscall)
+ {
+ 	switch(syscall) {
+diff --git a/arch/sparc64/kernel/audit.c b/arch/sparc64/kernel/audit.c
+index aef19cc..24d7f4b 100644
+--- a/arch/sparc64/kernel/audit.c
++++ b/arch/sparc64/kernel/audit.c
+@@ -23,6 +23,20 @@ static unsigned chattr_class[] = {
+ ~0U
+ };
+ 
++static unsigned signal_class[] = {
++#include <asm-generic/audit_signal.h>
++~0U
++};
++
++int audit_classify_arch(int arch)
++{
++#ifdef CONFIG_SPARC32_COMPAT
++	if (arch == AUDIT_ARCH_SPARC)
++		return 1;
++#endif
++	return 0;
++}
++
+ int audit_classify_syscall(int abi, unsigned syscall)
+ {
+ #ifdef CONFIG_SPARC32_COMPAT
+@@ -51,15 +65,18 @@ static int __init audit_classes_init(void)
+ 	extern __u32 sparc32_write_class[];
+ 	extern __u32 sparc32_read_class[];
+ 	extern __u32 sparc32_chattr_class[];
++	extern __u32 sparc32_signal_class[];
+ 	audit_register_class(AUDIT_CLASS_WRITE_32, sparc32_write_class);
+ 	audit_register_class(AUDIT_CLASS_READ_32, sparc32_read_class);
+ 	audit_register_class(AUDIT_CLASS_DIR_WRITE_32, sparc32_dir_class);
+ 	audit_register_class(AUDIT_CLASS_CHATTR_32, sparc32_chattr_class);
++	audit_register_class(AUDIT_CLASS_SIGNAL_32, sparc32_signal_class);
+ #endif
+ 	audit_register_class(AUDIT_CLASS_WRITE, write_class);
+ 	audit_register_class(AUDIT_CLASS_READ, read_class);
+ 	audit_register_class(AUDIT_CLASS_DIR_WRITE, dir_class);
+ 	audit_register_class(AUDIT_CLASS_CHATTR, chattr_class);
++	audit_register_class(AUDIT_CLASS_SIGNAL, signal_class);
+ 	return 0;
+ }
+ 
+diff --git a/arch/sparc64/kernel/compat_audit.c b/arch/sparc64/kernel/compat_audit.c
+index cca96c9..c197948 100644
+--- a/arch/sparc64/kernel/compat_audit.c
++++ b/arch/sparc64/kernel/compat_audit.c
+@@ -20,6 +20,11 @@ unsigned sparc32_read_class[] = {
+ ~0U
+ };
+ 
++unsigned sparc32_signal_class[] = {
++#include <asm-generic/audit_signal.h>
++~0U
++};
++
+ int sparc32_classify_syscall(unsigned syscall)
+ {
+ 	switch(syscall) {
+diff --git a/arch/x86_64/ia32/audit.c b/arch/x86_64/ia32/audit.c
+index 92d7d0c..8850fe4 100644
+--- a/arch/x86_64/ia32/audit.c
++++ b/arch/x86_64/ia32/audit.c
+@@ -20,6 +20,11 @@ unsigned ia32_read_class[] = {
+ ~0U
+ };
+ 
++unsigned ia32_signal_class[] = {
++#include <asm-generic/audit_signal.h>
++~0U
++};
++
+ int ia32_classify_syscall(unsigned syscall)
+ {
+ 	switch(syscall) {
+diff --git a/arch/x86_64/kernel/audit.c b/arch/x86_64/kernel/audit.c
+index 21f3338..06d3e5a 100644
+--- a/arch/x86_64/kernel/audit.c
++++ b/arch/x86_64/kernel/audit.c
+@@ -23,6 +23,20 @@ static unsigned chattr_class[] = {
+ ~0U
+ };
+ 
++static unsigned signal_class[] = {
++#include <asm-generic/audit_signal.h>
++~0U
++};
++
++int audit_classify_arch(int arch)
++{
++#ifdef CONFIG_IA32_EMULATION
++	if (arch == AUDIT_ARCH_I386)
++		return 1;
++#endif
++	return 0;
++}
++
+ int audit_classify_syscall(int abi, unsigned syscall)
+ {
+ #ifdef CONFIG_IA32_EMULATION
+@@ -49,15 +63,18 @@ static int __init audit_classes_init(void)
+ 	extern __u32 ia32_write_class[];
+ 	extern __u32 ia32_read_class[];
+ 	extern __u32 ia32_chattr_class[];
++	extern __u32 ia32_signal_class[];
+ 	audit_register_class(AUDIT_CLASS_WRITE_32, ia32_write_class);
+ 	audit_register_class(AUDIT_CLASS_READ_32, ia32_read_class);
+ 	audit_register_class(AUDIT_CLASS_DIR_WRITE_32, ia32_dir_class);
+ 	audit_register_class(AUDIT_CLASS_CHATTR_32, ia32_chattr_class);
++	audit_register_class(AUDIT_CLASS_SIGNAL_32, ia32_signal_class);
+ #endif
+ 	audit_register_class(AUDIT_CLASS_WRITE, write_class);
+ 	audit_register_class(AUDIT_CLASS_READ, read_class);
+ 	audit_register_class(AUDIT_CLASS_DIR_WRITE, dir_class);
+ 	audit_register_class(AUDIT_CLASS_CHATTR, chattr_class);
++	audit_register_class(AUDIT_CLASS_SIGNAL, signal_class);
+ 	return 0;
+ }
+ 
+diff --git a/include/asm-generic/audit_signal.h b/include/asm-generic/audit_signal.h
+new file mode 100644
+index 0000000..6feab7f
+--- /dev/null
++++ b/include/asm-generic/audit_signal.h
+@@ -0,0 +1,3 @@
++__NR_kill,
++__NR_tgkill,
++__NR_tkill,
+diff --git a/include/linux/audit.h b/include/linux/audit.h
+index 0e07db6..5e2a94b 100644
+--- a/include/linux/audit.h
++++ b/include/linux/audit.h
+@@ -89,6 +89,7 @@
+ #define AUDIT_MQ_NOTIFY		1314	/* POSIX MQ notify record type */
+ #define AUDIT_MQ_GETSETATTR	1315	/* POSIX MQ get/set attribute record type */
+ #define AUDIT_KERNEL_OTHER	1316	/* For use by 3rd party modules */
++#define AUDIT_OBJ_PID		1318	/* signal target */
+ 
+ #define AUDIT_AVC		1400	/* SE Linux avc denial or grant */
+ #define AUDIT_SELINUX_ERR	1401	/* Internal SE Linux Errors */
+@@ -146,6 +147,8 @@
+ #define AUDIT_CLASS_READ_32 5
+ #define AUDIT_CLASS_WRITE 6
+ #define AUDIT_CLASS_WRITE_32 7
++#define AUDIT_CLASS_SIGNAL 8
++#define AUDIT_CLASS_SIGNAL_32 9
+ 
+ /* This bitmask is used to validate user input.  It represents all bits that
+  * are currently used in an audit field constant understood by the kernel.
+@@ -335,6 +338,7 @@ struct mqstat;
+ #define AUDITSC_RESULT(x) ( ((long)(x))<0?AUDITSC_FAILURE:AUDITSC_SUCCESS )
+ extern int __init audit_register_class(int class, unsigned *list);
+ extern int audit_classify_syscall(int abi, unsigned syscall);
++extern int audit_classify_arch(int arch);
+ #ifdef CONFIG_AUDITSYSCALL
+ /* These are defined in auditsc.c */
+ 				/* Public API */
+@@ -438,6 +442,7 @@ static inline int audit_mq_getsetattr(mqd_t mqdes, struct mq_attr *mqstat)
+ 	return 0;
+ }
+ extern int audit_n_rules;
++extern int audit_signals;
+ #else
+ #define audit_alloc(t) ({ 0; })
+ #define audit_free(t) do { ; } while (0)
+@@ -468,6 +473,7 @@ extern int audit_n_rules;
+ #define audit_mq_notify(d,n) ({ 0; })
+ #define audit_mq_getsetattr(d,s) ({ 0; })
+ #define audit_n_rules 0
++#define audit_signals 0
+ #endif
+ 
+ #ifdef CONFIG_AUDIT
+diff --git a/kernel/audit.h b/kernel/audit.h
+index a337023..815d6f5 100644
+--- a/kernel/audit.h
++++ b/kernel/audit.h
+@@ -83,6 +83,7 @@ struct audit_krule {
+ 	u32			field_count;
+ 	char			*filterkey; /* ties events to rules */
+ 	struct audit_field	*fields;
++	struct audit_field	*arch_f; /* quick access to arch field */
+ 	struct audit_field	*inode_f; /* quick access to an inode field */
+ 	struct audit_watch	*watch;	/* associated watch */
+ 	struct list_head	rlist;	/* entry in audit_watch.rules list */
+@@ -131,17 +132,19 @@ extern void audit_handle_ievent(struct inotify_watch *, u32, u32, u32,
+ extern int selinux_audit_rule_update(void);
+ 
+ #ifdef CONFIG_AUDITSYSCALL
+-extern void __audit_signal_info(int sig, struct task_struct *t);
+-static inline void audit_signal_info(int sig, struct task_struct *t)
++extern int __audit_signal_info(int sig, struct task_struct *t);
++static inline int audit_signal_info(int sig, struct task_struct *t)
+ {
+-	if (unlikely(audit_pid && t->tgid == audit_pid))
+-		__audit_signal_info(sig, t);
++	if (unlikely((audit_pid && t->tgid == audit_pid) ||
++		     (audit_signals && !audit_dummy_context())))
++		return __audit_signal_info(sig, t);
++	return 0;
+ }
+ extern enum audit_state audit_filter_inodes(struct task_struct *,
+ 					    struct audit_context *);
+ extern void audit_set_auditable(struct audit_context *);
+ #else
+-#define audit_signal_info(s,t)
++#define audit_signal_info(s,t) AUDIT_DISABLED
+ #define audit_filter_inodes(t,c) AUDIT_DISABLED
+ #define audit_set_auditable(c)
+ #endif
+diff --git a/kernel/auditfilter.c b/kernel/auditfilter.c
+index cff9206..5c2745f 100644
+--- a/kernel/auditfilter.c
++++ b/kernel/auditfilter.c
+@@ -311,6 +311,43 @@ int audit_match_class(int class, unsigned syscall)
+ 	return classes[class][AUDIT_WORD(syscall)] & AUDIT_BIT(syscall);
+ }
+ 
++static inline int audit_match_class_bits(int class, u32 *mask)
++{
++	int i;
++
++	if (classes[class]) {
++		for (i = 0; i < AUDIT_BITMASK_SIZE; i++)
++			if (mask[i] & classes[class][i])
++				return 0;
++	}
++	return 1;
++}
++
++static int audit_match_signal(struct audit_entry *entry)
++{
++	struct audit_field *arch = entry->rule.arch_f;
++
++	if (!arch) {
++		/* When arch is unspecified, we must check both masks on biarch
++		 * as syscall number alone is ambiguous. */
++		return (audit_match_class_bits(AUDIT_CLASS_SIGNAL,
++					       entry->rule.mask) &&
++			audit_match_class_bits(AUDIT_CLASS_SIGNAL_32,
++					       entry->rule.mask));
++	}
++
++	switch(audit_classify_arch(arch->val)) {
++	case 0: /* native */
++		return (audit_match_class_bits(AUDIT_CLASS_SIGNAL,
++					       entry->rule.mask));
++	case 1: /* 32bit on biarch */
++		return (audit_match_class_bits(AUDIT_CLASS_SIGNAL_32,
++					       entry->rule.mask));
++	default:
++		return 1;
++	}
++}
++
+ /* Common user-space to kernel rule translation. */
+ static inline struct audit_entry *audit_to_entry_common(struct audit_rule *rule)
+ {
+@@ -429,6 +466,7 @@ static struct audit_entry *audit_rule_to_entry(struct audit_rule *rule)
+ 				err = -EINVAL;
+ 				goto exit_free;
+ 			}
++			entry->rule.arch_f = f;
+ 			break;
+ 		case AUDIT_PERM:
+ 			if (f->val & ~15)
+@@ -519,7 +557,6 @@ static struct audit_entry *audit_data_to_entry(struct audit_rule_data *data,
+ 		case AUDIT_FSGID:
+ 		case AUDIT_LOGINUID:
+ 		case AUDIT_PERS:
+-		case AUDIT_ARCH:
+ 		case AUDIT_MSGTYPE:
+ 		case AUDIT_PPID:
+ 		case AUDIT_DEVMAJOR:
+@@ -531,6 +568,9 @@ static struct audit_entry *audit_data_to_entry(struct audit_rule_data *data,
+ 		case AUDIT_ARG2:
+ 		case AUDIT_ARG3:
+ 			break;
++		case AUDIT_ARCH:
++			entry->rule.arch_f = f;
++			break;
+ 		case AUDIT_SUBJ_USER:
+ 		case AUDIT_SUBJ_ROLE:
+ 		case AUDIT_SUBJ_TYPE:
+@@ -1222,6 +1262,9 @@ static inline int audit_add_rule(struct audit_entry *entry,
+ #ifdef CONFIG_AUDITSYSCALL
+ 	if (!dont_count)
+ 		audit_n_rules++;
++
++	if (!audit_match_signal(entry))
++		audit_signals++;
+ #endif
+ 	mutex_unlock(&audit_filter_mutex);
+ 
+@@ -1295,6 +1338,9 @@ static inline int audit_del_rule(struct audit_entry *entry,
+ #ifdef CONFIG_AUDITSYSCALL
+ 	if (!dont_count)
+ 		audit_n_rules--;
++
++	if (!audit_match_signal(entry))
++		audit_signals--;
+ #endif
+ 	mutex_unlock(&audit_filter_mutex);
+ 
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index 5b2b7eb..d46094c 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -88,6 +88,9 @@ extern int audit_enabled;
+ /* number of audit rules */
+ int audit_n_rules;
+ 
++/* determines whether we collect data for signals sent */
++int audit_signals;
++
+ /* When fs/namei.c:getname() is called, we store the pointer in name and
+  * we don't let putname() free it (instead we free all of the saved
+  * pointers at syscall exit time).
+@@ -113,6 +116,9 @@ struct audit_aux_data {
+ 
+ #define AUDIT_AUX_IPCPERM	0
+ 
++/* Number of target pids per aux struct. */
++#define AUDIT_AUX_PIDS	16
++
+ struct audit_aux_data_mq_open {
+ 	struct audit_aux_data	d;
+ 	int			oflag;
+@@ -175,6 +181,13 @@ struct audit_aux_data_path {
+ 	struct vfsmount		*mnt;
+ };
+ 
++struct audit_aux_data_pids {
++	struct audit_aux_data	d;
++	pid_t			target_pid[AUDIT_AUX_PIDS];
++	u32			target_sid[AUDIT_AUX_PIDS];
++	int			pid_count;
++};
++
+ /* The per-task audit context. */
+ struct audit_context {
+ 	int		    dummy;	/* must be the first element */
+@@ -195,6 +208,9 @@ struct audit_context {
+ 	struct vfsmount *   pwdmnt;
+ 	struct audit_context *previous; /* For nested syscalls */
+ 	struct audit_aux_data *aux;
++#ifndef __GENKSYMS__
++	struct audit_aux_data *aux_pids;
++#endif
+ 
+ 				/* Save things to print about task_struct */
+ 	pid_t		    pid, ppid;
+@@ -203,6 +219,11 @@ struct audit_context {
+ 	unsigned long	    personality;
+ 	int		    arch;
+ 
++#ifndef __GENKSYMS__
++	pid_t		    target_pid;
++	u32		    target_sid;
++#endif
++
+ #if AUDIT_DEBUG
+ 	int		    put_count;
+ 	int		    ino_count;
+@@ -648,6 +669,10 @@ static inline void audit_free_aux(struct audit_context *context)
+ 		context->aux = aux->next;
+ 		kfree(aux);
+ 	}
++	while ((aux = context->aux_pids)) {
++		context->aux_pids = aux->next;
++		kfree(aux);
++	}
+ }
+ 
+ static inline void audit_zero_context(struct audit_context *context,
+@@ -789,6 +814,29 @@ static void audit_log_task_info(struct audit_buffer *ab, struct task_struct *tsk
+ 	audit_log_task_context(ab);
+ }
+ 
++static int audit_log_pid_context(struct audit_context *context, pid_t pid,
++				 u32 sid)
++{
++	struct audit_buffer *ab;
++	char *s = NULL;
++	u32 len;
++	int rc = 0;
++
++	ab = audit_log_start(context, GFP_KERNEL, AUDIT_OBJ_PID);
++	if (!ab)
++		return 1;
++
++	if (selinux_ctxid_to_string(sid, &s, &len)) {
++		audit_log_format(ab, "opid=%d obj=(none)", pid);
++		rc = 1;
++	} else
++		audit_log_format(ab, "opid=%d  obj=%s", pid, s);
++	audit_log_end(ab);
++	kfree(s);
++
++	return rc;
++}
++
+ static void audit_log_exit(struct audit_context *context, struct task_struct *tsk)
+ {
+ 	int i, call_panic = 0;
+@@ -960,6 +1008,21 @@ static void audit_log_exit(struct audit_context *context, struct task_struct *ts
+ 		audit_log_end(ab);
+ 	}
+ 
++	for (aux = context->aux_pids; aux; aux = aux->next) {
++		struct audit_aux_data_pids *axs = (void *)aux;
++		int i;
++
++		for (i = 0; i < axs->pid_count; i++)
++			if (audit_log_pid_context(context, axs->target_pid[i],
++						  axs->target_sid[i]))
++				call_panic = 1;
++	}
++
++	if (context->target_pid &&
++	    audit_log_pid_context(context, context->target_pid,
++				  context->target_sid))
++			call_panic = 1;
++
+ 	if (context->pwd && context->pwdmnt) {
+ 		ab = audit_log_start(context, GFP_KERNEL, AUDIT_CWD);
+ 		if (ab) {
+@@ -1180,6 +1243,10 @@ void audit_syscall_exit(int valid, long return_code)
+ 	} else {
+ 		audit_free_names(context);
+ 		audit_free_aux(context);
++		context->aux = NULL;
++		context->aux_pids = NULL;
++		context->target_pid = 0;
++		context->target_sid = 0;
+ 		kfree(context->filterkey);
+ 		context->filterkey = NULL;
+ 		tsk->audit_context = context;
+@@ -1877,15 +1944,17 @@ int audit_avc_path(struct dentry *dentry, struct vfsmount *mnt)
+  * If the audit subsystem is being terminated, record the task (pid)
+  * and uid that is doing that.
+  */
+-void __audit_signal_info(int sig, struct task_struct *t)
++int __audit_signal_info(int sig, struct task_struct *t)
+ {
++	struct audit_aux_data_pids *axp;
++	struct task_struct *tsk = current;
++	struct audit_context *ctx = tsk->audit_context;
+ 	extern pid_t audit_sig_pid;
+ 	extern uid_t audit_sig_uid;
+ 	extern u32 audit_sig_sid;
+ 
+-	if (sig == SIGTERM || sig == SIGHUP || sig == SIGUSR1) {
+-		struct task_struct *tsk = current;
+-		struct audit_context *ctx = tsk->audit_context;
++	if (audit_pid && t->tgid == audit_pid &&
++	    (sig == SIGTERM || sig == SIGHUP || sig == SIGUSR1)) {
+ 		audit_sig_pid = tsk->pid;
+ 		if (ctx)
+ 			audit_sig_uid = ctx->loginuid;
+@@ -1893,4 +1962,33 @@ void __audit_signal_info(int sig, struct task_struct *t)
+ 			audit_sig_uid = tsk->uid;
+ 		selinux_get_task_sid(tsk, &audit_sig_sid);
+ 	}
++
++	if (!audit_signals) /* audit_context checked in wrapper */
++		return 0;
++
++	/* optimize the common case by putting first signal recipient directly
++	 * in audit_context */
++	if (!ctx->target_pid) {
++		ctx->target_pid = t->tgid;
++		selinux_get_task_sid(t, &ctx->target_sid);
++		return 0;
++	}
++
++	axp = (void *)ctx->aux_pids;
++	if (!axp || axp->pid_count == AUDIT_AUX_PIDS) {
++		axp = kzalloc(sizeof(*axp), GFP_ATOMIC);
++		if (!axp)
++			return -ENOMEM;
++
++		axp->d.type = AUDIT_OBJ_PID;
++		axp->d.next = ctx->aux_pids;
++		ctx->aux_pids = (void *)axp;
++	}
++	BUG_ON(axp->pid_count > AUDIT_AUX_PIDS);
++
++	axp->target_pid[axp->pid_count] = t->tgid;
++	selinux_get_task_sid(t, &axp->target_sid[axp->pid_count]);
++	axp->pid_count++;
++
++	return 0;
+ }
+diff --git a/kernel/signal.c b/kernel/signal.c
+index 23ca487..1c7fe81 100644
+--- a/kernel/signal.c
++++ b/kernel/signal.c
+@@ -574,6 +574,11 @@ static int check_kill_permission(int sig, struct siginfo *info,
+ 	int error = -EINVAL;
+ 	if (!valid_signal(sig))
+ 		return error;
++
++	error = audit_signal_info(sig, t); /* Let audit system see the signal */
++	if (error)
++		return error;
++
+ 	error = -EPERM;
+ 	if ((info == SEND_SIG_NOINFO || (!is_si_special(info) && SI_FROMUSER(info)))
+ 	    && ((sig != SIGCONT) ||
+@@ -583,10 +588,7 @@ static int check_kill_permission(int sig, struct siginfo *info,
+ 	    && !capable(CAP_KILL))
+ 		return error;
+ 
+-	error = security_task_kill(t, info, sig, 0);
+-	if (!error)
+-		audit_signal_info(sig, t); /* Let audit system see the signal */
+-	return error;
++	return security_task_kill(t, info, sig, 0);
+ }
+ 
+ 
+diff --git a/lib/audit.c b/lib/audit.c
+index 3b1289f..8e7dc1c 100644
+--- a/lib/audit.c
++++ b/lib/audit.c
+@@ -23,6 +23,16 @@ static unsigned chattr_class[] = {
+ ~0U
+ };
+ 
++static unsigned signal_class[] = {
++#include <asm-generic/audit_signal.h>
++~0U
++};
++
++int audit_classify_arch(int arch)
++{
++	return 0;
++}
++
+ int audit_classify_syscall(int abi, unsigned syscall)
+ {
+ 	switch(syscall) {
+@@ -49,6 +59,7 @@ static int __init audit_classes_init(void)
+ 	audit_register_class(AUDIT_CLASS_READ, read_class);
+ 	audit_register_class(AUDIT_CLASS_DIR_WRITE, dir_class);
+ 	audit_register_class(AUDIT_CLASS_CHATTR, chattr_class);
++	audit_register_class(AUDIT_CLASS_SIGNAL, signal_class);
+ 	return 0;
+ }
+ 
+-- 
+1.5.0-rc2.GIT

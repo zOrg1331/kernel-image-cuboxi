@@ -1,0 +1,3370 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Mon, 24 Mar 2008 14:24:23 -0400
+Subject: [openib] remove xrc support
+Message-id: 1206383072-7299-3-git-send-email-dledford@redhat.com
+O-Subject: [Patch RHEL5 02/10] Infiniband: Remove xrc support
+Bugzilla: 253023
+
+I accidentally let a feature that we don't think is ready for prime
+time into the OFED 1.3-rc1 patch set.  This backs that feature out.
+Upstream still isn't certain that this feature's ABI won't change
+in the future, so it would be best to avoid shipping it yet.
+
+Signed-off-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/drivers/infiniband/core/device.c b/drivers/infiniband/core/device.c
+index 137c9e9..858b6ea 100644
+--- a/drivers/infiniband/core/device.c
++++ b/drivers/infiniband/core/device.c
+@@ -296,8 +296,6 @@ int ib_register_device(struct ib_device *device)
+ 	INIT_LIST_HEAD(&device->client_data_list);
+ 	spin_lock_init(&device->event_handler_lock);
+ 	spin_lock_init(&device->client_data_lock);
+-	device->ib_uverbs_xrcd_table = RB_ROOT;
+-	mutex_init(&device->xrcd_table_mutex);
+ 
+ 	ret = read_port_table_lengths(device);
+ 	if (ret) {
+diff --git a/drivers/infiniband/core/uverbs.h b/drivers/infiniband/core/uverbs.h
+index 237cc2d..c75eb6c 100644
+--- a/drivers/infiniband/core/uverbs.h
++++ b/drivers/infiniband/core/uverbs.h
+@@ -143,7 +143,6 @@ extern struct idr ib_uverbs_ah_idr;
+ extern struct idr ib_uverbs_cq_idr;
+ extern struct idr ib_uverbs_qp_idr;
+ extern struct idr ib_uverbs_srq_idr;
+-extern struct idr ib_uverbs_xrc_domain_idr;
+ 
+ void idr_remove_uobj(struct idr *idp, struct ib_uobject *uobj);
+ 
+@@ -163,8 +162,6 @@ void ib_uverbs_qp_event_handler(struct ib_event *event, void *context_ptr);
+ void ib_uverbs_srq_event_handler(struct ib_event *event, void *context_ptr);
+ void ib_uverbs_event_handler(struct ib_event_handler *handler,
+ 			     struct ib_event *event);
+-void ib_uverbs_dealloc_xrcd(struct ib_device *ib_dev,
+-			    struct ib_xrcd *xrcd);
+ 
+ #define IB_UVERBS_DECLARE_CMD(name)					\
+ 	ssize_t ib_uverbs_##name(struct ib_uverbs_file *file,		\
+@@ -199,9 +196,5 @@ IB_UVERBS_DECLARE_CMD(create_srq);
+ IB_UVERBS_DECLARE_CMD(modify_srq);
+ IB_UVERBS_DECLARE_CMD(query_srq);
+ IB_UVERBS_DECLARE_CMD(destroy_srq);
+-IB_UVERBS_DECLARE_CMD(create_xrc_srq);
+-IB_UVERBS_DECLARE_CMD(open_xrc_domain);
+-IB_UVERBS_DECLARE_CMD(close_xrc_domain);
+-
+ 
+ #endif /* UVERBS_H */
+diff --git a/drivers/infiniband/core/uverbs_cmd.c b/drivers/infiniband/core/uverbs_cmd.c
+index a99839b..9e98cec 100644
+--- a/drivers/infiniband/core/uverbs_cmd.c
++++ b/drivers/infiniband/core/uverbs_cmd.c
+@@ -39,7 +39,6 @@
+ #include <linux/fs.h>
+ 
+ #include <asm/uaccess.h>
+-#include <asm/fcntl.h>
+ 
+ #include "uverbs.h"
+ 
+@@ -257,20 +256,6 @@ static void put_srq_read(struct ib_srq *srq)
+ 	put_uobj_read(srq->uobject);
+ }
+ 
+-static struct ib_xrcd *idr_read_xrcd(int xrcd_handle,
+-				     struct ib_ucontext *context,
+-				     struct ib_uobject **uobj)
+-{
+-	*uobj = idr_read_uobj(&ib_uverbs_xrc_domain_idr, xrcd_handle,
+-			      context, 0);
+-	return *uobj ? (*uobj)->object : NULL;
+-}
+-
+-static void put_xrcd_read(struct ib_uobject *uobj)
+-{
+-	put_uobj_read(uobj);
+-}
+-
+ ssize_t ib_uverbs_get_context(struct ib_uverbs_file *file,
+ 			      const char __user *buf,
+ 			      int in_len, int out_len)
+@@ -314,7 +299,6 @@ ssize_t ib_uverbs_get_context(struct ib_uverbs_file *file,
+ 	INIT_LIST_HEAD(&ucontext->qp_list);
+ 	INIT_LIST_HEAD(&ucontext->srq_list);
+ 	INIT_LIST_HEAD(&ucontext->ah_list);
+-	INIT_LIST_HEAD(&ucontext->xrc_domain_list);
+ 	ucontext->closing = 0;
+ 
+ 	resp.num_comp_vectors = file->device->num_comp_vectors;
+@@ -1044,8 +1028,6 @@ ssize_t ib_uverbs_create_qp(struct ib_uverbs_file *file,
+ 	struct ib_srq                  *srq;
+ 	struct ib_qp                   *qp;
+ 	struct ib_qp_init_attr          attr;
+-	struct ib_xrcd	 	       *xrcd;
+-	struct ib_uobject		*xrcd_uobj;
+ 	int ret;
+ 
+ 	if (out_len < sizeof resp)
+@@ -1065,17 +1047,13 @@ ssize_t ib_uverbs_create_qp(struct ib_uverbs_file *file,
+ 	init_uobj(&obj->uevent.uobject, cmd.user_handle, file->ucontext, &qp_lock_key);
+ 	down_write(&obj->uevent.uobject.mutex);
+ 
+-	srq = (cmd.is_srq && cmd.qp_type != IB_QPT_XRC) ?
+-		idr_read_srq(cmd.srq_handle, file->ucontext) : NULL;
+-	xrcd = cmd.qp_type == IB_QPT_XRC ?
+-		idr_read_xrcd(cmd.srq_handle, file->ucontext, &xrcd_uobj) : NULL;
++	srq = cmd.is_srq ? idr_read_srq(cmd.srq_handle, file->ucontext) : NULL;
+ 	pd  = idr_read_pd(cmd.pd_handle, file->ucontext);
+ 	scq = idr_read_cq(cmd.send_cq_handle, file->ucontext, 0);
+ 	rcq = cmd.recv_cq_handle == cmd.send_cq_handle ?
+ 		scq : idr_read_cq(cmd.recv_cq_handle, file->ucontext, 1);
+ 
+-	if (!pd || !scq || !rcq || cmd.is_srq && !srq ||
+-	    cmd.qp_type == IB_QPT_XRC && !xrcd) {
++	if (!pd || !scq || !rcq || (cmd.is_srq && !srq)) {
+ 		ret = -EINVAL;
+ 		goto err_put;
+ 	}
+@@ -1087,7 +1065,7 @@ ssize_t ib_uverbs_create_qp(struct ib_uverbs_file *file,
+ 	attr.srq           = srq;
+ 	attr.sq_sig_type   = cmd.sq_sig_all ? IB_SIGNAL_ALL_WR : IB_SIGNAL_REQ_WR;
+ 	attr.qp_type       = cmd.qp_type;
+-	attr.xrc_domain	   = xrcd;
++	attr.create_flags  = 0;
+ 
+ 	attr.cap.max_send_wr     = cmd.max_send_wr;
+ 	attr.cap.max_recv_wr     = cmd.max_recv_wr;
+@@ -1114,14 +1092,11 @@ ssize_t ib_uverbs_create_qp(struct ib_uverbs_file *file,
+ 	qp->event_handler = attr.event_handler;
+ 	qp->qp_context    = attr.qp_context;
+ 	qp->qp_type	  = attr.qp_type;
+-	qp->xrcd	  = attr.xrc_domain;
+ 	atomic_inc(&pd->usecnt);
+ 	atomic_inc(&attr.send_cq->usecnt);
+ 	atomic_inc(&attr.recv_cq->usecnt);
+ 	if (attr.srq)
+ 		atomic_inc(&attr.srq->usecnt);
+-	else if (attr.xrc_domain)
+-		atomic_inc(&attr.xrc_domain->usecnt);
+ 
+ 	obj->uevent.uobject.object = qp;
+ 	ret = idr_add_uobj(&ib_uverbs_qp_idr, &obj->uevent.uobject);
+@@ -1149,8 +1124,6 @@ ssize_t ib_uverbs_create_qp(struct ib_uverbs_file *file,
+ 		put_cq_read(rcq);
+ 	if (srq)
+ 		put_srq_read(srq);
+-	if (xrcd)
+-		put_xrcd_read(xrcd_uobj);
+ 
+ 	mutex_lock(&file->mutex);
+ 	list_add_tail(&obj->uevent.uobject.list, &file->ucontext->qp_list);
+@@ -1177,8 +1150,6 @@ err_put:
+ 		put_cq_read(rcq);
+ 	if (srq)
+ 		put_srq_read(srq);
+-	if (xrcd)
+-		put_xrcd_read(xrcd_uobj);
+ 
+ 	put_uobj_write(&obj->uevent.uobject);
+ 	return ret;
+@@ -2022,8 +1993,6 @@ ssize_t ib_uverbs_create_srq(struct ib_uverbs_file *file,
+ 	srq->uobject       = &obj->uobject;
+ 	srq->event_handler = attr.event_handler;
+ 	srq->srq_context   = attr.srq_context;
+-	srq->xrc_cq = NULL;
+-	srq->xrcd = NULL;
+ 	atomic_inc(&pd->usecnt);
+ 	atomic_set(&srq->usecnt, 0);
+ 
+@@ -2069,136 +2038,6 @@ err:
+ 	return ret;
+ }
+ 
+-ssize_t ib_uverbs_create_xrc_srq(struct ib_uverbs_file *file,
+-			     const char __user *buf, int in_len,
+-			     int out_len)
+-{
+-	struct ib_uverbs_create_xrc_srq  cmd;
+-	struct ib_uverbs_create_srq_resp resp;
+-	struct ib_udata                  udata;
+-	struct ib_uevent_object         *obj;
+-	struct ib_pd                    *pd;
+-	struct ib_srq                   *srq;
+-	struct ib_cq			*xrc_cq;
+-	struct ib_xrcd			*xrcd;
+-	struct ib_srq_init_attr          attr;
+-	struct ib_uobject		*xrcd_uobj;
+-	int ret;
+-
+-	if (out_len < sizeof resp)
+-		return -ENOSPC;
+-
+-	if (copy_from_user(&cmd, buf, sizeof cmd))
+-		return -EFAULT;
+-
+-	INIT_UDATA(&udata, buf + sizeof cmd,
+-		   (unsigned long) cmd.response + sizeof resp,
+-		   in_len - sizeof cmd, out_len - sizeof resp);
+-
+-	obj = kmalloc(sizeof *obj, GFP_KERNEL);
+-	if (!obj)
+-		return -ENOMEM;
+-
+-	init_uobj(&obj->uobject, cmd.user_handle, file->ucontext, &srq_lock_key);
+-	down_write(&obj->uobject.mutex);
+-
+-	pd  = idr_read_pd(cmd.pd_handle, file->ucontext);
+-	if (!pd) {
+-		ret = -EINVAL;
+-		goto err;
+-	}
+-
+-	xrc_cq  = idr_read_cq(cmd.xrc_cq, file->ucontext, 0);
+-	if (!xrc_cq) {
+-		ret = -EINVAL;
+-		goto err_put_pd;
+-	}
+-
+-	xrcd  = idr_read_xrcd(cmd.xrcd_handle, file->ucontext, &xrcd_uobj);
+-	if (!xrcd) {
+-		ret = -EINVAL;
+-		goto err_put_cq;
+-	}
+-
+-
+-	attr.event_handler  = ib_uverbs_srq_event_handler;
+-	attr.srq_context    = file;
+-	attr.attr.max_wr    = cmd.max_wr;
+-	attr.attr.max_sge   = cmd.max_sge;
+-	attr.attr.srq_limit = cmd.srq_limit;
+-
+-	obj->events_reported     = 0;
+-	INIT_LIST_HEAD(&obj->event_list);
+-
+-	srq = pd->device->create_xrc_srq(pd, xrc_cq, xrcd, &attr, &udata);
+-	if (IS_ERR(srq)) {
+-		ret = PTR_ERR(srq);
+-		goto err_put;
+-	}
+-
+-	srq->device    	   = pd->device;
+-	srq->pd        	   = pd;
+-	srq->uobject       = &obj->uobject;
+-	srq->event_handler = attr.event_handler;
+-	srq->srq_context   = attr.srq_context;
+-	srq->xrc_cq	   = xrc_cq;
+-	srq->xrcd	   = xrcd;
+-	atomic_inc(&pd->usecnt);
+-	atomic_inc(&xrc_cq->usecnt);
+-	atomic_inc(&xrcd->usecnt);
+-
+-	atomic_set(&srq->usecnt, 0);
+-
+-	obj->uobject.object = srq;
+-	ret = idr_add_uobj(&ib_uverbs_srq_idr, &obj->uobject);
+-	if (ret)
+-		goto err_destroy;
+-
+-	memset(&resp, 0, sizeof resp);
+-	resp.srq_handle = obj->uobject.id;
+-	resp.max_wr     = attr.attr.max_wr;
+-	resp.max_sge    = attr.attr.max_sge;
+-
+-	if (copy_to_user((void __user *) (unsigned long) cmd.response,
+-			 &resp, sizeof resp)) {
+-		ret = -EFAULT;
+-		goto err_copy;
+-	}
+-
+-	put_xrcd_read(xrcd_uobj);
+-	put_cq_read(xrc_cq);
+-	put_pd_read(pd);
+-
+-	mutex_lock(&file->mutex);
+-	list_add_tail(&obj->uobject.list, &file->ucontext->srq_list);
+-	mutex_unlock(&file->mutex);
+-
+-	obj->uobject.live = 1;
+-
+-	up_write(&obj->uobject.mutex);
+-
+-	return in_len;
+-
+-err_copy:
+-	idr_remove_uobj(&ib_uverbs_srq_idr, &obj->uobject);
+-
+-err_destroy:
+-	ib_destroy_srq(srq);
+-
+-err_put:
+-	put_xrcd_read(xrcd_uobj);
+-
+-err_put_cq:
+-	put_cq_read(xrc_cq);
+-
+-err_put_pd:
+-	put_pd_read(pd);
+-
+-err:
+-	put_uobj_write(&obj->uobject);
+-	return ret;
+-}
+-
+ ssize_t ib_uverbs_modify_srq(struct ib_uverbs_file *file,
+ 			     const char __user *buf, int in_len,
+ 			     int out_len)
+@@ -2317,311 +2156,3 @@ ssize_t ib_uverbs_destroy_srq(struct ib_uverbs_file *file,
+ 
+ 	return ret ? ret : in_len;
+ }
+-
+-static struct inode * xrc_fd2inode(unsigned int fd)
+-{
+-	struct file * f = fget(fd);
+-
+-	if (!f)
+-		return NULL;
+-
+-	return f->f_dentry->d_inode;
+-}
+-
+-struct xrcd_table_entry {
+-	struct rb_node node;
+-	struct inode * inode;
+-	struct ib_xrcd *xrcd;
+-};
+-
+-static int xrcd_table_insert(struct ib_device *dev,
+-			     struct inode *i_n,
+-			     struct ib_xrcd *xrcd)
+-{
+-	struct xrcd_table_entry *entry, *scan;
+-	struct rb_node **p = &dev->ib_uverbs_xrcd_table.rb_node;
+-	struct rb_node *parent = NULL;
+-
+-	entry = kmalloc(sizeof(struct xrcd_table_entry), GFP_KERNEL);
+-	if (!entry)
+-		return -ENOMEM;
+-
+-	entry->inode = i_n;
+-	entry->xrcd = xrcd;
+-
+-	while (*p)
+-	{
+-		parent = *p;
+-		scan = rb_entry(parent, struct xrcd_table_entry, node);
+-
+-		if (i_n < scan->inode)
+-			p = &(*p)->rb_left;
+-		else if (i_n > scan->inode)
+-			p = &(*p)->rb_right;
+-		else {
+-			kfree(entry);
+-			return -EEXIST;
+-		}
+-	}
+-
+-	rb_link_node(&entry->node, parent, p);
+-	rb_insert_color(&entry->node, &dev->ib_uverbs_xrcd_table);
+-	return 0;
+-}
+-
+-static int insert_xrcd(struct ib_device *dev, struct inode *i_n,
+-		       struct ib_xrcd *xrcd)
+-{
+-	int ret;
+-
+-	ret = xrcd_table_insert(dev, i_n, xrcd);
+-	if (!ret)
+-		igrab(i_n);
+-
+-	return ret;
+-}
+-
+-static struct xrcd_table_entry * xrcd_table_search(struct ib_device *dev,
+-						   struct inode *i_n)
+-{
+-	struct xrcd_table_entry *scan;
+-	struct rb_node **p = &dev->ib_uverbs_xrcd_table.rb_node;
+-	struct rb_node *parent = NULL;
+-
+-	while (*p)
+-	{
+-		parent = *p;
+-		scan = rb_entry(parent, struct xrcd_table_entry, node);
+-
+-		if (i_n < scan->inode)
+-			p = &(*p)->rb_left;
+-		else if (i_n > scan->inode)
+-			p = &(*p)->rb_right;
+-		else
+-			return scan;
+-	}
+-	return NULL;
+-}
+-
+-static int find_xrcd(struct ib_device *dev, struct inode *i_n,
+-		     struct ib_xrcd **xrcd)
+-{
+-	struct xrcd_table_entry *entry;
+-
+-	entry = xrcd_table_search(dev, i_n);
+-	if (!entry)
+-		return -EINVAL;
+-
+-	*xrcd = entry->xrcd;
+-	return 0;
+-}
+-
+-
+-static void xrcd_table_delete(struct ib_device *dev,
+-			      struct inode *i_n)
+-{
+-	struct xrcd_table_entry *entry = xrcd_table_search(dev, i_n);
+-
+-	if (entry) {
+-		iput(i_n);
+-		rb_erase(&entry->node, &dev->ib_uverbs_xrcd_table);
+-		kfree(entry);
+-	}
+-}
+-
+-ssize_t ib_uverbs_open_xrc_domain(struct ib_uverbs_file *file,
+-				  const char __user *buf, int in_len,
+-				  int out_len)
+-{
+-	struct ib_uverbs_open_xrc_domain cmd;
+-	struct ib_uverbs_open_xrc_domain_resp resp;
+-	struct ib_udata			 udata;
+-	struct ib_uobject             	*uobj;
+-	struct ib_xrcd			*xrcd = NULL;
+-	struct inode			*inode = NULL;
+-	int				 ret = 0;
+-	int				 new_xrcd = 0;
+-
+-	if (out_len < sizeof resp)
+-		return -ENOSPC;
+-
+-	if (copy_from_user(&cmd, buf, sizeof cmd))
+-		return -EFAULT;
+-
+-	INIT_UDATA(&udata, buf + sizeof cmd,
+-		   (unsigned long) cmd.response + sizeof resp,
+-		   in_len - sizeof cmd, out_len - sizeof resp);
+-
+-	mutex_lock(&file->device->ib_dev->xrcd_table_mutex);
+-	if (cmd.fd != (u32) (-1)) {
+-		/* search for file descriptor */
+-		inode = xrc_fd2inode(cmd.fd);
+-		if (!inode) {
+-			ret = -EBADF;
+-			goto err_table_mutex_unlock;
+-		}
+-
+-		ret = find_xrcd(file->device->ib_dev, inode, &xrcd);
+-		if (ret && !(cmd.oflags & O_CREAT)) {
+-			/* no file descriptor. Need CREATE flag */
+-			ret = -EAGAIN;
+-			goto err_table_mutex_unlock;
+-        	}
+-
+-        	if (xrcd && cmd.oflags & O_EXCL){
+-			ret = -EINVAL;
+-			goto err_table_mutex_unlock;
+-		}
+-	}
+-
+-	uobj = kmalloc(sizeof *uobj, GFP_KERNEL);
+-	if (!uobj) {
+-		ret = -ENOMEM;
+-		goto err_table_mutex_unlock;
+-	}
+-
+-	init_uobj(uobj, 0, file->ucontext, &pd_lock_key);
+-	down_write(&uobj->mutex);
+-
+-	if (!xrcd) {
+-		xrcd = file->device->ib_dev->alloc_xrcd(file->device->ib_dev,
+-							file->ucontext, &udata);
+-		if (IS_ERR(xrcd)) {
+-			ret = PTR_ERR(xrcd);
+-			goto err;
+-		}
+-		xrcd->uobject = (cmd.fd == -1) ? uobj : NULL;
+-		xrcd->inode = inode;
+-		xrcd->device  = file->device->ib_dev;
+-		atomic_set(&xrcd->usecnt, 0);
+-		new_xrcd = 1;
+-	}
+-
+-	uobj->object = xrcd;
+-	ret = idr_add_uobj(&ib_uverbs_xrc_domain_idr, uobj);
+-	if (ret)
+-		goto err_idr;
+-
+-	memset(&resp, 0, sizeof resp);
+-	resp.xrcd_handle = uobj->id;
+-
+-	if (inode) {
+-		if (new_xrcd) {
+-		/* create new inode/xrcd table entry */
+-			ret = insert_xrcd(file->device->ib_dev, inode, xrcd);
+-			if (ret)
+-				goto err_insert_xrcd;
+-		}
+-		atomic_inc(&xrcd->usecnt);
+-	}
+-
+-	if (copy_to_user((void __user *) (unsigned long) cmd.response,
+-			 &resp, sizeof resp)) {
+-		ret = -EFAULT;
+-		goto err_copy;
+-	}
+-
+-	mutex_lock(&file->mutex);
+-	list_add_tail(&uobj->list, &file->ucontext->xrc_domain_list);
+-	mutex_unlock(&file->mutex);
+-
+-	uobj->live = 1;
+-
+-	up_write(&uobj->mutex);
+-
+-	mutex_unlock(&file->device->ib_dev->xrcd_table_mutex);
+-	return in_len;
+-
+-err_copy:
+-
+-	if (inode) {
+-		if (new_xrcd)
+-			xrcd_table_delete(file->device->ib_dev, inode);
+-		atomic_dec(&xrcd->usecnt);
+-	}
+-
+-err_insert_xrcd:
+-	idr_remove_uobj(&ib_uverbs_xrc_domain_idr, uobj);
+-
+-err_idr:
+-	ib_dealloc_xrcd(xrcd);
+-
+-err:
+-	put_uobj_write(uobj);
+-
+-err_table_mutex_unlock:
+-
+-	mutex_unlock(&file->device->ib_dev->xrcd_table_mutex);
+-	return ret;
+-}
+-
+-ssize_t ib_uverbs_close_xrc_domain(struct ib_uverbs_file *file,
+-				   const char __user *buf, int in_len,
+-				   int out_len)
+-{
+-	struct ib_uverbs_close_xrc_domain cmd;
+-	struct ib_uobject          *uobj;
+-	struct ib_xrcd             *xrcd = NULL;
+-	struct inode		   *inode = NULL;
+-	int                         ret = 0;
+-
+-	if (copy_from_user(&cmd, buf, sizeof cmd))
+-		return -EFAULT;
+-
+-	mutex_lock(&file->device->ib_dev->xrcd_table_mutex);
+-	uobj = idr_write_uobj(&ib_uverbs_xrc_domain_idr, cmd.xrcd_handle, file->ucontext);
+-	if (!uobj) {
+-		ret = -EINVAL;
+-		goto err_unlock_mutex;
+-	}
+-
+-	xrcd = (struct ib_xrcd *) (uobj->object);
+-	inode = xrcd->inode;
+-
+-	if (inode)
+-		atomic_dec(&xrcd->usecnt);
+-
+-	ret = ib_dealloc_xrcd(uobj->object);
+-	if (!ret)
+-		uobj->live = 0;
+-
+-	put_uobj_write(uobj);
+-
+-	if (ret && !inode)
+-		goto err_unlock_mutex;
+-
+-	if (!ret && inode)
+-		xrcd_table_delete(file->device->ib_dev, inode);
+-
+-	idr_remove_uobj(&ib_uverbs_xrc_domain_idr, uobj);
+-
+-	mutex_lock(&file->mutex);
+-	list_del(&uobj->list);
+-	mutex_unlock(&file->mutex);
+-
+-	put_uobj(uobj);
+-
+-	mutex_unlock(&file->device->ib_dev->xrcd_table_mutex);
+-	return in_len;
+-
+-err_unlock_mutex:
+-	mutex_unlock(&file->device->ib_dev->xrcd_table_mutex);
+-	return ret;
+-}
+-
+-void ib_uverbs_dealloc_xrcd(struct ib_device *ib_dev,
+-				   struct ib_xrcd *xrcd)
+-{
+-	struct inode		   *inode = NULL;
+-	int                         ret = 0;
+-
+-	inode = xrcd->inode;
+-	if (inode)
+-		atomic_dec(&xrcd->usecnt);
+-
+-	ret = ib_dealloc_xrcd(xrcd);
+-	if (!ret && inode)
+-		xrcd_table_delete(ib_dev, inode);
+-}
+-
+-
+diff --git a/drivers/infiniband/core/uverbs_main.c b/drivers/infiniband/core/uverbs_main.c
+index d9b0818..cfa567b 100644
+--- a/drivers/infiniband/core/uverbs_main.c
++++ b/drivers/infiniband/core/uverbs_main.c
+@@ -74,7 +74,6 @@ DEFINE_IDR(ib_uverbs_ah_idr);
+ DEFINE_IDR(ib_uverbs_cq_idr);
+ DEFINE_IDR(ib_uverbs_qp_idr);
+ DEFINE_IDR(ib_uverbs_srq_idr);
+-DEFINE_IDR(ib_uverbs_xrc_domain_idr);
+ 
+ static spinlock_t map_lock;
+ static struct ib_uverbs_device *dev_table[IB_UVERBS_MAX_DEVICES];
+@@ -111,9 +110,6 @@ static ssize_t (*uverbs_cmd_table[])(struct ib_uverbs_file *file,
+ 	[IB_USER_VERBS_CMD_MODIFY_SRQ]    	= ib_uverbs_modify_srq,
+ 	[IB_USER_VERBS_CMD_QUERY_SRQ]     	= ib_uverbs_query_srq,
+ 	[IB_USER_VERBS_CMD_DESTROY_SRQ]   	= ib_uverbs_destroy_srq,
+-	[IB_USER_VERBS_CMD_CREATE_XRC_SRQ]	= ib_uverbs_create_xrc_srq,
+-	[IB_USER_VERBS_CMD_OPEN_XRC_DOMAIN]	= ib_uverbs_open_xrc_domain,
+-	[IB_USER_VERBS_CMD_CLOSE_XRC_DOMAIN]	= ib_uverbs_close_xrc_domain,
+ };
+ 
+ static struct vfsmount *uverbs_event_mnt;
+@@ -217,18 +213,6 @@ static int ib_uverbs_cleanup_ucontext(struct ib_uverbs_file *file,
+ 		kfree(uqp);
+ 	}
+ 
+-
+-	list_for_each_entry_safe(uobj, tmp, &context->srq_list, list) {
+-		struct ib_srq *srq = uobj->object;
+-		struct ib_uevent_object *uevent =
+-			container_of(uobj, struct ib_uevent_object, uobject);
+-
+-		idr_remove_uobj(&ib_uverbs_srq_idr, uobj);
+-		ib_destroy_srq(srq);
+-		ib_uverbs_release_uevent(file, uevent);
+-		kfree(uevent);
+-	}
+-
+ 	list_for_each_entry_safe(uobj, tmp, &context->cq_list, list) {
+ 		struct ib_cq *cq = uobj->object;
+ 		struct ib_uverbs_event_file *ev_file = cq->cq_context;
+@@ -241,6 +225,17 @@ static int ib_uverbs_cleanup_ucontext(struct ib_uverbs_file *file,
+ 		kfree(ucq);
+ 	}
+ 
++	list_for_each_entry_safe(uobj, tmp, &context->srq_list, list) {
++		struct ib_srq *srq = uobj->object;
++		struct ib_uevent_object *uevent =
++			container_of(uobj, struct ib_uevent_object, uobject);
++
++		idr_remove_uobj(&ib_uverbs_srq_idr, uobj);
++		ib_destroy_srq(srq);
++		ib_uverbs_release_uevent(file, uevent);
++		kfree(uevent);
++	}
++
+ 	/* XXX Free MWs */
+ 
+ 	list_for_each_entry_safe(uobj, tmp, &context->mr_list, list) {
+@@ -251,16 +246,6 @@ static int ib_uverbs_cleanup_ucontext(struct ib_uverbs_file *file,
+ 		kfree(uobj);
+ 	}
+ 
+-	mutex_lock(&file->device->ib_dev->xrcd_table_mutex);
+-	list_for_each_entry_safe(uobj, tmp, &context->xrc_domain_list, list) {
+-		struct ib_xrcd *xrcd = uobj->object;
+-
+-		idr_remove_uobj(&ib_uverbs_xrc_domain_idr, uobj);
+-		ib_uverbs_dealloc_xrcd(file->device->ib_dev, xrcd);
+-		kfree(uobj);
+-	}
+-	mutex_unlock(&file->device->ib_dev->xrcd_table_mutex);
+-
+ 	list_for_each_entry_safe(uobj, tmp, &context->pd_list, list) {
+ 		struct ib_pd *pd = uobj->object;
+ 
+diff --git a/drivers/infiniband/core/verbs.c b/drivers/infiniband/core/verbs.c
+index 5e2eb58..84709ed 100644
+--- a/drivers/infiniband/core/verbs.c
++++ b/drivers/infiniband/core/verbs.c
+@@ -236,8 +236,6 @@ struct ib_srq *ib_create_srq(struct ib_pd *pd,
+ 		srq->uobject       = NULL;
+ 		srq->event_handler = srq_init_attr->event_handler;
+ 		srq->srq_context   = srq_init_attr->srq_context;
+-		srq->xrc_cq = NULL;
+-		srq->xrcd = NULL;
+ 		atomic_inc(&pd->usecnt);
+ 		atomic_set(&srq->usecnt, 0);
+ 	}
+@@ -246,36 +244,6 @@ struct ib_srq *ib_create_srq(struct ib_pd *pd,
+ }
+ EXPORT_SYMBOL(ib_create_srq);
+ 
+-struct ib_srq *ib_create_xrc_srq(struct ib_pd *pd,
+-				 struct ib_cq *xrc_cq,
+-				 struct ib_xrcd *xrcd,
+-				 struct ib_srq_init_attr *srq_init_attr)
+-{
+-	struct ib_srq *srq;
+-
+-	if (!pd->device->create_xrc_srq)
+-		return ERR_PTR(-ENOSYS);
+-
+-	srq = pd->device->create_xrc_srq(pd, xrc_cq, xrcd, srq_init_attr, NULL);
+-
+-	if (!IS_ERR(srq)) {
+-		srq->device	   = pd->device;
+-		srq->pd		   = pd;
+-		srq->uobject	   = NULL;
+-		srq->event_handler = srq_init_attr->event_handler;
+-		srq->srq_context   = srq_init_attr->srq_context;
+-		srq->xrc_cq	   = xrc_cq;
+-		srq->xrcd	   = xrcd;
+-		atomic_inc(&pd->usecnt);
+-		atomic_inc(&xrcd->usecnt);
+-		atomic_inc(&xrc_cq->usecnt);
+-		atomic_set(&srq->usecnt, 0);
+-	}
+-
+-	return srq;
+-}
+-EXPORT_SYMBOL(ib_create_xrc_srq);
+-
+ int ib_modify_srq(struct ib_srq *srq,
+ 		  struct ib_srq_attr *srq_attr,
+ 		  enum ib_srq_attr_mask srq_attr_mask)
+@@ -295,25 +263,16 @@ EXPORT_SYMBOL(ib_query_srq);
+ int ib_destroy_srq(struct ib_srq *srq)
+ {
+ 	struct ib_pd *pd;
+-	struct ib_cq *xrc_cq;
+-	struct ib_xrcd *xrcd;
+ 	int ret;
+ 
+ 	if (atomic_read(&srq->usecnt))
+ 		return -EBUSY;
+ 
+ 	pd = srq->pd;
+-	xrc_cq = srq->xrc_cq;
+-	xrcd = srq->xrcd;
+ 
+ 	ret = srq->device->destroy_srq(srq);
+-	if (!ret) {
++	if (!ret)
+ 		atomic_dec(&pd->usecnt);
+-		if (xrc_cq)
+-			atomic_dec(&xrc_cq->usecnt);
+-		if (xrcd)
+-			atomic_dec(&xrcd->usecnt);
+-	}
+ 
+ 	return ret;
+ }
+@@ -338,15 +297,11 @@ struct ib_qp *ib_create_qp(struct ib_pd *pd,
+ 		qp->event_handler = qp_init_attr->event_handler;
+ 		qp->qp_context    = qp_init_attr->qp_context;
+ 		qp->qp_type	  = qp_init_attr->qp_type;
+-		qp->xrcd	  = qp->qp_type == IB_QPT_XRC ?
+-			qp_init_attr->xrc_domain : NULL;
+ 		atomic_inc(&pd->usecnt);
+ 		atomic_inc(&qp_init_attr->send_cq->usecnt);
+ 		atomic_inc(&qp_init_attr->recv_cq->usecnt);
+ 		if (qp_init_attr->srq)
+ 			atomic_inc(&qp_init_attr->srq->usecnt);
+-		if (qp->qp_type == IB_QPT_XRC)
+-			atomic_inc(&qp->xrcd->usecnt);
+ 	}
+ 
+ 	return qp;
+@@ -373,9 +328,6 @@ static const struct {
+ 				[IB_QPT_RC]  = (IB_QP_PKEY_INDEX		|
+ 						IB_QP_PORT			|
+ 						IB_QP_ACCESS_FLAGS),
+-				[IB_QPT_XRC] = (IB_QP_PKEY_INDEX		|
+-						IB_QP_PORT			|
+-						IB_QP_ACCESS_FLAGS),
+ 				[IB_QPT_SMI] = (IB_QP_PKEY_INDEX		|
+ 						IB_QP_QKEY),
+ 				[IB_QPT_GSI] = (IB_QP_PKEY_INDEX		|
+@@ -398,9 +350,6 @@ static const struct {
+ 				[IB_QPT_RC]  = (IB_QP_PKEY_INDEX		|
+ 						IB_QP_PORT			|
+ 						IB_QP_ACCESS_FLAGS),
+-				[IB_QPT_XRC] = (IB_QP_PKEY_INDEX		|
+-						IB_QP_PORT			|
+-						IB_QP_ACCESS_FLAGS),
+ 				[IB_QPT_SMI] = (IB_QP_PKEY_INDEX		|
+ 						IB_QP_QKEY),
+ 				[IB_QPT_GSI] = (IB_QP_PKEY_INDEX		|
+@@ -420,12 +369,6 @@ static const struct {
+ 						IB_QP_RQ_PSN			|
+ 						IB_QP_MAX_DEST_RD_ATOMIC	|
+ 						IB_QP_MIN_RNR_TIMER),
+-				[IB_QPT_XRC] = (IB_QP_AV			|
+-						IB_QP_PATH_MTU			|
+-						IB_QP_DEST_QPN			|
+-						IB_QP_RQ_PSN			|
+-						IB_QP_MAX_DEST_RD_ATOMIC	|
+-						IB_QP_MIN_RNR_TIMER),
+ 			},
+ 			.opt_param = {
+ 				 [IB_QPT_UD]  = (IB_QP_PKEY_INDEX		|
+@@ -436,9 +379,6 @@ static const struct {
+ 				 [IB_QPT_RC]  = (IB_QP_ALT_PATH			|
+ 						 IB_QP_ACCESS_FLAGS		|
+ 						 IB_QP_PKEY_INDEX),
+-				 [IB_QPT_XRC] = (IB_QP_ALT_PATH			|
+-						IB_QP_ACCESS_FLAGS		|
+-						IB_QP_PKEY_INDEX),
+ 				 [IB_QPT_SMI] = (IB_QP_PKEY_INDEX		|
+ 						 IB_QP_QKEY),
+ 				 [IB_QPT_GSI] = (IB_QP_PKEY_INDEX		|
+@@ -459,11 +399,6 @@ static const struct {
+ 						IB_QP_RNR_RETRY			|
+ 						IB_QP_SQ_PSN			|
+ 						IB_QP_MAX_QP_RD_ATOMIC),
+-				[IB_QPT_XRC] = (IB_QP_TIMEOUT			|
+-						IB_QP_RETRY_CNT			|
+-						IB_QP_RNR_RETRY			|
+-						IB_QP_SQ_PSN			|
+-						IB_QP_MAX_QP_RD_ATOMIC),
+ 				[IB_QPT_SMI] = IB_QP_SQ_PSN,
+ 				[IB_QPT_GSI] = IB_QP_SQ_PSN,
+ 			},
+@@ -479,11 +414,6 @@ static const struct {
+ 						 IB_QP_ACCESS_FLAGS		|
+ 						 IB_QP_MIN_RNR_TIMER		|
+ 						 IB_QP_PATH_MIG_STATE),
+-				 [IB_QPT_XRC] = (IB_QP_CUR_STATE		|
+-						IB_QP_ALT_PATH			|
+-						IB_QP_ACCESS_FLAGS		|
+-						IB_QP_MIN_RNR_TIMER		|
+-						IB_QP_PATH_MIG_STATE),
+ 				 [IB_QPT_SMI] = (IB_QP_CUR_STATE		|
+ 						 IB_QP_QKEY),
+ 				 [IB_QPT_GSI] = (IB_QP_CUR_STATE		|
+@@ -508,11 +438,6 @@ static const struct {
+ 						IB_QP_ALT_PATH			|
+ 						IB_QP_PATH_MIG_STATE		|
+ 						IB_QP_MIN_RNR_TIMER),
+-				[IB_QPT_XRC] = (IB_QP_CUR_STATE			|
+-						IB_QP_ACCESS_FLAGS		|
+-						IB_QP_ALT_PATH			|
+-						IB_QP_PATH_MIG_STATE		|
+-						IB_QP_MIN_RNR_TIMER),
+ 				[IB_QPT_SMI] = (IB_QP_CUR_STATE			|
+ 						IB_QP_QKEY),
+ 				[IB_QPT_GSI] = (IB_QP_CUR_STATE			|
+@@ -525,7 +450,6 @@ static const struct {
+ 				[IB_QPT_UD]  = IB_QP_EN_SQD_ASYNC_NOTIFY,
+ 				[IB_QPT_UC]  = IB_QP_EN_SQD_ASYNC_NOTIFY,
+ 				[IB_QPT_RC]  = IB_QP_EN_SQD_ASYNC_NOTIFY,
+-				[IB_QPT_XRC] = IB_QP_EN_SQD_ASYNC_NOTIFY,
+ 				[IB_QPT_SMI] = IB_QP_EN_SQD_ASYNC_NOTIFY,
+ 				[IB_QPT_GSI] = IB_QP_EN_SQD_ASYNC_NOTIFY
+ 			}
+@@ -548,11 +472,6 @@ static const struct {
+ 						IB_QP_ACCESS_FLAGS		|
+ 						IB_QP_MIN_RNR_TIMER		|
+ 						IB_QP_PATH_MIG_STATE),
+-				[IB_QPT_XRC] = (IB_QP_CUR_STATE			|
+-						IB_QP_ALT_PATH			|
+-						IB_QP_ACCESS_FLAGS		|
+-						IB_QP_MIN_RNR_TIMER		|
+-						IB_QP_PATH_MIG_STATE),
+ 				[IB_QPT_SMI] = (IB_QP_CUR_STATE			|
+ 						IB_QP_QKEY),
+ 				[IB_QPT_GSI] = (IB_QP_CUR_STATE			|
+@@ -581,18 +500,6 @@ static const struct {
+ 						IB_QP_PKEY_INDEX		|
+ 						IB_QP_MIN_RNR_TIMER		|
+ 						IB_QP_PATH_MIG_STATE),
+-				[IB_QPT_XRC] = (IB_QP_PORT			|
+-						IB_QP_AV			|
+-						IB_QP_TIMEOUT			|
+-						IB_QP_RETRY_CNT			|
+-						IB_QP_RNR_RETRY			|
+-						IB_QP_MAX_QP_RD_ATOMIC		|
+-						IB_QP_MAX_DEST_RD_ATOMIC	|
+-						IB_QP_ALT_PATH			|
+-						IB_QP_ACCESS_FLAGS		|
+-						IB_QP_PKEY_INDEX		|
+-						IB_QP_MIN_RNR_TIMER		|
+-						IB_QP_PATH_MIG_STATE),
+ 				[IB_QPT_SMI] = (IB_QP_PKEY_INDEX		|
+ 						IB_QP_QKEY),
+ 				[IB_QPT_GSI] = (IB_QP_PKEY_INDEX		|
+@@ -677,15 +584,12 @@ int ib_destroy_qp(struct ib_qp *qp)
+ 	struct ib_pd *pd;
+ 	struct ib_cq *scq, *rcq;
+ 	struct ib_srq *srq;
+-	struct ib_xrcd *xrcd;
+-	enum ib_qp_type	qp_type = qp->qp_type;
+ 	int ret;
+ 
+ 	pd  = qp->pd;
+ 	scq = qp->send_cq;
+ 	rcq = qp->recv_cq;
+ 	srq = qp->srq;
+-	xrcd = qp->xrcd;
+ 
+ 	ret = qp->device->destroy_qp(qp);
+ 	if (!ret) {
+@@ -694,8 +598,6 @@ int ib_destroy_qp(struct ib_qp *qp)
+ 		atomic_dec(&rcq->usecnt);
+ 		if (srq)
+ 			atomic_dec(&srq->usecnt);
+-		if (qp_type == IB_QPT_XRC)
+-			atomic_dec(&xrcd->usecnt);
+ 	}
+ 
+ 	return ret;
+@@ -954,32 +856,3 @@ int ib_detach_mcast(struct ib_qp *qp, union ib_gid *gid, u16 lid)
+ 	return qp->device->detach_mcast(qp, gid, lid);
+ }
+ EXPORT_SYMBOL(ib_detach_mcast);
+-
+-int ib_dealloc_xrcd(struct ib_xrcd *xrcd)
+-{
+-	if (atomic_read(&xrcd->usecnt))
+-		return -EBUSY;
+-
+-	return xrcd->device->dealloc_xrcd(xrcd);
+-}
+-EXPORT_SYMBOL(ib_dealloc_xrcd);
+-
+-struct ib_xrcd * ib_alloc_xrcd(struct ib_device *device)
+-{
+-	struct ib_xrcd *xrcd;
+-
+-	if (!device->alloc_xrcd)
+-		return ERR_PTR(-ENOSYS);
+-
+-	xrcd = device->alloc_xrcd(device, NULL, NULL);
+-	if (!IS_ERR(xrcd)) {
+-		xrcd->device = device;
+-		xrcd->inode = NULL;
+-		xrcd->uobject = NULL;
+-		atomic_set(&xrcd->usecnt, 0);
+-	}
+-	return xrcd;
+-}
+-EXPORT_SYMBOL(ib_alloc_xrcd);
+-
+-
+diff --git a/drivers/infiniband/hw/mlx4/cq.c b/drivers/infiniband/hw/mlx4/cq.c
+index 300f14d..b730afa 100644
+--- a/drivers/infiniband/hw/mlx4/cq.c
++++ b/drivers/infiniband/hw/mlx4/cq.c
+@@ -32,7 +32,6 @@
+ 
+ #include <linux/mlx4/cq.h>
+ #include <linux/mlx4/qp.h>
+-#include <linux/mlx4/srq.h>
+ 
+ #include "mlx4_ib.h"
+ #include "user.h"
+@@ -121,8 +120,10 @@ struct ib_cq *mlx4_ib_create_cq(struct ib_device *ibdev, int entries, int vector
+ 	int buf_size;
+ 	int err;
+ 
+-	if (entries < 1 || entries > dev->dev->caps.max_cqes)
++	if (entries < 1 || entries > dev->dev->caps.max_cqes) {
++		mlx4_ib_dbg("invalid num of entries: %d", entries);
+ 		return ERR_PTR(-EINVAL);
++	}
+ 
+ 	cq = kmalloc(sizeof *cq, GFP_KERNEL);
+ 	if (!cq)
+@@ -331,11 +332,15 @@ static int mlx4_ib_poll_one(struct mlx4_ib_cq *cq,
+ 	struct mlx4_qp *mqp;
+ 	struct mlx4_ib_wq *wq;
+ 	struct mlx4_ib_srq *srq;
+-	struct mlx4_srq *msrq;
+ 	int is_send;
+ 	int is_error;
+-	int is_xrc_recv = 0;
+ 	u16 wqe_ctr;
++	u32 g_mlpath_rqpn;
++	__be32 status;
++
++#define CSUM_MASK_BITS cpu_to_be32(0x13c00000)
++#define CSUM_VAL_BITS  cpu_to_be32(0x10400000)
++#define CSUM_MASK2_BITS cpu_to_be32(0x0c000000)
+ 
+ 	cqe = next_cqe_sw(cq);
+ 	if (!cqe)
+@@ -359,23 +364,7 @@ static int mlx4_ib_poll_one(struct mlx4_ib_cq *cq,
+ 		return -EINVAL;
+ 	}
+ 
+-	if ((be32_to_cpu(cqe->my_qpn) & (1 << 23)) && !is_send) {
+-		 /*
+-		  * We do not have to take the XRC SRQ table lock here,
+-		  * because CQs will be locked while XRC SRQs are removed
+-		  * from the table.
+-		  */
+-		 msrq = __mlx4_srq_lookup(to_mdev(cq->ibcq.device)->dev,
+-					 be32_to_cpu(cqe->g_mlpath_rqpn) &
+-					 0xffffff);
+-		 if (unlikely(!msrq)) {
+-			 printk(KERN_WARNING "CQ %06x with entry for unknown XRC SRQ %06x\n",
+-				cq->mcq.cqn, be32_to_cpu(cqe->g_mlpath_rqpn) & 0xffffff);
+-			 return -EINVAL;
+-		 }
+-		 is_xrc_recv = 1;
+-		 srq = to_mibsrq(msrq);
+-	} else if (!*cur_qp ||
++	if (!*cur_qp ||
+ 	    (be32_to_cpu(cqe->my_qpn) & 0xffffff) != (*cur_qp)->mqp.qpn) {
+ 		/*
+ 		 * We do not have to take the QP table lock here,
+@@ -393,7 +382,7 @@ static int mlx4_ib_poll_one(struct mlx4_ib_cq *cq,
+ 		*cur_qp = to_mibqp(mqp);
+ 	}
+ 
+-	wc->qp = is_xrc_recv ? NULL: &(*cur_qp)->ibqp;
++	wc->qp = &(*cur_qp)->ibqp;
+ 
+ 	if (is_send) {
+ 		wq = &(*cur_qp)->sq;
+@@ -403,10 +392,6 @@ static int mlx4_ib_poll_one(struct mlx4_ib_cq *cq,
+ 		}
+ 		wc->wr_id = wq->wrid[wq->tail & (wq->wqe_cnt - 1)];
+ 		++wq->tail;
+-	} else if (is_xrc_recv) {
+-		wqe_ctr = be16_to_cpu(cqe->wqe_index);
+-		wc->wr_id = srq->wrid[wqe_ctr];
+-		mlx4_ib_free_srq_wqe(srq, wqe_ctr);
+ 	} else if ((*cur_qp)->ibqp.srq) {
+ 		srq = to_msrq((*cur_qp)->ibqp.srq);
+ 		wqe_ctr = be16_to_cpu(cqe->wqe_index);
+@@ -479,13 +464,16 @@ static int mlx4_ib_poll_one(struct mlx4_ib_cq *cq,
+ 
+ 		wc->slid	   = be16_to_cpu(cqe->rlid);
+ 		wc->sl		   = cqe->sl >> 4;
+-		wc->src_qp	   = be32_to_cpu(cqe->g_mlpath_rqpn) & 0xffffff;
+-		wc->dlid_path_bits = (be32_to_cpu(cqe->g_mlpath_rqpn) >> 24) & 0x7f;
+-		wc->wc_flags      |= be32_to_cpu(cqe->g_mlpath_rqpn) & 0x80000000 ?
++		g_mlpath_rqpn	   = be32_to_cpu(cqe->g_mlpath_rqpn);
++		wc->src_qp	   = g_mlpath_rqpn & 0xffffff;
++		wc->dlid_path_bits = (g_mlpath_rqpn >> 24) & 0x7f;
++		wc->wc_flags      |= g_mlpath_rqpn & 0x80000000 ?
+ 			IB_WC_GRH : 0;
+-		wc->pkey_index     = (u16) be32_to_cpu(cqe->immed_rss_invalid);
+-		wc->csum_ok   = be32_to_cpu(cqe->ipoib_status) & 0x10000000 &&
+-				be16_to_cpu(cqe->checksum) == 0xffff;
++		wc->pkey_index     = be32_to_cpu(cqe->immed_rss_invalid) & 0x7f;
++ 		status = cqe->ipoib_status;
++ 		wc->csum_ok = (status & CSUM_MASK_BITS) == CSUM_VAL_BITS &&
++ 			      (status & CSUM_MASK2_BITS) &&
++ 			      cqe->checksum == 0xffff;
+ 	}
+ 
+ 	return 0;
+@@ -535,10 +523,6 @@ void __mlx4_ib_cq_clean(struct mlx4_ib_cq *cq, u32 qpn, struct mlx4_ib_srq *srq)
+ 	int nfreed = 0;
+ 	struct mlx4_cqe *cqe, *dest;
+ 	u8 owner_bit;
+-	int is_xrc_srq = 0;
+-
+-	if (srq && srq->ibsrq.xrc_cq)
+-		is_xrc_srq = 1;
+ 
+ 	/*
+ 	 * First we need to find the current producer index, so we
+@@ -557,9 +541,7 @@ void __mlx4_ib_cq_clean(struct mlx4_ib_cq *cq, u32 qpn, struct mlx4_ib_srq *srq)
+ 	 */
+ 	while ((int) --prod_index - (int) cq->mcq.cons_index >= 0) {
+ 		cqe = get_cqe(cq, prod_index & cq->ibcq.cqe);
+-		if (((be32_to_cpu(cqe->my_qpn) & 0xffffff) == qpn) ||
+-		    (is_xrc_srq &&
+-		     (be32_to_cpu(cqe->g_mlpath_rqpn) & 0xffffff) == srq->msrq.srqn)) {
++		if ((be32_to_cpu(cqe->my_qpn) & 0xffffff) == qpn) {
+ 			if (srq && !(cqe->owner_sr_opcode & MLX4_CQE_IS_SEND_MASK))
+ 				mlx4_ib_free_srq_wqe(srq, be16_to_cpu(cqe->wqe_index));
+ 			++nfreed;
+diff --git a/drivers/infiniband/hw/mlx4/main.c b/drivers/infiniband/hw/mlx4/main.c
+index f03025c..2d9c39a 100644
+--- a/drivers/infiniband/hw/mlx4/main.c
++++ b/drivers/infiniband/hw/mlx4/main.c
+@@ -44,15 +44,23 @@
+ #include "user.h"
+ #include "wc.h"
+ 
+-#define DRV_NAME	"mlx4_ib"
+-#define DRV_VERSION	"0.01"
+-#define DRV_RELDATE	"May 1, 2006"
++#define DRV_NAME	MLX4_IB_DRV_NAME
++#define DRV_VERSION	"1.0"
++#define DRV_RELDATE	"February 28, 2008"
+ 
+ MODULE_AUTHOR("Roland Dreier");
+ MODULE_DESCRIPTION("Mellanox ConnectX HCA InfiniBand driver");
+ MODULE_LICENSE("Dual BSD/GPL");
+ MODULE_VERSION(DRV_VERSION);
+ 
++#ifdef CONFIG_MLX4_DEBUG
++
++int mlx4_ib_debug_level = 0;
++module_param_named(debug_level, mlx4_ib_debug_level, int, 0644);
++MODULE_PARM_DESC(debug_level, "Enable debug tracing if > 0");
++
++#endif /* CONFIG_MLX4_DEBUG */
++
+ static const char mlx4_ib_version[] __devinitdata =
+ 	DRV_NAME ": Mellanox ConnectX InfiniBand driver v"
+ 	DRV_VERSION " (" DRV_RELDATE ")\n";
+@@ -104,8 +112,6 @@ static int mlx4_ib_query_device(struct ib_device *ibdev,
+ 		props->device_cap_flags |= IB_DEVICE_IP_CSUM;
+ 	if (dev->dev->caps.max_gso_sz)
+ 		props->device_cap_flags |= IB_DEVICE_TCP_TSO;
+-	if (dev->dev->caps.flags & MLX4_DEV_CAP_FLAG_XRC)
+-		props->device_cap_flags |= IB_DEVICE_XRC;
+ 
+ 	props->vendor_id	   = be32_to_cpup((__be32 *) (out_mad->data + 36)) &
+ 		0xffffff;
+@@ -449,46 +455,6 @@ static int mlx4_ib_mcg_detach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
+ 				     &to_mqp(ibqp)->mqp, gid->raw);
+ }
+ 
+-static struct ib_xrcd *mlx4_ib_alloc_xrcd(struct ib_device *ibdev,
+-					  struct ib_ucontext *context,
+-					  struct ib_udata *udata)
+-{
+-	struct mlx4_ib_xrcd *xrcd;
+-	struct mlx4_ib_dev *mdev = to_mdev(ibdev);
+-	int err;
+-
+-	if (!(mdev->dev->caps.flags & MLX4_DEV_CAP_FLAG_XRC))
+-		return ERR_PTR(-ENOSYS);
+-
+-	xrcd = kmalloc(sizeof *xrcd, GFP_KERNEL);
+-	if (!xrcd)
+-		return ERR_PTR(-ENOMEM);
+-
+-	err = mlx4_xrcd_alloc(mdev->dev, &xrcd->xrcdn);
+-	if (err) {
+-		kfree(xrcd);
+-		return ERR_PTR(err);
+-	}
+-
+-	if (context)
+-		if (ib_copy_to_udata(udata, &xrcd->xrcdn, sizeof (__u32))) {
+-			mlx4_xrcd_free(mdev->dev, xrcd->xrcdn);
+-			kfree(xrcd);
+-			return ERR_PTR(-EFAULT);
+-		}
+-
+-	return &xrcd->ibxrcd;
+-}
+-
+-static int mlx4_ib_dealloc_xrcd(struct ib_xrcd *xrcd)
+-{
+-	mlx4_xrcd_free(to_mdev(xrcd->device)->dev, to_mxrcd(xrcd)->xrcdn);
+-	kfree(xrcd);
+-
+-	return 0;
+-}
+-
+-
+ static int init_node_data(struct mlx4_ib_dev *dev)
+ {
+ 	struct ib_smp *in_mad  = NULL;
+@@ -515,6 +481,7 @@ static int init_node_data(struct mlx4_ib_dev *dev)
+ 	if (err)
+ 		goto out;
+ 
++	dev->dev->rev_id = be32_to_cpup((__be32 *) (out_mad->data + 32));
+ 	memcpy(&dev->ib_dev.node_guid, out_mad->data + 12, 8);
+ 
+ out:
+@@ -561,6 +528,155 @@ static struct class_device_attribute *mlx4_class_attributes[] = {
+ 	&class_device_attr_board_id
+ };
+ 
++/*
++ * create 2 functions (show, store) and a class_device_attribute struct
++ * pointing to the functions for _name
++ */
++#define CLASS_DEVICE_DIAG_CLR_RPRT_ATTR(_name, _offset, _in_mod)		\
++static ssize_t store_rprt_##_name(struct class_device *cdev, 			\
++				  const char *buf, size_t length) {		\
++	return store_diag_rprt(cdev, buf, length, _offset, _in_mod);		\
++}										\
++static ssize_t show_rprt_##_name(struct class_device *cdev, char *buf) {	\
++	return show_diag_rprt(cdev, buf, _offset, _in_mod);			\
++}										\
++static CLASS_DEVICE_ATTR(_name, S_IRUGO | S_IWUGO, 				\
++	show_rprt_##_name, store_rprt_##_name);
++
++/*
++ * create show function and a class_device_attribute struct pointing to
++ * the function for _name
++ */
++#define CLASS_DEVICE_DIAG_RPRT_ATTR(_name, _offset, _in_mod)			\
++static ssize_t show_rprt_##_name(struct class_device *cdev, char *buf){		\
++	return show_diag_rprt(cdev, buf, _offset, _in_mod);			\
++}										\
++static CLASS_DEVICE_ATTR(_name, S_IRUGO, show_rprt_##_name, NULL);
++
++static ssize_t show_diag_rprt(struct class_device *cdev, char *buf,
++                              int offset, int in_mod)
++{
++	size_t ret = -1;
++	u32 counter_offset = offset;
++	u32 diag_counter = 0;
++	struct mlx4_ib_dev *dev = container_of(cdev, struct mlx4_ib_dev,
++					       ib_dev.class_dev);
++	/* clear counters file, can't read it */
++	if(offset < 0)
++		return sprintf(buf,"This file is write only\n");
++
++	ret = mlx4_query_diag_counters(dev->dev, 1, in_mod, &counter_offset,
++			 	       &diag_counter);
++	if (ret < 0)
++	{
++		sprintf(buf,"Operation failed\n");
++		return ret;
++	}
++
++	return sprintf(buf,"%d\n", diag_counter);
++}
++
++/* the store function is used for counter clear */
++static ssize_t store_diag_rprt(struct class_device *cdev,
++			       const char *buf, size_t length,
++			       int offset, int in_mod)
++{
++	size_t ret = -1;
++	u32 counter_offset = 0;
++	u32 diag_counter;
++	struct mlx4_ib_dev *dev = container_of(cdev, struct mlx4_ib_dev,
++					       ib_dev.class_dev);
++
++	ret = mlx4_query_diag_counters(dev->dev, 1, in_mod, &counter_offset,
++				       &diag_counter);
++	if (ret)
++		return ret;
++
++	return length;
++}
++
++CLASS_DEVICE_DIAG_RPRT_ATTR(rq_num_lle		  , 0x00, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(sq_num_lle		  , 0x04, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(rq_num_lqpoe	  , 0x08, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(sq_num_lqpoe 	  , 0x0C, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(rq_num_leeoe	  , 0x10, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(sq_num_leeoe	  , 0x14, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(rq_num_lpe		  , 0x18, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(sq_num_lpe		  , 0x1C, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(rq_num_wrfe		  , 0x20, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(sq_num_wrfe		  , 0x24, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(sq_num_mwbe		  , 0x2C, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(sq_num_bre		  , 0x34, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(rq_num_lae		  , 0x38, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(sq_num_rire		  , 0x44, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(rq_num_rire		  , 0x48, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(sq_num_rae		  , 0x4C, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(rq_num_rae		  , 0x50, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(sq_num_roe		  , 0x54, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(sq_num_tree		  , 0x5C, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(sq_num_rree		  , 0x64, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(rq_num_rnr		  , 0x68, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(sq_num_rnr		  , 0x6C, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(sq_num_rabrte	  , 0x7C, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(sq_num_ieecne	  , 0x84, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(sq_num_ieecse	  , 0x8C, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(rq_num_oos		  , 0x100, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(sq_num_oos		  , 0x104, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(rq_num_mce		  , 0x108, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(rq_num_rsync	  , 0x110, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(sq_num_rsync	  , 0x114, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(rq_num_udsdprd	  , 0x118, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(rq_num_ucsdprd	  , 0x120, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(num_cqovf	  	  , 0x1A0, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(num_eqovf		  , 0x1A4, 2);
++CLASS_DEVICE_DIAG_RPRT_ATTR(num_baddb		  , 0x1A8, 2);
++CLASS_DEVICE_DIAG_CLR_RPRT_ATTR(clear_diag	  , -1   , 3);
++
++static struct attribute *diag_rprt_attrs[] = {
++	&class_device_attr_rq_num_lle.attr,
++	&class_device_attr_sq_num_lle.attr,
++	&class_device_attr_rq_num_lqpoe.attr,
++	&class_device_attr_sq_num_lqpoe.attr,
++	&class_device_attr_rq_num_leeoe.attr,
++	&class_device_attr_sq_num_leeoe.attr,
++	&class_device_attr_rq_num_lpe.attr,
++	&class_device_attr_sq_num_lpe.attr,
++	&class_device_attr_rq_num_wrfe.attr,
++	&class_device_attr_sq_num_wrfe.attr,
++	&class_device_attr_sq_num_mwbe.attr,
++	&class_device_attr_sq_num_bre.attr,
++	&class_device_attr_rq_num_lae.attr,
++	&class_device_attr_sq_num_rire.attr,
++	&class_device_attr_rq_num_rire.attr,
++	&class_device_attr_sq_num_rae.attr,
++	&class_device_attr_rq_num_rae.attr,
++	&class_device_attr_sq_num_roe.attr,
++	&class_device_attr_sq_num_tree.attr,
++	&class_device_attr_sq_num_rree.attr,
++	&class_device_attr_rq_num_rnr.attr,
++	&class_device_attr_sq_num_rnr.attr,
++	&class_device_attr_sq_num_rabrte.attr,
++	&class_device_attr_sq_num_ieecne.attr,
++	&class_device_attr_sq_num_ieecse.attr,
++	&class_device_attr_rq_num_oos.attr,
++	&class_device_attr_sq_num_oos.attr,
++	&class_device_attr_rq_num_mce.attr,
++	&class_device_attr_rq_num_rsync.attr,
++	&class_device_attr_sq_num_rsync.attr,
++	&class_device_attr_rq_num_udsdprd.attr,
++	&class_device_attr_rq_num_ucsdprd.attr,
++	&class_device_attr_num_cqovf.attr,
++	&class_device_attr_num_eqovf.attr,
++	&class_device_attr_num_baddb.attr,
++	&class_device_attr_clear_diag.attr,
++	NULL
++};
++
++static struct attribute_group diag_counters_group = {
++	.name  = "diag_counters",
++	.attrs  = diag_rprt_attrs
++};
++
+ static void *mlx4_ib_add(struct mlx4_dev *dev)
+ {
+ 	struct mlx4_ib_dev *ibdev;
+@@ -659,16 +775,6 @@ static void *mlx4_ib_add(struct mlx4_dev *dev)
+ 	ibdev->ib_dev.map_phys_fmr	= mlx4_ib_map_phys_fmr;
+ 	ibdev->ib_dev.unmap_fmr		= mlx4_ib_unmap_fmr;
+ 	ibdev->ib_dev.dealloc_fmr	= mlx4_ib_fmr_dealloc;
+-	if (dev->caps.flags & MLX4_DEV_CAP_FLAG_XRC) {
+-		ibdev->ib_dev.create_xrc_srq = mlx4_ib_create_xrc_srq;
+-		ibdev->ib_dev.alloc_xrcd = mlx4_ib_alloc_xrcd;
+-		ibdev->ib_dev.dealloc_xrcd = mlx4_ib_dealloc_xrcd;
+-		ibdev->ib_dev.uverbs_cmd_mask |=
+-			(1ull << IB_USER_VERBS_CMD_CREATE_XRC_SRQ)	|
+-			(1ull << IB_USER_VERBS_CMD_OPEN_XRC_DOMAIN)	|
+-			(1ull << IB_USER_VERBS_CMD_CLOSE_XRC_DOMAIN);
+-	}
+-
+ 
+ 	if (ibdev->dev->caps.flags & MLX4_DEV_CAP_FLAG_IPOIB_CSUM)
+ 		ibdev->ib_dev.flags |= IB_DEVICE_IP_CSUM;
+@@ -693,8 +799,14 @@ static void *mlx4_ib_add(struct mlx4_dev *dev)
+ 			goto err_reg;
+ 	}
+ 
++	if(sysfs_create_group(&ibdev->ib_dev.class_dev.kobj, &diag_counters_group))
++		goto err_diag;
++
+ 	return ibdev;
+ 
++err_diag:
++	ib_unregister_device(&ibdev->ib_dev);
++
+ err_reg:
+ 	ib_unregister_device(&ibdev->ib_dev);
+ 
+@@ -718,6 +830,8 @@ static void mlx4_ib_remove(struct mlx4_dev *dev, void *ibdev_ptr)
+ 	struct mlx4_ib_dev *ibdev = ibdev_ptr;
+ 	int p;
+ 
++	sysfs_remove_group(&ibdev->ib_dev.class_dev.kobj, &diag_counters_group);
++
+ 	for (p = 1; p <= dev->caps.num_ports; ++p)
+ 		mlx4_CLOSE_PORT(dev, p);
+ 
+diff --git a/drivers/infiniband/hw/mlx4/mlx4_ib.h b/drivers/infiniband/hw/mlx4/mlx4_ib.h
+index 53a377d..f86a19d 100644
+--- a/drivers/infiniband/hw/mlx4/mlx4_ib.h
++++ b/drivers/infiniband/hw/mlx4/mlx4_ib.h
+@@ -43,6 +43,25 @@
+ #include <linux/mlx4/device.h>
+ #include <linux/mlx4/doorbell.h>
+ 
++
++#define MLX4_IB_DRV_NAME	"mlx4_ib"
++
++#ifdef CONFIG_MLX4_DEBUG
++extern int mlx4_ib_debug_level;
++
++#define mlx4_ib_dbg(format, arg...) 		\
++	do {					\
++		if (mlx4_ib_debug_level) 	\
++			printk(KERN_DEBUG "<" MLX4_IB_DRV_NAME "> %s: " format "\n",\
++			__func__, ## arg);	\
++	} while (0)
++
++#else /* CONFIG_MLX4_DEBUG */
++
++#define mlx4_ib_dbg(format, arg...) do {} while (0)
++
++#endif /* CONFIG_MLX4_DEBUG */
++
+ enum {
+ 	MLX4_IB_DB_PER_PAGE	= PAGE_SIZE / 4
+ };
+@@ -80,11 +99,6 @@ struct mlx4_ib_pd {
+ 	u32			pdn;
+ };
+ 
+-struct mlx4_ib_xrcd {
+-	struct ib_xrcd	ibxrcd;
+-	u32		xrcdn;
+-};
+-
+ struct mlx4_ib_cq_buf {
+ 	struct mlx4_buf		buf;
+ 	struct mlx4_mtt		mtt;
+@@ -122,6 +136,10 @@ struct mlx4_ib_wq {
+ 	unsigned		tail;
+ };
+ 
++enum qp_flags {
++	MLX4_QP_LSO = 1 << 0
++};
++
+ struct mlx4_ib_qp {
+ 	struct ib_qp		ibqp;
+ 	struct mlx4_qp		mqp;
+@@ -141,13 +159,13 @@ struct mlx4_ib_qp {
+ 	struct mlx4_mtt		mtt;
+ 	int			buf_size;
+ 	struct mutex		mutex;
+-	u16			xrcdn;
+ 	u8			port;
+ 	u8			alt_port;
+ 	u8			atomic_rd_en;
+ 	u8			resp_depth;
+ 	u8			sq_no_prefetch;
+ 	u8			state;
++	int			flags;
+ };
+ 
+ struct mlx4_ib_srq {
+@@ -204,11 +222,6 @@ static inline struct mlx4_ib_pd *to_mpd(struct ib_pd *ibpd)
+ 	return container_of(ibpd, struct mlx4_ib_pd, ibpd);
+ }
+ 
+-static inline struct mlx4_ib_xrcd *to_mxrcd(struct ib_xrcd *ibxrcd)
+-{
+-	return container_of(ibxrcd, struct mlx4_ib_xrcd, ibxrcd);
+-}
+-
+ static inline struct mlx4_ib_cq *to_mcq(struct ib_cq *ibcq)
+ {
+ 	return container_of(ibcq, struct mlx4_ib_cq, ibcq);
+@@ -284,11 +297,6 @@ int mlx4_ib_destroy_ah(struct ib_ah *ah);
+ struct ib_srq *mlx4_ib_create_srq(struct ib_pd *pd,
+ 				  struct ib_srq_init_attr *init_attr,
+ 				  struct ib_udata *udata);
+-struct ib_srq *mlx4_ib_create_xrc_srq(struct ib_pd *pd,
+-				      struct ib_cq *xrc_cq,
+-				      struct ib_xrcd *xrcd,
+-				      struct ib_srq_init_attr *init_attr,
+-				      struct ib_udata *udata);
+ int mlx4_ib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
+ 		       enum ib_srq_attr_mask attr_mask, struct ib_udata *udata);
+ int mlx4_ib_query_srq(struct ib_srq *srq, struct ib_srq_attr *srq_attr);
+diff --git a/drivers/infiniband/hw/mlx4/mr.c b/drivers/infiniband/hw/mlx4/mr.c
+index 7dc91a3..fe2c2e9 100644
+--- a/drivers/infiniband/hw/mlx4/mr.c
++++ b/drivers/infiniband/hw/mlx4/mr.c
+@@ -199,7 +199,7 @@ struct ib_fmr *mlx4_ib_fmr_alloc(struct ib_pd *pd, int acc,
+ 	if (err)
+ 		goto err_free;
+ 
+-	err = mlx4_mr_enable(to_mdev(pd->device)->dev, &fmr->mfmr.mr);
++	err = mlx4_fmr_enable(to_mdev(pd->device)->dev, &fmr->mfmr);
+ 	if (err)
+ 		goto err_mr;
+ 
+diff --git a/drivers/infiniband/hw/mlx4/qp.c b/drivers/infiniband/hw/mlx4/qp.c
+index ec66e7d..21580ab 100644
+--- a/drivers/infiniband/hw/mlx4/qp.c
++++ b/drivers/infiniband/hw/mlx4/qp.c
+@@ -132,9 +132,10 @@ static void stamp_send_wqe(struct mlx4_ib_qp *qp, int n, int size)
+ 	int ind;
+ 	void *buf;
+ 	__be32 stamp;
++	struct mlx4_wqe_ctrl_seg *ctrl;
+ 
+-	s = roundup(size, 1 << qp->sq.wqe_shift);
+ 	if (qp->sq_max_wqes_per_wr > 1) {
++		s = roundup(size, 1 << qp->sq.wqe_shift);
+ 		for (i = 0; i < s; i += 64) {
+ 			ind = (i >> qp->sq.wqe_shift) + n;
+ 			stamp = ind & qp->sq.wqe_cnt ?  cpu_to_be32(0x7fffffff) :
+@@ -144,7 +145,8 @@ static void stamp_send_wqe(struct mlx4_ib_qp *qp, int n, int size)
+ 			*wqe = stamp;
+ 		}
+ 	} else {
+-		buf = get_send_wqe(qp, n & (qp->sq.wqe_cnt - 1));
++		ctrl = buf = get_send_wqe(qp, n & (qp->sq.wqe_cnt - 1));
++		s = (ctrl->fence_size & 0x3f) << 4;
+ 		for (i = 64; i < s; i += 64) {
+ 			wqe = buf + i;
+ 			*wqe = 0xffffffff;
+@@ -262,7 +264,6 @@ static int send_wqe_overhead(enum ib_qp_type type)
+ 	case IB_QPT_UC:
+ 		return sizeof (struct mlx4_wqe_ctrl_seg) +
+ 			sizeof (struct mlx4_wqe_raddr_seg);
+-	case IB_QPT_XRC:
+ 	case IB_QPT_RC:
+ 		return sizeof (struct mlx4_wqe_ctrl_seg) +
+ 			sizeof (struct mlx4_wqe_atomic_seg) +
+@@ -284,24 +285,32 @@ static int send_wqe_overhead(enum ib_qp_type type)
+ }
+ 
+ static int set_rq_size(struct mlx4_ib_dev *dev, struct ib_qp_cap *cap,
+-		       int is_user, int has_srq_or_is_xrc, struct mlx4_ib_qp *qp)
++		       int is_user, int has_srq, struct mlx4_ib_qp *qp)
+ {
+ 	/* Sanity check RQ size before proceeding */
+ 	if (cap->max_recv_wr > dev->dev->caps.max_wqes - MLX4_IB_SQ_MAX_SPARE ||
+ 	    cap->max_recv_sge >
+-		min(dev->dev->caps.max_sq_sg, dev->dev->caps.max_rq_sg))
++		min(dev->dev->caps.max_sq_sg, dev->dev->caps.max_rq_sg)) {
++		mlx4_ib_dbg("Requested RQ size (sge or wr) too large");
+ 		return -EINVAL;
++	}
+ 
+-	if (has_srq_or_is_xrc) {
++	if (has_srq) {
+ 		/* QPs attached to an SRQ should have no RQ */
+-		if (cap->max_recv_wr)
++		if (cap->max_recv_wr) {
++			mlx4_ib_dbg("non-zero RQ size for QP using SRQ");
+ 			return -EINVAL;
++		}
+ 
+ 		qp->rq.wqe_cnt = qp->rq.max_gs = 0;
+ 	} else {
+ 		/* HW requires >= 1 RQ entry with >= 1 gather entry */
+-		if (is_user && (!cap->max_recv_wr || !cap->max_recv_sge))
++		if (is_user && (!cap->max_recv_wr || !cap->max_recv_sge)) {
++			mlx4_ib_dbg("user QP RQ has 0 wr's or 0 sge's "
++				    "(wr: 0x%x, sge: 0x%x)", cap->max_recv_wr,
++				    cap->max_recv_sge);
+ 			return -EINVAL;
++		}
+ 
+ 		qp->rq.wqe_cnt	 = roundup_pow_of_two(max(1U, cap->max_recv_wr));
+ 		qp->rq.max_gs	 = roundup_pow_of_two(max(1U, cap->max_recv_sge));
+@@ -325,28 +334,39 @@ static int set_rq_size(struct mlx4_ib_dev *dev, struct ib_qp_cap *cap,
+ 	return 0;
+ }
+ 
+-static int set_kernel_sq_size(struct mlx4_ib_dev *dev, struct ib_qp_cap *cap,
+-			      enum ib_qp_type type, struct mlx4_ib_qp *qp)
++static int set_kernel_sq_size(struct mlx4_ib_dev *dev,
++			      struct ib_qp_init_attr *init_attr,
++			      struct mlx4_ib_qp *qp)
+ {
++	struct ib_qp_cap *cap = &init_attr->cap;
++	enum ib_qp_type type = init_attr->qp_type;
+ 	int s;
++	int reserve = 0;
+ 
+ 	/* Sanity check SQ size before proceeding */
+ 	if (cap->max_send_wr	 > (dev->dev->caps.max_wqes - MLX4_IB_SQ_MAX_SPARE) ||
+ 	    cap->max_send_sge	 >
+ 		min(dev->dev->caps.max_sq_sg, dev->dev->caps.max_rq_sg) ||
+ 	    cap->max_inline_data + send_wqe_overhead(type) +
+-	    sizeof (struct mlx4_wqe_inline_seg) > dev->dev->caps.max_sq_desc_sz)
++	    sizeof (struct mlx4_wqe_inline_seg) > dev->dev->caps.max_sq_desc_sz) {
++		mlx4_ib_dbg("Requested SQ resources exceed device maxima");
+ 		return -EINVAL;
++	}
+ 
+ 	/*
+ 	 * For MLX transport we need 2 extra S/G entries:
+ 	 * one for the header and one for the checksum at the end
+ 	 */
+ 	if ((type == IB_QPT_SMI || type == IB_QPT_GSI) &&
+-	    cap->max_send_sge + 2 > dev->dev->caps.max_sq_sg)
++	    cap->max_send_sge + 2 > dev->dev->caps.max_sq_sg) {
++		mlx4_ib_dbg("No space for SQP hdr/csum sge's");
+ 		return -EINVAL;
++	}
+ 
+-	s = max(cap->max_send_sge * sizeof (struct mlx4_wqe_data_seg),
++	if (qp->flags & MLX4_QP_LSO)
++		reserve = 64;
++
++	s = max(cap->max_send_sge * sizeof (struct mlx4_wqe_data_seg) + reserve,
+ 		cap->max_inline_data + sizeof (struct mlx4_wqe_inline_seg)) +
+ 		send_wqe_overhead(type);
+ 
+@@ -407,7 +427,7 @@ static int set_kernel_sq_size(struct mlx4_ib_dev *dev, struct ib_qp_cap *cap,
+ 		++qp->sq.wqe_shift;
+ 	}
+ 
+-	qp->sq.max_gs = ((qp->sq_max_wqes_per_wr << qp->sq.wqe_shift) -
++	qp->sq.max_gs = ((qp->sq_max_wqes_per_wr << qp->sq.wqe_shift) - reserve -
+ 			 send_wqe_overhead(type)) / sizeof (struct mlx4_wqe_data_seg);
+ 
+ 	qp->buf_size = (qp->rq.wqe_cnt << qp->rq.wqe_shift) +
+@@ -439,8 +459,10 @@ static int set_user_sq_size(struct mlx4_ib_dev *dev,
+ 	if ((1 << ucmd->log_sq_bb_count) > dev->dev->caps.max_wqes	 ||
+ 	    ucmd->log_sq_stride >
+ 		ilog2(roundup_pow_of_two(dev->dev->caps.max_sq_desc_sz)) ||
+-	    ucmd->log_sq_stride < MLX4_IB_MIN_SQ_STRIDE)
++	    ucmd->log_sq_stride < MLX4_IB_MIN_SQ_STRIDE) {
++		mlx4_ib_dbg("Requested max wqes or wqe stride exceeds max");
+ 		return -EINVAL;
++	}
+ 
+ 	qp->sq.wqe_cnt   = 1 << ucmd->log_sq_bb_count;
+ 	qp->sq.wqe_shift = ucmd->log_sq_stride;
+@@ -476,8 +498,10 @@ static int create_qp_common(struct mlx4_ib_dev *dev, struct ib_pd *pd,
+ 	else
+ 		qp->sq_signal_bits = 0;
+ 
+-	err = set_rq_size(dev, &init_attr->cap, !!pd->uobject,
+-			  !!init_attr->srq || !!init_attr->xrc_domain , qp);
++	if (init_attr->create_flags & QP_CREATE_LSO)
++		qp->flags |= MLX4_QP_LSO;
++
++	err = set_rq_size(dev, &init_attr->cap, !!pd->uobject, !!init_attr->srq, qp);
+ 	if (err)
+ 		goto err;
+ 
+@@ -499,32 +523,39 @@ static int create_qp_common(struct mlx4_ib_dev *dev, struct ib_pd *pd,
+ 				       qp->buf_size, 0);
+ 		if (IS_ERR(qp->umem)) {
+ 			err = PTR_ERR(qp->umem);
++			mlx4_ib_dbg("ib_umem_get error (%d)", err);
+ 			goto err;
+ 		}
+ 
+ 		err = mlx4_mtt_init(dev->dev, ib_umem_page_count(qp->umem),
+ 				    ilog2(qp->umem->page_size), &qp->mtt);
+-		if (err)
++		if (err) {
++			mlx4_ib_dbg("mlx4_mtt_init error (%d)", err);
+ 			goto err_buf;
++		}
+ 
+ 		err = mlx4_ib_umem_write_mtt(dev, &qp->mtt, qp->umem);
+-		if (err)
++		if (err) {
++			mlx4_ib_dbg("mlx4_ib_umem_write_mtt error (%d)", err);
+ 			goto err_mtt;
++		}
+ 
+-		if (!init_attr->srq && init_attr->qp_type != IB_QPT_XRC) {
++		if (!init_attr->srq) {
+ 			err = mlx4_ib_db_map_user(to_mucontext(pd->uobject->context),
+ 						  ucmd.db_addr, &qp->db);
+-			if (err)
++			if (err) {
++				mlx4_ib_dbg("mlx4_ib_db_map_user error (%d)", err);
+ 				goto err_mtt;
++			}
+ 		}
+ 	} else {
+ 		qp->sq_no_prefetch = 0;
+ 
+-		err = set_kernel_sq_size(dev, &init_attr->cap, init_attr->qp_type, qp);
++		err = set_kernel_sq_size(dev, init_attr, qp);
+ 		if (err)
+ 			goto err;
+ 
+-		if (!init_attr->srq && init_attr->qp_type != IB_QPT_XRC) {
++		if (!init_attr->srq) {
+ 			err = mlx4_ib_db_alloc(dev, &qp->db, 0);
+ 			if (err)
+ 				goto err;
+@@ -539,12 +570,16 @@ static int create_qp_common(struct mlx4_ib_dev *dev, struct ib_pd *pd,
+ 
+ 		err = mlx4_mtt_init(dev->dev, qp->buf.npages, qp->buf.page_shift,
+ 				    &qp->mtt);
+-		if (err)
++		if (err) {
++			mlx4_ib_dbg("kernel qp mlx4_mtt_init error (%d)", err);
+ 			goto err_buf;
++		}
+ 
+ 		err = mlx4_buf_write_mtt(dev->dev, &qp->mtt, &qp->buf);
+-		if (err)
++		if (err) {
++			mlx4_ib_dbg("mlx4_buf_write_mtt error (%d)", err);
+ 			goto err_mtt;
++		}
+ 
+ 		qp->sq.wrid  = kmalloc(qp->sq.wqe_cnt * sizeof (u64), GFP_KERNEL);
+ 		qp->rq.wrid  = kmalloc(qp->rq.wqe_cnt * sizeof (u64), GFP_KERNEL);
+@@ -559,9 +594,6 @@ static int create_qp_common(struct mlx4_ib_dev *dev, struct ib_pd *pd,
+ 	if (err)
+ 		goto err_wrid;
+ 
+-	if (init_attr->qp_type == IB_QPT_XRC)
+-		qp->mqp.qpn |= (1 << 23);
+-
+ 	/*
+ 	 * Hardware wants QPN written in big-endian order (after
+ 	 * shifting) for send doorbell.  Precompute this value to save
+@@ -575,7 +607,7 @@ static int create_qp_common(struct mlx4_ib_dev *dev, struct ib_pd *pd,
+ 
+ err_wrid:
+ 	if (pd->uobject) {
+-		if (!init_attr->srq && init_attr->qp_type != IB_QPT_XRC)
++		if (!init_attr->srq)
+ 			mlx4_ib_db_unmap_user(to_mucontext(pd->uobject->context),
+ 					      &qp->db);
+ 	} else {
+@@ -593,7 +625,7 @@ err_buf:
+ 		mlx4_buf_free(dev->dev, qp->buf_size, &qp->buf);
+ 
+ err_db:
+-	if (!pd->uobject && !init_attr->srq && init_attr->qp_type != IB_QPT_XRC)
++	if (!pd->uobject && !init_attr->srq)
+ 		mlx4_ib_db_free(dev, &qp->db);
+ 
+ err:
+@@ -671,7 +703,7 @@ static void destroy_qp_common(struct mlx4_ib_dev *dev, struct mlx4_ib_qp *qp,
+ 	mlx4_mtt_cleanup(dev->dev, &qp->mtt);
+ 
+ 	if (is_user) {
+-		if (!qp->ibqp.srq && qp->ibqp.qp_type != IB_QPT_XRC)
++		if (!qp->ibqp.srq)
+ 			mlx4_ib_db_unmap_user(to_mucontext(qp->ibqp.uobject->context),
+ 					      &qp->db);
+ 		ib_umem_release(qp->umem);
+@@ -679,7 +711,7 @@ static void destroy_qp_common(struct mlx4_ib_dev *dev, struct mlx4_ib_qp *qp,
+ 		kfree(qp->sq.wrid);
+ 		kfree(qp->rq.wrid);
+ 		mlx4_buf_free(dev->dev, qp->buf_size, &qp->buf);
+-		if (!qp->ibqp.srq && qp->ibqp.qp_type != IB_QPT_XRC)
++		if (!qp->ibqp.srq)
+ 			mlx4_ib_db_free(dev, &qp->db);
+ 	}
+ }
+@@ -694,9 +726,6 @@ struct ib_qp *mlx4_ib_create_qp(struct ib_pd *pd,
+ 	int err;
+ 
+ 	switch (init_attr->qp_type) {
+-	case IB_QPT_XRC:
+-		if (!(dev->dev->caps.flags & MLX4_DEV_CAP_FLAG_XRC))
+-			return ERR_PTR(-ENOSYS);
+ 	case IB_QPT_RC:
+ 	case IB_QPT_UC:
+ 	case IB_QPT_UD:
+@@ -711,11 +740,6 @@ struct ib_qp *mlx4_ib_create_qp(struct ib_pd *pd,
+ 			return ERR_PTR(err);
+ 		}
+ 
+-		if (init_attr->qp_type == IB_QPT_XRC)
+-			qp->xrcdn = to_mxrcd(init_attr->xrc_domain)->xrcdn;
+-		else
+-			qp->xrcdn = 0;
+-
+ 		qp->ibqp.qp_num = qp->mqp.qpn;
+ 
+ 		break;
+@@ -724,8 +748,10 @@ struct ib_qp *mlx4_ib_create_qp(struct ib_pd *pd,
+ 	case IB_QPT_GSI:
+ 	{
+ 		/* Userspace is not allowed to create special QPs: */
+-		if (pd->uobject)
++		if (pd->uobject) {
++			mlx4_ib_dbg("Userspace is not allowed to create special QPs");
+ 			return ERR_PTR(-EINVAL);
++		}
+ 
+ 		sqp = kmalloc(sizeof *sqp, GFP_KERNEL);
+ 		if (!sqp)
+@@ -750,6 +776,8 @@ struct ib_qp *mlx4_ib_create_qp(struct ib_pd *pd,
+ 	}
+ 	default:
+ 		/* Don't support raw QPs */
++		mlx4_ib_dbg("Invalid QP type requested for create_qp (%d)",
++			    init_attr->qp_type);
+ 		return ERR_PTR(-EINVAL);
+ 	}
+ 
+@@ -780,7 +808,6 @@ static int to_mlx4_st(enum ib_qp_type type)
+ 	case IB_QPT_RC:		return MLX4_QP_ST_RC;
+ 	case IB_QPT_UC:		return MLX4_QP_ST_UC;
+ 	case IB_QPT_UD:		return MLX4_QP_ST_UD;
+-	case IB_QPT_XRC:	return MLX4_QP_ST_XRC;
+ 	case IB_QPT_SMI:
+ 	case IB_QPT_GSI:	return MLX4_QP_ST_MLX;
+ 	default:		return -1;
+@@ -928,11 +955,8 @@ static int __mlx4_ib_modify_qp(struct ib_qp *ibqp,
+ 		context->sq_size_stride = ilog2(qp->sq.wqe_cnt) << 3;
+ 	context->sq_size_stride |= qp->sq.wqe_shift - 4;
+ 
+-	if (cur_state == IB_QPS_RESET && new_state == IB_QPS_INIT) {
++	if (cur_state == IB_QPS_RESET && new_state == IB_QPS_INIT)
+ 		context->sq_size_stride |= !!qp->sq_no_prefetch << 7;
+-		if (ibqp->qp_type == IB_QPT_XRC)
+-			context->xrcd = cpu_to_be32((u32) qp->xrcdn);
+-	}
+ 
+ 	if (qp->ibqp.uobject)
+ 		context->usr_page = cpu_to_be32(to_mucontext(ibqp->uobject->context)->uar.index);
+@@ -957,8 +981,11 @@ static int __mlx4_ib_modify_qp(struct ib_qp *ibqp,
+ 
+ 	if (attr_mask & IB_QP_AV) {
+ 		if (mlx4_set_path(dev, &attr->ah_attr, &context->pri_path,
+-				  attr_mask & IB_QP_PORT ? attr->port_num : qp->port))
++				  attr_mask & IB_QP_PORT ? attr->port_num : qp->port)) {
++			mlx4_ib_dbg("qpn 0x%x: could not set pri path params",
++				    ibqp->qp_num);
+ 			goto out;
++		}
+ 
+ 		optpar |= (MLX4_QP_OPTPAR_PRIMARY_ADDR_PATH |
+ 			   MLX4_QP_OPTPAR_SCHED_QUEUE);
+@@ -971,16 +998,25 @@ static int __mlx4_ib_modify_qp(struct ib_qp *ibqp,
+ 
+ 	if (attr_mask & IB_QP_ALT_PATH) {
+ 		if (attr->alt_port_num == 0 ||
+-		    attr->alt_port_num > dev->dev->caps.num_ports)
++		    attr->alt_port_num > dev->dev->caps.num_ports) {
++			mlx4_ib_dbg("qpn 0x%x: invalid alternate port num (%d)",
++				    ibqp->qp_num, attr->alt_port_num);
+ 			goto out;
++		}
+ 
+ 		if (attr->alt_pkey_index >=
+-		    dev->dev->caps.pkey_table_len[attr->alt_port_num])
++		    dev->dev->caps.pkey_table_len[attr->alt_port_num]) {
++			mlx4_ib_dbg("qpn 0x%x: invalid alt pkey index (0x%x)",
++				    ibqp->qp_num, attr->alt_pkey_index);
+ 			goto out;
++		}
+ 
+ 		if (mlx4_set_path(dev, &attr->alt_ah_attr, &context->alt_path,
+-				  attr->alt_port_num))
++				  attr->alt_port_num)) {
++			mlx4_ib_dbg("qpn 0x%x: could not set alt path params",
++				    ibqp->qp_num);
+ 			goto out;
++		}
+ 
+ 		context->alt_path.pkey_index = attr->alt_pkey_index;
+ 		context->alt_path.ackto = attr->alt_timeout << 3;
+@@ -1044,8 +1080,7 @@ static int __mlx4_ib_modify_qp(struct ib_qp *ibqp,
+ 	if (ibqp->srq)
+ 		context->srqn = cpu_to_be32(1 << 24 | to_msrq(ibqp->srq)->msrq.srqn);
+ 
+-	if (!ibqp->srq && ibqp->qp_type != IB_QPT_XRC &&
+-	    cur_state == IB_QPS_RESET && new_state == IB_QPS_INIT)
++	if (!ibqp->srq && cur_state == IB_QPS_RESET && new_state == IB_QPS_INIT)
+ 		context->db_rec_addr = cpu_to_be64(qp->db.dma);
+ 
+ 	if (cur_state == IB_QPS_INIT &&
+@@ -1078,6 +1113,8 @@ static int __mlx4_ib_modify_qp(struct ib_qp *ibqp,
+ 		for (i = 0; i < qp->sq.wqe_cnt; ++i) {
+ 			ctrl = get_send_wqe(qp, i);
+ 			ctrl->owner_opcode = cpu_to_be32(1 << 31);
++			if (!(qp->sq_max_wqes_per_wr > 1))
++				ctrl->fence_size = 1 << (qp->sq.wqe_shift - 4);
+ 
+ 			stamp_send_wqe(qp, i, 1 << qp->sq.wqe_shift);
+ 		}
+@@ -1133,7 +1170,7 @@ static int __mlx4_ib_modify_qp(struct ib_qp *ibqp,
+ 		qp->sq.head = 0;
+ 		qp->sq.tail = 0;
+ 		qp->sq_next_wqe = 0;
+-		if (!ibqp->srq && ibqp->qp_type != IB_QPT_XRC)
++		if (!ibqp->srq)
+ 			*qp->db.db  = 0;
+ 	}
+ 
+@@ -1143,7 +1180,7 @@ out:
+ }
+ 
+ static const struct ib_qp_attr mlx4_ib_qp_attr = { .port_num = 1 };
+-static const int mlx4_ib_qp_attr_mask_table[IB_QPT_XRC + 1] = {
++static const int mlx4_ib_qp_attr_mask_table[IB_QPT_UD + 1] = {
+ 		[IB_QPT_UD]  = (IB_QP_PKEY_INDEX		|
+ 				IB_QP_PORT			|
+ 				IB_QP_QKEY),
+@@ -1153,9 +1190,6 @@ static const int mlx4_ib_qp_attr_mask_table[IB_QPT_XRC + 1] = {
+ 		[IB_QPT_RC]  = (IB_QP_PKEY_INDEX		|
+ 				IB_QP_PORT			|
+ 				IB_QP_ACCESS_FLAGS),
+-		[IB_QPT_XRC] = (IB_QP_PKEY_INDEX		|
+-				IB_QP_PORT			|
+-				IB_QP_ACCESS_FLAGS),
+ 		[IB_QPT_SMI] = (IB_QP_PKEY_INDEX		|
+ 				IB_QP_QKEY),
+ 		[IB_QPT_GSI] = (IB_QP_PKEY_INDEX		|
+@@ -1175,27 +1209,49 @@ int mlx4_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
+ 	cur_state = attr_mask & IB_QP_CUR_STATE ? attr->cur_qp_state : qp->state;
+ 	new_state = attr_mask & IB_QP_STATE ? attr->qp_state : cur_state;
+ 
+-	if (!ib_modify_qp_is_ok(cur_state, new_state, ibqp->qp_type, attr_mask))
++	if (!ib_modify_qp_is_ok(cur_state, new_state, ibqp->qp_type, attr_mask)) {
++		mlx4_ib_dbg("qpn 0x%x: invalid attribute mask specified "
++			    "for transition %d to %d. qp_type %d, attr_mask 0x%x",
++			    ibqp->qp_num, cur_state, new_state,
++			    ibqp->qp_type, attr_mask);
+ 		goto out;
++	}
+ 
+ 	if ((attr_mask & IB_QP_PORT) &&
+ 	    (attr->port_num == 0 || attr->port_num > dev->dev->caps.num_ports)) {
++		mlx4_ib_dbg("qpn 0x%x: invalid port number (%d) specified "
++			    "for transition %d to %d. qp_type %d",
++			    ibqp->qp_num, attr->port_num, cur_state,
++			    new_state, ibqp->qp_type);
+ 		goto out;
+ 	}
+ 
+ 	if (attr_mask & IB_QP_PKEY_INDEX) {
+ 		int p = attr_mask & IB_QP_PORT ? attr->port_num : qp->port;
+-		if (attr->pkey_index >= dev->dev->caps.pkey_table_len[p])
++		if (attr->pkey_index >= dev->dev->caps.pkey_table_len[p]) {
++			mlx4_ib_dbg("qpn 0x%x: invalid pkey index (%d) specified "
++				    "for transition %d to %d. qp_type %d",
++				    ibqp->qp_num, attr->pkey_index, cur_state,
++				    new_state, ibqp->qp_type);
+ 			goto out;
++		}
+ 	}
+ 
+ 	if (attr_mask & IB_QP_MAX_QP_RD_ATOMIC &&
+ 	    attr->max_rd_atomic > dev->dev->caps.max_qp_init_rdma) {
++		mlx4_ib_dbg("qpn 0x%x: max_rd_atomic (%d) too large. "
++			    "Transition %d to %d. qp_type %d",
++			    ibqp->qp_num, attr->max_rd_atomic, cur_state,
++			    new_state, ibqp->qp_type);
+ 		goto out;
+ 	}
+ 
+ 	if (attr_mask & IB_QP_MAX_DEST_RD_ATOMIC &&
+ 	    attr->max_dest_rd_atomic > dev->dev->caps.max_qp_dest_rdma) {
++		mlx4_ib_dbg("qpn 0x%x: max_dest_rd_atomic (%d) too large. "
++			    "Transition %d to %d. qp_type %d",
++			    ibqp->qp_num, attr->max_dest_rd_atomic, cur_state,
++			    new_state, ibqp->qp_type);
+ 		goto out;
+ 	}
+ 
+@@ -1273,6 +1329,8 @@ static int build_mlx_header(struct mlx4_ib_sqp *sqp, struct ib_send_wr *wr,
+ 		sqp->ud_header.immediate_data    = wr->imm_data;
+ 		break;
+ 	default:
++		mlx4_ib_dbg("special QP type %d: invalid wr opcode 0x%x",
++			    sqp->qp.ibqp.qp_type, wr->opcode);
+ 		return -EINVAL;
+ 	}
+ 
+@@ -1440,6 +1498,10 @@ static int build_lso_seg(struct mlx4_lso_seg *wqe, struct ib_send_wr *wr,
+ {
+ 	int halign;
+ 
++	halign = ALIGN(wr->wr.ud.hlen, 16);
++	if (unlikely(!(qp->flags & MLX4_QP_LSO) && wr->num_sge > qp->sq.max_gs - (halign >> 4)))
++                return -EINVAL;
++
+ 	memcpy(wqe->header, wr->wr.ud.header, wr->wr.ud.hlen);
+ 
+ 	/* make sure LSO header is written before
+@@ -1449,11 +1511,6 @@ static int build_lso_seg(struct mlx4_lso_seg *wqe, struct ib_send_wr *wr,
+ 	wqe->mss_hdr_size = cpu_to_be32(((wr->wr.ud.mss - wr->wr.ud.hlen)
+ 					 << 16) | wr->wr.ud.hlen);
+ 
+-	halign = ALIGN(wr->wr.ud.hlen, 16);
+-
+-	if (unlikely(wr->num_sge > qp->sq.max_gs - (halign >> 4)))
+-		return -EINVAL;
+-
+ 	*lso_seg_len = halign;
+ 	return 0;
+ }
+@@ -1479,12 +1536,15 @@ int mlx4_ib_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
+ 
+ 	for (nreq = 0; wr; ++nreq, wr = wr->next) {
+ 		if (mlx4_wq_overflow(&qp->sq, nreq, qp->ibqp.send_cq)) {
++			mlx4_ib_dbg("QP 0x%x: WQE overflow", ibqp->qp_num);
+ 			err = -ENOMEM;
+ 			*bad_wr = wr;
+ 			goto out;
+ 		}
+ 
+ 		if (unlikely(wr->num_sge > qp->sq.max_gs)) {
++			mlx4_ib_dbg("QP 0x%x: too many sg entries (%d)",
++				    ibqp->qp_num, wr->num_sge);
+ 			err = -EINVAL;
+ 			*bad_wr = wr;
+ 			goto out;
+@@ -1499,9 +1559,8 @@ int mlx4_ib_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
+ 			(wr->send_flags & IB_SEND_SOLICITED ?
+ 			 cpu_to_be32(MLX4_WQE_CTRL_SOLICITED) : 0) |
+ 			((wr->send_flags & IB_SEND_IP_CSUM) ?
+-			 cpu_to_be32(MLX4_WQE_CTRL_IP_CSUM) : 0)   |
+-			((wr->send_flags & IB_SEND_UDP_TCP_CSUM) ?
+-			 cpu_to_be32(MLX4_WQE_CTRL_TCP_UDP_CSUM) : 0)   |
++			 cpu_to_be32(MLX4_WQE_CTRL_IP_CSUM |
++				     MLX4_WQE_CTRL_TCP_UDP_CSUM) : 0) |
+ 			qp->sq_signal_bits;
+ 
+ 		if (wr->opcode == IB_WR_SEND_WITH_IMM ||
+@@ -1514,10 +1573,6 @@ int mlx4_ib_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
+ 		size = sizeof *ctrl / 16;
+ 
+ 		switch (ibqp->qp_type) {
+-		case IB_QPT_XRC:
+-			ctrl->srcrb_flags |=
+-				cpu_to_be32(wr->xrc_remote_srq_num << 8);
+-			/* fall thru */
+ 		case IB_QPT_RC:
+ 		case IB_QPT_UC:
+ 			switch (wr->opcode) {
+@@ -1691,12 +1746,15 @@ int mlx4_ib_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *wr,
+ 
+ 	for (nreq = 0; wr; ++nreq, wr = wr->next) {
+ 		if (mlx4_wq_overflow(&qp->rq, nreq, qp->ibqp.send_cq)) {
++			mlx4_ib_dbg("QP 0x%x: WQE overflow", ibqp->qp_num);
+ 			err = -ENOMEM;
+ 			*bad_wr = wr;
+ 			goto out;
+ 		}
+ 
+ 		if (unlikely(wr->num_sge > qp->rq.max_gs)) {
++			mlx4_ib_dbg("QP 0x%x: too many sg entries (%d)",
++				    ibqp->qp_num, wr->num_sge);
+ 			err = -EINVAL;
+ 			*bad_wr = wr;
+ 			goto out;
+@@ -1832,8 +1890,7 @@ int mlx4_ib_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr
+ 	qp_attr->qp_access_flags     =
+ 		to_ib_qp_access_flags(be32_to_cpu(context.params2));
+ 
+-	if (qp->ibqp.qp_type == IB_QPT_RC || qp->ibqp.qp_type == IB_QPT_UC ||
+-	    qp->ibqp.qp_type == IB_QPT_XRC) {
++	if (qp->ibqp.qp_type == IB_QPT_RC || qp->ibqp.qp_type == IB_QPT_UC) {
+ 		to_ib_ah_attr(dev->dev, &qp_attr->ah_attr, &context.pri_path);
+ 		to_ib_ah_attr(dev->dev, &qp_attr->alt_ah_attr, &context.alt_path);
+ 		qp_attr->alt_pkey_index = context.alt_path.pkey_index & 0x7f;
+diff --git a/drivers/infiniband/hw/mlx4/srq.c b/drivers/infiniband/hw/mlx4/srq.c
+index e708357..a1ad4cc 100644
+--- a/drivers/infiniband/hw/mlx4/srq.c
++++ b/drivers/infiniband/hw/mlx4/srq.c
+@@ -72,17 +72,13 @@ static void mlx4_ib_srq_event(struct mlx4_srq *srq, enum mlx4_event type)
+ 	}
+ }
+ 
+-struct ib_srq *mlx4_ib_create_xrc_srq(struct ib_pd *pd,
+-				      struct ib_cq *xrc_cq,
+-				      struct ib_xrcd *xrcd,
+-				      struct ib_srq_init_attr *init_attr,
+-				      struct ib_udata *udata)
++struct ib_srq *mlx4_ib_create_srq(struct ib_pd *pd,
++				  struct ib_srq_init_attr *init_attr,
++				  struct ib_udata *udata)
+ {
+ 	struct mlx4_ib_dev *dev = to_mdev(pd->device);
+ 	struct mlx4_ib_srq *srq;
+ 	struct mlx4_wqe_srq_next_seg *next;
+-	u32	cqn;
+-	u16	xrcdn;
+ 	int desc_size;
+ 	int buf_size;
+ 	int err;
+@@ -90,8 +86,12 @@ struct ib_srq *mlx4_ib_create_xrc_srq(struct ib_pd *pd,
+ 
+ 	/* Sanity check SRQ size before proceeding */
+ 	if (init_attr->attr.max_wr  >= dev->dev->caps.max_srq_wqes ||
+-	    init_attr->attr.max_sge >  dev->dev->caps.max_srq_sge)
++	    init_attr->attr.max_sge >  dev->dev->caps.max_srq_sge) {
++		mlx4_ib_dbg("a size param is out of range. "
++			    "max_wr = 0x%x, max_sge = 0x%x",
++			    init_attr->attr.max_wr, init_attr->attr.max_sge);
+ 		return ERR_PTR(-EINVAL);
++	}
+ 
+ 	srq = kmalloc(sizeof *srq, GFP_KERNEL);
+ 	if (!srq)
+@@ -176,24 +176,18 @@ struct ib_srq *mlx4_ib_create_xrc_srq(struct ib_pd *pd,
+ 		}
+ 	}
+ 
+-	cqn = xrc_cq ? (u32) (to_mcq(xrc_cq)->mcq.cqn) : 0;
+-	xrcdn = xrcd ? (u16) (to_mxrcd(xrcd)->xrcdn) :
+-		(u16) dev->dev->caps.reserved_xrcds;
+-
+-	err = mlx4_srq_alloc(dev->dev, to_mpd(pd)->pdn, cqn, xrcdn, &srq->mtt,
++	err = mlx4_srq_alloc(dev->dev, to_mpd(pd)->pdn, &srq->mtt,
+ 			     srq->db.dma, &srq->msrq);
+ 	if (err)
+ 		goto err_wrid;
+ 
+ 	srq->msrq.event = mlx4_ib_srq_event;
+ 
+-	if (pd->uobject) {
++	if (pd->uobject)
+ 		if (ib_copy_to_udata(udata, &srq->msrq.srqn, sizeof (__u32))) {
+ 			err = -EFAULT;
+ 			goto err_wrid;
+ 		}
+-	} else
+-		srq->ibsrq.xrc_srq_num = srq->msrq.srqn;
+ 
+ 	init_attr->attr.max_wr = srq->msrq.max - 1;
+ 
+@@ -232,12 +226,16 @@ int mlx4_ib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
+ 	int ret;
+ 
+ 	/* We don't support resizing SRQs (yet?) */
+-	if (attr_mask & IB_SRQ_MAX_WR)
++	if (attr_mask & IB_SRQ_MAX_WR) {
++		mlx4_ib_dbg("resize not yet supported");
+ 		return -EINVAL;
++	}
+ 
+ 	if (attr_mask & IB_SRQ_LIMIT) {
+-		if (attr->srq_limit >= srq->msrq.max)
++		if (attr->srq_limit >= srq->msrq.max){
++			mlx4_ib_dbg("limit (0x%x) too high", attr->srq_limit);
+ 			return -EINVAL;
++		}
+ 
+ 		mutex_lock(&srq->mutex);
+ 		ret = mlx4_srq_arm(dev->dev, &srq->msrq, attr->srq_limit);
+@@ -250,13 +248,6 @@ int mlx4_ib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
+ 	return 0;
+ }
+ 
+-struct ib_srq *mlx4_ib_create_srq(struct ib_pd *pd,
+-				  struct ib_srq_init_attr *init_attr,
+-				  struct ib_udata *udata)
+-{
+-	return mlx4_ib_create_xrc_srq(pd, NULL, NULL, init_attr, udata);
+-}
+-
+ int mlx4_ib_query_srq(struct ib_srq *ibsrq, struct ib_srq_attr *srq_attr)
+ {
+ 	struct mlx4_ib_dev *dev = to_mdev(ibsrq->device);
+@@ -279,18 +270,6 @@ int mlx4_ib_destroy_srq(struct ib_srq *srq)
+ {
+ 	struct mlx4_ib_dev *dev = to_mdev(srq->device);
+ 	struct mlx4_ib_srq *msrq = to_msrq(srq);
+-	struct mlx4_ib_cq *cq;
+-
+-	mlx4_srq_invalidate(dev->dev, &msrq->msrq);
+-
+-	if (srq->xrc_cq && !srq->uobject) {
+-		cq = to_mcq(srq->xrc_cq);
+-		spin_lock_irq(&cq->lock);
+-		__mlx4_ib_cq_clean(cq, -1, msrq);
+-		mlx4_srq_remove(dev->dev, &msrq->msrq);
+-		spin_unlock_irq(&cq->lock);
+-	} else
+-		mlx4_srq_remove(dev->dev, &msrq->msrq);
+ 
+ 	mlx4_srq_free(dev->dev, &msrq->msrq);
+ 	mlx4_mtt_cleanup(dev->dev, &msrq->mtt);
+@@ -339,12 +318,16 @@ int mlx4_ib_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *wr,
+ 
+ 	for (nreq = 0; wr; ++nreq, wr = wr->next) {
+ 		if (unlikely(wr->num_sge > srq->msrq.max_gs)) {
++			mlx4_ib_dbg("srq num 0x%x: num s/g entries too large (%d)",
++				    srq->msrq.srqn, wr->num_sge);
+ 			err = -EINVAL;
+ 			*bad_wr = wr;
+ 			break;
+ 		}
+ 
+ 		if (unlikely(srq->head == srq->tail)) {
++			mlx4_ib_dbg("srq num 0x%x: No entries available to post.",
++				    srq->msrq.srqn);
+ 			err = -ENOMEM;
+ 			*bad_wr = wr;
+ 			break;
+diff --git a/drivers/infiniband/hw/mthca/mthca_cmd.c b/drivers/infiniband/hw/mthca/mthca_cmd.c
+index 2a38926..6d59a22 100644
+--- a/drivers/infiniband/hw/mthca/mthca_cmd.c
++++ b/drivers/infiniband/hw/mthca/mthca_cmd.c
+@@ -1254,10 +1254,14 @@ int mthca_QUERY_ADAPTER(struct mthca_dev *dev,
+ 
+ 	if (err)
+ 		goto out;
+-
+-	MTHCA_GET(adapter->vendor_id, outbox,   QUERY_ADAPTER_VENDOR_ID_OFFSET);
+-	MTHCA_GET(adapter->device_id, outbox,   QUERY_ADAPTER_DEVICE_ID_OFFSET);
+-	MTHCA_GET(adapter->revision_id, outbox, QUERY_ADAPTER_REVISION_ID_OFFSET);
++	if (!mthca_is_memfree(dev)) {
++		MTHCA_GET(adapter->vendor_id, outbox,
++			  QUERY_ADAPTER_VENDOR_ID_OFFSET);
++		MTHCA_GET(adapter->device_id, outbox,
++			  QUERY_ADAPTER_DEVICE_ID_OFFSET);
++		MTHCA_GET(adapter->revision_id, outbox,
++			  QUERY_ADAPTER_REVISION_ID_OFFSET);
++	}
+ 	MTHCA_GET(adapter->inta_pin, outbox,    QUERY_ADAPTER_INTA_PIN_OFFSET);
+ 
+ 	get_board_id(outbox + QUERY_ADAPTER_VSD_OFFSET / 4,
+diff --git a/drivers/infiniband/hw/mthca/mthca_dev.h b/drivers/infiniband/hw/mthca/mthca_dev.h
+index 15aa32e..1b7e253 100644
+--- a/drivers/infiniband/hw/mthca/mthca_dev.h
++++ b/drivers/infiniband/hw/mthca/mthca_dev.h
+@@ -54,8 +54,8 @@
+ 
+ #define DRV_NAME	"ib_mthca"
+ #define PFX		DRV_NAME ": "
+-#define DRV_VERSION	"0.08"
+-#define DRV_RELDATE	"February 14, 2006"
++#define DRV_VERSION	"1.0"
++#define DRV_RELDATE	"February 28, 2008"
+ 
+ enum {
+ 	MTHCA_FLAG_DDR_HIDDEN = 1 << 1,
+diff --git a/drivers/infiniband/hw/mthca/mthca_main.c b/drivers/infiniband/hw/mthca/mthca_main.c
+index 1a766ef..c7b819b 100644
+--- a/drivers/infiniband/hw/mthca/mthca_main.c
++++ b/drivers/infiniband/hw/mthca/mthca_main.c
+@@ -761,7 +761,8 @@ static int mthca_init_hca(struct mthca_dev *mdev)
+ 	}
+ 
+ 	mdev->eq_table.inta_pin = adapter.inta_pin;
+-	mdev->rev_id            = adapter.revision_id;
++	if (!mthca_is_memfree(mdev))
++		mdev->rev_id = adapter.revision_id;
+ 	memcpy(mdev->board_id, adapter.board_id, sizeof mdev->board_id);
+ 
+ 	return 0;
+diff --git a/drivers/infiniband/hw/mthca/mthca_memfree.c b/drivers/infiniband/hw/mthca/mthca_memfree.c
+index 1f4d27d..252db08 100644
+--- a/drivers/infiniband/hw/mthca/mthca_memfree.c
++++ b/drivers/infiniband/hw/mthca/mthca_memfree.c
+@@ -542,6 +542,7 @@ struct mthca_user_db_table *mthca_init_user_db_tab(struct mthca_dev *dev)
+ 	for (i = 0; i < npages; ++i) {
+ 		db_tab->page[i].refcount = 0;
+ 		db_tab->page[i].uvirt    = 0;
++		sg_init_table(&db_tab->page[i].mem, 1);
+ 	}
+ 
+ 	return db_tab;
+diff --git a/drivers/infiniband/hw/mthca/mthca_mr.c b/drivers/infiniband/hw/mthca/mthca_mr.c
+index aa6c70a..3538da1 100644
+--- a/drivers/infiniband/hw/mthca/mthca_mr.c
++++ b/drivers/infiniband/hw/mthca/mthca_mr.c
+@@ -613,8 +613,10 @@ int mthca_fmr_alloc(struct mthca_dev *dev, u32 pd,
+ 			sizeof *(mr->mem.tavor.mpt) * idx;
+ 
+ 	mr->mtt = __mthca_alloc_mtt(dev, list_len, dev->mr_table.fmr_mtt_buddy);
+-	if (IS_ERR(mr->mtt))
++	if (IS_ERR(mr->mtt)) {
++		err = PTR_ERR(mr->mtt);
+ 		goto err_out_table;
++	}
+ 
+ 	mtt_seg = mr->mtt->first_seg * MTHCA_MTT_SEG_SIZE;
+ 
+@@ -627,8 +629,10 @@ int mthca_fmr_alloc(struct mthca_dev *dev, u32 pd,
+ 		mr->mem.tavor.mtts = dev->mr_table.tavor_fmr.mtt_base + mtt_seg;
+ 
+ 	mailbox = mthca_alloc_mailbox(dev, GFP_KERNEL);
+-	if (IS_ERR(mailbox))
++	if (IS_ERR(mailbox)) {
++		err = PTR_ERR(mailbox);
+ 		goto err_out_free_mtt;
++	}
+ 
+ 	mpt_entry = mailbox->buf;
+ 
+@@ -682,7 +686,7 @@ err_out_table:
+ 	mthca_table_put(dev, dev->mr_table.mpt_table, key);
+ 
+ err_out_mpt_free:
+-	mthca_free(&dev->mr_table.mpt_alloc, mr->ibmr.lkey);
++	mthca_free(&dev->mr_table.mpt_alloc, key);
+ 	return err;
+ }
+ 
+diff --git a/drivers/infiniband/hw/mthca/mthca_provider.c b/drivers/infiniband/hw/mthca/mthca_provider.c
+index 6bcde1c..9e491df 100644
+--- a/drivers/infiniband/hw/mthca/mthca_provider.c
++++ b/drivers/infiniband/hw/mthca/mthca_provider.c
+@@ -923,17 +923,13 @@ static struct ib_mr *mthca_reg_phys_mr(struct ib_pd       *pd,
+ 	struct mthca_mr *mr;
+ 	u64 *page_list;
+ 	u64 total_size;
+-	u64 mask;
++	unsigned long mask;
+ 	int shift;
+ 	int npages;
+ 	int err;
+ 	int i, j, n;
+ 
+-	/* First check that we have enough alignment */
+-	if ((*iova_start & ~PAGE_MASK) != (buffer_list[0].addr & ~PAGE_MASK))
+-		return ERR_PTR(-EINVAL);
+-
+-	mask = 0;
++	mask = buffer_list[0].addr ^ *iova_start;
+ 	total_size = 0;
+ 	for (i = 0; i < num_phys_buf; ++i) {
+ 		if (i != 0)
+@@ -947,17 +943,7 @@ static struct ib_mr *mthca_reg_phys_mr(struct ib_pd       *pd,
+ 	if (mask & ~PAGE_MASK)
+ 		return ERR_PTR(-EINVAL);
+ 
+-	/* Find largest page shift we can use to cover buffers */
+-	for (shift = PAGE_SHIFT; shift < 31; ++shift)
+-		if (num_phys_buf > 1) {
+-			if ((1ULL << shift) & mask)
+-				break;
+-		} else {
+-			if (1ULL << shift >=
+-			    buffer_list[0].size +
+-			    (buffer_list[0].addr & ((1ULL << shift) - 1)))
+-				break;
+-		}
++	shift = __ffs(mask | 1 << 31);
+ 
+ 	buffer_list[0].size += buffer_list[0].addr & ((1ULL << shift) - 1);
+ 	buffer_list[0].addr &= ~0ull << shift;
+@@ -1270,6 +1256,8 @@ static int mthca_init_node_data(struct mthca_dev *dev)
+ 		goto out;
+ 	}
+ 
++	if (mthca_is_memfree(dev))
++		dev->rev_id = be32_to_cpup((__be32 *) (out_mad->data + 32));
+ 	memcpy(&dev->ib_dev.node_guid, out_mad->data + 12, 8);
+ 
+ out:
+diff --git a/drivers/infiniband/hw/mthca/mthca_qp.c b/drivers/infiniband/hw/mthca/mthca_qp.c
+index 68aa73d..067fbd7 100644
+--- a/drivers/infiniband/hw/mthca/mthca_qp.c
++++ b/drivers/infiniband/hw/mthca/mthca_qp.c
+@@ -249,7 +249,8 @@ void mthca_qp_event(struct mthca_dev *dev, u32 qpn,
+ 	spin_unlock(&dev->qp_table.lock);
+ 
+ 	if (!qp) {
+-		mthca_warn(dev, "Async event for bogus QP %08x\n", qpn);
++		mthca_dbg(dev, "Async event %d for bogus QP %08x\n",
++			  (int) event_type, qpn);
+ 		return;
+ 	}
+ 
+@@ -1175,6 +1176,7 @@ static int mthca_alloc_qp_common(struct mthca_dev *dev,
+ {
+ 	int ret;
+ 	int i;
++	struct mthca_next_seg *next;
+ 
+ 	qp->refcount = 1;
+ 	init_waitqueue_head(&qp->wait);
+@@ -1217,7 +1219,6 @@ static int mthca_alloc_qp_common(struct mthca_dev *dev,
+ 	}
+ 
+ 	if (mthca_is_memfree(dev)) {
+-		struct mthca_next_seg *next;
+ 		struct mthca_data_seg *scatter;
+ 		int size = (sizeof (struct mthca_next_seg) +
+ 			    qp->rq.max_gs * sizeof (struct mthca_data_seg)) / 16;
+@@ -1240,6 +1241,13 @@ static int mthca_alloc_qp_common(struct mthca_dev *dev,
+ 						    qp->sq.wqe_shift) +
+ 						   qp->send_wqe_offset);
+ 		}
++	} else {
++		for (i = 0; i < qp->rq.max; ++i) {
++			next = get_recv_wqe(qp, i);
++			next->nda_op = htonl((((i + 1) % qp->rq.max) <<
++					      qp->rq.wqe_shift) | 1);
++		}
++
+ 	}
+ 
+ 	qp->sq.last = get_send_wqe(qp, qp->sq.max - 1);
+@@ -1863,7 +1871,6 @@ int mthca_tavor_post_receive(struct ib_qp *ibqp, struct ib_recv_wr *wr,
+ 		prev_wqe = qp->rq.last;
+ 		qp->rq.last = wqe;
+ 
+-		((struct mthca_next_seg *) wqe)->nda_op = 0;
+ 		((struct mthca_next_seg *) wqe)->ee_nds =
+ 			cpu_to_be32(MTHCA_NEXT_DBD);
+ 		((struct mthca_next_seg *) wqe)->flags = 0;
+@@ -1885,9 +1892,6 @@ int mthca_tavor_post_receive(struct ib_qp *ibqp, struct ib_recv_wr *wr,
+ 
+ 		qp->wrid[ind + qp->sq.max] = wr->wr_id;
+ 
+-		((struct mthca_next_seg *) prev_wqe)->nda_op =
+-			cpu_to_be32((ind << qp->rq.wqe_shift) | 1);
+-		wmb();
+ 		((struct mthca_next_seg *) prev_wqe)->ee_nds =
+ 			cpu_to_be32(MTHCA_NEXT_DBD | size);
+ 
+@@ -2013,9 +2017,7 @@ int mthca_arbel_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
+ 			((wr->send_flags & IB_SEND_SOLICITED) ?
+ 			 cpu_to_be32(MTHCA_NEXT_SOLICIT) : 0)   |
+ 			((wr->send_flags & IB_SEND_IP_CSUM) ?
+-			 cpu_to_be32(MTHCA_NEXT_IP_CSUM) : 0)   |
+-			((wr->send_flags & IB_SEND_UDP_TCP_CSUM) ?
+-			 cpu_to_be32(MTHCA_NEXT_TCP_UDP_CSUM) : 0)   |
++			 cpu_to_be32(MTHCA_NEXT_IP_CSUM | MTHCA_NEXT_TCP_UDP_CSUM) : 0) |
+ 			cpu_to_be32(1);
+ 		if (wr->opcode == IB_WR_SEND_WITH_IMM ||
+ 		    wr->opcode == IB_WR_RDMA_WRITE_WITH_IMM)
+diff --git a/drivers/infiniband/hw/mthca/mthca_srq.c b/drivers/infiniband/hw/mthca/mthca_srq.c
+index 553d681..af8483c 100644
+--- a/drivers/infiniband/hw/mthca/mthca_srq.c
++++ b/drivers/infiniband/hw/mthca/mthca_srq.c
+@@ -175,9 +175,17 @@ static int mthca_alloc_srq_buf(struct mthca_dev *dev, struct mthca_pd *pd,
+ 	 * scatter list L_Keys to the sentry value of 0x100.
+ 	 */
+ 	for (i = 0; i < srq->max; ++i) {
+-		wqe = get_wqe(srq, i);
++		struct mthca_next_seg *next;
+ 
+-		*wqe_to_link(wqe) = i < srq->max - 1 ? i + 1 : -1;
++		next = wqe = get_wqe(srq, i);
++
++		if (i < srq->max - 1) {
++			*wqe_to_link(wqe) = i + 1;
++			next->nda_op = htonl(((i + 1) << srq->wqe_shift) | 1);
++		} else {
++			*wqe_to_link(wqe) = -1;
++			next->nda_op = 0;
++		}
+ 
+ 		for (scatter = wqe + sizeof (struct mthca_next_seg);
+ 		     (void *) scatter < wqe + (1 << srq->wqe_shift);
+@@ -470,16 +478,15 @@ out:
+ void mthca_free_srq_wqe(struct mthca_srq *srq, u32 wqe_addr)
+ {
+ 	int ind;
++	struct mthca_next_seg *last_free;
+ 
+ 	ind = wqe_addr >> srq->wqe_shift;
+ 
+ 	spin_lock(&srq->lock);
+ 
+-	if (likely(srq->first_free >= 0))
+-		*wqe_to_link(get_wqe(srq, srq->last_free)) = ind;
+-	else
+-		srq->first_free = ind;
+-
++	last_free = get_wqe(srq, srq->last_free);
++	*wqe_to_link(last_free) = ind;
++	last_free->nda_op = htonl((ind << srq->wqe_shift) | 1);
+ 	*wqe_to_link(get_wqe(srq, ind)) = -1;
+ 	srq->last_free = ind;
+ 
+@@ -528,7 +535,6 @@ int mthca_tavor_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *wr,
+ 		prev_wqe  = srq->last;
+ 		srq->last = wqe;
+ 
+-		((struct mthca_next_seg *) wqe)->nda_op = 0;
+ 		((struct mthca_next_seg *) wqe)->ee_nds = 0;
+ 		/* flags field will always remain 0 */
+ 
+@@ -549,9 +555,6 @@ int mthca_tavor_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *wr,
+ 		if (i < srq->max_gs)
+ 			mthca_set_data_seg_inval(wqe);
+ 
+-		((struct mthca_next_seg *) prev_wqe)->nda_op =
+-			cpu_to_be32((ind << srq->wqe_shift) | 1);
+-		wmb();
+ 		((struct mthca_next_seg *) prev_wqe)->ee_nds =
+ 			cpu_to_be32(MTHCA_NEXT_DBD);
+ 
+@@ -633,8 +636,6 @@ int mthca_arbel_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *wr,
+ 			break;
+ 		}
+ 
+-		((struct mthca_next_seg *) wqe)->nda_op =
+-			cpu_to_be32((next_ind << srq->wqe_shift) | 1);
+ 		((struct mthca_next_seg *) wqe)->ee_nds = 0;
+ 		/* flags field will always remain 0 */
+ 
+diff --git a/drivers/net/mlx4/Makefile b/drivers/net/mlx4/Makefile
+index 161e01b..3af97af 100644
+--- a/drivers/net/mlx4/Makefile
++++ b/drivers/net/mlx4/Makefile
+@@ -6,4 +6,4 @@ export CPPFLAGS := $(INFINIBANDINCLUDE) $(CPPFLAGS)
+ obj-$(CONFIG_MLX4_CORE)		+= mlx4_core.o
+ 
+ mlx4_core-y :=	alloc.o catas.o cmd.o cq.o eq.o fw.o icm.o intf.o main.o mcg.o \
+-		mr.o pd.o profile.o qp.o reset.o srq.o xrcd.o
++		mr.o pd.o profile.o qp.o reset.o srq.o
+diff --git a/drivers/net/mlx4/fw.c b/drivers/net/mlx4/fw.c
+index f154e6f..cb8de45 100644
+--- a/drivers/net/mlx4/fw.c
++++ b/drivers/net/mlx4/fw.c
+@@ -46,6 +46,10 @@ enum {
+ extern void __buggy_use_of_MLX4_GET(void);
+ extern void __buggy_use_of_MLX4_PUT(void);
+ 
++static int mlx4_core_enable_qos = 1;
++module_param_named(enable_qos, mlx4_core_enable_qos, int, 0444);
++MODULE_PARM_DESC(enable_qos, "Enable Quality of Service support in the HCA if > 0, (default 1)");
++
+ #define MLX4_GET(dest, source, offset)				      \
+ 	do {							      \
+ 		void *__p = (char *) (source) + (offset);	      \
+@@ -160,8 +164,6 @@ int mlx4_QUERY_DEV_CAP(struct mlx4_dev *dev, struct mlx4_dev_cap *dev_cap)
+ #define QUERY_DEV_CAP_MAX_MCG_OFFSET		0x63
+ #define QUERY_DEV_CAP_RSVD_PD_OFFSET		0x64
+ #define QUERY_DEV_CAP_MAX_PD_OFFSET		0x65
+-#define QUERY_DEV_CAP_RSVD_XRC_OFFSET		0x66
+-#define QUERY_DEV_CAP_MAX_XRC_OFFSET		0x67
+ #define QUERY_DEV_CAP_RDMARC_ENTRY_SZ_OFFSET	0x80
+ #define QUERY_DEV_CAP_QPC_ENTRY_SZ_OFFSET	0x82
+ #define QUERY_DEV_CAP_AUX_ENTRY_SZ_OFFSET	0x84
+@@ -272,11 +274,6 @@ int mlx4_QUERY_DEV_CAP(struct mlx4_dev *dev, struct mlx4_dev_cap *dev_cap)
+ 	MLX4_GET(field, outbox, QUERY_DEV_CAP_MAX_PD_OFFSET);
+ 	dev_cap->max_pds = 1 << (field & 0x3f);
+ 
+-	MLX4_GET(field, outbox, QUERY_DEV_CAP_RSVD_XRC_OFFSET);
+-	dev_cap->reserved_xrcds = field >> 4;
+-	MLX4_GET(field, outbox, QUERY_DEV_CAP_MAX_XRC_OFFSET);
+-	dev_cap->max_xrcds = 1 << (field & 0x1f);
+-
+ 	MLX4_GET(size, outbox, QUERY_DEV_CAP_RDMARC_ENTRY_SZ_OFFSET);
+ 	dev_cap->rdmarc_entry_sz = size;
+ 	MLX4_GET(size, outbox, QUERY_DEV_CAP_QPC_ENTRY_SZ_OFFSET);
+@@ -633,9 +630,6 @@ int mlx4_QUERY_ADAPTER(struct mlx4_dev *dev, struct mlx4_adapter *adapter)
+ 	int err;
+ 
+ #define QUERY_ADAPTER_OUT_SIZE             0x100
+-#define QUERY_ADAPTER_VENDOR_ID_OFFSET     0x00
+-#define QUERY_ADAPTER_DEVICE_ID_OFFSET     0x04
+-#define QUERY_ADAPTER_REVISION_ID_OFFSET   0x08
+ #define QUERY_ADAPTER_INTA_PIN_OFFSET      0x10
+ #define QUERY_ADAPTER_VSD_OFFSET           0x20
+ 
+@@ -649,9 +643,6 @@ int mlx4_QUERY_ADAPTER(struct mlx4_dev *dev, struct mlx4_adapter *adapter)
+ 	if (err)
+ 		goto out;
+ 
+-	MLX4_GET(adapter->vendor_id, outbox,   QUERY_ADAPTER_VENDOR_ID_OFFSET);
+-	MLX4_GET(adapter->device_id, outbox,   QUERY_ADAPTER_DEVICE_ID_OFFSET);
+-	MLX4_GET(adapter->revision_id, outbox, QUERY_ADAPTER_REVISION_ID_OFFSET);
+ 	MLX4_GET(adapter->inta_pin, outbox,    QUERY_ADAPTER_INTA_PIN_OFFSET);
+ 
+ 	get_board_id(outbox + QUERY_ADAPTER_VSD_OFFSET / 4,
+@@ -723,6 +714,10 @@ int mlx4_INIT_HCA(struct mlx4_dev *dev, struct mlx4_init_hca_param *param)
+ 	/* Check port for UD address vector: */
+ 	*(inbox + INIT_HCA_FLAGS_OFFSET / 4) |= cpu_to_be32(1);
+ 
++	/* Enable QoS support if module parameter set */
++	if (mlx4_core_enable_qos)
++		*(inbox + INIT_HCA_FLAGS_OFFSET / 4) |= cpu_to_be32(1 << 2);
++
+ 	/* QPC/EEC/CQC/EQC/RDMARC attributes */
+ 
+ 	MLX4_PUT(inbox, param->qpc_base,      INIT_HCA_QPC_BASE_OFFSET);
+@@ -857,3 +852,40 @@ int mlx4_NOP(struct mlx4_dev *dev)
+ 	/* Input modifier of 0x1f means "finish as soon as possible." */
+ 	return mlx4_cmd(dev, 0, 0x1f, 0, MLX4_CMD_NOP, 100);
+ }
++
++int mlx4_query_diag_counters(struct mlx4_dev *dev, int array_length,
++			     int in_modifier, unsigned int in_offset[],
++			     u32 counter_out[])
++{
++	struct mlx4_cmd_mailbox *mailbox;
++	u32 *outbox;
++	u32 op_modifer = (u32)in_modifier;
++	int ret;
++	int i;
++
++	mailbox = mlx4_alloc_cmd_mailbox(dev);
++	if (IS_ERR(mailbox))
++		return PTR_ERR(mailbox);
++	outbox = mailbox->buf;
++
++	ret = mlx4_cmd_box(dev, 0, mailbox->dma, 0, op_modifer,
++			   MLX4_CMD_DIAG_RPRT, MLX4_CMD_TIME_CLASS_A);
++	if (ret)
++		goto out;
++
++	for(i=0; i<array_length; i++) {
++		if (in_offset[i] > MLX4_MAILBOX_SIZE) {
++			ret = -1;
++			goto out;
++		}
++
++		MLX4_GET(counter_out[i], outbox,   in_offset[i]);
++	}
++	ret = 0;
++
++out:
++	mlx4_free_cmd_mailbox(dev, mailbox);
++	return ret;
++}
++EXPORT_SYMBOL_GPL(mlx4_query_diag_counters);
++
+diff --git a/drivers/net/mlx4/fw.h b/drivers/net/mlx4/fw.h
+index e271e36..306cb9b 100644
+--- a/drivers/net/mlx4/fw.h
++++ b/drivers/net/mlx4/fw.h
+@@ -82,8 +82,6 @@ struct mlx4_dev_cap {
+ 	int max_mcgs;
+ 	int reserved_pds;
+ 	int max_pds;
+-	int reserved_xrcds;
+-	int max_xrcds;
+ 	int qpc_entry_sz;
+ 	int rdmarc_entry_sz;
+ 	int altc_entry_sz;
+@@ -102,9 +100,6 @@ struct mlx4_dev_cap {
+ };
+ 
+ struct mlx4_adapter {
+-	u32  vendor_id;
+-	u32  device_id;
+-	u32  revision_id;
+ 	char board_id[MLX4_BOARD_ID_LEN];
+ 	u8   inta_pin;
+ };
+diff --git a/drivers/net/mlx4/main.c b/drivers/net/mlx4/main.c
+index e2d7755..ea1ebdc 100644
+--- a/drivers/net/mlx4/main.c
++++ b/drivers/net/mlx4/main.c
+@@ -59,6 +59,10 @@ MODULE_PARM_DESC(debug_level, "Enable debug tracing if > 0");
+ 
+ #endif /* CONFIG_MLX4_DEBUG */
+ 
++int mlx4_blck_lb=1;
++module_param_named(block_loopback, mlx4_blck_lb, int, 0644);
++MODULE_PARM_DESC(block_loopback, "Block multicast loopback packets if > 0");
++
+ #ifdef CONFIG_PCI_MSI
+ 
+ static int msi_x = 1;
+@@ -210,10 +214,6 @@ static int mlx4_dev_cap(struct mlx4_dev *dev, struct mlx4_dev_cap *dev_cap)
+ 	dev->caps.flags		     = dev_cap->flags;
+ 	dev->caps.stat_rate_support  = dev_cap->stat_rate_support;
+ 	dev->caps.max_gso_sz	     = dev_cap->max_gso_sz;
+-	dev->caps.reserved_xrcds     = (dev->caps.flags & MLX4_DEV_CAP_FLAG_XRC) ?
+-		dev_cap->reserved_xrcds : 0;
+-	dev->caps.max_xrcds	     = (dev->caps.flags & MLX4_DEV_CAP_FLAG_XRC) ?
+-		dev_cap->max_xrcds : 0;
+ 
+ 	return 0;
+ }
+@@ -590,7 +590,6 @@ static int mlx4_init_hca(struct mlx4_dev *dev)
+ 	}
+ 
+ 	priv->eq_table.inta_pin = adapter.inta_pin;
+-	dev->rev_id		= adapter.revision_id;
+ 	memcpy(dev->board_id, adapter.board_id, sizeof dev->board_id);
+ 
+ 	return 0;
+@@ -642,18 +641,11 @@ static int mlx4_setup_hca(struct mlx4_dev *dev)
+ 		goto err_kar_unmap;
+ 	}
+ 
+-	err = mlx4_init_xrcd_table(dev);
+-	if (err) {
+-		mlx4_err(dev, "Failed to initialize "
+-			 "extended reliably connected domain table, aborting.\n");
+-		goto err_pd_table_free;
+-	}
+-
+ 	err = mlx4_init_mr_table(dev);
+ 	if (err) {
+ 		mlx4_err(dev, "Failed to initialize "
+ 			 "memory region table, aborting.\n");
+-		goto err_xrcd_table_free;
++		goto err_pd_table_free;
+ 	}
+ 
+ 	err = mlx4_init_eq_table(dev);
+@@ -737,9 +729,6 @@ err_eq_table_free:
+ err_mr_table_free:
+ 	mlx4_cleanup_mr_table(dev);
+ 
+-err_xrcd_table_free:
+-	mlx4_cleanup_xrcd_table(dev);
+-
+ err_pd_table_free:
+ 	mlx4_cleanup_pd_table(dev);
+ 
+@@ -913,7 +902,6 @@ err_cleanup:
+ 	mlx4_cmd_use_polling(dev);
+ 	mlx4_cleanup_eq_table(dev);
+ 	mlx4_cleanup_mr_table(dev);
+-	mlx4_cleanup_xrcd_table(dev);
+ 	mlx4_cleanup_pd_table(dev);
+ 	mlx4_cleanup_uar_table(dev);
+ 
+@@ -973,7 +961,6 @@ static void mlx4_remove_one(struct pci_dev *pdev)
+ 		mlx4_cmd_use_polling(dev);
+ 		mlx4_cleanup_eq_table(dev);
+ 		mlx4_cleanup_mr_table(dev);
+-		mlx4_cleanup_xrcd_table(dev);
+ 		mlx4_cleanup_pd_table(dev);
+ 
+ 		iounmap(priv->kar);
+diff --git a/drivers/net/mlx4/mcg.c b/drivers/net/mlx4/mcg.c
+index a99e772..6da6a43 100644
+--- a/drivers/net/mlx4/mcg.c
++++ b/drivers/net/mlx4/mcg.c
+@@ -206,13 +206,14 @@ int mlx4_multicast_attach(struct mlx4_dev *dev, struct mlx4_qp *qp, u8 gid[16])
+ 	}
+ 
+ 	for (i = 0; i < members_count; ++i)
+-		if (mgm->qp[i] == cpu_to_be32(qp->qpn)) {
++		if ((be32_to_cpu(mgm->qp[i]) & MGM_QPN_MASK) == qp->qpn) {
+ 			mlx4_dbg(dev, "QP %06x already a member of MGM\n", qp->qpn);
+ 			err = 0;
+ 			goto out;
+ 		}
+ 
+-	mgm->qp[members_count++] = cpu_to_be32(qp->qpn);
++	mgm->qp[members_count++] = cpu_to_be32((qp->qpn & MGM_QPN_MASK) |
++					       (!!mlx4_blck_lb << MGM_BLCK_LB_BIT));
+ 	mgm->members_count       = cpu_to_be32(members_count);
+ 
+ 	err = mlx4_WRITE_MCG(dev, index, mailbox);
+@@ -287,7 +288,7 @@ int mlx4_multicast_detach(struct mlx4_dev *dev, struct mlx4_qp *qp, u8 gid[16])
+ 
+ 	members_count = be32_to_cpu(mgm->members_count);
+ 	for (loc = -1, i = 0; i < members_count; ++i)
+-		if (mgm->qp[i] == cpu_to_be32(qp->qpn))
++		if ((be32_to_cpu(mgm->qp[i]) & MGM_QPN_MASK) == qp->qpn)
+ 			loc = i;
+ 
+ 	if (loc == -1) {
+diff --git a/drivers/net/mlx4/mlx4.h b/drivers/net/mlx4/mlx4.h
+index d1ac68f..8fc297e 100644
+--- a/drivers/net/mlx4/mlx4.h
++++ b/drivers/net/mlx4/mlx4.h
+@@ -46,8 +46,8 @@
+ 
+ #define DRV_NAME	"mlx4_core"
+ #define PFX		DRV_NAME ": "
+-#define DRV_VERSION	"0.01"
+-#define DRV_RELDATE	"May 1, 2007"
++#define DRV_VERSION	"1.0"
++#define DRV_RELDATE	"February 28, 2008"
+ 
+ enum {
+ 	MLX4_HCR_BASE		= 0x80680,
+@@ -106,6 +106,10 @@ extern int mlx4_debug_level;
+ #define mlx4_warn(mdev, format, arg...) \
+ 	dev_warn(&mdev->pdev->dev, format, ## arg)
+ 
++#define MGM_QPN_MASK       0x00FFFFFF
++#define MGM_BLCK_LB_BIT    30
++extern int mlx4_blck_lb;
++
+ struct mlx4_bitmap {
+ 	u32			last;
+ 	u32			top;
+@@ -220,6 +224,7 @@ struct mlx4_eq_table {
+ struct mlx4_srq_table {
+ 	struct mlx4_bitmap	bitmap;
+ 	spinlock_t		lock;
++	struct radix_tree_root	tree;
+ 	struct mlx4_icm_table	table;
+ 	struct mlx4_icm_table	cmpt_table;
+ };
+@@ -259,7 +264,6 @@ struct mlx4_priv {
+ 	struct mlx4_cmd		cmd;
+ 
+ 	struct mlx4_bitmap	pd_bitmap;
+-	struct mlx4_bitmap	xrcd_bitmap;
+ 	struct mlx4_uar_table	uar_table;
+ 	struct mlx4_mr_table	mr_table;
+ 	struct mlx4_cq_table	cq_table;
+@@ -289,7 +293,6 @@ void mlx4_bitmap_cleanup(struct mlx4_bitmap *bitmap);
+ int mlx4_reset(struct mlx4_dev *dev);
+ 
+ int mlx4_init_pd_table(struct mlx4_dev *dev);
+-int mlx4_init_xrcd_table(struct mlx4_dev *dev);
+ int mlx4_init_uar_table(struct mlx4_dev *dev);
+ int mlx4_init_mr_table(struct mlx4_dev *dev);
+ int mlx4_init_eq_table(struct mlx4_dev *dev);
+@@ -306,7 +309,6 @@ void mlx4_cleanup_cq_table(struct mlx4_dev *dev);
+ void mlx4_cleanup_qp_table(struct mlx4_dev *dev);
+ void mlx4_cleanup_srq_table(struct mlx4_dev *dev);
+ void mlx4_cleanup_mcg_table(struct mlx4_dev *dev);
+-void mlx4_cleanup_xrcd_table(struct mlx4_dev *dev);
+ 
+ void mlx4_start_catas_poll(struct mlx4_dev *dev);
+ void mlx4_stop_catas_poll(struct mlx4_dev *dev);
+diff --git a/drivers/net/mlx4/mr.c b/drivers/net/mlx4/mr.c
+index 0c05a10..730b3dc 100644
+--- a/drivers/net/mlx4/mr.c
++++ b/drivers/net/mlx4/mr.c
+@@ -578,13 +578,6 @@ int mlx4_fmr_alloc(struct mlx4_dev *dev, u32 pd, u32 access, int max_pages,
+ 		goto err_free;
+ 	}
+ 
+-	fmr->mpt = mlx4_table_find(&priv->mr_table.dmpt_table,
+-				    key_to_hw_index(fmr->mr.key), NULL);
+-	if (!fmr->mpt) {
+-		err = -ENOMEM;
+-		goto err_free;
+-	}
+-
+ 	return 0;
+ 
+ err_free:
+@@ -595,7 +588,19 @@ EXPORT_SYMBOL_GPL(mlx4_fmr_alloc);
+ 
+ int mlx4_fmr_enable(struct mlx4_dev *dev, struct mlx4_fmr *fmr)
+ {
+-	return mlx4_mr_enable(dev, &fmr->mr);
++	struct mlx4_priv *priv = mlx4_priv(dev);
++	int err;
++
++	err = mlx4_mr_enable(dev, &fmr->mr);
++	if (err)
++		return err;
++
++	fmr->mpt = mlx4_table_find(&priv->mr_table.dmpt_table,
++				    key_to_hw_index(fmr->mr.key), NULL);
++	if (!fmr->mpt)
++		return -ENOMEM;
++
++	return 0;
+ }
+ EXPORT_SYMBOL_GPL(mlx4_fmr_enable);
+ 
+diff --git a/drivers/net/mlx4/qp.c b/drivers/net/mlx4/qp.c
+index 04def82..1692a4b 100644
+--- a/drivers/net/mlx4/qp.c
++++ b/drivers/net/mlx4/qp.c
+@@ -55,7 +55,8 @@ void mlx4_qp_event(struct mlx4_dev *dev, u32 qpn, int event_type)
+ 	spin_unlock(&qp_table->lock);
+ 
+ 	if (!qp) {
+-		mlx4_warn(dev, "Async event for bogus QP %08x\n", qpn);
++		mlx4_dbg(dev, "Async event %d for bogus QP %08x\n",
++			 event_type, qpn);
+ 		return;
+ 	}
+ 
+@@ -263,12 +264,10 @@ int mlx4_init_qp_table(struct mlx4_dev *dev)
+ 	 * We reserve 2 extra QPs per port for the special QPs.  The
+ 	 * block of special QPs must be aligned to a multiple of 8, so
+ 	 * round up.
+-	 * We also reserve the MSB of the 24-bit QP number to indicate
+-	 * an XRC qp.
+ 	 */
+ 	dev->caps.sqp_start = ALIGN(dev->caps.reserved_qps, 8);
+ 	err = mlx4_bitmap_init(&qp_table->bitmap, dev->caps.num_qps,
+-			       (1 << 23) - 1, dev->caps.sqp_start + 8);
++			       (1 << 24) - 1, dev->caps.sqp_start + 8);
+ 	if (err)
+ 		return err;
+ 
+diff --git a/drivers/net/mlx4/srq.c b/drivers/net/mlx4/srq.c
+index 84c070a..d23f46d 100644
+--- a/drivers/net/mlx4/srq.c
++++ b/drivers/net/mlx4/srq.c
+@@ -40,20 +40,20 @@
+ struct mlx4_srq_context {
+ 	__be32			state_logsize_srqn;
+ 	u8			logstride;
+-	u8			reserved1;
+-	__be16			xrc_domain;
+-	__be32			pg_offset_cqn;
+-	u32			reserved2;
++	u8			reserved1[3];
++	u8			pg_offset;
++	u8			reserved2[3];
++	u32			reserved3;
+ 	u8			log_page_size;
+-	u8			reserved3[2];
++	u8			reserved4[2];
+ 	u8			mtt_base_addr_h;
+ 	__be32			mtt_base_addr_l;
+ 	__be32			pd;
+ 	__be16			limit_watermark;
+ 	__be16			wqe_cnt;
+-	u16			reserved4;
++	u16			reserved5;
+ 	__be16			wqe_counter;
+-	u32			reserved5;
++	u32			reserved6;
+ 	__be64			db_rec_addr;
+ };
+ 
+@@ -64,7 +64,7 @@ void mlx4_srq_event(struct mlx4_dev *dev, u32 srqn, int event_type)
+ 
+ 	spin_lock(&srq_table->lock);
+ 
+-	srq = radix_tree_lookup(&dev->srq_table_tree, srqn & (dev->caps.num_srqs - 1));
++	srq = radix_tree_lookup(&srq_table->tree, srqn & (dev->caps.num_srqs - 1));
+ 	if (srq)
+ 		atomic_inc(&srq->refcount);
+ 
+@@ -109,8 +109,8 @@ static int mlx4_QUERY_SRQ(struct mlx4_dev *dev, struct mlx4_cmd_mailbox *mailbox
+ 			    MLX4_CMD_TIME_CLASS_A);
+ }
+ 
+-int mlx4_srq_alloc(struct mlx4_dev *dev, u32 pdn, u32 cqn, u16 xrcd,
+-		   struct mlx4_mtt *mtt, u64 db_rec, struct mlx4_srq *srq)
++int mlx4_srq_alloc(struct mlx4_dev *dev, u32 pdn, struct mlx4_mtt *mtt,
++		   u64 db_rec, struct mlx4_srq *srq)
+ {
+ 	struct mlx4_srq_table *srq_table = &mlx4_priv(dev)->srq_table;
+ 	struct mlx4_cmd_mailbox *mailbox;
+@@ -131,7 +131,7 @@ int mlx4_srq_alloc(struct mlx4_dev *dev, u32 pdn, u32 cqn, u16 xrcd,
+ 		goto err_put;
+ 
+ 	spin_lock_irq(&srq_table->lock);
+-	err = radix_tree_insert(&dev->srq_table_tree, srq->srqn, srq);
++	err = radix_tree_insert(&srq_table->tree, srq->srqn, srq);
+ 	spin_unlock_irq(&srq_table->lock);
+ 	if (err)
+ 		goto err_cmpt_put;
+@@ -148,8 +148,6 @@ int mlx4_srq_alloc(struct mlx4_dev *dev, u32 pdn, u32 cqn, u16 xrcd,
+ 	srq_context->state_logsize_srqn = cpu_to_be32((ilog2(srq->max) << 24) |
+ 						      srq->srqn);
+ 	srq_context->logstride          = srq->wqe_shift - 4;
+-	srq_context->xrc_domain		= cpu_to_be16(xrcd);
+-	srq_context->pg_offset_cqn	= cpu_to_be32(cqn & 0xffffff);
+ 	srq_context->log_page_size      = mtt->page_shift - MLX4_ICM_PAGE_SHIFT;
+ 
+ 	mtt_addr = mlx4_mtt_addr(dev, mtt);
+@@ -170,7 +168,7 @@ int mlx4_srq_alloc(struct mlx4_dev *dev, u32 pdn, u32 cqn, u16 xrcd,
+ 
+ err_radix:
+ 	spin_lock_irq(&srq_table->lock);
+-	radix_tree_delete(&dev->srq_table_tree, srq->srqn);
++	radix_tree_delete(&srq_table->tree, srq->srqn);
+ 	spin_unlock_irq(&srq_table->lock);
+ 
+ err_cmpt_put:
+@@ -186,29 +184,18 @@ err_out:
+ }
+ EXPORT_SYMBOL_GPL(mlx4_srq_alloc);
+ 
+-void mlx4_srq_invalidate(struct mlx4_dev *dev, struct mlx4_srq *srq)
++void mlx4_srq_free(struct mlx4_dev *dev, struct mlx4_srq *srq)
+ {
++	struct mlx4_srq_table *srq_table = &mlx4_priv(dev)->srq_table;
+ 	int err;
+ 
+ 	err = mlx4_HW2SW_SRQ(dev, NULL, srq->srqn);
+ 	if (err)
+ 		mlx4_warn(dev, "HW2SW_SRQ failed (%d) for SRQN %06x\n", err, srq->srqn);
+-}
+-EXPORT_SYMBOL_GPL(mlx4_srq_invalidate);
+-
+-void mlx4_srq_remove(struct mlx4_dev *dev, struct mlx4_srq *srq)
+-{
+-	struct mlx4_srq_table *srq_table = &mlx4_priv(dev)->srq_table;
+ 
+ 	spin_lock_irq(&srq_table->lock);
+-	radix_tree_delete(&dev->srq_table_tree, srq->srqn);
++	radix_tree_delete(&srq_table->tree, srq->srqn);
+ 	spin_unlock_irq(&srq_table->lock);
+-}
+-EXPORT_SYMBOL_GPL(mlx4_srq_remove);
+-
+-void mlx4_srq_free(struct mlx4_dev *dev, struct mlx4_srq *srq)
+-{
+-	struct mlx4_srq_table *srq_table = &mlx4_priv(dev)->srq_table;
+ 
+ 	if (atomic_dec_and_test(&srq->refcount))
+ 		complete(&srq->free);
+@@ -254,7 +241,7 @@ int mlx4_init_srq_table(struct mlx4_dev *dev)
+ 	int err;
+ 
+ 	spin_lock_init(&srq_table->lock);
+-	INIT_RADIX_TREE(&dev->srq_table_tree, GFP_ATOMIC);
++	INIT_RADIX_TREE(&srq_table->tree, GFP_ATOMIC);
+ 
+ 	err = mlx4_bitmap_init(&srq_table->bitmap, dev->caps.num_srqs,
+ 			       dev->caps.num_srqs - 1, dev->caps.reserved_srqs);
+diff --git a/include/linux/mlx4/device.h b/include/linux/mlx4/device.h
+index e1253b3..645dedc 100644
+--- a/include/linux/mlx4/device.h
++++ b/include/linux/mlx4/device.h
+@@ -56,7 +56,6 @@ enum {
+ 	MLX4_DEV_CAP_FLAG_RC		= 1 <<  0,
+ 	MLX4_DEV_CAP_FLAG_UC		= 1 <<  1,
+ 	MLX4_DEV_CAP_FLAG_UD		= 1 <<  2,
+-	MLX4_DEV_CAP_FLAG_XRC		= 1 <<  3,
+ 	MLX4_DEV_CAP_FLAG_SRQ		= 1 <<  6,
+ 	MLX4_DEV_CAP_FLAG_IPOIB_CSUM	= 1 <<  7,
+ 	MLX4_DEV_CAP_FLAG_BAD_PKEY_CNTR	= 1 <<  8,
+@@ -182,8 +181,6 @@ struct mlx4_caps {
+ 	int			num_pds;
+ 	int			reserved_pds;
+ 	int			mtt_entry_sz;
+-	int			reserved_xrcds;
+-	int			max_xrcds;
+ 	u32			max_msg_sz;
+ 	u32			page_size_cap;
+ 	u32			flags;
+@@ -296,7 +293,6 @@ struct mlx4_dev {
+ 	unsigned long		flags;
+ 	struct mlx4_caps	caps;
+ 	struct radix_tree_root	qp_table_tree;
+-	struct radix_tree_root	srq_table_tree;
+ 	u32			rev_id;
+ 	char			board_id[MLX4_BOARD_ID_LEN];
+ };
+@@ -322,9 +318,6 @@ void mlx4_buf_free(struct mlx4_dev *dev, int size, struct mlx4_buf *buf);
+ int mlx4_pd_alloc(struct mlx4_dev *dev, u32 *pdn);
+ void mlx4_pd_free(struct mlx4_dev *dev, u32 pdn);
+ 
+-int mlx4_xrcd_alloc(struct mlx4_dev *dev, u32 *xrcdn);
+-void mlx4_xrcd_free(struct mlx4_dev *dev, u32 xrcdn);
+-
+ int mlx4_uar_alloc(struct mlx4_dev *dev, struct mlx4_uar *uar);
+ void mlx4_uar_free(struct mlx4_dev *dev, struct mlx4_uar *uar);
+ 
+@@ -349,8 +342,8 @@ void mlx4_cq_free(struct mlx4_dev *dev, struct mlx4_cq *cq);
+ int mlx4_qp_alloc(struct mlx4_dev *dev, int sqpn, struct mlx4_qp *qp);
+ void mlx4_qp_free(struct mlx4_dev *dev, struct mlx4_qp *qp);
+ 
+-int mlx4_srq_alloc(struct mlx4_dev *dev, u32 pdn, u32 cqn, u16 xrcd,
+-		   struct mlx4_mtt *mtt, u64 db_rec, struct mlx4_srq *srq);
++int mlx4_srq_alloc(struct mlx4_dev *dev, u32 pdn, struct mlx4_mtt *mtt,
++		   u64 db_rec, struct mlx4_srq *srq);
+ void mlx4_srq_free(struct mlx4_dev *dev, struct mlx4_srq *srq);
+ int mlx4_srq_arm(struct mlx4_dev *dev, struct mlx4_srq *srq, int limit_watermark);
+ int mlx4_srq_query(struct mlx4_dev *dev, struct mlx4_srq *srq, int *limit_watermark);
+@@ -370,5 +363,8 @@ void mlx4_fmr_unmap(struct mlx4_dev *dev, struct mlx4_fmr *fmr,
+ 		    u32 *lkey, u32 *rkey);
+ int mlx4_fmr_free(struct mlx4_dev *dev, struct mlx4_fmr *fmr);
+ int mlx4_SYNC_TPT(struct mlx4_dev *dev);
++int mlx4_query_diag_counters(struct mlx4_dev *melx4_dev, int array_length,
++			     int in_modifier, unsigned int in_offset[],
++			     u32 counter_out[]);
+ 
+ #endif /* MLX4_DEVICE_H */
+diff --git a/include/linux/mlx4/qp.h b/include/linux/mlx4/qp.h
+index dbd95d4..ac33c5c 100644
+--- a/include/linux/mlx4/qp.h
++++ b/include/linux/mlx4/qp.h
+@@ -74,7 +74,6 @@ enum {
+ 	MLX4_QP_ST_UC				= 0x1,
+ 	MLX4_QP_ST_RD				= 0x2,
+ 	MLX4_QP_ST_UD				= 0x3,
+-	MLX4_QP_ST_XRC				= 0x6,
+ 	MLX4_QP_ST_MLX				= 0x7
+ };
+ 
+@@ -137,7 +136,7 @@ struct mlx4_qp_context {
+ 	__be32			ssn;
+ 	__be32			params2;
+ 	__be32			rnr_nextrecvpsn;
+-	__be32			xrcd;
++	__be32			srcd;
+ 	__be32			cqn_recv;
+ 	__be64			db_rec_addr;
+ 	__be32			qkey;
+diff --git a/include/linux/mlx4/srq.h b/include/linux/mlx4/srq.h
+index 5371415..799a069 100644
+--- a/include/linux/mlx4/srq.h
++++ b/include/linux/mlx4/srq.h
+@@ -33,21 +33,10 @@
+ #ifndef MLX4_SRQ_H
+ #define MLX4_SRQ_H
+ 
+-#include <linux/types.h>
+-#include <linux/mlx4/device.h>
+-
+ struct mlx4_wqe_srq_next_seg {
+ 	u16			reserved1;
+ 	__be16			next_wqe_index;
+ 	u32			reserved2[3];
+ };
+ 
+-void mlx4_srq_invalidate(struct mlx4_dev *dev, struct mlx4_srq *srq);
+-void mlx4_srq_remove(struct mlx4_dev *dev, struct mlx4_srq *srq);
+-
+-static inline struct mlx4_srq *__mlx4_srq_lookup(struct mlx4_dev *dev, u32 srqn)
+-{
+-	return radix_tree_lookup(&dev->srq_table_tree, srqn & (dev->caps.num_srqs - 1));
+-}
+-
+ #endif /* MLX4_SRQ_H */
+diff --git a/include/rdma/ib_user_verbs.h b/include/rdma/ib_user_verbs.h
+index 27f5e76..64a721f 100644
+--- a/include/rdma/ib_user_verbs.h
++++ b/include/rdma/ib_user_verbs.h
+@@ -83,10 +83,7 @@ enum {
+ 	IB_USER_VERBS_CMD_MODIFY_SRQ,
+ 	IB_USER_VERBS_CMD_QUERY_SRQ,
+ 	IB_USER_VERBS_CMD_DESTROY_SRQ,
+-	IB_USER_VERBS_CMD_POST_SRQ_RECV,
+-	IB_USER_VERBS_CMD_CREATE_XRC_SRQ,
+-	IB_USER_VERBS_CMD_OPEN_XRC_DOMAIN,
+-	IB_USER_VERBS_CMD_CLOSE_XRC_DOMAIN
++	IB_USER_VERBS_CMD_POST_SRQ_RECV
+ };
+ 
+ /*
+@@ -646,18 +643,6 @@ struct ib_uverbs_create_srq {
+ 	__u64 driver_data[0];
+ };
+ 
+-struct ib_uverbs_create_xrc_srq {
+-	__u64 response;
+-	__u64 user_handle;
+-	__u32 pd_handle;
+-	__u32 max_wr;
+-	__u32 max_sge;
+-	__u32 srq_limit;
+-	__u32 xrcd_handle;
+-	__u32 xrc_cq;
+-	__u64 driver_data[0];
+-};
+-
+ struct ib_uverbs_create_srq_resp {
+ 	__u32 srq_handle;
+ 	__u32 max_wr;
+@@ -697,23 +682,4 @@ struct ib_uverbs_destroy_srq_resp {
+ 	__u32 events_reported;
+ };
+ 
+-struct ib_uverbs_open_xrc_domain {
+-	__u64 response;
+-	__u32 fd;
+-	__u32 oflags;
+-	__u64 driver_data[0];
+-};
+-
+-struct ib_uverbs_open_xrc_domain_resp {
+-	__u32 xrcd_handle;
+-};
+-
+-struct ib_uverbs_close_xrc_domain {
+-	__u64 response;
+-	__u32 xrcd_handle;
+-	__u64 driver_data[0];
+-};
+-
+-
+-
+ #endif /* IB_USER_VERBS_H */
+diff --git a/include/rdma/ib_verbs.h b/include/rdma/ib_verbs.h
+index 14a51b8..81dacbb 100644
+--- a/include/rdma/ib_verbs.h
++++ b/include/rdma/ib_verbs.h
+@@ -52,8 +52,6 @@
+ 
+ #include <asm/atomic.h>
+ #include <asm/uaccess.h>
+-#include <linux/rbtree.h>
+-#include <linux/mutex.h>
+ 
+ union ib_gid {
+ 	u8	raw[16];
+@@ -98,11 +96,14 @@ enum ib_device_cap_flags {
+ 	IB_DEVICE_ZERO_STAG		= (1<<15),
+ 	IB_DEVICE_SEND_W_INV		= (1<<16),
+ 	IB_DEVICE_MEM_WINDOW		= (1<<17),
+-	/* devices which publish this capability must support insertion of
+-	   IP, UDP and TCP checksum on outgoing packets */
++	/*
++	 * devices which publish this capability must support insertion of UDP
++	 * and TCP checksum on outgoing packets and can verify the validity of
++	 * checksum for incoming packets. Setting this flag implies the driver
++	 * may set NETIF_F_IP_CSUM.
++	 */
+ 	IB_DEVICE_IP_CSUM		= (1<<18),
+ 	IB_DEVICE_TCP_TSO               = (1<<19),
+-	IB_DEVICE_XRC                   = (1<<20),
+ };
+ 
+ enum ib_atomic_cap {
+@@ -491,11 +492,14 @@ enum ib_qp_type {
+ 	IB_QPT_RC,
+ 	IB_QPT_UC,
+ 	IB_QPT_UD,
+-	IB_QPT_XRC,
+ 	IB_QPT_RAW_IPV6,
+ 	IB_QPT_RAW_ETY
+ };
+ 
++enum qp_create_flags {
++	QP_CREATE_LSO = 1 << 0,
++};
++
+ struct ib_qp_init_attr {
+ 	void                  (*event_handler)(struct ib_event *, void *);
+ 	void		       *qp_context;
+@@ -505,8 +509,8 @@ struct ib_qp_init_attr {
+ 	struct ib_qp_cap	cap;
+ 	enum ib_sig_type	sq_sig_type;
+ 	enum ib_qp_type		qp_type;
+-	struct ib_xrcd	       *xrc_domain; /* XRC qp's only */
+ 	u8			port_num; /* special QP types only */
++	enum qp_create_flags    create_flags;
+ };
+ 
+ enum ib_rnr_timeout {
+@@ -616,11 +620,11 @@ enum ib_wr_opcode {
+ 	IB_WR_RDMA_WRITE,
+ 	IB_WR_RDMA_WRITE_WITH_IMM,
+ 	IB_WR_SEND,
+-	IB_WR_LSO,
+ 	IB_WR_SEND_WITH_IMM,
+ 	IB_WR_RDMA_READ,
+ 	IB_WR_ATOMIC_CMP_AND_SWP,
+-	IB_WR_ATOMIC_FETCH_AND_ADD
++	IB_WR_ATOMIC_FETCH_AND_ADD,
++	IB_WR_LSO
+ };
+ 
+ enum ib_send_flags {
+@@ -629,8 +633,7 @@ enum ib_send_flags {
+ 	IB_SEND_SOLICITED	= (1<<2),
+ 	IB_SEND_INLINE		= (1<<3),
+ 	IB_SEND_IP_CSUM         = (1<<4),
+-	IB_SEND_UDP_TCP_CSUM    = (1<<5),
+-	IB_SEND_UDP_LSO		= (1<<6)
++	IB_SEND_UDP_LSO		= (1<<5)
+ };
+ 
+ struct ib_sge {
+@@ -669,7 +672,6 @@ struct ib_send_wr {
+ 			u8	port_num;   /* valid for DR SMPs on switch only */
+ 		} ud;
+ 	} wr;
+-	u32			xrc_remote_srq_num; /* valid for XRC sends only */
+ };
+ 
+ struct ib_recv_wr {
+@@ -731,7 +733,6 @@ struct ib_ucontext {
+ 	struct list_head	qp_list;
+ 	struct list_head	srq_list;
+ 	struct list_head	ah_list;
+-	struct list_head	xrc_domain_list;
+ 	int			closing;
+ };
+ 
+@@ -759,15 +760,6 @@ struct ib_pd {
+ 	atomic_t          	usecnt; /* count all resources */
+ };
+ 
+-struct ib_xrcd {
+-	struct ib_device       *device;
+-	struct ib_uobject      *uobject;
+-	struct inode	       *inode;
+-	struct rb_node	        node;
+-	atomic_t          	usecnt; /* count all resources */
+-};
+-
+-
+ struct ib_ah {
+ 	struct ib_device	*device;
+ 	struct ib_pd		*pd;
+@@ -789,13 +781,10 @@ struct ib_cq {
+ struct ib_srq {
+ 	struct ib_device       *device;
+ 	struct ib_pd	       *pd;
+-	struct ib_cq	       *xrc_cq;
+-	struct ib_xrcd	       *xrcd;
+ 	struct ib_uobject      *uobject;
+ 	void		      (*event_handler)(struct ib_event *, void *);
+ 	void		       *srq_context;
+ 	atomic_t		usecnt;
+-	u32			xrc_srq_num;
+ };
+ 
+ struct ib_qp {
+@@ -809,7 +798,6 @@ struct ib_qp {
+ 	void		       *qp_context;
+ 	u32			qp_num;
+ 	enum ib_qp_type		qp_type;
+-	struct ib_xrcd	       *xrcd;  /* XRC QPs only */
+ };
+ 
+ struct ib_mr {
+@@ -1056,15 +1044,6 @@ struct ib_device {
+ 						  struct ib_grh *in_grh,
+ 						  struct ib_mad *in_mad,
+ 						  struct ib_mad *out_mad);
+-	struct ib_srq *            (*create_xrc_srq)(struct ib_pd *pd,
+-						     struct ib_cq *xrc_cq,
+-						     struct ib_xrcd *xrcd,
+-						     struct ib_srq_init_attr *srq_init_attr,
+-						     struct ib_udata *udata);
+-	struct ib_xrcd *	   (*alloc_xrcd)(struct ib_device *device,
+-						 struct ib_ucontext *context,
+-						 struct ib_udata *udata);
+-	int                        (*dealloc_xrcd)(struct ib_xrcd *xrcd);
+ 
+ 	struct ib_dma_mapping_ops   *dma_ops;
+ 
+@@ -1086,8 +1065,6 @@ struct ib_device {
+ 	__be64			     node_guid;
+ 	u8                           node_type;
+ 	u8                           phys_port_cnt;
+-	struct rb_root		     ib_uverbs_xrcd_table;
+-	struct mutex		     xrcd_table_mutex;
+ };
+ 
+ struct ib_client {
+@@ -1248,28 +1225,8 @@ int ib_query_ah(struct ib_ah *ah, struct ib_ah_attr *ah_attr);
+ int ib_destroy_ah(struct ib_ah *ah);
+ 
+ /**
+- * ib_create_xrc_srq - Creates an XRC SRQ associated with the specified
+- *   protection domain, cq, and xrc domain.
+- * @pd: The protection domain associated with the SRQ.
+- * @xrc_cq: The cq to be associated with the XRC SRQ.
+- * @xrcd: The XRC domain to be associated with the XRC SRQ.
+- * @srq_init_attr: A list of initial attributes required to create the
+- *   XRC SRQ.  If XRC SRQ creation succeeds, then the attributes are updated
+- *   to the actual capabilities of the created XRC SRQ.
+- *
+- * srq_attr->max_wr and srq_attr->max_sge are read the determine the
+- * requested size of the XRC SRQ, and set to the actual values allocated
+- * on return.  If ib_create_xrc_srq() succeeds, then max_wr and max_sge
+- * will always be at least as large as the requested values.
+- */
+-struct ib_srq *ib_create_xrc_srq(struct ib_pd *pd,
+-				 struct ib_cq *xrc_cq,
+-				 struct ib_xrcd *xrcd,
+-				 struct ib_srq_init_attr *srq_init_attr);
+-
+-/**
+- * ib_create_srq - Creates an SRQ associated with the specified
+- *   protection domain.
++ * ib_create_srq - Creates a SRQ associated with the specified protection
++ *   domain.
+  * @pd: The protection domain associated with the SRQ.
+  * @srq_init_attr: A list of initial attributes required to create the
+  *   SRQ.  If SRQ creation succeeds, then the attributes are updated to
+@@ -1907,17 +1864,4 @@ int ib_attach_mcast(struct ib_qp *qp, union ib_gid *gid, u16 lid);
+  */
+ int ib_detach_mcast(struct ib_qp *qp, union ib_gid *gid, u16 lid);
+ 
+-
+-/**
+- * ib_dealloc_xrcd - Deallocates an extended reliably connected domain.
+- * @xrcd: The xrc domain to deallocate.
+- */
+-int ib_dealloc_xrcd(struct ib_xrcd *xrcd);
+-
+-/**
+- * ib_alloc_xrcd - Allocates an extended reliably connected domain.
+- * @device: The device on which to allocate the xrcd.
+- */
+-struct ib_xrcd * ib_alloc_xrcd(struct ib_device *device);
+-
+ #endif /* IB_VERBS_H */

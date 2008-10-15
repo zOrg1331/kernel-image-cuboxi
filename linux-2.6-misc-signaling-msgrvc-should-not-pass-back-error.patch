@@ -1,0 +1,79 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Thu, 26 Jun 2008 19:50:04 +0200
+Subject:  [misc] signaling msgrvc() should not pass back error
+Message-id: 4863D6CC.8080402@redhat.com
+O-Subject: [RHEL5.2 patch] BZ452533 The msgrcv() syscall fails with error number 514 (ERESTARTNOHAND)
+Bugzilla: 452533
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Roland McGrath <roland@redhat.com>
+
+BZ﻿452533
+https://bugzilla.redhat.com/show_bug.cgi?id=452533
+
+Description
+When the user program gets a signal while calling the msgrcv(),
+msgrcv() returns with error number that indicates the program got a
+signal. However, msgrcv() returns with a wrong error number
+514(ERESTARTNOHAND), frequently. This error number is only used inner
+kernel and should never be seen by user programs
+
+Upstream status:
+b74d0deb968e1f85942f17080eace015ce3c332c
+
+Brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1367595
+
+Test status:
+Booted on x86_64 and tested by reproducer program attached in Issue Tracker. Mentioned issue did not happen with patched kernel.
+
+Jirka
+
+ kernel/signal.c |   14 ++++++++++----
+ 1 files changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/kernel/signal.c b/kernel/signal.c
+index 201917b..53fb8cf 100644
+--- a/kernel/signal.c
++++ b/kernel/signal.c
+@@ -100,7 +100,11 @@ static int recalc_sigpending_tsk(struct task_struct *t)
+ 		set_tsk_thread_flag(t, TIF_SIGPENDING);
+ 		return 1;
+ 	}
+-	clear_tsk_thread_flag(t, TIF_SIGPENDING);
++	/*
++	 * We must never clear the flag in another thread, or in current
++	 * when it's possible the current syscall is returning -ERESTART*.
++	 * So we don't clear it here, and only callers who know they should do.
++	 */
+ 	return 0;
+ }
+ 
+@@ -116,7 +120,9 @@ void recalc_sigpending_and_wake(struct task_struct *t)
+ 
+ void recalc_sigpending(void)
+ {
+-	recalc_sigpending_tsk(current);
++	if (!recalc_sigpending_tsk(current))
++		clear_thread_flag(TIF_SIGPENDING);
++
+ }
+ 
+ /* Given the mask, find the first available signal that should be serviced. */
+@@ -327,7 +333,6 @@ static int __dequeue_signal(struct sigpending *pending, sigset_t *mask,
+ 			sig = 0;
+ 				
+ 	}
+-	recalc_sigpending();
+ 
+ 	return sig;
+ }
+@@ -344,7 +349,8 @@ int dequeue_signal(struct task_struct *tsk, sigset_t *mask, siginfo_t *info)
+ 	if (!signr)
+ 		signr = __dequeue_signal(&tsk->signal->shared_pending,
+ 					 mask, info);
+- 	if (signr && unlikely(sig_kernel_stop(signr))) {
++	recalc_sigpending();
++	if (signr && unlikely(sig_kernel_stop(signr))) {
+  		/*
+  		 * Set a marker that we have dequeued a stop signal.  Our
+  		 * caller might release the siglock and then the pending

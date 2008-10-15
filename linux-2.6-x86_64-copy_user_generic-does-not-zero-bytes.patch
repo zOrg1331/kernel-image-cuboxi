@@ -1,0 +1,70 @@
+From: Vitaly Mayatskikh <vmayatsk@redhat.com>
+Date: Mon, 16 Jun 2008 11:13:35 +0200
+Message-ID: <m3tzfteo8w.fsf@gravicappa.englab.brq.redhat.com>
+O-Subject: [kernel team] [RHEL-5.2.Z PATCH] BZ451275 EMBARGOED kernel: [x86_64] The string instruction version didn't zero the output on exception. [rhel-5.2.z]
+Sunject: [x86_64] copy_user_generic() does not zero bytes
+Bugzilla: 451275
+
+The same issue as in RHEL-4, patch was simply backported (or forward
+ported?  :) 
+
+Description:
+============
+copy_user_generic_c on x86_64 does not zero bytes left at destination
+after GPF. Security leak is possible.
+
+This issue discovered by Cai Qian in RH in process of RHSA-2008:0508
+kernel QA testing.
+
+Upstream status:
+================
+commit 3022d734a54cbd2b65eea9a024564821101b4a9a
+
+Test status of the patch:
+=========================
+Tested by me on x86_64
+
+==
+diff -up linux-2.6.18.noarch/arch/x86_64/lib/copy_user.S.orig linux-2.6.18.noarch/arch/x86_64/lib/copy_user.S
+--- linux-2.6.18.noarch/arch/x86_64/lib/copy_user.S.orig	2008-06-16 09:45:12.000000000 +0200
++++ linux-2.6.18.noarch/arch/x86_64/lib/copy_user.S	2008-06-16 09:43:45.000000000 +0200
+@@ -325,22 +325,32 @@ ENDPROC(copy_user_generic)
+    */
+ copy_user_generic_c:
+ 	CFI_STARTPROC
++	xorq %rax,%rax
+ 	movl %edx,%ecx
+ 	shrl $3,%ecx
+-	andl $7,%edx	
+-1:	rep 
++	andl $7,%edx
++.Lc1:	rep 
+ 	movsq 
+ 	movl %edx,%ecx
+-2:	rep
++.Lc2:	rep
+ 	movsb
+-4:	movl %ecx,%eax
+ 	ret
+-3:	lea (%rdx,%rcx,8),%rax
++
++.Lc1e:	movq %rcx,%rsi
++.Lc3:	rep
++	stosq
++.Lc2e:	movl %edx,%ecx
++.Lc4:	rep
++	stosb
++.Lc3e:	leaq (%rdx,%rsi,8),%rax
+ 	ret
+ 	CFI_ENDPROC
+ END(copy_user_generic_c)
+ 
+ 	.section __ex_table,"a"
+-	.quad 1b,3b
+-	.quad 2b,4b
++	.align 8
++	.quad .Lc1,.Lc1e
++	.quad .Lc2,.Lc2e
++	.quad .Lc3,.Lc3e
++	.quad .Lc4,.Lc3e
+ 	.previous

@@ -1,0 +1,211 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL 5.1] [GFS2] Journaled data issues (bz #238162)
+Date: Wed, 13 Jun 2007 14:10:23 +0100
+Bugzilla: 238162
+Message-Id: <1181740223.8765.10.camel@quoit>
+Changelog: [GFS2] Journaled data issues
+
+
+Hi,
+
+This patch resolves the outstanding issues relating to journaled data
+files in GFS2. Its a combination of two upstream patches which have been
+tested to ensure that they fix the various issues of bz #238162.
+
+One issue is a counter whose increment is incorrect resulting in an
+overrun of a block in some circumstances. Another is that certain
+structures containing journal state were potentially getting added to a
+list twice, potentially corrupting the list. Another was attempting to
+write journal headers into blocks which were not mapped at the time. A
+further issue was journaled data buffers getting lost on umount in
+certain cases.
+
+The patch adds some new #defines to page-flags.h. These are taken from
+the upstream kernel and shouldn't affect any other code.
+
+Steve.
+
+-------------------------------------------------------------------------------
+diff -Nru linux-rhel-base/fs/gfs2/log.c linux-2.6.18.noarch/fs/gfs2/log.c
+--- linux-rhel-base/fs/gfs2/log.c	2007-06-13 10:30:16.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/log.c	2007-06-13 10:45:26.000000000 +0100
+@@ -83,6 +83,11 @@
+ 
+ 			gfs2_assert(sdp, bd->bd_ail == ai);
+ 
++			if (!bh){
++				list_move(&bd->bd_ail_st_list, &ai->ai_ail2_list);
++                                continue;
++                        }
++
+ 			if (!buffer_busy(bh)) {
+ 				if (!buffer_uptodate(bh)) {
+ 					gfs2_log_unlock(sdp);
+@@ -125,6 +130,11 @@
+ 					 bd_ail_st_list) {
+ 		bh = bd->bd_bh;
+ 
++		if (!bh){
++			list_move(&bd->bd_ail_st_list, &ai->ai_ail2_list);
++			continue;
++		}
++
+ 		gfs2_assert(sdp, bd->bd_ail == ai);
+ 
+ 		if (buffer_busy(bh)) {
+@@ -227,7 +237,10 @@
+ 		list_del(&bd->bd_ail_st_list);
+ 		list_del(&bd->bd_ail_gl_list);
+ 		atomic_dec(&bd->bd_gl->gl_ail_count);
+-		brelse(bd->bd_bh);
++		if (bd->bd_bh)
++			brelse(bd->bd_bh);
++		else
++			kmem_cache_free(gfs2_bufdata_cachep, bd);
+ 	}
+ }
+ 
+@@ -565,7 +578,7 @@
+ 	INIT_LIST_HEAD(&ai->ai_ail1_list);
+ 	INIT_LIST_HEAD(&ai->ai_ail2_list);
+ 
+-	gfs2_assert_withdraw(sdp, sdp->sd_log_num_buf == sdp->sd_log_commited_buf);
++	gfs2_assert_withdraw(sdp, sdp->sd_log_num_buf + sdp->sd_log_num_jdata == sdp->sd_log_commited_buf);
+ 	gfs2_assert_withdraw(sdp,
+ 			sdp->sd_log_num_revoke == sdp->sd_log_commited_revoke);
+ 
+diff -Nru linux-rhel-base/fs/gfs2/lops.c linux-2.6.18.noarch/fs/gfs2/lops.c
+--- linux-rhel-base/fs/gfs2/lops.c	2007-06-13 10:30:16.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/lops.c	2007-06-13 10:45:26.000000000 +0100
+@@ -475,6 +475,8 @@
+ 		tr->tr_num_buf++;
+ 		list_add(&bd->bd_list_tr, &tr->tr_list_buf);
+ 		gfs2_log_unlock(sdp);
++		if (!list_empty(&le->le_list))
++			return;
+ 		gfs2_pin(sdp, bd->bd_bh);
+ 		tr->tr_num_buf_new++;
+ 	} else {
+@@ -605,7 +607,8 @@
+ 				if (unlikely(magic != 0))
+ 					set_buffer_escaped(bh1);
+ 				gfs2_log_lock(sdp);
+-				if (n++ > num)
++				n += 2;
++				if (n >= num)
+ 					break;
+ 			} else if (!bh1) {
+ 				total_dbuf--;
+@@ -622,6 +625,7 @@
+ 		}
+ 		gfs2_log_unlock(sdp);
+ 		if (bh) {
++			set_buffer_mapped(bh);
+ 			set_buffer_dirty(bh);
+ 			ll_rw_block(WRITE, 1, &bh);
+ 			bh = NULL;
+diff -Nru linux-rhel-base/fs/gfs2/ops_address.c linux-2.6.18.noarch/fs/gfs2/ops_address.c
+--- linux-rhel-base/fs/gfs2/ops_address.c	2007-06-13 10:30:18.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/ops_address.c	2007-06-13 10:45:26.000000000 +0100
+@@ -50,6 +50,8 @@
+ 		end = start + bsize;
+ 		if (end <= from || start >= to)
+ 			continue;
++		if (gfs2_is_jdata(ip))
++			set_buffer_uptodate(bh);
+ 		gfs2_trans_add_bh(ip->i_gl, bh, 0);
+ 	}
+ }
+@@ -135,7 +137,9 @@
+ 		return 0; /* don't care */
+ 	}
+ 
+-	if (sdp->sd_args.ar_data == GFS2_DATA_ORDERED || gfs2_is_jdata(ip)) {
++	if ((sdp->sd_args.ar_data == GFS2_DATA_ORDERED || gfs2_is_jdata(ip)) &&
++	    PageChecked(page)) {
++		ClearPageChecked(page);
+ 		error = gfs2_trans_begin(sdp, RES_DINODE + 1, 0);
+ 		if (error)
+ 			goto out_ignore;
+@@ -582,6 +586,23 @@
+ }
+ 
+ /**
++ * gfs2_set_page_dirty - Page dirtying function
++ * @page: The page to dirty
++ *
++ * Returns: 1 if it dirtyed the page, or 0 otherwise
++ */
++ 
++static int gfs2_set_page_dirty(struct page *page)
++{
++	struct gfs2_inode *ip = GFS2_I(page->mapping->host);
++	struct gfs2_sbd *sdp = GFS2_SB(page->mapping->host);
++
++	if (sdp->sd_args.ar_data == GFS2_DATA_ORDERED || gfs2_is_jdata(ip))
++		SetPageChecked(page);
++	return __set_page_dirty_buffers(page);
++}
++
++/**
+  * gfs2_bmap - Block map function
+  * @mapping: Address space info
+  * @lblock: The block to map
+@@ -617,6 +638,8 @@
+ 	if (bd) {
+ 		bd->bd_bh = NULL;
+ 		bh->b_private = NULL;
++		if (!bd->bd_ail && list_empty(&bd->bd_le.le_list))
++			kmem_cache_free(gfs2_bufdata_cachep, bd);
+ 	}
+ 	gfs2_log_unlock(sdp);
+ 
+@@ -637,6 +660,8 @@
+ 	unsigned int curr_off = 0;
+ 
+ 	BUG_ON(!PageLocked(page));
++	if (offset == 0)
++		ClearPageChecked(page);
+ 	if (!page_has_buffers(page))
+ 		return;
+ 
+@@ -849,6 +874,7 @@
+ 	.sync_page = block_sync_page,
+ 	.prepare_write = gfs2_prepare_write,
+ 	.commit_write = gfs2_commit_write,
++	.set_page_dirty = gfs2_set_page_dirty,
+ 	.bmap = gfs2_bmap,
+ 	.invalidatepage = gfs2_invalidatepage,
+ 	.releasepage = gfs2_releasepage,
+diff -Nru linux-rhel-base/include/linux/page-flags.h linux-2.6.18.noarch/include/linux/page-flags.h
+--- linux-rhel-base/include/linux/page-flags.h	2007-06-13 10:30:11.000000000 +0100
++++ linux-2.6.18.noarch/include/linux/page-flags.h	2007-06-13 13:59:04.000000000 +0100
+@@ -72,6 +72,7 @@
+ #define PG_slab			 7	/* slab debug (Suparna wants this) */
+ 
+ #define PG_fs_misc		 8
++#define PG_owner_priv_1          8      /* Owner use. If pagecache, fs may use*/
+ #define PG_arch_1		 9
+ #define PG_reserved		10
+ #define PG_private		11	/* Has something at ->private */
+@@ -86,6 +87,8 @@
+ #define PG_nosave_free		18	/* Free, should not be written */
+ #define PG_buddy		19	/* Page is free, on buddy lists */
+ 
++/* PG_owner_priv_1 users should have descriptive aliases */
++#define PG_checked              PG_owner_priv_1 /* Used by some filesystems */
+ 
+ #if (BITS_PER_LONG > 32)
+ /*
+@@ -161,6 +164,10 @@
+ #define PageHighMem(page)	0 /* needed to optimize away at compile time */
+ #endif
+ 
++#define PageChecked(page)       test_bit(PG_checked, &(page)->flags)
++#define SetPageChecked(page)    set_bit(PG_checked, &(page)->flags)
++#define ClearPageChecked(page)  clear_bit(PG_checked, &(page)->flags)
++
+ #define PageReserved(page)	test_bit(PG_reserved, &(page)->flags)
+ #define SetPageReserved(page)	set_bit(PG_reserved, &(page)->flags)
+ #define ClearPageReserved(page)	clear_bit(PG_reserved, &(page)->flags)
+

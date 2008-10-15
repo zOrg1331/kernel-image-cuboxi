@@ -1,0 +1,70 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Fri, 22 Jun 2007 03:05:25 +0800
+Subject: [ia64] misc DBS cleanup
+Message-id: 467ACBF5.8030201@redhat.com
+O-Subject: [RHEL 5.1 PATCH] BZ 245217 misc ia64 DBS cleanup
+Bugzilla: 245217
+
+BZ 245217
+
+Description of problem:
+1.Silly bug in _PDC data setup. Haven't seen any real side-effects of this one
+yet. But, needs fixing regardless.
+2.cleanup the acpi header to reuse generic _PDC definition.
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=ce45b51ac4c3c575c71ab5c91c29bf34c2af6f7d
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=35729449655abcceeb3c72181e9920cf98f81c1e
+
+The attached backport has been tested by me. It works as expected.
+Please review and ACK.
+
+thanks,
+Luming
+
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+---
+ arch/ia64/kernel/acpi-processor.c |    2 +-
+ include/asm-ia64/acpi.h           |    7 ++-----
+ 2 files changed, 3 insertions(+), 6 deletions(-)
+
+diff --git a/arch/ia64/kernel/acpi-processor.c b/arch/ia64/kernel/acpi-processor.c
+index e683630..7ac388c 100644
+--- a/arch/ia64/kernel/acpi-processor.c
++++ b/arch/ia64/kernel/acpi-processor.c
+@@ -44,7 +44,7 @@ static void init_intel_pdc(struct acpi_processor *pr)
+ 
+ 	buf[0] = ACPI_PDC_REVISION_ID;
+ 	buf[1] = 1;
+-	buf[2] |= ACPI_PDC_EST_CAPABILITY_SMP;
++	buf[2] = ACPI_PDC_EST_CAPABILITY_SMP;
+ 
+ 	obj->type = ACPI_TYPE_BUFFER;
+ 	obj->buffer.length = 12;
+diff --git a/include/asm-ia64/acpi.h b/include/asm-ia64/acpi.h
+index 09a5dd0..c8a56e9 100644
+--- a/include/asm-ia64/acpi.h
++++ b/include/asm-ia64/acpi.h
+@@ -30,6 +30,8 @@
+ 
+ #ifdef __KERNEL__
+ 
++#include <acpi/pdc_intel.h>
++
+ #include <linux/init.h>
+ #include <linux/numa.h>
+ #include <asm/system.h>
+@@ -121,11 +123,6 @@ extern int __initdata nid_to_pxm_map[MAX_NUMNODES];
+ 
+ extern u16 ia64_acpiid_to_sapicid[];
+ 
+-/*
+- * Refer Intel ACPI _PDC support document for bit definitions
+- */
+-#define ACPI_PDC_EST_CAPABILITY_SMP     0x8
+-
+ #endif /*__KERNEL__*/
+ 
+ #endif /*_ASM_ACPI_H*/
+-- 
+1.5.3.5.645.gbb47
+

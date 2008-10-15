@@ -1,0 +1,62 @@
+From: Glauber de Oliveira Costa <gcosta@redhat.com>
+Subject: [PATCH RHEL-5] Trying to assign an non-existant file for block attach will leave device held forever.
+Date: Fri, 1 Dec 2006 12:55:36 -0200
+Bugzilla: 218037
+Message-Id: <20061201145536.GB6887@redhat.com>
+Changelog: Xen: Properly close block frontend on non-existant file
+
+
+Here's a fix that applies -p1 for BZ 218037.
+
+When backend detects a failure in attaching process, it sends
+a Closing event to frontend. It might be the case that this event
+happens before frontend is ever initialized. 
+
+The check for info->rq then fails, leaving frontend hung for a very long
+time (tm) , aka forever.
+
+We should always Close after receiving Closing, no matter what.
+
+Please ACK for inclusion. 
+
+-- 
+Glauber de Oliveira Costa
+Red Hat Inc.
+"Free as in Freedom"
+
+# HG changeset patch
+# User gcosta@redhat.com
+# Date 1164837286 18000
+# Node ID 4ac5ffcde6875aa4c772941704fb75261c967462
+# Parent  ffd048080ce2e50b1e1247709918484d8de54af1
+[LINUX] Properly trigger XenbusStateClosed in blkfront
+
+In some situations, like when error happens in block attach for
+a guest in dom0, backend send us XenbusStateClosing notification.
+However, as frontend were never properly initialized, it fails
+to change its own state to XenbusStateClosed, leaving the system
+in a dead-end state.
+
+Signed-off-by: Glauber de Oliveira Costa <gcosta@redhat.com>
+
+diff -r ffd048080ce2 -r 4ac5ffcde687 linux-2.6-xen-sparse/drivers/xen/blkfront/blkfront.c
+--- linux-2.6-xen-sparse/drivers/xen/blkfront/blkfront.c	Wed Nov 29 16:49:52 2006 -0500
++++ linux-2.6-xen-sparse/drivers/xen/blkfront/blkfront.c	Wed Nov 29 16:54:46 2006 -0500
+@@ -359,7 +359,7 @@ static void blkfront_closing(struct xenb
+ 	DPRINTK("blkfront_closing: %s removed\n", dev->nodename);
+ 
+ 	if (info->rq == NULL)
+-		return;
++		goto out;
+ 
+ 	spin_lock_irqsave(&blkif_io_lock, flags);
+ 	/* No more blkif_request(). */
+@@ -373,6 +373,7 @@ static void blkfront_closing(struct xenb
+ 
+ 	xlvbd_del(info);
+ 
++out:
+ 	xenbus_frontend_closed(dev);
+ }
+ 
+

@@ -1,0 +1,121 @@
+Date: Tue, 31 Oct 2006 10:58:07 +0100
+From: Thomas Graf <tgraf@redhat.com>
+Subject: [RHEL5 BZ209354]: [IPv6 MRT] irrelevant rules break ipv6 routing.
+
+    [IPv6] rules: Use RT6_LOOKUP_F_HAS_SADDR and fix source based selectors
+    
+    Fixes rt6_lookup() to provide the source address in the flow
+    and sets RT6_LOOKUP_F_HAS_SADDR whenever it is present in
+    the flow.
+    
+    Avoids unnecessary prefix comparisons by checking for a prefix
+    length first.
+    
+    Fixes the rule logic to not match packets if a source selector
+    has been specified but no source address is available.
+    
+    Thanks to Kim Nordlund <kim.nordlund@nokia.com> for working
+    on this patch with me.
+    
+    Signed-off-by: Thomas Graf <tgraf@suug.ch>
+    Acked-by: Ville Nuorvala <vnuorval@tcs.hut.fi>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Please ACK.
+
+Index: linux-2.6.18.noarch/net/ipv6/fib6_rules.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/ipv6/fib6_rules.c	2006-10-30 16:19:59.000000000 +0100
++++ linux-2.6.18.noarch/net/ipv6/fib6_rules.c	2006-10-30 16:21:33.000000000 +0100
+@@ -118,12 +118,15 @@
+ {
+ 	struct fib6_rule *r = (struct fib6_rule *) rule;
+ 
+-	if (!ipv6_prefix_equal(&fl->fl6_dst, &r->dst.addr, r->dst.plen))
++	if (r->dst.plen &&
++	    !ipv6_prefix_equal(&fl->fl6_dst, &r->dst.addr, r->dst.plen))
+ 		return 0;
+ 
+-	if ((flags & RT6_LOOKUP_F_HAS_SADDR) &&
+-	    !ipv6_prefix_equal(&fl->fl6_src, &r->src.addr, r->src.plen))
+-		return 0;
++	if (r->src.plen) {
++		if (!(flags & RT6_LOOKUP_F_HAS_SADDR) ||
++		    !ipv6_prefix_equal(&fl->fl6_src, &r->src.addr, r->src.plen))
++			return 0;
++	}
+ 
+ 	if (r->tclass && r->tclass != ((ntohl(fl->fl6_flowlabel) >> 20) & 0xff))
+ 		return 0;
+Index: linux-2.6.18.noarch/net/ipv6/route.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/ipv6/route.c	2006-10-30 16:19:59.000000000 +0100
++++ linux-2.6.18.noarch/net/ipv6/route.c	2006-10-30 16:21:33.000000000 +0100
+@@ -527,13 +527,17 @@
+ 		.nl_u = {
+ 			.ip6_u = {
+ 				.daddr = *daddr,
+-				/* TODO: saddr */
+ 			},
+ 		},
+ 	};
+ 	struct dst_entry *dst;
+ 	int flags = strict ? RT6_LOOKUP_F_IFACE : 0;
+ 
++	if (saddr) {
++		memcpy(&fl.fl6_src, saddr, sizeof(*saddr));
++		flags |= RT6_LOOKUP_F_HAS_SADDR;
++	}
++
+ 	dst = fib6_rule_lookup(&fl, flags, ip6_pol_route_lookup);
+ 	if (dst->error == 0)
+ 		return (struct rt6_info *) dst;
+@@ -691,6 +695,7 @@
+ void ip6_route_input(struct sk_buff *skb)
+ {
+ 	struct ipv6hdr *iph = skb->nh.ipv6h;
++	int flags = RT6_LOOKUP_F_HAS_SADDR;
+ 	struct flowi fl = {
+ 		.iif = skb->dev->ifindex,
+ 		.nl_u = {
+@@ -705,7 +710,9 @@
+ 		},
+ 		.proto = iph->nexthdr,
+ 	};
+-	int flags = rt6_need_strict(&iph->daddr) ? RT6_LOOKUP_F_IFACE : 0;
++
++	if (rt6_need_strict(&iph->daddr))
++		flags |= RT6_LOOKUP_F_IFACE;
+ 
+ 	skb->dst = fib6_rule_lookup(&fl, flags, ip6_pol_route_input);
+ }
+@@ -788,6 +795,9 @@
+ 	if (rt6_need_strict(&fl->fl6_dst))
+ 		flags |= RT6_LOOKUP_F_IFACE;
+ 
++	if (!ipv6_addr_any(&fl->fl6_src))
++		flags |= RT6_LOOKUP_F_HAS_SADDR;
++
+ 	return fib6_rule_lookup(fl, flags, ip6_pol_route_output);
+ }
+ 
+@@ -1346,6 +1356,7 @@
+ 					   struct in6_addr *gateway,
+ 					   struct net_device *dev)
+ {
++	int flags = RT6_LOOKUP_F_HAS_SADDR;
+ 	struct ip6rd_flowi rdfl = {
+ 		.fl = {
+ 			.oif = dev->ifindex,
+@@ -1358,7 +1369,9 @@
+ 		},
+ 		.gateway = *gateway,
+ 	};
+-	int flags = rt6_need_strict(dest) ? RT6_LOOKUP_F_IFACE : 0;
++
++	if (rt6_need_strict(dest))
++		flags |= RT6_LOOKUP_F_IFACE;
+ 
+ 	return (struct rt6_info *)fib6_rule_lookup((struct flowi *)&rdfl, flags, __ip6_route_redirect);
+ }
+

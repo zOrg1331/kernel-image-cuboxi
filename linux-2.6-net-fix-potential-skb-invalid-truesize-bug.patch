@@ -1,0 +1,89 @@
+From: Hideo AOKI <haoki@redhat.com>
+Date: Wed, 23 Jan 2008 03:48:22 -0500
+Subject: [net] fix potential SKB invalid truesize bug
+Message-id: 4796FF56.10207@redhat.com
+O-Subject: [RHEL 5.2 PATCH] bz#:429417 fix potential SKB invalid truesize bug
+Bugzilla: 429417
+
+Hello,
+
+BZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id429417
+
+Description:
+------------
+Current kernel has a potential issue on calculating truesize of skb.
+bz#223593 exposed this bug. To fix the bug, two patches were submitted
+to netdev mailing list recently thanks to David and Herbert.
+I back-ported them to RHEL5.
+
+Upstream Status:
+----------------
+The patches were applied to net-2.6 tree.
+
+http://git.kernel.org/?p=linux/kernel/git/davem/net-2.6.git;a=commitdiff;h=d4ec8e0d2895bab3d84c1314191ec31953cc5c93
+http://git.kernel.org/?p=linux/kernel/git/davem/net-2.6.git;a=commitdiff;h=d53bdc4ed9d4473810af9c07597ae43cf4b5f900
+
+Test Status:
+------------
+I confirmed that -72.el5 kernel with this patch and patch set bz#223593
+passed rhts Connectathon NFS test correctly.
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Alexander Viro <aviro@redhat.com>
+Acked-by: Neil Horman <nhorman@redhat.com>
+
+diff --git a/net/ipv4/ip_output.c b/net/ipv4/ip_output.c
+index 8c01b40..d744b2b 100644
+--- a/net/ipv4/ip_output.c
++++ b/net/ipv4/ip_output.c
+@@ -1023,8 +1023,6 @@ alloc_new_skb:
+ 
+ 				skb_fill_page_desc(skb, i, page, 0, 0);
+ 				frag = &skb_shinfo(skb)->frags[i];
+-				skb->truesize += PAGE_SIZE;
+-				atomic_add(PAGE_SIZE, &sk->sk_wmem_alloc);
+ 			} else {
+ 				err = -EMSGSIZE;
+ 				goto error;
+@@ -1037,6 +1035,8 @@ alloc_new_skb:
+ 			frag->size += copy;
+ 			skb->len += copy;
+ 			skb->data_len += copy;
++			skb->truesize += copy;
++			atomic_add(copy, &sk->sk_wmem_alloc);
+ 		}
+ 		offset += copy;
+ 		length -= copy;
+@@ -1181,6 +1181,8 @@ ssize_t	ip_append_page(struct sock *sk, struct page *page,
+ 
+ 		skb->len += len;
+ 		skb->data_len += len;
++		skb->truesize += len;
++		atomic_add(len, &sk->sk_wmem_alloc);
+ 		offset += len;
+ 		size -= len;
+ 	}
+diff --git a/net/ipv6/ip6_output.c b/net/ipv6/ip6_output.c
+index 5770ba7..e69d424 100644
+--- a/net/ipv6/ip6_output.c
++++ b/net/ipv6/ip6_output.c
+@@ -1229,8 +1229,6 @@ alloc_new_skb:
+ 
+ 				skb_fill_page_desc(skb, i, page, 0, 0);
+ 				frag = &skb_shinfo(skb)->frags[i];
+-				skb->truesize += PAGE_SIZE;
+-				atomic_add(PAGE_SIZE, &sk->sk_wmem_alloc);
+ 			} else {
+ 				err = -EMSGSIZE;
+ 				goto error;
+@@ -1243,6 +1241,8 @@ alloc_new_skb:
+ 			frag->size += copy;
+ 			skb->len += copy;
+ 			skb->data_len += copy;
++			skb->truesize += copy;
++			atomic_add(copy, &sk->sk_wmem_alloc);
+ 		}
+ 		offset += copy;
+ 		length -= copy;

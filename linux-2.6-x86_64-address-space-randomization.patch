@@ -1,0 +1,252 @@
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Date: Mon, 17 Mar 2008 15:29:32 +0100
+Subject: [x86_64] address space randomization
+Message-id: 1205764172.26175.12.camel@taijtu
+O-Subject: [PATCH RHEL5.2][BZ 222473] x86_64: address space randomization
+Bugzilla: 222473
+
+Backport of the current up-stream randomization code for x86_64.
+This should make x86_64 have the same randomization features already
+present in i386.
+
+Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+diff --git a/arch/x86_64/kernel/sys_x86_64.c b/arch/x86_64/kernel/sys_x86_64.c
+index 6449ea8..6bdde10 100644
+--- a/arch/x86_64/kernel/sys_x86_64.c
++++ b/arch/x86_64/kernel/sys_x86_64.c
+@@ -19,6 +19,7 @@
+ 
+ #include <asm/uaccess.h>
+ #include <asm/ia32.h>
++#include <linux/random.h>
+ 
+ /*
+  * sys_pipe() is the normal C calling standard for creating
+@@ -78,6 +79,13 @@ static void find_start_end(unsigned long flags, unsigned long *begin,
+ 		   of playground for now. -AK */ 
+ 		*begin = 0x40000000; 
+ 		*end = 0x80000000;		
++
++		if (current->flags & PF_RANDOMIZE) {
++			unsigned long new_begin =
++				randomize_range(*begin, *begin + 0x02000000, 0);
++			if (new_begin)
++				*begin = new_begin;
++		}
+ 	} else {
+ 		*begin = TASK_UNMAPPED_BASE;
+ 		*end = TASK_SIZE; 
+@@ -144,6 +152,95 @@ full_search:
+ 	}
+ }
+ 
++unsigned long
++arch_get_unmapped_area_topdown(struct file *filp, const unsigned long addr0,
++		const unsigned long len, const unsigned long pgoff,
++		const unsigned long flags)
++{
++	struct vm_area_struct *vma;
++	struct mm_struct *mm = current->mm;
++	unsigned long addr = addr0;
++
++	/* requested length too big for entire address space */
++	if (len > TASK_SIZE)
++		return -ENOMEM;
++
++	if (flags & MAP_FIXED)
++		return addr;
++
++	/* for MAP_32BIT mappings we force the legact mmap base */
++	if (!test_thread_flag(TIF_IA32) && (flags & MAP_32BIT))
++		goto bottomup;
++
++	/* requesting a specific address */
++	if (addr) {
++		addr = PAGE_ALIGN(addr);
++		vma = find_vma(mm, addr);
++		if (TASK_SIZE - len >= addr &&
++				(!vma || addr + len <= vma->vm_start))
++			return addr;
++	}
++
++	/* check if free_area_cache is useful for us */
++	if (len <= mm->cached_hole_size) {
++		mm->cached_hole_size = 0;
++		mm->free_area_cache = mm->mmap_base;
++	}
++
++	/* either no address requested or can't fit in requested address hole */
++	addr = mm->free_area_cache;
++
++	/* make sure it can fit in the remaining address space */
++	if (addr > len) {
++		vma = find_vma(mm, addr-len);
++		if (!vma || addr <= vma->vm_start)
++			/* remember the address as a hint for next time */
++			return (mm->free_area_cache = addr-len);
++	}
++
++	if (mm->mmap_base < len)
++		goto bottomup;
++
++	addr = mm->mmap_base - len;
++
++	do {
++		/*
++		 * Lookup failure means no vma is above this address,
++		 * else if new region fits below vma->vm_start,
++		 * return with success:
++		 */
++		vma = find_vma(mm, addr);
++		if (!vma || addr+len <= vma->vm_start)
++			/* remember the address as a hint for next time */
++			return (mm->free_area_cache = addr);
++
++		/* remember the largest hole we saw so far */
++		if (addr + mm->cached_hole_size < vma->vm_start)
++			mm->cached_hole_size = vma->vm_start - addr;
++
++		/* try just below the current vma->vm_start */
++		addr = vma->vm_start-len;
++	} while (len < vma->vm_start);
++
++bottomup:
++	/*
++	 * A failed mmap() very likely causes application failure,
++	 * so fall back to the bottom-up function here. This scenario
++	 * can happen with large stack limits and large mmap()
++	 * allocations.
++	 */
++	mm->cached_hole_size = ~0UL;
++	mm->free_area_cache = TASK_UNMAPPED_BASE;
++	addr = arch_get_unmapped_area(filp, addr0, len, pgoff, flags);
++	/*
++	 * Restore the topdown base:
++	 */
++	mm->free_area_cache = mm->mmap_base;
++	mm->cached_hole_size = ~0UL;
++
++	return addr;
++}
++
+ asmlinkage long sys_uname(struct new_utsname __user * name)
+ {
+ 	int err;
+diff --git a/arch/x86_64/mm/mmap.c b/arch/x86_64/mm/mmap.c
+index 432d2aa..2c4d35a 100644
+--- a/arch/x86_64/mm/mmap.c
++++ b/arch/x86_64/mm/mmap.c
+@@ -36,6 +36,38 @@
+ #define MIN_GAP (128*1024*1024)
+ #define MAX_GAP (TASK_SIZE/6*5)
+ 
++/*
++ * True on X86_32 or when emulating IA32 on X86_64
++ */
++static int mmap_is_ia32(void)
++{
++#ifdef __i386__
++	return 1;
++#endif
++#ifdef CONFIG_IA32_EMULATION
++	if (test_thread_flag(TIF_IA32))
++		return 1;
++#endif
++	return 0;
++}
++
++static unsigned long mmap_rnd(void)
++{
++	unsigned long rnd = 0;
++
++	/*
++	 *  8 bits of randomness in 32bit mmaps, 20 address space bits
++	 * 28 bits of randomness in 64bit mmaps, 40 address space bits
++	 */
++	if (current->flags & PF_RANDOMIZE) {
++		if (mmap_is_ia32())
++			rnd = (long)get_random_int() % (1<<8);
++		else
++			rnd = (long)(get_random_int() % (1<<28));
++	}
++	return rnd << PAGE_SHIFT;
++}
++
+ static inline unsigned long mmap_base(void)
+ {
+ 	unsigned long gap = current->signal->rlim[RLIMIT_STACK].rlim_cur;
+@@ -45,7 +77,7 @@ static inline unsigned long mmap_base(void)
+ 	else if (gap > MAX_GAP)
+ 		gap = MAX_GAP;
+ 
+-	return TASK_SIZE - (gap & PAGE_MASK);
++	return PAGE_ALIGN(TASK_SIZE - (gap & PAGE_MASK) - mmap_rnd());
+ }
+ 
+ static inline int mmap_is_legacy(void)
+@@ -66,6 +98,18 @@ static inline int mmap_is_legacy(void)
+ }
+ 
+ /*
++ * Bottom-up (legacy) layout on X86_32 did not support randomization, X86_64
++ * does, but not when emulating X86_32
++ */
++static unsigned long mmap_legacy_base(void)
++{
++	if (mmap_is_ia32())
++		return TASK_UNMAPPED_BASE;
++	else
++		return TASK_UNMAPPED_BASE + mmap_rnd();
++}
++
++/*
+  * This function, called very early during the creation of a new
+  * process VM image, sets up which VM layout function to use:
+  */
+@@ -76,7 +120,7 @@ void arch_pick_mmap_layout(struct mm_struct *mm)
+ 	 * bit is set, or if the expected stack growth is unlimited:
+ 	 */
+ 	if (mmap_is_legacy()) {
+-		mm->mmap_base = TASK_UNMAPPED_BASE;
++		mm->mmap_base = mmap_legacy_base();
+ 		mm->get_unmapped_area = arch_get_unmapped_area;
+ 		mm->unmap_area = arch_unmap_area;
+ 	} else {
+diff --git a/fs/binfmt_elf.c b/fs/binfmt_elf.c
+index da6713b..77bddd1 100644
+--- a/fs/binfmt_elf.c
++++ b/fs/binfmt_elf.c
+@@ -925,7 +925,7 @@ static int load_elf_binary(struct linux_binprm *bprm, struct pt_regs *regs)
+ 		if (loc->elf_ex.e_type == ET_EXEC || load_addr_set)
+ 			elf_flags |= MAP_FIXED;
+ 		else if (loc->elf_ex.e_type == ET_DYN)
+-#ifdef __i386__
++#if defined(__i386__) || defined(__x86_64__)
+ 			load_bias = 0;
+ #else
+ 			load_bias = ELF_PAGESTART(ELF_ET_DYN_BASE - vaddr);
+diff --git a/include/asm-x86_64/mach-xen/asm/pgtable.h b/include/asm-x86_64/mach-xen/asm/pgtable.h
+index c740ff9..bff95f2 100644
+--- a/include/asm-x86_64/mach-xen/asm/pgtable.h
++++ b/include/asm-x86_64/mach-xen/asm/pgtable.h
+@@ -578,6 +578,7 @@ int xen_change_pte_range(struct mm_struct *mm, pmd_t *pmd,
+ #define GET_PFN(pfn)			(pfn)
+ 
+ #define HAVE_ARCH_UNMAPPED_AREA
++#define HAVE_ARCH_UNMAPPED_AREA_TOPDOWN
+ 
+ #define pgtable_cache_init()   do { } while (0)
+ #define check_pgt_cache()      do { } while (0)
+diff --git a/include/asm-x86_64/pgtable.h b/include/asm-x86_64/pgtable.h
+index 20cf067..bd3d0c1 100644
+--- a/include/asm-x86_64/pgtable.h
++++ b/include/asm-x86_64/pgtable.h
+@@ -451,6 +451,7 @@ extern int kern_addr_valid(unsigned long addr);
+ #define GET_PFN(pfn)			(pfn)
+ 
+ #define HAVE_ARCH_UNMAPPED_AREA
++#define HAVE_ARCH_UNMAPPED_AREA_TOPDOWN
+ 
+ #define pgtable_cache_init()   do { } while (0)
+ #define check_pgt_cache()      do { } while (0)

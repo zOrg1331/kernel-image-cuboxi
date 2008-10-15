@@ -1,0 +1,137 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 REPOST] dlm: variable allocation types
+Date: Tue, 12 Jun 2007 12:31:32 -0500
+Bugzilla: 237558
+Message-Id: <20070612173132.GG16723@redhat.com>
+Changelog: [dlm] variable allocation types
+
+
+bz 237558
+
+upstream: gfs2-2.6-nmw.git
+
+
+Add a new flag, DLM_LSFL_FS, to be used when a file system creates a lockspace.
+This flag causes the dlm to use GFP_NOFS for allocations instead of GFP_KERNEL.
+Don't set the FS flag in exflags which are required to match among all nodes.
+
+Signed-Off-By: Patrick Caulfield <pcaulfie@redhat.com>
+Signed-Off-By: David Teigland <teigland@redhat.com>
+
+Index: linux-rhel51-quilt/fs/dlm/dlm_internal.h
+===================================================================
+--- linux-rhel51-quilt.orig/fs/dlm/dlm_internal.h	2007-06-08 10:19:22.000000000 -0500
++++ linux-rhel51-quilt/fs/dlm/dlm_internal.h	2007-06-08 12:02:33.000000000 -0500
+@@ -463,6 +463,7 @@
+ 	int			ls_low_nodeid;
+ 	int			ls_total_weight;
+ 	int			*ls_node_array;
++	gfp_t			ls_allocation;
+ 
+ 	struct dlm_rsb		ls_stub_rsb;	/* for returning errors */
+ 	struct dlm_lkb		ls_stub_lkb;	/* for returning errors */
+Index: linux-rhel51-quilt/fs/dlm/lock.c
+===================================================================
+--- linux-rhel51-quilt.orig/fs/dlm/lock.c	2007-06-08 10:18:13.000000000 -0500
++++ linux-rhel51-quilt/fs/dlm/lock.c	2007-06-08 12:02:33.000000000 -0500
+@@ -2594,7 +2594,7 @@
+ 	   pass into lowcomms_commit and a message buffer (mb) that we
+ 	   write our data into */
+ 
+-	mh = dlm_lowcomms_get_buffer(to_nodeid, mb_len, GFP_KERNEL, &mb);
++	mh = dlm_lowcomms_get_buffer(to_nodeid, mb_len, ls->ls_allocation, &mb);
+ 	if (!mh)
+ 		return -ENOBUFS;
+ 
+Index: linux-rhel51-quilt/fs/dlm/lockspace.c
+===================================================================
+--- linux-rhel51-quilt.orig/fs/dlm/lockspace.c	2007-06-08 10:17:28.000000000 -0500
++++ linux-rhel51-quilt/fs/dlm/lockspace.c	2007-06-12 12:26:25.000000000 -0500
+@@ -433,11 +433,17 @@
+ 	ls->ls_count = 0;
+ 	ls->ls_flags = 0;
+ 
+-	/* ls_exflags are forced to match among nodes, and we don't
+-	   need to require all nodes to have TIMEWARN active */
+ 	if (flags & DLM_LSFL_TIMEWARN)
+ 		set_bit(LSFL_TIMEWARN, &ls->ls_flags);
+-	ls->ls_exflags = (flags & ~DLM_LSFL_TIMEWARN);
++
++	if (flags & DLM_LSFL_FS)
++		ls->ls_allocation = GFP_NOFS;
++	else
++		ls->ls_allocation = GFP_KERNEL;
++
++	/* ls_exflags are forced to match among nodes, and we don't
++	   need to require all nodes to have TIMEWARN or FS set */
++	ls->ls_exflags = (flags & ~(DLM_LSFL_TIMEWARN | DLM_LSFL_FS));
+ 
+ 	size = dlm_config.ci_rsbtbl_size;
+ 	ls->ls_rsbtbl_size = size;
+Index: linux-rhel51-quilt/fs/dlm/rcom.c
+===================================================================
+--- linux-rhel51-quilt.orig/fs/dlm/rcom.c	2007-06-08 10:17:28.000000000 -0500
++++ linux-rhel51-quilt/fs/dlm/rcom.c	2007-06-08 12:02:33.000000000 -0500
+@@ -38,7 +38,7 @@
+ 	char *mb;
+ 	int mb_len = sizeof(struct dlm_rcom) + len;
+ 
+-	mh = dlm_lowcomms_get_buffer(to_nodeid, mb_len, GFP_KERNEL, &mb);
++	mh = dlm_lowcomms_get_buffer(to_nodeid, mb_len, ls->ls_allocation, &mb);
+ 	if (!mh) {
+ 		log_print("create_rcom to %d type %d len %d ENOBUFS",
+ 			  to_nodeid, type, len);
+@@ -385,7 +385,8 @@
+ 	dlm_recover_process_copy(ls, rc_in);
+ }
+ 
+-static int send_ls_not_ready(int nodeid, struct dlm_rcom *rc_in)
++static int send_ls_not_ready(struct dlm_ls *ls, int nodeid,
++			     struct dlm_rcom *rc_in)
+ {
+ 	struct dlm_rcom *rc;
+ 	struct rcom_config *rf;
+@@ -393,7 +394,7 @@
+ 	char *mb;
+ 	int mb_len = sizeof(struct dlm_rcom) + sizeof(struct rcom_config);
+ 
+-	mh = dlm_lowcomms_get_buffer(nodeid, mb_len, GFP_KERNEL, &mb);
++	mh = dlm_lowcomms_get_buffer(nodeid, mb_len, ls->ls_allocation, &mb);
+ 	if (!mh)
+ 		return -ENOBUFS;
+ 	memset(mb, 0, mb_len);
+@@ -462,7 +463,7 @@
+ 		log_print("lockspace %x from %d type %x not found",
+ 			  hd->h_lockspace, nodeid, rc->rc_type);
+ 		if (rc->rc_type == DLM_RCOM_STATUS)
+-			send_ls_not_ready(nodeid, rc);
++			send_ls_not_ready(ls, nodeid, rc);
+ 		return;
+ 	}
+ 
+Index: linux-rhel51-quilt/fs/gfs2/locking/dlm/mount.c
+===================================================================
+--- linux-rhel51-quilt.orig/fs/gfs2/locking/dlm/mount.c	2007-06-08 09:01:15.000000000 -0500
++++ linux-rhel51-quilt/fs/gfs2/locking/dlm/mount.c	2007-06-08 12:02:33.000000000 -0500
+@@ -147,7 +147,7 @@
+ 
+ 	error = dlm_new_lockspace(ls->fsname, strlen(ls->fsname),
+ 				  &ls->dlm_lockspace,
+-				  nodir ? DLM_LSFL_NODIR : 0,
++				  DLM_LSFL_FS | (nodir ? DLM_LSFL_NODIR : 0),
+ 				  GDLM_LVB_SIZE);
+ 	if (error) {
+ 		log_error("dlm_new_lockspace error %d", error);
+Index: linux-rhel51-quilt/include/linux/dlm.h
+===================================================================
+--- linux-rhel51-quilt.orig/include/linux/dlm.h	2007-06-08 10:14:50.000000000 -0500
++++ linux-rhel51-quilt/include/linux/dlm.h	2007-06-08 12:02:33.000000000 -0500
+@@ -206,6 +206,7 @@
+ 
+ #define DLM_LSFL_NODIR		0x00000001
+ #define DLM_LSFL_TIMEWARN	0x00000002
++#define DLM_LSFL_FS     	0x00000004
+ 
+ #ifdef __KERNEL__
+ 
+

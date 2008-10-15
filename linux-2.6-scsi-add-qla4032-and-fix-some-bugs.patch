@@ -1,0 +1,805 @@
+From: Mike Christie <mchristi@redhat.com>
+Subject: [PATCH RHEL5] add qla 4032 take 2 and fix some bugs
+Date: Thu, 21 Dec 2006 23:30:16 -0600
+Bugzilla: 213807
+Message-Id: <458B6D68.7010607@redhat.com>
+Changelog: scsi: add qla4032 and fix some bugs
+
+
+This is for:
+
+BZ 213807 add qla4032 support
+
+The 4032 addition is similar to the patch I sent a while back but I QE
+and Qlogic agreed on a different patch and qlogic sent some more
+bugfixes in the mean time and the new 4032 patch ended up being
+dependent on the bugfixes.
+
+BZ 215641 fix reset issue when qla3xxx is enabled
+
+This is triggered when running qla3xxx (qla3xxx handles the NIC
+interface on the card) and qla4xx at the same time and the card is reset.
+
+BZ 216255 fix nvram timing issue
+
+The problem was that when accessing the Serial PROM which is on 4022,
+the clock high and clock low phases should at least last for 250ns. We
+noticed that in some combination of CPU /PCI slot speeds these phases
+lasted less than 250ns. This results in invalid data.
+
+The patches are in 2.6.20-rc1 except some ioctl module bits which
+slipped in like the exporting of the version string. We took this
+because there is no chance for regression and because they were
+threatening to get IBM on us to take the patch they snuck this bit in.
+
+I tested the patch while doing different types of IO while disabling
+ports and pulling cables. IBM also tested the patch. We both found
+various issues when qla3xxx is run at the same time qla4xxx. qla3xxx
+handles NIC functionality and qla4xxx handles scsi/iscsi. The qla4xxx
+issues appear to be resolved. There are still some qla3xxx issues when
+doing rmmod or insmod while qla4xxx is running. These are not issues
+with this patch. They are upstream as well as in RHEL5.
+
+diff -uarp 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_dbg.c 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_dbg.c
+--- 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_dbg.c	2006-12-01 01:43:29.000000000 -0800
++++ 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_dbg.c	2006-12-04 05:02:49.000000000 -0800
+@@ -71,7 +71,7 @@ void __dump_registers(struct scsi_qla_ho
+ 		       readw(&ha->reg->u1.isp4010.nvram));
+ 	}
+ 
+-	else if (is_qla4022(ha)) {
++	else if (is_qla4022(ha) | is_qla4032(ha)) {
+ 		printk(KERN_INFO "0x%02X intr_mask	 = 0x%08X\n",
+ 		       (uint8_t) offsetof(struct isp_reg,
+ 					  u1.isp4022.intr_mask),
+@@ -119,7 +119,7 @@ void __dump_registers(struct scsi_qla_ho
+ 		       readw(&ha->reg->u2.isp4010.port_err_status));
+ 	}
+ 
+-	else if (is_qla4022(ha)) {
++	else if (is_qla4022(ha) | is_qla4032(ha)) {
+ 		printk(KERN_INFO "Page 0 Registers:\n");
+ 		printk(KERN_INFO "0x%02X ext_hw_conf	 = 0x%08X\n",
+ 		       (uint8_t) offsetof(struct isp_reg,
+diff -uarp 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_def.h 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_def.h
+--- 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_def.h	2006-12-01 01:48:49.000000000 -0800
++++ 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_def.h	2006-12-04 05:02:58.000000000 -0800
+@@ -40,7 +40,11 @@
+ 
+ #ifndef PCI_DEVICE_ID_QLOGIC_ISP4022
+ #define PCI_DEVICE_ID_QLOGIC_ISP4022	0x4022
+-#endif				/*  */
++#endif				
++
++#ifndef PCI_DEVICE_ID_QLOGIC_ISP4032
++#define PCI_DEVICE_ID_QLOGIC_ISP4032	0x4032
++#endif				
+ 
+ #define QLA_SUCCESS			0
+ #define QLA_ERROR			1
+@@ -269,6 +273,13 @@ struct scsi_qla_host {
+ 	struct klist_node node;
+ 	uint16_t instance;
+ 	uint16_t rsvd0;
++
++	/* exported functions */
++	int (*ql4cmd)(struct scsi_qla_host *ha, struct srb * srb);
++	int (*ql4mbx)(struct scsi_qla_host *ha, uint8_t inCount,
++                            uint8_t outCount, uint32_t *mbx_cmd,
++                            uint32_t *mbx_sts);
++
+ 	/* Linux adapter configuration data */
+ 	struct Scsi_Host *host; /* pointer to host data */
+ 	uint32_t tot_ddbs;
+@@ -325,12 +336,14 @@ struct scsi_qla_host {
+ 	uint32_t   eeprom_cmd_data;
+ 
+ 	/* Counters for general statistics */
++	uint64_t isr_count;
+ 	uint64_t adapter_error_count;
+ 	uint64_t device_error_count;
+ 	uint64_t total_io_count;
+ 	uint64_t total_mbytes_xferred;
+ 	uint64_t link_failure_count;
+ 	uint64_t invalid_crc_count;
++	uint32_t bytes_xfered;
+ 	uint32_t spurious_int_count;
+ 	uint32_t aborted_io_count;
+ 	uint32_t io_timeout_count;
+@@ -433,12 +446,6 @@ struct scsi_qla_host {
+ 	struct mutex  mbox_sem;
+ 	wait_queue_head_t mailbox_wait_queue;
+ 
+-	/* exported functions */
+-	int (*ql4cmd)(struct scsi_qla_host *ha, struct srb * srb);
+-	int (*ql4mbx)(struct scsi_qla_host *ha, uint8_t inCount,
+-                            uint8_t outCount, uint32_t *mbx_cmd,
+-                            uint32_t *mbx_sts);
+-
+ 	/* temporary mailbox status registers */
+ 	volatile uint8_t mbox_status_count;
+ 	volatile uint32_t mbox_status[MBOX_REG_COUNT];
+@@ -455,11 +462,17 @@ static inline int is_qla4010(struct scsi
+ 	return ha->pdev->device == PCI_DEVICE_ID_QLOGIC_ISP4010;
+ }
+ 
++
+ static inline int is_qla4022(struct scsi_qla_host *ha)
+ {
+ 	return ha->pdev->device == PCI_DEVICE_ID_QLOGIC_ISP4022;
+ }
+ 
++static inline int is_qla4032(struct scsi_qla_host *ha)
++{
++	return ha->pdev->device == PCI_DEVICE_ID_QLOGIC_ISP4032;
++}
++
+ static inline int adapter_up(struct scsi_qla_host *ha)
+ {
+ 	return (test_bit(AF_ONLINE, &ha->flags) != 0) &&
+@@ -473,58 +486,58 @@ static inline struct scsi_qla_host* to_q
+ 
+ static inline void __iomem* isp_semaphore(struct scsi_qla_host *ha)
+ {
+-	return (is_qla4022(ha) ?
+-		&ha->reg->u1.isp4022.semaphore :
+-		&ha->reg->u1.isp4010.nvram);
++	return (is_qla4010(ha) ?
++		&ha->reg->u1.isp4010.nvram :
++		&ha->reg->u1.isp4022.semaphore); 
+ }
+ 
+ static inline void __iomem* isp_nvram(struct scsi_qla_host *ha)
+ {
+-	return (is_qla4022(ha) ?
+-		&ha->reg->u1.isp4022.nvram :
+-		&ha->reg->u1.isp4010.nvram);
++	return (is_qla4010(ha) ?
++		&ha->reg->u1.isp4010.nvram :
++		&ha->reg->u1.isp4022.nvram);
+ }
+ 
+ static inline void __iomem* isp_ext_hw_conf(struct scsi_qla_host *ha)
+ {
+-	return (is_qla4022(ha) ?
+-		&ha->reg->u2.isp4022.p0.ext_hw_conf :
+-		&ha->reg->u2.isp4010.ext_hw_conf);
++	return (is_qla4010(ha) ?
++		&ha->reg->u2.isp4010.ext_hw_conf :
++		&ha->reg->u2.isp4022.p0.ext_hw_conf);
+ }
+ 
+ static inline void __iomem* isp_port_status(struct scsi_qla_host *ha)
+ {
+-	return (is_qla4022(ha) ?
+-		&ha->reg->u2.isp4022.p0.port_status :
+-		&ha->reg->u2.isp4010.port_status);
++	return (is_qla4010(ha) ?
++		&ha->reg->u2.isp4010.port_status :
++		&ha->reg->u2.isp4022.p0.port_status);
+ }
+ 
+ static inline void __iomem* isp_port_ctrl(struct scsi_qla_host *ha)
+ {
+-	return (is_qla4022(ha) ?
+-		&ha->reg->u2.isp4022.p0.port_ctrl :
+-		&ha->reg->u2.isp4010.port_ctrl);
++	return (is_qla4010(ha) ?
++		&ha->reg->u2.isp4010.port_ctrl :
++		&ha->reg->u2.isp4022.p0.port_ctrl);
+ }
+ 
+ static inline void __iomem* isp_port_error_status(struct scsi_qla_host *ha)
+ {
+-	return (is_qla4022(ha) ?
+-		&ha->reg->u2.isp4022.p0.port_err_status :
+-		&ha->reg->u2.isp4010.port_err_status);
++	return (is_qla4010(ha) ?
++		&ha->reg->u2.isp4010.port_err_status :
++		&ha->reg->u2.isp4022.p0.port_err_status);
+ }
+ 
+ static inline void __iomem * isp_gp_out(struct scsi_qla_host *ha)
+ {
+-	return (is_qla4022(ha) ?
+-		&ha->reg->u2.isp4022.p0.gp_out :
+-		&ha->reg->u2.isp4010.gp_out);
++	return (is_qla4010(ha) ?
++		&ha->reg->u2.isp4010.gp_out :
++		&ha->reg->u2.isp4022.p0.gp_out);
+ }
+ 
+ static inline int eeprom_ext_hw_conf_offset(struct scsi_qla_host *ha)
+ {
+-	return (is_qla4022(ha) ?
+-		offsetof(struct eeprom_data, isp4022.ext_hw_conf) / 2 :
+-		offsetof(struct eeprom_data, isp4010.ext_hw_conf) / 2);
++	return (is_qla4010(ha) ?
++		offsetof(struct eeprom_data, isp4010.ext_hw_conf) / 2 :
++		offsetof(struct eeprom_data, isp4022.ext_hw_conf) / 2);
+ }
+ 
+ int ql4xxx_sem_spinlock(struct scsi_qla_host * ha, u32 sem_mask, u32 sem_bits);
+@@ -533,59 +546,59 @@ int ql4xxx_sem_lock(struct scsi_qla_host
+ 
+ static inline int ql4xxx_lock_flash(struct scsi_qla_host *a)
+ {
+-	if (is_qla4022(a))
++	if (is_qla4010(a))
++		return ql4xxx_sem_spinlock(a, QL4010_FLASH_SEM_MASK,
++					   QL4010_FLASH_SEM_BITS);
++	else
+ 		return ql4xxx_sem_spinlock(a, QL4022_FLASH_SEM_MASK,
+ 					   (QL4022_RESOURCE_BITS_BASE_CODE |
+ 					    (a->mac_index)) << 13);
+-	else
+-		return ql4xxx_sem_spinlock(a, QL4010_FLASH_SEM_MASK,
+-					   QL4010_FLASH_SEM_BITS);
+ }
+ 
+ static inline void ql4xxx_unlock_flash(struct scsi_qla_host *a)
+ {
+-	if (is_qla4022(a))
+-		ql4xxx_sem_unlock(a, QL4022_FLASH_SEM_MASK);
+-	else
++	if (is_qla4010(a))
+ 		ql4xxx_sem_unlock(a, QL4010_FLASH_SEM_MASK);
++	else
++		ql4xxx_sem_unlock(a, QL4022_FLASH_SEM_MASK);
+ }
+ 
+ static inline int ql4xxx_lock_nvram(struct scsi_qla_host *a)
+ {
+-	if (is_qla4022(a))
++	if (is_qla4010(a))
++		return ql4xxx_sem_spinlock(a, QL4010_NVRAM_SEM_MASK,
++					   QL4010_NVRAM_SEM_BITS);
++	else
+ 		return ql4xxx_sem_spinlock(a, QL4022_NVRAM_SEM_MASK,
+ 					   (QL4022_RESOURCE_BITS_BASE_CODE |
+ 					    (a->mac_index)) << 10);
+-	else
+-		return ql4xxx_sem_spinlock(a, QL4010_NVRAM_SEM_MASK,
+-					   QL4010_NVRAM_SEM_BITS);
+ }
+ 
+ static inline void ql4xxx_unlock_nvram(struct scsi_qla_host *a)
+ {
+-	if (is_qla4022(a))
+-		ql4xxx_sem_unlock(a, QL4022_NVRAM_SEM_MASK);
+-	else
++	if (is_qla4010(a))
+ 		ql4xxx_sem_unlock(a, QL4010_NVRAM_SEM_MASK);
++	else
++		ql4xxx_sem_unlock(a, QL4022_NVRAM_SEM_MASK);
+ }
+ 
+ static inline int ql4xxx_lock_drvr(struct scsi_qla_host *a)
+ {
+-	if (is_qla4022(a))
++	if (is_qla4010(a))
++		return ql4xxx_sem_lock(a, QL4010_DRVR_SEM_MASK,
++				       QL4010_DRVR_SEM_BITS);
++	else
+ 		return ql4xxx_sem_lock(a, QL4022_DRVR_SEM_MASK,
+ 				       (QL4022_RESOURCE_BITS_BASE_CODE |
+ 					(a->mac_index)) << 1);
+-	else
+-		return ql4xxx_sem_lock(a, QL4010_DRVR_SEM_MASK,
+-				       QL4010_DRVR_SEM_BITS);
+ }
+ 
+ static inline void ql4xxx_unlock_drvr(struct scsi_qla_host *a)
+ {
+-	if (is_qla4022(a))
+-		ql4xxx_sem_unlock(a, QL4022_DRVR_SEM_MASK);
+-	else
++	if (is_qla4010(a))
+ 		ql4xxx_sem_unlock(a, QL4010_DRVR_SEM_MASK);
++	else
++		ql4xxx_sem_unlock(a, QL4022_DRVR_SEM_MASK);
+ }
+ 
+ /*---------------------------------------------------------------------------*/
+diff -uarp 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_fw.h 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_fw.h
+--- 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_fw.h	2006-12-01 01:43:29.000000000 -0800
++++ 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_fw.h	2006-12-04 05:02:59.000000000 -0800
+@@ -339,10 +339,13 @@ union external_hw_config_reg {
+ /*  Mailbox command definitions */
+ #define MBOX_CMD_ABOUT_FW			0x0009
+ #define MBOX_CMD_LUN_RESET			0x0016
++#define MBOX_CMD_GET_MANAGEMENT_DATA		0x001E
+ #define MBOX_CMD_GET_FW_STATUS			0x001F
+ #define MBOX_CMD_SET_ISNS_SERVICE		0x0021
+ #define ISNS_DISABLE				0
+ #define ISNS_ENABLE				1
++#define MBOX_CMD_COPY_FLASH			0x0024
++#define MBOX_CMD_WRITE_FLASH			0x0025
+ #define MBOX_CMD_READ_FLASH			0x0026
+ #define MBOX_CMD_CLEAR_DATABASE_ENTRY		0x0031
+ #define MBOX_CMD_CONN_CLOSE_SESS_LOGOUT		0x0056
+@@ -360,10 +363,13 @@ union external_hw_config_reg {
+ #define DDB_DS_SESSION_FAILED			0x06
+ #define DDB_DS_LOGIN_IN_PROCESS			0x07
+ #define MBOX_CMD_GET_FW_STATE			0x0069
++#define MBOX_CMD_GET_INIT_FW_CTRL_BLOCK_DEFAULTS 0x006A
++#define MBOX_CMD_RESTORE_FACTORY_DEFAULTS	0x0087
+ 
+ /* Mailbox 1 */
+ #define FW_STATE_READY				0x0000
+ #define FW_STATE_CONFIG_WAIT			0x0001
++#define FW_STATE_WAIT_LOGIN			0x0002
+ #define FW_STATE_ERROR				0x0004
+ #define FW_STATE_DHCP_IN_PROGRESS		0x0008
+ 
+diff -uarp 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_glbl.h 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_glbl.h
+--- 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_glbl.h	2006-12-01 01:48:49.000000000 -0800
++++ 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_glbl.h	2006-12-04 05:03:00.000000000 -0800
+@@ -10,6 +10,7 @@
+ 
+ struct iscsi_cls_conn;
+ 
++int ql4xxx_lock_drvr_wait(struct scsi_qla_host *a);
+ int qla4xxx_conn_start(struct iscsi_cls_conn *conn);
+ int qla4xxx_send_tgts(struct scsi_qla_host *ha, char *ip, uint16_t port);
+ int qla4xxx_send_command_to_isp(struct scsi_qla_host *ha, struct srb * srb);
+diff -uarp 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_init.c 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_init.c
+--- 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_init.c	2006-12-01 01:44:01.000000000 -0800
++++ 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_init.c	2006-12-04 05:02:50.000000000 -0800
+@@ -274,10 +274,15 @@ static int qla4xxx_fw_ready(struct scsi_
+ 			      "seconds expired= %d\n", ha->host_no, __func__,
+ 			      ha->firmware_state, ha->addl_fw_state,
+ 			      timeout_count));
++		if (is_qla4032(ha) &&
++			!(ha->addl_fw_state & FW_ADDSTATE_LINK_UP) &&
++			(timeout_count < ADAPTER_INIT_TOV - 5)) {
++			break;
++		}
+ 		msleep(1000);
+ 	}			/* end of for */
+ 
+-	if (timeout_count <= 0)
++	if (timeout_count == 0)
+ 		DEBUG2(printk("scsi%ld: %s: FW Initialization timed out!\n",
+ 			      ha->host_no, __func__));
+ 
+@@ -821,32 +826,6 @@ int qla4xxx_relogin_device(struct scsi_q
+ 	return QLA_SUCCESS;
+ }
+ 
+-/**
+- * qla4010_get_topcat_presence - check if it is QLA4040 TopCat Chip
+- * @ha: Pointer to host adapter structure.
+- *
+- **/
+-static int qla4010_get_topcat_presence(struct scsi_qla_host *ha)
+-{
+-	unsigned long flags;
+-	uint16_t topcat;
+-
+-	if (ql4xxx_lock_nvram(ha) != QLA_SUCCESS)
+-		return QLA_ERROR;
+-	spin_lock_irqsave(&ha->hardware_lock, flags);
+-	topcat = rd_nvram_word(ha, offsetof(struct eeprom_data,
+-					    isp4010.topcat));
+-	spin_unlock_irqrestore(&ha->hardware_lock, flags);
+-
+-	if ((topcat & TOPCAT_MASK) == TOPCAT_PRESENT)
+-		set_bit(AF_TOPCAT_CHIP_PRESENT, &ha->flags);
+-	else
+-		clear_bit(AF_TOPCAT_CHIP_PRESENT, &ha->flags);
+-	ql4xxx_unlock_nvram(ha);
+-	return QLA_SUCCESS;
+-}
+-
+-
+ static int qla4xxx_config_nvram(struct scsi_qla_host *ha)
+ {
+ 	unsigned long flags;
+@@ -881,7 +860,7 @@ static int qla4xxx_config_nvram(struct s
+ 		/* set defaults */
+ 		if (is_qla4010(ha))
+ 			extHwConfig.Asuint32_t = 0x1912;
+-		else if (is_qla4022(ha))
++		else if (is_qla4022(ha) | is_qla4032(ha))
+ 			extHwConfig.Asuint32_t = 0x0023;
+ 	}
+ 	DEBUG(printk("scsi%ld: %s: Setting extHwConfig to 0xFFFF%04x\n",
+@@ -942,7 +921,7 @@ static int qla4xxx_start_firmware_from_f
+ 
+ 	spin_lock_irqsave(&ha->hardware_lock, flags);
+ 	writel(jiffies, &ha->reg->mailbox[7]);
+-	if (is_qla4022(ha))
++	if (is_qla4022(ha) | is_qla4032(ha))
+ 		writel(set_rmask(NVR_WRITE_ENABLE),
+ 		       &ha->reg->u1.isp4022.nvram);
+ 
+@@ -993,7 +972,7 @@ static int qla4xxx_start_firmware_from_f
+ 	return status;
+ }
+ 
+-static int ql4xxx_lock_drvr_wait(struct scsi_qla_host *a)
++int ql4xxx_lock_drvr_wait(struct scsi_qla_host *a)
+ {
+ #define QL4_LOCK_DRVR_WAIT	300
+ #define QL4_LOCK_DRVR_SLEEP	100
+@@ -1033,12 +1012,7 @@ static int qla4xxx_start_firmware(struct
+ 	int soft_reset = 1;
+ 	int config_chip = 0;
+ 
+-	if (is_qla4010(ha)){
+-		if (qla4010_get_topcat_presence(ha) != QLA_SUCCESS)
+-			return QLA_ERROR;
+-	}
+-
+-	if (is_qla4022(ha))
++	if (is_qla4022(ha) | is_qla4032(ha))
+ 		ql4xxx_set_mac_number(ha);
+ 
+ 	if (ql4xxx_lock_drvr_wait(ha) != QLA_SUCCESS)
+diff -uarp 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_inline.h 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_inline.h
+--- 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_inline.h	2006-12-01 01:43:29.000000000 -0800
++++ 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_inline.h	2006-12-04 05:03:01.000000000 -0800
+@@ -38,7 +38,7 @@ qla4xxx_lookup_ddb_by_fw_index(struct sc
+ static inline void
+ __qla4xxx_enable_intrs(struct scsi_qla_host *ha)
+ {
+-	if (is_qla4022(ha)) {
++	if (is_qla4022(ha) | is_qla4032(ha)) {
+ 		writel(set_rmask(IMR_SCSI_INTR_ENABLE),
+ 		       &ha->reg->u1.isp4022.intr_mask);
+ 		readl(&ha->reg->u1.isp4022.intr_mask);
+@@ -52,7 +52,7 @@ __qla4xxx_enable_intrs(struct scsi_qla_h
+ static inline void
+ __qla4xxx_disable_intrs(struct scsi_qla_host *ha)
+ {
+-	if (is_qla4022(ha)) {
++	if (is_qla4022(ha) | is_qla4032(ha)) {
+ 		writel(clr_rmask(IMR_SCSI_INTR_ENABLE),
+ 		       &ha->reg->u1.isp4022.intr_mask);
+ 		readl(&ha->reg->u1.isp4022.intr_mask);
+diff -uarp 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_iocb.c 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_iocb.c
+--- 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_iocb.c	2006-12-01 01:48:49.000000000 -0800
++++ 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_iocb.c	2006-12-04 05:02:50.000000000 -0800
+@@ -444,6 +444,12 @@ int qla4xxx_send_command_to_isp(struct s
+ 			cmd_entry->control_flags = CF_WRITE;
+ 		else if (cmd->sc_data_direction == DMA_FROM_DEVICE)
+ 			cmd_entry->control_flags = CF_READ;
++
++		ha->bytes_xfered += cmd->request_bufflen;
++		if (ha->bytes_xfered & ~0xFFFFF){
++			ha->total_mbytes_xferred += ha->bytes_xfered >> 20;
++			ha->bytes_xfered &= 0xFFFFF;
++		}
+ 	}
+ 
+ 	/* Set tagged queueing control flags */
+diff -uarp 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_isr.c 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_isr.c
+--- 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_isr.c	2006-12-01 01:43:29.000000000 -0800
++++ 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_isr.c	2006-12-04 05:02:51.000000000 -0800
+@@ -627,6 +627,7 @@ irqreturn_t qla4xxx_intr_handler(int irq
+ 
+ 	spin_lock_irqsave(&ha->hardware_lock, flags);
+ 
++	ha->isr_count++;
+ 	/*
+ 	 * Repeatedly service interrupts up to a maximum of
+ 	 * MAX_REQS_SERVICED_PER_INTR
+diff -uarp 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_nvram.c 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_nvram.c
+--- 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_nvram.c	2006-12-01 01:43:29.000000000 -0800
++++ 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_nvram.c	2006-12-04 05:02:52.000000000 -0800
+@@ -7,15 +7,22 @@
+ 
+ #include "ql4_def.h"
+ 
++static inline void eeprom_cmd(uint32_t cmd, struct scsi_qla_host *ha)
++{
++	writel(cmd, isp_nvram(ha));
++	readl(isp_nvram(ha));
++	udelay(1);
++}
++
+ static inline int eeprom_size(struct scsi_qla_host *ha)
+ {
+-	return is_qla4022(ha) ? FM93C86A_SIZE_16 : FM93C66A_SIZE_16;
++	return is_qla4010(ha) ? FM93C66A_SIZE_16 : FM93C86A_SIZE_16;
+ }
+ 
+ static inline int eeprom_no_addr_bits(struct scsi_qla_host *ha)
+ {
+-	return is_qla4022(ha) ? FM93C86A_NO_ADDR_BITS_16 :
+-		FM93C56A_NO_ADDR_BITS_16;
++	return is_qla4010(ha) ? FM93C56A_NO_ADDR_BITS_16 :
++		FM93C86A_NO_ADDR_BITS_16 ;
+ }
+ 
+ static inline int eeprom_no_data_bits(struct scsi_qla_host *ha)
+@@ -28,8 +35,7 @@ static int fm93c56a_select(struct scsi_q
+ 	DEBUG5(printk(KERN_ERR "fm93c56a_select:\n"));
+ 
+ 	ha->eeprom_cmd_data = AUBURN_EEPROM_CS_1 | 0x000f0000;
+-	writel(ha->eeprom_cmd_data, isp_nvram(ha));
+-	readl(isp_nvram(ha));
++	eeprom_cmd(ha->eeprom_cmd_data, ha);
+ 	return 1;
+ }
+ 
+@@ -41,12 +47,13 @@ static int fm93c56a_cmd(struct scsi_qla_
+ 	int previousBit;
+ 
+ 	/* Clock in a zero, then do the start bit. */
+-	writel(ha->eeprom_cmd_data | AUBURN_EEPROM_DO_1, isp_nvram(ha));
+-	writel(ha->eeprom_cmd_data | AUBURN_EEPROM_DO_1 |
+-	       AUBURN_EEPROM_CLK_RISE, isp_nvram(ha));
+-	writel(ha->eeprom_cmd_data | AUBURN_EEPROM_DO_1 |
+-	       AUBURN_EEPROM_CLK_FALL, isp_nvram(ha));
+-	readl(isp_nvram(ha));
++	eeprom_cmd(ha->eeprom_cmd_data | AUBURN_EEPROM_DO_1, ha);
++
++	eeprom_cmd(ha->eeprom_cmd_data | AUBURN_EEPROM_DO_1 |
++	       AUBURN_EEPROM_CLK_RISE, ha);
++	eeprom_cmd(ha->eeprom_cmd_data | AUBURN_EEPROM_DO_1 |
++	       AUBURN_EEPROM_CLK_FALL, ha);
++
+ 	mask = 1 << (FM93C56A_CMD_BITS - 1);
+ 
+ 	/* Force the previous data bit to be different. */
+@@ -60,14 +67,14 @@ static int fm93c56a_cmd(struct scsi_qla_
+ 			 * If the bit changed, then change the DO state to
+ 			 * match.
+ 			 */
+-			writel(ha->eeprom_cmd_data | dataBit, isp_nvram(ha));
++			eeprom_cmd(ha->eeprom_cmd_data | dataBit, ha);
+ 			previousBit = dataBit;
+ 		}
+-		writel(ha->eeprom_cmd_data | dataBit |
+-		       AUBURN_EEPROM_CLK_RISE, isp_nvram(ha));
+-		writel(ha->eeprom_cmd_data | dataBit |
+-		       AUBURN_EEPROM_CLK_FALL, isp_nvram(ha));
+-		readl(isp_nvram(ha));
++		eeprom_cmd(ha->eeprom_cmd_data | dataBit |
++		       AUBURN_EEPROM_CLK_RISE, ha);
++		eeprom_cmd(ha->eeprom_cmd_data | dataBit |
++		       AUBURN_EEPROM_CLK_FALL, ha);
++
+ 		cmd = cmd << 1;
+ 	}
+ 	mask = 1 << (eeprom_no_addr_bits(ha) - 1);
+@@ -82,14 +89,15 @@ static int fm93c56a_cmd(struct scsi_qla_
+ 			 * If the bit changed, then change the DO state to
+ 			 * match.
+ 			 */
+-			writel(ha->eeprom_cmd_data | dataBit, isp_nvram(ha));
++			eeprom_cmd(ha->eeprom_cmd_data | dataBit, ha);
++
+ 			previousBit = dataBit;
+ 		}
+-		writel(ha->eeprom_cmd_data | dataBit |
+-		       AUBURN_EEPROM_CLK_RISE, isp_nvram(ha));
+-		writel(ha->eeprom_cmd_data | dataBit |
+-		       AUBURN_EEPROM_CLK_FALL, isp_nvram(ha));
+-		readl(isp_nvram(ha));
++		eeprom_cmd(ha->eeprom_cmd_data | dataBit |
++		       AUBURN_EEPROM_CLK_RISE, ha);
++		eeprom_cmd(ha->eeprom_cmd_data | dataBit |
++		       AUBURN_EEPROM_CLK_FALL, ha);
++
+ 		addr = addr << 1;
+ 	}
+ 	return 1;
+@@ -98,8 +106,7 @@ static int fm93c56a_cmd(struct scsi_qla_
+ static int fm93c56a_deselect(struct scsi_qla_host * ha)
+ {
+ 	ha->eeprom_cmd_data = AUBURN_EEPROM_CS_0 | 0x000f0000;
+-	writel(ha->eeprom_cmd_data, isp_nvram(ha));
+-	readl(isp_nvram(ha));
++	eeprom_cmd(ha->eeprom_cmd_data, ha);
+ 	return 1;
+ }
+ 
+@@ -112,12 +119,13 @@ static int fm93c56a_datain(struct scsi_q
+ 	/* Read the data bits
+ 	 * The first bit is a dummy.  Clock right over it. */
+ 	for (i = 0; i < eeprom_no_data_bits(ha); i++) {
+-		writel(ha->eeprom_cmd_data |
+-		       AUBURN_EEPROM_CLK_RISE, isp_nvram(ha));
+-		writel(ha->eeprom_cmd_data |
+-		       AUBURN_EEPROM_CLK_FALL, isp_nvram(ha));
+-		dataBit =
+-			(readw(isp_nvram(ha)) & AUBURN_EEPROM_DI_1) ? 1 : 0;
++		eeprom_cmd(ha->eeprom_cmd_data |
++		       AUBURN_EEPROM_CLK_RISE, ha);
++		eeprom_cmd(ha->eeprom_cmd_data |
++		       AUBURN_EEPROM_CLK_FALL, ha);
++
++		dataBit = (readw(isp_nvram(ha)) & AUBURN_EEPROM_DI_1) ? 1 : 0;
++
+ 		data = (data << 1) | dataBit;
+ 	}
+ 
+diff -uarp 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_os.c 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_os.c
+--- 2.6.18-1.2747.el5-x86_64/drivers/scsi/qla4xxx/ql4_os.c	2006-12-01 01:48:49.000000000 -0800
++++ 2.6.18-1.2747.el5-x86_64.4032_patch/drivers/scsi/qla4xxx/ql4_os.c	2006-12-04 05:11:50.000000000 -0800
+@@ -16,6 +16,7 @@
+  * Driver version
+  */
+ char qla4xxx_version_str[40];
++EXPORT_SYMBOL_GPL(qla4xxx_version_str);
+ 
+ /*      
+  * List of host adapters
+@@ -25,7 +26,7 @@ struct klist qla4xxx_hostlist;
+ struct klist *qla4xxx_hostlist_ptr = &qla4xxx_hostlist;
+ EXPORT_SYMBOL_GPL(qla4xxx_hostlist_ptr);
+  
+-atomic_t qla4xxx_hba_count;
++static atomic_t qla4xxx_hba_count;
+  
+ /*
+  * SRB allocation cache
+@@ -716,10 +717,10 @@ static int qla4xxx_cmd_wait(struct scsi_
+ }
+ 
+ /**
+- * qla4010_soft_reset - performs soft reset.
++ * qla4xxx_soft_reset - performs soft reset.
+  * @ha: Pointer to host adapter structure.
+  **/
+-static int qla4010_soft_reset(struct scsi_qla_host *ha)
++int qla4xxx_soft_reset(struct scsi_qla_host *ha)
+ {
+ 	uint32_t max_wait_time;
+ 	unsigned long flags = 0;
+@@ -825,29 +826,6 @@ static int qla4010_soft_reset(struct scs
+ }
+ 
+ /**
+- * qla4xxx_topcat_reset - performs hard reset of TopCat Chip.
+- * @ha: Pointer to host adapter structure.
+- **/
+-static int qla4xxx_topcat_reset(struct scsi_qla_host *ha)
+-{
+-	unsigned long flags;
+-
+-	ql4xxx_lock_nvram(ha);
+-	spin_lock_irqsave(&ha->hardware_lock, flags);
+-	writel(set_rmask(GPOR_TOPCAT_RESET), isp_gp_out(ha));
+-	readl(isp_gp_out(ha));
+-	mdelay(1);
+-
+-	writel(clr_rmask(GPOR_TOPCAT_RESET), isp_gp_out(ha));
+-	readl(isp_gp_out(ha));
+-	spin_unlock_irqrestore(&ha->hardware_lock, flags);
+-	mdelay(2523);
+-
+-	ql4xxx_unlock_nvram(ha);
+-	return QLA_SUCCESS;
+-}
+-
+-/**
+  * qla4xxx_flush_active_srbs - returns all outstanding i/o requests to O.S.
+  * @ha: Pointer to host adapter structure.
+  *
+@@ -875,26 +853,6 @@ static void qla4xxx_flush_active_srbs(st
+ }
+ 
+ /**
+- * qla4xxx_hard_reset - performs HBA Hard Reset
+- * @ha: Pointer to host adapter structure.
+- **/
+-static int qla4xxx_hard_reset(struct scsi_qla_host *ha)
+-{
+-	/* The QLA4010 really doesn't have an equivalent to a hard reset */
+-	qla4xxx_flush_active_srbs(ha);
+-	if (test_bit(AF_TOPCAT_CHIP_PRESENT, &ha->flags)) {
+-		int status = QLA_ERROR;
+-
+-		if ((qla4010_soft_reset(ha) == QLA_SUCCESS) &&
+-		    (qla4xxx_topcat_reset(ha) == QLA_SUCCESS) &&
+-		    (qla4010_soft_reset(ha) == QLA_SUCCESS))
+-			status = QLA_SUCCESS;
+-		return status;
+-	} else
+-		return qla4010_soft_reset(ha);
+-}
+-
+-/**
+  * qla4xxx_recover_adapter - recovers adapter after a fatal error
+  * @ha: Pointer to host adapter structure.
+  * @renew_ddb_list: Indicates what to do with the adapter's ddb list
+@@ -927,18 +885,11 @@ static int qla4xxx_recover_adapter(struc
+ 	if (status == QLA_SUCCESS) {
+ 		DEBUG2(printk("scsi%ld: %s - Performing soft reset..\n",
+ 			      ha->host_no, __func__));
+-		status = qla4xxx_soft_reset(ha);
+-	}
+-	/* FIXMEkaren: Do we want to keep interrupts enabled and process
+-	   AENs after soft reset */
+-
+-	/* If firmware (SOFT) reset failed, or if all outstanding
+-	 * commands have not returned, then do a HARD reset.
+-	 */
+-	if (status == QLA_ERROR) {
+-		DEBUG2(printk("scsi%ld: %s - Performing hard reset..\n",
+-			      ha->host_no, __func__));
+-		status = qla4xxx_hard_reset(ha);
++		qla4xxx_flush_active_srbs(ha);
++		if (ql4xxx_lock_drvr_wait(ha) == QLA_SUCCESS)
++			status = qla4xxx_soft_reset(ha);
++		else
++			status = QLA_ERROR;
+ 	}
+ 
+ 	/* Flush any pending ddb changed AENs */
+@@ -1130,7 +1081,8 @@ static void qla4xxx_free_adapter(struct 
+ 		destroy_workqueue(ha->dpc_thread);
+ 
+ 	/* Issue Soft Reset to put firmware in unknown state */
+-	qla4xxx_soft_reset(ha);
++	if (ql4xxx_lock_drvr_wait(ha) == QLA_SUCCESS)
++		qla4xxx_soft_reset(ha);
+ 
+ 	/* Remove timer thread, if present */
+ 	if (ha->timer_active)
+@@ -1355,8 +1307,8 @@ static int __devinit qla4xxx_probe_adapt
+ 
+ 	printk(KERN_INFO
+ 	       " QLogic iSCSI HBA Driver version: %s\n"
+-	       "  QLogic ISP%04x @ %s, host#=%ld, fw=%02d.%02d.%02d.%02d\n",
+-	       qla4xxx_version_str, ha->pdev->device, pci_name(ha->pdev),
++	       "  QLogic ISP%04x @ %s, pdev = %p host#=%ld, fw=%02d.%02d.%02d.%02d\n",
++	       qla4xxx_version_str, ha->pdev->device, pci_name(ha->pdev), pdev,
+ 	       ha->host_no, ha->firmware_version[0], ha->firmware_version[1],
+ 	       ha->patch_number, ha->build_number);
+ 
+@@ -1365,7 +1317,7 @@ static int __devinit qla4xxx_probe_adapt
+ 	ha->instance = atomic_inc_return(&qla4xxx_hba_count) - 1;
+ 
+         DEBUG2(printk("qla4xxx: listhead=%p, done adding ha=%p i=%d\n",
+-            &qla4xxx_hostlist, &ha->node, ha->instance);)
++            &qla4xxx_hostlist, &ha->node, ha->instance));
+ 
+ 	return 0;
+ 
+@@ -1482,27 +1434,6 @@ struct srb * qla4xxx_del_from_active_arr
+ }
+ 
+ /**
+- * qla4xxx_soft_reset - performs a SOFT RESET of hba.
+- * @ha: Pointer to host adapter structure.
+- **/
+-int qla4xxx_soft_reset(struct scsi_qla_host *ha)
+-{
+-
+-	DEBUG2(printk(KERN_WARNING "scsi%ld: %s: chip reset!\n", ha->host_no,
+-		      __func__));
+-	if (test_bit(AF_TOPCAT_CHIP_PRESENT, &ha->flags)) {
+-		int status = QLA_ERROR;
+-
+-		if ((qla4010_soft_reset(ha) == QLA_SUCCESS) &&
+-		    (qla4xxx_topcat_reset(ha) == QLA_SUCCESS) &&
+-		    (qla4010_soft_reset(ha) == QLA_SUCCESS) )
+-			status = QLA_SUCCESS;
+-		return status;
+-	} else
+-		return qla4010_soft_reset(ha);
+-}
+-
+-/**
+  * qla4xxx_eh_wait_on_command - waits for command to be returned by firmware
+  * @ha: actual ha whose done queue will contain the comd returned by firmware.
+  * @cmd: Scsi Command to wait on.
+@@ -1710,6 +1641,12 @@ static struct pci_device_id qla4xxx_pci_
+ 		.subvendor	= PCI_ANY_ID,
+ 		.subdevice	= PCI_ANY_ID,
+ 	},
++	{
++		.vendor		= PCI_VENDOR_ID_QLOGIC,
++		.device		= PCI_DEVICE_ID_QLOGIC_ISP4032,
++		.subvendor	= PCI_ANY_ID,
++		.subdevice	= PCI_ANY_ID,
++	},
+ 	{0, 0},
+ };
+ MODULE_DEVICE_TABLE(pci, qla4xxx_pci_tbl);
+

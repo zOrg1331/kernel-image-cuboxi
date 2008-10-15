@@ -1,0 +1,56 @@
+From: Aristeu Rozanski <arozansk@redhat.com>
+Date: Fri, 8 Feb 2008 00:01:00 -0500
+Subject: [net] ipsec: allow CTR mode use with AES
+Message-id: 20080208050058.GD968@redhat.com
+O-Subject: [RHEL5.2 PATCH] ipsec: allow CTR mode use with AES
+Bugzilla: 430164
+
+https://bugzilla.redhat.com/show_bug.cgi?id=430164
+
+This patch allows CTR mode to be used with AES algorithm and it's needed
+for ipsec conformance testing and IPv6 DoD certification.
+
+Upstream: davem already picked up the patch and plan to integrate it upstream
+
+Brew build id: 1159517
+
+diff --git a/include/linux/pfkeyv2.h b/include/linux/pfkeyv2.h
+index fc2c5ba..01a38ed 100644
+--- a/include/linux/pfkeyv2.h
++++ b/include/linux/pfkeyv2.h
+@@ -297,6 +297,7 @@ struct sadb_x_sec_ctx {
+ #define SADB_X_EALG_BLOWFISHCBC		7
+ #define SADB_EALG_NULL			11
+ #define SADB_X_EALG_AESCBC		12
++#define SADB_X_EALG_AESCTR		13
+ #define SADB_X_EALG_AES_CCM_ICV8	14
+ #define SADB_X_EALG_AES_CCM_ICV12	15
+ #define SADB_X_EALG_AES_CCM_ICV16	16
+diff --git a/net/xfrm/xfrm_algo.c b/net/xfrm/xfrm_algo.c
+index ca87d54..6f31d1b 100644
+--- a/net/xfrm/xfrm_algo.c
++++ b/net/xfrm/xfrm_algo.c
+@@ -334,6 +334,23 @@ static struct xfrm_nalgo_desc ealg_list[] = {
+                 .sadb_alg_maxbits = 256
+         }
+ },
++{
++	.name = "rfc3686(ctr(aes))",
++
++	.uinfo = {
++		.encr = {
++			.blockbits = 128,
++			.defkeybits = 160, /* 128-bit key + 32-bit nonce */
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_X_EALG_AESCTR,
++		.sadb_alg_ivlen	= 8,
++		.sadb_alg_minbits = 128,
++		.sadb_alg_maxbits = 256
++	}
++},
+ };
+ 
+ static struct xfrm_nalgo_desc calg_list[] = {

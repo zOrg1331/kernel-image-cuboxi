@@ -1,0 +1,54 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Tue, 30 Oct 2007 14:54:01 +0100
+Subject: [x86] use pci=bfsort for certain boxes
+Message-id: 47273779.7050006@redhat.com
+O-Subject: [RHEL5.2 PATCH] use pci=bfsort for HP DL385 G2 and DL585 G2
+Bugzilla: 242990
+
+Fixes https://bugzilla.redhat.com/show_bug.cgi?id=242990
+(IT #123140)
+
+HP ProLiant systems DL385 G2 and DL585 G2 need pci=bfsort to enumerate
+PCI devices in the expected order. The expected order for embedded NICs
+is the order in which they are labeled on the server chassis and how the
+BIOS numbers them.
+
+The patch adds the two models to the list of devices for which bfsort is
+automatically chosen. It will only change the order on new RHEL
+installations, because once installed, the NICs are identified by their
+MAC addresses by the scripts and keep their names stable.
+
+The patch is in Linux 2.6.24-rc1.
+
+Tested with the 585 G2 by the reporter of the issue.
+
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/arch/i386/pci/common.c b/arch/i386/pci/common.c
+index cd742ac..56c9ba4 100644
+--- a/arch/i386/pci/common.c
++++ b/arch/i386/pci/common.c
+@@ -318,6 +318,22 @@ static struct dmi_system_id __devinitdata pciprobe_dmi_table[] = {
+ 			DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant BL685c G1"),
+ 		},
+ 	},
++	{
++		.callback = set_bf_sort,
++		.ident = "HP ProLiant DL385 G2",
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "HP"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant DL385 G2"),
++		},
++	},
++	{
++		.callback = set_bf_sort,
++		.ident = "HP ProLiant DL585 G2",
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "HP"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant DL585 G2"),
++		},
++	},
+ 	{}
+ };
+ 

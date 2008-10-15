@@ -1,0 +1,33 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Subject: [RHEL5 patch] Fix for shmem_truncate_range() BUG_ON()
+Date: Wed, 03 Jan 2007 16:17:44 -0500
+Bugzilla: 219821
+Message-Id: <459C1D78.8010609@redhat.com>
+Changelog: mm: Fix for shmem_truncate_range() BUG_ON()
+
+
+The following patch prevents the BUG_ON in shmem_truncate_range() when 
+there are no
+indirect blocks or it is punching a hole below indirect blocks. 
+
+Fixes BZ 219821 and this patch was accepted upstream and committed into 
+kernel 2.6.19
+
+
+
+--- linux-2.6.18.noarch/mm/shmem.c.orig
++++ linux-2.6.18.noarch/mm/shmem.c
+@@ -510,7 +510,11 @@ static void shmem_truncate_range(struct 
+ 			size = SHMEM_NR_DIRECT;
+ 		nr_swaps_freed = shmem_free_swp(ptr+idx, ptr+size);
+ 	}
+-	if (!topdir)
++	/*
++	 * If there are no indirect blocks or we are punching a hole
++	 * below indirect blocks, nothing to be done.
++	 */
++	if (!topdir || (punch_hole && (limit <= SHMEM_NR_DIRECT)))
+ 		goto done2;
+ 
+ 	BUG_ON(limit <= SHMEM_NR_DIRECT);
+

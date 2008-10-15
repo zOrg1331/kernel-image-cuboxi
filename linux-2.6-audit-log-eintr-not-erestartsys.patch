@@ -1,0 +1,51 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Tue, 11 Dec 2007 22:13:39 -0500
+Subject: [audit] log eintr, not erestartsys
+Message-id: 1197429219.3005.13.camel@localhost.localdomain
+O-Subject: [RHEL5 PATCH] audit: log EINTR, not ERESTARTSYS in audit logs
+Bugzilla: 234426
+
+BZ 234426
+
+http://www.mail-archive.com/linux-audit@redhat.com/msg01675.html
+
+When a syscall gets interrupted by a signal and that signal is set to
+not restart the syscall its return code will get collected by the audit
+system before the registers are changed to the userspace valid EINTR;
+See the discussion in include/linux/errno.h
+
+Thus it is possible to get a syscall audit such as:
+
+type=SYSCALL msg=audit(11/13/2007 23:47:34.648:80314) : arch=x86_64
+syscall=accept success=no exit=-512(Unknown error 512) a0=3 [snip]
+
+with this patch we clean up those kernel only return codes and give the
+userspace equivalent.
+
+type=SYSCALL msg=audit(11/13/2007 23:06:04.017:898) : arch=x86_64
+syscall=accept success=no exit=-4(Interrupted system call) a0=3 [snip]
+
+Signed-off-by: Eric Paris <eparis@redhat.com>
+
+Tested using HP's test case and shown to solve the problem.
+
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index 387a780..04db704 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -699,7 +699,14 @@ static inline struct audit_context *audit_get_context(struct task_struct *tsk,
+ 	if (likely(!context))
+ 		return NULL;
+ 	context->return_valid = return_valid;
+-	context->return_code  = return_code;
++
++	if (unlikely((return_code == -ERESTART_RESTARTBLOCK) ||
++		     (return_code == -ERESTARTNOHAND) ||
++		     (return_code == -ERESTARTSYS) ||
++		     (return_code == -ERESTARTNOINTR)))
++		context->return_code = -EINTR;
++	else
++		context->return_code  = return_code;
+ 
+ 	if (context->in_syscall && !context->dummy && !context->auditable) {
+ 		enum audit_state state;

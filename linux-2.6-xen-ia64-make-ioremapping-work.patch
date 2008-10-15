@@ -1,0 +1,95 @@
+From: Jarod Wilson <jwilson@redhat.com>
+Date: Tue, 21 Aug 2007 22:12:53 -0400
+Subject: [xen] ia64: make ioremapping work
+Message-id: 46CB9BA5.4030109@redhat.com
+O-Subject: [RHEL5.2 PATCH] make ioremapping work on ia64 xen kernels
+Bugzilla: 240006
+
+Bugzilla
+--------
+#252399: ioremap patchset makes kernel-xen non-bootable on some ia64
+hardware
+
+Description
+-----------
+The ioremapping patch set we initially pulled into kernel 2.6.18-40.el5,
+but reverted in 2.6.18-41.el5, adds the ability for mmap requests to be
+validated, and if need be, remapped to another memory location. This
+change was necessary to make X function on a number of newer ia64
+systems. However, these changes made the xen kernel trigger a machine
+check on many of the same systems (predominantly those from HP).
+
+The crux of the problem is that we need the value of "size" for the xen
+ioremap hypercall, but we rounded it up to full pages before passing it
+to xen. If we use a different variable "page_size" for the rounded-up
+value, rather than clobbering "size", the xen kernels function with the
+ioremapping changes included.
+
+If at all possible, I know HP, Fujitsu, Hitachi and Intel would all like
+to see us revisit the ioremapping patches + this for 5.1 so X won't be
+busted on their newer systems, but if not, hey, we're getting a good
+jump start on 5.2...
+
+Testing
+-------
+Tested successfully on a number of HP systems that were failing with the
+prior ioremap patchset. Further testing across a wider array of systems
+forthcoming.
+
+Upstream status
+---------------
+The patch originates from Bjorn Helgaas at Hewlett-Packard, who wrote
+the ioremapping patches in the first place (which went into 2.6.19), and
+Bjorn should be sending them along upstream himself before too much longer.
+
+--
+Jarod Wilson
+jwilson@redhat.com
+
+Preserve "size", which is used if we can't use page table mappings.
+
+Acked-by: Doug Chapman <dchapman@redhat.com>
+Nacked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+
+diff --git a/arch/ia64/mm/ioremap.c b/arch/ia64/mm/ioremap.c
+index 7e876e0..5568d56 100644
+--- a/arch/ia64/mm/ioremap.c
++++ b/arch/ia64/mm/ioremap.c
+@@ -35,7 +35,7 @@ ioremap (unsigned long phys_addr, unsigned long size)
+ 	pgprot_t prot;
+ 	u64 attr;
+ 	unsigned long gran_base, gran_size;
+-	unsigned long page_base;
++	unsigned long page_base, page_size;
+ 
+ 	/*
+ 	 * For things in kern_memmap, we must use the same attribute
+@@ -64,8 +64,8 @@ ioremap (unsigned long phys_addr, unsigned long size)
+ 	 * instead.
+ 	 */
+ 	page_base = phys_addr & PAGE_MASK;
+-	size = PAGE_ALIGN(phys_addr + size) - page_base;
+-	if (efi_mem_attribute(page_base, size) & EFI_MEMORY_WB) {
++	page_size = PAGE_ALIGN(phys_addr + size) - page_base;
++	if (efi_mem_attribute(page_base, page_size) & EFI_MEMORY_WB) {
+ 		prot = PAGE_KERNEL;
+ 
+ 		/*
+@@ -77,14 +77,14 @@ ioremap (unsigned long phys_addr, unsigned long size)
+ 		/*
+ 		 * Ok, go for it..
+ 		 */
+-		area = get_vm_area(size, VM_IOREMAP);
++		area = get_vm_area(page_size, VM_IOREMAP);
+ 		if (!area)
+ 			return NULL;
+ 
+ 		area->phys_addr = phys_addr;
+ 		addr = (void __iomem *) area->addr;
+ 		if (ioremap_page_range((unsigned long) addr,
+-				(unsigned long) addr + size, phys_addr, prot)) {
++				(unsigned long) addr + page_size, phys_addr, prot)) {
+ 			vunmap((void __force *) addr);
+ 			return NULL;
+ 		}

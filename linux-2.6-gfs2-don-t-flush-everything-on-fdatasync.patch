@@ -1,0 +1,151 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5] [GFS2] Don't flush everything on fdatasync [1/2]
+Date: Thu, 07 Dec 2006 14:35:25 +0000
+Bugzilla: 218770
+Message-Id: <1165502125.3752.858.camel@quoit.chygwyn.com>
+Changelog: GFS2: Don't flush everything on fdatasync
+
+
+Hi,
+
+This one is in two bits purely because we are following the upstream patches.
+The bz is #218770 and the first of the two patches is below,
+
+Steve.
+
+
+
+>From 33c3de32872ef3c075e4dac04c0de8f86ac39f6f Mon Sep 17 00:00:00 2001
+
+The gfs2_fsync() function was doing a journal flush on each
+and every call. While this is correct, its also a lot of
+overhead. This patch means that on fdatasync flushes we
+rely on the VFS to flush the data for us and we don't do
+a journal flush unless we really need to.
+
+We have to do a journal flush for stuffed files though because
+they have the data and the inode metadata in the same block.
+Journaled files also need a journal flush too of course.
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+---
+ fs/gfs2/ops_file.c |   30 +++++++++++++++++++++++++++---
+ 1 files changed, 27 insertions(+), 3 deletions(-)
+
+diff --git a/fs/gfs2/ops_file.c b/fs/gfs2/ops_file.c
+index c2be216..7bd971b 100644
+--- a/fs/gfs2/ops_file.c
++++ b/fs/gfs2/ops_file.c
+@@ -22,6 +22,7 @@ #include <linux/gfs2_ondisk.h>
+ #include <linux/ext2_fs.h>
+ #include <linux/crc32.h>
+ #include <linux/lm_interface.h>
++#include <linux/writeback.h>
+ #include <asm/uaccess.h>
+ 
+ #include "gfs2.h"
+@@ -503,16 +504,39 @@ static int gfs2_close(struct inode *inod
+  * @file: the file that points to the dentry (we ignore this)
+  * @dentry: the dentry that points to the inode to sync
+  *
++ * The VFS will flush "normal" data for us. We only need to worry
++ * about metadata here. For journaled data, we just do a log flush
++ * as we can't avoid it. Otherwise we can just bale out if datasync
++ * is set. For stuffed inodes we must flush the log in order to
++ * ensure that all data is on disk.
++ *
+  * Returns: errno
+  */
+ 
+ static int gfs2_fsync(struct file *file, struct dentry *dentry, int datasync)
+ {
+-	struct gfs2_inode *ip = GFS2_I(dentry->d_inode);
++	struct inode *inode = dentry->d_inode;
++	int sync_state = inode->i_state & (I_DIRTY_SYNC|I_DIRTY_DATASYNC);
++	int ret = 0;
++	struct writeback_control wbc = {
++		.sync_mode = WB_SYNC_ALL,
++		.nr_to_write = 0,
++	};
++
++	if (gfs2_is_jdata(GFS2_I(inode))) {
++		gfs2_log_flush(GFS2_SB(inode), GFS2_I(inode)->i_gl);
++		return 0;
++	}
+ 
+-	gfs2_log_flush(ip->i_gl->gl_sbd, ip->i_gl);
++	if (sync_state != 0) {
++		if (!datasync)
++			ret = sync_inode(inode, &wbc);
+ 
+-	return 0;
++		if (gfs2_is_stuffed(GFS2_I(inode)))
++			gfs2_log_flush(GFS2_SB(inode), GFS2_I(inode)->i_gl);
++	}
++
++	return ret;
+ }
+ 
+ /**
+-- 
+1.4.1
+
+
+>From 34126f9f41901ca9d7d0031c2b11fc0d6c07b72d Mon Sep 17 00:00:00 2001
+From: Steven Whitehouse <swhiteho@redhat.com>
+Date: Thu, 7 Dec 2006 09:13:14 -0500
+Subject: [PATCH] [GFS2] Change gfs2_fsync() to use write_inode_now()
+
+This is a bit better than the previous version of gfs2_fsync()
+although it would be better still if we were able to call a
+function which only wrote the inode & metadata. Its no big deal
+though that this will potentially write the data as well since
+the VFS has already done that before calling gfs2_fsync(). I've
+also added a comment to explain whats going on here.
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+Cc: Andrew Morton <akpm@osdl.org>
+---
+ fs/gfs2/ops_file.c |   11 ++++++-----
+ 1 files changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/fs/gfs2/ops_file.c b/fs/gfs2/ops_file.c
+index 7bd971b..b3f1e03 100644
+--- a/fs/gfs2/ops_file.c
++++ b/fs/gfs2/ops_file.c
+@@ -510,6 +510,11 @@ static int gfs2_close(struct inode *inod
+  * is set. For stuffed inodes we must flush the log in order to
+  * ensure that all data is on disk.
+  *
++ * The call to write_inode_now() is there to write back metadata and
++ * the inode itself. It does also try and write the data, but thats
++ * (hopefully) a no-op due to the VFS having already called filemap_fdatawrite()
++ * for us.
++ *
+  * Returns: errno
+  */
+ 
+@@ -518,10 +523,6 @@ static int gfs2_fsync(struct file *file,
+ 	struct inode *inode = dentry->d_inode;
+ 	int sync_state = inode->i_state & (I_DIRTY_SYNC|I_DIRTY_DATASYNC);
+ 	int ret = 0;
+-	struct writeback_control wbc = {
+-		.sync_mode = WB_SYNC_ALL,
+-		.nr_to_write = 0,
+-	};
+ 
+ 	if (gfs2_is_jdata(GFS2_I(inode))) {
+ 		gfs2_log_flush(GFS2_SB(inode), GFS2_I(inode)->i_gl);
+@@ -530,7 +531,7 @@ static int gfs2_fsync(struct file *file,
+ 
+ 	if (sync_state != 0) {
+ 		if (!datasync)
+-			ret = sync_inode(inode, &wbc);
++			ret = write_inode_now(inode, 0);
+ 
+ 		if (gfs2_is_stuffed(GFS2_I(inode)))
+ 			gfs2_log_flush(GFS2_SB(inode), GFS2_I(inode)->i_gl);
+-- 
+1.4.1
+
+

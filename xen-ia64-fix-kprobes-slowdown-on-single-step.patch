@@ -1,0 +1,38 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Tue, 26 Feb 2008 19:40:21 -0500
+Subject: [xen] ia64: fix kprobes slowdown on single step
+Message-id: 47C4B175.5080605@redhat.com
+O-Subject: [RHEL5.2 PATCH] ia64 xen: Xen slows down and almost not respond when running some systemtap script
+Bugzilla: 434558
+
+This is a fix for BZ#434558.
+https://bugzilla.redhat.com/show_bug.cgi?id=434558
+
+The debug message on every singl step trap makes kprobe run slow.  This
+patch remove the message which is actually just for xen developers.
+
+I've tested this with kernel -83 and confirmed that the message is not
+shown and kprobe works well.
+
+Please review and ACK.
+
+Regards,
+
+Tetsu Yamamoto
+
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Chris Lalancette <clalance@redhat.com>
+Acked-by: Don Dutile <ddutile@redhat.com>
+
+diff --git a/arch/ia64/xen/faults.c b/arch/ia64/xen/faults.c
+index 77a71b1..2c7e234 100644
+--- a/arch/ia64/xen/faults.c
++++ b/arch/ia64/xen/faults.c
+@@ -716,7 +716,6 @@ ia64_handle_reflection(unsigned long ifa, struct pt_regs *regs,
+ 			return;
+ 		break;
+ 	case 36:
+-		printk("ia64_handle_reflection: handling single step trap\n");
+ 		vector = IA64_SINGLE_STEP_TRAP_VECTOR;
+ 		if (debugger_trap_entry(vector,regs))
+ 			return;

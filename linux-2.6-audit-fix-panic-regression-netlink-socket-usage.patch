@@ -1,0 +1,115 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Tue, 25 Mar 2008 11:00:58 -0400
+Subject: [audit] fix panic, regression, netlink socket usage
+Message-id: 1206457258.3180.22.camel@localhost.localdomain
+O-Subject: [PATCH RHEL5.2] BZ 429941 Correct audit panic regression and wrong netlink socket usage
+Bugzilla: 434158
+
+BZ 429941
+
+I'm actually fixing a couple upstream commits in this patch.  2
+regressions and a useless warning and a pretty severe audit flaw.  It
+was 4 upstream commits, but the patch is small and easy to understand!
+
+I added printk ratelimiters so the audit system couldn't DoS the box.
+Then upstream we found a problem with panicing when we overran printk so
+we just stop panicing if we are using printk (regression)
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=b29ee87e9b441e72454efd1be56aa1a05ffb2f58
+
+*******
+kauditd can send messages to the wrong netlink socket so we send to the
+right socket all the time. (serious potential flaw)
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=75c0371a2d385ecbd6e1f854d9dce20889f06736
+
+*******
+
+Fix C99 screwup when I was trying to use size_t in a format:
+(regression)
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=422b03cf75e11dfdfb29b0f19709bac585335f86
+
+*******
+
+Stop the useless kaudit_thread warning about not returning (just annoying)
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=4899b8b16b302299cc91289f7b5bac295e9ab387
+
+Acked-by: Steve Grubb <sgrubb@redhat.com>
+
+diff --git a/kernel/audit.c b/kernel/audit.c
+index fd71119..a03f189 100644
+--- a/kernel/audit.c
++++ b/kernel/audit.c
+@@ -76,9 +76,13 @@ static int	audit_default;
+ /* If auditing cannot proceed, audit_failure selects what happens. */
+ static int	audit_failure = AUDIT_FAIL_PRINTK;
+ 
+-/* If audit records are to be written to the netlink socket, audit_pid
+- * contains the (non-zero) pid. */
++/*
++ * If audit records are to be written to the netlink socket, audit_pid
++ * contains the pid of the auditd process and audit_nlk_pid contains
++ * the pid to use to send netlink messages to that process.
++ */
+ int		audit_pid;
++static int	audit_nlk_pid;
+ 
+ /* If audit_rate_limit is non-zero, limit the rate of sending audit records
+  * to that number per second.  This prevents DoS attacks, but results in
+@@ -166,7 +170,9 @@ void audit_panic(const char *message)
+ 			printk(KERN_ERR "audit: %s\n", message);
+ 		break;
+ 	case AUDIT_FAIL_PANIC:
+-		panic("audit: %s\n", message);
++		/* test audit_pid since printk is always losey, why bother? */
++		if (audit_pid)
++			panic("audit: %s\n", message);
+ 		break;
+ 	}
+ }
+@@ -408,15 +414,16 @@ static int kauditd_thread(void *dummy)
+ {
+ 	struct sk_buff *skb;
+ 
+-	while (1) {
++	while (!kthread_should_stop()) {
+ 		skb = skb_dequeue(&audit_skb_queue);
+ 		wake_up(&audit_backlog_wait);
+ 		if (skb) {
+ 			if (audit_pid) {
+-				int err = netlink_unicast(audit_sock, skb, audit_pid, 0);
++				int err = netlink_unicast(audit_sock, skb, audit_nlk_pid, 0);
+ 				if (err < 0) {
+ 					BUG_ON(err != -ECONNREFUSED); /* Shoudn't happen */
+ 					printk(KERN_ERR "audit: *NO* daemon at audit_pid=%d\n", audit_pid);
++					audit_log_lost("auditd dissapeared\n");
+ 					audit_pid = 0;
+ 				}
+ 			} else {
+@@ -441,6 +448,7 @@ static int kauditd_thread(void *dummy)
+ 			remove_wait_queue(&kauditd_wait, &wait);
+ 		}
+ 	}
++	return 0;
+ }
+ 
+ int audit_send_list(void *_dest)
+@@ -644,6 +652,7 @@ static int audit_receive_msg(struct sk_buff *skb, struct nlmsghdr *nlh)
+ 						loginuid);
+ 			}
+ 			audit_pid = status_get->pid;
++			audit_nlk_pid = NETLINK_CB(skb).pid;
+ 		}
+ 		if (status_get->mask & AUDIT_STATUS_RATE_LIMIT)
+ 			err = audit_set_rate_limit(status_get->rate_limit,
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index 0db0afe..006d508 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -1038,7 +1038,7 @@ static int audit_log_single_execve_arg(struct audit_context *context,
+ 		 * so we can be sure nothing was lost.
+ 		 */
+ 		if ((i == 0) && (too_long))
+-			audit_log_format(*ab, "a%d_len=%ld ", arg_num,
++			audit_log_format(*ab, "a%d_len=%zu ", arg_num,
+ 					 has_cntl ? 2*len : len);
+ 
+ 		/* actually log it */

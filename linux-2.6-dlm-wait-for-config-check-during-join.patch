@@ -1,0 +1,150 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] dlm: wait for config check during join
+Date: Thu, 31 May 2007 09:36:16 -0500
+Bugzilla: 206520
+Message-Id: <20070531143616.GF2642@redhat.com>
+Changelog: [dlm] wait for config check during join
+
+
+bz 206520
+
+Joining the lockspace should wait for the initial round of inter-node
+config checks to complete before returning.  This way, if there's a
+configuration mismatch between the joining node and the existing nodes,
+the join can fail and return an error to the application.
+
+upstream: gfs2-2.6-nmw.git and -mm
+
+Index: linux-rhel51-quilt/fs/dlm/dlm_internal.h
+===================================================================
+--- linux-rhel51-quilt.orig/fs/dlm/dlm_internal.h	2007-05-25 16:00:43.000000000 -0500
++++ linux-rhel51-quilt/fs/dlm/dlm_internal.h	2007-05-25 16:02:32.000000000 -0500
+@@ -472,6 +472,8 @@
+ 
+ 	wait_queue_head_t	ls_uevent_wait;	/* user part of join/leave */
+ 	int			ls_uevent_result;
++	struct completion	ls_members_done;
++	int			ls_members_result;
+ 
+ 	struct miscdevice       ls_device;
+ 
+Index: linux-rhel51-quilt/fs/dlm/lockspace.c
+===================================================================
+--- linux-rhel51-quilt.orig/fs/dlm/lockspace.c	2007-05-25 16:02:12.000000000 -0500
++++ linux-rhel51-quilt/fs/dlm/lockspace.c	2007-05-25 16:02:32.000000000 -0500
+@@ -193,13 +193,24 @@
+ 	else
+ 		kobject_uevent(&ls->ls_kobj, KOBJ_OFFLINE);
+ 
++	log_debug(ls, "%s the lockspace group...", in ? "joining" : "leaving");
++
++	/* dlm_controld will see the uevent, do the necessary group management
++	   and then write to sysfs to wake us */
++
+ 	error = wait_event_interruptible(ls->ls_uevent_wait,
+ 			test_and_clear_bit(LSFL_UEVENT_WAIT, &ls->ls_flags));
++
++	log_debug(ls, "group event done %d %d", error, ls->ls_uevent_result);
++
+ 	if (error)
+ 		goto out;
+ 
+ 	error = ls->ls_uevent_result;
+  out:
++	if (error)
++		log_error(ls, "group %s failed %d %d", in ? "join" : "leave",
++			  error, ls->ls_uevent_result);
+ 	return error;
+ }
+ 
+@@ -485,6 +496,8 @@
+ 
+ 	init_waitqueue_head(&ls->ls_uevent_wait);
+ 	ls->ls_uevent_result = 0;
++	init_completion(&ls->ls_members_done);
++	ls->ls_members_result = -1;
+ 
+ 	ls->ls_recoverd_task = NULL;
+ 	mutex_init(&ls->ls_recoverd_active);
+@@ -535,10 +548,21 @@
+ 	/* let kobject handle freeing of ls if there's an error */
+ 	do_unreg = 1;
+ 
++	/* This uevent triggers dlm_controld in userspace to add us to the
++	   group of nodes that are members of this lockspace (managed by the
++	   cluster infrastructure.)  Once it's done that, it tells us who the
++	   current lockspace members are (via configfs) and then tells the
++	   lockspace to start running (via sysfs) in dlm_ls_start(). */
++
+ 	error = do_uevent(ls, 1);
+ 	if (error)
+ 		goto out_stop;
+ 
++	wait_for_completion(&ls->ls_members_done);
++	error = ls->ls_members_result;
++	if (error)
++		goto out_members;
++
+ 	dlm_create_debug_file(ls);
+ 
+ 	log_debug(ls, "join complete");
+@@ -546,6 +570,10 @@
+ 	*lockspace = ls;
+ 	return 0;
+ 
++ out_members:
++	do_uevent(ls, 0);
++	dlm_clear_members(ls);
++	kfree(ls->ls_node_array);
+  out_stop:
+ 	dlm_recoverd_stop(ls);
+  out_delist:
+@@ -583,6 +611,8 @@
+ 	error = new_lockspace(name, namelen, lockspace, flags, lvblen);
+ 	if (!error)
+ 		ls_count++;
++	else if (!ls_count)
++		threads_stop();
+  out:
+ 	mutex_unlock(&ls_lock);
+ 	return error;
+Index: linux-rhel51-quilt/fs/dlm/member.c
+===================================================================
+--- linux-rhel51-quilt.orig/fs/dlm/member.c	2007-05-25 15:54:49.000000000 -0500
++++ linux-rhel51-quilt/fs/dlm/member.c	2007-05-25 16:02:32.000000000 -0500
+@@ -233,6 +233,12 @@
+ 	*neg_out = neg;
+ 
+ 	error = ping_members(ls);
++	if (!error || error == -EPROTO) {
++		/* new_lockspace() may be waiting to know if the config
++		   is good or bad */
++		ls->ls_members_result = error;
++		complete(&ls->ls_members_done);
++	}
+ 	if (error)
+ 		goto out;
+ 
+Index: linux-rhel51-quilt/fs/dlm/rcom.c
+===================================================================
+--- linux-rhel51-quilt.orig/fs/dlm/rcom.c	2007-05-25 15:53:23.000000000 -0500
++++ linux-rhel51-quilt/fs/dlm/rcom.c	2007-05-25 16:02:32.000000000 -0500
+@@ -90,7 +90,7 @@
+ 		log_error(ls, "version mismatch: %x nodeid %d: %x",
+ 			  DLM_HEADER_MAJOR | DLM_HEADER_MINOR, nodeid,
+ 			  rc->rc_header.h_version);
+-		return -EINVAL;
++		return -EPROTO;
+ 	}
+ 
+ 	if (rf->rf_lvblen != ls->ls_lvblen ||
+@@ -98,7 +98,7 @@
+ 		log_error(ls, "config mismatch: %d,%x nodeid %d: %d,%x",
+ 			  ls->ls_lvblen, ls->ls_exflags,
+ 			  nodeid, rf->rf_lvblen, rf->rf_lsflags);
+-		return -EINVAL;
++		return -EPROTO;
+ 	}
+ 	return 0;
+ }
+

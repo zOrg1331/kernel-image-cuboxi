@@ -1,0 +1,47 @@
+Message-ID: <483FBFFC.4070206@redhat.com>
+Date: Fri, 30 May 2008 10:51:08 +0200
+From: Anton Arapov <aarapov@redhat.com>
+O-Subject: [PATCH RHEL5] BZ#447396: EMBARGOED, dccp: sanity check feature length {CVE-2008-2358}
+Subject: [net] dccp sanity check feature length
+Bugzilla: 447396
+
+Details:
+The issue is an integer overflow in DCCP options handling. This may
+result in code execution allowing an attacker to execute code in a
+kernel context.  At the lowest severity, it will crash the kernel
+environment.
+
+Upstream status:
+in upstream, embargoed
+
+Test status:
+has been tested for build and boot.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1338875
+
+Notice:
+CVE-2008-2358
+
+Acked-by: Neil Horman <nhorman@redhat.com>
+Acked-by: Chris Wright <chrisw@redhat.com>
+Acked-by: Arnaldo Carvalho de Melo <acme@redhat.com>
+==
+
+ net/dccp/feat.c |    5 +++++
+ 1 files changed, 5 insertions(+), 0 deletions(-)
+
+diff --git a/net/dccp/feat.c b/net/dccp/feat.c
+index a1b0682..aceb1db 100644
+--- a/net/dccp/feat.c
++++ b/net/dccp/feat.c
+@@ -25,6 +25,11 @@ int dccp_feat_change(struct dccp_minisock *dmsk, u8 type, u8 feature,
+ 
+ 	dccp_pr_debug("feat change type=%d feat=%d\n", type, feature);
+ 
++	if (len > 3) {
++		if (net_ratelimit())
++			printk("%s: invalid length %d\n", __func__, len);
++		return -EINVAL;
++	}
+ 	/* XXX sanity check feat change request */
+ 
+ 	/* check if that feature is already being negotiated */

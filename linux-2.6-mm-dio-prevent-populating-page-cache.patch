@@ -1,0 +1,166 @@
+Date: Thu, 12 Oct 2006 19:17:49 -0400
+From: Jeff Moyer <jmoyer@redhat.com>
+Subject: [rhel5 patch] Keep O_DIRECT I/O from populating the page cache
+
+Hi,
+
+Oracle table creates will create sparse redo logs and database files, and
+then populate them sequentially.  A table create can happen at any time,
+though it is arguably a rare occurrence (some administrators have creates
+scripted to run nightly, others much less).  Kernel 2.6.12 introduced a
+regression that causes such sequential writes to sparse files to populate
+the page cache.  Allocating memory to the page cache for these operations
+is sub-optimal, since Oracle maintains its own cache layer.  The pages will
+eventually need to be reaped, anyway, and this doesn't happen until there
+is memory pressure.
+
+So, how did this work in the past?  In kernels prior to 2.6.12,
+generic_file_direct_IO looked like so:
+
+	retval = mapping->a_ops->direct_IO(rw, iocb, iov,
+					offset, nr_segs);
+	if (rw == WRITE && mapping->nrpages) {
+                int err = invalidate_inode_pages2(mapping);
+	        if (err)
+	                retval = err;
+	}
+
+If this was a write to a hole in a file, retval will be 0 and we fall back
+to buffered I/O.  In this case, the invalidate_inode_pages2 call may not
+invalidate any pages at all.  Here is the caller:
+
+	if (unlikely(file->f_flags & O_DIRECT)) {
+		written = generic_file_direct_write(iocb, iov,
+				&nr_segs, pos, ppos, count, ocount);
+		if (written < 0 || written == count)
+			goto out;
+		/*
+		 * direct-io write to a hole: fall through to buffered I/O
+		 * for completing the rest of the request.
+		 */
+		pos += written;
+		count -= written;
+	}
+
+	written = generic_file_buffered_write(iocb, iov, nr_segs,
+			pos, ppos, count, written);
+
+Here, we end up populating the page cache.  Notice that, just like in
+current kernels, there is no invalidation logic here.  The catch is that on
+the next I/O to this file, all of the pages associated with the file will
+be invalidated by the call to invalidate_inode_pages2 in
+generic_file_direct_IO.  So, each I/O clears the page cache pages used by
+the one before it.
+
+In 2.6.12, the call to invalidate_inode_pages2 in generic_file_direct_IO was
+changed to invalidate_inode_pages2_range:
+
+		retval = mapping->a_ops->direct_IO(rw, iocb, iov,
+						offset, nr_segs);
+		if (rw == WRITE && mapping->nrpages) {
+			pgoff_t end = (offset + write_len - 1)
+						>> PAGE_CACHE_SHIFT;
+			int err = invalidate_inode_pages2_range(mapping,
+					offset >> PAGE_CACHE_SHIFT, end);
+			if (err)
+				retval = err;
+		}
+
+So this means that we no longer invalidate the pages used by the previous
+I/O.  The impact of this change is that a sequential write to a 1G file
+will fill up 1G of page cache, which is sub-optimal in database
+environments.
+
+The attached patch has been worked upstream and is now in the -mm kernel.
+It takes care to sync out the file range written by the buffered I/O
+fallback, and then invalidates the page cache pages associated with that
+I/O.  I've tested it locally with tests specifically crafted to exercise this
+code path by creating a sparse file, and writing to that file sequentially
+using O_DIRECT I/O.
+
+I have verified that the attached patch works as expected using my test
+programs.  Jeff Needham (a Red Hat engineer on-site at Oracle) has verified
+that it works properly when run with OAST.
+
+This addresses bugzilla #207061.  Reviews and ACKs would be appreciated.
+
+Thanks!
+
+-Jeff
+
+--- linux-2.6.18.i686/mm/filemap.c.tikanga	2006-10-12 18:56:04.000000000 -0400
++++ linux-2.6.18.i686/mm/filemap.c	2006-10-11 15:03:27.000000000 -0400
+@@ -2351,7 +2351,7 @@ __generic_file_aio_write_nolock(struct k
+ 				unsigned long nr_segs, loff_t *ppos)
+ {
+ 	struct file *file = iocb->ki_filp;
+-	const struct address_space * mapping = file->f_mapping;
++	struct address_space * mapping = file->f_mapping;
+ 	size_t ocount;		/* original count */
+ 	size_t count;		/* after file limit checks */
+ 	struct inode 	*inode = mapping->host;
+@@ -2404,8 +2404,11 @@ __generic_file_aio_write_nolock(struct k
+ 
+ 	/* coalesce the iovecs and go direct-to-BIO for O_DIRECT */
+ 	if (unlikely(file->f_flags & O_DIRECT)) {
+-		written = generic_file_direct_write(iocb, iov,
+-				&nr_segs, pos, ppos, count, ocount);
++		loff_t endbyte;
++		ssize_t written_buffered;
++
++		written = generic_file_direct_write(iocb, iov, &nr_segs, pos,
++							ppos, count, ocount);
+ 		if (written < 0 || written == count)
+ 			goto out;
+ 		/*
+@@ -2414,10 +2417,46 @@ __generic_file_aio_write_nolock(struct k
+ 		 */
+ 		pos += written;
+ 		count -= written;
+-	}
++		written_buffered = generic_file_buffered_write(iocb, iov,
++						nr_segs, pos, ppos, count,
++						written);
++		/*
++		 * If generic_file_buffered_write() retuned a synchronous error
++		 * then we want to return the number of bytes which were
++		 * direct-written, or the error code if that was zero.  Note
++		 * that this differs from normal direct-io semantics, which
++		 * will return -EFOO even if some bytes were written.
++		 */
++		if (written_buffered < 0) {
++			err = written_buffered;
++			goto out;
++		}
+ 
+-	written = generic_file_buffered_write(iocb, iov, nr_segs,
+-			pos, ppos, count, written);
++		/*
++		 * We need to ensure that the page cache pages are written to
++		 * disk and invalidated to preserve the expected O_DIRECT
++		 * semantics.
++		 */
++		endbyte = pos + written_buffered - written - 1;
++		err = do_sync_file_range(file, pos, endbyte,
++					 SYNC_FILE_RANGE_WAIT_BEFORE|
++					 SYNC_FILE_RANGE_WRITE|
++					 SYNC_FILE_RANGE_WAIT_AFTER);
++		if (err == 0) {
++			written = written_buffered;
++			invalidate_mapping_pages(mapping,
++						 pos >> PAGE_CACHE_SHIFT,
++						 endbyte >> PAGE_CACHE_SHIFT);
++		} else {
++			/*
++			 * We don't know how much we wrote, so just return
++			 * the number of bytes which were direct-written
++			 */
++		}
++	} else {
++		written = generic_file_buffered_write(iocb, iov, nr_segs,
++				pos, ppos, count, written);
++	}
+ out:
+ 	current->backing_dev_info = NULL;
+ 	return written ? written : err;
+

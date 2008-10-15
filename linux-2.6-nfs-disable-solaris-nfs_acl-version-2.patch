@@ -1,0 +1,65 @@
+From: Steve Dickson <steved@redhat.com>
+Subject: [RHEL5][PATCH] Solaris NFS_ACL version 2 client can crash Linux NFS  server
+Date: Mon, 04 Dec 2006 10:39:16 -0500
+Bugzilla: 215073
+Message-Id: <45744124.5040505@redhat.com>
+Changelog: nfs: disable Solaris NFS_ACL version 2 
+
+
+This patch turns off NFS version 2 ACL processing which fixes this oops.
+This version of the ACL process has never been supported in
+any RHEL product and there no plans of supporting such processing.
+
+Please Note this ONLY effects NFS protocol version 2 ACL processing.
+ACL processing used in the NFS v3 and v4 are are supported.
+
+Note, the following RHEL5 config-generic file changes are
+also need to disable this type of processing.
+
+#--- configs/config-generic.orig 2006-12-04 08:37:32.234385000 -0500
+#+++ configs/config-generic	2006-12-04 09:19:18.094636000 -0500
+#@@ -2432,6 +2432,7 @@ CONFIG_NFS_V4=y
+ CONFIG_NFS_DIRECTIO=y
+ CONFIG_NFSD=m
+ CONFIG_NFSD_V3=y
++# CONFIG_NFSD_V2_ACL is not set
+ CONFIG_NFSD_V3_ACL=y
+ CONFIG_NFSD_V4=y
+ CONFIG_NFSD_TCP=y
+
+steved.
+
+
+--- linux-2.6.18.i686/fs/nfsd/nfssvc.c.org	2006-12-04 09:08:23.602634000 -0500
++++ linux-2.6.18.i686/fs/nfsd/nfssvc.c	2006-12-04 09:59:17.853624000 -0500
+@@ -66,11 +66,18 @@ static struct list_head nfsd_list = LIST
+ #if defined(CONFIG_NFSD_V2_ACL) || defined(CONFIG_NFSD_V3_ACL)
+ static struct svc_stat	nfsd_acl_svcstats;
+ static struct svc_version *	nfsd_acl_version[] = {
++#if defined(CONFIG_NFSD_V2_ACL)
+ 	[2] = &nfsd_acl_version2,
++#endif
+ 	[3] = &nfsd_acl_version3,
+ };
+ 
++#if defined(CONFIG_NFSD_V2_ACL)
+ #define NFSD_ACL_MINVERS            2
++#else
++#define NFSD_ACL_MINVERS            3
++#endif
++
+ #define NFSD_ACL_NRVERS		ARRAY_SIZE(nfsd_acl_version)
+ static struct svc_version *nfsd_acl_versions[NFSD_ACL_NRVERS];
+ 
+--- linux-2.6.18.i686/fs/Kconfig.org	2006-11-14 14:40:00.794809000 -0500
++++ linux-2.6.18.i686/fs/Kconfig	2006-12-04 09:28:05.038992000 -0500
+@@ -1609,7 +1609,7 @@ config NFSD
+ 	select LOCKD
+ 	select SUNRPC
+ 	select EXPORTFS
+-	select NFSD_V2_ACL if NFSD_V3_ACL
++# select NFSD_V2_ACL if NFSD_V3_ACL
+ 	select NFS_ACL_SUPPORT if NFSD_V2_ACL
+ 	select NFSD_TCP if NFSD_V4
+ 	select CRYPTO_MD5 if NFSD_V4
+

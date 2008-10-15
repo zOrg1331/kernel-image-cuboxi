@@ -1,0 +1,513 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Sun, 6 Jan 2008 16:09:47 +1100
+Subject: [xfrm] rfc4303 compliant auditing
+Message-id: E1JBNlb-0001DS-00@gondolin.me.apana.org.au
+O-Subject: [PATCH 31/32] [XFRM]: RFC4303 compliant auditing
+Bugzilla: 427877
+
+[XFRM]: RFC4303 compliant auditing
+
+This patch adds a number of new IPsec audit events to meet the auditing
+requirements of RFC4303.  This includes audit hooks for the following events:
+
+ * Could not find a valid SA [sections 2.1, 3.4.2]
+   . xfrm_audit_state_notfound()
+   . xfrm_audit_state_notfound_simple()
+
+ * Sequence number overflow [section 3.3.3]
+   . xfrm_audit_state_replay_overflow()
+
+ * Replayed packet [section 3.4.3]
+   . xfrm_audit_state_replay()
+
+ * Integrity check failure [sections 3.4.4.1, 3.4.4.2]
+   . xfrm_audit_state_icvfail()
+
+While RFC4304 deals only with ESP most of the changes in this patch apply to
+IPsec in general, i.e. both AH and ESP.  The one case, integrity check
+failure, where ESP specific code had to be modified the same was done to the
+AH code for the sake of consistency.
+
+Signed-off-by: Paul Moore <paul.moore@hp.com>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: James Morris <jmorris@redhat.com>
+
+diff --git a/include/linux/audit.h b/include/linux/audit.h
+index aecb1c4..dca9864 100644
+--- a/include/linux/audit.h
++++ b/include/linux/audit.h
+@@ -25,6 +25,7 @@
+ #define _LINUX_AUDIT_H_
+ 
+ #include <linux/elf-em.h>
++#include <linux/types.h>
+ 
+ /* The netlink messages for the audit system is divided into blocks:
+  * 1000 - 1099 are for commanding the audit system
+@@ -108,6 +109,7 @@
+ #define AUDIT_MAC_IPSEC_DELSA	1412	/* Delete a XFRM state */
+ #define AUDIT_MAC_IPSEC_ADDSPD	1413	/* Add a XFRM policy */
+ #define AUDIT_MAC_IPSEC_DELSPD	1414	/* Delete a XFRM policy */
++#define AUDIT_MAC_IPSEC_EVENT	1415	/* Audit an IPSec event */
+ 
+ #define AUDIT_FIRST_KERN_ANOM_MSG   1700
+ #define AUDIT_LAST_KERN_ANOM_MSG    1799
+diff --git a/include/net/xfrm.h b/include/net/xfrm.h
+index fba6872..cde5633 100644
+--- a/include/net/xfrm.h
++++ b/include/net/xfrm.h
+@@ -12,6 +12,7 @@
+ #include <linux/pfkeyv2.h>
+ #include <linux/in6.h>
+ #include <linux/mutex.h>
++#include <linux/audit.h>
+ 
+ #include <net/sock.h>
+ #include <net/dst.h>
+@@ -401,8 +402,38 @@ struct xfrm_audit
+ #ifdef CONFIG_AUDITSYSCALL
+ extern void xfrm_audit_log(uid_t auid, u32 secid, int type, int result,
+ 		    struct xfrm_policy *xp, struct xfrm_state *x);
++extern void xfrm_audit_state_replay_overflow(struct xfrm_state *x,
++                                             struct sk_buff *skb);
++extern void xfrm_audit_state_replay(struct xfrm_state *x, struct sk_buff *skb,
++				    __be32 net_seq);
++extern void xfrm_naudit_state_replay(struct xfrm_state *x, struct sk_buff *skb,
++				     __be32 net_seq);
++extern void xfrm_audit_state_notfound(struct sk_buff *skb, u16 family,
++				      __be32 net_spi, __be32 net_seq);
++extern void xfrm_naudit_state_notfound(struct sk_buff *skb, u16 family,
++				       __be32 net_spi, __be32 net_seq);
++extern void xfrm_audit_state_icvfail(struct xfrm_state *x,
++				     struct sk_buff *skb, u8 proto);
++
++static inline struct audit_buffer *xfrm_audit_start(const char *op)
++{
++	struct audit_buffer *audit_buf = NULL;
++
++	xfrm_audit_log(0, 0, AUDIT_MAC_IPSEC_EVENT, 0,
++		       (struct xfrm_policy *)&audit_buf, NULL);
++	if (audit_buf == NULL)
++		return NULL;
++	audit_log_format(audit_buf, "op=%s", op);
++	return audit_buf;
++}
+ #else
+ #define xfrm_audit_log(a,s,t,r,p,x) do { ; } while (0)
++#define xfrm_audit_state_replay_overflow(x, s)	do { ; } while (0)
++#define xfrm_audit_state_replay(s, f, sp, sq)	do { ; } while (0)
++#define xfrm_naudit_state_replay(s, f, sp, sq)	do { ; } while (0)
++#define xfrm_audit_state_notfound(s, f, sp, sq)	do { ; } while (0)
++#define xfrm_naudit_state_notfound(s, f, sp, sq) do { ; } while (0)
++#define xfrm_audit_state_icvfail(x, s, p)	do { ; } while (0)
+ #endif /* CONFIG_AUDITSYSCALL */
+ 
+ static inline void xfrm_pol_hold(struct xfrm_policy *policy)
+diff --git a/net/ipv4/ah4.c b/net/ipv4/ah4.c
+index 506d7a2..0d1dcf7 100644
+--- a/net/ipv4/ah4.c
++++ b/net/ipv4/ah4.c
+@@ -168,6 +168,7 @@ static int ah_input(struct xfrm_state *x, struct sk_buff *skb)
+ 		skb_push(skb, ihl);
+ 		ahp->icv(ahp, skb, ah->auth_data);
+ 		if (memcmp(ah->auth_data, auth_data, ahp->icv_trunc_len)) {
++			xfrm_audit_state_icvfail(x, skb, IPPROTO_AH);
+ 			x->stats.integrity_failed++;
+ 			goto out;
+ 		}
+diff --git a/net/ipv4/esp4.c b/net/ipv4/esp4.c
+index 33e9472..4c6945c 100644
+--- a/net/ipv4/esp4.c
++++ b/net/ipv4/esp4.c
+@@ -194,6 +194,8 @@ static int esp_output(struct xfrm_state *x, struct sk_buff *skb)
+ 
+ 	esph->spi = x->id.spi;
+ 	esph->seq_no = htonl(++x->replay.oseq);
++	if (unlikely(x->replay.oseq) == 0)
++		xfrm_audit_state_replay_overflow(x, skb);
+ 	xfrm_aevent_doreplay(x);
+ 
+ 	sg_init_table(sg, nfrags);
+@@ -238,8 +240,10 @@ static int esp_input_done2(struct xfrm_state *x, struct sk_buff *skb, int err)
+ 	kfree(ESP_SKB_CB(skb)->tmp);
+ 
+ 	if (unlikely(err)) {
+-		if (err == -EBADMSG)
++		if (err == -EBADMSG) {
++			xfrm_audit_state_icvfail(x, skb, IPPROTO_ESP);
+ 			x->stats.integrity_failed++;
++		}
+ 		goto out;
+ 	}
+ 
+diff --git a/net/ipv4/xfrm4_input.c b/net/ipv4/xfrm4_input.c
+index 17dce43..d96edf8 100644
+--- a/net/ipv4/xfrm4_input.c
++++ b/net/ipv4/xfrm4_input.c
+@@ -80,8 +80,10 @@ int xfrm4_rcv_encap(struct sk_buff *skb, __u16 encap_type)
+ 			goto drop;
+ 
+ 		x = xfrm_state_lookup((xfrm_address_t *)&iph->daddr, spi, iph->protocol, AF_INET);
+-		if (x == NULL)
++		if (x == NULL) {
++			xfrm_audit_state_notfound(skb, AF_INET, spi, seq);
+ 			goto drop;
++		}
+ 
+ 		skb->sp->xvec[skb->sp->len++] = x;
+ 
+@@ -92,8 +94,10 @@ int xfrm4_rcv_encap(struct sk_buff *skb, __u16 encap_type)
+ 		if ((x->encap ? x->encap->encap_type : 0) != encap_type)
+ 			goto drop_unlock;
+ 
+-		if (x->props.replay_window && xfrm_replay_check(x, seq))
++		if (x->props.replay_window && xfrm_replay_check(x, seq)) {
++			xfrm_audit_state_replay(x, skb, seq);
+ 			goto drop_unlock;
++		}
+ 
+ 		if (xfrm_state_check_expire(x))
+ 			goto drop_unlock;
+diff --git a/net/ipv4/xfrm4_ninput.c b/net/ipv4/xfrm4_ninput.c
+index 7c08856..d2a449e 100644
+--- a/net/ipv4/xfrm4_ninput.c
++++ b/net/ipv4/xfrm4_ninput.c
+@@ -48,8 +48,10 @@ int xfrm4_input_resume(struct sk_buff *skb, int err)
+ 			goto drop;
+ 
+ 		x = xfrm_state_lookup((xfrm_address_t *)&iph->daddr, spi, iph->protocol, AF_INET);
+-		if (x == NULL)
++		if (x == NULL) {
++			xfrm_naudit_state_notfound(skb, AF_INET, spi, seq);
+ 			goto drop;
++		}
+ 
+ 		skb->sp->xvec[skb->sp->len++] = x;
+ 
+@@ -57,8 +59,10 @@ int xfrm4_input_resume(struct sk_buff *skb, int err)
+ 		if (unlikely(x->km.state != XFRM_STATE_VALID))
+ 			goto drop_unlock;
+ 
+-		if (x->props.replay_window && xfrm_replay_check(x, seq))
++		if (x->props.replay_window && xfrm_replay_check(x, seq)) {
++			xfrm_naudit_state_replay(x, skb, seq);
+ 			goto drop_unlock;
++		}
+ 
+ 		if (xfrm_state_check_expire(x))
+ 			goto drop_unlock;
+diff --git a/net/ipv6/ah6.c b/net/ipv6/ah6.c
+index 9d4831b..5cdb130 100644
+--- a/net/ipv6/ah6.c
++++ b/net/ipv6/ah6.c
+@@ -295,6 +295,7 @@ static int ah6_input(struct xfrm_state *x, struct sk_buff *skb)
+ 		ahp->icv(ahp, skb, ah->auth_data);
+ 		if (memcmp(ah->auth_data, auth_data, ahp->icv_trunc_len)) {
+ 			LIMIT_NETDEBUG(KERN_WARNING "ipsec ah authentication error\n");
++			xfrm_audit_state_icvfail(x, skb, IPPROTO_AH);
+ 			x->stats.integrity_failed++;
+ 			goto free_out;
+ 		}
+diff --git a/net/ipv6/esp6.c b/net/ipv6/esp6.c
+index 2f14b67..32ca641 100644
+--- a/net/ipv6/esp6.c
++++ b/net/ipv6/esp6.c
+@@ -196,6 +196,8 @@ static int esp6_output(struct xfrm_state *x, struct sk_buff *skb)
+ 
+ 	esph->spi = x->id.spi;
+ 	esph->seq_no = htonl(++x->replay.oseq);
++	if (unlikely(x->replay.oseq) == 0)
++		xfrm_audit_state_replay_overflow(x, skb);
+ 	xfrm_aevent_doreplay(x);
+ 
+ 	sg_init_table(sg, nfrags);
+@@ -237,8 +239,10 @@ static int esp_input_done2(struct xfrm_state *x, struct sk_buff *skb, int err)
+ 	kfree(ESP_SKB_CB(skb)->tmp);
+ 
+ 	if (unlikely(err)) {
+-		if (err == -EBADMSG)
++		if (err == -EBADMSG) {
++			xfrm_audit_state_icvfail(x, skb, IPPROTO_ESP);
+ 			x->stats.integrity_failed++;
++		}
+ 		goto out;
+ 	}
+ 
+diff --git a/net/ipv6/xfrm6_input.c b/net/ipv6/xfrm6_input.c
+index a9b0514..81fd355 100644
+--- a/net/ipv6/xfrm6_input.c
++++ b/net/ipv6/xfrm6_input.c
+@@ -50,8 +50,10 @@ int xfrm6_rcv_spi(struct sk_buff *skb, u32 spi)
+ 			goto drop;
+ 
+ 		x = xfrm_state_lookup((xfrm_address_t *)&iph->daddr, spi, nexthdr, AF_INET6);
+-		if (x == NULL)
++		if (x == NULL) {
++			xfrm_naudit_state_notfound(skb, AF_INET6, spi, seq);
+ 			goto drop;
++		}
+ 
+ 		skb->sp->xvec[skb->sp->len++] = x;
+ 
+@@ -59,8 +61,10 @@ int xfrm6_rcv_spi(struct sk_buff *skb, u32 spi)
+ 		if (unlikely(x->km.state != XFRM_STATE_VALID))
+ 			goto drop_unlock;
+ 
+-		if (x->props.replay_window && xfrm_replay_check(x, seq))
++		if (x->props.replay_window && xfrm_replay_check(x, seq)) {
++			xfrm_naudit_state_replay(x, skb, seq);
+ 			goto drop_unlock;
++		}
+ 
+ 		if (xfrm_state_check_expire(x))
+ 			goto drop_unlock;
+diff --git a/net/ipv6/xfrm6_ninput.c b/net/ipv6/xfrm6_ninput.c
+index 1778693..d196659 100644
+--- a/net/ipv6/xfrm6_ninput.c
++++ b/net/ipv6/xfrm6_ninput.c
+@@ -38,8 +38,10 @@ int xfrm6_input_resume(struct sk_buff *skb, int nexthdr)
+ 			goto drop;
+ 
+ 		x = xfrm_state_lookup((xfrm_address_t *)&iph->daddr, spi, nexthdr, AF_INET6);
+-		if (x == NULL)
++		if (x == NULL) {
++			xfrm_naudit_state_notfound(skb, AF_INET6, spi, seq);
+ 			goto drop;
++		}
+ 
+ 		skb->sp->xvec[skb->sp->len++] = x;
+ 
+@@ -47,8 +49,10 @@ int xfrm6_input_resume(struct sk_buff *skb, int nexthdr)
+ 		if (unlikely(x->km.state != XFRM_STATE_VALID))
+ 			goto drop_unlock;
+ 
+-		if (x->props.replay_window && xfrm_replay_check(x, seq))
++		if (x->props.replay_window && xfrm_replay_check(x, seq)) {
++			xfrm_naudit_state_replay(x, skb, seq);
+ 			goto drop_unlock;
++		}
+ 
+ 		if (xfrm_state_check_expire(x))
+ 			goto drop_unlock;
+diff --git a/net/xfrm/xfrm_nalgo.c b/net/xfrm/xfrm_nalgo.c
+index 116cc65..f0cc84a 100644
+--- a/net/xfrm/xfrm_nalgo.c
++++ b/net/xfrm/xfrm_nalgo.c
+@@ -9,6 +9,7 @@
+  * any later version.
+  */
+ 
++#include <linux/audit.h>
+ #include <linux/init.h>
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+@@ -502,6 +503,120 @@ int xfrm_nlookup(struct dst_entry **dst_p, struct flowi *fl,
+ }
+ EXPORT_SYMBOL(xfrm_nlookup);
+ 
++#ifdef CONFIG_AUDITSYSCALL
++static inline void xfrm_audit_helper_pktinfo(struct sk_buff *skb, u16 family,
++					     struct audit_buffer *audit_buf)
++{
++	struct iphdr *iph4;
++	struct ipv6hdr *iph6;
++
++	switch (family) {
++	case AF_INET:
++		iph4 = ip_hdr(skb);
++		audit_log_format(audit_buf,
++				 " src=" NIPQUAD_FMT " dst=" NIPQUAD_FMT,
++				 NIPQUAD(iph4->saddr),
++				 NIPQUAD(iph4->daddr));
++		break;
++	case AF_INET6:
++		iph6 = ipv6_hdr(skb);
++		audit_log_format(audit_buf,
++				 " src=" NIP6_FMT " dst=" NIP6_FMT
++				 " flowlbl=0x%x%x%x",
++				 NIP6(iph6->saddr),
++				 NIP6(iph6->daddr),
++				 iph6->flow_lbl[0] & 0x0f,
++				 iph6->flow_lbl[1],
++				 iph6->flow_lbl[2]);
++		break;
++	}
++}
++
++void xfrm_audit_state_replay_overflow(struct xfrm_state *x,
++				      struct sk_buff *skb)
++{
++	struct audit_buffer *audit_buf;
++	u32 spi;
++
++	if (xfrm_old_kernel)
++		return;
++
++	audit_buf = xfrm_audit_start("SA-replay-overflow");
++	if (audit_buf == NULL)
++		return;
++	xfrm_audit_helper_pktinfo(skb, x->props.family, audit_buf);
++	/* don't record the sequence number because it's inherent in this kind
++	 * of audit message */
++	spi = ntohl(x->id.spi);
++	audit_log_format(audit_buf, " spi=%u(0x%x)", spi, spi);
++	audit_log_end(audit_buf);
++}
++EXPORT_SYMBOL_GPL(xfrm_audit_state_replay_overflow);
++
++void xfrm_naudit_state_replay(struct xfrm_state *x, struct sk_buff *skb,
++			      __be32 net_seq)
++{
++	struct audit_buffer *audit_buf;
++	u32 spi;
++
++	if (xfrm_old_kernel)
++		return;
++
++	audit_buf = xfrm_audit_start("SA-replayed-pkt");
++	if (audit_buf == NULL)
++		return;
++	xfrm_audit_helper_pktinfo(skb, x->props.family, audit_buf);
++	spi = ntohl(x->id.spi);
++	audit_log_format(audit_buf, " spi=%u(0x%x) seqno=%u",
++			 spi, spi, ntohl(net_seq));
++	audit_log_end(audit_buf);
++}
++EXPORT_SYMBOL_GPL(xfrm_naudit_state_replay);
++
++void xfrm_naudit_state_notfound(struct sk_buff *skb, u16 family,
++				__be32 net_spi, __be32 net_seq)
++{
++	struct audit_buffer *audit_buf;
++	u32 spi;
++
++	if (xfrm_old_kernel)
++		return;
++
++	audit_buf = xfrm_audit_start("SA-notfound");
++	if (audit_buf == NULL)
++		return;
++	xfrm_audit_helper_pktinfo(skb, family, audit_buf);
++	spi = ntohl(net_spi);
++	audit_log_format(audit_buf, " spi=%u(0x%x) seqno=%u",
++			 spi, spi, ntohl(net_seq));
++	audit_log_end(audit_buf);
++}
++EXPORT_SYMBOL_GPL(xfrm_naudit_state_notfound);
++
++void xfrm_audit_state_icvfail(struct xfrm_state *x,
++			      struct sk_buff *skb, u8 proto)
++{
++	struct audit_buffer *audit_buf;
++	__be32 net_spi;
++	__be32 net_seq;
++
++	if (xfrm_old_kernel)
++		return;
++
++	audit_buf = xfrm_audit_start("SA-icv-failure");
++	if (audit_buf == NULL)
++		return;
++	xfrm_audit_helper_pktinfo(skb, x->props.family, audit_buf);
++	if (xfrm_parse_spi(skb, proto, &net_spi, &net_seq) == 0) {
++		u32 spi = ntohl(net_spi);
++		audit_log_format(audit_buf, " spi=%u(0x%x) seqno=%u",
++				 spi, spi, ntohl(net_seq));
++	}
++	audit_log_end(audit_buf);
++}
++EXPORT_SYMBOL_GPL(xfrm_audit_state_icvfail);
++#endif
++
+ static int __init xfrm_nalgo_init(void)
+ {
+ 	xfrm_old_kernel = !xfrm_aalg_get_byname("hmac(md5)", 1);
+diff --git a/net/xfrm/xfrm_policy.c b/net/xfrm/xfrm_policy.c
+index dc9cb35..be3b301 100644
+--- a/net/xfrm/xfrm_policy.c
++++ b/net/xfrm/xfrm_policy.c
+@@ -1525,6 +1525,13 @@ void xfrm_audit_log(uid_t auid, u32 sid, int type, int result,
+ 		type == AUDIT_MAC_IPSEC_DELSPD) && !xp);
+ 
+ 	audit_buf = audit_log_start(current->audit_context, GFP_ATOMIC, type);
++
++	/* The things we do for ABI compatibility! */
++	if (type == AUDIT_MAC_IPSEC_EVENT) {
++		*(struct audit_buffer **)xp = audit_buf;
++		return;
++	}
++
+ 	if (audit_buf == NULL)
+ 		return;
+ 
+diff --git a/net/xfrm/xfrm_state.c b/net/xfrm/xfrm_state.c
+index df768c3..30d60a9 100644
+--- a/net/xfrm/xfrm_state.c
++++ b/net/xfrm/xfrm_state.c
+@@ -1279,3 +1279,64 @@ void __init xfrm_state_init(void)
+ 	INIT_WORK(&xfrm_state_gc_work, xfrm_state_gc_task, NULL);
+ }
+ 
++#ifdef CONFIG_AUDITSYSCALL
++static inline void xfrm_audit_helper_pktinfo(struct sk_buff *skb, u16 family,
++					     struct audit_buffer *audit_buf)
++{
++	struct iphdr *iph4;
++	struct ipv6hdr *iph6;
++
++	switch (family) {
++	case AF_INET:
++		iph4 = ip_hdr(skb);
++		audit_log_format(audit_buf,
++				 " src=" NIPQUAD_FMT " dst=" NIPQUAD_FMT,
++				 NIPQUAD(iph4->saddr),
++				 NIPQUAD(iph4->daddr));
++		break;
++	case AF_INET6:
++		iph6 = ipv6_hdr(skb);
++		audit_log_format(audit_buf,
++				 " src=" NIP6_FMT " dst=" NIP6_FMT
++				 " flowlbl=0x%x%x%x",
++				 NIP6(iph6->saddr),
++				 NIP6(iph6->daddr),
++				 iph6->flow_lbl[0] & 0x0f,
++				 iph6->flow_lbl[1],
++				 iph6->flow_lbl[2]);
++		break;
++	}
++}
++
++void xfrm_audit_state_replay(struct xfrm_state *x, struct sk_buff *skb,
++			     __be32 net_seq)
++{
++	struct audit_buffer *audit_buf;
++	u32 spi;
++
++	audit_buf = xfrm_audit_start("SA-replayed-pkt");
++	if (audit_buf == NULL)
++		return;
++	xfrm_audit_helper_pktinfo(skb, x->props.family, audit_buf);
++	spi = ntohl(x->id.spi);
++	audit_log_format(audit_buf, " spi=%u(0x%x) seqno=%u",
++			 spi, spi, ntohl(net_seq));
++	audit_log_end(audit_buf);
++}
++
++void xfrm_audit_state_notfound(struct sk_buff *skb, u16 family,
++			       __be32 net_spi, __be32 net_seq)
++{
++	struct audit_buffer *audit_buf;
++	u32 spi;
++
++	audit_buf = xfrm_audit_start("SA-notfound");
++	if (audit_buf == NULL)
++		return;
++	xfrm_audit_helper_pktinfo(skb, family, audit_buf);
++	spi = ntohl(net_spi);
++	audit_log_format(audit_buf, " spi=%u(0x%x) seqno=%u",
++			 spi, spi, ntohl(net_seq));
++	audit_log_end(audit_buf);
++}
++#endif

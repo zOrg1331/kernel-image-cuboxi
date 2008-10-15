@@ -1,0 +1,37 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Mon, 30 Jun 2008 13:30:53 -0400
+Subject: [ia64] softlock: prevent endless warnings in kdump
+Message-id: 20080630173053.GA8366@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL 5.3 PATCH] softlock: Prevent endless softlockup warnings on some ia64 systems (bz 453200)
+Bugzilla: 453200
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Hey-
+	Fujitsu recently noticed that when they configure kdump to halt the
+system after a dump operation (rather than a reboot) on their primequest ia64
+systems, they get an endless spew of softlockup messages on their console.  They
+tracked down the problem to an upstream patch which (among other things),
+supressed softlockup warnings when the system wasn't in SYSTEM_RUNNING state.
+Oddly this commit (# 6687a97d4041f996f725902d2990e5de6ef5cbe5) has already been
+backported to RHEL, except for this missing hunk.  This patch is the remainder
+of that hunk, backported to RHEL5.  Tested successfully by Fujitsu.
+
+Neil
+
+diff --git a/kernel/softlockup.c b/kernel/softlockup.c
+index b942e11..7f55472 100644
+--- a/kernel/softlockup.c
++++ b/kernel/softlockup.c
+@@ -103,6 +103,12 @@ void softlockup_tick(struct pt_regs *regs)
+ 		return;
+ 	}
+ 
++	/* do not print during early bootup: */
++	if (unlikely(system_state != SYSTEM_RUNNING)) {
++		touch_softlockup_watchdog();
++		return;
++	}
++
+ 	now = jiffies;
+ 
+ 	/* Wake up the high-prio watchdog task every second: */

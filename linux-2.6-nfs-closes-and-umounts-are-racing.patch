@@ -1,0 +1,43 @@
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [RHEL5.1][PATCH] NFS4: closes and umounts are racing. 
+Date: Wed, 06 Jun 2007 15:32:41 -0400
+Bugzilla: 225515
+Message-Id: <46670BD9.5060909@RedHat.com>
+Changelog: [nfs] closes and umounts are racing. 
+
+
+The attached patch avoids an oops during a
+race between that occurs between the rpciod daemon
+trying to do a nfs4_close and the filesystem being unmounted.
+The window is small and only happens when all of the NFS
+debugging is turned (although i was never able to reproduce
+the oops) but it does exist.
+
+Note, the key word is 'avoids'. This patch does not fix the
+problem, just avoids the oops...
+
+The true fix is currently being worked on in upstream
+which basically means there a patch but has very
+little (i.e. none) testing. So I've decided to submit
+this patch (since today is the deadline) with the idea
+of updating the patch when the final solution is a bit
+more baked.
+
+The bz for this is:
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=225515
+
+
+steved.
+
+--- old/fs/nfs/inode.c	2007-01-17 17:19:48.994020288 -0500
++++ new/fs/nfs/inode.c	2007-01-17 17:20:26.570307824 -0500
+@@ -914,7 +914,7 @@
+ 
+ 	server = NFS_SERVER(inode);
+ 	/* Update the fsid if and only if this is the root directory */
+-	if (inode == inode->i_sb->s_root->d_inode
++	if ( inode->i_sb->s_root && inode == inode->i_sb->s_root->d_inode
+ 			&& !nfs_fsid_equal(&server->fsid, &fattr->fsid))
+ 		server->fsid = fattr->fsid;
+ 
+

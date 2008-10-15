@@ -1,0 +1,25 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Thu, 29 Nov 2007 09:40:40 -0500
+Subject: [x86_64] nmi watchdog: incorrect logic for amd chips
+Message-id: 20071129144040.5690.92598.sendpatchset@prarit.boston.redhat.com
+O-Subject: [RHEL 5 PATCH]: Fix incorrect logic in AMD NMI code
+Bugzilla: 391741
+
+Resolve a typo in BZ 222144.  Incorrect logic when setting up AMD NMI
+Watchdog.
+
+Successfully tested by me, and signed off by AMD.
+
+diff --git a/arch/x86_64/kernel/nmi.c b/arch/x86_64/kernel/nmi.c
+index b33fb59..1fc773f 100644
+--- a/arch/x86_64/kernel/nmi.c
++++ b/arch/x86_64/kernel/nmi.c
+@@ -497,7 +497,7 @@ void setup_apic_nmi_watchdog(void)
+ {
+ 	switch (boot_cpu_data.x86_vendor) {
+ 	case X86_VENDOR_AMD:
+-		if ((boot_cpu_data.x86 != 15) || (boot_cpu_data.x86 != 16))
++		if ((boot_cpu_data.x86 != 15) && (boot_cpu_data.x86 != 16))
+ 			return;
+ 		if (strstr(boot_cpu_data.x86_model_id, "Screwdriver"))
+ 			return;

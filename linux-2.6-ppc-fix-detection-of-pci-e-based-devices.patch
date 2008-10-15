@@ -1,0 +1,46 @@
+From: Doug Ledford <dledford@redhat.com>
+Subject: [Patch RHEL5.1] Fix detection of PCI-e based devices on ppc systems
+Date: Thu, 16 Aug 2007 11:44:20 -0400
+Bugzilla: 252085
+Message-Id: <1187279060.14384.167.camel@firewall.xsintricity.com>
+Changelog: [ppc] Fix detection of PCI-e based devices
+
+
+The ppc arch is failing to detect PCI-e based devices in certain ppc
+cell based machines (bz252085).  Without some sort of solution, all
+PCI-e based devices on these machines are unusable.  This got thrown my
+way because, as it turns out, the device this is currently rendering
+unusable in the IBM blade servers based on ppc cell chips is their
+Infiniband card, which happens to be the primary means of inter-blade
+communication.  Aka, these blades are worthless without their infiniband
+card working.
+
+The attached patch comes from upstream, and has been tested in isolation
+by IBM to resolve the issue.  With this patch in place, the cell
+machines find the device in question and operate properly with that
+device.
+
+Blocker status has been requested for this patch.
+
+-- 
+Doug Ledford <dledford@redhat.com>
+              GPG KeyID: CFBFF194
+              http://people.redhat.com/dledford
+
+Infiniband specific RPMs available at
+              http://people.redhat.com/dledford/Infiniband
+
+Index: b/arch/powerpc/platforms/cell/setup.c
+===================================================================
+--- a/arch/powerpc/platforms/cell/setup.c
++++ b/arch/powerpc/platforms/cell/setup.c
+@@ -148,7 +148,8 @@ static void __init cell_find_and_init_ph
+ 		if (plb5 == NULL)
+ 			continue;
+ 		for (np = NULL; !!(np = of_get_next_child(plb5, np));)
+-			if (strcmp(np->name, "pcie") == 0)
++			if ((strcmp(np->name, "pcie") == 0) ||
++			    (strcmp(np->name, "pciex") == 0))
+ 				cell_add_phb(np, index++);
+ 		for (plb4 = NULL; !!(plb4 = of_get_next_child(plb5, plb4));)
+ 			if (strcmp(plb4->name, "plb4") == 0)

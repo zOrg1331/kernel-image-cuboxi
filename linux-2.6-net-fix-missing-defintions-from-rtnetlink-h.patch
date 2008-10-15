@@ -1,0 +1,57 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Fri, 11 Jan 2008 07:13:12 -0500
+Subject: [net] fix missing defintions from rtnetlink.h
+Message-id: 20080111121312.GD8631@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL 5.2 PATCH] fix missing defintions from rtnetlink.h (bz 428143)
+Bugzilla: 428143
+
+Hey-
+	The odad backport from a few weeks back moved some defiitions around
+inside some header files and caused several userspace build breaks, when the new
+header file wasn't included by those apps.  This patch fixes those missing
+definitions and brings us into line with how upstream is handling this
+compatibility.  Tested and confirmed to fix bz 428143.  Thanks!
+Neil
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Herbert Xu <herbert.xu@redhat.com>
+Acked-by: Thomas Graf <tgraf@redhat.com>
+
+diff --git a/include/linux/Kbuild b/include/linux/Kbuild
+index b33b4cc..571d6c2 100644
+--- a/include/linux/Kbuild
++++ b/include/linux/Kbuild
+@@ -226,6 +226,7 @@ unifdef-y += hpet.h
+ unifdef-y += i2c.h
+ unifdef-y += i2o-dev.h
+ unifdef-y += icmpv6.h
++unifdef-y += if_addr.h 
+ unifdef-y += if_bridge.h
+ unifdef-y += if_ec.h
+ unifdef-y += if_eql.h
+diff --git a/include/linux/if_addr.h b/include/linux/if_addr.h
+index e99aa71..af716b0 100644
+--- a/include/linux/if_addr.h
++++ b/include/linux/if_addr.h
+@@ -50,4 +50,9 @@ struct ifa_cacheinfo
+ 	__u32	tstamp; /* updated timestamp, hundredths of seconds */
+ };
+ 
++#ifndef __KERNEL__
++#define IFA_RTA(r)  ((struct rtattr*)(((char*)(r)) + NLMSG_ALIGN(sizeof(struct ifaddrmsg))))
++#define IFA_PAYLOAD(n) NLMSG_PAYLOAD(n,sizeof(struct ifaddrmsg))
++#endif
++
+ #endif
+diff --git a/include/linux/rtnetlink.h b/include/linux/rtnetlink.h
+index 198009b..e969e67 100644
+--- a/include/linux/rtnetlink.h
++++ b/include/linux/rtnetlink.h
+@@ -2,6 +2,7 @@
+ #define __LINUX_RTNETLINK_H
+ 
+ #include <linux/netlink.h>
++#include <linux/if_addr.h>
+ 
+ /****
+  *		Routing/neighbour discovery messages.

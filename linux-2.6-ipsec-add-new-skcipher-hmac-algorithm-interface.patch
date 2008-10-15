@@ -1,0 +1,493 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Sun, 6 Jan 2008 16:09:37 +1100
+Subject: [ipsec] add new skcipher/hmac algorithm interface
+Message-id: E1JBNlR-0001CK-00@gondolin.me.apana.org.au
+O-Subject: [PATCH 22/32] [IPSEC]: Add support for new skcipher/hmac algorithm interface
+Bugzilla: 253051
+
+[IPSEC]: Add support for new skcipher/hmac algorithm interface
+
+This patch introduces xfrm_nalgo.c which will provide an interface for
+transforms such as ESP to query the new skcipher/hmac and later AEAD
+algorithms.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/include/linux/pfkeyv2.h b/include/linux/pfkeyv2.h
+index d5dd471..636e0fb 100644
+--- a/include/linux/pfkeyv2.h
++++ b/include/linux/pfkeyv2.h
+@@ -285,6 +285,7 @@ struct sadb_x_sec_ctx {
+ #define SADB_X_AALG_SHA2_384HMAC	6
+ #define SADB_X_AALG_SHA2_512HMAC	7
+ #define SADB_X_AALG_RIPEMD160HMAC	8
++#define SADB_X_AALG_AES_XCBC_MAC	9
+ #define SADB_X_AALG_NULL		251	/* kame */
+ #define SADB_AALG_MAX			251
+ 
+diff --git a/include/net/xfrm.h b/include/net/xfrm.h
+index fff9c4c..ae0107b 100644
+--- a/include/net/xfrm.h
++++ b/include/net/xfrm.h
+@@ -895,6 +895,18 @@ struct xfrm_algo_desc {
+ 	struct sadb_alg desc;
+ };
+ 
++struct xfrm_nalgo_desc {
++	char *name;
++	u8 available:1;
++	union {
++		struct xfrm_algo_auth_info auth;
++		struct xfrm_algo_encr_info encr;
++		struct xfrm_algo_comp_info comp;
++	} uinfo;
++	struct sadb_alg desc;
++	char *compat;
++};
++
+ /* XFRM tunnel handlers.  */
+ struct xfrm_tunnel {
+ 	int (*handler)(struct sk_buff *skb);
+@@ -1020,6 +1032,8 @@ extern struct xfrm_algo_desc *xfrm_calg_get_byid(int alg_id);
+ extern struct xfrm_algo_desc *xfrm_aalg_get_byname(char *name, int probe);
+ extern struct xfrm_algo_desc *xfrm_ealg_get_byname(char *name, int probe);
+ extern struct xfrm_algo_desc *xfrm_calg_get_byname(char *name, int probe);
++extern struct xfrm_nalgo_desc *xfrm_naalg_get_byname(char *name, int probe);
++extern struct xfrm_nalgo_desc *xfrm_nealg_get_byname(char *name, int probe);
+ 
+ struct crypto_tfm;
+ typedef void (icv_update_fn_t)(struct crypto_tfm *, struct scatterlist *, unsigned int);
+diff --git a/net/xfrm/Kconfig b/net/xfrm/Kconfig
+index 0c1c043..1a62e9f 100644
+--- a/net/xfrm/Kconfig
++++ b/net/xfrm/Kconfig
+@@ -5,6 +5,10 @@ config XFRM
+        bool
+        depends on NET
+ 
++config XFRM_NALGO
++	tristate
++	depends on XFRM
++
+ config XFRM_USER
+ 	tristate "IPsec user configuration interface"
+ 	depends on INET && XFRM
+diff --git a/net/xfrm/Makefile b/net/xfrm/Makefile
+index 693aac1..849ffbe 100644
+--- a/net/xfrm/Makefile
++++ b/net/xfrm/Makefile
+@@ -3,5 +3,6 @@
+ #
+ 
+ obj-$(CONFIG_XFRM) := xfrm_policy.o xfrm_state.o xfrm_input.o xfrm_algo.o
++obj-$(CONFIG_XFRM_NALGO) += xfrm_nalgo.o
+ obj-$(CONFIG_XFRM_USER) += xfrm_user.o
+ 
+diff --git a/net/xfrm/xfrm_nalgo.c b/net/xfrm/xfrm_nalgo.c
+new file mode 100644
+index 0000000..902167c
+--- /dev/null
++++ b/net/xfrm/xfrm_nalgo.c
+@@ -0,0 +1,400 @@
++/*
++ * xfrm algorithm interface
++ *
++ * Copyright (c) 2002 James Morris <jmorris@intercode.com.au>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the Free
++ * Software Foundation; either version 2 of the License, or (at your option)
++ * any later version.
++ */
++
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/pfkeyv2.h>
++#include <linux/ncrypto.h>
++#include <linux/scatterlist.h>
++#include <net/xfrm.h>
++
++/*
++ * Algorithms supported by IPsec.  These entries contain properties which
++ * are used in key negotiation and xfrm processing, and are used to verify
++ * that instantiated crypto transforms have correct parameters for IPsec
++ * purposes.
++ */
++static struct xfrm_nalgo_desc aalg_list[] = {
++{
++	.name = "hmac(digest_null)",
++	.compat = "digest_null",
++
++	.uinfo = {
++		.auth = {
++			.icv_truncbits = 0,
++			.icv_fullbits = 0,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_X_AALG_NULL,
++		.sadb_alg_ivlen = 0,
++		.sadb_alg_minbits = 0,
++		.sadb_alg_maxbits = 0
++	}
++},
++{
++	.name = "hmac(md5)",
++	.compat = "md5",
++
++	.uinfo = {
++		.auth = {
++			.icv_truncbits = 96,
++			.icv_fullbits = 128,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_AALG_MD5HMAC,
++		.sadb_alg_ivlen = 0,
++		.sadb_alg_minbits = 128,
++		.sadb_alg_maxbits = 128
++	}
++},
++{
++	.name = "hmac(sha1)",
++	.compat = "sha1",
++
++	.uinfo = {
++		.auth = {
++			.icv_truncbits = 96,
++			.icv_fullbits = 160,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_AALG_SHA1HMAC,
++		.sadb_alg_ivlen = 0,
++		.sadb_alg_minbits = 160,
++		.sadb_alg_maxbits = 160
++	}
++},
++{
++	.name = "hmac(sha256)",
++	.compat = "sha256",
++
++	.uinfo = {
++		.auth = {
++			.icv_truncbits = 96,
++			.icv_fullbits = 256,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_X_AALG_SHA2_256HMAC,
++		.sadb_alg_ivlen = 0,
++		.sadb_alg_minbits = 256,
++		.sadb_alg_maxbits = 256
++	}
++},
++{
++	.name = "hmac(ripemd160)",
++	.compat = "ripemd160",
++
++	.uinfo = {
++		.auth = {
++			.icv_truncbits = 96,
++			.icv_fullbits = 160,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_X_AALG_RIPEMD160HMAC,
++		.sadb_alg_ivlen = 0,
++		.sadb_alg_minbits = 160,
++		.sadb_alg_maxbits = 160
++	}
++},
++{
++	.name = "xcbc(aes)",
++
++	.uinfo = {
++		.auth = {
++			.icv_truncbits = 96,
++			.icv_fullbits = 128,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_X_AALG_AES_XCBC_MAC,
++		.sadb_alg_ivlen = 0,
++		.sadb_alg_minbits = 128,
++		.sadb_alg_maxbits = 128
++	}
++},
++};
++
++static struct xfrm_nalgo_desc ealg_list[] = {
++{
++	.name = "ecb(cipher_null)",
++	.compat = "cipher_null",
++
++	.uinfo = {
++		.encr = {
++			.blockbits = 8,
++			.defkeybits = 0,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id =	SADB_EALG_NULL,
++		.sadb_alg_ivlen = 0,
++		.sadb_alg_minbits = 0,
++		.sadb_alg_maxbits = 0
++	}
++},
++{
++	.name = "cbc(des)",
++	.compat = "des",
++
++	.uinfo = {
++		.encr = {
++			.blockbits = 64,
++			.defkeybits = 64,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_EALG_DESCBC,
++		.sadb_alg_ivlen = 8,
++		.sadb_alg_minbits = 64,
++		.sadb_alg_maxbits = 64
++	}
++},
++{
++	.name = "cbc(des3_ede)",
++	.compat = "des3_ede",
++
++	.uinfo = {
++		.encr = {
++			.blockbits = 64,
++			.defkeybits = 192,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_EALG_3DESCBC,
++		.sadb_alg_ivlen = 8,
++		.sadb_alg_minbits = 192,
++		.sadb_alg_maxbits = 192
++	}
++},
++{
++	.name = "cbc(cast128)",
++	.compat = "cast128",
++
++	.uinfo = {
++		.encr = {
++			.blockbits = 64,
++			.defkeybits = 128,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_X_EALG_CASTCBC,
++		.sadb_alg_ivlen = 8,
++		.sadb_alg_minbits = 40,
++		.sadb_alg_maxbits = 128
++	}
++},
++{
++	.name = "cbc(blowfish)",
++	.compat = "blowfish",
++
++	.uinfo = {
++		.encr = {
++			.blockbits = 64,
++			.defkeybits = 128,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_X_EALG_BLOWFISHCBC,
++		.sadb_alg_ivlen = 8,
++		.sadb_alg_minbits = 40,
++		.sadb_alg_maxbits = 448
++	}
++},
++{
++	.name = "cbc(aes)",
++	.compat = "aes",
++
++	.uinfo = {
++		.encr = {
++			.blockbits = 128,
++			.defkeybits = 128,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_X_EALG_AESCBC,
++		.sadb_alg_ivlen = 8,
++		.sadb_alg_minbits = 128,
++		.sadb_alg_maxbits = 256
++	}
++},
++{
++	.name = "cbc(serpent)",
++	.compat = "serpent",
++
++	.uinfo = {
++		.encr = {
++			.blockbits = 128,
++			.defkeybits = 128,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_X_EALG_SERPENTCBC,
++		.sadb_alg_ivlen = 8,
++		.sadb_alg_minbits = 128,
++		.sadb_alg_maxbits = 256,
++	}
++},
++{
++	.name = "cbc(twofish)",
++	.compat = "twofish",
++
++	.uinfo = {
++		.encr = {
++			.blockbits = 128,
++			.defkeybits = 128,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_X_EALG_TWOFISHCBC,
++		.sadb_alg_ivlen = 8,
++		.sadb_alg_minbits = 128,
++		.sadb_alg_maxbits = 256
++	}
++},
++};
++
++static struct xfrm_nalgo_desc calg_list[] = {
++{
++	.name = "deflate",
++	.uinfo = {
++		.comp = {
++			.threshold = 90,
++		}
++	},
++	.desc = { .sadb_alg_id = SADB_X_CALG_DEFLATE }
++},
++{
++	.name = "lzs",
++	.uinfo = {
++		.comp = {
++			.threshold = 90,
++		}
++	},
++	.desc = { .sadb_alg_id = SADB_X_CALG_LZS }
++},
++{
++	.name = "lzjh",
++	.uinfo = {
++		.comp = {
++			.threshold = 50,
++		}
++	},
++	.desc = { .sadb_alg_id = SADB_X_CALG_LZJH }
++},
++};
++
++static inline int aalg_entries(void)
++{
++	return ARRAY_SIZE(aalg_list);
++}
++
++static inline int ealg_entries(void)
++{
++	return ARRAY_SIZE(ealg_list);
++}
++
++static inline int calg_entries(void)
++{
++	return ARRAY_SIZE(calg_list);
++}
++
++struct xfrm_algo_list {
++	struct xfrm_nalgo_desc *algs;
++	int entries;
++	u32 type;
++	u32 mask;
++};
++
++static const struct xfrm_algo_list xfrm_aalg_list = {
++	.algs = aalg_list,
++	.entries = ARRAY_SIZE(aalg_list),
++	.type = NCRYPTO_ALG_TYPE_HASH,
++	.mask = NCRYPTO_ALG_TYPE_HASH_MASK | NCRYPTO_ALG_ASYNC,
++};
++
++static const struct xfrm_algo_list xfrm_ealg_list = {
++	.algs = ealg_list,
++	.entries = ARRAY_SIZE(ealg_list),
++	.type = NCRYPTO_ALG_TYPE_BLKCIPHER,
++	.mask = NCRYPTO_ALG_TYPE_MASK | NCRYPTO_ALG_ASYNC,
++};
++
++static struct xfrm_nalgo_desc *xfrm_find_algo(
++	const struct xfrm_algo_list *algo_list,
++	int match(const struct xfrm_nalgo_desc *entry, const void *data),
++	const void *data, int probe)
++{
++	struct xfrm_nalgo_desc *list = algo_list->algs;
++	int i, status;
++
++	for (i = 0; i < algo_list->entries; i++) {
++		if (!match(list + i, data))
++			continue;
++
++		if (list[i].available)
++			return &list[i];
++
++		if (!probe)
++			break;
++
++		status = crypto_has_alg(list[i].name, algo_list->type,
++					algo_list->mask);
++		if (!status)
++			break;
++
++		list[i].available = status;
++		return &list[i];
++	}
++	return NULL;
++}
++
++static int xfrm_alg_name_match(const struct xfrm_nalgo_desc *entry,
++			       const void *data)
++{
++	const char *name = data;
++
++	return name && (!strcmp(name, entry->name) ||
++			(entry->compat && !strcmp(name, entry->compat)));
++}
++
++struct xfrm_nalgo_desc *xfrm_naalg_get_byname(char *name, int probe)
++{
++	return xfrm_find_algo(&xfrm_aalg_list, xfrm_alg_name_match, name,
++			      probe);
++}
++EXPORT_SYMBOL_GPL(xfrm_naalg_get_byname);
++
++struct xfrm_nalgo_desc *xfrm_nealg_get_byname(char *name, int probe)
++{
++	return xfrm_find_algo(&xfrm_ealg_list, xfrm_alg_name_match, name,
++			      probe);
++}
++EXPORT_SYMBOL_GPL(xfrm_nealg_get_byname);
++
++MODULE_LICENSE("GPL");

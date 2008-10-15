@@ -1,0 +1,38 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5 PATCH] dlm: fix receive_request lvb copying
+Date: Fri, 8 Dec 2006 11:09:20 -0600
+Bugzilla: 214595
+Message-Id: <20061208170920.GC9455@redhat.com>
+Changelog: dlm: fix receive_request lvb copying
+
+
+bz 214595
+patch 2 of 2
+
+LVB's are not sent as part of new requests, but the code receiving the
+request was copying data into the lvb anyway.  The space in the message
+where it mistakenly thought the lvb lived actually contained the resource
+name, so it wound up incorrectly copying this name data into the lvb.  Fix
+is to just create the lvb, not copy junk into it.
+
+
+Index: linux-2.6.19-quilt/fs/dlm/lock.c
+===================================================================
+--- linux-2.6.19-quilt.orig/fs/dlm/lock.c	2006-12-07 15:13:11.000000000 -0600
++++ linux-2.6.19-quilt/fs/dlm/lock.c	2006-12-08 08:59:25.110707925 -0600
+@@ -2430,8 +2430,12 @@
+ 
+ 	DLM_ASSERT(is_master_copy(lkb), dlm_print_lkb(lkb););
+ 
+-	if (receive_lvb(ls, lkb, ms))
+-		return -ENOMEM;
++	if (lkb->lkb_exflags & DLM_LKF_VALBLK) {
++		/* lkb was just created so there won't be an lvb yet */
++		lkb->lkb_lvbptr = allocate_lvb(ls);
++		if (!lkb->lkb_lvbptr)
++			return -ENOMEM;
++	}
+ 
+ 	return 0;
+ }
+

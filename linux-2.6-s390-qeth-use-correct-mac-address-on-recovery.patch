@@ -1,0 +1,52 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 30 Oct 2007 17:05:47 +0100
+Subject: [s390] qeth: use correct MAC address on recovery
+Message-id: 20071030160547.GF6604@redhat.com
+O-Subject: [RHEL5.2 PATCH 1/5] s390 qeth: Layer2 users MAC address lost on recovery with Virtual NIC's
+Bugzilla: 241276
+
+Problem:
+=========
+If a zVM Virtual NIC is coupled to a LAN of type.
+QDIO ETHER, zVM generates an initial MAC address.
+This MAC address can be changed later on.
+But after qeth recovery of such a device, a
+changed MAC address is lost and the zVM-generated
+MAC address is used.
+This is especially important for a bonding setup over Virtual NICs.
+
+Bugzilla
+=========
+
+BZ 241276
+https://bugzilla.redhat.com/show_bug.cgi?id=241276
+
+Upstream status of the patch:
+=============================
+Fix included in git as commit  a4c48a2691189cec0359ac13b41726d3005ef2f5
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index acb6a9e..5d9a9b9 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -6540,7 +6540,7 @@ qeth_setadpparms_change_macaddr_cb(struct qeth_card *card,
+ 	QETH_DBF_TEXT(trace,4,"chgmaccb");
+ 
+ 	cmd = (struct qeth_ipa_cmd *) data;
+-	if (!card->options.layer2 || card->info.guestlan ||
++	if (!card->options.layer2 ||
+ 	    !(card->info.mac_bits & QETH_LAYER2_MAC_READ)) {
+ 		memcpy(card->dev->dev_addr,
+ 		       &cmd->data.setadapterparms.data.change_addr.addr,

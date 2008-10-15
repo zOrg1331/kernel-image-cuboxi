@@ -1,0 +1,216 @@
+Date: Fri, 13 Oct 2006 12:20:41 -0700
+From: Anil S Keshavamurthy <akeshava@redhat.com>
+Subject: [PATCH RHEL5] BZ 210552: Ia64 - kprobe opcode must reside on 16 bytes
+ alignment
+
+BZ 210552.
+
+The kprobe struct has a member to save the original Instruction bundle,
+depending on where the address of the struct kprobe starts, the
+original instructions member might not be on a 16 byte boundary and
+will cause kernel panic when used this non-16 byte aligned address to
+single step later.
+
+This patch now fixes the issue by dynamically allocating
+the instruction bundle and makes sure this address is on
+16 byte boundary.
+
+
+The attached patch is back ported from 2.6.19-rc1.
+http://kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=214ddde2f95037e129eff7e895869771719c7c1b
+
+Please apply.
+
+-Thanks,
+Anil S Keshavamurthy
+Intel -Red Hat on-site partner Engineer.
+
+
+
+
+[IA64] kprobe opcode 16 bytes alignment on IA64
+
+On IA64 instruction opcode must be 16 bytes alignment, in kprobe structure
+there is one element to save original instruction, currently saved opcode
+is not statically allocated in kprobe structure, that can not assure
+16 bytes alignment. This patch dynamically allocated kprobe instruction
+opcode to assure 16 bytes alignment.
+
+Signed-off-by: bibo mao <bibo.mao@intel.com>
+Acked-by: Anil S Keshavamurthy <anil.s.keshavamurthy@intel.com>
+Signed-off-by: Tony Luck <tony.luck@intel.com>
+
+---
+ arch/ia64/kernel/kprobes.c |   55 +++++++++++++++++++++++----------------------
+ include/asm-ia64/kprobes.h |    9 ++++---
+ 2 files changed, 34 insertions(+), 30 deletions(-)
+
+Index: linux-2.6.18.ia64/arch/ia64/kernel/kprobes.c
+===================================================================
+--- linux-2.6.18.ia64.orig/arch/ia64/kernel/kprobes.c	2006-10-11 14:12:49.000000000 -0700
++++ linux-2.6.18.ia64/arch/ia64/kernel/kprobes.c	2006-10-11 14:12:52.000000000 -0700
+@@ -136,10 +136,8 @@
+ static int __kprobes unsupported_inst(uint template, uint  slot,
+ 				      uint major_opcode,
+ 				      unsigned long kprobe_inst,
+-				      struct kprobe *p)
++				      unsigned long addr)
+ {
+-	unsigned long addr = (unsigned long)p->addr;
+-
+ 	if (bundle_encoding[template][slot] == I) {
+ 		switch (major_opcode) {
+ 			case 0x0: //I_UNIT_MISC_OPCODE:
+@@ -217,7 +215,7 @@
+ 					 struct kprobe *p)
+ {
+ 	unsigned long break_inst = BREAK_INST;
+-	bundle_t *bundle = &p->ainsn.insn.bundle;
++	bundle_t *bundle = &p->opcode.bundle;
+ 
+ 	/*
+ 	 * Copy the original kprobe_inst qualifying predicate(qp)
+@@ -423,11 +421,9 @@
+ 	unsigned long *kprobe_addr = (unsigned long *)(addr & ~0xFULL);
+ 	unsigned long kprobe_inst=0;
+ 	unsigned int slot = addr & 0xf, template, major_opcode = 0;
+-	bundle_t *bundle = &p->ainsn.insn.bundle;
+-
+-	memcpy(&p->opcode.bundle, kprobe_addr, sizeof(bundle_t));
+-	memcpy(&p->ainsn.insn.bundle, kprobe_addr, sizeof(bundle_t));
++	bundle_t *bundle;
+ 
++	bundle = &((kprobe_opcode_t *)kprobe_addr)->bundle;
+  	template = bundle->quad0.template;
+ 
+ 	if(valid_kprobe_addr(template, slot, addr))
+@@ -440,20 +436,19 @@
+ 	/* Get kprobe_inst and major_opcode from the bundle */
+ 	get_kprobe_inst(bundle, slot, &kprobe_inst, &major_opcode);
+ 
+-	if (unsupported_inst(template, slot, major_opcode, kprobe_inst, p))
++	if (unsupported_inst(template, slot, major_opcode, kprobe_inst, addr))
+ 			return -EINVAL;
+ 
+-	prepare_break_inst(template, slot, major_opcode, kprobe_inst, p);
+ 
+-	return 0;
+-}
++	p->ainsn.insn = get_insn_slot();
++	if (!p->ainsn.insn)
++		return -ENOMEM;
++	memcpy(&p->opcode, kprobe_addr, sizeof(kprobe_opcode_t));
++	memcpy(p->ainsn.insn, kprobe_addr, sizeof(kprobe_opcode_t));
+ 
+-void __kprobes flush_insn_slot(struct kprobe *p)
+-{
+-	unsigned long arm_addr;
++	prepare_break_inst(template, slot, major_opcode, kprobe_inst, p);
+ 
+-	arm_addr = ((unsigned long)&p->opcode.bundle) & ~0xFULL;
+-	flush_icache_range(arm_addr, arm_addr + sizeof(bundle_t));
++	return 0;
+ }
+ 
+ void __kprobes arch_arm_kprobe(struct kprobe *p)
+@@ -461,9 +456,10 @@
+ 	unsigned long addr = (unsigned long)p->addr;
+ 	unsigned long arm_addr = addr & ~0xFULL;
+ 
+-	flush_insn_slot(p);
+-	memcpy((char *)arm_addr, &p->ainsn.insn.bundle, sizeof(bundle_t));
+-	flush_icache_range(arm_addr, arm_addr + sizeof(bundle_t));
++	flush_icache_range((unsigned long)p->ainsn.insn,
++			(unsigned long)p->ainsn.insn + sizeof(kprobe_opcode_t));
++	memcpy((char *)arm_addr, &p->opcode, sizeof(kprobe_opcode_t));
++	flush_icache_range(arm_addr, arm_addr + sizeof(kprobe_opcode_t));
+ }
+ 
+ void __kprobes arch_disarm_kprobe(struct kprobe *p)
+@@ -471,11 +467,18 @@
+ 	unsigned long addr = (unsigned long)p->addr;
+ 	unsigned long arm_addr = addr & ~0xFULL;
+ 
+-	/* p->opcode contains the original unaltered bundle */
+-	memcpy((char *) arm_addr, (char *) &p->opcode.bundle, sizeof(bundle_t));
+-	flush_icache_range(arm_addr, arm_addr + sizeof(bundle_t));
++	/* p->ainsn.insn contains the original unaltered kprobe_opcode_t */
++	memcpy((char *) arm_addr, (char *) p->ainsn.insn,
++					 sizeof(kprobe_opcode_t));
++	flush_icache_range(arm_addr, arm_addr + sizeof(kprobe_opcode_t));
+ }
+ 
++void __kprobes arch_remove_kprobe(struct kprobe *p)
++{
++	mutex_lock(&kprobe_mutex);
++	free_insn_slot(p->ainsn.insn);
++	mutex_unlock(&kprobe_mutex);
++}
+ /*
+  * We are resuming execution after a single step fault, so the pt_regs
+  * structure reflects the register state after we executed the instruction
+@@ -486,12 +489,12 @@
+  */
+ static void __kprobes resume_execution(struct kprobe *p, struct pt_regs *regs)
+ {
+-  	unsigned long bundle_addr = ((unsigned long) (&p->opcode.bundle)) & ~0xFULL;
++  	unsigned long bundle_addr = (unsigned long) (&p->ainsn.insn->bundle);
+   	unsigned long resume_addr = (unsigned long)p->addr & ~0xFULL;
+  	unsigned long template;
+  	int slot = ((unsigned long)p->addr & 0xf);
+ 
+-	template = p->opcode.bundle.quad0.template;
++	template = p->ainsn.insn->bundle.quad0.template;
+ 
+  	if (slot == 1 && bundle_encoding[template][1] == L)
+  		slot = 2;
+@@ -553,7 +556,7 @@
+ 
+ static void __kprobes prepare_ss(struct kprobe *p, struct pt_regs *regs)
+ {
+-	unsigned long bundle_addr = (unsigned long) &p->opcode.bundle;
++	unsigned long bundle_addr = (unsigned long) &p->ainsn.insn->bundle;
+ 	unsigned long slot = (unsigned long)p->addr & 0xf;
+ 
+ 	/* single step inline if break instruction */
+Index: linux-2.6.18.ia64/include/asm-ia64/kprobes.h
+===================================================================
+--- linux-2.6.18.ia64.orig/include/asm-ia64/kprobes.h	2006-10-11 14:12:49.000000000 -0700
++++ linux-2.6.18.ia64/include/asm-ia64/kprobes.h	2006-10-11 14:12:52.000000000 -0700
+@@ -29,7 +29,8 @@
+ #include <linux/percpu.h>
+ #include <asm/break.h>
+ 
+-#define MAX_INSN_SIZE   16
++#define __ARCH_WANT_KPROBES_INSN_SLOT
++#define MAX_INSN_SIZE   1
+ #define BREAK_INST	(long)(__IA64_BREAK_KPROBE << 6)
+ 
+ typedef union cmp_inst {
+@@ -94,7 +95,7 @@
+ #define IP_RELATIVE_PREDICT_OPCODE	(7)
+ #define LONG_BRANCH_OPCODE		(0xC)
+ #define LONG_CALL_OPCODE		(0xD)
+-#define arch_remove_kprobe(p)		do {} while (0)
++#define flush_insn_slot(p)		do { } while (0)
+ 
+ typedef struct kprobe_opcode {
+ 	bundle_t bundle;
+@@ -108,7 +109,7 @@
+ /* Architecture specific copy of original instruction*/
+ struct arch_specific_insn {
+ 	/* copy of the instruction to be emulated */
+-	kprobe_opcode_t insn;
++	kprobe_opcode_t *insn;
+  #define INST_FLAG_FIX_RELATIVE_IP_ADDR		1
+  #define INST_FLAG_FIX_BRANCH_REG		2
+  #define INST_FLAG_BREAK_INST			4
+@@ -125,6 +126,6 @@
+ }
+ extern void invalidate_stacked_regs(void);
+ extern void flush_register_stack(void);
+-extern void flush_insn_slot(struct kprobe *p);
++extern void arch_remove_kprobe(struct kprobe *p);
+ 
+ #endif				/* _ASM_KPROBES_H */
+

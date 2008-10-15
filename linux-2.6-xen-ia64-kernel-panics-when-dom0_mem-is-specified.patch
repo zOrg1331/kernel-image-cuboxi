@@ -1,0 +1,234 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5.1 PATCH 9/21] kernel-xen panics when dom0_mem=4194304 is specified
+Date: Thu, 07 Jun 2007 03:38:51 -0400
+Bugzilla: 217593
+Message-Id: <4667B60B.2040302@redhat.com>
+Changelog: [xen] ia64: kernel-xen panics when dom0_mem=4194304 is specified
+
+
+bz217593
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=217593
+
+Backport of cset#13455, 13429, and 13454.
+
+kernel-xen panics due to the driver initialization
+failure when dom0_mem=4194304 is specified (and without
+dom0_mem, it gets only 512MB out of xGB physical mem.)
+
+This is a fix for the kernel part.
+
+Thanks,
+Kei
+
+
+
+
+changeset 13429:  	1f811fe10d0a
+parent 13428:	105ac9be9b3d
+child 13430:	c3b455c4676c
+author: 	awilliam@xenbuild2.aw
+description: 	[IA64] don't allocate bitmap from low pool
+
+No need to allocate contiguous_bitmap out of the low pages pool as all
+pages are directly accessible on an ia64.
+
+Signed-off-by: Jes Sorensen <jes@sgi.com>
+
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/hypervisor.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN arch/ia64/xen/hypervisor.c~13429-IA64_dont_allocate_bitmap_from_low_pool arch/ia64/xen/hypervisor.c
+--- linux-2.6.18-21.el5-gerd-order/arch/ia64/xen/hypervisor.c~13429-IA64_dont_allocate_bitmap_from_low_pool	2007-06-07 02:44:29.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/hypervisor.c	2007-06-07 02:44:29.000000000 -0400
+@@ -60,7 +60,7 @@ void
+ contiguous_bitmap_init(unsigned long end_pfn)
+ {
+ 	unsigned long size = (end_pfn + 2 * BITS_PER_LONG) >> 3;
+-	contiguous_bitmap = alloc_bootmem_low_pages(size);
++	contiguous_bitmap = alloc_bootmem_pages(size);
+ 	BUG_ON(!contiguous_bitmap);
+ 	memset(contiguous_bitmap, 0, size);
+ }
+
+_
+
+
+rh bug 217593
+
+# HG changeset patch
+# User awilliam@xenbuild2.aw
+# Date 1167950710 25200
+# Node ID 5708307d0e3539227c6d1f17bfa2ed4c9c92a646
+# Parent  8bf7cd060df8d137ed4e189729d63707d5697ddd
+[IA64] allocate contiguous_bitmap sparsely like virtual memmap.
+
+With dom0 memory assignment changed, memory might be sparse, so simple bitmap
+may waste too much memory.
+
+Signed-off-by: Isaku Yamahata <yamahata@valinux.co.jp>
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/hypervisor.c |   86 +++++++++-
+ 1 file changed, 83 insertions(+), 3 deletions(-)
+
+diff -puN arch/ia64/xen/hypervisor.c~13455-IA64_allocate_contiguous_bitmap_sparsely_like_virtual_memmap. arch/ia64/xen/hypervisor.c
+--- linux-2.6.18-21.el5-gerd-order/arch/ia64/xen/hypervisor.c~13455-IA64_allocate_contiguous_bitmap_sparsely_like_virtual_memmap.	2007-06-07 02:44:29.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/hypervisor.c	2007-06-07 02:44:29.000000000 -0400
+@@ -25,7 +25,10 @@
+ #include <linux/bootmem.h>
+ #include <linux/module.h>
+ #include <linux/vmalloc.h>
++#include <linux/efi.h>
+ #include <asm/page.h>
++#include <asm/pgalloc.h>
++#include <asm/meminit.h>
+ #include <asm/hypervisor.h>
+ #include <asm/hypercall.h>
+ #include <xen/interface/memory.h>
+@@ -56,15 +59,92 @@ static int p2m_expose_init(void);
+  */
+ unsigned long *contiguous_bitmap;
+ 
+-void
+-contiguous_bitmap_init(unsigned long end_pfn)
++#ifdef CONFIG_VIRTUAL_MEM_MAP
++/* Following logic is stolen from create_mem_map_table() for virtual memmap */
++static int
++create_contiguous_bitmap(u64 start, u64 end, void *arg)
++{
++	unsigned long address, start_page, end_page;
++	unsigned long bitmap_start, bitmap_end;
++	unsigned char *bitmap;
++	int node;
++	pgd_t *pgd;
++	pud_t *pud;
++	pmd_t *pmd;
++	pte_t *pte;
++
++	bitmap_start = (unsigned long)contiguous_bitmap +
++	               ((__pa(start) >> PAGE_SHIFT) >> 3);
++	bitmap_end = (unsigned long)contiguous_bitmap +
++	             (((__pa(end) >> PAGE_SHIFT) + 2 * BITS_PER_LONG) >> 3);
++
++	start_page = bitmap_start & PAGE_MASK;
++	end_page = PAGE_ALIGN(bitmap_end);
++	node = paddr_to_nid(__pa(start));
++
++	bitmap = alloc_bootmem_pages_node(NODE_DATA(node),
++	                                  end_page - start_page);
++	BUG_ON(!bitmap);
++	memset(bitmap, 0, end_page - start_page);
++
++	for (address = start_page; address < end_page; address += PAGE_SIZE) {
++		pgd = pgd_offset_k(address);
++		if (pgd_none(*pgd))
++			pgd_populate(&init_mm, pgd,
++			             alloc_bootmem_pages_node(NODE_DATA(node),
++			                                      PAGE_SIZE));
++		pud = pud_offset(pgd, address);
++
++		if (pud_none(*pud))
++			pud_populate(&init_mm, pud,
++			             alloc_bootmem_pages_node(NODE_DATA(node),
++			                                      PAGE_SIZE));
++		pmd = pmd_offset(pud, address);
++
++		if (pmd_none(*pmd))
++			pmd_populate_kernel(&init_mm, pmd,
++			                    alloc_bootmem_pages_node
++			                    (NODE_DATA(node), PAGE_SIZE));
++		pte = pte_offset_kernel(pmd, address);
++
++		if (pte_none(*pte))
++			set_pte(pte,
++			        pfn_pte(__pa(bitmap + (address - start_page))
++			                >> PAGE_SHIFT, PAGE_KERNEL));
++	}
++	return 0;
++}
++#endif
++
++static void
++__contiguous_bitmap_init(unsigned long size)
+ {
+-	unsigned long size = (end_pfn + 2 * BITS_PER_LONG) >> 3;
+ 	contiguous_bitmap = alloc_bootmem_pages(size);
+ 	BUG_ON(!contiguous_bitmap);
+ 	memset(contiguous_bitmap, 0, size);
+ }
+ 
++void
++contiguous_bitmap_init(unsigned long end_pfn)
++{
++	unsigned long size = (end_pfn + 2 * BITS_PER_LONG) >> 3;
++#ifndef CONFIG_VIRTUAL_MEM_MAP
++	__contiguous_bitmap_init(size);
++#else
++	unsigned long max_gap = 0;
++
++	efi_memmap_walk(find_largest_hole, (u64*)&max_gap);
++	if (max_gap < LARGE_GAP) {
++		__contiguous_bitmap_init(size);
++	} else {
++		unsigned long map_size = PAGE_ALIGN(size);
++		vmalloc_end -= map_size;
++		contiguous_bitmap = (unsigned long*)vmalloc_end;
++		efi_memmap_walk(create_contiguous_bitmap, NULL);
++	}
++#endif
++}
++
+ #if 0
+ int
+ contiguous_bitmap_test(void* p)
+
+_
+
+
+changeset 13454:  	8bf7cd060df8
+parent 13453:	d9b2dd57fdc4
+child 13455:	5708307d0e35
+author: 	awilliam@xenbuild2.aw
+description: 	[IA64] Fix warning when building with CONFIG_FLATMEM unset
+
+Signed-off-by: Isaku Yamahata <yamahata@valinux.co.jp>
+
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/include/asm-ia64/maddr.h |    1 -
+ linux-2.6.18-21.el5-gerd-order-kei/include/asm-ia64/page.h  |    1 +
+ 2 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN include/asm-ia64/maddr.h~13454-IA64_Fix_warning_when_building_with_CONFIG_FLATMEM_unset include/asm-ia64/maddr.h
+--- linux-2.6.18-21.el5-gerd-order/include/asm-ia64/maddr.h~13454-IA64_Fix_warning_when_building_with_CONFIG_FLATMEM_unset	2007-06-07 02:44:29.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/include/asm-ia64/maddr.h	2007-06-07 02:44:29.000000000 -0400
+@@ -68,7 +68,6 @@ machine_to_phys_for_dma(unsigned long ma
+ static inline unsigned long
+ mfn_to_local_pfn(unsigned long mfn)
+ {
+-	extern unsigned long max_mapnr;
+ 	unsigned long pfn = mfn_to_pfn_for_dma(mfn);
+ 	if (!pfn_valid(pfn))
+ 		return INVALID_P2M_ENTRY;
+diff -puN include/asm-ia64/page.h~13454-IA64_Fix_warning_when_building_with_CONFIG_FLATMEM_unset include/asm-ia64/page.h
+--- linux-2.6.18-21.el5-gerd-order/include/asm-ia64/page.h~13454-IA64_Fix_warning_when_building_with_CONFIG_FLATMEM_unset	2007-06-07 02:44:29.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/include/asm-ia64/page.h	2007-06-07 02:44:29.000000000 -0400
+@@ -119,6 +119,7 @@ extern struct page *vmem_map;
+ #endif
+ 
+ #ifdef CONFIG_FLATMEM
++extern unsigned long max_mapnr;
+ # define pfn_valid(pfn)		(((pfn) < max_mapnr) && ia64_pfn_valid(pfn))
+ #elif defined(CONFIG_DISCONTIGMEM)
+ extern unsigned long min_low_pfn;
+
+_
+

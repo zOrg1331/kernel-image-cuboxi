@@ -1,0 +1,125 @@
+Date: Thu, 21 Sep 2006 16:46:30 +0100
+From: Alasdair G Kergon <agk@redhat.com>
+Subject: [RHEL5 PATCH 10/30] dm snapshot: make read and write exception functions void
+
+read_exception() and write_exception() only return an error if
+supplied with an out-of-range index.  If this ever happens it's the
+result of a bug in the calling code so we handle this with an
+assertion and remove the error handling in the callers.
+
+Index: linux-2.6.18.noarch/drivers/md/dm-exception-store.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/dm-exception-store.c
++++ linux-2.6.18.noarch/drivers/md/dm-exception-store.c
+@@ -296,42 +296,29 @@ static int write_header(struct pstore *p
+  */
+ static struct disk_exception *get_exception(struct pstore *ps, uint32_t index)
+ {
+-	if (index >= ps->exceptions_per_area)
+-		return NULL;
++	BUG_ON(index >= ps->exceptions_per_area);
+ 
+ 	return ((struct disk_exception *) ps->area) + index;
+ }
+ 
+-static int read_exception(struct pstore *ps,
+-			  uint32_t index, struct disk_exception *result)
++static void read_exception(struct pstore *ps,
++			   uint32_t index, struct disk_exception *result)
+ {
+-	struct disk_exception *e;
+-
+-	e = get_exception(ps, index);
+-	if (!e)
+-		return -EINVAL;
++	struct disk_exception *e = get_exception(ps, index);
+ 
+ 	/* copy it */
+ 	result->old_chunk = le64_to_cpu(e->old_chunk);
+ 	result->new_chunk = le64_to_cpu(e->new_chunk);
+-
+-	return 0;
+ }
+ 
+-static int write_exception(struct pstore *ps,
+-			   uint32_t index, struct disk_exception *de)
++static void write_exception(struct pstore *ps,
++			    uint32_t index, struct disk_exception *de)
+ {
+-	struct disk_exception *e;
+-
+-	e = get_exception(ps, index);
+-	if (!e)
+-		return -EINVAL;
++	struct disk_exception *e = get_exception(ps, index);
+ 
+ 	/* copy it */
+ 	e->old_chunk = cpu_to_le64(de->old_chunk);
+ 	e->new_chunk = cpu_to_le64(de->new_chunk);
+-
+-	return 0;
+ }
+ 
+ /*
+@@ -349,10 +336,7 @@ static int insert_exceptions(struct psto
+ 	*full = 1;
+ 
+ 	for (i = 0; i < ps->exceptions_per_area; i++) {
+-		r = read_exception(ps, i, &de);
+-
+-		if (r)
+-			return r;
++		read_exception(ps, i, &de);
+ 
+ 		/*
+ 		 * If the new_chunk is pointing at the start of
+
+Date: Thu, 21 Sep 2006 16:46:48 +0100
+From: Alasdair G Kergon <agk@redhat.com>
+Subject: [RHEL5 PATCH 11/30] dm snapshot: fix metadata writing when suspending
+
+When suspending a device-mapper device, dm_suspend() sleeps until all
+necessary I/O is completed.  This state is triggered by a callback from
+persistent_commit().  But some I/O can still be issued *after* the
+callback (to prepare the next metadata area for use if the current one is
+full).  This patch delays the callback until after that I/O is complete.
+
+Index: linux-2.6.18.noarch/drivers/md/dm-exception-store.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/dm-exception-store.c
++++ linux-2.6.18.noarch/drivers/md/dm-exception-store.c
+@@ -536,6 +536,16 @@ static void persistent_commit(struct exc
+ 		if (r)
+ 			ps->valid = 0;
+ 
++		/*
++		 * Have we completely filled the current area ?
++		 */
++		if (ps->current_committed == ps->exceptions_per_area) {
++			ps->current_committed = 0;
++			r = zero_area(ps, ps->current_area + 1);
++			if (r)
++				ps->valid = 0;
++		}
++
+ 		for (i = 0; i < ps->callback_count; i++) {
+ 			cb = ps->callbacks + i;
+ 			cb->callback(cb->context, r == 0 ? 1 : 0);
+@@ -543,16 +553,6 @@ static void persistent_commit(struct exc
+ 
+ 		ps->callback_count = 0;
+ 	}
+-
+-	/*
+-	 * Have we completely filled the current area ?
+-	 */
+-	if (ps->current_committed == ps->exceptions_per_area) {
+-		ps->current_committed = 0;
+-		r = zero_area(ps, ps->current_area + 1);
+-		if (r)
+-			ps->valid = 0;
+-	}
+ }
+ 
+ static void persistent_drop(struct exception_store *store)
+

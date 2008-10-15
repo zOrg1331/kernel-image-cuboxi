@@ -1,0 +1,31 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Tue, 29 Jul 2008 14:45:54 -0400
+Subject: [net] ixgbe: remove device ID for unsupported device
+Message-id: 20080729184554.GB10160@gospo.rdu.redhat.com
+O-Subject: [RHEL5.3 PATCH] ixgbe: remove device ID for unsupported device
+Bugzilla: 454910
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+The ixgbe driver was untested with device ID 8086:10c8 but still
+advertises support.  Currently if this device is present in the system
+when the driver is loaded, the system will panic.
+
+This probably isn't in Linus' tree yet, but it's at least in Jeff
+Garzik's.
+
+This will satisfy the request in BZ 454910.
+
+diff --git a/drivers/net/ixgbe/ixgbe_main.c b/drivers/net/ixgbe/ixgbe_main.c
+index c3533df..dbc370a 100644
+--- a/drivers/net/ixgbe/ixgbe_main.c
++++ b/drivers/net/ixgbe/ixgbe_main.c
+@@ -71,8 +71,6 @@ static struct pci_device_id ixgbe_pci_tbl[] = {
+ 	 board_82598 },
+ 	{PCI_VDEVICE(INTEL, IXGBE_DEV_ID_82598AF_SINGLE_PORT),
+ 	 board_82598 },
+-	{PCI_VDEVICE(INTEL, IXGBE_DEV_ID_82598AT_DUAL_PORT),
+-	 board_82598 },
+ 	{PCI_VDEVICE(INTEL, IXGBE_DEV_ID_82598EB_CX4),
+ 	 board_82598 },
+ 

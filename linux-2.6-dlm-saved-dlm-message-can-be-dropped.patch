@@ -1,0 +1,45 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] dlm: saved dlm message can be dropped
+Date: Thu, 25 Jan 2007 09:19:17 -0600
+Bugzilla: 223102
+Message-Id: <20070125151917.GF21980@redhat.com>
+Changelog: [dlm] saved dlm message can be dropped
+
+
+bz 223102
+
+dlm_receive_message() returns 0 instead of returning 'error'.  What would
+happen is that process_requestqueue would take a saved message off the
+requestqueue and call receive_message on it.  receive_message would then
+see that recovery had been aborted, set error to EINTR, and 'goto out',
+expecting that the error would be returned.  Instead, 0 was always
+returned, so process_requestqueue would think that the message had been
+processed and delete it instead of saving it to process next time.  This
+means the message (usually an unlock in my tests) would be lost.
+
+patch is in upstream gfs2 git tree
+
+
+Index: linux-rhel5-quilt/fs/dlm/lock.c
+===================================================================
+--- linux-rhel5-quilt.orig/fs/dlm/lock.c	2007-01-24 14:58:29.000000000 -0600
++++ linux-rhel5-quilt/fs/dlm/lock.c	2007-01-24 15:04:12.000000000 -0600
+@@ -3018,7 +3018,7 @@
+ {
+ 	struct dlm_message *ms = (struct dlm_message *) hd;
+ 	struct dlm_ls *ls;
+-	int error;
++	int error = 0;
+ 
+ 	if (!recovery)
+ 		dlm_message_in(ms);
+@@ -3135,7 +3135,7 @@
+  out:
+ 	dlm_put_lockspace(ls);
+ 	dlm_astd_wake();
+-	return 0;
++	return error;
+ }
+ 
+ 
+

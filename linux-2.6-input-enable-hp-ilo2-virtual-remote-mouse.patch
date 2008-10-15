@@ -1,0 +1,52 @@
+From: Alex Chiang <achiang@redhat.com>
+Date: Mon, 14 Jan 2008 16:24:51 -0700
+Subject: [input] enable HP iLO2 virtual remote mouse
+Message-id: 20080114232451.GC29347@algore.achiang
+O-Subject: Re: [RHEL5.2 PATCH] enable HP iLO2 virtual remote mouse in mousedev
+Bugzilla: 250288
+
+Description
+-----------
+This patch enables the virtual remote mouse presented by HP iLO2
+remote console devices.
+
+A user can connect with her web browser to an iLO2, and launch a
+java applet which displays the remote machine's console window
+where she may type / click as if she were local on that machine.
+
+Without this patch, the remote console will not respond to mouse
+input.
+
+Testing
+-------
+This patch has been tested by HP on an rx2620 with iLO2, using
+the Integrated Remote Console (vKVM).
+
+Without patch, remote mouse cursor did not move, and did not
+respond to clicks.
+
+With patch, visually verified that mouse cursor moves, and does
+respond to both left and right clicks.
+
+Acked-by: Aristeu Rozanski <arozansk@redhat.com>
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/drivers/input/mousedev.c b/drivers/input/mousedev.c
+index 1f851ac..ea8a5e4 100644
+--- a/drivers/input/mousedev.c
++++ b/drivers/input/mousedev.c
+@@ -712,6 +712,14 @@ static struct input_device_id mousedev_ids[] = {
+ 		.keybit = { [LONG(BTN_TOOL_FINGER)] = BIT(BTN_TOOL_FINGER) },
+ 		.absbit = { BIT(ABS_X) | BIT(ABS_Y) | BIT(ABS_PRESSURE) | BIT(ABS_TOOL_WIDTH) },
+ 	},	/* A touchpad */
++	{
++		.flags = INPUT_DEVICE_ID_MATCH_EVBIT |
++			 INPUT_DEVICE_ID_MATCH_KEYBIT |
++			 INPUT_DEVICE_ID_MATCH_ABSBIT,
++		.evbit = { BIT(EV_KEY) | BIT(EV_ABS) | BIT(EV_SYN) },
++		.keybit = { [LONG(BTN_LEFT)] = BIT(BTN_LEFT) },
++		.absbit = { BIT(ABS_X) | BIT(ABS_Y) },
++	},	/* A virtual remote mouse, host and remote screen size differ */
+ 
+ 	{ }, 	/* Terminating entry */
+ };

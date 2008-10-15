@@ -1,0 +1,58 @@
+From: Jan Glauber <jglauber@redhat.com>
+Subject: [RHEL5.1 PATCH] prevent dasd from flooding the console
+Date: Tue, 05 Jun 2007 11:49:39 +0000
+Bugzilla: 229590
+Message-Id: <1181044179.5323.10.camel@localhost.localdomain>
+Changelog: [dasd] prevent dasd from flooding the console
+
+
+BZ 229590
+
+In case of a cable pull the console is flooded with retry messages by
+the dasd driver and the system is not responding anymore. The problem
+is the handling of failed termination requests. In case a request timed
+out and termination did not work a message was printed every 100ms.
+
+Now we use a 5s delay per retry and generate a more precise message.
+
+Patch is tested by IBM and upstream.
+
+Please ack,
+Jan
+
+jglauber@redhat.com
+jang@de.ibm.com
+
+---
+
+diff -Naurp linux-2.6.18.s390x/drivers/s390/block/dasd.c linux-2.6.18.s390x-new/drivers/s390/block/dasd.c
+--- linux-2.6.18.s390x/drivers/s390/block/dasd.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18.s390x-new/drivers/s390/block/dasd.c	2007-02-09 17:44:53.000000000 +0100
+@@ -1263,15 +1263,21 @@ __dasd_check_expire(struct dasd_device *
+ 	if (list_empty(&device->ccw_queue))
+ 		return;
+ 	cqr = list_entry(device->ccw_queue.next, struct dasd_ccw_req, list);
+-	if (cqr->status == DASD_CQR_IN_IO && cqr->expires != 0) {
+-		if (time_after_eq(jiffies, cqr->expires + cqr->starttime)) {
++	if ((cqr->status == DASD_CQR_IN_IO && cqr->expires != 0) &&
++	    (time_after_eq(jiffies, cqr->expires + cqr->starttime))) {
++		if (device->discipline->term_IO(cqr) != 0) {
++			/* Hmpf, try again in 5 sec */
++			dasd_set_timer(device, 5*HZ);
++			DEV_MESSAGE(KERN_ERR, device,
++				    "internal error - timeout (%is) expired "
++				    "for cqr %p, termination failed, "
++				    "retrying in 5s",
++				    (cqr->expires/HZ), cqr);
++		} else {
+ 			DEV_MESSAGE(KERN_ERR, device,
+ 				    "internal error - timeout (%is) expired "
+ 				    "for cqr %p (%i retries left)",
+ 				    (cqr->expires/HZ), cqr, cqr->retries);
+-			if (device->discipline->term_IO(cqr) != 0)
+-				/* Hmpf, try again in 1/10 sec */
+-				dasd_set_timer(device, 10);
+ 		}
+ 	}
+ }
+

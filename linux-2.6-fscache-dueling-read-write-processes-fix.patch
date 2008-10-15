@@ -1,0 +1,134 @@
+From: Steve Dickson <SteveD@redhat.com>
+Subject: Re: [RHEL5/FC6] [Patch 1/2] FS-Cache: error from cache: -105
+Date: Sun, 10 Dec 2006 20:28:36 -0500
+Bugzilla: 212831
+Message-Id: <457CB444.3010303@RedHat.com>
+Changelog: FS-Cache: dueling read/write processes fix
+
+
+
+
+Steve Dickson wrote:
+>The following patch series has patches to both NFS and
+>FS-Cache the fix bz:
+>
+>https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=212831
+
+David found a problem with this original patch that could
+cause cache corruption when processes open the file for
+both read and write simultaneously . The details are
+in Comment #24 of the above bz.
+
+Quick background. NFS only uses the FS-Cache on reads, and
+when a file is open for write, the all caching is turned off until
+the inode is recycled. This problem with this if a client
+creates and populates a file, that data can not be cached (via
+reads) until the inode is recycle which is an indefinite
+amount of time .
+
+So this patch fixes dueling read/write processes that David identified,
+plus it enables FS-Caching after "last close". Meaning, the FS-Caching
+is re-enabled after the file is any and all processes... Note closes
+in the NFS world me all the data is flushed back...
+
+steved.
+
+--- linux-2.6.18.i686/fs/nfs/fscache.h.orig	2006-12-09 13:32:26.000000000 -0500
++++ linux-2.6.18.i686/fs/nfs/fscache.h	2006-12-09 17:54:49.000000000 -0500
+@@ -49,11 +49,18 @@ static inline void nfs_fscache_unregiste
+ 	fscache_unregister_netfs(&nfs_cache_netfs);
+ }
+ /*
+- * get the per-filehandle cookie for an NFS inode
++ * Initialize the fsc cookie and set the cache-able 
++ * bit if need be. 
+  */
+ static inline void nfs_fscache_init_cookie(struct inode *inode)
+ {
++	struct super_block *sb = inode->i_sb;
++
+ 	NFS_I(inode)->fscache = NULL;
++	if (NFS_SB(sb)->flags & NFS_MOUNT_FSCACHE) {
++		if (S_ISREG(inode->i_mode))
++				set_bit(NFS_INO_FSCACHE, &NFS_FLAGS(inode));
++	}
+ }
+ 
+ /*
+@@ -209,16 +216,35 @@ static inline void nfs_fscache_disable_c
+ static inline void nfs_fscache_set_cookie(struct inode *inode, 
+ 	struct file *filp)
+ {
+-	if (!S_ISREG(inode->i_mode))
++	struct super_block *sb = inode->i_sb;
++
++	if (!(NFS_SB(sb)->flags & NFS_MOUNT_FSCACHE))
++		return;
++
++	if (!NFS_FSCACHE(inode))
+ 		return;
+ 
+-	if ((filp->f_flags & O_ACCMODE) != O_RDONLY)
++	if ((filp->f_flags & O_ACCMODE) != O_RDONLY) {
+ 		nfs_fscache_disable_cookie(inode);
+-	else
++		clear_bit(NFS_INO_FSCACHE, &NFS_FLAGS(inode));
++	} else
+ 		nfs_fscache_enable_cookie(inode);
+ }
+ 
+ /*
++ * On the last close, re-enable the cache if need be.
++ */
++static inline void nfs_fscache_reset_cookie(struct inode *inode)
++{
++	struct super_block *sb = inode->i_sb;
++
++	if (NFS_SB(sb)->flags & NFS_MOUNT_FSCACHE) {
++		if (list_empty(&NFS_I(inode)->open_files))
++			set_bit(NFS_INO_FSCACHE, &NFS_FLAGS(inode));
++	}
++}
++
++/*
+  * install the VM ops for mmap() of an NFS file so that we can hold up writes
+  * to pages on shared writable mappings until the store to the cache is
+  * complete
+@@ -452,6 +478,8 @@ static inline void nfs_fscache_release_c
+ static inline void nfs_fscache_zap_cookie(struct inode *inode) {}
+ static inline void nfs_fscache_renew_cookie(struct inode *inode) {}
+ static inline void nfs_fscache_disable_cookie(struct inode *inode) {}
++static inline void nfs_fscache_set_cookie(struct inode *inode, struct file *filp) {}
++static inline void nfs_fscache_reset_cookie(struct inode *inode) {}
+ static inline void nfs_fscache_install_vm_ops(struct inode *inode, struct vm_area_struct *vma) {}
+ static inline void nfs_fscache_release_page(struct page *page) {}
+ static inline void nfs_fscache_invalidate_page(struct page *page,
+--- linux-2.6.18.i686/fs/nfs/inode.c.orig	2006-12-09 13:32:00.000000000 -0500
++++ linux-2.6.18.i686/fs/nfs/inode.c	2006-12-09 15:57:30.000000000 -0500
+@@ -534,6 +534,7 @@ static void nfs_file_clear_open_context(
+ 		list_move_tail(&ctx->list, &NFS_I(inode)->open_files);
+ 		spin_unlock(&inode->i_lock);
+ 		put_nfs_open_context(ctx);
++		nfs_fscache_reset_cookie(inode);
+ 	}
+ }
+ 
+--- linux-2.6.18.i686/include/linux/nfs_fs.h.orig	2006-12-07 20:48:56.000000000 -0500
++++ linux-2.6.18.i686/include/linux/nfs_fs.h	2006-12-09 13:39:03.000000000 -0500
+@@ -209,6 +209,7 @@ struct nfs_inode {
+ #define NFS_INO_ADVISE_RDPLUS	(1)		/* advise readdirplus */
+ #define NFS_INO_STALE		(2)		/* possible stale inode */
+ #define NFS_INO_ACL_LRU_SET	(3)		/* Inode is on the LRU list */
++#define NFS_INO_FSCACHE	(4)		/* inode can be cached by FS-Cache */
+ 
+ static inline struct nfs_inode *NFS_I(struct inode *inode)
+ {
+@@ -235,6 +236,7 @@ static inline struct nfs_inode *NFS_I(st
+ 
+ #define NFS_FLAGS(inode)		(NFS_I(inode)->flags)
+ #define NFS_STALE(inode)		(test_bit(NFS_INO_STALE, &NFS_FLAGS(inode)))
++#define NFS_FSCACHE(inode)		(test_bit(NFS_INO_FSCACHE, &NFS_FLAGS(inode)))
+ 
+ #define NFS_FILEID(inode)		(NFS_I(inode)->fileid)
+ 
+

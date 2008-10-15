@@ -1,0 +1,92 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Fri, 11 Jan 2008 16:22:47 -0500
+Subject: [xen] move hvm_maybe_deassert_evtchn_irq early
+Message-id: 4787DE27.8000107@redhat.com
+O-Subject: [RHEL5.2 PATCH] [Xen][4/4]: High Intr and Softintr rate in HVM's with pv-on-hvm drivers
+Bugzilla: 412721
+
+Patch 4/4: hvm-maybe-deassert-evtchn-irq-early.patch
+
+The final patch for the emulated IOAPIC patch for 3.1.2.
+Without this patch, HVMs running pv-on-hvm drivers see
+twice as many interrupts and soft intr's as one without
+this patch.
+
+It ensures that the virtual intr is cleared early-on,
+avoiding duplicate servicing of virtual interrupts.
+
+This is from upstream xen-3.1-testing, cset 15591
+	http://xenbits.xensource.com/staging/xen-3.1-testing.hg?rev/5a64f1bf9460
+
+Please review & ACK.
+
+- Don
+
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1200049582 0
+# Node ID 5a64f1bf9460c601bd3aa8089a3419535ec740ba
+# Parent f479c2af0825f79b5082779c7f09c4cdd204993c
+x86 hvm: hvm_maybe_deassert_evtchn_irq() needs to be called early in
+vmexit handling, before IO-APIC can be EOIed or unmasked and resample
+the fake INTx line.
+Signed-off-by: Keir Fraser <keir.fraser@citrix.com>
+xen-unstable changeset:   16705:e4fd457a3dd5eebf059b49340bb7f3aea1239d8f
+xen-unstable date:        Fri Jan 11 10:53:44 2008 +0000
+
+Acked-by: Herbert Xu <herbert.xu@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+
+diff --git a/arch/x86/hvm/svm/intr.c b/arch/x86/hvm/svm/intr.c
+index 757d34f..2215d86 100644
+--- a/arch/x86/hvm/svm/intr.c
++++ b/arch/x86/hvm/svm/intr.c
+@@ -124,7 +124,7 @@ asmlinkage void svm_intr_assist(void)
+ 
+     /* Crank the handle on interrupt state and check for new interrrupts. */
+     pt_update_irq(v);
+-    hvm_maybe_deassert_evtchn_irq();
++
+     do {
+         if ( !cpu_has_pending_irq(v) )
+             goto out;
+diff --git a/arch/x86/hvm/svm/svm.c b/arch/x86/hvm/svm/svm.c
+index 23a44cd..31359a3 100644
+--- a/arch/x86/hvm/svm/svm.c
++++ b/arch/x86/hvm/svm/svm.c
+@@ -2408,6 +2408,8 @@ asmlinkage void svm_vmexit_handler(struct cpu_user_regs *regs)
+     perfc_incra(svmexits, exit_reason);
+     eip = vmcb->rip;
+ 
++    hvm_maybe_deassert_evtchn_irq();
++
+     switch ( exit_reason )
+     {
+     case VMEXIT_INTR:
+diff --git a/arch/x86/hvm/vmx/intr.c b/arch/x86/hvm/vmx/intr.c
+index a1aa73e..2ebb4cd 100644
+--- a/arch/x86/hvm/vmx/intr.c
++++ b/arch/x86/hvm/vmx/intr.c
+@@ -115,8 +115,6 @@ asmlinkage void vmx_intr_assist(void)
+ 
+     pt_update_irq(v);
+ 
+-    hvm_maybe_deassert_evtchn_irq();
+-
+     update_tpr_threshold(vcpu_vlapic(v));
+ 
+     do {
+diff --git a/arch/x86/hvm/vmx/vmx.c b/arch/x86/hvm/vmx/vmx.c
+index 575ad23..777a7b3 100644
+--- a/arch/x86/hvm/vmx/vmx.c
++++ b/arch/x86/hvm/vmx/vmx.c
+@@ -2936,6 +2936,8 @@ asmlinkage void vmx_vmexit_handler(struct cpu_user_regs *regs)
+     if ( unlikely(exit_reason & VMX_EXIT_REASONS_FAILED_VMENTRY) )
+         return vmx_failed_vmentry(exit_reason, regs);
+ 
++    hvm_maybe_deassert_evtchn_irq();
++
+     switch ( exit_reason )
+     {
+     case EXIT_REASON_EXCEPTION_NMI:

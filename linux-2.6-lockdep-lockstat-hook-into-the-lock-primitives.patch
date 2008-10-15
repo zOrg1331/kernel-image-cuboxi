@@ -1,0 +1,202 @@
+From: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Date: Tue, 18 Dec 2007 12:22:06 +0100
+Subject: [lockdep] lockstat: hook into the lock primitives
+Message-id: 20071218112315.755898359@chello.nl
+O-Subject: [RHEL5.2 PATCH 05/14] lockstat: hook into spinlock_t, rwlock_t, rwsem and mutex
+Bugzilla: 193729
+
+Call the new lockstat tracking functions from the various lock primitives.
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Acked-by: Ingo Molnar <mingo@elte.hu>
+Acked-by: Jason Baron <jbaron@redhat.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/kernel/mutex.c b/kernel/mutex.c
+index e7cbbb8..35d2465 100644
+--- a/kernel/mutex.c
++++ b/kernel/mutex.c
+@@ -139,6 +139,12 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass)
+ 	list_add_tail(&waiter.list, &lock->wait_list);
+ 	waiter.task = task;
+ 
++	old_val = atomic_xchg(&lock->count, -1);
++	if (old_val == 1)
++		goto done;
++
++	lock_contended(&lock->dep_map, _RET_IP_);
++
+ 	for (;;) {
+ 		/*
+ 		 * Lets try to take the lock again - this is needed even if
+@@ -174,6 +180,8 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass)
+ 		spin_lock_mutex(&lock->wait_lock, flags);
+ 	}
+ 
++	lock_acquired(&lock->dep_map);
++done:
+ 	/* got the lock - rejoice! */
+ 	mutex_remove_waiter(lock, &waiter, task->thread_info);
+ 	debug_mutex_set_owner(lock, task->thread_info);
+diff --git a/kernel/rwsem.c b/kernel/rwsem.c
+index 291ded5..3939277 100644
+--- a/kernel/rwsem.c
++++ b/kernel/rwsem.c
+@@ -20,7 +20,7 @@ void down_read(struct rw_semaphore *sem)
+ 	might_sleep();
+ 	rwsem_acquire_read(&sem->dep_map, 0, 0, _RET_IP_);
+ 
+-	__down_read(sem);
++	LOCK_CONTENDED(sem, __down_read_trylock, __down_read);
+ }
+ 
+ EXPORT_SYMBOL(down_read);
+@@ -47,7 +47,7 @@ void down_write(struct rw_semaphore *sem)
+ 	might_sleep();
+ 	rwsem_acquire(&sem->dep_map, 0, 0, _RET_IP_);
+ 
+-	__down_write(sem);
++	LOCK_CONTENDED(sem, __down_write_trylock, __down_write);
+ }
+ 
+ EXPORT_SYMBOL(down_write);
+@@ -111,7 +111,7 @@ void down_read_nested(struct rw_semaphore *sem, int subclass)
+ 	might_sleep();
+ 	rwsem_acquire_read(&sem->dep_map, subclass, 0, _RET_IP_);
+ 
+-	__down_read(sem);
++	LOCK_CONTENDED(sem, __down_read_trylock, __down_read);
+ }
+ 
+ EXPORT_SYMBOL(down_read_nested);
+@@ -130,7 +130,7 @@ void down_write_nested(struct rw_semaphore *sem, int subclass)
+ 	might_sleep();
+ 	rwsem_acquire(&sem->dep_map, subclass, 0, _RET_IP_);
+ 
+-	__down_write_nested(sem, subclass);
++	LOCK_CONTENDED(sem, __down_write_trylock, __down_write);
+ }
+ 
+ EXPORT_SYMBOL(down_write_nested);
+diff --git a/kernel/spinlock.c b/kernel/spinlock.c
+index e005940..ec52e60 100644
+--- a/kernel/spinlock.c
++++ b/kernel/spinlock.c
+@@ -78,7 +78,7 @@ void __lockfunc _read_lock(rwlock_t *lock)
+ {
+ 	preempt_disable();
+ 	rwlock_acquire_read(&lock->dep_map, 0, 0, _RET_IP_);
+-	_raw_read_lock(lock);
++	LOCK_CONTENDED(lock, _raw_read_trylock, _raw_read_lock);
+ }
+ EXPORT_SYMBOL(_read_lock);
+ 
+@@ -95,7 +95,7 @@ unsigned long __lockfunc _spin_lock_irqsave(spinlock_t *lock)
+ 	 * that interrupts are not re-enabled during lock-acquire:
+ 	 */
+ #ifdef CONFIG_LOCKDEP
+-	_raw_spin_lock(lock);
++	LOCK_CONTENDED(lock, _raw_spin_trylock, _raw_spin_lock);
+ #else
+ 	_raw_spin_lock_flags(lock, &flags);
+ #endif
+@@ -108,7 +108,7 @@ void __lockfunc _spin_lock_irq(spinlock_t *lock)
+ 	local_irq_disable();
+ 	preempt_disable();
+ 	spin_acquire(&lock->dep_map, 0, 0, _RET_IP_);
+-	_raw_spin_lock(lock);
++	LOCK_CONTENDED(lock, _raw_spin_trylock, _raw_spin_lock);
+ }
+ EXPORT_SYMBOL(_spin_lock_irq);
+ 
+@@ -117,7 +117,7 @@ void __lockfunc _spin_lock_bh(spinlock_t *lock)
+ 	local_bh_disable();
+ 	preempt_disable();
+ 	spin_acquire(&lock->dep_map, 0, 0, _RET_IP_);
+-	_raw_spin_lock(lock);
++	LOCK_CONTENDED(lock, _raw_spin_trylock, _raw_spin_lock);
+ }
+ EXPORT_SYMBOL(_spin_lock_bh);
+ 
+@@ -128,7 +128,7 @@ unsigned long __lockfunc _read_lock_irqsave(rwlock_t *lock)
+ 	local_irq_save(flags);
+ 	preempt_disable();
+ 	rwlock_acquire_read(&lock->dep_map, 0, 0, _RET_IP_);
+-	_raw_read_lock(lock);
++	LOCK_CONTENDED(lock, _raw_read_trylock, _raw_read_lock);
+ 	return flags;
+ }
+ EXPORT_SYMBOL(_read_lock_irqsave);
+@@ -138,7 +138,7 @@ void __lockfunc _read_lock_irq(rwlock_t *lock)
+ 	local_irq_disable();
+ 	preempt_disable();
+ 	rwlock_acquire_read(&lock->dep_map, 0, 0, _RET_IP_);
+-	_raw_read_lock(lock);
++	LOCK_CONTENDED(lock, _raw_read_trylock, _raw_read_lock);
+ }
+ EXPORT_SYMBOL(_read_lock_irq);
+ 
+@@ -147,7 +147,7 @@ void __lockfunc _read_lock_bh(rwlock_t *lock)
+ 	local_bh_disable();
+ 	preempt_disable();
+ 	rwlock_acquire_read(&lock->dep_map, 0, 0, _RET_IP_);
+-	_raw_read_lock(lock);
++	LOCK_CONTENDED(lock, _raw_read_trylock, _raw_read_lock);
+ }
+ EXPORT_SYMBOL(_read_lock_bh);
+ 
+@@ -158,7 +158,7 @@ unsigned long __lockfunc _write_lock_irqsave(rwlock_t *lock)
+ 	local_irq_save(flags);
+ 	preempt_disable();
+ 	rwlock_acquire(&lock->dep_map, 0, 0, _RET_IP_);
+-	_raw_write_lock(lock);
++	LOCK_CONTENDED(lock, _raw_write_trylock, _raw_write_lock);
+ 	return flags;
+ }
+ EXPORT_SYMBOL(_write_lock_irqsave);
+@@ -168,7 +168,7 @@ void __lockfunc _write_lock_irq(rwlock_t *lock)
+ 	local_irq_disable();
+ 	preempt_disable();
+ 	rwlock_acquire(&lock->dep_map, 0, 0, _RET_IP_);
+-	_raw_write_lock(lock);
++	LOCK_CONTENDED(lock, _raw_write_trylock, _raw_write_lock);
+ }
+ EXPORT_SYMBOL(_write_lock_irq);
+ 
+@@ -177,7 +177,7 @@ void __lockfunc _write_lock_bh(rwlock_t *lock)
+ 	local_bh_disable();
+ 	preempt_disable();
+ 	rwlock_acquire(&lock->dep_map, 0, 0, _RET_IP_);
+-	_raw_write_lock(lock);
++	LOCK_CONTENDED(lock, _raw_write_trylock, _raw_write_lock);
+ }
+ EXPORT_SYMBOL(_write_lock_bh);
+ 
+@@ -185,7 +185,7 @@ void __lockfunc _spin_lock(spinlock_t *lock)
+ {
+ 	preempt_disable();
+ 	spin_acquire(&lock->dep_map, 0, 0, _RET_IP_);
+-	_raw_spin_lock(lock);
++	LOCK_CONTENDED(lock, _raw_spin_trylock, _raw_spin_lock);
+ }
+ 
+ EXPORT_SYMBOL(_spin_lock);
+@@ -194,7 +194,7 @@ void __lockfunc _write_lock(rwlock_t *lock)
+ {
+ 	preempt_disable();
+ 	rwlock_acquire(&lock->dep_map, 0, 0, _RET_IP_);
+-	_raw_write_lock(lock);
++	LOCK_CONTENDED(lock, _raw_write_trylock, _raw_write_lock);
+ }
+ 
+ EXPORT_SYMBOL(_write_lock);
+@@ -295,7 +295,7 @@ void __lockfunc _spin_lock_nested(spinlock_t *lock, int subclass)
+ {
+ 	preempt_disable();
+ 	spin_acquire(&lock->dep_map, subclass, 0, _RET_IP_);
+-	_raw_spin_lock(lock);
++	LOCK_CONTENDED(lock, _raw_spin_trylock, _raw_spin_lock);
+ }
+ 
+ EXPORT_SYMBOL(_spin_lock_nested);

@@ -1,0 +1,255 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH] BZ 233387 SAD/SPD flush have no security check
+Date: Mon, 04 Jun 2007 17:18:36 -0400
+Bugzilla: 233387
+Message-Id: <1180991916.3950.66.camel@localhost.localdomain>
+Changelog: [audit] SAD/SPD flush have no security check
+
+
+BZ 233387
+
+Currently we check for permission before deleting entries from SAD and
+SPD, (see security_xfrm_policy_delete() security_xfrm_state_delete())
+However we are not checking for authorization when flushing the SPD and
+the SAD completely. It was perhaps missed in the original security hooks
+patch.
+
+This patch adds a security check when flushing entries from the SAD and
+SPD.  It runs the entire database and checks each entry for a denial.
+If the process attempting the flush is unable to remove all of the
+entries a denial is logged the the flush function returns an error
+without removing anything.
+
+This is particularly useful when a process may need to create or delete
+its own xfrm entries used for things like labeled networking but that
+same process should not be able to delete other entries or flush the
+entire database.
+
+WAS Signed-off-by: Signed-off-by: Joy Latten<latten@austin.ibm.com> NOT NOW
+WAS Acked-by: James Morris <jmorris@namei.org> NOT NOW
+WAS Acked-by: Eric Paris <eparis@parisplace.org> NOT NOW
+
+---
+
+--- linux-2.6.18.x86_64/net/key/af_key.c.pre.223387	2007-03-26 14:04:19.000000000 -0400
++++ linux-2.6.18.x86_64/net/key/af_key.c	2007-03-26 19:22:22.000000000 -0400
+@@ -1645,6 +1645,7 @@ static int pfkey_flush(struct sock *sk, 
+ 	unsigned proto;
+ 	struct km_event c;
+ 	struct xfrm_audit audit_info;
++	int err;
+ 
+ 	proto = pfkey_satype2proto(hdr->sadb_msg_satype);
+ 	if (proto == 0)
+@@ -1652,7 +1653,9 @@ static int pfkey_flush(struct sock *sk, 
+ 
+ 	audit_info.loginuid = audit_get_loginuid(current->audit_context);
+ 	audit_info.secid = 0;
+-	xfrm_state_flush(proto, &audit_info);
++	err = xfrm_state_flush(proto, &audit_info);
++	if (err)
++		return err;
+ 	c.data.proto = proto;
+ 	c.seq = hdr->sadb_msg_seq;
+ 	c.pid = hdr->sadb_msg_pid;
+@@ -2427,10 +2430,13 @@ static int pfkey_spdflush(struct sock *s
+ {
+ 	struct km_event c;
+ 	struct xfrm_audit audit_info;
++	int err;
+ 
+ 	audit_info.loginuid = audit_get_loginuid(current->audit_context);
+ 	audit_info.secid = 0;
+-	xfrm_policy_flush(&audit_info);
++	err = xfrm_policy_flush(&audit_info);
++	if (err)
++		return err;
+ 	c.event = XFRM_MSG_FLUSHPOLICY;
+ 	c.pid = hdr->sadb_msg_pid;
+ 	c.seq = hdr->sadb_msg_seq;
+--- linux-2.6.18.x86_64/net/xfrm/xfrm_state.c.pre.223387	2007-03-26 14:04:19.000000000 -0400
++++ linux-2.6.18.x86_64/net/xfrm/xfrm_state.c	2007-03-26 19:52:38.000000000 -0400
+@@ -291,13 +291,48 @@ int xfrm_state_delete(struct xfrm_state 
+ }
+ EXPORT_SYMBOL(xfrm_state_delete);
+ 
+-void xfrm_state_flush(u8 proto, struct xfrm_audit *audit_info)
++#ifdef CONFIG_SECURITY_NETWORK_XFRM
++static int xfrm_state_flush_secctx_check(u8 proto, struct xfrm_audit *audit_info)
++{
++	int i;
++	int err = 0;
++	struct xfrm_state *x;
++
++	for (i = 0; i < XFRM_DST_HSIZE; i++) {
++		list_for_each_entry(x, xfrm_state_bydst+i, bydst) {
++			if (!xfrm_state_kern(x) &&
++			    (proto == IPSEC_PROTO_ANY || x->id.proto == proto) &&
++			    (err = security_xfrm_state_delete(x)) != 0) {
++
++				xfrm_audit_log(audit_info->loginuid,
++					       audit_info->secid,
++					       AUDIT_MAC_IPSEC_DELSA,
++					       0, NULL, x);
++				return err;
++			}
++		}
++	}
++
++	return err;
++}
++#else
++static int xfrm_state_flush_secctx_check(u8 proto, struct xfrm_audit *audit_info)
++{
++	return 0;
++}
++#endif /* CONFIG_SECURITY_NETWORK_XFRM */
++
++int xfrm_state_flush(u8 proto, struct xfrm_audit *audit_info)
+ {
+ 	int i;
+ 	int err = 0;
+ 	struct xfrm_state *x;
+ 
+ 	spin_lock_bh(&xfrm_state_lock);
++
++	err = xfrm_state_flush_secctx_check(proto, audit_info);
++	if (err)
++		goto out;
+ 	for (i = 0; i < XFRM_DST_HSIZE; i++) {
+ restart:
+ 		list_for_each_entry(x, xfrm_state_bydst+i, bydst) {
+@@ -318,8 +353,12 @@ restart:
+ 			}
+ 		}
+ 	}
++	err = 0;
++
++out:
+ 	spin_unlock_bh(&xfrm_state_lock);
+ 	wake_up(&km_waitq);
++	return err;
+ }
+ EXPORT_SYMBOL(xfrm_state_flush);
+ 
+--- linux-2.6.18.x86_64/net/xfrm/xfrm_policy.c.pre.223387	2007-03-26 14:04:19.000000000 -0400
++++ linux-2.6.18.x86_64/net/xfrm/xfrm_policy.c	2007-03-26 19:53:17.000000000 -0400
+@@ -555,12 +555,46 @@ struct xfrm_policy *xfrm_policy_byid(int
+ }
+ EXPORT_SYMBOL(xfrm_policy_byid);
+ 
+-void xfrm_policy_flush(struct xfrm_audit *audit_info)
++#ifdef CONFIG_SECURITY_NETWORK_XFRM
++static inline int
++xfrm_policy_flush_secctx_check(struct xfrm_audit *audit_info)
+ {
++	int dir, err = 0;
+ 	struct xfrm_policy *xp;
+-	int dir;
++
++	for (dir = 0; dir < XFRM_POLICY_MAX; dir++) {
++		xp = xfrm_policy_list[dir];
++		while (xp) {
++			err = security_xfrm_policy_delete(xp);
++			if (err) {
++				xfrm_audit_log(audit_info->loginuid, audit_info->secid,
++					AUDIT_MAC_IPSEC_DELSPD, 0, xp, NULL);
++				return err;
++			}
++			xp = xp->next;
++		}
++	}
++	return err;
++}
++#else
++static inline int
++xfrm_policy_flush_secctx_check(struct xfrm_audit *audit_info)
++{
++	return 0;
++}
++#endif
++
++int xfrm_policy_flush(struct xfrm_audit *audit_info)
++{
++	struct xfrm_policy *xp;
++	int dir, err = 0;
+ 
+ 	write_lock_bh(&xfrm_policy_lock);
++
++	err = xfrm_policy_flush_secctx_check(audit_info);
++	if (err)
++		goto out;
++
+ 	for (dir = 0; dir < XFRM_POLICY_MAX; dir++) {
+ 		while ((xp = xfrm_policy_list[dir]) != NULL) {
+ 			xfrm_policy_list[dir] = xp->next;
+@@ -575,7 +609,9 @@ void xfrm_policy_flush(struct xfrm_audit
+ 		}
+ 	}
+ 	atomic_inc(&flow_cache_genid);
++out:
+ 	write_unlock_bh(&xfrm_policy_lock);
++	return err;
+ }
+ EXPORT_SYMBOL(xfrm_policy_flush);
+ 
+--- linux-2.6.18.x86_64/net/xfrm/xfrm_user.c.pre.223387	2007-03-26 14:04:19.000000000 -0400
++++ linux-2.6.18.x86_64/net/xfrm/xfrm_user.c	2007-03-26 19:50:29.000000000 -0400
+@@ -1104,10 +1104,13 @@ static int xfrm_flush_sa(struct sk_buff 
+ 	struct km_event c;
+ 	struct xfrm_usersa_flush *p = NLMSG_DATA(nlh);
+ 	struct xfrm_audit audit_info;
++	int err;
+ 
+ 	audit_info.loginuid = NETLINK_CB(skb).loginuid;
+ 	audit_info.secid = NETLINK_CB(skb).sid;
+-	xfrm_state_flush(p->proto, &audit_info);
++	err = xfrm_state_flush(p->proto, &audit_info);
++	if (err)
++		return err;
+ 	c.data.proto = p->proto;
+ 	c.event = nlh->nlmsg_type;
+ 	c.seq = nlh->nlmsg_seq;
+@@ -1254,10 +1257,13 @@ static int xfrm_flush_policy(struct sk_b
+ {
+ 	struct km_event c;
+ 	struct xfrm_audit audit_info;
++	int err;
+ 
+ 	audit_info.loginuid = NETLINK_CB(skb).loginuid;
+ 	audit_info.secid = NETLINK_CB(skb).sid;
+-	xfrm_policy_flush(&audit_info);
++	err = xfrm_policy_flush(&audit_info);
++	if (err)
++		return err;
+ 	c.event = nlh->nlmsg_type;
+ 	c.seq = nlh->nlmsg_seq;
+ 	c.pid = nlh->nlmsg_pid;
+--- linux-2.6.18.x86_64/include/net/xfrm.h.pre.223387	2007-03-26 14:04:19.000000000 -0400
++++ linux-2.6.18.x86_64/include/net/xfrm.h	2007-03-26 19:18:39.000000000 -0400
+@@ -918,7 +918,7 @@ extern int xfrm_state_update(struct xfrm
+ extern struct xfrm_state *xfrm_state_lookup(xfrm_address_t *daddr, u32 spi, u8 proto, unsigned short family);
+ extern struct xfrm_state *xfrm_find_acq_byseq(u32 seq);
+ extern int xfrm_state_delete(struct xfrm_state *x);
+-extern void xfrm_state_flush(u8 proto, struct xfrm_audit *audit_info);
++extern int xfrm_state_flush(u8 proto, struct xfrm_audit *audit_info);
+ extern int xfrm_replay_check(struct xfrm_state *x, u32 seq);
+ extern void xfrm_replay_advance(struct xfrm_state *x, u32 seq);
+ extern void xfrm_replay_notify(struct xfrm_state *x, int event);
+@@ -967,13 +967,13 @@ struct xfrm_policy *xfrm_policy_bysel_ct
+ 					  struct xfrm_sec_ctx *ctx, int delete,
+ 					  int *err);
+ struct xfrm_policy *xfrm_policy_byid(int dir, u32 id, int delete, int *err);
+-void xfrm_policy_flush(struct xfrm_audit *audit_info);
++int xfrm_policy_flush(struct xfrm_audit *audit_info);
+ u32 xfrm_get_acqseq(void);
+ void xfrm_alloc_spi(struct xfrm_state *x, u32 minspi, u32 maxspi);
+ struct xfrm_state * xfrm_find_acq(u8 mode, u32 reqid, u8 proto,
+ 				  xfrm_address_t *daddr, xfrm_address_t *saddr,
+ 				  int create, unsigned short family);
+-extern void xfrm_policy_flush(struct xfrm_audit *audit_info);
++extern int xfrm_policy_flush(struct xfrm_audit *audit_info);
+ extern int xfrm_sk_policy_insert(struct sock *sk, int dir, struct xfrm_policy *pol);
+ extern int xfrm_flush_bundles(void);
+ extern void xfrm_flush_all_bundles(void);
+

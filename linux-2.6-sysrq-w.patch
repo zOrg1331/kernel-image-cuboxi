@@ -1,0 +1,43 @@
+Date: Tue, 17 Oct 2006 16:48:37 -0400
+From: Larry Woodman <lwoodman@redhat.com>
+Subject: Re: [RHEL5 patch] add "<Alt> <Sys> w " functionality to RHEL5/FC6
+
+
+--- linux-2.6.18.noarch/drivers/char/sysrq.c.orig
++++ linux-2.6.18.noarch/drivers/char/sysrq.c
+@@ -203,6 +203,25 @@ static struct sysrq_key_op sysrq_showmem
+ 	.enable_mask	= SYSRQ_ENABLE_DUMP,
+ };
+ 
++static spinlock_t show_lock = SPIN_LOCK_UNLOCKED;
++static void showacpu(void *info)
++{
++	spin_lock(&show_lock);
++	printk("CPU%d:\n", smp_processor_id());
++	show_stack(NULL, NULL);
++	spin_unlock(&show_lock);
++}
++static void sysrq_handle_showcpus(int key, struct pt_regs *pt_regs,
++				  struct tty_struct *tty) {
++	on_each_cpu(showacpu, NULL, 0, 0);
++}
++static struct sysrq_key_op sysrq_showcpus_op = {
++	.handler	= sysrq_handle_showcpus,
++	.help_msg	= "shoWcpus",
++	.action_msg	= "Show CPUs",
++	.enable_mask	= SYSRQ_ENABLE_DUMP,
++};
++
+ /*
+  * Signal sysrq helper function.  Sends a signal to all user processes.
+  */
+@@ -317,7 +340,7 @@ static struct sysrq_key_op *sysrq_key_ta
+ 	&sysrq_mountro_op,		/* u */
+ 	/* May be assigned at init time by SMP VOYAGER */
+ 	NULL,				/* v */
+-	NULL,				/* w */
++	&sysrq_showcpus_op,		/* w */
+ 	NULL,				/* x */
+ 	NULL,				/* y */
+ 	NULL				/* z */
+

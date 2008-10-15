@@ -1,0 +1,90 @@
+From: Abhijith Das <adas@redhat.com>
+Subject: [RHEL5.1 PATCH][GFS2] bz 253238: GFS2: glock dump dumps glocks for 	all file systems
+Date: Wed, 22 Aug 2007 13:32:57 -0500
+Bugzilla: 253238
+Message-Id: <46CC8159.5000307@redhat.com>
+Changelog: [GFS2] glock dump dumps glocks for all file systems
+
+
+Hi,
+This patch fixes two issues with glock dumps and is already upstream:
+1. dumps glocks only from the specified filesystem instead of all
+filesystems
+2. glock name in hexadecimal instead of decimal in the glock dump.
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+Signed-off-by: S. Wendy Cheng <wcheng@redhat.com>
+Signed-off-by: Abhijith Das <adas@redhat.com>
+
+Index: linux-rhel51-quilt/fs/gfs2/glock.c
+===================================================================
+--- linux-rhel51-quilt.orig/fs/gfs2/glock.c	2007-08-22 09:33:19.000000000 -0500
++++ linux-rhel51-quilt/fs/gfs2/glock.c	2007-08-22 10:49:04.000000000 -0500
+@@ -1844,7 +1844,7 @@
+ 
+ 	spin_lock(&gl->gl_spin);
+ 
+-	print_dbg(gi, "Glock 0x%p (%u, %llu)\n", gl, gl->gl_name.ln_type,
++	print_dbg(gi, "Glock 0x%p (%u, 0x%llx)\n", gl, gl->gl_name.ln_type,
+ 		   (unsigned long long)gl->gl_name.ln_number);
+ 	print_dbg(gi, "  gl_flags =");
+ 	for (x = 0; x < 32; x++) {
+@@ -2024,20 +2024,21 @@
+ {
+ 	struct gfs2_glock *gl;
+ 
++restart:
+ 	read_lock(gl_lock_addr(gi->hash));
+ 	gl = gi->gl;
+ 	if (gl) {
+-		gi->gl = hlist_entry(gl->gl_list.next, struct gfs2_glock,
+-				     gl_list);
++		gi->gl = hlist_entry(gl->gl_list.next,
++				     struct gfs2_glock, gl_list);
+ 		if (gi->gl)
+ 			gfs2_glock_hold(gi->gl);
+ 	}
+ 	read_unlock(gl_lock_addr(gi->hash));
+ 	if (gl)
+ 		gfs2_glock_put(gl);
+-
+-	while(gi->gl == NULL) {
++	if (gl && gi->gl == NULL)
+ 		gi->hash++;
++	while(gi->gl == NULL) {
+ 		if (gi->hash >= GFS2_GL_HASH_SIZE)
+ 			return 1;
+ 		read_lock(gl_lock_addr(gi->hash));
+@@ -2046,7 +2047,12 @@
+ 		if (gi->gl)
+ 			gfs2_glock_hold(gi->gl);
+ 		read_unlock(gl_lock_addr(gi->hash));
++		gi->hash++;
+ 	}
++
++	if (gi->sdp != gi->gl->gl_sbd)
++		goto restart;
++
+ 	return 0;
+ }
+ 
+@@ -2068,16 +2074,10 @@
+ 	gi->sdp = sdp;
+ 	gi->hash = 0;
+ 	gi->seq = NULL;
++	gi->gl = NULL;
+ 	memset(gi->string, 0, sizeof(gi->string));
+ 
+-	read_lock(gl_lock_addr(gi->hash));
+-	gi->gl = hlist_entry(gl_hash_table[gi->hash].hb_list.first,
+-			     struct gfs2_glock, gl_list);
+-	if (gi->gl)
+-		gfs2_glock_hold(gi->gl);
+-	read_unlock(gl_lock_addr(gi->hash));
+-
+-	if (!gi->gl && gfs2_glock_iter_next(gi)) {
++	if (gfs2_glock_iter_next(gi)) {
+ 		gfs2_glock_iter_free(gi);
+ 		return NULL;
+ 	}
+

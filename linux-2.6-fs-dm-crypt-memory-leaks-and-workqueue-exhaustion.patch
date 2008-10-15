@@ -1,0 +1,241 @@
+From: Milan Broz <mbroz@redhat.com>
+Date: Mon, 12 Nov 2007 19:28:38 +0100
+Subject: [fs] dm crypt: memory leaks and workqueue exhaustion
+Message-id: 47389B56.3080206@redhat.com
+O-Subject: [RHEL 5.2] dm crypt: memory leaks and workqueue memory exhaustion
+Bugzilla: 360621
+
+RHEL5.2 device mapper crypt: memory leaks and workqueue memory exhaustion
+Resolves: rhbz#360621
+Patches are upstream (in 2.6.24-rc)
+
+This patch contains thes fixes for dm-crypt:
+
+* fix OOPS on device removal
+(formerly upstream commit 80b16c192e469541263d6bfd9177662ceb632ecc,
+obsoleted by queue patches)
+
+* fix possible memory exhaustion
+using one workqueue for all operations can lead to starvation
+of io requests waiting for memory allocation.
+But the needed memory-releasing operation is queued after these
+requests (in the same queue).
+Fixed by use of separate single-threaded workqueues for io and
+crypt operations for each crypt device instead of one global workqueue.
+  upstream commit 9934a8bea2fc67e6f07d74304eca2a91d251bfe8
+  upstream commit cabf08e4d3d1181d7c408edae97fb4d1c31518af
+
+* Add missing dm_put_device in error path
+  upstream commit 55b42c5ae9c048de25233434afc7b71b01bee9e6
+
+* Fix BIO_UPTODATE test for write io.
+  (in -mm prepared for stable tree)
+
+Kernel with patch compiled and tested on basic crypt device mappings.
+
+Acked-by: Alasdair G Kergon <agk@redhat.com>
+
+diff --git a/drivers/md/dm-crypt.c b/drivers/md/dm-crypt.c
+index 2fef983..40f9e59 100644
+--- a/drivers/md/dm-crypt.c
++++ b/drivers/md/dm-crypt.c
+@@ -33,7 +33,6 @@ struct crypt_io {
+ 	struct work_struct work;
+ 	atomic_t pending;
+ 	int error;
+-	int post_process;
+ };
+ 
+ /*
+@@ -77,6 +76,8 @@ struct crypt_config {
+ 	mempool_t *page_pool;
+ 	struct bio_set *bs;
+ 
++	struct workqueue_struct *io_queue;
++	struct workqueue_struct *crypt_queue;
+ 	/*
+ 	 * crypto related data
+ 	 */
+@@ -424,18 +425,36 @@ static void dec_pending(struct crypt_io *io, int error)
+ }
+ 
+ /*
+- * kcryptd:
++ * kcryptd/kcryptd_io:
+  *
+  * Needed because it would be very unwise to do decryption in an
+  * interrupt context.
++ *
++ * kcryptd performs the actual encryption or decryption.
++ *
++ * kcryptd_io performs the IO submission.
++ *
++ * They must be separated as otherwise the final stages could be
++ * starved by new requests which can block in the first stages due
++ * to memory allocation.
+  */
+-static struct workqueue_struct *_kcryptd_workqueue;
+ static void kcryptd_do_work(void *data);
++static void kcryptd_do_crypt(void *data);
+ 
+ static void kcryptd_queue_io(struct crypt_io *io)
+ {
++	struct crypt_config *cc = io->target->private;
++
+ 	INIT_WORK(&io->work, kcryptd_do_work, io);
+-	queue_work(_kcryptd_workqueue, &io->work);
++	queue_work(cc->io_queue, &io->work);
++}
++
++static void kcryptd_queue_crypt(struct crypt_io *io)
++{
++	struct crypt_config *cc = io->target->private;
++
++	INIT_WORK(&io->work, kcryptd_do_crypt, io);
++	queue_work(cc->crypt_queue, &io->work);
+ }
+ 
+ static int crypt_endio(struct bio *clone, unsigned int done, int error)
+@@ -444,6 +463,9 @@ static int crypt_endio(struct bio *clone, unsigned int done, int error)
+ 	struct crypt_config *cc = io->target->private;
+ 	unsigned read_io = bio_data_dir(clone) == READ;
+ 
++	if (unlikely(!bio_flagged(clone, BIO_UPTODATE) && !error))
++		error = -EIO;
++
+ 	/*
+ 	 * free the processed pages, even if
+ 	 * it's only a partially completed write
+@@ -458,14 +480,11 @@ static int crypt_endio(struct bio *clone, unsigned int done, int error)
+ 	if (!read_io)
+ 		goto out;
+ 
+-	if (unlikely(!bio_flagged(clone, BIO_UPTODATE))) {
+-		error = -EIO;
++	if (unlikely(error))
+ 		goto out;
+-	}
+ 
+ 	bio_put(clone);
+-	io->post_process = 1;
+-	kcryptd_queue_io(io);
++	kcryptd_queue_crypt(io);
+ 	return 0;
+ 
+ out:
+@@ -588,10 +607,16 @@ static void kcryptd_do_work(void *data)
+ {
+ 	struct crypt_io *io = data;
+ 
+-	if (io->post_process)
+-		process_read_endio(io);
+-	else if (bio_data_dir(io->base_bio) == READ)
++	if (bio_data_dir(io->base_bio) == READ)
+ 		process_read(io);
++}
++
++static void kcryptd_do_crypt(void *data)
++{
++	struct crypt_io *io = data;
++
++	if (bio_data_dir(io->base_bio) == READ)
++		process_read_endio(io);
+ 	else
+ 		process_write(io);
+ }
+@@ -821,15 +846,33 @@ static int crypt_ctr(struct dm_target *ti, unsigned int argc, char **argv)
+ 		cc->iv_mode = kmalloc(strlen(ivmode) + 1, GFP_KERNEL);
+ 		if (!cc->iv_mode) {
+ 			ti->error = "Error kmallocing iv_mode string";
+-			goto bad5;
++			goto bad_iv_mode;
+ 		}
+ 		strcpy(cc->iv_mode, ivmode);
+ 	} else
+ 		cc->iv_mode = NULL;
+ 
++	cc->io_queue = create_singlethread_workqueue("kcryptd_io");
++	if (!cc->io_queue) {
++		ti->error = "Couldn't create kcryptd io queue";
++		goto bad_io_queue;
++	}
++
++	cc->crypt_queue = create_singlethread_workqueue("kcryptd");
++	if (!cc->crypt_queue) {
++		ti->error = "Couldn't create kcryptd queue";
++		goto bad_crypt_queue;
++	}
++
+ 	ti->private = cc;
+ 	return 0;
+ 
++bad_crypt_queue:
++	destroy_workqueue(cc->io_queue);
++bad_io_queue:
++	kfree(cc->iv_mode);
++bad_iv_mode:
++	dm_put_device(ti, cc->dev);
+ bad5:
+ 	bioset_free(cc->bs);
+ bad_bs:
+@@ -852,6 +895,9 @@ static void crypt_dtr(struct dm_target *ti)
+ {
+ 	struct crypt_config *cc = (struct crypt_config *) ti->private;
+ 
++	destroy_workqueue(cc->io_queue);
++	destroy_workqueue(cc->crypt_queue);
++
+ 	bioset_free(cc->bs);
+ 	mempool_destroy(cc->page_pool);
+ 	mempool_destroy(cc->io_pool);
+@@ -879,9 +925,13 @@ static int crypt_map(struct dm_target *ti, struct bio *bio,
+ 	io = mempool_alloc(cc->io_pool, GFP_NOIO);
+ 	io->target = ti;
+ 	io->base_bio = bio;
+-	io->error = io->post_process = 0;
++	io->error = 0;
+ 	atomic_set(&io->pending, 0);
+-	kcryptd_queue_io(io);
++
++	if (bio_data_dir(io->base_bio) == READ)
++		kcryptd_queue_io(io);
++	else
++		kcryptd_queue_crypt(io);
+ 
+ 	return 0;
+ }
+@@ -1014,25 +1064,12 @@ static int __init dm_crypt_init(void)
+ 	if (!_crypt_io_pool)
+ 		return -ENOMEM;
+ 
+-	_kcryptd_workqueue = create_workqueue("kcryptd");
+-	if (!_kcryptd_workqueue) {
+-		r = -ENOMEM;
+-		DMERR("couldn't create kcryptd");
+-		goto bad1;
+-	}
+-
+ 	r = dm_register_target(&crypt_target);
+ 	if (r < 0) {
+ 		DMERR("register failed %d", r);
+-		goto bad2;
++		kmem_cache_destroy(_crypt_io_pool);
+ 	}
+ 
+-	return 0;
+-
+-bad2:
+-	destroy_workqueue(_kcryptd_workqueue);
+-bad1:
+-	kmem_cache_destroy(_crypt_io_pool);
+ 	return r;
+ }
+ 
+@@ -1043,7 +1080,6 @@ static void __exit dm_crypt_exit(void)
+ 	if (r < 0)
+ 		DMERR("unregister failed %d", r);
+ 
+-	destroy_workqueue(_kcryptd_workqueue);
+ 	kmem_cache_destroy(_crypt_io_pool);
+ }
+ 

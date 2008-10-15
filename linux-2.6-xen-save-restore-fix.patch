@@ -1,0 +1,153 @@
+From: Gerd Hoffmann <kraxel@redhat.com>
+Subject: [RHEL-5.1 PATCH 10/10] xen: save/restore fix
+Date: Fri, 15 Jun 2007 10:58:11 +0200
+Bugzilla: 222128
+Message-Id: <467254A3.2010508@redhat.com>
+Changelog: [xen] save/restore fix
+
+
+  Hi,
+
+This patch fixes a locking bug in the save/restore path, needed to make 
+save/restore work reliable for SMP guests.
+
+cheers,
+  Gerd
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1172685319 0
+# Node ID c3c03089c59ef515766636dd4afef6573f3b6b42
+# Parent  8ba425b640b3c7f81c17eb45972eff6eabe9f94d
+linux: More save/restore fixes. Fix deadlock of cpu_hotplug_lock vs
+workqueue_mutex. This is a new deadlock since the workqueue_mutex is
+acquired in the workqueue_cpu_calbback() function across
+CPU_UP_PREPARE->CPU_ONLINE.
+
+The fix is for us not to rudely grab the cpu_hotplug_lock() during
+save/restore -- it's really not necessary.
+
+This patch is applicable to any of our 2.6 kernels, but is absolutely
+required from 2.6.18 onwards.
+
+Signed-off-by: Keir Fraser <keir@xensource.com>
+
+---
+ drivers/xen/core/cpu_hotplug.c |   37 +++++++++++--------------------------
+ drivers/xen/core/smpboot.c     |    6 ++++--
+ include/xen/cpu_hotplug.h      |    6 ------
+ 3 files changed, 15 insertions(+), 34 deletions(-)
+
+Index: linux-2.6.18.noarch/drivers/xen/core/cpu_hotplug.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/xen/core/cpu_hotplug.c
++++ linux-2.6.18.noarch/drivers/xen/core/cpu_hotplug.c
+@@ -122,29 +122,19 @@ arch_initcall(setup_vcpu_hotplug_event);
+ 
+ int smp_suspend(void)
+ {
+-	int i, err;
+-
+-	lock_cpu_hotplug();
++	int cpu, err;
+ 
+-	/*
+-	 * Take all other CPUs offline. We hold the hotplug mutex to
+-	 * avoid other processes bringing up CPUs under our feet.
+-	 */
+-	while (num_online_cpus() > 1) {
+-		unlock_cpu_hotplug();
+-		for_each_online_cpu(i) {
+-			if (i == 0)
+-				continue;
+-			err = cpu_down(i);
+-			if (err) {
+-				printk(KERN_CRIT "Failed to take all CPUs "
+-				       "down: %d.\n", err);
+-				for_each_possible_cpu(i)
+-					vcpu_hotplug(i);
+-				return err;
+-			}
++	for_each_online_cpu(cpu) {
++		if (cpu == 0)
++			continue;
++		err = cpu_down(cpu);
++		if (err) {
++			printk(KERN_CRIT "Failed to take all CPUs "
++			       "down: %d.\n", err);
++			for_each_possible_cpu(cpu)
++				vcpu_hotplug(cpu);
++			return err;
+ 		}
+-		lock_cpu_hotplug();
+ 	}
+ 
+ 	return 0;
+@@ -155,11 +145,6 @@ void smp_resume(void)
+ 	int cpu;
+ 
+ 	for_each_possible_cpu(cpu)
+-		cpu_initialize_context(cpu);
+-
+-	unlock_cpu_hotplug();
+-
+-	for_each_possible_cpu(cpu)
+ 		vcpu_hotplug(cpu);
+ }
+ 
+Index: linux-2.6.18.noarch/drivers/xen/core/smpboot.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/xen/core/smpboot.c
++++ linux-2.6.18.noarch/drivers/xen/core/smpboot.c
+@@ -50,6 +50,7 @@ cpumask_t cpu_online_map;
+ EXPORT_SYMBOL(cpu_online_map);
+ cpumask_t cpu_possible_map;
+ EXPORT_SYMBOL(cpu_possible_map);
++cpumask_t cpu_initialized_map;
+ 
+ struct cpuinfo_x86 cpu_data[NR_CPUS] __cacheline_aligned;
+ EXPORT_SYMBOL(cpu_data);
+@@ -159,7 +160,7 @@ static void cpu_bringup_and_idle(void)
+ 	cpu_idle();
+ }
+ 
+-void cpu_initialize_context(unsigned int cpu)
++static void cpu_initialize_context(unsigned int cpu)
+ {
+ 	vcpu_guest_context_t ctxt;
+ 	struct task_struct *idle = idle_task(cpu);
+@@ -169,7 +170,7 @@ void cpu_initialize_context(unsigned int
+ 	struct Xgt_desc_struct *gdt_descr = &per_cpu(cpu_gdt_descr, cpu);
+ #endif
+ 
+-	if (cpu == 0)
++	if (cpu_test_and_set(cpu, cpu_initialized_map))
+ 		return;
+ 
+ 	memset(&ctxt, 0, sizeof(ctxt));
+@@ -400,6 +401,7 @@ int __cpuinit __cpu_up(unsigned int cpu)
+ 	rc = cpu_up_check(cpu);
+ 	if (rc)
+ 		return rc;
++	cpu_initialize_context(cpu);
+ 
+ 	if (num_online_cpus() == 1)
+ 		alternatives_smp_switch(1);
+Index: linux-2.6.18.noarch/include/xen/cpu_hotplug.h
+===================================================================
+--- linux-2.6.18.noarch.orig/include/xen/cpu_hotplug.h
++++ linux-2.6.18.noarch/include/xen/cpu_hotplug.h
+@@ -6,12 +6,6 @@
+ 
+ #if defined(CONFIG_HOTPLUG_CPU)
+ 
+-#if defined(CONFIG_X86)
+-void cpu_initialize_context(unsigned int cpu);
+-#else
+-#define cpu_initialize_context(cpu)	((void)0)
+-#endif
+-
+ int cpu_up_check(unsigned int cpu);
+ void init_xenbus_allowed_cpumask(void);
+ int smp_suspend(void);
+

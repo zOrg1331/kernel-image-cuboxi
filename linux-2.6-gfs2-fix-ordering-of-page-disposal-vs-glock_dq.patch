@@ -1,0 +1,50 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5] [GFS2] Fix ordering of page disposal vs. glock_dq
+Date: Mon, 08 Jan 2007 15:44:33 +0000
+Bugzilla: 220117
+Message-Id: <1168271073.11844.33.camel@quoit.chygwyn.com>
+Changelog: GFS2: Fix ordering of page disposal vs. glock_dq
+
+
+Hi,
+
+This patch is upstream (in the GFS2 git tree) and has been tested by Wendy,
+
+Steve.
+
+>From 0a2547441d9f21188ba6dd4bb1603255ef9c2b7d Mon Sep 17 00:00:00 2001
+
+In case of unlinked files with dirty pages GFS2 wasn't clearing
+the pages in quite the right order. This patch clears the pages
+earlier (before the qlock_dq) to avoid the situation that the
+release of the glock results in attempting to write back data that
+has already been deallocated.
+
+This fixes Red Hat bugzilla: #220117
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+---
+ fs/gfs2/ops_super.c |    6 ++++++
+ 1 files changed, 6 insertions(+), 0 deletions(-)
+
+diff --git a/fs/gfs2/ops_super.c b/fs/gfs2/ops_super.c
+index b283783..c22738c 100644
+--- a/fs/gfs2/ops_super.c
++++ b/fs/gfs2/ops_super.c
+@@ -429,6 +429,12 @@ static void gfs2_delete_inode(struct ino
+ 	}
+ 
+ 	error = gfs2_dinode_dealloc(ip);
++	/*
++	 * Must do this before unlock to avoid trying to write back
++	 * potentially dirty data now that inode no longer exists
++	 * on disk.
++	 */
++	truncate_inode_pages(&inode->i_data, 0);
+ 
+ out_unlock:
+ 	gfs2_glock_dq(&ip->i_iopen_gh);
+-- 
+1.4.1
+
+

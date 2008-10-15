@@ -1,0 +1,85 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Date: Mon, 17 Dec 2007 17:57:45 -0500
+Subject: [scsi] mpt fusion: fix sas hotplug
+Message-id: alpine.LFD.0.9999.0712171544370.16626@localhost.localdomain
+O-Subject: [RHEL-5.2 PATCH] 4/3 bz253122 Update mpt fusion to version 3.04.05+
+Bugzilla: 253122
+
+This part of the MPT Fusion driver update should have been included
+with the previous three patches (my bad).  It is a fix for a SAS
+hotplug bug provided by FUJITSU and signed-off by LSI.  All-arches
+build at
+
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1083495
+
+Patch below.  Should be applied after the previous three.
+
+ drivers/message/fusion/mptsas.c |   38 +++++++++++++++++++++++++-------------
+ 1 files changed, 25 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/message/fusion/mptsas.c b/drivers/message/fusion/mptsas.c
+index 9d62697..44e6e3d 100644
+--- a/drivers/message/fusion/mptsas.c
++++ b/drivers/message/fusion/mptsas.c
+@@ -2025,8 +2025,11 @@ mptsas_probe_expander_phys(MPT_ADAPTER *ioc, u32 *handle)
+ 	struct mptsas_portinfo *port_info, *p, *ex;
+ 	struct device *parent;
+ 	struct sas_rphy *rphy;
+-	int error = -ENOMEM, i, j;
++	int error = -ENOMEM, i;
++	u8	add_new_expander;
++	u64	expander_sas_address;
+ 
++	add_new_expander = 0;
+ 	ex = kzalloc(sizeof(*port_info), GFP_KERNEL);
+ 	if (!ex)
+ 		goto out;
+@@ -2044,6 +2047,7 @@ mptsas_probe_expander_phys(MPT_ADAPTER *ioc, u32 *handle)
+ 	if (!port_info) {
+ 		port_info = ex;
+ 		list_add_tail(&port_info->list, &ioc->sas_topology);
++		add_new_expander = 1;
+ 	} else {
+ 		for (i = 0; i < ex->num_phys; i++) {
+ 			port_info->phy_info[i].handle =
+@@ -2083,20 +2087,28 @@ mptsas_probe_expander_phys(MPT_ADAPTER *ioc, u32 *handle)
+ 		}
+ 	}
+ 
+-	parent = &ioc->sh->shost_gendev;
+-	for (i = 0; i < port_info->num_phys; i++) {
+-		mutex_lock(&ioc->sas_topology_mutex);
+-		list_for_each_entry(p, &ioc->sas_topology, list) {
+-			for (j = 0; j < p->num_phys; j++) {
+-				if (port_info->phy_info[i].identify.handle !=
+-						p->phy_info[j].attached.handle)
+-					continue;
+-				rphy = mptsas_get_rphy(&p->phy_info[j]);
+-				parent = &rphy->dev;
+-			}
++	expander_sas_address = port_info->phy_info[0].identify.sas_address;
++
++	if (add_new_expander)
++		printk(MYIOC_s_INFO_FMT "add expander: num_phys %d, "
++		    "sas_addr (0x%llx)\n", ioc->name, port_info->num_phys,
++		    (unsigned long long)expander_sas_address);
++
++	parent = NULL;
++	mutex_lock(&ioc->sas_topology_mutex);
++	list_for_each_entry(p, &ioc->sas_topology, list) {
++		for (i = 0; i < p->num_phys && parent == NULL; i++) {
++			if (expander_sas_address !=
++			    p->phy_info[i].attached.sas_address)
++				continue;
++			rphy = mptsas_get_rphy(&p->phy_info[i]);
++			parent = &rphy->dev;
+ 		}
+-		mutex_unlock(&ioc->sas_topology_mutex);
+ 	}
++	mutex_unlock(&ioc->sas_topology_mutex);
++
++	if (!parent)
++		parent = &ioc->sh->shost_gendev;
+ 
+ 	mptsas_setup_wide_ports(ioc, port_info);
+ 

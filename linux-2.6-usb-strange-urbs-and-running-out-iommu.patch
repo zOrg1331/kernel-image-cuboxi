@@ -1,0 +1,166 @@
+From: Pete Zaitcev <zaitcev@redhat.com>
+Subject: [RHEL 5.1 patch] Strange URBs and running out IOMMU
+Date: Tue, 5 Jun 2007 12:56:03 -0700
+Bugzilla: 230427
+Message-Id: <20070605125603.f7962f68.zaitcev@redhat.com>
+Changelog: [usb] Strange URBs and running out IOMMU
+
+
+IBM found that a system with RSA II adapter runs out of IOMMU when they
+run a management application (actually, it runs out swiotlb memory area).
+This happens because they submit a Bulk type URB to an Interrupt
+endpoint. Surprisingly, this is legal. However, if an application attempts
+this, usbfs forgets to fill out the interval field. Host Controller Drivers
+(HCDs) verify that values in URB make sense and reject such URBs. Then,
+the USB core forgets to free DMA resources.
+
+The main fix is to initialize the interval value to something sensible.
+In case of Bulk, we pick the value from the device descriptor. Then,
+transfer occurs normally and everyting is fine. This is bug 230427.
+I simply backported the fix from upstream.
+
+Also, I'm throwing in the fix for the error path. This is not strictly
+required, because Linux leaked DMA resources for years in such circumstances.
+I went back to 2001 vintage kernels and found we started leaking when
+virt_to_bus() was replaced and never noticed it. But I consider this
+a relatively low risk fix, safe enough to get into RHEL 5.1. The bug
+is 236922. Upstream does not have this yet, but I have submitted it.
+
+I have built the kernel in Beehive and IBM tested it for functionality.
+I also have done some rudimentary tests for regressions (basically, got
+my tests sending control URBs down).
+
+Please review and ack as appropriate.
+
+Thanks,
+-- Pete
+
+diff -urp -X dontdiff linux-2.6.18-16.el5/drivers/usb/core/devio.c linux-2.6.18-16.el5-230427/drivers/usb/core/devio.c
+--- linux-2.6.18-16.el5/drivers/usb/core/devio.c	2007-04-23 15:38:19.000000000 -0700
++++ linux-2.6.18-16.el5-230427/drivers/usb/core/devio.c	2007-04-23 16:31:20.000000000 -0700
+@@ -903,7 +903,7 @@ static int proc_do_submiturb(struct dev_
+ 	struct async *as;
+ 	struct usb_ctrlrequest *dr = NULL;
+ 	unsigned int u, totlen, isofrmlen;
+-	int ret, interval = 0, ifnum = -1;
++	int ret, ifnum = -1;
+ 
+ 	if (uurb->flags & ~(USBDEVFS_URB_ISO_ASAP|USBDEVFS_URB_SHORT_NOT_OK|
+ 			   URB_NO_FSBR|URB_ZERO_PACKET))
+@@ -979,7 +979,6 @@ static int proc_do_submiturb(struct dev_
+ 		if ((ep->desc.bmAttributes & USB_ENDPOINT_XFERTYPE_MASK)
+ 				!= USB_ENDPOINT_XFER_ISOC)
+ 			return -EINVAL;
+-		interval = 1 << min (15, ep->desc.bInterval - 1);
+ 		isofrmlen = sizeof(struct usbdevfs_iso_packet_desc) * uurb->number_of_packets;
+ 		if (!(isopkt = kmalloc(isofrmlen, GFP_KERNEL)))
+ 			return -ENOMEM;
+@@ -1008,10 +1007,6 @@ static int proc_do_submiturb(struct dev_
+ 		if ((ep->desc.bmAttributes & USB_ENDPOINT_XFERTYPE_MASK)
+ 				!= USB_ENDPOINT_XFER_INT)
+ 			return -EINVAL;
+-		if (ps->dev->speed == USB_SPEED_HIGH)
+-			interval = 1 << min (15, ep->desc.bInterval - 1);
+-		else
+-			interval = ep->desc.bInterval;
+ 		if (uurb->buffer_length > MAX_USBFS_BUFFER_SIZE)
+ 			return -EINVAL;
+ 		if (!access_ok((uurb->endpoint & USB_DIR_IN) ? VERIFY_WRITE : VERIFY_READ, uurb->buffer, uurb->buffer_length))
+@@ -1040,7 +1035,11 @@ static int proc_do_submiturb(struct dev_
+ 	as->urb->setup_packet = (unsigned char*)dr;
+ 	as->urb->start_frame = uurb->start_frame;
+ 	as->urb->number_of_packets = uurb->number_of_packets;
+-	as->urb->interval = interval;
++	if (uurb->type == USBDEVFS_URB_TYPE_ISO ||
++			ps->dev->speed == USB_SPEED_HIGH)
++		as->urb->interval = 1 << min(15, ep->desc.bInterval - 1);
++	else
++		as->urb->interval = ep->desc.bInterval;
+         as->urb->context = as;
+         as->urb->complete = async_completed;
+ 	for (totlen = u = 0; u < uurb->number_of_packets; u++) {
+diff -urp -X dontdiff linux-2.6.18-16.el5/drivers/usb/core/hcd.c linux-2.6.18-16.el5-230427/drivers/usb/core/hcd.c
+--- linux-2.6.18-16.el5/drivers/usb/core/hcd.c	2006-09-19 20:42:06.000000000 -0700
++++ linux-2.6.18-16.el5-230427/drivers/usb/core/hcd.c	2007-06-01 13:30:38.000000000 -0700
+@@ -1090,9 +1090,10 @@ EXPORT_SYMBOL (usb_release_bandwidth);
+ 
+ /*-------------------------------------------------------------------------*/
+ 
+-static void urb_unlink (struct urb *urb)
++static void urb_unlink(struct usb_hcd *hcd, struct urb *urb)
+ {
+ 	unsigned long		flags;
++	int at_root_hub = (urb->dev == hcd->self.root_hub);
+ 
+ 	/* Release any periodic transfer bandwidth */
+ 	if (urb->bandwidth)
+@@ -1100,12 +1101,27 @@ static void urb_unlink (struct urb *urb)
+ 			usb_pipeisoc (urb->pipe));
+ 
+ 	/* clear all state linking urb to this dev (and hcd) */
+-
+ 	spin_lock_irqsave (&hcd_data_lock, flags);
+ 	list_del_init (&urb->urb_list);
+ 	spin_unlock_irqrestore (&hcd_data_lock, flags);
+-}
+ 
++	/* lower level hcd code should use *_dma exclusively */
++	if (hcd->self.controller->dma_mask && !at_root_hub) {
++		if (usb_pipecontrol (urb->pipe)
++			&& !(urb->transfer_flags & URB_NO_SETUP_DMA_MAP))
++			dma_unmap_single (hcd->self.controller, urb->setup_dma,
++					sizeof (struct usb_ctrlrequest),
++					DMA_TO_DEVICE);
++		if (urb->transfer_buffer_length != 0
++			&& !(urb->transfer_flags & URB_NO_TRANSFER_DMA_MAP))
++			dma_unmap_single (hcd->self.controller, 
++					urb->transfer_dma,
++					urb->transfer_buffer_length,
++					usb_pipein (urb->pipe)
++					    ? DMA_FROM_DEVICE
++					    : DMA_TO_DEVICE);
++	}
++}
+ 
+ /* may be called in any context with a valid urb->dev usecount
+  * caller surrenders "ownership" of urb
+@@ -1208,7 +1224,7 @@ doit:
+ 	status = hcd->driver->urb_enqueue (hcd, ep, urb, mem_flags);
+ done:
+ 	if (unlikely (status)) {
+-		urb_unlink (urb);
++		urb_unlink(hcd, urb);
+ 		atomic_dec (&urb->use_count);
+ 		if (urb->reject)
+ 			wake_up (&usb_kill_urb_queue);
+@@ -1612,28 +1628,7 @@ static struct usb_operations usb_hcd_ope
+  */
+ void usb_hcd_giveback_urb (struct usb_hcd *hcd, struct urb *urb, struct pt_regs *regs)
+ {
+-	int at_root_hub;
+-
+-	at_root_hub = (urb->dev == hcd->self.root_hub);
+-	urb_unlink (urb);
+-
+-	/* lower level hcd code should use *_dma exclusively */
+-	if (hcd->self.controller->dma_mask && !at_root_hub) {
+-		if (usb_pipecontrol (urb->pipe)
+-			&& !(urb->transfer_flags & URB_NO_SETUP_DMA_MAP))
+-			dma_unmap_single (hcd->self.controller, urb->setup_dma,
+-					sizeof (struct usb_ctrlrequest),
+-					DMA_TO_DEVICE);
+-		if (urb->transfer_buffer_length != 0
+-			&& !(urb->transfer_flags & URB_NO_TRANSFER_DMA_MAP))
+-			dma_unmap_single (hcd->self.controller, 
+-					urb->transfer_dma,
+-					urb->transfer_buffer_length,
+-					usb_pipein (urb->pipe)
+-					    ? DMA_FROM_DEVICE
+-					    : DMA_TO_DEVICE);
+-	}
+-
++	urb_unlink(hcd, urb);
+ 	usbmon_urb_complete (&hcd->self, urb);
+ 	/* pass ownership to the completion handler */
+ 	urb->complete (urb, regs);
+

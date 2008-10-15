@@ -1,0 +1,31 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Date: Fri, 15 Feb 2008 13:25:30 -0500
+Subject: [xen] resync TSC extrapolated frequency
+Message-id: 20080215182530.11293.24800.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH 2] Resync TSC extrapolated frequency
+Bugzilla: 430938
+
+Resolves BZ 430938
+
+When Xen is notified that CPU frequency has changed, do not trust
+the current TSC-extrapolated time when we re-sync.
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Chris Lalancette <clalance@redhat.com>
+
+diff --git a/arch/x86/time.c b/arch/x86/time.c
+index 5587683..ed61d39 100644
+--- a/arch/x86/time.c
++++ b/arch/x86/time.c
+@@ -733,8 +733,10 @@ int cpu_frequency_change(u64 freq)
+     local_irq_disable();
+     rdtscll(curr_tsc);
+     t->local_tsc_stamp = curr_tsc;
+-    t->stime_local_stamp = get_s_time();
+     t->stime_master_stamp = read_platform_stime();
++    /* TSC-extrapolated time may be bogus after frequency change. */
++    /*t->stime_local_stamp = get_s_time();*/
++    t->stime_local_stamp = t->stime_master_stamp;
+     set_time_scale(&t->tsc_scale, freq);
+     local_irq_enable();
+ 

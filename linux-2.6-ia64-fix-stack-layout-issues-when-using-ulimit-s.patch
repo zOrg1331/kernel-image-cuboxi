@@ -1,0 +1,94 @@
+From: Jarod Wilson <jwilson@redhat.com>
+Subject: [RHEL5.2 IA64 PATCH] Fix stack layout issues when using ulimit -s
+Date: Tue, 24 Apr 2007 17:30:44 -0400
+Bugzilla: 234576
+Message-Id: <462E7704.7090508@redhat.com>
+Changelog: [IA64] Fix stack layout issues when using ulimit -s
+
+
+At present, when one uses ulimit -s w/a RHEL5 kernel on ia64, Very Bad 
+Things can happen with the stack. The fix is in upstream, applies 
+cleanly to the RHEL5 kernel and I've tested to verify that it does fix 
+the problem (test case in the bz). Please ACK/NAK.
+
+
+Bugzilla:
+
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=234576
+
+
+Upstream changeset:
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=83d2cd3de48a7fb73838c45145780cfa9b1f61fd
+
+
+Executive summary:
+
+ia64 expects following vm layout:
+
+== low memory
+[register-stack grows up]
+[memory-stack grows down]
+== high memory
+
+But the code assigns the base of the register stack at the
+maximum stack size offset from the fixed address where the
+stack *might* start.  Stack randomization will result in the
+memory stack starting at a lower address than this, and if the
+user has set a low stack limit with "ulimit -s", then you can
+end up with the register stack above the memory stack (or if
+you were very unlucky right on top of it!).
+
+Fix: Calculate the base address for the register stack starting
+from the actual address of the memory stack.
+
+Signed-off-by: KAMEZAWA Hiroyuki <kamezawa.hiroyu@jp.fujitsu.com>
+Signed-off-by: Tony Luck <tony.luck@intel.com>
+
+
+-- 
+Jarod Wilson
+jwilson@redhat.com
+
+
+X-Git-Tag: v2.6.21-rc6~46^2~2
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=83d2cd3de48a7fb73838c45145780cfa9b1f61fd
+
+[IA64] bugfix stack layout upside-down
+
+ia64 expects following vm layout:
+
+== low memory
+[register-stack grows up]
+[memory-stack grows down]
+== high memory
+
+But the code assigns the base of the register stack at the
+maximum stack size offset from the fixed address where the
+stack *might* start.  Stack randomization will result in the
+memory stack starting at a lower address than this, and if the
+user has set a low stack limit with "ulimit -s", then you can
+end up with the register stack above the memory stack (or if
+you were very unlucky right on top of it!).
+
+Fix: Calculate the base address for the register stack starting
+from the actual address of the memory stack.
+
+Signed-off-by: KAMEZAWA Hiroyuki <kamezawa.hiroyu@jp.fujitsu.com>
+Signed-off-by: Tony Luck <tony.luck@intel.com>
+---
+
+diff --git a/arch/ia64/mm/init.c b/arch/ia64/mm/init.c
+index c8da621..4f36987 100644
+--- a/arch/ia64/mm/init.c
++++ b/arch/ia64/mm/init.c
+@@ -155,7 +155,7 @@ ia64_set_rbs_bot (void)
+ 
+ 	if (stack_size > MAX_USER_STACK_SIZE)
+ 		stack_size = MAX_USER_STACK_SIZE;
+-	current->thread.rbs_bot = STACK_TOP - stack_size;
++	current->thread.rbs_bot = PAGE_ALIGN(current->mm->start_stack - stack_size);
+ }
+ 
+ /*
+

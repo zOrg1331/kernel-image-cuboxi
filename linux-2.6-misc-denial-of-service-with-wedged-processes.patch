@@ -1,0 +1,59 @@
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Sat, 20 Oct 2007 13:13:52 +0200
+Subject: [misc] Denial of service with wedged processes
+Message-id: 4719E2F0.70705@redhat.com
+O-Subject: [RHEL5.2 PATCH] BZ229882: CVE-2006-6921 Denial of service with wedged processes
+Bugzilla: 229882
+
+BZ# 229882
+https://bugzilla.redhat.com/show_bug.cgi?id=229882
+
+Description:
+Linux kernel allows local users to cause a denial of service
+(unrecoverable zombie process) via a program with certain instructions
+that prevent init from properly reaping a child whose parent has
+died.
+
+How to reproduce:
+A reproducer is included in BZ.
+
+Upstream status:
+Patch is upstream
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=b2b2cbc4b2a2f389442549399a993a8306420baf
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=241ceee0b442c69226fb882d61d9b9785743898f
+
+Test status:
+Build an tested successfully on i386.
+
+diff --git a/kernel/exit.c b/kernel/exit.c
+index 58a28b0..d779f4f 100644
+--- a/kernel/exit.c
++++ b/kernel/exit.c
+@@ -620,10 +620,6 @@ choose_new_parent(struct task_struct *p, struct task_struct *reaper)
+ static void
+ reparent_thread(struct task_struct *p, struct task_struct *father)
+ {
+-	/* We don't want people slaying init.  */
+-	if (p->exit_signal != -1)
+-		p->exit_signal = SIGCHLD;
+-
+ 	if (p->pdeath_signal)
+ 		/* We already hold the tasklist_lock here.  */
+ 		group_send_sig_info(p->pdeath_signal, SEND_SIG_NOINFO, p);
+@@ -631,6 +627,16 @@ reparent_thread(struct task_struct *p, struct task_struct *father)
+ 	/* Move the child from its dying parent to the new one.  */
+ 	list_move_tail(&p->sibling, &p->parent->children);
+ 
++        /* If this is a threaded reparent there is no need to
++         * notify anyone anything has happened.
++         */
++        if (p->parent->group_leader == father->group_leader)
++                return;
++
++	/* We don't want people slaying init.  */
++	if (p->exit_signal != -1)
++		p->exit_signal = SIGCHLD;
++
+ 	/* If we'd notified the old parent about this child's death,
+ 	 * also notify the new parent.
+ 	 */

@@ -1,0 +1,61 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Mon, 17 Dec 2007 15:54:52 -0500
+Subject: [acpi] docking/undocking: oops when _DCK eval fails
+Message-id: 4766E21C.5080703@redhat.com
+O-Subject: RHEL-5.2 PATCH 5/5] Docking/undocking support
+Bugzilla: 252214
+
+bz252214 FEAT: RHEL 5.2 hot dock / undock support for mobile
+w/docking station
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=252214
+
+Problem:
+  ACPI: dock: fix oops when _DCK evaluation fails
+
+Solution:
+  Data returned by acpi_get_name in acpi_buffer is not acpi_object
+  and therefore should not be cast to it, otherwise we'll get an nice
+  oops trying to print error message.
+
+ Also print name of the ACPI object corresponding to the docking
+ station and elevate severity of the message printed when _DCK fails
+ to KERN_ERR.
+
+Upstream Status:
+commit: 9254bc845db90a123cf992e983539d0ee409f22a
+
+Testing:
+The patches in this series were successfully tested by me on
+a T60p, Dell Converse, and Dell Fila mobiles.
+
+As always, acks would be appreciated.
+
+diff --git a/drivers/acpi/dock.c b/drivers/acpi/dock.c
+index 91b18df..50ea98f 100644
+--- a/drivers/acpi/dock.c
++++ b/drivers/acpi/dock.c
+@@ -377,12 +377,11 @@ static void handle_dock(struct dock_station *ds, int dock)
+ 	union acpi_object arg;
+ 	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
+ 	struct acpi_buffer name_buffer = { ACPI_ALLOCATE_BUFFER, NULL };
+-	union acpi_object *obj;
+ 
+ 	acpi_get_name(ds->handle, ACPI_FULL_PATHNAME, &name_buffer);
+-	obj = name_buffer.pointer;
+ 
+-	printk(KERN_INFO PREFIX "%s\n", dock ? "docking" : "undocking");
++	printk(KERN_INFO PREFIX "%s - %s\n",
++		(char *)name_buffer.pointer, dock ? "docking" : "undocking");
+ 
+ 	/* _DCK method has one argument */
+ 	arg_list.count = 1;
+@@ -391,7 +390,8 @@ static void handle_dock(struct dock_station *ds, int dock)
+ 	arg.integer.value = dock;
+ 	status = acpi_evaluate_object(ds->handle, "_DCK", &arg_list, &buffer);
+ 	if (ACPI_FAILURE(status))
+-		pr_debug("%s: failed to execute _DCK\n", obj->string.pointer);
++		printk(KERN_ERR PREFIX "%s - failed to execute _DCK\n",
++			(char *)name_buffer.pointer);
+ 	kfree(buffer.pointer);
+ 	kfree(name_buffer.pointer);
+ }

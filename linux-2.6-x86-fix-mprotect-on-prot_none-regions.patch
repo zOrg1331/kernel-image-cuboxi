@@ -1,0 +1,290 @@
+From: Stephen C. Tweedie <sct@redhat.com>
+Date: Fri, 28 Mar 2008 16:51:28 +0000
+Subject: [x86] fix mprotect on PROT_NONE regions
+Message-id: 1206723088.17918.28.camel@sisko.scot.redhat.com
+O-Subject: [RHEL-5.2 patch] BZ 437412: Fix mprotect on PROT_NONE regions
+Bugzilla: 437412
+
+Hi,
+
+This is a repost, for real this time, of the PTE patch I posted as RFC
+yesterday.  I've now got a build for it in brew:
+
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1233668
+
+and have multiple reports that it cures the crash-on-starting-X bug:
+
+        https://bugzilla.redhat.com/show_bug.cgi?id=437412
+        Bugzilla Bug 437412: System reboots when X started on dom0
+
+The bug is that starting X crashes the system solid on some hardware
+with 5.2.  That's a regression against 5.1.  It occurs when we try to
+use mprotect(PROT_NONE) on an ioremapped region, and then turn the
+protection back to something readable.
+
+The regression is due to another fix in 5.2, concerning migration of
+PROT_NONE ptes.  Basically, when we migrate a PV guest, the hypervisor
+is responsible for updating all the guest's ptes to point to the correct
+new pages on the destination host.  But it doesn't touch pages which
+don't have the PAGE_PRESENT bit.  Trouble is, on x86, PROT_NONE pages
+don't have that bit set, so they don't get translated --- memory
+corruption!
+
+The fix in 5.2 was to special case PROT_NONE pages so that they are
+stored in the page tables using a guest-relative, not hardware, frame
+number.  So after migrate, if the guest on the new host turns the pages
+back to PROT_READ, they can be correctly re-translated to valid hardware
+frame numbers at that point in time.
+
+But this new translating code doesn't work for ioremap()ed memory ---
+such pages simply do not have a canonical, host-independent guest-
+relative frame number, so we hit a BUG() in the pte handling.
+
+The fix adopted upstream has been to mark ioremap() ptes with a new
+_PAGE_IO bit, taken from the x86 host-available bits in the pte, and to
+disable the magic frame number translations on ptes with that bit set.
+
+Note, we only have 3 os-available bits in the pte.  Upstream Xen uses
+bit 11 in the HV, and bit 9 for this new _PAGE_IO.  On x86_64, however,
+we're already using bit 9 in the Stratus dirty-memory-tracking patches,
+so I've changed _PAGE_IO patch to use bit 10 instead on 64-bit.  That's
+us completely out of free bits on 64-bit, though.
+
+Please ACK.
+
+--Stephen
+
+commit dd649b84b42b60261c093f7d74065378cf49c273
+Author: Stephen Tweedie <sct@redhat.com>
+Date:   Thu Mar 27 21:35:20 2008 +0000
+
+    Xen: Fix mprotect on ioremaped regions.
+
+    Fixes bug 437412: system crashes when X starts.
+
+    This patch fixes a regression caused by patch
+    linux-2.6-xen-save-restore-pv-oops-when-mmap-prot_none.patch.
+
+    When Xen PV guests migrate, the HV updates the hardware frame numbers
+    in all valid ptes automatically to reflect the layout of the guest on
+    the new host.  But it skips over ptes which are not marked as present.
+
+    On Linux x86, the mmu has no way to make a present page unreadable,
+    so to implement PROT_NONE, the mmu clears the present bit.  This
+    prevents the hypervisor from translating the ptes correctly on migrate,
+    which leaves the ptes pointing to the wrong page on the new host.
+
+    The above patch fixed this by storing the hardware frame numbers
+    for PROT_NONE pages as guest-relative pseudopage frame references
+    instead.  Unfortunately, that breaks mprotect(PROT_NONE) on
+    ioremap()ed memory regions, which do not have any guest-relative
+    frame numbers --- such pages are always specific to the host.
+
+    Fix this by introducing a new pte flag, _PAGE_IO, for ioremap()ed
+    pages and exempting such ptes from PROT_NONE translation.
+
+    Based on upstream linux-2.6.18-xen.hg changesets 488 and 492:
+
+      xen, x86: Track foreign and I/O mappings with a new pte flag, and do
+      not subject such ptes to conversions to/from pseudophysical addresses.
+
+    and
+
+      xen, i386: Fix non-PAE build failure.
+
+    but modified on x86_64 to use the second os-available pte bit, 0x400
+    instead of 0x200, for _PAGE_IO --- the bit used upstream is already used
+    for _PAGE_SOFTDIRTY in the non-upstream RHEL-specific patch,
+    linux-2.6-x86_64-dirty-page-tracking.patch.
+
+    Signed-off-by: Stephen Tweedie <sct@redhat.com>
+
+Acked-by: Chris Lalancette <clalance@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+
+diff --git a/arch/i386/mm/ioremap-xen.c b/arch/i386/mm/ioremap-xen.c
+index b9d379a..5f69a4c 100644
+--- a/arch/i386/mm/ioremap-xen.c
++++ b/arch/i386/mm/ioremap-xen.c
+@@ -76,7 +76,7 @@ static int __direct_remap_pfn_range(struct mm_struct *mm,
+ 		 * Fill in the machine address: PTE ptr is done later by
+ 		 * apply_to_page_range(). 
+ 		 */
+-		v->val = pte_val_ma(pfn_pte_ma(mfn, prot));
++		v->val = pte_val_ma(pfn_pte_ma(mfn, prot)) | _PAGE_IO;
+ 
+ 		mfn++;
+ 		address += PAGE_SIZE; 
+diff --git a/include/asm-i386/mach-xen/asm/page.h b/include/asm-i386/mach-xen/asm/page.h
+index b16b28b..4756ccc 100644
+--- a/include/asm-i386/mach-xen/asm/page.h
++++ b/include/asm-i386/mach-xen/asm/page.h
+@@ -36,6 +36,7 @@
+  * below. The preprocessor will warn if the two definitions aren't identical.
+  */
+ #define _PAGE_PRESENT	0x001
++#define _PAGE_IO	0x200
+ 
+ #define arch_free_page(_page,_order)			\
+ ({	int foreign = PageForeign(_page);		\
+@@ -88,8 +89,9 @@ typedef struct { unsigned long long pgd; } pgd_t;
+ typedef struct { unsigned long long pgprot; } pgprot_t;
+ #define pgprot_val(x)	((x).pgprot)
+ #include <asm/maddr.h>
+-#define __pte(x) ({ unsigned long long _x = (x);        \
+-    if (_x & _PAGE_PRESENT) _x = pte_phys_to_machine(_x);   \
++#define __pte(x) ({ unsigned long long _x = (x);			\
++    if ((_x & (_PAGE_PRESENT|_PAGE_IO)) == _PAGE_PRESENT)		\
++        _x = pte_phys_to_machine(_x);					\
+     ((pte_t) {(unsigned long)(_x), (unsigned long)(_x>>32)}); })
+ #define __pgd(x) ({ unsigned long long _x = (x); \
+     (pgd_t) {((_x) & _PAGE_PRESENT) ? pte_phys_to_machine(_x) : (_x)}; })
+@@ -103,7 +105,8 @@ static inline unsigned long long pte_val_ma(pte_t x)
+ static inline unsigned long long pte_val(pte_t x)
+ {
+ 	unsigned long long ret = pte_val_ma(x);
+-	if (x.pte_low & _PAGE_PRESENT) ret = pte_machine_to_phys(ret);
++	if ((x.pte_low & (_PAGE_PRESENT|_PAGE_IO)) == _PAGE_PRESENT)
++		ret = pte_machine_to_phys(ret);
+ 	return ret;
+ }
+ static inline unsigned long long pmd_val(pmd_t x)
+@@ -130,13 +133,16 @@ typedef struct { unsigned long pgprot; } pgprot_t;
+ #define pgprot_val(x)	((x).pgprot)
+ #include <asm/maddr.h>
+ #define boot_pte_t pte_t /* or would you rather have a typedef */
+-#define pte_val(x)	(((x).pte_low & _PAGE_PRESENT) ? \
+-			 machine_to_phys((x).pte_low) : \
++#define pte_val(x)	((((x).pte_low & (_PAGE_PRESENT|_PAGE_IO)) \
++			 == _PAGE_PRESENT) ?			   \
++			 machine_to_phys((x).pte_low) :		   \
+ 			 (x).pte_low)
+ #define pte_val_ma(x)	((x).pte_low)
+ #define __pte_val(x)	pte_val_ma(x)
+-#define __pte(x) ({ unsigned long _x = (x); \
+-    (pte_t) {((_x) & _PAGE_PRESENT) ? phys_to_machine(_x) : (_x)}; })
++#define __pte(x) ({ unsigned long _x = (x);			\
++    if ((_x & (_PAGE_PRESENT|_PAGE_IO)) == _PAGE_PRESENT)	\
++        _x = phys_to_machine(_x);				\
++    ((pte_t) { _x }); })
+ #define __pgd(x) ({ unsigned long _x = (x); \
+     (pgd_t) {((_x) & _PAGE_PRESENT) ? phys_to_machine(_x) : (_x)}; })
+ static inline unsigned long pgd_val(pgd_t x)
+diff --git a/include/asm-i386/mach-xen/asm/pgtable-2level.h b/include/asm-i386/mach-xen/asm/pgtable-2level.h
+index f7250a3..2694758 100644
+--- a/include/asm-i386/mach-xen/asm/pgtable-2level.h
++++ b/include/asm-i386/mach-xen/asm/pgtable-2level.h
+@@ -41,8 +41,10 @@
+ #define __pte_mfn(_pte) ((_pte).pte_low >> PAGE_SHIFT)
+ #define pte_mfn(_pte) ((_pte).pte_low & _PAGE_PRESENT ? \
+ 	__pte_mfn(_pte) : pfn_to_mfn(__pte_mfn(_pte)))
+-#define pte_pfn(_pte) ((_pte).pte_low & _PAGE_PRESENT ? \
+-	mfn_to_local_pfn(__pte_mfn(_pte)) : __pte_mfn(_pte))
++#define pte_pfn(_pte) ((_pte).pte_low & _PAGE_IO ? max_mapnr :	\
++		       (_pte).pte_low & _PAGE_PRESENT ?		\
++		       mfn_to_local_pfn(__pte_mfn(_pte)) :	\
++		       __pte_mfn(_pte))
+ 
+ #define pte_page(_pte) pfn_to_page(pte_pfn(_pte))
+ 
+diff --git a/include/asm-i386/mach-xen/asm/pgtable-3level.h b/include/asm-i386/mach-xen/asm/pgtable-3level.h
+index 8747c52..84f787f 100644
+--- a/include/asm-i386/mach-xen/asm/pgtable-3level.h
++++ b/include/asm-i386/mach-xen/asm/pgtable-3level.h
+@@ -149,8 +149,10 @@ static inline int pte_none(pte_t pte)
+ 			 ((_pte).pte_high << (32-PAGE_SHIFT)))
+ #define pte_mfn(_pte) ((_pte).pte_low & _PAGE_PRESENT ? \
+ 	__pte_mfn(_pte) : pfn_to_mfn(__pte_mfn(_pte)))
+-#define pte_pfn(_pte) ((_pte).pte_low & _PAGE_PRESENT ? \
+-	mfn_to_local_pfn(__pte_mfn(_pte)) : __pte_mfn(_pte))
++#define pte_pfn(_pte) ((_pte).pte_low & _PAGE_IO ? max_mapnr :	\
++		       (_pte).pte_low & _PAGE_PRESENT ?		\
++		       mfn_to_local_pfn(__pte_mfn(_pte)) :	\
++		       __pte_mfn(_pte))
+ 
+ extern unsigned long long __supported_pte_mask;
+ 
+diff --git a/include/asm-i386/mach-xen/asm/pgtable.h b/include/asm-i386/mach-xen/asm/pgtable.h
+index 8e03275..05b6e71 100644
+--- a/include/asm-i386/mach-xen/asm/pgtable.h
++++ b/include/asm-i386/mach-xen/asm/pgtable.h
+@@ -130,9 +130,12 @@ void paging_init(void);
+ #define _PAGE_NX	0
+ #endif
+ 
++/* Mapped page is I/O or foreign and has no associated page struct. */
++#define _PAGE_IO	0x200
++
+ #define _PAGE_TABLE	(_PAGE_PRESENT | _PAGE_RW | _PAGE_USER | _PAGE_ACCESSED | _PAGE_DIRTY)
+ #define _KERNPG_TABLE	(_PAGE_PRESENT | _PAGE_RW | _PAGE_ACCESSED | _PAGE_DIRTY)
+-#define _PAGE_CHG_MASK	(PTE_MASK | _PAGE_ACCESSED | _PAGE_DIRTY)
++#define _PAGE_CHG_MASK	(PTE_MASK | _PAGE_ACCESSED | _PAGE_DIRTY | _PAGE_IO)
+ 
+ #define PAGE_NONE \
+ 	__pgprot(_PAGE_PROTNONE | _PAGE_ACCESSED)
+diff --git a/include/asm-x86_64/mach-xen/asm/page.h b/include/asm-x86_64/mach-xen/asm/page.h
+index 50ad81d..084a3bc 100644
+--- a/include/asm-x86_64/mach-xen/asm/page.h
++++ b/include/asm-x86_64/mach-xen/asm/page.h
+@@ -18,6 +18,7 @@
+  * below. The preprocessor will warn if the two definitions aren't identical.
+  */
+ #define _PAGE_PRESENT	0x001
++#define _PAGE_IO	0x400
+ 
+ #define arch_free_page(_page,_order)			\
+ ({	int foreign = PageForeign(_page);		\
+@@ -101,8 +102,9 @@ typedef struct { unsigned long pgd; } pgd_t;
+ 
+ typedef struct { unsigned long pgprot; } pgprot_t;
+ 
+-#define pte_val(x)	(((x).pte & _PAGE_PRESENT) ? \
+-			 pte_machine_to_phys((x).pte) : \
++#define pte_val(x)	((((x).pte & (_PAGE_PRESENT|_PAGE_IO)) \
++			  == _PAGE_PRESENT) ?		       \
++			 pte_machine_to_phys((x).pte) :	       \
+ 			 (x).pte)
+ #define pte_val_ma(x)	((x).pte)
+ 
+@@ -135,7 +137,8 @@ static inline unsigned long pgd_val(pgd_t x)
+ 
+ static inline pte_t __pte(unsigned long x)
+ {
+-	if (x & _PAGE_PRESENT) x = pte_phys_to_machine(x);
++	if ((x & (_PAGE_PRESENT|_PAGE_IO)) == _PAGE_PRESENT)
++		x = pte_phys_to_machine(x);
+ 	return ((pte_t) { (x) });
+ }
+ 
+diff --git a/include/asm-x86_64/mach-xen/asm/pgtable.h b/include/asm-x86_64/mach-xen/asm/pgtable.h
+index bff95f2..f5cfe8e 100644
+--- a/include/asm-x86_64/mach-xen/asm/pgtable.h
++++ b/include/asm-x86_64/mach-xen/asm/pgtable.h
+@@ -229,10 +229,13 @@ static inline pte_t ptep_get_and_clear_full(struct mm_struct *mm, unsigned long
+ #define _PAGE_PROTNONE	0x080	/* If not present */
+ #define _PAGE_NX        (_AC(1,UL)<<_PAGE_BIT_NX)
+ 
++/* Mapped page is I/O or foreign and has no associated page struct. */
++#define _PAGE_IO	0x400
++
+ #define _PAGE_TABLE	(_PAGE_PRESENT | _PAGE_RW | _PAGE_USER | _PAGE_ACCESSED | _PAGE_DIRTY)
+ #define _KERNPG_TABLE	(_PAGE_PRESENT | _PAGE_RW | _PAGE_ACCESSED | _PAGE_DIRTY)
+ 
+-#define _PAGE_CHG_MASK	(PTE_MASK | _PAGE_ACCESSED | _PAGE_DIRTY | _PAGE_SOFTDIRTY)
++#define _PAGE_CHG_MASK	(PTE_MASK | _PAGE_ACCESSED | _PAGE_DIRTY | _PAGE_SOFTDIRTY | _PAGE_IO)
+ 
+ #define PAGE_NONE	__pgprot(_PAGE_PROTNONE | _PAGE_ACCESSED)
+ #define PAGE_SHARED	__pgprot(_PAGE_PRESENT | _PAGE_RW | _PAGE_USER | _PAGE_ACCESSED | _PAGE_NX)
+@@ -325,8 +328,10 @@ static inline unsigned long pud_bad(pud_t pud)
+ #define __pte_mfn(_pte) (((_pte).pte & PTE_MASK) >> PAGE_SHIFT)
+ #define pte_mfn(_pte) ((_pte).pte & _PAGE_PRESENT ? \
+ 	__pte_mfn(_pte) : pfn_to_mfn(__pte_mfn(_pte)))
+-#define pte_pfn(_pte) ((_pte).pte & _PAGE_PRESENT ? \
+-	mfn_to_local_pfn(__pte_mfn(_pte)) : __pte_mfn(_pte))
++#define pte_pfn(_pte) ((_pte).pte & _PAGE_IO ? end_pfn :	\
++		       (_pte).pte & _PAGE_PRESENT ?		\
++		       mfn_to_local_pfn(__pte_mfn(_pte)) :	\
++		       __pte_mfn(_pte))
+ 
+ #define pte_page(x)	pfn_to_page(pte_pfn(x))
+ 

@@ -1,0 +1,60 @@
+From: Simon McGrath <smcgrath@redhat.com>
+Date: Sat, 12 Apr 2008 00:43:40 -0400
+Subject: [misc] ttyS1 loses interrupt and stops transmitting
+Message-id: 48003DFC.9000801@redhat.com
+O-Subject: Re: [Stratus 5.2] ttyS1 lost interrupt and it stops transmitting: - Last minute patch, PLEASE REVIEW
+Bugzilla: 440121
+
+Description:
+------------
+
+Writes to /dev/ttyS1 frequently stall.  Analysis shows the 8250 driver
+incorrectly detects the device as a 16550A with the UART_BUG_TXEN bug.  Only
+on SMP systems is this bug is exposed.  When we boot with maxcpus=1 the problem
+does not occur.
+
+The patch fixes SMP races between the 8250 interrupt service routine (ISR)
+and non-ISR code when they access the IIR register of the UART.
+
+RHBZ#:
+------
+440121
+
+RHEL Version Found:
+------------------
+RHEL 5.2
+
+kABI Status:
+------------
+No symbols are implicated
+
+Test Status:
+-------------
+Stratus tested using kernel-2.6.18-87.el5 modified to take the irq_info lock
+during the quick test for UART_BUG_TXEN.  This ran overnight and that change (shown
+below) fixed our problem, plus we did not see any "irq %d nobody cared"
+messages.
+---------------------------------------------------------------
+
+diff --git a/drivers/serial/8250.c b/drivers/serial/8250.c
+index f7c9f23..85d29a1 100644
+--- a/drivers/serial/8250.c
++++ b/drivers/serial/8250.c
+@@ -1779,11 +1779,17 @@ static int serial8250_startup(struct uart_port *port)
+ 	 * Do a quick test to see if we receive an
+ 	 * interrupt when we enable the TX irq.
+ 	 */
++	if (is_real_interrupt(up->port.irq))
++		spin_lock(&irq_lists[up->port.irq].lock);
++
+ 	serial_outp(up, UART_IER, UART_IER_THRI);
+ 	lsr = serial_in(up, UART_LSR);
+ 	iir = serial_in(up, UART_IIR);
+ 	serial_outp(up, UART_IER, 0);
+ 
++	if (is_real_interrupt(up->port.irq))
++		spin_unlock(&irq_lists[up->port.irq].lock);
++
+ 	if (lsr & UART_LSR_TEMT && iir & UART_IIR_NO_INT) {
+ 		if (!(up->bugs & UART_BUG_TXEN)) {
+ 			up->bugs |= UART_BUG_TXEN;

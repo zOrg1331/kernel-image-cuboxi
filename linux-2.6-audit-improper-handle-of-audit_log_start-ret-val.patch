@@ -1,0 +1,104 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH -v2] BZ 335731 improper handling of audit_log_start 	return values
+Date: Thu, 18 Oct 2007 10:54:18 -0400
+Bugzilla: 335731
+Message-Id: <1192719258.2907.9.camel@localhost.localdomain>
+Changelog: [audit] improper handling of audit_log_start return values
+
+
+BZ 335731
+
+audit_log_start() can return NULL for a couple of reasons.  One of them
+being that the configuration explicitly decided to exclude that record
+type.  All of the audit_log_* functions correctly handle a NULL
+audit_buffer being passed to them.  In this case the code was assuming
+that a NULL buffer was always an error and was returning an error.  If
+the NULL return is for some reason or than an explicit exclude config
+audit_log_start() will call into the audit panic code.
+
+This patch fixes 4 places where we assume a null audit_buffer is a
+problem and return an error.  It fixes a problem where audit panic
+can get called incorrectly if OBJ_PID records are explicitly excluded.
+It also fixes a tiny memory leak on a rarely used code path if you
+exclude the right (wrong?) record type.
+
+Testing is pretty easy start auditd
+
+auditctl -D
+auditctl -a exclude,always -F "msgtype=CONFIG_CHANGE"
+auditctl -a exclude,always -F "msgtype=OBJ_PID"
+auditctl -a exit,always -S kill
+
+auditctl -b 4096
+kill [any pid]
+
+Both of these last 2 commands will cause audit problems.  The auditctl
+-b 4096 will fail with a -ENOMEM and will not be changed.  The kill [any
+pid] will work and the OBJ_PID record will not be logged, but it will
+call into the audit panic code and will give an error in dmesg like:
+audit: error converting sid to string.  If this is a system set to panic
+on audit errors this would panic the box.  
+
+The solution is simple.  Don't check return values.
+
+--- linux-2.6.18.i686/kernel/audit.c
++++ linux-2.6.18-5.1/kernel/audit.c
+@@ -252,8 +252,6 @@ static int audit_set_rate_limit(int limi
+ 		struct audit_buffer *ab;
+ 
+ 		ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE);
+-		if (!ab)
+-			return -ENOMEM;
+ 		audit_log_format(ab, "audit_rate_limit=%d old=%d by auid=%u",
+ 				limit, old, loginuid);
+ 		if (sid) {
+@@ -292,8 +290,6 @@ static int audit_set_backlog_limit(int l
+ 		struct audit_buffer *ab;
+ 
+ 		ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE);
+-		if (!ab)
+-			return -ENOMEM;
+ 		audit_log_format(ab, "audit_backlog_limit=%d old=%d by auid=%u",
+ 				limit, old, loginuid);
+ 		if (sid) {
+@@ -335,8 +331,6 @@ static int audit_set_enabled(int state, 
+ 		struct audit_buffer *ab;
+ 
+ 		ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE);
+-		if (!ab)
+-			return -ENOMEM;
+ 		audit_log_format(ab, "audit_enabled=%d old=%d by auid=%u",
+ 				state, old, loginuid);
+ 		if (sid) {
+@@ -380,8 +374,6 @@ static int audit_set_failure(int state, 
+ 		struct audit_buffer *ab;
+ 
+ 		ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE);
+-		if (!ab)
+-			return -ENOMEM;
+ 		audit_log_format(ab, "audit_failure=%d old=%d by auid=%u",
+ 				state, old, loginuid);
+ 		if (sid) {
+@@ -795,8 +787,6 @@ static int audit_receive_msg(struct sk_b
+ 		err = audit_tag_tree(old, new);
+ 
+ 		ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE);
+-		if (!ab)
+-			break;
+ 		audit_log_format(ab, "auid=%u", loginuid);
+ 		if (sid) {
+ 			u32 len;
+--- linux-2.6.18.i686/kernel/auditsc.c
++++ linux-2.6.18-5.1/kernel/auditsc.c
+@@ -926,8 +926,9 @@ static int audit_log_pid_context(struct 
+ 	int rc = 0;
+ 
+ 	ab = audit_log_start(context, GFP_KERNEL, AUDIT_OBJ_PID);
++	/* audit_panic called if needed, don't make caller panic as well */
+ 	if (!ab)
+-		return 1;
++		return 0;
+ 
+ 	if (selinux_ctxid_to_string(sid, &s, &len)) {
+ 		audit_log_format(ab, "opid=%d obj=(none)", pid);
+

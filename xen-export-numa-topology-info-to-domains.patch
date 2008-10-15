@@ -1,0 +1,339 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Thu, 20 Dec 2007 14:47:19 -0500
+Subject: [xen] export NUMA topology info to domains
+Message-id: 476AC6C7.8040307@redhat.com
+O-Subject: Re: [RHEL5.2 PATCH]: 2/2: NUMA xen tools and hypervisor fixes
+Bugzilla: 235848
+
+This patch addresses:
+
+  BZ 235848: LTC33765: 200938: Xen Hypervisor - Export NUMA topology info to domains
+
+This extends XEN_SYSCTL_physinfo hypercall so that it can also include
+information about the NUMA cpu node mappings.
+
+This change is derived from:
+
+  changeset:   15482:89d2192942be
+  user:        kfraser@localhost.localdomain
+  date:        Fri Jul 06 16:12:07 2007 +0100
+  description:
+  Extended the physinfo sysctl to export NUMA cpu_to_node topology info.
+  Print this in 'xm info'.
+  Signed-off-by: Ryan Harper <ryanh@us.ibm.com>
+  Signed-off-by: Keir Fraser <keir@xensource.com>
+
+The upstream change increments the XEN_SYSCTL_INTERFACE_VERSION number
+in the public headers. This means that if you run existing RHEL-5.1
+userspace with the upstream change apply *all* sysctl hypercalls will
+fail. This is obviously unacceptable for RHEL-5.1
+
+So the patch attached does *NOT* change XEN_SYSCTL_INTERFACE_VERSION in
+the public headers. It will also *NOT* fill in the NUMA info by default.
+So in the case an old userspace running this patch is effectively no
+functional change.
+
+Instead we whitelist use of the XEN_SYSCTL_physinfo hypercall with the new
+XEN_SYSCTL_INTERFACE_VERSION:
+
+ +        if (op->cmd == XEN_SYSCTL_physinfo &&
+ +           op->interface_version == (XEN_SYSCTL_INTERFACE_VERSION+1))
+ +           dprintk(XENLOG_DEBUG, "Allowing physinfo call with newer ABI
+version\n");
+ +        else
+ +            return -EACCES;
+
+So, the result is that we only populate the NUMA map information if there
+is a new userspace explicitly asking for the new ABI. In effect we are
+supporting both the old and the new ABIs at once and can reliably detect
+which to use, defaulting to the old unless explicitly asked otherwise.
+
+ arch/ia64/xen/dom0_ops.c |   73 ++++++++++++++---------------------------------
+ arch/powerpc/sysctl.c    |    6 +--
+ arch/x86/sysctl.c        |   39 +++++++++++++++++++++----
+ common/sysctl.c          |   12 +++++++
+ include/public/sysctl.h  |   18 +++++++++++
+ include/xen/cpumask.h    |    9 +++++
+ 6 files changed, 96 insertions(+), 61 deletions(-)
+
+Dan.
+--
+|=- Red Hat, Engineering, Emerging Technologies, Boston.  +1 978 392 2496 -=|
+|=-           Perl modules: http://search.cpan.org/~danberr/              -=|
+|=-               Projects: http://freshmeat.net/~danielpb/               -=|
+|=-  GnuPG: 7D3B9505   F3C9 553F A1DA 4AC2 5648 23C1 B3DF F742 7D3B 9505  -=|
+
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+
+diff --git a/arch/ia64/xen/dom0_ops.c b/arch/ia64/xen/dom0_ops.c
+index 4671ccd..c2bf6c6 100644
+--- a/arch/ia64/xen/dom0_ops.c
++++ b/arch/ia64/xen/dom0_ops.c
+@@ -240,7 +240,7 @@ long arch_do_sysctl(xen_sysctl_t *op, XEN_GUEST_HANDLE(xen_sysctl_t) u_sysctl)
+ #ifdef IA64_NUMA_PHYSINFO
+         int i;
+         node_data_t *chunks;
+-        u64 *map, cpu_to_node_map[MAX_NUMNODES];
++        uint32_t *map, cpu_to_node_map[NR_CPUS];
+ #endif
+ 
+         xen_sysctl_physinfo_t *pi = &op->u.physinfo;
+@@ -249,11 +249,9 @@ long arch_do_sysctl(xen_sysctl_t *op, XEN_GUEST_HANDLE(xen_sysctl_t) u_sysctl)
+             cpus_weight(cpu_sibling_map[0]);
+         pi->cores_per_socket =
+             cpus_weight(cpu_core_map[0]) / pi->threads_per_core;
+-        pi->sockets_per_node = 
+-            num_online_cpus() / cpus_weight(cpu_core_map[0]);
+-#ifndef IA64_NUMA_PHYSINFO
+-        pi->nr_nodes         = 1; 
+-#endif
++        pi->nr_nodes         = num_online_nodes();
++        pi->sockets_per_node = num_online_cpus() /
++            (pi->nr_nodes * pi->cores_per_socket * pi->threads_per_core);
+         pi->total_pages      = total_pages; 
+         pi->free_pages       = avail_domheap_pages();
+         pi->scrub_pages      = avail_scrub_pages();
+@@ -263,57 +261,30 @@ long arch_do_sysctl(xen_sysctl_t *op, XEN_GUEST_HANDLE(xen_sysctl_t) u_sysctl)
+         ret = 0;
+ 
+ #ifdef IA64_NUMA_PHYSINFO
+-        /* fetch memory_chunk pointer from guest */
+-        get_xen_guest_handle(chunks, pi->memory_chunks);
+-
+-        printk("chunks=%p, num_node_memblks=%u\n", chunks, num_node_memblks);
+-        /* if it is set, fill out memory chunk array */
+-        if (chunks != NULL) {
+-            if (num_node_memblks == 0) {
+-                /* Non-NUMA machine.  Put pseudo-values.  */
+-                node_data_t data;
+-                data.node_start_pfn = 0;
+-                data.node_spanned_pages = total_pages;
+-                data.node_id = 0;
+-                /* copy memory chunk structs to guest */
+-                if (copy_to_guest_offset(pi->memory_chunks, 0, &data, 1)) {
+-                    ret = -EFAULT;
+-                    break;
+-                }
+-            } else {
+-                for (i = 0; i < num_node_memblks && i < PUBLIC_MAXCHUNKS; i++) {
+-                    node_data_t data;
+-                    data.node_start_pfn = node_memblk[i].start_paddr >>
+-                                          PAGE_SHIFT;
+-                    data.node_spanned_pages = node_memblk[i].size >> PAGE_SHIFT;
+-                    data.node_id = node_memblk[i].nid;
+-                    /* copy memory chunk structs to guest */
+-                    if (copy_to_guest_offset(pi->memory_chunks, i, &data, 1)) {
++        /*
++         * RHEL5 ABI compat:
++         * Only fill in extended NUMA info if a newer userspace
++         * is talking to us
++         */
++        if (op->interface_version > XEN_SYSCTL_INTERFACE_VERSION)
++        {
++            /* fetch cpu_to_node pointer from guest */
++            get_xen_guest_handle(map, pi->cpu_to_node);
++
++            /* if set, fill out cpu_to_node array */
++            if (map != NULL) {
++                /* copy cpu to node mapping to domU */
++                memset(cpu_to_node_map, 0, sizeof(cpu_to_node_map));
++                for (i = 0; i < num_online_cpus(); i++) {
++                    cpu_to_node_map[i] = cpu_to_node(i);
++                    if (copy_to_guest_offset(pi->cpu_to_node, i,
++                                             &(cpu_to_node_map[i]), 1)) {
+                         ret = -EFAULT;
+                         break;
+                     }
+                 }
+             }
+         }
+-        /* set number of notes */
+-        pi->nr_nodes = num_online_nodes();
+-
+-        /* fetch cpu_to_node pointer from guest */
+-        get_xen_guest_handle(map, pi->cpu_to_node);
+-
+-        /* if set, fill out cpu_to_node array */
+-        if (map != NULL) {
+-            /* copy cpu to node mapping to domU */
+-            memset(cpu_to_node_map, 0, sizeof(cpu_to_node_map));
+-            for (i = 0; i < num_online_cpus(); i++) {
+-                cpu_to_node_map[i] = cpu_to_node(i);
+-                if (copy_to_guest_offset(pi->cpu_to_node, i,
+-                                         &(cpu_to_node_map[i]), 1)) {
+-                    ret = -EFAULT;
+-                    break;
+-                }
+-            }
+-        }
+ #endif
+ 
+         if ( copy_to_guest(u_sysctl, op, 1) )
+diff --git a/arch/powerpc/sysctl.c b/arch/powerpc/sysctl.c
+index 3b25b5f..d7f5b87 100644
+--- a/arch/powerpc/sysctl.c
++++ b/arch/powerpc/sysctl.c
+@@ -45,10 +45,10 @@ long arch_do_sysctl(struct xen_sysctl *sysctl,
+             cpus_weight(cpu_sibling_map[0]);
+         pi->cores_per_socket =
+             cpus_weight(cpu_core_map[0]) / pi->threads_per_core;
+-        pi->sockets_per_node = 
+-            num_online_cpus() / cpus_weight(cpu_core_map[0]);
++        pi->sockets_per_node = num_online_cpus() /
++            (num_online_nodes() * pi->cores_per_socket * pi->threads_per_core);
+ 
+-        pi->nr_nodes         = 1;
++        pi->nr_nodes         = num_online_nodes();
+         pi->total_pages      = total_pages;
+         pi->free_pages       = avail_domheap_pages();
+         pi->cpu_khz          = cpu_khz;
+diff --git a/arch/x86/sysctl.c b/arch/x86/sysctl.c
+index fe4c049..3b646b9 100644
+--- a/arch/x86/sysctl.c
++++ b/arch/x86/sysctl.c
+@@ -23,6 +23,10 @@
+ #include <asm/hvm/hvm.h>
+ #include <asm/hvm/support.h>
+ #include <asm/processor.h>
++#include <asm/numa.h>
++#include <xen/nodemask.h>
++
++#define get_xen_guest_handle(val, hnd)  do { val = (hnd).p; } while (0)
+ 
+ long arch_do_sysctl(
+     struct xen_sysctl *sysctl, XEN_GUEST_HANDLE(xen_sysctl_t) u_sysctl)
+@@ -34,25 +38,48 @@ long arch_do_sysctl(
+ 
+     case XEN_SYSCTL_physinfo:
+     {
++        uint32_t i, max_array_ent;
++
+         xen_sysctl_physinfo_t *pi = &sysctl->u.physinfo;
+ 
+         pi->threads_per_core =
+             cpus_weight(cpu_sibling_map[0]);
+         pi->cores_per_socket =
+             cpus_weight(cpu_core_map[0]) / pi->threads_per_core;
+-        pi->sockets_per_node = 
+-            num_online_cpus() / cpus_weight(cpu_core_map[0]);
++        pi->nr_nodes = num_online_nodes();
++        pi->sockets_per_node = num_online_cpus() /
++            (pi->nr_nodes * pi->cores_per_socket * pi->threads_per_core);
+ 
+-        pi->nr_nodes         = 1;
+         pi->total_pages      = total_pages;
+         pi->free_pages       = avail_domheap_pages();
+         pi->scrub_pages      = avail_scrub_pages();
+         pi->cpu_khz          = cpu_khz;
+         memset(pi->hw_cap, 0, sizeof(pi->hw_cap));
+         memcpy(pi->hw_cap, boot_cpu_data.x86_capability, NCAPINTS*4);
+-        ret = 0;
+-        if ( copy_to_guest(u_sysctl, sysctl, 1) )
+-            ret = -EFAULT;
++
++        max_array_ent = pi->max_cpu_id;
++        pi->max_cpu_id = last_cpu(cpu_online_map);
++        max_array_ent = min_t(uint32_t, max_array_ent, pi->max_cpu_id);
++
++        ret = -EFAULT;
++        /*
++         * RHEL5 ABI compat:
++         * Only fill in extended NUMA info if a newer userspace
++         * is talking to us
++         */
++        if (sysctl->interface_version > XEN_SYSCTL_INTERFACE_VERSION)
++        {
++            if ( !guest_handle_is_null(pi->cpu_to_node) )
++            {
++                for ( i = 0; i <= max_array_ent; i++ )
++                {
++                    uint32_t node = cpu_online(i) ? cpu_to_node(i) : ~0u;
++                    if ( copy_to_guest_offset(pi->cpu_to_node, i, &node, 1) )
++                        break;
++                }
++            }
++        }
++        ret = copy_to_guest(u_sysctl, sysctl, 1) ? -EFAULT : 0;
+     }
+     break;
+     
+diff --git a/common/sysctl.c b/common/sysctl.c
+index 6fabf1d..7f7d6ad 100644
+--- a/common/sysctl.c
++++ b/common/sysctl.c
+@@ -41,7 +41,17 @@ long do_sysctl(XEN_GUEST_HANDLE(xen_sysctl_t) u_sysctl)
+         return -EFAULT;
+ 
+     if ( op->interface_version != XEN_SYSCTL_INTERFACE_VERSION )
+-        return -EACCES;
++    {
++        /*
++         * RHEL5 ABI compat: Allow through physinfo calls with
++         * newer versions for NUMA extensions
++         */
++        if (op->cmd == XEN_SYSCTL_physinfo &&
++            op->interface_version == (XEN_SYSCTL_INTERFACE_VERSION+1))
++            dprintk(XENLOG_DEBUG, "Allowing physinfo call with newer ABI version\n");
++        else
++            return -EACCES;
++    }
+ 
+     spin_lock(&sysctl_lock);
+ 
+diff --git a/include/public/sysctl.h b/include/public/sysctl.h
+index 11f6db5..046042c 100644
+--- a/include/public/sysctl.h
++++ b/include/public/sysctl.h
+@@ -76,6 +76,7 @@ DEFINE_XEN_GUEST_HANDLE(xen_sysctl_tbuf_op_t);
+  */
+ #define XEN_SYSCTL_physinfo          3
+ struct xen_sysctl_physinfo {
++    /* IN variables. */
+     uint32_t threads_per_core;
+     uint32_t cores_per_socket;
+     uint32_t sockets_per_node;
+@@ -85,6 +86,23 @@ struct xen_sysctl_physinfo {
+     uint64_aligned_t free_pages;
+     uint64_aligned_t scrub_pages;
+     uint32_t hw_cap[8];
++
++    /* IN/OUT variables. */
++    /*
++     * IN: maximum addressable entry in the caller-provided cpu_to_node array.
++     * OUT: largest cpu identifier in the system.
++     * If OUT is greater than IN then the cpu_to_node array is truncated!
++     */
++    uint32_t max_cpu_id;
++    /*
++     * If not NULL, this array is filled with node identifier for each cpu.
++     * If a cpu has no node information (e.g., cpu not present) then the
++     * sentinel value ~0u is written.
++     * The size of this array is specified by the caller in @max_cpu_id.
++     * If the actual @max_cpu_id is smaller than the array then the trailing
++     * elements of the array will not be written by the sysctl.
++     */
++    XEN_GUEST_HANDLE_64(uint32_t) cpu_to_node;
+ };
+ typedef struct xen_sysctl_physinfo xen_sysctl_physinfo_t;
+ DEFINE_XEN_GUEST_HANDLE(xen_sysctl_physinfo_t);
+diff --git a/include/xen/cpumask.h b/include/xen/cpumask.h
+index d929620..b257b37 100644
+--- a/include/xen/cpumask.h
++++ b/include/xen/cpumask.h
+@@ -222,6 +222,15 @@ static inline int __next_cpu(int n, const cpumask_t *srcp, int nbits)
+ 	return min_t(int, nbits, find_next_bit(srcp->bits, nbits, n+1));
+ }
+ 
++#define last_cpu(src) __last_cpu(&(src), NR_CPUS)
++static inline int __last_cpu(const cpumask_t *srcp, int nbits)
++{
++       int cpu, pcpu = NR_CPUS;
++       for (cpu = first_cpu(*srcp); cpu < NR_CPUS; cpu = next_cpu(cpu, *srcp))
++               pcpu = cpu;
++       return pcpu;
++}
++
+ #define cpumask_of_cpu(cpu)						\
+ ({									\
+ 	typeof(_unused_cpumask_arg_) m;					\

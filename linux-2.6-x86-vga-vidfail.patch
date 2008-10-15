@@ -1,0 +1,16 @@
+diff -urNp --exclude-from=/home/davej/.exclude linux-910/arch/i386/boot/video.S linux-1000/arch/i386/boot/video.S
+--- linux-910/arch/i386/boot/video.S
++++ linux-1000/arch/i386/boot/video.S
+@@ -126,8 +126,12 @@ video:	pushw	%ds		# We use different seg
+ 	call	mode_set			# Set the mode
+ 	jc	vid1
+ 
++#if 0
+ 	leaw	badmdt, %si			# Invalid mode ID
+ 	call	prtstr
++#else
++	jmp	vid1
++#endif /* CONFIG_VIDEO_IGNORE_BAD_MODE */
+ vid2:	call	mode_menu
+ vid1:
+ #ifdef CONFIG_VIDEO_RETAIN

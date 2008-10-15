@@ -1,0 +1,34 @@
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Date: Thu, 10 Apr 2008 16:21:36 +0200
+Subject: [x86_64] 32-bit address space randomization
+Message-id: 1207837296.13860.4.camel@taijtu
+O-Subject: Re: [PATCH RHEL5.2][BZ 222473] x86_64: address space randomization
+Bugzilla: 213483
+
+Hi,
+
+Jakub spotted an imperfection in the address randomization of 32bit
+processes on 64bit kernels, it would fail to randomize the brk.
+
+It turns out that the ia32_binfmt.c ugliness disables asm-x86_64/elf.h
+and thereby misses __HAVE_ARCH_RANDOMIZE_BRK.
+
+Signed-off-by: Peter Zijlstra <pzijlstr@redhat.com>
+
+Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+diff --git a/arch/x86_64/ia32/ia32_binfmt.c b/arch/x86_64/ia32/ia32_binfmt.c
+index 3dbdf33..b7695d8 100644
+--- a/arch/x86_64/ia32/ia32_binfmt.c
++++ b/arch/x86_64/ia32/ia32_binfmt.c
+@@ -137,6 +137,10 @@ struct elf_prpsinfo
+ #define user user32
+ 
+ #define __ASM_X86_64_ELF_H 1
++
++#define __HAVE_ARCH_RANDOMIZE_BRK
++extern void randomize_brk(unsigned long old_brk);
++
+ #define elf_read_implies_exec(ex, executable_stack)     (executable_stack != EXSTACK_DISABLE_X)
+ //#include <asm/ia32.h>
+ #include <linux/elf.h>

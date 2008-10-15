@@ -1,0 +1,601 @@
+From: luyu <luyu@redhat.com>
+Subject: Re: [RHEL 5.1 PATCH] BZ 233046 getcpu system call
+Date: Sat, 28 Apr 2007 10:06:33 +0800
+Bugzilla: 233046
+Message-Id: <4632AC29.3070109@redhat.com>
+Changelog: [misc] getcpu system call
+
+
+  
+BZ 233046
+
+Recently Fenghua implemented getcpu system call for IPF that is a clean 
+interface to get the CPU and node number a process is running on.
+There is  /proc/<pid>/stat, but that is not a well documented API that 
+can be used in production systems. Andi added a system call in x86-64 
+that does this.
+The implementation includes both sys_getcpu and fsys_getcpu.  
+sys_getcpu patch can be found at:
+   [PATCH] Hook up getcpu system call for IA64
+   http://www.gelato.unsw.edu.au/archives/linux-ia64/0702/19940.html
+fsys_getcpu patch can be found at:
+   [PATCH] fsys_getcpu for IA64
+   http://www.gelato.unsw.edu.au/archives/linux-ia64/0702/19994.html
+Fenghua's patch has been in upstream kernel and his patches are on top 
+of Andi Kleen's getcpu patch:
+    
+
+Thanks,
+Luming
+
+
+diff -BruN linux-2.6.18.ia64/arch/i386/kernel/syscall_table.S linux-2.6.18.ia64-patched/arch/i386/kernel/syscall_table.S
+--- linux-2.6.18.ia64/arch/i386/kernel/syscall_table.S	2007-03-20 18:40:15.000000000 -0400
++++ linux-2.6.18.ia64-patched/arch/i386/kernel/syscall_table.S	2007-03-20 21:53:11.000000000 -0400
+@@ -325,3 +325,4 @@
+ 	.long sys_tee			/* 315 */
+ 	.long sys_vmsplice
+ 	.long sys_move_pages
++	.long sys_getcpu
+diff -BruN linux-2.6.18.ia64/arch/ia64/kernel/asm-offsets.c linux-2.6.18.ia64-patched/arch/ia64/kernel/asm-offsets.c
+--- linux-2.6.18.ia64/arch/ia64/kernel/asm-offsets.c	2007-03-20 18:40:15.000000000 -0400
++++ linux-2.6.18.ia64-patched/arch/ia64/kernel/asm-offsets.c	2007-03-20 19:13:04.000000000 -0400
+@@ -35,6 +35,7 @@
+ 	BLANK();
+ 
+ 	DEFINE(TI_FLAGS, offsetof(struct thread_info, flags));
++	DEFINE(TI_CPU, offsetof(struct thread_info, cpu));
+ 	DEFINE(TI_PRE_COUNT, offsetof(struct thread_info, preempt_count));
+ 
+ 	BLANK();
+diff -BruN linux-2.6.18.ia64/arch/ia64/kernel/entry.S linux-2.6.18.ia64-patched/arch/ia64/kernel/entry.S
+--- linux-2.6.18.ia64/arch/ia64/kernel/entry.S	2007-03-20 18:40:20.000000000 -0400
++++ linux-2.6.18.ia64-patched/arch/ia64/kernel/entry.S	2007-03-20 19:12:57.000000000 -0400
+@@ -1624,5 +1624,7 @@
+ 	data8 sys_sync_file_range		// 1300
+ 	data8 sys_tee
+ 	data8 sys_vmsplice
++	data8 sys_ni_syscall			// reserved for move_pages
++	data8 sys_getcpu
+ 
+ 	.org sys_call_table + 8*NR_syscalls	// guard against failures to increase NR_syscalls
+diff -BruN linux-2.6.18.ia64/arch/ia64/kernel/fsys.S linux-2.6.18.ia64-patched/arch/ia64/kernel/fsys.S
+--- linux-2.6.18.ia64/arch/ia64/kernel/fsys.S	2007-03-20 18:40:14.000000000 -0400
++++ linux-2.6.18.ia64-patched/arch/ia64/kernel/fsys.S	2007-03-20 19:13:04.000000000 -0400
+@@ -10,6 +10,8 @@
+  *			probably broke it along the way... ;-)
+  * 13-Jul-04 clameter   Implement fsys_clock_gettime and revise fsys_gettimeofday to make
+  *                      it capable of using memory based clocks without falling back to C code.
++ * 08-Feb-07 Fenghua Yu Implement fsys_getcpu.
++ *
+  */
+ 
+ #include <asm/asmmacro.h>
+@@ -505,6 +507,59 @@
+ #endif
+ END(fsys_rt_sigprocmask)
+ 
++/*
++ * fsys_getcpu doesn't use the third parameter in this implementation. It reads
++ * current_thread_info()->cpu and corresponding node in cpu_to_node_map.
++ */
++ENTRY(fsys_getcpu)
++	.prologue
++	.altrp b6
++	.body
++	;;
++	add r2=TI_FLAGS+IA64_TASK_SIZE,r16
++	tnat.nz p6,p0 = r32			// guard against NaT argument
++	add r3=TI_CPU+IA64_TASK_SIZE,r16
++	;;
++	ld4 r3=[r3]				// M r3 = thread_info->cpu
++	ld4 r2=[r2]				// M r2 = thread_info->flags
++(p6)    br.cond.spnt.few .fail_einval		// B
++	;;
++	tnat.nz p7,p0 = r33			// I guard against NaT argument
++(p7)    br.cond.spnt.few .fail_einval		// B
++#ifdef CONFIG_NUMA
++	movl r17=cpu_to_node_map
++	;;
++EX(.fail_efault, probe.w.fault r32, 3)		// M This takes 5 cycles
++EX(.fail_efault, probe.w.fault r33, 3)		// M This takes 5 cycles
++	shladd r18=r3,1,r17
++	;;
++	ld2 r20=[r18]				// r20 = cpu_to_node_map[cpu]
++	and r2 = TIF_ALLWORK_MASK,r2
++	;;
++	cmp.ne p8,p0=0,r2
++(p8)	br.spnt.many fsys_fallback_syscall
++	;;
++	;;
++EX(.fail_efault, st4 [r32] = r3)
++EX(.fail_efault, st2 [r33] = r20)
++	mov r8=0
++	;;
++#else
++EX(.fail_efault, probe.w.fault r32, 3)		// M This takes 5 cycles
++EX(.fail_efault, probe.w.fault r33, 3)		// M This takes 5 cycles
++	and r2 = TIF_ALLWORK_MASK,r2
++	;;
++	cmp.ne p8,p0=0,r2
++(p8)	br.spnt.many fsys_fallback_syscall
++	;;
++EX(.fail_efault, st4 [r32] = r3)
++EX(.fail_efault, st2 [r33] = r0)
++	mov r8=0
++	;;
++#endif
++	FSYS_RETURN
++END(fsys_getcpu)
++
+ ENTRY(fsys_fallback_syscall)
+ 	.prologue
+ 	.altrp b6
+@@ -878,6 +933,56 @@
+ 	data8 0				// timer_delete
+ 	data8 0				// clock_settime
+ 	data8 fsys_clock_gettime	// clock_gettime
++	data8 0				// clock_getres		// 1255
++	data8 0				// clock_nanosleep
++	data8 0				// fstatfs64
++	data8 0				// statfs64
++	data8 0				// mbind
++	data8 0				// get_mempolicy	// 1260
++	data8 0				// set_mempolicy
++	data8 0				// mq_open
++	data8 0				// mq_unlink
++	data8 0				// mq_timedsend
++	data8 0				// mq_timedreceive	// 1265
++	data8 0				// mq_notify
++	data8 0				// mq_getsetattr
++	data8 0				// kexec_load
++	data8 0				// vserver
++	data8 0				// waitid		// 1270
++	data8 0				// add_key
++	data8 0				// request_key
++	data8 0				// keyctl
++	data8 0				// ioprio_set
++	data8 0				// ioprio_get		// 1275
++	data8 0				// move_pages
++	data8 0				// inotify_init
++	data8 0				// inotify_add_watch
++	data8 0				// inotify_rm_watch
++	data8 0				// migrate_pages	// 1280
++	data8 0				// openat
++	data8 0				// mkdirat
++	data8 0				// mknodat
++	data8 0				// fchownat
++	data8 0				// futimesat		// 1285
++	data8 0				// newfstatat
++	data8 0				// unlinkat
++	data8 0				// renameat
++	data8 0				// linkat
++	data8 0				// symlinkat		// 1290
++	data8 0				// readlinkat
++	data8 0				// fchmodat
++	data8 0				// faccessat
++	data8 0
++	data8 0							// 1295
++	data8 0				// unshare
++	data8 0				// splice
++	data8 0				// set_robust_list
++	data8 0				// get_robust_list
++	data8 0				// sync_file_range	// 1300
++	data8 0				// tee
++	data8 0				// vmsplice
++	data8 0
++	data8 fsys_getcpu		// getcpu		// 1304
+ 
+ 	// fill in zeros for the remaining entries
+ 	.zero:
+diff -BruN linux-2.6.18.ia64/arch/x86_64/ia32/ia32entry.S linux-2.6.18.ia64-patched/arch/x86_64/ia32/ia32entry.S
+--- linux-2.6.18.ia64/arch/x86_64/ia32/ia32entry.S	2007-03-20 18:40:15.000000000 -0400
++++ linux-2.6.18.ia64-patched/arch/x86_64/ia32/ia32entry.S	2007-03-20 21:53:11.000000000 -0400
+@@ -721,4 +721,5 @@
+ 	.quad sys_tee
+ 	.quad compat_sys_vmsplice
+ 	.quad compat_sys_move_pages
++	.quad sys_getcpu
+ ia32_syscall_end:		
+diff -BruN linux-2.6.18.ia64/arch/x86_64/kernel/head.S linux-2.6.18.ia64-patched/arch/x86_64/kernel/head.S
+--- linux-2.6.18.ia64/arch/x86_64/kernel/head.S	2007-03-20 18:40:20.000000000 -0400
++++ linux-2.6.18.ia64-patched/arch/x86_64/kernel/head.S	2007-04-03 19:54:20.000000000 -0400
+@@ -371,7 +371,7 @@
+ 	.quad	0,0			/* TSS */
+ 	.quad	0,0			/* LDT */
+ 	.quad   0,0,0			/* three TLS descriptors */
+-	.quad	0			/* unused */
++ 	.quad	0x0000f40000000000	/* node/CPU stored in limit */
+ gdt_end:	
+ 	/* asm/segment.h:GDT_ENTRIES must match this */	
+ 	/* This should be a multiple of the cache line size */
+diff -BruN linux-2.6.18.ia64/arch/x86_64/kernel/time.c linux-2.6.18.ia64-patched/arch/x86_64/kernel/time.c
+--- linux-2.6.18.ia64/arch/x86_64/kernel/time.c	2007-03-20 18:40:14.000000000 -0400
++++ linux-2.6.18.ia64-patched/arch/x86_64/kernel/time.c	2007-04-03 19:56:37.000000000 -0400
+@@ -899,13 +899,8 @@
+ time_cpu_notifier(struct notifier_block *nb, unsigned long action, void *hcpu)
+ {
+ 	unsigned cpu = (unsigned long) hcpu;
+-
+-	if (action == CPU_ONLINE && cpu_has(&cpu_data[cpu], X86_FEATURE_RDTSCP)) {
+-		unsigned p;
+-		p = smp_processor_id() | (cpu_to_node(smp_processor_id())<<12);
+-		write_rdtscp_aux(p);
+-	}
+-
++ 	if (action == CPU_ONLINE)
++ 		vsyscall_set_cpu(cpu);
+ 	return NOTIFY_DONE;
+ }
+ 
+@@ -999,6 +994,11 @@
+ 	if (unsynchronized_tsc())
+ 		notsc = 1;
+ 
++ 	if (cpu_has(&boot_cpu_data, X86_FEATURE_RDTSCP))
++		vgetcpu_mode = VGETCPU_RDTSCP;
++	else
++		vgetcpu_mode = VGETCPU_LSL;
++
+ 	if (vxtime.hpet_address && notsc) {
+ 		timetype = hpet_use_timer ? "HPET" : "PIT/HPET";
+ 		if (hpet_use_timer)
+diff -BruN linux-2.6.18.ia64/arch/x86_64/kernel/vmlinux.lds.S linux-2.6.18.ia64-patched/arch/x86_64/kernel/vmlinux.lds.S
+--- linux-2.6.18.ia64/arch/x86_64/kernel/vmlinux.lds.S	2007-03-20 18:40:21.000000000 -0400
++++ linux-2.6.18.ia64-patched/arch/x86_64/kernel/vmlinux.lds.S	2007-03-20 22:16:00.000000000 -0400
+@@ -103,6 +103,9 @@
+   .vxtime : AT(VLOAD(.vxtime)) { *(.vxtime) }
+   vxtime = VVIRT(.vxtime);
+ 
++  .vgetcpu_mode : AT(VLOAD(.vgetcpu_mode)) { *(.vgetcpu_mode) }
++  vgetcpu_mode = VVIRT(.vgetcpu_mode);
++
+   .wall_jiffies : AT(VLOAD(.wall_jiffies)) { *(.wall_jiffies) }
+   wall_jiffies = VVIRT(.wall_jiffies);
+ 
+diff -BruN linux-2.6.18.ia64/arch/x86_64/kernel/vsyscall.c linux-2.6.18.ia64-patched/arch/x86_64/kernel/vsyscall.c
+--- linux-2.6.18.ia64/arch/x86_64/kernel/vsyscall.c	2007-03-20 18:40:20.000000000 -0400
++++ linux-2.6.18.ia64-patched/arch/x86_64/kernel/vsyscall.c	2007-03-20 22:16:30.000000000 -0400
+@@ -26,6 +26,7 @@
+ #include <linux/seqlock.h>
+ #include <linux/jiffies.h>
+ #include <linux/sysctl.h>
++#include <linux/getcpu.h>
+ 
+ #include <asm/vsyscall.h>
+ #include <asm/pgtable.h>
+@@ -33,11 +34,15 @@
+ #include <asm/fixmap.h>
+ #include <asm/errno.h>
+ #include <asm/io.h>
++#include <asm/segment.h>
++#include <asm/desc.h>
++#include <asm/topology.h>
+ 
+ #define __vsyscall(nr) __attribute__ ((unused,__section__(".vsyscall_" #nr)))
+ 
+ int __sysctl_vsyscall __section_sysctl_vsyscall = 1;
+ seqlock_t __xtime_lock __section_xtime_lock = SEQLOCK_UNLOCKED;
++int __vgetcpu_mode __section_vgetcpu_mode;
+ 
+ #include <asm/unistd.h>
+ 
+@@ -133,9 +138,46 @@
+ 	return __xtime.tv_sec;
+ }
+ 
+-long __vsyscall(2) venosys_0(void)
+-{
+-	return -ENOSYS;
++/* Fast way to get current CPU and node.
++   This helps to do per node and per CPU caches in user space.
++   The result is not guaranteed without CPU affinity, but usually
++   works out because the scheduler tries to keep a thread on the same
++   CPU.
++
++   tcache must point to a two element sized long array.
++   All arguments can be NULL. */
++long __vsyscall(2)
++vgetcpu(unsigned *cpu, unsigned *node, struct getcpu_cache *tcache)
++{
++	unsigned int dummy, p;
++	unsigned long j = 0;
++
++	/* Fast cache - only recompute value once per jiffies and avoid
++	   relatively costly rdtscp/cpuid otherwise.
++	   This works because the scheduler usually keeps the process
++	   on the same CPU and this syscall doesn't guarantee its
++	   results anyways.
++	   We do this here because otherwise user space would do it on
++	   its own in a likely inferior way (no access to jiffies).
++	   If you don't like it pass NULL. */
++	if (tcache && tcache->blob[0] == (j = __jiffies)) {
++		p = tcache->blob[1];
++	} else if (__vgetcpu_mode == VGETCPU_RDTSCP) {
++		/* Load per CPU data from RDTSCP */
++		rdtscp(dummy, dummy, p);
++	} else {
++		/* Load per CPU data from GDT */
++		asm("lsl %1,%0" : "=r" (p) : "r" (__PER_CPU_SEG));
++	}
++	if (tcache) {
++		tcache->blob[0] = j;
++		tcache->blob[1] = p;
++	}
++	if (cpu)
++		*cpu = p & 0xfff;
++	if (node)
++		*node = p >> 12;
++	return 0;
+ }
+ 
+ long __vsyscall(3) venosys_1(void)
+@@ -206,6 +248,43 @@
+ 
+ #endif
+ 
++static void __cpuinit write_rdtscp_cb(void *info)
++{
++	write_rdtscp_aux((unsigned long)info);
++}
++
++void __cpuinit vsyscall_set_cpu(int cpu)
++{
++	unsigned long *d;
++	unsigned long node = 0;
++#ifdef CONFIG_NUMA
++	node = cpu_to_node[cpu];
++#endif
++	if (cpu_has(&cpu_data[cpu], X86_FEATURE_RDTSCP)) {
++		void *info = (void *)((node << 12) | cpu);
++		/* Can happen on preemptive kernel */
++		if (get_cpu() == cpu)
++			write_rdtscp_cb(info);
++#ifdef CONFIG_SMP
++		else {
++			/* the notifier is unfortunately not executed on the
++			   target CPU */
++			smp_call_function_single(cpu,write_rdtscp_cb,info,0,1);
++		}
++#endif
++		put_cpu();
++	}
++
++	/* Store cpu number in limit so that it can be loaded quickly
++	   in user space in vgetcpu.
++	   12 bits for the CPU and 8 bits for the node. */
++	d = (unsigned long *)(cpu_gdt(cpu) + GDT_ENTRY_PER_CPU);
++	*d = 0x0f40000000000ULL;
++	*d |= cpu;
++	*d |= (node & 0xf) << 12;
++	*d |= (node >> 4) << 48;
++}
++
+ static void __init map_vsyscall(void)
+ {
+ 	extern char __vsyscall_0;
+@@ -220,6 +299,7 @@
+ 			VSYSCALL_ADDR(__NR_vgettimeofday)));
+ 	BUG_ON((unsigned long) &vtime != VSYSCALL_ADDR(__NR_vtime));
+ 	BUG_ON((VSYSCALL_ADDR(0) != __fix_to_virt(VSYSCALL_FIRST_PAGE)));
++	BUG_ON((unsigned long) &vgetcpu != VSYSCALL_ADDR(__NR_vgetcpu));
+ 	map_vsyscall();
+ #ifdef CONFIG_SYSCTL
+ 	register_sysctl_table(kernel_root_table2, 0);
+diff -BruN linux-2.6.18.ia64/include/asm-i386/unistd.h linux-2.6.18.ia64-patched/include/asm-i386/unistd.h
+--- linux-2.6.18.ia64/include/asm-i386/unistd.h	2007-03-20 18:40:15.000000000 -0400
++++ linux-2.6.18.ia64-patched/include/asm-i386/unistd.h	2007-03-20 21:53:11.000000000 -0400
+@@ -323,10 +323,11 @@
+ #define __NR_tee		315
+ #define __NR_vmsplice		316
+ #define __NR_move_pages		317
++#define __NR_getcpu		318
+ 
+ #ifdef __KERNEL__
+ 
+-#define NR_syscalls 318
++#define NR_syscalls 319
+ 
+ #ifndef __KERNEL_SYSCALLS_NO_ERRNO__
+ /*
+diff -BruN linux-2.6.18.ia64/include/asm-ia64/unistd.h linux-2.6.18.ia64-patched/include/asm-ia64/unistd.h
+--- linux-2.6.18.ia64/include/asm-ia64/unistd.h	2007-03-20 18:40:15.000000000 -0400
++++ linux-2.6.18.ia64-patched/include/asm-ia64/unistd.h	2007-03-20 19:12:57.000000000 -0400
+@@ -291,11 +291,13 @@
+ #define __NR_sync_file_range		1300
+ #define __NR_tee			1301
+ #define __NR_vmsplice			1302
++/* 1303 reserved for move_pages */
++#define __NR_getcpu			1304
+ 
+ #ifdef __KERNEL__
+ 
+ 
+-#define NR_syscalls			279 /* length of syscall table */
++#define NR_syscalls			281 /* length of syscall table */
+ 
+ #define __ARCH_WANT_SYS_RT_SIGACTION
+ 
+diff -BruN linux-2.6.18.ia64/include/asm-x86_64/segment.h linux-2.6.18.ia64-patched/include/asm-x86_64/segment.h
+--- linux-2.6.18.ia64/include/asm-x86_64/segment.h	2007-03-20 18:40:20.000000000 -0400
++++ linux-2.6.18.ia64-patched/include/asm-x86_64/segment.h	2007-04-03 19:52:47.000000000 -0400
+@@ -25,10 +25,12 @@
+ #define GDT_ENTRY_LDT 10 /* needs two entries */
+ #define GDT_ENTRY_TLS_MIN 12
+ #define GDT_ENTRY_TLS_MAX 14
+-/* 15 free */
+ 
+ #define GDT_ENTRY_TLS_ENTRIES 3
+ 
++#define GDT_ENTRY_PER_CPU 15	/* Abused to load per CPU data from limit */
++#define __PER_CPU_SEG	(GDT_ENTRY_PER_CPU * 8 + 3)
++
+ /* TLS indexes for 64bit - hardcoded in arch_prctl */
+ #define FS_TLS 0	
+ #define GS_TLS 1	
+diff -BruN linux-2.6.18.ia64/include/asm-x86_64/smp.h linux-2.6.18.ia64-patched/include/asm-x86_64/smp.h
+--- linux-2.6.18.ia64/include/asm-x86_64/smp.h	2007-03-20 18:40:21.000000000 -0400
++++ linux-2.6.18.ia64-patched/include/asm-x86_64/smp.h	2007-03-20 22:16:00.000000000 -0400
+@@ -131,13 +131,19 @@
+ 	/* we don't want to mark this access volatile - bad code generation */
+ 	return GET_APIC_LOGICAL_ID(*(unsigned long *)(APIC_BASE+APIC_LDR));
+ }
+-#endif
+ 
+ #ifdef CONFIG_SMP
+ #define cpu_physical_id(cpu)		x86_cpu_to_apicid[cpu]
+ #else
+ #define cpu_physical_id(cpu)		boot_cpu_id
+-#endif
+-
++static inline int smp_call_function_single(int cpuid, void (*func) (void *info),
++				void *info, int retry, int wait)
++{
++	/* Disable interrupts here? */
++	func(info);
++	return 0;
++}
++#endif /* !CONFIG_SMP */
++#endif /* !__ASSEMBLY */
+ #endif
+ 
+diff -BruN linux-2.6.18.ia64/include/asm-x86_64/vsyscall.h linux-2.6.18.ia64-patched/include/asm-x86_64/vsyscall.h
+--- linux-2.6.18.ia64/include/asm-x86_64/vsyscall.h	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.ia64-patched/include/asm-x86_64/vsyscall.h	2007-03-20 22:16:00.000000000 -0400
+@@ -4,6 +4,7 @@
+ enum vsyscall_num {
+ 	__NR_vgettimeofday,
+ 	__NR_vtime,
++	__NR_vgetcpu,
+ };
+ 
+ #define VSYSCALL_START (-10UL << 20)
+@@ -15,6 +16,7 @@
+ #include <linux/seqlock.h>
+ 
+ #define __section_vxtime __attribute__ ((unused, __section__ (".vxtime"), aligned(16)))
++#define __section_vgetcpu_mode __attribute__ ((unused, __section__ (".vgetcpu_mode"), aligned(16)))
+ #define __section_wall_jiffies __attribute__ ((unused, __section__ (".wall_jiffies"), aligned(16)))
+ #define __section_jiffies __attribute__ ((unused, __section__ (".jiffies"), aligned(16)))
+ #define __section_sys_tz __attribute__ ((unused, __section__ (".sys_tz"), aligned(16)))
+@@ -26,6 +28,9 @@
+ #define VXTIME_HPET	2
+ #define VXTIME_PMTMR	3
+ 
++#define VGETCPU_RDTSCP	1
++#define VGETCPU_LSL	2
++
+ struct vxtime_data {
+ 	long hpet_address;	/* HPET base address */
+ 	int last;
+@@ -40,6 +45,7 @@
+ 
+ /* vsyscall space (readonly) */
+ extern struct vxtime_data __vxtime;
++extern int __vgetcpu_mode;
+ extern struct timespec __xtime;
+ extern volatile unsigned long __jiffies;
+ extern unsigned long __wall_jiffies;
+@@ -48,6 +54,7 @@
+ 
+ /* kernel space (writeable) */
+ extern struct vxtime_data vxtime;
++extern int vgetcpu_mode;
+ extern unsigned long wall_jiffies;
+ extern struct timezone sys_tz;
+ extern int sysctl_vsyscall;
+@@ -55,6 +62,8 @@
+ 
+ extern int sysctl_vsyscall;
+ 
++extern void vsyscall_set_cpu(int cpu);
++
+ #define ARCH_HAVE_XTIME_LOCK 1
+ 
+ #endif /* __KERNEL__ */
+diff -BruN linux-2.6.18.ia64/include/linux/getcpu.h linux-2.6.18.ia64-patched/include/linux/getcpu.h
+--- linux-2.6.18.ia64/include/linux/getcpu.h	1969-12-31 19:00:00.000000000 -0500
++++ linux-2.6.18.ia64-patched/include/linux/getcpu.h	2007-03-20 22:16:30.000000000 -0400
+@@ -0,0 +1,18 @@
++#ifndef _LINUX_GETCPU_H
++#define _LINUX_GETCPU_H 1
++
++/* Cache for getcpu() to speed it up. Results might be a short time
++   out of date, but will be faster.
++
++   User programs should not refer to the contents of this structure.
++   I repeat they should not refer to it. If they do they will break
++   in future kernels.
++
++   It is only a private cache for vgetcpu(). It will change in future kernels.
++   The user program must store this information per thread (__thread)
++   If you want 100% accurate information pass NULL instead. */
++struct getcpu_cache {
++	unsigned long blob[128 / sizeof(long)];
++};
++
++#endif
+diff -BruN linux-2.6.18.ia64/include/linux/syscalls.h linux-2.6.18.ia64-patched/include/linux/syscalls.h
+--- linux-2.6.18.ia64/include/linux/syscalls.h	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.ia64-patched/include/linux/syscalls.h	2007-03-20 21:53:11.000000000 -0400
+@@ -53,6 +53,7 @@
+ struct compat_stat;
+ struct compat_timeval;
+ struct robust_list_head;
++struct getcpu_cache;
+ 
+ #include <linux/types.h>
+ #include <linux/aio_abi.h>
+@@ -596,5 +597,6 @@
+ 				    size_t __user *len_ptr);
+ asmlinkage long sys_set_robust_list(struct robust_list_head __user *head,
+ 				    size_t len);
++asmlinkage long sys_getcpu(unsigned *cpu, unsigned *node, struct getcpu_cache *cache);
+ 
+ #endif
+diff -BruN linux-2.6.18.ia64/kernel/sys.c linux-2.6.18.ia64-patched/kernel/sys.c
+--- linux-2.6.18.ia64/kernel/sys.c	2007-03-20 18:40:14.000000000 -0400
++++ linux-2.6.18.ia64-patched/kernel/sys.c	2007-03-20 22:16:30.000000000 -0400
+@@ -28,6 +28,7 @@
+ #include <linux/tty.h>
+ #include <linux/signal.h>
+ #include <linux/cn_proc.h>
++#include <linux/getcpu.h>
+ 
+ #include <linux/compat.h>
+ #include <linux/syscalls.h>
+@@ -2062,3 +2063,33 @@
+ 	}
+ 	return error;
+ }
++
++asmlinkage long sys_getcpu(unsigned __user *cpup, unsigned __user *nodep,
++	   		   struct getcpu_cache __user *cache)
++{
++	int err = 0;
++	int cpu = raw_smp_processor_id();
++	if (cpup)
++		err |= put_user(cpu, cpup);
++	if (nodep)
++		err |= put_user(cpu_to_node(cpu), nodep);
++	if (cache) {
++		/*
++		 * The cache is not needed for this implementation,
++		 * but make sure user programs pass something
++		 * valid. vsyscall implementations can instead make
++		 * good use of the cache. Only use t0 and t1 because
++		 * these are available in both 32bit and 64bit ABI (no
++		 * need for a compat_getcpu). 32bit has enough
++		 * padding
++		 */
++		unsigned long t0, t1;
++		get_user(t0, &cache->blob[0]);
++		get_user(t1, &cache->blob[1]);
++		t0++;
++		t1++;
++		put_user(t0, &cache->blob[0]);
++		put_user(t1, &cache->blob[1]);
++	}
++	return err ? -EFAULT : 0;
++}
+

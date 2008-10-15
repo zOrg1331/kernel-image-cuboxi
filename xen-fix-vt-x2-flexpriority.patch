@@ -1,0 +1,109 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Wed, 16 Apr 2008 08:41:17 -0400
+Subject: [xen] fix VT-x2 FlexPriority
+Message-id: 20080416124117.4800.46884.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH] Xen Fix VT-x2 FlexPriority (vTPR)
+Bugzilla: 252236
+
+Fixes bz 252236
+
+https://bugzilla.redhat.com/show_bug.cgi?id=252236
+
+The Intel feature request for VT-x2 FlexPriority (aka vTPR)
+was incorporated into RHEL 5.2 automatically due to the rebase
+to the 3.1.2 Hypervisor. However, there was a patch specified
+in the BZ that was not part of 3.1.2 and is needed to prevent
+Windows guests from 'blue screening'.
+
+Code is upstream in 3.1 cset 15572, located at
+
+http://xenbits.xensource.com/staging/xen-3.1-testing.hg?rev/690a80169633
+
+This patch is a slight variation of that patch since 15572 relied
+upon some changes made in other post 3.1.2 patches. This modification
+was provided by Intel.
+
+It has been brew built and tested out locally. QA has been
+asked to give it some mileage as well.
+
+Please review and ACK.
+
+Thanks,
+ Bill
+
+Derived from n 3.1-testing changeset 15572
+author: 	Keir Fraser <keir.fraser@citrix.com>
+date: 	Thu Dec 27 22:57:41 2007 +0000
+
+description: 	vmx: Do not allow emulated accesses to the vlapic mmap'ed 'magic
+page'.
+
+This is the equivalent of:
+xen-unstable changeset: 16663:d5f0afb58589
+xen-unstable date: Thu Dec 27 12:03:02 2007 +0000
+
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Chris Lalancette <clalance@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+
+diff --git a/arch/x86/hvm/hvm.c b/arch/x86/hvm/hvm.c
+index 00c1c86..208f14b 100644
+--- a/arch/x86/hvm/hvm.c
++++ b/arch/x86/hvm/hvm.c
+@@ -240,6 +240,8 @@ int hvm_domain_initialise(struct domain *d)
+         return -EINVAL;
+     }
+ 
++    d->arch.hvm_domain.vmx_apic_access_mfn = INVALID_MFN;
++
+     spin_lock_init(&d->arch.hvm_domain.pbuf_lock);
+     spin_lock_init(&d->arch.hvm_domain.irq_lock);
+     spin_lock_init(&d->arch.hvm_domain.vapic_access_lock);
+@@ -598,7 +600,8 @@ static int __hvm_copy(void *buf, paddr_t addr, int size, int dir, int virt)
+         
+         mfn = get_mfn_from_gpfn(gfn);
+ 
+-        if ( mfn == INVALID_MFN )
++        if ( (mfn == current->domain->arch.hvm_domain.vmx_apic_access_mfn) ||
++             (mfn == INVALID_MFN) )
+             return todo;
+ 
+         p = (char *)map_domain_page(mfn) + (addr & ~PAGE_MASK);
+diff --git a/arch/x86/hvm/vmx/vmx.c b/arch/x86/hvm/vmx/vmx.c
+index 777a7b3..51b058d 100644
+--- a/arch/x86/hvm/vmx/vmx.c
++++ b/arch/x86/hvm/vmx/vmx.c
+@@ -2655,6 +2655,7 @@ struct page_info * change_guest_physmap_for_vtpr(struct domain *d,
+ 
+         mfn = page_to_mfn(pg);
+         d->arch.hvm_domain.apic_access_page = pg;
++        d->arch.hvm_domain.vmx_apic_access_mfn = mfn;
+ 
+         guest_physmap_add_page(d, pfn, mfn);
+ 
+diff --git a/arch/x86/mm/shadow/multi.c b/arch/x86/mm/shadow/multi.c
+index 2279451..271d124 100644
+--- a/arch/x86/mm/shadow/multi.c
++++ b/arch/x86/mm/shadow/multi.c
+@@ -4012,7 +4012,8 @@ static inline void * emulate_map_dest(struct vcpu *v,
+     if ( !(flags & _PAGE_RW) ) 
+         goto page_fault;
+ 
+-    if ( mfn_valid(mfn) )
++    if ( mfn_valid(mfn) &&
++         (mfn_x(mfn) != v->domain->arch.hvm_domain.vmx_apic_access_mfn) )
+     {
+         *mfnp = mfn;
+         v->arch.paging.last_write_was_pt = !!sh_mfn_is_a_page_table(mfn);
+diff --git a/include/asm-x86/hvm/domain.h b/include/asm-x86/hvm/domain.h
+index 3c8d54e..50802b3 100644
+--- a/include/asm-x86/hvm/domain.h
++++ b/include/asm-x86/hvm/domain.h
+@@ -45,6 +45,7 @@ struct hvm_domain {
+     spinlock_t             vapic_access_lock;
+     int                    physmap_changed_for_vlapic_access : 1;
+     struct page_info       *apic_access_page;
++    unsigned long          vmx_apic_access_mfn;
+ 
+     struct hvm_io_handler  io_handler;
+ 

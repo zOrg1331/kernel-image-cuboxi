@@ -1,0 +1,29 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 11 Dec 2007 10:05:56 -0500
+Subject: [fs] cifs: fix error message about packet signing
+Message-id: 1197385560-21991-12-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.2 PATCH 11/15] BZ#417961: [CIFS] fix error message about packet signing
+Bugzilla: 417961
+
+When packet signing is disabled and the server requires it, cifs prints
+an error message. The current message refers to a file in /proc that no
+longer exists. Fix it to refer to the correct file.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/cifssmb.c b/fs/cifs/cifssmb.c
+index 0f2f789..2f219da 100644
+--- a/fs/cifs/cifssmb.c
++++ b/fs/cifs/cifssmb.c
+@@ -679,8 +679,8 @@ signing_check:
+ 		cFYI(1, ("Signing disabled"));
+ 		if (server->secMode & SECMODE_SIGN_REQUIRED)
+ 			cERROR(1, ("Server requires "
+-				   "/proc/fs/cifs/PacketSigningEnabled "
+-				   "to be on"));
++				   "packet signing to be enabled in "
++				   "/proc/fs/cifs/SecurityFlags."));
+ 		server->secMode &=
+ 			~(SECMODE_SIGN_ENABLED | SECMODE_SIGN_REQUIRED);
+ 	} else if ((secFlags & CIFSSEC_MUST_SIGN) == CIFSSEC_MUST_SIGN) {

@@ -1,0 +1,3415 @@
+From: Ryan Powers <rpowers@redhat.com>
+Subject: [RHEL5.1 PATCH] Repost: Update aic94xx and libsas.
+Date: Thu, 21 Jun 2007 19:18:21 -0400
+Bugzilla: 224694
+Message-Id: <467B073D.1060104@redhat.com>
+Changelog: [scsi] Update aic94xx and libsas to 1.0.3
+
+
+The original posting is as follows:
+>This patch comes from Adaptec and IBM and brings aic94xx in line with 
+>upstream's 1.0.3 (from 2.6.20-rc6). I've tested this on x86_64 and 
+>i386 and have not run into any problems, but we lack the hardware to 
+>test on more architectures.
+>These are the notes from Adaptec:
+>Released Note:
+>1. This patch is based on scsi-misc-2.6.git source code on
+>   01/29/2007 that is equivalent to Kernel 2.6.20-rc6.
+>2. This patch still use embedded Sequencer Firmware rather than
+>   load firmware from file.
+>3. Fix ascb race condition on platforms with expanders.
+>4. Add REQ_TASK_ABORT and DEVICE_RESET handlers.
+>5. Proper clean up of phys/port after a discovery error.
+>6. Don't BUG when connecting two expanders via wide.
+>7. Add the ability to enable/disable phys through sysfs.
+>8. Extend use of DDB lock to prevent race condition of DDB.]
+>
+>These are the upstream commits that have been included in this patch:
+>f456393e195e0aa16029985f63cd93b601a0d315
+>79a5eb609b74e7b3638861c41b98eafa74920a1f
+>fe4a36cf652031d2744a536ba5121032840380cb
+>dea22214790d1306f3a3444db13d2c726037b189
+>7b4feee973ca7be63345b92a987ef7ef879b179b
+>8880839815265ccc0edaff52ba08d750eea57acb
+>bf451207511d049189ddb0a4eae3acdb086a3c82
+>b218a0d8e250e0ae8fd4d4e45bd66a588b380752
+>acbf167d4ad8c27f9743a4b539d51ae9535bf21c
+>6d4dcd4dae25c48e8932326aaedfe560d7f2c7bb
+>cde3f74bac3e4a6bcdc3a6370af38179fd8ef1f2
+>f12164200f09ec10764f2cf96da335fd83062bc4
+>c8490f3a77805d04321d9e44486a679801a035b8
+>8f3b8fa9afe75cafc4feb317d305444f6c5271fb
+>37958fb040cf6f88b354b9fa7e846014ffbd3b73
+>3ebf6922b0833807e54c73f4794c74baf9945fc8
+>396819fba821ad56f1b90090d256f0ab726c89c5
+>3cd041fb7f50f4cee3bc3a2b0ce02b1562894894
+>bf2a1928f3e5d44934e974940a8260a57fcc8a58
+>3b709df5f7c83b6b0907217a248a1414a37ffcb6
+>57ba07dc54b7657e69fe8ac42d83df21e415c85b
+>fe3b5bfe73ace420709f0cfb198b0ffc704bd38b
+>e7571c152dea576f8c80ca240befc93d4f16551d
+>980fa2f9d64b9be96107c89e165953ace311af54
+>6b0efb8516a5298e12033df61f9e0c376a306adb
+>02cd743bb3a37f27681c487608fb819493fa4010
+>3b6e9fafc40e36f50f0bd0f1ee758eecd79f1098
+>6f63caae2172e97e528b58319480217b0b36542e
+>21434966462d57145c861b43f6206d945ac57630
+>dca84e4694419adf61ad052b1e5a50ac82726597
+>ad689233bee854dced741c91aff12a8771a22f6f
+>111367f5c9a0af0f3a42c39dee7360ca217cba1d
+>f27708fc7523a87e3e69cae5628015961f0d3061
+
+In addition to the above information, this patch now includes
+>8fdcf86af61bfba744f5868ec04dad71637ac33a
+>214fbb75075efa677b614be79a2d62dd79785b4f
+>058e2c474897dc53c88ac9162f9a9b16a879b8cd
+>a9344e68ac0a656475006737dbc258d69fe4f7b0
+>423f7cf467045eab616f97309aed87a54b5e351d
+>63bb1bf0400414c0bc51cf276daa0fb5168d1e61
+
+Some of the changes in the patch were modified so as to not break KABI. 
+I ran it through the checking script and it comes out as not breaking 
+anything. The patch builds cleanly, and I have tested it on i686. I have 
+asked IBM to aid in testing the patch on other architectures.
+
+---
+drivers/scsi/aic94xx/aic94xx.h         |    7
+drivers/scsi/aic94xx/aic94xx_dev.c     |   16 -
+drivers/scsi/aic94xx/aic94xx_hwi.c     |   30 ++-
+drivers/scsi/aic94xx/aic94xx_hwi.h     |   19 +-
+drivers/scsi/aic94xx/aic94xx_init.c    |  108 +++++++++---
+drivers/scsi/aic94xx/aic94xx_reg_def.h |    2
+drivers/scsi/aic94xx/aic94xx_sas.h     |    2
+drivers/scsi/aic94xx/aic94xx_scb.c     |  240 ++++++++++++++++++++++++--
+drivers/scsi/aic94xx/aic94xx_sds.c     |    8
+drivers/scsi/aic94xx/aic94xx_seq.c     |   43 +++-
+drivers/scsi/aic94xx/aic94xx_seq.h     |    4
+drivers/scsi/aic94xx/aic94xx_task.c    |   17 +
+drivers/scsi/aic94xx/aic94xx_tmf.c     |   18 +-
+drivers/scsi/libsas/sas_discover.c     |   64 ++++---
+drivers/scsi/libsas/sas_event.c        |   11 -
+drivers/scsi/libsas/sas_expander.c     |  218 +++++++++++++++---------
+drivers/scsi/libsas/sas_init.c         |   95 +++++++++-
+drivers/scsi/libsas/sas_internal.h     |   11 -
+drivers/scsi/libsas/sas_phy.c          |   18 +-
+drivers/scsi/libsas/sas_port.c         |   14 -
+drivers/scsi/libsas/sas_scsi_host.c    |  294 
++++++++++++++++++++++++++++++----
+drivers/scsi/scsi_error.c              |   47 +++--
+drivers/scsi/scsi_priv.h               |    8
+drivers/scsi/scsi_transport_sas.c      |  204 +++++++++++++++++++---
+include/scsi/libsas.h                  |   57 +++++-
+include/scsi/sas.h                     |   17 -
+include/scsi/scsi_transport_sas.h      |   84 +++++++++
+27 files changed, 1321 insertions(+), 335 deletions(-)
+
+---
+diff -urNp linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_dev.c linux-2.6.18/drivers/scsi/aic94xx/aic94xx_dev.c
+--- linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_dev.c	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/aic94xx/aic94xx_dev.c	2007-06-21 16:47:04.000000000 -0400
+@@ -37,18 +37,14 @@
+ 
+ static inline int asd_get_ddb(struct asd_ha_struct *asd_ha)
+ {
+-	unsigned long flags;
+ 	int ddb, i;
+ 
+-	spin_lock_irqsave(&asd_ha->hw_prof.ddb_lock, flags);
+ 	ddb = FIND_FREE_DDB(asd_ha);
+ 	if (ddb >= asd_ha->hw_prof.max_ddbs) {
+ 		ddb = -ENOMEM;
+-		spin_unlock_irqrestore(&asd_ha->hw_prof.ddb_lock, flags);
+ 		goto out;
+ 	}
+ 	SET_DDB(ddb, asd_ha);
+-	spin_unlock_irqrestore(&asd_ha->hw_prof.ddb_lock, flags);
+ 
+ 	for (i = 0; i < sizeof(struct asd_ddb_ssp_smp_target_port); i+= 4)
+ 		asd_ddbsite_write_dword(asd_ha, ddb, i, 0);
+@@ -77,14 +73,10 @@ out:
+ 
+ static inline void asd_free_ddb(struct asd_ha_struct *asd_ha, int ddb)
+ {
+-	unsigned long flags;
+-
+ 	if (!ddb || ddb >= 0xFFFF)
+ 		return;
+ 	asd_ddbsite_write_byte(asd_ha, ddb, DDB_TYPE, DDB_TYPE_UNUSED);
+-	spin_lock_irqsave(&asd_ha->hw_prof.ddb_lock, flags);
+ 	CLEAR_DDB(ddb, asd_ha);
+-	spin_unlock_irqrestore(&asd_ha->hw_prof.ddb_lock, flags);
+ }
+ 
+ static inline void asd_set_ddb_type(struct domain_device *dev)
+@@ -320,8 +312,11 @@ out:
+ 
+ int asd_dev_found(struct domain_device *dev)
+ {
++	unsigned long flags;
+ 	int res = 0;
++	struct asd_ha_struct *asd_ha = dev->port->ha->lldd_ha;
+ 
++	spin_lock_irqsave(&asd_ha->hw_prof.ddb_lock, flags);
+ 	switch (dev->dev_type) {
+ 	case SATA_PM:
+ 		res = asd_init_sata_pm_ddb(dev);
+@@ -335,14 +330,18 @@ int asd_dev_found(struct domain_device *
+ 		else
+ 			res = asd_init_initiator_ddb(dev);
+ 	}
++	spin_unlock_irqrestore(&asd_ha->hw_prof.ddb_lock, flags);
++
+ 	return res;
+ }
+ 
+ void asd_dev_gone(struct domain_device *dev)
+ {
+ 	int ddb, sister_ddb;
++	unsigned long flags;
+ 	struct asd_ha_struct *asd_ha = dev->port->ha->lldd_ha;
+ 
++	spin_lock_irqsave(&asd_ha->hw_prof.ddb_lock, flags);
+ 	ddb = (int) (unsigned long) dev->lldd_dev;
+ 	sister_ddb = asd_ddbsite_read_word(asd_ha, ddb, SISTER_DDB);
+ 
+@@ -350,4 +349,5 @@ void asd_dev_gone(struct domain_device *
+ 		asd_free_ddb(asd_ha, sister_ddb);
+ 	asd_free_ddb(asd_ha, ddb);
+ 	dev->lldd_dev = NULL;
++	spin_unlock_irqrestore(&asd_ha->hw_prof.ddb_lock, flags);
+ }
+diff -urNp linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx.h linux-2.6.18/drivers/scsi/aic94xx/aic94xx.h
+--- linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx.h	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/aic94xx/aic94xx.h	2007-06-21 17:41:13.000000000 -0400
+@@ -56,8 +56,8 @@
+ /* 2*ITNL timeout + 1 second */
+ #define AIC94XX_SCB_TIMEOUT  (5*HZ)
+ 
+-extern kmem_cache_t *asd_dma_token_cache;
+-extern kmem_cache_t *asd_ascb_cache;
++extern struct kmem_cache *asd_dma_token_cache;
++extern struct kmem_cache *asd_ascb_cache;
+ extern char sas_addr_str[2*SAS_ADDR_SIZE + 1];
+ 
+ static inline void asd_stringify_sas_addr(char *p, const u8 *sas_addr)
+@@ -109,6 +109,7 @@ int  asd_clear_nexus_port(struct asd_sas
+ int  asd_clear_nexus_ha(struct sas_ha_struct *sas_ha);
+ 
+ /* ---------- Phy Management ---------- */
+-int  asd_control_phy(struct asd_sas_phy *phy, enum phy_func func);
++int  asd_control_phy_wrap(struct asd_sas_phy *phy, enum phy_func func);
++int  asd_control_phy(struct asd_sas_phy *phy, enum phy_func func, void *arg);
+ 
+ #endif
+diff -urNp linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_hwi.c linux-2.6.18/drivers/scsi/aic94xx/aic94xx_hwi.c
+--- linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_hwi.c	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/aic94xx/aic94xx_hwi.c	2007-06-21 16:55:13.000000000 -0400
+@@ -96,7 +96,7 @@ static int asd_init_phy(struct asd_phy *
+ 	sas_phy->type = PHY_TYPE_PHYSICAL;
+ 	sas_phy->role = PHY_ROLE_INITIATOR;
+ 	sas_phy->oob_mode = OOB_NOT_CONNECTED;
+-	sas_phy->linkrate = PHY_LINKRATE_NONE;
++	sas_phy->linkrate = SAS_LINK_RATE_UNKNOWN;
+ 
+ 	phy->id_frm_tok = asd_alloc_coherent(asd_ha,
+ 					     sizeof(*phy->identify_frame),
+@@ -112,6 +112,21 @@ static int asd_init_phy(struct asd_phy *
+ 	return 0;
+ }
+ 
++static void asd_init_ports(struct asd_ha_struct *asd_ha)
++{
++	int i;
++
++	spin_lock_init(&asd_ha->asd_ports_lock);
++	for (i = 0; i < ASD_MAX_PHYS; i++) {
++		struct asd_port *asd_port = &asd_ha->asd_ports[i];
++
++		memset(asd_port->sas_addr, 0, SAS_ADDR_SIZE);
++		memset(asd_port->attached_sas_addr, 0, SAS_ADDR_SIZE);
++		asd_port->phy_mask = 0;
++		asd_port->num_phys = 0;
++	}
++}
++
+ static int asd_init_phys(struct asd_ha_struct *asd_ha)
+ {
+ 	u8 i;
+@@ -121,6 +136,7 @@ static int asd_init_phys(struct asd_ha_s
+ 		struct asd_phy *phy = &asd_ha->phys[i];
+ 
+ 		phy->phy_desc = &asd_ha->hw_prof.phy_desc[i];
++		phy->asd_port = NULL;
+ 
+ 		phy->sas_phy.enabled = 0;
+ 		phy->sas_phy.id = i;
+@@ -267,7 +283,7 @@ static int asd_init_dl(struct asd_ha_str
+ 
+ /* ---------- EDB and ESCB init ---------- */
+ 
+-static int asd_alloc_edbs(struct asd_ha_struct *asd_ha, unsigned int gfp_flags)
++static int asd_alloc_edbs(struct asd_ha_struct *asd_ha, gfp_t gfp_flags)
+ {
+ 	struct asd_seq_data *seq = &asd_ha->seq;
+ 	int i;
+@@ -298,7 +314,7 @@ Err_unroll:
+ }
+ 
+ static int asd_alloc_escbs(struct asd_ha_struct *asd_ha,
+-			   unsigned int gfp_flags)
++			   gfp_t gfp_flags)
+ {
+ 	struct asd_seq_data *seq = &asd_ha->seq;
+ 	struct asd_ascb *escb;
+@@ -658,6 +674,8 @@ int asd_init_hw(struct asd_ha_struct *as
+ 		goto Out;
+ 	}
+ 
++	asd_init_ports(asd_ha);
++
+ 	err = asd_init_scbs(asd_ha);
+ 	if (err) {
+ 		asd_printk("couldn't initialize scbs for %s\n",
+@@ -1028,9 +1046,9 @@ irqreturn_t asd_hw_isr(int irq, void *de
+ /* ---------- SCB handling ---------- */
+ 
+ static inline struct asd_ascb *asd_ascb_alloc(struct asd_ha_struct *asd_ha,
+-					      unsigned int gfp_flags)
++					      gfp_t gfp_flags)
+ {
+-	extern kmem_cache_t *asd_ascb_cache;
++	extern struct kmem_cache *asd_ascb_cache;
+ 	struct asd_seq_data *seq = &asd_ha->seq;
+ 	struct asd_ascb *ascb;
+ 	unsigned long flags;
+@@ -1086,7 +1104,7 @@ undo:
+  */
+ struct asd_ascb *asd_ascb_alloc_list(struct asd_ha_struct
+ 				     *asd_ha, int *num,
+-				     unsigned int gfp_flags)
++				     gfp_t gfp_flags)
+ {
+ 	struct asd_ascb *first = NULL;
+ 
+diff -urNp linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_hwi.h linux-2.6.18/drivers/scsi/aic94xx/aic94xx_hwi.h
+--- linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_hwi.h	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/aic94xx/aic94xx_hwi.h	2007-06-21 16:47:04.000000000 -0400
+@@ -46,6 +46,7 @@
+ #define PCI_DEVICE_ID_ADAPTEC2_RAZOR10 0x410
+ #define PCI_DEVICE_ID_ADAPTEC2_RAZOR12 0x412
+ #define PCI_DEVICE_ID_ADAPTEC2_RAZOR1E 0x41E
++#define PCI_DEVICE_ID_ADAPTEC2_RAZOR1F 0x41F
+ #define PCI_DEVICE_ID_ADAPTEC2_RAZOR30 0x430
+ #define PCI_DEVICE_ID_ADAPTEC2_RAZOR32 0x432
+ #define PCI_DEVICE_ID_ADAPTEC2_RAZOR3E 0x43E
+@@ -192,6 +193,16 @@ struct asd_seq_data {
+ 	struct asd_ascb **escb_arr; /* array of pointers to escbs */
+ };
+ 
++/* This is an internal port structure. These are used to get accurate
++ * phy_mask for updating DDB 0.
++ */
++struct asd_port {
++	u8  sas_addr[SAS_ADDR_SIZE];
++	u8  attached_sas_addr[SAS_ADDR_SIZE];
++	u32 phy_mask;
++	int num_phys;
++};
++
+ /* This is the Host Adapter structure.  It describes the hardware
+  * SAS adapter.
+  */
+@@ -210,6 +221,8 @@ struct asd_ha_struct {
+ 	struct hw_profile hw_prof;
+ 
+ 	struct asd_phy    phys[ASD_MAX_PHYS];
++	spinlock_t        asd_ports_lock;
++	struct asd_port   asd_ports[ASD_MAX_PHYS];
+ 	struct asd_sas_port   ports[ASD_MAX_PHYS];
+ 
+ 	struct dma_pool  *scb_pool;
+@@ -242,7 +255,7 @@ struct asd_ha_struct {
+ 
+ /* ---------- DMA allocs ---------- */
+ 
+-static inline struct asd_dma_tok *asd_dmatok_alloc(unsigned int flags)
++static inline struct asd_dma_tok *asd_dmatok_alloc(gfp_t flags)
+ {
+ 	return kmem_cache_alloc(asd_dma_token_cache, flags);
+ }
+@@ -254,7 +267,7 @@ static inline void asd_dmatok_free(struc
+ 
+ static inline struct asd_dma_tok *asd_alloc_coherent(struct asd_ha_struct *
+ 						     asd_ha, size_t size,
+-						     unsigned int flags)
++						     gfp_t flags)
+ {
+ 	struct asd_dma_tok *token = asd_dmatok_alloc(flags);
+ 	if (token) {
+@@ -376,7 +389,7 @@ irqreturn_t asd_hw_isr(int irq, void *de
+ 
+ struct asd_ascb *asd_ascb_alloc_list(struct asd_ha_struct
+ 				     *asd_ha, int *num,
+-				     unsigned int gfp_mask);
++				     gfp_t gfp_mask);
+ 
+ int  asd_post_ascb_list(struct asd_ha_struct *asd_ha, struct asd_ascb *ascb,
+ 			int num);
+diff -urNp linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_init.c linux-2.6.18/drivers/scsi/aic94xx/aic94xx_init.c
+--- linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_init.c	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/aic94xx/aic94xx_init.c	2007-06-21 16:49:40.000000000 -0400
+@@ -38,7 +38,7 @@
+ #include "aic94xx_seq.h"
+ 
+ /* The format is "version.release.patchlevel" */
+-#define ASD_DRIVER_VERSION "1.0.2"
++#define ASD_DRIVER_VERSION "1.0.2-1"
+ 
+ static int use_msi = 0;
+ module_param_named(use_msi, use_msi, int, S_IRUGO);
+@@ -57,6 +57,8 @@ MODULE_PARM_DESC(collector, "\n"
+ char sas_addr_str[2*SAS_ADDR_SIZE + 1] = "";
+ 
+ static struct scsi_transport_template *aic94xx_transport_template;
++static int asd_scan_finished(struct Scsi_Host *, unsigned long);
++static void asd_scan_start(struct Scsi_Host *);
+ 
+ static struct scsi_host_template aic94xx_sht = {
+ 	.module			= THIS_MODULE,
+@@ -66,6 +68,8 @@ static struct scsi_host_template aic94xx
+ 	.target_alloc		= sas_target_alloc,
+ 	.slave_configure	= sas_slave_configure,
+ 	.slave_destroy		= sas_slave_destroy,
++	.scan_finished		= asd_scan_finished,
++	.scan_start		= asd_scan_start,
+ 	.change_queue_depth	= sas_change_queue_depth,
+ 	.change_queue_type	= sas_change_queue_type,
+ 	.bios_param		= sas_bios_param,
+@@ -75,6 +79,8 @@ static struct scsi_host_template aic94xx
+ 	.sg_tablesize		= SG_ALL,
+ 	.max_sectors		= SCSI_DEFAULT_MAX_SECTORS,
+ 	.use_clustering		= ENABLE_CLUSTERING,
++	.eh_device_reset_handler	= sas_eh_device_reset_handler,
++	.eh_bus_reset_handler	= sas_eh_bus_reset_handler,
+ };
+ 
+ static int __devinit asd_map_memio(struct asd_ha_struct *asd_ha)
+@@ -234,15 +240,19 @@ static int __devinit asd_common_setup(st
+ 	}
+ 	/* Provide some sane default values. */
+ 	asd_ha->hw_prof.max_scbs = 512;
+-	asd_ha->hw_prof.max_ddbs = 128;
++	asd_ha->hw_prof.max_ddbs = ASD_MAX_DDBS;
+ 	asd_ha->hw_prof.num_phys = ASD_MAX_PHYS;
+ 	/* All phys are enabled, by default. */
+ 	asd_ha->hw_prof.enabled_phys = 0xFF;
+ 	for (i = 0; i < ASD_MAX_PHYS; i++) {
+-		asd_ha->hw_prof.phy_desc[i].max_sas_lrate = PHY_LINKRATE_3;
+-		asd_ha->hw_prof.phy_desc[i].min_sas_lrate = PHY_LINKRATE_1_5;
+-		asd_ha->hw_prof.phy_desc[i].max_sata_lrate= PHY_LINKRATE_1_5;
+-		asd_ha->hw_prof.phy_desc[i].min_sata_lrate= PHY_LINKRATE_1_5;
++		asd_ha->hw_prof.phy_desc[i].max_sas_lrate =
++			PHY_LINKRATE_3;
++		asd_ha->hw_prof.phy_desc[i].min_sas_lrate =
++			PHY_LINKRATE_1_5;
++		asd_ha->hw_prof.phy_desc[i].max_sata_lrate =
++			PHY_LINKRATE_1_5;
++		asd_ha->hw_prof.phy_desc[i].min_sata_lrate =
++			PHY_LINKRATE_1_5;
+ 	}
+ 
+ 	return 0;
+@@ -305,11 +315,29 @@ static ssize_t asd_show_dev_pcba_sn(stru
+ }
+ static DEVICE_ATTR(pcba_sn, S_IRUGO, asd_show_dev_pcba_sn, NULL);
+ 
+-static void asd_create_dev_attrs(struct asd_ha_struct *asd_ha)
++static int asd_create_dev_attrs(struct asd_ha_struct *asd_ha)
+ {
+-	device_create_file(&asd_ha->pcidev->dev, &dev_attr_revision);
+-	device_create_file(&asd_ha->pcidev->dev, &dev_attr_bios_build);
+-	device_create_file(&asd_ha->pcidev->dev, &dev_attr_pcba_sn);
++	int err;
++
++	err = device_create_file(&asd_ha->pcidev->dev, &dev_attr_revision);
++	if (err)
++		return err;
++
++	err = device_create_file(&asd_ha->pcidev->dev, &dev_attr_bios_build);
++	if (err)
++		goto err_rev;
++
++	err = device_create_file(&asd_ha->pcidev->dev, &dev_attr_pcba_sn);
++	if (err)
++		goto err_biosb;
++
++	return 0;
++
++err_biosb:
++	device_remove_file(&asd_ha->pcidev->dev, &dev_attr_bios_build);
++err_rev:
++	device_remove_file(&asd_ha->pcidev->dev, &dev_attr_revision);
++	return err;
+ }
+ 
+ static void asd_remove_dev_attrs(struct asd_ha_struct *asd_ha)
+@@ -428,8 +456,8 @@ static inline void asd_destroy_ha_caches
+ 	asd_ha->scb_pool = NULL;
+ }
+ 
+-kmem_cache_t *asd_dma_token_cache;
+-kmem_cache_t *asd_ascb_cache;
++struct kmem_cache *asd_dma_token_cache;
++struct kmem_cache *asd_ascb_cache;
+ 
+ static int asd_create_global_caches(void)
+ {
+@@ -504,6 +532,7 @@ static int asd_register_sas_ha(struct as
+ 	asd_ha->sas_ha.num_phys= ASD_MAX_PHYS;
+ 
+ 	asd_ha->sas_ha.lldd_queue_size = asd_ha->seq.can_queue;
++	asd_ha->sas_ha.lldd_max_execute_num = lldd_max_execute_num;
+ 
+ 	return sas_register_ha(&asd_ha->sas_ha);
+ }
+@@ -641,7 +670,9 @@ static int __devinit asd_pci_probe(struc
+ 	}
+ 	ASD_DPRINTK("escbs posted\n");
+ 
+-	asd_create_dev_attrs(asd_ha);
++	err = asd_create_dev_attrs(asd_ha);
++	if (err)
++		goto Err_dev_attrs;
+ 
+ 	err = asd_register_sas_ha(asd_ha);
+ 	if (err)
+@@ -664,6 +695,7 @@ Err_en_phys:
+ 	asd_unregister_sas_ha(asd_ha);
+ Err_reg_sas:
+ 	asd_remove_dev_attrs(asd_ha);
++Err_dev_attrs:
+ Err_escbs:
+ 	asd_disable_ints(asd_ha);
+ 	free_irq(dev->irq, asd_ha);
+@@ -699,6 +731,15 @@ static void asd_free_queues(struct asd_h
+ 
+ 	list_for_each_safe(pos, n, &pending) {
+ 		struct asd_ascb *ascb = list_entry(pos, struct asd_ascb, list);
++		/*
++		 * Delete unexpired ascb timers.  This may happen if we issue
++		 * a CONTROL PHY scb to an adapter and rmmod before the scb
++		 * times out.  Apparently we don't wait for the CONTROL PHY
++		 * to complete, so it doesn't matter if we kill the timer.
++		 */
++		del_timer_sync(&ascb->timer);
++		WARN_ON(ascb->scb->header.opcode != CONTROL_PHY);
++
+ 		list_del_init(pos);
+ 		ASD_DPRINTK("freeing from pending\n");
+ 		asd_ascb_free(ascb);
+@@ -744,15 +785,37 @@ static void __devexit asd_pci_remove(str
+ 	return;
+ }
+ 
++static void asd_scan_start(struct Scsi_Host *shost)
++{
++	struct asd_ha_struct *asd_ha;
++	int err;
++
++	asd_ha = SHOST_TO_SAS_HA(shost)->lldd_ha;
++	err = asd_enable_phys(asd_ha, asd_ha->hw_prof.enabled_phys);
++	if (err)
++		asd_printk("Couldn't enable phys, err:%d\n", err);
++}
++
++static int asd_scan_finished(struct Scsi_Host *shost, unsigned long time)
++{
++	/* give the phy enabling interrupt event time to come in (1s
++	 * is empirically about all it takes) */
++	if (time < HZ)
++		return 0;
++	/* Wait for discovery to finish */
++	scsi_flush_work(shost);
++	return 1;
++}
++
+ static ssize_t asd_version_show(struct device_driver *driver, char *buf)
+ {
+ 	return snprintf(buf, PAGE_SIZE, "%s\n", ASD_DRIVER_VERSION);
+ }
+ static DRIVER_ATTR(version, S_IRUGO, asd_version_show, NULL);
+ 
+-static void asd_create_driver_attrs(struct device_driver *driver)
++static int asd_create_driver_attrs(struct device_driver *driver)
+ {
+-	driver_create_file(driver, &driver_attr_version);
++	return driver_create_file(driver, &driver_attr_version);
+ }
+ 
+ static void asd_remove_driver_attrs(struct device_driver *driver)
+@@ -761,8 +824,6 @@ static void asd_remove_driver_attrs(stru
+ }
+ 
+ static struct sas_domain_function_template aic94xx_transport_functions = {
+-	.lldd_port_formed	= asd_update_port_links,
+-
+ 	.lldd_dev_found		= asd_dev_found,
+ 	.lldd_dev_gone		= asd_dev_gone,
+ 
+@@ -779,7 +840,8 @@ static struct sas_domain_function_templa
+ 	.lldd_clear_nexus_port	= asd_clear_nexus_port,
+ 	.lldd_clear_nexus_ha	= asd_clear_nexus_ha,
+ 
+-	.lldd_control_phy	= asd_control_phy,
++	.lldd_control_phy	= asd_control_phy_wrap,
++	.lldd_control_phy_new	= asd_control_phy,
+ };
+ 
+ static const struct pci_device_id aic94xx_pci_table[] __devinitdata = {
+@@ -789,6 +851,8 @@ static const struct pci_device_id aic94x
+ 	 0, 0, 1},
+ 	{PCI_DEVICE(PCI_VENDOR_ID_ADAPTEC2, PCI_DEVICE_ID_ADAPTEC2_RAZOR1E),
+ 	 0, 0, 1},
++	{PCI_DEVICE(PCI_VENDOR_ID_ADAPTEC2, PCI_DEVICE_ID_ADAPTEC2_RAZOR1F),
++	 0, 0, 1},
+ 	{PCI_DEVICE(PCI_VENDOR_ID_ADAPTEC2, PCI_DEVICE_ID_ADAPTEC2_RAZOR30),
+ 	 0, 0, 2},
+ 	{PCI_DEVICE(PCI_VENDOR_ID_ADAPTEC2, PCI_DEVICE_ID_ADAPTEC2_RAZOR32),
+@@ -823,17 +887,21 @@ static int __init aic94xx_init(void)
+ 
+ 	aic94xx_transport_template =
+ 		sas_domain_attach_transport(&aic94xx_transport_functions);
+-	if (err)
++	if (!aic94xx_transport_template)
+ 		goto out_destroy_caches;
+ 
+ 	err = pci_register_driver(&aic94xx_pci_driver);
+ 	if (err)
+ 		goto out_release_transport;
+ 
+-	asd_create_driver_attrs(&aic94xx_pci_driver.driver);
++	err = asd_create_driver_attrs(&aic94xx_pci_driver.driver);
++	if (err)
++		goto out_unregister_pcidrv;
+ 
+ 	return err;
+ 
++ out_unregister_pcidrv:
++	pci_unregister_driver(&aic94xx_pci_driver);
+  out_release_transport:
+ 	sas_release_transport(aic94xx_transport_template);
+  out_destroy_caches:
+diff -urNp linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_reg_def.h linux-2.6.18/drivers/scsi/aic94xx/aic94xx_reg_def.h
+--- linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_reg_def.h	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/aic94xx/aic94xx_reg_def.h	2007-06-21 16:47:04.000000000 -0400
+@@ -2000,7 +2000,7 @@
+  * The host accesses this scratch in a different manner from the
+  * central sequencer. The sequencer has to use CSEQ registers CSCRPAGE
+  * and CMnSCRPAGE to access the scratch memory. A flat mapping of the
+- * scratch memory is avaliable for software convenience and to prevent
++ * scratch memory is available for software convenience and to prevent
+  * corruption while the sequencer is running. This memory is mapped
+  * onto addresses 800h - BFFh, total of 400h bytes.
+  *
+diff -urNp linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_sas.h linux-2.6.18/drivers/scsi/aic94xx/aic94xx_sas.h
+--- linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_sas.h	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/aic94xx/aic94xx_sas.h	2007-06-21 16:47:04.000000000 -0400
+@@ -34,6 +34,7 @@
+  * domain that this sequencer can maintain low-level connections for
+  * us.  They are be 64 bytes.
+  */
++#define ASD_MAX_DDBS	128
+ 
+ struct asd_ddb_ssp_smp_target_port {
+ 	u8     conn_type;	  /* byte 0 */
+@@ -733,6 +734,7 @@ struct asd_phy {
+ 
+ 	struct sas_identify_frame *identify_frame;
+ 	struct asd_dma_tok  *id_frm_tok;
++	struct asd_port     *asd_port;
+ 
+ 	u8         frame_rcvd[ASD_EDB_SIZE];
+ };
+diff -urNp linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_scb.c linux-2.6.18/drivers/scsi/aic94xx/aic94xx_scb.c
+--- linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_scb.c	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/aic94xx/aic94xx_scb.c	2007-06-21 16:50:29.000000000 -0400
+@@ -25,6 +25,7 @@
+  */
+ 
+ #include <linux/pci.h>
++#include <scsi/scsi_host.h>
+ 
+ #include "aic94xx.h"
+ #include "aic94xx_reg.h"
+@@ -52,6 +53,8 @@
+ 
+ static inline void get_lrate_mode(struct asd_phy *phy, u8 oob_mode)
+ {
++	struct sas_phy *sas_phy = phy->sas_phy.phy;
++
+ 	switch (oob_mode & 7) {
+ 	case PHY_SPEED_60:
+ 		/* FIXME: sas transport class doesn't have this */
+@@ -59,7 +62,7 @@ static inline void get_lrate_mode(struct
+ 		phy->sas_phy.phy->negotiated_linkrate = SAS_LINK_RATE_6_0_GBPS;
+ 		break;
+ 	case PHY_SPEED_30:
+-		phy->sas_phy.linkrate = PHY_LINKRATE_3;
++		phy->sas_phy.linkrate = PHY_LINKRATE_6;
+ 		phy->sas_phy.phy->negotiated_linkrate = SAS_LINK_RATE_3_0_GBPS;
+ 		break;
+ 	case PHY_SPEED_15:
+@@ -67,6 +70,12 @@ static inline void get_lrate_mode(struct
+ 		phy->sas_phy.phy->negotiated_linkrate = SAS_LINK_RATE_1_5_GBPS;
+ 		break;
+ 	}
++	sas_phy->negotiated_linkrate = phy_linkrate_to_linkrate(phy->sas_phy.linkrate);
++	sas_phy->maximum_linkrate_hw = SAS_LINK_RATE_3_0_GBPS;
++	sas_phy->minimum_linkrate_hw = SAS_LINK_RATE_1_5_GBPS;
++	sas_phy->maximum_linkrate = phy_linkrate_to_linkrate(phy->phy_desc->max_sas_lrate);
++	sas_phy->minimum_linkrate = phy_linkrate_to_linkrate(phy->phy_desc->min_sas_lrate);
++
+ 	if (oob_mode & SAS_MODE)
+ 		phy->sas_phy.oob_mode = SAS_OOB_MODE;
+ 	else if (oob_mode & SATA_MODE)
+@@ -160,6 +169,70 @@ static inline void asd_get_attached_sas_
+ 	}
+ }
+ 
++static void asd_form_port(struct asd_ha_struct *asd_ha, struct asd_phy *phy)
++{
++	int i;
++	struct asd_port *free_port = NULL;
++	struct asd_port *port;
++	struct asd_sas_phy *sas_phy = &phy->sas_phy;
++	unsigned long flags;
++
++	spin_lock_irqsave(&asd_ha->asd_ports_lock, flags);
++	if (!phy->asd_port) {
++		for (i = 0; i < ASD_MAX_PHYS; i++) {
++			port = &asd_ha->asd_ports[i];
++
++			/* Check for wide port */
++			if (port->num_phys > 0 &&
++			    memcmp(port->sas_addr, sas_phy->sas_addr,
++				   SAS_ADDR_SIZE) == 0 &&
++			    memcmp(port->attached_sas_addr,
++				   sas_phy->attached_sas_addr,
++				   SAS_ADDR_SIZE) == 0) {
++				break;
++			}
++
++			/* Find a free port */
++			if (port->num_phys == 0 && free_port == NULL) {
++				free_port = port;
++			}
++		}
++
++		/* Use a free port if this doesn't form a wide port */
++		if (i >= ASD_MAX_PHYS) {
++			port = free_port;
++			BUG_ON(!port);
++			memcpy(port->sas_addr, sas_phy->sas_addr,
++			       SAS_ADDR_SIZE);
++			memcpy(port->attached_sas_addr,
++			       sas_phy->attached_sas_addr,
++			       SAS_ADDR_SIZE);
++		}
++		port->num_phys++;
++		port->phy_mask |= (1U << sas_phy->id);
++		phy->asd_port = port;
++	}
++	ASD_DPRINTK("%s: updating phy_mask 0x%x for phy%d\n",
++		    __FUNCTION__, phy->asd_port->phy_mask, sas_phy->id);
++	asd_update_port_links(asd_ha, phy);
++	spin_unlock_irqrestore(&asd_ha->asd_ports_lock, flags);
++}
++
++static void asd_deform_port(struct asd_ha_struct *asd_ha, struct asd_phy *phy)
++{
++	struct asd_port *port = phy->asd_port;
++	struct asd_sas_phy *sas_phy = &phy->sas_phy;
++	unsigned long flags;
++
++	spin_lock_irqsave(&asd_ha->asd_ports_lock, flags);
++	if (port) {
++		port->num_phys--;
++		port->phy_mask &= ~(1U << sas_phy->id);
++		phy->asd_port = NULL;
++	}
++	spin_unlock_irqrestore(&asd_ha->asd_ports_lock, flags);
++}
++
+ static inline void asd_bytes_dmaed_tasklet(struct asd_ascb *ascb,
+ 					   struct done_list_struct *dl,
+ 					   int edb_id, int phy_id)
+@@ -179,6 +252,7 @@ static inline void asd_bytes_dmaed_taskl
+ 	asd_get_attached_sas_addr(phy, phy->sas_phy.attached_sas_addr);
+ 	spin_unlock_irqrestore(&phy->sas_phy.frame_rcvd_lock, flags);
+ 	asd_dump_frame_rcvd(phy, dl);
++	asd_form_port(ascb->ha, phy);
+ 	sas_ha->notify_port_event(&phy->sas_phy, PORTE_BYTES_DMAED);
+ }
+ 
+@@ -189,6 +263,7 @@ static inline void asd_link_reset_err_ta
+ 	struct asd_ha_struct *asd_ha = ascb->ha;
+ 	struct sas_ha_struct *sas_ha = &asd_ha->sas_ha;
+ 	struct asd_sas_phy *sas_phy = sas_ha->sas_phy[phy_id];
++	struct asd_phy *phy = &asd_ha->phys[phy_id];
+ 	u8 lr_error = dl->status_block[1];
+ 	u8 retries_left = dl->status_block[2];
+ 
+@@ -213,6 +288,7 @@ static inline void asd_link_reset_err_ta
+ 
+ 	asd_turn_led(asd_ha, phy_id, 0);
+ 	sas_phy_disconnected(sas_phy);
++	asd_deform_port(asd_ha, phy);
+ 	sas_ha->notify_port_event(sas_phy, PORTE_LINK_RESET_ERR);
+ 
+ 	if (retries_left == 0) {
+@@ -240,6 +316,8 @@ static inline void asd_primitive_rcvd_ta
+ 	unsigned long flags;
+ 	struct sas_ha_struct *sas_ha = &ascb->ha->sas_ha;
+ 	struct asd_sas_phy *sas_phy = sas_ha->sas_phy[phy_id];
++	struct asd_ha_struct *asd_ha = ascb->ha;
++	struct asd_phy *phy = &asd_ha->phys[phy_id];
+ 	u8  reg  = dl->status_block[1];
+ 	u32 cont = dl->status_block[2] << ((reg & 3)*8);
+ 
+@@ -276,6 +354,7 @@ static inline void asd_primitive_rcvd_ta
+ 				    phy_id);
+ 			/* The sequencer disables all phys on that port.
+ 			 * We have to re-enable the phys ourselves. */
++			asd_deform_port(asd_ha, phy);
+ 			sas_ha->notify_port_event(sas_phy, PORTE_HARD_RESET);
+ 			break;
+ 
+@@ -343,6 +422,7 @@ static void escb_tasklet_complete(struct
+ 	u8  sb_opcode = dl->status_block[0];
+ 	int phy_id = sb_opcode & DL_PHY_MASK;
+ 	struct asd_sas_phy *sas_phy = sas_ha->sas_phy[phy_id];
++	struct asd_phy *phy = &asd_ha->phys[phy_id];
+ 
+ 	if (edb > 6 || edb < 0) {
+ 		ASD_DPRINTK("edb is 0x%x! dl->opcode is 0x%x\n",
+@@ -360,6 +440,118 @@ static void escb_tasklet_complete(struct
+ 			    ascb->scb->header.opcode);
+ 	}
+ 
++	/* Catch these before we mask off the sb_opcode bits */
++	switch (sb_opcode) {
++	case REQ_TASK_ABORT: {
++		struct asd_ascb *a, *b;
++		u16 tc_abort;
++		struct domain_device *failed_dev = NULL;
++
++		ASD_DPRINTK("%s: REQ_TASK_ABORT, reason=0x%X\n",
++			    __FUNCTION__, dl->status_block[3]);
++
++		/*
++		 * Find the task that caused the abort and abort it first.
++		 * The sequencer won't put anything on the done list until
++		 * that happens.
++		 */
++		tc_abort = *((u16*)(&dl->status_block[1]));
++		tc_abort = le16_to_cpu(tc_abort);
++
++		list_for_each_entry_safe(a, b, &asd_ha->seq.pend_q, list) {
++			struct sas_task *task = ascb->uldd_task;
++
++			if (task && a->tc_index == tc_abort) {
++				failed_dev = task->dev;
++				sas_task_abort(task);
++				break;
++			}
++		}
++
++		if (!failed_dev) {
++			ASD_DPRINTK("%s: Can't find task (tc=%d) to abort!\n",
++				    __FUNCTION__, tc_abort);
++			goto out;
++		}
++
++		/*
++		 * Now abort everything else for that device (hba?) so
++		 * that the EH will wake up and do something.
++		 */
++		list_for_each_entry_safe(a, b, &asd_ha->seq.pend_q, list) {
++			struct sas_task *task = ascb->uldd_task;
++
++			if (task &&
++			    task->dev == failed_dev &&
++			    a->tc_index != tc_abort)
++				sas_task_abort(task);
++		}
++
++		goto out;
++	}
++	case REQ_DEVICE_RESET: {
++		struct asd_ascb *a;
++		u16 conn_handle;
++		unsigned long flags;
++		struct sas_task *last_dev_task = NULL;
++
++		conn_handle = *((u16*)(&dl->status_block[1]));
++		conn_handle = le16_to_cpu(conn_handle);
++
++		ASD_DPRINTK("%s: REQ_DEVICE_RESET, reason=0x%X\n", __FUNCTION__,
++			    dl->status_block[3]);
++
++		/* Find the last pending task for the device... */
++		list_for_each_entry(a, &asd_ha->seq.pend_q, list) {
++			u16 x;
++			struct domain_device *dev;
++			struct sas_task *task = a->uldd_task;
++
++			if (!task)
++				continue;
++			dev = task->dev;
++
++			x = (unsigned long)dev->lldd_dev;
++			if (x == conn_handle)
++				last_dev_task = task;
++		}
++
++		if (!last_dev_task) {
++			ASD_DPRINTK("%s: Device reset for idle device %d?\n",
++				    __FUNCTION__, conn_handle);
++			goto out;
++		}
++
++		/* ...and set the reset flag */
++		spin_lock_irqsave(&last_dev_task->task_state_lock, flags);
++		last_dev_task->task_state_flags |= SAS_TASK_NEED_DEV_RESET;
++		spin_unlock_irqrestore(&last_dev_task->task_state_lock, flags);
++
++		/* Kill all pending tasks for the device */
++		list_for_each_entry(a, &asd_ha->seq.pend_q, list) {
++			u16 x;
++			struct domain_device *dev;
++			struct sas_task *task = a->uldd_task;
++
++			if (!task)
++				continue;
++			dev = task->dev;
++
++			x = (unsigned long)dev->lldd_dev;
++			if (x == conn_handle)
++				sas_task_abort(task);
++		}
++
++		goto out;
++	}
++	case SIGNAL_NCQ_ERROR:
++		ASD_DPRINTK("%s: SIGNAL_NCQ_ERROR\n", __FUNCTION__);
++		goto out;
++	case CLEAR_NCQ_ERROR:
++		ASD_DPRINTK("%s: CLEAR_NCQ_ERROR\n", __FUNCTION__);
++		goto out;
++	}
++
+ 	sb_opcode &= ~DL_PHY_MASK;
+ 
+ 	switch (sb_opcode) {
+@@ -387,24 +579,9 @@ static void escb_tasklet_complete(struct
+ 		asd_turn_led(asd_ha, phy_id, 0);
+ 		/* the device is gone */
+ 		sas_phy_disconnected(sas_phy);
++		asd_deform_port(asd_ha, phy);
+ 		sas_ha->notify_port_event(sas_phy, PORTE_TIMER_EVENT);
+ 		break;
+-	case REQ_TASK_ABORT:
+-		ASD_DPRINTK("%s: phy%d: REQ_TASK_ABORT\n", __FUNCTION__,
+-			    phy_id);
+-		break;
+-	case REQ_DEVICE_RESET:
+-		ASD_DPRINTK("%s: phy%d: REQ_DEVICE_RESET\n", __FUNCTION__,
+-			    phy_id);
+-		break;
+-	case SIGNAL_NCQ_ERROR:
+-		ASD_DPRINTK("%s: phy%d: SIGNAL_NCQ_ERROR\n", __FUNCTION__,
+-			    phy_id);
+-		break;
+-	case CLEAR_NCQ_ERROR:
+-		ASD_DPRINTK("%s: phy%d: CLEAR_NCQ_ERROR\n", __FUNCTION__,
+-			    phy_id);
+-		break;
+ 	default:
+ 		ASD_DPRINTK("%s: phy%d: unknown event:0x%x\n", __FUNCTION__,
+ 			    phy_id, sb_opcode);
+@@ -424,7 +601,7 @@ static void escb_tasklet_complete(struct
+ 
+ 		break;
+ 	}
+-
++out:
+ 	asd_invalidate_edb(ascb, edb);
+ }
+ 
+@@ -710,14 +887,37 @@ static const int phy_func_table[] = {
+ 	[PHY_FUNC_RELEASE_SPINUP_HOLD] = RELEASE_SPINUP_HOLD,
+ };
+ 
+-int asd_control_phy(struct asd_sas_phy *phy, enum phy_func func)
++int asd_control_phy_wrap(struct asd_sas_phy *phy, enum phy_func func)
++{
++	return asd_control_phy(phy, func, NULL);
++}
++
++int asd_control_phy(struct asd_sas_phy *phy, enum phy_func func, void *arg)
+ {
+ 	struct asd_ha_struct *asd_ha = phy->ha->lldd_ha;
++	struct asd_phy_desc *pd = asd_ha->phys[phy->id].phy_desc;
+ 	struct asd_ascb *ascb;
++	struct sas_phy_linkrates *rates;
+ 	int res = 1;
+ 
+-	if (func == PHY_FUNC_CLEAR_ERROR_LOG)
++	switch (func) {
++	case PHY_FUNC_CLEAR_ERROR_LOG:
+ 		return -ENOSYS;
++	case PHY_FUNC_SET_LINK_RATE:
++		rates = arg;
++		if (rates->minimum_linkrate) {
++			pd->min_sas_lrate = rates->minimum_linkrate;
++			pd->min_sata_lrate = rates->minimum_linkrate;
++		}
++		if (rates->maximum_linkrate) {
++			pd->max_sas_lrate = rates->maximum_linkrate;
++			pd->max_sata_lrate = rates->maximum_linkrate;
++		}
++		func = PHY_FUNC_LINK_RESET;
++		break;
++	default:
++		break;
++	}
+ 
+ 	ascb = asd_ascb_alloc_list(asd_ha, &res, GFP_KERNEL);
+ 	if (!ascb)
+diff -urNp linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_sds.c linux-2.6.18/drivers/scsi/aic94xx/aic94xx_sds.c
+--- linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_sds.c	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/aic94xx/aic94xx_sds.c	2007-06-21 16:47:04.000000000 -0400
+@@ -64,7 +64,7 @@ struct asd_ocm_dir {
+ 
+ #define OCM_INIT_DIR_ENTRIES	5
+ /***************************************************************************
+-*  OCM dircetory default
++*  OCM directory default
+ ***************************************************************************/
+ static struct asd_ocm_dir OCMDirInit =
+ {
+@@ -73,7 +73,7 @@ static struct asd_ocm_dir OCMDirInit =
+ };
+ 
+ /***************************************************************************
+-*  OCM dircetory Entries default
++*  OCM directory Entries default
+ ***************************************************************************/
+ static struct asd_ocm_dir_ent OCMDirEntriesInit[OCM_INIT_DIR_ENTRIES] =
+ {
+@@ -630,10 +630,6 @@ static int asd_flash_getid(struct asd_ha
+ 
+ 	reg = asd_read_reg_dword(asd_ha, EXSICNFGR);
+ 
+-	if (!(reg & FLASHEX)) {
+-		ASD_DPRINTK("flash doesn't exist\n");
+-		return -ENOENT;
+-	}
+ 	if (pci_read_config_dword(asd_ha->pcidev, PCI_CONF_FLSH_BAR,
+ 				  &asd_ha->hw_prof.flash.bar)) {
+ 		asd_printk("couldn't read PCI_CONF_FLSH_BAR of %s\n",
+diff -urNp linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_seq.c linux-2.6.18/drivers/scsi/aic94xx/aic94xx_seq.c
+--- linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_seq.c	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/aic94xx/aic94xx_seq.c	2007-06-21 16:47:04.000000000 -0400
+@@ -757,7 +757,7 @@ static void asd_init_lseq_mdp(struct asd
+ 	asd_write_reg_word(asd_ha, LmSEQ_FIRST_INV_SCB_SITE(lseq),
+ 			   (u16)last_scb_site_no+1);
+ 	asd_write_reg_word(asd_ha, LmSEQ_INTEN_SAVE(lseq),
+-			    (u16) LmM0INTEN_MASK & 0xFFFF0000 >> 16);
++			    (u16) ((LmM0INTEN_MASK & 0xFFFF0000) >> 16));
+ 	asd_write_reg_word(asd_ha, LmSEQ_INTEN_SAVE(lseq) + 2,
+ 			    (u16) LmM0INTEN_MASK & 0xFFFF);
+ 	asd_write_reg_byte(asd_ha, LmSEQ_LINK_RST_FRM_LEN(lseq), 0);
+@@ -900,6 +900,16 @@ static void asd_init_scb_sites(struct as
+ 		for (i = 0; i < ASD_SCB_SIZE; i += 4)
+ 			asd_scbsite_write_dword(asd_ha, site_no, i, 0);
+ 
++		/* Initialize SCB Site Opcode field to invalid. */
++		asd_scbsite_write_byte(asd_ha, site_no,
++				       offsetof(struct scb_header, opcode),
++				       0xFF);
++
++		/* Initialize SCB Site Flags field to mean a response
++		 * frame has been received.  This means inadvertent
++		 * frames received to be dropped. */
++		asd_scbsite_write_byte(asd_ha, site_no, 0x49, 0x01);
++
+ 		/* Workaround needed by SEQ to fix a SATA issue is to exclude
+ 		 * certain SCB sites from the free list. */
+ 		if (!SCB_SITE_VALID(site_no))
+@@ -915,16 +925,6 @@ static void asd_init_scb_sites(struct as
+ 		/* Q_NEXT field of the last SCB is invalidated. */
+ 		asd_scbsite_write_word(asd_ha, site_no, 0, first_scb_site_no);
+ 
+-		/* Initialize SCB Site Opcode field to invalid. */
+-		asd_scbsite_write_byte(asd_ha, site_no,
+-				       offsetof(struct scb_header, opcode),
+-				       0xFF);
+-
+-		/* Initialize SCB Site Flags field to mean a response
+-		 * frame has been received.  This means inadvertent
+-		 * frames received to be dropped. */
+-		asd_scbsite_write_byte(asd_ha, site_no, 0x49, 0x01);
+-
+ 		first_scb_site_no = site_no;
+ 		max_scbs++;
+ 	}
+@@ -1166,6 +1166,16 @@ static void asd_init_ddb_0(struct asd_ha
+ 	set_bit(0, asd_ha->hw_prof.ddb_bitmap);
+ }
+ 
++static void asd_seq_init_ddb_sites(struct asd_ha_struct *asd_ha)
++{
++	unsigned int i;
++	unsigned int ddb_site;
++
++	for (ddb_site = 0 ; ddb_site < ASD_MAX_DDBS; ddb_site++)
++		for (i = 0; i < sizeof(struct asd_ddb_ssp_smp_target_port); i+= 4)
++			asd_ddbsite_write_dword(asd_ha, ddb_site, i, 0);
++}
++
+ /**
+  * asd_seq_setup_seqs -- setup and initialize central and link sequencers
+  * @asd_ha: pointer to host adapter structure
+@@ -1175,6 +1185,9 @@ static void asd_seq_setup_seqs(struct as
+ 	int 		lseq;
+ 	u8		lseq_mask;
+ 
++	/* Initialize DDB sites */
++	asd_seq_init_ddb_sites(asd_ha);
++
+ 	/* Initialize SCB sites. Done first to compute some values which
+ 	 * the rest of the init code depends on. */
+ 	asd_init_scb_sites(asd_ha);
+@@ -1285,14 +1298,15 @@ int asd_start_seqs(struct asd_ha_struct 
+  * port_map_by_links is also used as the conn_mask byte in the
+  * initiator/target port DDB.
+  */
+-void asd_update_port_links(struct asd_sas_phy *sas_phy)
++void asd_update_port_links(struct asd_ha_struct *asd_ha, struct asd_phy *phy)
+ {
+-	struct asd_ha_struct *asd_ha = sas_phy->ha->lldd_ha;
+-	const u8 phy_mask = (u8) sas_phy->port->phy_mask;
++	const u8 phy_mask = (u8) phy->asd_port->phy_mask;
+ 	u8  phy_is_up;
+ 	u8  mask;
+ 	int i, err;
++	unsigned long flags;
+ 
++	spin_lock_irqsave(&asd_ha->hw_prof.ddb_lock, flags);
+ 	for_each_phy(phy_mask, mask, i)
+ 		asd_ddbsite_write_byte(asd_ha, 0,
+ 				       offsetof(struct asd_ddb_seq_shared,
+@@ -1312,6 +1326,7 @@ void asd_update_port_links(struct asd_sa
+ 			break;
+ 		}
+ 	}
++	spin_unlock_irqrestore(&asd_ha->hw_prof.ddb_lock, flags);
+ 
+ 	if (err)
+ 		asd_printk("couldn't update DDB 0:error:%d\n", err);
+diff -urNp linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_seq.h linux-2.6.18/drivers/scsi/aic94xx/aic94xx_seq.h
+--- linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_seq.h	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/aic94xx/aic94xx_seq.h	2007-06-21 16:47:04.000000000 -0400
+@@ -27,6 +27,7 @@
+ #ifndef _AIC94XX_SEQ_H_
+ #define _AIC94XX_SEQ_H_
+ 
++#ifdef __KERNEL__
+ int asd_pause_cseq(struct asd_ha_struct *asd_ha);
+ int asd_unpause_cseq(struct asd_ha_struct *asd_ha);
+ int asd_pause_lseq(struct asd_ha_struct *asd_ha, u8 lseq_mask);
+@@ -34,6 +35,7 @@ int asd_unpause_lseq(struct asd_ha_struc
+ int asd_init_seqs(struct asd_ha_struct *asd_ha);
+ int asd_start_seqs(struct asd_ha_struct *asd_ha);
+ 
+-void asd_update_port_links(struct asd_sas_phy *phy);
++void asd_update_port_links(struct asd_ha_struct *asd_ha, struct asd_phy *phy);
++#endif
+ 
+ #endif
+diff -urNp linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_task.c linux-2.6.18/drivers/scsi/aic94xx/aic94xx_task.c
+--- linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_task.c	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/aic94xx/aic94xx_task.c	2007-06-21 16:54:13.000000000 -0400
+@@ -53,7 +53,7 @@ static const u8 data_dir_flags[] = {
+ 
+ static inline int asd_map_scatterlist(struct sas_task *task,
+ 				      struct sg_el *sg_arr,
+-				      unsigned long gfp_flags)
++				      gfp_t gfp_flags)
+ {
+ 	struct asd_ascb *ascb = task->lldd_task;
+ 	struct asd_ha_struct *asd_ha = ascb->ha;
+@@ -349,6 +349,7 @@ Again:
+ 
+ 	spin_lock_irqsave(&task->task_state_lock, flags);
+ 	task->task_state_flags &= ~SAS_TASK_STATE_PENDING;
++	task->task_state_flags &= ~SAS_TASK_AT_INITIATOR;
+ 	task->task_state_flags |= SAS_TASK_STATE_DONE;
+ 	if (unlikely((task->task_state_flags & SAS_TASK_STATE_ABORTED))) {
+ 		spin_unlock_irqrestore(&task->task_state_lock, flags);
+@@ -368,7 +369,7 @@ Again:
+ /* ---------- ATA ---------- */
+ 
+ static int asd_build_ata_ascb(struct asd_ascb *ascb, struct sas_task *task,
+-			      unsigned long gfp_flags)
++			      gfp_t gfp_flags)
+ {
+ 	struct domain_device *dev = task->dev;
+ 	struct scb *scb;
+@@ -437,7 +438,7 @@ static void asd_unbuild_ata_ascb(struct 
+ /* ---------- SMP ---------- */
+ 
+ static int asd_build_smp_ascb(struct asd_ascb *ascb, struct sas_task *task,
+-			      unsigned long gfp_flags)
++			      gfp_t gfp_flags)
+ {
+ 	struct asd_ha_struct *asd_ha = ascb->ha;
+ 	struct domain_device *dev = task->dev;
+@@ -487,7 +488,7 @@ static void asd_unbuild_smp_ascb(struct 
+ /* ---------- SSP ---------- */
+ 
+ static int asd_build_ssp_ascb(struct asd_ascb *ascb, struct sas_task *task,
+-			      unsigned long gfp_flags)
++			      gfp_t gfp_flags)
+ {
+ 	struct domain_device *dev = task->dev;
+ 	struct scb *scb;
+@@ -557,6 +558,7 @@ int asd_execute_task(struct sas_task *ta
+ 	struct sas_task *t = task;
+ 	struct asd_ascb *ascb = NULL, *a;
+ 	struct asd_ha_struct *asd_ha = task->dev->port->ha->lldd_ha;
++	unsigned long flags;
+ 
+ 	res = asd_can_queue(asd_ha, num);
+ 	if (res)
+@@ -599,6 +601,10 @@ int asd_execute_task(struct sas_task *ta
+ 		}
+ 		if (res)
+ 			goto out_err_unmap;
++
++		spin_lock_irqsave(&t->task_state_lock, flags);
++		t->task_state_flags |= SAS_TASK_AT_INITIATOR;
++		spin_unlock_irqrestore(&t->task_state_lock, flags);
+ 	}
+ 	list_del_init(&alist);
+ 
+@@ -617,6 +623,9 @@ out_err_unmap:
+ 			if (a == b)
+ 				break;
+ 			t = a->uldd_task;
++			spin_lock_irqsave(&t->task_state_lock, flags);
++			t->task_state_flags &= ~SAS_TASK_AT_INITIATOR;
++			spin_unlock_irqrestore(&t->task_state_lock, flags);
+ 			switch (t->task_proto) {
+ 			case SATA_PROTO:
+ 			case SAS_PROTO_STP:
+diff -urNp linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_tmf.c linux-2.6.18/drivers/scsi/aic94xx/aic94xx_tmf.c
+--- linux-2.6.18.orig/drivers/scsi/aic94xx/aic94xx_tmf.c	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/aic94xx/aic94xx_tmf.c	2007-06-21 16:47:04.000000000 -0400
+@@ -290,6 +290,7 @@ static void asd_tmf_tasklet_complete(str
+ static inline int asd_clear_nexus(struct sas_task *task)
+ {
+ 	int res = TMF_RESP_FUNC_FAILED;
++	int leftover;
+ 	struct asd_ascb *tascb = task->lldd_task;
+ 	unsigned long flags;
+ 
+@@ -298,10 +299,12 @@ static inline int asd_clear_nexus(struct
+ 		res = asd_clear_nexus_tag(task);
+ 	else
+ 		res = asd_clear_nexus_index(task);
+-	wait_for_completion_timeout(&tascb->completion,
+-				    AIC94XX_SCB_TIMEOUT);
++	leftover = wait_for_completion_timeout(&tascb->completion,
++					       AIC94XX_SCB_TIMEOUT);
+ 	ASD_DPRINTK("came back from clear nexus\n");
+ 	spin_lock_irqsave(&task->task_state_lock, flags);
++	if (leftover < 1)
++		res = TMF_RESP_FUNC_FAILED;
+ 	if (task->task_state_flags & SAS_TASK_STATE_DONE)
+ 		res = TMF_RESP_FUNC_COMPLETE;
+ 	spin_unlock_irqrestore(&task->task_state_lock, flags);
+@@ -350,6 +353,7 @@ int asd_abort_task(struct sas_task *task
+ 	unsigned long flags;
+ 	struct asd_ascb *ascb = NULL;
+ 	struct scb *scb;
++	int leftover;
+ 
+ 	spin_lock_irqsave(&task->task_state_lock, flags);
+ 	if (task->task_state_flags & SAS_TASK_STATE_DONE) {
+@@ -455,9 +459,11 @@ int asd_abort_task(struct sas_task *task
+ 		break;
+ 	case TF_TMF_TASK_DONE + 0xFF00:	/* done but not reported yet */
+ 		res = TMF_RESP_FUNC_FAILED;
+-		wait_for_completion_timeout(&tascb->completion,
+-					    AIC94XX_SCB_TIMEOUT);
++		leftover = wait_for_completion_timeout(&tascb->completion,
++						       AIC94XX_SCB_TIMEOUT);
+ 		spin_lock_irqsave(&task->task_state_lock, flags);
++		if (leftover < 1)
++			res = TMF_RESP_FUNC_FAILED;
+ 		if (task->task_state_flags & SAS_TASK_STATE_DONE)
+ 			res = TMF_RESP_FUNC_COMPLETE;
+ 		spin_unlock_irqrestore(&task->task_state_lock, flags);
+@@ -566,9 +572,7 @@ static int asd_initiate_ssp_tmf(struct d
+ 		res = TMF_RESP_FUNC_ESUPP;
+ 		break;
+ 	default:
+-		ASD_DPRINTK("%s: converting result 0x%x to TMF_RESP_FUNC_FAILED\n",
+-			    __FUNCTION__, res);
+-		res = TMF_RESP_FUNC_FAILED;
++		/* Allow TMF response codes to propagate upwards */
+ 		break;
+ 	}
+ out_err:
+diff -urNp linux-2.6.18.orig/drivers/scsi/libsas/sas_discover.c linux-2.6.18/drivers/scsi/libsas/sas_discover.c
+--- linux-2.6.18.orig/drivers/scsi/libsas/sas_discover.c	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/libsas/sas_discover.c	2007-06-21 16:47:04.000000000 -0400
+@@ -548,7 +548,7 @@ int sas_discover_sata(struct domain_devi
+ 
+ 	res = sas_notify_lldd_dev_found(dev);
+ 	if (res)
+-		return res;
++		goto out_err2;
+ 
+ 	switch (dev->dev_type) {
+ 	case SATA_DEV:
+@@ -560,11 +560,23 @@ int sas_discover_sata(struct domain_devi
+ 	default:
+ 		break;
+ 	}
++	if (res)
++		goto out_err;
+ 
+ 	sas_notify_lldd_dev_gone(dev);
+-	if (!res) {
+-		sas_notify_lldd_dev_found(dev);
+-	}
++	res = sas_notify_lldd_dev_found(dev);
++	if (res)
++		goto out_err2;
++
++	res = sas_rphy_add(dev->rphy);
++	if (res)
++		goto out_err;
++
++	return res;
++
++out_err:
++	sas_notify_lldd_dev_gone(dev);
++out_err2:
+ 	return res;
+ }
+ 
+@@ -580,21 +592,17 @@ int sas_discover_end_dev(struct domain_d
+ 
+ 	res = sas_notify_lldd_dev_found(dev);
+ 	if (res)
+-		return res;
++		goto out_err2;
+ 
+ 	res = sas_rphy_add(dev->rphy);
+ 	if (res)
+ 		goto out_err;
+ 
+-	/* do this to get the end device port attributes which will have
+-	 * been scanned in sas_rphy_add */
+-	sas_notify_lldd_dev_gone(dev);
+-	sas_notify_lldd_dev_found(dev);
+-
+ 	return 0;
+ 
+ out_err:
+ 	sas_notify_lldd_dev_gone(dev);
++out_err2:
+ 	return res;
+ }
+ 
+@@ -649,6 +657,7 @@ void sas_unregister_domain_devices(struc
+  */
+ static void sas_discover_domain(void *data)
+ {
++	struct domain_device *dev;
+ 	int error = 0;
+ 	struct asd_sas_port *port = data;
+ 
+@@ -656,35 +665,42 @@ static void sas_discover_domain(void *da
+ 			&port->disc.pending);
+ 
+ 	if (port->port_dev)
+-		return ;
+-	else {
+-		error = sas_get_port_device(port);
+-		if (error)
+-			return;
+-	}
++		return;
++
++	error = sas_get_port_device(port);
++	if (error)
++		return;
++	dev = port->port_dev;
+ 
+ 	SAS_DPRINTK("DOING DISCOVERY on port %d, pid:%d\n", port->id,
+ 		    current->pid);
+ 
+-	switch (port->port_dev->dev_type) {
++	switch (dev->dev_type) {
+ 	case SAS_END_DEV:
+-		error = sas_discover_end_dev(port->port_dev);
++		error = sas_discover_end_dev(dev);
+ 		break;
+ 	case EDGE_DEV:
+ 	case FANOUT_DEV:
+-		error = sas_discover_root_expander(port->port_dev);
++		error = sas_discover_root_expander(dev);
+ 		break;
+ 	case SATA_DEV:
+ 	case SATA_PM:
+-		error = sas_discover_sata(port->port_dev);
++		error = sas_discover_sata(dev);
+ 		break;
+ 	default:
+-		SAS_DPRINTK("unhandled device %d\n", port->port_dev->dev_type);
++		SAS_DPRINTK("unhandled device %d\n", dev->dev_type);
+ 		break;
+ 	}
+ 
+ 	if (error) {
+-		kfree(port->port_dev); /* not kobject_register-ed yet */
++		sas_rphy_free(dev->rphy);
++		dev->rphy = NULL;
++
++		spin_lock(&port->dev_list_lock);
++		list_del_init(&dev->dev_list_node);
++		spin_unlock(&port->dev_list_lock);
++
++		kfree(dev); /* not kobject_register-ed yet */
+ 		port->port_dev = NULL;
+ 	}
+ 
+@@ -722,7 +738,7 @@ int sas_discover_event(struct asd_sas_po
+ 	BUG_ON(ev >= DISC_NUM_EVENTS);
+ 
+ 	sas_queue_event(ev, &disc->disc_event_lock, &disc->pending,
+-			&disc->disc_work[ev], port->ha->core.shost);
++			&disc->disc_work[ev], port->ha);
+ 
+ 	return 0;
+ }
+@@ -745,5 +761,5 @@ void sas_init_disc(struct sas_discovery 
+ 	spin_lock_init(&disc->disc_event_lock);
+ 	disc->pending = 0;
+ 	for (i = 0; i < DISC_NUM_EVENTS; i++)
+-		INIT_WORK(&disc->disc_work[i], sas_event_fns[i], port);
++		INIT_WORK(&disc->disc_work[i], sas_event_fns[i],port);
+ }
+diff -urNp linux-2.6.18.orig/drivers/scsi/libsas/sas_event.c linux-2.6.18/drivers/scsi/libsas/sas_event.c
+--- linux-2.6.18.orig/drivers/scsi/libsas/sas_event.c	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/libsas/sas_event.c	2007-06-21 16:47:04.000000000 -0400
+@@ -31,7 +31,7 @@ static void notify_ha_event(struct sas_h
+ 	BUG_ON(event >= HA_NUM_EVENTS);
+ 
+ 	sas_queue_event(event, &sas_ha->event_lock, &sas_ha->pending,
+-			&sas_ha->ha_events[event], sas_ha->core.shost);
++			&sas_ha->ha_events[event], sas_ha);
+ }
+ 
+ static void notify_port_event(struct asd_sas_phy *phy, enum port_event event)
+@@ -41,7 +41,7 @@ static void notify_port_event(struct asd
+ 	BUG_ON(event >= PORT_NUM_EVENTS);
+ 
+ 	sas_queue_event(event, &ha->event_lock, &phy->port_events_pending,
+-			&phy->port_events[event], ha->core.shost);
++			&phy->port_events[event], ha);
+ }
+ 
+ static void notify_phy_event(struct asd_sas_phy *phy, enum phy_event event)
+@@ -51,7 +51,7 @@ static void notify_phy_event(struct asd_
+ 	BUG_ON(event >= PHY_NUM_EVENTS);
+ 
+ 	sas_queue_event(event, &ha->event_lock, &phy->phy_events_pending,
+-			&phy->phy_events[event], ha->core.shost);
++			&phy->phy_events[event], ha);
+ }
+ 
+ int sas_init_events(struct sas_ha_struct *sas_ha)
+@@ -64,8 +64,9 @@ int sas_init_events(struct sas_ha_struct
+ 
+ 	spin_lock_init(&sas_ha->event_lock);
+ 
+-	for (i = 0; i < HA_NUM_EVENTS; i++)
+-		INIT_WORK(&sas_ha->ha_events[i], sas_ha_event_fns[i], sas_ha);
++	for (i = 0; i < HA_NUM_EVENTS; i++) {
++		INIT_WORK(&sas_ha->ha_events[i], sas_ha_event_fns[i],sas_ha);
++	}
+ 
+ 	sas_ha->notify_ha_event = notify_ha_event;
+ 	sas_ha->notify_port_event = notify_port_event;
+diff -urNp linux-2.6.18.orig/drivers/scsi/libsas/sas_expander.c linux-2.6.18/drivers/scsi/libsas/sas_expander.c
+--- linux-2.6.18.orig/drivers/scsi/libsas/sas_expander.c	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/libsas/sas_expander.c	2007-06-21 16:47:04.000000000 -0400
+@@ -71,55 +71,65 @@ static void smp_task_done(struct sas_tas
+ static int smp_execute_task(struct domain_device *dev, void *req, int req_size,
+ 			    void *resp, int resp_size)
+ {
+-	int res;
+-	struct sas_task *task = sas_alloc_task(GFP_KERNEL);
++	int res, retry;
++	struct sas_task *task = NULL;
+ 	struct sas_internal *i =
+ 		to_sas_internal(dev->port->ha->core.shost->transportt);
+ 
+-	if (!task)
+-		return -ENOMEM;
+-
+-	task->dev = dev;
+-	task->task_proto = dev->tproto;
+-	sg_init_one(&task->smp_task.smp_req, req, req_size);
+-	sg_init_one(&task->smp_task.smp_resp, resp, resp_size);
+-
+-	task->task_done = smp_task_done;
++	for (retry = 0; retry < 3; retry++) {
++		task = sas_alloc_task(GFP_KERNEL);
++		if (!task)
++			return -ENOMEM;
++
++		task->dev = dev;
++		task->task_proto = dev->tproto;
++		sg_init_one(&task->smp_task.smp_req, req, req_size);
++		sg_init_one(&task->smp_task.smp_resp, resp, resp_size);
++
++		task->task_done = smp_task_done;
++
++		task->timer.data = (unsigned long) task;
++		task->timer.function = smp_task_timedout;
++		task->timer.expires = jiffies + SMP_TIMEOUT*HZ;
++		add_timer(&task->timer);
+ 
+-	task->timer.data = (unsigned long) task;
+-	task->timer.function = smp_task_timedout;
+-	task->timer.expires = jiffies + SMP_TIMEOUT*HZ;
+-	add_timer(&task->timer);
+-
+-	res = i->dft->lldd_execute_task(task, 1, GFP_KERNEL);
+-
+-	if (res) {
+-		del_timer(&task->timer);
+-		SAS_DPRINTK("executing SMP task failed:%d\n", res);
+-		goto ex_err;
+-	}
++		res = i->dft->lldd_execute_task(task, 1, GFP_KERNEL);
+ 
+-	wait_for_completion(&task->completion);
+-	res = -ETASK;
+-	if ((task->task_state_flags & SAS_TASK_STATE_ABORTED)) {
+-		SAS_DPRINTK("smp task timed out or aborted\n");
+-		i->dft->lldd_abort_task(task);
+-		if (!(task->task_state_flags & SAS_TASK_STATE_DONE)) {
+-			SAS_DPRINTK("SMP task aborted and not done\n");
++		if (res) {
++			del_timer(&task->timer);
++			SAS_DPRINTK("executing SMP task failed:%d\n", res);
+ 			goto ex_err;
+ 		}
++
++		wait_for_completion(&task->completion);
++		res = -ETASK;
++		if ((task->task_state_flags & SAS_TASK_STATE_ABORTED)) {
++			SAS_DPRINTK("smp task timed out or aborted\n");
++			i->dft->lldd_abort_task(task);
++			if (!(task->task_state_flags & SAS_TASK_STATE_DONE)) {
++				SAS_DPRINTK("SMP task aborted and not done\n");
++				goto ex_err;
++			}
++		}
++		if (task->task_status.resp == SAS_TASK_COMPLETE &&
++		    task->task_status.stat == SAM_GOOD) {
++			res = 0;
++			break;
++		} else {
++			SAS_DPRINTK("%s: task to dev %016llx response: 0x%x "
++				    "status 0x%x\n", __FUNCTION__,
++				    SAS_ADDR(dev->sas_addr),
++				    task->task_status.resp,
++				    task->task_status.stat);
++			sas_free_task(task);
++			task = NULL;
++		}
+ 	}
+-	if (task->task_status.resp == SAS_TASK_COMPLETE &&
+-	    task->task_status.stat == SAM_GOOD)
+-		res = 0;
+-	else
+-		SAS_DPRINTK("%s: task to dev %016llx response: 0x%x "
+-			    "status 0x%x\n", __FUNCTION__,
+-			    SAS_ADDR(dev->sas_addr),
+-			    task->task_status.resp,
+-			    task->task_status.stat);
+ ex_err:
+-	sas_free_task(task);
++	BUG_ON(retry == 3 && task != NULL);
++	if (task != NULL) {
++		sas_free_task(task);
++	}
+ 	return res;
+ }
+ 
+@@ -187,24 +197,11 @@ static void sas_set_ex_phy(struct domain
+ 	phy->phy->identify.initiator_port_protocols = phy->attached_iproto;
+ 	phy->phy->identify.target_port_protocols = phy->attached_tproto;
+ 	phy->phy->identify.phy_identifier = phy_id;
+-	phy->phy->minimum_linkrate_hw = SAS_LINK_RATE_1_5_GBPS;
+-	phy->phy->maximum_linkrate_hw = SAS_LINK_RATE_3_0_GBPS;
+-	phy->phy->minimum_linkrate = SAS_LINK_RATE_1_5_GBPS;
+-	phy->phy->maximum_linkrate = SAS_LINK_RATE_3_0_GBPS;
+-	switch (phy->linkrate) {
+-	case PHY_LINKRATE_1_5:
+-		phy->phy->negotiated_linkrate = SAS_LINK_RATE_1_5_GBPS;
+-		break;
+-	case PHY_LINKRATE_3:
+-		phy->phy->negotiated_linkrate = SAS_LINK_RATE_3_0_GBPS;
+-		break;
+-	case PHY_LINKRATE_6:
+-		phy->phy->negotiated_linkrate = SAS_LINK_RATE_6_0_GBPS;
+-		break;
+-	default:
+-		phy->phy->negotiated_linkrate = SAS_LINK_RATE_UNKNOWN;
+-		break;
+-	}
++	phy->phy->minimum_linkrate_hw = phy_linkrate_to_linkrate(dr->hmin_linkrate);
++	phy->phy->maximum_linkrate_hw = phy_linkrate_to_linkrate(dr->hmax_linkrate);
++	phy->phy->minimum_linkrate = phy_linkrate_to_linkrate(dr->pmin_linkrate);
++	phy->phy->maximum_linkrate = phy_linkrate_to_linkrate(dr->pmax_linkrate);
++	phy->phy->negotiated_linkrate = phy_linkrate_to_linkrate(phy->linkrate);
+ 
+ 	if (!rediscover)
+ 		sas_phy_add(phy->phy);
+@@ -417,7 +414,8 @@ out:
+ #define PC_RESP_SIZE 8
+ 
+ int sas_smp_phy_control(struct domain_device *dev, int phy_id,
+-			enum phy_func phy_func)
++			enum phy_func phy_func,
++			struct sas_phy_linkrates *rates)
+ {
+ 	u8 *pc_req;
+ 	u8 *pc_resp;
+@@ -436,6 +434,10 @@ int sas_smp_phy_control(struct domain_de
+ 	pc_req[1] = SMP_PHY_CONTROL;
+ 	pc_req[9] = phy_id;
+ 	pc_req[10]= phy_func;
++	if (rates) {
++		pc_req[32] = rates->minimum_linkrate << 4;
++		pc_req[33] = rates->maximum_linkrate << 4;
++	}
+ 
+ 	res = smp_execute_task(dev, pc_req, PC_REQ_SIZE, pc_resp,PC_RESP_SIZE);
+ 
+@@ -449,8 +451,8 @@ static void sas_ex_disable_phy(struct do
+ 	struct expander_device *ex = &dev->ex_dev;
+ 	struct ex_phy *phy = &ex->ex_phy[phy_id];
+ 
+-	sas_smp_phy_control(dev, phy_id, PHY_FUNC_DISABLE);
+-	phy->linkrate = PHY_DISABLED;
++	sas_smp_phy_control(dev, phy_id, PHY_FUNC_DISABLE, NULL);
++	phy->linkrate = SAS_PHY_DISABLED;
+ }
+ 
+ static void sas_ex_disable_port(struct domain_device *dev, u8 *sas_addr)
+@@ -595,10 +597,15 @@ static struct domain_device *sas_ex_disc
+ 	child->iproto = phy->attached_iproto;
+ 	memcpy(child->sas_addr, phy->attached_sas_addr, SAS_ADDR_SIZE);
+ 	sas_hash_addr(child->hashed_sas_addr, child->sas_addr);
+-	phy->port = sas_port_alloc(&parent->rphy->dev, phy_id);
+-	BUG_ON(!phy->port);
+-	/* FIXME: better error handling*/
+-	BUG_ON(sas_port_add(phy->port) != 0);
++	if (!phy->port) {
++		phy->port = sas_port_alloc(&parent->rphy->dev, phy_id);
++		if (unlikely(!phy->port))
++			goto out_err;
++		if (unlikely(sas_port_add(phy->port) != 0)) {
++			sas_port_free(phy->port);
++			goto out_err;
++		}
++	}
+ 	sas_ex_get_linkrate(parent, child, phy);
+ 
+ 	if ((phy->attached_tproto & SAS_PROTO_STP) || phy->attached_sata_dev) {
+@@ -613,8 +620,7 @@ static struct domain_device *sas_ex_disc
+ 			SAS_DPRINTK("report phy sata to %016llx:0x%x returned "
+ 				    "0x%x\n", SAS_ADDR(parent->sas_addr),
+ 				    phy_id, res);
+-			kfree(child);
+-			return NULL;
++			goto out_free;
+ 		}
+ 		memcpy(child->frame_rcvd, &child->sata_dev.rps_resp.rps.fis,
+ 		       sizeof(struct dev_to_host_fis));
+@@ -625,14 +631,14 @@ static struct domain_device *sas_ex_disc
+ 				    "%016llx:0x%x returned 0x%x\n",
+ 				    SAS_ADDR(child->sas_addr),
+ 				    SAS_ADDR(parent->sas_addr), phy_id, res);
+-			kfree(child);
+-			return NULL;
++			goto out_free;
+ 		}
+ 	} else if (phy->attached_tproto & SAS_PROTO_SSP) {
+ 		child->dev_type = SAS_END_DEV;
+ 		rphy = sas_end_device_alloc(phy->port);
+ 		/* FIXME: error handling */
+-		BUG_ON(!rphy);
++		if (unlikely(!rphy))
++			goto out_free;
+ 		child->tproto = phy->attached_tproto;
+ 		sas_init_dev(child);
+ 
+@@ -649,9 +655,7 @@ static struct domain_device *sas_ex_disc
+ 				    "at %016llx:0x%x returned 0x%x\n",
+ 				    SAS_ADDR(child->sas_addr),
+ 				    SAS_ADDR(parent->sas_addr), phy_id, res);
+-			/* FIXME: this kfrees list elements without removing them */
+-			//kfree(child);
+-			return NULL;
++			goto out_list_del;
+ 		}
+ 	} else {
+ 		SAS_DPRINTK("target proto 0x%x at %016llx:0x%x not handled\n",
+@@ -661,6 +665,40 @@ static struct domain_device *sas_ex_disc
+ 
+ 	list_add_tail(&child->siblings, &parent_ex->children);
+ 	return child;
++
++ out_list_del:
++	sas_rphy_free(child->rphy);
++	child->rphy = NULL;
++	list_del(&child->dev_list_node);
++ out_free:
++	sas_port_delete(phy->port);
++ out_err:
++	phy->port = NULL;
++	kfree(child);
++	return NULL;
++}
++
++/* See if this phy is part of a wide port */
++static int sas_ex_join_wide_port(struct domain_device *parent, int phy_id)
++{
++	struct ex_phy *phy = &parent->ex_dev.ex_phy[phy_id];
++	int i;
++
++	for (i = 0; i < parent->ex_dev.num_phys; i++) {
++		struct ex_phy *ephy = &parent->ex_dev.ex_phy[i];
++
++		if (ephy == phy)
++			continue;
++
++		if (!memcmp(phy->attached_sas_addr, ephy->attached_sas_addr,
++			    SAS_ADDR_SIZE)) {
++			sas_port_add_phy(ephy->port, phy->phy);
++			phy->phy_state = PHY_DEVICE_DISCOVERED;
++			return 0;
++		}
++	}
++
++	return -ENODEV;
+ }
+ 
+ static struct domain_device *sas_ex_discover_expander(
+@@ -743,8 +781,8 @@ static int sas_ex_discover_dev(struct do
+ 	int res = 0;
+ 
+ 	/* Phy state */
+-	if (ex_phy->linkrate == PHY_SPINUP_HOLD) {
+-		if (!sas_smp_phy_control(dev, phy_id, PHY_FUNC_LINK_RESET))
++	if (ex_phy->linkrate == SAS_SATA_SPINUP_HOLD) {
++		if (!sas_smp_phy_control(dev, phy_id, PHY_FUNC_LINK_RESET, NULL))
+ 			res = sas_ex_phy_discover(dev, phy_id);
+ 		if (res)
+ 			return res;
+@@ -773,7 +811,7 @@ static int sas_ex_discover_dev(struct do
+ 			sas_configure_routing(dev, ex_phy->attached_sas_addr);
+ 		}
+ 		return 0;
+-	} else if (ex_phy->linkrate == PHY_LINKRATE_UNKNOWN)
++	} else if (ex_phy->linkrate == SAS_LINK_RATE_UNKNOWN)
+ 		return 0;
+ 
+ 	if (ex_phy->attached_dev_type != SAS_END_DEV &&
+@@ -795,6 +833,13 @@ static int sas_ex_discover_dev(struct do
+ 		return res;
+ 	}
+ 
++	res = sas_ex_join_wide_port(dev, phy_id);
++	if (!res) {
++		SAS_DPRINTK("Attaching ex phy%d to wide port %016llx\n",
++			    phy_id, SAS_ADDR(ex_phy->attached_sas_addr));
++		return res;
++	}
++
+ 	switch (ex_phy->attached_dev_type) {
+ 	case SAS_END_DEV:
+ 		child = sas_ex_discover_end_dev(dev, phy_id);
+@@ -922,9 +967,8 @@ static int sas_ex_discover_devices(struc
+ 			continue;
+ 
+ 		switch (ex_phy->linkrate) {
+-		case PHY_DISABLED:
+-		case PHY_RESET_PROBLEM:
+-		case PHY_PORT_SELECTOR:
++		case SAS_PHY_DISABLED:
++		case SAS_SATA_PORT_SELECTOR:
+ 			continue;
+ 		default:
+ 			res = sas_ex_discover_dev(dev, i);
+@@ -1417,14 +1461,23 @@ int sas_discover_root_expander(struct do
+ 	int res;
+ 	struct sas_expander_device *ex = rphy_to_expander_device(dev->rphy);
+ 
+-	sas_rphy_add(dev->rphy);
++	res = sas_rphy_add(dev->rphy);
++	if (res)
++		goto out_err;
+ 
+ 	ex->level = dev->port->disc.max_level; /* 0 */
+ 	res = sas_discover_expander(dev);
+-	if (!res)
+-		sas_ex_bfs_disc(dev->port);
++	if (res)
++		goto out_err2;
++
++	sas_ex_bfs_disc(dev->port);
+ 
+ 	return res;
++
++out_err2:
++	sas_rphy_remove(dev->rphy);
++out_err:
++	return res;
+ }
+ 
+ /* ---------- Domain revalidation ---------- */
+@@ -1719,6 +1772,7 @@ static int sas_rediscover_dev(struct dom
+ 		   SAS_ADDR(phy->attached_sas_addr)) {
+ 		SAS_DPRINTK("ex %016llx phy 0x%x broadcast flutter\n",
+ 			    SAS_ADDR(dev->sas_addr), phy_id);
++		sas_ex_phy_discover(dev, phy_id);
+ 	} else
+ 		res = sas_discover_new(dev, phy_id);
+ out:
+diff -urNp linux-2.6.18.orig/drivers/scsi/libsas/sas_init.c linux-2.6.18/drivers/scsi/libsas/sas_init.c
+--- linux-2.6.18.orig/drivers/scsi/libsas/sas_init.c	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/libsas/sas_init.c	2007-06-21 16:51:52.000000000 -0400
+@@ -36,7 +36,7 @@
+ 
+ #include "../scsi_sas_internal.h"
+ 
+-kmem_cache_t *sas_task_cache;
++struct kmem_cache *sas_task_cache;
+ 
+ /*------------ SAS addr hash -----------*/
+ void sas_hash_addr(u8 *hashed, const u8 *sas_addr)
+@@ -85,6 +85,9 @@ int sas_register_ha(struct sas_ha_struct
+ 	else if (sas_ha->lldd_queue_size == -1)
+ 		sas_ha->lldd_queue_size = 128; /* Sanity */
+ 
++	sas_ha->state = SAS_HA_REGISTERED;
++	spin_lock_init(&sas_ha->state_lock);
++
+ 	error = sas_register_phys(sas_ha);
+ 	if (error) {
+ 		printk(KERN_NOTICE "couldn't register sas phys:%d\n", error);
+@@ -112,6 +115,8 @@ int sas_register_ha(struct sas_ha_struct
+ 		}
+ 	}
+ 
++	INIT_LIST_HEAD(&sas_ha->eh_done_q);
++
+ 	return 0;
+ 
+ Undo_ports:
+@@ -123,12 +128,22 @@ Undo_phys:
+ 
+ int sas_unregister_ha(struct sas_ha_struct *sas_ha)
+ {
++	unsigned long flags;
++
++	/* Set the state to unregistered to avoid further
++	 * events to be queued */
++	spin_lock_irqsave(&sas_ha->state_lock, flags);
++	sas_ha->state = SAS_HA_UNREGISTERED;
++	spin_unlock_irqrestore(&sas_ha->state_lock, flags);
++	scsi_flush_work(sas_ha->core.shost);
++
++	sas_unregister_ports(sas_ha);
++
+ 	if (sas_ha->lldd_max_execute_num > 1) {
+ 		sas_shutdown_queue(sas_ha);
++		sas_ha->lldd_max_execute_num = 1;
+ 	}
+ 
+-	sas_unregister_ports(sas_ha);
+-
+ 	return 0;
+ }
+ 
+@@ -142,7 +157,37 @@ static int sas_get_linkerrors(struct sas
+ 	return sas_smp_get_phy_events(phy);
+ }
+ 
+-static int sas_phy_reset(struct sas_phy *phy, int hard_reset)
++int sas_phy_enable(struct sas_phy *phy, int enable)
++{
++	int ret;
++	enum phy_func command;
++
++	if (enable)
++		command = PHY_FUNC_LINK_RESET;
++	else
++		command = PHY_FUNC_DISABLE;
++
++	if (scsi_is_sas_phy_local(phy)) {
++		struct Scsi_Host *shost = dev_to_shost(phy->dev.parent);
++		struct sas_ha_struct *sas_ha = SHOST_TO_SAS_HA(shost);
++		struct asd_sas_phy *asd_phy = sas_ha->sas_phy[phy->number];
++		struct sas_internal *i =
++			to_sas_internal(sas_ha->core.shost->transportt);
++
++		if (!enable) {
++			sas_phy_disconnected(asd_phy);
++			sas_ha->notify_phy_event(asd_phy, PHYE_LOSS_OF_SIGNAL);
++		}
++		ret = i->dft->lldd_control_phy_new(asd_phy, command, NULL);
++	} else {
++		struct sas_rphy *rphy = dev_to_rphy(phy->dev.parent);
++		struct domain_device *ddev = sas_find_dev_by_rphy(rphy);
++		ret = sas_smp_phy_control(ddev, phy->number, command, NULL);
++	}
++	return ret;
++}
++
++int sas_phy_reset(struct sas_phy *phy, int hard_reset)
+ {
+ 	int ret;
+ 	enum phy_func reset_type;
+@@ -158,18 +203,56 @@ static int sas_phy_reset(struct sas_phy 
+ 		struct asd_sas_phy *asd_phy = sas_ha->sas_phy[phy->number];
+ 		struct sas_internal *i =
+ 			to_sas_internal(sas_ha->core.shost->transportt);
++		ret = i->dft->lldd_control_phy_new(asd_phy, reset_type, NULL);
++	} else {
++		struct sas_rphy *rphy = dev_to_rphy(phy->dev.parent);
++		struct domain_device *ddev = sas_find_dev_by_rphy(rphy);
++		ret = sas_smp_phy_control(ddev, phy->number, reset_type, NULL);
++	}
++	return ret;
++}
++
++int sas_set_phy_speed(struct sas_phy *phy,
++		      struct sas_phy_linkrates *rates)
++{
++	int ret;
++
++	if ((rates->minimum_linkrate &&
++	     rates->minimum_linkrate > linkrate_to_phy_linkrate(phy->maximum_linkrate)) ||
++	    (rates->maximum_linkrate &&
++	     rates->maximum_linkrate < linkrate_to_phy_linkrate(phy->minimum_linkrate)))
++		return -EINVAL;
+ 
+-		ret = i->dft->lldd_control_phy(asd_phy, reset_type);
++	if (rates->minimum_linkrate &&
++	    rates->minimum_linkrate < linkrate_to_phy_linkrate(phy->minimum_linkrate_hw))
++		rates->minimum_linkrate = linkrate_to_phy_linkrate(phy->minimum_linkrate_hw);
++
++	if (rates->maximum_linkrate &&
++	    rates->maximum_linkrate > linkrate_to_phy_linkrate(phy->maximum_linkrate_hw))
++		rates->maximum_linkrate = linkrate_to_phy_linkrate(phy->maximum_linkrate_hw);
++
++	if (scsi_is_sas_phy_local(phy)) {
++		struct Scsi_Host *shost = dev_to_shost(phy->dev.parent);
++		struct sas_ha_struct *sas_ha = SHOST_TO_SAS_HA(shost);
++		struct asd_sas_phy *asd_phy = sas_ha->sas_phy[phy->number];
++		struct sas_internal *i =
++			to_sas_internal(sas_ha->core.shost->transportt);
++		ret = i->dft->lldd_control_phy_new(asd_phy, PHY_FUNC_SET_LINK_RATE, rates);
+ 	} else {
+ 		struct sas_rphy *rphy = dev_to_rphy(phy->dev.parent);
+ 		struct domain_device *ddev = sas_find_dev_by_rphy(rphy);
+-		ret = sas_smp_phy_control(ddev, phy->number, reset_type);
++		ret = sas_smp_phy_control(ddev, phy->number,
++					  PHY_FUNC_LINK_RESET, rates);
++
+ 	}
++
+ 	return ret;
+ }
+ 
+ static struct sas_function_template sft = {
++	.phy_enable = sas_phy_enable,
+ 	.phy_reset = sas_phy_reset,
++	.set_phy_speed = sas_set_phy_speed,
+ 	.get_linkerrors = sas_get_linkerrors,
+ };
+ 
+diff -urNp linux-2.6.18.orig/drivers/scsi/libsas/sas_internal.h linux-2.6.18/drivers/scsi/libsas/sas_internal.h
+--- linux-2.6.18.orig/drivers/scsi/libsas/sas_internal.h	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/libsas/sas_internal.h	2007-06-21 16:47:04.000000000 -0400
+@@ -70,7 +70,7 @@ int sas_notify_lldd_dev_found(struct dom
+ void sas_notify_lldd_dev_gone(struct domain_device *);
+ 
+ int sas_smp_phy_control(struct domain_device *dev, int phy_id,
+-			enum phy_func phy_func);
++			enum phy_func phy_func, struct sas_phy_linkrates *);
+ int sas_smp_get_phy_events(struct sas_phy *phy);
+ 
+ struct domain_device *sas_find_dev_by_rphy(struct sas_rphy *rphy);
+@@ -80,7 +80,7 @@ void sas_hae_reset(void *);
+ static inline void sas_queue_event(int event, spinlock_t *lock,
+ 				   unsigned long *pending,
+ 				   struct work_struct *work,
+-				   struct Scsi_Host *shost)
++				   struct sas_ha_struct *sas_ha)
+ {
+ 	unsigned long flags;
+ 
+@@ -91,7 +91,12 @@ static inline void sas_queue_event(int e
+ 	}
+ 	__set_bit(event, pending);
+ 	spin_unlock_irqrestore(lock, flags);
+-	scsi_queue_work(shost, work);
++
++	spin_lock_irqsave(&sas_ha->state_lock, flags);
++	if (sas_ha->state != SAS_HA_UNREGISTERED) {
++		scsi_queue_work(sas_ha->core.shost, work);
++	}
++	spin_unlock_irqrestore(&sas_ha->state_lock, flags);
+ }
+ 
+ static inline void sas_begin_event(int event, spinlock_t *lock,
+diff -urNp linux-2.6.18.orig/drivers/scsi/libsas/sas_phy.c linux-2.6.18/drivers/scsi/libsas/sas_phy.c
+--- linux-2.6.18.orig/drivers/scsi/libsas/sas_phy.c	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/libsas/sas_phy.c	2007-06-21 16:53:12.000000000 -0400
+@@ -67,13 +67,16 @@ static void sas_phye_oob_error(void *dat
+ 		switch (phy->error) {
+ 		case 1:
+ 		case 2:
+-			i->dft->lldd_control_phy(phy, PHY_FUNC_HARD_RESET);
++			i->dft->lldd_control_phy_new(phy, PHY_FUNC_HARD_RESET,
++						     NULL);
++				
+ 			break;
+ 		case 3:
+ 		default:
+ 			phy->error = 0;
+ 			phy->enabled = 0;
+-			i->dft->lldd_control_phy(phy, PHY_FUNC_DISABLE);
++			i->dft->lldd_control_phy_new(phy, PHY_FUNC_DISABLE, NULL);
++			
+ 			break;
+ 		}
+ 	}
+@@ -90,7 +93,7 @@ static void sas_phye_spinup_hold(void *d
+ 			&phy->phy_events_pending);
+ 
+ 	phy->error = 0;
+-	i->dft->lldd_control_phy(phy, PHY_FUNC_RELEASE_SPINUP_HOLD);
++	i->dft->lldd_control_phy_new(phy, PHY_FUNC_RELEASE_SPINUP_HOLD, NULL);
+ }
+ 
+ /* ---------- Phy class registration ---------- */
+@@ -128,6 +131,7 @@ int sas_register_phys(struct sas_ha_stru
+ 		for (k = 0; k < PHY_NUM_EVENTS; k++)
+ 			INIT_WORK(&phy->phy_events[k], sas_phy_event_fns[k],
+ 				  phy);
++
+ 		phy->port = NULL;
+ 		phy->ha = sas_ha;
+ 		spin_lock_init(&phy->frame_rcvd_lock);
+@@ -144,10 +148,10 @@ int sas_register_phys(struct sas_ha_stru
+ 		phy->phy->identify.target_port_protocols = phy->tproto;
+ 		phy->phy->identify.sas_address = SAS_ADDR(sas_ha->sas_addr);
+ 		phy->phy->identify.phy_identifier = i;
+-		phy->phy->minimum_linkrate_hw = SAS_LINK_RATE_1_5_GBPS;
+-		phy->phy->maximum_linkrate_hw = SAS_LINK_RATE_3_0_GBPS;
+-		phy->phy->minimum_linkrate = SAS_LINK_RATE_1_5_GBPS;
+-		phy->phy->maximum_linkrate = SAS_LINK_RATE_3_0_GBPS;
++		phy->phy->minimum_linkrate_hw = SAS_LINK_RATE_UNKNOWN;
++		phy->phy->maximum_linkrate_hw = SAS_LINK_RATE_UNKNOWN;
++		phy->phy->minimum_linkrate = SAS_LINK_RATE_UNKNOWN;
++		phy->phy->maximum_linkrate = SAS_LINK_RATE_UNKNOWN;
+ 		phy->phy->negotiated_linkrate = SAS_LINK_RATE_UNKNOWN;
+ 
+ 		sas_phy_add(phy->phy);
+diff -urNp linux-2.6.18.orig/drivers/scsi/libsas/sas_port.c linux-2.6.18/drivers/scsi/libsas/sas_port.c
+--- linux-2.6.18.orig/drivers/scsi/libsas/sas_port.c	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/libsas/sas_port.c	2007-06-21 16:47:04.000000000 -0400
+@@ -42,10 +42,11 @@ static void sas_form_port(struct asd_sas
+ 	struct asd_sas_port *port = phy->port;
+ 	struct sas_internal *si =
+ 		to_sas_internal(sas_ha->core.shost->transportt);
++	unsigned long flags;
+ 
+ 	if (port) {
+ 		if (memcmp(port->attached_sas_addr, phy->attached_sas_addr,
+-			   SAS_ADDR_SIZE) == 0)
++			   SAS_ADDR_SIZE) != 0)
+ 			sas_deform_port(phy);
+ 		else {
+ 			SAS_DPRINTK("%s: phy%d belongs to port%d already(%d)!\n",
+@@ -56,7 +57,7 @@ static void sas_form_port(struct asd_sas
+ 	}
+ 
+ 	/* find a port */
+-	spin_lock(&sas_ha->phy_port_lock);
++	spin_lock_irqsave(&sas_ha->phy_port_lock, flags);
+ 	for (i = 0; i < sas_ha->num_phys; i++) {
+ 		port = sas_ha->sas_port[i];
+ 		spin_lock(&port->phy_list_lock);
+@@ -78,7 +79,7 @@ static void sas_form_port(struct asd_sas
+ 	if (i >= sas_ha->num_phys) {
+ 		printk(KERN_NOTICE "%s: couldn't find a free port, bug?\n",
+ 		       __FUNCTION__);
+-		spin_unlock(&sas_ha->phy_port_lock);
++		spin_unlock_irqrestore(&sas_ha->phy_port_lock, flags);
+ 		return;
+ 	}
+ 
+@@ -105,7 +106,7 @@ static void sas_form_port(struct asd_sas
+ 	} else
+ 		port->linkrate = max(port->linkrate, phy->linkrate);
+ 	spin_unlock(&port->phy_list_lock);
+-	spin_unlock(&sas_ha->phy_port_lock);
++	spin_unlock_irqrestore(&sas_ha->phy_port_lock, flags);
+ 
+ 	if (!port->port) {
+ 		port->port = sas_port_alloc(phy->phy->dev.parent, port->id);
+@@ -137,6 +138,7 @@ void sas_deform_port(struct asd_sas_phy 
+ 	struct asd_sas_port *port = phy->port;
+ 	struct sas_internal *si =
+ 		to_sas_internal(sas_ha->core.shost->transportt);
++	unsigned long flags;
+ 
+ 	if (!port)
+ 		return;		  /* done by a phy event */
+@@ -155,7 +157,7 @@ void sas_deform_port(struct asd_sas_phy 
+ 	if (si->dft->lldd_port_deformed)
+ 		si->dft->lldd_port_deformed(phy);
+ 
+-	spin_lock(&sas_ha->phy_port_lock);
++	spin_lock_irqsave(&sas_ha->phy_port_lock, flags);
+ 	spin_lock(&port->phy_list_lock);
+ 
+ 	list_del_init(&phy->port_phy_el);
+@@ -174,7 +176,7 @@ void sas_deform_port(struct asd_sas_phy 
+ 		port->phy_mask = 0;
+ 	}
+ 	spin_unlock(&port->phy_list_lock);
+-	spin_unlock(&sas_ha->phy_port_lock);
++	spin_unlock_irqrestore(&sas_ha->phy_port_lock, flags);
+ 
+ 	return;
+ }
+diff -urNp linux-2.6.18.orig/drivers/scsi/libsas/sas_scsi_host.c linux-2.6.18/drivers/scsi/libsas/sas_scsi_host.c
+--- linux-2.6.18.orig/drivers/scsi/libsas/sas_scsi_host.c	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/libsas/sas_scsi_host.c	2007-06-21 16:47:04.000000000 -0400
+@@ -29,9 +29,12 @@
+ #include <scsi/scsi_device.h>
+ #include <scsi/scsi_tcq.h>
+ #include <scsi/scsi.h>
++#include <scsi/scsi_eh.h>
+ #include <scsi/scsi_transport.h>
+ #include <scsi/scsi_transport_sas.h>
+ #include "../scsi_sas_internal.h"
++#include "../scsi_transport_api.h"
++#include "../scsi_priv.h"
+ 
+ #include <linux/err.h>
+ #include <linux/blkdev.h>
+@@ -46,6 +49,7 @@ static void sas_scsi_task_done(struct sa
+ {
+ 	struct task_status_struct *ts = &task->task_status;
+ 	struct scsi_cmnd *sc = task->uldd_task;
++	struct sas_ha_struct *sas_ha = SHOST_TO_SAS_HA(sc->device->host);
+ 	unsigned ts_flags = task->task_state_flags;
+ 	int hs = 0, stat = 0;
+ 
+@@ -116,7 +120,7 @@ static void sas_scsi_task_done(struct sa
+ 	sas_free_task(task);
+ 	/* This is very ugly but this is how SCSI Core works. */
+ 	if (ts_flags & SAS_TASK_STATE_ABORTED)
+-		scsi_finish_command(sc);
++		scsi_eh_finish_cmd(sc, &sas_ha->eh_done_q);
+ 	else
+ 		sc->scsi_done(sc);
+ }
+@@ -127,14 +131,14 @@ static enum task_attribute sas_scsi_get_
+ 	if (cmd->request && blk_rq_tagged(cmd->request)) {
+ 		if (cmd->device->ordered_tags &&
+ 		    (cmd->request->flags & REQ_HARDBARRIER))
+-			ta = TASK_ATTR_HOQ;
++			ta = TASK_ATTR_ORDERED;
+ 	}
+ 	return ta;
+ }
+ 
+ static struct sas_task *sas_create_task(struct scsi_cmnd *cmd,
+ 					       struct domain_device *dev,
+-					       unsigned long gfp_flags)
++					       gfp_t gfp_flags)
+ {
+ 	struct sas_task *task = sas_alloc_task(gfp_flags);
+ 	struct scsi_lun lun;
+@@ -278,6 +282,7 @@ enum task_disposition {
+ 	TASK_IS_ABORTED,
+ 	TASK_IS_AT_LU,
+ 	TASK_IS_NOT_AT_LU,
++	TASK_ABORT_FAILED,
+ };
+ 
+ static enum task_disposition sas_scsi_find_task(struct sas_task *task)
+@@ -328,15 +333,21 @@ static enum task_disposition sas_scsi_fi
+ 			SAS_DPRINTK("%s: querying task 0x%p\n",
+ 				    __FUNCTION__, task);
+ 			res = si->dft->lldd_query_task(task);
+-			if (res == TMF_RESP_FUNC_SUCC) {
++			switch (res) {
++			case TMF_RESP_FUNC_SUCC:
+ 				SAS_DPRINTK("%s: task 0x%p at LU\n",
+ 					    __FUNCTION__, task);
+ 				return TASK_IS_AT_LU;
+-			} else if (res == TMF_RESP_FUNC_COMPLETE) {
++			case TMF_RESP_FUNC_COMPLETE:
+ 				SAS_DPRINTK("%s: task 0x%p not at LU\n",
+ 					    __FUNCTION__, task);
+ 				return TASK_IS_NOT_AT_LU;
+-			}
++			case TMF_RESP_FUNC_FAILED:
++                                SAS_DPRINTK("%s: task 0x%p failed to abort\n",
++                                                __FUNCTION__, task);
++                                return TASK_ABORT_FAILED;
++                        }
++
+ 		}
+ 	}
+ 	return res;
+@@ -386,47 +397,132 @@ static int sas_recover_I_T(struct domain
+ 	return res;
+ }
+ 
+-void sas_scsi_recover_host(struct Scsi_Host *shost)
++/* Find the sas_phy that's attached to this device */
++struct sas_phy *find_local_sas_phy(struct domain_device *dev)
++{
++	struct domain_device *pdev = dev->parent;
++	struct ex_phy *exphy = NULL;
++	int i;
++
++	/* Directly attached device */
++	if (!pdev)
++		return dev->port->phy;
++
++	/* Otherwise look in the expander */
++	for (i = 0; i < pdev->ex_dev.num_phys; i++)
++		if (!memcmp(dev->sas_addr,
++			    pdev->ex_dev.ex_phy[i].attached_sas_addr,
++			    SAS_ADDR_SIZE)) {
++			exphy = &pdev->ex_dev.ex_phy[i];
++			break;
++		}
++
++	BUG_ON(!exphy);
++	return exphy->phy;
++}
++
++/* Attempt to send a LUN reset message to a device */
++int sas_eh_device_reset_handler(struct scsi_cmnd *cmd)
++{
++	struct domain_device *dev = cmd_to_domain_dev(cmd);
++	struct sas_internal *i =
++		to_sas_internal(dev->port->ha->core.shost->transportt);
++	struct scsi_lun lun;
++	int res;
++
++	int_to_scsilun(cmd->device->lun, &lun);
++
++	if (!i->dft->lldd_lu_reset)
++		return FAILED;
++
++	res = i->dft->lldd_lu_reset(dev, lun.scsi_lun);
++	if (res == TMF_RESP_FUNC_SUCC || res == TMF_RESP_FUNC_COMPLETE)
++		return SUCCESS;
++
++	return FAILED;
++}
++
++/* Attempt to send a phy (bus) reset */
++int sas_eh_bus_reset_handler(struct scsi_cmnd *cmd)
++{
++	struct domain_device *dev = cmd_to_domain_dev(cmd);
++	struct sas_phy *phy = find_local_sas_phy(dev);
++	int res;
++
++	res = sas_phy_reset(phy, 1);
++	if (res)
++		SAS_DPRINTK("Bus reset of %s failed 0x%x\n",
++			    phy->dev.kobj.k_name,
++			    res);
++	if (res == TMF_RESP_FUNC_SUCC || res == TMF_RESP_FUNC_COMPLETE)
++		return SUCCESS;
++
++	return FAILED;
++}
++
++/* Try to reset a device */
++static int try_to_reset_cmd_device(struct Scsi_Host *shost,
++				   struct scsi_cmnd *cmd)
++{
++	int res;
++
++	if (!shost->hostt->eh_device_reset_handler)
++		goto try_bus_reset;
++
++	res = shost->hostt->eh_device_reset_handler(cmd);
++	if (res == SUCCESS)
++		return res;
++
++try_bus_reset:
++	if (shost->hostt->eh_bus_reset_handler)
++		return shost->hostt->eh_bus_reset_handler(cmd);
++
++	return FAILED;
++}
++
++static int sas_eh_handle_sas_errors(struct Scsi_Host *shost,
++				    struct list_head *work_q,
++				    struct list_head *done_q)
+ {
+-	struct sas_ha_struct *ha = SHOST_TO_SAS_HA(shost);
+-	unsigned long flags;
+-	LIST_HEAD(error_q);
+ 	struct scsi_cmnd *cmd, *n;
+ 	enum task_disposition res = TASK_IS_DONE;
+-	int tmf_resp;
++	int tmf_resp, need_reset;
+ 	struct sas_internal *i = to_sas_internal(shost->transportt);
++	unsigned long flags;
++	struct sas_ha_struct *ha = SHOST_TO_SAS_HA(shost);
+ 
+-	spin_lock_irqsave(shost->host_lock, flags);
+-	list_splice_init(&shost->eh_cmd_q, &error_q);
+-	spin_unlock_irqrestore(shost->host_lock, flags);
+-
+-	SAS_DPRINTK("Enter %s\n", __FUNCTION__);
+-
+-	/* All tasks on this list were marked SAS_TASK_STATE_ABORTED
+-	 * by sas_scsi_timed_out() callback.
+-	 */
+ Again:
+-	SAS_DPRINTK("going over list...\n");
+-	list_for_each_entry_safe(cmd, n, &error_q, eh_entry) {
++	list_for_each_entry_safe(cmd, n, work_q, eh_entry) {
+ 		struct sas_task *task = TO_SAS_TASK(cmd);
+ 
+-		SAS_DPRINTK("trying to find task 0x%p\n", task);
++		if (!task)
++			continue;
++
+ 		list_del_init(&cmd->eh_entry);
++
++		spin_lock_irqsave(&task->task_state_lock, flags);
++		need_reset = task->task_state_flags & SAS_TASK_NEED_DEV_RESET;
++		spin_unlock_irqrestore(&task->task_state_lock, flags);
++
++		SAS_DPRINTK("trying to find task 0x%p\n", task);
+ 		res = sas_scsi_find_task(task);
+ 
+ 		cmd->eh_eflags = 0;
+-		shost->host_failed--;
+ 
+ 		switch (res) {
+ 		case TASK_IS_DONE:
+ 			SAS_DPRINTK("%s: task 0x%p is done\n", __FUNCTION__,
+ 				    task);
+ 			task->task_done(task);
++			if (need_reset)
++				try_to_reset_cmd_device(shost, cmd);
+ 			continue;
+ 		case TASK_IS_ABORTED:
+ 			SAS_DPRINTK("%s: task 0x%p is aborted\n",
+ 				    __FUNCTION__, task);
+ 			task->task_done(task);
++			if (need_reset)
++				try_to_reset_cmd_device(shost, cmd);
+ 			continue;
+ 		case TASK_IS_AT_LU:
+ 			SAS_DPRINTK("task 0x%p is at LU: lu recover\n", task);
+@@ -437,11 +533,14 @@ Again:
+ 					    SAS_ADDR(task->dev),
+ 					    cmd->device->lun);
+ 				task->task_done(task);
+-				sas_scsi_clear_queue_lu(&error_q, cmd);
++				if (need_reset)
++					try_to_reset_cmd_device(shost, cmd);
++				sas_scsi_clear_queue_lu(work_q, cmd);
+ 				goto Again;
+ 			}
+ 			/* fallthrough */
+ 		case TASK_IS_NOT_AT_LU:
++		case TASK_ABORT_FAILED:
+ 			SAS_DPRINTK("task 0x%p is not at LU: I_T recover\n",
+ 				    task);
+ 			tmf_resp = sas_recover_I_T(task->dev);
+@@ -449,7 +548,9 @@ Again:
+ 				SAS_DPRINTK("I_T %016llx recovered\n",
+ 					    SAS_ADDR(task->dev->sas_addr));
+ 				task->task_done(task);
+-				sas_scsi_clear_queue_I_T(&error_q, task->dev);
++				if (need_reset)
++					try_to_reset_cmd_device(shost, cmd);
++				sas_scsi_clear_queue_I_T(work_q, task->dev);
+ 				goto Again;
+ 			}
+ 			/* Hammer time :-) */
+@@ -462,7 +563,9 @@ Again:
+ 					SAS_DPRINTK("clear nexus port:%d "
+ 						    "succeeded\n", port->id);
+ 					task->task_done(task);
+-					sas_scsi_clear_queue_port(&error_q,
++					if (need_reset)
++						try_to_reset_cmd_device(shost, cmd);
++					sas_scsi_clear_queue_port(work_q,
+ 								  port);
+ 					goto Again;
+ 				}
+@@ -474,6 +577,8 @@ Again:
+ 					SAS_DPRINTK("clear nexus ha "
+ 						    "succeeded\n");
+ 					task->task_done(task);
++					if (need_reset)
++						try_to_reset_cmd_device(shost, cmd);
+ 					goto out;
+ 				}
+ 			}
+@@ -487,19 +592,54 @@ Again:
+ 				    cmd->device->lun);
+ 
+ 			task->task_done(task);
++			if (need_reset)
++				try_to_reset_cmd_device(shost, cmd);
+ 			goto clear_q;
+ 		}
+ 	}
+ out:
+-	SAS_DPRINTK("--- Exit %s\n", __FUNCTION__);
+-	return;
++	return list_empty(work_q);
+ clear_q:
+ 	SAS_DPRINTK("--- Exit %s -- clear_q\n", __FUNCTION__);
+-	list_for_each_entry_safe(cmd, n, &error_q, eh_entry) {
++	list_for_each_entry_safe(cmd, n, work_q, eh_entry) {
+ 		struct sas_task *task = TO_SAS_TASK(cmd);
+ 		list_del_init(&cmd->eh_entry);
+ 		task->task_done(task);
+ 	}
++	return list_empty(work_q);
++}
++
++void sas_scsi_recover_host(struct Scsi_Host *shost)
++{
++	struct sas_ha_struct *ha = SHOST_TO_SAS_HA(shost);
++	unsigned long flags;
++	LIST_HEAD(eh_work_q);
++
++	spin_lock_irqsave(shost->host_lock, flags);
++	list_splice_init(&shost->eh_cmd_q, &eh_work_q);
++	spin_unlock_irqrestore(shost->host_lock, flags);
++
++	SAS_DPRINTK("Enter %s\n", __FUNCTION__);
++	/*
++	 * Deal with commands that still have SAS tasks (i.e. they didn't
++	 * complete via the normal sas_task completion mechanism)
++	 */
++	if (sas_eh_handle_sas_errors(shost, &eh_work_q, &ha->eh_done_q))
++		goto out;
++
++	/*
++	 * Now deal with SCSI commands that completed ok but have a an error
++	 * code (and hopefully sense data) attached.  This is roughly what
++	 * scsi_unjam_host does, but we skip scsi_eh_abort_cmds because any
++	 * command we see here has no sas_task and is thus unknown to the HA.
++	 */
++	if (!scsi_eh_get_sense(&eh_work_q, &ha->eh_done_q))
++		scsi_eh_ready_devs(shost, &eh_work_q, &ha->eh_done_q);
++
++out:
++	scsi_eh_flush_done_q(&ha->eh_done_q);
++	SAS_DPRINTK("--- Exit %s\n", __FUNCTION__);
++	return;
+ }
+ 
+ enum scsi_eh_timer_return sas_scsi_timed_out(struct scsi_cmnd *cmd)
+@@ -508,18 +648,30 @@ enum scsi_eh_timer_return sas_scsi_timed
+ 	unsigned long flags;
+ 
+ 	if (!task) {
+-		SAS_DPRINTK("command 0x%p, task 0x%p, timed out: EH_HANDLED\n",
+-			    cmd, task);
+-		return EH_HANDLED;
++		cmd->timeout_per_command /= 2;
++		SAS_DPRINTK("command 0x%p, task 0x%p, gone: %s\n",
++			    cmd, task, (cmd->timeout_per_command ?
++			    "EH_RESET_TIMER" : "EH_NOT_HANDLED"));
++		if (!cmd->timeout_per_command)
++			return EH_NOT_HANDLED;
++		return EH_RESET_TIMER;
+ 	}
+ 
+ 	spin_lock_irqsave(&task->task_state_lock, flags);
++	BUG_ON(task->task_state_flags & SAS_TASK_STATE_ABORTED);
+ 	if (task->task_state_flags & SAS_TASK_STATE_DONE) {
+ 		spin_unlock_irqrestore(&task->task_state_lock, flags);
+ 		SAS_DPRINTK("command 0x%p, task 0x%p, timed out: EH_HANDLED\n",
+ 			    cmd, task);
+ 		return EH_HANDLED;
+ 	}
++	if (!(task->task_state_flags & SAS_TASK_AT_INITIATOR)) {
++		spin_unlock_irqrestore(&task->task_state_lock, flags);
++		SAS_DPRINTK("command 0x%p, task 0x%p, not at initiator: "
++			    "EH_RESET_TIMER\n",
++			    cmd, task);
++		return EH_RESET_TIMER;
++	}
+ 	task->task_state_flags |= SAS_TASK_STATE_ABORTED;
+ 	spin_unlock_irqrestore(&task->task_state_lock, flags);
+ 
+@@ -535,8 +687,9 @@ struct domain_device *sas_find_dev_by_rp
+ 	struct sas_ha_struct *ha = SHOST_TO_SAS_HA(shost);
+ 	struct domain_device *found_dev = NULL;
+ 	int i;
++	unsigned long flags;
+ 
+-	spin_lock(&ha->phy_port_lock);
++	spin_lock_irqsave(&ha->phy_port_lock, flags);
+ 	for (i = 0; i < ha->num_phys; i++) {
+ 		struct asd_sas_port *port = ha->sas_port[i];
+ 		struct domain_device *dev;
+@@ -552,7 +705,7 @@ struct domain_device *sas_find_dev_by_rp
+ 		spin_unlock(&port->dev_list_lock);
+ 	}
+  found:
+-	spin_unlock(&ha->phy_port_lock);
++	spin_unlock_irqrestore(&ha->phy_port_lock, flags);
+ 
+ 	return found_dev;
+ }
+@@ -601,6 +754,8 @@ int sas_slave_configure(struct scsi_devi
+ 		scsi_deactivate_tcq(scsi_dev, 1);
+ 	}
+ 
++	scsi_dev->allow_restart = 1;
++
+ 	return 0;
+ }
+ 
+@@ -777,6 +932,69 @@ void sas_shutdown_queue(struct sas_ha_st
+ 	spin_unlock_irqrestore(&core->task_queue_lock, flags);
+ }
+ 
++/*
++ * Call the LLDD task abort routine directly.  This function is intended for
++ * use by upper layers that need to tell the LLDD to abort a task.
++ */
++int __sas_task_abort(struct sas_task *task)
++{
++	struct sas_internal *si =
++		to_sas_internal(task->dev->port->ha->core.shost->transportt);
++	unsigned long flags;
++	int res;
++
++	spin_lock_irqsave(&task->task_state_lock, flags);
++	if (task->task_state_flags & SAS_TASK_STATE_ABORTED ||
++	    task->task_state_flags & SAS_TASK_STATE_DONE) {
++		spin_unlock_irqrestore(&task->task_state_lock, flags);
++		SAS_DPRINTK("%s: Task %p already finished.\n", __FUNCTION__,
++			    task);
++		return 0;
++	}
++	task->task_state_flags |= SAS_TASK_STATE_ABORTED;
++	spin_unlock_irqrestore(&task->task_state_lock, flags);
++
++	if (!si->dft->lldd_abort_task)
++		return -ENODEV;
++
++	res = si->dft->lldd_abort_task(task);
++
++	spin_lock_irqsave(&task->task_state_lock, flags);
++	if ((task->task_state_flags & SAS_TASK_STATE_DONE) ||
++	    (res == TMF_RESP_FUNC_COMPLETE))
++	{
++		spin_unlock_irqrestore(&task->task_state_lock, flags);
++		task->task_done(task);
++		return 0;
++	}
++
++	if (!(task->task_state_flags & SAS_TASK_STATE_DONE))
++		task->task_state_flags &= ~SAS_TASK_STATE_ABORTED;
++	spin_unlock_irqrestore(&task->task_state_lock, flags);
++
++	return -EAGAIN;
++}
++
++/*
++ * Tell an upper layer that it needs to initiate an abort for a given task.
++ * This should only ever be called by an LLDD.
++ */
++void sas_task_abort(struct sas_task *task)
++{
++	struct scsi_cmnd *sc = task->uldd_task;
++
++	/* Escape for libsas internal commands */
++	if (!sc) {
++		if (!del_timer(&task->timer))
++			return;
++		task->timer.function(task->timer.data);
++		return;
++	}
++
++	scsi_req_abort_cmd(sc);
++	scsi_schedule_eh(sc->device->host);
++}
++
+ EXPORT_SYMBOL_GPL(sas_queuecommand);
+ EXPORT_SYMBOL_GPL(sas_target_alloc);
+ EXPORT_SYMBOL_GPL(sas_slave_configure);
+@@ -784,3 +1002,9 @@ EXPORT_SYMBOL_GPL(sas_slave_destroy);
+ EXPORT_SYMBOL_GPL(sas_change_queue_depth);
+ EXPORT_SYMBOL_GPL(sas_change_queue_type);
+ EXPORT_SYMBOL_GPL(sas_bios_param);
++EXPORT_SYMBOL_GPL(__sas_task_abort);
++EXPORT_SYMBOL_GPL(sas_task_abort);
++EXPORT_SYMBOL_GPL(sas_phy_reset);
++EXPORT_SYMBOL_GPL(sas_phy_enable);
++EXPORT_SYMBOL_GPL(sas_eh_device_reset_handler);
++EXPORT_SYMBOL_GPL(sas_eh_bus_reset_handler);
+diff -urNp linux-2.6.18.orig/drivers/scsi/scsi_error.c linux-2.6.18/drivers/scsi/scsi_error.c
+--- linux-2.6.18.orig/drivers/scsi/scsi_error.c	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/scsi_error.c	2007-06-21 16:47:04.000000000 -0400
+@@ -575,9 +575,18 @@ static void scsi_abort_eh_cmnd(struct sc
+ }
+ 
+ /**
+- * scsi_send_eh_cmnd  - send a cmd to a device as part of error recovery.
+- * @scmd:	SCSI Cmd to send.
+- * @timeout:	Timeout for cmd.
++ * scsi_send_eh_cmnd  - submit a scsi command as part of error recory
++ * @scmd:       SCSI command structure to hijack
++ * @cmnd:       CDB to send
++ * @cmnd_size:  size in bytes of @cmnd
++ * @timeout:    timeout for this request
++ * @copy_sense: request sense data if set to 1
++ *
++ * This function is used to send a scsi command down to a target device
++ * as part of the error recovery process.  If @copy_sense is 0 the command
++ * sent must be one that does not transfer any data.  If @copy_sense is 1
++ * the command must be REQUEST_SENSE and this functions copies out the
++ * sense buffer it got into @scmd->sense_buffer.
+  *
+  * Return value:
+  *    SUCCESS or FAILED or NEEDS_RETRY
+@@ -591,6 +600,7 @@ static int scsi_send_eh_cmnd(struct scsi
+ 	DECLARE_COMPLETION_ONSTACK(done);
+ 	unsigned long timeleft;
+ 	unsigned long flags;
++	struct scatterlist sgl;
+ 	unsigned char old_cmnd[MAX_COMMAND_SIZE];
+ 	enum dma_data_direction old_data_direction;
+ 	unsigned short old_use_sg;
+@@ -617,24 +627,29 @@ static int scsi_send_eh_cmnd(struct scsi
+ 	memcpy(scmd->cmnd, cmnd, cmnd_size);
+ 
+ 	if (copy_sense) {
+-		int gfp_mask = GFP_ATOMIC;
++		gfp_t gfp_mask = GFP_ATOMIC;
+ 
+ 		if (shost->hostt->unchecked_isa_dma)
+ 			gfp_mask |= __GFP_DMA;
+ 
+-		scmd->sc_data_direction = DMA_FROM_DEVICE;
+-		scmd->request_bufflen = 252;
+-		scmd->request_buffer = kzalloc(scmd->request_bufflen, gfp_mask);
+-		if (!scmd->request_buffer)
++		sgl.page = alloc_page(gfp_mask);
++		if (!sgl.page)
+ 			return FAILED;
++		sgl.offset = 0;
++		sgl.length = 252;
++
++		scmd->sc_data_direction = DMA_FROM_DEVICE;
++		scmd->request_bufflen = sgl.length;
++		scmd->request_buffer = &sgl;
++		scmd->use_sg = 1;
+ 	} else {
+ 		scmd->request_buffer = NULL;
+ 		scmd->request_bufflen = 0;
+ 		scmd->sc_data_direction = DMA_NONE;
++		scmd->use_sg = 0;
+ 	}
+ 
+ 	scmd->underflow = 0;
+-	scmd->use_sg = 0;
+ 	scmd->cmd_len = COMMAND_SIZE(scmd->cmnd[0]);
+ 
+ 	if (sdev->scsi_level <= SCSI_2)
+@@ -699,7 +714,7 @@ static int scsi_send_eh_cmnd(struct scsi
+ 			memcpy(scmd->sense_buffer, scmd->request_buffer,
+ 			       sizeof(scmd->sense_buffer));
+ 		}
+-		kfree(scmd->request_buffer);
++		__free_page(sgl.page);
+ 	}
+ 
+ 
+@@ -773,8 +788,8 @@ EXPORT_SYMBOL(scsi_eh_finish_cmd);
+  *    XXX: Long term this code should go away, but that needs an audit of
+  *         all LLDDs first.
+  **/
+-static int scsi_eh_get_sense(struct list_head *work_q,
+-			     struct list_head *done_q)
++int scsi_eh_get_sense(struct list_head *work_q,
++		      struct list_head *done_q)
+ {
+ 	struct scsi_cmnd *scmd, *next;
+ 	int rtn;
+@@ -816,6 +831,7 @@ static int scsi_eh_get_sense(struct list
+ 
+ 	return list_empty(work_q);
+ }
++EXPORT_SYMBOL(scsi_eh_get_sense);
+ 
+ /**
+  * scsi_eh_tur - Send TUR to device.
+@@ -1403,9 +1419,9 @@ static void scsi_restart_operations(stru
+  * @eh_done_q:	list_head for processed commands.
+  *
+  **/
+-static void scsi_eh_ready_devs(struct Scsi_Host *shost,
+-			       struct list_head *work_q,
+-			       struct list_head *done_q)
++void scsi_eh_ready_devs(struct Scsi_Host *shost,
++			struct list_head *work_q,
++			struct list_head *done_q)
+ {
+ 	if (!scsi_eh_stu(shost, work_q, done_q))
+ 		if (!scsi_eh_bus_device_reset(shost, work_q, done_q))
+@@ -1413,6 +1429,7 @@ static void scsi_eh_ready_devs(struct Sc
+ 				if (!scsi_eh_host_reset(work_q, done_q))
+ 					scsi_eh_offline_sdevs(work_q, done_q);
+ }
++EXPORT_SYMBOL(scsi_eh_ready_devs);
+ 
+ /**
+  * scsi_eh_flush_done_q - finish processed commands or retry them.
+diff -urNp linux-2.6.18.orig/drivers/scsi/scsi_priv.h linux-2.6.18/drivers/scsi/scsi_priv.h
+--- linux-2.6.18.orig/drivers/scsi/scsi_priv.h	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/scsi_priv.h	2007-06-21 16:47:04.000000000 -0400
+@@ -39,6 +39,9 @@ static inline void scsi_log_completion(s
+ 	{ };
+ #endif
+ 
++/* scsi_scan.c */
++int scsi_complete_async_scans(void);
++
+ /* scsi_devinfo.c */
+ extern int scsi_get_device_flags(struct scsi_device *sdev,
+ 				 const unsigned char *vendor,
+@@ -55,6 +58,11 @@ extern int scsi_error_handler(void *host
+ extern int scsi_decide_disposition(struct scsi_cmnd *cmd);
+ extern void scsi_eh_wakeup(struct Scsi_Host *shost);
+ extern int scsi_eh_scmd_add(struct scsi_cmnd *, int);
++void scsi_eh_ready_devs(struct Scsi_Host *shost,
++			struct list_head *work_q,
++			struct list_head *done_q);
++int scsi_eh_get_sense(struct list_head *work_q,
++		      struct list_head *done_q);
+ 
+ /* scsi_lib.c */
+ extern int scsi_maybe_unblock_host(struct scsi_device *sdev);
+diff -urNp linux-2.6.18.orig/drivers/scsi/scsi_transport_sas.c linux-2.6.18/drivers/scsi/scsi_transport_sas.c
+--- linux-2.6.18.orig/drivers/scsi/scsi_transport_sas.c	2007-06-21 16:43:05.000000000 -0400
++++ linux-2.6.18/drivers/scsi/scsi_transport_sas.c	2007-06-21 16:47:04.000000000 -0400
+@@ -25,6 +25,7 @@
+ 
+ #include <linux/init.h>
+ #include <linux/module.h>
++#include <linux/jiffies.h>
+ #include <linux/err.h>
+ #include <linux/slab.h>
+ #include <linux/string.h>
+@@ -77,6 +78,24 @@ get_sas_##title##_names(u32 table_key, c
+ 	return len;						\
+ }
+ 
++#define sas_bitfield_name_set(title, table)			\
++static ssize_t							\
++set_sas_##title##_names(u32 *table_key, const char *buf)	\
++{								\
++	ssize_t len = 0;					\
++	int i;							\
++								\
++	for (i = 0; i < ARRAY_SIZE(table); i++) {		\
++		len = strlen(table[i].name);			\
++		if (strncmp(buf, table[i].name, len) == 0 &&	\
++		    (buf[len] == '\n' || buf[len] == '\0')) {	\
++			*table_key = table[i].value;		\
++			return 0;				\
++		}						\
++	}							\
++	return -EINVAL;						\
++}
++
+ #define sas_bitfield_name_search(title, table)			\
+ static ssize_t							\
+ get_sas_##title##_names(u32 table_key, char *buf)		\
+@@ -122,16 +141,16 @@ static struct {
+ 	u32		value;
+ 	char		*name;
+ } sas_linkspeed_names[] = {
+-	{ SAS_LINK_RATE_UNKNOWN,	"Unknown" },
+-	{ SAS_PHY_DISABLED,		"Phy disabled" },
+-	{ SAS_LINK_RATE_FAILED,		"Link Rate failed" },
+-	{ SAS_SATA_SPINUP_HOLD,		"Spin-up hold" },
+-	{ SAS_LINK_RATE_1_5_GBPS,	"1.5 Gbit" },
+-	{ SAS_LINK_RATE_3_0_GBPS,	"3.0 Gbit" },
+-	{ SAS_LINK_RATE_6_0_GBPS,	"6.0 Gbit" },
++	{ PHY_LINKRATE_UNKNOWN,	"Unknown" },
++	{ PHY_DISABLED,		"Phy disabled" },
++	{ 0x10,			"Link Rate failed" },
++	{ PHY_SPINUP_HOLD,	"Spin-up hold" },
++	{ PHY_LINKRATE_1_5,	"1.5 Gbit" },
++	{ PHY_LINKRATE_3,	"3.0 Gbit" },
++	{ PHY_LINKRATE_6,	"6.0 Gbit" },
+ };
+ sas_bitfield_name_search(linkspeed, sas_linkspeed_names)
+-
++sas_bitfield_name_set(linkspeed, sas_linkspeed_names)
+ 
+ /*
+  * SAS host attributes
+@@ -253,10 +272,39 @@ show_sas_phy_##field(struct class_device
+ 	return get_sas_linkspeed_names(phy->field, buf);		\
+ }
+ 
++/* Fudge to tell if we're minimum or maximum */
++#define sas_phy_store_linkspeed(field)					\
++static ssize_t								\
++store_sas_phy_##field(struct class_device *cdev, const char *buf,	\
++		      size_t count)					\
++{									\
++	struct sas_phy *phy = transport_class_to_phy(cdev);		\
++	struct Scsi_Host *shost = dev_to_shost(phy->dev.parent);	\
++	struct sas_internal *i = to_sas_internal(shost->transportt);	\
++	u32 value;							\
++	struct sas_phy_linkrates rates = {0};				\
++	int error;							\
++									\
++	error = set_sas_linkspeed_names(&value, buf);			\
++	if (error)							\
++		return error;						\
++	rates.field = value;						\
++	error = i->f->set_phy_speed(phy, &rates);			\
++									\
++	return error ? error : count;					\
++}
++
++#define sas_phy_linkspeed_rw_attr(field)				\
++	sas_phy_show_linkspeed(field)					\
++	sas_phy_store_linkspeed(field)					\
++static CLASS_DEVICE_ATTR(field, S_IRUGO, show_sas_phy_##field,		\
++	store_sas_phy_##field)
++
+ #define sas_phy_linkspeed_attr(field)					\
+ 	sas_phy_show_linkspeed(field)					\
+ static CLASS_DEVICE_ATTR(field, S_IRUGO, show_sas_phy_##field, NULL)
+ 
++
+ #define sas_phy_show_linkerror(field)					\
+ static ssize_t								\
+ show_sas_phy_##field(struct class_device *cdev, char *buf)		\
+@@ -288,6 +336,51 @@ show_sas_device_type(struct class_device
+ }
+ static CLASS_DEVICE_ATTR(device_type, S_IRUGO, show_sas_device_type, NULL);
+ 
++static ssize_t do_sas_phy_enable(struct class_device *cdev,
++		size_t count, int enable)
++{
++	struct sas_phy *phy = transport_class_to_phy(cdev);
++	struct Scsi_Host *shost = dev_to_shost(phy->dev.parent);
++	struct sas_internal *i = to_sas_internal(shost->transportt);
++	int error;
++
++	error = i->f->phy_enable(phy, enable);
++	if (error)
++		return error;
++	phy->enabled = enable;
++	return count;
++};
++
++static ssize_t store_sas_phy_enable(struct class_device *cdev,
++		const char *buf, size_t count)
++{
++	if (count < 1)
++		return -EINVAL;
++
++	switch (buf[0]) {
++	case '0':
++		do_sas_phy_enable(cdev, count, 0);
++		break;
++	case '1':
++		do_sas_phy_enable(cdev, count, 1);
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return count;
++}
++
++static ssize_t show_sas_phy_enable(struct class_device *cdev, char *buf)
++{
++	struct sas_phy *phy = transport_class_to_phy(cdev);
++
++	return snprintf(buf, 20, "%d", phy->enabled);
++}
++
++static CLASS_DEVICE_ATTR(enable, S_IRUGO | S_IWUSR, show_sas_phy_enable,
++			 store_sas_phy_enable);
++
+ static ssize_t do_sas_phy_reset(struct class_device *cdev,
+ 		size_t count, int hard_reset)
+ {
+@@ -326,9 +419,9 @@ sas_phy_simple_attr(identify.phy_identif
+ //sas_phy_simple_attr(port_identifier, port_identifier, "%d\n", int);
+ sas_phy_linkspeed_attr(negotiated_linkrate);
+ sas_phy_linkspeed_attr(minimum_linkrate_hw);
+-sas_phy_linkspeed_attr(minimum_linkrate);
++sas_phy_linkspeed_rw_attr(minimum_linkrate);
+ sas_phy_linkspeed_attr(maximum_linkrate_hw);
+-sas_phy_linkspeed_attr(maximum_linkrate);
++sas_phy_linkspeed_rw_attr(maximum_linkrate);
+ sas_phy_linkerror_attr(invalid_dword_count);
+ sas_phy_linkerror_attr(running_disparity_error_count);
+ sas_phy_linkerror_attr(loss_of_dword_sync_count);
+@@ -387,6 +480,7 @@ struct sas_phy *sas_phy_alloc(struct dev
+ 		return NULL;
+ 
+ 	phy->number = number;
++	phy->enabled = 1;
+ 
+ 	device_initialize(&phy->dev);
+ 	phy->dev.parent = get_device(parent);
+@@ -531,8 +625,19 @@ static void sas_port_release(struct devi
+ static void sas_port_create_link(struct sas_port *port,
+ 				 struct sas_phy *phy)
+ {
+-	sysfs_create_link(&port->dev.kobj, &phy->dev.kobj, phy->dev.bus_id);
+-	sysfs_create_link(&phy->dev.kobj, &port->dev.kobj, "port");
++	int res;
++
++	res = sysfs_create_link(&port->dev.kobj, &phy->dev.kobj,
++				phy->dev.bus_id);
++	if (res)
++		goto err;
++	res = sysfs_create_link(&phy->dev.kobj, &port->dev.kobj, "port");
++	if (res)
++		goto err;
++	return;
++err:
++	printk(KERN_ERR "%s: Cannot create port links, err=%d\n",
++	       __FUNCTION__, res);
+ }
+ 
+ static void sas_port_delete_link(struct sas_port *port,
+@@ -770,13 +875,20 @@ EXPORT_SYMBOL(sas_port_delete_phy);
+ 
+ void sas_port_mark_backlink(struct sas_port *port)
+ {
++	int res;
+ 	struct device *parent = port->dev.parent->parent->parent;
+ 
+ 	if (port->is_backlink)
+ 		return;
+ 	port->is_backlink = 1;
+-	sysfs_create_link(&port->dev.kobj, &parent->kobj,
+-			  parent->bus_id);
++	res = sysfs_create_link(&port->dev.kobj, &parent->kobj,
++				parent->bus_id);
++	if (res)
++		goto err;
++	return;
++err:
++	printk(KERN_ERR "%s: Cannot create port backlink, err=%d\n",
++	       __FUNCTION__, res);
+ 
+ }
+ EXPORT_SYMBOL(sas_port_mark_backlink);
+@@ -1189,7 +1301,7 @@ int sas_rphy_add(struct sas_rphy *rphy)
+ 	if (identify->device_type == SAS_END_DEVICE &&
+ 	    rphy->scsi_target_id != -1) {
+ 		scsi_scan_target(&rphy->dev, 0,
+-				rphy->scsi_target_id, ~0, 0);
++				rphy->scsi_target_id, SCAN_WILD_CARD, 0);
+ 	}
+ 
+ 	return 0;
+@@ -1205,7 +1317,7 @@ EXPORT_SYMBOL(sas_rphy_add);
+  * Note:
+  *   This function must only be called on a remote
+  *   PHY that has not sucessfully been added using
+- *   sas_rphy_add().
++ *   sas_rphy_add() (or has been sas_rphy_remove()'d)
+  */
+ void sas_rphy_free(struct sas_rphy *rphy)
+ {
+@@ -1224,18 +1336,30 @@ void sas_rphy_free(struct sas_rphy *rphy
+ EXPORT_SYMBOL(sas_rphy_free);
+ 
+ /**
+- * sas_rphy_delete  --  remove SAS remote PHY
+- * @rphy:	SAS remote PHY to remove
++ * sas_rphy_delete  --  remove and free SAS remote PHY
++ * @rphy:	SAS remote PHY to remove and free
+  *
+- * Removes the specified SAS remote PHY.
++ * Removes the specified SAS remote PHY and frees it.
+  */
+ void
+ sas_rphy_delete(struct sas_rphy *rphy)
+ {
++	sas_rphy_remove(rphy);
++	sas_rphy_free(rphy);
++}
++EXPORT_SYMBOL(sas_rphy_delete);
++
++/**
++ * sas_rphy_remove  --  remove SAS remote PHY
++ * @rphy:	SAS remote phy to remove
++ *
++ * Removes the specified SAS remote PHY.
++ */
++void
++sas_rphy_remove(struct sas_rphy *rphy)
++{
+ 	struct device *dev = &rphy->dev;
+ 	struct sas_port *parent = dev_to_sas_port(dev->parent);
+-	struct Scsi_Host *shost = dev_to_shost(parent->dev.parent);
+-	struct sas_host_attrs *sas_host = to_sas_host_attrs(shost);
+ 
+ 	switch (rphy->identify.device_type) {
+ 	case SAS_END_DEVICE:
+@@ -1251,17 +1375,10 @@ sas_rphy_delete(struct sas_rphy *rphy)
+ 
+ 	transport_remove_device(dev);
+ 	device_del(dev);
+-	transport_destroy_device(dev);
+-
+-	mutex_lock(&sas_host->lock);
+-	list_del(&rphy->list);
+-	mutex_unlock(&sas_host->lock);
+ 
+ 	parent->rphy = NULL;
+-
+-	put_device(dev);
+ }
+-EXPORT_SYMBOL(sas_rphy_delete);
++EXPORT_SYMBOL(sas_rphy_remove);
+ 
+ /**
+  * scsi_is_sas_rphy  --  check if a struct device represents a SAS remote PHY
+@@ -1310,13 +1427,23 @@ static int sas_user_scan(struct Scsi_Hos
+  * Setup / Teardown code
+  */
+ 
+-#define SETUP_TEMPLATE(attrb, field, perm, test)				\
++#define SETUP_TEMPLATE(attrb, field, perm, test)			\
+ 	i->private_##attrb[count] = class_device_attr_##field;		\
+ 	i->private_##attrb[count].attr.mode = perm;			\
+ 	i->attrb[count] = &i->private_##attrb[count];			\
+ 	if (test)							\
+ 		count++
+ 
++#define SETUP_TEMPLATE_RW(attrb, field, perm, test, ro_test, ro_perm)	\
++	i->private_##attrb[count] = class_device_attr_##field;		\
++	i->private_##attrb[count].attr.mode = perm;			\
++	if (ro_test) {							\
++		i->private_##attrb[count].attr.mode = ro_perm;		\
++		i->private_##attrb[count].store = NULL;			\
++	}								\
++	i->attrb[count] = &i->private_##attrb[count];			\
++	if (test)							\
++		count++
+ 
+ #define SETUP_RPORT_ATTRIBUTE(field) 					\
+ 	SETUP_TEMPLATE(rphy_attrs, field, S_IRUGO, 1)
+@@ -1327,6 +1454,14 @@ static int sas_user_scan(struct Scsi_Hos
+ #define SETUP_PHY_ATTRIBUTE(field)					\
+ 	SETUP_TEMPLATE(phy_attrs, field, S_IRUGO, 1)
+ 
++#define SETUP_PHY_ATTRIBUTE_RW(field)					\
++	SETUP_TEMPLATE_RW(phy_attrs, field, S_IRUGO | S_IWUSR, 1,	\
++			!i->f->set_phy_speed, S_IRUGO)
++
++#define SETUP_OPTIONAL_PHY_ATTRIBUTE_RW(field, func)			\
++	SETUP_TEMPLATE_RW(phy_attrs, field, S_IRUGO | S_IWUSR, 1,	\
++			  !i->f->func, S_IRUGO)
++
+ #define SETUP_PORT_ATTRIBUTE(field)					\
+ 	SETUP_TEMPLATE(port_attrs, field, S_IRUGO, 1)
+ 
+@@ -1334,10 +1469,10 @@ static int sas_user_scan(struct Scsi_Hos
+ 	SETUP_TEMPLATE(phy_attrs, field, S_IRUGO, i->f->func)
+ 
+ #define SETUP_PHY_ATTRIBUTE_WRONLY(field)				\
+-	SETUP_TEMPLATE(phy_attrs, field, S_IWUGO, 1)
++	SETUP_TEMPLATE(phy_attrs, field, S_IWUSR, 1)
+ 
+ #define SETUP_OPTIONAL_PHY_ATTRIBUTE_WRONLY(field, func)		\
+-	SETUP_TEMPLATE(phy_attrs, field, S_IWUGO, i->f->func)
++	SETUP_TEMPLATE(phy_attrs, field, S_IWUSR, i->f->func)
+ 
+ #define SETUP_END_DEV_ATTRIBUTE(field)					\
+ 	SETUP_TEMPLATE(end_dev_attrs, field, S_IRUGO, 1)
+@@ -1407,9 +1542,9 @@ sas_attach_transport(struct sas_function
+ 	//SETUP_PHY_ATTRIBUTE(port_identifier);
+ 	SETUP_PHY_ATTRIBUTE(negotiated_linkrate);
+ 	SETUP_PHY_ATTRIBUTE(minimum_linkrate_hw);
+-	SETUP_PHY_ATTRIBUTE(minimum_linkrate);
++	SETUP_PHY_ATTRIBUTE_RW(minimum_linkrate);
+ 	SETUP_PHY_ATTRIBUTE(maximum_linkrate_hw);
+-	SETUP_PHY_ATTRIBUTE(maximum_linkrate);
++	SETUP_PHY_ATTRIBUTE_RW(maximum_linkrate);
+ 
+ 	SETUP_PHY_ATTRIBUTE(invalid_dword_count);
+ 	SETUP_PHY_ATTRIBUTE(running_disparity_error_count);
+@@ -1417,6 +1552,7 @@ sas_attach_transport(struct sas_function
+ 	SETUP_PHY_ATTRIBUTE(phy_reset_problem_count);
+ 	SETUP_OPTIONAL_PHY_ATTRIBUTE_WRONLY(link_reset, phy_reset);
+ 	SETUP_OPTIONAL_PHY_ATTRIBUTE_WRONLY(hard_reset, phy_reset);
++	SETUP_OPTIONAL_PHY_ATTRIBUTE_RW(enable, phy_enable);
+ 	i->phy_attrs[count] = NULL;
+ 
+ 	count = 0;
+diff -urNp linux-2.6.18.orig/include/scsi/libsas.h linux-2.6.18/include/scsi/libsas.h
+--- linux-2.6.18.orig/include/scsi/libsas.h	2007-06-21 16:43:57.000000000 -0400
++++ linux-2.6.18/include/scsi/libsas.h	2007-06-21 16:53:45.000000000 -0400
+@@ -32,10 +32,10 @@
+ #include <scsi/sas.h>
+ #include <linux/list.h>
+ #include <asm/semaphore.h>
+-#include <asm/scatterlist.h>
+ #include <scsi/scsi_device.h>
+ #include <scsi/scsi_cmnd.h>
+ #include <scsi/scsi_transport_sas.h>
++#include <asm/scatterlist.h>
+ 
+ struct block_device;
+ 
+@@ -171,9 +171,9 @@ struct sata_device {
+ struct domain_device {
+         enum sas_dev_type dev_type;
+ 
+-        enum sas_phy_linkrate linkrate;
+-        enum sas_phy_linkrate min_linkrate;
+-        enum sas_phy_linkrate max_linkrate;
++	enum sas_phy_linkrate linkrate;
++	enum sas_phy_linkrate min_linkrate;
++	enum sas_phy_linkrate max_linkrate;
+ 
+         int  pathways;
+ 
+@@ -249,6 +249,11 @@ struct asd_sas_port {
+ 	void *lldd_port;	  /* not touched by the sas class code */
+ };
+ 
++struct asd_sas_event {
++	struct work_struct work;
++	struct asd_sas_phy *phy;
++};
++
+ /* The phy pretty much is controlled by the LLDD.
+  * The class only reads those fields.
+  */
+@@ -308,6 +313,11 @@ struct scsi_core {
+ 	int               queue_thread_kill;
+ };
+ 
++enum sas_ha_state {
++	SAS_HA_REGISTERED,
++	SAS_HA_UNREGISTERED
++};
++
+ struct sas_ha_struct {
+ /* private: */
+ 	spinlock_t       event_lock;
+@@ -339,6 +349,14 @@ struct sas_ha_struct {
+ 	void (*notify_phy_event)(struct asd_sas_phy *, enum phy_event);
+ 
+ 	void *lldd_ha;		  /* not touched by sas class code */
++
++#ifndef __GENKSYMS__
++	struct list_head eh_done_q;
++	
++	enum sas_ha_state state;
++	spinlock_t 	  state_lock;
++#endif
++
+ };
+ 
+ #define SHOST_TO_SAS_HA(_shost) (*(struct sas_ha_struct **)(_shost)->hostdata)
+@@ -369,7 +387,7 @@ void sas_hash_addr(u8 *hashed, const u8 
+ static inline void sas_phy_disconnected(struct asd_sas_phy *phy)
+ {
+ 	phy->oob_mode = OOB_NOT_CONNECTED;
+-	phy->linkrate = PHY_LINKRATE_NONE;
++	phy->linkrate = SAS_LINK_RATE_UNKNOWN;
+ }
+ 
+ /* ---------- Tasks ---------- */
+@@ -527,17 +545,22 @@ struct sas_task {
+ 
+ 	void   *lldd_task;	  /* for use by LLDDs */
+ 	void   *uldd_task;
++#ifndef __GENKSYMS__
++	struct work_struct abort_work;
++#endif
+ };
+ 
+ 
+ 
+-#define SAS_TASK_STATE_PENDING  1
+-#define SAS_TASK_STATE_DONE     2
+-#define SAS_TASK_STATE_ABORTED  4
++#define SAS_TASK_STATE_PENDING      1
++#define SAS_TASK_STATE_DONE         2
++#define SAS_TASK_STATE_ABORTED      4
++#define SAS_TASK_NEED_DEV_RESET     8
++#define SAS_TASK_AT_INITIATOR       16
+ 
+-static inline struct sas_task *sas_alloc_task(unsigned long flags)
++static inline struct sas_task *sas_alloc_task(gfp_t flags)
+ {
+-	extern kmem_cache_t *sas_task_cache;
++	extern struct kmem_cache *sas_task_cache;
+ 	struct sas_task *task = kmem_cache_alloc(sas_task_cache, flags);
+ 
+ 	if (task) {
+@@ -555,7 +578,7 @@ static inline struct sas_task *sas_alloc
+ static inline void sas_free_task(struct sas_task *task)
+ {
+ 	if (task) {
+-		extern kmem_cache_t *sas_task_cache;
++		extern struct kmem_cache *sas_task_cache;
+ 		BUG_ON(!list_empty(&task->list));
+ 		kmem_cache_free(sas_task_cache, task);
+ 	}
+@@ -588,11 +611,18 @@ struct sas_domain_function_template {
+ 
+ 	/* Phy management */
+ 	int (*lldd_control_phy)(struct asd_sas_phy *, enum phy_func);
++#ifndef __GENKSYMS__
++	int (*lldd_control_phy_new)(struct asd_sas_phy *, enum phy_func, void *);
++#endif
+ };
+ 
+ extern int sas_register_ha(struct sas_ha_struct *);
+ extern int sas_unregister_ha(struct sas_ha_struct *);
+ 
++int sas_set_phy_speed(struct sas_phy *phy,
++		      struct sas_phy_linkrates *rates);
++int sas_phy_enable(struct sas_phy *phy, int enabled);
++int sas_phy_reset(struct sas_phy *phy, int hard_reset);
+ extern int sas_queuecommand(struct scsi_cmnd *,
+ 		     void (*scsi_done)(struct scsi_cmnd *));
+ extern int sas_target_alloc(struct scsi_target *);
+@@ -625,4 +655,9 @@ void sas_unregister_dev(struct domain_de
+ 
+ void sas_init_dev(struct domain_device *);
+ 
++void sas_task_abort(struct sas_task *);
++int __sas_task_abort(struct sas_task *);
++int sas_eh_device_reset_handler(struct scsi_cmnd *cmd);
++int sas_eh_bus_reset_handler(struct scsi_cmnd *cmd);
++
+ #endif /* _SASLIB_H_ */
+diff -urNp linux-2.6.18.orig/include/scsi/sas.h linux-2.6.18/include/scsi/sas.h
+--- linux-2.6.18.orig/include/scsi/sas.h	2007-06-21 16:43:57.000000000 -0400
++++ linux-2.6.18/include/scsi/sas.h	2007-06-21 16:47:04.000000000 -0400
+@@ -102,20 +102,6 @@ enum sas_dev_type {
+ 	SATA_PM_PORT= 8,
+ };
+ 
+-enum sas_phy_linkrate {
+-	PHY_LINKRATE_NONE = 0,
+-	PHY_LINKRATE_UNKNOWN = 0,
+-	PHY_DISABLED,
+-	PHY_RESET_PROBLEM,
+-	PHY_SPINUP_HOLD,
+-	PHY_PORT_SELECTOR,
+-	PHY_LINKRATE_1_5 = 0x08,
+-	PHY_LINKRATE_G1  = PHY_LINKRATE_1_5,
+-	PHY_LINKRATE_3   = 0x09,
+-	PHY_LINKRATE_G2  = PHY_LINKRATE_3,
+-	PHY_LINKRATE_6   = 0x0A,
+-};
+-
+ /* Partly from IDENTIFY address frame. */
+ enum sas_proto {
+ 	SATA_PROTO    = 1,
+@@ -135,6 +121,9 @@ enum phy_func {
+ 	PHY_FUNC_CLEAR_AFFIL,
+ 	PHY_FUNC_TX_SATA_PS_SIGNAL,
+ 	PHY_FUNC_RELEASE_SPINUP_HOLD = 0x10, /* LOCAL PORT ONLY! */
++#ifndef __GENKSYMS__
++	PHY_FUNC_SET_LINK_RATE,
++#endif
+ };
+ 
+ /* SAS LLDD would need to report only _very_few_ of those, like BROADCAST.
+diff -urNp linux-2.6.18.orig/include/scsi/scsi_transport_sas.h linux-2.6.18/include/scsi/scsi_transport_sas.h
+--- linux-2.6.18.orig/include/scsi/scsi_transport_sas.h	2007-06-21 16:43:57.000000000 -0400
++++ linux-2.6.18/include/scsi/scsi_transport_sas.h	2007-06-21 16:47:04.000000000 -0400
+@@ -23,6 +23,26 @@ enum sas_protocol {
+ 	SAS_PROTOCOL_SSP		= 0x08,
+ };
+ 
++/* The following two enums are pretty much a mess, but before 5.1
++   sas_phy_linkrate existed in sas.h, and sas_linkrate existed in
++   scsi_transport_sas.h. These were merged into one with standard
++   values. In order to not break function CRCs, we need to have a
++   copy of each for genksyms.
++*/
++enum sas_phy_linkrate {
++	PHY_LINKRATE_NONE = 0,
++	PHY_LINKRATE_UNKNOWN = 0,
++	PHY_DISABLED,
++	PHY_RESET_PROBLEM,
++	PHY_SPINUP_HOLD,
++	PHY_PORT_SELECTOR,
++	PHY_LINKRATE_1_5 = 0x08,
++	PHY_LINKRATE_G1  = PHY_LINKRATE_1_5,
++	PHY_LINKRATE_3   = 0x09,
++	PHY_LINKRATE_G2  = PHY_LINKRATE_3,
++	PHY_LINKRATE_6   = 0x0A,
++};
++
+ enum sas_linkrate {
+ 	SAS_LINK_RATE_UNKNOWN,
+ 	SAS_PHY_DISABLED,
+@@ -65,6 +85,11 @@ struct sas_phy {
+ 
+ 	/* for the list of phys belonging to a port */
+ 	struct list_head	port_siblings;
++
++#ifndef __GENKSYMS__
++	struct work_struct      reset_work;
++	int			enabled;
++#endif
+ };
+ 
+ #define dev_to_phy(d) \
+@@ -142,12 +167,21 @@ struct sas_port {
+ #define transport_class_to_sas_port(cdev) \
+ 	dev_to_sas_port((cdev)->dev)
+ 
++struct sas_phy_linkrates {
++	enum sas_phy_linkrate maximum_linkrate;
++	enum sas_phy_linkrate minimum_linkrate;
++};
++
+ /* The functions by which the transport class and the driver communicate */
+ struct sas_function_template {
+ 	int (*get_linkerrors)(struct sas_phy *);
+ 	int (*get_enclosure_identifier)(struct sas_rphy *, u64 *);
+ 	int (*get_bay_identifier)(struct sas_rphy *);
+ 	int (*phy_reset)(struct sas_phy *, int);
++#ifndef __GENKSYMS__
++	int (*set_phy_speed)(struct sas_phy *, struct sas_phy_linkrates *);
++	int (*phy_enable)(struct sas_phy *, int);
++#endif
+ };
+ 
+ 
+@@ -164,6 +198,7 @@ extern struct sas_rphy *sas_end_device_a
+ extern struct sas_rphy *sas_expander_alloc(struct sas_port *, enum sas_device_type);
+ void sas_rphy_free(struct sas_rphy *);
+ extern int sas_rphy_add(struct sas_rphy *);
++extern void sas_rphy_remove(struct sas_rphy *);
+ extern void sas_rphy_delete(struct sas_rphy *);
+ extern int scsi_is_sas_rphy(const struct device *);
+ 
+@@ -195,4 +230,53 @@ scsi_is_sas_expander_device(struct devic
+ 
+ #define scsi_is_sas_phy_local(phy)	scsi_is_host_device((phy)->dev.parent)
+ 
++static inline enum sas_linkrate
++phy_linkrate_to_linkrate(enum sas_phy_linkrate lr)
++{
++	switch(lr) {
++	case PHY_LINKRATE_UNKNOWN:
++		return SAS_LINK_RATE_UNKNOWN;
++	case PHY_DISABLED:
++		return SAS_PHY_DISABLED;
++	case PHY_SPINUP_HOLD:
++		return SAS_SATA_SPINUP_HOLD;
++	case PHY_PORT_SELECTOR:
++		return SAS_SATA_PORT_SELECTOR;
++	case PHY_LINKRATE_1_5:
++		return SAS_LINK_RATE_1_5_GBPS;
++	case PHY_LINKRATE_3:
++		return SAS_LINK_RATE_3_0_GBPS;
++	case PHY_LINKRATE_6:
++		return SAS_LINK_RATE_6_0_GBPS;
++	case PHY_RESET_PROBLEM:
++	default:
++		return SAS_LINK_RATE_UNKNOWN;
++	}
++}
++	
++static inline enum sas_phy_linkrate
++linkrate_to_phy_linkrate(enum sas_linkrate lr)
++{
++	switch(lr) {
++	case SAS_LINK_RATE_UNKNOWN:
++		return PHY_LINKRATE_UNKNOWN;
++	case SAS_PHY_DISABLED:
++		return PHY_DISABLED;
++	case SAS_SATA_SPINUP_HOLD:
++		return PHY_SPINUP_HOLD;
++	case SAS_SATA_PORT_SELECTOR:
++		return PHY_PORT_SELECTOR;
++	case SAS_LINK_RATE_1_5_GBPS:
++		return PHY_LINKRATE_1_5;
++	case SAS_LINK_RATE_3_0_GBPS:
++		return PHY_LINKRATE_3;
++	case SAS_LINK_RATE_6_0_GBPS:
++		return PHY_LINKRATE_6;
++	case SAS_LINK_RATE_FAILED:
++	case SAS_LINK_VIRTUAL:
++	default:
++		return PHY_LINKRATE_UNKNOWN;
++	}
++}
++
+ #endif /* SCSI_TRANSPORT_SAS_H */
+

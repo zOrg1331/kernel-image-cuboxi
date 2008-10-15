@@ -1,0 +1,88 @@
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [RHEL5.1] [PATCH] NFSd oops when exporting krb5p mount
+Date: Thu, 05 Jul 2007 12:03:21 -0400
+Bugzilla: 247120
+Message-Id: <468D1649.7040602@RedHat.com>
+Changelog: [nfs] NFSd oops when exporting krb5p mount
+
+
+I found this oops while doing some unit testing on
+a (fairly) recent RHEL5 kernel (2.6.18-30.el5xen).
+
+Exporting Kerberos enabled exports would cause the server
+to oops when the exports were unexported. Its not clear
+why, but this happen every time on xen clients but never
+on non-xen machines.
+
+The details are in the bx:
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=247120
+
+<unneeded and probably inappropriate sarcasm>
+I know the 3-ack process does not allow for such adhoc
+testing and asking for this to be in 5.1 do put be in
+the *5-ack* range (if one includes exception and blocker acks), but
+</unneeded and probably inappropriate sarcasm>
+I do strongly suggest we get this into 5.1 since it was
+so reproduce able on my xen client.
+
+Please ack.
+
+steved.
+
+commit f988443a84528bd30c2f474efa5e2c511959f19b
+Author: NeilBrown <neilb@suse.de>
+
+    [PATCH] knfsd: Fix up some bit-rot in exp_export
+    
+    The nfsservctl system call isn't used but recent nfs-utils releases for
+    exporting filesystems, and consequently the code that is uses - exp_export -
+    has suffered some bitrot.
+    
+    Particular:
+      - some newly added fields in 'struct svc_export' are being initialised
+        properly.
+      - the return value is now always -ENOMEM ...
+    
+    This patch fixes both these problems.
+    
+    Signed-off-by: Neil Brown <neilb@suse.de>
+    Signed-off-by: Andrew Morton <akpm@osdl.org>
+    Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+
+--- linux-2.6.18.i686/fs/nfsd/export.c.orig	2007-07-05 10:28:55.000000000 -0400
++++ linux-2.6.18.i686/fs/nfsd/export.c	2007-07-05 10:29:58.000000000 -0400
+@@ -950,6 +950,8 @@ exp_export(struct nfsctl_export *nxp)
+ 
+ 	exp = exp_get_by_name(clp, nd.mnt, nd.dentry, NULL);
+ 
++	memset(&new, 0, sizeof(new));
++
+ 	/* must make sure there won't be an ex_fsid clash */
+ 	if ((nxp->ex_flags & NFSEXP_FSID) &&
+ 	    (fsid_key = exp_get_fsid_key(clp, nxp->ex_dev)) &&
+@@ -980,6 +982,9 @@ exp_export(struct nfsctl_export *nxp)
+ 
+ 	new.h.expiry_time = NEVER;
+ 	new.h.flags = 0;
++	new.ex_path = kstrdup(nxp->ex_path, GFP_KERNEL);
++	if (!new.ex_path)
++		goto finish;
+ 	new.ex_client = clp;
+ 	new.ex_mnt = nd.mnt;
+ 	new.ex_dentry = nd.dentry;
+@@ -1000,10 +1005,11 @@ exp_export(struct nfsctl_export *nxp)
+ 		/* failed to create at least one index */
+ 		exp_do_unexport(exp);
+ 		cache_flush();
+-		err = -ENOMEM;
+-	}
+-
++	} else
++		err = 0;
+ finish:
++	if (new.ex_path)
++		kfree(new.ex_path);
+ 	if (exp)
+ 		exp_put(exp);
+ 	if (fsid_key && !IS_ERR(fsid_key))
+

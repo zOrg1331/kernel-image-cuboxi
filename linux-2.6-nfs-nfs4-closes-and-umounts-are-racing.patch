@@ -1,0 +1,100 @@
+From: Steve Dickson <SteveD@redhat.com>
+Subject: Re: [RHEL5.1][PATCH] NFS4: closes and umounts are racing.
+Date: Mon, 20 Aug 2007 13:10:33 -0400
+Bugzilla: 245062
+Message-Id: <46C9CB09.2090103@RedHat.com>
+Changelog: [nfs] NFS4: closes and umounts are racing
+
+
+
+
+Steve Dickson wrote:
+>The attached patch avoids an oops during a
+>race between that occurs between the rpciod daemon
+>trying to do a nfs4_close and the filesystem being unmounted.
+>The window is small and only happens when all of the NFS
+>debugging is turned (although i was never able to reproduce
+>the oops) but it does exist.
+>
+>Note, the key word is 'avoids'. This patch does not fix the
+>problem, just avoids the oops...
+>
+>The true fix is currently being worked on in upstream
+>which basically means there a patch but has very
+>little (i.e. none) testing. So I've decided to submit
+>this patch (since today is the deadline) with the idea
+>of updating the patch when the final solution is a bit
+>more baked.
+>
+>The bz for this is:
+>https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=225515
+Here is the upstream version that fixes this close/umount race.
+I'm still not able to reproduce this problem (with or without this
+patch) and the customer has not come back with any hard results
+either.
+
+But the patch does look reasonable and has been "baking" in upstream
+since the beginning of the summer...
+
+This bz is a blocker bz, which are due today, so if could
+please take a look sooner verses later, that would good...
+
+tia,
+
+steved.
+
+
+commit a0356862bcbeb20acf64bc1a82d28a4c5bb957a7
+Author: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+    NFS: Fix nfs_reval_fsid()
+    
+    We don't need to revalidate the fsid on the root directory. It suffices to
+    revalidate it on the current directory.
+    
+    Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+
+--- linux-2.6.18.i686/fs/nfs/dir.c.orig	2007-08-20 10:51:29.094361000 -0400
++++ linux-2.6.18.i686/fs/nfs/dir.c	2007-08-20 12:30:09.080228000 -0400
+@@ -871,14 +871,13 @@ int nfs_is_exclusive_create(struct inode
+ 	return (nd->intent.open.flags & O_EXCL) != 0;
+ }
+ 
+-static inline int nfs_reval_fsid(struct vfsmount *mnt, struct inode *dir,
+-				 struct nfs_fh *fh, struct nfs_fattr *fattr)
++static inline int nfs_reval_fsid(struct inode *dir, const struct nfs_fattr *fattr)
+ {
+ 	struct nfs_server *server = NFS_SERVER(dir);
+ 
+ 	if (!nfs_fsid_equal(&server->fsid, &fattr->fsid))
+-		/* Revalidate fsid on root dir */
+-		return __nfs_revalidate_inode(server, mnt->mnt_root->d_inode);
++		/* Revalidate fsid using the parent directory */
++		return __nfs_revalidate_inode(server, dir);
+ 	return 0;
+ }
+ 
+@@ -920,7 +919,7 @@ static struct dentry *nfs_lookup(struct 
+ 		res = ERR_PTR(error);
+ 		goto out_unlock;
+ 	}
+-	error = nfs_reval_fsid(nd->mnt, dir, &fhandle, &fattr);
++	error = nfs_reval_fsid(dir, &fattr);
+ 	if (error < 0) {
+ 		res = ERR_PTR(error);
+ 		goto out_unlock;
+--- linux-2.6.18.i686/fs/nfs/inode.c.orig	2007-08-20 10:51:42.320416000 -0400
++++ linux-2.6.18.i686/fs/nfs/inode.c	2007-08-20 12:34:52.103026000 -0400
+@@ -903,8 +903,8 @@ static int nfs_update_inode(struct inode
+ 		goto out_changed;
+ 
+ 	server = NFS_SERVER(inode);
+-	/* Update the fsid if and only if this is the root directory */
+-	if ( inode->i_sb->s_root && inode == inode->i_sb->s_root->d_inode
++	/* Update the fsid? */
++	if (S_ISDIR(inode->i_mode)
+ 			&& !nfs_fsid_equal(&server->fsid, &fattr->fsid))
+ 		server->fsid = fattr->fsid;
+ 
+

@@ -1,0 +1,40 @@
+From: Anton Arapov <aarapov@redhat.com>
+Subject: [RHEL5.1 PATCH] BZ248102: Missing critical phys_to_virt in 	lib/swiotlb.c
+Date: Sat, 04 Aug 2007 17:08:54 +0200
+Bugzilla: 248102
+Message-Id: <m3643v49rt.fsf@neuro-laptop.skynet>
+Changelog: [misc] Missing critical phys_to_virt in lib/swiotlb.c
+
+
+
+BZ#248102
+  https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=248102
+
+Description
+  Adds missing call to phys_to_virt() in the lib/swiotlb.c:swiotlb_sync_sg() function. Without this change, a kernel panic will always occur whenever a SWIOTLB bounce buffer from a scatter-gather list gets synced.
+  RHEL5 Kernel panics when loading megaraid_mbox module.
+
+Upstream status
+  in upstream
+  commit# 93fbff63e62b87fe450814db41f859d60b048fb8 (2.6.20.git)
+
+Test status
+  tested for compilation.
+
+==
+diff -urpN linux-2.6.18.noarch.orig/lib/swiotlb.c linux-2.6.18.noarch/lib/swiotlb.c
+--- linux-2.6.18.noarch.orig/lib/swiotlb.c	2007-08-04 12:52:04.000000000 +0200
++++ linux-2.6.18.noarch/lib/swiotlb.c	2007-08-04 12:53:17.000000000 +0200
+@@ -750,7 +750,7 @@ swiotlb_sync_sg(struct device *hwdev, st
+ 
+ 	for (i = 0; i < nelems; i++, sg++)
+ 		if (sg->dma_address != SG_ENT_PHYS_ADDRESS(sg))
+-			sync_single(hwdev, (void *) sg->dma_address,
++			sync_single(hwdev, phys_to_virt(sg->dma_address),
+ 				    sg->dma_length, dir, target);
+ }
+ 
+
+--
+Kernel Development, Anton Arapov <aarapov@redhat.com>
+

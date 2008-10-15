@@ -1,0 +1,3479 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 2 Nov 2007 14:45:49 +0100
+Subject: [s390] Cleanup SCSI dumper code part 2
+Message-id: 20071102134549.GE13909@redhat.com
+O-Subject: [RHEL5.2 PATCH 5/7] FEAT: s390 Cleanup SCSI dumper code for upstream integration - kernel part (2/2)
+Bugzilla: 253104
+
+Description
+============
+
+s390 machines provide hardware support for creating Linux dumps on SCSI
+disks. For creating a dump a special purpose dump Linux is used. The first 32
+MB of memory are saved by the hardware before the dump Linux is
+booted. Via an SCLP interface, the saved memory can be accessed from
+Linux.
+
+This patch exports memory and registers of the crashed Linux to
+userspace via a debugfs file.
+
+In addition to that a user space tool is provided, which reads from the
+debugfs file and writes the dump in lkcd dump format into a filesystem.
+The tool is located under "arch/s390/boot/".
+
+For more information refer to Documentation/s390/zfcpdump.txt, which is
+included in this patch.
+
+The following needs to be set
+CONFIG_ZFCPDUMP=m
+
+Bugzilla
+=========
+
+BZ 253104
+https://bugzilla.redhat.com/show_bug.cgi?id=253104
+
+Upstream status of the patch:
+=============================
+Patch included in git as commit 411ed3225733dbd83b4cbaaa992ef80d6ec1534e
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/Documentation/s390/zfcpdump.txt b/Documentation/s390/zfcpdump.txt
+new file mode 100644
+index 0000000..cf45d27
+--- /dev/null
++++ b/Documentation/s390/zfcpdump.txt
+@@ -0,0 +1,87 @@
++s390 SCSI dump tool (zfcpdump)
++
++System z machines (z900 or higher) provide hardware support for creating system
++dumps on SCSI disks. The dump process is initiated by booting a dump tool, which
++has to create a dump of the current (probably crashed) Linux image. In order to
++not overwrite memory of the crashed Linux with data of the dump tool, the
++hardware saves some memory plus the register sets of the boot cpu before the
++dump tool is loaded. There exists an SCLP hardware interface to obtain the saved
++memory afterwards. Currently 32 MB are saved.
++
++This zfcpdump implementation consists of a Linux dump kernel together with
++a userspace dump tool, which are loaded together into the saved memory region
++below 32 MB. zfcpdump is installed on a SCSI disk using zipl (as contained in
++the s390-tools package) to make the device bootable. The operator of a Linux
++system can then trigger a SCSI dump by booting the SCSI disk, where zfcpdump
++resides on.
++
++The kernel part of zfcpdump is implemented as a debugfs file under "zcore/mem",
++which exports memory and registers of the crashed Linux in an s390
++standalone dump format. It can be used in the same way as e.g. /dev/mem. The
++dump format defines a 4K header followed by plain uncompressed memory. The
++register sets are stored in the prefix pages of the respective cpus. To build a
++dump enabled kernel with the zcore driver, the kernel config option
++CONFIG_ZFCPDUMP has to be set. When reading from "zcore/mem", the part of
++memory, which has been saved by hardware is read by the driver via the SCLP
++hardware interface. The second part is just copied from the non overwritten real
++memory.
++
++The userspace application of zfcpdump can reside e.g. in an intitramfs or an
++initrd. It reads from zcore/mem and writes the system dump to a file on a
++SCSI disk.
++
++To build a zfcpdump kernel use the following settings in your kernel
++configuration:
++ * CONFIG_ZFCPDUMP=y
++ * Enable ZFCP driver
++ * Enable SCSI driver
++ * Enable ext2 and ext3 filesystems
++ * Disable as many features as possible to keep the kernel small.
++   E.g. network support is not needed at all.
++
++To use the zfcpdump userspace application in an initramfs you have to do the
++following:
++
++ * Copy the zfcpdump executable somewhere into your Linux tree.
++   E.g. to "arch/s390/boot/zfcpdump. If you do not want to include
++   shared libraries, compile the tool with the "-static" gcc option.
++ * If you want to include e2fsck, add it to your source tree, too. The zfcpdump
++   application attempts to start /sbin/e2fsck from the ramdisk.
++ * Use an initramfs config file like the following:
++
++   dir /dev 755 0 0
++   nod /dev/console 644 0 0 c 5 1
++   nod /dev/null 644 0 0 c 1 3
++   nod /dev/sda1 644 0 0 b 8 1
++   nod /dev/sda2 644 0 0 b 8 2
++   nod /dev/sda3 644 0 0 b 8 3
++   nod /dev/sda4 644 0 0 b 8 4
++   nod /dev/sda5 644 0 0 b 8 5
++   nod /dev/sda6 644 0 0 b 8 6
++   nod /dev/sda7 644 0 0 b 8 7
++   nod /dev/sda8 644 0 0 b 8 8
++   nod /dev/sda9 644 0 0 b 8 9
++   nod /dev/sda10 644 0 0 b 8 10
++   nod /dev/sda11 644 0 0 b 8 11
++   nod /dev/sda12 644 0 0 b 8 12
++   nod /dev/sda13 644 0 0 b 8 13
++   nod /dev/sda14 644 0 0 b 8 14
++   nod /dev/sda15 644 0 0 b 8 15
++   file /init arch/s390/boot/zfcpdump 755 0 0
++   file /sbin/e2fsck arch/s390/boot/e2fsck 755 0 0
++   dir /proc 755 0 0
++   dir /sys 755 0 0
++   dir /mnt 755 0 0
++   dir /sbin 755 0 0
++
++ * Issue "make image" to build the zfcpdump image with initramfs.
++
++In a Linux distribution the zfcpdump enabled kernel image must be copied to
++/usr/share/zfcpdump/zfcpdump.image, where the s390 zipl tool is looking for the
++dump kernel when preparing a SCSI dump disk.
++
++If you use a ramdisk copy it to "/usr/share/zfcpdump/zfcpdump.rd".
++
++For more information on how to use zfcpdump refer to the s390 'Using the Dump
++Tools book', which is available from
++http://www.ibm.com/developerworks/linux/linux390.
+diff --git a/arch/s390/Kconfig b/arch/s390/Kconfig
+index d121403..ae697d3 100644
+--- a/arch/s390/Kconfig
++++ b/arch/s390/Kconfig
+@@ -469,6 +469,14 @@ config KEXEC
+ 	  current kernel, and to start another kernel.  It is like a reboot
+ 	  but is independent of hardware/microcode support.
+ 
++config ZFCPDUMP
++	tristate "zfcpdump support"
++	select SMP
++	default n
++	help
++	  Select this option if you want to build an zfcpdump enabled kernel.
++	  Refer to "Documentation/s390/zfcpdump.txt" for more details on this.
++
+ endmenu
+ 
+ source "net/Kconfig"
+diff --git a/arch/s390/boot/zfcpdump.c b/arch/s390/boot/zfcpdump.c
+new file mode 100644
+index 0000000..b8fc6ac
+--- /dev/null
++++ b/arch/s390/boot/zfcpdump.c
+@@ -0,0 +1,922 @@
++/*
++ * zfcpdump userspace tool
++ *
++ * This tool should be used in an intitramfs together with a kernel with
++ * enabled CONFIG_ZFCPDUMP kernel build option. The tool is able to write
++ * standalone system dumps on SCSI disks.
++ *
++ * See Documentation/s390/zfcpdump.txt for more information!
++ *
++ * Copyright IBM Corp. 2003, 2007.
++ * Author(s): Michael Holzheu
++ */
++
++//#define GZIP_SUPPORT
++
++#include <errno.h>
++#include <string.h>
++#include <dirent.h>
++#include <stdlib.h>
++#include <unistd.h>
++#include <time.h>
++#include <fcntl.h>
++#include <ctype.h>
++#include <sys/reboot.h>
++#include <sys/types.h>
++#include <sys/wait.h>
++#include <sys/stat.h>
++#include <sys/mount.h>
++#include <sys/time.h>
++#include <linux/reboot.h>
++#include <asm/types.h>
++#include "zfcpdump.h"
++#ifdef GZIP_SUPPORT
++#include <zlib.h>
++#endif
++
++static struct globals g;
++
++/*
++ * parse one kernel parameter in the form keyword=value
++ */
++static int parse_parameter(char *parameter)
++{
++	char *token;
++
++	token = strtok(parameter, "=");
++	if (token == NULL)
++		return 0;
++
++	if (strcmp(token, PARM_DIR) == 0) {
++		/* Dump Dir */
++		g.parm_dir = strtok(NULL, "=");
++		if (g.parm_dir == NULL) {
++			PRINT_WARN("No value for '%s' parameter specified\n",
++				    PARM_DIR);
++			PRINT_WARN("Using default: %s\n", PARM_DIR_DFLT);
++			g.parm_dir = PARM_DIR_DFLT;
++		}
++	} else if (strcmp(token, PARM_PART) == 0) {
++		/* Dump Partition */
++		g.parm_part = strtok(NULL, "=");
++		if (g.parm_part == NULL) {
++			PRINT_ERR("No value for '%s' parameter "
++				  "specified\n", PARM_PART);
++			return -1;
++		}
++	} else if (strcmp(token, PARM_MEM) == 0) {
++		/* Dump mem */
++		char *mem_str = strtok(NULL, "=");
++		if (mem_str == NULL) {
++			PRINT_ERR("No value for '%s' parameter "
++				  "specified\n", PARM_MEM);
++			return -1;
++		}
++		g.parm_mem = strtoll(mem_str, NULL, 0);
++	} else if (strcmp(token, PARM_COMP) == 0) {
++		/* Dump Compression */
++		g.parm_compress = strtok(NULL, "=");
++		if (g.parm_compress == NULL) {
++			PRINT_WARN("No value for '%s' parameter "
++				   "specified\n", PARM_COMP);
++			PRINT_WARN("Using default: %s\n", PARM_COMP_DFLT);
++			g.parm_compress = PARM_COMP_DFLT;
++		} else if ((strcmp(g.parm_compress, PARM_COMP_GZIP) != 0) &&
++			   (strcmp(g.parm_compress, PARM_COMP_NONE) != 0)) {
++			PRINT_WARN("Unknown dump compression '%s' "
++				   "specified!\n", g.parm_compress);
++			PRINT_WARN("Using default: %s\n", PARM_COMP_DFLT);
++			g.parm_compress = PARM_COMP_DFLT;
++		}
++	} else if (strcmp(token, PARM_DEBUG) == 0) {
++		/* Dump Debug */
++		char *s = strtok(NULL, "=");
++		if (s == NULL) {
++			PRINT_WARN("No value for '%s' parameter "
++				"specified\n", PARM_DEBUG);
++			PRINT_WARN("Using default: %d\n", PARM_DEBUG_DFLT);
++		} else {
++			g.parm_debug = atoi(s);
++			if ((g.parm_debug < PARM_DEBUG_MIN) ||
++			    (g.parm_debug > PARM_DEBUG_MAX)) {
++				PRINT_WARN("Invalid value (%i) for %s "
++				"parameter specified (allowed range is "
++				"%i - %i)\n", g.parm_debug, PARM_DEBUG,
++				PARM_DEBUG_MIN, PARM_DEBUG_MAX);
++				PRINT_WARN("Using default: %i\n",
++				PARM_DEBUG_DFLT);
++				g.parm_debug = PARM_DEBUG_DFLT;
++			}
++		}
++	} else if (strcmp(token, PARM_MODE) == 0) {
++		/* Dump Mode */
++		char *s = strtok(NULL, "=");
++		if (s == NULL) {
++			PRINT_WARN("No value for '%s' parameter "
++				"specified\n", PARM_MODE);
++			PRINT_WARN("Using default: %s\n", PARM_MODE_DFLT);
++		} else if (strcmp(s, PARM_MODE_INTERACT) == 0) {
++			g.parm_mode = PARM_MODE_INTERACT_NUM;
++		} else if (strcmp(s, PARM_MODE_AUTO) == 0) {
++			g.parm_mode = PARM_MODE_AUTO_NUM;
++		} else {
++			PRINT_WARN("Unknown dump mode: %s\n", s);
++			PRINT_WARN("Using default: %s\n", PARM_MODE_DFLT);
++		}
++	}
++	return 0;
++}
++
++/*
++ * Get dump parameters from /proc/cmdline
++ * Return: 0       - ok
++ *         (!= 0)  - error
++ */
++static int parse_parmline(void)
++{
++	int fh, i, count, token_cnt;
++	char *token;
++	char *parms[KERN_PARM_MAX];
++
++	/* setting defaults */
++
++	g.parm_compress = PARM_COMP_DFLT;
++	g.parm_dir      = PARM_DIR_DFLT;
++	g.parm_part     = PARM_PART_DFLT;
++	g.parm_debug    = PARM_DEBUG_DFLT;
++	g.parm_mode     = PARM_MODE_NUM_DFLT;
++	g.parm_mem      = PARM_MEM_DFLT;
++
++	fh = open(PROC_CMDLINE, O_RDONLY);
++	if (fh == -1) {
++		PRINT_PERR("open %s failed\n", PROC_CMDLINE);
++		return -1;
++	}
++	count = read(fh, g.parmline, CMDLINE_MAX_LEN);
++	if (count == -1) {
++		PRINT_PERR("read %s failed\n", PROC_CMDLINE);
++		close(fh);
++		return -1;
++	}
++	g.parmline[count-1] = '\0'; /* remove \n */
++	token_cnt = 0;
++	token = strtok(g.parmline, " \t\n");
++	while (token != NULL) {
++		parms[token_cnt] = token;
++		token = strtok(NULL, " \t\n");
++		token_cnt++;
++		if (token_cnt >= KERN_PARM_MAX) {
++			PRINT_WARN("More than %i kernel parmameters "
++				   "specified\n", KERN_PARM_MAX);
++			break;
++		}
++	}
++	for (i = 0; i < token_cnt; i++) {
++		if (parse_parameter(parms[i])) {
++			close(fh);
++			return -1;
++		}
++	}
++	PRINT_TRACE("dump dir  : %s\n", g.parm_dir);
++	PRINT_TRACE("dump part : %s\n", g.parm_part);
++	PRINT_TRACE("dump comp : %s\n", g.parm_compress);
++	PRINT_TRACE("dump debug: %d\n", g.parm_debug);
++	PRINT_TRACE("dump mem:   %llx\n", (unsigned long long) g.parm_mem);
++
++	if (g.parm_mode == PARM_MODE_AUTO_NUM)
++		PRINT_TRACE("dump mode : %s\n", PARM_MODE_AUTO);
++	if (g.parm_mode == PARM_MODE_INTERACT_NUM)
++		PRINT_TRACE("dump mode : %s\n", PARM_MODE_INTERACT);
++
++	sprintf(g.dump_dir, "%s/%s", DUMP_DIR, g.parm_dir);
++	close(fh);
++	return 0;
++}
++
++static int write_to_file(const char *file, const char *command)
++{
++	int fh;
++
++	PRINT_TRACE("Write: %s - %s\n", file, command);
++	fh = open(file, O_WRONLY);
++	if (fh == -1) {
++		PRINT_PERR("Could not open %s\n", file);
++		return -1;
++	}
++	if (write(fh, command, strlen(command)) == -1) {
++		PRINT_PERR("Write to %s failed\n", file);
++		close(fh);
++		return -1;
++	};
++	close(fh);
++	return 0;
++}
++
++static int read_file(const char *file, char *buf, int size)
++{
++	int fh;
++
++	PRINT_TRACE("Read: %s:\n", file);
++	fh = open(file, O_RDONLY);
++	if (fh == -1) {
++		PRINT_PERR("open %s failed\n", file);
++		return -1;
++	}
++	if (read(fh, buf, size) < 0) {
++		PRINT_PERR("read %s failed\n", file);
++		close(fh);
++		return -1;
++	}
++	if (buf[strlen(buf) - 1] == '\n')
++		buf[strlen(buf) - 1] = 0; /* strip newline */
++	close(fh);
++	PRINT_TRACE("'%s'\n", buf);
++
++	return 0;
++}
++
++/*
++ * Enable the scsi disk for dumping
++ * Return:    0 - ok
++ *         != 0 - error
++ */
++static int enable_zfcp_device(void)
++{
++	char command[1024], file[1024];
++
++	/* device */
++	if (read_file(IPL_DEVNO, g.dump_devno, sizeof(g.dump_devno)))
++		return -1;
++	sprintf(file, "/sys/bus/ccw/drivers/zfcp/%s/online", g.dump_devno);
++	if (write_to_file(file, "1\n"))
++		return -1;
++
++	/* wwpn */
++	if (read_file(IPL_WWPN, g.dump_wwpn, sizeof(g.dump_wwpn)))
++		return -1;
++	sprintf(file, "/sys/bus/ccw/drivers/zfcp/%s/port_add", g.dump_devno);
++	sprintf(command, "%s\n", g.dump_wwpn);
++	if (write_to_file(file, command))
++		return -1;
++
++	/* lun */
++	if (read_file(IPL_LUN, g.dump_lun, sizeof(g.dump_lun)))
++		return -1;
++	sprintf(file, "/sys/bus/ccw/drivers/zfcp/%s/%s/unit_add", g.dump_devno,
++		g.dump_wwpn);
++	sprintf(command, "%s\n", g.dump_lun);
++	if (write_to_file(file, command))
++		return -1;
++
++	/* bootprog */
++	read_file("/sys/firmware/ipl/bootprog", g.dump_bootprog,
++		sizeof(g.dump_bootprog));
++
++	return 0;
++}
++
++/*
++ * Mount the dump device
++ * Return:    0 - ok
++ *         != 0 - error
++ */
++static int mount_dump_device(void)
++{
++	int pid;
++	char dump_part[16];
++
++	PRINT_TRACE("e2fsck\n");
++	sprintf(dump_part, "%s%i", DEV_SCSI, atoi(g.parm_part));
++
++	pid = fork();
++	if (pid < 0) {
++		PRINT_PERR("fork failed\n");
++		return -1;
++	} else if (pid == 0) {
++		execl("/sbin/e2fsck", "e2fsck", dump_part, "-y", NULL);
++		exit(1);
++	} else {
++		waitpid(pid, NULL, 0);
++	}
++
++	PRINT_TRACE("mount\n");
++	if (mount(dump_part, DUMP_DIR, "ext3", 0, NULL) == 0)
++		return 0;
++	if (mount(dump_part, DUMP_DIR, "ext2", 0, NULL) != 0) {
++		PRINT_PERR("mount failed\n");
++		return -1;
++	}
++	return 0;
++}
++
++/*
++ * unmount the dump device
++ * Return:    0 - ok
++ *         != 0 - error
++ */
++static int umount_dump_device(void)
++{
++	if (umount(DUMP_DIR) != 0) {
++		PRINT_PERR("umount failed\n");
++		return -1;
++	}
++	return 0;
++}
++
++/*
++ * Terminate the system dumper
++ */
++static void terminate(void)
++{
++	sleep(WAIT_TIME_END); /* give the messages time to be displayed */
++	reboot(LINUX_REBOOT_CMD_POWER_OFF);
++}
++
++/*
++ * Signal handler for zfcp_dumper
++ */
++static __sighandler_t dump_sig_handler(int sig, siginfo_t *sip, void*p)
++{
++	PRINT_ERR("Got signal: %i\n", sig);
++	PRINT_ERR("Dump failed!\n");
++	terminate();
++	return 0;
++}
++
++/*
++ * Setup the Signal handler for zfcp_dumper
++ * Return:   0 - ok
++ *         !=0 - error
++ */
++static int init_sig(void)
++{
++	g.sigact.sa_flags = (SA_NODEFER | SA_SIGINFO | SA_RESETHAND);
++	g.sigact.sa_handler = (__sighandler_t)dump_sig_handler;
++	if (sigemptyset(&g.sigact.sa_mask) < 0)
++		return -1;
++	if (sigaction(SIGINT, &g.sigact, NULL) < 0)
++		return -1;
++	if (sigaction(SIGTERM, &g.sigact, NULL) < 0)
++		return -1;
++	if (sigaction(SIGPIPE, &g.sigact, NULL) < 0)
++		return -1;
++	if (sigaction(SIGABRT, &g.sigact, NULL) < 0)
++		return -1;
++	if (sigaction(SIGSEGV, &g.sigact, NULL) < 0)
++		return -1;
++	if (sigaction(SIGBUS, &g.sigact, NULL) < 0)
++		return -1;
++
++	return 0;
++}
++
++/*
++ * Set memory management parameters: Ensure that dirty pages are written
++ * early enough! See "Documentation/filesystems/proc.txt"
++ * Return:   0 - ok
++ *         !=0 - error
++ */
++static int tune_vm(void)
++{
++	char *sysctl_names[] = {"/proc/sys/vm/dirty_ratio",
++				"/proc/sys/vm/dirty_background_ratio",
++				"/proc/sys/vm/dirty_writeback_centisecs",
++				"/proc/sys/vm/dirty_expire_centisecs",
++				"/proc/sys/vm/vfs_cache_pressure",
++				"/proc/sys/vm/lowmem_reserve_ratio",
++				NULL};
++	char *sysctl_values[] = {"2", "5", "50", "50", "500", "32", NULL};
++	int i;
++
++	i = 0;
++	while (sysctl_names[i]) {
++		if (write_to_file(sysctl_names[i], sysctl_values[i]))
++			return -1;
++		i++;
++	}
++	return 0;
++}
++
++/*
++ * Get dump number of either new dump or dump to erase
++ * Parameter: dumpdir - dump directory (absolute path)
++ *            mode    - DUMP_FIRST: Find smallest dump number in directory
++ *                    - DUMP_LAST:  Find highest dump number in directory
++ * Return: >= 0 - dump number
++ *         -1   - no dump found in directory
++ *         <-1  - error
++ */
++static int get_dump_num(const char *dumpdir, int mode)
++{
++	DIR *dir = NULL;
++	struct dirent *dir_ent;
++	int dump_found, rc;
++
++	rc = 0;
++	dump_found = 0;
++	dir = opendir(dumpdir);
++	if (!dir) {
++		PRINT_PERR("Cannot evalute dump number\n");
++		return -2;
++	}
++
++	while ((dir_ent = readdir(dir))) {
++		int num;
++		if (sscanf(dir_ent->d_name, "dump.%ui", &num) == 1) {
++			char suffix[1024] = {};
++
++			/*
++			 * check if we have something like dump.001
++			 * this is not treated as dump, since we do not allow
++			 * leading zeros.
++			 * Also files like dump.-1, dump.-10 are ignored.
++			 */
++			sscanf(dir_ent->d_name, "dump.%s", suffix);
++			if (suffix[0] == '-')
++				continue;
++			if ((suffix[0] == '0') && isdigit(suffix[1]))
++				continue;
++			if (!dump_found) {
++				dump_found = 1;
++				rc = num;
++			} else if (mode == DUMP_LAST) {
++				rc = MAX(num, rc);
++			} else if (mode == DUMP_FIRST) {
++				rc = MIN(num, rc);
++			}
++		}
++	}
++	if (!dump_found)
++		rc = NO_DUMP;
++	closedir(dir);
++
++	return rc;
++}
++
++/*
++ * Erase oldest dump in dump directory
++ * Return:    0 - ok
++ *          !=0 - error
++ */
++static int erase_oldest_dump(void)
++{
++	int dump_nr;
++	char dname[1024] = {};
++	char answ[1024] = {};
++
++	dump_nr = get_dump_num(g.dump_dir, DUMP_FIRST);
++	if (dump_nr < 0) {
++		PRINT_ERR("Internal error: dump number cannot be evaluated\n");
++		return -1;
++	}
++	sprintf(dname, "dump.%i", dump_nr);
++	if (dump_nr == g.dump_nr) {
++		PRINT_ERR("Sorry, cannot delete any more dumps!\n");
++		return -1;
++	}
++	if (g.parm_mode == PARM_MODE_AUTO_NUM) {
++		PRINT("Removing oldest dump: '%s'\n", dname);
++	} else {
++		while ((strcmp(answ, "y") != 0) && (strcmp(answ, "n") != 0)) {
++			PRINT("Remove oldest dump: '%s' (y/n)? ", dname);
++			scanf("%s", answ);
++		}
++		if (strcmp(answ, "n") == 0)
++			return -1;
++	}
++	sprintf(dname, "%s/dump.%i", g.dump_dir, dump_nr);
++	if (unlink(dname) == -1) {
++		PRINT_PERR("Could not remove dump\n");
++		return -1;
++	}
++	sync();
++	/*
++	 * Wait some seconds in order to give ext3 time to discover that file
++	 * has been removed.
++	 */
++	sleep(WAIT_TIME_ERASE);
++	PRINT("Dump removed!\n");
++	return 0;
++}
++
++/*
++ * write buffer to dump. In case of ENOSPC try to remove oldest dump
++ * Parameter: fd    - filedescriptor of dump file
++ *            buf   - buffer to write
++ *            count - nr of bytes to write
++ *
++ * Return:    size  - written bytes
++ *            <0    - error
++ */
++static ssize_t dump_write(int fd, const void *buf, size_t count)
++{
++	ssize_t written, rc;
++
++	written = 0;
++	while (written != count) {
++		rc = write(fd, buf + written, count - written);
++		if ((rc == -1) && (errno == ENOSPC)) {
++			PRINT_ERR("No space left on device!\n");
++			/* Try to erase old dump */
++			if (erase_oldest_dump())
++				return -1;
++			continue;
++		} else if (rc == -1) {
++			/* Write failed somehow */
++			return -1;
++		}
++		written += rc;
++	}
++	return written;
++}
++
++#ifdef GZIP_SUPPORT
++/*
++ * Wrapper to gzip compress routine
++ * Parameter: old      - buffer to compress (in)
++ *            old_size - size of old buffer in bytes (in)
++ *            new      - buffer for compressed data (out)
++ *            new_size - size of 'new' buffer in bytes (in)
++ * Return:    >=0 - Size of compressed buffer
++ *            < 0 - error
++ */
++static int compress_gzip(const unsigned char *old, __u32 old_size,
++			 unsigned char *new, __u32 new_size)
++{
++	int rc;
++	unsigned long len;
++
++	len = old_size;
++	rc = compress(new, &len, old, new_size);
++	switch (rc) {
++	case Z_OK:
++		return len;
++	case Z_MEM_ERROR:
++		PRINT_ERR("Z_MEM_ERROR (not enough memory)!\n");
++		return -1;
++	case Z_BUF_ERROR:
++		/* In this case the compressed output is bigger than
++		   the uncompressed */
++		return -1;
++	case Z_DATA_ERROR:
++		PRINT_ERR("Z_DATA_ERROR (input data corrupted)!\n");
++		return -1;
++	default:
++		PRINT_ERR("Z_UNKNOWN_ERROR (rc 0x%x unknown)!\n", rc);
++		return -1;
++	}
++}
++#endif
++
++/*
++ * Do nothing! - No compression
++ */
++static int compress_none(const unsigned char *old, __u32 old_size,
++			 unsigned char *new, __u32 new_size)
++{
++	return -1; /* "-1" indicates, that compression was not done */
++}
++
++/*
++ * Convert s390 standalone dump header to lkcd dump header
++ * Parameter: s390_dh - s390 dump header (in)
++ *            dh      - lkcd dump header (out)
++ */
++static void s390_to_lkcd_hdr(struct dump_hdr_s390 *s390_dh,
++			     struct dump_hdr_lkcd *dh)
++{
++	struct timeval h_time;
++
++	/* adjust todclock to 1970 */
++	__u64 tod = s390_dh->tod;
++	tod -= 0x8126d60e46000000LL - (0x3c26700LL * 1000000 * 4096);
++	tod >>= 12;
++	h_time.tv_sec  = tod / 1000000;
++	h_time.tv_usec = tod % 1000000;
++
++	dh->memory_size    = s390_dh->memory_size;
++	dh->memory_start   = s390_dh->memory_start;
++	dh->memory_end     = s390_dh->memory_end;
++	dh->num_dump_pages = s390_dh->num_pages;
++	dh->page_size      = s390_dh->page_size;
++	dh->dump_level     = s390_dh->dump_level;
++
++	sprintf(dh->panic_string, "zSeries-dump (CPUID = %16llx)",
++		(unsigned long long) s390_dh->cpu_id);
++
++	if (s390_dh->arch_id == DH_ARCH_ID_S390)
++		strcpy(dh->utsname_machine, "s390");
++	else if (s390_dh->arch_id == DH_ARCH_ID_S390X)
++		strcpy(dh->utsname_machine, "s390x");
++	else
++		strcpy(dh->utsname_machine, "<unknown>");
++
++	strcpy(dh->utsname_sysname, "<unknown>");
++	strcpy(dh->utsname_nodename, "<unknown>");
++	strcpy(dh->utsname_release, "<unknown>");
++	strcpy(dh->utsname_version, "<unknown>");
++	strcpy(dh->utsname_domainname, "<unknown>");
++
++	dh->magic_number   = DUMP_MAGIC_NUMBER;
++	dh->version        = DUMP_VERSION_NUMBER;
++	dh->header_size    = sizeof(struct dump_hdr_lkcd);
++	dh->time.tv_sec    = h_time.tv_sec;
++	dh->time.tv_usec   = h_time.tv_usec;
++}
++
++/*
++ * Write progress information to screen
++ * Parameter: written - So many bytes have been written to the dump
++ *            max     - This is the whole memory to be written
++ */
++static void show_progress(unsigned long long written, unsigned long long max)
++{
++	int    time;
++	struct timeval t;
++	double percent;
++
++	gettimeofday(&t, NULL);
++	time = t.tv_sec;
++	if ((time < g.last_progress) && (written != max) && (written != 0))
++		return;
++	g.last_progress = time + 10;
++	percent = ((double) written / (double) max) * 100.0;
++	PRINT(" %4lli MB of %4lli MB (%5.1f%% )\n", written >> 20, max >> 20,
++		percent);
++	fflush(stdout);
++}
++
++/*
++ * create dump
++ *
++ * Return:   0  - ok
++ *         !=0  - error
++ */
++static int create_dump(void)
++{
++	struct stat stat_buf;
++	struct dump_hdr_lkcd dh;
++	struct dump_hdr_s390 s390_dh;
++	compress_fn_t compress_fn;
++	struct dump_page dp;
++	char page_buf[DUMP_BUF_SIZE], buf[PAGE_SIZE], dpcpage[PAGE_SIZE];
++	char dump_name[1024];
++	__u64 mem_loc;
++	__u32 buf_loc = 0, dp_size, dp_flags;
++	int size, fin, fout;
++
++	if (stat(g.dump_dir, &stat_buf) < 0) {
++		PRINT_ERR("Specified dump dir '%s' not found!\n", g.dump_dir);
++		return -1;
++	} else if (!S_ISDIR(stat_buf.st_mode)) {
++		PRINT_ERR("Specified dump dir '%s' is not a directory!\n",
++			g.dump_dir);
++		return -1;
++	}
++
++	/* initialize progress time */
++	g.last_progress = 0;
++
++	/* get dump number */
++	g.dump_nr = get_dump_num(g.dump_dir, DUMP_LAST);
++	if (g.dump_nr == NO_DUMP)
++		g.dump_nr = 0;
++	else if (g.dump_nr >= 0)
++		g.dump_nr += 1;
++	else
++		return -1;
++
++	/* try to open the source device */
++	fin = open(DEV_ZCORE, O_RDONLY, 0);
++	if (fin == -1) {
++		PRINT_ERR("open() source device '%s' failed!\n", DEV_ZCORE);
++		return -1;
++	}
++
++	/* make the new filename */
++	sprintf(dump_name, "%s/dump.%d", g.dump_dir, g.dump_nr);
++	fout = open(dump_name, DUMP_FLAGS, DUMP_MODE);
++	if (fout == -1) {
++		PRINT_ERR("open() of dump file \"%s\" failed!\n", dump_name);
++		goto failed_close_fin;
++	}
++
++	PRINT("dump file: dump.%d\n", g.dump_nr);
++	memset(&dh, 0, sizeof(dh));
++
++	/* get the dump header */
++	if (lseek(fin, 0, SEEK_SET) < 0) {
++		PRINT_ERR("Cannot lseek() to get the dump header from the "
++			"dump file!\n");
++		goto failed_close_fout;
++	}
++	if (read(fin, &s390_dh, sizeof(s390_dh)) != sizeof(s390_dh)) {
++		PRINT_ERR("Cannot read() dump header from dump file!\n");
++		goto failed_close_fout;
++	}
++
++	s390_to_lkcd_hdr(&s390_dh, &dh);
++
++	if (strcmp(g.parm_compress, PARM_COMP_GZIP) == 0) {
++#ifdef GZIP_SUPPORT
++		dh.dump_compress = DUMP_COMPRESS_GZIP;
++		compress_fn = compress_gzip;
++#else
++		PRINT_WARN("No gzip support. Compression disabled!\n");
++		dh.dump_compress = DUMP_COMPRESS_NONE;
++		compress_fn = compress_none;
++#endif
++	} else {
++		dh.dump_compress = DUMP_COMPRESS_NONE;
++		compress_fn = compress_none;
++	}
++
++	if (g.parm_mem < dh.memory_size) {
++		/* dump_mem parameter specified: Adjust memory size */
++		dh.memory_size = g.parm_mem;
++		dh.memory_end  = g.parm_mem;
++		dh.num_dump_pages = g.parm_mem / dh.page_size;
++	}
++
++	memset(page_buf, 0, DUMP_BUF_SIZE);
++	memcpy(page_buf, &dh, sizeof(dh));
++	if (lseek(fout, 0L, SEEK_SET) < 0) {
++		PRINT_ERR("lseek() failed\n");
++		goto failed_close_fout;
++	}
++	if (dump_write(fout, page_buf, DUMP_BUF_SIZE) != DUMP_BUF_SIZE) {
++		PRINT_ERR("Error: Write dump header failed\n");
++		goto failed_close_fout;
++	}
++
++	/* write dump */
++
++	mem_loc = 0;
++	if (lseek(fin, DUMP_HEADER_SZ_S390SA, SEEK_SET) < 0) {
++		PRINT_ERR("lseek() failed\n");
++		goto failed_close_fout;
++	}
++	while (mem_loc < dh.memory_size) {
++		if (read(fin, buf, PAGE_SIZE) != PAGE_SIZE) {
++			if (errno == EFAULT) {
++				/* probably memory hole. Skip page */
++				mem_loc += PAGE_SIZE;
++				continue;
++			}
++			PRINT_PERR("read error\n");
++			goto failed_close_fout;
++		}
++		memset(dpcpage, 0, PAGE_SIZE);
++		/* get the new compressed page size */
++
++		size = compress_fn((unsigned char *)buf, PAGE_SIZE,
++			(unsigned char *)dpcpage, PAGE_SIZE);
++
++		/* if compression failed or compressed was ineffective,
++		 * we write an uncompressed page */
++		if (size < 0) {
++			dp_flags = DUMP_DH_RAW;
++			dp_size = PAGE_SIZE;
++		} else {
++			dp_flags = DUMP_DH_COMPRESSED;
++			dp_size = size;
++		}
++		dp.address = mem_loc;
++		dp.size    = dp_size;
++		dp.flags   = dp_flags;
++		memcpy(page_buf + buf_loc, &dp, sizeof(dp));
++		buf_loc += sizeof(struct dump_page);
++		/* copy the page of memory */
++		if (dp_flags & DUMP_DH_COMPRESSED)
++			/* copy the compressed page */
++			memcpy(page_buf + buf_loc, dpcpage, dp_size);
++		else
++			/* copy directly from memory */
++			memcpy(page_buf + buf_loc, buf, dp_size);
++		buf_loc += dp_size;
++		if (dump_write(fout, page_buf, buf_loc) != buf_loc) {
++			PRINT_ERR("write error\n");
++			goto failed_close_fout;
++		}
++		buf_loc = 0;
++		mem_loc += PAGE_SIZE;
++		show_progress(mem_loc, dh.memory_size);
++	}
++
++	/* write end marker */
++
++	dp.address = 0x0;
++	dp.size    = DUMP_DH_END;
++	dp.flags   = 0x0;
++	dump_write(fout, &dp, sizeof(dp));
++	close(fin);
++	close(fout);
++	return 0;
++
++failed_close_fout:
++	close(fout);
++failed_close_fin:
++	close(fin);
++	return -1;
++}
++
++/*
++ * main routine of the zfcp_dumper
++ */
++int main(int argc, char *argv[])
++{
++	char linux_version[128];
++
++#ifdef __s390x__
++	PRINT("Linux System Dumper starting\n");
++	PRINT("Version %s (64 bit)\n", ZFCPDUMP_VERSION);
++#else
++	PRINT("Linux System Dumper starting\n");
++	PRINT("Version %s (32 bit)\n", ZFCPDUMP_VERSION);
++#endif
++
++	if (init_sig()) {
++		PRINT_ERR("Init Signals failed!\n");
++		goto fail;
++	}
++	if (mount("proc", "/proc", "proc", 0, NULL)) {
++		if (errno != EBUSY) {
++			PRINT_PERR("Unable to mount proc\n");
++			goto fail;
++		}
++	}
++	read_file("/proc/version", linux_version, sizeof(linux_version));
++	PRINT("%s\n", linux_version);
++
++	if (mount("sysfs", "/sys", "sysfs", 0, NULL)) {
++		if (errno != EBUSY) {
++			PRINT_PERR("Unable to mount sysfs\n");
++			goto fail;
++		}
++	}
++	if (mount("debugfs", "/sys/kernel/debug", "debugfs", 0, NULL)) {
++		if (errno != EBUSY) {
++			PRINT_PERR("Unable to mount debugfs\n");
++			goto fail;
++		}
++	}
++	if (tune_vm()) {
++		PRINT_PERR("Unable to set VM settings\n");
++		goto fail;
++	}
++	if (parse_parmline()) {
++		PRINT_ERR("Could not parse parmline\n");
++		goto fail;
++	}
++	if (enable_zfcp_device()) {
++		PRINT_ERR("Could not enable dump device\n");
++		goto fail;
++	}
++	PRINT(" \n"); /* leading blank is needed that sclp console prints
++			 the newline */
++	PRINT("DUMP PARAMETERS:\n");
++	PRINT("================\n");
++	PRINT("devno    : %s\n", g.dump_devno);
++	PRINT("wwpn     : %s\n", g.dump_wwpn);
++	PRINT("lun      : %s\n", g.dump_lun);
++	PRINT("conf     : %s\n", g.dump_bootprog);
++	PRINT("partition: %s\n", g.parm_part);
++	PRINT("directory: %s\n", g.parm_dir);
++	PRINT("compress : %s\n", g.parm_compress);
++	PRINT(" \n");
++	PRINT("MOUNT DUMP PARTITION:\n");
++	PRINT("=====================\n");
++	sleep(WAIT_TIME_ONLINE);
++	if (mount_dump_device()) {
++		PRINT_ERR("Could not mount dump device\n");
++		goto fail;
++	}
++	PRINT("DONE.\n");
++	PRINT(" \n");
++	PRINT("DUMP PROCESS STARTED:\n");
++	PRINT("=====================\n");
++
++	if (create_dump())
++		goto fail_umount;
++
++	if (umount_dump_device()) {
++		PRINT_ERR("Could not umount dump device\n");
++		goto fail;
++	}
++	PRINT(" \n");
++	PRINT("DUMP 'dump.%i' COMPLETE\n", g.dump_nr);
++	fflush(stdout);
++	terminate();
++	return 0;
++
++fail_umount:
++	if (umount_dump_device()) {
++		PRINT_ERR("Could not umount dump device\n");
++		goto fail;
++	}
++fail:
++	PRINT("DUMP 'dump.%i' FAILED\n", g.dump_nr);
++	fflush(stdout);
++	terminate();
++	return 1;
++}
+diff --git a/arch/s390/boot/zfcpdump.h b/arch/s390/boot/zfcpdump.h
+new file mode 100644
+index 0000000..7fb3914
+--- /dev/null
++++ b/arch/s390/boot/zfcpdump.h
+@@ -0,0 +1,216 @@
++/*
++ * zfcpdump userspace tool
++ *
++ * Copyright IBM Corp. 2003, 2007.
++ * Author(s): Michael Holzheu
++ */
++
++#ifndef _ZFCPDUMP_H
++#define _ZFCPDUMP_H
++
++#include <stdio.h>
++#include <signal.h>
++#include <stdint.h>
++
++#define ZFCPDUMP_VERSION "2.0"
++
++#define PRINT_TRACE(x...) \
++	do { \
++		if (g.parm_debug >= 3) { \
++			fprintf(stderr, "TRACE: "); \
++			fprintf(stderr, ##x); \
++		} \
++	} while (0)
++
++#define PRINT_ERR(x...) \
++	do { \
++		fprintf(stderr, "ERROR: "); \
++		fprintf(stderr, ##x); \
++	} while (0)
++
++#define PRINT_WARN(x...) \
++	do { \
++		fprintf(stderr, "WARNING: "); \
++		fprintf(stderr, ##x); \
++	} while (0)
++
++#define PRINT_PERR(x...) \
++	do { \
++		fprintf(stderr, "ERROR: "); \
++		fprintf(stderr, ##x); \
++		perror(""); \
++	} while (0)
++
++#define PRINT(x...) fprintf(stdout, ##x)
++#define CMDLINE_MAX_LEN 1024
++#define KERN_PARM_MAX 100
++
++#define DUMP_FLAGS (O_CREAT | O_RDWR | O_TRUNC)
++#define DUMP_MODE (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
++
++struct globals {
++	char	*parm_compress;
++	char	*parm_dir;
++	char	*parm_part;
++	int	parm_debug;
++	int	parm_mode;
++	__u64	parm_mem;
++	char	parmline[CMDLINE_MAX_LEN];
++	char	dump_dir[1024];
++	int	dump_nr;
++	int	last_progress;
++	struct	sigaction sigact;
++	char	dump_devno[16];
++	char	dump_wwpn[32];
++	char	dump_lun[32];
++	char	dump_bootprog[32];
++};
++
++#ifndef MIN
++#define MIN(x, y) ((x) < (y) ? (x) : (y))
++#endif
++#ifndef MAX
++#define MAX(x, y) ((x) > (y) ? (x) : (y))
++#endif
++
++#define PROC_CMDLINE	"/proc/cmdline"
++#define PROC_MISC	"/proc/misc"
++#define DEV_ZCORE	"/sys/kernel/debug/zcore/mem"
++#define DEV_SCSI	"/dev/sda"
++#define DUMP_DIR	"/mnt"
++
++#define IPL_WWPN	"/sys/firmware/ipl/wwpn"
++#define IPL_DEVNO	"/sys/firmware/ipl/device"
++#define IPL_LUN		"/sys/firmware/ipl/lun"
++
++#define PARM_DIR	"dump_dir"
++#define PARM_DIR_DFLT	"/"
++
++#define PARM_PART	"dump_part"
++#define PARM_PART_DFLT	"1"
++
++#define PARM_COMP	"dump_compress"
++#define PARM_COMP_GZIP	"gzip"
++#define PARM_COMP_NONE	"none"
++#define PARM_COMP_DFLT	PARM_COMP_NONE
++
++#define PARM_MEM	"dump_mem"
++#ifdef __s390x__
++#define PARM_MEM_DFLT	0xffffffffffffffff
++#else
++#define PARM_MEM_DFLT	0xffffffff
++#endif
++
++#define PARM_DEBUG	"dump_debug"
++#define PARM_DEBUG_DFLT	2
++#define PARM_DEBUG_MIN	1
++#define PARM_DEBUG_MAX	6
++
++#define PARM_MODE		"dump_mode"
++#define PARM_MODE_INTERACT	"interactive"
++#define PARM_MODE_INTERACT_NUM	0
++#define PARM_MODE_AUTO		"auto"
++#define PARM_MODE_AUTO_NUM	1
++#define PARM_MODE_DFLT		PARM_MODE_INTERACT
++#define PARM_MODE_NUM_DFLT	PARM_MODE_INTERACT_NUM
++
++#define DUMP_FIRST	0
++#define DUMP_LAST	1
++#define NO_DUMP		-1
++
++#define WAIT_TIME_ERASE		5 /* seconds */
++#define WAIT_TIME_END		3 /* seconds */
++#define WAIT_TIME_ONLINE	2 /* seconds */
++
++#define UTS_LEN		65
++
++#define DUMP_BUF_SIZE	(64 * 1024)
++
++/* header definitions for dumps from s390 standalone dump tools */
++#define DUMP_MAGIC_S390SA	0xa8190173618f23fdULL /* s390sa magic number */
++#define DUMP_HEADER_SZ_S390SA	4096
++
++/* standard header definitions */
++#define DUMP_MAGIC_NUMBER	0xa8190173618f23edULL  /* dump magic number  */
++#define DUMP_VERSION_NUMBER	0x8      /* dump version number             */
++#define DUMP_PANIC_LEN		0x100    /* dump panic string length        */
++
++/* dump compression options -- add as necessary */
++#define DUMP_COMPRESS_NONE	0x0   /* don't compress this dump      */
++#define DUMP_COMPRESS_GZIP	0x2   /* use GZIP compression          */
++
++/* dump header flags -- add as necessary */
++#define DUMP_DH_RAW		0x1   /* raw page (no compression)        */
++#define DUMP_DH_COMPRESSED	0x2   /* page is compressed               */
++#define DUMP_DH_END		0x4   /* end marker on a full dump        */
++
++#define PAGE_SIZE		4096
++
++/*
++ * This is the header dumped at the top of every valid crash dump.
++ */
++struct dump_hdr_lkcd {
++	__u64 magic_number;
++	__u32 version;
++	__u32 header_size;
++	__u32 dump_level;
++	__u32 page_size;
++	__u64 memory_size;
++	__u64 memory_start;
++	__u64 memory_end;
++	__u32 num_dump_pages;
++	char panic_string[DUMP_PANIC_LEN];
++	struct {
++		__u64 tv_sec;
++		__u64 tv_usec;
++	} time;
++	char utsname_sysname[UTS_LEN];
++	char utsname_nodename[UTS_LEN];
++	char utsname_release[UTS_LEN];
++	char utsname_version[UTS_LEN];
++	char utsname_machine[UTS_LEN];
++	char utsname_domainname[UTS_LEN];
++	__u64 current_task;
++	__u32 dump_compress;
++	__u32 dump_flags;
++	__u32 dump_device;
++} __attribute__((packed));
++
++#define DH_ARCH_ID_S390X 2
++#define DH_ARCH_ID_S390  1
++
++/*
++ * This is the header used by zcore
++ */
++struct dump_hdr_s390 {
++	__u64 magic_number;
++	__u32 version;
++	__u32 header_size;
++	__u32 dump_level;
++	__u32 page_size;
++	__u64 memory_size;
++	__u64 memory_start;
++	__u64 memory_end;
++	__u32 num_pages;
++	__u32 pad;
++	__u64 tod;
++	__u64 cpu_id;
++	__u32 arch_id;
++	__u32 build_arch_id;
++} __attribute__((packed));
++
++/*
++ * Header associated to each physical page of memory saved in the system
++ * crash dump.
++ */
++struct dump_page {
++	__u64 address; /* the address of this dump page */
++	__u32 size;    /* the size of this dump page */
++	__u32 flags;   /* flags (DUMP_COMPRESSED, DUMP_RAW or DUMP_END) */
++} __attribute__((packed));
++
++/* Compression function */
++typedef int (*compress_fn_t)(const unsigned char *old, __u32 old_size,
++			     unsigned char *new, __u32 size);
++
++#endif /* _ZFCPDUMP_H */
+diff --git a/arch/s390/boot/zfcpdump_initramfs.txt b/arch/s390/boot/zfcpdump_initramfs.txt
+new file mode 100644
+index 0000000..04cf6bf
+--- /dev/null
++++ b/arch/s390/boot/zfcpdump_initramfs.txt
+@@ -0,0 +1,29 @@
++#
++# initramfs definition for zfcpdump
++# See also Documentation/s390/zfcpdump.txt
++#
++
++dir /dev 755 0 0
++nod /dev/console 644 0 0 c 5 1
++nod /dev/null 644 0 0 c 1 3
++nod /dev/sda1 644 0 0 b 8 1
++nod /dev/sda2 644 0 0 b 8 2
++nod /dev/sda3 644 0 0 b 8 3
++nod /dev/sda4 644 0 0 b 8 4
++nod /dev/sda5 644 0 0 b 8 5
++nod /dev/sda6 644 0 0 b 8 6
++nod /dev/sda7 644 0 0 b 8 7
++nod /dev/sda8 644 0 0 b 8 8
++nod /dev/sda9 644 0 0 b 8 9
++nod /dev/sda10 644 0 0 b 8 10
++nod /dev/sda11 644 0 0 b 8 11
++nod /dev/sda12 644 0 0 b 8 12
++nod /dev/sda13 644 0 0 b 8 13
++nod /dev/sda14 644 0 0 b 8 14
++nod /dev/sda15 644 0 0 b 8 15
++dir /proc 755 0 0
++dir /sys 755 0 0
++dir /mnt 755 0 0
++dir /etc 755 0 0
++file /init arch/s390/boot/zfcpdump 755 0 0
++slink /etc/mtab /proc/mounts 755 0 0
+diff --git a/arch/s390/kernel/head.S b/arch/s390/kernel/head.S
+index adad886..bcad2a5 100644
+--- a/arch/s390/kernel/head.S
++++ b/arch/s390/kernel/head.S
+@@ -35,6 +35,8 @@
+ #define ARCH_OFFSET	0
+ #endif
+ 
++#define IPL_PARMBLOCK_ORIGIN 0x2000
++
+ #ifndef CONFIG_IPL
+         .org   0
+         .long  0x00080000,0x80000000+startup   # Just a restart PSW
+diff --git a/arch/s390/kernel/head64.S b/arch/s390/kernel/head64.S
+index fb74ef4..b2d88d4 100644
+--- a/arch/s390/kernel/head64.S
++++ b/arch/s390/kernel/head64.S
+@@ -39,6 +39,66 @@ startup_continue:
+ 	basr  %r13,0			 # get base
+ .LPG1:  sll   %r13,1                     # remove high order bit
+         srl   %r13,1
++
++#ifdef CONFIG_ZFCPDUMP
++
++	# check if we have been ipled using zfcp dump:
++
++	tm	0xb9,0x01		# test if subchannel is enabled
++	jno	.nodump			# subchannel disabled
++	l	%r1,0xb8
++	la	%r5,.Lipl_schib-.LPG1(%r13)
++	stsch	0(%r5)			# get schib of subchannel
++	jne	.nodump			# schib not available
++	tm	5(%r5),0x01		# devno valid?
++	jno	.nodump
++	tm	4(%r5),0x80		# qdio capable device?
++	jno	.nodump
++	l	%r2,20(%r0)		# address of ipl parameter block
++	lhi	%r3,0
++	ic	%r3,0x148(%r2)		# get opt field
++	chi	%r3,0x20		# load with dump?
++	jne	.nodump
++
++	# store all prefix registers in case of load with dump:
++
++	la	%r7,0			# base register for 0 page
++	la	%r8,0			# first cpu
++	l	%r11,.Lpref_arr_ptr-.LPG1(%r13)	# address of prefix array
++	ahi	%r11,4			# skip boot cpu
++	lr	%r12,%r11
++	ahi	%r12,(CONFIG_NR_CPUS*4)	# end of prefix array
++	stap	.Lcurrent_cpu+2-.LPG1(%r13)	# store current cpu addr
++1:
++	cl	%r8,.Lcurrent_cpu-.LPG1(%r13)	# is ipl cpu ?
++	je	4f				# if yes get next cpu
++2:
++	lr	%r9,%r7
++	sigp	%r9,%r8,0x9		# stop & store status of cpu
++	brc	8,3f			# accepted
++	brc	4,4f			# status stored: next cpu
++	brc	2,2b			# busy: 	 try again
++	brc	1,4f			# not op:	 next cpu
++3:
++	mvc	0(4,%r11),264(%r7)	# copy prefix register to prefix array
++	ahi	%r11,4			# next element in prefix array
++	clr	%r11,%r12
++	je	5f			# no more space in prefix array
++4:
++	ahi	%r8,1				# next cpu (r8 += 1)
++	cl	%r8,.Llast_cpu-.LPG1(%r13)	# is last possible cpu ?
++	jl	1b				# jump if not last cpu
++5:
++	lhi	%r1,2			# mode 2 = esame (dump)
++	j	6f
++.nodump:
++	lhi	%r1,1			# mode 1 = esame (normal ipl)
++6:
++#else
++	lhi	%r1,1			# mode 1 = esame (normal ipl)
++#endif /* CONFIG_ZFCPDUMP */
++	mvi	__LC_AR_MODE_ID,1	# set esame flag
++
+ 	GET_IPL_DEVICE
+         lhi   %r1,1                      # mode 1 = esame
+ 	mvi   __LC_AR_MODE_ID,1		 # set esame flag
+@@ -277,6 +337,14 @@ startup_continue:
+ .L4malign:.quad 0xffffffffffc00000
+ .Lscan2g:.quad 0x80000000 + 0x20000 - 8 # 2GB + 128K - 8
+ .Lnop:	.long  0x07000700
++#ifdef CONFIG_ZFCPDUMP
++.Lcurrent_cpu:
++	.long 0x0
++.Llast_cpu:
++	.long 0x0000ffff
++.Lpref_arr_ptr:
++	.long zfcpdump_prefix_array
++#endif /* CONFIG_ZFCPDUMP */
+ .Lparmaddr:
+ 	.quad	PARMAREA
+ 
+diff --git a/arch/s390/kernel/ipl.c b/arch/s390/kernel/ipl.c
+index a9bf9e6..6537581 100644
+--- a/arch/s390/kernel/ipl.c
++++ b/arch/s390/kernel/ipl.c
+@@ -14,6 +14,7 @@
+ #include <linux/delay.h>
+ #include <linux/reboot.h>
+ #include <linux/ctype.h>
++#include <asm/ipl.h>
+ #include <asm/smp.h>
+ #include <asm/setup.h>
+ #include <asm/cpcmd.h>
+@@ -28,41 +29,67 @@ extern char s390_readinfo_sccb[];
+ #define SCCB_LOADPARM (&s390_readinfo_sccb[24])
+ #define SCCB_FLAG (s390_readinfo_sccb[91])
+ 
+-enum ipl_type {
+-	IPL_TYPE_NONE	 = 1,
+-	IPL_TYPE_UNKNOWN = 2,
+-	IPL_TYPE_CCW	 = 4,
+-	IPL_TYPE_FCP	 = 8,
+-};
+-
+-#define IPL_NONE_STR	 "none"
+-#define IPL_UNKNOWN_STR  "unknown"
+-#define IPL_CCW_STR	 "ccw"
+-#define IPL_FCP_STR	 "fcp"
++#define IPL_UNKNOWN_STR		"unknown"
++#define IPL_CCW_STR		"ccw"
++#define IPL_FCP_STR		"fcp"
++#define IPL_FCP_DUMP_STR	"fcp_dump"
+ 
+ static char *ipl_type_str(enum ipl_type type)
+ {
+ 	switch (type) {
+-	case IPL_TYPE_NONE:
+-		return IPL_NONE_STR;
+ 	case IPL_TYPE_CCW:
+ 		return IPL_CCW_STR;
+ 	case IPL_TYPE_FCP:
+ 		return IPL_FCP_STR;
++	case IPL_TYPE_FCP_DUMP:
++		return IPL_FCP_DUMP_STR;
+ 	case IPL_TYPE_UNKNOWN:
+ 	default:
+ 		return IPL_UNKNOWN_STR;
+ 	}
+ }
+ 
++enum dump_type {
++	DUMP_TYPE_NONE	= 1,
++	DUMP_TYPE_CCW	= 2,
++	DUMP_TYPE_FCP	= 4,
++};
++
++#define DUMP_NONE_STR	 "none"
++#define DUMP_CCW_STR	 "ccw"
++#define DUMP_FCP_STR	 "fcp"
++
++static char *dump_type_str(enum dump_type type)
++{
++	switch (type) {
++	case DUMP_TYPE_NONE:
++		return DUMP_NONE_STR;
++	case DUMP_TYPE_CCW:
++		return DUMP_CCW_STR;
++	case DUMP_TYPE_FCP:
++		return DUMP_FCP_STR;
++	default:
++		return NULL;
++	}
++}
++
+ enum ipl_method {
+-	IPL_METHOD_NONE,
+-	IPL_METHOD_CCW_CIO,
+-	IPL_METHOD_CCW_DIAG,
+-	IPL_METHOD_CCW_VM,
+-	IPL_METHOD_FCP_RO_DIAG,
+-	IPL_METHOD_FCP_RW_DIAG,
+-	IPL_METHOD_FCP_RO_VM,
++	REIPL_METHOD_CCW_CIO,
++	REIPL_METHOD_CCW_DIAG,
++	REIPL_METHOD_CCW_VM,
++	REIPL_METHOD_FCP_RO_DIAG,
++	REIPL_METHOD_FCP_RW_DIAG,
++	REIPL_METHOD_FCP_RO_VM,
++	REIPL_METHOD_FCP_DUMP,
++	REIPL_METHOD_DEFAULT,
++};
++
++enum dump_method {
++	DUMP_METHOD_NONE,
++	DUMP_METHOD_CCW_CIO,
++	DUMP_METHOD_CCW_DIAG,
++	DUMP_METHOD_CCW_VM,
++	DUMP_METHOD_FCP_DIAG,
+ };
+ 
+ enum shutdown_action {
+@@ -89,39 +116,18 @@ static char *shutdown_action_str(enum shutdown_action action)
+ 	}
+ }
+ 
+-enum diag308_subcode  {
+-	DIAG308_IPL   = 3,
+-	DIAG308_DUMP  = 4,
+-	DIAG308_SET   = 5,
+-	DIAG308_STORE = 6,
+-};
+-
+-enum diag308_ipl_type {
+-	DIAG308_IPL_TYPE_FCP = 0,
+-	DIAG308_IPL_TYPE_CCW = 2,
+-};
+-
+-enum diag308_opt {
+-	DIAG308_IPL_OPT_IPL  = 0x10,
+-	DIAG308_IPL_OPT_DUMP = 0x20,
+-};
+-
+-enum diag308_rc {
+-	DIAG308_RC_OK = 1,
+-};
+-
+ static int diag308_set_works = 0;
+ 
+ static int reipl_capabilities = IPL_TYPE_UNKNOWN;
+ 
+ static enum ipl_type reipl_type = IPL_TYPE_UNKNOWN;
+-static enum ipl_method reipl_method = IPL_METHOD_NONE;
++static enum ipl_method reipl_method = REIPL_METHOD_DEFAULT;
+ static struct ipl_parameter_block *reipl_block_fcp;
+ static struct ipl_parameter_block *reipl_block_ccw;
+ 
+-static int dump_capabilities = IPL_TYPE_NONE;
+-static enum ipl_type dump_type = IPL_TYPE_NONE;
+-static enum ipl_method dump_method = IPL_METHOD_NONE;
++static int dump_capabilities = DUMP_TYPE_NONE;
++static enum dump_type dump_type = DUMP_TYPE_NONE;
++static enum dump_method dump_method = DUMP_METHOD_NONE;
+ static struct ipl_parameter_block *dump_block_fcp;
+ static struct ipl_parameter_block *dump_block_ccw;
+ 
+@@ -149,6 +155,7 @@ int diag308(unsigned long subcode, void *addr)
+ 
+ 	return _rc;
+ }
++EXPORT_SYMBOL_GPL(diag308);
+ 
+ /* SYSFS */
+ 
+@@ -194,24 +201,51 @@ static void make_attrs_ro(struct attribute **attrs)
+  * ipl section
+  */
+ 
+-static enum ipl_type ipl_get_type(void)
++static enum ipl_type get_ipl_type(void)
+ {
+ 	struct ipl_parameter_block *ipl = IPL_PARMBLOCK_START;
+ 
+-	if (!IPL_DEVNO_VALID)
++	if (!(ipl_parameter_flags & IPL_DEVNO_VALID))
+ 		return IPL_TYPE_UNKNOWN;
+-	if (!IPL_PARMBLOCK_VALID)
++	if (!(ipl_parameter_flags & IPL_PARMBLOCK_VALID))
+ 		return IPL_TYPE_CCW;
+ 	if (ipl->hdr.version > IPL_MAX_SUPPORTED_VERSION)
+ 		return IPL_TYPE_UNKNOWN;
+ 	if (ipl->hdr.pbt != DIAG308_IPL_TYPE_FCP)
+ 		return IPL_TYPE_UNKNOWN;
++	if (ipl->ipl_info.fcp.opt == DIAG308_IPL_OPT_DUMP)
++		return IPL_TYPE_FCP_DUMP;
+ 	return IPL_TYPE_FCP;
+ }
+ 
++void __init setup_ipl_info(void)
++{
++	ipl_info.type = get_ipl_type();
++	switch (ipl_info.type) {
++	case IPL_TYPE_CCW:
++		ipl_info.data.ccw.dev_id.devno = ipl_devno;
++		ipl_info.data.ccw.dev_id.ssid = 0;
++		break;
++	case IPL_TYPE_FCP:
++	case IPL_TYPE_FCP_DUMP:
++		ipl_info.data.fcp.dev_id.devno =
++			IPL_PARMBLOCK_START->ipl_info.fcp.devno;
++		ipl_info.data.fcp.dev_id.ssid = 0;
++		ipl_info.data.fcp.wwpn = IPL_PARMBLOCK_START->ipl_info.fcp.wwpn;
++		ipl_info.data.fcp.lun = IPL_PARMBLOCK_START->ipl_info.fcp.lun;
++		break;
++	case IPL_TYPE_UNKNOWN:
++	default:
++		/* We have no info to copy */
++		break;
++	}
++}
++
++struct ipl_info ipl_info;
++EXPORT_SYMBOL_GPL(ipl_info);
+ static ssize_t ipl_type_show(struct subsystem *subsys, char *page)
+ {
+-	return sprintf(page, "%s\n", ipl_type_str(ipl_get_type()));
++	return sprintf(page, "%s\n", ipl_type_str(ipl_info.type));
+ }
+ 
+ static struct subsys_attribute sys_ipl_type_attr = __ATTR_RO(ipl_type);
+@@ -220,10 +254,11 @@ static ssize_t sys_ipl_device_show(struct subsystem *subsys, char *page)
+ {
+ 	struct ipl_parameter_block *ipl = IPL_PARMBLOCK_START;
+ 
+-	switch (ipl_get_type()) {
++	switch (ipl_info.type) {
+ 	case IPL_TYPE_CCW:
+ 		return sprintf(page, "0.0.%04x\n", ipl_devno);
+ 	case IPL_TYPE_FCP:
++	case IPL_TYPE_FCP_DUMP:
+ 		return sprintf(page, "0.0.%04x\n", ipl->ipl_info.fcp.devno);
+ 	default:
+ 		return 0;
+@@ -451,20 +486,26 @@ static int reipl_set_type(enum ipl_type type)
+ 	switch(type) {
+ 	case IPL_TYPE_CCW:
+ 		if (MACHINE_IS_VM)
+-			reipl_method = IPL_METHOD_CCW_VM;
++			reipl_method = REIPL_METHOD_CCW_VM;
+ 		else
+-			reipl_method = IPL_METHOD_CCW_CIO;
++			reipl_method = REIPL_METHOD_CCW_CIO;
+ 		break;
+ 	case IPL_TYPE_FCP:
+ 		if (diag308_set_works)
+-			reipl_method = IPL_METHOD_FCP_RW_DIAG;
++			reipl_method = REIPL_METHOD_FCP_RW_DIAG;
+ 		else if (MACHINE_IS_VM)
+-			reipl_method = IPL_METHOD_FCP_RO_VM;
++			reipl_method = REIPL_METHOD_FCP_RO_VM;
+ 		else
+-			reipl_method = IPL_METHOD_FCP_RO_DIAG;
++			reipl_method = REIPL_METHOD_FCP_RO_DIAG;
++		break;
++	case IPL_TYPE_FCP_DUMP:
++		reipl_method = REIPL_METHOD_FCP_DUMP;
++		break;
++	case IPL_TYPE_UNKNOWN:
++		reipl_method = REIPL_METHOD_DEFAULT;
+ 		break;
+ 	default:
+-		reipl_method = IPL_METHOD_NONE;
++		BUG();
+ 	}
+ 	reipl_type = type;
+ 	return 0;
+@@ -540,22 +581,22 @@ static struct attribute_group dump_ccw_attr_group = {
+ 
+ /* dump type */
+ 
+-static int dump_set_type(enum ipl_type type)
++static int dump_set_type(enum dump_type type)
+ {
+ 	if (!(dump_capabilities & type))
+ 		return -EINVAL;
+ 	switch(type) {
+-	case IPL_TYPE_CCW:
++	case DUMP_TYPE_CCW:
+ 		if (MACHINE_IS_VM)
+-			dump_method = IPL_METHOD_CCW_VM;
++			dump_method = DUMP_METHOD_CCW_VM;
+ 		else
+-			dump_method = IPL_METHOD_CCW_CIO;
++			dump_method = DUMP_METHOD_CCW_CIO;
+ 		break;
+-	case IPL_TYPE_FCP:
+-		dump_method = IPL_METHOD_FCP_RW_DIAG;
++	case DUMP_TYPE_FCP:
++		dump_method = DUMP_METHOD_FCP_DIAG;
+ 		break;
+ 	default:
+-		dump_method = IPL_METHOD_NONE;
++		dump_method = DUMP_METHOD_NONE;
+ 	}
+ 	dump_type = type;
+ 	return 0;
+@@ -563,7 +604,7 @@ static int dump_set_type(enum ipl_type type)
+ 
+ static ssize_t dump_type_show(struct subsystem *subsys, char *page)
+ {
+-	return sprintf(page, "%s\n", ipl_type_str(dump_type));
++	return sprintf(page, "%s\n", dump_type_str(dump_type));
+ }
+ 
+ static ssize_t dump_type_store(struct subsystem *subsys, const char *buf,
+@@ -571,12 +612,12 @@ static ssize_t dump_type_store(struct subsystem *subsys, const char *buf,
+ {
+ 	int rc = -EINVAL;
+ 
+-	if (strncmp(buf, IPL_NONE_STR, strlen(IPL_NONE_STR)) == 0)
+-		rc = dump_set_type(IPL_TYPE_NONE);
+-	else if (strncmp(buf, IPL_CCW_STR, strlen(IPL_CCW_STR)) == 0)
+-		rc = dump_set_type(IPL_TYPE_CCW);
+-	else if (strncmp(buf, IPL_FCP_STR, strlen(IPL_FCP_STR)) == 0)
+-		rc = dump_set_type(IPL_TYPE_FCP);
++	if (strncmp(buf, DUMP_NONE_STR, strlen(DUMP_NONE_STR)) == 0)
++		rc = dump_set_type(DUMP_TYPE_NONE);
++	else if (strncmp(buf, DUMP_CCW_STR, strlen(DUMP_CCW_STR)) == 0)
++		rc = dump_set_type(DUMP_TYPE_CCW);
++	else if (strncmp(buf, DUMP_FCP_STR, strlen(DUMP_FCP_STR)) == 0)
++		rc = dump_set_type(DUMP_TYPE_FCP);
+ 	return (rc != 0) ? rc : len;
+ }
+ 
+@@ -642,14 +683,14 @@ void do_reipl(void)
+ 	char loadparm[LOADPARM_LEN + 1];
+ 
+ 	switch (reipl_method) {
+-	case IPL_METHOD_CCW_CIO:
++	case REIPL_METHOD_CCW_CIO:
+ 		devid.devno = reipl_block_ccw->ipl_info.ccw.devno;
+-		if (ipl_get_type() == IPL_TYPE_CCW && devid.devno == ipl_devno)
++		if (ipl_info.type == IPL_TYPE_CCW && devid.devno == ipl_devno)
+ 			diag308(DIAG308_IPL, NULL);
+ 		devid.ssid  = 0;
+ 		reipl_ccw_dev(&devid);
+ 		break;
+-	case IPL_METHOD_CCW_VM:
++	case REIPL_METHOD_CCW_VM:
+ 		reipl_get_ascii_loadparm(loadparm);
+ 		if (strlen(loadparm) == 0)
+ 			sprintf(buf, "IPL %X CLEAR",
+@@ -659,26 +700,28 @@ void do_reipl(void)
+ 				reipl_block_ccw->ipl_info.ccw.devno, loadparm);
+ 		cpcmd(buf, NULL, 0, NULL);
+ 		break;
+-	case IPL_METHOD_CCW_DIAG:
++	case REIPL_METHOD_CCW_DIAG:
+ 		diag308(DIAG308_SET, reipl_block_ccw);
+ 		diag308(DIAG308_IPL, NULL);
+ 		break;
+-	case IPL_METHOD_FCP_RW_DIAG:
++	case REIPL_METHOD_FCP_RW_DIAG:
+ 		diag308(DIAG308_SET, reipl_block_fcp);
+ 		diag308(DIAG308_IPL, NULL);
+ 		break;
+-	case IPL_METHOD_FCP_RO_DIAG:
++	case REIPL_METHOD_FCP_RO_DIAG:
+ 		diag308(DIAG308_IPL, NULL);
+ 		break;
+-	case IPL_METHOD_FCP_RO_VM:
++	case REIPL_METHOD_FCP_RO_VM:
+ 		cpcmd("IPL", NULL, 0, NULL);
+ 		break;
+-	case IPL_METHOD_NONE:
+-	default:
++	case REIPL_METHOD_DEFAULT:
+ 		if (MACHINE_IS_VM)
+ 			cpcmd("IPL", NULL, 0, NULL);
+ 		diag308(DIAG308_IPL, NULL);
+ 		break;
++	case REIPL_METHOD_FCP_DUMP:
++	default:
++		break;
+ 	}
+ 	signal_processor(smp_processor_id(), sigp_stop_and_store_status);
+ }
+@@ -691,29 +734,29 @@ static void do_dump(void)
+ 	static char buf[100];
+ 
+ 	switch (dump_method) {
+-	case IPL_METHOD_CCW_CIO:
++	case DUMP_METHOD_CCW_CIO:
+ 		lowcore_save = S390_lowcore;
+ 		dump_smp_stop_all();
+ 		devid.devno = dump_block_ccw->ipl_info.ccw.devno;
+ 		devid.ssid  = 0;
+ 		reipl_ccw_dev(&devid);
+ 		break;
+-	case IPL_METHOD_CCW_VM:
++	case DUMP_METHOD_CCW_VM:
+ 		dump_smp_stop_all();
+ 		sprintf(buf, "STORE STATUS");
+ 		cpcmd(buf, NULL, 0, NULL);
+ 		sprintf(buf, "IPL %X", dump_block_ccw->ipl_info.ccw.devno);
+ 		cpcmd(buf, NULL, 0, NULL);
+ 		break;
+-	case IPL_METHOD_CCW_DIAG:
++	case DUMP_METHOD_CCW_DIAG:
+ 		diag308(DIAG308_SET, dump_block_ccw);
+ 		diag308(DIAG308_DUMP, NULL);
+ 		break;
+-	case IPL_METHOD_FCP_RW_DIAG:
++	case DUMP_METHOD_FCP_DIAG:
+ 		diag308(DIAG308_SET, dump_block_fcp);
+ 		diag308(DIAG308_DUMP, NULL);
+ 		break;
+-	case IPL_METHOD_NONE:
++	case DUMP_METHOD_NONE:
+ 	default:
+ 		return;
+ 	}
+@@ -754,12 +797,13 @@ static int __init ipl_init(void)
+ 	rc = firmware_register(&ipl_subsys);
+ 	if (rc)
+ 		return rc;
+-	switch (ipl_get_type()) {
++	switch (ipl_info.type) {
+ 	case IPL_TYPE_CCW:
+ 		rc = sysfs_create_group(&ipl_subsys.kset.kobj,
+ 					&ipl_ccw_attr_group);
+ 		break;
+ 	case IPL_TYPE_FCP:
++	case IPL_TYPE_FCP_DUMP:
+ 		rc = ipl_register_fcp_files();
+ 		break;
+ 	default:
+@@ -798,7 +842,7 @@ static int __init reipl_ccw_init(void)
+ 	}
+ 	reipl_block_ccw->hdr.len = IPL_PARM_BLK_CCW_LEN;
+ 	reipl_block_ccw->hdr.version = IPL_PARM_BLOCK_VERSION;
+-	reipl_block_ccw->hdr.blk0_len = sizeof(reipl_block_ccw->ipl_info.ccw);
++	reipl_block_ccw->hdr.blk0_len = IPL_PARM_BLK0_CCW_LEN;
+ 	reipl_block_ccw->hdr.pbt = DIAG308_IPL_TYPE_CCW;
+ 	/* check if read scp info worked and set loadparm */
+ 	if (SCCB_VALID)
+@@ -811,7 +855,7 @@ static int __init reipl_ccw_init(void)
+ 	/* FIXME: check for diag308_set_works when enabling diag ccw reipl */
+ 	if (!MACHINE_IS_VM)
+ 		sys_reipl_ccw_loadparm_attr.attr.mode = S_IRUGO;
+-	if (ipl_get_type() == IPL_TYPE_CCW)
++	if (ipl_info.type == IPL_TYPE_CCW)
+ 		reipl_block_ccw->ipl_info.ccw.devno = ipl_devno;
+ 	reipl_capabilities |= IPL_TYPE_CCW;
+ 	return 0;
+@@ -821,9 +865,9 @@ static int __init reipl_fcp_init(void)
+ {
+ 	int rc;
+ 
+-	if ((!diag308_set_works) && (ipl_get_type() != IPL_TYPE_FCP))
++	if ((!diag308_set_works) && (ipl_info.type != IPL_TYPE_FCP))
+ 		return 0;
+-	if ((!diag308_set_works) && (ipl_get_type() == IPL_TYPE_FCP))
++	if ((!diag308_set_works) && (ipl_info.type == IPL_TYPE_FCP))
+ 		make_attrs_ro(reipl_fcp_attrs);
+ 
+ 	reipl_block_fcp = (void *) get_zeroed_page(GFP_KERNEL);
+@@ -834,13 +878,12 @@ static int __init reipl_fcp_init(void)
+ 		free_page((unsigned long)reipl_block_fcp);
+ 		return rc;
+ 	}
+-	if (ipl_get_type() == IPL_TYPE_FCP) {
++	if (ipl_info.type == IPL_TYPE_FCP) {
+ 		memcpy(reipl_block_fcp, IPL_PARMBLOCK_START, PAGE_SIZE);
+ 	} else {
+ 		reipl_block_fcp->hdr.len = IPL_PARM_BLK_FCP_LEN;
+ 		reipl_block_fcp->hdr.version = IPL_PARM_BLOCK_VERSION;
+-		reipl_block_fcp->hdr.blk0_len =
+-			sizeof(reipl_block_fcp->ipl_info.fcp);
++		reipl_block_fcp->hdr.blk0_len = IPL_PARM_BLK0_FCP_LEN;
+ 		reipl_block_fcp->hdr.pbt = DIAG308_IPL_TYPE_FCP;
+ 		reipl_block_fcp->ipl_info.fcp.opt = DIAG308_IPL_OPT_IPL;
+ 	}
+@@ -866,7 +909,7 @@ static int __init reipl_init(void)
+ 	rc = reipl_fcp_init();
+ 	if (rc)
+ 		return rc;
+-	rc = reipl_set_type(ipl_get_type());
++	rc = reipl_set_type(ipl_info.type);
+ 	if (rc)
+ 		return rc;
+ 	return 0;
+@@ -886,9 +929,9 @@ static int __init dump_ccw_init(void)
+ 	}
+ 	dump_block_ccw->hdr.len = IPL_PARM_BLK_CCW_LEN;
+ 	dump_block_ccw->hdr.version = IPL_PARM_BLOCK_VERSION;
+-	dump_block_ccw->hdr.blk0_len = sizeof(reipl_block_ccw->ipl_info.ccw);
++	dump_block_ccw->hdr.blk0_len = IPL_PARM_BLK0_CCW_LEN;
+ 	dump_block_ccw->hdr.pbt = DIAG308_IPL_TYPE_CCW;
+-	dump_capabilities |= IPL_TYPE_CCW;
++	dump_capabilities |= DUMP_TYPE_CCW;
+ 	return 0;
+ }
+ 
+@@ -910,10 +953,10 @@ static int __init dump_fcp_init(void)
+ 	}
+ 	dump_block_fcp->hdr.len = IPL_PARM_BLK_FCP_LEN;
+ 	dump_block_fcp->hdr.version = IPL_PARM_BLOCK_VERSION;
+-	dump_block_fcp->hdr.blk0_len = sizeof(dump_block_fcp->ipl_info.fcp);
++	dump_block_fcp->hdr.blk0_len = IPL_PARM_BLK0_FCP_LEN;
+ 	dump_block_fcp->hdr.pbt = DIAG308_IPL_TYPE_FCP;
+ 	dump_block_fcp->ipl_info.fcp.opt = DIAG308_IPL_OPT_DUMP;
+-	dump_capabilities |= IPL_TYPE_FCP;
++	dump_capabilities |= DUMP_TYPE_FCP;
+ 	return 0;
+ }
+ 
+@@ -952,7 +995,7 @@ static int __init dump_init(void)
+ 	rc = dump_fcp_init();
+ 	if (rc)
+ 		return rc;
+-	dump_set_type(IPL_TYPE_NONE);
++	dump_set_type(DUMP_TYPE_NONE);
+ 	return 0;
+ }
+ 
+diff --git a/arch/s390/kernel/setup.c b/arch/s390/kernel/setup.c
+index 0cc8f17..5189c23 100644
+--- a/arch/s390/kernel/setup.c
++++ b/arch/s390/kernel/setup.c
+@@ -38,6 +38,7 @@
+ #include <linux/device.h>
+ #include <linux/notifier.h>
+ 
++#include <asm/ipl.h>
+ #include <asm/uaccess.h>
+ #include <asm/system.h>
+ #include <asm/smp.h>
+@@ -48,6 +49,7 @@
+ #include <asm/page.h>
+ #include <asm/ptrace.h>
+ #include <asm/sections.h>
++#include <asm/cio.h>
+ 
+ /*
+  * Machine setup..
+@@ -272,6 +274,27 @@ static void __init conmode_default(void)
+ 	}
+ }
+ 
++#if defined(CONFIG_ZFCPDUMP) || defined(CONFIG_ZFCPDUMP_MODULE)
++static void __init setup_zfcpdump(unsigned int console_devno)
++{
++	static char str[64];
++
++	if (ipl_info.type != IPL_TYPE_FCP_DUMP)
++		return;
++	if (console_devno != -1)
++		sprintf(str, "cio_ignore=all,!0.0.%04x,!0.0.%04x",
++			ipl_info.data.fcp.dev_id.devno, console_devno);
++	else
++		sprintf(str, "cio_ignore=all,!0.0.%04x",
++			ipl_info.data.fcp.dev_id.devno);
++	strcat(COMMAND_LINE, " ");
++	strcat(COMMAND_LINE, str);
++	console_loglevel = 2;
++}
++#else
++static inline void setup_zfcpdump(unsigned int console_devno) {}
++#endif /* CONFIG_ZFCPDUMP */
++
+ #ifdef CONFIG_SMP
+ extern void machine_restart_smp(char *);
+ extern void machine_halt_smp(void);
+@@ -482,6 +505,9 @@ setup_resources(void)
+ 	}
+ }
+ 
++unsigned long real_memory_size;
++EXPORT_SYMBOL_GPL(real_memory_size);
++
+ static void __init
+ setup_memory(void)
+ {
+@@ -519,6 +545,7 @@ setup_memory(void)
+ 		start_chunk = (memory_chunk[i].addr + PAGE_SIZE - 1);
+ 		start_chunk >>= PAGE_SHIFT;
+ 		end_chunk = (memory_chunk[i].addr + memory_chunk[i].size);
++		real_memory_size = max(real_memory_size, end_chunk);
+ 		end_chunk >>= PAGE_SHIFT;
+ 		if (start_chunk < start_pfn)
+ 			start_chunk = start_pfn;
+@@ -622,6 +649,12 @@ setup_arch(char **cmdline_p)
+ 	memory_end &= ~0x200000UL;
+ #endif /* CONFIG_64BIT */
+ 
++	setup_ipl_info();
++#if defined(CONFIG_ZFCPDUMP) || defined(CONFIG_ZFCPDUMP_MODULE)
++	if (ipl_info.type == IPL_TYPE_FCP_DUMP) {
++		memory_end = ZFCPDUMP_HSA_SIZE;
++	}
++#endif
+ 	setup_memory();
+ 	setup_resources();
+ 	setup_lowcore();
+@@ -637,6 +670,9 @@ setup_arch(char **cmdline_p)
+ 
+         /* Setup default console */
+ 	conmode_default();
++
++	/* Setup zfcpdump support */
++	setup_zfcpdump(console_devno);
+ }
+ 
+ void print_cpu_info(struct cpuinfo_S390 *cpuinfo)
+diff --git a/arch/s390/kernel/smp.c b/arch/s390/kernel/smp.c
+index b2e6f4c..e31911d 100644
+--- a/arch/s390/kernel/smp.c
++++ b/arch/s390/kernel/smp.c
+@@ -32,13 +32,16 @@
+ #include <linux/cache.h>
+ #include <linux/interrupt.h>
+ #include <linux/cpu.h>
++#include <linux/bootmem.h>
+ 
++#include <asm/ipl.h>
+ #include <asm/sigp.h>
+ #include <asm/pgalloc.h>
+ #include <asm/irq.h>
+ #include <asm/s390_ext.h>
+ #include <asm/cpcmd.h>
+ #include <asm/tlbflush.h>
++#include <asm/smp.h>
+ 
+ extern volatile int __cpu_logical_map[];
+ 
+@@ -474,6 +477,55 @@ void smp_ctl_clear_bit(int cr, int bit) {
+ }
+ 
+ /*
++ * In early ipl state a temp. logically cpu number is needed, so the sigp
++ * functions can be used to sense other cpus. Since NR_CPUS is >= 2 on
++ * CONFIG_SMP and the ipl cpu is logical cpu 0, it must be 1.
++ */
++#define CPU_INIT_NO	1
++
++#if defined(CONFIG_ZFCPDUMP) || defined(CONFIG_ZFCPDUMP_MODULE)
++
++/*
++ * zfcpdump_prefix_array holds prefix registers for the following scenario:
++ * 64 bit zfcpdump kernel and 31 bit kernel which is to be dumped. We have to
++ * save its prefix registers, since they get lost, when switching from 31 bit
++ * to 64 bit.
++ */
++unsigned int zfcpdump_prefix_array[NR_CPUS + 1] \
++	__attribute__((__section__(".data")));
++
++static void __init smp_get_save_area(unsigned int cpu, unsigned int phy_cpu)
++{
++	if (ipl_info.type != IPL_TYPE_FCP_DUMP)
++		return;
++	if (cpu >= NR_CPUS) {
++		printk(KERN_WARNING "Registers for cpu %i not saved since dump "
++		       "kernel was compiled with NR_CPUS=%i\n", cpu, NR_CPUS);
++		return;
++	}
++	zfcpdump_save_areas[cpu] = alloc_bootmem(sizeof(union save_area));
++	__cpu_logical_map[CPU_INIT_NO] = (__u16) phy_cpu;
++	while (signal_processor(CPU_INIT_NO, sigp_stop_and_store_status) ==
++	       sigp_busy)
++		cpu_relax();
++	memcpy(zfcpdump_save_areas[cpu],
++	       (void *)(unsigned long) store_prefix() + SAVE_AREA_BASE,
++	       SAVE_AREA_SIZE);
++#ifdef CONFIG_64BIT
++	/* copy original prefix register */
++	zfcpdump_save_areas[cpu]->s390x.pref_reg = zfcpdump_prefix_array[cpu];
++#endif
++}
++
++union save_area *zfcpdump_save_areas[NR_CPUS + 1];
++EXPORT_SYMBOL_GPL(zfcpdump_save_areas);
++
++#else
++
++static inline void smp_get_save_area(unsigned int cpu, unsigned int phy_cpu) { }
++
++#endif /* CONFIG_ZFCPDUMP || CONFIG_ZFCPDUMP_MODULE */
++/*
+  * Lets check how many CPUs we have.
+  */
+ 
+@@ -497,6 +549,7 @@ __init smp_count_cpus(void)
+ 		if (signal_processor(1, sigp_sense) ==
+ 		    sigp_not_operational)
+ 			continue;
++		smp_get_save_area(num_cpus, cpu);
+ 		num_cpus++;
+ 	}
+ 
+diff --git a/drivers/s390/char/Makefile b/drivers/s390/char/Makefile
+index c110fcb..c84931d 100644
+--- a/drivers/s390/char/Makefile
++++ b/drivers/s390/char/Makefile
+@@ -29,3 +29,6 @@ obj-$(CONFIG_S390_TAPE_34XX) += tape_34xx.o
+ obj-$(CONFIG_S390_TAPE_3590) += tape_3590.o
+ obj-$(CONFIG_MONREADER) += monreader.o
+ obj-$(CONFIG_S390_VMUR) += vmur.o
++zcore_mod-objs := sclp_sdias.o zcore.o
++obj-$(CONFIG_ZFCPDUMP) += zcore_mod.o
++
+diff --git a/drivers/s390/char/sclp.h b/drivers/s390/char/sclp.h
+index 1b38f75..57bd20d 100644
+--- a/drivers/s390/char/sclp.h
++++ b/drivers/s390/char/sclp.h
+@@ -28,6 +28,7 @@
+ #define EvTyp_CntlProgIdent	0x0B
+ #define EvTyp_SigQuiesce	0x1D
+ #define EvTyp_VT220Msg		0x1A
++#define EVTYP_SDIAS		0x1C
+ 
+ #define EvTyp_OpCmd_Mask	0x80000000
+ #define EvTyp_Msg_Mask		0x40000000
+@@ -37,6 +38,7 @@
+ #define EvTyp_CtlProgIdent_Mask	0x00200000
+ #define EvTyp_SigQuiesce_Mask	0x00000008
+ #define EvTyp_VT220Msg_Mask	0x00000040
++#define EVTYP_SDIAS_MASK	0x00000010
+ 
+ #define GnrlMsgFlgs_DOM		0x8000
+ #define GnrlMsgFlgs_SndAlrm	0x4000
+@@ -145,6 +147,9 @@ int sclp_remove_processed(struct sccb_header *sccb);
+ int sclp_deactivate(void);
+ int sclp_reactivate(void);
+ 
++int sclp_sdias_init(void);
++void sclp_sdias_exit(void);
++
+ /* useful inlines */
+ 
+ /* VM uses EBCDIC 037, LPAR+native(SE+HMC) use EBCDIC 500 */
+diff --git a/drivers/s390/char/sclp_sdias.c b/drivers/s390/char/sclp_sdias.c
+new file mode 100644
+index 0000000..5b56f50
+--- /dev/null
++++ b/drivers/s390/char/sclp_sdias.c
+@@ -0,0 +1,254 @@
++/*
++ * Sclp "store data in absolut storage"
++ *
++ * Copyright IBM Corp. 2003,2007
++ * Author(s): Michael Holzheu
++ */
++
++#include <linux/sched.h>
++#include <asm/debug.h>
++#include <asm/ipl.h>
++#include "sclp.h"
++#include "sclp_rw.h"
++
++#define TRACE(x...) debug_sprintf_event(sdias_dbf, 1, x)
++#define ERROR_MSG(x...) printk ( KERN_ALERT "SDIAS: " x )
++
++#define SDIAS_RETRIES 300
++#define SDIAS_SLEEP_TICKS 50
++
++#define EQ_STORE_DATA	0x0
++#define EQ_SIZE		0x1
++#define DI_FCP_DUMP	0x0
++#define ASA_SIZE_32	0x0
++#define ASA_SIZE_64	0x1
++#define EVSTATE_ALL_STORED	0x0
++#define EVSTATE_NO_DATA		0x3
++#define EVSTATE_PART_STORED	0x10
++
++static struct debug_info *sdias_dbf;
++
++static struct sclp_register sclp_sdias_register = {
++	.send_mask = EVTYP_SDIAS_MASK,
++};
++
++struct sdias_evbuf {
++	struct	evbuf_header hdr;
++	u8	event_qual;
++	u8	data_id;
++	u64	reserved2;
++	u32	event_id;
++	u16	reserved3;
++	u8	asa_size;
++	u8	event_status;
++	u32	reserved4;
++	u32	blk_cnt;
++	u64	asa;
++	u32	reserved5;
++	u32	fbn;
++	u32	reserved6;
++	u32	lbn;
++	u16	reserved7;
++	u16	dbs;
++} __attribute__((packed));
++
++struct sdias_sccb {
++	struct sccb_header  hdr;
++	struct sdias_evbuf  evbuf;
++} __attribute__((packed));
++
++static struct sdias_sccb sccb __attribute__((aligned(4096)));
++
++static int sclp_req_done;
++static wait_queue_head_t sdias_wq;
++static DEFINE_MUTEX(sdias_mutex);
++
++static void sdias_callback(struct sclp_req *request, void *data)
++{
++	struct sdias_sccb *cbsccb;
++
++	cbsccb = (struct sdias_sccb *) request->sccb;
++	sclp_req_done = 1;
++	wake_up(&sdias_wq); /* Inform caller, that request is complete */
++	TRACE("callback done\n");
++}
++
++static int sdias_sclp_send(struct sclp_req *req)
++{
++	int retries;
++	int rc;
++
++	for (retries = SDIAS_RETRIES; retries; retries--) {
++		sclp_req_done = 0;
++		TRACE("add request\n");
++		rc = sclp_add_request(req);
++		if (rc) {
++			/* not initiated, wait some time and retry */
++			set_current_state(TASK_INTERRUPTIBLE);
++			TRACE("add request failed: rc = %i\n",rc);
++			schedule_timeout(SDIAS_SLEEP_TICKS);
++			continue;
++		}
++		/* initiated, wait for completion of service call */
++		wait_event(sdias_wq, (sclp_req_done == 1));
++		if (req->status == SCLP_REQ_FAILED) {
++			TRACE("sclp request failed\n");
++			rc = -EIO;
++			continue;
++		}
++		TRACE("request done\n");
++		break;
++	}
++	return rc;
++}
++
++/*
++ * Get number of blocks (4K) available in the HSA
++ */
++int sclp_sdias_blk_count(void)
++{
++	struct sclp_req request;
++	int rc;
++
++	mutex_lock(&sdias_mutex);
++
++	memset(&sccb, 0, sizeof(sccb));
++	memset(&request, 0, sizeof(request));
++
++	sccb.hdr.length = sizeof(sccb);
++	sccb.evbuf.hdr.length = sizeof(struct sdias_evbuf);
++	sccb.evbuf.hdr.type = EVTYP_SDIAS;
++	sccb.evbuf.event_qual = EQ_SIZE;
++	sccb.evbuf.data_id = DI_FCP_DUMP;
++	sccb.evbuf.event_id = 4712;
++	sccb.evbuf.dbs = 1;
++
++	request.sccb = &sccb;
++	request.command = SCLP_CMDW_WRITEDATA;
++	request.status = SCLP_REQ_FILLED;
++	request.callback = sdias_callback;
++
++	rc = sdias_sclp_send(&request);
++	if (rc) {
++		ERROR_MSG("sclp_send failed for get_nr_blocks\n");
++		goto out;
++	}
++	if (sccb.hdr.response_code != 0x0020) {
++		TRACE("send failed: %x\n", sccb.hdr.response_code);
++		rc = -EIO;
++		goto out;
++	}
++
++	switch (sccb.evbuf.event_status) {
++		case 0:
++			rc = sccb.evbuf.blk_cnt;
++			break;
++		default:
++			ERROR_MSG("SCLP error: %x\n", sccb.evbuf.event_status);
++			rc = -EIO;
++			goto out;
++	}
++	TRACE("%i blocks\n", rc);
++out:
++	mutex_unlock(&sdias_mutex);
++	return rc;
++}
++
++/*
++ * Copy from HSA to absolute storage (not reentrant):
++ *
++ * @dest     : Address of buffer where data should be copied
++ * @start_blk: Start Block (beginning with 1)
++ * @nr_blks  : Number of 4K blocks to copy
++ *
++ * Return Value: 0 : Requested 'number' of blocks of data copied
++ *		 <0: ERROR - negative event status
++ */
++int sclp_sdias_copy(void *dest, int start_blk, int nr_blks)
++{
++	struct sclp_req request;
++	int rc;
++
++	mutex_lock(&sdias_mutex);
++
++	memset(&sccb, 0, sizeof(sccb));
++	memset(&request, 0, sizeof(request));
++
++	sccb.hdr.length = sizeof(sccb);
++	sccb.evbuf.hdr.length = sizeof(struct sdias_evbuf);
++	sccb.evbuf.hdr.type = EVTYP_SDIAS;
++	sccb.evbuf.hdr.flags = 0;
++	sccb.evbuf.event_qual = EQ_STORE_DATA;
++	sccb.evbuf.data_id = DI_FCP_DUMP;
++	sccb.evbuf.event_id = 4712;
++#ifdef __s390x__
++	sccb.evbuf.asa_size = ASA_SIZE_64;
++#else
++	sccb.evbuf.asa_size = ASA_SIZE_32;
++#endif
++	sccb.evbuf.event_status = 0;
++	sccb.evbuf.blk_cnt = nr_blks;
++	sccb.evbuf.asa = (unsigned long)dest;
++	sccb.evbuf.fbn = start_blk;
++	sccb.evbuf.lbn = 0;
++	sccb.evbuf.dbs = 1;
++
++	request.sccb	 = &sccb;
++	request.command  = SCLP_CMDW_WRITEDATA;
++	request.status	 = SCLP_REQ_FILLED;
++	request.callback = sdias_callback;
++
++	rc = sdias_sclp_send(&request);
++	if (rc) {
++		ERROR_MSG("sclp_send failed: %x\n", rc);
++		goto out;
++	}
++	if (sccb.hdr.response_code != 0x0020) {
++		TRACE("copy failed: %x\n", sccb.hdr.response_code);
++		rc = -EIO;
++		goto out;
++	}
++
++	switch (sccb.evbuf.event_status) {
++		case EVSTATE_ALL_STORED:
++			TRACE("all stored\n");
++		case EVSTATE_PART_STORED:
++			TRACE("part stored: %i\n", sccb.evbuf.blk_cnt);
++			break;
++		case EVSTATE_NO_DATA:
++			TRACE("no data\n");
++		default:
++			ERROR_MSG("Error from SCLP while copying hsa. "
++				  "Event status = %x\n",
++				sccb.evbuf.event_status);
++			rc = -EIO;
++	}
++out:
++	mutex_unlock(&sdias_mutex);
++	return rc;
++}
++
++int __init sclp_sdias_init(void)
++{
++	int rc;
++
++	if (ipl_info.type != IPL_TYPE_FCP_DUMP)
++		return 0;
++	sdias_dbf = debug_register("dump_sdias", 4, 1, 4 * sizeof(long));
++	debug_register_view(sdias_dbf, &debug_sprintf_view);
++	debug_set_level(sdias_dbf, 6);
++	rc = sclp_register(&sclp_sdias_register);
++	if (rc) {
++		ERROR_MSG("sclp register failed\n");
++		return rc;
++	}
++	init_waitqueue_head(&sdias_wq);
++	TRACE("init done\n");
++	return 0;
++}
++
++void __exit sclp_sdias_exit(void)
++{
++	debug_unregister(sdias_dbf);
++	sclp_unregister(&sclp_sdias_register);
++}
+diff --git a/drivers/s390/char/zcore.c b/drivers/s390/char/zcore.c
+new file mode 100644
+index 0000000..056dfb5
+--- /dev/null
++++ b/drivers/s390/char/zcore.c
+@@ -0,0 +1,695 @@
++/*
++ * zcore module to export memory content and register sets for creating system
++ * dumps on SCSI disks (zfcpdump). The "zcore/mem" debugfs file shows the same
++ * dump format as s390 standalone dumps.
++ *
++ * For more information please refer to Documentation/s390/zfcpdump.txt
++ *
++ * Copyright IBM Corp. 2003,2007
++ * Author(s): Michael Holzheu
++ */
++
++#include <linux/init.h>
++#include <linux/miscdevice.h>
++#include <linux/utsname.h>
++#include <linux/debugfs.h>
++#include <asm/ipl.h>
++#include <asm/setup.h>
++#include <asm/sigp.h>
++#include <asm/uaccess.h>
++#include <asm/debug.h>
++#include <asm/processor.h>
++#include <asm/irqflags.h>
++#include "sclp.h"
++
++#define TRACE(x...) debug_sprintf_event(zcore_dbf, 1, x)
++#define MSG(x...) printk( KERN_ALERT x )
++#define ERROR_MSG(x...) printk ( KERN_ALERT "DUMP: " x )
++
++#define TO_USER		0
++#define TO_KERNEL	1
++
++extern int sclp_sdias_copy(void *dest, int start_blk, int nr_blks);
++extern int sclp_sdias_blk_count(void);
++
++enum arch_id {
++	ARCH_S390	= 0,
++	ARCH_S390X	= 1,
++};
++
++/* dump system info */
++
++struct sys_info {
++	enum arch_id	arch;
++	unsigned long	sa_base;
++	u32		sa_size;
++	int		cpu_map[NR_CPUS];
++	unsigned long	mem_size;
++	union save_area	lc_mask;
++};
++
++static struct sys_info sys_info;
++static struct debug_info *zcore_dbf;
++static int hsa_available;
++static struct dentry *zcore_dir;
++static struct dentry *zcore_file;
++
++/*
++ * Copy memory from HSA to kernel or user memory (not reentrant):
++ *
++ * @dest:  Kernel or user buffer where memory should be copied to
++ * @src:   Start address within HSA where data should be copied
++ * @count: Size of buffer, which should be copied
++ * @mode:  Either TO_KERNEL or TO_USER
++ */
++static int memcpy_hsa(void *dest, unsigned long src, size_t count, int mode)
++{
++	int offs, blk_num;
++	static char buf[PAGE_SIZE] __attribute__((__aligned__(PAGE_SIZE)));
++
++	if (count == 0)
++		return 0;
++
++	/* copy first block */
++	offs = 0;
++	if ((src % PAGE_SIZE) != 0) {
++		blk_num = src / PAGE_SIZE + 2;
++		if (sclp_sdias_copy(buf, blk_num, 1)) {
++			TRACE("sclp_sdias_copy() failed\n");
++			return -EIO;
++		}
++		offs = min((PAGE_SIZE - (src % PAGE_SIZE)), count);
++		if (mode == TO_USER) {
++			if (copy_to_user((__force __user void*) dest,
++					 buf + (src % PAGE_SIZE), offs))
++				return -EFAULT;
++		} else
++			memcpy(dest, buf + (src % PAGE_SIZE), offs);
++	}
++	if (offs == count)
++		goto out;
++
++	/* copy middle */
++	for (; (offs + PAGE_SIZE) <= count; offs += PAGE_SIZE) {
++		blk_num = (src + offs) / PAGE_SIZE + 2;
++		if (sclp_sdias_copy(buf, blk_num, 1)) {
++			TRACE("sclp_sdias_copy() failed\n");
++			return -EIO;
++		}
++		if (mode == TO_USER) {
++			if (copy_to_user((__force __user void*) dest + offs,
++					 buf, PAGE_SIZE))
++				return -EFAULT;
++		} else
++			memcpy(dest + offs, buf, PAGE_SIZE);
++	}
++	if (offs == count)
++		goto out;
++
++	/* copy last block */
++	blk_num = (src + offs) / PAGE_SIZE + 2;
++	if (sclp_sdias_copy(buf, blk_num, 1)) {
++		TRACE("sclp_sdias_copy() failed\n");
++		return -EIO;
++	}
++	if (mode == TO_USER) {
++		if (copy_to_user((__force __user void*) dest + offs, buf,
++				 PAGE_SIZE))
++			return -EFAULT;
++	} else
++		memcpy(dest + offs, buf, count - offs);
++out:
++	return 0;
++}
++
++static int memcpy_hsa_user(void __user *dest, unsigned long src, size_t count)
++{
++	return memcpy_hsa((void __force *) dest, src, count, TO_USER);
++}
++
++static int memcpy_hsa_kernel(void *dest, unsigned long src, size_t count)
++{
++	return memcpy_hsa(dest, src, count, TO_KERNEL);
++}
++
++#if __GNUC__ > 3 || (__GNUC__ == 3 && __GNUC_MINOR__ > 2)
++
++/* store then and system mask. */
++#define zcore_raw_local_irq_stnsm(__and) \
++({\
++	 unsigned long __mask; \
++	 asm volatile( \
++		"	stnsm	%0,%1" \
++		: "=Q" (__mask) : "i" (__and) : "memory"); \
++	__mask; \
++})
++
++/* set system mask. */
++#define zcore_raw_local_irq_ssm(__mask) \
++({ \
++	asm volatile("ssm   %0" : : "Q" (__mask) : "memory"); \
++})
++
++#else
++
++/* store then and system mask. */
++#define zcore_raw_local_irq_stnsm(__and) \
++({ \
++	unsigned long __mask; \
++	asm volatile( \
++		"	stnsm	0(%1),%2" \
++		: "=m" (__mask) \
++		: "a" (&__mask), "i" (__and) : "memory"); \
++	__mask; \
++})
++
++/* set system mask. */
++#define zcore_raw_local_irq_ssm(__mask) \
++({ \
++	asm volatile( \
++	"	ssm	0(%0)" \
++		: : "a" (&__mask), "m" (__mask) : "memory"); \
++})
++
++#endif
++
++static int memcpy_real(void *dest, unsigned long src, size_t count)
++{
++	unsigned long flags;
++	int rc = -EFAULT;
++	register unsigned long _dest asm("2") = (unsigned long) dest;
++	register unsigned long _len1 asm("3") = (unsigned long) count;
++	register unsigned long _src  asm("4") = src;
++	register unsigned long _len2 asm("5") = (unsigned long) count;
++
++	if (count == 0)
++		return 0;
++	flags = zcore_raw_local_irq_stnsm(0xf8UL); /* switch to real mode */
++	asm volatile (
++		"0:	mvcle	%1,%2,0x0\n"
++		"1:	jo	0b\n"
++		"	lhi	%0,0x0\n"
++		"2:\n"
++		EX_TABLE(1b,2b)
++		: "+d" (rc), "+d" (_dest), "+d" (_src), "+d" (_len1),
++		  "+d" (_len2), "=m" (*((long*)dest))
++		: "m" (*((long*)src))
++		: "cc", "memory");
++	zcore_raw_local_irq_ssm(flags);
++
++	return rc;
++}
++
++static int memcpy_real_user(void __user *dest, unsigned long src, size_t count)
++{
++	static char buf[4096];
++	int offs = 0, size;
++
++	while (offs < count) {
++		size = min(sizeof(buf), count - offs);
++		if (memcpy_real(buf, src + offs, size))
++			return -EFAULT;
++		if (copy_to_user(dest + offs, buf, size))
++			return -EFAULT;
++		offs += size;
++	}
++	return 0;
++}
++
++#ifdef __s390x__
++/*
++ * Convert s390x (64 bit) cpu info to s390 (32 bit) cpu info
++ */
++static void __init s390x_to_s390_regs(union save_area *out, union save_area *in,
++				      int cpu)
++{
++	int i;
++
++	for (i = 0; i < 16; i++) {
++		out->s390.gp_regs[i] = in->s390x.gp_regs[i] & 0x00000000ffffffff;
++		out->s390.acc_regs[i] = in->s390x.acc_regs[i];
++		out->s390.ctrl_regs[i] =
++			in->s390x.ctrl_regs[i] & 0x00000000ffffffff;
++	}
++	/* locore for 31 bit has only space for fpregs 0,2,4,6 */
++	out->s390.fp_regs[0] = in->s390x.fp_regs[0];
++	out->s390.fp_regs[1] = in->s390x.fp_regs[2];
++	out->s390.fp_regs[2] = in->s390x.fp_regs[4];
++	out->s390.fp_regs[3] = in->s390x.fp_regs[6];
++	memcpy(&(out->s390.psw[0]), &(in->s390x.psw[0]), 4);
++	out->s390.psw[1] |= 0x8; /* set bit 12 */
++	memcpy(&(out->s390.psw[4]),&(in->s390x.psw[12]), 4);
++	out->s390.psw[4] |= 0x80; /* set (31bit) addressing bit */
++	out->s390.pref_reg = in->s390x.pref_reg;
++	out->s390.timer = in->s390x.timer;
++	out->s390.clk_cmp = in->s390x.clk_cmp;
++}
++
++static void __init s390x_to_s390_save_areas(void)
++{
++	int i = 1;
++	static union save_area tmp;
++
++	while (zfcpdump_save_areas[i]) {
++		s390x_to_s390_regs(&tmp, zfcpdump_save_areas[i], i);
++		memcpy(zfcpdump_save_areas[i], &tmp, sizeof(tmp));
++		i++;
++	}
++}
++
++#endif /* __s390x__ */
++
++static int __init init_cpu_info(enum arch_id arch)
++{
++	union save_area *sa;
++
++	/* get info for boot cpu from lowcore, stored in the HSA */
++
++	sa = kmalloc(sizeof(*sa), GFP_KERNEL);
++	if (!sa) {
++		ERROR_MSG("kmalloc failed: %s: %i\n",__FUNCTION__, __LINE__);
++		return -ENOMEM;
++	}
++	if (memcpy_hsa_kernel(sa, sys_info.sa_base, sys_info.sa_size) < 0) {
++		ERROR_MSG("could not copy from HSA\n");
++		kfree(sa);
++		return -EIO;
++	}
++	zfcpdump_save_areas[0] = sa;
++
++#ifdef __s390x__
++	/* convert s390x regs to s390, if we are dumping an s390 Linux */
++
++	if (arch == ARCH_S390)
++		s390x_to_s390_save_areas();
++#endif
++
++	return 0;
++}
++
++static DEFINE_MUTEX(zcore_mutex);
++
++#define DUMP_VERSION	0x3
++#define DUMP_MAGIC	0xa8190173618f23fdULL
++#define DUMP_ARCH_S390X	2
++#define DUMP_ARCH_S390	1
++#define HEADER_SIZE	4096
++
++/* dump header dumped according to s390 crash dump format */
++
++struct zcore_header {
++	u64 magic;
++	u32 version;
++	u32 header_size;
++	u32 dump_level;
++	u32 page_size;
++	u64 mem_size;
++	u64 mem_start;
++	u64 mem_end;
++	u32 num_pages;
++	u32 pad1;
++	u64 tod;
++	cpuid_t cpu_id;
++	u32 arch_id;
++	u32 volnr;
++	u32 build_arch;
++	u64 rmem_size;
++	char pad2[4016];
++} __attribute__((packed,__aligned__(16)));
++
++static struct zcore_header zcore_header = {
++	.magic		= DUMP_MAGIC,
++	.version	= DUMP_VERSION,
++	.header_size	= 4096,
++	.dump_level	= 0,
++	.page_size	= PAGE_SIZE,
++	.mem_start	= 0,
++#ifdef __s390x__
++	.build_arch	= DUMP_ARCH_S390X,
++#else
++	.build_arch	= DUMP_ARCH_S390,
++#endif
++};
++
++/*
++ * Copy lowcore info to buffer. Use map in order to copy only register parts.
++ *
++ * @buf:    User buffer
++ * @sa:     Pointer to save area
++ * @sa_off: Offset in save area to copy
++ * @len:    Number of bytes to copy
++ */
++static int copy_lc(void __user *buf, void *sa, int sa_off, int len)
++{
++	int i;
++	char *lc_mask = (char*)&sys_info.lc_mask;
++
++	for (i = 0; i < len; i++) {
++		if (!lc_mask[i + sa_off])
++			continue;
++		if (copy_to_user(buf + i, sa + sa_off + i, 1))
++			return -EFAULT;
++	}
++	return 0;
++}
++
++/*
++ * Copy lowcores info to memory, if necessary
++ *
++ * @buf:   User buffer
++ * @addr:  Start address of buffer in dump memory
++ * @count: Size of buffer
++ */
++static int zcore_add_lc(char __user *buf, unsigned long start, size_t count)
++{
++	unsigned long end;
++	int i = 0;
++
++	if (count == 0)
++		return 0;
++
++	end = start + count;
++	while (zfcpdump_save_areas[i]) {
++		unsigned long cp_start, cp_end; /* copy range */
++		unsigned long sa_start, sa_end; /* save area range */
++		unsigned long prefix;
++		unsigned long sa_off, len, buf_off;
++
++		if (sys_info.arch == ARCH_S390)
++			prefix = zfcpdump_save_areas[i]->s390.pref_reg;
++		else
++			prefix = zfcpdump_save_areas[i]->s390x.pref_reg;
++
++		sa_start = prefix + sys_info.sa_base;
++		sa_end = prefix + sys_info.sa_base + sys_info.sa_size;
++
++		if ((end < sa_start) || (start > sa_end))
++			goto next;
++		cp_start = max(start, sa_start);
++		cp_end = min(end, sa_end);
++
++		buf_off = cp_start - start;
++		sa_off = cp_start - sa_start;
++		len = cp_end - cp_start;
++
++		TRACE("copy_lc for: %lx\n", start);
++		if (copy_lc(buf + buf_off, zfcpdump_save_areas[i], sa_off, len))
++			return -EFAULT;
++next:
++		i++;
++	}
++	return 0;
++}
++
++/*
++ * Read routine for zcore character device
++ * First 4K are dump header
++ * Next 32MB are HSA Memory
++ * Rest is read from absolute Memory
++ */
++static ssize_t zcore_read(struct file *file, char __user *buf, size_t count,
++			  loff_t *ppos)
++{
++	unsigned long mem_start; /* Start address in memory */
++	size_t mem_offs;	 /* Offset in dump memory */
++	size_t hdr_count;	 /* Size of header part of output buffer */
++	size_t size;
++	int rc;
++
++	mutex_lock(&zcore_mutex);
++
++	if (*ppos > (sys_info.mem_size + HEADER_SIZE)) {
++		rc = -EINVAL;
++		goto fail;
++	}
++
++	count = min(count, (size_t) (sys_info.mem_size + HEADER_SIZE - *ppos));
++
++	/* Copy dump header */
++	if (*ppos < HEADER_SIZE) {
++		size = min(count, (size_t) (HEADER_SIZE - *ppos));
++		if (copy_to_user(buf, &zcore_header + *ppos, size)) {
++			rc = -EFAULT;
++			goto fail;
++		}
++		hdr_count = size;
++		mem_start = 0;
++	} else {
++		hdr_count = 0;
++		mem_start = *ppos - HEADER_SIZE;
++	}
++
++	mem_offs = 0;
++
++	/* Copy from HSA data */
++	if (*ppos < (ZFCPDUMP_HSA_SIZE + HEADER_SIZE)) {
++		size = min((count - hdr_count), (size_t) (ZFCPDUMP_HSA_SIZE
++			   - mem_start));
++		rc = memcpy_hsa_user(buf + hdr_count, mem_start, size);
++		if (rc)
++			goto fail;
++
++		mem_offs += size;
++	}
++
++	/* Copy from real mem */
++	size = count - mem_offs - hdr_count;
++	rc = memcpy_real_user(buf + hdr_count + mem_offs, mem_start + mem_offs,
++			      size);
++	if (rc)
++		goto fail;
++
++	/*
++	 * Since s390 dump analysis tools like lcrash or crash
++	 * expect register sets in the prefix pages of the cpus,
++	 * we copy them into the read buffer, if necessary.
++	 * buf + hdr_count: Start of memory part of output buffer
++	 * mem_start: Start memory address to copy from
++	 * count - hdr_count: Size of memory area to copy
++	 */
++	if (zcore_add_lc(buf + hdr_count, mem_start, count - hdr_count)) {
++		rc = -EFAULT;
++		goto fail;
++	}
++	*ppos += count;
++fail:
++	mutex_unlock(&zcore_mutex);
++	return (rc < 0) ? rc : count;
++}
++
++static int zcore_open(struct inode *inode, struct file *filp)
++{
++	if (!hsa_available)
++		return -ENODATA;
++	else
++		return capable(CAP_SYS_RAWIO) ? 0 : -EPERM;
++}
++
++static int zcore_release(struct inode *inode, struct file *filep)
++{
++	diag308(DIAG308_REL_HSA, NULL);
++	hsa_available = 0;
++	return 0;
++}
++
++static loff_t zcore_lseek(struct file *file, loff_t offset, int orig)
++{
++	loff_t rc;
++
++	mutex_lock(&zcore_mutex);
++	switch (orig) {
++	case 0:
++		file->f_pos = offset;
++		rc = file->f_pos;
++		break;
++	case 1:
++		file->f_pos += offset;
++		rc = file->f_pos;
++		break;
++	default:
++		rc = -EINVAL;
++	}
++	mutex_unlock(&zcore_mutex);
++	return rc;
++}
++
++static struct file_operations zcore_fops = {
++	.owner		= THIS_MODULE,
++	.llseek		= zcore_lseek,
++	.read		= zcore_read,
++	.open		= zcore_open,
++	.release	= zcore_release,
++};
++
++
++static void __init set_s390_lc_mask(union save_area *map)
++{
++	memset(&map->s390.ext_save, 0xff, sizeof(map->s390.ext_save));
++	memset(&map->s390.timer, 0xff, sizeof(map->s390.timer));
++	memset(&map->s390.clk_cmp, 0xff, sizeof(map->s390.clk_cmp));
++	memset(&map->s390.psw, 0xff, sizeof(map->s390.psw));
++	memset(&map->s390.pref_reg, 0xff, sizeof(map->s390.pref_reg));
++	memset(&map->s390.acc_regs, 0xff, sizeof(map->s390.acc_regs));
++	memset(&map->s390.fp_regs, 0xff, sizeof(map->s390.fp_regs));
++	memset(&map->s390.gp_regs, 0xff, sizeof(map->s390.gp_regs));
++	memset(&map->s390.ctrl_regs, 0xff, sizeof(map->s390.ctrl_regs));
++}
++
++static void __init set_s390x_lc_mask(union save_area *map)
++{
++	memset(&map->s390x.fp_regs, 0xff, sizeof(map->s390x.fp_regs));
++	memset(&map->s390x.gp_regs, 0xff, sizeof(map->s390x.gp_regs));
++	memset(&map->s390x.psw, 0xff, sizeof(map->s390x.psw));
++	memset(&map->s390x.pref_reg, 0xff, sizeof(map->s390x.pref_reg));
++	memset(&map->s390x.fp_ctrl_reg, 0xff, sizeof(map->s390x.fp_ctrl_reg));
++	memset(&map->s390x.tod_reg, 0xff, sizeof(map->s390x.tod_reg));
++	memset(&map->s390x.timer, 0xff, sizeof(map->s390x.timer));
++	memset(&map->s390x.clk_cmp, 0xff, sizeof(map->s390x.clk_cmp));
++	memset(&map->s390x.acc_regs, 0xff, sizeof(map->s390x.acc_regs));
++	memset(&map->s390x.ctrl_regs, 0xff, sizeof(map->s390x.ctrl_regs));
++}
++
++/*
++ * Initialize dump globals for a given architecture
++ */
++static int __init sys_info_init(enum arch_id arch)
++{
++	switch (arch) {
++	case ARCH_S390X:
++		MSG("DETECTED 'S390X (64 bit) OS'\n");
++		sys_info.sa_base = SAVE_AREA_BASE_S390X;
++		sys_info.sa_size = sizeof(struct save_area_s390x);
++		set_s390x_lc_mask(&sys_info.lc_mask);
++		break;
++	case ARCH_S390:
++		MSG("DETECTED 'S390 (32 bit) OS'\n");
++		sys_info.sa_base = SAVE_AREA_BASE_S390;
++		sys_info.sa_size = sizeof(struct save_area_s390);
++		set_s390_lc_mask(&sys_info.lc_mask);
++		break;
++	default:
++		ERROR_MSG("unknown architecture 0x%x.\n",arch);
++		return -EINVAL;
++	}
++	sys_info.arch = arch;
++	if (init_cpu_info(arch)) {
++		ERROR_MSG("get cpu info failed\n");
++		return -ENOMEM;
++	}
++	sys_info.mem_size = real_memory_size;
++
++	return 0;
++}
++
++static int __init check_sdias(void)
++{
++	int rc, act_hsa_size;
++
++	rc = sclp_sdias_blk_count();
++	if (rc < 0) {
++		ERROR_MSG("Could not determine HSA size\n");
++		return rc;
++	}
++	act_hsa_size = (rc - 1) * PAGE_SIZE;
++	if (act_hsa_size < ZFCPDUMP_HSA_SIZE) {
++		ERROR_MSG("HSA size too small: %i\n", act_hsa_size);
++		return -EINVAL;
++	}
++	return 0;
++}
++
++static void __init zcore_header_init(int arch, struct zcore_header *hdr)
++{
++	if (arch == ARCH_S390X)
++		hdr->arch_id = DUMP_ARCH_S390X;
++	else
++		hdr->arch_id = DUMP_ARCH_S390;
++	hdr->mem_size = sys_info.mem_size;
++	hdr->rmem_size = sys_info.mem_size;
++	hdr->mem_end = sys_info.mem_size;
++	hdr->num_pages = sys_info.mem_size / PAGE_SIZE;
++	hdr->tod = get_clock();
++	get_cpu_id(&hdr->cpu_id);
++}
++
++static int __init zcore_init(void)
++{
++	unsigned char arch;
++	int rc;
++
++	if (ipl_info.type != IPL_TYPE_FCP_DUMP)
++		return -ENODATA;
++
++	zcore_dbf = debug_register("zcore", 4, 1, 4 * sizeof(long));
++	debug_register_view(zcore_dbf, &debug_sprintf_view);
++	debug_set_level(zcore_dbf, 6);
++
++	TRACE("devno:  %x\n", ipl_info.data.fcp.dev_id.devno);
++	TRACE("wwpn:   %llx\n", (unsigned long long) ipl_info.data.fcp.wwpn);
++	TRACE("lun:    %llx\n", (unsigned long long) ipl_info.data.fcp.lun);
++
++	rc = sclp_sdias_init();
++	if (rc)
++		goto fail;
++
++	rc = check_sdias();
++	if (rc) {
++		ERROR_MSG("Dump initialization failed\n");
++		goto fail;
++	}
++
++	rc = memcpy_hsa_kernel(&arch, __LC_AR_MODE_ID, 1);
++	if (rc) {
++		ERROR_MSG("sdial memcpy for arch id failed\n");
++		goto fail;
++	}
++
++#ifndef __s390x__
++	if (arch == ARCH_S390X) {
++		ERROR_MSG("32 bit dumper can't dump 64 bit system!\n");
++		rc = -EINVAL;
++		goto fail;
++	}
++#endif
++
++	rc = sys_info_init(arch);
++	if (rc) {
++		ERROR_MSG("arch init failed\n");
++		goto fail;
++	}
++
++	zcore_header_init(arch, &zcore_header);
++
++	zcore_dir = debugfs_create_dir("zcore" , NULL);
++	if (!zcore_dir) {
++		rc = -ENOMEM;
++		goto fail;
++	}
++	zcore_file = debugfs_create_file("mem", S_IRUSR, zcore_dir, NULL,
++					 &zcore_fops);
++	if (!zcore_file) {
++		debugfs_remove(zcore_dir);
++		rc = -ENOMEM;
++		goto fail;
++	}
++	hsa_available = 1;
++	return 0;
++
++fail:
++	diag308(DIAG308_REL_HSA, NULL);
++	return rc;
++}
++
++static void __exit zcore_exit(void)
++{
++	debug_unregister(zcore_dbf);
++	sclp_sdias_exit();
++	diag308(DIAG308_REL_HSA, NULL);
++}
++
++MODULE_AUTHOR("Copyright IBM Corp. 2003,2007");
++MODULE_DESCRIPTION("zcore module for zfcpdump support");
++MODULE_LICENSE("GPL");
++
++subsys_initcall(zcore_init);
++module_exit(zcore_exit);
+diff --git a/include/asm-s390/ipl.h b/include/asm-s390/ipl.h
+new file mode 100644
+index 0000000..452a50d
+--- /dev/null
++++ b/include/asm-s390/ipl.h
+@@ -0,0 +1,146 @@
++/*
++ * s390 (re)ipl support
++ *
++ * Copyright IBM Corp. 2007
++ */
++
++#ifndef _ASM_S390_IPL_H
++#define _ASM_S390_IPL_H
++
++#include <asm/types.h>
++#include <asm/cio.h>
++#include <asm/setup.h>
++
++#define IPL_PARMBLOCK_ORIGIN	0x2000
++
++#define IPL_PARM_BLK_FCP_LEN (sizeof(struct ipl_list_hdr) + \
++			      sizeof(struct ipl_block_fcp))
++
++#define IPL_PARM_BLK0_FCP_LEN (sizeof(struct ipl_block_fcp) + 8)
++
++#define IPL_PARM_BLK_CCW_LEN (sizeof(struct ipl_list_hdr) + \
++			      sizeof(struct ipl_block_ccw))
++
++#define IPL_PARM_BLK0_CCW_LEN (sizeof(struct ipl_block_ccw) + 8)
++
++#define IPL_MAX_SUPPORTED_VERSION (0)
++
++#define IPL_PARMBLOCK_START	((struct ipl_parameter_block *) \
++				 IPL_PARMBLOCK_ORIGIN)
++#define IPL_PARMBLOCK_SIZE	(IPL_PARMBLOCK_START->hdr.len)
++
++struct ipl_list_hdr {
++	u32 len;
++	u8  reserved1[3];
++	u8  version;
++	u32 blk0_len;
++	u8  pbt;
++	u8  flags;
++	u16 reserved2;
++} __attribute__((packed));
++
++struct ipl_block_fcp {
++	u8  reserved1[313-1];
++	u8  opt;
++	u8  reserved2[3];
++	u16 reserved3;
++	u16 devno;
++	u8  reserved4[4];
++	u64 wwpn;
++	u64 lun;
++	u32 bootprog;
++	u8  reserved5[12];
++	u64 br_lba;
++	u32 scp_data_len;
++	u8  reserved6[260];
++	u8  scp_data[];
++} __attribute__((packed));
++
++struct ipl_block_ccw {
++	u8  load_param[8];
++	u8  reserved1[84];
++	u8  reserved2[2];
++	u16 devno;
++	u8  vm_flags;
++	u8  reserved3[3];
++	u32 vm_parm_len;
++	u8  reserved4[80];
++} __attribute__((packed));
++
++struct ipl_parameter_block {
++	struct ipl_list_hdr hdr;
++	union {
++		struct ipl_block_fcp fcp;
++		struct ipl_block_ccw ccw;
++	} ipl_info;
++} __attribute__((packed));
++
++/*
++ * IPL validity flags
++ */
++extern u32 ipl_flags;
++extern u32 dump_prefix_page;
++extern unsigned int zfcpdump_prefix_array[];
++
++extern void do_reipl(void);
++extern void ipl_save_parameters(void);
++
++enum {
++	IPL_DEVNO_VALID		= 1,
++	IPL_PARMBLOCK_VALID	= 2,
++	IPL_NSS_VALID		= 4,
++};
++
++enum ipl_type {
++	IPL_TYPE_UNKNOWN	= 1,
++	IPL_TYPE_CCW		= 2,
++	IPL_TYPE_FCP		= 4,
++	IPL_TYPE_FCP_DUMP	= 8,
++};
++
++struct ipl_info
++{
++	enum ipl_type type;
++	union {
++		struct {
++			struct ccw_dev_id dev_id;
++		} ccw;
++		struct {
++			struct ccw_dev_id dev_id;
++			u64 wwpn;
++			u64 lun;
++		} fcp;
++	} data;
++};
++
++extern struct ipl_info ipl_info;
++extern void setup_ipl_info(void);
++
++/*
++ * DIAG 308 support
++ */
++enum diag308_subcode  {
++	DIAG308_REL_HSA	= 2,
++	DIAG308_IPL	= 3,
++	DIAG308_DUMP	= 4,
++	DIAG308_SET	= 5,
++	DIAG308_STORE	= 6,
++};
++
++enum diag308_ipl_type {
++	DIAG308_IPL_TYPE_FCP	= 0,
++	DIAG308_IPL_TYPE_CCW	= 2,
++};
++
++enum diag308_opt {
++	DIAG308_IPL_OPT_IPL	= 0x10,
++	DIAG308_IPL_OPT_DUMP	= 0x20,
++};
++
++enum diag308_rc {
++	DIAG308_RC_OK	= 1,
++};
++
++extern int diag308(unsigned long subcode, void *addr);
++
++#endif /* _ASM_S390_IPL_H */
+diff --git a/include/asm-s390/lowcore.h b/include/asm-s390/lowcore.h
+index 7308e35..2f5c63b 100644
+--- a/include/asm-s390/lowcore.h
++++ b/include/asm-s390/lowcore.h
+@@ -146,6 +146,52 @@ void pgm_check_handler(void);
+ void mcck_int_handler(void);
+ void io_int_handler(void);
+ 
++struct save_area_s390 {
++	u32	ext_save;
++	u64	timer;
++	u64	clk_cmp;
++	u8	pad1[24];
++	u8	psw[8];
++	u32	pref_reg;
++	u8	pad2[20];
++	u32	acc_regs[16];
++	u64	fp_regs[4];
++	u32	gp_regs[16];
++	u32	ctrl_regs[16];
++}  __attribute__((packed));
++
++struct save_area_s390x {
++	u64	fp_regs[16];
++	u64	gp_regs[16];
++	u8	psw[16];
++	u8	pad1[8];
++	u32	pref_reg;
++	u32	fp_ctrl_reg;
++	u8	pad2[4];
++	u32	tod_reg;
++	u64	timer;
++	u64	clk_cmp;
++	u8	pad3[8];
++	u32	acc_regs[16];
++	u64	ctrl_regs[16];
++}  __attribute__((packed));
++
++union save_area {
++	struct save_area_s390	s390;
++	struct save_area_s390x	s390x;
++};
++
++#define SAVE_AREA_BASE_S390	0xd4
++#define SAVE_AREA_BASE_S390X	0x1200
++
++#ifndef __s390x__
++#define SAVE_AREA_SIZE sizeof(struct save_area_s390)
++#define SAVE_AREA_BASE SAVE_AREA_BASE_S390
++#else
++#define SAVE_AREA_SIZE sizeof(struct save_area_s390x)
++#define SAVE_AREA_BASE SAVE_AREA_BASE_S390X
++#endif
++
+ struct _lowcore
+ {
+ #ifndef __s390x__
+@@ -361,6 +407,14 @@ static inline void set_prefix(__u32 address)
+         __asm__ __volatile__ ("spx %0" : : "m" (address) : "memory" );
+ }
+ 
++static inline __u32 store_prefix(void)
++{
++	__u32 address;
++
++	asm volatile("stpx %0" : "=m" (address));
++	return address;
++}
++
+ #define __PANIC_MAGIC           0xDEADC0DE
+ 
+ #endif
+diff --git a/include/asm-s390/processor.h b/include/asm-s390/processor.h
+index a3a4e5f..671f104 100644
+--- a/include/asm-s390/processor.h
++++ b/include/asm-s390/processor.h
+@@ -37,6 +37,11 @@ typedef struct
+         unsigned int unused  : 16;
+ } __attribute__ ((packed)) cpuid_t;
+ 
++static inline void get_cpu_id(cpuid_t *ptr)
++{
++	asm volatile("stidp 0(%1)" : "=m" (*ptr) : "a" (ptr));
++}
++
+ struct cpuinfo_S390
+ {
+         cpuid_t  cpu_id;
+diff --git a/include/asm-s390/setup.h b/include/asm-s390/setup.h
+index a086ea4..c051718 100644
+--- a/include/asm-s390/setup.h
++++ b/include/asm-s390/setup.h
+@@ -17,7 +17,6 @@
+ #define RAMDISK_ORIGIN		0x800000
+ #define RAMDISK_SIZE		0x800000
+ #define MEMORY_CHUNKS		16	/* max 0x7fff */
+-#define IPL_PARMBLOCK_ORIGIN	0x2000
+ 
+ #ifndef __ASSEMBLY__
+ 
+@@ -32,6 +31,8 @@
+ #endif /* __s390x__ */
+ #define COMMAND_LINE      ((char *)            (0x10480))
+ 
++extern unsigned long real_memory_size;
++
+ /*
+  * Machine features detected in head.S
+  */
+@@ -55,6 +56,7 @@ extern unsigned long machine_flags;
+ 
+ 
+ #define MACHINE_HAS_SCLP	(!MACHINE_IS_P390)
++#define ZFCPDUMP_HSA_SIZE	(32UL<<20)
+ 
+ /*
+  * Console mode. Override with conmode=
+@@ -71,60 +73,6 @@ extern unsigned int console_irq;
+ #define SET_CONSOLE_3215	do { console_mode = 2; } while (0)
+ #define SET_CONSOLE_3270	do { console_mode = 3; } while (0)
+ 
+-
+-struct ipl_list_hdr {
+-	u32 len;
+-	u8  reserved1[3];
+-	u8  version;
+-	u32 blk0_len;
+-	u8  pbt;
+-	u8  flags;
+-	u16 reserved2;
+-} __attribute__((packed));
+-
+-struct ipl_block_fcp {
+-	u8  reserved1[313-1];
+-	u8  opt;
+-	u8  reserved2[3];
+-	u16 reserved3;
+-	u16 devno;
+-	u8  reserved4[4];
+-	u64 wwpn;
+-	u64 lun;
+-	u32 bootprog;
+-	u8  reserved5[12];
+-	u64 br_lba;
+-	u32 scp_data_len;
+-	u8  reserved6[260];
+-	u8  scp_data[];
+-} __attribute__((packed));
+-
+-struct ipl_block_ccw {
+-	u8  load_param[8];
+-	u8  reserved1[84];
+-	u8  reserved2[2];
+-	u16 devno;
+-	u8  vm_flags;
+-	u8  reserved3[3];
+-	u32 vm_parm_len;
+-} __attribute__((packed));
+-
+-struct ipl_parameter_block {
+-	struct ipl_list_hdr hdr;
+-	union {
+-		struct ipl_block_fcp fcp;
+-		struct ipl_block_ccw ccw;
+-	} ipl_info;
+-} __attribute__((packed));
+-
+-#define IPL_PARM_BLK_FCP_LEN (sizeof(struct ipl_list_hdr) + \
+-			      sizeof(struct ipl_block_fcp))
+-
+-#define IPL_PARM_BLK_CCW_LEN (sizeof(struct ipl_list_hdr) + \
+-			      sizeof(struct ipl_block_ccw))
+-
+-#define IPL_MAX_SUPPORTED_VERSION (0)
+-
+ /*
+  * IPL validity flags and parameters as detected in head.S
+  */
+@@ -133,13 +81,6 @@ extern u16 ipl_devno;
+ 
+ void do_reipl(void);
+ 
+-#define IPL_DEVNO_VALID		(ipl_parameter_flags & 1)
+-#define IPL_PARMBLOCK_VALID	(ipl_parameter_flags & 2)
+-
+-#define IPL_PARMBLOCK_START	((struct ipl_parameter_block *) \
+-				 IPL_PARMBLOCK_ORIGIN)
+-#define IPL_PARMBLOCK_SIZE	(IPL_PARMBLOCK_START->hdr.len)
+-
+ #else /* __ASSEMBLY__ */
+ 
+ #ifndef __s390x__
+diff --git a/include/asm-s390/smp.h b/include/asm-s390/smp.h
+index 6576460..8ae560e 100644
+--- a/include/asm-s390/smp.h
++++ b/include/asm-s390/smp.h
+@@ -107,4 +107,5 @@ smp_call_function_on(void (*func) (void *info), void *info,
+ #define smp_setup_cpu_possible_map()
+ #endif
+ 
++extern union save_area *zfcpdump_save_areas[NR_CPUS + 1];
+ #endif

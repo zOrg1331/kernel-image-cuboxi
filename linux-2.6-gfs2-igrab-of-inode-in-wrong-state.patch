@@ -1,0 +1,49 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL 5.1] [GFS2] Fix bz #245646, igrab of inode in wrong state
+Date: Wed, 27 Jun 2007 14:50:53 +0100
+Bugzilla: 245646
+Message-Id: <1182952253.3386.14.camel@localhost.localdomain>
+Changelog: [GFS2] igrab of inode in wrong state
+
+
+Hi,
+
+The following upstream patch is missing from RHEL 5.1. It fixes a bug
+where igrab() was grabbing inodes which were in the I_CLEAR state
+resulting in a later iput() hitting a BUG trap. The patch has been
+upstream since 10th Feb and is trivial, and obviously correct.
+
+Steve.
+----------------------------------------------------------------
+X-Git-Tag: v2.6.21~1022^2~356
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=4a3b0a490d49ada8bbf3f426be1a0ace4dcd0a55
+
+[PATCH] igrab() should check for I_CLEAR
+
+When igrab() is calling __iget() on an inode it should check if
+clear_inode() has been called on the inode already.  Otherwise there is a
+race window between clear_inode() and destroy_inode() where igrab() calls
+__iget() which leads to already free inodes on the inode lists.
+
+Signed-off-by: Vandana Rungta <vandana@novell.com>
+Signed-off-by: Jan Blunck <jblunck@suse.de>
+Cc: Al Viro <viro@zeniv.linux.org.uk>
+Cc: Neil Brown <neilb@suse.de>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+
+diff --git a/fs/inode.c b/fs/inode.c
+index 6cacdab..062c5f9 100644
+--- a/fs/inode.c
++++ b/fs/inode.c
+@@ -709,7 +709,7 @@ EXPORT_SYMBOL(iunique);
+ struct inode *igrab(struct inode *inode)
+ {
+ 	spin_lock(&inode_lock);
+-	if (!(inode->i_state & (I_FREEING|I_WILL_FREE)))
++	if (!(inode->i_state & (I_FREEING|I_CLEAR|I_WILL_FREE)))
+ 		__iget(inode);
+ 	else
+ 		/*
+

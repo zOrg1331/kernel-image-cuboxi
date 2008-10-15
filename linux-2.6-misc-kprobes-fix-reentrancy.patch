@@ -1,0 +1,91 @@
+From: Dave Anderson <anderson@redhat.com>
+Date: Wed, 23 Jan 2008 15:19:17 -0500
+Subject: [misc] kprobes: fix reentrancy
+Message-id: 4797A145.7020209@redhat.com
+O-Subject: [RHEL5.2 PATCH 4/4] kprobes: BZ #232489: need kprobes improvement patches
+Bugzilla: 232489
+
+BZ #232489: need kprobes improvement patches
+https://bugzilla.redhat.com/show_bug.cgi?id=232489
+linux-2.6.git-cdc7dbdfe6edac177acb32e4ca56b525d0743fe7
+
+Backport of this ia64-specific commit:
+
+   commit cdc7dbdfe6edac177acb32e4ca56b525d0743fe7
+   Author: Anil S Keshavamurthy <anil.s.keshavamurthy@intel.com>
+   Date:   Fri May 11 09:38:40 2007 -0700
+
+   [IA64] fix Kprobes reentrancy
+
+   In case of reentrance i.e when a probe handler calls a functions which
+   inturn has a probe, we save a previous kprobe information and just single
+   step the reentrant probe without calling the actual probe handler.  During
+   this reentracy period, if an interrupt occurs and if probe happens to
+   trigger in the inturrupt path, then we were corrupting the previous kprobe(
+   as we were overriding the previous kprobe info) info their by crashing the
+   system.  This patch fixes this issues by having a an array of previous
+   kprobe info struct(with the array size of 2).
+
+   This similar technique is not needed on i386 and x86_64 because by default
+   interrupts are turn off in the break/int3 exception handler.
+
+   Signed-off-by: Anil S Keshavamurthy <anil.s.keshavamurthy@intel.com>
+   Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+   Signed-off-by: Tony Luck <tony.luck@intel.com>
+
+The testing of this piece on ia64 by Masami Hiramatsu (mhiramat@redhat.com)
+showed that the upstream code was insufficient.  Masami developed a
+bugfix patch and pushed it upstream on 1/17/08.  The new kprobes-ia64
+maintainer has already reviewed it, but but it has not been merged
+upstream yet.  That fix is appended below, which applies on top of
+the currently upstream patch.
+
+diff --git a/arch/ia64/kernel/kprobes.c b/arch/ia64/kernel/kprobes.c
+index 570d938..e6b5e1e 100644
+--- a/arch/ia64/kernel/kprobes.c
++++ b/arch/ia64/kernel/kprobes.c
+@@ -303,14 +303,19 @@ static int __kprobes valid_kprobe_addr(int template, int slot,
+ 
+ static void __kprobes save_previous_kprobe(struct kprobe_ctlblk *kcb)
+ {
+-	kcb->prev_kprobe.kp = kprobe_running();
+-	kcb->prev_kprobe.status = kcb->kprobe_status;
++	unsigned int i;
++	i = atomic_add_return(1, &kcb->prev_kprobe_index);
++	kcb->prev_kprobe[i-1].kp = kprobe_running();
++	kcb->prev_kprobe[i-1].status = kcb->kprobe_status;
+ }
+ 
+ static void __kprobes restore_previous_kprobe(struct kprobe_ctlblk *kcb)
+ {
+-	__get_cpu_var(current_kprobe) = kcb->prev_kprobe.kp;
+-	kcb->kprobe_status = kcb->prev_kprobe.status;
++	unsigned int i;
++	i = atomic_read(&kcb->prev_kprobe_index);
++	__get_cpu_var(current_kprobe) = kcb->prev_kprobe[i-1].kp;
++	kcb->kprobe_status = kcb->prev_kprobe[i-1].status;
++	atomic_sub(1, &kcb->prev_kprobe_index);
+ }
+ 
+ static void __kprobes set_current_kprobe(struct kprobe *p,
+diff --git a/include/asm-ia64/kprobes.h b/include/asm-ia64/kprobes.h
+index 8301061..f40eea1 100644
+--- a/include/asm-ia64/kprobes.h
++++ b/include/asm-ia64/kprobes.h
+@@ -71,13 +71,15 @@ struct prev_kprobe {
+ 
+ #define	MAX_PARAM_RSE_SIZE	(0x60+0x60/0x3f)
+ /* per-cpu kprobe control block */
++#define ARCH_PREV_KPROBE_SZ 2
+ struct kprobe_ctlblk {
+ 	unsigned long kprobe_status;
+ 	struct pt_regs jprobe_saved_regs;
+ 	unsigned long jprobes_saved_stacked_regs[MAX_PARAM_RSE_SIZE];
+ 	unsigned long *bsp;
+ 	unsigned long cfm;
+-	struct prev_kprobe prev_kprobe;
++	atomic_t prev_kprobe_index;
++	struct prev_kprobe prev_kprobe[ARCH_PREV_KPROBE_SZ];
+ };
+ 
+ #define JPROBE_ENTRY(pentry)	(kprobe_opcode_t *)pentry

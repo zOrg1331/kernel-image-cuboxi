@@ -1,0 +1,87 @@
+From: Dave Anderson <anderson@redhat.com>
+Date: Wed, 14 Nov 2007 15:40:31 -0500
+Subject: [misc] "irqpoll": misrouted interrupts deadlocks
+Message-id: 473B5D3F.10703@redhat.com
+O-Subject: [RHEL5.2 PATCH] BZ #247379: "irqpoll": misrouted interrupts deadlocks
+Bugzilla: 247379
+
+BZ #247379: "irqpoll": misrouted interrupts deadlocks
+    https://bugzilla.redhat.com/show_bug.cgi?id=247379
+
+Description:
+   Backport of a 2.6.19 patch that prevents a deadlock when using
+   the "irqpoll" command line option, which we use when booting
+   kdump kernels.  In the console log from the bugzilla, the kdump
+   kernel experienced a NMI watchdog lockup due to the following
+   series of events:
+
+    1. a timer interrupt occurred, leading to do_IRQ(), which:
+       - spin_lock(&desc->lock)
+       - ack'd the IRQ
+       - spin_unlock(&desc->lock)
+       - called handle_IRQ_event() to handle the timer interrupt
+       - spin_lock(&desc->spinlock)
+       - called note_interrupt()
+    2. because of "irqpoll", note_interrupt() called misrouted_irq().
+    3. misrouted_irq() called handle_IRQ_event() for an IDE/cdrom
+       interrupt.
+    4. handle_IRQ_event() re-enabled interrupts, invoked ide_intr(),
+       which in turn called cdrom_pc_intr().
+    5. cdrom_pc_intr() called printk() to display an error message.
+    6. vprintk() disabled interrupts, printed the message, and
+       re-enabled interrupts.
+    7. a second imer interrupt occurred -- which hung in __do_IRQ()
+       attempting the first spin_lock(&desc->lock) above...
+
+    The fix to __do_IRQ() is to move the spin_lock(&desc_lock) call
+    from just before, to just after the call to note_interrupt(), the
+    same way as is done by all other kernel callers to note_interrupt().
+
+Upstream status:
+   commit b42172fc7b569a0ef2b0fa38d71382969074c0e2
+   Author: Linus Torvalds <torvalds@woody.osdl.org>
+   Date:   Wed Nov 22 09:32:06 2006 -0800
+
+   Don't call "note_interrupt()" with irq descriptor lock held
+
+   This reverts commit f72fa707604c015a6625e80f269506032d5430dc, and solves
+   the problem that it tried to fix by simply making "__do_IRQ()" call the
+   note_interrupt() function without the lock held, the way everybody else
+   does.
+
+   It should be noted that all interrupt handling code must never allow the
+   descriptor actors to be entered "recursively" (that's why we do all the
+   magic IRQ_PENDING stuff in the first place), so there actually is
+   exclusion at that much higher level, even in the absense of locking.
+
+   Acked-by: Vivek Goyal <vgoyal@in.ibm.com>
+   Acked-by:Pavel Emelianov <xemul@openvz.org>
+   Cc: Andrew Morton <akpm@osdl.org>
+   Cc: Ingo Molnar <mingo@redhat.com>
+   Cc: Adrian Bunk <bunk@stusta.de>
+   Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+
+RHEL5 patch:
+
+Acked-by: Alan Cox <alan@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: Neil Horman <nhorman@redhat.com>
+Acked-by: Jon Masters <jcm@redhat.com>
+
+diff --git a/kernel/irq/handle.c b/kernel/irq/handle.c
+index 48a53f6..3fc2833 100644
+--- a/kernel/irq/handle.c
++++ b/kernel/irq/handle.c
+@@ -233,10 +233,10 @@ fastcall unsigned int __do_IRQ(unsigned int irq, struct pt_regs *regs)
+ 		spin_unlock(&desc->lock);
+ 
+ 		action_ret = handle_IRQ_event(irq, regs, action);
+-
+-		spin_lock(&desc->lock);
+ 		if (!noirqdebug)
+ 			note_interrupt(irq, desc, action_ret, regs);
++
++		spin_lock(&desc->lock);
+ 		if (likely(!(desc->status & IRQ_PENDING)))
+ 			break;
+ 		desc->status &= ~IRQ_PENDING;

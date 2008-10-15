@@ -1,0 +1,61 @@
+From: David Teigland <teigland@redhat.com>
+Date: Thu, 29 Nov 2007 10:25:48 -0600
+Subject: [dlm] tcp: bind connections from known local address
+Message-id: 20071129162548.GE8513@redhat.com
+O-Subject: [RHEL5.2 PATCH] dlm: bind connections from known local address when using TCP
+Bugzilla: 358841
+
+bz 358841
+
+A common problem occurs when multiple IP addresses within the same
+subnet are assigned to the same NIC.  If we make a connection attempt to
+another address on the same subnet as one of those addresses, the
+connection attempt will not necessarily be routed from the address we
+want.
+
+In the case of the DLM, the other nodes will quickly drop the connection
+attempt, causing problems.
+
+This patch makes the DLM bind to the local address it acquired from the
+cluster manager when using TCP prior to making a connection, obviating
+the need for administrators to "fix" their systems or use clever routing
+tricks.
+
+Signed-off-by: Lon Hohberger <lhh@redhat.com>
+
+Upstream commit
+http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/steve/gfs2-2.6-nmw.git;a=commitdiff;h=614a0b09d5f4c97f53be90af05d44a7d1a66ec06
+
+Acked-by: Bob Peterson <rpeterso@redhat.com>
+
+diff --git a/fs/dlm/lowcomms.c b/fs/dlm/lowcomms.c
+index 2e81536..222867d 100644
+--- a/fs/dlm/lowcomms.c
++++ b/fs/dlm/lowcomms.c
+@@ -864,7 +864,7 @@ static void sctp_init_assoc(struct connection *con)
+ static void tcp_connect_to_sock(struct connection *con)
+ {
+ 	int result = -EHOSTUNREACH;
+-	struct sockaddr_storage saddr;
++	struct sockaddr_storage saddr, src_addr;
+ 	int addr_len;
+ 	struct socket *sock;
+ 
+@@ -898,6 +898,17 @@ static void tcp_connect_to_sock(struct connection *con)
+ 	con->connect_action = tcp_connect_to_sock;
+ 	add_sock(sock, con);
+ 
++	/* Bind to our cluster-known address connecting to avoid
++	   routing problems */
++	memcpy(&src_addr, dlm_local_addr[0], sizeof(src_addr));
++	make_sockaddr(&src_addr, 0, &addr_len);
++	result = sock->ops->bind(sock, (struct sockaddr *) &src_addr,
++				 addr_len);
++	if (result < 0) {
++		printk("dlm: could not bind for connect: %d\n", result);
++		/* This *may* not indicate a critical error */
++	}
++
+ 	make_sockaddr(&saddr, dlm_config.ci_tcp_port, &addr_len);
+ 
+ 	log_print("connecting to %d", con->nodeid);

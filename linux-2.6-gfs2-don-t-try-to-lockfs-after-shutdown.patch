@@ -1,0 +1,94 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5] gfs2: don't try to lockfs after shutdown
+Date: Thu, 07 Dec 2006 11:25:29 +0000
+Bugzilla: 215962
+Message-Id: <1165490729.3752.833.camel@quoit.chygwyn.com>
+Changelog: gfs2: don't try to lockfs after shutdown
+
+
+Hi,
+
+This patch fixes bz #215962. Its not yet in the upstream tree, but that
+is only because I'm waiting for Linus to pull what is there already,
+otherwise it would be. This fixes one of the two most important GFS2
+bugs which need to be fixed before RHEL5 is released,
+
+Steve.
+
+
+>From teigland@redhat.com Wed Dec  6 17:49:54 2006
+Return-Path: <teigland@redhat.com>
+Received: from pobox.surrey.redhat.com ([unix socket]) by
+	pobox.surrey.redhat.com (Cyrus v2.1.12) with LMTP; Wed, 06 Dec 2006
+	17:49:54 +0000
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com
+	[172.16.52.254]) by pobox.surrey.redhat.com (8.12.11.20060308/8.12.11) with
+	ESMTP id kB6HnsA4022123 for <swhiteho@pobox.surrey.redhat.com>; Wed, 6 Dec
+	2006 17:49:54 GMT
+Received: from pobox.corp.redhat.com (pobox.corp.redhat.com [10.11.255.20])
+	by int-mx1.corp.redhat.com (8.13.1/8.13.1) with ESMTP id kB6Hnrf5013902 for
+	<swhiteho@int-mx1.corp.redhat.com>; Wed, 6 Dec 2006 12:49:53 -0500
+Received: from taggart.msp.redhat.com (null.msp.redhat.com [10.15.80.136])
+	by pobox.corp.redhat.com (8.13.1/8.12.8) with ESMTP id kB6HnrF6018837; Wed,
+	6 Dec 2006 12:49:53 -0500
+Received: from taggart.msp.redhat.com (null [127.0.0.1]) by
+	taggart.msp.redhat.com (8.13.1/8.13.1) with ESMTP id kB6HkX0W025415; Wed, 6
+	Dec 2006 11:46:33 -0600
+Received: (from teigland@localhost) by taggart.msp.redhat.com
+	(8.13.1/8.13.1/Submit) id kB6HkX02025414; Wed, 6 Dec 2006 11:46:33 -0600
+To: Steven Whitehouse <swhiteho@redhat.com>
+Cc: cluster-devel@redhat.com
+Message-ID: <20061206174633.GA25322@redhat.com>
+Mime-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Disposition: inline
+User-Agent: Mutt/1.4.1i
+X-Evolution-Source: imap://swhiteho@pobox.surrey.redhat.com/
+Content-Transfer-Encoding: 8bit
+
+If an fs has already been shut down, a lockfs callback should do nothing.
+An fs that's been shut down can't acquire locks or do anything with
+respect to the cluster.
+
+Also, remove FIXME comment in withdraw function.  The missing bits of the
+withdraw procedure are now all done by user space.
+
+Signed-off-by: David Teigland <teigland@redhat.com>
+
+Index: linux-2.6.19-quilt/fs/gfs2/lm.c
+===================================================================
+--- linux-2.6.19-quilt.orig/fs/gfs2/lm.c	2006-11-29 15:57:37.000000000 -0600
++++ linux-2.6.19-quilt/fs/gfs2/lm.c	2006-12-06 11:39:17.375799158 -0600
+@@ -104,15 +104,9 @@
+ 	vprintk(fmt, args);
+ 	va_end(args);
+ 
+-	fs_err(sdp, "about to withdraw from the cluster\n");
++	fs_err(sdp, "about to withdraw this file system\n");
+ 	BUG_ON(sdp->sd_args.ar_debug);
+ 
+-
+-	fs_err(sdp, "waiting for outstanding I/O\n");
+-
+-	/* FIXME: suspend dm device so oustanding bio's complete
+-	   and all further io requests fail */
+-
+ 	fs_err(sdp, "telling LM to withdraw\n");
+ 	gfs2_withdraw_lockproto(&sdp->sd_lockstruct);
+ 	fs_err(sdp, "withdrawn\n");
+Index: linux-2.6.19-quilt/fs/gfs2/ops_super.c
+===================================================================
+--- linux-2.6.19-quilt.orig/fs/gfs2/ops_super.c	2006-11-29 15:57:37.000000000 -0600
++++ linux-2.6.19-quilt/fs/gfs2/ops_super.c	2006-12-06 11:38:12.855658211 -0600
+@@ -172,6 +172,9 @@
+ 	struct gfs2_sbd *sdp = sb->s_fs_info;
+ 	int error;
+ 
++	if (test_bit(SDF_SHUTDOWN, &sdp->sd_flags))
++		return;
++
+ 	for (;;) {
+ 		error = gfs2_freeze_fs(sdp);
+ 		if (!error)
+

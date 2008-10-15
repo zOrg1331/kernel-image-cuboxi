@@ -1,0 +1,140 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [PATCH RHEL5.1] bz249910 [ppc] DATA CORRUPTION:Axon memory does not handle double bit errors
+Date: Mon, 30 Jul 2007 10:38:15 -0400 (EDT)
+Bugzilla: 249910
+Message-Id: <Pine.LNX.4.64.0707301037040.30310@squad5-lp1.lab.boston.redhat.com>
+Changelog: [ppc] Axon memory does not handle double bit errors
+
+
+RHBZ#: 249910
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=249910
+
+Description:
+------------
+The problem is that Axon memory does not handle double bit errors (at
+least detect them like it is for other eServers) and that this might lead
+to corrupted data. IBM's memory policy is that single bit errors must be
+detected and corrected and that double bit errors must be detected. Axon
+is failing this policy. The system design today allows only Linux to react
+on this (via reacting on an interrupt) too late, so the corrupted data
+might be already transferred. Hence the system design must be changed that
+Linux is not reacting on those interrupts, instead the firmware must route
+those interrupts to a fast reacting HW instance. The attached patch will
+turn off the Linux reaction for certain interrupts.
+
+RHEL Version Found:
+-------------------
+This is a bug found in RHEL5u1 kernel 2.6.18-36.el5.
+
+Upstream Status:
+----------------
+This upstream git-commit is, in 2.6.23-rc1:
+   7fd7218610600b16f6f0af3f9d9353ba0265c09f
+
+Test Status:
+------------
+To ensure cross-platform build, this code has been built with brew
+--scratch against a 2.6.18-36.el5 kernel and is available at [1].
+
+This code has been tested by Ben Herrenschmidt of IBM on top of
+2.6.18-36.el5.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+--
+---
+ arch/powerpc/sysdev/mpic.c |   36 +++++++++++++++++++++++++++++++++++-
+ include/asm-powerpc/mpic.h |    3 +++
+ 2 files changed, 38 insertions(+), 1 deletion(-)
+
+Index: b/arch/powerpc/sysdev/mpic.c
+===================================================================
+--- a/arch/powerpc/sysdev/mpic.c
++++ b/arch/powerpc/sysdev/mpic.c
+@@ -824,6 +824,8 @@ static int mpic_host_map(struct irq_host
+ 
+ 	if (hw >= mpic->irq_count)
+ 		return -EINVAL;
++	if (mpic->protected && test_bit(hw, mpic->protected))
++		return -EINVAL;
+ 
+ 	/* Default chip */
+ 	chip = &mpic->hc_irq;
+@@ -948,7 +950,6 @@ struct mpic * __init mpic_alloc(struct d
+ 	if (node && get_property(node, "big-endian", NULL) != NULL)
+ 		mpic->flags |= MPIC_BIG_ENDIAN;
+ 
+-
+ #ifdef CONFIG_MPIC_WEIRD
+ 	mpic->hw_set = mpic_infos[MPIC_GET_REGSET(flags)];
+ #endif
+@@ -1125,11 +1126,35 @@ void __init mpic_init(struct mpic *mpic)
+ 	if ((mpic->flags & MPIC_BROKEN_U3) && (mpic->flags & MPIC_PRIMARY))
+  		mpic_scan_ht_pics(mpic);
+ 
++	/* Look for protected sources */
++	if (mpic->of_node) {
++		unsigned int psize, mapsize;
++		const u32 *psrc =
++			get_property(mpic->of_node, "protected-sources",
++				     &psize);
++		if (psrc) {
++			psize /= 4;
++			mapsize = BITS_TO_LONGS(mpic->num_sources) *
++				sizeof(unsigned long);
++			mpic->protected = alloc_bootmem(mapsize);
++			BUG_ON(mpic->protected == NULL);
++			memset(mpic->protected, 0, mapsize);
++			for (i = 0; i < psize; i++) {
++				if (psrc[i] > mpic->num_sources)
++					continue;
++				__set_bit(psrc[i], mpic->protected);
++			}
++		}
++	}
++
+ 	for (i = 0; i < mpic->num_sources; i++) {
+ 		/* start with vector = source number, and masked */
+ 		u32 vecpri = MPIC_VECPRI_MASK | i |
+ 			(8 << MPIC_VECPRI_PRIORITY_SHIFT);
+ 		
++		/* check if protected */
++		if (mpic->protected && test_bit(i, mpic->protected))
++			continue;
+ 		/* init hw */
+ 		mpic_irq_write(i, MPIC_INFO(IRQ_VECTOR_PRI), vecpri);
+ 		mpic_irq_write(i, MPIC_INFO(IRQ_DESTINATION),
+@@ -1315,6 +1340,15 @@ unsigned int mpic_get_one_irq(struct mpi
+ #endif
+ 	if (unlikely(src == MPIC_VEC_SPURRIOUS))
+ 		return NO_IRQ;
++
++	if (unlikely(mpic->protected && test_bit(src, mpic->protected))) {
++		if (printk_ratelimit())
++			printk(KERN_WARNING "%s: Got protected source %d !\n",
++			       mpic->name, (int)src);
++		mpic_eoi(mpic);
++		return NO_IRQ;
++	}
++
+ 	return irq_linear_revmap(mpic->irqhost, src);
+ }
+ 
+Index: b/include/asm-powerpc/mpic.h
+===================================================================
+--- a/include/asm-powerpc/mpic.h
++++ b/include/asm-powerpc/mpic.h
+@@ -295,6 +295,9 @@ struct mpic
+ 	unsigned int		dcr_base;
+ #endif
+ 
++	/* Protected sources */
++	unsigned long		*protected;
++
+ #ifdef CONFIG_MPIC_WEIRD
+ 	/* Pointer to HW info array */
+ 	u32			*hw_set;
+

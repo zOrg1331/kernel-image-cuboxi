@@ -1,0 +1,86 @@
+From: grgustaf@redhat.com
+Subject: [RHEL5.1 PATCH] sparsemem memmap allocation above 4G (bz 227426)
+Date: Wed, 6 Jun 2007 17:34:44 -0400
+Bugzilla: 227426
+Message-Id: <20070606213444.GA29230@samurai.boston.redhat.com>
+Changelog: [x86_64] sparsemem memmap allocation above 4G
+
+
+This patch went upstream last Friday. Some Intel folks suggested it may solve
+this install panic bugzilla on a machine w/ 64GB of RAM.
+
+I should be able to get one of the folks with this large memory setup at Intel
+to test for me this week. I'm not sure if we need the kernel on the install CD
+to reproduce this exact BZ though.
+
+Larry, do you think this could solve that problem?
+
+Patch notes from Nanhai Zou:
+
+On systems with a huge amount of physical memory, VFS cache and memory memmap
+may eat all available system memory under 4G, then the system may fail to
+allocate swiotlb bounce buffer.
+
+There was a fix for this issue in arch/x86_64/mm/numa.c, but that fix doesn't
+cover sparsemem model. This patch add fix to sparsemem model by first trying
+to allocate memmap above 4G.
+
+- Geoff
+
+Index: linux-2.6.18.x86_64/arch/x86_64/mm/init.c
+===================================================================
+--- linux-2.6.18.x86_64.orig/arch/x86_64/mm/init.c	2007-06-05 18:45:40.000000000 -0400
++++ linux-2.6.18.x86_64/arch/x86_64/mm/init.c	2007-06-06 16:30:32.000000000 -0400
+@@ -877,3 +877,9 @@ int in_gate_area_no_task(unsigned long a
+ {
+ 	return (addr >= VSYSCALL_START) && (addr < VSYSCALL_END);
+ }
++
++void *alloc_bootmem_high_node(pg_data_t *pgdat, unsigned long size)
++{
++	return __alloc_bootmem_core(pgdat->bdata, size,
++			SMP_CACHE_BYTES, (4UL*1024*1024*1024), 0);
++}
+Index: linux-2.6.18.x86_64/include/linux/bootmem.h
+===================================================================
+--- linux-2.6.18.x86_64.orig/include/linux/bootmem.h	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.x86_64/include/linux/bootmem.h	2007-06-06 16:32:05.000000000 -0400
+@@ -56,6 +56,8 @@ extern void * __init __alloc_bootmem_low
+ extern void * __init __alloc_bootmem_core(struct bootmem_data *bdata,
+ 		unsigned long size, unsigned long align, unsigned long goal,
+ 		unsigned long limit);
++extern void *alloc_bootmem_high_node(pg_data_t *pgdat, unsigned long size);
++
+ #ifndef CONFIG_HAVE_ARCH_BOOTMEM_NODE
+ extern void __init reserve_bootmem (unsigned long addr, unsigned long size);
+ #define alloc_bootmem(x) \
+Index: linux-2.6.18.x86_64/mm/sparse.c
+===================================================================
+--- linux-2.6.18.x86_64.orig/mm/sparse.c	2007-06-05 18:45:37.000000000 -0400
++++ linux-2.6.18.x86_64/mm/sparse.c	2007-06-06 16:33:47.000000000 -0400
+@@ -186,6 +186,12 @@ static int sparse_init_one_section(struc
+ 	return 1;
+ }
+ 
++__attribute__((weak))
++void *alloc_bootmem_high_node(pg_data_t *pgdat, unsigned long size)
++{
++	return NULL;
++}
++
+ static struct page *sparse_early_mem_map_alloc(unsigned long pnum)
+ {
+ 	struct page *map;
+@@ -196,6 +202,11 @@ static struct page *sparse_early_mem_map
+ 	if (map)
+ 		return map;
+ 
++	map = alloc_bootmem_high_node(NODE_DATA(nid),
++			sizeof(struct page) * PAGES_PER_SECTION);
++	if (map)
++		return map;
++
+ 	map = alloc_bootmem_node(NODE_DATA(nid),
+ 			sizeof(struct page) * PAGES_PER_SECTION);
+ 	if (map)
+

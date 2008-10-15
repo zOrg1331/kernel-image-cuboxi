@@ -1,0 +1,54 @@
+Date: Fri, 29 Sep 2006 10:51:49 -0400
+From: Steve Grubb <sgrubb@redhat.com>
+Subject: [RHEL5 PATCH] fix unbounded name_count array in audit code
+
+Hi,
+
+I revised the patch per comments. This patch is accepted upstream and is a
+replacement for Patch1803 in the current kernel. This is also to fix bz
+#208303.
+
+The below patch closes an unbounded use of name_count. It was posted to
+linux-audit mail list Thursday and accepted today. The bug can lead to oopses
+in some new file systems.
+
+Signed-off-by: Steve Grubb <sgrubb@redhat.com>
+
+
+diff -urp linux-2.6.18.x86_64.orig/kernel/auditsc.c linux-2.6.18.x86_64/kernel/auditsc.c
+--- linux-2.6.18.x86_64.orig/kernel/auditsc.c	2006-09-24 08:24:27.000000000 -0400
++++ linux-2.6.18.x86_64/kernel/auditsc.c	2006-09-24 08:42:01.000000000 -0400
+@@ -1347,7 +1347,13 @@ void __audit_inode_child(const char *dna
+ 		}
+ 
+ update_context:
+-	idx = context->name_count++;
++	idx = context->name_count;
++	if (context->name_count == AUDIT_NAMES) {
++		printk(KERN_DEBUG "name_count maxed and losing %s\n",
++			found_name ?: "(null)");
++		return;
++	} 
++	context->name_count++;
+ #if AUDIT_DEBUG
+ 	context->ino_count++;
+ #endif
+@@ -1365,7 +1371,16 @@ update_context:
+ 	/* A parent was not found in audit_names, so copy the inode data for the
+ 	 * provided parent. */
+ 	if (!found_name) {
+-		idx = context->name_count++;
++		idx = context->name_count;
++		if (context->name_count == AUDIT_NAMES) {
++			printk(KERN_DEBUG 
++				"name_count maxed and losing parent inode data: dev=%02x:%02x, inode=%lu",
++				MAJOR(parent->i_sb->s_dev),
++				MINOR(parent->i_sb->s_dev),
++				parent->i_ino);
++			return;
++		}
++		context->name_count++;
+ #if AUDIT_DEBUG
+ 		context->ino_count++;
+ #endif
+

@@ -1,0 +1,94 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] dlm: schedule during recovery loops
+Date: Tue, 25 Sep 2007 11:06:05 -0500
+Bugzilla: 250464
+Message-Id: <20070925160605.GD15893@redhat.com>
+Changelog: [GFS2] dlm: schedule during recovery loops
+
+
+bz 250464
+
+Call schedule() in a bunch of places where the recovery code loops
+through lists of locks.  The theory is that these lists become so
+long that looping through them triggers the softlockup watchdog
+(usually on ia64, doesn't seem to happen often on other arch's).
+Will send the same patch upstream.
+
+
+Index: linux-rhel51-2007-08-20/fs/dlm/lock.c
+===================================================================
+--- linux-rhel51-2007-08-20.orig/fs/dlm/lock.c
++++ linux-rhel51-2007-08-20/fs/dlm/lock.c
+@@ -3997,6 +3997,7 @@ int dlm_recover_waiters_post(struct dlm_
+ 		unlock_rsb(r);
+ 		put_rsb(r);
+ 		dlm_put_lkb(lkb);
++		schedule();
+ 	}
+ 
+ 	return error;
+Index: linux-rhel51-2007-08-20/fs/dlm/recover.c
+===================================================================
+--- linux-rhel51-2007-08-20.orig/fs/dlm/recover.c
++++ linux-rhel51-2007-08-20/fs/dlm/recover.c
+@@ -533,6 +533,7 @@ int dlm_recover_locks(struct dlm_ls *ls)
+ 		}
+ 
+ 		count += r->res_recover_locks_count;
++		schedule();
+ 	}
+ 	up_read(&ls->ls_root_sem);
+ 
+@@ -705,6 +706,7 @@ void dlm_recover_rsbs(struct dlm_ls *ls)
+ 		rsb_clear_flag(r, RSB_RECOVER_CONVERT);
+ 		rsb_clear_flag(r, RSB_NEW_MASTER2);
+ 		unlock_rsb(r);
++		schedule();
+ 	}
+ 	up_read(&ls->ls_root_sem);
+ 
+@@ -732,6 +734,7 @@ int dlm_create_root_list(struct dlm_ls *
+ 			dlm_hold_rsb(r);
+ 		}
+ 		read_unlock(&ls->ls_rsbtbl[i].lock);
++		schedule();
+ 	}
+  out:
+ 	up_write(&ls->ls_root_sem);
+@@ -741,11 +744,15 @@ int dlm_create_root_list(struct dlm_ls *
+ void dlm_release_root_list(struct dlm_ls *ls)
+ {
+ 	struct dlm_rsb *r, *safe;
++	unsigned int count = 0;
+ 
+ 	down_write(&ls->ls_root_sem);
+ 	list_for_each_entry_safe(r, safe, &ls->ls_root_list, res_root_list) {
+ 		list_del_init(&r->res_root_list);
+ 		dlm_put_rsb(r);
++
++		if (!(++count % 100))
++			schedule();
+ 	}
+ 	up_write(&ls->ls_root_sem);
+ }
+@@ -763,6 +770,7 @@ void dlm_clear_toss_list(struct dlm_ls *
+ 			free_rsb(r);
+ 		}
+ 		write_unlock(&ls->ls_rsbtbl[i].lock);
++		schedule();
+ 	}
+ }
+ 
+Index: linux-rhel51-2007-08-20/fs/dlm/requestqueue.c
+===================================================================
+--- linux-rhel51-2007-08-20.orig/fs/dlm/requestqueue.c
++++ linux-rhel51-2007-08-20/fs/dlm/requestqueue.c
+@@ -192,6 +192,7 @@ void dlm_purge_requestqueue(struct dlm_l
+ 			list_del(&e->list);
+ 			kfree(e);
+ 		}
++		schedule();
+ 	}
+ 	mutex_unlock(&ls->ls_requestqueue_mutex);
+ }
+

@@ -1,0 +1,114 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Date: Mon, 24 Mar 2008 16:54:08 -0400
+Subject: [ata] fix SATA IDE mode bug upon resume
+Message-id: 47E814F0.5020204@redhat.com
+O-Subject: Re: [RHEL5.2 PATCH] Fix SATA IDE mode bug
+Bugzilla: 432652
+
+Jeff Garzik wrote:
+> On Mon, Mar 24, 2008 at 03:27:42PM -0400, Bhavana Nagendra wrote:
+>
+>> Resolves BZ 432652
+>>
+>> This patch resolves the S3 resume failure when you add a SATA disk 2nd
+>> port and set SATA type as native IDE.   The root cause is that we have
+>> not correctly set operating mode when resume is called for.
+>>
+>> This upstream patch was approved by Jeff Garzik and is necessary to
+>> initialize and set SATA mode correctly.
+>>
+>> http://marc.info/?l=linux-pci&m=120193321032703&w=2
+>>
+>> This patch is a bug fix and will affect future SBs.
+>>
+>> The backport solution for provided is the simplest possible change to
+>> get the fix in at this stage in RHEL5.2.   The upstream patch will not
+>> apply "as is" because 2.6.18 code base is missing the resume early changes
+>> in the PM subsystem, and the back port resulted in kABI errors.  Thus the
+>> simple back port to utilize the existing resume function in AHCI.
+>>
+>> This patch and the brew build have been tested at AMD and work on both
+>> 32-bit and 64-bit platforms, for all SATA ports, both Native IDE and Legacy
+>> IDE.  This patch works for AMD and provides a fix without being invasive
+>> for R5.2.
+>>
+>> Please ACK.
+>>
+>
+Updated patch based on Jeff's request.    The quirk_sb600_sata() is a
+static function that
+has changed names upstream to a more descriptive and appropriate
+quirk_amd_ide_mode().
+This should not cause any KABI issues as it's not exported.    Brew
+build is proving it.
+
+Bhavana
+
+Acked-by: Jeff Garzik <jgarzik@redhat.com>
+Acked-by: Alan Cox <alan@redhat.com>
+
+diff --git a/drivers/ata/ahci.c b/drivers/ata/ahci.c
+index 0753e9f..6c8fa83 100644
+--- a/drivers/ata/ahci.c
++++ b/drivers/ata/ahci.c
+@@ -1943,6 +1943,22 @@ static int ahci_pci_device_resume(struct pci_dev *pdev)
+ 	struct ata_host *host = dev_get_drvdata(&pdev->dev);
+ 	int rc;
+ 
++	if (pdev->vendor == PCI_VENDOR_ID_ATI &&
++	    (pdev->device == 0x4380 || pdev->device == 0x4390)) {
++		u8 tmp;
++		pci_read_config_byte(pdev, PCI_CLASS_DEVICE, &tmp);
++		if (tmp == 0x01) {
++			pci_read_config_byte(pdev, 0x40, &tmp);
++			pci_write_config_byte(pdev, 0x40, tmp|1);
++			pci_write_config_byte(pdev, 0x9, 1);
++			pci_write_config_byte(pdev, 0xa, 6);
++			pci_write_config_byte(pdev, 0x40, tmp);
++
++			pdev->class = PCI_CLASS_STORAGE_SATA_AHCI;
++			printk(KERN_INFO "PCI: set SATA to AHCI mode\n");
++		}
++	}
++
+ 	rc = ata_pci_device_do_resume(pdev);
+ 	if (rc)
+ 		return rc;
+diff --git a/drivers/pci/quirks.c b/drivers/pci/quirks.c
+index d4a898c..a2fce08 100644
+--- a/drivers/pci/quirks.c
++++ b/drivers/pci/quirks.c
+@@ -855,12 +855,13 @@ static void __init quirk_disable_pxb(struct pci_dev *pdev)
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82454NX,	quirk_disable_pxb );
+ 
+ 
+-static void __devinit quirk_sb600_sata(struct pci_dev *pdev)
++static void __devinit quirk_amd_ide_mode(struct pci_dev *pdev)
+ {
+-	/* set sb600 sata to ahci mode */
+-	if ((pdev->class >> 8) == PCI_CLASS_STORAGE_IDE) {
+-		u8 tmp;
+-
++	/* set sb600/sb700/sb800 sata to ahci mode */
++	u8 tmp;
++ 
++	pci_read_config_byte(pdev, PCI_CLASS_DEVICE, &tmp);
++	if (tmp == 0x01) {
+ 		pci_read_config_byte(pdev, 0x40, &tmp);
+ 		pci_write_config_byte(pdev, 0x40, tmp|1);
+ 		pci_write_config_byte(pdev, 0x9, 1);
+@@ -868,10 +869,12 @@ static void __devinit quirk_sb600_sata(struct pci_dev *pdev)
+ 		pci_write_config_byte(pdev, 0x40, tmp);
+ 
+ 		pdev->class = PCI_CLASS_STORAGE_SATA_AHCI;
++		printk(KERN_INFO "PCI: set SATA to AHCI mode\n");
+ 	}
+ }
+-DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP600_SATA, quirk_sb600_sata);
+-DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP700_SATA, quirk_sb600_sata);
++
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP600_SATA, quirk_amd_ide_mode);
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP700_SATA, quirk_amd_ide_mode);
+ 
+ /*
+  *	Serverworks CSB5 IDE does not fully support native mode

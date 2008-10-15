@@ -1,0 +1,40 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Subject: Re: [RHEL5.1 REGRESSION] Fix tscsync frequency transitions
+Date: Thu, 26 Jul 2007 13:42:43 -0400
+Bugzilla: 245082
+Message-Id: <46A8DD13.7060009@redhat.com>
+Changelog: [x86] Fix tscsync frequency transitions
+
+Resolves BZ 245082
+
+The Power Now! driver has a module parameter "tscsync" which needs to be set
+if TSC is used as a time source. This allows the cores to change frequencies
+in step and avoids the skew.  A regression was found wherein the req_state
+data structure was not initialized correctly.
+
+Testing has confirmed that this patch works on mutilple AMD platforms and
+is upstream.  
+
+--- linux-2.6.18.i386/arch/i386/kernel/cpu/cpufreq/powernow-k8.c.porig	2007-07-25 16:55:30.000000000 -0400
++++ linux-2.6.18.i386/arch/i386/kernel/cpu/cpufreq/powernow-k8.c	2007-07-26 11:19:16.000000000 -0400
+@@ -1276,9 +1276,6 @@ static int __cpuinit powernowk8_cpu_init
+ 	if (cpu_family == CPU_OPTERON)
+ 		fidvid_msr_init();
+ 
+-	if (tscsync && (cpu_family == CPU_OPTERON))
+-		req_state[pol->cpu] = 0;
+-
+ 	/* run on any CPU again */
+ 	set_cpus_allowed(current, oldmask);
+ 
+@@ -1427,6 +1424,9 @@ static int __cpuinit powernowk8_init(voi
+ 				printk(KERN_ERR PFX "Unable to allocate memory!\n");
+ 				return -ENOMEM;
+ 			}
++			/* necessary for dual-cores (99=just a large number) */
++			for(i=0; i < num_possible_cpus(); i++)
++				req_state[i] = 99;
+ 		}
+ 		printk(KERN_INFO PFX "Found %d %s "
+ 			"processors (%d cpu cores) (" VERSION ")\n", supported_cpus/cpu_data[0].booted_cores,
+

@@ -1,0 +1,290 @@
+From: Alexander Viro <aviro@redhat.com>
+Subject: [RHEL 5.1 PATCH] bz#248416
+Date: Tue, 7 Aug 2007 19:08:21 -0400
+Bugzilla: 248416
+Message-Id: <20070807230821.GW13539@devserv.devel.redhat.com>
+Changelog: [audit] sub-tree cleanups
+
+
+	That should be a followup to 182624, actually; fixes a bunch
+of bugs in there.
+
+diff -urN linux-2.6.18.i686/kernel/auditfilter.c linux-2.6.18.i686-fix/kernel/auditfilter.c
+--- linux-2.6.18.i686/kernel/auditfilter.c	2007-08-04 16:34:34.000000000 -0400
++++ linux-2.6.18.i686-fix/kernel/auditfilter.c	2007-08-04 16:03:53.000000000 -0400
+@@ -628,7 +628,7 @@
+ 				goto exit_free;
+ 			entry->rule.buflen += f->val;
+ 
+-			err = audit_add_tree_rule(&entry->rule, str, f->op);
++			err = audit_make_tree(&entry->rule, str, f->op);
+ 			if (err) {
+ 				kfree(str);
+ 				goto exit_free;
+@@ -920,6 +920,14 @@
+ 	new->inode_f = old->inode_f;
+ 	new->watch = NULL;
+ 	new->field_count = old->field_count;
++	/*
++	 * note that we are OK with not refcounting here; audit_match_tree()
++	 * never dereferences tree and we can't get false positives there
++	 * since we'd have to have rule gone from the list *and* removed
++	 * before the chunks found by lookup had been allocated, i.e. before
++	 * the beginning of list scan.
++	 */
++	new->tree = old->tree;
+ 	memcpy(new->fields, old->fields, sizeof(struct audit_field) * fcount);
+ 
+ 	/* deep copy this information, updating the se_rule fields, because
+@@ -1247,6 +1255,7 @@
+ 	struct audit_entry *e;
+ 	struct audit_field *inode_f = entry->rule.inode_f;
+ 	struct audit_watch *watch = entry->rule.watch;
++	struct audit_tree *tree = entry->rule.tree;
+ 	struct nameidata *ndp, *ndw;
+ 	int h, err, putnd_needed = 0;
+ #ifdef CONFIG_AUDITSYSCALL
+@@ -1268,6 +1277,9 @@
+ 	mutex_unlock(&audit_filter_mutex);
+ 	if (e) {
+ 		err = -EEXIST;
++		/* normally audit_add_tree_rule() will free it on failure */
++		if (tree)
++			audit_put_tree(tree);
+ 		goto error;
+ 	}
+ 
+@@ -1290,6 +1302,13 @@
+ 		h = audit_hash_ino((u32)watch->ino);
+ 		list = &audit_inode_hash[h];
+ 	}
++	if (tree) {
++		err = audit_add_tree_rule(&entry->rule);
++		if (err) {
++			mutex_unlock(&audit_filter_mutex);
++			goto error;
++		}
++	}
+ 
+ 	if (entry->rule.flags & AUDIT_FILTER_PREPEND) {
+ 		list_add_rcu(&entry->list, list);
+@@ -1326,6 +1345,7 @@
+ 	struct audit_entry  *e;
+ 	struct audit_field *inode_f = entry->rule.inode_f;
+ 	struct audit_watch *watch, *tmp_watch = entry->rule.watch;
++	struct audit_tree *tree = entry->rule.tree;
+ 	LIST_HEAD(inotify_list);
+ 	int h, ret = 0;
+ #ifdef CONFIG_AUDITSYSCALL
+@@ -1391,6 +1411,8 @@
+ out:
+ 	if (tmp_watch)
+ 		audit_put_watch(tmp_watch); /* match initial get */
++	if (tree)
++		audit_put_tree(tree);	/* that's the temporary one */
+ 
+ 	return ret;
+ }
+@@ -1806,7 +1828,7 @@
+ 						 &watch->rules);
+ 					list_del(&entry->rule.rlist);
+ 				} else if (tree)
+-					list_replace(&entry->rule.rlist,
++					list_replace_init(&entry->rule.rlist,
+ 						     &nentry->rule.rlist);
+ 				list_replace_rcu(&entry->list, &nentry->list);
+ 			}
+diff -urN linux-2.6.18.i686/kernel/audit.h linux-2.6.18.i686-fix/kernel/audit.h
+--- linux-2.6.18.i686/kernel/audit.h	2007-08-04 16:34:24.000000000 -0400
++++ linux-2.6.18.i686-fix/kernel/audit.h	2007-08-04 16:03:53.000000000 -0400
+@@ -141,13 +141,15 @@
+ extern struct audit_chunk *audit_tree_lookup(const struct inode *);
+ extern void audit_put_chunk(struct audit_chunk *);
+ extern int audit_tree_match(struct audit_chunk *, struct audit_tree *);
+-extern int audit_add_tree_rule(struct audit_krule *, char *, u32);
++extern int audit_make_tree(struct audit_krule *, char *, u32);
++extern int audit_add_tree_rule(struct audit_krule *);
+ extern int audit_remove_tree_rule(struct audit_krule *);
+ extern void audit_trim_trees(void);
+ extern int audit_tag_tree(char *old, char *new);
+ extern void audit_schedule_prune(void);
+ extern void audit_prune_trees(void);
+ extern const char *audit_tree_path(struct audit_tree *);
++extern void audit_put_tree(struct audit_tree *);
+ 
+ extern char *audit_unpack_string(void **, size_t *, size_t);
+ 
+diff -urN linux-2.6.18.i686/kernel/audit_tree.c linux-2.6.18.i686-fix/kernel/audit_tree.c
+--- linux-2.6.18.i686/kernel/audit_tree.c	2007-08-04 16:34:34.000000000 -0400
++++ linux-2.6.18.i686-fix/kernel/audit_tree.c	2007-08-04 16:31:10.000000000 -0400
+@@ -14,6 +14,7 @@
+ 	struct list_head rules;
+ 	struct list_head list;
+ 	struct list_head same_root;
++	struct rcu_head head;
+ 	char pathname[];
+ };
+ 
+@@ -52,8 +53,8 @@
+  * chunk.hash is a hash with middle bits of watch.inode as
+  * a hash function.						RCU, hash_lock
+  *
+- * tree is refcounted; one reference for "some rules refer to it", one for
+- * each chunk with pointer to it.
++ * tree is refcounted; one reference for "some rules on rules_list refer to
++ * it", one for each chunk with pointer to it.
+  *
+  * chunk is refcounted by embedded inotify_watch.
+  *
+@@ -77,6 +78,7 @@
+ 		INIT_LIST_HEAD(&tree->rules);
+ 		INIT_LIST_HEAD(&tree->list);
+ 		INIT_LIST_HEAD(&tree->same_root);
++		tree->root = NULL;
+ 		strcpy(tree->pathname, s);
+ 	}
+ 	return tree;
+@@ -87,12 +89,16 @@
+ 	atomic_inc(&tree->count);
+ }
+ 
++static void __put_tree(struct rcu_head *rcu)
++{
++	struct audit_tree *tree = container_of(rcu, struct audit_tree, head);
++	kfree(tree);
++}
++
+ static inline void put_tree(struct audit_tree *tree)
+ {
+-	if (atomic_dec_and_test(&tree->count)) {
+-		synchronize_rcu();
+-		kfree(tree);
+-	}
++	if (atomic_dec_and_test(&tree->count))
++		call_rcu(&tree->head, __put_tree);
+ }
+ 
+ /* to avoid bringing the entire thing in audit.h */
+@@ -294,7 +300,7 @@
+ 	list_add(&chunk->owners[0].list, &tree->chunks);
+ 	if (!tree->root) {
+ 		tree->root = chunk;
+-		list_add(&chunk->trees, &tree->same_root);
++		list_add(&tree->same_root, &chunk->trees);
+ 	}
+ 	insert_hash(chunk);
+ 	spin_unlock(&hash_lock);
+@@ -366,7 +372,7 @@
+ 	old->dead = 1;
+ 	if (!tree->root) {
+ 		tree->root = chunk;
+-		list_add(&chunk->trees, &tree->same_root);
++		list_add(&tree->same_root, &chunk->trees);
+ 	}
+ 	spin_unlock(&hash_lock);
+ 	inotify_evict_watch(&old->watch);
+@@ -388,11 +394,10 @@
+ 	struct audit_entry *entry;
+ 	struct audit_buffer *ab;
+ 
+-	mutex_lock(&audit_filter_mutex);
+ 	list_for_each_entry_safe(rule, next, &tree->rules, rlist) {
+ 		entry = container_of(rule, struct audit_entry, rule);
+ 
+-		list_del(&rule->rlist);
++		list_del_init(&rule->rlist);
+ 		if (rule->tree) {
+ 			/* not a half-baked one */
+ 			ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE);
+@@ -410,7 +415,6 @@
+ 			call_rcu(&entry->rcu, audit_free_rule_rcu);
+ 		}
+ 	}
+-	mutex_unlock(&audit_filter_mutex);
+ }
+ 
+ /*
+@@ -589,37 +593,49 @@
+ 	return is_subdir(dentry, nd->dentry);
+ }
+ 
+-int audit_add_tree_rule(struct audit_krule *rule, char *pathname, u32 op)
++int audit_make_tree(struct audit_krule *rule, char *pathname, u32 op)
+ {
+-	struct audit_tree *tree;
+-	struct nameidata nd;
+-	struct vfsmount *mnt, *p;
+-	struct list_head list;
+-	int err;
+ 
+ 	if (pathname[0] != '/' ||
+ 	    rule->listnr != AUDIT_FILTER_EXIT ||
+ 	    op & ~AUDIT_EQUAL ||
+ 	    rule->inode_f || rule->watch || rule->tree)
+ 		return -EINVAL;
++	rule->tree = alloc_tree(pathname);
++	if (!rule->tree)
++		return -ENOMEM;
++	return 0;
++}
++
++void audit_put_tree(struct audit_tree *tree)
++{
++	put_tree(tree);
++}
++
++/* called with audit_filter_mutex */
++int audit_add_tree_rule(struct audit_krule *rule)
++{
++	struct audit_tree *seed = rule->tree, *tree;
++	struct nameidata nd;
++	struct vfsmount *mnt, *p;
++	struct list_head list;
++	int err;
+ 
+-	mutex_lock(&audit_filter_mutex);
+ 	list_for_each_entry(tree, &tree_list, list) {
+-		if (!strcmp(pathname, tree->pathname)) {
+-			get_tree(tree);
++		if (!strcmp(seed->pathname, tree->pathname)) {
++			put_tree(seed);
+ 			rule->tree = tree;
+ 			list_add(&rule->rlist, &tree->rules);
+-			mutex_unlock(&audit_filter_mutex);
+ 			return 0;
+ 		}
+ 	}
+-	tree = alloc_tree(pathname);
++	tree = seed;
+ 	list_add(&tree->list, &tree_list);
+ 	list_add(&rule->rlist, &tree->rules);
+ 	/* do not set rule->tree yet */
+ 	mutex_unlock(&audit_filter_mutex);
+ 
+-	err = path_lookup(pathname, 0, &nd);
++	err = path_lookup(tree->pathname, 0, &nd);
+ 	if (err)
+ 		goto Err;
+ 	mnt = collect_mounts(nd.mnt, nd.dentry);
+@@ -653,12 +669,10 @@
+ 
+ 	mutex_lock(&audit_filter_mutex);
+ 	if (list_empty(&rule->rlist)) {
+-		mutex_unlock(&audit_filter_mutex);
+ 		put_tree(tree);
+ 		return -ENOENT;
+ 	}
+ 	rule->tree = tree;
+-	mutex_unlock(&audit_filter_mutex);
+ 	put_tree(tree);
+ 
+ 	return 0;
+@@ -666,7 +680,6 @@
+ 	mutex_lock(&audit_filter_mutex);
+ 	list_del_init(&tree->list);
+ 	list_del_init(&tree->rules);
+-	mutex_unlock(&audit_filter_mutex);
+ 	put_tree(tree);
+ 	return err;
+ }
+
