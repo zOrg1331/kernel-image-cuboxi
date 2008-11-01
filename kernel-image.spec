@@ -1,4 +1,4 @@
-Name: kernel-image-std-def
+Name: kernel-image-std-pae
 Version: 2.6.27
 Release: alt1
 %define kernel_base_version	%version
@@ -20,12 +20,11 @@ Release: alt1
 %define kgcc_version	4.3
 
 # Enable/disable SGML docs formatting
-%def_enable docs
+%def_disable docs
 
 #Remove oss
 %def_enable oss
 ## Don't edit below this line ##################################
-
 %define kversion	%kernel_base_version%kernel_extra_version
 %define modules_dir	/lib/modules/%kversion-%flavour-%krelease
 
@@ -41,7 +40,7 @@ Packager: Kernel Maintainers Team <kernel@packages.altlinux.org>
 
 Patch0: %name-%version-%release.patch
 
-ExclusiveArch: i586 x86_64
+ExclusiveArch: i586
 
 ExclusiveOS: Linux
 
@@ -88,6 +87,9 @@ should support wide range of hardware, but does not contain patches
 which are useful only for some special applications (and may have
 undesirable side effects in other cases).  This is the default 2.6.x
 kernel variant for ALT Linux distributions.
+
+This kernel build for PAE systems. If you have more then 2Gb of memory use
+this kernel.
 
 %package -n kernel-modules-oss-%flavour
 Summary: OSS sound driver modules (obsolete)
