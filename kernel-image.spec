@@ -1,4 +1,4 @@
-Name: kernel-image-std-def
+Name: kernel-image-std-srv
 Version: 2.6.27
 Release: alt1
 %define kernel_base_version	%version
@@ -20,7 +20,7 @@ Release: alt1
 %define kgcc_version	4.3
 
 # Enable/disable SGML docs formatting
-%def_enable docs
+%def_disable docs
 
 #Remove oss
 %def_enable oss
@@ -89,6 +89,7 @@ which are useful only for some special applications (and may have
 undesirable side effects in other cases).  This is the default 2.6.x
 kernel variant for ALT Linux distributions.
 
+This kernel optimized for throughput and recommeded for servers.
 %package -n kernel-modules-oss-%flavour
 Summary: OSS sound driver modules (obsolete)
 Group: System/Kernel and hardware
