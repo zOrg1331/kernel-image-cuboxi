@@ -1,4 +1,4 @@
-Name: kernel-image-std-def
+Name: kernel-image-std-ll
 Version: 2.6.27
 Release: alt1
 %define kernel_base_version	%version
@@ -20,7 +20,7 @@ Release: alt1
 %define kgcc_version	4.3
 
 # Enable/disable SGML docs formatting
-%def_enable docs
+%def_disable docs
 
 #Remove oss
 %def_enable oss
