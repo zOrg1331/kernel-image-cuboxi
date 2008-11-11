@@ -52,7 +52,6 @@
 #include <linux/pci.h>
 #include <linux/vmalloc.h>
 #include <linux/wait.h>
-#include <linux/byteorder/generic.h>
 
 #include <linux/interrupt.h>
 #include <linux/i2c.h>
@@ -72,20 +71,22 @@
 
 #include <linux/videodev.h>
 #include <media/v4l2-common.h>
+#include <media/v4l2-ioctl.h>
 #include "videocodec.h"
 
+#include <asm/byteorder.h>
 #include <asm/io.h>
 #include <asm/uaccess.h>
 #include <linux/proc_fs.h>
 
 #include <linux/video_decoder.h>
 #include <linux/video_encoder.h>
+#include <media/compat.h>
 #include <linux/mutex.h>
 #include "zoran.h"
 #include "zoran_device.h"
 #include "zoran_card.h"
 
-#ifdef CONFIG_VIDEO_V4L2
 	/* we declare some card type definitions here, they mean
 	 * the same as the v4l1 ZORAN_VID_TYPE above, except it's v4l2 */
 #define ZORAN_V4L2_VID_FLAGS ( \
@@ -94,19 +95,14 @@
 				V4L2_CAP_VIDEO_OUTPUT |\
 				V4L2_CAP_VIDEO_OVERLAY \
 			      )
-#endif
 
-#include <asm/byteorder.h>
 
-#if defined(CONFIG_VIDEO_V4L2) && defined(CONFIG_VIDEO_V4L1_COMPAT)
+#if defined(CONFIG_VIDEO_V4L1_COMPAT)
 #define ZFMT(pal, fcc, cs) \
 	.palette = (pal), .fourcc = (fcc), .colorspace = (cs)
-#elif defined(CONFIG_VIDEO_V4L2)
-#define ZFMT(pal, fcc, cs) \
-	.fourcc = (fcc), .colorspace = (cs)
 #else
 #define ZFMT(pal, fcc, cs) \
-	.palette = (pal)
+	.fourcc = (fcc), .colorspace = (cs)
 #endif
 
 const struct zoran_format zoran_formats[] = {
@@ -197,19 +193,19 @@ const struct zoran_format zoran_formats[] = {
 #define NUM_FORMATS ARRAY_SIZE(zoran_formats)
 
 // RJ: Test only - want to test BUZ_USE_HIMEM even when CONFIG_BIGPHYS_AREA is defined
+#if !defined(CONFIG_BIGPHYS_AREA) && !defined(BUZ_USE_HIMEM)
+//#undef CONFIG_BIGPHYS_AREA
+#define BUZ_USE_HIMEM
+#endif
 
+#if defined(CONFIG_BIGPHYS_AREA)
+#   include <linux/bigphysarea.h>
+#endif
 
-extern int v4l_nbufs;
-extern int v4l_bufsize;
-extern int jpg_nbufs;
-extern int jpg_bufsize;
-extern int pass_through;
-
-static int lock_norm = 0;	/* 1=Don't change TV standard (norm) */
+static int lock_norm;	/* 0 = default 1 = Don't change TV standard (norm) */
 module_param(lock_norm, int, 0644);
 MODULE_PARM_DESC(lock_norm, "Prevent norm changes (1 = ignore, >1 = fail)");
 
-#ifdef CONFIG_VIDEO_V4L2
 	/* small helper function for calculating buffersizes for v4l2
 	 * we calculate the nearest higher power-of-two, which
 	 * will be the recommended buffersize */
@@ -232,7 +228,6 @@ zoran_v4l2_calc_bufsize (struct zoran_jpg_settings *settings)
 		return 8192;
 	return result;
 }
-#endif
 
 /* forward references */
 static void v4l_fbuffer_free(struct file *file);
@@ -249,6 +244,7 @@ static void jpg_fbuffer_free(struct file *file);
  *   Linux with the necessary memory left over).
  */
 
+#if defined(BUZ_USE_HIMEM) && !defined(CONFIG_BIGPHYS_AREA)
 static unsigned long
 get_high_mem (unsigned long size)
 {
@@ -312,6 +308,7 @@ get_high_mem (unsigned long size)
 
 	return hi_mem_ph;
 }
+#endif
 
 static int
 v4l_fbuffer_alloc (struct file *file)
@@ -320,7 +317,9 @@ v4l_fbuffer_alloc (struct file *file)
 	struct zoran *zr = fh->zr;
 	int i, off;
 	unsigned char *mem;
+#if defined(BUZ_USE_HIMEM) && !defined(CONFIG_BIGPHYS_AREA)
 	unsigned long pmem = 0;
+#endif
 
 	/* we might have old buffers lying around... */
 	if (fh->v4l_buffers.ready_to_be_freed) {
@@ -361,6 +360,39 @@ v4l_fbuffer_alloc (struct file *file)
 				ZR_DEVNAME(zr), i, (unsigned long) mem,
 				virt_to_bus(mem));
 		} else {
+#if defined(CONFIG_BIGPHYS_AREA)
+			/* Use bigphysarea_alloc_pages */
+
+			int n =
+			    (fh->v4l_buffers.buffer_size + PAGE_SIZE -
+			     1) / PAGE_SIZE;
+
+			mem =
+			    (unsigned char *) bigphysarea_alloc_pages(n, 0,
+								      GFP_KERNEL);
+			if (mem == 0) {
+				dprintk(1,
+					KERN_ERR
+					"%s: v4l_fbuffer_alloc() - bigphysarea_alloc_pages for V4L buf %d failed\n",
+					ZR_DEVNAME(zr), i);
+				v4l_fbuffer_free(file);
+				return -ENOBUFS;
+			}
+			fh->v4l_buffers.buffer[i].fbuffer = mem;
+			fh->v4l_buffers.buffer[i].fbuffer_phys =
+			    virt_to_phys(mem);
+			fh->v4l_buffers.buffer[i].fbuffer_bus =
+			    virt_to_bus(mem);
+			dprintk(4,
+				KERN_INFO
+				"%s: Bigphysarea frame %d mem %p (bus: 0x%lx)\n",
+				ZR_DEVNAME(zr), i, mem, virt_to_bus(mem));
+
+			/* Zero out the allocated memory */
+			memset(fh->v4l_buffers.buffer[i].fbuffer, 0,
+			       fh->v4l_buffers.buffer_size);
+#else
+#if defined(BUZ_USE_HIMEM)
 
 			/* Use high memory which has been left at boot time */
 
@@ -400,6 +432,21 @@ v4l_fbuffer_alloc (struct file *file)
 				fh->v4l_buffers.buffer[i].fbuffer_bus =
 				    pmem + i * fh->v4l_buffers.buffer_size;
 			}
+#else
+			/* No bigphysarea present, usage of high memory disabled,
+			 * but user wants buffers of more than MAX_KMALLOC_MEM */
+			dprintk(1,
+				KERN_ERR
+				"%s: v4l_fbuffer_alloc() - no bigphysarea_patch present, usage of high memory disabled,\n",
+				ZR_DEVNAME(zr));
+			dprintk(1,
+				KERN_ERR
+				"%s: v4l_fbuffer_alloc() - sorry, could not allocate %d V4L buffers of size %d KB.\n",
+				ZR_DEVNAME(zr), fh->v4l_buffers.num_buffers,
+				fh->v4l_buffers.buffer_size >> 10);
+			return -ENOBUFS;
+#endif
+#endif
 		}
 	}
 
@@ -430,6 +477,11 @@ v4l_fbuffer_free (struct file *file)
 				ClearPageReserved(MAP_NR(mem + off));
 			kfree((void *) fh->v4l_buffers.buffer[i].fbuffer);
 		}
+#if defined(CONFIG_BIGPHYS_AREA)
+		else
+			bigphysarea_free_pages((void *) fh->v4l_buffers.
+					       buffer[i].fbuffer);
+#endif
 		fh->v4l_buffers.buffer[i].fbuffer = NULL;
 	}
 
@@ -502,7 +554,7 @@ jpg_fbuffer_alloc (struct file *file)
 			jpg_fbuffer_free(file);
 			return -ENOBUFS;
 		}
-		fh->jpg_buffers.buffer[i].frag_tab = (u32 *) mem;
+		fh->jpg_buffers.buffer[i].frag_tab = (__le32 *) mem;
 		fh->jpg_buffers.buffer[i].frag_tab_bus =
 		    virt_to_bus((void *) mem);
 
@@ -1174,7 +1226,7 @@ zoran_close_end_session (struct file *file)
 
 	/* v4l capture */
 	if (fh->v4l_buffers.active != ZORAN_FREE) {
-		long flags;
+		unsigned long flags;
 
 		spin_lock_irqsave(&zr->spinlock, flags);
 		zr36057_set_memgrab(zr, 0);
@@ -1218,10 +1270,11 @@ zoran_open (struct inode *inode,
 	struct zoran_fh *fh;
 	int i, res, first_open = 0, have_module_locks = 0;
 
+	lock_kernel();
 	/* find the device */
 	for (i = 0; i < zoran_num; i++) {
-		if (zoran[i].video_dev->minor == minor) {
-			zr = &zoran[i];
+		if (zoran[i]->video_dev->minor == minor) {
+			zr = zoran[i];
 			break;
 		}
 	}
@@ -1328,6 +1381,7 @@ zoran_open (struct inode *inode,
 	file->private_data = fh;
 	fh->zr = zr;
 	zoran_open_init_session(file);
+	unlock_kernel();
 
 	return 0;
 
@@ -1345,6 +1399,7 @@ open_unlock_and_return:
 	if (zr) {
 		/*mutex_unlock(&zr->resource_lock);*/
 	}
+	unlock_kernel();
 
 	return res;
 }
@@ -1464,7 +1519,7 @@ setup_fbuffer (struct file               *file,
 	if (!bytesperline)
 		bytesperline = width * ((fmt->depth + 7) & ~7) / 8;
 
-#if 0
+#if 0 /* keep */
 	if (zr->overlay_active) {
 		/* dzjee... stupid users... don't even bother to turn off
 		 * overlay before changing the memory location...
@@ -1709,7 +1764,6 @@ setup_overlay (struct file *file,
 	return wait_grab_pending(zr);
 }
 
-#ifdef CONFIG_VIDEO_V4L2
 	/* get the status of a buffer in the clients buffer queue */
 static int
 zoran_v4l2_buffer_status (struct file        *file,
@@ -1815,7 +1869,6 @@ zoran_v4l2_buffer_status (struct file        *file,
 
 	return 0;
 }
-#endif
 
 static int
 zoran_set_norm (struct zoran *zr,
@@ -2624,8 +2677,6 @@ zoran_do_ioctl (struct inode *inode,
 	}
 		break;
 
-#ifdef CONFIG_VIDEO_V4L2
-
 		/* The new video4linux2 capture interface - much nicer than video4linux1, since
 		 * it allows for integrating the JPEG capturing calls inside standard v4l2
 		 */
@@ -2748,7 +2799,8 @@ zoran_do_ioctl (struct inode *inode,
 				    fh->v4l_settings.format->fourcc;
 				fmt->fmt.pix.colorspace =
 				    fh->v4l_settings.format->colorspace;
-				fmt->fmt.pix.bytesperline = 0;
+				fmt->fmt.pix.bytesperline =
+				    fh->v4l_settings.bytesperline;
 				if (BUZ_MAX_HEIGHT <
 				    (fh->v4l_settings.height * 2))
 					fmt->fmt.pix.field =
@@ -2806,7 +2858,7 @@ zoran_do_ioctl (struct inode *inode,
 	{
 		struct v4l2_format *fmt = arg;
 		int i, res = 0;
-		__u32 printformat;
+		__le32 printformat;
 
 		dprintk(3, KERN_DEBUG "%s: VIDIOC_S_FMT - type=%d, ",
 			ZR_DEVNAME(zr), fmt->type);
@@ -2843,13 +2895,6 @@ zoran_do_ioctl (struct inode *inode,
 				fmt->fmt.pix.width, fmt->fmt.pix.height,
 				fmt->fmt.pix.pixelformat,
 				(char *) &printformat);
-
-			if (fmt->fmt.pix.bytesperline > 0) {
-				dprintk(5,
-					KERN_ERR "%s: bpl not supported\n",
-					ZR_DEVNAME(zr));
-				return -EINVAL;
-			}
 
 			/* we can be requested to do JPEG/raw playback/capture */
 			if (!
@@ -2934,8 +2979,11 @@ zoran_do_ioctl (struct inode *inode,
 				fh->jpg_buffers.buffer_size =
 				    zoran_v4l2_calc_bufsize(&fh->
 							    jpg_settings);
+				fmt->fmt.pix.bytesperline = 0;
 				fmt->fmt.pix.sizeimage =
 				    fh->jpg_buffers.buffer_size;
+				fmt->fmt.pix.colorspace =
+				    V4L2_COLORSPACE_SMPTE170M;
 
 				/* we hereby abuse this variable to show that
 				 * we're gonna do mjpeg capture */
@@ -2990,9 +3038,13 @@ zoran_do_ioctl (struct inode *inode,
 
 				/* tell the user the
 				 * results/missing stuff */
+				fmt->fmt.pix.bytesperline =
+					fh->v4l_settings.bytesperline;
 				fmt->fmt.pix.sizeimage =
 					fh->v4l_settings.height *
 					fh->v4l_settings.bytesperline;
+				fmt->fmt.pix.colorspace =
+					fh->v4l_settings.format->colorspace;
 				if (BUZ_MAX_HEIGHT <
 				    (fh->v4l_settings.height * 2))
 					fmt->fmt.pix.field =
@@ -3051,7 +3103,7 @@ zoran_do_ioctl (struct inode *inode,
 	{
 		int i, res = 0;
 		struct v4l2_framebuffer *fb = arg;
-		__u32 printformat = __cpu_to_le32(fb->fmt.pixelformat);
+		__le32 printformat = __cpu_to_le32(fb->fmt.pixelformat);
 
 		dprintk(3,
 			KERN_DEBUG
@@ -3447,7 +3499,7 @@ zoran_do_ioctl (struct inode *inode,
 
 			/* unload capture */
 			if (zr->v4l_memgrab_active) {
-				long flags;
+				unsigned long flags;
 
 				spin_lock_irqsave(&zr->spinlock, flags);
 				zr36057_set_memgrab(zr, 0);
@@ -4197,7 +4249,6 @@ zoran_do_ioctl (struct inode *inode,
 		return 0;
 	}
 		break;
-#endif
 
 	default:
 		dprintk(1, KERN_DEBUG "%s: UNKNOWN ioctl cmd: 0x%x\n",
@@ -4247,7 +4298,7 @@ zoran_poll (struct file *file,
 		dprintk(3,
 			KERN_DEBUG
 			"%s: %s() raw - active=%c, sync_tail=%lu/%c, pend_tail=%lu, pend_head=%lu\n",
-			ZR_DEVNAME(zr), __FUNCTION__,
+			ZR_DEVNAME(zr), __func__,
 			"FAL"[fh->v4l_buffers.active], zr->v4l_sync_tail,
 			"UPMD"[zr->v4l_buffers.buffer[frame].state],
 			zr->v4l_pend_tail, zr->v4l_pend_head);
@@ -4269,7 +4320,7 @@ zoran_poll (struct file *file,
 		dprintk(3,
 			KERN_DEBUG
 			"%s: %s() jpg - active=%c, que_tail=%lu/%c, que_head=%lu, dma=%lu/%lu\n",
-			ZR_DEVNAME(zr), __FUNCTION__,
+			ZR_DEVNAME(zr), __func__,
 			"FAL"[fh->jpg_buffers.active], zr->jpg_que_tail,
 			"UPMD"[zr->jpg_buffers.buffer[frame].state],
 			zr->jpg_que_head, zr->jpg_dma_tail, zr->jpg_dma_head);
@@ -4387,7 +4438,7 @@ zoran_vm_close (struct vm_area_struct *vma)
 				mutex_lock(&zr->resource_lock);
 
 				if (fh->v4l_buffers.active != ZORAN_FREE) {
-					long flags;
+					unsigned long flags;
 
 					spin_lock_irqsave(&zr->spinlock, flags);
 					zr36057_set_memgrab(zr, 0);
@@ -4518,7 +4569,7 @@ zoran_mmap (struct file           *file,
 				if (todo > fraglen)
 					todo = fraglen;
 				pos =
-				    le32_to_cpu((unsigned long) fh->jpg_buffers.
+				    le32_to_cpu(fh->jpg_buffers.
 				    buffer[i].frag_tab[2 * j]);
 				/* should just be pos on i386 */
 				page = virt_to_phys(bus_to_virt(pos))
@@ -4644,7 +4695,9 @@ static const struct file_operations zoran_fops = {
 	.open = zoran_open,
 	.release = zoran_close,
 	.ioctl = zoran_ioctl,
+#ifdef CONFIG_COMPAT
 	.compat_ioctl	= v4l_compat_ioctl32,
+#endif
 	.llseek = no_llseek,
 	.read = zoran_read,
 	.write = zoran_write,
@@ -4654,10 +4707,6 @@ static const struct file_operations zoran_fops = {
 
 struct video_device zoran_template __devinitdata = {
 	.name = ZORAN_NAME,
-	.type = ZORAN_VID_TYPE,
-#ifdef CONFIG_VIDEO_V4L2
-	.type2 = ZORAN_V4L2_VID_FLAGS,
-#endif
 	.fops = &zoran_fops,
 	.release = &zoran_vdev_release,
 	.minor = -1

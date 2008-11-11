@@ -38,7 +38,7 @@
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
 #include <linux/page-flags.h>
-#include <linux/byteorder/generic.h>
+#include <asm/byteorder.h>
 #include <asm/page.h>
 #include <asm/uaccess.h>
 
@@ -303,7 +303,11 @@ int zc0301_i2c_write(struct zc0301_device* cam, u16 address, u16 value)
 
 /*****************************************************************************/
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void zc0301_urb_complete(struct urb *urb, struct pt_regs* regs)
+#else
 static void zc0301_urb_complete(struct urb *urb)
+#endif
 {
 	struct zc0301_device* cam = urb->context;
 	struct zc0301_frame_t** f;
@@ -657,7 +661,7 @@ static int zc0301_open(struct inode* inode, struct file* filp)
 	if (!down_read_trylock(&zc0301_dev_lock))
 		return -EAGAIN;
 
-	cam = video_get_drvdata(video_devdata(filp));
+	cam = video_drvdata(filp);
 
 	if (wait_for_completion_interruptible(&cam->probe)) {
 		up_read(&zc0301_dev_lock);
@@ -739,7 +743,7 @@ static int zc0301_release(struct inode* inode, struct file* filp)
 
 	down_write(&zc0301_dev_lock);
 
-	cam = video_get_drvdata(video_devdata(filp));
+	cam = video_drvdata(filp);
 
 	zc0301_stop_transfer(cam);
 	zc0301_release_buffers(cam);
@@ -759,7 +763,7 @@ static int zc0301_release(struct inode* inode, struct file* filp)
 static ssize_t
 zc0301_read(struct file* filp, char __user * buf, size_t count, loff_t* f_pos)
 {
-	struct zc0301_device* cam = video_get_drvdata(video_devdata(filp));
+	struct zc0301_device *cam = video_drvdata(filp);
 	struct zc0301_frame_t* f, * i;
 	unsigned long lock_flags;
 	long timeout;
@@ -866,7 +870,7 @@ exit:
 
 static unsigned int zc0301_poll(struct file *filp, poll_table *wait)
 {
-	struct zc0301_device* cam = video_get_drvdata(video_devdata(filp));
+	struct zc0301_device *cam = video_drvdata(filp);
 	struct zc0301_frame_t* f;
 	unsigned long lock_flags;
 	unsigned int mask = 0;
@@ -941,7 +945,7 @@ static struct vm_operations_struct zc0301_vm_ops = {
 
 static int zc0301_mmap(struct file* filp, struct vm_area_struct *vma)
 {
-	struct zc0301_device* cam = video_get_drvdata(video_devdata(filp));
+	struct zc0301_device *cam = video_drvdata(filp);
 	unsigned long size = vma->vm_end - vma->vm_start,
 		      start = vma->vm_start;
 	void *pos;
@@ -1796,7 +1800,7 @@ zc0301_vidioc_s_parm(struct zc0301_device* cam, void __user * arg)
 static int zc0301_ioctl_v4l2(struct inode* inode, struct file* filp,
 			     unsigned int cmd, void __user * arg)
 {
-	struct zc0301_device* cam = video_get_drvdata(video_devdata(filp));
+	struct zc0301_device *cam = video_drvdata(filp);
 
 	switch (cmd) {
 
@@ -1891,7 +1895,7 @@ static int zc0301_ioctl_v4l2(struct inode* inode, struct file* filp,
 static int zc0301_ioctl(struct inode* inode, struct file* filp,
 			unsigned int cmd, unsigned long arg)
 {
-	struct zc0301_device* cam = video_get_drvdata(video_devdata(filp));
+	struct zc0301_device *cam = video_drvdata(filp);
 	int err = 0;
 
 	if (mutex_lock_interruptible(&cam->fileop_mutex))
@@ -1925,7 +1929,9 @@ static const struct file_operations zc0301_fops = {
 	.open =    zc0301_open,
 	.release = zc0301_release,
 	.ioctl =   zc0301_ioctl,
+#ifdef CONFIG_COMPAT
 	.compat_ioctl = v4l_compat_ioctl32,
+#endif
 	.read =    zc0301_read,
 	.poll =    zc0301_poll,
 	.mmap =    zc0301_mmap,
@@ -1939,7 +1945,7 @@ zc0301_usb_probe(struct usb_interface* intf, const struct usb_device_id* id)
 {
 	struct usb_device *udev = interface_to_usbdev(intf);
 	struct zc0301_device* cam;
-	static unsigned int dev_nr = 0;
+	static unsigned int dev_nr;
 	unsigned int i;
 	int err = 0;
 
@@ -1983,11 +1989,10 @@ zc0301_usb_probe(struct usb_interface* intf, const struct usb_device_id* id)
 	}
 
 	strcpy(cam->v4ldev->name, "ZC0301[P] PC Camera");
-	cam->v4ldev->owner = THIS_MODULE;
-	cam->v4ldev->type = VID_TYPE_CAPTURE | VID_TYPE_SCALES;
 	cam->v4ldev->fops = &zc0301_fops;
 	cam->v4ldev->minor = video_nr[dev_nr];
 	cam->v4ldev->release = video_device_release;
+	cam->v4ldev->parent = &udev->dev;
 	video_set_drvdata(cam->v4ldev, cam);
 
 	init_completion(&cam->probe);

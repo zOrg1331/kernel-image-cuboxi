@@ -42,6 +42,7 @@
 //#include<errno.h>
 
 /* v4l  API */
+#include <media/compat.h>
 #include <linux/videodev.h>
 
 /* headerfile of this module */
@@ -55,11 +56,10 @@
 #define MAX_CODECS 20
 
 /* amount of chips attached via this driver */
-static int zr36016_codecs = 0;
+static int zr36016_codecs;
 
 /* debugging is available via module parameter */
-
-static int debug = 0;
+static int debug;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0-4)");
 
@@ -228,7 +228,7 @@ zr36016_basic_test (struct zr36016 *ptr)
    simple loop for pushing the init datasets - NO USE --
    ========================================================================= */
 
-#if 0
+#if 0 /* keep */
 static int zr36016_pushit (struct zr36016 *ptr,
 			   u16             startreg,
 			   u16             len,

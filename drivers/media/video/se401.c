@@ -35,7 +35,7 @@ static const char version[] = "0.24";
 #include <linux/usb.h>
 #include "se401.h"
 
-static int flickerless=0;
+static int flickerless;
 static int video_nr = -1;
 
 static struct usb_device_id device_table [] = {
@@ -282,7 +282,11 @@ static void se401_auto_resetlevel(struct usb_se401 *se401)
 }
 
 /* irq handler for snapshot button */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void se401_button_irq(struct urb *urb, struct pt_regs *regs)
+#else
 static void se401_button_irq(struct urb *urb)
+#endif
 {
 	struct usb_se401 *se401 = urb->context;
 	int status;
@@ -300,10 +304,10 @@ static void se401_button_irq(struct urb *urb)
 	case -ENOENT:
 	case -ESHUTDOWN:
 		/* this urb is terminated, clean up */
-		dbg("%s - urb shutting down with status: %d", __FUNCTION__, urb->status);
+		dbg("%s - urb shutting down with status: %d", __func__, urb->status);
 		return;
 	default:
-		dbg("%s - nonzero urb status received: %d", __FUNCTION__, urb->status);
+		dbg("%s - nonzero urb status received: %d", __func__, urb->status);
 		goto exit;
 	}
 
@@ -315,10 +319,14 @@ exit:
 	status = usb_submit_urb (urb, GFP_ATOMIC);
 	if (status)
 		err ("%s - usb_submit_urb failed with result %d",
-		     __FUNCTION__, status);
+		     __func__, status);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void se401_video_irq(struct urb *urb, struct pt_regs *regs)
+#else
 static void se401_video_irq(struct urb *urb)
+#endif
 {
 	struct usb_se401 *se401 = urb->context;
 	int length = urb->actual_length;
@@ -936,14 +944,18 @@ static int se401_open(struct inode *inode, struct file *file)
 	struct usb_se401 *se401 = (struct usb_se401 *)dev;
 	int err = 0;
 
-	if (se401->user)
+	lock_kernel();
+	if (se401->user) {
+		unlock_kernel();
 		return -EBUSY;
+	}
 	se401->fbuf = rvmalloc(se401->maxframesize * SE401_NUMFRAMES);
 	if (se401->fbuf)
 		file->private_data = dev;
 	else
 		err = -ENOMEM;
 	se401->user = !err;
+	unlock_kernel();
 
 	return err;
 }
@@ -1224,14 +1236,15 @@ static const struct file_operations se401_fops = {
 	.read =         se401_read,
 	.mmap =         se401_mmap,
 	.ioctl =        se401_ioctl,
+#ifdef CONFIG_COMPAT
 	.compat_ioctl = v4l_compat_ioctl32,
+#endif
 	.llseek =       no_llseek,
 };
 static struct video_device se401_template = {
-	.owner =	THIS_MODULE,
 	.name =         "se401 USB camera",
-	.type =         VID_TYPE_CAPTURE,
 	.fops =         &se401_fops,
+	.release = video_device_release_empty,
 };
 
 
@@ -1279,7 +1292,7 @@ static int se401_init(struct usb_se401 *se401, int button)
 	rc=se401_sndctrl(0, se401, SE401_REQ_GET_HEIGHT, 0, cp, sizeof(cp));
 	se401->cheight=cp[0]+cp[1]*256;
 
-	if (!cp[2] && SE401_FORMAT_BAYER) {
+	if (!(cp[2] & SE401_FORMAT_BAYER)) {
 		err("Bayer format not supported!");
 		return 1;
 	}
@@ -1397,7 +1410,7 @@ static int se401_probe(struct usb_interface *intf,
 	mutex_init(&se401->lock);
 	wmb();
 
-	if (video_register_device(&se401->vdev, VFL_TYPE_GRABBER, video_nr) == -1) {
+	if (video_register_device(&se401->vdev, VFL_TYPE_GRABBER, video_nr) < 0) {
 		kfree(se401);
 		err("video_register_device failed");
 		return -EIO;

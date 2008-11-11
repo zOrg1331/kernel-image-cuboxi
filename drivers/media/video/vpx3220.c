@@ -24,8 +24,6 @@
 #include <linux/types.h>
 #include <linux/slab.h>
 
-#include <linux/byteorder/swab.h>
-
 #include <asm/io.h>
 #include <asm/uaccess.h>
 
@@ -33,6 +31,7 @@
 
 #define I2C_NAME(x) (x)->name
 
+#include <media/compat.h>
 #include <linux/videodev.h>
 #include <media/v4l2-common.h>
 #include <linux/video_decoder.h>
@@ -40,7 +39,7 @@
 #define I2C_VPX3220        0x86
 #define VPX3220_DEBUG	KERN_DEBUG "vpx3220: "
 
-static int debug = 0;
+static int debug;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0-1)");
 

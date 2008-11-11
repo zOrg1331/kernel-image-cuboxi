@@ -30,7 +30,6 @@
 #include <linux/mm.h>
 #include <linux/utsname.h>
 #include <linux/highmem.h>
-#include <linux/videodev.h>
 #include <linux/vmalloc.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -43,7 +42,6 @@
 #include <media/saa7115.h>
 #include <media/v4l2-common.h>
 #include <media/tuner.h>
-#include <media/audiochip.h>
 
 #include <linux/workqueue.h>
 
@@ -53,19 +51,21 @@
 
 #include "usbvision.h"
 
-static unsigned int core_debug = 0;
+static unsigned int core_debug;
 module_param(core_debug,int,0644);
 MODULE_PARM_DESC(core_debug,"enable debug messages [core]");
 
-static unsigned int force_testpattern = 0;
+static unsigned int force_testpattern;
 module_param(force_testpattern,int,0644);
 MODULE_PARM_DESC(force_testpattern,"enable test pattern display [core]");
 
-static int adjustCompression = 1;			// Set the compression to be adaptive
+static int adjustCompression = 1;	/* Set the compression to be adaptive */
 module_param(adjustCompression, int, 0444);
 MODULE_PARM_DESC(adjustCompression, " Set the ADPCM compression for the device.  Default: 1 (On)");
 
-static int SwitchSVideoInput = 0;			// To help people with Black and White output with using s-video input.  Some cables and input device are wired differently.
+/* To help people with Black and White output with using s-video input.
+ * Some cables and input device are wired differently. */
+static int SwitchSVideoInput;
 module_param(SwitchSVideoInput, int, 0444);
 MODULE_PARM_DESC(SwitchSVideoInput, " Set the S-Video input.  Some cables and input device are wired differently. Default: 0 (Off)");
 
@@ -82,8 +82,10 @@ MODULE_PARM_DESC(adjust_Y_Offset, "adjust Y offset display [core]");
 
 
 #ifdef USBVISION_DEBUG
-	#define PDEBUG(level, fmt, args...) \
-		if (core_debug & (level)) info("[%s:%d] " fmt, __PRETTY_FUNCTION__, __LINE__ , ## args)
+	#define PDEBUG(level, fmt, args...) { \
+		if (core_debug & (level)) \
+			info("[%s:%d] " fmt, __func__, __LINE__ , ## args); \
+	}
 #else
 	#define PDEBUG(level, fmt, args...) do {} while(0)
 #endif
@@ -163,7 +165,6 @@ static void usbvision_rvfree(void *mem, unsigned long size)
 
 	vfree(mem);
 }
-
 
 
 #if ENABLE_HEXDUMP
@@ -384,7 +385,7 @@ int usbvision_scratch_alloc(struct usb_usbvision *usbvision)
 	scratch_reset(usbvision);
 	if(usbvision->scratch == NULL) {
 		err("%s: unable to allocate %d bytes for scratch",
-		    __FUNCTION__, scratch_buf_size);
+		    __func__, scratch_buf_size);
 		return -ENOMEM;
 	}
 	return 0;
@@ -418,7 +419,7 @@ static void usbvision_testpattern(struct usb_usbvision *usbvision,
 	unsigned char *f;
 	int num_cell = 0;
 	int scan_length = 0;
-	static int num_pass = 0;
+	static int num_pass;
 
 	if (usbvision == NULL) {
 		printk(KERN_ERR "%s: usbvision == NULL\n", proc);
@@ -493,7 +494,8 @@ int usbvision_decompress_alloc(struct usb_usbvision *usbvision)
 	int IFB_size = MAX_FRAME_WIDTH * MAX_FRAME_HEIGHT * 3 / 2;
 	usbvision->IntraFrameBuffer = vmalloc_32(IFB_size);
 	if (usbvision->IntraFrameBuffer == NULL) {
-		err("%s: unable to allocate %d for compr. frame buffer", __FUNCTION__, IFB_size);
+		err("%s: unable to allocate %d for compr. frame buffer",
+		    __func__, IFB_size);
 		return -ENOMEM;
 	}
 	return 0;
@@ -1430,7 +1432,7 @@ static int usbvision_compress_isochronous(struct usb_usbvision *usbvision,
 	}
 #if ENABLE_HEXDUMP
 	if (totlen > 0) {
-		static int foo = 0;
+		static int foo;
 		if (foo < 1) {
 			printk(KERN_DEBUG "+%d.\n", usbvision->scratchlen);
 			usbvision_hexdump(data0, (totlen > 64) ? 64 : totlen);
@@ -1441,8 +1443,13 @@ static int usbvision_compress_isochronous(struct usb_usbvision *usbvision,
  return totlen;
 }
 
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,18)
 static void usbvision_isocIrq(struct urb *urb)
 {
+#else
+static void usbvision_isocIrq(struct urb *urb, struct pt_regs *regs)
+{
+#endif
 	int errCode = 0;
 	int len;
 	struct usb_usbvision *usbvision = urb->context;
@@ -1516,7 +1523,7 @@ static void usbvision_isocIrq(struct urb *urb)
 
 	if(errCode) {
 		err("%s: usb_submit_urb failed: error %d",
-		    __FUNCTION__, errCode);
+		    __func__, errCode);
 	}
 
 	return;
@@ -1547,7 +1554,7 @@ int usbvision_read_reg(struct usb_usbvision *usbvision, unsigned char reg)
 				0, (__u16) reg, buffer, 1, HZ);
 
 	if (errCode < 0) {
-		err("%s: failed: error %d", __FUNCTION__, errCode);
+		err("%s: failed: error %d", __func__, errCode);
 		return errCode;
 	}
 	return buffer[0];
@@ -1575,13 +1582,17 @@ int usbvision_write_reg(struct usb_usbvision *usbvision, unsigned char reg,
 				USB_RECIP_ENDPOINT, 0, (__u16) reg, &value, 1, HZ);
 
 	if (errCode < 0) {
-		err("%s: failed: error %d", __FUNCTION__, errCode);
+		err("%s: failed: error %d", __func__, errCode);
 	}
 	return errCode;
 }
 
 
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,18)
 static void usbvision_ctrlUrb_complete(struct urb *urb)
+#else
+static void usbvision_ctrlUrb_complete(struct urb *urb, struct pt_regs *regs)
+#endif
 {
 	struct usb_usbvision *usbvision = (struct usb_usbvision *)urb->context;
 
@@ -1851,7 +1862,7 @@ int usbvision_set_output(struct usb_usbvision *usbvision, int width,
 				 0, (__u16) USBVISION_LXSIZE_O, value, 4, HZ);
 
 		if (errCode < 0) {
-			err("%s failed: error %d", __FUNCTION__, errCode);
+			err("%s failed: error %d", __func__, errCode);
 			return errCode;
 		}
 		usbvision->curwidth = usbvision->stretch_width * UsbWidth;
@@ -2237,7 +2248,7 @@ static int usbvision_set_dram_settings(struct usb_usbvision *usbvision)
 			     (__u16) USBVISION_DRM_PRM1, value, 8, HZ);
 
 	if (rc < 0) {
-		err("%sERROR=%d", __FUNCTION__, rc);
+		err("%sERROR=%d", __func__, rc);
 		return rc;
 	}
 
@@ -2285,9 +2296,17 @@ int usbvision_power_on(struct usb_usbvision *usbvision)
  */
 
 // to call usbvision_power_off from task queue
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+static void call_usbvision_power_off(void *_usbvision)
+#else
 static void call_usbvision_power_off(struct work_struct *work)
+#endif
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	struct usb_usbvision *usbvision = _usbvision;
+#else
 	struct usb_usbvision *usbvision = container_of(work, struct usb_usbvision, powerOffWork);
+#endif
 
 	PDEBUG(DBG_FUNC, "");
 	if(mutex_lock_interruptible(&usbvision->lock)) {
@@ -2310,9 +2329,12 @@ static void usbvision_powerOffTimer(unsigned long data)
 
 	PDEBUG(DBG_FUNC, "");
 	del_timer(&usbvision->powerOffTimer);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	INIT_WORK(&usbvision->powerOffWork, call_usbvision_power_off, usbvision);
+#else
 	INIT_WORK(&usbvision->powerOffWork, call_usbvision_power_off);
+#endif
 	(void) schedule_work(&usbvision->powerOffWork);
-
 }
 
 void usbvision_init_powerOffTimer(struct usb_usbvision *usbvision)
@@ -2486,7 +2508,7 @@ int usbvision_init_isoc(struct usb_usbvision *usbvision)
 
 		urb = usb_alloc_urb(USBVISION_URB_FRAMES, GFP_KERNEL);
 		if (urb == NULL) {
-			err("%s: usb_alloc_urb() failed", __FUNCTION__);
+			err("%s: usb_alloc_urb() failed", __func__);
 			return -ENOMEM;
 		}
 		usbvision->sbuf[bufIdx].urb = urb;
@@ -2513,20 +2535,19 @@ int usbvision_init_isoc(struct usb_usbvision *usbvision)
 		}
 	}
 
-
 	/* Submit all URBs */
 	for (bufIdx = 0; bufIdx < USBVISION_NUMSBUF; bufIdx++) {
 			errCode = usb_submit_urb(usbvision->sbuf[bufIdx].urb,
 						 GFP_KERNEL);
 		if (errCode) {
 			err("%s: usb_submit_urb(%d) failed: error %d",
-			    __FUNCTION__, bufIdx, errCode);
+			    __func__, bufIdx, errCode);
 		}
 	}
 
 	usbvision->streaming = Stream_Idle;
 	PDEBUG(DBG_ISOC, "%s: streaming=1 usbvision->video_endp=$%02x",
-	       __FUNCTION__,
+	       __func__,
 	       usbvision->video_endp);
 	return 0;
 }
@@ -2559,8 +2580,7 @@ void usbvision_stop_isoc(struct usb_usbvision *usbvision)
 		usbvision->sbuf[bufIdx].urb = NULL;
 	}
 
-
-	PDEBUG(DBG_ISOC, "%s: streaming=Stream_Off\n", __FUNCTION__);
+	PDEBUG(DBG_ISOC, "%s: streaming=Stream_Off\n", __func__);
 	usbvision->streaming = Stream_Off;
 
 	if (!usbvision->remove_pending) {
@@ -2571,7 +2591,7 @@ void usbvision_stop_isoc(struct usb_usbvision *usbvision)
 					    usbvision->ifaceAlt);
 		if (errCode < 0) {
 			err("%s: usb_set_interface() failed: error %d",
-			    __FUNCTION__, errCode);
+			    __func__, errCode);
 			usbvision->last_error = errCode;
 		}
 		regValue = (16-usbvision_read_reg(usbvision, USBVISION_ALTER_REG)) & 0x0F;
