@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.25-std-def-alt9
-# Mon Sep  8 15:12:58 2008
+# Linux kernel version: 2.6.25-std-def-alt8.M41.1
+# Tue Nov 11 16:57:25 2008
 #
 CONFIG_64BIT=y
 # CONFIG_X86_32 is not set
@@ -2498,9 +2498,10 @@ CONFIG_MFD_SM501=m
 #
 # Multimedia devices
 #
-# CONFIG_VIDEO_DEV is not set
-# CONFIG_DVB_CORE is not set
-# CONFIG_DAB is not set
+
+#
+# Multimedia core support
+#
 
 #
 # Graphics support
@@ -2643,20 +2644,7 @@ CONFIG_LOGO_LINUX_CLUT224=y
 # Bootsplash configuration
 #
 CONFIG_BOOTSPLASH=y
-
-#
-# Sound
-#
 CONFIG_SOUND=m
-
-#
-# Advanced Linux Sound Architecture
-#
-# CONFIG_SND is not set
-
-#
-# Open Sound System
-#
 CONFIG_SOUND_PRIME=m
 CONFIG_SOUND_TRIDENT=m
 CONFIG_SOUND_MSNDCLAS=m
