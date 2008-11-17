@@ -64,7 +64,13 @@ extern int wait_grab_pending(struct zoran *zr);
 /* interrupts */
 extern void print_interrupts(struct zoran *zr);
 extern void clear_interrupt_counters(struct zoran *zr);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+extern irqreturn_t zoran_irq(int irq,
+			     void *dev_id,
+			     struct pt_regs *regs);
+#else
 extern irqreturn_t zoran_irq(int irq, void *dev_id);
+#endif
 
 /* JPEG codec access */
 extern void jpeg_start(struct zoran *zr);
@@ -77,6 +83,14 @@ extern void zoran_set_pci_master(struct zoran *zr,
 				 int set_master);
 extern void zoran_init_hardware(struct zoran *zr);
 extern void zr36057_restart(struct zoran *zr);
+
+extern const struct zoran_format zoran_formats[];
+
+extern int v4l_nbufs;
+extern int v4l_bufsize;
+extern int jpg_nbufs;
+extern int jpg_bufsize;
+extern int pass_through;
 
 /* i2c */
 extern int decoder_command(struct zoran *zr,

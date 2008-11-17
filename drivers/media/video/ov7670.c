@@ -18,6 +18,7 @@
 #include <media/v4l2-common.h>
 #include <media/v4l2-chip-ident.h>
 #include <linux/i2c.h>
+#include <media/compat.h>
 
 
 MODULE_AUTHOR("Jonathan Corbet <corbet@lwn.net>");
@@ -423,6 +424,27 @@ static int ov7670_write(struct i2c_client *c, unsigned char reg,
 	return ret;
 }
 
+#if 0 /* Not currently used, but maybe should be  */
+
+static int ov7670_write_mask(struct i2c_client *c, unsigned char reg,
+		unsigned char value, unsigned char mask)
+{
+	unsigned char v;
+	int ret, tries = 0;
+
+	ret = ov7670_read(c, reg, &v);
+	if (ret < 0)
+		return ret;
+	v &= ~mask;
+	v |= (value & mask);
+	msleep(10); /* FIXME experiment */
+	do {
+		ret = ov7670_write(c, reg, v);
+	} while (ret < 0 && ++tries < 3);
+	return ret;
+}
+
+#endif
 
 /*
  * Write a list of register settings; ff/ff stops the process.
@@ -682,17 +704,17 @@ static int ov7670_try_fmt(struct i2c_client *c, struct v4l2_format *fmt,
 	for (index = 0; index < N_OV7670_FMTS; index++)
 		if (ov7670_formats[index].pixelformat == pix->pixelformat)
 			break;
-	if (index >= N_OV7670_FMTS)
-		return -EINVAL;
+	if (index >= N_OV7670_FMTS) {
+		/* default to first format */
+		index = 0;
+		pix->pixelformat = ov7670_formats[0].pixelformat;
+	}
 	if (ret_fmt != NULL)
 		*ret_fmt = ov7670_formats + index;
 	/*
 	 * Fields: the OV devices claim to be progressive.
 	 */
-	if (pix->field == V4L2_FIELD_ANY)
-		pix->field = V4L2_FIELD_NONE;
-	else if (pix->field != V4L2_FIELD_NONE)
-		return -EINVAL;
+	pix->field = V4L2_FIELD_NONE;
 	/*
 	 * Round requested image size down to the nearest
 	 * we support, but not below the smallest.
@@ -825,6 +847,28 @@ static int ov7670_s_parm(struct i2c_client *c, struct v4l2_streamparm *parms)
  * Code for dealing with controls.
  */
 
+#if 0  /* This seems unneeded after all, should probably come out */
+/*
+ * Fetch and store the color matrix.
+ */
+static int ov7670_get_cmatrix(struct i2c_client *client,
+	int matrix[CMATRIX_LEN])
+{
+	int i, ret;
+	unsigned char signbits;
+
+	ret = ov7670_read(client, REG_CMATRIX_SIGN, &signbits);
+	for (i = 0; i < CMATRIX_LEN; i++) {
+		unsigned char raw;
+
+		ret += ov7670_read(client, REG_CMATRIX_BASE + i, &raw);
+		matrix[i] = (int) raw;
+		if (signbits & (1 << i))
+			matrix[i] *= -1;
+	}
+	return ret;
+}
+#endif
 
 
 
@@ -833,7 +877,7 @@ static int ov7670_store_cmatrix(struct i2c_client *client,
 		int matrix[CMATRIX_LEN])
 {
 	int i, ret;
-	unsigned char signbits;
+	unsigned char signbits = 0;
 
 	/*
 	 * Weird crap seems to exist in the upper part of
@@ -1009,7 +1053,7 @@ static unsigned char ov7670_abs_to_sm(unsigned char v)
 
 static int ov7670_t_brightness(struct i2c_client *client, int value)
 {
-	unsigned char com8, v;
+	unsigned char com8 = 0, v;
 	int ret;
 
 	ov7670_read(client, REG_COM8, &com8);
@@ -1022,7 +1066,7 @@ static int ov7670_t_brightness(struct i2c_client *client, int value)
 
 static int ov7670_q_brightness(struct i2c_client *client, __s32 *value)
 {
-	unsigned char v;
+	unsigned char v = 0;
 	int ret = ov7670_read(client, REG_BRIGHT, &v);
 
 	*value = ov7670_sm_to_abs(v);
@@ -1036,7 +1080,7 @@ static int ov7670_t_contrast(struct i2c_client *client, int value)
 
 static int ov7670_q_contrast(struct i2c_client *client, __s32 *value)
 {
-	unsigned char v;
+	unsigned char v = 0;
 	int ret = ov7670_read(client, REG_CONTRAS, &v);
 
 	*value = v;
@@ -1046,7 +1090,7 @@ static int ov7670_q_contrast(struct i2c_client *client, __s32 *value)
 static int ov7670_q_hflip(struct i2c_client *client, __s32 *value)
 {
 	int ret;
-	unsigned char v;
+	unsigned char v = 0;
 
 	ret = ov7670_read(client, REG_MVFP, &v);
 	*value = (v & MVFP_MIRROR) == MVFP_MIRROR;
@@ -1056,7 +1100,7 @@ static int ov7670_q_hflip(struct i2c_client *client, __s32 *value)
 
 static int ov7670_t_hflip(struct i2c_client *client, int value)
 {
-	unsigned char v;
+	unsigned char v = 0;
 	int ret;
 
 	ret = ov7670_read(client, REG_MVFP, &v);
@@ -1074,7 +1118,7 @@ static int ov7670_t_hflip(struct i2c_client *client, int value)
 static int ov7670_q_vflip(struct i2c_client *client, __s32 *value)
 {
 	int ret;
-	unsigned char v;
+	unsigned char v = 0;
 
 	ret = ov7670_read(client, REG_MVFP, &v);
 	*value = (v & MVFP_FLIP) == MVFP_FLIP;
@@ -1084,7 +1128,7 @@ static int ov7670_q_vflip(struct i2c_client *client, __s32 *value)
 
 static int ov7670_t_vflip(struct i2c_client *client, int value)
 {
-	unsigned char v;
+	unsigned char v = 0;
 	int ret;
 
 	ret = ov7670_read(client, REG_MVFP, &v);

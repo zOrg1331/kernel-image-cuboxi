@@ -19,18 +19,20 @@
  * 02110-1301, USA.
  */
 
-
+#include <linux/version.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/i2c.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 23)
 #include <linux/freezer.h>
-#include <linux/videodev.h>
+#endif
 #include <linux/videodev2.h>
 #include <media/v4l2-common.h>
 #include <media/msp3400.h>
 #include <linux/kthread.h>
 #include <linux/suspend.h>
+#include <media/compat.h>
 #include "msp3400-driver.h"
 
 /* this one uses the automatic sound standard detection of newer msp34xx
@@ -480,7 +482,6 @@ int msp3400c_thread(void *data)
 	struct msp3400c_carrier_detect *cd;
 	int count, max1, max2, val1, val2, val, i;
 
-
 	v4l_dbg(1, msp_debug, client, "msp3400 daemon started\n");
 	set_freezable();
 	for (;;) {
@@ -833,11 +834,6 @@ static int msp34xxg_modus(struct i2c_client *client)
 		v4l_dbg(1, msp_debug, client, "selected radio modus\n");
 		return 0x0001;
 	}
-
-	if (state->v4l2_std & V4L2_STD_PAL) {
-		v4l_dbg(1, msp_debug, client, "selected PAL modus\n");
-		return 0x7001;
-	}
 	if (state->v4l2_std == V4L2_STD_NTSC_M_JP) {
 		v4l_dbg(1, msp_debug, client, "selected M (EIA-J) modus\n");
 		return 0x4001;
@@ -846,15 +842,15 @@ static int msp34xxg_modus(struct i2c_client *client)
 		v4l_dbg(1, msp_debug, client, "selected M (A2) modus\n");
 		return 0x0001;
 	}
+	if (state->v4l2_std == V4L2_STD_SECAM_L) {
+		v4l_dbg(1, msp_debug, client, "selected SECAM-L modus\n");
+		return 0x6001;
+	}
 	if (state->v4l2_std & V4L2_STD_MN) {
 		v4l_dbg(1, msp_debug, client, "selected M (BTSC) modus\n");
 		return 0x2001;
 	}
-	if (state->v4l2_std & V4L2_STD_SECAM) {
-		v4l_dbg(1, msp_debug, client, "selected SECAM modus\n");
-		return 0x6001;
-	}
-	return 0x0001;
+	return 0x7001;
 }
 
 static void msp34xxg_set_source(struct i2c_client *client, u16 reg, int in)

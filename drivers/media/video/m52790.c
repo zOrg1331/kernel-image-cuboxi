@@ -26,16 +26,22 @@
 #include <asm/uaccess.h>
 #include <linux/i2c.h>
 #include <linux/i2c-id.h>
-#include <linux/videodev.h>
+#include <linux/videodev2.h>
 #include <media/m52790.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-chip-ident.h>
 #include <media/v4l2-i2c-drv.h>
+#include <media/compat.h>
 
 MODULE_DESCRIPTION("i2c device driver for m52790 A/V switch");
 MODULE_AUTHOR("Hans Verkuil");
 MODULE_LICENSE("GPL");
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22)
+static unsigned short normal_i2c[] = { 0x90 >> 1, I2C_CLIENT_END };
+
+I2C_CLIENT_INSMOD;
+#endif
 
 struct m52790_state {
 	u16 input;
@@ -126,7 +132,8 @@ static int m52790_command(struct i2c_client *client, unsigned int cmd,
 
 /* i2c implementation */
 
-static int m52790_probe(struct i2c_client *client)
+static int m52790_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct m52790_state *state;
 
@@ -134,8 +141,10 @@ static int m52790_probe(struct i2c_client *client)
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA))
 		return -EIO;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
 	snprintf(client->name, sizeof(client->name) - 1, "m52790");
 
+#endif
 	v4l_info(client, "chip found @ 0x%x (%s)\n",
 			client->addr << 1, client->adapter->name);
 
@@ -158,11 +167,21 @@ static int m52790_remove(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
+static const struct i2c_device_id m52790_id[] = {
+	{ "m52790", 0 },
+	{ }
+};
+MODULE_DEVICE_TABLE(i2c, m52790_id);
+
+#endif
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "m52790",
 	.driverid = I2C_DRIVERID_M52790,
 	.command = m52790_command,
 	.probe = m52790_probe,
 	.remove = m52790_remove,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
+	.id_table = m52790_id,
+#endif
 };
-

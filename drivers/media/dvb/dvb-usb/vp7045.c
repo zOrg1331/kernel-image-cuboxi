@@ -18,6 +18,9 @@
 static int dvb_usb_vp7045_debug;
 module_param_named(debug,dvb_usb_vp7045_debug, int, 0644);
 MODULE_PARM_DESC(debug, "set debugging level (1=info,xfer=2,rc=4 (or-able))." DVB_USB_DEBUG_STATUS);
+
+DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
+
 #define deb_info(args...) dprintk(dvb_usb_vp7045_debug,0x01,args)
 #define deb_xfer(args...) dprintk(dvb_usb_vp7045_debug,0x02,args)
 #define deb_rc(args...)   dprintk(dvb_usb_vp7045_debug,0x04,args)
@@ -147,6 +150,14 @@ static struct dvb_usb_rc_key vp7045_rc_keys[] = {
 	{ 0x00, 0x53, KEY_GREEN},
 	{ 0x00, 0x5e, KEY_YELLOW},
 	{ 0x00, 0x5f, KEY_BLUE}
+#if 0
+	/* not sure which linux key codes to use for the following buttons: */
+	{ 0x00, 0x46, ???}, /* Zoom- */
+	{ 0x00, 0x0e, ???}, /* Recall */
+	{ 0x00, 0x49, ???}, /* L/R */
+	{ 0x00, 0x47, ???}, /* PIP */
+	{ 0x00, 0x50, ???}, /* SAP */
+#endif
 };
 
 static int vp7045_rc_query(struct dvb_usb_device *d, u32 *event, int *state)
@@ -219,7 +230,8 @@ static struct dvb_usb_device_properties vp7045_properties;
 static int vp7045_usb_probe(struct usb_interface *intf,
 		const struct usb_device_id *id)
 {
-	return dvb_usb_device_init(intf,&vp7045_properties,THIS_MODULE,NULL);
+	return dvb_usb_device_init(intf, &vp7045_properties,
+				   THIS_MODULE, NULL, adapter_nr);
 }
 
 static struct usb_device_id vp7045_usb_table [] = {

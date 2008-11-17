@@ -49,7 +49,11 @@ static int frame_sizes[] = {
 #define FRAME_SIZE_PER_DESC   frame_sizes[cam->cur_alt]
 
 static void process_frame(struct camera_data *cam);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void cpia2_usb_complete(struct urb *urb, struct pt_regs *);
+#else
 static void cpia2_usb_complete(struct urb *urb);
+#endif
 static int cpia2_usb_probe(struct usb_interface *intf,
 			   const struct usb_device_id *id);
 static void cpia2_usb_disconnect(struct usb_interface *intf);
@@ -84,7 +88,7 @@ static struct usb_driver cpia2_driver = {
  *****************************************************************************/
 static void process_frame(struct camera_data *cam)
 {
-	static int frame_count = 0;
+	static int frame_count;
 
 	unsigned char *inbuff = cam->workbuff->data;
 
@@ -199,7 +203,11 @@ static void add_COM(struct camera_data *cam)
  *
  *  callback when incoming packet is received
  *****************************************************************************/
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void cpia2_usb_complete(struct urb *urb, struct pt_regs *regs)
+#else
 static void cpia2_usb_complete(struct urb *urb)
+#endif
 {
 	int i;
 	unsigned char *cdata;
@@ -478,7 +486,7 @@ int cpia2_usb_change_streaming_alternate(struct camera_data *cam,
  * set_alternate
  *
  *****************************************************************************/
-int set_alternate(struct camera_data *cam, unsigned int alt)
+static int set_alternate(struct camera_data *cam, unsigned int alt)
 {
 	int ret = 0;
 
@@ -632,7 +640,7 @@ int cpia2_usb_transfer_cmd(struct camera_data *cam,
 static int submit_urbs(struct camera_data *cam)
 {
 	struct urb *urb;
-	int fx, err, i;
+	int fx, err, i, j;
 
 	for(i=0; i<NUM_SBUF; ++i) {
 		if (cam->sbuf[i].data)
@@ -657,6 +665,9 @@ static int submit_urbs(struct camera_data *cam)
 		}
 		urb = usb_alloc_urb(FRAMES_PER_DESC, GFP_KERNEL);
 		if (!urb) {
+			ERR("%s: usb_alloc_urb error!\n", __func__);
+			for (j = 0; j < i; j++)
+				usb_free_urb(cam->sbuf[j].urb);
 			return -ENOMEM;
 		}
 

@@ -19,7 +19,7 @@
  *  along with this program; if not, write to the Free Software
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
-
+#include <linux/version.h>
 #include <linux/init.h>
 #include <linux/list.h>
 #include <linux/module.h>
@@ -27,7 +27,9 @@
 #include <linux/kthread.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,20)
 #include <linux/freezer.h>
+#endif
 #include <asm/div64.h>
 
 #include "saa7134-reg.h"
@@ -35,18 +37,18 @@
 
 /* ------------------------------------------------------------------ */
 
-static unsigned int audio_debug = 0;
+static unsigned int audio_debug;
 module_param(audio_debug, int, 0644);
 MODULE_PARM_DESC(audio_debug,"enable debug messages [tv audio]");
 
-static unsigned int audio_ddep = 0;
+static unsigned int audio_ddep;
 module_param(audio_ddep, int, 0644);
 MODULE_PARM_DESC(audio_ddep,"audio ddep overwrite");
 
 static int audio_clock_override = UNSET;
 module_param(audio_clock_override, int, 0644);
 
-static int audio_clock_tweak = 0;
+static int audio_clock_tweak;
 module_param(audio_clock_tweak, int, 0644);
 MODULE_PARM_DESC(audio_clock_tweak, "Audio clock tick fine tuning for cards with audio crystal that's slightly off (range [-1024 .. 1024])");
 
@@ -376,6 +378,23 @@ static int tvaudio_checkcarrier(struct saa7134_dev *dev, struct mainscan *scan)
 	return value;
 }
 
+#if 0
+static void sifdebug_dump_regs(struct saa7134_dev *dev)
+{
+	print_regb(AUDIO_STATUS);
+	print_regb(IDENT_SIF);
+	print_regb(LEVEL_READOUT1);
+	print_regb(LEVEL_READOUT2);
+	print_regb(DCXO_IDENT_CTRL);
+	print_regb(DEMODULATOR);
+	print_regb(AGC_GAIN_SELECT);
+	print_regb(MONITOR_SELECT);
+	print_regb(FM_DEEMPHASIS);
+	print_regb(FM_DEMATRIX);
+	print_regb(SIF_SAMPLE_FREQ);
+	print_regb(ANALOG_IO_SELECT);
+}
+#endif
 
 static int tvaudio_getstereo(struct saa7134_dev *dev, struct saa7134_tvaudio *audio)
 {
@@ -477,8 +496,9 @@ static int tvaudio_thread(void *data)
 	unsigned int i, audio, nscan;
 	int max1,max2,carrier,rx,mode,lastmode,default_carrier;
 
-
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 23)
 	set_freezable();
+#endif
 
 	for (;;) {
 		tvaudio_sleep(dev,-1);
@@ -653,6 +673,17 @@ static char *stdres[0x20] = {
 
 #define DSP_RETRY 32
 #define DSP_DELAY 16
+#define SAA7135_DSP_RWCLEAR_RERR 1
+
+static inline int saa_dsp_reset_error_bit(struct saa7134_dev *dev)
+{
+	int state = saa_readb(SAA7135_DSP_RWSTATE);
+	if (unlikely(state & SAA7135_DSP_RWSTATE_ERR)) {
+		d2printk("%s: resetting error bit\n", dev->name);
+		saa_writeb(SAA7135_DSP_RWCLEAR, SAA7135_DSP_RWCLEAR_RERR);
+	}
+	return 0;
+}
 
 static inline int saa_dsp_wait_bit(struct saa7134_dev *dev, int bit)
 {
@@ -660,8 +691,8 @@ static inline int saa_dsp_wait_bit(struct saa7134_dev *dev, int bit)
 
 	state = saa_readb(SAA7135_DSP_RWSTATE);
 	if (unlikely(state & SAA7135_DSP_RWSTATE_ERR)) {
-		printk("%s: dsp access error\n",dev->name);
-		/* FIXME: send ack ... */
+		printk(KERN_WARNING "%s: dsp access error\n", dev->name);
+		saa_dsp_reset_error_bit(dev);
 		return -EIO;
 	}
 	while (0 == (state & bit)) {
@@ -681,6 +712,24 @@ static inline int saa_dsp_wait_bit(struct saa7134_dev *dev, int bit)
 	return 0;
 }
 
+#if 0
+static int saa_dsp_readl(struct saa7134_dev *dev, int reg, u32 *value)
+{
+	int err;
+
+	d2printk("dsp read reg 0x%x\n", reg<<2);
+	saa_readl(reg);
+	err = saa_dsp_wait_bit(dev,SAA7135_DSP_RWSTATE_RDB);
+	if (err < 0)
+		return err;
+	*value = saa_readl(reg);
+	d2printk("dsp read   => 0x%06x\n", *value & 0xffffff);
+	err = saa_dsp_wait_bit(dev,SAA7135_DSP_RWSTATE_IDA);
+	if (err < 0)
+		return err;
+	return 0;
+}
+#endif
 
 int saa_dsp_writel(struct saa7134_dev *dev, int reg, u32 value)
 {
@@ -764,8 +813,9 @@ static int tvaudio_thread_ddep(void *data)
 	struct saa7134_dev *dev = data;
 	u32 value, norms;
 
-
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 23)
 	set_freezable();
+#endif
 	for (;;) {
 		tvaudio_sleep(dev,-1);
 		if (kthread_should_stop())
@@ -862,13 +912,34 @@ void saa7134_enable_i2s(struct saa7134_dev *dev)
 
 	if (!card_is_empress(dev))
 		return;
-	i2s_format = (dev->input->amux == TV) ? 0x00 : 0x01;
 
-	/* enable I2S audio output for the mpeg encoder */
-	saa_writeb(SAA7134_I2S_OUTPUT_SELECT,  0x80);
-	saa_writeb(SAA7134_I2S_OUTPUT_FORMAT,  i2s_format);
-	saa_writeb(SAA7134_I2S_OUTPUT_LEVEL,   0x0F);
-	saa_writeb(SAA7134_I2S_AUDIO_OUTPUT,   0x01);
+	if (dev->pci->device == PCI_DEVICE_ID_PHILIPS_SAA7130)
+		return;
+
+	/* configure GPIO for out */
+	saa_andorl(SAA7134_GPIO_GPMODE0 >> 2, 0x0E000000, 0x00000000);
+
+	switch (dev->pci->device) {
+	case PCI_DEVICE_ID_PHILIPS_SAA7133:
+	case PCI_DEVICE_ID_PHILIPS_SAA7135:
+	    /* Set I2S format (SONY)  */
+	    saa_writeb(SAA7133_I2S_AUDIO_CONTROL, 0x00);
+	    /* Start I2S */
+	    saa_writeb(SAA7134_I2S_AUDIO_OUTPUT, 0x11);
+	    break;
+
+	case PCI_DEVICE_ID_PHILIPS_SAA7134:
+	    i2s_format = (dev->input->amux == TV) ? 0x00 : 0x01;
+
+	    /* enable I2S audio output for the mpeg encoder */
+	    saa_writeb(SAA7134_I2S_OUTPUT_SELECT, 0x80);
+	    saa_writeb(SAA7134_I2S_OUTPUT_FORMAT, i2s_format);
+	    saa_writeb(SAA7134_I2S_OUTPUT_LEVEL,  0x0F);
+	    saa_writeb(SAA7134_I2S_AUDIO_OUTPUT,  0x01);
+
+	default:
+	    break;
+	}
 }
 
 int saa7134_tvaudio_rx2mode(u32 rx)

@@ -28,6 +28,7 @@
 #include <linux/usb.h>
 #include <linux/input.h>
 #include <linux/dvb/frontend.h>
+#include <media/compat.h>
 #include <linux/mutex.h>
 #include <linux/mm.h>
 #include <asm/io.h>
@@ -58,11 +59,13 @@ static int debug;
 module_param_named(debug, debug, int, 0644);
 MODULE_PARM_DESC(debug, "Turn on/off debugging (default:off).");
 
+DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
+
 #define dprintk(level, args...)						\
 do {									\
 	if ((debug & level)) {						\
 		printk("%s: %s(): ", KBUILD_MODNAME,			\
-		       __FUNCTION__);					\
+		       __func__);					\
 		printk(args); }						\
 } while (0)
 
@@ -80,22 +83,22 @@ enum cinergyt2_ep1_cmd {
 
 struct dvbt_set_parameters_msg {
 	uint8_t cmd;
-	uint32_t freq;
+	__le32 freq;
 	uint8_t bandwidth;
-	uint16_t tps;
+	__le16 tps;
 	uint8_t flags;
 } __attribute__((packed));
 
 struct dvbt_get_status_msg {
-	uint32_t freq;
+	__le32 freq;
 	uint8_t bandwidth;
-	uint16_t tps;
+	__le16 tps;
 	uint8_t flags;
-	uint16_t gain;
+	__le16 gain;
 	uint8_t snr;
-	uint32_t viterbi_error_rate;
-	uint32_t rs_error_rate;
-	uint32_t uncorrected_block_count;
+	__le32 viterbi_error_rate;
+	__le32 rs_error_rate;
+	__le32 uncorrected_block_count;
 	uint8_t lock_bits;
 	uint8_t prev_lock_bits;
 } __attribute__((packed));
@@ -129,11 +132,16 @@ struct cinergyt2 {
 
 	struct dvbt_set_parameters_msg param;
 	struct dvbt_get_status_msg status;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	struct work_struct query_work;
+#else
 	struct delayed_work query_work;
+#endif
 
 	wait_queue_head_t poll_wq;
 	int pending_fe_events;
 	int disconnect_pending;
+	unsigned int uncorrected_block_count;
 	atomic_t inuse;
 
 	void *streambuf;
@@ -143,9 +151,13 @@ struct cinergyt2 {
 #ifdef ENABLE_RC
 	struct input_dev *rc_input_dev;
 	char phys[64];
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	struct work_struct rc_query_work;
+#else
 	struct delayed_work rc_query_work;
+#endif
 	int rc_input_event;
-	u32 rc_last_code;
+	__le32 rc_last_code;
 	unsigned long last_event_jiffies;
 #endif
 };
@@ -158,7 +170,7 @@ enum {
 
 struct cinergyt2_rc_event {
 	char type;
-	uint32_t value;
+	__le32 value;
 } __attribute__((packed));
 
 static const uint32_t rc_keys[] = {
@@ -240,7 +252,11 @@ static void cinergyt2_sleep (struct cinergyt2 *cinergyt2, int sleep)
 	cinergyt2->sleeping = sleep;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void cinergyt2_stream_irq (struct urb *urb, struct pt_regs *regs);
+#else
 static void cinergyt2_stream_irq (struct urb *urb);
+#endif
 
 static int cinergyt2_submit_stream_urb (struct cinergyt2 *cinergyt2, struct urb *urb)
 {
@@ -260,7 +276,11 @@ static int cinergyt2_submit_stream_urb (struct cinergyt2 *cinergyt2, struct urb 
 	return err;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void cinergyt2_stream_irq (struct urb *urb, struct pt_regs *regs)
+#else
 static void cinergyt2_stream_irq (struct urb *urb)
+#endif
 {
 	struct cinergyt2 *cinergyt2 = urb->context;
 
@@ -617,8 +637,11 @@ static int cinergyt2_ioctl (struct inode *inode, struct file *file,
 	{
 		uint32_t unc_count;
 
-		unc_count = stat->uncorrected_block_count;
-		stat->uncorrected_block_count = 0;
+		if (mutex_lock_interruptible(&cinergyt2->sem))
+			return -ERESTARTSYS;
+		unc_count = cinergyt2->uncorrected_block_count;
+		cinergyt2->uncorrected_block_count = 0;
+		mutex_unlock(&cinergyt2->sem);
 
 		/* UNC are already converted to host byte order... */
 		return put_user(unc_count,(__u32 __user *) arg);
@@ -741,10 +764,18 @@ static struct dvb_device cinergyt2_fe_template = {
 
 #ifdef ENABLE_RC
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+static void cinergyt2_query_rc (void *data)
+#else
 static void cinergyt2_query_rc (struct work_struct *work)
+#endif
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	struct cinergyt2 *cinergyt2 = data;
+#else
 	struct cinergyt2 *cinergyt2 =
 		container_of(work, struct cinergyt2, rc_query_work.work);
+#endif
 	char buf[1] = { CINERGYT2_EP1_GET_RC_EVENTS };
 	struct cinergyt2_rc_event rc_events[12];
 	int n, len, i;
@@ -767,7 +798,7 @@ static void cinergyt2_query_rc (struct work_struct *work)
 				input_sync(cinergyt2->rc_input_dev);
 				cinergyt2->rc_input_event = KEY_MAX;
 			}
-			cinergyt2->rc_last_code = ~0;
+			cinergyt2->rc_last_code = cpu_to_le32(~0);
 		}
 		goto out;
 	}
@@ -778,7 +809,7 @@ static void cinergyt2_query_rc (struct work_struct *work)
 			n, le32_to_cpu(rc_events[n].value), rc_events[n].type);
 
 		if (rc_events[n].type == CINERGYT2_RC_EVENT_TYPE_NEC &&
-		    rc_events[n].value == ~0) {
+		    rc_events[n].value == cpu_to_le32(~0)) {
 			/* keyrepeat bit -> just repeat last rc_input_event */
 		} else {
 			cinergyt2->rc_input_event = KEY_MAX;
@@ -793,7 +824,7 @@ static void cinergyt2_query_rc (struct work_struct *work)
 
 		if (cinergyt2->rc_input_event != KEY_MAX) {
 			if (rc_events[n].value == cinergyt2->rc_last_code &&
-			    cinergyt2->rc_last_code != ~0) {
+			    cinergyt2->rc_last_code != cpu_to_le32(~0)) {
 				/* emit a key-up so the double event is recognized */
 				dprintk(1, "rc_input_event=%d UP\n", cinergyt2->rc_input_event);
 				input_report_key(cinergyt2->rc_input_dev,
@@ -827,8 +858,12 @@ static int cinergyt2_register_rc(struct cinergyt2 *cinergyt2)
 	usb_make_path(cinergyt2->udev, cinergyt2->phys, sizeof(cinergyt2->phys));
 	strlcat(cinergyt2->phys, "/input0", sizeof(cinergyt2->phys));
 	cinergyt2->rc_input_event = KEY_MAX;
-	cinergyt2->rc_last_code = ~0;
+	cinergyt2->rc_last_code = cpu_to_le32(~0);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	INIT_WORK(&cinergyt2->rc_query_work, cinergyt2_query_rc, cinergyt2);
+#else
 	INIT_DELAYED_WORK(&cinergyt2->rc_query_work, cinergyt2_query_rc);
+#endif
 
 	input_dev->name = DRIVER_NAME " remote control";
 	input_dev->phys = cinergyt2->phys;
@@ -838,10 +873,14 @@ static int cinergyt2_register_rc(struct cinergyt2 *cinergyt2)
 	input_dev->keycodesize = 0;
 	input_dev->keycodemax = 0;
 	input_dev->id.bustype = BUS_USB;
-	input_dev->id.vendor = cinergyt2->udev->descriptor.idVendor;
-	input_dev->id.product = cinergyt2->udev->descriptor.idProduct;
+	input_dev->id.vendor = le16_to_cpu(cinergyt2->udev->descriptor.idVendor);
+	input_dev->id.product = le16_to_cpu(cinergyt2->udev->descriptor.idProduct);
 	input_dev->id.version = 1;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 	input_dev->dev.parent = &cinergyt2->udev->dev;
+#else
+	input_dev->cdev.dev = &cinergyt2->udev->dev;
+#endif
 
 	err = input_register_device(input_dev);
 	if (err) {
@@ -880,25 +919,31 @@ static inline void cinergyt2_resume_rc(struct cinergyt2 *cinergyt2) { }
 
 #endif /* ENABLE_RC */
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+static void cinergyt2_query (void *data)
+#else
 static void cinergyt2_query (struct work_struct *work)
+#endif
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	struct cinergyt2 *cinergyt2 = (struct cinergyt2 *) data;
+#else
 	struct cinergyt2 *cinergyt2 =
 		container_of(work, struct cinergyt2, query_work.work);
+#endif
 	char cmd [] = { CINERGYT2_EP1_GET_TUNER_STATUS };
 	struct dvbt_get_status_msg *s = &cinergyt2->status;
 	uint8_t lock_bits;
-	uint32_t unc;
 
 	if (cinergyt2->disconnect_pending || mutex_lock_interruptible(&cinergyt2->sem))
 		return;
 
-	unc = s->uncorrected_block_count;
 	lock_bits = s->lock_bits;
 
 	cinergyt2_command(cinergyt2, cmd, sizeof(cmd), (char *) s, sizeof(*s));
 
-	unc += le32_to_cpu(s->uncorrected_block_count);
-	s->uncorrected_block_count = unc;
+	cinergyt2->uncorrected_block_count +=
+		le32_to_cpu(s->uncorrected_block_count);
 
 	if (lock_bits != s->lock_bits) {
 		wake_up_interruptible(&cinergyt2->poll_wq);
@@ -927,7 +972,11 @@ static int cinergyt2_probe (struct usb_interface *intf,
 	mutex_init(&cinergyt2->sem);
 	mutex_init(&cinergyt2->wq_sem);
 	init_waitqueue_head (&cinergyt2->poll_wq);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	INIT_WORK(&cinergyt2->query_work, cinergyt2_query, cinergyt2);
+#else
 	INIT_DELAYED_WORK(&cinergyt2->query_work, cinergyt2_query);
+#endif
 
 	cinergyt2->udev = interface_to_usbdev(intf);
 	cinergyt2->param.cmd = CINERGYT2_EP1_SET_TUNER_PARAMETERS;
@@ -938,7 +987,10 @@ static int cinergyt2_probe (struct usb_interface *intf,
 		return -ENOMEM;
 	}
 
-	if ((err = dvb_register_adapter(&cinergyt2->adapter, DRIVER_NAME, THIS_MODULE, &cinergyt2->udev->dev)) < 0) {
+	err = dvb_register_adapter(&cinergyt2->adapter, DRIVER_NAME,
+				   THIS_MODULE, &cinergyt2->udev->dev,
+				   adapter_nr);
+	if (err < 0) {
 		kfree(cinergyt2);
 		return err;
 	}

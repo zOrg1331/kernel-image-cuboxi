@@ -1,6 +1,7 @@
 Name: kernel-image-std-ll
 Version: 2.6.25
-Release: alt8.M41.1
+Release: alt8.M41.2
+epoch: 1
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -21,7 +22,6 @@ Release: alt8.M41.1
 
 # Enable/disable SGML docs formatting
 %def_disable docs
-
 ## Don't edit below this line ##################################
 
 %define kversion	%kernel_base_version%kernel_extra_version
@@ -109,6 +109,48 @@ not work well.
 
 Install this package only if you really need it.
 
+%package -n kernel-modules-alsa-%flavour
+Summary: The Advanced Linux Sound Architecture modules
+Group: System/Kernel and hardware
+Provides:  kernel-modules-alsa-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease > %version-%release
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+Prereq: %name = %version-%release
+Requires(postun): %name = %version-%release
+
+%description -n kernel-modules-alsa-%flavour
+The Advanced Linux Sound Architecture (ALSA) provides audio and MIDI
+functionality to the Linux operating system. ALSA has the following
+significant features:
+1. Efficient support for all types of audio interfaces, from consumer
+soundcards to professional multichannel audio interfaces.
+2. Fully modularized sound drivers.
+3. SMP and thread-safe design.
+4. User space library (alsa-lib) to simplify application programming
+and provide higher level functionality.
+5. Support for the older OSS API, providing binary compatibility for
+most OSS programs.
+
+These are sound drivers for your ALT Linux system.
+
+
+
+%package -n kernel-modules-v4l-%flavour
+Summary: Video4Linux driver modules (obsolete)
+Group: System/Kernel and hardware
+Provides:  kernel-modules-v4l-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-v4l-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-v4l-%kversion-%flavour-%krelease > %version-%release
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+Prereq: %name = %version-%release
+Requires(postun): %name = %version-%release
+
+%description -n kernel-modules-v4l-%flavour
+Video for linux drivers
+
 %package -n kernel-headers-%flavour
 Summary: Header files for the Linux kernel
 Group: System/Kernel and hardware
@@ -135,7 +177,6 @@ If possible, try to use glibc-kernheaders instead of this package.
 Summary: Headers and other files needed for building kernel modules
 Group: System/Kernel and hardware
 Requires: gcc%kgcc_version
-Requires: kernel-headers-alsa
 
 %description -n kernel-headers-modules-%flavour
 This package contains header files, Makefiles and other parts of the
@@ -342,6 +383,17 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 %postun -n kernel-modules-oss-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
+%post -n kernel-modules-v4l-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-v4l-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
+%post -n kernel-modules-alsa-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-alsa-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
 %post -n kernel-headers-%flavour
 %post_kernel_headers %kversion-%flavour-%krelease
 
@@ -354,7 +406,8 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 /boot/config-%kversion-%flavour-%krelease
 %modules_dir
 %exclude %modules_dir/build
-
+%exclude %modules_dir/kernel/sound
+%exclude %modules_dir/kernel/drivers/media/
 # OSS drivers
 %exclude %modules_dir/kernel/sound/oss
 
@@ -374,8 +427,20 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 %files -n kernel-doc-%base_flavour
 %doc %_docdir/kernel-doc-%base_flavour-%version
 %endif
+%files -n kernel-modules-alsa-%flavour
+%modules_dir/kernel/sound/
+%exclude %modules_dir/kernel/sound/oss
+
+%files -n kernel-modules-v4l-%flavour
+%modules_dir/kernel/drivers/media/
 
 %changelog
+* Mon Nov 17 2008 Michail Yakushin <silicium@altlinux.ru> 1:2.6.25-alt8.M41.2
+- 2.6.25.20 (included security fixes)
+- new V4L
+- alsa 1.0.17
+- v4l and alsa builded from one source package
+
 * Mon Sep 08 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt8.M41.1
 - Rewrite configs based on std-def.  The only differences from std-def are:
   + PAE support on i586

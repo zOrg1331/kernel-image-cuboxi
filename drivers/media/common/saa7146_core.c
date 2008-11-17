@@ -30,7 +30,7 @@ unsigned int saa7146_debug;
 module_param(saa7146_debug, uint, 0644);
 MODULE_PARM_DESC(saa7146_debug, "debug level (default: 0)");
 
-#if 0
+#if 0 /* keep */
 static void dump_registers(struct saa7146_dev* dev)
 {
 	int i = 0;
@@ -74,7 +74,7 @@ static inline int saa7146_wait_for_debi_done_sleep(struct saa7146_dev *dev,
 		if (err) {
 			printk(KERN_ERR "%s: %s timed out while waiting for "
 					"registers getting programmed\n",
-					dev->name, __FUNCTION__);
+					dev->name, __func__);
 			return -ETIMEDOUT;
 		}
 		msleep(1);
@@ -89,7 +89,7 @@ static inline int saa7146_wait_for_debi_done_sleep(struct saa7146_dev *dev,
 		saa7146_read(dev, MC2);
 		if (err) {
 			DEB_S(("%s: %s timed out while waiting for transfer "
-				"completion\n",	dev->name, __FUNCTION__));
+				"completion\n",	dev->name, __func__));
 			return -ETIMEDOUT;
 		}
 		msleep(1);
@@ -111,7 +111,7 @@ static inline int saa7146_wait_for_debi_done_busyloop(struct saa7146_dev *dev,
 		if (!loops--) {
 			printk(KERN_ERR "%s: %s timed out while waiting for "
 					"registers getting programmed\n",
-					dev->name, __FUNCTION__);
+					dev->name, __func__);
 			return -ETIMEDOUT;
 		}
 		udelay(1);
@@ -125,7 +125,7 @@ static inline int saa7146_wait_for_debi_done_busyloop(struct saa7146_dev *dev,
 		saa7146_read(dev, MC2);
 		if (!loops--) {
 			DEB_S(("%s: %s timed out while waiting for transfer "
-				"completion\n", dev->name, __FUNCTION__));
+				"completion\n", dev->name, __func__));
 			return -ETIMEDOUT;
 		}
 		udelay(5);
@@ -233,8 +233,8 @@ void saa7146_pgtable_free(struct pci_dev *pci, struct saa7146_pgtable *pt)
 
 int saa7146_pgtable_alloc(struct pci_dev *pci, struct saa7146_pgtable *pt)
 {
-	u32          *cpu;
-	dma_addr_t   dma_addr;
+	__le32       *cpu;
+	dma_addr_t   dma_addr = 0;
 
 	cpu = pci_alloc_consistent(pci, PAGE_SIZE, &dma_addr);
 	if (NULL == cpu) {
@@ -250,7 +250,7 @@ int saa7146_pgtable_alloc(struct pci_dev *pci, struct saa7146_pgtable *pt)
 int saa7146_pgtable_build_single(struct pci_dev *pci, struct saa7146_pgtable *pt,
 	struct scatterlist *list, int sglen  )
 {
-	u32 *ptr, fill;
+	__le32 *ptr, fill;
 	int nr_pages = 0;
 	int i,p;
 
@@ -291,7 +291,11 @@ int saa7146_pgtable_build_single(struct pci_dev *pci, struct saa7146_pgtable *pt
 
 /********************************************************************************/
 /* interrupt handler */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static irqreturn_t interrupt_hw(int irq, void *dev_id, struct pt_regs *regs)
+#else
 static irqreturn_t interrupt_hw(int irq, void *dev_id)
+#endif
 {
 	struct saa7146_dev *dev = dev_id;
 	u32 isr;

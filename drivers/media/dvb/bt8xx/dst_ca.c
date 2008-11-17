@@ -36,13 +36,13 @@
 #define dprintk(x, y, z, format, arg...) do {						\
 	if (z) {									\
 		if	((x > DST_CA_ERROR) && (x > y))					\
-			printk(KERN_ERR "%s: " format "\n", __FUNCTION__ , ##arg);	\
+			printk(KERN_ERR "%s: " format "\n", __func__ , ##arg);	\
 		else if	((x > DST_CA_NOTICE) && (x > y))				\
-			printk(KERN_NOTICE "%s: " format "\n", __FUNCTION__ , ##arg);	\
+			printk(KERN_NOTICE "%s: " format "\n", __func__ , ##arg);	\
 		else if ((x > DST_CA_INFO) && (x > y))					\
-			printk(KERN_INFO "%s: " format "\n", __FUNCTION__ , ##arg);	\
+			printk(KERN_INFO "%s: " format "\n", __func__ , ##arg);	\
 		else if ((x > DST_CA_DEBUG) && (x > y))					\
-			printk(KERN_DEBUG "%s: " format "\n", __FUNCTION__ , ##arg);	\
+			printk(KERN_DEBUG "%s: " format "\n", __func__ , ##arg);	\
 	} else {									\
 		if (x > y)								\
 			printk(format, ## arg);						\
@@ -162,7 +162,7 @@ static int ca_get_app_info(struct dst_state *state)
 	dprintk(verbose, DST_CA_INFO, 1, " ================================ CI Module Application Info ======================================");
 	dprintk(verbose, DST_CA_INFO, 1, " Application Type=[%d], Application Vendor=[%d], Vendor Code=[%d]\n%s: Application info=[%s]",
 		state->messages[7], (state->messages[8] << 8) | state->messages[9],
-		(state->messages[10] << 8) | state->messages[11], __FUNCTION__, (char *)(&state->messages[12]));
+		(state->messages[10] << 8) | state->messages[11], __func__, (char *)(&state->messages[12]));
 	dprintk(verbose, DST_CA_INFO, 1, " ==================================================================================================");
 
 	// Transform dst message to correct application_info message
@@ -418,6 +418,102 @@ static int debug_string(u8 *msg, u32 length, u32 offset)
 	return 0;
 }
 
+#if 0
+/*	MMI	*/
+static int ca_get_mmi(struct dst_state *state, struct ca_msg *hw_msg, struct ca_msg *mmi_msg)
+{
+	static u8 get_mmi[] = { 0x07, 0x40, 0x00, 0x00, 0x0d, 0x00, 0x00, 0x0f };
+
+	put_checksum(&get_mmi[0], 7);
+	if ((dst_put_ci(state, get_mmi, sizeof (get_mmi), hw_msg->msg, GET_REPLY)) < 0) {
+		dprintk(verbose, DST_CA_ERROR, 1, " -->dst_put_ci FAILED !");
+		return -1;
+	}
+	dprintk(verbose, DST_CA_NOTICE, 1, " -->dst_put_ci SUCCESS !");
+	memcpy(mmi_msg->msg, hw_msg->msg, hw_msg->msg[4]);
+
+	return 0;
+}
+
+/**
+ *	Get Menu should be the first MMI function (like open !)
+ */
+static int ca_get_menu(struct dst_state *state)
+{
+	static u8 get_menu[] = { 0x07, 0x40, 0x00, 0x00, 0x09, 0x00, 0x00, 0xff };
+
+	put_checksum(&get_menu[0], 7);
+	if ((dst_put_ci(state, get_menu, sizeof (get_menu), get_menu, NO_REPLY)) < 0) {
+		dprintk(verbose, DST_CA_ERROR, 1, " -->dst_put_ci FAILED !");
+		return -1;
+	}
+	dprintk(verbose, DST_CA_NOTICE, 1, " -->dst_put_ci SUCCESS !");
+
+	return 0;
+}
+
+/**
+ *	MMI Enq	(Enquire the application to allow user input)
+ */
+static int ca_answer_menu(struct dst_state *state, struct ca_msg *hw_msg, struct ca_msg *menu_answ)
+{
+	u8 choice = 0;
+
+	static u8 answer_menu[] = { 0x08, 0x40, 0x00, 0x00, 0x0b, 0x01, 0x00, 0x01, 0xff };
+
+	/*	derive answer from menu (This comes from the user)	*/
+	answer_menu[7] = choice;
+	put_checksum(&answer_menu[0], 7);
+	if ((dst_put_ci(state, answer_menu, sizeof (answer_menu), hw_msg->msg, NO_REPLY)) < 0) {
+		dprintk(verbose, DST_CA_ERROR, 1, " -->dst_put_ci FAILED !");
+		return -1;
+	}
+	dprintk(verbose, DST_CA_NOTICE, 1, " -->dst_put_ci SUCCESS !");
+
+	return 0;
+}
+
+static int ca_answer_mmi(struct dst_state *state, struct ca_msg *hw_msg, struct ca_msg *answ_msg)
+{
+	u8 answer =0, length = 0;
+
+	static u8 answer_mmi[] = { 0x08, 0x40, 0x00, 0x00, 0x08, 0x01, 0x00, 0x01, 0xff };
+
+	/*	derive answer from answ_msg (This comes from the user)	*/
+	if (answer == 0)	/*	0x00 == Cancel	*/
+		answer_mmi[7] = 0x00;
+	else {			/*	0x01 == Answer	*/
+		length = strlen(answ_msg->msg);
+		memcpy(&answer_mmi[8], answ_msg->msg, length);
+		answer_mmi[0] += length;
+		answer_mmi[5] += length;
+	}
+	put_checksum(&answer_mmi[0], (8 + length));
+	if ((dst_put_ci(state, answer_mmi, sizeof (answer_mmi), hw_msg->msg, GET_REPLY)) < 0) {
+		dprintk(verbose, DST_CA_NOTICE, 1, " -->dst_put_ci FAILED !");
+
+		return -1;
+	}
+	dprintk(verbose, DST_CA_NOTICE, 1, " -->dst_put_ci SUCCESS !");
+
+	return 0;
+}
+
+static int ca_close_mmi(struct dst_state *state, struct ca_msg *hw_msg)
+{
+	static u8 close_mmi[] = { 0x07, 0x40, 0x00, 0x00, 0x0e, 0x00, 0x00, 0xff };
+
+	put_checksum(&close_mmi[0], 7);
+	if ((dst_put_ci(state, close_mmi, sizeof (close_mmi), hw_msg->msg, NO_REPLY)) < 0) {
+		dprintk(verbose, DST_CA_ERROR, 1, " -->dst_put_ci FAILED !");
+
+		return -1;
+	}
+	dprintk(verbose, DST_CA_NOTICE, 1, " -->dst_put_ci SUCCESS !");
+
+	return 0;
+}
+#endif
 
 static int ca_set_pmt(struct dst_state *state, struct ca_msg *p_ca_message, struct ca_msg *hw_buffer, u8 reply, u8 query)
 {
