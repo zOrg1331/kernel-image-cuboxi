@@ -28,14 +28,21 @@
 #include <linux/input.h>
 #include <linux/usb.h>
 
+#include <media/compat.h>
 #include "em28xx.h"
+
+#define EM28XX_SNAPSHOT_KEY KEY_CAMERA
+#define EM28XX_SBUTTON_QUERY_INTERVAL 500
+#define EM28XX_R0C_USBSUSP_SNAPSHOT 0x20
 
 static unsigned int ir_debug;
 module_param(ir_debug, int, 0644);
-MODULE_PARM_DESC(ir_debug,"enable debug messages [IR]");
+MODULE_PARM_DESC(ir_debug, "enable debug messages [IR]");
 
-#define dprintk(fmt, arg...)	if (ir_debug) \
-	printk(KERN_DEBUG "%s/ir: " fmt, ir->c.name , ## arg)
+#define dprintk(fmt, arg...) \
+	if (ir_debug) { \
+		printk(KERN_DEBUG "%s/ir: " fmt, ir->c.name , ## arg); \
+	}
 
 /* ----------------------------------------------------------------------- */
 
@@ -44,7 +51,7 @@ int em28xx_get_key_terratec(struct IR_i2c *ir, u32 *ir_key, u32 *ir_raw)
 	unsigned char b;
 
 	/* poll IR chip */
-	if (1 != i2c_master_recv(&ir->c,&b,1)) {
+	if (1 != i2c_master_recv(&ir->c, &b, 1)) {
 		dprintk("read error\n");
 		return -EIO;
 	}
@@ -74,24 +81,30 @@ int em28xx_get_key_em_haup(struct IR_i2c *ir, u32 *ir_key, u32 *ir_raw)
 	unsigned char code;
 
 	/* poll IR chip */
-	if (2 != i2c_master_recv(&ir->c,buf,2))
+	if (2 != i2c_master_recv(&ir->c, buf, 2))
 		return -EIO;
 
 	/* Does eliminate repeated parity code */
-	if (buf[1]==0xff)
+	if (buf[1] == 0xff)
 		return 0;
 
-	ir->old=buf[1];
+#if 0
+	/* avoid reapeating keystrokes */
+	if (buf[1] == ir->old)
+		return 0;
+#endif
+	ir->old = buf[1];
 
 	/* Rearranges bits to the right order */
-	code=    ((buf[0]&0x01)<<5) | /* 0010 0000 */
+	code =   ((buf[0]&0x01)<<5) | /* 0010 0000 */
 		 ((buf[0]&0x02)<<3) | /* 0001 0000 */
 		 ((buf[0]&0x04)<<1) | /* 0000 1000 */
 		 ((buf[0]&0x08)>>1) | /* 0000 0100 */
 		 ((buf[0]&0x10)>>3) | /* 0000 0010 */
 		 ((buf[0]&0x20)>>5);  /* 0000 0001 */
 
-	dprintk("ir hauppauge (em2840): code=0x%02x (rcv=0x%02x)\n",code,buf[0]);
+	dprintk("ir hauppauge (em2840): code=0x%02x (rcv=0x%02x)\n",
+			code, buf[0]);
 
 	/* return key */
 	*ir_key = code;
@@ -106,20 +119,118 @@ int em28xx_get_key_pinnacle_usb_grey(struct IR_i2c *ir, u32 *ir_key,
 
 	/* poll IR chip */
 
-	if (3 != i2c_master_recv(&ir->c,buf,3)) {
+	if (3 != i2c_master_recv(&ir->c, buf, 3)) {
 		dprintk("read error\n");
 		return -EIO;
 	}
 
 	dprintk("key %02x\n", buf[2]&0x3f);
-	if (buf[0]!=0x00){
+	if (buf[0] != 0x00)
 		return 0;
-	}
 
 	*ir_key = buf[2]&0x3f;
 	*ir_raw = buf[2]&0x3f;
 
 	return 1;
+}
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 20)
+static void em28xx_query_sbutton(void *data)
+#else
+static void em28xx_query_sbutton(struct work_struct *work)
+#endif
+{
+	/* Poll the register and see if the button is depressed */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 20)
+	struct em28xx *dev = data;
+#else
+	struct em28xx *dev =
+		container_of(work, struct em28xx, sbutton_query_work.work);
+#endif
+	int ret;
+
+	ret = em28xx_read_reg(dev, EM28XX_R0C_USBSUSP);
+
+	if (ret & EM28XX_R0C_USBSUSP_SNAPSHOT) {
+		u8 cleared;
+		/* Button is depressed, clear the register */
+		cleared = ((u8) ret) & ~EM28XX_R0C_USBSUSP_SNAPSHOT;
+		em28xx_write_regs(dev, EM28XX_R0C_USBSUSP, &cleared, 1);
+
+		/* Not emulate the keypress */
+		input_report_key(dev->sbutton_input_dev, EM28XX_SNAPSHOT_KEY,
+				 1);
+		/* Now unpress the key */
+		input_report_key(dev->sbutton_input_dev, EM28XX_SNAPSHOT_KEY,
+				 0);
+	}
+
+	/* Schedule next poll */
+	schedule_delayed_work(&dev->sbutton_query_work,
+			      msecs_to_jiffies(EM28XX_SBUTTON_QUERY_INTERVAL));
+}
+
+void em28xx_register_snapshot_button(struct em28xx *dev)
+{
+	struct input_dev *input_dev;
+	int err;
+
+	em28xx_info("Registering snapshot button...\n");
+	input_dev = input_allocate_device();
+	if (!input_dev) {
+		em28xx_errdev("input_allocate_device failed\n");
+		return;
+	}
+
+	usb_make_path(dev->udev, dev->snapshot_button_path,
+		      sizeof(dev->snapshot_button_path));
+	strlcat(dev->snapshot_button_path, "/sbutton",
+		sizeof(dev->snapshot_button_path));
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 20)
+	INIT_WORK(&dev->sbutton_query_work, em28xx_query_sbutton, dev);
+#else
+	INIT_DELAYED_WORK(&dev->sbutton_query_work, em28xx_query_sbutton);
+#endif
+
+	input_dev->name = "em28xx snapshot button";
+	input_dev->phys = dev->snapshot_button_path;
+	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_REP);
+	set_bit(EM28XX_SNAPSHOT_KEY, input_dev->keybit);
+	input_dev->keycodesize = 0;
+	input_dev->keycodemax = 0;
+	input_dev->id.bustype = BUS_USB;
+	input_dev->id.vendor = le16_to_cpu(dev->udev->descriptor.idVendor);
+	input_dev->id.product = le16_to_cpu(dev->udev->descriptor.idProduct);
+	input_dev->id.version = 1;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
+	input_dev->dev.parent = &dev->udev->dev;
+#else
+	input_dev->cdev.dev = &dev->udev->dev;
+#endif
+
+	err = input_register_device(input_dev);
+	if (err) {
+		em28xx_errdev("input_register_device failed\n");
+		input_free_device(input_dev);
+		return;
+	}
+
+	dev->sbutton_input_dev = input_dev;
+	schedule_delayed_work(&dev->sbutton_query_work,
+			      msecs_to_jiffies(EM28XX_SBUTTON_QUERY_INTERVAL));
+	return;
+
+}
+
+void em28xx_deregister_snapshot_button(struct em28xx *dev)
+{
+	if (dev->sbutton_input_dev != NULL) {
+		em28xx_info("Deregistering snapshot button\n");
+		cancel_rearming_delayed_work(&dev->sbutton_query_work);
+		input_unregister_device(dev->sbutton_input_dev);
+		dev->sbutton_input_dev = NULL;
+	}
+	return;
 }
 
 /* ----------------------------------------------------------------------

@@ -12,25 +12,30 @@
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
  */
-
-
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/device.h>
 #include <linux/fs.h>
 #include <linux/kthread.h>
 #include <linux/file.h>
-#include <linux/freezer.h>
 
-#include <media/videobuf-dma-sg.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+#include <linux/suspend.h>
+#else
+#include <linux/freezer.h>
+#endif
+
+#include <media/videobuf-core.h>
 #include <media/videobuf-dvb.h>
+#include <media/compat.h>
 
 /* ------------------------------------------------------------------ */
 
 MODULE_AUTHOR("Gerd Knorr <kraxel@bytesex.org> [SuSE Labs]");
 MODULE_LICENSE("GPL");
 
-static unsigned int debug = 0;
+static unsigned int debug;
 module_param(debug, int, 0644);
 MODULE_PARM_DESC(debug,"enable debug messages");
 
@@ -45,7 +50,7 @@ static int videobuf_dvb_thread(void *data)
 	struct videobuf_buffer *buf;
 	unsigned long flags;
 	int err;
-	struct videobuf_dmabuf *dma;
+	void *outp;
 
 	dprintk("dvb thread started\n");
 	set_freezable();
@@ -66,9 +71,10 @@ static int videobuf_dvb_thread(void *data)
 		try_to_freeze();
 
 		/* feed buffer data to demux */
-		dma=videobuf_to_dma(buf);
+		outp = videobuf_queue_to_vmalloc (&dvb->dvbq, buf);
+
 		if (buf->state == VIDEOBUF_DONE)
-			dvb_dmx_swfilter(&dvb->demux, dma->vmalloc,
+			dvb_dmx_swfilter(&dvb->demux, outp,
 					 buf->size);
 
 		/* requeue buffer */
@@ -138,14 +144,16 @@ static int videobuf_dvb_stop_feed(struct dvb_demux_feed *feed)
 int videobuf_dvb_register(struct videobuf_dvb *dvb,
 			  struct module *module,
 			  void *adapter_priv,
-			  struct device *device)
+			  struct device *device,
+			  short *adapter_nr)
 {
 	int result;
 
 	mutex_init(&dvb->lock);
 
 	/* register adapter */
-	result = dvb_register_adapter(&dvb->adapter, dvb->name, module, device);
+	result = dvb_register_adapter(&dvb->adapter, dvb->name, module, device,
+				      adapter_nr);
 	if (result < 0) {
 		printk(KERN_WARNING "%s: dvb_register_adapter failed (errno = %d)\n",
 		       dvb->name, result);
@@ -253,4 +261,3 @@ EXPORT_SYMBOL(videobuf_dvb_unregister);
  * compile-command: "make DVB=1"
  * End:
  */
-

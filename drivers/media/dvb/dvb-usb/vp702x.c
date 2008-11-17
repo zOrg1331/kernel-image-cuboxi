@@ -21,6 +21,8 @@ int dvb_usb_vp702x_debug;
 module_param_named(debug,dvb_usb_vp702x_debug, int, 0644);
 MODULE_PARM_DESC(debug, "set debugging level (1=info,xfer=2,rc=4 (or-able))." DVB_USB_DEBUG_STATUS);
 
+DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
+
 struct vp702x_state {
 	int pid_filter_count;
 	int pid_filter_can_bypass;
@@ -142,6 +144,38 @@ static int vp702x_set_pid(struct dvb_usb_adapter *adap, u16 pid, u8 id, int onof
 	return 0;
 }
 
+#if 0
+static int vp702x_pid_filter_ctrl(struct dvb_usb_device *adap, int onoff)
+{
+//	u8 b;
+//	return vp702x_usb_in_op(d,0xe0, ((!onoff) << 8) | 0x0e, 0, &b, 1);
+	return 0;
+}
+
+static int vp702x_pid_filter(struct dvb_usb_device *adap, int index, u16 pid, int onoff)
+{
+#if 0
+	struct vp702x_state *st = adap->priv;
+	u8 buf[16];
+
+//	vp702x_pid_filter_ctrl(d, 1);
+	/* clear the index */
+//	st->pid_state &= ~(1 << index);
+//	vp702x_usb_in_op(d,0xe0, (st->pid_state << 8) | 0x0f, 0, buf, 16);
+
+	if (onoff) {
+		st->pid_state |= 1 << index;
+		pid = 0xffff;
+
+
+		vp702x_usb_in_op(d,0xe0, (st->pid_state << 8) | 0x0f, 0, buf, 16);
+	}
+
+	vp702x_check_pid_filter(d);
+#endif
+	return 0;
+}
+#endif
 
 static int vp702x_init_pid_filter(struct dvb_usb_adapter *adap)
 {
@@ -204,6 +238,21 @@ static int vp702x_rc_query(struct dvb_usb_device *d, u32 *event, int *state)
 	return 0;
 }
 
+#if 0
+int vp702x_power_ctrl(struct dvb_usb_device *d, int onoff)
+{
+	struct vp702x_device_state *st = d->priv;
+
+	if (st->power_state == 0 && onoff)
+		vp702x_usb_out_op(d, SET_TUNER_POWER_REQ, 1, 7, NULL, 0);
+	else if (st->power_state == 1 && onoff == 0)
+		vp702x_usb_out_op(d, SET_TUNER_POWER_REQ, 0, 7, NULL, 0);
+
+	st->power_state = onoff;
+
+	return 0;
+}
+#endif  /*  0  */
 
 static int vp702x_read_mac_addr(struct dvb_usb_device *d,u8 mac[6])
 {
@@ -238,7 +287,8 @@ static struct dvb_usb_device_properties vp702x_properties;
 static int vp702x_usb_probe(struct usb_interface *intf,
 		const struct usb_device_id *id)
 {
-	return dvb_usb_device_init(intf,&vp702x_properties,THIS_MODULE,NULL);
+	return dvb_usb_device_init(intf, &vp702x_properties,
+				   THIS_MODULE, NULL, adapter_nr);
 }
 
 static struct usb_device_id vp702x_usb_table [] = {

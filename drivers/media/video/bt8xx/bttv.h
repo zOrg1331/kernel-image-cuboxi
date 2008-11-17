@@ -16,9 +16,11 @@
 
 #include <linux/videodev.h>
 #include <linux/i2c.h>
+#include <media/compat.h>
 #include <media/ir-common.h>
 #include <media/ir-kbd-i2c.h>
 #include <media/i2c-addr.h>
+#include <media/tuner.h>
 
 /* ---------------------------------------------------------- */
 /* exported by bttv-cards.c                                   */
@@ -173,7 +175,9 @@
 #define BTTV_BOARD_VOODOOTV_200		   0x93
 #define BTTV_BOARD_DVICO_FUSIONHDTV_2	   0x94
 #define BTTV_BOARD_TYPHOON_TVTUNERPCI	   0x95
-
+#define BTTV_BOARD_GEOVISION_GV600	   0x96
+#define BTTV_BOARD_KOZUMI_KTV_01C          0x97
+#define BTTV_BOARD_ENLTV_FM_2		   0x98
 
 /* more card-specific defines */
 #define PT2254_L_CHANNEL 0x10
@@ -266,6 +270,7 @@ extern int bttv_handle_chipset(struct bttv *btv);
 /* ---------------------------------------------------------- */
 /* exported by bttv-if.c                                      */
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,7,0)
 /* this obsolete -- please use the sysfs-based
    interface below for new code */
 
@@ -290,12 +295,12 @@ extern int bttv_read_gpio(unsigned int card, unsigned long *data);
 extern int bttv_write_gpio(unsigned int card,
 			   unsigned long mask, unsigned long data);
 
+#endif
 
 
 
 /* ---------------------------------------------------------- */
 /* sysfs/driver-moded based gpio access interface             */
-
 
 struct bttv_sub_device {
 	struct device    dev;

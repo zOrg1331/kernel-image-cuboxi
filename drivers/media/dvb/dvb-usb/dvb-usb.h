@@ -13,6 +13,7 @@
 #include <linux/input.h>
 #include <linux/usb.h>
 #include <linux/firmware.h>
+#include <media/compat.h>
 #include <linux/mutex.h>
 
 #include "dvb_frontend.h"
@@ -363,7 +364,11 @@ struct dvb_usb_device {
 	/* remote control */
 	struct input_dev *rc_input_dev;
 	char rc_phys[64];
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	struct work_struct rc_query_work;
+#else
 	struct delayed_work rc_query_work;
+#endif
 	u32 last_event;
 	int last_state;
 
@@ -372,7 +377,10 @@ struct dvb_usb_device {
 	void *priv;
 };
 
-extern int dvb_usb_device_init(struct usb_interface *, struct dvb_usb_device_properties *, struct module *, struct dvb_usb_device **);
+extern int dvb_usb_device_init(struct usb_interface *,
+			       struct dvb_usb_device_properties *,
+			       struct module *, struct dvb_usb_device **,
+			       short *adapter_nums);
 extern void dvb_usb_device_exit(struct usb_interface *);
 
 /* the generic read/write method for device control */

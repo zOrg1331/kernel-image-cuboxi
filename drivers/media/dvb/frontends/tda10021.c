@@ -44,7 +44,7 @@ struct tda10021_state {
 };
 
 
-#if 0
+#if 0 /* keep */
 #define dprintk(x...) printk(x)
 #else
 #define dprintk(x...)
@@ -79,7 +79,7 @@ static int _tda10021_writereg (struct tda10021_state* state, u8 reg, u8 data)
 	if (ret != 1)
 		printk("DVB: TDA10021(%d): %s, writereg error "
 			"(reg == 0x%02x, val == 0x%02x, ret == %i)\n",
-			state->frontend.dvb->num, __FUNCTION__, reg, data, ret);
+			state->frontend.dvb->num, __func__, reg, data, ret);
 
 	msleep(10);
 	return (ret != 1) ? -EREMOTEIO : 0;
@@ -97,7 +97,7 @@ static u8 tda10021_readreg (struct tda10021_state* state, u8 reg)
 	// Don't print an error message if the id is read.
 	if (ret != 2 && reg != 0x1a)
 		printk("DVB: TDA10021: %s: readreg error (ret == %i)\n",
-				__FUNCTION__, ret);
+				__func__, ret);
 	return b1[0];
 }
 
@@ -449,7 +449,7 @@ static struct dvb_frontend_ops tda10021_ops = {
 		.frequency_max = 862000000,
 		.symbol_rate_min = (XIN/2)/64,     /* SACLK/64 == (XIN/2)/64 */
 		.symbol_rate_max = (XIN/2)/4,      /* SACLK/4 */
-	#if 0
+	#if 0 /* keep */
 		.frequency_tolerance = ???,
 		.symbol_rate_tolerance = ???,  /* ppm */  /* == 8% (spec p. 5) */
 	#endif

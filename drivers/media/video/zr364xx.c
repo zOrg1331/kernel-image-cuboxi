@@ -35,6 +35,8 @@
 #include <linux/proc_fs.h>
 #include <linux/highmem.h>
 #include <media/v4l2-common.h>
+#include <media/v4l2-ioctl.h>
+#include <media/compat.h>
 
 
 /* Version Information */
@@ -62,8 +64,8 @@
 
 
 /* Module parameters */
-static int debug = 0;
-static int mode = 0;
+static int debug;
+static int mode;
 
 
 /* Module parameters interface */
@@ -115,6 +117,7 @@ struct zr364xx_camera {
 	int height;
 	int method;
 	struct mutex lock;
+	int users;
 };
 
 
@@ -521,7 +524,7 @@ static int zr364xx_vidioc_g_ctrl(struct file *file, void *priv,
 	return 0;
 }
 
-static int zr364xx_vidioc_enum_fmt_cap(struct file *file,
+static int zr364xx_vidioc_enum_fmt_vid_cap(struct file *file,
 				       void *priv, struct v4l2_fmtdesc *f)
 {
 	if (f->index > 0)
@@ -537,7 +540,7 @@ static int zr364xx_vidioc_enum_fmt_cap(struct file *file,
 	return 0;
 }
 
-static int zr364xx_vidioc_try_fmt_cap(struct file *file, void *priv,
+static int zr364xx_vidioc_try_fmt_vid_cap(struct file *file, void *priv,
 				      struct v4l2_format *f)
 {
 	struct video_device *vdev = video_devdata(file);
@@ -564,7 +567,7 @@ static int zr364xx_vidioc_try_fmt_cap(struct file *file, void *priv,
 	return 0;
 }
 
-static int zr364xx_vidioc_g_fmt_cap(struct file *file, void *priv,
+static int zr364xx_vidioc_g_fmt_vid_cap(struct file *file, void *priv,
 				    struct v4l2_format *f)
 {
 	struct video_device *vdev = video_devdata(file);
@@ -589,7 +592,7 @@ static int zr364xx_vidioc_g_fmt_cap(struct file *file, void *priv,
 	return 0;
 }
 
-static int zr364xx_vidioc_s_fmt_cap(struct file *file, void *priv,
+static int zr364xx_vidioc_s_fmt_vid_cap(struct file *file, void *priv,
 				    struct v4l2_format *f)
 {
 	struct video_device *vdev = video_devdata(file);
@@ -640,21 +643,22 @@ static int zr364xx_open(struct inode *inode, struct file *file)
 
 	DBG("zr364xx_open");
 
-	cam->skip = 2;
+	mutex_lock(&cam->lock);
 
-	err = video_exclusive_open(inode, file);
-	if (err < 0)
-		return err;
+	if (cam->users) {
+		err = -EBUSY;
+		goto out;
+	}
 
 	if (!cam->framebuf) {
 		cam->framebuf = vmalloc_32(MAX_FRAME_SIZE * FRAMES);
 		if (!cam->framebuf) {
 			info("vmalloc_32 failed!");
-			return -ENOMEM;
+			err = -ENOMEM;
+			goto out;
 		}
 	}
 
-	mutex_lock(&cam->lock);
 	for (i = 0; init[cam->method][i].size != -1; i++) {
 		err =
 		    send_control_msg(udev, 1, init[cam->method][i].value,
@@ -662,20 +666,23 @@ static int zr364xx_open(struct inode *inode, struct file *file)
 				     init[cam->method][i].size);
 		if (err < 0) {
 			info("error during open sequence: %d", i);
-			mutex_unlock(&cam->lock);
-			return err;
+			goto out;
 		}
 	}
 
+	cam->skip = 2;
+	cam->users++;
 	file->private_data = vdev;
 
 	/* Added some delay here, since opening/closing the camera quickly,
 	 * like Ekiga does during its startup, can crash the webcam
 	 */
 	mdelay(100);
+	err = 0;
 
+out:
 	mutex_unlock(&cam->lock);
-	return 0;
+	return err;
 }
 
 
@@ -696,6 +703,10 @@ static int zr364xx_release(struct inode *inode, struct file *file)
 	udev = cam->udev;
 
 	mutex_lock(&cam->lock);
+
+	cam->users--;
+	file->private_data = NULL;
+
 	for (i = 0; i < 2; i++) {
 		err =
 		    send_control_msg(udev, 1, init[cam->method][i].value,
@@ -703,21 +714,19 @@ static int zr364xx_release(struct inode *inode, struct file *file)
 				     init[cam->method][i].size);
 		if (err < 0) {
 			info("error during release sequence");
-			mutex_unlock(&cam->lock);
-			return err;
+			goto out;
 		}
 	}
-
-	file->private_data = NULL;
-	video_exclusive_release(inode, file);
 
 	/* Added some delay here, since opening/closing the camera quickly,
 	 * like Ekiga does during its startup, can crash the webcam
 	 */
 	mdelay(100);
+	err = 0;
 
+out:
 	mutex_unlock(&cam->lock);
-	return 0;
+	return err;
 }
 
 
@@ -761,19 +770,12 @@ static const struct file_operations zr364xx_fops = {
 	.llseek = no_llseek,
 };
 
-static struct video_device zr364xx_template = {
-	.owner = THIS_MODULE,
-	.name = DRIVER_DESC,
-	.type = VID_TYPE_CAPTURE,
-	.fops = &zr364xx_fops,
-	.release = video_device_release,
-	.minor = -1,
-
+static const struct v4l2_ioctl_ops zr364xx_ioctl_ops = {
 	.vidioc_querycap	= zr364xx_vidioc_querycap,
-	.vidioc_enum_fmt_cap	= zr364xx_vidioc_enum_fmt_cap,
-	.vidioc_try_fmt_cap	= zr364xx_vidioc_try_fmt_cap,
-	.vidioc_s_fmt_cap	= zr364xx_vidioc_s_fmt_cap,
-	.vidioc_g_fmt_cap	= zr364xx_vidioc_g_fmt_cap,
+	.vidioc_enum_fmt_vid_cap = zr364xx_vidioc_enum_fmt_vid_cap,
+	.vidioc_try_fmt_vid_cap	= zr364xx_vidioc_try_fmt_vid_cap,
+	.vidioc_s_fmt_vid_cap	= zr364xx_vidioc_s_fmt_vid_cap,
+	.vidioc_g_fmt_vid_cap	= zr364xx_vidioc_g_fmt_vid_cap,
 	.vidioc_enum_input	= zr364xx_vidioc_enum_input,
 	.vidioc_g_input		= zr364xx_vidioc_g_input,
 	.vidioc_s_input		= zr364xx_vidioc_s_input,
@@ -782,6 +784,14 @@ static struct video_device zr364xx_template = {
 	.vidioc_queryctrl	= zr364xx_vidioc_queryctrl,
 	.vidioc_g_ctrl		= zr364xx_vidioc_g_ctrl,
 	.vidioc_s_ctrl		= zr364xx_vidioc_s_ctrl,
+};
+
+static struct video_device zr364xx_template = {
+	.name = DRIVER_DESC,
+	.fops = &zr364xx_fops,
+	.ioctl_ops = &zr364xx_ioctl_ops,
+	.release = video_device_release,
+	.minor = -1,
 };
 
 

@@ -45,6 +45,7 @@
 #include <linux/kdev_t.h>
 #include "bttvp.h"
 #include <media/v4l2-common.h>
+#include <media/v4l2-ioctl.h>
 #include <media/tvaudio.h>
 #include <media/msp3400.h>
 
@@ -75,9 +76,9 @@ static unsigned int gbuffers = 8;
 static unsigned int gbufsize = 0x208000;
 static unsigned int reset_crop = 1;
 
-static int video_nr = -1;
-static int radio_nr = -1;
-static int vbi_nr = -1;
+static int video_nr[BTTV_MAX] = { [0 ... (BTTV_MAX-1)] = -1 };
+static int radio_nr[BTTV_MAX] = { [0 ... (BTTV_MAX-1)] = -1 };
+static int vbi_nr[BTTV_MAX] = { [0 ... (BTTV_MAX-1)] = -1 };
 static int debug_latency;
 
 static unsigned int fdsr;
@@ -95,7 +96,6 @@ static unsigned int irq_iswitch;
 static unsigned int uv_ratio    = 50;
 static unsigned int full_luma_range;
 static unsigned int coring;
-extern int no_overlay;
 
 /* API features (turn on/off stuff for testing) */
 static unsigned int v4l2        = 1;
@@ -108,9 +108,6 @@ module_param(irq_debug,         int, 0644);
 module_param(debug_latency,     int, 0644);
 
 module_param(fdsr,              int, 0444);
-module_param(video_nr,          int, 0444);
-module_param(radio_nr,          int, 0444);
-module_param(vbi_nr,            int, 0444);
 module_param(gbuffers,          int, 0444);
 module_param(gbufsize,          int, 0444);
 module_param(reset_crop,        int, 0444);
@@ -130,7 +127,10 @@ module_param(uv_ratio,          int, 0444);
 module_param(full_luma_range,   int, 0444);
 module_param(coring,            int, 0444);
 
-module_param_array(radio, int, NULL, 0444);
+module_param_array(radio,       int, NULL, 0444);
+module_param_array(video_nr,    int, NULL, 0444);
+module_param_array(radio_nr,    int, NULL, 0444);
+module_param_array(vbi_nr,      int, NULL, 0444);
 
 MODULE_PARM_DESC(radio,"The TV card supports radio, default is 0 (no)");
 MODULE_PARM_DESC(bigendian,"byte order of the framebuffer, default is native endian");
@@ -152,6 +152,9 @@ MODULE_PARM_DESC(irq_iswitch,"switch inputs in irq handler");
 MODULE_PARM_DESC(uv_ratio,"ratio between u and v gains, default is 50");
 MODULE_PARM_DESC(full_luma_range,"use the full luma range, default is 0 (no)");
 MODULE_PARM_DESC(coring,"set the luma coring level, default is 0 (no)");
+MODULE_PARM_DESC(video_nr, "video device numbers");
+MODULE_PARM_DESC(vbi_nr, "vbi device numbers");
+MODULE_PARM_DESC(radio_nr, "radio device numbers");
 
 MODULE_DESCRIPTION("bttv - v4l/v4l2 driver module for bt848/878 based cards");
 MODULE_AUTHOR("Ralph Metzler & Marcus Metzler & Gerd Knorr");
@@ -163,8 +166,8 @@ MODULE_LICENSE("GPL");
 static ssize_t show_card(struct device *cd,
 			 struct device_attribute *attr, char *buf)
 {
-	struct video_device *vfd = container_of(cd, struct video_device, class_dev);
-	struct bttv *btv = dev_get_drvdata(vfd->dev);
+	struct video_device *vfd = container_of(cd, struct video_device, dev);
+	struct bttv *btv = dev_get_drvdata(vfd->parent);
 	return sprintf(buf, "%d\n", btv ? btv->c.type : UNSET);
 }
 static DEVICE_ATTR(card, S_IRUGO, show_card, NULL);
@@ -172,14 +175,22 @@ static DEVICE_ATTR(card, S_IRUGO, show_card, NULL);
 /* ----------------------------------------------------------------------- */
 /* dvb auto-load setup                                                     */
 #if defined(CONFIG_MODULES) && defined(MODULE)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+static void request_module_async(void *ptr)
+#else
 static void request_module_async(struct work_struct *work)
+#endif
 {
 	request_module("dvb-bt8xx");
 }
 
 static void request_modules(struct bttv *dev)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+	INIT_WORK(&dev->request_module_wk, request_module_async, (void*)dev);
+#else
 	INIT_WORK(&dev->request_module_wk, request_module_async);
+#endif
 	schedule_work(&dev->request_module_wk);
 }
 #else
@@ -929,10 +940,12 @@ disclaim_video_lines(struct bttv *btv)
 static
 void free_btres(struct bttv *btv, struct bttv_fh *fh, int bits)
 {
+#if 1 /* DEBUG */
 	if ((fh->resources & bits) != bits) {
 		/* trying to free ressources not allocated by us ... */
 		printk("bttv: BUG! (btres)\n");
 	}
+#endif
 	mutex_lock(&btv->lock);
 	fh->resources  &= ~bits;
 	btv->resources &= ~bits;
@@ -1176,6 +1189,11 @@ audio_mux(struct bttv *btv, int input, int mute)
 		gpio_val = bttv_tvcards[btv->c.type].gpiomute;
 	else
 		gpio_val = bttv_tvcards[btv->c.type].gpiomux[input];
+#if 0
+	printk("bttv%d: amux: input=%d mute=%d signal=%s gpio_mux=%d irq=%s\n",
+	       btv->c.nr, input, mute, signal ? "yes" : "no",
+	       gpio_val, in_interrupt() ? "yes" : "no");
+#endif
 
 	gpio_bits(bttv_tvcards[btv->c.type].gpiomask, gpio_val);
 	if (bttv_gpio)
@@ -1321,6 +1339,11 @@ set_tvnorm(struct bttv *btv, unsigned int norm)
 	case BTTV_BOARD_VOODOOTV_200:
 		bttv_tda9880_setnorm(btv,norm);
 		break;
+#if 0
+	case BTTV_BOARD_OSPREY540:
+		osprey_540_set_norm(btv,norm);
+		break;
+#endif
 	}
 	id = tvnorm->v4l2_id;
 	bttv_call_i2c_clients(btv, VIDIOC_S_STD, &id);
@@ -1367,7 +1390,7 @@ static void init_irqreg(struct bttv *btv)
 			(btv->gpioirq ? BT848_INT_GPINT : 0) |
 			BT848_INT_SCERR |
 			(fdsr ? BT848_INT_FDSR : 0) |
-			BT848_INT_RISCI|BT848_INT_OCERR|BT848_INT_VPRES|
+			BT848_INT_RISCI | BT848_INT_OCERR |
 			BT848_INT_FMTCHG|BT848_INT_HLOCK|
 			BT848_INT_I2CDONE,
 			BT848_INT_MASK);
@@ -2372,7 +2395,7 @@ static int setup_window(struct bttv_fh *fh, struct bttv *btv,
 	if (check_btres(fh, RESOURCE_OVERLAY)) {
 		struct bttv_buffer *new;
 
-		new = videobuf_pci_alloc(sizeof(*new));
+		new = videobuf_sg_alloc(sizeof(*new));
 		new->crop = btv->crop[!!fh->do_crop].rect;
 		bttv_overlay_risc(btv, &fh->ov, fh->ovfmt, new);
 		retval = bttv_switch_overlay(btv,fh,new);
@@ -2448,7 +2471,7 @@ pix_format_set_size     (struct v4l2_pix_format *       f,
 	}
 }
 
-static int bttv_g_fmt_cap(struct file *file, void *priv,
+static int bttv_g_fmt_vid_cap(struct file *file, void *priv,
 					struct v4l2_format *f)
 {
 	struct bttv_fh *fh  = priv;
@@ -2461,7 +2484,7 @@ static int bttv_g_fmt_cap(struct file *file, void *priv,
 	return 0;
 }
 
-static int bttv_g_fmt_overlay(struct file *file, void *priv,
+static int bttv_g_fmt_vid_overlay(struct file *file, void *priv,
 					struct v4l2_format *f)
 {
 	struct bttv_fh *fh  = priv;
@@ -2472,7 +2495,7 @@ static int bttv_g_fmt_overlay(struct file *file, void *priv,
 	return 0;
 }
 
-static int bttv_try_fmt_cap(struct file *file, void *priv,
+static int bttv_try_fmt_vid_cap(struct file *file, void *priv,
 						struct v4l2_format *f)
 {
 	const struct bttv_format *fmt;
@@ -2532,7 +2555,7 @@ static int bttv_try_fmt_cap(struct file *file, void *priv,
 	return 0;
 }
 
-static int bttv_try_fmt_overlay(struct file *file, void *priv,
+static int bttv_try_fmt_vid_overlay(struct file *file, void *priv,
 						struct v4l2_format *f)
 {
 	struct bttv_fh *fh = priv;
@@ -2542,7 +2565,7 @@ static int bttv_try_fmt_overlay(struct file *file, void *priv,
 			/* adjust_crop */ 0);
 }
 
-static int bttv_s_fmt_cap(struct file *file, void *priv,
+static int bttv_s_fmt_vid_cap(struct file *file, void *priv,
 				struct v4l2_format *f)
 {
 	int retval;
@@ -2556,7 +2579,7 @@ static int bttv_s_fmt_cap(struct file *file, void *priv,
 	if (0 != retval)
 		return retval;
 
-	retval = bttv_try_fmt_cap(file, priv, f);
+	retval = bttv_try_fmt_vid_cap(file, priv, f);
 	if (0 != retval)
 		return retval;
 
@@ -2591,7 +2614,7 @@ static int bttv_s_fmt_cap(struct file *file, void *priv,
 	return 0;
 }
 
-static int bttv_s_fmt_overlay(struct file *file, void *priv,
+static int bttv_s_fmt_vid_overlay(struct file *file, void *priv,
 				struct v4l2_format *f)
 {
 	struct bttv_fh *fh = priv;
@@ -2661,7 +2684,7 @@ static int bttv_querycap(struct file *file, void  *priv,
 	return 0;
 }
 
-static int bttv_enum_fmt_vbi(struct file *file, void  *priv,
+static int bttv_enum_fmt_vbi_cap(struct file *file, void  *priv,
 				struct v4l2_fmtdesc *f)
 {
 	if (0 != f->index)
@@ -2692,7 +2715,7 @@ static int bttv_enum_fmt_cap_ovr(struct v4l2_fmtdesc *f)
 	return i;
 }
 
-static int bttv_enum_fmt_cap(struct file *file, void  *priv,
+static int bttv_enum_fmt_vid_cap(struct file *file, void  *priv,
 				struct v4l2_fmtdesc *f)
 {
 	int rc = bttv_enum_fmt_cap_ovr(f);
@@ -2703,7 +2726,7 @@ static int bttv_enum_fmt_cap(struct file *file, void  *priv,
 	return 0;
 }
 
-static int bttv_enum_fmt_overlay(struct file *file, void  *priv,
+static int bttv_enum_fmt_vid_overlay(struct file *file, void  *priv,
 					struct v4l2_fmtdesc *f)
 {
 	int rc;
@@ -2760,7 +2783,7 @@ static int bttv_overlay(struct file *file, void *f, unsigned int on)
 	mutex_lock(&fh->cap.vb_lock);
 	if (on) {
 		fh->ov.tvnorm = btv->tvnorm;
-		new = videobuf_pci_alloc(sizeof(*new));
+		new = videobuf_sg_alloc(sizeof(*new));
 		new->crop = btv->crop[!!fh->do_crop].rect;
 		bttv_overlay_risc(btv, &fh->ov, fh->ovfmt, new);
 	} else {
@@ -2834,7 +2857,7 @@ static int bttv_s_fbuf(struct file *file, void *f,
 		if (check_btres(fh, RESOURCE_OVERLAY)) {
 			struct bttv_buffer *new;
 
-			new = videobuf_pci_alloc(sizeof(*new));
+			new = videobuf_sg_alloc(sizeof(*new));
 			new->crop = btv->crop[!!fh->do_crop].rect;
 			bttv_overlay_risc(btv, &fh->ov, fh->ovfmt, new);
 			retval = bttv_switch_overlay(btv, fh, new);
@@ -3117,12 +3140,18 @@ static int bttv_s_crop(struct file *file, void *f, struct v4l2_crop *crop)
 
 static int bttv_g_audio(struct file *file, void *priv, struct v4l2_audio *a)
 {
+	if (unlikely(a->index))
+		return -EINVAL;
+
 	strcpy(a->name, "audio");
 	return 0;
 }
 
 static int bttv_s_audio(struct file *file, void *priv, struct v4l2_audio *a)
 {
+	if (unlikely(a->index))
+		return -EINVAL;
+
 	return 0;
 }
 
@@ -3184,7 +3213,7 @@ static unsigned int bttv_poll(struct file *file, poll_table *wait)
 			/* need to capture a new frame */
 			if (locked_btres(fh->btv,RESOURCE_VIDEO_STREAM))
 				goto err;
-			fh->cap.read_buf = videobuf_pci_alloc(fh->cap.msize);
+			fh->cap.read_buf = videobuf_sg_alloc(fh->cap.msize);
 			if (NULL == fh->cap.read_buf)
 				goto err;
 			fh->cap.read_buf->memory = V4L2_MEMORY_USERPTR;
@@ -3221,6 +3250,7 @@ static int bttv_open(struct inode *inode, struct file *file)
 
 	dprintk(KERN_DEBUG "bttv: open minor=%d\n",minor);
 
+	lock_kernel();
 	for (i = 0; i < bttv_num; i++) {
 		if (bttvs[i].video_dev &&
 		    bttvs[i].video_dev->minor == minor) {
@@ -3235,35 +3265,40 @@ static int bttv_open(struct inode *inode, struct file *file)
 			break;
 		}
 	}
-	if (NULL == btv)
+	if (NULL == btv) {
+		unlock_kernel();
 		return -ENODEV;
+	}
 
 	dprintk(KERN_DEBUG "bttv%d: open called (type=%s)\n",
 		btv->c.nr,v4l2_type_names[type]);
 
 	/* allocate per filehandle data */
 	fh = kmalloc(sizeof(*fh),GFP_KERNEL);
-	if (NULL == fh)
+	if (NULL == fh) {
+		unlock_kernel();
 		return -ENOMEM;
+	}
 	file->private_data = fh;
 	*fh = btv->init;
 	fh->type = type;
 	fh->ov.setup_ok = 0;
 	v4l2_prio_open(&btv->prio,&fh->prio);
 
-	videobuf_queue_pci_init(&fh->cap, &bttv_video_qops,
-			    btv->c.pci, &btv->s_lock,
+	videobuf_queue_sg_init(&fh->cap, &bttv_video_qops,
+			    &btv->c.pci->dev, &btv->s_lock,
 			    V4L2_BUF_TYPE_VIDEO_CAPTURE,
 			    V4L2_FIELD_INTERLACED,
 			    sizeof(struct bttv_buffer),
 			    fh);
-	videobuf_queue_pci_init(&fh->vbi, &bttv_vbi_qops,
-			    btv->c.pci, &btv->s_lock,
+	videobuf_queue_sg_init(&fh->vbi, &bttv_vbi_qops,
+			    &btv->c.pci->dev, &btv->s_lock,
 			    V4L2_BUF_TYPE_VBI_CAPTURE,
 			    V4L2_FIELD_SEQ_TB,
 			    sizeof(struct bttv_buffer),
 			    fh);
 	set_tvnorm(btv,btv->tvnorm);
+	set_input(btv, btv->input, btv->tvnorm);
 
 	btv->users++;
 
@@ -3284,6 +3319,7 @@ static int bttv_open(struct inode *inode, struct file *file)
 	bttv_vbi_fmt_reset(&fh->vbi_fmt, btv->tvnorm);
 
 	bttv_field_count(btv);
+	unlock_kernel();
 	return 0;
 }
 
@@ -3324,6 +3360,10 @@ static int bttv_release(struct inode *inode, struct file *file)
 
 	btv->users--;
 	bttv_field_count(btv);
+
+	if (!btv->users)
+		audio_mute(btv, 1);
+
 	return 0;
 }
 
@@ -3351,23 +3391,20 @@ static const struct file_operations bttv_fops =
 	.poll     = bttv_poll,
 };
 
-static struct video_device bttv_video_template =
-{
-	.fops     = &bttv_fops,
-	.minor    = -1,
+static const struct v4l2_ioctl_ops bttv_ioctl_ops = {
 	.vidioc_querycap                = bttv_querycap,
-	.vidioc_enum_fmt_cap            = bttv_enum_fmt_cap,
-	.vidioc_g_fmt_cap               = bttv_g_fmt_cap,
-	.vidioc_try_fmt_cap             = bttv_try_fmt_cap,
-	.vidioc_s_fmt_cap               = bttv_s_fmt_cap,
-	.vidioc_enum_fmt_overlay        = bttv_enum_fmt_overlay,
-	.vidioc_g_fmt_overlay           = bttv_g_fmt_overlay,
-	.vidioc_try_fmt_overlay         = bttv_try_fmt_overlay,
-	.vidioc_s_fmt_overlay           = bttv_s_fmt_overlay,
-	.vidioc_enum_fmt_vbi            = bttv_enum_fmt_vbi,
-	.vidioc_g_fmt_vbi               = bttv_g_fmt_vbi,
-	.vidioc_try_fmt_vbi             = bttv_try_fmt_vbi,
-	.vidioc_s_fmt_vbi               = bttv_s_fmt_vbi,
+	.vidioc_enum_fmt_vid_cap        = bttv_enum_fmt_vid_cap,
+	.vidioc_g_fmt_vid_cap           = bttv_g_fmt_vid_cap,
+	.vidioc_try_fmt_vid_cap         = bttv_try_fmt_vid_cap,
+	.vidioc_s_fmt_vid_cap           = bttv_s_fmt_vid_cap,
+	.vidioc_enum_fmt_vid_overlay    = bttv_enum_fmt_vid_overlay,
+	.vidioc_g_fmt_vid_overlay       = bttv_g_fmt_vid_overlay,
+	.vidioc_try_fmt_vid_overlay     = bttv_try_fmt_vid_overlay,
+	.vidioc_s_fmt_vid_overlay       = bttv_s_fmt_vid_overlay,
+	.vidioc_enum_fmt_vbi_cap        = bttv_enum_fmt_vbi_cap,
+	.vidioc_g_fmt_vbi_cap           = bttv_g_fmt_vbi_cap,
+	.vidioc_try_fmt_vbi_cap         = bttv_try_fmt_vbi_cap,
+	.vidioc_s_fmt_vbi_cap           = bttv_s_fmt_vbi_cap,
 	.vidioc_g_audio                 = bttv_g_audio,
 	.vidioc_s_audio                 = bttv_s_audio,
 	.vidioc_cropcap                 = bttv_cropcap,
@@ -3405,8 +3442,14 @@ static struct video_device bttv_video_template =
 	.vidioc_g_register		= bttv_g_register,
 	.vidioc_s_register		= bttv_s_register,
 #endif
-	.tvnorms                        = BTTV_NORMS,
-	.current_norm                   = V4L2_STD_PAL,
+};
+
+static struct video_device bttv_video_template = {
+	.fops         = &bttv_fops,
+	.minor        = -1,
+	.ioctl_ops    = &bttv_ioctl_ops,
+	.tvnorms      = BTTV_NORMS,
+	.current_norm = V4L2_STD_PAL,
 };
 
 /* ----------------------------------------------------------------------- */
@@ -3421,21 +3464,26 @@ static int radio_open(struct inode *inode, struct file *file)
 
 	dprintk("bttv: open minor=%d\n",minor);
 
+	lock_kernel();
 	for (i = 0; i < bttv_num; i++) {
-		if (bttvs[i].radio_dev->minor == minor) {
+		if (bttvs[i].radio_dev && bttvs[i].radio_dev->minor == minor) {
 			btv = &bttvs[i];
 			break;
 		}
 	}
-	if (NULL == btv)
+	if (NULL == btv) {
+		unlock_kernel();
 		return -ENODEV;
+	}
 
 	dprintk("bttv%d: open called (radio)\n",btv->c.nr);
 
 	/* allocate per filehandle data */
 	fh = kmalloc(sizeof(*fh), GFP_KERNEL);
-	if (NULL == fh)
+	if (NULL == fh) {
+		unlock_kernel();
 		return -ENOMEM;
+	}
 	file->private_data = fh;
 	*fh = btv->init;
 	v4l2_prio_open(&btv->prio, &fh->prio);
@@ -3448,6 +3496,7 @@ static int radio_open(struct inode *inode, struct file *file)
 	audio_input(btv,TVAUDIO_INPUT_RADIO);
 
 	mutex_unlock(&btv->lock);
+	unlock_kernel();
 	return 0;
 }
 
@@ -3456,6 +3505,9 @@ static int radio_release(struct inode *inode, struct file *file)
 	struct bttv_fh *fh = file->private_data;
 	struct bttv *btv = fh->btv;
 	struct rds_command cmd;
+
+	file->private_data = NULL;
+	kfree(fh);
 
 	btv->radio_user--;
 
@@ -3510,7 +3562,7 @@ static int radio_enum_input(struct file *file, void *priv,
 		return -EINVAL;
 
 	strcpy(i->name, "Radio");
-	 i->type = V4L2_INPUT_TYPE_TUNER;
+	i->type = V4L2_INPUT_TYPE_TUNER;
 
 	return 0;
 }
@@ -3518,10 +3570,9 @@ static int radio_enum_input(struct file *file, void *priv,
 static int radio_g_audio(struct file *file, void *priv,
 					struct v4l2_audio *a)
 {
-	if (a->index != 0)
+	if (unlikely(a->index))
 		return -EINVAL;
 
-	memset(a, 0, sizeof(*a));
 	strcpy(a->name, "Radio");
 
 	return 0;
@@ -3543,11 +3594,17 @@ static int radio_s_tuner(struct file *file, void *priv,
 static int radio_s_audio(struct file *file, void *priv,
 					struct v4l2_audio *a)
 {
+	if (unlikely(a->index))
+		return -EINVAL;
+
 	return 0;
 }
 
 static int radio_s_input(struct file *filp, void *priv, unsigned int i)
 {
+	if (unlikely(i))
+		return -EINVAL;
+
 	return 0;
 }
 
@@ -3621,10 +3678,7 @@ static const struct file_operations radio_fops =
 	.poll     = radio_poll,
 };
 
-static struct video_device radio_template =
-{
-	.fops     = &radio_fops,
-	.minor    = -1,
+static const struct v4l2_ioctl_ops radio_ioctl_ops = {
 	.vidioc_querycap        = radio_querycap,
 	.vidioc_g_tuner         = radio_g_tuner,
 	.vidioc_enum_input      = radio_enum_input,
@@ -3639,6 +3693,12 @@ static struct video_device radio_template =
 	.vidioc_s_ctrl          = bttv_s_ctrl,
 	.vidioc_g_frequency     = bttv_g_frequency,
 	.vidioc_s_frequency     = bttv_s_frequency,
+};
+
+static struct video_device radio_template = {
+	.fops      = &radio_fops,
+	.minor     = -1,
+	.ioctl_ops = &radio_ioctl_ops,
 };
 
 /* ----------------------------------------------------------------------- */
@@ -3691,7 +3751,7 @@ static void bttv_risc_disasm(struct bttv *btv,
 	for (i = 0; i < (risc->size >> 2); i += n) {
 		printk("%s:   0x%lx: ", btv->c.name,
 		       (unsigned long)(risc->dma + (i<<2)));
-		n = bttv_risc_decode(risc->cpu[i]);
+		n = bttv_risc_decode(le32_to_cpu(risc->cpu[i]));
 		for (j = 1; j < n; j++)
 			printk("%s:   0x%lx: 0x%08x [ arg #%d ]\n",
 			       btv->c.name, (unsigned long)(risc->dma + ((i+j)<<2)),
@@ -3760,8 +3820,8 @@ static void bttv_irq_debug_low_latency(struct bttv *btv, u32 rc)
 	printk("bttv%d: irq: skipped frame [main=%lx,o_vbi=%lx,o_field=%lx,rc=%lx]\n",
 	       btv->c.nr,
 	       (unsigned long)btv->main.dma,
-	       (unsigned long)btv->main.cpu[RISC_SLOT_O_VBI+1],
-	       (unsigned long)btv->main.cpu[RISC_SLOT_O_FIELD+1],
+	       (unsigned long)le32_to_cpu(btv->main.cpu[RISC_SLOT_O_VBI+1]),
+	       (unsigned long)le32_to_cpu(btv->main.cpu[RISC_SLOT_O_FIELD+1]),
 	       (unsigned long)rc);
 
 	if (0 == (btread(BT848_DSTATUS) & BT848_DSTATUS_HLOC)) {
@@ -4042,7 +4102,11 @@ bttv_irq_switch_vbi(struct bttv *btv)
 	spin_unlock(&btv->s_lock);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static irqreturn_t bttv_irq(int irq, void *dev_id, struct pt_regs * regs)
+#else
 static irqreturn_t bttv_irq(int irq, void *dev_id)
+#endif
 {
 	u32 stat,astat;
 	u32 dstat;
@@ -4161,8 +4225,7 @@ static irqreturn_t bttv_irq(int irq, void *dev_id)
 
 static struct video_device *vdev_init(struct bttv *btv,
 				      const struct video_device *template,
-				      const char *type_name,
-				      const int type)
+				      const char *type_name)
 {
 	struct video_device *vfd;
 
@@ -4171,9 +4234,9 @@ static struct video_device *vdev_init(struct bttv *btv,
 		return NULL;
 	*vfd = *template;
 	vfd->minor   = -1;
-	vfd->dev     = &btv->c.pci->dev;
+	vfd->parent  = &btv->c.pci->dev;
 	vfd->release = video_device_release;
-	vfd->type    = type;
+	vfd->debug   = bttv_debug;
 	snprintf(vfd->name, sizeof(vfd->name), "BT%d%s %s (%s)",
 		 btv->id, (btv->id==848 && btv->revision==0x12) ? "A" : "",
 		 type_name, bttv_tvcards[btv->c.type].name);
@@ -4208,28 +4271,20 @@ static void bttv_unregister_video(struct bttv *btv)
 /* register video4linux devices */
 static int __devinit bttv_register_video(struct bttv *btv)
 {
-	int video_type = VID_TYPE_CAPTURE |
-			 VID_TYPE_TUNER   |
-			 VID_TYPE_CLIPPING|
-			 VID_TYPE_SCALES;
-
-	if (no_overlay <= 0) {
-		bttv_video_template.type |= VID_TYPE_OVERLAY;
-	} else {
+	if (no_overlay > 0)
 		printk("bttv: Overlay support disabled.\n");
-	}
 
 	/* video */
-	btv->video_dev = vdev_init(btv, &bttv_video_template,
-				   "video", video_type);
+	btv->video_dev = vdev_init(btv, &bttv_video_template, "video");
 
 	if (NULL == btv->video_dev)
 		goto err;
-	if (video_register_device(btv->video_dev,VFL_TYPE_GRABBER,video_nr)<0)
+	if (video_register_device(btv->video_dev, VFL_TYPE_GRABBER,
+				  video_nr[btv->c.nr]) < 0)
 		goto err;
 	printk(KERN_INFO "bttv%d: registered device video%d\n",
 	       btv->c.nr,btv->video_dev->minor & 0x1f);
-	if (device_create_file(&btv->video_dev->class_dev,
+	if (device_create_file(&btv->video_dev->dev,
 				     &dev_attr_card)<0) {
 		printk(KERN_ERR "bttv%d: device_create_file 'card' "
 		       "failed\n", btv->c.nr);
@@ -4237,12 +4292,12 @@ static int __devinit bttv_register_video(struct bttv *btv)
 	}
 
 	/* vbi */
-	btv->vbi_dev = vdev_init(btv, &bttv_video_template,
-				 "vbi", VID_TYPE_TUNER | VID_TYPE_TELETEXT);
+	btv->vbi_dev = vdev_init(btv, &bttv_video_template, "vbi");
 
 	if (NULL == btv->vbi_dev)
 		goto err;
-	if (video_register_device(btv->vbi_dev,VFL_TYPE_VBI,vbi_nr)<0)
+	if (video_register_device(btv->vbi_dev, VFL_TYPE_VBI,
+				  vbi_nr[btv->c.nr]) < 0)
 		goto err;
 	printk(KERN_INFO "bttv%d: registered device vbi%d\n",
 	       btv->c.nr,btv->vbi_dev->minor & 0x1f);
@@ -4250,11 +4305,11 @@ static int __devinit bttv_register_video(struct bttv *btv)
 	if (!btv->has_radio)
 		return 0;
 	/* radio */
-	btv->radio_dev = vdev_init(btv, &radio_template,
-				   "radio", VID_TYPE_TUNER);
+	btv->radio_dev = vdev_init(btv, &radio_template, "radio");
 	if (NULL == btv->radio_dev)
 		goto err;
-	if (video_register_device(btv->radio_dev, VFL_TYPE_RADIO,radio_nr)<0)
+	if (video_register_device(btv->radio_dev, VFL_TYPE_RADIO,
+				  radio_nr[btv->c.nr]) < 0)
 		goto err;
 	printk(KERN_INFO "bttv%d: registered device radio%d\n",
 	       btv->c.nr,btv->radio_dev->minor & 0x1f);

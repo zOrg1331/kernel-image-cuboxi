@@ -64,8 +64,6 @@
 #include "ivtv-gpio.h"
 #include "ivtv-i2c.h"
 
-#include <media/ir-kbd-i2c.h>
-
 /* i2c implementation for cx23415/6 chip, ivtv project.
  * Author: Kevin Thayer (nufan_wfk at yahoo.com)
  */
@@ -74,10 +72,6 @@
 #define IVTV_REG_I2C_SETSDA_OFFSET 0x7004
 #define IVTV_REG_I2C_GETSCL_OFFSET 0x7008
 #define IVTV_REG_I2C_GETSDA_OFFSET 0x700c
-
-#ifndef I2C_ADAP_CLASS_TV_ANALOG
-#define I2C_ADAP_CLASS_TV_ANALOG I2C_CLASS_TV_ANALOG
-#endif /* I2C_ADAP_CLASS_TV_ANALOG */
 
 #define IVTV_CS53L32A_I2C_ADDR		0x11
 #define IVTV_M52790_I2C_ADDR		0x48
@@ -136,16 +130,16 @@ static const u8 hw_addrs[] = {
 };
 
 /* This array should match the IVTV_HW_ defines */
-static const char * const hw_drivernames[] = {
+static const char * const hw_devicenames[] = {
 	"cx25840",
 	"saa7115",
-	"saa7127",
+	"saa7127_auto",	/* saa7127 or saa7129 */
 	"msp3400",
 	"tuner",
 	"wm8775",
 	"cs53l32a",
 	"tveeprom",
-	"saa7115",
+	"saa7114",
 	"upd64031a",
 	"upd64083",
 	"saa717x",
@@ -157,6 +151,7 @@ static const char * const hw_drivernames[] = {
 
 int ivtv_i2c_register(struct ivtv *itv, unsigned idx)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
 	struct i2c_board_info info;
 	struct i2c_client *c;
 	u8 id;
@@ -167,7 +162,12 @@ int ivtv_i2c_register(struct ivtv *itv, unsigned idx)
 		return -1;
 	id = hw_driverids[idx];
 	memset(&info, 0, sizeof(info));
-	strcpy(info.driver_name, hw_drivernames[idx]);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
+	strlcpy(info.driver_name, hw_devicenames[idx],
+			sizeof(info.driver_name));
+#else
+	strlcpy(info.type, hw_devicenames[idx], sizeof(info.type));
+#endif
 	info.addr = hw_addrs[idx];
 	for (i = 0; itv->i2c_clients[i] && i < I2C_CLIENTS_MAX; i++) {}
 
@@ -177,10 +177,16 @@ int ivtv_i2c_register(struct ivtv *itv, unsigned idx)
 	}
 
 	if (id != I2C_DRIVERID_TUNER) {
-		c = i2c_new_device(&itv->i2c_adap, &info);
-		if (c->driver == NULL)
+		if (id == I2C_DRIVERID_UPD64031A ||
+		    id == I2C_DRIVERID_UPD64083) {
+			unsigned short addrs[2] = { info.addr, I2C_CLIENT_END };
+
+			c = i2c_new_probed_device(&itv->i2c_adap, &info, addrs);
+		} else
+			c = i2c_new_device(&itv->i2c_adap, &info);
+		if (c && c->driver == NULL)
 			i2c_unregister_device(c);
-		else
+		else if (c)
 			itv->i2c_clients[i] = c;
 		return itv->i2c_clients[i] ? 0 : -ENODEV;
 	}
@@ -202,10 +208,28 @@ int ivtv_i2c_register(struct ivtv *itv, unsigned idx)
 	else if (c)
 		itv->i2c_clients[i++] = c;
 	return 0;
+#else
+	return 0;
+#endif
 }
 
 static int attach_inform(struct i2c_client *client)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22)
+	struct ivtv *itv = (struct ivtv *)i2c_get_adapdata(client->adapter);
+	int i;
+
+	IVTV_DEBUG_I2C("i2c client attach\n");
+	for (i = 0; i < I2C_CLIENTS_MAX; i++) {
+		if (itv->i2c_clients[i] == NULL) {
+			itv->i2c_clients[i] = client;
+			break;
+		}
+	}
+	if (i == I2C_CLIENTS_MAX) {
+		IVTV_ERR("Insufficient room for new I2C client\n");
+	}
+#endif
 	return 0;
 }
 
@@ -533,6 +557,9 @@ static struct i2c_adapter ivtv_i2c_adap_hw_template = {
 	.client_register = attach_inform,
 	.client_unregister = detach_inform,
 	.owner = THIS_MODULE,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22)
+	.class = I2C_CLASS_TV_ANALOG,
+#endif
 };
 
 static void ivtv_setscl_old(void *data, int state)
@@ -586,6 +613,9 @@ static struct i2c_adapter ivtv_i2c_adap_template = {
 	.client_register = attach_inform,
 	.client_unregister = detach_inform,
 	.owner = THIS_MODULE,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22)
+	.class = I2C_CLASS_TV_ANALOG,
+#endif
 };
 
 static const struct i2c_algo_bit_data ivtv_i2c_algo_template = {
@@ -650,7 +680,7 @@ static const char *ivtv_i2c_id_name(u32 id)
 
 	for (i = 0; i < ARRAY_SIZE(hw_driverids); i++)
 		if (hw_driverids[i] == id)
-			return hw_drivernames[i];
+			return hw_devicenames[i];
 	return "unknown device";
 }
 
@@ -661,7 +691,7 @@ static const char *ivtv_i2c_hw_name(u32 hw)
 
 	for (i = 0; i < ARRAY_SIZE(hw_driverids); i++)
 		if (1 << i == hw)
-			return hw_drivernames[i];
+			return hw_devicenames[i];
 	return "unknown device";
 }
 
@@ -763,7 +793,7 @@ int init_ivtv_i2c(struct ivtv *itv)
 	 * same size and GPIO must be the last entry.
 	 */
 	if (ARRAY_SIZE(hw_driverids) != ARRAY_SIZE(hw_addrs) ||
-	    ARRAY_SIZE(hw_drivernames) != ARRAY_SIZE(hw_addrs) ||
+	    ARRAY_SIZE(hw_devicenames) != ARRAY_SIZE(hw_addrs) ||
 	    IVTV_HW_GPIO != (1 << (ARRAY_SIZE(hw_addrs) - 1)) ||
 	    hw_driverids[ARRAY_SIZE(hw_addrs) - 1]) {
 		IVTV_ERR("Mismatched I2C hardware arrays\n");
@@ -788,7 +818,9 @@ int init_ivtv_i2c(struct ivtv *itv)
 	memcpy(&itv->i2c_client, &ivtv_i2c_client_template,
 	       sizeof(struct i2c_client));
 	itv->i2c_client.adapter = &itv->i2c_adap;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20)
 	itv->i2c_adap.dev.parent = &itv->dev->dev;
+#endif
 
 	IVTV_DEBUG_I2C("setting scl and sda to 1\n");
 	ivtv_setscl(itv, 1);
@@ -804,5 +836,13 @@ void exit_ivtv_i2c(struct ivtv *itv)
 {
 	IVTV_DEBUG_I2C("i2c exit\n");
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20)
 	i2c_del_adapter(&itv->i2c_adap);
+#else
+	if (itv->options.newi2c > 0) {
+		i2c_del_adapter(&itv->i2c_adap);
+	} else {
+		i2c_bit_del_bus(&itv->i2c_adap);
+	}
+#endif
 }

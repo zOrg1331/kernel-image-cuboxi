@@ -39,6 +39,8 @@
 #include "dvbdev.h"
 #include "tda1004x.h"
 
+DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
+
 #define DRIVER_NAME		"pluto2"
 
 #define REG_PIDn(n)		((n) << 2)	/* PID n pattern registers */
@@ -232,7 +234,7 @@ static void pluto_reset_ts(struct pluto *pluto, int reenable)
 
 static void pluto_set_dma_addr(struct pluto *pluto)
 {
-	pluto_writereg(pluto, REG_PCAR, cpu_to_le32(pluto->dma_addr));
+	pluto_writereg(pluto, REG_PCAR, pluto->dma_addr);
 }
 
 static int __devinit pluto_dma_map(struct pluto *pluto)
@@ -240,7 +242,11 @@ static int __devinit pluto_dma_map(struct pluto *pluto)
 	pluto->dma_addr = pci_map_single(pluto->pdev, pluto->dma_buf,
 			TS_DMA_BYTES, PCI_DMA_FROMDEVICE);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 27)
 	return pci_dma_mapping_error(pluto->dma_addr);
+#else
+	return pci_dma_mapping_error(pluto->pdev, pluto->dma_addr);
+#endif
 }
 
 static void pluto_dma_unmap(struct pluto *pluto)
@@ -323,7 +329,11 @@ static void pluto_dma_end(struct pluto *pluto, unsigned int nbpackets)
 			TS_DMA_BYTES, PCI_DMA_FROMDEVICE);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static irqreturn_t pluto_irq(int irq, void *dev_id, struct pt_regs *regs)
+#else
 static irqreturn_t pluto_irq(int irq, void *dev_id)
+#endif
 {
 	struct pluto *pluto = dev_id;
 	u32 tscr;
@@ -662,7 +672,8 @@ static int __devinit pluto2_probe(struct pci_dev *pdev,
 		goto err_pluto_hw_exit;
 
 	/* dvb */
-	ret = dvb_register_adapter(&pluto->dvb_adapter, DRIVER_NAME, THIS_MODULE, &pdev->dev);
+	ret = dvb_register_adapter(&pluto->dvb_adapter, DRIVER_NAME,
+				   THIS_MODULE, &pdev->dev, adapter_nr);
 	if (ret < 0)
 		goto err_i2c_del_adapter;
 

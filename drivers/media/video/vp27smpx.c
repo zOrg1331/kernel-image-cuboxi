@@ -27,15 +27,21 @@
 #include <asm/uaccess.h>
 #include <linux/i2c.h>
 #include <linux/i2c-id.h>
-#include <linux/videodev.h>
+#include <linux/videodev2.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-chip-ident.h>
 #include <media/v4l2-i2c-drv.h>
+#include <media/compat.h>
 
 MODULE_DESCRIPTION("vp27smpx driver");
 MODULE_AUTHOR("Hans Verkuil");
 MODULE_LICENSE("GPL");
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22)
+static unsigned short normal_i2c[] = { 0xb6 >> 1, I2C_CLIENT_END };
+
+I2C_CLIENT_INSMOD;
+#endif
 
 /* ----------------------------------------------------------------------- */
 
@@ -121,7 +127,8 @@ static int vp27smpx_command(struct i2c_client *client, unsigned cmd, void *arg)
  * concerning the addresses: i2c wants 7 bit (without the r/w bit), so '>>1'
  */
 
-static int vp27smpx_probe(struct i2c_client *client)
+static int vp27smpx_probe(struct i2c_client *client,
+			  const struct i2c_device_id *id)
 {
 	struct vp27smpx_state *state;
 
@@ -129,8 +136,9 @@ static int vp27smpx_probe(struct i2c_client *client)
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA))
 		return -EIO;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
 	snprintf(client->name, sizeof(client->name) - 1, "vp27smpx");
-
+#endif
 	v4l_info(client, "chip found @ 0x%x (%s)\n",
 			client->addr << 1, client->adapter->name);
 
@@ -153,11 +161,21 @@ static int vp27smpx_remove(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
+static const struct i2c_device_id vp27smpx_id[] = {
+	{ "vp27smpx", 0 },
+	{ }
+};
+MODULE_DEVICE_TABLE(i2c, vp27smpx_id);
+#endif
+
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "vp27smpx",
 	.driverid = I2C_DRIVERID_VP27SMPX,
 	.command = vp27smpx_command,
 	.probe = vp27smpx_probe,
 	.remove = vp27smpx_remove,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
+	.id_table = vp27smpx_id,
+#endif
 };
-

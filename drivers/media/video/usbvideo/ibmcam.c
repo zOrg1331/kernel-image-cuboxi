@@ -121,7 +121,7 @@ static int init_model2_yb = -1;
 
 /* 01.01.08 - Added for RCA video in support -LO */
 /* Settings for camera model 3 */
-static int init_model3_input = 0;
+static int init_model3_input;
 
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level: 0-9 (default=0)");
@@ -257,7 +257,7 @@ static enum ParseState ibmcam_find_header(struct uvd *uvd) /* FIXME: Add frame h
 			    (RING_QUEUE_PEEK(&uvd->dp, 1) == 0xFF) &&
 			    (RING_QUEUE_PEEK(&uvd->dp, 2) == 0x00))
 			{
-#if 0				/* This code helps to detect new frame markers */
+#if 0 /* keep */				/* This code helps to detect new frame markers */
 				info("Header sig: 00 FF 00 %02X", RING_QUEUE_PEEK(&uvd->dp, 3));
 #endif
 				frame->header = RING_QUEUE_PEEK(&uvd->dp, 3);
@@ -265,7 +265,7 @@ static enum ParseState ibmcam_find_header(struct uvd *uvd) /* FIXME: Add frame h
 				    (frame->header == HDRSIG_MODEL1_176x144) ||
 				    (frame->header == HDRSIG_MODEL1_352x288))
 				{
-#if 0
+#if 0 /* keep */
 					info("Header found.");
 #endif
 					RING_QUEUE_DEQUEUE_BYTES(&uvd->dp, marker_len);
@@ -294,7 +294,7 @@ case IBMCAM_MODEL_4:
 			if ((RING_QUEUE_PEEK(&uvd->dp, 0) == 0x00) &&
 			    (RING_QUEUE_PEEK(&uvd->dp, 1) == 0xFF))
 			{
-#if 0
+#if 0 /* keep */
 				info("Header found.");
 #endif
 				RING_QUEUE_DEQUEUE_BYTES(&uvd->dp, marker_len);
@@ -337,7 +337,7 @@ case IBMCAM_MODEL_4:
 				byte3 = RING_QUEUE_PEEK(&uvd->dp, 2);
 				byte4 = RING_QUEUE_PEEK(&uvd->dp, 3);
 				frame->header = (byte3 << 8) | byte4;
-#if 0
+#if 0 /* keep */
 				info("Header found.");
 #endif
 				RING_QUEUE_DEQUEUE_BYTES(&uvd->dp, marker_len);
@@ -736,12 +736,12 @@ static enum ParseState ibmcam_model2_320x240_parse_lines(
 		 * make black color and quit the horizontal scanning loop.
 		 */
 		if (((frame->curline + 2) >= scanHeight) || (i >= scanLength)) {
-			const int j = i * V4L_BYTES_PER_PIXEL;
+			const int offset = i * V4L_BYTES_PER_PIXEL;
 #if USES_IBMCAM_PUTPIXEL
 			/* Refresh 'f' because we don't use it much with PUTPIXEL */
-			f = frame->data + (v4l_linesize * frame->curline) + j;
+			f = frame->data + (v4l_linesize * frame->curline) + offset;
 #endif
-			memset(f, 0, v4l_linesize - j);
+			memset(f, 0, v4l_linesize - offset);
 			break;
 		}
 
@@ -802,6 +802,21 @@ static enum ParseState ibmcam_model2_320x240_parse_lines(
 		return scan_Continue;
 }
 
+/*
+ * ibmcam_model3_parse_lines()
+ *
+ * | Even lines |     Odd Lines       |
+ * -----------------------------------|
+ * |YYY........Y|UYVYUYVY.........UYVY|
+ * |YYY........Y|UYVYUYVY.........UYVY|
+ * |............|.....................|
+ * |YYY........Y|UYVYUYVY.........UYVY|
+ * |------------+---------------------|
+ *
+ * There is one (U, V) chroma pair for every four luma (Y) values.  This
+ * function reads a pair of lines at a time and obtains missing chroma values
+ * from adjacent pixels.
+ */
 static enum ParseState ibmcam_model3_parse_lines(
 	struct uvd *uvd,
 	struct usbvideo_frame *frame,
@@ -816,6 +831,7 @@ static enum ParseState ibmcam_model3_parse_lines(
 	const int ccm = 128; /* Color correction median - see below */
 	int i, u, v, rw, data_w=0, data_h=0, color_corr;
 	static unsigned char lineBuffer[640*3];
+	int line;
 
 	color_corr = (uvd->vpic.colour - 0x8000) >> 8; /* -128..+127 = -ccm..+(ccm-1)*/
 	RESTRICT_TO_RANGE(color_corr, -ccm, ccm+1);
@@ -869,15 +885,15 @@ static enum ParseState ibmcam_model3_parse_lines(
 		return scan_NextFrame;
 	}
 
-	/* Make sure there's enough data for the entire line */
-	len = 3 * data_w; /* <y-data> <uv-data> */
+	/* Make sure that lineBuffer can store two lines of data */
+	len = 3 * data_w; /* <y-data> <uyvy-data> */
 	assert(len <= sizeof(lineBuffer));
 
-	/* Make sure there's enough data for the entire line */
+	/* Make sure there's enough data for two lines */
 	if (RingQueue_GetLength(&uvd->dp) < len)
 		return scan_Out;
 
-	/* Suck one line out of the ring queue */
+	/* Suck two lines of data out of the ring queue */
 	RingQueue_Dequeue(&uvd->dp, lineBuffer, len);
 
 	data = lineBuffer;
@@ -887,15 +903,23 @@ static enum ParseState ibmcam_model3_parse_lines(
 	rw = (int)VIDEOSIZE_Y(frame->request) - (int)(frame->curline) - 1;
 	RESTRICT_TO_RANGE(rw, 0, VIDEOSIZE_Y(frame->request)-1);
 
-	for (i = 0; i < VIDEOSIZE_X(frame->request); i++) {
-		int y, rv, gv, bv;	/* RGB components */
+	/* Iterate over two lines. */
+	for (line = 0; line < 2; line++) {
+		for (i = 0; i < VIDEOSIZE_X(frame->request); i++) {
+			int y;
+			int rv, gv, bv;	/* RGB components */
 
-		if (i < data_w) {
-			y = data[i];	/* Luminosity is the first line */
+			if (i >= data_w) {
+				RGB24_PUTPIXEL(frame, i, rw, 0, 0, 0);
+				continue;
+			}
+
+			/* first line is YYY...Y; second is UYVY...UYVY */
+			y = data[(line == 0) ? i : (i*2 + 1)];
 
 			/* Apply static color correction */
-			u = color[i*2] + hue_corr;
-			v = color[i*2 + 1] + hue2_corr;
+			u = color[(i/2)*4] + hue_corr;
+			v = color[(i/2)*4 + 2] + hue2_corr;
 
 			/* Apply color correction */
 			if (color_corr != 0) {
@@ -903,13 +927,21 @@ static enum ParseState ibmcam_model3_parse_lines(
 				u = 128 + ((ccm + color_corr) * (u - 128)) / ccm;
 				v = 128 + ((ccm + color_corr) * (v - 128)) / ccm;
 			}
-		} else
-			y = 0, u = v = 128;
 
-		YUV_TO_RGB_BY_THE_BOOK(y, u, v, rv, gv, bv);
-		RGB24_PUTPIXEL(frame, i, rw, rv, gv, bv); /* Done by deinterlacing now */
+
+			YUV_TO_RGB_BY_THE_BOOK(y, u, v, rv, gv, bv);
+			RGB24_PUTPIXEL(frame, i, rw, rv, gv, bv);  /* No deinterlacing */
+		}
+
+		/* Check for the end of requested data */
+		if (rw == 0)
+			break;
+
+		/* Prepare for the second line */
+		rw--;
+		data = lineBuffer + data_w;
 	}
-	frame->deinterlace = Deinterlace_FillEvenLines;
+	frame->deinterlace = Deinterlace_None;
 
 	/*
 	 * Account for number of bytes that we wrote into output V4L frame.
@@ -1099,7 +1131,7 @@ static void ibmcam_ProcessIsocData(struct uvd *uvd,
 	/* Update the frame's uncompressed length. */
 	frame->seqRead_Length += copylen;
 
-#if 0
+#if 0 /* keep */
 	{
 		static unsigned char j=0;
 		memset(frame->data, j++, uvd->max_frame_size);
@@ -1138,7 +1170,7 @@ static int ibmcam_veio(
 			cp,
 			sizeof(cp),
 			1000);
-#if 0
+#if 0 /* keep */
 		info("USB => %02x%02x%02x%02x%02x%02x%02x%02x "
 		       "(req=$%02x val=$%04x ind=$%04x)",
 		       cp[0],cp[1],cp[2],cp[3],cp[4],cp[5],cp[6],cp[7],
@@ -1432,7 +1464,7 @@ static void ibmcam_change_lighting_conditions(struct uvd *uvd)
 		break;
 	}
 	case IBMCAM_MODEL_2:
-#if 0
+#if 0 /* keep */
 		/*
 		 * This command apparently requires camera to be stopped. My
 		 * experiments showed that it -is- possible to alter the lighting
@@ -1610,7 +1642,7 @@ static void ibmcam_set_hue(struct uvd *uvd)
 	}
 	case IBMCAM_MODEL_3:
 	{
-#if 0 /* This seems not to work. No problem, will fix programmatically */
+#if 0 /* keep */ /* This seems not to work. No problem, will fix programmatically */
 		unsigned short hue = 0x05 + (uvd->vpic.hue / (0xFFFF / (0x37 - 0x05 + 1)));
 		RESTRICT_TO_RANGE(hue, 0x05, 0x37);
 		if (uvd->vpic_old.hue == hue)
@@ -1859,7 +1891,7 @@ static int ibmcam_model1_setup(struct uvd *uvd)
 		ibmcam_veio(uvd, 0, 0x04, 0x011a);	/* Same everywhere */
 		ibmcam_veio(uvd, 0, 0x2b, 0x011c);
 		ibmcam_veio(uvd, 0, 0x23, 0x012a);	/* Same everywhere */
-#if 0
+#if 0 /* keep */
 		ibmcam_veio(uvd, 0, 0x00, 0x0106);
 		ibmcam_veio(uvd, 0, 0x38, 0x0107);
 #else
@@ -3501,7 +3533,7 @@ case IBMCAM_MODEL_4:
 		ibmcam_veio(uvd, 0, 0x0000, 0x0112);
 		break;
 	case IBMCAM_MODEL_3:
-#if 1
+#if 1 /* keep */
 		ibmcam_veio(uvd, 0, 0x0000, 0x010c);
 
 		/* Here we are supposed to select video interface alt. setting 0 */
