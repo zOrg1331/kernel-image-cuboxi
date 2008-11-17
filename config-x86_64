@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.25-std-def-alt8.M41.1
-# Mon Nov 17 11:08:40 2008
+# Linux kernel version: 2.6.25-std-def-alt8.M41.2
+# Mon Nov 17 14:32:41 2008
 #
 CONFIG_64BIT=y
 # CONFIG_X86_32 is not set
@@ -439,7 +439,7 @@ CONFIG_NET=y
 #
 CONFIG_PACKET=m
 CONFIG_PACKET_MMAP=y
-CONFIG_UNIX=m
+CONFIG_UNIX=y
 CONFIG_XFRM=y
 CONFIG_XFRM_USER=m
 # CONFIG_XFRM_SUB_POLICY is not set
