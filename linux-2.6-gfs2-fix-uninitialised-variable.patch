@@ -1,0 +1,49 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5] Fix uninitialised variable in GFS2
+Date: Tue, 12 Dec 2006 10:39:17 +0000
+Bugzilla: 219212
+Message-Id: <1165919957.3752.1080.camel@quoit.chygwyn.com>
+Changelog: gfs2: Fix uninitialised variable
+
+
+Hi,
+
+I didn't spot this one getting posted yet, and its an important one, so
+here it is. The bugzilla is #219212. This is already upstream,
+
+Steve.
+
+X-Git-Tag: v2.6.19-rc2
+X-Git-Url: http://www2.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=f5c54804d9e3bb23d8924af09d9ca1c8de9560b6
+
+[GFS2] Fix uninitialised variable
+
+This fixes a bug where, in certain cases an uninitialised variable
+could cause a dereference of a NULL pointer in gfs2_commit_write().
+Also a typo in a comment is fixed at the same time.
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+---
+
+--- a/fs/gfs2/ops_address.c
++++ b/fs/gfs2/ops_address.c
+@@ -385,6 +385,7 @@ static int gfs2_prepare_write(struct fil
+ 		goto out_unlock;
+ 
+ 
++	ip->i_alloc.al_requested = 0;
+ 	if (alloc_required) {
+ 		al = gfs2_alloc_get(ip);
+ 
+--- a/fs/gfs2/rgrp.h
++++ b/fs/gfs2/rgrp.h
+@@ -32,7 +32,7 @@ void gfs2_rgrp_repolish_clones(struct gf
+ struct gfs2_alloc *gfs2_alloc_get(struct gfs2_inode *ip);
+ static inline void gfs2_alloc_put(struct gfs2_inode *ip)
+ {
+-	return; /* Se we can see where ip->i_alloc is used */
++	return; /* So we can see where ip->i_alloc is used */
+ }
+ 
+ int gfs2_inplace_reserve_i(struct gfs2_inode *ip,
+

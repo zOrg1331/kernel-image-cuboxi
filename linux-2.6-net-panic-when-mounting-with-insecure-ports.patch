@@ -1,0 +1,571 @@
+From: Anton Arapov <aarapov@redhat.com>
+Date: Fri, 19 Oct 2007 12:43:02 +0200
+Subject: [net] panic when mounting with insecure ports
+Message-id: m3d4vbmll5.fsf@bandura.englab.brq.redhat.com
+O-Subject: [RHEL5.2 PATCH] BZ294881: Kernel panic when mounting with insecure ports
+Bugzilla: 294881
+
+BZ#294881:
+  https://bugzilla.redhat.com/show_bug.cgi?id=294881
+
+Description:
+  Kernel crashes when the port range of one single port are using.
+  Robustness and locking were added to the local_port_range sysctl.
+
+  One of the patches adopted with respect to keep the kernel in
+conformance to upstream. Otherwise I will have to export
+set_local_port_range() function with appropriate code changes in
+net/ipv4/tcp.c
+
+Upstream status:
+  commit# 06393009000779b00a558fd2f280882cc7dc2008
+          [SCTP]: port randomization
+
+  commit# 227b60f5102cda4e4ab792b526a59c8cb20cd9f8
+          [INET]: local port range robustness
+
+  committed-to-mm-tree:
+  http://marc.info/?l=linux-mm-commits&m=119274231700326&w=2
+          [INET]: justification for localport range robustness
+
+  commit# 3f196eb519a419bf83ecc22753943fd0a0de4f8f
+          [TCP]: Use default 32768-61000 outgoing port range in all cases
+          * adopted wrt conformance
+
+Test status:
+  Has been tested for compilation, boot and by the reproducer.
+  No kABI brakage has been detected by check-kabi tool.
+
+==
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: James Morris <jmorris@redhat.com>
+Acked-by: Neil Horman <nhorman@redhat.com>
+---
+ drivers/infiniband/core/cma.c   |   23 +++++++-----
+ include/net/ip.h                |    3 +-
+ include/net/sctp/structs.h      |    2 -
+ net/ipv4/inet_connection_sock.c |   24 ++++++++++---
+ net/ipv4/inet_hashtables.c      |   13 +++----
+ net/ipv4/sysctl_net_ipv4.c      |   75 ++++++++++++++++++++++++++++++++++++--
+ net/ipv4/tcp.c                  |    3 --
+ net/ipv4/tcp_ipv4.c             |    1 -
+ net/ipv4/udp.c                  |   20 +++++-----
+ net/ipv6/inet6_hashtables.c     |   12 +++---
+ net/ipv6/udp.c                  |   18 ++++-----
+ net/sctp/protocol.c             |    3 --
+ net/sctp/socket.c               |   26 ++++---------
+ security/selinux/hooks.c        |   39 +++++++++++---------
+ 14 files changed, 165 insertions(+), 97 deletions(-)
+
+diff -urpN linux-2.6.18.noarch.orig/drivers/infiniband/core/cma.c linux-2.6.18.noarch/drivers/infiniband/core/cma.c
+--- linux-2.6.18.noarch.orig/drivers/infiniband/core/cma.c	2007-11-27 16:11:33.000000000 +0100
++++ linux-2.6.18.noarch/drivers/infiniband/core/cma.c	2007-11-27 16:11:58.000000000 +0100
+@@ -1883,13 +1883,14 @@ err1:
+ static int cma_alloc_any_port(struct idr *ps, struct rdma_id_private *id_priv)
+ {
+ 	struct rdma_bind_list *bind_list;
+-	int port, ret;
++	int port, ret, low, high;
+ 
+ 	bind_list = kzalloc(sizeof *bind_list, GFP_KERNEL);
+ 	if (!bind_list)
+ 		return -ENOMEM;
+ 
+ retry:
++	/* FIXME: add proper port randomization per like inet_csk_get_port */
+ 	do {
+ 		ret = idr_get_new_above(ps, bind_list, next_port, &port);
+ 	} while ((ret == -EAGAIN) && idr_pre_get(ps, GFP_KERNEL));
+@@ -1897,18 +1898,19 @@ retry:
+ 	if (ret)
+ 		goto err1;
+ 
+-	if (port > sysctl_local_port_range[1]) {
+-		if (next_port != sysctl_local_port_range[0]) {
++	inet_get_local_port_range(&low, &high);
++	if (port > high) {
++		if (next_port != low) {
+ 			idr_remove(ps, port);
+-			next_port = sysctl_local_port_range[0];
++			next_port = low;
+ 			goto retry;
+ 		}
+ 		ret = -EADDRNOTAVAIL;
+ 		goto err2;
+ 	}
+ 
+-	if (port == sysctl_local_port_range[1])
+-		next_port = sysctl_local_port_range[0];
++	if (port == high)
++		next_port = low;
+ 	else
+ 		next_port = port + 1;
+ 
+@@ -2791,12 +2793,13 @@ static void cma_remove_one(struct ib_dev
+ 
+ static int cma_init(void)
+ {
+-	int ret;
++	int ret, low, high, remaining;
+ 
+ 	get_random_bytes(&next_port, sizeof next_port);
+-	next_port = ((unsigned int) next_port % 
+-		    (sysctl_local_port_range[1] - sysctl_local_port_range[0])) +
+-		    sysctl_local_port_range[0];
++	inet_get_local_port_range(&low, &high);
++	remaining = (high - low) + 1;
++	next_port = ((unsigned int) next_port % remaining) + low;
++	
+ 	cma_wq = create_singlethread_workqueue("rdma_cm_wq");
+ 	if (!cma_wq)
+ 		return -ENOMEM;
+diff -urpN linux-2.6.18.noarch.orig/include/net/ip.h linux-2.6.18.noarch/include/net/ip.h
+--- linux-2.6.18.noarch.orig/include/net/ip.h	2007-11-27 16:11:37.000000000 +0100
++++ linux-2.6.18.noarch/include/net/ip.h	2007-11-27 16:12:16.000000000 +0100
+@@ -161,6 +161,7 @@ DECLARE_SNMP_STAT(struct linux_mib, net_
+ #define NET_ADD_STATS_BH(field, adnd)	SNMP_ADD_STATS_BH(net_statistics, field, adnd)
+ #define NET_ADD_STATS_USER(field, adnd)	SNMP_ADD_STATS_USER(net_statistics, field, adnd)
+ 
++extern void inet_get_local_port_range(int *low, int *high);
+ extern int sysctl_local_port_range[2];
+ extern int sysctl_ip_default_ttl;
+ extern int sysctl_ip_nonlocal_bind;
+diff -urpN linux-2.6.18.noarch.orig/include/net/sctp/structs.h linux-2.6.18.noarch/include/net/sctp/structs.h
+--- linux-2.6.18.noarch.orig/include/net/sctp/structs.h	2007-11-27 16:11:37.000000000 +0100
++++ linux-2.6.18.noarch/include/net/sctp/structs.h	2007-11-27 16:11:58.000000000 +0100
+@@ -195,8 +195,6 @@ extern struct sctp_globals {
+ 
+ 	/* This is the sctp port control hash.	*/
+ 	int port_hashsize;
+-	int port_rover;
+-	spinlock_t port_alloc_lock;  /* Protects port_rover. */
+ 	struct sctp_bind_hashbucket *port_hashtable;
+ 
+ 	/* This is the global local address list.
+diff -urpN linux-2.6.18.noarch.orig/net/ipv4/inet_connection_sock.c linux-2.6.18.noarch/net/ipv4/inet_connection_sock.c
+--- linux-2.6.18.noarch.orig/net/ipv4/inet_connection_sock.c	2007-11-27 16:11:22.000000000 +0100
++++ linux-2.6.18.noarch/net/ipv4/inet_connection_sock.c	2007-11-27 16:11:58.000000000 +0100
+@@ -34,8 +34,21 @@ EXPORT_SYMBOL(inet_csk_timer_bug_msg);
+  * For high-usage systems, use sysctl to change this to
+  * 32768-61000
+  */
+-int sysctl_local_port_range[2] = { 1024, 4999 };
++int sysctl_local_port_range[2] = { 32768, 61000 };
++DEFINE_SEQLOCK(sysctl_port_range_lock);
+ 
++void inet_get_local_port_range(int *low, int *high)
++{
++	unsigned seq;
++	do {
++		seq = read_seqbegin(&sysctl_port_range_lock);
++		
++		*low = sysctl_local_port_range[0];
++		*high = sysctl_local_port_range[1];
++	} while (read_seqretry(&sysctl_port_range_lock, seq));
++}
++EXPORT_SYMBOL(inet_get_local_port_range);
++ 
+ int inet_csk_bind_conflict(const struct sock *sk,
+ 			   const struct inet_bind_bucket *tb)
+ {
+@@ -79,10 +92,11 @@ int inet_csk_get_port(struct inet_hashin
+ 
+ 	local_bh_disable();
+ 	if (!snum) {
+-		int low = sysctl_local_port_range[0];
+-		int high = sysctl_local_port_range[1];
+-		int remaining = (high - low) + 1;
+-		int rover = net_random() % (high - low) + low;
++		int remaining, rover, low, high;
++
++		inet_get_local_port_range(&low, &high);
++		remaining = (high - low) + 1;
++		rover = net_random() % remaining + low;
+ 
+ 		do {
+ 			head = &hashinfo->bhash[inet_bhashfn(rover, hashinfo->bhash_size)];
+diff -urpN linux-2.6.18.noarch.orig/net/ipv4/inet_hashtables.c linux-2.6.18.noarch/net/ipv4/inet_hashtables.c
+--- linux-2.6.18.noarch.orig/net/ipv4/inet_hashtables.c	2007-11-27 16:11:22.000000000 +0100
++++ linux-2.6.18.noarch/net/ipv4/inet_hashtables.c	2007-11-27 16:11:58.000000000 +0100
+@@ -250,19 +250,18 @@ int inet_hash_connect(struct inet_timewa
+ 	int ret;
+ 
+  	if (!snum) {
+- 		int low = sysctl_local_port_range[0];
+- 		int high = sysctl_local_port_range[1];
+-		int range = high - low;
+- 		int i;
+-		int port;
++		int i, remaining, low, high, port;
+ 		static u32 hint;
+ 		u32 offset = hint + inet_sk_port_offset(sk);
+ 		struct hlist_node *node;
+  		struct inet_timewait_sock *tw = NULL;
+ 
++		inet_get_local_port_range(&low, &high);
++		remaining = (high - low) + 1;
++		
+  		local_bh_disable();
+-		for (i = 1; i <= range; i++) {
+-			port = low + (i + offset) % range;
++		for (i = 1; i <= remaining; i++) {
++			port = low + (i + offset) % remaining;
+  			head = &hinfo->bhash[inet_bhashfn(port, hinfo->bhash_size)];
+  			spin_lock(&head->lock);
+ 
+diff -urpN linux-2.6.18.noarch.orig/net/ipv4/sysctl_net_ipv4.c linux-2.6.18.noarch/net/ipv4/sysctl_net_ipv4.c
+--- linux-2.6.18.noarch.orig/net/ipv4/sysctl_net_ipv4.c	2007-11-27 16:11:22.000000000 +0100
++++ linux-2.6.18.noarch/net/ipv4/sysctl_net_ipv4.c	2007-11-27 16:11:58.000000000 +0100
+@@ -12,6 +12,7 @@
+ #include <linux/sysctl.h>
+ #include <linux/igmp.h>
+ #include <linux/inetdevice.h>
++#include <linux/seqlock.h>
+ #include <net/snmp.h>
+ #include <net/icmp.h>
+ #include <net/ip.h>
+@@ -90,6 +91,73 @@ static int ipv4_sysctl_forward_strategy(
+ 	return 1;
+ }
+ 
++extern seqlock_t sysctl_port_range_lock;
++
++/* Update system visible IP port range */
++static void set_local_port_range(int range[2])
++{
++	write_seqlock(&sysctl_port_range_lock);
++	sysctl_local_port_range[0] = range[0];
++	sysctl_local_port_range[1] = range[1];
++	write_sequnlock(&sysctl_port_range_lock);
++}
++
++/* Validate changes from /proc interface. */
++static int ipv4_local_port_range(ctl_table *table, int write, struct file *filp,
++				 void __user *buffer,
++				 size_t *lenp, loff_t *ppos)
++{
++	int ret;
++	int range[2] = { sysctl_local_port_range[0],
++			 sysctl_local_port_range[1] };
++	ctl_table tmp = {
++		.data = &range,
++		.maxlen = sizeof(range),
++		.mode = table->mode,
++		.extra1 = &ip_local_port_range_min,
++		.extra2 = &ip_local_port_range_max,
++	};
++
++	ret = proc_dointvec_minmax(&tmp, write, filp, buffer, lenp, ppos);
++
++	if (write && ret == 0) {
++		if (range[1] < range[0])
++			ret = -EINVAL;
++		else
++			set_local_port_range(range);
++	}
++
++	return ret;
++}
++
++/* Validate changes from sysctl interface. */
++static int ipv4_sysctl_local_port_range(ctl_table *table, int __user *name,
++					 int nlen, void __user *oldval,
++					 size_t __user *oldlenp,
++					void __user *newval, size_t newlen, void **context)
++{
++	int ret;
++	int range[2] = { sysctl_local_port_range[0],
++			 sysctl_local_port_range[1] };
++	ctl_table tmp = {
++		.data = &range,
++		.maxlen = sizeof(range),
++		.mode = table->mode,
++		.extra1 = &ip_local_port_range_min,
++		.extra2 = &ip_local_port_range_max,
++	};
++
++	ret = sysctl_intvec(&tmp, name, nlen, oldval, oldlenp, newval, newlen, context);
++	if (ret == 0 && newval && newlen) {
++		if (range[1] < range[0])
++			ret = -EINVAL;
++		else
++			set_local_port_range(range);
++	}
++	return ret;
++}
++
++
+ static int proc_tcp_congestion_control(ctl_table *ctl, int write, struct file * filp,
+ 				       void __user *buffer, size_t *lenp, loff_t *ppos)
+ {
+@@ -371,10 +439,8 @@ ctl_table ipv4_table[] = {
+ 		.data		= &sysctl_local_port_range,
+ 		.maxlen		= sizeof(sysctl_local_port_range),
+ 		.mode		= 0644,
+-		.proc_handler	= &proc_dointvec_minmax,
+-		.strategy	= &sysctl_intvec,
+-		.extra1		= ip_local_port_range_min,
+-		.extra2		= ip_local_port_range_max
++		.proc_handler	= &ipv4_local_port_range,
++		.strategy	= &ipv4_sysctl_local_port_range,
+ 	},
+ 	{
+ 		.ctl_name	= NET_IPV4_ICMP_ECHO_IGNORE_ALL,
+diff -urpN linux-2.6.18.noarch.orig/net/ipv4/tcp.c linux-2.6.18.noarch/net/ipv4/tcp.c
+--- linux-2.6.18.noarch.orig/net/ipv4/tcp.c	2007-11-27 16:11:22.000000000 +0100
++++ linux-2.6.18.noarch/net/ipv4/tcp.c	2007-11-27 16:11:58.000000000 +0100
+@@ -2306,13 +2306,10 @@ void __init tcp_init(void)
+ 			order++)
+ 		;
+ 	if (order >= 4) {
+-		sysctl_local_port_range[0] = 32768;
+-		sysctl_local_port_range[1] = 61000;
+ 		tcp_death_row.sysctl_max_tw_buckets = 180000;
+ 		sysctl_tcp_max_orphans = 4096 << (order - 4);
+ 		sysctl_max_syn_backlog = 1024;
+ 	} else if (order < 3) {
+-		sysctl_local_port_range[0] = 1024 * (3 - order);
+ 		tcp_death_row.sysctl_max_tw_buckets >>= (3 - order);
+ 		sysctl_tcp_max_orphans >>= (3 - order);
+ 		sysctl_max_syn_backlog = 128;
+diff -urpN linux-2.6.18.noarch.orig/net/ipv4/udp.c linux-2.6.18.noarch/net/ipv4/udp.c
+--- linux-2.6.18.noarch.orig/net/ipv4/udp.c	2007-11-27 16:11:22.000000000 +0100
++++ linux-2.6.18.noarch/net/ipv4/udp.c	2007-11-27 16:11:58.000000000 +0100
+@@ -129,11 +129,13 @@ static int udp_v4_get_port(struct sock *
+ 
+ 	write_lock_bh(&udp_hash_lock);
+ 	if (snum == 0) {
+-		int best_size_so_far, best, result, i;
++		int best_size_so_far, best, result, i, low, high;
+ 
+-		if (udp_port_rover > sysctl_local_port_range[1] ||
+-		    udp_port_rover < sysctl_local_port_range[0])
+-			udp_port_rover = sysctl_local_port_range[0];
++		inet_get_local_port_range(&low, &high);
++
++		if (udp_port_rover > high ||
++		    udp_port_rover < low)
++			udp_port_rover = low;
+ 		best_size_so_far = 32767;
+ 		best = result = udp_port_rover;
+ 		for (i = 0; i < UDP_HTABLE_SIZE; i++, result++) {
+@@ -142,9 +144,8 @@ static int udp_v4_get_port(struct sock *
+ 
+ 			list = &udp_hash[result & (UDP_HTABLE_SIZE - 1)];
+ 			if (hlist_empty(list)) {
+-				if (result > sysctl_local_port_range[1])
+-					result = sysctl_local_port_range[0] +
+-						((result - sysctl_local_port_range[0]) &
++				if (result > high)
++					result = low + ((result - low) &
+ 						 (UDP_HTABLE_SIZE - 1));
+ 				goto gotit;
+ 			}
+@@ -158,9 +159,8 @@ static int udp_v4_get_port(struct sock *
+ 		}
+ 		result = best;
+ 		for(i = 0; i < (1 << 16) / UDP_HTABLE_SIZE; i++, result += UDP_HTABLE_SIZE) {
+-			if (result > sysctl_local_port_range[1])
+-				result = sysctl_local_port_range[0]
+-					+ ((result - sysctl_local_port_range[0]) &
++			if (result > high)
++				result = low + ((result - low) &
+ 					   (UDP_HTABLE_SIZE - 1));
+ 			if (!udp_lport_inuse(result))
+ 				break;
+diff -urpN linux-2.6.18.noarch.orig/net/ipv6/inet6_hashtables.c linux-2.6.18.noarch/net/ipv6/inet6_hashtables.c
+--- linux-2.6.18.noarch.orig/net/ipv6/inet6_hashtables.c	2007-11-27 16:11:22.000000000 +0100
++++ linux-2.6.18.noarch/net/ipv6/inet6_hashtables.c	2007-11-27 16:11:58.000000000 +0100
+@@ -254,18 +254,18 @@ int inet6_hash_connect(struct inet_timew
+ 	int ret;
+ 
+  	if (snum == 0) {
+- 		const int low = sysctl_local_port_range[0];
+- 		const int high = sysctl_local_port_range[1];
+-		const int range = high - low;
+- 		int i, port;
++ 		int i, port, low, high, remaining;
+ 		static u32 hint;
+ 		const u32 offset = hint + inet6_sk_port_offset(sk);
+ 		struct hlist_node *node;
+  		struct inet_timewait_sock *tw = NULL;
++ 		
++ 		inet_get_local_port_range(&low, &high);
++ 		remaining = (high - low) + 1;
+ 
+  		local_bh_disable();
+-		for (i = 1; i <= range; i++) {
+-			port = low + (i + offset) % range;
++		for (i = 1; i <= remaining; i++) {
++			port = low + (i + offset) % remaining;
+  			head = &hinfo->bhash[inet_bhashfn(port, hinfo->bhash_size)];
+  			spin_lock(&head->lock);
+ 
+diff -urpN linux-2.6.18.noarch.orig/net/ipv6/udp.c linux-2.6.18.noarch/net/ipv6/udp.c
+--- linux-2.6.18.noarch.orig/net/ipv6/udp.c	2007-11-27 16:11:22.000000000 +0100
++++ linux-2.6.18.noarch/net/ipv6/udp.c	2007-11-27 16:11:58.000000000 +0100
+@@ -71,11 +71,11 @@ static int udp_v6_get_port(struct sock *
+ 
+ 	write_lock_bh(&udp_hash_lock);
+ 	if (snum == 0) {
+-		int best_size_so_far, best, result, i;
++		int best_size_so_far, best, result, i, low, high;
+ 
+-		if (udp_port_rover > sysctl_local_port_range[1] ||
+-		    udp_port_rover < sysctl_local_port_range[0])
+-			udp_port_rover = sysctl_local_port_range[0];
++		inet_get_local_port_range(&low, &high);
++		if (udp_port_rover > high || udp_port_rover < low)
++			udp_port_rover = low;
+ 		best_size_so_far = 32767;
+ 		best = result = udp_port_rover;
+ 		for (i = 0; i < UDP_HTABLE_SIZE; i++, result++) {
+@@ -84,9 +84,8 @@ static int udp_v6_get_port(struct sock *
+ 
+ 			list = &udp_hash[result & (UDP_HTABLE_SIZE - 1)];
+ 			if (hlist_empty(list)) {
+-				if (result > sysctl_local_port_range[1])
+-					result = sysctl_local_port_range[0] +
+-						((result - sysctl_local_port_range[0]) &
++				if (result > high)
++					result = low + ((result - low) &
+ 						 (UDP_HTABLE_SIZE - 1));
+ 				goto gotit;
+ 			}
+@@ -100,9 +99,8 @@ static int udp_v6_get_port(struct sock *
+ 		}
+ 		result = best;
+ 		for(i = 0; i < (1 << 16) / UDP_HTABLE_SIZE; i++, result += UDP_HTABLE_SIZE) {
+-			if (result > sysctl_local_port_range[1])
+-				result = sysctl_local_port_range[0]
+-					+ ((result - sysctl_local_port_range[0]) &
++			if (result > high)
++				result = low + ((result - low) &
+ 					   (UDP_HTABLE_SIZE - 1));
+ 			if (!udp_lport_inuse(result))
+ 				break;
+diff -urpN linux-2.6.18.noarch.orig/net/sctp/protocol.c linux-2.6.18.noarch/net/sctp/protocol.c
+--- linux-2.6.18.noarch.orig/net/sctp/protocol.c	2007-11-27 16:11:22.000000000 +0100
++++ linux-2.6.18.noarch/net/sctp/protocol.c	2007-11-27 16:11:58.000000000 +0100
+@@ -1180,9 +1180,6 @@ SCTP_STATIC __init int sctp_init(void)
+ 		sctp_port_hashtable[i].chain = NULL;
+ 	}
+ 
+-	spin_lock_init(&sctp_port_alloc_lock);
+-	sctp_port_rover = sysctl_local_port_range[0] - 1;
+-
+ 	printk(KERN_INFO "SCTP: Hash tables configured "
+ 			 "(established %d bind %d)\n",
+ 		sctp_assoc_hashsize, sctp_port_hashsize);
+diff -urpN linux-2.6.18.noarch.orig/net/sctp/socket.c linux-2.6.18.noarch/net/sctp/socket.c
+--- linux-2.6.18.noarch.orig/net/sctp/socket.c	2007-11-27 16:11:22.000000000 +0100
++++ linux-2.6.18.noarch/net/sctp/socket.c	2007-11-27 16:11:58.000000000 +0100
+@@ -4666,22 +4666,14 @@ static long sctp_get_port_local(struct s
+ 	sctp_local_bh_disable();
+ 
+ 	if (snum == 0) {
+-		/* Search for an available port.
+-		 *
+-		 * 'sctp_port_rover' was the last port assigned, so
+-		 * we start to search from 'sctp_port_rover +
+-		 * 1'. What we do is first check if port 'rover' is
+-		 * already in the hash table; if not, we use that; if
+-		 * it is, we try next.
+-		 */
+-		int low = sysctl_local_port_range[0];
+-		int high = sysctl_local_port_range[1];
+-		int remaining = (high - low) + 1;
+-		int rover;
+-		int index;
++		/* Search for an available port. */
++		int low, high, remaining, index;
++		unsigned int rover;
++		
++		inet_get_local_port_range(&low, &high);
++		remaining = (high - low) + 1;
++		rover = net_random() % remaining + low;
+ 
+-		sctp_spin_lock(&sctp_port_alloc_lock);
+-		rover = sctp_port_rover;
+ 		do {
+ 			rover++;
+ 			if ((rover < low) || (rover > high))
+@@ -4696,8 +4688,6 @@ static long sctp_get_port_local(struct s
+ 		next:
+ 			sctp_spin_unlock(&head->lock);
+ 		} while (--remaining > 0);
+-		sctp_port_rover = rover;
+-		sctp_spin_unlock(&sctp_port_alloc_lock);
+ 
+ 		/* Exhausted local port range during search? */
+ 		ret = 1;
+diff -urpN linux-2.6.18.noarch.orig/security/selinux/hooks.c linux-2.6.18.noarch/security/selinux/hooks.c
+--- linux-2.6.18.noarch.orig/security/selinux/hooks.c	2007-11-27 16:11:37.000000000 +0100
++++ linux-2.6.18.noarch/security/selinux/hooks.c	2007-11-27 16:11:58.000000000 +0100
+@@ -48,7 +48,7 @@
+ #include <linux/netfilter_ipv6.h>
+ #include <linux/tty.h>
+ #include <net/icmp.h>
+-#include <net/ip.h>		/* for sysctl_local_port_range[] */
++#include <net/ip.h>		/* for local_port_range[] */
+ #include <net/tcp.h>		/* struct or_callable used in sock_rcv_skb */
+ #include <asm/uaccess.h>
+ #include <asm/semaphore.h>
+@@ -3153,8 +3153,6 @@ static int selinux_socket_post_create(st
+ /* Range of port numbers used to automatically bind.
+    Need to determine whether we should perform a name_bind
+    permission check between the socket and the port number. */
+-#define ip_local_port_range_0 sysctl_local_port_range[0]
+-#define ip_local_port_range_1 sysctl_local_port_range[1]
+ 
+ static int selinux_socket_bind(struct socket *sock, struct sockaddr *address, int addrlen)
+ {
+@@ -3197,20 +3195,27 @@ static int selinux_socket_bind(struct so
+ 			addrp = (char *)&addr6->sin6_addr.s6_addr;
+ 		}
+ 
+-		if (snum&&(snum < max(PROT_SOCK,ip_local_port_range_0) ||
+-			   snum > ip_local_port_range_1)) {
+-			err = security_port_sid(sk->sk_family, sk->sk_type,
+-						sk->sk_protocol, snum, &sid);
+-			if (err)
+-				goto out;
+-			AVC_AUDIT_DATA_INIT(&ad,NET);
+-			ad.u.net.sport = htons(snum);
+-			ad.u.net.family = family;
+-			err = avc_has_perm(isec->sid, sid,
+-					   isec->sclass,
+-					   SOCKET__NAME_BIND, &ad);
+-			if (err)
+-				goto out;
++		if (snum) {
++			int low, high;
++
++			inet_get_local_port_range(&low, &high);
++
++			if (snum < max(PROT_SOCK, low) || snum > high) {
++				err = security_port_sid(sk->sk_family,
++							sk->sk_type,
++							sk->sk_protocol, snum,
++							&sid);
++				if (err)
++					goto out;
++				AVC_AUDIT_DATA_INIT(&ad,NET);
++				ad.u.net.sport = htons(snum);
++				ad.u.net.family = family;
++				err = avc_has_perm(isec->sid, sid,
++						   isec->sclass,
++						   SOCKET__NAME_BIND, &ad);
++				if (err)
++					goto out;
++			}
+ 		}
+ 		
+ 		switch(isec->sclass) {
+
+-- 
+Anton Arapov, <aarapov@redhat.com>
+0x6FA8C812/pgp.mit.edu
+
+

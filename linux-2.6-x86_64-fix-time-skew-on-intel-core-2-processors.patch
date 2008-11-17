@@ -1,0 +1,52 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: Re: [RHEL5 PATCH]: BZ 213050 Fix time skew on Intel Core 2 processors
+Date: Tue, 05 Dec 2006 13:12:11 -0500
+Bugzilla: 213050
+Message-Id: <4575B67B.2020905@redhat.com>
+Changelog: Fix time skew on Intel Core 2 processors
+
+New patch ...
+
+P.
+
+On Core2 Intel processors the rdtsc instruction is not serializing.
+
+It's bad and causes "time going backwards" errors on these processors.
+
+Backport of http://marc.theaimsgroup.com/?l=linux-kernel&m=116470988830541&w=2
+(and ported into the -xen code)...
+
+Tested by me on mclasen's Dell laptop which exhibited this behaviour.  Further
+testing is ongoing.
+
+Fixes BZ 213050.
+
+--- linux-2.6.18.ia64/arch/x86_64/kernel/setup.c.orig	2006-12-05 08:08:37.000000000 -0500
++++ linux-2.6.18.ia64/arch/x86_64/kernel/setup.c	2006-12-05 08:08:44.000000000 -0500
+@@ -1011,7 +1011,10 @@ static void __cpuinit init_intel(struct 
+ 	if ((c->x86 == 0xf && c->x86_model >= 0x03) ||
+ 	    (c->x86 == 0x6 && c->x86_model >= 0x0e))
+ 		set_bit(X86_FEATURE_CONSTANT_TSC, &c->x86_capability);
+-	set_bit(X86_FEATURE_SYNC_RDTSC, &c->x86_capability);
++	if (c->x86 == 15)
++		set_bit(X86_FEATURE_SYNC_RDTSC, &c->x86_capability);
++	else
++		clear_bit(X86_FEATURE_SYNC_RDTSC, &c->x86_capability);
+  	c->x86_max_cores = intel_num_cpu_cores(c);
+ 
+ 	srat_detect_node();
+--- linux-2.6.18.ia64/arch/x86_64/kernel/setup-xen.c.orig	2006-12-05 08:09:11.000000000 -0500
++++ linux-2.6.18.ia64/arch/x86_64/kernel/setup-xen.c	2006-12-05 08:07:54.000000000 -0500
+@@ -1259,7 +1259,10 @@ static void __cpuinit init_intel(struct 
+ 	if ((c->x86 == 0xf && c->x86_model >= 0x03) ||
+ 	    (c->x86 == 0x6 && c->x86_model >= 0x0e))
+ 		set_bit(X86_FEATURE_CONSTANT_TSC, &c->x86_capability);
+-	set_bit(X86_FEATURE_SYNC_RDTSC, &c->x86_capability);
++	if (c->x86 == 15)
++		set_bit(X86_FEATURE_SYNC_RDTSC, &c->x86_capability);
++	else
++		clear_bit(X86_FEATURE_SYNC_RDTSC, &c->x86_capability);
+  	c->x86_max_cores = intel_num_cpu_cores(c);
+ 
+ 	srat_detect_node();
+

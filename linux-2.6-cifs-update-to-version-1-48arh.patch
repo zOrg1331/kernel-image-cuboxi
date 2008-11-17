@@ -1,0 +1,4690 @@
+From: Jeff Layton <jlayton@redhat.com>
+Subject: Re: [RHEL5 PATCH] Update CIFS to version 1.48aRH (BZ 238597)
+Date: Tue, 5 Jun 2007 16:09:50 -0400
+Bugzilla: 238597
+Message-Id: <20070605160950.49f4193e.jlayton@redhat.com>
+Changelog: [cifs] Update CIFS to version 1.48aRH
+
+
+On Tue, 5 Jun 2007 15:59:08 -0400
+Don Zickus <dzickus@redhat.com> wrote:
+
+> On Wed, May 09, 2007 at 09:39:09AM -0400, Jeff Layton wrote:
+> > In the past, we've apparently taken the route of updating CIFS as a whole to
+> > later releases in its entirety. For RHEL5, I plan to continue doing this. This
+> > patch updates the CIFS code in RHEL5 to 1.48aRH. This is the CIFS code tarball
+> > by Steve French that's been backported to earlier kernels, with a few
+> > small diffs needed for RHEL5. I also rolled in the patch for bz 227973. This
+> > incorporates fixes for the following open BZ's:
+> > 
+> > 227973	cifs does not allow null user names
+> > 224476	Fix up CIFS for "test_clear_page_dirty()" removal
+> > 
+> > Due to the size of the patch (~150K), I'm not going to post it here, but will
+> > instead direct you to the BZ case if you want to look over it:
+> 
+---
+ fs/cifs/CHANGES        |   40 ++++++-
+ fs/cifs/Makefile       |    2 +-
+ fs/cifs/README         |    2 +-
+ fs/cifs/TODO           |   16 ++--
+ fs/cifs/cifs_debug.c   |    4 +-
+ fs/cifs/cifs_fs_sb.h   |    2 +
+ fs/cifs/cifs_unicode.c |    4 +-
+ fs/cifs/cifs_unicode.h |    5 +
+ fs/cifs/cifsencrypt.c  |    4 +-
+ fs/cifs/cifsfs.c       |  283 ++++++++++++++++++++++++++++++++----------------
+ fs/cifs/cifsfs.h       |   60 +++++++++-
+ fs/cifs/cifsglob.h     |   46 +++++++-
+ fs/cifs/cifspdu.h      |  130 +++++++++++++++++-----
+ fs/cifs/cifsproto.h    |   43 +++++++-
+ fs/cifs/cifssmb.c      |  165 ++++++++++++++++++++++++----
+ fs/cifs/connect.c      |  217 ++++++++++++++++++++++++++++++++++---
+ fs/cifs/dir.c          |   77 +++++++++++---
+ fs/cifs/export.c       |   52 +++++++++
+ fs/cifs/file.c         |  235 ++++++++++++++++++++++++++++++++--------
+ fs/cifs/inode.c        |  137 ++++++++++++++++++++----
+ fs/cifs/link.c         |   68 +++++++++---
+ fs/cifs/misc.c         |   75 ++++++++++----
+ fs/cifs/netmisc.c      |  138 +++++++++++++++++++++++
+ fs/cifs/readdir.c      |   71 +++++++++++--
+ fs/cifs/sess.c         |   36 ++++--
+ fs/cifs/smbdes.c       |   10 ++-
+ fs/cifs/transport.c    |   70 +++++++++++--
+ fs/cifs/xattr.c        |    5 +-
+ 28 files changed, 1661 insertions(+), 336 deletions(-)
+ create mode 100644 fs/cifs/export.c
+
+diff --git a/fs/cifs/CHANGES b/fs/cifs/CHANGES
+index 77a2fbb..5072b17 100644
+--- a/fs/cifs/CHANGES
++++ b/fs/cifs/CHANGES
+@@ -1,3 +1,34 @@
++Verison 1.48
++------------
++Fix mtime bouncing around from local idea of last write times to remote time.
++Fix hang (in i_size_read) when simultaneous size update of same remote file
++on smp system corrupts sequence number. Do not reread unnecessarily partial page
++(which we are about to overwrite anyway) when writing out file opened rw.
++When DOS attribute of file on non-Unix server's file changes on the server side
++from read-only back to read-write, reflect this change in default file mode
++(we had been leaving a file's mode read-only until the inode were reloaded).
++Allow setting of attribute back to ATTR_NORMAL (removing readonly dos attribute
++when archive dos attribute not set and we are changing mode back to writeable
++on server which does not support the Unix Extensions).
++
++Version 1.47
++------------
++Fix oops in list_del during mount caused by unaligned string.
++Fix file corruption which could occur on some large file
++copies caused by writepages page i/o completion bug.
++Seek to SEEK_END forces check for update of file size for non-cached
++files.
++
++Version 1.46
++------------
++Support deep tree mounts.  Better support OS/2, Win9x (DOS) time stamps.
++Allow null user to be specified on mount ("username="). Do not return
++EINVAL on readdir when filldir fails due to overwritten blocksize
++(fixes FC problem).  Return error in rename 2nd attempt retry (ie report
++if rename by handle also fails, after rename by path fails, we were
++not reporting whether the retry worked or not). Fix NTLMv2 to
++work to Windows servers (mount with option "sec=ntlmv2").
++
+ Version 1.45
+ ------------
+ Do not time out lockw calls when using posix extensions. Do not
+@@ -6,11 +37,8 @@ on requests on other threads.  Improve POSIX locking emulation,
+ (lock cancel now works, and unlock of merged range works even
+ to Windows servers now).  Fix oops on mount to lanman servers
+ (win9x, os/2 etc.) when null password.  Do not send listxattr
+-(SMB to query all EAs) if nouser_xattr specified.  Return error
+-in rename 2nd attempt retry (ie report if rename by handle also
+-fails, after rename by path fails, we were not reporting whether
+-the retry worked or not).
+-
++(SMB to query all EAs) if nouser_xattr specified.  Fix SE Linux
++problem (instantiate inodes/dentries in right order for readdir).
+ 
+ Version 1.44
+ ------------
+@@ -218,7 +246,7 @@ improperly zeroed buffer in CIFS Unix extensions set times call.
+ Version 1.25
+ ------------
+ Fix internationalization problem in cifs readdir with filenames that map to 
+-longer UTF-8 strings than the string on the wire was in Unicode.  Add workaround
++longer UTF8 strings than the string on the wire was in Unicode.  Add workaround
+ for readdir to netapp servers. Fix search rewind (seek into readdir to return 
+ non-consecutive entries).  Do not do readdir when server negotiates 
+ buffer size to small to fit filename. Add support for reading POSIX ACLs from
+diff --git a/fs/cifs/Makefile b/fs/cifs/Makefile
+index a26f26e..6ecd9d6 100644
+--- a/fs/cifs/Makefile
++++ b/fs/cifs/Makefile
+@@ -3,4 +3,4 @@
+ #
+ obj-$(CONFIG_CIFS) += cifs.o
+ 
+-cifs-objs := cifsfs.o cifssmb.o cifs_debug.o connect.o dir.o file.o inode.o link.o misc.o netmisc.o smbdes.o smbencrypt.o transport.o asn1.o md4.o md5.o cifs_unicode.o nterr.o xattr.o cifsencrypt.o fcntl.o readdir.o ioctl.o sess.o
++cifs-objs := cifsfs.o cifssmb.o cifs_debug.o connect.o dir.o file.o inode.o link.o misc.o netmisc.o smbdes.o smbencrypt.o transport.o asn1.o md4.o md5.o cifs_unicode.o nterr.o xattr.o cifsencrypt.o fcntl.o readdir.o ioctl.o sess.o export.o
+diff --git a/fs/cifs/README b/fs/cifs/README
+index 5f0e1bd..d4be92b 100644
+--- a/fs/cifs/README
++++ b/fs/cifs/README
+@@ -1,5 +1,5 @@
+ The CIFS VFS support for Linux supports many advanced network filesystem 
+-features such as heirarchical dfs like namespace, hardlinks, locking and more.  
++features such as hierarchical dfs like namespace, hardlinks, locking and more.  
+ It was designed to comply with the SNIA CIFS Technical Reference (which 
+ supersedes the 1992 X/Open SMB Standard) as well as to perform best practice 
+ practical interoperability with Windows 2000, Windows XP, Samba and equivalent 
+diff --git a/fs/cifs/TODO b/fs/cifs/TODO
+index fc34c74..267a762 100644
+--- a/fs/cifs/TODO
++++ b/fs/cifs/TODO
+@@ -18,7 +18,9 @@ better)
+ 
+ d) Kerberos/SPNEGO session setup support - (started)
+ 
+-e) NTLMv2 authentication (mostly implemented)
++e) NTLMv2 authentication (mostly implemented - double check
++that NTLMv2 signing works, also need to cleanup now unneeded SessSetup code in
++fs/cifs/connect.c)
+ 
+ f) MD5-HMAC signing SMB PDUs when SPNEGO style SessionSetup 
+ used (Kerberos or NTLMSSP). Signing alreadyimplemented for NTLM
+@@ -88,11 +90,12 @@ w) Finish up the dos time conversion routines needed to return old server
+ time to the client (default time, of now or time 0 is used now for these 
+ very old servers)
+ 
+-x) Add support for OS/2 (LANMAN 1.2 and LANMAN2.1 based SMB servers)
++x) In support for OS/2 (LANMAN 1.2 and LANMAN2.1 based SMB servers) 
++need to add ability to set time to server (utimes command)
+ 
+ y) Finish testing of Windows 9x/Windows ME server support (started).
+ 
+-KNOWN BUGS (updated April 29, 2005)
++KNOWN BUGS (updated February 26, 2007)
+ ====================================
+ See http://bugzilla.samba.org - search on product "CifsVFS" for
+ current bug list.
+@@ -107,11 +110,6 @@ but recognizes them
+ succeed but still return access denied (appears to be Windows 
+ server not cifs client problem) and has not been reproduced recently.
+ NTFS partitions do not have this problem.
+-4) debug connectathon lock test case 10 which fails against
+-Samba (may be unmappable due to POSIX to Windows lock model
+-differences but worth investigating).  Also debug Samba to 
+-see why lock test case 7 takes longer to complete to Samba
+-than to Windows.
+ 
+ Misc testing to do
+ ==================
+@@ -119,7 +117,7 @@ Misc testing to do
+ types. Try nested symlinks (8 deep). Return max path name in stat -f information
+ 
+ 2) Modify file portion of ltp so it can run against a mounted network
+-share and run it against cifs vfs.
++share and run it against cifs vfs in automated fashion.
+ 
+ 3) Additional performance testing and optimization using iozone and similar - 
+ there are some easy changes that can be done to parallelize sequential writes,
+diff --git a/fs/cifs/cifs_debug.c b/fs/cifs/cifs_debug.c
+index 96abeb7..6017c46 100644
+--- a/fs/cifs/cifs_debug.c
++++ b/fs/cifs/cifs_debug.c
+@@ -143,8 +143,8 @@ cifs_debug_data_read(char *buf, char **beginBuffer, off_t offset,
+ 		ses = list_entry(tmp, struct cifsSesInfo, cifsSessionList);
+ 		if((ses->serverDomain == NULL) || (ses->serverOS == NULL) ||
+ 		   (ses->serverNOS == NULL)) {
+-			buf += sprintf("\nentry for %s not fully displayed\n\t",
+-					ses->serverName);
++			buf += sprintf(buf, "\nentry for %s not fully "
++					"displayed\n\t", ses->serverName);
+ 			
+ 		} else {
+ 			length =
+diff --git a/fs/cifs/cifs_fs_sb.h b/fs/cifs/cifs_fs_sb.h
+index ad58eb0..fd1e52e 100644
+--- a/fs/cifs/cifs_fs_sb.h
++++ b/fs/cifs/cifs_fs_sb.h
+@@ -40,5 +40,7 @@ struct cifs_sb_info {
+ 	mode_t	mnt_file_mode;
+ 	mode_t	mnt_dir_mode;
+ 	int     mnt_cifs_flags;
++	int	prepathlen;
++	char *  prepath;
+ };
+ #endif				/* _CIFS_FS_SB_H */
+diff --git a/fs/cifs/cifs_unicode.c b/fs/cifs/cifs_unicode.c
+index d2a8b29..793c4b9 100644
+--- a/fs/cifs/cifs_unicode.c
++++ b/fs/cifs/cifs_unicode.c
+@@ -74,8 +74,8 @@ cifs_strtoUCS(__le16 * to, const char *from, int len,
+ 		charlen = codepage->char2uni(from, len, &wchar_to[i]);
+ 		if (charlen < 1) {
+ 			cERROR(1,
+-			       ("cifs_strtoUCS: char2uni returned %d",
+-				charlen));
++			       ("strtoUCS: char2uni of %d returned %d",
++				(int)*from, charlen));
+ 			/* A question mark */
+ 			to[i] = cpu_to_le16(0x003f);
+ 			charlen = 1;
+diff --git a/fs/cifs/cifs_unicode.h b/fs/cifs/cifs_unicode.h
+index 39e5b97..1854df4 100644
+--- a/fs/cifs/cifs_unicode.h
++++ b/fs/cifs/cifs_unicode.h
+@@ -59,9 +59,14 @@ extern struct UniCaseRange UniLowerRange[];
+ #endif				/* UNIUPR_NOLOWER */
+ 
+ #ifdef __KERNEL__
++#ifndef __le16
++int cifs_strfromUCS_le(char *, const __u16 *, int, const struct nls_table *);
++int cifs_strtoUCS(__u16 *, const char *, int, const struct nls_table *);
++#else
+ int cifs_strfromUCS_le(char *, const __le16 *, int, const struct nls_table *);
+ int cifs_strtoUCS(__le16 *, const char *, int, const struct nls_table *);
+ #endif
++#endif
+ 
+ /*
+  * UniStrcat:  Concatenate the second string to the first
+diff --git a/fs/cifs/cifsencrypt.c b/fs/cifs/cifsencrypt.c
+index 4bc250b..fdeda51 100644
+--- a/fs/cifs/cifsencrypt.c
++++ b/fs/cifs/cifsencrypt.c
+@@ -372,8 +372,10 @@ void setup_ntlmv2_rsp(struct cifsSesInfo * ses, char * resp_buf,
+ 	buf->time = cpu_to_le64(cifs_UnixTimeToNT(CURRENT_TIME));
+ 	get_random_bytes(&buf->client_chal, sizeof(buf->client_chal));
+ 	buf->reserved2 = 0;
+-	buf->names[0].type = 0;
++	buf->names[0].type = cpu_to_le16(NTLMSSP_DOMAIN_TYPE);
+ 	buf->names[0].length = 0;
++	buf->names[1].type = 0;
++	buf->names[1].length = 0;
+ 
+ 	/* calculate buf->ntlmv2_hash */
+ 	rc = calc_ntlmv2_hash(ses, nls_cp);
+diff --git a/fs/cifs/cifsfs.c b/fs/cifs/cifsfs.c
+index 9373e22..153e118 100644
+--- a/fs/cifs/cifsfs.c
++++ b/fs/cifs/cifsfs.c
+@@ -1,7 +1,7 @@
+ /*
+  *   fs/cifs/cifsfs.c
+  *
+- *   Copyright (C) International Business Machines  Corp., 2002,2004
++ *   Copyright (C) International Business Machines  Corp., 2002,2007
+  *   Author(s): Steve French (sfrench@us.ibm.com)
+  *
+  *   Common Internet FileSystem (CIFS) client
+@@ -33,7 +33,6 @@
+ #include <linux/vfs.h>
+ #include <linux/mempool.h>
+ #include <linux/delay.h>
+-#include <linux/kthread.h>
+ #include "cifsfs.h"
+ #include "cifspdu.h"
+ #define DECLARE_GLOBALS_HERE
+@@ -42,11 +41,21 @@
+ #include "cifs_debug.h"
+ #include "cifs_fs_sb.h"
+ #include <linux/mm.h>
+-#define CIFS_MAGIC_NUMBER 0xFF534D42	/* the first four bytes of SMB PDUs */
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,9)
++#include <linux/moduleparam.h>
++#endif /* 2.6.9 */
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,19)
++#include <linux/freezer.h>
++#endif /* 2.6.19 */
++#define CIFS_MAGIC_NUMBER 0xFF534D42    /* the first four bytes of SMB PDUs */
+ 
+ #ifdef CONFIG_CIFS_QUOTA
+ static struct quotactl_ops cifs_quotactl_ops;
+-#endif
++#endif /* QUOTA */
++
++#ifdef CONFIG_CIFS_EXPERIMENTAL
++extern struct export_operations cifs_export_ops;
++#endif /* EXPERIMENTAL */
+ 
+ int cifsFYI = 0;
+ int cifsERROR = 1;
+@@ -61,8 +70,8 @@ unsigned int extended_security = CIFSSEC_DEF;
+ unsigned int sign_CIFS_PDUs = 1;
+ extern struct task_struct * oplockThread; /* remove sparse warning */
+ struct task_struct * oplockThread = NULL;
+-extern struct task_struct * dnotifyThread; /* remove sparse warning */
+-struct task_struct * dnotifyThread = NULL;
++/* extern struct task_struct * dnotifyThread; remove sparse warning */
++static struct task_struct * dnotifyThread = NULL;
+ unsigned int CIFSMaxBufSize = CIFS_MAX_MSGSIZE;
+ module_param(CIFSMaxBufSize, int, 0);
+ MODULE_PARM_DESC(CIFSMaxBufSize,"Network buffer size (not including header). Default: 16384 Range: 8192 to 130048");
+@@ -76,6 +85,9 @@ unsigned int cifs_max_pending = CIFS_MAX_REQ;
+ module_param(cifs_max_pending, int, 0);
+ MODULE_PARM_DESC(cifs_max_pending,"Simultaneous requests to server. Default: 50 Range: 2 to 256");
+ 
++static DECLARE_COMPLETION(cifs_oplock_exited);
++static DECLARE_COMPLETION(cifs_dnotify_exited);
++
+ extern mempool_t *cifs_sm_req_poolp;
+ extern mempool_t *cifs_req_poolp;
+ extern mempool_t *cifs_mid_poolp;
+@@ -89,8 +101,9 @@ cifs_read_super(struct super_block *sb, void *data,
+ 	struct inode *inode;
+ 	struct cifs_sb_info *cifs_sb;
+ 	int rc = 0;
+-
+-	sb->s_flags |= MS_NODIRATIME; /* and probably even noatime */
++	
++	/* BB should we make this contingent on mount parm? */
++	sb->s_flags |= MS_NODIRATIME | MS_NOATIME;
+ 	sb->s_fs_info = kzalloc(sizeof(struct cifs_sb_info),GFP_KERNEL);
+ 	cifs_sb = CIFS_SB(sb);
+ 	if(cifs_sb == NULL)
+@@ -107,6 +120,10 @@ cifs_read_super(struct super_block *sb, void *data,
+ 
+ 	sb->s_magic = CIFS_MAGIC_NUMBER;
+ 	sb->s_op = &cifs_super_ops;
++#ifdef CONFIG_CIFS_EXPERIMENTAL
++	if(experimEnabled != 0)
++		sb->s_export_op = &cifs_export_ops;
++#endif /* EXPERIMENTAL */	
+ /*	if(cifs_sb->tcon->ses->server->maxBuf > MAX_CIFS_HDR_SIZE + 512)
+ 	    sb->s_blocksize = cifs_sb->tcon->ses->server->maxBuf - MAX_CIFS_HDR_SIZE; */
+ #ifdef CONFIG_CIFS_QUOTA
+@@ -165,10 +182,27 @@ cifs_put_super(struct super_block *sb)
+ 	return;
+ }
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 16)
++void * kzalloc(size_t size, unsigned flgs)
++{
++	void * buf;
++	buf = kmalloc(size, flgs);
++	if(buf != NULL)
++		memset(buf, 0, size);
++	return buf;
++}
++#endif
++
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 17)
+ static int
+ cifs_statfs(struct dentry *dentry, struct kstatfs *buf)
+ {
+ 	struct super_block *sb = dentry->d_sb;
++#else
++static int
++cifs_statfs(struct super_block *sb, struct kstatfs *buf)
++{
++#endif	
+ 	int xid; 
+ 	int rc = -EOPNOTSUPP;
+ 	struct cifs_sb_info *cifs_sb;
+@@ -189,7 +223,6 @@ cifs_statfs(struct dentry *dentry, struct kstatfs *buf)
+ 	buf->f_files = 0;	/* undefined */
+ 	buf->f_ffree = 0;	/* unlimited */
+ 
+-#ifdef CONFIG_CIFS_EXPERIMENTAL
+ /* BB we could add a second check for a QFS Unix capability bit */
+ /* BB FIXME check CIFS_POSIX_EXTENSIONS Unix cap first FIXME BB */
+     if ((pTcon->ses->capabilities & CAP_UNIX) && (CIFS_POSIX_EXTENSIONS &
+@@ -199,11 +232,12 @@ cifs_statfs(struct dentry *dentry, struct kstatfs *buf)
+     /* Only need to call the old QFSInfo if failed
+     on newer one */
+     if(rc)
+-#endif /* CIFS_EXPERIMENTAL */
+-	rc = CIFSSMBQFSInfo(xid, pTcon, buf);
++	if(pTcon->ses->capabilities & CAP_NT_SMBS)
++		rc = CIFSSMBQFSInfo(xid, pTcon, buf); /* not supported by OS2 */
+ 
+-	/* Old Windows servers do not support level 103, retry with level 
+-	   one if old server failed the previous call */ 
++	/* Some old Windows servers also do not support level 103, retry with
++	   older level one if old server failed the previous call or we
++	   bypassed it because we detected that this was an older LANMAN sess */
+ 	if(rc)
+ 		rc = SMBOldQFSInfo(xid, pTcon, buf);
+ 	/*     
+@@ -227,8 +261,12 @@ static int cifs_permission(struct inode * inode, int mask, struct nameidata *nd)
+ 	} else /* file mode might have been restricted at mount time 
+ 		on the client (above and beyond ACL on servers) for  
+ 		servers which do not support setting and viewing mode bits,
+-		so allowing client to check permissions is useful */ 
++		so allowing client to check permissions is useful */
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,10) 
++		return vfs_permission(inode, mask);
++#else
+ 		return generic_permission(inode, mask, NULL);
++#endif /* LINUX version */
+ }
+ 
+ static kmem_cache_t *cifs_inode_cachep;
+@@ -256,7 +294,10 @@ cifs_alloc_inode(struct super_block *sb)
+ 	cifs_inode->clientCanCacheRead = FALSE;
+ 	cifs_inode->clientCanCacheAll = FALSE;
+ 	cifs_inode->vfs_inode.i_blkbits = 14;  /* 2**14 = CIFS_MAX_MSGSIZE */
+-	cifs_inode->vfs_inode.i_flags = S_NOATIME | S_NOCMTIME;
++	
++	/* Can not set i_flags here - they get immediately overwritten
++	   to zero by the VFS */
++/*	cifs_inode->vfs_inode.i_flags = S_NOATIME | S_NOCMTIME;*/
+ 	INIT_LIST_HEAD(&cifs_inode->openFileList);
+ 	return &cifs_inode->vfs_inode;
+ }
+@@ -281,6 +322,7 @@ cifs_show_options(struct seq_file *s, struct vfsmount *m)
+ 
+ 	if (cifs_sb) {
+ 		if (cifs_sb->tcon) {
++/* BB add prepath to mount options displayed */
+ 			seq_printf(s, ",unc=%s", cifs_sb->tcon->treeName);
+ 			if (cifs_sb->tcon->ses) {
+ 				if (cifs_sb->tcon->ses->userName)
+@@ -401,14 +443,22 @@ static struct quotactl_ops cifs_quotactl_ops = {
+ };
+ #endif
+ 
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 16)
+ static void cifs_umount_begin(struct vfsmount * vfsmnt, int flags)
++#else
++static void cifs_umount_begin(struct super_block * sblock)
++#endif
+ {
+ 	struct cifs_sb_info *cifs_sb;
+ 	struct cifsTconInfo * tcon;
+ 
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 16)
+ 	if (!(flags & MNT_FORCE))
+ 		return;
+ 	cifs_sb = CIFS_SB(vfsmnt->mnt_sb);
++#else
++	cifs_sb = CIFS_SB(sblock);
++#endif
+ 	if(cifs_sb == NULL)
+ 		return;
+ 
+@@ -458,9 +508,16 @@ struct super_operations cifs_super_ops = {
+ 	.remount_fs = cifs_remount,
+ };
+ 
++
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 17)
+ static int
+ cifs_get_sb(struct file_system_type *fs_type,
+ 	    int flags, const char *dev_name, void *data, struct vfsmount *mnt)
++#else
++static struct super_block *
++cifs_get_sb(struct file_system_type *fs_type,
++	    int flags, const char *dev_name, void *data)
++#endif
+ {
+ 	int rc;
+ 	struct super_block *sb = sget(fs_type, NULL, set_anon_super, NULL);
+@@ -468,20 +525,42 @@ cifs_get_sb(struct file_system_type *fs_type,
+ 	cFYI(1, ("Devname: %s flags: %d ", dev_name, flags));
+ 
+ 	if (IS_ERR(sb))
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 17)
+ 		return PTR_ERR(sb);
++#else	
++		return sb;
++#endif
+ 
+ 	sb->s_flags = flags;
+ 
+-	rc = cifs_read_super(sb, data, dev_name, flags & MS_SILENT ? 1 : 0);
++	rc = cifs_read_super(sb, data, dev_name, flags & MS_VERBOSE ? 1 : 0);
+ 	if (rc) {
+ 		up_write(&sb->s_umount);
+ 		deactivate_super(sb);
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 17)
+ 		return rc;
++#else		
++		return ERR_PTR(rc);
++#endif		
+ 	}
+ 	sb->s_flags |= MS_ACTIVE;
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 17)
+ 	return simple_set_mnt(mnt, sb);
++#else	
++	return sb;
++#endif
+ }
+ 
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 18)
++static ssize_t cifs_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
++                                   unsigned long nr_segs, loff_t pos)
++{
++        struct inode *inode = iocb->ki_filp->f_dentry->d_inode;
++        ssize_t written;
++
++        written = generic_file_aio_write(iocb, iov, nr_segs, pos);
++#else
++
+ static ssize_t cifs_file_writev(struct file *file, const struct iovec *iov,
+ 				unsigned long nr_segs, loff_t *ppos)
+ {
+@@ -501,6 +580,7 @@ static ssize_t cifs_file_aio_write(struct kiocb *iocb, const char __user *buf,
+ 	ssize_t written;
+ 
+ 	written = generic_file_aio_write(iocb, buf, count, pos);
++#endif
+ 	if (!CIFS_I(inode)->clientCanCacheAll)
+ 		filemap_fdatawrite(inode->i_mapping);
+ 	return written;
+@@ -510,7 +590,21 @@ static loff_t cifs_llseek(struct file *file, loff_t offset, int origin)
+ {
+ 	/* origin == SEEK_END => we must revalidate the cached file length */
+ 	if (origin == 2) {
+-		int retval = cifs_revalidate(file->f_dentry);
++		int retval;
++
++		/* some applications poll for the file length in this strange
++                  way so we must seek to end on non-oplocked files by
++                  setting the revalidate time to zero */
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 19)
++		if(file->f_path.dentry->d_inode)                
++			CIFS_I(file->f_path.dentry->d_inode)->time = 0;
++
++		retval = cifs_revalidate(file->f_path.dentry);
++#else
++		if(file->f_dentry->d_inode)
++			CIFS_I(file->f_dentry->d_inode)->time = 0;
++		retval = cifs_revalidate(file->f_dentry);
++#endif
+ 		if (retval < 0)
+ 			return (loff_t)retval;
+ 	}
+@@ -561,9 +655,13 @@ struct inode_operations cifs_file_inode_ops = {
+ };
+ 
+ struct inode_operations cifs_symlink_inode_ops = {
+-	.readlink = generic_readlink, 
+-	.follow_link = cifs_follow_link,
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,9)
++	.readlink = cifs_readlink,
++#else
++	.readlink = generic_readlink,
+ 	.put_link = cifs_put_link,
++#endif
++	.follow_link = cifs_follow_link,
+ 	.permission = cifs_permission,
+ 	/* BB add the following two eventually */
+ 	/* revalidate: cifs_revalidate,
+@@ -579,8 +677,10 @@ struct inode_operations cifs_symlink_inode_ops = {
+ const struct file_operations cifs_file_ops = {
+ 	.read = do_sync_read,
+ 	.write = do_sync_write,
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 19)
+ 	.readv = generic_file_readv,
+ 	.writev = cifs_file_writev,
++#endif
+ 	.aio_read = generic_file_aio_read,
+ 	.aio_write = cifs_file_aio_write,
+ 	.open = cifs_open,
+@@ -619,11 +719,14 @@ const struct file_operations cifs_file_direct_ops = {
+ 	.dir_notify = cifs_dir_notify,
+ #endif /* CONFIG_CIFS_EXPERIMENTAL */
+ };
++
+ const struct file_operations cifs_file_nobrl_ops = {
+ 	.read = do_sync_read,
+ 	.write = do_sync_write,
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 19)
+ 	.readv = generic_file_readv,
+ 	.writev = cifs_file_writev,
++#endif
+ 	.aio_read = generic_file_aio_read,
+ 	.aio_write = cifs_file_aio_write,
+ 	.open = cifs_open,
+@@ -688,8 +791,7 @@ cifs_init_inodecache(void)
+ {
+ 	cifs_inode_cachep = kmem_cache_create("cifs_inode_cache",
+ 					      sizeof (struct cifsInodeInfo),
+-					      0, (SLAB_RECLAIM_ACCOUNT|
+-						SLAB_MEM_SPREAD),
++					      0, SLAB_RECLAIM_ACCOUNT,
+ 					      cifs_init_once, NULL);
+ 	if (cifs_inode_cachep == NULL)
+ 		return -ENOMEM;
+@@ -700,8 +802,7 @@ cifs_init_inodecache(void)
+ static void
+ cifs_destroy_inodecache(void)
+ {
+-	if (kmem_cache_destroy(cifs_inode_cachep))
+-		printk(KERN_WARNING "cifs_inode_cache: error freeing\n");
++	kmem_cache_destroy(cifs_inode_cachep);
+ }
+ 
+ static int
+@@ -731,8 +832,10 @@ cifs_init_request_bufs(void)
+ 		cERROR(1,("cifs_min_rcv set to maximum (64)"));
+ 	}
+ 
+-	cifs_req_poolp = mempool_create_slab_pool(cifs_min_rcv,
+-						  cifs_req_cachep);
++	cifs_req_poolp = mempool_create(cifs_min_rcv,
++					mempool_alloc_slab,
++					mempool_free_slab,
++					cifs_req_cachep);
+ 
+ 	if(cifs_req_poolp == NULL) {
+ 		kmem_cache_destroy(cifs_req_cachep);
+@@ -762,8 +865,10 @@ cifs_init_request_bufs(void)
+ 		cFYI(1,("cifs_min_small set to maximum (256)"));
+ 	}
+ 
+-	cifs_sm_req_poolp = mempool_create_slab_pool(cifs_min_small,
+-						     cifs_sm_req_cachep);
++	cifs_sm_req_poolp = mempool_create(cifs_min_small,
++				mempool_alloc_slab,
++				mempool_free_slab,
++				cifs_sm_req_cachep);
+ 
+ 	if(cifs_sm_req_poolp == NULL) {
+ 		mempool_destroy(cifs_req_poolp);
+@@ -779,13 +884,9 @@ static void
+ cifs_destroy_request_bufs(void)
+ {
+ 	mempool_destroy(cifs_req_poolp);
+-	if (kmem_cache_destroy(cifs_req_cachep))
+-		printk(KERN_WARNING
+-		       "cifs_destroy_request_cache: error not all structures were freed\n");
++	kmem_cache_destroy(cifs_req_cachep);
+ 	mempool_destroy(cifs_sm_req_poolp);
+-	if (kmem_cache_destroy(cifs_sm_req_cachep))
+-		printk(KERN_WARNING
+-		      "cifs_destroy_request_cache: cifs_small_rq free error\n");
++	kmem_cache_destroy(cifs_sm_req_cachep);
+ }
+ 
+ static int
+@@ -797,8 +898,10 @@ cifs_init_mids(void)
+ 	if (cifs_mid_cachep == NULL)
+ 		return -ENOMEM;
+ 
+-	/* 3 is a reasonable minimum number of simultaneous operations */
+-	cifs_mid_poolp = mempool_create_slab_pool(3, cifs_mid_cachep);
++	cifs_mid_poolp = mempool_create(3 /* a reasonable min simultan opers */,
++					mempool_alloc_slab,
++					mempool_free_slab,
++					cifs_mid_cachep);
+ 	if(cifs_mid_poolp == NULL) {
+ 		kmem_cache_destroy(cifs_mid_cachep);
+ 		return -ENOMEM;
+@@ -820,13 +923,8 @@ static void
+ cifs_destroy_mids(void)
+ {
+ 	mempool_destroy(cifs_mid_poolp);
+-	if (kmem_cache_destroy(cifs_mid_cachep))
+-		printk(KERN_WARNING
+-		       "cifs_destroy_mids: error not all structures were freed\n");
+-
+-	if (kmem_cache_destroy(cifs_oplock_cachep))
+-		printk(KERN_WARNING
+-		       "error not all oplock structures were freed\n");
++	kmem_cache_destroy(cifs_mid_cachep);
++	kmem_cache_destroy(cifs_oplock_cachep);
+ }
+ 
+ static int cifs_oplock_thread(void * dummyarg)
+@@ -837,9 +935,15 @@ static int cifs_oplock_thread(void * dummyarg)
+ 	__u16  netfid;
+ 	int rc;
+ 
++	daemonize("cifsoplockd");
++	allow_signal(SIGTERM);
++
++	oplockThread = current;
+ 	do {
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 12)
+ 		if (try_to_freeze()) 
+ 			continue;
++#endif
+ 		
+ 		spin_lock(&GlobalMid_Lock);
+ 		if(list_empty(&GlobalOplock_Q)) {
+@@ -892,9 +996,9 @@ static int cifs_oplock_thread(void * dummyarg)
+ 			set_current_state(TASK_INTERRUPTIBLE);
+ 			schedule_timeout(1);  /* yield in case q were corrupt */
+ 		}
+-	} while (!kthread_should_stop());
+-
+-	return 0;
++	} while(!signal_pending(current));
++	oplockThread = NULL;
++	complete_and_exit (&cifs_oplock_exited, 0);
+ }
+ 
+ static int cifs_dnotify_thread(void * dummyarg)
+@@ -902,9 +1006,15 @@ static int cifs_dnotify_thread(void * dummyarg)
+ 	struct list_head *tmp;
+ 	struct cifsSesInfo *ses;
+ 
++	daemonize("cifsdnotifyd");
++	allow_signal(SIGTERM);
++
++	dnotifyThread = current;
+ 	do {
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 12)
+ 		if (try_to_freeze())
+ 			continue;
++#endif
+ 		set_current_state(TASK_INTERRUPTIBLE);
+ 		schedule_timeout(15*HZ);
+ 		read_lock(&GlobalSMBSeslock);
+@@ -919,9 +1029,8 @@ static int cifs_dnotify_thread(void * dummyarg)
+ 				wake_up_all(&ses->server->response_q);
+ 		}
+ 		read_unlock(&GlobalSMBSeslock);
+-	} while (!kthread_should_stop());
+-
+-	return 0;
++	} while(!signal_pending(current));
++	complete_and_exit (&cifs_dnotify_exited, 0);
+ }
+ 
+ static int __init
+@@ -931,7 +1040,7 @@ init_cifs(void)
+ #ifdef CONFIG_PROC_FS
+ 	cifs_proc_init();
+ #endif
+-	INIT_LIST_HEAD(&GlobalServerList);	/* BB not implemented yet */
++/*	INIT_LIST_HEAD(&GlobalServerList);*/	/* BB not implemented yet */
+ 	INIT_LIST_HEAD(&GlobalSMBSessionList);
+ 	INIT_LIST_HEAD(&GlobalTreeConnectionList);
+ 	INIT_LIST_HEAD(&GlobalOplock_Q);
+@@ -971,48 +1080,32 @@ init_cifs(void)
+ 	}
+ 
+ 	rc = cifs_init_inodecache();
+-	if (rc)
+-		goto out_clean_proc;
+-
+-	rc = cifs_init_mids();
+-	if (rc)
+-		goto out_destroy_inodecache;
+-
+-	rc = cifs_init_request_bufs();
+-	if (rc)
+-		goto out_destroy_mids;
+-
+-	rc = register_filesystem(&cifs_fs_type);
+-	if (rc)
+-		goto out_destroy_request_bufs;
+-
+-	oplockThread = kthread_run(cifs_oplock_thread, NULL, "cifsoplockd");
+-	if (IS_ERR(oplockThread)) {
+-		rc = PTR_ERR(oplockThread);
+-		cERROR(1,("error %d create oplock thread", rc));
+-		goto out_unregister_filesystem;
+-	}
+-
+-	dnotifyThread = kthread_run(cifs_dnotify_thread, NULL, "cifsdnotifyd");
+-	if (IS_ERR(dnotifyThread)) {
+-		rc = PTR_ERR(dnotifyThread);
+-		cERROR(1,("error %d create dnotify thread", rc));
+-		goto out_stop_oplock_thread;
++	if (!rc) {
++		rc = cifs_init_mids();
++		if (!rc) {
++			rc = cifs_init_request_bufs();
++			if (!rc) {
++				rc = register_filesystem(&cifs_fs_type);
++				if (!rc) {                
++					rc = (int)kernel_thread(cifs_oplock_thread, NULL, 
++						CLONE_FS | CLONE_FILES | CLONE_VM);
++					if(rc > 0) {
++						rc = (int)kernel_thread(cifs_dnotify_thread, NULL,
++							CLONE_FS | CLONE_FILES | CLONE_VM);
++						if(rc > 0)
++							return 0;
++						else
++							cERROR(1,("error %d create dnotify thread", rc));
++					} else {
++						cERROR(1,("error %d create oplock thread",rc));
++					}
++				}
++				cifs_destroy_request_bufs();
++			}
++			cifs_destroy_mids();
++		}
++		cifs_destroy_inodecache();
+ 	}
+-
+-	return 0;
+-
+- out_stop_oplock_thread:
+-	kthread_stop(oplockThread);
+- out_unregister_filesystem:
+-	unregister_filesystem(&cifs_fs_type);
+- out_destroy_request_bufs:
+-	cifs_destroy_request_bufs();
+- out_destroy_mids:
+-	cifs_destroy_mids();
+- out_destroy_inodecache:
+-	cifs_destroy_inodecache();
+- out_clean_proc:
+ #ifdef CONFIG_PROC_FS
+ 	cifs_proc_clean();
+ #endif
+@@ -1030,8 +1123,14 @@ exit_cifs(void)
+ 	cifs_destroy_inodecache();
+ 	cifs_destroy_mids();
+ 	cifs_destroy_request_bufs();
+-	kthread_stop(oplockThread);
+-	kthread_stop(dnotifyThread);
++	if(oplockThread) {
++		send_sig(SIGTERM, oplockThread, 1);
++		wait_for_completion(&cifs_oplock_exited);
++	}
++	if(dnotifyThread) {
++		send_sig(SIGTERM, dnotifyThread, 1);
++		wait_for_completion(&cifs_dnotify_exited);
++	}
+ }
+ 
+ MODULE_AUTHOR("Steve French <sfrench@us.ibm.com>");
+diff --git a/fs/cifs/cifsfs.h b/fs/cifs/cifsfs.h
+index 39ee8ef..75ade9b 100644
+--- a/fs/cifs/cifsfs.h
++++ b/fs/cifs/cifsfs.h
+@@ -32,30 +32,69 @@
+ #define TRUE 1
+ #endif
+ 
++#ifndef __user
++#define __user
++#endif
++
++#include <linux/version.h>
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,11)
++#define current_fs_time(arg) CURRENT_TIME
++#endif
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 4, 25)
++#define filemap_fdatawrite filemap_fdatasync
++#endif
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,5,0)
++static inline int timespec_equal(time_t *time1, time_t *time2)
++{
++        return (time1 == time2);
++}
++
++static inline void invalidate_remote_inode(struct inode * inode)
++{
++	invalidate_inode_pages(inode);
++}
++
++static inline void i_size_write(struct inode *inode, loff_t size)
++{
++	inode->i_size = size;
++}
++#ifndef PageUptodate
++#define PageUptodate(page) Page_Uptodate(page)
++#endif
++#endif
++
+ extern const struct address_space_operations cifs_addr_ops;
+ extern const struct address_space_operations cifs_addr_ops_smallbuf;
+ 
+ /* Functions related to super block operations */
+ extern struct super_operations cifs_super_ops;
+ extern void cifs_read_inode(struct inode *);
+-extern void cifs_delete_inode(struct inode *);
+-/* extern void cifs_write_inode(struct inode *); *//* BB not needed yet */
++/*extern void cifs_delete_inode(struct inode *);*/  /* BB not needed yet */
++/* extern void cifs_write_inode(struct inode *); */ /* BB not needed yet */
+ 
+ /* Functions related to inodes */
+ extern struct inode_operations cifs_dir_inode_ops;
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ extern int cifs_create(struct inode *, struct dentry *, int, 
+ 		       struct nameidata *);
+ extern struct dentry * cifs_lookup(struct inode *, struct dentry *,
+-				  struct nameidata *);
++                                  struct nameidata *);
++extern int cifs_mknod(struct inode *, struct dentry *, int, dev_t);
++extern int cifs_getattr(struct vfsmount *, struct dentry *, struct kstat *);
++#else
++extern int cifs_create(struct inode *, struct dentry *, int);
++extern struct dentry * cifs_lookup(struct inode *, struct dentry *);
++extern int cifs_mknod(struct inode *, struct dentry *, int, int);
++#endif
+ extern int cifs_unlink(struct inode *, struct dentry *);
+ extern int cifs_hardlink(struct dentry *, struct inode *, struct dentry *);
+-extern int cifs_mknod(struct inode *, struct dentry *, int, dev_t);
+ extern int cifs_mkdir(struct inode *, struct dentry *, int);
+ extern int cifs_rmdir(struct inode *, struct dentry *);
+ extern int cifs_rename(struct inode *, struct dentry *, struct inode *,
+ 		       struct dentry *);
+ extern int cifs_revalidate(struct dentry *);
+-extern int cifs_getattr(struct vfsmount *, struct dentry *, struct kstat *);
+ extern int cifs_setattr(struct dentry *, struct iattr *);
+ 
+ extern struct inode_operations cifs_file_inode_ops;
+@@ -75,7 +114,11 @@ extern ssize_t cifs_user_write(struct file *file, const char __user *write_data,
+ 			 size_t write_size, loff_t * poffset);
+ extern int cifs_lock(struct file *, int, struct file_lock *);
+ extern int cifs_fsync(struct file *, struct dentry *, int);
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,17)
+ extern int cifs_flush(struct file *, fl_owner_t id);
++#else
++extern int cifs_flush(struct file *);
++#endif /* 2.6.17 */
+ extern int cifs_file_mmap(struct file * , struct vm_area_struct *);
+ extern const struct file_operations cifs_dir_ops;
+ extern int cifs_dir_open(struct inode *inode, struct file *file);
+@@ -87,8 +130,13 @@ extern struct dentry_operations cifs_dentry_ops;
+ extern struct dentry_operations cifs_ci_dentry_ops;
+ 
+ /* Functions related to symlinks */
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,12)
+ extern void *cifs_follow_link(struct dentry *direntry, struct nameidata *nd);
+ extern void cifs_put_link(struct dentry *direntry, struct nameidata *nd, void *);
++#else
++extern int cifs_follow_link(struct dentry *direntry, struct nameidata *nd);
++extern void cifs_put_link(struct dentry *direntry, struct nameidata *nd);
++#endif
+ extern int cifs_readlink(struct dentry *direntry, char __user *buffer, 
+ 			 int buflen);
+ extern int cifs_symlink(struct inode *inode, struct dentry *direntry,
+@@ -100,5 +148,5 @@ extern ssize_t	cifs_getxattr(struct dentry *, const char *, void *, size_t);
+ extern ssize_t	cifs_listxattr(struct dentry *, char *, size_t);
+ extern int cifs_ioctl (struct inode * inode, struct file * filep,
+ 		       unsigned int command, unsigned long arg);
+-#define CIFS_VERSION   "1.45"
++#define CIFS_VERSION   "1.48aRH"
+ #endif				/* _CIFSFS_H */
+diff --git a/fs/cifs/cifsglob.h b/fs/cifs/cifsglob.h
+index b24006c..2bb636c 100644
+--- a/fs/cifs/cifsglob.h
++++ b/fs/cifs/cifsglob.h
+@@ -18,6 +18,7 @@
+  */
+ #include <linux/in.h>
+ #include <linux/in6.h>
++#include <linux/version.h>
+ #include "cifs_fs_sb.h"
+ /*
+  * The sizes of various internal tables and strings
+@@ -68,6 +69,14 @@
+ #define XATTR_DOS_ATTRIB "user.DOSATTRIB"
+ #endif
+ 
++#ifndef SLAB_NOFS
++#define SLAB_NOFS GFP_NOFS
++#endif
++
++#ifndef SLAB_KERNEL
++#define SLAB_KERNEL GFP_KERNEL
++#endif
++
+ /*
+  * This information is kept on every Server we know about.
+  *
+@@ -153,7 +162,7 @@ struct TCP_Server_Info {
+ 	char sessid[4];		/* unique token id for this session */
+ 	/* (returned on Negotiate */
+ 	int capabilities; /* allow selective disabling of caps by smb sess */
+-	__u16 timeZone;
++	int timeAdj;  /* Adjust for difference in server time zone in sec */
+ 	__u16 CurrentMid;         /* multiplex id - rotating counter */
+ 	char cryptKey[CIFS_CRYPTO_KEY_SIZE];
+ 	/* 16th byte of RFC1001 workstation name is always null */
+@@ -203,9 +212,14 @@ struct cifsSesInfo {
+ 	char * domainName;
+ 	char * password;
+ };
+-/* session flags */
++/* no more than one of the following three session flags may be set */
+ #define CIFS_SES_NT4 1
+-
++#define CIFS_SES_OS2 2
++#define CIFS_SES_W9X 4
++/* following flag is set for old servers such as OS2 (and Win95?)
++   which do not negotiate NTLM or POSIX dialects, but instead
++   negotiate one of the older LANMAN dialects */
++#define CIFS_SES_LANMAN 8
+ /*
+  * there is one of these for each connection to a resource on a particular
+  * session 
+@@ -331,9 +345,12 @@ struct cifsInodeInfo {
+ 	unsigned clientCanCacheRead:1; /* read oplock */
+ 	unsigned clientCanCacheAll:1;  /* read and writebehind oplock */
+ 	unsigned oplockPending:1;
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	struct inode vfs_inode;
++#endif
+ };
+ 
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ static inline struct cifsInodeInfo *
+ CIFS_I(struct inode *inode)
+ {
+@@ -345,6 +362,21 @@ CIFS_SB(struct super_block *sb)
+ {
+ 	return sb->s_fs_info;
+ }
++#else
++static inline struct cifsInodeInfo *
++CIFS_I(struct inode *inode)
++{
++	return (struct cifsInodeInfo *)&(inode->u);
++}
++
++static inline struct cifs_sb_info *
++CIFS_SB(struct super_block *sb)
++{
++	return (struct cifs_sb_info *) &(sb->u);
++}
++
++extern struct inode * get_cifs_inode(struct super_block * sb);
++#endif
+ 
+ static inline char CIFS_DIR_SEP(const struct cifs_sb_info *cifs_sb)
+ {
+@@ -519,15 +551,17 @@ GLOBAL_EXTERN struct servers_not_supported *NotSuppList;	/*@z4a */
+  */
+ GLOBAL_EXTERN struct smbUidInfo *GlobalUidList[UID_HASH];
+ 
+-GLOBAL_EXTERN struct list_head GlobalServerList; /* BB not implemented yet */
++/* GLOBAL_EXTERN struct list_head GlobalServerList; BB not implemented yet */
+ GLOBAL_EXTERN struct list_head GlobalSMBSessionList;
+ GLOBAL_EXTERN struct list_head GlobalTreeConnectionList;
+ GLOBAL_EXTERN rwlock_t GlobalSMBSeslock;  /* protects list inserts on 3 above */
+ 
+ GLOBAL_EXTERN struct list_head GlobalOplock_Q;
+ 
+-GLOBAL_EXTERN struct list_head GlobalDnotifyReqList; /* Outstanding dir notify requests */
+-GLOBAL_EXTERN struct list_head GlobalDnotifyRsp_Q;/* DirNotify response queue */
++/* Outstanding dir notify requests */
++GLOBAL_EXTERN struct list_head GlobalDnotifyReqList;
++/* DirNotify response queue */
++GLOBAL_EXTERN struct list_head GlobalDnotifyRsp_Q;
+ 
+ /*
+  * Global transaction id (XID) information
+diff --git a/fs/cifs/cifspdu.h b/fs/cifs/cifspdu.h
+index 8623902..40d1730 100644
+--- a/fs/cifs/cifspdu.h
++++ b/fs/cifs/cifspdu.h
+@@ -1,7 +1,7 @@
+ /*
+  *   fs/cifs/cifspdu.h
+  *
+- *   Copyright (c) International Business Machines  Corp., 2002,2005
++ *   Copyright (c) International Business Machines  Corp., 2002,2007
+  *   Author(s): Steve French (sfrench@us.ibm.com)
+  *
+  *   This library is free software; you can redistribute it and/or modify
+@@ -26,7 +26,8 @@
+ 
+ #ifdef CONFIG_CIFS_WEAK_PW_HASH
+ #define LANMAN_PROT 0
+-#define CIFS_PROT   1
++#define LANMAN2_PROT 1
++#define CIFS_PROT   2
+ #else
+ #define CIFS_PROT   0
+ #endif
+@@ -34,9 +35,11 @@
+ #define BAD_PROT 0xFFFF
+ 
+ /* SMB command codes */
+-/* Some commands have minimal (wct=0,bcc=0), or uninteresting, responses
+- (ie which include no useful data other than the SMB error code itself).
+- Knowing this helps avoid response buffer allocations and copy in some cases */
++/*
++ * Some commands have minimal (wct=0,bcc=0), or uninteresting, responses
++ * (ie which include no useful data other than the SMB error code itself).
++ * Knowing this helps avoid response buffer allocations and copy in some cases
++ */
+ #define SMB_COM_CREATE_DIRECTORY      0x00 /* trivial response */
+ #define SMB_COM_DELETE_DIRECTORY      0x01 /* trivial response */
+ #define SMB_COM_CLOSE                 0x04 /* triv req/rsp, timestamp ignored */
+@@ -98,6 +101,15 @@
+  *****************************************************************
+  */
+ 
++#ifndef __le16
++#define __le16 __u16
++#define __le32 __u32
++#define __le64 __u64
++#define __be16 __u16
++#define __be32 __u32
++#define __be64 __u64
++#endif
++
+ /*
+  * Starting value for maximum SMB size negotiation
+  */
+@@ -217,6 +229,9 @@
+  */
+ #define CIFS_NO_HANDLE        0xFFFF
+ 
++#define NO_CHANGE_64          0xFFFFFFFFFFFFFFFFULL
++#define NO_CHANGE_32          0xFFFFFFFFUL
++
+ /* IPC$ in ASCII */
+ #define CIFS_IPC_RESOURCE "\x49\x50\x43\x24"
+ 
+@@ -408,6 +423,8 @@ typedef struct negotiate_req {
+ 
+ /* Dialect index is 13 for LANMAN */
+ 
++#define MIN_TZ_ADJ (15 * 60) /* minimum grid for timezones in seconds */
++
+ typedef struct lanman_neg_rsp {
+ 	struct smb_hdr hdr;	/* wct = 13 */
+ 	__le16 DialectIndex;
+@@ -417,7 +434,10 @@ typedef struct lanman_neg_rsp {
+ 	__le16 MaxNumberVcs;
+ 	__le16 RawMode;
+ 	__le32 SessionKey;
+-	__le32 ServerTime;
++	struct {
++		__le16 Time;
++		__le16 Date;
++	} __attribute__((packed)) SrvTime;
+ 	__le16 ServerTimeZone;
+ 	__le16 EncryptionKeyLength;
+ 	__le16 Reserved;
+@@ -538,7 +558,8 @@ typedef union smb_com_session_setup_andx {
+ /*      unsigned char  * NativeOS;      */
+ /*	unsigned char  * NativeLanMan;  */
+ /*      unsigned char  * PrimaryDomain; */
+-	} __attribute__((packed)) resp;	/* NTLM response with or without extended sec*/
++	} __attribute__((packed)) resp;	/* NTLM response 
++					   (with or without extended sec) */
+ 
+ 	struct {		/* request format */
+ 		struct smb_hdr hdr;	/* wct = 10 */
+@@ -574,6 +595,12 @@ typedef union smb_com_session_setup_andx {
+ 
+ /* format of NLTMv2 Response ie "case sensitive password" hash when NTLMv2 */
+ 
++#define NTLMSSP_SERVER_TYPE	1
++#define NTLMSSP_DOMAIN_TYPE	2
++#define NTLMSSP_FQ_DOMAIN_TYPE	3
++#define NTLMSSP_DNS_DOMAIN_TYPE	4
++#define NTLMSSP_DNS_PARENT_TYPE	5
++
+ struct ntlmssp2_name {
+ 	__le16 type;
+ 	__le16 length;
+@@ -587,7 +614,7 @@ struct ntlmv2_resp {
+ 	__le64  time;
+ 	__u64  client_chal; /* random */
+ 	__u32  reserved2;
+-	struct ntlmssp2_name names[1];
++	struct ntlmssp2_name names[2];
+ 	/* array of name entries could follow ending in minimum 4 byte struct */
+ } __attribute__((packed));
+ 
+@@ -674,7 +701,7 @@ typedef union smb_com_tree_disconnect {	/* as an altetnative can use flag on
+ typedef struct smb_com_close_req {
+ 	struct smb_hdr hdr;	/* wct = 3 */
+ 	__u16 FileID;
+-	__u32 LastWriteTime;	/* should be zero */
++	__u32 LastWriteTime;	/* should be zero or -1 */
+ 	__u16 ByteCount;	/* 0 */
+ } __attribute__((packed)) CLOSE_REQ;
+ 
+@@ -783,6 +810,8 @@ typedef struct smb_com_openx_rsp {
+ 	__u16  ByteCount;
+ } __attribute__((packed)) OPENX_RSP; 
+ 
++/* For encoding of POSIX Open Request - see trans2 function 0x209 data struct */
++
+ /* Legacy write request for older servers */
+ typedef struct smb_com_writex_req {
+         struct smb_hdr hdr;     /* wct = 12 */
+@@ -1340,10 +1369,13 @@ struct smb_t2_rsp {
+ #define SMB_QUERY_FILE_UNIX_BASIC       0x200
+ #define SMB_QUERY_FILE_UNIX_LINK        0x201
+ #define SMB_QUERY_POSIX_ACL             0x204
+-#define SMB_QUERY_XATTR                 0x205
++#define SMB_QUERY_XATTR                 0x205  /* e.g. system EA name space */
+ #define SMB_QUERY_ATTR_FLAGS            0x206  /* append,immutable etc. */
+ #define SMB_QUERY_POSIX_PERMISSION      0x207
+ #define SMB_QUERY_POSIX_LOCK            0x208
++/* #define SMB_POSIX_OPEN               0x209 */
++/* #define SMB_POSIX_UNLINK             0x20a */
++#define SMB_QUERY_FILE__UNIX_INFO2      0x20b
+ #define SMB_QUERY_FILE_INTERNAL_INFO    0x3ee
+ #define SMB_QUERY_FILE_ACCESS_INFO      0x3f0
+ #define SMB_QUERY_FILE_NAME_INFO2       0x3f1 /* 0x30 bytes */
+@@ -1363,8 +1395,11 @@ struct smb_t2_rsp {
+ #define SMB_SET_XATTR                   0x205
+ #define SMB_SET_ATTR_FLAGS              0x206  /* append, immutable etc. */
+ #define SMB_SET_POSIX_LOCK              0x208
++#define SMB_POSIX_OPEN                  0x209
++#define SMB_POSIX_UNLINK                0x20a
++#define SMB_SET_FILE_UNIX_INFO2
+ #define SMB_SET_FILE_BASIC_INFO2        0x3ec
+-#define SMB_SET_FILE_RENAME_INFORMATION 0x3f2 /* BB check if qpathinfo level too */
++#define SMB_SET_FILE_RENAME_INFORMATION 0x3f2 /* BB check if qpathinfo too */
+ #define SMB_FILE_ALL_INFO2              0x3fa
+ #define SMB_SET_FILE_ALLOCATION_INFO2   0x3fb
+ #define SMB_SET_FILE_END_OF_FILE_INFO2  0x3fc
+@@ -1414,7 +1449,7 @@ typedef struct smb_com_transaction2_qpi_rsp {
+ 	struct smb_hdr hdr;	/* wct = 10 + SetupCount */
+ 	struct trans2_resp t2;
+ 	__u16 ByteCount;
+-	__u16 Reserved2;	/* parameter word reserved - present for infolevels > 100 */
++	__u16 Reserved2; /* parameter word is present for infolevels > 100 */
+ } __attribute__((packed)) TRANSACTION2_QPI_RSP;
+ 
+ typedef struct smb_com_transaction2_spi_req {
+@@ -1447,7 +1482,7 @@ typedef struct smb_com_transaction2_spi_rsp {
+ 	struct smb_hdr hdr;	/* wct = 10 + SetupCount */
+ 	struct trans2_resp t2;
+ 	__u16 ByteCount;
+-	__u16 Reserved2;	/* parameter word reserved - present for infolevels > 100 */
++	__u16 Reserved2; /* parameter word is present for infolevels > 100 */
+ } __attribute__((packed)) TRANSACTION2_SPI_RSP;
+ 
+ struct set_file_rename {
+@@ -1613,6 +1648,7 @@ typedef struct smb_com_transaction2_fnext_rsp_parms {
+ #define SMB_QUERY_FS_ATTRIBUTE_INFO 0x105
+ #define SMB_QUERY_CIFS_UNIX_INFO    0x200
+ #define SMB_QUERY_POSIX_FS_INFO     0x201
++#define SMB_QUERY_POSIX_WHO_AM_I    0x202
+ #define SMB_QUERY_LABEL_INFO        0x3ea
+ #define SMB_QUERY_FS_QUOTA_INFO     0x3ee
+ #define SMB_QUERY_FS_FULL_SIZE_INFO 0x3ef
+@@ -1645,9 +1681,21 @@ typedef struct smb_com_transaction_qfsi_rsp {
+ 	struct smb_hdr hdr;	/* wct = 10 + SetupCount */
+ 	struct trans2_resp t2;
+ 	__u16 ByteCount;
+-	__u8 Pad;		/* may be three bytes *//* followed by data area */
++	__u8 Pad;	/* may be three bytes? *//* followed by data area */
+ } __attribute__((packed)) TRANSACTION2_QFSI_RSP;
+ 
++typedef struct whoami_rsp_data { /* Query level 0x202 */
++	__u32 flags; /* 0 = Authenticated user 1 = GUEST */
++	__u32 mask; /* which flags bits server understands ie 0x0001 */
++	__u64 unix_user_id;
++	__u64 unix_user_gid;
++	__u32 number_of_supplementary_gids; /* may be zero */
++	__u32 number_of_sids; /* may be zero */
++	__u32 length_of_sid_array; /* in bytes - may be zero */
++	__u32 pad; /* reserved - MBZ */
++	/* __u64 gid_array[0]; */  /* may be empty */
++	/* __u8 * psid_list */  /* may be empty */
++} __attribute__((packed)) WHOAMI_RSP_DATA;
+ 
+ /* SETFSInfo Levels */
+ #define SMB_SET_CIFS_UNIX_INFO    0x200
+@@ -1844,8 +1892,17 @@ typedef struct {
+ #define CIFS_UNIX_XATTR_CAP             0x00000004 /* support new namespace   */
+ #define CIFS_UNIX_EXTATTR_CAP           0x00000008 /* support chattr/chflag   */
+ #define CIFS_UNIX_POSIX_PATHNAMES_CAP   0x00000010 /* Allow POSIX path chars  */
++#define CIFS_UNIX_POSIX_PATH_OPS_CAP    0x00000020 /* Allow new POSIX path based
++						      calls including posix open
++						      and posix unlink */ 
+ #ifdef CONFIG_CIFS_POSIX
+-#define CIFS_UNIX_CAP_MASK              0x0000001b
++/* Can not set pathnames cap yet until we send new posix create SMB since
++   otherwise server can treat such handles opened with older ntcreatex
++   (by a new client which knows how to send posix path ops)
++   as non-posix handles (can affect write behavior with byte range locks.
++   We can add back in POSIX_PATH_OPS cap when Posix Create/Mkdir finished */
++/* #define CIFS_UNIX_CAP_MASK              0x0000003b */
++#define CIFS_UNIX_CAP_MASK              0x0000001b 
+ #else 
+ #define CIFS_UNIX_CAP_MASK              0x00000013
+ #endif /* CONFIG_CIFS_POSIX */
+@@ -1932,7 +1989,7 @@ typedef struct { /* data block encoding of response to level 263 QPathInfo */
+ 	__le32 AlignmentRequirement;
+ 	__le32 FileNameLength;
+ 	char FileName[1];
+-} __attribute__((packed)) FILE_ALL_INFO;		/* level 0x107 QPathInfo */
++} __attribute__((packed)) FILE_ALL_INFO;	/* level 0x107 QPathInfo */
+ 
+ /* defines for enumerating possible values of the Unix type field below */
+ #define UNIX_FILE      0
+@@ -1956,11 +2013,11 @@ typedef struct {
+ 	__u64 UniqueId;
+ 	__le64 Permissions;
+ 	__le64 Nlinks;
+-} __attribute__((packed)) FILE_UNIX_BASIC_INFO;		/* level 0x200 QPathInfo */
++} __attribute__((packed)) FILE_UNIX_BASIC_INFO;	/* level 0x200 QPathInfo */
+ 
+ typedef struct {
+ 	char LinkDest[1];
+-} __attribute__((packed)) FILE_UNIX_LINK_INFO;		/* level 0x201 QPathInfo */
++} __attribute__((packed)) FILE_UNIX_LINK_INFO;	/* level 0x201 QPathInfo */
+ 
+ /* The following three structures are needed only for
+ 	setting time to NT4 and some older servers via
+@@ -1997,7 +2054,7 @@ typedef struct {
+ 	__le64 ChangeTime;
+ 	__le32 Attributes;
+ 	__u32 Pad;
+-} __attribute__((packed)) FILE_BASIC_INFO;		/* size info, level 0x101 */
++} __attribute__((packed)) FILE_BASIC_INFO;	/* size info, level 0x101 */
+ 
+ struct file_allocation_info {
+ 	__le64 AllocationSize; /* Note old Samba srvr rounds this up too much */
+@@ -2006,7 +2063,7 @@ struct file_allocation_info {
+ 
+ struct file_end_of_file_info {
+ 	__le64 FileSize;		/* offset to end of file */
+-} __attribute__((packed));	/* size info, level 0x104 for set, 0x106 for query */
++} __attribute__((packed)); /* size info, level 0x104 for set, 0x106 for query */
+ 
+ struct file_alt_name_info {
+ 	__u8   alt_name[1];
+@@ -2061,6 +2118,19 @@ struct cifs_posix_acl { /* access conrol list  (ACL) */
+ 
+ /* end of POSIX ACL definitions */
+ 
++typedef struct {
++	__u32 OpenFlags; /* same as NT CreateX */
++	__u32 PosixOpenFlags;
++	__u32 Mode;
++	__u16 Level; /* reply level requested (see QPathInfo levels) */
++	__u16 Pad;  /* reserved - MBZ */
++} __attribute__((packed)) OPEN_PSX_REQ; /* level 0x209 SetPathInfo data */
++
++typedef struct {
++	/* reply varies based on requested level */
++} __attribute__((packed)) OPEN_PSX_RSP; /* level 0x209 SetPathInfo data */
++
++
+ struct file_internal_info {
+ 	__u64  UniqueId; /* inode number */
+ } __attribute__((packed));      /* level 0x3ee */
+@@ -2224,7 +2294,8 @@ struct data_blob {
+ 	1) PosixCreateX - to set and return the mode, inode#, device info and
+ 	perhaps add a CreateDevice - to create Pipes and other special .inodes
+ 	Also note POSIX open flags
+-	2) Close - to return the last write time to do cache across close more safely
++	2) Close - to return the last write time to do cache across close 
++		more safely
+ 	3) FindFirst return unique inode number - what about resume key, two 
+ 	forms short (matches readdir) and full (enough info to cache inodes)
+ 	4) Mkdir - set mode
+@@ -2259,7 +2330,8 @@ struct data_blob {
+ 	TRANSACTION2 (18 cases)
+ 		SMB_SET_FILE_END_OF_FILE_INFO2 SMB_SET_PATH_END_OF_FILE_INFO2
+ 		(BB verify that never need to set allocation size)
+-		SMB_SET_FILE_BASIC_INFO2 (setting times - BB can it be done via Unix ext?)
++		SMB_SET_FILE_BASIC_INFO2 (setting times - BB can it be done via
++			 Unix ext?)
+ 	
+ 	COPY (note support for copy across directories) - FUTURE, OPTIONAL
+ 	setting/getting OS/2 EAs - FUTURE (BB can this handle
+@@ -2279,13 +2351,13 @@ struct data_blob {
+ 	T2 QUERY_PATH_INFO (SMB_QUERY_FILE_UNIX_BASIC) - BB check for missing inode fields
+ 					Actually need QUERY_FILE_UNIX_INFO since has inode num
+ 					BB what about a) blksize/blkbits/blocks
+-								  b) i_version
+-								  c) i_rdev
+-								  d) notify mask?
+-								  e) generation
+-								  f) size_seqcount
++							  b) i_version
++							  c) i_rdev
++							  d) notify mask?
++							  e) generation
++							  f) size_seqcount
+ 	T2 FIND_FIRST/FIND_NEXT FIND_FILE_UNIX
+-	TRANS2_GET_DFS_REFERRAL				  - OPTIONAL but recommended
++	TRANS2_GET_DFS_REFERRAL			  - OPTIONAL but recommended
+ 	T2_QFS_INFO QueryDevice/AttributeInfo - OPTIONAL
+ 	
+ 	
+@@ -2324,7 +2396,7 @@ typedef struct file_xattr_info {
+ 	__u32 xattr_value_len;
+ 	char  xattr_name[0];
+ 	/* followed by xattr_value[xattr_value_len], no pad */
+-} __attribute__((packed)) FILE_XATTR_INFO;	/* extended attribute, info level 0x205 */
++} __attribute__((packed)) FILE_XATTR_INFO; /* extended attribute, info level 0x205 */
+ 
+ 
+ /* flags for chattr command */
+diff --git a/fs/cifs/cifsproto.h b/fs/cifs/cifsproto.h
+index b35c55c..ae79d24 100644
+--- a/fs/cifs/cifsproto.h
++++ b/fs/cifs/cifsproto.h
+@@ -21,9 +21,22 @@
+ #ifndef _CIFSPROTO_H
+ #define _CIFSPROTO_H
+ #include <linux/nls.h>
++#include <linux/version.h>
+ 
+ struct statfs;
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,8)
++#define kvec iovec
++#endif
++
++#ifndef msleep
++#define msleep(x) { set_current_state(TASK_UNINTERRUPTIBLE); schedule_timeout(x * HZ / 1000); }
++#endif
++
++#ifndef __user
++#define __user
++#endif
++
+ /*
+  *****************************************************************
+  * All Prototypes
+@@ -42,7 +55,7 @@ extern void _FreeXid(unsigned int);
+ #define FreeXid(curr_xid) {_FreeXid(curr_xid); cFYI(1,("CIFS VFS: leaving %s (xid = %d) rc = %d",__FUNCTION__,curr_xid,(int)rc));}
+ extern char *build_path_from_dentry(struct dentry *);
+ extern char *build_wildcard_path_from_dentry(struct dentry *direntry);
+-extern void renew_parental_timestamps(struct dentry *direntry);
++/* extern void renew_parental_timestamps(struct dentry *direntry);*/
+ extern int SendReceive(const unsigned int /* xid */ , struct cifsSesInfo *,
+ 			struct smb_hdr * /* input */ ,
+ 			struct smb_hdr * /* out */ ,
+@@ -55,9 +68,9 @@ extern int SendReceiveBlockingLock(const unsigned int /* xid */ , struct cifsTco
+ 				struct smb_hdr * /* out */ ,
+ 				int * /* bytes returned */);
+ extern int checkSMBhdr(struct smb_hdr *smb, __u16 mid);
+-extern int checkSMB(struct smb_hdr *smb, __u16 mid, int length);
++extern int checkSMB(struct smb_hdr *smb, __u16 mid, unsigned int length);
+ extern int is_valid_oplock_break(struct smb_hdr *smb, struct TCP_Server_Info *);
+-extern int is_size_safe_to_change(struct cifsInodeInfo *);
++extern int is_size_safe_to_change(struct cifsInodeInfo *, __u64 eof);
+ extern struct cifsFileInfo *find_writable_file(struct cifsInodeInfo *);
+ extern unsigned int smbCalcSize(struct smb_hdr *ptr);
+ extern unsigned int smbCalcSize_LE(struct smb_hdr *ptr);
+@@ -78,8 +91,17 @@ extern __u16 GetNextMid(struct TCP_Server_Info *server);
+ extern struct oplock_q_entry * AllocOplockQEntry(struct inode *, u16, 
+ 						 struct cifsTconInfo *);
+ extern void DeleteOplockQEntry(struct oplock_q_entry *);
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2,5,0)
+ extern struct timespec cifs_NTtimeToUnix(u64 /* utc nanoseconds since 1601 */ );
+ extern u64 cifs_UnixTimeToNT(struct timespec);
++extern struct timespec cnvrtDosUnixTm(__u16 date, __u16 time);
++#else
++extern u64 cifs_UnixTimeToNT(time_t);
++extern time_t cifs_NTtimeToUnix(u64 /* utc nanoseconds since 1601 */ );
++extern time_t cnvrtDosUnixTm(__u16 date, __u16 time);
++#endif
++extern __le64 cnvrtDosCifsTm(__u16 date, __u16 time);
++
+ extern int cifs_get_inode_info(struct inode **pinode,
+ 			const unsigned char *search_path, 
+ 			FILE_ALL_INFO * pfile_info,
+@@ -116,6 +138,7 @@ extern int CIFSFindClose(const int, struct cifsTconInfo *tcon,
+ extern int CIFSSMBQPathInfo(const int xid, struct cifsTconInfo *tcon,
+ 			const unsigned char *searchName,
+ 			FILE_ALL_INFO * findData,
++			int legacy /* whether to use old info level */,
+ 			const struct nls_table *nls_codepage, int remap);
+ extern int SMBQueryInformation(const int xid, struct cifsTconInfo *tcon,
+                         const unsigned char *searchName,
+@@ -143,10 +166,17 @@ extern int get_dfs_path(int xid, struct cifsSesInfo *pSesInfo,
+ 			unsigned int *pnum_referrals, 
+ 			unsigned char ** preferrals,
+ 			int remap);
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ extern int CIFSSMBQFSInfo(const int xid, struct cifsTconInfo *tcon,
+ 			struct kstatfs *FSData);
+ extern int SMBOldQFSInfo(const int xid, struct cifsTconInfo *tcon,
+ 			struct kstatfs *FSData);
++#else
++extern int CIFSSMBQFSInfo(const int xid, struct cifsTconInfo *tcon,
++                        struct statfs *FSData);
++extern int SMBOldQFSInfo(const int xid, struct cifsTconInfo *tcon,
++                        struct statfs *FSData);
++#endif
+ extern int CIFSSMBSetFSUnixInfo(const int xid, struct cifsTconInfo *tcon,
+ 			__u64 cap);
+ 
+@@ -155,7 +185,11 @@ extern int CIFSSMBQFSAttributeInfo(const int xid,
+ extern int CIFSSMBQFSDeviceInfo(const int xid, struct cifsTconInfo *tcon);
+ extern int CIFSSMBQFSUnixInfo(const int xid, struct cifsTconInfo *tcon);
+ extern int CIFSSMBQFSPosixInfo(const int xid, struct cifsTconInfo *tcon,
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 			struct kstatfs *FSData);
++#else
++			struct statfs  *FSData);
++#endif
+ 
+ extern int CIFSSMBSetTimes(const int xid, struct cifsTconInfo *tcon,
+ 			const char *fileName, const FILE_BASIC_INFO * data,
+@@ -331,4 +365,7 @@ extern int CIFSSMBSetPosixACL(const int xid, struct cifsTconInfo *tcon,
+ 		const struct nls_table *nls_codepage, int remap_special_chars);
+ extern int CIFSGetExtAttr(const int xid, struct cifsTconInfo *tcon,
+                 const int netfid, __u64 * pExtAttrBits, __u64 *pMask);
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 16)
++extern void * kzalloc(size_t size, unsigned flgs);
++#endif
+ #endif			/* _CIFSPROTO_H */
+diff --git a/fs/cifs/cifssmb.c b/fs/cifs/cifssmb.c
+index 075d8fb..80fc491 100644
+--- a/fs/cifs/cifssmb.c
++++ b/fs/cifs/cifssmb.c
+@@ -30,7 +30,10 @@
+ #include <linux/fs.h>
+ #include <linux/kernel.h>
+ #include <linux/vfs.h>
++#include <linux/version.h>
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ #include <linux/posix_acl_xattr.h>
++#endif
+ #include <asm/uaccess.h>
+ #include "cifspdu.h"
+ #include "cifsglob.h"
+@@ -46,6 +49,7 @@ static struct {
+ } protocols[] = {
+ #ifdef CONFIG_CIFS_WEAK_PW_HASH
+ 	{LANMAN_PROT, "\2LM1.2X002"},
++	{LANMAN2_PROT, "\2LANMAN2.1"},
+ #endif /* weak password hashing for legacy clients */
+ 	{CIFS_PROT, "\2NT LM 0.12"}, 
+ 	{POSIX_PROT, "\2POSIX 2"},
+@@ -58,6 +62,7 @@ static struct {
+ } protocols[] = {
+ #ifdef CONFIG_CIFS_WEAK_PW_HASH
+ 	{LANMAN_PROT, "\2LM1.2X002"},
++	{LANMAN2_PROT, "\2LANMAN2.1"},
+ #endif /* weak password hashing for legacy clients */
+ 	{CIFS_PROT, "\2NT LM 0.12"}, 
+ 	{BAD_PROT, "\2"}
+@@ -67,13 +72,13 @@ static struct {
+ /* define the number of elements in the cifs dialect array */
+ #ifdef CONFIG_CIFS_POSIX
+ #ifdef CONFIG_CIFS_WEAK_PW_HASH
+-#define CIFS_NUM_PROT 3
++#define CIFS_NUM_PROT 4
+ #else
+ #define CIFS_NUM_PROT 2
+ #endif /* CIFS_WEAK_PW_HASH */
+ #else /* not posix */
+ #ifdef CONFIG_CIFS_WEAK_PW_HASH
+-#define CIFS_NUM_PROT 2
++#define CIFS_NUM_PROT 3
+ #else
+ #define CIFS_NUM_PROT 1
+ #endif /* CONFIG_CIFS_WEAK_PW_HASH */
+@@ -131,8 +136,20 @@ small_smb_init(int smb_command, int wct, struct cifsTconInfo *tcon,
+ 				   reconnect, should be greater than cifs socket
+ 				   timeout which is 7 seconds */
+ 			while(tcon->ses->server->tcpStatus == CifsNeedReconnect) {
+-				wait_event_interruptible_timeout(tcon->ses->server->response_q,
+-					(tcon->ses->server->tcpStatus == CifsGood), 10 * HZ);
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 0)
++				int timeout = 10 * HZ;
++				while((tcon->ses->server->tcpStatus != CifsGood)
++						&& (timeout > 0)) {
++					timeout = interruptible_sleep_on_timeout(
++						&tcon->ses->server->response_q,
++						timeout);
++				}
++#else
++				wait_event_interruptible_timeout(
++					tcon->ses->server->response_q,
++					(tcon->ses->server->tcpStatus == CifsGood),
++					10 * HZ);
++#endif
+ 				if(tcon->ses->server->tcpStatus == CifsNeedReconnect) {
+ 					/* on "soft" mounts we wait once */
+ 					if((tcon->retry == FALSE) || 
+@@ -267,8 +284,20 @@ smb_init(int smb_command, int wct, struct cifsTconInfo *tcon,
+ 				   reconnect, should be greater than cifs socket
+ 				   timeout which is 7 seconds */
+ 			while(tcon->ses->server->tcpStatus == CifsNeedReconnect) {
+-				wait_event_interruptible_timeout(tcon->ses->server->response_q,
+-					(tcon->ses->server->tcpStatus == CifsGood), 10 * HZ);
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 0)
++				int timeout = 10 * HZ;
++				while((tcon->ses->server->tcpStatus != CifsGood)
++						&& (timeout > 0)) {
++					timeout = interruptible_sleep_on_timeout
++						(&tcon->ses->server->response_q,
++						 timeout);
++				}
++#else
++				wait_event_interruptible_timeout(
++					tcon->ses->server->response_q,
++					(tcon->ses->server->tcpStatus == CifsGood),
++					10 * HZ);
++#endif
+ 				if(tcon->ses->server->tcpStatus == 
+ 						CifsNeedReconnect) {
+ 					/* on "soft" mounts we wait once */
+@@ -397,6 +426,7 @@ CIFSSMBNegotiate(unsigned int xid, struct cifsSesInfo *ses)
+ 	struct TCP_Server_Info * server;
+ 	u16 count;
+ 	unsigned int secFlags;
++	u16 dialect;
+ 
+ 	if(ses->server)
+ 		server = ses->server;
+@@ -436,9 +466,10 @@ CIFSSMBNegotiate(unsigned int xid, struct cifsSesInfo *ses)
+ 	if (rc != 0) 
+ 		goto neg_err_exit;
+ 
+-	cFYI(1,("Dialect: %d", pSMBr->DialectIndex));
++	dialect = le16_to_cpu(pSMBr->DialectIndex);
++	cFYI(1,("Dialect: %d", dialect));
+ 	/* Check wct = 1 error case */
+-	if((pSMBr->hdr.WordCount < 13) || (pSMBr->DialectIndex == BAD_PROT)) {
++	if((pSMBr->hdr.WordCount < 13) || (dialect == BAD_PROT)) {
+ 		/* core returns wct = 1, but we do not ask for core - otherwise
+ 		small wct just comes when dialect index is -1 indicating we 
+ 		could not negotiate a common dialect */
+@@ -446,7 +477,9 @@ CIFSSMBNegotiate(unsigned int xid, struct cifsSesInfo *ses)
+ 		goto neg_err_exit;
+ #ifdef CONFIG_CIFS_WEAK_PW_HASH 
+ 	} else if((pSMBr->hdr.WordCount == 13)
+-			&& (pSMBr->DialectIndex == LANMAN_PROT)) {
++			&& ((dialect == LANMAN_PROT)
++				|| (dialect == LANMAN2_PROT))) {
++		__s16 tmp;
+ 		struct lanman_neg_rsp * rsp = (struct lanman_neg_rsp *)pSMBr;
+ 
+ 		if((secFlags & CIFSSEC_MAY_LANMAN) || 
+@@ -472,12 +505,44 @@ CIFSSMBNegotiate(unsigned int xid, struct cifsSesInfo *ses)
+ 			server->maxRw = 0;/* we do not need to use raw anyway */
+ 			server->capabilities = CAP_MPX_MODE;
+ 		}
+-		server->timeZone = le16_to_cpu(rsp->ServerTimeZone);
++		tmp = (__s16)le16_to_cpu(rsp->ServerTimeZone);
++		if (tmp == -1) {
++			/* OS/2 often does not set timezone therefore
++			 * we must use server time to calc time zone.
++			 * Could deviate slightly from the right zone.
++			 * Smallest defined timezone difference is 15 minutes
++			 * (i.e. Nepal).  Rounding up/down is done to match
++			 * this requirement.
++			 */
++			int val, seconds, remain, result;
++			struct timespec ts, utc;
++			utc = CURRENT_TIME;
++			ts = cnvrtDosUnixTm(le16_to_cpu(rsp->SrvTime.Date),
++						le16_to_cpu(rsp->SrvTime.Time));
++			cFYI(1,("SrvTime: %d sec since 1970 (utc: %d) diff: %d",
++				(int)ts.tv_sec, (int)utc.tv_sec,
++				(int)(utc.tv_sec - ts.tv_sec)));
++			val = (int)(utc.tv_sec - ts.tv_sec);
++			seconds = val < 0 ? -val : val;
++			result = (seconds / MIN_TZ_ADJ) * MIN_TZ_ADJ;
++			remain = seconds % MIN_TZ_ADJ;
++			if(remain >= (MIN_TZ_ADJ / 2))
++				result += MIN_TZ_ADJ;
++			if(val < 0)
++				result = - result;
++			server->timeAdj = result;
++		} else {
++			server->timeAdj = (int)tmp;
++			server->timeAdj *= 60; /* also in seconds */
++		}
++		cFYI(1,("server->timeAdj: %d seconds", server->timeAdj));
++
+ 
+ 		/* BB get server time for time conversions and add
+ 		code to use it and timezone since this is not UTC */	
+ 
+-		if (rsp->EncryptionKeyLength == cpu_to_le16(CIFS_CRYPTO_KEY_SIZE)) {
++		if (rsp->EncryptionKeyLength == 
++				cpu_to_le16(CIFS_CRYPTO_KEY_SIZE)) {
+ 			memcpy(server->cryptKey, rsp->EncryptionKey,
+ 				CIFS_CRYPTO_KEY_SIZE);
+ 		} else if (server->secMode & SECMODE_PW_ENCRYPT) {
+@@ -531,7 +596,8 @@ CIFSSMBNegotiate(unsigned int xid, struct cifsSesInfo *ses)
+ 	cFYI(0, ("Max buf = %d", ses->server->maxBuf));
+ 	GETU32(ses->server->sessid) = le32_to_cpu(pSMBr->SessionKey);
+ 	server->capabilities = le32_to_cpu(pSMBr->Capabilities);
+-	server->timeZone = le16_to_cpu(pSMBr->ServerTimeZone);	
++	server->timeAdj = (int)(__s16)le16_to_cpu(pSMBr->ServerTimeZone);
++	server->timeAdj *= 60;
+ 	if (pSMBr->EncryptionKeyLength == CIFS_CRYPTO_KEY_SIZE) {
+ 		memcpy(server->cryptKey, pSMBr->u.EncryptionKey,
+ 		       CIFS_CRYPTO_KEY_SIZE);
+@@ -1617,7 +1683,7 @@ CIFSSMBClose(const int xid, struct cifsTconInfo *tcon, int smb_file_id)
+ 	pSMBr = (CLOSE_RSP *)pSMB; /* BB removeme BB */
+ 
+ 	pSMB->FileID = (__u16) smb_file_id;
+-	pSMB->LastWriteTime = 0;
++	pSMB->LastWriteTime = 0xFFFFFFFF;
+ 	pSMB->ByteCount = 0;
+ 	rc = SendReceive(xid, tcon->ses, (struct smb_hdr *) pSMB,
+ 			 (struct smb_hdr *) pSMBr, &bytes_returned, 0);
+@@ -2387,7 +2453,7 @@ qreparse_out:
+ 
+ 	return rc;
+ }
+-
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ #ifdef CONFIG_CIFS_POSIX
+ 
+ /*Convert an Access Control Entry from wire format to local POSIX xattr format*/
+@@ -2770,7 +2836,7 @@ GetExtAttrOut:
+ 
+ 
+ #endif /* CONFIG_POSIX */
+-
++#endif /* if version > 2.5 */
+ 
+ /* security id for everyone */
+ const struct cifs_sid sid_everyone = {1, 1, {0, 0, 0, 0, 0, 0}, {0, 0, 0, 0}};
+@@ -2856,7 +2922,6 @@ qsec_out:
+ 	return rc;
+ }
+ 
+-
+ /* Legacy Query Path Information call for lookup to old servers such
+    as Win9x/WinME */
+ int SMBQueryInformation(const int xid, struct cifsTconInfo *tcon,
+@@ -2898,7 +2963,20 @@ QInfRetry:
+ 	if (rc) {
+ 		cFYI(1, ("Send error in QueryInfo = %d", rc));
+ 	} else if (pFinfo) {            /* decode response */
++		struct timespec ts;
++		__u32 time = le32_to_cpu(pSMBr->last_write_time);
++		/* BB FIXME - add time zone adjustment BB */
+ 		memset(pFinfo, 0, sizeof(FILE_ALL_INFO));
++		ts.tv_nsec = 0;
++		ts.tv_sec = time;
++		/* decode time fields */
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
++		pFinfo->ChangeTime = cpu_to_le64(cifs_UnixTimeToNT(ts));
++#else
++		pFinfo->ChangeTime = cpu_to_le64(cifs_UnixTimeToNT(time));
++#endif
++		pFinfo->LastWriteTime = pFinfo->ChangeTime;
++		pFinfo->LastAccessTime = 0;
+ 		pFinfo->AllocationSize =
+ 			cpu_to_le64(le32_to_cpu(pSMBr->size));
+ 		pFinfo->EndOfFile = pFinfo->AllocationSize;
+@@ -2922,6 +3000,7 @@ int
+ CIFSSMBQPathInfo(const int xid, struct cifsTconInfo *tcon,
+ 		 const unsigned char *searchName,
+ 		 FILE_ALL_INFO * pFindData,
++		 int legacy /* old style infolevel */,
+ 		 const struct nls_table *nls_codepage, int remap)
+ {
+ /* level 263 SMB_QUERY_FILE_ALL_INFO */
+@@ -2970,7 +3049,10 @@ QPathInfoRetry:
+ 	byte_count = params + 1 /* pad */ ;
+ 	pSMB->TotalParameterCount = cpu_to_le16(params);
+ 	pSMB->ParameterCount = pSMB->TotalParameterCount;
+-	pSMB->InformationLevel = cpu_to_le16(SMB_QUERY_FILE_ALL_INFO);
++	if(legacy)
++		pSMB->InformationLevel = cpu_to_le16(SMB_INFO_STANDARD);
++	else
++		pSMB->InformationLevel = cpu_to_le16(SMB_QUERY_FILE_ALL_INFO);
+ 	pSMB->Reserved4 = 0;
+ 	pSMB->hdr.smb_buf_length += byte_count;
+ 	pSMB->ByteCount = cpu_to_le16(byte_count);
+@@ -2982,13 +3064,24 @@ QPathInfoRetry:
+ 	} else {		/* decode response */
+ 		rc = validate_t2((struct smb_t2_rsp *)pSMBr);
+ 
+-		if (rc || (pSMBr->ByteCount < 40)) 
++		if (rc) /* BB add auto retry on EOPNOTSUPP? */
++			rc = -EIO;
++		else if (!legacy && (pSMBr->ByteCount < 40)) 
+ 			rc = -EIO;	/* bad smb */
++		else if(legacy && (pSMBr->ByteCount < 24))
++			rc = -EIO;  /* 24 or 26 expected but we do not read last field */
+ 		else if (pFindData){
++			int size;
+ 			__u16 data_offset = le16_to_cpu(pSMBr->t2.DataOffset);
++			if(legacy) /* we do not read the last field, EAsize, fortunately
++					   since it varies by subdialect and on Set vs. Get, is  
++					   two bytes or 4 bytes depending but we don't care here */
++				size = sizeof(FILE_INFO_STANDARD);
++			else
++				size = sizeof(FILE_ALL_INFO);
+ 			memcpy((char *) pFindData,
+ 			       (char *) &pSMBr->hdr.Protocol +
+-			       data_offset, sizeof (FILE_ALL_INFO));
++			       data_offset, size);
+ 		} else
+ 		    rc = -ENOMEM;
+ 	}
+@@ -3613,6 +3706,14 @@ getDFSRetry:
+ 		strncpy(pSMB->RequestFileName, searchName, name_len);
+ 	}
+ 
++	if(ses->server) {
++		if(ses->server->secMode &
++		   (SECMODE_SIGN_REQUIRED | SECMODE_SIGN_ENABLED))
++			pSMB->hdr.Flags2 |= SMBFLG2_SECURITY_SIGNATURE;
++	}
++
++        pSMB->hdr.Uid = ses->Suid;
++
+ 	params = 2 /* level */  + name_len /*includes null */ ;
+ 	pSMB->TotalDataCount = 0;
+ 	pSMB->DataCount = 0;
+@@ -3733,7 +3834,11 @@ GetDFSRefExit:
+ 
+ /* Query File System Info such as free space to old servers such as Win 9x */
+ int
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ SMBOldQFSInfo(const int xid, struct cifsTconInfo *tcon, struct kstatfs *FSData)
++#else
++SMBOldQFSInfo(const int xid, struct cifsTconInfo *tcon, struct statfs *FSData)
++#endif
+ {
+ /* level 0x01 SMB_QUERY_FILE_SYSTEM_INFO */
+ 	TRANSACTION2_QFSI_REQ *pSMB = NULL;
+@@ -3818,7 +3923,11 @@ oldQFSInfoRetry:
+ }
+ 
+ int
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ CIFSSMBQFSInfo(const int xid, struct cifsTconInfo *tcon, struct kstatfs *FSData)
++#else
++CIFSSMBQFSInfo(const int xid, struct cifsTconInfo *tcon, struct statfs *FSData)
++#endif
+ {
+ /* level 0x103 SMB_QUERY_FILE_SYSTEM_INFO */
+ 	TRANSACTION2_QFSI_REQ *pSMB = NULL;
+@@ -4178,7 +4287,11 @@ SETFSUnixRetry:
+ 
+ int
+ CIFSSMBQFSPosixInfo(const int xid, struct cifsTconInfo *tcon,
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 		   struct kstatfs *FSData)
++#else
++		   struct statfs  *FSData)
++#endif
+ {
+ /* level 0x201  SMB_QUERY_CIFS_POSIX_INFO */
+ 	TRANSACTION2_QFSI_REQ *pSMB = NULL;
+@@ -4719,6 +4832,16 @@ setPermsRetry:
+ 	pSMB->InformationLevel = cpu_to_le16(SMB_SET_FILE_UNIX_BASIC);
+ 	pSMB->Reserved4 = 0;
+ 	pSMB->hdr.smb_buf_length += byte_count;
++	/* Samba server ignores set of file size to zero due to bugs in some
++	older clients, but we should be precise - we use SetFileSize to
++	set file size and do not want to truncate file size to zero
++	accidently as happened on one Samba server beta by putting
++	zero instead of -1 here */ 
++	data_offset->EndOfFile = NO_CHANGE_64;
++	data_offset->NumOfBytes = NO_CHANGE_64;
++	data_offset->LastStatusChange = NO_CHANGE_64;
++	data_offset->LastAccessTime = NO_CHANGE_64;
++	data_offset->LastModificationTime = NO_CHANGE_64;
+ 	data_offset->Uid = cpu_to_le64(uid);
+ 	data_offset->Gid = cpu_to_le64(gid);
+ 	/* better to leave device as zero when it is  */
+@@ -4804,7 +4927,7 @@ int CIFSSMBNotify(const int xid, struct cifsTconInfo *tcon,
+ 	} else {
+ 		/* Add file to outstanding requests */
+ 		/* BB change to kmem cache alloc */	
+-		dnotify_req = (struct dir_notify_req *) kmalloc(
++		dnotify_req = kmalloc(
+ 						sizeof(struct dir_notify_req),
+ 						 GFP_KERNEL);
+ 		if(dnotify_req) {
+@@ -5190,7 +5313,7 @@ SetEARetry:
+ 	parm_data->list_len = cpu_to_le32(count);
+ 	parm_data->list[0].EA_flags = 0;
+ 	/* we checked above that name len is less than 255 */
+-	parm_data->list[0].name_len = (__u8)name_len;
++	parm_data->list[0].name_len = (__u8)name_len;;
+ 	/* EA names are always ASCII */
+ 	if(ea_name)
+ 		strncpy(parm_data->list[0].name,ea_name,name_len);
+diff --git a/fs/cifs/connect.c b/fs/cifs/connect.c
+index 5d394c7..9009d59 100644
+--- a/fs/cifs/connect.c
++++ b/fs/cifs/connect.c
+@@ -27,10 +27,16 @@
+ #include <linux/pagemap.h>
+ #include <linux/ctype.h>
+ #include <linux/utsname.h>
+-#include <linux/mempool.h>
+ #include <linux/delay.h>
+ #include <linux/completion.h>
++#include <linux/version.h>
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
++#include <linux/mempool.h>
+ #include <linux/pagevec.h>
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,19)
++#include <linux/freezer.h>
++#endif /* 2.6.19 */
++#endif
+ #include <asm/uaccess.h>
+ #include <asm/processor.h>
+ #include "cifspdu.h"
+@@ -47,12 +53,21 @@
+ #define CIFS_PORT 445
+ #define RFC1001_PORT 139
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 7)
++#define sock_create_kern sock_create
++#endif
+ static DECLARE_COMPLETION(cifsd_complete);
+ 
+ extern void SMBNTencrypt(unsigned char *passwd, unsigned char *c8,
+ 			 unsigned char *p24);
+ 
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ extern mempool_t *cifs_req_poolp;
++#else /* old 2.4 kernel */
++#ifndef PAGEVEC_SIZE
++#define PAGEVEC_SIZE 14
++#endif
++#endif
+ 
+ struct smb_vol {
+ 	char *username;
+@@ -89,6 +104,7 @@ struct smb_vol {
+ 	unsigned int wsize;
+ 	unsigned int sockopt;
+ 	unsigned short int port;
++	char * prepath;
+ };
+ 
+ static int ipv4_connect(struct sockaddr_in *psin_server, 
+@@ -182,7 +198,9 @@ cifs_reconnect(struct TCP_Server_Info *server)
+ 
+ 	while ((server->tcpStatus != CifsExiting) && (server->tcpStatus != CifsGood))
+ 	{
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 12)
+ 		try_to_freeze();
++#endif
+ 		if(server->protocolType == IPV6) {
+ 			rc = ipv6_connect(&server->addr.sockAddr6,&server->ssocket);
+ 		} else {
+@@ -342,9 +360,17 @@ cifs_demultiplex_thread(struct TCP_Server_Info *server)
+ 	int isLargeBuf = FALSE;
+ 	int isMultiRsp;
+ 	int reconnect;
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 8)
++	mm_segment_t temp_fs;
++#endif
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 0)
++	daemonize();
++	sprintf(current->comm,"cifsd");
++#else
+ 	daemonize("cifsd");
+ 	allow_signal(SIGKILL);
++#endif
+ 	current->flags |= PF_MEMALLOC;
+ 	server->tsk = current;	/* save process info to wake at shutdown */
+ 	cFYI(1, ("Demultiplex PID: %d", current->pid));
+@@ -353,15 +379,24 @@ cifs_demultiplex_thread(struct TCP_Server_Info *server)
+ 	length = tcpSesAllocCount.counter;
+ 	write_unlock(&GlobalSMBSeslock);
+ 	complete(&cifsd_complete);
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 10)
+ 	if(length  > 1) {
+ 		mempool_resize(cifs_req_poolp,
+ 			length + cifs_min_rcv,
+ 			GFP_KERNEL);
+ 	}
++#endif
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 8)
++	temp_fs = get_fs();	/* we must turn off socket api parm checking */
++	set_fs(get_ds());
++#endif
+ 
+ 	while (server->tcpStatus != CifsExiting) {
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 12)
+ 		if (try_to_freeze())
+ 			continue;
++#endif
+ 		if (bigbuf == NULL) {
+ 			bigbuf = cifs_buf_get();
+ 			if (!bigbuf) {
+@@ -394,10 +429,15 @@ cifs_demultiplex_thread(struct TCP_Server_Info *server)
+ 		iov.iov_len = 4;
+ 		smb_msg.msg_control = NULL;
+ 		smb_msg.msg_controllen = 0;
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 8)
++		smb_msg.msg_iov = &iov;
++		smb_msg.msg_iovlen = 1;
+ 		length =
+-		    kernel_recvmsg(csocket, &smb_msg,
++			sock_recvmsg(csocket, &smb_msg, 4 /* RFC1001 len */, 0);
++#else
++		length = kernel_recvmsg(csocket, &smb_msg,
+ 				 &iov, 1, 4, 0 /* BB see socket.h flags */);
+-
++#endif
+ 		if (server->tcpStatus == CifsExiting) {
+ 			break;
+ 		} else if (server->tcpStatus == CifsNeedReconnect) {
+@@ -420,7 +460,11 @@ cifs_demultiplex_thread(struct TCP_Server_Info *server)
+ 				   and so simply return error to mount */
+ 				break;
+ 			}
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 12)
+ 			if (!try_to_freeze() && (length == -EINTR)) {
++#else
++			if (length == -EINTR) {
++#endif
+ 				cFYI(1,("cifsd thread killed"));
+ 				break;
+ 			}
+@@ -520,8 +564,13 @@ cifs_demultiplex_thread(struct TCP_Server_Info *server)
+ 		iov.iov_len = pdu_length;
+ 		for (total_read = 0; total_read < pdu_length; 
+ 		     total_read += length) {
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 8)
++			length = sock_recvmsg(csocket, &smb_msg,
++				pdu_length - total_read, 0);
++#else
+ 			length = kernel_recvmsg(csocket, &smb_msg, &iov, 1,
+ 						pdu_length - total_read, 0);
++#endif
+ 			if((server->tcpStatus == CifsExiting) ||
+ 			    (length == -EINTR)) {
+ 				/* then will exit */
+@@ -668,6 +717,10 @@ multi_t2_fnd:
+ 		sock_release(csocket);
+ 		server->ssocket = NULL;
+ 	}
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 8)
++	set_fs(temp_fs);
++#endif
+ 	/* buffer usuallly freed in free_mid - need to free it here on exit */
+ 	if (bigbuf != NULL)
+ 		cifs_buf_release(bigbuf);
+@@ -749,11 +802,13 @@ multi_t2_fnd:
+ 	write_unlock(&GlobalSMBSeslock);
+ 
+ 	kfree(server);
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	if(length  > 0) {
+ 		mempool_resize(cifs_req_poolp,
+ 			length + cifs_min_rcv,
+ 			GFP_KERNEL);
+ 	}
++#endif
+ 	
+ 	complete_and_exit(&cifsd_complete, 0);
+ 	return 0;
+@@ -771,12 +826,21 @@ cifs_parse_mount_options(char *options, const char *devname,struct smb_vol *vol)
+ 	separator[1] = 0; 
+ 
+ 	memset(vol->source_rfc1001_name,0x20,15);
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 18)
++	for(i=0;i < strnlen(utsname()->nodename,15);i++) {
++		/* does not have to be a perfect mapping since the field is
++		informational, only used for servers that do not support
++		port 445 and it can be overridden at mount time */
++		vol->source_rfc1001_name[i] = 
++			toupper(utsname()->nodename[i]);
++#else
+ 	for(i=0;i < strnlen(system_utsname.nodename,15);i++) {
+ 		/* does not have to be a perfect mapping since the field is
+ 		informational, only used for servers that do not support
+ 		port 445 and it can be overridden at mount time */
+ 		vol->source_rfc1001_name[i] = 
+ 			toupper(system_utsname.nodename[i]);
++#endif
+ 	}
+ 	vol->source_rfc1001_name[15] = 0;
+ 	/* null target name indicates to use *SMBSERVR default called name
+@@ -816,10 +880,13 @@ cifs_parse_mount_options(char *options, const char *devname,struct smb_vol *vol)
+ 		} else if (strnicmp(data, "nouser_xattr",12) == 0) {
+ 			vol->no_xattr = 1;
+ 		} else if (strnicmp(data, "user", 4) == 0) {
+-			if (!value || !*value) {
++			if (!value) {
+ 				printk(KERN_WARNING
+ 				       "CIFS: invalid or missing username\n");
+ 				return 1;	/* needs_arg; */
++			} else if(!*value) {
++				/* null user, ie anonymous, authentication */
++				vol->nullauth = 1;
+ 			}
+ 			if (strnlen(value, 200) < 200) {
+ 				vol->username = value;
+@@ -993,6 +1060,28 @@ cifs_parse_mount_options(char *options, const char *devname,struct smb_vol *vol)
+ 				printk(KERN_WARNING "CIFS: domain name too long\n");
+ 				return 1;
+ 			}
++                } else if (strnicmp(data, "prefixpath", 10) == 0) {
++                        if (!value || !*value) {
++                                printk(KERN_WARNING
++                                       "CIFS: invalid path prefix\n");
++                                return 1;       /* needs_arg; */
++                        }
++                        if ((temp_len = strnlen(value, 1024)) < 1024) {
++				if(value[0] != '/')
++					temp_len++;  /* missing leading slash */
++                                vol->prepath = kmalloc(temp_len+1,GFP_KERNEL);
++                                if(vol->prepath == NULL)
++                                        return 1;
++				if(value[0] != '/') {
++					vol->prepath[0] = '/';
++	                                strcpy(vol->prepath+1,value);
++				} else
++					strcpy(vol->prepath,value);
++				cFYI(1,("prefix path %s",vol->prepath));
++                        } else {
++                                printk(KERN_WARNING "CIFS: prefix too long\n");
++                                return 1;
++                        }
+ 		} else if (strnicmp(data, "iocharset", 9) == 0) {
+ 			if (!value || !*value) {
+ 				printk(KERN_WARNING "CIFS: invalid iocharset specified\n");
+@@ -1397,7 +1486,11 @@ ipv4_connect(struct sockaddr_in *psin_server, struct socket **csocket,
+ 		} else {
+ 		/* BB other socket options to set KEEPALIVE, NODELAY? */
+ 			cFYI(1,("Socket created"));
+-			(*csocket)->sk->sk_allocation = GFP_NOFS; 
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
++			(*csocket)->sk->sk_allocation = GFP_NOFS;
++#else
++			(*csocket)->sk->allocation = GFP_NOFS;
++#endif
+ 		}
+ 	}
+ 
+@@ -1447,6 +1540,7 @@ ipv4_connect(struct sockaddr_in *psin_server, struct socket **csocket,
+ 	/* Eventually check for other socket options to change from 
+ 		the default. sock_setsockopt not used because it expects 
+ 		user space buffer */
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	 cFYI(1,("sndbuf %d rcvbuf %d rcvtimeo 0x%lx",(*csocket)->sk->sk_sndbuf,
+ 		 (*csocket)->sk->sk_rcvbuf, (*csocket)->sk->sk_rcvtimeo));
+ 	(*csocket)->sk->sk_rcvtimeo = 7 * HZ;
+@@ -1455,7 +1549,16 @@ ipv4_connect(struct sockaddr_in *psin_server, struct socket **csocket,
+ 		(*csocket)->sk->sk_sndbuf = 200 * 1024;
+ 	if((*csocket)->sk->sk_rcvbuf < (140 * 1024))
+ 		(*csocket)->sk->sk_rcvbuf = 140 * 1024;
+-
++#else
++         cFYI(1,("sndbuf %d rcvbuf %d rcvtimeo 0x%lx",(*csocket)->sk->sndbuf,
++                 (*csocket)->sk->rcvbuf, (*csocket)->sk->rcvtimeo));
++        (*csocket)->sk->rcvtimeo = 7 * HZ;
++        /* make the bufsizes depend on wsize/rsize and max requests */
++        if((*csocket)->sk->sndbuf < (200 * 1024))
++                (*csocket)->sk->sndbuf = 200 * 1024;
++        if((*csocket)->sk->rcvbuf < (140 * 1024))
++                (*csocket)->sk->rcvbuf = 140 * 1024;
++#endif
+ 	/* send RFC1001 sessinit */
+ 	if(psin_server->sin_port == htons(RFC1001_PORT)) {
+ 		/* some servers require RFC1001 sessinit before sending
+@@ -1525,7 +1628,11 @@ ipv6_connect(struct sockaddr_in6 *psin_server, struct socket **csocket)
+ 		} else {
+ 		/* BB other socket options to set KEEPALIVE, NODELAY? */
+ 			 cFYI(1,("ipv6 Socket created"));
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 			(*csocket)->sk->sk_allocation = GFP_NOFS;
++#else
++			(*csocket)->sk->allocation = GFP_NOFS;
++#endif
+ 		}
+ 	}
+ 
+@@ -1576,7 +1683,11 @@ ipv6_connect(struct sockaddr_in6 *psin_server, struct socket **csocket)
+ 	/* Eventually check for other socket options to change from 
+ 		the default. sock_setsockopt not used because it expects 
+ 		user space buffer */
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	(*csocket)->sk->sk_rcvtimeo = 7 * HZ;
++#else
++	(*csocket)->sk->rcvtimeo = 7 * HZ;
++#endif
+ 		
+ 	return rc;
+ }
+@@ -1605,11 +1716,15 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 	if (cifs_parse_mount_options(mount_data, devname, &volume_info)) {
+ 		kfree(volume_info.UNC);
+ 		kfree(volume_info.password);
++		kfree(volume_info.prepath);
+ 		FreeXid(xid);
+ 		return -EINVAL;
+ 	}
+ 
+-	if (volume_info.username) {
++	if (volume_info.nullauth) {
++		cFYI(1,("null user"));
++		volume_info.username = NULL;
++	} else if (volume_info.username) {
+ 		/* BB fixme parse for domain name here */
+ 		cFYI(1, ("Username: %s ", volume_info.username));
+ 
+@@ -1619,6 +1734,7 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+            locations such as env variables and files on disk */
+ 		kfree(volume_info.UNC);
+ 		kfree(volume_info.password);
++		kfree(volume_info.prepath);
+ 		FreeXid(xid);
+ 		return -EINVAL;
+ 	}
+@@ -1639,6 +1755,7 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 			/* we failed translating address */
+ 			kfree(volume_info.UNC);
+ 			kfree(volume_info.password);
++			kfree(volume_info.prepath);
+ 			FreeXid(xid);
+ 			return -EINVAL;
+ 		}
+@@ -1651,6 +1768,7 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 		cERROR(1,("Connecting to DFS root not implemented yet"));
+ 		kfree(volume_info.UNC);
+ 		kfree(volume_info.password);
++		kfree(volume_info.prepath);
+ 		FreeXid(xid);
+ 		return -EINVAL;
+ 	} else /* which servers DFS root would we conect to */ {
+@@ -1658,6 +1776,7 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 		       ("CIFS mount error: No UNC path (e.g. -o unc=//192.168.1.100/public) specified"));
+ 		kfree(volume_info.UNC);
+ 		kfree(volume_info.password);
++		kfree(volume_info.prepath);
+ 		FreeXid(xid);
+ 		return -EINVAL;
+ 	}
+@@ -1672,6 +1791,7 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 			cERROR(1,("CIFS mount error: iocharset %s not found",volume_info.iocharset));
+ 			kfree(volume_info.UNC);
+ 			kfree(volume_info.password);
++			kfree(volume_info.prepath);
+ 			FreeXid(xid);
+ 			return -ELIBACC;
+ 		}
+@@ -1688,6 +1808,7 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 	else {
+ 		kfree(volume_info.UNC);
+ 		kfree(volume_info.password);
++		kfree(volume_info.prepath);
+ 		FreeXid(xid);
+ 		return -EINVAL;
+ 	}
+@@ -1710,6 +1831,7 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 				sock_release(csocket);
+ 			kfree(volume_info.UNC);
+ 			kfree(volume_info.password);
++			kfree(volume_info.prepath);
+ 			FreeXid(xid);
+ 			return rc;
+ 		}
+@@ -1720,6 +1842,7 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 			sock_release(csocket);
+ 			kfree(volume_info.UNC);
+ 			kfree(volume_info.password);
++			kfree(volume_info.prepath);
+ 			FreeXid(xid);
+ 			return rc;
+ 		} else {
+@@ -1744,6 +1867,7 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 				sock_release(csocket);
+ 				kfree(volume_info.UNC);
+ 				kfree(volume_info.password);
++				kfree(volume_info.prepath);
+ 				FreeXid(xid);
+ 				return rc;
+ 			}
+@@ -1831,6 +1955,14 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 			/* Windows ME may prefer this */
+ 			cFYI(1,("readsize set to minimum 2048"));
+ 		}
++		/* calculate prepath */
++		cifs_sb->prepath = volume_info.prepath;
++		if(cifs_sb->prepath) {
++			cifs_sb->prepathlen = strlen(cifs_sb->prepath);
++			cifs_sb->prepath[0] = CIFS_DIR_SEP(cifs_sb);
++			volume_info.prepath = NULL;
++		} else 
++			cifs_sb->prepathlen = 0;
+ 		cifs_sb->mnt_uid = volume_info.linux_uid;
+ 		cifs_sb->mnt_gid = volume_info.linux_gid;
+ 		cifs_sb->mnt_file_mode = volume_info.file_mode;
+@@ -1909,8 +2041,9 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 		} else
+ 			sb->s_maxbytes = (u64) 1 << 31;	/* 2 GB */
+ 	}
+-
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 10)
+ 	sb->s_time_gran = 100;
++#endif
+ 
+ /* on error free sesinfo and tcon struct if needed */
+ 	if (rc) {
+@@ -1963,8 +2096,12 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 				if(volume_info.no_psx_acl)
+ 					cap &= ~CIFS_UNIX_POSIX_ACL_CAP;
+ 				else if(CIFS_UNIX_POSIX_ACL_CAP & cap) {
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 					cFYI(1,("negotiated posix acl support"));
+ 					sb->s_flags |= MS_POSIXACL;
++#else
++					cFYI(1,("ACLs not supported"));
++#endif
+ 				}
+ 
+ 				if(volume_info.posix_paths == 0)
+@@ -2008,6 +2145,7 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 	the password ptr is put in the new session structure (in which case the
+ 	password will be freed at unmount time) */
+ 	kfree(volume_info.UNC);
++	kfree(volume_info.prepath);
+ 	FreeXid(xid);
+ 	return rc;
+ }
+@@ -2111,8 +2249,14 @@ CIFSSessSetup(unsigned int xid, struct cifsSesInfo *ses,
+ 				  32, nls_codepage);
+ 		bcc_ptr += 2 * bytes_returned;
+ 		bytes_returned =
+-		    cifs_strtoUCS((__le16 *) bcc_ptr, system_utsname.release,
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 18)
++			cifs_strtoUCS((__le16 *)bcc_ptr, utsname()->release,
++                                  32, nls_codepage);
++
++#else
++			cifs_strtoUCS((__le16 *)bcc_ptr, system_utsname.release,
+ 				  32, nls_codepage);
++#endif
+ 		bcc_ptr += 2 * bytes_returned;
+ 		bcc_ptr += 2;
+ 		bytes_returned =
+@@ -2138,8 +2282,13 @@ CIFSSessSetup(unsigned int xid, struct cifsSesInfo *ses,
+ 		}
+ 		strcpy(bcc_ptr, "Linux version ");
+ 		bcc_ptr += strlen("Linux version ");
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 18)
++                strcpy(bcc_ptr, utsname()->release);
++                bcc_ptr += strlen(utsname()->release) + 1;
++#else
+ 		strcpy(bcc_ptr, system_utsname.release);
+ 		bcc_ptr += strlen(system_utsname.release) + 1;
++#endif
+ 		strcpy(bcc_ptr, CIFS_NETWORK_OPSYS);
+ 		bcc_ptr += strlen(CIFS_NETWORK_OPSYS) + 1;
+ 	}
+@@ -2403,8 +2552,14 @@ CIFSNTLMSSPNegotiateSessSetup(unsigned int xid,
+ 				  32, nls_codepage);
+ 		bcc_ptr += 2 * bytes_returned;
+ 		bytes_returned =
+-		    cifs_strtoUCS((__le16 *) bcc_ptr, system_utsname.release, 32,
+-				  nls_codepage);
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 18)
++		    cifs_strtoUCS((__le16 *)bcc_ptr, utsname()->release, 32,
++				nls_codepage);
++
++#else
++		    cifs_strtoUCS((__le16 *)bcc_ptr, system_utsname.release, 32,
++				nls_codepage);
++#endif
+ 		bcc_ptr += 2 * bytes_returned;
+ 		bcc_ptr += 2;	/* null terminate Linux version */
+ 		bytes_returned =
+@@ -2420,8 +2575,13 @@ CIFSNTLMSSPNegotiateSessSetup(unsigned int xid,
+ 	} else {		/* ASCII */
+ 		strcpy(bcc_ptr, "Linux version ");
+ 		bcc_ptr += strlen("Linux version ");
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 18)
++		strcpy(bcc_ptr, utsname()->release);
++		bcc_ptr += strlen(utsname()->release) + 1;
++#else
+ 		strcpy(bcc_ptr, system_utsname.release);
+ 		bcc_ptr += strlen(system_utsname.release) + 1;
++#endif
+ 		strcpy(bcc_ptr, CIFS_NETWORK_OPSYS);
+ 		bcc_ptr += strlen(CIFS_NETWORK_OPSYS) + 1;
+ 		bcc_ptr++;	/* empty domain field */
+@@ -2794,8 +2954,14 @@ CIFSNTLMSSPAuthSessSetup(unsigned int xid, struct cifsSesInfo *ses,
+ 				  32, nls_codepage);
+ 		bcc_ptr += 2 * bytes_returned;
+ 		bytes_returned =
++
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 18)
++		    cifs_strtoUCS((__le16 *) bcc_ptr, utsname()->release, 32,
++                                  nls_codepage);
++#else
+ 		    cifs_strtoUCS((__le16 *) bcc_ptr, system_utsname.release, 32,
+ 				  nls_codepage);
++#endif
+ 		bcc_ptr += 2 * bytes_returned;
+ 		bcc_ptr += 2;	/* null term version string */
+ 		bytes_returned =
+@@ -2846,8 +3012,13 @@ CIFSNTLMSSPAuthSessSetup(unsigned int xid, struct cifsSesInfo *ses,
+ 
+ 		strcpy(bcc_ptr, "Linux version ");
+ 		bcc_ptr += strlen("Linux version ");
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 18)
++		strcpy(bcc_ptr, utsname()->release);
++		bcc_ptr += strlen(utsname()->release) + 1;
++#else
+ 		strcpy(bcc_ptr, system_utsname.release);
+ 		bcc_ptr += strlen(system_utsname.release) + 1;
++#endif
+ 		strcpy(bcc_ptr, CIFS_NETWORK_OPSYS);
+ 		bcc_ptr += strlen(CIFS_NETWORK_OPSYS) + 1;
+ 		bcc_ptr++;	/* null domain */
+@@ -3173,7 +3344,9 @@ CIFSTCon(unsigned int xid, struct cifsSesInfo *ses,
+ 			}
+ 			/* else do not bother copying these informational fields */
+ 		}
+-		if(smb_buffer_response->WordCount == 3)
++		if((smb_buffer_response->WordCount == 3) ||
++			 (smb_buffer_response->WordCount == 7))
++			/* field is in same location */
+ 			tcon->Flags = le16_to_cpu(pSMBr->OptionalSupport);
+ 		else
+ 			tcon->Flags = 0;
+@@ -3195,6 +3368,7 @@ cifs_umount(struct super_block *sb, struct cifs_sb_info *cifs_sb)
+ 	int xid;
+ 	struct cifsSesInfo *ses = NULL;
+ 	struct task_struct *cifsd_task;
++	char * tmp;
+ 
+ 	xid = GetXid();
+ 
+@@ -3228,8 +3402,17 @@ cifs_umount(struct super_block *sb, struct cifs_sb_info *cifs_sb)
+ 	}
+ 	
+ 	cifs_sb->tcon = NULL;
++	tmp = cifs_sb->prepath;
++	cifs_sb->prepathlen = 0;
++	cifs_sb->prepath = NULL;
++	kfree(tmp);
+ 	if (ses)
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 14)
++		set_current_state(TASK_INTERRUPTIBLE);
++		schedule_timeout(HZ / 2);
++#else
+ 		schedule_timeout_interruptible(msecs_to_jiffies(500));
++#endif
+ 	if (ses)
+ 		sesInfoFree(ses);
+ 
+@@ -3265,19 +3448,21 @@ int cifs_setup_session(unsigned int xid, struct cifsSesInfo *pSesInfo,
+ 		first_time = 1;
+ 	}
+ 	if (!rc) {
++		pSesInfo->flags = 0;
+ 		pSesInfo->capabilities = pSesInfo->server->capabilities;
+ 		if(linuxExtEnabled == 0)
+ 			pSesInfo->capabilities &= (~CAP_UNIX);
+ 	/*	pSesInfo->sequence_number = 0;*/
+-		cFYI(1,("Security Mode: 0x%x Capabilities: 0x%x Time Zone: %d",
++		cFYI(1,("Security Mode: 0x%x Capabilities: 0x%x TimeAdjust: %d",
+ 			pSesInfo->server->secMode,
+ 			pSesInfo->server->capabilities,
+-			pSesInfo->server->timeZone));
++			pSesInfo->server->timeAdj));
+ 		if(experimEnabled < 2)
+ 			rc = CIFS_SessSetup(xid, pSesInfo,
+ 					    first_time, nls_info);
+ 		else if (extended_security
+-				&& (pSesInfo->capabilities & CAP_EXTENDED_SECURITY)
++				&& (pSesInfo->capabilities 
++					& CAP_EXTENDED_SECURITY)
+ 				&& (pSesInfo->server->secType == NTLMSSP)) {
+ 			rc = -EOPNOTSUPP;
+ 		} else if (extended_security
+@@ -3291,7 +3476,7 @@ int cifs_setup_session(unsigned int xid, struct cifsSesInfo *pSesInfo,
+ 			if (!rc) {
+ 				if(ntlmv2_flag) {
+ 					char * v2_response;
+-					cFYI(1,("Can use more secure NTLM version 2 password hash"));
++					cFYI(1,("more secure NTLM ver2 hash"));
+ 					if(CalcNTLMv2_partial_mac_key(pSesInfo, 
+ 						nls_info)) {
+ 						rc = -ENOMEM;
+diff --git a/fs/cifs/dir.c b/fs/cifs/dir.c
+index 914239d..7be188c 100644
+--- a/fs/cifs/dir.c
++++ b/fs/cifs/dir.c
+@@ -23,15 +23,21 @@
+ #include <linux/fs.h>
+ #include <linux/stat.h>
+ #include <linux/slab.h>
++#include <linux/version.h>
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ #include <linux/namei.h>
++#endif
+ #include "cifsfs.h"
+ #include "cifspdu.h"
+ #include "cifsglob.h"
+ #include "cifsproto.h"
+ #include "cifs_debug.h"
+ #include "cifs_fs_sb.h"
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,9)
++#include <linux/ctype.h>
++#endif
+ 
+-void
++static void
+ renew_parental_timestamps(struct dentry *direntry)
+ {
+ 	/* BB check if there is a way to get the kernel to do this or if we really need this */
+@@ -46,7 +52,8 @@ char *
+ build_path_from_dentry(struct dentry *direntry)
+ {
+ 	struct dentry *temp;
+-	int namelen = 0;
++	int namelen;
++	int pplen;
+ 	char *full_path;
+ 	char dirsep;
+ 
+@@ -56,7 +63,9 @@ build_path_from_dentry(struct dentry *direntry)
+ 		when the server crashed */
+ 
+ 	dirsep = CIFS_DIR_SEP(CIFS_SB(direntry->d_sb));
++	pplen = CIFS_SB(direntry->d_sb)->prepathlen;
+ cifs_bp_rename_retry:
++	namelen = pplen; 
+ 	for (temp = direntry; !IS_ROOT(temp);) {
+ 		namelen += (1 + temp->d_name.len);
+ 		temp = temp->d_parent;
+@@ -70,7 +79,6 @@ cifs_bp_rename_retry:
+ 	if(full_path == NULL)
+ 		return full_path;
+ 	full_path[namelen] = 0;	/* trailing null */
+-
+ 	for (temp = direntry; !IS_ROOT(temp);) {
+ 		namelen -= 1 + temp->d_name.len;
+ 		if (namelen < 0) {
+@@ -79,7 +87,7 @@ cifs_bp_rename_retry:
+ 			full_path[namelen] = dirsep;
+ 			strncpy(full_path + namelen + 1, temp->d_name.name,
+ 				temp->d_name.len);
+-			cFYI(0, (" name: %s ", full_path + namelen));
++			cFYI(0, ("name: %s", full_path + namelen));
+ 		}
+ 		temp = temp->d_parent;
+ 		if(temp == NULL) {
+@@ -88,18 +96,23 @@ cifs_bp_rename_retry:
+ 			return NULL;
+ 		}
+ 	}
+-	if (namelen != 0) {
++	if (namelen != pplen) {
+ 		cERROR(1,
+-		       ("We did not end path lookup where we expected namelen is %d",
++		       ("did not end path lookup where expected namelen is %d",
+ 			namelen));
+-		/* presumably this is only possible if we were racing with a rename 
++		/* presumably this is only possible if racing with a rename 
+ 		of one of the parent directories  (we can not lock the dentries
+ 		above us to prevent this, but retrying should be harmless) */
+ 		kfree(full_path);
+-		namelen = 0;
+ 		goto cifs_bp_rename_retry;
+ 	}
+-
++	/* DIR_SEP already set for byte  0 / vs \ but not for
++	   subsequent slashes in prepath which currently must
++	   be entered the right way - not sure if there is an alternative
++	   since the '\' is a valid posix character so we can not switch
++	   those safely to '/' if any are found in the middle of the prepath */
++	/* BB test paths to Windows with '/' in the midst of prepath */
++	strncpy(full_path,CIFS_SB(direntry->d_sb)->prepath,pplen);
+ 	return full_path;
+ }
+ 
+@@ -116,8 +129,12 @@ BB remove above eight lines BB */
+ /* Inode operations in similar order to how they appear in Linux file fs.h */
+ 
+ int
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ cifs_create(struct inode *inode, struct dentry *direntry, int mode,
+ 		struct nameidata *nd)
++#else
++cifs_create(struct inode *inode, struct dentry *direntry, int mode)
++#endif
+ {
+ 	int rc = -ENOENT;
+ 	int xid;
+@@ -129,10 +146,12 @@ cifs_create(struct inode *inode, struct dentry *direntry, int mode,
+ 	char *full_path = NULL;
+ 	FILE_ALL_INFO * buf = NULL;
+ 	struct inode *newinode = NULL;
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	struct cifsFileInfo * pCifsFile = NULL;
+ 	struct cifsInodeInfo * pCifsInode;
+-	int disposition = FILE_OVERWRITE_IF;
+ 	int write_only = FALSE;
++#endif
++	int disposition = FILE_OVERWRITE_IF;
+ 
+ 	xid = GetXid();
+ 
+@@ -145,8 +164,13 @@ cifs_create(struct inode *inode, struct dentry *direntry, int mode,
+ 		return -ENOMEM;
+ 	}
+ 
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	if(nd && (nd->flags & LOOKUP_OPEN)) {
++#if LINUX_VERSION_CODE == KERNEL_VERSION(2,6,5) /* SUSE included Lustre patch */
++		int oflags = nd->intent.it_flags;
++#else
+ 		int oflags = nd->intent.open.flags;
++#endif
+ 
+ 		desiredAccess = 0;
+ 		if (oflags & FMODE_READ)
+@@ -171,6 +195,9 @@ cifs_create(struct inode *inode, struct dentry *direntry, int mode,
+ 	/* BB add processing to set equivalent of mode - e.g. via CreateX with ACLs */
+ 	if (oplockEnabled)
+ 		oplock = REQ_OPLOCK;
++#else
++	desiredAccess = GENERIC_WRITE;
++#endif
+ 
+ 	buf = kmalloc(sizeof(FILE_ALL_INFO),GFP_KERNEL);
+ 	if(buf == NULL) {
+@@ -252,6 +279,7 @@ cifs_create(struct inode *inode, struct dentry *direntry, int mode,
+ 				direntry->d_op = &cifs_dentry_ops;
+ 			d_instantiate(direntry, newinode);
+ 		}
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 		if((nd->flags & LOOKUP_OPEN) == FALSE) {
+ 			/* mknod case - do not leave file open */
+ 			CIFSSMBClose(xid, pTcon, fileHandle);
+@@ -295,16 +323,24 @@ cifs_create(struct inode *inode, struct dentry *direntry, int mode,
+ 			}
+ 			write_unlock(&GlobalSMBSeslock);
+ 		}
+-	} 
++	}
+ cifs_create_out:
++#else /* 2.4 does not pass open flags so must reopen on cifs_open */
++		CIFSSMBClose(xid, pTcon, fileHandle);
++	}
++#endif
+ 	kfree(buf);
+ 	kfree(full_path);
+ 	FreeXid(xid);
+ 	return rc;
+ }
+ 
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ int cifs_mknod(struct inode *inode, struct dentry *direntry, int mode, 
+-		dev_t device_number) 
++		dev_t device_number)
++#else
++int cifs_mknod(struct inode *inode, struct dentry *direntry, int mode, int device_number)
++#endif
+ {
+ 	int rc = -EPERM;
+ 	int xid;
+@@ -313,8 +349,10 @@ int cifs_mknod(struct inode *inode, struct dentry *direntry, int mode,
+ 	char *full_path = NULL;
+ 	struct inode * newinode = NULL;
+ 
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	if (!old_valid_dev(device_number))
+ 		return -EINVAL;
++#endif
+ 
+ 	xid = GetXid();
+ 
+@@ -423,9 +461,13 @@ int cifs_mknod(struct inode *inode, struct dentry *direntry, int mode,
+ 	return rc;
+ }
+ 
+-
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ struct dentry *
+ cifs_lookup(struct inode *parent_dir_inode, struct dentry *direntry, struct nameidata *nd)
++#else
++struct dentry *
++cifs_lookup(struct inode *parent_dir_inode, struct dentry *direntry)
++#endif
+ {
+ 	int xid;
+ 	int rc = 0; /* to get around spurious gcc warning, set to zero here */
+@@ -519,8 +561,13 @@ cifs_lookup(struct inode *parent_dir_inode, struct dentry *direntry, struct name
+ 	return ERR_PTR(rc);
+ }
+ 
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ static int
+ cifs_d_revalidate(struct dentry *direntry, struct nameidata *nd)
++#else
++static int
++cifs_d_revalidate(struct dentry *direntry, int flags)
++#endif
+ {
+ 	int isValid = 1;
+ 
+@@ -556,6 +603,10 @@ struct dentry_operations cifs_dentry_ops = {
+ 	/* no need for d_hash, d_compare, d_release, d_iput ... yet. BB confirm this BB */
+ };
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,9)
++#define nls_tolower(cp, name) tolower(name)
++#define nls_strnicmp(cp, name1, name2, len) strnicmp(name1, name2, len)
++#endif
+ static int cifs_ci_hash(struct dentry *dentry, struct qstr *q)
+ {
+ 	struct nls_table *codepage = CIFS_SB(dentry->d_inode->i_sb)->local_nls;
+diff --git a/fs/cifs/export.c b/fs/cifs/export.c
+new file mode 100644
+index 0000000..1d71639
+--- /dev/null
++++ b/fs/cifs/export.c
+@@ -0,0 +1,52 @@
++/*
++ *   fs/cifs/export.c
++ *
++ *   Copyright (C) International Business Machines  Corp., 2007
++ *   Author(s): Steve French (sfrench@us.ibm.com)
++ *
++ *   Common Internet FileSystem (CIFS) client
++ * 
++ *   Operations related to support for exporting files via NFSD
++ *
++ *   This library is free software; you can redistribute it and/or modify
++ *   it under the terms of the GNU Lesser General Public License as published
++ *   by the Free Software Foundation; either version 2.1 of the License, or
++ *   (at your option) any later version.
++ *
++ *   This library is distributed in the hope that it will be useful,
++ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See
++ *   the GNU Lesser General Public License for more details.
++ *
++ *   You should have received a copy of the GNU Lesser General Public License
++ *   along with this library; if not, write to the Free Software
++ *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
++ */
++ 
++ /* 
++  * See Documentation/filesystems/Exporting
++  * and examples in fs/exportfs
++  */
++
++#include <linux/fs.h>
++ 
++#ifdef CONFIG_CIFS_EXPERIMENTAL
++ 
++static struct dentry *cifs_get_parent(struct dentry *dentry)
++{
++ 	/* BB need to add code here eventually to enable export via NFSD */
++ 	return ERR_PTR(-EACCES);
++}
++ 
++struct export_operations cifs_export_ops = {
++ 	.get_parent = cifs_get_parent,
++/*	Following five export operations are unneeded so far and can default */ 	
++/* 	.get_dentry =
++ 	.get_name =
++ 	.find_exported_dentry =
++ 	.decode_fh = 
++ 	.encode_fs =  */
++ };
++ 
++#endif /* EXPERIMENTAL */
++ 
+diff --git a/fs/cifs/file.c b/fs/cifs/file.c
+index ddb012a..26e5453 100644
+--- a/fs/cifs/file.c
++++ b/fs/cifs/file.c
+@@ -22,17 +22,26 @@
+  *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+  */
+ #include <linux/fs.h>
+-#include <linux/backing-dev.h>
+ #include <linux/stat.h>
+ #include <linux/fcntl.h>
+-#include <linux/mpage.h>
+ #include <linux/pagemap.h>
+-#include <linux/pagevec.h>
+ #include <linux/smp_lock.h>
+-#include <linux/writeback.h>
+ #include <linux/delay.h>
+ #include <asm/div64.h>
+ #include "cifsfs.h"
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
++#include <linux/backing-dev.h>
++#include <linux/mpage.h>
++#include <linux/pagevec.h>
++#include <linux/writeback.h>
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 19)
++#include <linux/task_io_accounting_ops.h>
++#endif /* 2.6.19 */
++#endif
++#include <asm/uaccess.h>
++#ifndef FL_SLEEP
++#define FL_SLEEP 0
++#endif
+ #include "cifspdu.h"
+ #include "cifsglob.h"
+ #include "cifsproto.h"
+@@ -82,7 +91,11 @@ static inline int cifs_convert_flags(unsigned int flags)
+ static inline int cifs_get_disposition(unsigned int flags)
+ {
+ 	if ((flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL))
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 		return FILE_CREATE;
++#else
++		return FILE_OPEN_IF;
++#endif
+ 	else if ((flags & (O_CREAT | O_TRUNC)) == (O_CREAT | O_TRUNC))
+ 		return FILE_OVERWRITE_IF;
+ 	else if ((flags & O_CREAT) == O_CREAT)
+@@ -99,7 +112,11 @@ static inline int cifs_open_inode_helper(struct inode *inode, struct file *file,
+ 	struct cifsTconInfo *pTcon, int *oplock, FILE_ALL_INFO *buf,
+ 	char *full_path, int xid)
+ {
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	struct timespec temp;
++#else
++	time_t temp;
++#endif
+ 	int rc;
+ 
+ 	/* want handles we can use to read with first
+@@ -131,7 +148,12 @@ static inline int cifs_open_inode_helper(struct inode *inode, struct file *file,
+ 		if (file->f_dentry->d_inode->i_mapping) {
+ 		/* BB no need to lock inode until after invalidate
+ 		   since namei code should already have it locked? */
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 15)
+ 			filemap_write_and_wait(file->f_dentry->d_inode->i_mapping);
++#else
++			filemap_fdatawrite(file->f_dentry->d_inode->i_mapping);
++			filemap_fdatawait(file->f_dentry->d_inode->i_mapping);
++#endif
+ 		}
+ 		cFYI(1, ("invalidating remote inode since open detected it "
+ 			 "changed"));
+@@ -423,7 +445,13 @@ static int cifs_reopen_file(struct inode *inode, struct file *file,
+ 		pCifsInode = CIFS_I(inode);
+ 		if (pCifsInode) {
+ 			if (can_flush) {
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 15)
+ 				filemap_write_and_wait(inode->i_mapping);
++#else
++				filemap_fdatawrite(inode->i_mapping);
++				filemap_fdatawait(inode->i_mapping);
++#endif
++
+ 			/* temporarily disable caching while we
+ 			   go to server to get inode info */
+ 				pCifsInode->clientCanCacheAll = FALSE;
+@@ -493,10 +521,14 @@ int cifs_close(struct inode *inode, struct file *file)
+ 					the struct would be in each open file,
+ 					but this should give enough time to 
+ 					clear the socket */
+-					cERROR(1,("close with pending writes"));
++#ifdef CONFIG_CIFS_DEBUG2
++					cFYI(1,("close delay, write pending"));
++#endif /* DEBUG2 */
+ 					msleep(timeout);
+ 					timeout *= 4;
+-				} 
++				}
++				if(atomic_read(&pSMBFile->wrtPending))
++					cERROR(1,("close with pending writes"));
+ 				rc = CIFSSMBClose(xid, pTcon,
+ 						  pSMBFile->netfid);
+ 			}
+@@ -771,8 +803,10 @@ int cifs_lock(struct file *file, int cmd, struct file_lock *pfLock)
+ 		}
+ 	}
+ 
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,8)
+ 	if (pfLock->fl_flags & FL_POSIX)
+ 		posix_lock_file_wait(file, pfLock);
++#endif
+ 	FreeXid(xid);
+ 	return rc;
+ }
+@@ -1010,8 +1044,9 @@ static ssize_t cifs_write(struct file *file, const char *write_data,
+ 	/* since the write may have blocked check these pointers again */
+ 	if (file->f_dentry) {
+ 		if (file->f_dentry->d_inode) {
+-			file->f_dentry->d_inode->i_ctime = 
+-			file->f_dentry->d_inode->i_mtime = CURRENT_TIME;
++/*BB We could make this contingent on superblock ATIME flag too */
++/*			file->f_dentry->d_inode->i_ctime = 
++			file->f_dentry->d_inode->i_mtime = CURRENT_TIME;*/
+ 			if (total_written > 0) {
+ 				if (*poffset > file->f_dentry->d_inode->i_size)
+ 					i_size_write(file->f_dentry->d_inode, 
+@@ -1035,7 +1070,9 @@ struct cifsFileInfo *find_writable_file(struct cifsInodeInfo *cifs_inode)
+ 
+ 	if(cifs_inode == NULL) {
+ 		cERROR(1,("Null inode passed to cifs_writeable_file"));
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 4, 19)
+ 		dump_stack();
++#endif
+ 		return NULL;
+ 	}
+ 
+@@ -1050,7 +1087,11 @@ struct cifsFileInfo *find_writable_file(struct cifsInodeInfo *cifs_inode)
+ 			read_unlock(&GlobalSMBSeslock);
+ 			if((open_file->invalidHandle) && 
+ 			   (!open_file->closePend) /* BB fixme -since the second clause can not be true remove it BB */) {
+-				rc = cifs_reopen_file(&cifs_inode->vfs_inode, 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 0)
++				rc = cifs_reopen_file(open_file->pfile->f_dentry->d_inode,
++#else
++				rc = cifs_reopen_file(&cifs_inode->vfs_inode,
++#endif
+ 						      open_file->pfile, FALSE);
+ 				/* if it fails, try another handle - might be */
+ 				/* dangerous to hold up writepages with retry */
+@@ -1131,6 +1172,8 @@ static int cifs_partialpagewrite(struct page *page, unsigned from, unsigned to)
+ 	return rc;
+ }
+ 
++
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 14)
+ static int cifs_writepages(struct address_space *mapping,
+ 			   struct writeback_control *wbc)
+ {
+@@ -1139,10 +1182,14 @@ static int cifs_writepages(struct address_space *mapping,
+ 	unsigned int bytes_written;
+ 	struct cifs_sb_info *cifs_sb;
+ 	int done = 0;
+-	pgoff_t end;
++	pgoff_t end = -1;
+ 	pgoff_t index;
+- 	int range_whole = 0;
+-	struct kvec iov[32];
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 17)
++	int range_whole = 0;
++#else		
++	int is_range = 0;
++#endif /* 2.6.17 */	
++	struct kvec * iov;
+ 	int len;
+ 	int n_iov = 0;
+ 	pgoff_t next;
+@@ -1167,21 +1214,28 @@ static int cifs_writepages(struct address_space *mapping,
+ 	if((cifs_sb->tcon->ses) && (cifs_sb->tcon->ses->server))
+ 		if(cifs_sb->tcon->ses->server->secMode &
+                           (SECMODE_SIGN_REQUIRED | SECMODE_SIGN_ENABLED))
+-			if(!experimEnabled)
++			if(!experimEnabled) 
+ 				return generic_writepages(mapping, wbc);
+ 
++	iov = kmalloc(32 * sizeof(struct kvec), GFP_KERNEL);
++	if(iov == NULL)
++		return generic_writepages(mapping, wbc);
++
++
+ 	/*
+ 	 * BB: Is this meaningful for a non-block-device file system?
+ 	 * If it is, we should test it again after we do I/O
+ 	 */
+ 	if (wbc->nonblocking && bdi_write_congested(bdi)) {
+ 		wbc->encountered_congestion = 1;
++		kfree(iov);
+ 		return 0;
+ 	}
+ 
+ 	xid = GetXid();
+ 
+ 	pagevec_init(&pvec, 0);
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 17)
+ 	if (wbc->range_cyclic) {
+ 		index = mapping->writeback_index; /* Start from prev offset */
+ 		end = -1;
+@@ -1192,6 +1246,20 @@ static int cifs_writepages(struct address_space *mapping,
+ 			range_whole = 1;
+ 		scanned = 1;
+ 	}
++#else	
++	if (wbc->sync_mode == WB_SYNC_NONE)
++		index = mapping->writeback_index; /* Start from prev offset */
++	else {
++		index = 0;
++		scanned = 1;
++	}
++	if (wbc->start || wbc->end) {
++		index = wbc->start >> PAGE_CACHE_SHIFT;
++		end = wbc->end >> PAGE_CACHE_SHIFT;
++		is_range = 1;
++		scanned = 1;
++	}
++#endif /* 2.6.17 */	
+ retry:
+ 	while (!done && (index <= end) &&
+ 	       (nr_pages = pagevec_lookup_tag(&pvec, mapping, &index,
+@@ -1225,7 +1293,11 @@ retry:
+ 				break;
+ 			}
+ 
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 17)
+ 			if (!wbc->range_cyclic && page->index > end) {
++#else
++			if (unlikely(is_range) && (page->index > end)) {
++#endif /* 2.6.17 */
+ 				done = 1;
+ 				unlock_page(page);
+ 				break;
+@@ -1241,14 +1313,21 @@ retry:
+ 				wait_on_page_writeback(page);
+ 
+ 			if (PageWriteback(page) ||
+-					!test_clear_page_dirty(page)) {
++					!clear_page_dirty_for_io(page)) {
+ 				unlock_page(page);
+ 				break;
+ 			}
+ 
++			/*
++			 * This actually clears the dirty bit in the radix tree.
++			 * See cifs_writepage() for more commentary.
++			 */
++			set_page_writeback(page);
++
+ 			if (page_offset(page) >= mapping->host->i_size) {
+ 				done = 1;
+ 				unlock_page(page);
++				end_page_writeback(page);
+ 				break;
+ 			}
+ 
+@@ -1312,6 +1391,7 @@ retry:
+ 					SetPageError(page);
+ 				kunmap(page);
+ 				unlock_page(page);
++				end_page_writeback(page);
+ 				page_cache_release(page);
+ 			}
+ 			if ((wbc->nr_to_write -= n_iov) <= 0)
+@@ -1329,15 +1409,24 @@ retry:
+ 		index = 0;
+ 		goto retry;
+ 	}
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 17)
+ 	if (wbc->range_cyclic || (range_whole && wbc->nr_to_write > 0))
++#else	
++	if (!is_range)
++#endif /* 2.6.17 */	
+ 		mapping->writeback_index = index;
+ 
+ 	FreeXid(xid);
+-
++	kfree(iov);
+ 	return rc;
+ }
++#endif /* KERNEL_VERSION > 2.6.14 */
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,5,0)
++static int cifs_writepage(struct page* page)
++#else 
+ static int cifs_writepage(struct page* page, struct writeback_control *wbc)
++#endif
+ {
+ 	int rc = -EFAULT;
+ 	int xid;
+@@ -1348,11 +1437,23 @@ static int cifs_writepage(struct page* page, struct writeback_control *wbc)
+         if (!PageUptodate(page)) {
+ 		cFYI(1, ("ppw - page not up to date"));
+ 	}
+-	
++
++	/*
++	 * Set the "writeback" flag, and clear "dirty" in the radix tree.
++	 *
++	 * A writepage() implementation always needs to do either this,
++	 * or re-dirty the page with "redirty_page_for_writepage()" in
++	 * the case of a failure.
++	 *
++	 * Just unlocking the page will cause the radix tree tag-bits
++	 * to fail to update with the state of the page correctly.
++	 */
++	set_page_writeback(page);		
+ 	rc = cifs_partialpagewrite(page, 0, PAGE_CACHE_SIZE);
+ 	SetPageUptodate(page); /* BB add check for error and Clearuptodate? */
+ 	unlock_page(page);
+-	page_cache_release(page);	
++	end_page_writeback(page);
++	page_cache_release(page);
+ 	FreeXid(xid);
+ 	return rc;
+ }
+@@ -1369,6 +1470,7 @@ static int cifs_commit_write(struct file *file, struct page *page,
+ 	xid = GetXid();
+ 	cFYI(1, ("commit write for page %p up to position %lld for %d", 
+ 		 page, position, to));
++	spin_lock(&inode->i_lock);
+ 	if (position > inode->i_size) {
+ 		i_size_write(inode, position);
+ 		/* if (file->private_data == NULL) {
+@@ -1398,6 +1500,7 @@ static int cifs_commit_write(struct file *file, struct page *page,
+ 			cFYI(1, (" SetEOF (commit write) rc = %d", rc));
+ 		} */
+ 	}
++	spin_unlock(&inode->i_lock);
+ 	if (!PageUptodate(page)) {
+ 		position =  ((loff_t)page->index << PAGE_CACHE_SHIFT) + offset;
+ 		/* can not rely on (or let) writepage write this data */
+@@ -1445,7 +1548,7 @@ int cifs_fsync(struct file *file, struct dentry *dentry, int datasync)
+ 	return rc;
+ }
+ 
+-/* static void cifs_sync_page(struct page *page)
++/* static int cifs_sync_page(struct page *page)
+ {
+ 	struct address_space *mapping;
+ 	struct inode *inode;
+@@ -1459,25 +1562,27 @@ int cifs_fsync(struct file *file, struct dentry *dentry, int datasync)
+ 		return 0;
+ 	inode = mapping->host;
+ 	if (!inode)
+-		return; */
++		return 0; */
+ 
+ /*	fill in rpages then 
+ 	result = cifs_pagein_inode(inode, index, rpages); */ /* BB finish */
+ 
+ /*	cFYI(1, ("rpages is %d for sync page of Index %ld", rpages, index));
+ 
+-#if 0
+ 	if (rc < 0)
+ 		return rc;
+ 	return 0;
+-#endif
+ } */
+ 
+ /*
+  * As file closes, flush all cached write data for this inode checking
+  * for write behind errors.
+  */
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 17)
+ int cifs_flush(struct file *file, fl_owner_t id)
++#else
++int cifs_flush(struct file *file)
++#endif /* 2.6.17 */
+ {
+ 	struct inode * inode = file->f_dentry->d_inode;
+ 	int rc = 0;
+@@ -1670,7 +1775,7 @@ int cifs_file_mmap(struct file *file, struct vm_area_struct *vma)
+ 	return rc;
+ }
+ 
+-
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ static void cifs_copy_cache_pages(struct address_space *mapping, 
+ 	struct list_head *pages, int bytes_read, char *data,
+ 	struct pagevec *plru_pvec)
+@@ -1816,6 +1921,9 @@ static int cifs_readpages(struct file *file, struct address_space *mapping,
+ 			}
+ 			break;
+ 		} else if (bytes_read > 0) {
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 19)
++			task_io_account_read(bytes_read);
++#endif
+ 			pSMBr = (struct smb_com_read_rsp *)smb_read_data;
+ 			cifs_copy_cache_pages(mapping, page_list, bytes_read,
+ 				smb_read_data + 4 /* RFC1001 hdr */ +
+@@ -1880,6 +1988,7 @@ static int cifs_readpages(struct file *file, struct address_space *mapping,
+ 	FreeXid(xid);
+ 	return rc;
+ }
++#endif
+ 
+ static int cifs_readpage_worker(struct file *file, struct page *page,
+ 	loff_t *poffset)
+@@ -1944,7 +2053,7 @@ static int cifs_readpage(struct file *file, struct page *page)
+    refreshing the inode only on increases in the file size 
+    but this is tricky to do without racing with writebehind
+    page caching in the current Linux kernel design */
+-int is_size_safe_to_change(struct cifsInodeInfo *cifsInode)
++int is_size_safe_to_change(struct cifsInodeInfo *cifsInode, __u64 end_of_file)
+ {
+ 	struct cifsFileInfo *open_file = NULL;
+ 
+@@ -1958,14 +2067,20 @@ int is_size_safe_to_change(struct cifsInodeInfo *cifsInode)
+ 		this handle go free and allow it to
+ 		be closable if needed */
+ 		atomic_dec(&open_file->wrtPending);
+-
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 		cifs_sb = CIFS_SB(cifsInode->vfs_inode.i_sb);
++#else
++		cifs_sb = CIFS_SB(open_file->pfile->f_dentry->d_inode->i_sb);
++#endif
+ 		if ( cifs_sb->mnt_cifs_flags & CIFS_MOUNT_DIRECT_IO ) {
+ 			/* since no page cache to corrupt on directio 
+ 			we can change size safely */
+ 			return 1;
+ 		}
+ 
++		if(i_size_read(&cifsInode->vfs_inode) < end_of_file)
++			return 1;
++
+ 		return 0;
+ 	} else
+ 		return 1;
+@@ -1975,45 +2090,69 @@ static int cifs_prepare_write(struct file *file, struct page *page,
+ 	unsigned from, unsigned to)
+ {
+ 	int rc = 0;
+-        loff_t offset = (loff_t)page->index << PAGE_CACHE_SHIFT;
++	loff_t i_size;
++	loff_t offset;
++
+ 	cFYI(1, ("prepare write for page %p from %d to %d",page,from,to));
+-	if (!PageUptodate(page)) {
+-	/*	if (to - from != PAGE_CACHE_SIZE) {
+-			void *kaddr = kmap_atomic(page, KM_USER0);
++	if (PageUptodate(page))
++		return 0;
++
++	/* If we are writing a full page it will be up to date,
++	   no need to read from the server */
++	if ((to == PAGE_CACHE_SIZE) && (from == 0)) {
++		SetPageUptodate(page);
++		return 0;
++	}
++
++	offset = (loff_t)page->index << PAGE_CACHE_SHIFT;
++	i_size = i_size_read(page->mapping->host);
++
++	if ((offset >= i_size) ||
++	    ((from == 0) && (offset + to) >= i_size)) {
++		/*
++		 * We don't need to read data beyond the end of the file.
++		 * zero it, and set the page uptodate
++		 */
++		void *kaddr = kmap_atomic(page, KM_USER0);
++
++		if (from)
+ 			memset(kaddr, 0, from);
++		if (to < PAGE_CACHE_SIZE)
+ 			memset(kaddr + to, 0, PAGE_CACHE_SIZE - to);
+-			flush_dcache_page(page);
+-			kunmap_atomic(kaddr, KM_USER0);
+-		} */
+-		/* If we are writing a full page it will be up to date,
+-		   no need to read from the server */
+-		if ((to == PAGE_CACHE_SIZE) && (from == 0))
+-			SetPageUptodate(page);
+-
++		flush_dcache_page(page);
++		kunmap_atomic(kaddr, KM_USER0);
++		SetPageUptodate(page);
++	} else if ((file->f_flags & O_ACCMODE) != O_WRONLY) {
+ 		/* might as well read a page, it is fast enough */
+-		if ((file->f_flags & O_ACCMODE) != O_WRONLY) {
+-			rc = cifs_readpage_worker(file, page, &offset);
+-		} else {
+-		/* should we try using another file handle if there is one -
+-		   how would we lock it to prevent close of that handle
+-		   racing with this read?
+-		   In any case this will be written out by commit_write */
+-		}
++		rc = cifs_readpage_worker(file, page, &offset);
++	} else {
++		/* we could try using another file handle if there is one -
++		   but how would we lock it to prevent close of that handle
++		   racing with this read? In any case
++		   this will be written out by commit_write so is fine */
+ 	}
+ 
+-	/* BB should we pass any errors back? 
+-	   e.g. if we do not have read access to the file */
++	/* we do not need to pass errors back 
++	   e.g. if we do not have read access to the file 
++	   because cifs_commit_write will do the right thing.  -- shaggy */
++
+ 	return 0;
+ }
+ 
+ const struct address_space_operations cifs_addr_ops = {
+ 	.readpage = cifs_readpage,
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	.readpages = cifs_readpages,
++#endif
+ 	.writepage = cifs_writepage,
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 14)
+ 	.writepages = cifs_writepages,
++#endif
+ 	.prepare_write = cifs_prepare_write,
+ 	.commit_write = cifs_commit_write,
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	.set_page_dirty = __set_page_dirty_nobuffers,
++#endif
+ 	/* .sync_page = cifs_sync_page, */
+ 	/* .direct_IO = */
+ };
+@@ -2026,10 +2165,14 @@ const struct address_space_operations cifs_addr_ops = {
+ const struct address_space_operations cifs_addr_ops_smallbuf = {
+ 	.readpage = cifs_readpage,
+ 	.writepage = cifs_writepage,
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 14)
+ 	.writepages = cifs_writepages,
++#endif
+ 	.prepare_write = cifs_prepare_write,
+ 	.commit_write = cifs_commit_write,
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	.set_page_dirty = __set_page_dirty_nobuffers,
++#endif
+ 	/* .sync_page = cifs_sync_page, */
+ 	/* .direct_IO = */
+ };
+diff --git a/fs/cifs/inode.c b/fs/cifs/inode.c
+index 2108213..6fe80c6 100644
+--- a/fs/cifs/inode.c
++++ b/fs/cifs/inode.c
+@@ -19,7 +19,6 @@
+  *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+  */
+ #include <linux/fs.h>
+-#include <linux/buffer_head.h>
+ #include <linux/stat.h>
+ #include <linux/pagemap.h>
+ #include <asm/div64.h>
+@@ -29,6 +28,9 @@
+ #include "cifsproto.h"
+ #include "cifs_debug.h"
+ #include "cifs_fs_sb.h"
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
++#include <linux/buffer_head.h>
++#endif
+ 
+ int cifs_get_inode_info_unix(struct inode **pinode,
+ 	const unsigned char *search_path, struct super_block *sb, int xid)
+@@ -91,6 +93,9 @@ int cifs_get_inode_info_unix(struct inode **pinode,
+ 				(*pinode)->i_ino =
+ 					(unsigned long)findData.UniqueId;
+ 			} /* note ino incremented to unique num in new_inode */
++			if(sb->s_flags & MS_NOATIME)
++				(*pinode)->i_flags |= S_NOATIME | S_NOCMTIME;
++				
+ 			insert_inode_hash(*pinode);
+ 		}
+ 
+@@ -141,10 +146,10 @@ int cifs_get_inode_info_unix(struct inode **pinode,
+ 		inode->i_gid = le64_to_cpu(findData.Gid);
+ 		inode->i_nlink = le64_to_cpu(findData.Nlinks);
+ 
+-		if (is_size_safe_to_change(cifsInfo)) {
++		spin_lock(&inode->i_lock);
++		if (is_size_safe_to_change(cifsInfo, end_of_file)) {
+ 		/* can not safely change the file size here if the
+ 		   client is writing to it due to potential races */
+-
+ 			i_size_write(inode, end_of_file);
+ 
+ 		/* blksize needs to be multiple of two. So safer to default to
+@@ -160,6 +165,7 @@ int cifs_get_inode_info_unix(struct inode **pinode,
+ 		/* for this calculation */
+ 			inode->i_blocks = (512 - 1 + num_of_bytes) >> 9;
+ 		}
++		spin_unlock(&inode->i_lock);
+ 
+ 		if (num_of_bytes < end_of_file)
+ 			cFYI(1, ("allocation size less than end of file"));
+@@ -180,12 +186,13 @@ int cifs_get_inode_info_unix(struct inode **pinode,
+ 			else /* not direct, send byte range locks */ 
+ 				inode->i_fop = &cifs_file_ops;
+ 
++			inode->i_data.a_ops = &cifs_addr_ops;
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 			/* check if server can support readpages */
+ 			if(pTcon->ses->server->maxBuf < 
+ 			    PAGE_CACHE_SIZE + MAX_CIFS_HDR_SIZE)
+ 				inode->i_data.a_ops = &cifs_addr_ops_smallbuf;
+-			else
+-				inode->i_data.a_ops = &cifs_addr_ops;
++#endif
+ 		} else if (S_ISDIR(inode->i_mode)) {
+ 			cFYI(1, ("Directory inode"));
+ 			inode->i_op = &cifs_dir_inode_ops;
+@@ -319,6 +326,7 @@ int cifs_get_inode_info(struct inode **pinode,
+ 	struct cifs_sb_info *cifs_sb = CIFS_SB(sb);
+ 	char *tmp_path;
+ 	char *buf = NULL;
++	int adjustTZ = FALSE;
+ 
+ 	pTcon = cifs_sb->tcon;
+ 	cFYI(1,("Getting info on %s", search_path));
+@@ -338,6 +346,7 @@ int cifs_get_inode_info(struct inode **pinode,
+ 		pfindData = (FILE_ALL_INFO *)buf;
+ 		/* could do find first instead but this returns more info */
+ 		rc = CIFSSMBQPathInfo(xid, pTcon, search_path, pfindData,
++			      0 /* not legacy */,
+ 			      cifs_sb->local_nls, cifs_sb->mnt_cifs_flags &
+ 				CIFS_MOUNT_MAP_SPECIAL_CHR);
+ 		/* BB optimize code so we do not make the above call
+@@ -348,6 +357,7 @@ int cifs_get_inode_info(struct inode **pinode,
+ 					pfindData, cifs_sb->local_nls, 
+ 					cifs_sb->mnt_cifs_flags &
+ 					  CIFS_MOUNT_MAP_SPECIAL_CHR);
++			adjustTZ = TRUE;
+ 		}
+ 		
+ 	}
+@@ -385,8 +395,10 @@ int cifs_get_inode_info(struct inode **pinode,
+ 		/* get new inode */
+ 		if (*pinode == NULL) {
+ 			*pinode = new_inode(sb);
+-			if (*pinode == NULL)
++			if (*pinode == NULL) {
++				kfree(buf);
+ 				return -ENOMEM;
++			}
+ 			/* Is an i_ino of zero legal? Can we use that to check
+ 			   if the server supports returning inode numbers?  Are
+ 			   there other sanity checks we can use to ensure that
+@@ -417,6 +429,8 @@ int cifs_get_inode_info(struct inode **pinode,
+ 				} else /* do we need cast or hash to ino? */
+ 					(*pinode)->i_ino = inode_num;
+ 			} /* else ino incremented to unique num in new_inode*/
++			if(sb->s_flags & MS_NOATIME)
++				(*pinode)->i_flags |= S_NOATIME | S_NOCMTIME;
+ 			insert_inode_hash(*pinode);
+ 		}
+ 		inode = *pinode;
+@@ -432,13 +446,20 @@ int cifs_get_inode_info(struct inode **pinode,
+ 		(pTcon->ses->server->maxBuf - MAX_CIFS_HDR_SIZE) & 0xFFFFFE00;*/
+ 
+ 		/* Linux can not store file creation time so ignore it */
+-		inode->i_atime =
+-		    cifs_NTtimeToUnix(le64_to_cpu(pfindData->LastAccessTime));
++		if(pfindData->LastAccessTime)
++			inode->i_atime = cifs_NTtimeToUnix
++				(le64_to_cpu(pfindData->LastAccessTime));
++		else /* do not need to use current_fs_time - time not stored */
++			inode->i_atime = CURRENT_TIME;
+ 		inode->i_mtime =
+ 		    cifs_NTtimeToUnix(le64_to_cpu(pfindData->LastWriteTime));
+ 		inode->i_ctime =
+ 		    cifs_NTtimeToUnix(le64_to_cpu(pfindData->ChangeTime));
+ 		cFYI(0, ("Attributes came in as 0x%x", attr));
++		if(adjustTZ && (pTcon->ses) && (pTcon->ses->server)) {
++			inode->i_ctime.tv_sec += pTcon->ses->server->timeAdj;
++	                inode->i_mtime.tv_sec += pTcon->ses->server->timeAdj;
++		}
+ 
+ 		/* set default mode. will override for dirs below */
+ 		if (atomic_read(&cifsInfo->inUse) == 0)
+@@ -486,8 +507,10 @@ int cifs_get_inode_info(struct inode **pinode,
+ 		/* BB add code here -
+ 		   validate if device or weird share or device type? */
+ 		}
+-		if (is_size_safe_to_change(cifsInfo)) {
+-			/* can not safely change the file size here if the
++		
++		spin_lock(&inode->i_lock);
++		if (is_size_safe_to_change(cifsInfo, le64_to_cpu(pfindData->EndOfFile))) {
++			/* can not safely shrink the file size here if the
+ 			   client is writing to it due to potential races */
+ 			i_size_write(inode,le64_to_cpu(pfindData->EndOfFile));
+ 
+@@ -496,6 +519,7 @@ int cifs_get_inode_info(struct inode **pinode,
+ 			inode->i_blocks = (512 - 1 + le64_to_cpu(
+ 					   pfindData->AllocationSize)) >> 9;
+ 		}
++		spin_unlock(&inode->i_lock);
+ 
+ 		inode->i_nlink = le32_to_cpu(pfindData->NumberOfLinks);
+ 
+@@ -526,11 +550,12 @@ int cifs_get_inode_info(struct inode **pinode,
+ 			else /* not direct, send byte range locks */
+ 				inode->i_fop = &cifs_file_ops;
+ 
++			inode->i_data.a_ops = &cifs_addr_ops;
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 			if(pTcon->ses->server->maxBuf < 
+ 			     PAGE_CACHE_SIZE + MAX_CIFS_HDR_SIZE)
+ 				inode->i_data.a_ops = &cifs_addr_ops_smallbuf;
+-			else
+-				inode->i_data.a_ops = &cifs_addr_ops;
++#endif
+ 		} else if (S_ISDIR(inode->i_mode)) {
+ 			cFYI(1, ("Directory inode"));
+ 			inode->i_op = &cifs_dir_inode_ops;
+@@ -585,9 +610,9 @@ int cifs_unlink(struct inode *inode, struct dentry *direntry)
+ 
+ 	/* Unlink can be called from rename so we can not grab the sem here
+ 	   since we deadlock otherwise */
+-/*	mutex_lock(&direntry->d_sb->s_vfs_rename_mutex);*/
++/*	down(&direntry->d_sb->s_vfs_rename_sem);*/
+ 	full_path = build_path_from_dentry(direntry);
+-/*	mutex_unlock(&direntry->d_sb->s_vfs_rename_mutex);*/
++/*	up(&direntry->d_sb->s_vfs_rename_sem);*/
+ 	if (full_path == NULL) {
+ 		FreeXid(xid);
+ 		return -ENOMEM;
+@@ -824,8 +849,10 @@ int cifs_rmdir(struct inode *inode, struct dentry *direntry)
+ 
+ 	if (!rc) {
+ 		inode->i_nlink--;
++		spin_lock(&direntry->d_inode->i_lock);
+ 		i_size_write(direntry->d_inode,0);
+ 		direntry->d_inode->i_nlink = 0;
++		spin_unlock(&direntry->d_inode->i_lock);
+ 	}
+ 
+ 	cifsInode = CIFS_I(direntry->d_inode);
+@@ -965,7 +992,11 @@ int cifs_revalidate(struct dentry *direntry)
+ 	struct cifs_sb_info *cifs_sb;
+ 	struct cifsInodeInfo *cifsInode;
+ 	loff_t local_size;
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	struct timespec local_mtime;
++#else
++	time_t local_mtime;
++#endif
+ 	int invalidate_inode = FALSE;
+ 
+ 	if (direntry->d_inode == NULL)
+@@ -1086,6 +1117,7 @@ int cifs_revalidate(struct dentry *direntry)
+ 	return rc;
+ }
+ 
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ int cifs_getattr(struct vfsmount *mnt, struct dentry *dentry,
+ 	struct kstat *stat)
+ {
+@@ -1096,10 +1128,15 @@ int cifs_getattr(struct vfsmount *mnt, struct dentry *dentry,
+ 	}
+ 	return err;
+ }
++#endif
+ 
+ static int cifs_truncate_page(struct address_space *mapping, loff_t from)
+ {
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	pgoff_t index = from >> PAGE_CACHE_SHIFT;
++#else
++	unsigned long index = from >> PAGE_CACHE_SHIFT;
++#endif
+ 	unsigned offset = from & (PAGE_CACHE_SIZE - 1);
+ 	struct page *page;
+ 	char *kaddr;
+@@ -1118,6 +1155,52 @@ static int cifs_truncate_page(struct address_space *mapping, loff_t from)
+ 	return rc;
+ }
+ 
++static int cifs_vmtruncate(struct inode * inode, loff_t offset)
++{
++	struct address_space *mapping = inode->i_mapping;
++	unsigned long limit;
++
++	spin_lock(&inode->i_lock);
++	if (inode->i_size < offset)
++		goto do_expand;
++	/*
++	 * truncation of in-use swapfiles is disallowed - it would cause
++	 * subsequent swapout to scribble on the now-freed blocks.
++	 */
++	if (IS_SWAPFILE(inode)) {
++		spin_unlock(&inode->i_lock);
++		goto out_busy;
++	}
++	i_size_write(inode, offset);
++	spin_unlock(&inode->i_lock);
++	unmap_mapping_range(mapping, offset + PAGE_SIZE - 1, 0, 1);
++	truncate_inode_pages(mapping, offset);
++	goto out_truncate;
++
++do_expand:
++	limit = current->signal->rlim[RLIMIT_FSIZE].rlim_cur;
++	if (limit != RLIM_INFINITY && offset > limit) {
++		spin_unlock(&inode->i_lock);
++		goto out_sig;
++	}
++	if (offset > inode->i_sb->s_maxbytes) {
++		spin_unlock(&inode->i_lock);
++		goto out_big;
++	}
++	i_size_write(inode, offset);
++	spin_unlock(&inode->i_lock);
++out_truncate:
++	if (inode->i_op && inode->i_op->truncate)
++		inode->i_op->truncate(inode);
++	return 0;
++out_sig:
++	send_sig(SIGXFSZ, current, 0);
++out_big:
++	return -EFBIG;
++out_busy:
++	return -ETXTBSY;
++}
++
+ int cifs_setattr(struct dentry *direntry, struct iattr *attrs)
+ {
+ 	int xid;
+@@ -1128,6 +1211,7 @@ int cifs_setattr(struct dentry *direntry, struct iattr *attrs)
+ 	struct cifsFileInfo *open_file = NULL;
+ 	FILE_BASIC_INFO time_buf;
+ 	int set_time = FALSE;
++	int set_dosattr = FALSE;
+ 	__u64 mode = 0xFFFFFFFFFFFFFFFFULL;
+ 	__u64 uid = 0xFFFFFFFFFFFFFFFFULL;
+ 	__u64 gid = 0xFFFFFFFFFFFFFFFFULL;
+@@ -1161,7 +1245,12 @@ int cifs_setattr(struct dentry *direntry, struct iattr *attrs)
+ 	/* BB check if we need to refresh inode from server now ? BB */
+ 
+ 	/* need to flush data before changing file size on server */
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 15)
+ 	filemap_write_and_wait(direntry->d_inode->i_mapping);
++#else
++	filemap_fdatawrite(direntry->d_inode->i_mapping);
++	filemap_fdatawait(direntry->d_inode->i_mapping);
++#endif
+ 
+ 	if (attrs->ia_valid & ATTR_SIZE) {
+ 		/* To avoid spurious oplock breaks from server, in the case of
+@@ -1234,7 +1323,7 @@ int cifs_setattr(struct dentry *direntry, struct iattr *attrs)
+ 		   */
+ 
+ 		if (rc == 0) {
+-			rc = vmtruncate(direntry->d_inode, attrs->ia_size);
++			rc = cifs_vmtruncate(direntry->d_inode, attrs->ia_size);
+ 			cifs_truncate_page(direntry->d_inode->i_mapping,
+ 					   direntry->d_inode->i_size);
+ 		} else 
+@@ -1264,15 +1353,23 @@ int cifs_setattr(struct dentry *direntry, struct iattr *attrs)
+ 	else if (attrs->ia_valid & ATTR_MODE) {
+ 		rc = 0;
+ 		if ((mode & S_IWUGO) == 0) /* not writeable */ {
+-			if ((cifsInode->cifsAttrs & ATTR_READONLY) == 0)
++			if ((cifsInode->cifsAttrs & ATTR_READONLY) == 0) {
++				set_dosattr = TRUE;
+ 				time_buf.Attributes =
+ 					cpu_to_le32(cifsInode->cifsAttrs |
+ 						    ATTR_READONLY);
++			}
+ 		} else if ((mode & S_IWUGO) == S_IWUGO) {
+-			if (cifsInode->cifsAttrs & ATTR_READONLY)
++			if (cifsInode->cifsAttrs & ATTR_READONLY) {
++				set_dosattr = TRUE;
+ 				time_buf.Attributes =
+ 					cpu_to_le32(cifsInode->cifsAttrs &
+ 						    (~ATTR_READONLY));
++				/* Windows ignores set to zero */
++				if(time_buf.Attributes == 0)
++					time_buf.Attributes |= 
++						cpu_to_le32(ATTR_NORMAL);
++			}
+ 		}
+ 		/* BB to be implemented -
+ 		   via Windows security descriptors or streams */
+@@ -1310,7 +1407,7 @@ int cifs_setattr(struct dentry *direntry, struct iattr *attrs)
+ 	} else
+ 		time_buf.ChangeTime = 0;
+ 
+-	if (set_time || time_buf.Attributes) {
++	if (set_time || set_dosattr) {
+ 		time_buf.CreationTime = 0;	/* do not change */
+ 		/* In the future we should experiment - try setting timestamps
+ 		   via Handle (SetFileInfo) instead of by path */
+@@ -1354,7 +1451,7 @@ int cifs_setattr(struct dentry *direntry, struct iattr *attrs)
+ 		and this check ensures that we are not being called from
+ 		sys_utimes in which case we ought to fail the call back to
+ 		the user when the server rejects the call */
+-		if((rc) && (attrs->ia_valid &&
++		if((rc) && (attrs->ia_valid &
+ 			 (ATTR_MODE | ATTR_GID | ATTR_UID | ATTR_SIZE)))
+ 			rc = 0;
+ 	}
+@@ -1369,9 +1466,11 @@ cifs_setattr_exit:
+ 	return rc;
+ }
+ 
++#if 0
+ void cifs_delete_inode(struct inode *inode)
+ {
+ 	cFYI(1, ("In cifs_delete_inode, inode = 0x%p", inode));
+ 	/* may have to add back in if and when safe distributed caching of
+ 	   directories added e.g. via FindNotify */
+ }
++#endif
+diff --git a/fs/cifs/link.c b/fs/cifs/link.c
+index a57f5d6..6fbba03 100644
+--- a/fs/cifs/link.c
++++ b/fs/cifs/link.c
+@@ -20,7 +20,10 @@
+  */
+ #include <linux/fs.h>
+ #include <linux/stat.h>
++#include <linux/version.h>
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2,5,0)
+ #include <linux/namei.h>
++#endif
+ #include "cifsfs.h"
+ #include "cifspdu.h"
+ #include "cifsglob.h"
+@@ -69,17 +72,31 @@ cifs_hardlink(struct dentry *old_file, struct inode *inode,
+ 			rc = -EOPNOTSUPP;  
+ 	}
+ 
+-/* if (!rc)     */
+-	{
+-		/*   renew_parental_timestamps(old_file);
+-		   inode->i_nlink++;
+-		   mark_inode_dirty(inode);
+-		   d_instantiate(direntry, inode); */
+-		/* BB add call to either mark inode dirty or refresh its data and timestamp to current time */
++	d_drop(direntry);	/* force new lookup from server of target */
++
++	/* if source file is cached (oplocked) revalidate will not go to server
++	   until the file is closed or oplock broken so update nlinks locally */
++	if(old_file->d_inode) {
++		cifsInode = CIFS_I(old_file->d_inode);
++		if(rc == 0) {
++			old_file->d_inode->i_nlink++;
++/* BB should we make this contingent on superblock flag NOATIME? */
++/*			old_file->d_inode->i_ctime = CURRENT_TIME;*/
++			/* parent dir timestamps will update from srv
++			within a second, would it really be worth it
++			to set the parent dir cifs inode time to zero
++			to force revalidate (faster) for it too? */
++		}
++		/* if not oplocked will force revalidate to get info 
++		   on source file from srv */
++		cifsInode->time = 0;
++
++                /* Will update parent dir timestamps from srv within a second.
++		   Would it really be worth it to set the parent dir (cifs
++		   inode) time field to zero to force revalidate on parent
++		   directory faster ie 
++			CIFS_I(inode)->time = 0;  */
+ 	}
+-	d_drop(direntry);	/* force new lookup from server */
+-	cifsInode = CIFS_I(old_file->d_inode);
+-	cifsInode->time = 0;	/* will force revalidate to go get info when needed */
+ 
+ cifs_hl_exit:
+ 	kfree(fromName);
+@@ -87,9 +104,13 @@ cifs_hl_exit:
+ 	FreeXid(xid);
+ 	return rc;
+ }
+-
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,12)
+ void *
+ cifs_follow_link(struct dentry *direntry, struct nameidata *nd)
++#else
++int
++cifs_follow_link(struct dentry *direntry, struct nameidata *nd)
++#endif
+ {
+ 	struct inode *inode = direntry->d_inode;
+ 	int rc = -EACCES;
+@@ -132,6 +153,9 @@ cifs_follow_link(struct dentry *direntry, struct nameidata *nd)
+ /* BB Add special case check for Samba DFS symlinks */
+ 
+ 		target_path[PATH_MAX-1] = 0;
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,9) 
++		rc = vfs_follow_link(nd, target_path);
++#endif
+ 	} else {
+ 		kfree(target_path);
+ 		target_path = ERR_PTR(rc);
+@@ -141,8 +165,14 @@ out:
+ 	kfree(full_path);
+ out_no_free:
+ 	FreeXid(xid);
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,8) 
+ 	nd_set_link(nd, target_path);
++#endif
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,12)
+ 	return NULL;	/* No cookie */
++#else
++	return 0;
++#endif
+ }
+ 
+ int
+@@ -225,9 +255,9 @@ cifs_readlink(struct dentry *direntry, char __user *pBuffer, int buflen)
+ 
+ /* BB would it be safe against deadlock to grab this sem 
+       even though rename itself grabs the sem and calls lookup? */
+-/*       mutex_lock(&inode->i_sb->s_vfs_rename_mutex);*/
++/*       down(&inode->i_sb->s_vfs_rename_sem);*/
+ 	full_path = build_path_from_dentry(direntry);
+-/*       mutex_unlock(&inode->i_sb->s_vfs_rename_mutex);*/
++/*       up(&inode->i_sb->s_vfs_rename_sem);*/
+ 
+ 	if(full_path == NULL) {
+ 		FreeXid(xid);
+@@ -254,7 +284,11 @@ cifs_readlink(struct dentry *direntry, char __user *pBuffer, int buflen)
+ 				tmpbuffer,
+ 				len - 1,
+ 				cifs_sb->local_nls);
+-	else {
++	else if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_UNX_EMUL) {
++		cERROR(1,("SFU style symlinks not implemented yet"));
++		/* add open and read as in fs/cifs/inode.c */
++	
++	} else {
+ 		rc = CIFSSMBOpen(xid, pTcon, full_path, FILE_OPEN, GENERIC_READ,
+ 				OPEN_REPARSE_POINT,&fid, &oplock, NULL, 
+ 				cifs_sb->local_nls, 
+@@ -317,9 +351,15 @@ cifs_readlink(struct dentry *direntry, char __user *pBuffer, int buflen)
+ 	return rc;
+ }
+ 
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,12)
+ void cifs_put_link(struct dentry *direntry, struct nameidata *nd, void *cookie)
++#else
++void cifs_put_link(struct dentry *direntry, struct nameidata *nd)
++#endif
+ {
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,8)
+ 	char *p = nd_get_link(nd);
+ 	if (!IS_ERR(p))
+ 		kfree(p);
++#endif
+ }
+diff --git a/fs/cifs/misc.c b/fs/cifs/misc.c
+index 22c937e..e5e544d 100644
+--- a/fs/cifs/misc.c
++++ b/fs/cifs/misc.c
+@@ -21,7 +21,10 @@
+ 
+ #include <linux/slab.h>
+ #include <linux/ctype.h>
++#include <linux/version.h>
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ #include <linux/mempool.h>
++#endif
+ #include "cifspdu.h"
+ #include "cifsglob.h"
+ #include "cifsproto.h"
+@@ -30,8 +33,13 @@
+ #include "nterr.h"
+ #include "cifs_unicode.h"
+ 
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ extern mempool_t *cifs_sm_req_poolp;
+ extern mempool_t *cifs_req_poolp;
++#else
++extern kmem_cache_t *cifs_sm_req_cachep;
++extern kmem_cache_t *cifs_req_cachep;
++#endif
+ extern struct task_struct * oplockThread;
+ 
+ /* The xid serves as a useful identifier for each incoming vfs request, 
+@@ -71,9 +79,7 @@ sesInfoAlloc(void)
+ {
+ 	struct cifsSesInfo *ret_buf;
+ 
+-	ret_buf =
+-	    (struct cifsSesInfo *) kzalloc(sizeof (struct cifsSesInfo),
+-					   GFP_KERNEL);
++	ret_buf = kzalloc(sizeof (struct cifsSesInfo), GFP_KERNEL);
+ 	if (ret_buf) {
+ 		write_lock(&GlobalSMBSeslock);
+ 		atomic_inc(&sesInfoAllocCount);
+@@ -109,9 +115,7 @@ struct cifsTconInfo *
+ tconInfoAlloc(void)
+ {
+ 	struct cifsTconInfo *ret_buf;
+-	ret_buf =
+-	    (struct cifsTconInfo *) kzalloc(sizeof (struct cifsTconInfo),
+-					    GFP_KERNEL);
++	ret_buf = kzalloc(sizeof (struct cifsTconInfo), GFP_KERNEL);
+ 	if (ret_buf) {
+ 		write_lock(&GlobalSMBSeslock);
+ 		atomic_inc(&tconInfoAllocCount);
+@@ -153,7 +157,11 @@ cifs_buf_get(void)
+    albeit slightly larger than necessary and maxbuffersize 
+    defaults to this and can not be bigger */
+ 	ret_buf =
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	    (struct smb_hdr *) mempool_alloc(cifs_req_poolp, SLAB_KERNEL | SLAB_NOFS);
++#else
++	    (struct smb_hdr *) kmem_cache_alloc(cifs_req_cachep, SLAB_KERNEL);
++#endif
+ 
+ 	/* clear the first few header bytes */
+ 	/* for most paths, more is cleared in header_assemble */
+@@ -176,8 +184,11 @@ cifs_buf_release(void *buf_to_free)
+ 		/* cFYI(1, ("Null buffer passed to cifs_buf_release"));*/
+ 		return;
+ 	}
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	mempool_free(buf_to_free,cifs_req_poolp);
+-
++#else
++	kmem_cache_free(cifs_req_cachep, buf_to_free);
++#endif
+ 	atomic_dec(&bufAllocCount);
+ 	return;
+ }
+@@ -192,7 +203,11 @@ cifs_small_buf_get(void)
+    albeit slightly larger than necessary and maxbuffersize 
+    defaults to this and can not be bigger */
+ 	ret_buf =
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	    (struct smb_hdr *) mempool_alloc(cifs_sm_req_poolp, SLAB_KERNEL | SLAB_NOFS);
++#else
++	    (struct smb_hdr *) kmem_cache_alloc(cifs_sm_req_cachep, SLAB_KERNEL);
++#endif
+ 	if (ret_buf) {
+ 	/* No need to clear memory here, cleared in header assemble */
+ 	/*	memset(ret_buf, 0, sizeof(struct smb_hdr) + 27);*/
+@@ -213,7 +228,11 @@ cifs_small_buf_release(void *buf_to_free)
+ 		cFYI(1, ("Null buffer passed to cifs_small_buf_release"));
+ 		return;
+ 	}
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	mempool_free(buf_to_free,cifs_sm_req_poolp);
++#else
++	kmem_cache_free(cifs_sm_req_cachep, buf_to_free);
++#endif
+ 
+ 	atomic_dec(&smBufAllocCount);
+ 	return;
+@@ -418,26 +437,42 @@ checkSMBhdr(struct smb_hdr *smb, __u16 mid)
+ }
+ 
+ int
+-checkSMB(struct smb_hdr *smb, __u16 mid, int length)
++checkSMB(struct smb_hdr *smb, __u16 mid, unsigned int length)
+ {
+ 	__u32 len = smb->smb_buf_length;
+ 	__u32 clc_len;  /* calculated length */
+ 	cFYI(0, ("checkSMB Length: 0x%x, smb_buf_length: 0x%x", length, len));
+-	if (((unsigned int)length < 2 + sizeof (struct smb_hdr)) ||
+-	    (len > CIFSMaxBufSize + MAX_CIFS_HDR_SIZE - 4)) {
+-		if ((unsigned int)length < 2 + sizeof (struct smb_hdr)) {
+-			if (((unsigned int)length >= 
+-				sizeof (struct smb_hdr) - 1)
++
++	if (length < 2 + sizeof (struct smb_hdr)) {
++		if ((length >= sizeof (struct smb_hdr) - 1)
+ 			    && (smb->Status.CifsError != 0)) {
+-				smb->WordCount = 0;
+-				/* some error cases do not return wct and bcc */
++			smb->WordCount = 0;
++			/* some error cases do not return wct and bcc */
++			return 0;
++		} else if ((length == sizeof(struct smb_hdr) + 1) && 
++				(smb->WordCount == 0)) {
++			char * tmp = (char *)smb;
++			/* Need to work around a bug in two servers here */
++			/* First, check if the part of bcc they sent was zero */
++			if (tmp[sizeof(struct smb_hdr)] == 0) {
++				/* some servers return only half of bcc
++				 * on simple responses (wct, bcc both zero)
++				 * in particular have seen this on
++				 * ulogoffX and FindClose. This leaves
++				 * one byte of bcc potentially unitialized
++				 */
++				/* zero rest of bcc */
++				tmp[sizeof(struct smb_hdr)+1] = 0;
+ 				return 0;
+-			} else {
+-				cERROR(1, ("Length less than smb header size"));
+ 			}
++			cERROR(1,("rcvd invalid byte count (bcc)"));
++		} else {
++			cERROR(1, ("Length less than smb header size"));
+ 		}
+-		if (len > CIFSMaxBufSize + MAX_CIFS_HDR_SIZE - 4)
+-			cERROR(1, ("smb length greater than MaxBufSize, mid=%d",
++		return 1;
++	}
++	if (len > CIFSMaxBufSize + MAX_CIFS_HDR_SIZE - 4) {
++		cERROR(1, ("smb length greater than MaxBufSize, mid=%d",
+ 				   smb->Mid));
+ 		return 1;
+ 	}
+@@ -446,7 +481,7 @@ checkSMB(struct smb_hdr *smb, __u16 mid, int length)
+ 		return 1;
+ 	clc_len = smbCalcSize_LE(smb);
+ 
+-	if(4 + len != (unsigned int)length) {
++	if(4 + len != length) {
+ 		cERROR(1, ("Length read does not match RFC1001 length %d",len));
+ 		return 1;
+ 	}
+diff --git a/fs/cifs/netmisc.c b/fs/cifs/netmisc.c
+index ce87550..d5aff51 100644
+--- a/fs/cifs/netmisc.c
++++ b/fs/cifs/netmisc.c
+@@ -887,6 +887,18 @@ smbCalcSize_LE(struct smb_hdr *ptr)
+      * Convert the NT UTC (based 1601-01-01, in hundred nanosecond units)
+      * into Unix UTC (based 1970-01-01, in seconds).
+      */
++
++
++static int total_days_of_prev_months[] =
++{0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
++
++
++__le64 cnvrtDosCifsTm(__u16 date, __u16 time)
++{
++	return cpu_to_le64(cifs_UnixTimeToNT(cnvrtDosUnixTm(date, time)));
++}
++
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2,5,0)
+ struct timespec
+ cifs_NTtimeToUnix(u64 ntutc)
+ {
+@@ -909,3 +921,129 @@ cifs_UnixTimeToNT(struct timespec t)
+ 	/* Convert to 100ns intervals and then add the NTFS time offset. */
+ 	return (u64) t.tv_sec * 10000000 + t.tv_nsec/100 + NTFS_TIME_OFFSET;
+ }
++
++struct timespec cnvrtDosUnixTm(__u16 date, __u16 time)
++{
++	struct timespec ts;
++	int sec, min, days, month, year;
++	SMB_TIME * st = (SMB_TIME *)&time;
++	SMB_DATE * sd = (SMB_DATE *)&date;
++
++	cFYI(1,("date %d time %d",date, time));
++
++	sec = 2 * st->TwoSeconds;
++	min = st->Minutes;
++	if((sec > 59) || (min > 59))
++		cERROR(1,("illegal time min %d sec %d", min, sec));
++	sec += (min * 60);
++	sec += 60 * 60 * st->Hours;
++	if(st->Hours > 24)
++		cERROR(1,("illegal hours %d",st->Hours));
++	days = sd->Day;
++	month = sd->Month;
++	if((days > 31) || (month > 12))
++		cERROR(1,("illegal date, month %d day: %d", month, days));
++	month -= 1;
++	days += total_days_of_prev_months[month];
++	days += 3652; /* account for difference in days between 1980 and 1970 */
++	year = sd->Year;
++	days += year * 365;
++	days += (year/4); /* leap year */
++	/* generalized leap year calculation is more complex, ie no leap year
++	for years/100 except for years/400, but since the maximum number for DOS
++	 year is 2**7, the last year is 1980+127, which means we need only
++	 consider 2 special case years, ie the years 2000 and 2100, and only
++	 adjust for the lack of leap year for the year 2100, as 2000 was a 
++	 leap year (divisable by 400) */
++	if(year >= 120)  /* the year 2100 */
++		days = days - 1;  /* do not count leap year for the year 2100 */
++
++	/* adjust for leap year where we are still before leap day */
++	if(year != 120)
++		days -= ((year & 0x03) == 0) && (month < 2 ? 1 : 0);
++	sec += 24 * 60 * 60 * days; 
++
++	ts.tv_sec = sec;
++
++	/* cFYI(1,("sec after cnvrt dos to unix time %d",sec)); */
++
++	ts.tv_nsec = 0;
++	return ts;	
++}
++#else
++/* Did not merge changeset 268f3be177ce93791da38facc34126b5038cd851
++ * and related time fixes into this function for 2.4 case
++ */
++time_t
++cifs_NTtimeToUnix(__u64 ntutc)
++{
++	/* BB what about the timezone? BB */
++
++	/* Subtract the NTFS time offset, then convert to 1s intervals.  */
++	u64 t;
++
++	t = ntutc - NTFS_TIME_OFFSET;
++	do_div(t, 10000000);
++	return (time_t)t;
++}
++
++/* Convert the Unix UTC into NT UTC. */
++__u64
++cifs_UnixTimeToNT(time_t t)
++{
++	__u64 dce_time;
++   /* Convert to 100ns intervals and then add the NTFS time offset. */
++	dce_time = (__u64) t * 10000000;
++	dce_time += NTFS_TIME_OFFSET;
++	return dce_time;
++}
++time_t cnvrtDosUnixTm(__u16 date, __u16 time)
++{
++	__u8  dt[2];
++	__u8  tm[2];
++	time_t ts;
++	int sec,min, days, month, year;
++/*    SMB_TIME * st = (SMB_TIME *)&time;*/
++
++	cFYI(1,("date %d time %d",date, time));
++
++	dt[0] = date & 0xFF;
++	dt[1] = (date & 0xFF00) >> 8;
++	tm[0] = time & 0xFF;
++	tm[1] = (time & 0xFF00) >> 8;
++
++	sec = tm[0] & 0x1F;
++	sec = 2 * sec;
++	min = ((tm[0] >>5)&0xFF) + ((tm[1] & 0x7)<<3);
++
++	sec += (min * 60);
++	sec += 60 * 60 * ((tm[1] >> 3) &0xFF) /* hours */;
++	days = (dt[0] & 0x1F) - 1;
++	month = ((dt[0] >> 5) & 0xFF) + ((dt[1] & 0x1) <<3);
++	if(month > 12)
++		cERROR(1,("illegal month %d in date", month));
++	month -= 1;
++	days += total_days_of_prev_months[month];
++	days += 3653; /* account for difference in days between 1980 and 1970 */
++	year = (dt[1]>>1) & 0xFF;
++	days += year * 365;
++	days += (year/4); /* leap year */
++	/* generalized leap year calculation is more complex, ie no leap year
++	for years/100 except for years/400, but since the maximum number for DOS
++	 year is 2**7, the last year is 1980+127, which means we need only
++	 consider 2 special case years, ie the years 2000 and 2100, and only
++	 adjust for the lack of leap year for the year 2100, as 2000 was a 
++	 leap year (divisable by 400) */
++	if(year >= 120)  /* the year 2100 */
++		days = days - 1;  /* do not count leap year for the year 2100 */
++
++	/* adjust for leap year where we are still before leap day */
++	days -= ((year & 0x03) == 0) && (month < 2 ? 1 : 0);
++	sec += 24 * 60 * 60 * days;
++
++	ts = (time_t)sec;
++
++	return ts;
++}
++#endif
++
+diff --git a/fs/cifs/readdir.c b/fs/cifs/readdir.c
+index e926261..5999729 100644
+--- a/fs/cifs/readdir.c
++++ b/fs/cifs/readdir.c
+@@ -3,7 +3,7 @@
+  *
+  *   Directory search handling
+  * 
+- *   Copyright (C) International Business Machines  Corp., 2004, 2005
++ *   Copyright (C) International Business Machines  Corp., 2004, 2007
+  *   Author(s): Steve French (sfrench@us.ibm.com)
+  *
+  *   This library is free software; you can redistribute it and/or modify
+@@ -83,6 +83,12 @@ static int construct_dentry(struct qstr *qstring, struct file *file,
+ 				return rc;
+ 			rc = 1;
+ 		}
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 19)
++		if(file->f_path.dentry->d_sb->s_flags & MS_NOATIME)
++#else
++		if(file->f_dentry->d_sb->s_flags & MS_NOATIME)
++#endif
++			(*ptmp_inode)->i_flags |= S_NOATIME | S_NOCMTIME;
+ 	} else {
+ 		tmp_dentry = d_alloc(file->f_dentry, qstring);
+ 		if(tmp_dentry == NULL) {
+@@ -98,6 +104,12 @@ static int construct_dentry(struct qstr *qstring, struct file *file,
+ 			tmp_dentry->d_op = &cifs_dentry_ops;
+ 		if(*ptmp_inode == NULL)
+ 			return rc;
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 19)
++		if(file->f_path.dentry->d_sb->s_flags & MS_NOATIME)
++#else
++		if(file->f_dentry->d_sb->s_flags & MS_NOATIME)
++#endif
++			(*ptmp_inode)->i_flags |= S_NOATIME | S_NOCMTIME;			
+ 		rc = 2;
+ 	}
+ 
+@@ -106,11 +118,32 @@ static int construct_dentry(struct qstr *qstring, struct file *file,
+ 	return rc;
+ }
+ 
++static void AdjustForTZ(struct cifsTconInfo * tcon, struct inode * inode)
++{
++	if((tcon) && (tcon->ses) && (tcon->ses->server)) {
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
++		inode->i_ctime.tv_sec += tcon->ses->server->timeAdj;
++		inode->i_mtime.tv_sec += tcon->ses->server->timeAdj;
++		inode->i_atime.tv_sec += tcon->ses->server->timeAdj;
++#else
++		inode->i_ctime += tcon->ses->server->timeAdj;
++		inode->i_mtime += tcon->ses->server->timeAdj;
++		inode->i_atime += tcon->ses->server->timeAdj;
++#endif
++	}
++	return;
++}
++
++
+ static void fill_in_inode(struct inode *tmp_inode, int new_buf_type,
+ 		char * buf, int *pobject_type, int isNewInode)
+ {
+ 	loff_t local_size;
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	struct timespec local_mtime;
++#else
++	time_t local_mtime;
++#endif
+ 
+ 	struct cifsInodeInfo *cifsInfo = CIFS_I(tmp_inode);
+ 	struct cifs_sb_info *cifs_sb = CIFS_SB(tmp_inode->i_sb);
+@@ -135,12 +168,26 @@ static void fill_in_inode(struct inode *tmp_inode, int new_buf_type,
+ 		tmp_inode->i_ctime =
+ 		      cifs_NTtimeToUnix(le64_to_cpu(pfindData->ChangeTime));
+ 	} else { /* legacy, OS2 and DOS style */
++/*		struct timespec ts;*/
+ 		FIND_FILE_STANDARD_INFO * pfindData = 
+ 			(FIND_FILE_STANDARD_INFO *)buf;
+ 
++		tmp_inode->i_mtime = cnvrtDosUnixTm(
++				le16_to_cpu(pfindData->LastWriteDate),
++				le16_to_cpu(pfindData->LastWriteTime));
++		tmp_inode->i_atime = cnvrtDosUnixTm(
++				le16_to_cpu(pfindData->LastAccessDate),
++				le16_to_cpu(pfindData->LastAccessTime));
++		tmp_inode->i_ctime = cnvrtDosUnixTm(
++				le16_to_cpu(pfindData->LastWriteDate),
++				le16_to_cpu(pfindData->LastWriteTime));
++		AdjustForTZ(cifs_sb->tcon, tmp_inode);
+ 		attr = le16_to_cpu(pfindData->Attributes);
+ 		allocation_size = le32_to_cpu(pfindData->AllocationSize);
+ 		end_of_file = le32_to_cpu(pfindData->DataSize);
++		/* do not need to use current_fs_time helper function since
++		 time not stored for this case so atime can not "go backwards"
++		 by pulling newer older from disk when inode refrenshed */
+ 		tmp_inode->i_atime = CURRENT_TIME;
+ 		/* tmp_inode->i_mtime =  BB FIXME - add dos time handling
+ 		tmp_inode->i_ctime = 0;   BB FIXME */
+@@ -208,7 +255,8 @@ static void fill_in_inode(struct inode *tmp_inode, int new_buf_type,
+ 		atomic_set(&cifsInfo->inUse, 1);
+ 	}
+ 
+-	if (is_size_safe_to_change(cifsInfo)) {
++	spin_lock(&tmp_inode->i_lock);
++	if (is_size_safe_to_change(cifsInfo, end_of_file)) {
+ 		/* can not safely change the file size here if the 
+ 		client is writing to it due to potential races */
+ 		i_size_write(tmp_inode, end_of_file);
+@@ -217,12 +265,13 @@ static void fill_in_inode(struct inode *tmp_inode, int new_buf_type,
+ 	/* for this calculation, even though the reported blocksize is larger */
+ 		tmp_inode->i_blocks = (512 - 1 + allocation_size) >> 9;
+ 	}
++	spin_unlock(&tmp_inode->i_lock);
+ 
+ 	if (allocation_size < end_of_file)
+ 		cFYI(1, ("May be sparse file, allocation less than file size"));
+ 	cFYI(1, ("File Size %ld and blocks %llu",
+-		(unsigned long)tmp_inode->i_size,
+-		(unsigned long long)tmp_inode->i_blocks));
++			(unsigned long)tmp_inode->i_size,
++			(unsigned long long)tmp_inode->i_blocks));
+ 	if (S_ISREG(tmp_inode->i_mode)) {
+ 		cFYI(1, ("File inode"));
+ 		tmp_inode->i_op = &cifs_file_inode_ops;
+@@ -275,7 +324,11 @@ static void unix_fill_in_inode(struct inode *tmp_inode,
+ 	FILE_UNIX_INFO *pfindData, int *pobject_type, int isNewInode)
+ {
+ 	loff_t local_size;
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	struct timespec local_mtime;
++#else
++	time_t local_mtime;
++#endif
+ 
+ 	struct cifsInodeInfo *cifsInfo = CIFS_I(tmp_inode);
+ 	struct cifs_sb_info *cifs_sb = CIFS_SB(tmp_inode->i_sb);
+@@ -337,15 +390,17 @@ static void unix_fill_in_inode(struct inode *tmp_inode,
+ 	tmp_inode->i_gid = le64_to_cpu(pfindData->Gid);
+ 	tmp_inode->i_nlink = le64_to_cpu(pfindData->Nlinks);
+ 
+-	if (is_size_safe_to_change(cifsInfo)) {
++	spin_lock(&tmp_inode->i_lock);
++	if (is_size_safe_to_change(cifsInfo, end_of_file)) {
+ 		/* can not safely change the file size here if the 
+ 		client is writing to it due to potential races */
+-		i_size_write(tmp_inode,end_of_file);
++		i_size_write(tmp_inode, end_of_file);
+ 
+ 	/* 512 bytes (2**9) is the fake blocksize that must be used */
+ 	/* for this calculation, not the real blocksize */
+ 		tmp_inode->i_blocks = (512 - 1 + num_of_bytes) >> 9;
+ 	}
++	spin_unlock(&tmp_inode->i_lock);
+ 
+ 	if (S_ISREG(tmp_inode->i_mode)) {
+ 		cFYI(1, ("File inode"));
+@@ -556,7 +611,7 @@ static int cifs_entry_is_dot(char *current_entry, struct cifsFileInfo *cfile)
+ 		FIND_FILE_STANDARD_INFO * pFindData =
+ 			(FIND_FILE_STANDARD_INFO *)current_entry;
+ 		filename = &pFindData->FileName[0];
+-		len = pFindData->FileNameLength;
++		len = le32_to_cpu(pFindData->FileNameLength);
+ 	} else {
+ 		cFYI(1,("Unknown findfirst level %d",cfile->srch_inf.info_level));
+ 	}
+@@ -946,6 +1001,7 @@ static int cifs_save_resume_key(const char *current_entry,
+ 		filename = &pFindData->FileName[0];
+ 		/* one byte length, no name conversion */
+ 		len = (unsigned int)pFindData->FileNameLength;
++		cifsFile->srch_inf.resume_key = pFindData->ResumeKey;
+ 	} else {
+ 		cFYI(1,("Unknown findfirst level %d",level));
+ 		return -EINVAL;
+@@ -1067,6 +1123,7 @@ int cifs_readdir(struct file *file, void *direntry, filldir_t filldir)
+ 				rc = 0;
+ 				break;
+ 			}
++
+ 			file->f_pos++;
+ 			if(file->f_pos == 
+ 				cifsFile->srch_inf.index_of_last_entry) {
+diff --git a/fs/cifs/sess.c b/fs/cifs/sess.c
+index d3fd341..9a5c286 100644
+--- a/fs/cifs/sess.c
++++ b/fs/cifs/sess.c
+@@ -21,6 +21,7 @@
+  *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+  */
+ 
++#include <linux/fs.h>
+ #include "cifspdu.h"
+ #include "cifsglob.h"
+ #include "cifsproto.h"
+@@ -116,8 +117,13 @@ static void unicode_ssetup_strings(char ** pbcc_area, struct cifsSesInfo *ses,
+ 	bytes_ret = cifs_strtoUCS((__le16 *)bcc_ptr, "Linux version ", 32,
+ 				  nls_cp);
+ 	bcc_ptr += 2 * bytes_ret;
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 18)
++	bytes_ret = cifs_strtoUCS((__le16 *) bcc_ptr, utsname()->release,
++				  32, nls_cp);
++#else
+ 	bytes_ret = cifs_strtoUCS((__le16 *) bcc_ptr, system_utsname.release,
+ 				  32, nls_cp);
++#endif
+ 	bcc_ptr += 2 * bytes_ret;
+ 	bcc_ptr += 2; /* trailing null */
+ 
+@@ -161,8 +167,13 @@ static void ascii_ssetup_strings(char ** pbcc_area, struct cifsSesInfo *ses,
+ 
+ 	strcpy(bcc_ptr, "Linux version ");
+ 	bcc_ptr += strlen("Linux version ");
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 18)
++	strcpy(bcc_ptr, utsname()->release);
++	bcc_ptr += strlen(utsname()->release) + 1;
++#else
+ 	strcpy(bcc_ptr, system_utsname.release);
+ 	bcc_ptr += strlen(system_utsname.release) + 1;
++#endif
+ 
+ 	strcpy(bcc_ptr, CIFS_NETWORK_OPSYS);
+ 	bcc_ptr += strlen(CIFS_NETWORK_OPSYS) + 1;
+@@ -274,6 +285,10 @@ static int decode_ascii_ssetup(char ** pbcc_area, int bleft, struct cifsSesInfo
+ 	ses->serverOS = kzalloc(len + 1, GFP_KERNEL);
+ 	if(ses->serverOS)
+ 		strncpy(ses->serverOS, bcc_ptr, len);
++	if(strncmp(ses->serverOS, "OS/2",4) == 0) {
++			cFYI(1,("OS/2 server"));
++			ses->flags |= CIFS_SES_OS2;
++	}
+ 
+ 	bcc_ptr += len + 1;
+ 	bleft -= len + 1;
+@@ -296,16 +311,11 @@ static int decode_ascii_ssetup(char ** pbcc_area, int bleft, struct cifsSesInfo
+         if(len > bleft)
+                 return rc;
+ 
+-        if(ses->serverDomain)
+-                kfree(ses->serverDomain);
+-
+-        ses->serverDomain = kzalloc(len + 1, GFP_KERNEL);
+-        if(ses->serverOS)
+-                strncpy(ses->serverOS, bcc_ptr, len);
+-
+-        bcc_ptr += len + 1;
+-	bleft -= len + 1;
+-
++	/* No domain field in LANMAN case. Domain is
++	   returned by old servers in the SMB negprot response */
++	/* BB For newer servers which do not support Unicode,
++	   but thus do return domain here we could add parsing
++	   for it later, but it is not very important */
+ 	cFYI(1,("ascii: bytes left %d",bleft));
+ 
+ 	return rc;
+@@ -372,18 +382,20 @@ CIFS_SessSetup(unsigned int xid, struct cifsSesInfo *ses, int first_time,
+ 	str_area = kmalloc(2000, GFP_KERNEL);
+ 	bcc_ptr = str_area;
+ 
++	ses->flags &= ~CIFS_SES_LANMAN;
++
+ 	if(type == LANMAN) {
+ #ifdef CONFIG_CIFS_WEAK_PW_HASH
+ 		char lnm_session_key[CIFS_SESS_KEY_SIZE];
+ 
+ 		/* no capabilities flags in old lanman negotiation */
+ 
+-		pSMB->old_req.PasswordLength = cpu_to_le16(CIFS_SESS_KEY_SIZE); 
++		pSMB->old_req.PasswordLength = CIFS_SESS_KEY_SIZE; 
+ 		/* BB calculate hash with password */
+ 		/* and copy into bcc */
+ 
+ 		calc_lanman_hash(ses, lnm_session_key);
+-
++		ses->flags |= CIFS_SES_LANMAN; 
+ /* #ifdef CONFIG_CIFS_DEBUG2
+ 		cifs_dump_mem("cryptkey: ",ses->server->cryptKey,
+ 			CIFS_SESS_KEY_SIZE);
+diff --git a/fs/cifs/smbdes.c b/fs/cifs/smbdes.c
+index efaa044..13e9b83 100644
+--- a/fs/cifs/smbdes.c
++++ b/fs/cifs/smbdes.c
+@@ -196,7 +196,7 @@ dohash(char *out, char *in, char *key, int forw)
+ 	char c[28];
+ 	char d[28];
+ 	char *cd;
+-	char ki[16][48];
++	char (*ki)[48];
+ 	char *pd1;
+ 	char l[32], r[32];
+ 	char *rl;
+@@ -206,6 +206,12 @@ dohash(char *out, char *in, char *key, int forw)
+ 	if(pk1 == NULL)
+ 		return;
+ 
++	ki = kmalloc(16*48, GFP_KERNEL);
++	if(ki == NULL) {
++		kfree(pk1);
++		return;
++	}
++
+ 	cd = pk1 + 56;
+ 	pd1= cd  + 56;
+ 	rl = pd1 + 64;
+@@ -243,6 +249,7 @@ dohash(char *out, char *in, char *key, int forw)
+ 		er = kmalloc(48+48+32+32+32, GFP_KERNEL);
+ 		if(er == NULL) {
+ 			kfree(pk1);
++			kfree(ki);
+ 			return;
+ 		}
+ 		erk = er+48;
+@@ -290,6 +297,7 @@ dohash(char *out, char *in, char *key, int forw)
+ 
+ 	permute(out, rl, perm6, 64);
+ 	kfree(pk1);
++	kfree(ki);
+ }
+ 
+ static void
+diff --git a/fs/cifs/transport.c b/fs/cifs/transport.c
+index 48d47b4..4c4b2b3 100644
+--- a/fs/cifs/transport.c
++++ b/fs/cifs/transport.c
+@@ -27,13 +27,19 @@
+ #include <linux/delay.h>
+ #include <asm/uaccess.h>
+ #include <asm/processor.h>
+-#include <linux/mempool.h>
+ #include "cifspdu.h"
+ #include "cifsglob.h"
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
++#include <linux/mempool.h>
++#else
++extern kmem_cache_t *cifs_mid_cachep;
++#endif
+ #include "cifsproto.h"
+ #include "cifs_debug.h"
+-  
++
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ extern mempool_t *cifs_mid_poolp;
++#endif
+ extern kmem_cache_t *cifs_oplock_cachep;
+ 
+ static struct mid_q_entry *
+@@ -49,9 +55,16 @@ AllocMidQEntry(const struct smb_hdr *smb_buffer, struct cifsSesInfo *ses)
+ 		cERROR(1, ("Null TCP session in AllocMidQEntry"));
+ 		return NULL;
+ 	}
+-	
++
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	temp = (struct mid_q_entry *) mempool_alloc(cifs_mid_poolp,
+ 						    SLAB_KERNEL | SLAB_NOFS);
++#else
++	temp = (struct mid_q_entry *) kmem_cache_alloc(cifs_mid_cachep,
++							SLAB_KERNEL);
++
++#endif
++
+ 	if (temp == NULL)
+ 		return temp;
+ 	else {
+@@ -106,7 +119,11 @@ DeleteMidQEntry(struct mid_q_entry *midEntry)
+ 		}
+ 	}
+ #endif
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 	mempool_free(midEntry, cifs_mid_poolp);
++#else
++	kmem_cache_free(cifs_mid_cachep, midEntry);
++#endif
+ }
+ 
+ struct oplock_q_entry *
+@@ -151,6 +168,9 @@ smb_send(struct socket *ssocket, struct smb_hdr *smb_buffer,
+ 	struct msghdr smb_msg;
+ 	struct kvec iov;
+ 	unsigned len = smb_buf_length + 4;
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 8)
++	mm_segment_t temp_fs;
++#endif
+ 
+ 	if(ssocket == NULL)
+ 		return -ENOTSOCK; /* BB eventually add reconnect code here */
+@@ -159,6 +179,10 @@ smb_send(struct socket *ssocket, struct smb_hdr *smb_buffer,
+ 
+ 	smb_msg.msg_name = sin;
+ 	smb_msg.msg_namelen = sizeof (struct sockaddr);
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 8)
++	smb_msg.msg_iov = &iov;
++	smb_msg.msg_iovlen = 1;
++#endif
+ 	smb_msg.msg_control = NULL;
+ 	smb_msg.msg_controllen = 0;
+ 	smb_msg.msg_flags = MSG_DONTWAIT + MSG_NOSIGNAL; /* BB add more flags?*/
+@@ -172,8 +196,16 @@ smb_send(struct socket *ssocket, struct smb_hdr *smb_buffer,
+ 	cFYI(1, ("Sending smb of length %d", smb_buf_length));
+ 	dump_smb(smb_buffer, len);
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 8)
++	temp_fs = get_fs();	/* we must turn off socket api parm checking */
++	set_fs(get_ds());
++#endif
+ 	while (len > 0) {
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 8)
++		rc = sock_sendmsg(ssocket, &smb_msg, len);
++#else
+ 		rc = kernel_sendmsg(ssocket, &smb_msg, &iov, 1, len);
++#endif
+ 		if ((rc == -ENOSPC) || (rc == -EAGAIN)) {
+ 			i++;
+ 		/* smaller timeout here than send2 since smaller size */
+@@ -197,6 +229,9 @@ smb_send(struct socket *ssocket, struct smb_hdr *smb_buffer,
+ 		iov.iov_len -= rc;
+ 		len -= rc;
+ 	}
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 8)
++	set_fs(temp_fs);
++#endif
+ 
+ 	if (rc < 0) {
+ 		cERROR(1,("Error %d sending data on socket to server", rc));
+@@ -223,6 +258,9 @@ smb_send2(struct socket *ssocket, struct kvec *iov, int n_vec,
+ 	unsigned int total_len;
+ 	int first_vec = 0;
+ 	unsigned int smb_buf_length = smb_buffer->smb_buf_length;
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 8)
++	mm_segment_t temp_fs;
++#endif
+ 	
+ 	if(ssocket == NULL)
+ 		return -ENOTSOCK; /* BB eventually add reconnect code here */
+@@ -247,9 +285,19 @@ smb_send2(struct socket *ssocket, struct kvec *iov, int n_vec,
+ 	cFYI(1, ("Sending smb:  total_len %d", total_len));
+ 	dump_smb(smb_buffer, len);
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 8)
++	temp_fs = get_fs();	/* we must turn off socket api parm checking */
++	set_fs(get_ds());
++#endif
+ 	while (total_len) {
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 8)
++		smb_msg.msg_iov = &iov[first_vec];
++		smb_msg.msg_iovlen = n_vec - first_vec;
++		rc = sock_sendmsg(ssocket, &smb_msg, total_len);
++#else
+ 		rc = kernel_sendmsg(ssocket, &smb_msg, &iov[first_vec],
+ 				    n_vec - first_vec, total_len);
++#endif
+ 		if ((rc == -ENOSPC) || (rc == -EAGAIN)) {
+ 			i++;
+ 			if(i >= 14) {
+@@ -266,7 +314,12 @@ smb_send2(struct socket *ssocket, struct kvec *iov, int n_vec,
+ 			break;
+ 
+ 		if (rc >= total_len) {
+-			WARN_ON(rc > total_len);
++			if(rc > total_len) {
++				cERROR(1,("unexpected length received"));
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 4, 19)
++				dump_stack();
++#endif
++			}
+ 			break;
+ 		}
+ 		if(rc == 0) {
+@@ -293,6 +346,9 @@ smb_send2(struct socket *ssocket, struct kvec *iov, int n_vec,
+ 		}
+ 		i = 0; /* in case we get ENOSPC on the next send */
+ 	}
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 8)
++	set_fs(temp_fs);
++#endif
+ 
+ 	if (rc < 0) {
+ 		cERROR(1,("Error %d sending data on socket to server", rc));
+@@ -499,7 +555,7 @@ SendReceive2(const unsigned int xid, struct cifsSesInfo *ses,
+ 	   due to last connection to this server being unmounted */
+ 	if (signal_pending(current)) {
+ 		/* if signal pending do not hold up user for full smb timeout
+-		but we still give response a change to complete */
++		but we still give response a chance to complete */
+ 		timeout = 2 * HZ;
+ 	}   
+ 
+@@ -587,7 +643,6 @@ SendReceive2(const unsigned int xid, struct cifsSesInfo *ses,
+ 	}
+ 
+ out:
+-
+ 	DeleteMidQEntry(midQ);
+ 	atomic_dec(&ses->server->inFlight); 
+ 	wake_up(&ses->server->request_q);
+@@ -681,7 +736,7 @@ SendReceive(const unsigned int xid, struct cifsSesInfo *ses,
+ 	   due to last connection to this server being unmounted */
+ 	if (signal_pending(current)) {
+ 		/* if signal pending do not hold up user for full smb timeout
+-		but we still give response a change to complete */
++		but we still give response a chance to complete */
+ 		timeout = 2 * HZ;
+ 	}   
+ 
+@@ -765,7 +820,6 @@ SendReceive(const unsigned int xid, struct cifsSesInfo *ses,
+ 	}
+ 
+ out:
+-
+ 	DeleteMidQEntry(midQ);
+ 	atomic_dec(&ses->server->inFlight); 
+ 	wake_up(&ses->server->request_q);
+diff --git a/fs/cifs/xattr.c b/fs/cifs/xattr.c
+index 067648b..2734a92 100644
+--- a/fs/cifs/xattr.c
++++ b/fs/cifs/xattr.c
+@@ -20,7 +20,10 @@
+  */
+ 
+ #include <linux/fs.h>
++#include <linux/version.h>
++#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ #include <linux/posix_acl_xattr.h>
++#endif
+ #include "cifsfs.h"
+ #include "cifspdu.h"
+ #include "cifsglob.h"
+@@ -269,7 +272,7 @@ ssize_t cifs_getxattr(struct dentry * direntry, const char * ea_name,
+ 				rc = CIFSSMBGetCIFSACL(xid, pTcon, fid,
+ 					ea_value, buf_size,
+ 					ACL_TYPE_ACCESS);
+-				CIFSSMBClose(xid, pTcon, fid)
++				CIFSSMBClose(xid, pTcon, fid);
+ 			}
+ 		} */  /* BB enable after fixing up return data */
+                   		
+-- 
+1.5.0.6
+

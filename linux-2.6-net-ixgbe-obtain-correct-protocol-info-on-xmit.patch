@@ -1,0 +1,62 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Wed, 13 Feb 2008 21:44:51 -0500
+Subject: [net] ixgbe: obtain correct protocol info on xmit
+Message-id: 20080214024451.GW31161@gospo.usersys.redhat.com
+O-Subject: [RHEL5.2 PATCH] ixgbe: correctly obtain protocol information on transmit
+Bugzilla: 428230
+
+Mark Wagner discovered that Xen guests that send traffic through ixgbe
+interfaces would cause a panic unless tx checksumming was disabled on
+the interface.  This severely limits performance and since the default
+has it enabled you will quickly panic the the box.  This isn't ideal, so
+I dug around a vmcore he provided and discovered that the driver
+incorrectly gathered packet protocol information from socket information
+stored in the skb.
+
+This works well on hosts that are generating the traffic, but when you
+put the ixgbe interface in a bridge, there is no longer any socket info
+for outgoing packets (since they came from the bridging interface).  I
+proposed a smaller fix for this upstream, but intel already had one in
+their internal driver, so Auke posted this patch.
+
+I've tested it and it works well.  This will resolve BZ 428230.
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/drivers/net/ixgbe/ixgbe_main.c b/drivers/net/ixgbe/ixgbe_main.c
+index 70775af..c3533df 100644
+--- a/drivers/net/ixgbe/ixgbe_main.c
++++ b/drivers/net/ixgbe/ixgbe_main.c
+@@ -2206,11 +2206,29 @@ static bool ixgbe_tx_csum(struct ixgbe_adapter *adapter,
+ 				    IXGBE_ADVTXD_DTYP_CTXT);
+ 
+ 		if (skb->ip_summed == CHECKSUM_PARTIAL) {
+-			if (skb->protocol == ntohs(ETH_P_IP))
++			switch (skb->protocol) {
++			case __constant_htons(ETH_P_IP):
+ 				type_tucmd_mlhl |= IXGBE_ADVTXD_TUCMD_IPV4;
++				if (ip_hdr(skb)->protocol == IPPROTO_TCP)
++					type_tucmd_mlhl |=
++						IXGBE_ADVTXD_TUCMD_L4T_TCP;
++				break;
++
++			case __constant_htons(ETH_P_IPV6):
++				/* XXX what about other V6 headers?? */
++				if (ipv6_hdr(skb)->nexthdr == IPPROTO_TCP)
++					type_tucmd_mlhl |=
++						IXGBE_ADVTXD_TUCMD_L4T_TCP;
++				break;
+ 
+-			if (skb->sk->sk_protocol == IPPROTO_TCP)
+-				type_tucmd_mlhl |= IXGBE_ADVTXD_TUCMD_L4T_TCP;
++			default:
++				if (unlikely(net_ratelimit())) {
++					DPRINTK(PROBE, WARNING,
++					 "partial checksum but proto=%x!\n",
++					 skb->protocol);
++				}
++				break;
++			}
+ 		}
+ 
+ 		context_desc->type_tucmd_mlhl = cpu_to_le32(type_tucmd_mlhl);

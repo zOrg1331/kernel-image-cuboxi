@@ -1,0 +1,59 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH] BZ 229720 pfkey_spdget does not audit xrfm policy 	changes
+Date: Sun, 03 Jun 2007 18:16:49 -0400
+Bugzilla: 229720
+Message-Id: <1180909009.31147.25.camel@localhost.localdomain>
+Changelog: [audit] pfkey_spdget does not audit xrfm policy changes
+
+
+pfkey_spdget neither had an LSM security hook nor auditing for the
+removal of xfrm_policy structs.  The security hook was added when it was
+moved into xfrm_policy_byid instead of the callers to that function by
+my earlier patch and this patch adds the auditing hooks as well.
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=215a2dd3b43e0dc425e81d21de9d961416b1dad4
+
+Been in LSPP for some time and functioning properly.
+
+-Eric
+
+--- /tmp/af_key.c	2007-02-22 18:50:25.000000000 -0500
++++ linux-2.6.18.i386/net/key/af_key.c	2007-02-22 18:46:42.000000000 -0500
+@@ -2336,7 +2336,7 @@ out:
+ static int pfkey_spdget(struct sock *sk, struct sk_buff *skb, struct sadb_msg *hdr, void **ext_hdrs)
+ {
+ 	unsigned int dir;
+-	int err;
++	int err, delete;
+ 	struct sadb_x_policy *pol;
+ 	struct xfrm_policy *xp;
+ 	struct km_event c;
+@@ -2348,17 +2348,20 @@ static int pfkey_spdget(struct sock *sk,
+ 	if (dir >= XFRM_POLICY_MAX)
+ 		return -EINVAL;
+ 
+-	xp = xfrm_policy_byid(dir, pol->sadb_x_policy_id,
+-			      hdr->sadb_msg_type == SADB_X_SPDDELETE2, &err);
++	delete = (hdr->sadb_msg_type == SADB_X_SPDDELETE2);
++	xp = xfrm_policy_byid(dir, pol->sadb_x_policy_id, delete, &err);
++
+ 	if (xp == NULL)
+ 		return -ENOENT;
+ 
+-	if (err)
+-		goto out;
++	if (delete) {
++		xfrm_audit_log(audit_get_loginuid(current->audit_context), 0,
++			       AUDIT_MAC_IPSEC_DELSPD, err ? 0 : 1, xp, NULL);
++		if (err)
++			goto out;
+ 
+-	c.seq = hdr->sadb_msg_seq;
+-	c.pid = hdr->sadb_msg_pid;
+-	if (hdr->sadb_msg_type == SADB_X_SPDDELETE2) {
++		c.seq = hdr->sadb_msg_seq;
++		c.pid = hdr->sadb_msg_pid;
+ 		c.data.byid = 1;
+ 		c.event = XFRM_MSG_DELPOLICY;
+ 		km_policy_notify(xp, dir, &c);
+

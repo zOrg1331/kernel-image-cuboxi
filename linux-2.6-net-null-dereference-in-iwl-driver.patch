@@ -1,0 +1,42 @@
+From: Vitaly Mayatskikh <vmayatsk@redhat.com>
+Date: Wed, 12 Dec 2007 18:17:41 +0100
+Subject: [net] NULL dereference in iwl driver
+Message-id: m3zlwfygqy.fsf@gravicapa.englab.brq.redhat.com
+O-Subject: [RHEL-5.2 PATCH] BZ401431 CVE-2007-5938 NULL dereference in iwl driver [rhel-5.2]
+Bugzilla: 401431
+
+BZ#401431
+
+https://bugzilla.redhat.com/show_bug.cgi?id=401431
+
+Description:
+============
+NULL pointer dereference possible in iwl_set_rate() in iwl3945 and
+iwl4965 drivers. There's no error checking after calling
+iwl_get_hw_mode() with wrong mode number.
+
+Upstream status:
+================
+I don't see the way how is it possible to call iwl_set_rate with wrong
+mode number, but the patch is upstream.
+
+Test status of the patch:
+=========================
+No reproducer. The possibility of exploiting kernel with this issue is
+unknown too.
+
+diff --git a/drivers/net/wireless/iwlwifi/base.c b/drivers/net/wireless/iwlwifi/base.c
+index 4f7fe12..46706a8 100644
+--- a/drivers/net/wireless/iwlwifi/base.c
++++ b/drivers/net/wireless/iwlwifi/base.c
+@@ -2857,6 +2857,10 @@ static void iwl_set_rate(struct iwl_priv *priv)
+ 	int i;
+ 
+ 	hw = iwl_get_hw_mode(priv, priv->phymode);
++        if (!hw) {
++                IWL_ERROR("Failed to set rate: unable to get hw mode\n");
++                return;
++        }
+ 
+ 	priv->active_rate = 0;
+ 	priv->active_rate_basic = 0;

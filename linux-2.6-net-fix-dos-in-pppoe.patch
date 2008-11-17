@@ -1,0 +1,39 @@
+From: Neil Horman <nhorman@redhat.com>
+Subject: RHEL 5.1 PATCH: fix DoS in PPPOE (bz 239581)
+Date: Wed, 30 May 2007 11:15:20 -0400
+Bugzilla: 239581
+Message-Id: <20070530151520.GC10842@hmsendeavour.rdu.redhat.com>
+Changelog: [net] fix DoS in PPPOE
+
+
+Hey All-
+	PPPOE has an issue in which its possible to leak memory when a connected
+pppoe socket is released before the PPPIOCGCHAN ioctl is called on it.  Attached
+is a upstream backport of the patch to fix this.  Solves bz 239581
+
+Regards
+Neil
+
+
+
+--- linux-2.6.18.noarch/drivers/net/pppox.c.orig	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.noarch/drivers/net/pppox.c	2007-05-30 10:25:08.000000000 -0400
+@@ -58,7 +58,7 @@
+ {
+ 	/* Clear connection to ppp device, if attached. */
+ 
+-	if (sk->sk_state & (PPPOX_BOUND | PPPOX_ZOMBIE)) {
++	if (sk->sk_state & (PPPOX_BOUND | PPPOX_CONNECTED | PPPOX_ZOMBIE)) {
+ 		ppp_unregister_channel(&pppox_sk(sk)->chan);
+ 		sk->sk_state = PPPOX_DEAD;
+ 	}
+-- 
+/***************************************************
+ *Neil Horman
+ *Software Engineer
+ *Red Hat, Inc.
+ *nhorman@redhat.com
+ *gpg keyid: 1024D / 0x92A74FA1
+ *http://pgp.mit.edu
+ ***************************************************/
+

@@ -1,0 +1,74 @@
+From: Peter Zijlstra<pzijlstr@redhat.com>
+Subject: [RHEL 5][PATCH] write failure on swapout could corrupt data
+Date: Mon, 07 Aug 2006 10:55:55
+Bugzilla: 216194
+Message-Id: <1154962555.16862.5.camel@taijtu>
+Changelog: write failure on swapout could corrupt data
+
+fold from patches in -mm; original request was for RHEL 4.5.
+Resubmit against RHEL 5 because I don't think the patches will
+reach mainline in the RHEL 5 time frame.
+---
+
+
+Currently we can silently drop data if the write to swap failed. It usually
+doesn't result in data-corruption because on page-in the process will receive
+SIGBUS (assuming write-failure implies read-failure).
+
+This assumption might or might not be valid.
+
+This patch will avoid the page being discarded after a failed write. But
+will print a warning the sysadmin _should_ take to heart, if a lot of swap
+space becomes un-writeable, OOM is not far off.
+
+Also add a similar message to the read failure.
+
+Tested by making the write fail 'randomly' once every 50 writes or so.
+
+RH-Bugzilla-ID: 198749
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+---
+ page_io.c |   21 ++++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+Index: linux-2.6/mm/page_io.c
+===================================================================
+--- linux-2.6.orig/mm/page_io.c
++++ linux-2.6/mm/page_io.c
+@@ -52,8 +52,23 @@ static int end_swap_bio_write(struct bio
+ 	if (bio->bi_size)
+ 		return 1;
+ 
+-	if (!uptodate)
++	if (!uptodate) {
+ 		SetPageError(page);
++		/*
++		 * We failed to write the page out to swap-space.
++		 * Re-dirty the page in order to avoid it being reclaimed.
++		 * Also print a dire warning that things will go BAD (tm)
++		 * very quickly.
++		 *
++		 * Also clear PG_reclaim to avoid rotate_reclaimable_page()
++		 */
++		set_page_dirty(page);
++		printk(KERN_ALERT "Write-error on swap-device (%u:%u:%Lu)\n",
++				imajor(bio->bi_bdev->bd_inode),
++				iminor(bio->bi_bdev->bd_inode),
++				(unsigned long long)bio->bi_sector);
++		ClearPageReclaim(page);
++	}
+ 	end_page_writeback(page);
+ 	bio_put(bio);
+ 	return 0;
+@@ -70,6 +85,10 @@ static int end_swap_bio_read(struct bio 
+ 	if (!uptodate) {
+ 		SetPageError(page);
+ 		ClearPageUptodate(page);
++		printk(KERN_ALERT "Read-error on swap-device (%u:%u:%Lu)\n",
++				imajor(bio->bi_bdev->bd_inode),
++				iminor(bio->bi_bdev->bd_inode),
++				(unsigned long long)bio->bi_sector);
+ 	} else {
+ 		SetPageUptodate(page);
+ 	}
+

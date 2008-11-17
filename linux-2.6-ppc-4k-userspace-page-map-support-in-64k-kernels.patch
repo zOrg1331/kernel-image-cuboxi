@@ -1,0 +1,230 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [PATCH RHEL5.1] bz250144 [ppc] 4k page mapping support for userspace 	in 64k kernels [AMMENDED]
+Date: Fri, 3 Aug 2007 08:21:31 -0400 (EDT)
+Bugzilla: 250144
+Message-Id: <Pine.LNX.4.64.0708030820250.30310@squad5-lp1.lab.boston.redhat.com>
+Changelog: [ppc] 4k page mapping support for userspace 	in 64k kernels
+
+
+This is an ammended repost of [1]. See the end of the 'Description'
+section for information on the change.
+
+RHBZ#: 250144
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=250144
+
+Description:
+------------
+Some drivers have resources that they want to be able to map into
+userspace that are 4k in size.   On a kernel configured with 64k pages
+we currently end up mapping the 4k we want plus another 60k of
+physical address space, which could contain anything.  This can
+introduce security problems, for example in the case of an infiniband
+adaptor where the other 60k could contain registers that some other
+program is using for its communications.
+
+galaxy (eHCA) has a 4k page of control registers for each single QP and CQ.
+The physical adress of this page is defined by phyp when you allocate a
+resource.
+
+To be able to send and receive data from userspace without a kernel call you
+have to get access to that 4k page from userspace.  If the linux kernel only
+allows to map 64k pages into userspace there's a conflict. Phyp only allows to
+map this page area in 4k chunks (H_ENTER).
+
+=== Ammendment ===
+This corrects a bug in the original "map 4k pages to user space" patch
+where we only added the code for handling the special 4k RPNs to the code
+where we insert a PTE in the primary hash bucket, but failed to add
+similar code where we insert a PTE in the secondary hash bucket.  This
+adds the necessary code.
+
+RHEL Version Found:
+-------------------
+This is a bug found in RHEL5u1 kernel 2.6.18-36.el5.
+
+Upstream Status:
+----------------
+This patch is contains the following 2 upstream commits to paulus's tree, which are expectect to be present in 2.6.23:
+  721151d004dcf01a71b12bb6b893f9160284cf6e
+  430404ed9c2f202ca9d3c8072699b2b0279e4dfe
+  c0f7c6cb5dbb6d90e0334e62376dbc6ac3d1d315
+
+Test Status:
+------------
+To ensure cross-platform build, this code has been built with brew
+--scratch against a 2.6.18-36.el5 kernel and is available at [2].
+
+This patch has been tested with others to ensure that they create a working
+eHCA infiniband stack.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+--
+[1] http://post-office.corp.redhat.com/archives/rhkernel-list/2007-August/thread.html#00038
+[2] http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=721151d004dcf01a71b12bb6b893f9160284cf6e
+[3] http://brewweb.devel.redhat.com/brew/taskinfo?taskID=906267
+
+---
+ arch/powerpc/mm/hash_low_64.S     |   11 +++++++---
+ arch/powerpc/mm/hash_utils_64.c   |   40 ++++++++++++++++++++++++++++----------
+ include/asm-powerpc/pgtable-4k.h  |    3 ++
+ include/asm-powerpc/pgtable-64k.h |   13 +++++++-----
+ 4 files changed, 49 insertions(+), 18 deletions(-)
+
+Index: linux-2.6.18.ppc64/arch/powerpc/mm/hash_low_64.S
+===================================================================
+--- linux-2.6.18.ppc64.orig/arch/powerpc/mm/hash_low_64.S
++++ linux-2.6.18.ppc64/arch/powerpc/mm/hash_low_64.S
+@@ -445,9 +445,12 @@ END_FTR_SECTION(CPU_FTR_NOEXECUTE|CPU_FT
+ 
+ htab_insert_pte:
+ 	/* real page number in r5, PTE RPN value + index */
+-	rldicl	r5,r31,64-PTE_RPN_SHIFT,PTE_RPN_SHIFT
++	andis.	r0,r31,_PAGE_4K_PFN@h
++	srdi	r5,r31,PTE_RPN_SHIFT
++	bne-	htab_special_pfn
+ 	sldi	r5,r5,PAGE_SHIFT-HW_PAGE_SHIFT
+ 	add	r5,r5,r25
++htab_special_pfn:
+ 	sldi	r5,r5,HW_PAGE_SHIFT
+ 
+ 	/* Calculate primary group hash */
+@@ -469,10 +472,12 @@ _GLOBAL(htab_call_hpte_insert1)
+ 	/* Now try secondary slot */
+ 
+ 	/* real page number in r5, PTE RPN value + index */
+-	rldicl	r5,r31,64-PTE_RPN_SHIFT,PTE_RPN_SHIFT
++	andis.	r0,r31,_PAGE_4K_PFN@h
++	srdi	r5,r31,PTE_RPN_SHIFT
++	bne-	3f
+ 	sldi	r5,r5,PAGE_SHIFT-HW_PAGE_SHIFT
+ 	add	r5,r5,r25
+-	sldi	r5,r5,HW_PAGE_SHIFT
++3:	sldi	r5,r5,HW_PAGE_SHIFT
+ 
+ 	/* Calculate secondary group hash */
+ 	andc	r0,r27,r28
+Index: linux-2.6.18.ppc64/arch/powerpc/mm/hash_utils_64.c
+===================================================================
+--- linux-2.6.18.ppc64.orig/arch/powerpc/mm/hash_utils_64.c
++++ linux-2.6.18.ppc64/arch/powerpc/mm/hash_utils_64.c
+@@ -574,6 +574,27 @@ unsigned int hash_page_do_lazy_icache(un
+ 	return pp;
+ }
+ 
++/*
++ * Demote a segment to using 4k pages.
++ * For now this makes the whole process use 4k pages.
++ */
++void demote_segment_4k(struct mm_struct *mm, unsigned long addr)
++{
++#ifdef CONFIG_PPC_64K_PAGES
++	if (mm->context.user_psize == MMU_PAGE_4K)
++		return;
++	mm->context.user_psize = MMU_PAGE_4K;
++	mm->context.sllp = SLB_VSID_USER | mmu_psize_defs[MMU_PAGE_4K].sllp;
++	get_paca()->context = mm->context;
++	slb_flush_and_rebolt();
++#ifdef CONFIG_SPE_BASE
++	spu_flush_all_slbs(mm);
++#endif
++#endif
++}
++
++EXPORT_SYMBOL_GPL(demote_segment_4k);
++
+ /* Result code is:
+  *  0 - handled
+  *  1 - normal page fault
+@@ -666,15 +687,19 @@ int hash_page(unsigned long ea, unsigned
+ #ifndef CONFIG_PPC_64K_PAGES
+ 	rc = __hash_page_4K(ea, access, vsid, ptep, trap, local);
+ #else
++	/* If _PAGE_4K_PFN is set, make sure this is a 4k segment */
++	if (pte_val(*ptep) & _PAGE_4K_PFN) {
++		demote_segment_4k(mm, ea);
++		psize = MMU_PAGE_4K;
++	}
++
+ 	if (mmu_ci_restrictions) {
+ 		/* If this PTE is non-cacheable, switch to 4k */
+ 		if (psize == MMU_PAGE_64K &&
+ 		    (pte_val(*ptep) & _PAGE_NO_CACHE)) {
+ 			if (user_region) {
++				demote_segment_4k(mm, ea);
+ 				psize = MMU_PAGE_4K;
+-				mm->context.user_psize = MMU_PAGE_4K;
+-				mm->context.sllp = SLB_VSID_USER |
+-					mmu_psize_defs[MMU_PAGE_4K].sllp;
+ 			} else if (ea < VMALLOC_END) {
+ 				/*
+ 				 * some driver did a non-cacheable mapping
+@@ -763,13 +788,8 @@ void hash_preload(struct mm_struct *mm, 
+ 	if (mmu_ci_restrictions) {
+ 		/* If this PTE is non-cacheable, switch to 4k */
+ 		if (mm->context.user_psize == MMU_PAGE_64K &&
+-		    (pte_val(*ptep) & _PAGE_NO_CACHE)) {
+-			mm->context.user_psize = MMU_PAGE_4K;
+-			mm->context.sllp = SLB_VSID_USER |
+-				mmu_psize_defs[MMU_PAGE_4K].sllp;
+-			get_paca()->context = mm->context;
+-			slb_flush_and_rebolt();
+-		}
++		    (pte_val(*ptep) & _PAGE_NO_CACHE))
++			demote_segment_4k(mm, ea);
+ 	}
+ 	if (mm->context.user_psize == MMU_PAGE_64K)
+ 		__hash_page_64K(ea, access, vsid, ptep, trap, local);
+Index: linux-2.6.18.ppc64/include/asm-powerpc/pgtable-4k.h
+===================================================================
+--- linux-2.6.18.ppc64.orig/include/asm-powerpc/pgtable-4k.h
++++ linux-2.6.18.ppc64/include/asm-powerpc/pgtable-4k.h
+@@ -96,3 +96,6 @@
+ 
+ #define pud_ERROR(e) \
+ 	printk("%s:%d: bad pud %08lx.\n", __FILE__, __LINE__, pud_val(e))
++
++#define remap_4k_pfn(vma, addr, pfn, prot)	\
++	remap_pfn_range((vma), (addr), (pfn), PAGE_SIZE, (prot))
+Index: linux-2.6.18.ppc64/include/asm-powerpc/pgtable-64k.h
+===================================================================
+--- linux-2.6.18.ppc64.orig/include/asm-powerpc/pgtable-64k.h
++++ linux-2.6.18.ppc64/include/asm-powerpc/pgtable-64k.h
+@@ -35,6 +35,7 @@
+ #define _PAGE_HPTE_SUB	0x0ffff000 /* combo only: sub pages HPTE bits */
+ #define _PAGE_HPTE_SUB0	0x08000000 /* combo only: first sub page */
+ #define _PAGE_COMBO	0x10000000 /* this is a combo 4k page */
++#define _PAGE_4K_PFN	0x20000000 /* PFN is for a single 4k page */
+ #define _PAGE_F_SECOND  0x00008000 /* full page: hidx bits */
+ #define _PAGE_F_GIX     0x00007000 /* full page: hidx bits */
+ 
+@@ -44,12 +45,10 @@
+ 
+ /* Shift to put page number into pte.
+  *
+- * That gives us a max RPN of 32 bits, which means a max of 48 bits
+- * of addressable physical space.
+- * We could get 3 more bits here by setting PTE_RPN_SHIFT to 29 but
+- * 32 makes PTEs more readable for debugging for now :)
++ * That gives us a max RPN of 34 bits, which means a max of 50 bits
++ * of addressable physical space, or 46 bits for the special 4k PFNs.
+  */
+-#define PTE_RPN_SHIFT	(32)
++#define PTE_RPN_SHIFT	(30)
+ #define PTE_RPN_MAX	(1UL << (64 - PTE_RPN_SHIFT))
+ #define PTE_RPN_MASK	(~((1UL<<PTE_RPN_SHIFT)-1))
+ 
+@@ -93,6 +92,10 @@
+ #define pte_pagesize_index(pte)	\
+ 	(((pte) & _PAGE_COMBO)? MMU_PAGE_4K: MMU_PAGE_64K)
+ 
++#define remap_4k_pfn(vma, addr, pfn, prot)				\
++	remap_pfn_range((vma), (addr), (pfn), PAGE_SIZE,		\
++			__pgprot(pgprot_val((prot)) | _PAGE_4K_PFN))
++
+ #endif /*  __ASSEMBLY__ */
+ #endif /* __KERNEL__ */
+ #endif /* _ASM_POWERPC_PGTABLE_64K_H */
+

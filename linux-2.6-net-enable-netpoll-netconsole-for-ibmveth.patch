@@ -1,0 +1,55 @@
+From: Neil Horman <nhorman@redhat.com>
+Subject: [RHEL5 Patch] Enable netpoll/netdump/netconsole for ibmveth (bz 211246)
+Date: Tue, 21 Nov 2006 13:58:54 -0500
+Bugzilla: 211246
+Message-Id: <20061121185854.GG4028@hmsendeavour.rdu.redhat.com>
+Changelog: Enable netpoll/netconsole for ibmveth
+
+
+Hey all-
+	This is an upstream backport of the patch to enable netpoll
+functionality in the ibmveth driver.  Since ibmveth gets used on platforms that
+don't currently support kdump, I think we need this so we can have legacy
+netdump support on those platforms.  Resolves bz 195438
+
+Regards
+Neil
+
+
+--- linux-2.6.18.noarch/drivers/net/ibmveth.c.orig	2006-11-21 08:07:04.000000000 -0500
++++ linux-2.6.18.noarch/drivers/net/ibmveth.c	2006-11-21 08:36:40.000000000 -0500
+@@ -926,6 +926,14 @@
+ 	return -EINVAL;
+ }
+ 
++#ifdef CONFIG_NET_POLL_CONTROLLER
++static void ibmveth_poll_controller(struct net_device *dev)
++{
++	ibmveth_replenish_task(dev->priv);
++	ibmveth_interrupt(dev->irq, dev, NULL);
++}
++#endif
++
+ static int __devinit ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
+ {
+ 	int rc, i;
+@@ -998,6 +1006,9 @@
+ 	netdev->ethtool_ops           = &netdev_ethtool_ops;
+ 	netdev->change_mtu         = ibmveth_change_mtu;
+ 	SET_NETDEV_DEV(netdev, &dev->dev);
++#ifdef CONFIG_NET_POLL_CONTROLLER
++	netdev->poll_controller = ibmveth_poll_controller;
++#endif
+  	netdev->features |= NETIF_F_LLTX;
+ 	spin_lock_init(&adapter->stats_lock);
+ 
+-- 
+/***************************************************
+ *Neil Horman
+ *Software Engineer
+ *Red Hat, Inc.
+ *nhorman@redhat.com
+ *gpg keyid: 1024D / 0x92A74FA1
+ *http://pgp.mit.edu
+ ***************************************************/
+

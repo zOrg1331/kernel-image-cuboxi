@@ -1,0 +1,95 @@
+From: Steve Dickson <SteveD@redhat.com>
+Date: Tue, 1 Apr 2008 15:11:24 -0400
+Subject: [nfs] fix the fsid revalidation in nfs_update_inode
+Message-id: 47F288DC.3000404@RedHat.com
+O-Subject: [RHEL 5.2] [BZ431166] NFS: 'No such file or directory' error from working Netapp NFS
+Bugzilla: 431166
+
+Here is a late breaking patch that stop the revalidation
+of the client's notion of the filsystem ID (or FID).
+
+As https://bugzilla.redhat.com/show_bug.cgi?id=431166#c38
+explains:
+
+When we detect that we've crossed a mountpoint on the remote server, we
+must take care not to use that inode to revalidate the fsid on our
+current superblock. To do so, we label the inode as a remote mountpoint,
+and check for that in nfs_update_inode().
+
+I was able to reproduce this problem with without a Netapp server
+as https://bugzilla.redhat.com/show_bug.cgi?id=431166#c44 explains:
+
+It seems I can reproduce this problem using V4 and a linux NFS server in
+a rawhide kernel by exporting a "filesystem tree" of at least
+three filesystem. Something similar to:
+
+   export /fs1
+   export /fs1/fs2
+   export /fs1/fs2/fs3
+
+Then do a v4 mount on a client
+   mount -t nfs4 server:/fs1 /mnt/fs1
+
+Now when the third filesystem is access from the client
+   ls /mnt/fs1/fs2/fs3
+
+the access fails with ESTALE because does the fids are not handled
+correctly, which this patch does address.
+
+The point of all this is, this looks like its a good patch
+and we should try to move forward with it.
+
+Please ACK.
+
+steved.
+
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+Date: Thu, 6 Mar 2008 12:34:50 -0500
+NFS: Fix the fsid revalidation in nfs_update_inode()
+
+When we detect that we've crossed a mountpoint on the remote server, we
+must take care not to use that inode to revalidate the fsid on our
+current superblock. To do so, we label the inode as a remote mountpoint,
+and check for that in nfs_update_inode().
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+Acked-by: Peter Staubach <staubach@redhat.com>
+Acked-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/nfs/inode.c b/fs/nfs/inode.c
+index 1e9ce09..53f96fa 100644
+--- a/fs/nfs/inode.c
++++ b/fs/nfs/inode.c
+@@ -286,6 +286,7 @@ nfs_fhget(struct super_block *sb, struct nfs_fh *fh, struct nfs_fattr *fattr)
+ 				else
+ 					inode->i_op = &nfs_mountpoint_inode_operations;
+ 				inode->i_fop = NULL;
++				set_bit(NFS_INO_MOUNTPOINT, &nfsi->flags);
+ 			}
+ 		} else if (S_ISLNK(inode->i_mode))
+ 			inode->i_op = &nfs_symlink_inode_operations;
+@@ -921,8 +922,9 @@ static int nfs_update_inode(struct inode *inode, struct nfs_fattr *fattr)
+ 
+ 	server = NFS_SERVER(inode);
+ 	/* Update the fsid? */
+-	if (S_ISDIR(inode->i_mode)
+-			&& !nfs_fsid_equal(&server->fsid, &fattr->fsid))
++	if (S_ISDIR(inode->i_mode) &&
++			!nfs_fsid_equal(&server->fsid, &fattr->fsid) &&
++			!test_bit(NFS_INO_MOUNTPOINT, &nfsi->flags))
+ 		server->fsid = fattr->fsid;
+ 
+ 	/*
+diff --git a/include/linux/nfs_fs.h b/include/linux/nfs_fs.h
+index 004e5b5..623c099 100644
+--- a/include/linux/nfs_fs.h
++++ b/include/linux/nfs_fs.h
+@@ -220,6 +220,7 @@ struct nfs_inode {
+ #define NFS_INO_STALE		(2)		/* possible stale inode */
+ #define NFS_INO_ACL_LRU_SET	(3)		/* Inode is on the LRU list */
+ #define NFS_INO_FSCACHE	(4)		/* inode can be cached by FS-Cache */
++#define NFS_INO_MOUNTPOINT	(5)		/* inode is remote mountpoint */
+ 
+ static inline struct nfs_inode *NFS_I(struct inode *inode)
+ {

@@ -1,0 +1,102 @@
+From: Scott Moser <smoser@redhat.com>
+Date: Thu, 1 Nov 2007 14:38:07 -0400
+Subject: [ppc64] eHEA: ibm,loc-code not unique
+Message-id: Pine.LNX.4.64.0711011437220.30676@squad5-lp1.lab.boston.redhat.com
+O-Subject: [PATCH RHEL5u2] bz271821 ibm,loc-code not unique for eHEA/eHCA adapters
+Bugzilla: 271821
+
+Bug 271821 [1]
+---------------
+
+Description:
+-----------
+Each eHEA/eHCA adapter is shown in the Open Firmware Device Tree and has
+an attribute called ibm,loc-code. The IBMEBUS driver uses this loc-code to
+create entries for each adapter in the sysfs. The ibm,loc-code is not
+unique. For some machine configurations with multiple eHEA/eHCA adapters
+this causes problems when the IBMEBUS driver tries to create the same
+sysfs entries twice.
+
+This patch will change ibmebus to use the device-tree name for bus ID
+instead of the location code. The device-tree name is unique (enforced by
+OFDT specs), so this will prevent bus ID collisions.
+
+Kernel Version:
+--------------
+Patch built against 2.6.18-54
+
+Upstream Status:
+---------------
+This is a backport of upstream commit
+d8612417b2f78767b96ca434b50d23e5cdfcde07
+
+Test Status:
+----
+To ensure cross platform build, a brew scratch build has been done against
+2.6.18-54 at [2].
+
+I've booted the kernel above and done hotplug add and remove for the ehea
+devices.  I've verified that the entries created in sysfs
+(/sys/devices/ibmebus/) are named like lhea@23c00100 rather than with the
+ibm,loc-code (which looks like 789D.001.DQDMLYY-P1).
+
+Please review patch below for RHEL5u2
+--
+[1]:https://bugzilla.redhat.com/show_bug.cgi?id=271821
+--
+ arch/powerpc/kernel/ibmebus.c |   27 ++++++++-------------------
+ 1 file changed, 8 insertions(+), 19 deletions(-)
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+---
+ arch/powerpc/kernel/ibmebus.c |   27 ++++++++-------------------
+ 1 files changed, 8 insertions(+), 19 deletions(-)
+
+diff --git a/arch/powerpc/kernel/ibmebus.c b/arch/powerpc/kernel/ibmebus.c
+index 74e40f9..0880a15 100644
+--- a/arch/powerpc/kernel/ibmebus.c
++++ b/arch/powerpc/kernel/ibmebus.c
+@@ -185,21 +185,7 @@ static struct ibmebus_dev* __devinit ibmebus_register_device_node(
+ 	struct device_node *dn)
+ {
+ 	struct ibmebus_dev *dev;
+-	char *loc_code;
+-	int length;
+-
+-	loc_code = (char *)get_property(dn, "ibm,loc-code", NULL);
+-	if (!loc_code) {
+-                printk(KERN_WARNING "%s: node %s missing 'ibm,loc-code'\n",
+-		       __FUNCTION__, dn->name ? dn->name : "<unknown>");
+-		return ERR_PTR(-EINVAL);
+-        }
+-	
+-	if (strlen(loc_code) == 0) {
+-	        printk(KERN_WARNING "%s: 'ibm,loc-code' is invalid\n",
+-		       __FUNCTION__);
+-		return ERR_PTR(-EINVAL);
+-	}
++	int i, len, bus_len;
+ 
+ 	dev = kzalloc(sizeof(struct ibmebus_dev), GFP_KERNEL);
+ 	if (!dev) {
+@@ -208,10 +194,13 @@ static struct ibmebus_dev* __devinit ibmebus_register_device_node(
+ 
+ 	dev->ofdev.node = of_node_get(dn);
+        
+-	length = strlen(loc_code);
+-	memcpy(dev->ofdev.dev.bus_id, loc_code 
+-		+ (length - min(length, BUS_ID_SIZE - 1)), 
+-		min(length, BUS_ID_SIZE - 1));
++	len = strlen(dn->full_name + 1);
++	bus_len = min(len, BUS_ID_SIZE - 1);
++	memcpy(dev->ofdev.dev.bus_id, dn->full_name + 1
++	       + (len - bus_len), bus_len);
++	for (i = 0; i < bus_len; i++)
++		if (dev->ofdev.dev.bus_id[i] == '/')
++			dev->ofdev.dev.bus_id[i] = '_';
+ 
+ 	/* Register with generic device framework. */
+ 	if (ibmebus_register_device_common(dev, dn->name) != 0) {
+-- 
+1.5.3.5.645.gbb47
+

@@ -1,0 +1,183 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5.1] [GFS2] Fix bz 217356, GFS2 hangs waiting for semaphore
+Date: Wed, 18 Apr 2007 15:43:59 +0100
+Bugzilla: 217356
+Message-Id: <1176907439.1636.310.camel@quoit.chygwyn.com>
+Changelog: [GFS2] hangs waiting for semaphore
+
+
+Hi,
+
+this is another gfs2 fix from upstream, back ported to RHEL 5.1. It
+fixes a lock ordering problem when disposing of inodes whether that is
+through unlink, rename or rmdir. Russell's original patch didn't apply
+against RHEL 5.1, so this has been ported by hand. There are no code
+changes, it just seems to be a whitespace/context problem that was
+preventing it from applying,
+
+Steve.
+
+
+diff -Nru linux-rhel-base/fs/gfs2/inode.c ./linux-2.6.18.noarch/fs/gfs2/inode.c
+--- linux-rhel-base/fs/gfs2/inode.c	2007-04-18 15:15:36.000000000 +0100
++++ ./linux-2.6.18.noarch/fs/gfs2/inode.c	2007-04-18 15:19:59.000000000 +0100
+@@ -343,55 +343,11 @@
+ 	mark_inode_dirty(&ip->i_inode);
+ 
+ 	if (ip->i_inode.i_nlink == 0)
+-                error = gfs2_change_nlink_i(ip);
++                gfs2_unlink_di(&ip->i_inode); /* mark inode unlinked */
+ 
+ 	return error;
+ }
+ 
+-int gfs2_change_nlink_i(struct gfs2_inode *ip)
+-{
+-	struct gfs2_sbd *sdp = ip->i_inode.i_sb->s_fs_info;
+-	struct gfs2_inode *rindex = GFS2_I(sdp->sd_rindex);
+-	struct gfs2_glock *ri_gl = rindex->i_gl;
+-	struct gfs2_rgrpd *rgd;
+-	struct gfs2_holder ri_gh, rg_gh;
+-	int existing, error;
+-
+-	/* if we come from rename path, we could have the lock already */
+-	existing = gfs2_glock_is_locked_by_me(ri_gl);
+-	if (!existing) {
+-		error = gfs2_rindex_hold(sdp, &ri_gh);
+-		if (error)
+-			goto out;
+-	}
+-
+-	/* find the matching rgd */
+-	error = -EIO;
+-	rgd = gfs2_blk2rgrpd(sdp, ip->i_num.no_addr);
+-	if (!rgd)
+-		goto out_norgrp;
+-
+-	/* 
+-	 * Eventually we may want to move rgd(s) to a linked list
+-	 * and piggyback the free logic into one of gfs2 daemons
+-	 * to gain some performance. 
+-	 */
+-	if (!rgd->rd_gl || !gfs2_glock_is_locked_by_me(rgd->rd_gl)) {
+-		error = gfs2_glock_nq_init(rgd->rd_gl, LM_ST_EXCLUSIVE, 0, &rg_gh);
+-		if (error)
+-			goto out_norgrp;
+-
+-		gfs2_unlink_di(&ip->i_inode); /* mark inode unlinked */
+-		gfs2_glock_dq_uninit(&rg_gh);
+-	}
+-
+-out_norgrp:
+-	if (!existing)	
+-		gfs2_glock_dq_uninit(&ri_gh);
+-out:
+-	return error;
+-}
+-
+ struct inode *gfs2_lookup_simple(struct inode *dip, const char *name)
+ {
+ 	struct qstr qstr;
+diff -Nru linux-rhel-base/fs/gfs2/ops_inode.c ./linux-2.6.18.noarch/fs/gfs2/ops_inode.c
+--- linux-rhel-base/fs/gfs2/ops_inode.c	2007-04-18 15:15:35.000000000 +0100
++++ ./linux-2.6.18.noarch/fs/gfs2/ops_inode.c	2007-04-18 15:26:53.000000000 +0100
+@@ -264,13 +264,21 @@
+ 	struct gfs2_inode *dip = GFS2_I(dir);
+ 	struct gfs2_sbd *sdp = GFS2_SB(dir);
+ 	struct gfs2_inode *ip = GFS2_I(dentry->d_inode);
+-	struct gfs2_holder ghs[2];
++	struct gfs2_holder ghs[3];
++	struct gfs2_rgrpd *rgd;
++	struct gfs2_holder ri_gh;
+ 	int error;
+ 
++	error = gfs2_rindex_hold(sdp, &ri_gh);
++	if (error)
++		return error;
++
+ 	gfs2_holder_init(dip->i_gl, LM_ST_EXCLUSIVE, 0, ghs);
+ 	gfs2_holder_init(ip->i_gl, LM_ST_EXCLUSIVE, 0, ghs + 1);
++	rgd = gfs2_blk2rgrpd(sdp, ip->i_num.no_addr);
++	gfs2_holder_init(rgd->rd_gl, LM_ST_EXCLUSIVE, 0, ghs + 2);
+ 
+-	error = gfs2_glock_nq_m(2, ghs);
++	error = gfs2_glock_nq_m(3, ghs);
+ 	if (error)
+ 		goto out;
+ 
+@@ -291,10 +299,12 @@
+ out_end_trans:
+ 	gfs2_trans_end(sdp);
+ out_gunlock:
+-	gfs2_glock_dq_m(2, ghs);
++	gfs2_glock_dq_m(3, ghs);
+ out:
+ 	gfs2_holder_uninit(ghs);
+ 	gfs2_holder_uninit(ghs + 1);
++	gfs2_holder_uninit(ghs + 2);
++	gfs2_glock_dq_uninit(&ri_gh);
+ 	return error;
+ }
+ 
+@@ -449,13 +459,20 @@
+ 	struct gfs2_inode *dip = GFS2_I(dir);
+ 	struct gfs2_sbd *sdp = GFS2_SB(dir);
+ 	struct gfs2_inode *ip = GFS2_I(dentry->d_inode);
+-	struct gfs2_holder ghs[2];
++	struct gfs2_holder ghs[3];
++	struct gfs2_rgrpd *rgd;
++	struct gfs2_holder ri_gh;
+ 	int error;
+ 
++	error = gfs2_rindex_hold(sdp, &ri_gh);
++	if (error)
++		return error;
+ 	gfs2_holder_init(dip->i_gl, LM_ST_EXCLUSIVE, 0, ghs);
+ 	gfs2_holder_init(ip->i_gl, LM_ST_EXCLUSIVE, 0, ghs + 1);
++	rgd = gfs2_blk2rgrpd(sdp, ip->i_num.no_addr);
++	gfs2_holder_init(rgd->rd_gl, LM_ST_EXCLUSIVE, 0, ghs + 2);
+ 
+-	error = gfs2_glock_nq_m(2, ghs);
++	error = gfs2_glock_nq_m(3, ghs);
+ 	if (error)
+ 		goto out;
+ 
+@@ -483,10 +500,12 @@
+ 	gfs2_trans_end(sdp);
+ 
+ out_gunlock:
+-	gfs2_glock_dq_m(2, ghs);
++	gfs2_glock_dq_m(3, ghs);
+ out:
+ 	gfs2_holder_uninit(ghs);
+ 	gfs2_holder_uninit(ghs + 1);
++	gfs2_holder_uninit(ghs + 2);
++	gfs2_glock_dq_uninit(&ri_gh);
+ 	return error;
+ }
+ 
+@@ -547,7 +566,8 @@
+ 	struct gfs2_inode *ip = GFS2_I(odentry->d_inode);
+ 	struct gfs2_inode *nip = NULL;
+ 	struct gfs2_sbd *sdp = GFS2_SB(odir);
+-	struct gfs2_holder ghs[4], r_gh;
++	struct gfs2_holder ghs[5], r_gh;
++	struct gfs2_rgrpd *nrgd;
+ 	unsigned int num_gh;
+ 	int dir_rename = 0;
+ 	int alloc_required;
+@@ -587,6 +607,13 @@
+ 	if (nip) {
+ 		gfs2_holder_init(nip->i_gl, LM_ST_EXCLUSIVE, 0, ghs + num_gh);
+ 		num_gh++;
++		/* grab the resource lock for unlink flag twiddling
++		 * this is the case of the target file already existing
++		 * so we unlink before doing the rename
++		 */
++		nrgd = gfs2_blk2rgrpd(sdp, nip->i_num.no_addr);
++		if (nrgd)
++			gfs2_holder_init(nrgd->rd_gl, LM_ST_EXCLUSIVE, 0, ghs + num_gh++);
+ 	}
+ 
+ 	error = gfs2_glock_nq_m(num_gh, ghs);
+

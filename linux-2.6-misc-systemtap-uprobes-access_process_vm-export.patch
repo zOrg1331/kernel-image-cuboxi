@@ -1,0 +1,32 @@
+From: Frank Ch. Eigler <fche@redhat.com>
+Date: Tue, 9 Oct 2007 16:23:39 -0400
+Subject: [misc] systemtap uprobes: access_process_vm export
+Message-id: 20071009202338.GD7418@redhat.com
+O-Subject: [RHEL5.2 PATCH] systemtap uprobes: access_process_vm export
+Bugzilla: 424991
+
+Hi -
+
+The following patch, part of upstream commit 5992b6da, is needed for
+systemtap user-space support.  bz #228130.
+
+- FChE
+
+ kernel/ptrace.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Peter Zijlstra <pzijlstr@redhat.com>
+
+diff --git a/kernel/ptrace.c b/kernel/ptrace.c
+index 559072f..aa69d64 100644
+--- a/kernel/ptrace.c
++++ b/kernel/ptrace.c
+@@ -81,6 +81,7 @@ int access_process_vm(struct task_struct *tsk, unsigned long addr, void *buf, in
+ 	
+ 	return buf - old_buf;
+ }
++EXPORT_SYMBOL_GPL(access_process_vm);
+ 
+ 
+ #ifdef CONFIG_DEBUG_PREEMPT

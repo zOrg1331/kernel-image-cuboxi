@@ -1,0 +1,127 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] dlm: interface for purge
+Date: Thu, 19 Apr 2007 11:46:07 -0500
+Bugzilla: 237125
+Message-Id: <20070419164607.GE23079@redhat.com>
+Changelog: [dlm] interface for purge
+
+
+bz 237125
+
+Add code to accept purge commands from userland.
+
+Index: linux-rhel51-quilt/fs/dlm/lock.h
+===================================================================
+--- linux-rhel51-quilt.orig/fs/dlm/lock.h	2007-01-24 14:42:04.000000000 -0600
++++ linux-rhel51-quilt/fs/dlm/lock.h	2007-04-19 10:42:43.000000000 -0500
+@@ -41,6 +41,8 @@
+ 	uint32_t flags, uint32_t lkid, char *lvb_in);
+ int dlm_user_cancel(struct dlm_ls *ls,  struct dlm_user_args *ua_tmp,
+ 	uint32_t flags, uint32_t lkid);
++int dlm_user_purge(struct dlm_ls *ls, struct dlm_user_proc *proc,
++	int nodeid, int pid);
+ void dlm_clear_proc_locks(struct dlm_ls *ls, struct dlm_user_proc *proc);
+ 
+ static inline int is_master(struct dlm_rsb *r)
+Index: linux-rhel51-quilt/fs/dlm/user.c
+===================================================================
+--- linux-rhel51-quilt.orig/fs/dlm/user.c	2007-04-19 10:41:56.000000000 -0500
++++ linux-rhel51-quilt/fs/dlm/user.c	2007-04-19 10:42:43.000000000 -0500
+@@ -55,6 +55,7 @@
+ 	union  {
+ 		struct dlm_lock_params32 lock;
+ 		struct dlm_lspace_params lspace;
++		struct dlm_purge_params purge;
+ 	} i;
+ };
+ 
+@@ -91,6 +92,9 @@
+ 		kb->i.lspace.flags = kb32->i.lspace.flags;
+ 		kb->i.lspace.minor = kb32->i.lspace.minor;
+ 		strcpy(kb->i.lspace.name, kb32->i.lspace.name);
++	} else if (kb->cmd == DLM_USER_PURGE) {
++		kb->i.purge.nodeid = kb32->i.purge.nodeid;
++		kb->i.purge.pid = kb32->i.purge.pid;
+ 	} else {
+ 		kb->i.lock.mode = kb32->i.lock.mode;
+ 		kb->i.lock.namelen = kb32->i.lock.namelen;
+@@ -296,6 +300,22 @@
+ 	return error;
+ }
+ 
++static int device_user_purge(struct dlm_user_proc *proc,
++			     struct dlm_purge_params *params)
++{
++	struct dlm_ls *ls;
++	int error;
++
++	ls = dlm_find_lockspace_local(proc->lockspace);
++	if (!ls)
++		return -ENOENT;
++
++	error = dlm_user_purge(ls, proc, params->nodeid, params->pid);
++
++	dlm_put_lockspace(ls);
++	return error;
++}
++
+ static int device_create_lockspace(struct dlm_lspace_params *params)
+ {
+ 	dlm_lockspace_t *lockspace;
+@@ -507,6 +527,14 @@
+ 		error = device_remove_lockspace(&kbuf->i.lspace);
+ 		break;
+ 
++	case DLM_USER_PURGE:
++		if (!proc) {
++			log_print("no locking on control device");
++			goto out_sig;
++		}
++		error = device_user_purge(proc, &kbuf->i.purge);
++		break;
++
+ 	default:
+ 		log_print("Unknown command passed to DLM device : %d\n",
+ 			  kbuf->cmd);
+Index: linux-rhel51-quilt/include/linux/dlm_device.h
+===================================================================
+--- linux-rhel51-quilt.orig/include/linux/dlm_device.h	2007-01-24 14:42:04.000000000 -0600
++++ linux-rhel51-quilt/include/linux/dlm_device.h	2007-04-19 10:42:43.000000000 -0500
+@@ -19,7 +19,7 @@
+ 
+ /* Version of the device interface */
+ #define DLM_DEVICE_VERSION_MAJOR 5
+-#define DLM_DEVICE_VERSION_MINOR 0
++#define DLM_DEVICE_VERSION_MINOR 1
+ #define DLM_DEVICE_VERSION_PATCH 0
+ 
+ /* struct passed to the lock write */
+@@ -44,6 +44,11 @@
+ 	char name[0];
+ };
+ 
++struct dlm_purge_params {
++	__u32 nodeid;
++	__u32 pid;
++};
++
+ struct dlm_write_request {
+ 	__u32 version[3];
+ 	__u8 cmd;
+@@ -53,6 +58,7 @@
+ 	union  {
+ 		struct dlm_lock_params   lock;
+ 		struct dlm_lspace_params lspace;
++		struct dlm_purge_params  purge;
+ 	} i;
+ };
+ 
+@@ -76,6 +82,7 @@
+ #define DLM_USER_QUERY        3
+ #define DLM_USER_CREATE_LOCKSPACE  4
+ #define DLM_USER_REMOVE_LOCKSPACE  5
++#define DLM_USER_PURGE        6
+ 
+ /* Arbitrary length restriction */
+ #define MAX_LS_NAME_LEN 64
+

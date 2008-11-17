@@ -1,0 +1,36 @@
+From: Jon Masters <jcm@redhat.com>
+Subject: [RHEL5.1] MODULE_FIRMWARE patch
+Date: Thu, 22 Mar 2007 14:30:40 -0400
+Bugzilla: 233494
+Message-Id: <20070322183040.GD29240@devserv.devel.redhat.com>
+Changelog: [module] MODULE_FIRMWARE support
+
+
+Yo,
+
+I wanna get this into RHEL5.1 so I can add support for adding firmware deps.
+to initrd images. With this patch, it will now be possible to build drivers
+that annotate their source to provide us with this information - note that
+I'm not proposing we undo the re-integration of firmware in drivers we
+currently ship. This is more for any added/third party driver builds.
+
+It's upstream, just wasn't there in time for RHEL5.
+
+Signed-off-by: Jon Masters <jcm@redhat.com>
+
+diff -urNp linux-2.6.18.noarch_orig/include/linux/module.h linux-2.6.18.noarch/include/linux/module.h
+--- linux-2.6.18.noarch_orig/include/linux/module.h	2007-03-22 13:26:50.000000000 -0400
++++ linux-2.6.18.noarch/include/linux/module.h	2007-03-22 14:20:53.000000000 -0400
+@@ -156,6 +156,11 @@ extern struct module __this_module;
+ */
+ #define MODULE_VERSION(_version) MODULE_INFO(version, _version)
+ 
++/* Optional firmware file (or files) needed by the module
++ * format is simply firmware file name.  Multiple firmware
++ * files require multiple MODULE_FIRMWARE() specifiers */
++#define MODULE_FIRMWARE(_firmware) MODULE_INFO(firmware, _firmware)
++
+ /* Given an address, look for it in the exception tables */
+ const struct exception_table_entry *search_exception_tables(unsigned long add);
+ 
+

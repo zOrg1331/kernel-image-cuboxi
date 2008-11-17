@@ -1,0 +1,124 @@
+From: Kei Tokunaga<ktokunag@redhat.com>
+Subject: [RHEL5 PATCH] SHPCHP driver doesn't work in poll mode
+Date: Tue, 14 Nov 2006 16:19:17
+Bugzilla: 211679
+Message-Id: <455A32D5.5090404@redhat.com>
+Changelog: SHPCHP driver doesn't work in poll mode
+
+BZ211679
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=211679
+
+This patch is in upstream.
+http://www.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=b4a1efffcf8070dbc7734f27da10ce49fb9f2a34
+
+SHPC command always fails with the following message if
+the SHPCHP driver is loaded with poll event mode enabled.
+
+   shpchp: Command not completed in 2000 msec
+   shpchp: hpc_slot_disable: Write command failed!
+   shpchp: remove_board: Issue of Slot Disable command failed
+
+wait_event_interruptible_timeout() was called in shpc_wait_cmd()
+even in polling mode, which caused this issue.  This patch adds
+a new function 'shpc_poll_ctrl_busy()', which was the same code
+performed in shpc_write_cmd(), for polling mode and makes
+shpc_wait_cmd() and shpc_write_cmd() call the function.
+
+The patch applies to 2.6.18-1.2747.el5.
+
+BZ215561 depends on this bug.
+
+Thanks,
+Kei
+--
+Fujitsu On-site Engineer
+---
+
+ linux-2.6.18-1.2747.el5-kei/./drivers/pci/hotplug/shpchp_hpc.c |   54 ++++++----
+ 1 file changed, 35 insertions(+), 19 deletions(-)
+
+diff -puN ./drivers/pci/hotplug/shpchp_hpc.c~bz211679-fix_SHPCHP-poll_mode ./drivers/pci/hotplug/shpchp_hpc.c
+--- linux-2.6.18-1.2747.el5/./drivers/pci/hotplug/shpchp_hpc.c~bz211679-fix_SHPCHP-poll_mode	2006-11-14 14:32:39.000000000 -0500
++++ linux-2.6.18-1.2747.el5-kei/./drivers/pci/hotplug/shpchp_hpc.c	2006-11-14 14:36:59.000000000 -0500
+@@ -302,16 +302,43 @@ static void start_int_poll_timer(struct 
+ 	add_timer(&php_ctlr->int_poll_timer);
+ }
+ 
++/*
++ * Returns 1 if SHPC finishes executing a command within 1 sec,
++ * otherwise returns 0.
++ */
++static inline int shpc_poll_ctrl_busy(struct controller *ctrl)
++{
++	int i;
++	u16 cmd_status = shpc_readw(ctrl, CMD_STATUS);
++
++	if (!(cmd_status & 0x1))
++		return 1;
++
++	/* Check every 0.1 sec for a total of 1 sec */
++	for (i = 0; i < 10; i++) {
++		msleep(100);
++		cmd_status = shpc_readw(ctrl, CMD_STATUS);
++		if (!(cmd_status & 0x1))
++			return 1;
++	}
++
++	return 0;
++}
++
+ static inline int shpc_wait_cmd(struct controller *ctrl)
+ {
+ 	int retval = 0;
+-	unsigned int timeout_msec = shpchp_poll_mode ? 2000 : 1000;
+-	unsigned long timeout = msecs_to_jiffies(timeout_msec);
+-	int rc = wait_event_interruptible_timeout(ctrl->queue,
+-						  !ctrl->cmd_busy, timeout);
++	unsigned long timeout = msecs_to_jiffies(1000);
++	int rc;
++
++	if (shpchp_poll_mode)
++		rc = shpc_poll_ctrl_busy(ctrl);
++	else
++		rc = wait_event_interruptible_timeout(ctrl->queue,
++						!ctrl->cmd_busy, timeout);
+ 	if (!rc) {
+ 		retval = -EIO;
+-		err("Command not completed in %d msec\n", timeout_msec);
++		err("Command not completed in 1000 msec\n");
+ 	} else if (rc < 0) {
+ 		retval = -EINTR;
+ 		info("Command was interrupted by a signal\n");
+@@ -327,26 +354,15 @@ static int shpc_write_cmd(struct slot *s
+ 	u16 cmd_status;
+ 	int retval = 0;
+ 	u16 temp_word;
+-	int i;
+ 
+ 	DBG_ENTER_ROUTINE 
+ 
+ 	mutex_lock(&slot->ctrl->cmd_lock);
+ 
+-	for (i = 0; i < 10; i++) {
+-		cmd_status = shpc_readw(ctrl, CMD_STATUS);
+-		
+-		if (!(cmd_status & 0x1))
+-			break;
+-		/*  Check every 0.1 sec for a total of 1 sec*/
+-		msleep(100);
+-	}
+-
+-	cmd_status = shpc_readw(ctrl, CMD_STATUS);
+-	
+-	if (cmd_status & 0x1) { 
++	if (!shpc_poll_ctrl_busy(ctrl)) {
+ 		/* After 1 sec and and the controller is still busy */
+-		err("%s : Controller is still busy after 1 sec.\n", __FUNCTION__);
++		err("%s : Controller is still busy after 1 sec.\n",
++		    __FUNCTION__);
+ 		retval = -EBUSY;
+ 		goto out;
+ 	}
+
+_
+

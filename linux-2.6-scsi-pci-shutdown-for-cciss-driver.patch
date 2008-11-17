@@ -1,0 +1,151 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: [RHEL5.1 PATCH] bz248728 PCI shutdown for cciss driver
+Date: Fri, 3 Aug 2007 19:25:01 -0400 (EDT)
+Bugzilla: 248728
+Message-Id: <Pine.LNX.4.64.0708031923011.26752@bogart.boston.redhat.com>
+Changelog: [scsi] PCI shutdown for cciss driver
+
+
+
+This is a late critical bug fix for the cciss driver submitted by Mike
+Miller of HP.  Basically, we need a shutdown callback to flush the
+battery-backed cache in the adapter.  The bz has all apropriate flags
+set, the patch was submitted upstream by MM, and compile-tested by me.
+
+The patch adds support for the pci shutdown method. This is required to
+ensure we flush the battery backed write cache. This patch is included
+in 2.6.22.1. This is a critical fix. Without this patch it is possible to
+leave data in the BBWC on reboot or shutdown. Potential for data loss. This
+patch has been tested with up to 512 logical volumes.
+Please include this patch.
+
+Signed-off-by: Mike Miller <mike.miller@hp.com>
+
+-------------------------------------------------------------------------------
+ cciss.c |   65
+++++++++++++++++++++++++++++++++++++++++++----------------------
+ 1 file changed, 43 insertions(+), 22 deletions(-)
+
+diff -burNp linux-2.6.18.i386-p0001/drivers/block/cciss.c linux-2.6.18.i386/drivers/block/cciss.c
+--- linux-2.6.18.i386-p0001/drivers/block/cciss.c	2007-07-16 10:59:12.000000000 -0500
++++ linux-2.6.18.i386/drivers/block/cciss.c	2007-07-16 12:39:10.000000000 -0500
+@@ -167,6 +167,7 @@ static int sendcmd_withirq(__u8 cmd, int
+ 			   __u8 page_code, int cmd_type);
+ 
+ static void fail_all_cmds(unsigned long ctlr);
++static void cciss_shutdown(struct pci_dev *);
+ 
+ #ifdef CONFIG_PROC_FS
+ static int cciss_proc_get_info(char *buffer, char **start, off_t offset,
+@@ -3393,47 +3394,53 @@ static int __devinit cciss_init_one(stru
+ 	return -1;
+ }
+ 
+-static void __devexit cciss_remove_one(struct pci_dev *pdev)
++static void cciss_shutdown(struct pci_dev *pdev)
+ {
+ 	ctlr_info_t *tmp_ptr;
+-	int i, j;
++	int i;
+ 	char flush_buf[4];
+ 	int return_code;
+ 
+-	if (pci_get_drvdata(pdev) == NULL) {
+-		printk(KERN_ERR "cciss: Unable to remove device \n");
+-		return;
+-	}
+ 	tmp_ptr = pci_get_drvdata(pdev);
++	if (tmp_ptr == NULL)
++		return;
+ 	i = tmp_ptr->ctlr;
+-	if (hba[i] == NULL) {
+-		printk(KERN_ERR "cciss: device appears to "
+-		       "already be removed \n");
++	if (hba[i] == NULL)
+ 		return;
+-	}
++
+ 	/* Turn board interrupts off  and send the flush cache command */
+ 	/* sendcmd will turn off interrupt, and send the flush...
+ 	 * To write all data in the battery backed cache to disks */
+ 	memset(flush_buf, 0, 4);
+ 	return_code = sendcmd(CCISS_CACHE_FLUSH, i, flush_buf, 4, 0, 0, 0, NULL,
+ 			      TYPE_CMD);
+-	if (return_code != IO_OK) {
+-		printk(KERN_WARNING "Error Flushing cache on controller %d\n",
+-		       i);
++	if (return_code == IO_OK) {
++		printk(KERN_INFO "Completed flushing cache on controller %d\n", i);
++	} else {
++		printk(KERN_WARNING "Error flushing cache on controller %d\n", i);
+ 	}
+ 	free_irq(hba[i]->intr[2], hba[i]);
++}
+ 
+-#ifdef CONFIG_PCI_MSI
+-	if (hba[i]->msix_vector)
+-		pci_disable_msix(hba[i]->pdev);
+-	else if (hba[i]->msi_vector)
+-		pci_disable_msi(hba[i]->pdev);
+-#endif				/* CONFIG_PCI_MSI */
++static void __devexit cciss_remove_one(struct pci_dev *pdev)
++{
++	ctlr_info_t *tmp_ptr;
++	int i, j;
++
++	if (pci_get_drvdata(pdev) == NULL) {
++		printk(KERN_ERR "cciss: Unable to remove device \n");
++		return;
++	}
++	tmp_ptr = pci_get_drvdata(pdev);
++	i = tmp_ptr->ctlr;
++	if (hba[i] == NULL) {
++		printk(KERN_ERR "cciss: device appears to "
++		       "already be removed \n");
++		return;
++	}
+ 
+-	iounmap(hba[i]->vaddr);
+-	cciss_unregister_scsi(i);	/* unhook from SCSI subsystem */
+-	unregister_blkdev(hba[i]->major, hba[i]->devname);
+ 	remove_proc_entry(hba[i]->devname, proc_cciss);
++	unregister_blkdev(hba[i]->major, hba[i]->devname);
+ 
+ 	/* remove it from the disk list */
+ 	for (j = 0; j < CISS_MAX_LUN; j++) {
+@@ -3448,6 +3455,19 @@ static void __devexit cciss_remove_one(s
+ 		}
+ 	}
+ 
++	cciss_unregister_scsi(i);	/* unhook from SCSI subsystem */
++
++	cciss_shutdown(pdev);
++
++#ifdef CONFIG_PCI_MSI
++	if (hba[i]->msix_vector)
++		pci_disable_msix(hba[i]->pdev);
++	else if (hba[i]->msi_vector)
++		pci_disable_msi(hba[i]->pdev);
++#endif				/* CONFIG_PCI_MSI */
++
++	iounmap(hba[i]->vaddr);
++
+ 	pci_free_consistent(hba[i]->pdev, hba[i]->nr_cmds * sizeof(CommandList_struct),
+ 			    hba[i]->cmd_pool, hba[i]->cmd_pool_dhandle);
+ 	pci_free_consistent(hba[i]->pdev, hba[i]->nr_cmds * sizeof(ErrorInfo_struct),
+@@ -3470,6 +3490,7 @@ static struct pci_driver cciss_pci_drive
+ 	.probe = cciss_init_one,
+ 	.remove = __devexit_p(cciss_remove_one),
+ 	.id_table = cciss_pci_device_id,	/* id_table */
++	.shutdown = cciss_shutdown,
+ };
+ 
+ /*
+
+
+-- 
+Charles M. "Chip" Coldwell
+Senior Software Engineer
+Red Hat, Inc
+978-392-2426
+

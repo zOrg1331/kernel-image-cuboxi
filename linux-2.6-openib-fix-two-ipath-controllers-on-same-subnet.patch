@@ -1,0 +1,78 @@
+From: Doug Ledford <dledford@redhat.com>
+Subject: [Patch RHEL5.1] Fix ipath driver when 2 ipath controllers are on 	the same subnet
+Date: Thu, 16 Aug 2007 16:37:58 -0400
+Bugzilla: 253005
+Message-Id: <1187296678.14384.215.camel@firewall.xsintricity.com>
+Changelog: [openib] Fix two ipath controllers on same subnet
+
+
+There is a bug in the ipath driver when you have two cards in a system
+that are connected to the same subnet.  Each card has a unique guid, and
+the driver is supposed to send that guid to the subnet manager so that
+the subnet manager can build a map of what guids exist and assign each
+guid/port combination a unique link id.  Due to a thinko in the ipath
+driver, all cards in the system report the same guid to the subnet
+manager.  This causes the subnet manager to think that it is merely
+receiving duplicate information about the same guid/port combination,
+even though in reality it is receiving information about two distinctly
+different cards.  The net result is that the subnet manager assigns the
+same link id to both cards in the system.  When the cards then attempt
+to attach themselves to the ib fabric with the same link id, the last
+card to attempt to attach wins out and the other card gets disabled by
+the switch.  However, the cards will periodly attempt to reattach using
+that link id, so one card will be active for a while, then the other
+card will attempt to attach with the same link id, it will win, and the
+card that *was* active goes inactive.  This repeats ad infinitum.
+
+The attached patch solves this issue by correctly using the guid from
+the card in question when returning the guid/port information to the
+subnet manager.
+
+I verified that prior to this patch, a fresh start of the opensm subnet
+manager with the previous guid cache erased did not in fact see both
+guids from the machine with two cards installed, and instead only saw
+one guid.  I then booted the problem machine with a kernel that had this
+patch applied, and both ports on the card were properly assigned
+different link ids, both ports were able to attach and stay attached to
+the fabric, and a reinspection of the guid cache on the subnet manager
+machine now properly shows both card guids in the guid list.
+
+This is for bugzilla 253005 and I've requested exception status for this
+one line change.  It's also already upstream.
+
+-- 
+Doug Ledford <dledford@redhat.com>
+              GPG KeyID: CFBFF194
+              http://people.redhat.com/dledford
+
+Infiniband specific RPMs available at
+              http://people.redhat.com/dledford/Infiniband
+
+commit f41d229865c984015914221959675b1c8723f6a7
+Author: Sean Hefty <sean.hefty@intel.com>
+
+    IB/ipath: return correct PortGUID in NodeInfo
+    
+    Return the PortGUID of the correct port when responding to a NodeInfo
+    query.  Returning the SystemImageGUID causes issues when there are
+    multiple HCAs in a single system.
+    
+    Signed-off-by: Sean Hefty <sean.hefty@intel.com>
+    Signed-off-by: Roland Dreier <rolandd@cisco.com>
+
+diff --git a/drivers/infiniband/hw/ipath/ipath_mad.c b/drivers/infiniband/hw/ipath/ipath_mad.c
+index 2aaa029..d61c030 100644
+--- a/drivers/infiniband/hw/ipath/ipath_mad.c
++++ b/drivers/infiniband/hw/ipath/ipath_mad.c
+@@ -103,7 +103,7 @@ static int recv_subn_get_nodeinfo(struct ib_smp *smp,
+ 	/* This is already in network order */
+ 	nip->sys_guid = to_idev(ibdev)->sys_image_guid;
+ 	nip->node_guid = dd->ipath_guid;
+-	nip->port_guid = nip->sys_guid;
++	nip->port_guid = dd->ipath_guid;
+ 	nip->partition_cap = cpu_to_be16(ipath_get_npkeys(dd));
+ 	nip->device_id = cpu_to_be16(dd->ipath_deviceid);
+ 	majrev = dd->ipath_majrev;
+
+
+

@@ -1,0 +1,400 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH 2/3] BZ 218097  NetLabel: bring current with 	upstream: performance
+Date: Fri, 01 Dec 2006 15:15:16 -0500
+Bugzilla: 218097
+Message-Id: <1165004116.2079.178.camel@localhost.localdomain>
+Changelog: NetLabel: bring current with upstream: performance
+
+
+BZ 218097 Part 2:
+
+These patches improve performance of NetLabel labeled networking and
+help reduce the impact on networking performance when NetLabel is not
+being used.  These are patches 2,3,4,5, and 10 from the set listed at:
+
+http://www.mail-archive.com/netdev@vger.kernel.org/msg26592.html
+
+These are all on track for 2.6.20.
+
+*****
+Patch 2:
+Currently the NetLabel unlabeled packet accept flag is an atomic type
+and it is checked for every non-NetLabel packet which comes into the
+system but rarely ever changed.  This patch changes this flag to a
+normal integer and protects it with RCU locking.
+
+Patch 3:
+The netlbl_secattr_init() function would always return 0 making it
+pointless to have a return value.  This patch changes the function to
+return void.
+
+Patch 4:
+The existing netlbl_lsm_secattr struct required the LSM to check all of
+the fields to determine if any security attributes were present
+resulting in a lot of work in the common case of no attributes.  This
+patch adds a 'flags' field which is used to indicate which attributes
+are present in the structure; this should allow the LSM to do a quick
+comparison to determine if the structure holds any security attributes. 
+Example:
+
+ if (netlbl_lsm_secattr->flags)
+        /* security attributes present */
+ else
+        /* NO security attributes present */
+
+Patch 5:
+Right now the NetLabel code always jumps into the CIPSOv4 layer to
+determine if a CIPSO IP option is present.  However, we can do this
+check directly in the NetLabel code by making use of the
+CIPSO_V4_OPTEXIST() macro which should save us a function call in the
+common case of not having a CIPSOv4 option present.
+
+Patch 10:
+The cipso_v4_doi_search() function behaves the same as
+cipso_v4_doi_getdef() but is a local, static function so use it whenever
+possibile in the CIPSOv4 code base.
+
+-Eric
+
+diff -Naupr linux-2.6.18.i686.pre.perf/include/net/netlabel.h linux-2.6.18.i686/include/net/netlabel.h
+--- linux-2.6.18.i686.pre.perf/include/net/netlabel.h	2006-11-27 16:01:38.000000000 -0500
++++ linux-2.6.18.i686/include/net/netlabel.h	2006-11-27 16:38:30.000000000 -0500
+@@ -111,11 +111,17 @@ struct netlbl_lsm_cache {
+ 	void (*free) (const void *data);
+ 	void *data;
+ };
++#define NETLBL_SECATTR_NONE             0x00000000
++#define NETLBL_SECATTR_DOMAIN           0x00000001
++#define NETLBL_SECATTR_CACHE            0x00000002
++#define NETLBL_SECATTR_MLS_LVL          0x00000004
++#define NETLBL_SECATTR_MLS_CAT          0x00000008
+ struct netlbl_lsm_secattr {
++	u32 flags;
++
+ 	char *domain;
+ 
+ 	u32 mls_lvl;
+-	u32 mls_lvl_vld;
+ 	unsigned char *mls_cat;
+ 	size_t mls_cat_len;
+ 
+@@ -169,14 +175,15 @@ static inline void netlbl_secattr_cache_
+  * @secattr: the struct to initialize
+  *
+  * Description:
+- * Initialize an already allocated netlbl_lsm_secattr struct.  Returns zero on
+- * success, negative values on error.
++ * Initialize an already allocated netlbl_lsm_secattr struct.
+  *
+  */
+-static inline int netlbl_secattr_init(struct netlbl_lsm_secattr *secattr)
++static inline void netlbl_secattr_init(struct netlbl_lsm_secattr *secattr)
+ {
+-	memset(secattr, 0, sizeof(*secattr));
+-	return 0;
++	secattr->flags = 0;
++	secattr->domain = NULL;
++	secattr->mls_cat = NULL;
++	secattr->cache = NULL;
+ }
+ 
+ /**
+diff -Naupr linux-2.6.18.i686.pre.perf/net/ipv4/cipso_ipv4.c linux-2.6.18.i686/net/ipv4/cipso_ipv4.c
+--- linux-2.6.18.i686.pre.perf/net/ipv4/cipso_ipv4.c	2006-11-27 16:01:25.000000000 -0500
++++ linux-2.6.18.i686/net/ipv4/cipso_ipv4.c	2006-11-27 16:38:45.000000000 -0500
+@@ -319,6 +319,7 @@ static int cipso_v4_cache_check(const un
+ 			entry->activity += 1;
+ 			atomic_inc(&entry->lsm_data->refcount);
+ 			secattr->cache = entry->lsm_data;
++			secattr->flags |= NETLBL_SECATTR_CACHE;
+ 			if (prev_entry == NULL) {
+ 				spin_unlock_bh(&cipso_v4_cache[bkt].lock);
+ 				return 0;
+@@ -1010,12 +1011,15 @@ static int cipso_v4_gentag_rbm(const str
+ 			       unsigned char **buffer,
+ 			       u32 *buffer_len)
+ {
+-	int ret_val = -EPERM;
++	int ret_val;
+ 	unsigned char *buf = NULL;
+ 	u32 buf_len;
+ 	u32 level;
+ 
+-	if (secattr->mls_cat) {
++	if ((secattr->flags & NETLBL_SECATTR_MLS_LVL) == 0)
++		return -EPERM;
++
++	if (secattr->flags & NETLBL_SECATTR_MLS_CAT) {
+ 		buf = kzalloc(CIPSO_V4_HDR_LEN + 4 + CIPSO_V4_TAG1_CAT_LEN,
+ 			      GFP_ATOMIC);
+ 		if (buf == NULL)
+@@ -1032,10 +1036,10 @@ static int cipso_v4_gentag_rbm(const str
+ 		/* This will send packets using the "optimized" format when
+ 		 * possibile as specified in  section 3.4.2.6 of the
+ 		 * CIPSO draft. */
+-		if (cipso_v4_rbm_optfmt && (ret_val > 0 && ret_val < 10))
+-			ret_val = 10;
+-
+-		buf_len = 4 + ret_val;
++		if (cipso_v4_rbm_optfmt && ret_val > 0 && ret_val <= 10)
++			buf_len = 14;
++		else
++			buf_len = 4 + ret_val;
+ 	} else {
+ 		buf = kzalloc(CIPSO_V4_HDR_LEN + 4, GFP_ATOMIC);
+ 		if (buf == NULL)
+@@ -1089,7 +1093,7 @@ static int cipso_v4_parsetag_rbm(const s
+ 	if (ret_val != 0)
+ 		return ret_val;
+ 	secattr->mls_lvl = level;
+-	secattr->mls_lvl_vld = 1;
++	secattr->flags |= NETLBL_SECATTR_MLS_LVL;
+ 
+ 	if (tag_len > 4) {
+ 		switch (doi_def->type) {
+@@ -1113,8 +1117,10 @@ static int cipso_v4_parsetag_rbm(const s
+ 		if (ret_val < 0) {
+ 			kfree(secattr->mls_cat);
+ 			return ret_val;
++		} else if (ret_val > 0) {
++			secattr->mls_cat_len = ret_val;
++			secattr->flags |= NETLBL_SECATTR_MLS_CAT;
+ 		}
+-		secattr->mls_cat_len = ret_val;
+ 	}
+ 
+ 	return 0;
+@@ -1158,7 +1164,7 @@ int cipso_v4_validate(unsigned char **op
+ 	}
+ 
+ 	rcu_read_lock();
+-	doi_def = cipso_v4_doi_getdef(ntohl(*((u32 *)&opt[2])));
++	doi_def = cipso_v4_doi_search(ntohl(*((u32 *)&opt[2])));
+ 	if (doi_def == NULL) {
+ 		err_offset = 2;
+ 		goto validate_return_locked;
+@@ -1390,7 +1396,7 @@ int cipso_v4_sock_getattr(struct sock *s
+ 
+ 	doi = ntohl(*(u32 *)&cipso_ptr[2]);
+ 	rcu_read_lock();
+-	doi_def = cipso_v4_doi_getdef(doi);
++	doi_def = cipso_v4_doi_search(doi);
+ 	if (doi_def == NULL) {
+ 		rcu_read_unlock();
+ 		return -ENOMSG;
+@@ -1448,15 +1454,13 @@ int cipso_v4_skbuff_getattr(const struct
+ 	u32 doi;
+ 	struct cipso_v4_doi *doi_def;
+ 
+-	if (!CIPSO_V4_OPTEXIST(skb))
+-		return -ENOMSG;
+ 	cipso_ptr = CIPSO_V4_OPTPTR(skb);
+ 	if (cipso_v4_cache_check(cipso_ptr, cipso_ptr[1], secattr) == 0)
+ 		return 0;
+ 
+ 	doi = ntohl(*(u32 *)&cipso_ptr[2]);
+ 	rcu_read_lock();
+-	doi_def = cipso_v4_doi_getdef(doi);
++	doi_def = cipso_v4_doi_search(doi);
+ 	if (doi_def == NULL)
+ 		goto skbuff_getattr_return;
+ 	switch (cipso_ptr[6]) {
+diff -Naupr linux-2.6.18.i686.pre.perf/net/netlabel/netlabel_kapi.c linux-2.6.18.i686/net/netlabel/netlabel_kapi.c
+--- linux-2.6.18.i686.pre.perf/net/netlabel/netlabel_kapi.c	2006-11-27 16:01:23.000000000 -0500
++++ linux-2.6.18.i686/net/netlabel/netlabel_kapi.c	2006-11-27 16:38:36.000000000 -0500
+@@ -62,6 +62,9 @@ int netlbl_socket_setattr(const struct s
+ 	int ret_val = -ENOENT;
+ 	struct netlbl_dom_map *dom_entry;
+ 
++	if ((secattr->flags & NETLBL_SECATTR_DOMAIN) == 0)
++		return -ENOENT;
++
+ 	rcu_read_lock();
+ 	dom_entry = netlbl_domhsh_getentry(secattr->domain);
+ 	if (dom_entry == NULL)
+@@ -146,10 +149,8 @@ int netlbl_socket_getattr(const struct s
+ int netlbl_skbuff_getattr(const struct sk_buff *skb,
+ 			  struct netlbl_lsm_secattr *secattr)
+ {
+-	int ret_val;
+-
+-	ret_val = cipso_v4_skbuff_getattr(skb, secattr);
+-	if (ret_val == 0)
++	if (CIPSO_V4_OPTEXIST(skb) &&
++	    cipso_v4_skbuff_getattr(skb, secattr) == 0)
+ 		return 0;
+ 
+ 	return netlbl_unlabel_getattr(secattr);
+@@ -200,7 +201,7 @@ void netlbl_cache_invalidate(void)
+ int netlbl_cache_add(const struct sk_buff *skb,
+ 		     const struct netlbl_lsm_secattr *secattr)
+ {
+-	if (secattr->cache == NULL)
++	if ((secattr->flags & NETLBL_SECATTR_CACHE) == 0)
+ 		return -ENOMSG;
+ 
+ 	if (CIPSO_V4_OPTEXIST(skb))
+diff -Naupr linux-2.6.18.i686.pre.perf/net/netlabel/netlabel_unlabeled.c linux-2.6.18.i686/net/netlabel/netlabel_unlabeled.c
+--- linux-2.6.18.i686.pre.perf/net/netlabel/netlabel_unlabeled.c	2006-11-27 16:01:23.000000000 -0500
++++ linux-2.6.18.i686/net/netlabel/netlabel_unlabeled.c	2006-11-27 16:38:22.000000000 -0500
+@@ -48,7 +48,8 @@
+ #include "netlabel_unlabeled.h"
+ 
+ /* Accept unlabeled packets flag */
+-static atomic_t netlabel_unlabel_accept_flg = ATOMIC_INIT(0);
++static DEFINE_SPINLOCK(netlabel_unlabel_acceptflg_lock);
++static u8 netlabel_unlabel_acceptflg = 0;
+ 
+ /* NetLabel Generic NETLINK CIPSOv4 family */
+ static struct genl_family netlbl_unlabel_gnl_family = {
+@@ -83,8 +84,12 @@ static void netlbl_unlabel_acceptflg_set
+ 	struct audit_buffer *audit_buf;
+ 	u8 old_val;
+ 
+-	old_val = atomic_read(&netlabel_unlabel_accept_flg);
+-	atomic_set(&netlabel_unlabel_accept_flg, value);
++	rcu_read_lock();
++	old_val = netlabel_unlabel_acceptflg;
++	spin_lock(&netlabel_unlabel_acceptflg_lock);
++	netlabel_unlabel_acceptflg = value;
++	spin_unlock(&netlabel_unlabel_acceptflg_lock);
++	rcu_read_unlock();
+ 
+ 	audit_buf = netlbl_audit_start_common(AUDIT_MAC_UNLBL_ALLOW,
+ 					      audit_info);
+@@ -156,9 +161,11 @@ static int netlbl_unlabel_list(struct sk
+ 		goto list_failure;
+ 	}
+ 
++	rcu_read_lock();
+ 	ret_val = nla_put_u8(ans_skb,
+ 			     NLBL_UNLABEL_A_ACPTFLG,
+-			     atomic_read(&netlabel_unlabel_accept_flg));
++			     netlabel_unlabel_acceptflg);
++	rcu_read_unlock();
+ 	if (ret_val != 0)
+ 		goto list_failure;
+ 
+@@ -244,10 +251,17 @@ int netlbl_unlabel_genl_init(void)
+  */
+ int netlbl_unlabel_getattr(struct netlbl_lsm_secattr *secattr)
+ {
+-	if (atomic_read(&netlabel_unlabel_accept_flg) == 1)
+-		return netlbl_secattr_init(secattr);
++	int ret_val;
++
++	rcu_read_lock();
++	if (netlabel_unlabel_acceptflg == 1) {
++		netlbl_secattr_init(secattr);
++		ret_val = 0;
++	} else
++		ret_val = -ENOMSG;
++	rcu_read_unlock();
+ 
+-	return -ENOMSG;
++	return ret_val;
+ }
+ 
+ /**
+diff -Naupr linux-2.6.18.i686.pre.perf/security/selinux/ss/services.c linux-2.6.18.i686/security/selinux/ss/services.c
+--- linux-2.6.18.i686.pre.perf/security/selinux/ss/services.c	2006-11-27 16:01:17.000000000 -0500
++++ linux-2.6.18.i686/security/selinux/ss/services.c	2006-11-27 16:38:30.000000000 -0500
+@@ -2237,8 +2237,6 @@ static void selinux_netlbl_cache_add(str
+ 	cache = kzalloc(sizeof(*cache),	GFP_ATOMIC);
+ 	if (cache == NULL)
+ 		goto netlbl_cache_add_return;
+-	secattr.cache->free = selinux_netlbl_cache_free;
+-	secattr.cache->data = (void *)cache;
+ 
+ 	cache->type = NETLBL_CACHE_T_MLS;
+ 	if (ebitmap_cpy(&cache->data.mls_label.level[0].cat,
+@@ -2251,6 +2249,10 @@ static void selinux_netlbl_cache_add(str
+ 	cache->data.mls_label.level[0].sens = ctx->range.level[0].sens;
+ 	cache->data.mls_label.level[1].sens = ctx->range.level[0].sens;
+ 
++	secattr.cache->free = selinux_netlbl_cache_free;
++	secattr.cache->data = (void *)cache;
++	secattr.flags = NETLBL_SECATTR_CACHE;
++
+ 	netlbl_cache_add(skb, &secattr);
+ 
+ netlbl_cache_add_return:
+@@ -2296,7 +2298,7 @@ static int selinux_netlbl_secattr_to_sid
+ 
+ 	POLICY_RDLOCK;
+ 
+-	if (secattr->cache) {
++	if (secattr->flags & NETLBL_SECATTR_CACHE) {
+ 		cache = NETLBL_CACHE(secattr->cache->data);
+ 		switch (cache->type) {
+ 		case NETLBL_CACHE_T_SID:
+@@ -2329,7 +2331,7 @@ static int selinux_netlbl_secattr_to_sid
+ 		default:
+ 			goto netlbl_secattr_to_sid_return;
+ 		}
+-	} else if (secattr->mls_lvl_vld) {
++	} else if (secattr->flags & NETLBL_SECATTR_MLS_LVL) {
+ 		ctx = sidtab_search(&sidtab, base_sid);
+ 		if (ctx == NULL)
+ 			goto netlbl_secattr_to_sid_return;
+@@ -2338,7 +2340,7 @@ static int selinux_netlbl_secattr_to_sid
+ 		ctx_new.role = ctx->role;
+ 		ctx_new.type = ctx->type;
+ 		mls_import_lvl(&ctx_new, secattr->mls_lvl, secattr->mls_lvl);
+-		if (secattr->mls_cat) {
++		if (secattr->flags & NETLBL_SECATTR_MLS_CAT) {
+ 			if (mls_import_cat(&ctx_new,
+ 					   secattr->mls_cat,
+ 					   secattr->mls_cat_len,
+@@ -2395,11 +2397,13 @@ int selinux_netlbl_skbuff_getsid(struct 
+ 
+ 	netlbl_secattr_init(&secattr);
+ 	rc = netlbl_skbuff_getattr(skb, &secattr);
+-	if (rc == 0)
++	if (rc == 0 && secattr.flags != NETLBL_SECATTR_NONE)
+ 		rc = selinux_netlbl_secattr_to_sid(skb,
+ 						   &secattr,
+ 						   base_sid,
+ 						   sid);
++	else
++		*sid = SECSID_NULL;
+ 	netlbl_secattr_destroy(&secattr);
+ 
+ 	return rc;
+@@ -2438,7 +2442,6 @@ static int selinux_netlbl_socket_setsid(
+ 	secattr.domain = kstrdup(policydb.p_type_val_to_name[ctx->type - 1],
+ 				 GFP_ATOMIC);
+ 	mls_export_lvl(ctx, &secattr.mls_lvl, NULL);
+-	secattr.mls_lvl_vld = 1;
+ 	rc = mls_export_cat(ctx,
+ 			    &secattr.mls_cat,
+ 			    &secattr.mls_cat_len,
+@@ -2447,6 +2450,10 @@ static int selinux_netlbl_socket_setsid(
+ 	if (rc != 0)
+ 		goto netlbl_socket_setsid_return;
+ 
++	secattr.flags |= NETLBL_SECATTR_DOMAIN | NETLBL_SECATTR_MLS_LVL;
++	if (secattr.mls_cat)
++		secattr.flags |= NETLBL_SECATTR_MLS_CAT;
++
+ 	rc = netlbl_socket_setattr(sock, &secattr);
+ 	if (rc == 0) {
+ 		spin_lock(&sksec->nlbl_lock);
+@@ -2572,6 +2579,7 @@ void selinux_netlbl_sock_graft(struct so
+ 
+ 	netlbl_secattr_init(&secattr);
+ 	if (netlbl_sock_getattr(sk, &secattr) == 0 &&
++	    secattr.flags != NETLBL_SECATTR_NONE &&
+ 	    selinux_netlbl_secattr_to_sid(NULL,
+ 					  &secattr,
+ 					  SECINITSID_UNLABELED,
+@@ -2702,7 +2710,7 @@ int selinux_netlbl_socket_setsockopt(str
+ 	    sksec->nlbl_state == NLBL_LABELED) {
+ 		netlbl_secattr_init(&secattr);
+ 		rc = netlbl_socket_getattr(sock, &secattr);
+-		if (rc == 0 && (secattr.cache || secattr.mls_lvl_vld))
++		if (rc == 0 && secattr.flags != NETLBL_SECATTR_NONE)
+ 			rc = -EACCES;
+ 		netlbl_secattr_destroy(&secattr);
+ 	}
+

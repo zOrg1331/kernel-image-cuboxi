@@ -1,0 +1,14 @@
+No external modules should be touching these symbols.
+If they are, they are broken.
+
+diff -urNp --exclude-from=/home/davej/.exclude linux-3022/fs/open.c linux-10000/fs/open.c
+--- linux-3022/fs/open.c
++++ linux-10000/fs/open.c
+@@ -976,7 +976,6 @@ out_error:
+ 	fd = error;
+ 	goto out;
+ }
+-EXPORT_SYMBOL_GPL(sys_open);
+ 
+ #ifndef __alpha__
+ 

@@ -1,0 +1,43 @@
+From: Doug Chapman <dchapman@redhat.com>
+Date: Thu, 6 Dec 2007 16:16:26 -0500
+Subject: [cpufreq] don't take sem in cpufreq_quick_get
+Message-id: 1196975786.1083.11.camel@athlon
+O-Subject: [RHEL 5.2 PATCH 5/5] hang at 'Disabling ondemand cpu frequency scaling'
+Bugzilla: 253416
+
+Patch 5 of 5 for BZ 253416
+
+backport of:
+
+commit 9eb59573d4b86f347e6cd04f47a4c2082009fa58
+Author: Andi Kleen <ak@suse.de>
+Date:   Wed Oct 10 02:18:27 2007 +0200
+
+    [CPUFREQ] Don't take semaphore in cpufreq_quick_get()
+
+    I don't see any reason to take an expensive lock in cpufreq_quick_get()
+    Reading policy->cur is a single atomic operation and after
+    the lock is dropped again the state could change any time anyways.
+
+    So don't take the lock in the first place.
+
+    This also makes this function interrupt safe which is useful
+    for some code of mine.
+
+diff --git a/drivers/cpufreq/cpufreq.c b/drivers/cpufreq/cpufreq.c
+index 5ee1b94..b2356eb 100644
+--- a/drivers/cpufreq/cpufreq.c
++++ b/drivers/cpufreq/cpufreq.c
+@@ -1024,12 +1024,7 @@ unsigned int cpufreq_quick_get(unsigned int cpu)
+ 	unsigned int ret = 0;
+ 
+ 	if (policy) {
+-		if (unlikely(lock_policy_rwsem_read(cpu)))
+-			return ret;
+-
+ 		ret = policy->cur;
+-
+-		unlock_policy_rwsem_read(cpu);
+ 		cpufreq_cpu_put(policy);
+ 	}
+ 

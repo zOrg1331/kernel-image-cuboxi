@@ -1,0 +1,67 @@
+From: Scott Moser <dzickus@lorax.boston.redhat.com>
+Date: Wed, 5 Dec 2007 13:11:39 -0500
+Subject: [ppc64] unequal allocation of hugepages
+Message-id: Pine.LNX.4.64.0712051309320.19799@squad5-lp1.lab.boston.redhat.com
+O-Subject: [PATCH RHEL5u2] bz239790 Unequal allocation of hugepages on pseries [1/3] - revised
+Bugzilla: 239790
+
+    Introduce alloc_pages_thisnode() to help deal with THISNODE allocations
+    without introducing the GFP flags in RH5.1.
+
+    If a node's first fallback node is a different node, then it must not
+    have any memory on it. So fail to satisfy the THISNODE allocation.
+
+    Setup the zonelist so that the first different node in the list will
+    result in __alloc_pages bailing.
+
+    Signed-off-by: Nishanth Aravamudan <nacc@us.ibm.com>
+
+--
+ include/linux/gfp.h |   32 ++++++++++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/include/linux/gfp.h b/include/linux/gfp.h
+index 92383d0..5ef5296 100644
+--- a/include/linux/gfp.h
++++ b/include/linux/gfp.h
+@@ -109,6 +109,38 @@ static inline int arch_free_page(struct page *page, int order) { return 0; }
+ extern struct page *
+ FASTCALL(__alloc_pages(gfp_t, unsigned int, struct zonelist *));
+ 
++static inline struct page *alloc_pages_thisnode(int nid, gfp_t gfp_mask,
++						unsigned int order)
++{
++	struct zonelist *zl;
++	struct zonelist thisnode_zl;
++	int i;
++
++	if (unlikely(order >= MAX_ORDER))
++		return NULL;
++
++	/* Unknown node is current node */
++	if (nid < 0)
++		nid = numa_node_id();
++
++	zl = NODE_DATA(nid)->node_zonelists + gfp_zone(gfp_mask);
++	/*
++	 * If the first fallback node is a different node, then this
++	 * node has no memory
++	 */
++	if (zl->zones[0]->zone_pgdat->node_id != nid)
++		return NULL;
++
++	for (i = 1; zl->zones[i] != NULL; i++) {
++		if (zl->zones[i]->zone_pgdat->node_id != nid)
++			break;
++		thisnode_zl.zones[i] = zl->zones[i];
++	}
++	thisnode_zl.zones[i] = NULL;
++
++	return __alloc_pages(gfp_mask, order, &thisnode_zl);
++}
++
+ static inline struct page *alloc_pages_node(int nid, gfp_t gfp_mask,
+ 						unsigned int order)
+ {

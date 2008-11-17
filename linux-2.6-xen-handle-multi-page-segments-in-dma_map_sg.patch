@@ -1,0 +1,86 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Thu, 20 Dec 2007 13:28:45 -0500
+Subject: [xen] handle multi-page segments in dma_map_sg
+Message-id: 20071220182845.7320.19225.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH 1/6] handle multi-page segments in dma_map_sg
+Bugzilla: 328321
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1183985110 -3600
+# Node ID 30033a6379428f57269455f0963841743c6d5e46
+# Parent  9cdade953890a612734d97b3abc21513a1a9cf6d
+x86: dma_map_sg() must handle multi-page segments.
+Signed-off-by: Keir Fraser <keir@xensource.com>
+linux-2.6.18-xen changeset: 93:08cf42135056cbc07a6d790d4851e0e4b160f847
+linux-2.6.18-xen date: Mon Jul 09 13:45:10 2007 +0100
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+
+diff --git a/arch/i386/kernel/pci-dma-xen.c b/arch/i386/kernel/pci-dma-xen.c
+index e217312..cdeda5a 100644
+--- a/arch/i386/kernel/pci-dma-xen.c
++++ b/arch/i386/kernel/pci-dma-xen.c
+@@ -130,6 +130,9 @@ dma_map_sg(struct device *hwdev, struct scatterlist *sg, int nents,
+ 			BUG_ON(!sg[i].page);
+ 			IOMMU_BUG_ON(address_needs_mapping(
+ 				hwdev, sg[i].dma_address));
++			IOMMU_BUG_ON(range_straddles_page_boundary(
++				page_to_pseudophys(sg[i].page) + sg[i].offset,
++				sg[i].length));
+ 		}
+ 		rc = nents;
+ 	}
+@@ -361,7 +364,7 @@ dma_map_single(struct device *dev, void *ptr, size_t size,
+ 		dma = swiotlb_map_single(dev, ptr, size, direction);
+ 	} else {
+ 		dma = virt_to_bus(ptr);
+-		IOMMU_BUG_ON(range_straddles_page_boundary(ptr, size));
++		IOMMU_BUG_ON(range_straddles_page_boundary(__pa(ptr), size));
+ 		IOMMU_BUG_ON(address_needs_mapping(dev, dma));
+ 	}
+ 
+diff --git a/arch/i386/kernel/swiotlb.c b/arch/i386/kernel/swiotlb.c
+index 5e3be10..2c5441d 100644
+--- a/arch/i386/kernel/swiotlb.c
++++ b/arch/i386/kernel/swiotlb.c
+@@ -436,7 +436,7 @@ swiotlb_map_single(struct device *hwdev, void *ptr, size_t size, int dir)
+ 	 * we can safely return the device addr and not worry about bounce
+ 	 * buffering it.
+ 	 */
+-	if (!range_straddles_page_boundary(ptr, size) &&
++	if (!range_straddles_page_boundary(__pa(ptr), size) &&
+ 	    !address_needs_mapping(hwdev, dev_addr))
+ 		return dev_addr;
+ 
+@@ -529,7 +529,9 @@ swiotlb_map_sg(struct device *hwdev, struct scatterlist *sg, int nelems,
+ 
+ 	for (i = 0; i < nelems; i++, sg++) {
+ 		dev_addr = SG_ENT_PHYS_ADDRESS(sg);
+-		if (address_needs_mapping(hwdev, dev_addr)) {
++		if (range_straddles_page_boundary(page_to_pseudophys(sg->page)
++						  + sg->offset, sg->length)
++		    || address_needs_mapping(hwdev, dev_addr)) {
+ 			buffer.page   = sg->page;
+ 			buffer.offset = sg->offset;
+ 			map = map_single(hwdev, buffer, sg->length, dir);
+diff --git a/include/asm-i386/mach-xen/asm/dma-mapping.h b/include/asm-i386/mach-xen/asm/dma-mapping.h
+index 580b144..18b1a0d 100644
+--- a/include/asm-i386/mach-xen/asm/dma-mapping.h
++++ b/include/asm-i386/mach-xen/asm/dma-mapping.h
+@@ -23,11 +23,11 @@ address_needs_mapping(struct device *hwdev, dma_addr_t addr)
+ }
+ 
+ static inline int
+-range_straddles_page_boundary(void *p, size_t size)
++range_straddles_page_boundary(paddr_t p, size_t size)
+ {
+ 	extern unsigned long *contiguous_bitmap;
+-	return (((((unsigned long)p & ~PAGE_MASK) + size) > PAGE_SIZE) &&
+-		!test_bit(__pa(p) >> PAGE_SHIFT, contiguous_bitmap));
++	return ((((p & ~PAGE_MASK) + size) > PAGE_SIZE) &&
++		!test_bit(p >> PAGE_SHIFT, contiguous_bitmap));
+ }
+ 
+ #define dma_alloc_noncoherent(d, s, h, f) dma_alloc_coherent(d, s, h, f)

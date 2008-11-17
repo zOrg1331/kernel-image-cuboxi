@@ -1,0 +1,46 @@
+From: Gerd Hoffmann <kraxel@redhat.com>
+Subject: [RHEL-5.1 PATCH 8/10] xen: blktap race #2
+Date: Fri, 15 Jun 2007 10:49:20 +0200
+Bugzilla: 222128
+Message-Id: <46725290.503@redhat.com>
+Changelog: [xen] xen: blktap race #2
+
+
+  Hi,
+
+This patch fixes yet another race in the blktap driver.
+
+cheers,
+  Gerd
+
+
+
+# HG changeset patch
+# User Jake Wires <jwires@xensource.com>
+# Date 1163731648 28800
+# Node ID f0ba459065d32b61c9d04ccde5787e48e23be782
+# Parent  f1d2860c51370f7a89c5b8b6b7941b8975928349
+[BLKTAP] fix race between ufe_ring and blk_ring in blktap.c
+
+Signed-off-by: Jake Wires <jwires@xensource.com>
+
+---
+ drivers/xen/blktap/blktapmain.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+Index: linux-2.6.18.noarch/drivers/xen/blktap/blktapmain.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/xen/blktap/blktapmain.c
++++ linux-2.6.18.noarch/drivers/xen/blktap/blktapmain.c
+@@ -1002,9 +1002,9 @@ static int blktap_read_ufe_ring(tap_blki
+ 			map[offset] = NULL;
+ 		}
+ 		fast_flush_area(pending_req, pending_idx, usr_idx, info->minor);
++		info->idx_map[usr_idx] = INVALID_REQ;
+ 		make_response(blkif, pending_req->id, res.operation,
+ 			      res.status);
+-		info->idx_map[usr_idx] = INVALID_REQ;
+ 		blkif_put(pending_req->blkif);
+ 		free_req(pending_req);
+ 	}
+

@@ -1,0 +1,1059 @@
+From: Geoff Gustafson <grgustaf@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] agpgart and drm support for bearlake graphics (bz 229091)
+Date: Thu, 14 Jun 2007 14:32:46 -0400
+Bugzilla: 229091
+Message-Id: <20070614183246.GA22021@samurai.boston.redhat.com>
+Changelog: [drm] agpgart and drm support for bearlake graphics
+
+
+On Thu, Jun 14, 2007 at 01:26:07PM -0400, Geoff Gustafson wrote:
+> Since this is getting painful, I will post one big patch properly applying
+> the patches on bz 227390 thread and these, in a second.
+
+OK, this big patch has all the crestline and bearlake agpgart and drm stuff
+together, for bz 227390 and 229091. Applies against -25.el5. Now without
+trailing whitespace!
+
+Built against -25.el5 and booted on bearlake as a sanity check.
+
+- Geoff
+
+Index: linux-2.6.18.x86_64/drivers/char/agp/agp.h
+===================================================================
+--- linux-2.6.18.x86_64.orig/drivers/char/agp/agp.h	2007-06-14 13:42:39.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/char/agp/agp.h	2007-06-14 13:44:42.000000000 -0400
+@@ -175,7 +175,7 @@ struct agp_bridge_data {
+ #define I830_GMCH_MEM_MASK		0x1
+ #define I830_GMCH_MEM_64M		0x1
+ #define I830_GMCH_MEM_128M		0
+-#define I830_GMCH_GMS_MASK		0x70
++#define I830_GMCH_GMS_MASK		0xf0
+ #define I830_GMCH_GMS_DISABLED		0x00
+ #define I830_GMCH_GMS_LOCAL		0x10
+ #define I830_GMCH_GMS_STOLEN_512	0x20
+@@ -229,6 +229,9 @@ struct agp_bridge_data {
+ #define I965_PGETBL_SIZE_512KB	(0 << 1)
+ #define I965_PGETBL_SIZE_256KB	(1 << 1)
+ #define I965_PGETBL_SIZE_128KB	(2 << 1)
++#define VTD_PGETBL_SIZE_MASK	(3 << 8)
++#define VTD_PGETBL_SIZE_1M	(1 << 8)
++#define VTD_PGETBL_SIZE_2M	(2 << 8)
+ #define I810_DRAM_CTL		0x3000
+ #define I810_DRAM_ROW_0		0x00000001
+ #define I810_DRAM_ROW_0_SDRAM	0x00000001
+Index: linux-2.6.18.x86_64/drivers/char/agp/intel-agp.c
+===================================================================
+--- linux-2.6.18.x86_64.orig/drivers/char/agp/intel-agp.c	2007-06-14 13:42:39.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/char/agp/intel-agp.c	2007-06-14 13:44:42.000000000 -0400
+@@ -19,6 +19,13 @@
+ #define PCI_DEVICE_ID_INTEL_82965G_IG       0x29A2
+ #define PCI_DEVICE_ID_INTEL_82965GM_HB      0x2A00
+ #define PCI_DEVICE_ID_INTEL_82965GM_IG      0x2A02
++#define PCI_DEVICE_ID_INTEL_82965GME_IG     0x2A12
++#define PCI_DEVICE_ID_INTEL_G33_HB          0x29C0
++#define PCI_DEVICE_ID_INTEL_G33_IG          0x29C2
++#define PCI_DEVICE_ID_INTEL_Q35_HB          0x29B0
++#define PCI_DEVICE_ID_INTEL_Q35_IG          0x29B2
++#define PCI_DEVICE_ID_INTEL_Q33_HB          0x29D0
++#define PCI_DEVICE_ID_INTEL_Q33_IG          0x29D2
+ 
+ #define IS_I965 (agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82946GZ_HB || \
+                  agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82965G_1_HB || \
+@@ -26,6 +33,10 @@
+                  agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82965G_HB || \
+                  agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82965GM_HB)
+ 
++#define IS_G33	(agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_G33_HB || \
++                 agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_Q35_HB || \
++                 agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_Q33_HB)
++
+ 
+ /* Intel 815 register */
+ #define INTEL_815_APCONT	0x51
+@@ -49,6 +60,8 @@
+ #define I915_PTEADDR	0x1C
+ #define I915_GMCH_GMS_STOLEN_48M	(0x6 << 4)
+ #define I915_GMCH_GMS_STOLEN_64M	(0x7 << 4)
++#define I915_GMCH_GMS_STOLEN_128M	(0x8 << 4)
++#define I915_GMCH_GMS_STOLEN_256M	(0x9 << 4)
+ 
+ /* Intel 965G registers */
+ #define I965_MSAC 0x62
+@@ -390,7 +403,7 @@ static void intel_i830_init_gtt_entries(
+ 	u8 rdct;
+ 	int local = 0;
+ 	static const int ddt[4] = { 0, 16, 32, 64 };
+-	int size;/* reserved space (in kb) at the top of stolen memory */
++	int size = 0; /* reserved space (in kb) at the top of stolen memory */
+ 
+ 	pci_read_config_word(agp_bridge->dev,I830_GMCH_CTRL,&gmch_ctrl);
+ 
+@@ -413,11 +426,28 @@ static void intel_i830_init_gtt_entries(
+ 			size = 512;
+ 			break;
+ 		default:
+-			printk(KERN_INFO PFX "Unknown page table size, "
+-				"assuming 512KB\n");
++			printk(KERN_INFO PFX "Unknown page table size 0x%x, "
++				"assuming 512KB\n", (pgetbl_ctl & I965_PGETBL_SIZE_MASK));
+ 			size = 512;
+ 		}
+ 		size += 4; /* add in BIOS popup space */
++	} else if (IS_G33) {
++		/* G33's GTT size defined in gmch_ctrl, which has two options:
++		* 1M (no VT-d mode) and 2M (VT-d mode)
++		*/
++		switch (gmch_ctrl & VTD_PGETBL_SIZE_MASK) {
++		case VTD_PGETBL_SIZE_1M:
++			size = 1024;
++			break;
++		case VTD_PGETBL_SIZE_2M:
++			size = 2048;
++			break;
++		default:
++			printk(KERN_INFO PFX "Unknown page table size 0x%x, "
++				"assuming 512KB\n", (gmch_ctrl & VTD_PGETBL_SIZE_MASK));
++			size = 512;
++		}
++		size += 4;
+ 	} else {
+ 		/* On previous hardware, the GTT size was just what was
+ 		* required to map the aperture.
+@@ -469,7 +499,8 @@ static void intel_i830_init_gtt_entries(
+ 			if (agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82915G_HB ||
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82915GM_HB ||
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945G_HB ||
+-			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945GM_HB || IS_I965 )
++			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945GM_HB ||
++			    IS_I965 || IS_G33)
+ 				gtt_entries = MB(48) - KB(size);
+ 			else
+ 				gtt_entries = 0;
+@@ -479,10 +510,24 @@ static void intel_i830_init_gtt_entries(
+ 			if (agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82915G_HB ||
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82915GM_HB ||
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945G_HB ||
+-			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945GM_HB || IS_I965)
++			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945GM_HB ||
++			    IS_I965 || IS_G33)
+ 				gtt_entries = MB(64) - KB(size);
+ 			else
+ 				gtt_entries = 0;
++			break;
++		case I915_GMCH_GMS_STOLEN_128M:
++			if (IS_G33)
++				gtt_entries = MB(128) - KB(size);
++			else
++				gtt_entries = 0;
++			break;
++		case I915_GMCH_GMS_STOLEN_256M:
++			if (IS_G33)
++				gtt_entries = MB(256) - KB(size);
++			else
++				gtt_entries = 0;
++			break;
+ 		default:
+ 			gtt_entries = 0;
+ 			break;
+@@ -1625,6 +1670,30 @@ static struct agp_bridge_driver intel_i9
+        .agp_destroy_page       = agp_generic_destroy_page,
+ };
+ 
++static struct agp_bridge_driver intel_g33_driver = {
++       .owner                  = THIS_MODULE,
++       .aperture_sizes         = intel_i830_sizes,
++       .size_type              = FIXED_APER_SIZE,
++       .num_aperture_sizes     = 4,
++       .needs_scratch_page     = TRUE,
++       .configure              = intel_i915_configure,
++       .fetch_size             = intel_i9xx_fetch_size,
++       .cleanup                = intel_i915_cleanup,
++       .tlb_flush              = intel_i810_tlbflush,
++       .mask_memory            = intel_i965_mask_memory,
++       .masks                  = intel_i810_masks,
++       .agp_enable             = intel_i810_agp_enable,
++       .cache_flush            = global_cache_flush,
++       .create_gatt_table      = intel_i915_create_gatt_table,
++       .free_gatt_table        = intel_i830_free_gatt_table,
++       .insert_memory          = intel_i915_insert_entries,
++       .remove_memory          = intel_i915_remove_entries,
++       .alloc_by_type          = intel_i830_alloc_by_type,
++       .free_by_type           = intel_i810_free_by_type,
++       .agp_alloc_page         = agp_generic_alloc_page,
++       .agp_destroy_page       = agp_generic_destroy_page,
++};
++
+ static struct agp_bridge_driver intel_7505_driver = {
+ 	.owner			= THIS_MODULE,
+ 	.aperture_sizes		= intel_8xx_sizes,
+@@ -1813,11 +1882,14 @@ static int __devinit agp_intel_probe(str
+ 		name = "945G";
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_82945GM_HB:
+-		if (find_i830(PCI_DEVICE_ID_INTEL_82945GM_IG))
++		if (find_i830(PCI_DEVICE_ID_INTEL_82945GM_IG)) {
+ 			bridge->driver = &intel_915_driver;
+-		else
++			name = "945GM";
++		} else if (find_i830(PCI_DEVICE_ID_INTEL_82945GME_IG)) {
++			bridge->driver = &intel_915_driver;
++			name = "945GME";
++		} else
+ 			bridge->driver = &intel_845_driver;
+-		name = "945GM";
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_82946GZ_HB:
+ 		if (find_i830(PCI_DEVICE_ID_INTEL_82946GZ_IG))
+@@ -1848,11 +1920,35 @@ static int __devinit agp_intel_probe(str
+ 		name = "965G";
+ 		break;
+ 	case PCI_DEVICE_ID_INTEL_82965GM_HB:
+-		if (find_i830(PCI_DEVICE_ID_INTEL_82965GM_IG))
++		if (find_i830(PCI_DEVICE_ID_INTEL_82965GM_IG)) {
++			bridge->driver = &intel_i965_driver;
++			name = "965GM";
++		} else if (find_i830(PCI_DEVICE_ID_INTEL_82965GME_IG)) {
+ 			bridge->driver = &intel_i965_driver;
++			name = "965GME/GLE";
++		} else
++			bridge->driver = &intel_845_driver;
++		break;
++	case PCI_DEVICE_ID_INTEL_G33_HB:
++		if (find_i830(PCI_DEVICE_ID_INTEL_G33_IG))
++			bridge->driver = &intel_g33_driver;
++		else
++			bridge->driver = &intel_845_driver;
++		name = "G33";
++		break;
++	case PCI_DEVICE_ID_INTEL_Q35_HB:
++		if (find_i830(PCI_DEVICE_ID_INTEL_Q35_IG))
++			bridge->driver = &intel_g33_driver;
++		else
++			bridge->driver = &intel_845_driver;
++		name = "Q35";
++		break;
++	case PCI_DEVICE_ID_INTEL_Q33_HB:
++		if (find_i830(PCI_DEVICE_ID_INTEL_Q33_IG))
++			bridge->driver = &intel_g33_driver;
+ 		else
+ 			bridge->driver = &intel_845_driver;
+-		name = "965GM";
++		name = "Q33";
+ 		break;
+ 
+ 	case PCI_DEVICE_ID_INTEL_7505_0:
+@@ -2014,6 +2110,9 @@ static struct pci_device_id agp_intel_pc
+ 	ID(PCI_DEVICE_ID_INTEL_82965Q_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_82965G_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_82965GM_HB),
++	ID(PCI_DEVICE_ID_INTEL_G33_HB),
++	ID(PCI_DEVICE_ID_INTEL_Q35_HB),
++	ID(PCI_DEVICE_ID_INTEL_Q33_HB),
+ 	{ }
+ };
+ 
+Index: linux-2.6.18.x86_64/drivers/char/drm/drm_pciids.h
+===================================================================
+--- linux-2.6.18.x86_64.orig/drivers/char/drm/drm_pciids.h	2007-06-14 13:42:39.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/char/drm/drm_pciids.h	2007-06-14 13:44:42.000000000 -0400
+@@ -277,17 +277,23 @@
+ 	{0, 0, 0}
+ 
+ #define i915_PCI_IDS \
+-	{0x8086, 0x3577, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, \
+-	{0x8086, 0x2562, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, \
+-	{0x8086, 0x3582, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, \
+-	{0x8086, 0x2572, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, \
+-	{0x8086, 0x2582, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, \
+-	{0x8086, 0x2592, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, \
+-	{0x8086, 0x2772, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, \
+-	{0x8086, 0x27a2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, \
+-	{0x8086, 0x2972, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, \
+-	{0x8086, 0x2982, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, \
+-	{0x8086, 0x2992, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, \
+-	{0x8086, 0x29a2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, \
++	{0x8086, 0x3577, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I8XX}, \
++	{0x8086, 0x2562, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I8XX}, \
++	{0x8086, 0x3582, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I8XX}, \
++	{0x8086, 0x2572, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I8XX}, \
++	{0x8086, 0x2582, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
++	{0x8086, 0x2592, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
++	{0x8086, 0x2772, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
++	{0x8086, 0x27A2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
++	{0x8086, 0x27AE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
++	{0x8086, 0x2972, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
++	{0x8086, 0x2982, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
++	{0x8086, 0x2992, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
++	{0x8086, 0x29A2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
++	{0x8086, 0x2A02, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
++	{0x8086, 0x2A12, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
++	{0x8086, 0x29C2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
++	{0x8086, 0x29B2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
++	{0x8086, 0x29D2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
+ 	{0, 0, 0}
+ 
+Index: linux-2.6.18.x86_64/drivers/char/drm/i810_dma.c
+===================================================================
+--- linux-2.6.18.x86_64.orig/drivers/char/drm/i810_dma.c	2007-06-14 13:42:39.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/char/drm/i810_dma.c	2007-06-14 13:44:42.000000000 -0400
+@@ -141,10 +141,10 @@ static int i810_map_buffer(drm_buf_t * b
+ 					    MAP_SHARED, buf->bus_address);
+ 	dev_priv->mmap_buffer = NULL;
+ 	filp->f_op = old_fops;
+-	if ((unsigned long)buf_priv->virtual > -1024UL) {
++	if (IS_ERR(buf_priv->virtual)) {
+ 		/* Real error */
+ 		DRM_ERROR("mmap error\n");
+-		retcode = (signed int)buf_priv->virtual;
++		retcode = PTR_ERR(buf_priv->virtual);
+ 		buf_priv->virtual = NULL;
+ 	}
+ 	up_write(&current->mm->mmap_sem);
+@@ -808,7 +808,7 @@ static void i810_dma_dispatch_vertex(drm
+ 		    ((GFX_OP_PRIMITIVE | prim | ((used / 4) - 2)));
+ 
+ 		if (used & 4) {
+-			*(u32 *) ((u32) buf_priv->kernel_virtual + used) = 0;
++			*(u32 *) ((char *) buf_priv->kernel_virtual + used) = 0;
+ 			used += 4;
+ 		}
+ 
+@@ -1166,7 +1166,7 @@ static void i810_dma_dispatch_mc(drm_dev
+ 
+ 	if (buf_priv->currently_mapped == I810_BUF_MAPPED) {
+ 		if (used & 4) {
+-			*(u32 *) ((u32) buf_priv->virtual + used) = 0;
++			*(u32 *) ((char *) buf_priv->virtual + used) = 0;
+ 			used += 4;
+ 		}
+ 
+Index: linux-2.6.18.x86_64/drivers/char/drm/i810_drm.h
+===================================================================
+--- linux-2.6.18.x86_64.orig/drivers/char/drm/i810_drm.h	2007-06-14 13:42:39.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/char/drm/i810_drm.h	2007-06-14 13:44:42.000000000 -0400
+@@ -127,8 +127,13 @@ typedef struct _drm_i810_init {
+ /* This is the init structure prior to v1.2 */
+ typedef struct _drm_i810_pre12_init {
+ 	drm_i810_init_func_t func;
++#if CONFIG_XFREE86_VERSION < XFREE86_VERSION(4,1,0,0)
++	int ring_map_idx;
++	int buffer_map_idx;
++#else
+ 	unsigned int mmio_offset;
+ 	unsigned int buffers_offset;
++#endif
+ 	int sarea_priv_offset;
+ 	unsigned int ring_start;
+ 	unsigned int ring_end;
+Index: linux-2.6.18.x86_64/drivers/char/drm/i810_drv.c
+===================================================================
+--- linux-2.6.18.x86_64.orig/drivers/char/drm/i810_drv.c	2007-06-14 13:42:39.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/char/drm/i810_drv.c	2007-06-14 13:44:42.000000000 -0400
+@@ -43,7 +43,7 @@ static struct pci_device_id pciidlist[] 
+ 
+ static struct drm_driver driver = {
+ 	.driver_features =
+-	    DRIVER_USE_AGP | DRIVER_REQUIRE_AGP | DRIVER_USE_MTRR |
++	    DRIVER_USE_AGP | DRIVER_REQUIRE_AGP | /* DRIVER_USE_MTRR | */
+ 	    DRIVER_HAVE_DMA | DRIVER_DMA_QUEUE,
+ 	.dev_priv_size = sizeof(drm_i810_buf_priv_t),
+ 	.load = i810_driver_load,
+Index: linux-2.6.18.x86_64/drivers/char/drm/i830_dma.c
+===================================================================
+--- linux-2.6.18.x86_64.orig/drivers/char/drm/i830_dma.c	2007-06-14 13:42:39.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/char/drm/i830_dma.c	2007-06-14 13:44:42.000000000 -0400
+@@ -146,7 +146,7 @@ static int i830_map_buffer(drm_buf_t * b
+ 	if (IS_ERR((void *)virtual)) {	/* ugh */
+ 		/* Real error */
+ 		DRM_ERROR("mmap error\n");
+-		retcode = virtual;
++		retcode = PTR_ERR((void *)virtual);
+ 		buf_priv->virtual = NULL;
+ 	} else {
+ 		buf_priv->virtual = (void __user *)virtual;
+Index: linux-2.6.18.x86_64/drivers/char/drm/i915_dma.c
+===================================================================
+--- linux-2.6.18.x86_64.orig/drivers/char/drm/i915_dma.c	2007-06-14 13:42:39.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/char/drm/i915_dma.c	2007-06-14 13:44:42.000000000 -0400
+@@ -34,7 +34,13 @@
+ #define IS_I965G(dev)  (dev->pdev->device == 0x2972 || \
+ 			dev->pdev->device == 0x2982 || \
+ 			dev->pdev->device == 0x2992 || \
+-			dev->pdev->device == 0x29A2)
++			dev->pdev->device == 0x29A2 || \
++			dev->pdev->device == 0x2A02 || \
++			dev->pdev->device == 0x2A12)
++
++#define IS_G33(dev)    (dev->pdev->device == 0x29C2 || \
++			dev->pdev->device == 0x29B2 || \
++			dev->pdev->device == 0x29D2)
+ 
+ 
+ /* Really want an OS-independent resettable timer.  Would like to have
+@@ -63,6 +69,7 @@ int i915_wait_ring(drm_device_t * dev, i
+ 			i = 0;
+ 
+ 		last_head = ring->head;
++		DRM_UDELAY(1);
+ 	}
+ 
+ 	return DRM_ERR(EBUSY);
+@@ -106,6 +113,12 @@ static int i915_dma_cleanup(drm_device_t
+ 			I915_WRITE(0x02080, 0x1ffff000);
+ 		}
+ 
++		if (dev_priv->status_gfx_addr) {
++			dev_priv->status_gfx_addr = 0;
++			drm_core_ioremapfree(&dev_priv->hws_map, dev);
++			I915_WRITE(0x02080, 0x1ffff000);
++		}
++
+ 		drm_free(dev->dev_private, sizeof(drm_i915_private_t),
+ 			 DRM_MEM_DRIVER);
+ 
+@@ -177,23 +190,28 @@ static int i915_initialize(drm_device_t 
+ 	 */
+ 	dev_priv->allow_batchbuffer = 1;
+ 
++	/* Enable vblank on pipe A for older X servers
++	 */
++	dev_priv->vblank_pipe = DRM_I915_VBLANK_PIPE_A;
++
+ 	/* Program Hardware Status Page */
+-	dev_priv->status_page_dmah = drm_pci_alloc(dev, PAGE_SIZE, PAGE_SIZE,
+-						   0xffffffff);
++	if (!IS_G33(dev)) {
++		dev_priv->status_page_dmah =
++			drm_pci_alloc(dev, PAGE_SIZE, PAGE_SIZE, 0xffffffff);
++
++		if (!dev_priv->status_page_dmah) {
++			dev->dev_private = (void *)dev_priv;
++			i915_dma_cleanup(dev);
++			DRM_ERROR("Can not allocate hardware status page\n");
++			return DRM_ERR(ENOMEM);
++		}
++		dev_priv->hw_status_page = dev_priv->status_page_dmah->vaddr;
++		dev_priv->dma_status_page = dev_priv->status_page_dmah->busaddr;
+ 
+-	if (!dev_priv->status_page_dmah) {
+-		dev->dev_private = (void *)dev_priv;
+-		i915_dma_cleanup(dev);
+-		DRM_ERROR("Can not allocate hardware status page\n");
+-		return DRM_ERR(ENOMEM);
++		memset(dev_priv->hw_status_page, 0, PAGE_SIZE);
++		I915_WRITE(0x02080, dev_priv->dma_status_page);
+ 	}
+-	dev_priv->hw_status_page = dev_priv->status_page_dmah->vaddr;
+-	dev_priv->dma_status_page = dev_priv->status_page_dmah->busaddr;
+-
+-	memset(dev_priv->hw_status_page, 0, PAGE_SIZE);
+-	DRM_DEBUG("hw status page @ %p\n", dev_priv->hw_status_page);
+ 
+-	I915_WRITE(0x02080, dev_priv->dma_status_page);
+ 	DRM_DEBUG("Enabled hardware status page\n");
+ 
+ 	dev->dev_private = (void *)dev_priv;
+@@ -230,7 +248,11 @@ static int i915_dma_resume(drm_device_t 
+ 	}
+ 	DRM_DEBUG("hw status page @ %p\n", dev_priv->hw_status_page);
+ 
+-	I915_WRITE(0x02080, dev_priv->dma_status_page);
++	if (dev_priv->status_gfx_addr != 0)
++		I915_WRITE(0x02080, dev_priv->status_gfx_addr);
++	else
++		I915_WRITE(0x02080, dev_priv->dma_status_page);
++
+ 	DRM_DEBUG("Enabled hardware status page\n");
+ 
+ 	return 0;
+@@ -261,7 +283,7 @@ static int i915_dma_init(DRM_IOCTL_ARGS)
+ 		retcode = i915_dma_resume(dev);
+ 		break;
+ 	default:
+-		retcode = -EINVAL;
++		retcode = DRM_ERR(EINVAL);
+ 		break;
+ 	}
+ 
+@@ -358,10 +380,9 @@ static int i915_emit_cmds(drm_device_t *
+ 	for (i = 0; i < dwords;) {
+ 		int cmd, sz;
+ 
+-		if (DRM_COPY_FROM_USER_UNCHECKED(&cmd, &buffer[i], sizeof(cmd))) {
+-
++		if (DRM_COPY_FROM_USER_UNCHECKED(&cmd, &buffer[i], sizeof(cmd)))
+ 			return DRM_ERR(EINVAL);
+-		}
++
+ 		if ((sz = validate_cmd(cmd)) == 0 || i + sz > dwords)
+ 			return DRM_ERR(EINVAL);
+ 
+@@ -393,7 +414,7 @@ static int i915_emit_box(drm_device_t * 
+ 	RING_LOCALS;
+ 
+ 	if (DRM_COPY_FROM_USER_UNCHECKED(&box, &boxes[i], sizeof(box))) {
+-		return EFAULT;
++		return DRM_ERR(EFAULT);
+ 	}
+ 
+ 	if (box.y2 <= box.y1 || box.x2 <= box.x1 || box.y2 <= 0 || box.x2 <= 0) {
+@@ -427,7 +448,7 @@ static int i915_emit_box(drm_device_t * 
+  * emit.  For now, do it in both places:
+  */
+ 
+-static void i915_emit_breadcrumb(drm_device_t *dev)
++void i915_emit_breadcrumb(drm_device_t *dev)
+ {
+ 	drm_i915_private_t *dev_priv = dev->dev_private;
+ 	RING_LOCALS;
+@@ -540,6 +561,12 @@ static int i915_dispatch_flip(drm_device
+ 	OUT_RING(0);
+ 	ADVANCE_LP_RING();
+ 
++	/* Wait for a pending flip to take effect */
++	BEGIN_LP_RING(2);
++	OUT_RING(MI_WAIT_FOR_EVENT | MI_WAIT_FOR_PLANE_A_FLIP);
++	OUT_RING(0);
++	ADVANCE_LP_RING();
++
+ 	BEGIN_LP_RING(6);
+ 	OUT_RING(CMD_OP_DISPLAYBUFFER_INFO | ASYNC_FLIP);
+ 	OUT_RING(0);
+@@ -553,20 +580,7 @@ static int i915_dispatch_flip(drm_device
+ 	OUT_RING(0);
+ 	ADVANCE_LP_RING();
+ 
+-	BEGIN_LP_RING(2);
+-	OUT_RING(MI_WAIT_FOR_EVENT | MI_WAIT_FOR_PLANE_A_FLIP);
+-	OUT_RING(0);
+-	ADVANCE_LP_RING();
+-
+-	dev_priv->sarea_priv->last_enqueue = dev_priv->counter++;
+-
+-	BEGIN_LP_RING(4);
+-	OUT_RING(CMD_STORE_DWORD_IDX);
+-	OUT_RING(20);
+-	OUT_RING(dev_priv->counter);
+-	OUT_RING(0);
+-	ADVANCE_LP_RING();
+-
++	i915_emit_breadcrumb(dev);
+ 	dev_priv->sarea_priv->pf_current_page = dev_priv->current_page;
+ 	return 0;
+ }
+@@ -592,7 +606,6 @@ static int i915_batchbuffer(DRM_IOCTL_AR
+ {
+ 	DRM_DEVICE;
+ 	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
+-	u32 *hw_status = dev_priv->hw_status_page;
+ 	drm_i915_sarea_t *sarea_priv = (drm_i915_sarea_t *)
+ 	    dev_priv->sarea_priv;
+ 	drm_i915_batchbuffer_t batch;
+@@ -618,7 +631,7 @@ static int i915_batchbuffer(DRM_IOCTL_AR
+ 
+ 	ret = i915_dispatch_batchbuffer(dev, &batch);
+ 
+-	sarea_priv->last_dispatch = (int)hw_status[5];
++	sarea_priv->last_dispatch = READ_BREADCRUMB(dev_priv);
+ 	return ret;
+ }
+ 
+@@ -626,7 +639,6 @@ static int i915_cmdbuffer(DRM_IOCTL_ARGS
+ {
+ 	DRM_DEVICE;
+ 	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
+-	u32 *hw_status = dev_priv->hw_status_page;
+ 	drm_i915_sarea_t *sarea_priv = (drm_i915_sarea_t *)
+ 	    dev_priv->sarea_priv;
+ 	drm_i915_cmdbuffer_t cmdbuf;
+@@ -654,7 +666,18 @@ static int i915_cmdbuffer(DRM_IOCTL_ARGS
+ 		return ret;
+ 	}
+ 
+-	sarea_priv->last_dispatch = (int)hw_status[5];
++	sarea_priv->last_dispatch = READ_BREADCRUMB(dev_priv);
++	return 0;
++}
++
++static int i915_do_cleanup_pageflip(drm_device_t * dev)
++{
++	drm_i915_private_t *dev_priv = dev->dev_private;
++
++	DRM_DEBUG("%s\n", __FUNCTION__);
++	if (dev_priv->current_page != 0)
++		i915_dispatch_flip(dev);
++
+ 	return 0;
+ }
+ 
+@@ -739,6 +762,101 @@ static int i915_setparam(DRM_IOCTL_ARGS)
+ 	return 0;
+ }
+ 
++drm_i915_mmio_entry_t mmio_table[] = {
++	[MMIO_REGS_PS_DEPTH_COUNT] = {
++		I915_MMIO_MAY_READ|I915_MMIO_MAY_WRITE,
++		0x2350,
++		8
++	}
++};
++
++static int mmio_table_size = sizeof(mmio_table)/sizeof(drm_i915_mmio_entry_t);
++
++static int i915_mmio(DRM_IOCTL_ARGS)
++{
++	char buf[32];
++	DRM_DEVICE;
++	drm_i915_private_t *dev_priv = dev->dev_private;
++	drm_i915_mmio_entry_t *e;
++	drm_i915_mmio_t mmio;
++	void __iomem *base;
++	if (!dev_priv) {
++		DRM_ERROR("%s called with no initialization\n", __FUNCTION__);
++		return DRM_ERR(EINVAL);
++	}
++	DRM_COPY_FROM_USER_IOCTL(mmio, (drm_i915_mmio_t __user *) data,
++				 sizeof(mmio));
++
++	if (mmio.reg >= mmio_table_size)
++		return DRM_ERR(EINVAL);
++
++	e = &mmio_table[mmio.reg];
++	base = dev_priv->mmio_map->handle + e->offset;
++
++	switch (mmio.read_write) {
++		case I915_MMIO_READ:
++			if (!(e->flag & I915_MMIO_MAY_READ))
++				return DRM_ERR(EINVAL);
++			memcpy_fromio(buf, base, e->size);
++			if (DRM_COPY_TO_USER(mmio.data, buf, e->size)) {
++				DRM_ERROR("DRM_COPY_TO_USER failed\n");
++				return DRM_ERR(EFAULT);
++			}
++			break;
++
++		case I915_MMIO_WRITE:
++			if (!(e->flag & I915_MMIO_MAY_WRITE))
++				return DRM_ERR(EINVAL);
++			if(DRM_COPY_FROM_USER(buf, mmio.data, e->size)) {
++				DRM_ERROR("DRM_COPY_TO_USER failed\n");
++				return DRM_ERR(EFAULT);
++			}
++			memcpy_toio(base, buf, e->size);
++			break;
++	}
++	return 0;
++}
++
++static int i915_set_status_page(DRM_IOCTL_ARGS)
++{
++	DRM_DEVICE;
++	drm_i915_private_t *dev_priv = dev->dev_private;
++	drm_i915_hws_addr_t hws;
++
++	if (!dev_priv) {
++		DRM_ERROR("%s called with no initialization\n", __FUNCTION__);
++		return DRM_ERR(EINVAL);
++	}
++	DRM_COPY_FROM_USER_IOCTL(hws, (drm_i915_hws_addr_t __user *) data,
++		sizeof(hws));
++	printk(KERN_DEBUG "set status page addr 0x%08x\n", (u32)hws.addr);
++
++	dev_priv->status_gfx_addr = hws.addr & (0x1ffff<<12);
++
++	dev_priv->hws_map.offset = dev->agp->agp_info.aper_base + hws.addr;
++	dev_priv->hws_map.size = 4*1024;
++	dev_priv->hws_map.type = 0;
++	dev_priv->hws_map.flags = 0;
++	dev_priv->hws_map.mtrr = 0;
++
++	drm_core_ioremap(&dev_priv->hws_map, dev);
++	if (dev_priv->hws_map.handle == NULL) {
++		dev->dev_private = (void *)dev_priv;
++		i915_dma_cleanup(dev);
++		dev_priv->status_gfx_addr = 0;
++		DRM_ERROR("can not ioremap virtual address for G33 hw status page\n");
++		return DRM_ERR(ENOMEM);
++	}
++	dev_priv->hw_status_page = dev_priv->hws_map.handle;
++
++	memset(dev_priv->hw_status_page, 0, PAGE_SIZE);
++	I915_WRITE(0x02080, dev_priv->status_gfx_addr);
++	DRM_DEBUG("load hws 0x2080 with gfx mem 0x%x\n",
++			dev_priv->status_gfx_addr);
++	DRM_DEBUG("load hws at %p\n", dev_priv->hw_status_page);
++	return 0;
++}
++
+ int i915_driver_load(drm_device_t *dev, unsigned long flags)
+ {
+ 	/* i915 has 4 more counters */
+@@ -755,6 +873,7 @@ void i915_driver_lastclose(drm_device_t 
+ {
+ 	if (dev->dev_private) {
+ 		drm_i915_private_t *dev_priv = dev->dev_private;
++		i915_do_cleanup_pageflip(dev);
+ 		i915_mem_takedown(&(dev_priv->agp_heap));
+ 	}
+ 	i915_dma_cleanup(dev);
+@@ -784,6 +903,8 @@ drm_ioctl_desc_t i915_ioctls[] = {
+ 	[DRM_IOCTL_NR(DRM_I915_DESTROY_HEAP)] = { i915_mem_destroy_heap, DRM_AUTH|DRM_MASTER|DRM_ROOT_ONLY },
+ 	[DRM_IOCTL_NR(DRM_I915_SET_VBLANK_PIPE)] = { i915_vblank_pipe_set, DRM_AUTH|DRM_MASTER|DRM_ROOT_ONLY },
+ 	[DRM_IOCTL_NR(DRM_I915_GET_VBLANK_PIPE)] = { i915_vblank_pipe_get, DRM_AUTH },
++	[DRM_IOCTL_NR(DRM_I915_MMIO)] = {i915_mmio, DRM_AUTH},
++	[DRM_IOCTL_NR(DRM_I915_HWS_ADDR)] = {i915_set_status_page, DRM_AUTH},
+ };
+ 
+ int i915_max_ioctl = DRM_ARRAY_SIZE(i915_ioctls);
+Index: linux-2.6.18.x86_64/drivers/char/drm/i915_drm.h
+===================================================================
+--- linux-2.6.18.x86_64.orig/drivers/char/drm/i915_drm.h	2007-06-14 13:42:39.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/char/drm/i915_drm.h	2007-06-14 13:44:42.000000000 -0400
+@@ -132,6 +132,8 @@ typedef struct _drm_i915_sarea {
+ #define DRM_I915_DESTROY_HEAP	0x0c
+ #define DRM_I915_SET_VBLANK_PIPE	0x0d
+ #define DRM_I915_GET_VBLANK_PIPE	0x0e
++#define DRM_I915_MMIO		0x10
++#define DRM_I915_HWS_ADDR	0x11
+ 
+ #define DRM_IOCTL_I915_INIT		DRM_IOW( DRM_COMMAND_BASE + DRM_I915_INIT, drm_i915_init_t)
+ #define DRM_IOCTL_I915_FLUSH		DRM_IO ( DRM_COMMAND_BASE + DRM_I915_FLUSH)
+@@ -243,4 +245,36 @@ typedef struct drm_i915_vblank_pipe {
+ 	int pipe;
+ } drm_i915_vblank_pipe_t;
+ 
++#define I915_MMIO_READ	0
++#define I915_MMIO_WRITE	1
++
++#define I915_MMIO_MAY_READ	0x1
++#define I915_MMIO_MAY_WRITE	0x2
++
++#define MMIO_REGS_IA_PRIMATIVES_COUNT		0
++#define MMIO_REGS_IA_VERTICES_COUNT		1
++#define MMIO_REGS_VS_INVOCATION_COUNT		2
++#define MMIO_REGS_GS_PRIMITIVES_COUNT		3
++#define MMIO_REGS_GS_INVOCATION_COUNT		4
++#define MMIO_REGS_CL_PRIMITIVES_COUNT		5
++#define MMIO_REGS_CL_INVOCATION_COUNT		6
++#define MMIO_REGS_PS_INVOCATION_COUNT		7
++#define MMIO_REGS_PS_DEPTH_COUNT		8
++
++typedef struct drm_i915_mmio_entry {
++	unsigned int flag;
++	unsigned int offset;
++	unsigned int size;
++}drm_i915_mmio_entry_t;
++
++typedef struct drm_i915_mmio {
++	unsigned int read_write:1;
++	unsigned int reg:31;
++	void __user *data;
++} drm_i915_mmio_t;
++
++typedef struct drm_i915_hws_addr {
++	uint64_t addr;
++} drm_i915_hws_addr_t;
++
+ #endif				/* _I915_DRM_H_ */
+Index: linux-2.6.18.x86_64/drivers/char/drm/i915_drv.h
+===================================================================
+--- linux-2.6.18.x86_64.orig/drivers/char/drm/i915_drv.h	2007-06-14 13:42:39.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/char/drm/i915_drv.h	2007-06-14 13:44:42.000000000 -0400
+@@ -37,7 +37,7 @@
+ 
+ #define DRIVER_NAME		"i915"
+ #define DRIVER_DESC		"Intel Graphics"
+-#define DRIVER_DATE		"20060119"
++#define DRIVER_DATE		"20060929"
+ 
+ /* Interface history:
+  *
+@@ -46,9 +46,10 @@
+  * 1.3: Add vblank support
+  * 1.4: Fix cmdbuffer path, add heap destroy
+  * 1.5: Add vblank pipe configuration
++ * 1.8: New ioctl for ARB_Occlusion_Query
+  */
+ #define DRIVER_MAJOR		1
+-#define DRIVER_MINOR		5
++#define DRIVER_MINOR		8
+ #define DRIVER_PATCHLEVEL	0
+ 
+ typedef struct _drm_i915_ring_buffer {
+@@ -71,6 +72,13 @@ struct mem_block {
+ 	DRMFILE filp;		/* 0: free, -1: heap, other: real files */
+ };
+ 
++typedef struct _drm_i915_vbl_swap {
++	struct list_head head;
++	drm_drawable_t drw_id;
++	unsigned int pipe;
++	unsigned int sequence;
++} drm_i915_vbl_swap_t;
++
+ typedef struct drm_i915_private {
+ 	drm_local_map_t *sarea;
+ 	drm_local_map_t *mmio_map;
+@@ -81,12 +89,13 @@ typedef struct drm_i915_private {
+ 	drm_dma_handle_t *status_page_dmah;
+ 	void *hw_status_page;
+ 	dma_addr_t dma_status_page;
+-	unsigned long counter;
++	uint32_t counter;
++	unsigned int status_gfx_addr;
++	drm_local_map_t hws_map;
+ 
+ 	int back_offset;
+ 	int front_offset;
+ 	int current_page;
+-	int page_flipping;
+ 	int use_mi_batchbuffer_start;
+ 
+ 	wait_queue_head_t irq_queue;
+@@ -98,8 +107,24 @@ typedef struct drm_i915_private {
+ 	struct mem_block *agp_heap;
+ 	unsigned int sr01, adpa, ppcr, dvob, dvoc, lvds;
+ 	int vblank_pipe;
++
++	spinlock_t user_irq_lock;
++	int user_irq_refcount;
++	uint32_t irq_enable_reg;
++	int irq_enabled;
++
++	spinlock_t swaps_lock;
++	drm_i915_vbl_swap_t vbl_swaps;
++	unsigned int swaps_pending;
+ } drm_i915_private_t;
+ 
++enum intel_chip_family {
++	CHIP_I8XX = 0X01,
++	CHIP_I9XX = 0X02,
++	CHIP_I915 = 0X04,
++	CHIP_I965 = 0X08,
++};
++
+ extern drm_ioctl_desc_t i915_ioctls[];
+ extern int i915_max_ioctl;
+ 
+@@ -111,6 +136,7 @@ extern void i915_driver_preclose(drm_dev
+ extern int i915_driver_device_is_agp(drm_device_t * dev);
+ extern long i915_compat_ioctl(struct file *filp, unsigned int cmd,
+ 			      unsigned long arg);
++extern void i915_emit_breadcrumb(drm_device_t *dev);
+ 
+ /* i915_irq.c */
+ extern int i915_irq_emit(DRM_IOCTL_ARGS);
+@@ -123,6 +149,10 @@ extern void i915_driver_irq_postinstall(
+ extern void i915_driver_irq_uninstall(drm_device_t * dev);
+ extern int i915_vblank_pipe_set(DRM_IOCTL_ARGS);
+ extern int i915_vblank_pipe_get(DRM_IOCTL_ARGS);
++extern int i915_emit_irq(drm_device_t * dev);
++
++extern void i915_user_irq_on(drm_i915_private_t *dev_priv);
++extern void i915_user_irq_off(drm_i915_private_t *dev_priv);
+ 
+ /* i915_mem.c */
+ extern int i915_mem_alloc(DRM_IOCTL_ARGS);
+@@ -191,6 +221,7 @@ extern int i915_wait_ring(drm_device_t *
+ #define I915REG_INT_IDENTITY_R	0x020a4
+ #define I915REG_INT_MASK_R 	0x020a8
+ #define I915REG_INT_ENABLE_R	0x020a0
++#define I915REG_INSTPM		0x020c0
+ 
+ #define SRX_INDEX		0x3c4
+ #define SRX_DATA		0x3c5
+@@ -272,6 +303,7 @@ extern int i915_wait_ring(drm_device_t *
+ 
+ #define CMD_OP_DESTBUFFER_INFO	 ((0x3<<29)|(0x1d<<24)|(0x8e<<16)|1)
+ 
+-#define READ_BREADCRUMB(dev_priv) (((u32 *)(dev_priv->hw_status_page))[5])
++#define READ_BREADCRUMB(dev_priv) (((volatile u32*)(dev_priv->hw_status_page))[5])
++#define READ_HWSP(dev_priv, reg)  (((volatile u32*)(dev_priv->hw_status_page))[reg])
+ 
+ #endif
+Index: linux-2.6.18.x86_64/drivers/char/drm/i915_irq.c
+===================================================================
+--- linux-2.6.18.x86_64.orig/drivers/char/drm/i915_irq.c	2007-06-14 13:42:39.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/char/drm/i915_irq.c	2007-06-14 13:44:42.000000000 -0400
+@@ -45,7 +45,7 @@ irqreturn_t i915_driver_irq_handler(DRM_
+ 
+ 	temp = I915_READ16(I915REG_INT_IDENTITY_R);
+ 
+-	temp &= (USER_INT_FLAG | VSYNC_PIPEA_FLAG | VSYNC_PIPEB_FLAG);
++	temp &= (dev_priv->irq_enable_reg | USER_INT_FLAG);
+ 
+ 	DRM_DEBUG("%s flag=%08x\n", __FUNCTION__, temp);
+ 
+@@ -53,6 +53,8 @@ irqreturn_t i915_driver_irq_handler(DRM_
+ 		return IRQ_NONE;
+ 
+ 	I915_WRITE16(I915REG_INT_IDENTITY_R, temp);
++	(void) I915_READ16(I915REG_INT_IDENTITY_R);
++	DRM_READMEMORYBARRIER();
+ 
+ 	dev_priv->sarea_priv->last_dispatch = READ_BREADCRUMB(dev_priv);
+ 
+@@ -68,7 +70,7 @@ irqreturn_t i915_driver_irq_handler(DRM_
+ 	return IRQ_HANDLED;
+ }
+ 
+-static int i915_emit_irq(drm_device_t * dev)
++int i915_emit_irq(drm_device_t * dev)
+ {
+ 
+ 	drm_i915_private_t *dev_priv = dev->dev_private;
+@@ -78,17 +80,9 @@ static int i915_emit_irq(drm_device_t * 
+ 
+ 	DRM_DEBUG("%s\n", __FUNCTION__);
+ 
+-	dev_priv->sarea_priv->last_enqueue = ++dev_priv->counter;
+-
+-	if (dev_priv->counter > 0x7FFFFFFFUL)
+-		 dev_priv->sarea_priv->last_enqueue = dev_priv->counter = 1;
+-
+-	BEGIN_LP_RING(6);
+-	OUT_RING(CMD_STORE_DWORD_IDX);
+-	OUT_RING(20);
+-	OUT_RING(dev_priv->counter);
++	i915_emit_breadcrumb(dev);
+ 
+-	OUT_RING(0);
++	BEGIN_LP_RING(2);
+ 	OUT_RING(0);
+ 	OUT_RING(GFX_OP_USER_INTERRUPT);
+ 	ADVANCE_LP_RING();
+@@ -98,6 +92,26 @@ static int i915_emit_irq(drm_device_t * 
+ 
+ }
+ 
++void i915_user_irq_on(drm_i915_private_t *dev_priv)
++{
++	spin_lock(&dev_priv->user_irq_lock);
++	if (dev_priv->irq_enabled && (++dev_priv->user_irq_refcount == 1)){
++		dev_priv->irq_enable_reg |= USER_INT_FLAG;
++		I915_WRITE16(I915REG_INT_ENABLE_R, dev_priv->irq_enable_reg);
++	}
++	spin_unlock(&dev_priv->user_irq_lock);
++}
++
++void i915_user_irq_off(drm_i915_private_t *dev_priv)
++{
++	spin_lock(&dev_priv->user_irq_lock);
++	if (dev_priv->irq_enabled && (--dev_priv->user_irq_refcount == 0)) {
++		//dev_priv->irq_enable_reg &= ~USER_INT_FLAG;
++		//I915_WRITE16(I915REG_INT_ENABLE_R, dev_priv->irq_enable_reg);
++	}
++	spin_unlock(&dev_priv->user_irq_lock);
++}
++
+ static int i915_wait_irq(drm_device_t * dev, int irq_nr)
+ {
+ 	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
+@@ -111,8 +125,10 @@ static int i915_wait_irq(drm_device_t * 
+ 
+ 	dev_priv->sarea_priv->perf_boxes |= I915_BOX_WAIT;
+ 
++	i915_user_irq_on(dev_priv);
+ 	DRM_WAIT_ON(ret, dev_priv->irq_queue, 3 * DRM_HZ,
+ 		    READ_BREADCRUMB(dev_priv) >= irq_nr);
++	i915_user_irq_off(dev_priv);
+ 
+ 	if (ret == DRM_ERR(EBUSY)) {
+ 		DRM_ERROR("%s: EBUSY -- rec: %d emitted: %d\n",
+@@ -193,23 +209,18 @@ int i915_irq_wait(DRM_IOCTL_ARGS)
+ 	return i915_wait_irq(dev, irqwait.irq_seq);
+ }
+ 
+-static int i915_enable_interrupt (drm_device_t *dev)
++static void i915_enable_interrupt (drm_device_t *dev)
+ {
+ 	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
+-	u16 flag;
+ 
+-	flag = 0;
++	dev_priv->irq_enable_reg = USER_INT_FLAG;
+ 	if (dev_priv->vblank_pipe & DRM_I915_VBLANK_PIPE_A)
+-		flag |= VSYNC_PIPEA_FLAG;
++		dev_priv->irq_enable_reg |= VSYNC_PIPEA_FLAG;
+ 	if (dev_priv->vblank_pipe & DRM_I915_VBLANK_PIPE_B)
+-		flag |= VSYNC_PIPEB_FLAG;
+-	if (dev_priv->vblank_pipe & ~(DRM_I915_VBLANK_PIPE_A|DRM_I915_VBLANK_PIPE_B)) {
+-		DRM_ERROR("%s called with invalid pipe 0x%x\n",
+-			  __FUNCTION__, dev_priv->vblank_pipe);
+-		return DRM_ERR(EINVAL);
+-	}
+-	I915_WRITE16(I915REG_INT_ENABLE_R, USER_INT_FLAG | flag);
+-	return 0;
++		dev_priv->irq_enable_reg |= VSYNC_PIPEB_FLAG;
++
++	I915_WRITE16(I915REG_INT_ENABLE_R, dev_priv->irq_enable_reg);
++	dev_priv->irq_enabled = 1;
+ }
+ 
+ /* Set the vblank monitor pipe
+@@ -228,8 +239,17 @@ int i915_vblank_pipe_set(DRM_IOCTL_ARGS)
+ 	DRM_COPY_FROM_USER_IOCTL(pipe, (drm_i915_vblank_pipe_t __user *) data,
+ 				 sizeof(pipe));
+ 
++	if (pipe.pipe & ~ (DRM_I915_VBLANK_PIPE_A|DRM_I915_VBLANK_PIPE_B)) {
++		DRM_ERROR("%s called with invalid pipe 0x%x\n",
++			  __FUNCTION__, pipe.pipe);
++		return DRM_ERR(EINVAL);
++	}
++
+ 	dev_priv->vblank_pipe = pipe.pipe;
+-	return i915_enable_interrupt (dev);
++
++	i915_enable_interrupt (dev);
++
++	return 0;
+ }
+ 
+ int i915_vblank_pipe_get(DRM_IOCTL_ARGS)
+@@ -270,8 +290,25 @@ void i915_driver_irq_postinstall(drm_dev
+ {
+ 	drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private;
+ 
++	dev_priv->swaps_lock = SPIN_LOCK_UNLOCKED;
++	INIT_LIST_HEAD(&dev_priv->vbl_swaps.head);
++	dev_priv->swaps_pending = 0;
++
++	dev_priv->swaps_lock = SPIN_LOCK_UNLOCKED;
++	INIT_LIST_HEAD(&dev_priv->vbl_swaps.head);
++	dev_priv->swaps_pending = 0;
++
++	dev_priv->user_irq_lock = SPIN_LOCK_UNLOCKED;
++	dev_priv->user_irq_refcount = 0;
++
+ 	i915_enable_interrupt(dev);
+ 	DRM_INIT_WAITQUEUE(&dev_priv->irq_queue);
++
++	/*
++	 * Initialize the hardware status page IRQ location.
++	 */
++
++	I915_WRITE(I915REG_INSTPM, ( 1 << 5) | ( 1 << 21));
+ }
+ 
+ void i915_driver_irq_uninstall(drm_device_t * dev)
+@@ -282,6 +319,7 @@ void i915_driver_irq_uninstall(drm_devic
+ 	if (!dev_priv)
+ 		return;
+ 
++	dev_priv->irq_enabled = 0;
+ 	I915_WRITE16(I915REG_HWSTAM, 0xffff);
+ 	I915_WRITE16(I915REG_INT_MASK_R, 0xffff);
+ 	I915_WRITE16(I915REG_INT_ENABLE_R, 0x0);
+Index: linux-2.6.18.x86_64/include/linux/pci_ids.h
+===================================================================
+--- linux-2.6.18.x86_64.orig/include/linux/pci_ids.h	2007-06-14 13:42:39.000000000 -0400
++++ linux-2.6.18.x86_64/include/linux/pci_ids.h	2007-06-14 13:44:42.000000000 -0400
+@@ -2191,6 +2191,7 @@
+ #define PCI_DEVICE_ID_INTEL_82945G_IG	0x2772
+ #define PCI_DEVICE_ID_INTEL_82945GM_HB	0x27A0
+ #define PCI_DEVICE_ID_INTEL_82945GM_IG	0x27A2
++#define PCI_DEVICE_ID_INTEL_82945GME_IG 0x27AE
+ #define PCI_DEVICE_ID_INTEL_ICH6_0	0x2640
+ #define PCI_DEVICE_ID_INTEL_ICH6_1	0x2641
+ #define PCI_DEVICE_ID_INTEL_ICH6_2	0x2642
+

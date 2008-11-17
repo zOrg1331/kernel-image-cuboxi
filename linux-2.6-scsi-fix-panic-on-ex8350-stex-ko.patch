@@ -1,0 +1,137 @@
+From: Jun'ichi \Nick\ Nomura <jnomura@redhat.com>
+Subject: [RHEL5 PATCH] Fix stex.ko kernel panic on EX8350 (regression)
+Date: Tue, 16 Jan 2007 10:48:37 -0500
+Bugzilla: 220783
+Message-Id: <45ACF3D5.9030507@redhat.com>
+Changelog: scsi: fix EX8350 panic (stex.ko)
+
+
+This patch is from Promise to fix kernel panic on EX8350 adapter
+(stex.ko driver) under I/O stress.
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=220783
+
+As for the upstream status, the patch is not in upstream.
+However the panic doesn't occur on upstream 2.6.19 with the
+unpatched driver code under the same test.
+The patch itself works fine for both RHEL5 and upstream 2.6.19.
+
+The patch is tested by NEC and Promise under both normal and
+I/O stressed cases.
+
+Please ACK for RHEL5.0.
+
+Thanks,
+-- 
+Jun'ichi "Nick" Nomura / On-site engineer from NEC
+
+diff -urp linux-2.6.18.x86_64/drivers/scsi/stex.c linux-2.6.18.promise/drivers/scsi/stex.c
+--- linux-2.6.18.x86_64/drivers/scsi/stex.c	2007-01-16 10:08:36.000000000 -0500
++++ linux-2.6.18.promise/drivers/scsi/stex.c	2007-01-16 10:15:05.000000000 -0500
+@@ -96,6 +96,7 @@ enum {
+ 
+ 	/* request count, etc. */
+ 	MU_MAX_REQUEST				= 32,
++	TAG_BITMAP_LENGTH			= MU_MAX_REQUEST,
+ 
+ 	/* one message wasted, use MU_MAX_REQUEST+1
+ 		to handle MU_MAX_REQUEST messages */
+@@ -306,6 +307,7 @@ struct st_hba {
+ 	struct Scsi_Host *host;
+ 	struct pci_dev *pdev;
+ 
++	u32 tag;
+ 	u32 req_head;
+ 	u32 req_tail;
+ 	u32 status_head;
+@@ -348,6 +350,18 @@ static void stex_gettime(__le32 *time)
+ 	*time = cpu_to_le32(tv.tv_sec & 0xffffffff);
+ 	*(time + 1) = cpu_to_le32((tv.tv_sec >> 16) >> 16);
+ }
++static u16 stex_alloc_tag(unsigned long *bitmap) {
++	int i;
++	i = find_first_zero_bit(bitmap, TAG_BITMAP_LENGTH);
++	if (i < TAG_BITMAP_LENGTH)
++		__set_bit(i, bitmap);
++	return (u16)i;
++}
++
++static void stex_free_tag(unsigned long *bitmap, u16 tag) {
++	__clear_bit((int)tag, bitmap);
++}
++
+ 
+ static struct status_msg *stex_get_status(struct st_hba *hba)
+ {
+@@ -632,9 +646,8 @@ stex_queuecommand(struct scsi_cmnd *cmd,
+ 
+ 	cmd->scsi_done = done;
+ 
+-	tag = cmd->request->tag;
+-
+-	if (unlikely(tag >= host->can_queue))
++	if (unlikely((tag = stex_alloc_tag((unsigned long *)&hba->tag))
++		== TAG_BITMAP_LENGTH))
+ 		return SCSI_MLQUEUE_HOST_BUSY;
+ 
+ 	req = stex_alloc_req(hba);
+@@ -825,6 +838,7 @@ static void stex_mu_intr(struct st_hba *
+ 		if (unlikely(ccb->req == NULL)) {
+ 			printk(KERN_WARNING DRV_NAME
+ 				"(%s): lagging req\n", pci_name(hba->pdev));
++			stex_free_tag((unsigned long *)&hba->tag, tag);
+ 			hba->out_req_cnt--;
+ 			continue;
+ 		}
+@@ -850,7 +864,7 @@ static void stex_mu_intr(struct st_hba *
+ 			if (unlikely(ccb->cmd->cmnd[0] == PASSTHRU_CMD &&
+ 				ccb->cmd->cmnd[1] == PASSTHRU_GET_ADAPTER))
+ 				stex_controller_info(hba, ccb);
+-
++			stex_free_tag((unsigned long *)&hba->tag, tag);
+ 			stex_unmap_sg(hba, ccb->cmd);
+ 			stex_scsi_done(ccb);
+ 			hba->out_req_cnt--;
+@@ -1233,13 +1247,6 @@ stex_probe(struct pci_dev *pdev, const s
+ 	if (err)
+ 		goto out_free_irq;
+ 
+-	err = scsi_init_shared_tag_map(host, ST_CAN_QUEUE);
+-	if (err) {
+-		printk(KERN_ERR DRV_NAME "(%s): init shared queue failed\n",
+-			pci_name(pdev));
+-		goto out_free_irq;
+-	}
+-
+ 	pci_set_drvdata(pdev, hba);
+ 
+ 	err = scsi_add_host(host, &pdev->dev);
+@@ -1275,9 +1282,16 @@ static void stex_hba_stop(struct st_hba 
+ 	struct req_msg *req;
+ 	unsigned long flags;
+ 	unsigned long before;
+-	u16 tag = 0;
++	u16 tag;
+ 
+ 	spin_lock_irqsave(hba->host->host_lock, flags);
++	if ((tag = stex_alloc_tag((unsigned long *)&hba->tag))
++		== TAG_BITMAP_LENGTH) {
++		spin_unlock_irqrestore(hba->host->host_lock, flags);
++		printk(KERN_ERR DRV_NAME "(%s): unable to alloc tag\n",
++			pci_name(hba->pdev));
++		return;
++	}
+ 	req = stex_alloc_req(hba);
+ 	memset(req->cdb, 0, STEX_CDB_LENGTH);
+ 
+@@ -1307,6 +1321,10 @@ static void stex_hba_stop(struct st_hba 
+ 			return;
+ 		msleep(10);
+ 	}
++
++	spin_lock_irqsave(hba->host->host_lock, flags);
++	stex_free_tag((unsigned long *)&hba->tag, tag);
++	spin_unlock_irqrestore(hba->host->host_lock, flags);
+ }
+ 
+ static void stex_hba_free(struct st_hba *hba)
+

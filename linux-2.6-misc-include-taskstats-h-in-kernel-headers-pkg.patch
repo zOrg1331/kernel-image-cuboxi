@@ -1,0 +1,47 @@
+From: Don Zickus <dzickus@redhat.com>
+Subject: [RHEL-5 Patch] include taskstats.h in kernel-headers package
+Date: Tue, 5 Jun 2007 21:52:41 -0400
+Bugzilla: 230648
+Message-Id: <20070606015241.GG8782@redhat.com>
+Changelog: [misc] include taskstats.h in kernel-headers package
+
+
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=230648
+
+A customer has an application that requires the taskstats.h file but it
+wasn't included in the kernel-headers package.  The change is trivial and
+an oversight.
+
+Fix is upstream and tested.
+
+Cheers,
+Don
+
+commit 6d4d8c0aa255c7b4bdf0fb693ec015b56204bbb3
+Author: David Woodhouse <dwmw2@infradead.org>
+
+    Add taskstats.h to kbuild
+    
+    Add taskstats.h to include/linux/Kbuild, make headers_install would then
+    pickup taskstats.h.  This needs to be done as taskstats.h is a user
+    interface header.
+    
+    Signed-off-by: Balbir Singh <balbir@linux.vnet.ibm.com>
+    Signed-off-by: David Woodhouse <dwmw2@infradead.org>
+    Cc: Don Zickus <dzickus@redhat.com>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/include/linux/Kbuild b/include/linux/Kbuild
+index a124c32..7153861 100644
+--- a/include/linux/Kbuild
++++ b/include/linux/Kbuild
+@@ -141,6 +141,7 @@ header-y += sockios.h
+ header-y += som.h
+ header-y += sound.h
+ header-y += synclink.h
++header-y += taskstats.h
+ header-y += telephony.h
+ header-y += termios.h
+ header-y += ticable.h
+

@@ -1,0 +1,161 @@
+From: Anton Arapov <aarapov@redhat.com>
+Subject: [RHEL5.1 PATCH] *REPOST* BZ275991: CVE-2007-3731 NULL pointer 	dereference triggered by ptrace
+Date: Sat, 08 Sep 2007 21:02:16 +0200
+Bugzilla: 275991
+Message-Id: <h8lkbhyo93.fsf@pepelac.englab.brq.redhat.com>
+Changelog: [ptrace] NULL pointer dereference triggered by ptrace
+
+
+BZ#275991: (tracking bug number)
+  https://bugzilla.redhat.com/show_bug.cgi?id=275991
+
+Description:
+  From Evan Teran: [http://bugzilla.kernel.org/show_bug.cgi?id=8765]
+    it is possible to cause the kernel to reference a null pointer
+  with simple ptrace code. the OOPS seems to indicate that it occurs
+  in arch_ptrace. I noticed  when working on my debugger, that if i
+  set the childs CS to certain invalid values, instead of a segfault
+  (i believe this is the correct response to invalid cs). Not only
+  would the ptraced app crash, but so would the debugger. After
+  further investigation, I realized that the debugger crash was the
+  kernel terminating the ptracer due to a null pointer in one of the
+  ptrace functions.
+
+Upstream status:
+  commit# 29eb51101c02df517ca64ec472d7501127ad1da8
+    - The code for LDT segment selectors was not robust in the face of
+  a bogus selector set in %cs via ptrace before the single-step was
+  done.
+  commit# a10d9a71bafd3a283da240d2868e71346d2aef6f
+    - The TRACE_IRQS_ON function in iret_exc: calls a C function
+  without ensuring that the segments are set properly. Move the trace
+  function and the enabling of interrupt into the C stub.
+
+Test status:
+  Has been tested for compilation, boot.
+  Issue was reproduced by the test program(included to bugzilla).
+  Patch fixes the problem.
+
+Notice:
+  BZ#248324 - original bugzilla number.
+
+==
+diff -aBburpN linux-2.6.18.noarch.orig/arch/i386/kernel/entry.S linux-2.6.18.noarch/arch/i386/kernel/entry.S
+--- linux-2.6.18.noarch.orig/arch/i386/kernel/entry.S	2007-09-08 16:26:26.000000000 +0200
++++ linux-2.6.18.noarch/arch/i386/kernel/entry.S	2007-09-08 16:26:41.000000000 +0200
+@@ -384,8 +384,6 @@ restore_nocheck_notrace:
+ 1:	iret
+ .section .fixup,"ax"
+ iret_exc:
+-	TRACE_IRQS_ON
+-	sti
+ 	pushl $0			# no error code
+ 	pushl $do_iret_error
+ 	jmp error_code
+diff -aBburpN linux-2.6.18.noarch.orig/arch/i386/kernel/entry-xen.S linux-2.6.18.noarch/arch/i386/kernel/entry-xen.S
+--- linux-2.6.18.noarch.orig/arch/i386/kernel/entry-xen.S	2007-09-08 16:26:26.000000000 +0200
++++ linux-2.6.18.noarch/arch/i386/kernel/entry-xen.S	2007-09-08 16:26:41.000000000 +0200
+@@ -443,10 +443,6 @@ restore_nocheck_notrace:
+ 1:	iret
+ .section .fixup,"ax"
+ iret_exc:
+-#ifndef CONFIG_XEN
+-	TRACE_IRQS_ON
+-	sti
+-#endif
+ 	pushl $0			# no error code
+ 	pushl $do_iret_error
+ 	jmp error_code
+diff -aBburpN linux-2.6.18.noarch.orig/arch/i386/kernel/ptrace.c linux-2.6.18.noarch/arch/i386/kernel/ptrace.c
+--- linux-2.6.18.noarch.orig/arch/i386/kernel/ptrace.c	2007-09-08 16:26:26.000000000 +0200
++++ linux-2.6.18.noarch/arch/i386/kernel/ptrace.c	2007-09-08 16:26:41.000000000 +0200
+@@ -186,14 +186,22 @@ static unsigned long convert_eip_to_line
+ 		u32 *desc;
+ 		unsigned long base;
+ 
++		seg &= ~7UL;
++		
+ 		down(&child->mm->context.sem);
+-		desc = child->mm->context.ldt + (seg & ~7);
+-		base = (desc[0] >> 16) | ((desc[1] & 0xff) << 16) | (desc[1] & 0xff000000);
++		if (unlikely((seg >> 3) >= child->mm->context.size))
++			addr = -1L; /* bogus selector, access would fault */
++		else {
++			desc = child->mm->context.ldt + seg;
++			base = ((desc[0] >> 16) |
++				((desc[1] & 0xff) << 16) |
++				(desc[1] & 0xff000000));
+ 
+ 		/* 16-bit code segment? */
+ 		if (!((desc[1] >> 22) & 1))
+ 			addr &= 0xffff;
+ 		addr += base;
++		}
+ 		up(&child->mm->context.sem);
+ 	}
+ 	return addr;
+diff -aBburpN linux-2.6.18.noarch.orig/arch/i386/kernel/traps.c linux-2.6.18.noarch/arch/i386/kernel/traps.c
+--- linux-2.6.18.noarch.orig/arch/i386/kernel/traps.c	2007-09-08 16:26:26.000000000 +0200
++++ linux-2.6.18.noarch/arch/i386/kernel/traps.c	2007-09-08 16:27:17.000000000 +0200
+@@ -639,7 +639,9 @@ check_lazy_exec_limit(int cpu, struct pt
+  */
+ fastcall void do_iret_error(struct pt_regs *regs, long error_code)
+ {
+-	int ok = check_lazy_exec_limit(get_cpu(), regs, error_code);
++	int ok;
++	local_irq_enable();
++	ok = check_lazy_exec_limit(get_cpu(), regs, error_code);
+ 	put_cpu();
+ 	if (!ok && notify_die(DIE_TRAP, "iret exception", regs,
+ 			      error_code, 32, SIGSEGV) != NOTIFY_STOP) {
+diff -aBburpN linux-2.6.18.noarch.orig/arch/i386/kernel/traps-xen.c linux-2.6.18.noarch/arch/i386/kernel/traps-xen.c
+--- linux-2.6.18.noarch.orig/arch/i386/kernel/traps-xen.c	2007-09-08 16:26:26.000000000 +0200
++++ linux-2.6.18.noarch/arch/i386/kernel/traps-xen.c	2007-09-08 16:27:34.000000000 +0200
+@@ -641,7 +641,11 @@ check_lazy_exec_limit(int cpu, struct pt
+  */
+ fastcall void do_iret_error(struct pt_regs *regs, long error_code)
+ {
+-	int ok = check_lazy_exec_limit(get_cpu(), regs, error_code);
++	int ok;
++#ifndef CONFIG_XEN	
++	local_irq_enable();
++#endif
++	ok = check_lazy_exec_limit(get_cpu(), regs, error_code);
+ 	put_cpu();
+ 	if (!ok && notify_die(DIE_TRAP, "iret exception", regs,
+ 			      error_code, 32, SIGSEGV) != NOTIFY_STOP) {
+diff -aBburpN linux-2.6.18.noarch.orig/arch/x86_64/kernel/ptrace.c linux-2.6.18.noarch/arch/x86_64/kernel/ptrace.c
+--- linux-2.6.18.noarch.orig/arch/x86_64/kernel/ptrace.c	2007-09-08 16:26:26.000000000 +0200
++++ linux-2.6.18.noarch/arch/x86_64/kernel/ptrace.c	2007-09-08 16:26:41.000000000 +0200
+@@ -107,14 +107,22 @@ unsigned long convert_rip_to_linear(stru
+ 		u32 *desc;
+ 		unsigned long base;
+ 
++		seg &= ~7UL;
++		
+ 		down(&child->mm->context.sem);
+-		desc = child->mm->context.ldt + (seg & ~7);
+-		base = (desc[0] >> 16) | ((desc[1] & 0xff) << 16) | (desc[1] & 0xff000000);
++		if (unlikely((seg >> 3) >= child->mm->context.size))
++			addr = -1L; /* bogus selector, access would fault */
++		else {
++			desc = child->mm->context.ldt + seg;
++			base = ((desc[0] >> 16) |
++				((desc[1] & 0xff) << 16) |
++				(desc[1] & 0xff000000));
+ 
+ 		/* 16-bit code segment? */
+ 		if (!((desc[1] >> 22) & 1))
+ 			addr &= 0xffff;
+ 		addr += base;
++		}
+ 		up(&child->mm->context.sem);
+ 	}
+ 	return addr;
+
+-- 
+Anton Arapov, <aarapov@redhat.com>
+Kernel Development, Red Hat
+GPG Key ID: 0x6FA8C812
+
+

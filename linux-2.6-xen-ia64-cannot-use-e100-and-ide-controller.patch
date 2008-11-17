@@ -1,0 +1,56 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5.1 PATCH] Cannot use e100 and IDE controller on Xen-ia64
+Date: Wed, 08 Aug 2007 12:05:06 -0400
+Bugzilla: 250454
+Message-Id: <46B9E9B2.3020901@redhat.com>
+Changelog: [XEN] ia64: Cannot use e100 and IDE controller
+
+
+bz250454
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=250454
+
+Dom0 fails to detect e100 and IDE controller since io_tlb_end
+was out of bounds, which caused swiotlb_dma_supported() to fail.
+
+This are spews of failure of probing e100:
+
+  e100: Intel(R) PRO/100 Network Driver, 3.5.10-k2-NAPI
+  e100: Copyright(c) 1999-2005 Intel Corporation
+  GSI 20 (level, low) -> CPU 2 (0x0200) vector 51
+  ACPI: PCI Interrupt 0000:01:08.0[A] -> GSI 20 (level, low) -> IRQ 51
+  e100: 0000:01:08.0: e100_probe: No usable DMA configuration, aborting.
+  ACPI: PCI interrupt for device 0000:01:08.0 disabled
+  GSI 20 (level, low) -> CPU 2 (0x0200) vector 51 unregistered
+  e100: probe of 0000:01:08.0 failed with error -5
+
+The fix-patch is upstream:
+  http://xenbits.xensource.com/ext/ia64/linux-2.6.18-xen.hg?rev/b3ac98591e60
+
+Attached patch applies to -38.  We have verified that it worked on -37.
+
+Thanks,
+Kei
+
+---
+
+ linux-2.6.18.ia64-kei/arch/ia64/xen/swiotlb.c |    4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff -puN arch/ia64/xen/swiotlb.c~bz250454 arch/ia64/xen/swiotlb.c
+--- linux-2.6.18.ia64/arch/ia64/xen/swiotlb.c~bz250454	2007-08-08 10:39:13.000000000 -0400
++++ linux-2.6.18.ia64-kei/arch/ia64/xen/swiotlb.c	2007-08-08 10:39:27.000000000 -0400
+@@ -862,7 +862,11 @@ swiotlb_dma_mapping_error(dma_addr_t dma
+ int
+ swiotlb_dma_supported (struct device *hwdev, u64 mask)
+ {
++#ifdef CONFIG_XEN
++	return (virt_to_bus(io_tlb_end - 1)) <= mask;
++#else
+ 	return (virt_to_bus(io_tlb_end) - 1) <= mask;
++#endif
+ }
+ 
+ EXPORT_SYMBOL(swiotlb_init);
+
+_
+

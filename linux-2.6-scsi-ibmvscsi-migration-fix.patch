@@ -1,0 +1,49 @@
+Date: Wed, 18 Oct 2006 16:22:21 -0400 (EDT)
+From: "Janice M. Girouard" <jgirouar@redhat.com>
+Subject: [RHEL5.0 PPC PATCH] RHBZ# 211304: RIT104437- IBMVSCSI does not
+ correctly reenable the CRQ.
+
+
+BRHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=211304
+
+Description:
+------------
+The attached one line changec to drivers/scsi/ibmvscsi/ibmvscsi.c corrects 
+a problem created when integrating a mainline patch.   Without this 
+update, parition Migration is unable to recognize disks after a migration.
+
+RHEL Version Found:
+-------------------
+RHEL 5.0 beta
+
+Upstream Status:
+----------------
+The patch has been accepted into the scsi rc fixes tree, it should make it 
+in 2.6.19-rc3. Commit to James Bottomley tree:
+http://www.kernel.org/git/?p=linux/kernel/git/jejb/scsi-rc-fixes-2.6.git;a=commit;h=ebe921d2f27cccd5225bb01bf4f532ca8bcca582
+
+Test Status:
+------------
+To reproduce this failure, perform a Active Partition Migration.  This 
+patch builds cleanly against kernel-2.6.18-1.2727.el5.src.rpm.
+
+Proposed Patch:
+----------------
+
+--- a/drivers/scsi/ibmvscsi/ibmvscsi.c	2006-09-27 16:38:48.000000000 -0500
++++ b/drivers/scsi/ibmvscsi/ibmvscsi.c	2006-10-13 13:34:22.000000000 -0500
+@@ -1213,7 +1213,7 @@ void ibmvscsi_handle_crq(struct viosrp_c
+ 			       "ibmvscsi: Re-enabling adapter!\n");
+ 			purge_requests(hostdata, DID_REQUEUE);
+ 			if ((ibmvscsi_reenable_crq_queue(&hostdata->queue,
+-							hostdata) == 0) ||
++							hostdata)) ||
+ 			    (ibmvscsi_send_crq(hostdata,
+ 					       0xC001000000000000LL, 0))) {
+ 					atomic_set(&hostdata->request_limit,
+
+__
+Please review and ACK for RHEL 5.0
+

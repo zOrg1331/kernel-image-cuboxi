@@ -1,0 +1,138 @@
+From: Vince Worthington <vincew@redhat.com>
+Date: Thu, 24 Apr 2008 11:05:27 -0400
+Subject: [misc] fix race in switch_uid and user signal accounting
+Message-id: 20080424150527.GA707@cobrajet.rdu.redhat.com
+O-Subject: [RHEL5 PATCH REPOST] BZ# 441762: Fix race in switch_uid() and correct user signal accounting
+Bugzilla: 441762 440830
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Jerome Marchand <jmarchan@redhat.com>
+
+Re-posting as no response/comment was seen to first post.
+
+This is the RHEL5 counterpart to the proposed patch posted yesterday for RHEL4.
+
+The upstream patches are a "drop-in" in RHEL5 sources (unlike RHEL4) so this
+should be an easy ACK.
+
+The patch closes a race condition in switch_uid() which Samba smbd processes
+seem to have a knack for triggering.  Since our RHEL5 kernels also do not have
+this code present, we probably need to fix it in RHEL5 too.
+
+Guy Streeter also noted that the changes to kernel/signal.c in the second
+upstream commit noted below have already been confirmed to solve BZ 440830.
+
+Upstream commit details and description:
+
+commit 45c18b0bb579b5c1b89f8c99f1b6ffa4c586ba08
+Author: Linus Torvalds <torvalds@g5.osdl.org>
+Date:   Sat Nov 4 10:06:02 2006 -0800
+Fix unlikely (but possible) race condition on task->user access
+
+There's a possible race condition when doing a "switch_uid()" from one
+user to another, which could race with another thread doing a signal
+allocation and looking at the old thread ->user pointer as it is freed.
+
+This explains an oops reported by Lukasz Trabinski:
+	http://permalink.gmane.org/gmane.linux.kernel/462241
+
+We fix this by delaying the (reference-counted) freeing of the user
+structure until the thread signal handler lock has been released, so
+that we know that the signal allocation has either seen the new value or
+has properly incremented the reference count of the old one.
+
+Race identified by Oleg Nesterov.
+
+----
+
+commit 10b1fbdb0a0ca91847a534ad26d0bc250c25b74f
+From: Linus Torvalds <torvalds@g5.osdl.org>
+Date: Sat, 4 Nov 2006 21:03:00 +0000 (-0800)
+Subject: Make sure "user->sigpending" count is in sync
+
+Make sure "user->sigpending" count is in sync
+
+The previous commit (45c18b0bb579b5c1b89f8c99f1b6ffa4c586ba08, aka "Fix
+unlikely (but possible) race condition on task->user access") fixed a
+potential oops due to __sigqueue_alloc() getting its "user" pointer out
+of sync with switch_user(), and accessing a user pointer that had been
+de-allocated on another CPU.
+
+It still left another (much less serious) problem, where a concurrent
+__sigqueue_alloc and swich_user could cause sigqueue_alloc to do signal
+pending reference counting for a _different_ user than the one it then
+actually ended up using.  No oops, but we'd end up with the wrong signal
+accounting.
+
+Another case of Oleg's eagle-eyes picking up the problem.
+
+This is trivially fixed by just making sure we load whichever "user"
+structure we decide to use (it doesn't matter _which_ one we pick, we
+just need to pick one) just once.
+
+-----
+
+The patch is posted below.
+
+Thank you,
+Vince Worthington
+
+ kernel/signal.c |   15 +++++++++++----
+ kernel/user.c   |   11 +++++++++++
+ 2 files changed, 22 insertions(+), 4 deletions(-)
+
+diff --git a/kernel/signal.c b/kernel/signal.c
+index 53fb8cf..4c8010b 100644
+--- a/kernel/signal.c
++++ b/kernel/signal.c
+@@ -165,18 +165,25 @@ static struct sigqueue *__sigqueue_alloc(struct task_struct *t, gfp_t flags,
+ 					 int override_rlimit)
+ {
+ 	struct sigqueue *q = NULL;
++	struct user_struct *user;
+ 
+-	atomic_inc(&t->user->sigpending);
++	/*
++	 * In order to avoid problems with "switch_user()", we want to make
++	 * sure that the compiler doesn't re-load "t->user"
++	 */
++	user = t->user;
++	barrier();
++	atomic_inc(&user->sigpending);
+ 	if (override_rlimit ||
+-	    atomic_read(&t->user->sigpending) <=
++	    atomic_read(&user->sigpending) <=
+ 			t->signal->rlim[RLIMIT_SIGPENDING].rlim_cur)
+ 		q = kmem_cache_alloc(sigqueue_cachep, flags);
+ 	if (unlikely(q == NULL)) {
+-		atomic_dec(&t->user->sigpending);
++		atomic_dec(&user->sigpending);
+ 	} else {
+ 		INIT_LIST_HEAD(&q->list);
+ 		q->flags = 0;
+-		q->user = get_uid(t->user);
++		q->user = get_uid(user);
+ 	}
+ 	return(q);
+ }
+diff --git a/kernel/user.c b/kernel/user.c
+index 6408c04..220e586 100644
+--- a/kernel/user.c
++++ b/kernel/user.c
+@@ -187,6 +187,17 @@ void switch_uid(struct user_struct *new_user)
+ 	atomic_dec(&old_user->processes);
+ 	switch_uid_keyring(new_user);
+ 	current->user = new_user;
++
++	/*
++	 * We need to synchronize with __sigqueue_alloc()
++	 * doing a get_uid(p->user).. If that saw the old
++	 * user value, we need to wait until it has exited
++	 * its critical region before we can free the old
++	 * structure.
++	 */
++	smp_mb();
++	spin_unlock_wait(&current->sighand->siglock);
++
+ 	free_uid(old_user);
+ 	suid_keys(current);
+ }

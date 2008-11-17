@@ -1,0 +1,14 @@
+
+http://www.lkml.org/lkml/2006/2/23/189
+
+--- linux-2.6.16.noarch/arch/i386/Kconfig~	2006-04-04 15:30:43.000000000 -0500
++++ linux-2.6.16.noarch/arch/i386/Kconfig	2006-04-04 15:30:55.000000000 -0500
+@@ -729,7 +729,7 @@ config CRASH_DUMP
+ 	  Generate crash dump after being started by kexec.
+ 
+ config PHYSICAL_START
+-	hex "Physical address where the kernel is loaded" if (EMBEDDED || CRASH_DUMP)
++	hex "Physical address where the kernel is loaded"
+ 
+ 	default "0x1000000" if CRASH_DUMP
+ 	default "0x100000"

@@ -1,0 +1,51 @@
+From: Jeff Layton <jlayton@redhat.com>
+Subject: [RHEL5.1 PATCH] make static counters in new_inode and iunique be 32 bits (BZ 215356)
+Date: Mon, 12 Feb 2007 09:50:16 -0500
+Bugzilla: 215356
+Message-Id: <200702121450.l1CEoGMX025675@dantu.rdu.redhat.com>
+Changelog: [fs] make static counters in new_inode and iunique be 32 bits
+
+
+When a 32-bit program that was not compiled with large file offsets does a
+stat and gets a st_ino value back that won't fit in the 32 bit field, glibc
+(correctly) generates an EOVERFLOW error. We can't do anything about fs's
+with larger permanent inode numbers, but when we generate them on the fly,
+we ought to try and have them fit within a 32 bit field.
+
+This patch does this by making the static counters in these two functions be
+32 bits. It's pretty much identical to the patches recently committed to RHEL3
+and 4. This fixes the testcase in bz215356.
+
+I had originally intended to make this part of a larger patchset. It would have
+made sure that any callers of new_inode ensured that their i_ino values were
+unique. Unfortunately, it's tough to do that without impacting performance,
+and upstream has more or less decided not to worry about that unless and until
+it becomes a problem.
+
+-- Jeff
+
+diff --git a/fs/inode.c b/fs/inode.c
+index bf21dc6..23fc1fd 100644
+--- a/fs/inode.c
++++ b/fs/inode.c
+@@ -524,7 +524,8 @@ repeat:
+  */
+ struct inode *new_inode(struct super_block *sb)
+ {
+-	static unsigned long last_ino;
++	/* 32 bits for compatability mode stat calls */
++	static unsigned int last_ino;
+ 	struct inode * inode;
+ 
+ 	spin_lock_prefetch(&inode_lock);
+@@ -683,7 +684,8 @@ static unsigned long hash(struct super_block *sb, unsigned long hashval)
+  */
+ ino_t iunique(struct super_block *sb, ino_t max_reserved)
+ {
+-	static ino_t counter;
++	/* 32 bits for compatability mode stat calls */
++	static unsigned int counter;
+ 	struct inode *inode;
+ 	struct hlist_head * head;
+ 	ino_t res;
+

@@ -1,0 +1,63 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH] BZ 229732 pfkey_delete and xfrm_del_sa audit hooks 	wrong
+Date: Sun, 03 Jun 2007 18:22:37 -0400
+Bugzilla: 229732
+Message-Id: <1180909357.31147.29.camel@localhost.localdomain>
+Changelog: [audit] pfkey_delete and xfrm_del_sa audit hooks wrong
+
+
+BZ 229732
+
+Inside pfkey_delete and xfrm_del_sa the audit hooks were not called if
+there was any permission/security failures in attempting to do the del
+operation (such as permission denied from security_xfrm_state_delete).
+This patch moves the audit hook to the exit path such that all failures
+(and successes) will actually get audited.
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=16bec31db751030171b31d7767fa3a5bdbe980ea
+
+-Eric
+
+--- linux-2.6.18.i686/net/key/af_key.c.pre.229732	2007-02-23 13:23:24.000000000 -0500
++++ linux-2.6.18.i686/net/key/af_key.c	2007-02-23 13:24:13.000000000 -0500
+@@ -1467,9 +1467,6 @@ static int pfkey_delete(struct sock *sk,
+ 
+ 	err = xfrm_state_delete(x);
+ 
+-	xfrm_audit_log(audit_get_loginuid(current->audit_context), 0,
+-		       AUDIT_MAC_IPSEC_DELSA, err ? 0 : 1, NULL, x);
+-
+ 	if (err < 0)
+ 		goto out;
+ 
+@@ -1478,6 +1475,8 @@ static int pfkey_delete(struct sock *sk,
+ 	c.event = XFRM_MSG_DELSA;
+ 	km_state_notify(x, &c);
+ out:
++	xfrm_audit_log(audit_get_loginuid(current->audit_context), 0,
++		       AUDIT_MAC_IPSEC_DELSA, err ? 0 : 1, NULL, x);
+ 	xfrm_state_put(x);
+ 
+ 	return err;
+--- linux-2.6.18.i686/net/xfrm/xfrm_user.c.pre.229732	2007-02-23 13:24:33.000000000 -0500
++++ linux-2.6.18.i686/net/xfrm/xfrm_user.c	2007-02-23 13:25:24.000000000 -0500
+@@ -441,9 +441,6 @@ static int xfrm_del_sa(struct sk_buff *s
+ 
+ 	err = xfrm_state_delete(x);
+ 
+-	xfrm_audit_log(NETLINK_CB(skb).loginuid, NETLINK_CB(skb).sid,
+-		       AUDIT_MAC_IPSEC_DELSA, err ? 0 : 1, NULL, x);
+-
+ 	if (err < 0)
+ 		goto out;
+ 
+@@ -453,6 +450,8 @@ static int xfrm_del_sa(struct sk_buff *s
+ 	km_state_notify(x, &c);
+ 
+ out:
++	xfrm_audit_log(NETLINK_CB(skb).loginuid, NETLINK_CB(skb).sid,
++		       AUDIT_MAC_IPSEC_DELSA, err ? 0 : 1, NULL, x);
+ 	xfrm_state_put(x);
+ 	return err;
+ }
+

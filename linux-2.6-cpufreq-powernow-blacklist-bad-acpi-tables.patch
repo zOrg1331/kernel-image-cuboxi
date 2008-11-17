@@ -1,0 +1,245 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Wed, 12 Mar 2008 10:13:33 -0400
+Subject: [cpufreq] powernow: blacklist bad acpi tables
+Message-id: 47D7E50D.1090408@redhat.com
+O-Subject: Re: [RHEL 5.2 PATCH]: Disable cpi_processor_preregister_performance call by default [v2]
+Bugzilla: 430947
+
+Here's description of the BIOS/ACPI problem on the HP xw9400, and a
+suggestion
+for an OS solution.
+
+The xw9400 has two dual-core processors (note, to add to your confusion
+I am going to refer to cores as cpus and processors as procs in the
+remaining text).  When the system boots, the boot order (the way the
+cpus are enumerated) of the cpus is as follows:
+
+00 - proc 0, cpu 0
+10 - proc 1, cpu 0
+01 - proc 0, cpu 1
+11 - proc 1, cpu 1
+
+Note that the choice to enumerate the cpus in this manner is an HP
+choice, and not the preferred AMD choice.
+
+The ACPI _PSD table is a table that is (usually) hardcoded that
+describes the way that cpus are grouped together in domains which have a
+common cpu frequency.
+
+The ACPI table is laid out as follows on the xw9400:
+
+acpi_processor_preregister_performance calling acpi_processor_get_psd on
+cpu 0
+acpi_processor_get_psd: num_entries = 5
+acpi_processor_get_psd: revision = 0
+acpi_processor_get_psd: domain = 0
+acpi_processor_get_psd: coord_type = 253
+acpi_processor_get_psd: num_processors = 2
+acpi_processor_preregister_performance calling acpi_processor_get_psd on
+cpu 1
+input: AT Translated Set 2 keyboard as /class/input/input0
+acpi_processor_get_psd: num_entries = 5
+acpi_processor_get_psd: revision = 0
+acpi_processor_get_psd: domain = 0
+acpi_processor_get_psd: coord_type = 253
+acpi_processor_get_psd: num_processors = 2
+acpi_processor_preregister_performance calling acpi_processor_get_psd on
+cpu 2
+acpi_processor_get_psd: num_entries = 5
+acpi_processor_get_psd: revision = 0
+acpi_processor_get_psd: domain = 1
+acpi_processor_get_psd: coord_type = 253
+acpi_processor_get_psd: num_processors = 2
+acpi_processor_preregister_performance calling acpi_processor_get_psd on
+cpu 3
+acpi_processor_get_psd: num_entries = 5
+acpi_processor_get_psd: revision = 0
+acpi_processor_get_psd: domain = 1
+acpi_processor_get_psd: coord_type = 253
+acpi_processor_get_psd: num_processors = 2
+
+ie) the table is
+
+00 - proc 0, cpu 0
+01 - proc 0, cpu 1
+10 - proc 1, cpu 0
+11 - proc 1, cpu 1
+
+So ... when acpi_processor_preregister_performance() is called, the OS
+sets a cpumask which describes the frequency domains in the system.
+
+ From the ACPI table and data, the domain's cpumasks are:
+
+Domain A: 0011
+Domain B: 1100
+
+However, going back to the way the cpus were enumerated,
+
+00 - proc 0, cpu 0
+10 - proc 1, cpu 0
+01 - proc 0, cpu 1
+11 - proc 1, cpu 1
+
+ From this data, we can see that the domain's cpumasks should be:
+
+Domain A: 0101
+Domain B: 1010
+
+The issue is that the boot order of the cpus does not match the ACPI
+provided map for the domains.  *This is broken*.
+
+Resolves BZ 430947, successfully tested by me on an HP xw9400.
+
+Solution/Workaround for broken BIOS/ACPI:
+
+It appears to be unsafe to call the acpi_processor_preregister_performance
+routine on HP Opteron systems because of their broken BIOS/ACPI information.
+
+For bare-metal kernels, avoid calling acpi_processor_preregister_performance
+on HP Opteron systems.
+
+For Xen kernels, do not load the powernow-k8 driver for HP Opteron systems.
+
+Resolves BZ 430947, bare-metal successfully tested by me on an HP xw9400.
+clalance is currently testing Xen -- I will update this thread once with
+results.
+
+====
+Gah.  I didn't test enough.  During domU testing, it was found that this patch
+causes an OOPS.  The problem is that in domU kernels, dmi_get_system_info()
+returns NULL (since there is no DMI information), and the subsequent strncmp()
+OOPs.  Since PV domU's can't control the power anyway, the fix is to bomb out of
+powernow_k8init() earlier for them.  The attached patch does this; it's exactly
+the same as the previous version, but bombs out for domU's earlier.
+
+Please ACK.
+
+Chris Lalancette
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/arch/i386/kernel/cpu/cpufreq/powernow-k8.c b/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
+index 9206298..56e0f7b 100644
+--- a/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
++++ b/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
+@@ -33,6 +33,7 @@
+ #include <linux/string.h>
+ #include <linux/cpumask.h>
+ #include <linux/sched.h>	/* for current / set_cpus_allowed() */
++#include <linux/dmi.h>
+ 
+ #include <asm/msr.h>
+ #include <asm/io.h>
+@@ -57,6 +58,13 @@ static struct powernow_k8_data *powernow_data[NR_CPUS];
+ static int *req_state = NULL;
+ static int tscsync = 0;
+ 
++/* preregister_acpi_perf can have 3 values:
++   0 = NEVER call preregister_acpi_preregister_performance
++   1 = call unless overridden by code check in powernowk8_init
++   2 = ALWAYS call preregister_acpi_preregister_performance
++ */
++static int preregister_acpi_perf = 1;
++
+ static int cpu_family = CPU_OPTERON;
+ 
+ #ifndef CONFIG_SMP
+@@ -777,9 +785,9 @@ static void powernow_k8_acpi_pst_values(struct powernow_k8_data *data, unsigned
+ static struct acpi_processor_performance *acpi_perf_data[NR_CPUS];
+ static int preregister_valid = 0;
+ 
+-static int powernow_k8_cpu_preinit_acpi()
++static int powernow_k8_cpu_preinit_acpi(void)
+ {
+-	int i; 
++	int i;
+ 	struct acpi_processor_performance *data;
+ 	for_each_possible_cpu(i) {
+ 		data = kzalloc(sizeof(struct acpi_processor_performance),
+@@ -790,15 +798,20 @@ static int powernow_k8_cpu_preinit_acpi()
+ 				kfree(acpi_perf_data[j]);
+ 				acpi_perf_data[j] = NULL;
+ 			}
+-			return -ENODEV;
++			return -ENOMEM;
+ 		}
+ 		acpi_perf_data[i] = data;
+ 	}
+ 
+-	if (acpi_processor_preregister_performance(acpi_perf_data))
+-		return -ENODEV;
+-	else 
+-		preregister_valid = 1;
++	if (preregister_acpi_perf != 0) {
++		if (acpi_processor_preregister_performance(acpi_perf_data))
++			return -ENODEV;
++		else
++			preregister_valid = 1;
++	} else {
++		printk(KERN_INFO "powernow-k8: Disabling ACPI "
++		       "pre-initialization.\n");
++	}
+ 	return 0;
+ }
+ 
+@@ -1408,6 +1421,42 @@ static int __cpuinit powernowk8_init(void)
+ 			supported_cpus++;
+ 	}
+ 
++#ifdef CONFIG_XEN
++	if (!is_initial_xendomain()) {
++		/* Xen PV domU's can't possibly do powersaving; bail */
++		return -EPERM;
++	}
++#endif
++
++	/* AMD provides AGESA library modules for use in their BIOS. The
++	   default AGESA code creates the _PSD with the assumption the APICs
++	   are numbered per the BKDG HOWEVER, there is a callback
++	   (ibvPSDApicIDtoNode) to set the APIC ID to node translation for _PSD
++	   dependency domains if the system numbers the APICs differently.
++
++	   It looks like HP did not follow spec on both fronts (it numbered
++	   differently from the BKDG as	well as did not implement the callback
++	   to set the domains properly).
++
++	   AMD reports that HP is the only vendor to implement CPU enumeration
++	   this way. */
++	if (preregister_acpi_perf == 1 && cpu_family == CPU_OPTERON) {
++		char * dmi_data = dmi_get_system_info(DMI_BIOS_VENDOR);
++		if (!strncmp(dmi_data, "Hewlett-Packard", 15)) {
++#ifdef CONFIG_XEN
++	   		/* Disable cpufreq for HP AMD Opteron systems */
++			printk("%s: This BIOS is %s .... disabling cpufreq "
++			       "support\n", __FUNCTION__, dmi_data);
++			return -EPERM;
++#else
++			/* Disable preregistering ACPI data for HP AMD Opteron
++			   systems */
++			preregister_acpi_perf = 0;
++#endif
++		}
++	}
++
++
+ #ifndef CONFIG_SMP
+ 	tscsync = 0;
+ #endif
+@@ -1423,7 +1472,9 @@ static int __cpuinit powernowk8_init(void)
+ 			for(i=0; i < num_possible_cpus(); i++)
+ 				req_state[i] = 99;
+ 		}
+-		powernow_k8_cpu_preinit_acpi();
++		if (powernow_k8_cpu_preinit_acpi())
++			printk(KERN_ERR PFX "Pre-initialization of ACPI failed"
++			       "\n");
+ #ifdef CONFIG_SMP
+ 		printk(KERN_INFO PFX "Found %d %s "
+ 		       "processors (%d cpu cores) (" VERSION ")\n",
+@@ -1460,3 +1511,6 @@ module_exit(powernowk8_exit);
+ 
+ module_param(tscsync, int, 0);
+ MODULE_PARM_DESC(tscsync, "enable tsc by synchronizing powernow-k8 changes");
++module_param(preregister_acpi_perf, int, 0);
++MODULE_PARM_DESC(preregister_acpi_perf, "allow preregistering of performance"
++		 " related ACPI data");

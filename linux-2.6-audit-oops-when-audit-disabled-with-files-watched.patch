@@ -1,0 +1,40 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH] BZ 245164 kernel oops when audit disables and files watched
+Date: Fri, 22 Jun 2007 15:55:08 -0400
+Bugzilla: 245164
+Message-Id: <1182542108.3444.17.camel@dhcp231-215.rdu.redhat.com>
+Changelog: [audit] kernel oops when audit disabled with files watched
+
+
+BZ 245164
+
+The kernel can oops if a file is watched, auditing is then disabled, and
+you try to do something with the watched file.
+
+To reproduce:
+- auditctl -e 1
+- touch /tmp/foo
+- auditctl -w /tmp/foo
+- auditctl -e 0
+- rm /tmp/foo (or mv)
+
+Simple enough, check if there is an audit_context on the file before you
+try to use it.
+
+Its been posted upstream and I'm sure viro will pull it into the audit
+tree soon.
+
+-Eric
+
+--- linux-2.6.18.i686/kernel/auditfilter.c.pre.audit.disabled
++++ linux-2.6.18.i686/kernel/auditfilter.c
+@@ -976,7 +976,7 @@ static void audit_update_watch(struct au
+ 
+ 		/* If the update involves invalidating rules, do the inode-based
+ 		 * filtering now, so we don't omit records. */
+-		if (invalidating &&
++		if (invalidating && current->audit_context &&
+ 		    audit_filter_inodes(current, current->audit_context) == AUDIT_RECORD_CONTEXT)
+ 			audit_set_auditable(current->audit_context);
+ 
+

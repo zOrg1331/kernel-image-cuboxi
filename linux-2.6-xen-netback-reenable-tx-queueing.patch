@@ -1,0 +1,278 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Subject: [RHEL5 PATCH] [NET] netback: Reenable TX queueing and drop packets after timeout
+Date: Wed, 22 Nov 2006 11:56:54 +1100
+Bugzilla: 216441
+Message-Id: <20061122005654.GA14544@gondor.apana.org.au>
+Changelog: Xen netback: Reenable TX queueing and drop pkts after timeout
+
+
+Hi:
+
+BZ 216441
+
+Upstream disabled TX queueing due to concerns of packets lingering
+in queues indefinitely which is a drain on a precious resource in dom0.
+They've since reenabled it by imposing a 500ms timeout in the queue.
+The first changeset was picked up in RHEL5, which resulted in the
+loss of TX queueing.
+
+Here is the changes from upstream to reenable TX queueing.
+
+PS We need to teach upstream about the TX watchdog :)
+
+Cheers,
+-- 
+Visit Openswan at http://www.openswan.org/
+Email: Herbert Xu ~{PmV>HI~} <herbert@gondor.apana.org.au>
+Home Page: http://gondor.apana.org.au/~herbert/
+PGP Key: http://gondor.apana.org.au/~herbert/pubkey.txt
+--
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Node ID 637eace6d5c64c52d6f8b521720aedb89e47c0a7
+# Parent  d2ba4ac3616895f7260f108b9d5c3c487be8d482
+[NET] back: Fix packet queuing so that packets are drained if the
+interface is blocked for longer than 500ms. This avoids deadlock
+situations where interfaces cannot be destroyed because some other
+dormant interface is holding resources.
+
+Signed-off-by: Christopher Clark <christopher.clark@cl.cam.ac.uk>
+Signed-off-by: Keir Fraser <keir@xensource.com>
+
+diff -r d2ba4ac36168 -r 637eace6d5c6 linux-2.6-xen-sparse/drivers/xen/netback/common.h
+--- linux-2.6-xen-sparse/drivers/xen/netback/common.h	Mon Oct 23 10:05:32 2006 +0100
++++ linux-2.6-xen-sparse/drivers/xen/netback/common.h	Mon Oct 23 11:20:37 2006 +0100
+@@ -92,6 +92,9 @@ typedef struct netif_st {
+ 	unsigned long   remaining_credit;
+ 	struct timer_list credit_timeout;
+ 
++	/* Enforce draining of the transmit queue. */
++	struct timer_list tx_queue_timeout;
++
+ 	/* Miscellaneous private stuff. */
+ 	struct list_head list;  /* scheduling list */
+ 	atomic_t         refcnt;
+@@ -119,6 +122,8 @@ int netif_map(netif_t *netif, unsigned l
+ 
+ void netif_xenbus_init(void);
+ 
++#define netif_schedulable(dev) (netif_running(dev) && netif_carrier_ok(dev))
++
+ void netif_schedule_work(netif_t *netif);
+ void netif_deschedule_work(netif_t *netif);
+ 
+diff -r d2ba4ac36168 -r 637eace6d5c6 linux-2.6-xen-sparse/drivers/xen/netback/interface.c
+--- linux-2.6-xen-sparse/drivers/xen/netback/interface.c	Mon Oct 23 10:05:32 2006 +0100
++++ linux-2.6-xen-sparse/drivers/xen/netback/interface.c	Mon Oct 23 11:20:37 2006 +0100
+@@ -44,12 +44,11 @@
+  * For example, consider a packet that holds onto resources belonging to the
+  * guest for which it is queued (e.g., packet received on vif1.0, destined for
+  * vif1.1 which is not activated in the guest): in this situation the guest
+- * will never be destroyed, unless vif1.1 is taken down (which flushes the
+- * 'tx_queue').
+- * 
+- * Only set this parameter to non-zero value if you know what you are doing!
++ * will never be destroyed, unless vif1.1 is taken down. To avoid this, we
++ * run a timer (tx_queue_timeout) to drain the queue when the interface is
++ * blocked.
+  */
+-static unsigned long netbk_queue_length = 0;
++static unsigned long netbk_queue_length = 32;
+ module_param_named(queue_length, netbk_queue_length, ulong, 0);
+ 
+ static void __netif_up(netif_t *netif)
+@@ -62,7 +61,6 @@ static void __netif_down(netif_t *netif)
+ {
+ 	disable_irq(netif->irq);
+ 	netif_deschedule_work(netif);
+-	del_timer_sync(&netif->credit_timeout);
+ }
+ 
+ static int net_open(struct net_device *dev)
+@@ -153,7 +151,10 @@ netif_t *netif_alloc(domid_t domid, unsi
+ 	netif->credit_bytes = netif->remaining_credit = ~0UL;
+ 	netif->credit_usec  = 0UL;
+ 	init_timer(&netif->credit_timeout);
++	/* Initialize 'expires' now: it's used to track the credit window. */
+ 	netif->credit_timeout.expires = jiffies;
++
++	init_timer(&netif->tx_queue_timeout);
+ 
+ 	dev->hard_start_xmit = netif_be_start_xmit;
+ 	dev->get_stats       = netif_be_get_stats;
+@@ -319,25 +320,6 @@ err_rx:
+ 	return err;
+ }
+ 
+-static void netif_free(netif_t *netif)
+-{
+-	atomic_dec(&netif->refcnt);
+-	wait_event(netif->waiting_to_free, atomic_read(&netif->refcnt) == 0);
+-
+-	if (netif->irq)
+-		unbind_from_irqhandler(netif->irq, netif);
+-	
+-	unregister_netdev(netif->dev);
+-
+-	if (netif->tx.sring) {
+-		unmap_frontend_pages(netif);
+-		free_vm_area(netif->tx_comms_area);
+-		free_vm_area(netif->rx_comms_area);
+-	}
+-
+-	free_netdev(netif->dev);
+-}
+-
+ void netif_disconnect(netif_t *netif)
+ {
+ 	if (netif_carrier_ok(netif->dev)) {
+@@ -348,5 +330,23 @@ void netif_disconnect(netif_t *netif)
+ 		rtnl_unlock();
+ 		netif_put(netif);
+ 	}
+-	netif_free(netif);
+-}
++
++	atomic_dec(&netif->refcnt);
++	wait_event(netif->waiting_to_free, atomic_read(&netif->refcnt) == 0);
++
++	del_timer_sync(&netif->credit_timeout);
++	del_timer_sync(&netif->tx_queue_timeout);
++
++	if (netif->irq)
++		unbind_from_irqhandler(netif->irq, netif);
++	
++	unregister_netdev(netif->dev);
++
++	if (netif->tx.sring) {
++		unmap_frontend_pages(netif);
++		free_vm_area(netif->tx_comms_area);
++		free_vm_area(netif->rx_comms_area);
++	}
++
++	free_netdev(netif->dev);
++}
+diff -r d2ba4ac36168 -r 637eace6d5c6 linux-2.6-xen-sparse/drivers/xen/netback/netback.c
+--- linux-2.6-xen-sparse/drivers/xen/netback/netback.c	Mon Oct 23 10:05:32 2006 +0100
++++ linux-2.6-xen-sparse/drivers/xen/netback/netback.c	Mon Oct 23 11:20:37 2006 +0100
+@@ -264,6 +264,13 @@ static inline int netbk_queue_full(netif
+ 	       ((netif->rx.rsp_prod_pvt + NET_RX_RING_SIZE - peek) < needed);
+ }
+ 
++static void tx_queue_callback(unsigned long data)
++{
++	netif_t *netif = (netif_t *)data;
++	if (netif_schedulable(netif->dev))
++		netif_wake_queue(netif->dev);
++}
++
+ int netif_be_start_xmit(struct sk_buff *skb, struct net_device *dev)
+ {
+ 	netif_t *netif = netdev_priv(dev);
+@@ -271,20 +278,13 @@ int netif_be_start_xmit(struct sk_buff *
+ 	BUG_ON(skb->dev != dev);
+ 
+ 	/* Drop the packet if the target domain has no receive buffers. */
+-	if (unlikely(!netif_running(dev) || !netif_carrier_ok(dev)))
++	if (unlikely(!netif_schedulable(dev) || netbk_queue_full(netif)))
+ 		goto drop;
+ 
+-	if (unlikely(netbk_queue_full(netif))) {
+-		/* Not a BUG_ON() -- misbehaving netfront can trigger this. */
+-		if (netbk_can_queue(dev))
+-			DPRINTK("Queue full but not stopped!\n");
+-		goto drop;
+-	}
+-
+-	/* Copy the packet here if it's destined for a flipping
+-	   interface but isn't flippable (e.g. extra references to
+-	   data)
+-	*/
++	/*
++	 * Copy the packet here if it's destined for a flipping interface
++	 * but isn't flippable (e.g. extra references to data).
++	 */
+ 	if (!netif->copying_receiver && !is_flippable_skb(skb)) {
+ 		struct sk_buff *nskb = netbk_copy_skb(skb);
+ 		if ( unlikely(nskb == NULL) )
+@@ -305,8 +305,19 @@ int netif_be_start_xmit(struct sk_buff *
+ 		netif->rx.sring->req_event = netif->rx_req_cons_peek +
+ 			netbk_max_required_rx_slots(netif);
+ 		mb(); /* request notification /then/ check & stop the queue */
+-		if (netbk_queue_full(netif))
++		if (netbk_queue_full(netif)) {
+ 			netif_stop_queue(dev);
++			/*
++			 * Schedule 500ms timeout to restart the queue, thus
++			 * ensuring that an inactive queue will be drained.
++			 * Packets will be immediately be dropped until more
++			 * receive buffers become available (see
++			 * netbk_queue_full() check above).
++			 */
++			netif->tx_queue_timeout.data = (unsigned long)netif;
++			netif->tx_queue_timeout.function = tx_queue_callback;
++			__mod_timer(&netif->tx_queue_timeout, jiffies + HZ/2);
++		}
+ 	}
+ 
+ 	skb_queue_tail(&rx_queue, skb);
+@@ -706,6 +717,7 @@ static void net_rx_action(unsigned long 
+ 		}
+ 
+ 		if (netif_queue_stopped(netif->dev) &&
++		    netif_schedulable(netif->dev) &&
+ 		    !netbk_queue_full(netif))
+ 			netif_wake_queue(netif->dev);
+ 
+@@ -763,8 +775,7 @@ static void add_to_net_schedule_list_tai
+ 
+ 	spin_lock_irq(&net_schedule_list_lock);
+ 	if (!__on_net_schedule_list(netif) &&
+-	    likely(netif_running(netif->dev) &&
+-		   netif_carrier_ok(netif->dev))) {
++	    likely(netif_schedulable(netif->dev))) {
+ 		list_add_tail(&netif->list, &net_schedule_list);
+ 		netif_get(netif);
+ 	}
+@@ -1358,7 +1369,7 @@ irqreturn_t netif_be_int(int irq, void *
+ 	add_to_net_schedule_list_tail(netif);
+ 	maybe_schedule_tx_action();
+ 
+-	if (netif_queue_stopped(netif->dev) && !netbk_queue_full(netif))
++	if (netif_schedulable(netif->dev) && !netbk_queue_full(netif))
+ 		netif_wake_queue(netif->dev);
+ 
+ 	return IRQ_HANDLED;
+diff -r d2ba4ac36168 -r 637eace6d5c6 linux-2.6-xen-sparse/drivers/xen/netback/xenbus.c
+--- linux-2.6-xen-sparse/drivers/xen/netback/xenbus.c	Mon Oct 23 10:05:32 2006 +0100
++++ linux-2.6-xen-sparse/drivers/xen/netback/xenbus.c	Mon Oct 23 11:20:37 2006 +0100
+@@ -328,7 +328,7 @@ static void connect(struct backend_info 
+ 
+ 	/* May not get a kick from the frontend, so start the tx_queue now. */
+ 	if (!netbk_can_queue(be->netif->dev))
+-		netif_start_queue(be->netif->dev);
++		netif_wake_queue(be->netif->dev);
+ }
+ 
+ 
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Node ID d9a0690399e0131900a0468ad086e8bc07dab3f8
+# Parent  b21246720fde43b11835d814e9755f1f3888f9e4
+[NET] back: Remove warning about non-zero tx queue length.
+Signed-off-by: Keir Fraser <keir@xensource.com>
+
+diff -r b21246720fde -r d9a0690399e0 linux-2.6-xen-sparse/drivers/xen/netback/interface.c
+--- linux-2.6-xen-sparse/drivers/xen/netback/interface.c	Mon Oct 30 17:35:11 2006 +0000
++++ linux-2.6-xen-sparse/drivers/xen/netback/interface.c	Tue Oct 31 09:49:31 2006 +0000
+@@ -166,9 +166,6 @@ netif_t *netif_alloc(domid_t domid, unsi
+ 	SET_ETHTOOL_OPS(dev, &network_ethtool_ops);
+ 
+ 	dev->tx_queue_len = netbk_queue_length;
+-	if (dev->tx_queue_len != 0)
+-		printk(KERN_WARNING "netbk: WARNING: device '%s' has non-zero "
+-		       "queue length (%lu)!\n", dev->name, dev->tx_queue_len);
+ 
+ 	/*
+ 	 * Initialise a dummy MAC address. We choose the numerically
+

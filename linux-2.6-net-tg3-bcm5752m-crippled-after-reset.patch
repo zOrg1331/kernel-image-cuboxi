@@ -1,0 +1,59 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Subject: [RHEL5 PATCH] tg3: BCM5752M crippled after reset
+Date: Thu, 30 Nov 2006 12:49:40 -0500
+Bugzilla: 215765
+Message-Id: <20061130174939.GB7875@gospo.rdu.redhat.com>
+Changelog: tg3: BCM5752M crippled after reset
+
+
+
+The BCM 5752M needs a PHY reset early in the card's reset sequence. This
+appears to be useful to other cards as well. Without this patch, the
+card cannot be properly reset -- so a card can't dhcp the second time
+(or a Xen guest cannot dhcp).
+
+This problem was already discovered upstream and fixed with the
+following upstream patch:
+http://kernel.org/git/?p=linux/kernel/git/jgarzik/netdev-2.6.git;a=commit;h=36da4d869f23bc7d1a70a3185218cb626537845c
+
+This fixes BZ 215765 and has been verified by the reporter.
+
+-andy
+
+---
+
+ tg3.c |    8 ++++----
+ 1 files changed, 4 insertions(+), 4 deletions(-)
+
+--- linux-2.6.18.x86_64/drivers/net/tg3.c.orig	2006-11-20 14:58:03.922927000 -0500
++++ linux-2.6.18.x86_64/drivers/net/tg3.c	2006-11-20 14:58:28.273553000 -0500
+@@ -68,8 +68,8 @@
+ 
+ #define DRV_MODULE_NAME		"tg3"
+ #define PFX DRV_MODULE_NAME	": "
+-#define DRV_MODULE_VERSION	"3.65"
+-#define DRV_MODULE_RELDATE	"August 07, 2006"
++#define DRV_MODULE_VERSION	"3.65-rh"
++#define DRV_MODULE_RELDATE	"November 20, 2006"
+ 
+ #define TG3_DEF_MAC_MODE	0
+ #define TG3_DEF_RX_MODE		0
+@@ -5958,7 +5958,7 @@ static int tg3_reset_hw(struct tg3 *tp, 
+ 		tg3_abort_hw(tp, 1);
+ 	}
+ 
+-	if ((tp->tg3_flags2 & TG3_FLG2_MII_SERDES) && reset_phy)
++	if (reset_phy)
+ 		tg3_phy_reset(tp);
+ 
+ 	err = tg3_chip_reset(tp);
+@@ -6511,7 +6511,7 @@ static int tg3_reset_hw(struct tg3 *tp, 
+ 		tw32(GRC_LOCAL_CTRL, tp->grc_local_ctrl);
+ 	}
+ 
+-	err = tg3_setup_phy(tp, reset_phy);
++	err = tg3_setup_phy(tp, 0);
+ 	if (err)
+ 		return err;
+ 
+

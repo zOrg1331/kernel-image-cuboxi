@@ -1,0 +1,110 @@
+From: "Janice M. Girouard" <jgirouar@redhat.com>
+Subject: [RHEL 5.0 PPC PATCH] RHBZ# 214486: LTC28828-Kernel Panic at  .ibmveth_poll+0x20c/0x470
+Date: Tue, 28 Nov 2006 16:58:05 -0500 (Eastern Standard Time)
+Bugzilla: 214486
+Message-Id: <Pine.WNT.4.64.0611281649320.2852@IBM-3MTQI3AXJFW>
+Changelog: IBM veth panic when buffer rolls over
+
+
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=214486
+
+Description:
+------------
+This patch fixes a bug that has been present since the very first 
+versions of the driver, but was exposed in 2.6.16 when the # of 2k 
+buffers was modified.  Depending on traffic, it may take as little as 4 
+days (when really pounding at it) or it can take a month, but the kernel 
+*will* panic and jump to xmon.
+
+Before 2.6.16, it was "hidden" because the number of 2k buffers was 256, 
+which is a perfect divisor of 2^32 (meaning that 2^32 divided by 256 is a 
+whole number without a remainder).  For performance reasons the number of 
+buffers was changed to 768 which is not a perfect divisor of 2^32, 
+causing the panic.  
+
+The consumer_index and producer_index are u32's that get incremented on 
+every buffer emptied and replenished respectively.  We use the 
+{producer,consumer}_index mod'ed with the size of the pool to pick out an 
+entry in the free_map.  The problem happens when the u32 rolls over and 
+the number of the buffers in the pool is not a perfect divisor of 2^32.  
+i.e. if the number of 2K buffers is 0x300, before the consumer_index 
+rolls over,  our index to the free map = 0xffffffff mod 0x300 = 0xff.  
+The next time a buffer is emptied, we want the index to the free map to 
+be 0x100, but 0x0 mod 0x300 is 0x0.
+
+This patch assigns the mod'ed result back to the consumer and producer 
+indexes so that they never roll over.  The second chunk of the patch 
+covers the unlikely case where the consumer_index has just been reset to 
+0x0 and the hypervisor is not able to accept that buffer.
+
+RHEL Version Found:
+-------------------
+kernel 2.6.16 and above.  
+
+Upstream Status:
+----------------
+This patch has been accepted into the mainline tree as two separate 
+patches.  The first patch had a increment calculation mistake.
+
+These are the commits from Linus' tree:
+
+http://git.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=751ae21c6cd1493e3d0a4935b08fb298b9d89773
+
+http://git.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=047a66d4bb24aaf19f41d620f8f0534c2153cd0b
+
+
+Test Status:
+------------
+This patch was tested by Santiago Leon of IBM.  The panic happens after 
+2^32 packets received, so it usually takes 4-5  days to replicate when 
+running netperf 24 hours a day.  To replicate the bug much quicker, (17 
+hours) and verify the fix, he changed some of the parameters of the 
+ibmveth driver: 20 buffers of 2k and 3k buffers of 256 bytes (because 3k 
+is not a divisor of 2^32).  
+
+This patch builds against kernel-2.6.18-1.277.el5.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL 5.0
+
+--- a/drivers/net/ibmveth.c	2006-11-07 11:40:47.000000000 -0500
++++ b/drivers/net/ibmveth.c	2006-11-07 11:41:47.000000000 -0500
+@@ -212,7 +212,8 @@ static void ibmveth_replenish_buffer_poo
+ 			break;
+ 		}
+ 
+-		free_index = pool->consumer_index++ % pool->size;
++		free_index = pool->consumer_index;
++		pool->consumer_index = (pool->consumer_index + 1) % pool->size;
+ 		index = pool->free_map[free_index];
+ 
+ 		ibmveth_assert(index != IBM_VETH_INVALID_MAP);
+@@ -238,7 +239,10 @@ static void ibmveth_replenish_buffer_poo
+ 		if(lpar_rc != H_SUCCESS) {
+ 			pool->free_map[free_index] = index;
+ 			pool->skbuff[index] = NULL;
+-			pool->consumer_index--;
++			if (pool->consumer_index == 0)
++				pool->consumer_index = pool->size - 1;
++			else
++				pool->consumer_index--;
+ 			dma_unmap_single(&adapter->vdev->dev,
+ 					pool->dma_addr[index], pool->buff_size,
+ 					DMA_FROM_DEVICE);
+@@ -325,7 +329,10 @@ static void ibmveth_remove_buffer_from_p
+ 			 adapter->rx_buff_pool[pool].buff_size,
+ 			 DMA_FROM_DEVICE);
+ 
+-	free_index = adapter->rx_buff_pool[pool].producer_index++ % adapter->rx_buff_pool[pool].size;
++	free_index = adapter->rx_buff_pool[pool].producer_index;
++	adapter->rx_buff_pool[pool].producer_index
++		= (adapter->rx_buff_pool[pool].producer_index + 1)
++		% adapter->rx_buff_pool[pool].size;
+ 	adapter->rx_buff_pool[pool].free_map[free_index] = index;
+ 
+ 	mb();
+

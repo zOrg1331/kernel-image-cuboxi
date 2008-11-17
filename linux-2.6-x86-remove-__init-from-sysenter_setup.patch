@@ -1,0 +1,69 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] BZ 226852 : remove __init from sysenter_setup
+Date: Thu, 01 Mar 2007 07:53:31 -0500
+Bugzilla: 226852
+Message-Id: <45E6CCCB.8050801@redhat.com>
+Changelog: [x86] remove __init from sysenter_setup
+
+Remove __init from sysenter_setup.
+
+Resolves BZ 226852.patch
+
+Successfully tested by me.
+
+diff -urNp linux-2.6.18.i386.orig/arch/i386/kernel/sysenter.c linux-2.6.18.i386.new/arch/i386/kernel/sysenter.c
+--- linux-2.6.18.i386.orig/arch/i386/kernel/sysenter.c	2007-02-28 11:33:21.000000000 -0500
++++ linux-2.6.18.i386.new/arch/i386/kernel/sysenter.c	2007-02-28 11:30:54.000000000 -0500
+@@ -74,7 +74,7 @@ extern const char vsyscall_int80_start, 
+ extern const char vsyscall_sysenter_start, vsyscall_sysenter_end;
+ static void *syscall_page;
+ 
+-int __init sysenter_setup(void)
++int __cpuinit sysenter_setup(void)
+ {
+ 	syscall_page = (void *)get_zeroed_page(GFP_ATOMIC);
+ 
+diff -urNp linux-2.6.18.i386.orig/arch/i386/kernel/vsyscall.S linux-2.6.18.i386.new/arch/i386/kernel/vsyscall.S
+--- linux-2.6.18.i386.orig/arch/i386/kernel/vsyscall.S	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.i386.new/arch/i386/kernel/vsyscall.S	2007-02-28 11:30:54.000000000 -0500
+@@ -1,6 +1,6 @@
+ #include <linux/init.h>
+ 
+-__INITDATA
++__CPUINITDATA
+ 
+ 	.globl vsyscall_int80_start, vsyscall_int80_end
+ vsyscall_int80_start:
+diff -urNp linux-2.6.18.i386.orig/arch/x86_64/kernel/head.S linux-2.6.18.i386.new/arch/x86_64/kernel/head.S
+--- linux-2.6.18.i386.orig/arch/x86_64/kernel/head.S	2007-02-28 11:33:17.000000000 -0500
++++ linux-2.6.18.i386.new/arch/x86_64/kernel/head.S	2007-02-28 11:31:35.000000000 -0500
+@@ -327,9 +327,7 @@ NEXT_PAGE(level2_spare_pgt)
+ 
+ 	.data
+ 
+-#ifndef CONFIG_HOTPLUG_CPU
+-	__INITDATA
+-#endif
++	__CPUINITDATA
+ 
+ 	.align 16
+ 	.globl cpu_gdt_descr
+diff -urNp linux-2.6.18.i386.orig/include/linux/init.h linux-2.6.18.i386.new/include/linux/init.h
+--- linux-2.6.18.i386.orig/include/linux/init.h	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.i386.new/include/linux/init.h	2007-02-28 11:30:54.000000000 -0500
+@@ -56,6 +56,14 @@
+ #define __FINIT		.previous
+ #define __INITDATA	.section	".init.data","aw"
+ 
++#ifdef CONFIG_HOTPLUG_CPU
++#define __CPUINIT	.section	".text","ax"
++#define __CPUINITDATA	.section	".data","aw"
++#else
++#define __CPUINIT	__INIT
++#define __CPUINITDATA	__INITDATA
++#endif
++
+ #ifndef __ASSEMBLY__
+ /*
+  * Used for initialization calls..
+

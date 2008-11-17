@@ -1,0 +1,30 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH] BZ 232524 Add space in IPv6 xfrm audit record
+Date: Mon, 04 Jun 2007 12:03:08 -0400
+Bugzilla: 232524
+Message-Id: <1180972988.3950.9.camel@localhost.localdomain>
+Changelog: [audit] Add space in IPv6 xfrm audit record
+
+
+BZ 232524
+
+When auditing XFRM config changes for IPv6 the audit record did not
+contain a space between the src and dst.  In the LSPP kernel and
+amazingly adds a space!
+
+http://git.kernel.org/?p=linux/kernel/git/davem/net-2.6.git;a=commitdiff;h=961995582e3752e983dc3906a57546a188007440
+
+-Eric
+
+--- linux-2.6.18.i686/net/xfrm/xfrm_policy.c.pre.232524	2007-03-22 18:13:42.000000000 -0400
++++ linux-2.6.18.i686/net/xfrm/xfrm_policy.c	2007-03-22 18:23:51.000000000 -0400
+@@ -1484,7 +1484,7 @@ void xfrm_audit_log(uid_t auid, u32 sid,
+ 					sizeof(struct in6_addr));
+ 			}
+ 			audit_log_format(audit_buf,
+-					 " src=" NIP6_FMT "dst=" NIP6_FMT,
++					 " src=" NIP6_FMT " dst=" NIP6_FMT,
+ 					 NIP6(saddr6), NIP6(daddr6));
+ 		}
+ 		break;
+

@@ -1,0 +1,306 @@
+Date: Fri, 06 Oct 2006 19:24:28 -0400
+From: Doug Ledford <dledford@redhat.com>
+Subject: [Patch RHEL5] fix oops on ppc when using scsi sg to access devices
+
+The upstream sg driver has a problem related to large page sizes.
+Specifically, the 64k page size on ppc causes it to oops.  There are two
+fixes to the problem.  The first, and obviously smaller but incomplete
+version of the patch is a single line change to sg.h to make
+SG_SCATTER_SZ at least as large as all arch PAGE_SIZE possibilities.
+That change has been tested to solve the problem.  However, the upstream
+version of the patch is done much more correctly in that it accomodates
+*any* page size that might come up in the future and does the right math
+to make everything work instead of just hoping that increasing the size
+statically will be good enough and not cause problems on other arches
+with a smaller page size that have to deal with those huge chunks of
+memory.  My preference is for the upstream fix, which I will attach
+here.  However, I'll put the one line patch inline.  This is for
+bz207146.  Both versions of the fix have been tested and verified by
+IBM.
+
+Date: Wed, 20 Sep 2006 22:20:49 +0000 (-0400)
+From: Douglas Gilbert <dougg@torque.net>
+Subject: [SCSI] sg: fixes for large page_size
+
+[SCSI] sg: fixes for large page_size
+
+This sg driver patch addresses the problem with larger
+page sizes reported by Brian King in this post:
+http://marc.theaimsgroup.com/?l=linux-scsi&m=115867718623631&w=2
+Some other related matters are also addressed. Some of these
+prevent oopses when the SG_SCATTER_SZ or scatter_elem_sz are
+set to inappropriate values.
+
+The scatter_elem_sz has been tested up to 4 MB which should
+make the largest data transfer with one SCSI command, 32 MB
+less one block, achievable with a relatively small number
+of elements in the scatter gather list.
+
+ChangeLog:
+    - add scatter_elem_sz boot time parameter and sysfs module
+      parameter that is initialized to SG_SCATTER_SZ
+    - the driver will then adjust scatter_elem_sz to be the
+      max(given(scatter_elem_sz), PAGE_SIZE)
+      It will also round it up, if necessary, to be a power
+      of two
+    - clean up sg.h header, correct bad urls and some statements
+      that are no longer valid
+    - make the def_reserved_size sysfs module attribute writable
+
+Signed-off-by: Douglas Gilbert <dougg@torque.net>
+Signed-off-by: James Bottomley <James.Bottomley@SteelEye.com>
+---
+
+--- a/drivers/scsi/sg.c
++++ b/drivers/scsi/sg.c
+@@ -60,7 +60,7 @@ static int sg_version_num = 30534;	/* 2 
+ 
+ #ifdef CONFIG_SCSI_PROC_FS
+ #include <linux/proc_fs.h>
+-static char *sg_version_date = "20060818";
++static char *sg_version_date = "20060920";
+ 
+ static int sg_proc_init(void);
+ static void sg_proc_cleanup(void);
+@@ -94,6 +94,9 @@ int sg_big_buff = SG_DEF_RESERVED_SIZE;
+ static int def_reserved_size = -1;	/* picks up init parameter */
+ static int sg_allow_dio = SG_ALLOW_DIO_DEF;
+ 
++static int scatter_elem_sz = SG_SCATTER_SZ;
++static int scatter_elem_sz_prev = SG_SCATTER_SZ;
++
+ #define SG_SECTOR_SZ 512
+ #define SG_SECTOR_MSK (SG_SECTOR_SZ - 1)
+ 
+@@ -1537,11 +1540,9 @@ sg_remove(struct class_device *cl_dev, s
+ 		msleep(10);	/* dirty detach so delay device destruction */
+ }
+ 
+-/* Set 'perm' (4th argument) to 0 to disable module_param's definition
+- * of sysfs parameters (which module_param doesn't yet support).
+- * Sysfs parameters defined explicitly below.
+- */
+-module_param_named(def_reserved_size, def_reserved_size, int, S_IRUGO);
++module_param_named(scatter_elem_sz, scatter_elem_sz, int, S_IRUGO | S_IWUSR);
++module_param_named(def_reserved_size, def_reserved_size, int,
++		   S_IRUGO | S_IWUSR);
+ module_param_named(allow_dio, sg_allow_dio, int, S_IRUGO | S_IWUSR);
+ 
+ MODULE_AUTHOR("Douglas Gilbert");
+@@ -1550,6 +1551,8 @@ MODULE_LICENSE("GPL");
+ MODULE_VERSION(SG_VERSION_STR);
+ MODULE_ALIAS_CHARDEV_MAJOR(SCSI_GENERIC_MAJOR);
+ 
++MODULE_PARM_DESC(scatter_elem_sz, "scatter gather element "
++                "size (default: max(SG_SCATTER_SZ, PAGE_SIZE))");
+ MODULE_PARM_DESC(def_reserved_size, "size of buffer reserved for each fd");
+ MODULE_PARM_DESC(allow_dio, "allow direct I/O (default: 0 (disallow))");
+ 
+@@ -1558,8 +1561,14 @@ init_sg(void)
+ {
+ 	int rc;
+ 
++	if (scatter_elem_sz < PAGE_SIZE) {
++		scatter_elem_sz = PAGE_SIZE;
++		scatter_elem_sz_prev = scatter_elem_sz;
++	}
+ 	if (def_reserved_size >= 0)
+ 		sg_big_buff = def_reserved_size;
++	else
++		def_reserved_size = sg_big_buff;
+ 
+ 	rc = register_chrdev_region(MKDEV(SCSI_GENERIC_MAJOR, 0), 
+ 				    SG_MAX_DEVS, "sg");
+@@ -1842,15 +1851,30 @@ sg_build_indirect(Sg_scatter_hold * schp
+ 	if (mx_sc_elems < 0)
+ 		return mx_sc_elems;	/* most likely -ENOMEM */
+ 
++	num = scatter_elem_sz;
++	if (unlikely(num != scatter_elem_sz_prev)) {
++		if (num < PAGE_SIZE) {
++			scatter_elem_sz = PAGE_SIZE;
++			scatter_elem_sz_prev = PAGE_SIZE;
++		} else
++			scatter_elem_sz_prev = num;
++	}
+ 	for (k = 0, sg = schp->buffer, rem_sz = blk_size;
+ 	     (rem_sz > 0) && (k < mx_sc_elems);
+ 	     ++k, rem_sz -= ret_sz, ++sg) {
+ 		
+-		num = (rem_sz > SG_SCATTER_SZ) ? SG_SCATTER_SZ : rem_sz;
++		num = (rem_sz > scatter_elem_sz_prev) ?
++		      scatter_elem_sz_prev : rem_sz;
+ 		p = sg_page_malloc(num, sfp->low_dma, &ret_sz);
+ 		if (!p)
+ 			return -ENOMEM;
+ 
++		if (num == scatter_elem_sz_prev) {
++			if (unlikely(ret_sz > scatter_elem_sz_prev)) {
++				scatter_elem_sz = ret_sz;
++				scatter_elem_sz_prev = ret_sz;
++			}
++		}
+ 		sg->page = p;
+ 		sg->length = ret_sz;
+ 
+@@ -2341,6 +2365,9 @@ sg_add_sfp(Sg_device * sdp, int dev)
+ 	}
+ 	write_unlock_irqrestore(&sg_dev_arr_lock, iflags);
+ 	SCSI_LOG_TIMEOUT(3, printk("sg_add_sfp: sfp=0x%p\n", sfp));
++	if (unlikely(sg_big_buff != def_reserved_size))
++		sg_big_buff = def_reserved_size;
++
+ 	sg_build_reserve(sfp, sg_big_buff);
+ 	SCSI_LOG_TIMEOUT(3, printk("sg_add_sfp:   bufflen=%d, k_use_sg=%d\n",
+ 			   sfp->reserve.bufflen, sfp->reserve.k_use_sg));
+@@ -2437,16 +2464,16 @@ sg_res_in_use(Sg_fd * sfp)
+ 	return srp ? 1 : 0;
+ }
+ 
+-/* If retSzp==NULL want exact size or fail */
++/* The size fetched (value output via retSzp) set when non-NULL return */
+ static struct page *
+ sg_page_malloc(int rqSz, int lowDma, int *retSzp)
+ {
+ 	struct page *resp = NULL;
+ 	gfp_t page_mask;
+ 	int order, a_size;
+-	int resSz = rqSz;
++	int resSz;
+ 
+-	if (rqSz <= 0)
++	if ((rqSz <= 0) || (NULL == retSzp))
+ 		return resp;
+ 
+ 	if (lowDma)
+@@ -2456,8 +2483,9 @@ sg_page_malloc(int rqSz, int lowDma, int
+ 
+ 	for (order = 0, a_size = PAGE_SIZE; a_size < rqSz;
+ 	     order++, a_size <<= 1) ;
++	resSz = a_size;		/* rounded up if necessary */
+ 	resp = alloc_pages(page_mask, order);
+-	while ((!resp) && order && retSzp) {
++	while ((!resp) && order) {
+ 		--order;
+ 		a_size >>= 1;	/* divide by 2, until PAGE_SIZE */
+ 		resp =  alloc_pages(page_mask, order);	/* try half */
+@@ -2466,8 +2494,7 @@ sg_page_malloc(int rqSz, int lowDma, int
+ 	if (resp) {
+ 		if (!capable(CAP_SYS_ADMIN) || !capable(CAP_SYS_RAWIO))
+ 			memset(page_address(resp), 0, resSz);
+-		if (retSzp)
+-			*retSzp = resSz;
++		*retSzp = resSz;
+ 	}
+ 	return resp;
+ }
+--- a/include/scsi/sg.h
++++ b/include/scsi/sg.h
+@@ -11,26 +11,10 @@
+ Original driver (sg.h):
+ *       Copyright (C) 1992 Lawrence Foard
+ Version 2 and 3 extensions to driver:
+-*       Copyright (C) 1998 - 2003 Douglas Gilbert
++*       Copyright (C) 1998 - 2006 Douglas Gilbert
+ 
+-    Version: 3.5.29 (20030529)
+-    This version is for 2.5 series kernels.
+-
+-    Changes since 3.5.28 (20030308)
+-	- fix bug introduced in version 3.1.24 (last segment of sgat list)
+-    Changes since 3.5.27 (20020812)
+-    	- remove procfs entries: hosts, host_hdr + host_strs (now in sysfs)
+-	- add sysfs sg driver params: def_reserved_size, allow_dio, version
+-	- new boot option: "sg_allow_dio" and module parameter: "allow_dio"
+-        - multiple internal changes due to scsi subsystem rework	
+-    Changes since 3.5.26 (20020708)
+-	- re-add direct IO using Kai Makisara's work
+-	- re-tab to 8, start using C99-isms
+-	- simplify memory management
+-    Changes since 3.5.25 (20020504)
+-	- driverfs additions
+-	- copy_to/from_user() fixes [William Stinson]
+-	- disable kiobufs support
++    Version: 3.5.34 (20060920)
++    This version is for 2.6 series kernels.
+ 
+     For a full changelog see http://www.torque.net/sg
+ 
+@@ -40,7 +24,7 @@ Map of SG verions to the Linux kernels i
+        2.1.40            2.2.20
+        3.0.x             optional version 3 sg driver for 2.2 series
+        3.1.17++          2.4.0++
+-       3.5.23++          2.5.0++
++       3.5.30++          2.6.0++
+ 
+ Major new features in SG 3.x driver (cf SG 2.x drivers)
+ 	- SG_IO ioctl() combines function if write() and read()
+@@ -51,14 +35,15 @@ Major new features in SG 3.x driver (cf 
+  data into kernel buffers and then use the CPU to copy the data into the 
+  user space (vice versa for writes). That is called "indirect" IO due to 
+  the double handling of data. There are two methods offered to remove the
+- redundant copy: 1) direct IO which uses the kernel kiobuf mechanism and 
+- 2) using the mmap() system call to map the reserve buffer (this driver has 
+- one reserve buffer per fd) into the user space. Both have their advantages.
++ redundant copy: 1) direct IO and 2) using the mmap() system call to map
++ the reserve buffer (this driver has one reserve buffer per fd) into the
++ user space. Both have their advantages.
+  In terms of absolute speed mmap() is faster. If speed is not a concern, 
+  indirect IO should be fine. Read the documentation for more information.
+ 
+- ** N.B. To use direct IO 'echo 1 > /proc/scsi/sg/allow_dio' may be
+-         needed. That pseudo file's content is defaulted to 0. **
++ ** N.B. To use direct IO 'echo 1 > /proc/scsi/sg/allow_dio' or
++         'echo 1 > /sys/module/sg/parameters/allow_dio' is needed.
++         That attribute is 0 by default. **
+  
+  Historical note: this SCSI pass-through driver has been known as "sg" for 
+  a decade. In broader kernel discussions "sg" is used to refer to scatter
+@@ -72,20 +57,17 @@ Major new features in SG 3.x driver (cf 
+  	http://www.torque.net/sg/p/sg_v3_ho.html
+  This is a rendering from DocBook source [change the extension to "sgml"
+  or "xml"]. There are renderings in "ps", "pdf", "rtf" and "txt" (soon).
++ The SG_IO ioctl is now found in other parts kernel (e.g. the block layer).
++ For more information see http://www.torque.net/sg/sg_io.html
+ 
+  The older, version 2 documents discuss the original sg interface in detail:
+ 	http://www.torque.net/sg/p/scsi-generic.txt
+ 	http://www.torque.net/sg/p/scsi-generic_long.txt
+- A version of this document (potentially out of date) may also be found in
+- the kernel source tree, probably at:
+-        Documentation/scsi/scsi-generic.txt .
++ Also available: <kernel_source>/Documentation/scsi/scsi-generic.txt
+ 
+  Utility and test programs are available at the sg web site. They are 
+- bundled as sg_utils (for the lk 2.2 series) and sg3_utils (for the
+- lk 2.4 series).
+-
+- There is a HOWTO on the Linux SCSI subsystem in the lk 2.4 series at:
+- 	http://www.linuxdoc.org/HOWTO/SCSI-2.4-HOWTO
++ packaged as sg3_utils (for the lk 2.4 and 2.6 series) and sg_utils
++ (for the lk 2.2 series).
+ */
+ 
+ 
+@@ -238,13 +220,12 @@ typedef struct sg_req_info { /* used by 
+ #define SG_GET_ACCESS_COUNT 0x2289  
+ 
+ 
+-#define SG_SCATTER_SZ (8 * 4096)  /* PAGE_SIZE not available to user */
++#define SG_SCATTER_SZ (8 * 4096)
+ /* Largest size (in bytes) a single scatter-gather list element can have.
+-   The value must be a power of 2 and <= (PAGE_SIZE * 32) [131072 bytes on
+-   i386]. The minimum value is PAGE_SIZE. If scatter-gather not supported
+-   by adapter then this value is the largest data block that can be
+-   read/written by a single scsi command. The user can find the value of
+-   PAGE_SIZE by calling getpagesize() defined in unistd.h . */
++   The value used by the driver is 'max(SG_SCATTER_SZ, PAGE_SIZE)'.
++   This value should be a power of 2 (and may be rounded up internally).
++   If scatter-gather is not supported by adapter then this value is the
++   largest data block that can be read/written by a single scsi command. */
+ 
+ #define SG_DEFAULT_RETRIES 0
+ 
+
+
+

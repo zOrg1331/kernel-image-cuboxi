@@ -1,0 +1,35 @@
+From: Alan Cox <alan@redhat.com>
+Subject: [PATCH] Fix bug #222653 (on Exception) Serverworks data corruptor
+Date: Wed, 6 Jun 2007 10:16:37 -0400
+Bugzilla: 222653
+Message-Id: <20070606141637.GG4678@devserv.devel.redhat.com>
+Changelog: [ide] Serverworks data corruptor
+
+
+Serverworks IDE passes mode information from the BIOS to the driver (which then
+mostly interprets it right but not entirely). However in RAID mode some of the 
+RAID firmware leaves enough bits to convince the driver to use the firmware
+settings but not actual valid data and this causes corruption.
+
+The fix is pretty clean and upstream (upstream in fact now plans to move on
+from this to drop all firmware based tuning and always do the job itself as the
+new libata driver does). If the chip is in RAID mode the dev->class is not set
+to STORAGE_IDE, and in that case we skip the oem setup and tune the chipset by
+hand.
+
+--- linux-2.6.18.x86_64/drivers/ide/pci/serverworks.c~	2007-06-06 15:08:51.000000000 +0100
++++ linux-2.6.18.x86_64/drivers/ide/pci/serverworks.c	2007-06-06 15:08:51.000000000 +0100
+@@ -156,6 +156,12 @@
+ 	pci_read_config_word(dev, 0x4A, &csb5_pio);
+ 	pci_read_config_byte(dev, 0x54, &ultra_enable);
+ 
++	/* If we are in RAID mode (eg AMI MegaIDE) then we can't it
++	   turns out trust the firmware configuration */
++
++	if ((dev->class >> 8) != PCI_CLASS_STORAGE_IDE)
++		goto oem_setup_failed;
++
+ 	/* Per Specified Design by OEM, and ASIC Architect */
+ 	if ((dev->device == PCI_DEVICE_ID_SERVERWORKS_CSB6IDE) ||
+ 	    (dev->device == PCI_DEVICE_ID_SERVERWORKS_CSB6IDE2)) {
+

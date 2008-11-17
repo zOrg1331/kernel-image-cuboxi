@@ -1,0 +1,70 @@
+In 2.6.18-rc7, the section that prepares for preemptible periodic work
+has two bugs. The first is due to an improper locking sequence that leads
+to frozen systems. The second causes netdev watchdog timeouts. Both
+are fixed.
+
+Signed-off-by: Larry Finger <Larry.Finger@lwfinger.net>
+
+Index: linux-2.6/drivers/net/wireless/bcm43xx/bcm43xx_main.c
+===================================================================
+--- linux-2.6.orig/drivers/net/wireless/bcm43xx/bcm43xx_main.c
++++ linux-2.6/drivers/net/wireless/bcm43xx/bcm43xx_main.c
+@@ -3182,39 +3182,37 @@ static void bcm43xx_periodic_work_handle
+ 		/* Periodic work will take a long time, so we want it to
+ 		 * be preemtible.
+ 		 */
+-		bcm43xx_lock_irqonly(bcm, flags);
+-		netif_stop_queue(bcm->net_dev);
++		mutex_lock(&bcm->mutex);
++		netif_tx_disable(bcm->net_dev);
++		spin_lock_irqsave(&bcm->irq_lock, flags);
++		bcm43xx_mac_suspend(bcm);
+ 		if (bcm43xx_using_pio(bcm))
+ 			bcm43xx_pio_freeze_txqueues(bcm);
+ 		savedirqs = bcm43xx_interrupt_disable(bcm, BCM43xx_IRQ_ALL);
+-		bcm43xx_unlock_irqonly(bcm, flags);
+-		bcm43xx_lock_noirq(bcm);
++		spin_unlock_irqrestore(&bcm->irq_lock, flags);
+ 		bcm43xx_synchronize_irq(bcm);
+ 	} else {
+ 		/* Periodic work should take short time, so we want low
+ 		 * locking overhead.
+ 		 */
+-		bcm43xx_lock_irqsafe(bcm, flags);
++		mutex_lock(&bcm->mutex);
++		spin_lock_irqsave(&bcm->irq_lock, flags);
+ 	}
+ 
+ 	do_periodic_work(bcm);
+ 
+ 	if (badness > BADNESS_LIMIT) {
+-		bcm43xx_lock_irqonly(bcm, flags);
+-		if (likely(bcm43xx_status(bcm) == BCM43xx_STAT_INITIALIZED)) {
+-			tasklet_enable(&bcm->isr_tasklet);
+-			bcm43xx_interrupt_enable(bcm, savedirqs);
+-			if (bcm43xx_using_pio(bcm))
+-				bcm43xx_pio_thaw_txqueues(bcm);
+-		}
++		spin_lock_irqsave(&bcm->irq_lock, flags);
++		tasklet_enable(&bcm->isr_tasklet);
++		bcm43xx_interrupt_enable(bcm, savedirqs);
++		if (bcm43xx_using_pio(bcm))
++			bcm43xx_pio_thaw_txqueues(bcm);
++		bcm43xx_mac_enable(bcm);
+ 		netif_wake_queue(bcm->net_dev);
+-		mmiowb();
+-		bcm43xx_unlock_irqonly(bcm, flags);
+-		bcm43xx_unlock_noirq(bcm);
+-	} else {
+-		mmiowb();
+-		bcm43xx_unlock_irqsafe(bcm, flags);
+ 	}
++	mmiowb();
++	spin_unlock_irqrestore(&bcm->irq_lock, flags);
++	mutex_unlock(&bcm->mutex);
+ }
+ 
+ static void bcm43xx_periodic_tasks_delete(struct bcm43xx_private *bcm)
+
+
+

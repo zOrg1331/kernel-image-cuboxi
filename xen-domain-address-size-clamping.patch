@@ -1,0 +1,192 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Tue, 18 Dec 2007 15:56:03 -0500
+Subject: [xen] domain address-size clamping
+Message-id: 20071218205603.15371.18136.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH 2/3] Domain address-size clamping
+Bugzilla: 227614
+
+32-on-64: Fix domain address-size clamping, implement
+copy-on-grant-transfer, and eliminate 166GB memory limit for x86/64
+Xen.
+Signed-off-by: Keir Fraser <keir.fraser@citrix.com>
+xen-unstable changeset: 16548:cd5e1e76d0bc66440a04122baa27860f5d763b5b
+xen-unstable date: Thu Dec 06 13:39:19 2007 +0000
+
+32-on-64: Fixes to previous changeset.
+Signed-off-by: Keir Fraser <keir.fraser@citrix.com>
+xen-unstable changeset: 16549:baf90ee3c1dab65f4a386521be6e108920622866
+xen-unstable date: Thu Dec 06 13:56:00 2007 +0000
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+
+diff --git a/arch/x86/domain.c b/arch/x86/domain.c
+index 9a0ba98..215d4f2 100644
+--- a/arch/x86/domain.c
++++ b/arch/x86/domain.c
+@@ -296,8 +296,6 @@ int switch_native(struct domain *d)
+             release_compat_l4(d->vcpu[vcpuid]);
+     }
+ 
+-    d->arch.physaddr_bitsize = 64;
+-
+     return 0;
+ }
+ 
+diff --git a/arch/x86/domain_build.c b/arch/x86/domain_build.c
+index f3eeb76..e053334 100644
+--- a/arch/x86/domain_build.c
++++ b/arch/x86/domain_build.c
+@@ -363,7 +363,7 @@ int __init construct_dom0(
+ #ifdef CONFIG_COMPAT
+         HYPERVISOR_COMPAT_VIRT_START(d) =
+             max_t(unsigned int, m2p_compat_vstart, value);
+-        d->arch.physaddr_bitsize = !is_pv_32on64_domain(d) ? 64 :
++        d->arch.physaddr_bitsize =
+             fls((1UL << 32) - HYPERVISOR_COMPAT_VIRT_START(d)) - 1
+             + (PAGE_SIZE - 2);
+         if ( value > (!is_pv_32on64_domain(d) ?
+diff --git a/arch/x86/x86_64/mm.c b/arch/x86/x86_64/mm.c
+index 2df1c6c..2c6d462 100644
+--- a/arch/x86/x86_64/mm.c
++++ b/arch/x86/x86_64/mm.c
+@@ -428,7 +428,7 @@ int check_descriptor(const struct domain *dom, struct desc_struct *d)
+ 
+ unsigned int domain_clamp_alloc_bitsize(struct domain *d, unsigned int bits)
+ {
+-    if ( d == NULL )
++    if ( (d == NULL) || !is_pv_32on64_domain(d) )
+         return bits;
+     return min(d->arch.physaddr_bitsize, bits);
+ }
+diff --git a/common/grant_table.c b/common/grant_table.c
+index b6a16d5..dc14f5a 100644
+--- a/common/grant_table.c
++++ b/common/grant_table.c
+@@ -809,6 +809,7 @@ gnttab_transfer(
+     grant_entry_t *sha;
+     struct gnttab_transfer gop;
+     unsigned long mfn;
++    unsigned int max_bitsize;
+ 
+     for ( i = 0; i < count; i++ )
+     {
+@@ -857,6 +858,34 @@ gnttab_transfer(
+             goto copyback;
+         }
+ 
++        max_bitsize = domain_clamp_alloc_bitsize(
++            e, BITS_PER_LONG+PAGE_SHIFT-1);
++        if ( (1UL << (max_bitsize - PAGE_SHIFT)) <= mfn )
++        {
++            struct page_info *new_page;
++            void *sp, *dp;
++
++            new_page = alloc_domheap_pages(NULL, 0, MEMF_bits(max_bitsize));
++            if ( new_page == NULL )
++            {
++                rcu_unlock_domain(e);
++                page->count_info &= ~(PGC_count_mask|PGC_allocated);
++                free_domheap_page(page);
++                gop.status = GNTST_address_too_big;
++                goto copyback;
++            }
++
++            sp = map_domain_page(mfn);
++            dp = map_domain_page(page_to_mfn(new_page));
++            memcpy(dp, sp, PAGE_SIZE);
++            unmap_domain_page(dp);
++            unmap_domain_page(sp);
++
++            page->count_info &= ~(PGC_count_mask|PGC_allocated);
++            free_domheap_page(page);
++            page = new_page;
++        }
++
+         spin_lock(&e->page_alloc_lock);
+ 
+         /*
+diff --git a/common/memory.c b/common/memory.c
+index 311c5ae..1c2f2a8 100644
+--- a/common/memory.c
++++ b/common/memory.c
+@@ -309,18 +309,6 @@ static long memory_exchange(XEN_GUEST_HANDLE(xen_memory_exchange_t) arg)
+         goto fail_early;
+     }
+ 
+-    if ( (exch.out.address_bits != 0) &&
+-         (exch.out.address_bits <
+-          (get_order_from_pages(max_page) + PAGE_SHIFT)) )
+-    {
+-        if ( exch.out.address_bits <= PAGE_SHIFT )
+-        {
+-            rc = -ENOMEM;
+-            goto fail_early;
+-        }
+-        memflags = MEMF_bits(exch.out.address_bits);
+-    }
+-
+     if ( exch.in.extent_order <= exch.out.extent_order )
+     {
+         in_chunk_order  = exch.out.extent_order - exch.in.extent_order;
+@@ -343,6 +331,9 @@ static long memory_exchange(XEN_GUEST_HANDLE(xen_memory_exchange_t) arg)
+     }
+     d = current->domain;
+ 
++    memflags |= MEMF_bits(domain_clamp_alloc_bitsize(
++        d, exch.out.address_bits ? : (BITS_PER_LONG+PAGE_SHIFT)));
++
+     cpu = select_local_cpu(d);
+ 
+     for ( i = (exch.nr_exchanged >> in_chunk_order);
+diff --git a/common/page_alloc.c b/common/page_alloc.c
+index 6c84335..4cbece4 100644
+--- a/common/page_alloc.c
++++ b/common/page_alloc.c
+@@ -817,15 +817,13 @@ struct page_info *__alloc_domheap_pages(
+ 
+     ASSERT(!in_irq());
+ 
+-    if ( bits )
+-    {
+-        bits = domain_clamp_alloc_bitsize(d, bits);
+-        if ( bits <= (PAGE_SHIFT + 1) )
+-            return NULL;
+-        bits -= PAGE_SHIFT + 1;
+-        if ( bits < zone_hi )
+-            zone_hi = bits;
+-    }
++    bits = domain_clamp_alloc_bitsize(d, bits ? : (BITS_PER_LONG+PAGE_SHIFT));
++    if ( bits <= (PAGE_SHIFT + 1) )
++        return NULL;
++
++    bits -= PAGE_SHIFT + 1;
++    if ( bits < zone_hi )
++        zone_hi = bits;
+ 
+     if ( (zone_hi + PAGE_SHIFT) >= dma_bitsize )
+     {
+diff --git a/include/public/grant_table.h b/include/public/grant_table.h
+index 222ac37..d0ba9e9 100644
+--- a/include/public/grant_table.h
++++ b/include/public/grant_table.h
+@@ -370,7 +370,8 @@ DEFINE_XEN_GUEST_HANDLE(gnttab_query_size_t);
+ #define GNTST_no_device_space  (-7) /* Out of space in I/O MMU.              */
+ #define GNTST_permission_denied (-8) /* Not enough privilege for operation.  */
+ #define GNTST_bad_page         (-9) /* Specified page was invalid for op.    */
+-#define GNTST_bad_copy_arg    (-10) /* copy arguments cross page boundary */
++#define GNTST_bad_copy_arg    (-10) /* copy arguments cross page boundary.   */
++#define GNTST_address_too_big (-11) /* transfer page address too large.      */
+ 
+ #define GNTTABOP_error_msgs {                   \
+     "okay",                                     \
+@@ -383,7 +384,8 @@ DEFINE_XEN_GUEST_HANDLE(gnttab_query_size_t);
+     "no spare translation slot in the I/O MMU", \
+     "permission denied",                        \
+     "bad page",                                 \
+-    "copy arguments cross page boundary"        \
++    "copy arguments cross page boundary",       \
++    "page address size too large"               \
+ }
+ 
+ #endif /* __XEN_PUBLIC_GRANT_TABLE_H__ */

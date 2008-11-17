@@ -1,0 +1,24 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Subject: [RHEL5 patch]fix OOM killing processes wrongly thought MPOL_BIND
+Date: Fri, 18 May 2007 08:30:10 -0400
+Bugzilla: 222491
+Message-Id: <1179491411.14174.16.camel@dhcp83-56.boston.redhat.com>
+Changelog: [mm]fix OOM wrongly killing processes through MPOL_BIND
+
+
+constrained_alloc() doesnt initialize the node mask so it actions are
+random!  Attached upstream patch fixes this and BZ 222491
+
+
+
+--- linux-2.6.18.noarch/mm/oom_kill.c.orig
++++ linux-2.6.18.noarch/mm/oom_kill.c
+@@ -176,6 +176,7 @@ static inline int constrained_alloc(stru
+ 	nodemask_t nodes;
+ 	int node;
+ 
++	nodes_clear(nodes);
+ 	/* node has memory ? */
+ 	for_each_online_node(node)
+ 		if (NODE_DATA(node)->node_present_pages)
+

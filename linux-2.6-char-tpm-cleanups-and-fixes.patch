@@ -1,0 +1,875 @@
+From: Konrad Rzeszutek <konradr@redhat.com>
+Date: Fri, 9 Nov 2007 07:50:51 -0500
+Subject: [char] tpm: cleanups and fixes
+Message-id: 20071109125051.GA4080@mars.boston.redhat.com
+O-Subject: [RHEL5 U2 PATCH] RHBZ# 184784: TCG: TPM device driver - Trusted Computing
+Bugzilla: 184784
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=184784
+
+Description:
+------------
+>From the BZ:
+"Security is an important aspect of computing systems.  Trusted Computing and
+the Trusted Platform Module (TPM) is the foundation for hardware integrity
+based computing."
+
+RHEL Version Found:
+------------------
+New feature
+
+kABI Status:
+------------
+No breakage.
+
+Brew:
+-----
+Built on all platforms. In my scratch dir look for 2.6.18-54.el5.51_10_30_A kernel build.
+
+Upstream Status:
+----------------
+Yes. It is in 2.6.23.
+
+Test Status:
+------------
+Tested for regression via the RHTS kernel workflow - no problems on various vendors boxes. Tested
+on v1.1 TPM chipset using the TCG test-cases systems - no problems. I haven't tested the v1.2 chip,
+but the IBM test-team test-results show no problems with the kernel I provided to them. I am going
+to test the v1.2 chip along with some other patches next week and provide testing feedback.
+
+Config flags:
+-------------
+These need to be enabled:
+CONFIG_TCG_TPM=m
+CONFIG_TCG_TIS=m
+CONFIG_TCG_NSC=m
+CONFIG_TCG_ATMEL=m
+CONFIG_TCG_INFINEON=m
+
+The CONFIG_TCG_TPM needs to be set in config-rhel-generic (right now it is set to
+"# CONFIG_TCG_TPM is not set")
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-54.el5
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/drivers/char/tpm/Kconfig b/drivers/char/tpm/Kconfig
+index fe00c7d..b9b047d 100644
+--- a/drivers/char/tpm/Kconfig
++++ b/drivers/char/tpm/Kconfig
+@@ -2,10 +2,9 @@
+ # TPM device configuration
+ #
+ 
+-menu "TPM devices"
+-
+-config TCG_TPM
++menuconfig TCG_TPM
+ 	tristate "TPM Hardware Support"
++
+ 	depends on EXPERIMENTAL
+ 	---help---
+ 	  If you have a TPM security chip in your system, which
+@@ -20,9 +19,11 @@ config TCG_TPM
+ 	  Note: For more TPM drivers enable CONFIG_PNP, CONFIG_ACPI
+ 	  and CONFIG_PNPACPI.
+ 
++if TCG_TPM
++
+ config TCG_TIS
+ 	tristate "TPM Interface Specification 1.2 Interface"
+-	depends on TCG_TPM && PNPACPI
++	depends on PNPACPI
+ 	---help---
+ 	  If you have a TPM security chip that is compliant with the
+ 	  TCG TIS 1.2 TPM specification say Yes and it will be accessible
+@@ -31,16 +32,15 @@ config TCG_TIS
+ 
+ config TCG_NSC
+ 	tristate "National Semiconductor TPM Interface"
+-	depends on TCG_TPM && PNPACPI
++	depends on PNPACPI
+ 	---help---
+-	  If you have a TPM security chip from National Semicondutor 
++	  If you have a TPM security chip from National Semiconductor 
+ 	  say Yes and it will be accessible from within Linux.  To 
+ 	  compile this driver as a module, choose M here; the module 
+ 	  will be called tpm_nsc.
+ 
+ config TCG_ATMEL
+ 	tristate "Atmel TPM Interface"
+-	depends on TCG_TPM
+ 	---help---
+ 	  If you have a TPM security chip from Atmel say Yes and it 
+ 	  will be accessible from within Linux.  To compile this driver 
+@@ -48,7 +48,7 @@ config TCG_ATMEL
+ 
+ config TCG_INFINEON
+ 	tristate "Infineon Technologies TPM Interface"
+-	depends on TCG_TPM && PNPACPI
++	depends on PNPACPI
+ 	---help---
+ 	  If you have a TPM security chip from Infineon Technologies
+ 	  (either SLD 9630 TT 1.1 or SLB 9635 TT 1.2) say Yes and it
+@@ -58,5 +58,4 @@ config TCG_INFINEON
+ 	  Further information on this driver and the supported hardware
+ 	  can be found at http://www.prosec.rub.de/tpm
+ 
+-endmenu
+-
++endif # TCG_TPM
+diff --git a/drivers/char/tpm/tpm.c b/drivers/char/tpm/tpm.c
+index a082a2e..5f2f040 100644
+--- a/drivers/char/tpm/tpm.c
++++ b/drivers/char/tpm/tpm.c
+@@ -7,7 +7,7 @@
+  * Reiner Sailer <sailer@watson.ibm.com>
+  * Kylene Hall <kjhall@us.ibm.com>
+  *
+- * Maintained by: <tpmdd_devel@lists.sourceforge.net>
++ * Maintained by: <tpmdd-devel@lists.sourceforge.net>
+  *
+  * Device driver for TCG/TCPA TPM (trusted platform module).
+  * Specifications at www.trustedcomputinggroup.org	 
+@@ -23,9 +23,10 @@
+  *
+  */
+ 
+-#include <linux/sched.h>
+ #include <linux/poll.h>
++#include <linux/mutex.h>
+ #include <linux/spinlock.h>
++
+ #include "tpm.h"
+ 
+ enum tpm_const {
+@@ -329,10 +330,10 @@ static void timeout_work(void *ptr)
+ {
+ 	struct tpm_chip *chip = ptr;
+ 
+-	down(&chip->buffer_mutex);
++	mutex_lock(&chip->buffer_mutex);
+ 	atomic_set(&chip->data_pending, 0);
+ 	memset(chip->data_buffer, 0, TPM_BUFSIZE);
+-	up(&chip->buffer_mutex);
++	mutex_unlock(&chip->buffer_mutex);
+ }
+ 
+ /*
+@@ -381,7 +382,7 @@ static ssize_t tpm_transmit(struct tpm_chip *chip, const char *buf,
+ 		return -E2BIG;
+ 	}
+ 
+-	down(&chip->tpm_mutex);
++	mutex_lock(&chip->tpm_mutex);
+ 
+ 	if ((rc = chip->vendor.send(chip, (u8 *) buf, count)) < 0) {
+ 		dev_err(chip->dev,
+@@ -420,7 +421,7 @@ out_recv:
+ 		dev_err(chip->dev,
+ 			"tpm_transmit: tpm_recv: error %zd\n", rc);
+ out:
+-	up(&chip->tpm_mutex);
++	mutex_unlock(&chip->tpm_mutex);
+ 	return rc;
+ }
+ 
+@@ -943,12 +944,12 @@ int tpm_release(struct inode *inode, struct file *file)
+ {
+ 	struct tpm_chip *chip = file->private_data;
+ 
++	flush_scheduled_work();
+ 	spin_lock(&driver_lock);
+ 	file->private_data = NULL;
+-	chip->num_opens--;
+ 	del_singleshot_timer_sync(&chip->user_read_timer);
+-	flush_scheduled_work();
+ 	atomic_set(&chip->data_pending, 0);
++	chip->num_opens--;
+ 	put_device(chip->dev);
+ 	kfree(chip->data_buffer);
+ 	spin_unlock(&driver_lock);
+@@ -967,14 +968,14 @@ ssize_t tpm_write(struct file *file, const char __user *buf,
+ 	while (atomic_read(&chip->data_pending) != 0)
+ 		msleep(TPM_TIMEOUT);
+ 
+-	down(&chip->buffer_mutex);
++	mutex_lock(&chip->buffer_mutex);
+ 
+ 	if (in_size > TPM_BUFSIZE)
+ 		in_size = TPM_BUFSIZE;
+ 
+ 	if (copy_from_user
+ 	    (chip->data_buffer, (void __user *) buf, in_size)) {
+-		up(&chip->buffer_mutex);
++		mutex_unlock(&chip->buffer_mutex);
+ 		return -EFAULT;
+ 	}
+ 
+@@ -982,7 +983,7 @@ ssize_t tpm_write(struct file *file, const char __user *buf,
+ 	out_size = tpm_transmit(chip, chip->data_buffer, TPM_BUFSIZE);
+ 
+ 	atomic_set(&chip->data_pending, out_size);
+-	up(&chip->buffer_mutex);
++	mutex_unlock(&chip->buffer_mutex);
+ 
+ 	/* Set a timeout by which the reader must come claim the result */
+ 	mod_timer(&chip->user_read_timer, jiffies + (60 * HZ));
+@@ -1005,10 +1006,10 @@ ssize_t tpm_read(struct file *file, char __user *buf,
+ 		if (size < ret_size)
+ 			ret_size = size;
+ 
+-		down(&chip->buffer_mutex);
++		mutex_lock(&chip->buffer_mutex);
+ 		if (copy_to_user(buf, chip->data_buffer, ret_size))
+ 			ret_size = -EFAULT;
+-		up(&chip->buffer_mutex);
++		mutex_unlock(&chip->buffer_mutex);
+ 	}
+ 
+ 	return ret_size;
+@@ -1098,18 +1099,22 @@ struct tpm_chip *tpm_register_hardware(struct device *dev, const struct tpm_vend
+ 
+ 	/* Driver specific per-device data */
+ 	chip = kzalloc(sizeof(*chip), GFP_KERNEL);
+-	if (chip == NULL)
++	devname = kmalloc(DEVNAME_SIZE, GFP_KERNEL);
++
++	if (chip == NULL || devname == NULL) {
++		kfree(chip);
++		kfree(devname);
+ 		return NULL;
++	}
+ 
+-	init_MUTEX(&chip->buffer_mutex);
+-	init_MUTEX(&chip->tpm_mutex);
++	mutex_init(&chip->buffer_mutex);
++	mutex_init(&chip->tpm_mutex);
+ 	INIT_LIST_HEAD(&chip->list);
+ 
+ 	INIT_WORK(&chip->work, timeout_work, chip);
+ 
+-	init_timer(&chip->user_read_timer);
+-	chip->user_read_timer.function = user_reader_timeout;
+-	chip->user_read_timer.data = (unsigned long) chip;
++	setup_timer(&chip->user_read_timer, user_reader_timeout,
++			(unsigned long)chip);
+ 
+ 	memcpy(&chip->vendor, entry, sizeof(struct tpm_vendor_specific));
+ 
+@@ -1126,7 +1131,6 @@ struct tpm_chip *tpm_register_hardware(struct device *dev, const struct tpm_vend
+ 
+ 	set_bit(chip->dev_num, dev_mask);
+ 
+-	devname = kmalloc(DEVNAME_SIZE, GFP_KERNEL);
+ 	scnprintf(devname, DEVNAME_SIZE, "%s%d", "tpm", chip->dev_num);
+ 	chip->vendor.miscdev.name = devname;
+ 
+@@ -1153,7 +1157,15 @@ struct tpm_chip *tpm_register_hardware(struct device *dev, const struct tpm_vend
+ 
+ 	spin_unlock(&driver_lock);
+ 
+-	sysfs_create_group(&dev->kobj, chip->vendor.attr_group);
++	if (sysfs_create_group(&dev->kobj, chip->vendor.attr_group)) {
++		list_del(&chip->list);
++		misc_deregister(&chip->vendor.miscdev);
++		put_device(dev);
++		clear_bit(chip->dev_num, dev_mask);
++		kfree(chip);
++		kfree(devname);
++		return NULL;
++	}
+ 
+ 	chip->bios_dir = tpm_bios_log_setup(devname);
+ 
+diff --git a/drivers/char/tpm/tpm.h b/drivers/char/tpm/tpm.h
+index 050ced2..d15ccdd 100644
+--- a/drivers/char/tpm/tpm.h
++++ b/drivers/char/tpm/tpm.h
+@@ -7,7 +7,7 @@
+  * Reiner Sailer <sailer@watson.ibm.com>
+  * Kylene Hall <kjhall@us.ibm.com>
+  *
+- * Maintained by: <tpmdd_devel@lists.sourceforge.net>
++ * Maintained by: <tpmdd-devel@lists.sourceforge.net>
+  *
+  * Device driver for TCG/TCPA TPM (trusted platform module).
+  * Specifications at www.trustedcomputinggroup.org	 
+@@ -19,9 +19,10 @@
+  * 
+  */
+ #include <linux/module.h>
+-#include <linux/pci.h>
+ #include <linux/delay.h>
+ #include <linux/fs.h>
++#include <linux/mutex.h>
++#include <linux/sched.h>
+ #include <linux/miscdevice.h>
+ #include <linux/platform_device.h>
+ #include <linux/io.h>
+@@ -94,11 +95,11 @@ struct tpm_chip {
+ 	/* Data passed to and from the tpm via the read/write calls */
+ 	u8 *data_buffer;
+ 	atomic_t data_pending;
+-	struct semaphore buffer_mutex;
++	struct mutex buffer_mutex;
+ 
+ 	struct timer_list user_read_timer;	/* user needs to claim result */
+ 	struct work_struct work;
+-	struct semaphore tpm_mutex;	/* tpm is processing */
++	struct mutex tpm_mutex;	/* tpm is processing */
+ 
+ 	struct tpm_vendor_specific vendor;
+ 
+diff --git a/drivers/char/tpm/tpm_atmel.c b/drivers/char/tpm/tpm_atmel.c
+index ad8ffe4..d0e7926 100644
+--- a/drivers/char/tpm/tpm_atmel.c
++++ b/drivers/char/tpm/tpm_atmel.c
+@@ -7,7 +7,7 @@
+  * Reiner Sailer <sailer@watson.ibm.com>
+  * Kylene Hall <kjhall@us.ibm.com>
+  *
+- * Maintained by: <tpmdd_devel@lists.sourceforge.net>
++ * Maintained by: <tpmdd-devel@lists.sourceforge.net>
+  *
+  * Device driver for TCG/TCPA TPM (trusted platform module).
+  * Specifications at www.trustedcomputinggroup.org	 
+@@ -184,7 +184,9 @@ static int __init init_atmel(void)
+ 	unsigned long base;
+ 	struct  tpm_chip *chip;
+ 
+-	driver_register(&atml_drv);
++	rc = driver_register(&atml_drv);
++	if (rc)
++		return rc;
+ 
+ 	if ((iobase = atmel_get_base_addr(&base, &region_size)) == NULL) {
+ 		rc = -ENODEV;
+@@ -195,10 +197,8 @@ static int __init init_atmel(void)
+ 	    (atmel_request_region
+ 	     (tpm_atmel.base, region_size, "tpm_atmel0") == NULL) ? 0 : 1;
+ 
+-
+-	if (IS_ERR
+-	    (pdev =
+-	     platform_device_register_simple("tpm_atmel", -1, NULL, 0))) {
++	pdev = platform_device_register_simple("tpm_atmel", -1, NULL, 0);
++	if (IS_ERR(pdev)) {
+ 		rc = PTR_ERR(pdev);
+ 		goto err_rel_reg;
+ 	}
+diff --git a/drivers/char/tpm/tpm_atmel.h b/drivers/char/tpm/tpm_atmel.h
+index 2e68eeb..03564b8 100644
+--- a/drivers/char/tpm/tpm_atmel.h
++++ b/drivers/char/tpm/tpm_atmel.h
+@@ -4,7 +4,7 @@
+  * Authors:
+  * Kylene Hall <kjhall@us.ibm.com>
+  *
+- * Maintained by: <tpmdd_devel@lists.sourceforge.net>
++ * Maintained by: <tpmdd-devel@lists.sourceforge.net>
+  *
+  * Device driver for TCG/TCPA TPM (trusted platform module).
+  * Specifications at www.trustedcomputinggroup.org
+@@ -23,6 +23,9 @@
+  */
+ 
+ #ifdef CONFIG_PPC64
++
++#include <asm/prom.h>
++
+ #define atmel_getb(chip, offset) readb(chip->vendor->iobase + offset);
+ #define atmel_putb(val, chip, offset) writeb(val, chip->vendor->iobase + offset)
+ #define atmel_request_region request_mem_region
+diff --git a/drivers/char/tpm/tpm_bios.c b/drivers/char/tpm/tpm_bios.c
+index a611972..da4b14e 100644
+--- a/drivers/char/tpm/tpm_bios.c
++++ b/drivers/char/tpm/tpm_bios.c
+@@ -7,6 +7,8 @@
+  *	Reiner Sailer <sailer@watson.ibm.com>
+  *	Kylene Hall <kjhall@us.ibm.com>
+  *
++ * Maintained by: <tpmdd-devel@lists.sourceforge.net>
++ *
+  * Access to the eventlog extended by the TCG BIOS of PC platform
+  *
+  * This program is free software; you can redistribute it and/or
+@@ -429,7 +431,7 @@ static int tpm_ascii_bios_measurements_open(struct inode *inode,
+ 		return -ENOMEM;
+ 
+ 	if ((err = read_log(log)))
+-		return err;
++		goto out_free;
+ 
+ 	/* now register seq file */
+ 	err = seq_open(file, &tpm_ascii_b_measurments_seqops);
+@@ -437,10 +439,15 @@ static int tpm_ascii_bios_measurements_open(struct inode *inode,
+ 		seq = file->private_data;
+ 		seq->private = log;
+ 	} else {
+-		kfree(log->bios_event_log);
+-		kfree(log);
++		goto out_free;
+ 	}
++
++out:
+ 	return err;
++out_free:
++	kfree(log->bios_event_log);
++	kfree(log);
++	goto out;
+ }
+ 
+ struct file_operations tpm_ascii_bios_measurements_ops = {
+@@ -462,7 +469,7 @@ static int tpm_binary_bios_measurements_open(struct inode *inode,
+ 		return -ENOMEM;
+ 
+ 	if ((err = read_log(log)))
+-		return err;
++		goto out_free;
+ 
+ 	/* now register seq file */
+ 	err = seq_open(file, &tpm_binary_b_measurments_seqops);
+@@ -470,10 +477,15 @@ static int tpm_binary_bios_measurements_open(struct inode *inode,
+ 		seq = file->private_data;
+ 		seq->private = log;
+ 	} else {
+-		kfree(log->bios_event_log);
+-		kfree(log);
++		goto out_free;
+ 	}
++
++out:
+ 	return err;
++out_free:
++	kfree(log->bios_event_log);
++	kfree(log);
++	goto out;
+ }
+ 
+ struct file_operations tpm_binary_bios_measurements_ops = {
+diff --git a/drivers/char/tpm/tpm_infineon.c b/drivers/char/tpm/tpm_infineon.c
+index 1353b5a..967002a 100644
+--- a/drivers/char/tpm/tpm_infineon.c
++++ b/drivers/char/tpm/tpm_infineon.c
+@@ -30,12 +30,60 @@
+ #define	TPM_MAX_TRIES		5000
+ #define	TPM_INFINEON_DEV_VEN_VALUE	0x15D1
+ 
+-/* These values will be filled after PnP-call */
+-static int TPM_INF_DATA;
+-static int TPM_INF_ADDR;
+-static int TPM_INF_BASE;
+-static int TPM_INF_ADDR_LEN;
+-static int TPM_INF_PORT_LEN;
++#define TPM_INF_IO_PORT		0x0
++#define TPM_INF_IO_MEM		0x1
++
++#define TPM_INF_ADDR		0x0
++#define TPM_INF_DATA		0x1
++
++struct tpm_inf_dev {
++	int iotype;
++
++	void __iomem *mem_base;		/* MMIO ioremap'd addr */
++	unsigned long map_base;		/* phys MMIO base */
++	unsigned long map_size;		/* MMIO region size */
++	unsigned int index_off;		/* index register offset */
++
++	unsigned int data_regs;		/* Data registers */
++	unsigned int data_size;
++
++	unsigned int config_port;	/* IO Port config index reg */
++	unsigned int config_size;
++};
++
++static struct tpm_inf_dev tpm_dev;
++
++static inline void tpm_data_out(unsigned char data, unsigned char offset)
++{
++	if (tpm_dev.iotype == TPM_INF_IO_PORT)
++		outb(data, tpm_dev.data_regs + offset);
++	else
++		writeb(data, tpm_dev.mem_base + tpm_dev.data_regs + offset);
++}
++
++static inline unsigned char tpm_data_in(unsigned char offset)
++{
++	if (tpm_dev.iotype == TPM_INF_IO_PORT)
++		return inb(tpm_dev.data_regs + offset);
++	else
++		return readb(tpm_dev.mem_base + tpm_dev.data_regs + offset);
++}
++
++static inline void tpm_config_out(unsigned char data, unsigned char offset)
++{
++	if (tpm_dev.iotype == TPM_INF_IO_PORT)
++		outb(data, tpm_dev.config_port + offset);
++	else
++		writeb(data, tpm_dev.mem_base + tpm_dev.index_off + offset);
++}
++
++static inline unsigned char tpm_config_in(unsigned char offset)
++{
++	if (tpm_dev.iotype == TPM_INF_IO_PORT)
++		return inb(tpm_dev.config_port + offset);
++	else
++		return readb(tpm_dev.mem_base + tpm_dev.index_off + offset);
++}
+ 
+ /* TPM header definitions */
+ enum infineon_tpm_header {
+@@ -105,7 +153,7 @@ static int empty_fifo(struct tpm_chip *chip, int clear_wrfifo)
+ 
+ 	if (clear_wrfifo) {
+ 		for (i = 0; i < 4096; i++) {
+-			status = inb(chip->vendor.base + WRFIFO);
++			status = tpm_data_in(WRFIFO);
+ 			if (status == 0xff) {
+ 				if (check == 5)
+ 					break;
+@@ -125,8 +173,8 @@ static int empty_fifo(struct tpm_chip *chip, int clear_wrfifo)
+ 	 */
+ 	i = 0;
+ 	do {
+-		status = inb(chip->vendor.base + RDFIFO);
+-		status = inb(chip->vendor.base + STAT);
++		status = tpm_data_in(RDFIFO);
++		status = tpm_data_in(STAT);
+ 		i++;
+ 		if (i == TPM_MAX_TRIES)
+ 			return -EIO;
+@@ -139,7 +187,7 @@ static int wait(struct tpm_chip *chip, int wait_for_bit)
+ 	int status;
+ 	int i;
+ 	for (i = 0; i < TPM_MAX_TRIES; i++) {
+-		status = inb(chip->vendor.base + STAT);
++		status = tpm_data_in(STAT);
+ 		/* check the status-register if wait_for_bit is set */
+ 		if (status & 1 << wait_for_bit)
+ 			break;
+@@ -158,7 +206,7 @@ static int wait(struct tpm_chip *chip, int wait_for_bit)
+ static void wait_and_send(struct tpm_chip *chip, u8 sendbyte)
+ {
+ 	wait(chip, STAT_XFE);
+-	outb(sendbyte, chip->vendor.base + WRFIFO);
++	tpm_data_out(sendbyte, WRFIFO);
+ }
+ 
+     /* Note: WTX means Waiting-Time-Extension. Whenever the TPM needs more
+@@ -205,7 +253,7 @@ recv_begin:
+ 		ret = wait(chip, STAT_RDA);
+ 		if (ret)
+ 			return -EIO;
+-		buf[i] = inb(chip->vendor.base + RDFIFO);
++		buf[i] = tpm_data_in(RDFIFO);
+ 	}
+ 
+ 	if (buf[0] != TPM_VL_VER) {
+@@ -220,7 +268,7 @@ recv_begin:
+ 
+ 		for (i = 0; i < size; i++) {
+ 			wait(chip, STAT_RDA);
+-			buf[i] = inb(chip->vendor.base + RDFIFO);
++			buf[i] = tpm_data_in(RDFIFO);
+ 		}
+ 
+ 		if ((size == 0x6D00) && (buf[1] == 0x80)) {
+@@ -269,7 +317,7 @@ static int tpm_inf_send(struct tpm_chip *chip, u8 * buf, size_t count)
+ 	u8 count_high, count_low, count_4, count_3, count_2, count_1;
+ 
+ 	/* Disabling Reset, LP and IRQC */
+-	outb(RESET_LP_IRQC_DISABLE, chip->vendor.base + CMD);
++	tpm_data_out(RESET_LP_IRQC_DISABLE, CMD);
+ 
+ 	ret = empty_fifo(chip, 1);
+ 	if (ret) {
+@@ -320,7 +368,7 @@ static void tpm_inf_cancel(struct tpm_chip *chip)
+ 
+ static u8 tpm_inf_status(struct tpm_chip *chip)
+ {
+-	return inb(chip->vendor.base + STAT);
++	return tpm_data_in(STAT);
+ }
+ 
+ static DEVICE_ATTR(pubek, S_IRUGO, tpm_show_pubek, NULL);
+@@ -381,51 +429,88 @@ static int __devinit tpm_inf_pnp_probe(struct pnp_dev *dev,
+ 	/* read IO-ports through PnP */
+ 	if (pnp_port_valid(dev, 0) && pnp_port_valid(dev, 1) &&
+ 	    !(pnp_port_flags(dev, 0) & IORESOURCE_DISABLED)) {
+-		TPM_INF_ADDR = pnp_port_start(dev, 0);
+-		TPM_INF_ADDR_LEN = pnp_port_len(dev, 0);
+-		TPM_INF_DATA = (TPM_INF_ADDR + 1);
+-		TPM_INF_BASE = pnp_port_start(dev, 1);
+-		TPM_INF_PORT_LEN = pnp_port_len(dev, 1);
+-		if ((TPM_INF_PORT_LEN < 4) || (TPM_INF_ADDR_LEN < 2)) {
++
++	    	tpm_dev.iotype = TPM_INF_IO_PORT;
++
++		tpm_dev.config_port = pnp_port_start(dev, 0);
++		tpm_dev.config_size = pnp_port_len(dev, 0);
++		tpm_dev.data_regs = pnp_port_start(dev, 1);
++		tpm_dev.data_size = pnp_port_len(dev, 1);
++		if ((tpm_dev.data_size < 4) || (tpm_dev.config_size < 2)) {
+ 			rc = -EINVAL;
+ 			goto err_last;
+ 		}
+ 		dev_info(&dev->dev, "Found %s with ID %s\n",
+ 			 dev->name, dev_id->id);
+-		if (!((TPM_INF_BASE >> 8) & 0xff)) {
++		if (!((tpm_dev.data_regs >> 8) & 0xff)) {
+ 			rc = -EINVAL;
+ 			goto err_last;
+ 		}
+ 		/* publish my base address and request region */
+-		if (request_region
+-		    (TPM_INF_BASE, TPM_INF_PORT_LEN, "tpm_infineon0") == NULL) {
++		if (request_region(tpm_dev.data_regs, tpm_dev.data_size,
++				   "tpm_infineon0") == NULL) {
+ 			rc = -EINVAL;
+ 			goto err_last;
+ 		}
+-		if (request_region
+-		    (TPM_INF_ADDR, TPM_INF_ADDR_LEN, "tpm_infineon0") == NULL) {
++		if (request_region(tpm_dev.config_port, tpm_dev.config_size,
++				   "tpm_infineon0") == NULL) {
++			release_region(tpm_dev.data_regs, tpm_dev.data_size);
+ 			rc = -EINVAL;
+ 			goto err_last;
+ 		}
++	} else if (pnp_mem_valid(dev, 0) &&
++	           !(pnp_mem_flags(dev, 0) & IORESOURCE_DISABLED)) {
++
++	    	tpm_dev.iotype = TPM_INF_IO_MEM;
++
++		tpm_dev.map_base = pnp_mem_start(dev, 0);
++		tpm_dev.map_size = pnp_mem_len(dev, 0);
++
++		dev_info(&dev->dev, "Found %s with ID %s\n",
++			 dev->name, dev_id->id);
++
++		/* publish my base address and request region */
++		if (request_mem_region(tpm_dev.map_base, tpm_dev.map_size,
++				       "tpm_infineon0") == NULL) {
++			rc = -EINVAL;
++			goto err_last;
++		}
++
++		tpm_dev.mem_base = ioremap(tpm_dev.map_base, tpm_dev.map_size);
++		if (tpm_dev.mem_base == NULL) {
++			release_mem_region(tpm_dev.map_base, tpm_dev.map_size);
++			rc = -EINVAL;
++			goto err_last;
++		}
++
++		/*
++		 * The only known MMIO based Infineon TPM system provides
++		 * a single large mem region with the device config
++		 * registers at the default TPM_ADDR.  The data registers
++		 * seem like they could be placed anywhere within the MMIO
++		 * region, but lets just put them at zero offset.
++		 */
++		tpm_dev.index_off = TPM_ADDR;
++		tpm_dev.data_regs = 0x0;
+ 	} else {
+ 		rc = -EINVAL;
+ 		goto err_last;
+ 	}
+ 
+ 	/* query chip for its vendor, its version number a.s.o. */
+-	outb(ENABLE_REGISTER_PAIR, TPM_INF_ADDR);
+-	outb(IDVENL, TPM_INF_ADDR);
+-	vendorid[1] = inb(TPM_INF_DATA);
+-	outb(IDVENH, TPM_INF_ADDR);
+-	vendorid[0] = inb(TPM_INF_DATA);
+-	outb(IDPDL, TPM_INF_ADDR);
+-	productid[1] = inb(TPM_INF_DATA);
+-	outb(IDPDH, TPM_INF_ADDR);
+-	productid[0] = inb(TPM_INF_DATA);
+-	outb(CHIP_ID1, TPM_INF_ADDR);
+-	version[1] = inb(TPM_INF_DATA);
+-	outb(CHIP_ID2, TPM_INF_ADDR);
+-	version[0] = inb(TPM_INF_DATA);
++	tpm_config_out(ENABLE_REGISTER_PAIR, TPM_INF_ADDR);
++	tpm_config_out(IDVENL, TPM_INF_ADDR);
++	vendorid[1] = tpm_config_in(TPM_INF_DATA);
++	tpm_config_out(IDVENH, TPM_INF_ADDR);
++	vendorid[0] = tpm_config_in(TPM_INF_DATA);
++	tpm_config_out(IDPDL, TPM_INF_ADDR);
++	productid[1] = tpm_config_in(TPM_INF_DATA);
++	tpm_config_out(IDPDH, TPM_INF_ADDR);
++	productid[0] = tpm_config_in(TPM_INF_DATA);
++	tpm_config_out(CHIP_ID1, TPM_INF_ADDR);
++	version[1] = tpm_config_in(TPM_INF_DATA);
++	tpm_config_out(CHIP_ID2, TPM_INF_ADDR);
++	version[0] = tpm_config_in(TPM_INF_DATA);
+ 
+ 	switch ((productid[0] << 8) | productid[1]) {
+ 	case 6:
+@@ -442,51 +527,54 @@ static int __devinit tpm_inf_pnp_probe(struct pnp_dev *dev,
+ 	if ((vendorid[0] << 8 | vendorid[1]) == (TPM_INFINEON_DEV_VEN_VALUE)) {
+ 
+ 		/* configure TPM with IO-ports */
+-		outb(IOLIMH, TPM_INF_ADDR);
+-		outb(((TPM_INF_BASE >> 8) & 0xff), TPM_INF_DATA);
+-		outb(IOLIML, TPM_INF_ADDR);
+-		outb((TPM_INF_BASE & 0xff), TPM_INF_DATA);
++		tpm_config_out(IOLIMH, TPM_INF_ADDR);
++		tpm_config_out((tpm_dev.data_regs >> 8) & 0xff, TPM_INF_DATA);
++		tpm_config_out(IOLIML, TPM_INF_ADDR);
++		tpm_config_out((tpm_dev.data_regs & 0xff), TPM_INF_DATA);
+ 
+ 		/* control if IO-ports are set correctly */
+-		outb(IOLIMH, TPM_INF_ADDR);
+-		ioh = inb(TPM_INF_DATA);
+-		outb(IOLIML, TPM_INF_ADDR);
+-		iol = inb(TPM_INF_DATA);
++		tpm_config_out(IOLIMH, TPM_INF_ADDR);
++		ioh = tpm_config_in(TPM_INF_DATA);
++		tpm_config_out(IOLIML, TPM_INF_ADDR);
++		iol = tpm_config_in(TPM_INF_DATA);
+ 
+-		if ((ioh << 8 | iol) != TPM_INF_BASE) {
++		if ((ioh << 8 | iol) != tpm_dev.data_regs) {
+ 			dev_err(&dev->dev,
+-				"Could not set IO-ports to 0x%x\n",
+-				TPM_INF_BASE);
++				"Could not set IO-data registers to 0x%x\n",
++				tpm_dev.data_regs);
+ 			rc = -EIO;
+ 			goto err_release_region;
+ 		}
+ 
+ 		/* activate register */
+-		outb(TPM_DAR, TPM_INF_ADDR);
+-		outb(0x01, TPM_INF_DATA);
+-		outb(DISABLE_REGISTER_PAIR, TPM_INF_ADDR);
++		tpm_config_out(TPM_DAR, TPM_INF_ADDR);
++		tpm_config_out(0x01, TPM_INF_DATA);
++		tpm_config_out(DISABLE_REGISTER_PAIR, TPM_INF_ADDR);
+ 
+ 		/* disable RESET, LP and IRQC */
+-		outb(RESET_LP_IRQC_DISABLE, TPM_INF_BASE + CMD);
++		tpm_data_out(RESET_LP_IRQC_DISABLE, CMD);
+ 
+ 		/* Finally, we're done, print some infos */
+ 		dev_info(&dev->dev, "TPM found: "
+-			 "config base 0x%x, "
+-			 "io base 0x%x, "
++			 "config base 0x%lx, "
++			 "data base 0x%lx, "
+ 			 "chip version 0x%02x%02x, "
+ 			 "vendor id 0x%x%x (Infineon), "
+ 			 "product id 0x%02x%02x"
+ 			 "%s\n",
+-			 TPM_INF_ADDR,
+-			 TPM_INF_BASE,
++			 tpm_dev.iotype == TPM_INF_IO_PORT ?
++				tpm_dev.config_port :
++				tpm_dev.map_base + tpm_dev.index_off,
++			 tpm_dev.iotype == TPM_INF_IO_PORT ?
++				tpm_dev.data_regs :
++				tpm_dev.map_base + tpm_dev.data_regs,
+ 			 version[0], version[1],
+ 			 vendorid[0], vendorid[1],
+ 			 productid[0], productid[1], chipname);
+ 
+-		if (!(chip = tpm_register_hardware(&dev->dev, &tpm_inf))) {
++		if (!(chip = tpm_register_hardware(&dev->dev, &tpm_inf)))
+ 			goto err_release_region;
+-		}
+-		chip->vendor.base = TPM_INF_BASE;
++
+ 		return 0;
+ 	} else {
+ 		rc = -ENODEV;
+@@ -494,8 +582,13 @@ static int __devinit tpm_inf_pnp_probe(struct pnp_dev *dev,
+ 	}
+ 
+ err_release_region:
+-	release_region(TPM_INF_BASE, TPM_INF_PORT_LEN);
+-	release_region(TPM_INF_ADDR, TPM_INF_ADDR_LEN);
++	if (tpm_dev.iotype == TPM_INF_IO_PORT) {
++		release_region(tpm_dev.data_regs, tpm_dev.data_size);
++		release_region(tpm_dev.config_port, tpm_dev.config_size);
++	} else {
++		iounmap(tpm_dev.mem_base);
++		release_mem_region(tpm_dev.map_base, tpm_dev.map_size);
++	}
+ 
+ err_last:
+ 	return rc;
+@@ -506,8 +599,14 @@ static __devexit void tpm_inf_pnp_remove(struct pnp_dev *dev)
+ 	struct tpm_chip *chip = pnp_get_drvdata(dev);
+ 
+ 	if (chip) {
+-		release_region(TPM_INF_BASE, TPM_INF_PORT_LEN);
+-		release_region(TPM_INF_ADDR, TPM_INF_ADDR_LEN);
++		if (tpm_dev.iotype == TPM_INF_IO_PORT) {
++			release_region(tpm_dev.data_regs, tpm_dev.data_size);
++			release_region(tpm_dev.config_port,
++				       tpm_dev.config_size);
++		} else {
++			iounmap(tpm_dev.mem_base);
++			release_mem_region(tpm_dev.map_base, tpm_dev.map_size);
++		}
+ 		tpm_remove_hardware(chip->dev);
+ 	}
+ }
+@@ -539,5 +638,5 @@ module_exit(cleanup_inf);
+ 
+ MODULE_AUTHOR("Marcel Selhorst <selhorst@crypto.rub.de>");
+ MODULE_DESCRIPTION("Driver for Infineon TPM SLD 9630 TT 1.1 / SLB 9635 TT 1.2");
+-MODULE_VERSION("1.8");
++MODULE_VERSION("1.9");
+ MODULE_LICENSE("GPL");
+diff --git a/drivers/char/tpm/tpm_nsc.c b/drivers/char/tpm/tpm_nsc.c
+index 26287aa..6313326 100644
+--- a/drivers/char/tpm/tpm_nsc.c
++++ b/drivers/char/tpm/tpm_nsc.c
+@@ -7,7 +7,7 @@
+  * Reiner Sailer <sailer@watson.ibm.com>
+  * Kylene Hall <kjhall@us.ibm.com>
+  *
+- * Maintained by: <tpmdd_devel@lists.sourceforge.net>
++ * Maintained by: <tpmdd-devel@lists.sourceforge.net>
+  *
+  * Device driver for TCG/TCPA TPM (trusted platform module).
+  * Specifications at www.trustedcomputinggroup.org	 
+@@ -284,7 +284,7 @@ static struct device_driver nsc_drv = {
+ static int __init init_nsc(void)
+ {
+ 	int rc = 0;
+-	int lo, hi;
++	int lo, hi, err;
+ 	int nscAddrBase = TPM_ADDR;
+ 	struct tpm_chip *chip;
+ 	unsigned long base;
+@@ -297,7 +297,9 @@ static int __init init_nsc(void)
+ 			return -ENODEV;
+ 	}
+ 
+-	driver_register(&nsc_drv);
++	err = driver_register(&nsc_drv);
++	if (err)
++		return err;
+ 
+ 	hi = tpm_read_index(nscAddrBase, TPM_NSC_BASE0_HI);
+ 	lo = tpm_read_index(nscAddrBase, TPM_NSC_BASE0_LO);
+diff --git a/drivers/char/tpm/tpm_tis.c b/drivers/char/tpm/tpm_tis.c
+index ee7ac6f..bda5166 100644
+--- a/drivers/char/tpm/tpm_tis.c
++++ b/drivers/char/tpm/tpm_tis.c
+@@ -5,6 +5,8 @@
+  * Leendert van Doorn <leendert@watson.ibm.com>
+  * Kylene Hall <kjhall@us.ibm.com>
+  *
++ * Maintained by: <tpmdd-devel@lists.sourceforge.net>
++ *
+  * Device driver for TCG/TCPA TPM (trusted platform module).
+  * Specifications at www.trustedcomputinggroup.org
+  *

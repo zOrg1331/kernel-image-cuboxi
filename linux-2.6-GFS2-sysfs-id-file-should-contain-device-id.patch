@@ -1,0 +1,46 @@
+From: Bob Peterson <rpeterso@redhat.com>
+Date: Tue, 6 Nov 2007 09:39:57 -0600
+Subject: [GFS2] sysfs "id" file should contain device id
+Message-id: 1194363597.29111.14.camel@technetium.msp.redhat.com
+O-Subject: [RHEL5.2 PATCH][GFS2] bz 363901: GFS2: sysfs "id" file should contain device id
+Bugzilla: 363901
+
+This patch is for bugzilla bug 363901.
+
+This patch changes the sysfs "id" file for gfs2 so that it gives
+the device "major:minor" rather than vfs's s_id value.  This id
+file is used by the gfs2 utils (e.g. gfs2_tool) to determine where
+in sysfs the gfs2 kernel keeps its tuning files.  However, this
+was failing in many cases before because the old vfs s_id value
+doesn't always match what userspace knows about the file system.
+Therefore the tools were not working on some devices, especially
+in single-user (non-clustered) file systems.
+
+This patch has been included in the upstream gfs2 kernel git
+tree and tested and found to fix the problem on system roth-01.
+
+Signed-off-by: Bob Peterson <rpeterso@redhat.com>
+--
+
+Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+---
+ fs/gfs2/sys.c |    3 ++-
+ 1 files changed, 2 insertions(+), 1 deletions(-)
+
+diff --git a/fs/gfs2/sys.c b/fs/gfs2/sys.c
+index 0b4c8b2..0f9ebf2 100644
+--- a/fs/gfs2/sys.c
++++ b/fs/gfs2/sys.c
+@@ -32,7 +32,8 @@ spinlock_t gfs2_sys_margs_lock;
+ 
+ static ssize_t id_show(struct gfs2_sbd *sdp, char *buf)
+ {
+-	return snprintf(buf, PAGE_SIZE, "%s\n", sdp->sd_vfs->s_id);
++	return snprintf(buf, PAGE_SIZE, "%u:%u\n",
++			MAJOR(sdp->sd_vfs->s_dev), MINOR(sdp->sd_vfs->s_dev));
+ }
+ 
+ static ssize_t fsname_show(struct gfs2_sbd *sdp, char *buf)
+-- 
+1.5.3.5.645.gbb47
+

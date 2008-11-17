@@ -1,0 +1,41 @@
+From: Doug Chapman <dchapman@redhat.com>
+Date: Mon, 14 Jan 2008 18:05:30 -0500
+Subject: [ia64] xen: fix bogus IOSAPIC
+Message-id: 1200351931.32411.32.camel@athlon
+O-Subject: [RHEL5.2 PATCH] fix bogus IOSAPIC on ia64 xen
+Bugzilla: 246130
+
+for BZ 246130 - [rhts] ia64 acpi complains of errors
+
+On para-virtualized ia64 xen the ACPI tables do not contain
+IOSAPIC entries which leads to the error message:
+
+   Error parsing MADT - no IOSAPIC entries
+
+when booting pv ia64 xen guest.  I am told that the lack
+of IOSAPIC entries is intentional by our ia64 experts back
+at HP.  We are already ignoring this for the sn2 platform.
+This patch extends that for "xen" platform as well.
+
+I am currently pushing this upstream.  Tested by booting
+a pv guest with this patch and verifying the error goes
+away.
+
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: Jon Masters <jcm@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/arch/ia64/kernel/acpi.c b/arch/ia64/kernel/acpi.c
+index f2bf59d..c9e3aae 100644
+--- a/arch/ia64/kernel/acpi.c
++++ b/arch/ia64/kernel/acpi.c
+@@ -698,7 +698,7 @@ int __init acpi_boot_init(void)
+ 
+ 	if (acpi_table_parse_madt
+ 	    (ACPI_MADT_IOSAPIC, acpi_parse_iosapic, NR_IOSAPICS) < 1) {
+-		if (!ia64_platform_is("sn2"))
++		if (!ia64_platform_is("sn2") && !ia64_platform_is("xen"))
+ 			printk(KERN_ERR PREFIX
+ 			       "Error parsing MADT - no IOSAPIC entries\n");
+ 	}

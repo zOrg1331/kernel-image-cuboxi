@@ -1,0 +1,81 @@
+From: Brian Maly <bmaly@redhat.com>
+Subject: [RHEL5.1 patch] allow creation of null parent devices
+Date: Tue, 09 Oct 2007 17:40:59 -0400
+Bugzilla: 323771
+Message-Id: <470BF56B.4000304@redhat.com>
+Changelog: [sound] allow creation of null parent devices
+
+
+resolves BZ 323771
+
+This patch resolves an ALSA regression discovered today that causes the 
+snd_pcm_oss module to fail to load with the following message 
+"device_create does not work yet for NULL parents". The ALSA 1.0.14 
+update switched from using class_device_create() to device_create() 
+while still passing a NULL as the value to the parent argument, being it 
+is allowed in newer kernels. This patch provides the needed changes to 
+allow devices in classes to have no parent, and removes the warning if 
+NULL is passed.
+
+This patch is a backport of:
+http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=64bb5d2c116478dba7501d2acf078ed74ba30c1f
+
+
+It has been tested and resolves the issue.
+
+Brian
+
+
+
+--- linux-2.6.18.noarch/drivers/base/core.c.orig	2007-08-08 22:08:11.000000000 -0400
++++ linux-2.6.18.noarch/drivers/base/core.c	2007-10-09 17:06:23.000000000 -0400
+@@ -3,6 +3,8 @@
+  *
+  * Copyright (c) 2002-3 Patrick Mochel
+  * Copyright (c) 2002-3 Open Source Development Labs
++ * Copyright (c) 2006 Greg Kroah-Hartman <gregkh@suse.de>
++ * Copyright (c) 2006 Novell, Inc.
+  *
+  * This file is released under the GPLv2
+  *
+@@ -340,10 +342,11 @@ int device_add(struct device *dev)
+ 				  "subsystem");
+ 		sysfs_create_link(&dev->class->subsys.kset.kobj, &dev->kobj,
+ 				  dev->bus_id);
+-
+-		sysfs_create_link(&dev->kobj, &dev->parent->kobj, "device");
+-		class_name = make_class_name(dev->class->name, &dev->kobj);
+-		sysfs_create_link(&dev->parent->kobj, &dev->kobj, class_name);
++		if (parent) {
++			sysfs_create_link(&dev->kobj, &dev->parent->kobj, "device");
++			class_name = make_class_name(dev->class->name, &dev->kobj);
++			sysfs_create_link(&dev->parent->kobj, &dev->kobj, class_name);
++		}
+ 	}
+ 
+ 	if ((error = device_pm_add(dev)))
+@@ -458,8 +461,10 @@ void device_del(struct device * dev)
+ 		sysfs_remove_link(&dev->kobj, "subsystem");
+ 		sysfs_remove_link(&dev->class->subsys.kset.kobj, dev->bus_id);
+ 		class_name = make_class_name(dev->class->name, &dev->kobj);
+-		sysfs_remove_link(&dev->kobj, "device");
+-		sysfs_remove_link(&dev->parent->kobj, class_name);
++		if (parent) {
++			sysfs_remove_link(&dev->kobj, "device");
++			sysfs_remove_link(&dev->parent->kobj, class_name);
++		}
+ 		kfree(class_name);
+ 		down(&dev->class->sem);
+ 		list_del_init(&dev->node);
+@@ -596,10 +601,6 @@ struct device *device_create(struct clas
+ 
+ 	if (class == NULL || IS_ERR(class))
+ 		goto error;
+-	if (parent == NULL) {
+-		printk(KERN_WARNING "%s does not work yet for NULL parents\n", __FUNCTION__);
+-		goto error;
+-	}
+ 
+ 	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
+ 	if (!dev) {
+

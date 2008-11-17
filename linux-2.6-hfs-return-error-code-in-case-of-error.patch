@@ -1,0 +1,53 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [PATCH RHEL5] HFS: return error code in case of error
+Date: Fri, 01 Dec 2006 17:21:30 -0500
+Bugzilla: 217009
+Message-Id: <1165011690.2079.195.camel@localhost.localdomain>
+Changelog: HFS: return error code in case of error
+
+
+BZ 217009 - CVE-2006-6056
+
+Patch upstream for 2.6.19:
+http://www.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=d6ddf55440833fd9404138026af246c51ebeef22
+
+HFS bug found during the 'month of kernel bugs'
+
+http://kernelfun.blogspot.com/2006/11/mokb-14-11-2006-linux-26x-selinux.html
+
+hfs_fill_super() returns success even if
+  root_inode = hfs_iget(sb, &fd.search_key->cat, &rec);
+or
+  sb->s_root = d_alloc_root(root_inode);
+
+fails.  This superblock finds its way to superblock_doinit() which does:
+
+        struct dentry *root = sb->s_root;
+        struct inode *inode = root->d_inode;
+
+and boom since sb itself is not set up correctly.  Need to make sure the
+error cases return an error, I think.
+
+I tested this against the image in question from the MoKB and it does
+not panic.  I also ran the fsfuzzer against hfs for a couple minutes
+with the fix and did not hit any other problems quickly.
+
+-Eric
+
+--- linux-2.6.18.i686/fs/hfs/super.c.hfs.super
++++ linux-2.6.18.i686/fs/hfs/super.c
+@@ -391,11 +391,13 @@ static int hfs_fill_super(struct super_b
+ 		hfs_find_exit(&fd);
+ 		goto bail_no_root;
+ 	}
++	res = -EINVAL;
+ 	root_inode = hfs_iget(sb, &fd.search_key->cat, &rec);
+ 	hfs_find_exit(&fd);
+ 	if (!root_inode)
+ 		goto bail_no_root;
+ 
++	res = -ENOMEM;
+ 	sb->s_root = d_alloc_root(root_inode);
+ 	if (!sb->s_root)
+ 		goto bail_iput;
+

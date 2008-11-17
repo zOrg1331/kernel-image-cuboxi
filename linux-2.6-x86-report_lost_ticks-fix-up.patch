@@ -1,0 +1,38 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Tue, 27 Nov 2007 13:49:24 -0500
+Subject: [x86] report_lost_ticks fix up
+Message-id: 20071127184924.29190.44862.sendpatchset@prarit.boston.redhat.com
+O-Subject: [RHEL 5 PATCH]: report_lost_ticks fix up
+Bugzilla: 394581
+
+Make lost tick warning use report_lost_ticks boot line option.
+
+Not upstream as upstream has moved beyond this codebase.
+
+Successfully compiled and tested by me and reporting customer.
+
+Acked-by: Brian Maly <bmaly@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+diff --git a/arch/x86_64/kernel/time.c b/arch/x86_64/kernel/time.c
+index 8b9e227..efa5efd 100644
+--- a/arch/x86_64/kernel/time.c
++++ b/arch/x86_64/kernel/time.c
+@@ -331,7 +331,7 @@ static noinline void handle_lost_ticks(int lost, struct pt_regs *regs)
+ 		print_symbol("rip %s)\n", regs->rip);
+ 	}
+ 
+-	if (lost_count == 1000 && !warned) {
++	if (lost_count == 1000 && !warned && report_lost_ticks) {
+ 		printk(KERN_WARNING "warning: many lost ticks.\n"
+ 		       KERN_WARNING "Your time source seems to be instable or "
+ 		   		"some driver is hogging interupts\n");
+@@ -648,7 +648,7 @@ static void cpufreq_delayed_get(void)
+ 	static int warned;
+ 	if (cpufreq_init && !cpufreq_delayed_issched) {
+ 		cpufreq_delayed_issched = 1;
+-		if (!warned) {
++		if (!warned && report_lost_ticks) {
+ 			warned = 1;
+ 			printk(KERN_DEBUG 
+ 	"Losing some ticks... checking if CPU frequency changed.\n");

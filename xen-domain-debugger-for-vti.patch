@@ -1,0 +1,432 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Mon, 14 Jan 2008 12:12:26 -0500
+Subject: [xen] domain debugger for VTi
+Message-id: 20080114171226.17245.53207.sendpatchset@dhcp78-13.lab.boston.redhat.com
+O-Subject: [RHEL5.2 PATCH 2/2][Xen][Take2] domU HVM application cannot debug via gdb
+Bugzilla: 426362
+
+# HG changeset patch
+# User Kouya Shimura <kouya@jp.fujitsu.com>
+# Date 1200028870 -32400
+# Node ID 8713a380c749244863fe52753973f7169185453a
+# Parent  0aaefec6775aeedcbbb5193d3bf8ccc00c6a6bf7
+ia64 cset 15419, 16105, 16213
+
+[IA64] Domain debugger for VTi: virtualize ibr and dbr.
+
+Misc cleanup.
+
+Signed-off-by: Tristan Gingold <tgingold@free.fr>
+
+[IA64] Fix vmx_emul_mov_from_dbr/ibr()
+
+dbr[] and ibr[] are confused.
+
+Signed-off-by: Isaku Yamahata <yamahata@valinux.co.jp>
+
+[IA64] Enable dbr for VTi domain
+
+Signed-off-by: Kouya Shimura <kouya@jp.fujitsu.com>
+
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+diff --git a/arch/ia64/vmx/vmmu.c b/arch/ia64/vmx/vmmu.c
+index 89b01a6..41a0356 100644
+--- a/arch/ia64/vmx/vmmu.c
++++ b/arch/ia64/vmx/vmmu.c
+@@ -544,8 +544,7 @@ IA64FAULT vmx_vcpu_ptc_e(VCPU *vcpu, u64 va)
+ 
+ IA64FAULT vmx_vcpu_ptc_g(VCPU *vcpu, u64 va, u64 ps)
+ {
+-    vmx_vcpu_ptc_ga(vcpu, va, ps);
+-    return IA64_ILLOP_FAULT;
++    return vmx_vcpu_ptc_ga(vcpu, va, ps);
+ }
+ /*
+ IA64FAULT vmx_vcpu_ptc_ga(VCPU *vcpu, u64 va, u64 ps)
+diff --git a/arch/ia64/vmx/vmx_ivt.S b/arch/ia64/vmx/vmx_ivt.S
+index 6c79cd5..deaefc2 100644
+--- a/arch/ia64/vmx/vmx_ivt.S
++++ b/arch/ia64/vmx/vmx_ivt.S
+@@ -1011,7 +1011,7 @@ END(vmx_speculation_vector)
+ // 0x5900 Entry 29 (size 16 bundles) Debug (16,28,56)
+ ENTRY(vmx_debug_vector)
+     VMX_DBG_FAULT(29)
+-    VMX_FAULT(29)
++    VMX_REFLECT(29)
+ END(vmx_debug_vector)
+ 
+     .org vmx_ia64_ivt+0x5a00
+diff --git a/arch/ia64/vmx/vmx_process.c b/arch/ia64/vmx/vmx_process.c
+index 5724911..e62fe9d 100644
+--- a/arch/ia64/vmx/vmx_process.c
++++ b/arch/ia64/vmx/vmx_process.c
+@@ -86,19 +86,20 @@ void vmx_reflect_interruption(u64 ifa, u64 isr, u64 iim,
+     u64 vpsr = VCPU(vcpu, vpsr);
+     
+     vector = vec2off[vec];
+-    if(!(vpsr&IA64_PSR_IC)&&(vector!=IA64_DATA_NESTED_TLB_VECTOR)){
+-        panic_domain(regs, "Guest nested fault vector=%lx!\n", vector);
+-    }
+ 
+     switch (vec) {
+-
++    case 5:  // IA64_DATA_NESTED_TLB_VECTOR
++        break;
+     case 22:	// IA64_INST_ACCESS_RIGHTS_VECTOR
++        if (!(vpsr & IA64_PSR_IC))
++            goto nested_fault;
+         if (vhpt_access_rights_fixup(vcpu, ifa, 0))
+             return;
+         break;
+ 
+     case 25:	// IA64_DISABLED_FPREG_VECTOR
+-
++        if (!(vpsr & IA64_PSR_IC))
++            goto nested_fault;
+         if (FP_PSR(vcpu) & IA64_PSR_DFH) {
+             FP_PSR(vcpu) = IA64_PSR_MFH;
+             if (__ia64_per_cpu_var(fp_owner) != vcpu)
+@@ -110,8 +111,10 @@ void vmx_reflect_interruption(u64 ifa, u64 isr, u64 iim,
+         }
+ 
+         break;       
+-        
++
+     case 32:	// IA64_FP_FAULT_VECTOR
++        if (!(vpsr & IA64_PSR_IC))
++            goto nested_fault;
+         // handle fpswa emulation
+         // fp fault
+         status = handle_fpu_swa(1, regs, isr);
+@@ -123,6 +126,8 @@ void vmx_reflect_interruption(u64 ifa, u64 isr, u64 iim,
+         break;
+ 
+     case 33:	// IA64_FP_TRAP_VECTOR
++        if (!(vpsr & IA64_PSR_IC))
++            goto nested_fault;
+         //fp trap
+         status = handle_fpu_swa(0, regs, isr);
+         if (!status)
+@@ -132,7 +137,23 @@ void vmx_reflect_interruption(u64 ifa, u64 isr, u64 iim,
+             return;
+         }
+         break;
+-    
++
++    case 29: // IA64_DEBUG_VECTOR
++    case 35: // IA64_TAKEN_BRANCH_TRAP_VECTOR
++    case 36: // IA64_SINGLE_STEP_TRAP_VECTOR
++        if (vmx_guest_kernel_mode(regs)
++            && current->domain->debugger_attached) {
++            domain_pause_for_debugger();
++            return;
++        }
++        if (!(vpsr & IA64_PSR_IC))
++            goto nested_fault;
++        break;
++
++    default:
++        if (!(vpsr & IA64_PSR_IC))
++            goto nested_fault;
++        break;
+     } 
+     VCPU(vcpu,isr)=isr;
+     VCPU(vcpu,iipa) = regs->cr_iip;
+@@ -142,6 +163,10 @@ void vmx_reflect_interruption(u64 ifa, u64 isr, u64 iim,
+         set_ifa_itir_iha(vcpu,ifa,1,1,1);
+     }
+     inject_guest_interruption(vcpu, vector);
++    return;
++
++ nested_fault:
++    panic_domain(regs, "Guest nested fault vector=%lx!\n", vector);
+ }
+ 
+ 
+diff --git a/arch/ia64/vmx/vmx_utility.c b/arch/ia64/vmx/vmx_utility.c
+index 89fe01b..1cf8619 100644
+--- a/arch/ia64/vmx/vmx_utility.c
++++ b/arch/ia64/vmx/vmx_utility.c
+@@ -26,7 +26,7 @@
+ #include <asm/processor.h>
+ #include <asm/vmx_mm_def.h>
+ 
+-
++#ifdef CHECK_FAULT
+ /*
+  * Return:
+  *  0:  Not reserved indirect registers
+@@ -71,6 +71,7 @@ is_reserved_indirect_register (
+     return 0;
+ 
+ }
++#endif
+ 
+ /*
+  * Return:
+@@ -207,7 +208,7 @@ check_psr_rsv_fields (u64 value)
+ }
+ 
+ 
+-
++#ifdef CHECK_FAULT
+ /*
+  * Return:
+  *  1: CR reserved fields are not zero
+@@ -310,9 +311,9 @@ check_cr_rsv_fields (int index, u64 value)
+     panic ("Unsupported CR");
+     return 0;
+ }
++#endif
+ 
+-
+-
++#if 0
+ /*
+  * Return:
+  *  0:  Indirect Reg reserved fields are not zero
+@@ -361,7 +362,7 @@ check_indirect_reg_rsv_fields ( int type, int index, u64 value )
+ 
+     return 1;
+ }
+-
++#endif
+ 
+ 
+ 
+diff --git a/arch/ia64/vmx/vmx_vcpu.c b/arch/ia64/vmx/vmx_vcpu.c
+index 13e7f40..bc75c26 100644
+--- a/arch/ia64/vmx/vmx_vcpu.c
++++ b/arch/ia64/vmx/vmx_vcpu.c
+@@ -96,8 +96,7 @@ vmx_vcpu_set_psr(VCPU *vcpu, unsigned long value)
+      */
+     VCPU(vcpu,vpsr) = value &
+             (~ (IA64_PSR_ID |IA64_PSR_DA | IA64_PSR_DD |
+-                IA64_PSR_SS | IA64_PSR_ED | IA64_PSR_IA
+-            ));
++                IA64_PSR_ED | IA64_PSR_IA));
+ 
+     if ( !old_psr.i && (value & IA64_PSR_I) ) {
+         // vpsr.i 0->1
+diff --git a/arch/ia64/vmx/vmx_virt.c b/arch/ia64/vmx/vmx_virt.c
+index 1a6b62a..2f09724 100644
+--- a/arch/ia64/vmx/vmx_virt.c
++++ b/arch/ia64/vmx/vmx_virt.c
+@@ -178,8 +178,8 @@ static IA64FAULT vmx_emul_mov_to_psr(VCPU *vcpu, INST64 inst)
+ {
+     u64 val;
+ 
+-    if(vcpu_get_gr_nat(vcpu, inst.M35.r2, &val) != IA64_NO_FAULT)
+-	panic_domain(vcpu_regs(vcpu),"get_psr nat bit fault\n");
++    if (vcpu_get_gr_nat(vcpu, inst.M35.r2, &val) != IA64_NO_FAULT)
++        panic_domain(vcpu_regs(vcpu),"get_psr nat bit fault\n");
+ 
+     return vmx_vcpu_set_psr_l(vcpu, val);
+ }
+@@ -892,7 +892,6 @@ static IA64FAULT vmx_emul_mov_to_rr(VCPU *vcpu, INST64 inst)
+ static IA64FAULT vmx_emul_mov_to_dbr(VCPU *vcpu, INST64 inst)
+ {
+     u64 r3,r2;
+-    return IA64_NO_FAULT;
+ #ifdef  CHECK_FAULT
+     IA64_PSR vpsr;
+     vpsr.val=vmx_vcpu_get_psr(vcpu);
+@@ -916,7 +915,6 @@ static IA64FAULT vmx_emul_mov_to_dbr(VCPU *vcpu, INST64 inst)
+ static IA64FAULT vmx_emul_mov_to_ibr(VCPU *vcpu, INST64 inst)
+ {
+     u64 r3,r2;
+-    return IA64_NO_FAULT;
+ #ifdef  CHECK_FAULT
+     IA64_PSR vpsr;
+     vpsr.val=vmx_vcpu_get_psr(vcpu);
+@@ -934,7 +932,7 @@ static IA64FAULT vmx_emul_mov_to_ibr(VCPU *vcpu, INST64 inst)
+         return IA64_FAULT;
+ #endif  //CHECK_FAULT
+     }
+-    return (vmx_vcpu_set_ibr(vcpu,r3,r2));
++    return vmx_vcpu_set_ibr(vcpu,r3,r2);
+ }
+ 
+ static IA64FAULT vmx_emul_mov_to_pmc(VCPU *vcpu, INST64 inst)
+@@ -1064,6 +1062,7 @@ static IA64FAULT vmx_emul_mov_from_pkr(VCPU *vcpu, INST64 inst)
+ static IA64FAULT vmx_emul_mov_from_dbr(VCPU *vcpu, INST64 inst)
+ {
+     u64 r3,r1;
++    IA64FAULT res;
+ #ifdef  CHECK_FAULT
+     if(check_target_register(vcpu, inst.M43.r1)){
+         set_illegal_op_isr(vcpu);
+@@ -1094,13 +1093,16 @@ static IA64FAULT vmx_emul_mov_from_dbr(VCPU *vcpu, INST64 inst)
+         return IA64_FAULT;
+     }
+ #endif  //CHECK_FAULT
+-    vmx_vcpu_get_dbr(vcpu,r3,&r1);
++    res = vmx_vcpu_get_dbr(vcpu, r3, &r1);
++    if (res != IA64_NO_FAULT)
++        return res;
+     return vcpu_set_gr(vcpu, inst.M43.r1, r1,0);
+ }
+ 
+ static IA64FAULT vmx_emul_mov_from_ibr(VCPU *vcpu, INST64 inst)
+ {
+     u64 r3,r1;
++    IA64FAULT res;
+ #ifdef  CHECK_FAULT
+     if(check_target_register(vcpu, inst.M43.r1)){
+         set_illegal_op_isr(vcpu);
+@@ -1131,7 +1133,9 @@ static IA64FAULT vmx_emul_mov_from_ibr(VCPU *vcpu, INST64 inst)
+         return IA64_FAULT;
+     }
+ #endif  //CHECK_FAULT
+-    vmx_vcpu_get_ibr(vcpu,r3,&r1);
++    res = vmx_vcpu_get_ibr(vcpu, r3, &r1);
++    if (res != IA64_NO_FAULT)
++        return res;
+     return vcpu_set_gr(vcpu, inst.M43.r1, r1,0);
+ }
+ 
+@@ -1558,22 +1562,38 @@ if ( (cause == 0xff && opcode == 0x1e000000000) || cause == 0 ) {
+         break;
+     case EVENT_VMSW:
+         printk ("Unimplemented instruction %ld\n", cause);
+-	status=IA64_FAULT;
++        status=IA64_FAULT;
+         break;
+     default:
+-        panic_domain(regs,"unknown cause %ld, iip: %lx, ipsr: %lx\n", cause,regs->cr_iip,regs->cr_ipsr);
++        panic_domain(regs,"unknown cause %ld, iip: %lx, ipsr: %lx\n",
++                     cause,regs->cr_iip,regs->cr_ipsr);
+         break;
+     };
+ 
+ #if 0
+-    if (status == IA64_FAULT)
++    if (status != IA64_NO_FAULT)
+ 	panic("Emulation failed with cause %d:\n", cause);
+ #endif
+ 
+-    if ( status == IA64_NO_FAULT && cause !=EVENT_RFI ) {
+-        vcpu_increment_iip(vcpu);
++    switch (status) {
++    case IA64_RSVDREG_FAULT:
++        set_rsv_reg_field_isr(vcpu);
++        rsv_reg_field(vcpu);
++        break;
++    case IA64_ILLOP_FAULT:
++        set_illegal_op_isr(vcpu);
++        illegal_op(vcpu);
++        break;
++    case IA64_FAULT:
++        /* Registers aleady set.  */
++        break;
++    case IA64_NO_FAULT:
++        if ( cause != EVENT_RFI )
++            vcpu_increment_iip(vcpu);
++        break;
+     }
+ 
++
+     recover_if_physical_mode(vcpu);
+     return;
+ 
+diff --git a/arch/ia64/xen/vcpu.c b/arch/ia64/xen/vcpu.c
+index 3f0263d..71b120d 100644
+--- a/arch/ia64/xen/vcpu.c
++++ b/arch/ia64/xen/vcpu.c
+@@ -1756,8 +1756,10 @@ IA64FAULT vcpu_set_dbr(VCPU * vcpu, u64 reg, u64 val)
+ 		if (val >= HYPERVISOR_VIRT_START && val <= HYPERVISOR_VIRT_END)
+ 			return IA64_ILLOP_FAULT;
+ 	} else {
+-		/* Mask PL0.  */
+-		val &= ~(1UL << 56);
++		if (!VMX_DOMAIN(vcpu)) {
++			/* Mask PL0. */
++			val &= ~(1UL << 56);
++		}
+ 	}
+ 	if (val != 0)
+ 		vcpu->arch.dbg_used |= (1 << reg);
+@@ -1778,8 +1780,10 @@ IA64FAULT vcpu_set_ibr(VCPU * vcpu, u64 reg, u64 val)
+ 		if (val >= HYPERVISOR_VIRT_START && val <= HYPERVISOR_VIRT_END)
+ 			return IA64_ILLOP_FAULT;
+ 	} else {
+-		/* Mask PL0.  */
+-		val &= ~(1UL << 56);
++		if (!VMX_DOMAIN(vcpu)) {
++			/* Mask PL0. */
++			val &= ~(1UL << 56);
++		}
+ 	}
+ 	if (val != 0)
+ 		vcpu->arch.dbg_used |= (1 << (reg + IA64_NUM_DBG_REGS));
+diff --git a/include/asm-ia64/linux-xen/asm/ptrace.h b/include/asm-ia64/linux-xen/asm/ptrace.h
+index adcd30a..1467b2e 100644
+--- a/include/asm-ia64/linux-xen/asm/ptrace.h
++++ b/include/asm-ia64/linux-xen/asm/ptrace.h
+@@ -267,6 +267,7 @@ struct switch_stack {
+ # define ia64_psr(regs)			((struct ia64_psr *) &(regs)->cr_ipsr)
+ #ifdef XEN
+ # define guest_kernel_mode(regs)	(ia64_psr(regs)->cpl == 2)
++# define vmx_guest_kernel_mode(regs)	(ia64_psr(regs)->cpl == 0)
+ #endif
+ # define user_mode(regs)		(((struct ia64_psr *) &(regs)->cr_ipsr)->cpl != 0)
+ # define user_stack(task,regs)	((long) regs - (long) task == IA64_STK_OFFSET - sizeof(*regs))
+diff --git a/include/asm-ia64/vmx.h b/include/asm-ia64/vmx.h
+index 6bf682d..a217b05 100644
+--- a/include/asm-ia64/vmx.h
++++ b/include/asm-ia64/vmx.h
+@@ -50,6 +50,8 @@ extern void set_ifa_itir_iha (struct vcpu *vcpu, u64 vadr,
+ extern void inject_guest_interruption(struct vcpu *vcpu, u64 vec);
+ extern void set_illegal_op_isr (struct vcpu *vcpu);
+ extern void illegal_op (struct vcpu *vcpu);
++extern void set_rsv_reg_field_isr (struct vcpu *vcpu);
++extern void rsv_reg_field (struct vcpu *vcpu);
+ extern void vmx_relinquish_guest_resources(struct domain *d);
+ extern void vmx_relinquish_vcpu_resources(struct vcpu *v);
+ extern void vmx_die_if_kernel(char *str, struct pt_regs *regs, long err);
+diff --git a/include/asm-ia64/vmx_vcpu.h b/include/asm-ia64/vmx_vcpu.h
+index fda5e82..480440d 100644
+--- a/include/asm-ia64/vmx_vcpu.h
++++ b/include/asm-ia64/vmx_vcpu.h
+@@ -331,34 +331,22 @@ static inline IA64FAULT vmx_vcpu_get_cpuid(VCPU * vcpu, u64 reg, u64 * pval)
+ 
+ static inline IA64FAULT vmx_vcpu_set_dbr(VCPU * vcpu, u64 reg, u64 val)
+ {
+-	// TODO: unimplemented DBRs return a reserved register fault
+-	// TODO: Should set Logical CPU state, not just physical
+-	ia64_set_dbr(reg, val);
+-	return IA64_NO_FAULT;
++        return vcpu_set_dbr(vcpu, reg, val);
+ }
+ 
+ static inline IA64FAULT vmx_vcpu_set_ibr(VCPU * vcpu, u64 reg, u64 val)
+ {
+-	// TODO: unimplemented IBRs return a reserved register fault
+-	// TODO: Should set Logical CPU state, not just physical
+-	ia64_set_ibr(reg, val);
+-	return IA64_NO_FAULT;
++        return vcpu_set_ibr(vcpu, reg, val);
+ }
+ 
+ static inline IA64FAULT vmx_vcpu_get_dbr(VCPU * vcpu, u64 reg, u64 * pval)
+ {
+-	// TODO: unimplemented DBRs return a reserved register fault
+-	u64 val = ia64_get_dbr(reg);
+-	*pval = val;
+-	return IA64_NO_FAULT;
++        return vcpu_get_dbr(vcpu, reg, pval);
+ }
+ 
+ static inline IA64FAULT vmx_vcpu_get_ibr(VCPU * vcpu, u64 reg, u64 * pval)
+ {
+-	// TODO: unimplemented IBRs return a reserved register fault
+-	u64 val = ia64_get_ibr(reg);
+-	*pval = val;
+-	return IA64_NO_FAULT;
++        return vcpu_get_ibr(vcpu, reg, pval);
+ }
+ 
+ /**************************************************************************

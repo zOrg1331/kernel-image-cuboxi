@@ -1,0 +1,30 @@
+From: Abhijith Das <adas@redhat.com>
+Date: Sat, 8 Mar 2008 16:30:03 -0600
+Subject: [GFS2] remove assertion "al->al_alloced" failed
+Message-id: 47D3136B.60502@redhat.com
+O-Subject: [RHEL5.2 PATCH][GFS2] - bz432824: warning: assertion "al->al_alloced" failed in alloc_page_backing
+Bugzilla: 432824
+
+This patch removes the assert warning. In some cases (truncating when
+block size < page size), it's possible that blocks are already allocated
+for the last page. It's ok in such a case for alloc_page_backing to not
+allocate blocks.
+
+Signed-off-by: Abhijith Das <adas@redhat.com>
+
+Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+Acked-by: Bob Peterson <rpeterso@redhat.com>
+
+diff --git a/fs/gfs2/ops_vm.c b/fs/gfs2/ops_vm.c
+index 404b7cc..ed158fe 100644
+--- a/fs/gfs2/ops_vm.c
++++ b/fs/gfs2/ops_vm.c
+@@ -91,8 +91,6 @@ static int alloc_page_backing(struct gfs2_inode *ip, struct page *page)
+ 		x += extlen;
+ 	}
+ 
+-	gfs2_assert_warn(sdp, al->al_alloced);
+-
+ out_trans:
+ 	gfs2_trans_end(sdp);
+ out_ipres:

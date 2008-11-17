@@ -1,0 +1,68 @@
+--- linux-2.6.16.noarch/include/asm-generic/bug.h~	2006-03-24 15:32:04.000000000 -0500
++++ linux-2.6.16.noarch/include/asm-generic/bug.h	2006-03-24 15:33:29.000000000 -0500
+@@ -4,10 +4,14 @@
+ #include <linux/compiler.h>
+ #include <linux/config.h>
+ 
++#ifndef __ASSEMBLY__
++extern const char *print_tainted(void);
++#endif
++
+ #ifdef CONFIG_BUG
+ #ifndef HAVE_ARCH_BUG
+ #define BUG() do { \
+-	printk("BUG: failure at %s:%d/%s()!\n", __FILE__, __LINE__, __FUNCTION__); \
++	printk("BUG: failure at %s:%d/%s()! (%s)\n", __FILE__, __LINE__, __FUNCTION__, print_tainted()); \
+ 	panic("BUG!"); \
+ } while (0)
+ #endif
+@@ -19,7 +23,7 @@
+ #ifndef HAVE_ARCH_WARN_ON
+ #define WARN_ON(condition) do { \
+ 	if (unlikely((condition)!=0)) { \
+-		printk("BUG: warning at %s:%d/%s()\n", __FILE__, __LINE__, __FUNCTION__); \
++		printk("BUG: warning at %s:%d/%s() (%s)\n", __FILE__, __LINE__, __FUNCTION__, print_tainted()); \
+ 		dump_stack(); \
+ 	} \
+ } while (0)
+diff -urNp --exclude-from=/home/davej/.exclude linux-1740/kernel/panic.c linux-2000/kernel/panic.c
+--- linux-1740/kernel/panic.c
++++ linux-2000/kernel/panic.c
+@@ -151,6 +151,7 @@ const char *print_tainted(void)
+ 		snprintf(buf, sizeof(buf), "Not tainted");
+ 	return(buf);
+ }
++EXPORT_SYMBOL(print_tainted);
+ 
+ void add_taint(unsigned flag)
+ {
+--- linux-2.6.15/mm/page_alloc.c~	2006-01-07 20:48:33.000000000 -0500
++++ linux-2.6.15/mm/page_alloc.c	2006-01-07 20:49:24.000000000 -0500
+@@ -137,12 +137,12 @@ static inline int bad_range(struct zone 
+ static void bad_page(struct page *page)
+ {
+ 	printk(KERN_EMERG "Bad page state in process '%s'\n"
+-		KERN_EMERG "page:%p flags:0x%0*lx mapping:%p mapcount:%d count:%d\n"
++		KERN_EMERG "page:%p flags:0x%0*lx mapping:%p mapcount:%d count:%d (%s)\n"
+ 		KERN_EMERG "Trying to fix it up, but a reboot is needed\n"
+ 		KERN_EMERG "Backtrace:\n",
+ 		current->comm, page, (int)(2*sizeof(unsigned long)),
+ 		(unsigned long)page->flags, page->mapping,
+-		page_mapcount(page), page_count(page));
++		page_mapcount(page), page_count(page), print_tainted());
+ 	dump_stack();
+ 	page->flags &= ~(1 << PG_lru	|
+ 			1 << PG_private |
+--- linux-2.6.16.noarch/mm/slab.c~	2006-03-22 18:25:29.000000000 -0500
++++ linux-2.6.16.noarch/mm/slab.c	2006-03-22 18:25:53.000000000 -0500
+@@ -1573,8 +1573,8 @@ static void check_poison_obj(struct kmem
+ 			/* Print header */
+ 			if (lines == 0) {
+ 				printk(KERN_ERR
+-					"Slab corruption: start=%p, len=%d\n",
+-					realobj, size);
++					"Slab corruption: (%s) start=%p, len=%d\n",
++					print_tainted(), realobj, size);
+ 				print_objinfo(cachep, objp, 0);
+ 				dump_stack();
+ 			}

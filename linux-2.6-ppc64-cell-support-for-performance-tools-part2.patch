@@ -1,0 +1,32 @@
+From: Scott Moser <smoser@redhat.com>
+Date: Mon, 17 Dec 2007 12:01:46 -0500
+Subject: [ppc64] cell: support for Performance Tools part2
+Message-id: 11979109082609-do-send-email-smoser@redhat.com
+O-Subject: [PATCH RHEL5u2] bz253211 Cell/B.E. Kernel Support for Performance Tools [2/4]
+Bugzilla: 253211
+
+Add a symbol-export for kernel/hrtimer.c::hrtimer_forward().  This routine
+is needed by the upcoming Oprofile-for-Cell patch, since Oprofile can be
+built as a module.
+
+This is a backport for RHEL5U2 from the 2.6.22 kernel to the 2.6.18
+kernel.
+
+--
+ kernel/hrtimer.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/kernel/hrtimer.c b/kernel/hrtimer.c
+index 21c38a7..bee3deb 100644
+--- a/kernel/hrtimer.c
++++ b/kernel/hrtimer.c
+@@ -335,6 +335,7 @@ hrtimer_forward(struct hrtimer *timer, ktime_t now, ktime_t interval)
+ 
+ 	return orun;
+ }
++EXPORT_SYMBOL_GPL(hrtimer_forward);
+ 
+ /*
+  * enqueue_hrtimer - internal function to (re)start a timer

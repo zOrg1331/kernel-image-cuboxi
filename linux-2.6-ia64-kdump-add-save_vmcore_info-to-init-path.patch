@@ -1,0 +1,36 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Tue, 15 Apr 2008 13:36:16 -0400
+Subject: [ia64] kdump: add save_vmcore_info to INIT path
+Message-id: 20080415173616.GC10340@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL 5.2 PATCH]. add save_vmcore_info to ia64 INIT path
+Bugzilla: 442368
+
+Hey-
+	We have a regression in 5.2, and this patch fixes it.  When we adopted
+the use of elf notes to store vmcoreinfo data in RHEL5 we left out a path in
+which we called crash_save_vmcoreinfo.  Namely the path that we use to restart
+the system if the nmi button is pressed on an ia64 box (which sends an init
+message to all the cpus).  The result is that, if a system is booted into a
+kdump kernel via INIT on ia64, makedumpfile will not work (as its required
+configuration isn't present).  This patch fixes that.  Its obvious and very low
+risk.  It was just sent upstream today, and while I don't see the flags set on
+it yet, I'm told this bug will have blocker status shortly.
+
+Thanks!
+Neil
+
+Acked-by: Dave Anderson <anderson@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/arch/ia64/kernel/crash.c b/arch/ia64/kernel/crash.c
+index cf2c1b9..c50b9d5 100644
+--- a/arch/ia64/kernel/crash.c
++++ b/arch/ia64/kernel/crash.c
+@@ -139,6 +139,7 @@ machine_crash_shutdown(struct pt_regs *pt)
+ static void
+ machine_kdump_on_init(void)
+ {
++	crash_save_vmcoreinfo();
+ 	local_irq_disable();
+ 	kexec_disable_iosapic();
+ 	machine_kexec(ia64_kimage);

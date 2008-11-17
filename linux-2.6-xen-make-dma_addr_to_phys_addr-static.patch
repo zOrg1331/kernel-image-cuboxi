@@ -1,0 +1,33 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Thu, 20 Dec 2007 13:29:05 -0500
+Subject: [xen] make dma_addr_to_phys_addr static
+Message-id: 20071220182905.7320.69914.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH 5/6] Make dma_addr_to_phys_addr static
+Bugzilla: 328321
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1184081555 -3600
+# Node ID 0894e8230ec9a3bc00412a5853c4dac52d1c14c5
+# Parent  1b098e32011ecb4518feeb1397e9400d7c1ba9d4
+swiotlb: dma_addr_to_phys_addr() should be static.
+Signed-off-by: Keir Fraser <keir@xensource.com>
+linux-2.6.18-xen changeset: 105:b3c2f84be0bb38ee8570d1a7cbf5191291bc84f0
+linux-2.6.18-xen date: Tue Jul 10 16:32:35 2007 +0100
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+
+diff --git a/arch/i386/kernel/swiotlb.c b/arch/i386/kernel/swiotlb.c
+index 0e73bb0..ae9e3b7 100644
+--- a/arch/i386/kernel/swiotlb.c
++++ b/arch/i386/kernel/swiotlb.c
+@@ -345,7 +345,7 @@ map_single(struct device *hwdev, struct phys_addr buffer, size_t size, int dir)
+ 	return dma_addr;
+ }
+ 
+-struct phys_addr dma_addr_to_phys_addr(char *dma_addr)
++static struct phys_addr dma_addr_to_phys_addr(char *dma_addr)
+ {
+ 	int index = (dma_addr - iotlb_virt_start) >> IO_TLB_SHIFT;
+ 	struct phys_addr buffer = io_tlb_orig_addr[index];

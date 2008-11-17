@@ -1,0 +1,82 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Thu, 3 Jan 2008 17:22:22 -0500
+Subject: [xen] ia64: hv hangs on Corrected Platform Errors
+Message-id: 477D601E.1030102@redhat.com
+O-Subject: [RHEL5.2 PATCH] [Xen] hypervisor sometimes hangs on Corrected Platform Errors
+Bugzilla: 371671
+
+This patch fixes BZ#371671.
+https://bugzilla.redhat.com/show_bug.cgi?id=371671
+
+Hypervisor hang is caused by the bug of SAL call emulation,
+ia64_sal_get_state_info().  The patch to fix it is backported from  the
+upstream.
+- [IA64] Fix ia64_sal_get_state_info() emulation bug
+http://xenbits.xensource.com/ext/ia64/xen-unstable.hg/rev/42e032f52371
+
+I've tested these patches with kernel-2.6.18-58.el5, and confirmed that
+hypervisor does not hang while CPE occurs.
+
+Please review and ACK.
+
+Regards,
+
+Tetsu Yamamoto
+
+# HG changeset patch
+# User Alex Williamson <alex.williamson@hp.com>
+# Date 1193928603 21600
+# Node ID 42e032f52371c2ba1bb048a6215381d7b5ba53ff
+# Parent  a07288a8478521002c2302ad18fac52eb6600055
+[IA64] Fix ia64_sal_get_state_info() emulation bug
+
+It is possible to double-free the sal queue entry when multiple
+ia64_sal_get_state_info() from Dom0 are called simultaniously.
+In the worst case, the kernel might panic.
+
+Signed-off-by: Kazuhiro Suzuki <kaz@jp.fujitsu.com>
+
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+
+diff --git a/arch/ia64/xen/fw_emul.c b/arch/ia64/xen/fw_emul.c
+index bd4b86e..a49ae88 100644
+--- a/arch/ia64/xen/fw_emul.c
++++ b/arch/ia64/xen/fw_emul.c
+@@ -241,6 +241,8 @@ sal_emulator (long index, unsigned long in1, unsigned long in2,
+ 			}
+ 			e = list_entry(sal_queue[in1].next,
+ 			               sal_queue_entry_t, list);
++
++			list_del(&e->list);
+ 			spin_unlock_irqrestore(&sal_queue_lock, flags);
+ 
+ 			IA64_SAL_DEBUG("SAL_GET_STATE_INFO(%s <= %s) "
+@@ -276,10 +278,12 @@ sal_emulator (long index, unsigned long in1, unsigned long in2,
+ 			r9 = arg.ret;
+ 			status = arg.status;
+ 			if (r9 == 0) {
++				xfree(e);
++			} else {
++				/* Re-add the entry to sal_queue */
+ 				spin_lock_irqsave(&sal_queue_lock, flags);
+-				list_del(&e->list);
++				list_add(&e->list, &sal_queue[in1]);
+ 				spin_unlock_irqrestore(&sal_queue_lock, flags);
+-				xfree(e);
+ 			}
+ 		} else {
+ 			status = IA64_SAL_NO_INFORMATION_AVAILABLE;
+@@ -315,10 +319,10 @@ sal_emulator (long index, unsigned long in1, unsigned long in2,
+ 			               "on CPU#%d.\n",
+ 			               rec_name[e->sal_info_type],
+ 			               rec_name[in1], e->cpuid);
+-			
+ 
+ 			arg.type = e->sal_info_type;
+ 			arg.status = 0;
++
+ 			if (e->cpuid == smp_processor_id()) {
+ 				IA64_SAL_DEBUG("SAL_CLEAR_STATE_INFO: local\n");
+ 				clear_state_info_on(&arg);

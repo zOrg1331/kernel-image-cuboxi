@@ -1,0 +1,38 @@
+From: Wendy Cheng <wcheng@redhat.com>
+Subject: [RHEL5.1 PATCH] 03/01 NFS fix - gfs2_decode_fh
+Date: Thu, 01 Mar 2007 16:01:34 -0500
+Bugzilla: 229345
+Message-Id: <45E73F2E.8030804@redhat.com>
+Changelog: [gfs2] NFS v2 mount failure
+
+
+Bugzilla 229345
+
+GFS2 expects fh_type and fh_len have the same value. This is apparently 
+not correct. One obvious symptom is the failure of NFS v2 mount command 
+(that uses fixed fh_len for all requests).
+
+-- Wendy
+
+
+--- linux-0227/fs/gfs2/ops_export.c	2007-02-27 17:26:07.000000000 -0500
++++ linux/fs/gfs2/ops_export.c	2007-02-27 17:32:21.000000000 -0500
+@@ -37,14 +37,11 @@ static struct dentry *gfs2_decode_fh(str
+ 	struct gfs2_fh_obj fh_obj;
+ 	struct gfs2_inum *this, parent;
+ 
+-	if (fh_type != fh_len)
+-		return NULL;
+-
+ 	this 		= &fh_obj.this;
+ 	fh_obj.imode 	= DT_UNKNOWN;
+ 	memset(&parent, 0, sizeof(struct gfs2_inum));
+ 
+-	switch (fh_type) {
++	switch (fh_len) {
+ 	case GFS2_LARGE_FH_SIZE:
+ 		parent.no_formal_ino = ((u64)be32_to_cpu(fh[4])) << 32;
+ 		parent.no_formal_ino |= be32_to_cpu(fh[5]);
+
+
+

@@ -1,0 +1,443 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [PATCH RHEL5.1] bz249667 [ppc] No Boot/Hang response for PCI-E errors 	on a QS21 
+Date: Thu, 26 Jul 2007 14:16:29 -0400 (EDT)
+Bugzilla: 249667
+Message-Id: <Pine.LNX.4.64.0707261415290.30310@squad5-lp1.lab.boston.redhat.com>
+Changelog: [ppc] No Boot/Hang response for PCI-E errors
+
+
+RHBZ#: 249667
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=249667
+
+Description:
+------------
+The Axon PCIe root complexes used in the IBM QS21 systems report PCI
+errors (e.g. poisoned TLP, crc error, etc) it asserts an interrupt that
+has to be caught by Linux.
+
+The "driver" will dump out some registers, then panic. It is an extra file
+in arch/powerpc/platforms/cell and does not impact other platforms.
+
+Without the patches to support this error reporting these systems witll
+hang on boot in the face of PCI errors.
+
+RHEL Version Found:
+-------------------
+This is a bug found in RHEL5u1 kernel 2.6.18-36.el5
+
+Upstream Status:
+----------------
+These patches are in the mainline Cell kernel and are queued for submission to
+kernel.org.
+
+Config Options:
+--------------
+This requires that the following 2 options be set for ppc64 kernels:
+CONFIG_CBE_AXON_UTL=y
+CONFIG_CBE_AXON_PCI=y
+
+Test Status:
+------------
+To ensure cross-platform build, this code has been built with brew
+--scratch against a 2.6.18-36.el5 kernel and is available at [1].
+
+This build has been used for verification that the problem is fixed.
+Verification was done by Jens Osterkamp of IBM.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+-- 
+[1] http://brewweb.devel.redhat.com/brew/taskinfo?taskID=887483
+
+---
+ arch/powerpc/platforms/cell/Kconfig          |   14 ++
+ arch/powerpc/platforms/cell/Makefile         |    3 
+ arch/powerpc/platforms/cell/axon_pci-error.c |  160 +++++++++++++++++++++++++++
+ arch/powerpc/platforms/cell/axon_utl.c       |  159 ++++++++++++++++++++++++++
+ include/asm-powerpc/prom.h                   |    3 
+ 5 files changed, 339 insertions(+)
+
+Index: linux-2.6.18.ppc64/arch/powerpc/platforms/cell/Kconfig
+===================================================================
+--- linux-2.6.18.ppc64.orig/arch/powerpc/platforms/cell/Kconfig
++++ linux-2.6.18.ppc64/arch/powerpc/platforms/cell/Kconfig
+@@ -25,4 +25,18 @@ config CBE_RAS
+ 	bool "RAS features for bare metal Cell BE"
+ 	default y
+ 
++config CBE_AXON_UTL
++	bool "CBE/Axon PCIe Upper Transaction layer error handling"
++	default n
++	help
++	  The Axon chip delivers error conditions detected in the
++	  PCIe root complex as interrupts.
++
++config CBE_AXON_PCI
++	bool "CBE/Axon PCI error handling"
++	default n
++	help
++	  The Axon chip delivers error conditions detected in the
++	  PCI bridge as error interrupts.
++
+ endmenu
+Index: linux-2.6.18.ppc64/arch/powerpc/platforms/cell/Makefile
+===================================================================
+--- linux-2.6.18.ppc64.orig/arch/powerpc/platforms/cell/Makefile
++++ linux-2.6.18.ppc64/arch/powerpc/platforms/cell/Makefile
+@@ -3,6 +3,9 @@ obj-$(CONFIG_PPC_CELL_NATIVE)		+= interr
+ 					   io-workarounds.o
+ obj-$(CONFIG_CBE_RAS)			+= ras.o
+ 
++obj-$(CONFIG_CBE_AXON_UTL)		+= axon_utl.o
++obj-$(CONFIG_CBE_AXON_PCI)		+= axon_pci-error.o
++
+ ifeq ($(CONFIG_SMP),y)
+ obj-$(CONFIG_PPC_CELL_NATIVE)		+= smp.o
+ endif
+Index: linux-2.6.18.ppc64/arch/powerpc/platforms/cell/axon_utl.c
+===================================================================
+--- /dev/null
++++ linux-2.6.18.ppc64/arch/powerpc/platforms/cell/axon_utl.c
+@@ -0,0 +1,159 @@
++/*
++ * PCIe error reporting handler for Axon
++ *
++ * (C) Copyright IBM Corp. 2007
++ *
++ * Authors : Jens Osterkamp <Jens.Osterkamp@de.ibm.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ */
++
++#include <linux/interrupt.h>
++#include <linux/irq.h>
++#include <linux/kernel.h>
++#include <linux/pci.h>
++#include <linux/reboot.h>
++
++#include <asm/machdep.h>
++#include <asm/prom.h>
++
++#include "../../kernel/msi.h"
++
++/*
++ * Axon UTL registers
++ */
++#define AXON_UTL_STATUS			0x04
++#define AXON_UTL_PCIE_PORT_STATUS	0xa4
++#define AXON_UTL_PCIE_PORT_CMPLX_STATUS	0xb0
++
++struct axon_utl {
++	struct device_node *dn;
++	void __iomem *base;
++	int virq;
++};
++
++static u32 axon_utl_read(struct axon_utl *axon_utl, unsigned int reg)
++{
++	return in_be32(axon_utl->base + reg);
++}
++
++static void axon_utl_dump_registers(struct axon_utl *axon_utl)
++{
++	printk("\naxon_utl: AXON_UTL_STATUS = 0x%08x\n",
++	       axon_utl_read(axon_utl, AXON_UTL_STATUS));
++
++	printk("axon_utl: AXON_UTL_PCIE_PORT_STATUS = 0x%08x\n",
++	       axon_utl_read(axon_utl, AXON_UTL_PCIE_PORT_STATUS));
++
++	printk("axon_utl: AXON_UTL_PCIE_ROOT_CMPLX_STATUS = 0x%08x\n",
++	       axon_utl_read(axon_utl, AXON_UTL_PCIE_PORT_CMPLX_STATUS));
++}
++
++static irqreturn_t axon_utl_interrupt(int irq, void *ptr)
++{
++	struct axon_utl *axon_utl = (struct axon_utl *) ptr;
++
++	axon_utl_dump_registers(axon_utl);
++
++	panic("\naxon_utl: an unrecoverable error on PCIe node %s occured !\n",
++	      axon_utl->dn->full_name);
++
++	/* should never happen */
++	return IRQ_HANDLED;
++}
++
++static int axon_utl_setup_one(struct device_node *dn)
++{
++	int ret, virq;
++	unsigned int flags;
++	struct axon_utl *axon_utl;
++	const u32 *addr;
++	u64 ioaddr, size;
++
++	pr_debug("axon_utl: setting up dn %s\n", dn->full_name);
++
++	axon_utl = kzalloc(sizeof(struct axon_utl), GFP_KERNEL);
++	if (!axon_utl) {
++		printk(KERN_ERR "axon_utl: could not allocate axon_utl for %s\n",
++		       dn->full_name);
++		goto out;
++	}
++
++	axon_utl->dn = dn;
++
++	addr = of_get_address(dn, 0, &size, &flags);
++
++	if (addr == 0) {
++		printk(KERN_ERR "axon_utl: addr of resource is 0\n");
++		goto out_free;
++	}
++
++	if (size == 0) {
++		printk(KERN_ERR "axon_utl: length of resource is 0\n");
++		goto out_free;
++	}
++
++	ioaddr = of_translate_address(dn, addr);
++
++	axon_utl->base = ioremap(ioaddr, size);
++
++	if (axon_utl->base == NULL) {
++		printk(KERN_ERR "axon_utl: unable to ioremap io address\n");
++		goto out_free;
++	}
++
++	virq = irq_of_parse_and_map(dn, 0);
++	if (virq == NO_IRQ) {
++		printk(KERN_ERR "axon_utl: irq parse and map failed for %s\n",
++		       dn->full_name);
++		goto out_free;
++	}
++
++	ret = request_irq(virq, axon_utl_interrupt,
++			IRQF_DISABLED, "axon_utl", axon_utl);
++	if (ret) {
++		printk(KERN_ERR "axon_utl: request for irq %d on dn %s failed \n",
++		       virq, dn->full_name);
++		goto out_free;
++	}
++
++	pr_info("axon_utl: registered error handler on irq %d for %s\n",
++	       virq, axon_utl->dn->full_name);
++
++	return 0;
++
++out_free:
++	kfree(axon_utl);
++out:
++	return -ENODEV;
++}
++
++static int axon_utl_init(void)
++{
++	struct device_node *dn;
++	int n=0;
++
++	for_each_compatible_node(dn, NULL, "ibm,axon-pciex-utl") {
++		if (axon_utl_setup_one(dn) == 0)
++			n++;
++	}
++
++	if (n == 0) {
++		pr_info("No pciex nodes found\n");
++	}
++
++	return 0;
++}
++
++subsys_initcall(axon_utl_init);
+Index: linux-2.6.18.ppc64/arch/powerpc/platforms/cell/axon_pci-error.c
+===================================================================
+--- /dev/null
++++ linux-2.6.18.ppc64/arch/powerpc/platforms/cell/axon_pci-error.c
+@@ -0,0 +1,160 @@
++/*
++ * PCI error reporting handler for Axon
++ *
++ * (C) Copyright IBM Corp. 2007
++ *
++ * Authors : Jens Osterkamp <Jens.Osterkamp@de.ibm.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ */
++
++#include <linux/interrupt.h>
++#include <linux/irq.h>
++#include <linux/kernel.h>
++#include <linux/pci.h>
++#include <linux/reboot.h>
++
++#include <asm/machdep.h>
++#include <asm/prom.h>
++
++#include "../../kernel/msi.h"
++
++/*
++ * Axon PCI bridge registers
++ */
++#define AXON_PCI_BRIDGE_OFFSET		0x0ec80000
++
++/* PCI status */
++#define AXON_PCI_STATUS			0x04
++
++/* PCI error status */
++#define AXON_PCI_ERROR_STATUS		0x54
++
++struct axon_pci {
++	struct device_node *dn;
++	void __iomem *base;
++	int virq;
++};
++
++static u32 axon_pci_read(struct axon_pci *axon_pci, unsigned int reg)
++{
++	return in_be32(axon_pci->base + AXON_PCI_BRIDGE_OFFSET + reg);
++}
++
++static void axon_pci_dump_registers(struct axon_pci *axon_pci)
++{
++	printk("\naxon_pci: AXON_PCI_STATUS = 0x%08x\n",
++	       axon_pci_read(axon_pci, AXON_PCI_STATUS));
++
++	printk("axon_pci: AXON_PCI_ERROR_STATUS = 0x%08x\n",
++	       axon_pci_read(axon_pci, AXON_PCI_ERROR_STATUS));
++}
++
++static irqreturn_t axon_pci_interrupt(int irq, void *ptr)
++{
++	struct axon_pci *axon_pci = (struct axon_pci *) ptr;
++
++	axon_pci_dump_registers(axon_pci);
++
++	panic("\naxon_pci: an unrecoverable error on PCI node %s occured !\n",
++	      axon_pci->dn->full_name);
++
++	/* should never happen */
++	return IRQ_HANDLED;
++}
++
++static int axon_pci_setup_one(struct device_node *dn)
++{
++	int ret, virq;
++	unsigned int flags;
++	struct axon_pci *axon_pci;
++	const u32 *addr;
++	u64 ioaddr, size;
++
++	pr_debug("axon_pci: setting up dn %s\n", dn->full_name);
++
++	axon_pci = kzalloc(sizeof(struct axon_pci), GFP_KERNEL);
++	if (!axon_pci) {
++		printk(KERN_ERR "axon_pci: could not allocate axon_pci for %s\n",
++		       dn->full_name);
++		goto out;
++	}
++
++	axon_pci->dn = dn;
++
++	addr = of_get_address(dn, 0, &size, &flags);
++
++	if (addr == 0) {
++		printk(KERN_ERR "axon_pci: addr of resource is 0\n");
++		goto out_free;
++	}
++
++	if (size == 0) {
++		printk(KERN_ERR "axon_pci: length of resource is 0\n");
++		goto out_free;
++	}
++
++	ioaddr = of_translate_address(dn, addr);
++
++	axon_pci->base = ioremap(ioaddr, size);
++
++	if (axon_pci->base == NULL) {
++		printk(KERN_ERR "axon_pci: unable to ioremap io address\n");
++		goto out_free;
++	}
++
++	virq = irq_of_parse_and_map(dn, 0);
++	if (virq == NO_IRQ) {
++		printk(KERN_ERR "axon_pci: irq parse and map failed for %s\n",
++		       dn->full_name);
++		goto out_free;
++	}
++
++	ret = request_irq(virq, axon_pci_interrupt,
++			IRQF_DISABLED, "axon_pci", axon_pci);
++	if (ret) {
++		printk(KERN_ERR "axon_pci: request for irq %d on dn %s failed \n",
++		       virq, dn->full_name);
++		goto out_free;
++	}
++
++	pr_info("axon_pci: registered error handler on irq %d for %s\n",
++	       virq, axon_pci->dn->full_name);
++
++	return 0;
++
++out_free:
++	kfree(axon_pci);
++out:
++	return -ENODEV;
++}
++
++static int axon_pci_init(void)
++{
++	struct device_node *dn;
++	int n=0;
++
++	for_each_compatible_node(dn, NULL, "ibm,axon-pcix") {
++		if (axon_pci_setup_one(dn) == 0)
++			n++;
++	}
++
++	if (n == 0) {
++		pr_info("No pcix nodes found\n");
++	}
++
++	return 0;
++}
++
++subsys_initcall(axon_pci_init);
+Index: linux-2.6.18.ppc64/include/asm-powerpc/prom.h
+===================================================================
+--- linux-2.6.18.ppc64.orig/include/asm-powerpc/prom.h
++++ linux-2.6.18.ppc64/include/asm-powerpc/prom.h
+@@ -128,6 +128,9 @@ extern struct device_node *of_find_node_
+ 	     dn = of_find_node_by_type(dn, type))
+ extern struct device_node *of_find_compatible_node(struct device_node *from,
+ 	const char *type, const char *compat);
++#define for_each_compatible_node(dn, type, compatible) \
++	for (dn = of_find_compatible_node(NULL, type, compatible); dn; \
++		dn = of_find_compatible_node(dn, type, compatible))
+ extern struct device_node *of_find_node_by_path(const char *path);
+ extern struct device_node *of_find_node_by_phandle(phandle handle);
+ extern struct device_node *of_find_all_nodes(struct device_node *prev);
+

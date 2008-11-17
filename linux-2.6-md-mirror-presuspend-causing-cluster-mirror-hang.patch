@@ -1,0 +1,64 @@
+From: Jonathan Brassow <jbrassow@redhat.com>
+Date: Mon, 17 Dec 2007 16:02:09 -0600
+Subject: [md] mirror presuspend causing cluster mirror hang
+Message-id: 1197928929.28090.5.camel@hydrogen
+O-Subject: [RHEL 5.2 PATCH] Incorrect order of mirror presuspend ops causes cluster mirror hang
+Bugzilla: 358871
+
+Bug #358871
+
+Cluster mirrors do not (and can not) allow writes to mirror regions which have
+not recovered yet.
+
+When a mirror suspends it:
+1) stops recovery
+2) flushes the work queue (finishing outstanding writes)
+3) calls log presuspend
+
+The log has no way of knowing that the mirror is suspending until #3, so it
+blocks any outstanding writes to regions that are not-in-sync.  This could hang
+the mirror because recovery has been stopped and the not-in-sync regions will
+never be cleared - delaying the writes indefinitely.
+
+The solution is to switch the order of operations to:
+1) stop recovery
+2) call log presuspend
+3) flush work queue
+
+By doing this, the log knows that recovery has been stopped and that there will
+be no collisions with writes.  Therefore, it can allow writes to regions which
+have not yet been recovered.
+
+There are no ill effects of this patch on single machine mirroring.  The core
+log implementation does not define a presuspend, so there is nothing called.
+The disk log implementation simply returns '0' for presuspend.  So, for
+single machine mirroring, we are effectively moving a no-op.
+
+Acked-by: Alasdair G Kergon <agk@redhat.com>
+
+diff --git a/drivers/md/dm-raid1.c b/drivers/md/dm-raid1.c
+index 515ff4e..d4ea9cb 100644
+--- a/drivers/md/dm-raid1.c
++++ b/drivers/md/dm-raid1.c
+@@ -1686,6 +1686,10 @@ static void mirror_presuspend(struct dm_target *ti)
+ 	wait_event(recovery_stopped_event,
+ 		   !atomic_read(&ms->rh.recovery_in_flight));
+ 
++	if (log->type->presuspend && log->type->presuspend(log))
++		/* FIXME: need better error handling */
++		DMWARN("log presuspend failed");
++
+ 	/*
+ 	 * Now that recovery is complete/stopped and the
+ 	 * delayed bios are queued, we need to wait for
+@@ -1693,10 +1697,6 @@ static void mirror_presuspend(struct dm_target *ti)
+ 	 * we know that all of our I/O has been pushed.
+ 	 */
+ 	flush_workqueue(ms->kmirrord_wq);
+-
+-	if (log->type->presuspend && log->type->presuspend(log))
+-		/* FIXME: need better error handling */
+-		DMWARN("log presuspend failed");
+ }
+ 
+ static void mirror_postsuspend(struct dm_target *ti)

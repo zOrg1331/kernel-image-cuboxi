@@ -1,0 +1,352 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 18 Dec 2007 12:14:35 -0600
+Subject: [fs] ecryptfs: backport to rhel5 cipher api
+Message-id: 47680E0B.1090201@redhat.com
+O-Subject: [RHEL 5.2 PATCH] 10/15: eCryptfs: backport to RHEL5 cipher API
+Bugzilla: 228341
+
+Backport ecryptfs to use the RHEL5 cipher API.
+
+ crypto.c          |   97 +++++++++++++-----------------------------------------
+ ecryptfs_kernel.h |    6 +--
+ keystore.c        |   32 +++++++----------
+ 3 files changed, 41 insertions(+), 94 deletions(-)
+
+diff --git a/fs/ecryptfs/crypto.c b/fs/ecryptfs/crypto.c
+index bbed2fd..2b656d0 100644
+--- a/fs/ecryptfs/crypto.c
++++ b/fs/ecryptfs/crypto.c
+@@ -141,28 +141,6 @@ out:
+ 	return rc;
+ }
+ 
+-static int ecryptfs_crypto_api_algify_cipher_name(char **algified_name,
+-						  char *cipher_name,
+-						  char *chaining_modifier)
+-{
+-	int cipher_name_len = strlen(cipher_name);
+-	int chaining_modifier_len = strlen(chaining_modifier);
+-	int algified_name_len;
+-	int rc;
+-
+-	algified_name_len = (chaining_modifier_len + cipher_name_len + 3);
+-	(*algified_name) = kmalloc(algified_name_len, GFP_KERNEL);
+-	if (!(*algified_name)) {
+-		rc = -ENOMEM;
+-		goto out;
+-	}
+-	snprintf((*algified_name), algified_name_len, "%s(%s)",
+-		 chaining_modifier, cipher_name);
+-	rc = 0;
+-out:
+-	return rc;
+-}
+-
+ /**
+  * ecryptfs_derive_iv
+  * @iv: destination for the derived iv vale
+@@ -241,7 +219,7 @@ void ecryptfs_destroy_crypt_stat(struct ecryptfs_crypt_stat *crypt_stat)
+ 	struct ecryptfs_key_sig *key_sig, *key_sig_tmp;
+ 
+ 	if (crypt_stat->tfm)
+-		crypto_free_blkcipher(crypt_stat->tfm);
++		crypto_free_tfm(crypt_stat->tfm);
+ 	if (crypt_stat->hash_tfm)
+ 		crypto_free_hash(crypt_stat->hash_tfm);
+ 	mutex_lock(&crypt_stat->keysig_list_mutex);
+@@ -338,11 +316,6 @@ static int encrypt_scatterlist(struct ecryptfs_crypt_stat *crypt_stat,
+ 			       struct scatterlist *src_sg, int size,
+ 			       unsigned char *iv)
+ {
+-	struct blkcipher_desc desc = {
+-		.tfm = crypt_stat->tfm,
+-		.info = iv,
+-		.flags = CRYPTO_TFM_REQ_MAY_SLEEP
+-	};
+ 	int rc = 0;
+ 
+ 	BUG_ON(!crypt_stat || !crypt_stat->tfm
+@@ -355,8 +328,8 @@ static int encrypt_scatterlist(struct ecryptfs_crypt_stat *crypt_stat,
+ 	}
+ 	/* Consider doing this once, when the file is opened */
+ 	mutex_lock(&crypt_stat->cs_tfm_mutex);
+-	rc = crypto_blkcipher_setkey(crypt_stat->tfm, crypt_stat->key,
+-				     crypt_stat->key_size);
++	rc = crypto_cipher_setkey(crypt_stat->tfm, crypt_stat->key,
++				  crypt_stat->key_size);
+ 	if (rc) {
+ 		ecryptfs_printk(KERN_ERR, "Error setting key; rc = [%d]\n",
+ 				rc);
+@@ -365,7 +338,7 @@ static int encrypt_scatterlist(struct ecryptfs_crypt_stat *crypt_stat,
+ 		goto out;
+ 	}
+ 	ecryptfs_printk(KERN_DEBUG, "Encrypting [%d] bytes.\n", size);
+-	crypto_blkcipher_encrypt_iv(&desc, dest_sg, src_sg, size);
++	crypto_cipher_encrypt_iv(crypt_stat->tfm, dest_sg, src_sg, size, iv);
+ 	mutex_unlock(&crypt_stat->cs_tfm_mutex);
+ out:
+ 	return rc;
+@@ -678,17 +651,12 @@ static int decrypt_scatterlist(struct ecryptfs_crypt_stat *crypt_stat,
+ 			       struct scatterlist *src_sg, int size,
+ 			       unsigned char *iv)
+ {
+-	struct blkcipher_desc desc = {
+-		.tfm = crypt_stat->tfm,
+-		.info = iv,
+-		.flags = CRYPTO_TFM_REQ_MAY_SLEEP
+-	};
+ 	int rc = 0;
+ 
+ 	/* Consider doing this once, when the file is opened */
+ 	mutex_lock(&crypt_stat->cs_tfm_mutex);
+-	rc = crypto_blkcipher_setkey(crypt_stat->tfm, crypt_stat->key,
+-				     crypt_stat->key_size);
++	rc = crypto_cipher_setkey(crypt_stat->tfm, crypt_stat->key,
++				  crypt_stat->key_size);
+ 	if (rc) {
+ 		ecryptfs_printk(KERN_ERR, "Error setting key; rc = [%d]\n",
+ 				rc);
+@@ -697,7 +665,8 @@ static int decrypt_scatterlist(struct ecryptfs_crypt_stat *crypt_stat,
+ 		goto out;
+ 	}
+ 	ecryptfs_printk(KERN_DEBUG, "Decrypting [%d] bytes.\n", size);
+-	rc = crypto_blkcipher_decrypt_iv(&desc, dest_sg, src_sg, size);
++	rc = crypto_cipher_decrypt_iv(crypt_stat->tfm, dest_sg, src_sg, size,
++				      iv);
+ 	mutex_unlock(&crypt_stat->cs_tfm_mutex);
+ 	if (rc) {
+ 		ecryptfs_printk(KERN_ERR, "Error decrypting; rc = [%d]\n",
+@@ -779,7 +748,6 @@ ecryptfs_decrypt_page_offset(struct ecryptfs_crypt_stat *crypt_stat,
+  */
+ int ecryptfs_init_crypt_ctx(struct ecryptfs_crypt_stat *crypt_stat)
+ {
+-	char *full_alg_name;
+ 	int rc = -EINVAL;
+ 
+ 	if (!crypt_stat->cipher) {
+@@ -796,23 +764,16 @@ int ecryptfs_init_crypt_ctx(struct ecryptfs_crypt_stat *crypt_stat)
+ 		goto out;
+ 	}
+ 	mutex_lock(&crypt_stat->cs_tfm_mutex);
+-	rc = ecryptfs_crypto_api_algify_cipher_name(&full_alg_name,
+-						    crypt_stat->cipher, "cbc");
+-	if (rc)
+-		goto out;
+-	crypt_stat->tfm = crypto_alloc_blkcipher(full_alg_name, 0,
+-						 CRYPTO_ALG_ASYNC);
+-	kfree(full_alg_name);
+-	if (IS_ERR(crypt_stat->tfm)) {
+-		rc = PTR_ERR(crypt_stat->tfm);
++	crypt_stat->tfm = crypto_alloc_tfm(crypt_stat->cipher,
++					   ECRYPTFS_DEFAULT_CHAINING_MODE
++					   | CRYPTO_TFM_REQ_WEAK_KEY);
++	mutex_unlock(&crypt_stat->cs_tfm_mutex);
++	if (!crypt_stat->tfm) {
+ 		ecryptfs_printk(KERN_ERR, "cryptfs: init_crypt_ctx(): "
+ 				"Error initializing cipher [%s]\n",
+ 				crypt_stat->cipher);
+-		mutex_unlock(&crypt_stat->cs_tfm_mutex);
+ 		goto out;
+ 	}
+-	crypto_blkcipher_set_flags(crypt_stat->tfm, CRYPTO_TFM_REQ_WEAK_KEY);
+-	mutex_unlock(&crypt_stat->cs_tfm_mutex);
+ 	rc = 0;
+ out:
+ 	return rc;
+@@ -1757,11 +1718,10 @@ out:
+  * event, regardless of whether this function succeeds for fails.
+  */
+ static int
+-ecryptfs_process_key_cipher(struct crypto_blkcipher **key_tfm,
++ecryptfs_process_key_cipher(struct crypto_tfm **key_tfm,
+ 			    char *cipher_name, size_t *key_size)
+ {
+ 	char dummy_key[ECRYPTFS_MAX_KEY_BYTES];
+-	char *full_alg_name;
+ 	int rc;
+ 
+ 	*key_tfm = NULL;
+@@ -1771,26 +1731,19 @@ ecryptfs_process_key_cipher(struct crypto_blkcipher **key_tfm,
+ 		      "allowable is [%d]\n", *key_size, ECRYPTFS_MAX_KEY_BYTES);
+ 		goto out;
+ 	}
+-	rc = ecryptfs_crypto_api_algify_cipher_name(&full_alg_name, cipher_name,
+-						    "ecb");
+-	if (rc)
+-		goto out;
+-	*key_tfm = crypto_alloc_blkcipher(full_alg_name, 0, CRYPTO_ALG_ASYNC);
+-	kfree(full_alg_name);
+-	if (IS_ERR(*key_tfm)) {
+-		rc = PTR_ERR(*key_tfm);
++	*key_tfm = crypto_alloc_tfm(cipher_name,
++				    (CRYPTO_TFM_MODE_ECB
++				     | CRYPTO_TFM_REQ_WEAK_KEY));
++	if (!(*key_tfm)) {
++		rc = -EINVAL;
+ 		printk(KERN_ERR "Unable to allocate crypto cipher with name "
+-		       "[%s]; rc = [%d]\n", cipher_name, rc);
++		       "[%s]\n", cipher_name);
+ 		goto out;
+ 	}
+-	crypto_blkcipher_set_flags(*key_tfm, CRYPTO_TFM_REQ_WEAK_KEY);
+-	if (*key_size == 0) {
+-		struct blkcipher_alg *alg = crypto_blkcipher_alg(*key_tfm);
+-
+-		*key_size = alg->max_keysize;
+-	}
++	if (*key_size == 0)
++		*key_size = crypto_tfm_alg_max_keysize(*key_tfm);
+ 	get_random_bytes(dummy_key, *key_size);
+-	rc = crypto_blkcipher_setkey(*key_tfm, dummy_key, *key_size);
++	rc = crypto_cipher_setkey(*key_tfm, dummy_key, *key_size);
+ 	if (rc) {
+ 		printk(KERN_ERR "Error attempting to set key of size [%Zd] for "
+ 		       "cipher [%s]; rc = [%d]\n", *key_size, cipher_name, rc);
+@@ -1821,7 +1774,7 @@ int ecryptfs_destroy_crypto(void)
+ 				 key_tfm_list) {
+ 		list_del(&key_tfm->key_tfm_list);
+ 		if (key_tfm->key_tfm)
+-			crypto_free_blkcipher(key_tfm->key_tfm);
++			crypto_free_tfm(key_tfm->key_tfm);
+ 		kmem_cache_free(ecryptfs_key_tfm_cache, key_tfm);
+ 	}
+ 	mutex_unlock(&key_tfm_list_mutex);
+@@ -1867,7 +1820,7 @@ out:
+ 	return rc;
+ }
+ 
+-int ecryptfs_get_tfm_and_mutex_for_cipher_name(struct crypto_blkcipher **tfm,
++int ecryptfs_get_tfm_and_mutex_for_cipher_name(struct crypto_tfm **tfm,
+ 					       struct mutex **tfm_mutex,
+ 					       char *cipher_name)
+ {
+diff --git a/fs/ecryptfs/ecryptfs_kernel.h b/fs/ecryptfs/ecryptfs_kernel.h
+index 67367f0..55b4f9a 100644
+--- a/fs/ecryptfs/ecryptfs_kernel.h
++++ b/fs/ecryptfs/ecryptfs_kernel.h
+@@ -242,7 +242,7 @@ struct ecryptfs_crypt_stat {
+ 	size_t extent_shift;
+ 	unsigned int extent_mask;
+ 	struct ecryptfs_mount_crypt_stat *mount_crypt_stat;
+-	struct crypto_blkcipher *tfm;
++	struct crypto_tfm *tfm;
+ 	struct crypto_hash *hash_tfm; /* Crypto context for generating
+ 				       * the initialization vectors */
+ 	unsigned char cipher[ECRYPTFS_MAX_CIPHER_NAME_SIZE];
+@@ -315,7 +315,7 @@ struct ecryptfs_global_auth_tok {
+  * keeps a list of crypto API contexts around to use when needed.
+  */
+ struct ecryptfs_key_tfm {
+-	struct crypto_blkcipher *key_tfm;
++	struct crypto_tfm *key_tfm;
+ 	size_t key_size;
+ 	struct mutex key_tfm_mutex;
+ 	struct list_head key_tfm_list;
+@@ -623,7 +623,7 @@ ecryptfs_add_new_key_tfm(struct ecryptfs_key_tfm **key_tfm, char *cipher_name,
+ 			 size_t key_size);
+ int ecryptfs_init_crypto(void);
+ int ecryptfs_destroy_crypto(void);
+-int ecryptfs_get_tfm_and_mutex_for_cipher_name(struct crypto_blkcipher **tfm,
++int ecryptfs_get_tfm_and_mutex_for_cipher_name(struct crypto_tfm **tfm,
+ 					       struct mutex **tfm_mutex,
+ 					       char *cipher_name);
+ int ecryptfs_keyring_auth_tok_for_sig(struct key **auth_tok_key,
+diff --git a/fs/ecryptfs/keystore.c b/fs/ecryptfs/keystore.c
+index 263fed8..e68783c 100644
+--- a/fs/ecryptfs/keystore.c
++++ b/fs/ecryptfs/keystore.c
+@@ -1034,10 +1034,8 @@ decrypt_passphrase_encrypted_session_key(struct ecryptfs_auth_tok *auth_tok,
+ {
+ 	struct scatterlist dst_sg;
+ 	struct scatterlist src_sg;
+-	struct mutex *tfm_mutex;
+-	struct blkcipher_desc desc = {
+-		.flags = CRYPTO_TFM_REQ_MAY_SLEEP
+-	};
++	struct mutex *tfm_mutex = NULL;
++	struct crypto_tfm *tfm = NULL;
+ 	int rc = 0;
+ 
+ 	sg_init_table(&dst_sg, 1);
+@@ -1051,7 +1049,7 @@ decrypt_passphrase_encrypted_session_key(struct ecryptfs_auth_tok *auth_tok,
+ 			auth_tok->token.password.session_key_encryption_key,
+ 			auth_tok->token.password.session_key_encryption_key_bytes);
+ 	}
+-	rc = ecryptfs_get_tfm_and_mutex_for_cipher_name(&desc.tfm, &tfm_mutex,
++	rc = ecryptfs_get_tfm_and_mutex_for_cipher_name(&tfm, &tfm_mutex,
+ 							crypt_stat->cipher);
+ 	if (unlikely(rc)) {
+ 		printk(KERN_ERR "Internal error whilst attempting to get "
+@@ -1082,8 +1080,8 @@ decrypt_passphrase_encrypted_session_key(struct ecryptfs_auth_tok *auth_tok,
+ 		goto out;
+ 	}
+ 	mutex_lock(tfm_mutex);
+-	rc = crypto_blkcipher_setkey(
+-		desc.tfm, auth_tok->token.password.session_key_encryption_key,
++	rc = crypto_cipher_setkey(
++		tfm, auth_tok->token.password.session_key_encryption_key,
+ 		crypt_stat->key_size);
+ 	if (unlikely(rc < 0)) {
+ 		mutex_unlock(tfm_mutex);
+@@ -1091,7 +1089,7 @@ decrypt_passphrase_encrypted_session_key(struct ecryptfs_auth_tok *auth_tok,
+ 		rc = -EINVAL;
+ 		goto out;
+ 	}
+-	rc = crypto_blkcipher_decrypt(&desc, &dst_sg, &src_sg,
++	rc = crypto_cipher_decrypt(tfm, &dst_sg, &src_sg,
+ 				      auth_tok->session_key.encrypted_key_size);
+ 	mutex_unlock(tfm_mutex);
+ 	if (unlikely(rc)) {
+@@ -1542,16 +1540,13 @@ write_tag_3_packet(char *dest, size_t *remaining_bytes,
+ 	size_t max_packet_size;
+ 	struct ecryptfs_mount_crypt_stat *mount_crypt_stat =
+ 		crypt_stat->mount_crypt_stat;
+-	struct blkcipher_desc desc = {
+-		.tfm = NULL,
+-		.flags = CRYPTO_TFM_REQ_MAY_SLEEP
+-	};
++	struct crypto_tfm *tfm = NULL;
+ 	int rc = 0;
+ 
+ 	(*packet_size) = 0;
+ 	ecryptfs_from_hex(key_rec->sig, auth_tok->token.password.signature,
+ 			  ECRYPTFS_SIG_SIZE);
+-	rc = ecryptfs_get_tfm_and_mutex_for_cipher_name(&desc.tfm, &tfm_mutex,
++	rc = ecryptfs_get_tfm_and_mutex_for_cipher_name(&tfm, &tfm_mutex,
+ 							crypt_stat->cipher);
+ 	if (unlikely(rc)) {
+ 		printk(KERN_ERR "Internal error whilst attempting to get "
+@@ -1560,12 +1555,11 @@ write_tag_3_packet(char *dest, size_t *remaining_bytes,
+ 		goto out;
+ 	}
+ 	if (mount_crypt_stat->global_default_cipher_key_size == 0) {
+-		struct blkcipher_alg *alg = crypto_blkcipher_alg(desc.tfm);
++		unsigned int key_size = crypto_tfm_alg_max_keysize(tfm);
+ 
+ 		printk(KERN_WARNING "No key size specified at mount; "
+-		       "defaulting to [%d]\n", alg->max_keysize);
+-		mount_crypt_stat->global_default_cipher_key_size =
+-			alg->max_keysize;
++		       "defaulting to [%d]\n", key_size);
++		mount_crypt_stat->global_default_cipher_key_size = key_size;
+ 	}
+ 	if (crypt_stat->key_size == 0)
+ 		crypt_stat->key_size =
+@@ -1635,7 +1629,7 @@ write_tag_3_packet(char *dest, size_t *remaining_bytes,
+ 		goto out;
+ 	}
+ 	mutex_lock(tfm_mutex);
+-	rc = crypto_blkcipher_setkey(desc.tfm, session_key_encryption_key,
++	rc = crypto_cipher_setkey(tfm, session_key_encryption_key,
+ 				     crypt_stat->key_size);
+ 	if (rc < 0) {
+ 		mutex_unlock(tfm_mutex);
+@@ -1646,7 +1640,7 @@ write_tag_3_packet(char *dest, size_t *remaining_bytes,
+ 	rc = 0;
+ 	ecryptfs_printk(KERN_DEBUG, "Encrypting [%d] bytes of the key\n",
+ 			crypt_stat->key_size);
+-	rc = crypto_blkcipher_encrypt(&desc, &dst_sg, &src_sg,
++	rc = crypto_cipher_encrypt(tfm, &dst_sg, &src_sg,
+ 				      (*key_rec).enc_key_size);
+ 	mutex_unlock(tfm_mutex);
+ 	if (rc) {

@@ -1,0 +1,25 @@
+From: Peter Martuccelli <peterm@redhat.com>
+Date: Mon, 10 Dec 2007 16:47:27 -0500
+Subject: [ipmi] fix memory leak in try_init_dmi
+Message-id: 200712102147.lBALlRAm021261@redrum.boston.redhat.com
+O-Subject: [RHEL 5.2][Patch 1/7] IPMI: Fix memory leak in try_init_dmi()
+Bugzilla: 279191
+
+try_init_dmi() had a memory leak in the default case.  For an unknown
+interface type we need to free the smi_info struct that we allocated
+before returning.
+
+Patch is upstream, please ACK.
+
+diff --git a/drivers/char/ipmi/ipmi_si_intf.c b/drivers/char/ipmi/ipmi_si_intf.c
+index 938f38f..4a00727 100644
+--- a/drivers/char/ipmi/ipmi_si_intf.c
++++ b/drivers/char/ipmi/ipmi_si_intf.c
+@@ -1996,6 +1996,7 @@ static __devinit void try_init_dmi(struct dmi_ipmi_data *ipmi_data)
+ 		info->si_type = SI_BT;
+ 		break;
+ 	default:
++		kfree(info);
+ 		return;
+ 	}
+ 

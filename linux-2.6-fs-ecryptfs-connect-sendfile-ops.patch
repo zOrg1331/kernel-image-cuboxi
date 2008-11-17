@@ -1,0 +1,33 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 18 Dec 2007 12:17:18 -0600
+Subject: [fs] ecryptfs: connect sendfile ops
+Message-id: 47680EAE.6000909@redhat.com
+O-Subject: [RHEL 5.2 PATCH] 14/15: eCryptfs: connect sendfile ops
+Bugzilla: 228341
+
+Hook up .sendfile op for RHEL5 kernels
+
+After this patch, ecryptfs should build cleanly in RHEL5.
+
+Next patch is rolled-up fixes from -mm.
+
+diff --git a/fs/ecryptfs/file.c b/fs/ecryptfs/file.c
+index f5adc61..d60697f 100644
+--- a/fs/ecryptfs/file.c
++++ b/fs/ecryptfs/file.c
+@@ -292,6 +292,7 @@ const struct file_operations ecryptfs_dir_fops = {
+ 	.release = ecryptfs_release,
+ 	.fsync = ecryptfs_fsync,
+ 	.fasync = ecryptfs_fasync,
++	.sendfile = generic_file_sendfile,
+ 	.splice_read = generic_file_splice_read,
+ };
+ 
+@@ -309,6 +310,7 @@ const struct file_operations ecryptfs_main_fops = {
+ 	.release = ecryptfs_release,
+ 	.fsync = ecryptfs_fsync,
+ 	.fasync = ecryptfs_fasync,
++	.sendfile = generic_file_sendfile,
+ 	.splice_read = generic_file_splice_read,
+ };
+ 

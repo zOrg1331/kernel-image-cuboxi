@@ -1,0 +1,42 @@
+From: Tony Camuso <tcamuso@redhat.com>
+Date: Mon, 25 Feb 2008 09:45:35 -0500
+Subject: [x86] add HP DL580 G5 to bfsort whitelist
+Message-id: 47C2D48F.7050700@redhat.com
+O-Subject: [RHEL5.2 PATCH 1/1]Add HP DL580 G5 to bfsort whitelist
+Bugzilla: 434792
+
+Fixes RHEL5.2 aspect of Bug 429727
+
+Please ACK
+
+commit 297d8a03f09283885a3e5d6e5921ba38d23ac0a2
+Author: Tony Camuso <tony.camuso@hp.com>
+Date:   Mon Feb 25 09:39:46 2008 -0500
+
+     Add  ProLiant 580 G5 to bfsort Whitelist
+
+     Boot-time breadth-first device enumeration for the HP ProLiant
+     DL580 G5.
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+Acked-by: Brian Maly <bmaly@redhat.com>
+
+diff --git a/arch/i386/pci/common.c b/arch/i386/pci/common.c
+index 411047f..1838be8 100644
+--- a/arch/i386/pci/common.c
++++ b/arch/i386/pci/common.c
+@@ -353,6 +353,14 @@ static struct dmi_system_id __devinitdata pciprobe_dmi_table[] = {
+ 			DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant DL585 G2"),
+ 		},
+ 	},
++	{
++		.callback = set_bf_sort,
++		.ident = "HP ProLiant DL580 G5",
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "HP"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant DL580 G5"),
++		},
++	},
+ 	{}
+ };
+ 

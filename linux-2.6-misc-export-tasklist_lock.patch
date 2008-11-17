@@ -1,0 +1,36 @@
+From: David Howells <dhowells@redhat.com>
+Subject: [RHEL5 PATCH] Support OpenAFS by non-GPL exporting tasklist_lock
+Date: Wed, 06 Dec 2006 11:57:48 +0000
+Bugzilla: 207992
+Message-Id: <22923.1165406268@redhat.com>
+Changelog: export tasklist_lock
+
+
+
+The attached patch provides support for OpenAFS in RHEL-5 by removing the _GPL
+from the export of the tasklist_lock [BZ 207992].
+
+The OpenAFS community didn't deal with Christoph Hellwig's announcement of the
+removal of this export in time:
+
+	http://lkml.org/lkml/2006/7/8/153
+
+So we need to bring it back to support OpenAFS for people such as MSDW.
+
+However, I think we should make it clear that it will not come back in FC-7 or
+RHEL-6 and beyond unless it is reinstated in the upstream kernel.
+
+David
+
+--- linux-2.6.18.noarch/kernel/fork.c.orig	2006-12-06 10:48:25.000000000 +0000
++++ linux-2.6.18.noarch/kernel/fork.c	2006-12-06 10:48:28.000000000 +0000
+@@ -64,7 +64,7 @@ int max_threads;		/* tunable limit on nr
+ DEFINE_PER_CPU(unsigned long, process_counts) = 0;
+ 
+ __cacheline_aligned DEFINE_RWLOCK(tasklist_lock);  /* outer */
+-EXPORT_SYMBOL_GPL(tasklist_lock);
++EXPORT_SYMBOL(tasklist_lock);
+ 
+ int nr_processes(void)
+ {
+

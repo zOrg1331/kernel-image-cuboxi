@@ -1,0 +1,21 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Mon, 17 Dec 2007 16:52:46 -0500
+Subject: [misc] export radix-tree-preload
+Message-id: 20071217214126.25159.14694.sendpatchset@sgi-desktop.boston.redhat.com
+O-Subject: [PATCH RHEL5.2 1/4] EXTERNALize radix-tree-preload
+Bugzilla: 422321
+
+Acked-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/lib/radix-tree.c b/lib/radix-tree.c
+index 637d556..96a4f78 100644
+--- a/lib/radix-tree.c
++++ b/lib/radix-tree.c
+@@ -139,6 +139,7 @@ int radix_tree_preload(gfp_t gfp_mask)
+ out:
+ 	return ret;
+ }
++EXPORT_SYMBOL(radix_tree_preload);
+ 
+ static inline void tag_set(struct radix_tree_node *node, unsigned int tag,
+ 		int offset)

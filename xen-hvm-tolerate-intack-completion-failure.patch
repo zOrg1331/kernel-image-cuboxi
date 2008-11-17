@@ -1,0 +1,234 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Fri, 11 Jan 2008 16:22:40 -0500
+Subject: [xen] hvm: tolerate intack completion failure
+Message-id: 4787DE20.1040505@redhat.com
+O-Subject: [RHEL5.2 PATCH] [Xen][3/4]: High Intr and Softintr rate in HVM's with pv-on-hvm drivers
+Bugzilla: 412721
+
+Patch 3/4: hvm-tolerate-intack-completion-failure.patch
+
+Due to the differences in xen-3.2 and xen-3.1.2's HVM intr emulation,
+intack completion appears to fail.  This patch 'tolerates' that
+failure.
+
+This patch is needed in order to apply the final, upstream
+patch, 4/4.  Without patch 4/4, HVM guests with pv-on-hvm drivers
+see twice as many intrs as bare-metal, &/or properly emulated
+HVM IOAPICs.  the softintr load is approx. twice as large w/o
+the next patch, 4/4, as well.
+
+This is the upstream xen-3.1-testing patch verbatim, cset 15588.
+	http://xenbits.xensource.com/staging/xen-3.1-testing.hg?rev/f4a17a5dc9b0
+
+Please review & ACK.
+
+- Don
+
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1199966099 0
+# Node ID f4a17a5dc9b03a05a525ffc2b75e80e764cf8924
+# Parent 48c800d5a3718a4a8115c02fc0b76d16f85d35f8
+x86 hvm: Tolerate failure to complete INTACK cycle on an
+interrupt. Failure can occur because we do not hold locks between
+detecting a pending interrupt and acknowledging it. Satte can change
+between these two points.
+Signed-off-by: Keir Fraser <keir.fraser@citrix.com>
+
+Acked-by: Bill Burns <bburns@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+
+diff --git a/arch/x86/hvm/svm/intr.c b/arch/x86/hvm/svm/intr.c
+index 4965376..757d34f 100644
+--- a/arch/x86/hvm/svm/intr.c
++++ b/arch/x86/hvm/svm/intr.c
+@@ -125,38 +125,39 @@ asmlinkage void svm_intr_assist(void)
+     /* Crank the handle on interrupt state and check for new interrrupts. */
+     pt_update_irq(v);
+     hvm_maybe_deassert_evtchn_irq();
+-    if ( !cpu_has_pending_irq(v) )
+-        goto out;
+-
+-    /*
+-     * If the guest can't take an interrupt right now, create a 'fake'
+-     * virtual interrupt on to intercept as soon as the guest _can_ take
+-     * interrupts.  Do not obtain the next interrupt from the vlapic/pic
+-     * if unable to inject.
+-     *
+-     * Also do this if there is an exception pending.  This is because
+-     * the delivery of the exception can arbitrarily delay the injection
+-     * of the vintr (for example, if the exception is handled via an
+-     * interrupt gate, hence zeroing RFLAGS.IF). In the meantime:
+-     * - the vTPR could be modified upwards, so we need to wait until the
+-     *   exception is delivered before we can safely decide that an
+-     *   interrupt is deliverable; and
+-     * - the guest might look at the APIC/PIC state, so we ought not to have 
+-     *   cleared the interrupt out of the IRR.
+-     */
+-    if ( irq_masked(vmcb->rflags) || vmcb->interrupt_shadow 
+-         || vmcb->eventinj.fields.v )  
+-    {
+-        vmcb->general1_intercepts |= GENERAL1_INTERCEPT_VINTR;
+-        HVMTRACE_2D(INJ_VIRQ, v, 0x0, /*fake=*/ 1);
+-        svm_inject_extint(v, 0x0); /* actual vector doesn't matter */
+-        intr_window_enabled  = 1;
+-        goto out;
+-    }
+-
+-    /* Okay, we can deliver the interrupt: grab it and update PIC state. */
+-    intr_vector = cpu_get_interrupt(v, &intr_type);
+-    BUG_ON(intr_vector < 0);
++    do {
++        if ( !cpu_has_pending_irq(v) )
++            goto out;
++
++        /*
++         * If the guest can't take an interrupt right now, create a 'fake'
++         * virtual interrupt on to intercept as soon as the guest _can_ take
++         * interrupts.  Do not obtain the next interrupt from the vlapic/pic
++         * if unable to inject.
++         *
++         * Also do this if there is an exception pending.  This is because
++         * the delivery of the exception can arbitrarily delay the injection
++         * of the vintr (for example, if the exception is handled via an
++         * interrupt gate, hence zeroing RFLAGS.IF). In the meantime:
++         * - the vTPR could be modified upwards, so we need to wait until the
++         *   exception is delivered before we can safely decide that an
++         *   interrupt is deliverable; and
++         * - the guest might look at the APIC/PIC state, so we ought not to have 
++         *   cleared the interrupt out of the IRR.
++         */
++        if ( irq_masked(vmcb->rflags) || vmcb->interrupt_shadow 
++             || vmcb->eventinj.fields.v )  
++        {
++            vmcb->general1_intercepts |= GENERAL1_INTERCEPT_VINTR;
++            HVMTRACE_2D(INJ_VIRQ, v, 0x0, /*fake=*/ 1);
++            svm_inject_extint(v, 0x0); /* actual vector doesn't matter */
++            intr_window_enabled  = 1;
++            goto out;
++        }
++
++        /* Okay, we can deliver the interrupt: grab it and update PIC state. */
++        intr_vector = cpu_get_interrupt(v, &intr_type);
++    } while ( intr_vector < 0 );
+ 
+     HVMTRACE_2D(INJ_VIRQ, v, intr_vector, /*fake=*/ 0);
+     svm_inject_extint(v, intr_vector);
+diff --git a/arch/x86/hvm/vmx/intr.c b/arch/x86/hvm/vmx/intr.c
+index 0f6a0e2..a1aa73e 100644
+--- a/arch/x86/hvm/vmx/intr.c
++++ b/arch/x86/hvm/vmx/intr.c
+@@ -119,60 +119,63 @@ asmlinkage void vmx_intr_assist(void)
+ 
+     update_tpr_threshold(vcpu_vlapic(v));
+ 
+-    has_ext_irq = cpu_has_pending_irq(v);
+-
+-    if ( unlikely(v->arch.hvm_vmx.vector_injected) )
+-    {
+-        v->arch.hvm_vmx.vector_injected = 0;
+-        if ( unlikely(has_ext_irq) )
++    do {
++        has_ext_irq = cpu_has_pending_irq(v);
++
++        if ( unlikely(v->arch.hvm_vmx.vector_injected) )
++        {
++            v->arch.hvm_vmx.vector_injected = 0;
++            if ( unlikely(has_ext_irq) )
++                enable_irq_window(v);
++            return;
++        }
++
++        /* This could be moved earlier in the VMX resume sequence. */
++        idtv_info_field = __vmread(IDT_VECTORING_INFO_FIELD);
++        if ( unlikely(idtv_info_field & INTR_INFO_VALID_MASK) )
++        {
++            __vmwrite(VM_ENTRY_INTR_INFO_FIELD, idtv_info_field);
++
++            /*
++             * Safe: the length will only be interpreted for software
++             * exceptions and interrupts. If we get here then delivery of some
++             * event caused a fault, and this always results in defined
++             * VM_EXIT_INSTRUCTION_LEN.
++             */
++            inst_len = __vmread(VM_EXIT_INSTRUCTION_LEN); /* Safe */
++            __vmwrite(VM_ENTRY_INSTRUCTION_LEN, inst_len);
++
++            if ( unlikely(idtv_info_field & 0x800) ) /* valid error code */
++                __vmwrite(VM_ENTRY_EXCEPTION_ERROR_CODE,
++                          __vmread(IDT_VECTORING_ERROR_CODE));
++            if ( unlikely(has_ext_irq) )
++                enable_irq_window(v);
++
++            HVM_DBG_LOG(DBG_LEVEL_1, "idtv_info_field=%x", idtv_info_field);
++            return;
++        }
++
++        if ( likely(!has_ext_irq) )
++            return;
++
++        intr_shadow = __vmread(GUEST_INTERRUPTIBILITY_INFO);
++        if ( unlikely(intr_shadow & (VMX_INTR_SHADOW_STI|
++                                     VMX_INTR_SHADOW_MOV_SS)) )
++        {
+             enable_irq_window(v);
+-        return;
+-    }
++            HVM_DBG_LOG(DBG_LEVEL_1, "interruptibility");
++            return;
++        }
+ 
+-    /* This could be moved earlier in the VMX resume sequence. */
+-    idtv_info_field = __vmread(IDT_VECTORING_INFO_FIELD);
+-    if ( unlikely(idtv_info_field & INTR_INFO_VALID_MASK) )
+-    {
+-        __vmwrite(VM_ENTRY_INTR_INFO_FIELD, idtv_info_field);
+-
+-        /*
+-         * Safe: the length will only be interpreted for software exceptions
+-         * and interrupts. If we get here then delivery of some event caused a
+-         * fault, and this always results in defined VM_EXIT_INSTRUCTION_LEN.
+-         */
+-        inst_len = __vmread(VM_EXIT_INSTRUCTION_LEN); /* Safe */
+-        __vmwrite(VM_ENTRY_INSTRUCTION_LEN, inst_len);
+-
+-        if ( unlikely(idtv_info_field & 0x800) ) /* valid error code */
+-            __vmwrite(VM_ENTRY_EXCEPTION_ERROR_CODE,
+-                      __vmread(IDT_VECTORING_ERROR_CODE));
+-        if ( unlikely(has_ext_irq) )
++        eflags = __vmread(GUEST_RFLAGS);
++        if ( irq_masked(eflags) )
++        {
+             enable_irq_window(v);
++            return;
++        }
+ 
+-        HVM_DBG_LOG(DBG_LEVEL_1, "idtv_info_field=%x", idtv_info_field);
+-        return;
+-    }
+-
+-    if ( likely(!has_ext_irq) )
+-        return;
+-
+-    intr_shadow = __vmread(GUEST_INTERRUPTIBILITY_INFO);
+-    if ( unlikely(intr_shadow & (VMX_INTR_SHADOW_STI|VMX_INTR_SHADOW_MOV_SS)) )
+-    {
+-        enable_irq_window(v);
+-        HVM_DBG_LOG(DBG_LEVEL_1, "interruptibility");
+-        return;
+-    }
+-
+-    eflags = __vmread(GUEST_RFLAGS);
+-    if ( irq_masked(eflags) )
+-    {
+-        enable_irq_window(v);
+-        return;
+-    }
+-
+-    intr_vector = cpu_get_interrupt(v, &intr_type);
+-    BUG_ON(intr_vector < 0);
++        intr_vector = cpu_get_interrupt(v, &intr_type);
++    } while ( intr_vector < 0 );
+ 
+     HVMTRACE_2D(INJ_VIRQ, v, intr_vector, /*fake=*/ 0);
+     vmx_inject_extint(v, intr_vector, VMX_DELIVER_NO_ERROR_CODE);

@@ -1,0 +1,573 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL 5.1] [GFS2] Missing lost inode recovery code (bz #201012)
+Date: Mon, 11 Jun 2007 09:43:48 +0100
+Bugzilla: 201012
+Message-Id: <1181551428.25918.295.camel@quoit>
+Changelog: [GFS2] Missing lost inode recovery code
+
+
+Hi,
+
+This is a combination of 5 upstream patches which fix bz #201012. This
+should be applied to RHEL 5.1 after all the previously sent patches
+(Don: in order words as per the patch ordering email I sent last week).
+
+The various parts of this patch have been in the upstream -nmw git tree
+for varying lengths of time and have been tested both separately and as
+a whole. We've done some single node postmark runs to verify that the
+changes don't cause any performance decrease as they are in a
+performance critical path, as well as the clustered tests to ensure that
+unlinked inodes are now being disposed of in a timely manner.
+
+We believe that it is reasonable to do testing in the upstream -nmw git
+tree since, so far as GFS2 is concerned its nearly identical to the
+RHEL-5.1 tree. The differences are 1) the macros for adjusting i_nlink
+(which are trivial no-ops anyway) and the first part of the patch for bz
+#238162 which will be submitted to RHEL 5.1 as soon as possible.
+
+Steve.
+
+------------------------------------------------------------------------------
+diff -Nru linux-rhel-base/fs/gfs2/glock.c linux-2.6.18.noarch/fs/gfs2/glock.c
+--- linux-rhel-base/fs/gfs2/glock.c	2007-06-11 09:00:57.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/glock.c	2007-06-11 09:23:32.000000000 +0100
+@@ -421,11 +421,11 @@
+ static void gfs2_holder_wake(struct gfs2_holder *gh)
+ {
+ 	clear_bit(HIF_WAIT, &gh->gh_iflags);
+-	smp_mb();
++	smp_mb__after_clear_bit();
+ 	wake_up_bit(&gh->gh_iflags, HIF_WAIT);
+ }
+ 
+-static int holder_wait(void *word)
++static int just_schedule(void *word)
+ {
+         schedule();
+         return 0;
+@@ -434,7 +434,20 @@
+ static void wait_on_holder(struct gfs2_holder *gh)
+ {
+ 	might_sleep();
+-	wait_on_bit(&gh->gh_iflags, HIF_WAIT, holder_wait, TASK_UNINTERRUPTIBLE);
++	wait_on_bit(&gh->gh_iflags, HIF_WAIT, just_schedule, TASK_UNINTERRUPTIBLE);
++}
++
++static void gfs2_demote_wake(struct gfs2_glock *gl)
++{
++        clear_bit(GLF_DEMOTE, &gl->gl_flags);
++        smp_mb__after_clear_bit();
++        wake_up_bit(&gl->gl_flags, GLF_DEMOTE);
++}
++
++static void wait_on_demote(struct gfs2_glock *gl)
++{
++	might_sleep();
++	wait_on_bit(&gl->gl_flags, GLF_DEMOTE, just_schedule, TASK_UNINTERRUPTIBLE);
+ }
+ 
+ /**
+@@ -527,7 +540,7 @@
+ 
+ 	if (gl->gl_state == gl->gl_demote_state ||
+ 	    gl->gl_state == LM_ST_UNLOCKED) {
+-		clear_bit(GLF_DEMOTE, &gl->gl_flags);
++		gfs2_demote_wake(gl);
+ 		return 0;
+ 	}
+ 	set_bit(GLF_LOCK, &gl->gl_flags);
+@@ -665,12 +678,22 @@
+  * practise: LM_ST_SHARED and LM_ST_UNLOCKED
+  */
+ 
+-static void handle_callback(struct gfs2_glock *gl, unsigned int state)
++static void handle_callback(struct gfs2_glock *gl, unsigned int state, int remote)
+ {
+ 	spin_lock(&gl->gl_spin);
+ 	if (test_and_set_bit(GLF_DEMOTE, &gl->gl_flags) == 0) {
+ 		gl->gl_demote_state = state;
+ 		gl->gl_demote_time = jiffies;
++		if (remote && gl->gl_ops->go_type == LM_TYPE_IOPEN &&
++		    gl->gl_object) {
++			struct inode *inode = igrab(gl->gl_object);
++			spin_unlock(&gl->gl_spin);
++			if (inode) {
++				d_prune_aliases(inode);
++				iput(inode);
++			}
++			return;
++		}
+ 	} else if (gl->gl_demote_state != LM_ST_UNLOCKED) {
+ 		gl->gl_demote_state = state;
+ 	}
+@@ -739,7 +762,7 @@
+ 		if (ret & LM_OUT_CANCELED)
+ 			op_done = 0;
+ 		else
+-			clear_bit(GLF_DEMOTE, &gl->gl_flags);
++			gfs2_demote_wake(gl);
+ 	} else {
+ 		spin_lock(&gl->gl_spin);
+ 		list_del_init(&gh->gh_list);
+@@ -847,7 +870,7 @@
+ 	gfs2_assert_warn(sdp, !ret);
+ 
+ 	state_change(gl, LM_ST_UNLOCKED);
+-	clear_bit(GLF_DEMOTE, &gl->gl_flags);
++	gfs2_demote_wake(gl);
+ 
+ 	if (glops->go_inval)
+ 		glops->go_inval(gl, DIO_METADATA);
+@@ -1173,7 +1196,7 @@
+ 	const struct gfs2_glock_operations *glops = gl->gl_ops;
+ 
+ 	if (gh->gh_flags & GL_NOCACHE)
+-		handle_callback(gl, LM_ST_UNLOCKED);
++		handle_callback(gl, LM_ST_UNLOCKED, 0);
+ 
+ 	gfs2_glmutex_lock(gl);
+ 
+@@ -1195,6 +1218,13 @@
+ 	spin_unlock(&gl->gl_spin);
+ }
+ 
++void gfs2_glock_dq_wait(struct gfs2_holder *gh)
++{
++	struct gfs2_glock *gl = gh->gh_gl;
++	gfs2_glock_dq(gh);
++	wait_on_demote(gl);
++}
++
+ /**
+  * gfs2_glock_dq_uninit - dequeue a holder from a glock and initialize it
+  * @gh: the holder structure
+@@ -1455,7 +1485,7 @@
+ 	if (!gl)
+ 		return;
+ 
+-	handle_callback(gl, state);
++	handle_callback(gl, state, 1);
+ 
+ 	spin_lock(&gl->gl_spin);
+ 	run_queue(gl);
+@@ -1595,7 +1625,7 @@
+ 	if (gfs2_glmutex_trylock(gl)) {
+ 		if (list_empty(&gl->gl_holders) &&
+ 		    gl->gl_state != LM_ST_UNLOCKED && demote_ok(gl))
+-			handle_callback(gl, LM_ST_UNLOCKED);
++			handle_callback(gl, LM_ST_UNLOCKED, 0);
+ 		gfs2_glmutex_unlock(gl);
+ 	}
+ 
+@@ -1708,7 +1738,7 @@
+ 	if (gfs2_glmutex_trylock(gl)) {
+ 		if (list_empty(&gl->gl_holders) &&
+ 		    gl->gl_state != LM_ST_UNLOCKED)
+-			handle_callback(gl, LM_ST_UNLOCKED);
++			handle_callback(gl, LM_ST_UNLOCKED, 0);
+ 		gfs2_glmutex_unlock(gl);
+ 	}
+ }
+diff -Nru linux-rhel-base/fs/gfs2/glock.h linux-2.6.18.noarch/fs/gfs2/glock.h
+--- linux-rhel-base/fs/gfs2/glock.h	2007-06-11 09:00:56.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/glock.h	2007-06-11 09:23:32.000000000 +0100
+@@ -86,6 +86,7 @@
+ int gfs2_glock_poll(struct gfs2_holder *gh);
+ int gfs2_glock_wait(struct gfs2_holder *gh);
+ void gfs2_glock_dq(struct gfs2_holder *gh);
++void gfs2_glock_dq_wait(struct gfs2_holder *gh);
+ 
+ void gfs2_glock_dq_uninit(struct gfs2_holder *gh);
+ int gfs2_glock_nq_num(struct gfs2_sbd *sdp,
+diff -Nru linux-rhel-base/fs/gfs2/incore.h linux-2.6.18.noarch/fs/gfs2/incore.h
+--- linux-rhel-base/fs/gfs2/incore.h	2007-06-11 09:00:57.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/incore.h	2007-06-11 09:22:33.000000000 +0100
+@@ -95,6 +95,8 @@
+ 	u32 rd_last_alloc_data;
+ 	u32 rd_last_alloc_meta;
+ 	struct gfs2_sbd *rd_sbd;
++	unsigned long rd_flags;
++#define GFS2_RDF_CHECK        0x0001          /* Need to check for unlinked inodes */
+ };
+ 
+ enum gfs2_state_bits {
+diff -Nru linux-rhel-base/fs/gfs2/inode.c linux-2.6.18.noarch/fs/gfs2/inode.c
+--- linux-rhel-base/fs/gfs2/inode.c	2007-06-11 09:00:57.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/inode.c	2007-06-11 09:23:32.000000000 +0100
+@@ -98,22 +98,8 @@
+ 
+ 	if (inode->i_state & I_NEW) {
+ 		struct gfs2_sbd *sdp = GFS2_SB(inode);
+-		umode_t mode = DT2IF(type);
++		umode_t mode;
+ 		inode->i_private = ip;
+-		inode->i_mode = mode;
+-
+-		if (S_ISREG(mode)) {
+-			inode->i_op = &gfs2_file_iops;
+-			inode->i_fop = &gfs2_file_fops;
+-			inode->i_mapping->a_ops = &gfs2_file_aops;
+-		} else if (S_ISDIR(mode)) {
+-			inode->i_op = &gfs2_dir_iops;
+-			inode->i_fop = &gfs2_dir_fops;
+-		} else if (S_ISLNK(mode)) {
+-			inode->i_op = &gfs2_symlink_iops;
+-		} else {
+-			inode->i_op = &gfs2_dev_iops;
+-		}
+ 
+ 		error = gfs2_glock_get(sdp, no_addr, &gfs2_inode_glops, CREATE, &ip->i_gl);
+ 		if (unlikely(error))
+@@ -128,12 +114,47 @@
+ 		error = gfs2_glock_nq_init(io_gl, LM_ST_SHARED, GL_EXACT, &ip->i_iopen_gh);
+ 		if (unlikely(error))
+ 			goto fail_iopen;
++		ip->i_iopen_gh.gh_gl->gl_object = ip;
+ 
+ 		gfs2_glock_put(io_gl);
++
++		/*
++		 * We must read the inode in order to work out its type in
++		 * this case. Note that this doesn't happen often as we normally
++		 * know the type beforehand. This code path only occurs during
++		 * unlinked inode recovery (where it is safe to do this glock,
++		 * which is not true in the general case).
++		 */
++		inode->i_mode = mode = DT2IF(type);
++		if (type == DT_UNKNOWN) {
++			struct gfs2_holder gh;
++			error = gfs2_glock_nq_init(ip->i_gl, LM_ST_EXCLUSIVE, 0, &gh);
++			if (unlikely(error))
++				goto fail_glock;
++			/* Inode is now uptodate */
++			mode = inode->i_mode;
++			gfs2_glock_dq_uninit(&gh);
++		}
++
++		if (S_ISREG(mode)) {
++			inode->i_op = &gfs2_file_iops;
++			inode->i_fop = &gfs2_file_fops;
++			inode->i_mapping->a_ops = &gfs2_file_aops;
++		} else if (S_ISDIR(mode)) {
++			inode->i_op = &gfs2_dir_iops;
++			inode->i_fop = &gfs2_dir_fops;
++		} else if (S_ISLNK(mode)) {
++			inode->i_op = &gfs2_symlink_iops;
++		} else {
++			inode->i_op = &gfs2_dev_iops;
++		}
++
+ 		unlock_new_inode(inode);
+ 	}
+ 
+ 	return inode;
++fail_glock:
++	gfs2_glock_dq(&ip->i_iopen_gh);
+ fail_iopen:
+ 	gfs2_glock_put(io_gl);
+ fail_put:
+@@ -369,7 +390,7 @@
+ 	struct super_block *sb = dir->i_sb;
+ 	struct gfs2_inode *dip = GFS2_I(dir);
+ 	struct gfs2_holder d_gh;
+-	int error;
++	int error = 0;
+ 	struct inode *inode = NULL;
+ 	int unlock = 0;
+ 
+@@ -857,7 +878,7 @@
+ struct inode *gfs2_createi(struct gfs2_holder *ghs, const struct qstr *name,
+ 			   unsigned int mode, dev_t dev)
+ {
+-	struct inode *inode;
++	struct inode *inode = NULL;
+ 	struct gfs2_inode *dip = ghs->gh_gl->gl_object;
+ 	struct inode *dir = &dip->i_inode;
+ 	struct gfs2_sbd *sdp = GFS2_SB(&dip->i_inode);
+@@ -900,28 +921,28 @@
+ 
+ 	error = gfs2_inode_refresh(GFS2_I(inode));
+ 	if (error)
+-		goto fail_iput;
++		goto fail_gunlock2;
+ 
+ 	error = gfs2_acl_create(dip, GFS2_I(inode));
+ 	if (error)
+-		goto fail_iput;
++		goto fail_gunlock2;
+ 
+ 	error = gfs2_security_init(dip, GFS2_I(inode));
+ 	if (error)
+-		goto fail_iput;
++		goto fail_gunlock2;
+ 
+ 	error = link_dinode(dip, name, GFS2_I(inode));
+ 	if (error)
+-		goto fail_iput;
++		goto fail_gunlock2;
+ 
+ 	if (!inode)
+ 		return ERR_PTR(-ENOMEM);
+ 	return inode;
+ 
+-fail_iput:
+-	iput(inode);
+ fail_gunlock2:
+ 	gfs2_glock_dq_uninit(ghs + 1);
++	if (inode)
++		iput(inode);
+ fail_gunlock:
+ 	gfs2_glock_dq(ghs);
+ fail:
+diff -Nru linux-rhel-base/fs/gfs2/ops_inode.c linux-2.6.18.noarch/fs/gfs2/ops_inode.c
+--- linux-rhel-base/fs/gfs2/ops_inode.c	2007-06-11 09:00:57.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/ops_inode.c	2007-06-11 09:22:25.000000000 +0100
+@@ -749,7 +749,7 @@
+ 		if (error)
+ 			goto out_end_trans;
+ 
+-		error = gfs2_dir_mvino(ip, &name, nip, DT_DIR);
++		error = gfs2_dir_mvino(ip, &name, ndip, DT_DIR);
+ 		if (error)
+ 			goto out_end_trans;
+ 	} else {
+diff -Nru linux-rhel-base/fs/gfs2/ops_super.c linux-2.6.18.noarch/fs/gfs2/ops_super.c
+--- linux-rhel-base/fs/gfs2/ops_super.c	2007-06-11 09:00:56.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/ops_super.c	2007-06-11 09:23:32.000000000 +0100
+@@ -326,8 +326,10 @@
+ 		gfs2_glock_schedule_for_reclaim(ip->i_gl);
+ 		gfs2_glock_put(ip->i_gl);
+ 		ip->i_gl = NULL;
+-		if (ip->i_iopen_gh.gh_gl)
++		if (ip->i_iopen_gh.gh_gl) {
++			ip->i_iopen_gh.gh_gl->gl_object = NULL;
+ 			gfs2_glock_dq_uninit(&ip->i_iopen_gh);
++		}
+ 	}
+ }
+ 
+@@ -422,13 +424,13 @@
+ 	if (!inode->i_private)
+ 		goto out;
+ 
+-	error = gfs2_glock_nq_init(ip->i_gl, LM_ST_EXCLUSIVE, LM_FLAG_TRY_1CB, &gh);
++	error = gfs2_glock_nq_init(ip->i_gl, LM_ST_EXCLUSIVE, 0, &gh);
+ 	if (unlikely(error)) {
+ 		gfs2_glock_dq_uninit(&ip->i_iopen_gh);
+ 		goto out;
+ 	}
+ 
+-	gfs2_glock_dq(&ip->i_iopen_gh);
++	gfs2_glock_dq_wait(&ip->i_iopen_gh);
+ 	gfs2_holder_reinit(LM_ST_EXCLUSIVE, LM_FLAG_TRY_1CB | GL_NOCACHE, &ip->i_iopen_gh);
+ 	error = gfs2_glock_nq(&ip->i_iopen_gh);
+ 	if (error)
+diff -Nru linux-rhel-base/fs/gfs2/rgrp.c linux-2.6.18.noarch/fs/gfs2/rgrp.c
+--- linux-rhel-base/fs/gfs2/rgrp.c	2007-06-11 09:00:57.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/rgrp.c	2007-06-11 09:22:33.000000000 +0100
+@@ -28,6 +28,7 @@
+ #include "ops_file.h"
+ #include "util.h"
+ #include "log.h"
++#include "inode.h"
+ 
+ #define BFITNOENT ((u32)~0)
+ 
+@@ -50,6 +51,9 @@
+ 	        1, 0, 0, 0
+ };
+ 
++static u32 rgblk_search(struct gfs2_rgrpd *rgd, u32 goal,
++                        unsigned char old_state, unsigned char new_state);
++
+ /**
+  * gfs2_setbit - Set a bit in the bitmaps
+  * @buffer: the buffer that holds the bitmaps
+@@ -531,6 +535,7 @@
+ 
+ 	rgd->rd_gl->gl_object = rgd;
+ 	rgd->rd_rg_vn = rgd->rd_gl->gl_vn - 1;
++	rgd->rd_flags |= GFS2_RDF_CHECK;
+ 	return error;
+ }
+ 
+@@ -846,6 +851,37 @@
+ }
+ 
+ /**
++ * try_rgrp_unlink - Look for any unlinked, allocated, but unused inodes
++ * @rgd: The rgrp
++ *
++ * Returns: The inode, if one has been found
++ */
++
++static struct inode *try_rgrp_unlink(struct gfs2_rgrpd *rgd, u64 *last_unlinked)
++{
++	struct inode *inode;
++	u32 goal = 0;
++	u64 ino;
++
++	for(;;) {
++		goal = rgblk_search(rgd, goal, GFS2_BLKST_UNLINKED,
++				    GFS2_BLKST_UNLINKED);
++		if (goal == 0)
++			return 0;
++		ino = goal + rgd->rd_data0;
++		if (ino <= *last_unlinked)
++			continue;
++		*last_unlinked = ino;
++		inode = gfs2_inode_lookup(rgd->rd_sbd->sd_vfs, ino, DT_UNKNOWN);
++		if (!IS_ERR(inode))
++			return inode;
++	}
++
++	rgd->rd_flags &= ~GFS2_RDF_CHECK;
++	return NULL;
++}
++
++/**
+  * recent_rgrp_first - get first RG from "recent" list
+  * @sdp: The GFS2 superblock
+  * @rglast: address of the rgrp used last
+@@ -1006,8 +1042,9 @@
+  * Returns: errno
+  */
+ 
+-static int get_local_rgrp(struct gfs2_inode *ip)
++static struct inode *get_local_rgrp(struct gfs2_inode *ip, u64 *last_unlinked)
+ {
++	struct inode *inode = NULL;
+ 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
+ 	struct gfs2_rgrpd *rgd, *begin = NULL;
+ 	struct gfs2_alloc *al = &ip->i_alloc;
+@@ -1027,7 +1064,11 @@
+ 		case 0:
+ 			if (try_rgrp_fit(rgd, al))
+ 				goto out;
++			if (rgd->rd_flags & GFS2_RDF_CHECK)
++				inode = try_rgrp_unlink(rgd, last_unlinked);
+ 			gfs2_glock_dq_uninit(&al->al_rgd_gh);
++			if (inode)
++				return inode;
+ 			rgd = recent_rgrp_next(rgd, 1);
+ 			break;
+ 
+@@ -1036,7 +1077,7 @@
+ 			break;
+ 
+ 		default:
+-			return error;
++			return ERR_PTR(error);
+ 		}
+ 	}
+ 
+@@ -1051,7 +1092,11 @@
+ 		case 0:
+ 			if (try_rgrp_fit(rgd, al))
+ 				goto out;
++			if (rgd->rd_flags & GFS2_RDF_CHECK)
++				inode = try_rgrp_unlink(rgd, last_unlinked);
+ 			gfs2_glock_dq_uninit(&al->al_rgd_gh);
++			if (inode)
++				return inode;
+ 			break;
+ 
+ 		case GLR_TRYFAILED:
+@@ -1059,7 +1104,7 @@
+ 			break;
+ 
+ 		default:
+-			return error;
++			return ERR_PTR(error);
+ 		}
+ 
+ 		rgd = gfs2_rgrpd_get_next(rgd);
+@@ -1068,7 +1113,7 @@
+ 
+ 		if (rgd == begin) {
+ 			if (++loops >= 3)
+-				return -ENOSPC;
++				return ERR_PTR(-ENOSPC);
+ 			if (!skipped)
+ 				loops++;
+ 			flags = 0;
+@@ -1088,7 +1133,7 @@
+ 		forward_rgrp_set(sdp, rgd);
+ 	}
+ 
+-	return 0;
++	return NULL;
+ }
+ 
+ /**
+@@ -1102,11 +1147,14 @@
+ {
+ 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
+ 	struct gfs2_alloc *al = &ip->i_alloc;
++	struct inode *inode;
+ 	int error = 0;
++	u64 last_unlinked = 0;
+ 
+ 	if (gfs2_assert_warn(sdp, al->al_requested))
+ 		return -EINVAL;
+ 
++try_again:
+ 	/* We need to hold the rindex unless the inode we're using is
+ 	   the rindex itself, in which case it's already held. */
+ 	if (ip != GFS2_I(sdp->sd_rindex))
+@@ -1117,11 +1165,15 @@
+ 	if (error)
+ 		return error;
+ 
+-	error = get_local_rgrp(ip);
+-	if (error) {
++	inode = get_local_rgrp(ip, &last_unlinked);
++	if (inode) {
+ 		if (ip != GFS2_I(sdp->sd_rindex))
+ 			gfs2_glock_dq_uninit(&al->al_ri_gh);
+-		return error;
++		if (IS_ERR(inode))
++			return PTR_ERR(inode);
++		iput(inode);
++		gfs2_log_flush(sdp, NULL);
++		goto try_again;
+ 	}
+ 
+ 	al->al_file = file;
+@@ -1209,7 +1261,7 @@
+  */
+ 
+ static u32 rgblk_search(struct gfs2_rgrpd *rgd, u32 goal,
+-			     unsigned char old_state, unsigned char new_state)
++			unsigned char old_state, unsigned char new_state)
+ {
+ 	struct gfs2_bitmap *bi = NULL;
+ 	u32 length = rgd->rd_length;
+@@ -1250,17 +1302,18 @@
+ 		goal = 0;
+ 	}
+ 
+-	if (gfs2_assert_withdraw(rgd->rd_sbd, x <= length))
+-		blk = 0;
++	if (old_state != new_state) {
++		gfs2_assert_withdraw(rgd->rd_sbd, blk != BFITNOENT);
+ 
+-	gfs2_trans_add_bh(rgd->rd_gl, bi->bi_bh, 1);
+-	gfs2_setbit(rgd, bi->bi_bh->b_data + bi->bi_offset,
+-		    bi->bi_len, blk, new_state);
+-	if (bi->bi_clone)
+-		gfs2_setbit(rgd, bi->bi_clone + bi->bi_offset,
++		gfs2_trans_add_bh(rgd->rd_gl, bi->bi_bh, 1);
++		gfs2_setbit(rgd, bi->bi_bh->b_data + bi->bi_offset,
+ 			    bi->bi_len, blk, new_state);
++		if (bi->bi_clone)
++			gfs2_setbit(rgd, bi->bi_clone + bi->bi_offset,
++				    bi->bi_len, blk, new_state);
++	}
+ 
+-	return bi->bi_start * GFS2_NBBY + blk;
++	return (blk == BFITNOENT) ? 0 : (bi->bi_start * GFS2_NBBY) + blk;
+ }
+ 
+ /**
+

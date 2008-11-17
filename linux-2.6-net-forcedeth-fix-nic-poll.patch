@@ -1,0 +1,55 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Subject: [RHEL5.1 PATCH] forcedeth: fix nic poll
+Date: Fri, 3 Aug 2007 20:19:24 +0800
+Bugzilla: 245191
+Message-Id: <20070803121924.GA25521@gondor.apana.org.au>
+Changelog: [net] forcedeth: fix nic poll
+
+
+Hi:
+
+RHEL5.1 BZ 245191
+
+This patch has been upstream since March.
+
+It fixes a major stability issue with the forcedeth driver
+which also happens to exhibit itself during Xen live migration.
+
+Please ack.
+
+commit fcc5f2665c81e087fb95143325ed769a41128d50
+Author: Ayaz Abdulla <aabdulla@nvidia.com>
+
+    forcedeth: fix nic poll
+
+    The nic poll routine was missing the call to the optimized irq routine.
+    This patch adds the missing call for the optimized path.
+
+    See http://bugzilla.kernel.org/show_bug.cgi?id=7950 for more information.
+
+    Signed-Off-By: Ayaz Abdulla <aabdulla@nvidia.com>
+
+    Signed-off-by: Jeff Garzik <jeff@garzik.org>
+
+Cheers,
+-- 
+Visit Openswan at http://www.openswan.org/
+Email: Herbert Xu ~{PmV>HI~} <herbert@gondor.apana.org.au>
+Home Page: http://gondor.apana.org.au/~herbert/
+PGP Key: http://gondor.apana.org.au/~herbert/pubkey.txt
+--
+--- linux-2.6.18.x86_64/drivers/net/forcedeth.c.orig
++++ linux-2.6.18.x86_64/drivers/net/forcedeth.c
+@@ -3521,7 +3520,10 @@ static void nv_do_nic_poll(unsigned long
+ 	pci_push(base);
+ 
+ 	if (!using_multi_irqs(dev)) {
+-		nv_nic_irq(0, dev, NULL);
++		if (np->desc_ver == DESC_VER_3)
++			nv_nic_irq_optimized(0, dev, NULL);
++		else
++			nv_nic_irq(0, dev, NULL);
+ 		if (np->msi_flags & NV_MSI_X_ENABLED)
+ 			enable_irq_lockdep(np->msi_x_entry[NV_MSI_X_VECTOR_ALL].vector);
+ 		else
+

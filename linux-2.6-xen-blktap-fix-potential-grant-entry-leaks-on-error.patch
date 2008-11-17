@@ -1,0 +1,132 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Subject: Re: [RHEL5 PATCH] [BLKTAP]: Fix potential grant entry leaks on error
+Date: Wed, 13 Dec 2006 19:02:18 +1100
+Bugzilla: 217993
+Message-Id: <20061213080218.GA17666@gondor.apana.org.au>
+Changelog: Xen: Fix potential grant entry leaks on error
+
+
+On Tue, Dec 12, 2006 at 07:38:11PM +0000, Don Zickus wrote:
+> 
+> ACKs?
+
+OK, let's see if we can get some more acks with this version :)
+
+BZ 217993
+
+This patch is from xen-unstable changeset 11835-11837.  It fixes
+a security issue in the blktap backend module.
+
+Thanks,
+-- 
+Visit Openswan at http://www.openswan.org/
+Email: Herbert Xu ~{PmV>HI~} <herbert@gondor.apana.org.au>
+Home Page: http://gondor.apana.org.au/~herbert/
+PGP Key: http://gondor.apana.org.au/~herbert/pubkey.txt
+--
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Node ID 1467ae6622288069016fd0a12010fa9e737f6f17
+# Parent  4c40bed66adeafc1bea38b7f9620223355b4f44e
+[BLKTAP]: Kill duplicate fast_flush_area call
+
+The dispatch_rw_block_io may call fast_flush_area twice if
+create_lookup_pte_addr fails (there is a flush call at fail_flush
+already).  The second call simply causes warnings to be printed
+on the console.  This patch removes the duplicate call.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Index: latest/drivers/xen/blktap/blktapmain.c
+===================================================================
+--- latest.orig/drivers/xen/blktap/blktapmain.c
++++ latest/drivers/xen/blktap/blktapmain.c
+@@ -844,29 +844,30 @@ static void fast_flush_area(pending_req_
+ 		uvaddr = MMAP_VADDR(info->user_vstart, u_idx, i);
+ 
+ 		khandle = &pending_handle(mmap_idx, k_idx, i);
+-		if (BLKTAP_INVALID_HANDLE(khandle)) {
+-			WPRINTK("BLKTAP_INVALID_HANDLE\n");
+-			continue;
+-		}
+-		gnttab_set_unmap_op(&unmap[invcount], 
++
++		if (khandle->kernel != 0xFFFF) {
++			gnttab_set_unmap_op(&unmap[invcount],
+ 				    idx_to_kaddr(mmap_idx, k_idx, i), 
+ 				    GNTMAP_host_map, khandle->kernel);
+-		invcount++;
+-
+-		if (create_lookup_pte_addr(
+-		    info->vma->vm_mm,
+-		    MMAP_VADDR(info->user_vstart, u_idx, i), 
+-		    &ptep) !=0) {
+-			WPRINTK("Couldn't get a pte addr!\n");
+-			return;
++			invcount++;
+ 		}
+ 
+-		gnttab_set_unmap_op(&unmap[invcount], ptep,
+-			GNTMAP_host_map |
+-			GNTMAP_application_map |
+-			GNTMAP_contains_pte,
+-			khandle->user);
+-		invcount++;
++		if (khandle->user != 0xFFFF) {
++			if (create_lookup_pte_addr(
++		    		info->vma->vm_mm,
++		    		MMAP_VADDR(info->user_vstart, u_idx, i),
++		    		&ptep) !=0) 	{
++				WPRINTK("Couldn't get a pte addr!\n");
++				return;
++			}
++
++			gnttab_set_unmap_op(&unmap[invcount], ptep,
++				GNTMAP_host_map |
++				GNTMAP_application_map |
++				GNTMAP_contains_pte,
++				khandle->user);
++			invcount++;
++		}
+             
+ 		BLKTAP_INVALIDATE_HANDLE(khandle);
+ 	}
+@@ -1224,19 +1225,25 @@ static void dispatch_rw_block_io(blkif_t
+ 		if (unlikely(map[i].status != 0)) {
+ 			WPRINTK("invalid kernel buffer -- "
+ 				"could not remap it\n");
+-			goto fail_flush;
++			ret |= 1;
++			map[i].handle = 0xFFFF;
+ 		}
+ 
+ 		if (unlikely(map[i+1].status != 0)) {
+ 			WPRINTK("invalid user buffer -- "
+ 				"could not remap it\n");
+-			goto fail_flush;
++			ret |= 1;
++			map[i+1].handle = 0xFFFF;
+ 		}
+ 
+ 		pending_handle(mmap_idx, pending_idx, i/2).kernel 
+ 			= map[i].handle;
+ 		pending_handle(mmap_idx, pending_idx, i/2).user   
+ 			= map[i+1].handle;
++
++		if (ret)
++			continue;
++
+ 		set_phys_to_machine(__pa(kvaddr) >> PAGE_SHIFT,
+ 			FOREIGN_FRAME(map[i].dev_bus_addr >> PAGE_SHIFT));
+ 		offset = (uvaddr - info->vma->vm_start) >> PAGE_SHIFT;
+@@ -1244,6 +1251,10 @@ static void dispatch_rw_block_io(blkif_t
+ 		((struct page **)info->vma->vm_private_data)[offset] =
+ 			pg;
+ 	}
++
++	if (ret)
++		goto fail_flush;
++
+ 	/* Mark mapped pages as reserved: */
+ 	for (i = 0; i < req->nr_segments; i++) {
+ 		unsigned long kvaddr;

@@ -1,0 +1,28 @@
+--- linux-2.6.15.noarch/init/main.c~	2006-03-05 00:45:51.000000000 -0500
++++ linux-2.6.15.noarch/init/main.c	2006-03-05 00:49:41.000000000 -0500
+@@ -640,6 +640,15 @@ static void __init do_basic_setup(void)
+ 	do_initcalls();
+ }
+ 
++static int __initdata nosoftlockup;
++
++static int __init nosoftlockup_setup(char *str)
++{
++	nosoftlockup = 1;
++	return 1;
++}
++__setup("nosoftlockup", nosoftlockup_setup);
++
+ static void do_pre_smp_initcalls(void)
+ {
+ 	extern int spawn_ksoftirqd(void);
+@@ -649,7 +657,8 @@ static void do_pre_smp_initcalls(void)
+ 	migration_init();
+ #endif
+ 	spawn_ksoftirqd();
+-	spawn_softlockup_task();
++	if (!nosoftlockup)
++		spawn_softlockup_task();
+ }
+ 
+ static void run_init_process(char *init_filename)

@@ -1,0 +1,203 @@
+From: George Beshers <gbeshers@redhat.com>
+Subject: RHEL5.1 PATCH: eliminate potential deadlock on XPC disconnects
+Date: Thu, 24 May 2007 13:16:34 -0400
+Bugzilla: 223837
+Message-Id: <4655C872.40908@redhat.com>
+Changelog: [ia64] eliminate potential deadlock on XPC disconnects
+
+
+BZ#223837
+
+ This patch eliminates a potential deadlock that is possible when XPC
+ disconnects a channel to a partition that has gone down. This deadlock will
+ occur if at least one of the kthreads created by XPC for the purpose of 
+ making
+ callouts to the channel's registerer is detained in the registerer and will
+ not be returning back to XPC until some registerer request occurs on the now
+ downed partition. The potential for a deadlock is removed by ensuring that
+ there always is a kthread available to make the channel disconnecting 
+ callout
+ to the register.
+
+The patch is from upstream 
+http://kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=a460ef8d0a98ac9ef6b829ae292c9b6c13bc0120
+
+The change is limited to ia64/sn and therefore SGI hardware and has been 
+reviewed
+and tested inside SGI.
+
+Cheers,
+George
+Please ack.
+
+
+diff -purN --exclude='*.config' linux-2.6.18.ia64.a/arch/ia64/sn/kernel/xpc_channel.c linux-2.6.18.ia64.b/arch/ia64/sn/kernel/xpc_channel.c
+--- linux-2.6.18.ia64.a/arch/ia64/sn/kernel/xpc_channel.c	2006-09-19 22:42:06.000000000 -0500
++++ linux-2.6.18.ia64.b/arch/ia64/sn/kernel/xpc_channel.c	2007-05-24 10:51:02.000000000 -0500
+@@ -632,7 +632,7 @@ xpc_process_connect(struct xpc_channel *
+ 		ch->number, ch->partid);
+ 
+ 	spin_unlock_irqrestore(&ch->lock, *irq_flags);
+-	xpc_create_kthreads(ch, 1);
++	xpc_create_kthreads(ch, 1, 0);
+ 	spin_lock_irqsave(&ch->lock, *irq_flags);
+ }
+ 
+@@ -754,12 +754,12 @@ xpc_process_disconnect(struct xpc_channe
+ 
+ 	/* make sure all activity has settled down first */
+ 
+-	if (atomic_read(&ch->references) > 0 ||
+-			((ch->flags & XPC_C_CONNECTEDCALLOUT_MADE) &&
+-			!(ch->flags & XPC_C_DISCONNECTINGCALLOUT_MADE))) {
++	if (atomic_read(&ch->kthreads_assigned) > 0 ||
++				atomic_read(&ch->references) > 0) {
+ 		return;
+ 	}
+-	DBUG_ON(atomic_read(&ch->kthreads_assigned) != 0);
++	DBUG_ON((ch->flags & XPC_C_CONNECTEDCALLOUT_MADE) &&
++			!(ch->flags & XPC_C_DISCONNECTINGCALLOUT_MADE));
+ 
+ 	if (part->act_state == XPC_P_DEACTIVATING) {
+ 		/* can't proceed until the other side disengages from us */
+@@ -1651,6 +1651,11 @@ xpc_disconnect_channel(const int line, s
+ 	/* wake all idle kthreads so they can exit */
+ 	if (atomic_read(&ch->kthreads_idle) > 0) {
+ 		wake_up_all(&ch->idle_wq);
++
++	} else if ((ch->flags & XPC_C_CONNECTEDCALLOUT_MADE) &&
++			!(ch->flags & XPC_C_DISCONNECTINGCALLOUT)) {
++		/* start a kthread that will do the xpcDisconnecting callout */
++		xpc_create_kthreads(ch, 1, 1);
+ 	}
+ 
+ 	/* wake those waiting to allocate an entry from the local msg queue */
+diff -purN --exclude='*.config' linux-2.6.18.ia64.a/arch/ia64/sn/kernel/xpc_main.c linux-2.6.18.ia64.b/arch/ia64/sn/kernel/xpc_main.c
+--- linux-2.6.18.ia64.a/arch/ia64/sn/kernel/xpc_main.c	2006-09-19 22:42:06.000000000 -0500
++++ linux-2.6.18.ia64.b/arch/ia64/sn/kernel/xpc_main.c	2007-05-24 10:51:02.000000000 -0500
+@@ -684,7 +684,7 @@ xpc_activate_kthreads(struct xpc_channel
+ 	dev_dbg(xpc_chan, "create %d new kthreads, partid=%d, channel=%d\n",
+ 		needed, ch->partid, ch->number);
+ 
+-	xpc_create_kthreads(ch, needed);
++	xpc_create_kthreads(ch, needed, 0);
+ }
+ 
+ 
+@@ -778,26 +778,28 @@ xpc_daemonize_kthread(void *args)
+ 		xpc_kthread_waitmsgs(part, ch);
+ 	}
+ 
+-	if (atomic_dec_return(&ch->kthreads_assigned) == 0) {
+-		spin_lock_irqsave(&ch->lock, irq_flags);
+-		if ((ch->flags & XPC_C_CONNECTEDCALLOUT_MADE) &&
+-				!(ch->flags & XPC_C_DISCONNECTINGCALLOUT)) {
+-			ch->flags |= XPC_C_DISCONNECTINGCALLOUT;
+-			spin_unlock_irqrestore(&ch->lock, irq_flags);
++	/* let registerer know that connection is disconnecting */
+ 
+-			xpc_disconnect_callout(ch, xpcDisconnecting);
+-
+-			spin_lock_irqsave(&ch->lock, irq_flags);
+-			ch->flags |= XPC_C_DISCONNECTINGCALLOUT_MADE;
+-		}
++	spin_lock_irqsave(&ch->lock, irq_flags);
++	if ((ch->flags & XPC_C_CONNECTEDCALLOUT_MADE) &&
++			!(ch->flags & XPC_C_DISCONNECTINGCALLOUT)) {
++		ch->flags |= XPC_C_DISCONNECTINGCALLOUT;
+ 		spin_unlock_irqrestore(&ch->lock, irq_flags);
++
++		xpc_disconnect_callout(ch, xpcDisconnecting);
++
++		spin_lock_irqsave(&ch->lock, irq_flags);
++		ch->flags |= XPC_C_DISCONNECTINGCALLOUT_MADE;
++	}
++	spin_unlock_irqrestore(&ch->lock, irq_flags);
++
++	if (atomic_dec_return(&ch->kthreads_assigned) == 0) {
+ 		if (atomic_dec_return(&part->nchannels_engaged) == 0) {
+ 			xpc_mark_partition_disengaged(part);
+ 			xpc_IPI_send_disengage(part);
+ 		}
+ 	}
+ 
+-
+ 	xpc_msgqueue_deref(ch);
+ 
+ 	dev_dbg(xpc_chan, "kthread exiting, partid=%d, channel=%d\n",
+@@ -821,7 +823,8 @@ xpc_daemonize_kthread(void *args)
+  * partition.
+  */
+ void
+-xpc_create_kthreads(struct xpc_channel *ch, int needed)
++xpc_create_kthreads(struct xpc_channel *ch, int needed,
++			int ignore_disconnecting)
+ {
+ 	unsigned long irq_flags;
+ 	pid_t pid;
+@@ -836,16 +839,38 @@ xpc_create_kthreads(struct xpc_channel *
+ 		 * kthread. That kthread is responsible for doing the
+ 		 * counterpart to the following before it exits.
+ 		 */
++		if (ignore_disconnecting) {
++			if (!atomic_inc_not_zero(&ch->kthreads_assigned)) {
++				/* kthreads assigned had gone to zero */
++				BUG_ON(!(ch->flags &
++					XPC_C_DISCONNECTINGCALLOUT_MADE));
++				break;
++			}
++
++		} else if (ch->flags & XPC_C_DISCONNECTING) {
++			break;
++
++		} else if (atomic_inc_return(&ch->kthreads_assigned) == 1) {
++			if (atomic_inc_return(&part->nchannels_engaged) == 1)
++				xpc_mark_partition_engaged(part);
++		}
+ 		(void) xpc_part_ref(part);
+ 		xpc_msgqueue_ref(ch);
+-		if (atomic_inc_return(&ch->kthreads_assigned) == 1 &&
+-		    atomic_inc_return(&part->nchannels_engaged) == 1) {
+-			xpc_mark_partition_engaged(part);
+-		}
+ 
+ 		pid = kernel_thread(xpc_daemonize_kthread, (void *) args, 0);
+ 		if (pid < 0) {
+ 			/* the fork failed */
++
++			/*
++			 * NOTE: if (ignore_disconnecting &&
++			 * !(ch->flags & XPC_C_DISCONNECTINGCALLOUT)) is true,
++			 * then we'll deadlock if all other kthreads assigned
++			 * to this channel are blocked in the channel's
++			 * registerer, because the only thing that will unblock
++			 * them is the xpcDisconnecting callout that this
++			 * failed kernel_thread would have made.
++			 */
++
+ 			if (atomic_dec_return(&ch->kthreads_assigned) == 0 &&
+ 			    atomic_dec_return(&part->nchannels_engaged) == 0) {
+ 				xpc_mark_partition_disengaged(part);
+@@ -860,9 +885,6 @@ xpc_create_kthreads(struct xpc_channel *
+ 				 * Flag this as an error only if we have an
+ 				 * insufficient #of kthreads for the channel
+ 				 * to function.
+-				 *
+-				 * No xpc_msgqueue_ref() is needed here since
+-				 * the channel mgr is doing this.
+ 				 */
+ 				spin_lock_irqsave(&ch->lock, irq_flags);
+ 				XPC_DISCONNECT_CHANNEL(ch, xpcLackOfResources,
+diff -purN --exclude='*.config' linux-2.6.18.ia64.a/include/asm-ia64/sn/xpc.h linux-2.6.18.ia64.b/include/asm-ia64/sn/xpc.h
+--- linux-2.6.18.ia64.a/include/asm-ia64/sn/xpc.h	2006-09-19 22:42:06.000000000 -0500
++++ linux-2.6.18.ia64.b/include/asm-ia64/sn/xpc.h	2007-05-24 10:51:02.000000000 -0500
+@@ -673,7 +673,7 @@ extern irqreturn_t xpc_notify_IRQ_handle
+ extern void xpc_dropped_IPI_check(struct xpc_partition *);
+ extern void xpc_activate_partition(struct xpc_partition *);
+ extern void xpc_activate_kthreads(struct xpc_channel *, int);
+-extern void xpc_create_kthreads(struct xpc_channel *, int);
++extern void xpc_create_kthreads(struct xpc_channel *, int, int);
+ extern void xpc_disconnect_wait(int);
+ 
+ 
+

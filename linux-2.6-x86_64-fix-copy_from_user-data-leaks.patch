@@ -1,0 +1,132 @@
+Date: Fri, 23 May 2008 14:41:07 +0200
+From: Anton Arapov <aarapov@redhat.com>
+Subject: [x86_64] fix copy_from_user() data leaks
+O-Subject: [PATCH RHEL5] BZ#433945: write() system call vulnerability {CVE-2008-0598}
+Bugzilla: 433945
+
+Details:
+Leak of information is possible due to inaccurate realization of
+copy_from_user().
+
+Upstream status:
+Not in upstream. Embargoed.
+
+Test status:
+Patch has been tested for compilation, boot and by reproducer
+build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1330220
+
+reproducer output:
+# hexdump pattern.txt
+0000000 307c 3d69 df3c 2a72 0a7e 7244 6d61 88d7
+[...]
+0000fc0 c952 851b 9346 127a 3084 56ea c29b 18d9
+0000fd0 b53e 293c 6db2 9a0b a83a 01c9 06f7 94fa
+0000fe0 d62f 30e0 a29e fbcb 52cd f730 36ae 47c7
+0000ff0 c103 baa0 d4fc c9d7 20c2 545f a592 274f
+0001000
+
+# ./dump
+mapped file at addr 2a9555c000
+readaddr 2a9555cfc8
+rc is 56 and errno 0
+
+# hexdump dump.log
+0000000 3084 56ea c29b 18d9 b53e 293c 6db2 9a0b
+0000010 a83a 01c9 06f7 94fa d62f 30e0 a29e fbcb
+0000020 52cd f730 36ae 47c7 c103 baa0 d4fc c9d7
+0000030 20c2 545f a592 274f 0000 0000 0000 0000
+0000040
+
+Notice:
+Backport, without any changes actually.
+
+Acked-by: Vivek Goyal <vgoyal@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+==
+ arch/x86_64/lib/copy_user.S |   58 +++++++++++++++++++++++++++++++------------
+ 1 files changed, 42 insertions(+), 16 deletions(-)
+
+diff --git a/arch/x86_64/lib/copy_user.S b/arch/x86_64/lib/copy_user.S
+index 962f3a6..8c1d271 100644
+--- a/arch/x86_64/lib/copy_user.S
++++ b/arch/x86_64/lib/copy_user.S
+@@ -213,18 +213,18 @@ ENTRY(copy_user_generic)
+ 	.quad .Ls2,.Ls2e
+ 	.quad .Ls3,.Ls3e
+ 	.quad .Ls4,.Ls4e
+-	.quad .Ld1,.Ls1e
+-	.quad .Ld2,.Ls2e
+-	.quad .Ld3,.Ls3e
+-	.quad .Ld4,.Ls4e
++	.quad .Ld1,.Ld1e
++	.quad .Ld2,.Ld2e
++	.quad .Ld3,.Ld3e
++	.quad .Ld4,.Ld4e
+ 	.quad .Ls5,.Ls5e
+ 	.quad .Ls6,.Ls6e
+ 	.quad .Ls7,.Ls7e
+ 	.quad .Ls8,.Ls8e
+-	.quad .Ld5,.Ls5e
+-	.quad .Ld6,.Ls6e
+-	.quad .Ld7,.Ls7e
+-	.quad .Ld8,.Ls8e
++	.quad .Ld5,.Ld5e
++	.quad .Ld6,.Ld6e
++	.quad .Ld7,.Ld7e
++	.quad .Ld8,.Ld8e
+ 	.quad .Ls9,.Le_quad
+ 	.quad .Ld9,.Le_quad
+ 	.quad .Ls10,.Le_byte
+@@ -236,18 +236,44 @@ ENTRY(copy_user_generic)
+ 	.quad .Le5,.Le_zero
+ 	.previous
+ 
++	/* Don't forget to store registers, which were loaded before fault.
++	   Otherwise we will have up to 24 bytes of garbage and possible
++	   security leak */
++.Ls8e:	addl $8,%eax
++	movq %r9,6*8(%rdi)
++.Ls7e:	addl $8,%eax
++	movq %r8,5*8(%rdi)
++.Ls6e:	addl $8,%eax
++	movq %r11,4*8(%rdi)
++.Ls5e:	addl $32,%eax
++	jmp .Ls1e
++
++.Ls4e:	addl $8,%eax
++	movq %r9,2*8(%rdi)
++.Ls3e:	addl $8,%eax
++	movq %r8,1*8(%rdi)
++.Ls2e:	addl $8,%eax
++	movq %r11,(%rdi)
++.Ls1e:	addq %rax,%rdi
++	shlq $6,%rdx
++	addq %rbx,%rdx
++	subq %rax,%rdx
++	andl $63,%ecx
++	addq %rcx,%rdx
++	jmp .Lzero_rest
++
+ 	/* compute 64-offset for main loop. 8 bytes accuracy with error on the
+ 	   pessimistic side. this is gross. it would be better to fix the
+ 	   interface. */
+ 	/* eax: zero, ebx: 64 */
+-.Ls1e: 	addl $8,%eax
+-.Ls2e: 	addl $8,%eax
+-.Ls3e: 	addl $8,%eax
+-.Ls4e: 	addl $8,%eax
+-.Ls5e: 	addl $8,%eax
+-.Ls6e: 	addl $8,%eax
+-.Ls7e: 	addl $8,%eax
+-.Ls8e: 	addl $8,%eax
++.Ld1e: 	addl $8,%eax
++.Ld2e: 	addl $8,%eax
++.Ld3e: 	addl $8,%eax
++.Ld4e: 	addl $8,%eax
++.Ld5e: 	addl $8,%eax
++.Ld6e: 	addl $8,%eax
++.Ld7e: 	addl $8,%eax
++.Ld8e: 	addl $8,%eax
+ 	addq %rbx,%rdi	/* +64 */
+ 	subq %rax,%rdi  /* correct destination with computed offset */
+ 

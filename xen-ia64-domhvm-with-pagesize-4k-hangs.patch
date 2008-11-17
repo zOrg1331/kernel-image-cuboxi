@@ -1,0 +1,719 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Wed, 9 Jan 2008 16:00:06 -0500
+Subject: [xen] ia64: domHVM with pagesize 4k hangs
+Message-id: 478535D6.1030504@redhat.com
+O-Subject: [RHEL5.2 PATCH] [Xen] domHVM with pagesize 4k hangs
+Bugzilla: 428124
+
+These patches fix BZ#428124.
+https://bugzilla.redhat.com/show_bug.cgi?id=428124
+
+Windows Server 2008 guest is the case of DomHVM with pagesize 4k.
+To run Windows 2008 on ia64/xen, the following patches are necessary.
+
+- 16112: [IA64] Fix TLB insertion for subpaging
+  http://xenbits.xensource.com/ext/ia64/xen-unstable.hg/rev/52d9f5028397
+     Without this fix, Windows 2008 hangs because itc.i instruction
+     is repeated forever.
+- 16287: Update pal.h and pal.S to linux-2.6.21 (from IT#135794)
+  http://xenbits.xensource.com/ext/ia64/xen-unstable.hg/rev/b235b68a0f4f
+     This is necessary to implement missing PAL procedures.
+- 16288: Implement some PAL procedures (from IT#135794)
+  http://xenbits.xensource.com/ext/ia64/xen-unstable.hg/rev/41c1731c9125
+     This implements some PAL procedures necessary for Windows 2008.
+- 16622: [IA64] Fix vulnerability of copy_to_user in PAL emulation
+  http://xenbits.xensource.com/ext/ia64/xen-unstable.hg/rev/e6069a715fd7
+     This fixes the security hole.  Actually, without this fix,
+     Windows 2008 guest destroys the content of the memory where it
+     should not access.
+- xen-ia64-remove-unused-function-because-of-updating-PAL.patch
+     This fixes the compile error caused by PAL update removing an
+     unused function.
+
+Besides these patches, Open Guest Firmware (cs:38 or later) is necessary
+to run Windows 2008.
+
+I've tested these patches with kernel-2.6.18-58, and confirmed that
+Windows Server 2008 RC1 can be installed and work fine on DomHVM guest.
+
+Please review and ACK.
+
+Regards,
+
+Tetsu Yamamoto
+
+# HG changeset patch
+# User KUWAMURA Shin'ya <kuwa@jp.fujitsu.com>
+# Date 1198723354 -32400
+# Node ID 92ac3aa244c3aef3771588d7b9b29ef7ac4d471e
+# Parent  4253c77373f98a2ab4c2ef8cd6b8602b21a3bea1
+16622: [IA64] Fix vulnerability of copy_to_user in PAL emulation
+
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+diff --git a/arch/ia64/linux-xen/README.origin b/arch/ia64/linux-xen/README.origin
+index bfc3981..1f23206 100644
+--- a/arch/ia64/linux-xen/README.origin
++++ b/arch/ia64/linux-xen/README.origin
+@@ -18,7 +18,6 @@ minstate.h		-> linux/arch/ia64/kernel/minstate.h
+ mm_contig.c		-> linux/arch/ia64/mm/contig.c
+ mm_numa.c		-> linux/arch/ia64/mm/numa.c
+ numa.c			-> linux/arch/ia64/kernel/numa.c
+-pal.S			-> linux/arch/ia64/kernel/pal.S
+ process-linux-xen.c	-> linux/arch/ia64/kernel/process.c
+ sal.c			-> linux/arch/ia64/kernel/sal.c
+ setup.c			-> linux/arch/ia64/kernel/setup.c
+@@ -42,3 +41,5 @@ perfmon_generic.h	-> linux/arch/kernel/perfmon_generic.h
+ perfmon_itanium.h	-> linux/arch/kernel/perfmon_itanium.h
+ perfmon_mckinley.h	-> linux/arch/kernel/perfmon_mckinley.h
+ perfmon_montecito.h	-> linux/arch/kernel/perfmon_montecito.h
++# The files below are from Linux-2.6.21
++pal.S			-> linux/arch/ia64/kernel/pal.S
+diff --git a/arch/ia64/linux-xen/pal.S b/arch/ia64/linux-xen/pal.S
+index 65387ba..8d8577a 100644
+--- a/arch/ia64/linux-xen/pal.S
++++ b/arch/ia64/linux-xen/pal.S
+@@ -21,11 +21,12 @@ pal_entry_point:
+ 	.text
+ 
+ /*
+- * Set the PAL entry point address.  This could be written in C code, but we do it here
+- * to keep it all in one module (besides, it's so trivial that it's
++ * Set the PAL entry point address.  This could be written in C code, but we
++ * do it here to keep it all in one module (besides, it's so trivial that it's
+  * not a big deal).
+  *
+- * in0		Address of the PAL entry point (text address, NOT a function descriptor).
++ * in0		Address of the PAL entry point (text address, NOT a function
++ *		descriptor).
+  */
+ GLOBAL_ENTRY(ia64_pal_handler_init)
+ 	alloc r3=ar.pfs,1,0,0,0
+@@ -36,9 +37,9 @@ GLOBAL_ENTRY(ia64_pal_handler_init)
+ END(ia64_pal_handler_init)
+ 
+ /*
+- * Default PAL call handler.  This needs to be coded in assembly because it uses
+- * the static calling convention, i.e., the RSE may not be used and calls are
+- * done via "br.cond" (not "br.call").
++ * Default PAL call handler.  This needs to be coded in assembly because it
++ * uses the static calling convention, i.e., the RSE may not be used and
++ * calls are done via "br.cond" (not "br.call").
+  */
+ GLOBAL_ENTRY(ia64_pal_default_handler)
+ 	mov r8=-1
+@@ -50,12 +51,10 @@ END(ia64_pal_default_handler)
+  *
+  * in0         Index of PAL service
+  * in1 - in3   Remaining PAL arguments
+- * in4	       1 ==> clear psr.ic,  0 ==> don't clear psr.ic
+- *
+  */
+ GLOBAL_ENTRY(ia64_pal_call_static)
+-	.prologue ASM_UNW_PRLG_RP|ASM_UNW_PRLG_PFS, ASM_UNW_PRLG_GRSAVE(5)
+-	alloc loc1 = ar.pfs,5,5,0,0
++	.prologue ASM_UNW_PRLG_RP|ASM_UNW_PRLG_PFS, ASM_UNW_PRLG_GRSAVE(4)
++	alloc loc1 = ar.pfs,4,5,0,0
+ 	movl loc2 = pal_entry_point
+ 1:	{
+ 	  mov r28 = in0
+@@ -64,7 +63,6 @@ GLOBAL_ENTRY(ia64_pal_call_static)
+ 	}
+ 	;;
+ 	ld8 loc2 = [loc2]		// loc2 <- entry point
+-	tbit.nz p6,p7 = in4, 0
+ 	adds r8 = 1f-1b,r8
+ 	mov loc4=ar.rsc			// save RSE configuration
+ 	;;
+@@ -74,13 +72,11 @@ GLOBAL_ENTRY(ia64_pal_call_static)
+ 	.body
+ 	mov r30 = in2
+ 
+-(p6)	rsm psr.i | psr.ic
+ 	mov r31 = in3
+ 	mov b7 = loc2
+ 
+-(p7)	rsm psr.i
++	rsm psr.i
+ 	;;
+-(p6)	srlz.i
+ 	mov rp = r8
+ 	br.cond.sptk.many b7
+ 1:	mov psr.l = loc3
+@@ -96,8 +92,8 @@ END(ia64_pal_call_static)
+  * Make a PAL call using the stacked registers calling convention.
+  *
+  * Inputs:
+- * 	in0         Index of PAL service
+- * 	in2 - in3   Remaning PAL arguments
++ *	in0         Index of PAL service
++ *	in2 - in3   Remaining PAL arguments
+  */
+ GLOBAL_ENTRY(ia64_pal_call_stacked)
+ 	.prologue ASM_UNW_PRLG_RP|ASM_UNW_PRLG_PFS, ASM_UNW_PRLG_GRSAVE(4)
+@@ -131,18 +127,18 @@ END(ia64_pal_call_stacked)
+  * Make a physical mode PAL call using the static registers calling convention.
+  *
+  * Inputs:
+- * 	in0         Index of PAL service
+- * 	in2 - in3   Remaning PAL arguments
++ *	in0         Index of PAL service
++ *	in2 - in3   Remaining PAL arguments
+  *
+  * PSR_LP, PSR_TB, PSR_ID, PSR_DA are never set by the kernel.
+  * So we don't need to clear them.
+  */
+-#define PAL_PSR_BITS_TO_CLEAR							\
+-	(IA64_PSR_I | IA64_PSR_IT | IA64_PSR_DT  | IA64_PSR_DB | IA64_PSR_RT |	\
+-	 IA64_PSR_DD | IA64_PSR_SS | IA64_PSR_RI | IA64_PSR_ED |		\
++#define PAL_PSR_BITS_TO_CLEAR						      \
++	(IA64_PSR_I | IA64_PSR_IT | IA64_PSR_DT  | IA64_PSR_DB | IA64_PSR_RT |\
++	 IA64_PSR_DD | IA64_PSR_SS | IA64_PSR_RI | IA64_PSR_ED |	      \
+ 	 IA64_PSR_DFL | IA64_PSR_DFH)
+ 
+-#define PAL_PSR_BITS_TO_SET							\
++#define PAL_PSR_BITS_TO_SET						      \
+ 	(IA64_PSR_BN)
+ 
+ 
+@@ -182,7 +178,7 @@ GLOBAL_ENTRY(ia64_pal_call_phys_static)
+ 	;;
+ 	andcm r16=loc3,r16		// removes bits to clear from psr
+ 	br.call.sptk.many rp=ia64_switch_mode_phys
+-.ret1:	mov rp = r8			// install return address (physical)
++	mov rp = r8			// install return address (physical)
+ 	mov loc5 = r19
+ 	mov loc6 = r20
+ 	br.cond.sptk.many b7
+@@ -192,7 +188,6 @@ GLOBAL_ENTRY(ia64_pal_call_phys_static)
+ 	mov r19=loc5
+ 	mov r20=loc6
+ 	br.call.sptk.many rp=ia64_switch_mode_virt // return to virtual mode
+-.ret2:
+ 	mov psr.l = loc3		// restore init PSR
+ 
+ 	mov ar.pfs = loc1
+@@ -207,8 +202,8 @@ END(ia64_pal_call_phys_static)
+  * Make a PAL call using the stacked registers in physical mode.
+  *
+  * Inputs:
+- * 	in0         Index of PAL service
+- * 	in2 - in3   Remaning PAL arguments
++ *	in0         Index of PAL service
++ *	in2 - in3   Remaining PAL arguments
+  */
+ GLOBAL_ENTRY(ia64_pal_call_phys_stacked)
+ 	.prologue ASM_UNW_PRLG_RP|ASM_UNW_PRLG_PFS, ASM_UNW_PRLG_GRSAVE(5)
+@@ -216,17 +211,12 @@ GLOBAL_ENTRY(ia64_pal_call_phys_stacked)
+ 	movl	loc2 = pal_entry_point
+ 1:	{
+ 	  mov r28  = in0		// copy procedure index
+-	  mov loc0 = rp		// save rp
++	  mov loc0 = rp			// save rp
+ 	}
+ 	.body
+ 	;;
+ 	ld8 loc2 = [loc2]		// loc2 <- entry point
+-	mov out0 = in0		// first argument
+-	mov out1 = in1		// copy arg2
+-	mov out2 = in2		// copy arg3
+-	mov out3 = in3		// copy arg3
+-	;;
+-	mov loc3 = psr		// save psr
++	mov loc3 = psr			// save psr
+ 	;;
+ 	mov loc4=ar.rsc			// save RSE configuration
+ #ifdef XEN
+@@ -244,18 +234,23 @@ GLOBAL_ENTRY(ia64_pal_call_phys_stacked)
+ 	;;
+ 	andcm r16=loc3,r16		// removes bits to clear from psr
+ 	br.call.sptk.many rp=ia64_switch_mode_phys
+-.ret6:
++
++	mov out0 = in0			// first argument
++	mov out1 = in1			// copy arg2
++	mov out2 = in2			// copy arg3
++	mov out3 = in3			// copy arg3
+ 	mov loc5 = r19
+ 	mov loc6 = r20
++
+ 	br.call.sptk.many rp=b7		// now make the call
+-.ret7:
++
+ 	mov ar.rsc=0			// put RSE in enforced lazy, LE mode
+ 	mov r16=loc3			// r16= original psr
+ 	mov r19=loc5
+ 	mov r20=loc6
+-	br.call.sptk.many rp=ia64_switch_mode_virt	// return to virtual mode
++	br.call.sptk.many rp=ia64_switch_mode_virt // return to virtual mode
+ 
+-.ret8:	mov psr.l  = loc3		// restore init PSR
++	mov psr.l  = loc3		// restore init PSR
+ 	mov ar.pfs = loc1
+ 	mov rp = loc0
+ 	;;
+@@ -265,10 +260,11 @@ GLOBAL_ENTRY(ia64_pal_call_phys_stacked)
+ END(ia64_pal_call_phys_stacked)
+ 
+ /*
+- * Save scratch fp scratch regs which aren't saved in pt_regs already (fp10-fp15).
++ * Save scratch fp scratch regs which aren't saved in pt_regs already
++ * (fp10-fp15).
+  *
+- * NOTE: We need to do this since firmware (SAL and PAL) may use any of the scratch
+- * regs fp-low partition.
++ * NOTE: We need to do this since firmware (SAL and PAL) may use any of the
++ * scratch regs fp-low partition.
+  *
+  * Inputs:
+  *      in0	Address of stack storage for fp regs
+diff --git a/arch/ia64/vmx/vmmu.c b/arch/ia64/vmx/vmmu.c
+index 79e22f5..8b49c58 100644
+--- a/arch/ia64/vmx/vmmu.c
++++ b/arch/ia64/vmx/vmmu.c
+@@ -114,6 +114,7 @@ void recycle_message(thash_cb_t *hcb, u64 para)
+ }
+  */
+ 
++#if 0
+ /*
+  * Purge all guest TCs in logical processor.
+  * Instead of purging all LP TCs, we should only purge   
+@@ -154,6 +155,7 @@ purge_machine_tc_by_domid(domid_t domid)
+     // purge all TCs belong to this guest.
+ #endif
+ }
++#endif
+ 
+ static int init_domain_vhpt(struct vcpu *v)
+ {
+diff --git a/arch/ia64/vmx/vtlb.c b/arch/ia64/vmx/vtlb.c
+index e60b81d..15feab5 100644
+--- a/arch/ia64/vmx/vtlb.c
++++ b/arch/ia64/vmx/vtlb.c
+@@ -555,13 +555,15 @@ void thash_purge_and_insert(VCPU *v, u64 pte, u64 itir, u64 ifa, int type)
+         }
+         else {
+             u64 psr;
+-            phy_pte  &= ~PAGE_FLAGS_RV_MASK;
+-            psr = ia64_clear_ic();
+-            ia64_itc(type + 1, ifa, phy_pte, ps);
+-            ia64_set_psr(psr);
+-            ia64_srlz_i();
+-            // ps < mrr.ps, this is not supported
+-            // panic_domain(NULL, "%s: ps (%lx) < mrr.ps \n", __func__, ps);
++            vtlb_insert(v, pte, itir, ifa);
++            vcpu_quick_region_set(PSCBX(v,tc_regions),ifa);
++            if (!(pte & VTLB_PTE_IO)) {
++		phy_pte  &= ~PAGE_FLAGS_RV_MASK;
++		psr = ia64_clear_ic();
++		ia64_itc(type + 1, ifa, phy_pte, ps);
++		ia64_set_psr(psr);
++		ia64_srlz_i();
++	    }
+         }
+     }
+     else{
+diff --git a/include/asm-ia64/linux-xen/asm/README.origin b/include/asm-ia64/linux-xen/asm/README.origin
+index e843a71..7a20f1a 100644
+--- a/include/asm-ia64/linux-xen/asm/README.origin
++++ b/include/asm-ia64/linux-xen/asm/README.origin
+@@ -17,7 +17,6 @@ mca_asm.h		-> linux/include/asm-ia64/mca_asm.h
+ meminit.h		-> linux/include/asm-ia64/meminit.h
+ numa.h			-> linux/include/asm-ia64/numa.h
+ page.h			-> linux/include/asm-ia64/page.h
+-pal.h			-> linux/include/asm-ia64/pal.h
+ percpu.h		-> linux/include/asm-ia64/percpu.h
+ pgalloc.h		-> linux/include/asm-ia64/pgalloc.h
+ pgtable.h		-> linux/include/asm-ia64/pgtable.h
+@@ -42,3 +41,6 @@ machvec_dig.h		-> linux/include/asm-ia64/machvec_dig.h
+ machvec_sn2.h		-> linux/include/asm-ia64/machvec_sn2.h
+ machvec_hpzx1.h		-> linux/include/asm-ia64/machvec_hpzx1.h
+ machvec_pci.h		-> linux/include/asm-ia64/pci.h
++
++# The files below are from Linux-2.6.21
++pal.h			-> linux/include/asm-ia64/pal.h
+diff --git a/include/asm-ia64/linux-xen/asm/pal.h b/include/asm-ia64/linux-xen/asm/pal.h
+index 71e6a4e..00e32c5 100644
+--- a/include/asm-ia64/linux-xen/asm/pal.h
++++ b/include/asm-ia64/linux-xen/asm/pal.h
+@@ -20,6 +20,8 @@
+  * 00/05/24     eranian Updated to latest PAL spec, fix structures bugs, added
+  * 00/05/25	eranian Support for stack calls, and static physical calls
+  * 00/06/18	eranian Support for stacked physical calls
++ * 06/10/26	rja	Support for Intel Itanium Architecture Software Developer's
++ *			Manual Rev 2.2 (Jan 2006)
+  */
+ 
+ /*
+@@ -30,7 +32,7 @@
+ #define PAL_CACHE_FLUSH		1	/* flush i/d cache */
+ #define PAL_CACHE_INFO		2	/* get detailed i/d cache info */
+ #define PAL_CACHE_INIT		3	/* initialize i/d cache */
+-#define PAL_CACHE_SUMMARY	4	/* get summary of cache heirarchy */
++#define PAL_CACHE_SUMMARY	4	/* get summary of cache hierarchy */
+ #define PAL_MEM_ATTRIB		5	/* list supported memory attributes */
+ #define PAL_PTCE_INFO		6	/* purge TLB info */
+ #define PAL_VM_INFO		7	/* return supported virtual memory features */
+@@ -68,6 +70,9 @@
+ #define PAL_SHUTDOWN		40	/* enter processor shutdown state */
+ #define PAL_PREFETCH_VISIBILITY	41	/* Make Processor Prefetches Visible */
+ #define PAL_LOGICAL_TO_PHYSICAL 42	/* returns information on logical to physical processor mapping */
++#define PAL_CACHE_SHARED_INFO	43	/* returns information on caches shared by logical processor */
++#define PAL_GET_HW_POLICY	48	/* Get current hardware resource sharing policy */
++#define PAL_SET_HW_POLICY	49	/* Set current hardware resource sharing policy */
+ 
+ #define PAL_COPY_PAL		256	/* relocate PAL procedures and PAL PMI */
+ #define PAL_HALT_INFO		257	/* return the low power capabilities of processor */
+@@ -75,6 +80,14 @@
+ #define PAL_CACHE_READ		259	/* read tag & data of cacheline for diagnostic testing */
+ #define PAL_CACHE_WRITE		260	/* write tag & data of cacheline for diagnostic testing */
+ #define PAL_VM_TR_READ		261	/* read contents of translation register */
++#define PAL_GET_PSTATE		262	/* get the current P-state */
++#define PAL_SET_PSTATE		263	/* set the P-state */
++#define PAL_BRAND_INFO		274	/* Processor branding information */
++
++#define PAL_GET_PSTATE_TYPE_LASTSET	0
++#define PAL_GET_PSTATE_TYPE_AVGANDRESET	1
++#define PAL_GET_PSTATE_TYPE_AVGNORESET	2
++#define PAL_GET_PSTATE_TYPE_INSTANT	3
+ 
+ #ifndef __ASSEMBLY__
+ 
+@@ -98,15 +111,16 @@ typedef s64				pal_status_t;
+ 						 * cache without sideeffects
+ 						 * and "restrict" was 1
+ 						 */
++#define PAL_STATUS_REQUIRES_MEMORY	(-9)	/* Call requires PAL memory buffer */
+ 
+-/* Processor cache level in the heirarchy */
++/* Processor cache level in the hierarchy */
+ typedef u64				pal_cache_level_t;
+ #define PAL_CACHE_LEVEL_L0		0	/* L0 */
+ #define PAL_CACHE_LEVEL_L1		1	/* L1 */
+ #define PAL_CACHE_LEVEL_L2		2	/* L2 */
+ 
+ 
+-/* Processor cache type at a particular level in the heirarchy */
++/* Processor cache type at a particular level in the hierarchy */
+ 
+ typedef u64				pal_cache_type_t;
+ #define PAL_CACHE_TYPE_INSTRUCTION	1	/* Instruction cache */
+@@ -131,7 +145,7 @@ typedef u64				pal_cache_line_state_t;
+ #define PAL_CACHE_LINE_STATE_MODIFIED	3	/* Modified */
+ 
+ typedef struct pal_freq_ratio {
+-	u64 den : 32, num : 32;	/* numerator & denominator */
++	u32 den, num;		/* numerator & denominator */
+ } itc_ratio, proc_ratio;
+ 
+ typedef	union  pal_cache_config_info_1_s {
+@@ -152,10 +166,10 @@ typedef	union  pal_cache_config_info_1_s {
+ 
+ typedef	union  pal_cache_config_info_2_s {
+ 	struct {
+-		u64		cache_size	: 32,	/*cache size in bytes*/
++		u32		cache_size;		/*cache size in bytes*/
+ 
+ 
+-				alias_boundary	: 8,	/* 39-32 aliased addr
++		u32		alias_boundary	: 8,	/* 39-32 aliased addr
+ 							 * separation for max
+ 							 * performance.
+ 							 */
+@@ -261,14 +275,14 @@ typedef struct pal_cache_protection_info_s {
+ #define PAL_CACHE_PROT_METHOD_ECC		3	/* ECC protection */
+ 
+ 
+-/* Processor cache line identification in the heirarchy */
++/* Processor cache line identification in the hierarchy */
+ typedef union pal_cache_line_id_u {
+ 	u64			pclid_data;
+ 	struct {
+ 		u64		cache_type	: 8,	/* 7-0 cache type */
+ 				level		: 8,	/* 15-8 level of the
+ 							 * cache in the
+-							 * heirarchy.
++							 * hierarchy.
+ 							 */
+ 				way		: 8,	/* 23-16 way in the set
+ 							 */
+@@ -281,7 +295,7 @@ typedef union pal_cache_line_id_u {
+ 		u64		cache_type	: 8,	/* 7-0 cache type */
+ 				level		: 8,	/* 15-8 level of the
+ 							 * cache in the
+-							 * heirarchy.
++							 * hierarchy.
+ 							 */
+ 				way		: 8,	/* 23-16 way in the set
+ 							 */
+@@ -360,6 +374,7 @@ typedef u64					pal_mc_info_index_t;
+ 							 * dependent
+ 							 */
+ 
++#define PAL_TLB_CHECK_OP_PURGE			8
+ 
+ typedef struct pal_process_state_info_s {
+ 	u64		reserved1	: 2,
+@@ -455,7 +470,9 @@ typedef struct pal_process_state_info_s {
+ 						 * by the processor
+ 						 */
+ 
+-			reserved2	: 11,
++			se		: 1,	/* Shared error.  MCA in a
++						   shared structure */
++			reserved2	: 10,
+ 			cc		: 1,	/* Cache check */
+ 			tc		: 1,	/* TLB check */
+ 			bc		: 1,	/* Bus check */
+@@ -486,10 +503,12 @@ typedef struct pal_cache_check_info_s {
+ 						 * error occurred
+ 						 */
+ 			wiv		: 1,	/* Way field valid */
+-			reserved2	: 10,
++			reserved2	: 1,
++			dp		: 1,	/* Data poisoned on MBE */
++			reserved3	: 8,
+ 
+ 			index		: 20,	/* Cache line index */
+-			reserved3	: 2,
++			reserved4	: 2,
+ 
+ 			is		: 1,	/* instruction set (1 == ia32) */
+ 			iv		: 1,	/* instruction set field valid */
+@@ -556,7 +575,7 @@ typedef struct pal_bus_check_info_s {
+ 			type		: 8,	/* Bus xaction type*/
+ 			sev		: 5,	/* Bus error severity*/
+ 			hier		: 2,	/* Bus hierarchy level */
+-			reserved1	: 1,
++			dp		: 1,	/* Data poisoned on MBE */
+ 			bsi		: 8,	/* Bus error status
+ 						 * info
+ 						 */
+@@ -763,7 +782,7 @@ struct ia64_pal_retval {
+  * (generally 0) MUST be passed.  Reserved parameters are not optional
+  * parameters.
+  */
+-extern struct ia64_pal_retval ia64_pal_call_static (u64, u64, u64, u64, u64);
++extern struct ia64_pal_retval ia64_pal_call_static (u64, u64, u64, u64);
+ extern struct ia64_pal_retval ia64_pal_call_stacked (u64, u64, u64, u64);
+ extern struct ia64_pal_retval ia64_pal_call_phys_static (u64, u64, u64, u64);
+ extern struct ia64_pal_retval ia64_pal_call_phys_stacked (u64, u64, u64, u64);
+@@ -773,14 +792,7 @@ extern void ia64_load_scratch_fpregs (struct ia64_fpreg *);
+ #define PAL_CALL(iprv,a0,a1,a2,a3) do {			\
+ 	struct ia64_fpreg fr[6];			\
+ 	ia64_save_scratch_fpregs(fr);			\
+-	iprv = ia64_pal_call_static(a0, a1, a2, a3, 0);	\
+-	ia64_load_scratch_fpregs(fr);			\
+-} while (0)
+-
+-#define PAL_CALL_IC_OFF(iprv,a0,a1,a2,a3) do {		\
+-	struct ia64_fpreg fr[6];			\
+-	ia64_save_scratch_fpregs(fr);			\
+-	iprv = ia64_pal_call_static(a0, a1, a2, a3, 1);	\
++	iprv = ia64_pal_call_static(a0, a1, a2, a3);	\
+ 	ia64_load_scratch_fpregs(fr);			\
+ } while (0)
+ 
+@@ -840,7 +852,9 @@ typedef union pal_bus_features_u {
+ 		u64	pbf_req_bus_parking			:	1;
+ 		u64	pbf_bus_lock_mask			:	1;
+ 		u64	pbf_enable_half_xfer_rate		:	1;
+-		u64	pbf_reserved2				:	22;
++		u64	pbf_reserved2				:	20;
++		u64	pbf_enable_shared_line_replace		:	1;
++		u64	pbf_enable_exclusive_line_replace	:	1;
+ 		u64	pbf_disable_xaction_queueing		:	1;
+ 		u64	pbf_disable_resp_err_check		:	1;
+ 		u64	pbf_disable_berr_check			:	1;
+@@ -928,11 +942,7 @@ static inline s64
+ ia64_pal_cache_flush (u64 cache_type, u64 invalidate, u64 *progress, u64 *vector)
+ {
+ 	struct ia64_pal_retval iprv;
+-#ifdef XEN	/* fix a bug in Linux... PAL has changed */
+ 	PAL_CALL(iprv, PAL_CACHE_FLUSH, cache_type, invalidate, *progress);
+-#else
+-	PAL_CALL_IC_OFF(iprv, PAL_CACHE_FLUSH, cache_type, invalidate, *progress);
+-#endif
+ 	if (vector)
+ 		*vector = iprv.v0;
+ 	*progress = iprv.v1;
+@@ -967,11 +977,12 @@ static inline s64
+ ia64_pal_cache_read (pal_cache_line_id_u_t line_id, u64 physical_addr)
+ {
+ 	struct ia64_pal_retval iprv;
+-	PAL_CALL(iprv, PAL_CACHE_READ, line_id.pclid_data, physical_addr, 0);
++	PAL_CALL_PHYS_STK(iprv, PAL_CACHE_READ, line_id.pclid_data,
++				physical_addr, 0);
+ 	return iprv.status;
+ }
+ 
+-/* Return summary information about the heirarchy of caches controlled by the processor */
++/* Return summary information about the hierarchy of caches controlled by the processor */
+ static inline s64
+ ia64_pal_cache_summary (u64 *cache_levels, u64 *unique_caches)
+ {
+@@ -989,7 +1000,8 @@ static inline s64
+ ia64_pal_cache_write (pal_cache_line_id_u_t line_id, u64 physical_addr, u64 data)
+ {
+ 	struct ia64_pal_retval iprv;
+-	PAL_CALL(iprv, PAL_CACHE_WRITE, line_id.pclid_data, physical_addr, data);
++	PAL_CALL_PHYS_STK(iprv, PAL_CACHE_WRITE, line_id.pclid_data,
++				physical_addr, data);
+ 	return iprv.status;
+ }
+ 
+@@ -1085,6 +1097,24 @@ ia64_pal_freq_ratios (struct pal_freq_ratio *proc_ratio, struct pal_freq_ratio *
+ 	return iprv.status;
+ }
+ 
++/*
++ * Get the current hardware resource sharing policy of the processor
++ */
++static inline s64
++ia64_pal_get_hw_policy (u64 proc_num, u64 *cur_policy, u64 *num_impacted,
++			u64 *la)
++{
++	struct ia64_pal_retval iprv;
++	PAL_CALL(iprv, PAL_GET_HW_POLICY, proc_num, 0, 0);
++	if (cur_policy)
++		*cur_policy = iprv.v0;
++	if (num_impacted)
++		*num_impacted = iprv.v1;
++	if (la)
++		*la = iprv.v2;
++	return iprv.status;
++}
++
+ /* Make the processor enter HALT or one of the implementation dependent low
+  * power states where prefetching and execution are suspended and cache and
+  * TLB coherency is not maintained.
+@@ -1118,6 +1148,34 @@ ia64_pal_halt_info (pal_power_mgmt_info_u_t *power_buf)
+ 	return iprv.status;
+ }
+ 
++/* Get the current P-state information */
++static inline s64
++ia64_pal_get_pstate (u64 *pstate_index, unsigned long type)
++{
++	struct ia64_pal_retval iprv;
++	PAL_CALL_STK(iprv, PAL_GET_PSTATE, type, 0, 0);
++	*pstate_index = iprv.v0;
++	return iprv.status;
++}
++
++/* Set the P-state */
++static inline s64
++ia64_pal_set_pstate (u64 pstate_index)
++{
++	struct ia64_pal_retval iprv;
++	PAL_CALL_STK(iprv, PAL_SET_PSTATE, pstate_index, 0, 0);
++	return iprv.status;
++}
++
++/* Processor branding information*/
++static inline s64
++ia64_pal_get_brand_info (char *brand_info)
++{
++	struct ia64_pal_retval iprv;
++	PAL_CALL_STK(iprv, PAL_BRAND_INFO, 0, (u64)brand_info, 0);
++	return iprv.status;
++}
++
+ /* Cause the processor to enter LIGHT HALT state, where prefetching and execution are
+  * suspended, but cache and TLB coherency is maintained.
+  */
+@@ -1381,6 +1439,17 @@ ia64_pal_rse_info (u64 *num_phys_stacked, pal_hints_u_t *hints)
+ 	return iprv.status;
+ }
+ 
++/*
++ * Set the current hardware resource sharing policy of the processor
++ */
++static inline s64
++ia64_pal_set_hw_policy (u64 policy)
++{
++	struct ia64_pal_retval iprv;
++	PAL_CALL(iprv, PAL_SET_HW_POLICY, policy, 0, 0);
++	return iprv.status;
++}
++
+ /* Cause the processor to enter	SHUTDOWN state, where prefetching and execution are
+  * suspended, but cause cache and TLB coherency to be maintained.
+  * This is usually called in IA-32 mode.
+@@ -1418,7 +1487,12 @@ typedef union  pal_version_u {
+ } pal_version_u_t;
+ 
+ 
+-/* Return PAL version information */
++/*
++ * Return PAL version information.  While the documentation states that
++ * PAL_VERSION can be called in either physical or virtual mode, some
++ * implementations only allow physical calls.  We don't call it very often,
++ * so the overhead isn't worth eliminating.
++ */
+ static inline s64
+ ia64_pal_version (pal_version_u_t *pal_min_version, pal_version_u_t *pal_cur_version)
+ {
+@@ -1499,12 +1573,15 @@ typedef union pal_vm_info_1_u {
+ 	} pal_vm_info_1_s;
+ } pal_vm_info_1_u_t;
+ 
++#define PAL_MAX_PURGES		0xFFFF		/* all ones is means unlimited */
++
+ typedef union pal_vm_info_2_u {
+ 	u64			pvi2_val;
+ 	struct {
+ 		u64		impl_va_msb	: 8,
+ 				rid_size	: 8,
+-				reserved	: 48;
++				max_purges	: 16,
++				reserved	: 32;
+ 	} pal_vm_info_2_s;
+ } pal_vm_info_2_u_t;
+ 
+@@ -1626,14 +1703,40 @@ ia64_pal_logical_to_phys(u64 proc_number, pal_logical_to_physical_t *mapping)
+ 
+ 	if (iprv.status == PAL_STATUS_SUCCESS)
+ 	{
+-		if (proc_number == 0)
+-			mapping->overview.overview_data = iprv.v0;
++		mapping->overview.overview_data = iprv.v0;
+ 		mapping->ppli1.ppli1_data = iprv.v1;
+ 		mapping->ppli2.ppli2_data = iprv.v2;
+ 	}
+ 
+ 	return iprv.status;
+ }
++
++typedef struct pal_cache_shared_info_s
++{
++	u64 num_shared;
++	pal_proc_n_log_info1_t ppli1;
++	pal_proc_n_log_info2_t ppli2;
++} pal_cache_shared_info_t;
++
++/* Get information on logical to physical processor mappings. */
++static inline s64
++ia64_pal_cache_shared_info(u64 level,
++		u64 type,
++		u64 proc_number,
++		pal_cache_shared_info_t *info)
++{
++	struct ia64_pal_retval iprv;
++
++	PAL_CALL(iprv, PAL_CACHE_SHARED_INFO, level, type, proc_number);
++
++	if (iprv.status == PAL_STATUS_SUCCESS) {
++		info->num_shared = iprv.v0;
++		info->ppli1.ppli1_data = iprv.v1;
++		info->ppli2.ppli2_data = iprv.v2;
++	}
++
++	return iprv.status;
++}
+ #ifdef XEN
+ #include <asm/vmx_pal.h>
+ #endif

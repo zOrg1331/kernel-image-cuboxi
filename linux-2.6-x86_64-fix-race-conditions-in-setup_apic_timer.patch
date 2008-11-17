@@ -1,0 +1,38 @@
+From: Geoff Gustafson <grgustaf@redhat.com>
+Date: Fri, 28 Sep 2007 17:22:35 -0400
+Subject: [x86_64] fix race conditions in setup_APIC_timer
+Message-id: 20070928212235.GA8985@samurai.boston.redhat.com
+O-Subject: [RHEL5.1 PATCH] fix race conditions in setup_APIC_timer (bz 251869)
+Bugzilla: 251869
+
+This patch upstream fixes race conditions in setup_APIC_timer, and fixed system hangs for the submitter.
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=b291aa7a6564e859af144e1bd14ffa463519b198
+
+Intel has run into the same problem on a repeated reboot test, and submitted BZ 251869. A slight variant of the attached patch was appeared to fix the problem for Intel. The Intel requester would like this considered for 5.1 errata.
+
+The upstream submitter wasn't totally sure about the patch, but it's been in Linus' tree for almost two months now. It looks sensible to me.
+
+- Geoff
+
+diff --git a/arch/x86_64/kernel/apic.c b/arch/x86_64/kernel/apic.c
+index 32cf9f7..ca13cff 100644
+--- a/arch/x86_64/kernel/apic.c
++++ b/arch/x86_64/kernel/apic.c
+@@ -728,10 +728,12 @@ static void setup_APIC_timer(unsigned int clocks)
+ 
+ 	/* wait for irq slice */
+  	if (vxtime.hpet_address && hpet_use_timer) {
+- 		int trigger = hpet_readl(HPET_T0_CMP);
+- 		while (hpet_readl(HPET_COUNTER) >= trigger)
+- 			/* do nothing */ ;
+- 		while (hpet_readl(HPET_COUNTER) <  trigger)
++		/*
++		 * Wait for the comparator value to change which signals that
++		 * the tick slice has expired.
++		 */
++		u32 trigger = hpet_readl(HPET_T0_CMP);
++		while (hpet_readl(HPET_T0_CMP) == trigger)
+  			/* do nothing */ ;
+  	} else {
+ 		int c1, c2;

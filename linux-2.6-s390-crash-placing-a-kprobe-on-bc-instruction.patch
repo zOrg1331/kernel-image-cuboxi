@@ -1,0 +1,56 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 16 Nov 2007 13:57:44 +0100
+Subject: [s390] crash placing a kprobe on "bc" instruction
+Message-id: 20071116125744.GR6053@redhat.com
+O-Subject: [RHEL5 U2 PATCH 10/14] s390 - Placing a kprobe on "bc" instruction can crash the system.
+Bugzilla: 253275
+
+Description
+============
+The instruction length is encoded into the first two bits of the s390
+instruction.  Kprobes is incorrectly computing the instruction length.
+The instruction length is used for determining what type of "fix-up" is needed
+for conditions branch instruction.  The problem can be seen by placing a kprobe
+on a  "bc" instruction that will not branch.   The results is that  Kprobe
+incorrectly computes the  new instruction pointer (psw.addr) after single
+stepping the instruction.
+
+This problem was identified by code inspection, and later reproduced using the
+test code.  The problem has not been seen on a production system.
+
+Bugzilla
+=========
+
+BZ 253275
+https://bugzilla.redhat.com/show_bug.cgi?id=253275
+
+Upstream status of the patch:
+=============================
+ Patch is posted upstream
+
+ http://lkml.org/lkml/2007/8/15/347
+ http://lkml.org/lkml/2007/8/15/365
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/arch/s390/kernel/kprobes.c b/arch/s390/kernel/kprobes.c
+index 1dc9163..66a16a8 100644
+--- a/arch/s390/kernel/kprobes.c
++++ b/arch/s390/kernel/kprobes.c
+@@ -85,7 +85,7 @@ void __kprobes get_instruction_type(struct arch_specific_insn *ainsn)
+ 	ainsn->reg = (*ainsn->insn & 0xf0) >> 4;
+ 
+ 	/* save the instruction length (pop 5-5) in bytes */
+-	switch (*(__u8 *) (ainsn->insn) >> 4) {
++	switch (*(__u8 *) (ainsn->insn) >> 6) {
+ 	case 0:
+ 		ainsn->ilen = 2;
+ 		break;

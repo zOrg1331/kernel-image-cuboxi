@@ -1,0 +1,35 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL 5.1 PATCH]: BZ 227838 Change rivafb_remove to __deviexit
+Date: Thu, 22 Feb 2007 11:07:25 -0500
+Bugzilla: 227838
+Message-Id: <20070222160725.1492.15818.sendpatchset@prarit.boston.redhat.com>
+Changelog: [video] Change rivafb_remove to __deviexit
+
+
+Change rivafb_remove to __deviexit.
+
+Resolves BZ 227838.
+
+Successfully tested by me.
+
+--- linux-2.6.18.ia64.orig/drivers/video/riva/fbdev.c	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.ia64/drivers/video/riva/fbdev.c	2007-02-22 11:04:19.000000000 -0500
+@@ -2177,7 +2177,7 @@ err_ret:
+ 	return ret;
+ }
+ 
+-static void __exit rivafb_remove(struct pci_dev *pd)
++static void __devexit rivafb_remove(struct pci_dev *pd)
+ {
+ 	struct fb_info *info = pci_get_drvdata(pd);
+ 	struct riva_par *par = info->par;
+@@ -2255,7 +2255,7 @@ static struct pci_driver rivafb_driver =
+ 	.name		= "rivafb",
+ 	.id_table	= rivafb_pci_tbl,
+ 	.probe		= rivafb_probe,
+-	.remove		= __exit_p(rivafb_remove),
++	.remove		= __devexit_p(rivafb_remove),
+ };
+ 
+ 
+

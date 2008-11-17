@@ -1,0 +1,136 @@
+From: Kei Tokunaga<ktokunag@redhat.com>
+Subject: [RHEL5 PATCH] strange messages around booting and acpi-memory-hotplug
+Date: Mon, 30 Oct 2006 16:11:13
+Bugzilla: 212231
+Message-Id: <45466A71.8050104@redhat.com>
+Changelog: strange messages around booting and acpi-memory-hotplug
+
+BZ212231
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=212231
+
+Attached patch fixes BZ212231/IT104817.
+
+Memory hot-add function is supposed to be called in
+the event of memory hot-add literally, but it's also
+called even at boot time when ACPI scanning runs.
+Unuseful and even misleading messages "ACPI: add_memory
+failed" are printed at boot time as a result of that.
+This may worry the customers unnecessarily and they
+may contact us about it.
+
+The patch has been already included in upstream.
+Attached patch is a backported patch for RHEL5 CVS
+kernel.  We, Fujitsu, have done some testing on it.
+
+Thanks,
+Kei
+--
+Keiichiro Tokunaga
+Fujitsu On-site Engineer
+
+commit 887b95931b4072e60e3bf4253ff7bffe372bca46
+Author: Yasunori Goto <y-goto@jp.fujitsu.com>
+
+    [PATCH] acpi memory hotplug: remove strange add_memory fail message
+    
+    I wrote a patch to avoid redundant memory hot-add call at boot time.  This
+    was cause of strange fail message of memory hotplug like "ACPI: add_memory
+    failed".  Memory is recognized by early boot code with EFI/E820.
+    
+    But, if DSDT describes memory devices for them, then hot-add code is called
+    for already recognized memory, and it shows fail messages with -EEXIST.
+    So, sys admin will misunderstand this message as something wrong by it.
+    
+    This patch avoids them by preventing redundant hot-add call until
+    completion of driver initialization.
+    
+    [akpm@osdl.org: cleanups]
+    Signed-off-by: Yasunori Goto <y-goto@jp.fujitsu.com>
+    Cc: "Brown, Len" <len.brown@intel.com>
+    Signed-off-by: Andrew Morton <akpm@osdl.org>
+    Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+
+index 9090b5a..6bcd9e8 100644
+
+
+---
+
+ linux-2.6.18-1.2739.el5-kei/drivers/acpi/acpi_memhotplug.c |   12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff -puN drivers/acpi/acpi_memhotplug.c~remove_strange_add_memory_fail_msg drivers/acpi/acpi_memhotplug.c
+--- linux-2.6.18-1.2739.el5/drivers/acpi/acpi_memhotplug.c~remove_strange_add_memory_fail_msg	2006-10-27 17:18:29.000000000 -0400
++++ linux-2.6.18-1.2739.el5-kei/drivers/acpi/acpi_memhotplug.c	2006-10-27 17:18:29.000000000 -0400
+@@ -85,6 +85,8 @@ struct acpi_memory_device {
+ 	struct list_head res_list;
+ };
+ 
++static int acpi_hotmem_initialized;
++
+ static acpi_status
+ acpi_memory_get_resource(struct acpi_resource *resource, void *context)
+ {
+@@ -436,6 +438,15 @@ static int acpi_memory_device_start (str
+ 	struct acpi_memory_device *mem_device;
+ 	int result = 0;
+ 
++	/*
++	 * Early boot code has recognized memory area by EFI/E820.
++	 * If DSDT shows these memory devices on boot, hotplug is not necessary
++	 * for them. So, it just returns until completion of this driver's
++	 * start up.
++	 */
++	if (!acpi_hotmem_initialized)
++		return 0;
++
+ 	mem_device = acpi_driver_data(device);
+ 
+ 	if (!acpi_memory_check_device(mem_device)) {
+@@ -535,6 +546,7 @@ static int __init acpi_memory_device_ini
+ 		return -ENODEV;
+ 	}
+ 
++	acpi_hotmem_initialized = 1;
+ 	return 0;
+ }
+ 
+
+_
+
+
+commit 6cbe44cd8d48a92856295f445183f52bf42a544d
+Author: Yasunori Goto <y-goto@jp.fujitsu.com>
+Date:   Thu Oct 19 23:28:30 2006 -0700
+
+    [PATCH] Change log level of a message of acpi_memhotplug to KERN_DEBUG
+    
+    I suppose this message seems quite useless except debugging.  It just shows
+    "Hotplug Mem Device".  System admin can't know anything by this message.
+    So, I would like to change it to KERN_DEBUG.
+    
+    Signed-off-by: Yasunori Goto <y-goto@jp.fujitsu.com>
+    Signed-off-by: Andrew Morton <akpm@osdl.org>
+    Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+
+index 98099de..9090b5a 100644
+
+
+---
+
+ linux-2.6.18-1.2739.el5-kei/drivers/acpi/acpi_memhotplug.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN drivers/acpi/acpi_memhotplug.c~change_log_level_of_acpi_memoryhotplug drivers/acpi/acpi_memhotplug.c
+--- linux-2.6.18-1.2739.el5/drivers/acpi/acpi_memhotplug.c~change_log_level_of_acpi_memoryhotplug	2006-10-27 17:18:32.000000000 -0400
++++ linux-2.6.18-1.2739.el5-kei/drivers/acpi/acpi_memhotplug.c	2006-10-27 17:18:32.000000000 -0400
+@@ -414,7 +414,7 @@ static int acpi_memory_device_add(struct
+ 	/* Set the device state */
+ 	mem_device->state = MEMORY_POWER_ON_STATE;
+ 
+-	printk(KERN_INFO "%s \n", acpi_device_name(device));
++	printk(KERN_DEBUG "%s \n", acpi_device_name(device));
+ 
+ 	return result;
+ }
+
+_

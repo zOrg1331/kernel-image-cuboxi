@@ -1,0 +1,1079 @@
+From: Jan Glauber <jglauber@redhat.com>
+Subject: [RHEL5 PATCH s390] common i/o layer fixes from upstream
+Date: Thu, 30 Nov 2006 10:42:56 +0100
+Bugzilla: 217799
+Message-Id: <1164879776.5610.21.camel@bender>
+Changelog: s390: common i/o layer fixes
+
+
+BZ 217799. 
+
+There are some cio patches that missed 2.6.18 that should go into RHEL5.
+Without these patches setting paths offline/online wont work, therefore
+a device qualification for RHEL5 would fail.
+
+All patches are upstream (2.6.19) and tested by IBM.
+
+Changelog:
+- css_probe_device() must be called enabled
+- 0 is a valid chpid
+- incorrect device operational notification
+- inaccessible device after CHPID deactivation
+- always query all paths on path verification
+- subchannel evaluation function must operate with lock
+- subchannels remain in no-path state although channel paths reappeared
+- add timeout for internal operations
+- update path groups on logical CHPID changes
+- start path verification after I/O finished during grace period
+
+Jan
+-- 
+jglauber@redhat.com
+jang@de.ibm.com
+
+ chsc.c          |   69 +++++++++++++------
+ cio.c           |    7 -
+ css.c           |  202 ++++++++++++++++++++++++++++----------------------------
+ css.h           |    2 
+ device.c        |    3 
+ device_fsm.c    |   65 +++++++++++++-----
+ device_id.c     |   12 ++-
+ device_ops.c    |   27 ++++++-
+ device_pgid.c   |  125 ++++++++++++++++++++++------------
+ device_status.c |    3 
+ 10 files changed, 324 insertions(+), 191 deletions(-)
+
+diff -urNp linux-2.6.18.s390x/drivers/s390/cio/chsc.c linux-2.6.18.s390x.cio/drivers/s390/cio/chsc.c
+--- linux-2.6.18.s390x/drivers/s390/cio/chsc.c	2006-11-29 16:40:29.000000000 +0100
++++ linux-2.6.18.s390x.cio/drivers/s390/cio/chsc.c	2006-11-29 18:05:46.000000000 +0100
+@@ -200,11 +200,13 @@ css_get_ssd_info(struct subchannel *sch)
+ 	spin_unlock_irq(&sch->lock);
+ 	free_page((unsigned long)page);
+ 	if (!ret) {
+-		int j, chpid;
++		int j, chpid, mask;
+ 		/* Allocate channel path structures, if needed. */
+ 		for (j = 0; j < 8; j++) {
++			mask = 0x80 >> j;
+ 			chpid = sch->ssd_info.chpid[j];
+-			if (chpid && (get_chp_status(chpid) < 0))
++			if ((sch->schib.pmcw.pim & mask) &&
++			    (get_chp_status(chpid) < 0))
+ 			    new_channel_path(chpid);
+ 		}
+ 	}
+@@ -222,13 +224,15 @@ s390_subchannel_remove_chpid(struct devi
+ 
+ 	sch = to_subchannel(dev);
+ 	chpid = data;
+-	for (j = 0; j < 8; j++)
+-		if (sch->schib.pmcw.chpid[j] == chpid->id)
++	for (j = 0; j < 8; j++) {
++		mask = 0x80 >> j;
++		if ((sch->schib.pmcw.pim & mask) &&
++		    (sch->schib.pmcw.chpid[j] == chpid->id))
+ 			break;
++	}
+ 	if (j >= 8)
+ 		return 0;
+ 
+-	mask = 0x80 >> j;
+ 	spin_lock_irq(&sch->lock);
+ 
+ 	stsch(sch->schid, &schib);
+@@ -247,6 +251,8 @@ s390_subchannel_remove_chpid(struct devi
+ 		cc = cio_clear(sch);
+ 		if (cc == -ENODEV)
+ 			goto out_unreg;
++		/* Request retry of internal operation. */
++		device_set_intretry(sch);
+ 		/* Call handler. */
+ 		if (sch->driver && sch->driver->termination)
+ 			sch->driver->termination(&sch->dev);
+@@ -256,7 +262,7 @@ s390_subchannel_remove_chpid(struct devi
+ 	/* trigger path verification. */
+ 	if (sch->driver && sch->driver->verify)
+ 		sch->driver->verify(&sch->dev);
+-	else if (sch->vpm == mask)
++	else if (sch->lpm == mask)
+ 		goto out_unreg;
+ out_unlock:
+ 	spin_unlock_irq(&sch->lock);
+@@ -378,6 +384,7 @@ __s390_process_res_acc(struct subchannel
+ 
+ 	if (chp_mask == 0) {
+ 		spin_unlock_irq(&sch->lock);
++		put_device(&sch->dev);
+ 		return 0;
+ 	}
+ 	old_lpm = sch->lpm;
+@@ -392,7 +399,7 @@ __s390_process_res_acc(struct subchannel
+ 
+ 	spin_unlock_irq(&sch->lock);
+ 	put_device(&sch->dev);
+-	return (res_data->fla_mask == 0xffff) ? -ENODEV : 0;
++	return 0;
+ }
+ 
+
+@@ -619,7 +626,7 @@ __chp_add_new_sch(struct subchannel_id s
+ static int
+ __chp_add(struct subchannel_id schid, void *data)
+ {
+-	int i;
++	int i, mask;
+ 	struct channel_path *chp;
+ 	struct subchannel *sch;
+ 
+@@ -629,8 +636,10 @@ __chp_add(struct subchannel_id schid, vo
+ 		/* Check if the subchannel is now available. */
+ 		return __chp_add_new_sch(schid);
+ 	spin_lock_irq(&sch->lock);
+-	for (i=0; i<8; i++)
+-		if (sch->schib.pmcw.chpid[i] == chp->id) {
++	for (i=0; i<8; i++) {
++		mask = 0x80 >> i;
++		if ((sch->schib.pmcw.pim & mask) &&
++		    (sch->schib.pmcw.chpid[i] == chp->id)) {
+ 			if (stsch(sch->schid, &sch->schib) != 0) {
+ 				/* Endgame. */
+ 				spin_unlock_irq(&sch->lock);
+@@ -638,6 +647,7 @@ __chp_add(struct subchannel_id schid, vo
+ 			}
+ 			break;
+ 		}
++	}
+ 	if (i==8) {
+ 		spin_unlock_irq(&sch->lock);
+ 		return 0;
+@@ -645,7 +655,7 @@ __chp_add(struct subchannel_id schid, vo
+ 	sch->lpm = ((sch->schib.pmcw.pim &
+ 		     sch->schib.pmcw.pam &
+ 		     sch->schib.pmcw.pom)
+-		    | 0x80 >> i) & sch->opm;
++		    | mask) & sch->opm;
+ 
+ 	if (sch->driver && sch->driver->verify)
+ 		sch->driver->verify(&sch->dev);
+@@ -700,23 +710,37 @@ chp_process_crw(int chpid, int on)
+ }
+ 
+ static inline int
+-__check_for_io_and_kill(struct subchannel *sch, int index)
++check_for_io_on_path(struct subchannel *sch, int index)
+ {
+ 	int cc;
+ 
+-	if (!device_is_online(sch))
+-		/* cio could be doing I/O. */
+-		return 0;
+ 	cc = stsch(sch->schid, &sch->schib);
+ 	if (cc)
+ 		return 0;
+-	if (sch->schib.scsw.actl && sch->schib.pmcw.lpum == (0x80 >> index)) {
+-		device_set_waiting(sch);
++	if (sch->schib.scsw.actl && sch->schib.pmcw.lpum == (0x80 >> index))
+ 		return 1;
+-	}
+ 	return 0;
+ }
+ 
++static void
++terminate_internal_io(struct subchannel *sch)
++{
++	if (cio_clear(sch)) {
++		/* Recheck device in case clear failed */
++		sch->lpm = 0;
++		if (css_enqueue_subchannel_slow(sch->schid)) {
++			css_clear_subchannel_slow_list();
++			need_rescan = 1;
++		}
++		return;
++	}
++	/* Request retry of internal operation. */
++	device_set_intretry(sch);
++	/* Call handler. */
++	if (sch->driver && sch->driver->termination)
++		sch->driver->termination(&sch->dev);
++}
++
+ static inline void
+ __s390_subchannel_vary_chpid(struct subchannel *sch, __u8 chpid, int on)
+ {
+@@ -747,7 +771,14 @@ __s390_subchannel_vary_chpid(struct subc
+ 			 * can successfully terminate, even using the
+ 			 * just varied off path. Then kill it.
+ 			 */
+-			if (!__check_for_io_and_kill(sch, chp) && !sch->lpm) {
++			if (check_for_io_on_path(sch, chp)) {
++				if (device_is_online(sch))
++					/* Wait for I/O to finish */
++					device_set_waiting(sch);
++				else
++					/* Kill and retry internal I/O */
++					terminate_internal_io(sch);
++			} else if (!sch->lpm) {
+ 				if (css_enqueue_subchannel_slow(sch->schid)) {
+ 					css_clear_subchannel_slow_list();
+ 					need_rescan = 1;
+diff -urNp linux-2.6.18.s390x/drivers/s390/cio/cio.c linux-2.6.18.s390x.cio/drivers/s390/cio/cio.c
+--- linux-2.6.18.s390x/drivers/s390/cio/cio.c	2006-11-29 16:40:29.000000000 +0100
++++ linux-2.6.18.s390x.cio/drivers/s390/cio/cio.c	2006-11-29 18:05:46.000000000 +0100
+@@ -192,7 +192,7 @@ cio_start_key (struct subchannel *sch,	/
+ 	sch->orb.pfch = sch->options.prefetch == 0;
+ 	sch->orb.spnd = sch->options.suspend;
+ 	sch->orb.ssic = sch->options.suspend && sch->options.inter;
+-	sch->orb.lpm = (lpm != 0) ? (lpm & sch->opm) : sch->lpm;
++	sch->orb.lpm = (lpm != 0) ? lpm : sch->lpm;
+ #ifdef CONFIG_64BIT
+ 	/*
+ 	 * for 64 bit we always support 64 bit IDAWs with 4k page size only
+@@ -570,10 +570,7 @@ cio_validate_subchannel (struct subchann
+ 	sch->opm = 0xff;
+ 	if (!cio_is_console(sch->schid))
+ 		chsc_validate_chpids(sch);
+-	sch->lpm = sch->schib.pmcw.pim &
+-		sch->schib.pmcw.pam &
+-		sch->schib.pmcw.pom &
+-		sch->opm;
++	sch->lpm = sch->schib.pmcw.pam & sch->opm;
+ 
+ 	CIO_DEBUG(KERN_INFO, 0,
+ 		  "Detected device %04x on subchannel 0.%x.%04X"
+diff -urNp linux-2.6.18.s390x/drivers/s390/cio/css.c linux-2.6.18.s390x.cio/drivers/s390/cio/css.c
+--- linux-2.6.18.s390x/drivers/s390/cio/css.c	2006-11-29 16:40:29.000000000 +0100
++++ linux-2.6.18.s390x.cio/drivers/s390/cio/css.c	2006-11-29 18:05:46.000000000 +0100
+@@ -182,136 +182,140 @@ get_subchannel_by_schid(struct subchanne
+ 	return dev ? to_subchannel(dev) : NULL;
+ }
+ 
+-
+-static inline int
+-css_get_subchannel_status(struct subchannel *sch, struct subchannel_id schid)
++static inline int css_get_subchannel_status(struct subchannel *sch)
+ {
+ 	struct schib schib;
+-	int cc;
+ 
+-	cc = stsch(schid, &schib);
+-	if (cc)
+-		return CIO_GONE;
+-	if (!schib.pmcw.dnv)
++	if (stsch(sch->schid, &schib) || !schib.pmcw.dnv)
+ 		return CIO_GONE;
+-	if (sch && sch->schib.pmcw.dnv &&
+-	    (schib.pmcw.dev != sch->schib.pmcw.dev))
++	if (sch->schib.pmcw.dnv && (schib.pmcw.dev != sch->schib.pmcw.dev))
+ 		return CIO_REVALIDATE;
+-	if (sch && !sch->lpm)
++	if (!sch->lpm)
+ 		return CIO_NO_PATH;
+ 	return CIO_OPER;
+ }
+-	
+-static int
+-css_evaluate_subchannel(struct subchannel_id schid, int slow)
++
++static int css_evaluate_known_subchannel(struct subchannel *sch, int slow)
+ {
+ 	int event, ret, disc;
+-	struct subchannel *sch;
+ 	unsigned long flags;
++	enum { NONE, UNREGISTER, UNREGISTER_PROBE, REPROBE } action;
+ 
+-	sch = get_subchannel_by_schid(schid);
+-	disc = sch ? device_is_disconnected(sch) : 0;
++	spin_lock_irqsave(&sch->lock, flags);
++	disc = device_is_disconnected(sch);
+ 	if (disc && slow) {
+-		if (sch)
+-			put_device(&sch->dev);
+-		return 0; /* Already processed. */
++		/* Disconnected devices are evaluated directly only.*/
++		spin_unlock_irqrestore(&sch->lock, flags);
++		return 0;
+ 	}
+-	/*
+-	 * We've got a machine check, so running I/O won't get an interrupt.
+-	 * Kill any pending timers.
+-	 */
+-	if (sch)
+-		device_kill_pending_timer(sch);
++	/* No interrupt after machine check - kill pending timers. */
++	device_kill_pending_timer(sch);
+ 	if (!disc && !slow) {
+-		if (sch)
+-			put_device(&sch->dev);
+-		return -EAGAIN; /* Will be done on the slow path. */
++		/* Non-disconnected devices are evaluated on the slow path. */
++		spin_unlock_irqrestore(&sch->lock, flags);
++		return -EAGAIN;
+ 	}
+-	event = css_get_subchannel_status(sch, schid);
++	event = css_get_subchannel_status(sch);
+ 	CIO_MSG_EVENT(4, "Evaluating schid 0.%x.%04x, event %d, %s, %s path.\n",
+-		      schid.ssid, schid.sch_no, event,
+-		      sch?(disc?"disconnected":"normal"):"unknown",
+-		      slow?"slow":"fast");
++		      sch->schid.ssid, sch->schid.sch_no, event,
++		      disc ? "disconnected" : "normal",
++		      slow ? "slow" : "fast");
++	/* Analyze subchannel status. */
++	action = NONE;
+ 	switch (event) {
+ 	case CIO_NO_PATH:
+-	case CIO_GONE:
+-		if (!sch) {
+-			/* Never used this subchannel. Ignore. */
+-			ret = 0;
++		if (disc) {
++			/* Check if paths have become available. */
++			action = REPROBE;
+ 			break;
+ 		}
+-		if (disc && (event == CIO_NO_PATH)) {
+-			/*
+-			 * Uargh, hack again. Because we don't get a machine
+-			 * check on configure on, our path bookkeeping can
+-			 * be out of date here (it's fine while we only do
+-			 * logical varying or get chsc machine checks). We
+-			 * need to force reprobing or we might miss devices
+-			 * coming operational again. It won't do harm in real
+-			 * no path situations.
+-			 */
+-			spin_lock_irqsave(&sch->lock, flags);
+-			device_trigger_reprobe(sch);
++		/* fall through */
++	case CIO_GONE:
++		/* Prevent unwanted effects when opening lock. */
++		cio_disable_subchannel(sch);
++		device_set_disconnected(sch);
++		/* Ask driver what to do with device. */
++		action = UNREGISTER;
++		if (sch->driver && sch->driver->notify) {
+ 			spin_unlock_irqrestore(&sch->lock, flags);
+-			ret = 0;
+-			break;
+-		}
+-		if (sch->driver && sch->driver->notify &&
+-		    sch->driver->notify(&sch->dev, event)) {
+-			cio_disable_subchannel(sch);
+-			device_set_disconnected(sch);
+-			ret = 0;
+-			break;
++			ret = sch->driver->notify(&sch->dev, event);
++			spin_lock_irqsave(&sch->lock, flags);
++			if (ret)
++				action = NONE;
+ 		}
+-		/*
+-		 * Unregister subchannel.
+-		 * The device will be killed automatically.
+-		 */
+-		cio_disable_subchannel(sch);
+-		css_sch_device_unregister(sch);
+-		/* Reset intparm to zeroes. */
+-		sch->schib.pmcw.intparm = 0;
+-		cio_modify(sch);
+-		put_device(&sch->dev);
+-		ret = 0;
+ 		break;
+ 	case CIO_REVALIDATE:
+-		/* 
+-		 * Revalidation machine check. Sick.
+-		 * We don't notify the driver since we have to throw the device
+-		 * away in any case.
+-		 */
+-		if (!disc) {
+-			css_sch_device_unregister(sch);
+-			/* Reset intparm to zeroes. */
+-			sch->schib.pmcw.intparm = 0;
+-			cio_modify(sch);
+-			put_device(&sch->dev);
+-			ret = css_probe_device(schid);
+-		} else {
+-			/*
+-			 * We can't immediately deregister the disconnected
+-			 * device since it might block.
+-			 */
+-			spin_lock_irqsave(&sch->lock, flags);
+-			device_trigger_reprobe(sch);
+-			spin_unlock_irqrestore(&sch->lock, flags);
+-			ret = 0;
+-		}
++		/* Device will be removed, so no notify necessary. */
++		if (disc)
++			/* Reprobe because immediate unregister might block. */
++			action = REPROBE;
++		else
++			action = UNREGISTER_PROBE;
+ 		break;
+ 	case CIO_OPER:
+-		if (disc) {
+-			spin_lock_irqsave(&sch->lock, flags);
++		if (disc)
+ 			/* Get device operational again. */
+-			device_trigger_reprobe(sch);
+-			spin_unlock_irqrestore(&sch->lock, flags);
+-		}
+-		ret = sch ? 0 : css_probe_device(schid);
++			action = REPROBE;
++		break;
++	}
++	/* Perform action. */
++	ret = 0;
++	switch (action) {
++	case UNREGISTER:
++	case UNREGISTER_PROBE:
++		/* Unregister device (will use subchannel lock). */
++		spin_unlock_irqrestore(&sch->lock, flags);
++		css_sch_device_unregister(sch);
++		spin_lock_irqsave(&sch->lock, flags);
++
++		/* Reset intparm to zeroes. */
++		sch->schib.pmcw.intparm = 0;
++		cio_modify(sch);
++		break;
++	case REPROBE:
++		device_trigger_reprobe(sch);
+ 		break;
+ 	default:
+-		BUG();
+-		ret = 0;
++		break;
+ 	}
++	spin_unlock_irqrestore(&sch->lock, flags);
++	/* Probe if necessary. */
++	if (action == UNREGISTER_PROBE)
++		ret = css_probe_device(sch->schid);
++
++	return ret;
++}
++
++static int css_evaluate_new_subchannel(struct subchannel_id schid, int slow)
++{
++	struct schib schib;
++
++	if (!slow) {
++		/* Will be done on the slow path. */
++		return -EAGAIN;
++	}
++	if (stsch(schid, &schib) || !schib.pmcw.dnv) {
++		/* Unusable - ignore. */
++		return 0;
++	}
++	CIO_MSG_EVENT(4, "Evaluating schid 0.%x.%04x, event %d, unknown, "
++			 "slow path.\n", schid.ssid, schid.sch_no, CIO_OPER);
++
++	return css_probe_device(schid);
++}
++
++static int css_evaluate_subchannel(struct subchannel_id schid, int slow)
++{
++	struct subchannel *sch;
++	int ret;
++
++	sch = get_subchannel_by_schid(schid);
++	if (sch) {
++		ret = css_evaluate_known_subchannel(sch, slow);
++		put_device(&sch->dev);
++	} else
++		ret = css_evaluate_new_subchannel(schid, slow);
++
+ 	return ret;
+ }
+ 
+diff -urNp linux-2.6.18.s390x/drivers/s390/cio/css.h linux-2.6.18.s390x.cio/drivers/s390/cio/css.h
+--- linux-2.6.18.s390x/drivers/s390/cio/css.h	2006-11-29 16:40:27.000000000 +0100
++++ linux-2.6.18.s390x.cio/drivers/s390/cio/css.h	2006-11-29 18:05:46.000000000 +0100
+@@ -95,6 +95,7 @@ struct ccw_device_private {
+ 		unsigned int donotify:1;    /* call notify function */
+ 		unsigned int recog_done:1;  /* dev. recog. complete */
+ 		unsigned int fake_irb:1;    /* deliver faked irb */
++		unsigned int intretry:1;    /* retry internal operation */
+ 	} __attribute__((packed)) flags;
+ 	unsigned long intparm;	/* user interruption parameter */
+ 	struct qdio_irq *qdio_data;
+@@ -172,6 +173,7 @@ void device_trigger_reprobe(struct subch
+ /* Helper functions for vary on/off. */
+ int device_is_online(struct subchannel *);
+ void device_set_waiting(struct subchannel *);
++void device_set_intretry(struct subchannel *sch);
+ 
+ /* Machine check helper function. */
+ void device_kill_pending_timer(struct subchannel *);
+diff -urNp linux-2.6.18.s390x/drivers/s390/cio/device.c linux-2.6.18.s390x.cio/drivers/s390/cio/device.c
+--- linux-2.6.18.s390x/drivers/s390/cio/device.c	2006-11-29 18:00:57.000000000 +0100
++++ linux-2.6.18.s390x.cio/drivers/s390/cio/device.c	2006-11-29 18:05:46.000000000 +0100
+@@ -951,6 +951,9 @@ io_subchannel_ioterm(struct device *dev)
+ 	cdev = dev->driver_data;
+ 	if (!cdev)
+ 		return;
++	/* Internal I/O will be retried by the interrupt handler */
++	if (cdev->private->flags.intretry)
++		return;
+ 	cdev->private->state = DEV_STATE_CLEAR_VERIFY;
+ 	if (cdev->handler)
+ 		cdev->handler(cdev, cdev->private->intparm,
+diff -urNp linux-2.6.18.s390x/drivers/s390/cio/device_fsm.c linux-2.6.18.s390x.cio/drivers/s390/cio/device_fsm.c
+--- linux-2.6.18.s390x/drivers/s390/cio/device_fsm.c	2006-11-29 16:40:28.000000000 +0100
++++ linux-2.6.18.s390x.cio/drivers/s390/cio/device_fsm.c	2006-11-29 18:05:46.000000000 +0100
+@@ -68,9 +68,21 @@ device_set_waiting(struct subchannel *sc
+ 		return;
+ 	cdev = sch->dev.driver_data;
+ 	ccw_device_set_timeout(cdev, 10*HZ);
++	cdev->private->flags.doverify = 1;
+ 	cdev->private->state = DEV_STATE_WAIT4IO;
+ }
+ 
++void
++device_set_intretry(struct subchannel *sch)
++{
++	struct ccw_device *cdev;
++
++	cdev = sch->dev.driver_data;
++	if (!cdev)
++		return;
++	cdev->private->flags.intretry = 1;
++}
++
+ /*
+  * Timeout function. It just triggers a DEV_EVENT_TIMEOUT.
+  */
+@@ -232,10 +244,7 @@ ccw_device_recog_done(struct ccw_device 
+ 	 */
+ 	old_lpm = sch->lpm;
+ 	stsch(sch->schid, &sch->schib);
+-	sch->lpm = sch->schib.pmcw.pim &
+-		sch->schib.pmcw.pam &
+-		sch->schib.pmcw.pom &
+-		sch->opm;
++	sch->lpm = sch->schib.pmcw.pam & sch->opm;
+ 	/* Check since device may again have become not operational. */
+ 	if (!sch->schib.pmcw.dnv)
+ 		state = DEV_STATE_NOT_OPER;
+@@ -351,6 +360,8 @@ ccw_device_done(struct ccw_device *cdev,
+ 
+ 	sch = to_subchannel(cdev->dev.parent);
+ 
++	ccw_device_set_timeout(cdev, 0);
++
+ 	if (state != DEV_STATE_ONLINE)
+ 		cio_disable_subchannel(sch);
+ 
+@@ -454,8 +465,8 @@ ccw_device_sense_pgid_done(struct ccw_de
+ 		return;
+ 	}
+ 	/* Start Path Group verification. */
+-	sch->vpm = 0;	/* Start with no path groups set. */
+ 	cdev->private->state = DEV_STATE_VERIFY;
++	cdev->private->flags.doverify = 0;
+ 	ccw_device_verify_start(cdev);
+ }
+ 
+@@ -555,7 +566,19 @@ ccw_device_nopath_notify(void *data)
+ void
+ ccw_device_verify_done(struct ccw_device *cdev, int err)
+ {
+-	cdev->private->flags.doverify = 0;
++	struct subchannel *sch;
++
++	sch = to_subchannel(cdev->dev.parent);
++	/* Update schib - pom may have changed. */
++	stsch(sch->schid, &sch->schib);
++	/* Update lpm with verified path mask. */
++	sch->lpm = sch->vpm;
++	/* Repeat path verification? */
++	if (cdev->private->flags.doverify) {
++		cdev->private->flags.doverify = 0;
++		ccw_device_verify_start(cdev);
++		return;
++	}
+ 	switch (err) {
+ 	case -EOPNOTSUPP: /* path grouping not supported, just set online. */
+ 		cdev->private->options.pgroup = 0;
+@@ -576,9 +599,13 @@ ccw_device_verify_done(struct ccw_device
+ 		}
+ 		break;
+ 	case -ETIME:
++		/* Reset oper notify indication after verify error. */
++		cdev->private->flags.donotify = 0;
+ 		ccw_device_done(cdev, DEV_STATE_BOXED);
+ 		break;
+ 	default:
++		/* Reset oper notify indication after verify error. */
++		cdev->private->flags.donotify = 0;
+ 		PREPARE_WORK(&cdev->private->kick_work,
+ 			     ccw_device_nopath_notify, (void *)cdev);
+ 		queue_work(ccw_device_notify_work, &cdev->private->kick_work);
+@@ -613,6 +640,7 @@ ccw_device_online(struct ccw_device *cde
+ 	if (!cdev->private->options.pgroup) {
+ 		/* Start initial path verification. */
+ 		cdev->private->state = DEV_STATE_VERIFY;
++		cdev->private->flags.doverify = 0;
+ 		ccw_device_verify_start(cdev);
+ 		return 0;
+ 	}
+@@ -659,7 +687,6 @@ ccw_device_offline(struct ccw_device *cd
+ 	/* Are we doing path grouping? */
+ 	if (!cdev->private->options.pgroup) {
+ 		/* No, set state offline immediately. */
+-		sch->vpm = 0;
+ 		ccw_device_done(cdev, DEV_STATE_OFFLINE);
+ 		return 0;
+ 	}
+@@ -780,6 +807,7 @@ ccw_device_online_verify(struct ccw_devi
+ 	}
+ 	/* Device is idle, we can do the path verification. */
+ 	cdev->private->state = DEV_STATE_VERIFY;
++	cdev->private->flags.doverify = 0;
+ 	ccw_device_verify_start(cdev);
+ }
+ 
+@@ -885,6 +913,12 @@ ccw_device_w4sense(struct ccw_device *cd
+ 	 * had killed the original request.
+ 	 */
+ 	if (irb->scsw.fctl & (SCSW_FCTL_CLEAR_FUNC | SCSW_FCTL_HALT_FUNC)) {
++		/* Retry Basic Sense if requested. */
++		if (cdev->private->flags.intretry) {
++			cdev->private->flags.intretry = 0;
++			ccw_device_do_sense(cdev, irb);
++			return;
++		}
+ 		cdev->private->flags.dosense = 0;
+ 		memset(&cdev->private->irb, 0, sizeof(struct irb));
+ 		ccw_device_accumulate_irb(cdev, irb);
+@@ -1001,7 +1035,7 @@ ccw_device_wait4io_irq(struct ccw_device
+ 		PREPARE_WORK(&cdev->private->kick_work,
+ 			     ccw_device_nopath_notify, (void *)cdev);
+ 		queue_work(ccw_device_notify_work, &cdev->private->kick_work);
+-	} else if (cdev->private->flags.doverify)
++	} else
+ 		ccw_device_online_verify(cdev, 0);
+ }
+ 
+@@ -1042,9 +1076,9 @@ ccw_device_wait4io_timeout(struct ccw_de
+ }
+ 
+ static void
+-ccw_device_wait4io_verify(struct ccw_device *cdev, enum dev_event dev_event)
++ccw_device_delay_verify(struct ccw_device *cdev, enum dev_event dev_event)
+ {
+-	/* When the I/O has terminated, we have to start verification. */
++	/* Start verification after current task finished. */
+ 	cdev->private->flags.doverify = 1;
+ }
+ 
+@@ -1110,10 +1144,7 @@ device_trigger_reprobe(struct subchannel
+ 	 * The pim, pam, pom values may not be accurate, but they are the best
+ 	 * we have before performing device selection :/
+ 	 */
+-	sch->lpm = sch->schib.pmcw.pim &
+-		sch->schib.pmcw.pam &
+-		sch->schib.pmcw.pom &
+-		sch->opm;
++	sch->lpm = sch->schib.pmcw.pam & sch->opm;
+ 	/* Re-set some bits in the pmcw that were lost. */
+ 	sch->schib.pmcw.isc = 3;
+ 	sch->schib.pmcw.csense = 1;
+@@ -1237,7 +1268,7 @@ fsm_func_t *dev_jumptable[NR_DEV_STATES]
+ 		[DEV_EVENT_NOTOPER]	= ccw_device_online_notoper,
+ 		[DEV_EVENT_INTERRUPT]	= ccw_device_verify_irq,
+ 		[DEV_EVENT_TIMEOUT]	= ccw_device_onoff_timeout,
+-		[DEV_EVENT_VERIFY]	= ccw_device_nop,
++		[DEV_EVENT_VERIFY]	= ccw_device_delay_verify,
+ 	},
+ 	[DEV_STATE_ONLINE] = {
+ 		[DEV_EVENT_NOTOPER]	= ccw_device_online_notoper,
+@@ -1280,7 +1311,7 @@ fsm_func_t *dev_jumptable[NR_DEV_STATES]
+ 		[DEV_EVENT_NOTOPER]	= ccw_device_online_notoper,
+ 		[DEV_EVENT_INTERRUPT]	= ccw_device_wait4io_irq,
+ 		[DEV_EVENT_TIMEOUT]	= ccw_device_wait4io_timeout,
+-		[DEV_EVENT_VERIFY]	= ccw_device_wait4io_verify,
++		[DEV_EVENT_VERIFY]	= ccw_device_delay_verify,
+ 	},
+ 	[DEV_STATE_QUIESCE] = {
+ 		[DEV_EVENT_NOTOPER]	= ccw_device_quiesce_done,
+@@ -1293,7 +1324,7 @@ fsm_func_t *dev_jumptable[NR_DEV_STATES]
+ 		[DEV_EVENT_NOTOPER]	= ccw_device_nop,
+ 		[DEV_EVENT_INTERRUPT]	= ccw_device_start_id,
+ 		[DEV_EVENT_TIMEOUT]	= ccw_device_bug,
+-		[DEV_EVENT_VERIFY]	= ccw_device_nop,
++		[DEV_EVENT_VERIFY]	= ccw_device_start_id,
+ 	},
+ 	[DEV_STATE_DISCONNECTED_SENSE_ID] = {
+ 		[DEV_EVENT_NOTOPER]	= ccw_device_recog_notoper,
+diff -urNp linux-2.6.18.s390x/drivers/s390/cio/device_id.c linux-2.6.18.s390x.cio/drivers/s390/cio/device_id.c
+--- linux-2.6.18.s390x/drivers/s390/cio/device_id.c	2006-11-29 16:40:27.000000000 +0100
++++ linux-2.6.18.s390x.cio/drivers/s390/cio/device_id.c	2006-11-29 18:05:46.000000000 +0100
+@@ -197,6 +197,8 @@ __ccw_device_sense_id_start(struct ccw_d
+ 		if ((sch->opm & cdev->private->imask) != 0 &&
+ 		    cdev->private->iretry > 0) {
+ 			cdev->private->iretry--;
++			/* Reset internal retry indication. */
++			cdev->private->flags.intretry = 0;
+ 			ret = cio_start (sch, cdev->private->iccws,
+ 					 cdev->private->imask);
+ 			/* ret is 0, -EBUSY, -EACCES or -ENODEV */
+@@ -243,8 +245,14 @@ ccw_device_check_sense_id(struct ccw_dev
+ 		return 0; /* Success */
+ 	}
+ 	/* Check the error cases. */
+-	if (irb->scsw.fctl & (SCSW_FCTL_HALT_FUNC | SCSW_FCTL_CLEAR_FUNC))
+-		return -ETIME;
++	if (irb->scsw.fctl & (SCSW_FCTL_HALT_FUNC | SCSW_FCTL_CLEAR_FUNC)) {
++		/* Retry Sense ID if requested. */
++		if (cdev->private->flags.intretry) {
++			cdev->private->flags.intretry = 0;
++			return -EAGAIN;
++		} else
++			return -ETIME;
++	}
+ 	if (irb->esw.esw0.erw.cons && (irb->ecw[0] & SNS0_CMD_REJECT)) {
+ 		/*
+ 		 * if the device doesn't support the SenseID
+diff -urNp linux-2.6.18.s390x/drivers/s390/cio/device_ops.c linux-2.6.18.s390x.cio/drivers/s390/cio/device_ops.c
+--- linux-2.6.18.s390x/drivers/s390/cio/device_ops.c	2006-11-29 16:40:29.000000000 +0100
++++ linux-2.6.18.s390x.cio/drivers/s390/cio/device_ops.c	2006-11-29 18:05:46.000000000 +0100
+@@ -96,6 +96,12 @@ ccw_device_start_key(struct ccw_device *
+ 	ret = cio_set_options (sch, flags);
+ 	if (ret)
+ 		return ret;
++	/* Adjust requested path mask to excluded varied off paths. */
++	if (lpm) {
++		lpm &= sch->opm;
++		if (lpm == 0)
++			return -EACCES;
++	}
+ 	ret = cio_start_key (sch, cpa, lpm, key);
+ 	if (ret == 0)
+ 		cdev->private->intparm = intparm;
+@@ -210,6 +216,9 @@ ccw_device_call_handler(struct ccw_devic
+ 	      (stctl & SCSW_STCTL_PRIM_STATUS)))
+ 		return 0;
+ 
++	/* Clear pending timers for device driver initiated I/O. */
++	if (ending_status)
++		ccw_device_set_timeout(cdev, 0);
+ 	/*
+ 	 * Now we are ready to call the device driver interrupt handler.
+ 	 */
+@@ -250,7 +259,7 @@ ccw_device_get_path_mask(struct ccw_devi
+ 	if (!sch)
+ 		return 0;
+ 	else
+-		return sch->vpm;
++		return sch->lpm;
+ }
+ 
+ static void
+@@ -276,10 +285,10 @@ ccw_device_wake_up(struct ccw_device *cd
+ 		 * or intervention required. Also check for long busy
+ 		 * conditions.
+ 		 */
+-		 if (cdev->private->flags.doverify ||
++		if (cdev->private->flags.doverify ||
+ 			 cdev->private->state == DEV_STATE_VERIFY)
+ 			 cdev->private->intparm = -EAGAIN;
+-		 if ((irb->scsw.dstat & DEV_STAT_UNIT_CHECK) &&
++		else if ((irb->scsw.dstat & DEV_STAT_UNIT_CHECK) &&
+ 		     !(irb->ecw[0] &
+ 		       (SNS0_CMD_REJECT | SNS0_INTERVENTION_REQ)))
+ 			 cdev->private->intparm = -EAGAIN;
+@@ -303,8 +312,11 @@ __ccw_device_retry_loop(struct ccw_devic
+ 
+ 	sch = to_subchannel(cdev->dev.parent);
+ 	do {
++		ccw_device_set_timeout(cdev, 60 * HZ);
+ 		ret = cio_start (sch, ccw, lpm);
+-		if ((ret == -EBUSY) || (ret == -EACCES)) {
++		if (ret != 0)
++			ccw_device_set_timeout(cdev, 0);
++		if (ret == -EBUSY) {
+ 			/* Try again later. */
+ 			spin_unlock_irq(&sch->lock);
+ 			msleep(10);
+@@ -433,6 +445,13 @@ read_conf_data_lpm (struct ccw_device *c
+ 	if (!ciw || ciw->cmd == 0)
+ 		return -EOPNOTSUPP;
+ 
++	/* Adjust requested path mask to excluded varied off paths. */
++	if (lpm) {
++		lpm &= sch->opm;
++		if (lpm == 0)
++			return -EACCES;
++	}
++
+ 	rcd_ccw = kzalloc(sizeof(struct ccw1), GFP_KERNEL | GFP_DMA);
+ 	if (!rcd_ccw)
+ 		return -ENOMEM;
+diff -urNp linux-2.6.18.s390x/drivers/s390/cio/device_pgid.c linux-2.6.18.s390x.cio/drivers/s390/cio/device_pgid.c
+--- linux-2.6.18.s390x/drivers/s390/cio/device_pgid.c	2006-11-29 16:40:28.000000000 +0100
++++ linux-2.6.18.s390x.cio/drivers/s390/cio/device_pgid.c	2006-11-29 18:05:46.000000000 +0100
+@@ -71,6 +71,8 @@ __ccw_device_sense_pgid_start(struct ccw
+ 		ccw->cda = (__u32) __pa (&cdev->private->pgid[i]);
+ 		if (cdev->private->iretry > 0) {
+ 			cdev->private->iretry--;
++			/* Reset internal retry indication. */
++			cdev->private->flags.intretry = 0;
+ 			ret = cio_start (sch, cdev->private->iccws, 
+ 					 cdev->private->imask);
+ 			/* ret is 0, -EBUSY, -EACCES or -ENODEV */
+@@ -96,6 +98,9 @@ ccw_device_sense_pgid_start(struct ccw_d
+ {
+ 	int ret;
+ 
++	/* Set a timeout of 60s */
++	ccw_device_set_timeout(cdev, 60*HZ);
++
+ 	cdev->private->state = DEV_STATE_SENSE_PGID;
+ 	cdev->private->imask = 0x80;
+ 	cdev->private->iretry = 5;
+@@ -118,8 +123,14 @@ __ccw_device_check_sense_pgid(struct ccw
+ 
+ 	sch = to_subchannel(cdev->dev.parent);
+ 	irb = &cdev->private->irb;
+-	if (irb->scsw.fctl & (SCSW_FCTL_HALT_FUNC | SCSW_FCTL_CLEAR_FUNC))
+-		return -ETIME;
++	if (irb->scsw.fctl & (SCSW_FCTL_HALT_FUNC | SCSW_FCTL_CLEAR_FUNC)) {
++		/* Retry Sense PGID if requested. */
++		if (cdev->private->flags.intretry) {
++			cdev->private->flags.intretry = 0;
++			return -EAGAIN;
++		} else
++			return -ETIME;
++	}
+ 	if (irb->esw.esw0.erw.cons &&
+ 	    (irb->ecw[0]&(SNS0_CMD_REJECT|SNS0_INTERVENTION_REQ))) {
+ 		/*
+@@ -245,18 +256,19 @@ __ccw_device_do_pgid(struct ccw_device *
+ 	memset(&cdev->private->irb, 0, sizeof(struct irb));
+ 
+ 	/* Try multiple times. */
+-	ret = -ENODEV;
++	ret = -EACCES;
+ 	if (cdev->private->iretry > 0) {
+ 		cdev->private->iretry--;
++		/* Reset internal retry indication. */
++		cdev->private->flags.intretry = 0;
+ 		ret = cio_start (sch, cdev->private->iccws,
+ 				 cdev->private->imask);
+-		/* ret is 0, -EBUSY, -EACCES or -ENODEV */
+-		if ((ret != -EACCES) && (ret != -ENODEV))
++		/* We expect an interrupt in case of success or busy
++		 * indication. */
++		if ((ret == 0) || (ret == -EBUSY))
+ 			return ret;
+ 	}
+-	/* PGID command failed on this path. Switch it off. */
+-	sch->lpm &= ~cdev->private->imask;
+-	sch->vpm &= ~cdev->private->imask;
++	/* PGID command failed on this path. */
+ 	CIO_MSG_EVENT(2, "SPID - Device %04x on Subchannel "
+ 		      "0.%x.%04x, lpm %02X, became 'not operational'\n",
+ 		      cdev->private->devno, sch->schid.ssid,
+@@ -286,18 +298,19 @@ static int __ccw_device_do_nop(struct cc
+ 	memset(&cdev->private->irb, 0, sizeof(struct irb));
+ 
+ 	/* Try multiple times. */
+-	ret = -ENODEV;
++	ret = -EACCES;
+ 	if (cdev->private->iretry > 0) {
+ 		cdev->private->iretry--;
++		/* Reset internal retry indication. */
++		cdev->private->flags.intretry = 0;
+ 		ret = cio_start (sch, cdev->private->iccws,
+ 				 cdev->private->imask);
+-		/* ret is 0, -EBUSY, -EACCES or -ENODEV */
+-		if ((ret != -EACCES) && (ret != -ENODEV))
++		/* We expect an interrupt in case of success or busy
++		 * indication. */
++		if ((ret == 0) || (ret == -EBUSY))
+ 			return ret;
+ 	}
+-	/* nop command failed on this path. Switch it off. */
+-	sch->lpm &= ~cdev->private->imask;
+-	sch->vpm &= ~cdev->private->imask;
++	/* nop command failed on this path. */
+ 	CIO_MSG_EVENT(2, "NOP - Device %04x on Subchannel "
+ 		      "0.%x.%04x, lpm %02X, became 'not operational'\n",
+ 		      cdev->private->devno, sch->schid.ssid,
+@@ -318,8 +331,14 @@ __ccw_device_check_pgid(struct ccw_devic
+ 
+ 	sch = to_subchannel(cdev->dev.parent);
+ 	irb = &cdev->private->irb;
+-	if (irb->scsw.fctl & (SCSW_FCTL_HALT_FUNC | SCSW_FCTL_CLEAR_FUNC))
+-		return -ETIME;
++	if (irb->scsw.fctl & (SCSW_FCTL_HALT_FUNC | SCSW_FCTL_CLEAR_FUNC)) {
++		/* Retry Set Path Group ID if requested. */
++		if (cdev->private->flags.intretry) {
++			cdev->private->flags.intretry = 0;
++			return -EAGAIN;
++		} else
++			return -ETIME;
++	}
+ 	if (irb->esw.esw0.erw.cons) {
+ 		if (irb->ecw[0] & SNS0_CMD_REJECT)
+ 			return -EOPNOTSUPP;
+@@ -356,8 +375,14 @@ static int __ccw_device_check_nop(struct
+ 
+ 	sch = to_subchannel(cdev->dev.parent);
+ 	irb = &cdev->private->irb;
+-	if (irb->scsw.fctl & (SCSW_FCTL_HALT_FUNC | SCSW_FCTL_CLEAR_FUNC))
+-		return -ETIME;
++	if (irb->scsw.fctl & (SCSW_FCTL_HALT_FUNC | SCSW_FCTL_CLEAR_FUNC)) {
++		/* Retry NOP if requested. */
++		if (cdev->private->flags.intretry) {
++			cdev->private->flags.intretry = 0;
++			return -EAGAIN;
++		} else
++			return -ETIME;
++	}
+ 	if (irb->scsw.cc == 3) {
+ 		CIO_MSG_EVENT(2, "NOP - Device %04x on Subchannel 0.%x.%04x,"
+ 			      " lpm %02X, became 'not operational'\n",
+@@ -372,27 +397,32 @@ static void
+ __ccw_device_verify_start(struct ccw_device *cdev)
+ {
+ 	struct subchannel *sch;
+-	__u8 imask, func;
++	__u8 func;
+ 	int ret;
+ 
+ 	sch = to_subchannel(cdev->dev.parent);
+-	while (sch->vpm != sch->lpm) {
+-		/* Find first unequal bit in vpm vs. lpm */
+-		for (imask = 0x80; imask != 0; imask >>= 1)
+-			if ((sch->vpm & imask) != (sch->lpm & imask))
+-				break;
+-		cdev->private->imask = imask;
++	/* Repeat for all paths. */
++	for (; cdev->private->imask; cdev->private->imask >>= 1,
++				     cdev->private->iretry = 5) {
++		if ((cdev->private->imask & sch->schib.pmcw.pam) == 0)
++			/* Path not available, try next. */
++			continue;
+ 		if (cdev->private->options.pgroup) {
+-			func = (sch->vpm & imask) ?
+-				SPID_FUNC_RESIGN : SPID_FUNC_ESTABLISH;
++			if (sch->opm & cdev->private->imask)
++				func = SPID_FUNC_ESTABLISH;
++			else
++				func = SPID_FUNC_RESIGN;
+ 			ret = __ccw_device_do_pgid(cdev, func);
+ 		} else
+ 			ret = __ccw_device_do_nop(cdev);
++		/* We expect an interrupt in case of success or busy
++		 * indication. */
+ 		if (ret == 0 || ret == -EBUSY)
+ 			return;
+-		cdev->private->iretry = 5;
++		/* Permanent path failure, try next. */
+ 	}
+-	ccw_device_verify_done(cdev, (sch->lpm != 0) ? 0 : -ENODEV);
++	/* Done with all paths. */
++	ccw_device_verify_done(cdev, (sch->vpm != 0) ? 0 : -ENODEV);
+ }
+ 		
+ /*
+@@ -421,14 +451,14 @@ ccw_device_verify_irq(struct ccw_device 
+ 	else
+ 		ret = __ccw_device_check_nop(cdev);
+ 	memset(&cdev->private->irb, 0, sizeof(struct irb));
++
+ 	switch (ret) {
+ 	/* 0, -ETIME, -EAGAIN, -EOPNOTSUPP or -EACCES */
+ 	case 0:
+-		/* Establish or Resign Path Group done. Update vpm. */
+-		if ((sch->lpm & cdev->private->imask) != 0)
+-			sch->vpm |= cdev->private->imask;
+-		else
+-			sch->vpm &= ~cdev->private->imask;
++		/* Path verification ccw finished successfully, update lpm. */
++		sch->vpm |= sch->opm & cdev->private->imask;
++		/* Go on with next path. */
++		cdev->private->imask >>= 1;
+ 		cdev->private->iretry = 5;
+ 		__ccw_device_verify_start(cdev);
+ 		break;
+@@ -441,6 +471,10 @@ ccw_device_verify_irq(struct ccw_device 
+ 			cdev->private->options.pgroup = 0;
+ 		else
+ 			cdev->private->flags.pgid_single = 1;
++		/* Retry */
++		sch->vpm = 0;
++		cdev->private->imask = 0x80;
++		cdev->private->iretry = 5;
+ 		/* fall through. */
+ 	case -EAGAIN:		/* Try again. */
+ 		__ccw_device_verify_start(cdev);
+@@ -449,8 +483,7 @@ ccw_device_verify_irq(struct ccw_device 
+ 		ccw_device_verify_done(cdev, -ETIME);
+ 		break;
+ 	case -EACCES:		/* channel is not operational. */
+-		sch->lpm &= ~cdev->private->imask;
+-		sch->vpm &= ~cdev->private->imask;
++		cdev->private->imask >>= 1;
+ 		cdev->private->iretry = 5;
+ 		__ccw_device_verify_start(cdev);
+ 		break;
+@@ -463,19 +496,19 @@ ccw_device_verify_start(struct ccw_devic
+ 	struct subchannel *sch = to_subchannel(cdev->dev.parent);
+ 
+ 	cdev->private->flags.pgid_single = 0;
++	cdev->private->imask = 0x80;
+ 	cdev->private->iretry = 5;
+-	/*
+-	 * Update sch->lpm with current values to catch paths becoming
+-	 * available again.
+-	 */
++
++	/* Start with empty vpm. */
++	sch->vpm = 0;
++
++	/* Get current pam. */
+ 	if (stsch(sch->schid, &sch->schib)) {
+ 		ccw_device_verify_done(cdev, -ENODEV);
+ 		return;
+ 	}
+-	sch->lpm = sch->schib.pmcw.pim &
+-		sch->schib.pmcw.pam &
+-		sch->schib.pmcw.pom &
+-		sch->opm;
++	/* After 60s path verification is considered to have failed. */
++	ccw_device_set_timeout(cdev, 60*HZ);
+ 	__ccw_device_verify_start(cdev);
+ }
+ 
+@@ -524,7 +557,6 @@ ccw_device_disband_irq(struct ccw_device
+ 	switch (ret) {
+ 	/* 0, -ETIME, -EAGAIN, -EOPNOTSUPP or -EACCES */
+ 	case 0:			/* disband successful. */
+-		sch->vpm = 0;
+ 		ccw_device_disband_done(cdev, ret);
+ 		break;
+ 	case -EOPNOTSUPP:
+@@ -551,6 +583,9 @@ ccw_device_disband_irq(struct ccw_device
+ void
+ ccw_device_disband_start(struct ccw_device *cdev)
+ {
++	/* After 60s disbanding is considered to have failed. */
++	ccw_device_set_timeout(cdev, 60*HZ);
++
+ 	cdev->private->flags.pgid_single = 0;
+ 	cdev->private->iretry = 5;
+ 	cdev->private->imask = 0x80;
+diff -urNp linux-2.6.18.s390x/drivers/s390/cio/device_status.c linux-2.6.18.s390x.cio/drivers/s390/cio/device_status.c
+--- linux-2.6.18.s390x/drivers/s390/cio/device_status.c	2006-11-29 16:40:27.000000000 +0100
++++ linux-2.6.18.s390x.cio/drivers/s390/cio/device_status.c	2006-11-29 18:05:46.000000000 +0100
+@@ -320,6 +320,9 @@ ccw_device_do_sense(struct ccw_device *c
+ 	sch->sense_ccw.count = SENSE_MAX_COUNT;
+ 	sch->sense_ccw.flags = CCW_FLAG_SLI;
+ 
++	/* Reset internal retry indication. */
++	cdev->private->flags.intretry = 0;
++
+ 	return cio_start (sch, &sch->sense_ccw, 0xff);
+ }
+ 
+

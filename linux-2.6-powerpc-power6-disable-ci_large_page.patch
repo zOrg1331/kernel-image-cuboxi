@@ -1,0 +1,35 @@
+Date: Fri, 06 Oct 2006 12:10:42 +0100
+From: David Woodhouse <dwmw2@redhat.com>
+Subject: Re: RHEL4.5 PPC FEATURE 200527: RHBZ# 199695: Linux on Power
+	Support for eClipz
+
+On Wed, 2006-10-04 at 14:27 -0400, Janice M. Girouard wrote:
+> 
+> Includes base kernel support for the new eClipz HW. This is the initial 
+> launch of the next generation powerpc processor.  Base support will enable 
+> new HW and Software features available with the new processor type. 
+> Initial GA of HW is scheduled for 2/07. 
+
+An extra patch from Paulus to add to that.... we can't use
+cache-inhibited 64KiB pages on POWER6, because the HCA (Infiniband)
+adapter needs to map 4KiB regions into userspace -- and because it isn't
+clear that the hypervisor supports 64KiB CI pages at all anyway.
+
+diff --git a/include/asm-powerpc/cputable.h b/include/asm-powerpc/cputable.h
+index 12707ab..afdd0b2 100644
+--- a/include/asm-powerpc/cputable.h
++++ b/include/asm-powerpc/cputable.h
+@@ -328,7 +328,7 @@ #define CPU_FTRS_POWER6 (CPU_FTR_SPLIT_I
+ 	    CPU_FTR_HPTE_TABLE | CPU_FTR_PPCAS_ARCH_V2 | CPU_FTR_CTRL | \
+ 	    CPU_FTR_MMCRA | CPU_FTR_SMT | \
+ 	    CPU_FTR_COHERENT_ICACHE | CPU_FTR_LOCKLESS_TLBIE | \
+-	    CPU_FTR_PURR | CPU_FTR_CI_LARGE_PAGE | CPU_FTR_REAL_LE)
++	    CPU_FTR_PURR | CPU_FTR_REAL_LE)
+ #define CPU_FTRS_CELL	(CPU_FTR_SPLIT_ID_CACHE | CPU_FTR_USE_TB | \
+ 	    CPU_FTR_HPTE_TABLE | CPU_FTR_PPCAS_ARCH_V2 | CPU_FTR_CTRL | \
+ 	    CPU_FTR_ALTIVEC_COMP | CPU_FTR_MMCRA | CPU_FTR_SMT | \
+
+
+-- 
+dwmw2
+

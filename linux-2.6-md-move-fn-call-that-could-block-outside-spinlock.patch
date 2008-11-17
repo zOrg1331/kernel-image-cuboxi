@@ -1,0 +1,60 @@
+From: Jonathan Brassow <jbrassow@redhat.com>
+Subject: [PATCH RHEL 5.1] BZ 242069 - move fn call that could block outside 	spinlock
+Date: Fri, 01 Jun 2007 13:43:17 -0500
+Bugzilla: 242069
+Message-Id: <1180723397.22889.2.camel@hydrogen.msp.redhat.com>
+Changelog: [md] move fn call that could block outside spinlock
+
+
+ brassow
+
+>From drivers/md/dm-log.h:
+        /*
+         * Mark an area as clean or dirty.  These functions may
+         * block, though for performance reasons blocking should
+         * be extremely rare (eg, allocating another chunk of
+         * memory for some reason).
+         */
+        void (*mark_region)(struct dirty_log *log, region_t region);
+        void (*clear_region)(struct dirty_log *log, region_t region);
+
+These function rarely block, but they could.  Would be a good idea
+to move the clear_region call in rh_update_states outside the
+spin lock.
+
+Index: linux-rhel5/drivers/md/dm-raid1.c
+===================================================================
+--- linux-rhel5.orig/drivers/md/dm-raid1.c
++++ linux-rhel5/drivers/md/dm-raid1.c
+@@ -396,10 +396,8 @@ static void rh_update_states(struct regi
+ 		list_splice(&rh->clean_regions, &clean);
+ 		INIT_LIST_HEAD(&rh->clean_regions);
+ 
+-		list_for_each_entry (reg, &clean, list) {
+-			rh->log->type->clear_region(rh->log, reg->key);
++		list_for_each_entry (reg, &clean, list)
+ 			list_del(&reg->hash_list);
+-		}
+ 	}
+ 
+ 	if (!list_empty(&rh->recovered_regions)) {
+@@ -437,14 +435,15 @@ static void rh_update_states(struct regi
+ 		mempool_free(reg, rh->region_pool);
+ 	}
+ 
++	list_for_each_entry_safe (reg, next, &clean, list) {
++		rh->log->type->clear_region(rh->log, reg->key);
++		mempool_free(reg, rh->region_pool);
++	}
+ 	/*
+ 	 * If the log implementation is good, it will only
+ 	 * flush (to disk) if it is necessary.
+ 	 */
+ 	rh->log->type->flush(rh->log);
+-
+-	list_for_each_entry_safe (reg, next, &clean, list)
+-		mempool_free(reg, rh->region_pool);
+ }
+ 
+ static void rh_inc(struct region_hash *rh, region_t region)
+

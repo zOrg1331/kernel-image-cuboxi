@@ -1,0 +1,80 @@
+From: Hideo AOKI <haoki@redhat.com>
+Date: Tue, 29 Jan 2008 18:44:37 -0500
+Subject: [audit] fix potential SKB invalid truesize bug
+Message-id: 479FBA65.1000607@redhat.com
+O-Subject: Re: [RHEL 5.2 PATCH] bz#:429417 fix potential SKB invalid truesize bug
+Bugzilla: 429417
+
+Hideo AOKI wrote:
+>
+> BZ#:
+> ------
+> https://bugzilla.redhat.com/show_bug.cgi?id=429417
+>
+> Description:
+> ------------
+> Current kernel has a potential issue on calculating truesize of skb.
+> bz#223593 exposed this bug. To fix the bug, two patches were submitted
+> to netdev mailing list recently thanks to David and Herbert.
+> I back-ported them to RHEL5.
+
+I would like to update the patch to fix bz#429417.
+
+Although the previous patch that I posted on 1/23 EST solved issues on
+connectathon test, Jeff Burke found audit-test-2088 still failed
+occasionally.
+
+The route cause of the bug was truesize handling in audit_expand().
+Thanks to Herbert and David (again), the bugfix patch is going to be
+queued up for -stable tree.
+
+http://marc.info/?l=linux-kernel&m=120151869128310&w=2
+http://marc.info/?l=linux-kernel&m=120158206902563&w=2
+
+I back-ported the patch to -75.el5 and merged into
+linux-2.6-net-fix-potential-skb-invalid-truesize-bug.patch.
+
+kABI Status:
+------------
+There is no kABI issues.
+
+Brew:
+-----
+This patch was built on all platforms.
+http://brewweb.devel.redhat.com/brew/buildinfo?buildID=68562
+
+Test Status:
+------------
+I run audit-test-2088 more than 20 hours on the -75.el5 kernel with
+this patch, and no SKB bug message appears.
+
+Regards,
+Hideo
+
+Acked-by: Eric Paris <eparis@redhat.com>
+
+diff --git a/kernel/audit.c b/kernel/audit.c
+index 6cbe2cb..fd71119 100644
+--- a/kernel/audit.c
++++ b/kernel/audit.c
+@@ -1146,13 +1146,17 @@ struct audit_buffer *audit_log_start(struct audit_context *ctx, gfp_t gfp_mask,
+ static inline int audit_expand(struct audit_buffer *ab, int extra)
+ {
+ 	struct sk_buff *skb = ab->skb;
+-	int ret = pskb_expand_head(skb, skb_headroom(skb), extra,
+-				   ab->gfp_mask);
++	int oldtail = skb_tailroom(skb);
++	int ret = pskb_expand_head(skb, 0, extra, ab->gfp_mask);
++	int newtail = skb_tailroom(skb);
++
+ 	if (ret < 0) {
+ 		audit_log_lost("out of memory in audit_expand");
+ 		return 0;
+ 	}
+-	return skb_tailroom(skb);
++
++	skb->truesize += newtail - oldtail;
++	return newtail;
+ }
+ 
+ /*

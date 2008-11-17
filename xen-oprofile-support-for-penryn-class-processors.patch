@@ -1,0 +1,41 @@
+From: Geoff Gustafson <grgustaf@redhat.com>
+Date: Thu, 27 Mar 2008 11:15:09 -0400
+Subject: [xen] oprofile: support for Penryn-class processors
+Message-id: 20080327151509.GA19434@samurai.boston.redhat.com
+O-Subject: Re: [RHEL5.2 PATCH] oprofile support for Penryn-class processors (bz 253056)
+Bugzilla: 253056
+
+Confirmed that Don actually needs this as a separate patch, for HV, but fixed
+up the patch root so it applies right for him.
+
+I'm able to see events available with ophelp under dom0 regardless of whether I
+have this patch in place or not. So I'm not sure how to test and demonstrate
+that it does something useful. But it looks trivially right, and it sounds like
+Markus has the most informed opinion on the topic, and he approves.
+
+- Geoff
+
+[DON: Remember to take the first one-liner patch as well.]
+
+diff --git a/arch/x86/oprofile/nmi_int.c b/arch/x86/oprofile/nmi_int.c
+index 09549ca..88a1da8 100644
+--- a/arch/x86/oprofile/nmi_int.c
++++ b/arch/x86/oprofile/nmi_int.c
+@@ -295,14 +295,14 @@ static int __init ppro_init(char ** cpu_type)
+ {
+ 	__u8 cpu_model = current_cpu_data.x86_model;
+ 
+-	if (cpu_model > 15) {
++	if (cpu_model == 15 || cpu_model == 23)
++		*cpu_type = "i386/core_2";
++	else if (cpu_model > 15) {
+ 		printk("xenoprof: Initialization failed. "
+ 		       "Intel processor model %d for P6 class family is not "
+ 		       "supported\n", cpu_model);
+ 		return 0;
+ 	}
+-	else if (cpu_model == 15)
+-		*cpu_type = "i386/core_2";
+ 	else if (cpu_model == 14)
+ 		*cpu_type = "i386/core";
+ 	else if (cpu_model == 9)

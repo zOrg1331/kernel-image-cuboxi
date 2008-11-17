@@ -1,0 +1,50 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5 PATCH 4/5] pciehp: 'irq XX: nobody cared' kernel oops is reported
+Date: Wed, 29 Nov 2006 12:41:32 -0500
+Bugzilla: 216939
+Message-Id: <456DC64C.4060209@redhat.com>
+Changelog: pciehp: pci_disable_msi() called to early
+
+
+BZ216939
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=216939
+
+This fix was posted to the community, and is waiting for
+being merged to upstream.  It already got "Signed-off-by:"
+from the maintainer.
+
+This patch fixes the problem that kernel oops message "irq XX:
+nobody cared" is reported when pciehp driver is rmmoded and
+then insmoded again.  The cause is that pciehp driver calls
+pci_disable_msi() at controller release time, even though it
+must be done by PCI Express Port Bus driver.  This patch
+removes unnecessary pci_disable_msi() call from pciehp driver.
+
+This patch applies to -2.6.18-1.2747.el5 and I have verified
+that it worked all right.
+
+Thanks,
+Kei
+
+Signed-off-by: Kenji Kaneshige <kaneshige.kenji@jp.fujitsu.com>
+Signed-off-by: Kristen Carlson Accardi <kristen.c.accardi@intel.com>
+
+---
+ drivers/pci/hotplug/pciehp_hpc.c |    2 --
+ 1 file changed, 2 deletions(-)
+
+--- gregkh-2.6.orig/drivers/pci/hotplug/pciehp_hpc.c
++++ gregkh-2.6/drivers/pci/hotplug/pciehp_hpc.c
+@@ -718,8 +718,6 @@ static void hpc_release_ctlr(struct cont
+ 		if (php_ctlr->irq) {
+ 			free_irq(php_ctlr->irq, ctrl);
+ 			php_ctlr->irq = 0;
+-			if (!pcie_mch_quirk) 
+-				pci_disable_msi(php_ctlr->pci_dev);
+ 		}
+ 	}
+ 	if (php_ctlr->pci_dev) 
+
+--
+
+

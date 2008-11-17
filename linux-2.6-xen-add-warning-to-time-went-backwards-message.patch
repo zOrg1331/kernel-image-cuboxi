@@ -1,0 +1,33 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 12 Mar 2008 10:10:46 -0400
+Subject: [xen] add warning to 'time went backwards' message
+Message-id: 20080312141046.22327.28505.sendpatchset@prarit.boston.redhat.com
+O-Subject: [RHEL 5 PATCH]: Add Warning to Xen "time went backwards" message
+Bugzilla: 436775
+
+Add "Warning" to the "Time went backwards" message.
+
+Most QA groups (if not all) grep for specific messages in the syslog such as
+"Error", "Warning", "Oops".
+
+Time went backwards is a key error which can result in system instability.
+
+Signed-off-by: Prarit Bhargava <prarit@redhat.com>
+
+Acked-by: Bill Burns <bburns@redhat.com>
+
+diff --git a/arch/i386/kernel/time-xen.c b/arch/i386/kernel/time-xen.c
+index 2a6f8e1..2c51117 100644
+--- a/arch/i386/kernel/time-xen.c
++++ b/arch/i386/kernel/time-xen.c
+@@ -665,8 +665,8 @@ irqreturn_t timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+ 	if ((unlikely(delta < -(s64)permitted_clock_jitter) ||
+ 	     unlikely(delta_cpu < -(s64)permitted_clock_jitter))
+ 	    && printk_ratelimit()) {
+-		printk("Timer ISR/%d: Time went backwards: "
+-		       "delta=%lld delta_cpu=%lld shadow=%lld "
++		printk(KERN_WARNING "Warning Timer ISR/%d: Time went "
++		       "backwards: delta=%lld delta_cpu=%lld shadow=%lld "
+ 		       "off=%lld processed=%lld cpu_processed=%lld\n",
+ 		       cpu, delta, delta_cpu, shadow->system_timestamp,
+ 		       (s64)get_nsec_offset(shadow),

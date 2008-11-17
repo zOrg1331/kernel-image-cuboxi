@@ -1,0 +1,20 @@
+diff -Naurp linux-2.6.18.x86_64/drivers/scsi/3w-9xxx.c linux-2.6.18.x86_64a/drivers/scsi/3w-9xxx.c
+--- linux-2.6.18.x86_64/drivers/scsi/3w-9xxx.c	2008-06-05 14:53:15.000000000 +0200
++++ linux-2.6.18.x86_64a/drivers/scsi/3w-9xxx.c	2008-06-05 14:39:11.000000000 +0200
+@@ -89,6 +89,7 @@
+ #include <scsi/scsi_host.h>
+ #include <scsi/scsi_tcq.h>
+ #include <scsi/scsi_cmnd.h>
++#include <linux/libata.h>
+ #include "3w-9xxx.h"
+ 
+ /* Globals */
+@@ -2062,6 +2063,7 @@ static int __devinit twa_probe(struct pc
+ 	}
+ 
+ 	pci_set_master(pdev);
++	pci_try_set_mwi(pdev);
+ 
+ 	retval = pci_set_dma_mask(pdev, sizeof(dma_addr_t) > 4 ? DMA_64BIT_MASK : DMA_32BIT_MASK);
+ 	if (retval) {
+

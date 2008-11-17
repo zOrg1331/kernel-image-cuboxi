@@ -1,0 +1,543 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5.1 PATCH 4/21] Xen0 can not startX in tiger4
+Date: Thu, 07 Jun 2007 03:34:13 -0400
+Bugzilla: 215536
+Message-Id: <4667B4F5.5050406@redhat.com>
+Changelog: [xen] Xen0 can not startX in tiger4
+
+
+bz215536
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=215536
+
+Backport of cset#12513, 12873, 14068, 14347, and 12690.
+
+After RHEL5 installation finished, system will go into "init 5"
+automatically.  But Xen0 can not startX in Tiger4 at present.
+Then Tiger4's local terminal can not display correctly. And
+user can not operate the local terminal.
+Xen0's serial port will keep printing:
+(XEN) lookup_domain_mpa: bad mpa 0xfbfd0738 (=> 0x20000000)
+(XEN) Warning: UC to WB for mpaddr=fbfd0738
+(XEN) lookup_domain_mpa: d 0xf000000007d18080 id 0 current 0xf000000007cf0000 id
+0
+(XEN) lookup_domain_mpa: bad mpa 0xfbfd0738 (=> 0x20000000)
+(XEN) Warning: UC to WB for mpaddr=fbfd0738
+(XEN) lookup_domain_mpa: d 0xf000000007d18080 id 0 current 0xf000000007cf0000 id
+0
+(XEN) lookup_domain_mpa: bad mpa 0xfbfd0738 (=> 0x20000000)
+(XEN) Warning: UC to WB for mpaddr=fbfd0738
+
+The following patch set fixes this issue.
+
+Thanks,
+Kei
+
+
+rh bug 215536
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1164190994 0
+# Node ID 395aa5609e6d10b226b91e673afcfade2f4e3f6f
+# Parent  a3c6479c87ef06c7bc8a743ef8360211dcda2532
+[LINUX] Make xen /dev/mem aware of IA64 to use X.
+
+The original /dev/mem (linux/drivers/char/mem.c) is aware of IA64
+specific issues. On the other hand paravirtualized /dev/mem
+(linux-2.6-xen-sparse/drivers/xen/char/mem.c) is simplifed not to be
+aware of IA64. This patch makes it IA64-aware to use X on domain0/IA64.
+With this patch and ia64-specific patches, X server can boot on domain0/IA64.
+
+Signed-off-by: Isaku Yamahata <yamahata@valinux.co.jp>
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/drivers/xen/char/mem.c               |   51 +++++++---
+ linux-2.6.18-21.el5-gerd-order-kei/include/asm-i386/mach-xen/asm/io.h   |    3 
+ linux-2.6.18-21.el5-gerd-order-kei/include/asm-x86_64/mach-xen/asm/io.h |    3 
+ 3 files changed, 41 insertions(+), 16 deletions(-)
+
+diff -puN drivers/xen/char/mem.c~12513-LINUX_Make_xen_devmem_aware_of_IA64_to_use_X. drivers/xen/char/mem.c
+--- linux-2.6.18-21.el5-gerd-order/drivers/xen/char/mem.c~12513-LINUX_Make_xen_devmem_aware_of_IA64_to_use_X.	2007-06-06 21:00:02.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/drivers/xen/char/mem.c	2007-06-06 21:00:02.000000000 -0400
+@@ -26,13 +26,12 @@
+ #include <asm/io.h>
+ #include <asm/hypervisor.h>
+ 
+-static inline int uncached_access(struct file *file)
++#ifndef ARCH_HAS_VALID_PHYS_ADDR_RANGE
++static inline int valid_phys_addr_range(unsigned long addr, size_t *count)
+ {
+-	if (file->f_flags & O_SYNC)
+-		return 1;
+-	/* Xen sets correct MTRR type on non-RAM for us. */
+-	return 0;
++	return 1;
+ }
++#endif
+ 
+ /*
+  * This funcion reads the *physical* memory. The f_pos points directly to the 
+@@ -45,6 +44,9 @@ static ssize_t read_mem(struct file * fi
+ 	ssize_t read = 0, sz;
+ 	void __iomem *v;
+ 
++	if (!valid_phys_addr_range(p, &count))
++		return -EFAULT;
++
+ 	while (count > 0) {
+ 		/*
+ 		 * Handle first page in case it's not aligned
+@@ -56,13 +58,15 @@ static ssize_t read_mem(struct file * fi
+ 
+ 		sz = min_t(unsigned long, sz, count);
+ 
+-		if ((v = ioremap(p, sz)) == NULL) {
++		v = xlate_dev_mem_ptr(p, sz);
++		if (IS_ERR(v) || v == NULL) {
+ 			/*
+-			 * Some programs (e.g., dmidecode) groove off into weird RAM
+-			 * areas where no tables can possibly exist (because Xen will
+-			 * have stomped on them!). These programs get rather upset if
+-			 * we let them know that Xen failed their access, so we fake
+-			 * out a read of all zeroes. :-)
++			 * Some programs (e.g., dmidecode) groove off into
++			 * weird RAM areas where no tables can possibly exist
++			 * (because Xen will have stomped on them!). These
++			 * programs get rather upset if we let them know that
++			 * Xen failed their access, so we fake out a read of
++			 * all zeroes.
+ 			 */
+ 			if (clear_user(buf, count))
+ 				return -EFAULT;
+@@ -71,7 +75,7 @@ static ssize_t read_mem(struct file * fi
+ 		}
+ 
+ 		ignored = copy_to_user(buf, v, sz);
+-		iounmap(v);
++		xlate_dev_mem_ptr_unmap(v);
+ 		if (ignored)
+ 			return -EFAULT;
+ 		buf += sz;
+@@ -91,6 +95,9 @@ static ssize_t write_mem(struct file * f
+ 	ssize_t written = 0, sz;
+ 	void __iomem *v;
+ 
++	if (!valid_phys_addr_range(p, &count))
++		return -EFAULT;
++
+ 	while (count > 0) {
+ 		/*
+ 		 * Handle first page in case it's not aligned
+@@ -102,11 +109,17 @@ static ssize_t write_mem(struct file * f
+ 
+ 		sz = min_t(unsigned long, sz, count);
+ 
+-		if ((v = ioremap(p, sz)) == NULL)
++		v = xlate_dev_mem_ptr(p, sz);
++		if (v == NULL)
+ 			break;
++		if (IS_ERR(v)) {
++			if (written == 0)
++				return PTR_ERR(v);
++			break;
++		}
+ 
+ 		ignored = copy_from_user(v, buf, sz);
+-		iounmap(v);
++		xlate_dev_mem_ptr_unmap(v);
+ 		if (ignored) {
+ 			written += sz - ignored;
+ 			if (written)
+@@ -123,6 +136,15 @@ static ssize_t write_mem(struct file * f
+ 	return written;
+ }
+ 
++#ifndef ARCH_HAS_DEV_MEM_MMAP_MEM
++static inline int uncached_access(struct file *file)
++{
++	if (file->f_flags & O_SYNC)
++		return 1;
++	/* Xen sets correct MTRR type on non-RAM for us. */
++	return 0;
++}
++
+ static int mmap_mem(struct file * file, struct vm_area_struct * vma)
+ {
+ 	size_t size = vma->vm_end - vma->vm_start;
+@@ -134,6 +156,7 @@ static int mmap_mem(struct file * file, 
+ 	return direct_remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff,
+ 				      size, vma->vm_page_prot, DOMID_IO);
+ }
++#endif
+ 
+ /*
+  * The memory devices use the full 32/64 bits of the offset, and so we cannot
+diff -puN include/asm-i386/mach-xen/asm/io.h~12513-LINUX_Make_xen_devmem_aware_of_IA64_to_use_X. include/asm-i386/mach-xen/asm/io.h
+--- linux-2.6.18-21.el5-gerd-order/include/asm-i386/mach-xen/asm/io.h~12513-LINUX_Make_xen_devmem_aware_of_IA64_to_use_X.	2007-06-06 21:00:02.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/include/asm-i386/mach-xen/asm/io.h	2007-06-06 21:00:02.000000000 -0400
+@@ -53,7 +53,8 @@
+  * Convert a physical pointer to a virtual kernel pointer for /dev/mem
+  * access
+  */
+-#define xlate_dev_mem_ptr(p)	__va(p)
++#define xlate_dev_mem_ptr(p, sz)	ioremap(p, sz)
++#define xlate_dev_mem_ptr_unmap(p)	iounmap(p)
+ 
+ /*
+  * Convert a virtual cached pointer to an uncached pointer
+diff -puN include/asm-x86_64/mach-xen/asm/io.h~12513-LINUX_Make_xen_devmem_aware_of_IA64_to_use_X. include/asm-x86_64/mach-xen/asm/io.h
+--- linux-2.6.18-21.el5-gerd-order/include/asm-x86_64/mach-xen/asm/io.h~12513-LINUX_Make_xen_devmem_aware_of_IA64_to_use_X.	2007-06-06 21:00:02.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/include/asm-x86_64/mach-xen/asm/io.h	2007-06-06 21:00:02.000000000 -0400
+@@ -313,7 +313,8 @@ extern int iommu_bio_merge;
+  * Convert a physical pointer to a virtual kernel pointer for /dev/mem
+  * access
+  */
+-#define xlate_dev_mem_ptr(p)	__va(p)
++#define xlate_dev_mem_ptr(p, sz)	ioremap(p, sz)
++#define xlate_dev_mem_ptr_unmap(p)	iounmap(p)
+ 
+ /*
+  * Convert a virtual cached pointer to an uncached pointer
+
+_
+
+
+changeset 14347:  	94fcbb52bde2
+parent 14346:	e39964673c6f
+child 14348:	f9fbcc354daa
+author: 	kfraser@localhost.localdomain
+description: 	Fix valid_phys_addr_range() prototype of xen /dev/mem.
+The second argument is size_t, not size_t *.
+
+Signed-off-by: Isaku Yamahata <yamahata@valinux.co.jp>
+
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/drivers/xen/char/mem.c |    6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff -puN drivers/xen/char/mem.c~14347-Fix_valid_phys_addr_range_prototype_of_xen_dev_mem drivers/xen/char/mem.c
+--- linux-2.6.18-21.el5-gerd-order/drivers/xen/char/mem.c~14347-Fix_valid_phys_addr_range_prototype_of_xen_dev_mem	2007-06-07 02:44:16.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/drivers/xen/char/mem.c	2007-06-07 02:44:16.000000000 -0400
+@@ -27,7 +27,7 @@
+ #include <asm/hypervisor.h>
+ 
+ #ifndef ARCH_HAS_VALID_PHYS_ADDR_RANGE
+-static inline int valid_phys_addr_range(unsigned long addr, size_t *count)
++static inline int valid_phys_addr_range(unsigned long addr, size_t count)
+ {
+ 	return 1;
+ }
+@@ -44,7 +44,7 @@ static ssize_t read_mem(struct file * fi
+ 	ssize_t read = 0, sz;
+ 	void __iomem *v;
+ 
+-	if (!valid_phys_addr_range(p, &count))
++	if (!valid_phys_addr_range(p, count))
+ 		return -EFAULT;
+ 
+ 	while (count > 0) {
+@@ -95,7 +95,7 @@ static ssize_t write_mem(struct file * f
+ 	ssize_t written = 0, sz;
+ 	void __iomem *v;
+ 
+-	if (!valid_phys_addr_range(p, &count))
++	if (!valid_phys_addr_range(p, count))
+ 		return -EFAULT;
+ 
+ 	while (count > 0) {
+
+_
+
+
+rh bug 215536
+
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1165247097 25200
+# Node ID e5e6893ec6997513fc2920a2efc3bfd6ed6cd6b0
+# Parent  bef3a5ffd78d234cfa62641429c4e60ee754ae9d
+[IA64] paraviatualize /dev/mem to enable X.
+
+Signed-off-by: Isaku Yamahata <yamahata@valinux.co.jp>
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/Kconfig          |    3 
+ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/mm/ioremap.c     |    2 
+ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/Makefile     |    2 
+ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/mem.c        |   76 ++++++++++
+ linux-2.6.18-21.el5-gerd-order-kei/include/asm-ia64/io.h      |    5 
+ linux-2.6.18-21.el5-gerd-order-kei/include/asm-ia64/uaccess.h |   20 ++
+ 6 files changed, 104 insertions(+), 4 deletions(-)
+
+diff -puN arch/ia64/Kconfig~12873-IA64_paraviatualize_devmem_to_enable_X. arch/ia64/Kconfig
+--- linux-2.6.18-21.el5-gerd-order/arch/ia64/Kconfig~12873-IA64_paraviatualize_devmem_to_enable_X.	2007-06-07 02:44:26.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/Kconfig	2007-06-07 02:44:26.000000000 -0400
+@@ -614,9 +614,6 @@ config XEN_BALLOON
+ config XEN_SKBUFF
+ 	default y
+ 
+-config XEN_DEVMEM
+-	default n
+-
+ config XEN_REBOOT
+ 	default y
+ 
+diff -puN arch/ia64/mm/ioremap.c~12873-IA64_paraviatualize_devmem_to_enable_X. arch/ia64/mm/ioremap.c
+--- linux-2.6.18-21.el5-gerd-order/arch/ia64/mm/ioremap.c~12873-IA64_paraviatualize_devmem_to_enable_X.	2007-06-07 02:44:26.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/mm/ioremap.c	2007-06-07 02:44:26.000000000 -0400
+@@ -18,6 +18,8 @@ __ioremap (unsigned long offset, unsigne
+ {
+ #ifdef CONFIG_XEN
+ 	offset = HYPERVISOR_ioremap(offset, size);
++	if (IS_ERR_VALUE(offset))
++		return (void __iomem*)offset;
+ #endif
+ 	return (void __iomem *) (__IA64_UNCACHED_OFFSET | offset);
+ }
+diff -puN arch/ia64/xen/Makefile~12873-IA64_paraviatualize_devmem_to_enable_X. arch/ia64/xen/Makefile
+--- linux-2.6.18-21.el5-gerd-order/arch/ia64/xen/Makefile~12873-IA64_paraviatualize_devmem_to_enable_X.	2007-06-07 02:44:26.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/Makefile	2007-06-07 02:44:26.000000000 -0400
+@@ -4,6 +4,6 @@
+ 
+ obj-y := hypercall.o xenivt.o xenentry.o xensetup.o xenpal.o xenhpski.o \
+ 	 hypervisor.o pci-dma-xen.o util.o xencomm.o xcom_hcall.o \
+-	 xcom_mini.o xcom_privcmd.o
++	 xcom_mini.o xcom_privcmd.o mem.o
+ 
+ pci-dma-xen-y := ../../i386/kernel/pci-dma-xen.o
+diff -puN /dev/null arch/ia64/xen/mem.c
+--- /dev/null	2007-06-06 22:04:04.286000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/mem.c	2007-06-07 02:44:26.000000000 -0400
+@@ -0,0 +1,76 @@
++/*
++ *  Originally from linux/drivers/char/mem.c
++ *
++ *  Copyright (C) 1991, 1992  Linus Torvalds
++ *
++ *  Added devfs support.
++ *    Jan-11-1998, C. Scott Ananian <cananian@alumni.princeton.edu>
++ *  Shared /dev/zero mmaping support, Feb 2000, Kanoj Sarcar <kanoj@sgi.com>
++ */
++/*
++ * taken from
++ * linux/drivers/char/mem.c and linux-2.6-xen-sparse/drivers/xen/char/mem.c.
++ * adjusted for IA64 and made transparent.
++ * Copyright (c) 2006 Isaku Yamahata <yamahata at valinux co jp>
++ *                    VA Linux Systems Japan K.K.
++ */
++
++#include <linux/config.h>
++#include <linux/mm.h>
++#include <linux/efi.h>
++
++/*
++ * Architectures vary in how they handle caching for addresses
++ * outside of main memory.
++ *
++ */
++static inline int uncached_access(struct file *file, unsigned long addr)
++{
++	/*
++	 * On ia64, we ignore O_SYNC because we cannot tolerate memory attribute aliases.
++	 */
++	return !(efi_mem_attributes(addr) & EFI_MEMORY_WB);
++}
++
++int xen_mmap_mem(struct file * file, struct vm_area_struct * vma)
++{
++	unsigned long addr = vma->vm_pgoff << PAGE_SHIFT;
++	size_t size = vma->vm_end - vma->vm_start;
++
++
++#if 0
++	/*
++	 *XXX FIXME: linux-2.6.16.29, linux-2.6.17
++	 *    valid_mmap_phys_addr_range() in linux/arch/ia64/kernel/efi.c
++	 *    fails checks.
++	 *    linux-2.6.18.1's returns always 1.
++	 *    Its comments says
++	 *
++         * MMIO regions are often missing from the EFI memory map.
++         * We must allow mmap of them for programs like X, so we
++         * currently can't do any useful validation.
++         */
++	if (!valid_mmap_phys_addr_range(addr, &size))
++		return -EINVAL;
++	if (size < vma->vm_end - vma->vm_start)
++		return -EINVAL;
++#endif
++
++	if (is_running_on_xen()) {
++		unsigned long offset = HYPERVISOR_ioremap(addr, size);
++		if (IS_ERR_VALUE(offset))
++			return offset;
++	}
++
++	if (uncached_access(file, vma->vm_pgoff << PAGE_SHIFT))
++		vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
++
++        /* Remap-pfn-range will mark the range VM_IO and VM_RESERVED */
++        if (remap_pfn_range(vma,
++                            vma->vm_start,
++                            vma->vm_pgoff,
++                            size,
++                            vma->vm_page_prot))
++                return -EAGAIN;
++        return 0;
++}
+diff -puN include/asm-ia64/io.h~12873-IA64_paraviatualize_devmem_to_enable_X. include/asm-ia64/io.h
+--- linux-2.6.18-21.el5-gerd-order/include/asm-ia64/io.h~12873-IA64_paraviatualize_devmem_to_enable_X.	2007-06-07 02:44:26.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/include/asm-ia64/io.h	2007-06-07 02:44:26.000000000 -0400
+@@ -132,6 +132,11 @@ extern int valid_mmap_phys_addr_range (u
+ 	(((bvec_to_bus((vec1)) + (vec1)->bv_len) == bvec_to_bus((vec2))) && \
+ 	 ((bvec_to_pseudophys((vec1)) + (vec1)->bv_len) ==		\
+ 	  bvec_to_pseudophys((vec2))))
++
++/* We will be supplying our own /dev/mem implementation */
++#define ARCH_HAS_DEV_MEM
++#define ARCH_HAS_DEV_MEM_MMAP_MEM
++int xen_mmap_mem(struct file * file, struct vm_area_struct * vma);
+ #endif /* CONFIG_XEN */
+ 
+ # endif /* KERNEL */
+diff -puN include/asm-ia64/uaccess.h~12873-IA64_paraviatualize_devmem_to_enable_X. include/asm-ia64/uaccess.h
+--- linux-2.6.18-21.el5-gerd-order/include/asm-ia64/uaccess.h~12873-IA64_paraviatualize_devmem_to_enable_X.	2007-06-07 02:44:26.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/include/asm-ia64/uaccess.h	2007-06-07 02:44:26.000000000 -0400
+@@ -365,6 +365,7 @@ ia64_done_with_exception (struct pt_regs
+ }
+ 
+ #define ARCH_HAS_TRANSLATE_MEM_PTR	1
++#ifndef CONFIG_XEN
+ static __inline__ char *
+ xlate_dev_mem_ptr (unsigned long p)
+ {
+@@ -379,6 +380,25 @@ xlate_dev_mem_ptr (unsigned long p)
+ 
+ 	return ptr;
+ }
++#else
++static __inline__ char *
++xlate_dev_mem_ptr (unsigned long p, ssize_t sz)
++{
++	unsigned long pfn = p >> PAGE_SHIFT;
++
++	if (pfn_valid(pfn) && !PageUncached(pfn_to_page(pfn)))
++		return __va(p);
++
++	return ioremap(p, sz);
++}
++
++static __inline__ void
++xlate_dev_mem_ptr_unmap (char* v)
++{
++	if (REGION_NUMBER(v) == RGN_UNCACHED)
++		iounmap(v);
++}
++#endif
+ 
+ /*
+  * Convert a virtual cached kernel memory pointer to an uncached pointer
+
+_
+
+
+rh bug 215536
+
+# HG changeset patch
+# User awilliam@xenbuild2.aw
+# Date 1171839652 25200
+# Node ID 5abf33a383cf651acd17156effd807bc5f44ffd2
+# Parent  5ad7d9b466eed042418944402120afafb68a8408
+[IA64] Paravirtualize mmap handlers of /proc/bus/pci
+
+Signed-off-by: Akio Takebe <takebe_akio@jp.fujitsu.com>
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/pci/pci.c |   16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff -puN arch/ia64/pci/pci.c~14068-IA64_Paravirtualize_mmap_handlers_of_procbuspci arch/ia64/pci/pci.c
+--- linux-2.6.18-21.el5-gerd-order/arch/ia64/pci/pci.c~14068-IA64_Paravirtualize_mmap_handlers_of_procbuspci	2007-06-07 02:44:27.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/pci/pci.c	2007-06-07 02:44:27.000000000 -0400
+@@ -608,6 +608,14 @@ pci_mmap_page_range (struct pci_dev *dev
+ 	else
+ 		vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+ 
++	if (is_initial_xendomain()) {
++		unsigned long addr = vma->vm_pgoff << PAGE_SHIFT;
++		size_t size = vma->vm_end - vma->vm_start;
++		unsigned long offset = HYPERVISOR_ioremap(addr, size);
++		if (IS_ERR_VALUE(offset))
++			return offset;
++	}
++
+ 	if (remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff,
+ 			     vma->vm_end - vma->vm_start, vma->vm_page_prot))
+ 		return -EAGAIN;
+@@ -665,6 +673,14 @@ pci_mmap_legacy_page_range(struct pci_bu
+ 	vma->vm_pgoff += (unsigned long)addr >> PAGE_SHIFT;
+ 	vma->vm_page_prot = prot;
+ 
++	if (is_initial_xendomain()) {
++		unsigned long addr = vma->vm_pgoff << PAGE_SHIFT;
++		size_t size = vma->vm_end - vma->vm_start;
++		unsigned long offset = HYPERVISOR_ioremap(addr, size);
++		if (IS_ERR_VALUE(offset))
++			return offset;
++	}
++
+ 	if (remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff,
+ 			    size, vma->vm_page_prot))
+ 		return -EAGAIN;
+
+_
+
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1164980673 0
+# Node ID b334f479853e9516707afbdeaf47372017564dab
+# Parent  4ede29160b534da74024f98d3e006cf0ecdc573b
+[LINUX] dev/mem: Rename Xen's mmap_mem to xen_mmap_mem to
+avoid conflict with the definition (which still exists and
+is used) in drivers/char/mem.c.
+Signed-off-by: Keir Fraser <keir@xensource.com>
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/drivers/xen/char/mem.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN drivers/xen/char/mem.c~12690-LINUX_devmem_Rename_Xens_mmap_mem_to_xen_mmap_mem_to drivers/xen/char/mem.c
+--- linux-2.6.18-21.el5-gerd-order/drivers/xen/char/mem.c~12690-LINUX_devmem_Rename_Xens_mmap_mem_to_xen_mmap_mem_to	2007-06-07 02:44:27.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/drivers/xen/char/mem.c	2007-06-07 02:44:27.000000000 -0400
+@@ -145,7 +145,7 @@ static inline int uncached_access(struct
+ 	return 0;
+ }
+ 
+-static int mmap_mem(struct file * file, struct vm_area_struct * vma)
++static int xen_mmap_mem(struct file * file, struct vm_area_struct * vma)
+ {
+ 	size_t size = vma->vm_end - vma->vm_start;
+ 
+@@ -198,6 +198,6 @@ struct file_operations mem_fops = {
+ 	.llseek		= memory_lseek,
+ 	.read		= read_mem,
+ 	.write		= write_mem,
+-	.mmap		= mmap_mem,
++	.mmap		= xen_mmap_mem,
+ 	.open		= open_mem,
+ };
+
+_
+

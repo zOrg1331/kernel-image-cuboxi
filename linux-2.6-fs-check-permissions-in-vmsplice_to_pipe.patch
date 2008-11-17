@@ -1,0 +1,31 @@
+From: Alexander Viro <aviro@redhat.com>
+Date: Sun, 10 Feb 2008 16:00:27 -0500
+Subject: [fs] check permissions in vmsplice_to_pipe
+Message-id: 20080210210027.GS4473@devserv.devel.redhat.com
+O-Subject: [rhel5 fix] bz 432251
+Bugzilla: 432253
+
+	Blind use of get_user_pages() without checking that address is
+userland one.  Other two holes in fs/splice.c are post-2.6.18 and had
+not been brought in by backports; that one predates 2.6.18 and we do
+have it.
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: Alan Cox <alan@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Jon Masters <jcm@redhat.com>
+
+diff --git a/fs/splice.c b/fs/splice.c
+index 700749f..d108451 100644
+--- a/fs/splice.c
++++ b/fs/splice.c
+@@ -1154,6 +1154,9 @@ static int get_iovec_page_array(const struct iovec __user *iov,
+ 		if (unlikely(!base))
+ 			break;
+ 
++		if (unlikely(!access_ok(VERIFY_READ, base, len)))
++			break;
++
+ 		/*
+ 		 * Get this base offset and number of pages, then map
+ 		 * in the user pages.

@@ -1,0 +1,58 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5 PATCH] dlm: resend lock during recovery if master not ready
+Date: Thu, 30 Nov 2006 16:03:08 -0600
+Bugzilla: 215596
+Message-Id: <20061130220308.GA31429@redhat.com>
+Changelog: dlm: resend lock during recovery if master not ready
+
+
+bz 215596
+patch 1 of 3
+
+There's a chance the new master of resource hasn't learned it's the new
+master before another node sends it a lock during recovery.  The node
+sending the lock needs to resend if this happens.
+
+- A sends a master lookup for resource R to C
+- B sends a master lookup for resource R to C
+- C receives A's lookup, assigns A to be master of R and
+  sends a reply back to A
+- C receives B's lookup and sends a reply back to B saying
+  that A is the master
+- B receives lookup reply from C and sends its lock for R to A
+- A receives lock from B, doesn't think it's the master of R
+  and sends an error back to B
+- A receives lookup reply from C and becomes master of R
+- B gets error back from A and resends its lock back to A
+  (this resending is what this patch does)
+- A receives lock from B, it now sees it's the master of R
+  and takes the lock
+
+Index: latest/fs/dlm/lock.c
+===================================================================
+--- latest.orig/fs/dlm/lock.c
++++ latest/fs/dlm/lock.c
+@@ -3571,6 +3571,14 @@ int dlm_recover_process_copy(struct dlm_
+ 	lock_rsb(r);
+ 
+ 	switch (error) {
++	case -EBADR:
++		/* There's a chance the new master received our lock before
++		   dlm_recover_master_reply(), this wouldn't happen if we did
++		   a barrier between recover_masters and recover_locks. */
++		log_debug(ls, "master copy not ready %x r %lx %s", lkb->lkb_id,
++			  (unsigned long)r, r->res_name);
++		dlm_send_rcom_lock(r, lkb);
++		goto out;
+ 	case -EEXIST:
+ 		log_debug(ls, "master copy exists %x", lkb->lkb_id);
+ 		/* fall through */
+@@ -3585,7 +3593,7 @@ int dlm_recover_process_copy(struct dlm_
+ 	/* an ack for dlm_recover_locks() which waits for replies from
+ 	   all the locks it sends to new masters */
+ 	dlm_recovered_lock(r);
+-
++ out:
+ 	unlock_rsb(r);
+ 	put_rsb(r);
+ 	dlm_put_lkb(lkb);

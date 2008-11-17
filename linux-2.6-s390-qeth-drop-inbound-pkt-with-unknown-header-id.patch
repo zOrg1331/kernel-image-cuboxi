@@ -1,0 +1,55 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 16 Nov 2007 13:54:50 +0100
+Subject: [s390] qeth: drop inbound pkt with unknown header id
+Message-id: 20071116125450.GJ6053@redhat.com
+O-Subject: [RHEL5 U2 PATCH 2/14] s390 - qeth: discard inbound packets with unknown header id
+Bugzilla: 360591
+
+Description
+============
+
+Debugging statements are added for inbound packets with unknown
+header id. Those packets are discarded and no longer processed as
+osn-packets.
+
+Bugzilla
+=========
+
+BZ 360591
+https://bugzilla.redhat.com/show_bug.cgi?id=360591
+
+Upstream status of the patch:
+=============================
+
+Fixed upstream in git commit 28692ec45e58f40a998beb155fe1c0d3e1167485
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index b0bd651..3724956 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -2640,9 +2640,14 @@ qeth_process_inbound_buffer(struct qeth_card *card,
+ 			*((__u32 *)skb->cb) = ++card->seqno.pkt_seqno;
+ 		} else if (hdr->hdr.l3.id == QETH_HEADER_TYPE_LAYER3)
+ 			vlan_tag = qeth_rebuild_skb(card, skb, hdr);
+-		else { /*in case of OSN*/
++		else if (hdr->hdr.osn.id == QETH_HEADER_TYPE_OSN) {
+ 			skb_push(skb, sizeof(struct qeth_hdr));
+ 			memcpy(skb->data, hdr, sizeof(struct qeth_hdr));
++		} else { /* unknown header type */
++			dev_kfree_skb_any(skb);
++			QETH_DBF_TEXT(trace, 3, "inbunkno");
++			QETH_DBF_HEX(control, 3, hdr, QETH_DBF_CONTROL_LEN);
++			continue;
+ 		}
+ 		/* is device UP ? */
+ 		if (!(card->dev->flags & IFF_UP)){

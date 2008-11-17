@@ -1,0 +1,89 @@
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Subject: [PATCH RHEL-5] Reset current->pdeath_signal on SUID binary 	execution
+Date: Mon, 10 Sep 2007 21:13:06 +0200
+Bugzilla: 251119
+Message-Id: <1189451586.15042.28.camel@taijtu>
+Changelog: [fs] Reset current->pdeath_signal on SUID binary execution
+
+
+
+https://bugzilla.redhat.com/show_bug.cgi?id=251119
+https://bugzilla.redhat.com/show_bug.cgi?id=252307
+
+---
+commit d2d56c5f51028cb9f3d800882eb6f4cbd3f9099f
+Author: Marcel Holtmann <marcel@holtmann.org>
+
+[PATCH] Reset current->pdeath_signal on SUID binary execution
+
+This fixes a vulnerability in the "parent process death signal"
+implementation discoverd by Wojciech Purczynski of COSEINC PTE Ltd.
+and iSEC Security Research.
+
+http://marc.info/?l=bugtraq&m=118711306802632&w=2
+
+Signed-off-by: Marcel Holtmann <marcel@holtmann.org>
+--
+commit 4ac212ad4e8fafc22fa147fc255ff5fa5435cf33
+Author: Stephen Smalley <sds@tycho.nsa.gov>
+
+SELinux: clear parent death signal on SID transitions
+
+Clear parent death signal on SID transitions to prevent unauthorized
+signaling between SIDs.
+
+Signed-off-by:  Stephen Smalley <sds@tycho.nsa.gov>
+Acked-by: Eric Paris <eparis@parisplace.org>
+Signed-off-by: James Morris <jmorris@localhost.localdomain>
+---
+ fs/exec.c                |   13 +++++++++----
+ security/selinux/hooks.c |    3 +++
+ 2 files changed, 12 insertions(+), 4 deletions(-)
+
+Index: linux-2.6.18.noarch/fs/exec.c
+===================================================================
+--- linux-2.6.18.noarch.orig/fs/exec.c	2007-08-31 11:25:56.000000000 +0200
++++ linux-2.6.18.noarch/fs/exec.c	2007-08-31 11:26:15.000000000 +0200
+@@ -883,9 +883,12 @@ int flush_old_exec(struct linux_binprm *
+ 	 */
+ 	current->mm->task_size = TASK_SIZE;
+ 
+-	if (bprm->e_uid != current->euid || bprm->e_gid != current->egid || 
+-	    file_permission(bprm->file, MAY_READ) ||
+-	    (bprm->interp_flags & BINPRM_FLAGS_ENFORCE_NONDUMP)) {
++	if (bprm->e_uid != current->euid || bprm->e_gid != current->egid) {
++		suid_keys(current);
++ 		current->mm->dumpable = suid_dumpable;
++		current->pdeath_signal = 0;
++	} else if (file_permission(bprm->file, MAY_READ) ||
++			(bprm->interp_flags & BINPRM_FLAGS_ENFORCE_NONDUMP)) {
+ 		suid_keys(current);
+ 		current->mm->dumpable = suid_dumpable;
+ 	}
+@@ -971,8 +974,10 @@ void compute_creds(struct linux_binprm *
+ {
+ 	int unsafe;
+ 
+-	if (bprm->e_uid != current->uid)
++	if (bprm->e_uid != current->uid) {
+ 		suid_keys(current);
++		current->pdeath_signal = 0;
++	}
+ 	exec_keys(current);
+ 
+ 	task_lock(current);
+Index: linux-2.6.18.noarch/security/selinux/hooks.c
+===================================================================
+--- linux-2.6.18.noarch.orig/security/selinux/hooks.c	2007-08-14 15:33:14.000000000 +0200
++++ linux-2.6.18.noarch/security/selinux/hooks.c	2007-09-10 19:14:01.000000000 +0200
+@@ -1904,6 +1904,9 @@ static void selinux_bprm_post_apply_cred
+ 		spin_unlock_irq(&current->sighand->siglock);
+ 	}
+ 
++	/* Always clear parent death signal on SID transitions. */
++	current->pdeath_signal = 0;
++
+ 	/* Check whether the new SID can inherit resource limits
+ 	   from the old SID.  If not, reset all soft limits to
+ 	   the lower of the current task's hard limit and the init
+

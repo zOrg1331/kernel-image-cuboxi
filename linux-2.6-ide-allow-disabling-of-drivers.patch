@@ -1,0 +1,113 @@
+From: Gerd Hoffmann <kraxel@redhat.com>
+Date: Fri, 31 Aug 2007 14:44:10 +0200
+Subject: [ide] allow disabling of drivers
+Message-id: 46D80D1A.8020305@redhat.com
+O-Subject: [RHEL 5.2 patch] bz 247982: need a way to disable ide drivers
+Bugzilla: 247982
+
+  Hi,
+
+bug 247982
+
+We want be able to run RHEL-5 fully virtualized guests with
+paravirtualized drivers.  Xen emulates a IDE disk controller (PIIX3)
+which is driven by the drivers/ide/ subsystem in RHEL-5.
+
+The ide drivers in RHEL-5 are compiled statically, thus it is impossible
+to select ide vs. paravirtualied driver by module load order (Fedora 7+
+can be handled that way).  That in turn requires an kernel command line
+option to disable the ide drivers so the paravirtual driver can step in.
+
+As the paravirtual drivers are optional we can't automatically disable
+ide for the xen disk controller, although it can easily be identified by
+pci subsystem id.
+
+The patch introduces an "ide=disable" kernel command line option which
+disables all drivers in drivers/ide/.
+
+This patch depends on the fix for bug 241338 posted recently.
+
+cheers,
+  Gerd
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+---
+ drivers/ide/ide.c       |   16 +++++++++++++++-
+ drivers/ide/setup-pci.c |    5 +++++
+ include/linux/ide.h     |    1 +
+ 3 files changed, 21 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/ide/ide.c b/drivers/ide/ide.c
+index eabd0b2..bbe4ad8 100644
+--- a/drivers/ide/ide.c
++++ b/drivers/ide/ide.c
+@@ -171,6 +171,7 @@ static const u8 ide_hwif_to_major[] = { IDE0_MAJOR, IDE1_MAJOR,
+ static int idebus_parameter;	/* holds the "idebus=" parameter */
+ static int system_bus_speed;	/* holds what we think is VESA/PCI bus speed */
+ static int initializing;	/* set while initializing built-in drivers */
++int disable_ide;
+ 
+ DECLARE_MUTEX(ide_cfg_sem);
+  __cacheline_aligned_in_smp DEFINE_SPINLOCK(ide_lock);
+@@ -360,7 +361,14 @@ struct proc_dir_entry *proc_ide_root;
+ static struct resource* hwif_request_region(ide_hwif_t *hwif,
+ 					    unsigned long addr, int num)
+ {
+-	struct resource *res = request_region(addr, num, hwif->name);
++	struct resource *res;
++
++	if (disable_ide) {
++		printk(KERN_DEBUG "IDE disabled: blocking 0x%lX-0x%lX for %s\n",
++		       addr, addr+num-1, hwif->name);
++		return NULL;
++	}
++	res = request_region(addr, num, hwif->name);
+ 
+ 	if (!res)
+ 		printk(KERN_ERR "%s: I/O resource 0x%lX-0x%lX not free.\n",
+@@ -1524,6 +1532,12 @@ static int __init ide_setup(char *s)
+ 		return 1;
+ 	}
+ 
++	if (!strcmp(s, "ide=disable")) {
++		printk(" : disable drivers/ide subsystem\n");
++		disable_ide = 1;
++		return 1;
++	}
++
+ #ifdef CONFIG_BLK_DEV_IDEPCI
+ 	if (!strcmp(s, "ide=reverse")) {
+ 		ide_scan_direction = 1;
+diff --git a/drivers/ide/setup-pci.c b/drivers/ide/setup-pci.c
+index eb09452..3ee1314 100644
+--- a/drivers/ide/setup-pci.c
++++ b/drivers/ide/setup-pci.c
+@@ -785,6 +785,11 @@ static LIST_HEAD(ide_pci_drivers);
+ 
+ int __ide_pci_register_driver(struct pci_driver *driver, struct module *module)
+ {
++	if (disable_ide) {
++		printk(KERN_DEBUG "IDE disabled: ignore pci driver %s\n", driver ->name);
++		return -ENODEV;
++	}
++
+ 	if(!pre_init)
+ 		return __pci_register_driver(driver, module);
+ 	driver->driver.owner = module;
+diff --git a/include/linux/ide.h b/include/linux/ide.h
+index 27fca71..5dd135c 100644
+--- a/include/linux/ide.h
++++ b/include/linux/ide.h
+@@ -1006,6 +1006,7 @@ int generic_ide_ioctl(ide_drive_t *, struct file *, struct block_device *, unsig
+ extern	ide_hwif_t	ide_hwifs[];		/* master data repository */
+ #endif
+ extern int noautodma;
++extern int disable_ide;
+ 
+ extern int ide_end_request (ide_drive_t *drive, int uptodate, int nrsecs);
+ int ide_end_dequeued_request(ide_drive_t *drive, struct request *rq,
+-- 
+1.5.3.5.645.gbb47
+

@@ -1,0 +1,175 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 8 Jan 2008 12:30:42 -0600
+Subject: [fs] ecryptfs: check for existing key_tfm at mount
+Message-id: 4783C152.4000404@redhat.com
+O-Subject: [RHEL 5.2 PATCH] 17/15: UPDATED2: eCryptfs: check for existing key_tfm at mount time
+Bugzilla: 228341
+
+(Further testing found a locking problem with the last patch -
+extraneous unlock was left in.  Sorry for all the updates).
+
+---------
+
+Jeff Moyer pointed out that a mount; umount loop of ecryptfs,
+with the same cipher & other mount options, created a new
+ecryptfs_key_tfm_cache item each time, and the cache could
+grow quite large this way.
+
+Looking at this with mhalcrow, we saw that ecryptfs_parse_options()
+unconditionally called ecryptfs_add_new_key_tfm(), which is what
+was adding these items.
+
+Refactor ecryptfs_get_tfm_and_mutex_for_cipher_name() to create a
+new helper function, ecryptfs_tfm_exists(), which checks for the
+cipher on the cached key_tfm_list, and sets a pointer
+to it if it exists.  This can then be called from
+ecryptfs_parse_options(), and new key_tfm's can be added only when
+a cached one is not found.
+
+Informally acked by Mike Halcrow & sent up to -mm.
+
+Andrew had a comment about locking; this updated patch reflects
+those changes.
+
+Signed-off-by: Eric Sandeen <sandeen@redhat.com>
+
+diff --git a/fs/ecryptfs/crypto.c b/fs/ecryptfs/crypto.c
+index ce98068..38859f0 100644
+--- a/fs/ecryptfs/crypto.c
++++ b/fs/ecryptfs/crypto.c
+@@ -1743,6 +1743,11 @@ int ecryptfs_init_crypto(void)
+ 	return 0;
+ }
+ 
++/**
++ * ecryptfs_destroy_crypto - free all cached key_tfms on key_tfm_list
++ *
++ * Called only at module unload time
++ */
+ int ecryptfs_destroy_crypto(void)
+ {
+ 	struct ecryptfs_key_tfm *key_tfm, *key_tfm_tmp;
+@@ -1766,6 +1771,8 @@ ecryptfs_add_new_key_tfm(struct ecryptfs_key_tfm **key_tfm, char *cipher_name,
+ 	struct ecryptfs_key_tfm *tmp_tfm;
+ 	int rc = 0;
+ 
++	BUG_ON(!mutex_is_locked(&key_tfm_list_mutex));
++
+ 	tmp_tfm = kmem_cache_alloc(ecryptfs_key_tfm_cache, GFP_KERNEL);
+ 	if (key_tfm != NULL)
+ 		(*key_tfm) = tmp_tfm;
+@@ -1792,13 +1799,50 @@ ecryptfs_add_new_key_tfm(struct ecryptfs_key_tfm **key_tfm, char *cipher_name,
+ 			(*key_tfm) = NULL;
+ 		goto out;
+ 	}
+-	mutex_lock(&key_tfm_list_mutex);
+ 	list_add(&tmp_tfm->key_tfm_list, &key_tfm_list);
+-	mutex_unlock(&key_tfm_list_mutex);
+ out:
+ 	return rc;
+ }
+ 
++/**
++ * ecryptfs_tfm_exists - Search for existing tfm for cipher_name.
++ * @cipher_name: the name of the cipher to search for
++ * @key_tfm: set to corresponding tfm if found
++ *
++ * Searches for cached key_tfm matching @cipher_name
++ * Must be called with &key_tfm_list_mutex held
++ * Returns 1 if found, with @key_tfm set
++ * Returns 0 if not found, with @key_tfm set to NULL
++ */
++int ecryptfs_tfm_exists(char *cipher_name, struct ecryptfs_key_tfm **key_tfm)
++{
++	struct ecryptfs_key_tfm *tmp_key_tfm;
++
++	BUG_ON(!mutex_is_locked(&key_tfm_list_mutex));
++
++	list_for_each_entry(tmp_key_tfm, &key_tfm_list, key_tfm_list) {
++		if (strcmp(tmp_key_tfm->cipher_name, cipher_name) == 0) {
++			if (key_tfm)
++				(*key_tfm) = tmp_key_tfm;
++			return 1;
++		}
++	}
++	if (key_tfm)
++		(*key_tfm) = NULL;
++	return 0;
++}
++
++/**
++ * ecryptfs_get_tfm_and_mutex_for_cipher_name
++ *
++ * @tfm: set to cached tfm found, or new tfm created
++ * @tfm_mutex: set to mutex for cached tfm found, or new tfm created
++ * @cipher_name: the name of the cipher to search for and/or add
++ *
++ * Sets pointers to @tfm & @tfm_mutex matching @cipher_name.
++ * Searches for cached item first, and creates new if not found.
++ * Returns 0 on success, non-zero if adding new cipher failed
++ */
+ int ecryptfs_get_tfm_and_mutex_for_cipher_name(struct crypto_tfm **tfm,
+ 					       struct mutex **tfm_mutex,
+ 					       char *cipher_name)
+@@ -1808,22 +1852,17 @@ int ecryptfs_get_tfm_and_mutex_for_cipher_name(struct crypto_tfm **tfm,
+ 
+ 	(*tfm) = NULL;
+ 	(*tfm_mutex) = NULL;
++
+ 	mutex_lock(&key_tfm_list_mutex);
+-	list_for_each_entry(key_tfm, &key_tfm_list, key_tfm_list) {
+-		if (strcmp(key_tfm->cipher_name, cipher_name) == 0) {
+-			(*tfm) = key_tfm->key_tfm;
+-			(*tfm_mutex) = &key_tfm->key_tfm_mutex;
+-			mutex_unlock(&key_tfm_list_mutex);
++	if (!ecryptfs_tfm_exists(cipher_name, &key_tfm)) {
++		rc = ecryptfs_add_new_key_tfm(&key_tfm, cipher_name, 0);
++		if (rc) {
++			printk(KERN_ERR "Error adding new key_tfm to list; "
++					"rc = [%d]\n", rc);
+ 			goto out;
+ 		}
+ 	}
+ 	mutex_unlock(&key_tfm_list_mutex);
+-	rc = ecryptfs_add_new_key_tfm(&key_tfm, cipher_name, 0);
+-	if (rc) {
+-		printk(KERN_ERR "Error adding new key_tfm to list; rc = [%d]\n",
+-		       rc);
+-		goto out;
+-	}
+ 	(*tfm) = key_tfm->key_tfm;
+ 	(*tfm_mutex) = &key_tfm->key_tfm_mutex;
+ out:
+diff --git a/fs/ecryptfs/ecryptfs_kernel.h b/fs/ecryptfs/ecryptfs_kernel.h
+index e2aca2b..597ddf5 100644
+--- a/fs/ecryptfs/ecryptfs_kernel.h
++++ b/fs/ecryptfs/ecryptfs_kernel.h
+@@ -623,6 +623,7 @@ ecryptfs_add_new_key_tfm(struct ecryptfs_key_tfm **key_tfm, char *cipher_name,
+ 			 size_t key_size);
+ int ecryptfs_init_crypto(void);
+ int ecryptfs_destroy_crypto(void);
++int ecryptfs_tfm_exists(char *cipher_name, struct ecryptfs_key_tfm **key_tfm);
+ int ecryptfs_get_tfm_and_mutex_for_cipher_name(struct crypto_tfm **tfm,
+ 					       struct mutex **tfm_mutex,
+ 					       char *cipher_name);
+diff --git a/fs/ecryptfs/main.c b/fs/ecryptfs/main.c
+index 7533868..37c2ab9 100644
+--- a/fs/ecryptfs/main.c
++++ b/fs/ecryptfs/main.c
+@@ -423,9 +423,13 @@ static int ecryptfs_parse_options(struct super_block *sb, char *options)
+ 	if (!cipher_key_bytes_set) {
+ 		mount_crypt_stat->global_default_cipher_key_size = 0;
+ 	}
+-	rc = ecryptfs_add_new_key_tfm(
+-		NULL, mount_crypt_stat->global_default_cipher_name,
+-		mount_crypt_stat->global_default_cipher_key_size);
++	mutex_lock(&key_tfm_list_mutex);
++	if (!ecryptfs_tfm_exists(mount_crypt_stat->global_default_cipher_name,
++				 NULL))
++		rc = ecryptfs_add_new_key_tfm(
++			NULL, mount_crypt_stat->global_default_cipher_name,
++			mount_crypt_stat->global_default_cipher_key_size);
++	mutex_unlock(&key_tfm_list_mutex);
+ 	if (rc) {
+ 		printk(KERN_ERR "Error attempting to initialize cipher with "
+ 		       "name = [%s] and key size = [%td]; rc = [%d]\n",

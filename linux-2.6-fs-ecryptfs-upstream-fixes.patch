@@ -1,0 +1,245 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 18 Dec 2007 12:18:43 -0600
+Subject: [fs] ecryptfs: upstream fixes
+Message-id: 47680F03.4020302@redhat.com
+O-Subject: [RHEL 5.2 PATCH] 15/15: eCryptfs: upstream fixes from -mm
+Bugzilla: 228341
+
+5 patches I submitted to -mm, they address errors found while testing,
+descriptions are below.
+
+All but last (which was just sent today) are in -mm, all are acked by
+upstream author. (on IRC if not formally in the patch...)
+
+ crypto.c     |    1 +
+ keystore.c   |    2 +-
+ main.c       |    1 +
+ mmap.c       |   31 ++++++++++++++++++++-----------
+ read_write.c |   27 +++++++++++++++++++++------
+ super.c      |   52 +++++++++++++++++++++++++++++++---------------------
+ 6 files changed, 75 insertions(+), 39 deletions(-)
+
+diff --git a/fs/ecryptfs/crypto.c b/fs/ecryptfs/crypto.c
+index bfc45b5..ce98068 100644
+--- a/fs/ecryptfs/crypto.c
++++ b/fs/ecryptfs/crypto.c
+@@ -1778,6 +1778,7 @@ ecryptfs_add_new_key_tfm(struct ecryptfs_key_tfm **key_tfm, char *cipher_name,
+ 	mutex_init(&tmp_tfm->key_tfm_mutex);
+ 	strncpy(tmp_tfm->cipher_name, cipher_name,
+ 		ECRYPTFS_MAX_CIPHER_NAME_SIZE);
++	tmp_tfm->cipher_name[ECRYPTFS_MAX_CIPHER_NAME_SIZE] = '\0';
+ 	tmp_tfm->key_size = key_size;
+ 	rc = ecryptfs_process_key_cipher(&tmp_tfm->key_tfm,
+ 					 tmp_tfm->cipher_name,
+diff --git a/fs/ecryptfs/keystore.c b/fs/ecryptfs/keystore.c
+index 6ebbc26..5993724 100644
+--- a/fs/ecryptfs/keystore.c
++++ b/fs/ecryptfs/keystore.c
+@@ -1851,7 +1851,7 @@ ecryptfs_add_global_auth_tok(struct ecryptfs_mount_crypt_stat *mount_crypt_stat,
+ 	struct ecryptfs_global_auth_tok *new_auth_tok;
+ 	int rc = 0;
+ 
+-	new_auth_tok = kmem_cache_alloc(ecryptfs_global_auth_tok_cache,
++	new_auth_tok = kmem_cache_zalloc(ecryptfs_global_auth_tok_cache,
+ 					GFP_KERNEL);
+ 	if (!new_auth_tok) {
+ 		rc = -ENOMEM;
+diff --git a/fs/ecryptfs/main.c b/fs/ecryptfs/main.c
+index 74db5b9..7ed9eee 100644
+--- a/fs/ecryptfs/main.c
++++ b/fs/ecryptfs/main.c
+@@ -523,6 +523,7 @@ static int ecryptfs_read_super(struct super_block *sb, const char *dev_name)
+ 	lower_mnt = nd.mnt;
+ 	ecryptfs_set_superblock_lower(sb, lower_root->d_sb);
+ 	sb->s_maxbytes = lower_root->d_sb->s_maxbytes;
++	sb->s_blocksize = lower_root->d_sb->s_blocksize;
+ 	ecryptfs_set_dentry_lower(sb->s_root, lower_root);
+ 	ecryptfs_set_dentry_lower_mnt(sb->s_root, lower_mnt);
+ 	rc = ecryptfs_interpose(lower_root, sb->s_root, sb, 0);
+diff --git a/fs/ecryptfs/mmap.c b/fs/ecryptfs/mmap.c
+index dbfb805..f02cb00 100644
+--- a/fs/ecryptfs/mmap.c
++++ b/fs/ecryptfs/mmap.c
+@@ -263,14 +263,13 @@ out:
+ 	return 0;
+ }
+ 
++/* This function must zero any hole we create */
+ static int ecryptfs_prepare_write(struct file *file, struct page *page,
+ 				  unsigned from, unsigned to)
+ {
+ 	int rc = 0;
++	loff_t prev_page_end_size;
+ 
+-	if (from == 0 && to == PAGE_CACHE_SIZE)
+-		goto out;	/* If we are writing a full page, it will be
+-				   up to date. */
+ 	if (!PageUptodate(page)) {
+ 		rc = ecryptfs_read_lower_page_segment(page, page->index, 0,
+ 						      PAGE_CACHE_SIZE,
+@@ -283,22 +282,32 @@ static int ecryptfs_prepare_write(struct file *file, struct page *page,
+ 		} else
+ 			SetPageUptodate(page);
+ 	}
+-	if (page->index != 0) {
+-		loff_t end_of_prev_pg_pos =
+-			(((loff_t)page->index << PAGE_CACHE_SHIFT) - 1);
+ 
+-		if (end_of_prev_pg_pos > i_size_read(page->mapping->host)) {
++	prev_page_end_size = ((loff_t)page->index << PAGE_CACHE_SHIFT);
++
++	/*
++	 * If creating a page or more of holes, zero them out via truncate.
++	 * Note, this will increase i_size.
++	 */
++	if (page->index != 0) {
++		if (prev_page_end_size > i_size_read(page->mapping->host)) {
+ 			rc = ecryptfs_truncate(file->f_dentry,
+-					       end_of_prev_pg_pos);
++					       prev_page_end_size);
+ 			if (rc) {
+ 				printk(KERN_ERR "Error on attempt to "
+ 				       "truncate to (higher) offset [%lld];"
+-				       " rc = [%d]\n", end_of_prev_pg_pos, rc);
++				       " rc = [%d]\n", prev_page_end_size, rc);
+ 				goto out;
+ 			}
+ 		}
+-		if (end_of_prev_pg_pos + 1 > i_size_read(page->mapping->host))
+-			memclear_highpage_flush(page, 0, PAGE_CACHE_SIZE);
++	}
++	/*
++	 * Writing to a new page, and creating a small hole from start of page?
++	 * Zero it out.
++	 */
++	if ((i_size_read(page->mapping->host) == prev_page_end_size) &&
++	    (from != 0)) {
++		memclear_highpage_flush(page, 0, PAGE_CACHE_SIZE);
+ 	}
+ out:
+ 	return rc;
+diff --git a/fs/ecryptfs/read_write.c b/fs/ecryptfs/read_write.c
+index 6b7474a..948f576 100644
+--- a/fs/ecryptfs/read_write.c
++++ b/fs/ecryptfs/read_write.c
+@@ -124,6 +124,10 @@ int ecryptfs_write(struct file *ecryptfs_file, char *data, loff_t offset,
+ 	loff_t pos;
+ 	int rc = 0;
+ 
++	/*
++	 * if we are writing beyond current size, then start pos
++	 * at the current size - we'll fill in zeros from there.
++	 */
+ 	if (offset > ecryptfs_file_size)
+ 		pos = ecryptfs_file_size;
+ 	else
+@@ -137,6 +141,7 @@ int ecryptfs_write(struct file *ecryptfs_file, char *data, loff_t offset,
+ 		if (num_bytes > total_remaining_bytes)
+ 			num_bytes = total_remaining_bytes;
+ 		if (pos < offset) {
++			/* remaining zeros to write, up to destination offset */
+ 			size_t total_remaining_zeros = (offset - pos);
+ 
+ 			if (num_bytes > total_remaining_zeros)
+@@ -167,17 +172,27 @@ int ecryptfs_write(struct file *ecryptfs_file, char *data, loff_t offset,
+ 			}
+ 		}
+ 		ecryptfs_page_virt = kmap_atomic(ecryptfs_page, KM_USER0);
++
++		/*
++		 * pos: where we're now writing, offset: where the request was
++		 * If current pos is before request, we are filling zeros
++		 * If we are at or beyond request, we are writing the *data*
++		 * If we're in a fresh page beyond eof, zero it in either case
++		 */
++		if (pos < offset || !start_offset_in_page) {
++			/* We are extending past the previous end of the file.
++			 * Fill in zero values to the end of the page */
++			memset(((char *)ecryptfs_page_virt
++				+ start_offset_in_page), 0,
++				PAGE_CACHE_SIZE - start_offset_in_page);
++		}
++
++		/* pos >= offset, we are now writing the data request */
+ 		if (pos >= offset) {
+ 			memcpy(((char *)ecryptfs_page_virt
+ 				+ start_offset_in_page),
+ 			       (data + data_offset), num_bytes);
+ 			data_offset += num_bytes;
+-		} else {
+-			/* We are extending past the previous end of the file.
+-			 * Fill in zero values up to the start of where we
+-			 * will be writing data. */
+-			memset(((char *)ecryptfs_page_virt
+-				+ start_offset_in_page), 0, num_bytes);
+ 		}
+ 		kunmap_atomic(ecryptfs_page_virt, KM_USER0);
+ 		flush_dcache_page(ecryptfs_page);
+diff --git a/fs/ecryptfs/super.c b/fs/ecryptfs/super.c
+index b3202a5..f074a67 100644
+--- a/fs/ecryptfs/super.c
++++ b/fs/ecryptfs/super.c
+@@ -157,32 +157,42 @@ static void ecryptfs_clear_inode(struct inode *inode)
+ /**
+  * ecryptfs_show_options
+  *
+- * Prints the directory we are currently mounted over.
+- * Returns zero on success; non-zero otherwise
++ * Prints the mount options for a given superblock.
++ * Returns zero; does not fail.
+  */
+ static int ecryptfs_show_options(struct seq_file *m, struct vfsmount *mnt)
+ {
+ 	struct super_block *sb = mnt->mnt_sb;
+-	struct dentry *lower_root_dentry = ecryptfs_dentry_to_lower(sb->s_root);
+-	struct vfsmount *lower_mnt = ecryptfs_dentry_to_lower_mnt(sb->s_root);
+-	char *tmp_page;
+-	char *path;
+-	int rc = 0;
+-
+-	tmp_page = (char *)__get_free_page(GFP_KERNEL);
+-	if (!tmp_page) {
+-		rc = -ENOMEM;
+-		goto out;
+-	}
+-	path = d_path(lower_root_dentry, lower_mnt, tmp_page, PAGE_SIZE);
+-	if (IS_ERR(path)) {
+-		rc = PTR_ERR(path);
+-		goto out;
++	struct ecryptfs_mount_crypt_stat *mount_crypt_stat =
++		&ecryptfs_superblock_to_private(sb)->mount_crypt_stat;
++	struct ecryptfs_global_auth_tok *walker;
++
++	mutex_lock(&mount_crypt_stat->global_auth_tok_list_mutex);
++	list_for_each_entry(walker,
++			    &mount_crypt_stat->global_auth_tok_list,
++			    mount_crypt_stat_list) {
++		seq_printf(m, ",ecryptfs_sig=%s", walker->sig);
+ 	}
+-	seq_printf(m, ",dir=%s", path);
+-	free_page((unsigned long)tmp_page);
+-out:
+-	return rc;
++	mutex_unlock(&mount_crypt_stat->global_auth_tok_list_mutex);
++
++	/* Note this is global and probably shouldn't be a mount option */
++	if (ecryptfs_verbosity)
++		seq_printf(m, ",ecryptfs_debug=%d\n", ecryptfs_verbosity);
++
++	seq_printf(m, ",ecryptfs_cipher=%s",
++		mount_crypt_stat->global_default_cipher_name);
++
++	if (mount_crypt_stat->global_default_cipher_key_size)
++		seq_printf(m, ",ecryptfs_key_bytes=%zd",
++			   mount_crypt_stat->global_default_cipher_key_size);
++	if (mount_crypt_stat->flags & ECRYPTFS_PLAINTEXT_PASSTHROUGH_ENABLED)
++		seq_printf(m, ",ecryptfs_passthrough");
++	if (mount_crypt_stat->flags & ECRYPTFS_XATTR_METADATA_ENABLED)
++		seq_printf(m, ",ecryptfs_xattr_metadata");
++	if (mount_crypt_stat->flags & ECRYPTFS_ENCRYPTED_VIEW_ENABLED)
++		seq_printf(m, ",ecryptfs_encrypted_view");
++
++	return 0;
+ }
+ 
+ struct super_operations ecryptfs_sops = {

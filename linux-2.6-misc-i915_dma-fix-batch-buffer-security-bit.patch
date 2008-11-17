@@ -1,0 +1,70 @@
+From: Aristeu Rozanski <arozansk@redhat.com>
+Subject: [RHEL5 PATCH] i915_dma: fix batch buffer security bit for i965 chipsets
+Date: Tue, 7 Aug 2007 17:44:16 -0400
+Bugzilla: 251188
+Message-Id: <20070807214416.GB15553@redhat.com>
+Changelog: [misc] i915_dma: fix batch buffer security bit for i965 chipsets
+
+
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=251185
+CVE-2007-3851
+
+On Intel 965 and newer, the batch buffer security bit has moved and
+currently RHEL5 i915 DRM driver allows commands that can reach any part
+of the memory. This can be a security problem if the user has access to DRM
+like local X users.
+
+This patch is upstream in commit 21f16289270447673a7263ccc0b22d562fb01ecb
+
+RHEL-4 i915 DRM driver doesn't supports Intel 965 chipsets, so it's not
+affected by this problem.
+
+--- tree.orig/drivers/char/drm/i915_dma.c
++++ tree/drivers/char/drm/i915_dma.c
+@@ -185,6 +185,8 @@ static int i915_initialize(drm_device_t 
+ 	 * private backbuffer/depthbuffer usage.
+ 	 */
+ 	dev_priv->use_mi_batchbuffer_start = 0;
++	if (IS_I965G(dev)) /* 965 doesn't support older method */
++		dev_priv->use_mi_batchbuffer_start = 1;
+ 
+ 	/* Allow hardware batchbuffers unless told otherwise.
+ 	 */
+@@ -526,8 +528,14 @@ static int i915_dispatch_batchbuffer(drm
+ 
+ 		if (dev_priv->use_mi_batchbuffer_start) {
+ 			BEGIN_LP_RING(2);
+-			OUT_RING(MI_BATCH_BUFFER_START | (2 << 6));
+-			OUT_RING(batch->start | MI_BATCH_NON_SECURE);
++			if (IS_I965G(dev)) {
++				OUT_RING(MI_BATCH_BUFFER_START | (2 << 6) |
++					 MI_BATCH_NON_SECURE_I965);
++				OUT_RING(batch->start);
++			} else {
++				OUT_RING(MI_BATCH_BUFFER_START | (2 << 6));
++				OUT_RING(batch->start | MI_BATCH_NON_SECURE);
++			}
+ 			ADVANCE_LP_RING();
+ 		} else {
+ 			BEGIN_LP_RING(4);
+@@ -746,7 +754,8 @@ static int i915_setparam(DRM_IOCTL_ARGS)
+ 
+ 	switch (param.param) {
+ 	case I915_SETPARAM_USE_MI_BATCHBUFFER_START:
+-		dev_priv->use_mi_batchbuffer_start = param.value;
++		if (!IS_I965G(dev))
++			dev_priv->use_mi_batchbuffer_start = param.value;
+ 		break;
+ 	case I915_SETPARAM_TEX_LRU_LOG_GRANULARITY:
+ 		dev_priv->tex_lru_log_granularity = param.value;
+--- tree.orig/drivers/char/drm/i915_drv.h
++++ tree/drivers/char/drm/i915_drv.h
+@@ -291,6 +291,7 @@ extern int i915_wait_ring(drm_device_t *
+ #define MI_BATCH_BUFFER_START 	(0x31<<23)
+ #define MI_BATCH_BUFFER_END 	(0xA<<23)
+ #define MI_BATCH_NON_SECURE	(1)
++#define MI_BATCH_NON_SECURE_I965 (1 << 8)
+ 
+ #define MI_WAIT_FOR_EVENT       ((0x3<<23))
+ #define MI_WAIT_FOR_PLANE_A_FLIP      (1<<2)
+

@@ -1,0 +1,4340 @@
+From: Janice M. Girouard <jgirouar@redhat.com>
+Subject: [RHEL 5.1 FEATURE] bz #228099 1/12 PPC: Cell Platform Base kernel  support
+Date: Tue, 17 Apr 2007 14:54:12 -0400 (Eastern Daylight Time)
+Bugzilla: 228099
+Message-Id: <Pine.WNT.4.64.0704161557170.5540@IBM-3MTQI3AXJFW>
+Changelog: [ppc64] Cell Platform Base kernel support
+
+
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=228099
+
+Description:
+------------
+1 of 12 patches by Ben Herrenschmidt of IBM required for supporting IBM 
+customers purchasing Cell blade configurations.  
+
+Without this patch, there are two copies of the same functions that apply 
+feature fixups, one for CPU features and one for firmware features.  In 
+addition, they are both in assembly and with separate implementations for 
+32 and 64 bit platforms.  identify_cpu() is also implemented in assembly 
+and separate for 32 and 64 bit.  
+
+This patch replaces duplicate functions with a pair of C functions.  The 
+call sites are slightly moved on ppc64 as well to be called from C instead 
+of fro assembly, though it's a very small change, and thus shouldn't cause 
+any problem.
+
+RHEL Version Found:
+-------------------
+feature enhancement for 5.1.
+
+Upstream Status:
+----------------
+This has been accepted into the kernel and can be viewed in the 2.6.20.3 
+kernel.
+
+Test Status:
+------------
+This patch was tested by Benjamin herrenschmidt of IBM.  It has been
+ack'd by Olof Johansson and signed off by Paul Mackerras.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL 5.1.
+-
+
+Index: linux-2.6/arch/powerpc/kernel/cputable.c
+===================================================================
+--- linux-2.6.orig/arch/powerpc/kernel/cputable.c	2007-01-24 16:01:50.000000000 +1100
++++ linux-2.6/arch/powerpc/kernel/cputable.c	2007-01-24 16:02:12.000000000 +1100
+@@ -18,6 +18,7 @@
+ 
+ #include <asm/oprofile_impl.h>
+ #include <asm/cputable.h>
++#include <asm/prom.h>		/* for PTRRELOC on ARCH=ppc */
+ 
+ struct cpu_spec* cur_cpu_spec = NULL;
+ EXPORT_SYMBOL(cur_cpu_spec);
+@@ -67,7 +68,7 @@
+ #define PPC_FEATURE_SPE_COMP	0
+ #endif
+ 
+-struct cpu_spec	cpu_specs[] = {
++static struct cpu_spec cpu_specs[] = {
+ #ifdef CONFIG_PPC64
+ 	{	/* Power3 */
+ 		.pvr_mask		= 0xffff0000,
+@@ -1120,3 +1121,72 @@
+ #endif /* !CLASSIC_PPC */
+ #endif /* CONFIG_PPC32 */
+ };
++
++struct cpu_spec *identify_cpu(unsigned long offset)
++{
++	struct cpu_spec *s = cpu_specs;
++	struct cpu_spec **cur = &cur_cpu_spec;
++	unsigned int pvr = mfspr(SPRN_PVR);
++	int i;
++
++	s = PTRRELOC(s);
++	cur = PTRRELOC(cur);
++
++	if (*cur != NULL)
++		return PTRRELOC(*cur);
++
++	for (i = 0; i < ARRAY_SIZE(cpu_specs); i++,s++)
++		if ((pvr & s->pvr_mask) == s->pvr_value) {
++			*cur = cpu_specs + i;
++#ifdef CONFIG_PPC64
++			/* ppc64 expects identify_cpu to also call setup_cpu
++			 * for that processor. I will consolidate that at a
++			 * later time, for now, just use our friend #ifdef.
++			 * we also don't need to PTRRELOC the function pointer
++			 * on ppc64 as we are running at 0 in real mode.
++			 */
++			if (s->cpu_setup) {
++				s->cpu_setup(offset, s);
++			}
++#endif /* CONFIG_PPC64 */
++			return s;
++		}
++	BUG();
++	return NULL;
++}
++
++void do_feature_fixups(unsigned long offset, unsigned long value,
++		       void *fixup_start, void *fixup_end)
++{
++	struct fixup_entry {
++		unsigned long	mask;
++		unsigned long	value;
++		unsigned int	*start;
++		unsigned int	*end;
++	} *fcur, *fend;
++
++	fcur = fixup_start;
++	fend = fixup_end;
++
++	for (; fcur < fend; fcur++) {
++		unsigned int *pstart, *pend, *p;
++
++		if ((value & fcur->mask) == fcur->value)
++			continue;
++
++		/* These PTRRELOCs will disappear once the new scheme for
++		 * modules and vdso is implemented
++		 */
++		pstart = PTRRELOC(fcur->start);
++		pend = PTRRELOC(fcur->end);
++
++		for (p = pstart; p < pend; p++) {
++			*p = 0x60000000u;
++			asm volatile ("dcbst 0, %0" : : "r" (p));
++		}
++		asm volatile ("sync" : : : "memory");
++		for (p = pstart; p < pend; p++)
++			asm volatile ("icbi 0,%0" : : "r" (p));
++		asm volatile ("sync; isync" : : : "memory");
++	}
++}
+Index: linux-2.6/arch/powerpc/kernel/head_64.S
+===================================================================
+--- linux-2.6.orig/arch/powerpc/kernel/head_64.S	2007-01-24 16:01:50.000000000 +1100
++++ linux-2.6/arch/powerpc/kernel/head_64.S	2007-01-24 16:02:12.000000000 +1100
+@@ -1552,11 +1552,6 @@
+ 	li	r0,0
+ 	stdu	r0,-STACK_FRAME_OVERHEAD(r1)
+ 
+-	LOAD_REG_IMMEDIATE(r3,cpu_specs)
+-	LOAD_REG_IMMEDIATE(r4,cur_cpu_spec)
+-	li	r5,0
+-	bl	.identify_cpu
+-
+ 	LOAD_REG_IMMEDIATE(r2,__toc_start)
+ 	addi	r2,r2,0x4000
+ 	addi	r2,r2,0x4000
+@@ -1925,13 +1920,6 @@
+ 	addi	r2,r2,0x4000
+ 	add	r2,r2,r26
+ 
+-	LOAD_REG_IMMEDIATE(r3, cpu_specs)
+-	add	r3,r3,r26
+-	LOAD_REG_IMMEDIATE(r4,cur_cpu_spec)
+-	add	r4,r4,r26
+-	mr	r5,r26
+-	bl	.identify_cpu
+-
+ 	/* Save some low level config HIDs of CPU0 to be copied to
+ 	 * other CPUs later on, or used for suspend/resume
+ 	 */
+@@ -1967,12 +1955,6 @@
+ 	li	r0,0
+ 	stdu	r0,-STACK_FRAME_OVERHEAD(r1)
+ 
+-	/* Apply the CPUs-specific fixups (nop out sections not relevant
+-	 * to this CPU
+-	 */
+-	li	r3,0
+-	bl	.do_cpu_ftr_fixups
+-
+ 	/* ptr to current */
+ 	LOAD_REG_IMMEDIATE(r4, init_task)
+ 	std	r4,PACACURRENT(r13)
+Index: linux-2.6/arch/powerpc/kernel/misc_32.S
+===================================================================
+--- linux-2.6.orig/arch/powerpc/kernel/misc_32.S	2007-01-24 16:01:50.000000000 +1100
++++ linux-2.6/arch/powerpc/kernel/misc_32.S	2007-01-24 16:02:12.000000000 +1100
+@@ -102,80 +102,6 @@
+ 	blr
+ 
+ /*
+- * identify_cpu,
+- * called with r3 = data offset and r4 = CPU number
+- * doesn't change r3
+- */
+-_GLOBAL(identify_cpu)
+-	addis	r8,r3,cpu_specs@ha
+-	addi	r8,r8,cpu_specs@l
+-	mfpvr	r7
+-1:
+-	lwz	r5,CPU_SPEC_PVR_MASK(r8)
+-	and	r5,r5,r7
+-	lwz	r6,CPU_SPEC_PVR_VALUE(r8)
+-	cmplw	0,r6,r5
+-	beq	1f
+-	addi	r8,r8,CPU_SPEC_ENTRY_SIZE
+-	b	1b
+-1:
+-	addis	r6,r3,cur_cpu_spec@ha
+-	addi	r6,r6,cur_cpu_spec@l
+-	sub	r8,r8,r3
+-	stw	r8,0(r6)
+-	blr
+-
+-/*
+- * do_cpu_ftr_fixups - goes through the list of CPU feature fixups
+- * and writes nop's over sections of code that don't apply for this cpu.
+- * r3 = data offset (not changed)
+- */
+-_GLOBAL(do_cpu_ftr_fixups)
+-	/* Get CPU 0 features */
+-	addis	r6,r3,cur_cpu_spec@ha
+-	addi	r6,r6,cur_cpu_spec@l
+-	lwz	r4,0(r6)
+-	add	r4,r4,r3
+-	lwz	r4,CPU_SPEC_FEATURES(r4)
+-
+-	/* Get the fixup table */
+-	addis	r6,r3,__start___ftr_fixup@ha
+-	addi	r6,r6,__start___ftr_fixup@l
+-	addis	r7,r3,__stop___ftr_fixup@ha
+-	addi	r7,r7,__stop___ftr_fixup@l
+-
+-	/* Do the fixup */
+-1:	cmplw	0,r6,r7
+-	bgelr
+-	addi	r6,r6,16
+-	lwz	r8,-16(r6)	/* mask */
+-	and	r8,r8,r4
+-	lwz	r9,-12(r6)	/* value */
+-	cmplw	0,r8,r9
+-	beq	1b
+-	lwz	r8,-8(r6)	/* section begin */
+-	lwz	r9,-4(r6)	/* section end */
+-	subf.	r9,r8,r9
+-	beq	1b
+-	/* write nops over the section of code */
+-	/* todo: if large section, add a branch at the start of it */
+-	srwi	r9,r9,2
+-	mtctr	r9
+-	add	r8,r8,r3
+-	lis	r0,0x60000000@h	/* nop */
+-3:	stw	r0,0(r8)
+-	andi.	r10,r4,CPU_FTR_SPLIT_ID_CACHE@l
+-	beq	2f
+-	dcbst	0,r8		/* suboptimal, but simpler */
+-	sync
+-	icbi	0,r8
+-2:	addi	r8,r8,4
+-	bdnz	3b
+-	sync			/* additional sync needed on g4 */
+-	isync
+-	b	1b
+-
+-/*
+  * call_setup_cpu - call the setup_cpu function for this cpu
+  * r3 = data offset, r24 = cpu number
+  *
+Index: linux-2.6/arch/powerpc/kernel/setup_32.c
+===================================================================
+--- linux-2.6.orig/arch/powerpc/kernel/setup_32.c	2007-01-24 16:01:50.000000000 +1100
++++ linux-2.6/arch/powerpc/kernel/setup_32.c	2007-01-24 16:02:12.000000000 +1100
+@@ -95,6 +95,7 @@
+ unsigned long __init early_init(unsigned long dt_ptr)
+ {
+ 	unsigned long offset = reloc_offset();
++	struct cpu_spec *spec;
+ 
+ 	/* First zero the BSS -- use memset_io, some platforms don't have
+ 	 * caches on yet */
+@@ -104,8 +105,11 @@
+ 	 * Identify the CPU type and fix up code sections
+ 	 * that depend on which cpu we have.
+ 	 */
+-	identify_cpu(offset, 0);
+-	do_cpu_ftr_fixups(offset);
++	spec = identify_cpu(offset);
++
++	do_feature_fixups(offset, spec->cpu_features,
++			  PTRRELOC(&__start___ftr_fixup),
++			  PTRRELOC(&__stop___ftr_fixup));
+ 
+ 	return KERNELBASE + offset;
+ }
+Index: linux-2.6/arch/powerpc/kernel/setup_64.c
+===================================================================
+--- linux-2.6.orig/arch/powerpc/kernel/setup_64.c	2007-01-24 16:01:50.000000000 +1100
++++ linux-2.6/arch/powerpc/kernel/setup_64.c	2007-01-24 16:03:37.000000000 +1100
+@@ -176,6 +176,9 @@
+ 
+ void __init early_setup(unsigned long dt_ptr)
+ {
++	/* Identify CPU type */
++	identify_cpu(0);
++
+ 	/* Assume we're on cpu 0 for now. Don't write to the paca yet! */
+ 	setup_paca(0);
+ 
+@@ -354,6 +357,12 @@
+ {
+ 	DBG(" -> setup_system()\n");
+ 
++	/* Apply the CPUs-specific and firmware specific fixups to kernel
++	 * text (nop out sections not relevant to this CPU or this firmware)
++	 */
++	do_feature_fixups(0, cur_cpu_spec->cpu_features,
++			  &__start___ftr_fixup, &__stop___ftr_fixup);
++
+ 	/*
+ 	 * Unflatten the device-tree passed by prom_init or kexec
+ 	 */
+Index: linux-2.6/arch/powerpc/platforms/iseries/setup.c
+===================================================================
+--- linux-2.6.orig/arch/powerpc/platforms/iseries/setup.c	2007-01-24 16:01:50.000000000 +1100
++++ linux-2.6/arch/powerpc/platforms/iseries/setup.c	2007-01-24 16:02:12.000000000 +1100
+@@ -654,6 +654,11 @@
+ 	if (!of_flat_dt_is_compatible(root, "IBM,iSeries"))
+ 		return 0;
+ 
++	/* Identify CPU type. This is done again by the common code later
++	 * on but calling this function multiple times is fine.
++	 */
++	identify_cpu(0);
++
+ 	powerpc_firmware_features |= FW_FEATURE_ISERIES;
+ 	powerpc_firmware_features |= FW_FEATURE_LPAR;
+ 
+Index: linux-2.6/arch/ppc/kernel/misc.S
+===================================================================
+--- linux-2.6.orig/arch/ppc/kernel/misc.S	2007-01-24 16:01:50.000000000 +1100
++++ linux-2.6/arch/ppc/kernel/misc.S	2007-01-24 16:02:12.000000000 +1100
+@@ -110,80 +110,6 @@
+ 	blr
+ 
+ /*
+- * identify_cpu,
+- * called with r3 = data offset and r4 = CPU number
+- * doesn't change r3
+- */
+-_GLOBAL(identify_cpu)
+-	addis	r8,r3,cpu_specs@ha
+-	addi	r8,r8,cpu_specs@l
+-	mfpvr	r7
+-1:
+-	lwz	r5,CPU_SPEC_PVR_MASK(r8)
+-	and	r5,r5,r7
+-	lwz	r6,CPU_SPEC_PVR_VALUE(r8)
+-	cmplw	0,r6,r5
+-	beq	1f
+-	addi	r8,r8,CPU_SPEC_ENTRY_SIZE
+-	b	1b
+-1:
+-	addis	r6,r3,cur_cpu_spec@ha
+-	addi	r6,r6,cur_cpu_spec@l
+-	sub	r8,r8,r3
+-	stw	r8,0(r6)
+-	blr
+-
+-/*
+- * do_cpu_ftr_fixups - goes through the list of CPU feature fixups
+- * and writes nop's over sections of code that don't apply for this cpu.
+- * r3 = data offset (not changed)
+- */
+-_GLOBAL(do_cpu_ftr_fixups)
+-	/* Get CPU 0 features */
+-	addis	r6,r3,cur_cpu_spec@ha
+-	addi	r6,r6,cur_cpu_spec@l
+-	lwz	r4,0(r6)
+-	add	r4,r4,r3
+-	lwz	r4,CPU_SPEC_FEATURES(r4)
+-
+-	/* Get the fixup table */
+-	addis	r6,r3,__start___ftr_fixup@ha
+-	addi	r6,r6,__start___ftr_fixup@l
+-	addis	r7,r3,__stop___ftr_fixup@ha
+-	addi	r7,r7,__stop___ftr_fixup@l
+-
+-	/* Do the fixup */
+-1:	cmplw	0,r6,r7
+-	bgelr
+-	addi	r6,r6,16
+-	lwz	r8,-16(r6)	/* mask */
+-	and	r8,r8,r4
+-	lwz	r9,-12(r6)	/* value */
+-	cmplw	0,r8,r9
+-	beq	1b
+-	lwz	r8,-8(r6)	/* section begin */
+-	lwz	r9,-4(r6)	/* section end */
+-	subf.	r9,r8,r9
+-	beq	1b
+-	/* write nops over the section of code */
+-	/* todo: if large section, add a branch at the start of it */
+-	srwi	r9,r9,2
+-	mtctr	r9
+-	add	r8,r8,r3
+-	lis	r0,0x60000000@h	/* nop */
+-3:	stw	r0,0(r8)
+-	andi.	r10,r4,CPU_FTR_SPLIT_ID_CACHE@l
+-	beq	2f
+-	dcbst	0,r8		/* suboptimal, but simpler */
+-	sync
+-	icbi	0,r8
+-2:	addi	r8,r8,4
+-	bdnz	3b
+-	sync			/* additional sync needed on g4 */
+-	isync
+-	b	1b
+-
+-/*
+  * call_setup_cpu - call the setup_cpu function for this cpu
+  * r3 = data offset, r24 = cpu number
+  *
+Index: linux-2.6/arch/ppc/kernel/setup.c
+===================================================================
+--- linux-2.6.orig/arch/ppc/kernel/setup.c	2007-01-24 16:01:50.000000000 +1100
++++ linux-2.6/arch/ppc/kernel/setup.c	2007-01-24 16:02:12.000000000 +1100
+@@ -38,6 +38,7 @@
+ #include <asm/nvram.h>
+ #include <asm/xmon.h>
+ #include <asm/ocp.h>
++#include <asm/prom.h>
+ 
+ #define USES_PPC_SYS (defined(CONFIG_85xx) || defined(CONFIG_83xx) || \
+ 		      defined(CONFIG_MPC10X_BRIDGE) || defined(CONFIG_8260) || \
+@@ -53,8 +54,6 @@
+ 
+ extern void platform_init(unsigned long r3, unsigned long r4,
+ 		unsigned long r5, unsigned long r6, unsigned long r7);
+-extern void identify_cpu(unsigned long offset, unsigned long cpu);
+-extern void do_cpu_ftr_fixups(unsigned long offset);
+ extern void reloc_got2(unsigned long offset);
+ 
+ extern void ppc6xx_idle(void);
+@@ -298,6 +297,7 @@
+ {
+  	unsigned long phys;
+ 	unsigned long offset = reloc_offset();
++	struct cpu_spec *spec;
+ 
+  	/* Default */
+  	phys = offset + KERNELBASE;
+@@ -310,8 +310,10 @@
+ 	 * Identify the CPU type and fix up code sections
+ 	 * that depend on which cpu we have.
+ 	 */
+-	identify_cpu(offset, 0);
+-	do_cpu_ftr_fixups(offset);
++	spec = identify_cpu(offset);
++	do_feature_fixups(offset, spec->cpu_features,
++			  PTRRELOC(&__start___ftr_fixup),
++			  PTRRELOC(&__stop___ftr_fixup));
+ 
+ 	return phys;
+ }
+Index: linux-2.6/include/asm-powerpc/cputable.h
+===================================================================
+--- linux-2.6.orig/include/asm-powerpc/cputable.h	2007-01-24 16:01:50.000000000 +1100
++++ linux-2.6/include/asm-powerpc/cputable.h	2007-01-24 16:02:12.000000000 +1100
+@@ -85,8 +85,11 @@
+ 
+ extern struct cpu_spec		*cur_cpu_spec;
+ 
+-extern void identify_cpu(unsigned long offset, unsigned long cpu);
+-extern void do_cpu_ftr_fixups(unsigned long offset);
++extern unsigned int __start___ftr_fixup, __stop___ftr_fixup;
++
++extern struct cpu_spec *identify_cpu(unsigned long offset);
++extern void do_feature_fixups(unsigned long offset, unsigned long value,
++			      void *fixup_start, void *fixup_end);
+ 
+ #endif /* __ASSEMBLY__ */
+ 
+Index: linux-2.6/arch/powerpc/kernel/misc_64.S
+===================================================================
+--- linux-2.6.orig/arch/powerpc/kernel/misc_64.S	2007-01-24 16:01:50.000000000 +1100
++++ linux-2.6/arch/powerpc/kernel/misc_64.S	2007-01-24 16:02:12.000000000 +1100
+@@ -246,85 +246,6 @@
+ 	isync
+ 	blr
+ 
+-/*
+- * identify_cpu and calls setup_cpu
+- * In:	r3 = base of the cpu_specs array
+- *	r4 = address of cur_cpu_spec
+- *	r5 = relocation offset
+- */
+-_GLOBAL(identify_cpu)
+-	mfpvr	r7
+-1:
+-	lwz	r8,CPU_SPEC_PVR_MASK(r3)
+-	and	r8,r8,r7
+-	lwz	r9,CPU_SPEC_PVR_VALUE(r3)
+-	cmplw	0,r9,r8
+-	beq	1f
+-	addi	r3,r3,CPU_SPEC_ENTRY_SIZE
+-	b	1b
+-1:
+-	sub	r0,r3,r5
+-	std	r0,0(r4)
+-	ld	r4,CPU_SPEC_SETUP(r3)
+-	cmpdi	0,r4,0
+-	add	r4,r4,r5
+-	beqlr
+-	ld	r4,0(r4)
+-	add	r4,r4,r5
+-	mtctr	r4
+-	/* Calling convention for cpu setup is r3=offset, r4=cur_cpu_spec */
+-	mr	r4,r3
+-	mr	r3,r5
+-	bctr
+-
+-/*
+- * do_cpu_ftr_fixups - goes through the list of CPU feature fixups
+- * and writes nop's over sections of code that don't apply for this cpu.
+- * r3 = data offset (not changed)
+- */
+-_GLOBAL(do_cpu_ftr_fixups)
+-	/* Get CPU 0 features */
+-	LOAD_REG_IMMEDIATE(r6,cur_cpu_spec)
+-	sub	r6,r6,r3
+-	ld	r4,0(r6)
+-	sub	r4,r4,r3
+-	ld	r4,CPU_SPEC_FEATURES(r4)
+-	/* Get the fixup table */
+-	LOAD_REG_IMMEDIATE(r6,__start___ftr_fixup)
+-	sub	r6,r6,r3
+-	LOAD_REG_IMMEDIATE(r7,__stop___ftr_fixup)
+-	sub	r7,r7,r3
+-	/* Do the fixup */
+-1:	cmpld	r6,r7
+-	bgelr
+-	addi	r6,r6,32
+-	ld	r8,-32(r6)	/* mask */
+-	and	r8,r8,r4
+-	ld	r9,-24(r6)	/* value */
+-	cmpld	r8,r9
+-	beq	1b
+-	ld	r8,-16(r6)	/* section begin */
+-	ld	r9,-8(r6)	/* section end */
+-	subf.	r9,r8,r9
+-	beq	1b
+-	/* write nops over the section of code */
+-	/* todo: if large section, add a branch at the start of it */
+-	srwi	r9,r9,2
+-	mtctr	r9
+-	sub	r8,r8,r3
+-	lis	r0,0x60000000@h	/* nop */
+-3:	stw	r0,0(r8)
+-	andi.	r10,r4,CPU_FTR_SPLIT_ID_CACHE@l
+-	beq	2f
+-	dcbst	0,r8		/* suboptimal, but simpler */
+-	sync
+-	icbi	0,r8
+-2:	addi	r8,r8,4
+-	bdnz	3b
+-	sync			/* additional sync needed on g4 */
+-	isync
+-	b	1b
+-
+ #if defined(CONFIG_PPC_PMAC) || defined(CONFIG_PPC_MAPLE)
+ /*
+  * Do an IO access in real mode
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=228099
+
+Description:
+------------
+1 of 12 patches developed by Benjamin Herrenschmidt of IBM required for 
+supportin IBM customers purchasing Cell blade configurations.
+
+This patch adds some macros that can be used with an explicit label in 
+order to nest cpu features.  This should be used very carefully but is 
+necessary for the upcoming cell TB fixup.
+
+RHEL Version Found:
+-------------------
+feature enhancement for 5.1.
+
+Upstream Status:
+----------------
+This has been accepted into the kernel and can be viewed in the 2.6.20.3 
+kernel.    There are slight changes, when the 5.1 code differs from the 
+kernel.  
+
+Test Status:
+------------
+This patch was tested by Benjamin herrenschmidt of IBM.  It has been
+ack'd by Olof Johansson and signed off by Paul Mackerras.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL 5.1.
+-
+
+diff --git a/include/asm-powerpc/cputable.h b/include/asm-powerpc/cputable.h
+index 4d22218..65faf32 100644
+--- a/include/asm-powerpc/cputable.h
++++ b/include/asm-powerpc/cputable.h
+@@ -434,30 +434,34 @@ static inline int cpu_has_feature(unsigned long feature)
+ 
+ #ifdef __ASSEMBLY__
+ 
+-#define BEGIN_FTR_SECTION		98:
++#define BEGIN_FTR_SECTION_NESTED(label)	label:
++#define BEGIN_FTR_SECTION		BEGIN_FTR_SECTION_NESTED(98)
+ 
+ #ifndef __powerpc64__
+-#define END_FTR_SECTION(msk, val)		\
++#define END_FTR_SECTION_NESTED(msk, val, label) \
+ 99:						\
+ 	.section __ftr_fixup,"a";		\
+ 	.align 2;				\
+ 	.long msk;				\
+ 	.long val;				\
+-	.long 98b;				\
++	.long label##b;				\
+ 	.long 99b;				\
+ 	.previous
+ #else /* __powerpc64__ */
+-#define END_FTR_SECTION(msk, val)		\
++#define END_FTR_SECTION_NESTED(msk, val, label) \
+ 99:						\
+ 	.section __ftr_fixup,"a";		\
+ 	.align 3;				\
+ 	.llong msk;				\
+ 	.llong val;				\
+-	.llong 98b;				\
++	.llong label##b;				\
+ 	.llong 99b;	 			\
+ 	.previous
+ #endif /* __powerpc64__ */
+ 
++#define END_FTR_SECTION(msk, val)		\
++	END_FTR_SECTION_NESTED(msk, val, 98)
++
+ #define END_FTR_SECTION_IFSET(msk)	END_FTR_SECTION((msk), (msk))
+ #define END_FTR_SECTION_IFCLR(msk)	END_FTR_SECTION((msk), 0)
+ #endif /* __ASSEMBLY__ */
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=228099
+
+Description:
+------------
+1 of 12 patches developed by Benjamin Herrenschmidt of IBM required for 
+supportin IBM customers purchasing Cell blade configurations.
+
+This patch reworks the feature fixup mecanism so vdso's can be fixed up.
+The main issue was that the construct:
+
+            .long   label  (or .llong on 64 bits)
+
+will not work in the case of a shared library like the vdso. It will 
+generate an empty placeholder in the fixup table along with a reloc, which 
+is not something we can deal with in the vdso.
+
+The idea here (thanks Alan Modra !) is to instead use something like:
+
+    1:
+            .long   label - 1b
+
+That is, the feature fixup tables no longer contain addresses of bits 
+of code to patch, but offsets of such code from the fixup table entry 
+itself. That is properly resolved by ld when building the .so's. I've
+modified the fixup mecanism generically to use that method for the rest
+of the kernel as well.
+
+Another trick is that the 32 bits vDSO included in the 64 bits kernel  
+need to have a table in the 64 bits format. However, gas does not support 
+32 bits code with a statement of the form:
+
+            .llong  label - 1b  (Or even just .llong label)
+
+That is, it cannot emit the right fixup/relocation for the linker to use 
+to assign a 32 bits address to an .llong field. Thus, in the specific case 
+of the 32 bits vdso built as part of the 64 bits kernel, we are using a 
+modified macro that generates:
+
+            .long   0xffffffff
+            .llong  label - 1b
+
+Note that this assumes that the value is negative which is enforced by the 
+.lds (those offsets are always negative as the .text is always before the 
+fixup table and gas doesn't support emiting the reloc the other way around).
+
+RHEL Version Found:
+-------------------
+feature enhancement for 5.1.
+
+Upstream Status:
+----------------
+This has been accepted into the kernel and can be viewed in the 2.6.20.3 
+kernel.    
+
+Test Status:
+------------
+This patch was tested by Benjamin herrenschmidt of IBM.  It has been
+signed off by Olof Johansson and Paul Mackerras.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL 5.1.
+-
+Index: linux-2.6/arch/powerpc/kernel/cputable.c
+===================================================================
+--- linux-2.6.orig/arch/powerpc/kernel/cputable.c	2007-01-24 16:02:12.000000000 +1100
++++ linux-2.6/arch/powerpc/kernel/cputable.c	2007-01-24 16:04:30.000000000 +1100
+@@ -1155,14 +1155,13 @@
+ 	return NULL;
+ }
+ 
+-void do_feature_fixups(unsigned long offset, unsigned long value,
+-		       void *fixup_start, void *fixup_end)
++void do_feature_fixups(unsigned long value, void *fixup_start, void *fixup_end)
+ {
+ 	struct fixup_entry {
+ 		unsigned long	mask;
+ 		unsigned long	value;
+-		unsigned int	*start;
+-		unsigned int	*end;
++		long		start_off;
++		long		end_off;
+ 	} *fcur, *fend;
+ 
+ 	fcur = fixup_start;
+@@ -1177,8 +1176,8 @@
+ 		/* These PTRRELOCs will disappear once the new scheme for
+ 		 * modules and vdso is implemented
+ 		 */
+-		pstart = PTRRELOC(fcur->start);
+-		pend = PTRRELOC(fcur->end);
++		pstart = ((unsigned int *)fcur) + (fcur->start_off / 4);
++		pend = ((unsigned int *)fcur) + (fcur->end_off / 4);
+ 
+ 		for (p = pstart; p < pend; p++) {
+ 			*p = 0x60000000u;
+Index: linux-2.6/arch/powerpc/kernel/setup_32.c
+===================================================================
+--- linux-2.6.orig/arch/powerpc/kernel/setup_32.c	2007-01-24 16:02:12.000000000 +1100
++++ linux-2.6/arch/powerpc/kernel/setup_32.c	2007-01-24 16:04:30.000000000 +1100
+@@ -107,7 +107,7 @@
+ 	 */
+ 	spec = identify_cpu(offset);
+ 
+-	do_feature_fixups(offset, spec->cpu_features,
++	do_feature_fixups(spec->cpu_features,
+ 			  PTRRELOC(&__start___ftr_fixup),
+ 			  PTRRELOC(&__stop___ftr_fixup));
+ 
+Index: linux-2.6/arch/powerpc/kernel/setup_64.c
+===================================================================
+--- linux-2.6.orig/arch/powerpc/kernel/setup_64.c	2007-01-24 16:03:37.000000000 +1100
++++ linux-2.6/arch/powerpc/kernel/setup_64.c	2007-01-24 16:04:56.000000000 +1100
+@@ -360,7 +360,7 @@
+ 	/* Apply the CPUs-specific and firmware specific fixups to kernel
+ 	 * text (nop out sections not relevant to this CPU or this firmware)
+ 	 */
+-	do_feature_fixups(0, cur_cpu_spec->cpu_features,
++	do_feature_fixups(cur_cpu_spec->cpu_features,
+ 			  &__start___ftr_fixup, &__stop___ftr_fixup);
+ 
+ 	/*
+Index: linux-2.6/arch/powerpc/kernel/vdso.c
+===================================================================
+--- linux-2.6.orig/arch/powerpc/kernel/vdso.c	2007-01-24 16:01:50.000000000 +1100
++++ linux-2.6/arch/powerpc/kernel/vdso.c	2007-01-24 16:10:35.000000000 +1100
+@@ -36,6 +36,8 @@
+ #include <asm/vdso.h>
+ #include <asm/vdso_datapage.h>
+ 
++#include "setup.h"
++
+ #undef DEBUG
+ 
+ #ifdef DEBUG
+@@ -587,6 +589,31 @@
+ 	return 0;
+ }
+ 
++
++static __init int vdso_fixup_features(struct lib32_elfinfo *v32,
++				      struct lib64_elfinfo *v64)
++{
++	void *start32;
++	unsigned long size32;
++
++#ifdef CONFIG_PPC64
++	void *start64;
++	unsigned long size64;
++
++	start64 = find_section64(v64->hdr, "__ftr_fixup", &size64);
++	if (start64)
++		do_feature_fixups(cur_cpu_spec->cpu_features,
++				  start64, start64 + size64);
++#endif /* CONFIG_PPC64 */
++
++	start32 = find_section32(v32->hdr, "__ftr_fixup", &size32);
++	if (start32)
++		do_feature_fixups(cur_cpu_spec->cpu_features,
++				  start32, start32 + size32);
++
++	return 0;
++}
++
+ static __init int vdso_fixup_alt_funcs(struct lib32_elfinfo *v32,
+ 				       struct lib64_elfinfo *v64)
+ {
+@@ -635,6 +662,9 @@
+ 	if (vdso_fixup_datapage(&v32, &v64))
+ 		return -1;
+ 
++	if (vdso_fixup_features(&v32, &v64))
++		return -1;
++
+ 	if (vdso_fixup_alt_funcs(&v32, &v64))
+ 		return -1;
+ 
+@@ -715,6 +745,7 @@
+ 	 * Setup the syscall map in the vDOS
+ 	 */
+ 	vdso_setup_syscall_map();
++
+ 	/*
+ 	 * Initialize the vDSO images in memory, that is do necessary
+ 	 * fixups of vDSO symbols, locate trampolines, etc...
+Index: linux-2.6/arch/powerpc/kernel/vdso32/vdso32.lds.S
+===================================================================
+--- linux-2.6.orig/arch/powerpc/kernel/vdso32/vdso32.lds.S	2007-01-24 16:01:50.000000000 +1100
++++ linux-2.6/arch/powerpc/kernel/vdso32/vdso32.lds.S	2007-01-24 16:06:01.000000000 +1100
+@@ -32,6 +32,11 @@
+   PROVIDE (_etext = .);
+   PROVIDE (etext = .);
+ 
++  . = ALIGN(8);
++  __ftr_fixup : {
++    *(__ftr_fixup)
++  }
++
+   /* Other stuff is appended to the text segment: */
+   .rodata		: { *(.rodata .rodata.* .gnu.linkonce.r.*) }
+   .rodata1		: { *(.rodata1) }
+Index: linux-2.6/arch/powerpc/kernel/vdso64/vdso64.lds.S
+===================================================================
+--- linux-2.6.orig/arch/powerpc/kernel/vdso64/vdso64.lds.S	2007-01-24 16:01:50.000000000 +1100
++++ linux-2.6/arch/powerpc/kernel/vdso64/vdso64.lds.S	2007-01-24 16:05:35.000000000 +1100
+@@ -31,6 +31,11 @@
+   PROVIDE (_etext = .);
+   PROVIDE (etext = .);
+ 
++  . = ALIGN(8);
++  __ftr_fixup : {
++    *(__ftr_fixup)
++  }
++
+   /* Other stuff is appended to the text segment: */
+   .rodata         : { *(.rodata .rodata.* .gnu.linkonce.r.*) }
+   .rodata1        : { *(.rodata1) }
+Index: linux-2.6/arch/ppc/kernel/setup.c
+===================================================================
+--- linux-2.6.orig/arch/ppc/kernel/setup.c	2007-01-24 16:02:12.000000000 +1100
++++ linux-2.6/arch/ppc/kernel/setup.c	2007-01-24 16:04:30.000000000 +1100
+@@ -311,7 +311,7 @@
+ 	 * that depend on which cpu we have.
+ 	 */
+ 	spec = identify_cpu(offset);
+-	do_feature_fixups(offset, spec->cpu_features,
++	do_feature_fixups(spec->cpu_features,
+ 			  PTRRELOC(&__start___ftr_fixup),
+ 			  PTRRELOC(&__stop___ftr_fixup));
+ 
+Index: linux-2.6/include/asm-powerpc/asm-compat.h
+===================================================================
+--- linux-2.6.orig/include/asm-powerpc/asm-compat.h	2007-01-24 16:01:50.000000000 +1100
++++ linux-2.6/include/asm-powerpc/asm-compat.h	2007-01-24 16:04:30.000000000 +1100
+@@ -14,6 +14,58 @@
+ #  define ASM_CONST(x)		__ASM_CONST(x)
+ #endif
+ 
++
++/*
++ * Feature section common macros
++ *
++ * Note that the entries now contain offsets between the table entry
++ * and the code rather than absolute code pointers in order to be
++ * useable with the vdso shared library. There is also an assumption
++ * that values will be negative, that is, the fixup table has to be
++ * located after the code it fixes up.
++ */
++#ifdef CONFIG_PPC64
++#ifdef __powerpc64__
++/* 64 bits kernel, 64 bits code */
++#define MAKE_FTR_SECTION_ENTRY(msk, val, label, sect)	\
++99:							\
++	.section sect,"a";				\
++	.align 3;					\
++98:						       	\
++	.llong msk;					\
++	.llong val;					\
++	.llong label##b-98b;				\
++	.llong 99b-98b;		 			\
++	.previous
++#else /* __powerpc64__ */
++/* 64 bits kernel, 32 bits code (ie. vdso32) */
++#define MAKE_FTR_SECTION_ENTRY(msk, val, label, sect)	\
++99:							\
++	.section sect,"a";				\
++	.align 3;					\
++98:						       	\
++	.llong msk;					\
++	.llong val;					\
++	.long 0xffffffff;      				\
++	.long label##b-98b;				\
++	.long 0xffffffff;	       			\
++	.long 99b-98b;		 			\
++	.previous
++#endif /* !__powerpc64__ */
++#else /* CONFIG_PPC64 */
++/* 32 bits kernel, 32 bits code */
++#define MAKE_FTR_SECTION_ENTRY(msk, val, label, sect)	\
++99:						       	\
++	.section sect,"a";			       	\
++	.align 2;				       	\
++98:						       	\
++	.long msk;				       	\
++	.long val;				       	\
++	.long label##b-98b;			       	\
++	.long 99b-98b;				       	\
++	.previous
++#endif /* !CONFIG_PPC64 */
++
+ #ifdef __powerpc64__
+ 
+ /* operations for longs and pointers */
+Index: linux-2.6/include/asm-powerpc/cputable.h
+===================================================================
+--- linux-2.6.orig/include/asm-powerpc/cputable.h	2007-01-24 16:04:13.000000000 +1100
++++ linux-2.6/include/asm-powerpc/cputable.h	2007-01-24 16:27:42.000000000 +1100
+@@ -88,8 +88,8 @@
+ extern unsigned int __start___ftr_fixup, __stop___ftr_fixup;
+ 
+ extern struct cpu_spec *identify_cpu(unsigned long offset);
+-extern void do_feature_fixups(unsigned long offset, unsigned long value,
+-			      void *fixup_start, void *fixup_end);
++extern void do_feature_fixups(unsigned long value, void *fixup_start,
++			      void *fixup_end);
+ 
+ #endif /* __ASSEMBLY__ */
+ 
+@@ -426,32 +426,11 @@
+ #ifdef __ASSEMBLY__
+ 
+ #define BEGIN_FTR_SECTION_NESTED(label)	label:
+-#define BEGIN_FTR_SECTION		BEGIN_FTR_SECTION_NESTED(98)
+-
+-#ifndef __powerpc64__
+-#define END_FTR_SECTION_NESTED(msk, val, label) \
+-99:						\
+-	.section __ftr_fixup,"a";		\
+-	.align 2;				\
+-	.long msk;				\
+-	.long val;				\
+-	.long label##b;				\
+-	.long 99b;				\
+-	.previous
+-#else /* __powerpc64__ */
++#define BEGIN_FTR_SECTION		BEGIN_FTR_SECTION_NESTED(97)
+ #define END_FTR_SECTION_NESTED(msk, val, label) \
+-99:						\
+-	.section __ftr_fixup,"a";		\
+-	.align 3;				\
+-	.llong msk;				\
+-	.llong val;				\
+-	.llong label##b;				\
+-	.llong 99b;	 			\
+-	.previous
+-#endif /* __powerpc64__ */
+-
++	MAKE_FTR_SECTION_ENTRY(msk, val, label, __ftr_fixup)
+ #define END_FTR_SECTION(msk, val)		\
+-	END_FTR_SECTION_NESTED(msk, val, 98)
++	END_FTR_SECTION_NESTED(msk, val, 97)
+ 
+ #define END_FTR_SECTION_IFSET(msk)	END_FTR_SECTION((msk), (msk))
+ #define END_FTR_SECTION_IFCLR(msk)	END_FTR_SECTION((msk), 0)
+Index: linux-2.6/include/asm-powerpc/timex.h
+===================================================================
+--- linux-2.6.orig/include/asm-powerpc/timex.h	2007-01-24 16:01:50.000000000 +1100
++++ linux-2.6/include/asm-powerpc/timex.h	2007-01-24 16:27:42.000000000 +1100
+@@ -30,13 +30,15 @@
+ 	ret = 0;
+ 
+ 	__asm__ __volatile__(
+-		"98:	mftb %0\n"
++		"97:	mftb %0\n"
+ 		"99:\n"
+ 		".section __ftr_fixup,\"a\"\n"
++		".align 2\n"
++		"98:\n"
+ 		"	.long %1\n"
+ 		"	.long 0\n"
+-		"	.long 98b\n"
+-		"	.long 99b\n"
++		"	.long 97b-98b\n"
++		"	.long 99b-98b\n"
+ 		".previous"
+ 		: "=r" (ret) : "i" (CPU_FTR_601));
+ #endif
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=228099
+
+Description:
+------------
+1 of 12 patches developed by Benjamin herrenschmidt of IBM  required for 
+IBM customers purchasing Cell blade configurations.
+
+This patch adds support for feature fixups in modules.  This involves 
+adding support for R_PPC64_REL64 relocs to the 64 bits module loader.  It 
+also modifies modpost.c to ignore the powerpc fixup sections (or it would 
+warn when used in .init.text).
+
+RHEL Version Found:
+-------------------
+feature enhancement for 5.1.
+
+Upstream Status:
+----------------
+This has been accepted into the kernel and can be viewed in the 2.6.20.3 
+kernel.    
+
+Test Status:
+------------
+This patch was tested by Benjamin herrenschmidt of IBM.  It has been
+signed off by Olof Johansson and Paul Mackerras.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL 5.1.
+-
+
+Index: linux-2.6/arch/powerpc/kernel/module_32.c
+===================================================================
+--- linux-2.6.orig/arch/powerpc/kernel/module_32.c	2007-01-24 16:00:26.000000000 +1100
++++ linux-2.6/arch/powerpc/kernel/module_32.c	2007-01-24 16:13:46.000000000 +1100
+@@ -24,6 +24,8 @@
+ #include <linux/kernel.h>
+ #include <linux/cache.h>
+ 
++#include "setup.h"
++
+ #if 0
+ #define DEBUGP printk
+ #else
+@@ -269,33 +271,50 @@
+ 	return 0;
+ }
+ 
++static const Elf_Shdr *find_section(const Elf_Ehdr *hdr,
++				    const Elf_Shdr *sechdrs,
++				    const char *name)
++{
++	char *secstrings;
++	unsigned int i;
++
++	secstrings = (char *)hdr + sechdrs[hdr->e_shstrndx].sh_offset;
++	for (i = 1; i < hdr->e_shnum; i++)
++		if (strcmp(secstrings+sechdrs[i].sh_name, name) == 0)
++			return &sechdrs[i];
++	return NULL;
++}
++
+ int module_finalize(const Elf_Ehdr *hdr,
+ 		    const Elf_Shdr *sechdrs,
+ 		    struct module *me)
+ {
+-	char *secstrings;
+-	unsigned int i;
++	const Elf_Shdr *sect;
+ 
+ 	me->arch.bug_table = NULL;
+ 	me->arch.num_bugs = 0;
+ 
+ 	/* Find the __bug_table section, if present */
+-	secstrings = (char *)hdr + sechdrs[hdr->e_shstrndx].sh_offset;
+-	for (i = 1; i < hdr->e_shnum; i++) {
+-		if (strcmp(secstrings+sechdrs[i].sh_name, "__bug_table"))
+-			continue;
+-		me->arch.bug_table = (void *) sechdrs[i].sh_addr;
+-		me->arch.num_bugs = sechdrs[i].sh_size / sizeof(struct bug_entry);
+-		break;
++	sect = find_section(hdr, sechdrs, "__bug_table");
++	if (sect != NULL) {
++		me->arch.bug_table = (void *) sect->sh_addr;
++		me->arch.num_bugs = sect->sh_size / sizeof(struct bug_entry);
+ 	}
+ 
+-	/*
++ 	/*
+ 	 * Strictly speaking this should have a spinlock to protect against
+ 	 * traversals, but since we only traverse on BUG()s, a spinlock
+ 	 * could potentially lead to deadlock and thus be counter-productive.
+ 	 */
+ 	list_add(&me->arch.bug_list, &module_bug_list);
+ 
++	/* Apply feature fixups */
++	sect = find_section(hdr, sechdrs, "__ftr_fixup");
++	if (sect != NULL)
++		do_feature_fixups(cur_cpu_spec->cpu_features,
++				  (void *)sect->sh_addr,
++				  (void *)sect->sh_addr + sect->sh_size);
++
+ 	return 0;
+ }
+ 
+Index: linux-2.6/arch/powerpc/kernel/module_64.c
+===================================================================
+--- linux-2.6.orig/arch/powerpc/kernel/module_64.c	2007-01-24 16:00:26.000000000 +1100
++++ linux-2.6/arch/powerpc/kernel/module_64.c	2007-01-24 16:14:30.000000000 +1100
+@@ -22,6 +22,9 @@
+ #include <linux/vmalloc.h>
+ #include <asm/module.h>
+ #include <asm/uaccess.h>
++#include <asm/firmware.h>
++
++#include "setup.h"
+ 
+ /* FIXME: We don't do .init separately.  To do this, we'd need to have
+    a separate r2 value in the init and core section, and stub between
+@@ -400,6 +403,11 @@
+ 				| (value & 0x03fffffc);
+ 			break;
+ 
++		case R_PPC64_REL64:
++			/* 64 bits relative (used by features fixups) */
++			*location = value - (unsigned long)location;
++			break;
++
+ 		default:
+ 			printk("%s: Unknown ADD relocation: %lu\n",
+ 			       me->name,
+@@ -413,23 +421,33 @@
+ 
+ LIST_HEAD(module_bug_list);
+ 
+-int module_finalize(const Elf_Ehdr *hdr,
+-		const Elf_Shdr *sechdrs, struct module *me)
++static const Elf_Shdr *find_section(const Elf_Ehdr *hdr,
++				    const Elf_Shdr *sechdrs,
++				    const char *name)
+ {
+ 	char *secstrings;
+ 	unsigned int i;
+ 
++	secstrings = (char *)hdr + sechdrs[hdr->e_shstrndx].sh_offset;
++	for (i = 1; i < hdr->e_shnum; i++)
++		if (strcmp(secstrings+sechdrs[i].sh_name, name) == 0)
++			return &sechdrs[i];
++	return NULL;
++}
++
++int module_finalize(const Elf_Ehdr *hdr,
++		const Elf_Shdr *sechdrs, struct module *me)
++{
++	const Elf_Shdr *sect;
++
+ 	me->arch.bug_table = NULL;
+ 	me->arch.num_bugs = 0;
+ 
+ 	/* Find the __bug_table section, if present */
+-	secstrings = (char *)hdr + sechdrs[hdr->e_shstrndx].sh_offset;
+-	for (i = 1; i < hdr->e_shnum; i++) {
+-		if (strcmp(secstrings+sechdrs[i].sh_name, "__bug_table"))
+-			continue;
+-		me->arch.bug_table = (void *) sechdrs[i].sh_addr;
+-		me->arch.num_bugs = sechdrs[i].sh_size / sizeof(struct bug_entry);
+-		break;
++	sect = find_section(hdr, sechdrs, "__bug_table");
++	if (sect != NULL) {
++		me->arch.bug_table = (void *) sect->sh_addr;
++		me->arch.num_bugs = sect->sh_size / sizeof(struct bug_entry);
+ 	}
+ 
+ 	/*
+@@ -439,6 +457,13 @@
+ 	 */
+ 	list_add(&me->arch.bug_list, &module_bug_list);
+ 
++	/* Apply feature fixups */
++	sect = find_section(hdr, sechdrs, "__ftr_fixup");
++	if (sect != NULL)
++		do_feature_fixups(cur_cpu_spec->cpu_features,
++				  (void *)sect->sh_addr,
++				  (void *)sect->sh_addr + sect->sh_size);
++
+ 	return 0;
+ }
+ 
+Index: linux-2.6/scripts/mod/modpost.c
+===================================================================
+--- linux-2.6.orig/scripts/mod/modpost.c	2007-01-24 16:00:26.000000000 +1100
++++ linux-2.6/scripts/mod/modpost.c	2007-01-24 16:14:04.000000000 +1100
+@@ -910,6 +910,7 @@
+ 		".fixup",
+ 		".smp_locks",
+ 		".plt",  /* seen on ARCH=um build on x86_64. Harmless */
++		"__ftr_fixup",		/* powerpc cpu feature fixup */
+ 		NULL
+ 	};
+ 	/* Start of section names */
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=228099
+
+Description:
+------------
+1 of 12 patches developed by Ben Herrenschmidt required for supporting IBM 
+customers purchasing Cell blade configurations.
+
+The Cell CPU timebase has an erratum.  When reading the entire 64 bits of 
+the timebase with one mftb instruction, there is a handful of cycles 
+window during which one might read a value with the low order 32 bits 
+already reset to 0x00000000 but the high order bits not yet incremented by 
+one.  This fixes it by reading the timebase again until the low order 32 
+bits are no longer 0.  That might introduce occasional latencies if 
+hitting mftb just at the wrong time, but no more than 70ns on a cell 
+blade, and that was considered acceptable.
+
+RHEL Version Found:
+-------------------
+feature enhancement for 5.1.
+
+Upstream Status:
+----------------
+This has been accepted into the kernel and can be viewed in the 2.6.20.3 
+kernel.    
+
+Test Status:
+------------
+This patch was tested by Benjamin herrenschmidt of IBM.  It has been
+signed off by Olof Johansson and Paul Mackerras.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL 5.1.
+-
+
+Index: linux-2.6/arch/powerpc/kernel/vdso64/gettimeofday.S
+===================================================================
+--- linux-2.6.orig/arch/powerpc/kernel/vdso64/gettimeofday.S	2007-01-22 14:38:56.000000000 +1100
++++ linux-2.6/arch/powerpc/kernel/vdso64/gettimeofday.S	2007-01-24 15:21:02.000000000 +1100
+@@ -229,8 +229,10 @@
+ 	xor	r0,r8,r8		/* create dependency */
+ 	add	r3,r3,r0
+ 
+-	/* Get TB & offset it */
+-	mftb	r7
++	/* Get TB & offset it. We use the MFTB macro which will generate
++	 * workaround code for Cell.
++	 */
++	MFTB(r7)
+ 	ld	r9,CFG_TB_ORIG_STAMP(r3)
+ 	subf	r7,r9,r7
+ 
+Index: linux-2.6/include/asm-powerpc/cputable.h
+===================================================================
+--- linux-2.6.orig/include/asm-powerpc/cputable.h	2007-01-22 14:38:59.000000000 +1100
++++ linux-2.6/include/asm-powerpc/cputable.h	2007-01-24 15:22:28.000000000 +1100
+@@ -140,6 +140,7 @@
+ #define CPU_FTR_CI_LARGE_PAGE		LONG_ASM_CONST(0x0000100000000000)
+ #define CPU_FTR_PAUSE_ZERO		LONG_ASM_CONST(0x0000200000000000)
+ #define CPU_FTR_PURR			LONG_ASM_CONST(0x0000400000000000)
++#define CPU_FTR_CELL_TB_BUG		LONG_ASM_CONST(0x0000800000000000)
+ 
+ #ifndef __ASSEMBLY__
+ 
+@@ -327,7 +328,8 @@
+ #define CPU_FTRS_CELL	(CPU_FTR_SPLIT_ID_CACHE | CPU_FTR_USE_TB | \
+ 	    CPU_FTR_HPTE_TABLE | CPU_FTR_PPCAS_ARCH_V2 | \
+ 	    CPU_FTR_ALTIVEC_COMP | CPU_FTR_MMCRA | CPU_FTR_SMT | \
+-	    CPU_FTR_CTRL | CPU_FTR_PAUSE_ZERO | CPU_FTR_CI_LARGE_PAGE)
++	    CPU_FTR_CTRL | CPU_FTR_PAUSE_ZERO | CPU_FTR_CI_LARGE_PAGE | \
++	    CPU_FTR_CELL_TB_BUG )
+ #define CPU_FTRS_COMPATIBLE	(CPU_FTR_SPLIT_ID_CACHE | CPU_FTR_USE_TB | \
+ 	    CPU_FTR_HPTE_TABLE | CPU_FTR_PPCAS_ARCH_V2)
+ #endif
+Index: linux-2.6/include/asm-powerpc/ppc_asm.h
+===================================================================
+--- linux-2.6.orig/include/asm-powerpc/ppc_asm.h	2007-01-22 14:38:59.000000000 +1100
++++ linux-2.6/include/asm-powerpc/ppc_asm.h	2007-01-24 15:21:02.000000000 +1100
+@@ -30,9 +30,9 @@
+ 	mfspr	ra,SPRN_PURR;		/* get processor util. reg */	\
+ END_FTR_SECTION_IFSET(CPU_FTR_PURR);					\
+ BEGIN_FTR_SECTION;							\
+-	mftb	ra;			/* or get TB if no PURR */	\
++	MFTB(ra);			/* or get TB if no PURR */	\
+ END_FTR_SECTION_IFCLR(CPU_FTR_PURR);					\
+-	ld	rb,PACA_STARTPURR(r13);				\
++	ld	rb,PACA_STARTPURR(r13);					\
+ 	std	ra,PACA_STARTPURR(r13);					\
+ 	subf	rb,rb,ra;		/* subtract start value */	\
+ 	ld	ra,PACA_USER_TIME(r13);					\
+@@ -45,9 +45,9 @@
+ 	mfspr	ra,SPRN_PURR;		/* get processor util. reg */	\
+ END_FTR_SECTION_IFSET(CPU_FTR_PURR);					\
+ BEGIN_FTR_SECTION;							\
+-	mftb	ra;			/* or get TB if no PURR */	\
++	MFTB(ra);			/* or get TB if no PURR */	\
+ END_FTR_SECTION_IFCLR(CPU_FTR_PURR);					\
+-	ld	rb,PACA_STARTPURR(r13);				\
++	ld	rb,PACA_STARTPURR(r13);					\
+ 	std	ra,PACA_STARTPURR(r13);					\
+ 	subf	rb,rb,ra;		/* subtract start value */	\
+ 	ld	ra,PACA_SYSTEM_TIME(r13);				\
+@@ -274,6 +274,16 @@
+ #define ISYNC_601
+ #endif
+ 
++#ifdef CONFIG_PPC_CELL
++#define MFTB(dest)			\
++90:	mftb  dest;			\
++BEGIN_FTR_SECTION_NESTED(96);		\
++	cmpwi dest,0;			\
++	beq-  90b;			\
++END_FTR_SECTION_NESTED(CPU_FTR_CELL_TB_BUG, CPU_FTR_CELL_TB_BUG, 96)
++#else
++#define MFTB(dest)			mftb dest
++#endif
+ 
+ #ifndef CONFIG_SMP
+ #define TLBSYNC
+Index: linux-2.6/include/asm-powerpc/reg.h
+===================================================================
+--- linux-2.6.orig/include/asm-powerpc/reg.h	2007-01-22 14:38:59.000000000 +1100
++++ linux-2.6/include/asm-powerpc/reg.h	2007-01-24 15:21:02.000000000 +1100
+@@ -617,10 +617,35 @@
+ 				: "=r" (rval)); rval;})
+ #define mtspr(rn, v)	asm volatile("mtspr " __stringify(rn) ",%0" : : "r" (v))
+ 
++#ifdef __powerpc64__
++#ifdef CONFIG_PPC_CELL
++#define mftb()		({unsigned long rval;				\
++			asm volatile(					\
++				"90:	mftb %0;\n"			\
++				"97:	cmpwi %0,0;\n"			\
++				"	beq- 90b;\n"			\
++				"99:\n"					\
++				".section __ftr_fixup,\"a\"\n"		\
++				".align 3\n"				\
++				"98:\n"					\
++				"	.llong %1\n"			\
++				"	.llong %1\n"			\
++				"	.llong 97b-98b\n"		\
++				"	.llong 99b-98b\n"		\
++				".previous"				\
++			: "=r" (rval) : "i" (CPU_FTR_CELL_TB_BUG)); rval;})
++#else
+ #define mftb()		({unsigned long rval;	\
+ 			asm volatile("mftb %0" : "=r" (rval)); rval;})
++#endif /* !CONFIG_PPC_CELL */
++
++#else /* __powerpc64__ */
++
+ #define mftbl()		({unsigned long rval;	\
+ 			asm volatile("mftbl %0" : "=r" (rval)); rval;})
++#define mftbu()		({unsigned long rval;	\
++			asm volatile("mftbu %0" : "=r" (rval)); rval;})
++#endif /* !__powerpc64__ */
+ 
+ #define mttbl(v)	asm volatile("mttbl %0":: "r"(v))
+ #define mttbu(v)	asm volatile("mttbu %0":: "r"(v))
+Index: linux-2.6/include/asm-powerpc/time.h
+===================================================================
+--- linux-2.6.orig/include/asm-powerpc/time.h	2007-01-22 14:38:59.000000000 +1100
++++ linux-2.6/include/asm-powerpc/time.h	2007-01-24 15:21:03.000000000 +1100
+@@ -78,30 +78,35 @@
+ #define __USE_RTC()	0
+ #endif
+ 
+-/* On ppc64 this gets us the whole timebase; on ppc32 just the lower half */
++#ifdef CONFIG_PPC64
++
++/* For compatibility, get_tbl() is defined as get_tb() on ppc64 */
++#define get_tbl		get_tb
++
++#else
++
+ static inline unsigned long get_tbl(void)
+ {
+-	unsigned long tbl;
+-
+ #if defined(CONFIG_403GCX)
++	unsigned long tbl;
+ 	asm volatile("mfspr %0, 0x3dd" : "=r" (tbl));
++	return tbl;
+ #else
+-	asm volatile("mftb %0" : "=r" (tbl));
++	return mftbl();
+ #endif
+-	return tbl;
+ }
+ 
+ static inline unsigned int get_tbu(void)
+ {
++#ifdef CONFIG_403GCX
+ 	unsigned int tbu;
+-
+-#if defined(CONFIG_403GCX)
+ 	asm volatile("mfspr %0, 0x3dc" : "=r" (tbu));
++	return tbu;
+ #else
+-	asm volatile("mftbu %0" : "=r" (tbu));
++	return mftbu();
+ #endif
+-	return tbu;
+ }
++#endif /* !CONFIG_PPC64 */
+ 
+ static inline unsigned int get_rtcl(void)
+ {
+@@ -127,7 +132,7 @@
+ {
+ 	return mftb();
+ }
+-#else
++#else /* CONFIG_PPC64 */
+ static inline u64 get_tb(void)
+ {
+ 	unsigned int tbhi, tblo, tbhi2;
+@@ -140,7 +145,7 @@
+ 
+ 	return ((u64)tbhi << 32) | tblo;
+ }
+-#endif
++#endif /* !CONFIG_PPC64 */
+ 
+ static inline void set_tb(unsigned int upper, unsigned int lower)
+ {
+Index: linux-2.6/include/asm-powerpc/timex.h
+===================================================================
+--- linux-2.6.orig/include/asm-powerpc/timex.h	2007-01-22 14:38:59.000000000 +1100
++++ linux-2.6/include/asm-powerpc/timex.h	2007-01-24 15:21:03.000000000 +1100
+@@ -8,6 +8,7 @@
+  */
+ 
+ #include <asm/cputable.h>
++#include <asm/reg.h>
+ 
+ #define CLOCK_TICK_RATE	1024000 /* Underlying HZ */
+ 
+@@ -15,13 +16,11 @@
+ 
+ static inline cycles_t get_cycles(void)
+ {
+-	cycles_t ret;
+-
+ #ifdef __powerpc64__
+-
+-	__asm__ __volatile__("mftb %0" : "=r" (ret) : );
+-
++	return mftb();
+ #else
++	cycles_t ret;
++
+ 	/*
+ 	 * For the "cycle" counter we use the timebase lower half.
+ 	 * Currently only used on SMP.
+@@ -39,9 +38,8 @@
+ 		"	.long 99b\n"
+ 		".previous"
+ 		: "=r" (ret) : "i" (CPU_FTR_601));
+-#endif
+-
+ 	return ret;
++#endif
+ }
+ 
+ #endif	/* __KERNEL__ */
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=228099
+
+Description:
+------------
+1 of 12 patches developed by Banjamin Herrenschmidt of IBM required for 
+IBM customers purchasing Cell blade configurations.
+
+This patch reworks the cell iic interrupt handling so that:
+
+- Node ID is back in the interrupt number (only one IRQ host is created 
+for all nodes). This allows interrupts from sources on another node to be 
+routed non-locally. This will allow possibly one day to fix maxcpus=1 or 
+2 and still get interrupts from devices on BE 1. (A bit more fixing is 
+needed for that) and it will allow us to implement actual affinity 
+control of external interrupts.
+
+- Added handling of the IO exceptions interrupts (badly named, but Ben 
+re-used the name initially used by STI). Those are the interrupts exposed 
+by IIC_ISR and IIC_IRR, such as the IOC translation exception, performance 
+monitor, etc... Those get their special numbers in the IRQ number space 
+and are internally implemented as a cascade on unit 0xe, class 1 of each node.
+
+RHEL Version Found:
+-------------------
+feature enhancement for 5.1.
+
+Upstream Status:
+----------------
+This has been accepted into the kernel and can be viewed in the 2.6.20.3 
+kernel.    
+
+Test Status:
+------------
+This patch was tested by Benjamin herrenschmidt of IBM.  It has been
+signed off by Olof Johansson and Paul Mackerras.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL 5.1.
+-
+
+Index: linux-malta-RH5/arch/powerpc/platforms/cell/interrupt.c
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/platforms/cell/interrupt.c	2007-01-10 15:10:07.000000000 +1100
++++ linux-malta-RH5/arch/powerpc/platforms/cell/interrupt.c	2007-01-10 15:11:06.000000000 +1100
+@@ -21,6 +21,12 @@
+  * You should have received a copy of the GNU General Public License
+  * along with this program; if not, write to the Free Software
+  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ *
++ * TODO:
++ * - Fix various assumptions related to HW CPU numbers vs. linux CPU numbers
++ *   vs node numbers in the setup code
++ * - Implement proper handling of maxcpus=1/2 (that is, routing of irqs from
++ *   a non-active node to the active node)
+  */
+ 
+ #include <linux/interrupt.h>
+@@ -44,24 +50,25 @@ struct iic {
+ 	u8 target_id;
+ 	u8 eoi_stack[16];
+ 	int eoi_ptr;
+-	struct irq_host *host;
++	struct device_node *node;
+ };
+ 
+ static DEFINE_PER_CPU(struct iic, iic);
+ #define IIC_NODE_COUNT	2
+-static struct irq_host *iic_hosts[IIC_NODE_COUNT];
++static struct irq_host *iic_host;
+ 
+ /* Convert between "pending" bits and hw irq number */
+ static irq_hw_number_t iic_pending_to_hwnum(struct cbe_iic_pending_bits bits)
+ {
+ 	unsigned char unit = bits.source & 0xf;
++	unsigned char node = bits.source >> 4;
++	unsigned char class = bits.class & 3;
+ 
++	/* Decode IPIs */
+ 	if (bits.flags & CBE_IIC_IRQ_IPI)
+-		return IIC_IRQ_IPI0 | (bits.prio >> 4);
+-	else if (bits.class <= 3)
+-		return (bits.class << 4) | unit;
++		return IIC_IRQ_TYPE_IPI | (bits.prio >> 4);
+ 	else
+-		return IIC_IRQ_INVALID;
++		return (node << IIC_IRQ_NODE_SHIFT) | (class << 4) | unit;
+ }
+ 
+ static void iic_mask(unsigned int irq)
+@@ -86,21 +93,70 @@ static struct irq_chip iic_chip = {
+ 	.eoi = iic_eoi,
+ };
+ 
++
++static void iic_ioexc_eoi(unsigned int irq)
++{
++}
++
++static void iic_ioexc_cascade(unsigned int irq, struct irq_desc *desc,
++			    struct pt_regs *regs)
++{
++	struct cbe_iic_regs __iomem *node_iic = (void __iomem *)desc->handler_data;
++	unsigned int base = (irq & 0xffffff00) | IIC_IRQ_TYPE_IOEXC;
++	unsigned long bits, ack;
++	int cascade;
++
++	for (;;) {
++		bits = in_be64(&node_iic->iic_is);
++		if (bits == 0)
++			break;
++		/* pre-ack edge interrupts */
++		ack = bits & IIC_ISR_EDGE_MASK;
++		if (ack)
++			out_be64(&node_iic->iic_is, ack);
++		/* handle them */
++		for (cascade = 63; cascade >= 0; cascade--)
++			if (bits & (0x8000000000000000UL >> cascade)) {
++				unsigned int cirq =
++					irq_linear_revmap(iic_host,
++							  base | cascade);
++				if (cirq != NO_IRQ)
++					generic_handle_irq(cirq, regs);
++			}
++		/* post-ack level interrupts */
++		ack = bits & ~IIC_ISR_EDGE_MASK;
++		if (ack)
++			out_be64(&node_iic->iic_is, ack);
++	}
++	desc->chip->eoi(irq);
++}
++
++
++static struct irq_chip iic_ioexc_chip = {
++	.typename = " CELL-IOEX",
++	.mask = iic_mask,
++	.unmask = iic_unmask,
++	.eoi = iic_ioexc_eoi,
++};
++
+ /* Get an IRQ number from the pending state register of the IIC */
+ static unsigned int iic_get_irq(struct pt_regs *regs)
+ {
+-  	struct cbe_iic_pending_bits pending;
+- 	struct iic *iic;
+-
+- 	iic = &__get_cpu_var(iic);
+- 	*(unsigned long *) &pending =
+- 		in_be64((unsigned long __iomem *) &iic->regs->pending_destr);
+- 	iic->eoi_stack[++iic->eoi_ptr] = pending.prio;
+- 	BUG_ON(iic->eoi_ptr > 15);
+-	if (pending.flags & CBE_IIC_IRQ_VALID)
+-		return irq_linear_revmap(iic->host,
+- 					 iic_pending_to_hwnum(pending));
+-	return NO_IRQ;
++	struct cbe_iic_pending_bits pending;
++	struct iic *iic;
++	unsigned int virq;
++
++	iic = &__get_cpu_var(iic);
++	*(unsigned long *) &pending =
++		in_be64((unsigned long __iomem *) &iic->regs->pending_destr);
++	if (!(pending.flags & CBE_IIC_IRQ_VALID))
++		return NO_IRQ;
++	virq = irq_linear_revmap(iic_host, iic_pending_to_hwnum(pending));
++	if (virq == NO_IRQ)
++		return NO_IRQ;
++	iic->eoi_stack[++iic->eoi_ptr] = pending.prio;
++	BUG_ON(iic->eoi_ptr > 15);
++	return virq;
+ }
+ 
+ #ifdef CONFIG_SMP
+@@ -108,12 +164,7 @@ static unsigned int iic_get_irq(struct p
+ /* Use the highest interrupt priorities for IPI */
+ static inline int iic_ipi_to_irq(int ipi)
+ {
+-	return IIC_IRQ_IPI0 + IIC_NUM_IPIS - 1 - ipi;
+-}
+-
+-static inline int iic_irq_to_ipi(int irq)
+-{
+-	return IIC_NUM_IPIS - 1 - (irq - IIC_IRQ_IPI0);
++	return IIC_IRQ_TYPE_IPI + 0xf - ipi;
+ }
+ 
+ void iic_setup_cpu(void)
+@@ -123,7 +174,7 @@ void iic_setup_cpu(void)
+ 
+ void iic_cause_IPI(int cpu, int mesg)
+ {
+-	out_be64(&per_cpu(iic, cpu).regs->generate, (IIC_NUM_IPIS - 1 - mesg) << 4);
++	out_be64(&per_cpu(iic, cpu).regs->generate, (0xf - mesg) << 4);
+ }
+ 
+ u8 iic_get_target_id(int cpu)
+@@ -134,9 +185,7 @@ EXPORT_SYMBOL_GPL(iic_get_target_id);
+ 
+ struct irq_host *iic_get_irq_host(int node)
+ {
+-	if (node < 0 || node >= IIC_NODE_COUNT)
+-		return NULL;
+-	return iic_hosts[node];
++	return iic_host;
+ }
+ EXPORT_SYMBOL_GPL(iic_get_irq_host);
+ 
+@@ -149,34 +198,20 @@ static irqreturn_t iic_ipi_action(int ir
+ 
+ 	return IRQ_HANDLED;
+ }
+-
+ static void iic_request_ipi(int ipi, const char *name)
+ {
+-	int node, virq;
++	int virq;
+ 
+-	for (node = 0; node < IIC_NODE_COUNT; node++) {
+-		char *rname;
+-		if (iic_hosts[node] == NULL)
+-			continue;
+-		virq = irq_create_mapping(iic_hosts[node],
+-					  iic_ipi_to_irq(ipi));
+-		if (virq == NO_IRQ) {
+-			printk(KERN_ERR
+-			       "iic: failed to map IPI %s on node %d\n",
+-			       name, node);
+-			continue;
+-		}
+-		rname = kzalloc(strlen(name) + 16, GFP_KERNEL);
+-		if (rname)
+-			sprintf(rname, "%s node %d", name, node);
+-		else
+-			rname = (char *)name;
+-		if (request_irq(virq, iic_ipi_action, IRQF_DISABLED,
+-				rname, (void *)(long)ipi))
+-			printk(KERN_ERR
+-			       "iic: failed to request IPI %s on node %d\n",
+-			       name, node);
++	virq = irq_create_mapping(iic_host, iic_ipi_to_irq(ipi));
++	if (virq == NO_IRQ) {
++		printk(KERN_ERR
++		       "iic: failed to map IPI %s\n", name);
++		return;
+ 	}
++	if (request_irq(virq, iic_ipi_action, IRQF_DISABLED, name,
++			(void *)(long)ipi))
++		printk(KERN_ERR
++		       "iic: failed to request IPI %s\n", name);
+ }
+ 
+ void iic_request_IPIs(void)
+@@ -193,16 +228,24 @@ void iic_request_IPIs(void)
+ 
+ static int iic_host_match(struct irq_host *h, struct device_node *node)
+ {
+-	return h->host_data != NULL && node == h->host_data;
++	return device_is_compatible(node,
++				    "IBM,CBEA-Internal-Interrupt-Controller");
+ }
+ 
+ static int iic_host_map(struct irq_host *h, unsigned int virq,
+ 			irq_hw_number_t hw)
+ {
+-	if (hw < IIC_IRQ_IPI0)
+-		set_irq_chip_and_handler(virq, &iic_chip, handle_fasteoi_irq);
+-	else
++	switch (hw & IIC_IRQ_TYPE_MASK) {
++	case IIC_IRQ_TYPE_IPI:
+ 		set_irq_chip_and_handler(virq, &iic_chip, handle_percpu_irq);
++		break;
++	case IIC_IRQ_TYPE_IOEXC:
++		set_irq_chip_and_handler(virq, &iic_ioexc_chip,
++					 handle_fasteoi_irq);
++		break;
++	default:
++		set_irq_chip_and_handler(virq, &iic_chip, handle_fasteoi_irq);
++	}
+ 	return 0;
+ }
+ 
+@@ -211,11 +254,39 @@ static int iic_host_xlate(struct irq_hos
+ 			   irq_hw_number_t *out_hwirq, unsigned int *out_flags)
+ 
+ {
+-	/* Currently, we don't translate anything. That needs to be fixed as
+-	 * we get better defined device-trees. iic interrupts have to be
+-	 * explicitely mapped by whoever needs them
+-	 */
+-	return -ENODEV;
++	unsigned int node, ext, unit, class;
++	const u32 *val;
++
++	if (!device_is_compatible(ct,
++				     "IBM,CBEA-Internal-Interrupt-Controller"))
++		return -ENODEV;
++	if (intsize != 1)
++		return -ENODEV;
++	val = get_property(ct, "#interrupt-cells", NULL);
++	if (val == NULL || *val != 1)
++		return -ENODEV;
++
++	node = intspec[0] >> 24;
++	ext = (intspec[0] >> 16) & 0xff;
++	class = (intspec[0] >> 8) & 0xff;
++	unit = intspec[0] & 0xff;
++
++	/* Check if node is in supported range */
++	if (node > 1)
++		return -EINVAL;
++
++	/* Build up interrupt number, special case for IO exceptions */
++	*out_hwirq = (node << IIC_IRQ_NODE_SHIFT);
++	if (unit == IIC_UNIT_IIC && class == 1)
++		*out_hwirq |= IIC_IRQ_TYPE_IOEXC | ext;
++	else
++		*out_hwirq |= IIC_IRQ_TYPE_NORMAL |
++			(class << IIC_IRQ_CLASS_SHIFT) | unit;
++
++	/* Dummy flags, ignored by iic code */
++	*out_flags = IRQ_TYPE_EDGE_RISING;
++
++	return 0;
+ }
+ 
+ static struct irq_host_ops iic_host_ops = {
+@@ -225,7 +296,7 @@ static struct irq_host_ops iic_host_ops 
+ };
+ 
+ static void __init init_one_iic(unsigned int hw_cpu, unsigned long addr,
+-				struct irq_host *host)
++				struct device_node *node)
+ {
+ 	/* XXX FIXME: should locate the linux CPU number from the HW cpu
+ 	 * number properly. We are lucky for now
+@@ -237,19 +308,19 @@ static void __init init_one_iic(unsigned
+ 
+ 	iic->target_id = ((hw_cpu & 2) << 3) | ((hw_cpu & 1) ? 0xf : 0xe);
+ 	iic->eoi_stack[0] = 0xff;
+-	iic->host = host;
++	iic->node = of_node_get(node);
+ 	out_be64(&iic->regs->prio, 0);
+ 
+-	printk(KERN_INFO "IIC for CPU %d at %lx mapped to %p, target id 0x%x\n",
+-	       hw_cpu, addr, iic->regs, iic->target_id);
++	printk(KERN_INFO "IIC for CPU %d target id 0x%x : %s\n",
++	       hw_cpu, iic->target_id, node->full_name);
+ }
+ 
+ static int __init setup_iic(void)
+ {
+ 	struct device_node *dn;
+ 	struct resource r0, r1;
+-	struct irq_host *host;
+-	int found = 0;
++	unsigned int node, cascade, found = 0;
++	struct cbe_iic_regs __iomem *node_iic;
+  	u32 *np;
+ 
+ 	for (dn = NULL;
+@@ -270,19 +341,37 @@ static int __init setup_iic(void)
+ 			of_node_put(dn);
+ 			return -ENODEV;
+ 		}
+-		host = NULL;
+-		if (found < IIC_NODE_COUNT) {
+-			host = irq_alloc_host(IRQ_HOST_MAP_LINEAR,
+-					      IIC_SOURCE_COUNT,
+-					      &iic_host_ops,
+-					      IIC_IRQ_INVALID);
+-			iic_hosts[found] = host;
+-			BUG_ON(iic_hosts[found] == NULL);
+-			iic_hosts[found]->host_data = of_node_get(dn);
+-			found++;
+-		}
+-		init_one_iic(np[0], r0.start, host);
+-		init_one_iic(np[1], r1.start, host);
++		found++;
++		init_one_iic(np[0], r0.start, dn);
++		init_one_iic(np[1], r1.start, dn);
++
++		/* Setup cascade for IO exceptions. XXX cleanup tricks to get
++		 * node vs CPU etc...
++		 * Note that we configure the IIC_IRR here with a hard coded
++		 * priority of 1. We might want to improve that later.
++		 */
++		node = np[0] >> 1;
++		node_iic = cbe_get_cpu_iic_regs(np[0]);
++		cascade = node << IIC_IRQ_NODE_SHIFT;
++		cascade |= 1 << IIC_IRQ_CLASS_SHIFT;
++		cascade |= IIC_UNIT_IIC;
++		cascade = irq_create_mapping(iic_host, cascade);
++		if (cascade == NO_IRQ)
++			continue;
++		/*
++		 * irq_data is a generic pointer that gets passed back
++		 * to us later, so the forced cast is fine.
++		 */
++		set_irq_data(cascade, (void __force *)node_iic);
++		set_irq_chained_handler(cascade , iic_ioexc_cascade);
++		out_be64(&node_iic->iic_ir,
++			 (1 << 12)		/* priority */ |
++			 (node << 4)		/* dest node */ |
++			 IIC_UNIT_THREAD_0	/* route them to thread 0 */);
++		/* Flush pending (make sure it triggers if there is
++		 * anything pending
++		 */
++		out_be64(&node_iic->iic_is, 0xfffffffffffffffful);
+ 	}
+ 
+ 	if (found)
+@@ -293,6 +382,12 @@ static int __init setup_iic(void)
+ 
+ void __init iic_init_IRQ(void)
+ {
++	/* Setup an irq host data structure */
++	iic_host = irq_alloc_host(IRQ_HOST_MAP_LINEAR, IIC_SOURCE_COUNT,
++				  &iic_host_ops, IIC_IRQ_INVALID);
++	BUG_ON(iic_host == NULL);
++	irq_set_default_host(iic_host);
++
+ 	/* Discover and initialize iics */
+ 	if (setup_iic() < 0)
+ 		panic("IIC: Failed to initialize !\n");
+@@ -303,3 +398,19 @@ void __init iic_init_IRQ(void)
+ 	/* Enable on current CPU */
+ 	iic_setup_cpu();
+ }
++
++void iic_set_interrupt_routing(int cpu, int thread, int priority)
++{
++	struct cbe_iic_regs __iomem *iic_regs = cbe_get_cpu_iic_regs(cpu);
++	u64 iic_ir = 0;
++	int node = cpu >> 1;
++
++	/* Set which node and thread will handle the next interrupt */
++	iic_ir |= CBE_IIC_IR_PRIO(priority) |
++		  CBE_IIC_IR_DEST_NODE(node);
++	if (thread == 0)
++		iic_ir |= CBE_IIC_IR_DEST_UNIT(CBE_IIC_IR_PT_0);
++	else
++		iic_ir |= CBE_IIC_IR_DEST_UNIT(CBE_IIC_IR_PT_1);
++	out_be64(&iic_regs->iic_ir, iic_ir);
++}
+Index: linux-malta-RH5/arch/powerpc/platforms/cell/interrupt.h
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/platforms/cell/interrupt.h	2007-01-10 15:10:07.000000000 +1100
++++ linux-malta-RH5/arch/powerpc/platforms/cell/interrupt.h	2007-01-10 15:11:06.000000000 +1100
+@@ -2,48 +2,76 @@
+ #define ASM_CELL_PIC_H
+ #ifdef __KERNEL__
+ /*
+- * Mapping of IIC pending bits into per-node
+- * interrupt numbers.
++ * Mapping of IIC pending bits into per-node interrupt numbers.
+  *
+- * IRQ     FF CC SS PP   FF CC SS PP	Description
++ * Interrupt numbers are in the range 0...0x1ff where the top bit
++ * (0x100) represent the source node. Only 2 nodes are supported with
++ * the current code though it's trivial to extend that if necessary using
++ * higher level bits
+  *
+- * 00-3f   80 02 +0 00 - 80 02 +0 3f	South Bridge
+- * 00-3f   80 02 +b 00 - 80 02 +b 3f	South Bridge
+- * 41-4a   80 00 +1 ** - 80 00 +a **	SPU Class 0
+- * 51-5a   80 01 +1 ** - 80 01 +a **	SPU Class 1
+- * 61-6a   80 02 +1 ** - 80 02 +a **	SPU Class 2
+- * 70-7f   C0 ** ** 00 - C0 ** ** 0f	IPI
++ * The bottom 8 bits are split into 2 type bits and 6 data bits that
++ * depend on the type:
+  *
+- *    F flags
+- *    C class
+- *    S source
+- *    P Priority
+- *    + node number
+- *    * don't care
++ * 00 (0x00 | data) : normal interrupt. data is (class << 4) | source
++ * 01 (0x40 | data) : IO exception. data is the exception number as
++ *                    defined by bit numbers in IIC_SR
++ * 10 (0x80 | data) : IPI. data is the IPI number (obtained from the priority)
++ *                    and node is always 0 (IPIs are per-cpu, their source is
++ *                    not relevant)
++ * 11 (0xc0 | data) : reserved
+  *
+- * A node consists of a Cell Broadband Engine and an optional
+- * south bridge device providing a maximum of 64 IRQs.
+- * The south bridge may be connected to either IOIF0
+- * or IOIF1.
+- * Each SPE is represented as three IRQ lines, one per
+- * interrupt class.
+- * 16 IRQ numbers are reserved for inter processor
+- * interruptions, although these are only used in the
+- * range of the first node.
++ * In addition, interrupt number 0x80000000 is defined as always invalid
++ * (that is the node field is expected to never extend to move than 23 bits)
+  *
+- * This scheme needs 128 IRQ numbers per BIF node ID,
+- * which means that with the total of 512 lines
+- * available, we can have a maximum of four nodes.
+  */
+ 
+ enum {
+-	IIC_IRQ_INVALID		= 0xff,
+-	IIC_IRQ_MAX		= 0x3f,
+-	IIC_IRQ_EXT_IOIF0	= 0x20,
+-	IIC_IRQ_EXT_IOIF1	= 0x2b,
+-	IIC_IRQ_IPI0		= 0x40,
+-	IIC_NUM_IPIS    	= 0x10, /* IRQs reserved for IPI */
+-	IIC_SOURCE_COUNT	= 0x50,
++	IIC_IRQ_INVALID		= 0x80000000u,
++	IIC_IRQ_NODE_MASK	= 0x100,
++	IIC_IRQ_NODE_SHIFT	= 8,
++	IIC_IRQ_MAX		= 0x1ff,
++	IIC_IRQ_TYPE_MASK	= 0xc0,
++	IIC_IRQ_TYPE_NORMAL	= 0x00,
++	IIC_IRQ_TYPE_IOEXC	= 0x40,
++	IIC_IRQ_TYPE_IPI	= 0x80,
++	IIC_IRQ_CLASS_SHIFT	= 4,
++	IIC_IRQ_CLASS_0		= 0x00,
++	IIC_IRQ_CLASS_1		= 0x10,
++	IIC_IRQ_CLASS_2		= 0x20,
++	IIC_SOURCE_COUNT	= 0x200,
++
++	/* Here are defined the various source/dest units. Avoid using those
++	 * definitions if you can, they are mostly here for reference
++	 */
++	IIC_UNIT_SPU_0		= 0x4,
++	IIC_UNIT_SPU_1		= 0x7,
++	IIC_UNIT_SPU_2		= 0x3,
++	IIC_UNIT_SPU_3		= 0x8,
++	IIC_UNIT_SPU_4		= 0x2,
++	IIC_UNIT_SPU_5		= 0x9,
++	IIC_UNIT_SPU_6		= 0x1,
++	IIC_UNIT_SPU_7		= 0xa,
++	IIC_UNIT_IOC_0		= 0x0,
++	IIC_UNIT_IOC_1		= 0xb,
++	IIC_UNIT_THREAD_0	= 0xe, /* target only */
++	IIC_UNIT_THREAD_1	= 0xf, /* target only */
++	IIC_UNIT_IIC		= 0xe, /* source only (IO exceptions) */
++
++	/* Base numbers for the external interrupts */
++	IIC_IRQ_EXT_IOIF0	=
++		IIC_IRQ_TYPE_NORMAL | IIC_IRQ_CLASS_2 | IIC_UNIT_IOC_0,
++	IIC_IRQ_EXT_IOIF1	=
++		IIC_IRQ_TYPE_NORMAL | IIC_IRQ_CLASS_2 | IIC_UNIT_IOC_1,
++
++	/* Base numbers for the IIC_ISR interrupts */
++	IIC_IRQ_IOEX_TMI	= IIC_IRQ_TYPE_IOEXC | IIC_IRQ_CLASS_1 | 63,
++	IIC_IRQ_IOEX_PMI	= IIC_IRQ_TYPE_IOEXC | IIC_IRQ_CLASS_1 | 62,
++	IIC_IRQ_IOEX_ATI	= IIC_IRQ_TYPE_IOEXC | IIC_IRQ_CLASS_1 | 61,
++	IIC_IRQ_IOEX_MATBFI	= IIC_IRQ_TYPE_IOEXC | IIC_IRQ_CLASS_1 | 60,
++	IIC_IRQ_IOEX_ELDI	= IIC_IRQ_TYPE_IOEXC | IIC_IRQ_CLASS_1 | 59,
++
++	/* Which bits in IIC_ISR are edge sensitive */
++	IIC_ISR_EDGE_MASK	= 0x4ul,
+ };
+ 
+ extern void iic_init_IRQ(void);
+@@ -52,9 +80,10 @@ extern void iic_request_IPIs(void);
+ extern void iic_setup_cpu(void);
+ 
+ extern u8 iic_get_target_id(int cpu);
+-extern struct irq_host *iic_get_irq_host(int node);
+ 
+ extern void spider_init_IRQ(void);
+ 
++extern void iic_set_interrupt_routing(int cpu, int thread, int priority);
++
+ #endif
+ #endif /* ASM_CELL_PIC_H */
+Index: linux-malta-RH5/arch/powerpc/platforms/cell/spider-pic.c
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/platforms/cell/spider-pic.c	2007-01-10 15:10:07.000000000 +1100
++++ linux-malta-RH5/arch/powerpc/platforms/cell/spider-pic.c	2007-01-10 15:11:06.000000000 +1100
+@@ -243,7 +243,6 @@ static unsigned int __init spider_find_c
+ 	u32 *imap, *tmp;
+ 	int imaplen, intsize, unit;
+ 	struct device_node *iic;
+-	struct irq_host *iic_host;
+ 
+ #if 0 /* Enable that when we have a way to retreive the node as well */
+ 	/* First, we check wether we have a real "interrupts" in the device
+@@ -289,11 +288,11 @@ static unsigned int __init spider_find_c
+ 	 * the iic host from the iic OF node, but that way I'm still compatible
+ 	 * with really really old old firmwares for which we don't have a node
+ 	 */
+-	iic_host = iic_get_irq_host(pic->node_id);
+-	if (iic_host == NULL)
+-		return NO_IRQ;
+ 	/* Manufacture an IIC interrupt number of class 2 */
+-	virq = irq_create_mapping(iic_host, 0x20 | unit);
++	virq = irq_create_mapping(NULL,
++				  (pic->node_id << IIC_IRQ_NODE_SHIFT) |
++				  (2 << IIC_IRQ_CLASS_SHIFT) |
++				  unit);
+ 	if (virq == NO_IRQ)
+ 		printk(KERN_ERR "spider_pic: failed to map cascade !");
+ 	return virq;
+Index: linux-malta-RH5/arch/powerpc/platforms/cell/spu_base.c
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/platforms/cell/spu_base.c	2007-01-10 15:10:07.000000000 +1100
++++ linux-malta-RH5/arch/powerpc/platforms/cell/spu_base.c	2007-01-10 15:11:06.000000000 +1100
+@@ -568,24 +568,23 @@ static void spu_unmap(struct spu *spu)
+ /* This function shall be abstracted for HV platforms */
+ static int __init spu_map_interrupts(struct spu *spu, struct device_node *np)
+ {
+-	struct irq_host *host;
+ 	unsigned int isrc;
+ 	u32 *tmp;
+ 
+-	host = iic_get_irq_host(spu->node);
+-	if (host == NULL)
+-		return -ENODEV;
+-
+-	/* Get the interrupt source from the device-tree */
++	/* Get the interrupt source unit from the device-tree */
+ 	tmp = (u32 *)get_property(np, "isrc", NULL);
+ 	if (!tmp)
+ 		return -ENODEV;
+-	spu->isrc = isrc = tmp[0];
++	isrc = tmp[0];
++
++	/* Add the node number */
++	isrc |= spu->node << IIC_IRQ_NODE_SHIFT;
++	spu->isrc = isrc;
+ 
+ 	/* Now map interrupts of all 3 classes */
+-	spu->irqs[0] = irq_create_mapping(host, 0x00 | isrc);
+-	spu->irqs[1] = irq_create_mapping(host, 0x10 | isrc);
+-	spu->irqs[2] = irq_create_mapping(host, 0x20 | isrc);
++	spu->irqs[0] = irq_create_mapping(NULL, IIC_IRQ_CLASS_0 | isrc);
++	spu->irqs[1] = irq_create_mapping(NULL, IIC_IRQ_CLASS_1 | isrc);
++	spu->irqs[2] = irq_create_mapping(NULL, IIC_IRQ_CLASS_2 | isrc);
+ 
+ 	/* Right now, we only fail if class 2 failed */
+ 	return spu->irqs[2] == NO_IRQ ? -EINVAL : 0;
+Index: linux-malta-RH5/arch/powerpc/platforms/cell/cbe_regs.h
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/platforms/cell/cbe_regs.h	2007-01-10 15:10:07.000000000 +1100
++++ linux-malta-RH5/arch/powerpc/platforms/cell/cbe_regs.h	2007-01-10 15:11:06.000000000 +1100
+@@ -102,18 +102,28 @@ struct cbe_iic_regs {
+ 
+ 	/* IIC interrupt registers */
+ 	struct	cbe_iic_thread_regs thread[2];			/* 0x0400 */
+-	u64     iic_ir;						/* 0x0440 */
+-	u64     iic_is;						/* 0x0448 */
++
++	u64	iic_ir;						/* 0x0440 */
++#define CBE_IIC_IR_PRIO(x)      (((x) & 0xf) << 12)
++#define CBE_IIC_IR_DEST_NODE(x) (((x) & 0xf) << 4)
++#define CBE_IIC_IR_DEST_UNIT(x) ((x) & 0xf)
++#define CBE_IIC_IR_IOC_0        0x0
++#define CBE_IIC_IR_IOC_1S       0xb
++#define CBE_IIC_IR_PT_0         0xe
++#define CBE_IIC_IR_PT_1         0xf
++
++	u64	iic_is;						/* 0x0448 */
++#define CBE_IIC_IS_PMI		0x2
+ 
+ 	u8	pad_0x0450_0x0500[0x0500 - 0x0450];		/* 0x0450 */
+ 
+ 	/* IOC FIR */
+ 	u64	ioc_fir_reset;					/* 0x0500 */
+-	u64	ioc_fir_set;
+-	u64	ioc_checkstop_enable;
+-	u64	ioc_fir_error_mask;
+-	u64	ioc_syserr_enable;
+-	u64	ioc_fir;
++	u64	ioc_fir_set;					/* 0x0508 */
++	u64	ioc_checkstop_enable;				/* 0x0510 */
++	u64	ioc_fir_error_mask;				/* 0x0518 */
++	u64	ioc_syserr_enable;				/* 0x0520 */
++	u64	ioc_fir;					/* 0x0528 */
+ 
+ 	u8	pad_0x0530_0x1000[0x1000 - 0x0530];		/* 0x0530 */
+ };
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=228099
+
+Description:
+------------
+7 of 12 patches by Ben Herrenschmidt of IBM required for supporting IBM 
+customers purchasing Cell blade configurations.  
+
+This patch adds new dcr_map, dcr_read, and dcr_write accessors for DCRs 
+that can be used by drivers to transparently address either native DCRs or 
+memory mapped DCRs.  The implementation for memory mapped DCRs is done 
+after the binding being currently worked on fro SLOF and the Axon chipset.  
+This patch enables it for the cell native platform.
+
+RHEL Version Found:
+-------------------
+feature enhancement for 5.1.
+
+Upstream Status:
+----------------
+This has been accepted into the kernel and can be viewed in the 2.6.20.3 
+kernel.
+
+Test Status:
+------------
+This patch was tested by Benjamin Herrenschmidt of IBM.  It has been
+ack'd by Olof Johansson and signed off by Paul Mackerras.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL 5.1.
+-
+
+Index: linux-malta-RH5/arch/powerpc/Kconfig
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/Kconfig	2007-01-10 14:46:06.000000000 +1100
++++ linux-malta-RH5/arch/powerpc/Kconfig	2007-01-10 15:24:53.000000000 +1100
+@@ -160,9 +160,11 @@ config PPC_86xx
+ 
+ config 40x
+ 	bool "AMCC 40x"
++	select PPC_DCR_NATIVE
+ 
+ config 44x
+ 	bool "AMCC 44x"
++	select PPC_DCR_NATIVE
+ 
+ config 8xx
+ 	bool "Freescale 8xx"
+@@ -208,6 +210,19 @@ config PPC_FPU
+ 	bool
+ 	default y if PPC64
+ 
++config PPC_DCR_NATIVE
++	bool
++	default n
++
++config PPC_DCR_MMIO
++	bool
++	default n
++
++config PPC_DCR
++	bool
++	depends on PPC_DCR_NATIVE || PPC_DCR_MMIO
++	default y
++
+ config BOOKE
+ 	bool
+ 	depends on E200 || E500
+@@ -424,6 +439,7 @@ config PPC_CELL
+ config PPC_CELL_NATIVE
+ 	bool
+ 	select PPC_CELL
++	select PPC_DCR_MMIO
+ 	default n
+ 
+ config PPC_IBM_CELL_BLADE
+Index: linux-malta-RH5/arch/powerpc/kernel/Makefile
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/kernel/Makefile	2007-01-10 14:46:06.000000000 +1100
++++ linux-malta-RH5/arch/powerpc/kernel/Makefile	2007-01-10 15:18:58.000000000 +1100
+@@ -62,6 +62,7 @@ obj-$(CONFIG_BOOTX_TEXT)	+= btext.o
+ obj-$(CONFIG_SMP)		+= smp.o
+ obj-$(CONFIG_KPROBES)		+= kprobes.o
+ obj-$(CONFIG_PPC_UDBG_16550)	+= legacy_serial.o udbg_16550.o
++
+ module-$(CONFIG_PPC64)		+= module_64.o
+ obj-$(CONFIG_MODULES)		+= $(module-y)
+ 
+Index: linux-malta-RH5/arch/powerpc/sysdev/Makefile
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/sysdev/Makefile	2007-01-10 14:46:07.000000000 +1100
++++ linux-malta-RH5/arch/powerpc/sysdev/Makefile	2007-01-10 15:21:59.000000000 +1100
+@@ -5,8 +5,8 @@ endif
+ obj-$(CONFIG_MPIC)		+= mpic.o
+ obj-$(CONFIG_PPC_INDIRECT_PCI)	+= indirect_pci.o
+ obj-$(CONFIG_PPC_MPC106)	+= grackle.o
+-obj-$(CONFIG_BOOKE)		+= dcr.o
+-obj-$(CONFIG_40x)		+= dcr.o
++obj-$(CONFIG_PPC_DCR)		+= dcr.o
++obj-$(CONFIG_PPC_DCR_NATIVE)	+= dcr-low.o
+ obj-$(CONFIG_U3_DART)		+= dart_iommu.o
+ obj-$(CONFIG_MMIO_NVRAM)	+= mmio_nvram.o
+ obj-$(CONFIG_FSL_SOC)		+= fsl_soc.o
+Index: linux-malta-RH5/arch/powerpc/sysdev/dcr-low.S
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-malta-RH5/arch/powerpc/sysdev/dcr-low.S	2007-01-10 15:18:58.000000000 +1100
+@@ -0,0 +1,39 @@
++/*
++ * "Indirect" DCR access
++ *
++ * Copyright (c) 2004 Eugene Surovegin <ebs@ebshome.net>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under  the terms of  the GNU General Public License as published by the
++ * Free Software Foundation;  either version 2 of the License, or (at your
++ * option) any later version.
++ */
++
++#include <asm/ppc_asm.h>
++#include <asm/processor.h>
++
++#define DCR_ACCESS_PROLOG(table) \
++	rlwinm  r3,r3,4,18,27;   \
++	lis     r5,table@h;      \
++	ori     r5,r5,table@l;   \
++	add     r3,r3,r5;        \
++	mtctr   r3;              \
++	bctr
++
++_GLOBAL(__mfdcr)
++	DCR_ACCESS_PROLOG(__mfdcr_table)
++
++_GLOBAL(__mtdcr)
++	DCR_ACCESS_PROLOG(__mtdcr_table)
++
++__mfdcr_table:
++	mfdcr  r3,0; blr
++__mtdcr_table:
++	mtdcr  0,r4; blr
++
++dcr     = 1
++        .rept   1023
++	mfdcr   r3,dcr; blr
++	mtdcr   dcr,r4; blr
++	dcr     = dcr + 1
++	.endr
+Index: linux-malta-RH5/arch/powerpc/sysdev/dcr.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-malta-RH5/arch/powerpc/sysdev/dcr.c	2007-01-10 15:25:32.000000000 +1100
+@@ -0,0 +1,137 @@
++/*
++ * (c) Copyright 2006 Benjamin Herrenschmidt, IBM Corp.
++ *                    <benh@kernel.crashing.org>
++ *
++ *   This program is free software;  you can redistribute it and/or modify
++ *   it under the terms of the GNU General Public License as published by
++ *   the Free Software Foundation; either version 2 of the License, or
++ *   (at your option) any later version.
++ *
++ *   This program is distributed in the hope that it will be useful,
++ *   but WITHOUT ANY WARRANTY;  without even the implied warranty of
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See
++ *   the GNU General Public License for more details.
++ *
++ *   You should have received a copy of the GNU General Public License
++ *   along with this program;  if not, write to the Free Software
++ *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
++ */
++
++#undef DEBUG
++
++#include <linux/kernel.h>
++#include <asm/prom.h>
++#include <asm/dcr.h>
++
++unsigned int dcr_resource_start(struct device_node *np, unsigned int index)
++{
++	unsigned int ds;
++	u32 *dr = (u32 *)get_property(np, "dcr-reg", &ds);
++
++	if (dr == NULL || ds & 1 || index >= (ds / 8))
++		return 0;
++
++	return dr[index * 2];
++}
++
++unsigned int dcr_resource_len(struct device_node *np, unsigned int index)
++{
++	unsigned int ds;
++	u32 *dr = (u32 *)get_property(np, "dcr-reg", &ds);
++
++	if (dr == NULL || ds & 1 || index >= (ds / 8))
++		return 0;
++
++	return dr[index * 2 + 1];
++}
++
++#ifndef CONFIG_PPC_DCR_NATIVE
++
++static struct device_node * find_dcr_parent(struct device_node * node)
++{
++	struct device_node *par, *tmp;
++	u32 *p;
++
++	for (par = of_node_get(node); par;) {
++		if (get_property(par, "dcr-controller", NULL))
++			break;
++		p = (u32 *)get_property(par, "dcr-parent", NULL);
++		tmp = par;
++		if (p == NULL)
++			par = of_get_parent(par);
++		else
++			par = of_find_node_by_phandle(*p);
++		of_node_put(tmp);
++	}
++	return par;
++}
++
++u64 of_translate_dcr_address(struct device_node *dev,
++			     unsigned int dcr_n,
++			     unsigned int *out_stride)
++{
++	struct device_node *dp;
++	u32 *p;
++	unsigned int stride;
++	u64 ret;
++
++	dp = find_dcr_parent(dev);
++	if (dp == NULL)
++		return OF_BAD_ADDR;
++
++	/* Stride is not properly defined yet, default to 0x10 for Axon */
++	p = (u32 *)get_property(dp, "dcr-mmio-stride", NULL);
++	stride = (p == NULL) ? 0x10 : *p;
++
++	/* XXX FIXME: Which property name is to use of the 2 following ? */
++	p = (u32 *)get_property(dp, "dcr-mmio-range", NULL);
++	if (p == NULL)
++		p = (u32 *)get_property(dp, "dcr-mmio-space", NULL);
++	if (p == NULL)
++		return OF_BAD_ADDR;
++
++	/* Maybe could do some better range checking here */
++	ret = of_translate_address(dp, p);
++	if (ret != OF_BAD_ADDR)
++		ret += (u64)(stride) * (u64)dcr_n;
++	if (out_stride)
++		*out_stride = stride;
++	return ret;
++}
++
++dcr_host_t dcr_map(struct device_node *dev, unsigned int dcr_n,
++		   unsigned int dcr_c)
++{
++	dcr_host_t ret = { .token = NULL, .stride = 0 };
++	u64 addr;
++
++	pr_debug("dcr_map(%s, 0x%x, 0x%x)\n",
++		 dev->full_name, dcr_n, dcr_c);
++
++	addr = of_translate_dcr_address(dev, dcr_n, &ret.stride);
++	pr_debug("translates to addr: 0x%lx, stride: 0x%x\n",
++		 addr, ret.stride);
++	if (addr == OF_BAD_ADDR)
++		return ret;
++	pr_debug("mapping 0x%x bytes\n", dcr_c * ret.stride);
++	ret.token = ioremap(addr, dcr_c * ret.stride);
++	if (ret.token == NULL)
++		return ret;
++	pr_debug("mapped at 0x%p -> base is 0x%p\n",
++		 ret.token, ret.token - dcr_n * ret.stride);
++	ret.token -= dcr_n * ret.stride;
++	return ret;
++}
++
++void dcr_unmap(dcr_host_t host, unsigned int dcr_n, unsigned int dcr_c)
++{
++	dcr_host_t h = host;
++
++	if (h.token == NULL)
++		return;
++	h.token -= dcr_n * h.stride;
++	iounmap(h.token);
++	h.token = NULL;
++}
++
++#endif /* !defined(CONFIG_PPC_DCR_NATIVE) */
+Index: linux-malta-RH5/arch/ppc/Kconfig
+===================================================================
+--- linux-malta-RH5.orig/arch/ppc/Kconfig	2007-01-10 14:46:07.000000000 +1100
++++ linux-malta-RH5/arch/ppc/Kconfig	2007-01-10 15:18:58.000000000 +1100
+@@ -77,9 +77,11 @@ config 6xx
+ 
+ config 40x
+ 	bool "40x"
++	select PPC_DCR_NATIVE
+ 
+ config 44x
+ 	bool "44x"
++	select PPC_DCR_NATIVE
+ 
+ config 8xx
+ 	bool "8xx"
+@@ -95,6 +97,15 @@ endchoice
+ config PPC_FPU
+ 	bool
+ 
++config PPC_DCR_NATIVE
++	bool
++	default n
++
++config PPC_DCR
++	bool
++	depends on PPC_DCR_NATIVE
++	default y
++
+ config BOOKE
+ 	bool
+ 	depends on E200 || E500
+Index: linux-malta-RH5/include/asm-powerpc/dcr-mmio.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-malta-RH5/include/asm-powerpc/dcr-mmio.h	2007-01-10 15:18:58.000000000 +1100
+@@ -0,0 +1,51 @@
++/*
++ * (c) Copyright 2006 Benjamin Herrenschmidt, IBM Corp.
++ *                    <benh@kernel.crashing.org>
++ *
++ *   This program is free software;  you can redistribute it and/or modify
++ *   it under the terms of the GNU General Public License as published by
++ *   the Free Software Foundation; either version 2 of the License, or
++ *   (at your option) any later version.
++ *
++ *   This program is distributed in the hope that it will be useful,
++ *   but WITHOUT ANY WARRANTY;  without even the implied warranty of
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See
++ *   the GNU General Public License for more details.
++ *
++ *   You should have received a copy of the GNU General Public License
++ *   along with this program;  if not, write to the Free Software
++ *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
++ */
++
++#ifndef _ASM_POWERPC_DCR_MMIO_H
++#define _ASM_POWERPC_DCR_MMIO_H
++#ifdef __KERNEL__
++
++#include <asm/io.h>
++
++typedef struct { void __iomem *token; unsigned int stride; } dcr_host_t;
++
++#define DCR_MAP_OK(host)	((host).token != NULL)
++
++extern dcr_host_t dcr_map(struct device_node *dev, unsigned int dcr_n,
++			  unsigned int dcr_c);
++extern void dcr_unmap(dcr_host_t host, unsigned int dcr_n, unsigned int dcr_c);
++
++static inline u32 dcr_read(dcr_host_t host, unsigned int dcr_n)
++{
++	return in_be32(host.token + dcr_n * host.stride);
++}
++
++static inline void dcr_write(dcr_host_t host, unsigned int dcr_n, u32 value)
++{
++	out_be32(host.token + dcr_n * host.stride, value);
++}
++
++extern u64 of_translate_dcr_address(struct device_node *dev,
++				    unsigned int dcr_n,
++				    unsigned int *stride);
++
++#endif /* __KERNEL__ */
++#endif /* _ASM_POWERPC_DCR_MMIO_H */
++
++
+Index: linux-malta-RH5/include/asm-powerpc/dcr-native.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-malta-RH5/include/asm-powerpc/dcr-native.h	2007-01-10 15:21:59.000000000 +1100
+@@ -0,0 +1,72 @@
++/*
++ * (c) Copyright 2006 Benjamin Herrenschmidt, IBM Corp.
++ *                    <benh@kernel.crashing.org>
++ *
++ *   This program is free software;  you can redistribute it and/or modify
++ *   it under the terms of the GNU General Public License as published by
++ *   the Free Software Foundation; either version 2 of the License, or
++ *   (at your option) any later version.
++ *
++ *   This program is distributed in the hope that it will be useful,
++ *   but WITHOUT ANY WARRANTY;  without even the implied warranty of
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See
++ *   the GNU General Public License for more details.
++ *
++ *   You should have received a copy of the GNU General Public License
++ *   along with this program;  if not, write to the Free Software
++ *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
++ */
++
++#ifndef _ASM_POWERPC_DCR_NATIVE_H
++#define _ASM_POWERPC_DCR_NATIVE_H
++#ifdef __KERNEL__
++#ifndef __ASSEMBLY__
++
++typedef struct {} dcr_host_t;
++
++#define DCR_MAP_OK(host)	(1)
++
++#define dcr_map(dev, dcr_n, dcr_c)	{}
++#define dcr_unmap(host, dcr_n, dcr_c)	{}
++#define dcr_read(host, dcr_n)		mfdcr(dcr_n)
++#define dcr_write(host, dcr_n, value)	mtdcr(dcr_n, value)
++
++/* Device Control Registers */
++void __mtdcr(int reg, unsigned int val);
++unsigned int __mfdcr(int reg);
++#define mfdcr(rn)						\
++	({unsigned int rval;					\
++	if (__builtin_constant_p(rn))				\
++		asm volatile("mfdcr %0," __stringify(rn)	\
++		              : "=r" (rval));			\
++	else							\
++		rval = __mfdcr(rn);				\
++	rval;})
++
++#define mtdcr(rn, v)						\
++do {								\
++	if (__builtin_constant_p(rn))				\
++		asm volatile("mtdcr " __stringify(rn) ",%0"	\
++			      : : "r" (v)); 			\
++	else							\
++		__mtdcr(rn, v);					\
++} while (0)
++
++/* R/W of indirect DCRs make use of standard naming conventions for DCRs */
++#define mfdcri(base, reg)			\
++({						\
++	mtdcr(base ## _CFGADDR, base ## _ ## reg);	\
++	mfdcr(base ## _CFGDATA);			\
++})
++
++#define mtdcri(base, reg, data)			\
++do {						\
++	mtdcr(base ## _CFGADDR, base ## _ ## reg);	\
++	mtdcr(base ## _CFGDATA, data);		\
++} while (0)
++
++#endif /* __ASSEMBLY__ */
++#endif /* __KERNEL__ */
++#endif /* _ASM_POWERPC_DCR_NATIVE_H */
++
++
+Index: linux-malta-RH5/include/asm-powerpc/dcr.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-malta-RH5/include/asm-powerpc/dcr.h	2007-01-10 15:21:59.000000000 +1100
+@@ -0,0 +1,44 @@
++/*
++ * (c) Copyright 2006 Benjamin Herrenschmidt, IBM Corp.
++ *                    <benh@kernel.crashing.org>
++ *
++ *   This program is free software;  you can redistribute it and/or modify
++ *   it under the terms of the GNU General Public License as published by
++ *   the Free Software Foundation; either version 2 of the License, or
++ *   (at your option) any later version.
++ *
++ *   This program is distributed in the hope that it will be useful,
++ *   but WITHOUT ANY WARRANTY;  without even the implied warranty of
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See
++ *   the GNU General Public License for more details.
++ *
++ *   You should have received a copy of the GNU General Public License
++ *   along with this program;  if not, write to the Free Software
++ *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
++ */
++
++#ifndef _ASM_POWERPC_DCR_H
++#define _ASM_POWERPC_DCR_H
++#ifdef __KERNEL__
++#ifdef CONFIG_PPC_DCR
++
++#ifdef CONFIG_PPC_DCR_NATIVE
++#include <asm/dcr-native.h>
++#else
++#include <asm/dcr-mmio.h>
++#endif
++
++/*
++ * On CONFIG_PPC_MERGE, we have additional helpers to read the DCR
++ * base from the device-tree
++ */
++#ifdef CONFIG_PPC_MERGE
++extern unsigned int dcr_resource_start(struct device_node *np,
++				       unsigned int index);
++extern unsigned int dcr_resource_len(struct device_node *np,
++				     unsigned int index);
++#endif /* CONFIG_PPC_MERGE */
++
++#endif /* CONFIG_PPC_DCR */
++#endif /* __KERNEL__ */
++#endif /* _ASM_POWERPC_DCR_H */
+Index: linux-malta-RH5/arch/powerpc/sysdev/dcr.S
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/sysdev/dcr.S	2007-01-10 15:19:14.000000000 +1100
++++ /dev/null	1970-01-01 00:00:00.000000000 +0000
+@@ -1,39 +0,0 @@
+-/*
+- * "Indirect" DCR access
+- *
+- * Copyright (c) 2004 Eugene Surovegin <ebs@ebshome.net>
+- *
+- * This program is free software; you can redistribute it and/or modify it
+- * under  the terms of  the GNU General Public License as published by the
+- * Free Software Foundation;  either version 2 of the License, or (at your
+- * option) any later version.
+- */
+-
+-#include <asm/ppc_asm.h>
+-#include <asm/processor.h>
+-
+-#define DCR_ACCESS_PROLOG(table) \
+-	rlwinm  r3,r3,4,18,27;   \
+-	lis     r5,table@h;      \
+-	ori     r5,r5,table@l;   \
+-	add     r3,r3,r5;        \
+-	mtctr   r3;              \
+-	bctr
+-
+-_GLOBAL(__mfdcr)
+-	DCR_ACCESS_PROLOG(__mfdcr_table)
+-
+-_GLOBAL(__mtdcr)
+-	DCR_ACCESS_PROLOG(__mtdcr_table)
+-
+-__mfdcr_table:
+-	mfdcr  r3,0; blr
+-__mtdcr_table:
+-	mtdcr  0,r4; blr
+-
+-dcr     = 1
+-        .rept   1023
+-	mfdcr   r3,dcr; blr
+-	mtdcr   dcr,r4; blr
+-	dcr     = dcr + 1
+-	.endr
+Index: linux-malta-RH5/arch/powerpc/kernel/ppc_ksyms.c
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/kernel/ppc_ksyms.c	2007-01-10 14:46:06.000000000 +1100
++++ linux-malta-RH5/arch/powerpc/kernel/ppc_ksyms.c	2007-01-10 15:21:59.000000000 +1100
+@@ -225,7 +225,7 @@ EXPORT_SYMBOL(mmu_hash_lock); /* For MOL
+ extern long *intercept_table;
+ EXPORT_SYMBOL(intercept_table);
+ #endif /* CONFIG_PPC_STD_MMU_32 */
+-#if defined(CONFIG_40x) || defined(CONFIG_BOOKE)
++#ifdef CONFIG_PPC_DCR_NATIVE
+ EXPORT_SYMBOL(__mtdcr);
+ EXPORT_SYMBOL(__mfdcr);
+ #endif
+Index: linux-malta-RH5/include/asm-ppc/reg_booke.h
+===================================================================
+--- linux-malta-RH5.orig/include/asm-ppc/reg_booke.h	2007-01-10 14:46:47.000000000 +1100
++++ linux-malta-RH5/include/asm-ppc/reg_booke.h	2007-01-10 15:21:59.000000000 +1100
+@@ -9,41 +9,9 @@
+ #ifndef __ASM_PPC_REG_BOOKE_H__
+ #define __ASM_PPC_REG_BOOKE_H__
+ 
+-#ifndef __ASSEMBLY__
+-/* Device Control Registers */
+-void __mtdcr(int reg, unsigned int val);
+-unsigned int __mfdcr(int reg);
+-#define mfdcr(rn)						\
+-	({unsigned int rval;					\
+-	if (__builtin_constant_p(rn))				\
+-		asm volatile("mfdcr %0," __stringify(rn)	\
+-		              : "=r" (rval));			\
+-	else							\
+-		rval = __mfdcr(rn);				\
+-	rval;})
+-
+-#define mtdcr(rn, v)						\
+-do {								\
+-	if (__builtin_constant_p(rn))				\
+-		asm volatile("mtdcr " __stringify(rn) ",%0"	\
+-			      : : "r" (v)); 			\
+-	else							\
+-		__mtdcr(rn, v);					\
+-} while (0)
+-
+-/* R/W of indirect DCRs make use of standard naming conventions for DCRs */
+-#define mfdcri(base, reg)			\
+-({						\
+-	mtdcr(base ## _CFGADDR, base ## _ ## reg);	\
+-	mfdcr(base ## _CFGDATA);			\
+-})
+-
+-#define mtdcri(base, reg, data)			\
+-do {						\
+-	mtdcr(base ## _CFGADDR, base ## _ ## reg);	\
+-	mtdcr(base ## _CFGDATA, data);		\
+-} while (0)
++#include <asm/dcr.h>
+ 
++#ifndef __ASSEMBLY__
+ /* Performance Monitor Registers */
+ #define mfpmr(rn)	({unsigned int rval; \
+ 			asm volatile("mfpmr %0," __stringify(rn) \
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=228099
+
+Description:
+------------
+8 of 12 patches by Ben Herrenschmidt of IBM required for supporting IBM 
+customers purchasing Cell blade configurations.  
+
+This patch implements support for DCR based MPIC implementations.  Such 
+implementations have the MPIC_USES_DCR flag set and don't use the 
+phys_addr argument of mpic_alloc (they require a valid dcr mapping in the 
+device mode).
+
+RHEL Version Found:
+-------------------
+feature enhancement for 5.1.
+
+Upstream Status:
+----------------
+This has been accepted into the kernel and can be viewed in the 2.6.20.3 
+kernel.
+
+Test Status:
+------------
+This patch was tested by Benjamin Herrenschmidt of IBM.  It has been
+ack'd by Olof Johansson and signed off by Paul Mackerras.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL 5.1.
+-
+
+Index: linux-2.6/arch/powerpc/Kconfig
+===================================================================
+--- linux-2.6.orig/arch/powerpc/Kconfig	2007-01-22 15:49:46.000000000 +1100
++++ linux-2.6/arch/powerpc/Kconfig	2007-01-22 15:53:24.000000000 +1100
+@@ -440,6 +440,7 @@
+ 	bool
+ 	select PPC_CELL
+ 	select PPC_DCR_MMIO
++	select MPIC
+ 	default n
+ 
+ config PPC_IBM_CELL_BLADE
+Index: linux-2.6/arch/powerpc/platforms/cell/setup.c
+===================================================================
+--- linux-2.6.orig/arch/powerpc/platforms/cell/setup.c	2007-01-22 14:38:56.000000000 +1100
++++ linux-2.6/arch/powerpc/platforms/cell/setup.c	2007-01-22 17:29:34.000000000 +1100
+@@ -50,6 +50,7 @@
+ #include <asm/spu.h>
+ #include <asm/spu_priv1.h>
+ #include <asm/udbg.h>
++#include <asm/mpic.h>
+ 
+ #include "interrupt.h"
+ #include "iommu.h"
+@@ -88,10 +89,54 @@
+ 		pci_read_irq_line(dev);
+ }
+ 
++static void cell_mpic_cascade(unsigned int irq, struct irq_desc *desc,
++			      struct pt_regs *regs)
++{
++	struct mpic *mpic = desc->handler_data;
++	unsigned int virq;
++
++	virq = mpic_get_one_irq(mpic, regs);
++	if (virq != NO_IRQ)
++		generic_handle_irq(virq, regs);
++	desc->chip->eoi(irq);
++}
++
++static void __init mpic_init_IRQ(void)
++{
++	struct device_node *dn;
++	struct mpic *mpic;
++	unsigned int virq;
++
++	for (dn = NULL;
++	     (dn = of_find_node_by_name(dn, "interrupt-controller"));) {
++		if (!device_is_compatible(dn, "CBEA,platform-open-pic"))
++			continue;
++
++		/* The MPIC driver will get everything it needs from the
++		 * device-tree, just pass 0 to all arguments
++		 */
++		mpic = mpic_alloc(dn, 0, 0, 0, 0, " MPIC     ");
++		if (mpic == NULL)
++			continue;
++		mpic_init(mpic);
++
++		virq = irq_of_parse_and_map(dn, 0);
++		if (virq == NO_IRQ)
++			continue;
++
++		printk(KERN_INFO "%s : hooking up to IRQ %d\n",
++		       dn->full_name, virq);
++		set_irq_data(virq, mpic);
++		set_irq_chained_handler(virq, cell_mpic_cascade);
++	}
++}
++
++
+ static void __init cell_init_irq(void)
+ {
+ 	iic_init_IRQ();
+ 	spider_init_IRQ();
++	mpic_init_IRQ();
+ }
+ 
+ static void __init cell_setup_arch(void)
+Index: linux-2.6/arch/powerpc/sysdev/mpic.c
+===================================================================
+--- linux-2.6.orig/arch/powerpc/sysdev/mpic.c	2007-01-22 14:38:56.000000000 +1100
++++ linux-2.6/arch/powerpc/sysdev/mpic.c	2007-01-22 15:49:46.000000000 +1100
+@@ -147,33 +147,51 @@
+  */
+ 
+ 
+-static inline u32 _mpic_read(unsigned int be, volatile u32 __iomem *base,
+-			    unsigned int reg)
+-{
+-	if (be)
+-		return in_be32(base + (reg >> 2));
+-	else
+-		return in_le32(base + (reg >> 2));
++static inline u32 _mpic_read(enum mpic_reg_type type,
++			     struct mpic_reg_bank *rb,
++			     unsigned int reg)
++{
++	switch(type) {
++#ifdef CONFIG_PPC_DCR
++	case mpic_access_dcr:
++		return dcr_read(rb->dhost,
++				rb->dbase + reg + rb->doff);
++#endif
++	case mpic_access_mmio_be:
++		return in_be32(rb->base + (reg >> 2));
++	case mpic_access_mmio_le:
++	default:
++		return in_le32(rb->base + (reg >> 2));
++	}
+ }
+ 
+-static inline void _mpic_write(unsigned int be, volatile u32 __iomem *base,
+-			      unsigned int reg, u32 value)
++static inline void _mpic_write(enum mpic_reg_type type,
++			       struct mpic_reg_bank *rb,
++ 			       unsigned int reg, u32 value)
+ {
+-	if (be)
+-		out_be32(base + (reg >> 2), value);
+-	else
+-		out_le32(base + (reg >> 2), value);
++	switch(type) {
++#ifdef CONFIG_PPC_DCR
++	case mpic_access_dcr:
++		return dcr_write(rb->dhost,
++				 rb->dbase + reg + rb->doff, value);
++#endif
++	case mpic_access_mmio_be:
++		return out_be32(rb->base + (reg >> 2), value);
++	case mpic_access_mmio_le:
++	default:
++		return out_le32(rb->base + (reg >> 2), value);
++	}
+ }
+ 
+ static inline u32 _mpic_ipi_read(struct mpic *mpic, unsigned int ipi)
+ {
+-	unsigned int be = (mpic->flags & MPIC_BIG_ENDIAN) != 0;
++	enum mpic_reg_type type = mpic->reg_type;
+ 	unsigned int offset = MPIC_INFO(GREG_IPI_VECTOR_PRI_0) +
+ 			      (ipi * MPIC_INFO(GREG_IPI_STRIDE));
+ 
+-	if (mpic->flags & MPIC_BROKEN_IPI)
+-		be = !be;
+-	return _mpic_read(be, mpic->gregs, offset);
++	if ((mpic->flags & MPIC_BROKEN_IPI) && type == mpic_access_mmio_le)
++		type = mpic_access_mmio_be;
++	return _mpic_read(type, &mpic->gregs, offset);
+ }
+ 
+ static inline void _mpic_ipi_write(struct mpic *mpic, unsigned int ipi, u32 value)
+@@ -181,7 +199,7 @@
+ 	unsigned int offset = MPIC_INFO(GREG_IPI_VECTOR_PRI_0) +
+ 			      (ipi * MPIC_INFO(GREG_IPI_STRIDE));
+ 
+-	_mpic_write(mpic->flags & MPIC_BIG_ENDIAN, mpic->gregs, offset, value);
++	_mpic_write(mpic->reg_type, &mpic->gregs, offset, value);
+ }
+ 
+ static inline u32 _mpic_cpu_read(struct mpic *mpic, unsigned int reg)
+@@ -190,8 +208,7 @@
+ 
+ 	if (mpic->flags & MPIC_PRIMARY)
+ 		cpu = hard_smp_processor_id();
+-	return _mpic_read(mpic->flags & MPIC_BIG_ENDIAN,
+-			  mpic->cpuregs[cpu], reg);
++	return _mpic_read(mpic->reg_type, &mpic->cpuregs[cpu], reg);
+ }
+ 
+ static inline void _mpic_cpu_write(struct mpic *mpic, unsigned int reg, u32 value)
+@@ -201,7 +218,7 @@
+ 	if (mpic->flags & MPIC_PRIMARY)
+ 		cpu = hard_smp_processor_id();
+ 
+-	_mpic_write(mpic->flags & MPIC_BIG_ENDIAN, mpic->cpuregs[cpu], reg, value);
++	_mpic_write(mpic->reg_type, &mpic->cpuregs[cpu], reg, value);
+ }
+ 
+ static inline u32 _mpic_irq_read(struct mpic *mpic, unsigned int src_no, unsigned int reg)
+@@ -209,7 +226,7 @@
+ 	unsigned int	isu = src_no >> mpic->isu_shift;
+ 	unsigned int	idx = src_no & mpic->isu_mask;
+ 
+-	return _mpic_read(mpic->flags & MPIC_BIG_ENDIAN, mpic->isus[isu],
++	return _mpic_read(mpic->reg_type, &mpic->isus[isu],
+ 			  reg + (idx * MPIC_INFO(IRQ_STRIDE)));
+ }
+ 
+@@ -219,12 +236,12 @@
+ 	unsigned int	isu = src_no >> mpic->isu_shift;
+ 	unsigned int	idx = src_no & mpic->isu_mask;
+ 
+-	_mpic_write(mpic->flags & MPIC_BIG_ENDIAN, mpic->isus[isu],
++	_mpic_write(mpic->reg_type, &mpic->isus[isu],
+ 		    reg + (idx * MPIC_INFO(IRQ_STRIDE)), value);
+ }
+ 
+-#define mpic_read(b,r)		_mpic_read(mpic->flags & MPIC_BIG_ENDIAN,(b),(r))
+-#define mpic_write(b,r,v)	_mpic_write(mpic->flags & MPIC_BIG_ENDIAN,(b),(r),(v))
++#define mpic_read(b,r)		_mpic_read(mpic->reg_type,&(b),(r))
++#define mpic_write(b,r,v)	_mpic_write(mpic->reg_type,&(b),(r),(v))
+ #define mpic_ipi_read(i)	_mpic_ipi_read(mpic,(i))
+ #define mpic_ipi_write(i,v)	_mpic_ipi_write(mpic,(i),(v))
+ #define mpic_cpu_read(i)	_mpic_cpu_read(mpic,(i))
+@@ -238,6 +255,38 @@
+  */
+ 
+ 
++static void _mpic_map_mmio(struct mpic *mpic, unsigned long phys_addr,
++			   struct mpic_reg_bank *rb, unsigned int offset,
++			   unsigned int size)
++{
++	rb->base = ioremap(phys_addr + offset, size);
++	BUG_ON(rb->base == NULL);
++}
++
++#ifdef CONFIG_PPC_DCR
++static void _mpic_map_dcr(struct mpic *mpic, struct mpic_reg_bank *rb,
++			  unsigned int offset, unsigned int size)
++{
++	rb->dbase = mpic->dcr_base;
++	rb->doff = offset;
++	rb->dhost = dcr_map(mpic->of_node, rb->dbase + rb->doff, size);
++	BUG_ON(!DCR_MAP_OK(rb->dhost));
++}
++
++static inline void mpic_map(struct mpic *mpic, unsigned long phys_addr,
++			    struct mpic_reg_bank *rb, unsigned int offset,
++			    unsigned int size)
++{
++	if (mpic->flags & MPIC_USES_DCR)
++		_mpic_map_dcr(mpic, rb, offset, size);
++	else
++		_mpic_map_mmio(mpic, phys_addr, rb, offset, size);
++}
++#else /* CONFIG_PPC_DCR */
++#define mpic_map(m,p,b,o,s)	_mpic_map_mmio(m,p,b,o,s)
++#endif /* !CONFIG_PPC_DCR */
++
++
+ 
+ /* Check if we have one of those nice broken MPICs with a flipped endian on
+  * reads from IPI registers
+@@ -845,7 +894,7 @@
+  */
+ 
+ struct mpic * __init mpic_alloc(struct device_node *node,
+-				unsigned long phys_addr,
++				phys_addr_t phys_addr,
+ 				unsigned int flags,
+ 				unsigned int isu_size,
+ 				unsigned int irq_count,
+@@ -855,6 +904,7 @@
+ 	u32		reg;
+ 	const char	*vers;
+ 	int		i;
++	u64		paddr = phys_addr;
+ 
+ 	mpic = alloc_bootmem(sizeof(struct mpic));
+ 	if (mpic == NULL)
+@@ -883,6 +933,7 @@
+ 	if (flags & MPIC_PRIMARY)
+ 		mpic->hc_ht_irq.set_affinity = mpic_set_affinity;
+ #endif /* CONFIG_MPIC_BROKEN_U3 */
++
+ #ifdef CONFIG_SMP
+ 	mpic->hc_ipi = mpic_ipi_chip;
+ 	mpic->hc_ipi.typename = name;
+@@ -893,15 +944,52 @@
+ 	mpic->irq_count = irq_count;
+ 	mpic->num_sources = 0; /* so far */
+ 
++	/* Check for "big-endian" in device-tree */
++	if (node && get_property(node, "big-endian", NULL) != NULL)
++		mpic->flags |= MPIC_BIG_ENDIAN;
++
++
+ #ifdef CONFIG_MPIC_WEIRD
+ 	mpic->hw_set = mpic_infos[MPIC_GET_REGSET(flags)];
+ #endif
+ 
++	/* default register type */
++	mpic->reg_type = (flags & MPIC_BIG_ENDIAN) ?
++		mpic_access_mmio_be : mpic_access_mmio_le;
++
++	/* If no physical address is passed in, a device-node is mandatory */
++	BUG_ON(paddr == 0 && node == NULL);
++
++	/* If no physical address passed in, check if it's dcr based */
++	if (paddr == 0 && get_property(node, "dcr-reg", NULL) != NULL)
++		mpic->flags |= MPIC_USES_DCR;
++
++#ifdef CONFIG_PPC_DCR
++	if (mpic->flags & MPIC_USES_DCR) {
++		u32 *dbasep;
++		dbasep = (u32 *)get_property(node, "dcr-reg", NULL);
++		BUG_ON(dbasep == NULL);
++		mpic->dcr_base = *dbasep;
++		mpic->reg_type = mpic_access_dcr;
++	}
++#else
++	BUG_ON (mpic->flags & MPIC_USES_DCR);
++#endif /* CONFIG_PPC_DCR */
++
++	/* If the MPIC is not DCR based, and no physical address was passed
++	 * in, try to obtain one
++	 */
++	if (paddr == 0 && !(mpic->flags & MPIC_USES_DCR)) {
++		u32 *reg;
++		reg = (u32 *)get_property(node, "reg", NULL);
++		BUG_ON(reg == NULL);
++		paddr = of_translate_address(node, reg);
++		BUG_ON(paddr == OF_BAD_ADDR);
++	}
++
+ 	/* Map the global registers */
+-	mpic->gregs = ioremap(phys_addr + MPIC_INFO(GREG_BASE), 0x1000);
+-	mpic->tmregs = mpic->gregs +
+-		       ((MPIC_INFO(TIMER_BASE) - MPIC_INFO(GREG_BASE)) >> 2);
+-	BUG_ON(mpic->gregs == NULL);
++	mpic_map(mpic, paddr, &mpic->gregs, MPIC_INFO(GREG_BASE), 0x1000);
++	mpic_map(mpic, paddr, &mpic->tmregs, MPIC_INFO(TIMER_BASE), 0x1000);
+ 
+ 	/* Reset */
+ 	if (flags & MPIC_WANTS_RESET) {
+@@ -926,17 +1014,16 @@
+ 
+ 	/* Map the per-CPU registers */
+ 	for (i = 0; i < mpic->num_cpus; i++) {
+-		mpic->cpuregs[i] = ioremap(phys_addr + MPIC_INFO(CPU_BASE) +
+-					   i * MPIC_INFO(CPU_STRIDE), 0x1000);
+-		BUG_ON(mpic->cpuregs[i] == NULL);
++		mpic_map(mpic, paddr, &mpic->cpuregs[i],
++			 MPIC_INFO(CPU_BASE) + i * MPIC_INFO(CPU_STRIDE),
++			 0x1000);
+ 	}
+ 
+ 	/* Initialize main ISU if none provided */
+ 	if (mpic->isu_size == 0) {
+ 		mpic->isu_size = mpic->num_sources;
+-		mpic->isus[0] = ioremap(phys_addr + MPIC_INFO(IRQ_BASE),
+-					MPIC_INFO(IRQ_STRIDE) * mpic->isu_size);
+-		BUG_ON(mpic->isus[0] == NULL);
++		mpic_map(mpic, paddr, &mpic->isus[0],
++			 MPIC_INFO(IRQ_BASE), MPIC_INFO(IRQ_STRIDE) * mpic->isu_size);
+ 	}
+ 	mpic->isu_shift = 1 + __ilog2(mpic->isu_size - 1);
+ 	mpic->isu_mask = (1 << mpic->isu_shift) - 1;
+@@ -956,10 +1043,11 @@
+ 		vers = "<unknown>";
+ 		break;
+ 	}
+-	printk(KERN_INFO "mpic: Setting up MPIC \"%s\" version %s at %lx, max %d CPUs\n",
+-	       name, vers, phys_addr, mpic->num_cpus);
+-	printk(KERN_INFO "mpic: ISU size: %d, shift: %d, mask: %x\n", mpic->isu_size,
+-	       mpic->isu_shift, mpic->isu_mask);
++	printk(KERN_INFO "mpic: Setting up MPIC \"%s\" version %s at %llx,"
++	       " max %d CPUs\n",
++	       name, vers, (unsigned long long)paddr, mpic->num_cpus);
++	printk(KERN_INFO "mpic: ISU size: %d, shift: %d, mask: %x\n",
++	       mpic->isu_size, mpic->isu_shift, mpic->isu_mask);
+ 
+ 	mpic->next = mpics;
+ 	mpics = mpic;
+@@ -973,14 +1061,14 @@
+ }
+ 
+ void __init mpic_assign_isu(struct mpic *mpic, unsigned int isu_num,
+-			    unsigned long phys_addr)
++			    phys_addr_t paddr)
+ {
+ 	unsigned int isu_first = isu_num * mpic->isu_size;
+ 
+ 	BUG_ON(isu_num >= MPIC_MAX_ISU);
+ 
+-	mpic->isus[isu_num] = ioremap(phys_addr,
+-				      MPIC_INFO(IRQ_STRIDE) * mpic->isu_size);
++	mpic_map(mpic, paddr, &mpic->isus[isu_num], 0,
++		 MPIC_INFO(IRQ_STRIDE) * mpic->isu_size);
+ 	if ((isu_first + mpic->isu_size) > mpic->num_sources)
+ 		mpic->num_sources = isu_first + mpic->isu_size;
+ }
+Index: linux-2.6/include/asm-powerpc/mpic.h
+===================================================================
+--- linux-2.6.orig/include/asm-powerpc/mpic.h	2007-01-22 14:38:59.000000000 +1100
++++ linux-2.6/include/asm-powerpc/mpic.h	2007-01-22 15:49:46.000000000 +1100
+@@ -3,6 +3,7 @@
+ #ifdef __KERNEL__
+ 
+ #include <linux/irq.h>
++#include <asm/dcr.h>
+ 
+ /*
+  * Global registers
+@@ -225,6 +226,23 @@
+ #endif /* CONFIG_MPIC_BROKEN_U3 */
+ 
+ 
++enum mpic_reg_type {
++	mpic_access_mmio_le,
++	mpic_access_mmio_be,
++#ifdef CONFIG_PPC_DCR
++	mpic_access_dcr
++#endif
++};
++
++struct mpic_reg_bank {
++	u32 __iomem	*base;
++#ifdef CONFIG_PPC_DCR
++	dcr_host_t	dhost;
++	unsigned int	dbase;
++	unsigned int	doff;
++#endif /* CONFIG_PPC_DCR */
++};
++
+ /* The instance data of a given MPIC */
+ struct mpic
+ {
+@@ -264,11 +282,18 @@
+ 	spinlock_t		fixup_lock;
+ #endif
+ 
++	/* Register access method */
++	enum mpic_reg_type	reg_type;
++
+ 	/* The various ioremap'ed bases */
+-	volatile u32 __iomem	*gregs;
+-	volatile u32 __iomem	*tmregs;
+-	volatile u32 __iomem	*cpuregs[MPIC_MAX_CPUS];
+-	volatile u32 __iomem	*isus[MPIC_MAX_ISU];
++	struct mpic_reg_bank	gregs;
++	struct mpic_reg_bank	tmregs;
++	struct mpic_reg_bank	cpuregs[MPIC_MAX_CPUS];
++	struct mpic_reg_bank	isus[MPIC_MAX_ISU];
++
++#ifdef CONFIG_PPC_DCR
++	unsigned int		dcr_base;
++#endif
+ 
+ #ifdef CONFIG_MPIC_WEIRD
+ 	/* Pointer to HW info array */
+@@ -305,6 +330,8 @@
+ #define MPIC_SPV_EOI			0x00000020
+ /* No passthrough disable */
+ #define MPIC_NO_PTHROU_DIS		0x00000040
++/* DCR based MPIC */
++#define MPIC_USES_DCR			0x00000080
+ 
+ /* MPIC HW modification ID */
+ #define MPIC_REGSET_MASK		0xf0000000
+@@ -337,7 +364,7 @@
+  * that is senses[0] correspond to linux irq "irq_offset".
+  */
+ extern struct mpic *mpic_alloc(struct device_node *node,
+-			       unsigned long phys_addr,
++			       phys_addr_t phys_addr,
+ 			       unsigned int flags,
+ 			       unsigned int isu_size,
+ 			       unsigned int irq_count,
+@@ -350,7 +377,7 @@
+  * @phys_addr:	physical address of the ISU
+  */
+ extern void mpic_assign_isu(struct mpic *mpic, unsigned int isu_num,
+-			    unsigned long phys_addr);
++			    phys_addr_t phys_addr);
+ 
+ /* Set default sense codes
+  *
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=228099
+
+Description:
+------------
+9 of 12 patches by Ben Herrenschmidt of IBM required for supporting IBM 
+customers purchasing Cell blade configurations. 
+
+    [POWERPC] Souped-up of_platform_device support
+
+This patch first splits of_device.c and of_platform.c, the later 
+containing the bits relative to of_platform_device's. On the "breaks" side 
+of things, drivers using of_platform_device(s) need to include 
+asm/of_platform.h now and of_(un)register_driver is now 
+of_(un)register_platform_driver.
+
+In addition to a few utility functions to locate of_platform_device(s), 
+the main new addition is of_platform_bus_probe() which allows the  
+platform code to trigger an automatic creation of of_platform_devices for a 
+whole tree of devices.
+
+The function acts based on the type of the various "parent" devices 
+encountered from a provided root, using either a default known list of bus 
+types that can be "probed" or a passed-in list. It will only register 
+devices on busses matching that list, which mean that typically, it will 
+not register PCI devices, as expected (since they will be picked up by 
+the PCI layer).
+
+This will be used by Cell platforms using 4xx-type IOs in the Axon 
+bridge and can be used by any embedded-type device as well.
+
+RHEL Version Found:
+-------------------
+feature enhancement for 5.1.
+
+Upstream Status:
+----------------
+This has been accepted into the kernel and can be viewed in the 2.6.20.3 
+kernel.
+
+Test Status:
+------------
+This patch was tested by Benjamin Herrenschmidt of IBM.  It has been
+ack'd by Olof Johansson and signed off by Paul Mackerras.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL 5.1.
+-
+
+Index: linux-malta-RH5/arch/powerpc/kernel/Makefile
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/kernel/Makefile	2007-01-10 16:31:15.000000000 +1100
++++ linux-malta-RH5/arch/powerpc/kernel/Makefile	2007-01-10 16:31:23.000000000 +1100
+@@ -23,7 +23,7 @@ obj-$(CONFIG_PPC64)		+= setup_64.o binfm
+ obj-$(CONFIG_PPC64)		+= vdso64/
+ obj-$(CONFIG_ALTIVEC)		+= vecemu.o vector.o
+ obj-$(CONFIG_PPC_970_NAP)	+= idle_power4.o
+-obj-$(CONFIG_PPC_OF)		+= of_device.o prom_parse.o
++obj-$(CONFIG_PPC_OF)		+= of_device.o of_platform.o prom_parse.o
+ procfs-$(CONFIG_PPC64)		:= proc_ppc64.o
+ obj-$(CONFIG_PROC_FS)		+= $(procfs-y)
+ rtaspci-$(CONFIG_PPC64)		:= rtas_pci.o
+Index: linux-malta-RH5/arch/powerpc/kernel/dma_64.c
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/kernel/dma_64.c	2007-01-10 16:32:24.000000000 +1100
++++ linux-malta-RH5/arch/powerpc/kernel/dma_64.c	2007-01-10 16:32:53.000000000 +1100
+@@ -28,6 +28,9 @@ static struct dma_mapping_ops *get_dma_o
+ 	if (dev->bus == &ibmebus_bus_type)
+ 		return &ibmebus_dma_ops;
+ #endif
++	if (dev->bus == &of_platform_bus_type)
++		return &of_platform_dma_ops;
++
+ 	return NULL;
+ }
+ 
+Index: linux-malta-RH5/arch/powerpc/kernel/of_device.c
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/kernel/of_device.c	2007-01-10 16:12:39.000000000 +1100
++++ linux-malta-RH5/arch/powerpc/kernel/of_device.c	2007-01-10 16:41:31.000000000 +1100
+@@ -9,30 +9,27 @@
+ #include <asm/of_device.h>
+ 
+ /**
+- * of_match_device - Tell if an of_device structure has a matching
+- * of_match structure
++ * of_match_node - Tell if an device_node has a matching of_match structure
+  * @ids: array of of device match structures to search in
+- * @dev: the of device structure to match against
++ * @node: the of device structure to match against
+  *
+- * Used by a driver to check whether an of_device present in the
+- * system is in its list of supported devices.
++ * Low level utility function used by device matching.
+  */
+-const struct of_device_id *of_match_device(const struct of_device_id *matches,
+-					const struct of_device *dev)
++const struct of_device_id *of_match_node(const struct of_device_id *matches,
++					 const struct device_node *node)
+ {
+-	if (!dev->node)
+-		return NULL;
+ 	while (matches->name[0] || matches->type[0] || matches->compatible[0]) {
+ 		int match = 1;
+ 		if (matches->name[0])
+-			match &= dev->node->name
+-				&& !strcmp(matches->name, dev->node->name);
++			match &= node->name
++				&& !strcmp(matches->name, node->name);
+ 		if (matches->type[0])
+-			match &= dev->node->type
+-				&& !strcmp(matches->type, dev->node->type);
++			match &= node->type
++				&& !strcmp(matches->type, node->type);
+ 		if (matches->compatible[0])
+-			match &= device_is_compatible(dev->node,
+-				matches->compatible);
++			match &= device_is_compatible(
++					      (struct device_node *)node,
++					      (char *)matches->compatible);
+ 		if (match)
+ 			return matches;
+ 		matches++;
+@@ -40,16 +37,21 @@ const struct of_device_id *of_match_devi
+ 	return NULL;
+ }
+ 
+-static int of_platform_bus_match(struct device *dev, struct device_driver *drv)
++/**
++ * of_match_device - Tell if an of_device structure has a matching
++ * of_match structure
++ * @ids: array of of device match structures to search in
++ * @dev: the of device structure to match against
++ *
++ * Used by a driver to check whether an of_device present in the
++ * system is in its list of supported devices.
++ */
++const struct of_device_id *of_match_device(const struct of_device_id *matches,
++					   const struct of_device *dev)
+ {
+-	struct of_device * of_dev = to_of_device(dev);
+-	struct of_platform_driver * of_drv = to_of_platform_driver(drv);
+-	const struct of_device_id * matches = of_drv->match_table;
+-
+-	if (!matches)
+-		return 0;
+-
+-	return of_match_device(matches, of_dev) != NULL;
++	if (!dev->node)
++		return NULL;
++	return of_match_node(matches, dev->node);
+ }
+ 
+ struct of_device *of_dev_get(struct of_device *dev)
+@@ -71,96 +73,8 @@ void of_dev_put(struct of_device *dev)
+ 		put_device(&dev->dev);
+ }
+ 
+-
+-static int of_device_probe(struct device *dev)
+-{
+-	int error = -ENODEV;
+-	struct of_platform_driver *drv;
+-	struct of_device *of_dev;
+-	const struct of_device_id *match;
+-
+-	drv = to_of_platform_driver(dev->driver);
+-	of_dev = to_of_device(dev);
+-
+-	if (!drv->probe)
+-		return error;
+-
+-	of_dev_get(of_dev);
+-
+-	match = of_match_device(drv->match_table, of_dev);
+-	if (match)
+-		error = drv->probe(of_dev, match);
+-	if (error)
+-		of_dev_put(of_dev);
+-
+-	return error;
+-}
+-
+-static int of_device_remove(struct device *dev)
+-{
+-	struct of_device * of_dev = to_of_device(dev);
+-	struct of_platform_driver * drv = to_of_platform_driver(dev->driver);
+-
+-	if (dev->driver && drv->remove)
+-		drv->remove(of_dev);
+-	return 0;
+-}
+-
+-static int of_device_suspend(struct device *dev, pm_message_t state)
+-{
+-	struct of_device * of_dev = to_of_device(dev);
+-	struct of_platform_driver * drv = to_of_platform_driver(dev->driver);
+-	int error = 0;
+-
+-	if (dev->driver && drv->suspend)
+-		error = drv->suspend(of_dev, state);
+-	return error;
+-}
+-
+-static int of_device_resume(struct device * dev)
+-{
+-	struct of_device * of_dev = to_of_device(dev);
+-	struct of_platform_driver * drv = to_of_platform_driver(dev->driver);
+-	int error = 0;
+-
+-	if (dev->driver && drv->resume)
+-		error = drv->resume(of_dev);
+-	return error;
+-}
+-
+-struct bus_type of_platform_bus_type = {
+-       .name	= "of_platform",
+-       .match	= of_platform_bus_match,
+-       .probe	= of_device_probe,
+-       .remove	= of_device_remove,
+-       .suspend	= of_device_suspend,
+-       .resume	= of_device_resume,
+-};
+-
+-static int __init of_bus_driver_init(void)
+-{
+-	return bus_register(&of_platform_bus_type);
+-}
+-
+-postcore_initcall(of_bus_driver_init);
+-
+-int of_register_driver(struct of_platform_driver *drv)
+-{
+-	/* initialize common driver fields */
+-	drv->driver.name = drv->name;
+-	drv->driver.bus = &of_platform_bus_type;
+-
+-	/* register with core */
+-	return driver_register(&drv->driver);
+-}
+-
+-void of_unregister_driver(struct of_platform_driver *drv)
+-{
+-	driver_unregister(&drv->driver);
+-}
+-
+-
+-static ssize_t dev_show_devspec(struct device *dev, struct device_attribute *attr, char *buf)
++static ssize_t dev_show_devspec(struct device *dev,
++				struct device_attribute *attr, char *buf)
+ {
+ 	struct of_device *ofdev;
+ 
+@@ -232,41 +146,8 @@ void of_device_unregister(struct of_devi
+ 	device_unregister(&ofdev->dev);
+ }
+ 
+-struct of_device* of_platform_device_create(struct device_node *np,
+-					    const char *bus_id,
+-					    struct device *parent)
+-{
+-	struct of_device *dev;
+-
+-	dev = kmalloc(sizeof(*dev), GFP_KERNEL);
+-	if (!dev)
+-		return NULL;
+-	memset(dev, 0, sizeof(*dev));
+-
+-	dev->node = of_node_get(np);
+-	dev->dma_mask = 0xffffffffUL;
+-	dev->dev.dma_mask = &dev->dma_mask;
+-	dev->dev.parent = parent;
+-	dev->dev.bus = &of_platform_bus_type;
+-	dev->dev.release = of_release_dev;
+-
+-	strlcpy(dev->dev.bus_id, bus_id, BUS_ID_SIZE);
+-
+-	if (of_device_register(dev) != 0) {
+-		kfree(dev);
+-		return NULL;
+-	}
+-
+-	return dev;
+-}
+-
+ EXPORT_SYMBOL(of_match_device);
+-EXPORT_SYMBOL(of_platform_bus_type);
+-EXPORT_SYMBOL(of_register_driver);
+-EXPORT_SYMBOL(of_unregister_driver);
+-EXPORT_SYMBOL(of_device_register);
+ EXPORT_SYMBOL(of_device_unregister);
+ EXPORT_SYMBOL(of_dev_get);
+ EXPORT_SYMBOL(of_dev_put);
+-EXPORT_SYMBOL(of_platform_device_create);
+ EXPORT_SYMBOL(of_release_dev);
+Index: linux-malta-RH5/arch/powerpc/kernel/of_platform.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ linux-malta-RH5/arch/powerpc/kernel/of_platform.c	2007-01-10 16:40:33.000000000 +1100
+@@ -0,0 +1,391 @@
++/*
++ *    Copyright (C) 2006 Benjamin Herrenschmidt, IBM Corp.
++ *			 <benh@kernel.crashing.org>
++ *    and		 Arnd Bergmann, IBM Corp.
++ *
++ *  This program is free software; you can redistribute it and/or
++ *  modify it under the terms of the GNU General Public License
++ *  as published by the Free Software Foundation; either version
++ *  2 of the License, or (at your option) any later version.
++ *
++ */
++
++#undef DEBUG
++
++#include <linux/string.h>
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/mod_devicetable.h>
++#include <linux/slab.h>
++#include <linux/pci.h>
++
++#include <asm/errno.h>
++#include <asm/dcr.h>
++#include <asm/of_device.h>
++#include <asm/topology.h>
++#include <asm/pci-bridge.h>
++#include <asm/ppc-pci.h>
++#include <asm/atomic.h>
++
++
++/*
++ * The list of OF IDs below is used for matching bus types in the
++ * system whose devices are to be exposed as of_platform_devices.
++ *
++ * This is the default list valid for most platforms. This file provides
++ * functions who can take an explicit list if necessary though
++ *
++ * The search is always performed recursively looking for children of
++ * the provided device_node and recursively if such a children matches
++ * a bus type in the list
++ */
++
++static struct of_device_id of_default_bus_ids[] = {
++	{ .type = "soc", },
++	{ .compatible = "soc", },
++	{ .type = "spider", },
++	{ .type = "axon", },
++	{ .type = "plb5", },
++	{ .type = "plb4", },
++	{ .type = "opb", },
++	{ .type = "ebc", },
++	{},
++};
++
++static atomic_t bus_no_reg_magic;
++
++/*
++ *
++ * OF platform device type definition & base infrastructure
++ *
++ */
++
++static int of_platform_bus_match(struct device *dev, struct device_driver *drv)
++{
++	struct of_device * of_dev = to_of_device(dev);
++	struct of_platform_driver * of_drv = to_of_platform_driver(drv);
++	const struct of_device_id * matches = of_drv->match_table;
++
++	if (!matches)
++		return 0;
++
++	return of_match_device(matches, of_dev) != NULL;
++}
++
++static int of_platform_device_probe(struct device *dev)
++{
++	int error = -ENODEV;
++	struct of_platform_driver *drv;
++	struct of_device *of_dev;
++	const struct of_device_id *match;
++
++	drv = to_of_platform_driver(dev->driver);
++	of_dev = to_of_device(dev);
++
++	if (!drv->probe)
++		return error;
++
++	of_dev_get(of_dev);
++
++	match = of_match_device(drv->match_table, of_dev);
++	if (match)
++		error = drv->probe(of_dev, match);
++	if (error)
++		of_dev_put(of_dev);
++
++	return error;
++}
++
++static int of_platform_device_remove(struct device *dev)
++{
++	struct of_device * of_dev = to_of_device(dev);
++	struct of_platform_driver * drv = to_of_platform_driver(dev->driver);
++
++	if (dev->driver && drv->remove)
++		drv->remove(of_dev);
++	return 0;
++}
++
++static int of_platform_device_suspend(struct device *dev, pm_message_t state)
++{
++	struct of_device * of_dev = to_of_device(dev);
++	struct of_platform_driver * drv = to_of_platform_driver(dev->driver);
++	int error = 0;
++
++	if (dev->driver && drv->suspend)
++		error = drv->suspend(of_dev, state);
++	return error;
++}
++
++static int of_platform_device_resume(struct device * dev)
++{
++	struct of_device * of_dev = to_of_device(dev);
++	struct of_platform_driver * drv = to_of_platform_driver(dev->driver);
++	int error = 0;
++
++	if (dev->driver && drv->resume)
++		error = drv->resume(of_dev);
++	return error;
++}
++
++struct bus_type of_platform_bus_type = {
++       .name	= "of_platform",
++       .match	= of_platform_bus_match,
++       .probe	= of_platform_device_probe,
++       .remove	= of_platform_device_remove,
++       .suspend	= of_platform_device_suspend,
++       .resume	= of_platform_device_resume,
++};
++EXPORT_SYMBOL(of_platform_bus_type);
++
++static int __init of_bus_driver_init(void)
++{
++	return bus_register(&of_platform_bus_type);
++}
++
++postcore_initcall(of_bus_driver_init);
++
++int of_register_platform_driver(struct of_platform_driver *drv)
++{
++	/* initialize common driver fields */
++	drv->driver.name = drv->name;
++	drv->driver.bus = &of_platform_bus_type;
++
++	/* register with core */
++	return driver_register(&drv->driver);
++}
++EXPORT_SYMBOL(of_register_platform_driver);
++
++void of_unregister_platform_driver(struct of_platform_driver *drv)
++{
++	driver_unregister(&drv->driver);
++}
++EXPORT_SYMBOL(of_unregister_platform_driver);
++
++static void of_platform_make_bus_id(struct of_device *dev)
++{
++	struct device_node *node = dev->node;
++	char *name = dev->dev.bus_id;
++	u32 *reg;
++	u64 addr;
++	int magic;
++
++	/*
++	 * If it's a DCR based device, use 'd' for native DCRs
++	 * and 'D' for MMIO DCRs.
++	 */
++#ifdef CONFIG_PPC_DCR
++	reg = (u32 *)get_property(node, "dcr-reg", NULL);
++	if (reg) {
++#ifdef CONFIG_PPC_DCR_NATIVE
++		snprintf(name, BUS_ID_SIZE, "d%x.%s",
++			 *reg, node->name);
++#else /* CONFIG_PPC_DCR_NATIVE */
++		addr = of_translate_dcr_address(node, *reg, NULL);
++		if (addr != OF_BAD_ADDR) {
++			snprintf(name, BUS_ID_SIZE,
++				 "D%llx.%s", (unsigned long long)addr,
++				 node->name);
++			return;
++		}
++#endif /* !CONFIG_PPC_DCR_NATIVE */
++	}
++#endif /* CONFIG_PPC_DCR */
++
++	/*
++	 * For MMIO, get the physical address
++	 */
++	reg = (u32 *)get_property(node, "reg", NULL);
++	if (reg) {
++		addr = of_translate_address(node, reg);
++		if (addr != OF_BAD_ADDR) {
++			snprintf(name, BUS_ID_SIZE,
++				 "%llx.%s", (unsigned long long)addr,
++				 node->name);
++			return;
++		}
++	}
++
++	/*
++	 * No BusID, use the node name and add a globally incremented
++	 * counter (and pray...)
++	 */
++	magic = atomic_add_return(1, &bus_no_reg_magic);
++	snprintf(name, BUS_ID_SIZE, "%s.%d", node->name, magic - 1);
++}
++
++struct of_device* of_platform_device_create(struct device_node *np,
++					    const char *bus_id,
++					    struct device *parent)
++{
++	struct of_device *dev;
++
++	dev = kmalloc(sizeof(*dev), GFP_KERNEL);
++	if (!dev)
++		return NULL;
++	memset(dev, 0, sizeof(*dev));
++
++	dev->node = of_node_get(np);
++	dev->dma_mask = 0xffffffffUL;
++	dev->dev.dma_mask = &dev->dma_mask;
++	dev->dev.parent = parent;
++	dev->dev.bus = &of_platform_bus_type;
++	dev->dev.release = of_release_dev;
++
++	/* We do not fill the DMA ops for platform devices by default.
++	 * This is currently the responsibility of the platform code
++	 * to do such, possibly using a device notifier
++	 */
++
++	if (bus_id)
++		strlcpy(dev->dev.bus_id, bus_id, BUS_ID_SIZE);
++	else
++		of_platform_make_bus_id(dev);
++
++	if (of_device_register(dev) != 0) {
++		kfree(dev);
++		return NULL;
++	}
++
++	return dev;
++}
++EXPORT_SYMBOL(of_platform_device_create);
++
++
++
++/**
++ * of_platform_bus_create - Create an OF device for a bus node and all its
++ * children. Optionally recursively instanciate matching busses.
++ * @bus: device node of the bus to instanciate
++ * @matches: match table, NULL to use the default, OF_NO_DEEP_PROBE to
++ * disallow recursive creation of child busses
++ */
++static int of_platform_bus_create(struct device_node *bus,
++				  struct of_device_id *matches,
++				  struct device *parent)
++{
++	struct device_node *child;
++	struct of_device *dev;
++	int rc = 0;
++
++	for (child = NULL; (child = of_get_next_child(bus, child)); ) {
++		pr_debug("   create child: %s\n", child->full_name);
++		dev = of_platform_device_create(child, NULL, parent);
++		if (dev == NULL)
++			rc = -ENOMEM;
++		else if (!of_match_node(matches, child))
++			continue;
++		if (rc == 0) {
++			pr_debug("   and sub busses\n");
++			rc = of_platform_bus_create(child, matches, &dev->dev);
++		} if (rc) {
++			of_node_put(child);
++			break;
++		}
++	}
++	return rc;
++}
++
++/**
++ * of_platform_bus_probe - Probe the device-tree for platform busses
++ * @root: parent of the first level to probe or NULL for the root of the tree
++ * @matches: match table, NULL to use the default
++ * @parent: parent to hook devices from, NULL for toplevel
++ *
++ * Note that children of the provided root are not instanciated as devices
++ * unless the specified root itself matches the bus list and is not NULL.
++ */
++
++int of_platform_bus_probe(struct device_node *root,
++			  struct of_device_id *matches,
++			  struct device *parent)
++{
++	struct device_node *child;
++	struct of_device *dev;
++	int rc = 0;
++
++	if (matches == NULL)
++		matches = of_default_bus_ids;
++	if (matches == OF_NO_DEEP_PROBE)
++		return -EINVAL;
++	if (root == NULL)
++		root = of_find_node_by_path("/");
++	else
++		of_node_get(root);
++
++	pr_debug("of_platform_bus_probe()\n");
++	pr_debug(" starting at: %s\n", root->full_name);
++
++	/* Do a self check of bus type, if there's a match, create
++	 * children
++	 */
++	if (of_match_node(matches, root)) {
++		pr_debug(" root match, create all sub devices\n");
++		dev = of_platform_device_create(root, NULL, parent);
++		if (dev == NULL) {
++			rc = -ENOMEM;
++			goto bail;
++		}
++		pr_debug(" create all sub busses\n");
++		rc = of_platform_bus_create(root, matches, &dev->dev);
++		goto bail;
++	}
++	for (child = NULL; (child = of_get_next_child(root, child)); ) {
++		if (!of_match_node(matches, child))
++			continue;
++
++		pr_debug("  match: %s\n", child->full_name);
++		dev = of_platform_device_create(child, NULL, parent);
++		if (dev == NULL)
++			rc = -ENOMEM;
++		else
++			rc = of_platform_bus_create(child, matches, &dev->dev);
++		if (rc) {
++			of_node_put(child);
++			break;
++		}
++	}
++ bail:
++	of_node_put(root);
++	return rc;
++}
++EXPORT_SYMBOL(of_platform_bus_probe);
++
++static int of_dev_node_match(struct device *dev, void *data)
++{
++	return to_of_device(dev)->node == data;
++}
++
++struct of_device *of_find_device_by_node(struct device_node *np)
++{
++	struct device *dev;
++
++	dev = bus_find_device(&of_platform_bus_type,
++			      NULL, np, of_dev_node_match);
++	if (dev)
++		return to_of_device(dev);
++	return NULL;
++}
++EXPORT_SYMBOL(of_find_device_by_node);
++
++static int of_dev_phandle_match(struct device *dev, void *data)
++{
++	phandle *ph = data;
++	return to_of_device(dev)->node->linux_phandle == *ph;
++}
++
++struct of_device *of_find_device_by_phandle(phandle ph)
++{
++	struct device *dev;
++
++	dev = bus_find_device(&of_platform_bus_type,
++			      NULL, &ph, of_dev_phandle_match);
++	if (dev)
++		return to_of_device(dev);
++	return NULL;
++}
++EXPORT_SYMBOL(of_find_device_by_phandle);
++
++struct dma_mapping_ops of_platform_dma_ops;
++EXPORT_SYMBOL(of_platform_dma_ops);
+Index: linux-malta-RH5/include/asm-powerpc/of_device.h
+===================================================================
+--- linux-malta-RH5.orig/include/asm-powerpc/of_device.h	2007-01-10 16:12:53.000000000 +1100
++++ linux-malta-RH5/include/asm-powerpc/of_device.h	2007-01-10 16:38:35.000000000 +1100
+@@ -4,6 +4,7 @@
+ 
+ #include <linux/device.h>
+ #include <linux/mod_devicetable.h>
++#include <linux/dma-mapping.h>
+ #include <asm/prom.h>
+ 
+ /*
+@@ -12,6 +13,7 @@
+  * mechanism
+  */
+ extern struct bus_type of_platform_bus_type;
++extern struct dma_mapping_ops of_platform_dma_ops;
+ 
+ /*
+  * The of_device is a kind of "base class" that is a superset of
+@@ -26,6 +28,8 @@ struct of_device
+ };
+ #define	to_of_device(d) container_of(d, struct of_device, dev)
+ 
++extern const struct of_device_id *of_match_node(
++	const struct of_device_id *matches, const struct device_node *node);
+ extern const struct of_device_id *of_match_device(
+ 	const struct of_device_id *matches, const struct of_device *dev);
+ 
+@@ -53,8 +57,10 @@ struct of_platform_driver
+ };
+ #define	to_of_platform_driver(drv) container_of(drv,struct of_platform_driver, driver)
+ 
+-extern int of_register_driver(struct of_platform_driver *drv);
+-extern void of_unregister_driver(struct of_platform_driver *drv);
++extern int of_register_platform_driver(struct of_platform_driver *drv);
++#define of_register_driver of_register_platform_driver
++extern void of_unregister_platform_driver(struct of_platform_driver *drv);
++#define of_unregister_driver of_unregister_platform_driver
+ extern int of_device_register(struct of_device *ofdev);
+ extern void of_device_unregister(struct of_device *ofdev);
+ extern struct of_device *of_platform_device_create(struct device_node *np,
+@@ -62,5 +68,15 @@ extern struct of_device *of_platform_dev
+ 						   struct device *parent);
+ extern void of_release_dev(struct device *dev);
+ 
++/* pseudo "matches" value to not do deep probe */
++#define OF_NO_DEEP_PROBE ((struct of_device_id *)-1)
++
++extern int of_platform_bus_probe(struct device_node *root,
++				 struct of_device_id *matches,
++				 struct device *parent);
++
++extern struct of_device *of_find_device_by_node(struct device_node *np);
++extern struct of_device *of_find_device_by_phandle(phandle ph);
++
+ #endif /* __KERNEL__ */
+ #endif /* _ASM_POWERPC_OF_DEVICE_H */
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=228099
+
+Description:
+------------
+10 of 12 patches by Ben Herrenschmidt of IBM required for supporting IBM 
+customers purchasing Cell blade configurations. 
+
+This patch makes the Cell DMA code work on both the Spider and the Axon 
+south bridges by turning cell_dma_valid into a variable instead of a 
+constant.  This will be updated when we have full iommu support.
+
+RHEL Version Found:
+-------------------
+feature enhancement for 5.1.
+
+Upstream Status:
+----------------
+This has been accepted into the kernel and can be viewed in the 2.6.20.3 
+kernel.
+
+Test Status:
+------------
+This patch was tested by Benjamin Herrenschmidt of IBM.  It has been
+ack'd by Olof Johansson and signed off by Paul Mackerras.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL 5.1.
+-
+
+Index: linux-malta-RH5/arch/powerpc/platforms/cell/iommu.c
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/platforms/cell/iommu.c	2007-01-10 14:46:07.000000000 +1100
++++ linux-malta-RH5/arch/powerpc/platforms/cell/iommu.c	2007-01-11 17:04:07.000000000 +1100
+@@ -46,6 +46,8 @@
+ 
+ #include "iommu.h"
+ 
++static dma_addr_t cell_dma_valid = SPIDER_DMA_VALID;
++
+ static inline unsigned long 
+ get_iopt_entry(unsigned long real_address, unsigned long ioid,
+ 			 unsigned long prot)
+@@ -427,7 +429,7 @@ static void *cell_alloc_coherent(struct 
+ 	ret = (void *)__get_free_pages(flag, get_order(size));
+ 	if (ret != NULL) {
+ 		memset(ret, 0, size);
+-		*dma_handle = virt_to_abs(ret) | CELL_DMA_VALID;
++		*dma_handle = virt_to_abs(ret) | cell_dma_valid;
+ 	}
+ 	return ret;
+ }
+@@ -441,7 +443,7 @@ static void cell_free_coherent(struct de
+ static dma_addr_t cell_map_single(struct device *hwdev, void *ptr,
+ 		size_t size, enum dma_data_direction direction)
+ {
+-	return virt_to_abs(ptr) | CELL_DMA_VALID;
++	return virt_to_abs(ptr) | cell_dma_valid;
+ }
+ 
+ static void cell_unmap_single(struct device *hwdev, dma_addr_t dma_addr,
+@@ -456,7 +458,7 @@ static int cell_map_sg(struct device *hw
+ 
+ 	for (i = 0; i < nents; i++, sg++) {
+ 		sg->dma_address = (page_to_phys(sg->page) + sg->offset)
+-					| CELL_DMA_VALID;
++					| cell_dma_valid;
+ 		sg->dma_length = sg->length;
+ 	}
+ 
+@@ -487,7 +489,16 @@ void cell_init_iommu(void)
+ {
+ 	int setup_bus = 0;
+ 
+-	if (of_find_node_by_path("/mambo")) {
++	/* If we have an Axon bridge, clear the DMA valid mask and don't
++	 * try to mess around with the iommu (keep it off). This will work
++	 * for malta limited amount of RAM on a RHEL kernel. Upstream is
++	 * smarter but we don't need to backport that now.
++	 */
++	if (of_find_node_by_name(NULL, "axon")) {
++		cell_dma_valid = 0;
++		ppc_md.iommu_dev_setup = iommu_dev_setup_null;
++		ppc_md.iommu_bus_setup = iommu_bus_setup_null;
++	} else if (of_find_node_by_path("/mambo")) {
+ 		pr_info("Not using iommu on systemsim\n");
+ 	} else {
+ 
+@@ -509,4 +520,5 @@ void cell_init_iommu(void)
+ 	}
+ 
+ 	pci_dma_ops = cell_iommu_ops;
++	of_platform_dma_ops = cell_iommu_ops;
+ }
+Index: linux-malta-RH5/arch/powerpc/platforms/cell/iommu.h
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/platforms/cell/iommu.h	2007-01-10 14:46:07.000000000 +1100
++++ linux-malta-RH5/arch/powerpc/platforms/cell/iommu.h	2007-01-10 16:55:47.000000000 +1100
+@@ -53,9 +53,11 @@ enum {
+ 	IOC_ST_ORIGIN     = 0x918,
+ 	IOC_CONF	  = 0x930,
+ 
+-	/* The high bit needs to be set on every DMA address,
+-	   only 2GB are addressable */
+-	CELL_DMA_VALID	  = 0x80000000,
++	/* The high bit needs to be set on every DMA address when using
++	 * a spider bridge and only 2GB are addressable with the current
++	 * iommu code.
++	 */
++	SPIDER_DMA_VALID  = 0x80000000,
+ 	CELL_DMA_MASK	  = 0x7fffffff,
+ };
+ 
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=228099
+
+Description:
+------------
+11 of 12 patches by Ben Herrenschmidt of IBM required for supporting IBM
+customers purchasing Cell blade configurations.
+
+Hook up of_platform_bus_probe with the cell platform in order to publish 
+the non-PCI devices in the device-tree of cell blades as 
+of_platform_device(s).
+
+RHEL Version Found:
+-------------------
+feature enhancement for 5.1.
+
+Upstream Status:
+----------------
+This has been accepted into the kernel and can be viewed in the 2.6.20.3 
+kernel.
+
+Test Status:
+------------
+This patch was tested by Benjamin Herrenschmidt of IBM.  It has been
+ack'd by Olof Johansson and signed off by Paul Mackerras.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL 5.1.
+-
+
+Index: linux-malta-RH5/arch/powerpc/platforms/cell/setup.c
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/platforms/cell/setup.c	2007-01-11 17:05:40.000000000 +1100
++++ linux-malta-RH5/arch/powerpc/platforms/cell/setup.c	2007-01-11 17:06:05.000000000 +1100
+@@ -51,6 +51,7 @@
+ #include <asm/spu_priv1.h>
+ #include <asm/udbg.h>
+ #include <asm/mpic.h>
++#include <asm/of_device.h>
+ 
+ #include "interrupt.h"
+ #include "iommu.h"
+@@ -89,6 +90,14 @@ static void __init cell_pcibios_fixup(vo
+ 		pci_read_irq_line(dev);
+ }
+ 
++static int __init cell_publish_devices(void)
++{
++	if (machine_is(cell))
++		of_platform_bus_probe(NULL, NULL, NULL);
++	return 0;
++}
++device_initcall(cell_publish_devices);
++
+ static void cell_mpic_cascade(unsigned int irq, struct irq_desc *desc,
+ 			      struct pt_regs *regs)
+ {
+
+The following should have been attached to this patch:
+Original patch was:
+
+commit 4c9d2800be5dfabf26acdeb401cbabe9edc1dcf2
+Author: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+
+    [POWERPC] Generic OF platform driver for PCI host bridges.
+
+    When enabled in Kconfig, it will pick up any of_platform_device
+    matching it's match list (currently type "pci", "pcix", "pcie",
+    or "ht" and setup a PHB for it.
+
+    Platform must provide a ppc_md.pci_setup_phb() for it to work
+    (for doing the necessary initialisations specific to a given PHB
+    like setting up the config space ops).
+
+    It's currently only available on 64 bits as the 32 bits PCI code
+    can't quite cope with it in it's current form. I will fix that
+    later.
+
+    Signed-off-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+    Signed-off-by: Paul Mackerras <paulus@samba.org>
+
+This instead does a cell-only solution with the same code, but less
+invasive, to reduce the risk of breaking other platforms.
+
+
+Index: linux-malta-RH5/arch/powerpc/kernel/pci_64.c
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/kernel/pci_64.c	2007-01-11
+18:06:36.000000000 +1100
++++ linux-malta-RH5/arch/powerpc/kernel/pci_64.c	2007-01-11
+18:07:09.000000000 +1100
+@@ -1003,10 +1003,7 @@ void __devinit pci_process_bridge_OF_ran
+ 		pci_space = ranges[0];
+ 		pci_addr = ((unsigned long)ranges[1] << 32) | ranges[2];
+ 
+-		cpu_phys_addr = ranges[3];
+-		if (na >= 2)
+-			cpu_phys_addr = (cpu_phys_addr << 32) | ranges[4];
+-
++		cpu_phys_addr = of_translate_address(dev, &ranges[3]);
+ 		size = ((unsigned long)ranges[na+3] << 32) | ranges[na+4];
+ 		ranges += np;
+ 		if (size == 0)
+Index: linux-malta-RH5/arch/powerpc/platforms/cell/setup.c
+===================================================================
+--- linux-malta-RH5.orig/arch/powerpc/platforms/cell/setup.c	2007-01-11
+17:12:42.000000000 +1100
++++ linux-malta-RH5/arch/powerpc/platforms/cell/setup.c	2007-01-11
+18:08:34.000000000 +1100
+@@ -110,6 +110,61 @@ static void cell_mpic_cascade(unsigned i
+ 	desc->chip->eoi(irq);
+ }
+ 
++static void __init cell_add_phb(struct device_node *node, int index)
++{
++	struct pci_controller *phb;
++	struct resource r;
++
++	phb = pcibios_alloc_controller(node);
++	if (!phb)
++		return;
++	setup_phb(node, phb);
++	if (of_address_to_resource(node, 0, &r) == 0)
++		phb->buid = r.start;
++	pci_process_bridge_OF_ranges(phb, node, 0);
++	pci_setup_phb_io(phb, index == 0);
++}
++
++static void __init cell_find_and_init_phbs(void)
++{
++	struct device_node *axon, *plb5, *plb4, *np;
++	int index = 0;
++
++	/* Old blades, use generic code */
++	axon = of_find_node_by_name(NULL, "axon");
++	if (axon == NULL) {
++		find_and_init_phbs();
++		return;
++	}
++
++	/* New blades, manually instanciate bridges for now as
++	 * RHEL5 doesn't have the infrastructure to do it from
++	 * of_platform
++	 */
++	for (; axon; axon = of_find_node_by_name(axon, "axon")) {
++		for (plb5 = NULL; !!(plb5 = of_get_next_child(axon, plb5));)
++			if (strcmp(plb5->name, "plb5") == 0)
++				break;
++		if (plb5 == NULL)
++			continue;
++		for (np = NULL; !!(np = of_get_next_child(plb5, np));)
++			if (strcmp(np->name, "pcie") == 0)
++				cell_add_phb(np, index++);
++		for (plb4 = NULL; !!(plb4 = of_get_next_child(plb5, plb4));)
++			if (strcmp(plb4->name, "plb4") == 0)
++				break;
++		of_node_put(plb5);
++		if (plb4 == NULL)
++			continue;
++		for (np = NULL; !!(np = of_get_next_child(plb4, np));)
++			if (strcmp(np->name, "pcix") == 0)
++				cell_add_phb(np, index++);
++		of_node_put(plb4);
++	}
++
++	pci_devs_phb_init();
++}
++
+ static void __init mpic_init_IRQ(void)
+ {
+ 	struct device_node *dn;
+@@ -174,7 +229,7 @@ static void __init cell_setup_arch(void)
+ 
+ 	/* Find and initialize PCI host bridges */
+ 	init_pci_config_tokens();
+-	find_and_init_phbs();
++	cell_find_and_init_phbs();
+ 	cbe_pervasive_init();
+ #ifdef CONFIG_DUMMY_CONSOLE
+ 	conswitchp = &dummy_con;
+

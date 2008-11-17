@@ -1,0 +1,30 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5.1 PATCH]: Add Hitachi HDS7250SASUN500G 0621KTAWSD to NCQ blacklist
+Date: Tue, 10 Jul 2007 18:21:08 -0400
+Bugzilla: 247627
+Message-Id: <20070710222108.27699.68227.sendpatchset@prarit.boston.redhat.com>
+Changelog: [sata] Add Hitachi HDS7250SASUN500G 0621KTAWSD to NCQ blacklist
+
+
+Backport of
+
+http://marc.info/?l=linux-ide&m=118410568612699&w=2
+
+Blacklist the Hitachi HDS7250SASUN500G 0621KTAWSD drive for NCQ operation.
+
+Tested successfully by me on a Sun Ultra 40 with this drive.
+
+Resolves BZ 247627.
+
+--- linux-2.6.18.x86_64/drivers/ata/libata-core.c.orig	2007-07-07 00:14:58.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/ata/libata-core.c	2007-07-07 00:16:08.000000000 -0400
+@@ -3787,6 +3787,8 @@ static const struct ata_blacklist_entry 
+ 	/* NCQ is broken */
+ 	{ "Maxtor 6L250S0",     "BANC1G10",     ATA_HORKAGE_NONCQ },
+ 	{ "Maxtor 6B200M0",	"BANC1B10",	ATA_HORKAGE_NONCQ },
++	{ "HITACHI HDS7250SASUN500G 0621KTAWSD", "K2AOAJ0AHITACHI",
++	 ATA_HORKAGE_NONCQ },
+ 	/* NCQ hard hangs device under heavier load, needs hard power cycle */
+ 	{ "Maxtor 6B250S0",	"BANC1B70",	ATA_HORKAGE_NONCQ },
+ 	/* Blacklist entries taken from Silicon Image 3124/3132
+

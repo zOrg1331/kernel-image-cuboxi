@@ -1,0 +1,36 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 11 Dec 2007 10:05:50 -0500
+Subject: [fs] cifs: oops on second mount to same server
+Message-id: 1197385560-21991-6-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.2 PATCH 05/15] BZ#373741: [CIFS] fix oops on second mount to same server when null auth is used
+Bugzilla: 373741
+
+When a share is mounted using no username, cifs_mount sets
+volume_info.username as a NULL pointer, and the sesInfo userName as an
+empty string. The volume_info.username is passed to a couple of other
+functions to see if there is an existing unc or tcp connection that can
+be used. These functions assume that the username will be a valid
+string that can be passed to strncmp. If the pointer is NULL, then the
+kernel will oops if there's an existing session to which the string
+can be compared.
+
+This patch changes cifs_mount to set volume_info.username to an empty
+string in this situation, which prevents the oops and should make it
+so that the comparison to other null auth sessions match.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/connect.c b/fs/cifs/connect.c
+index 4f787c3..60dc369 100644
+--- a/fs/cifs/connect.c
++++ b/fs/cifs/connect.c
+@@ -1879,7 +1879,7 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 
+ 	if (volume_info.nullauth) {
+ 		cFYI(1, ("null user"));
+-		volume_info.username = NULL;
++		volume_info.username = "";
+ 	} else if (volume_info.username) {
+ 		/* BB fixme parse for domain name here */
+ 		cFYI(1, ("Username: %s", volume_info.username));

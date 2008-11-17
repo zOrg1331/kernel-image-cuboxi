@@ -1,0 +1,26 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5 PATCH]: BZ 241781 Fix a cast in the lost ticks code
+Date: Tue, 5 Jun 2007 15:19:19 -0400
+Bugzilla: 241781
+Message-Id: <20070605191919.4094.64150.sendpatchset@prarit.boston.redhat.com>
+Changelog: [x86_64] Fix a cast in the lost ticks code
+
+
+Fix a cast in the lost ticks code.
+
+Successfully tested by me.
+
+Resolves BZ 241781.
+
+--- linux-2.6.18.x86_64/arch/x86_64/kernel/time.c.orig	2007-06-04 09:44:01.000000000 -0400
++++ linux-2.6.18.x86_64/arch/x86_64/kernel/time.c	2007-06-04 09:44:29.000000000 -0400
+@@ -435,7 +435,7 @@ void main_timer_handler(struct pt_regs *
+ 	/* SCALE: We expect tick_divider - 1 lost, ie 0 for normal behaviour */
+ 	if (lost > (tick_divider - 1))  {
+ 		handle_lost_ticks(lost, regs);
+-		jiffies += lost - (tick_divider - 1);
++		jiffies += (u64)lost - (tick_divider - 1);
+ 	}
+ 
+ /*
+

@@ -1,0 +1,107 @@
+From: Ryan O'Hara <rohara@redhat.com>
+Date: Wed, 28 Nov 2007 14:58:21 -0600
+Subject: [gfs2] remove permission checks from xattr ops
+Message-id: 474DD66D.9020903@redhat.com
+O-Subject: [RHEL5 PATCH] GFS2 - remove permission checks from xattr ops
+Bugzilla: 307431
+
+BZ 307431
+
+Remove read/write permission() checks from xattr operations.
+VFS layer is already handling permission for xattrs via the
+xattr_permission() call, so there is no need for gfs2 to
+check permissions. Futhermore, using permission() for SELinux
+xattrs ops is incorrect.
+
+Signed-off-by: Ryan O'Hara <rohara@redhat.com>
+
+Acked-by: Eric Paris <eparis@redhat.com>
+Acked-by: Josef Bacik <jbacik@redhat.com>
+
+diff --git a/fs/gfs2/eaops.c b/fs/gfs2/eaops.c
+index c1f4400..f959d55 100644
+--- a/fs/gfs2/eaops.c
++++ b/fs/gfs2/eaops.c
+@@ -57,41 +57,16 @@ unsigned int gfs2_ea_name2type(const char *name, const char **truncated_name)
+ 
+ static int user_eo_get(struct gfs2_inode *ip, struct gfs2_ea_request *er)
+ {
+-	struct inode *inode = &ip->i_inode;
+-	int error = permission(inode, MAY_READ, NULL);
+-	if (error)
+-		return error;
+-
+ 	return gfs2_ea_get_i(ip, er);
+ }
+ 
+ static int user_eo_set(struct gfs2_inode *ip, struct gfs2_ea_request *er)
+ {
+-	struct inode *inode = &ip->i_inode;
+-
+-	if (S_ISREG(inode->i_mode) ||
+-	    (S_ISDIR(inode->i_mode) && !(inode->i_mode & S_ISVTX))) {
+-		int error = permission(inode, MAY_WRITE, NULL);
+-		if (error)
+-			return error;
+-	} else
+-		return -EPERM;
+-
+ 	return gfs2_ea_set_i(ip, er);
+ }
+ 
+ static int user_eo_remove(struct gfs2_inode *ip, struct gfs2_ea_request *er)
+ {
+-	struct inode *inode = &ip->i_inode;
+-
+-	if (S_ISREG(inode->i_mode) ||
+-	    (S_ISDIR(inode->i_mode) && !(inode->i_mode & S_ISVTX))) {
+-		int error = permission(inode, MAY_WRITE, NULL);
+-		if (error)
+-			return error;
+-	} else
+-		return -EPERM;
+-
+ 	return gfs2_ea_remove_i(ip, er);
+ }
+ 
+@@ -107,8 +82,6 @@ static int system_eo_get(struct gfs2_inode *ip, struct gfs2_ea_request *er)
+ 	     GFS2_ACL_IS_DEFAULT(er->er_name, er->er_name_len)))
+ 		return -EOPNOTSUPP;
+ 
+-
+-
+ 	return gfs2_ea_get_i(ip, er);
+ }
+ 
+@@ -171,31 +144,16 @@ static int system_eo_remove(struct gfs2_inode *ip, struct gfs2_ea_request *er)
+ 
+ static int security_eo_get(struct gfs2_inode *ip, struct gfs2_ea_request *er)
+ {
+-	struct inode *inode = &ip->i_inode;
+-	int error = permission(inode, MAY_READ, NULL);
+-	if (error)
+-		return error;
+-
+ 	return gfs2_ea_get_i(ip, er);
+ }
+ 
+ static int security_eo_set(struct gfs2_inode *ip, struct gfs2_ea_request *er)
+ {
+-	struct inode *inode = &ip->i_inode;
+-	int error = permission(inode, MAY_WRITE, NULL);
+-	if (error)
+-		return error;
+-
+ 	return gfs2_ea_set_i(ip, er);
+ }
+ 
+ static int security_eo_remove(struct gfs2_inode *ip, struct gfs2_ea_request *er)
+ {
+-	struct inode *inode = &ip->i_inode;
+-	int error = permission(inode, MAY_WRITE, NULL);
+-	if (error)
+-		return error;
+-
+ 	return gfs2_ea_remove_i(ip, er);
+ }
+ 

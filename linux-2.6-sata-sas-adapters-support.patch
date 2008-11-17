@@ -1,0 +1,372 @@
+
+This patch is a combination of the following patches:
+
+libata: Add ata_host_set_init
+libata: Add ata_port_init
+libata: Add ata_sas_probe_ent_alloc
+libata: Add support for SATA attachment to SAS adapters
+
+Signed-off-by: Brian King <brking@us.ibm.com>
+---
+
+ linux-2.6.17.ppc64-bjking1/drivers/scsi/libata-core.c |   96 +++++++++
+ linux-2.6.17.ppc64-bjking1/drivers/scsi/libata-scsi.c |  174 ++++++++++++++++++
+ linux-2.6.17.ppc64-bjking1/drivers/scsi/libata.h      |    3 
+ linux-2.6.17.ppc64-bjking1/include/linux/libata.h     |   11 +
+ 4 files changed, 283 insertions(+), 1 deletion(-)
+
+diff -puN drivers/scsi/libata-core.c~libata_sas_rhel5 drivers/scsi/libata-core.c
+--- linux-2.6.17.ppc64/drivers/scsi/libata-core.c~libata_sas_rhel5	2006-09-06 13:32:24.000000000 -0500
++++ linux-2.6.17.ppc64-bjking1/drivers/scsi/libata-core.c	2006-09-06 13:32:24.000000000 -0500
+@@ -1528,7 +1528,7 @@ err_out_nosup:
+  *	Zero on success, negative errno otherwise.
+  */
+ 
+-static int ata_bus_probe(struct ata_port *ap)
++int ata_bus_probe(struct ata_port *ap)
+ {
+ 	unsigned int classes[ATA_MAX_DEVICES];
+ 	int tries[ATA_MAX_DEVICES];
+@@ -5240,6 +5240,77 @@ void ata_dev_init(struct ata_device *dev
+ }
+ 
+ /**
++ *	ata_port_init - Initialize an ata_port structure
++ *	@ap: Structure to initialize
++ *	@host_set: Collection of hosts to which @ap belongs
++ *	@ent: Probe information provided by low-level driver
++ *	@port_no: Port number associated with this ata_port
++ *
++ *	Initialize a new ata_port structure.
++ *
++ *	LOCKING:
++ *	Inherited from caller.
++ */
++void ata_port_init(struct ata_port *ap, struct ata_host_set *host_set,
++		   const struct ata_probe_ent *ent, unsigned int port_no)
++{
++	unsigned int i;
++
++	ap->lock = &host_set->lock;
++	ap->flags = ATA_FLAG_DISABLED;
++	ap->id = ata_unique_id++;
++	ap->ctl = ATA_DEVCTL_OBS;
++	ap->host_set = host_set;
++	ap->dev = ent->dev;
++	ap->port_no = port_no;
++	ap->hard_port_no =
++		ent->legacy_mode ? ent->hard_port_no : port_no;
++	ap->pio_mask = ent->pio_mask;
++	ap->mwdma_mask = ent->mwdma_mask;
++	ap->udma_mask = ent->udma_mask;
++	ap->flags |= ent->host_flags;
++	ap->flags |= ent->port_flags[port_no];	/* pata fix */
++	ap->ops = ent->port_ops;
++	ap->hw_sata_spd_limit = UINT_MAX;
++	ap->active_tag = ATA_TAG_POISON;
++	ap->last_ctl = 0xFF;
++
++#if defined(ATA_VERBOSE_DEBUG)
++	/* turn on all debugging levels */
++	ap->msg_enable = 0x00FF;
++#elif defined(ATA_DEBUG)
++	ap->msg_enable = ATA_MSG_DRV | ATA_MSG_INFO | ATA_MSG_CTL | ATA_MSG_WARN | ATA_MSG_ERR;
++#else
++	ap->msg_enable = ATA_MSG_DRV | ATA_MSG_ERR | ATA_MSG_WARN;
++#endif
++
++	INIT_WORK(&ap->port_task, NULL, NULL);
++	INIT_WORK(&ap->hotplug_task, ata_scsi_hotplug, ap);
++	INIT_WORK(&ap->scsi_rescan_task, ata_scsi_dev_rescan, ap);
++	INIT_LIST_HEAD(&ap->eh_done_q);
++	init_waitqueue_head(&ap->eh_wait_q);
++
++	/* set cable type */
++	ap->cbl = ATA_CBL_NONE;
++	if (ap->flags & ATA_FLAG_SATA)
++		ap->cbl = ATA_CBL_SATA;
++
++	for (i = 0; i < ATA_MAX_DEVICES; i++) {
++		struct ata_device *dev = &ap->device[i];
++		dev->ap = ap;
++		dev->devno = i;
++		ata_dev_init(dev);
++	}
++
++#ifdef ATA_IRQ_TRAP
++	ap->stats.unhandled_irq = 1;
++	ap->stats.idle_irq = 1;
++#endif
++
++	memcpy(&ap->ioaddr, &ent->port[port_no], sizeof(struct ata_ioports));
++}
++
++/**
+  *	ata_host_init - Initialize an ata_port structure
+  *	@ap: Structure to initialize
+  *	@host: associated SCSI mid-layer structure
+@@ -5374,6 +5445,28 @@ err_out:
+ }
+ 
+ /**
++ *	ata_sas_host_init - Initialize a host_set struct
++ *	@host_set:	host_set to initialize
++ *	@dev:		device host_set is attached to
++ *	@flags:	host_set flags
++ *	@ops:		port_ops
++ *
++ *	LOCKING:
++ *	PCI/etc. bus probe sem.
++ *
++ */
++
++void ata_host_set_init(struct ata_host_set *host_set,
++		       struct device *dev, unsigned long flags,
++		       const struct ata_port_operations *ops)
++{
++	spin_lock_init(&host_set->lock);
++	host_set->dev = dev;
++	host_set->flags = flags;
++	host_set->ops = ops;
++}
++
++/**
+  *	ata_device_add - Register hardware device with ATA and SCSI layers
+  *	@ent: Probe information describing hardware device to be registered
+  *
+@@ -5929,6 +6022,7 @@ EXPORT_SYMBOL_GPL(sata_deb_timing_hotplu
+ EXPORT_SYMBOL_GPL(sata_deb_timing_long);
+ EXPORT_SYMBOL_GPL(ata_std_bios_param);
+ EXPORT_SYMBOL_GPL(ata_std_ports);
++EXPORT_SYMBOL_GPL(ata_host_set_init);
+ EXPORT_SYMBOL_GPL(ata_device_add);
+ EXPORT_SYMBOL_GPL(ata_port_detach);
+ EXPORT_SYMBOL_GPL(ata_host_set_remove);
+diff -puN drivers/scsi/libata.h~libata_sas_rhel5 drivers/scsi/libata.h
+--- linux-2.6.17.ppc64/drivers/scsi/libata.h~libata_sas_rhel5	2006-09-06 13:32:24.000000000 -0500
++++ linux-2.6.17.ppc64-bjking1/drivers/scsi/libata.h	2006-09-06 13:32:24.000000000 -0500
+@@ -69,6 +69,8 @@ extern int ata_flush_cache(struct ata_de
+ extern void ata_dev_init(struct ata_device *dev);
+ extern int ata_task_ioctl(struct scsi_device *scsidev, void __user *arg);
+ extern int ata_cmd_ioctl(struct scsi_device *scsidev, void __user *arg);
++extern void ata_port_init(struct ata_port *ap, struct ata_host_set *host_set,
++			  const struct ata_probe_ent *ent, unsigned int port_no);
+ 
+ 
+ /* libata-scsi.c */
+@@ -107,6 +109,7 @@ extern void ata_scsi_rbuf_fill(struct at
+                                            u8 *rbuf, unsigned int buflen));
+ extern void ata_schedule_scsi_eh(struct Scsi_Host *shost);
+ extern void ata_scsi_dev_rescan(void *data);
++extern int ata_bus_probe(struct ata_port *ap);
+ 
+ /* libata-eh.c */
+ extern enum scsi_eh_timer_return ata_scsi_timed_out(struct scsi_cmnd *cmd);
+diff -puN drivers/scsi/libata-scsi.c~libata_sas_rhel5 drivers/scsi/libata-scsi.c
+--- linux-2.6.17.ppc64/drivers/scsi/libata-scsi.c~libata_sas_rhel5	2006-09-06 13:32:24.000000000 -0500
++++ linux-2.6.17.ppc64-bjking1/drivers/scsi/libata-scsi.c	2006-09-06 13:32:24.000000000 -0500
+@@ -3158,3 +3158,177 @@ void ata_scsi_dev_rescan(void *data)
+ 			scsi_rescan_device(&(dev->sdev->sdev_gendev));
+ 	}
+ }
++
++static struct ata_probe_ent *
++ata_sas_probe_ent_alloc(struct device *dev, const struct ata_port_info *port)
++{
++	struct ata_probe_ent *probe_ent;
++
++	probe_ent = kzalloc(sizeof(*probe_ent), GFP_KERNEL);
++	if (!probe_ent) {
++		printk(KERN_ERR DRV_NAME "(%s): out of memory\n",
++		       kobject_name(&(dev->kobj)));
++		return NULL;
++	}
++
++	INIT_LIST_HEAD(&probe_ent->node);
++	probe_ent->dev = dev;
++
++	probe_ent->sht = port->sht;
++	probe_ent->host_flags = port->host_flags;
++	probe_ent->pio_mask = port->pio_mask;
++	probe_ent->mwdma_mask = port->mwdma_mask;
++	probe_ent->udma_mask = port->udma_mask;
++	probe_ent->port_ops = port->port_ops;
++
++	return probe_ent;
++}
++
++/**
++ *	ata_sas_port_alloc - Allocate port for a SAS attached SATA device
++ *	@pdev: PCI device that the scsi device is attached to
++ *	@port_info: Information from low-level host driver
++ *	@host: SCSI host that the scsi device is attached to
++ *
++ *	LOCKING:
++ *	PCI/etc. bus probe sem.
++ *
++ *	RETURNS:
++ *	ata_port pointer on success / NULL on failure.
++ */
++
++struct ata_port *ata_sas_port_alloc(struct ata_host_set *host_set,
++				    struct ata_port_info *port_info,
++				    struct Scsi_Host *host)
++{
++	struct ata_port *ap = kzalloc(sizeof(*ap), GFP_KERNEL);
++	struct ata_probe_ent *ent;
++
++	if (!ap)
++		return NULL;
++
++	ent = ata_sas_probe_ent_alloc(host_set->dev, port_info);
++	if (!ent) {
++		kfree(ap);
++		return NULL;
++	}
++
++	ata_port_init(ap, host_set, ent, 0);
++	ap->lock = host->host_lock;
++	kfree(ent);
++	return ap;
++}
++EXPORT_SYMBOL_GPL(ata_sas_port_alloc);
++
++/**
++ *	ata_sas_port_start - Set port up for dma.
++ *	@ap: Port to initialize
++ *
++ *	Called just after data structures for each port are
++ *	initialized.  Allocates DMA pad.
++ *
++ *	May be used as the port_start() entry in ata_port_operations.
++ *
++ *	LOCKING:
++ *	Inherited from caller.
++ */
++int ata_sas_port_start(struct ata_port *ap)
++{
++	return ata_pad_alloc(ap, ap->dev);
++}
++EXPORT_SYMBOL_GPL(ata_sas_port_start);
++
++/**
++ *	ata_port_stop - Undo ata_sas_port_start()
++ *	@ap: Port to shut down
++ *
++ *	Frees the DMA pad.
++ *
++ *	May be used as the port_stop() entry in ata_port_operations.
++ *
++ *	LOCKING:
++ *	Inherited from caller.
++ */
++
++void ata_sas_port_stop(struct ata_port *ap)
++{
++	ata_pad_free(ap, ap->dev);
++}
++EXPORT_SYMBOL_GPL(ata_sas_port_stop);
++
++/**
++ *	ata_sas_port_init - Initialize a SATA device
++ *	@ap: SATA port to initialize
++ *
++ *	LOCKING:
++ *	PCI/etc. bus probe sem.
++ *
++ *	RETURNS:
++ *	Zero on success, non-zero on error.
++ */
++
++int ata_sas_port_init(struct ata_port *ap)
++{
++	int rc = ap->ops->port_start(ap);
++
++	if (!rc)
++		rc = ata_bus_probe(ap);
++
++	return rc;
++}
++EXPORT_SYMBOL_GPL(ata_sas_port_init);
++
++/**
++ *	ata_sas_port_destroy - Destroy a SATA port allocated by ata_sas_port_alloc
++ *	@ap: SATA port to destroy
++ *
++ */
++
++void ata_sas_port_destroy(struct ata_port *ap)
++{
++	ap->ops->port_stop(ap);
++	kfree(ap);
++}
++EXPORT_SYMBOL_GPL(ata_sas_port_destroy);
++
++/**
++ *	ata_sas_slave_configure - Default slave_config routine for libata devices
++ *	@sdev: SCSI device to configure
++ *	@ap: ATA port to which SCSI device is attached
++ *
++ *	RETURNS:
++ *	Zero.
++ */
++
++int ata_sas_slave_configure(struct scsi_device *sdev, struct ata_port *ap)
++{
++	ata_scsi_sdev_config(sdev);
++	ata_scsi_dev_config(sdev, ap->device);
++	return 0;
++}
++EXPORT_SYMBOL_GPL(ata_sas_slave_configure);
++
++/**
++ *	ata_sas_queuecmd - Issue SCSI cdb to libata-managed device
++ *	@cmd: SCSI command to be sent
++ *	@done: Completion function, called when command is complete
++ *	@ap:	ATA port to which the command is being sent
++ *
++ *	RETURNS:
++ *	Zero.
++ */
++
++int ata_sas_queuecmd(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *),
++		     struct ata_port *ap)
++{
++	ata_scsi_dump_cdb(ap, cmd);
++
++	if (likely(ata_scsi_dev_enabled(ap->device)))
++		__ata_scsi_queuecmd(cmd, done, ap->device);
++	else {
++		cmd->result = (DID_BAD_TARGET << 16);
++		done(cmd);
++	}
++	return 0;
++}
++EXPORT_SYMBOL_GPL(ata_sas_queuecmd);
+diff -puN include/linux/libata.h~libata_sas_rhel5 include/linux/libata.h
+--- linux-2.6.17.ppc64/include/linux/libata.h~libata_sas_rhel5	2006-09-06 13:32:24.000000000 -0500
++++ linux-2.6.17.ppc64-bjking1/include/linux/libata.h	2006-09-06 13:32:24.000000000 -0500
+@@ -685,11 +685,22 @@ extern int ata_pci_clear_simplex(struct 
+ #endif /* CONFIG_PCI */
+ extern int ata_device_add(const struct ata_probe_ent *ent);
+ extern void ata_port_detach(struct ata_port *ap);
++extern void ata_host_set_init(struct ata_host_set *, struct device *,
++			      unsigned long, const struct ata_port_operations *);
+ extern void ata_host_set_remove(struct ata_host_set *host_set);
+ extern int ata_scsi_detect(struct scsi_host_template *sht);
+ extern int ata_scsi_ioctl(struct scsi_device *dev, int cmd, void __user *arg);
+ extern int ata_scsi_queuecmd(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *));
+ extern int ata_scsi_release(struct Scsi_Host *host);
++extern void ata_sas_port_destroy(struct ata_port *);
++extern struct ata_port *ata_sas_port_alloc(struct ata_host_set *,
++					   struct ata_port_info *, struct Scsi_Host *);
++extern int ata_sas_port_init(struct ata_port *);
++extern int ata_sas_port_start(struct ata_port *ap);
++extern void ata_sas_port_stop(struct ata_port *ap);
++extern int ata_sas_slave_configure(struct scsi_device *, struct ata_port *);
++extern int ata_sas_queuecmd(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *),
++			    struct ata_port *ap);
+ extern unsigned int ata_host_intr(struct ata_port *ap, struct ata_queued_cmd *qc);
+ extern int sata_scr_valid(struct ata_port *ap);
+ extern int sata_scr_read(struct ata_port *ap, int reg, u32 *val);
+_

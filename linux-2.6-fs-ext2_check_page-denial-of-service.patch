@@ -1,0 +1,52 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Subject: [PATCH RHEL5] CVE-2006-6054 ext2_check_page denial of service
+Date: Wed, 03 Jan 2007 15:14:04 -0600
+Bugzilla: 217018
+Message-Id: <459C1C9C.4000203@redhat.com>
+Changelog: fs: ext2_check_page denial of service
+
+
+for: Bugzilla Bug 217018: CVE-2006-6054 ext2_check_page denial of service
+
+This is in -mm as of 12/27/2006 as 
+ext2-skip-pages-past-number-of-blocks-in-ext2_find_entry.patch
+
+This one was pointed out on the MOKB site:
+http://kernelfun.blogspot.com/2006/11/mokb-09-11-2006-linux-26x-ext2checkpage.html
+
+If a directory's i_size is corrupted, ext2_find_entry() will keep processing
+pages until the i_size is reached, even if there are no more blocks associated
+with the directory inode.  This patch puts in some minimal sanity-checking
+so that we don't keep checking pages (and issuing errors) if we know there
+can be no more data to read, based on the block count of the directory inode.
+
+This is somewhat similar in approach to the ext3 patch I sent earlier this
+year.
+
+Thanks,
+
+-Eric
+
+Signed-off-by: Eric Sandeen <sandeen@redhat.com>
+
+Index: linux-2.6.18-1.2910.el5/fs/ext2/dir.c
+===================================================================
+--- linux-2.6.18-1.2910.el5.orig/fs/ext2/dir.c
++++ linux-2.6.18-1.2910.el5/fs/ext2/dir.c
+@@ -368,6 +368,14 @@ struct ext2_dir_entry_2 * ext2_find_entr
+ 		}
+ 		if (++n >= npages)
+ 			n = 0;
++		/* next page is past the blocks we've got */
++		if (unlikely(n > (dir->i_blocks >> (PAGE_CACHE_SHIFT - 9)))) {
++			ext2_error(dir->i_sb, __FUNCTION__,
++				"dir %lu size %lld exceeds block count %llu",
++				dir->i_ino, dir->i_size,
++				(unsigned long long)dir->i_blocks);
++			goto out;
++		}
+ 	} while (n != start);
+ out:
+ 	return NULL;
+
+

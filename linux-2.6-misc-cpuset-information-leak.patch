@@ -1,0 +1,57 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5.1 PATCH]: BZ 242811 CVE-2007-2875 cpuset information leak
+Date: Tue, 12 Jun 2007 08:30:28 -0400
+Bugzilla: 242811
+Message-Id: <20070612123028.31045.64690.sendpatchset@prarit.boston.redhat.com>
+Changelog: [misc] cpuset information leak
+
+
+Backport of
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=85badbdf5120d246ce2bb3f1a7689a805f9c9006;hp=92f4c701aad794de9e4cf7341d0a486aed027c46
+
+Resolves BZ 242811, CVE-2007-2875.
+
+Successfully tested by me on altix2.
+
+--- linux-2.6.18.ia64.orig/kernel/configs.c	2007-06-11 15:01:28.000000000 -0400
++++ linux-2.6.18.ia64/kernel/configs.c	2007-06-11 17:18:05.000000000 -0400
+@@ -61,18 +61,9 @@ static ssize_t
+ ikconfig_read_current(struct file *file, char __user *buf,
+ 		      size_t len, loff_t * offset)
+ {
+-	loff_t pos = *offset;
+-	ssize_t count;
+-
+-	if (pos >= kernel_config_data_size)
+-		return 0;
+-
+-	count = min(len, (size_t)(kernel_config_data_size - pos));
+-	if (copy_to_user(buf, kernel_config_data + MAGIC_SIZE + pos, count))
+-		return -EFAULT;
+-
+-	*offset += count;
+-	return count;
++	return simple_read_from_buffer(buf, len, offset,
++				       kernel_config_data + MAGIC_SIZE,
++				       kernel_config_data_size);
+ }
+ 
+ static struct file_operations ikconfig_file_ops = {
+--- linux-2.6.18.ia64.orig/kernel/cpuset.c	2007-06-11 15:01:28.000000000 -0400
++++ linux-2.6.18.ia64/kernel/cpuset.c	2007-06-11 17:18:05.000000000 -0400
+@@ -1742,12 +1742,7 @@ static ssize_t cpuset_tasks_read(struct 
+ {
+ 	struct ctr_struct *ctr = file->private_data;
+ 
+-	if (*ppos + nbytes > ctr->bufsz)
+-		nbytes = ctr->bufsz - *ppos;
+-	if (copy_to_user(buf, ctr->buf + *ppos, nbytes))
+-		return -EFAULT;
+-	*ppos += nbytes;
+-	return nbytes;
++	return simple_read_from_buffer(buf, nbytes, ppos, ctr->buf, ctr->bufsz);
+ }
+ 
+ static int cpuset_tasks_release(struct inode *unused_inode, struct file *file)
+

@@ -1,0 +1,118 @@
+Date: Sat, 30 Sep 2006 21:17:02 +0100
+From: Alasdair G Kergon <agk@redhat.com>
+Subject: [RHEL5] dm: add feature flags to reduce future kABI impact
+
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=208543
+
+This patch adds a 'feature flags' field to several structures that we
+anticipate we may wish to extend for enhancements during the lifetime of the
+product, to help us reduce the impact of future kABI changes.
+(Mostly these are lists of function pointers that we might need to
+extend if new features require new hooks, as happened several times
+during RHEL4.)
+
+Since 'struct exception_store' is included in 'struct dm_snapshot' we move
+it to the end.
+
+This patch deals with a problem peculiar to RHEL and is not currently
+upstream.
+
+Index: linux-2.6.18.noarch/drivers/md/dm-hw-handler.h
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/dm-hw-handler.h	2006-09-20 04:42:06.000000000 +0100
++++ linux-2.6.18.noarch/drivers/md/dm-hw-handler.h	2006-09-29 12:06:29.000000000 +0100
+@@ -24,6 +24,7 @@ struct hw_handler {
+  */
+ /* Information about a hardware handler type */
+ struct hw_handler_type {
++	uint64_t features;
+ 	char *name;
+ 	struct module *module;
+ 
+Index: linux-2.6.18.noarch/drivers/md/dm-log.h
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/dm-log.h	2006-09-26 17:01:32.000000000 +0100
++++ linux-2.6.18.noarch/drivers/md/dm-log.h	2006-09-29 12:06:29.000000000 +0100
+@@ -28,6 +28,7 @@ struct dirty_log {
+ };
+ 
+ struct dirty_log_type {
++	uint64_t features;
+ 	struct list_head list;
+ 	const char *name;
+ 	struct module *module;
+Index: linux-2.6.18.noarch/drivers/md/dm-mpath.h
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/dm-mpath.h	2006-09-20 04:42:06.000000000 +0100
++++ linux-2.6.18.noarch/drivers/md/dm-mpath.h	2006-09-29 12:06:29.000000000 +0100
+@@ -12,6 +12,7 @@
+ struct dm_dev;
+ 
+ struct path {
++	uint64_t features;
+ 	struct dm_dev *dev;	/* Read-only */
+ 	unsigned is_active;	/* Read-only */
+ 
+Index: linux-2.6.18.noarch/drivers/md/dm-path-selector.h
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/dm-path-selector.h	2006-09-20 04:42:06.000000000 +0100
++++ linux-2.6.18.noarch/drivers/md/dm-path-selector.h	2006-09-29 12:06:29.000000000 +0100
+@@ -28,6 +28,7 @@ struct path_selector {
+ 
+ /* Information about a path selector type */
+ struct path_selector_type {
++	uint64_t features;
+ 	char *name;
+ 	struct module *module;
+ 
+Index: linux-2.6.18.noarch/drivers/md/dm-snap.h
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/dm-snap.h	2006-09-29 12:06:18.000000000 +0100
++++ linux-2.6.18.noarch/drivers/md/dm-snap.h	2006-09-29 12:06:29.000000000 +0100
+@@ -42,6 +42,7 @@ struct exception {
+  * COW device).
+  */
+ struct exception_store {
++	uint64_t features;
+ 
+ 	/*
+ 	 * Destroys this object when you've finished with it.
+@@ -85,6 +86,7 @@ struct exception_store {
+ };
+ 
+ struct dm_snapshot {
++	uint64_t features;
+ 	struct rw_semaphore lock;
+ 	struct dm_table *table;
+ 
+@@ -120,14 +122,14 @@ struct dm_snapshot {
+ 	 */
+ 	spinlock_t pe_lock;
+ 
+-	/* The on disk metadata handler */
+-	struct exception_store store;
+-
+ 	struct kcopyd_client *kcopyd_client;
+ 
+ 	/* Queue of snapshot writes for ksnapd to flush */
+ 	struct bio_list queued_bios;
+ 	struct work_struct queued_bios_work;
++
++	/* The on disk metadata handler */
++	struct exception_store store;
+ };
+ 
+ /*
+Index: linux-2.6.18.noarch/include/linux/device-mapper.h
+===================================================================
+--- linux-2.6.18.noarch.orig/include/linux/device-mapper.h	2006-09-29 12:06:18.000000000 +0100
++++ linux-2.6.18.noarch/include/linux/device-mapper.h	2006-09-29 12:06:29.000000000 +0100
+@@ -90,6 +90,7 @@ void dm_put_device(struct dm_target *ti,
+  * Information about a target type
+  */
+ struct target_type {
++	uint64_t features;
+ 	const char *name;
+ 	struct module *module;
+ 	unsigned version[3];
+

@@ -1,0 +1,57 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Mon, 8 Oct 2007 15:51:23 -0500
+Subject: [fs] udf: Fix possible data corruption
+Message-id: 470A984B.50003@redhat.com
+O-Subject: [RHEL5 PATCH 6/7] Fix possible UDF data corruption
+Bugzilla: 221282
+
+From: Jan Kara <jack@suse.cz>
+Date: Fri, 1 Jun 2007 07:46:29 +0000 (-0700)
+Subject: Fix possible UDF data corruption
+X-Git-Tag: v2.6.22-rc4~55
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=85d71244f02583886dc20a60df2d4657d42116b4
+
+Fix possible UDF data corruption
+
+update_next_aext() could possibly rewrite values in elen and eloc, possibly
+leading to data corruption when rewriting a file. Use temporary variables
+instead. Also advance cur_epos as it can also point to an indirect extent
+pointer.
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Josef Bacik <jbacik@redhat.com>
+
+diff --git a/fs/udf/inode.c b/fs/udf/inode.c
+index eeca953..4506111 100644
+--- a/fs/udf/inode.c
++++ b/fs/udf/inode.c
+@@ -460,8 +460,8 @@ static struct buffer_head * inode_getblk(struct inode * inode, sector_t block,
+ 	kernel_long_ad laarr[EXTENT_MERGE_SIZE];
+ 	struct extent_position prev_epos, cur_epos, next_epos;
+ 	int count = 0, startnum = 0, endnum = 0;
+-	uint32_t elen = 0;
+-	kernel_lb_addr eloc;
++	uint32_t elen = 0, tmpelen;
++	kernel_lb_addr eloc, tmpeloc;
+ 	int c = 1;
+ 	loff_t lbcount = 0, b_off = 0;
+ 	uint32_t newblocknum, newblock;
+@@ -520,8 +520,12 @@ static struct buffer_head * inode_getblk(struct inode * inode, sector_t block,
+ 
+ 	b_off -= lbcount;
+ 	offset = b_off >> inode->i_sb->s_blocksize_bits;
+-	/* Move into indirect extent if we are at a pointer to it */
+-	udf_next_aext(inode, &prev_epos, &eloc, &elen, 0);
++	/*
++	 * Move prev_epos and cur_epos into indirect extent if we are at
++	 * the pointer to it
++	 */
++	udf_next_aext(inode, &prev_epos, &tmpeloc, &tmpelen, 0);
++	udf_next_aext(inode, &cur_epos, &tmpeloc, &tmpelen, 0);
+ 
+ 	/* if the extent is allocated and recorded, return the block
+        if the extent is not a multiple of the blocksize, round up */

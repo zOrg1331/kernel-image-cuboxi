@@ -1,0 +1,107 @@
+Date: Tue, 31 Oct 2006 10:59:20 +0100
+From: Thomas Graf <tgraf@redhat.com>
+Subject: [RHEL5 BZ210216]: [IPv6 MRT] blackhole and prohibit rule types are not working as they should
+
+    [IPv6] route: Fix prohibit and blackhole routing decision
+    
+    Lookups resolving to ip6_blk_hole_entry must result in silently
+    discarding the packets whereas an ip6_pkt_prohibit_entry is
+    supposed to cause an ICMPV6_ADM_PROHIBITED message to be sent.
+    
+    Thanks to Kim Nordlund <kim.nordlund@nokia.com> for noticing
+    this bug.
+    
+    Signed-off-by: Thomas Graf <tgraf@suug.ch>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Index: linux-2.6.18.noarch/net/ipv6/route.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/ipv6/route.c	2006-10-30 16:21:33.000000000 +0100
++++ linux-2.6.18.noarch/net/ipv6/route.c	2006-10-30 16:24:48.000000000 +0100
+@@ -139,6 +139,10 @@
+ 
+ #ifdef CONFIG_IPV6_MULTIPLE_TABLES
+ 
++static int		ip6_pkt_prohibit(struct sk_buff *skb);
++static int		ip6_pkt_prohibit_out(struct sk_buff *skb);
++static int		ip6_pkt_blk_hole(struct sk_buff *skb);
++
+ struct rt6_info ip6_prohibit_entry = {
+ 	.u = {
+ 		.dst = {
+@@ -148,8 +152,8 @@
+ 			.obsolete	= -1,
+ 			.error		= -EACCES,
+ 			.metrics	= { [RTAX_HOPLIMIT - 1] = 255, },
+-			.input		= ip6_pkt_discard,
+-			.output		= ip6_pkt_discard_out,
++			.input		= ip6_pkt_prohibit,
++			.output		= ip6_pkt_prohibit_out,
+ 			.ops		= &ip6_dst_ops,
+ 			.path		= (struct dst_entry*)&ip6_prohibit_entry,
+ 		}
+@@ -168,8 +172,8 @@
+ 			.obsolete	= -1,
+ 			.error		= -EINVAL,
+ 			.metrics	= { [RTAX_HOPLIMIT - 1] = 255, },
+-			.input		= ip6_pkt_discard,
+-			.output		= ip6_pkt_discard_out,
++			.input		= ip6_pkt_blk_hole,
++			.output		= ip6_pkt_blk_hole,
+ 			.ops		= &ip6_dst_ops,
+ 			.path		= (struct dst_entry*)&ip6_blk_hole_entry,
+ 		}
+@@ -1723,24 +1727,50 @@
+  *	Drop the packet on the floor
+  */
+ 
+-static int ip6_pkt_discard(struct sk_buff *skb)
++static inline int ip6_pkt_drop(struct sk_buff *skb, int code)
+ {
+ 	int type = ipv6_addr_type(&skb->nh.ipv6h->daddr);
+ 	if (type == IPV6_ADDR_ANY || type == IPV6_ADDR_RESERVED)
+ 		IP6_INC_STATS(IPSTATS_MIB_INADDRERRORS);
+ 
+ 	IP6_INC_STATS(IPSTATS_MIB_OUTNOROUTES);
+-	icmpv6_send(skb, ICMPV6_DEST_UNREACH, ICMPV6_NOROUTE, 0, skb->dev);
++	icmpv6_send(skb, ICMPV6_DEST_UNREACH, code, 0, skb->dev);
+ 	kfree_skb(skb);
+ 	return 0;
+ }
+ 
++static int ip6_pkt_discard(struct sk_buff *skb)
++{
++	return ip6_pkt_drop(skb, ICMPV6_NOROUTE);
++}
++
+ static int ip6_pkt_discard_out(struct sk_buff *skb)
+ {
+ 	skb->dev = skb->dst->dev;
+ 	return ip6_pkt_discard(skb);
+ }
+ 
++#ifdef CONFIG_IPV6_MULTIPLE_TABLES
++
++static int ip6_pkt_prohibit(struct sk_buff *skb)
++{
++	return ip6_pkt_drop(skb, ICMPV6_ADM_PROHIBITED);
++}
++
++static int ip6_pkt_prohibit_out(struct sk_buff *skb)
++{
++	skb->dev = skb->dst->dev;
++	return ip6_pkt_prohibit(skb);
++}
++
++static int ip6_pkt_blk_hole(struct sk_buff *skb)
++{
++	kfree_skb(skb);
++	return 0;
++}
++
++#endif
++
+ /*
+  *	Allocate a dst for local (unicast / anycast) address.
+  */
+

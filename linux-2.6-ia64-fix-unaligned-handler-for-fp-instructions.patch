@@ -1,0 +1,68 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Thu, 31 Jan 2008 14:15:48 +0800
+Subject: [ia64] fix unaligned handler for FP instructions
+Message-id: 47A16794.6040301@redhat.com
+O-Subject: [RHEL 5.2 PATCH] bz428920: user data corruption on misaligned access with certain FP instructions
+Bugzilla: 428920
+
+bz428920
+
+Description of problem:
+
+ia64 kernel does not correctly handle certain floating point unaligned data traps.
+The code assumes that the 'x' bit can determine whether the instruction is
+    an "ldf" or "ldfp" ... which it is for opcode=6 (see table 4-29 on
+    page 3:302 of the SDM).  But for opcode=7 the 'x' bit is irrelevent,
+    all variants are "ldf" instructions (see table 4-36 on page 3:306).
+
+    Note also that interpreting the instruction as "ldfp" means that the
+    "paired" floating point register (f35 in the example here) will also
+    be corrupted.
+
+This is fixed by the attached patch, which has already been submitted back to
+the mainline kernel.
+
+Upstream status:
+It is upstream. Git commit:  1a499150e4ec1299232e24389f648d059ce5617a
+
+I have tested the patch. It fixes the problem.
+
+Management status:
+The pm_ack, devel_ack, and qa_ack are __not__ set on the bugzilla.
+
+Please review, test and AC.
+
+Thanks,
+Luming
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+diff --git a/arch/ia64/kernel/unaligned.c b/arch/ia64/kernel/unaligned.c
+index 1e35755..2184de0 100644
+--- a/arch/ia64/kernel/unaligned.c
++++ b/arch/ia64/kernel/unaligned.c
+@@ -1488,16 +1488,19 @@ ia64_handle_unaligned (unsigned long ifa, struct pt_regs *regs)
+ 	      case LDFA_OP:
+ 	      case LDFCCLR_OP:
+ 	      case LDFCNC_OP:
+-	      case LDF_IMM_OP:
+-	      case LDFA_IMM_OP:
+-	      case LDFCCLR_IMM_OP:
+-	      case LDFCNC_IMM_OP:
+ 		if (u.insn.x)
+ 			ret = emulate_load_floatpair(ifa, u.insn, regs);
+ 		else
+ 			ret = emulate_load_float(ifa, u.insn, regs);
+ 		break;
+ 
++	      case LDF_IMM_OP:
++	      case LDFA_IMM_OP:
++	      case LDFCCLR_IMM_OP:
++	      case LDFCNC_IMM_OP:
++		ret = emulate_load_float(ifa, u.insn, regs);
++		break;
++
+ 	      case STF_OP:
+ 	      case STF_IMM_OP:
+ 		ret = emulate_store_float(ifa, u.insn, regs);

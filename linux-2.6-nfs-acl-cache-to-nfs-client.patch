@@ -1,0 +1,505 @@
+Date: Fri, 29 Sep 2006 12:41:36 -0400
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [RHEL5][PATCH 1/3 ] NFS is revalidating directory entries too often
+
+
+NFS: Add a new ACL cache to the linux nfs client
+
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+The current ACL cache only allows one ACL at a time to be cached for each
+inode. Add a per-inode red-black tree in order to allow more than one to
+be cached at a time.
+
+Should significantly cut down the access time for shared directories such
+as /bin etc.
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+---
+
+--- linux-2.6.18.i686/fs/nfs/dir.c.001	2006-09-29 10:12:21.000000000 -0400
++++ linux-2.6.18.i686/fs/nfs/dir.c	2006-09-29 12:13:59.000000000 -0400
+@@ -1634,35 +1634,134 @@ out:
+ 	return error;
+ }
+ 
+-int nfs_access_get_cached(struct inode *inode, struct rpc_cred *cred, struct nfs_access_entry *res)
++static void nfs_access_free_entry(struct nfs_access_entry *entry)
++{
++	put_rpccred(entry->cred);
++	kfree(entry);
++}
++
++static void __nfs_access_zap_cache(struct inode *inode)
+ {
+ 	struct nfs_inode *nfsi = NFS_I(inode);
+-	struct nfs_access_entry *cache = &nfsi->cache_access;
++	struct rb_root *root_node = &nfsi->access_cache;
++	struct rb_node *n, *dispose = NULL;
++	struct nfs_access_entry *entry;
++
++	/* Unhook entries from the cache */
++	while ((n = rb_first(root_node)) != NULL) {
++		entry = rb_entry(n, struct nfs_access_entry, rb_node);
++		rb_erase(n, root_node);
++		n->rb_left = dispose;
++		dispose = n;
++	}
++	nfsi->cache_validity &= ~NFS_INO_INVALID_ACCESS;
++	spin_unlock(&inode->i_lock);
+ 
+-	if (cache->cred != cred
+-			|| time_after(jiffies, cache->jiffies + NFS_ATTRTIMEO(inode))
+-			|| (nfsi->cache_validity & NFS_INO_INVALID_ACCESS))
+-		return -ENOENT;
+-	memcpy(res, cache, sizeof(*res));
+-	return 0;
++	/* Now kill them all! */
++	while (dispose != NULL) {
++		n = dispose;
++		dispose = n->rb_left;
++		nfs_access_free_entry(rb_entry(n, struct nfs_access_entry, rb_node));
++	}
+ }
+ 
+-void nfs_access_add_cache(struct inode *inode, struct nfs_access_entry *set)
++void nfs_access_zap_cache(struct inode *inode)
+ {
+-	struct nfs_inode *nfsi = NFS_I(inode);
+-	struct nfs_access_entry *cache = &nfsi->cache_access;
++	spin_lock(&inode->i_lock);
++	/* This will release the spinlock */
++	__nfs_access_zap_cache(inode);
++}
++
++static struct nfs_access_entry *nfs_access_search_rbtree(struct inode *inode, struct rpc_cred *cred)
++{
++	struct rb_node *n = NFS_I(inode)->access_cache.rb_node;
++	struct nfs_access_entry *entry;
++
++	while (n != NULL) {
++		entry = rb_entry(n, struct nfs_access_entry, rb_node);
+ 
+-	if (cache->cred != set->cred) {
+-		if (cache->cred)
+-			put_rpccred(cache->cred);
+-		cache->cred = get_rpccred(set->cred);
++		if (cred < entry->cred)
++			n = n->rb_left;
++		else if (cred > entry->cred)
++			n = n->rb_right;
++		else
++			return entry;
+ 	}
+-	/* FIXME: replace current access_cache BKL reliance with inode->i_lock */
++	return NULL;
++}
++
++int nfs_access_get_cached(struct inode *inode, struct rpc_cred *cred, struct nfs_access_entry *res)
++{
++	struct nfs_inode *nfsi = NFS_I(inode);
++	struct nfs_access_entry *cache;
++	int err = -ENOENT;
++
+ 	spin_lock(&inode->i_lock);
+-	nfsi->cache_validity &= ~NFS_INO_INVALID_ACCESS;
++	if (nfsi->cache_validity & NFS_INO_INVALID_ACCESS)
++		goto out_zap;
++	cache = nfs_access_search_rbtree(inode, cred);
++	if (cache == NULL)
++		goto out;
++	if (time_after(jiffies, cache->jiffies + NFS_ATTRTIMEO(inode)))
++		goto out_stale;
++	res->jiffies = cache->jiffies;
++	res->cred = cache->cred;
++	res->mask = cache->mask;
++	err = 0;
++out:
+ 	spin_unlock(&inode->i_lock);
++	return err;
++out_stale:
++	rb_erase(&cache->rb_node, &nfsi->access_cache);
++	spin_unlock(&inode->i_lock);
++	nfs_access_free_entry(cache);
++	return -ENOENT;
++out_zap:
++	/* This will release the spinlock */
++	__nfs_access_zap_cache(inode);
++	return -ENOENT;
++}
++
++static void nfs_access_add_rbtree(struct inode *inode, struct nfs_access_entry *set)
++{
++	struct rb_root *root_node = &NFS_I(inode)->access_cache;
++	struct rb_node **p = &root_node->rb_node;
++	struct rb_node *parent = NULL;
++	struct nfs_access_entry *entry;
++
++	spin_lock(&inode->i_lock);
++	while (*p != NULL) {
++		parent = *p;
++		entry = rb_entry(parent, struct nfs_access_entry, rb_node);
++
++		if (set->cred < entry->cred)
++			p = &parent->rb_left;
++		else if (set->cred > entry->cred)
++			p = &parent->rb_right;
++		else
++			goto found;
++	}
++	rb_link_node(&set->rb_node, parent, p);
++	rb_insert_color(&set->rb_node, root_node);
++	spin_unlock(&inode->i_lock);
++	return;
++found:
++	rb_replace_node(parent, &set->rb_node, root_node);
++	spin_unlock(&inode->i_lock);
++	nfs_access_free_entry(entry);
++}
++
++void nfs_access_add_cache(struct inode *inode, struct nfs_access_entry *set)
++{
++	struct nfs_access_entry *cache = kmalloc(sizeof(*cache), GFP_KERNEL);
++	if (cache == NULL)
++		return;
++	RB_CLEAR_NODE(&cache->rb_node);
+ 	cache->jiffies = set->jiffies;
++	cache->cred = get_rpccred(set->cred);
+ 	cache->mask = set->mask;
++
++	nfs_access_add_rbtree(inode, cache);
+ }
+ 
+ static int nfs_do_access(struct inode *inode, struct rpc_cred *cred, int mask)
+--- linux-2.6.18.i686/fs/nfs/inode.c.001	2006-09-29 10:12:21.000000000 -0400
++++ linux-2.6.18.i686/fs/nfs/inode.c	2006-09-29 12:16:50.000000000 -0400
+@@ -70,21 +70,16 @@ int nfs_write_inode(struct inode *inode,
+ 
+ void nfs_clear_inode(struct inode *inode)
+ {
+-	struct nfs_inode *nfsi = NFS_I(inode);
+-	struct rpc_cred *cred;
+-
+ 	/*
+ 	 * The following should never happen...
+ 	 */
+ 	BUG_ON(nfs_have_writebacks(inode));
+-	BUG_ON (!list_empty(&nfsi->open_files));
++	BUG_ON (!list_empty(&NFS_I(inode)->open_files));
++	BUG_ON(atomic_read(&NFS_I(inode)->data_updates) != 0);
+ 	nfs_zap_acl_cache(inode);
+-	cred = nfsi->cache_access.cred;
+-	if (cred)
+-		put_rpccred(cred);
++	nfs_access_zap_cache(inode);
+ 
+-	nfs_fscache_release_fh_cookie(NFS_SERVER(inode), nfsi);
+-	BUG_ON(atomic_read(&nfsi->data_updates) != 0);
++	nfs_fscache_release_fh_cookie(NFS_SERVER(inode), NFS_I(inode));
+ }
+ 
+ /**
+@@ -291,7 +286,7 @@ nfs_fhget(struct super_block *sb, struct
+ 		nfsi->attrtimeo = NFS_MINATTRTIMEO(inode);
+ 		nfsi->attrtimeo_timestamp = jiffies;
+ 		memset(nfsi->cookieverf, 0, sizeof(nfsi->cookieverf));
+-		nfsi->cache_access.cred = NULL;
++		nfsi->access_cache = RB_ROOT;
+ 
+ 		nfs_fscache_get_fh_cookie(sb, nfsi, maycache);
+ 
+--- linux-2.6.18.i686/include/linux/nfs_fs.h.001	2006-09-29 10:12:21.000000000 -0400
++++ linux-2.6.18.i686/include/linux/nfs_fs.h	2006-09-29 12:14:00.000000000 -0400
+@@ -42,6 +42,7 @@
+ #include <linux/in.h>
+ #include <linux/mm.h>
+ #include <linux/pagemap.h>
++#include <linux/rbtree.h>
+ #include <linux/rwsem.h>
+ #include <linux/wait.h>
+ 
+@@ -70,6 +71,7 @@
+  * NFSv3/v4 Access mode cache entry
+  */
+ struct nfs_access_entry {
++	struct rb_node		rb_node;
+ 	unsigned long		jiffies;
+ 	struct rpc_cred *	cred;
+ 	int			mask;
+@@ -146,7 +148,7 @@ struct nfs_inode {
+ 	 */
+ 	atomic_t		data_updates;
+ 
+-	struct nfs_access_entry	cache_access;
++	struct rb_root		access_cache;
+ #ifdef CONFIG_NFS_V3_ACL
+ 	struct posix_acl	*acl_access;
+ 	struct posix_acl	*acl_default;
+@@ -301,6 +303,7 @@ extern int nfs_getattr(struct vfsmount *
+ extern int nfs_permission(struct inode *, int, struct nameidata *);
+ extern int nfs_access_get_cached(struct inode *, struct rpc_cred *, struct nfs_access_entry *);
+ extern void nfs_access_add_cache(struct inode *, struct nfs_access_entry *);
++extern void nfs_access_zap_cache(struct inode *inode);
+ extern int nfs_open(struct inode *, struct file *);
+ extern int nfs_release(struct inode *, struct file *);
+ extern int nfs_attribute_timeout(struct inode *inode);
+
+Date: Fri, 29 Sep 2006 12:42:27 -0400
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [RHEL5][PATCH 2/3 ] NFS is revalidating directory entries too often
+
+
+NFS: Add a global LRU list for the ACL cache
+
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+...in order to allow the addition of a memory shrinker.
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+---
+
+--- linux-2.6.18.i686/fs/nfs/dir.c.002	2006-09-29 12:13:59.000000000 -0400
++++ linux-2.6.18.i686/fs/nfs/dir.c	2006-09-29 12:20:58.000000000 -0400
+@@ -1634,10 +1634,17 @@ out:
+ 	return error;
+ }
+ 
++static DEFINE_SPINLOCK(nfs_access_lru_lock);
++static LIST_HEAD(nfs_access_lru_list);
++static atomic_long_t nfs_access_nr_entries;
++
+ static void nfs_access_free_entry(struct nfs_access_entry *entry)
+ {
+ 	put_rpccred(entry->cred);
+ 	kfree(entry);
++	smp_mb__before_atomic_dec();
++	atomic_long_dec(&nfs_access_nr_entries);
++	smp_mb__after_atomic_dec();
+ }
+ 
+ static void __nfs_access_zap_cache(struct inode *inode)
+@@ -1651,6 +1658,7 @@ static void __nfs_access_zap_cache(struc
+ 	while ((n = rb_first(root_node)) != NULL) {
+ 		entry = rb_entry(n, struct nfs_access_entry, rb_node);
+ 		rb_erase(n, root_node);
++		list_del(&entry->lru);
+ 		n->rb_left = dispose;
+ 		dispose = n;
+ 	}
+@@ -1667,6 +1675,13 @@ static void __nfs_access_zap_cache(struc
+ 
+ void nfs_access_zap_cache(struct inode *inode)
+ {
++	/* Remove from global LRU init */
++	if (test_and_clear_bit(NFS_INO_ACL_LRU_SET, &NFS_FLAGS(inode))) {
++		spin_lock(&nfs_access_lru_lock);
++		list_del_init(&NFS_I(inode)->access_cache_inode_lru);
++		spin_unlock(&nfs_access_lru_lock);
++	}
++
+ 	spin_lock(&inode->i_lock);
+ 	/* This will release the spinlock */
+ 	__nfs_access_zap_cache(inode);
+@@ -1707,12 +1722,14 @@ int nfs_access_get_cached(struct inode *
+ 	res->jiffies = cache->jiffies;
+ 	res->cred = cache->cred;
+ 	res->mask = cache->mask;
++	list_move_tail(&cache->lru, &nfsi->access_cache_entry_lru);
+ 	err = 0;
+ out:
+ 	spin_unlock(&inode->i_lock);
+ 	return err;
+ out_stale:
+ 	rb_erase(&cache->rb_node, &nfsi->access_cache);
++	list_del(&cache->lru);
+ 	spin_unlock(&inode->i_lock);
+ 	nfs_access_free_entry(cache);
+ 	return -ENOENT;
+@@ -1724,7 +1741,8 @@ out_zap:
+ 
+ static void nfs_access_add_rbtree(struct inode *inode, struct nfs_access_entry *set)
+ {
+-	struct rb_root *root_node = &NFS_I(inode)->access_cache;
++	struct nfs_inode *nfsi = NFS_I(inode);
++	struct rb_root *root_node = &nfsi->access_cache;
+ 	struct rb_node **p = &root_node->rb_node;
+ 	struct rb_node *parent = NULL;
+ 	struct nfs_access_entry *entry;
+@@ -1743,10 +1761,13 @@ static void nfs_access_add_rbtree(struct
+ 	}
+ 	rb_link_node(&set->rb_node, parent, p);
+ 	rb_insert_color(&set->rb_node, root_node);
++	list_add_tail(&set->lru, &nfsi->access_cache_entry_lru);
+ 	spin_unlock(&inode->i_lock);
+ 	return;
+ found:
+ 	rb_replace_node(parent, &set->rb_node, root_node);
++	list_add_tail(&set->lru, &nfsi->access_cache_entry_lru);
++	list_del(&entry->lru);
+ 	spin_unlock(&inode->i_lock);
+ 	nfs_access_free_entry(entry);
+ }
+@@ -1762,6 +1783,18 @@ void nfs_access_add_cache(struct inode *
+ 	cache->mask = set->mask;
+ 
+ 	nfs_access_add_rbtree(inode, cache);
++
++	/* Update accounting */
++	smp_mb__before_atomic_inc();
++	atomic_long_inc(&nfs_access_nr_entries);
++	smp_mb__after_atomic_inc();
++
++	/* Add inode to global LRU list */
++	if (!test_and_set_bit(NFS_INO_ACL_LRU_SET, &NFS_FLAGS(inode))) {
++		spin_lock(&nfs_access_lru_lock);
++		list_add_tail(&NFS_I(inode)->access_cache_inode_lru, &nfs_access_lru_list);
++		spin_unlock(&nfs_access_lru_lock);
++	}
+ }
+ 
+ static int nfs_do_access(struct inode *inode, struct rpc_cred *cred, int mask)
+--- linux-2.6.18.i686/fs/nfs/inode.c.002	2006-09-29 12:16:50.000000000 -0400
++++ linux-2.6.18.i686/fs/nfs/inode.c	2006-09-29 12:20:58.000000000 -0400
+@@ -1114,6 +1114,8 @@ static void init_once(void * foo, kmem_c
+ 		INIT_LIST_HEAD(&nfsi->dirty);
+ 		INIT_LIST_HEAD(&nfsi->commit);
+ 		INIT_LIST_HEAD(&nfsi->open_files);
++		INIT_LIST_HEAD(&nfsi->access_cache_entry_lru);
++		INIT_LIST_HEAD(&nfsi->access_cache_inode_lru);
+ 		INIT_RADIX_TREE(&nfsi->nfs_page_tree, GFP_ATOMIC);
+ 		atomic_set(&nfsi->data_updates, 0);
+ 		nfsi->ndirty = 0;
+--- linux-2.6.18.i686/include/linux/nfs_fs.h.002	2006-09-29 12:14:00.000000000 -0400
++++ linux-2.6.18.i686/include/linux/nfs_fs.h	2006-09-29 12:20:59.000000000 -0400
+@@ -72,6 +72,7 @@
+  */
+ struct nfs_access_entry {
+ 	struct rb_node		rb_node;
++	struct list_head	lru;
+ 	unsigned long		jiffies;
+ 	struct rpc_cred *	cred;
+ 	int			mask;
+@@ -149,6 +150,8 @@ struct nfs_inode {
+ 	atomic_t		data_updates;
+ 
+ 	struct rb_root		access_cache;
++	struct list_head	access_cache_entry_lru;
++	struct list_head	access_cache_inode_lru;
+ #ifdef CONFIG_NFS_V3_ACL
+ 	struct posix_acl	*acl_access;
+ 	struct posix_acl	*acl_default;
+@@ -205,6 +208,7 @@ struct nfs_inode {
+ #define NFS_INO_REVALIDATING	(0)		/* revalidating attrs */
+ #define NFS_INO_ADVISE_RDPLUS	(1)		/* advise readdirplus */
+ #define NFS_INO_STALE		(2)		/* possible stale inode */
++#define NFS_INO_ACL_LRU_SET	(3)		/* Inode is on the LRU list */
+ 
+ static inline struct nfs_inode *NFS_I(struct inode *inode)
+ {
+
+Date: Fri, 29 Sep 2006 12:42:56 -0400
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [RHEL5][PATCH 3/3 ] NFS is revalidating directory entries too often
+
+
+NFS: Add acl cache shrinker for the VM
+
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+---
+
+--- linux-2.6.18.i686/fs/nfs/dir.c.003	2006-09-29 12:20:58.000000000 -0400
++++ linux-2.6.18.i686/fs/nfs/dir.c	2006-09-29 12:22:24.000000000 -0400
+@@ -1647,6 +1647,50 @@ static void nfs_access_free_entry(struct
+ 	smp_mb__after_atomic_dec();
+ }
+ 
++int nfs_access_cache_shrinker(int nr_to_scan, gfp_t gfp_mask)
++{
++	LIST_HEAD(head);
++	struct nfs_inode *nfsi;
++	struct nfs_access_entry *cache;
++
++	spin_lock(&nfs_access_lru_lock);
++restart:
++	list_for_each_entry(nfsi, &nfs_access_lru_list, access_cache_inode_lru) {
++		struct inode *inode;
++
++		if (nr_to_scan-- == 0)
++			break;
++		inode = igrab(&nfsi->vfs_inode);
++		if (inode == NULL)
++			continue;
++		spin_lock(&inode->i_lock);
++		if (list_empty(&nfsi->access_cache_entry_lru))
++			goto remove_lru_entry;
++		cache = list_entry(nfsi->access_cache_entry_lru.next,
++				struct nfs_access_entry, lru);
++		list_move(&cache->lru, &head);
++		rb_erase(&cache->rb_node, &nfsi->access_cache);
++		if (!list_empty(&nfsi->access_cache_entry_lru))
++			list_move_tail(&nfsi->access_cache_inode_lru,
++					&nfs_access_lru_list);
++		else {
++remove_lru_entry:
++			list_del_init(&nfsi->access_cache_inode_lru);
++			clear_bit(NFS_INO_ACL_LRU_SET, &nfsi->flags);
++		}
++		spin_unlock(&inode->i_lock);
++		iput(inode);
++		goto restart;
++	}
++	spin_unlock(&nfs_access_lru_lock);
++	while (!list_empty(&head)) {
++		cache = list_entry(head.next, struct nfs_access_entry, lru);
++		list_del(&cache->lru);
++		nfs_access_free_entry(cache);
++	}
++	return (atomic_long_read(&nfs_access_nr_entries) / 100) * sysctl_vfs_cache_pressure;
++}
++
+ static void __nfs_access_zap_cache(struct inode *inode)
+ {
+ 	struct nfs_inode *nfsi = NFS_I(inode);
+--- linux-2.6.18.i686/fs/nfs/internal.h.003	2006-09-29 10:12:21.000000000 -0400
++++ linux-2.6.18.i686/fs/nfs/internal.h	2006-09-29 12:22:24.000000000 -0400
+@@ -142,6 +142,9 @@ extern int nfs4_proc_fs_locations(struct
+ 				  struct page *page);
+ #endif
+ 
++/* dir.c */
++extern int nfs_access_cache_shrinker(int nr_to_scan, gfp_t gfp_mask);
++
+ /* inode.c */
+ extern struct inode *nfs_alloc_inode(struct super_block *sb);
+ extern void nfs_destroy_inode(struct inode *);
+--- linux-2.6.18.i686/fs/nfs/super.c.003	2006-09-29 10:12:21.000000000 -0400
++++ linux-2.6.18.i686/fs/nfs/super.c	2006-09-29 12:22:24.000000000 -0400
+@@ -137,6 +137,8 @@ static struct super_operations nfs4_sops
+ };
+ #endif
+ 
++static struct shrinker *acl_shrinker;
++
+ /*
+  * Register the NFS filesystems
+  */
+@@ -156,6 +158,7 @@ int __init register_nfs_fs(void)
+ 	if (ret < 0)
+ 		goto error_2;
+ #endif
++	acl_shrinker = set_shrinker(DEFAULT_SEEKS, nfs_access_cache_shrinker);
+ 	return 0;
+ 
+ #ifdef CONFIG_NFS_V4
+@@ -173,6 +176,8 @@ error_0:
+  */
+ void __exit unregister_nfs_fs(void)
+ {
++	if (acl_shrinker != NULL)
++		remove_shrinker(acl_shrinker);
+ #ifdef CONFIG_NFS_V4
+ 	unregister_filesystem(&nfs4_fs_type);
+ 	nfs_unregister_sysctl();
+

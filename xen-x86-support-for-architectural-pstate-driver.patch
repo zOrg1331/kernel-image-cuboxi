@@ -1,0 +1,86 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Date: Mon, 17 Dec 2007 15:49:22 -0500
+Subject: [xen] x86: support for architectural pstate driver
+Message-id: 20071217204924.32238.92957.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH 2/2] Xen support for architectural pstate driver
+Bugzilla: 419171
+
+Resolves BZ 419171
+
+Xen support for architectural pstate driver; includes the support in
+msr-index.h and traps.c in the hypervisor for the new interface.
+
+The patch applies cleanly on top of Rik's Power Now! in Xen merge.
+
+Brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1083370
+
+Please review and provide ACKs.
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+
+diff --git a/arch/x86/traps.c b/arch/x86/traps.c
+index a85dff8..263b351 100644
+--- a/arch/x86/traps.c
++++ b/arch/x86/traps.c
+@@ -1725,6 +1725,17 @@ static int emulate_privileged_op(struct cpu_user_regs *regs)
+ #endif
+         case MSR_K8_FIDVID_STATUS:
+         case MSR_K8_FIDVID_CTL:
++        case MSR_K8_PSTATE_LIMIT:
++        case MSR_K8_PSTATE_CTRL:
++        case MSR_K8_PSTATE_STATUS:
++        case MSR_K8_PSTATE0:
++        case MSR_K8_PSTATE1:
++        case MSR_K8_PSTATE2:
++        case MSR_K8_PSTATE3:
++        case MSR_K8_PSTATE4:
++        case MSR_K8_PSTATE5:
++        case MSR_K8_PSTATE6:
++        case MSR_K8_PSTATE7:
+             if ( (cpufreq_controller != FREQCTL_dom0_kernel) ||
+                  (boot_cpu_data.x86_vendor != X86_VENDOR_AMD) ||
+                  wrmsr_safe(regs->ecx, eax, edx) )
+@@ -1773,6 +1784,17 @@ static int emulate_privileged_op(struct cpu_user_regs *regs)
+ #endif
+         case MSR_K8_FIDVID_CTL:
+         case MSR_K8_FIDVID_STATUS:
++        case MSR_K8_PSTATE_LIMIT:
++        case MSR_K8_PSTATE_CTRL:
++        case MSR_K8_PSTATE_STATUS:
++        case MSR_K8_PSTATE0:
++        case MSR_K8_PSTATE1:
++        case MSR_K8_PSTATE2:
++        case MSR_K8_PSTATE3:
++        case MSR_K8_PSTATE4:
++        case MSR_K8_PSTATE5:
++        case MSR_K8_PSTATE6:
++        case MSR_K8_PSTATE7:
+             if ( (cpufreq_controller != FREQCTL_dom0_kernel) ||
+                  (boot_cpu_data.x86_vendor != X86_VENDOR_AMD) ||
+                  rdmsr_safe(regs->ecx, regs->eax, regs->edx) )
+diff --git a/include/asm-x86/msr.h b/include/asm-x86/msr.h
+index bb224b1..09b6381 100644
+--- a/include/asm-x86/msr.h
++++ b/include/asm-x86/msr.h
+@@ -349,6 +349,18 @@ static inline void write_efer(__u64 val)
+ #define MSR_K7_CLK_CTL			0xC001001b
+ #define MSR_K7_FID_VID_CTL		0xC0010041
+ #define MSR_K7_FID_VID_STATUS		0xC0010042
++#define MSR_K8_PSTATE_LIMIT            0xc0010061
++#define MSR_K8_PSTATE_CTRL             0xc0010062
++#define MSR_K8_PSTATE_STATUS           0xc0010063
++#define MSR_K8_PSTATE0                 0xc0010064
++#define MSR_K8_PSTATE1                 0xc0010065
++#define MSR_K8_PSTATE2                 0xc0010066
++#define MSR_K8_PSTATE3                 0xc0010067
++#define MSR_K8_PSTATE4                 0xc0010068
++#define MSR_K8_PSTATE5                 0xc0010069
++#define MSR_K8_PSTATE6                 0xc001006A
++#define MSR_K8_PSTATE7                 0xc001006B
++#define MSR_K8_ENABLE_C1E              0xc0010055
+ 
+ #define MSR_K8_TOP_MEM1			0xC001001A
+ #define MSR_K8_TOP_MEM2			0xC001001D

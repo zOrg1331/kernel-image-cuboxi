@@ -1,0 +1,529 @@
+From: Dave Airlie <airlied@redhat.com>
+Date: Wed, 16 Jan 2008 13:16:24 +1000
+Subject: [char] R500 drm support
+Message-id: 1200453384.3975.7.camel@localhost
+O-Subject: [RHEL5.2 PATCH] BZ#185028 R500 drm kernel support
+Bugzilla: 429012
+
+BZ#
+
+https://bugzilla.redhat.com/show_bug.cgi?id=185028
+
+Description:
+------------
+
+This patch add support for the R500 2D acceleration. It also backports a
+fix to the radeon caching code to allow r500 2D acceleration to work
+properly. This patch is needed to allow the R500 2D accel in the X.org
+driver to work properly.
+
+A previous patch was sent to the rhkernel list in December, but this
+patch obsoletes that as it had duplicate pci ids and lacked the caching
+fix.
+
+Acked-by: Kyle McMartin <kmcmartin@redhat.com>
+
+diff --git a/drivers/char/drm/drm_pciids.h b/drivers/char/drm/drm_pciids.h
+index 1368e41..52b3fb8 100644
+--- a/drivers/char/drm/drm_pciids.h
++++ b/drivers/char/drm/drm_pciids.h
+@@ -131,6 +131,101 @@
+ 	{0x1002, 0x5e4c, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV410|CHIP_NEW_MEMMAP}, \
+ 	{0x1002, 0x5e4d, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV410|CHIP_NEW_MEMMAP}, \
+ 	{0x1002, 0x5e4f, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV410|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7100, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R520|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7101, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R520|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7102, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R520|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7103, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R520|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7104, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R520|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7105, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R520|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7106, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R520|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7108, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R520|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7109, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R520|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x710A, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R520|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x710B, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R520|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x710C, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R520|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x710E, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R520|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x710F, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R520|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7140, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7141, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7142, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7143, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7144, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7145, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7146, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7147, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7149, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x714A, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x714B, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x714C, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x714D, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x714E, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x714F, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7151, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7152, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7153, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x715E, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x715F, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7180, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7181, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7183, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7186, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7187, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7188, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x718A, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x718B, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x718C, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x718D, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x718F, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7193, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7196, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x719B, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x719F, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV515|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x71C0, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x71C1, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x71C2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x71C3, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x71C4, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x71C5, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x71C6, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x71C7, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x71CD, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x71CE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x71D2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x71D4, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x71D5, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x71D6, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x71DA, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x71DE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7200, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7210, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7211, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV530|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7240, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R580|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7243, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R580|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7244, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R580|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7245, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R580|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7246, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R580|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7247, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R580|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7248, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R580|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7249, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R580|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x724A, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R580|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x724B, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R580|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x724C, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R580|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x724D, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R580|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x724E, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R580|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x724F, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R580|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7280, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV570|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7281, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV560|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7283, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV560|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7284, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_R580|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7287, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV560|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7288, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV570|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7289, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV570|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x728B, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV570|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x728C, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV570|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7290, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV560|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7291, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV560|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7293, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV560|CHIP_NEW_MEMMAP}, \
++	{0x1002, 0x7297, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RV560|CHIP_NEW_MEMMAP}, \
+ 	{0x1002, 0x7834, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RS300|CHIP_IS_IGP|CHIP_NEW_MEMMAP}, \
+ 	{0x1002, 0x7835, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_RS300|CHIP_IS_IGP|CHIP_IS_MOBILITY|CHIP_NEW_MEMMAP}, \
+ 	{0, 0, 0}
+diff --git a/drivers/char/drm/r300_cmdbuf.c b/drivers/char/drm/r300_cmdbuf.c
+index 26bdf2c..0506b10 100644
+--- a/drivers/char/drm/r300_cmdbuf.c
++++ b/drivers/char/drm/r300_cmdbuf.c
+@@ -77,23 +77,31 @@ static int r300_emit_cliprects(drm_radeon_private_t *dev_priv,
+ 				return DRM_ERR(EFAULT);
+ 			}
+ 
+-			box.x1 =
+-			    (box.x1 +
+-			     R300_CLIPRECT_OFFSET) & R300_CLIPRECT_MASK;
+-			box.y1 =
+-			    (box.y1 +
+-			     R300_CLIPRECT_OFFSET) & R300_CLIPRECT_MASK;
+-			box.x2 =
+-			    (box.x2 +
+-			     R300_CLIPRECT_OFFSET) & R300_CLIPRECT_MASK;
+-			box.y2 =
+-			    (box.y2 +
+-			     R300_CLIPRECT_OFFSET) & R300_CLIPRECT_MASK;
++			if ((dev_priv->flags & CHIP_FAMILY_MASK) >= CHIP_RV515) {
++				box.x1 = (box.x1) &
++					R300_CLIPRECT_MASK;
++				box.y1 = (box.y1) &
++					R300_CLIPRECT_MASK;
++				box.x2 = (box.x2) &
++					R300_CLIPRECT_MASK;
++				box.y2 = (box.y2) &
++					R300_CLIPRECT_MASK;
++			} else {
++				box.x1 = (box.x1 + R300_CLIPRECT_OFFSET) &
++					R300_CLIPRECT_MASK;
++				box.y1 = (box.y1 + R300_CLIPRECT_OFFSET) &
++					R300_CLIPRECT_MASK;
++				box.x2 = (box.x2 + R300_CLIPRECT_OFFSET) &
++					R300_CLIPRECT_MASK;
++				box.y2 = (box.y2 + R300_CLIPRECT_OFFSET) &
++					R300_CLIPRECT_MASK;
+ 
++			}
+ 			OUT_RING((box.x1 << R300_CLIPRECT_X_SHIFT) |
+ 				 (box.y1 << R300_CLIPRECT_Y_SHIFT));
+ 			OUT_RING((box.x2 << R300_CLIPRECT_X_SHIFT) |
+ 				 (box.y2 << R300_CLIPRECT_Y_SHIFT));
++
+ 		}
+ 
+ 		OUT_RING_REG(R300_RE_CLIPRECT_CNTL, r300_cliprect_cntl[nr - 1]);
+@@ -133,9 +141,11 @@ static int r300_emit_cliprects(drm_radeon_private_t *dev_priv,
+ 
+ static u8 r300_reg_flags[0x10000 >> 2];
+ 
+-void r300_init_reg_flags(void)
++void r300_init_reg_flags(struct drm_device *dev)
+ {
+ 	int i;
++	drm_radeon_private_t *dev_priv = dev->dev_private;
++
+ 	memset(r300_reg_flags, 0, 0x10000 >> 2);
+ #define ADD_RANGE_MARK(reg, count,mark) \
+ 		for(i=((reg)>>2);i<((reg)>>2)+(count);i++)\
+@@ -229,6 +239,9 @@ void r300_init_reg_flags(void)
+ 	ADD_RANGE(R300_VAP_INPUT_ROUTE_0_0, 8);
+ 	ADD_RANGE(R300_VAP_INPUT_ROUTE_1_0, 8);
+ 
++	if ((dev_priv->flags & CHIP_FAMILY_MASK) >= CHIP_RV515) {
++		ADD_RANGE(0x4074, 16);
++	}
+ }
+ 
+ static __inline__ int r300_check_range(unsigned reg, int count)
+diff --git a/drivers/char/drm/radeon_cp.c b/drivers/char/drm/radeon_cp.c
+index 5ad43ba..0c5e7df 100644
+--- a/drivers/char/drm/radeon_cp.c
++++ b/drivers/char/drm/radeon_cp.c
+@@ -816,6 +816,45 @@ static const u32 R300_cp_microcode[][2] = {
+ 	{0000000000, 0000000000},
+ };
+ 
++static u32 RADEON_READ_MCIND(drm_radeon_private_t *dev_priv, int addr)
++{
++	u32 ret;
++	RADEON_WRITE(R520_MC_IND_INDEX, 0x7f0000 | (addr & 0xff));
++	ret = RADEON_READ(R520_MC_IND_DATA);
++	RADEON_WRITE(R520_MC_IND_INDEX, 0);
++	return ret;
++}
++
++static u32 radeon_read_fb_location(drm_radeon_private_t *dev_priv)
++{
++	if ((dev_priv->flags & CHIP_FAMILY_MASK) == CHIP_RV515)
++		return RADEON_READ_MCIND(dev_priv, RV515_MC_FB_LOCATION);
++	else if ((dev_priv->flags & CHIP_FAMILY_MASK) > CHIP_RV515)
++		return RADEON_READ_MCIND(dev_priv, R520_MC_FB_LOCATION);
++	else
++		return RADEON_READ(RADEON_MC_FB_LOCATION);
++}
++
++static void radeon_write_fb_location(drm_radeon_private_t *dev_priv, u32 fb_loc)
++{
++	if ((dev_priv->flags & CHIP_FAMILY_MASK) == CHIP_RV515)
++		RADEON_WRITE_MCIND(RV515_MC_FB_LOCATION, fb_loc);
++	else if ((dev_priv->flags & CHIP_FAMILY_MASK) > CHIP_RV515)
++		RADEON_WRITE_MCIND(R520_MC_FB_LOCATION, fb_loc);
++	else
++		RADEON_WRITE(RADEON_MC_FB_LOCATION, fb_loc);
++}
++
++static void radeon_write_agp_location(drm_radeon_private_t *dev_priv, u32 agp_loc)
++{
++	if ((dev_priv->flags & CHIP_FAMILY_MASK) == CHIP_RV515)
++		RADEON_WRITE_MCIND(RV515_MC_AGP_LOCATION, agp_loc);
++	else if ((dev_priv->flags & CHIP_FAMILY_MASK) > CHIP_RV515)
++		RADEON_WRITE_MCIND(R520_MC_AGP_LOCATION, agp_loc);
++	else
++		RADEON_WRITE(RADEON_MC_AGP_LOCATION, agp_loc);
++}
++
+ static int RADEON_READ_PLL(drm_device_t * dev, int addr)
+ {
+ 	drm_radeon_private_t *dev_priv = dev->dev_private;
+@@ -864,13 +903,13 @@ static int radeon_do_pixcache_flush(drm_radeon_private_t * dev_priv)
+ 
+ 	dev_priv->stats.boxes |= RADEON_BOX_WAIT_IDLE;
+ 
+-	tmp = RADEON_READ(RADEON_RB2D_DSTCACHE_CTLSTAT);
+-	tmp |= RADEON_RB2D_DC_FLUSH_ALL;
+-	RADEON_WRITE(RADEON_RB2D_DSTCACHE_CTLSTAT, tmp);
++	tmp = RADEON_READ(RADEON_RB3D_DSTCACHE_CTLSTAT);
++	tmp |= RADEON_RB3D_DC_FLUSH_ALL;
++	RADEON_WRITE(RADEON_RB3D_DSTCACHE_CTLSTAT, tmp);
+ 
+ 	for (i = 0; i < dev_priv->usec_timeout; i++) {
+-		if (!(RADEON_READ(RADEON_RB2D_DSTCACHE_CTLSTAT)
+-		      & RADEON_RB2D_DC_BUSY)) {
++		if (!(RADEON_READ(RADEON_RB3D_DSTCACHE_CTLSTAT)
++		      & RADEON_RB3D_DC_BUSY)) {
+ 			return 0;
+ 		}
+ 		DRM_UDELAY(1);
+@@ -1065,41 +1104,43 @@ static int radeon_do_engine_reset(drm_device_t * dev)
+ 
+ 	radeon_do_pixcache_flush(dev_priv);
+ 
+-	clock_cntl_index = RADEON_READ(RADEON_CLOCK_CNTL_INDEX);
+-	mclk_cntl = RADEON_READ_PLL(dev, RADEON_MCLK_CNTL);
+-
+-	RADEON_WRITE_PLL(RADEON_MCLK_CNTL, (mclk_cntl |
+-					    RADEON_FORCEON_MCLKA |
+-					    RADEON_FORCEON_MCLKB |
+-					    RADEON_FORCEON_YCLKA |
+-					    RADEON_FORCEON_YCLKB |
+-					    RADEON_FORCEON_MC |
+-					    RADEON_FORCEON_AIC));
+-
+-	rbbm_soft_reset = RADEON_READ(RADEON_RBBM_SOFT_RESET);
+-
+-	RADEON_WRITE(RADEON_RBBM_SOFT_RESET, (rbbm_soft_reset |
+-					      RADEON_SOFT_RESET_CP |
+-					      RADEON_SOFT_RESET_HI |
+-					      RADEON_SOFT_RESET_SE |
+-					      RADEON_SOFT_RESET_RE |
+-					      RADEON_SOFT_RESET_PP |
+-					      RADEON_SOFT_RESET_E2 |
+-					      RADEON_SOFT_RESET_RB));
+-	RADEON_READ(RADEON_RBBM_SOFT_RESET);
+-	RADEON_WRITE(RADEON_RBBM_SOFT_RESET, (rbbm_soft_reset &
+-					      ~(RADEON_SOFT_RESET_CP |
+-						RADEON_SOFT_RESET_HI |
+-						RADEON_SOFT_RESET_SE |
+-						RADEON_SOFT_RESET_RE |
+-						RADEON_SOFT_RESET_PP |
+-						RADEON_SOFT_RESET_E2 |
+-						RADEON_SOFT_RESET_RB)));
+-	RADEON_READ(RADEON_RBBM_SOFT_RESET);
+-
+-	RADEON_WRITE_PLL(RADEON_MCLK_CNTL, mclk_cntl);
+-	RADEON_WRITE(RADEON_CLOCK_CNTL_INDEX, clock_cntl_index);
+-	RADEON_WRITE(RADEON_RBBM_SOFT_RESET, rbbm_soft_reset);
++	if ((dev_priv->flags & CHIP_FAMILY_MASK) < CHIP_RV515) {
++		clock_cntl_index = RADEON_READ(RADEON_CLOCK_CNTL_INDEX);
++		mclk_cntl = RADEON_READ_PLL(dev, RADEON_MCLK_CNTL);
++		
++		RADEON_WRITE_PLL(RADEON_MCLK_CNTL, (mclk_cntl |
++						    RADEON_FORCEON_MCLKA |
++						    RADEON_FORCEON_MCLKB |
++						    RADEON_FORCEON_YCLKA |
++						    RADEON_FORCEON_YCLKB |
++						    RADEON_FORCEON_MC |
++						    RADEON_FORCEON_AIC));
++		
++		rbbm_soft_reset = RADEON_READ(RADEON_RBBM_SOFT_RESET);
++		
++		RADEON_WRITE(RADEON_RBBM_SOFT_RESET, (rbbm_soft_reset |
++						      RADEON_SOFT_RESET_CP |
++						      RADEON_SOFT_RESET_HI |
++						      RADEON_SOFT_RESET_SE |
++						      RADEON_SOFT_RESET_RE |
++						      RADEON_SOFT_RESET_PP |
++						      RADEON_SOFT_RESET_E2 |
++						      RADEON_SOFT_RESET_RB));
++		RADEON_READ(RADEON_RBBM_SOFT_RESET);
++		RADEON_WRITE(RADEON_RBBM_SOFT_RESET, (rbbm_soft_reset &
++						      ~(RADEON_SOFT_RESET_CP |
++							RADEON_SOFT_RESET_HI |
++							RADEON_SOFT_RESET_SE |
++							RADEON_SOFT_RESET_RE |
++							RADEON_SOFT_RESET_PP |
++							RADEON_SOFT_RESET_E2 |
++							RADEON_SOFT_RESET_RB)));
++		RADEON_READ(RADEON_RBBM_SOFT_RESET);
++		
++		RADEON_WRITE_PLL(RADEON_MCLK_CNTL, mclk_cntl);
++		RADEON_WRITE(RADEON_CLOCK_CNTL_INDEX, clock_cntl_index);
++		RADEON_WRITE(RADEON_RBBM_SOFT_RESET, rbbm_soft_reset);
++	}
+ 
+ 	/* Reset the CP ring */
+ 	radeon_do_cp_reset(dev_priv);
+@@ -1125,14 +1166,14 @@ static void radeon_cp_init_ring_buffer(drm_device_t * dev,
+ 	 * always appended to the fb which is not necessarily the case
+ 	 */
+ 	if (!dev_priv->new_memmap)
+-		RADEON_WRITE(RADEON_MC_FB_LOCATION,
++		radeon_write_fb_location(dev_priv,
+ 			     ((dev_priv->gart_vm_start - 1) & 0xffff0000)
+ 			     | (dev_priv->fb_location >> 16));
+ 
+ #if __OS_HAS_AGP
+ 	if (dev_priv->flags & CHIP_IS_AGP) {
+ 		RADEON_WRITE(RADEON_AGP_BASE, (unsigned int)dev->agp->base);
+-		RADEON_WRITE(RADEON_MC_AGP_LOCATION,
++		radeon_write_agp_location(dev_priv, 
+ 			     (((dev_priv->gart_vm_start - 1 +
+ 				dev_priv->gart_size) & 0xffff0000) |
+ 			      (dev_priv->gart_vm_start >> 16)));
+@@ -1280,7 +1321,7 @@ static void radeon_set_pciegart(drm_radeon_private_t * dev_priv, int on)
+ 				  dev_priv->gart_vm_start +
+ 				  dev_priv->gart_size - 1);
+ 
+-		RADEON_WRITE(RADEON_MC_AGP_LOCATION, 0xffffffc0);	/* ?? */
++		radeon_write_agp_location(dev_priv, 0xffffffc0); /* ?? */
+ 
+ 		RADEON_WRITE_PCIE(RADEON_PCIE_TX_GART_CNTL,
+ 				  RADEON_PCIE_TX_GART_EN);
+@@ -1318,7 +1359,7 @@ static void radeon_set_pcigart(drm_radeon_private_t * dev_priv, int on)
+ 
+ 		/* Turn off AGP aperture -- is this required for PCI GART?
+ 		 */
+-		RADEON_WRITE(RADEON_MC_AGP_LOCATION, 0xffffffc0);	/* ?? */
++		radeon_write_agp_location(dev_priv, 0xffffffc0);
+ 		RADEON_WRITE(RADEON_AGP_COMMAND, 0);	/* clear AGP_COMMAND */
+ 	} else {
+ 		RADEON_WRITE(RADEON_AIC_CNTL,
+@@ -1517,10 +1558,9 @@ static int radeon_do_init_cp(drm_device_t * dev, drm_radeon_init_t * init)
+ 			  dev->agp_buffer_map->handle);
+ 	}
+ 
+-	dev_priv->fb_location = (RADEON_READ(RADEON_MC_FB_LOCATION)
+-				 & 0xffff) << 16;
++	dev_priv->fb_location = (radeon_read_fb_location(dev_priv) & 0xffff) << 16;
+ 	dev_priv->fb_size = 
+-		((RADEON_READ(RADEON_MC_FB_LOCATION) & 0xffff0000u) + 0x10000)
++		((radeon_read_fb_location(dev_priv) & 0xffff0000u) + 0x10000)
+ 		- dev_priv->fb_location;
+ 
+ 	dev_priv->front_pitch_offset = (((dev_priv->front_pitch / 64) << 22) |
+@@ -1615,7 +1655,7 @@ static int radeon_do_init_cp(drm_device_t * dev, drm_radeon_init_t * init)
+ 			dev_priv->gart_info.bus_addr =
+ 			    dev_priv->pcigart_offset + dev_priv->fb_location;
+ 			dev_priv->gart_info.mapping.offset =
+-			    dev_priv->gart_info.bus_addr;
++			    dev_priv->pcigart_offset + dev_priv->fb_aper_offset;
+ 			dev_priv->gart_info.mapping.size =
+ 			    RADEON_PCIGART_TABLE_SIZE;
+ 
+@@ -1764,7 +1804,7 @@ int radeon_cp_init(DRM_IOCTL_ARGS)
+ 				 sizeof(init));
+ 
+ 	if (init.func == RADEON_INIT_R300_CP)
+-		r300_init_reg_flags();
++		r300_init_reg_flags(dev);
+ 
+ 	switch (init.func) {
+ 	case RADEON_INIT_CP:
+@@ -2183,6 +2223,10 @@ int radeon_driver_load(struct drm_device *dev, unsigned long flags)
+ 	case CHIP_R200:
+ 	case CHIP_R300:
+ 	case CHIP_R420:
++	case CHIP_RV515:
++	case CHIP_R520:
++	case CHIP_RV570:
++	case CHIP_R580:
+ 		dev_priv->flags |= CHIP_HAS_HIERZ;
+ 		break;
+ 	default:
+@@ -2216,7 +2260,8 @@ int radeon_driver_firstopen(struct drm_device *dev)
+ 	if (ret != 0)
+ 		return ret;
+ 
+-	ret = drm_addmap(dev, drm_get_resource_start(dev, 0),
++	dev_priv->fb_aper_offset = drm_get_resource_start(dev, 0);
++	ret = drm_addmap(dev, dev_priv->fb_aper_offset,
+ 			 drm_get_resource_len(dev, 0), _DRM_FRAME_BUFFER,
+ 			 _DRM_WRITE_COMBINING, &map);
+ 	if (ret != 0)
+diff --git a/drivers/char/drm/radeon_drv.h b/drivers/char/drm/radeon_drv.h
+index e5a256f..a2149d7 100644
+--- a/drivers/char/drm/radeon_drv.h
++++ b/drivers/char/drm/radeon_drv.h
+@@ -120,6 +120,12 @@ enum radeon_family {
+ 	CHIP_R420,
+ 	CHIP_RV410,
+ 	CHIP_RS400,
++	CHIP_RV515,
++	CHIP_R520,
++	CHIP_RV530,
++	CHIP_RV560,
++	CHIP_RV570,
++	CHIP_R580,
+ 	CHIP_LAST,
+ };
+ 
+@@ -285,6 +291,7 @@ typedef struct drm_radeon_private {
+ 
+ 	/* starting from here on, data is preserved accross an open */
+ 	uint32_t flags;		/* see radeon_chip_flags */
++	unsigned long fb_aper_offset;
+ } drm_radeon_private_t;
+ 
+ typedef struct drm_radeon_buf_priv {
+@@ -353,7 +360,7 @@ extern long radeon_compat_ioctl(struct file *filp, unsigned int cmd,
+ 				unsigned long arg);
+ 
+ /* r300_cmdbuf.c */
+-extern void r300_init_reg_flags(void);
++extern void r300_init_reg_flags(struct drm_device *dev);
+ 
+ extern int r300_do_cp_cmdbuf(drm_device_t * dev, DRMFILE filp,
+ 			     drm_file_t * filp_priv,
+@@ -416,6 +423,16 @@ extern int r300_do_cp_cmdbuf(drm_device_t * dev, DRMFILE filp,
+ #define RADEON_PCIE_TX_GART_END_LO	0x16
+ #define RADEON_PCIE_TX_GART_END_HI	0x17
+ 
++#define R520_MC_IND_INDEX 0x70
++#define R520_MC_IND_WR_EN (1<<24)
++#define R520_MC_IND_DATA  0x74
++
++#define RV515_MC_FB_LOCATION 0x01
++#define RV515_MC_AGP_LOCATION 0x02
++
++#define R520_MC_FB_LOCATION 0x04
++#define R520_MC_AGP_LOCATION 0x05
++
+ #define RADEON_MPP_TB_CONFIG		0x01c0
+ #define RADEON_MEM_CNTL			0x0140
+ #define RADEON_MEM_SDRAM_MODE_REG	0x0158
+@@ -545,6 +562,11 @@ extern int r300_do_cp_cmdbuf(drm_device_t * dev, DRMFILE filp,
+ #	define RADEON_RB3D_ZC_FREE		(1 << 2)
+ #	define RADEON_RB3D_ZC_FLUSH_ALL		0x5
+ #	define RADEON_RB3D_ZC_BUSY		(1 << 31)
++#define RADEON_RB3D_DSTCACHE_CTLSTAT   0x325c
++#      define RADEON_RB3D_DC_FLUSH             (3 << 0)
++#      define RADEON_RB3D_DC_FREE              (3 << 2)
++#      define RADEON_RB3D_DC_FLUSH_ALL         0xf
++#      define RADEON_RB3D_DC_BUSY              (1 << 31)
+ #define RADEON_RB3D_ZSTENCILCNTL	0x1c2c
+ #	define RADEON_Z_TEST_MASK		(7 << 4)
+ #	define RADEON_Z_TEST_ALWAYS		(7 << 4)
+@@ -946,6 +968,13 @@ do {									\
+ 	RADEON_WRITE( RADEON_PCIE_DATA, (val) );			\
+ } while (0)
+ 
++#define RADEON_WRITE_MCIND( addr, val )					\
++	do {								\
++		RADEON_WRITE(R520_MC_IND_INDEX, 0xff0000 | ((addr) & 0xff));	\
++		RADEON_WRITE(R520_MC_IND_DATA, (val));			\
++		RADEON_WRITE(R520_MC_IND_INDEX, 0);	\
++	} while (0)
++
+ #define CP_PACKET0( reg, n )						\
+ 	(RADEON_CP_PACKET0 | ((n) << 16) | ((reg) >> 2))
+ #define CP_PACKET0_TABLE( reg, n )					\
+@@ -986,12 +1015,12 @@ do {									\
+ } while (0)
+ 
+ #define RADEON_FLUSH_CACHE() do {					\
+-	OUT_RING( CP_PACKET0( RADEON_RB2D_DSTCACHE_CTLSTAT, 0 ) );	\
++	OUT_RING( CP_PACKET0( RADEON_RB3D_DSTCACHE_CTLSTAT, 0 ) );	\
+ 	OUT_RING( RADEON_RB2D_DC_FLUSH );				\
+ } while (0)
+ 
+ #define RADEON_PURGE_CACHE() do {					\
+-	OUT_RING( CP_PACKET0( RADEON_RB2D_DSTCACHE_CTLSTAT, 0 ) );	\
++	OUT_RING( CP_PACKET0( RADEON_RB3D_DSTCACHE_CTLSTAT, 0 ) );	\
+ 	OUT_RING( RADEON_RB2D_DC_FLUSH_ALL );				\
+ } while (0)
+ 

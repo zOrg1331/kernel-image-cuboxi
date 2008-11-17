@@ -1,0 +1,49 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Mon, 22 Oct 2007 16:33:02 -0400
+Subject: [selinux] don't oops when using non-MLS policy
+Message-id: 1193085182.2950.12.camel@localhost.localdomain
+O-Subject: [RHEL5 PATCH] bz 223827 SELinux: mls_export_cat and NetLabel oops using non-MLS policy
+Bugzilla: 223827
+
+BZ 223827
+
+We don't ship a non-MLS enabled policy but some of our government
+customers along with some of our partner consulting firms do use TE only
+selinux policy.  Those customers hit a bug in which the NetLabel code
+passes NULL pointers and mls_export_cat then tries to use them.  For now
+those customers are forced to enable mls but not to make use of it.
+This patch checks to make sure we aren't going to deref null before we
+do it.  Patch was tested by a gentleman at HP for us.
+
+Original upstream problem discussion can be found at:
+http://marc2.theaimsgroup.com/?t=116920302500004&r=1&w=2
+
+ security/selinux/ss/mls.c |   12 ++++++++----
+ 1 file changed, 8 insertions(+), 4 deletions(-)
+
+Acked-by: James Morris <jmorris@redhat.com>
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/security/selinux/ss/mls.c b/security/selinux/ss/mls.c
+index 2cca8e2..531b08a 100644
+--- a/security/selinux/ss/mls.c
++++ b/security/selinux/ss/mls.c
+@@ -641,10 +641,14 @@ int mls_export_cat(const struct context *context,
+ 	int rc = -EPERM;
+ 
+ 	if (!selinux_mls_enabled) {
+-		*low = NULL;
+-		*low_len = 0;
+-		*high = NULL;
+-		*high_len = 0;
++		if (low != NULL) {
++			*low = NULL;
++			*low_len = 0;
++		}
++		if (high != NULL) {
++			*high = NULL;
++			*high_len = 0;
++		}
+ 		return 0;
+ 	}
+ 

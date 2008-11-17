@@ -1,0 +1,150 @@
+From: Alexander Viro <aviro@redhat.com>
+Subject: [PATCH] AVC_PATH handling (bz 224620)
+Date: Mon, 11 Jun 2007 13:48:25 -0400
+Bugzilla: 224620
+Message-Id: <200706111748.l5BHmPrP000503@devserv.devel.redhat.com>
+Changelog: [audit] AVC_PATH handling
+
+
+
+---
+ include/linux/audit.h  |    2 --
+ kernel/auditsc.c       |   47 -----------------------------------------------
+ security/selinux/avc.c |   15 ++++++++-------
+ 3 files changed, 8 insertions(+), 56 deletions(-)
+
+diff --git a/include/linux/audit.h b/include/linux/audit.h
+index ab2f568..1679d74 100644
+--- a/include/linux/audit.h
++++ b/include/linux/audit.h
+@@ -399,7 +399,6 @@ extern int __audit_ipc_set_perm(unsigned long qbytes, uid_t uid, gid_t gid, mode
+ extern int audit_bprm(struct linux_binprm *bprm);
+ extern int audit_socketcall(int nargs, unsigned long *args);
+ extern int audit_sockaddr(int len, void *addr);
+-extern int audit_avc_path(struct dentry *dentry, struct vfsmount *mnt);
+ extern int audit_set_macxattr(const char *name);
+ extern int __audit_mq_open(int oflag, mode_t mode, struct mq_attr __user *u_attr);
+ extern int __audit_mq_timedsend(mqd_t mqdes, size_t msg_len, unsigned int msg_prio, const struct timespec __user *u_abs_timeout);
+@@ -473,7 +472,6 @@ extern int audit_signals;
+ #define audit_bprm(p) ({ 0; })
+ #define audit_socketcall(n,a) ({ 0; })
+ #define audit_sockaddr(len, addr) ({ 0; })
+-#define audit_avc_path(dentry, mnt) ({ 0; })
+ #define audit_set_macxattr(n) do { ; } while (0)
+ #define audit_mq_open(o,m,a) ({ 0; })
+ #define audit_mq_timedsend(d,l,p,t) ({ 0; })
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index de0adf4..2e6ddaa 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -175,12 +175,6 @@ struct audit_aux_data_sockaddr {
+ 	char			a[0];
+ };
+ 
+-struct audit_aux_data_path {
+-	struct audit_aux_data	d;
+-	struct dentry		*dentry;
+-	struct vfsmount		*mnt;
+-};
+-
+ struct audit_aux_data_pids {
+ 	struct audit_aux_data	d;
+ 	pid_t			target_pid[AUDIT_AUX_PIDS];
+@@ -660,12 +654,6 @@ static inline void audit_free_aux(struct audit_context *context)
+ 	struct audit_aux_data *aux;
+ 
+ 	while ((aux = context->aux)) {
+-		if (aux->type == AUDIT_AVC_PATH) {
+-			struct audit_aux_data_path *axi = (void *)aux;
+-			dput(axi->dentry);
+-			mntput(axi->mnt);
+-		}
+-
+ 		context->aux = aux->next;
+ 		kfree(aux);
+ 	}
+@@ -999,11 +987,6 @@ static void audit_log_exit(struct audit_context *context, struct task_struct *ts
+ 			audit_log_hex(ab, axs->a, axs->len);
+ 			break; }
+ 
+-		case AUDIT_AVC_PATH: {
+-			struct audit_aux_data_path *axi = (void *)aux;
+-			audit_log_d_path(ab, "path=", axi->dentry, axi->mnt);
+-			break; }
+-
+ 		}
+ 		audit_log_end(ab);
+ 	}
+@@ -1915,36 +1898,6 @@ void __audit_ptrace(struct task_struct *t)
+ }
+ 
+ /**
+- * audit_avc_path - record the granting or denial of permissions
+- * @dentry: dentry to record
+- * @mnt: mnt to record
+- *
+- * Returns 0 for success or NULL context or < 0 on error.
+- *
+- * Called from security/selinux/avc.c::avc_audit()
+- */
+-int audit_avc_path(struct dentry *dentry, struct vfsmount *mnt)
+-{
+-	struct audit_aux_data_path *ax;
+-	struct audit_context *context = current->audit_context;
+-
+-	if (likely(!context))
+-		return 0;
+-
+-	ax = kmalloc(sizeof(*ax), GFP_ATOMIC);
+-	if (!ax)
+-		return -ENOMEM;
+-
+-	ax->dentry = dget(dentry);
+-	ax->mnt = mntget(mnt);
+-
+-	ax->d.type = AUDIT_AVC_PATH;
+-	ax->d.next = context->aux;
+-	context->aux = (void *)ax;
+-	return 0;
+-}
+-
+-/**
+  * audit_signal_info - record signal info for shutting down audit subsystem
+  * @sig: signal value
+  * @t: task being signaled
+diff --git a/security/selinux/avc.c b/security/selinux/avc.c
+index a300702..b69f8ab 100644
+--- a/security/selinux/avc.c
++++ b/security/selinux/avc.c
+@@ -570,10 +570,12 @@ void avc_audit(u32 ssid, u32 tsid,
+ 		case AVC_AUDIT_DATA_FS:
+ 			if (a->u.fs.dentry) {
+ 				struct dentry *dentry = a->u.fs.dentry;
+-				if (a->u.fs.mnt)
+-					audit_avc_path(dentry, a->u.fs.mnt);
+-				audit_log_format(ab, " name=");
+-				audit_log_untrustedstring(ab, dentry->d_name.name);
++				if (a->u.fs.mnt) {
++					audit_log_d_path(ab, "path=", dentry, a->u.fs.mnt);
++				} else {
++					audit_log_format(ab, " name=");
++					audit_log_untrustedstring(ab, dentry->d_name.name);
++				}
+ 				inode = dentry->d_inode;
+ 			} else if (a->u.fs.inode) {
+ 				struct dentry *dentry;
+@@ -624,9 +626,8 @@ void avc_audit(u32 ssid, u32 tsid,
+ 				case AF_UNIX:
+ 					u = unix_sk(sk);
+ 					if (u->dentry) {
+-						audit_avc_path(u->dentry, u->mnt);
+-						audit_log_format(ab, " name=");
+-						audit_log_untrustedstring(ab, u->dentry->d_name.name);
++						audit_log_d_path(ab, "path=",
++								 u->dentry, u->mnt);
+ 						break;
+ 					}
+ 					if (!u->addr)
+-- 
+1.5.0-rc2.GIT
+

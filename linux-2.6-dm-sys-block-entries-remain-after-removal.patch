@@ -1,0 +1,48 @@
+From: Milan Broz <mbroz@redhat.com>
+Subject: [RHEL5 PATCH] device mapper: BZ 214905 /sys/block/dm-* entries remains  after DM device removed
+Date: Tue, 14 Nov 2006 10:32:26 +0100
+Bugzilla: 214905
+Message-Id: <45598D2A.2030109@redhat.com>
+Changelog: device mapper: /sys/block/dm-* entries remain after removal
+
+
+Some /sys/block/dm-* entries remains after DM device removed.
+
+Resolves: BZ#214905, IT#106576
+
+Patch is upstream queued for 2.6.19rc6.
+--
+There is a race between dev_create() and find_device().
+
+If the mdptr has not yet been stored against a device,
+find_device() needs to behave as though no device was
+found.  It already returns NULL, but there is a dm_put()
+missing: it must drop the reference dm_get_md() took.
+
+It manifests itself if another dm ioctl attempts to reference a
+newly-created device while the device creation ioctl is still running.
+The consequence is that the device cannot be removed until the machine
+is rebooted.  Certain udev configurations can lead to this happening.
+
+Index: linux-2.6.18.noarch/drivers/md/dm-ioctl.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/dm-ioctl.c	2006-11-14 10:25:28.000000000 +0100
++++ linux-2.6.18.noarch/drivers/md/dm-ioctl.c	2006-11-14 10:25:34.000000000 +0100
+@@ -606,9 +606,14 @@ static struct hash_cell *__find_device_h
+ 		return __get_name_cell(param->name);
+ 
+ 	md = dm_get_md(huge_decode_dev(param->dev));
+-	if (md)
+-		mdptr = dm_get_mdptr(md);
++	if (!md)
++		goto out;
+ 
++	mdptr = dm_get_mdptr(md);
++	if (!mdptr)
++		dm_put(md);
++
++out:
+ 	return mdptr;
+ }
+
+

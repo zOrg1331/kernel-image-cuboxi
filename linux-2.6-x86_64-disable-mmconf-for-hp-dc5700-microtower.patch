@@ -1,0 +1,33 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5 PATCH]: disable mmconf for HP dc5700 Microtower
+Date: Tue, 5 Jun 2007 10:46:40 -0400
+Bugzilla: 219389
+Message-Id: <20070605144640.2311.66190.sendpatchset@prarit.boston.redhat.com>
+Changelog: [x86_64] disable mmconf for HP dc5700 Microtower
+
+
+disable_mmconf for the HP dc5700 Microtower.
+
+Successfully tested by me on the dc5700 in my cube.
+
+Resolves BZ 219389.
+
+diff -urNp -X linux-2.6.18.x86_64/Documentation/dontdiff linux-2.6.18.x86_64.orig/arch/x86_64/pci/mmconfig.c linux-2.6.18.x86_64/arch/x86_64/pci/mmconfig.c
+--- linux-2.6.18.x86_64.orig/arch/x86_64/pci/mmconfig.c	2007-05-07 04:41:31.000000000 -0400
++++ linux-2.6.18.x86_64/arch/x86_64/pci/mmconfig.c	2007-05-07 06:57:52.000000000 -0400
+@@ -198,6 +198,14 @@ static struct dmi_system_id __devinitdat
+                         DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant DL585 G2"),
+                 },
+         },
++        {
++                .callback = disable_mmconf,
++                .ident = "HP Compaq dc5700 Microtower",
++                .matches = {
++                        DMI_MATCH(DMI_PRODUCT_NAME,
++				  "HP Compaq dc5700 Microtower"),
++                },
++        },
+ 
+ 	{}
+ };
+

@@ -1,0 +1,57 @@
+From: Eric Paris <eparis@parisplace.org>
+Subject: [RHEL5 PATCH] XFRM Audit: 222033 correct xfrm auditing panic
+Date: Tue, 09 Jan 2007 13:51:52 -0500
+Bugzilla: 222033
+Message-Id: <1168368712.26569.41.camel@localhost.localdomain>
+Changelog: XFRM Audit: correct xfrm auditing panic
+
+
+EIP: [<c0320f67>] xfrm_audit_log+0x116/0x423 SS:ESP 0068:f522999c
+
+the reason for the crash is that we pass both 'xp' and 'x' as NULL into 
+xfrm_audit_log(), which thus has no other option but to crash.
+
+We move the problematic call into the else from the above if (!delete)
+to make sure it will have returned in this case.  Upstream also added a
+check to xfrm_audit_log() such that if both xfrm and policy are NULL, we
+return.  In that case there isn't anything to audit since we are only
+auditing creation and deletion of xfrm and policy.
+
+
+--- linux-2.6.18.i686/net/xfrm/xfrm_policy.c.pre.xfrm	2007-01-09 13:33:06.000000000 -0500
++++ linux-2.6.18.i686/net/xfrm/xfrm_policy.c	2007-01-09 13:34:54.000000000 -0500
+@@ -1388,6 +1388,9 @@ void xfrm_audit_log(uid_t auid, u32 sid,
+ 	if (audit_enabled == 0)
+ 		return;
+ 
++	if ((x == NULL) && (xp == NULL))
++		return;
++
+ 	audit_buf = audit_log_start(current->audit_context, GFP_ATOMIC, type);
+ 	if (audit_buf == NULL)
+ 	return;
+--- linux-2.6.18.i686/net/xfrm/xfrm_user.c.pre.xfrm	2007-01-09 13:33:06.000000000 -0500
++++ linux-2.6.18.i686/net/xfrm/xfrm_user.c	2007-01-09 13:34:54.000000000 -0500
+@@ -1066,10 +1066,6 @@ static int xfrm_get_policy(struct sk_buf
+ 		xp = xfrm_policy_bysel_ctx(p->dir, &p->sel, tmp.security, delete);
+ 		security_xfrm_policy_free(&tmp);
+ 	}
+-	if (delete)
+-		xfrm_audit_log(NETLINK_CB(skb).loginuid, NETLINK_CB(skb).sid,
+-			       AUDIT_MAC_IPSEC_DELSPD, (xp) ? 1 : 0, xp, NULL);
+-
+ 	if (xp == NULL)
+ 		return -ENOENT;
+ 
+@@ -1087,6 +1083,10 @@ static int xfrm_get_policy(struct sk_buf
+ 	} else {
+ 		if ((err = security_xfrm_policy_delete(xp)) != 0)
+ 			goto out;
++
++		xfrm_audit_log(NETLINK_CB(skb).loginuid, NETLINK_CB(skb).sid,
++			       AUDIT_MAC_IPSEC_DELSPD, (xp) ? 1 : 0, xp, NULL);
++
+ 		c.data.byid = p->index;
+ 		c.event = nlh->nlmsg_type;
+ 		c.seq = nlh->nlmsg_seq;
+

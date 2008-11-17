@@ -1,0 +1,83 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 30 Oct 2007 17:12:12 +0100
+Subject: [s390] panic with lcs interface as dhcp server
+Message-id: 20071030161212.GK6604@redhat.com
+O-Subject: [RHEL5.2 PATCH] s390 Kernel panic with lcs interface as dhcp server
+Bugzilla: 350861
+
+Problem:
+=========
+
+When a dhcp server is started using a lcs interface , the dhcp server crashes and
+the  lcs interface goes down and later on leads to a kernel panic.
+Lcs detects  (lcs_irq) channel and device failures on the lcs device which
+starts lcs_recovery.
+
+Bugzilla
+=========
+
+BZ 350861
+https://bugzilla.redhat.com/show_bug.cgi?id=350861
+
+Upstream status of the patch:
+=============================
+
+Patch has been submitted for upstream integraton:
+http://lkml.org/lkml/2007/10/5/188
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/drivers/s390/net/lcs.c b/drivers/s390/net/lcs.c
+index 16ac68c..2c8347b 100644
+--- a/drivers/s390/net/lcs.c
++++ b/drivers/s390/net/lcs.c
+@@ -1397,11 +1397,13 @@ lcs_irq(struct ccw_device *cdev, unsigned long intparm, struct irb *irb)
+ 	if (rc || (dstat & DEV_STAT_UNIT_EXCEP)) {
+ 		PRINT_WARN("check on device %s, dstat=0x%X, cstat=0x%X \n",
+ 			    cdev->dev.bus_id, dstat, cstat);
+-		if (rc) {
+-			lcs_schedule_recovery(card);
+-			wake_up(&card->wait_q);
+-			return;
+-		}
++		if (rc)
++			channel->state = CH_STATE_ERROR;
++	}
++	if (channel->state == CH_STATE_ERROR) {
++		lcs_schedule_recovery(card);
++		wake_up(&card->wait_q);
++		return;
+ 	}
+ 	/* How far in the ccw chain have we processed? */
+ 	if ((channel->state != CH_STATE_INIT) &&
+@@ -1707,6 +1709,8 @@ lcs_stopcard(struct lcs_card *card)
+ 
+ 	if (card->read.state != CH_STATE_STOPPED &&
+ 	    card->write.state != CH_STATE_STOPPED &&
++	    card->read.state != CH_STATE_ERROR &&
++	    card->write.state != CH_STATE_ERROR &&
+ 	    card->state == DEV_STATE_UP) {
+ 		lcs_clear_multicast_list(card);
+ 		rc = lcs_send_stoplan(card,LCS_INITIATOR_TCPIP);
+diff --git a/drivers/s390/net/lcs.h b/drivers/s390/net/lcs.h
+index 9314393..383694a 100644
+--- a/drivers/s390/net/lcs.h
++++ b/drivers/s390/net/lcs.h
+@@ -143,6 +143,7 @@ enum lcs_channel_states {
+ 	CH_STATE_RUNNING,
+ 	CH_STATE_SUSPENDED,
+ 	CH_STATE_CLEARED,
++	CH_STATE_ERROR,
+ };
+ 
+ /**

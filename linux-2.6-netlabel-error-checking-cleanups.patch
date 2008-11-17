@@ -1,0 +1,202 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [PATCH RHEL5] netlabel: bz: 210425 fix 3 issues with netlabel
+Date: Thu, 26 Oct 2006 14:24:27 -0400
+Bugzilla: 210425
+Message-Id: <1161887067.1343.40.camel@localhost.localdomain>
+Changelog: netlabel: various error checking cleanups
+
+
+This is a patch fixing 3 problems with the current netlabel code.  This
+should fix all of the issues mentioned in BZ 210425.  A RHEL5 kernel
+with these fixes has been built (people.redhat.com/sgrubb/files/lspp)
+and has been found to fix the oops and the catagory issue.  The error
+checking was not tested as the problem was found through code
+inspection.
+
+First it was possible to dereference values that were never set.
+Instead of unconditionally dereferencing during variable initialization
+we instead will only use those values if they have been properly set.
+http://marc.theaimsgroup.com/?l=linux-netdev&m=116060895810450&w=2
+
+Second the error paths around mls_export_cat were found from code
+inspection to be lacking.  Simple things like actually checking return
+values and nulling out pointers after kfree()
+http://marc.theaimsgroup.com/?l=linux-netdev&m=116060895712178&w=2
+
+The last part is actually an off by one bug.  It was possible that the
+wrong or no catagories would be set on a connection at the boundry.
+http://marc.theaimsgroup.com/?l=linux-netdev&m=116060895710963&w=2
+
+-Eric
+
+diff -Naupr linux-2.6.18.i686.orig/net/ipv4/cipso_ipv4.c linux-2.6.18.i686/net/ipv4/cipso_ipv4.c
+--- linux-2.6.18.i686.orig/net/ipv4/cipso_ipv4.c	2006-10-13 10:50:42.000000000 -0400
++++ linux-2.6.18.i686/net/ipv4/cipso_ipv4.c	2006-10-13 11:05:59.000000000 -0400
+@@ -773,13 +773,15 @@ static int cipso_v4_map_cat_rbm_valid(co
+ {
+ 	int cat = -1;
+ 	u32 bitmap_len_bits = bitmap_len * 8;
+-	u32 cipso_cat_size = doi_def->map.std->cat.cipso_size;
+-	u32 *cipso_array = doi_def->map.std->cat.cipso;
++	u32 cipso_cat_size;
++	u32 *cipso_array;
+ 
+ 	switch (doi_def->type) {
+ 	case CIPSO_V4_MAP_PASS:
+ 		return 0;
+ 	case CIPSO_V4_MAP_STD:
++		cipso_cat_size = doi_def->map.std->cat.cipso_size;
++		cipso_array = doi_def->map.std->cat.cipso;
+ 		for (;;) {
+ 			cat = cipso_v4_bitmap_walk(bitmap,
+ 						   bitmap_len_bits,
+@@ -825,19 +827,21 @@ static int cipso_v4_map_cat_rbm_hton(con
+ 	u32 net_spot_max = 0;
+ 	u32 host_clen_bits = host_cat_len * 8;
+ 	u32 net_clen_bits = net_cat_len * 8;
+-	u32 host_cat_size = doi_def->map.std->cat.local_size;
+-	u32 *host_cat_array = doi_def->map.std->cat.local;
++	u32 host_cat_size;
++	u32 *host_cat_array;
+ 
+ 	switch (doi_def->type) {
+ 	case CIPSO_V4_MAP_PASS:
+-		net_spot_max = host_cat_len - 1;
+-		while (net_spot_max > 0 && host_cat[net_spot_max] == 0)
++		net_spot_max = host_cat_len;
++		while (net_spot_max > 0 && host_cat[net_spot_max - 1] == 0)
+ 			net_spot_max--;
+ 		if (net_spot_max > net_cat_len)
+ 			return -EINVAL;
+ 		memcpy(net_cat, host_cat, net_spot_max);
+ 		return net_spot_max;
+ 	case CIPSO_V4_MAP_STD:
++		host_cat_size = doi_def->map.std->cat.local_size;
++		host_cat_array = doi_def->map.std->cat.local;
+ 		for (;;) {
+ 			host_spot = cipso_v4_bitmap_walk(host_cat,
+ 							 host_clen_bits,
+@@ -893,8 +897,8 @@ static int cipso_v4_map_cat_rbm_ntoh(con
+ 	int net_spot = -1;
+ 	u32 net_clen_bits = net_cat_len * 8;
+ 	u32 host_clen_bits = host_cat_len * 8;
+-	u32 net_cat_size = doi_def->map.std->cat.cipso_size;
+-	u32 *net_cat_array = doi_def->map.std->cat.cipso;
++	u32 net_cat_size;
++	u32 *net_cat_array;
+ 
+ 	switch (doi_def->type) {
+ 	case CIPSO_V4_MAP_PASS:
+@@ -903,6 +907,8 @@ static int cipso_v4_map_cat_rbm_ntoh(con
+ 		memcpy(host_cat, net_cat, net_cat_len);
+ 		return net_cat_len;
+ 	case CIPSO_V4_MAP_STD:
++		net_cat_size = doi_def->map.std->cat.cipso_size;
++		net_cat_array = doi_def->map.std->cat.cipso;
+ 		for (;;) {
+ 			net_spot = cipso_v4_bitmap_walk(net_cat,
+ 							net_clen_bits,
+diff -Naupr linux-2.6.18.i686.orig/security/selinux/ss/ebitmap.c linux-2.6.18.i686/security/selinux/ss/ebitmap.c
+--- linux-2.6.18.i686.orig/security/selinux/ss/ebitmap.c	2006-10-13 10:50:31.000000000 -0400
++++ linux-2.6.18.i686/security/selinux/ss/ebitmap.c	2006-10-13 11:05:57.000000000 -0400
+@@ -93,11 +93,15 @@ int ebitmap_export(const struct ebitmap 
+ 	size_t bitmap_byte;
+ 	unsigned char bitmask;
+ 
++	if (src->highbit == 0) {
++		*dst = NULL;
++		*dst_len = 0;
++		return 0;
++	}
++
+ 	bitmap_len = src->highbit / 8;
+ 	if (src->highbit % 7)
+ 		bitmap_len += 1;
+-	if (bitmap_len == 0)
+-		return -EINVAL;
+ 
+ 	bitmap = kzalloc((bitmap_len & ~(sizeof(MAPTYPE) - 1)) +
+ 			 sizeof(MAPTYPE),
+diff -Naupr linux-2.6.18.i686.orig/security/selinux/ss/mls.c linux-2.6.18.i686/security/selinux/ss/mls.c
+--- linux-2.6.18.i686.orig/security/selinux/ss/mls.c	2006-10-13 10:50:31.000000000 -0400
++++ linux-2.6.18.i686/security/selinux/ss/mls.c	2006-10-13 11:05:57.000000000 -0400
+@@ -640,8 +640,13 @@ int mls_export_cat(const struct context 
+ {
+ 	int rc = -EPERM;
+ 
+-	if (!selinux_mls_enabled)
++	if (!selinux_mls_enabled) {
++		*low = NULL;
++		*low_len = 0;
++		*high = NULL;
++		*high_len = 0;
+ 		return 0;
++	}
+ 
+ 	if (low != NULL) {
+ 		rc = ebitmap_export(&context->range.level[0].cat,
+@@ -661,10 +666,16 @@ int mls_export_cat(const struct context 
+ 	return 0;
+ 
+ export_cat_failure:
+-	if (low != NULL)
++	if (low != NULL) {
+ 		kfree(*low);
+-	if (high != NULL)
++		*low = NULL;
++		*low_len = 0;
++	}
++	if (high != NULL) {
+ 		kfree(*high);
++		*high = NULL;
++		*high_len = 0;
++	}
+ 	return rc;
+ }
+ 
+diff -Naupr linux-2.6.18.i686.orig/security/selinux/ss/services.c linux-2.6.18.i686/security/selinux/ss/services.c
+--- linux-2.6.18.i686.orig/security/selinux/ss/services.c	2006-10-13 10:50:31.000000000 -0400
++++ linux-2.6.18.i686/security/selinux/ss/services.c	2006-10-13 11:05:57.000000000 -0400
+@@ -2399,31 +2399,33 @@ static int selinux_netlbl_socket_setsid(
+ 	if (!ss_initialized)
+ 		return 0;
+ 
++	netlbl_secattr_init(&secattr);
++
+ 	POLICY_RDLOCK;
+ 
+ 	ctx = sidtab_search(&sidtab, sid);
+ 	if (ctx == NULL)
+ 		goto netlbl_socket_setsid_return;
+ 
+-	netlbl_secattr_init(&secattr);
+ 	secattr.domain = kstrdup(policydb.p_type_val_to_name[ctx->type - 1],
+ 				 GFP_ATOMIC);
+ 	mls_export_lvl(ctx, &secattr.mls_lvl, NULL);
+ 	secattr.mls_lvl_vld = 1;
+-	mls_export_cat(ctx,
+-		       &secattr.mls_cat,
+-		       &secattr.mls_cat_len,
+-		       NULL,
+-		       NULL);
++	rc = mls_export_cat(ctx,
++			    &secattr.mls_cat,
++			    &secattr.mls_cat_len,
++			    NULL,
++			    NULL);
++	if (rc != 0)
++		goto netlbl_socket_setsid_return;
+ 
+ 	rc = netlbl_socket_setattr(sock, &secattr);
+ 	if (rc == 0)
+ 		sksec->nlbl_state = NLBL_LABELED;
+ 
+-	netlbl_secattr_destroy(&secattr);
+-
+ netlbl_socket_setsid_return:
+ 	POLICY_RDUNLOCK;
++	netlbl_secattr_destroy(&secattr);
+ 	return rc;
+ }
+ 
+

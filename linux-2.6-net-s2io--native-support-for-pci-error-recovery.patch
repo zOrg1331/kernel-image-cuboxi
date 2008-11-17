@@ -1,0 +1,231 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [RHEL5.1 PATCH] bz228052 Native Support for PCI Error Recovery in  s2io
+Date: Wed, 6 Jun 2007 14:34:56 -0400 (EDT)
+Bugzilla: 228052
+Message-Id: <Pine.LNX.4.64.0705291604330.5134@squad5-lp1.lab.boston.redhat.com>
+Changelog: [net] s2io: Native Support for PCI Error Recovery
+
+
+RHBZ#: 228052 [FEATURE]
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=228052
+
+Description:
+------------
+This patch adds PCI error recovery to the s2io 10-Gigabit ethernet device
+driver, allowing it to seamlessly recover from parity errors.
+ 
+Power systems provide support for EEH recovery; the addition of PCI error
+recovery in device drivers allows the exploitation of this platform feature.
+
+RHEL Version Found:
+-------------------
+requested as a feature for 5.1
+
+Upstream Status:
+----------------
+This code has been submitted for upstream approval [1]
+
+Test Status:
+------------
+There is an error injection tool called errinjct that can simulate EEH
+events at the firmware level.  Testing consists of the injection of
+EEH events onto the bus on which s2io devices reside.
+
+1) Test Cases:  testing will be performed using the errinjct tool.  The
+following scenarios will be attempted:
+ - One-off injections on a bus containing a single-function adapter
+ - Multiple injections (5 within an hour) on a bus containing an adapter
+
+2) Acceptance Criteria:  seamless recovery from all detected EEH events on
+single- adapters; automatic offlining of devices which experience 5 errors
+within an hour.
+
+A scratch brew build with task id 792929 has been done with this code to verify
+build on all platforms [2]. 
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+--
+[1] http://lkml.org/lkml/2007/5/14/476 
+[2] http://brewweb.devel.redhat.com/brew/taskinfo?taskID=792929
+
+---
+ drivers/net/s2io.c |  121 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ drivers/net/s2io.h |    5 ++
+ 2 files changed, 126 insertions(+)
+
+Index: b/drivers/net/s2io.c
+===================================================================
+--- a/drivers/net/s2io.c
++++ b/drivers/net/s2io.c
+@@ -434,11 +434,18 @@ static struct pci_device_id s2io_tbl[] _
+ 
+ MODULE_DEVICE_TABLE(pci, s2io_tbl);
+ 
++static struct pci_error_handlers s2io_err_handler = {
++	.error_detected = s2io_io_error_detected,
++	.slot_reset = s2io_io_slot_reset,
++	.resume = s2io_io_resume,
++};
++
+ static struct pci_driver s2io_driver = {
+       .name = "S2IO",
+       .id_table = s2io_tbl,
+       .probe = s2io_init_nic,
+       .remove = __devexit_p(s2io_rem_nic),
++      .err_handler = &s2io_err_handler,
+ };
+ 
+ /* A simplifier macro used both by init and free shared_mem Fns(). */
+@@ -3158,6 +3165,11 @@ static void alarm_intr_handler(struct s2
+ 	register u64 val64 = 0, err_reg = 0;
+ 	u64 cnt;
+ 	int i;
++
++	if ((nic->pdev->error_state != pci_channel_io_normal) &&
++		 (nic->pdev->error_state != 0))
++		return;
++
+ 	nic->mac_control.stats_info->sw_stat.ring_full_cnt = 0;
+ 	/* Handling the XPAK counters update */
+ 	if(nic->mac_control.stats_info->xpak_stat.xpak_timer_count < 72000) {
+@@ -4174,6 +4186,11 @@ static irqreturn_t s2io_isr(int irq, voi
+ 	mac_info_t *mac_control;
+ 	struct config_param *config;
+ 
++	/* Pretend we handled any irq's from a disconnected card */
++	if ((sp->pdev->error_state != pci_channel_io_normal) &&
++		 (sp->pdev->error_state != 0))
++		return IRQ_HANDLED;
++
+ 	atomic_inc(&sp->isr_cnt);
+ 	mac_control = &sp->mac_control;
+ 	config = &sp->config;
+@@ -7567,3 +7584,107 @@ static void lro_append_pkt(nic_t *sp, lr
+ 	sp->mac_control.stats_info->sw_stat.clubbed_frms_cnt++;
+ 	return;
+ }
++
++/**
++ * s2io_io_error_detected - called when PCI error is detected
++ * @pdev: Pointer to PCI device
++ * @state: The current pci conneection state
++ *
++ * This function is called after a PCI bus error affecting
++ * this device has been detected.
++ */
++static pci_ers_result_t s2io_io_error_detected(struct pci_dev *pdev,
++                                               pci_channel_state_t state)
++{
++	struct net_device *netdev = pci_get_drvdata(pdev);
++	nic_t *sp = netdev->priv;
++
++	netif_device_detach(netdev);
++
++	if (netif_running(netdev)) {
++		unsigned long flags;
++
++		/* The folowing is an abreviated subset of the
++		 * steps taken by s2io_card_down(), avoiding
++		 * steps that touch the card itself.
++		 */
++		del_timer_sync(&sp->alarm_timer);
++		atomic_set(&sp->card_state, CARD_DOWN);
++
++		/* Kill tasklet. */
++		tasklet_kill(&sp->task);
++
++		/* Free all Tx buffers */
++		spin_lock_irqsave(&sp->tx_lock, flags);
++		free_tx_buffers(sp);
++		spin_unlock_irqrestore(&sp->tx_lock, flags);
++
++		/* Free all Rx buffers */
++		spin_lock_irqsave(&sp->rx_lock, flags);
++		free_rx_buffers(sp);
++		spin_unlock_irqrestore(&sp->rx_lock, flags);
++
++		clear_bit(0, &(sp->link_state));
++		sp->device_close_flag = TRUE;	/* Device is shut down. */
++	}
++	pci_disable_device(pdev);
++
++	return PCI_ERS_RESULT_NEED_RESET;
++}
++
++/**
++ * s2io_io_slot_reset - called after the pci bus has been reset.
++ * @pdev: Pointer to PCI device
++ *
++ * Restart the card from scratch, as if from a cold-boot.
++ * At this point, the card has exprienced a hard reset,
++ * followed by fixups by BIOS, and has its config space
++ * set up identically to what it was at cold boot.
++ */
++static pci_ers_result_t s2io_io_slot_reset(struct pci_dev *pdev)
++{
++	struct net_device *netdev = pci_get_drvdata(pdev);
++	nic_t *sp = netdev->priv;
++
++	if (pci_enable_device(pdev)) {
++		printk(KERN_ERR "s2io: "
++		       "Cannot re-enable PCI device after reset.\n");
++		return PCI_ERS_RESULT_DISCONNECT;
++	}
++
++	pci_set_master(pdev);
++	s2io_reset(sp);
++
++	return PCI_ERS_RESULT_RECOVERED;
++}
++
++/**
++ * s2io_io_resume - called when traffic can start flowing again.
++ * @pdev: Pointer to PCI device
++ *
++ * This callback is called when the error recovery driver tells
++ * us that its OK to resume normal operation.
++ */
++static void s2io_io_resume(struct pci_dev *pdev)
++{
++	struct net_device *netdev = pci_get_drvdata(pdev);
++	nic_t *sp = netdev->priv;
++
++	if (netif_running(netdev)) {
++		if (s2io_card_up(sp)) {
++			printk(KERN_ERR "s2io: "
++			       "can't bring device back up after reset\n");
++			return;
++		}
++
++		if (s2io_set_mac_addr(netdev, netdev->dev_addr) == FAILURE) {
++			s2io_card_down(sp);
++			printk(KERN_ERR "s2io: "
++			       "can't resetore mac addr after reset\n");
++			return;
++		}
++	}
++
++	netif_device_attach(netdev);
++	netif_wake_queue(netdev);
++}
+Index: b/drivers/net/s2io.h
+===================================================================
+--- a/drivers/net/s2io.h
++++ b/drivers/net/s2io.h
+@@ -1007,6 +1007,11 @@ static int s2io_card_up(nic_t *nic);
+ static int get_xena_rev_id(struct pci_dev *pdev);
+ static void restore_xmsi_data(nic_t *nic);
+ 
++static pci_ers_result_t s2io_io_error_detected(struct pci_dev *pdev,
++                                               pci_channel_state_t state);
++static pci_ers_result_t s2io_io_slot_reset(struct pci_dev *pdev);
++static void s2io_io_resume(struct pci_dev *pdev);
++
+ static int s2io_club_tcp_session(u8 *buffer, u8 **tcp, u32 *tcp_len, lro_t **lro, RxD_t *rxdp, nic_t *sp);
+ static void clear_lro_session(lro_t *lro);
+ static void queue_rx_frame(struct sk_buff *skb);
+

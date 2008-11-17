@@ -1,0 +1,96 @@
+From: Gerd Hoffmann <kraxel@redhat.com>
+Subject: [RHEL-5.1 PATCH 9/10] xen: blkback/blktap: fix id type
+Date: Fri, 15 Jun 2007 10:55:14 +0200
+Bugzilla: 222128
+Message-Id: <467253F2.1030701@redhat.com>
+Changelog: [xen] blkback/blktap: fix id type
+
+
+  Hi,
+
+This fixes the request identifier to be 64bit everythere.  It already is 
+in the request structs passed between frontend and backend, this patch 
+fixes up the driver internal structs so the upper 32bit don't get lost 
+along the way.
+
+cheers,
+  Gerd
+
+
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1178010516 -3600
+# Node ID 5b4a02335182a331519840d57308fbc2f027316d
+# Parent  1ddaf2650633ef9217e884c61832fa68317995f5
+linux blkback/blktap: Request/response identifiers are u64, not long.
+Signed-off-by: Keir Fraser <keir@xensource.com>
+
+---
+ drivers/xen/blkback/blkback.c   |    6 +++---
+ drivers/xen/blktap/blktapmain.c |    6 +++---
+ 2 files changed, 6 insertions(+), 6 deletions(-)
+
+Index: linux-2.6.18.noarch/drivers/xen/blkback/blkback.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/xen/blkback/blkback.c
++++ linux-2.6.18.noarch/drivers/xen/blkback/blkback.c
+@@ -71,7 +71,7 @@ module_param(debug_lvl, int, 0644);
+  */
+ typedef struct {
+ 	blkif_t       *blkif;
+-	unsigned long  id;
++	u64            id;
+ 	int            nr_pages;
+ 	atomic_t       pendcnt;
+ 	unsigned short operation;
+@@ -108,7 +108,7 @@ static int do_block_io_op(blkif_t *blkif
+ static void dispatch_rw_block_io(blkif_t *blkif,
+ 				 blkif_request_t *req,
+ 				 pending_req_t *pending_req);
+-static void make_response(blkif_t *blkif, unsigned long id, 
++static void make_response(blkif_t *blkif, u64 id,
+ 			  unsigned short op, int st);
+ 
+ /******************************************************************
+@@ -487,7 +487,7 @@ static void dispatch_rw_block_io(blkif_t
+  */
+ 
+ 
+-static void make_response(blkif_t *blkif, unsigned long id, 
++static void make_response(blkif_t *blkif, u64 id,
+ 			  unsigned short op, int st)
+ {
+ 	blkif_response_t  resp;
+Index: linux-2.6.18.noarch/drivers/xen/blktap/blktapmain.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/xen/blktap/blktapmain.c
++++ linux-2.6.18.noarch/drivers/xen/blktap/blktapmain.c
+@@ -155,7 +155,7 @@ module_param(debug_lvl, int, 0644);
+  */
+ typedef struct {
+ 	blkif_t       *blkif;
+-	unsigned long  id;
++	u64            id;
+ 	unsigned short mem_idx;
+ 	int            nr_pages;
+ 	atomic_t       pendcnt;
+@@ -720,7 +720,7 @@ static int do_block_io_op(blkif_t *blkif
+ static void dispatch_rw_block_io(blkif_t *blkif,
+ 				 blkif_request_t *req,
+ 				 pending_req_t *pending_req);
+-static void make_response(blkif_t *blkif, unsigned long id, 
++static void make_response(blkif_t *blkif, u64 id,
+                           unsigned short op, int st);
+ 
+ /******************************************************************
+@@ -1313,7 +1313,7 @@ static void dispatch_rw_block_io(blkif_t
+  */
+ 
+ 
+-static void make_response(blkif_t *blkif, unsigned long id, 
++static void make_response(blkif_t *blkif, u64 id,
+                           unsigned short op, int st)
+ {
+ 	blkif_response_t  resp;
+

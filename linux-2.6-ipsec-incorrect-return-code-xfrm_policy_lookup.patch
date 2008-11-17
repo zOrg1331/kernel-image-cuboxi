@@ -1,0 +1,48 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: Re: [RHEL5 PATCH] IPSec: 218591 incorrect return code in 	xfrm_policy_lookup
+Date: Wed, 17 Jan 2007 14:18:16 -0500
+Bugzilla: 218591
+Message-Id: <1169061496.9186.45.camel@localhost.localdomain>
+Changelog: IPSec: incorrect return code in xfrm_policy_lookup
+
+
+On Wed, 2007-01-17 at 14:07 -0500, Eric Paris wrote:
+> BZ 218591
+> 
+> I messed up the upstream backport of error propagation in xfrm code.  In
+> upstream code 'no policy found' returns a 0 from xfrm_policy_lookup.
+> But I actually have it returning -ESRCH in that case.  This turns out to
+> break a number of things.  IPSec over IPV6 only works for a couple
+> packets, Enabling IPSec makes the kernel reject non-ipsec packets (since
+> it thinks non-ipsec packets got an error rather than 'no match') and
+> other things.
+> 
+> The upstream patch I was trying to backport is at:
+> http://www.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=134b0fc544ba062498451611cb6f3e4454221b3d
+> and you will see a similar thing happening in that patch only it happens
+> in *xfrm_policy_lookup_bytype which does not exist in RHEL5.
+
+--- linux-2.6.18.i686/net/xfrm/xfrm_policy.c.pre.xfrm	2007-01-17 13:04:06.000000000 -0500
++++ linux-2.6.18.i686/net/xfrm/xfrm_policy.c	2007-01-17 13:23:46.000000000 -0500
+@@ -609,7 +609,7 @@ static int xfrm_policy_lookup(struct flo
+ 			       void **objp, atomic_t **obj_refp)
+ {
+ 	struct xfrm_policy *pol;
+-	int ret = -ESRCH;
++	int ret = 0;
+ 
+ 	read_lock_bh(&xfrm_policy_lock);
+ 	for (pol = xfrm_policy_list[dir]; pol; pol = pol->next) {
+@@ -626,6 +626,11 @@ static int xfrm_policy_lookup(struct flo
+  			if (!ret) {
+ 				xfrm_pol_hold(pol);
+ 				break;
++			} else if (ret == -ESRCH)
++				ret = 0;
++			else {
++				pol = NULL;
++				break;
+ 			}
+ 		}
+ 	}
+

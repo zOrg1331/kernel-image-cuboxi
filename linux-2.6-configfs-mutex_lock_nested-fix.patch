@@ -1,0 +1,52 @@
+From: Eric Sandeen <esandeen@redhat.com>
+Subject: [PATCH RHEL5] configfs: mutex_lock_nested() fix
+Date: Mon, 13 Nov 2006 12:03:14 -0600
+Bugzilla: 211506
+Message-Id: <200611131803.kADI3EhC003378@neon.msp.redhat.com>
+Changelog: configfs: mutex_lock_nested() fix
+
+
+This fix is for Bugzilla Bug 211506: LTC27855-possible recursive locking detected 2.6.18-1.2702.el5
+
+configfs needed some lock debug annotation; when removing the dlm module
+IBM got recursive lock warnings.
+
+This posted, upstream* patch was tested by IBM and found to resolve the problem.
+
+*http://lkml.org/lkml/2006/10/19/230
+also in -mm at http://www.kernel.org/pub/linux/kernel/people/akpm/patches/2.6/2.6.19-rc5/2.6.19-rc5-mm1/broken-out/git-ocfs2.patch
+
+Thanks,
+-Eric
+
+----
+
+commit 3bcc276af214fc384c059713f9b5ef7a55bdbfab
+Author: Mark Fasheh <mark.fasheh@oracle.com>
+
+configfs: mutex_lock_nested() fix
+
+configfs_unregister_subsystem() nests a pair of inode i_mutex acquisitions,
+and thus needs annotation via mutex_lock_nested().
+
+Signed-off-by: Mark Fasheh <mark.fasheh@oracle.com>
+
+diff --git a/fs/configfs/dir.c b/fs/configfs/dir.c
+index 8a3b6a1..452cfd1 100644
+Index: linux-2.6.18-1.2732.el5/fs/configfs/dir.c
+===================================================================
+--- linux-2.6.18-1.2732.el5.orig/fs/configfs/dir.c
++++ linux-2.6.18-1.2732.el5/fs/configfs/dir.c
+@@ -1148,8 +1148,9 @@ void configfs_unregister_subsystem(struc
+ 		return;
+ 	}
+ 
+-	mutex_lock(&configfs_sb->s_root->d_inode->i_mutex);
+-	mutex_lock(&dentry->d_inode->i_mutex);
++	mutex_lock_nested(&configfs_sb->s_root->d_inode->i_mutex,
++			  I_MUTEX_PARENT);
++	mutex_lock_nested(&dentry->d_inode->i_mutex, I_MUTEX_CHILD);
+ 	if (configfs_detach_prep(dentry)) {
+ 		printk(KERN_ERR "configfs: Tried to unregister non-empty subsystem!\n");
+ 	}
+

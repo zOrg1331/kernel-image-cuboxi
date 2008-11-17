@@ -1,0 +1,48 @@
+From: Don Zickus <dzickus@redhat.com>
+Subject: [PATCH RHEL5.1] allow vmsplice to work in 32-bit mode on ppc64
+Date: Wed, 18 Apr 2007 11:01:30 -0400
+Bugzilla: 235184
+Message-Id: <20070418150130.GL11029@redhat.com>
+Changelog: [ppc64] allow vmsplice to work in 32-bit mode on ppc64
+
+
+bz 235184
+
+A simple change to point the vmsplice 32-bit syscall to the compat layer.
+Noticed when using ltp.  With the change the test succeeds.
+
+This change is now upstream.
+
+Cheers,
+Don
+
+
+commit c4b7e8754e3198eb5392568e523da6440143c2cd
+Author: Don Zickus <dzickus@redhat.com>
+
+    allow vmsplice to work in 32-bit mode on ppc64
+    
+    Trivial change to pass vmsplice arguments through the compat layer on
+    pp64.
+    
+    Signed-off-by: Don Zickus <dzickus@redhat.com>
+    Acked-by: Stephen Rothwell <sfr@canb.auug.org.au>
+    Acked-by: Paul Mackerras <paulus@samba.org>
+    Cc: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/include/asm-powerpc/systbl.h b/include/asm-powerpc/systbl.h
+index 8d853c5..0b00068 100644
+--- a/include/asm-powerpc/systbl.h
++++ b/include/asm-powerpc/systbl.h
+@@ -288,7 +288,7 @@ COMPAT_SYS(ppoll)
+ SYSCALL_SPU(unshare)
+ SYSCALL_SPU(splice)
+ SYSCALL_SPU(tee)
+-SYSCALL_SPU(vmsplice)
++COMPAT_SYS_SPU(vmsplice)
+ COMPAT_SYS_SPU(openat)
+ SYSCALL_SPU(mkdirat)
+ SYSCALL_SPU(mknodat)
+

@@ -1,0 +1,57 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Thu, 20 Dec 2007 16:44:39 -0500
+Subject: [Xen] ia64: failed domHVM creation causes HV hang
+Message-id: 20071220163709.9E50.TYAMAMOT@redhat.com
+O-Subject: [RHEL5.2 PATCH][Xen] hypervisor hangs or dom0 panics after domHVM creation is failed by memory shortage.
+Bugzilla: 279831
+
+This patch is a kernel-xen hypervisor part to fix BZ#279831.
+https://bugzilla.redhat.com/show_bug.cgi?id=279831
+
+When creating a HVM domain fails because of memory shortage, the process
+to relinquish the resource has a problem that it does not stop PM timer.
+This patch is backported from the upstream to fix it.
+http://xenbits.xensource.com/ext/ia64/xen-unstable.hg?rev/0cc2e0a1b2fc
+
+To fix this bug completely, another patch of user land part is needed.  I'll
+clone this BZ for xen and post a patch to virtualist for the cloned BZ later.
+
+With kernel-xen-2.6.18-58.el5 applied this patch and xen-3.0.3-41
+applied the patch of user land part, I've confirmed that this problem
+does not occur.
+
+Please review and ack.
+
+Regards,
+
+Tetsu Yamamoto
+# HG changeset patch
+# User Alex Williamson <alex.williamson@hp.com>
+# Date 1187989609 21600
+# Node ID 0cc2e0a1b2fcf0f46a23f51e691650893ae5aee9
+# Parent  049d4baa9965b35eed8b4b4a1a2283906d956ac3
+[IA64] Kill PM timer
+
+The release proceeding of domain resources forgot to stop (or kill)
+PM timer, and freed the domain structure.
+VMX flag of VCPU#0 was not set when VHPT allocation for VCPU#0
+failed.  For this reason, domain_relinquish_resources() did not
+call vmx_relinqush_guest_resources().  But the domain structure
+was freed.  As a result, timer_softirq_action() lose sight of
+the callback function for PM timer.
+
+Signed-off-by: Masaki Kanno <kanno.masaki@jp.fujitsu.com>
+
+diff --git a/arch/ia64/xen/domain.c b/arch/ia64/xen/domain.c
+index bb69b8d..02968c9 100644
+--- a/arch/ia64/xen/domain.c
++++ b/arch/ia64/xen/domain.c
+@@ -760,7 +760,7 @@ static void relinquish_memory(struct domain *d, struct list_head *list)
+ void domain_relinquish_resources(struct domain *d)
+ {
+     /* Relinquish guest resources for VT-i domain. */
+-    if (d->vcpu[0] && VMX_DOMAIN(d->vcpu[0]))
++    if (d->arch.is_vti)
+ 	    vmx_relinquish_guest_resources(d);
+ 
+     /* Tear down shadow mode stuff. */

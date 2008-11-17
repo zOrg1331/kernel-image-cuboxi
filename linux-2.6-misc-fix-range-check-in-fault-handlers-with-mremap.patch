@@ -1,0 +1,138 @@
+From: Vitaly Mayatskikh <vmayatsk@redhat.com>
+Date: Mon, 3 Mar 2008 14:37:53 +0100
+Subject: [misc] fix range check in fault handlers with mremap
+Message-id: m3lk50hqry.fsf@gravicappa.englab.brq.redhat.com
+O-Subject: [RHEL-5.2 PATCH] BZ428971 CVE-2008-0007 kernel: insufficient range checks in fault handlers with mremap [rhel-5.2]
+Bugzilla: 428971
+
+Bugzilla: 428971
+CVE: CVE-2008-0007
+
+https://bugzilla.redhat.com/show_bug.cgi?id=428971
+
+Description:
+============
+There are security problems allowing a local user to have read/write
+access of arbitrary kernel memory.
+
+Description by Nick Piggin:
+
+vm audit: add VM_DONTEXPAND to mmap for drivers that need it
+
+Drivers that register a ->fault handler, but do not range-check the
+offset argument, must set VM_DONTEXPAND in the vm_flags in order to
+prevent an expanding mremap from overflowing the resource.
+
+Upstream status:
+================
+commit 83af8eda68a3f0c227d0eb05348e58ae27a62e7e
+
+Test status of the patch:
+=========================
+Kernel was built and booted ok
+
+Acked-by: Rik van Riel <riel@redhat.com>
+
+diff --git a/drivers/char/drm/drm_vm.c b/drivers/char/drm/drm_vm.c
+index ffd0800..ba190fd 100644
+--- a/drivers/char/drm/drm_vm.c
++++ b/drivers/char/drm/drm_vm.c
+@@ -479,6 +479,7 @@ static int drm_mmap_dma(struct file *filp, struct vm_area_struct *vma)
+ 	vma->vm_ops = &drm_vm_dma_ops;
+ 
+ 	vma->vm_flags |= VM_RESERVED;	/* Don't swap */
++	vma->vm_flags |= VM_DONTEXPAND;
+ 
+ 	vma->vm_file = filp;	/* Needed for drm_vm_open() */
+ 	drm_vm_open(vma);
+@@ -656,6 +657,7 @@ int drm_mmap(struct file *filp, struct vm_area_struct *vma)
+ 		return -EINVAL;	/* This should never happen. */
+ 	}
+ 	vma->vm_flags |= VM_RESERVED;	/* Don't swap */
++	vma->vm_flags |= VM_DONTEXPAND;
+ 
+ 	vma->vm_file = filp;	/* Needed for drm_vm_open() */
+ 	drm_vm_open(vma);
+diff --git a/kernel/relay.c b/kernel/relay.c
+index 03fa02b..0ad4ec3 100644
+--- a/kernel/relay.c
++++ b/kernel/relay.c
+@@ -84,6 +84,7 @@ int relay_mmap_buf(struct rchan_buf *buf, struct vm_area_struct *vma)
+ 		return -EINVAL;
+ 
+ 	vma->vm_ops = &relay_file_mmap_ops;
++	vma->vm_flags |= VM_DONTEXPAND;
+ 	vma->vm_private_data = buf;
+ 	buf->chan->cb->buf_mapped(buf, filp);
+ 
+diff --git a/mm/mmap.c b/mm/mmap.c
+index 8ce2fdf..d89ab1f 100644
+--- a/mm/mmap.c
++++ b/mm/mmap.c
+@@ -2253,7 +2253,7 @@ int install_special_mapping(struct mm_struct *mm,
+ 	vma->vm_start = addr;
+ 	vma->vm_end = addr + len;
+ 
+-	vma->vm_flags = vm_flags;
++	vma->vm_flags = vm_flags | VM_DONTEXPAND;
+ 	vma->vm_page_prot = pgprot;
+ 
+ 	vma->vm_ops = &special_mapping_vmops;
+diff --git a/sound/oss/via82cxxx_audio.c b/sound/oss/via82cxxx_audio.c
+index 7ab3a73..34c33a6 100644
+--- a/sound/oss/via82cxxx_audio.c
++++ b/sound/oss/via82cxxx_audio.c
+@@ -2105,6 +2105,7 @@ static struct page * via_mm_nopage (struct vm_area_struct * vma,
+ {
+ 	struct via_info *card = vma->vm_private_data;
+ 	struct via_channel *chan = &card->ch_out;
++	unsigned long max_bufs;
+ 	struct page *dmapage;
+ 	unsigned long pgoff;
+ 	int rd, wr;
+@@ -2128,14 +2129,11 @@ static struct page * via_mm_nopage (struct vm_area_struct * vma,
+ 	rd = card->ch_in.is_mapped;
+ 	wr = card->ch_out.is_mapped;
+ 
+-#ifndef VIA_NDEBUG
+-	{
+-	unsigned long max_bufs = chan->frag_number;
+-	if (rd && wr) max_bufs *= 2;
+-	/* via_dsp_mmap() should ensure this */
+-	assert (pgoff < max_bufs);
+-	}
+-#endif
++	max_bufs = chan->frag_number;
++	if (rd && wr)
++		max_bufs *= 2;
++	if (pgoff >= max_bufs)
++		return NOPAGE_SIGBUS;
+ 
+ 	/* if full-duplex (read+write) and we have two sets of bufs,
+ 	 * then the playback buffers come first, sez soundcard.c */
+diff --git a/sound/usb/usx2y/usX2Yhwdep.c b/sound/usb/usx2y/usX2Yhwdep.c
+index b76b3dd..e617d7e 100644
+--- a/sound/usb/usx2y/usX2Yhwdep.c
++++ b/sound/usb/usx2y/usX2Yhwdep.c
+@@ -88,7 +88,7 @@ static int snd_us428ctls_mmap(struct snd_hwdep * hw, struct file *filp, struct v
+ 		us428->us428ctls_sharedmem->CtlSnapShotLast = -2;
+ 	}
+ 	area->vm_ops = &us428ctls_vm_ops;
+-	area->vm_flags |= VM_RESERVED;
++	area->vm_flags |= VM_RESERVED | VM_DONTEXPAND;
+ 	area->vm_private_data = hw->private_data;
+ 	return 0;
+ }
+diff --git a/sound/usb/usx2y/usx2yhwdeppcm.c b/sound/usb/usx2y/usx2yhwdeppcm.c
+index 6109f69..4ee1d78 100644
+--- a/sound/usb/usx2y/usx2yhwdeppcm.c
++++ b/sound/usb/usx2y/usx2yhwdeppcm.c
+@@ -728,7 +728,7 @@ static int snd_usX2Y_hwdep_pcm_mmap(struct snd_hwdep * hw, struct file *filp, st
+ 		return -ENODEV;
+ 	}
+ 	area->vm_ops = &snd_usX2Y_hwdep_pcm_vm_ops;
+-	area->vm_flags |= VM_RESERVED;
++	area->vm_flags |= VM_RESERVED | VM_DONTEXPAND;
+ 	area->vm_private_data = hw->private_data;
+ 	return 0;
+ }

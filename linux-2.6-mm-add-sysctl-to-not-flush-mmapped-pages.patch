@@ -1,0 +1,203 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Thu, 7 Feb 2008 14:32:21 -0500
+Subject: [mm] add sysctl to not flush mmapped pages
+Message-id: 1202412741.4172.12.camel@dhcp83-56.boston.redhat.com
+O-Subject: [RHEL5-U2 patch] Customer reports "severe application performance degradation moving from RHEL3 to RHEL5 - extensive use of mmap IO"
+Bugzilla: 431180
+
+This is the RHEL5-U2 patch(merged into kernel-2.6.18-78 and tested) that
+addresses this issue.  I suspect it will be needed soon...
+
+-----------------------------------------------------------------------
+We have a high profile customer that ran into what they determined
+to be a severe performance regression when migrating from RHEL3 directly
+to RHEL5. They have an application that mmap()s several thousand
+files and directs network socket output to the virtual address space
+that those files are mmap()'d into, a few bytes at a time. This creates
+a zero-copy solution for streaming network input data to several
+thousand files on disk.
+
+On RHEL3(2.4) the modifications to the pagecache pages of an mmap()'d
+file do not get flushed to disk as long as that file is mmap()'d. Once
+the
+munmap() occurs the the PTE dirty bits get probigated to the page
+PG_dirty bits and the inode gets marked dirty so those pages get flushed
+out asynchronously by kupdate within 5 seconds. On RHEL5(2.6), the PTE
+dirty bits get probigated to the page PG_dirty bits and the inode gets
+marked dirty each time the page is modified in do_no_page() and
+do_wp_page() so the page gets flushed out within 30 seconds of being
+modified.
+
+This is a 2.6 *feature* since pagecache pages that are mmap()'s and
+modified via store instructions get flushed out to disk in the same way
+as those that are modifies via write() system calls. However this also
+causes  significantly more IO from kupdate since it writes the mmap()'d
+pagecache pages back to disk several times when those pages are updated
+a few bytes at a time. This additional IO from thousand mmap()'d files
+during peak, slows down the application on RHEL5 to the
+point where it delivers stale data to other components of the
+application and that results in “bad things”. This behavior is not seen
+when running the same code on RHEL3 since the data is not
+flushed out until the file is munmap().
+
+The attached patch adds tuning parameter /proc/sys/vm/flush_mmap_pages
+which controls whether the system flushes out modified mmap()'d pages
+continuously or postpones the flushing until the munmap(). By default,
+flush_mmap_pages is 1, forcing the current RHEL5 continuous flushing
+behavior. When flush_mmap_pages is set to zero, the probigation of the
+PTE dirty bits to the page PG_dirty bits and the marking of the inode to
+DIRTY is postponed until the file is munmap()'d. unmap_page_range()
+was also changed to asynchronously flush the pages that were modified
+when the file was mmap()'d via a pdflush_operation() that calls
+filemap_flush(). There is no danger of "loosing" a modified page and
+not writing it to disk since the PTE dirty bit is not cleared until the
+file is unmap()'d or kswapd()/try_to_free_pages() reclaims the page via
+a call to try_to_unmap(), both of which probigate the PTE dirty bit to
+the page PG_dirty bit.
+
+Fixes BZ 431180.
+-----------------------------------------------------------------------
+
+diff --git a/include/linux/sysctl.h b/include/linux/sysctl.h
+index 5faf2cd..463aca2 100644
+--- a/include/linux/sysctl.h
++++ b/include/linux/sysctl.h
+@@ -202,7 +202,8 @@ enum
+ 	VM_VDSO_ENABLED=34,	/* map VDSO into new processes? */
+ 	VM_MIN_SLAB=35,		 /* Percent pages ignored by zone reclaim */
+ 	VM_PAGECACHE=37,        /* favor reclaiming unmapped pagecache pages */
+-	VM_MMAP_MIN_ADDR=38, /* amound of memory to protect from mmap */
++	VM_MMAP_MIN_ADDR=38, 	/* amount of memory to protect from mmap */
++	VM_FLUSH_MMAP=39,       /* flush mmap()d pagecache pages */
+ };
+ 
+ 
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index 472cc83..7a5ac51 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -77,6 +77,7 @@ extern int pid_max_min, pid_max_max;
+ extern int sysctl_drop_caches;
+ extern int percpu_pagelist_fraction;
+ extern int compat_log;
++extern int flush_mmap_pages;
+ 
+ #if defined(CONFIG_X86_LOCAL_APIC) && defined(CONFIG_X86)
+ extern int proc_unknown_nmi_panic(ctl_table *, int, struct file *,
+@@ -1108,7 +1109,17 @@ static ctl_table vm_table[] = {
+ 		.strategy	= &sysctl_intvec,
+ 		.extra1		= &zero,
+ 		.extra2		= &one_hundred,
+-},
++	},
++	{
++		.ctl_name	= VM_FLUSH_MMAP,
++		.procname	= "flush_mmap_pages",
++		.data		= &flush_mmap_pages,
++		.maxlen		= sizeof(flush_mmap_pages),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++		.strategy	= &sysctl_intvec,
++		.extra1		= &zero,
++	},
+ 	{ .ctl_name = 0 }
+ };
+ 
+diff --git a/mm/memory.c b/mm/memory.c
+index ec8655e..dfc5f21 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -93,6 +93,7 @@ static int __init disable_randmaps(char *s)
+ }
+ __setup("norandmaps", disable_randmaps);
+ 
++int flush_mmap_pages = 1;
+ 
+ /*
+  * If a p?d_bad entry is found while walking page tables, report
+@@ -744,6 +745,11 @@ static inline unsigned long zap_pud_range(struct mmu_gather *tlb,
+ 	return addr;
+ }
+ 
++static void mmap_flush(struct address_space *mapping)
++{
++	filemap_flush(mapping);
++}
++
+ static unsigned long unmap_page_range(struct mmu_gather *tlb,
+ 				struct vm_area_struct *vma,
+ 				unsigned long addr, unsigned long end,
+@@ -769,6 +775,9 @@ static unsigned long unmap_page_range(struct mmu_gather *tlb,
+ 	} while (pgd++, addr = next, (addr != end && *zap_work > 0));
+ 	tlb_end_vma(tlb, vma);
+ 
++	if (!flush_mmap_pages && vma->vm_file && vma->vm_file->f_mapping)
++			pdflush_operation(mmap_flush, vma->vm_file->f_mapping);
++
+ 	return addr;
+ }
+ 
+@@ -1624,6 +1633,7 @@ static int do_wp_page(struct mm_struct *mm, struct vm_area_struct *vma,
+ 	pte_t entry;
+ 	int reuse = 0, ret = VM_FAULT_MINOR;
+ 	struct page *dirty_page = NULL;
++	int dirty_pte = 0;
+ 
+ 	old_page = vm_normal_page(vma, address, orig_pte);
+ 	if (!old_page)
+@@ -1682,6 +1692,7 @@ static int do_wp_page(struct mm_struct *mm, struct vm_area_struct *vma,
+ 		flush_cache_page(vma, address, pte_pfn(orig_pte));
+ 		entry = pte_mkyoung(orig_pte);
+ 		entry = maybe_mkwrite(pte_mkdirty(entry), vma);
++		dirty_pte++;
+ 		ptep_set_access_flags(vma, address, page_table, entry, 1);
+ 		update_mmu_cache(vma, address, entry);
+ 		lazy_mmu_prot_update(entry);
+@@ -1725,6 +1736,7 @@ gotten:
+ 		flush_cache_page(vma, address, pte_pfn(orig_pte));
+ 		entry = mk_pte(new_page, vma->vm_page_prot);
+ 		entry = maybe_mkwrite(pte_mkdirty(entry), vma);
++		dirty_pte++;
+ 		lazy_mmu_prot_update(entry);
+ 		/*
+ 		 * Clear the pte entry and flush it first, before updating the
+@@ -1749,7 +1761,8 @@ gotten:
+ unlock:
+ 	pte_unmap_unlock(page_table, ptl);
+ 	if (dirty_page) {
+-		set_page_dirty_balance(dirty_page);
++		if (flush_mmap_pages || !dirty_pte)
++			set_page_dirty_balance(dirty_page);
+ 		put_page(dirty_page);
+ 	}
+ 	return ret;
+@@ -2285,6 +2298,7 @@ static int do_no_page(struct mm_struct *mm, struct vm_area_struct *vma,
+ 	int ret = VM_FAULT_MINOR;
+ 	int anon = 0;
+ 	struct page *dirty_page = NULL;
++	int dirty_pte = 0;
+ 
+ 	pte_unmap(page_table);
+ 	BUG_ON(vma->vm_flags & VM_PFNMAP);
+@@ -2369,8 +2383,10 @@ retry:
+ 	if (pte_none(*page_table)) {
+ 		flush_icache_page(vma, new_page);
+ 		entry = mk_pte(new_page, vma->vm_page_prot);
+-		if (write_access)
++		if (write_access) {
+ 			entry = maybe_mkwrite(pte_mkdirty(entry), vma);
++			dirty_pte++;
++		}
+ 		lazy_mmu_prot_update(entry);
+ 		set_pte_at(mm, address, page_table, entry);
+ 		if (anon) {
+@@ -2396,7 +2412,8 @@ retry:
+ unlock:
+ 	pte_unmap_unlock(page_table, ptl);
+ 	if (dirty_page) {
+-		set_page_dirty_balance(dirty_page);
++		if (flush_mmap_pages || !dirty_pte)
++			set_page_dirty_balance(dirty_page);
+ 		put_page(dirty_page);
+ 	}
+ 	return ret;

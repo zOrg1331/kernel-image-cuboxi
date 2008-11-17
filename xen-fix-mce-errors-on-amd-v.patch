@@ -1,0 +1,38 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] Fix MCE errors on AMD-V Barcelona
+Date: Mon, 13 Aug 2007 13:18:53 -0400
+Bugzilla: 251435
+Message-Id: <46C0927D.70009@redhat.com>
+Changelog: [XEN] Fix MCE errors on AMD-V
+
+always initiate AMD mcheck initialization code in the hypervisor if AMD 
+machine (ie. Remove family check)
+
+Bhavana
+
+
+--- xen/arch/x86/cpu/mcheck/mce.c.mceinit	2007-08-10 13:34:38.000000000 -0400
++++ xen/arch/x86/cpu/mcheck/mce.c	2007-08-10 13:37:33.000000000 -0400
+@@ -34,8 +34,7 @@ void mcheck_init(struct cpuinfo_x86 *c)
+ 
+ 	switch (c->x86_vendor) {
+ 		case X86_VENDOR_AMD:
+-			if (c->x86==6 || c->x86==15)
+-				amd_mcheck_init(c);
++			amd_mcheck_init(c);
+ 			break;
+ 
+ 		case X86_VENDOR_INTEL:
+--- xen/arch/x86/cpu/mcheck/k7.c.mceinit	2007-08-10 13:35:45.000000000 -0400
++++ xen/arch/x86/cpu/mcheck/k7.c	2007-08-10 13:36:46.000000000 -0400
+@@ -75,6 +75,9 @@ void amd_mcheck_init(struct cpuinfo_x86 
+ 	machine_check_vector = k7_machine_check;
+ 	wmb();
+ 
++	if (!cpu_has(c, X86_FEATURE_MCE))
++		return;
++
+ 	printk (KERN_INFO "Intel machine check architecture supported.\n");
+ 	rdmsr (MSR_IA32_MCG_CAP, l, h);
+ 	if (l & (1<<8))	/* Control register present ? */
+

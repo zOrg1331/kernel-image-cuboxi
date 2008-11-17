@@ -1,0 +1,505 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Thu, 20 Dec 2007 18:04:54 -0500
+Subject: [xen] ia64: guest has bad network performance
+Message-id: 20071220174356.9E52.TYAMAMOT@redhat.com
+O-Subject: [RHEL5.2 PATCH][Xen] Windows Guest/IA64 have bad network performance.
+Bugzilla: 272201
+
+Attached patches fix BZ#272201.
+https://bugzilla.redhat.com/show_bug.cgi?id=272201
+
+These are backported from the upstream to optimize the ptc.e emulation
+and vtlb size.
+
+- cs15560: [IA64] Speedup ptc.e emulation
+  http://xenbits.xensource.com/ext/ia64/xen-unstable.hg?rev/834ac63f4894
+- cs15696: [IA64] Make MMU setting of domVTi configurable
+  http://xenbits.xensource.com/ext/ia64/xen-unstable.hg?rev/5b19839d0365
+- cs15725: [IA64] Shrink vtlb size
+  http://xenbits.xensource.com/ext/ia64/xen-unstable.hg?rev/f317c27973f5
+
+I've tested these patches with kernel-xen-2.6.18-58.el5, and confirmed
+with ttcp that network performance has been improved as follows:
+
+Result of network throughput by executing 'ttcpia64 -u -t -l65000
+-n75000 xx.xx.xx.xx'
+  Before : 39709.25 KB/sec
+  After  : 70960.53 KB/sec
+
+Please review and ACK.
+
+Regards,
+
+Tetsu Yamamoto
+
+# HG changeset patch
+# User Alex Williamson <alex.williamson@hp.com>
+# Date 1186942753 21600
+# Node ID 5b19839d036508fb2721a567798359dd11f68916
+# Parent  54c721bb6d452d8eb97a151c847c9276868ae5c5
+[IA64] Make MMU setting of domVTi configurable
+
+This patch makes MMU setting of domVTi configurable.
+The size of VTLB and VHPT can be set by boot option.
+(e.g. "vti_vtlb_size=256k vti_vhpt_size=1m")
+
+Also some cleanups.
+
+Signed-off-by: Kouya Shimura <kouya@jp.fujitsu.com>
+
+diff --git a/arch/ia64/vmx/vmmu.c b/arch/ia64/vmx/vmmu.c
+index 41a0356..79e22f5 100644
+--- a/arch/ia64/vmx/vmmu.c
++++ b/arch/ia64/vmx/vmmu.c
+@@ -19,23 +19,48 @@
+  *  Xuefei Xu (Anthony Xu) (Anthony.xu@intel.com)
+  *  Yaozu Dong (Eddie Dong) (Eddie.dong@intel.com)
+  */
+-#include <linux/sched.h>
+-#include <linux/mm.h>
+-#include <asm/tlb.h>
+-#include <asm/gcc_intrin.h>
+-#include <asm/vcpu.h>
+-#include <linux/interrupt.h>
+ #include <asm/vmx_vcpu.h>
+-#include <asm/vmx_mm_def.h>
+-#include <asm/vmx.h>
+-#include <asm/hw_irq.h>
+ #include <asm/vmx_pal_vsa.h>
+-#include <asm/kregs.h>
+-#include <asm/vcpu.h>
+-#include <xen/irq.h>
+-#include <xen/errno.h>
+ #include <xen/sched-if.h>
+ 
++static int default_vtlb_sz = DEFAULT_VTLB_SZ;
++static int default_vhpt_sz = DEFAULT_VHPT_SZ;
++
++static void __init parse_vtlb_size(char *s)
++{
++    int sz = parse_size_and_unit(s, NULL);
++
++    if (sz > 0) {
++        default_vtlb_sz = fls(sz - 1);
++        /* minimum 16KB (for tag uniqueness) */
++        if (default_vtlb_sz < 14)
++            default_vtlb_sz = 14;
++    }
++}
++
++static int canonicalize_vhpt_size(int sz)
++{
++    /* minimum 32KB */
++    if (sz < 15)
++        return 15;
++    /* maximum 8MB (since purging TR is hard coded) */
++    if (sz > IA64_GRANULE_SHIFT - 1)
++        return IA64_GRANULE_SHIFT - 1;
++    return sz;
++}
++
++static void __init parse_vhpt_size(char *s)
++{
++    int sz = parse_size_and_unit(s, NULL);
++    if (sz > 0) {
++        default_vhpt_sz = fls(sz - 1);
++        default_vhpt_sz = canonicalize_vhpt_size(default_vhpt_sz);
++    }
++}
++
++custom_param("vti_vtlb_size", parse_vtlb_size);
++custom_param("vti_vhpt_size", parse_vhpt_size);
++
+ /*
+  * Get the machine page frame number in 16KB unit
+  * Input:
+@@ -132,66 +157,33 @@ purge_machine_tc_by_domid(domid_t domid)
+ 
+ static int init_domain_vhpt(struct vcpu *v)
+ {
+-    struct page_info *page;
+-    void * vbase;
+-    page = alloc_domheap_pages (NULL, VCPU_VHPT_ORDER, 0);
+-    if ( page == NULL ) {
+-        printk("No enough contiguous memory for init_domain_vhpt\n");
+-        return -ENOMEM;
+-    }
+-    vbase = page_to_virt(page);
+-    memset(vbase, 0, VCPU_VHPT_SIZE);
+-    printk(XENLOG_DEBUG "Allocate domain vhpt at 0x%p\n", vbase);
+-    
+-    VHPT(v,hash) = vbase;
+-    VHPT(v,hash_sz) = VCPU_VHPT_SIZE/2;
+-    VHPT(v,cch_buf) = (void *)((u64)vbase + VHPT(v,hash_sz));
+-    VHPT(v,cch_sz) = VCPU_VHPT_SIZE - VHPT(v,hash_sz);
+-    thash_init(&(v->arch.vhpt),VCPU_VHPT_SHIFT-1);
+-    v->arch.arch_vmx.mpta = v->arch.vhpt.pta.val;
++    int rc;
+ 
+-    return 0;
++    rc = thash_alloc(&(v->arch.vhpt), default_vhpt_sz, "vhpt");
++    v->arch.arch_vmx.mpta = v->arch.vhpt.pta.val;
++    return rc;
+ }
+ 
+ 
+ static void free_domain_vhpt(struct vcpu *v)
+ {
+-    struct page_info *page;
+-
+-    if (v->arch.vhpt.hash) {
+-        page = virt_to_page(v->arch.vhpt.hash);
+-        free_domheap_pages(page, VCPU_VHPT_ORDER);
+-        v->arch.vhpt.hash = 0;
+-    }
+-
+-    return;
++    if (v->arch.vhpt.hash)
++        thash_free(&(v->arch.vhpt));
+ }
+ 
+ int init_domain_tlb(struct vcpu *v)
+ {
+-    struct page_info *page;
+-    void * vbase;
+     int rc;
+ 
+     rc = init_domain_vhpt(v);
+     if (rc)
+         return rc;
+ 
+-    page = alloc_domheap_pages (NULL, VCPU_VTLB_ORDER, 0);
+-    if ( page == NULL ) {
+-        printk("No enough contiguous memory for init_domain_tlb\n");
++    rc = thash_alloc(&(v->arch.vtlb), default_vtlb_sz, "vtlb");
++    if (rc) {
+         free_domain_vhpt(v);
+-        return -ENOMEM;
++        return rc;
+     }
+-    vbase = page_to_virt(page);
+-    memset(vbase, 0, VCPU_VTLB_SIZE);
+-    printk(XENLOG_DEBUG "Allocate domain vtlb at 0x%p\n", vbase);
+-    
+-    VTLB(v,hash) = vbase;
+-    VTLB(v,hash_sz) = VCPU_VTLB_SIZE/2;
+-    VTLB(v,cch_buf) = (void *)((u64)vbase + VTLB(v,hash_sz));
+-    VTLB(v,cch_sz) = VCPU_VTLB_SIZE - VTLB(v,hash_sz);
+-    thash_init(&(v->arch.vtlb),VCPU_VTLB_SHIFT-1);
+     
+     return 0;
+ }
+@@ -199,12 +191,8 @@ int init_domain_tlb(struct vcpu *v)
+ 
+ void free_domain_tlb(struct vcpu *v)
+ {
+-    struct page_info *page;
+-
+-    if ( v->arch.vtlb.hash) {
+-        page = virt_to_page(v->arch.vtlb.hash);
+-        free_domheap_pages(page, VCPU_VTLB_ORDER);
+-    }
++    if (v->arch.vtlb.hash)
++        thash_free(&(v->arch.vtlb));
+ 
+     free_domain_vhpt(v);
+ }
+@@ -252,41 +240,9 @@ void machine_tlb_insert(struct vcpu *v, thash_data_t *tlb)
+  */
+ void machine_tlb_purge(u64 va, u64 ps)
+ {
+-//    u64       psr;
+-//    psr = ia64_clear_ic();
+     ia64_ptcl(va, ps << 2);
+-//    ia64_set_psr(psr);
+-//    ia64_srlz_i();
+-//    return;
+-}
+-/*
+-u64 machine_thash(u64 va)
+-{
+-    return ia64_thash(va);
+-}
+-
+-u64 machine_ttag(u64 va)
+-{
+-    return ia64_ttag(va);
+-}
+-*/
+-thash_data_t * vsa_thash(PTA vpta, u64 va, u64 vrr, u64 *tag)
+-{
+-    u64 index,pfn,rid,pfn_bits;
+-    pfn_bits = vpta.size-5-8;
+-    pfn = REGION_OFFSET(va)>>_REGION_PAGE_SIZE(vrr);
+-    rid = _REGION_ID(vrr);
+-    index = ((rid&0xff)<<pfn_bits)|(pfn&((1UL<<pfn_bits)-1));
+-    *tag = ((rid>>8)&0xffff) | ((pfn >>pfn_bits)<<16);
+-    return (thash_data_t *)((vpta.base<<PTA_BASE_SHIFT)+(index<<5));
+-//    return ia64_call_vsa(PAL_VPS_THASH,va,vrr,vpta,0,0,0,0);
+ }
+ 
+-//u64 vsa_ttag(u64 va, u64 vrr)
+-//{
+-//    return ia64_call_vsa(PAL_VPS_TTAG,va,vrr,0,0,0,0,0);
+-//}
+-
+ int vhpt_enabled(VCPU *vcpu, uint64_t vadr, vhpt_ref_t ref)
+ {
+     ia64_rr  vrr;
+diff --git a/arch/ia64/vmx/vmx_entry.S b/arch/ia64/vmx/vmx_entry.S
+index ef400c4..afe9762 100644
+--- a/arch/ia64/vmx/vmx_entry.S
++++ b/arch/ia64/vmx/vmx_entry.S
+@@ -20,21 +20,9 @@
+  *  Kun Tian (Kevin Tian) (kevin.tian@intel.com)
+  */
+ 
+-#ifndef VCPU_TLB_SHIFT
+-#define VCPU_TLB_SHIFT	22
+-#endif
+ #include <linux/config.h>
+ #include <asm/asmmacro.h>
+-#include <asm/cache.h>
+-#include <asm/kregs.h>
+ #include <asm/offsets.h>
+-#include <asm/pgtable.h>
+-#include <asm/percpu.h>
+-#include <asm/processor.h>
+-#include <asm/thread_info.h>
+-#include <asm/unistd.h>
+-#include <asm/vhpt.h>
+-#include <asm/vmmu.h>
+ #include "vmx_minstate.h"
+ 
+ GLOBAL_ENTRY(ia64_leave_nested)
+@@ -719,7 +707,7 @@ GLOBAL_ENTRY(vmx_switch_rr7)
+    movl r25=PAGE_KERNEL
+    ;;
+    or loc5 = r25,loc5          // construct PA | page properties
+-   mov r23 = VCPU_VHPT_SHIFT <<2
++   mov r23 = IA64_GRANULE_SHIFT <<2
+    ;;
+    ptr.d   in3,r23
+    ;;
+diff --git a/arch/ia64/vmx/vtlb.c b/arch/ia64/vmx/vtlb.c
+index 3bd1a66..e60b81d 100644
+--- a/arch/ia64/vmx/vtlb.c
++++ b/arch/ia64/vmx/vtlb.c
+@@ -21,34 +21,14 @@
+  *  XiaoYan Feng (Fleming Feng) (Fleming.feng@intel.com)
+  */
+ 
+-#include <linux/sched.h>
+-#include <asm/tlb.h>
+-#include <xen/mm.h>
+-#include <asm/vmx_mm_def.h>
+-#include <asm/gcc_intrin.h>
+-#include <linux/interrupt.h>
+ #include <asm/vmx_vcpu.h>
+-#include <asm/vmx_phy_mode.h>
+-#include <asm/vmmu.h>
+-#include <asm/tlbflush.h>
+-#include <asm/regionreg.h>
+-#define  MAX_CCH_LENGTH     40
+ 
+ thash_data_t *__alloc_chain(thash_cb_t *);
+ 
+-static void cch_mem_init(thash_cb_t *hcb)
++static inline void cch_mem_init(thash_cb_t *hcb)
+ {
+-    int num;
+-    thash_data_t *p;
+-
+-    hcb->cch_freelist = p = hcb->cch_buf;
+-    num = (hcb->cch_sz/sizeof(thash_data_t))-1;
+-    do{
+-        p->next =p+1;
+-        p++;
+-        num--;
+-    }while(num);
+-    p->next = NULL;
++    hcb->cch_free_idx = 0;
++    hcb->cch_freelist = NULL;
+ }
+ 
+ static thash_data_t *cch_alloc(thash_cb_t *hcb)
+@@ -56,8 +36,16 @@ static thash_data_t *cch_alloc(thash_cb_t *hcb)
+     thash_data_t *p;
+     if ( (p = hcb->cch_freelist) != NULL ) {
+         hcb->cch_freelist = p->next;
++        return p;
++    }
++    if (hcb->cch_free_idx < hcb->cch_sz/sizeof(thash_data_t)) {
++        p = &((thash_data_t *)hcb->cch_buf)[hcb->cch_free_idx++];
++        p->page_flags = 0;
++        p->itir = 0;
++        p->next = NULL;
++        return p;
+     }
+-    return p;
++    return NULL;
+ }
+ 
+ /*
+@@ -298,6 +286,17 @@ u64 guest_vhpt_lookup(u64 iha, u64 *pte)
+     return ret;
+ }
+ 
++static thash_data_t * vtlb_thash(PTA vpta, u64 va, u64 vrr, u64 *tag)
++{
++    u64 index, pfn, rid;
++
++    pfn = REGION_OFFSET(va) >> _REGION_PAGE_SIZE(vrr);
++    rid = _REGION_ID(vrr);
++    index = (pfn ^ rid) & ((1UL << (vpta.size - 5)) - 1);
++    *tag = pfn ^ (rid << 39);
++    return (thash_data_t *)((vpta.base << PTA_BASE_SHIFT) + (index << 5));
++}
++
+ /*
+  *  purge software guest tlb
+  */
+@@ -320,7 +319,7 @@ static void vtlb_purge(VCPU *v, u64 va, u64 ps)
+         size = PSIZE(rr_ps);
+         vrr.ps = rr_ps;
+         while (num) {
+-            cur = vsa_thash(hcb->pta, curadr, vrr.rrval, &tag);
++            cur = vtlb_thash(hcb->pta, curadr, vrr.rrval, &tag);
+             while (cur) {
+                 if (cur->etag == tag && cur->ps == rr_ps)
+                     cur->etag = 1UL << 63;
+@@ -413,7 +412,7 @@ void vtlb_insert(VCPU *v, u64 pte, u64 itir, u64 va)
+     vcpu_get_rr(v, va, &vrr.rrval);
+     vrr.ps = itir_ps(itir);
+     VMX(v, psbits[va >> 61]) |= (1UL << vrr.ps);
+-    hash_table = vsa_thash(hcb->pta, va, vrr.rrval, &tag);
++    hash_table = vtlb_thash(hcb->pta, va, vrr.rrval, &tag);
+     cch = hash_table;
+     while (cch) {
+         if (INVALID_TLB(cch)) {
+@@ -645,7 +644,7 @@ thash_data_t *vtlb_lookup(VCPU *v, u64 va,int is_data)
+         ps = __ffs(psbits);
+         psbits &= ~(1UL << ps);
+         vrr.ps = ps;
+-        cch = vsa_thash(hcb->pta, va, vrr.rrval, &tag);
++        cch = vtlb_thash(hcb->pta, va, vrr.rrval, &tag);
+         do {
+             if (cch->etag == tag && cch->ps == ps)
+                 return cch;
+@@ -659,16 +658,15 @@ thash_data_t *vtlb_lookup(VCPU *v, u64 va,int is_data)
+ /*
+  * Initialize internal control data before service.
+  */
+-void thash_init(thash_cb_t *hcb, u64 sz)
++static void thash_init(thash_cb_t *hcb, u64 sz)
+ {
+     int num;
+-    thash_data_t *head, *p;
++    thash_data_t *head;
+ 
+     hcb->pta.val = (unsigned long)hcb->hash;
+     hcb->pta.vf = 1;
+     hcb->pta.ve = 1;
+     hcb->pta.size = sz;
+-    hcb->cch_rec_head = hcb->hash;
+     
+     head=hcb->hash;
+     num = (hcb->hash_sz/sizeof(thash_data_t));
+@@ -680,16 +678,47 @@ void thash_init(thash_cb_t *hcb, u64 sz)
+         head++;
+         num--;
+     }while(num);
++
++    hcb->cch_free_idx = 0;
++    hcb->cch_freelist = NULL;
++}
++
++int thash_alloc(thash_cb_t *hcb, u64 sz_log2, char *what)
++{
++    struct page_info *page;
++    void * vbase;
++    u64 sz = 1UL << sz_log2;
++
++    page = alloc_domheap_pages(NULL, (sz_log2 + 1 - PAGE_SHIFT), 0);
++    if (page == NULL) {
++        printk("No enough contiguous memory(%ldKB) for init_domain_%s\n", 
++               sz >> (10 - 1), what);
++        return -ENOMEM;
++    }
++    vbase = page_to_virt(page);
++    memset(vbase, 0, sz + sz); // hash + collisions chain
++    if (sz_log2 >= 20 - 1)
++        printk(XENLOG_DEBUG "Allocate domain %s at 0x%p(%ldMB)\n", 
++               what, vbase, sz >> (20 - 1));
++    else
++        printk(XENLOG_DEBUG "Allocate domain %s at 0x%p(%ldKB)\n",
++               what, vbase, sz >> (10 - 1));
+     
+-    hcb->cch_freelist = p = hcb->cch_buf;
+-    num = hcb->cch_sz / sizeof(thash_data_t);
+-    do{
+-        p->page_flags = 0;
+-        p->itir = 0;
+-        p->next =p+1;
+-        p++;
+-        num--;
+-    }while(num);
++    hcb->hash = vbase;
++    hcb->hash_sz = sz;
++    hcb->cch_buf = (void *)((u64)vbase + hcb->hash_sz);
++    hcb->cch_sz = sz;
++    thash_init(hcb, sz_log2);
++    return 0;
++}
+ 
+-    (p - 1)->next = NULL;
++void thash_free(thash_cb_t *hcb)
++{
++    struct page_info *page;
++
++    if (hcb->hash) {
++        page = virt_to_page(hcb->hash);
++        free_domheap_pages(page, hcb->pta.size + 1 - PAGE_SHIFT);
++        hcb->hash = 0;
++    }
+ }
+diff --git a/include/asm-ia64/vmmu.h b/include/asm-ia64/vmmu.h
+index bf6889b..5710837 100644
+--- a/include/asm-ia64/vmmu.h
++++ b/include/asm-ia64/vmmu.h
+@@ -24,12 +24,8 @@
+ #define XEN_TLBthash_H
+ 
+ #define     MAX_CCN_DEPTH       (15)       // collision chain depth
+-#define     VCPU_VTLB_SHIFT     (20)    // 1M for VTLB
+-#define     VCPU_VTLB_SIZE      (1UL<<VCPU_VTLB_SHIFT)
+-#define     VCPU_VTLB_ORDER     (VCPU_VTLB_SHIFT - PAGE_SHIFT)
+-#define     VCPU_VHPT_SHIFT     (24)    // 16M for VTLB
+-#define     VCPU_VHPT_SIZE      (1UL<<VCPU_VHPT_SHIFT)
+-#define     VCPU_VHPT_ORDER     (VCPU_VHPT_SHIFT - PAGE_SHIFT)
++#define     DEFAULT_VTLB_SZ     (14) // 16K hash + 16K c-chain for VTLB
++#define     DEFAULT_VHPT_SZ     (23) // 8M hash + 8M c-chain for VHPT
+ #define     VTLB(v,_x)          (v->arch.vtlb._x)
+ #define     VHPT(v,_x)          (v->arch.vhpt._x)
+ #ifndef __ASSEMBLY__
+@@ -195,15 +191,17 @@ typedef struct thash_cb {
+     u64     hash_sz;        // size of above data.
+     void    *cch_buf;       // base address of collision chain.
+     u64     cch_sz;         // size of above data.
++    u64     cch_free_idx;   // index of free entry.
+     thash_data_t *cch_freelist;
+-    thash_data_t *cch_rec_head;  // cch recycle header
+     PTA     pta;
+ } thash_cb_t;
+ 
+ /*
+- * Initialize internal control data before service.
++ * Allocate and initialize internal control data before service.
+  */
+-extern void thash_init(thash_cb_t *hcb, u64 sz);
++extern int thash_alloc(thash_cb_t *hcb, u64 sz, char *what);
++
++extern void thash_free(thash_cb_t *hcb);
+ 
+ /*
+  * Insert an entry to hash table. 

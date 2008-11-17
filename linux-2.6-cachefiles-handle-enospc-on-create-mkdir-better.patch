@@ -1,0 +1,81 @@
+From: David Howells<dhowells@redhat.com>
+Subject: [RHEL5/FC6 PATCH] CacheFiles: Handle ENOSPC on create/mkdir better
+Date: Wed, 30 Aug 2006 12:50:09
+Bugzilla: 212844
+Message-Id: <1072.1156956609@warthog.cambridge.redhat.com>
+Changelog: CacheFiles: Handle ENOSPC on create/mkdir better
+
+
+Handle ENOSPC on create/mkdir calls to the backing filesystem better.  Rather
+than returning it to FS-Cache or FS-Cache returning it to the netfs, it is
+converted into ENOBUFS.
+
+I've tested this on my testbox.  It can be reproduced by setting up a very
+small cache, for example with:
+
+	dd if=/dev/zero of=/root/fakedisc bs=10240 count=1024
+	mke2fs -j /root/fakedisc 
+	tune2fs -o user_xattr /root/fakedisc 
+	mount -o loop /root/fakedisc /var/fscache/
+	cachefilesd
+
+And then running a "find" over a few thousand NFS files on an NFS share that's
+mounted with "-o fsc".  This will eventually run the cache out of free inodes,
+and ENOSPC will be returned by Ext3, yielding a lot of these messages in the
+kernel log:
+
+	FS-Cache: error from cache: -28
+
+David
+---
+
+ fs/cachefiles/cf-namei.c |    7 ++++++-
+ fs/fscache/cookie.c      |    5 ++++-
+ 2 files changed, 10 insertions(+), 2 deletions(-)
+
+Index: latest/fs/cachefiles/cf-namei.c
+===================================================================
+--- latest.orig/fs/cachefiles/cf-namei.c
++++ latest/fs/cachefiles/cf-namei.c
+@@ -509,11 +509,13 @@ lookup_again:
+ 	return 0;
+ 
+ create_error:
++	_debug("create error %d", ret);
+ 	if (ret == -EIO)
+ 		cachefiles_io_error(cache, "create/mkdir failed");
+ 	goto error;
+ 
+ check_error:
++	_debug("check error %d", ret);
+ 	write_lock(&cache->active_lock);
+ 	rb_erase(&object->active_node, &cache->active_nodes);
+ 	write_unlock(&cache->active_lock);
+@@ -546,7 +548,10 @@ error_out:
+ 	current->fsuid = fsuid;
+ 	current->fsgid = fsgid;
+ 
+-	_leave(" = ret");
++	if (ret == -ENOSPC)
++		ret = -ENOBUFS;
++
++	_leave(" = error %d", -ret);
+ 	return ret;
+ }
+ 
+Index: latest/fs/fscache/cookie.c
+===================================================================
+--- latest.orig/fs/fscache/cookie.c
++++ latest/fs/fscache/cookie.c
+@@ -750,8 +750,10 @@ no_cache:
+ 	ret = -ENOMEDIUM;
+ 	goto error_cleanup;
+ error:
+-	if (ret != -ENOBUFS)
++	if (ret != -ENOBUFS) {
+ 		printk(KERN_ERR "FS-Cache: error from cache: %d\n", ret);
++		ret = -ENOBUFS;
++	}
+ error_cleanup:
+ 	if (cookie) {
+ 		up_write(&cookie->sem);

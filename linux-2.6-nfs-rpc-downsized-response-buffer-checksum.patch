@@ -1,0 +1,123 @@
+From: Jeff Layton <jlayton@redhat.com>
+Subject: [RHEL5 PATCH] RPC: when downsizing response buffer, account for 	checksum (BZ 238687)
+Date: Mon, 7 May 2007 18:02:41 -0400
+Bugzilla: 238687
+Message-Id: <20070507220241.GH6129@dantu.rdu.redhat.com>
+Changelog: [nfs] RPC: when downsizing response buffer, account for checksum
+
+
+Currently, when the RPC layer is building a response it calls svc_reserve to
+downsize the reservation in the response buffer. The size that it uses in this
+situation does not account for the possibility of a checksum at the end of
+the packet.
+
+This is mostly evident when mounting NFSv2/3 with sec=krb5i or sec=krb5p. When
+you do this and do a bunch of I/O to the filesystem, you'll get printk's that
+look something like this:
+
+	RPC request reserved 164 but used 208
+
+NFSv4 seems to have a large enough reserved size for compound packets that it
+usually papers over this problem.
+
+These are soft reservations, and overflowing them generally isn't harmful,
+but this can generate a lot of printk spam on a busy mount. The following
+patch is a backport of the patch I've sent upstream to resolve this. The
+upstream patch is currently in -mm.
+
+diff --git a/fs/nfsd/nfs3proc.c b/fs/nfsd/nfs3proc.c
+index f61142a..7d47c16 100644
+--- a/fs/nfsd/nfs3proc.c
++++ b/fs/nfsd/nfs3proc.c
+@@ -175,7 +175,7 @@ nfsd3_proc_read(struct svc_rqst *rqstp, struct nfsd3_readargs *argp,
+ 	if (NFSSVC_MAXBLKSIZE < resp->count)
+ 		resp->count = NFSSVC_MAXBLKSIZE;
+ 
+-	svc_reserve(rqstp, ((1 + NFS3_POST_OP_ATTR_WORDS + 3)<<2) + resp->count +4);
++	svc_reserve_auth(rqstp, ((1 + NFS3_POST_OP_ATTR_WORDS + 3)<<2) + resp->count +4);
+ 
+ 	fh_copy(&resp->fh, &argp->fh);
+ 	nfserr = nfsd_read(rqstp, &resp->fh, NULL,
+diff --git a/fs/nfsd/nfsproc.c b/fs/nfsd/nfsproc.c
+index 4e06810..21f2ff7 100644
+--- a/fs/nfsd/nfsproc.c
++++ b/fs/nfsd/nfsproc.c
+@@ -154,7 +154,7 @@ nfsd_proc_read(struct svc_rqst *rqstp, struct nfsd_readargs *argp,
+ 				argp->count);
+ 		argp->count = NFSSVC_MAXBLKSIZE;
+ 	}
+-	svc_reserve(rqstp, (19<<2) + argp->count + 4);
++	svc_reserve_auth(rqstp, (19<<2) + argp->count + 4);
+ 
+ 	resp->count = argp->count;
+ 	nfserr = nfsd_read(rqstp, fh_copy(&resp->fh, &argp->fh), NULL,
+diff --git a/include/linux/sunrpc/auth.h b/include/linux/sunrpc/auth.h
+index a6de332..d7cf890 100644
+--- a/include/linux/sunrpc/auth.h
++++ b/include/linux/sunrpc/auth.h
+@@ -20,9 +20,6 @@
+ /* size of the nodename buffer */
+ #define UNX_MAXNODENAME	32
+ 
+-/* Maximum size (in bytes) of an rpc credential or verifier */
+-#define RPC_MAX_AUTH_SIZE (400)
+-
+ /* Work around the lack of a VFS credential */
+ struct auth_cred {
+ 	uid_t	uid;
+diff --git a/include/linux/sunrpc/msg_prot.h b/include/linux/sunrpc/msg_prot.h
+index f43f237..a519176 100644
+--- a/include/linux/sunrpc/msg_prot.h
++++ b/include/linux/sunrpc/msg_prot.h
+@@ -34,6 +34,9 @@ enum rpc_auth_flavors {
+ 	RPC_AUTH_GSS_SPKMP = 390011,
+ };
+ 
++/* Maximum size (in bytes) of an rpc credential or verifier */
++#define RPC_MAX_AUTH_SIZE (400)
++
+ enum rpc_msg_type {
+ 	RPC_CALL = 0,
+ 	RPC_REPLY = 1
+diff --git a/include/linux/sunrpc/svc.h b/include/linux/sunrpc/svc.h
+index 94350f5..486abfe 100644
+--- a/include/linux/sunrpc/svc.h
++++ b/include/linux/sunrpc/svc.h
+@@ -326,4 +326,23 @@ int		   svc_register(struct svc_serv *, int, unsigned short);
+ void		   svc_wake_up(struct svc_serv *);
+ void		   svc_reserve(struct svc_rqst *rqstp, int space);
+ 
++/*
++ * When we want to reduce the size of the reserved space in the response
++ * buffer, we need to take into account the size of any checksum data that
++ * may be at the end of the packet. This is difficult to determine exactly
++ * for all cases without actually generating the checksum, so we just use a
++ * static value.
++ */
++static inline void 
++svc_reserve_auth(struct svc_rqst *rqstp, int space)
++{
++	int			added_space = 0;
++
++	switch(rqstp->rq_authop->flavour) {
++		case RPC_AUTH_GSS:
++			added_space = RPC_MAX_AUTH_SIZE;
++	}
++	return svc_reserve(rqstp, space + added_space);
++}
++
+ #endif /* SUNRPC_SVC_H */
+diff --git a/net/sunrpc/svc.c b/net/sunrpc/svc.c
+index 0aab5b5..2d390d1 100644
+--- a/net/sunrpc/svc.c
++++ b/net/sunrpc/svc.c
+@@ -379,7 +379,7 @@ svc_process(struct svc_serv *serv, struct svc_rqst *rqstp)
+ 	 * better idea of reply size
+ 	 */
+ 	if (procp->pc_xdrressize)
+-		svc_reserve(rqstp, procp->pc_xdrressize<<2);
++		svc_reserve_auth(rqstp, procp->pc_xdrressize<<2);
+ 
+ 	/* Call the function that processes the request. */
+ 	if (!versp->vs_dispatch) {
+

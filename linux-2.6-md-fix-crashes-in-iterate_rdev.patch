@@ -1,0 +1,211 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Mon, 25 Aug 2008 13:43:56 -0400
+Subject: [md] fix crashes in iterate_rdev
+Message-id: 1219686236.16580.8.camel@firewall.xsintricity.com
+O-Subject: [Patch RHEL5.3] MD: Fix crashes in iterate_rdev
+Bugzilla: 455471
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+There are possibilities of breakage if the devices change while being
+iterated through.  The attached patch was run on my stress tester over
+the weekend and passed.  This resolves bz455471.  This can be had via
+this mail or you can grab the relevant commit from my git tree:
+
+--
+Doug Ledford <dledford@redhat.com>
+              GPG KeyID: CFBFF194
+              http://people.redhat.com/dledford
+
+Infiniband specific RPMs available at
+              http://people.redhat.com/dledford/Infiniband
+
+commit 703996cab645e1f19b8f8c36be000bb90e006503
+Author: Doug Ledford <dledford@redhat.com>
+Date:   Mon Aug 25 13:36:16 2008 -0400
+
+    Fix up locking around iterate rdev
+
+    Signed-off-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/drivers/md/bitmap.c b/drivers/md/bitmap.c
+index 57bc10a..f4e368e 100644
+--- a/drivers/md/bitmap.c
++++ b/drivers/md/bitmap.c
+@@ -258,9 +258,9 @@ static struct page *read_sb_page(mddev_t *mddev, long offset, unsigned long inde
+ static int write_sb_page(mddev_t *mddev, long offset, struct page *page, int wait)
+ {
+ 	mdk_rdev_t *rdev;
+-	struct list_head *tmp;
+ 
+-	ITERATE_RDEV(mddev, rdev, tmp)
++	rcu_read_lock();
++	rdev_for_each_rcu(rdev, mddev)
+ 		if (test_bit(In_sync, &rdev->flags)
+ 		    && !test_bit(Faulty, &rdev->flags))
+ 			md_super_write(mddev, rdev,
+@@ -268,6 +268,7 @@ static int write_sb_page(mddev_t *mddev, long offset, struct page *page, int wai
+ 				       + page->index * (PAGE_SIZE/512),
+ 				       PAGE_SIZE,
+ 				       page);
++	rcu_read_unlock();
+ 
+ 	if (wait)
+ 		md_super_wait(mddev);
+diff --git a/drivers/md/md.c b/drivers/md/md.c
+index d77b879..72d3b87 100644
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -1306,13 +1306,17 @@ static mdk_rdev_t * match_dev_unit(mddev_t *mddev, mdk_rdev_t *dev)
+ 
+ static int match_mddev_units(mddev_t *mddev1, mddev_t *mddev2)
+ {
+-	struct list_head *tmp;
+-	mdk_rdev_t *rdev;
+-
+-	ITERATE_RDEV(mddev1,rdev,tmp)
+-		if (match_dev_unit(mddev2, rdev))
+-			return 1;
+-
++	mdk_rdev_t *rdev, *rdev2;
++
++	rcu_read_lock();
++	rdev_for_each_rcu(rdev, mddev1)
++		rdev_for_each_rcu(rdev2, mddev2)
++			if (rdev->bdev->bd_contains ==
++			    rdev2->bdev->bd_contains) {
++				rcu_read_unlock();
++				return 1;
++			}
++	rcu_read_unlock();
+ 	return 0;
+ }
+ 
+@@ -1366,7 +1370,7 @@ static int bind_rdev_to_array(mdk_rdev_t * rdev, mddev_t * mddev)
+ 	while ( (s=strchr(rdev->kobj.k_name, '/')) != NULL)
+ 		*s = '!';
+ 			
+-	list_add(&rdev->same_set, &mddev->disks);
++	list_add_rcu(&rdev->same_set, &mddev->disks);
+ 	rdev->mddev = mddev;
+ 	printk(KERN_INFO "md: bind<%s>\n", b);
+ 
+@@ -1390,10 +1394,14 @@ static void unbind_rdev_from_array(mdk_rdev_t * rdev)
+ 		return;
+ 	}
+ 	bd_release_from_disk(rdev->bdev, rdev->mddev->gendisk);
+-	list_del_init(&rdev->same_set);
++	list_del_rcu(&rdev->same_set);
+ 	printk(KERN_INFO "md: unbind<%s>\n", bdevname(rdev->bdev,b));
+ 	rdev->mddev = NULL;
+ 	sysfs_remove_link(&rdev->kobj, "block");
++
++	/* Delay due to rcu usage.
++	 */
++	synchronize_rcu();
+ 	kobject_del(&rdev->kobj);
+ }
+ 
+@@ -1445,7 +1453,6 @@ static void export_rdev(mdk_rdev_t * rdev)
+ 	if (rdev->mddev)
+ 		MD_BUG();
+ 	free_disk_sb(rdev);
+-	list_del_init(&rdev->same_set);
+ #ifndef MODULE
+ 	md_autodetect_dev(rdev->bdev->bd_dev);
+ #endif
+@@ -1924,10 +1931,21 @@ rdev_attr_show(struct kobject *kobj, struct attribute *attr, char *page)
+ {
+ 	struct rdev_sysfs_entry *entry = container_of(attr, struct rdev_sysfs_entry, attr);
+ 	mdk_rdev_t *rdev = container_of(kobj, mdk_rdev_t, kobj);
++	mddev_t *mddev = rdev->mddev;
++	ssize_t rv;
+ 
+ 	if (!entry->show)
+ 		return -EIO;
+-	return entry->show(rdev, page);
++
++	rv = mddev ? mddev_lock(mddev) : -EBUSY;
++	if (!rv) {
++		if (rdev->mddev == NULL)
++			rv = -EBUSY;
++		else
++			rv = entry->show(rdev, page);
++		mddev_unlock(mddev);
++	}
++	return rv;
+ }
+ 
+ static ssize_t
+@@ -1936,12 +1954,22 @@ rdev_attr_store(struct kobject *kobj, struct attribute *attr,
+ {
+ 	struct rdev_sysfs_entry *entry = container_of(attr, struct rdev_sysfs_entry, attr);
+ 	mdk_rdev_t *rdev = container_of(kobj, mdk_rdev_t, kobj);
++	ssize_t rv;
++	mddev_t *mddev = rdev->mddev;
+ 
+ 	if (!entry->store)
+ 		return -EIO;
+ 	if (!capable(CAP_SYS_ADMIN))
+ 		return -EACCES;
+-	return entry->store(rdev, page, length);
++	rv = mddev ? mddev_lock(mddev): -EBUSY;
++	if (!rv) {
++		if (rdev->mddev == NULL)
++			rv = -EBUSY;
++		else
++			rv = entry->store(rdev, page, length);
++		mddev_unlock(mddev);
++	}
++	return rv;
+ }
+ 
+ static void rdev_free(struct kobject *ko)
+@@ -3434,8 +3462,10 @@ static void autorun_devices(int part)
+ 		/* on success, candidates will be empty, on error
+ 		 * it won't...
+ 		 */
+-		ITERATE_RDEV_GENERIC(candidates,rdev,tmp)
++		ITERATE_RDEV_GENERIC(candidates,rdev,tmp) {
++			list_del_init(&rdev->same_set);
+ 			export_rdev(rdev);
++		}
+ 		mddev_put(mddev);
+ 	}
+ 	printk(KERN_INFO "md: ... autorun DONE.\n");
+@@ -4978,12 +5008,12 @@ int unregister_md_personality(struct mdk_personality *p)
+ static int is_mddev_idle(mddev_t *mddev)
+ {
+ 	mdk_rdev_t * rdev;
+-	struct list_head *tmp;
+ 	int idle;
+ 	unsigned long curr_events;
+ 
+ 	idle = 1;
+-	ITERATE_RDEV(mddev,rdev,tmp) {
++	rcu_read_lock();
++	rdev_for_each_rcu(rdev, mddev) {
+ 		struct gendisk *disk = rdev->bdev->bd_contains->bd_disk;
+ 		curr_events = disk_stat_read(disk, sectors[0]) + 
+ 				disk_stat_read(disk, sectors[1]) - 
+@@ -5006,6 +5036,7 @@ static int is_mddev_idle(mddev_t *mddev)
+ 			idle = 0;
+ 		}
+ 	}
++	rcu_read_unlock();
+ 	return idle;
+ }
+ 
+diff --git a/include/linux/raid/md_k.h b/include/linux/raid/md_k.h
+index d288902..15afc45 100644
+--- a/include/linux/raid/md_k.h
++++ b/include/linux/raid/md_k.h
+@@ -314,6 +314,9 @@ static inline char * mdname (mddev_t * mddev)
+ #define ITERATE_RDEV(mddev,rdev,tmp)					\
+ 	ITERATE_RDEV_GENERIC((mddev)->disks,rdev,tmp)
+ 
++#define rdev_for_each_rcu(rdev, mddev)					\
++	list_for_each_entry_rcu(rdev, &((mddev)->disks), same_set)
++
+ /*
+  * Iterates through 'pending RAID disks'
+  */

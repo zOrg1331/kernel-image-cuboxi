@@ -1,0 +1,77 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Subject: [RHEL5 PATCH] [NETDRV] e1000: Do not truncate TSO TCP header with 82544 workaround
+Date: Wed, 20 Dec 2006 16:34:53 +1100
+Bugzilla: 206540
+Message-Id: <20061220053453.GA25916@gondor.apana.org.au>
+Changelog: e1000: truncated TSO TCP header with 82544, workaround
+
+
+Hi:
+
+RHEL5 blocker BZ 206540
+
+This patch has been ACKed by Intel.  I haven't heard from Jeff Garzik
+yet though.  Could you ACK this Jeff? Thanks.
+
+It's safe because it only has an effect if the chipset is 82544 where
+we've verified that this fixes transmit hangs that occur when the TCP
+header of a TSO packet gets segmented due to alignment issues and the
+PCI-X workaround in the e1000 driver.  These alignment settings are
+present under Xen (or by CONFIG_DEBUG_SLAB had we not turned it off).
+
+Cheers,
+-- 
+Visit Openswan at http://www.openswan.org/
+Email: Herbert Xu ~{PmV>HI~} <herbert@gondor.apana.org.au>
+Home Page: http://gondor.apana.org.au/~herbert/
+PGP Key: http://gondor.apana.org.au/~herbert/pubkey.txt
+--
+[NETDRV] e1000: Do not truncate TSO TCP header with 82544 workaround
+
+The e1000 driver has a workaround for 82544 on PCI-X where if the
+terminating byte of a buffer is at addresses 0-3 mod 8, then 4 bytes
+are shaved off it and defered to a new segment.  This is due to an
+erratum that could otherwise cause TX hangs.
+
+Unfortunately this breaks TSO because it may cause the TCP header to
+be split over two segments which itself causes TX hangs.  The solution
+is to pull 4 bytes of data up from the next segment rather than pushing
+4 bytes off.  This ensures the TCP header remains in one piece and
+works around the PCI-X hang.
+
+This patch is based on one from Jesse Brandeburg.
+
+This bug has been trigered by both CONFIG_DEBUG_SLAB as well as Xen.
+
+Note that the only reason we don't see this normally is because the
+TCP stack starts writing from the end, i.e., it writes the TCP header
+first then slaps on the IP header, etc.  So the end of the TCP header
+(skb->tail - 1 here) is always aligned correctly.
+
+Had we made the start of the IP header (e.g., IPv6) 8-byte aligned
+instead, this would happen for normal TCP traffic as well.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+--
+diff --git a/drivers/net/e1000/e1000_main.c b/drivers/net/e1000/e1000_main.c
+index 73f3a85..2c6ba42 100644
+--- a/drivers/net/e1000/e1000_main.c
++++ b/drivers/net/e1000/e1000_main.c
+@@ -3168,6 +3168,16 @@ #ifdef NETIF_F_TSO
+ 		if (skb->data_len && (hdr_len == (skb->len - skb->data_len))) {
+ 			switch (adapter->hw.mac_type) {
+ 				unsigned int pull_size;
++			case e1000_82544:
++				/* Make sure we have room to chop off 4 bytes,
++				 * and that the end alignment will work out to
++				 * this hardware's requirements
++				 * NOTE: this is a TSO only workaround
++				 * if end byte alignment not correct move us
++				 * into the next dword */
++				if ((unsigned long)(skb->tail - 1) & 4)
++					break;
++				/* fall through */
+ 			case e1000_82571:
+ 			case e1000_82572:
+ 			case e1000_82573:
+

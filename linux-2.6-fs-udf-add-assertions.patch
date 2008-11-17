@@ -1,0 +1,49 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Mon, 8 Oct 2007 15:49:48 -0500
+Subject: [fs] udf: add assertions
+Message-id: 470A97EC.6020006@redhat.com
+O-Subject: [RHEL5 PATCH 4/7] udf: add assertions
+Bugzilla: 221282
+
+From: Jan Kara <jack@suse.cz>
+Date: Tue, 8 May 2007 07:35:18 +0000 (-0700)
+Subject: udf: add assertions
+X-Git-Tag: v2.6.22-rc1~521
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=948b9b2c967c3bec6136b2dbb9e1c12f62e03efa
+
+udf: add assertions
+
+Add a few assertions into udf_discard_prealloc() to check that the file is
+sane (mostly helps debugging further patches  ;) .
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+Acked-by: Christoph Hellwig <hch@infradead.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Josef Bacik <jbacik@redhat.com>
+
+diff --git a/fs/udf/truncate.c b/fs/udf/truncate.c
+index 0449b22..0e328cd 100644
+--- a/fs/udf/truncate.c
++++ b/fs/udf/truncate.c
+@@ -88,8 +88,9 @@ void udf_discard_prealloc(struct inode * inode)
+ 	{
+ 		etype = netype;
+ 		lbcount += elen;
+-		if (lbcount > inode->i_size && lbcount - inode->i_size < inode->i_sb->s_blocksize)
++		if (lbcount > inode->i_size && lbcount - elen < inode->i_size)
+ 		{
++			WARN_ON(lbcount - inode->i_size >= inode->i_sb->s_blocksize);
+ 			nelen = elen - (lbcount - inode->i_size);
+ 			epos.offset -= adsize;
+ 			extent_trunc(inode, &epos, eloc, etype, elen, nelen);
+@@ -119,6 +120,7 @@ void udf_discard_prealloc(struct inode * inode)
+ 	}
+ 	UDF_I_LENEXTENTS(inode) = lbcount;
+ 
++	WARN_ON(lbcount != inode->i_size);
+ 	brelse(epos.bh);
+ }
+ 

@@ -1,0 +1,82 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Subject: [RHEL5.1 PATCH] - buffer: memorder fix
+Date: Wed, 21 Feb 2007 16:09:08 -0600
+Bugzilla: 225172
+Message-Id: <45DCC304.8050901@redhat.com>
+Changelog: [ext3] buffer: memorder fix
+
+
+This is for BZ 225172: LTC31365-ext3 error: bit already cleared for block, aborted journal, remount read-only
+
+Lack of a memory barrier in unlock_buffer() was leading to a race where 2 processes would
+both try to free a shared extended attribute block upon file deletion.
+
+I'd almost have argued for this one-liner to be in an errata kernel, but no-one 
+else has found it in testing, so... it's probably still debatable.
+
+Please ack,
+
+Thanks,
+
+-Eric
+
+--------- patch follows ------------
+
+X-Git-Tag: v2.6.21-rc1^0~274^2~265
+X-Git-Url: http://git.kernel.org/git/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=72ed3d035855841ad611ee48b20909e9619d4a79
+
+[PATCH] buffer: memorder fix
+
+unlock_buffer(), like unlock_page(), must not clear the lock without
+ensuring that the critical section is closed.
+
+Mingming later sent the same patch, saying:
+
+  We are running SDET benchmark and saw double free issue for ext3 extended
+  attributes block, which complains the same xattr block already being freed (in
+  ext3_xattr_release_block()).  The problem could also been triggered by
+  multiple threads loop untar/rm a kernel tree.
+
+  The race is caused by missing a memory barrier at unlock_buffer() before the
+  lock bit being cleared, resulting in possible concurrent h_refcounter update.
+  That causes a reference counter leak, then later leads to the double free that
+  we have seen.
+
+  Inside unlock_buffer(), there is a memory barrier is placed *after* the lock
+  bit is being cleared, however, there is no memory barrier *before* the bit is
+  cleared.  On some arch the h_refcount update instruction and the clear bit
+  instruction could be reordered, thus leave the critical section re-entered.
+
+  The race is like this: For example, if the h_refcount is initialized as 1,
+
+  cpu 0:                                   cpu1
+  --------------------------------------   -----------------------------------
+  lock_buffer() /* test_and_set_bit */
+  clear_buffer_locked(bh);
+                                          lock_buffer() /* test_and_set_bit */
+  h_refcount = h_refcount+1; /* = 2*/     h_refcount = h_refcount + 1; /*= 2 */
+                                          clear_buffer_locked(bh);
+  ....                                    ......
+
+  We lost a h_refcount here. We need a memory barrier before the buffer head lock
+  bit being cleared to force the order of the two writes.  Please apply.
+
+Signed-off-by: Nick Piggin <npiggin@suse.de>
+Signed-off-by: Mingming Cao <cmm@us.ibm.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+
+Index: linux-2.6.18-6.el5/fs/buffer.c
+===================================================================
+--- linux-2.6.18-6.el5.orig/fs/buffer.c
++++ linux-2.6.18-6.el5/fs/buffer.c
+@@ -77,6 +77,7 @@ EXPORT_SYMBOL(__lock_buffer);
+ 
+ void fastcall unlock_buffer(struct buffer_head *bh)
+ {
++	smp_mb__before_clear_bit();
+ 	clear_buffer_locked(bh);
+ 	smp_mb__after_clear_bit();
+ 	wake_up_bit(&bh->b_state, BH_Lock);
+

@@ -1,0 +1,57 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH] BZ 220482 Networking: make inet->is_icsk assignment 	binary
+Date: Thu, 04 Jan 2007 15:24:47 -0500
+Bugzilla: 220482
+Message-Id: <1167942287.3339.45.camel@localhost.localdomain>
+Changelog: Networking: make inet->is_icsk assignment binary
+
+
+BZ 220482
+
+It was found that systems configured to use NetLabel labeled networking
+for some communications and regular networking for other communications
+would experience 'hangs' when large packets were being transmitted with
+the 'regular' peers.  The problem was eventually traced down to the fact
+that inet_create() and inet6_create() functions incorrectly set the
+inet_sock->is_icsk field.  Both functions assume that the is_icsk field
+is large enough to hold at least a INET_PROTOSW_ICSK value when it is
+actually only a single bit.  This patch corrects the assignment by doing
+a boolean comparison whose result will safely fit into a single bit
+field.
+
+This patch has been tested in a RHEL5 kernel (in the LSPP series) and is
+found to correct the issue.  It will be making it's appearance on netdev
+this week but I wanted to get it here as quickly as possible.  The
+blocker flag is not yet set, but since this is required for LSPP
+certification it meets the criteria and will be set as soon as all the
+management/process things happen.
+
+-Eric
+
+ net/ipv4/af_inet.c  |    2 +-
+ net/ipv6/af_inet6.c |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+--- linux-2.6.18.i686/net/ipv6/af_inet6.c.pre.icsk	2007-01-03 14:50:56.000000000 -0500
++++ linux-2.6.18.i686/net/ipv6/af_inet6.c	2007-01-03 14:51:08.000000000 -0500
+@@ -167,7 +167,7 @@ lookup_protocol:
+ 		sk->sk_reuse = 1;
+ 
+ 	inet = inet_sk(sk);
+-	inet->is_icsk = INET_PROTOSW_ICSK & answer_flags;
++	inet->is_icsk = (INET_PROTOSW_ICSK & answer_flags) == INET_PROTOSW_ICSK;
+ 
+ 	if (SOCK_RAW == sock->type) {
+ 		inet->num = protocol;
+--- linux-2.6.18.i686/net/ipv4/af_inet.c.pre.icsk	2007-01-03 14:50:56.000000000 -0500
++++ linux-2.6.18.i686/net/ipv4/af_inet.c	2007-01-03 14:51:08.000000000 -0500
+@@ -304,7 +304,7 @@ lookup_protocol:
+ 		sk->sk_reuse = 1;
+ 
+ 	inet = inet_sk(sk);
+-	inet->is_icsk = INET_PROTOSW_ICSK & answer_flags;
++	inet->is_icsk = (INET_PROTOSW_ICSK & answer_flags) == INET_PROTOSW_ICSK;
+ 
+ 	if (SOCK_RAW == sock->type) {
+ 		inet->num = protocol;
+

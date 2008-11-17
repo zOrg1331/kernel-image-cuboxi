@@ -1,0 +1,76 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Thu, 5 Jul 2007 10:22:46 -0400
+Subject: [cifs] make demux thread ignore signals from userspace
+Message-id: 20070705102246.e9298b16.jlayton@redhat.com
+O-Subject: [RHEL5 PATCH] make cifs demux thread ignore signals from userspace
+Bugzilla: 245674
+
+Currently, the cifs_mount and cifs_umount functions send a SIGKILL to
+the demuliplexer thread to make it break out of kernel_recvmsg. Without
+this, there can be a long delay when mounting or unmounting filesystems
+while the demux thread waits for the call to time out. In order to do
+this, it explicitly does an allow_signal(SIGKILL) when the thread
+starts.
+
+The reproducer for this problem is pretty non-sensical, but it involves
+mounting a cifs share that has dropped off the net and then sending a
+SIGKILL to cifsd (exact steps are in the BZ). You might be wondering
+"why would someone want to try to kill their kernel thread"? A very good
+question and not one to which I've ever gotten a good answer.
+
+In any case, the following patch corrects the issue by making the thread
+ignore all signals and having cifs_mount and cifs_umount use force_sig
+instead of send_sig. This insulates the thread from userspace signals,
+while still allowing it to break out of kernel_recvmsg for mounts and
+unmounts.
+
+As a side note, the upstream cifs list is tossing around ideas for how to
+make it so that signals aren't needed at all. There seems to be a general
+idea that signals and kthreads shouldn't mix, though I've not gotten a
+clear explanation of why this is.
+---
+ fs/cifs/connect.c |    7 +++----
+ 1 files changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/fs/cifs/connect.c b/fs/cifs/connect.c
+index abcabb4..aba3f05 100644
+--- a/fs/cifs/connect.c
++++ b/fs/cifs/connect.c
+@@ -369,7 +369,6 @@ cifs_demultiplex_thread(struct TCP_Server_Info *server)
+ 	sprintf(current->comm,"cifsd");
+ #else
+ 	daemonize("cifsd");
+-	allow_signal(SIGKILL);
+ #endif
+ 	current->flags |= PF_MEMALLOC;
+ 	server->tsk = current;	/* save process info to wake at shutdown */
+@@ -2055,7 +2054,7 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 			srvTcp->tcpStatus = CifsExiting;
+ 			spin_unlock(&GlobalMid_Lock);
+ 			if(srvTcp->tsk) {
+-				send_sig(SIGKILL,srvTcp->tsk,1);
++				force_sig(SIGKILL,srvTcp->tsk);
+ 				wait_for_completion(&cifsd_complete);
+ 			}
+ 		}
+@@ -2071,7 +2070,7 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 					/* if the socketUseCount is now zero */
+ 					if((temp_rc == -ESHUTDOWN) &&
+ 					   (pSesInfo->server->tsk)) {
+-						send_sig(SIGKILL,pSesInfo->server->tsk,1);
++						force_sig(SIGKILL,pSesInfo->server->tsk);
+ 						wait_for_completion(&cifsd_complete);
+ 					}
+ 				} else
+@@ -3392,7 +3391,7 @@ cifs_umount(struct super_block *sb, struct cifs_sb_info *cifs_sb)
+ 			} else if (rc == -ESHUTDOWN) {
+ 				cFYI(1,("Waking up socket by sending it signal"));
+ 				if(cifsd_task) {
+-					send_sig(SIGKILL,cifsd_task,1);
++					force_sig(SIGKILL,cifsd_task);
+ 					wait_for_completion(&cifsd_complete);
+ 				}
+ 				rc = 0;
+-- 
+1.5.3.5.645.gbb47
+

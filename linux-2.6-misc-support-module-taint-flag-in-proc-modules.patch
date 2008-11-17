@@ -1,0 +1,212 @@
+From: Jon Masters <jcm@redhat.com>
+Date: Tue, 22 Jan 2008 18:25:15 -0500
+Subject: [misc] support module taint flag in /proc/modules
+Message-id: 1201044315.18144.133.camel@perihelion
+O-Subject: [RHEL5.2 PATCH] [bz253476] Add a new /proc/modules_taint interface [take 2]
+Bugzilla: 253476
+
+The following patch backports the upstream per-module module taint flag,
+to which we add support also for module signing to so that we can now
+also see if modules are signed. I re-used the license_gplok field in
+struct module since it is obviated by this patch upstream, shouldn't
+have any external modular users, and is only used at runtime anyway.
+
+Jon.
+
+diff --git a/include/linux/kernel.h b/include/linux/kernel.h
+index cdaefa3..f04d1af 100644
+--- a/include/linux/kernel.h
++++ b/include/linux/kernel.h
+@@ -203,6 +203,7 @@ extern enum system_states {
+ #define TAINT_FORCED_RMMOD		(1<<3)
+ #define TAINT_MACHINE_CHECK		(1<<4)
+ #define TAINT_BAD_PAGE			(1<<5)
++#define TAINT_UNSIGNED_MODULE		(1<<6)
+ 
+ extern void dump_stack(void);
+ 
+diff --git a/include/linux/module.h b/include/linux/module.h
+index 0460634..0c7d42e 100644
+--- a/include/linux/module.h
++++ b/include/linux/module.h
+@@ -318,7 +318,7 @@ struct module
+ 	int unsafe;
+ 
+ 	/* Am I GPL-compatible */
+-	int license_gplok;
++	int license_gplok;		/* NOTE: reused for taint data. */
+ 	
+ 	/* Am I gpg signed */
+ 	int gpgsig_ok;
+@@ -353,6 +353,7 @@ struct module
+ 	/* The command line arguments (may be mangled).  People like
+ 	   keeping pointers to this stuff */
+ 	char *args;
++
+ };
+ 
+ /* FIXME: It'd be nice to isolate modules during init, too, so they
+diff --git a/kernel/module.c b/kernel/module.c
+index d047cf4..6fc16de 100644
+--- a/kernel/module.c
++++ b/kernel/module.c
+@@ -88,6 +88,12 @@ static inline int strong_try_module_get(struct module *mod)
+ 	return try_module_get(mod);
+ }
+ 
++static inline void add_taint_module(struct module *mod, unsigned flag)
++{
++	add_taint(flag);
++	mod->license_gplok |= flag;
++}
++
+ /* A thread that wants to hold a reference to a module only while it
+  * is running can call ths to safely exit.
+  * nfsd and lockd use this.
+@@ -848,11 +854,10 @@ static int check_version(Elf_Shdr *sechdrs,
+ 		return 0;
+ 	}
+ 	/* Not in module's version table.  OK, but that taints the kernel. */
+-	if (!(tainted & TAINT_FORCED_MODULE)) {
++	if (!(tainted & TAINT_FORCED_MODULE))
+ 		printk("%s: no version for \"%s\" found: kernel tainted.\n",
+ 		       mod->name, symname);
+-		add_taint(TAINT_FORCED_MODULE);
+-	}
++	add_taint_module(mod, TAINT_FORCED_MODULE);
+ 	return 1;
+ }
+ 
+@@ -910,7 +915,8 @@ static unsigned long resolve_symbol(Elf_Shdr *sechdrs,
+ 	unsigned long ret;
+ 	const unsigned long *crc;
+ 
+-	ret = __find_symbol(name, &owner, &crc, mod->license_gplok);
++	ret = __find_symbol(name, &owner, &crc,
++			!(mod->license_gplok & TAINT_PROPRIETARY_MODULE));
+ 	if (ret) {
+ 		/* use_module can fail due to OOM, or module unloading */
+ 		if (!check_version(sechdrs, versindex, name, mod, crc) ||
+@@ -1321,11 +1327,11 @@ static void set_license(struct module *mod, const char *license)
+ 	if (!license)
+ 		license = "unspecified";
+ 
+-	mod->license_gplok = license_is_gpl_compatible(license);
+-	if (!mod->license_gplok && !(tainted & TAINT_PROPRIETARY_MODULE)) {
+-		printk(KERN_WARNING "%s: module license '%s' taints kernel.\n",
+-		       mod->name, license);
+-		add_taint(TAINT_PROPRIETARY_MODULE);
++	if (!license_is_gpl_compatible(license)) {
++		if (!(tainted & TAINT_PROPRIETARY_MODULE))
++			printk(KERN_WARNING "%s: module license '%s' taints "
++				"kernel.\n", mod->name, license);
++		add_taint_module(mod, TAINT_PROPRIETARY_MODULE);
+ 	}
+ }
+ 
+@@ -1564,6 +1570,10 @@ static struct module *load_module(void __user *umod,
+ 	mod = (void *)sechdrs[modindex].sh_addr;
+ 	mod->gpgsig_ok = gpgsig_ok;
+ 
++#if CONFIG_MODULE_SIG
++	if (!mod->gpgsig_ok)
++		add_taint_module(mod, TAINT_UNSIGNED_MODULE);
++#endif
+ 	if (symindex == 0) {
+ 		printk(KERN_WARNING "%s: module has no symbols (stripped?)\n",
+ 		       mod->name);
+@@ -1611,7 +1621,7 @@ static struct module *load_module(void __user *umod,
+ 	modmagic = get_modinfo(sechdrs, infoindex, "vermagic");
+ 	/* This is allowed: modprobe --force will invalidate it. */
+ 	if (!modmagic) {
+-		add_taint(TAINT_FORCED_MODULE);
++		add_taint_module(mod,TAINT_FORCED_MODULE);
+ 		printk(KERN_WARNING "%s: no version magic, tainting kernel.\n",
+ 		       mod->name);
+ 	} else if (!same_magic(modmagic, vermagic)) {
+@@ -1708,7 +1718,7 @@ static struct module *load_module(void __user *umod,
+ 	if (strcmp(mod->name, "ndiswrapper") == 0)
+ 		add_taint(TAINT_PROPRIETARY_MODULE);
+ 	if (strcmp(mod->name, "driverloader") == 0)
+-		add_taint(TAINT_PROPRIETARY_MODULE);
++		add_taint_module(mod,TAINT_PROPRIETARY_MODULE);
+ 
+ 	/* Set up MODINFO_ATTR fields */
+ 	setup_modinfo(mod, sechdrs, infoindex);
+@@ -1753,7 +1763,7 @@ static struct module *load_module(void __user *umod,
+ 	    (mod->num_unused_gpl_syms && !unusedgplcrcindex)) {
+ 		printk(KERN_WARNING "%s: No versions for exported symbols."
+ 		       " Tainting kernel.\n", mod->name);
+-		add_taint(TAINT_FORCED_MODULE);
++		add_taint_module(mod, TAINT_FORCED_MODULE);
+ 	}
+ #endif
+ 
+@@ -2117,9 +2127,37 @@ static void m_stop(struct seq_file *m, void *p)
+ 	mutex_unlock(&module_mutex);
+ }
+ 
++static char *taint_flags(unsigned int taints, char *buf)
++{
++	int bx = 0;
++
++	if (taints) {
++		buf[bx++] = '(';
++		if (taints & TAINT_PROPRIETARY_MODULE)
++			buf[bx++] = 'P';
++		if (taints & TAINT_FORCED_MODULE)
++			buf[bx++] = 'F';
++#if CONFIG_MODULE_SIG
++		if (taints & TAINT_UNSIGNED_MODULE)
++			buf[bx++] = 'U';
++#endif
++		/*
++		 * TAINT_FORCED_RMMOD: could be added.
++		 * TAINT_UNSAFE_SMP, TAINT_MACHINE_CHECK, TAINT_BAD_PAGE don't
++		 * apply to modules.
++		 */
++		buf[bx++] = ')';
++	}
++	buf[bx] = '\0';
++
++	return buf;
++}
++
+ static int m_show(struct seq_file *m, void *p)
+ {
+ 	struct module *mod = list_entry(p, struct module, list);
++	char buf[8];
++
+ 	seq_printf(m, "%s %lu",
+ 		   mod->name, mod->init_size + mod->core_size);
+ 	print_unload_info(m, mod);
+@@ -2132,6 +2170,10 @@ static int m_show(struct seq_file *m, void *p)
+ 	/* Used by oprofile and other similar tools. */
+ 	seq_printf(m, " 0x%p", mod->module_core);
+ 
++	/* Taints info */
++	if (mod->license_gplok)
++		seq_printf(m, " %s", taint_flags(mod->license_gplok, buf));
++
+ 	seq_printf(m, "\n");
+ 	return 0;
+ }
+@@ -2224,15 +2266,11 @@ struct module *module_text_address(unsigned long addr)
+ void print_modules(void)
+ {
+ 	struct module *mod;
++	char buf[8];
+ 
+ 	printk("Modules linked in:");
+-	list_for_each_entry(mod, &modules, list) {
+-		printk(" %s", mod->name);
+-#if CONFIG_MODULE_SIG		
+-		if (!mod->gpgsig_ok)
+-			printk("(U)");
+-#endif		
+-	}
++	list_for_each_entry(mod, &modules, list)
++		printk(" %s%s", mod->name, taint_flags(mod->license_gplok, buf));
+ 	printk("\n");
+ }
+ 

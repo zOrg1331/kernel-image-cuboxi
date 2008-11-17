@@ -1,0 +1,249 @@
+From: Scott Moser <smoser@redhat.com>
+Date: Mon, 17 Dec 2007 12:01:48 -0500
+Subject: [ppc64] cell: support for Performance Tools part4
+Message-id: 11979109092682-do-send-email-smoser@redhat.com
+O-Subject: [PATCH RHEL5u2] bz253211 Cell/B.E. Kernel Support for Performance Tools [4/4]
+Bugzilla: 253211
+
+--
+ arch/powerpc/oprofile/Kconfig                |    2
+ arch/powerpc/platforms/cell/Makefile         |    1
+ arch/powerpc/platforms/cell/spu_notify.c     |   67 +++++++++++++++++++++
+ arch/powerpc/platforms/cell/spu_syscalls.c   |   14 ++++
+ arch/powerpc/platforms/cell/spufs/context.c  |   16 -----
+ arch/powerpc/platforms/cell/spufs/sched.c    |   28 +-------
+ arch/powerpc/platforms/cell/spufs/syscalls.c |    1
+ include/asm-powerpc/spu.h                    |    4 +
+ 8 files changed, 94 insertions(+), 39 deletions(-)
+
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/arch/powerpc/oprofile/Kconfig b/arch/powerpc/oprofile/Kconfig
+index 7089e79..e3eb68f 100644
+--- a/arch/powerpc/oprofile/Kconfig
++++ b/arch/powerpc/oprofile/Kconfig
+@@ -17,7 +17,7 @@ config OPROFILE
+ 
+ config OPROFILE_CELL
+ 	bool "OProfile for Cell Broadband Engine"
+-	depends on (SPU_FS = y && OPROFILE = m) || (SPU_FS = y && OPROFILE = y) || (SPU_FS = m && OPROFILE = m)
++	depends on (OPROFILE = m || OPROFILE = y)
+ 	default y
+ 	help
+ 	  Profiling of Cell BE SPUs requires special support enabled
+diff --git a/arch/powerpc/platforms/cell/Makefile b/arch/powerpc/platforms/cell/Makefile
+index b86273e..eb0ea80 100644
+--- a/arch/powerpc/platforms/cell/Makefile
++++ b/arch/powerpc/platforms/cell/Makefile
+@@ -22,6 +22,7 @@ spu-priv1-$(CONFIG_PPC_CELL_NATIVE)	+= spu_priv1_mmio.o
+ spu-manage-$(CONFIG_PPC_CELLEB)		+= spu_manage.o
+ spu-manage-$(CONFIG_PPC_CELL_NATIVE)	+= spu_manage.o
+ obj-$(CONFIG_SPU_BASE)			+= spu_callbacks.o spu_base.o \
++					   spu_notify.o \
+ 					   spu_syscalls.o \
+ 					   $(spu-priv1-y) \
+ 					   $(spu-manage-y) \
+diff --git a/arch/powerpc/platforms/cell/spu_notify.c b/arch/powerpc/platforms/cell/spu_notify.c
+new file mode 100644
+index 0000000..34d1569
+--- /dev/null
++++ b/arch/powerpc/platforms/cell/spu_notify.c
+@@ -0,0 +1,67 @@
++/*
++ * Move OProfile dependencies from spufs module to the kernel so it
++ * can run on non-cell PPC.
++ *
++ * Copyright (C) IBM 2005
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2, or (at your option)
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ */
++
++#undef DEBUG
++
++#include <linux/module.h>
++#include <asm/spu.h>
++#include "spufs/spufs.h"
++
++static BLOCKING_NOTIFIER_HEAD(spu_switch_notifier);
++
++void spu_switch_notify(struct spu *spu, struct spu_context *ctx)
++{
++	blocking_notifier_call_chain(&spu_switch_notifier,
++				     ctx ? ctx->object_id : 0, spu);
++}
++EXPORT_SYMBOL_GPL(spu_switch_notify);
++
++int spu_switch_event_register(struct notifier_block *n)
++{
++	int ret;
++	ret = blocking_notifier_chain_register(&spu_switch_notifier, n);
++	if (!ret)
++		notify_spus_active();
++	return ret;
++}
++EXPORT_SYMBOL_GPL(spu_switch_event_register);
++
++int spu_switch_event_unregister(struct notifier_block *n)
++{
++	return blocking_notifier_chain_unregister(&spu_switch_notifier, n);
++}
++EXPORT_SYMBOL_GPL(spu_switch_event_unregister);
++
++void spu_set_profile_private_kref(struct spu_context *ctx,
++				  struct kref *prof_info_kref,
++				  void (* prof_info_release) (struct kref *kref))
++{
++	ctx->prof_priv_kref = prof_info_kref;
++	ctx->prof_priv_release = prof_info_release;
++}
++EXPORT_SYMBOL_GPL(spu_set_profile_private_kref);
++
++void *spu_get_profile_private_kref(struct spu_context *ctx)
++{
++	return ctx->prof_priv_kref;
++}
++EXPORT_SYMBOL_GPL(spu_get_profile_private_kref);
++
+diff --git a/arch/powerpc/platforms/cell/spu_syscalls.c b/arch/powerpc/platforms/cell/spu_syscalls.c
+index a9438b7..75530d9 100644
+--- a/arch/powerpc/platforms/cell/spu_syscalls.c
++++ b/arch/powerpc/platforms/cell/spu_syscalls.c
+@@ -145,6 +145,20 @@ int elf_coredump_extra_notes_write(struct file *file, loff_t *foffset)
+ 	return ret;
+ }
+ 
++void notify_spus_active(void)
++{
++	struct spufs_calls *calls;
++
++	calls = spufs_calls_get();
++	if (!calls)
++		return;
++
++	calls->notify_spus_active();
++	spufs_calls_put(calls);
++
++	return;
++}
++
+ int register_spu_syscalls(struct spufs_calls *calls)
+ {
+ 	if (spufs_calls)
+diff --git a/arch/powerpc/platforms/cell/spufs/context.c b/arch/powerpc/platforms/cell/spufs/context.c
+index 9cb081c..adf0a03 100644
+--- a/arch/powerpc/platforms/cell/spufs/context.c
++++ b/arch/powerpc/platforms/cell/spufs/context.c
+@@ -190,19 +190,3 @@ void spu_release_saved(struct spu_context *ctx)
+ 	spu_release(ctx);
+ }
+ 
+-void spu_set_profile_private_kref(struct spu_context *ctx,
+-				  struct kref *prof_info_kref,
+-				  void ( * prof_info_release) (struct kref *kref))
+-{
+-	ctx->prof_priv_kref = prof_info_kref;
+-	ctx->prof_priv_release = prof_info_release;
+-}
+-EXPORT_SYMBOL_GPL(spu_set_profile_private_kref);
+-
+-void *spu_get_profile_private_kref(struct spu_context *ctx)
+-{
+-	return ctx->prof_priv_kref;
+-}
+-EXPORT_SYMBOL_GPL(spu_get_profile_private_kref);
+-
+-
+diff --git a/arch/powerpc/platforms/cell/spufs/sched.c b/arch/powerpc/platforms/cell/spufs/sched.c
+index d5e1dc0..419bcd0 100644
+--- a/arch/powerpc/platforms/cell/spufs/sched.c
++++ b/arch/powerpc/platforms/cell/spufs/sched.c
+@@ -165,15 +165,7 @@ static int node_allowed(struct spu_context *ctx, int node)
+ 	return rval;
+ }
+ 
+-static BLOCKING_NOTIFIER_HEAD(spu_switch_notifier);
+-
+-void spu_switch_notify(struct spu *spu, struct spu_context *ctx)
+-{
+-	blocking_notifier_call_chain(&spu_switch_notifier,
+-			    ctx ? ctx->object_id : 0, spu);
+-}
+-
+-static void notify_spus_active(void)
++void do_notify_spus_active(void)
+ {
+ 	int node;
+ 
+@@ -199,22 +191,14 @@ static void notify_spus_active(void)
+ 		mutex_unlock(&cbe_spu_info[node].list_mutex);
+ 	}
+ }
++EXPORT_SYMBOL_GPL(do_notify_spus_active);
+ 
+-int spu_switch_event_register(struct notifier_block * n)
+-{
+-	int ret;
+-	ret = blocking_notifier_chain_register(&spu_switch_notifier, n);
+-	if (!ret)
+-		notify_spus_active();
+-	return ret;
+-}
+-EXPORT_SYMBOL_GPL(spu_switch_event_register);
+-
+-int spu_switch_event_unregister(struct notifier_block * n)
++#ifndef MODULE
++void notify_spus_active(void)
+ {
+-	return blocking_notifier_chain_unregister(&spu_switch_notifier, n);
++	do_notify_spus_active();
+ }
+-EXPORT_SYMBOL_GPL(spu_switch_event_unregister);
++#endif
+ 
+ /**
+  * spu_bind_context - bind spu context to physical spu
+diff --git a/arch/powerpc/platforms/cell/spufs/syscalls.c b/arch/powerpc/platforms/cell/spufs/syscalls.c
+index 71f8f7e..dc4e99c 100644
+--- a/arch/powerpc/platforms/cell/spufs/syscalls.c
++++ b/arch/powerpc/platforms/cell/spufs/syscalls.c
+@@ -86,5 +86,6 @@ struct spufs_calls spufs_calls = {
+ 	.spu_run = do_spu_run,
+ 	.coredump_extra_notes_size = spufs_coredump_extra_notes_size,
+ 	.coredump_extra_notes_write = spufs_coredump_extra_notes_write,
++	.notify_spus_active = do_notify_spus_active,
+ 	.owner = THIS_MODULE,
+ };
+diff --git a/include/asm-powerpc/spu.h b/include/asm-powerpc/spu.h
+index 186d6d6..e05643a 100644
+--- a/include/asm-powerpc/spu.h
++++ b/include/asm-powerpc/spu.h
+@@ -256,6 +256,7 @@ struct spufs_calls {
+ 						__u32 __user *ustatus);
+ 	int (*coredump_extra_notes_size)(void);
+ 	int (*coredump_extra_notes_write)(struct file *file, loff_t *foffset);
++	void (*notify_spus_active)(void);
+ 	struct module *owner;
+ };
+ 
+@@ -308,6 +309,9 @@ struct notifier_block;
+ int spu_switch_event_register(struct notifier_block * n);
+ int spu_switch_event_unregister(struct notifier_block * n);
+ 
++extern void notify_spus_active(void);
++extern void do_notify_spus_active(void);
++
+ /*
+  * This defines the Local Store, Problem Area and Privlege Area of an SPU.
+  */

@@ -1,0 +1,39 @@
+From: Rik van Riel <riel@redhat.com>
+Subject: Re: [PATCH RHEL 5.1] workaround for qla2xxx vs xen swiotlb
+Date: Tue, 14 Aug 2007 11:36:34 -0400
+Bugzilla: 219216
+Message-Id: <46C1CC02.4040404@redhat.com>
+Changelog: [misc] workaround for qla2xxx vs xen swiotlb
+
+There is a theoretical problem when the qla2xxx driver fills up
+the swiotlb space and shares the system with a driver that will
+make the system panic if it cannot get space in the swiotlb.
+In that case, the other printks will trigger and we still know
+what went wrong.
+
+Here's a version using printk_ratelimit().
+
+Directly using __printk_ratelimit() with a higher timeout
+is probably not a good idea, since lower timeout messages
+could starve this one completely.
+
+-- 
+Politics is the struggle between those who want to make their country
+the best in the world, and those who believe it already is.  Each group
+calls the other unpatriotic.
+
+--- linux-2.6.18.noarch/arch/i386/kernel/swiotlb.c.flood	2007-08-13 14:59:05.000000000 -0400
++++ linux-2.6.18.noarch/arch/i386/kernel/swiotlb.c	2007-08-14 11:32:25.000000000 -0400
+@@ -403,8 +403,9 @@ swiotlb_full(struct device *dev, size_t 
+ 	 * When the mapping is small enough return a static buffer to limit
+ 	 * the damage, or panic when the transfer is too big.
+ 	 */
+-	printk(KERN_ERR "PCI-DMA: Out of SW-IOMMU space for %lu bytes at "
+-	       "device %s\n", (unsigned long)size, dev ? dev->bus_id : "?");
++	if (printk_ratelimit())
++		printk(KERN_ERR "PCI-DMA: Out of SW-IOMMU space for %lu bytes at "
++		       "device %s\n", (unsigned long)size, dev ? dev->bus_id : "?");
+ 
+ 	if (size > io_tlb_overflow && do_panic) {
+ 		if (dir == PCI_DMA_FROMDEVICE || dir == PCI_DMA_BIDIRECTIONAL)
+

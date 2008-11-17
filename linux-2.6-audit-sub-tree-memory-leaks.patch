@@ -1,0 +1,107 @@
+From: Alexander Viro <aviro@redhat.com>
+Subject: [RHEL 5.1 PATCH] bz#251160
+Date: Tue, 7 Aug 2007 19:10:00 -0400
+Bugzilla: 251160
+Message-Id: <20070807231000.GX13539@devserv.devel.redhat.com>
+Changelog: [audit] sub-tree memory leaks
+
+
+	Fixes a couple of leaks and off-by-one in allocator.  The
+patch is on top of fixes for 248416.
+
+diff -urN linux-2.6.18.x86_64/kernel/auditfilter.c linux-2.6.18.x86_64-1/kernel/auditfilter.c
+--- linux-2.6.18.x86_64/kernel/auditfilter.c	2007-08-07 17:11:01.000000000 -0400
++++ linux-2.6.18.x86_64-1/kernel/auditfilter.c	2007-08-07 17:09:23.000000000 -0400
+@@ -629,10 +629,9 @@
+ 			entry->rule.buflen += f->val;
+ 
+ 			err = audit_make_tree(&entry->rule, str, f->op);
+-			if (err) {
+-				kfree(str);
++			kfree(str);
++			if (err)
+ 				goto exit_free;
+-			}
+ 			break;
+ 		case AUDIT_INODE:
+ 			err = audit_to_inode(&entry->rule, f);
+diff -urN linux-2.6.18.x86_64/kernel/audit_tree.c linux-2.6.18.x86_64-1/kernel/audit_tree.c
+--- linux-2.6.18.x86_64/kernel/audit_tree.c	2007-08-07 17:11:01.000000000 -0400
++++ linux-2.6.18.x86_64-1/kernel/audit_tree.c	2007-08-07 17:14:48.000000000 -0400
+@@ -70,7 +70,7 @@
+ {
+ 	struct audit_tree *tree;
+ 
+-	tree = kmalloc(sizeof(struct audit_tree) + strlen(s), GFP_KERNEL);
++	tree = kmalloc(sizeof(struct audit_tree) + strlen(s) + 1, GFP_KERNEL);
+ 	if (tree) {
+ 		atomic_set(&tree->count, 1);
+ 		tree->goner = 0;
+@@ -195,7 +195,6 @@
+ 
+ /* tagging and untagging inodes with trees */
+ 
+-/* ->inotify_mutex is held */
+ static void untag_chunk(struct audit_chunk *chunk, struct node *p)
+ {
+ 	struct audit_chunk *new;
+@@ -203,8 +202,11 @@
+ 	int size = chunk->count - 1;
+ 	int i, j;
+ 
+-	if (chunk->dead)
++	mutex_lock(&chunk->watch.inode->inotify_mutex);
++	if (chunk->dead) {
++		mutex_unlock(&chunk->watch.inode->inotify_mutex);
+ 		return;
++	}
+ 
+ 	owner = p->owner;
+ 
+@@ -218,6 +220,8 @@
+ 		list_del_rcu(&chunk->hash);
+ 		spin_unlock(&hash_lock);
+ 		inotify_evict_watch(&chunk->watch);
++		mutex_unlock(&chunk->watch.inode->inotify_mutex);
++		put_inotify_watch(&chunk->watch);
+ 		return;
+ 	}
+ 
+@@ -258,6 +262,8 @@
+ 		owner->root = new;
+ 	spin_unlock(&hash_lock);
+ 	inotify_evict_watch(&chunk->watch);
++	mutex_unlock(&chunk->watch.inode->inotify_mutex);
++	put_inotify_watch(&chunk->watch);
+ 	return;
+ 
+ Fallback:
+@@ -271,6 +277,7 @@
+ 	p->owner = NULL;
+ 	put_tree(owner);
+ 	spin_unlock(&hash_lock);
++	mutex_unlock(&chunk->watch.inode->inotify_mutex);
+ }
+ 
+ static int create_chunk(struct inode *inode, struct audit_tree *tree)
+@@ -432,9 +439,7 @@
+ 		get_inotify_watch(&chunk->watch);
+ 		spin_unlock(&hash_lock);
+ 
+-		mutex_lock(&chunk->watch.inode->inotify_mutex);
+ 		untag_chunk(chunk, p);
+-		mutex_unlock(&chunk->watch.inode->inotify_mutex);
+ 
+ 		put_inotify_watch(&chunk->watch);
+ 		spin_lock(&hash_lock);
+@@ -477,9 +482,7 @@
+ 		get_inotify_watch(&chunk->watch);
+ 		spin_unlock(&hash_lock);
+ 
+-		mutex_lock(&chunk->watch.inode->inotify_mutex);
+ 		untag_chunk(chunk, node);
+-		mutex_unlock(&chunk->watch.inode->inotify_mutex);
+ 
+ 		put_inotify_watch(&chunk->watch);
+ 		spin_lock(&hash_lock);
+

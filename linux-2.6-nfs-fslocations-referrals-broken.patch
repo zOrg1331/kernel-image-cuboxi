@@ -1,0 +1,95 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Wed, 5 Mar 2008 17:24:03 -0500
+Subject: [nfs] fslocations/referrals broken
+Message-id: 20080305222403.GE8084@bpeters-ibm
+O-Subject: Re: [RHEL-5.2 PATCH] BZ#432690 - [regression] NFS fslocations/referrals broken
+Bugzilla: 432690
+
+RHBZ#:
+------------
+https://bugzilla.redhat.com/show_bug.cgi?id=432690
+
+Description:
+------------
+The NFS Security Negotiation feature (RHBZ253019: LTC37709: 200628: NFS
+Security
+Negotiation) introduced two regressions in 2.6.18-78.el5.  This bug fixes
+those problems.
+
+The first issue is a serious regression that totally breaks nfs referrals
+(fs
+locations). It is fixed by removing a redundant parsing of the export
+stream for
+the fsloc option.
+
+The second issue is a regression that causes a directory entry which is a
+mount
+point for a sub-mounted file system to appear incorrectly.
+
+The second segment is upstream here:
+
+http://git.kernel.org/
+?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=a1033be72cdb053e1
+82bb41e302a1c11e72b68bb
+
+The first segment fixes a problem that arose from a bad backport/merge of
+the
+security negotiation code into RHEL 5.1 (this code segment moved - which
+caused
+it to appear twice in the backport)
+
+NFS fslocations/referrals regressed and is completely unuseable, this
+function
+worked in 5.1.
+
+The patch was tested and addresses the problem - I have run my security
+negotiation test suite against it from both Linux and AIX clients. The
+suite includes referral testing.
+
+RHEL Version Found:
+------------
+Regression - fix for feature added in 5.1
+
+kABI Status:
+------------
+No symbols were harmed.
+
+Upstream Status:
+------------
+The second part of this patch is upstream in git commit:
+a1033be72cdb053e182bb41e302a1c11e72b68bb
+
+Test Status:
+------------
+Verified to fix referrals and negotiation on a system-X system
+---------------------------------------------------------------
+
+diff --git a/fs/nfsd/export.c b/fs/nfsd/export.c
+index b72402b..d6bd71a 100644
+--- a/fs/nfsd/export.c
++++ b/fs/nfsd/export.c
+@@ -409,10 +409,6 @@ fsloc_parse(char **mesg, char *buf, struct nfsd4_fs_locations *fsloc)
+ 	int len;
+ 	int migrated, i, err;
+ 
+-	len = qword_get(mesg, buf, PAGE_SIZE);
+-	if (len != 5 || memcmp(buf, "fsloc", 5))
+-		return 0;
+-
+ 	/* listsize */
+ 	err = get_int(mesg, &fsloc->locations_count);
+ 	if (err)
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index 31e2e7f..ebd8bf6 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -106,7 +106,8 @@ nfsd_cross_mnt(struct svc_rqst *rqstp, struct dentry **dpp,
+ 
+ 	exp2 = rqst_exp_get_by_name(rqstp, mnt, mounts);
+ 	if (IS_ERR(exp2)) {
+-		err = PTR_ERR(exp2);
++		if (PTR_ERR(exp2) != -ENOENT)
++			err = PTR_ERR(exp2);
+ 		dput(mounts);
+ 		mntput(mnt);
+ 		goto out;

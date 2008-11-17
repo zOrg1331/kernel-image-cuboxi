@@ -1,0 +1,424 @@
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [RHEL5.1][PATCH] NFS: fixed oops in symlink code. 
+Date: Thu, 31 May 2007 15:04:11 -0400
+Bugzilla: 218718
+Message-Id: <465F1C2B.2020808@RedHat.com>
+Changelog: [nfs] fixed oops in symlink code. 
+
+
+The attached patch is a back port of three upstream patches
+that do the following:
+
+1) Fix an occasional oops when in the symlink code when
+   running the cthon test suite.
+
+2) Adds a symlink cache cuts down on network traffic.
+
+3) Eliminates a copy operations by using pages. Results
+   to directly in the page cache which eliminates
+   the coping from the RPC buffer.
+
+4) Eliminates the allocation of large RPC buffers.
+
+I've and continue to test this by continuously running
+5 streams of the cthon test suite.
+
+This addresses bz:
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=218718
+
+steved.
+
+
+
+
+commit 873101b33776780d32610fc4c90c7358a5e98f51
+Author: Chuck Lever <chuck.lever@oracle.com>
+
+    NFS: copy symlinks into page cache before sending NFS SYMLINK request
+    
+    Currently the NFS client does not cache symlinks it creates.  They get
+    cached only when the NFS client reads them back from the server.
+    
+    Copy the symlink into the page cache before sending it.
+
+
+commit 94a6d75320b3681e6e728b70e18bd186cb55e682
+Author: Chuck Lever <chuck.lever@oracle.com>
+
+    NFS: Use cached page as buffer for NFS symlink requests
+    
+    Now that we have a copy of the symlink path in the page cache, we can pass
+    a struct page down to the XDR routines instead of a string buffer.
+
+commit 39cf8a1374dc51fea169190674d5e4996a7d7ea2
+Author: Chuck Lever <chuck.lever@oracle.com>
+
+    [PATCH] NFS: fix minor bug in new NFS symlink code
+    
+    The original code confused a zero return code from pagevec_add() as success.
+
+
+--- linux-2.6.18.i686/include/linux/nfs_xdr.h.orig	2007-05-31 11:04:11.000000000 -0400
++++ linux-2.6.18.i686/include/linux/nfs_xdr.h	2007-05-31 13:47:00.000000000 -0400
+@@ -359,8 +359,8 @@ struct nfs_symlinkargs {
+ 	struct nfs_fh *		fromfh;
+ 	const char *		fromname;
+ 	unsigned int		fromlen;
+-	const char *		topath;
+-	unsigned int		tolen;
++	struct page **		pages;
++	unsigned int		pathlen;
+ 	struct iattr *		sattr;
+ };
+ 
+@@ -435,8 +435,8 @@ struct nfs3_symlinkargs {
+ 	struct nfs_fh *		fromfh;
+ 	const char *		fromname;
+ 	unsigned int		fromlen;
+-	const char *		topath;
+-	unsigned int		tolen;
++	struct page **		pages;
++	unsigned int		pathlen;
+ 	struct iattr *		sattr;
+ };
+ 
+@@ -534,7 +534,10 @@ struct nfs4_accessres {
+ struct nfs4_create_arg {
+ 	u32				ftype;
+ 	union {
+-		struct qstr *		symlink;    /* NF4LNK */
++		struct {
++			struct page **	pages;
++			unsigned int	len;
++		} symlink;   /* NF4LNK */
+ 		struct {
+ 			u32		specdata1;
+ 			u32		specdata2;
+@@ -794,8 +797,8 @@ struct nfs_rpc_ops {
+ 	int	(*rename)  (struct inode *, struct qstr *,
+ 			    struct inode *, struct qstr *);
+ 	int	(*link)    (struct inode *, struct inode *, struct qstr *);
+-	int	(*symlink) (struct inode *, struct dentry *, struct qstr *,
+-			    struct iattr *);
++	int	(*symlink) (struct inode *, struct dentry *, struct page *,
++			    unsigned int, struct iattr *);
+ 	int	(*mkdir)   (struct inode *, struct dentry *, struct iattr *);
+ 	int	(*rmdir)   (struct inode *, struct qstr *);
+ 	int	(*readdir) (struct dentry *, struct rpc_cred *,
+--- linux-2.6.18.i686/fs/nfs/nfs4xdr.c.orig	2007-05-31 11:04:11.000000000 -0400
++++ linux-2.6.18.i686/fs/nfs/nfs4xdr.c	2007-05-31 13:47:00.000000000 -0400
+@@ -128,7 +128,7 @@ static int nfs4_stat_to_errno(int);
+ #define decode_link_maxsz	(op_decode_hdr_maxsz + 5)
+ #define encode_symlink_maxsz	(op_encode_hdr_maxsz + \
+ 				1 + nfs4_name_maxsz + \
+-				nfs4_path_maxsz + \
++				1 + \
+ 				nfs4_fattr_maxsz)
+ #define decode_symlink_maxsz	(op_decode_hdr_maxsz + 8)
+ #define encode_create_maxsz	(op_encode_hdr_maxsz + \
+@@ -673,9 +673,9 @@ static int encode_create(struct xdr_stre
+ 
+ 	switch (create->ftype) {
+ 	case NF4LNK:
+-		RESERVE_SPACE(4 + create->u.symlink->len);
+-		WRITE32(create->u.symlink->len);
+-		WRITEMEM(create->u.symlink->name, create->u.symlink->len);
++		RESERVE_SPACE(4);
++		WRITE32(create->u.symlink.len);
++		xdr_write_pages(xdr, create->u.symlink.pages, 0, create->u.symlink.len);
+ 		break;
+ 
+ 	case NF4BLK: case NF4CHR:
+--- linux-2.6.18.i686/fs/nfs/proc.c.orig	2007-05-31 11:04:11.000000000 -0400
++++ linux-2.6.18.i686/fs/nfs/proc.c	2007-05-31 13:47:00.000000000 -0400
+@@ -425,8 +425,8 @@ nfs_proc_link(struct inode *inode, struc
+ }
+ 
+ static int
+-nfs_proc_symlink(struct inode *dir, struct dentry *dentry, struct qstr *path,
+-		 struct iattr *sattr)
++nfs_proc_symlink(struct inode *dir, struct dentry *dentry, struct page *page,
++		 unsigned int len, struct iattr *sattr)
+ {
+ 	struct nfs_fh fhandle;
+ 	struct nfs_fattr fattr;
+@@ -434,8 +434,8 @@ nfs_proc_symlink(struct inode *dir, stru
+ 		.fromfh		= NFS_FH(dir),
+ 		.fromname	= dentry->d_name.name,
+ 		.fromlen	= dentry->d_name.len,
+-		.topath		= path->name,
+-		.tolen		= path->len,
++		.pages		= &page,
++		.pathlen	= len,
+ 		.sattr		= sattr
+ 	};
+ 	struct rpc_message msg = {
+@@ -444,11 +444,11 @@ nfs_proc_symlink(struct inode *dir, stru
+ 	};
+ 	int			status;
+ 
+-	if (path->len > NFS2_MAXPATHLEN)
++	if (len > NFS2_MAXPATHLEN)
+ 		return -ENAMETOOLONG;
+ 
+-	dprintk("NFS call  symlink %s -> %s\n", dentry->d_name.name,
+-			path->name);
++	dprintk("NFS call  symlink %s\n", dentry->d_name.name);
++
+ 	status = rpc_call_sync(NFS_CLIENT(dir), &msg, 0);
+ 	nfs_mark_for_revalidate(dir);
+ 
+--- linux-2.6.18.i686/fs/nfs/nfs3xdr.c.orig	2007-05-31 11:04:11.000000000 -0400
++++ linux-2.6.18.i686/fs/nfs/nfs3xdr.c	2007-05-31 13:47:00.000000000 -0400
+@@ -56,7 +56,7 @@
+ #define NFS3_writeargs_sz	(NFS3_fh_sz+5)
+ #define NFS3_createargs_sz	(NFS3_diropargs_sz+NFS3_sattr_sz)
+ #define NFS3_mkdirargs_sz	(NFS3_diropargs_sz+NFS3_sattr_sz)
+-#define NFS3_symlinkargs_sz	(NFS3_diropargs_sz+NFS3_path_sz+NFS3_sattr_sz)
++#define NFS3_symlinkargs_sz	(NFS3_diropargs_sz+1+NFS3_sattr_sz)
+ #define NFS3_mknodargs_sz	(NFS3_diropargs_sz+2+NFS3_sattr_sz)
+ #define NFS3_renameargs_sz	(NFS3_diropargs_sz+NFS3_diropargs_sz)
+ #define NFS3_linkargs_sz		(NFS3_fh_sz+NFS3_diropargs_sz)
+@@ -398,8 +398,11 @@ nfs3_xdr_symlinkargs(struct rpc_rqst *re
+ 	p = xdr_encode_fhandle(p, args->fromfh);
+ 	p = xdr_encode_array(p, args->fromname, args->fromlen);
+ 	p = xdr_encode_sattr(p, args->sattr);
+-	p = xdr_encode_array(p, args->topath, args->tolen);
++	*p++ = htonl(args->pathlen);
+ 	req->rq_slen = xdr_adjust_iovec(req->rq_svec, p);
++
++	/* Copy the page */
++	xdr_encode_pages(&req->rq_snd_buf, args->pages, 0, args->pathlen);
+ 	return 0;
+ }
+ 
+--- linux-2.6.18.i686/fs/nfs/nfs2xdr.c.orig	2007-05-31 11:04:11.000000000 -0400
++++ linux-2.6.18.i686/fs/nfs/nfs2xdr.c	2007-05-31 13:47:00.000000000 -0400
+@@ -51,7 +51,7 @@
+ #define NFS_createargs_sz	(NFS_diropargs_sz+NFS_sattr_sz)
+ #define NFS_renameargs_sz	(NFS_diropargs_sz+NFS_diropargs_sz)
+ #define NFS_linkargs_sz		(NFS_fhandle_sz+NFS_diropargs_sz)
+-#define NFS_symlinkargs_sz	(NFS_diropargs_sz+NFS_path_sz+NFS_sattr_sz)
++#define NFS_symlinkargs_sz	(NFS_diropargs_sz+1+NFS_sattr_sz)
+ #define NFS_readdirargs_sz	(NFS_fhandle_sz+2)
+ 
+ #define NFS_attrstat_sz		(1+NFS_fattr_sz)
+@@ -351,11 +351,26 @@ nfs_xdr_linkargs(struct rpc_rqst *req, u
+ static int
+ nfs_xdr_symlinkargs(struct rpc_rqst *req, u32 *p, struct nfs_symlinkargs *args)
+ {
++	struct xdr_buf *sndbuf = &req->rq_snd_buf;
++	size_t pad;
++
+ 	p = xdr_encode_fhandle(p, args->fromfh);
+ 	p = xdr_encode_array(p, args->fromname, args->fromlen);
+-	p = xdr_encode_array(p, args->topath, args->tolen);
++	*p++ = htonl(args->pathlen);
++	sndbuf->len = xdr_adjust_iovec(sndbuf->head, p);
++
++	xdr_encode_pages(sndbuf, args->pages, 0, args->pathlen);
++
++	/*
++	 * xdr_encode_pages may have added a few bytes to ensure the
++	 * pathname ends on a 4-byte boundary.  Start encoding the
++	 * attributes after the pad bytes.
++	 */
++	pad = sndbuf->tail->iov_len;
++	if (pad > 0)
++		p++;
+ 	p = xdr_encode_sattr(p, args->sattr);
+-	req->rq_slen = xdr_adjust_iovec(req->rq_svec, p);
++	sndbuf->len += xdr_adjust_iovec(sndbuf->tail, p) - pad;
+ 	return 0;
+ }
+ 
+--- linux-2.6.18.i686/fs/nfs/dir.c.orig	2007-05-31 13:46:43.000000000 -0400
++++ linux-2.6.18.i686/fs/nfs/dir.c	2007-05-31 13:49:14.000000000 -0400
+@@ -1454,43 +1454,83 @@ static int nfs_unlink(struct inode *dir,
+ 	return error;
+ }
+ 
+-static int
+-nfs_symlink(struct inode *dir, struct dentry *dentry, const char *symname)
++/*
++ * To create a symbolic link, most file systems instantiate a new inode,
++ * add a page to it containing the path, then write it out to the disk
++ * using prepare_write/commit_write.
++ *
++ * Unfortunately the NFS client can't create the in-core inode first
++ * because it needs a file handle to create an in-core inode (see
++ * fs/nfs/inode.c:nfs_fhget).  We only have a file handle *after* the
++ * symlink request has completed on the server.
++ *
++ * So instead we allocate a raw page, copy the symname into it, then do
++ * the SYMLINK request with the page as the buffer.  If it succeeds, we
++ * now have a new file handle and can instantiate an in-core NFS inode
++ * and move the raw page into its mapping.
++ */
++static int nfs_symlink(struct inode *dir, struct dentry *dentry, const char *symname)
++
+ {
++	struct pagevec lru_pvec;
++	struct page *page;
++	char *kaddr;
+ 	struct iattr attr;
+-	struct qstr qsymname;
++	unsigned int pathlen = strlen(symname);
+ 	int error;
+ 
+ 	dfprintk(VFS, "NFS: symlink(%s/%ld, %s, %s)\n", dir->i_sb->s_id,
+ 		dir->i_ino, dentry->d_name.name, symname);
+ 
+-#ifdef NFS_PARANOIA
+-if (dentry->d_inode)
+-printk("nfs_proc_symlink: %s/%s not negative!\n",
+-dentry->d_parent->d_name.name, dentry->d_name.name);
+-#endif
+-	/*
+-	 * Fill in the sattr for the call.
+- 	 * Note: SunOS 4.1.2 crashes if the mode isn't initialized!
+-	 */
+-	attr.ia_valid = ATTR_MODE;
+-	attr.ia_mode = S_IFLNK | S_IRWXUGO;
++	if (pathlen > PAGE_SIZE)
++		return -ENAMETOOLONG;
+ 
+-	qsymname.name = symname;
+-	qsymname.len  = strlen(symname);
++	attr.ia_mode = S_IFLNK | S_IRWXUGO;
++	attr.ia_valid = ATTR_MODE;
+ 
+ 	lock_kernel();
++
++	page = alloc_page(GFP_KERNEL);
++	if (!page) {
++		unlock_kernel();
++		return -ENOMEM;
++	}
++
++	kaddr = kmap_atomic(page, KM_USER0);
++	memcpy(kaddr, symname, pathlen);
++	if (pathlen < PAGE_SIZE)
++		memset(kaddr + pathlen, 0, PAGE_SIZE - pathlen);
++	kunmap_atomic(kaddr, KM_USER0);
++
+ 	nfs_begin_data_update(dir);
+-	error = NFS_PROTO(dir)->symlink(dir, dentry, &qsymname, &attr);
++	error = NFS_PROTO(dir)->symlink(dir, dentry, page, pathlen, &attr);
+ 	nfs_end_data_update(dir);
+-	if (!error) {
+-		if (error == -EEXIST)
+-			printk("nfs_proc_symlink: %s/%s already exists??\n",
+-			       dentry->d_parent->d_name.name, dentry->d_name.name);
++	if (error != 0) {
++		dfprintk(VFS, "NFS: symlink(%s/%ld, %s, %s) error %d\n",
++			dir->i_sb->s_id, dir->i_ino,
++			dentry->d_name.name, symname, error);
+ 		d_drop(dentry);
++		__free_page(page);
++		unlock_kernel();
++		return error;
+ 	}
++
++	/*
++	 * No big deal if we can't add this page to the page cache here.
++	 * READLINK will get the missing page from the server if needed.
++	 */
++	pagevec_init(&lru_pvec, 0);
++	if (!add_to_page_cache(page, dentry->d_inode->i_mapping, 0,
++							GFP_KERNEL)) {
++		pagevec_add(&lru_pvec, page);
++		pagevec_lru_add(&lru_pvec);
++		SetPageUptodate(page);
++		unlock_page(page);
++	} else
++		__free_page(page);
++
+ 	unlock_kernel();
+-	return error;
++	return 0;
+ }
+ 
+ static int 
+--- linux-2.6.18.i686/fs/nfs/nfs3proc.c.orig	2007-05-31 11:04:11.000000000 -0400
++++ linux-2.6.18.i686/fs/nfs/nfs3proc.c	2007-05-31 13:47:00.000000000 -0400
+@@ -544,8 +544,8 @@ nfs3_proc_link(struct inode *inode, stru
+ }
+ 
+ static int
+-nfs3_proc_symlink(struct inode *dir, struct dentry *dentry, struct qstr *path,
+-		  struct iattr *sattr)
++nfs3_proc_symlink(struct inode *dir, struct dentry *dentry, struct page *page,
++		  unsigned int len, struct iattr *sattr)
+ {
+ 	struct nfs_fh fhandle;
+ 	struct nfs_fattr fattr, dir_attr;
+@@ -553,8 +553,8 @@ nfs3_proc_symlink(struct inode *dir, str
+ 		.fromfh		= NFS_FH(dir),
+ 		.fromname	= dentry->d_name.name,
+ 		.fromlen	= dentry->d_name.len,
+-		.topath		= path->name,
+-		.tolen		= path->len,
++		.pages		= &page,
++		.pathlen	= len,
+ 		.sattr		= sattr
+ 	};
+ 	struct nfs3_diropres	res = {
+@@ -569,11 +569,11 @@ nfs3_proc_symlink(struct inode *dir, str
+ 	};
+ 	int			status;
+ 
+-	if (path->len > NFS3_MAXPATHLEN)
++	if (len > NFS3_MAXPATHLEN)
+ 		return -ENAMETOOLONG;
+ 
+-	dprintk("NFS call  symlink %s -> %s\n", dentry->d_name.name,
+-			path->name);
++	dprintk("NFS call  symlink %s\n", dentry->d_name.name);
++
+ 	nfs_fattr_init(&dir_attr);
+ 	nfs_fattr_init(&fattr);
+ 	status = rpc_call_sync(NFS_CLIENT(dir), &msg, 0);
+--- linux-2.6.18.i686/fs/nfs/nfs4proc.c.orig	2007-05-31 11:04:11.000000000 -0400
++++ linux-2.6.18.i686/fs/nfs/nfs4proc.c	2007-05-31 13:47:00.000000000 -0400
+@@ -2085,7 +2085,7 @@ static int nfs4_proc_link(struct inode *
+ }
+ 
+ static int _nfs4_proc_symlink(struct inode *dir, struct dentry *dentry,
+-		struct qstr *path, struct iattr *sattr)
++		struct page *page, unsigned int len, struct iattr *sattr)
+ {
+ 	struct nfs_server *server = NFS_SERVER(dir);
+ 	struct nfs_fh fhandle;
+@@ -2111,10 +2111,11 @@ static int _nfs4_proc_symlink(struct ino
+ 	};
+ 	int			status;
+ 
+-	if (path->len > NFS4_MAXPATHLEN)
++	if (len > NFS4_MAXPATHLEN)
+ 		return -ENAMETOOLONG;
+ 
+-	arg.u.symlink = path;
++	arg.u.symlink.pages = &page;
++	arg.u.symlink.len = len;
+ 	nfs_fattr_init(&fattr);
+ 	nfs_fattr_init(&dir_fattr);
+ 	
+@@ -2128,13 +2129,14 @@ static int _nfs4_proc_symlink(struct ino
+ }
+ 
+ static int nfs4_proc_symlink(struct inode *dir, struct dentry *dentry,
+-		struct qstr *path, struct iattr *sattr)
++		struct page *page, unsigned int len, struct iattr *sattr)
+ {
+ 	struct nfs4_exception exception = { };
+ 	int err;
+ 	do {
+ 		err = nfs4_handle_exception(NFS_SERVER(dir),
+-				_nfs4_proc_symlink(dir, dentry, path, sattr),
++				_nfs4_proc_symlink(dir, dentry, page,
++							len, sattr),
+ 				&exception);
+ 	} while (exception.retry);
+ 	return err;
+

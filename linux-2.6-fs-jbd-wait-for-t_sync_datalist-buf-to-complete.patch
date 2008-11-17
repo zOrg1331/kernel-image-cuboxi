@@ -1,0 +1,70 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Subject: [RHEL5.2 PATCH] - jbd: wait for already submitted t_sync_datalist 	buffer to complete
+Date: Mon, 27 Aug 2007 11:42:34 -0500
+Bugzilla: 250537
+Message-Id: <46D2FEFA.20102@redhat.com>
+Changelog: [fs] jbd: wait for t_sync_datalist buffer to complete
+
+
+This is for bug 
+Bug 250537: [PATCH] jbd: wait for already submitted t_sync_datalist buffer to complete
+
+This change catches buffers which are locked but not dirty, i.e.
+just submitted for IO, in the journal_submit_data_buffers() path
+so that they are waited on just like buffers which were actually
+submitted from that function.
+
+The change has been upstream since late last year.
+
+Thanks,
+
+-Eric
+
+==================================
+
+X-Git-Tag: v2.6.20-rc2~15
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=6f5a9da1af5a8c286575c30c2706dc1fbef9164b
+
+[PATCH] jbd: wait for already submitted t_sync_datalist buffer to complete
+
+In the current jbd code, if a buffer on BJ_SyncData list is dirty and not
+locked, the buffer is refiled to BJ_Locked list, submitted to the IO and
+waited for IO completion.
+
+But the fsstress test showed the case that when a buffer was already
+submitted to the IO just before the buffer_dirty(bh) check, the buffer was
+not waited for IO completion.
+
+Following patch solves this problem.  If it is assumed that a buffer is
+submitted to the IO before the buffer_dirty(bh) check and still being
+written to disk, this buffer is refiled to BJ_Locked list.
+
+Signed-off-by: Hisashi Hifumi <hifumi.hisashi@oss.ntt.co.jp>
+Cc: Jan Kara <jack@ucw.cz>
+Cc: "Stephen C. Tweedie" <sct@redhat.com>
+Cc: <linux-ext4@vger.kernel.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+
+---
+
+Index: linux-2.6.18-24.el5/fs/jbd/commit.c
+===================================================================
+--- linux-2.6.18-24.el5.orig/fs/jbd/commit.c
++++ linux-2.6.18-24.el5/fs/jbd/commit.c
+@@ -248,8 +248,12 @@ write_out_data:
+ 				bufs = 0;
+ 				goto write_out_data;
+ 			}
+-		}
+-		else {
++		} else if (!locked && buffer_locked(bh)) {
++			__journal_file_buffer(jh, commit_transaction,
++						BJ_Locked);
++			jbd_unlock_bh_state(bh);
++			put_bh(bh);
++		} else {
+ 			BUFFER_TRACE(bh, "writeout complete: unfile");
+ 			__journal_unfile_buffer(jh);
+ 			jbd_unlock_bh_state(bh);
+

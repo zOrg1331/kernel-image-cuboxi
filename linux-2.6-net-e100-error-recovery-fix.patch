@@ -1,0 +1,45 @@
+Date: Fri, 6 Oct 2006 11:21:11 -0400
+From: "John W. Linville" <linville@redhat.com>
+Subject: [rhel5 patch] e100: fix PCI error recovery
+
+BZ208187
+
+Posted based on triviality and upstream acceptance.
+
+From: Linas Vepstas <linas@austin.ibm.com>
+Date: Thu, 31 Aug 2006 14:27:48 -0700
+Subject: [PATCH] e100: fix error recovery
+
+A recent patch in -mm3 titled
+"gregkh-pci-pci-don-t-enable-device-if-already-enabled.patch" causes
+pci_enable_device() to be a no-op if the kernel thinks that the device is
+already enabled.  This change breaks the PCI error recovery mechanism in
+the e100 device driver, since, after PCI slot reset, the card is no longer
+enabled.  This is a trivial fix for this problem.  Tested.
+
+Signed-off-by: Linas Vepstas <linas@austin.ibm.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Signed-off-by: Auke Kok <auke-jan.h.kok@intel.com>
+---
+ drivers/net/e100.c |    1 +
+ 1 files changed, 1 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/net/e100.c b/drivers/net/e100.c
+index 458af6a..e12cc68 100644
+--- a/drivers/net/e100.c
++++ b/drivers/net/e100.c
+@@ -2791,6 +2791,7 @@ static pci_ers_result_t e100_io_error_de
+ 	/* Detach; put netif into state similar to hotplug unplug. */
+ 	netif_poll_enable(netdev);
+ 	netif_device_detach(netdev);
++	pci_disable_device(pdev);
+ 
+ 	/* Request a slot reset. */
+ 	return PCI_ERS_RESULT_NEED_RESET;
+-- 
+1.4.2.GIT
+
+-- 
+John W. Linville
+linville@redhat.com
+

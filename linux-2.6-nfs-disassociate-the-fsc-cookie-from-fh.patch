@@ -1,0 +1,313 @@
+Date: Fri, 03 Nov 2006 15:37:22 -0500
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [RHEL5/FC6] [Patch 1/2] FS-Cache: error from cache: -105
+
+The following patch series has patches to both NFS and
+FS-Cache the fix bz:
+
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=212831
+
+NFS was filling the cache with fscache cookies that were never
+going to be used. fscache cookies were being created each time a
+new file handle was created, which makes sense if every fh/file
+was going to be opened. Unfortunately with readdirs this is not
+the case. So when an ls -R was done on a sizable tree structure,
+the entire fscache is be filled up with fscache cookies that were
+never going be used (i.e. because they were never going to
+be opened).
+
+So this patch disassociates the fsc cookie from the
+FH and associates it a file inode and *only* file inodes.
+Meaning NFS will only create cookies for files that are
+opened for reading only. All other inode types are explicitly
+ignored...
+
+Actually, this greatly simplifies the NFS/FSC interface plus it also
+speeds up readdirs since there is not caching done... But in the end,
+we probably should cache readdir entries since they are held in pages
+and they are mostly readonly data, but thats for another release..
+
+Both of the patches have been unit tested and are currently
+being worked over by jkt_home....
+
+
+steved.
+
+--- linux-2.6.18.i686/fs/nfs/inode.c.orig	2006-10-26 11:42:35.368677000 -0400
++++ linux-2.6.18.i686/fs/nfs/inode.c	2006-11-03 08:45:23.577258000 -0500
+@@ -79,7 +79,7 @@ void nfs_clear_inode(struct inode *inode
+ 	nfs_zap_acl_cache(inode);
+ 	nfs_access_zap_cache(inode);
+ 
+-	nfs_fscache_release_fh_cookie(NFS_SERVER(inode), NFS_I(inode));
++	nfs_fscache_release_cookie(inode);
+ }
+ 
+ /**
+@@ -126,7 +126,7 @@ void nfs_zap_caches(struct inode *inode)
+ 	nfs_zap_caches_locked(inode);
+ 	spin_unlock(&inode->i_lock);
+ 
+-	nfs_fscache_zap_fh_cookie(NFS_SERVER(inode), NFS_I(inode));
++	nfs_fscache_zap_cookie(inode);
+ }
+ 
+ static void nfs_zap_acl_cache(struct inode *inode)
+@@ -205,7 +205,6 @@ nfs_fhget(struct super_block *sb, struct
+ 	};
+ 	struct inode *inode = ERR_PTR(-ENOENT);
+ 	unsigned long hash;
+-	int maycache = 1;
+ 
+ 	if ((fattr->valid & NFS_ATTR_FATTR) == 0)
+ 		goto out_no_inode;
+@@ -257,7 +256,6 @@ nfs_fhget(struct super_block *sb, struct
+ 				else
+ 					inode->i_op = &nfs_mountpoint_inode_operations;
+ 				inode->i_fop = NULL;
+-				maycache = 0;
+ 			}
+ 		} else if (S_ISLNK(inode->i_mode))
+ 			inode->i_op = &nfs_symlink_inode_operations;
+@@ -288,7 +286,7 @@ nfs_fhget(struct super_block *sb, struct
+ 		memset(nfsi->cookieverf, 0, sizeof(nfsi->cookieverf));
+ 		nfsi->access_cache = RB_ROOT;
+ 
+-		nfs_fscache_get_fh_cookie(sb, nfsi, maycache);
++		nfs_fscache_init_cookie(inode);
+ 
+ 		unlock_new_inode(inode);
+ 	} else
+@@ -372,7 +370,7 @@ void nfs_setattr_update_inode(struct ino
+ 	if ((attr->ia_valid & ATTR_SIZE) != 0) {
+ 		nfs_inc_stats(inode, NFSIOS_SETATTRTRUNC);
+ 		inode->i_size = attr->ia_size;
+-		nfs_fscache_set_size(NFS_SERVER(inode), NFS_I(inode), inode->i_size);
++		nfs_fscache_set_size(inode);
+ 		vmtruncate(inode, attr->ia_size);
+ 	}
+ }
+@@ -557,8 +555,9 @@ int nfs_open(struct inode *inode, struct
+ 	ctx->mode = filp->f_mode;
+ 	nfs_file_set_open_context(filp, ctx);
+ 	put_nfs_open_context(ctx);
+-	if ((filp->f_flags & O_ACCMODE) != O_RDONLY)
+-		nfs_fscache_disable_fh_cookie(inode);
++
++	nfs_fscache_set_cookie(inode, filp);
++
+ 	return 0;
+ }
+ 
+@@ -697,7 +696,7 @@ int nfs_revalidate_mapping(struct inode 
+ 		}
+ 		spin_unlock(&inode->i_lock);
+ 
+-		nfs_fscache_renew_fh_cookie(NFS_SERVER(inode), nfsi);
++		nfs_fscache_renew_cookie(inode);
+ 
+ 		dfprintk(PAGECACHE, "NFS: (%s/%Ld) data cache invalidated\n",
+ 				inode->i_sb->s_id,
+@@ -932,13 +931,13 @@ static int nfs_update_inode(struct inode
+ 			if (data_stable) {
+ 				inode->i_size = new_isize;
+ 				invalid |= NFS_INO_INVALID_DATA;
+-				nfs_fscache_set_size(NFS_SERVER(inode), nfsi, inode->i_size);
++				nfs_fscache_set_size(inode);
+ 			}
+ 			invalid |= NFS_INO_INVALID_ATTR;
+ 		} else if (new_isize > cur_isize) {
+ 			inode->i_size = new_isize;
+ 			invalid |= NFS_INO_INVALID_ATTR|NFS_INO_INVALID_DATA;
+-			nfs_fscache_set_size(NFS_SERVER(inode), nfsi, inode->i_size);
++			nfs_fscache_set_size(inode);
+ 		}
+ 		nfsi->cache_change_attribute = jiffies;
+ 		dprintk("NFS: isize change on server for file %s/%ld\n",
+--- linux-2.6.18.i686/fs/nfs/fscache.h.orig	2006-10-26 11:42:34.920677000 -0400
++++ linux-2.6.18.i686/fs/nfs/fscache.h	2006-11-03 10:22:42.240584000 -0500
+@@ -48,6 +48,13 @@ static inline void nfs_fscache_unregiste
+ {
+ 	fscache_unregister_netfs(&nfs_cache_netfs);
+ }
++/*
++ * get the per-filehandle cookie for an NFS inode
++ */
++static inline void nfs_fscache_init_cookie(struct inode *inode)
++{
++	NFS_I(inode)->fscache = NULL;
++}
+ 
+ /*
+  * get the per-client index cookie for an NFS client if the appropriate mount
+@@ -90,12 +97,15 @@ static inline const char *nfs_server_fsc
+ /*
+  * get the per-filehandle cookie for an NFS inode
+  */
+-static inline void nfs_fscache_get_fh_cookie(struct super_block *sb,
+-					     struct nfs_inode *nfsi,
+-					     int maycache)
++static inline void nfs_fscache_enable_cookie(struct inode *inode)
+ {
+-	nfsi->fscache = NULL;
+-	if (maycache && (NFS_SB(sb)->flags & NFS_MOUNT_FSCACHE)) {
++	struct super_block *sb = inode->i_sb;
++	struct nfs_inode *nfsi = NFS_I(inode);
++
++	if (nfsi->fscache != NULL)
++		return;
++
++	if ((NFS_SB(sb)->flags & NFS_MOUNT_FSCACHE)) {
+ 		nfsi->fscache = fscache_acquire_cookie(
+ 			NFS_SB(sb)->nfs_client->fscache,
+ 			&nfs_cache_fh_index_def,
+@@ -111,20 +121,19 @@ static inline void nfs_fscache_get_fh_co
+ /*
+  * change the filesize associated with a per-filehandle cookie
+  */
+-static inline void nfs_fscache_set_size(struct nfs_server *server,
+-					struct nfs_inode *nfsi,
+-					loff_t i_size)
++static inline void nfs_fscache_set_size(struct inode *inode)
+ {
+-	fscache_set_i_size(nfsi->fscache, i_size);
++	fscache_set_i_size(NFS_I(inode)->fscache, inode->i_size);
+ }
+ 
+ /*
+  * replace a per-filehandle cookie due to revalidation detecting a file having
+  * changed on the server
+  */
+-static inline void nfs_fscache_renew_fh_cookie(struct nfs_server *server,
+-					       struct nfs_inode *nfsi)
++static inline void nfs_fscache_renew_cookie(struct inode *inode)
+ {
++	struct nfs_inode *nfsi = NFS_I(inode);
++	struct nfs_server *server = NFS_SERVER(inode);
+ 	struct fscache_cookie *old = nfsi->fscache;
+ 
+ 	if (nfsi->fscache) {
+@@ -146,9 +155,10 @@ static inline void nfs_fscache_renew_fh_
+ /*
+  * release a per-filehandle cookie
+  */
+-static inline void nfs_fscache_release_fh_cookie(struct nfs_server *server,
+-						 struct nfs_inode *nfsi)
++static inline void nfs_fscache_release_cookie(struct inode *inode)
+ {
++	struct nfs_inode *nfsi = NFS_I(inode);
++
+ 	dfprintk(FSCACHE, "NFS: clear cookie (0x%p/0x%p)\n",
+ 		 nfsi, nfsi->fscache);
+ 
+@@ -159,9 +169,10 @@ static inline void nfs_fscache_release_f
+ /*
+  * retire a per-filehandle cookie, destroying the data attached to it
+  */
+-static inline void nfs_fscache_zap_fh_cookie(struct nfs_server *server,
+-					     struct nfs_inode *nfsi)
++static inline void nfs_fscache_zap_cookie(struct inode *inode)
+ {
++	struct nfs_inode *nfsi = NFS_I(inode);
++
+ 	dfprintk(FSCACHE,"NFS: zapping cookie (0x%p/0x%p)\n",
+ 		nfsi, nfsi->fscache);
+ 
+@@ -174,7 +185,7 @@ static inline void nfs_fscache_zap_fh_co
+  * invalidating all the pages in the page cache relating to the associated
+  * inode to clear the per-page caching
+  */
+-static inline void nfs_fscache_disable_fh_cookie(struct inode *inode)
++static inline void nfs_fscache_disable_cookie(struct inode *inode)
+ {
+ 	if (NFS_I(inode)->fscache) {
+ 		dfprintk(FSCACHE,
+@@ -186,11 +197,28 @@ static inline void nfs_fscache_disable_f
+ 		if (inode->i_mapping && inode->i_mapping->nrpages)
+ 			invalidate_inode_pages2(inode->i_mapping);
+ 
+-		nfs_fscache_zap_fh_cookie(NFS_SERVER(inode), NFS_I(inode));
++		nfs_fscache_zap_cookie(inode);
+ 	}
+ }
+ 
+ /*
++ * Decide if we should enable or disable the FS cache for
++ * this inode. For now, only files that are open for read
++ * will be able to use the FS cache.
++ */
++static inline void nfs_fscache_set_cookie(struct inode *inode, 
++	struct file *filp)
++{
++	if (!S_ISREG(inode->i_mode))
++		return;
++
++	if ((filp->f_flags & O_ACCMODE) != O_RDONLY)
++		nfs_fscache_disable_cookie(inode);
++	else
++		nfs_fscache_enable_cookie(inode);
++}
++
++/*
+  * install the VM ops for mmap() of an NFS file so that we can hold up writes
+  * to pages on shared writable mappings until the store to the cache is
+  * complete
+@@ -413,28 +441,17 @@ static inline void nfs_writepage_to_fsca
+ #else /* CONFIG_NFS_FSCACHE */
+ static inline int nfs_fscache_register(void) { return 0; }
+ static inline void nfs_fscache_unregister(void) {}
++static inline void nfs_fscache_init_cookie(struct inode *inode) {}
+ static inline void nfs_fscache_get_client_cookie(struct nfs_client *clp) {}
+ static inline void nfs4_fscache_get_client_cookie(struct nfs_client *clp) {}
+ static inline void nfs_fscache_release_client_cookie(struct nfs_client *clp) {}
+ static inline const char *nfs_server_fscache_state(struct nfs_server *server) { return "no "; }
+-
+-static inline void nfs_fscache_get_fh_cookie(struct super_block *sb,
+-					     struct nfs_inode *nfsi,
+-					     int maycache)
+-{
+-}
+-static inline void nfs_fscache_set_size(struct nfs_server *server,
+-					struct nfs_inode *nfsi,
+-					loff_t i_size)
+-{
+-}
+-static inline void nfs_fscache_release_fh_cookie(struct nfs_server *server,
+-						 struct nfs_inode *nfsi)
+-{
+-}
+-static inline void nfs_fscache_zap_fh_cookie(struct nfs_server *server, struct nfs_inode *nfsi) {}
+-static inline void nfs_fscache_renew_fh_cookie(struct nfs_server *server, struct nfs_inode *nfsi) {}
+-static inline void nfs_fscache_disable_fh_cookie(struct inode *inode) {}
++static inline void nfs_fscache_enable_cookie(struct inode *inode) { }
++static inline void nfs_fscache_set_size(struct inode *inode) { }
++static inline void nfs_fscache_release_cookie(struct inode *inode) {}
++static inline void nfs_fscache_zap_cookie(struct inode *inode) {}
++static inline void nfs_fscache_renew_cookie(struct inode *inode) {}
++static inline void nfs_fscache_disable_cookie(struct inode *inode) {}
+ static inline void nfs_fscache_install_vm_ops(struct inode *inode, struct vm_area_struct *vma) {}
+ static inline void nfs_fscache_release_page(struct page *page) {}
+ static inline void nfs_fscache_invalidate_page(struct page *page,
+
+Date: Fri, 03 Nov 2006 15:37:34 -0500
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [RHEL5/FC6] [Patch 2/2] FS-Cache: error from cache: -105
+
+This second part of the series basically turns of the
+logging of, what can be, a very common error...
+
+steved.
+
+--- linux-2.6.18.i686/fs/fscache/cookie.c.org	2006-10-26 11:42:34.864677000 -0400
++++ linux-2.6.18.i686/fs/fscache/cookie.c	2006-11-03 11:09:50.613743000 -0500
+@@ -750,7 +750,8 @@ no_cache:
+ 	ret = -ENOMEDIUM;
+ 	goto error_cleanup;
+ error:
+-	printk(KERN_ERR "FS-Cache: error from cache: %d\n", ret);
++	if (ret != -ENOBUFS)
++		printk(KERN_ERR "FS-Cache: error from cache: %d\n", ret);
+ error_cleanup:
+ 	if (cookie) {
+ 		up_write(&cookie->sem);
+

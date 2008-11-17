@@ -1,0 +1,36 @@
+From: Jarod Wilson <jwilson@redhat.com>
+Subject: Re: [RHEL5.1 Patch] ia64 xen: make ia64 pv xen guest installs possible 	and let non-HP systems actually boot
+Date: Fri, 20 Jul 2007 15:25:07 -0400
+Bugzilla: 249076
+Message-Id: <46A10C13.9060406@redhat.com>
+Changelog: [XEN] ia64: allow guests to vga install
+
+
+Jarod Wilson wrote:
+> At present (kernel-xen-2.6.18-34.el5.ia64), ia64 xen paravirt guests
+> always install via serial console text mode, even when the pvfb gets
+> successfully fired up (bug 249075). Additionally, many non-HP ia64
+> systems that are only set up to output via vga fail to boot without
+> manually adding 'console=tty' to their kernel boot args (bug 249076).
+> The following one-line patch is to ia64-xen-specific code, so very
+> low-risk, low-impact, and it remedies both of these issues.
+
+-- 
+Jarod Wilson
+jwilson@redhat.com
+
+
+--- linux-2.6.18/arch/ia64/kernel/setup.c.org	2007-06-26 14:01:51.000000000 +0900
++++ linux-2.6.18/arch/ia64/kernel/setup.c	2007-06-26 14:32:18.000000000 +0900
+@@ -634,6 +634,8 @@
+ #if !defined(CONFIG_VT) || !defined(CONFIG_DUMMY_CONSOLE)
+ 			conswitchp = NULL;
+ #endif
++			/* force set tty for RHEL5 */
++			add_preferred_console("tty", 0, NULL);
+ 		}
+ 	}
+ #endif
+
+
+

@@ -1,0 +1,44 @@
+From: Tom Coughlan <coughlan@redhat.com>
+Subject: [RHEL 5 PATCH] Fix Emulex lpfc ioctl on PPC
+Date: Mon, 11 Dec 2006 15:51:21 -0500
+Bugzilla: 219194
+Message-Id: <1165870281.30044.77.camel@bianchi.boston.redhat.com>
+Changelog: Fix Emulex lpfc ioctl on PPC
+
+
+This one-liner fixes a bug in an lpfc ioctl that prevents remote
+management features from working on PPC systems. Emulex found this while
+testing RHEL Beta 2, and confirmed the fix. BZ 219194.
+
+This updates the version number to 8.1.10.3. The patch applies cleanly
+after the patch I posted on Mon, 04 Dec 2006: 
+
+(That was BZ 218243)
+
+Tom
+
+diff -urpN a/drivers/scsi/lpfc/lpfc_ioctl.c b/drivers/scsi/lpfc/lpfc_ioctl.c
+--- a/drivers/scsi/lpfc/lpfc_ioctl.c	2006-12-08 18:49:05.023094000 -0500
++++ b/drivers/scsi/lpfc/lpfc_ioctl.c	2006-12-08 18:49:05.167095000 -0500
+@@ -60,7 +60,7 @@ struct event_data {
+ 	uint32_t type;
+ 	uint32_t immed_dat;
+ 	void * data;
+-	size_t len;
++	uint32_t len;
+ };
+ 
+ 
+diff -urpN a/drivers/scsi/lpfc/lpfc_version.h b/drivers/scsi/lpfc/lpfc_version.h
+--- a/drivers/scsi/lpfc/lpfc_version.h	2006-12-08 18:49:05.061094000 -0500
++++ b/drivers/scsi/lpfc/lpfc_version.h	2006-12-08 18:49:05.218094000 -0500
+@@ -18,7 +18,7 @@
+  * included with this package.                                     *
+  *******************************************************************/
+ 
+-#define LPFC_DRIVER_VERSION "8.1.10.2"
++#define LPFC_DRIVER_VERSION "8.1.10.3"
+ 
+ #define LPFC_DRIVER_NAME "lpfc"
+ 
+

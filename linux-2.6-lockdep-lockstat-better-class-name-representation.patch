@@ -1,0 +1,50 @@
+From: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Date: Tue, 18 Dec 2007 12:22:10 +0100
+Subject: [lockdep] lockstat: better class name representation
+Message-id: 20071218112316.098034677@chello.nl
+O-Subject: [RHEL5.2 PATCH 09/14] lockstat: better class name representation
+Bugzilla: 193729
+
+optionally add class->name_version and class->subclass to the class name
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Cc: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/kernel/lockdep_proc.c b/kernel/lockdep_proc.c
+index 4925bda..6ab388c 100644
+--- a/kernel/lockdep_proc.c
++++ b/kernel/lockdep_proc.c
+@@ -403,8 +403,30 @@ static void seq_stats(struct seq_file *m, struct lock_stat_data *data)
+ 	class = data->class;
+ 	stats = &data->stats;
+ 
+-	snprintf(name, 38, "%s", class->name);
++	namelen = 38;
++	if (class->name_version > 1)
++		namelen -= 2; /* XXX truncates versions > 9 */
++	if (class->subclass)
++		namelen -= 2;
++
++	if (!class->name) {
++		char str[KSYM_NAME_LEN];
++		const char *key_name;
++
++		key_name = __get_key_name(class->key, str);
++		snprintf(name, namelen, "%s", key_name);
++	} else {
++		snprintf(name, namelen, "%s", class->name);
++	}
+ 	namelen = strlen(name);
++	if (class->name_version > 1) {
++		snprintf(name+namelen, 3, "#%d", class->name_version);
++		namelen += 2;
++	}
++	if (class->subclass) {
++		snprintf(name+namelen, 3, "/%d", class->subclass);
++		namelen += 2;
++	}
+ 
+ 	if (stats->write_holdtime.nr) {
+ 		if (stats->read_holdtime.nr)

@@ -1,0 +1,50 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Date: Mon, 17 Dec 2007 07:45:47 -0500
+Subject: [scsi] mpt fusion: add accessor for version 3.04.05+
+Message-id: alpine.LFD.0.9999.0712170744410.16626@localhost.localdomain
+O-Subject: [RHEL-5.2 PATCH] 2/3 bz253122 Update mpt fusion to version 3.04.05+
+Bugzilla: 253122
+
+Adds accessors to the SCSI midlayer
+
+ include/scsi/scsi_cmnd.h |   13 +++++++++++++
+ include/scsi/scsi_host.h |    4 ++++
+ 2 files changed, 17 insertions(+), 0 deletions(-)
+
+diff --git a/include/scsi/scsi_cmnd.h b/include/scsi/scsi_cmnd.h
+index 58e6444..5e67d09 100644
+--- a/include/scsi/scsi_cmnd.h
++++ b/include/scsi/scsi_cmnd.h
+@@ -142,4 +142,17 @@ extern void *scsi_kmap_atomic_sg(struct scatterlist *sg, int sg_count,
+ 				 size_t *offset, size_t *len);
+ extern void scsi_kunmap_atomic_sg(void *virt);
+ 
++#define scsi_sg_count(cmd) ((cmd)->use_sg)
++#define scsi_sglist(cmd) ((struct scatterlist *)(cmd)->request_buffer)
++#define scsi_bufflen(cmd) ((cmd)->request_bufflen)
++
++static inline void scsi_set_resid(struct scsi_cmnd *cmd, int resid)
++{
++	cmd->resid = resid;
++}
++
++static inline int scsi_get_resid(struct scsi_cmnd *cmd)
++{
++	return cmd->resid;
++}
+ #endif /* _SCSI_SCSI_CMND_H */
+diff --git a/include/scsi/scsi_host.h b/include/scsi/scsi_host.h
+index ab322bc..8b35f0d 100644
+--- a/include/scsi/scsi_host.h
++++ b/include/scsi/scsi_host.h
+@@ -647,6 +647,10 @@ struct Scsi_Host {
+ #define shost_printk(prefix, shost, fmt, a...)	\
+ 	dev_printk(prefix, &(shost)->shost_gendev, fmt, ##a)
+ 
++static inline void *shost_priv(struct Scsi_Host *shost)
++{
++	return (void *)shost->hostdata;
++}
+ 
+ int scsi_is_host_device(const struct device *);
+ 

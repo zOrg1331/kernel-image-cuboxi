@@ -1,0 +1,32 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Thu, 13 Sep 2007 11:49:12 -0400
+Subject: [nfs] nfs_symlink: allocate page with GFP_HIGHUSER
+Message-id: 200709131549.l8DFnCMA032079@dantu.rdu.redhat.com
+O-Subject: [RHEL5 PATCH] nfs_symlink should use GFP_HIGHUSER to allocate page (BZ#245042)
+Bugzilla: 245042
+
+This patch is intended for 5.2...
+
+The patch for bug 218718 makes it so that nfs_symlink() allocates a page
+destined for pagecache and uses that to hold the name to which the symlink
+points. It allocates it using GFP_KERNEL but most pagecache pages are
+allocated using GFP_HIGHUSER.
+
+There's no reason to use normal zone memory for this, and a machine doing a
+storm of NFS symlinks could potentially end up under normal zone memory
+pressure. A patch to change the code to allocate the page out of highmem
+recently went upstream. The following patch does the same for RHEL5.
+
+diff --git a/fs/nfs/dir.c b/fs/nfs/dir.c
+index 10b0f66..3783bd5 100644
+--- a/fs/nfs/dir.c
++++ b/fs/nfs/dir.c
+@@ -1503,7 +1503,7 @@ static int nfs_symlink(struct inode *dir, struct dentry *dentry, const char *sym
+ 
+ 	lock_kernel();
+ 
+-	page = alloc_page(GFP_KERNEL);
++	page = alloc_page(GFP_HIGHUSER);
+ 	if (!page) {
+ 		unlock_kernel();
+ 		return -ENOMEM;

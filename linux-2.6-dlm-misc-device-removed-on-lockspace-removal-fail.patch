@@ -1,0 +1,156 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] dlm: misc device removed when lockspace removal fails
+Date: Thu, 31 May 2007 09:36:41 -0500
+Bugzilla: 241817
+Message-Id: <20070531143641.GI2642@redhat.com>
+Changelog: [dlm] misc device removed when lockspace removal fails
+
+
+bz 241817
+
+Currently if the lockspace removal fails the misc device associated with a
+lockspace is left deleted. After that there is no way to access the orphaned
+lockspace from userland.
+
+This patch recreates the misc device if th dlm_release_lockspace fails. I
+believe this is better than attempting to remove the lockspace first because
+that leaves an unattached device lying around. The potential gap in which there
+is no access to the lockspace between removing the misc device and recreating it
+is acceptable ... after all the application is trying to remove it, and only new
+users of the lockspace will be affected.
+
+Also, to sync with upstream, add const to file_operations and include user.h.
+
+upstream: gfs2-2.6-nmw.git and -mm
+
+Index: linux-rhel51-quilt/fs/dlm/user.c
+===================================================================
+--- linux-rhel51-quilt.orig/fs/dlm/user.c	2007-06-08 10:18:13.000000000 -0500
++++ linux-rhel51-quilt/fs/dlm/user.c	2007-06-08 10:21:21.000000000 -0500
+@@ -22,10 +22,11 @@
+ #include "lockspace.h"
+ #include "lock.h"
+ #include "lvb_table.h"
++#include "user.h"
+ 
+ static const char *name_prefix="dlm";
+ static struct miscdevice ctl_device;
+-static struct file_operations device_fops;
++static const struct file_operations device_fops;
+ 
+ #ifdef CONFIG_COMPAT
+ 
+@@ -336,6 +337,29 @@
+ 	return error;
+ }
+ 
++static int create_misc_device(struct dlm_ls *ls, char *name)
++{
++	int error, len;
++
++	error = -ENOMEM;
++	len = strlen(name) + strlen(name_prefix) + 2;
++	ls->ls_device.name = kzalloc(len, GFP_KERNEL);
++	if (!ls->ls_device.name)
++		goto fail;
++
++	snprintf((char *)ls->ls_device.name, len, "%s_%s", name_prefix,
++		 name);
++	ls->ls_device.fops = &device_fops;
++	ls->ls_device.minor = MISC_DYNAMIC_MINOR;
++
++	error = misc_register(&ls->ls_device);
++	if (error) {
++		kfree(ls->ls_device.name);
++	}
++fail:
++	return error;
++}
++
+ static int device_user_purge(struct dlm_user_proc *proc,
+ 			     struct dlm_purge_params *params)
+ {
+@@ -356,7 +380,7 @@
+ {
+ 	dlm_lockspace_t *lockspace;
+ 	struct dlm_ls *ls;
+-	int error, len;
++	int error;
+ 
+ 	if (!capable(CAP_SYS_ADMIN))
+ 		return -EPERM;
+@@ -370,29 +394,14 @@
+ 	if (!ls)
+ 		return -ENOENT;
+ 
+-	error = -ENOMEM;
+-	len = strlen(params->name) + strlen(name_prefix) + 2;
+-	ls->ls_device.name = kzalloc(len, GFP_KERNEL);
+-	if (!ls->ls_device.name)
+-		goto fail;
+-	snprintf((char *)ls->ls_device.name, len, "%s_%s", name_prefix,
+-		 params->name);
+-	ls->ls_device.fops = &device_fops;
+-	ls->ls_device.minor = MISC_DYNAMIC_MINOR;
+-
+-	error = misc_register(&ls->ls_device);
+-	if (error) {
+-		kfree(ls->ls_device.name);
+-		goto fail;
+-	}
+-
+-	error = ls->ls_device.minor;
++	error = create_misc_device(ls, params->name);
+ 	dlm_put_lockspace(ls);
+-	return error;
+ 
+- fail:
+-	dlm_put_lockspace(ls);
+-	dlm_release_lockspace(lockspace, 0);
++	if (error)
++		dlm_release_lockspace(lockspace, 0);
++	else
++		error = ls->ls_device.minor;
++
+ 	return error;
+ }
+ 
+@@ -409,6 +418,10 @@
+ 	if (!ls)
+ 		return -ENOENT;
+ 
++	/* Deregister the misc device first, so we don't have
++	 * a device that's not attached to a lockspace. If
++	 * dlm_release_lockspace fails then we can recreate it
++	 */
+ 	error = misc_deregister(&ls->ls_device);
+ 	if (error) {
+ 		dlm_put_lockspace(ls);
+@@ -427,6 +440,8 @@
+ 
+ 	dlm_put_lockspace(ls);
+ 	error = dlm_release_lockspace(lockspace, force);
++	if (error)
++		create_misc_device(ls, ls->ls_name);
+  out:
+ 	return error;
+ }
+@@ -864,7 +879,7 @@
+ 	return 0;
+ }
+ 
+-static struct file_operations device_fops = {
++static const struct file_operations device_fops = {
+ 	.open    = device_open,
+ 	.release = device_close,
+ 	.read    = device_read,
+@@ -873,7 +888,7 @@
+ 	.owner   = THIS_MODULE,
+ };
+ 
+-static struct file_operations ctl_device_fops = {
++static const struct file_operations ctl_device_fops = {
+ 	.open    = ctl_device_open,
+ 	.release = ctl_device_close,
+ 	.read    = device_read,
+

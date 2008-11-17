@@ -1,0 +1,52 @@
+From: Tony Camuso <tcamuso@redhat.com>
+Subject: [RHEL5.1 PATCH] Blacklist for HP DL585G2 and HP dc5700
+Date: Tue, 31 Jul 2007 07:25:09 -0400
+Bugzilla: 248186
+Message-Id: <20070731112509.16339.83435.sendpatchset@dhcp83-188.boston.redhat.com>
+Changelog: [x86] Blacklist for HP DL585G2 and HP dc5700
+
+
+
+Resolves BZ 248186
+
+This patch Blacklists the HP Proliant DL585 G2 and dc5700 systems.
+
+These systems must be blacklisted to prevent them from using 
+MMCONFIG for PCI configuration space probes in order to circumvent
+the bug in the 8132 PCI bridge that acks only the first MMCONFIG cycle
+and no others. 
+
+The blacklisted systems will use legacy PCI Configuration probes through 
+the CF8/CFC Port IO addresses. 
+
+This patch has been built against 2.6.18-36.el5 and booted on a DL585G1
+to test for regressions, and on a DL585G2 to test for the correct 
+functionality. 
+
+Please ACK or comment. 
+
+--- linux-2.6.18.i386/arch/i386/pci/mmconfig.c.orig	2007-07-19 13:29:38.000000000 -0400
++++ linux-2.6.18.i386/arch/i386/pci/mmconfig.c	2007-07-19 13:37:39.000000000 -0400
+@@ -214,6 +214,21 @@ static struct dmi_system_id __devinitdat
+ 			DMI_MATCH(DMI_PRODUCT_NAME, "HP xw9400 Workstation"),
+ 		},
+ 	},
++	{
++		.callback = disable_mmconf,
++		.ident = "ProLiant DL585 G2",
++		.matches = {
++			DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant DL585 G2"),
++		},
++	},
++	{
++		.callback = disable_mmconf,
++		.ident = "HP Compaq dc5700 Microtower",
++		.matches = {
++			DMI_MATCH(DMI_PRODUCT_NAME, 
++				"HP Compaq dc5700 Microtower"),
++		},
++	},
+ 
+ 	{}
+ };
+

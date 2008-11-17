@@ -1,0 +1,119 @@
+From: Doug Chapman <dchapman@redhat.com>
+Date: Thu, 6 Dec 2007 16:15:23 -0500
+Subject: [cpufreq] governor: use new rwsem locking in work cb
+Message-id: 1196975723.1083.7.camel@athlon
+O-Subject: [RHEL 5.2 PATCH 3/5] hang at 'Disabling ondemand cpu frequency scaling'
+Bugzilla: 253416
+
+Patch 3/5 for BZ 253416
+
+Backport of:
+
+commit 56463b78cdca8e9ff8cc1759bca0c0777a061d6b
+Author: Venkatesh Pallipadi <venkatesh.pallipadi@intel.com>
+Date:   Mon Feb 5 16:12:45 2007 -0800
+
+    [CPUFREQ] ondemand governor use new cpufreq rwsem locking in work callback
+
+    Eliminate flush_workqueue in cpufreq_governor(STOP) callpath. Using flush
+    there has a deadlock potential as in
+
+    http://uwsg.iu.edu/hypermail/linux/kernel/0611.3/1223.html
+
+    Also, cleanup the locking issues with do_dbs_timer delayed_work callback.
+    As it changes the CPU frequency using __cpufreq_target, it needs to have
+    policy_rwsem in write mode, which also protects it from hot plug.
+
+diff --git a/drivers/cpufreq/cpufreq_ondemand.c b/drivers/cpufreq/cpufreq_ondemand.c
+index 7ce7ca9..9218115 100644
+--- a/drivers/cpufreq/cpufreq_ondemand.c
++++ b/drivers/cpufreq/cpufreq_ondemand.c
+@@ -307,18 +307,25 @@ static void do_dbs_timer(struct cpu_dbs_info_s *dbs_info)
+ {
+ 	unsigned int cpu = dbs_info->cpu;
+ 
+-	if (!dbs_info->enable)
++	if (lock_policy_rwsem_write(cpu) < 0)
+ 		return;
+ 
++	if (!dbs_info->enable){
++		unlock_policy_rwsem_write(cpu);
++		return;
++	}
++
+ 	lock_cpu_hotplug();
+ 	dbs_check_cpu(dbs_info);
+ 	unlock_cpu_hotplug();
+ 	queue_delayed_work_on(cpu, kondemand_wq, &dbs_info->work,
+ 			usecs_to_jiffies(dbs_tuners_ins.sampling_rate));
++	unlock_policy_rwsem_write(cpu);
+ }
+ 
+ static inline void dbs_timer_init(struct cpu_dbs_info_s *dbs_info)
+ {
++	dbs_info->enable = 1;
+ 	INIT_WORK(&dbs_info->work, do_dbs_timer, dbs_info);
+ 	queue_delayed_work_on(dbs_info->cpu, kondemand_wq, &dbs_info->work,
+ 			usecs_to_jiffies(dbs_tuners_ins.sampling_rate));
+@@ -329,7 +336,6 @@ static inline void dbs_timer_exit(struct cpu_dbs_info_s *dbs_info)
+ {
+ 	dbs_info->enable = 0;
+ 	cancel_delayed_work(&dbs_info->work);
+-	flush_workqueue(kondemand_wq);
+ }
+ 
+ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
+@@ -357,15 +363,7 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
+ 
+ 		mutex_lock(&dbs_mutex);
+ 		dbs_enable++;
+-		if (dbs_enable == 1) {
+-			kondemand_wq = create_workqueue("kondemand");
+-			if (!kondemand_wq) {
+-				printk(KERN_ERR "Creation of kondemand failed\n");
+-				dbs_enable--;
+-				mutex_unlock(&dbs_mutex);
+-				return -ENOSPC;
+-			}
+-		}
++
+ 		for_each_cpu_mask(j, policy->cpus) {
+ 			struct cpu_dbs_info_s *j_dbs_info;
+ 			j_dbs_info = &per_cpu(cpu_dbs_info, j);
+@@ -375,7 +373,6 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
+ 			j_dbs_info->prev_cpu_wall = get_jiffies_64();
+ 		}
+ 		this_dbs_info->cpu = cpu;
+-		this_dbs_info->enable = 1;
+ 		sysfs_create_group(&policy->kobj, &dbs_attr_group);
+ 		/*
+ 		 * Start the timerschedule work, when this governor
+@@ -406,9 +403,6 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
+ 		dbs_timer_exit(this_dbs_info);
+ 		sysfs_remove_group(&policy->kobj, &dbs_attr_group);
+ 		dbs_enable--;
+-		if (dbs_enable == 0)
+-			destroy_workqueue(kondemand_wq);
+-
+ 		mutex_unlock(&dbs_mutex);
+ 
+ 		break;
+@@ -437,12 +431,18 @@ static struct cpufreq_governor cpufreq_gov_dbs = {
+ 
+ static int __init cpufreq_gov_dbs_init(void)
+ {
++	kondemand_wq = create_workqueue("kondemand");
++	if (!kondemand_wq) {
++		printk(KERN_ERR "Creation of kondemand failed\n");
++		return -EFAULT;
++	}
+ 	return cpufreq_register_governor(&cpufreq_gov_dbs);
+ }
+ 
+ static void __exit cpufreq_gov_dbs_exit(void)
+ {
+ 	cpufreq_unregister_governor(&cpufreq_gov_dbs);
++	destroy_workqueue(kondemand_wq);
+ }
+ 
+ 

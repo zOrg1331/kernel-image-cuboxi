@@ -1,0 +1,111 @@
+Date: Thu, 7 Sep 2006 17:11:43 -0400 (EDT)
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: [RHEL5 beta2 PATCH REPOST]: BZ#200299 'Cannot allocate memory' when
+ cat /proc/scsi/scsi
+
+
+--- linux-2.6.17.i686/drivers/scsi/scsi_proc.c.orig	2006-09-07 13:00:21.000000000 -0400
++++ linux-2.6.17.i686/drivers/scsi/scsi_proc.c	2006-09-07 12:58:21.000000000 -0400
+@@ -144,10 +144,12 @@ void scsi_proc_host_rm(struct Scsi_Host 
+ 	remove_proc_entry(name, shost->hostt->proc_dir);
+ }
+ 
+-static int proc_print_scsidevice(struct device *dev, void *data)
++static int proc_scsi_show(struct seq_file *s, void *data)
+ {
++	struct klist_iter *iter = data;
++	struct klist_node *node = iter->i_cur;
++	struct device *dev = container_of(node, struct device, knode_bus);
+ 	struct scsi_device *sdev = to_scsi_device(dev);
+-	struct seq_file *s = data;
+ 	int i;
+ 
+ 	seq_printf(s,
+@@ -294,20 +296,72 @@ static ssize_t proc_scsi_write(struct fi
+ 	return err;
+ }
+ 
+-static int proc_scsi_show(struct seq_file *s, void *p)
++static void *proc_scsi_start(struct seq_file *s, loff_t *pos)
+ {
+-	seq_printf(s, "Attached devices:\n");
+-	bus_for_each_dev(&scsi_bus_type, NULL, s, proc_print_scsidevice);
+-	return 0;
++	struct klist_iter *iter;
++	loff_t n;
++
++	iter = kmalloc(sizeof(*iter), GFP_KERNEL);
++	if (iter == NULL)
++		return ERR_PTR(-ENOMEM);
++	klist_iter_init(&scsi_bus_type.klist_devices, iter);
++
++	if (*pos == 0)
++		seq_puts(s, "Attached devices:\n");
++
++	n = *pos;
++	do {
++		struct klist_node *node = klist_next(iter);
++		if (node == NULL) {
++			klist_iter_exit(iter);
++			kfree(iter);
++			return NULL;
++		}
++	} while (n-- != 0);
++
++	return iter;
++}
++
++static void *proc_scsi_next(struct seq_file *s, void *p, loff_t *pos)
++{
++	struct klist_iter *iter = p;
++	struct klist_node *node = klist_next(iter);
++
++	if (node == NULL) {
++		klist_iter_exit(iter);
++		kfree(iter);
++		return NULL;
++	}
++
++	*pos += 1;
++	return iter;
+ }
+ 
++static void proc_scsi_stop(struct seq_file *s, void *p)
++{
++	struct klist_iter *iter = p;
++
++	if (iter != NULL && !IS_ERR_VALUE((unsigned long)iter)) {
++		klist_iter_exit(iter);
++		kfree(iter);
++	}
++}
++
++
++static struct seq_operations proc_scsi_op = {
++	.start  = proc_scsi_start,
++	.next   = proc_scsi_next,
++	.stop   = proc_scsi_stop,
++	.show   = proc_scsi_show,
++};
++
+ static int proc_scsi_open(struct inode *inode, struct file *file)
+ {
+ 	/*
+ 	 * We don't really needs this for the write case but it doesn't
+ 	 * harm either.
+ 	 */
+-	return single_open(file, proc_scsi_show, NULL);
++	return seq_open(file, &proc_scsi_op);
+ }
+ 
+ static struct file_operations proc_scsi_operations = {
+@@ -315,7 +369,7 @@ static struct file_operations proc_scsi_
+ 	.read		= seq_read,
+ 	.write		= proc_scsi_write,
+ 	.llseek		= seq_lseek,
+-	.release	= single_release,
++	.release	= seq_release,
+ };
+ 
+ int __init scsi_init_procfs(void)
+

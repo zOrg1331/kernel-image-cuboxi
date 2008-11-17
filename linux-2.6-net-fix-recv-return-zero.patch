@@ -1,0 +1,82 @@
+From 4bb1c04ab4cb721fa5d762cccca455ca71551d34 Mon Sep 17 00:00:00 2001
+From: Thomas Graf <tgraf@redhat.com>
+Date: Thu, 3 Jul 2008 16:45:10 -0400
+Subject: [PATCH] [net] fix recv return zero
+
+Message-id: <20080618205631.GA10397@lsx.localdomain>
+O-Subject: [RHEL5.3 PATCH BZ435657] AF_UNIX: Fix stream recvmsg() race.
+Bugzilla: 435657
+
+BZ 435657
+Back port of upstream fix 3c0d2f3780fc94746c4842e965bd2570e2119bb6:
+
+A recv() on an AF_UNIX, SOCK_STREAM socket can race with a
+send()+close() on the peer, causing recv() to return zero, even though
+the sent data should be received.
+
+This happens if the send() and the close() is performed between
+skb_dequeue() and checking sk->sk_shutdown in unix_stream_recvmsg():
+
+process A  skb_dequeue() returns NULL, there's no data in the socket queue
+process B  new data is inserted onto the queue by unix_stream_sendmsg()
+process B  sk->sk_shutdown is set to SHUTDOWN_MASK by unix_release_sock()
+process A  sk->sk_shutdown is checked, unix_release_sock() returns zero
+
+I'm surprised nobody noticed this, it's not hard to trigger.  Maybe
+it's just (un)luck with the timing.
+
+It's possible to work around this bug in userspace, by retrying the
+recv() once in case of a zero return value.
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: James Morris <jmorris@redhat.com>
+Acked-by: Neil Horman <nhorman@redhat.com>
+---
+ net/unix/af_unix.c |   12 +++++++++---
+ 1 files changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/net/unix/af_unix.c b/net/unix/af_unix.c
+index de6ec51..acde97e 100644
+--- a/net/unix/af_unix.c
++++ b/net/unix/af_unix.c
+@@ -1711,20 +1711,22 @@ static int unix_stream_recvmsg(struct kiocb *iocb, struct socket *sock,
+ 		int chunk;
+ 		struct sk_buff *skb;
+ 
++		unix_state_rlock(sk);
+ 		skb = skb_dequeue(&sk->sk_receive_queue);
+ 		if (skb==NULL)
+ 		{
+ 			if (copied >= target)
+-				break;
++				goto unlock;
+ 
+ 			/*
+ 			 *	POSIX 1003.1g mandates this order.
+ 			 */
+ 			 
+ 			if ((err = sock_error(sk)) != 0)
+-				break;
++				goto unlock;
+ 			if (sk->sk_shutdown & RCV_SHUTDOWN)
+-				break;
++				goto unlock;
++			unix_state_runlock(sk);
+ 			err = -EAGAIN;
+ 			if (!timeo)
+ 				break;
+@@ -1738,7 +1740,11 @@ static int unix_stream_recvmsg(struct kiocb *iocb, struct socket *sock,
+ 			}
+ 			mutex_lock(&u->readlock);
+ 			continue;
++unlock:
++			unix_state_runlock(sk);
++			break;
+ 		}
++		unix_state_runlock(sk);
+ 
+ 		if (check_creds) {
+ 			/* Never glue messages from different writers */
+-- 
+1.5.5.1
+

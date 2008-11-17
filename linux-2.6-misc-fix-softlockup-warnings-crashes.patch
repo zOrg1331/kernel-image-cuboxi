@@ -1,0 +1,95 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Tue, 20 Nov 2007 15:34:22 -0500
+Subject: [misc] fix softlockup warnings/crashes
+Message-id: 474344CE.5020109@redhat.com
+O-Subject: [RHEL5.2 PATCH]: Fix softlockup warnings/crashes
+Bugzilla: 250994
+
+All,
+     Attached is a patch to fix BZ 250994.  The original reported problem is
+that after a save/restore, RHEL-5 PV guests would spit out "softlockup" warnings
+on the console.  However, it has been determined in a number of other cases that
+the softlockup errors can cause more serious problems, especially on dom0.  Note
+that this patch only affects Xen and s390, since these are the only
+architectures that support NO_IDLE_HZ in RHEL-5.  What this patch does is
+basically ensure that before we go idle, we make sure that the idle time is
+never greater than the next softlockup event.
+
+This patch is upstream (and has been since June) here:
+http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/61ed8662b69c
+
+Successfully tested by me on save/restore loops, and also tested by a hardware
+vendor running regression tests and a customer running Xen guests on top of GFS.
+
+Please review and ACK.
+
+Thanks,
+Chris Lalancette
+
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 338ae7c..806ff8b 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -214,12 +214,17 @@ extern void update_process_times(int user, struct pt_regs *regs);
+ extern void scheduler_tick(void);
+ 
+ #ifdef CONFIG_DETECT_SOFTLOCKUP
++extern unsigned long softlockup_get_next_event(void);
+ extern void softlockup_tick(struct pt_regs *regs);
+ extern void spawn_softlockup_task(void);
+ extern void touch_softlockup_watchdog(void);
+ extern void touch_all_softlockup_watchdogs(void);
+ extern int softlockup_thresh;
+ #else
++static inline unsigned long softlockup_get_next_event(void)
++{
++	return MAX_JIFFY_OFFSET;
++}
+ static inline void softlockup_tick(struct pt_regs *regs)
+ {
+ }
+diff --git a/kernel/softlockup.c b/kernel/softlockup.c
+index e35a03b..c9aad28 100644
+--- a/kernel/softlockup.c
++++ b/kernel/softlockup.c
+@@ -42,6 +42,19 @@ void touch_softlockup_watchdog(void)
+ }
+ EXPORT_SYMBOL(touch_softlockup_watchdog);
+ 
++unsigned long softlockup_get_next_event(void)
++{
++	int this_cpu = smp_processor_id();
++	unsigned long touch_timestamp = per_cpu(touch_timestamp, this_cpu);
++
++	if (per_cpu(print_timestamp, this_cpu) == touch_timestamp ||
++		did_panic ||
++			!per_cpu(watchdog_task, this_cpu))
++		return MAX_JIFFY_OFFSET;
++
++	return max_t(long, 0, touch_timestamp + HZ - jiffies);
++}
++
+ void touch_all_softlockup_watchdogs(void)
+ {
+ 	int cpu;
+diff --git a/kernel/timer.c b/kernel/timer.c
+index a8d3320..35a40dc 100644
+--- a/kernel/timer.c
++++ b/kernel/timer.c
+@@ -616,7 +616,9 @@ unsigned long next_timer_interrupt(void)
+ 		if (hr_expires < 3)
+ 			return hr_expires + jiffies;
+ 	}
+-	hr_expires += jiffies;
++	hr_expires = min_t(unsigned long,
++			   softlockup_get_next_event(),
++			   hr_expires) + jiffies;
+ 
+ 	base = __get_cpu_var(tvec_bases);
+ 	spin_lock(&base->lock);

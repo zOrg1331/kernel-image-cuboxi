@@ -1,0 +1,115 @@
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Date: Sun, 3 Feb 2008 19:23:45 +0100
+Subject: [sched] change the interactive interface
+Message-id: 20080203183340.124870658@chello.nl
+O-Subject: [RHEL5.2 PATCH 1/2] sched: change the interactive interface
+Bugzilla: 250589
+
+Change the /proc/sys/kernel/sched_fair interface that disables the
+interactivity estimator that is new in 5.2 to
+/proc/sys/kernel/sched_interactive because the customers insist on having
+a weak interactivity form.
+
+The new interface takes the values:
+2 - strong (default, as previous RHEL-5 releases)
+1 - weak; avoid starvation of tasks due to the interactivity bonus
+0 - disabled; no interactivity bonus
+
+For now, '1' is not implemented, but change the interface before 5.2 hits the
+streets, otherwise we need to change it for 5.3 and the two versions will have
+different interfaces.
+
+Signed-off-by: Peter Zijlstra <pzijlstr@redhat.com>
+
+Acked-by: Ingo Molnar <mingo@redhat.com>
+
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 806ff8b..4bf2f47 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -118,7 +118,9 @@ extern unsigned long avenrun[];		/* Load averages */
+ 	load += n*(FIXED_1-exp); \
+ 	load >>= FSHIFT;
+ 
+-extern unsigned int sched_fair;
++extern int sched_interactive;
++extern int sched_interactive_min;
++extern int sched_interactive_max;
+ extern unsigned long total_forks;
+ extern int nr_threads;
+ extern int last_pid;
+diff --git a/include/linux/sysctl.h b/include/linux/sysctl.h
+index ac29a86..5faf2cd 100644
+--- a/include/linux/sysctl.h
++++ b/include/linux/sysctl.h
+@@ -155,7 +155,7 @@ enum
+ 	KERN_MAX_LOCK_DEPTH=74,
+ 	KERN_KDUMP_ON_INIT=75,	/* int: ia64 kdump with INIT */
+  	KERN_PANIC_ON_NMI=76, /* int: whether we will panic on an unrecovered */
+-	KERN_SCHED_FAIR=77,     /* int: disable the interactivity estimator */
++	KERN_SCHED_INTERACTIVE=77, /* int: disable the interactivity estimator */
+ 	KERN_LOCK_STAT=78,	/* int: enable lock statistics */
+ 	KERN_PROVE_LOCKING=79,	/* int: enable lock dependancy validation */
+ 	KERN_SOFTLOCKUP_THRESH=80, /* int: min time to report softlockups */
+diff --git a/kernel/sched.c b/kernel/sched.c
+index 0d71173..9452d75 100644
+--- a/kernel/sched.c
++++ b/kernel/sched.c
+@@ -867,7 +867,7 @@ static int recalc_task_prio(struct task_struct *p, unsigned long long now)
+ 	/* Caller must always ensure 'now >= p->timestamp' */
+ 	unsigned long sleep_time = now - p->timestamp;
+ 
+-	if (batch_task(p) || sched_fair)
++	if (batch_task(p) || sched_interactive == 0)
+ 		sleep_time = 0;
+ 
+ 	if (likely(sleep_time > 0)) {
+@@ -4064,7 +4064,15 @@ static inline struct task_struct *find_process_by_pid(pid_t pid)
+ 	return pid ? find_task_by_pid(pid) : current;
+ }
+ 
+-unsigned int sched_fair;
++/*
++ * interactive mode:
++ * 2 - strong (default)
++ * 1 - weak - avoids starvation of tasks due to interactive bonus
++ * 0 - disabled - no bonus at all
++ */
++int __read_mostly sched_interactive = 2;
++int sched_interactive_min = 0;
++int sched_interactive_max = 2;
+ 
+ /* Actually do priority change: must hold rq lock. */
+ static void __setscheduler(struct task_struct *p, int policy, int prio)
+@@ -4081,7 +4089,7 @@ static void __setscheduler(struct task_struct *p, int policy, int prio)
+ 	 */
+ 	if (policy == SCHED_BATCH)
+ 		p->sleep_avg = 0;
+-	if (policy == SCHED_NORMAL && sched_fair)
++	if (policy == SCHED_NORMAL && sched_interactive == 0)
+ 		p->sleep_avg = 0;
+ 	set_load_weight(p);
+ }
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index e935b76..472cc83 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -272,12 +272,14 @@ static ctl_table root_table[] = {
+ 
+ static ctl_table kern_table[] = {
+ 	{
+-		.ctl_name	= KERN_SCHED_FAIR,
+-		.procname	= "sched_fair",
+-		.data		= &sched_fair,
++		.ctl_name	= KERN_SCHED_INTERACTIVE,
++		.procname	= "sched_interactive",
++		.data		= &sched_interactive,
+ 		.maxlen		= sizeof(int),
+ 		.mode		= 0644,
+-		.proc_handler	= &proc_dointvec,
++		.proc_handler	= &proc_dointvec_minmax,
++		.extra1		= &sched_interactive_min,
++		.extra2		= &sched_interactive_max,
+ 	},
+ 	{
+ 		.ctl_name	= KERN_OSTYPE,

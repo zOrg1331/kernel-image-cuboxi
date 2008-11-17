@@ -1,0 +1,92 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Tue, 4 Mar 2008 15:37:17 -0500
+Subject: [net] cxgb3: rdma arp and loopback fixes
+Message-id: 20080304203717.GI564@gospo.usersys.redhat.com
+O-Subject: [RHEL5.2 PATCH] cxgb3: rdma arp and loopback fixes
+Bugzilla: 253449
+
+Divy Le Ray (from Chelsio) has encouraged us to take these patches since
+they resolve a cluster startup issues and a panic when using loopback
+interfaces.  He claims these fixes are critical and should be included
+in 5.2.  Here is the upstream commit info for these backported changes.
+
+commit 4eb61e0231be536d8116457b67b3e447bbd510dc
+Author: Steve Wise <swise@opengridcomputing.com>
+Date:   Wed Feb 6 12:05:19 2008 -0600
+
+    cxgb3: Handle ARP completions that mark neighbors stale.
+
+    When ARP completes due to a request rather than a reply the neighbor is
+    marked NUD_STALE instead of reachable (see arp_process()).  The handler
+    for the resulting netevent needs to check also for NUD_STALE.
+
+    Failure to use the arp entry can cause RDMA connection failures.
+
+commit 8704e9a8790cc9e394198663c1c9150c899fb9a2
+Author: Steve Wise <swise@opengridcomputing.com>
+Date:   Tue Feb 12 16:09:29 2008 -0600
+
+    RDMA/cxgb3: Fail loopback connections
+
+    The cxgb3 HW and driver don't support loopback RDMA connections.  So
+    fail any connection attempt where the destination address is local.
+
+This will resolve the request in 253449.
+
+Acked-by: Neil Horman <nhorman@redhat.com>
+
+diff --git a/drivers/infiniband/hw/cxgb3/iwch_cm.c b/drivers/infiniband/hw/cxgb3/iwch_cm.c
+index d80daec..6798f2c 100644
+--- a/drivers/infiniband/hw/cxgb3/iwch_cm.c
++++ b/drivers/infiniband/hw/cxgb3/iwch_cm.c
+@@ -35,6 +35,7 @@
+ #include <linux/skbuff.h>
+ #include <linux/timer.h>
+ #include <linux/notifier.h>
++#include <linux/inetdevice.h>
+ 
+ #include <net/neighbour.h>
+ #include <net/netevent.h>
+@@ -1786,6 +1787,17 @@ err:
+ 	return err;
+ }
+ 
++static int is_loopback_dst(struct iw_cm_id *cm_id)
++{
++	struct net_device *dev;
++
++	dev = ip_dev_find(cm_id->remote_addr.sin_addr.s_addr);
++	if (!dev)
++		return 0;
++	dev_put(dev);
++	return 1;
++}
++
+ int iwch_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
+ {
+ 	int err = 0;
+@@ -1793,6 +1805,11 @@ int iwch_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
+ 	struct iwch_ep *ep;
+ 	struct rtable *rt;
+ 
++	if (is_loopback_dst(cm_id)) {
++		err = -ENOSYS;
++		goto out;
++	}
++
+ 	ep = alloc_ep(sizeof(*ep), GFP_KERNEL);
+ 	if (!ep) {
+ 		printk(KERN_ERR MOD "%s - cannot alloc ep.\n", __FUNCTION__);
+diff --git a/drivers/net/cxgb3/l2t.c b/drivers/net/cxgb3/l2t.c
+index d660af7..d80bbdb 100644
+--- a/drivers/net/cxgb3/l2t.c
++++ b/drivers/net/cxgb3/l2t.c
+@@ -404,7 +404,7 @@ found:
+ 			if (neigh->nud_state & NUD_FAILED) {
+ 				arpq = e->arpq_head;
+ 				e->arpq_head = e->arpq_tail = NULL;
+-			} else if (neigh_is_connected(neigh))
++			} else if (neigh->nud_state & (NUD_CONNECTED|NUD_STALE))
+ 				setup_l2e_send_pending(dev, NULL, e);
+ 		} else {
+ 			e->state = neigh_is_connected(neigh) ?

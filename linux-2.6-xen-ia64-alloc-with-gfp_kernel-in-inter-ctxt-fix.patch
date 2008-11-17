@@ -1,0 +1,36 @@
+From: Josef Bacik <jbacik@redhat.com>
+Subject: [RHEL5.1 PATCH] XEN: keep xen from allocating with GFP_KERNEL in 	an interrupt context
+Date: Wed, 5 Sep 2007 15:32:47 -0400
+Bugzilla: 279141
+Message-Id: <20070905193246.GA21707@dhcp-243-37.rdu.redhat.com>
+Changelog: [XEN] ia64: allocating with GFP_KERNEL in interrupt context fix
+
+
+Hello,
+
+This is in reference to bz 279141, which an exception is being filed for.  I'm
+posting this now to get it out here and reviewed.  HP while running cert tests
+ran into a panic, with a few BUG messages before the panic complaining about
+being scheduled while atomic.  Come to find out the box was trying to schedule
+from an interrupt context.  Under memory pressure we'd try to flush stuff out,
+do an io_schedule() and then boom, problems.  This patch fixes it so when we
+call xencomm_create from ia64_sal_get_state_info (which can be called during an
+interrupt) we call it with GFP_ATOMIC instead of GFP_KERNEL.  We were able to
+reproduce the problem inhouse, and with the patch are no longer able to
+reproduce.  The customer will be testing this as well to double check.  Thank
+you,
+
+Josef
+
+--- linux-2.6.18.x86_64/include/asm-ia64/sal.h.josef	2007-08-30 15:28:47.000000000 -0400
++++ linux-2.6.18.x86_64/include/asm-ia64/sal.h	2007-08-30 15:28:56.000000000 -0400
+@@ -703,7 +703,7 @@ ia64_sal_get_state_info (u64 sal_info_ty
+ 
+ 		if (xencomm_create(sal_info,
+ 		                   ia64_sal_get_state_info_size(sal_info_type),
+-		                   &desc, GFP_KERNEL))
++		                   &desc, GFP_ATOMIC))
+ 			return 0;
+ 
+ 		SAL_CALL_REENTRANT(isrv, SAL_GET_STATE_INFO, sal_info_type, 0,
+

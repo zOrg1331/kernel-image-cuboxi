@@ -1,0 +1,76 @@
+From: Brian Maly <bmaly@redhat.com>
+Date: Thu, 19 Jun 2008 17:52:27 -0400
+Subject: [misc] ttyS1 lost interrupt, stops transmitting v2
+Message-id: 485AD51B.7070307@redhat.com
+O-Subject: [RHEL5.3 patch] Stratus 5.3: ttyS1 lost interrupt and it stops transmitting
+Bugzilla: 451157
+RH-Acked-by: Alan Cox <alan@redhat.com>
+
+resolves BZ's  440121, 451157
+
+This is a follow up patch on behalf of Stratus. There was a previous
+patch for this issue already posted (by Stratus) and committed into
+RHEL5 (BZ 440121). This patch caused a regression (BZ 451157) which was
+a lockdep warning "circular locking dependency detected". I have been
+asked to take over this issue on behalf of Stratus, so I am posting this
+follow up patch so as to resolve the regression the initial patch
+caused. The history of this issue is somewhat confusing and there has
+been much discussion on how to correctly solve this issue. I believe the
+patch Im attaching was the final patch agreed on by all as acceptable.
+This new patch has locking re-ordered to prevent deadlock. This patch
+has been tested (on HP and IBM blades) and has been confirmed to resolve
+the issue.
+
+Brian
+
+ drivers/serial/8250.c |   18 ++++++++++--------
+ 1 files changed, 10 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/serial/8250.c b/drivers/serial/8250.c
+index 85d29a1..96eec5c 100644
+--- a/drivers/serial/8250.c
++++ b/drivers/serial/8250.c
+@@ -1762,7 +1762,11 @@ static int serial8250_startup(struct uart_port *port)
+ 	 */
+ 	serial_outp(up, UART_LCR, UART_LCR_WLEN8);
+ 
+-	spin_lock_irqsave(&up->port.lock, flags);
++	if (is_real_interrupt(up->port.irq)) {
++		spin_lock_irqsave(&irq_lists[up->port.irq].lock, flags);
++		spin_lock(&up->port.lock);
++	} else
++		spin_lock_irqsave(&up->port.lock, flags);
+ 	if (up->port.flags & UPF_FOURPORT) {
+ 		if (!is_real_interrupt(up->port.irq))
+ 			up->port.mctrl |= TIOCM_OUT1;
+@@ -1779,17 +1783,11 @@ static int serial8250_startup(struct uart_port *port)
+ 	 * Do a quick test to see if we receive an
+ 	 * interrupt when we enable the TX irq.
+ 	 */
+-	if (is_real_interrupt(up->port.irq))
+-		spin_lock(&irq_lists[up->port.irq].lock);
+-
+ 	serial_outp(up, UART_IER, UART_IER_THRI);
+ 	lsr = serial_in(up, UART_LSR);
+ 	iir = serial_in(up, UART_IIR);
+ 	serial_outp(up, UART_IER, 0);
+ 
+-	if (is_real_interrupt(up->port.irq))
+-		spin_unlock(&irq_lists[up->port.irq].lock);
+-
+ 	if (lsr & UART_LSR_TEMT && iir & UART_IIR_NO_INT) {
+ 		if (!(up->bugs & UART_BUG_TXEN)) {
+ 			up->bugs |= UART_BUG_TXEN;
+@@ -1800,7 +1798,11 @@ static int serial8250_startup(struct uart_port *port)
+ 		up->bugs &= ~UART_BUG_TXEN;
+ 	}
+ 
+-	spin_unlock_irqrestore(&up->port.lock, flags);
++	if (is_real_interrupt(up->port.irq)) {
++		spin_unlock(&up->port.lock);
++		spin_unlock_irqrestore(&irq_lists[up->port.irq].lock, flags);
++	} else
++		spin_unlock_irqrestore(&up->port.lock, flags);
+ 
+ 	/*
+ 	 * Finally, enable interrupts.  Note: Modem status interrupts

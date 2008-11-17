@@ -1,0 +1,58 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: [RHEL-5.1 PATCH] 4/4 mptscsi adds DID_BUS_BUSY host status when scsi  status of BUSY is returned
+Date: Mon, 4 Jun 2007 11:58:09 -0400 (EDT)
+Bugzilla: 228108
+Message-Id: <Pine.LNX.4.64.0706041156450.19914@bogart.boston.redhat.com>
+Changelog: [scsi] mpt adds DID_BUS_BUSY host status on scsi BUSY status
+
+
+bz228108
+
+    The mptscsi driver in linux version 2.6.9-34 changes a SCSI
+    return status of scsi busy into a SCSI status of host busy and
+    scsi (target) busy before returning the status to the linux
+    I/O stack.
+    
+    A reasonable course of action may be to simply remove the
+    interpretation of scsi status when ioc status is success -- do not
+    return DID_BUS_BUSY in this case.  Doing so will limit scsi busy
+    retries to 180 seconds which may be a reasonable compromise
+    solution for the needs of both Engenio's RDAC/MPP multi- pathing
+    driver and VMware's ESX Server.
+    
+    Since 2.6.14, code submitted by Christoph Hellwig enables the
+    upstream kernel to limit SCSI command retransmissions for the same
+    command to 180 seconds worth of retries.  This is true for all
+    cases without exception, even for a SCSI status of SAM_STAT_BUSY
+    or QUEUE_FULL, both of which would have caused indefinite retries
+    in the past without also returning a driver status of DID_BUS_BUSY
+    to limit retries.
+    
+    http://marc.info/?l=linux-scsi&m=117432237504253&w=2 to see
+    (basically this same patch) submitted by Eric Moore to upstream
+    kernel to do the same thing.
+
+diff --git a/drivers/message/fusion/mptscsih.c b/drivers/message/fusion/mptscsih.c
+index b960c07..6e11def 100644
+--- a/drivers/message/fusion/mptscsih.c
++++ b/drivers/message/fusion/mptscsih.c
+@@ -823,10 +823,7 @@ mptscsih_io_done(MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf, MPT_FRAME_HDR *mr)
+ 			sc->resid=0;
+ 		case MPI_IOCSTATUS_SCSI_RECOVERED_ERROR:	/* 0x0040 */
+ 		case MPI_IOCSTATUS_SUCCESS:			/* 0x0000 */
+-			if (scsi_status == MPI_SCSI_STATUS_BUSY)
+-				sc->result = (DID_BUS_BUSY << 16) | scsi_status;
+-			else
+-				sc->result = (DID_OK << 16) | scsi_status;
++			sc->result = (DID_OK << 16) | scsi_status;
+ 			if (scsi_state == 0) {
+ 				;
+ 			} else if (scsi_state & MPI_SCSI_STATE_AUTOSENSE_VALID) {
+
+
+-- 
+Charles M. "Chip" Coldwell
+Senior Software Engineer
+Red Hat, Inc
+978-392-2426
+

@@ -1,0 +1,300 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Sun, 6 Jan 2008 16:09:28 +1100
+Subject: [crypto] tcrypt: hmac template and hash interface
+Message-id: E1JBNlI-0001BQ-00@gondolin.me.apana.org.au
+O-Subject: [PATCH 14/32] [CRYPTO] tcrypt: Use HMAC template and hash interface
+Bugzilla: 253051
+
+[CRYPTO] tcrypt: Use HMAC template and hash interface
+
+This patch converts tcrypt to use the new HMAC template rather than the
+hard-coded version of HMAC.
+
+For the backport all existing digest algorithms will stay as is rather
+than switching to the hash interface.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/crypto/tcrypt.c b/crypto/tcrypt.c
+index 5101e25..ea2813c 100644
+--- a/crypto/tcrypt.c
++++ b/crypto/tcrypt.c
+@@ -182,92 +182,121 @@ static void test_hash(char *algo, struct hash_testvec *template,
+ 	crypto_free_tfm(tfm);
+ }
+ 
+-
+-#ifdef CONFIG_CRYPTO_HMAC
+-
+-static void test_hmac(char *algo, struct hmac_testvec *template,
+-		      unsigned int tcount)
++static void test_nhash(char *algo, struct hash_testvec *template,
++		       unsigned int tcount)
+ {
+ 	unsigned int i, j, k, temp;
+ 	struct scatterlist sg[8];
+ 	char result[64];
+-	struct crypto_tfm *tfm;
+-	struct hmac_testvec *hmac_tv;
+-	unsigned int tsize, klen;
+-
+-	tfm = crypto_alloc_tfm(algo, 0);
+-	if (tfm == NULL) {
+-		printk("failed to load transform for %s\n", algo);
+-		return;
+-	}
++	struct crypto_hash *tfm;
++	struct hash_desc desc;
++	struct hash_testvec *hash_tv;
++	unsigned int tsize;
++	int ret;
+ 
+-	printk("\ntesting hmac_%s\n", algo);
++	printk("\ntesting %s\n", algo);
+ 
+-	tsize = sizeof(struct hmac_testvec);
++	tsize = sizeof(struct hash_testvec);
+ 	tsize *= tcount;
++
+ 	if (tsize > TVMEMSIZE) {
+-		printk("template (%u) too big for tvmem (%u)\n", tsize,
+-		       TVMEMSIZE);
+-		goto out;
++		printk("template (%u) too big for tvmem (%u)\n", tsize, TVMEMSIZE);
++		return;
+ 	}
+ 
+ 	memcpy(tvmem, template, tsize);
+-	hmac_tv = (void *)tvmem;
++	hash_tv = (void *)tvmem;
++
++	tfm = crypto_alloc_hash(algo, 0, NCRYPTO_ALG_ASYNC);
++	if (IS_ERR(tfm)) {
++		printk("failed to load transform for %s: %ld\n", algo,
++		       PTR_ERR(tfm));
++		return;
++	}
++
++	desc.tfm = tfm;
++	desc.flags = 0;
+ 
+ 	for (i = 0; i < tcount; i++) {
+ 		printk("test %u:\n", i + 1);
+-		memset(result, 0, sizeof (result));
++		memset(result, 0, 64);
++
++		sg_init_one(&sg[0], hash_tv[i].plaintext, hash_tv[i].psize);
+ 
+-		klen = hmac_tv[i].ksize;
+-		sg_set_buf(&sg[0], hmac_tv[i].plaintext, hmac_tv[i].psize);
++		if (hash_tv[i].ksize) {
++			ret = crypto_hash_setkey(tfm, hash_tv[i].key,
++						 hash_tv[i].ksize);
++			if (ret) {
++				printk("setkey() failed ret=%d\n", ret);
++				goto out;
++			}
++		}
+ 
+-		crypto_hmac(tfm, hmac_tv[i].key, &klen, sg, 1, result);
++		ret = crypto_hash_digest(&desc, sg, hash_tv[i].psize, result);
++		if (ret) {
++			printk("digest () failed ret=%d\n", ret);
++			goto out;
++		}
+ 
+-		hexdump(result, crypto_tfm_alg_digestsize(tfm));
++		hexdump(result, crypto_hash_digestsize(tfm));
+ 		printk("%s\n",
+-		       memcmp(result, hmac_tv[i].digest,
+-			      crypto_tfm_alg_digestsize(tfm)) ? "fail" :
+-		       "pass");
++		       memcmp(result, hash_tv[i].digest,
++			      crypto_hash_digestsize(tfm)) ?
++		       "fail" : "pass");
+ 	}
+ 
+-	printk("\ntesting hmac_%s across pages\n", algo);
++	printk("testing %s across pages\n", algo);
+ 
++	/* setup the dummy buffer first */
+ 	memset(xbuf, 0, XBUFSIZE);
+ 
+ 	j = 0;
+ 	for (i = 0; i < tcount; i++) {
+-		if (hmac_tv[i].np) {
++		if (hash_tv[i].np) {
+ 			j++;
+-			printk("test %u:\n",j);
++			printk("test %u:\n", j);
+ 			memset(result, 0, 64);
+ 
+ 			temp = 0;
+-			klen = hmac_tv[i].ksize;
+-			for (k = 0; k < hmac_tv[i].np; k++) {
++			sg_init_table(sg, hash_tv[i].np);
++			for (k = 0; k < hash_tv[i].np; k++) {
+ 				memcpy(&xbuf[IDX[k]],
+-				       hmac_tv[i].plaintext + temp,
+-				       hmac_tv[i].tap[k]);
+-				temp += hmac_tv[i].tap[k];
++				       hash_tv[i].plaintext + temp,
++				       hash_tv[i].tap[k]);
++				temp += hash_tv[i].tap[k];
+ 				sg_set_buf(&sg[k], &xbuf[IDX[k]],
+-					    hmac_tv[i].tap[k]);
++					    hash_tv[i].tap[k]);
+ 			}
+ 
+-			crypto_hmac(tfm, hmac_tv[i].key, &klen, sg,
+-				    hmac_tv[i].np, result);
+-			hexdump(result, crypto_tfm_alg_digestsize(tfm));
++			if (hash_tv[i].ksize) {
++				ret = crypto_hash_setkey(tfm, hash_tv[i].key,
++							 hash_tv[i].ksize);
+ 
++				if (ret) {
++					printk("setkey() failed ret=%d\n", ret);
++					goto out;
++				}
++			}
++
++			ret = crypto_hash_digest(&desc, sg, hash_tv[i].psize,
++						 result);
++			if (ret) {
++				printk("digest () failed ret=%d\n", ret);
++				goto out;
++			}
++
++			hexdump(result, crypto_hash_digestsize(tfm));
+ 			printk("%s\n",
+-			       memcmp(result, hmac_tv[i].digest,
+-				      crypto_tfm_alg_digestsize(tfm)) ?
++			       memcmp(result, hash_tv[i].digest,
++				      crypto_hash_digestsize(tfm)) ?
+ 			       "fail" : "pass");
+ 		}
+ 	}
++
+ out:
+-	crypto_free_tfm(tfm);
++	crypto_free_hash(tfm);
+ }
+ 
+-#endif	/* CONFIG_CRYPTO_HMAC */
+-
+ static void test_cipher(char *algo, int enc,
+ 			struct cipher_testvec *template, unsigned int tcount)
+ {
+@@ -1055,11 +1084,12 @@ static void do_test(void)
+ 		test_hash("tgr128", tgr128_tv_template, TGR128_TEST_VECTORS);
+ 		test_deflate();
+ 		test_crc32c();
+-#ifdef CONFIG_CRYPTO_HMAC
+-		test_hmac("md5", hmac_md5_tv_template, HMAC_MD5_TEST_VECTORS);
+-		test_hmac("sha1", hmac_sha1_tv_template, HMAC_SHA1_TEST_VECTORS);
+-		test_hmac("sha256", hmac_sha256_tv_template, HMAC_SHA256_TEST_VECTORS);
+-#endif
++		test_nhash("hmac(md5)", hmac_md5_tv_template,
++			   HMAC_MD5_TEST_VECTORS);
++		test_nhash("hmac(sha1)", hmac_sha1_tv_template,
++			   HMAC_SHA1_TEST_VECTORS);
++		test_nhash("hmac(sha256)", hmac_sha256_tv_template,
++			   HMAC_SHA256_TEST_VECTORS);
+ 
+ 		test_hash("michael_mic", michael_mic_tv_template, MICHAEL_MIC_TEST_VECTORS);
+ 		break;
+@@ -1250,21 +1280,21 @@ static void do_test(void)
+ 			    XETA_DEC_TEST_VECTORS);
+ 		break;
+ 
+-#ifdef CONFIG_CRYPTO_HMAC
+ 	case 100:
+-		test_hmac("md5", hmac_md5_tv_template, HMAC_MD5_TEST_VECTORS);
++		test_nhash("hmac(md5)", hmac_md5_tv_template,
++			   HMAC_MD5_TEST_VECTORS);
+ 		break;
+ 
+ 	case 101:
+-		test_hmac("sha1", hmac_sha1_tv_template, HMAC_SHA1_TEST_VECTORS);
++		test_nhash("hmac(sha1)", hmac_sha1_tv_template,
++			   HMAC_SHA1_TEST_VECTORS);
+ 		break;
+ 
+ 	case 102:
+-		test_hmac("sha256", hmac_sha256_tv_template, HMAC_SHA256_TEST_VECTORS);
++		test_nhash("hmac(sha256)", hmac_sha256_tv_template,
++			   HMAC_SHA256_TEST_VECTORS);
+ 		break;
+ 
+-#endif
+-
+ 	case 200:
+ 		test_cipher_speed("ecb(aes)", ENCRYPT, sec, NULL, 0,
+ 				  aes_speed_template);
+diff --git a/crypto/tcrypt.h b/crypto/tcrypt.h
+index 1fac560..3443915 100644
+--- a/crypto/tcrypt.h
++++ b/crypto/tcrypt.h
+@@ -36,16 +36,6 @@ struct hash_testvec {
+ 	unsigned char ksize;
+ };
+ 
+-struct hmac_testvec {
+-	char key[128];
+-	char plaintext[128];
+-	char digest[MAX_DIGEST_SIZE];
+-	unsigned char tap[MAX_TAP];
+-	unsigned char ksize;
+-	unsigned char psize;
+-	unsigned char np;
+-};
+-
+ struct cipher_testvec {
+ 	char key[MAX_KEYLEN] __attribute__ ((__aligned__(4)));
+ 	char iv[MAX_IVLEN];
+@@ -697,14 +687,13 @@ static struct hash_testvec tgr128_tv_template[] = {
+ 	},
+ };
+ 
+-#ifdef CONFIG_CRYPTO_HMAC
+ /*
+  * HMAC-MD5 test vectors from RFC2202
+  * (These need to be fixed to not use strlen).
+  */
+ #define HMAC_MD5_TEST_VECTORS	7
+ 
+-static struct hmac_testvec hmac_md5_tv_template[] =
++static struct hash_testvec hmac_md5_tv_template[] =
+ {
+ 	{
+ 		.key	= { [0 ... 15] =  0x0b },
+@@ -768,7 +757,7 @@ static struct hmac_testvec hmac_md5_tv_template[] =
+  */
+ #define HMAC_SHA1_TEST_VECTORS	7
+ 
+-static struct hmac_testvec hmac_sha1_tv_template[] = {
++static struct hash_testvec hmac_sha1_tv_template[] = {
+ 	{
+ 		.key	= { [0 ... 19] = 0x0b },
+ 		.ksize	= 20,
+@@ -833,7 +822,7 @@ static struct hmac_testvec hmac_sha1_tv_template[] = {
+  */
+ #define HMAC_SHA256_TEST_VECTORS	10
+ 
+-static struct hmac_testvec hmac_sha256_tv_template[] = {
++static struct hash_testvec hmac_sha256_tv_template[] = {
+ 	{
+ 		.key	= { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+ 			    0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+@@ -944,8 +933,6 @@ static struct hmac_testvec hmac_sha256_tv_template[] = {
+ 	},
+ };
+ 
+-#endif	/* CONFIG_CRYPTO_HMAC */
+-
+ /*
+  * DES test vectors.
+  */
