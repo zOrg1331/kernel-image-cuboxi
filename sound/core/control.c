@@ -684,7 +684,8 @@ static int snd_ctl_elem_info_user(struct snd_ctl_file *ctl,
 	return result;
 }
 
-int snd_ctl_elem_read(struct snd_card *card, struct snd_ctl_elem_value *control)
+int snd_ctl_elem_read(struct snd_card *card,
+			     struct snd_ctl_elem_value *control)
 {
 	struct snd_kcontrol *kctl;
 	struct snd_kcontrol_volatile *vd;
@@ -709,7 +710,7 @@ int snd_ctl_elem_read(struct snd_card *card, struct snd_ctl_elem_value *control)
 	return result;
 }
 
-static int snd_ctl_elem_read_user(struct snd_card *card,
+int snd_ctl_elem_read_user(struct snd_card *card,
 				  struct snd_ctl_elem_value __user *_control)
 {
 	struct snd_ctl_elem_value *control;
@@ -735,7 +736,7 @@ static int snd_ctl_elem_read_user(struct snd_card *card,
 }
 
 int snd_ctl_elem_write(struct snd_card *card, struct snd_ctl_file *file,
-		       struct snd_ctl_elem_value *control)
+			      struct snd_ctl_elem_value *control)
 {
 	struct snd_kcontrol *kctl;
 	struct snd_kcontrol_volatile *vd;
@@ -1426,12 +1427,12 @@ static int snd_ctl_dev_disconnect(struct snd_device *device)
 	cardnum = card->number;
 	snd_assert(cardnum >= 0 && cardnum < SNDRV_CARDS, return -ENXIO);
 
-	down_read(&card->controls_rwsem);
+	read_lock(&card->ctl_files_rwlock);
 	list_for_each_entry(ctl, &card->ctl_files, list) {
 		wake_up(&ctl->change_sleep);
 		kill_fasync(&ctl->fasync, SIGIO, POLL_ERR);
 	}
-	up_read(&card->controls_rwsem);
+	read_unlock(&card->ctl_files_rwlock);
 
 	if ((err = snd_unregister_device(SNDRV_DEVICE_TYPE_CONTROL,
 					 card, -1)) < 0)

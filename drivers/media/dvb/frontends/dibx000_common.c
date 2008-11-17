@@ -20,6 +20,22 @@ static int dibx000_write_word(struct dibx000_i2c_master *mst, u16 reg, u16 val)
 	return i2c_transfer(mst->i2c_adap, &msg, 1) != 1 ? -EREMOTEIO : 0;
 }
 
+#if 0
+static u16 dibx000_read_word(struct dibx000_i2c_master *mst, u16 reg)
+{
+	u8 wb[2] = { (reg >> 8) | 0x80, reg & 0xff };
+	u8 rb[2];
+	struct i2c_msg msg[2] = {
+		{ .addr = mst->i2c_addr, .flags = 0,        .buf = wb, .len = 2 },
+		{ .addr = mst->i2c_addr, .flags = I2C_M_RD, .buf = rb, .len = 2 },
+	};
+
+	if (i2c_transfer(mst->i2c_adap, msg, 2) != 2)
+		dprintk("i2c read error on %d\\n",reg);
+
+	return (rb[0] << 8) | rb[1];
+}
+#endif
 
 static int dibx000_i2c_select_interface(struct dibx000_i2c_master *mst, enum dibx000_i2c_interface intf)
 {
@@ -35,6 +51,12 @@ static int dibx000_i2c_gate_ctrl(struct dibx000_i2c_master *mst, u8 tx[4], u8 ad
 {
 	u16 val;
 
+#if 0
+	if (onoff)
+		dprintk("opening gate for %p - on i2c_address %x\n", mst, addr);
+	else
+		dprintk("closing gate for %p\n", mst);
+#endif
 
 	if (onoff)
 		val = addr << 8; // bit 7 = use master or not, if 0, the gate is open
@@ -96,6 +118,23 @@ struct i2c_adapter * dibx000_get_i2c_adapter(struct dibx000_i2c_master *mst, enu
 			if (gating)
 				i2c = &mst->gated_tuner_i2c_adap;
 			break;
+#if 0
+			else
+				i2c = &mst->tuner_i2c_adap;
+			break;
+		case DIBX000_I2C_INTERFACE_GPIO_1_2:
+			if (gating)
+				i2c = &mst->gated_gpio_1_2_i2c_adap;
+			else
+				i2c = &mst->gpio_1_2_i2c_adap;
+			break;
+		case DIBX000_I2C_INTERFACE_GPIO_3_4:
+			if (gating)
+				i2c = &mst->gated_gpio_3_4_i2c_adap;
+			else
+				i2c = &mst->gpio_3_4_i2c_adap;
+			break;
+#endif
 		default:
 			printk(KERN_ERR "DiBX000: incorrect I2C interface selected\n");
 			break;

@@ -33,10 +33,15 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/input.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,18)
 #include <linux/usb/input.h>
+#else
+#include <linux/usb_input.h>
+#endif
 
 #include "usbvideo.h"
 #include "quickcam_messenger.h"
+#include <media/compat.h>
 
 /*
  * Version Information
@@ -46,11 +51,11 @@
 static int debug;
 #define DEBUG(n, format, arg...) \
 	if (n <= debug) {	 \
-		printk(KERN_DEBUG __FILE__ ":%s(): " format "\n", __FUNCTION__ , ## arg); \
+		printk(KERN_DEBUG __FILE__ ":%s(): " format "\n", __func__ , ## arg); \
 	}
 #else
 #define DEBUG(n, arg...)
-static const int debug = 0;
+static const int debug;
 #endif
 
 #define DRIVER_VERSION "v0.01"
@@ -100,7 +105,11 @@ static void qcm_register_input(struct qcm *cam, struct usb_device *dev)
 	input_dev->name = "QCM button";
 	input_dev->phys = cam->input_physname;
 	usb_to_input_id(dev, &input_dev->id);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 	input_dev->dev.parent = &dev->dev;
+#else
+	input_dev->cdev.dev = &dev->dev;
+#endif
 
 	input_dev->evbit[0] = BIT_MASK(EV_KEY);
 	input_dev->keybit[BIT_WORD(BTN_0)] = BIT_MASK(BTN_0);
@@ -130,7 +139,11 @@ static void qcm_report_buttonstat(struct qcm *cam)
 	}
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void qcm_int_irq(struct urb *urb, struct pt_regs *regs)
+#else
 static void qcm_int_irq(struct urb *urb)
+#endif
 {
 	int ret;
 	struct uvd *uvd = urb->context;
@@ -210,7 +223,7 @@ static int qcm_stv_setb(struct usb_device *dev, u16 reg, u8 val)
 	return ret;
 }
 
-static int qcm_stv_setw(struct usb_device *dev, u16 reg, u16 val)
+static int qcm_stv_setw(struct usb_device *dev, u16 reg, __le16 val)
 {
 	int ret;
 
@@ -610,7 +623,11 @@ static void resubmit_urb(struct uvd *uvd, struct urb *urb)
 		err("usb_submit_urb error (%d)", ret);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+static void qcm_isoc_irq(struct urb *urb, struct pt_regs *regs)
+#else
 static void qcm_isoc_irq(struct urb *urb)
+#endif
 {
 	int len;
 	struct uvd *uvd = urb->context;

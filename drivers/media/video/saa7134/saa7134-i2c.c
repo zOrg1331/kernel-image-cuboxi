@@ -33,11 +33,11 @@
 
 /* ----------------------------------------------------------- */
 
-static unsigned int i2c_debug = 0;
+static unsigned int i2c_debug;
 module_param(i2c_debug, int, 0644);
 MODULE_PARM_DESC(i2c_debug,"enable debug messages [i2c]");
 
-static unsigned int i2c_scan = 0;
+static unsigned int i2c_scan;
 module_param(i2c_scan, int, 0444);
 MODULE_PARM_DESC(i2c_scan,"scan i2c bus at insmod time");
 
@@ -140,6 +140,8 @@ static inline int i2c_is_busy(enum i2c_status status)
 {
 	switch (status) {
 	case BUSY:
+	case TO_SCL:
+	case TO_ARB:
 		return true;
 	default:
 		return false;
@@ -196,6 +198,10 @@ static inline int i2c_send_byte(struct saa7134_dev *dev,
 	enum i2c_status status;
 	__u32 dword;
 
+#if 0
+	i2c_set_attr(dev,attr);
+	saa_writeb(SAA7134_I2C_DATA, data);
+#else
 	/* have to write both attr + data in one 32bit word */
 	dword  = saa_readl(SAA7134_I2C_ATTR_STATUS >> 2);
 	dword &= 0x0f;
@@ -205,6 +211,7 @@ static inline int i2c_send_byte(struct saa7134_dev *dev,
 //	dword |= 0x40 << 16;  /* 400 kHz */
 	dword |= 0xf0 << 24;
 	saa_writel(SAA7134_I2C_ATTR_STATUS >> 2, dword);
+#endif
 	d2printk(KERN_DEBUG "%s: i2c data => 0x%x\n",dev->name,data);
 
 	if (!i2c_is_busy_wait(dev))
@@ -322,11 +329,11 @@ static u32 functionality(struct i2c_adapter *adap)
 static int attach_inform(struct i2c_client *client)
 {
 	struct saa7134_dev *dev = client->adapter->algo_data;
-	int tuner = dev->tuner_type;
-	struct tuner_setup tun_setup;
 
 	d1printk( "%s i2c attach [addr=0x%x,client=%s]\n",
 		client->driver->driver.name, client->addr, client->name);
+	if (client->addr == 0x20 && client->driver && client->driver->command)
+		dev->mpeg_i2c_client = client;
 
 	/* Am I an i2c remote control? */
 
@@ -343,46 +350,6 @@ static int attach_inform(struct i2c_client *client)
 			break;
 		}
 	}
-
-	if (!client->driver->command)
-		return 0;
-
-	if (saa7134_boards[dev->board].radio_type != UNSET) {
-
-		tun_setup.type = saa7134_boards[dev->board].radio_type;
-		tun_setup.addr = saa7134_boards[dev->board].radio_addr;
-
-		if ((tun_setup.addr == ADDR_UNSET) || (tun_setup.addr == client->addr)) {
-			tun_setup.mode_mask = T_RADIO;
-
-			client->driver->command(client, TUNER_SET_TYPE_ADDR, &tun_setup);
-		}
-	}
-
-	if (tuner != UNSET) {
-		tun_setup.type = tuner;
-		tun_setup.addr = saa7134_boards[dev->board].tuner_addr;
-		tun_setup.config = saa7134_boards[dev->board].tuner_config;
-		tun_setup.tuner_callback = saa7134_tuner_callback;
-
-		if ((tun_setup.addr == ADDR_UNSET)||(tun_setup.addr == client->addr)) {
-
-			tun_setup.mode_mask = T_ANALOG_TV;
-
-			client->driver->command(client,TUNER_SET_TYPE_ADDR, &tun_setup);
-		}
-
-		if (tuner == TUNER_TDA9887) {
-			struct v4l2_priv_tun_config tda9887_cfg;
-
-			tda9887_cfg.tuner = TUNER_TDA9887;
-			tda9887_cfg.priv = &dev->tda9887_conf;
-
-			client->driver->command(client, TUNER_SET_CONFIG,
-						&tda9887_cfg);
-		}
-	}
-
 
 	return 0;
 }
@@ -464,6 +431,16 @@ void saa7134_i2c_call_clients(struct saa7134_dev *dev,
 	BUG_ON(NULL == dev->i2c_adap.algo_data);
 	i2c_clients_command(&dev->i2c_adap, cmd, arg);
 }
+
+int saa7134_i2c_call_saa6752(struct saa7134_dev *dev,
+					      unsigned int cmd, void *arg)
+{
+	if (dev->mpeg_i2c_client == NULL)
+		return -EINVAL;
+	return dev->mpeg_i2c_client->driver->command(dev->mpeg_i2c_client,
+								cmd, arg);
+}
+EXPORT_SYMBOL_GPL(saa7134_i2c_call_saa6752);
 
 int saa7134_i2c_register(struct saa7134_dev *dev)
 {

@@ -28,9 +28,9 @@ typedef struct {
 
 static struct usbvideo *cams = NULL;
 
-static int debug = 0;
+static int debug;
 
-static int flags = 0; /* FLAGS_DISPLAY_HINTS | FLAGS_OVERLAY_STATS; */
+static int flags; /* FLAGS_DISPLAY_HINTS | FLAGS_OVERLAY_STATS; */
 
 static const int min_canvasWidth  = 8;
 static const int min_canvasHeight = 4;
@@ -155,7 +155,7 @@ static int ultracam_veio(
 			cp,
 			sizeof(cp),
 			1000);
-#if 1
+#if 1 /* keep */
 		info("USB => %02x%02x%02x%02x%02x%02x%02x%02x "
 		       "(req=$%02x val=$%04x ind=$%04x)",
 		       cp[0],cp[1],cp[2],cp[3],cp[4],cp[5],cp[6],cp[7],

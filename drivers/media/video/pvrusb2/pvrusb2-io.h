@@ -1,6 +1,5 @@
 /*
  *
- *  $Id$
  *
  *  Copyright (C) 2005 Mike Isely <isely@pobox.com>
  *
@@ -36,6 +35,15 @@ enum pvr2_buffer_state {
 struct pvr2_stream;
 struct pvr2_buffer;
 
+struct pvr2_stream_stats {
+	unsigned int buffers_in_queue;
+	unsigned int buffers_in_idle;
+	unsigned int buffers_in_ready;
+	unsigned int buffers_processed;
+	unsigned int buffers_failed;
+	unsigned int bytes_processed;
+};
+
 /* Initialize / tear down stream structure */
 struct pvr2_stream *pvr2_stream_create(void);
 void pvr2_stream_destroy(struct pvr2_stream *);
@@ -45,6 +53,9 @@ void pvr2_stream_setup(struct pvr2_stream *,
 void pvr2_stream_set_callback(struct pvr2_stream *,
 			      pvr2_stream_callback func,
 			      void *data);
+void pvr2_stream_get_stats(struct pvr2_stream *,
+			   struct pvr2_stream_stats *,
+			   int zero_counts);
 
 /* Query / set the nominal buffer count */
 int pvr2_stream_get_buffer_count(struct pvr2_stream *);
@@ -57,8 +68,15 @@ struct pvr2_buffer *pvr2_stream_get_ready_buffer(struct pvr2_stream *);
 struct pvr2_buffer *pvr2_stream_get_buffer(struct pvr2_stream *sp,int id);
 
 /* Find out how many buffers are idle or ready */
+#if 0
+int pvr2_stream_get_idle_count(struct pvr2_stream *);
+#endif /*  0  */
 int pvr2_stream_get_ready_count(struct pvr2_stream *);
 
+#if 0
+/* Kill all pending operations */
+void pvr2_stream_flush(struct pvr2_stream *);
+#endif /*  0  */
 
 /* Kill all pending buffers and throw away any ready buffers as well */
 void pvr2_stream_kill(struct pvr2_stream *);
@@ -72,12 +90,22 @@ unsigned int pvr2_buffer_get_count(struct pvr2_buffer *);
 /* Retrieve completion code for given ready buffer */
 int pvr2_buffer_get_status(struct pvr2_buffer *);
 
+#if 0
+/* Retrieve state of given buffer */
+enum pvr2_buffer_state pvr2_buffer_get_state(struct pvr2_buffer *);
+
+#endif /*  0  */
 /* Retrieve ID of given buffer */
 int pvr2_buffer_get_id(struct pvr2_buffer *);
 
 /* Start reading into given buffer (kill it if needed) */
 int pvr2_buffer_queue(struct pvr2_buffer *);
 
+#if 0
+/* Move buffer back to idle pool (kill it if needed) */
+int pvr2_buffer_idle(struct pvr2_buffer *);
+
+#endif /*  0  */
 #endif /* __PVRUSB2_IO_H */
 
 /*

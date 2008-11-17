@@ -78,7 +78,7 @@
 
 #define TUNER_HITACHI_NTSC		40
 #define TUNER_PHILIPS_PAL_MK		41
-#define TUNER_PHILIPS_ATSC		42
+#define TUNER_PHILIPS_FCV1236D		42
 #define TUNER_PHILIPS_FM1236_MK3	43
 
 #define TUNER_PHILIPS_4IN1		44	/* ATI TV Wonder Pro - Conexant */
@@ -122,6 +122,7 @@
 #define TUNER_TDA9887                   74      /* This tuner should be used only internally */
 #define TUNER_TEA5761			75	/* Only FM Radio Tuner */
 #define TUNER_XC5000			76	/* Xceive Silicon Tuner */
+#define TUNER_TCL_MF02GIP_5N		77	/* TCL MF02GIP_5N */
 
 /* tv card specific */
 #define TDA9887_PRESENT 		(1<<0)
@@ -178,7 +179,7 @@ struct tuner_setup {
 	unsigned int	type;   /* Tuner type */
 	unsigned int	mode_mask;  /* Allowed tuner modes */
 	unsigned int	config; /* configuraion for more complex tuners */
-	int (*tuner_callback) (void *dev, int command,int arg);
+	int (*tuner_callback) (void *dev, int component, int cmd, int arg);
 };
 
 #endif /* __KERNEL__ */

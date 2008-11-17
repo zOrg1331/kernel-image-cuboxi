@@ -35,6 +35,7 @@
 #include <linux/vmalloc.h>
 #include <linux/proc_fs.h>
 #include <linux/module.h>
+#include <media/compat.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
@@ -51,7 +52,7 @@ MODULE_PARM_DESC(debug, "activates debug info");
 #define dprintk(fmt, arg...) do {					\
 	    if (debug)							\
 		printk(KERN_INFO "em28xx-audio %s: " fmt,		\
-				  __FUNCTION__, ##arg); 		\
+				  __func__, ##arg); 		\
 	} while (0)
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;
@@ -70,7 +71,11 @@ static int em28xx_isoc_audio_deinit(struct em28xx *dev)
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 19)
+static void em28xx_audio_isocirq(struct urb *urb, struct pt_regs *regs)
+#else
 static void em28xx_audio_isocirq(struct urb *urb)
+#endif
 {
 	struct em28xx            *dev = urb->context;
 	int                      i;
@@ -80,8 +85,13 @@ static void em28xx_audio_isocirq(struct urb *urb)
 	int                      status;
 	unsigned char            *cp;
 	unsigned int             stride;
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
+	snd_pcm_substream_t *substream;
+	snd_pcm_runtime_t   *runtime;
+#else
 	struct snd_pcm_substream *substream;
 	struct snd_pcm_runtime   *runtime;
+#endif
 	if (dev->adev->capture_pcm_substream) {
 		substream = dev->adev->capture_pcm_substream;
 		runtime = substream->runtime;
@@ -161,8 +171,14 @@ static int em28xx_init_audio_isoc(struct em28xx *dev)
 
 		memset(dev->adev->transfer_buffer[i], 0x80, sb_size);
 		urb = usb_alloc_urb(EM28XX_NUM_AUDIO_PACKETS, GFP_ATOMIC);
-		if (!urb)
+		if (!urb) {
+			em28xx_errdev("usb_alloc_urb failed!\n");
+			for (j = 0; j < i; j++) {
+				usb_free_urb(dev->adev->urb[j]);
+				kfree(dev->adev->transfer_buffer[j]);
+			}
 			return -ENOMEM;
+		}
 
 		urb->dev = dev->udev;
 		urb->context = dev;
@@ -218,10 +234,19 @@ static int em28xx_cmd(struct em28xx *dev, int cmd, int arg)
 	}
 }
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
+static int snd_pcm_alloc_vmalloc_buffer(snd_pcm_substream_t *subs,
+					size_t size)
+#else
 static int snd_pcm_alloc_vmalloc_buffer(struct snd_pcm_substream *subs,
 					size_t size)
+#endif
 {
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
+	snd_pcm_runtime_t      *runtime = subs->runtime;
+#else
 	struct snd_pcm_runtime *runtime = subs->runtime;
+#endif
 
 	dprintk("Alocating vbuffer\n");
 	if (runtime->dma_area) {
@@ -239,7 +264,11 @@ static int snd_pcm_alloc_vmalloc_buffer(struct snd_pcm_substream *subs,
 	return 0;
 }
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
+static snd_pcm_hardware_t snd_em28xx_hw_capture = {
+#else
 static struct snd_pcm_hardware snd_em28xx_hw_capture = {
+#endif
 	.info = SNDRV_PCM_INFO_BLOCK_TRANSFER |
 		SNDRV_PCM_INFO_MMAP           |
 		SNDRV_PCM_INFO_INTERLEAVED    |
@@ -260,13 +289,27 @@ static struct snd_pcm_hardware snd_em28xx_hw_capture = {
 	.periods_max = 98,		/* 12544, */
 };
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
+static int snd_em28xx_capture_open(snd_pcm_substream_t *substream)
+#else
 static int snd_em28xx_capture_open(struct snd_pcm_substream *substream)
+#endif
 {
 	struct em28xx *dev = snd_pcm_substream_chip(substream);
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
+	snd_pcm_runtime_t *runtime = substream->runtime;
+#else
 	struct snd_pcm_runtime *runtime = substream->runtime;
+#endif
 	int ret = 0;
 
 	dprintk("opening device and trying to acquire exclusive lock\n");
+
+	if (!dev) {
+		printk(KERN_ERR "BUG: em28xx can't find device struct."
+				" Can't proceed with open\n");
+		return -ENODEV;
+	}
 
 	/* Sets volume, mute, etc */
 
@@ -297,7 +340,11 @@ err:
 	return ret;
 }
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
+static int snd_em28xx_pcm_close(snd_pcm_substream_t *substream)
+#else
 static int snd_em28xx_pcm_close(struct snd_pcm_substream *substream)
+#endif
 {
 	struct em28xx *dev = snd_pcm_substream_chip(substream);
 	dev->adev->users--;
@@ -319,8 +366,13 @@ static int snd_em28xx_pcm_close(struct snd_pcm_substream *substream)
 	return 0;
 }
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
+static int snd_em28xx_hw_capture_params(snd_pcm_substream_t *substream,
+					snd_pcm_hw_params_t *hw_params)
+#else
 static int snd_em28xx_hw_capture_params(struct snd_pcm_substream *substream,
 					struct snd_pcm_hw_params *hw_params)
+#endif
 {
 	unsigned int channels, rate, format;
 	int ret;
@@ -339,7 +391,11 @@ static int snd_em28xx_hw_capture_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
+static int snd_em28xx_hw_capture_free(snd_pcm_substream_t *substream)
+#else
 static int snd_em28xx_hw_capture_free(struct snd_pcm_substream *substream)
+#endif
 {
 	struct em28xx *dev = snd_pcm_substream_chip(substream);
 
@@ -351,13 +407,21 @@ static int snd_em28xx_hw_capture_free(struct snd_pcm_substream *substream)
 	return 0;
 }
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
+static int snd_em28xx_prepare(snd_pcm_substream_t *substream)
+#else
 static int snd_em28xx_prepare(struct snd_pcm_substream *substream)
+#endif
 {
 	return 0;
 }
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
+static int snd_em28xx_capture_trigger(snd_pcm_substream_t *substream, int cmd)
+#else
 static int snd_em28xx_capture_trigger(struct snd_pcm_substream *substream,
 				      int cmd)
+#endif
 {
 	struct em28xx *dev = snd_pcm_substream_chip(substream);
 
@@ -375,8 +439,13 @@ static int snd_em28xx_capture_trigger(struct snd_pcm_substream *substream,
 	}
 }
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
+static snd_pcm_uframes_t snd_em28xx_capture_pointer(snd_pcm_substream_t
+						    *substream)
+#else
 static snd_pcm_uframes_t snd_em28xx_capture_pointer(struct snd_pcm_substream
 						    *substream)
+#endif
 {
 	struct em28xx *dev;
 
@@ -387,15 +456,24 @@ static snd_pcm_uframes_t snd_em28xx_capture_pointer(struct snd_pcm_substream
 	return hwptr_done;
 }
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
+static struct page *snd_pcm_get_vmalloc_page(snd_pcm_substream_t *subs,
+					     unsigned long offset)
+#else
 static struct page *snd_pcm_get_vmalloc_page(struct snd_pcm_substream *subs,
 					     unsigned long offset)
+#endif
 {
 	void *pageptr = subs->runtime->dma_area + offset;
 
 	return vmalloc_to_page(pageptr);
 }
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
+static snd_pcm_ops_t snd_em28xx_pcm_capture = {
+#else
 static struct snd_pcm_ops snd_em28xx_pcm_capture = {
+#endif
 	.open      = snd_em28xx_capture_open,
 	.close     = snd_em28xx_pcm_close,
 	.ioctl     = snd_pcm_lib_ioctl,
@@ -410,10 +488,21 @@ static struct snd_pcm_ops snd_em28xx_pcm_capture = {
 static int em28xx_audio_init(struct em28xx *dev)
 {
 	struct em28xx_audio *adev;
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
+	snd_pcm_t           *pcm;
+	snd_card_t          *card;
+#else
 	struct snd_pcm      *pcm;
 	struct snd_card     *card;
+#endif
 	static int          devnr;
 	int                 ret, err;
+
+	if (dev->has_audio_class) {
+		/* This device does not support the extension (in this case
+		   the device is expecting the snd-usb-audio module */
+		return 0;
+	}
 
 	printk(KERN_INFO "em28xx-audio.c: probing for em28x1 "
 			 "non standard usbaudio\n");
@@ -457,6 +546,12 @@ static int em28xx_audio_fini(struct em28xx *dev)
 {
 	if (dev == NULL)
 		return 0;
+
+	if (dev->has_audio_class) {
+		/* This device does not support the extension (in this case
+		   the device is expecting the snd-usb-audio module */
+		return 0;
+	}
 
 	if (dev->adev) {
 		snd_card_free(dev->adev->sndcard);

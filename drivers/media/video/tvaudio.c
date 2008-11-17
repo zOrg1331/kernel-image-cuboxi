@@ -13,7 +13,7 @@
  *   debug - set to 1 if you'd like to see debug messages
  *
  */
-
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
@@ -26,7 +26,10 @@
 #include <linux/i2c.h>
 #include <linux/init.h>
 #include <linux/kthread.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,20)
 #include <linux/freezer.h>
+#endif
+#include <media/compat.h>
 
 #include <media/tvaudio.h>
 #include <media/v4l2-common.h>
@@ -38,7 +41,7 @@
 /* ---------------------------------------------------------------------- */
 /* insmod args                                                            */
 
-static int debug = 0;	/* insmod parameter */
+static int debug;	/* insmod parameter */
 module_param(debug, int, 0644);
 
 MODULE_DESCRIPTION("device driver for various i2c TV sound decoder / audiomux chips");
@@ -69,7 +72,6 @@ typedef struct AUDIOCMD {
 /* chip description */
 struct CHIPDESC {
 	char       *name;             /* chip name         */
-	int        id;                /* ID */
 	int        addr_lo, addr_hi;  /* i2c address range */
 	int        registers;         /* # of registers    */
 
@@ -862,8 +864,13 @@ static int tda9874a_getmode(struct CHIPSTATE *chip)
 		 * But changing the mode to V4L2_TUNER_MODE_MONO would switch
 		 * external 4052 multiplexer in audio_hook().
 		 */
+#if 0
+		if((nsr & 0x02) && !(dsr & 0x10)) /* NSR.S/MB=1 and DSR.AMSTAT=0 */
+			mode |= V4L2_TUNER_MODE_STEREO;
+#else
 		if(nsr & 0x02) /* NSR.S/MB=1 */
 			mode |= V4L2_TUNER_MODE_STEREO;
+#endif
 		if(nsr & 0x01) /* NSR.D/SB=1 */
 			mode |= V4L2_TUNER_MODE_LANG1 | V4L2_TUNER_MODE_LANG2;
 	} else {
@@ -1235,11 +1242,11 @@ static int tda9850  = 1;
 static int tda9855  = 1;
 static int tda9873  = 1;
 static int tda9874a = 1;
-static int tea6300  = 0;  /* address clash with msp34xx */
-static int tea6320  = 0;  /* address clash with msp34xx */
+static int tea6300;	/* default 0 - address clash with msp34xx */
+static int tea6320;	/* default 0 - address clash with msp34xx */
 static int tea6420  = 1;
 static int pic16c54 = 1;
-static int ta8874z  = 0;  /* address clash with tda9840 */
+static int ta8874z;	/* default 0 - address clash with tda9840 */
 
 module_param(tda8425, int, 0444);
 module_param(tda9840, int, 0444);
@@ -1256,7 +1263,6 @@ module_param(ta8874z, int, 0444);
 static struct CHIPDESC chiplist[] = {
 	{
 		.name       = "tda9840",
-		.id         = I2C_DRIVERID_TDA9840,
 		.insmodopt  = &tda9840,
 		.addr_lo    = I2C_ADDR_TDA9840 >> 1,
 		.addr_hi    = I2C_ADDR_TDA9840 >> 1,
@@ -1272,7 +1278,6 @@ static struct CHIPDESC chiplist[] = {
 	},
 	{
 		.name       = "tda9873h",
-		.id         = I2C_DRIVERID_TDA9873,
 		.checkit    = tda9873_checkit,
 		.insmodopt  = &tda9873,
 		.addr_lo    = I2C_ADDR_TDA985x_L >> 1,
@@ -1293,7 +1298,6 @@ static struct CHIPDESC chiplist[] = {
 	},
 	{
 		.name       = "tda9874h/a",
-		.id         = I2C_DRIVERID_TDA9874,
 		.checkit    = tda9874a_checkit,
 		.initialize = tda9874a_initialize,
 		.insmodopt  = &tda9874a,
@@ -1306,7 +1310,6 @@ static struct CHIPDESC chiplist[] = {
 	},
 	{
 		.name       = "tda9850",
-		.id         = I2C_DRIVERID_TDA9850,
 		.insmodopt  = &tda9850,
 		.addr_lo    = I2C_ADDR_TDA985x_L >> 1,
 		.addr_hi    = I2C_ADDR_TDA985x_H >> 1,
@@ -1319,7 +1322,6 @@ static struct CHIPDESC chiplist[] = {
 	},
 	{
 		.name       = "tda9855",
-		.id         = I2C_DRIVERID_TDA9855,
 		.insmodopt  = &tda9855,
 		.addr_lo    = I2C_ADDR_TDA985x_L >> 1,
 		.addr_hi    = I2C_ADDR_TDA985x_H >> 1,
@@ -1344,7 +1346,6 @@ static struct CHIPDESC chiplist[] = {
 	},
 	{
 		.name       = "tea6300",
-		.id         = I2C_DRIVERID_TEA6300,
 		.insmodopt  = &tea6300,
 		.addr_lo    = I2C_ADDR_TEA6300 >> 1,
 		.addr_hi    = I2C_ADDR_TEA6300 >> 1,
@@ -1365,7 +1366,6 @@ static struct CHIPDESC chiplist[] = {
 	},
 	{
 		.name       = "tea6320",
-		.id         = I2C_DRIVERID_TEA6300,
 		.initialize = tea6320_initialize,
 		.insmodopt  = &tea6320,
 		.addr_lo    = I2C_ADDR_TEA6300 >> 1,
@@ -1387,7 +1387,6 @@ static struct CHIPDESC chiplist[] = {
 	},
 	{
 		.name       = "tea6420",
-		.id         = I2C_DRIVERID_TEA6420,
 		.insmodopt  = &tea6420,
 		.addr_lo    = I2C_ADDR_TEA6420 >> 1,
 		.addr_hi    = I2C_ADDR_TEA6420 >> 1,
@@ -1400,7 +1399,6 @@ static struct CHIPDESC chiplist[] = {
 	},
 	{
 		.name       = "tda8425",
-		.id         = I2C_DRIVERID_TDA8425,
 		.insmodopt  = &tda8425,
 		.addr_lo    = I2C_ADDR_TDA8425 >> 1,
 		.addr_hi    = I2C_ADDR_TDA8425 >> 1,
@@ -1424,7 +1422,6 @@ static struct CHIPDESC chiplist[] = {
 	},
 	{
 		.name       = "pic16c54 (PV951)",
-		.id         = I2C_DRIVERID_PIC16C54_PV9,
 		.insmodopt  = &pic16c54,
 		.addr_lo    = I2C_ADDR_PIC16C54 >> 1,
 		.addr_hi    = I2C_ADDR_PIC16C54>> 1,
@@ -1440,8 +1437,6 @@ static struct CHIPDESC chiplist[] = {
 	},
 	{
 		.name       = "ta8874z",
-		.id         = -1,
-		/*.id         = I2C_DRIVERID_TA8874Z, */
 		.checkit    = ta8874z_checkit,
 		.insmodopt  = &ta8874z,
 		.addr_lo    = I2C_ADDR_TDA9840 >> 1,
@@ -1461,7 +1456,7 @@ static struct CHIPDESC chiplist[] = {
 /* ---------------------------------------------------------------------- */
 /* i2c registration                                                       */
 
-static int chip_probe(struct i2c_client *client)
+static int chip_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	struct CHIPSTATE *chip;
 	struct CHIPDESC  *desc;
@@ -1505,7 +1500,12 @@ static int chip_probe(struct i2c_client *client)
 	}
 
 	/* fill required data structures */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
 	strcpy(client->name, desc->name);
+#else
+	if (!id)
+		strlcpy(client->name, desc->name, I2C_NAME_SIZE);
+#endif
 	chip->type = desc-chiplist;
 	chip->shadow.count = desc->registers+1;
 	chip->prevmode = -1;
@@ -1804,7 +1804,7 @@ static int chip_command(struct i2c_client *client,
 		break;
 	case VIDIOC_S_FREQUENCY:
 		chip->mode = 0; /* automatic */
-		if (desc->checkmode) {
+		if (desc->checkmode && desc->setmode) {
 			desc->setmode(chip,V4L2_TUNER_MODE_MONO);
 			if (chip->prevmode != V4L2_TUNER_MODE_MONO)
 				chip->prevmode = -1; /* reset previous mode */
@@ -1830,6 +1830,17 @@ static int chip_legacy_probe(struct i2c_adapter *adap)
 	return 0;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
+/* This driver supports many devices and the idea is to let the driver
+   detect which device is present. So rather than listing all supported
+   devices here, we pretend to support a single, fake device type. */
+static const struct i2c_device_id chip_id[] = {
+	{ "tvaudio", 0 },
+	{ }
+};
+MODULE_DEVICE_TABLE(i2c, chip_id);
+#endif
+
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "tvaudio",
 	.driverid = I2C_DRIVERID_TVAUDIO,
@@ -1837,6 +1848,9 @@ static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.probe = chip_probe,
 	.remove = chip_remove,
 	.legacy_probe = chip_legacy_probe,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
+	.id_table = chip_id,
+#endif
 };
 
 /*

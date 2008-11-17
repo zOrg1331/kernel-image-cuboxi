@@ -44,6 +44,7 @@
 #endif
 
 #include "cpia.h"
+#include <media/compat.h>
 
 static int video_nr = -1;
 
@@ -2414,7 +2415,7 @@ static void set_flicker(struct cam_params *params, volatile u32 *command_flags,
 #define FIRMWARE_VERSION(x,y) (params->version.firmwareVersion == (x) && \
 			       params->version.firmwareRevision == (y))
 /* define for compgain calculation */
-#if 0
+#if 0 /* keep */
 #define COMPGAIN(base, curexp, newexp) \
     (u8) ((((float) base - 128.0) * ((float) curexp / (float) newexp)) + 128.5)
 #define EXP_FROM_COMP(basecomp, curcomp, curexp) \
@@ -3155,7 +3156,7 @@ static void put_cam(struct cpia_camera_ops* ops)
 static int cpia_open(struct inode *inode, struct file *file)
 {
 	struct video_device *dev = video_devdata(file);
-	struct cam_data *cam = dev->priv;
+	struct cam_data *cam = video_get_drvdata(dev);
 	int err;
 
 	if (!cam) {
@@ -3202,7 +3203,7 @@ static int cpia_open(struct inode *inode, struct file *file)
 
 	/* Set ownership of /proc/cpia/videoX to current user */
 	if(cam->proc_entry)
-		cam->proc_entry->uid = current->uid;
+		cam->proc_entry->uid = current_uid();
 
 	/* set mark for loading first frame uncompressed */
 	cam->first_frame = 1;
@@ -3232,7 +3233,7 @@ static int cpia_open(struct inode *inode, struct file *file)
 static int cpia_close(struct inode *inode, struct file *file)
 {
 	struct  video_device *dev = file->private_data;
-	struct cam_data *cam = dev->priv;
+	struct cam_data *cam = video_get_drvdata(dev);
 
 	if (cam->ops) {
 		/* Return ownership of /proc/cpia/videoX to root */
@@ -3284,7 +3285,7 @@ static ssize_t cpia_read(struct file *file, char __user *buf,
 			 size_t count, loff_t *ppos)
 {
 	struct video_device *dev = file->private_data;
-	struct cam_data *cam = dev->priv;
+	struct cam_data *cam = video_get_drvdata(dev);
 	int err;
 
 	/* make this _really_ smp and multithread-safe */
@@ -3341,7 +3342,7 @@ static int cpia_do_ioctl(struct inode *inode, struct file *file,
 			 unsigned int ioctlnr, void *arg)
 {
 	struct video_device *dev = file->private_data;
-	struct cam_data *cam = dev->priv;
+	struct cam_data *cam = video_get_drvdata(dev);
 	int retval = 0;
 
 	if (!cam || !cam->ops)
@@ -3739,7 +3740,7 @@ static int cpia_mmap(struct file *file, struct vm_area_struct *vma)
 	unsigned long start = vma->vm_start;
 	unsigned long size  = vma->vm_end - vma->vm_start;
 	unsigned long page, pos;
-	struct cam_data *cam = dev->priv;
+	struct cam_data *cam = video_get_drvdata(dev);
 	int retval;
 
 	if (!cam || !cam->ops)
@@ -3792,15 +3793,16 @@ static const struct file_operations cpia_fops = {
 	.read		= cpia_read,
 	.mmap		= cpia_mmap,
 	.ioctl          = cpia_ioctl,
+#ifdef CONFIG_COMPAT
 	.compat_ioctl	= v4l_compat_ioctl32,
+#endif
 	.llseek         = no_llseek,
 };
 
 static struct video_device cpia_template = {
-	.owner		= THIS_MODULE,
 	.name		= "CPiA Camera",
-	.type		= VID_TYPE_CAPTURE,
 	.fops           = &cpia_fops,
+	.release 	= video_device_release_empty,
 };
 
 /* initialise cam_data structure  */
@@ -3928,7 +3930,7 @@ static void init_camera_struct(struct cam_data *cam,
 	cam->proc_entry = NULL;
 
 	memcpy(&cam->vdev, &cpia_template, sizeof(cpia_template));
-	cam->vdev.priv = cam;
+	video_set_drvdata(&cam->vdev, cam);
 
 	cam->curframe = 0;
 	for (i = 0; i < FRAME_NUM; i++) {
@@ -3955,7 +3957,7 @@ struct cam_data *cpia_register_camera(struct cpia_camera_ops *ops, void *lowleve
 	camera->lowlevel_data = lowlevel;
 
 	/* register v4l device */
-	if (video_register_device(&camera->vdev, VFL_TYPE_GRABBER, video_nr) == -1) {
+	if (video_register_device(&camera->vdev, VFL_TYPE_GRABBER, video_nr) < 0) {
 		kfree(camera);
 		printk(KERN_DEBUG "video_register_device failed\n");
 		return NULL;

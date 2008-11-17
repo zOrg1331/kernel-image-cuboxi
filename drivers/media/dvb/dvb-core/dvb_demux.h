@@ -26,6 +26,7 @@
 #include <linux/time.h>
 #include <linux/timer.h>
 #include <linux/spinlock.h>
+#include <media/compat.h>
 #include <linux/mutex.h>
 
 #include "demux.h"
