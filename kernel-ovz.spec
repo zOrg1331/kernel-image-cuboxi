@@ -113,7 +113,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 # Versions of various parts
 
 # After branching, please hardcode these values as the
-# %dist and %rhel tags are not reliable yet
+# %%dist and %%rhel tags are not reliable yet
 # For example dist -> .el5 and rhel -> 5
 %define dist .el5
 %define rhel 5
@@ -320,7 +320,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %endif
 
 # To temporarily exclude an architecture from being built, add it to
-# %nobuildarches. Do _NOT_ use the ExclusiveArch: line, because if we
+# %%nobuildarches. Do _NOT_ use the ExclusiveArch: line, because if we
 # don't build kernel-headers then the new build system will no longer let
 # us use the previous build of that package -- it'll just be completely AWOL.
 # Which is a BadThing(tm).
@@ -419,11 +419,12 @@ BuildPreReq: bzip2, findutils, gzip, m4, perl, make >= 3.78, diffutils
 %if %{signmodules}
 BuildPreReq: gnupg
 %endif
-BuildRequires: gcc >= 3.4.2, binutils >= 2.12, redhat-rpm-config
+BuildRequires: gcc >= 3.4.2, binutils >= 2.12
 %if %{with_headers}
 BuildRequires: unifdef
 %endif
 BuildConflicts: rhbuildsys(DiskFree) < 500Mb
+BuildPreReq: python-modules
 
 
 Source0: ftp://ftp.kernel.org/pub/linux/kernel/v2.6/linux-%{kversion}.tar.bz2
@@ -2565,7 +2566,7 @@ BuildRoot: %{_tmppath}/kernel-%{KVERREL}-root
 # Pass path of the RPM temp dir containing kabideps to find-provides script.
 %global _use_internal_dependency_generator 0
 %define __find_provides %_sourcedir/find-provides %{_tmppath}
-%define __find_requires /usr/lib/rpm/redhat/find-requires kernel
+%define __find_requires /usr/lib/rpm/find-requires kernel
 
 %ifarch x86_64
 Obsoletes: kernel-smp
@@ -6333,7 +6334,7 @@ This is required to use SystemTap with %{name}-kdump-%{KVERREL}.
 - [ppc64] SLB shadow buffer error cause random reboots (Brad Peters ) [440085]
 - [xen] check num of segments in block backend driver (Bill Burns ) [378291]
 - [sata] SB600: add 255-sector limit (Bhavana Nagendra ) [434741]
-- [x86_64] fix unprivileged crash on %cs corruption (Jarod Wilson ) [439788]
+- [x86_64] fix unprivileged crash on %%cs corruption (Jarod Wilson ) [439788]
 - [scsi] qla4xxx: update driver version number (Marcus Barrow ) [439316]
 - [acpi] only ibm_acpi.c should report bay events (Prarit Bhargava ) [439380]
 - [x86] xen: fix SWIOTLB overflows (Stephen C. Tweedie ) [433554]
