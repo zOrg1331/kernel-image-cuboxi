@@ -128,7 +128,8 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 # that the kernel isn't the stock distribution kernel, for example,
 # by setting the define to ".local" or ".bz123456"
 #
-%define buildid .%{ovzver}.%{ovzrel}
+%define altrelease alt1
+%define buildid .%{ovzver}.%{ovzrel}-%{altrelease}
 #
 %define sublevel 18
 %define kversion 2.6.%{sublevel}
