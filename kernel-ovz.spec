@@ -1,8 +1,8 @@
 # ------------- translate OVZ build system settings to RHEL -----------------
 %define buildup 1
-%define buildsmp 1
-%define buildpae 1
-%define buildenterprise 1
+%define buildsmp 0
+%define buildpae 0
+%define buildenterprise 0
 %define buildxen 0
 %define buildopenafs 0
 
