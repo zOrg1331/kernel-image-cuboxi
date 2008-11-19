@@ -15,34 +15,34 @@
 %define ovzver 028stab059
 %define ovzrel 3
 
-%if !%{buildup}
+%if !%buildup
 %define _without_up 1
 %endif
-%if !%{buildsmp}
+%if !%buildsmp
 %define _without_smp 1
 %endif
-%if !%{buildpae}
+%if !%buildpae
 %define _without_pae 1
 %endif
-%if !%{buildenterprise}
+%if !%buildenterprise
 %define _without_ent 1
 %endif
-%if !%{buildxen}
+%if !%buildxen
 %define _without_xen 1
 %endif
-%if !%{builddebug}
+%if !%builddebug
 %define _without_debug 1
 %endif
-%if !%{builddoc}
+%if !%builddoc
 %define _without_doc 1
 %endif
-%if !%{buildkdump}
+%if !%buildkdump
 %define _without_kdump 1
 %endif
-%if !%{buildheaders}
+%if !%buildheaders
 %define _without_headers 1
 %endif
-%if !%{buildopenafs}
+%if !%buildopenafs
 %define _without_openafs 1
 %endif
 
@@ -119,7 +119,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %define rhel 5
 
 # Values used for RHEL version info in version.h
-%define rh_release_major %{rhel}
+%define rh_release_major %rhel
 %define rh_release_minor 2
 
 #
@@ -129,35 +129,35 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 # by setting the define to ".local" or ".bz123456"
 #
 %define altrelease alt1
-%define buildid .%{ovzver}.%{ovzrel}-%{altrelease}
+%define buildid .%ovzver.%ovzrel-%altrelease
 #
 %define sublevel 18
-%define kversion 2.6.%{sublevel}
-%define rpmversion 2.6.%{sublevel}
+%define kversion 2.6.%sublevel
+%define rpmversion 2.6.%sublevel
 %define release 92.1.13%{?dist}%{?buildid}
 %define signmodules 0
 %define xen_hv_cset 15502
 %define xen_abi_ver 3.1
 %define make_target bzImage
 %define kernel_image x86
-%define xen_flags verbose=y crash_debug=y XEN_VENDORVERSION=-%{PACKAGE_RELEASE}
+%define xen_flags verbose=y crash_debug=y XEN_VENDORVERSION=-%PACKAGE_RELEASE
 %define xen_target vmlinuz
 %define xen_image vmlinuz
 
-%define KVERREL %{PACKAGE_VERSION}-%{PACKAGE_RELEASE}
+%define KVERREL %PACKAGE_VERSION-%PACKAGE_RELEASE
 %define hdrarch %_target_cpu
 
-%if !%{debugbuildsenabled}
+%if !%debugbuildsenabled
 %define with_debug 0
 %endif
 
-%if !%{with_debuginfo}
+%if !%with_debuginfo
 %define _enable_debug_packages 0
 %endif
 %define debuginfodir /usr/lib/debug
 
 # if requested, only build base kernel
-%if %{with_baseonly}
+%if %with_baseonly
 %define with_smp 0
 %define with_pae 0
 %define with_xen 0
@@ -166,7 +166,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %endif
 
 # if requested, only build smp kernel
-%if %{with_smponly}
+%if %with_smponly
 %define with_up 0
 %define with_pae 0
 %define with_xen 0
@@ -175,7 +175,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %endif
 
 # if requested, only build xen kernel
-%if %{with_xenonly}
+%if %with_xenonly
 %define with_up 0
 %define with_smp 0
 %define with_pae 0
@@ -238,13 +238,13 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %define with_up 0
 %define with_headers 0
 %define with_debug 0
-%define all_arch_configs kernel-%{kversion}-*.config
+%define all_arch_configs kernel-%kversion-*.config
 %endif
 
 # Per-arch tweaks
 
-%ifarch %{all_x86}
-%define all_arch_configs kernel-%{kversion}-i?86*.config.ovz
+%ifarch %all_x86
+%define all_arch_configs kernel-%kversion-i?86*.config.ovz
 %define image_install_path boot
 %define signmodules 0
 %define hdrarch i386
@@ -252,18 +252,18 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 
 %ifarch i686
 # we build always xen i686 HV with pae
-%define xen_flags verbose=y crash_debug=y pae=y XEN_VENDORVERSION=-%{PACKAGE_RELEASE}
+%define xen_flags verbose=y crash_debug=y pae=y XEN_VENDORVERSION=-%PACKAGE_RELEASE
 %endif
 
 %ifarch x86_64
-%define all_arch_configs kernel-%{kversion}-x86_64*.config.ovz
+%define all_arch_configs kernel-%kversion-x86_64*.config.ovz
 %define image_install_path boot
 %define signmodules 0
-%define xen_flags verbose=y crash_debug=y max_phys_cpus=64 XEN_VENDORVERSION=-%{PACKAGE_RELEASE}
+%define xen_flags verbose=y crash_debug=y max_phys_cpus=64 XEN_VENDORVERSION=-%PACKAGE_RELEASE
 %endif
 
 %ifarch ppc64 ppc64iseries
-%define all_arch_configs kernel-%{kversion}-ppc64*.config.ovz
+%define all_arch_configs kernel-%kversion-ppc64*.config.ovz
 %define image_install_path boot
 %define signmodules 0
 %define make_target vmlinux
@@ -273,14 +273,14 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %endif
 
 %ifarch s390
-%define all_arch_configs kernel-%{kversion}-s390*.config.ovz
+%define all_arch_configs kernel-%kversion-s390*.config.ovz
 %define image_install_path boot
 %define make_target image
 %define kernel_image arch/s390/boot/image
 %endif
 
 %ifarch s390x
-%define all_arch_configs kernel-%{kversion}-s390x*.config.ovz
+%define all_arch_configs kernel-%kversion-s390x*.config.ovz
 %define image_install_path boot
 %define make_target image
 %define kernel_image arch/s390/boot/image
@@ -288,19 +288,19 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %endif
 
 %ifarch sparc
-%define all_arch_configs kernel-%{kversion}-sparc.config.ovz
+%define all_arch_configs kernel-%kversion-sparc.config.ovz
 %define make_target image
 %define kernel_image image
 %endif
 
 %ifarch sparc64
-%define all_arch_configs kernel-%{kversion}-sparc64*.config.ovz
+%define all_arch_configs kernel-%kversion-sparc64*.config.ovz
 %define make_target image
 %define kernel_image image
 %endif
 
 %ifarch ppc
-%define all_arch_configs kernel-%{kversion}-ppc{-,.}*config.ovz
+%define all_arch_configs kernel-%kversion-ppc{-,.}*config.ovz
 %define image_install_path boot
 %define make_target vmlinux
 %define kernel_image vmlinux
@@ -309,13 +309,13 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %endif
 
 %ifarch ia64
-%define all_arch_configs kernel-%{kversion}-ia64*.config.ovz
+%define all_arch_configs kernel-%kversion-ia64*.config.ovz
 %define image_install_path boot/efi/EFI/redhat
 %define signmodules 0
 %define make_target compressed
 %define kernel_image vmlinux.gz
 # ia64 xen HV doesn't build with debug=y at the moment
-%define xen_flags verbose=y crash_debug=y XEN_VENDORVERSION=-%{PACKAGE_RELEASE}
+%define xen_flags verbose=y crash_debug=y XEN_VENDORVERSION=-%PACKAGE_RELEASE
 %define xen_target compressed
 %define xen_image vmlinux.gz
 %endif
@@ -350,7 +350,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 # First the general kernel 2.6 required versions as per
 # Documentation/Changes
 #
-%if !%{includeovz}
+%if !%includeovz
 %define kernel_dot_org_conflicts  ppp < 2.4.3-3, isdn4k-utils < 3.2-32, nfs-utils < 1.0.7-12, e2fsprogs < 1.37-4, util-linux < 2.12, jfsutils < 1.1.7-2, reiserfs-utils < 3.6.19-2, xfsprogs < 2.6.13-4, procps < 3.2.5-6.3, oprofile < 0.9.1-2
 %else
 %define kernel_dot_org_conflicts  ppp <= 2.3.15, pcmcia-cs <= 3.1.20, isdn4k-utils <= 3.0, mount < 2.10r-5, nfs-utils < 1.0.3, e2fsprogs < 1.29, util-linux < 2.10, jfsutils < 1.0.14, reiserfsprogs < 3.6.3, xfsprogs < 2.1.0, procps < 2.0.9, oprofile < 0.5.3
@@ -362,7 +362,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 # problems with the newer kernel or lack certain things that make
 # integration in the distro harder than needed.
 #
-%if !%{includeovz}
+%if !%includeovz
 %define package_conflicts initscripts < 7.23, udev < 063-6, iptables < 1.3.2-1, ipw2200-firmware < 2.4, selinux-policy-targeted < 1.25.3-14
 %else
 %define package_conflicts cipe < 1.4.5, tux < 2.1.0, kudzu <= 0.92, dev < 3.2-7, iptables < 1.2.5-3, bcm5820 < 1.81, nvidia-rh72 <= 1.0
@@ -377,7 +377,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 # Packages that need to be installed before the kernel is, because the %post
 # scripts use them.
 #
-%if !%{includeovz}
+%if !%includeovz
 %define kernel_prereq  fileutils, module-init-tools, initscripts >= 8.11.1-1, mkinitrd >= 4.2.21-1
 %else
 %define kernel_prereq  fileutils, module-init-tools, initscripts >= 5.83, mkinitrd >= 3.5.5
@@ -386,53 +386,51 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 Name: ovzkernel
 Group: System Environment/Kernel
 License: GPLv2
-URL: http://www.kernel.org/
-Version: %{rpmversion}
-Release: %{release}
+Url: http://www.kernel.org/
+Version: %rpmversion
+Release: %release
 %if 0%{?olpc}
 ExclusiveArch: i386 i586
 %else
 # DO NOT CHANGE THIS LINE TO TEMPORARILY EXCLUDE AN ARCHITECTURE BUILD.
 # SET %nobuildarches (ABOVE) INSTEAD
-ExclusiveArch: noarch %{all_x86} x86_64 ppc ppc64 ia64 sparc sparc64 s390 s390x
+ExclusiveArch: noarch %all_x86 x86_64 ppc ppc64 ia64 sparc sparc64 s390 s390x
 %endif
 ExclusiveOS: Linux
-Provides: kernel = %{version}
+Provides: kernel = %version
 Provides: kernel-drm = 4.3.0
-Provides: kernel-%{_target_cpu} = %{rpmversion}-%{release}
-Provides: vzkernel = %{KVERREL}
+Provides: kernel-%_target_cpu = %rpmversion-%release
+Provides: vzkernel = %KVERREL
 Provides: vzquotamod
-Prereq: %{kernel_prereq}
-Conflicts: %{kernel_dot_org_conflicts}
-Conflicts: %{package_conflicts}
+PreReq: %kernel_prereq
+Conflicts: %kernel_dot_org_conflicts
+Conflicts: %package_conflicts
 # We can't let RPM do the dependencies automatic because it'll then pick up
 # a correct but undesirable perl dependency from the module headers which
 # isn't required for the kernel proper to function
 AutoReq: no
 AutoProv: yes
 
-
 #
 # List the packages used during the kernel build
 #
 BuildPreReq: module-init-tools, patch >= 2.5.4, bash >= 2.03, sh-utils, tar
 BuildPreReq: bzip2, findutils, gzip, m4, perl, make >= 3.78, diffutils
-%if %{signmodules}
+%if %signmodules
 BuildPreReq: gnupg
 %endif
 BuildRequires: gcc >= 3.4.2, binutils >= 2.12
-%if %{with_headers}
+%if %with_headers
 BuildRequires: unifdef
 %endif
 BuildConflicts: rhbuildsys(DiskFree) < 500Mb
 BuildPreReq: python-modules
 
-
-Source0: ftp://ftp.kernel.org/pub/linux/kernel/v2.6/linux-%{kversion}.tar.bz2
-Source1: xen-%{xen_hv_cset}.tar.bz2
+Source0: ftp://ftp.kernel.org/pub/linux/kernel/v2.6/linux-%kversion.tar.bz2
+Source1: xen-%xen_hv_cset.tar.bz2
 Source2: Config.mk
-%if %{with_openafs}
-Source3: openafs-%{openafs_version}-src.tar.bz2
+%if %with_openafs
+Source3: openafs-%openafs_version-src.tar.bz2
 %endif
 
 %if %{!?_without_source:0}%{?_without_source:1}
@@ -472,14 +470,14 @@ Source129: Module.kabi_x86_64xen
 
 Source130: check-kabi
 
-Source200: kernel-%{kversion}-i686.config.ovz
-Source201: kernel-%{kversion}-i686-PAE.config.ovz
-Source202: kernel-%{kversion}-i686-ent.config.ovz
-Source203: kernel-%{kversion}-x86_64.config.ovz
-Source204: kernel-%{kversion}-ia64.config.ovz
-Source205: kernel-%{kversion}-ppc64.config.ovz
-Source206: kernel-%{kversion}-i686-xen.config.ovz
-Source207: kernel-%{kversion}-x86_64-xen.config.ovz
+Source200: kernel-%kversion-i686.config.ovz
+Source201: kernel-%kversion-i686-PAE.config.ovz
+Source202: kernel-%kversion-i686-ent.config.ovz
+Source203: kernel-%kversion-x86_64.config.ovz
+Source204: kernel-%kversion-ia64.config.ovz
+Source205: kernel-%kversion-ppc64.config.ovz
+Source206: kernel-%kversion-i686-xen.config.ovz
+Source207: kernel-%kversion-x86_64-xen.config.ovz
 
 #
 # Patches 0 through 100 are meant for core subsystem upgrades
@@ -2450,7 +2448,7 @@ Patch22593: linux-2.6-fs-vfs-fix-lookup-on-deleted-directory.patch
 Patch22594: linux-2.6-mm-tmpfs-restore-missing-clear_highpage.patch
 Patch22595: linux-2.6-net-bnx2x-chip-reset-and-port-type-fixes.patch
 Patch22596: linux-2.6-fs-lockd-nlmsvc_lookup_host-called-with-f_sema-held.patch
-Patch22597: linux-2.6-fs-dio-use-kzalloc-to-zero-out-struct-dio.patch 
+Patch22597: linux-2.6-fs-dio-use-kzalloc-to-zero-out-struct-dio.patch
 Patch22598: linux-2.6-misc-serial-fix-break-handling-for-i82571-over-lan.patch
 Patch22599: linux-2.6-fs-dio-lock-refcount-operations.patch
 Patch22600: linux-2.6-net-bridge-eliminate-delay-on-carrier-up.patch
@@ -2461,7 +2459,7 @@ Patch22604: linux-2.6-sound-snd_seq_oss_synth_make_info-info-leak.patch
 Patch22605: linux-2.6-md-fix-crashes-in-iterate_rdev.patch
 
 # Start VZ patches
-Patch50000: patch-%{ovzver}-core
+Patch50000: patch-%ovzver-core
 
 # Hot fixes
 Patch60001: diff-i2o-msgleak-10070423
@@ -2561,12 +2559,10 @@ Patch99999: linux-kernel-test.patch
 
 # END OF PATCH DEFINITIONS
 
-BuildRoot: %{_tmppath}/kernel-%{KVERREL}-root
-
 # Override find_provides to use a script that provides "kernel(symbol) = hash".
 # Pass path of the RPM temp dir containing kabideps to find-provides script.
 %global _use_internal_dependency_generator 0
-%define __find_provides %_sourcedir/find-provides %{_tmppath}
+%define __find_provides %_sourcedir/find-provides %_tmppath
 %define __find_requires /usr/lib/rpm/find-requires kernel
 
 %ifarch x86_64
@@ -2580,19 +2576,18 @@ of the operating system:  memory allocation, process allocation, device
 input and output, etc.
 
 %package devel
-Summary: Development package for building kernel modules to match the kernel.
+Summary: Development package for building kernel modules to match the kernel
 Group: System Environment/Kernel
 AutoReqProv: no
-Provides: kernel-devel-%{_target_cpu} = %{rpmversion}-%{release}
-Prereq: /usr/bin/find
+Provides: kernel-devel-%_target_cpu = %rpmversion-%release
+PreReq: /usr/bin/find
 
 %description devel
 This package provides kernel headers and makefiles sufficient to build modules
 against the kernel package.
 
-
 %package doc
-Summary: Various documentation bits found in the kernel source.
+Summary: Various documentation bits found in the kernel source
 Group: Documentation
 
 %description doc
@@ -2620,17 +2615,17 @@ building most standard programs and are also needed for rebuilding the
 glibc package.
 
 %package PAE
-Summary: The Linux kernel compiled for PAE capable machines.
+Summary: The Linux kernel compiled for PAE capable machines
 
 Group: System Environment/Kernel
-Provides: kernel = %{version}
+Provides: kernel = %version
 Provides: kernel-drm = 4.3.0
-Provides: kernel-%{_target_cpu} = %{rpmversion}-%{release}PAE
-Provides: vzkernel = %{KVERREL}
+Provides: kernel-%_target_cpu = %rpmversion-%{release}PAE
+Provides: vzkernel = %KVERREL
 Provides: vzquotamod
-Prereq: %{kernel_prereq}
-Conflicts: %{kernel_dot_org_conflicts}
-Conflicts: %{package_conflicts}
+PreReq: %kernel_prereq
+Conflicts: %kernel_dot_org_conflicts
+Conflicts: %package_conflicts
 Obsoletes: kernel-smp < 2.6.17
 # We can't let RPM do the dependencies automatic because it'll then pick up
 # a correct but undesirable perl dependency from the module headers which
@@ -2645,30 +2640,30 @@ The non-PAE kernel can only address up to 4GB of memory.
 Install the kernel-PAE package if your machine has more than 4GB of memory.
 
 %package PAE-devel
-Summary: Development package for building kernel modules to match the PAE kernel.
+Summary: Development package for building kernel modules to match the PAE kernel
 Group: System Environment/Kernel
-Provides: kernel-PAE-devel-%{_target_cpu} = %{rpmversion}-%{release}
-Provides: kernel-devel-%{_target_cpu} = %{rpmversion}-%{release}PAE
-Provides: kernel-devel = %{rpmversion}-%{release}PAE
+Provides: kernel-PAE-devel-%_target_cpu = %rpmversion-%release
+Provides: kernel-devel-%_target_cpu = %rpmversion-%{release}PAE
+Provides: kernel-devel = %rpmversion-%{release}PAE
 AutoReqProv: no
-Prereq: /usr/bin/find
+PreReq: /usr/bin/find
 
 %description PAE-devel
 This package provides kernel headers and makefiles sufficient to build modules
 against the PAE kernel package.
 
 %package ent
-Summary: The Linux kernel compiled for huge mem capable machines.
+Summary: The Linux kernel compiled for huge mem capable machines
 
 Group: System Environment/Kernel
-Provides: kernel = %{version}
+Provides: kernel = %version
 Provides: kernel-drm = 4.3.0
-Provides: kernel-%{_target_cpu} = %{rpmversion}-%{release}ent
-Provides: vzkernel = %{KVERREL}
+Provides: kernel-%_target_cpu = %rpmversion-%{release}ent
+Provides: vzkernel = %KVERREL
 Provides: vzquotamod
-Prereq: %{kernel_prereq}
-Conflicts: %{kernel_dot_org_conflicts}
-Conflicts: %{package_conflicts}
+PreReq: %kernel_prereq
+Conflicts: %kernel_dot_org_conflicts
+Conflicts: %package_conflicts
 Obsoletes: kernel-smp < 2.6.17
 # We can't let RPM do the dependencies automatic because it'll then pick up
 # a correct but undesirable perl dependency from the module headers which
@@ -2683,30 +2678,30 @@ and works using 4GB split feature which increases normal zone size.
 Install the kernel-ent package if your machine has more than 8GB of memory.
 
 %package ent-devel
-Summary: Development package for building kernel modules to match the ent kernel.
+Summary: Development package for building kernel modules to match the ent kernel
 Group: System Environment/Kernel
-Provides: kernel-ent-devel-%{_target_cpu} = %{rpmversion}-%{release}
-Provides: kernel-devel-%{_target_cpu} = %{rpmversion}-%{release}ent
-Provides: kernel-devel = %{rpmversion}-%{release}ent
+Provides: kernel-ent-devel-%_target_cpu = %rpmversion-%release
+Provides: kernel-devel-%_target_cpu = %rpmversion-%{release}ent
+Provides: kernel-devel = %rpmversion-%{release}ent
 AutoReqProv: no
-Prereq: /usr/bin/find
+PreReq: /usr/bin/find
 
 %description ent-devel
 This package provides kernel headers and makefiles sufficient to build modules
 against the ent kernel package.
 
 %package smp
-Summary: The Linux kernel compiled for SMP machines.
+Summary: The Linux kernel compiled for SMP machines
 
 Group: System Environment/Kernel
-Provides: kernel = %{version}
+Provides: kernel = %version
 Provides: kernel-drm = 4.3.0
-Provides: kernel-%{_target_cpu} = %{rpmversion}-%{release}smp
-Provides: vzkernel = %{KVERREL}
+Provides: kernel-%_target_cpu = %rpmversion-%{release}smp
+Provides: vzkernel = %KVERREL
 Provides: vzquotamod
-Prereq: %{kernel_prereq}
-Conflicts: %{kernel_dot_org_conflicts}
-Conflicts: %{package_conflicts}
+PreReq: %kernel_prereq
+Conflicts: %kernel_dot_org_conflicts
+Conflicts: %package_conflicts
 # upto and including kernel 2.4.9 rpms, the 4Gb+ kernel was called kernel-enterprise
 # now that the smp kernel offers this capability, obsolete the old kernel
 Obsoletes: kernel-enterprise < 2.4.10
@@ -2724,13 +2719,13 @@ hyperthreading technology.
 Install the kernel-smp package if your machine uses two or more CPUs.
 
 %package smp-devel
-Summary: Development package for building kernel modules to match the SMP kernel.
+Summary: Development package for building kernel modules to match the SMP kernel
 Group: System Environment/Kernel
-Provides: kernel-smp-devel-%{_target_cpu} = %{rpmversion}-%{release}
-Provides: kernel-devel-%{_target_cpu} = %{rpmversion}-%{release}smp
-Provides: kernel-devel = %{rpmversion}-%{release}smp
+Provides: kernel-smp-devel-%_target_cpu = %rpmversion-%release
+Provides: kernel-devel-%_target_cpu = %rpmversion-%{release}smp
+Provides: kernel-devel = %rpmversion-%{release}smp
 AutoReqProv: no
-Prereq: /usr/bin/find
+PreReq: /usr/bin/find
 
 %description smp-devel
 This package provides kernel headers and makefiles sufficient to build modules
@@ -2740,15 +2735,15 @@ against the SMP kernel package.
 Summary: The Linux kernel compiled for Xen VM operations
 
 Group: System Environment/Kernel
-Provides: kernel = %{version}
-Provides: kernel-%{_target_cpu} = %{rpmversion}-%{release}xen
-Provides: xen-hypervisor-abi = %{xen_abi_ver}
-Provides: vzkernel = %{KVERREL}
+Provides: kernel = %version
+Provides: kernel-%_target_cpu = %rpmversion-%{release}xen
+Provides: xen-hypervisor-abi = %xen_abi_ver
+Provides: vzkernel = %KVERREL
 Provides: vzquotamod
-Prereq: %{kernel_prereq}
-Conflicts: %{kernel_dot_org_conflicts}
-Conflicts: %{package_conflicts}
-Conflicts: %{xen_conflicts}
+PreReq: %kernel_prereq
+Conflicts: %kernel_dot_org_conflicts
+Conflicts: %package_conflicts
+Conflicts: %xen_conflicts
 # We can't let RPM do the dependencies automatic because it'll then pick up
 # a correct but undesirable perl dependency from the module headers which
 # isn't required for the kernel proper to function
@@ -2760,28 +2755,28 @@ This package includes a version of the Linux kernel which
 runs in Xen VM. It works for both priviledged and unpriviledged guests.
 
 %package xen-devel
-Summary: Development package for building kernel modules to match the kernel.
+Summary: Development package for building kernel modules to match the kernel
 Group: System Environment/Kernel
 AutoReqProv: no
-Provides: kernel-xen-devel-%{_target_cpu} = %{rpmversion}-%{release}
-Provides: kernel-devel-%{_target_cpu} = %{rpmversion}-%{release}xen
-Provides: kernel-devel = %{rpmversion}-%{release}xen
-Prereq: /usr/bin/find
+Provides: kernel-xen-devel-%_target_cpu = %rpmversion-%release
+Provides: kernel-devel-%_target_cpu = %rpmversion-%{release}xen
+Provides: kernel-devel = %rpmversion-%{release}xen
+PreReq: /usr/bin/find
 
 %description xen-devel
 This package provides kernel headers and makefiles sufficient to build modules
 against the kernel package.
 
 %package kdump
-Summary: A minimal Linux kernel compiled for kernel crash dumps.
+Summary: A minimal Linux kernel compiled for kernel crash dumps
 
 Group: System Environment/Kernel
-Provides: kernel = %{version}
+Provides: kernel = %version
 Provides: kernel-drm = 4.3.0
-Provides: kernel-%{_target_cpu} = %{rpmversion}-%{release}kdump
-Prereq: %{kernel_prereq}
-Conflicts: %{kernel_dot_org_conflicts}
-Conflicts: %{package_conflicts}
+Provides: kernel-%_target_cpu = %rpmversion-%{release}kdump
+PreReq: %kernel_prereq
+Conflicts: %kernel_dot_org_conflicts
+Conflicts: %package_conflicts
 # We can't let RPM do the dependencies automatic because it'll then pick up
 # a correct but undesirable perl dependency from the module headers which
 # isn't required for the kernel proper to function
@@ -2794,13 +2789,13 @@ required only on machines which will use the kexec-based kernel crash dump
 mechanism.
 
 %package kdump-devel
-Summary: Development package for building kernel modules to match the kdump kernel.
+Summary: Development package for building kernel modules to match the kdump kernel
 Group: System Environment/Kernel
-Provides: kernel-kdump-devel-%{_target_cpu} = %{rpmversion}-%{release}
-Provides: kernel-devel-%{_target_cpu} = %{rpmversion}-%{release}kdump
-Provides: kernel-devel = %{rpmversion}-%{release}kdump
+Provides: kernel-kdump-devel-%_target_cpu = %rpmversion-%release
+Provides: kernel-devel-%_target_cpu = %rpmversion-%{release}kdump
+Provides: kernel-devel = %rpmversion-%{release}kdump
 AutoReqProv: no
-Prereq: /usr/bin/find
+PreReq: /usr/bin/find
 
 %description kdump-devel
 This package provides kernel headers and makefiles sufficient to build modules
@@ -2812,9 +2807,9 @@ Summary: The Linux kernel compiled with debug config
 Group: System Environment/Kernel
 Provides: vzkernel
 Provides: vzquotamod
-Prereq: %{kernel_prereq}
-Conflicts: %{kernel_dot_org_conflicts}
-Conflicts: %{package_conflicts}
+PreReq: %kernel_prereq
+Conflicts: %kernel_dot_org_conflicts
+Conflicts: %package_conflicts
 AutoReq: no
 AutoProv: yes
 
@@ -2827,9 +2822,9 @@ Summary: The Linux PAE kernel compiled with debug config
 Group: System Environment/Kernel
 Provides: vzkernel
 Provides: vzquotamod
-Prereq: %{kernel_prereq}
-Conflicts: %{kernel_dot_org_conflicts}
-Conflicts: %{package_conflicts}
+PreReq: %kernel_prereq
+Conflicts: %kernel_dot_org_conflicts
+Conflicts: %package_conflicts
 AutoReq: no
 AutoProv: yes
 
@@ -2842,9 +2837,9 @@ Summary: The Linux ent kernel compiled with debug config
 Group: System Environment/Kernel
 Provides: vzkernel
 Provides: vzquotamod
-Prereq: %{kernel_prereq}
-Conflicts: %{kernel_dot_org_conflicts}
-Conflicts: %{package_conflicts}
+PreReq: %kernel_prereq
+Conflicts: %kernel_dot_org_conflicts
+Conflicts: %package_conflicts
 AutoReq: no
 AutoProv: yes
 
@@ -2857,9 +2852,9 @@ Summary: The Linux smp kernel compiled with debug config
 Group: System Environment/Kernel
 Provides: vzkernel
 Provides: vzquotamod
-Prereq: %{kernel_prereq}
-Conflicts: %{kernel_dot_org_conflicts}
-Conflicts: %{package_conflicts}
+PreReq: %kernel_prereq
+Conflicts: %kernel_dot_org_conflicts
+Conflicts: %package_conflicts
 AutoReq: no
 AutoProv: yes
 
@@ -2868,22 +2863,22 @@ Debug smp kernel
 
 %prep
 # do a few sanity-checks for --with *only builds
-%if %{with_baseonly}
-%if !%{with_up}
+%if %with_baseonly
+%if !%with_up
 echo "Cannot build --with baseonly, up build is disabled"
 exit 1
 %endif
 %endif
 
-%if %{with_smponly}
-%if !%{with_smp}
+%if %with_smponly
+%if !%with_smp
 echo "Cannot build --with smponly, smp build is disabled"
 exit 1
 %endif
 %endif
 
-%if %{with_xenonly}
-%if !%{with_xen}
+%if %with_xenonly
+%if !%with_xen
 echo "Cannot build --with xenonly, xen build is disabled"
 exit 1
 %endif
@@ -2892,25 +2887,25 @@ exit 1
 # First we unpack the kernel tarball.
 # If this isn't the first make prep, we use links to the existing clean tarball
 # which speeds things up quite a bit.
-if [ ! -d %{name}-%{kversion}/vanilla ]; then
+if [ ! -d %name-%kversion/vanilla ]; then
   # Ok, first time we do a make prep.
   rm -f pax_global_header
-%setup -q -n %{name}-%{version} -c
-  mv linux-%{kversion} vanilla
+%setup -q -n %name-%version -c
+  mv linux-%kversion vanilla
 else
   # We already have a vanilla dir.
-  cd %{name}-%{kversion}
-  if [ -d linux-%{kversion}.%{_target_cpu} ]; then
+  cd %name-%kversion
+  if [ -d linux-%kversion.%_target_cpu ]; then
      # Just in case we ctrl-c'd a prep already
      rm -rf deleteme
      # Move away the stale away, and delete in background.
-     mv linux-%{kversion}.%{_target_cpu} deleteme
+     mv linux-%kversion.%_target_cpu deleteme
      rm -rf deleteme &
   fi
 fi
-cp -rl vanilla linux-%{kversion}.%{_target_cpu}
+cp -rl vanilla linux-%kversion.%_target_cpu
 
-cd linux-%{kversion}.%{_target_cpu}
+cd linux-%kversion.%_target_cpu
 
 # Update to latest upstream.
 %patch1 -p1
@@ -2999,7 +2994,6 @@ cd linux-%{kversion}.%{_target_cpu}
 # and patches related to how RPMs are build
 #
 
-
 # This patch adds a "make nonint_oldconfig" which is non-interactive and
 # also gives a list of missing options at the end. Useful for automated
 # builds (as used in the buildsystem).
@@ -3029,7 +3023,7 @@ cd linux-%{kversion}.%{_target_cpu}
 #
 # Xen
 #
-%if %{includexen}
+%if %includexen
 #
 # Apply the main xen patch...
 #%patch951 -p1
@@ -3072,7 +3066,6 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 # Patches 1000 to 5000 are reserved for bugfixes to drivers and filesystems
 #
 
-
 # Various low-impact patches to aid debugging.
 %patch1010 -p1
 %patch1011 -p1
@@ -3088,7 +3081,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 #%patch1020 -p1
 %patch1021 -p1
 %patch1022 -p1
-%if %{includexen}
+%if %includexen
 %patch1023 -p1
 %endif
 
@@ -3096,7 +3089,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 # Make /dev/mem a need-to-know function
 #
 %patch1050 -p1
-%if %{includexen}
+%if %includexen
 %patch1051 -p1
 %endif
 
@@ -3104,7 +3097,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 # /dev/crash driver for the crashdump analysis tool
 #
 %patch1060 -p1
-%if %{includexen}
+%if %includexen
 %patch1061 -p1
 %endif
 
@@ -4976,7 +4969,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch22604 -p1
 %patch22605 -p1
 
-%if %{includeovz}
+%if %includeovz
 %patch50000 -p1
 
 %patch60001 -p1
@@ -5048,30 +5041,30 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 # correction of SUBLEVEL/EXTRAVERSION in top-level source tree Makefile
 # patch the Makefile to include rhel version info
 %patch99990 -p1
-perl -p -i -e "s/^SUBLEVEL.*/SUBLEVEL = %{sublevel}/" Makefile
+perl -p -i -e "s/^SUBLEVEL.*/SUBLEVEL = %sublevel/" Makefile
 perl -p -i -e "s/^EXTRAVERSION.*/EXTRAVERSION = -prep/" Makefile
-perl -p -i -e "s/^RHEL_MAJOR.*/RHEL_MAJOR = %{rh_release_major}/" Makefile
-perl -p -i -e "s/^RHEL_MINOR.*/RHEL_MINOR = %{rh_release_minor}/" Makefile
+perl -p -i -e "s/^RHEL_MAJOR.*/RHEL_MAJOR = %rh_release_major/" Makefile
+perl -p -i -e "s/^RHEL_MINOR.*/RHEL_MINOR = %rh_release_minor/" Makefile
 
 # conditionally applied test patch for debugging convenience
-%if %([ -s %{PATCH99999} ] && echo 1 || echo 0)
+%if %([ -s %PATCH99999 ] && echo 1 || echo 0)
 %patch99999 -p1
 %endif
 
 # END OF PATCH APPLICATIONS
 
-cp %{SOURCE10} Documentation/
+cp %SOURCE10 Documentation/
 
 mkdir configs
 
-for cfg in %{all_arch_configs}; do
+for cfg in %all_arch_configs; do
   cp -f $RPM_SOURCE_DIR/$cfg .
 done
 
 #if a rhel kernel, apply the rhel config options
-%if !%{includeovz}
+%if !%includeovz
 %if 0%{?rhel}
-  for i in %{all_arch_configs}
+  for i in %all_arch_configs
   do
     mv $i $i.tmp
     $RPM_SOURCE_DIR/merge.pl $RPM_SOURCE_DIR/config-rhel-generic $i.tmp > $i
@@ -5079,7 +5072,7 @@ done
   done
 %ifarch ppc64 noarch
   #CONFIG_FB_MATROX is disabled for rhel generic but needed for ppc64 rhel
-  for i in kernel-%{kversion}-ppc64.config
+  for i in kernel-%kversion-ppc64.config
   do
     mv $i $i.tmp
     $RPM_SOURCE_DIR/merge.pl $RPM_SOURCE_DIR/config-rhel-ppc64-generic $i.tmp > $i
@@ -5090,7 +5083,7 @@ done
 %endif
 #if a olpc kernel, apply the olpc config options
 %if 0%{?olpc}
-  for i in %{all_arch_configs}
+  for i in %all_arch_configs
   do
     mv $i $i.tmp
     $RPM_SOURCE_DIR/merge.pl $RPM_SOURCE_DIR/config-olpc-generic $i.tmp > $i
@@ -5098,24 +5091,23 @@ done
   done
 %endif
 
-
 %if 0%{?rhel}
 # don't need these for relocatable kernels
-rm -f kernel-%{kversion}-{i686,x86_64}-kdump.config
+rm -f kernel-%kversion-{i686,x86_64}-kdump.config
 # don't need these in general
-rm -f kernel-%{kversion}-i586.config
+rm -f kernel-%kversion-i586.config
 %endif
 
 %if 0%{?olpc}
 # don't need these for OLPC
-rm -f kernel-%{kversion}-*PAE*.config
-rm -f kernel-%{kversion}-*ent*.config
-rm -f kernel-%{kversion}-*xen*.config
-rm -f kernel-%{kversion}-*kdump*.config
+rm -f kernel-%kversion-*PAE*.config
+rm -f kernel-%kversion-*ent*.config
+rm -f kernel-%kversion-*xen*.config
+rm -f kernel-%kversion-*kdump*.config
 %endif
 
-%if !%{with_debug}
-rm -f kernel-%{kversion}-*-debug.config
+%if !%with_debug
+rm -f kernel-%kversion-*-debug.config
 %endif
 
 # now run oldconfig over all the config files
@@ -5141,14 +5133,13 @@ done
 # get rid of unwanted files resulting from patch fuzz
 find . \( -name "*.orig" -o -name "*~" \) -exec rm -f {} \; >/dev/null
 
-
 # Unpack the Xen tarball.
-%if %{includexen}
-cp %{SOURCE2} .
+%if %includexen
+cp %SOURCE2 .
 if [ -d xen ]; then
   rm -rf xen
 fi
-%setup -D -T -q -n %{name}-%{version} -a1
+%setup -D -T -q -n %name-%version -a1
 cd xen
 # Any necessary hypervisor patches go here
 %patch20001 -p1
@@ -5214,17 +5205,16 @@ cd xen
 # end of necessary hypervisor patches
 %endif
 
-%if %{with_openafs}
+%if %with_openafs
   echo Prepare openafs...
-  cd  %{_builddir}/%{name}-%{version}
-  tar xjf %{SOURCE3}
-  cd openafs-%{openafs_version}
+  cd  %_builddir/%name-%version
+  tar xjf %SOURCE3
+  cd openafs-%openafs_version
 %patch90500 -p1
 %patch90501 -p1
 %patch90502 -p1
 %patch90503 -p1
 %endif
- 
 
 ###
 ### build
@@ -5234,11 +5224,11 @@ cd xen
 # Create gpg keys for signing the modules
 #
 
-%if %{signmodules}
-gpg --homedir . --batch --gen-key %{SOURCE11}
+%if %signmodules
+gpg --homedir . --batch --gen-key %SOURCE11
 gpg --homedir . --export --keyring ./kernel.pub Red > extract.pub
-make linux-%{kversion}.%{_target_cpu}/scripts/bin2c
-linux-%{kversion}.%{_target_cpu}/scripts/bin2c ksign_def_public_key __initdata < extract.pub > linux-%{kversion}.%{_target_cpu}/crypto/signature/key.h
+make linux-%kversion.%_target_cpu/scripts/bin2c
+linux-%kversion.%_target_cpu/scripts/bin2c ksign_def_public_key __initdata < extract.pub > linux-%kversion.%_target_cpu/crypto/signature/key.h
 %endif
 
 BuildKernel() {
@@ -5248,22 +5238,22 @@ BuildKernel() {
 
     # Pick the right config file for the kernel we're building
     if [ -n "$Flavour" ] ; then
-      Config=kernel-%{kversion}-%{_target_cpu}-$Flavour.config.ovz
-      DevelDir=/usr/src/kernels/%{KVERREL}-$Flavour-%{_target_cpu}
-      DevelLink=/usr/src/kernels/%{KVERREL}$Flavour-%{_target_cpu}
+      Config=kernel-%kversion-%_target_cpu-$Flavour.config.ovz
+      DevelDir=/usr/src/kernels/%KVERREL-$Flavour-%_target_cpu
+      DevelLink=/usr/src/kernels/%KVERREL$Flavour-%_target_cpu
     else
-      Config=kernel-%{kversion}-%{_target_cpu}.config.ovz
-      DevelDir=/usr/src/kernels/%{KVERREL}-%{_target_cpu}
+      Config=kernel-%kversion-%_target_cpu.config.ovz
+      DevelDir=/usr/src/kernels/%KVERREL-%_target_cpu
       DevelLink=
     fi
 
     Config=${Config//-debug/}
 
-    KernelVer=%{version}-%{release}$Flavour
-    echo BUILDING A KERNEL FOR $Flavour %{_target_cpu}...
+    KernelVer=%version-%release$Flavour
+    echo BUILDING A KERNEL FOR $Flavour %_target_cpu...
 
     # make sure EXTRAVERSION says what we want it to say
-    perl -p -i -e "s/^EXTRAVERSION.*/EXTRAVERSION = -%{release}$Flavour/" Makefile
+    perl -p -i -e "s/^EXTRAVERSION.*/EXTRAVERSION = -%release$Flavour/" Makefile
 
     # and now to start the build process
 
@@ -5292,38 +5282,38 @@ BuildKernel() {
       make -s ARCH=$Arch %{?_smp_mflags} modules || exit 1
     fi
 
-%if %{with_openafs}
+%if %with_openafs
     echo Building openafs...
-      OpenAfsDir=%{_builddir}/%{name}-%{version}/openafs-%{openafs_version}
-    KernelSrcDir=%{_builddir}/%{name}-%{version}/linux-%{kversion}.%{_target_cpu}
+      OpenAfsDir=%_builddir/%name-%version/openafs-%openafs_version
+    KernelSrcDir=%_builddir/%name-%version/linux-%kversion.%_target_cpu
     cd $OpenAfsDir
     [ -f Makefile ] && make distclean
     ./configure --with-linux-kernel-headers=$KernelSrcDir
     make -s libafs
-    cd $KernelSrcDir 
+    cd $KernelSrcDir
 %endif
     # Start installing the results
 
-%if %{with_debuginfo}
-    mkdir -p $RPM_BUILD_ROOT%{debuginfodir}/boot
-    mkdir -p $RPM_BUILD_ROOT%{debuginfodir}/%{image_install_path}
+%if %with_debuginfo
+    mkdir -p $RPM_BUILD_ROOT%debuginfodir/boot
+    mkdir -p $RPM_BUILD_ROOT%debuginfodir/%image_install_path
 %endif
-    mkdir -p $RPM_BUILD_ROOT/%{image_install_path}
+    mkdir -p $RPM_BUILD_ROOT/%image_install_path
     install -m 644 .config $RPM_BUILD_ROOT/boot/config-$KernelVer
     install -m 644 System.map $RPM_BUILD_ROOT/boot/System.map-$KernelVer
     touch $RPM_BUILD_ROOT/boot/initrd-$KernelVer.img
-    cp $KernelImage $RPM_BUILD_ROOT/%{image_install_path}/vmlinuz-$KernelVer
+    cp $KernelImage $RPM_BUILD_ROOT/%image_install_path/vmlinuz-$KernelVer
     if [ -f arch/$Arch/boot/zImage.stub ]; then
-      cp arch/$Arch/boot/zImage.stub $RPM_BUILD_ROOT/%{image_install_path}/zImage.stub-$KernelVer || :
+      cp arch/$Arch/boot/zImage.stub $RPM_BUILD_ROOT/%image_install_path/zImage.stub-$KernelVer || :
     fi
 
-%if %{includeovz}
-    cp vmlinux $RPM_BUILD_ROOT/%{image_install_path}/vmlinux-$KernelVer
-    chmod 400 $RPM_BUILD_ROOT/%{image_install_path}/vmlinux-$KernelVer
+%if %includeovz
+    cp vmlinux $RPM_BUILD_ROOT/%image_install_path/vmlinux-$KernelVer
+    chmod 400 $RPM_BUILD_ROOT/%image_install_path/vmlinux-$KernelVer
 %endif
 
     if [ "$Flavour" == "kdump" -a "$Arch" != "s390" ]; then
-        rm -f $RPM_BUILD_ROOT/%{image_install_path}/vmlinuz-$KernelVer
+        rm -f $RPM_BUILD_ROOT/%image_install_path/vmlinuz-$KernelVer
     fi
 
     mkdir -p $RPM_BUILD_ROOT/lib/modules/$KernelVer
@@ -5337,20 +5327,20 @@ BuildKernel() {
     echo "**** GENERATING kernel ABI metadata ****"
     gzip -c9 < Module.symvers > $RPM_BUILD_ROOT/boot/symvers-$KernelVer.gz
     chmod 0755 %_sourcedir/kabitool
-    if [ ! -e $RPM_SOURCE_DIR/kabi_whitelist_%{_target_cpu}$Flavour ]; then
+    if [ ! -e $RPM_SOURCE_DIR/kabi_whitelist_%_target_cpu$Flavour ]; then
         echo "**** No KABI whitelist was available during build ****"
         %_sourcedir/kabitool -b $RPM_BUILD_ROOT/$DevelDir -k $KernelVer -l $RPM_BUILD_ROOT/kabi_whitelist
     else
-	cp $RPM_SOURCE_DIR/kabi_whitelist_%{_target_cpu}$Flavour $RPM_BUILD_ROOT/kabi_whitelist
+	cp $RPM_SOURCE_DIR/kabi_whitelist_%_target_cpu$Flavour $RPM_BUILD_ROOT/kabi_whitelist
     fi
-    rm -f %{_tmppath}/kernel-$KernelVer-kabideps
-    %_sourcedir/kabitool -b . -d %{_tmppath}/kernel-$KernelVer-kabideps -k $KernelVer -w $RPM_BUILD_ROOT/kabi_whitelist
+    rm -f %_tmppath/kernel-$KernelVer-kabideps
+    %_sourcedir/kabitool -b . -d %_tmppath/kernel-$KernelVer-kabideps -k $KernelVer -w $RPM_BUILD_ROOT/kabi_whitelist
 
-%if %{with_kabichk}
+%if %with_kabichk
     echo "**** kABI checking is enabled in kernel SPEC file. ****"
     chmod 0755 $RPM_SOURCE_DIR/check-kabi
-    if [ -e $RPM_SOURCE_DIR/Module.kabi_%{_target_cpu}$Flavour ]; then
-	cp $RPM_SOURCE_DIR/Module.kabi_%{_target_cpu}$Flavour $RPM_BUILD_ROOT/Module.kabi
+    if [ -e $RPM_SOURCE_DIR/Module.kabi_%_target_cpu$Flavour ]; then
+	cp $RPM_SOURCE_DIR/Module.kabi_%_target_cpu$Flavour $RPM_BUILD_ROOT/Module.kabi
 	$RPM_SOURCE_DIR/check-kabi -k $RPM_BUILD_ROOT/Module.kabi -s Module.symvers || exit 1
     else
 	echo "**** NOTE: Cannot find reference Module.kabi file. ****"
@@ -5372,7 +5362,7 @@ BuildKernel() {
     mkdir -p $RPM_BUILD_ROOT/lib/modules/$KernelVer/extra
     mkdir -p $RPM_BUILD_ROOT/lib/modules/$KernelVer/updates
     mkdir -p $RPM_BUILD_ROOT/lib/modules/$KernelVer/weak-updates
-%if %{with_openafs}
+%if %with_openafs
     find $OpenAfsDir -name libafs.ko -execdir cp '{}' $RPM_BUILD_ROOT/lib/modules/$KernelVer/extra/openafs.ko \;
 %endif
     # first copy everything
@@ -5389,11 +5379,11 @@ BuildKernel() {
     rm -rf $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/include
     cp .config $RPM_BUILD_ROOT/lib/modules/$KernelVer/build
     cp -a scripts $RPM_BUILD_ROOT/lib/modules/$KernelVer/build
-    if [ -d arch/%{_arch}/scripts ]; then
-      cp -a arch/%{_arch}/scripts $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/arch/%{_arch} || :
+    if [ -d arch/%_arch/scripts ]; then
+      cp -a arch/%_arch/scripts $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/arch/%_arch || :
     fi
-    if [ -f arch/%{_arch}/*lds ]; then
-      cp -a arch/%{_arch}/*lds $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/arch/%{_arch}/ || :
+    if [ -f arch/%_arch/*lds ]; then
+      cp -a arch/%_arch/*lds $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/arch/%_arch/ || :
     fi
     rm -f $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/scripts/*.o
     rm -f $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/scripts/*/*.o
@@ -5413,7 +5403,7 @@ BuildKernel() {
       ln -sf ../../../include/asm-ppc* asm
       popd
     fi
-%if %{includexen}
+%if %includexen
     cp -a xen $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/include
 %endif
 
@@ -5428,15 +5418,15 @@ BuildKernel() {
     #
     # save the vmlinux file for kernel debugging into the kernel-debuginfo rpm
     #
-%if %{with_debuginfo}
-    mkdir -p $RPM_BUILD_ROOT%{debuginfodir}/lib/modules/$KernelVer
-    cp vmlinux $RPM_BUILD_ROOT%{debuginfodir}/lib/modules/$KernelVer
+%if %with_debuginfo
+    mkdir -p $RPM_BUILD_ROOT%debuginfodir/lib/modules/$KernelVer
+    cp vmlinux $RPM_BUILD_ROOT%debuginfodir/lib/modules/$KernelVer
 %endif
 
     find $RPM_BUILD_ROOT/lib/modules/$KernelVer -name "*.ko" -type f >modnames
 
     # gpg sign the modules
-%if %{signmodules}
+%if %signmodules
     gcc -o scripts/modsign/mod-extract scripts/modsign/mod-extract.c -Wall
     KEYFLAGS="--no-default-keyring --homedir .."
     KEYFLAGS="$KEYFLAGS --secret-keyring ../kernel.sec"
@@ -5464,7 +5454,7 @@ BuildKernel() {
       /sbin/modinfo -l $i >> modinfo
     done
     cat modinfo |\
-%if %{with_openafs}
+%if %with_openafs
       grep -v "http://www.openafs.org/dl/license10.html" |
 %endif
       grep -v "^GPL" |
@@ -5496,57 +5486,57 @@ BuildKernel() {
 ###
 
 # prepare directories
-rm -rf $RPM_BUILD_ROOT
+
 mkdir -p $RPM_BUILD_ROOT/boot
 
-%if %{includexen}
-%if %{with_xen}
+%if %includexen
+%if %with_xen
   cd xen
-  mkdir -p $RPM_BUILD_ROOT/%{image_install_path} $RPM_BUILD_ROOT/boot
-  make %{?_smp_mflags} %{xen_flags}
-  install -m 644 xen.gz $RPM_BUILD_ROOT/%{image_install_path}/xen.gz-%{KVERREL}
-  install -m 755 xen-syms $RPM_BUILD_ROOT/boot/xen-syms-%{KVERREL}
+  mkdir -p $RPM_BUILD_ROOT/%image_install_path $RPM_BUILD_ROOT/boot
+  make %{?_smp_mflags} %xen_flags
+  install -m 644 xen.gz $RPM_BUILD_ROOT/%image_install_path/xen.gz-%KVERREL
+  install -m 755 xen-syms $RPM_BUILD_ROOT/boot/xen-syms-%KVERREL
   cd ..
 %endif
 %endif
 
-cd linux-%{kversion}.%{_target_cpu}
+cd linux-%kversion.%_target_cpu
 
-%if %{with_up}
+%if %with_up
 BuildKernel %make_target %kernel_image
-%if %{with_debug}
+%if %with_debug
 BuildKernel %make_target %kernel_image debug
 %endif
 %endif
 
-%if %{with_pae}
+%if %with_pae
 BuildKernel %make_target %kernel_image PAE
-%if %{with_debug}
+%if %with_debug
 BuildKernel %make_target %kernel_image PAE-debug
 %endif
 %endif
 
-%if %{with_ent}
-BuildKernel %make_target %kernel_image ent 
-%if %{with_debug}
+%if %with_ent
+BuildKernel %make_target %kernel_image ent
+%if %with_debug
 BuildKernel %make_target %kernel_image ent-debug
 %endif
 %endif
 
-%if %{with_smp}
+%if %with_smp
 BuildKernel %make_target %kernel_image smp
-%if %{with_debug}
+%if %with_debug
 BuildKernel %make_target %kernel_image smp-debug
 %endif
 %endif
 
-%if %{includexen}
-%if %{with_xen}
+%if %includexen
+%if %with_xen
 BuildKernel %xen_target %xen_image xen
 %endif
 %endif
 
-%if %{with_kdump}
+%if %with_kdump
 BuildKernel %make_target %kernel_image kdump
 %endif
 
@@ -5555,34 +5545,33 @@ BuildKernel %make_target %kernel_image kdump
 ###
 
 # This macro is used by %%install, so we must redefine it before that.
-%define debug_package %{nil}
+%define debug_package %nil
 
-%if %{with_debuginfo}
+%if %with_debuginfo
 %ifnarch noarch
 %global __debug_package 1
 %package debuginfo-common
-Summary: Kernel source files used by %{name}-debuginfo packages
+Summary: Kernel source files used by %name-debuginfo packages
 Group: Development/Debug
-Provides: %{name}-debuginfo-common-%{_target_cpu} = %{KVERREL}
+Provides: %name-debuginfo-common-%_target_cpu = %KVERREL
 
 %description debuginfo-common
-This package is required by %{name}-debuginfo subpackages.
+This package is required by %name-debuginfo subpackages.
 It provides the kernel source files common to all builds.
 
 %files debuginfo-common
-%defattr(-,root,root)
-/usr/src/debug/%{name}-%{version}/linux-%{kversion}.%{_target_cpu}
-%if %{includexen}
-%if %{with_xen}
-/usr/src/debug/%{name}-%{version}/xen
+/usr/src/debug/%name-%version/linux-%kversion.%_target_cpu
+%if %includexen
+%if %with_xen
+/usr/src/debug/%name-%version/xen
 %endif
 %endif
 %dir /usr/src/debug
-%dir %{debuginfodir}
-%dir %{debuginfodir}/%{image_install_path}
-%dir %{debuginfodir}/lib
-%dir %{debuginfodir}/lib/modules
-%dir %{debuginfodir}/usr/src/kernels
+%dir %debuginfodir
+%dir %debuginfodir/%image_install_path
+%dir %debuginfodir/lib
+%dir %debuginfodir/lib/modules
+%dir %debuginfodir/usr/src/kernels
 %endif
 %endif
 
@@ -5591,8 +5580,7 @@ It provides the kernel source files common to all builds.
 ###
 
 %install
-
-cd linux-%{kversion}.%{_target_cpu}
+cd linux-%kversion.%_target_cpu
 %ifnarch %nobuildarches noarch
 mkdir -p $RPM_BUILD_ROOT/etc/modprobe.d
 cat > $RPM_BUILD_ROOT/etc/modprobe.d/blacklist-firewire << \EOF
@@ -5601,11 +5589,11 @@ blacklist firewire-ohci
 EOF
 %endif
 
-%if %{includexen}
-%if %{with_xen}
+%if %includexen
+%if %with_xen
 mkdir -p $RPM_BUILD_ROOT/etc/ld.so.conf.d
-rm -f $RPM_BUILD_ROOT/etc/ld.so.conf.d/kernelcap-%{KVERREL}.conf
-cat > $RPM_BUILD_ROOT/etc/ld.so.conf.d/kernelcap-%{KVERREL}.conf <<\EOF
+rm -f $RPM_BUILD_ROOT/etc/ld.so.conf.d/kernelcap-%KVERREL.conf
+cat > $RPM_BUILD_ROOT/etc/ld.so.conf.d/kernelcap-%KVERREL.conf <<\EOF
 # This directive teaches ldconfig to search in nosegneg subdirectories
 # and cache the DSOs there with extra bit 0 set in their hwcap match
 # fields.  In Xen guest kernels, the vDSO tells the dynamic linker to
@@ -5613,22 +5601,22 @@ cat > $RPM_BUILD_ROOT/etc/ld.so.conf.d/kernelcap-%{KVERREL}.conf <<\EOF
 # in the ld.so.cache file.
 hwcap 0 nosegneg
 EOF
-chmod 444 $RPM_BUILD_ROOT/etc/ld.so.conf.d/kernelcap-%{KVERREL}.conf
+chmod 444 $RPM_BUILD_ROOT/etc/ld.so.conf.d/kernelcap-%KVERREL.conf
 %endif
 %endif
 
-%if %{with_doc}
-mkdir -p $RPM_BUILD_ROOT/usr/share/doc/kernel-doc-%{kversion}/Documentation
+%if %with_doc
+mkdir -p $RPM_BUILD_ROOT/usr/share/doc/kernel-doc-%kversion/Documentation
 
 # sometimes non-world-readable files sneak into the kernel source tree
 chmod -R a+r *
 # copy the source over
-tar cf - Documentation | tar xf - -C $RPM_BUILD_ROOT/usr/share/doc/kernel-doc-%{kversion}
+tar cf - Documentation | tar xf - -C $RPM_BUILD_ROOT/usr/share/doc/kernel-doc-%kversion
 %endif
 
-%if %{with_headers}
+%if %with_headers
 # Install kernel headers
-make ARCH=%{hdrarch} INSTALL_HDR_PATH=$RPM_BUILD_ROOT/usr headers_install
+make ARCH=%hdrarch INSTALL_HDR_PATH=$RPM_BUILD_ROOT/usr headers_install
 
 # Manually go through the 'headers_check' process for every file, but
 # don't die if it fails
@@ -5661,10 +5649,10 @@ if [ `uname -i` == "x86_64" -o `uname -i` == "i386" ]; then
     /bin/sed -i -e 's/^DEFAULTKERNEL=kernel-smp$/DEFAULTKERNEL=kernel/' /etc/sysconfig/kernel || exit $?
   fi
 fi
-/sbin/new-kernel-pkg --package kernel --mkinitrd --depmod --install %{KVERREL} || exit $?
+/sbin/new-kernel-pkg --package kernel --mkinitrd --depmod --install %KVERREL || exit $?
 if [ -x /sbin/weak-modules ]
 then
-    /sbin/weak-modules --add-kernel %{KVERREL} || exit $?
+    /sbin/weak-modules --add-kernel %KVERREL || exit $?
 fi
 exit 0
 
@@ -5687,7 +5675,7 @@ then
     . /etc/sysconfig/kernel || exit $?
 fi
 if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
-  pushd /usr/src/kernels/%{KVERREL}-%{_target_cpu} > /dev/null
+  pushd /usr/src/kernels/%KVERREL-%_target_cpu > /dev/null
   /usr/bin/find . -type f | while read f; do hardlink -c /usr/src/kernels/*FC*/$f $f ; done
   popd > /dev/null
 fi
@@ -5701,7 +5689,7 @@ fi
 exit 0
 
 %post smp-debug
-[ -x /sbin/vzkernel-install ] && /sbin/vzkernel-install --install --mkinitrd --depmod %{KVERREL}-smp-debug
+[ -x /sbin/vzkernel-install ] && /sbin/vzkernel-install --install --mkinitrd --depmod %KVERREL-smp-debug
 [ -f /etc/modprobe.conf ] && ! grep -qE "ip_conntrack_(en|dis)able_ve0" /etc/modprobe.conf && \
 	echo 'options ip_conntrack ip_conntrack_disable_ve0=1' >> /etc/modprobe.conf
 [ -f /etc/modules.conf ] && ! grep -qE "ip_conntrack_(en|dis)able_ve0" /etc/modules.conf && \
@@ -5714,7 +5702,7 @@ then
     . /etc/sysconfig/kernel || exit $?
 fi
 if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
-  pushd /usr/src/kernels/%{KVERREL}-smp-%{_target_cpu} > /dev/null
+  pushd /usr/src/kernels/%KVERREL-smp-%_target_cpu > /dev/null
   /usr/bin/find . -type f | while read f; do hardlink -c /usr/src/kernels/*FC*/$f $f ; done
   popd > /dev/null
 fi
@@ -5747,7 +5735,7 @@ then
     . /etc/sysconfig/kernel || exit $?
 fi
 if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
-  pushd /usr/src/kernels/%{KVERREL}-PAE-%{_target_cpu} > /dev/null
+  pushd /usr/src/kernels/%KVERREL-PAE-%_target_cpu > /dev/null
   /usr/bin/find . -type f | while read f; do hardlink -c /usr/src/kernels/*FC*/$f $f ; done
   popd > /dev/null
 fi
@@ -5780,7 +5768,7 @@ then
     . /etc/sysconfig/kernel || exit $?
 fi
 if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
-  pushd /usr/src/kernels/%{KVERREL}-ent-%{_target_cpu} > /dev/null
+  pushd /usr/src/kernels/%KVERREL-ent-%_target_cpu > /dev/null
   /usr/bin/find . -type f | while read f; do hardlink -c /usr/src/kernels/*FC*/$f $f ; done
   popd > /dev/null
 fi
@@ -5792,7 +5780,7 @@ if [ `uname -i` == "x86_64" -o `uname -i` == "i386" ]; then
   fi
 fi
 if [ -e /proc/xen/xsd_kva -o ! -d /proc/xen ]; then
-	/sbin/new-kernel-pkg --package kernel-xen --mkinitrd --depmod --install --multiboot=/%{image_install_path}/xen.gz-%{KVERREL} %{KVERREL}xen || exit $?
+	/sbin/new-kernel-pkg --package kernel-xen --mkinitrd --depmod --install --multiboot=/%image_install_path/xen.gz-%KVERREL %{KVERREL}xen || exit $?
 else
 	/sbin/new-kernel-pkg --package kernel-xen --mkinitrd --depmod --install %{KVERREL}xen || exit $?
 fi
@@ -5812,7 +5800,7 @@ then
     . /etc/sysconfig/kernel || exit $?
 fi
 if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
-  pushd /usr/src/kernels/%{KVERREL}-xen-%{_target_cpu} > /dev/null
+  pushd /usr/src/kernels/%KVERREL-xen-%_target_cpu > /dev/null
   /usr/bin/find . -type f | while read f; do hardlink -c /usr/src/kernels/*FC*/$f $f ; done
   popd > /dev/null
 fi
@@ -5831,16 +5819,16 @@ then
     . /etc/sysconfig/kernel || exit $?
 fi
 if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
-  pushd /usr/src/kernels/%{KVERREL}-kdump-%{_target_cpu} > /dev/null
+  pushd /usr/src/kernels/%KVERREL-kdump-%_target_cpu > /dev/null
   /usr/bin/find . -type f | while read f; do hardlink -c /usr/src/kernels/*FC*/$f $f ; done
   popd > /dev/null
 fi
 
 %preun
-/sbin/new-kernel-pkg --rminitrd --rmmoddep --remove %{KVERREL} || exit $?
+/sbin/new-kernel-pkg --rminitrd --rmmoddep --remove %KVERREL || exit $?
 if [ -x /sbin/weak-modules ]
 then
-    /sbin/weak-modules --remove-kernel %{KVERREL} || exit $?
+    /sbin/weak-modules --remove-kernel %KVERREL || exit $?
 fi
 
 %preun debug
@@ -5908,53 +5896,50 @@ fi
 ### file lists
 ###
 
-# This is %{image_install_path} on an arch where that includes ELF files,
+# This is %image_install_path on an arch where that includes ELF files,
 # or empty otherwise.
-%define elf_image_install_path %{?kernel_image_elf:%{image_install_path}}
+%define elf_image_install_path %{?kernel_image_elf:%image_install_path}
 
-%if %{with_up}
-%if %{with_debuginfo}
+%if %with_up
+%if %with_debuginfo
 %ifnarch noarch
 %package debuginfo
-Summary: Debug information for package %{name}
+Summary: Debug information for package %name
 Group: Development/Debug
-Requires: %{name}-debuginfo-common-%{_target_cpu} = %{KVERREL}
-Provides: %{name}-debuginfo-%{_target_cpu} = %{KVERREL}
+Requires: %name-debuginfo-common-%_target_cpu = %KVERREL
+Provides: %name-debuginfo-%_target_cpu = %KVERREL
 %description debuginfo
-This package provides debug information for package %{name}
-This is required to use SystemTap with %{name}-%{KVERREL}.
+This package provides debug information for package %name
+This is required to use SystemTap with %name-%KVERREL.
 %files debuginfo
-%defattr(-,root,root)
-%if "%{elf_image_install_path}" != ""
-%{debuginfodir}/%{elf_image_install_path}/*-%{KVERREL}.debug
+%if "%elf_image_install_path" != ""
+%debuginfodir/%elf_image_install_path/*-%KVERREL.debug
 %endif
-%{debuginfodir}/lib/modules/%{KVERREL}
-%{debuginfodir}/usr/src/kernels/%{KVERREL}-%{_target_cpu}
+%debuginfodir/lib/modules/%KVERREL
+%debuginfodir/usr/src/kernels/%KVERREL-%_target_cpu
 %endif
 %endif
 
 %files
-%defattr(-,root,root)
-/%{image_install_path}/vmlinuz-%{KVERREL}
-/%{image_install_path}/vmlinux-%{KVERREL}
-/boot/System.map-%{KVERREL}
-/boot/symvers-%{KVERREL}.gz
-/boot/config-%{KVERREL}
-%dir /lib/modules/%{KVERREL}
-/lib/modules/%{KVERREL}/kernel
-/lib/modules/%{KVERREL}/build
-/lib/modules/%{KVERREL}/source
-/lib/modules/%{KVERREL}/extra
-/lib/modules/%{KVERREL}/updates
-/lib/modules/%{KVERREL}/weak-updates
-%ghost /boot/initrd-%{KVERREL}.img
+/%image_install_path/vmlinuz-%KVERREL
+/%image_install_path/vmlinux-%KVERREL
+/boot/System.map-%KVERREL
+/boot/symvers-%KVERREL.gz
+/boot/config-%KVERREL
+%dir /lib/modules/%KVERREL
+/lib/modules/%KVERREL/kernel
+/lib/modules/%KVERREL/build
+/lib/modules/%KVERREL/source
+/lib/modules/%KVERREL/extra
+/lib/modules/%KVERREL/updates
+/lib/modules/%KVERREL/weak-updates
+%ghost /boot/initrd-%KVERREL.img
 %config(noreplace) /etc/modprobe.d/blacklist-firewire
 
-%if %{with_debug}
+%if %with_debug
 %files debug
-%defattr(-,root,root)
-/%{image_install_path}/vmlinuz-%{KVERREL}debug
-/%{image_install_path}/vmlinux-%{KVERREL}debug
+/%image_install_path/vmlinuz-%{KVERREL}debug
+/%image_install_path/vmlinux-%{KVERREL}debug
 /boot/System.map-%{KVERREL}debug
 /boot/symvers-%{KVERREL}debug.gz
 /boot/config-%{KVERREL}debug
@@ -5970,41 +5955,37 @@ This is required to use SystemTap with %{name}-%{KVERREL}.
 %endif
 
 %files devel
-%defattr(-,root,root)
-%verify(not mtime) /usr/src/kernels/%{KVERREL}-%{_target_cpu}
+%verify(not mtime) /usr/src/kernels/%KVERREL-%_target_cpu
 %endif
 
-%if %{with_headers}
+%if %with_headers
 %files headers
-%defattr(-,root,root)
 /usr/include/*
 %endif
 
-%if %{with_pae}
-%if %{with_debuginfo}
+%if %with_pae
+%if %with_debuginfo
 %ifnarch noarch
 %package PAE-debuginfo
-Summary: Debug information for package %{name}-PAE
+Summary: Debug information for package %name-PAE
 Group: Development/Debug
-Requires: %{name}-debuginfo-common-%{_target_cpu} = %{KVERREL}
-Provides: %{name}-%PAE-debuginfo-%{_target_cpu} = %{KVERREL}
+Requires: %name-debuginfo-common-%_target_cpu = %KVERREL
+Provides: %name-%PAE-debuginfo-%_target_cpu = %KVERREL
 %description PAE-debuginfo
-This package provides debug information for package %{name}-PAE
-This is required to use SystemTap with %{name}-PAE-%{KVERREL}.
+This package provides debug information for package %name-PAE
+This is required to use SystemTap with %name-PAE-%KVERREL.
 %files PAE-debuginfo
-%defattr(-,root,root)
-%if "%{elf_image_install_path}" != ""
-%{debuginfodir}/%{elf_image_install_path}/*-%{KVERREL}PAE.debug
+%if "%elf_image_install_path" != ""
+%debuginfodir/%elf_image_install_path/*-%{KVERREL}PAE.debug
 %endif
-%{debuginfodir}/lib/modules/%{KVERREL}PAE
-%{debuginfodir}/usr/src/kernels/%{KVERREL}-PAE-%{_target_cpu}
+%debuginfodir/lib/modules/%{KVERREL}PAE
+%debuginfodir/usr/src/kernels/%KVERREL-PAE-%_target_cpu
 %endif
 %endif
 
 %files PAE
-%defattr(-,root,root)
-/%{image_install_path}/vmlinuz-%{KVERREL}PAE
-/%{image_install_path}/vmlinux-%{KVERREL}PAE
+/%image_install_path/vmlinuz-%{KVERREL}PAE
+/%image_install_path/vmlinux-%{KVERREL}PAE
 /boot/System.map-%{KVERREL}PAE
 /boot/symvers-%{KVERREL}PAE.gz
 /boot/config-%{KVERREL}PAE
@@ -6018,11 +5999,10 @@ This is required to use SystemTap with %{name}-PAE-%{KVERREL}.
 %ghost /boot/initrd-%{KVERREL}PAE.img
 %config(noreplace) /etc/modprobe.d/blacklist-firewire
 
-%if %{with_debug}
+%if %with_debug
 %files PAE-debug
-%defattr(-,root,root)
-/%{image_install_path}/vmlinuz-%{KVERREL}PAE-debug
-/%{image_install_path}/vmlinux-%{KVERREL}PAE-debug
+/%image_install_path/vmlinuz-%{KVERREL}PAE-debug
+/%image_install_path/vmlinux-%{KVERREL}PAE-debug
 /boot/System.map-%{KVERREL}PAE-debug
 /boot/symvers-%{KVERREL}PAE-debug.gz
 /boot/config-%{KVERREL}PAE-debug
@@ -6038,35 +6018,32 @@ This is required to use SystemTap with %{name}-PAE-%{KVERREL}.
 %endif
 
 %files PAE-devel
-%defattr(-,root,root)
-%verify(not mtime) /usr/src/kernels/%{KVERREL}-PAE-%{_target_cpu}
-/usr/src/kernels/%{KVERREL}PAE-%{_target_cpu}
+%verify(not mtime) /usr/src/kernels/%KVERREL-PAE-%_target_cpu
+/usr/src/kernels/%{KVERREL}PAE-%_target_cpu
 %endif
 
-%if %{with_ent}
-%if %{with_debuginfo}
+%if %with_ent
+%if %with_debuginfo
 %ifnarch noarch
 %package ent-debuginfo
-Summary: Debug information for package %{name}-ent
+Summary: Debug information for package %name-ent
 Group: Development/Debug
-Requires: %{name}-debuginfo-common-%{_target_cpu} = %{KVERREL}
-Provides: %{name}-%ent-debuginfo-%{_target_cpu} = %{KVERREL}
+Requires: %name-debuginfo-common-%_target_cpu = %KVERREL
+Provides: %name-%ent-debuginfo-%_target_cpu = %KVERREL
 %description ent-debuginfo
-This package provides debug information for package %{name}-ent
-This is required to use SystemTap with %{name}-ent-%{KVERREL}.
+This package provides debug information for package %name-ent
+This is required to use SystemTap with %name-ent-%KVERREL.
 %files ent-debuginfo
-%defattr(-,root,root)
-%if "%{elf_image_install_path}" != ""
-%{debuginfodir}/%{elf_image_install_path}/*-%{KVERREL}ent.debug
+%if "%elf_image_install_path" != ""
+%debuginfodir/%elf_image_install_path/*-%{KVERREL}ent.debug
 %endif
-%{debuginfodir}/lib/modules/%{KVERREL}ent
-%{debuginfodir}/usr/src/kernels/%{KVERREL}-ent-%{_target_cpu}
+%debuginfodir/lib/modules/%{KVERREL}ent
+%debuginfodir/usr/src/kernels/%KVERREL-ent-%_target_cpu
 %endif
 %endif
 
 %files ent
-%defattr(-,root,root)
-/%{image_install_path}/vmlinuz-%{KVERREL}ent
+/%image_install_path/vmlinuz-%{KVERREL}ent
 /boot/System.map-%{KVERREL}ent
 /boot/symvers-%{KVERREL}ent.gz
 /boot/config-%{KVERREL}ent
@@ -6080,11 +6057,10 @@ This is required to use SystemTap with %{name}-ent-%{KVERREL}.
 %ghost /boot/initrd-%{KVERREL}ent.img
 %config(noreplace) /etc/modprobe.d/blacklist-firewire
 
-%if %{with_debug}
+%if %with_debug
 %files ent-debug
-%defattr(-,root,root)
-/%{image_install_path}/vmlinuz-%{KVERREL}ent-debug
-/%{image_install_path}/vmlinux-%{KVERREL}ent-debug
+/%image_install_path/vmlinuz-%{KVERREL}ent-debug
+/%image_install_path/vmlinux-%{KVERREL}ent-debug
 /boot/System.map-%{KVERREL}ent-debug
 /boot/symvers-%{KVERREL}ent-debug.gz
 /boot/config-%{KVERREL}ent-debug
@@ -6100,35 +6076,32 @@ This is required to use SystemTap with %{name}-ent-%{KVERREL}.
 %endif
 
 %files ent-devel
-%defattr(-,root,root)
-%verify(not mtime) /usr/src/kernels/%{KVERREL}-ent-%{_target_cpu}
-/usr/src/kernels/%{KVERREL}ent-%{_target_cpu}
+%verify(not mtime) /usr/src/kernels/%KVERREL-ent-%_target_cpu
+/usr/src/kernels/%{KVERREL}ent-%_target_cpu
 %endif
 
-%if %{with_smp}
-%if %{with_debuginfo}
+%if %with_smp
+%if %with_debuginfo
 %ifnarch noarch
 %package smp-debuginfo
-Summary: Debug information for package %{name}-smp
+Summary: Debug information for package %name-smp
 Group: Development/Debug
-Requires: %{name}-debuginfo-common-%{_target_cpu} = %{KVERREL}
-Provides: %{name}-%smp-debuginfo-%{_target_cpu} = %{KVERREL}
+Requires: %name-debuginfo-common-%_target_cpu = %KVERREL
+Provides: %name-%smp-debuginfo-%_target_cpu = %KVERREL
 %description smp-debuginfo
-This package provides debug information for package %{name}-smp
-This is required to use SystemTap with %{name}-smp-%{KVERREL}.
+This package provides debug information for package %name-smp
+This is required to use SystemTap with %name-smp-%KVERREL.
 %files smp-debuginfo
-%defattr(-,root,root)
-%if "%{elf_image_install_path}" != ""
-%{debuginfodir}/%{elf_image_install_path}/*-%{KVERREL}smp.debug
+%if "%elf_image_install_path" != ""
+%debuginfodir/%elf_image_install_path/*-%{KVERREL}smp.debug
 %endif
-%{debuginfodir}/lib/modules/%{KVERREL}smp
-%{debuginfodir}/usr/src/kernels/%{KVERREL}-smp-%{_target_cpu}
+%debuginfodir/lib/modules/%{KVERREL}smp
+%debuginfodir/usr/src/kernels/%KVERREL-smp-%_target_cpu
 %endif
 %endif
 
 %files smp
-%defattr(-,root,root)
-/%{image_install_path}/vmlinuz-%{KVERREL}smp
+/%image_install_path/vmlinuz-%{KVERREL}smp
 /boot/System.map-%{KVERREL}smp
 /boot/symvers-%{KVERREL}smp.gz
 /boot/config-%{KVERREL}smp
@@ -6143,47 +6116,44 @@ This is required to use SystemTap with %{name}-smp-%{KVERREL}.
 %config(noreplace) /etc/modprobe.d/blacklist-firewire
 
 %files smp-devel
-%defattr(-,root,root)
-%verify(not mtime) /usr/src/kernels/%{KVERREL}-smp-%{_target_cpu}
-/usr/src/kernels/%{KVERREL}smp-%{_target_cpu}
+%verify(not mtime) /usr/src/kernels/%KVERREL-smp-%_target_cpu
+/usr/src/kernels/%{KVERREL}smp-%_target_cpu
 %endif
 
-%if %{includexen}
-%if %{with_xen}
-%if %{with_debuginfo}
+%if %includexen
+%if %with_xen
+%if %with_debuginfo
 %ifnarch noarch
 %package xen-debuginfo
-Summary: Debug information for package %{name}-xen
+Summary: Debug information for package %name-xen
 Group: Development/Debug
-Requires: %{name}-debuginfo-common-%{_target_cpu} = %{KVERREL}
-Provides: %{name}-xen-debuginfo-%{_target_cpu} = %{KVERREL}
+Requires: %name-debuginfo-common-%_target_cpu = %KVERREL
+Provides: %name-xen-debuginfo-%_target_cpu = %KVERREL
 %description xen-debuginfo
-This package provides debug information for package %{name}-xen
-This is required to use SystemTap with %{name}-xen-%{KVERREL}.
+This package provides debug information for package %name-xen
+This is required to use SystemTap with %name-xen-%KVERREL.
 %files xen-debuginfo
-%defattr(-,root,root)
-%if "%{elf_image_install_path}" != ""
-%{debuginfodir}/%{elf_image_install_path}/*-%{KVERREL}xen.debug
+%if "%elf_image_install_path" != ""
+%debuginfodir/%elf_image_install_path/*-%{KVERREL}xen.debug
 %endif
-%{debuginfodir}/lib/modules/%{KVERREL}xen
-%{debuginfodir}/usr/src/kernels/%{KVERREL}-xen-%{_target_cpu}
-%{debuginfodir}/boot/xen*-%{KVERREL}.debug
+%debuginfodir/lib/modules/%{KVERREL}xen
+%debuginfodir/usr/src/kernels/%KVERREL-xen-%_target_cpu
+%debuginfodir/boot/xen*-%KVERREL.debug
 %endif
 %endif
 
 %files xen
-%defattr(-,root,root)
-/%{image_install_path}/vmlinuz-%{KVERREL}xen
+/%image_install_path/vmlinuz-%{KVERREL}xen
 /boot/System.map-%{KVERREL}xen
 /boot/symvers-%{KVERREL}xen.gz
 /boot/config-%{KVERREL}xen
-/%{image_install_path}/xen.gz-%{KVERREL}
-/boot/xen-syms-%{KVERREL}
+/%image_install_path/xen.gz-%KVERREL
+/boot/xen-syms-%KVERREL
 %dir /lib/modules/%{KVERREL}xen
 /lib/modules/%{KVERREL}xen/kernel
 %verify(not mtime) /lib/modules/%{KVERREL}xen/build
 /lib/modules/%{KVERREL}xen/source
-/etc/ld.so.conf.d/kernelcap-%{KVERREL}.conf
+/etc/ld.so.conf.d/kernelcap-%KVERREL.conf
 /lib/modules/%{KVERREL}xen/extra
 /lib/modules/%{KVERREL}xen/updates
 /lib/modules/%{KVERREL}xen/weak-updates
@@ -6191,46 +6161,43 @@ This is required to use SystemTap with %{name}-xen-%{KVERREL}.
 %config(noreplace) /etc/modprobe.d/blacklist-firewire
 
 %files xen-devel
-%defattr(-,root,root)
-%verify(not mtime) /usr/src/kernels/%{KVERREL}-xen-%{_target_cpu}
-/usr/src/kernels/%{KVERREL}xen-%{_target_cpu}
+%verify(not mtime) /usr/src/kernels/%KVERREL-xen-%_target_cpu
+/usr/src/kernels/%{KVERREL}xen-%_target_cpu
 %endif
 
 %endif
 
-%if %{with_kdump}
-%if %{with_debuginfo}
+%if %with_kdump
+%if %with_debuginfo
 %ifnarch noarch
 %package kdump-debuginfo
-Summary: Debug information for package %{name}-kdump
+Summary: Debug information for package %name-kdump
 Group: Development/Debug
-Requires: %{name}-debuginfo-common-%{_target_cpu} = %{KVERREL}
-Provides: %{name}-kdump-debuginfo-%{_target_cpu} = %{KVERREL}
+Requires: %name-debuginfo-common-%_target_cpu = %KVERREL
+Provides: %name-kdump-debuginfo-%_target_cpu = %KVERREL
 %description kdump-debuginfo
-This package provides debug information for package %{name}-kdump
-This is required to use SystemTap with %{name}-kdump-%{KVERREL}.
+This package provides debug information for package %name-kdump
+This is required to use SystemTap with %name-kdump-%KVERREL.
 %files kdump-debuginfo
-%defattr(-,root,root)
 %ifnarch s390x
-%if "%{image_install_path}" != ""
-%{debuginfodir}/%{image_install_path}/*-%{KVERREL}kdump.debug
+%if "%image_install_path" != ""
+%debuginfodir/%image_install_path/*-%{KVERREL}kdump.debug
 %endif
 %else
-%if "%{elf_image_install_path}" != ""
-%{debuginfodir}/%{elf_image_install_path}/*-%{KVERREL}kdump.debug
+%if "%elf_image_install_path" != ""
+%debuginfodir/%elf_image_install_path/*-%{KVERREL}kdump.debug
 %endif
 %endif
-%{debuginfodir}/lib/modules/%{KVERREL}kdump
-%{debuginfodir}/usr/src/kernels/%{KVERREL}-kdump-%{_target_cpu}
+%debuginfodir/lib/modules/%{KVERREL}kdump
+%debuginfodir/usr/src/kernels/%KVERREL-kdump-%_target_cpu
 %endif
 %endif
 
 %files kdump
-%defattr(-,root,root)
 %ifnarch s390x
-/%{image_install_path}/vmlinux-%{KVERREL}kdump
+/%image_install_path/vmlinux-%{KVERREL}kdump
 %else
-/%{image_install_path}/vmlinuz-%{KVERREL}kdump
+/%image_install_path/vmlinuz-%{KVERREL}kdump
 %endif
 /boot/System.map-%{KVERREL}kdump
 /boot/symvers-%{KVERREL}kdump.gz
@@ -6248,19 +6215,17 @@ This is required to use SystemTap with %{name}-kdump-%{KVERREL}.
 %config(noreplace) /etc/modprobe.d/blacklist-firewire
 
 %files kdump-devel
-%defattr(-,root,root)
-%verify(not mtime) /usr/src/kernels/%{KVERREL}-kdump-%{_target_cpu}
-/usr/src/kernels/%{KVERREL}kdump-%{_target_cpu}
+%verify(not mtime) /usr/src/kernels/%KVERREL-kdump-%_target_cpu
+/usr/src/kernels/%{KVERREL}kdump-%_target_cpu
 %endif
 
 # only some architecture builds need kernel-doc
 
-%if %{with_doc}
+%if %with_doc
 %files doc
-%defattr(-,root,root)
-%{_datadir}/doc/kernel-doc-%{kversion}/Documentation/*
-%dir %{_datadir}/doc/kernel-doc-%{kversion}/Documentation
-%dir %{_datadir}/doc/kernel-doc-%{kversion}
+%_datadir/doc/kernel-doc-%kversion/Documentation/*
+%dir %_datadir/doc/kernel-doc-%kversion/Documentation
+%dir %_datadir/doc/kernel-doc-%kversion
 %endif
 
 %changelog
@@ -7482,7 +7447,7 @@ This is required to use SystemTap with %{name}-kdump-%{KVERREL}.
 - [xen] Support new xm command: xm trigger (Kei Tokunaga ) [242140]
 - [xen] ia64: Fix for irq_desc() missing in new upstream (Kei Tokunaga ) [242137]
 - [xen] ia64: Set IRQ_PER_CPU status on percpu IRQs (Kei Tokunaga ) [242136]
-- [xen] ia64: improve performance of system call (Kei Tokunaga ) 
+- [xen] ia64: improve performance of system call (Kei Tokunaga )
 - [xen] ia64: para domain vmcore does not work under crash (Kei Tokunaga ) [224047]
 - [xen] ia64: kernel-xen panics when dom0_mem=4194304 is specified (Kei Tokunaga ) [217593]
 - [xen] ia64: evtchn_callback fix and clean (Kei Tokunaga ) [242126]
@@ -7778,7 +7743,7 @@ This is required to use SystemTap with %{name}-kdump-%{KVERREL}.
 - [NMI] change watchdog timeout to 30 seconds (Larry Woodman ) [229563]
 - [ppc64] allow vmsplice to work in 32-bit mode on ppc64 (Don Zickus ) [235184]
 - [nfs] fix multiple dentries pointing to same directory inode (Steve Dickson ) [208862]
-- [ipc] mqueue nested locking annotation (Eric Sandeen ) 
+- [ipc] mqueue nested locking annotation (Eric Sandeen )
 - [net] expand in-kernel socket api (Neil Horman ) [213287]
 - [XEN] Better fix for netfront_tx_slot_available(). (Herbert Xu ) [224558]
 - [fs] make static counters in new_inode and iunique be 32 bits (Jeff Layton ) [215356]
@@ -7806,7 +7771,7 @@ This is required to use SystemTap with %{name}-kdump-%{KVERREL}.
 - [misc] some apps cannot use IPC msgsnd/msgrcv larger than 64K (Jerome Marchand ) [232012]
 - [xen] Fix netfront teardown (Glauber de Oliveira Costa ) [219563]
 
-* Fri Apr 13 2007 Don Zickus <dzickus@redhat.com> [2.6.18-15.el5] 
+* Fri Apr 13 2007 Don Zickus <dzickus@redhat.com> [2.6.18-15.el5]
 - [x86_64] enable calgary support for x86_64 system (Neil Horman ) [221593]
 - [s390] pseudo random number generator (Jan Glauber ) [184809]
 - [ppc64] Oprofile kernel module does not distinguish PPC 970MP  (Janice M. Girouard ) [216458]
@@ -8201,253 +8166,252 @@ This is required to use SystemTap with %{name}-kdump-%{KVERREL}.
 - mspec failures due to memory.c bad pte problem (Erik Jacobson ) [211854]
 - Fix autofs creating bad dentries in NFS mount (David Howells ) [216178]
 
-* Thu Nov 09 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2747.el5] 
-- Set HZ to 1000 for kernel and 250 for Xen (Don Zickus) [198594] 
-- Custom Diagnostics kernel module fails to load on RHEL5 (Janice Girouard) [213020] 
-- kernel: FS-Cache: error from cache: -105 (2nd part) (Don Zickus) [214678] 
- 
-* Mon Nov 06 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2746.el5] 
-- configure XPC as a loadable kernel module instead of static (Erik Jacobson) [213903] 
-- kernel BUG at drivers/xen/core/evtchn.c:482! (Glauber de Oliveira Costa) [210672] 
-- IPv6 MRT: 'lockdep' annotation is missing? (Thomas Graf) [209313] 
-- sort PCI device list breadth-first (John Feeney) [209484] 
-- reenable xen pae >4GB patch (Don Zickus) 
- 
-* Sun Nov 05 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2745.el5] 
+* Thu Nov 09 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2747.el5]
+- Set HZ to 1000 for kernel and 250 for Xen (Don Zickus) [198594]
+- Custom Diagnostics kernel module fails to load on RHEL5 (Janice Girouard) [213020]
+- kernel: FS-Cache: error from cache: -105 (2nd part) (Don Zickus) [214678]
+
+* Mon Nov 06 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2746.el5]
+- configure XPC as a loadable kernel module instead of static (Erik Jacobson) [213903]
+- kernel BUG at drivers/xen/core/evtchn.c:482! (Glauber de Oliveira Costa) [210672]
+- IPv6 MRT: 'lockdep' annotation is missing? (Thomas Graf) [209313]
+- sort PCI device list breadth-first (John Feeney) [209484]
+- reenable xen pae >4GB patch (Don Zickus)
+
+* Sun Nov 05 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2745.el5]
 - disable the xen-pae patch due to compile problems
 
-* Sun Nov 05 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2744.el5] 
-- Kernel Panic on Initial boot of guest (Steven Rostedt) [211633] 
-- kernel unable to read partition (device busy) (Peter Zijlstra) [212191] 
-- QEMU always crashes (Don Zickus) [212625] 
-- kernel: FS-Cache: error from cache: -105 (Steve Dickson) [212831] 
-- DLM oops in kref_put when umounting (Patrick Caulfield) [213005] 
-- gfs umount hung, message size too big (Patrick Caulfield) [213289] 
-- CPU hotplug doesn't work trying to BSP offline (Keiichiro Tokunaga) [213324] 
-- status messages ping-pong between unmounted nodes (Dave Teigland) [213682] 
-- res_recover_locks_count not reset when recover_locks is aborted (Dave Teigland) [213684] 
-- disable CONFIG_ISA (Don Zickus) 
- 
-* Wed Nov 01 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2740.el5] 
-- Remove support for ipw3945 driver (Don Zickus) [195534] 
-- acpiphp will not load due to unknown symbols (Prarit Bhargava) [209506] 
-- Can not install rhel5 b1 on ipr dasd. (Janice Girouard) [210851] 
-- Can't make SCTP connections between Xen guests (Don Zickus) [212550] 
-- eHEA update to support 64K pages for Power6 (Janice Girouard) [212041] 
-- Failure to boot second kernel on HP hardware (Don Zickus) [212578] 
-- dlm deadlock during simultaneous mount attempts (Dave Teigland) [211914] 
-- CMT-eligible ipw2200/2915 driver (John W. Linville) [184862] 
-- CVE-2006-5174 copy_from_user information leak on s390 (Jan Glauber) [213568] 
-- NFSv4: fs_locations support (Steve Dickson) [212352] 
-- [IPv6] irrelevant rules break ipv6 routing. (Thomas Graf) [209354] 
-- [IPv6] blackhole and prohibit rule types not working (Thomas Graf) [210216] 
-- [KEXEC] bad offset in icache instruction crashes Montecito systems (Jarod Wilson) [212643] 
-- assertion "FALSE" failed in gfs/glock.c (Dave Teigland) [211622] 
-- I/O DLPAR and Hotplug not enabled in RHEL5 (Janice Girouard) [207732] 
- 
-* Thu Oct 26 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2739.el5] 
-- SHPCHP driver doesn't work (Keiichiro Tokunaga) [210478] 
-- ext3/jbd panic (Eric Sandeen) [209647] 
-- Oops in nfs_cancel_commit_list (Jeff Layton) [210679] 
-- kernel Soft lockup detected on corrupted ext3 filesystem (Eric Sandeen) [212053] 
-- CIFS doesn't work (Steve Dickson) [211070] 
- 
-* Thu Oct 26 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2738.el5] 
+* Sun Nov 05 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2744.el5]
+- Kernel Panic on Initial boot of guest (Steven Rostedt) [211633]
+- kernel unable to read partition (device busy) (Peter Zijlstra) [212191]
+- QEMU always crashes (Don Zickus) [212625]
+- kernel: FS-Cache: error from cache: -105 (Steve Dickson) [212831]
+- DLM oops in kref_put when umounting (Patrick Caulfield) [213005]
+- gfs umount hung, message size too big (Patrick Caulfield) [213289]
+- CPU hotplug doesn't work trying to BSP offline (Keiichiro Tokunaga) [213324]
+- status messages ping-pong between unmounted nodes (Dave Teigland) [213682]
+- res_recover_locks_count not reset when recover_locks is aborted (Dave Teigland) [213684]
+- disable CONFIG_ISA (Don Zickus)
+
+* Wed Nov 01 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2740.el5]
+- Remove support for ipw3945 driver (Don Zickus) [195534]
+- acpiphp will not load due to unknown symbols (Prarit Bhargava) [209506]
+- Can not install rhel5 b1 on ipr dasd. (Janice Girouard) [210851]
+- Can't make SCTP connections between Xen guests (Don Zickus) [212550]
+- eHEA update to support 64K pages for Power6 (Janice Girouard) [212041]
+- Failure to boot second kernel on HP hardware (Don Zickus) [212578]
+- dlm deadlock during simultaneous mount attempts (Dave Teigland) [211914]
+- CMT-eligible ipw2200/2915 driver (John W. Linville) [184862]
+- CVE-2006-5174 copy_from_user information leak on s390 (Jan Glauber) [213568]
+- NFSv4: fs_locations support (Steve Dickson) [212352]
+- [IPv6] irrelevant rules break ipv6 routing. (Thomas Graf) [209354]
+- [IPv6] blackhole and prohibit rule types not working (Thomas Graf) [210216]
+- [KEXEC] bad offset in icache instruction crashes Montecito systems (Jarod Wilson) [212643]
+- assertion "FALSE" failed in gfs/glock.c (Dave Teigland) [211622]
+- I/O DLPAR and Hotplug not enabled in RHEL5 (Janice Girouard) [207732]
+
+* Thu Oct 26 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2739.el5]
+- SHPCHP driver doesn't work (Keiichiro Tokunaga) [210478]
+- ext3/jbd panic (Eric Sandeen) [209647]
+- Oops in nfs_cancel_commit_list (Jeff Layton) [210679]
+- kernel Soft lockup detected on corrupted ext3 filesystem (Eric Sandeen) [212053]
+- CIFS doesn't work (Steve Dickson) [211070]
+
+* Thu Oct 26 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2738.el5]
 - need to convert bd_mount_mutex on gfs2 also (Peter Zijlstra)
 
-* Wed Oct 25 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2737.el5] 
-- Grant table operations unsuitable for guest domains (Rik van Riel) [210489] 
-- AMD-V HVM windows guest boot menu timer issue (Steven Rostedt) [209001] 
-- iflags.h is not upstream (Steve Whitehouse) [211583] 
-- ACPIPHP doesn't work (Keiichiro Tokunaga) [209677] 
-- IBMVSCSI does not correctly reenable the CRQ (Janice Girouard) [211304] 
-- librdmacm-utils failures (Doug Ledford) [210711] 
-- Badness in debug_mutex_unlock at kernel/mutex-debug.c:80 (Janice Girouard) [208500] 
-- Stratus memory tracking functionality needed in RHEL5 (Kimball Murray) [209173, 211604] 
- 
-* Tue Oct 24 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2736.el5] 
+* Wed Oct 25 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2737.el5]
+- Grant table operations unsuitable for guest domains (Rik van Riel) [210489]
+- AMD-V HVM windows guest boot menu timer issue (Steven Rostedt) [209001]
+- iflags.h is not upstream (Steve Whitehouse) [211583]
+- ACPIPHP doesn't work (Keiichiro Tokunaga) [209677]
+- IBMVSCSI does not correctly reenable the CRQ (Janice Girouard) [211304]
+- librdmacm-utils failures (Doug Ledford) [210711]
+- Badness in debug_mutex_unlock at kernel/mutex-debug.c:80 (Janice Girouard) [208500]
+- Stratus memory tracking functionality needed in RHEL5 (Kimball Murray) [209173, 211604]
+
+* Tue Oct 24 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2736.el5]
 - Can't unload gnbd module, 128 references (Peter Zijlstra) [211905]
 - ddruid does not recognize dasd drives (Peter Zijlstra) [210030]
- 
+
 * Mon Oct 23 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2733.el5]
 - disable x86_64 dirty page tracking, it breaks some machines (Don Zickus)
 
-* Tue Oct 17 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2732.el5] 
-- possible recursive locking detected: cachefilesd (David Howells) [204615] 
-- Stratus memory tracking functionality needed in RHEL5 (Kimball Murray) [209173] 
-- nfs handled rpc error incorrectly (Steve Dickson) [207040] 
-- cachefiles: inode count maintance (Steve Dickson) [209434] 
-- mkinitrd: iSCSI root requires crc32c module (Mike Christie) [210232] 
-- implemented sysrq-w to dump all cpus (Larry Woodman) 
-- enable panic_on_oops (Dave Anderson) 
-- re-enable x86_64 stack unwinder fixes (Don Zickus) 
-- disable kernel debug flags (Don Zickus) 
- 
+* Tue Oct 17 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2732.el5]
+- possible recursive locking detected: cachefilesd (David Howells) [204615]
+- Stratus memory tracking functionality needed in RHEL5 (Kimball Murray) [209173]
+- nfs handled rpc error incorrectly (Steve Dickson) [207040]
+- cachefiles: inode count maintance (Steve Dickson) [209434]
+- mkinitrd: iSCSI root requires crc32c module (Mike Christie) [210232]
+- implemented sysrq-w to dump all cpus (Larry Woodman)
+- enable panic_on_oops (Dave Anderson)
+- re-enable x86_64 stack unwinder fixes (Don Zickus)
+- disable kernel debug flags (Don Zickus)
+
 * Tue Oct 17 2006 Stephen C. Tweedie <sct@redhat.com>
 - Fix up xen blktap merge to restore modular build
 
-* Tue Oct 17 2006 Don Zickus <dzickus@redhat.com> 
+* Tue Oct 17 2006 Don Zickus <dzickus@redhat.com>
 - fix xen breakage from last night's incorrect commits
 
-* Mon Oct 16 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2729.el5] 
+* Mon Oct 16 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2729.el5]
 - revert Kpobes backport from 2.6.19-rc1, it fails to compile
 
-* Mon Oct 16 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2728.el5] 
-- Update FC transport and Emulex lpfc Fibre Channel Driver (Tom Coughlan) [207551] 
-- NFSv4 using memory after its freed fix (Steve Dickson) [206996] 
-- GFS2 dirents are 'unkown' type (Steve Whitehouse) [210493] 
-- Cachefs double unlock (Steve Dickson) [210701] 
-- tty locking cleanup (Prarit Bhargava) [210249] 
-- ibmveth fails in kdump boot (Janice Girouard - IBM on-site partner) [199129] 
-- Kpobes backport from 2.6.19-rc1 (Anil S Keshavamurthy) [210555] 
-- Ia64 - kprobe opcode must reside on 16 bytes alignment (Anil S Keshavamurthy) [210552] 
-- GFS2 forgets to unmap pages (Steve Whitehouse) [207764] 
-- DIO needs to avoid using page cache (Jeffrey Moyer) [207061] 
-- megaraid_sas: update (Chip Coldwell) [209463] 
-- NFS data corruption (Steve Dickson) [210071] 
-- page align bss sections on x86_64 (Vivek Goyal) [210499] 
-- blkbk/netbk modules don't load (Aron Griffis) [210070] 
-- blktap does not build on ia64 (Aron Griffis) [208895] 
-- blkbk/netbk modules don't load (Rik van Riel) [202971] 
-- patches from xen-ia64-unstable (Rik van Riel) [210637] 
-- Xen version strings need to reflect exact Red Hat build number (Stephen Tweedie) [211003] 
-- updated to 2.6.18.1 stable series (Don Zickus) 
-- updated execshield patch (Don Zickus) 
-- revert CONFIG_PCI_CALGARY_IOMMU config (Don Zickus) 
-- disable CONFIG_MAMBO (Don Zickus) 
- 
-* Thu Oct 12 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2727.el5] 
-- I/O errors with dm-multipath when adding new path (Alasdair Kergon) [169302] 
-- Kdump on i386 fails - Second kernel panics (Vivek Goyal) [207598] 
-- patch to qla4xxx for supporting ioctl module (Mike Christie) [207356] 
-- lockdep fixes (Peter Zijlstra) [208165 209135 204767] 
-- printk cleanup (Dave Jones) 
-- spec file cleanup (Dave Jones, Bill Nottingham) 
-- gfs-dlm fix (Patrick Caulfield) 
-- find-provides fix (Jon Masters) 
- 
-* Wed Oct 11 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2726.el5] 
-- need to disable all cpu frequency scaling drivers in Xen kernel (Rik van Riel) [210336 208942] 
-- radeon hangs DMA when CONFIG_CALGARY_IOMMU is build in kernel. (Konrad Rzeszutek) [210380] 
-- Got Call Trace message when remove veth module (Janice Girouard) [208938] 
-- cannot generate kABI deps unless kernel is installed (Jon Masters) [203926] 
-- ctcmpc driver (Jan Glauber) [184608] 
-- PTRACE_DETACH doesn't deliver signals under utrace. (Aristeu S. Rozanski F.) [207674] 
-- SG_SCATTER_SZ causing Oops during scsi disk microcode update (Doug Ledford) [207146] 
-- ia64 kprobe fixes (David Smith) 
- 
-* Tue Oct 10 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2725.el5] 
-- Duplicate dput in sysfs_update_file can cause a panic. (Prarit Bhargava) [209454] 
-- Lock issue with 2.6.18-1.2702.el5, NetworkManager and ipw3945 (John W. Linville) [208890] 
-- cpqarray module fails to detect arrays (Chip Coldwell) [205653] 
-- stex.c driver for Promise SuperTrak EX is missing (Jeff Garzik) [209179] 
-- NetLabel does not audit configuration changes (Eric Paris) [208456] 
-- NetLabel has a race problem in the cache (Eric Paris) [209324] 
-- kernel/lockdep.c:1814/trace_hardirqs_on() (Not tainted) for APM (Peter Zijlstra) [209480] 
--  correct netlabel secid for packets without a known label (Eric Paris) [210032] 
-- IPSec information leak with labeled networking (Eric Paris) [209171] 
-- NetLabel hot-add memory confict pre-beta2 kenrel x86_64 (Konrad Rzeszutek) [208445] 
-- NFS data corruption (Steve Dickson) [210071] 
-- kernel dm multipath: ioctl support (Alasdair Kergon) [207575] 
-- kernel dm: fix alloc_dev error path (Alasdair Kergon) [209660] 
-- kernel dm snapshot: fix invalidation ENOMEM (Alasdair Kergon) [209661] 
-- kernel dm snapshot: chunk_size parameter is not required after creation (Alasdair Kergon) [209840] 
-- kernel dm snapshot: fix metadata error handling (Alasdair Kergon) [209842] 
-- kernel dm snapshot: fix metadata writing when suspending (Alasdair Kergon) [209843] 
-- kernel dm: full snapshot removal attempt causes a seg fault/kernel bug (Alasdair Kergon) [204796] 
-- dm mirror: remove trailing space from table (Alasdair Kergon) [209848] 
-- kernel dm: add uevent change event on resume (Alasdair Kergon) [209849] 
-- kernel dm crypt: Provide a mechanism to clear key while device suspended (Milan Broz) [185471] 
-- kernel dm: use private biosets to avoid deadlock under memory pressure (Alasdair Kergon) [209851] 
-- kernel dm: add feature flags to structures for future kABI compatibility (Alasdair Kergon) [208543] 
-- kernel dm: application visible I/O errors with dm-multipath and queue_if_no_path when adding new path (Alasdair Kergon) [169302] 
-- refresh ia64-kexec-kdump patch (Don Zickus) 
-- update exec-shield patch (Don Zickus) 
-- revert x86 unwinder fixes (Don Zickus) 
- 
- 
-* Mon Oct 09 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2722.el5]  
+* Mon Oct 16 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2728.el5]
+- Update FC transport and Emulex lpfc Fibre Channel Driver (Tom Coughlan) [207551]
+- NFSv4 using memory after its freed fix (Steve Dickson) [206996]
+- GFS2 dirents are 'unkown' type (Steve Whitehouse) [210493]
+- Cachefs double unlock (Steve Dickson) [210701]
+- tty locking cleanup (Prarit Bhargava) [210249]
+- ibmveth fails in kdump boot (Janice Girouard - IBM on-site partner) [199129]
+- Kpobes backport from 2.6.19-rc1 (Anil S Keshavamurthy) [210555]
+- Ia64 - kprobe opcode must reside on 16 bytes alignment (Anil S Keshavamurthy) [210552]
+- GFS2 forgets to unmap pages (Steve Whitehouse) [207764]
+- DIO needs to avoid using page cache (Jeffrey Moyer) [207061]
+- megaraid_sas: update (Chip Coldwell) [209463]
+- NFS data corruption (Steve Dickson) [210071]
+- page align bss sections on x86_64 (Vivek Goyal) [210499]
+- blkbk/netbk modules don't load (Aron Griffis) [210070]
+- blktap does not build on ia64 (Aron Griffis) [208895]
+- blkbk/netbk modules don't load (Rik van Riel) [202971]
+- patches from xen-ia64-unstable (Rik van Riel) [210637]
+- Xen version strings need to reflect exact Red Hat build number (Stephen Tweedie) [211003]
+- updated to 2.6.18.1 stable series (Don Zickus)
+- updated execshield patch (Don Zickus)
+- revert CONFIG_PCI_CALGARY_IOMMU config (Don Zickus)
+- disable CONFIG_MAMBO (Don Zickus)
+
+* Thu Oct 12 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2727.el5]
+- I/O errors with dm-multipath when adding new path (Alasdair Kergon) [169302]
+- Kdump on i386 fails - Second kernel panics (Vivek Goyal) [207598]
+- patch to qla4xxx for supporting ioctl module (Mike Christie) [207356]
+- lockdep fixes (Peter Zijlstra) [208165 209135 204767]
+- printk cleanup (Dave Jones)
+- spec file cleanup (Dave Jones, Bill Nottingham)
+- gfs-dlm fix (Patrick Caulfield)
+- find-provides fix (Jon Masters)
+
+* Wed Oct 11 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2726.el5]
+- need to disable all cpu frequency scaling drivers in Xen kernel (Rik van Riel) [210336 208942]
+- radeon hangs DMA when CONFIG_CALGARY_IOMMU is build in kernel. (Konrad Rzeszutek) [210380]
+- Got Call Trace message when remove veth module (Janice Girouard) [208938]
+- cannot generate kABI deps unless kernel is installed (Jon Masters) [203926]
+- ctcmpc driver (Jan Glauber) [184608]
+- PTRACE_DETACH doesn't deliver signals under utrace. (Aristeu S. Rozanski F.) [207674]
+- SG_SCATTER_SZ causing Oops during scsi disk microcode update (Doug Ledford) [207146]
+- ia64 kprobe fixes (David Smith)
+
+* Tue Oct 10 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2725.el5]
+- Duplicate dput in sysfs_update_file can cause a panic. (Prarit Bhargava) [209454]
+- Lock issue with 2.6.18-1.2702.el5, NetworkManager and ipw3945 (John W. Linville) [208890]
+- cpqarray module fails to detect arrays (Chip Coldwell) [205653]
+- stex.c driver for Promise SuperTrak EX is missing (Jeff Garzik) [209179]
+- NetLabel does not audit configuration changes (Eric Paris) [208456]
+- NetLabel has a race problem in the cache (Eric Paris) [209324]
+- kernel/lockdep.c:1814/trace_hardirqs_on() (Not tainted) for APM (Peter Zijlstra) [209480]
+-  correct netlabel secid for packets without a known label (Eric Paris) [210032]
+- IPSec information leak with labeled networking (Eric Paris) [209171]
+- NetLabel hot-add memory confict pre-beta2 kenrel x86_64 (Konrad Rzeszutek) [208445]
+- NFS data corruption (Steve Dickson) [210071]
+- kernel dm multipath: ioctl support (Alasdair Kergon) [207575]
+- kernel dm: fix alloc_dev error path (Alasdair Kergon) [209660]
+- kernel dm snapshot: fix invalidation ENOMEM (Alasdair Kergon) [209661]
+- kernel dm snapshot: chunk_size parameter is not required after creation (Alasdair Kergon) [209840]
+- kernel dm snapshot: fix metadata error handling (Alasdair Kergon) [209842]
+- kernel dm snapshot: fix metadata writing when suspending (Alasdair Kergon) [209843]
+- kernel dm: full snapshot removal attempt causes a seg fault/kernel bug (Alasdair Kergon) [204796]
+- dm mirror: remove trailing space from table (Alasdair Kergon) [209848]
+- kernel dm: add uevent change event on resume (Alasdair Kergon) [209849]
+- kernel dm crypt: Provide a mechanism to clear key while device suspended (Milan Broz) [185471]
+- kernel dm: use private biosets to avoid deadlock under memory pressure (Alasdair Kergon) [209851]
+- kernel dm: add feature flags to structures for future kABI compatibility (Alasdair Kergon) [208543]
+- kernel dm: application visible I/O errors with dm-multipath and queue_if_no_path when adding new path (Alasdair Kergon) [169302]
+- refresh ia64-kexec-kdump patch (Don Zickus)
+- update exec-shield patch (Don Zickus)
+- revert x86 unwinder fixes (Don Zickus)
+
+* Mon Oct 09 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2722.el5]
 - update utrace patch to fix s390 build problems
 - ia64 hotswap cpu patch fixes to compile under xen
 - ia64 export fixes
 
-* Mon Oct 09 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2718.el5]  
-- Audit Filtering on PPID for = and != is inverted (Eric Paris) [206425] 
-- Adding Hitachi SANRISE entries into SCSI white list (Chip Coldwell) [206532] 
-- forward port of SCSI blacklist from RHEL4 (Chip Coldwell) [208256] 
-- Need to add ALSA support for Broadwater platform (John W. Linville) [184855] 
-- /proc/<pid>/smaps doesn't give any data (Alexander Viro) [208589] 
-- ACPI based CPU hotplug causes kernel panic (Keiichiro Tokunaga) [208487] 
-- New infiniband 12x power driver opensourced from IBM (Janice Girouard) [184791] 
-- iscsi oops when connection creation fails (Mike Christie) [209006] 
-- nommconf work-around still needed for AMD chipsets (Jim Baker) [207396] 
-- ProPack XPMEM exported symbols (Greg Edwards) [206215] 
-- PCI error recovery bug in e100 and e1000 cards (John W. Linville) [208187] 
-- / on raid fails to boot post-install system (Jan Glauber) [196943] 
-- auditctl fails to reject malformed ARCH filter (Eric Paris) [206427] 
-- oom-killer updates (Larry Woodman) [208583] 
-- NFS is revalidating directory entries too often (Steve Dickson) [205454] 
-- kernel-xen cannot reboot (Stephen Tweedie) [209841] 
-- Unsupported FS's in RHEL 5 Beta 1 (Don Zickus) [206486] 
- 
-* Thu Oct 05 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2717.el5] 
+* Mon Oct 09 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2718.el5]
+- Audit Filtering on PPID for = and != is inverted (Eric Paris) [206425]
+- Adding Hitachi SANRISE entries into SCSI white list (Chip Coldwell) [206532]
+- forward port of SCSI blacklist from RHEL4 (Chip Coldwell) [208256]
+- Need to add ALSA support for Broadwater platform (John W. Linville) [184855]
+- /proc/<pid>/smaps doesn't give any data (Alexander Viro) [208589]
+- ACPI based CPU hotplug causes kernel panic (Keiichiro Tokunaga) [208487]
+- New infiniband 12x power driver opensourced from IBM (Janice Girouard) [184791]
+- iscsi oops when connection creation fails (Mike Christie) [209006]
+- nommconf work-around still needed for AMD chipsets (Jim Baker) [207396]
+- ProPack XPMEM exported symbols (Greg Edwards) [206215]
+- PCI error recovery bug in e100 and e1000 cards (John W. Linville) [208187]
+- / on raid fails to boot post-install system (Jan Glauber) [196943]
+- auditctl fails to reject malformed ARCH filter (Eric Paris) [206427]
+- oom-killer updates (Larry Woodman) [208583]
+- NFS is revalidating directory entries too often (Steve Dickson) [205454]
+- kernel-xen cannot reboot (Stephen Tweedie) [209841]
+- Unsupported FS's in RHEL 5 Beta 1 (Don Zickus) [206486]
+
+* Thu Oct 05 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2717.el5]
 - patch fix for RDSCTP (Don Zickus)
 
-* Thu Oct 05 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2715.el5] 
-- RDTSCP Support (Bhavana Nagendra) [185057] 
-- s390 kprobe on larl instruction crashes system (Jan Glauber) [205738] 
-- single stepping is broken when kprobes is configured (Jan Glauber) [205739] 
-- autofs kernel patches resulting from Connectathon testing (Ian Kent) [206952] 
-- Include the qla3xxx networking driver (Konrad Rzeszutek) [208182] 
-- overzealous sanity checking in sys_poll() (Chris Snook) [204705] 
-- automounter cannot shutdown when timeout=0 (Ian Kent) [205836] 
-- Rewrite of journaling data commit code (Eric Sandeen) [207739] 
-- qla4xxx soft lockup when ethernet cable disconnected (Mike Christie) [206063] 
-- hypfs_kill_super() check for initialized root inode (Jan Glauber) [207717] 
-- The Matrox graphics driver is not built (Janice Girouard) [207200] 
- 
-* Mon Oct 02 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2714.el5] 
-- Wrong SELinux context prevents hidd from working (David Woodhouse) [204655] 
-- nfs connectathon component basic test 6 fails.... (Steve Dickson) [208637] 
-- unstick STICKY bit to fix suspend/resume (Dave Jones) 
- 
+* Thu Oct 05 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2715.el5]
+- RDTSCP Support (Bhavana Nagendra) [185057]
+- s390 kprobe on larl instruction crashes system (Jan Glauber) [205738]
+- single stepping is broken when kprobes is configured (Jan Glauber) [205739]
+- autofs kernel patches resulting from Connectathon testing (Ian Kent) [206952]
+- Include the qla3xxx networking driver (Konrad Rzeszutek) [208182]
+- overzealous sanity checking in sys_poll() (Chris Snook) [204705]
+- automounter cannot shutdown when timeout=0 (Ian Kent) [205836]
+- Rewrite of journaling data commit code (Eric Sandeen) [207739]
+- qla4xxx soft lockup when ethernet cable disconnected (Mike Christie) [206063]
+- hypfs_kill_super() check for initialized root inode (Jan Glauber) [207717]
+- The Matrox graphics driver is not built (Janice Girouard) [207200]
+
+* Mon Oct 02 2006 Don Zickus <dzickus@redhat.com> [2.6.18-1.2714.el5]
+- Wrong SELinux context prevents hidd from working (David Woodhouse) [204655]
+- nfs connectathon component basic test 6 fails.... (Steve Dickson) [208637]
+- unstick STICKY bit to fix suspend/resume (Dave Jones)
+
 * Fri Sep 29 2006 Don Zickus <dzickus@redhat.com>
 - fix up ipv6 multiple routing table patch
 
-* Thu Sep 28 2006 Don Zickus <dzickus@redhat.com> 
-- s390 ccs/ccw subsystem does not have proper uevent support (Pete Zaitcev) [199994] 
-- 'Cannot allocate memory' when cat /proc/scsi/scsi (Chip Coldwell) [200299] 
-- Add support for Kirkwood and Kirkwood LP NICs (John W. Linville) [207776] 
-- remove userspace support from qla4xxx (Mike Christie) [206063] 
-- NetLabel interface has changed in the upstream kernels (Eric Paris) [208119] 
-- lockdep fixes (Peter Zijlstra) [208304 204795] 
- 
+* Thu Sep 28 2006 Don Zickus <dzickus@redhat.com>
+- s390 ccs/ccw subsystem does not have proper uevent support (Pete Zaitcev) [199994]
+- 'Cannot allocate memory' when cat /proc/scsi/scsi (Chip Coldwell) [200299]
+- Add support for Kirkwood and Kirkwood LP NICs (John W. Linville) [207776]
+- remove userspace support from qla4xxx (Mike Christie) [206063]
+- NetLabel interface has changed in the upstream kernels (Eric Paris) [208119]
+- lockdep fixes (Peter Zijlstra) [208304 204795]
+
 * Thu Sep 28 2006 Steven Whitehouse <swhiteho@redhat.com>
 - Updated GFS2/DLM patch
 
-* Wed Sep 27 2006 Don Zickus <dzickus@redhat.com> 
--Multiple routing tables for IPv6 (Thomas Graf) [179612] 
--bunch of lockdep fixes (Peter Zijlstra) [200520 208294 208293 208292 208290] 
--rearrange the cachefs patches for easier future maintance (Steve Dickson) 
--enable some TCP congestion algorithms (David Miller) 
--add a test patch (Eric Paris) 
- 
+* Wed Sep 27 2006 Don Zickus <dzickus@redhat.com>
+-Multiple routing tables for IPv6 (Thomas Graf) [179612]
+-bunch of lockdep fixes (Peter Zijlstra) [200520 208294 208293 208292 208290]
+-rearrange the cachefs patches for easier future maintance (Steve Dickson)
+-enable some TCP congestion algorithms (David Miller)
+-add a test patch (Eric Paris)
+
 * Tue Sep 26 2006 Don Zickus <dzickus@redhat.com>
 - Need to add the sata sas bits
- 
-* Tue Sep 26 2006 Don Zickus <dzickus@redhat.com> 
--Native SAS and SATA device support - SATA/IDE converter (Janice Girouard) [196336] 
--kernel unaligned access messages in rhel5a1 (Prarit Bhargava) [198572] 
--problems with LUNs mapped at LUN0 with iscsi and netapp filers (Mike Christie) [205802] 
--ext3 fails to mount a 16T filesystem due to overflows (Eric Sandeen) [206721] 
--possible recursive locking detected - swapper/1 (Peter Zijlstra) [203098] 
--FS-Cache: error from cache: -28 (David Howells) [204614] 
--aic94xx driver does not recognise SAS drives in x366 (Konrad Rzeszutek) [206526] 
--Support for 3945 driver (John W. Linville) [195534] 
--Memory Hotplug fails due to relocatable kernel patches (Vivek Goyal) [207596] 
--Potential overflow in jbd for filesystems > 8T (Eric Sandeen) [208024] 
--2,4-node x460 halts during bootup after installation (Konrad Rzeszutek) [203971] 
- 
+
+* Tue Sep 26 2006 Don Zickus <dzickus@redhat.com>
+-Native SAS and SATA device support - SATA/IDE converter (Janice Girouard) [196336]
+-kernel unaligned access messages in rhel5a1 (Prarit Bhargava) [198572]
+-problems with LUNs mapped at LUN0 with iscsi and netapp filers (Mike Christie) [205802]
+-ext3 fails to mount a 16T filesystem due to overflows (Eric Sandeen) [206721]
+-possible recursive locking detected - swapper/1 (Peter Zijlstra) [203098]
+-FS-Cache: error from cache: -28 (David Howells) [204614]
+-aic94xx driver does not recognise SAS drives in x366 (Konrad Rzeszutek) [206526]
+-Support for 3945 driver (John W. Linville) [195534]
+-Memory Hotplug fails due to relocatable kernel patches (Vivek Goyal) [207596]
+-Potential overflow in jbd for filesystems > 8T (Eric Sandeen) [208024]
+-2,4-node x460 halts during bootup after installation (Konrad Rzeszutek) [203971]
+
 * Mon Sep 25 2006 Don Zickus <dzickus@redhat.com>
 - fix x86 relocatable patch (again) to build properly
 
@@ -8543,7 +8507,7 @@ This is required to use SystemTap with %{name}-kdump-%{KVERREL}.
 * Thu Sep 14 2006 Don Zickus <dzickus@redhat.com>
 - add include/asm-x86_64/const.h to exported header file list
   used by the x86 relocatable patch (inside include/asm-x86_64/page.h)
-  
+
 * Thu Sep 14 2006 Dave Jones <davej@redhat.com>
 - kprobe changes to make systemtap's life easier.
 
@@ -8554,7 +8518,7 @@ This is required to use SystemTap with %{name}-kdump-%{KVERREL}.
    - squashfs s390 fix
 - include x86 relocatable patch at end of list
 - some /proc/kcore changes for x86 relocatable kernel
-   
+
 * Thu Sep 14 2006 David Woodhouse <dwmw2@redhat.com>
 - 2.6.18rc7-git1
 - header file fixups
