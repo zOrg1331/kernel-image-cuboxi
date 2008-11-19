@@ -151,6 +151,27 @@ Requires(postun): %name = %version-%release
 %description -n kernel-modules-v4l-%flavour
 Video for linux drivers
 
+%package -n kernel-modules-drm-%flavour
+Summary: The Direct Rendering Infrastructure modules
+Group: System/Kernel and hardware
+Provides:  kernel-modules-drm-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-drm-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-drm-%kversion-%flavour-%krelease > %version-%release
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+Prereq: %name = %version-%release
+Requires(postun): %name = %version-%release
+
+%description -n kernel-modules-drm-%flavour
+The Direct Rendering Infrastructure, also known as the DRI, is a framework
+for allowing direct access to graphics hardware in a safe and efficient
+manner.  It includes changes to the X server, to several client libraries,
+and to the kernel.  The first major use for the DRI is to create fast
+OpenGL implementations.
+
+These are modules for your ALT Linux system
+
+
 %package -n kernel-headers-%flavour
 Summary: Header files for the Linux kernel
 Group: Development/Kernel
@@ -362,14 +383,11 @@ cp -a Documentation/* %buildroot%_docdir/kernel-doc-%base_flavour-%version/
 find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 	-maxdepth 1 -type f -not -name '*.html' -delete
 %endif # if_enabled docs
-#replace sound headers by link to alsa headers
-rm -rf %buildroot%kbuild_dir/include/sound
-ln -s /usr/include/sound/ %buildroot%kbuild_dir/include/sound
 
 #remove video headers
-rm -rf %buildroot%kbuild_dir/include/media
-rm -rf %buildroot%kbuild_dir/drivers/media
-rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
+#rm -rf %buildroot%kbuild_dir/include/media
+#rm -rf %buildroot%kbuild_dir/drivers/media
+#rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 
 %post
 %post_kernel_image %kversion-%flavour-%krelease
@@ -382,6 +400,13 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 
 %postun -n kernel-modules-oss-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
+
+%post -n kernel-modules-drm-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-drm-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
 
 %post -n kernel-modules-v4l-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
@@ -431,6 +456,9 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 %modules_dir/kernel/sound/
 %exclude %modules_dir/kernel/sound/oss
 
+%files -n kernel-modules-drm-%flavour
+%modules_dir/kernel/drivers/gpu/drm
+
 %files -n kernel-modules-v4l-%flavour
 %modules_dir/kernel/drivers/media/
 
@@ -440,6 +468,7 @@ rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 - new V4L
 - alsa 1.0.17
 - v4l and alsa builded from one source package
+- updated DRM from 2.6.26
 
 * Mon Sep 08 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.25-alt8.M41.1
 - 2.6.25.17
