@@ -5058,7 +5058,7 @@ cp %SOURCE10 Documentation/
 mkdir configs
 
 for cfg in %all_arch_configs; do
-  cp -f $RPM_SOURCE_DIR/$cfg .
+  cp -f %_sourcedir/$cfg .
 done
 
 #if a rhel kernel, apply the rhel config options
@@ -5067,7 +5067,7 @@ done
   for i in %all_arch_configs
   do
     mv $i $i.tmp
-    $RPM_SOURCE_DIR/merge.pl $RPM_SOURCE_DIR/config-rhel-generic $i.tmp > $i
+    %_sourcedir/merge.pl %_sourcedir/config-rhel-generic $i.tmp > $i
     rm $i.tmp
   done
 %ifarch ppc64 noarch
@@ -5075,7 +5075,7 @@ done
   for i in kernel-%kversion-ppc64.config
   do
     mv $i $i.tmp
-    $RPM_SOURCE_DIR/merge.pl $RPM_SOURCE_DIR/config-rhel-ppc64-generic $i.tmp > $i
+    %_sourcedir/merge.pl %_sourcedir/config-rhel-ppc64-generic $i.tmp > $i
     rm $i.tmp
   done
 %endif
@@ -5086,7 +5086,7 @@ done
   for i in %all_arch_configs
   do
     mv $i $i.tmp
-    $RPM_SOURCE_DIR/merge.pl $RPM_SOURCE_DIR/config-olpc-generic $i.tmp > $i
+    %_sourcedir/merge.pl %_sourcedir/config-olpc-generic $i.tmp > $i
     rm $i.tmp
   done
 %endif
