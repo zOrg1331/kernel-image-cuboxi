@@ -153,7 +153,7 @@ Video for linux drivers
 
 %package -n kernel-headers-%flavour
 Summary: Header files for the Linux kernel
-Group: System/Kernel and hardware
+Group: Development/Kernel
 Requires: kernel-headers-common >= 1.1.5
 Provides: kernel-headers = %version
 #Provides: kernel-headers-%base_flavour = %version-%release
@@ -175,7 +175,7 @@ If possible, try to use glibc-kernheaders instead of this package.
 
 %package -n kernel-headers-modules-%flavour
 Summary: Headers and other files needed for building kernel modules
-Group: System/Kernel and hardware
+Group: Development/Kernel
 Requires: gcc%kgcc_version
 
 %description -n kernel-headers-modules-%flavour
