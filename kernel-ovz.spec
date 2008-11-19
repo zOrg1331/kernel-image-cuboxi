@@ -129,7 +129,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 # by setting the define to ".local" or ".bz123456"
 #
 %define altrelease alt1
-%define buildid .%ovzver.%ovzrel-%altrelease
+%define buildid .%ovzver.%ovzrel.%altrelease
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
@@ -5257,11 +5257,11 @@ BuildKernel() {
 
     # and now to start the build process
 
-    make -s mrproper
+    %make_build -s mrproper
     cp configs/$Config .config
 
     if echo "$Flavour" | grep debug ; then
-	    $RPM_SOURCE_DIR/make_debug_config.sh
+	    %_sourcedir/make_debug_config.sh
     fi
 
     Arch=`head -1 .config | cut -b 3-`
@@ -5276,72 +5276,72 @@ BuildKernel() {
       popd
     fi
 
-    make -s ARCH=$Arch nonint_oldconfig > /dev/null
-    make -s ARCH=$Arch %{?_smp_mflags} $MakeTarget
+    %make_build -s ARCH=$Arch nonint_oldconfig > /dev/null
+    %make_build -s ARCH=$Arch %{?_smp_mflags} $MakeTarget
     if [ "$Arch" != "s390" -o "$Flavour" != "kdump" ]; then
-      make -s ARCH=$Arch %{?_smp_mflags} modules || exit 1
+      %make_build -s ARCH=$Arch %{?_smp_mflags} modules || exit 1
     fi
 
 %if %with_openafs
     echo Building openafs...
       OpenAfsDir=%_builddir/%name-%version/openafs-%openafs_version
     KernelSrcDir=%_builddir/%name-%version/linux-%kversion.%_target_cpu
-    cd $OpenAfsDir
+    pushd $OpenAfsDir
     [ -f Makefile ] && make distclean
     ./configure --with-linux-kernel-headers=$KernelSrcDir
-    make -s libafs
-    cd $KernelSrcDir
+    %make_build -s libafs
+    popd
 %endif
     # Start installing the results
 
 %if %with_debuginfo
-    mkdir -p $RPM_BUILD_ROOT%debuginfodir/boot
-    mkdir -p $RPM_BUILD_ROOT%debuginfodir/%image_install_path
+    mkdir -p %buildroot%debuginfodir/boot
+    mkdir -p %buildroot%debuginfodir/%image_install_path
 %endif
-    mkdir -p $RPM_BUILD_ROOT/%image_install_path
-    install -m 644 .config $RPM_BUILD_ROOT/boot/config-$KernelVer
-    install -m 644 System.map $RPM_BUILD_ROOT/boot/System.map-$KernelVer
-    touch $RPM_BUILD_ROOT/boot/initrd-$KernelVer.img
-    cp $KernelImage $RPM_BUILD_ROOT/%image_install_path/vmlinuz-$KernelVer
+    mkdir -p %buildroot/%image_install_path
+    install -m 644 .config %buildroot/boot/config-$KernelVer
+    install -m 644 System.map %buildroot/boot/System.map-$KernelVer
+    touch %buildroot/boot/initrd-$KernelVer.img
+    cp $KernelImage %buildroot/%image_install_path/vmlinuz-$KernelVer
     if [ -f arch/$Arch/boot/zImage.stub ]; then
-      cp arch/$Arch/boot/zImage.stub $RPM_BUILD_ROOT/%image_install_path/zImage.stub-$KernelVer || :
+      cp arch/$Arch/boot/zImage.stub %buildroot/%image_install_path/zImage.stub-$KernelVer || :
     fi
 
 %if %includeovz
-    cp vmlinux $RPM_BUILD_ROOT/%image_install_path/vmlinux-$KernelVer
-    chmod 400 $RPM_BUILD_ROOT/%image_install_path/vmlinux-$KernelVer
+    cp vmlinux %buildroot/%image_install_path/vmlinux-$KernelVer
+    chmod 400 %buildroot/%image_install_path/vmlinux-$KernelVer
 %endif
 
     if [ "$Flavour" == "kdump" -a "$Arch" != "s390" ]; then
-        rm -f $RPM_BUILD_ROOT/%image_install_path/vmlinuz-$KernelVer
+        rm -f %buildroot/%image_install_path/vmlinuz-$KernelVer
     fi
 
-    mkdir -p $RPM_BUILD_ROOT/lib/modules/$KernelVer
+    mkdir -p %buildroot/lib/modules/$KernelVer
     if [ "$Arch" != "s390" -o "$Flavour" != "kdump" ]; then
-      make -s ARCH=$Arch INSTALL_MOD_PATH=$RPM_BUILD_ROOT modules_install KERNELRELEASE=$KernelVer
+      make -s ARCH=$Arch INSTALL_MOD_PATH=%buildroot modules_install KERNELRELEASE=$KernelVer
     else
       touch Module.symvers
     fi
 
     # Create the kABI metadata for use in packaging
     echo "**** GENERATING kernel ABI metadata ****"
-    gzip -c9 < Module.symvers > $RPM_BUILD_ROOT/boot/symvers-$KernelVer.gz
+    gzip -c9 < Module.symvers > %buildroot/boot/symvers-$KernelVer.gz
     chmod 0755 %_sourcedir/kabitool
-    if [ ! -e $RPM_SOURCE_DIR/kabi_whitelist_%_target_cpu$Flavour ]; then
+    if [ ! -e %buildroot/kabi_whitelist_%_target_cpu$Flavour ]; then
         echo "**** No KABI whitelist was available during build ****"
-        %_sourcedir/kabitool -b $RPM_BUILD_ROOT/$DevelDir -k $KernelVer -l $RPM_BUILD_ROOT/kabi_whitelist
+        %_sourcedir/kabitool -b %buildroot/$DevelDir -k $KernelVer -l %buildroot/kabi_whitelist
     else
-	cp $RPM_SOURCE_DIR/kabi_whitelist_%_target_cpu$Flavour $RPM_BUILD_ROOT/kabi_whitelist
+	cp %buildroot/kabi_whitelist_%_target_cpu$Flavour %buildroot/kabi_whitelist
     fi
     rm -f %_tmppath/kernel-$KernelVer-kabideps
-    %_sourcedir/kabitool -b . -d %_tmppath/kernel-$KernelVer-kabideps -k $KernelVer -w $RPM_BUILD_ROOT/kabi_whitelist
+    %_sourcedir/kabitool -b . -d %_tmppath/kernel-$KernelVer-kabideps -k $KernelVer -w %buildroot/kabi_whitelist
 
 %if %with_kabichk
     echo "**** kABI checking is enabled in kernel SPEC file. ****"
-    chmod 0755 $RPM_SOURCE_DIR/check-kabi
-    if [ -e $RPM_SOURCE_DIR/Module.kabi_%_target_cpu$Flavour ]; then
-	cp $RPM_SOURCE_DIR/Module.kabi_%_target_cpu$Flavour $RPM_BUILD_ROOT/Module.kabi
-	$RPM_SOURCE_DIR/check-kabi -k $RPM_BUILD_ROOT/Module.kabi -s Module.symvers || exit 1
+    chmod 0755 %_sourcedir/check-kabi
+    if [ -e %_sourcedir/Module.kabi_%_target_cpu$Flavour ]; then
+	cp %_sourcedir/Module.kabi_%_target_cpu$Flavour %buildroot/Module.kabi
+	%_sourcedir/check-kabi -k %buildroot/Module.kabi -s Module.symvers || exit 1
     else
 	echo "**** NOTE: Cannot find reference Module.kabi file. ****"
     fi
@@ -5354,76 +5354,76 @@ BuildKernel() {
     # * all Makefile/Kconfig files
     # * all script/ files
 
-    rm -f $RPM_BUILD_ROOT/lib/modules/$KernelVer/build
-    rm -f $RPM_BUILD_ROOT/lib/modules/$KernelVer/source
-    mkdir -p $RPM_BUILD_ROOT/lib/modules/$KernelVer/build
-    (cd $RPM_BUILD_ROOT/lib/modules/$KernelVer ; ln -s build source)
+    rm -f %buildroot/lib/modules/$KernelVer/build
+    rm -f %buildroot/lib/modules/$KernelVer/source
+    mkdir -p %buildroot/lib/modules/$KernelVer/build
+    (cd %buildroot/lib/modules/$KernelVer ; ln -s build source)
     # dirs for additional modules per module-init-tools, kbuild/modules.txt
-    mkdir -p $RPM_BUILD_ROOT/lib/modules/$KernelVer/extra
-    mkdir -p $RPM_BUILD_ROOT/lib/modules/$KernelVer/updates
-    mkdir -p $RPM_BUILD_ROOT/lib/modules/$KernelVer/weak-updates
+    mkdir -p %buildroot/lib/modules/$KernelVer/extra
+    mkdir -p %buildroot/lib/modules/$KernelVer/updates
+    mkdir -p %buildroot/lib/modules/$KernelVer/weak-updates
 %if %with_openafs
-    find $OpenAfsDir -name libafs.ko -execdir cp '{}' $RPM_BUILD_ROOT/lib/modules/$KernelVer/extra/openafs.ko \;
+    find $OpenAfsDir -name libafs.ko -execdir cp '{}' %buildroot/lib/modules/$KernelVer/extra/openafs.ko \;
 %endif
     # first copy everything
-    cp --parents `find  -type f -name "Makefile*" -o -name "Kconfig*"` $RPM_BUILD_ROOT/lib/modules/$KernelVer/build
-    cp Module.symvers $RPM_BUILD_ROOT/lib/modules/$KernelVer/build
-    mv $RPM_BUILD_ROOT/kabi_whitelist $RPM_BUILD_ROOT/lib/modules/$KernelVer/build
-    if [ -e $RPM_BUILD_ROOT/Module.kabi ]; then
-	mv $RPM_BUILD_ROOT/Module.kabi $RPM_BUILD_ROOT/lib/modules/$KernelVer/build
+    cp --parents `find  -type f -name "Makefile*" -o -name "Kconfig*"` %buildroot/lib/modules/$KernelVer/build
+    cp Module.symvers %buildroot/lib/modules/$KernelVer/build
+    mv %buildroot/kabi_whitelist %buildroot/lib/modules/$KernelVer/build
+    if [ -e %buildroot/Module.kabi ]; then
+	mv %buildroot/Module.kabi %buildroot/lib/modules/$KernelVer/build
     fi
-    cp symsets-$KernelVer.tar.gz $RPM_BUILD_ROOT/lib/modules/$KernelVer/build
+    cp symsets-$KernelVer.tar.gz %buildroot/lib/modules/$KernelVer/build
     # then drop all but the needed Makefiles/Kconfig files
-    rm -rf $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/Documentation
-    rm -rf $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/scripts
-    rm -rf $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/include
-    cp .config $RPM_BUILD_ROOT/lib/modules/$KernelVer/build
-    cp -a scripts $RPM_BUILD_ROOT/lib/modules/$KernelVer/build
+    rm -rf %buildroot/lib/modules/$KernelVer/build/Documentation
+    rm -rf %buildroot/lib/modules/$KernelVer/build/scripts
+    rm -rf %buildroot/lib/modules/$KernelVer/build/include
+    cp .config %buildroot/lib/modules/$KernelVer/build
+    cp -a scripts %buildroot/lib/modules/$KernelVer/build
     if [ -d arch/%_arch/scripts ]; then
-      cp -a arch/%_arch/scripts $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/arch/%_arch || :
+      cp -a arch/%_arch/scripts %buildroot/lib/modules/$KernelVer/build/arch/%_arch || :
     fi
     if [ -f arch/%_arch/*lds ]; then
-      cp -a arch/%_arch/*lds $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/arch/%_arch/ || :
+      cp -a arch/%_arch/*lds %buildroot/lib/modules/$KernelVer/build/arch/%_arch/ || :
     fi
-    rm -f $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/scripts/*.o
-    rm -f $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/scripts/*/*.o
-    mkdir -p $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/include
-    cd include
-    cp -a acpi config keys linux math-emu media mtd net pcmcia rdma rxrpc scsi sound video asm asm-generic ub $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/include
-    cp -a `readlink asm` $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/include
+    rm -f %buildroot/lib/modules/$KernelVer/build/scripts/*.o
+    rm -f %buildroot/lib/modules/$KernelVer/build/scripts/*/*.o
+    mkdir -p %buildroot/lib/modules/$KernelVer/build/include
+    pushd include
+    cp -a acpi config keys linux math-emu media mtd net pcmcia rdma rxrpc scsi sound video asm asm-generic ub %buildroot/lib/modules/$KernelVer/build/include
+    cp -a `readlink asm` %buildroot/lib/modules/$KernelVer/build/include
     if [ "$Arch" = "x86_64" ]; then
-      cp -a asm-i386 $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/include
+      cp -a asm-i386 %buildroot/lib/modules/$KernelVer/build/include
     fi
     # While arch/powerpc/include/asm is still a symlink to the old
     # include/asm-ppc{64,} directory, include that in kernel-devel too.
     if [ "$Arch" = "powerpc" -a -r ../arch/powerpc/include/asm ]; then
-      cp -a `readlink ../arch/powerpc/include/asm` $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/include
-      mkdir -p $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/arch/$Arch/include
-      pushd $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/arch/$Arch/include
+      cp -a `readlink ../arch/powerpc/include/asm` %buildroot/lib/modules/$KernelVer/build/include
+      mkdir -p %buildroot/lib/modules/$KernelVer/build/arch/$Arch/include
+      pushd %buildroot/lib/modules/$KernelVer/build/arch/$Arch/include
       ln -sf ../../../include/asm-ppc* asm
       popd
     fi
 %if %includexen
-    cp -a xen $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/include
+    cp -a xen %buildroot/lib/modules/$KernelVer/build/include
 %endif
 
     # Make sure the Makefile and version.h have a matching timestamp so that
     # external modules can be built
-    touch -r $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/Makefile $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/include/linux/version.h
-    touch -r $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/.config $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/include/linux/autoconf.h
+    touch -r %buildroot/lib/modules/$KernelVer/build/Makefile %buildroot/lib/modules/$KernelVer/build/include/linux/version.h
+    touch -r %buildroot/lib/modules/$KernelVer/build/.config %buildroot/lib/modules/$KernelVer/build/include/linux/autoconf.h
     # Copy .config to include/config/auto.conf so "make prepare" is unnecessary.
-    cp $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/.config $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/include/config/auto.conf
-    cd ..
+    cp %buildroot/lib/modules/$KernelVer/build/.config %buildroot/lib/modules/$KernelVer/build/include/config/auto.conf
+    popd
 
     #
     # save the vmlinux file for kernel debugging into the kernel-debuginfo rpm
     #
 %if %with_debuginfo
-    mkdir -p $RPM_BUILD_ROOT%debuginfodir/lib/modules/$KernelVer
-    cp vmlinux $RPM_BUILD_ROOT%debuginfodir/lib/modules/$KernelVer
+    mkdir -p %buildroot%debuginfodir/lib/modules/$KernelVer
+    cp vmlinux %buildroot%debuginfodir/lib/modules/$KernelVer
 %endif
 
-    find $RPM_BUILD_ROOT/lib/modules/$KernelVer -name "*.ko" -type f >modnames
+    find %buildroot/lib/modules/$KernelVer -name "*.ko" -type f >modnames
 
     # gpg sign the modules
 %if %signmodules
@@ -5465,13 +5465,13 @@ BuildKernel() {
     rm -f modinfo
     rm -f modnames
     # remove files that will be auto generated by depmod at rpm -i time
-    rm -f $RPM_BUILD_ROOT/lib/modules/$KernelVer/modules.*
+    rm -f %buildroot/lib/modules/$KernelVer/modules.*
 
     # Move the devel headers out of the root file system
-    mkdir -p $RPM_BUILD_ROOT/usr/src/kernels
-    mv $RPM_BUILD_ROOT/lib/modules/$KernelVer/build $RPM_BUILD_ROOT/$DevelDir
-    ln -sf ../../..$DevelDir $RPM_BUILD_ROOT/lib/modules/$KernelVer/build
-    [ -z "$DevelLink" ] || ln -sf `basename $DevelDir` $RPM_BUILD_ROOT/$DevelLink
+    mkdir -p %buildroot/usr/src/kernels
+    mv %buildroot/lib/modules/$KernelVer/build %buildroot/$DevelDir
+    ln -sf ../../..$DevelDir %buildroot/lib/modules/$KernelVer/build
+    [ -z "$DevelLink" ] || ln -sf `basename $DevelDir` %buildroot/$DevelLink
 
 	# Temporary fix for upstream "make prepare" bug.
 #	pushd $RPM_BUILD_ROOT/$DevelDir > /dev/null
@@ -5487,16 +5487,16 @@ BuildKernel() {
 
 # prepare directories
 
-mkdir -p $RPM_BUILD_ROOT/boot
+mkdir -p %buildroot/boot
 
 %if %includexen
 %if %with_xen
-  cd xen
-  mkdir -p $RPM_BUILD_ROOT/%image_install_path $RPM_BUILD_ROOT/boot
+  pushd xen
+  mkdir -p %buildroot/%image_install_path %buildroot/boot
   make %{?_smp_mflags} %xen_flags
-  install -m 644 xen.gz $RPM_BUILD_ROOT/%image_install_path/xen.gz-%KVERREL
-  install -m 755 xen-syms $RPM_BUILD_ROOT/boot/xen-syms-%KVERREL
-  cd ..
+  install -m 644 xen.gz %buildroot/%image_install_path/xen.gz-%KVERREL
+  install -m 755 xen-syms %buildroot/boot/xen-syms-%KVERREL
+  popd
 %endif
 %endif
 
@@ -5582,8 +5582,8 @@ It provides the kernel source files common to all builds.
 %install
 cd linux-%kversion.%_target_cpu
 %ifnarch %nobuildarches noarch
-mkdir -p $RPM_BUILD_ROOT/etc/modprobe.d
-cat > $RPM_BUILD_ROOT/etc/modprobe.d/blacklist-firewire << \EOF
+mkdir -p %buildroot/etc/modprobe.d
+cat > %buildroot/etc/modprobe.d/blacklist-firewire << \EOF
 # Comment out the next line to enable the firewire drivers
 blacklist firewire-ohci
 EOF
@@ -5591,9 +5591,9 @@ EOF
 
 %if %includexen
 %if %with_xen
-mkdir -p $RPM_BUILD_ROOT/etc/ld.so.conf.d
-rm -f $RPM_BUILD_ROOT/etc/ld.so.conf.d/kernelcap-%KVERREL.conf
-cat > $RPM_BUILD_ROOT/etc/ld.so.conf.d/kernelcap-%KVERREL.conf <<\EOF
+mkdir -p %buildroot/etc/ld.so.conf.d
+rm -f %buildroot/etc/ld.so.conf.d/kernelcap-%KVERREL.conf
+cat > %buildroot/etc/ld.so.conf.d/kernelcap-%KVERREL.conf <<\EOF
 # This directive teaches ldconfig to search in nosegneg subdirectories
 # and cache the DSOs there with extra bit 0 set in their hwcap match
 # fields.  In Xen guest kernels, the vDSO tells the dynamic linker to
@@ -5601,42 +5601,42 @@ cat > $RPM_BUILD_ROOT/etc/ld.so.conf.d/kernelcap-%KVERREL.conf <<\EOF
 # in the ld.so.cache file.
 hwcap 0 nosegneg
 EOF
-chmod 444 $RPM_BUILD_ROOT/etc/ld.so.conf.d/kernelcap-%KVERREL.conf
+chmod 444 %buildroot/etc/ld.so.conf.d/kernelcap-%KVERREL.conf
 %endif
 %endif
 
 %if %with_doc
-mkdir -p $RPM_BUILD_ROOT/usr/share/doc/kernel-doc-%kversion/Documentation
+mkdir -p %buildroot/usr/share/doc/kernel-doc-%kversion/Documentation
 
 # sometimes non-world-readable files sneak into the kernel source tree
 chmod -R a+r *
 # copy the source over
-tar cf - Documentation | tar xf - -C $RPM_BUILD_ROOT/usr/share/doc/kernel-doc-%kversion
+tar cf - Documentation | tar xf - -C %buildroot/usr/share/doc/kernel-doc-%kversion
 %endif
 
 %if %with_headers
 # Install kernel headers
-make ARCH=%hdrarch INSTALL_HDR_PATH=$RPM_BUILD_ROOT/usr headers_install
+make ARCH=%hdrarch INSTALL_HDR_PATH=%buildroot/usr headers_install
 
 # Manually go through the 'headers_check' process for every file, but
 # don't die if it fails
 chmod +x scripts/hdrcheck.sh
 echo -e '*****\n*****\nHEADER EXPORT WARNINGS:\n*****' > hdrwarnings.txt
-for FILE in `find $RPM_BUILD_ROOT/usr/include` ; do
-    scripts/hdrcheck.sh $RPM_BUILD_ROOT/usr/include $FILE >> hdrwarnings.txt || :
+for FILE in `find %buildroot/usr/include` ; do
+    scripts/hdrcheck.sh %buildroot/usr/include $FILE >> hdrwarnings.txt || :
 done
 echo -e '*****\n*****' >> hdrwarnings.txt
 if grep -q exist hdrwarnings.txt; then
-   sed s:^$RPM_BUILD_ROOT/usr/include/:: hdrwarnings.txt
+   sed s:^%buildroot/usr/include/:: hdrwarnings.txt
    # Temporarily cause a build failure if header inconsistencies.
    # exit 1
 fi
 
 # glibc provides scsi headers for itself, for now
-rm -rf $RPM_BUILD_ROOT/usr/include/scsi
-rm -f $RPM_BUILD_ROOT/usr/include/asm*/atomic.h
-rm -f $RPM_BUILD_ROOT/usr/include/asm*/io.h
-rm -f $RPM_BUILD_ROOT/usr/include/asm*/irq.h
+rm -rf %buildroot/usr/include/scsi
+rm -f %buildroot/usr/include/asm*/atomic.h
+rm -f %buildroot/usr/include/asm*/io.h
+rm -f %buildroot/usr/include/asm*/irq.h
 %endif
 
 ###
