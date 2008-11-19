@@ -433,6 +433,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/build
 %exclude %modules_dir/kernel/sound
 %exclude %modules_dir/kernel/drivers/media/
+%exclude %modules_dir/kernel/drivers/char/drm
 # OSS drivers
 %exclude %modules_dir/kernel/sound/oss
 
