@@ -5650,12 +5650,6 @@ rm -f $RPM_BUILD_ROOT/usr/include/asm*/atomic.h
 rm -f $RPM_BUILD_ROOT/usr/include/asm*/io.h
 rm -f $RPM_BUILD_ROOT/usr/include/asm*/irq.h
 %endif
-###
-### clean
-###
-
-%clean
-rm -rf $RPM_BUILD_ROOT
 
 ###
 ### scripts
