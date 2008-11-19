@@ -461,7 +461,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/sound/oss
 
 %files -n kernel-modules-drm-%flavour
-%modules_dir/kernel/drivers/gpu/drm
+%modules_dir/kernel/drivers/char/drm
 
 %files -n kernel-modules-v4l-%flavour
 %modules_dir/kernel/drivers/media/
