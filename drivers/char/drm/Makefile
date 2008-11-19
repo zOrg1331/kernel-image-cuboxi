@@ -18,6 +18,7 @@ radeon-objs := radeon_drv.o radeon_cp.o radeon_state.o radeon_mem.o radeon_irq.o
 sis-objs    := sis_drv.o sis_mm.o
 savage-objs := savage_drv.o savage_bci.o savage_state.o
 via-objs    := via_irq.o via_drv.o via_map.o via_mm.o via_dma.o via_verifier.o via_video.o via_dmablit.o
+mach64-objs := mach64_drv.o mach64_dma.o mach64_irq.o mach64_state.o
 
 ifeq ($(CONFIG_COMPAT),y)
 drm-objs    += drm_ioc32.o
@@ -37,4 +38,5 @@ obj-$(CONFIG_DRM_I830)	+= i830.o
 obj-$(CONFIG_DRM_I915)  += i915.o
 obj-$(CONFIG_DRM_SIS)   += sis.o
 obj-$(CONFIG_DRM_SAVAGE)+= savage.o
-obj-$(CONFIG_DRM_VIA)	+=via.o
+obj-$(CONFIG_DRM_VIA)	+= via.o
+obj-$(CONFIG_DRM_MACH64)+= mach64.o
