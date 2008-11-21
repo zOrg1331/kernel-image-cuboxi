@@ -110,6 +110,22 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %define _enable_debug_packages 0
 %global __debug_package 0
 
+# define a flavour (default is empty)
+%define flavour %nil
+%if %with_pae
+%define flavour PAE
+%endif
+%if %with_ent
+%define flavour ent
+%endif
+%if %with_smp
+%define flavour smp
+%endif
+%if %with_kdump
+%define flavour kdump
+%endif
+
+
 # Versions of various parts
 
 # After branching, please hardcode these values as the
@@ -5231,313 +5247,52 @@ make linux-%kversion.%_target_cpu/scripts/bin2c
 linux-%kversion.%_target_cpu/scripts/bin2c ksign_def_public_key __initdata < extract.pub > linux-%kversion.%_target_cpu/crypto/signature/key.h
 %endif
 
-BuildKernel() {
-    MakeTarget=$1
-    KernelImage=$2
-    Flavour=$3
-
-    # Pick the right config file for the kernel we're building
-    if [ -n "$Flavour" ] ; then
-      Config=kernel-%kversion-%_target_cpu-$Flavour.config.ovz
-      DevelDir=/usr/src/kernels/%KVERREL-$Flavour-%_target_cpu
-      DevelLink=/usr/src/kernels/%KVERREL$Flavour-%_target_cpu
-    else
-      Config=kernel-%kversion-%_target_cpu.config.ovz
-      DevelDir=/usr/src/kernels/%KVERREL-%_target_cpu
-      DevelLink=
-    fi
-
-    Config=${Config//-debug/}
-
-    KernelVer=%version-%release$Flavour
-    echo BUILDING A KERNEL FOR $Flavour %_target_cpu...
-
-    # make sure EXTRAVERSION says what we want it to say
-    perl -p -i -e "s/^EXTRAVERSION.*/EXTRAVERSION = -%release$Flavour/" Makefile
-
-    # and now to start the build process
-
-    %make_build -s mrproper
-    cp configs/$Config .config
-
-    if echo "$Flavour" | grep debug ; then
-	    %_sourcedir/make_debug_config.sh
-    fi
-
-    Arch=`head -1 .config | cut -b 3-`
-    echo USING ARCH=$Arch
-
-    if [ "$KernelImage" == "x86" ]; then
-       KernelImage=arch/$Arch/boot/bzImage
-    fi
-    if [ "$Arch" == "s390" -a "$Flavour" == "kdump" ]; then
-      pushd arch/s390/boot
-      gcc -static -o zfcpdump zfcpdump.c
-      popd
-    fi
-
-    %make_build -s ARCH=$Arch nonint_oldconfig > /dev/null
-    %make_build -s ARCH=$Arch %{?_smp_mflags} $MakeTarget
-    if [ "$Arch" != "s390" -o "$Flavour" != "kdump" ]; then
-      %make_build -s ARCH=$Arch %{?_smp_mflags} modules || exit 1
-    fi
-
-%if %with_openafs
-    echo Building openafs...
-      OpenAfsDir=%_builddir/%name-%version/openafs-%openafs_version
-    KernelSrcDir=%_builddir/%name-%version/linux-%kversion.%_target_cpu
-    pushd $OpenAfsDir
-    [ -f Makefile ] && make distclean
-    ./configure --with-linux-kernel-headers=$KernelSrcDir
-    %make_build -s libafs
-    popd
-%endif
-    # Start installing the results
-
-%if %with_debuginfo
-    mkdir -p %buildroot%debuginfodir/boot
-    mkdir -p %buildroot%debuginfodir/%image_install_path
-%endif
-    mkdir -p %buildroot/%image_install_path
-    install -m 644 .config %buildroot/boot/config-$KernelVer
-    install -m 644 System.map %buildroot/boot/System.map-$KernelVer
-    touch %buildroot/boot/initrd-$KernelVer.img
-    cp $KernelImage %buildroot/%image_install_path/vmlinuz-$KernelVer
-    if [ -f arch/$Arch/boot/zImage.stub ]; then
-      cp arch/$Arch/boot/zImage.stub %buildroot/%image_install_path/zImage.stub-$KernelVer || :
-    fi
-
-%if %includeovz
-    cp vmlinux %buildroot/%image_install_path/vmlinux-$KernelVer
-    chmod 400 %buildroot/%image_install_path/vmlinux-$KernelVer
-%endif
-
-    if [ "$Flavour" == "kdump" -a "$Arch" != "s390" ]; then
-        rm -f %buildroot/%image_install_path/vmlinuz-$KernelVer
-    fi
-
-    mkdir -p %buildroot/lib/modules/$KernelVer
-    if [ "$Arch" != "s390" -o "$Flavour" != "kdump" ]; then
-      make -s ARCH=$Arch INSTALL_MOD_PATH=%buildroot modules_install KERNELRELEASE=$KernelVer
-    else
-      touch Module.symvers
-    fi
-
-    # Create the kABI metadata for use in packaging
-    echo "**** GENERATING kernel ABI metadata ****"
-    gzip -c9 < Module.symvers > %buildroot/boot/symvers-$KernelVer.gz
-    chmod 0755 %_sourcedir/kabitool
-    if [ ! -e %buildroot/kabi_whitelist_%_target_cpu$Flavour ]; then
-        echo "**** No KABI whitelist was available during build ****"
-        %_sourcedir/kabitool -b %buildroot/$DevelDir -k $KernelVer -l %buildroot/kabi_whitelist
-    else
-	cp %buildroot/kabi_whitelist_%_target_cpu$Flavour %buildroot/kabi_whitelist
-    fi
-    rm -f %_tmppath/kernel-$KernelVer-kabideps
-    %_sourcedir/kabitool -b . -d %_tmppath/kernel-$KernelVer-kabideps -k $KernelVer -w %buildroot/kabi_whitelist
-
-%if %with_kabichk
-    echo "**** kABI checking is enabled in kernel SPEC file. ****"
-    chmod 0755 %_sourcedir/check-kabi
-    if [ -e %_sourcedir/Module.kabi_%_target_cpu$Flavour ]; then
-	cp %_sourcedir/Module.kabi_%_target_cpu$Flavour %buildroot/Module.kabi
-	%_sourcedir/check-kabi -k %buildroot/Module.kabi -s Module.symvers || exit 1
-    else
-	echo "**** NOTE: Cannot find reference Module.kabi file. ****"
-    fi
-%endif
-
-    # And save the headers/makefiles etc for building modules against
-    #
-    # This all looks scary, but the end result is supposed to be:
-    # * all arch relevant include/ files
-    # * all Makefile/Kconfig files
-    # * all script/ files
-
-    rm -f %buildroot/lib/modules/$KernelVer/build
-    rm -f %buildroot/lib/modules/$KernelVer/source
-    mkdir -p %buildroot/lib/modules/$KernelVer/build
-    (cd %buildroot/lib/modules/$KernelVer ; ln -s build source)
-    # dirs for additional modules per module-init-tools, kbuild/modules.txt
-    mkdir -p %buildroot/lib/modules/$KernelVer/extra
-    mkdir -p %buildroot/lib/modules/$KernelVer/updates
-    mkdir -p %buildroot/lib/modules/$KernelVer/weak-updates
-%if %with_openafs
-    find $OpenAfsDir -name libafs.ko -execdir cp '{}' %buildroot/lib/modules/$KernelVer/extra/openafs.ko \;
-%endif
-    # first copy everything
-    cp --parents `find  -type f -name "Makefile*" -o -name "Kconfig*"` %buildroot/lib/modules/$KernelVer/build
-    cp Module.symvers %buildroot/lib/modules/$KernelVer/build
-    mv %buildroot/kabi_whitelist %buildroot/lib/modules/$KernelVer/build
-    if [ -e %buildroot/Module.kabi ]; then
-	mv %buildroot/Module.kabi %buildroot/lib/modules/$KernelVer/build
-    fi
-    cp symsets-$KernelVer.tar.gz %buildroot/lib/modules/$KernelVer/build
-    # then drop all but the needed Makefiles/Kconfig files
-    rm -rf %buildroot/lib/modules/$KernelVer/build/Documentation
-    rm -rf %buildroot/lib/modules/$KernelVer/build/scripts
-    rm -rf %buildroot/lib/modules/$KernelVer/build/include
-    cp .config %buildroot/lib/modules/$KernelVer/build
-    cp -a scripts %buildroot/lib/modules/$KernelVer/build
-    if [ -d arch/%_arch/scripts ]; then
-      cp -a arch/%_arch/scripts %buildroot/lib/modules/$KernelVer/build/arch/%_arch || :
-    fi
-    if [ -f arch/%_arch/*lds ]; then
-      cp -a arch/%_arch/*lds %buildroot/lib/modules/$KernelVer/build/arch/%_arch/ || :
-    fi
-    rm -f %buildroot/lib/modules/$KernelVer/build/scripts/*.o
-    rm -f %buildroot/lib/modules/$KernelVer/build/scripts/*/*.o
-    mkdir -p %buildroot/lib/modules/$KernelVer/build/include
-    pushd include
-    cp -a acpi config keys linux math-emu media mtd net pcmcia rdma rxrpc scsi sound video asm asm-generic ub %buildroot/lib/modules/$KernelVer/build/include
-    cp -a `readlink asm` %buildroot/lib/modules/$KernelVer/build/include
-    if [ "$Arch" = "x86_64" ]; then
-      cp -a asm-i386 %buildroot/lib/modules/$KernelVer/build/include
-    fi
-    # While arch/powerpc/include/asm is still a symlink to the old
-    # include/asm-ppc{64,} directory, include that in kernel-devel too.
-    if [ "$Arch" = "powerpc" -a -r ../arch/powerpc/include/asm ]; then
-      cp -a `readlink ../arch/powerpc/include/asm` %buildroot/lib/modules/$KernelVer/build/include
-      mkdir -p %buildroot/lib/modules/$KernelVer/build/arch/$Arch/include
-      pushd %buildroot/lib/modules/$KernelVer/build/arch/$Arch/include
-      ln -sf ../../../include/asm-ppc* asm
-      popd
-    fi
-%if %includexen
-    cp -a xen %buildroot/lib/modules/$KernelVer/build/include
-%endif
-
-    # Make sure the Makefile and version.h have a matching timestamp so that
-    # external modules can be built
-    touch -r %buildroot/lib/modules/$KernelVer/build/Makefile %buildroot/lib/modules/$KernelVer/build/include/linux/version.h
-    touch -r %buildroot/lib/modules/$KernelVer/build/.config %buildroot/lib/modules/$KernelVer/build/include/linux/autoconf.h
-    # Copy .config to include/config/auto.conf so "make prepare" is unnecessary.
-    cp %buildroot/lib/modules/$KernelVer/build/.config %buildroot/lib/modules/$KernelVer/build/include/config/auto.conf
-    popd
-
-    #
-    # save the vmlinux file for kernel debugging into the kernel-debuginfo rpm
-    #
-%if %with_debuginfo
-    mkdir -p %buildroot%debuginfodir/lib/modules/$KernelVer
-    cp vmlinux %buildroot%debuginfodir/lib/modules/$KernelVer
-%endif
-
-    find %buildroot/lib/modules/$KernelVer -name "*.ko" -type f >modnames
-
-    # gpg sign the modules
-%if %signmodules
-    gcc -o scripts/modsign/mod-extract scripts/modsign/mod-extract.c -Wall
-    KEYFLAGS="--no-default-keyring --homedir .."
-    KEYFLAGS="$KEYFLAGS --secret-keyring ../kernel.sec"
-    KEYFLAGS="$KEYFLAGS --keyring ../kernel.pub"
-    export KEYFLAGS
-
-    for i in `cat modnames`
-    do
-      sh ./scripts/modsign/modsign.sh $i Red
-      mv -f $i.signed $i
-    done
-    unset KEYFLAGS
-%endif
-
-    # mark modules executable so that strip-to-file can strip them
-    for i in `cat modnames`
-    do
-      chmod u+x $i
-    done
-
-    # detect missing or incorrect license tags
-    for i in `cat modnames`
-    do
-      echo -n "$i "
-      /sbin/modinfo -l $i >> modinfo
-    done
-    cat modinfo |\
-%if %with_openafs
-      grep -v "http://www.openafs.org/dl/license10.html" |
-%endif
-      grep -v "^GPL" |
-      grep -v "^Dual BSD/GPL" |\
-      grep -v "^Dual MPL/GPL" |\
-      grep -v "^GPL and additional rights" |\
-      grep -v "^GPL v2" && exit 1
-    rm -f modinfo
-    rm -f modnames
-    # remove files that will be auto generated by depmod at rpm -i time
-    rm -f %buildroot/lib/modules/$KernelVer/modules.*
-
-    # Move the devel headers out of the root file system
-    mkdir -p %buildroot/usr/src/kernels
-    mv %buildroot/lib/modules/$KernelVer/build %buildroot/$DevelDir
-    ln -sf ../../..$DevelDir %buildroot/lib/modules/$KernelVer/build
-    [ -z "$DevelLink" ] || ln -sf `basename $DevelDir` %buildroot/$DevelLink
-
-	# Temporary fix for upstream "make prepare" bug.
-#	pushd $RPM_BUILD_ROOT/$DevelDir > /dev/null
-#	if [ -f Makefile ]; then
-#		make prepare
-#	fi
-#	popd > /dev/null
-}
-
 ###
 # DO it...
 ###
 
 # prepare directories
 
-mkdir -p %buildroot/boot
-
-%if %includexen
-%if %with_xen
-  pushd xen
-  mkdir -p %buildroot/%image_install_path %buildroot/boot
-  make %{?_smp_mflags} %xen_flags
-  install -m 644 xen.gz %buildroot/%image_install_path/xen.gz-%KVERREL
-  install -m 755 xen-syms %buildroot/boot/xen-syms-%KVERREL
-  popd
-%endif
-%endif
-
 cd linux-%kversion.%_target_cpu
 
-%if %with_up
-BuildKernel %make_target %kernel_image
-%if %with_debug
-BuildKernel %make_target %kernel_image debug
-%endif
-%endif
+# Pick the right config file for the kernel we're building
+if [ -n "%flavour" ] ; then
+	Config=kernel-%kversion-%_target_cpu-%flavour.config.ovz
+else
+	Config=kernel-%kversion-%_target_cpu.config.ovz
+fi
 
-%if %with_pae
-BuildKernel %make_target %kernel_image PAE
-%if %with_debug
-BuildKernel %make_target %kernel_image PAE-debug
-%endif
-%endif
+echo BUILDING A KERNEL FOR %flavour %_target_cpu...
 
-%if %with_ent
-BuildKernel %make_target %kernel_image ent
-%if %with_debug
-BuildKernel %make_target %kernel_image ent-debug
-%endif
-%endif
+# make sure EXTRAVERSION says what we want it to say
+perl -p -i -e "s/^EXTRAVERSION.*/EXTRAVERSION = -%release%flavour/" Makefile
 
-%if %with_smp
-BuildKernel %make_target %kernel_image smp
-%if %with_debug
-BuildKernel %make_target %kernel_image smp-debug
-%endif
-%endif
+# and now to start the build process
 
-%if %includexen
-%if %with_xen
-BuildKernel %xen_target %xen_image xen
-%endif
-%endif
+%make_build -s mrproper
+cp configs/${Config//-debug/} .config
 
-%if %with_kdump
-BuildKernel %make_target %kernel_image kdump
+if echo "%flavour" | grep debug ; then
+	%_sourcedir/make_debug_config.sh
+fi
+
+Arch=`head -1 .config | cut -b 3-`
+echo USING ARCH=$Arch
+echo "$Arch" > .buildarch
+
+%make_build -s ARCH=$Arch nonint_oldconfig > /dev/null
+%make_build -s ARCH=$Arch %{?_smp_mflags} %make_target
+%make_build -s ARCH=$Arch %{?_smp_mflags} modules || exit 1
+
+%if %with_openafs
+    echo Building openafs...
+    OpenAfsDir=%_builddir/%name-%version/openafs-%openafs_version
+    KernelSrcDir=%_builddir/%name-%version/linux-%kversion.%_target_cpu
+    pushd $OpenAfsDir
+    [ -f Makefile ] && make distclean
+    ./configure --with-linux-kernel-headers=$KernelSrcDir
+    %make_build -s libafs
+    popd
 %endif
 
 ###
@@ -5581,6 +5336,213 @@ It provides the kernel source files common to all builds.
 
 %install
 cd linux-%kversion.%_target_cpu
+# Start installing the results
+
+Arch=`cat .buildarch`
+KernelVer=%version-%release%flavour
+if [ -n "%flavour" ] ; then
+	DevelDir=/usr/src/kernels/%KVERREL-%flavour-%_target_cpu
+	DevelLink=/usr/src/kernels/%KVERREL%flavour-%_target_cpu
+else
+	DevelDir=/usr/src/kernels/%KVERREL-%_target_cpu
+	DevelLink=
+fi
+
+%if %with_debuginfo
+mkdir -p %buildroot%debuginfodir/boot
+mkdir -p %buildroot%debuginfodir/%image_install_path
+%endif
+mkdir -p %buildroot/%image_install_path
+install -m 644 .config %buildroot/boot/config-$KernelVer
+install -m 644 System.map %buildroot/boot/System.map-$KernelVer
+touch %buildroot/boot/initrd-$KernelVer.img
+
+if [ "%kernel_image" == "x86" ]; then
+    kernel_image=arch/$Arch/boot/bzImage
+else
+    kernel_image="%kernel_image"
+fi
+cp $kernel_image %buildroot/%image_install_path/vmlinuz-$KernelVer
+if [ -f arch/$Arch/boot/zImage.stub ]; then
+  cp arch/$Arch/boot/zImage.stub %buildroot/%image_install_path/zImage.stub-$KernelVer || :
+fi
+
+%if %includeovz
+cp vmlinux %buildroot/%image_install_path/vmlinux-$KernelVer
+chmod 400 %buildroot/%image_install_path/vmlinux-$KernelVer
+%endif
+
+if [ "%flavour" == "kdump" -a "$Arch" != "s390" ]; then
+    rm -f %buildroot/%image_install_path/vmlinuz-$KernelVer
+fi
+
+mkdir -p %buildroot/lib/modules/$KernelVer
+if [ "$Arch" != "s390" -o "%flavour" != "kdump" ]; then
+  make -s ARCH=$Arch INSTALL_MOD_PATH=%buildroot modules_install KERNELRELEASE=$KernelVer
+else
+  touch Module.symvers
+fi
+
+# Create the kABI metadata for use in packaging
+echo "**** GENERATING kernel ABI metadata ****"
+gzip -c9 < Module.symvers > %buildroot/boot/symvers-$KernelVer.gz
+chmod 0755 %_sourcedir/kabitool
+if [ ! -e %buildroot/kabi_whitelist_%_target_cpu%flavour ]; then
+    echo "**** No KABI whitelist was available during build ****"
+    %_sourcedir/kabitool -b %buildroot/$DevelDir -k $KernelVer -l %buildroot/kabi_whitelist
+else
+cp %buildroot/kabi_whitelist_%_target_cpu%flavour %buildroot/kabi_whitelist
+fi
+rm -f %_tmppath/kernel-$KernelVer-kabideps
+%_sourcedir/kabitool -b . -d %_tmppath/kernel-$KernelVer-kabideps -k $KernelVer -w %buildroot/kabi_whitelist
+
+%if %with_kabichk
+echo "**** kABI checking is enabled in kernel SPEC file. ****"
+chmod 0755 %_sourcedir/check-kabi
+if [ -e %_sourcedir/Module.kabi_%_target_cpu%flavour ]; then
+cp %_sourcedir/Module.kabi_%_target_cpu%flavour %buildroot/Module.kabi
+%_sourcedir/check-kabi -k %buildroot/Module.kabi -s Module.symvers || exit 1
+else
+echo "**** NOTE: Cannot find reference Module.kabi file. ****"
+fi
+%endif
+
+# And save the headers/makefiles etc for building modules against
+#
+# This all looks scary, but the end result is supposed to be:
+# * all arch relevant include/ files
+# * all Makefile/Kconfig files
+# * all script/ files
+
+rm -f %buildroot/lib/modules/$KernelVer/build
+rm -f %buildroot/lib/modules/$KernelVer/source
+mkdir -p %buildroot/lib/modules/$KernelVer/build
+(cd %buildroot/lib/modules/$KernelVer ; ln -s build source)
+# dirs for additional modules per module-init-tools, kbuild/modules.txt
+mkdir -p %buildroot/lib/modules/$KernelVer/extra
+mkdir -p %buildroot/lib/modules/$KernelVer/updates
+mkdir -p %buildroot/lib/modules/$KernelVer/weak-updates
+%if %with_openafs
+find $OpenAfsDir -name libafs.ko -execdir cp '{}' %buildroot/lib/modules/$KernelVer/extra/openafs.ko \;
+%endif
+# first copy everything
+cp --parents `find  -type f -name "Makefile*" -o -name "Kconfig*"` %buildroot/lib/modules/$KernelVer/build
+cp Module.symvers %buildroot/lib/modules/$KernelVer/build
+mv %buildroot/kabi_whitelist %buildroot/lib/modules/$KernelVer/build
+if [ -e %buildroot/Module.kabi ]; then
+mv %buildroot/Module.kabi %buildroot/lib/modules/$KernelVer/build
+fi
+cp symsets-$KernelVer.tar.gz %buildroot/lib/modules/$KernelVer/build
+# then drop all but the needed Makefiles/Kconfig files
+rm -rf %buildroot/lib/modules/$KernelVer/build/Documentation
+rm -rf %buildroot/lib/modules/$KernelVer/build/scripts
+rm -rf %buildroot/lib/modules/$KernelVer/build/include
+cp .config %buildroot/lib/modules/$KernelVer/build
+cp -a scripts %buildroot/lib/modules/$KernelVer/build
+if [ -d arch/%_arch/scripts ]; then
+  cp -a arch/%_arch/scripts %buildroot/lib/modules/$KernelVer/build/arch/%_arch || :
+fi
+if [ -f arch/%_arch/*lds ]; then
+  cp -a arch/%_arch/*lds %buildroot/lib/modules/$KernelVer/build/arch/%_arch/ || :
+fi
+rm -f %buildroot/lib/modules/$KernelVer/build/scripts/*.o
+rm -f %buildroot/lib/modules/$KernelVer/build/scripts/*/*.o
+mkdir -p %buildroot/lib/modules/$KernelVer/build/include
+pushd include
+cp -a acpi config keys linux math-emu media mtd net pcmcia rdma rxrpc scsi sound video asm asm-generic ub %buildroot/lib/modules/$KernelVer/build/include
+cp -a `readlink asm` %buildroot/lib/modules/$KernelVer/build/include
+if [ "$Arch" = "x86_64" ]; then
+  cp -a asm-i386 %buildroot/lib/modules/$KernelVer/build/include
+fi
+# While arch/powerpc/include/asm is still a symlink to the old
+# include/asm-ppc{64,} directory, include that in kernel-devel too.
+if [ "$Arch" = "powerpc" -a -r ../arch/powerpc/include/asm ]; then
+  cp -a `readlink ../arch/powerpc/include/asm` %buildroot/lib/modules/$KernelVer/build/include
+  mkdir -p %buildroot/lib/modules/$KernelVer/build/arch/$Arch/include
+  pushd %buildroot/lib/modules/$KernelVer/build/arch/$Arch/include
+  ln -sf ../../../include/asm-ppc* asm
+  popd
+fi
+%if %includexen
+%if %with_xen
+cp -a xen %buildroot/lib/modules/$KernelVer/build/include
+%endif
+%endif
+
+# Make sure the Makefile and version.h have a matching timestamp so that
+# external modules can be built
+touch -r %buildroot/lib/modules/$KernelVer/build/Makefile %buildroot/lib/modules/$KernelVer/build/include/linux/version.h
+touch -r %buildroot/lib/modules/$KernelVer/build/.config %buildroot/lib/modules/$KernelVer/build/include/linux/autoconf.h
+# Copy .config to include/config/auto.conf so "make prepare" is unnecessary.
+cp %buildroot/lib/modules/$KernelVer/build/.config %buildroot/lib/modules/$KernelVer/build/include/config/auto.conf
+popd
+
+#
+# save the vmlinux file for kernel debugging into the kernel-debuginfo rpm
+#
+%if %with_debuginfo
+mkdir -p %buildroot%debuginfodir/lib/modules/$KernelVer
+cp vmlinux %buildroot%debuginfodir/lib/modules/$KernelVer
+%endif
+
+find %buildroot/lib/modules/$KernelVer -name "*.ko" -type f >modnames
+
+# gpg sign the modules
+%if %signmodules
+gcc -o scripts/modsign/mod-extract scripts/modsign/mod-extract.c -Wall
+KEYFLAGS="--no-default-keyring --homedir .."
+KEYFLAGS="$KEYFLAGS --secret-keyring ../kernel.sec"
+KEYFLAGS="$KEYFLAGS --keyring ../kernel.pub"
+export KEYFLAGS
+
+for i in `cat modnames`
+do
+  sh ./scripts/modsign/modsign.sh $i Red
+  mv -f $i.signed $i
+done
+unset KEYFLAGS
+%endif
+
+# mark modules executable so that strip-to-file can strip them
+for i in `cat modnames`
+do
+  chmod u+x $i
+done
+
+# detect missing or incorrect license tags
+for i in `cat modnames`
+do
+  echo -n "$i "
+  /sbin/modinfo -l $i >> modinfo
+done
+cat modinfo |\
+%if %with_openafs
+  grep -v "http://www.openafs.org/dl/license10.html" |
+%endif
+  grep -v "^GPL" |
+  grep -v "^Dual BSD/GPL" |\
+  grep -v "^Dual MPL/GPL" |\
+  grep -v "^GPL and additional rights" |\
+  grep -v "^GPL v2" && exit 1
+rm -f modinfo
+rm -f modnames
+# remove files that will be auto generated by depmod at rpm -i time
+rm -f %buildroot/lib/modules/$KernelVer/modules.*
+
+# Move the devel headers out of the root file system
+mkdir -p %buildroot/usr/src/kernels
+mv %buildroot/lib/modules/$KernelVer/build %buildroot/$DevelDir
+ln -sf ../../..$DevelDir %buildroot/lib/modules/$KernelVer/build
+[ -z "$DevelLink" ] || ln -sf `basename $DevelDir` %buildroot/$DevelLink
+
+	# Temporary fix for upstream "make prepare" bug.
+#	pushd $RPM_BUILD_ROOT/$DevelDir > /dev/null
+#	if [ -f Makefile ]; then
+#		make prepare
+#	fi
+#	popd > /dev/null
+
+# EOoldBuildKernel
 %ifnarch %nobuildarches noarch
 mkdir -p %buildroot/etc/modprobe.d
 cat > %buildroot/etc/modprobe.d/blacklist-firewire << \EOF
