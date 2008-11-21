@@ -1,6 +1,6 @@
 Name: kernel-image-std-srv
 Version: 2.6.25
-Release: alt8.M41.2
+Release: alt8.M41.3
 epoch: 1
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -142,11 +142,13 @@ These are sound drivers for your ALT Linux system.
 
 
 %package -n kernel-modules-v4l-%flavour
-Summary: Video4Linux driver modules (obsolete)
+Summary: Video4Linux driver modules
 Group: System/Kernel and hardware
 Provides:  kernel-modules-v4l-%kversion-%flavour-%krelease = %version-%release
 Conflicts: kernel-modules-v4l-%kversion-%flavour-%krelease < %version-%release
 Conflicts: kernel-modules-v4l-%kversion-%flavour-%krelease > %version-%release
+Provides:  kernel-modules-uvcvideo-%kversion-%flavour-%krelease = %version-%release
+Provides:  kernel-modules-gspca-%kversion-%flavour-%krelease = %version-%release
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
 Prereq: %name = %version-%release
@@ -468,6 +470,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Fri Nov 21 2008 Michail Yakushin <silicium@altlinux.ru> 1:2.6.25-alt8.M41.3
+- fix provedes in V4L subpackage 
+
 * Mon Nov 17 2008 Michail Yakushin <silicium@altlinux.ru> 1:2.6.25-alt8.M41.2
 - 2.6.25.20 (included security fixes)
 - new V4L
