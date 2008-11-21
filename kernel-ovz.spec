@@ -1,3 +1,5 @@
+%set_verify_elf_method relaxed
+
 # ------------- translate OVZ build system settings to RHEL -----------------
 %define buildup 1
 %define buildsmp 0
