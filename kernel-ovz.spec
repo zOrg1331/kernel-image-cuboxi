@@ -15,7 +15,7 @@
 %define _without_kabichk 1
 
 %define ovzver 028stab059
-%define ovzrel 3
+%define ovzrel 6
 
 %if !%buildup
 %define _without_up 1
@@ -2523,6 +2523,7 @@ Patch90216: diff-snd-hda-intel
 Patch90217: diff-drv-e1000-depends-e1000e-20080718
 Patch90218: diff-rh-9w-try-set-mwi
 Patch90219: diff-drv-arcmsr-alloc-atomic-20080821
+Patch90220: diff-drv-e1000-select-e1000e
 
 # GFSv1
 Patch90300: diff-gfs-kmod-0.1.23-5.el5_2.2
@@ -2538,6 +2539,7 @@ Patch90310: diff-gfs-rm-warn-20070720
 Patch90311: diff-gfs-rm-lockfs-support-20071129
 Patch90312: diff-gfs-force-localfloks-20080226
 Patch90313: diff-gfs-shut-up-debug-20080821
+Patch90314: diff-gfs-fix-proc-entry-20081024
 
 # Patch90340: diff-dlm-fix-user-unlocking-20070829
 # Patch90341: diff-dlm-can-miss-clearing-resend-flag-20070829
@@ -2566,6 +2568,9 @@ Patch100001: diff-ms-devleak-dstdebug-20080504
 Patch100002: diff-ipv4-dumpbaddst-20080929
 Patch100003: diff-ipv4-reliable-dst-garbage-20080929
 Patch100004: diff-ve-moreleaks-20090829
+Patch100005: diff-ms-__scm_destroy-recursion-20081113
+Patch100006: diff-ms-AF_UNIX-garbage-20081113
+Patch100007: diff-ms-AF_UNIX-garbage-inflight-20081113
 # Patch100002: diff-ms-dnotify-race
 
 # End VZ patches
@@ -5020,6 +5025,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch90217 -p1
 %patch90218 -p1
 %patch90219 -p1
+%patch90220 -p1
 
 %patch90300 -p1
 %patch90301 -p1
@@ -5034,6 +5040,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch90311 -p1
 %patch90312 -p1
 %patch90313 -p1
+%patch90314 -p1
 
 # %patch90340 -p1
 # %patch90341 -p1
@@ -5052,6 +5059,9 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100002 -p1
 %patch100003 -p1
 %patch100004 -p1
+%patch100005 -p1
+%patch100006 -p1
+%patch100007 -p1
 # %patch100002 -p1 obsoleted by linux-2.6-fs-race-condition-in-dnotify.patch
 
 %endif

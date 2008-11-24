@@ -25,11 +25,13 @@ copy: diff-cciss-reformat-error-handling
 copy: diff-dm-limits-bounce_pfn-20071029
 copy: diff-drv-arcmsr-alloc-atomic-20080821
 copy: diff-drv-e1000-depends-e1000e-20080718
+copy: diff-drv-e1000-select-e1000e
 copy: diff-fs-fsync-enable-rh5-20080131
 copy: diff-gfs-aops-fix-20070516
 copy: diff-gfs-bh-leak-fix-20070716
 copy: diff-gfs-debug-bugs-20070521
 copy: diff-gfs-dread-oops-20070718
+copy: diff-gfs-fix-proc-entry-20081024
 copy: diff-gfs-force-localfloks-20080226
 copy: diff-gfs-kconfig
 copy: diff-gfs-rm-lockfs-support-20071129
@@ -46,6 +48,9 @@ copy: diff-i2o-proc-perms-20060304
 copy: diff-i2o-procread-20070509
 copy: diff-ipv4-dumpbaddst-20080929
 copy: diff-ipv4-reliable-dst-garbage-20080929
+copy: diff-ms-AF_UNIX-garbage-20081113
+copy: diff-ms-AF_UNIX-garbage-inflight-20081113
+copy: diff-ms-__scm_destroy-recursion-20081113
 copy: diff-ms-devleak-dstdebug-20080504
 copy: diff-ms-rtnlcompat-20081010
 copy: diff-ms-splice-access-20080211
