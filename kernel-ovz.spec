@@ -1,4 +1,5 @@
 %set_verify_elf_skiplist /boot/*
+%set_strip_skiplist /boot/*
 # ------------- translate OVZ build system settings to RHEL -----------------
 %define buildup 1
 %define buildsmp 0
@@ -5370,7 +5371,7 @@ fi
 
 %if %includeovz
 cp vmlinux %buildroot/%image_install_path/vmlinux-$KernelVer
-chmod 400 %buildroot/%image_install_path/vmlinux-$KernelVer
+chmod 600 %buildroot/%image_install_path/vmlinux-$KernelVer
 %endif
 
 if [ "%flavour" == "kdump" -a "$Arch" != "s390" ]; then
