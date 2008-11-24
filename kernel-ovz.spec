@@ -1,5 +1,4 @@
-%set_verify_elf_method relaxed
-
+%set_verify_elf_skiplist /boot/*
 # ------------- translate OVZ build system settings to RHEL -----------------
 %define buildup 1
 %define buildsmp 0
