@@ -5618,36 +5618,12 @@ rm -f %buildroot/usr/include/asm*/irq.h
 ###
 
 %post
-if [ `uname -i` == "x86_64" -o `uname -i` == "i386" ]; then
-  if [ -f /etc/sysconfig/kernel ]; then
-    /bin/sed -i -e 's/^DEFAULTKERNEL=kernel-smp$/DEFAULTKERNEL=kernel/' /etc/sysconfig/kernel || exit $?
-  fi
-fi
-/sbin/new-kernel-pkg --package kernel --mkinitrd --depmod --install %KVERREL || exit $?
-if [ -x /sbin/weak-modules ]
-then
-    /sbin/weak-modules --add-kernel %KVERREL || exit $?
-fi
-exit 0
+%post_kernel_image %KVERREL
 
 %post debug
-if [ `uname -i` == "x86_64" -o `uname -i` == "i386" ]; then
-  if [ -f /etc/sysconfig/kernel ]; then
-    /bin/sed -i -e 's/^DEFAULTKERNEL=kernel-smp$/DEFAULTKERNEL=kernel/' /etc/sysconfig/kernel || exit $?
-  fi
-fi
-/sbin/new-kernel-pkg --package kernel-debug --mkinitrd --depmod --install %{KVERREL}debug || exit $?
-if [ -x /sbin/weak-modules ]
-then
-    /sbin/weak-modules --add-kernel %{KVERREL}debug || exit $?
-fi
-exit 0
+%post_kernel_image %{KVERREL}debug
 
 %post devel
-if [ -f /etc/sysconfig/kernel ]
-then
-    . /etc/sysconfig/kernel || exit $?
-fi
 if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
   pushd /usr/src/kernels/%KVERREL-%_target_cpu > /dev/null
   /usr/bin/find . -type f | while read f; do hardlink -c /usr/src/kernels/*FC*/$f $f ; done
@@ -5655,12 +5631,7 @@ if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
 fi
 
 %post smp
-/sbin/new-kernel-pkg --package kernel-smp --mkinitrd --depmod --install %{KVERREL}smp || exit $?
-if [ -x /sbin/weak-modules ]
-then
-    /sbin/weak-modules --add-kernel %{KVERREL}smp || exit $?
-fi
-exit 0
+%post_kernel_image %{KVERREL}smp
 
 %post smp-debug
 [ -x /sbin/vzkernel-install ] && /sbin/vzkernel-install --install --mkinitrd --depmod %KVERREL-smp-debug
@@ -5671,10 +5642,6 @@ exit 0
 exit 0
 
 %post smp-devel
-if [ -f /etc/sysconfig/kernel ]
-then
-    . /etc/sysconfig/kernel || exit $?
-fi
 if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
   pushd /usr/src/kernels/%KVERREL-smp-%_target_cpu > /dev/null
   /usr/bin/find . -type f | while read f; do hardlink -c /usr/src/kernels/*FC*/$f $f ; done
@@ -5682,32 +5649,12 @@ if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
 fi
 
 %post PAE
-if [ -f /etc/sysconfig/kernel ]; then
-    /bin/sed -i -e 's/^DEFAULTKERNEL=kernel-smp$/DEFAULTKERNEL=kernel-PAE/' /etc/sysconfig/kernel
-fi
-/sbin/new-kernel-pkg --package kernel-PAE --mkinitrd --depmod --install %{KVERREL}PAE || exit $?
-if [ -x /sbin/weak-modules ]
-then
-    /sbin/weak-modules --add-kernel %{KVERREL}PAE || exit $?
-fi
-exit 0
+%post_kernel_image %{KVERREL}PAE
 
 %post PAE-debug
-if [ -f /etc/sysconfig/kernel ]; then
-    /bin/sed -i -e 's/^DEFAULTKERNEL=kernel-smp$/DEFAULTKERNEL=kernel-PAE/' /etc/sysconfig/kernel
-fi
-/sbin/new-kernel-pkg --package kernel-PAE-debug --mkinitrd --depmod --install %{KVERREL}PAE-debug || exit $?
-if [ -x /sbin/weak-modules ]
-then
-    /sbin/weak-modules --add-kernel %{KVERREL}PAE-debug || exit $?
-fi
-exit 0
+%post_kernel_image %{KVERREL}PAE-debug
 
 %post PAE-devel
-if [ -f /etc/sysconfig/kernel ]
-then
-    . /etc/sysconfig/kernel || exit $?
-fi
 if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
   pushd /usr/src/kernels/%KVERREL-PAE-%_target_cpu > /dev/null
   /usr/bin/find . -type f | while read f; do hardlink -c /usr/src/kernels/*FC*/$f $f ; done
@@ -5715,32 +5662,12 @@ if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
 fi
 
 %post ent
-if [ -f /etc/sysconfig/kernel ]; then
-    /bin/sed -i -e 's/^DEFAULTKERNEL=kernel-smp$/DEFAULTKERNEL=kernel-ent/' /etc/sysconfig/kernel
-fi
-/sbin/new-kernel-pkg --package kernel-ent --mkinitrd --depmod --install %{KVERREL}ent || exit $?
-if [ -x /sbin/weak-modules ]
-then
-    /sbin/weak-modules --add-kernel %{KVERREL}ent || exit $?
-fi
-exit 0
+%post_kernel_image %{KVERREL}ent
 
 %post ent-debug
-if [ -f /etc/sysconfig/kernel ]; then
-    /bin/sed -i -e 's/^DEFAULTKERNEL=kernel-smp$/DEFAULTKERNEL=kernel-ent/' /etc/sysconfig/kernel
-fi
-/sbin/new-kernel-pkg --package kernel-ent-debug --mkinitrd --depmod --install %{KVERREL}ent-debug || exit $?
-if [ -x /sbin/weak-modules ]
-then
-    /sbin/weak-modules --add-kernel %{KVERREL}ent-debug || exit $?
-fi
-exit 0
+%post_kernel_image %{KVERREL}ent-debug
 
 %post ent-devel
-if [ -f /etc/sysconfig/kernel ]
-then
-    . /etc/sysconfig/kernel || exit $?
-fi
 if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
   pushd /usr/src/kernels/%KVERREL-ent-%_target_cpu > /dev/null
   /usr/bin/find . -type f | while read f; do hardlink -c /usr/src/kernels/*FC*/$f $f ; done
@@ -5748,31 +5675,18 @@ if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
 fi
 
 %post xen
-if [ `uname -i` == "x86_64" -o `uname -i` == "i386" ]; then
-  if [ -f /etc/sysconfig/kernel ]; then
-    /bin/sed -i -e 's/^DEFAULTKERNEL=kernel-xen[0U]/DEFAULTKERNEL=kernel-xen/' /etc/sysconfig/kernel || exit $?
-  fi
-fi
 if [ -e /proc/xen/xsd_kva -o ! -d /proc/xen ]; then
 	/sbin/new-kernel-pkg --package kernel-xen --mkinitrd --depmod --install --multiboot=/%image_install_path/xen.gz-%KVERREL %{KVERREL}xen || exit $?
 else
-	/sbin/new-kernel-pkg --package kernel-xen --mkinitrd --depmod --install %{KVERREL}xen || exit $?
+	%post_kernel_image %{KVERREL}xen || exit $?
 fi
 if [ -x /sbin/ldconfig ]
 then
     /sbin/ldconfig -X || exit $?
 fi
-if [ -x /sbin/weak-modules ]
-then
-    /sbin/weak-modules --add-kernel %{KVERREL}xen || exit $?
-fi
 exit 0
 
 %post xen-devel
-if [ -f /etc/sysconfig/kernel ]
-then
-    . /etc/sysconfig/kernel || exit $?
-fi
 if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
   pushd /usr/src/kernels/%KVERREL-xen-%_target_cpu > /dev/null
   /usr/bin/find . -type f | while read f; do hardlink -c /usr/src/kernels/*FC*/$f $f ; done
@@ -5780,18 +5694,9 @@ if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
 fi
 
 %post kdump
-/sbin/new-kernel-pkg --package kernel-kdump --mkinitrd --depmod --install %{KVERREL}kdump || exit $?
-if [ -x /sbin/weak-modules ]
-then
-    /sbin/weak-modules --add-kernel %{KVERREL}kdump || exit $?
-fi
-exit 0
+%post_kernel_image %{KVERREL}kdump
 
 %post kdump-devel
-if [ -f /etc/sysconfig/kernel ]
-then
-    . /etc/sysconfig/kernel || exit $?
-fi
 if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
   pushd /usr/src/kernels/%KVERREL-kdump-%_target_cpu > /dev/null
   /usr/bin/find . -type f | while read f; do hardlink -c /usr/src/kernels/*FC*/$f $f ; done
@@ -5799,72 +5704,34 @@ if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
 fi
 
 %preun
-/sbin/new-kernel-pkg --rminitrd --rmmoddep --remove %KVERREL || exit $?
-if [ -x /sbin/weak-modules ]
-then
-    /sbin/weak-modules --remove-kernel %KVERREL || exit $?
-fi
+%preun_kernel_image %KVERREL
 
 %preun debug
-/sbin/new-kernel-pkg --rminitrd --rmmoddep --remove %{KVERREL}debug || exit $?
-if [ -x /sbin/weak-modules ]
-then
-    /sbin/weak-modules --remove-kernel %{KVERREL}debug || exit $?
-fi
+%preun_kernel_image %{KVERREL}debug
 
 %preun smp
-/sbin/new-kernel-pkg --rminitrd --rmmoddep --remove %{KVERREL}smp || exit $?
-if [ -x /sbin/weak-modules ]
-then
-    /sbin/weak-modules --remove-kernel %{KVERREL}smp || exit $?
-fi
+%preun_kernel_image %{KVERREL}smp
 
 %preun smp-debug
-[ -x /sbin/vzkernel-install ] && /sbin/vzkernel-install --remove --rminitrd --rmmoddep %{KVERREL}smp-debug
-if [ -x /sbin/weak-modules ]
-then
-    /sbin/weak-modules --remove-kernel %{KVERREL}smp-debug || exit $?
-fi
+%preun_kernel_image %{KVERREL}smp-debug
 
 %preun PAE
-/sbin/new-kernel-pkg --rminitrd --rmmoddep --remove %{KVERREL}PAE || exit $?
-if [ -x /sbin/weak-modules ]
-then
-    /sbin/weak-modules --remove-kernel %{KVERREL}PAE || exit $?
-fi
+%preun_kernel_image %{KVERREL}PAE
 
 %preun PAE-debug
-/sbin/new-kernel-pkg --rminitrd --rmmoddep --remove %{KVERREL}PAE-debug || exit $?
-if [ -x /sbin/weak-modules ]
-then
-    /sbin/weak-modules --remove-kernel %{KVERREL}PAE-debug || exit $?
-fi
+%preun_kernel_image %{KVERREL}PAE-debug
 
 %preun ent
-/sbin/new-kernel-pkg --rminitrd --rmmoddep --remove %{KVERREL}ent || exit $?
-then
-    /sbin/weak-modules --remove-kernel %{KVERREL}ent || exit $?
-fi
+%preun_kernel_image %{KVERREL}ent
 
 %preun ent-debug
-/sbin/new-kernel-pkg --rminitrd --rmmoddep --remove %{KVERREL}ent-debug || exit $?
-then
-    /sbin/weak-modules --remove-kernel %{KVERREL}ent-debug || exit $?
-fi
+%preun_kernel_image %{KVERREL}ent-debug
 
 %preun kdump
-/sbin/new-kernel-pkg --rminitrd --rmmoddep --remove %{KVERREL}kdump || exit $?
-if [ -x /sbin/weak-modules ]
-then
-    /sbin/weak-modules --remove-kernel %{KVERREL}kdump || exit $?
-fi
+%preun_kernel_image %{KVERREL}kdump
 
 %preun xen
-/sbin/new-kernel-pkg --rminitrd --rmmoddep --remove %{KVERREL}xen || exit $?
-if [ -x /sbin/weak-modules ]
-then
-    /sbin/weak-modules --remove-kernel %{KVERREL}xen || exit $?
-fi
+%preun_kernel_image %{KVERREL}xen
 
 ###
 ### file lists
