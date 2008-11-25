@@ -58,8 +58,10 @@ static void __init handle_initrd(void)
 	current->flags |= PF_NOFREEZE;
 	pid = kernel_thread(do_linuxrc, "/linuxrc", SIGCHLD);
 	if (pid > 0) {
-		while (pid != sys_wait4(-1, NULL, 0, NULL))
+		while (pid != sys_wait4(-1, NULL, 0, NULL)) {
 			yield();
+			try_to_freeze();
+		}
 	}
 
 	/* move initrd to rootfs' /old */
