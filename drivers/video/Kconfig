@@ -1616,5 +1616,9 @@ if SYSFS
 	source "drivers/video/backlight/Kconfig"
 endif
 
+if FB
+	source "drivers/video/bootsplash/Kconfig"
+endif
+
 endmenu
 
