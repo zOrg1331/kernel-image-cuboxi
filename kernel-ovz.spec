@@ -52,7 +52,6 @@
 # ---------------------------------------------------------------------------
 
 %define _unpackaged_files_terminate_build 0
-Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 
 # What parts do we want to build?  We must build at least one kernel.
 # These are the kernels that are built IF the architecture allows it.
@@ -146,13 +145,13 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 # that the kernel isn't the stock distribution kernel, for example,
 # by setting the define to ".local" or ".bz123456"
 #
-%define altrelease alt1
-%define buildid .%ovzver.%ovzrel.%altrelease
+%define buildid .%ovzver.%ovzrel
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
 %define rpmversion 2.6.%sublevel
-%define release 92.1.13%{?dist}%{?buildid}
+%define altrelease alt1
+%define release %altrelease.92.1.13%{?dist}%{?buildid}
 %define signmodules 0
 %define xen_hv_cset 15502
 %define xen_abi_ver 3.1
@@ -401,8 +400,10 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %define kernel_prereq  fileutils, module-init-tools, initscripts >= 5.83, mkinitrd >= 3.5.5
 %endif
 
-Name: ovzkernel
-Group: System Environment/Kernel
+Packager: Kernel Maintainers Team <kernel@packages.altlinux.org>
+Name: kernel-image-ovz-rhel
+Group: System/Kernel and hardware
+Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 License: GPLv2
 Url: http://www.kernel.org/
 Version: %rpmversion
@@ -6069,3 +6070,7 @@ This is required to use SystemTap with %name-kdump-%KVERREL.
 %dir %_datadir/doc/kernel-doc-%kversion/Documentation
 %dir %_datadir/doc/kernel-doc-%kversion
 %endif
+
+%changelog
+* Wed Nov 26 2008 Anton Protopopov <aspsk@altlinux.org> 2.6.18-92.1.13.el5.028stab059.6.alt1
+- Build for ALT
