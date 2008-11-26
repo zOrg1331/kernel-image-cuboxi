@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.25
-Release: alt8.M41.3
+Release: alt8.M41.4
 epoch: 1
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -435,6 +435,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/build
 %exclude %modules_dir/kernel/sound
 %exclude %modules_dir/kernel/drivers/media/
+%exclude %modules_dir/kernel/drivers/char/drm/
 # OSS drivers
 %exclude %modules_dir/kernel/sound/oss
 
@@ -465,6 +466,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Wed Nov 26 2008 Michail Yakushin <silicium@altlinux.ru> 1:2.6.25-alt8.M41.4
+- export symbol usb_kill_urb
+- exclude DRM from kernel-image package
+
 * Fri Nov 21 2008 Michail Yakushin <silicium@altlinux.ru> 1:2.6.25-alt8.M41.3
 - fix provedes in V4L subpackage 
 
