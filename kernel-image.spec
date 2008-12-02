@@ -466,7 +466,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
-* Sat Nov 29 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt4
+* Tue Dec 02 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt4
 - Add elantech touchpad dirver
 - Add missing evms-nodm patch
 - Move KVM modules to separated package 
@@ -475,6 +475,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 	- add Nikon D300
 	- add Kyocera / Contax SL300R T*
 	- add Mio moov 330 gps
+- Update r8169 driver (thank to vsu@)
 - config changes:
     + Builded as module, what before was compiled in:
     	- IKCONFIG - /proc/config.gz  - How need it, can load it.
@@ -493,7 +494,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
     	- INPUT_WISTRON_BTNS - x86 Wistron laptop button interface -
     	- HP_WATCHDOG - HP Proliant watchdog driver
     	- SCx200_WDT - National Semiconductor SCx200 Watchdog
-    	- RDC321X_WDT  - RDC R-321x SoC watchdog
     	- VIDEO_SAA7134_DVB -  DVB on SAA7134 support
     	- RADIO_CADET, RADIO_RTRACK, RADIO_RTRACK2,CONFIG_RADIO_AZTECH,
     	 RADIO_GEMTEK,RADIO_GEMTEK_PCI,RADIO_MAXIRADIO, RADIO_MAESTRO, RADIO_SF16FMI, CONFIG_RADIO_SF16FMR2,
@@ -503,7 +503,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
     	- USB_SERIAL_DEBUG - USB serial debug support
     	- USB_MIDI_GADGET -
     	- BACKTRACE_SELF_TEST, LKDTM, DEBUG_NX_TEST  - for debug perpouse
-
+    
 * Thu Nov 13 2008 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt3
 - 2.6.27.7
 - Add custom DSDT support.
