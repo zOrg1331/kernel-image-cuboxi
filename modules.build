@@ -20,4 +20,6 @@ eeepc
 kvm
 drbd8
 svgalib_helper
+gnbd
+gfs
 rt2860
