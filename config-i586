@@ -1,7 +1,5 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.25-std-def-alt8.M41.2
-# Wed Nov 19 09:23:59 2008
 #
 # CONFIG_64BIT is not set
 CONFIG_X86_32=y
@@ -1567,7 +1565,7 @@ CONFIG_PATA_VIA=m
 CONFIG_PATA_WINBOND=m
 CONFIG_PATA_WINBOND_VLB=m
 CONFIG_MD=y
-CONFIG_BLK_DEV_MD=m
+CONFIG_BLK_DEV_MD=y
 CONFIG_MD_LINEAR=m
 CONFIG_MD_RAID0=m
 CONFIG_MD_RAID1=m
