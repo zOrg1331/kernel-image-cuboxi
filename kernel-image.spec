@@ -469,6 +469,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 * Wed Nov 26 2008 Michail Yakushin <silicium@altlinux.ru> 1:2.6.25-alt8.M41.4
 - export symbol usb_kill_urb
 - exclude DRM from kernel-image package
+- fix boot from MD
 
 * Fri Nov 21 2008 Michail Yakushin <silicium@altlinux.ru> 1:2.6.25-alt8.M41.3
 - fix provedes in V4L subpackage 
