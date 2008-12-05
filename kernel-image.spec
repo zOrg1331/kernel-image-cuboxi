@@ -1,6 +1,6 @@
 Name: kernel-image-std-srv
 Version: 2.6.25
-Release: alt8.M41.3
+Release: alt8.M41.4
 epoch: 1
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -470,6 +470,12 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Wed Nov 26 2008 Michail Yakushin <silicium@altlinux.ru> 1:2.6.25-alt8.M41.4
+- export symbol usb_kill_urb
+- exclude DRM from kernel-image package
+- fix boot from MD
+- add elantech touchpad driver(#17991)
+
 * Fri Nov 21 2008 Michail Yakushin <silicium@altlinux.ru> 1:2.6.25-alt8.M41.3
 - fix provedes in V4L subpackage 
 
