@@ -42,7 +42,7 @@ void usb_init_urb(struct urb *urb)
 		INIT_LIST_HEAD(&urb->anchor_list);
 	}
 }
-EXPORT_SYMBOL_GPL(usb_init_urb);
+EXPORT_SYMBOL(usb_init_urb);
 
 /**
  * usb_alloc_urb - creates a new urb for a USB driver to use
