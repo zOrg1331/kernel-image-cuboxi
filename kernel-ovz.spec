@@ -394,11 +394,7 @@
 # Packages that need to be installed before the kernel is, because the %post
 # scripts use them.
 #
-%if !%includeovz
-%define kernel_prereq  fileutils, module-init-tools, initscripts >= 8.11.1-1, mkinitrd >= 4.2.21-1
-%else
-%define kernel_prereq  fileutils, module-init-tools, initscripts >= 5.83, mkinitrd >= 3.5.5
-%endif
+%define kernel_prereq  coreutils, module-init-tools, mkinitrd
 
 Packager: Kernel Maintainers Team <kernel@packages.altlinux.org>
 Name: kernel-image-ovz-rhel
@@ -421,9 +417,16 @@ Provides: kernel-drm = 4.3.0
 Provides: kernel-%_target_cpu = %rpmversion-%release
 Provides: vzkernel = %KVERREL
 Provides: vzquotamod
+BuildRequires(pre): rpm-build-kernel
 PreReq: %kernel_prereq
 Conflicts: %kernel_dot_org_conflicts
 Conflicts: %package_conflicts
+
+Requires: bootloader-utils >= 0.3-alt1
+Requires: module-init-tools >= 3.1
+Requires: mkinitrd >= 1:2.9.9-alt1
+Requires: startup >= 0.8.3-alt1
+
 # We can't let RPM do the dependencies automatic because it'll then pick up
 # a correct but undesirable perl dependency from the module headers which
 # isn't required for the kernel proper to function
@@ -433,7 +436,7 @@ AutoProv: yes
 #
 # List the packages used during the kernel build
 #
-BuildPreReq: module-init-tools, patch >= 2.5.4, bash >= 2.03, sh-utils, tar
+BuildPreReq: module-init-tools, patch >= 2.5.4, bash >= 2.03, coreutils, tar
 BuildPreReq: bzip2, findutils, gzip, m4, perl, make >= 3.78, diffutils
 %if %signmodules
 BuildPreReq: gnupg
@@ -2601,7 +2604,7 @@ input and output, etc.
 
 %package devel
 Summary: Development package for building kernel modules to match the kernel
-Group: System Environment/Kernel
+Group: System/Kernel and hardware
 AutoReqProv: no
 Provides: kernel-devel-%_target_cpu = %rpmversion-%release
 PreReq: /usr/bin/find
@@ -6071,6 +6074,10 @@ This is required to use SystemTap with %name-kdump-%KVERREL.
 %endif
 
 %changelog
+* Sun Dec 07 2008 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt1.92.1.13.el5.028stab059.6
+- Build with more or less adecuate konfig
+- Build with sisyphus check
+
 * Wed Nov 26 2008 Anton Protopopov <aspsk@altlinux.org> 2.6.18-92.1.13.el5.028stab059.6.alt1
 - Build for ALT
 
