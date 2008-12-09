@@ -261,7 +261,7 @@
 # Per-arch tweaks
 
 %ifarch %all_x86
-%define all_arch_configs kernel-%kversion-i?86*.config.ovz
+%define all_arch_configs kernel-%kversion-i686.config.ovz
 %define image_install_path boot
 %define signmodules 0
 %define hdrarch i386
