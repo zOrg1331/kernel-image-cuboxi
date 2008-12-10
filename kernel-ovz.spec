@@ -80,22 +80,11 @@
 %define with_doc       %{?_without_doc:       0} %{?!_without_doc:       1}
 # kernel-headers
 %define with_headers   %{?_without_headers:   0} %{?!_without_headers:   1}
-# kernel-debuginfo
-%define with_debuginfo %{?_without_debuginfo: 0} %{!?_without_debuginfo: 1}
 # openafs module
 %define with_openafs   %{?_without_openafs:   0} %{?!_without_openafs:   1}
 
 # Control whether we perform a compat. check against published ABI.
 %define with_kabichk   %{?_without_kabichk:   0} %{?!_without_kabichk:   1}
-
-# Additional options for user-friendly one-off kernel building:
-#
-# Only build the base kernel (--with baseonly):
-%define with_baseonly  %{?_with_baseonly:     1} %{?!_with_baseonly:     0}
-# Only build the smp kernel (--with smponly):
-%define with_smponly   %{?_with_smponly:      1} %{?!_with_smponly:      0}
-# Only build the xen kernel (--with xenonly):
-%define with_xenonly   %{?_with_xenonly:      1} %{?!_with_xenonly:      0}
 
 # Whether to apply the Xen patches -- leave this enabled.
 %define includexen 1
@@ -103,29 +92,8 @@
 
 %define openafs_version 1.4.6
 
-# Set debugbuildsenabled to 1 for production (build separate debug kernels)
-#  and 0 for rawhide (all kernels are debug kernels).
-# See also 'make debug' and 'make release'.
-%define debugbuildsenabled 1
-
-%define _enable_debug_packages 0
-%global __debug_package 0
-
-# define a flavour (default is empty)
+# define a flavour
 %define flavour %nil
-%if %with_pae
-%define flavour PAE
-%endif
-%if %with_ent
-%define flavour ent
-%endif
-%if %with_smp
-%define flavour smp
-%endif
-%if %with_kdump
-%define flavour kdump
-%endif
-
 
 # Versions of various parts
 
@@ -152,7 +120,6 @@
 %define rpmversion 2.6.%sublevel
 %define altrelease alt1
 %define release %altrelease.92.1.13%{?dist}%{?buildid}
-%define signmodules 0
 %define xen_hv_cset 15502
 %define xen_abi_ver 3.1
 %define make_target bzImage
@@ -164,110 +131,13 @@
 %define KVERREL %PACKAGE_VERSION-%PACKAGE_RELEASE
 %define hdrarch %_target_cpu
 
-%if !%debugbuildsenabled
-%define with_debug 0
-%endif
-
-%if !%with_debuginfo
-%define _enable_debug_packages 0
-%endif
-%define debuginfodir /usr/lib/debug
-
-# if requested, only build base kernel
-%if %with_baseonly
-%define with_smp 0
-%define with_pae 0
-%define with_xen 0
-%define with_kdump 0
-%define with_debug 0
-%endif
-
-# if requested, only build smp kernel
-%if %with_smponly
-%define with_up 0
-%define with_pae 0
-%define with_xen 0
-%define with_kdump 0
-%define with_debug 0
-%endif
-
-# if requested, only build xen kernel
-%if %with_xenonly
-%define with_up 0
-%define with_smp 0
-%define with_pae 0
-%define with_kdump 0
-%define with_debug 0
-%endif
-
-# groups of related archs
-#OLPC stuff
-%if 0%{?olpc}
-%define with_xen 0
-%endif
-# Don't build 586 kernels for RHEL builds.
-%if 0%{?rhel}
-%define all_x86 i386 i686
-# we differ here b/c of the reloc patches
-%ifarch i686 x86_64
-%define with_kdump 0
-%endif
-%else
-%define all_x86 i386 i586 i686
-%endif
-
 # Overrides for generic default options
 
-# Only ppc and sparc64 need separate smp kernels
-%ifnarch ppc sparc64
-%define with_smp 0
-%endif
-
-# pae is only valid on i686
-%ifnarch i686
-%define with_pae 0
-%define with_ent 0
-%endif
-
-# xen only builds on i686, x86_64 and ia64
-%ifnarch i686 x86_64 ia64
-%define with_xen 0
-%endif
-
-# only build kernel-kdump on i686, x86_64 and ppc64
-%ifnarch i686 x86_64 ppc64 ppc64iseries s390x
-%define with_kdump 0
-%endif
-
-# only package docs noarch
-%ifnarch noarch
-%define with_doc 0
-%endif
-
-# no need to build headers again for these arches,
-# they can just use i386 and ppc64 headers
-%ifarch i586 i686 ppc64iseries
-%define with_headers 0
-%endif
-
-# obviously, don't build noarch kernels or headers
-%ifarch noarch
-%define with_up 0
-%define with_headers 0
-%define with_debug 0
-%define all_arch_configs kernel-%kversion-*.config
-%endif
-
 # Per-arch tweaks
-
-%ifarch %all_x86
+%ifarch i686
 %define all_arch_configs kernel-%kversion-i686.config.ovz
 %define image_install_path boot
-%define signmodules 0
 %define hdrarch i386
-%endif
-
-%ifarch i686
 # we build always xen i686 HV with pae
 %define xen_flags verbose=y crash_debug=y pae=y XEN_VENDORVERSION=-%PACKAGE_RELEASE
 %endif
@@ -275,87 +145,7 @@
 %ifarch x86_64
 %define all_arch_configs kernel-%kversion-x86_64*.config.ovz
 %define image_install_path boot
-%define signmodules 0
 %define xen_flags verbose=y crash_debug=y max_phys_cpus=64 XEN_VENDORVERSION=-%PACKAGE_RELEASE
-%endif
-
-%ifarch ppc64 ppc64iseries
-%define all_arch_configs kernel-%kversion-ppc64*.config.ovz
-%define image_install_path boot
-%define signmodules 0
-%define make_target vmlinux
-%define kernel_image vmlinux
-%define kernel_image_elf 1
-%define hdrarch powerpc
-%endif
-
-%ifarch s390
-%define all_arch_configs kernel-%kversion-s390*.config.ovz
-%define image_install_path boot
-%define make_target image
-%define kernel_image arch/s390/boot/image
-%endif
-
-%ifarch s390x
-%define all_arch_configs kernel-%kversion-s390x*.config.ovz
-%define image_install_path boot
-%define make_target image
-%define kernel_image arch/s390/boot/image
-%define hdrarch s390
-%endif
-
-%ifarch sparc
-%define all_arch_configs kernel-%kversion-sparc.config.ovz
-%define make_target image
-%define kernel_image image
-%endif
-
-%ifarch sparc64
-%define all_arch_configs kernel-%kversion-sparc64*.config.ovz
-%define make_target image
-%define kernel_image image
-%endif
-
-%ifarch ppc
-%define all_arch_configs kernel-%kversion-ppc{-,.}*config.ovz
-%define image_install_path boot
-%define make_target vmlinux
-%define kernel_image vmlinux
-%define kernel_image_elf 1
-%define hdrarch powerpc
-%endif
-
-%ifarch ia64
-%define all_arch_configs kernel-%kversion-ia64*.config.ovz
-%define image_install_path boot/efi/EFI/redhat
-%define signmodules 0
-%define make_target compressed
-%define kernel_image vmlinux.gz
-# ia64 xen HV doesn't build with debug=y at the moment
-%define xen_flags verbose=y crash_debug=y XEN_VENDORVERSION=-%PACKAGE_RELEASE
-%define xen_target compressed
-%define xen_image vmlinux.gz
-%endif
-
-# To temporarily exclude an architecture from being built, add it to
-# %%nobuildarches. Do _NOT_ use the ExclusiveArch: line, because if we
-# don't build kernel-headers then the new build system will no longer let
-# us use the previous build of that package -- it'll just be completely AWOL.
-# Which is a BadThing(tm).
-
-# We don't build a kernel on i386 or s390x or ppc -- we only do kernel-headers there.
-%define nobuildarches i386 s390 ppc
-
-%ifarch %nobuildarches
-%define with_up 0
-%define with_smp 0
-%define with_pae 0
-%define with_ent 0
-%define with_xen 0
-%define with_kdump 0
-%define with_debug 0
-%define with_debuginfo 0
-%define _enable_debug_packages 0
 %endif
 
 #
@@ -367,11 +157,7 @@
 # First the general kernel 2.6 required versions as per
 # Documentation/Changes
 #
-%if !%includeovz
-%define kernel_dot_org_conflicts  ppp < 2.4.3-3, isdn4k-utils < 3.2-32, nfs-utils < 1.0.7-12, e2fsprogs < 1.37-4, util-linux < 2.12, jfsutils < 1.1.7-2, reiserfs-utils < 3.6.19-2, xfsprogs < 2.6.13-4, procps < 3.2.5-6.3, oprofile < 0.9.1-2
-%else
 %define kernel_dot_org_conflicts  ppp <= 2.3.15, pcmcia-cs <= 3.1.20, isdn4k-utils <= 3.0, mount < 2.10r-5, nfs-utils < 1.0.3, e2fsprogs < 1.29, util-linux < 2.10, jfsutils < 1.0.14, reiserfsprogs < 3.6.3, xfsprogs < 2.1.0, procps < 2.0.9, oprofile < 0.5.3
-%endif
 
 #
 # Then a series of requirements that are distribution specific, either
@@ -379,22 +165,7 @@
 # problems with the newer kernel or lack certain things that make
 # integration in the distro harder than needed.
 #
-%if !%includeovz
-%define package_conflicts initscripts < 7.23, udev < 063-6, iptables < 1.3.2-1, ipw2200-firmware < 2.4, selinux-policy-targeted < 1.25.3-14
-%else
 %define package_conflicts cipe < 1.4.5, tux < 2.1.0, kudzu <= 0.92, dev < 3.2-7, iptables < 1.2.5-3, bcm5820 < 1.81, nvidia-rh72 <= 1.0
-%endif
-
-#
-# The ld.so.conf.d file we install uses syntax older ldconfig's don't grok.
-#
-%define xen_conflicts glibc < 2.3.5-1, xen < 3.0.1
-
-#
-# Packages that need to be installed before the kernel is, because the %post
-# scripts use them.
-#
-%define kernel_prereq  coreutils, module-init-tools, mkinitrd
 
 Packager: Kernel Maintainers Team <kernel@packages.altlinux.org>
 Name: kernel-image-ovz-rhel
@@ -407,9 +178,7 @@ Release: %release
 %if 0%{?olpc}
 ExclusiveArch: i386 i586
 %else
-# DO NOT CHANGE THIS LINE TO TEMPORARILY EXCLUDE AN ARCHITECTURE BUILD.
-# SET %nobuildarches (ABOVE) INSTEAD
-ExclusiveArch: noarch %all_x86 x86_64 ppc ppc64 ia64 sparc sparc64 s390 s390x
+ExclusiveArch: i686 x86_64
 %endif
 ExclusiveOS: Linux
 Provides: kernel = %version
@@ -418,7 +187,7 @@ Provides: kernel-%_target_cpu = %rpmversion-%release
 Provides: vzkernel = %KVERREL
 Provides: vzquotamod
 BuildRequires(pre): rpm-build-kernel
-PreReq: %kernel_prereq
+PreReq: coreutils, module-init-tools, mkinitrd
 Conflicts: %kernel_dot_org_conflicts
 Conflicts: %package_conflicts
 
@@ -438,9 +207,6 @@ AutoProv: yes
 #
 BuildPreReq: module-init-tools, patch >= 2.5.4, bash >= 2.03, coreutils, tar
 BuildPreReq: bzip2, findutils, gzip, m4, perl, make >= 3.78, diffutils
-%if %signmodules
-BuildPreReq: gnupg
-%endif
 BuildRequires: gcc >= 3.4.2, binutils >= 2.12
 %if %with_headers
 BuildRequires: unifdef
@@ -2641,276 +2407,7 @@ header files define structures and constants that are needed for
 building most standard programs and are also needed for rebuilding the
 glibc package.
 
-%package PAE
-Summary: The Linux kernel compiled for PAE capable machines
-
-Group: System Environment/Kernel
-Provides: kernel = %version
-Provides: kernel-drm = 4.3.0
-Provides: kernel-%_target_cpu = %rpmversion-%{release}PAE
-Provides: vzkernel = %KVERREL
-Provides: vzquotamod
-PreReq: %kernel_prereq
-Conflicts: %kernel_dot_org_conflicts
-Conflicts: %package_conflicts
-Obsoletes: kernel-smp < 2.6.17
-# We can't let RPM do the dependencies automatic because it'll then pick up
-# a correct but undesirable perl dependency from the module headers which
-# isn't required for the kernel proper to function
-AutoReq: no
-AutoProv: yes
-
-%description PAE
-This package includes a version of the Linux kernel with support for up to
-64GB of high memory. It requires a CPU with Physical Address Extensions (PAE).
-The non-PAE kernel can only address up to 4GB of memory.
-Install the kernel-PAE package if your machine has more than 4GB of memory.
-
-%package PAE-devel
-Summary: Development package for building kernel modules to match the PAE kernel
-Group: System Environment/Kernel
-Provides: kernel-PAE-devel-%_target_cpu = %rpmversion-%release
-Provides: kernel-devel-%_target_cpu = %rpmversion-%{release}PAE
-Provides: kernel-devel = %rpmversion-%{release}PAE
-AutoReqProv: no
-PreReq: /usr/bin/find
-
-%description PAE-devel
-This package provides kernel headers and makefiles sufficient to build modules
-against the PAE kernel package.
-
-%package ent
-Summary: The Linux kernel compiled for huge mem capable machines
-
-Group: System Environment/Kernel
-Provides: kernel = %version
-Provides: kernel-drm = 4.3.0
-Provides: kernel-%_target_cpu = %rpmversion-%{release}ent
-Provides: vzkernel = %KVERREL
-Provides: vzquotamod
-PreReq: %kernel_prereq
-Conflicts: %kernel_dot_org_conflicts
-Conflicts: %package_conflicts
-Obsoletes: kernel-smp < 2.6.17
-# We can't let RPM do the dependencies automatic because it'll then pick up
-# a correct but undesirable perl dependency from the module headers which
-# isn't required for the kernel proper to function
-AutoReq: no
-AutoProv: yes
-
-%description ent
-This package includes a version of the Linux kernel with support for up to
-64GB of high memory. It requires a CPU with Physical Address Extensions (PAE)
-and works using 4GB split feature which increases normal zone size.
-Install the kernel-ent package if your machine has more than 8GB of memory.
-
-%package ent-devel
-Summary: Development package for building kernel modules to match the ent kernel
-Group: System Environment/Kernel
-Provides: kernel-ent-devel-%_target_cpu = %rpmversion-%release
-Provides: kernel-devel-%_target_cpu = %rpmversion-%{release}ent
-Provides: kernel-devel = %rpmversion-%{release}ent
-AutoReqProv: no
-PreReq: /usr/bin/find
-
-%description ent-devel
-This package provides kernel headers and makefiles sufficient to build modules
-against the ent kernel package.
-
-%package smp
-Summary: The Linux kernel compiled for SMP machines
-
-Group: System Environment/Kernel
-Provides: kernel = %version
-Provides: kernel-drm = 4.3.0
-Provides: kernel-%_target_cpu = %rpmversion-%{release}smp
-Provides: vzkernel = %KVERREL
-Provides: vzquotamod
-PreReq: %kernel_prereq
-Conflicts: %kernel_dot_org_conflicts
-Conflicts: %package_conflicts
-# upto and including kernel 2.4.9 rpms, the 4Gb+ kernel was called kernel-enterprise
-# now that the smp kernel offers this capability, obsolete the old kernel
-Obsoletes: kernel-enterprise < 2.4.10
-# We can't let RPM do the dependencies automatic because it'll then pick up
-# a correct but undesirable perl dependency from the module headers which
-# isn't required for the kernel proper to function
-AutoReq: no
-AutoProv: yes
-
-%description smp
-This package includes a SMP version of the Linux kernel. It is
-required only on machines with two or more CPUs as well as machines with
-hyperthreading technology.
-
-Install the kernel-smp package if your machine uses two or more CPUs.
-
-%package smp-devel
-Summary: Development package for building kernel modules to match the SMP kernel
-Group: System Environment/Kernel
-Provides: kernel-smp-devel-%_target_cpu = %rpmversion-%release
-Provides: kernel-devel-%_target_cpu = %rpmversion-%{release}smp
-Provides: kernel-devel = %rpmversion-%{release}smp
-AutoReqProv: no
-PreReq: /usr/bin/find
-
-%description smp-devel
-This package provides kernel headers and makefiles sufficient to build modules
-against the SMP kernel package.
-
-%package xen
-Summary: The Linux kernel compiled for Xen VM operations
-
-Group: System Environment/Kernel
-Provides: kernel = %version
-Provides: kernel-%_target_cpu = %rpmversion-%{release}xen
-Provides: xen-hypervisor-abi = %xen_abi_ver
-Provides: vzkernel = %KVERREL
-Provides: vzquotamod
-PreReq: %kernel_prereq
-Conflicts: %kernel_dot_org_conflicts
-Conflicts: %package_conflicts
-Conflicts: %xen_conflicts
-# We can't let RPM do the dependencies automatic because it'll then pick up
-# a correct but undesirable perl dependency from the module headers which
-# isn't required for the kernel proper to function
-AutoReq: no
-AutoProv: yes
-
-%description xen
-This package includes a version of the Linux kernel which
-runs in Xen VM. It works for both priviledged and unpriviledged guests.
-
-%package xen-devel
-Summary: Development package for building kernel modules to match the kernel
-Group: System Environment/Kernel
-AutoReqProv: no
-Provides: kernel-xen-devel-%_target_cpu = %rpmversion-%release
-Provides: kernel-devel-%_target_cpu = %rpmversion-%{release}xen
-Provides: kernel-devel = %rpmversion-%{release}xen
-PreReq: /usr/bin/find
-
-%description xen-devel
-This package provides kernel headers and makefiles sufficient to build modules
-against the kernel package.
-
-%package kdump
-Summary: A minimal Linux kernel compiled for kernel crash dumps
-
-Group: System Environment/Kernel
-Provides: kernel = %version
-Provides: kernel-drm = 4.3.0
-Provides: kernel-%_target_cpu = %rpmversion-%{release}kdump
-PreReq: %kernel_prereq
-Conflicts: %kernel_dot_org_conflicts
-Conflicts: %package_conflicts
-# We can't let RPM do the dependencies automatic because it'll then pick up
-# a correct but undesirable perl dependency from the module headers which
-# isn't required for the kernel proper to function
-AutoReq: no
-AutoProv: yes
-
-%description kdump
-This package includes a kdump version of the Linux kernel. It is
-required only on machines which will use the kexec-based kernel crash dump
-mechanism.
-
-%package kdump-devel
-Summary: Development package for building kernel modules to match the kdump kernel
-Group: System Environment/Kernel
-Provides: kernel-kdump-devel-%_target_cpu = %rpmversion-%release
-Provides: kernel-devel-%_target_cpu = %rpmversion-%{release}kdump
-Provides: kernel-devel = %rpmversion-%{release}kdump
-AutoReqProv: no
-PreReq: /usr/bin/find
-
-%description kdump-devel
-This package provides kernel headers and makefiles sufficient to build modules
-against the kdump kernel package.
-
-%package debug
-Summary: The Linux kernel compiled with debug config
-
-Group: System Environment/Kernel
-Provides: vzkernel
-Provides: vzquotamod
-PreReq: %kernel_prereq
-Conflicts: %kernel_dot_org_conflicts
-Conflicts: %package_conflicts
-AutoReq: no
-AutoProv: yes
-
-%description debug
-Debug kernel
-
-%package PAE-debug
-Summary: The Linux PAE kernel compiled with debug config
-
-Group: System Environment/Kernel
-Provides: vzkernel
-Provides: vzquotamod
-PreReq: %kernel_prereq
-Conflicts: %kernel_dot_org_conflicts
-Conflicts: %package_conflicts
-AutoReq: no
-AutoProv: yes
-
-%description PAE-debug
-Debug PAE kernel
-
-%package ent-debug
-Summary: The Linux ent kernel compiled with debug config
-
-Group: System Environment/Kernel
-Provides: vzkernel
-Provides: vzquotamod
-PreReq: %kernel_prereq
-Conflicts: %kernel_dot_org_conflicts
-Conflicts: %package_conflicts
-AutoReq: no
-AutoProv: yes
-
-%description ent-debug
-Debug ent kernel
-
-%package smp-debug
-Summary: The Linux smp kernel compiled with debug config
-
-Group: System Environment/Kernel
-Provides: vzkernel
-Provides: vzquotamod
-PreReq: %kernel_prereq
-Conflicts: %kernel_dot_org_conflicts
-Conflicts: %package_conflicts
-AutoReq: no
-AutoProv: yes
-
-%description smp-debug
-Debug smp kernel
-
 %prep
-# do a few sanity-checks for --with *only builds
-%if %with_baseonly
-%if !%with_up
-echo "Cannot build --with baseonly, up build is disabled"
-exit 1
-%endif
-%endif
-
-%if %with_smponly
-%if !%with_smp
-echo "Cannot build --with smponly, smp build is disabled"
-exit 1
-%endif
-%endif
-
-%if %with_xenonly
-%if !%with_xen
-echo "Cannot build --with xenonly, xen build is disabled"
-exit 1
-%endif
-%endif
-
 # First we unpack the kernel tarball.
 # If this isn't the first make prep, we use links to the existing clean tarball
 # which speeds things up quite a bit.
@@ -5093,26 +4590,6 @@ for cfg in %all_arch_configs; do
   cp -f %_sourcedir/$cfg .
 done
 
-#if a rhel kernel, apply the rhel config options
-%if !%includeovz
-%if 0%{?rhel}
-  for i in %all_arch_configs
-  do
-    mv $i $i.tmp
-    %_sourcedir/merge.pl %_sourcedir/config-rhel-generic $i.tmp > $i
-    rm $i.tmp
-  done
-%ifarch ppc64 noarch
-  #CONFIG_FB_MATROX is disabled for rhel generic but needed for ppc64 rhel
-  for i in kernel-%kversion-ppc64.config
-  do
-    mv $i $i.tmp
-    %_sourcedir/merge.pl %_sourcedir/config-rhel-ppc64-generic $i.tmp > $i
-    rm $i.tmp
-  done
-%endif
-%endif
-%endif
 #if a olpc kernel, apply the olpc config options
 %if 0%{?olpc}
   for i in %all_arch_configs
@@ -5252,21 +4729,6 @@ cd xen
 ### build
 ###
 %build
-#
-# Create gpg keys for signing the modules
-#
-
-%if %signmodules
-gpg --homedir . --batch --gen-key %SOURCE11
-gpg --homedir . --export --keyring ./kernel.pub Red > extract.pub
-make linux-%kversion.%_target_cpu/scripts/bin2c
-linux-%kversion.%_target_cpu/scripts/bin2c ksign_def_public_key __initdata < extract.pub > linux-%kversion.%_target_cpu/crypto/signature/key.h
-%endif
-
-###
-# DO it...
-###
-
 # prepare directories
 
 cd linux-%kversion.%_target_cpu
@@ -5318,34 +4780,6 @@ echo "$Arch" > .buildarch
 # This macro is used by %%install, so we must redefine it before that.
 %define debug_package %nil
 
-%if %with_debuginfo
-%ifnarch noarch
-%global __debug_package 1
-%package debuginfo-common
-Summary: Kernel source files used by %name-debuginfo packages
-Group: Development/Debug
-Provides: %name-debuginfo-common-%_target_cpu = %KVERREL
-
-%description debuginfo-common
-This package is required by %name-debuginfo subpackages.
-It provides the kernel source files common to all builds.
-
-%files debuginfo-common
-/usr/src/debug/%name-%version/linux-%kversion.%_target_cpu
-%if %includexen
-%if %with_xen
-/usr/src/debug/%name-%version/xen
-%endif
-%endif
-%dir /usr/src/debug
-%dir %debuginfodir
-%dir %debuginfodir/%image_install_path
-%dir %debuginfodir/lib
-%dir %debuginfodir/lib/modules
-%dir %debuginfodir/usr/src/kernels
-%endif
-%endif
-
 ###
 ### install
 ###
@@ -5364,10 +4798,6 @@ else
 	DevelLink=
 fi
 
-%if %with_debuginfo
-mkdir -p %buildroot%debuginfodir/boot
-mkdir -p %buildroot%debuginfodir/%image_install_path
-%endif
 mkdir -p %buildroot/%image_install_path
 install -m 644 .config %buildroot/boot/config-$KernelVer
 install -m 644 System.map %buildroot/boot/System.map-$KernelVer
@@ -5496,28 +4926,8 @@ popd
 #
 # save the vmlinux file for kernel debugging into the kernel-debuginfo rpm
 #
-%if %with_debuginfo
-mkdir -p %buildroot%debuginfodir/lib/modules/$KernelVer
-cp vmlinux %buildroot%debuginfodir/lib/modules/$KernelVer
-%endif
 
 find %buildroot/lib/modules/$KernelVer -name "*.ko" -type f >modnames
-
-# gpg sign the modules
-%if %signmodules
-gcc -o scripts/modsign/mod-extract scripts/modsign/mod-extract.c -Wall
-KEYFLAGS="--no-default-keyring --homedir .."
-KEYFLAGS="$KEYFLAGS --secret-keyring ../kernel.sec"
-KEYFLAGS="$KEYFLAGS --keyring ../kernel.pub"
-export KEYFLAGS
-
-for i in `cat modnames`
-do
-  sh ./scripts/modsign/modsign.sh $i Red
-  mv -f $i.signed $i
-done
-unset KEYFLAGS
-%endif
 
 # mark modules executable so that strip-to-file can strip them
 for i in `cat modnames`
@@ -5559,13 +4969,11 @@ ln -sf ../../..$DevelDir %buildroot/lib/modules/$KernelVer/build
 #	popd > /dev/null
 
 # EOoldBuildKernel
-%ifnarch %nobuildarches noarch
 mkdir -p %buildroot/etc/modprobe.d
 cat > %buildroot/etc/modprobe.d/blacklist-firewire << \EOF
 # Comment out the next line to enable the firewire drivers
 blacklist firewire-ohci
 EOF
-%endif
 
 %if %includexen
 %if %with_xen
@@ -5624,9 +5032,6 @@ rm -f %buildroot/usr/include/asm*/irq.h
 %post
 %post_kernel_image %KVERREL
 
-%post debug
-%post_kernel_image %{KVERREL}debug
-
 %post devel
 if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
   pushd /usr/src/kernels/%KVERREL-%_target_cpu > /dev/null
@@ -5634,108 +5039,8 @@ if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
   popd > /dev/null
 fi
 
-%post smp
-%post_kernel_image %{KVERREL}smp
-
-%post smp-debug
-[ -x /sbin/vzkernel-install ] && /sbin/vzkernel-install --install --mkinitrd --depmod %KVERREL-smp-debug
-[ -f /etc/modprobe.conf ] && ! grep -qE "ip_conntrack_(en|dis)able_ve0" /etc/modprobe.conf && \
-	echo 'options ip_conntrack ip_conntrack_disable_ve0=1' >> /etc/modprobe.conf
-[ -f /etc/modules.conf ] && ! grep -qE "ip_conntrack_(en|dis)able_ve0" /etc/modules.conf && \
-	echo 'options ip_conntrack ip_conntrack_disable_ve0=1' >> /etc/modules.conf
-exit 0
-
-%post smp-devel
-if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
-  pushd /usr/src/kernels/%KVERREL-smp-%_target_cpu > /dev/null
-  /usr/bin/find . -type f | while read f; do hardlink -c /usr/src/kernels/*FC*/$f $f ; done
-  popd > /dev/null
-fi
-
-%post PAE
-%post_kernel_image %{KVERREL}PAE
-
-%post PAE-debug
-%post_kernel_image %{KVERREL}PAE-debug
-
-%post PAE-devel
-if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
-  pushd /usr/src/kernels/%KVERREL-PAE-%_target_cpu > /dev/null
-  /usr/bin/find . -type f | while read f; do hardlink -c /usr/src/kernels/*FC*/$f $f ; done
-  popd > /dev/null
-fi
-
-%post ent
-%post_kernel_image %{KVERREL}ent
-
-%post ent-debug
-%post_kernel_image %{KVERREL}ent-debug
-
-%post ent-devel
-if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
-  pushd /usr/src/kernels/%KVERREL-ent-%_target_cpu > /dev/null
-  /usr/bin/find . -type f | while read f; do hardlink -c /usr/src/kernels/*FC*/$f $f ; done
-  popd > /dev/null
-fi
-
-%post xen
-if [ -e /proc/xen/xsd_kva -o ! -d /proc/xen ]; then
-	/sbin/new-kernel-pkg --package kernel-xen --mkinitrd --depmod --install --multiboot=/%image_install_path/xen.gz-%KVERREL %{KVERREL}xen || exit $?
-else
-	%post_kernel_image %{KVERREL}xen || exit $?
-fi
-if [ -x /sbin/ldconfig ]
-then
-    /sbin/ldconfig -X || exit $?
-fi
-exit 0
-
-%post xen-devel
-if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
-  pushd /usr/src/kernels/%KVERREL-xen-%_target_cpu > /dev/null
-  /usr/bin/find . -type f | while read f; do hardlink -c /usr/src/kernels/*FC*/$f $f ; done
-  popd > /dev/null
-fi
-
-%post kdump
-%post_kernel_image %{KVERREL}kdump
-
-%post kdump-devel
-if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
-  pushd /usr/src/kernels/%KVERREL-kdump-%_target_cpu > /dev/null
-  /usr/bin/find . -type f | while read f; do hardlink -c /usr/src/kernels/*FC*/$f $f ; done
-  popd > /dev/null
-fi
-
 %preun
 %preun_kernel_image %KVERREL
-
-%preun debug
-%preun_kernel_image %{KVERREL}debug
-
-%preun smp
-%preun_kernel_image %{KVERREL}smp
-
-%preun smp-debug
-%preun_kernel_image %{KVERREL}smp-debug
-
-%preun PAE
-%preun_kernel_image %{KVERREL}PAE
-
-%preun PAE-debug
-%preun_kernel_image %{KVERREL}PAE-debug
-
-%preun ent
-%preun_kernel_image %{KVERREL}ent
-
-%preun ent-debug
-%preun_kernel_image %{KVERREL}ent-debug
-
-%preun kdump
-%preun_kernel_image %{KVERREL}kdump
-
-%preun xen
-%preun_kernel_image %{KVERREL}xen
 
 ###
 ### file lists
@@ -5744,26 +5049,6 @@ fi
 # This is %image_install_path on an arch where that includes ELF files,
 # or empty otherwise.
 %define elf_image_install_path %{?kernel_image_elf:%image_install_path}
-
-%if %with_up
-%if %with_debuginfo
-%ifnarch noarch
-%package debuginfo
-Summary: Debug information for package %name
-Group: Development/Debug
-Requires: %name-debuginfo-common-%_target_cpu = %KVERREL
-Provides: %name-debuginfo-%_target_cpu = %KVERREL
-%description debuginfo
-This package provides debug information for package %name
-This is required to use SystemTap with %name-%KVERREL.
-%files debuginfo
-%if "%elf_image_install_path" != ""
-%debuginfodir/%elf_image_install_path/*-%KVERREL.debug
-%endif
-%debuginfodir/lib/modules/%KVERREL
-%debuginfodir/usr/src/kernels/%KVERREL-%_target_cpu
-%endif
-%endif
 
 %files
 /%image_install_path/vmlinuz-%KVERREL
@@ -5781,291 +5066,15 @@ This is required to use SystemTap with %name-%KVERREL.
 %ghost /boot/initrd-%KVERREL.img
 %config(noreplace) /etc/modprobe.d/blacklist-firewire
 
-%if %with_debug
-%files debug
-/%image_install_path/vmlinuz-%{KVERREL}debug
-/%image_install_path/vmlinux-%{KVERREL}debug
-/boot/System.map-%{KVERREL}debug
-/boot/symvers-%{KVERREL}debug.gz
-/boot/config-%{KVERREL}debug
-%dir /lib/modules/%{KVERREL}debug
-/lib/modules/%{KVERREL}debug/kernel
-/lib/modules/%{KVERREL}debug/build
-/lib/modules/%{KVERREL}debug/source
-/lib/modules/%{KVERREL}debug/extra
-/lib/modules/%{KVERREL}debug/updates
-/lib/modules/%{KVERREL}debug/weak-updates
-%ghost /boot/initrd-%{KVERREL}debug.img
-%config(noreplace) /etc/modprobe.d/blacklist-firewire
-%endif
-
 %files devel
 %verify(not mtime) /usr/src/kernels/%KVERREL-%_target_cpu
-%endif
 
 %if %with_headers
 %files headers
 /usr/include/*
 %endif
 
-%if %with_pae
-%if %with_debuginfo
-%ifnarch noarch
-%package PAE-debuginfo
-Summary: Debug information for package %name-PAE
-Group: Development/Debug
-Requires: %name-debuginfo-common-%_target_cpu = %KVERREL
-Provides: %name-%PAE-debuginfo-%_target_cpu = %KVERREL
-%description PAE-debuginfo
-This package provides debug information for package %name-PAE
-This is required to use SystemTap with %name-PAE-%KVERREL.
-%files PAE-debuginfo
-%if "%elf_image_install_path" != ""
-%debuginfodir/%elf_image_install_path/*-%{KVERREL}PAE.debug
-%endif
-%debuginfodir/lib/modules/%{KVERREL}PAE
-%debuginfodir/usr/src/kernels/%KVERREL-PAE-%_target_cpu
-%endif
-%endif
-
-%files PAE
-/%image_install_path/vmlinuz-%{KVERREL}PAE
-/%image_install_path/vmlinux-%{KVERREL}PAE
-/boot/System.map-%{KVERREL}PAE
-/boot/symvers-%{KVERREL}PAE.gz
-/boot/config-%{KVERREL}PAE
-%dir /lib/modules/%{KVERREL}PAE
-/lib/modules/%{KVERREL}PAE/kernel
-/lib/modules/%{KVERREL}PAE/build
-/lib/modules/%{KVERREL}PAE/source
-/lib/modules/%{KVERREL}PAE/extra
-/lib/modules/%{KVERREL}PAE/updates
-/lib/modules/%{KVERREL}PAE/weak-updates
-%ghost /boot/initrd-%{KVERREL}PAE.img
-%config(noreplace) /etc/modprobe.d/blacklist-firewire
-
-%if %with_debug
-%files PAE-debug
-/%image_install_path/vmlinuz-%{KVERREL}PAE-debug
-/%image_install_path/vmlinux-%{KVERREL}PAE-debug
-/boot/System.map-%{KVERREL}PAE-debug
-/boot/symvers-%{KVERREL}PAE-debug.gz
-/boot/config-%{KVERREL}PAE-debug
-%dir /lib/modules/%{KVERREL}PAE-debug
-/lib/modules/%{KVERREL}PAE-debug/kernel
-/lib/modules/%{KVERREL}PAE-debug/build
-/lib/modules/%{KVERREL}PAE-debug/source
-/lib/modules/%{KVERREL}PAE-debug/extra
-/lib/modules/%{KVERREL}PAE-debug/updates
-/lib/modules/%{KVERREL}PAE-debug/weak-updates
-%ghost /boot/initrd-%{KVERREL}PAE-debug.img
-%config(noreplace) /etc/modprobe.d/blacklist-firewire
-%endif
-
-%files PAE-devel
-%verify(not mtime) /usr/src/kernels/%KVERREL-PAE-%_target_cpu
-/usr/src/kernels/%{KVERREL}PAE-%_target_cpu
-%endif
-
-%if %with_ent
-%if %with_debuginfo
-%ifnarch noarch
-%package ent-debuginfo
-Summary: Debug information for package %name-ent
-Group: Development/Debug
-Requires: %name-debuginfo-common-%_target_cpu = %KVERREL
-Provides: %name-%ent-debuginfo-%_target_cpu = %KVERREL
-%description ent-debuginfo
-This package provides debug information for package %name-ent
-This is required to use SystemTap with %name-ent-%KVERREL.
-%files ent-debuginfo
-%if "%elf_image_install_path" != ""
-%debuginfodir/%elf_image_install_path/*-%{KVERREL}ent.debug
-%endif
-%debuginfodir/lib/modules/%{KVERREL}ent
-%debuginfodir/usr/src/kernels/%KVERREL-ent-%_target_cpu
-%endif
-%endif
-
-%files ent
-/%image_install_path/vmlinuz-%{KVERREL}ent
-/boot/System.map-%{KVERREL}ent
-/boot/symvers-%{KVERREL}ent.gz
-/boot/config-%{KVERREL}ent
-%dir /lib/modules/%{KVERREL}ent
-/lib/modules/%{KVERREL}ent/kernel
-/lib/modules/%{KVERREL}ent/build
-/lib/modules/%{KVERREL}ent/source
-/lib/modules/%{KVERREL}ent/extra
-/lib/modules/%{KVERREL}ent/updates
-/lib/modules/%{KVERREL}ent/weak-updates
-%ghost /boot/initrd-%{KVERREL}ent.img
-%config(noreplace) /etc/modprobe.d/blacklist-firewire
-
-%if %with_debug
-%files ent-debug
-/%image_install_path/vmlinuz-%{KVERREL}ent-debug
-/%image_install_path/vmlinux-%{KVERREL}ent-debug
-/boot/System.map-%{KVERREL}ent-debug
-/boot/symvers-%{KVERREL}ent-debug.gz
-/boot/config-%{KVERREL}ent-debug
-%dir /lib/modules/%{KVERREL}ent-debug
-/lib/modules/%{KVERREL}ent-debug/kernel
-/lib/modules/%{KVERREL}ent-debug/build
-/lib/modules/%{KVERREL}ent-debug/source
-/lib/modules/%{KVERREL}ent-debug/extra
-/lib/modules/%{KVERREL}ent-debug/updates
-/lib/modules/%{KVERREL}ent-debug/weak-updates
-%ghost /boot/initrd-%{KVERREL}ent-debug.img
-%config(noreplace) /etc/modprobe.d/blacklist-firewire
-%endif
-
-%files ent-devel
-%verify(not mtime) /usr/src/kernels/%KVERREL-ent-%_target_cpu
-/usr/src/kernels/%{KVERREL}ent-%_target_cpu
-%endif
-
-%if %with_smp
-%if %with_debuginfo
-%ifnarch noarch
-%package smp-debuginfo
-Summary: Debug information for package %name-smp
-Group: Development/Debug
-Requires: %name-debuginfo-common-%_target_cpu = %KVERREL
-Provides: %name-%smp-debuginfo-%_target_cpu = %KVERREL
-%description smp-debuginfo
-This package provides debug information for package %name-smp
-This is required to use SystemTap with %name-smp-%KVERREL.
-%files smp-debuginfo
-%if "%elf_image_install_path" != ""
-%debuginfodir/%elf_image_install_path/*-%{KVERREL}smp.debug
-%endif
-%debuginfodir/lib/modules/%{KVERREL}smp
-%debuginfodir/usr/src/kernels/%KVERREL-smp-%_target_cpu
-%endif
-%endif
-
-%files smp
-/%image_install_path/vmlinuz-%{KVERREL}smp
-/boot/System.map-%{KVERREL}smp
-/boot/symvers-%{KVERREL}smp.gz
-/boot/config-%{KVERREL}smp
-%dir /lib/modules/%{KVERREL}smp
-/lib/modules/%{KVERREL}smp/kernel
-/lib/modules/%{KVERREL}smp/build
-/lib/modules/%{KVERREL}smp/source
-/lib/modules/%{KVERREL}smp/extra
-/lib/modules/%{KVERREL}smp/updates
-/lib/modules/%{KVERREL}smp/weak-updates
-%ghost /boot/initrd-%{KVERREL}smp.img
-%config(noreplace) /etc/modprobe.d/blacklist-firewire
-
-%files smp-devel
-%verify(not mtime) /usr/src/kernels/%KVERREL-smp-%_target_cpu
-/usr/src/kernels/%{KVERREL}smp-%_target_cpu
-%endif
-
-%if %includexen
-%if %with_xen
-%if %with_debuginfo
-%ifnarch noarch
-%package xen-debuginfo
-Summary: Debug information for package %name-xen
-Group: Development/Debug
-Requires: %name-debuginfo-common-%_target_cpu = %KVERREL
-Provides: %name-xen-debuginfo-%_target_cpu = %KVERREL
-%description xen-debuginfo
-This package provides debug information for package %name-xen
-This is required to use SystemTap with %name-xen-%KVERREL.
-%files xen-debuginfo
-%if "%elf_image_install_path" != ""
-%debuginfodir/%elf_image_install_path/*-%{KVERREL}xen.debug
-%endif
-%debuginfodir/lib/modules/%{KVERREL}xen
-%debuginfodir/usr/src/kernels/%KVERREL-xen-%_target_cpu
-%debuginfodir/boot/xen*-%KVERREL.debug
-%endif
-%endif
-
-%files xen
-/%image_install_path/vmlinuz-%{KVERREL}xen
-/boot/System.map-%{KVERREL}xen
-/boot/symvers-%{KVERREL}xen.gz
-/boot/config-%{KVERREL}xen
-/%image_install_path/xen.gz-%KVERREL
-/boot/xen-syms-%KVERREL
-%dir /lib/modules/%{KVERREL}xen
-/lib/modules/%{KVERREL}xen/kernel
-%verify(not mtime) /lib/modules/%{KVERREL}xen/build
-/lib/modules/%{KVERREL}xen/source
-/etc/ld.so.conf.d/kernelcap-%KVERREL.conf
-/lib/modules/%{KVERREL}xen/extra
-/lib/modules/%{KVERREL}xen/updates
-/lib/modules/%{KVERREL}xen/weak-updates
-%ghost /boot/initrd-%{KVERREL}xen.img
-%config(noreplace) /etc/modprobe.d/blacklist-firewire
-
-%files xen-devel
-%verify(not mtime) /usr/src/kernels/%KVERREL-xen-%_target_cpu
-/usr/src/kernels/%{KVERREL}xen-%_target_cpu
-%endif
-
-%endif
-
-%if %with_kdump
-%if %with_debuginfo
-%ifnarch noarch
-%package kdump-debuginfo
-Summary: Debug information for package %name-kdump
-Group: Development/Debug
-Requires: %name-debuginfo-common-%_target_cpu = %KVERREL
-Provides: %name-kdump-debuginfo-%_target_cpu = %KVERREL
-%description kdump-debuginfo
-This package provides debug information for package %name-kdump
-This is required to use SystemTap with %name-kdump-%KVERREL.
-%files kdump-debuginfo
-%ifnarch s390x
-%if "%image_install_path" != ""
-%debuginfodir/%image_install_path/*-%{KVERREL}kdump.debug
-%endif
-%else
-%if "%elf_image_install_path" != ""
-%debuginfodir/%elf_image_install_path/*-%{KVERREL}kdump.debug
-%endif
-%endif
-%debuginfodir/lib/modules/%{KVERREL}kdump
-%debuginfodir/usr/src/kernels/%KVERREL-kdump-%_target_cpu
-%endif
-%endif
-
-%files kdump
-%ifnarch s390x
-/%image_install_path/vmlinux-%{KVERREL}kdump
-%else
-/%image_install_path/vmlinuz-%{KVERREL}kdump
-%endif
-/boot/System.map-%{KVERREL}kdump
-/boot/symvers-%{KVERREL}kdump.gz
-/boot/config-%{KVERREL}kdump
-%dir /lib/modules/%{KVERREL}kdump
-/lib/modules/%{KVERREL}kdump/build
-/lib/modules/%{KVERREL}kdump/source
-%ifnarch s390x
-/lib/modules/%{KVERREL}kdump/kernel
-/lib/modules/%{KVERREL}kdump/extra
-/lib/modules/%{KVERREL}kdump/updates
-/lib/modules/%{KVERREL}kdump/weak-updates
-%endif
-%ghost /boot/initrd-%{KVERREL}kdump.img
-%config(noreplace) /etc/modprobe.d/blacklist-firewire
-
-%files kdump-devel
-%verify(not mtime) /usr/src/kernels/%KVERREL-kdump-%_target_cpu
-/usr/src/kernels/%{KVERREL}kdump-%_target_cpu
-%endif
-
 # only some architecture builds need kernel-doc
-
 %if %with_doc
 %files doc
 %_datadir/doc/kernel-doc-%kversion/Documentation/*
