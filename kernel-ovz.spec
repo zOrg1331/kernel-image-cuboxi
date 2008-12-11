@@ -1,90 +1,12 @@
 %set_verify_elf_skiplist /boot/*
 %set_strip_skiplist /boot/*
-# ------------- translate OVZ build system settings to RHEL -----------------
-%define buildup 1
-%define buildsmp 0
-%define buildpae 0
-%define buildenterprise 0
-%define buildxen 0
-%define buildopenafs 0
 
-%define builddebug 0
-%define builddoc 0
-%define buildkdump 0
-%define buildheaders 0
-%define _without_kabichk 1
+%define with_doc       0
+%define with_headers   0
+%define with_openafs   0
 
 %define ovzver 028stab059
 %define ovzrel 6
-
-%if !%buildup
-%define _without_up 1
-%endif
-%if !%buildsmp
-%define _without_smp 1
-%endif
-%if !%buildpae
-%define _without_pae 1
-%endif
-%if !%buildenterprise
-%define _without_ent 1
-%endif
-%if !%buildxen
-%define _without_xen 1
-%endif
-%if !%builddebug
-%define _without_debug 1
-%endif
-%if !%builddoc
-%define _without_doc 1
-%endif
-%if !%buildkdump
-%define _without_kdump 1
-%endif
-%if !%buildheaders
-%define _without_headers 1
-%endif
-%if !%buildopenafs
-%define _without_openafs 1
-%endif
-
-%define _without_debuginfo 1
-# ---------------------------------------------------------------------------
-
-%define _unpackaged_files_terminate_build 0
-
-# What parts do we want to build?  We must build at least one kernel.
-# These are the kernels that are built IF the architecture allows it.
-# All should default to 1 (enabled) and be flipped to 0 (disabled)
-# by later arch-specific checks
-
-# The following build options are enabled by default.
-# Use either --without <opt> in your rpmbuild command or force values
-# to 0 in here to disable them
-#
-# standard kernel
-%define with_up        %{?_without_up:        0} %{?!_without_up:        1}
-# kernel-smp (only valid for ppc 32-bit, sparc64)
-%define with_smp       %{?_without_smp:       0} %{?!_without_smp:       1}
-# kernel-PAE (only valid for i686)
-%define with_pae       %{?_without_pae:       0} %{?!_without_pae:       1}
-# kernel-ent (only valid for i686)
-%define with_ent       %{?_without_ent:       0} %{?!_without_ent:       1}
-# kernel-xen (only valid for i686, x86_64 and ia64)
-%define with_xen       %{?_without_xen:       0} %{?!_without_xen:       1}
-# kernel-kdump (only valid for ppc64)
-%define with_kdump     %{?_without_kdump:     0} %{?!_without_kdump:     1}
-# kernel-debug
-%define with_debug     %{?_without_debug:     0} %{!?_without_debug:     1}
-# kernel-doc
-%define with_doc       %{?_without_doc:       0} %{?!_without_doc:       1}
-# kernel-headers
-%define with_headers   %{?_without_headers:   0} %{?!_without_headers:   1}
-# openafs module
-%define with_openafs   %{?_without_openafs:   0} %{?!_without_openafs:   1}
-
-# Control whether we perform a compat. check against published ABI.
-%define with_kabichk   %{?_without_kabichk:   0} %{?!_without_kabichk:   1}
 
 # Whether to apply the Xen patches -- leave this enabled.
 %define includexen 1
@@ -118,12 +40,6 @@
 %define altrelease alt1
 %define release %altrelease.92.1.13%{?dist}%{?buildid}
 %define xen_hv_cset 15502
-%define xen_abi_ver 3.1
-%define make_target bzImage
-%define kernel_image x86
-%define xen_flags verbose=y crash_debug=y XEN_VENDORVERSION=-%PACKAGE_RELEASE
-%define xen_target vmlinuz
-%define xen_image vmlinuz
 
 %define KVERREL %PACKAGE_VERSION-%PACKAGE_RELEASE
 %define hdrarch %_target_cpu
@@ -133,16 +49,12 @@
 # Per-arch tweaks
 %ifarch i686
 %define all_arch_configs kernel-%kversion-i686.config.ovz
-%define image_install_path boot
 %define hdrarch i386
 # we build always xen i686 HV with pae
-%define xen_flags verbose=y crash_debug=y pae=y XEN_VENDORVERSION=-%PACKAGE_RELEASE
 %endif
 
 %ifarch x86_64
 %define all_arch_configs kernel-%kversion-x86_64*.config.ovz
-%define image_install_path boot
-%define xen_flags verbose=y crash_debug=y max_phys_cpus=64 XEN_VENDORVERSION=-%PACKAGE_RELEASE
 %endif
 
 #
@@ -4612,9 +4524,7 @@ rm -f kernel-%kversion-*xen*.config
 rm -f kernel-%kversion-*kdump*.config
 %endif
 
-%if !%with_debug
 rm -f kernel-%kversion-*-debug.config
-%endif
 
 # now run oldconfig over all the config files
 for i in *.config.ovz
@@ -4748,7 +4658,7 @@ echo USING ARCH=$Arch
 echo "$Arch" > .buildarch
 
 %make_build -s ARCH=$Arch nonint_oldconfig > /dev/null
-%make_build -s ARCH=$Arch %{?_smp_mflags} %make_target
+%make_build -s ARCH=$Arch %{?_smp_mflags} bzImage
 %make_build -s ARCH=$Arch %{?_smp_mflags} modules || exit 1
 
 %if %with_openafs
@@ -4763,13 +4673,6 @@ echo "$Arch" > .buildarch
 %endif
 
 ###
-### Special hacks for debuginfo subpackages.
-###
-
-# This macro is used by %%install, so we must redefine it before that.
-%define debug_package %nil
-
-###
 ### install
 ###
 
@@ -4780,26 +4683,20 @@ cd linux-%kversion.%_target_cpu
 Arch=`cat .buildarch`
 KernelVer=%version-%release
 DevelDir=/usr/src/kernels/%KVERREL-%_target_cpu
-DevelLink=
 
-mkdir -p %buildroot/%image_install_path
+mkdir -p %buildroot/boot
 install -m 644 .config %buildroot/boot/config-$KernelVer
 install -m 644 System.map %buildroot/boot/System.map-$KernelVer
 touch %buildroot/boot/initrd-$KernelVer.img
 
-if [ "%kernel_image" == "x86" ]; then
-    kernel_image=arch/$Arch/boot/bzImage
-else
-    kernel_image="%kernel_image"
-fi
-cp $kernel_image %buildroot/%image_install_path/vmlinuz-$KernelVer
+cp arch/$Arch/boot/bzImage %buildroot/boot/vmlinuz-$KernelVer
 if [ -f arch/$Arch/boot/zImage.stub ]; then
-  cp arch/$Arch/boot/zImage.stub %buildroot/%image_install_path/zImage.stub-$KernelVer || :
+  cp arch/$Arch/boot/zImage.stub %buildroot/boot/zImage.stub-$KernelVer || :
 fi
 
 %if %includeovz
-cp vmlinux %buildroot/%image_install_path/vmlinux-$KernelVer
-chmod 600 %buildroot/%image_install_path/vmlinux-$KernelVer
+cp vmlinux %buildroot/boot/vmlinux-$KernelVer
+chmod 600 %buildroot/boot/vmlinux-$KernelVer
 %endif
 
 mkdir -p %buildroot/lib/modules/$KernelVer
@@ -4818,17 +4715,6 @@ fi
 rm -f %_tmppath/kernel-$KernelVer-kabideps
 %_sourcedir/kabitool -b . -d %_tmppath/kernel-$KernelVer-kabideps -k $KernelVer -w %buildroot/kabi_whitelist
 
-%if %with_kabichk
-echo "**** kABI checking is enabled in kernel SPEC file. ****"
-chmod 0755 %_sourcedir/check-kabi
-if [ -e %_sourcedir/Module.kabi_%_target_cpu ]; then
-cp %_sourcedir/Module.kabi_%_target_cpu %buildroot/Module.kabi
-%_sourcedir/check-kabi -k %buildroot/Module.kabi -s Module.symvers || exit 1
-else
-echo "**** NOTE: Cannot find reference Module.kabi file. ****"
-fi
-%endif
-
 # And save the headers/makefiles etc for building modules against
 #
 # This all looks scary, but the end result is supposed to be:
@@ -4836,14 +4722,11 @@ fi
 # * all Makefile/Kconfig files
 # * all script/ files
 
-rm -f %buildroot/lib/modules/$KernelVer/build
-rm -f %buildroot/lib/modules/$KernelVer/source
+rm -f %buildroot/lib/modules/$KernelVer/{build,source}
 mkdir -p %buildroot/lib/modules/$KernelVer/build
 (cd %buildroot/lib/modules/$KernelVer ; ln -s build source)
 # dirs for additional modules per module-init-tools, kbuild/modules.txt
-mkdir -p %buildroot/lib/modules/$KernelVer/extra
-mkdir -p %buildroot/lib/modules/$KernelVer/updates
-mkdir -p %buildroot/lib/modules/$KernelVer/weak-updates
+mkdir -p %buildroot/lib/modules/$KernelVer/{extra,updates,weak-updates}
 %if %with_openafs
 find $OpenAfsDir -name libafs.ko -execdir cp '{}' %buildroot/lib/modules/$KernelVer/extra/openafs.ko \;
 %endif
@@ -4856,9 +4739,7 @@ mv %buildroot/Module.kabi %buildroot/lib/modules/$KernelVer/build
 fi
 cp symsets-$KernelVer.tar.gz %buildroot/lib/modules/$KernelVer/build
 # then drop all but the needed Makefiles/Kconfig files
-rm -rf %buildroot/lib/modules/$KernelVer/build/Documentation
-rm -rf %buildroot/lib/modules/$KernelVer/build/scripts
-rm -rf %buildroot/lib/modules/$KernelVer/build/include
+rm -rf %buildroot/lib/modules/$KernelVer/build/{Documentation,scripts,include}
 cp .config %buildroot/lib/modules/$KernelVer/build
 cp -a scripts %buildroot/lib/modules/$KernelVer/build
 if [ -d arch/%_arch/scripts ]; then
@@ -4885,11 +4766,6 @@ if [ "$Arch" = "powerpc" -a -r ../arch/powerpc/include/asm ]; then
   ln -sf ../../../include/asm-ppc* asm
   popd
 fi
-%if %includexen
-%if %with_xen
-cp -a xen %buildroot/lib/modules/$KernelVer/build/include
-%endif
-%endif
 
 # Make sure the Makefile and version.h have a matching timestamp so that
 # external modules can be built
@@ -4926,8 +4802,7 @@ cat modinfo |\
   grep -v "^Dual MPL/GPL" |\
   grep -v "^GPL and additional rights" |\
   grep -v "^GPL v2" && exit 1
-rm -f modinfo
-rm -f modnames
+rm -f modinfo modnames
 # remove files that will be auto generated by depmod at rpm -i time
 rm -f %buildroot/lib/modules/$KernelVer/modules.*
 
@@ -4935,7 +4810,6 @@ rm -f %buildroot/lib/modules/$KernelVer/modules.*
 mkdir -p %buildroot/usr/src/kernels
 mv %buildroot/lib/modules/$KernelVer/build %buildroot/$DevelDir
 ln -sf ../../..$DevelDir %buildroot/lib/modules/$KernelVer/build
-[ -z "$DevelLink" ] || ln -sf `basename $DevelDir` %buildroot/$DevelLink
 
 	# Temporary fix for upstream "make prepare" bug.
 #	pushd $RPM_BUILD_ROOT/$DevelDir > /dev/null
@@ -4950,22 +4824,6 @@ cat > %buildroot/etc/modprobe.d/blacklist-firewire << \EOF
 # Comment out the next line to enable the firewire drivers
 blacklist firewire-ohci
 EOF
-
-%if %includexen
-%if %with_xen
-mkdir -p %buildroot/etc/ld.so.conf.d
-rm -f %buildroot/etc/ld.so.conf.d/kernelcap-%KVERREL.conf
-cat > %buildroot/etc/ld.so.conf.d/kernelcap-%KVERREL.conf <<\EOF
-# This directive teaches ldconfig to search in nosegneg subdirectories
-# and cache the DSOs there with extra bit 0 set in their hwcap match
-# fields.  In Xen guest kernels, the vDSO tells the dynamic linker to
-# search in nosegneg subdirectories and to match this extra hwcap bit
-# in the ld.so.cache file.
-hwcap 0 nosegneg
-EOF
-chmod 444 %buildroot/etc/ld.so.conf.d/kernelcap-%KVERREL.conf
-%endif
-%endif
 
 %if %with_doc
 mkdir -p %buildroot/usr/share/doc/kernel-doc-%kversion/Documentation
@@ -4996,9 +4854,7 @@ fi
 
 # glibc provides scsi headers for itself, for now
 rm -rf %buildroot/usr/include/scsi
-rm -f %buildroot/usr/include/asm*/atomic.h
-rm -f %buildroot/usr/include/asm*/io.h
-rm -f %buildroot/usr/include/asm*/irq.h
+rm -f %buildroot/usr/include/asm*/{atomic,io,irq}.h
 %endif
 
 ###
@@ -5022,23 +4878,13 @@ fi
 ### file lists
 ###
 
-# This is %image_install_path on an arch where that includes ELF files,
-# or empty otherwise.
-%define elf_image_install_path %{?kernel_image_elf:%image_install_path}
-
 %files
-/%image_install_path/vmlinuz-%KVERREL
-/%image_install_path/vmlinux-%KVERREL
+/boot/vmlinuz-%KVERREL
+/boot/vmlinux-%KVERREL
 /boot/System.map-%KVERREL
 /boot/symvers-%KVERREL.gz
 /boot/config-%KVERREL
-%dir /lib/modules/%KVERREL
-/lib/modules/%KVERREL/kernel
-/lib/modules/%KVERREL/build
-/lib/modules/%KVERREL/source
-/lib/modules/%KVERREL/extra
-/lib/modules/%KVERREL/updates
-/lib/modules/%KVERREL/weak-updates
+/lib/modules/%KVERREL
 %ghost /boot/initrd-%KVERREL.img
 %config(noreplace) /etc/modprobe.d/blacklist-firewire
 
@@ -5053,9 +4899,7 @@ fi
 # only some architecture builds need kernel-doc
 %if %with_doc
 %files doc
-%_datadir/doc/kernel-doc-%kversion/Documentation/*
-%dir %_datadir/doc/kernel-doc-%kversion/Documentation
-%dir %_datadir/doc/kernel-doc-%kversion
+%doc %_docdir/kernel-doc-%kversion
 %endif
 
 %changelog
