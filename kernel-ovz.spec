@@ -4757,15 +4757,6 @@ cp -a `readlink asm` %buildroot/lib/modules/$KernelVer/build/include
 if [ "$Arch" = "x86_64" ]; then
   cp -a asm-i386 %buildroot/lib/modules/$KernelVer/build/include
 fi
-# While arch/powerpc/include/asm is still a symlink to the old
-# include/asm-ppc{64,} directory, include that in kernel-devel too.
-if [ "$Arch" = "powerpc" -a -r ../arch/powerpc/include/asm ]; then
-  cp -a `readlink ../arch/powerpc/include/asm` %buildroot/lib/modules/$KernelVer/build/include
-  mkdir -p %buildroot/lib/modules/$KernelVer/build/arch/$Arch/include
-  pushd %buildroot/lib/modules/$KernelVer/build/arch/$Arch/include
-  ln -sf ../../../include/asm-ppc* asm
-  popd
-fi
 
 # Make sure the Makefile and version.h have a matching timestamp so that
 # external modules can be built
