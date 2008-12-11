@@ -92,9 +92,6 @@
 
 %define openafs_version 1.4.6
 
-# define a flavour
-%define flavour %nil
-
 # Versions of various parts
 
 # After branching, please hardcode these values as the
@@ -4734,25 +4731,17 @@ cd xen
 cd linux-%kversion.%_target_cpu
 
 # Pick the right config file for the kernel we're building
-if [ -n "%flavour" ] ; then
-	Config=kernel-%kversion-%_target_cpu-%flavour.config.ovz
-else
-	Config=kernel-%kversion-%_target_cpu.config.ovz
-fi
+Config=kernel-%kversion-%_target_cpu.config.ovz
 
-echo BUILDING A KERNEL FOR %flavour %_target_cpu...
+echo BUILDING A KERNEL FOR %_target_cpu...
 
 # make sure EXTRAVERSION says what we want it to say
-perl -p -i -e "s/^EXTRAVERSION.*/EXTRAVERSION = -%release%flavour/" Makefile
+perl -p -i -e "s/^EXTRAVERSION.*/EXTRAVERSION = -%release/" Makefile
 
 # and now to start the build process
 
 %make_build -s mrproper
-cp configs/${Config//-debug/} .config
-
-if echo "%flavour" | grep debug ; then
-	%_sourcedir/make_debug_config.sh
-fi
+cp configs/$Config .config
 
 Arch=`head -1 .config | cut -b 3-`
 echo USING ARCH=$Arch
@@ -4789,14 +4778,9 @@ cd linux-%kversion.%_target_cpu
 # Start installing the results
 
 Arch=`cat .buildarch`
-KernelVer=%version-%release%flavour
-if [ -n "%flavour" ] ; then
-	DevelDir=/usr/src/kernels/%KVERREL-%flavour-%_target_cpu
-	DevelLink=/usr/src/kernels/%KVERREL%flavour-%_target_cpu
-else
-	DevelDir=/usr/src/kernels/%KVERREL-%_target_cpu
-	DevelLink=
-fi
+KernelVer=%version-%release
+DevelDir=/usr/src/kernels/%KVERREL-%_target_cpu
+DevelLink=
 
 mkdir -p %buildroot/%image_install_path
 install -m 644 .config %buildroot/boot/config-$KernelVer
@@ -4818,26 +4802,18 @@ cp vmlinux %buildroot/%image_install_path/vmlinux-$KernelVer
 chmod 600 %buildroot/%image_install_path/vmlinux-$KernelVer
 %endif
 
-if [ "%flavour" == "kdump" -a "$Arch" != "s390" ]; then
-    rm -f %buildroot/%image_install_path/vmlinuz-$KernelVer
-fi
-
 mkdir -p %buildroot/lib/modules/$KernelVer
-if [ "$Arch" != "s390" -o "%flavour" != "kdump" ]; then
-  make -s ARCH=$Arch INSTALL_MOD_PATH=%buildroot modules_install KERNELRELEASE=$KernelVer
-else
-  touch Module.symvers
-fi
+make -s ARCH=$Arch INSTALL_MOD_PATH=%buildroot modules_install KERNELRELEASE=$KernelVer
 
 # Create the kABI metadata for use in packaging
 echo "**** GENERATING kernel ABI metadata ****"
 gzip -c9 < Module.symvers > %buildroot/boot/symvers-$KernelVer.gz
 chmod 0755 %_sourcedir/kabitool
-if [ ! -e %buildroot/kabi_whitelist_%_target_cpu%flavour ]; then
+if [ ! -e %buildroot/kabi_whitelist_%_target_cpu ]; then
     echo "**** No KABI whitelist was available during build ****"
     %_sourcedir/kabitool -b %buildroot/$DevelDir -k $KernelVer -l %buildroot/kabi_whitelist
 else
-cp %buildroot/kabi_whitelist_%_target_cpu%flavour %buildroot/kabi_whitelist
+cp %buildroot/kabi_whitelist_%_target_cpu %buildroot/kabi_whitelist
 fi
 rm -f %_tmppath/kernel-$KernelVer-kabideps
 %_sourcedir/kabitool -b . -d %_tmppath/kernel-$KernelVer-kabideps -k $KernelVer -w %buildroot/kabi_whitelist
@@ -4845,8 +4821,8 @@ rm -f %_tmppath/kernel-$KernelVer-kabideps
 %if %with_kabichk
 echo "**** kABI checking is enabled in kernel SPEC file. ****"
 chmod 0755 %_sourcedir/check-kabi
-if [ -e %_sourcedir/Module.kabi_%_target_cpu%flavour ]; then
-cp %_sourcedir/Module.kabi_%_target_cpu%flavour %buildroot/Module.kabi
+if [ -e %_sourcedir/Module.kabi_%_target_cpu ]; then
+cp %_sourcedir/Module.kabi_%_target_cpu %buildroot/Module.kabi
 %_sourcedir/check-kabi -k %buildroot/Module.kabi -s Module.symvers || exit 1
 else
 echo "**** NOTE: Cannot find reference Module.kabi file. ****"
