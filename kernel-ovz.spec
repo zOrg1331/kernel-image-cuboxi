@@ -6,7 +6,6 @@
 %define with_openafs   0
 
 %define ovzver 028stab059
-%define ovzrel 6
 
 # Whether to apply the Xen patches -- leave this enabled.
 %define includexen 1
@@ -32,17 +31,17 @@
 # that the kernel isn't the stock distribution kernel, for example,
 # by setting the define to ".local" or ".bz123456"
 #
-%define buildid .%ovzver.%ovzrel
-#
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define rpmversion 2.6.%sublevel
-%define altrelease alt1
-%define release %altrelease.92.1.13%{?dist}%{?buildid}
+%define krelease alt1
 %define xen_hv_cset 15502
 
 %define KVERREL %PACKAGE_VERSION-%PACKAGE_RELEASE
 %define hdrarch %_target_cpu
+
+%define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
+%define kbuild_dir      %_prefix/src/linux-%kversion-%flavour-%krelease
+%define old_kbuild_dir  %_prefix/src/linux-%kversion-%flavour
 
 # Overrides for generic default options
 
@@ -82,8 +81,8 @@ Group: System/Kernel and hardware
 Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 License: GPLv2
 Url: http://www.kernel.org/
-Version: %rpmversion
-Release: %release
+Version: %kversion
+Release: %krelease
 %if 0%{?olpc}
 ExclusiveArch: i386 i586
 %else
@@ -92,7 +91,7 @@ ExclusiveArch: i686 x86_64
 ExclusiveOS: Linux
 Provides: kernel = %version
 Provides: kernel-drm = 4.3.0
-Provides: kernel-%_target_cpu = %rpmversion-%release
+Provides: kernel-%_target_cpu = %kversion-%release
 Provides: vzkernel = %KVERREL
 Provides: vzquotamod
 BuildRequires(pre): rpm-build-kernel
@@ -2281,7 +2280,7 @@ input and output, etc.
 Summary: Development package for building kernel modules to match the kernel
 Group: System/Kernel and hardware
 AutoReqProv: no
-Provides: kernel-devel-%_target_cpu = %rpmversion-%release
+Provides: kernel-devel-%_target_cpu = %kversion-%release
 PreReq: /usr/bin/find
 
 %description devel
@@ -4682,7 +4681,6 @@ cd linux-%kversion.%_target_cpu
 
 Arch=`cat .buildarch`
 KernelVer=%version-%release
-DevelDir=/usr/src/kernels/%KVERREL-%_target_cpu
 
 mkdir -p %buildroot/boot
 install -m 644 .config %buildroot/boot/config-$KernelVer
@@ -4708,7 +4706,7 @@ gzip -c9 < Module.symvers > %buildroot/boot/symvers-$KernelVer.gz
 chmod 0755 %_sourcedir/kabitool
 if [ ! -e %buildroot/kabi_whitelist_%_target_cpu ]; then
     echo "**** No KABI whitelist was available during build ****"
-    %_sourcedir/kabitool -b %buildroot/$DevelDir -k $KernelVer -l %buildroot/kabi_whitelist
+    %_sourcedir/kabitool -b %buildroot%kbuild_dir -k $KernelVer -l %buildroot/kabi_whitelist
 else
 cp %buildroot/kabi_whitelist_%_target_cpu %buildroot/kabi_whitelist
 fi
@@ -4799,11 +4797,11 @@ rm -f %buildroot/lib/modules/$KernelVer/modules.*
 
 # Move the devel headers out of the root file system
 mkdir -p %buildroot/usr/src/kernels
-mv %buildroot/lib/modules/$KernelVer/build %buildroot/$DevelDir
-ln -sf ../../..$DevelDir %buildroot/lib/modules/$KernelVer/build
+mv %buildroot/lib/modules/$KernelVer/build %buildroot%kbuild_dir
+ln -sf %kbuild_dir %buildroot/lib/modules/$KernelVer/build
 
 	# Temporary fix for upstream "make prepare" bug.
-#	pushd $RPM_BUILD_ROOT/$DevelDir > /dev/null
+#	pushd $RPM_BUILD_ROOT/%%kbuild_dir > /dev/null
 #	if [ -f Makefile ]; then
 #		make prepare
 #	fi
@@ -4855,13 +4853,6 @@ rm -f %buildroot/usr/include/asm*/{atomic,io,irq}.h
 %post
 %post_kernel_image %KVERREL
 
-%post devel
-if [ "$HARDLINK" != "no" -a -x /usr/sbin/hardlink ] ; then
-  pushd /usr/src/kernels/%KVERREL-%_target_cpu > /dev/null
-  /usr/bin/find . -type f | while read f; do hardlink -c /usr/src/kernels/*FC*/$f $f ; done
-  popd > /dev/null
-fi
-
 %preun
 %preun_kernel_image %KVERREL
 
@@ -4880,7 +4871,7 @@ fi
 %config(noreplace) /etc/modprobe.d/blacklist-firewire
 
 %files devel
-%verify(not mtime) /usr/src/kernels/%KVERREL-%_target_cpu
+%verify(not mtime) %kbuild_dir
 
 %if %with_headers
 %files headers
@@ -4894,6 +4885,9 @@ fi
 %endif
 
 %changelog
+* Thu Dec 11 2008 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt1
+- Intermediate release
+
 * Sun Dec 07 2008 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt1.92.1.13.el5.028stab059.6
 - Build with more or less adecuate konfig
 - Build with sisyphus check
