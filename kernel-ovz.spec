@@ -25,6 +25,10 @@
 %define rh_release_major %rhel
 %define rh_release_minor 2
 
+# Build options
+# You can change compiler version by editing this line:
+%define kgcc_version	4.1
+
 #
 # Polite request for people who spin their own kernel rpms:
 # please modify the "buildid" define in a way that identifies
@@ -2276,16 +2280,21 @@ Linux operating system.  The kernel handles the basic functions
 of the operating system:  memory allocation, process allocation, device
 input and output, etc.
 
-%package devel
-Summary: Development package for building kernel modules to match the kernel
+%package -n kernel-headers-modules-%flavour
+Summary: Headers and other files needed for building kernel modules
 Group: System/Kernel and hardware
-AutoReqProv: no
-Provides: kernel-devel-%_target_cpu = %kversion-%release
-PreReq: /usr/bin/find
+Requires: gcc%kgcc_version
+# ??? Requires: kernel-headers-alsa
 
-%description devel
-This package provides kernel headers and makefiles sufficient to build modules
-against the kernel package.
+%description -n kernel-headers-modules-%flavour
+This package contains header files, Makefiles and other parts of the
+Linux kernel build system which are needed to build kernel modules for
+the Linux kernel package %name-%version-%release.
+
+If you need to compile a third-party kernel module for the Linux
+kernel package %name-%version-%release, install this package
+and specify %kbuild_dir as the kernel source
+directory.
 
 %package doc
 Summary: Various documentation bits found in the kernel source
@@ -4870,7 +4879,7 @@ rm -f %buildroot/usr/include/asm*/{atomic,io,irq}.h
 %ghost /boot/initrd-%KVERREL.img
 %config(noreplace) /etc/modprobe.d/blacklist-firewire
 
-%files devel
+%files -n kernel-headers-modules-%flavour
 %verify(not mtime) %kbuild_dir
 
 %if %with_headers
