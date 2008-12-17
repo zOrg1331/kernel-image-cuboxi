@@ -40,12 +40,13 @@
 %define krelease alt1
 %define xen_hv_cset 15502
 
-%define KVERREL %PACKAGE_VERSION-%PACKAGE_RELEASE
 %define hdrarch %_target_cpu
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
 %define kbuild_dir      %_prefix/src/linux-%kversion-%flavour-%krelease
 %define old_kbuild_dir  %_prefix/src/linux-%kversion-%flavour
+%define modules_dir     /lib/modules/%kversion-%flavour-%krelease
+%define KVERREL         %kversion-%flavour-%krelease
 
 # Overrides for generic default options
 
@@ -2347,6 +2348,10 @@ fi
 cp -rl vanilla linux-%kversion.%_target_cpu
 
 cd linux-%kversion.%_target_cpu
+
+# this file should be usable both with make and sh (for broken modules
+# which do not use the kernel makefile system)
+echo 'export GCC_VERSION=%kgcc_version' > gcc_version.inc
 
 # Update to latest upstream.
 %patch1 -p1
@@ -4689,38 +4694,37 @@ cd linux-%kversion.%_target_cpu
 # Start installing the results
 
 Arch=`cat .buildarch`
-KernelVer=%version-%release
 
 mkdir -p %buildroot/boot
-install -m 644 .config %buildroot/boot/config-$KernelVer
-install -m 644 System.map %buildroot/boot/System.map-$KernelVer
-touch %buildroot/boot/initrd-$KernelVer.img
+install -m 644 .config %buildroot/boot/config-%KVERREL
+install -m 644 System.map %buildroot/boot/System.map-%KVERREL
+touch %buildroot/boot/initrd-%KVERREL.img
 
-cp arch/$Arch/boot/bzImage %buildroot/boot/vmlinuz-$KernelVer
+cp arch/$Arch/boot/bzImage %buildroot/boot/vmlinuz-%KVERREL
 if [ -f arch/$Arch/boot/zImage.stub ]; then
-  cp arch/$Arch/boot/zImage.stub %buildroot/boot/zImage.stub-$KernelVer || :
+  cp arch/$Arch/boot/zImage.stub %buildroot/boot/zImage.stub-%KVERREL || :
 fi
 
 %if %includeovz
-cp vmlinux %buildroot/boot/vmlinux-$KernelVer
-chmod 600 %buildroot/boot/vmlinux-$KernelVer
+cp vmlinux %buildroot/boot/vmlinux-%KVERREL
+chmod 600 %buildroot/boot/vmlinux-%KVERREL
 %endif
 
-mkdir -p %buildroot/lib/modules/$KernelVer
-make -s ARCH=$Arch INSTALL_MOD_PATH=%buildroot modules_install KERNELRELEASE=$KernelVer
+mkdir -p %buildroot/%modules_dir
+make -s ARCH=$Arch INSTALL_MOD_PATH=%buildroot modules_install KERNELRELEASE=%KVERREL
 
 # Create the kABI metadata for use in packaging
 echo "**** GENERATING kernel ABI metadata ****"
-gzip -c9 < Module.symvers > %buildroot/boot/symvers-$KernelVer.gz
+gzip -c9 < Module.symvers > %buildroot/boot/symvers-%KVERREL.gz
 chmod 0755 %_sourcedir/kabitool
 if [ ! -e %buildroot/kabi_whitelist_%_target_cpu ]; then
     echo "**** No KABI whitelist was available during build ****"
-    %_sourcedir/kabitool -b %buildroot%kbuild_dir -k $KernelVer -l %buildroot/kabi_whitelist
+    %_sourcedir/kabitool -b %buildroot%kbuild_dir -k %KVERREL -l %buildroot/kabi_whitelist
 else
 cp %buildroot/kabi_whitelist_%_target_cpu %buildroot/kabi_whitelist
 fi
-rm -f %_tmppath/kernel-$KernelVer-kabideps
-%_sourcedir/kabitool -b . -d %_tmppath/kernel-$KernelVer-kabideps -k $KernelVer -w %buildroot/kabi_whitelist
+rm -f %_tmppath/kernel-%KVERREL-kabideps
+%_sourcedir/kabitool -b . -d %_tmppath/kernel-%KVERREL-kabideps -k %KVERREL -w %buildroot/kabi_whitelist
 
 # And save the headers/makefiles etc for building modules against
 #
@@ -4729,55 +4733,55 @@ rm -f %_tmppath/kernel-$KernelVer-kabideps
 # * all Makefile/Kconfig files
 # * all script/ files
 
-rm -f %buildroot/lib/modules/$KernelVer/{build,source}
-mkdir -p %buildroot/lib/modules/$KernelVer/build
-(cd %buildroot/lib/modules/$KernelVer ; ln -s build source)
+rm -f %buildroot%modules_dir/{build,source}
+mkdir -p %buildroot%modules_dir/build
+(cd %buildroot%modules_dir ; ln -s build source)
 # dirs for additional modules per module-init-tools, kbuild/modules.txt
-mkdir -p %buildroot/lib/modules/$KernelVer/{extra,updates,weak-updates}
+mkdir -p %buildroot%modules_dir/{extra,updates,weak-updates}
 %if %with_openafs
-find $OpenAfsDir -name libafs.ko -execdir cp '{}' %buildroot/lib/modules/$KernelVer/extra/openafs.ko \;
+find $OpenAfsDir -name libafs.ko -execdir cp '{}' %buildroot%modules_dir/extra/openafs.ko \;
 %endif
 # first copy everything
-cp --parents `find  -type f -name "Makefile*" -o -name "Kconfig*"` %buildroot/lib/modules/$KernelVer/build
-cp Module.symvers %buildroot/lib/modules/$KernelVer/build
-mv %buildroot/kabi_whitelist %buildroot/lib/modules/$KernelVer/build
+cp --parents `find  -type f -name "Makefile*" -o -name "Kconfig*"` %buildroot%modules_dir/build
+cp Module.symvers %buildroot%modules_dir/build
+mv %buildroot/kabi_whitelist %buildroot%modules_dir/build
 if [ -e %buildroot/Module.kabi ]; then
-mv %buildroot/Module.kabi %buildroot/lib/modules/$KernelVer/build
+mv %buildroot/Module.kabi %buildroot%modules_dir/build
 fi
-cp symsets-$KernelVer.tar.gz %buildroot/lib/modules/$KernelVer/build
+cp symsets-%KVERREL.tar.gz %buildroot%modules_dir/build
 # then drop all but the needed Makefiles/Kconfig files
-rm -rf %buildroot/lib/modules/$KernelVer/build/{Documentation,scripts,include}
-cp .config %buildroot/lib/modules/$KernelVer/build
-cp -a scripts %buildroot/lib/modules/$KernelVer/build
+rm -rf %buildroot%modules_dir/build/{Documentation,scripts,include}
+cp .config %buildroot%modules_dir/build
+cp -a scripts %buildroot%modules_dir/build
 if [ -d arch/%_arch/scripts ]; then
-  cp -a arch/%_arch/scripts %buildroot/lib/modules/$KernelVer/build/arch/%_arch || :
+  cp -a arch/%_arch/scripts %buildroot%modules_dir/build/arch/%_arch || :
 fi
 if [ -f arch/%_arch/*lds ]; then
-  cp -a arch/%_arch/*lds %buildroot/lib/modules/$KernelVer/build/arch/%_arch/ || :
+  cp -a arch/%_arch/*lds %buildroot%modules_dir/build/arch/%_arch/ || :
 fi
-rm -f %buildroot/lib/modules/$KernelVer/build/scripts/*.o
-rm -f %buildroot/lib/modules/$KernelVer/build/scripts/*/*.o
-mkdir -p %buildroot/lib/modules/$KernelVer/build/include
+rm -f %buildroot%modules_dir/build/scripts/*.o
+rm -f %buildroot%modules_dir/build/scripts/*/*.o
+mkdir -p %buildroot%modules_dir/build/include
 pushd include
-cp -a acpi config keys linux math-emu media mtd net pcmcia rdma rxrpc scsi sound video asm asm-generic ub %buildroot/lib/modules/$KernelVer/build/include
-cp -a `readlink asm` %buildroot/lib/modules/$KernelVer/build/include
+cp -a acpi config keys linux math-emu media mtd net pcmcia rdma rxrpc scsi sound video asm asm-generic ub %buildroot%modules_dir/build/include
+cp -a `readlink asm` %buildroot%modules_dir/build/include
 if [ "$Arch" = "x86_64" ]; then
-  cp -a asm-i386 %buildroot/lib/modules/$KernelVer/build/include
+  cp -a asm-i386 %buildroot%modules_dir/build/include
 fi
 
 # Make sure the Makefile and version.h have a matching timestamp so that
 # external modules can be built
-touch -r %buildroot/lib/modules/$KernelVer/build/Makefile %buildroot/lib/modules/$KernelVer/build/include/linux/version.h
-touch -r %buildroot/lib/modules/$KernelVer/build/.config %buildroot/lib/modules/$KernelVer/build/include/linux/autoconf.h
+touch -r %buildroot%modules_dir/build/Makefile %buildroot%modules_dir/build/include/linux/version.h
+touch -r %buildroot%modules_dir/build/.config %buildroot%modules_dir/build/include/linux/autoconf.h
 # Copy .config to include/config/auto.conf so "make prepare" is unnecessary.
-cp %buildroot/lib/modules/$KernelVer/build/.config %buildroot/lib/modules/$KernelVer/build/include/config/auto.conf
+cp %buildroot%modules_dir/build/.config %buildroot%modules_dir/build/include/config/auto.conf
 popd
 
 #
 # save the vmlinux file for kernel debugging into the kernel-debuginfo rpm
 #
 
-find %buildroot/lib/modules/$KernelVer -name "*.ko" -type f >modnames
+find %buildroot%modules_dir -name "*.ko" -type f >modnames
 
 # mark modules executable so that strip-to-file can strip them
 for i in `cat modnames`
@@ -4802,12 +4806,12 @@ cat modinfo |\
   grep -v "^GPL v2" && exit 1
 rm -f modinfo modnames
 # remove files that will be auto generated by depmod at rpm -i time
-rm -f %buildroot/lib/modules/$KernelVer/modules.*
+rm -f %buildroot%modules_dir/modules.*
 
 # Move the devel headers out of the root file system
 mkdir -p %buildroot/usr/src/kernels
-mv %buildroot/lib/modules/$KernelVer/build %buildroot%kbuild_dir
-ln -sf %kbuild_dir %buildroot/lib/modules/$KernelVer/build
+mv %buildroot%modules_dir/build %buildroot%kbuild_dir
+ln -sf %kbuild_dir %buildroot%modules_dir/build
 
 	# Temporary fix for upstream "make prepare" bug.
 #	pushd $RPM_BUILD_ROOT/%%kbuild_dir > /dev/null
@@ -4855,6 +4859,62 @@ rm -rf %buildroot/usr/include/scsi
 rm -f %buildroot/usr/include/asm*/{atomic,io,irq}.h
 %endif
 
+# Install files required for building external modules (in addition to headers)
+KbuildFiles="
+	Makefile
+	Module.symvers
+	arch/x86/Makefile
+	arch/x86/Makefile_32
+	arch/x86/Makefile_32.cpu
+%ifarch x86_64
+	arch/x86/Makefile_64
+%endif
+
+	scripts/pnmtologo
+	scripts/mod/modpost
+	scripts/mkmakefile
+	scripts/mkversion
+	scripts/mod/mk_elfconfig
+	scripts/kconfig/conf
+	scripts/mkcompile_h
+	scripts/makelst
+	scripts/Makefile.modpost
+	scripts/Makefile.modinst
+	scripts/Makefile.lib
+	scripts/Makefile.host
+	scripts/Makefile.clean
+	scripts/Makefile.build
+	scripts/Makefile
+	scripts/Kbuild.include
+	scripts/kallsyms
+	scripts/genksyms/genksyms
+	scripts/basic/fixdep
+	scripts/extract-ikconfig
+	scripts/conmakehash
+	scripts/checkversion.pl
+	scripts/checkincludes.pl
+	scripts/checkconfig.pl
+	scripts/bin2c
+	scripts/gcc-version.sh
+
+	.config
+	.kernelrelease
+	gcc_version.inc
+"
+for f in $KbuildFiles; do
+	[ -e "$f" ] || continue
+	[ -x "$f" ] && mode=755 || mode=644
+	install -Dp -m$mode "$f" %buildroot%kbuild_dir/"$f"
+done
+
+# Fix symlinks to kernel sources in /lib/modules
+rm -f %buildroot%modules_dir/{build,source}
+ln -s %kbuild_dir %buildroot%modules_dir/build
+
+# Provide kbuild directory with old name (without %%krelease)
+ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
+
+
 ###
 ### scripts
 ###
@@ -4871,16 +4931,19 @@ rm -f %buildroot/usr/include/asm*/{atomic,io,irq}.h
 
 %files
 /boot/vmlinuz-%KVERREL
-/boot/vmlinux-%KVERREL
 /boot/System.map-%KVERREL
 /boot/symvers-%KVERREL.gz
 /boot/config-%KVERREL
-/lib/modules/%KVERREL
+%modules_dir
+%exclude %modules_dir/build
 %ghost /boot/initrd-%KVERREL.img
 %config(noreplace) /etc/modprobe.d/blacklist-firewire
 
 %files -n kernel-headers-modules-%flavour
-%verify(not mtime) %kbuild_dir
+%kbuild_dir
+%old_kbuild_dir
+%dir %modules_dir
+%modules_dir/build
 
 %if %with_headers
 %files headers
