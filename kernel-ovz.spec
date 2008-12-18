@@ -4651,23 +4651,14 @@ cd xen
 %patch90503 -p1
 %endif
 
-###
-### build
-###
 %build
-# prepare directories
-
 cd linux-%kversion.%_target_cpu
-
-# Pick the right config file for the kernel we're building
 Config=kernel-%kversion-%_target_cpu.config.ovz
 
 echo BUILDING A KERNEL FOR %_target_cpu...
 
 # make sure EXTRAVERSION says what we want it to say
 perl -p -i -e "s/^EXTRAVERSION.*/EXTRAVERSION = -%release/" Makefile
-
-# and now to start the build process
 
 %make_build -s mrproper
 cp configs/$Config .config
@@ -4690,10 +4681,6 @@ echo "$Arch" > .buildarch
     %make_build -s libafs
     popd
 %endif
-
-###
-### install
-###
 
 %install
 cd linux-%kversion.%_target_cpu
