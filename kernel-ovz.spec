@@ -2,7 +2,7 @@
 %set_strip_skiplist /boot/*
 
 %define with_doc       0
-%define with_headers   0
+%define with_headers   1
 %define with_openafs   0
 
 %define ovzver 028stab059
@@ -43,6 +43,7 @@
 %define hdrarch %_target_cpu
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
+%define kheaders_dir    %_prefix/include/linux-%kversion-%flavour
 %define kbuild_dir      %_prefix/src/linux-%kversion-%flavour-%krelease
 %define old_kbuild_dir  %_prefix/src/linux-%kversion-%flavour
 %define modules_dir     /lib/modules/%kversion-%flavour-%krelease
@@ -2309,21 +2310,26 @@ device drivers shipped with it are documented in these files.
 You'll want to install this package if you need a reference to the
 options that can be passed to Linux kernel modules at load time.
 
-%package headers
-Summary: Header files for the Linux kernel for use by glibc
-Group: Development/System
-Obsoletes: glibc-kernheaders
-# For ovzkernel-headers to install properly
-Obsoletes: kernel-headers
-Provides: glibc-kernheaders = 3.0-46
-Provides: kernel-headers
+%package -n kernel-headers-%flavour
+Summary: Header files for the Linux kernel
+Group: System/Kernel and hardware
+Requires: kernel-headers-common >= 1.1.5
+Provides: kernel-headers = %version
 
-%description headers
-Kernel-headers includes the C header files that specify the interface
-between the Linux kernel and userspace libraries and programs.  The
-header files define structures and constants that are needed for
-building most standard programs and are also needed for rebuilding the
-glibc package.
+%description -n kernel-headers-%flavour
+This package makes Linux kernel headers corresponding to the Linux
+kernel package %name-%version-%release available for building
+userspace programs (if this version of headers is selected by
+adjust_kernel_headers).
+
+Since Linux 2.6.18 the kernel build system supports creation of
+sanitized kernel headers for use in userspace (by deleting headers
+which are not usable in userspace and removing #ifdef __KERNEL__
+blocks from installed headers).  This package contains sanitized
+headers instead of raw kernel headers which were present in some
+previous versions of similar packages.
+
+If possible, try to use glibc-kernheaders instead of this package.
 
 %prep
 # First we unpack the kernel tarball.
@@ -4838,25 +4844,25 @@ tar cf - Documentation | tar xf - -C %buildroot/usr/share/doc/kernel-doc-%kversi
 
 %if %with_headers
 # Install kernel headers
-make ARCH=%hdrarch INSTALL_HDR_PATH=%buildroot/usr headers_install
+make ARCH=%hdrarch INSTALL_HDR_PATH=%buildroot%kheaders_dir headers_install
 
 # Manually go through the 'headers_check' process for every file, but
 # don't die if it fails
 chmod +x scripts/hdrcheck.sh
 echo -e '*****\n*****\nHEADER EXPORT WARNINGS:\n*****' > hdrwarnings.txt
-for FILE in `find %buildroot/usr/include` ; do
-    scripts/hdrcheck.sh %buildroot/usr/include $FILE >> hdrwarnings.txt || :
+for FILE in `find %buildroot%kheaders_dir/include` ; do
+    scripts/hdrcheck.sh %buildroot%kheaders_dir/include $FILE >> hdrwarnings.txt || :
 done
 echo -e '*****\n*****' >> hdrwarnings.txt
 if grep -q exist hdrwarnings.txt; then
-   sed s:^%buildroot/usr/include/:: hdrwarnings.txt
+   sed s:^%buildroot%kheaders_dir/include/:: hdrwarnings.txt
    # Temporarily cause a build failure if header inconsistencies.
    # exit 1
 fi
 
 # glibc provides scsi headers for itself, for now
-rm -rf %buildroot/usr/include/scsi
-rm -f %buildroot/usr/include/asm*/{atomic,io,irq}.h
+rm -rf %buildroot%kheaders_dir/include/scsi
+rm -f %buildroot%kheaders_dir/include/asm*/{atomic,io,irq}.h
 %endif
 
 # Install files required for building external modules (in addition to headers)
@@ -4946,8 +4952,8 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %modules_dir/build
 
 %if %with_headers
-%files headers
-/usr/include/*
+%files -n kernel-headers-%flavour
+%kheaders_dir
 %endif
 
 # only some architecture builds need kernel-doc
