@@ -4652,6 +4652,7 @@ cd xen
 %endif
 
 %build
+export ARCH=%base_arch
 cd linux-%kversion.%_target_cpu
 Config=kernel-%kversion-%_target_cpu.config.ovz
 
@@ -4663,13 +4664,9 @@ perl -p -i -e "s/^EXTRAVERSION.*/EXTRAVERSION = -%release/" Makefile
 %make_build -s mrproper
 cp configs/$Config .config
 
-Arch=`head -1 .config | cut -b 3-`
-echo USING ARCH=$Arch
-echo "$Arch" > .buildarch
-
-%make_build -s ARCH=$Arch nonint_oldconfig > /dev/null
-%make_build -s ARCH=$Arch %{?_smp_mflags} bzImage
-%make_build -s ARCH=$Arch %{?_smp_mflags} modules || exit 1
+%make_build -s nonint_oldconfig > /dev/null
+%make_build -s %{?_smp_mflags} bzImage
+%make_build -s %{?_smp_mflags} modules || exit 1
 
 %if %with_openafs
     echo Building openafs...
@@ -4683,19 +4680,18 @@ echo "$Arch" > .buildarch
 %endif
 
 %install
-cd linux-%kversion.%_target_cpu
-# Start installing the results
+export ARCH=%base_arch
 
-Arch=`cat .buildarch`
+cd linux-%kversion.%_target_cpu
 
 mkdir -p %buildroot/boot
 install -m 644 .config %buildroot/boot/config-%KVERREL
 install -m 644 System.map %buildroot/boot/System.map-%KVERREL
 touch %buildroot/boot/initrd-%KVERREL.img
 
-cp arch/$Arch/boot/bzImage %buildroot/boot/vmlinuz-%KVERREL
-if [ -f arch/$Arch/boot/zImage.stub ]; then
-  cp arch/$Arch/boot/zImage.stub %buildroot/boot/zImage.stub-%KVERREL || :
+cp arch/$ARCH/boot/bzImage %buildroot/boot/vmlinuz-%KVERREL
+if [ -f arch/$ARCH/boot/zImage.stub ]; then
+  cp arch/$ARCH/boot/zImage.stub %buildroot/boot/zImage.stub-%KVERREL || :
 fi
 
 %if %includeovz
@@ -4704,7 +4700,7 @@ chmod 600 %buildroot/boot/vmlinux-%KVERREL
 %endif
 
 mkdir -p %buildroot/%modules_dir
-make -s ARCH=$Arch INSTALL_MOD_PATH=%buildroot modules_install KERNELRELEASE=%KVERREL
+make -s INSTALL_MOD_PATH=%buildroot modules_install KERNELRELEASE=%KVERREL
 
 # Create the kABI metadata for use in packaging
 echo "**** GENERATING kernel ABI metadata ****"
@@ -4758,7 +4754,7 @@ mkdir -p %buildroot%modules_dir/build/include
 pushd include
 cp -a acpi config keys linux math-emu media mtd net pcmcia rdma rxrpc scsi sound video asm asm-generic ub %buildroot%modules_dir/build/include
 cp -a `readlink asm` %buildroot%modules_dir/build/include
-if [ "$Arch" = "x86_64" ]; then
+if [ "$ARCH" = "x86_64" ]; then
   cp -a asm-i386 %buildroot%modules_dir/build/include
 fi
 
