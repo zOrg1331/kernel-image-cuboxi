@@ -100,6 +100,8 @@ Provides: kernel-drm = 4.3.0
 Provides: kernel-%_target_cpu = %kversion-%release
 Provides: vzkernel = %KVERREL
 Provides: vzquotamod
+Provides: alsa = 1.0.14
+
 BuildRequires(pre): rpm-build-kernel
 PreReq: coreutils, module-init-tools, mkinitrd
 Conflicts: %kernel_dot_org_conflicts
