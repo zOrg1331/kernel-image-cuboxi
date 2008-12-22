@@ -21,6 +21,7 @@
   */
 
 #include <linux/module.h>
+#include <media/compat.h>
 #include <linux/dvb/frontend.h>
 #include <asm/types.h>
 
