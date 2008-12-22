@@ -22,6 +22,7 @@
 #include <linux/videodev.h>
 #include <linux/video_decoder.h>
 #include <linux/i2c.h>
+#include <media/compat.h>
 
 #include "saa7191.h"
 

@@ -34,6 +34,7 @@
 #include <linux/mutex.h>
 
 #include <media/ovcamchip.h>
+#include <media/compat.h>
 
 #include "w9968cf_vpp.h"
 
