@@ -2286,7 +2286,7 @@ input and output, etc.
 
 %package -n kernel-headers-modules-%flavour
 Summary: Headers and other files needed for building kernel modules
-Group: System/Kernel and hardware
+Group: Development/Kernel
 Requires: gcc%kgcc_version
 # ??? Requires: kernel-headers-alsa
 
@@ -2314,7 +2314,7 @@ options that can be passed to Linux kernel modules at load time.
 
 %package -n kernel-headers-%flavour
 Summary: Header files for the Linux kernel
-Group: System/Kernel and hardware
+Group: Development/Kernel
 Requires: kernel-headers-common >= 1.1.5
 Provides: kernel-headers = %version
 
