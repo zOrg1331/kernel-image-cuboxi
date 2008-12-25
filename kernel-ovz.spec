@@ -97,7 +97,7 @@ ExclusiveArch: i686 x86_64
 ExclusiveOS: Linux
 Provides: kernel = %version
 Provides: kernel-drm = 4.3.0
-Provides: kernel-%_target_cpu = %kversion-%release
+Provides: kernel-%_target_cpu = %kversion-%flavour-%krelease
 Provides: vzkernel = %KVERREL
 Provides: vzquotamod
 Provides: alsa = 1.0.14
@@ -4661,7 +4661,7 @@ Config=kernel-%kversion-%_target_cpu.config.ovz
 echo BUILDING A KERNEL FOR %_target_cpu...
 
 # make sure EXTRAVERSION says what we want it to say
-perl -p -i -e "s/^EXTRAVERSION.*/EXTRAVERSION = -%release/" Makefile
+perl -p -i -e "s/^EXTRAVERSION.*/EXTRAVERSION = -%flavour-%release/" Makefile
 
 %make_build -s mrproper
 cp configs/$Config .config
