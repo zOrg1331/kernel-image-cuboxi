@@ -676,7 +676,8 @@ static inline int init_ve_namespaces(struct ve_struct *ve,
 	tsk = current;
 	cur = tsk->nsproxy;
 
-	err = copy_namespaces(CLONE_NAMESPACES_MASK & ~CLONE_NEWNET, tsk);
+	err = copy_namespaces(CLONE_NEWUTS | CLONE_NEWIPC
+			| CLONE_NEWUSER | CLONE_NEWPID, tsk, 1);
 	if (err < 0)
 		return err;
 
@@ -719,7 +720,7 @@ static int init_ve_netns(struct ve_struct *ve, struct nsproxy **old)
 	tsk = current;
 	cur = tsk->nsproxy;
 
-	err = copy_namespaces(CLONE_NEWNET, tsk);
+	err = copy_namespaces(CLONE_NEWNET, tsk, 1);
 	if (err < 0)
 		return err;
 

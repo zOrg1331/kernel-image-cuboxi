@@ -1021,13 +1021,8 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	struct task_struct *p;
 	int cgroup_callbacks_done = 0;
 
-#ifdef CONFIG_VE
-	if (clone_flags & CLONE_NAMESPACES_MASK)
-		return ERR_PTR(-EINVAL);
-#else
 	if ((clone_flags & (CLONE_NEWNS|CLONE_FS)) == (CLONE_NEWNS|CLONE_FS))
 		return ERR_PTR(-EINVAL);
-#endif
 
 	/*
 	 * Thread groups must share signals as well, and detached threads
@@ -1195,7 +1190,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 		goto bad_fork_cleanup_sighand;
 	if ((retval = copy_mm(clone_flags, p)))
 		goto bad_fork_cleanup_signal;
-	if ((retval = copy_namespaces(clone_flags, p)))
+	if ((retval = copy_namespaces(clone_flags, p, 0)))
 		goto bad_fork_cleanup_mm;
 	if ((retval = copy_io(clone_flags, p)))
 		goto bad_fork_cleanup_namespaces;
@@ -1736,10 +1731,6 @@ SYSCALL_DEFINE1(unshare, unsigned long, unshare_flags)
 				CLONE_VM|CLONE_FILES|CLONE_SYSVSEM|
 				CLONE_NEWUTS|CLONE_NEWIPC|CLONE_NEWNET))
 		goto bad_unshare_out;
-#ifdef CONFIG_VE
-	if (unshare_flags & CLONE_NAMESPACES_MASK)
-		goto bad_unshare_out;
-#endif
 
 	/*
 	 * CLONE_NEWIPC must also detach from the undolist: after switching
@@ -1758,11 +1749,9 @@ SYSCALL_DEFINE1(unshare, unsigned long, unshare_flags)
 		goto bad_unshare_cleanup_sigh;
 	if ((err = unshare_fd(unshare_flags, &new_fd)))
 		goto bad_unshare_cleanup_vm;
-#ifndef CONFIG_VE
 	if ((err = unshare_nsproxy_namespaces(unshare_flags, &new_nsproxy,
 			new_fs)))
 		goto bad_unshare_cleanup_fd;
-#endif
 
 	if (new_fs ||  new_mm || new_fd || do_sysvsem || new_nsproxy) {
 		if (do_sysvsem) {
@@ -1811,9 +1800,7 @@ SYSCALL_DEFINE1(unshare, unsigned long, unshare_flags)
 	if (new_nsproxy)
 		put_nsproxy(new_nsproxy);
 
-#ifndef CONFIG_VE
 bad_unshare_cleanup_fd:
-#endif
 	if (new_fd)
 		put_files_struct(new_fd);
 
