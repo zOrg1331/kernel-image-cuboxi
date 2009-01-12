@@ -168,6 +168,14 @@ static struct utrace_attached_engine *matching_engine(
 }
 
 /*
+ * For experimental use, utrace attach is mutually exclusive with ptrace.
+ */
+static inline bool exclude_utrace(struct task_struct *task)
+{
+	return unlikely(!!task->ptrace);
+}
+
+/*
  * Called without locks.
  * Allocate target->utrace and install engine in it.  If we lose a race in
  * setting it up, return -EAGAIN.  This function mediates startup races.
@@ -177,6 +185,7 @@ static struct utrace_attached_engine *matching_engine(
 static int utrace_first_engine(struct task_struct *target,
 			       struct utrace_attached_engine *engine)
 {
+	int ret;
 	struct utrace *utrace;
 
 	/*
@@ -205,9 +214,12 @@ static int utrace_first_engine(struct task_struct *target,
 	spin_lock_init(&utrace->lock);
 	CHECK_INIT(utrace);
 
+	ret = -EAGAIN;
 	spin_lock(&utrace->lock);
 	task_lock(target);
-	if (likely(!target->utrace)) {
+	if (exclude_utrace(target)) {
+		ret = -EBUSY;
+	} else if (likely(!target->utrace)) {
 		rcu_assign_pointer(target->utrace, utrace);
 
 		/*
@@ -243,7 +255,7 @@ static int utrace_first_engine(struct task_struct *target,
 	spin_unlock(&utrace->lock);
 	kmem_cache_free(utrace_cachep, utrace);
 
-	return -EAGAIN;
+	return ret;
 }
 
 /*

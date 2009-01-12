@@ -16,6 +16,7 @@
 #include <linux/pagemap.h>
 #include <linux/smp_lock.h>
 #include <linux/ptrace.h>
+#include <linux/utrace.h>
 #include <linux/security.h>
 #include <linux/signal.h>
 #include <linux/audit.h>
@@ -172,6 +173,14 @@ bool ptrace_may_access(struct task_struct *task, unsigned int mode)
 	return (!err ? true : false);
 }
 
+/*
+ * For experimental use of utrace, exclude ptrace on the same task.
+ */
+static inline bool exclude_ptrace(struct task_struct *task)
+{
+	return unlikely(!!task_utrace_struct(task));
+}
+
 int ptrace_attach(struct task_struct *task)
 {
 	int retval;
@@ -208,6 +217,11 @@ repeat:
 			cpu_relax();
 		} while (!write_can_lock(&tasklist_lock));
 		goto repeat;
+	}
+
+	if (exclude_ptrace(task)) {
+		retval = -EBUSY;
+		goto bad;
 	}
 
 	if (!task->mm)
