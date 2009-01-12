@@ -398,8 +398,10 @@ restart:
 
 	if (unlikely(ret)) {
 		kmem_cache_free(utrace_engine_cachep, engine);
-		if (unlikely(ret == -EAGAIN))
+		if (unlikely(ret == -EAGAIN)) {
+			cond_resched();
 			goto restart;
+		}
 		engine = ERR_PTR(ret);
 	}
 
