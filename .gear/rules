@@ -48,13 +48,17 @@ copy: diff-i2o-proc-perms-20060304
 copy: diff-i2o-procread-20070509
 copy: diff-ipv4-dumpbaddst-20080929
 copy: diff-ipv4-reliable-dst-garbage-20080929
-copy: diff-ms-AF_UNIX-garbage-20081113
-copy: diff-ms-AF_UNIX-garbage-inflight-20081113
-copy: diff-ms-__scm_destroy-recursion-20081113
 copy: diff-ms-devleak-dstdebug-20080504
-copy: diff-ms-rtnlcompat-20081010
+copy: diff-ms-devleaktime-20081111
+copy: diff-ms-framebuffer-EFI-20081205
+copy: diff-ms-nfssync-20081118
 copy: diff-ms-splice-access-20080211
 copy: diff-ms-tcp-slow-start-20080306
+copy: diff-nbd-compile-fixes
+copy: diff-nbd-from-current
+copy: diff-nbd-spinlock-usage-fix
+copy: diff-nbd-umount-after-connection-lost
+copy: diff-nbd-xmit-timeout
 copy: diff-nfs-rpcsaddr
 copy: diff-openafs-configure-no-mod-check
 copy: diff-openafs-exec-context
@@ -62,9 +66,11 @@ copy: diff-openafs-find_task_by_pid
 copy: diff-openafs-for_each_process
 copy: diff-rh-9w-try-set-mwi
 copy: diff-scsi-add-modalias-mainstream
+copy: diff-show-task-running-20081117
 copy: diff-snd-hda-intel
 copy: diff-tossing-headers-around
 copy: diff-ve-moreleaks-20090829
+copy: diff-ve-net-ipip-oops-fix-20090108
 copy: find-provides
 copy: genkey
 copy: kabi_whitelist_i686
@@ -79,5 +85,5 @@ copy: kabi_whitelist_x86_64
 copy: kabi_whitelist_x86_64xen
 copy: kabitool
 tar.bz2: linux name=linux-2.6.18
-copy: patch-028stab059-core
+copy: patch-028stab060-core
 tar.gz: xen name=xen-15502 base= suffix=.tar.bz2

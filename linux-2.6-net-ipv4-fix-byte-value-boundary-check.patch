@@ -1,0 +1,62 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Thu, 23 Oct 2008 15:35:58 +0200
+Subject: [net] ipv4: fix byte value boundary check
+Message-id: 20081023153558.1df9e92f@psychotron.englab.brq.redhat.com
+O-Subject: [RHEL5.4 patch] BZ468148 ipv4: Fix byte value boundary check in do_ip_getsockopt()
+Bugzilla: 468148
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+
+BZ468148
+https://bugzilla.redhat.com/show_bug.cgi?id=468148
+
+﻿Description:
+If we try to grab a char sized socket option value, as in:
+
+  unsigned char ttl = 255;
+  socklen_t     len = sizeof(ttl);
+  setsockopt(socket, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, &len);
+
+  getsockopt(socket, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, &len);
+
+The ttl returned will be wrong on big-endian, and on both little-
+endian and big-endian the next three bytes in userspace are written
+with garbage.
+
+It's because of this test in do_ip_getsockopt():
+
+if (len < sizeof(int) && len > 0 && val>=0 && val<255) {
+
+It should allow a 'val' of 255 to pass here, but it doesn't so it
+copies a full 'int' back to userspace.
+
+On little-endian that will write the correct value into the location
+but it spams on the next three bytes in userspace.  On big endian it
+writes the wrong value into the location and spams the next three
+bytes.
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=951e07c930f5f66b676eaa4c32a1b0d8e2d7d06a
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1536585
+
+Test:
+Booted and tested with reproducer on x86_64, ppc64. Works fine.
+
+Jirka
+
+diff --git a/net/ipv4/ip_sockglue.c b/net/ipv4/ip_sockglue.c
+index a107827..e9180d9 100644
+--- a/net/ipv4/ip_sockglue.c
++++ b/net/ipv4/ip_sockglue.c
+@@ -1144,7 +1144,7 @@ static int do_ip_getsockopt(struct sock *sk, int level, int optname,
+ 	}
+ 	release_sock(sk);
+ 	
+-	if (len < sizeof(int) && len > 0 && val>=0 && val<255) {
++	if (len < sizeof(int) && len > 0 && val>=0 && val<=255) {
+ 		unsigned char ucval = (unsigned char)val;
+ 		len = 1;
+ 		if(put_user(len, optlen))

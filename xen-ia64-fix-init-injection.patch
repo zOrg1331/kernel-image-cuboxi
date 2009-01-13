@@ -1,0 +1,108 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Mon, 13 Oct 2008 16:05:57 -0400
+Subject: [xen] ia64: fix INIT injection
+Message-id: 48F3AA25.8030608@redhat.com
+O-Subject: [RHEL5.3 PATCH] xen-ia64: fix INIT injection
+Bugzilla: 464445
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+BZ464445
+https://bugzilla.redhat.com/show_bug.cgi?id=464445
+
+[Description]
+On ia64/xen, 'xm trigger init' causes domain panic if userland
+application is running on the guest.  This means that there is no way to
+dump core file for windows guest by INIT signal, which is the only way
+to get dump file from dom0 (xm dump-core does not work for windows guest).
+
+This is fixed by the patch in the upstream.
+- [IA64] fix INIT injection.
+   http://xenbits.xensource.com/xen-unstable.hg?rev/3d96f88fb220
+
+[Upstream Status]
+The patch was applied in the upstream 4 weeks ago.
+
+[brew ID]
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1517066
+
+[Test Status]
+I've tested this patch with kernel-119 on ia64 box and confirmed that
+windows guest domain does not panic and can make dump file by 'xm
+trigger init' command.
+
+Please review and ACK.
+
+Regards,
+
+Tetsu Yamamoto
+
+# HG changeset patch
+# User Isaku Yamahata <yamahata@valinux.co.jp>
+# Date 1221728055 -32400
+# Node ID 3d96f88fb220dd1b29f4873deca378913b3db3ff
+# Parent  4a381ddc764a635e9242686ef8cefb5af363c873
+[IA64] fix INIT injection.
+
+xm trigger command sometimes causes an unexpected domain panic.
+There are several symptoms:
+ * Guest nested fault (INIT handler runs with vpsr.cpl != 0)
+ * Interrupt when IC=0
+ * Unexpected virtual <--> physical mode transition
+
+Signed-off-by: Kouya Shimura <kouya@jp.fujitsu.com>
+Signed-off-by: Kazuhiro Suzuki <kaz@jp.fujitsu.com>
+
+diff --git a/arch/ia64/vmx/vlsapic.c b/arch/ia64/vmx/vlsapic.c
+index b262a80..70ef86f 100644
+--- a/arch/ia64/vmx/vlsapic.c
++++ b/arch/ia64/vmx/vlsapic.c
+@@ -38,6 +38,7 @@
+ #include <asm/vmx_platform.h>
+ #include <asm/viosapic.h>
+ #include <asm/vlsapic.h>
++#include <asm/vmx_phy_mode.h>
+ #include <asm/linux/jiffies.h>
+ #include <xen/domain.h>
+ 
+@@ -607,9 +608,8 @@ struct vcpu * vlsapic_lid_to_vcpu(struct domain *d, uint16_t dest)
+  * To inject INIT to guest, we must set the PAL_INIT entry 
+  * and set psr to switch to physical mode
+  */
+-#define PAL_INIT_ENTRY 0x80000000ffffffa0
+ #define PSR_SET_BITS (IA64_PSR_DT | IA64_PSR_IT | IA64_PSR_RT | \
+-                      IA64_PSR_IC | IA64_PSR_RI)
++                      IA64_PSR_IC | IA64_PSR_RI | IA64_PSR_I | IA64_PSR_CPL)
+ 
+ static void vmx_inject_guest_pal_init(VCPU *vcpu)
+ {
+diff --git a/arch/ia64/vmx/vmx_phy_mode.c b/arch/ia64/vmx/vmx_phy_mode.c
+index b6155aa..ee070c1 100644
+--- a/arch/ia64/vmx/vmx_phy_mode.c
++++ b/arch/ia64/vmx/vmx_phy_mode.c
+@@ -237,7 +237,12 @@ void
+ switch_mm_mode(VCPU *vcpu, IA64_PSR old_psr, IA64_PSR new_psr)
+ {
+     int act;
+-    act = mm_switch_action(old_psr, new_psr);
++    /* Switch to physical mode when injecting PAL_INIT */
++    if (unlikely(MODE_IND(new_psr) == 0 &&
++                 vcpu_regs(vcpu)->cr_iip == PAL_INIT_ENTRY))
++        act = SW_V2P;
++    else
++        act = mm_switch_action(old_psr, new_psr);
+     perfc_incra(vmx_switch_mm_mode, act);
+     switch (act) {
+     case SW_V2P:
+diff --git a/include/asm-ia64/vmx_phy_mode.h b/include/asm-ia64/vmx_phy_mode.h
+index fcc6e5b..ee7b71b 100644
+--- a/include/asm-ia64/vmx_phy_mode.h
++++ b/include/asm-ia64/vmx_phy_mode.h
+@@ -120,4 +120,6 @@ extern void physical_tlb_miss(VCPU *vcpu, u64 vadr, int type);
+ #define GUEST_VIRT  1   /* Guest in virtual mode */
+ #define GUEST_PHYS  2   /* Guest in physical mode, requiring emulation */
+ 
++#define PAL_INIT_ENTRY 0x80000000ffffffa0
++
+ #endif /* _PHY_MODE_H_ */

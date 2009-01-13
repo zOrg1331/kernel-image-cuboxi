@@ -12,8 +12,8 @@
 %define buildheaders 0
 %define _without_kabichk 1
 
-%define ovzver 028stab059
-%define ovzrel 6
+%define ovzver 028stab060
+%define ovzrel 2
 
 %if !%{buildup}
 %define _without_up 1
@@ -133,7 +133,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %define sublevel 18
 %define kversion 2.6.%{sublevel}
 %define rpmversion 2.6.%{sublevel}
-%define release 92.1.13%{?dist}%{?buildid}
+%define release 92.1.18%{?dist}%{?buildid}
 %define signmodules 0
 %define xen_hv_cset 15502
 %define xen_abi_ver 3.1
@@ -898,6 +898,9 @@ Patch20057: xen-hv-ignoring-extended-cpu-model-field.patch
 Patch20058: xen-fix-vt-x2-flexpriority.patch
 Patch20059: xen-hv-memory-corruption-with-large-number-of-cpus.patch
 Patch20060: xen-ia64-smp-unsafe-with-xenmem_add_to_physmap-on-hvm.patch
+Patch20061: xen-allow-guests-to-hide-the-tsc-from-applications.patch
+Patch20062: xen-ia64-fix-init-injection.patch
+Patch20063: xen-x86-allow-the-kernel-to-boot-on-pre-64-bit-hw.patch
 # end of Xen patches
 
 Patch21007: linux-2.6-netlabel-error-checking-cleanups.patch
@@ -2457,6 +2460,35 @@ Patch22602: linux-2.6-ia64-fix-to-check-module_free-parameter.patch
 Patch22603: linux-2.6-ipmi-control-bmc-device-ordering.patch
 Patch22604: linux-2.6-sound-snd_seq_oss_synth_make_info-info-leak.patch
 Patch22605: linux-2.6-md-fix-crashes-in-iterate_rdev.patch
+Patch22606: linux-2.6-fs-fix-bad-unlock_page-in-pip_to_file-error-path.patch
+Patch22607: linux-2.6-xen-event-channel-lock-and-barrier.patch
+Patch22608: linux-2.6-xen-xennet-coordinate-arp-with-backend-network-status.patch
+Patch22609: linux-2.6-mm-optimize-zero_page-in-get_user_pages-and-fix-xip.patch
+Patch22610: linux-2.6-acpi-error-attaching-device-data.patch
+Patch22611: linux-2.6-net-dccp_setsockopt_change-integer-overflow.patch
+Patch22612: linux-2.6-openib-race-between-qp-async-handler-and-destroy_qp.patch
+Patch22613: linux-2.6-fs-cifs-fix-o_append-on-directio-mounts.patch
+Patch22614: linux-2.6-x86_64-xen-local-dos-due-to-nt-bit-leakage.patch
+Patch22615: linux-2.6-net-random32-seeding-improvement.patch
+Patch22616: linux-2.6-libata-ata_scsi_rbuf_get-check-for-scatterlist-usage.patch
+Patch22617: linux-2.6-x86_64-gettimeofday-fixes-for-hpet-pmtimer-tsc.patch
+Patch22619: linux-2.6-dlm-user-c-input-validation-fixes.patch
+Patch22620: linux-2.6-misc-cpufreq-fix-format-string-bug.patch
+Patch22621: linux-2.6-fs-binfmt_misc-avoid-potential-kernel-stack-overflow.patch
+Patch22622: linux-2.6-char-add-range_is_allowed-check-to-mmap_mem.patch
+Patch22623: linux-2.6-scsi-qla2xxx-additional-residual-count-correction.patch
+Patch22624: linux-2.6-x86_64-revert-time-syscall-changes.patch
+Patch22625: linux-2.6-pci-fix-problems-with-msi-interrupt-management.patch
+Patch22626: linux-2.6-fs-open-allows-setgid-bit-when-user-is-not-in-group.patch
+Patch22627: linux-2.6-fs-remove-suid-when-splicing-into-an-inode.patch
+Patch22628: linux-2.6-scsi-aacraid-remove-some-quirk-aac_quirk_scsi_32-bits.patch
+Patch22629: linux-2.6-i386-vdso-use-install_special_mapping.patch
+
+# Backports from kernel-2.6.18-92.1.22.el5
+Patch22630: linux-2.6-nfs-v4-credential-ref-leak-in-nfs4_get_state_owner.patch
+Patch22631: linux-2.6-net-ipv4-fix-byte-value-boundary-check.patch
+Patch22632: linux-2.6-fs-don-t-allow-splice-to-files-opened-with-o_append.patch
+Patch22633: linux-2.6-drm-i915-driver-arbitrary-ioremap.patch
 
 # Start VZ patches
 Patch50000: patch-%{ovzver}-core
@@ -2542,7 +2574,6 @@ Patch90503: diff-openafs-configure-no-mod-check
 Patch91001: diff-ms-tcp-slow-start-20080306
 Patch91002: linux-hp-dmi-info-correct.patch
 Patch91003: diff-nfs-rpcsaddr
-Patch91004: diff-ms-rtnlcompat-20081010
 
 # Bells and whistles
 Patch100000: diff-fs-fsync-enable-rh5-20080131
@@ -2550,10 +2581,19 @@ Patch100001: diff-ms-devleak-dstdebug-20080504
 Patch100002: diff-ipv4-dumpbaddst-20080929
 Patch100003: diff-ipv4-reliable-dst-garbage-20080929
 Patch100004: diff-ve-moreleaks-20090829
-Patch100005: diff-ms-__scm_destroy-recursion-20081113
-Patch100006: diff-ms-AF_UNIX-garbage-20081113
-Patch100007: diff-ms-AF_UNIX-garbage-inflight-20081113
-# Patch100002: diff-ms-dnotify-race
+Patch100010: diff-ms-nfssync-20081118
+Patch100014: diff-ms-devleaktime-20081111
+Patch100015: diff-show-task-running-20081117
+Patch100016: diff-ms-framebuffer-EFI-20081205
+Patch100017: diff-ve-net-ipip-oops-fix-20090108
+#Patch100018:
+
+# NBD
+Patch110001: diff-nbd-from-current
+Patch110002: diff-nbd-compile-fixes
+Patch110003: diff-nbd-umount-after-connection-lost
+Patch110005: diff-nbd-spinlock-usage-fix
+Patch110006: diff-nbd-xmit-timeout
 
 # End VZ patches
 
@@ -4978,6 +5018,34 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch22603 -p1
 %patch22604 -p1
 %patch22605 -p1
+%patch22606 -p1
+%patch22607 -p1
+%patch22608 -p1
+%patch22609 -p1
+%patch22610 -p1
+%patch22611 -p1
+%patch22612 -p1
+%patch22613 -p1
+%patch22614 -p1
+%patch22615 -p1
+%patch22616 -p1
+%patch22617 -p1
+%patch22619 -p1
+%patch22620 -p1
+%patch22621 -p1
+%patch22622 -p1
+%patch22623 -p1
+%patch22624 -p1
+%patch22625 -p1
+%patch22626 -p1
+%patch22627 -p1
+%patch22628 -p1
+%patch22629 -p1
+%patch22630 -p1
+%patch22631 -p1
+%patch22632 -p1
+%patch22633 -p1
+
 
 %if %{includeovz}
 %patch50000 -p1
@@ -5039,17 +5107,24 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch91001 -p1
 %patch91002 -p1
 %patch91003 -p1
-%patch91004 -p1
 
 %patch100000 -p1
 %patch100001 -p1
 %patch100002 -p1
 %patch100003 -p1
 %patch100004 -p1
-%patch100005 -p1
-%patch100006 -p1
-%patch100007 -p1
-# %patch100002 -p1 obsoleted by linux-2.6-fs-race-condition-in-dnotify.patch
+%patch100010 -p1
+%patch100014 -p1
+%patch100015 -p1
+%patch100016 -p1
+%patch100017 -p1
+#%patch100018 -p1
+
+%patch110001 -p1
+%patch110002 -p1
+%patch110003 -p1
+%patch110005 -p1
+%patch110006 -p1
 
 %endif
 
@@ -5219,6 +5294,10 @@ cd xen
 %patch20058 -p1
 %patch20059 -p1
 %patch20060 -p1
+%patch20061 -p1
+%patch20062 -p1
+%patch20063 -p1
+
 # end of necessary hypervisor patches
 %endif
 
@@ -5894,12 +5973,14 @@ fi
 
 %preun ent
 /sbin/new-kernel-pkg --rminitrd --rmmoddep --remove %{KVERREL}ent || exit $?
+if [ -x /sbin/weak-modules ]
 then
     /sbin/weak-modules --remove-kernel %{KVERREL}ent || exit $?
 fi
 
 %preun ent-debug
 /sbin/new-kernel-pkg --rminitrd --rmmoddep --remove %{KVERREL}ent-debug || exit $?
+if [ -x /sbin/weak-modules ]
 then
     /sbin/weak-modules --remove-kernel %{KVERREL}ent-debug || exit $?
 fi
@@ -6081,6 +6162,7 @@ This is required to use SystemTap with %{name}-ent-%{KVERREL}.
 %files ent
 %defattr(-,root,root)
 /%{image_install_path}/vmlinuz-%{KVERREL}ent
+/%{image_install_path}/vmlinux-%{KVERREL}ent
 /boot/System.map-%{KVERREL}ent
 /boot/symvers-%{KVERREL}ent.gz
 /boot/config-%{KVERREL}ent
@@ -6143,6 +6225,7 @@ This is required to use SystemTap with %{name}-smp-%{KVERREL}.
 %files smp
 %defattr(-,root,root)
 /%{image_install_path}/vmlinuz-%{KVERREL}smp
+/%{image_install_path}/vmlinux-%{KVERREL}smp
 /boot/System.map-%{KVERREL}smp
 /boot/symvers-%{KVERREL}smp.gz
 /boot/config-%{KVERREL}smp
@@ -6188,6 +6271,7 @@ This is required to use SystemTap with %{name}-xen-%{KVERREL}.
 %files xen
 %defattr(-,root,root)
 /%{image_install_path}/vmlinuz-%{KVERREL}xen
+/%{image_install_path}/vmlinux-%{KVERREL}xen
 /boot/System.map-%{KVERREL}xen
 /boot/symvers-%{KVERREL}xen.gz
 /boot/config-%{KVERREL}xen
