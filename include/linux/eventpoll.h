@@ -70,6 +70,8 @@ struct epoll_filefd {
 	int fd;
 };
 
+struct user_struct;
+
 /*
  * This structure is stored inside the "private_data" member of the file
  * structure and rapresent the main data sructure for the eventpoll
@@ -105,6 +107,9 @@ struct eventpoll {
 	 * holding ->lock.
 	 */
 	struct epitem *ovflist;
+
+	/* The user that created the eventpoll descriptor */
+	struct user_struct *user;
 };
 
 /*

@@ -616,6 +616,10 @@ struct user_struct {
 	atomic_t inotify_watches; /* How many inotify watches does this user have? */
 	atomic_t inotify_devs;	/* How many inotify devs does this user have opened? */
 #endif
+#ifdef CONFIG_EPOLL
+	atomic_t epoll_devs;	/* The number of epoll descriptors currently open */
+	atomic_t epoll_watches;	/* The number of file descriptors currently watched */
+#endif
 #ifdef CONFIG_POSIX_MQUEUE
 	/* protected by mq_lock	*/
 	unsigned long mq_bytes;	/* How many bytes can be allocated to mqueue? */
@@ -1323,6 +1327,8 @@ struct task_struct {
 	 */
 	__u8	 pn_state;
 	__u8	 stopped_state:1;
+
+	struct list_head	*scm_work_list;
 
 	/*
 	 * cache last used pipe for splice

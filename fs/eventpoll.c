@@ -103,6 +103,8 @@
 
 #define EP_UNACTIVE_PTR ((void *) -1L)
 
+#define EP_ITEM_COST (sizeof(struct epitem) + sizeof(struct eppoll_entry))
+
 /*
  * Node that is linked into the "wake_task_list" member of the "struct poll_safewake".
  * It is used to keep track on all tasks that are currently inside the wake_up() code
@@ -150,9 +152,17 @@ struct ep_pqueue {
 };
 
 /*
+ * Configuration options available inside /proc/sys/fs/epoll/
+ */
+/* Maximum number of epoll devices, per user */
+static int max_user_instances __read_mostly;
+/* Maximum number of epoll watched descriptors, per user */
+static int max_user_watches __read_mostly;
+
+/*
  * This mutex is used to serialize ep_free() and eventpoll_release_file().
  */
-struct mutex epmutex;
+DEFINE_MUTEX(epmutex);
 EXPORT_SYMBOL_GPL(epmutex);
 
 /* Safe wake up implementation */
@@ -163,6 +173,33 @@ static struct kmem_cache *epi_cache __read_mostly;
 
 /* Slab cache used to allocate "struct eppoll_entry" */
 static struct kmem_cache *pwq_cache __read_mostly;
+
+#ifdef CONFIG_SYSCTL
+
+#include <linux/sysctl.h>
+
+static int zero;
+
+ctl_table epoll_table[] = {
+	{
+		.procname	= "max_user_instances",
+		.data		= &max_user_instances,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= &zero,
+	},
+	{
+		.procname	= "max_user_watches",
+		.data		= &max_user_watches,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= &zero,
+	},
+	{ .ctl_name = 0 }
+};
+#endif /* CONFIG_SYSCTL */
 
 
 /* Setup the structure that is used as key for the RB tree */
@@ -326,6 +363,8 @@ static int ep_remove(struct eventpoll *ep, struct epitem *epi)
 	/* At this point it is safe to free the eventpoll item */
 	kmem_cache_free(epi_cache, epi);
 
+	atomic_dec(&ep->user->epoll_watches);
+
 	DNPRINTK(3, (KERN_INFO "[%p] eventpoll: ep_remove(%p, %p)\n",
 		     current, ep, file));
 
@@ -373,6 +412,8 @@ static void ep_free(struct eventpoll *ep)
 
 	mutex_unlock(&epmutex);
 	mutex_destroy(&ep->mtx);
+	atomic_dec(&ep->user->epoll_devs);
+	free_uid(ep->user);
 	kfree(ep);
 }
 
@@ -457,10 +498,19 @@ void eventpoll_release_file(struct file *file)
 
 static int ep_alloc(struct eventpoll **pep)
 {
-	struct eventpoll *ep = kzalloc(sizeof(*ep), GFP_KERNEL);
+	int error;
+	struct user_struct *user;
+	struct eventpoll *ep;
 
-	if (!ep)
-		return -ENOMEM;
+	user = get_current_user();
+	error = -EMFILE;
+	if (unlikely(atomic_read(&user->epoll_devs) >=
+			max_user_instances))
+		goto free_uid;
+	error = -ENOMEM;
+	ep = kzalloc(sizeof(*ep), GFP_KERNEL);
+	if (unlikely(!ep))
+		goto free_uid;
 
 	spin_lock_init(&ep->lock);
 	mutex_init(&ep->mtx);
@@ -469,12 +519,17 @@ static int ep_alloc(struct eventpoll **pep)
 	INIT_LIST_HEAD(&ep->rdllist);
 	ep->rbr = RB_ROOT;
 	ep->ovflist = EP_UNACTIVE_PTR;
+	ep->user = user;
 
 	*pep = ep;
 
 	DNPRINTK(3, (KERN_INFO "[%p] eventpoll: ep_alloc() ep=%p\n",
 		     current, ep));
 	return 0;
+
+free_uid:
+	free_uid(user);
+	return error;
 }
 
 /*
@@ -629,9 +684,11 @@ int ep_insert(struct eventpoll *ep, struct epoll_event *event,
 	struct epitem *epi;
 	struct ep_pqueue epq;
 
-	error = -ENOMEM;
+	if (unlikely(atomic_read(&ep->user->epoll_watches) >=
+		     max_user_watches))
+		return -ENOSPC;
 	if (!(epi = kmem_cache_alloc(epi_cache, GFP_KERNEL)))
-		goto error_return;
+		return -ENOMEM;
 
 	/* Item initialization follow here ... */
 	INIT_LIST_HEAD(&epi->rdllink);
@@ -661,6 +718,7 @@ int ep_insert(struct eventpoll *ep, struct epoll_event *event,
 	 * install process. Namely an allocation for a wait queue failed due
 	 * high memory pressure.
 	 */
+	error = -ENOMEM;
 	if (epi->nwait < 0)
 		goto error_unregister;
 
@@ -691,6 +749,8 @@ int ep_insert(struct eventpoll *ep, struct epoll_event *event,
 
 	spin_unlock_irqrestore(&ep->lock, flags);
 
+	atomic_inc(&ep->user->epoll_watches);
+
 	/* We have to call this outside the lock */
 	if (pwake)
 		ep_poll_safewake(&psw, &ep->poll_wait);
@@ -715,7 +775,7 @@ error_unregister:
 	spin_unlock_irqrestore(&ep->lock, flags);
 
 	kmem_cache_free(epi_cache, epi);
-error_return:
+
 	return error;
 }
 EXPORT_SYMBOL(ep_insert);
@@ -1001,6 +1061,7 @@ asmlinkage long sys_epoll_create1(int flags)
 			      flags & O_CLOEXEC);
 	if (fd < 0)
 		ep_free(ep);
+	atomic_inc(&ep->user->epoll_devs);
 
 error_return:
 	DNPRINTK(3, (KERN_INFO "[%p] eventpoll: sys_epoll_create(%d) = %d\n",
@@ -1223,7 +1284,12 @@ asmlinkage long sys_epoll_pwait(int epfd, struct epoll_event __user *events,
 
 static int __init eventpoll_init(void)
 {
-	mutex_init(&epmutex);
+	struct sysinfo si;
+
+	si_meminfo(&si);
+	max_user_instances = 128;
+	max_user_watches = (((si.totalram - si.totalhigh) / 32) << PAGE_SHIFT) /
+		EP_ITEM_COST;
 
 	/* Initialize the structure used to perform safe poll wait head wake ups */
 	ep_poll_safewake_init(&psw);
