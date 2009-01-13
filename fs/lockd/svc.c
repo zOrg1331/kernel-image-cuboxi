@@ -297,7 +297,7 @@ lockd_up(int proto) /* Maybe add a 'family' option when IPv6 is supported ?? */
 
 	svc_sock_update_bufs(serv);
 
-	nlmsvc_task = kthread_run(lockd, nlmsvc_rqst, serv->sv_name);
+	nlmsvc_task = kthread_run_ve(get_exec_env(), lockd, nlmsvc_rqst, serv->sv_name);
 	if (IS_ERR(nlmsvc_task)) {
 		error = PTR_ERR(nlmsvc_task);
 		svc_exit_thread(nlmsvc_rqst);
