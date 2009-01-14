@@ -822,6 +822,7 @@ void tun_setup(struct net_device *dev)
 
 	dev->ethtool_ops = &tun_ethtool_ops;
 	dev->destructor = tun_free_netdev;
+	dev->features |= NETIF_F_VIRTUAL;
 }
 EXPORT_SYMBOL(tun_setup);
 
