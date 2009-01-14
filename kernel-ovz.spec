@@ -102,6 +102,7 @@ Provides: vzkernel = %KVERREL
 Provides: vzquotamod
 Provides: alsa = 1.0.14
 
+BuildRequires: kernel-source-%kversion
 BuildRequires(pre): rpm-build-kernel
 PreReq: coreutils, module-init-tools, mkinitrd
 Conflicts: %kernel_dot_org_conflicts
@@ -130,8 +131,7 @@ BuildRequires: unifdef
 BuildConflicts: rhbuildsys(DiskFree) < 500Mb
 BuildPreReq: python-modules
 
-Source0: ftp://ftp.kernel.org/pub/linux/kernel/v2.6/linux-%kversion.tar.bz2
-Source1: xen-%xen_hv_cset.tar.bz2
+Source1: xen-%xen_hv_cset.tar
 Source2: Config.mk
 %if %with_openafs
 Source3: openafs-%openafs_version-src.tar.bz2
@@ -186,7 +186,7 @@ Source207: kernel-%kversion-x86_64-xen.config.ovz
 #
 # Patches 0 through 100 are meant for core subsystem upgrades
 #
-Patch1: patch-2.6.18.4.bz2
+Patch1: patch-2.6.18.4
 #Patch2: patch-2.6.18-rc7-git4.bz2
 Patch3: git-geode.patch
 Patch4: git-agpgart.patch
@@ -2334,26 +2334,9 @@ previous versions of similar packages.
 If possible, try to use glibc-kernheaders instead of this package.
 
 %prep
-# First we unpack the kernel tarball.
-# If this isn't the first make prep, we use links to the existing clean tarball
-# which speeds things up quite a bit.
-if [ ! -d %name-%kversion/vanilla ]; then
-  # Ok, first time we do a make prep.
-  rm -f pax_global_header
-%setup -q -n %name-%version -c
-  mv linux-%kversion vanilla
-else
-  # We already have a vanilla dir.
-  cd %name-%kversion
-  if [ -d linux-%kversion.%_target_cpu ]; then
-     # Just in case we ctrl-c'd a prep already
-     rm -rf deleteme
-     # Move away the stale away, and delete in background.
-     mv linux-%kversion.%_target_cpu deleteme
-     rm -rf deleteme &
-  fi
-fi
-cp -rl vanilla linux-%kversion.%_target_cpu
+%setup -T -q -n %name-%version -c
+tar -xf /usr/src/kernel/sources/kernel-source-%kversion.tar.bz2
+mv kernel-source-%kversion linux-%kversion.%_target_cpu
 
 cd linux-%kversion.%_target_cpu
 
