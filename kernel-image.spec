@@ -1,6 +1,6 @@
 Name: kernel-image-std-srv
 Version: 2.6.27
-Release: alt9
+Release: alt10
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -468,6 +468,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Thu Jan 15 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt10
+- 2.6.27.11 
+- turn on PRINTK_TIME
+
 * Sun Jan 11 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt9
 - add GEM support
 - update config on x86_64: turn off CONFIG_SYSFS_DEPRECATED 
