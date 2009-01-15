@@ -529,7 +529,9 @@ int ptrace_traceme(void)
 	 */
 repeat:
 	task_lock(current);
-	if (!(current->ptrace & PT_PTRACED)) {
+	if (exclude_ptrace(current)) {
+		ret = -EBUSY;
+	} else if (!(current->ptrace & PT_PTRACED)) {
 		/*
 		 * See ptrace_attach() comments about the locking here.
 		 */
