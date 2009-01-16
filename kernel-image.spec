@@ -470,7 +470,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %changelog
 * Thu Jan 15 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt10
 - 2.6.27.11 
-- turn on PRINTK_TIME
+- add eeepc rfkill support
+- config:
++	turn on PRINTK_TIME
++	build-in kernel config
 
 * Sun Jan 11 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt9
 - add GEM support
