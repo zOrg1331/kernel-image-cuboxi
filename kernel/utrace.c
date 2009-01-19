@@ -1964,7 +1964,7 @@ void utrace_resume(struct task_struct *task, struct pt_regs *regs)
  */
 bool utrace_interrupt_pending(void)
 {
-	return current->utrace->interrupt;
+	return task_utrace_struct(current)->interrupt;
 }
 
 /*
