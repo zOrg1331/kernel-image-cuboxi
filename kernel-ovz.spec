@@ -4833,6 +4833,32 @@ rm -rf %buildroot%kheaders_dir/include/scsi
 rm -f %buildroot%kheaders_dir/include/asm*/{atomic,io,irq}.h
 %endif
 
+# drivers-headers install
+install -d %buildroot%kbuild_dir/drivers/scsi
+install -d %buildroot%kbuild_dir/drivers/char/drm
+install -d %buildroot%kbuild_dir/drivers/md
+install -d %buildroot%kbuild_dir/drivers/usb/core
+install -d %buildroot%kbuild_dir/drivers/net/wireless
+install -d %buildroot%kbuild_dir/net/mac80211
+install -d %buildroot%kbuild_dir/kernel
+install -d %buildroot%kbuild_dir/lib
+cp -a drivers/scsi/{{scsi,scsi_typedefs}.h,scsi_module.c} \
+	%buildroot%kbuild_dir/drivers/scsi/
+cp -a drivers/char/drm/{drm,drm_os_linux,drmP}.h \
+	%buildroot%kbuild_dir/drivers/char/drm/
+cp -a drivers/md/dm*.h \
+	%buildroot%kbuild_dir/drivers/md/
+cp -a drivers/usb/core/*.h \
+	%buildroot%kbuild_dir/drivers/usb/core/
+cp -a drivers/net/wireless/Kconfig \
+	%buildroot%kbuild_dir/drivers/net/wireless/
+cp -a lib/hexdump.c %buildroot%kbuild_dir/lib/
+cp -a kernel/workqueue.c %buildroot%kbuild_dir/kernel/
+cp -a net/mac80211/ieee80211_{i,key,rate}.h \
+	%buildroot%kbuild_dir/net/mac80211/
+cp -a net/mac80211/sta_info.h \
+	%buildroot%kbuild_dir/net/mac80211/
+
 # Install files required for building external modules (in addition to headers)
 KbuildFiles="
 	Makefile
