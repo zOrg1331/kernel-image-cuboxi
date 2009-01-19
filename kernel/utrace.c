@@ -163,6 +163,16 @@ static inline bool exclude_utrace(struct task_struct *task)
 }
 
 /*
+ * Initialize the struct, initially zero'd.
+ */
+static inline void init_utrace_struct(struct utrace *utrace)
+{
+	INIT_LIST_HEAD(&utrace->attached);
+	INIT_LIST_HEAD(&utrace->attaching);
+	spin_lock_init(&utrace->lock);
+}
+
+/*
  * Called without locks.
  * Allocate target->utrace and install engine in it.  If we lose a race in
  * setting it up, return -EAGAIN.  This function mediates startup races.
@@ -194,11 +204,9 @@ static int utrace_first_engine(struct task_struct *target,
 	utrace = kmem_cache_zalloc(utrace_cachep, GFP_KERNEL);
 	if (unlikely(!utrace))
 		return -ENOMEM;
+	init_utrace_struct(utrace);
 
-	INIT_LIST_HEAD(&utrace->attached);
-	INIT_LIST_HEAD(&utrace->attaching);
 	list_add(&engine->entry, &utrace->attached);
-	spin_lock_init(&utrace->lock);
 
 	ret = -EAGAIN;
 	spin_lock(&utrace->lock);
@@ -2507,23 +2515,24 @@ EXPORT_SYMBOL_GPL(task_user_regset_view);
  */
 struct task_struct *utrace_tracer_task(struct task_struct *target)
 {
-	struct utrace *utrace;
+	struct list_head *pos, *next;
+	struct utrace_attached_engine *engine;
+	const struct utrace_engine_ops *ops;
 	struct task_struct *tracer = NULL;
+	struct utrace *utrace;
 
 	utrace = rcu_dereference(target->utrace);
-	if (utrace != NULL) {
-		struct list_head *pos, *next;
-		struct utrace_attached_engine *engine;
-		const struct utrace_engine_ops *ops;
-		list_for_each_safe(pos, next, &utrace->attached) {
-			engine = list_entry(pos, struct utrace_attached_engine,
-					    entry);
-			ops = rcu_dereference(engine->ops);
-			if (ops->tracer_task) {
-				tracer = (*ops->tracer_task)(engine, target);
-				if (tracer != NULL)
-					break;
-			}
+	if (!utrace)
+		return NULL;
+
+	list_for_each_safe(pos, next, &utrace->attached) {
+		engine = list_entry(pos, struct utrace_attached_engine,
+				    entry);
+		ops = rcu_dereference(engine->ops);
+		if (ops->tracer_task) {
+			tracer = (*ops->tracer_task)(engine, target);
+			if (tracer != NULL)
+				break;
 		}
 	}
 
@@ -2556,10 +2565,11 @@ int utrace_unsafe_exec(struct task_struct *task)
 void task_utrace_proc_status(struct seq_file *m, struct task_struct *p)
 {
 	struct utrace *utrace = rcu_dereference(p->utrace);
-	if (unlikely(utrace))
-		seq_printf(m, "Utrace: %lx%s%s%s\n",
-			   p->utrace_flags,
-			   utrace->stopped ? " (stopped)" : "",
-			   utrace->report ? " (report)" : "",
-			   utrace->interrupt ? " (interrupt)" : "");
+	if (likely(!utrace))
+		return;
+	seq_printf(m, "Utrace: %lx%s%s%s\n",
+		   p->utrace_flags,
+		   utrace->stopped ? " (stopped)" : "",
+		   utrace->report ? " (report)" : "",
+		   utrace->interrupt ? " (interrupt)" : "");
 }
