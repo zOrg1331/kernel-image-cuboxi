@@ -1598,7 +1598,7 @@ void utrace_report_exec(struct linux_binfmt *fmt, struct linux_binprm *bprm,
 			struct pt_regs *regs)
 {
 	struct task_struct *task = current;
-	struct utrace *utrace = task->utrace;
+	struct utrace *utrace = task_utrace_struct(task);
 	INIT_REPORT(report);
 
 	REPORT(task, utrace, &report, UTRACE_EVENT(EXEC),
@@ -1612,7 +1612,7 @@ void utrace_report_exec(struct linux_binfmt *fmt, struct linux_binprm *bprm,
 bool utrace_report_syscall_entry(struct pt_regs *regs)
 {
 	struct task_struct *task = current;
-	struct utrace *utrace = task->utrace;
+	struct utrace *utrace = task_utrace_struct(task);
 	INIT_REPORT(report);
 
 	start_report(utrace);
@@ -1655,7 +1655,7 @@ bool utrace_report_syscall_entry(struct pt_regs *regs)
 void utrace_report_syscall_exit(struct pt_regs *regs)
 {
 	struct task_struct *task = current;
-	struct utrace *utrace = task->utrace;
+	struct utrace *utrace = task_utrace_struct(task);
 	INIT_REPORT(report);
 
 	REPORT(task, utrace, &report, UTRACE_EVENT(SYSCALL_EXIT),
@@ -1671,7 +1671,7 @@ void utrace_report_syscall_exit(struct pt_regs *regs)
 void utrace_report_clone(unsigned long clone_flags, struct task_struct *child)
 {
 	struct task_struct *task = current;
-	struct utrace *utrace = task->utrace;
+	struct utrace *utrace = task_utrace_struct(task);
 	INIT_REPORT(report);
 
 	/*
@@ -1710,7 +1710,7 @@ void utrace_report_clone(unsigned long clone_flags, struct task_struct *child)
  */
 void utrace_finish_vfork(struct task_struct *task)
 {
-	struct utrace *utrace = task->utrace;
+	struct utrace *utrace = task_utrace_struct(task);
 
 	spin_lock(&utrace->lock);
 	if (!utrace->vfork_stop)
@@ -1728,7 +1728,7 @@ void utrace_finish_vfork(struct task_struct *task)
 void utrace_report_jctl(int notify, int what)
 {
 	struct task_struct *task = current;
-	struct utrace *utrace = task->utrace;
+	struct utrace *utrace = task_utrace_struct(task);
 	INIT_REPORT(report);
 	bool was_stopped = task_is_stopped(task);
 
@@ -1796,7 +1796,7 @@ void utrace_report_jctl(int notify, int what)
 void utrace_report_exit(long *exit_code)
 {
 	struct task_struct *task = current;
-	struct utrace *utrace = task->utrace;
+	struct utrace *utrace = task_utrace_struct(task);
 	INIT_REPORT(report);
 	long orig_code = *exit_code;
 
@@ -1906,7 +1906,7 @@ static void finish_resume_report(struct utrace_report *report,
  */
 void utrace_resume(struct task_struct *task, struct pt_regs *regs)
 {
-	struct utrace *utrace = task->utrace;
+	struct utrace *utrace = task_utrace_struct(task);
 	INIT_REPORT(report);
 	struct utrace_attached_engine *engine, *next;
 
@@ -2369,7 +2369,7 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
  */
 void utrace_signal_handler(struct task_struct *task, int stepping)
 {
-	struct utrace *utrace = task->utrace;
+	struct utrace *utrace = task_utrace_struct(task);
 
 	spin_lock(&utrace->lock);
 
@@ -2545,7 +2545,7 @@ struct task_struct *utrace_tracer_task(struct task_struct *target)
  */
 int utrace_unsafe_exec(struct task_struct *task)
 {
-	struct utrace *utrace = task->utrace;
+	struct utrace *utrace = task_utrace_struct(task);
 	struct utrace_attached_engine *engine, *next;
 	const struct utrace_engine_ops *ops;
 	int unsafe = 0;
