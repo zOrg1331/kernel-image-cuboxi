@@ -24,15 +24,6 @@
 #include <linux/seq_file.h>
 
 
-#define UTRACE_DEBUG 1
-#ifdef UTRACE_DEBUG
-#define CHECK_INIT(p)	atomic_set(&(p)->check_dead, 1)
-#define CHECK_DEAD(p)	BUG_ON(!atomic_dec_and_test(&(p)->check_dead))
-#else
-#define CHECK_INIT(p)	do { } while (0)
-#define CHECK_DEAD(p)	do { } while (0)
-#endif
-
 /*
  * Per-thread structure task_struct.utrace points to.
  *
@@ -76,9 +67,6 @@ struct utrace {
 
 	struct list_head attached, attaching;
 	spinlock_t lock;
-#ifdef UTRACE_DEBUG
-	atomic_t check_dead;
-#endif
 
 	struct utrace_attached_engine *reporting;
 
@@ -115,7 +103,6 @@ static void utrace_free(struct rcu_head *rhead)
 static void rcu_utrace_free(struct utrace *utrace)
 	__releases(utrace->lock)
 {
-	CHECK_DEAD(utrace);
 	spin_unlock(&utrace->lock);
 	call_rcu(&utrace->u.dead, utrace_free);
 }
@@ -212,7 +199,6 @@ static int utrace_first_engine(struct task_struct *target,
 	INIT_LIST_HEAD(&utrace->attaching);
 	list_add(&engine->entry, &utrace->attached);
 	spin_lock_init(&utrace->lock);
-	CHECK_INIT(utrace);
 
 	ret = -EAGAIN;
 	spin_lock(&utrace->lock);
