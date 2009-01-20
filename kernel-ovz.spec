@@ -2266,6 +2266,9 @@ Patch99990: linux-2.6-rhel-version-h.patch
 # empty final patch file to facilitate testing of kernel patches
 Patch99999: linux-kernel-test.patch
 
+# ALT-specific patch
+Patch200000: our_kernel.patch
+
 # END OF PATCH DEFINITIONS
 
 # Override find_provides to use a script that provides "kernel(symbol) = hash".
@@ -4492,6 +4495,9 @@ perl -p -i -e "s/^RHEL_MINOR.*/RHEL_MINOR = %rh_release_minor/" Makefile
 %if %([ -s %PATCH99999 ] && echo 1 || echo 0)
 %patch99999 -p1
 %endif
+
+# ALT-specific patch
+%patch200000 -p1
 
 # END OF PATCH APPLICATIONS
 
