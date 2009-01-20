@@ -2266,9 +2266,6 @@ Patch99990: linux-2.6-rhel-version-h.patch
 # empty final patch file to facilitate testing of kernel patches
 Patch99999: linux-kernel-test.patch
 
-# ALT-specific changes
-patch200000: 0001--imported-Unionfs-1.4-intended-for-2.6.18.patch
-
 # END OF PATCH DEFINITIONS
 
 # Override find_provides to use a script that provides "kernel(symbol) = hash".
@@ -4496,9 +4493,6 @@ perl -p -i -e "s/^RHEL_MINOR.*/RHEL_MINOR = %rh_release_minor/" Makefile
 %patch99999 -p1
 %endif
 
-# ALT-specific patches
-%patch200000 -p1
-
 # END OF PATCH APPLICATIONS
 
 cp %SOURCE10 Documentation/
@@ -4641,7 +4635,6 @@ cd xen
 %patch90502 -p1
 %patch90503 -p1
 %endif
-
 
 %build
 export ARCH=%base_arch
