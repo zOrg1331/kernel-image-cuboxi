@@ -52,14 +52,9 @@
 # Overrides for generic default options
 
 # Per-arch tweaks
+%define kernel_config kernel-%kversion-%base_arch.config.ovz
 %ifarch i686
-%define all_arch_configs kernel-%kversion-i686.config.ovz
 %define hdrarch i386
-# we build always xen i686 HV with pae
-%endif
-
-%ifarch x86_64
-%define all_arch_configs kernel-%kversion-x86_64*.config.ovz
 %endif
 
 #
@@ -4503,59 +4498,6 @@ perl -p -i -e "s/^RHEL_MINOR.*/RHEL_MINOR = %rh_release_minor/" Makefile
 
 cp %SOURCE10 Documentation/
 
-mkdir configs
-
-for cfg in %all_arch_configs; do
-  cp -f %_sourcedir/$cfg .
-done
-
-#if a olpc kernel, apply the olpc config options
-%if 0%{?olpc}
-  for i in %all_arch_configs
-  do
-    mv $i $i.tmp
-    %_sourcedir/merge.pl %_sourcedir/config-olpc-generic $i.tmp > $i
-    rm $i.tmp
-  done
-%endif
-
-%if 0%{?rhel}
-# don't need these for relocatable kernels
-rm -f kernel-%kversion-{i686,x86_64}-kdump.config
-# don't need these in general
-rm -f kernel-%kversion-i586.config
-%endif
-
-%if 0%{?olpc}
-# don't need these for OLPC
-rm -f kernel-%kversion-*PAE*.config
-rm -f kernel-%kversion-*ent*.config
-rm -f kernel-%kversion-*xen*.config
-rm -f kernel-%kversion-*kdump*.config
-%endif
-
-rm -f kernel-%kversion-*-debug.config
-
-# now run oldconfig over all the config files
-for i in *.config.ovz
-do
-  mv $i .config
-  Arch=`head -1 .config | cut -b 3-`
-  make ARCH=$Arch nonint_oldconfig > /dev/null
-  echo "# $Arch" > configs/$i
-  cat .config >> configs/$i
-done
-
-# If we don't have many patches to apply, sometimes the deleteme
-# trick still hasn't completed, and things go bang at this point
-# when find traverses into directories that get deleted.
-# So we serialise until the dir has gone away.
-cd ..
-while [ -d deleteme ];
-do
-	sleep 1
-done
-
 # get rid of unwanted files resulting from patch fuzz
 find . \( -name "*.orig" -o -name "*~" \) -exec rm -f {} \; >/dev/null
 
@@ -4645,7 +4587,6 @@ cd xen
 %build
 export ARCH=%base_arch
 cd linux-%kversion.%_target_cpu
-Config=kernel-%kversion-%_target_cpu.config.ovz
 
 echo BUILDING A KERNEL FOR %_target_cpu...
 
@@ -4653,7 +4594,7 @@ echo BUILDING A KERNEL FOR %_target_cpu...
 perl -p -i -e "s/^EXTRAVERSION.*/EXTRAVERSION = -%flavour-%release/" Makefile
 
 %make_build -s mrproper
-cp configs/$Config .config
+cp %_sourcedir/%kernel_config . && cp %kernel_config .config
 
 %make_build -s nonint_oldconfig > /dev/null
 %make_build -s %{?_smp_mflags} bzImage
