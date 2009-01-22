@@ -40,27 +40,13 @@
 %define krelease alt1
 %define xen_hv_cset 15502
 
-%define hdrarch %_target_cpu
-
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
 %define kheaders_dir    %_prefix/include/linux-%kversion-%flavour
 %define kbuild_dir      %_prefix/src/linux-%kversion-%flavour-%krelease
 %define old_kbuild_dir  %_prefix/src/linux-%kversion-%flavour
 %define modules_dir     /lib/modules/%kversion-%flavour-%krelease
 %define KVERREL         %kversion-%flavour-%krelease
-
-# Overrides for generic default options
-
-# Per-arch tweaks
-%define kernel_config kernel-%kversion-%base_arch.config.ovz
-%ifarch i686
-%define hdrarch i386
-%endif
-
-#
-# Three sets of minimum package version requirements in the form of Conflicts:
-# to versions below the minimum
-#
+%define kernel_config kernel-%kversion-%_arch.config.ovz
 
 #
 # First the general kernel 2.6 required versions as per
@@ -4759,7 +4745,7 @@ tar cf - Documentation | tar xf - -C %buildroot/usr/share/doc/kernel-doc-%kversi
 
 %if %with_headers
 # Install kernel headers
-make ARCH=%hdrarch INSTALL_HDR_PATH=%buildroot%kheaders_dir headers_install
+make INSTALL_HDR_PATH=%buildroot%kheaders_dir headers_install
 
 # Manually go through the 'headers_check' process for every file, but
 # don't die if it fails
