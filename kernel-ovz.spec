@@ -36,7 +36,7 @@
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define krelease alt1
+%define krelease alt2
 %define xen_hv_cset 15502
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
@@ -4968,6 +4968,9 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Mon Jan 26 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt2
+- release of 2.6.18-92.1.18.el5.028stab060.2
+
 * Thu Dec 11 2008 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt1
 - Intermediate release
 
