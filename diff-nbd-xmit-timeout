@@ -1,0 +1,141 @@
+Signed-off-by: Konstantin Ozerkov <kozerkov@parallels.com>
+diff --git a/drivers/block/nbd.c b/drivers/block/nbd.c
+index a071d8e..bb01f3a 100644
+--- a/drivers/block/nbd.c
++++ b/drivers/block/nbd.c
+@@ -51,6 +51,7 @@
+ #define DBG_BLKDEV      0x0100
+ #define DBG_RX          0x0200
+ #define DBG_TX          0x0400
++#define DBG_TXRX	(DBG_TX | DBG_RX)
+ static unsigned int debugflags;
+ #endif /* NDEBUG */
+ 
+@@ -141,9 +142,7 @@ static void nbd_xmit_timeout(unsigned long arg)
+ {
+ 	struct task_struct *task = (struct task_struct *)arg;
+ 
+-	printk(KERN_WARNING "nbd: killing hung xmit (%s, pid: %d)\n",
+-		task->comm, task->pid);
+-	force_sig(SIGKILL, task);
++	force_sig(SIGIO, task);
+ }
+ 
+ /*
+@@ -157,6 +156,7 @@ static int sock_xmit(struct nbd_device *lo, int send, void *buf, int size,
+ 	struct msghdr msg;
+ 	struct kvec iov;
+ 	sigset_t blocked, oldset;
++	struct timer_list ti;
+ 
+ 	if (unlikely(!sock)) {
+ 		printk(KERN_ERR "%s: Attempted %s on closed socket in sock_xmit\n",
+@@ -164,9 +164,9 @@ static int sock_xmit(struct nbd_device *lo, int send, void *buf, int size,
+ 		return -EINVAL;
+ 	}
+ 
+-	/* Allow interception of SIGKILL only
++	/* Allow interception of SIGKILL and SIGIO only
+ 	 * Don't allow other signals to interrupt the transmission */
+-	siginitsetinv(&blocked, sigmask(SIGKILL));
++	siginitsetinv(&blocked, sigmask(SIGKILL)|sigmask(SIGIO));
+ 	sigprocmask(SIG_SETMASK, &blocked, &oldset);
+ 
+ 	do {
+@@ -179,30 +179,38 @@ static int sock_xmit(struct nbd_device *lo, int send, void *buf, int size,
+ 		msg.msg_controllen = 0;
+ 		msg.msg_flags = msg_flags | MSG_NOSIGNAL;
+ 
+-		if (send) {
+-			struct timer_list ti;
++		if (lo->xmit_timeout) {
++			init_timer(&ti);
++			ti.function = nbd_xmit_timeout;
++			ti.data = (unsigned long)current;
++			ti.expires = jiffies + lo->xmit_timeout;
++			add_timer(&ti);
++		}
+ 
+-			if (lo->xmit_timeout) {
+-				init_timer(&ti);
+-				ti.function = nbd_xmit_timeout;
+-				ti.data = (unsigned long)current;
+-				ti.expires = jiffies + lo->xmit_timeout;
+-				add_timer(&ti);
+-			}
++		if (send)
+ 			result = kernel_sendmsg(sock, &msg, &iov, 1, size);
+-			if (lo->xmit_timeout)
+-				del_timer_sync(&ti);
+-		} else
++		else
+ 			result = kernel_recvmsg(sock, &msg, &iov, 1, size, 0);
+ 
++		if (lo->xmit_timeout)
++			del_timer_sync(&ti);
++
+ 		if (signal_pending(current)) {
+ 			siginfo_t info;
+-			printk(KERN_WARNING "nbd (pid %d: %s) got signal %d\n",
+-				current->pid, current->comm,
+-				dequeue_signal_lock(current, &current->blocked, &info));
+-			result = -EINTR;
+-			sock_shutdown(lo, !send);
+-			break;
++			int sig;
++
++			sig = dequeue_signal_lock(current, &current->blocked,
++							&info);
++
++			dprintk(DBG_TXRX, "%s: (pid %d: %s) got signal %d\n",
++					lo->disk->disk_name, current->pid,
++					current->comm, sig);
++
++			if (sig == SIGIO && result < 0)
++				/* This is timeout event, notify up level*/
++				result = -EAGAIN;
++			else
++				result = -EINTR;
+ 		}
+ 
+ 		if (result <= 0) {
+@@ -286,6 +294,7 @@ static int nbd_send_req(struct nbd_device *lo, struct request *req)
+ 	return 0;
+ 
+ error_out:
++	sock_shutdown(lo, 0);
+ 	return 1;
+ }
+ 
+@@ -332,9 +341,22 @@ static struct request *nbd_read_stat(struct nbd_device *lo)
+ 	struct nbd_reply reply;
+ 	struct request *req;
+ 
++restart:
+ 	reply.magic = 0;
+ 	result = sock_xmit(lo, 0, &reply, sizeof(reply), MSG_WAITALL);
+ 	if (result <= 0) {
++		if (result == -EAGAIN) {
++			/* RX timeout, check if device idle (restart RX) */
++			spin_lock_irq(&lo->queue_lock);
++			if (list_empty(&lo->queue_head)) {
++				spin_unlock_irq(&lo->queue_lock);
++				dprintk(DBG_RX, "%s: receive timeout\n",
++							lo->disk->disk_name);
++				goto restart;
++			}
++			spin_unlock_irq(&lo->queue_lock);
++		}
++
+ 		printk(KERN_ERR "%s: Receive control failed (result %d)\n",
+ 				lo->disk->disk_name, result);
+ 		goto harderror;
+@@ -521,6 +543,8 @@ static int nbd_thread(void *data)
+ 	struct nbd_device *lo = data;
+ 	struct request *req;
+ 
++	allow_signal(SIGKILL);
++	allow_signal(SIGIO);
+ 	set_user_nice(current, -20);
+ 	while (!kthread_should_stop() || !list_empty(&lo->waiting_queue)) {
+ 		/* wait for something to do */

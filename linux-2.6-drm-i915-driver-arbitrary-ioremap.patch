@@ -1,0 +1,34 @@
+From: Eugene Teo <eteo@redhat.com>
+Date: Fri, 3 Oct 2008 09:42:29 +0800
+Subject: [drm] i915 driver arbitrary ioremap
+Message-id: 48E57885.70504@redhat.com
+O-Subject: [kernel team] [RHEL5.3 patch] BZ#464509 kernel: i915 kernel drm driver arbitrary ioremap
+Bugzilla: 464509
+RH-Acked-by: Dave Airlie <airlied@redhat.com>
+CVE: CVE-2008-3831
+
+This is for bz#464509 (CVE-2008-3831).
+
+>From vendor-sec:
+Olaf Kirch noticed that the i915_set_status_page() function of the i915
+kernel driver calls ioremap with an address offset that is supplied by
+userspace via ioctl. The function zeroes the mapped memory via memset
+and tells the hardware about the address. Turns out that access to that
+ioctl is not restricted to root so users could probably exploit that to
+do nasty things. We haven't tried to write actual exploit code though.
+
+It only affects the Intel G33 series and newer.
+
+diff --git a/drivers/char/drm/i915_dma.c b/drivers/char/drm/i915_dma.c
+index 5978aac..38c5812 100644
+--- a/drivers/char/drm/i915_dma.c
++++ b/drivers/char/drm/i915_dma.c
+@@ -924,7 +924,7 @@ drm_ioctl_desc_t i915_ioctls[] = {
+ 	[DRM_IOCTL_NR(DRM_I915_SET_VBLANK_PIPE)] = { i915_vblank_pipe_set, DRM_AUTH|DRM_MASTER|DRM_ROOT_ONLY },
+ 	[DRM_IOCTL_NR(DRM_I915_GET_VBLANK_PIPE)] = { i915_vblank_pipe_get, DRM_AUTH },
+ 	[DRM_IOCTL_NR(DRM_I915_MMIO)] = {i915_mmio, DRM_AUTH},
+-	[DRM_IOCTL_NR(DRM_I915_HWS_ADDR)] = {i915_set_status_page, DRM_AUTH},
++	[DRM_IOCTL_NR(DRM_I915_HWS_ADDR)] = {i915_set_status_page, DRM_AUTH|DRM_MASTER|DRM_ROOT_ONLY},
+ };
+ 
+ int i915_max_ioctl = DRM_ARRAY_SIZE(i915_ioctls);

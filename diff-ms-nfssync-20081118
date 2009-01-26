@@ -1,0 +1,33 @@
+fs: disable sync from VE init
+
+- NFS with -o hard will block forever as network is down
+- VE will be stopped much faster in real life
+
+https://bugzilla.sw.ru/show_bug.cgi?id=125339
+
+Signed-off-by: Denis V. Lunev <den@openvz.org>
+===========================================================
+--- ./fs/buffer.c.sync1	2008-11-07 13:31:22.000000000 +0300
++++ ./fs/buffer.c	2008-11-18 15:37:17.000000000 +0300
+@@ -286,11 +286,20 @@ static void do_sync(unsigned long wait)
+ asmlinkage long sys_sync(void)
+ {
+ 	struct user_beancounter *ub;
++	struct ve_struct *ve;
+ 
+ 	ub = get_exec_ub();
+ 	ub_percpu_inc(ub, sync);
+ 
+-	if (sysctl_fsync_enable || ve_is_super(get_exec_env())) {
++	ve = get_exec_env();
++	/* init can't sync during VE stop. Rationale:
++	 *  - NFS with -o hard will block forever as network is down
++	 *  - no useful job is performed as VE0 will call umount/sync
++	 *    by his own later
++	 *  Den
++	 */
++	if (ve_is_super(ve) ||
++	    (sysctl_fsync_enable && current != ve->init_entry)) {
+ 		do_sync(1);
+ 	}
+ 

@@ -1,0 +1,163 @@
+From: Anton Arapov <aarapov@redhat.com>
+Date: Tue, 1 Jul 2008 15:36:30 +0200
+Subject: [mm] optimize ZERO_PAGE in 'get_user_pages' and fix XIP
+Message-id: 486A32DE.7090905@redhat.com
+O-Subject: [RHEL5.3 PATCH] BZ452668: Reinstate ZERO_PAGE optimization in 'get_user_pages()' and fix XIP
+Bugzilla: 452668
+RH-Acked-by: Eugene Teo <eteo@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Vitaly Mayatskikh <vmayatsk@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+CVE: CVE-2008-2372
+
+Bugzilla: 452668
+
+Details: (cut from bz#452666)
+  Problem was introduced by upstream commit# b5810039a54e5babf428e9a1e89fc1940fabff11, which is exists in RHEL5's kernel.
+  We used to get the ZERO_PAGE when we did the "handle_mm_fault()", but since fault handling no longer uses ZERO_PAGE for new anonymous pages, we now need to handle that special case in follow_page() instead.
+
+Upstream status:
+  1st patch, addressed to issue:
+    commit# 89f5b7da2a6bad2e84670422ab8192382a5aeb9f
+  2nd patch, addressed to introduced regression by the first patch:
+    commit# 672ca28e300c17bf8d792a2a7a8631193e580c74
+
+Test status:
+  build, and successfully tested by KernelTier1 tests
+  http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1369899
+  http://rhts.redhat.com/cgi-bin/rhts/jobs.cgi?id=24490
+
+Notice:
+  the only changed line:
+    (!vma->vm_ops->nopage && !vma->vm_ops->nopfn);
+  where is fault was replaced by nopage.
+
+==
+
+diff --git a/arch/powerpc/kernel/vdso.c b/arch/powerpc/kernel/vdso.c
+index a9184d7..ec616f4 100644
+--- a/arch/powerpc/kernel/vdso.c
++++ b/arch/powerpc/kernel/vdso.c
+@@ -126,7 +126,7 @@ static void dump_one_vdso_page(struct page *pg, struct page *upg)
+ 	printk("kpg: %p (c:%d,f:%08lx)", __va(page_to_pfn(pg) << PAGE_SHIFT),
+ 	       page_count(pg),
+ 	       pg->flags);
+-	if (upg/* && pg != upg*/) {
++	if (upg && !IS_ERR(upg) /* && pg != upg*/) {
+ 		printk(" upg: %p (c:%d,f:%08lx)", __va(page_to_pfn(upg)
+ 						       << PAGE_SHIFT),
+ 		       page_count(upg),
+diff --git a/mm/memory.c b/mm/memory.c
+index 9ea444b..12c2d9f 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -947,17 +947,15 @@ struct page *follow_page(struct vm_area_struct *vma, unsigned long address,
+ 		goto no_page_table;
+ 
+ 	ptep = pte_offset_map_lock(mm, pmd, address, &ptl);
+-	if (!ptep)
+-		goto out;
+ 
+ 	pte = *ptep;
+ 	if (!pte_present(pte))
+-		goto unlock;
++		goto no_page;
+ 	if ((flags & FOLL_WRITE) && !pte_write(pte))
+ 		goto unlock;
+ 	page = vm_normal_page(vma, address, pte);
+ 	if (unlikely(!page))
+-		goto unlock;
++		goto bad_page;
+ 
+ 	if (flags & FOLL_GET)
+ 		get_page(page);
+@@ -972,6 +970,15 @@ unlock:
+ out:
+ 	return page;
+ 
++bad_page:
++	pte_unmap_unlock(ptep, ptl);
++	return ERR_PTR(-EFAULT);
++
++no_page:
++	pte_unmap_unlock(ptep, ptl);
++	if (!pte_none(pte))
++		return page;
++	/* Fall through to ZERO_PAGE handling */
+ no_page_table:
+ 	/*
+ 	 * When core dumping an enormous anonymous area that nobody
+@@ -986,6 +993,26 @@ no_page_table:
+ 	return page;
+ }
+ 
++/* Can we do the FOLL_ANON optimization? */
++static inline int use_zero_page(struct vm_area_struct *vma)
++{
++	/*
++	 * We don't want to optimize FOLL_ANON for make_pages_present()
++	 * when it tries to page in a VM_LOCKED region. As to VM_SHARED,
++	 * we want to get the page from the page tables to make sure
++	 * that we serialize and update with any other user of that
++	 * mapping.
++	 */
++	if (vma->vm_flags & (VM_LOCKED | VM_SHARED))
++		return 0;
++	/*
++	 * And if we have a fault or a nopfn routine, it's not an
++	 * anonymous region.
++	 */
++	return !vma->vm_ops ||
++		(!vma->vm_ops->nopage && !vma->vm_ops->nopfn);
++}
++
+ int get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
+ 		unsigned long start, int len, int write, int force,
+ 		struct page **pages, struct vm_area_struct **vmas)
+@@ -1078,8 +1105,7 @@ int get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
+ 		foll_flags = FOLL_TOUCH;
+ 		if (pages)
+ 			foll_flags |= FOLL_GET;
+-		if (!write && !(vma->vm_flags & VM_LOCKED) &&
+-		    (!vma->vm_ops || !vma->vm_ops->nopage))
++		if (!write && use_zero_page(vma))
+ 			foll_flags |= FOLL_ANON;
+ 
+ 		do {
+@@ -1117,6 +1143,8 @@ int get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
+ 					BUG();
+ 				}
+ 			}
++			if (IS_ERR(page))
++				return i ? i : PTR_ERR(page);
+ 			if (pages) {
+ 				pages[i] = page;
+ 
+diff --git a/mm/migrate.c b/mm/migrate.c
+index 289b068..2f454fd 100644
+--- a/mm/migrate.c
++++ b/mm/migrate.c
+@@ -778,6 +778,11 @@ static int do_move_pages(struct mm_struct *mm, struct page_to_node *pm,
+ 			goto set_status;
+ 
+ 		page = follow_page(vma, pp->addr, FOLL_GET);
++
++		err = PTR_ERR(page);
++		if (IS_ERR(page))
++			goto set_status;
++
+ 		err = -ENOENT;
+ 		if (!page)
+ 			goto set_status;
+@@ -841,6 +846,11 @@ static int do_pages_stat(struct mm_struct *mm, struct page_to_node *pm)
+ 			goto set_status;
+ 
+ 		page = follow_page(vma, pm->addr, 0);
++
++		err = PTR_ERR(page);
++		if (IS_ERR(page))
++			goto set_status;
++
+ 		err = -ENOENT;
+ 		/* Use PageReserved to check for zero page */
+ 		if (!page || PageReserved(page))

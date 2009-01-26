@@ -1,0 +1,133 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Wed, 27 Aug 2008 18:17:13 +0200
+Subject: [net] random32: seeding improvement
+Message-id: 20080827181713.0cb2cacf@psychotron.englab.brq.redhat.com
+O-Subject: [RHEL5.3 patch] BZ458019 kernel: random32: seeding improvement [rhel-5.3]
+Bugzilla: 458019
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Eugene Teo <eteo@redhat.com>
+
+BZ458019
+
+﻿Description:
+Stephen Hemminger wrote a patch to improve random32() seeding.
+
+The rationale is:
+   * use u32 consistently
+   * no need to do LCG on values from (better) get_random_bytes
+   * use more data from get_random_bytes for secondary seeding
+   * don't reduce state space on srandom32()
+   * enforce state variable initialization restrictions
+
+Also changed function net_srandom() to let it update the state of all CPUs.
+The network stack goes into pains to feed the current IP addresses in,
+but it is not very effective if that is only done for some random CPU
+instead of all. So it's changed to feed bits into all CPUs. Decided to do
+that lockless because well somewhat random results are ok.
+
+Upstream status:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=697f8d0348a652593d195a13dd1067d9df911a82
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=61407f80f72970d52d4339f81c6c3cd03f4ca0f0
+
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1441605
+
+Test status:
+Booted on x86_64.
+
+Jirka
+
+diff --git a/net/core/utils.c b/net/core/utils.c
+index e31c90e..4ca43fb 100644
+--- a/net/core/utils.c
++++ b/net/core/utils.c
+@@ -80,23 +80,12 @@ static u32 __net_random(struct nrnd_state *state)
+ 	return (state->s1 ^ state->s2 ^ state->s3);
+ }
+ 
+-static void __net_srandom(struct nrnd_state *state, unsigned long s)
++/*
++ * Handle minimum values for seeds
++ */
++static inline u32 __seed(u32 x, u32 m)
+ {
+-	if (s == 0)
+-		s = 1;      /* default seed is 1 */
+-
+-#define LCG(n) (69069 * n)
+-	state->s1 = LCG(s);
+-	state->s2 = LCG(state->s1);
+-	state->s3 = LCG(state->s2);
+-
+-	/* "warm it up" */
+-	__net_random(state);
+-	__net_random(state);
+-	__net_random(state);
+-	__net_random(state);
+-	__net_random(state);
+-	__net_random(state);
++	return (x < m) ? x + m : x;
+ }
+ 
+ 
+@@ -112,9 +101,15 @@ unsigned long net_random(void)
+ 
+ void net_srandom(unsigned long entropy)
+ {
+-	struct nrnd_state *state = &get_cpu_var(net_rand_state);
+-	__net_srandom(state, state->s1^entropy);
+-	put_cpu_var(state);
++	int i;
++	/*
++	 * No locking on the CPUs, but then somewhat random results are, well,
++	 * expected.
++	 */
++	for_each_possible_cpu (i) {
++		struct nrnd_state *state = &per_cpu(net_rand_state, i);
++		state->s1 = __seed(state->s1 ^ entropy, 1);
++	}
+ }
+ 
+ void __init net_random_init(void)
+@@ -123,20 +118,37 @@ void __init net_random_init(void)
+ 
+ 	for_each_possible_cpu(i) {
+ 		struct nrnd_state *state = &per_cpu(net_rand_state,i);
+-		__net_srandom(state, i+jiffies);
++
++#define LCG(x) ((x) * 69069)   /* super-duper LCG */
++		state->s1 = __seed(LCG(i + jiffies), 1);
++		state->s2 = __seed(LCG(state->s1), 7);
++		state->s3 = __seed(LCG(state->s2), 15);
++
++		/* "warm it up" */
++		__net_random(state);
++		__net_random(state);
++		__net_random(state);
++		__net_random(state);
++		__net_random(state);
++		__net_random(state);
+ 	}
+ }
+ 
+ static int net_random_reseed(void)
+ {
+ 	int i;
+-	unsigned long seed;
+ 
+ 	for_each_possible_cpu(i) {
+ 		struct nrnd_state *state = &per_cpu(net_rand_state,i);
++		u32 seeds[3];
++
++		get_random_bytes(&seeds, sizeof(seeds));
++		state->s1 = __seed(seeds[0], 1);
++		state->s2 = __seed(seeds[1], 7);
++		state->s3 = __seed(seeds[2], 15);
+ 
+-		get_random_bytes(&seed, sizeof(seed));
+-		__net_srandom(state, seed);
++		/* mix it in */
++		__net_random(state);
+ 	}
+ 	return 0;
+ }

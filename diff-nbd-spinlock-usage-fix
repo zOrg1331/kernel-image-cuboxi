@@ -1,0 +1,36 @@
+Signed-off-by: Konstantin Ozerkov <kozerkov@parallels.com>
+diff --git a/drivers/block/nbd.c b/drivers/block/nbd.c
+index daa041f..a071d8e 100644
+--- a/drivers/block/nbd.c
++++ b/drivers/block/nbd.c
+@@ -299,15 +299,15 @@ static struct request *nbd_find_request(struct nbd_device *lo,
+ 	if (unlikely(err))
+ 		goto out;
+ 
+-	spin_lock(&lo->queue_lock);
++	spin_lock_irq(&lo->queue_lock);
+ 	list_for_each_entry_safe(req, tmp, &lo->queue_head, queuelist) {
+ 		if (req != xreq)
+ 			continue;
+ 		list_del_init(&req->queuelist);
+-		spin_unlock(&lo->queue_lock);
++		spin_unlock_irq(&lo->queue_lock);
+ 		return req;
+ 	}
+-	spin_unlock(&lo->queue_lock);
++	spin_unlock_irq(&lo->queue_lock);
+ 
+ 	err = -ENOENT;
+ 
+@@ -500,9 +500,9 @@ static void nbd_handle_req(struct nbd_device *lo, struct request *req)
+ 		req->errors++;
+ 		nbd_end_request(req);
+ 	} else {
+-		spin_lock(&lo->queue_lock);
++		spin_lock_irq(&lo->queue_lock);
+ 		list_add(&req->queuelist, &lo->queue_head);
+-		spin_unlock(&lo->queue_lock);
++		spin_unlock_irq(&lo->queue_lock);
+ 	}
+ 
+ 	lo->active_req = NULL;

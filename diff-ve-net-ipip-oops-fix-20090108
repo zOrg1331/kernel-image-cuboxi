@@ -1,0 +1,46 @@
+diff -up ./net/ipv4/ipip.c.ipipfix ./net/ipv4/ipip.c
+--- ./net/ipv4/ipip.c.ipipfix	2008-12-23 14:58:04.000000000 +0300
++++ ./net/ipv4/ipip.c	2009-01-08 13:45:24.000000000 +0300
+@@ -127,12 +127,11 @@ static int ipip_fb_tunnel_init(struct ne
+ 
+ static DEFINE_RWLOCK(ipip_lock);
+ 
+-static struct ip_tunnel * ipip_tunnel_lookup(u32 remote, u32 local)
++static struct ip_tunnel * ipip_tunnel_lookup(struct ve_ipip *vip, u32 remote, u32 local)
+ {
+ 	unsigned h0 = HASH(remote);
+ 	unsigned h1 = HASH(local);
+ 	struct ip_tunnel *t;
+-	struct ve_ipip *vip = get_exec_env()->ve_ipip;
+ 
+ 	for (t = vip->tunnels_r_l[h0^h1]; t; t = t->next) {
+ 		if (local == t->parms.iph.saddr &&
+@@ -314,12 +313,15 @@ static int ipip_err(struct sk_buff *skb,
+ 		break;
+ 	}
+ 
+-	err = -ENOENT;
++	err = 0;
+ 
+ 	read_lock(&ipip_lock);
+-	ve = set_exec_env(skb->owner_env);
+-	t = ipip_tunnel_lookup(iph->daddr, iph->saddr);
+-	(void)set_exec_env(ve);
++	ve = skb->owner_env;
++	if (ve->ve_ipip == NULL)
++		goto out;
++
++	err = -ENOENT;
++	t = ipip_tunnel_lookup(ve->ve_ipip, iph->daddr, iph->saddr);
+ 	if (t == NULL || t->parms.iph.daddr == 0)
+ 		goto out;
+ 
+@@ -484,7 +486,7 @@ static int ipip_rcv(struct sk_buff *skb)
+ 	iph = skb->nh.iph;
+ 
+ 	read_lock(&ipip_lock);
+-	if ((tunnel = ipip_tunnel_lookup(iph->saddr, iph->daddr)) != NULL) {
++	if ((tunnel = ipip_tunnel_lookup(ve->ve_ipip, iph->saddr, iph->daddr)) != NULL) {
+ 		if (!xfrm4_policy_check(NULL, XFRM_POLICY_IN, skb)) {
+ 			read_unlock(&ipip_lock);
+ 			kfree_skb(skb);

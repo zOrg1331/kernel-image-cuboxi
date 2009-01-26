@@ -1,0 +1,418 @@
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Date: Wed, 10 Sep 2008 15:40:52 +0200
+Subject: [i386] vDSO: use install_special_mapping
+Message-id: 1221054052.4917.28.camel@lappy.programming.kicks-ass.net
+O-Subject: [RHEL-5 PATCH] BZ460251 CVE-2008-3527 EMBARGOED i386 vDSO: use	install_special_mapping
+Bugzilla: 460275
+RH-Acked-by: David Howells <dhowells@redhat.com>
+RH-Acked-by: Roland McGrath <roland@redhat.com>
+RH-Acked-by: Eugene Teo <eteo@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=460251
+
+
+Tested the i386 and x86_64/ia32 bits with the reproducers from the BZ,
+don't have a clue wrt Xen but the code looked similar enough so it
+_ought_ to work.
+
+---
+>From 7d91d531900bfa1165d445390b3b13a8013f98f7 Mon Sep 17 00:00:00 2001  
+From: Roland McGrath <roland@redhat.com>
+Date: Thu, 8 Feb 2007 14:20:42 -0800
+Subject: [PATCH] i386 vDSO: use install_special_mapping
+
+This patch uses install_special_mapping for the i386 vDSO setup, consolidating
+duplicated code.
+
+Signed-off-by: Roland McGrath <roland@redhat.com>
+Cc: Ingo Molnar <mingo@elte.hu>
+Cc: Paul Mackerras <paulus@samba.org>
+Cc: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Cc: Andi Kleen <ak@suse.de>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+ arch/i386/kernel/sysenter.c      |   53 +++++++--------------------------
+ arch/x86_64/ia32/syscall32-xen.c |   61 ++++++++++-----------------------------
+ arch/x86_64/ia32/syscall32.c     |   58 +++++++------------------------------
+ include/asm-x86_64/proto.h       |    1 
+ include/asm-x86_64/vsyscall32.h  |    1 
+ include/linux/mm.h               |    3 -
+ mm/mmap.c                        |   19 ++++++++----
+ 7 files changed, 54 insertions(+), 142 deletions(-)
+
+Index: RHEL-5/arch/i386/kernel/sysenter.c
+===================================================================
+--- RHEL-5.orig/arch/i386/kernel/sysenter.c	2008-09-10 12:24:58.000000000 +0200
++++ RHEL-5/arch/i386/kernel/sysenter.c	2008-09-10 12:25:17.000000000 +0200
+@@ -72,11 +72,12 @@ void enable_sep_cpu(void)
+  */
+ extern const char vsyscall_int80_start, vsyscall_int80_end;
+ extern const char vsyscall_sysenter_start, vsyscall_sysenter_end;
+-static void *syscall_page;
++static struct page *syscall_pages[1];
+ 
+ int __cpuinit sysenter_setup(void)
+ {
+-	syscall_page = (void *)get_zeroed_page(GFP_ATOMIC);
++	void *syscall_page = (void *)get_zeroed_page(GFP_ATOMIC);
++	syscall_pages[0] = virt_to_page(syscall_page);
+ 
+ #ifdef CONFIG_XEN
+ 	if (boot_cpu_has(X86_FEATURE_SEP)) {
+@@ -109,24 +110,6 @@ int __cpuinit sysenter_setup(void)
+ 	return 0;
+ }
+ 
+-static struct page *syscall_nopage(struct vm_area_struct *vma,
+-				unsigned long adr, int *type)
+-{
+-	struct page *p = virt_to_page(adr - vma->vm_start + syscall_page);
+-	get_page(p);
+-	return p;
+-}
+-
+-/* Prevent VMA merging */
+-static void syscall_vma_close(struct vm_area_struct *vma)
+-{
+-}
+-
+-static struct vm_operations_struct syscall_vm_ops = {
+-	.close = syscall_vma_close,
+-	.nopage = syscall_nopage,
+-};
+-
+ /* Defined in vsyscall-sysenter.S */
+ extern void SYSENTER_RETURN;
+ 
+@@ -134,7 +117,6 @@ extern void SYSENTER_RETURN;
+ int arch_setup_additional_pages(struct linux_binprm *bprm, int exstack,
+ 				unsigned long start_code, unsigned long interp_map_address)
+ {
+-	struct vm_area_struct *vma;
+ 	struct mm_struct *mm = current->mm;
+ 	unsigned long addr;
+ 	int ret;
+@@ -146,38 +128,25 @@ int arch_setup_additional_pages(struct l
+ 		goto up_fail;
+ 	}
+ 
+-	vma = kmem_cache_zalloc(vm_area_cachep, SLAB_KERNEL);
+-	if (!vma) {
+-		ret = -ENOMEM;
+-		goto up_fail;
+-	}
+-
+-	vma->vm_start = addr;
+-	vma->vm_end = addr + PAGE_SIZE;
+-	/* MAYWRITE to allow gdb to COW and set breakpoints */
+-	vma->vm_flags = VM_READ|VM_EXEC|VM_MAYREAD|VM_MAYEXEC|VM_MAYWRITE;
+ 	/*
++	 * MAYWRITE to allow gdb to COW and set breakpoints
++	 *
+ 	 * Make sure the vDSO gets into every core dump.
+ 	 * Dumping its contents makes post-mortem fully interpretable later
+ 	 * without matching up the same kernel and hardware config to see
+ 	 * what PC values meant.
+ 	 */
+-	vma->vm_flags |= VM_ALWAYSDUMP;
+-	vma->vm_flags |= mm->def_flags;
+-	vma->vm_page_prot = protection_map[vma->vm_flags & 7];
+-	vma->vm_ops = &syscall_vm_ops;
+-	vma->vm_mm = mm;
+-
+-	ret = insert_vm_struct(mm, vma);
+-	if (unlikely(ret)) {
+-		kmem_cache_free(vm_area_cachep, vma);
++	ret = install_special_mapping(mm, addr, PAGE_SIZE,
++			VM_READ|VM_EXEC|
++			VM_MAYREAD|VM_MAYWRITE|VM_MAYEXEC|
++			VM_ALWAYSDUMP,
++			syscall_pages);
++	if (ret)
+ 		goto up_fail;
+-	}
+ 
+ 	current->mm->context.vdso = (void *)addr;
+ 	current_thread_info()->sysenter_return =
+ 				    (void *)VDSO_SYM(&SYSENTER_RETURN);
+-	mm->total_vm++;
+ up_fail:
+ 	up_write(&mm->mmap_sem);
+ 	return ret;
+Index: RHEL-5/include/linux/mm.h
+===================================================================
+--- RHEL-5.orig/include/linux/mm.h	2008-09-10 12:24:58.000000000 +0200
++++ RHEL-5/include/linux/mm.h	2008-09-10 12:25:17.000000000 +0200
+@@ -1066,8 +1066,7 @@ static inline unsigned long get_unmapped
+ 
+ extern int install_special_mapping(struct mm_struct *mm,
+ 				   unsigned long addr, unsigned long len,
+-				   unsigned long vm_flags, pgprot_t pgprot,
+-				   struct page **pages);
++				   unsigned long vm_flags, struct page **pages);
+ 
+ extern unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
+ 	unsigned long len, unsigned long prot,
+Index: RHEL-5/mm/mmap.c
+===================================================================
+--- RHEL-5.orig/mm/mmap.c	2008-09-10 12:24:58.000000000 +0200
++++ RHEL-5/mm/mmap.c	2008-09-10 13:54:55.000000000 +0200
+@@ -2224,11 +2224,16 @@ special_mapping_nopage(struct vm_area_st
+ 	return NOPAGE_SIGBUS;
+ }
+ 
++static void special_mapping_close(struct vm_area_struct *vma)
++{
++}
++
+ static struct vm_operations_struct special_mapping_vmops = {
++	.close = special_mapping_close,
+ 	.nopage	= special_mapping_nopage,
+ };
+ 
+-unsigned int vdso_populate = 1;
++unsigned int vdso_populate = 0;
+ 
+ /*
+  * Insert a new vma covering the given region, with the given flags and
+@@ -2239,8 +2244,7 @@ unsigned int vdso_populate = 1;
+  */
+ int install_special_mapping(struct mm_struct *mm,
+ 			    unsigned long addr, unsigned long len,
+-			    unsigned long vm_flags, pgprot_t pgprot,
+-			    struct page **pages)
++			    unsigned long vm_flags, struct page **pages)
+ {
+ 	struct vm_area_struct *vma;
+ 	int err;
+@@ -2254,13 +2258,16 @@ int install_special_mapping(struct mm_st
+ 	vma->vm_start = addr;
+ 	vma->vm_end = addr + len;
+ 
+-	vma->vm_flags = vm_flags | VM_DONTEXPAND;
+-	vma->vm_page_prot = pgprot;
++	vma->vm_flags = vm_flags | mm->def_flags | VM_DONTEXPAND;
++	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
+ 
+ 	vma->vm_ops = &special_mapping_vmops;
+ 	vma->vm_private_data = pages;
+ 
+-	insert_vm_struct(mm, vma);
++	if (unlikely(insert_vm_struct(mm, vma))) {
++		kmem_cache_free(vm_area_cachep, vma);
++		return -ENOMEM;
++	}
+ 	mm->total_vm += len >> PAGE_SHIFT;
+ 
+ 	if (!vdso_populate)
+Index: RHEL-5/arch/x86_64/ia32/syscall32.c
+===================================================================
+--- RHEL-5.orig/arch/x86_64/ia32/syscall32.c	2008-09-10 12:24:58.000000000 +0200
++++ RHEL-5/arch/x86_64/ia32/syscall32.c	2008-09-10 14:06:20.000000000 +0200
+@@ -18,27 +18,9 @@ extern unsigned char syscall32_syscall[]
+ extern unsigned char syscall32_sysenter[], syscall32_sysenter_end[];
+ extern int sysctl_vsyscall32;
+ 
+-char *syscall32_page; 
++static struct page *syscall32_pages[1];
+ static int use_sysenter = -1;
+ 
+-static struct page *
+-syscall32_nopage(struct vm_area_struct *vma, unsigned long adr, int *type)
+-{
+-	struct page *p = virt_to_page(adr - vma->vm_start + syscall32_page);
+-	get_page(p);
+-	return p;
+-}
+-
+-/* Prevent VMA merging */
+-static void syscall32_vma_close(struct vm_area_struct *vma)
+-{
+-}
+-
+-static struct vm_operations_struct syscall32_vm_ops = {
+-	.close = syscall32_vma_close,
+-	.nopage = syscall32_nopage,
+-};
+-
+ struct linux_binprm;
+ 
+ /* Setup a VMA at program startup for the vsyscall page */
+@@ -46,47 +28,31 @@ int syscall32_setup_pages(struct linux_b
+ 			  unsigned long start_code,
+ 			  unsigned long interp_map_address)
+ {
+-	int npages = (VSYSCALL32_END - VSYSCALL32_BASE) >> PAGE_SHIFT;
+-	struct vm_area_struct *vma;
+ 	struct mm_struct *mm = current->mm;
+ 	int ret;
+ 
+-	vma = kmem_cache_alloc(vm_area_cachep, SLAB_KERNEL);
+-	if (!vma)
+-		return -ENOMEM;
+-
+-	memset(vma, 0, sizeof(struct vm_area_struct));
+-	/* Could randomize here */
+-	vma->vm_start = VSYSCALL32_BASE;
+-	vma->vm_end = VSYSCALL32_END;
+-	/* MAYWRITE to allow gdb to COW and set breakpoints */
+-	vma->vm_flags = VM_READ|VM_EXEC|VM_MAYREAD|VM_MAYEXEC|VM_MAYWRITE;
++	down_write(&mm->mmap_sem);
+ 	/*
++	 * MAYWRITE to allow gdb to COW and set breakpoints
++	 *
+ 	 * Make sure the vDSO gets into every core dump.
+ 	 * Dumping its contents makes post-mortem fully interpretable later
+ 	 * without matching up the same kernel and hardware config to see
+ 	 * what PC values meant.
+ 	 */
+-	vma->vm_flags |= VM_ALWAYSDUMP;
+-	vma->vm_flags |= mm->def_flags;
+-	vma->vm_page_prot = protection_map[vma->vm_flags & 7];
+-	vma->vm_ops = &syscall32_vm_ops;
+-	vma->vm_mm = mm;
+-
+-	down_write(&mm->mmap_sem);
+-	if ((ret = insert_vm_struct(mm, vma))) {
+-		up_write(&mm->mmap_sem);
+-		kmem_cache_free(vm_area_cachep, vma);
+-		return ret;
+-	}
+-	mm->total_vm += npages;
++	ret = install_special_mapping(mm, VSYSCALL32_BASE, PAGE_SIZE,
++			VM_READ|VM_EXEC|
++			VM_MAYREAD|VM_MAYWRITE|VM_MAYEXEC|
++			VM_ALWAYSDUMP,
++			syscall32_pages);
+ 	up_write(&mm->mmap_sem);
+-	return 0;
++	return ret;
+ }
+ 
+ static int __init init_syscall32(void)
+ { 
+-	syscall32_page = (void *)get_zeroed_page(GFP_KERNEL); 
++	void *syscall32_page = (void *)get_zeroed_page(GFP_KERNEL);
++	syscall32_pages[0] = virt_to_page(syscall32_page);
+ 	if (!syscall32_page) 
+ 		panic("Cannot allocate syscall32 page"); 
+  	if (use_sysenter > 0) {
+Index: RHEL-5/arch/x86_64/ia32/syscall32-xen.c
+===================================================================
+--- RHEL-5.orig/arch/x86_64/ia32/syscall32-xen.c	2008-09-10 12:25:14.000000000 +0200
++++ RHEL-5/arch/x86_64/ia32/syscall32-xen.c	2008-09-10 14:07:40.000000000 +0200
+@@ -21,29 +21,11 @@ extern unsigned char syscall32_syscall[]
+ extern unsigned char syscall32_sysenter[], syscall32_sysenter_end[];
+ extern int sysctl_vsyscall32;
+ 
+-char *syscall32_page; 
++static struct page *syscall32_pages[1];
+ #ifndef USE_INT80
+ static int use_sysenter = -1;
+ #endif
+ 
+-static struct page *
+-syscall32_nopage(struct vm_area_struct *vma, unsigned long adr, int *type)
+-{
+-	struct page *p = virt_to_page(adr - vma->vm_start + syscall32_page);
+-	get_page(p);
+-	return p;
+-}
+-
+-/* Prevent VMA merging */
+-static void syscall32_vma_close(struct vm_area_struct *vma)
+-{
+-}
+-
+-static struct vm_operations_struct syscall32_vm_ops = {
+-	.close = syscall32_vma_close,
+-	.nopage = syscall32_nopage,
+-};
+-
+ struct linux_binprm;
+ 
+ /* Setup a VMA at program startup for the vsyscall page */
+@@ -51,40 +33,31 @@ int syscall32_setup_pages(struct linux_b
+ 			  unsigned long start_code,
+ 			  unsigned long interp_map_address)
+ {
+-	int npages = (VSYSCALL32_END - VSYSCALL32_BASE) >> PAGE_SHIFT;
+-	struct vm_area_struct *vma;
+ 	struct mm_struct *mm = current->mm;
+ 	int ret;
+ 
+-	vma = kmem_cache_alloc(vm_area_cachep, SLAB_KERNEL);
+-	if (!vma)
+-		return -ENOMEM;
+-
+-	memset(vma, 0, sizeof(struct vm_area_struct));
+-	/* Could randomize here */
+-	vma->vm_start = VSYSCALL32_BASE;
+-	vma->vm_end = VSYSCALL32_END;
+-	/* MAYWRITE to allow gdb to COW and set breakpoints */
+-	vma->vm_flags = VM_READ|VM_EXEC|VM_MAYREAD|VM_MAYEXEC|VM_MAYWRITE;
+-	vma->vm_flags |= mm->def_flags;
+-	vma->vm_page_prot = protection_map[vma->vm_flags & 7];
+-	vma->vm_ops = &syscall32_vm_ops;
+-	vma->vm_mm = mm;
+-
+ 	down_write(&mm->mmap_sem);
+-	if ((ret = insert_vm_struct(mm, vma))) {
+-		up_write(&mm->mmap_sem);
+-		kmem_cache_free(vm_area_cachep, vma);
+-		return ret;
+-	}
+-	mm->total_vm += npages;
++	/*
++	 * MAYWRITE to allow gdb to COW and set breakpoints
++	 *
++	 * Make sure the vDSO gets into every core dump.
++	 * Dumping its contents makes post-mortem fully interpretable later
++	 * without matching up the same kernel and hardware config to see
++	 * what PC values meant.
++	 */
++	ret = install_special_mapping(mm, VSYSCALL32_BASE, PAGE_SIZE,
++			VM_READ|VM_EXEC|
++			VM_MAYREAD|VM_MAYWRITE|VM_MAYEXEC|
++			VM_ALWAYSDUMP,
++			syscall32_pages);
+ 	up_write(&mm->mmap_sem);
+-	return 0;
++	return ret;
+ }
+ 
+ static int __init init_syscall32(void)
+ { 
+-	syscall32_page = (void *)get_zeroed_page(GFP_KERNEL); 
++	void *syscall32_page = (void *)get_zeroed_page(GFP_KERNEL);
++	syscall32_pages[0] = virt_to_page(syscall32_page);
+ 	if (!syscall32_page) 
+ 		panic("Cannot allocate syscall32 page"); 
+ 
+Index: RHEL-5/include/asm-x86_64/proto.h
+===================================================================
+--- RHEL-5.orig/include/asm-x86_64/proto.h	2008-08-29 10:10:34.000000000 +0200
++++ RHEL-5/include/asm-x86_64/proto.h	2008-09-10 13:49:59.000000000 +0200
+@@ -85,7 +85,6 @@ extern void swap_low_mappings(void);
+ extern void __show_regs(struct pt_regs * regs);
+ extern void show_regs(struct pt_regs * regs);
+ 
+-extern char *syscall32_page;
+ extern void syscall32_cpu_init(void);
+ 
+ extern void setup_node_bootmem(int nodeid, unsigned long start, unsigned long end);
+Index: RHEL-5/include/asm-x86_64/vsyscall32.h
+===================================================================
+--- RHEL-5.orig/include/asm-x86_64/vsyscall32.h	2008-08-28 14:06:23.000000000 +0200
++++ RHEL-5/include/asm-x86_64/vsyscall32.h	2008-09-10 13:48:31.000000000 +0200
+@@ -8,7 +8,6 @@
+ #define VSYSCALL32_SYSEXIT (VSYSCALL32_BASE + 0x410)
+ #else
+ #define VSYSCALL32_BASE 0xffffe000UL
+-#define VSYSCALL32_END (VSYSCALL32_BASE + PAGE_SIZE)
+ #define VSYSCALL32_EHDR ((const struct elf32_hdr *) VSYSCALL32_BASE)
+ 
+ #define VSYSCALL32_VSYSCALL ((void *)VSYSCALL32_BASE + 0x400) 
+
+

@@ -1,0 +1,118 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Tue, 29 Jul 2008 15:08:43 -0400
+Subject: [openib] race between QP async handler and destroy_qp
+Message-id: 20080729190843.8757.14037.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL 5.3] Race possibility between QP async handler and destroy_qp()
+Bugzilla: 446109
+RH-Acked-by: David Howells <dhowells@redhat.com>
+RH-Acked-by: Doug Ledford <dledford@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=446109
+
+Description:
+===========
+Bug fix / Power arch only
+
+In a multi core environment a raise between the QP async event handler and
+destro_qp() can occur. This will lead to unpredictable results during invalid
+memory access, which can lead to a kernel crash.
+
+Fix implements a count of pending QP events and necessary logic to force
+destroy_qp to wait until count of QP events still pending is zero.
+
+RHEL Version Found:
+================
+RHEL 5.2
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1385479
+
+Upstream Status:
+================
+Patch above has been accepted by Roland Dreier (InfiniBand maintainer)
+http://lkml.org/lkml/2008/5/7/183
+and sent to Linus to pull for 2.6.26-rc2:
+http://lkml.org/lkml/2008/5/7/231
+
+Test Status:
+============
+We were unable to duplicate the race, and did not see a kernel crash
+with this patch applied to the RHEL 2.6.18-95 kernel.
+
+Stefan Roscher, 7/29/08
+
+===============================================================
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+
+Proposed Patch:
+===============
+This patch is based on 2.6.18-95.el5
+
+diff --git a/drivers/infiniband/hw/ehca/ehca_classes.h b/drivers/infiniband/hw/ehca/ehca_classes.h
+index 55e5efb..1b259cd 100644
+--- a/drivers/infiniband/hw/ehca/ehca_classes.h
++++ b/drivers/infiniband/hw/ehca/ehca_classes.h
+@@ -201,6 +201,8 @@ struct ehca_qp {
+ 	int mtu_shift;
+ 	u32 message_count;
+ 	u32 packet_count;
++	atomic_t nr_events; /* events seen */
++	wait_queue_head_t wait_completion;
+ };
+ 
+ #define IS_SRQ(qp) (qp->ext_type == EQPT_SRQ)
+diff --git a/drivers/infiniband/hw/ehca/ehca_irq.c b/drivers/infiniband/hw/ehca/ehca_irq.c
+index b5ca94c..ab8f42c 100644
+--- a/drivers/infiniband/hw/ehca/ehca_irq.c
++++ b/drivers/infiniband/hw/ehca/ehca_irq.c
+@@ -204,6 +204,8 @@ static void qp_event_callback(struct ehca_shca *shca, u64 eqe,
+ 
+ 	read_lock(&ehca_qp_idr_lock);
+ 	qp = idr_find(&ehca_qp_idr, token);
++	if (qp)
++		atomic_inc(&qp->nr_events);
+ 	read_unlock(&ehca_qp_idr_lock);
+ 
+ 	if (!qp)
+@@ -223,6 +225,8 @@ static void qp_event_callback(struct ehca_shca *shca, u64 eqe,
+ 	if (fatal && qp->ext_type == EQPT_SRQBASE)
+ 		dispatch_qp_event(shca, qp, IB_EVENT_QP_LAST_WQE_REACHED);
+ 
++	if (atomic_dec_and_test(&qp->nr_events))
++		wake_up(&qp->wait_completion);
+ 	return;
+ }
+ 
+diff --git a/drivers/infiniband/hw/ehca/ehca_qp.c b/drivers/infiniband/hw/ehca/ehca_qp.c
+index c9f9013..a552639 100644
+--- a/drivers/infiniband/hw/ehca/ehca_qp.c
++++ b/drivers/infiniband/hw/ehca/ehca_qp.c
+@@ -565,6 +565,8 @@ static struct ehca_qp *internal_create_qp(
+ 		return ERR_PTR(-ENOMEM);
+ 	}
+ 
++	atomic_set(&my_qp->nr_events, 0);
++	init_waitqueue_head(&my_qp->wait_completion);
+ 	spin_lock_init(&my_qp->spinlock_s);
+ 	spin_lock_init(&my_qp->spinlock_r);
+ 	my_qp->qp_type = qp_type;
+@@ -1988,6 +1990,9 @@ static int internal_destroy_qp(struct ib_device *dev, struct ehca_qp *my_qp,
+ 	idr_remove(&ehca_qp_idr, my_qp->token);
+ 	write_unlock_irqrestore(&ehca_qp_idr_lock, flags);
+ 
++        /* now wait until all pending events have completed */
++	wait_event(my_qp->wait_completion, !atomic_read(&my_qp->nr_events));
++
+ 	h_ret = hipz_h_destroy_qp(shca->ipz_hca_handle, my_qp);
+ 	if (h_ret != H_SUCCESS) {
+ 		ehca_err(dev, "hipz_h_destroy_qp() failed h_ret=%li "

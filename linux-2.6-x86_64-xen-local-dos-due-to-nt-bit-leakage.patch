@@ -1,0 +1,81 @@
+From: Eugene Teo <eteo@redhat.com>
+Date: Wed, 6 Aug 2008 13:03:12 +0800
+Subject: [x86_64] xen: local DOS due to NT bit leakage
+Message-id: 20080806050312.GA20735@kernel.sg
+O-Subject: [RHEL5.3 PATCH] kernel: local denial of service due to NT bit leakage v2
+Bugzilla: 457722
+RH-Acked-by: Chuck Ebbert <cebbert@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+CVE: CVE-2006-5755
+
+Second try.
+
+This is for bz#457722 (CVE-2006-5755).
+
+Backport of commit 658fdbef66e5e9be79b457edc2cbbb3add840aa9
+
+SYSENTER can cause a NT to be set which might cause crashes on the IRET
+in the next task.
+
+This patch ensures that -xen is patched, and not forgotten.
+
+Brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1422417
+
+Signed-off-by: Eugene Teo <eteo@redhat.com>
+
+diff --git a/arch/x86_64/kernel/entry-xen.S b/arch/x86_64/kernel/entry-xen.S
+index c6f2a23..37e1708 100644
+--- a/arch/x86_64/kernel/entry-xen.S
++++ b/arch/x86_64/kernel/entry-xen.S
+@@ -187,6 +187,10 @@ NMI_MASK = 0x80000000
+ /* rdi:	prev */	
+ ENTRY(ret_from_fork)
+ 	CFI_DEFAULT_STACK
++	push kernel_eflags(%rip)
++	CFI_ADJUST_CFA_OFFSET 4
++	popf                # reset kernel eflags
++	CFI_ADJUST_CFA_OFFSET -4
+ 	call schedule_tail
+ 	GET_THREAD_INFO(%rcx)
+ 	testl $(_TIF_SYSCALL_TRACE|_TIF_SYSCALL_AUDIT|_TIF_SECCOMP),threadinfo_flags(%rcx)
+diff --git a/arch/x86_64/kernel/setup64-xen.c b/arch/x86_64/kernel/setup64-xen.c
+index 36f486e..d4e813d 100644
+--- a/arch/x86_64/kernel/setup64-xen.c
++++ b/arch/x86_64/kernel/setup64-xen.c
+@@ -213,6 +213,8 @@ void __cpuinit check_efer(void)
+         }       
+ }
+ 
++unsigned long kernel_eflags;
++
+ /*
+  * cpu_init() initializes state that is per-CPU. Some data is already
+  * initialized (naturally) in the bootstrap process, such as the GDT
+@@ -336,4 +338,6 @@ void __cpuinit cpu_init (void)
+ 	set_debugreg(0UL, 7);
+ 
+ 	fpu_init(); 
++
++	raw_local_save_flags(kernel_eflags);
+ }
+diff --git a/include/asm-x86_64/mach-xen/asm/system.h b/include/asm-x86_64/mach-xen/asm/system.h
+index 7d8b882..69df8a4 100644
+--- a/include/asm-x86_64/mach-xen/asm/system.h
++++ b/include/asm-x86_64/mach-xen/asm/system.h
+@@ -22,12 +22,13 @@
+ #define __RESTORE(reg,offset) "movq (14-" #offset ")*8(%%rsp),%%" #reg "\n\t"
+ 
+ /* frame pointer must be last for get_wchan */
+-#define SAVE_CONTEXT    "pushq %%rbp ; movq %%rsi,%%rbp\n\t"
+-#define RESTORE_CONTEXT "movq %%rbp,%%rsi ; popq %%rbp\n\t"
++#define SAVE_CONTEXT    "pushf ; pushq %%rbp ; movq %%rsi,%%rbp\n\t"
++#define RESTORE_CONTEXT "movq %%rbp,%%rsi ; popq %%rbp ; popf\t"
+ 
+ #define __EXTRA_CLOBBER  \
+ 	,"rcx","rbx","rdx","r8","r9","r10","r11","r12","r13","r14","r15"
+ 
++/* Save restore flags to clear handle leaking NT */
+ #define switch_to(prev,next,last) \
+ 	asm volatile(SAVE_CONTEXT						    \
+ 		     "movq %%rsp,%P[threadrsp](%[prev])\n\t" /* save RSP */	  \

@@ -1,0 +1,57 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Tue, 16 Sep 2008 11:55:10 -0500
+Subject: [libata] ata_scsi_rbuf_get check for scatterlist usage
+Message-id: 20080916165510.GA19333@dhcp-210.hsv.redhat.com
+O-Subject: [RHEL5.2.Z PATCH] libata: ata_scsi_rbuf_get check for scatterlist usage
+Bugzilla: 460638
+RH-Acked-by: Jeff Garzik <jgarzik@redhat.com>
+RH-Acked-by: Alan Cox <alan@redhat.com>
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+
+This is a Z-stream fix for BZ 460638, ata_scsi_rbuf_get
+and ata_scsi_rbuf_put should check for scatterlist usage
+before calling kmap_atomic. The upstream versions of these
+functions are present without the changes to scsi_sglist
+and scsi_cmnd (struct scsi_data_buffer). Fujitsu
+was consistently seeing their system crash on boot up
+and have verified a test kernel (2.6.18-92.1.12.el5)
+built with this patch, and a test kernel patched with
+the RHEL5.3 sata update.
+
+Please review and ACK.
+
+Thanks,
+David
+
+diff -urpN linux-2.6.18.i686/drivers/ata/libata-scsi.c linux-2.6.18.i686.new/drivers/ata/libata-scsi.c
+--- linux-2.6.18.i686/drivers/ata/libata-scsi.c	2008-09-02 17:58:37.000000000 -0500
++++ linux-2.6.18.i686.new/drivers/ata/libata-scsi.c	2008-09-04 09:52:04.000000000 -0500
+@@ -1605,9 +1605,10 @@ static unsigned int ata_scsi_rbuf_get(st
+ 	u8 *buf;
+ 	unsigned int buflen;
+ 
+-	struct scatterlist *sg = scsi_sglist(cmd);
+-
+-	if (sg) {
++	if (cmd->use_sg) {
++		struct scatterlist *sg;
++		
++		sg = (struct scatterlist *) cmd->request_buffer;
+ 		buf = kmap_atomic(sg_page(sg), KM_IRQ0) + sg->offset;
+ 		buflen = sg->length;
+ 	} else {
+@@ -1632,9 +1633,12 @@ static unsigned int ata_scsi_rbuf_get(st
+ 
+ static inline void ata_scsi_rbuf_put(struct scsi_cmnd *cmd, u8 *buf)
+ {
+-	struct scatterlist *sg = scsi_sglist(cmd);
+-	if (sg)
++	if (cmd->use_sg) {
++		struct scatterlist *sg;
++
++		sg = (struct scatterlist *) cmd->request_buffer;
+ 		kunmap_atomic(buf - sg->offset, KM_IRQ0);
++	}
+ }
+ 
+ /**

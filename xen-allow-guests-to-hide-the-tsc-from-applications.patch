@@ -1,0 +1,631 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Wed, 17 Sep 2008 15:40:56 +0200
+Subject: [xen] allow guests to hide the TSC from applications
+Message-id: 48D108E8.1040900@redhat.com
+O-Subject: [RHEL5 PATCH]: Allow guest kernels to hide the TSC from applications
+Bugzilla: 378481
+CVE: CVE-2007-5907
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Eugene Teo <eteo@redhat.com>
+
+All,
+     Attached is a patch to fix BZ 378481, which is a request to enable TSC
+hiding for guest kernels (CVE-2007-5907).  This is generally done by the guest
+kernel turning on bit 2 in the CR4 register.  Now, we don't support this
+functionality in RHEL kernels (i.e. we don't have CONFIG_SECCOMP turned on), but
+some other vendors kernels do have this on and might expect to be able to
+(successfully) hide the TSC from their applications.
+     This patch is very close to upstream xen-unstable c/s 16259 and 16333, with
+a few important differences:
+1)  The removal of the "irq_masked()" inline function caused me to change a few
+callers that weren't in the original patches, but I seem to have gotten them all
+here.
+2)  I had to add an additional #include to the es7000 code to get it to build;
+upstream doesn't have this because they've removed es7000 support (as far as I
+can tell).
+3)  Upstream removed pge_off/pge_on, and went with an open-coded version of the
+same.  This patch does the same, except it *also* has to open-code a PGE flush
+in the local_tlb_flush_pge function.  Note that for 64-bit (i.e.
+USER_MAPPINGS_ARE_GLOBAL), I define local_flush_tlb_pge the same as
+local_flush_tlb.  This is because the way that local_flush_tlb 64-bit is
+flushing the TLB is exactly the same as what pge_off/pge_on was doing, so it was
+sort of redundant before.
+
+I tested this patch by building a RHEL kernel with CONFIG_SECCOMP turned on, and
+then running a small program that just read the TSC in a loop.  Before I patched
+the hypervisor, trying to turn on seccomp for this process (echo 1 >
+/proc/<pid>/seccomp) caused the process to be killed with SIGKILL, and the
+following message to be printed in the hypervisor logs:
+
+(XEN) traps.c:1685:d9 Attempt to change CR4 flags 00000660 -> 00000664
+
+After patching the hypervisor with this patch, doing the exact same test ends up
+with a SEGFAULT in the application, and no message from the hypervisor (which
+is, I believe, the correct operation).
+
+I also brew-built it (without problems), and did smoke testing on both i386 and
+x86_64.
+
+Please review and ACK.
+
+--
+Chris Lalancette
+
+diff --git a/arch/x86/acpi/boot.c b/arch/x86/acpi/boot.c
+index 3b76219..a4dddc9 100644
+--- a/arch/x86/acpi/boot.c
++++ b/arch/x86/acpi/boot.c
+@@ -36,6 +36,7 @@
+ #include <asm/apic.h>
+ #include <asm/io.h>
+ #include <asm/mpspec.h>
++#include <asm/processor.h>
+ #include <mach_apic.h>
+ #include <mach_mpparse.h>
+ 
+diff --git a/arch/x86/domain.c b/arch/x86/domain.c
+index 319676c..0651a71 100644
+--- a/arch/x86/domain.c
++++ b/arch/x86/domain.c
+@@ -49,7 +49,8 @@
+ #endif
+ 
+ DEFINE_PER_CPU(struct vcpu *, curr_vcpu);
+-DEFINE_PER_CPU(__u64, efer);
++DEFINE_PER_CPU(u64, efer);
++DEFINE_PER_CPU(unsigned long, cr4);
+ 
+ static void paravirt_ctxt_switch_from(struct vcpu *v);
+ static void paravirt_ctxt_switch_to(struct vcpu *v);
+@@ -385,6 +386,9 @@ int vcpu_initialise(struct vcpu *v)
+             v->arch.schedule_tail = continue_idle_domain;
+             v->arch.cr3           = __pa(idle_pg_table);
+         }
++
++        v->arch.guest_context.ctrlreg[4] =
++            real_cr4_to_pv_guest_cr4(mmu_cr4_features);
+     }
+ 
+     v->arch.perdomain_ptes =
+@@ -527,13 +531,29 @@ void arch_domain_destroy(struct domain *d)
+     free_xenheap_page(d->shared_info);
+ }
+ 
++unsigned long pv_guest_cr4_fixup(unsigned long guest_cr4)
++{
++    unsigned long hv_cr4_mask, hv_cr4 = real_cr4_to_pv_guest_cr4(read_cr4());
++
++    hv_cr4_mask = ~X86_CR4_TSD;
++    if ( cpu_has_de )
++        hv_cr4_mask &= ~X86_CR4_DE;
++
++    if ( (guest_cr4 & hv_cr4_mask) != (hv_cr4 & hv_cr4_mask) )
++        gdprintk(XENLOG_WARNING,
++                 "Attempt to change CR4 flags %08lx -> %08lx\n",
++                 hv_cr4 & ~(X86_CR4_PGE|X86_CR4_PSE), guest_cr4);
++
++    return (hv_cr4 & hv_cr4_mask) | (guest_cr4 & ~hv_cr4_mask);
++}
++
+ /* This is called by arch_final_setup_guest and do_boot_vcpu */
+ int arch_set_info_guest(
+     struct vcpu *v, vcpu_guest_context_u c)
+ {
+     struct domain *d = v->domain;
+     unsigned long cr3_pfn = INVALID_MFN;
+-    unsigned long flags;
++    unsigned long flags, cr4;
+     int i, rc = 0, compat;
+ 
+     /* The context is a compat-mode one if the target domain is compat-mode;
+@@ -622,6 +642,11 @@ int arch_set_info_guest(
+ 
+         /* Ensure real hardware interrupts are enabled. */
+         v->arch.guest_context.user_regs.eflags |= EF_IE;
++
++        cr4 = v->arch.guest_context.ctrlreg[4];
++        v->arch.guest_context.ctrlreg[4] = cr4 ? pv_guest_cr4_fixup(cr4) :
++            real_cr4_to_pv_guest_cr4(mmu_cr4_features);
++
+     }
+     else
+     {
+@@ -1198,9 +1223,15 @@ static void paravirt_ctxt_switch_from(struct vcpu *v)
+ 
+ static void paravirt_ctxt_switch_to(struct vcpu *v)
+ {
++    unsigned long cr4;
++
+     set_int80_direct_trap(v);
+     switch_kernel_stack(v);
+ 
++    cr4 = pv_guest_cr4_to_real_cr4(v->arch.guest_context.ctrlreg[4]);
++    if ( unlikely(cr4 != read_cr4()) )
++        write_cr4(cr4);
++
+     if ( unlikely(v->arch.guest_context.debugreg[7]) )
+     {
+         write_debugreg(0, v->arch.guest_context.debugreg[0]);
+diff --git a/arch/x86/flushtlb.c b/arch/x86/flushtlb.c
+index f7c06f3..98cbdb7 100644
+--- a/arch/x86/flushtlb.c
++++ b/arch/x86/flushtlb.c
+@@ -83,9 +83,12 @@ void write_cr3(unsigned long cr3)
+     hvm_flush_guest_tlbs();
+ 
+ #ifdef USER_MAPPINGS_ARE_GLOBAL
+-    __pge_off();
+-    __asm__ __volatile__ ( "mov %0, %%cr3" : : "r" (cr3) : "memory" );
+-    __pge_on();
++    {
++        unsigned long cr4 = read_cr4();
++        write_cr4(cr4 & ~X86_CR4_PGE);
++        asm volatile ( "mov %0, %%cr3" : : "r" (cr3) : "memory" );
++        write_cr4(cr4);
++    }
+ #else
+     __asm__ __volatile__ ( "mov %0, %%cr3" : : "r" (cr3) : "memory" );
+ #endif
+@@ -108,8 +111,12 @@ void local_flush_tlb(void)
+     hvm_flush_guest_tlbs();
+ 
+ #ifdef USER_MAPPINGS_ARE_GLOBAL
+-    __pge_off();
+-    __pge_on();
++    {
++            unsigned long cr4 = read_cr4();
++            write_cr4(cr4 & ~X86_CR4_PGE);
++            barrier();
++            write_cr4(cr4);
++    }
+ #else
+     __asm__ __volatile__ ( "mov %0, %%cr3" : : "r" (read_cr3()) : "memory" );
+ #endif
+diff --git a/arch/x86/genapic/es7000plat.c b/arch/x86/genapic/es7000plat.c
+index f1fd851..3c26e26 100644
+--- a/arch/x86/genapic/es7000plat.c
++++ b/arch/x86/genapic/es7000plat.c
+@@ -36,6 +36,7 @@
+ #include <asm/io.h>
+ #include <asm/smp.h>
+ #include <asm/apicdef.h>
++#include <asm/processor.h>
+ #include "es7000.h"
+ 
+ /*
+diff --git a/arch/x86/hvm/svm/intr.c b/arch/x86/hvm/svm/intr.c
+index 2215d86..241155b 100644
+--- a/arch/x86/hvm/svm/intr.c
++++ b/arch/x86/hvm/svm/intr.c
+@@ -145,7 +145,7 @@ asmlinkage void svm_intr_assist(void)
+          * - the guest might look at the APIC/PIC state, so we ought not to have 
+          *   cleared the interrupt out of the IRR.
+          */
+-        if ( irq_masked(vmcb->rflags) || vmcb->interrupt_shadow 
++        if ( !(vmcb->rflags & X86_EFLAGS_IF) || vmcb->interrupt_shadow 
+              || vmcb->eventinj.fields.v )  
+         {
+             vmcb->general1_intercepts |= GENERAL1_INTERCEPT_VINTR;
+diff --git a/arch/x86/hvm/svm/svm.c b/arch/x86/hvm/svm/svm.c
+index 163a6cf..9eb3f52 100644
+--- a/arch/x86/hvm/svm/svm.c
++++ b/arch/x86/hvm/svm/svm.c
+@@ -623,7 +623,7 @@ static int svm_load_vmcb_ctxt(struct vcpu *v, struct hvm_hw_cpu *ctxt)
+ static int svm_interrupts_enabled(struct vcpu *v)
+ {
+     unsigned long eflags = v->arch.hvm_svm.vmcb->rflags;
+-    return !irq_masked(eflags); 
++    return (eflags & X86_EFLAGS_IF);
+ }
+ 
+ static int svm_guest_x86_mode(struct vcpu *v)
+diff --git a/arch/x86/hvm/vmx/intr.c b/arch/x86/hvm/vmx/intr.c
+index 2ebb4cd..cdea237 100644
+--- a/arch/x86/hvm/vmx/intr.c
++++ b/arch/x86/hvm/vmx/intr.c
+@@ -166,7 +166,7 @@ asmlinkage void vmx_intr_assist(void)
+         }
+ 
+         eflags = __vmread(GUEST_RFLAGS);
+-        if ( irq_masked(eflags) )
++        if ( !(eflags & X86_EFLAGS_IF) )
+         {
+             enable_irq_window(v);
+             return;
+diff --git a/arch/x86/hvm/vmx/vmcs.c b/arch/x86/hvm/vmx/vmcs.c
+index bc295d4..83864af 100644
+--- a/arch/x86/hvm/vmx/vmcs.c
++++ b/arch/x86/hvm/vmx/vmcs.c
+@@ -418,7 +418,7 @@ static void construct_vmcs(struct vcpu *v)
+ 
+     /* Host control registers. */
+     __vmwrite(HOST_CR0, read_cr0() | X86_CR0_TS);
+-    __vmwrite(HOST_CR4, read_cr4());
++    __vmwrite(HOST_CR4, mmu_cr4_features);
+ 
+     /* Host CS:RIP. */
+     __vmwrite(HOST_CS_SELECTOR, __HYPERVISOR_CS);
+diff --git a/arch/x86/hvm/vmx/vmx.c b/arch/x86/hvm/vmx/vmx.c
+index 1680353..c131d52 100644
+--- a/arch/x86/hvm/vmx/vmx.c
++++ b/arch/x86/hvm/vmx/vmx.c
+@@ -995,6 +995,10 @@ static void vmx_ctxt_switch_from(struct vcpu *v)
+ 
+ static void vmx_ctxt_switch_to(struct vcpu *v)
+ {
++    /* HOST_CR4 in VMCS is always mmu_cr4_features. Sync CR4 now. */
++    if ( unlikely(read_cr4() != mmu_cr4_features) )
++        write_cr4(mmu_cr4_features);
++
+     vmx_restore_guest_msrs(v);
+     vmx_restore_dr(v);
+ }
+@@ -1251,7 +1255,7 @@ static void vmx_init_hypercall_page(struct domain *d, void *hypercall_page)
+ static int vmx_interrupts_enabled(struct vcpu *v) 
+ {
+     unsigned long eflags = __vmread(GUEST_RFLAGS); 
+-    return !irq_masked(eflags); 
++    return (eflags & X86_EFLAGS_IF); 
+ }
+ 
+ 
+diff --git a/arch/x86/setup.c b/arch/x86/setup.c
+index fdb1d1d..4ae9bae 100644
+--- a/arch/x86/setup.c
++++ b/arch/x86/setup.c
+@@ -474,6 +474,8 @@ void __init __start_xen(unsigned long mbi_p)
+     set_current((struct vcpu *)0xfffff000); /* debug sanity */
+     idle_vcpu[0] = current;
+     set_processor_id(0); /* needed early, for smp_processor_id() */
++    rdmsrl(MSR_EFER, this_cpu(efer));
++    asm volatile ( "mov %%cr4,%0" : "=r" (this_cpu(cr4)) );
+ 
+     smp_prepare_boot_cpu();
+ 
+diff --git a/arch/x86/smp.c b/arch/x86/smp.c
+index 05c3fb4..9a0e1df 100644
+--- a/arch/x86/smp.c
++++ b/arch/x86/smp.c
+@@ -86,6 +86,12 @@ static inline void check_IPI_mask(cpumask_t cpumask)
+     ASSERT(!cpus_empty(cpumask));
+ }
+ 
++void apic_wait_icr_idle(void)
++{
++	while ( apic_read( APIC_ICR ) & APIC_ICR_BUSY )
++		cpu_relax();
++}
++
+ void send_IPI_mask_flat(cpumask_t cpumask, int vector)
+ {
+     unsigned long mask = cpus_addr(cpumask)[0];
+diff --git a/arch/x86/smpboot.c b/arch/x86/smpboot.c
+index 667f533..86b3f26 100644
+--- a/arch/x86/smpboot.c
++++ b/arch/x86/smpboot.c
+@@ -489,6 +489,8 @@ void __devinit start_secondary(void *unused)
+ 	set_processor_id(cpu);
+ 	set_current(idle_vcpu[cpu]);
+         this_cpu(curr_vcpu) = idle_vcpu[cpu];
++	rdmsrl(MSR_EFER, this_cpu(efer));
++	asm volatile ( "mov %%cr4,%0" : "=r" (this_cpu(cr4)) );
+ 
+ 	percpu_traps_init();
+ 
+diff --git a/arch/x86/traps.c b/arch/x86/traps.c
+index e91e072..bcf47f4 100644
+--- a/arch/x86/traps.c
++++ b/arch/x86/traps.c
+@@ -1679,10 +1679,9 @@ static int emulate_privileged_op(struct cpu_user_regs *regs)
+             break;
+ 
+         case 4: /* Write CR4 */
+-            if ( *reg != (read_cr4() & ~(X86_CR4_PGE|X86_CR4_PSE)) )
+-                gdprintk(XENLOG_WARNING,
+-                         "Attempt to change CR4 flags %08lx -> %08lx\n",
+-                         read_cr4() & ~(X86_CR4_PGE|X86_CR4_PSE), *reg);
++            v->arch.guest_context.ctrlreg[4] = pv_guest_cr4_fixup(*reg);
++            write_cr4(pv_guest_cr4_to_real_cr4(
++                v->arch.guest_context.ctrlreg[4]));
+             break;
+ 
+         default:
+@@ -1764,6 +1763,10 @@ static int emulate_privileged_op(struct cpu_user_regs *regs)
+         }
+         break;
+ 
++    case 0x31: /* RDTSC */
++        rdtsc(regs->eax, regs->edx);
++        break;
++
+     case 0x32: /* RDMSR */
+         switch ( regs->ecx )
+         {
+diff --git a/include/asm-x86/apic.h b/include/asm-x86/apic.h
+index fd0ee81..9b13084 100644
+--- a/include/asm-x86/apic.h
++++ b/include/asm-x86/apic.h
+@@ -2,9 +2,7 @@
+ #define __ASM_APIC_H
+ 
+ #include <xen/config.h>
+-#include <asm/fixmap.h>
+ #include <asm/apicdef.h>
+-#include <asm/processor.h>
+ #include <asm/system.h>
+ 
+ #define Dprintk(x...)
+@@ -51,11 +49,7 @@ static __inline u32 apic_read(unsigned long reg)
+ 	return *((volatile u32 *)(APIC_BASE+reg));
+ }
+ 
+-static __inline__ void apic_wait_icr_idle(void)
+-{
+-	while ( apic_read( APIC_ICR ) & APIC_ICR_BUSY )
+-		cpu_relax();
+-}
++void apic_wait_icr_idle(void);
+ 
+ int get_physical_broadcast(void);
+ 
+diff --git a/include/asm-x86/domain.h b/include/asm-x86/domain.h
+index dec6215..fd28d4a 100644
+--- a/include/asm-x86/domain.h
++++ b/include/asm-x86/domain.h
+@@ -339,6 +339,16 @@ struct arch_vcpu
+ /* Continue the current hypercall via func(data) on specified cpu. */
+ int continue_hypercall_on_cpu(int cpu, long (*func)(void *data), void *data);
+ 
++/* Clean up CR4 bits that are not under guest control. */
++ unsigned long pv_guest_cr4_fixup(unsigned long guest_cr4);
++
++/* Convert between guest-visible and real CR4 values. */
++#define pv_guest_cr4_to_real_cr4(c) \
++    ((c) | (mmu_cr4_features & (X86_CR4_PGE | X86_CR4_PSE)))
++#define real_cr4_to_pv_guest_cr4(c) \
++    ((c) & ~(X86_CR4_PGE | X86_CR4_PSE))
++
++
+ #endif /* __ASM_DOMAIN_H__ */
+ 
+ /*
+diff --git a/include/asm-x86/flushtlb.h b/include/asm-x86/flushtlb.h
+index 03d1327..d8cdce9 100644
+--- a/include/asm-x86/flushtlb.h
++++ b/include/asm-x86/flushtlb.h
+@@ -74,12 +74,17 @@ extern void write_cr3(unsigned long cr3);
+ /* Flush guest mappings from the TLB and implicitly tick the tlbflush clock. */
+ extern void local_flush_tlb(void);
+ 
++#ifdef USER_MAPPINGS_ARE_GLOBAL
++#define local_flush_tlb_pge() local_flush_tlb()
++#else
+ #define local_flush_tlb_pge()                                     \
+     do {                                                          \
+-        __pge_off();                                              \
++        unsigned long cr4 = read_cr4();                           \
++        write_cr4(cr4 & ~X86_CR4_PGE);                            \
+         local_flush_tlb();                                        \
+-        __pge_on();                                               \
++        write_cr4(cr4);                                           \
+     } while ( 0 )
++#endif
+ 
+ #define local_flush_tlb_one(__addr) \
+     __asm__ __volatile__("invlpg %0": :"m" (*(char *) (__addr)))
+diff --git a/include/asm-x86/hvm/io.h b/include/asm-x86/hvm/io.h
+index 17c2f58..15981ff 100644
+--- a/include/asm-x86/hvm/io.h
++++ b/include/asm-x86/hvm/io.h
+@@ -137,13 +137,6 @@ static inline int register_portio_handler(
+     return register_io_handler(d, addr, size, action, HVM_PORTIO);
+ }
+ 
+-#if defined(__i386__) || defined(__x86_64__)
+-static inline int irq_masked(unsigned long eflags)
+-{
+-    return ((eflags & X86_EFLAGS_IF) == 0);
+-}
+-#endif
+-
+ extern void send_pio_req(unsigned long port, unsigned long count, int size,
+                          paddr_t value, int dir, int df, int value_is_ptr);
+ void send_timeoffset_req(unsigned long timeoff);
+diff --git a/include/asm-x86/hvm/irq.h b/include/asm-x86/hvm/irq.h
+index e46bdb4..7ab4446 100644
+--- a/include/asm-x86/hvm/irq.h
++++ b/include/asm-x86/hvm/irq.h
+@@ -24,6 +24,7 @@
+ 
+ #include <xen/types.h>
+ #include <xen/spinlock.h>
++#include <asm/irq.h>
+ #include <asm/hvm/vpic.h>
+ #include <asm/hvm/vioapic.h>
+ #include <public/hvm/save.h>
+diff --git a/include/asm-x86/io_apic.h b/include/asm-x86/io_apic.h
+index b8731bf..e8e102a 100644
+--- a/include/asm-x86/io_apic.h
++++ b/include/asm-x86/io_apic.h
+@@ -2,9 +2,10 @@
+ #define __ASM_IO_APIC_H
+ 
+ #include <xen/config.h>
+-#include <asm/fixmap.h>
+ #include <asm/types.h>
+ #include <asm/mpspec.h>
++#include <asm/apicdef.h>
++#include <asm/fixmap.h>
+ 
+ /*
+  * Intel IO-APIC support for SMP and UP systems.
+diff --git a/include/asm-x86/msr.h b/include/asm-x86/msr.h
+index 8508183..2638236 100644
+--- a/include/asm-x86/msr.h
++++ b/include/asm-x86/msr.h
+@@ -150,16 +150,14 @@ static inline void wrmsrl(unsigned int msr, __u64 val)
+ 
+ #ifndef __ASSEMBLY__
+ 
+-DECLARE_PER_CPU(__u64, efer);
++DECLARE_PER_CPU(u64, efer);
+ 
+-static inline __u64 read_efer(void)
++static inline u64 read_efer(void)
+ {
+-    if (!this_cpu(efer))
+-        rdmsrl(MSR_EFER, this_cpu(efer));
+     return this_cpu(efer);
+ }
+ 
+-static inline void write_efer(__u64 val)
++static inline void write_efer(u64 val)
+ {
+     this_cpu(efer) = val;
+     wrmsrl(MSR_EFER, val);
+diff --git a/include/asm-x86/page.h b/include/asm-x86/page.h
+index 4b41332..d902343 100644
+--- a/include/asm-x86/page.h
++++ b/include/asm-x86/page.h
+@@ -294,20 +294,6 @@ void paging_init(void);
+ void setup_idle_pagetable(void);
+ #endif /* !defined(__ASSEMBLY__) */
+ 
+-#define __pge_off()                                                     \
+-    do {                                                                \
+-        __asm__ __volatile__(                                           \
+-            "mov %0, %%cr4;  # turn off PGE     "                       \
+-            : : "r" (mmu_cr4_features & ~X86_CR4_PGE) );                \
+-        } while ( 0 )
+-
+-#define __pge_on()                                                      \
+-    do {                                                                \
+-        __asm__ __volatile__(                                           \
+-            "mov %0, %%cr4;  # turn off PGE     "                       \
+-            : : "r" (mmu_cr4_features) );                               \
+-    } while ( 0 )
+-
+ #define _PAGE_PRESENT  0x001U
+ #define _PAGE_RW       0x002U
+ #define _PAGE_USER     0x004U
+diff --git a/include/asm-x86/processor.h b/include/asm-x86/processor.h
+index 20368e5..7e633e2 100644
+--- a/include/asm-x86/processor.h
++++ b/include/asm-x86/processor.h
+@@ -8,6 +8,8 @@
+ #include <xen/config.h>
+ #include <xen/cache.h>
+ #include <xen/types.h>
++#include <xen/smp.h>
++#include <xen/percpu.h>
+ #include <public/xen.h>
+ #include <asm/types.h>
+ #include <asm/cpufeature.h>
+@@ -296,16 +298,17 @@ static inline unsigned long read_cr2(void)
+     return __cr2;
+ }
+ 
++DECLARE_PER_CPU(unsigned long, cr4);
++
+ static inline unsigned long read_cr4(void)
+ {
+-    unsigned long __cr4;
+-    __asm__("mov %%cr4,%0\n\t" :"=r" (__cr4));
+-    return __cr4;
+-} 
++    return this_cpu(cr4);
++}
+     
+ static inline void write_cr4(unsigned long val)
+ {
+-	__asm__("mov %0,%%cr4": :"r" ((unsigned long)val));
++    this_cpu(cr4) = val;
++    asm volatile ( "mov %0,%%cr4" : : "r" (val) );
+ }
+ 
+ 
+@@ -331,24 +334,14 @@ extern unsigned long mmu_cr4_features;
+ 
+ static always_inline void set_in_cr4 (unsigned long mask)
+ {
+-    unsigned long dummy;
+     mmu_cr4_features |= mask;
+-    __asm__ __volatile__ (
+-        "mov %%cr4,%0\n\t"
+-        "or %1,%0\n\t"
+-        "mov %0,%%cr4\n"
+-        : "=&r" (dummy) : "irg" (mask) );
++    write_cr4(read_cr4() | mask);
+ }
+ 
+ static always_inline void clear_in_cr4 (unsigned long mask)
+ {
+-    unsigned long dummy;
+     mmu_cr4_features &= ~mask;
+-    __asm__ __volatile__ (
+-        "mov %%cr4,%0\n\t"
+-        "and %1,%0\n\t"
+-        "mov %0,%%cr4\n"
+-        : "=&r" (dummy) : "irg" (~mask) );
++    write_cr4(read_cr4() & ~mask);
+ }
+ 
+ /*
+diff --git a/include/asm-x86/smp.h b/include/asm-x86/smp.h
+index f23b915..e85bc96 100644
+--- a/include/asm-x86/smp.h
++++ b/include/asm-x86/smp.h
+@@ -13,7 +13,6 @@
+ 
+ #ifdef CONFIG_X86_LOCAL_APIC
+ #ifndef __ASSEMBLY__
+-#include <asm/fixmap.h>
+ #include <asm/bitops.h>
+ #include <asm/mpspec.h>
+ #ifdef CONFIG_X86_IO_APIC
+diff --git a/include/asm-x86/x86_32/elf.h b/include/asm-x86/x86_32/elf.h
+index 1aa4e07..1abcaaf 100644
+--- a/include/asm-x86/x86_32/elf.h
++++ b/include/asm-x86/x86_32/elf.h
+@@ -1,8 +1,6 @@
+ #ifndef __X86_32_ELF_H__
+ #define __X86_32_ELF_H__
+ 
+-#include <asm/processor.h>
+-
+ typedef struct {
+     unsigned long ebx;
+     unsigned long ecx;
+@@ -40,7 +38,7 @@ static inline void elf_core_save_regs(ELF_Gregset *core_regs,
+     asm volatile("movw %%fs, %%ax;" :"=a"(core_regs->fs));
+     asm volatile("movw %%gs, %%ax;" :"=a"(core_regs->gs));
+     /* orig_eax not filled in for now */
+-    core_regs->eip = (unsigned long)current_text_addr();
++    core_regs->eip = (unsigned long)elf_core_save_regs;
+     asm volatile("movw %%cs, %%ax;" :"=a"(core_regs->cs));
+     asm volatile("pushfl; popl %0" :"=m"(core_regs->eflags));
+     asm volatile("movl %%esp,%0" : "=m"(core_regs->esp));
+diff --git a/include/asm-x86/x86_64/elf.h b/include/asm-x86/x86_64/elf.h
+index 39c90b7..df92ec0 100644
+--- a/include/asm-x86/x86_64/elf.h
++++ b/include/asm-x86/x86_64/elf.h
+@@ -1,8 +1,6 @@
+ #ifndef __X86_64_ELF_H__
+ #define __X86_64_ELF_H__
+ 
+-#include <asm/processor.h>
+-
+ typedef struct {
+     unsigned long r15;
+     unsigned long r14;
+@@ -54,7 +52,7 @@ static inline void elf_core_save_regs(ELF_Gregset *core_regs,
+     asm volatile("movq %%rsi,%0" : "=m"(core_regs->rsi));
+     asm volatile("movq %%rdi,%0" : "=m"(core_regs->rdi));
+     /* orig_rax not filled in for now */
+-    core_regs->rip = (unsigned long)current_text_addr();
++    core_regs->rip = (unsigned long)elf_core_save_regs;
+     asm volatile("movl %%cs, %%eax;" :"=a"(core_regs->cs));
+     asm volatile("pushfq; popq %0" :"=m"(core_regs->eflags));
+     asm volatile("movq %%rsp,%0" : "=m"(core_regs->rsp));
