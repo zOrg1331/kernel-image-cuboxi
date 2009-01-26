@@ -2249,6 +2249,7 @@ Patch99999: linux-kernel-test.patch
 
 # ALT-specific patch
 Patch200000: our_kernel.patch
+Patch200001: revert_utimensat.patch
 
 # END OF PATCH DEFINITIONS
 
@@ -4479,6 +4480,7 @@ perl -p -i -e "s/^RHEL_MINOR.*/RHEL_MINOR = %rh_release_minor/" Makefile
 
 # ALT-specific patch
 %patch200000 -p1
+%patch200001 -p1
 
 # END OF PATCH APPLICATIONS
 
