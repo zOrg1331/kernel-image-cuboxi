@@ -1030,7 +1030,7 @@ retry:
 /*
  * Open an eventpoll file descriptor.
  */
-asmlinkage long sys_epoll_create1(int flags)
+SYSCALL_DEFINE1(epoll_create1, int, flags)
 {
 	int error, fd = -1;
 	struct eventpoll *ep;
@@ -1070,7 +1070,7 @@ error_return:
 	return fd;
 }
 
-asmlinkage long sys_epoll_create(int size)
+SYSCALL_DEFINE1(epoll_create, int, size)
 {
 	if (size < 0)
 		return -EINVAL;
@@ -1084,8 +1084,8 @@ EXPORT_SYMBOL(sys_epoll_create);
  * the eventpoll file that enables the insertion/removal/change of
  * file descriptors inside the interest set.
  */
-asmlinkage long sys_epoll_ctl(int epfd, int op, int fd,
-			      struct epoll_event __user *event)
+SYSCALL_DEFINE4(epoll_ctl, int, epfd, int, op, int, fd,
+		struct epoll_event __user *, event)
 {
 	int error;
 	struct file *file, *tfile;
@@ -1182,8 +1182,8 @@ error_return:
  * Implement the event wait interface for the eventpoll file. It is the kernel
  * part of the user space epoll_wait(2).
  */
-asmlinkage long sys_epoll_wait(int epfd, struct epoll_event __user *events,
-			       int maxevents, int timeout)
+SYSCALL_DEFINE4(epoll_wait, int, epfd, struct epoll_event __user *, events,
+		int, maxevents, int, timeout)
 {
 	int error;
 	struct file *file;
@@ -1240,9 +1240,9 @@ error_return:
  * Implement the event wait interface for the eventpoll file. It is the kernel
  * part of the user space epoll_pwait(2).
  */
-asmlinkage long sys_epoll_pwait(int epfd, struct epoll_event __user *events,
-		int maxevents, int timeout, const sigset_t __user *sigmask,
-		size_t sigsetsize)
+SYSCALL_DEFINE6(epoll_pwait, int, epfd, struct epoll_event __user *, events,
+		int, maxevents, int, timeout, const sigset_t __user *, sigmask,
+		size_t, sigsetsize)
 {
 	int error;
 	sigset_t ksigmask, sigsaved;

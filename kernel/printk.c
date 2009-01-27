@@ -445,9 +445,23 @@ out:
 	return error;
 }
 
-asmlinkage long sys_syslog(int type, char __user *buf, int len)
+SYSCALL_DEFINE3(syslog, int, type, char __user *, buf, int, len)
 {
-	return do_syslog(type, buf, len);
+	int retval;
+
+	if ((type == 2) || (type == 9)) {
+		/*
+		 * These operation can also be invoked through /proc/kmsg, but
+		 * you need to have an open file descriptor for that.  Make the
+		 * syslog system call also require the syslog open permission.
+		 */
+		retval = security_syslog(1);
+		if (retval)
+			goto out;
+	}
+	retval = do_syslog(type, buf, len);
+out:
+	return retval;
 }
 
 /*
@@ -876,11 +890,6 @@ asmlinkage int ve_printk(int dst, const char *fmt, ...)
 EXPORT_SYMBOL(ve_printk);
 
 #else
-
-asmlinkage long sys_syslog(int type, char __user *buf, int len)
-{
-	return -ENOSYS;
-}
 
 static void call_console_drivers(unsigned start, unsigned end)
 {

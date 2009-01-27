@@ -1054,7 +1054,7 @@ EXPORT_SYMBOL_GPL(do_pipe);
  * sys_pipe() is the normal C calling standard for creating
  * a pipe. It's not the way Unix traditionally does this, though.
  */
-asmlinkage long __weak sys_pipe2(int __user *fildes, int flags)
+SYSCALL_DEFINE2(pipe2, int __user *, fildes, int, flags)
 {
 	int fd[2];
 	int error;
@@ -1070,7 +1070,7 @@ asmlinkage long __weak sys_pipe2(int __user *fildes, int flags)
 	return error;
 }
 
-asmlinkage long __weak sys_pipe(int __user *fildes)
+SYSCALL_DEFINE1(pipe, int __user *, fildes)
 {
 	return sys_pipe2(fildes, 0);
 }

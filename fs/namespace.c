@@ -1201,7 +1201,7 @@ void umount_ve_fs_type(struct file_system_type *local_fs_type)
  * unixes. Our API is identical to OSF/1 to avoid making a mess of AMD
  */
 
-asmlinkage long sys_umount(char __user * name, int flags)
+SYSCALL_DEFINE2(umount, char __user *, name, int, flags)
 {
 	struct path path;
 	int retval;
@@ -1233,7 +1233,7 @@ out:
 /*
  *	The 2.0 compatible umount. No flags.
  */
-asmlinkage long sys_oldumount(char __user * name)
+SYSCALL_DEFINE1(oldumount, char __user *, name)
 {
 	return sys_umount(name, 0);
 }
@@ -2142,9 +2142,8 @@ struct mnt_namespace *copy_mnt_ns(unsigned long flags, struct mnt_namespace *ns,
 	return new_ns;
 }
 
-asmlinkage long sys_mount(char __user * dev_name, char __user * dir_name,
-			  char __user * type, unsigned long flags,
-			  void __user * data)
+SYSCALL_DEFINE5(mount, char __user *, dev_name, char __user *, dir_name,
+		char __user *, type, unsigned long, flags, void __user *, data)
 {
 	int retval;
 	unsigned long data_page;
@@ -2270,8 +2269,8 @@ static void chroot_fs_refs(struct path *old_root, struct path *new_root)
  *    though, so you may need to say mount --bind /nfs/my_root /nfs/my_root
  *    first.
  */
-asmlinkage long sys_pivot_root(const char __user * new_root,
-			       const char __user * put_old)
+SYSCALL_DEFINE2(pivot_root, const char __user *, new_root,
+		const char __user *, put_old)
 {
 	struct vfsmount *tmp;
 	struct path new, old, parent_path, root_parent, root;

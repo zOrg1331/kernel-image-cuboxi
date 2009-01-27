@@ -36,6 +36,7 @@
 #include <linux/delay.h>
 #include <linux/string.h>
 #include <linux/slab.h>
+#include <media/compat.h>
 
 #include "dvb_frontend.h"
 #include "mt352_priv.h"
