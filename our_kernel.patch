@@ -1,3 +1,10 @@
+This patch was created as follows:
+
+1. git diff v2.6.18 ourkernel > our_kernel.patch
+2. patch(1) fails on our_kernel.patch, so at this
+   point we must correct it by hands, for example,
+   remove all appearences of i_blksize in it.
+
 diff --git a/drivers/char/keyboard.c b/drivers/char/keyboard.c
 index 3e90aac..9c44967 100644
 --- a/drivers/char/keyboard.c
