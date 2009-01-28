@@ -1,7 +1,7 @@
-Name: kernel-image-std-def
+Name: kernel-image-ovz-smp
 Version: 2.6.27
-Release: alt11
-epoch:1 
+Release: alt0.1
+
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -21,7 +21,7 @@ epoch:1
 %define kgcc_version	4.3
 
 # Enable/disable SGML docs formatting
-%def_enable docs
+%def_disable docs
 
 #Remove oss
 %def_enable oss
@@ -467,6 +467,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Wed Jan 28 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.27-alt0.1
+- Rename package, disable htmldocs
+
 * Sun Jan 25 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt11
 - 2.6.27.13 
 - alsa 1.0.19
