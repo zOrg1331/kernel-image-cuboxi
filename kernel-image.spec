@@ -1,6 +1,6 @@
 Name: kernel-image-std-pae
 Version: 2.6.27
-Release: alt10
+Release: alt11
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -469,6 +469,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Sun Jan 25 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt11
+- 2.6.27.13 
+- alsa 1.0.19
+- replaced unionfs by aufs
+
 * Thu Jan 15 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt10
 - 2.6.27.12 
 - add eeepc rfkill support
@@ -482,6 +487,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 - update config on x86_64: turn off CONFIG_SYSFS_DEPRECATED 
 - fix thinkpad and prism54 aliases
 - add conntrack RTSP support
+- add AUFS
 
 * Thu Dec 18 2008 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt8
 - 2.6.27.10 
