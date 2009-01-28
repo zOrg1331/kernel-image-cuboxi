@@ -1383,7 +1383,7 @@ static int do_env_enter(struct ve_struct *ve, unsigned int flags)
 		goto out_up;
 
 #ifdef CONFIG_VZ_FAIRSCHED
-	err = sys_fairsched_mvpr(current->pid, ve->veid);
+	err = sys_fairsched_mvpr(task_pid_vnr(current), ve->veid);
 	if (err)
 		goto out_up;
 #endif
