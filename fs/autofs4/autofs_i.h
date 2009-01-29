@@ -136,6 +136,7 @@ struct autofs_sb_info {
 	spinlock_t lookup_lock;
 	struct list_head active_list;
 	struct list_head expiring_list;
+	unsigned is32bit:1;
 };
 
 static inline struct autofs_sb_info *autofs4_sbi(struct super_block *sb)
