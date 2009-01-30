@@ -69,11 +69,7 @@ License: GPLv2
 Url: http://www.kernel.org/
 Version: %kversion
 Release: %krelease
-%if 0%{?olpc}
-ExclusiveArch: i386 i586
-%else
-ExclusiveArch: i686 x86_64
-%endif
+ExclusiveArch: i586 x86_64
 ExclusiveOS: Linux
 Provides: kernel = %version
 Provides: kernel-drm = 4.3.0
@@ -154,7 +150,7 @@ Source129: Module.kabi_x86_64xen
 
 Source130: check-kabi
 
-Source200: kernel-%kversion-i686.config.ovz
+Source200: kernel-%kversion-i586.config.ovz
 Source201: kernel-%kversion-i686-PAE.config.ovz
 Source202: kernel-%kversion-i686-ent.config.ovz
 Source203: kernel-%kversion-x86_64.config.ovz
