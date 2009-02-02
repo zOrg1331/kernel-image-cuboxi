@@ -51,19 +51,19 @@ UB_DECLARE_FUNC(int, ub_slab_charge(struct kmem_cache *cachep,
 UB_DECLARE_VOID_FUNC(ub_slab_uncharge(struct kmem_cache *cachep, void *obj))
 
 #ifdef CONFIG_BEANCOUNTERS
-static inline int should_charge(struct kmem_cache *cachep, gfp_t flags)
+static inline int should_charge(unsigned long cflags, gfp_t flags)
 {
-	if (!(cachep->flags & SLAB_UBC))
+	if (!(cflags & SLAB_UBC))
 		return 0;
-	if ((cachep->flags & SLAB_NO_CHARGE) && !(flags & __GFP_UBC))
+	if ((cflags & SLAB_NO_CHARGE) && !(flags & __GFP_UBC))
 		return 0;
 	return 1;
 }
 
-#define should_uncharge(cachep)	should_charge(cachep, __GFP_UBC)
+#define should_uncharge(cflags)	should_charge(cflags, __GFP_UBC)
 #else
-#define should_charge(cache, f)	0
-#define should_uncharge(cache)	0
+#define should_charge(cflags, f)	0
+#define should_uncharge(cflags)		0
 #endif
 
 #endif /* __UB_SLAB_H_ */
