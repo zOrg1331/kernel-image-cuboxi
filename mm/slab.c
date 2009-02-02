@@ -3495,7 +3495,7 @@ __cache_alloc(struct kmem_cache *cachep, gfp_t flags, void *caller)
 	kmemleak_alloc_recursive(objp, obj_size(cachep), 1, cachep->flags,
 				 flags);
 	prefetchw(objp);
-	if (objp && should_charge(cachep, flags) &&
+	if (objp && should_charge(cachep->flags, flags) &&
 			ub_slab_charge(cachep, objp, flags)) {
 		kmem_cache_free(cachep, objp);
 		objp = NULL;
@@ -3624,7 +3624,7 @@ static inline void __cache_free(struct kmem_cache *cachep, void *objp)
 
 	kmemcheck_slab_free(cachep, objp, obj_size(cachep));
 
-	if (should_uncharge(cachep))
+	if (should_uncharge(cachep->flags))
 		ub_slab_uncharge(cachep, objp);
 
 	/*
