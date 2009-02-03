@@ -1,7 +1,7 @@
 /*
  *  linux/kernel/ve/vecalls.c
  *
- *  Copyright (C) 2000-2005  SWsoft
+ *  Copyright (C) 2000-2009 Parallels Holdings, Ltd.
  *  All rights reserved.
  *
  */
@@ -1378,7 +1378,7 @@ static int do_env_enter(struct ve_struct *ve, unsigned int flags)
 		goto out_up;
 
 #ifdef CONFIG_VZ_FAIRSCHED
-	err = sys_fairsched_mvpr(current->pid, ve->veid);
+	err = sys_fairsched_mvpr(task_pid_vnr(current), ve->veid);
 	if (err)
 		goto out_up;
 #endif
@@ -2424,7 +2424,7 @@ static void vecalls_exit(void)
 	fini_vecalls_sysctl();
 }
 
-MODULE_AUTHOR("SWsoft <info@sw-soft.com>");
+MODULE_AUTHOR("Parallels <info@parallels.com>");
 MODULE_DESCRIPTION("Virtuozzo Control");
 MODULE_LICENSE("GPL v2");
 

@@ -3565,7 +3565,7 @@ __cache_alloc(struct kmem_cache *cachep, gfp_t flags, void *caller)
 	objp = __do_cache_alloc(cachep, flags);
 	objp = cache_alloc_debugcheck_after(cachep, flags, objp, caller);
 	prefetchw(objp);
-	if (objp && should_charge(cachep, flags) &&
+	if (objp && should_charge(cachep->flags, flags) &&
 			ub_slab_charge(cachep, objp, flags)) {
 		kmem_cache_free(cachep, objp);
 		objp = NULL;
@@ -3688,7 +3688,7 @@ static inline void __cache_free(struct kmem_cache *cachep, void *objp)
 	check_irq_off();
 	objp = cache_free_debugcheck(cachep, objp, __builtin_return_address(0));
 
-	if (should_uncharge(cachep))
+	if (should_uncharge(cachep->flags))
 		ub_slab_uncharge(cachep, objp);
 
 	/*
