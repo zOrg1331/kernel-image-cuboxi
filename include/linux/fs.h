@@ -63,7 +63,7 @@ extern int dir_notify_enable;
 #define MAY_APPEND 8
 #define MAY_ACCESS 16
 #define MAY_OPEN 32
-#define MAY_QUOTACTL 16 /* for devgroup-vs-openvz only */
+#define MAY_QUOTACTL 64 /* for devgroup-vs-openvz only */
 
 #define FMODE_READ 1
 #define FMODE_WRITE 2
