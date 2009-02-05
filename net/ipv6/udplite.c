@@ -13,7 +13,9 @@
  */
 #include "udp_impl.h"
 
+#ifndef CONFIG_VE
 DEFINE_SNMP_STAT(struct udp_mib, udplite_stats_in6) __read_mostly;
+#endif
 
 static int udplitev6_rcv(struct sk_buff *skb)
 {
