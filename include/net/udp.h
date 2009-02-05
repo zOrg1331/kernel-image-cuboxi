@@ -176,11 +176,11 @@ DECLARE_SNMP_STAT(struct udp_mib, udplite_stats_in6);
 	else		SNMP_INC_STATS_BH((net)->mib.udp_statistics, field);    }  while(0)
 
 #define UDP6_INC_STATS_BH(net, field, is_udplite) 	    do { (void)net;  \
-	if (is_udplite) SNMP_INC_STATS_BH(udplite_stats_in6, field);         \
-	else		SNMP_INC_STATS_BH(udp_stats_in6, field);    } while(0)
+	if (is_udplite) SNMP_INC_STATS_BH(ve_udplite_stats_in6, field);         \
+	else		SNMP_INC_STATS_BH(ve_udp_stats_in6, field);    } while(0)
 #define UDP6_INC_STATS_USER(net, field, is_udplite)	    do { (void)net;    \
-	if (is_udplite) SNMP_INC_STATS_USER(udplite_stats_in6, field);         \
-	else		SNMP_INC_STATS_USER(udp_stats_in6, field);    } while(0)
+	if (is_udplite) SNMP_INC_STATS_USER(ve_udplite_stats_in6, field);         \
+	else		SNMP_INC_STATS_USER(ve_udp_stats_in6, field);    } while(0)
 
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 #define UDPX_INC_STATS_BH(sk, field) \
