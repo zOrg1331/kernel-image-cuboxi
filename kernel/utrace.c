@@ -173,26 +173,15 @@ static inline void init_utrace_struct(struct utrace *utrace)
 }
 
 /*
- * Called without locks.
- * Allocate target->utrace and install engine in it.  If we lose a race in
- * setting it up, return -EAGAIN.  This function mediates startup races.
- * The creating parent task has priority, and other callers will delay here
- * to let its call succeed and take the new utrace lock first.
+ * Called without locks, when we might be the first utrace engine to attach.
+ * If this is a newborn thread and we are not the creator, we have to wait
+ * for it.  The creator gets the first chance to attach.  The PF_STARTING
+ * flag is cleared after its report_clone hook has had a chance to run.
  */
-static int utrace_first_engine(struct task_struct *target,
-			       struct utrace_attached_engine *engine)
+static inline int utrace_attach_delay(struct task_struct *target)
 {
-	int ret;
-	struct utrace *utrace;
-
-	/*
-	 * If this is a newborn thread and we are not the creator,
-	 * we have to wait for it.  The creator gets the first chance
-	 * to attach.  The PF_STARTING flag is cleared after its
-	 * report_clone hook has had a chance to run.
-	 */
 	if (target->flags & PF_STARTING) {
-		utrace = current->utrace;
+		struct utrace *utrace = current->utrace;
 		if (!utrace || utrace->u.live.cloning != target) {
 			yield();
 			if (signal_pending(current))
@@ -200,6 +189,20 @@ static int utrace_first_engine(struct task_struct *target,
 			return -EAGAIN;
 		}
 	}
+
+	return 0;
+}
+
+/*
+ * Called without locks.
+ * Allocate target->utrace and install engine in it.  If we lose a race in
+ * setting it up, return -EAGAIN.  This function mediates startup races.
+ */
+static int utrace_first_engine(struct task_struct *target,
+			       struct utrace_attached_engine *engine)
+{
+	int ret;
+	struct utrace *utrace;
 
 	utrace = kmem_cache_zalloc(utrace_cachep, GFP_KERNEL);
 	if (unlikely(!utrace))
@@ -243,7 +246,7 @@ static int utrace_first_engine(struct task_struct *target,
 
 	/*
 	 * Another engine attached first, so there is a struct already.
-	 * A null return says to restart looking for the existing one.
+	 * Our -EAGAIN return says to restart looking for the existing one.
 	 */
 	task_unlock(target);
 	spin_unlock(&utrace->lock);
@@ -256,14 +259,14 @@ static int utrace_first_engine(struct task_struct *target,
  * Called with rcu_read_lock() held.
  * Lock utrace and verify that it's still installed in target->utrace.
  * If not, return -EAGAIN.
- * Then enqueue engine, or maybe don't if UTRACE_ATTACH_EXCLUSIVE.
+ * Enqueue @engine, or maybe don't if UTRACE_ATTACH_EXCLUSIVE.
  */
-static int utrace_second_engine(struct task_struct *target,
-				struct utrace *utrace,
-				struct utrace_attached_engine *engine,
-				int flags,
-				const struct utrace_engine_ops *ops,
-				void *data)
+static int utrace_add_engine(struct task_struct *target,
+			     struct utrace *utrace,
+			     struct utrace_attached_engine *engine,
+			     int flags,
+			     const struct utrace_engine_ops *ops,
+			     void *data)
 {
 	int ret;
 
@@ -395,10 +398,12 @@ restart:
 	utrace = rcu_dereference(target->utrace);
 	if (!utrace) {
 		rcu_read_unlock();
-		ret = utrace_first_engine(target, engine);
+		ret = utrace_attach_delay(target);
+		if (likely(!ret))
+			ret = utrace_first_engine(target, engine);
 	} else {
-		ret = utrace_second_engine(target, utrace, engine,
-					   flags, ops, data);
+		ret = utrace_add_engine(target, utrace, engine,
+					flags, ops, data);
 		rcu_read_unlock();
 	}
 
