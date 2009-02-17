@@ -63,7 +63,7 @@ config MACH_TROUT
 	help
 	  Support for the HTC Dream, T-Mobile G1, Android ADP1 devices.
 
-config TROUT_H2W
+config HTC_HEADSET
 	tristate "HTC 2 Wire detection driver"
 	default n
 	help
