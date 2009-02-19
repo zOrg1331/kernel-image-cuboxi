@@ -545,6 +545,9 @@ static int pppoe_create(struct net *net, struct socket *sock)
 {
 	struct sock *sk;
 
+	if (!(get_exec_env()->features & VE_FEATURE_PPP))
+		return -EACCES;
+
 	sk = sk_alloc(net, PF_PPPOX, GFP_KERNEL, &pppoe_sk_proto);
 	if (!sk)
 		return -ENOMEM;
