@@ -181,7 +181,7 @@ static inline void init_utrace_struct(struct utrace *utrace)
 static inline int utrace_attach_delay(struct task_struct *target)
 {
 	if (target->flags & PF_STARTING) {
-		struct utrace *utrace = current->utrace;
+		struct utrace *utrace = task_utrace_struct(current);
 		if (!utrace || utrace->u.live.cloning != target) {
 			yield();
 			if (signal_pending(current))
@@ -485,6 +485,36 @@ static const struct utrace_engine_ops utrace_detached_ops = {
 #define LIVE_FLAGS_MASK	(~0UL)
 
 /*
+ * After waking up from TASK_TRACED, clear bookkeeping in @utrace.
+ * Returns true if we were woken up prematurely by SIGKILL.
+ */
+static inline bool finish_utrace_stop(struct task_struct *task,
+				      struct utrace *utrace)
+{
+	bool killed = false;
+
+	/*
+	 * utrace_wakeup() clears @utrace->stopped before waking us up.
+	 * We're officially awake if it's clear.
+	 */
+	spin_lock(&utrace->lock);
+	if (unlikely(utrace->stopped)) {
+		/*
+		 * If we're here with it still set, it must have been
+		 * signal_wake_up() instead, waking us up for a SIGKILL.
+		 */
+		spin_lock_irq(&task->sighand->siglock);
+		WARN_ON(!sigismember(&task->pending.signal, SIGKILL));
+		spin_unlock_irq(&task->sighand->siglock);
+		utrace->stopped = 0;
+		killed = true;
+	}
+	spin_unlock(&utrace->lock);
+
+	return killed;
+}
+
+/*
  * Perform %UTRACE_STOP, i.e. block in TASK_TRACED until woken up.
  * @task == current, @utrace == current->utrace, which is not locked.
  * Return true if we were woken up by SIGKILL even though some utrace
@@ -539,30 +569,13 @@ static bool utrace_stop(struct task_struct *task, struct utrace *utrace)
 	killed = false;
 	rcu_read_lock();
 	utrace = rcu_dereference(task->utrace);
-	if (utrace) {
-		/*
-		 * utrace_wakeup() clears @utrace->stopped before waking us up.
-		 * We're officially awake if it's clear.
-		 */
-		spin_lock(&utrace->lock);
-		if (unlikely(utrace->stopped)) {
-			/*
-			 * If we're here with it still set, it must have been
-			 * signal_wake_up() instead, waking us up for a SIGKILL.
-			 */
-			spin_lock_irq(&task->sighand->siglock);
-			WARN_ON(!sigismember(&task->pending.signal, SIGKILL));
-			spin_unlock_irq(&task->sighand->siglock);
-			utrace->stopped = 0;
-			killed = true;
-		}
-		spin_unlock(&utrace->lock);
-	}
+	if (utrace)
+		killed = finish_utrace_stop(task, utrace);
 	rcu_read_unlock();
 
 	/*
 	 * While we were in TASK_TRACED, complete_signal() considered
-	 * us "uninterested" in signal wakeups.  Now make sure we our
+	 * us "uninterested" in signal wakeups.  Now make sure our
 	 * TIF_SIGPENDING state is correct for normal running.
 	 */
 	spin_lock_irq(&task->sighand->siglock);
