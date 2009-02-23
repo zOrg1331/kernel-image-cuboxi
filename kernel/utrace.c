@@ -1365,7 +1365,8 @@ EXPORT_SYMBOL_GPL(utrace_control);
  * This blocks while @target might be in the midst of making a callback to
  * @engine.  It can be interrupted by signals and will return -%ERESTARTSYS.
  * A return value of zero means no callback from @target to @engine was
- * in progress.
+ * in progress.  Any effect of its return value (such as %UTRACE_STOP) has
+ * already been applied to @engine.
  *
  * It's not necessary to keep the @target pointer alive for this call.
  * It's only necessary to hold a ref on @engine.  This will return
@@ -1478,6 +1479,37 @@ static bool finish_callback(struct utrace *utrace,
 {
 	enum utrace_resume_action action = utrace_resume_action(ret);
 
+	report->result = ret & ~UTRACE_RESUME_MASK;
+
+	/*
+	 * If utrace_control() was used, treat that like UTRACE_DETACH here.
+	 */
+	if (action == UTRACE_DETACH || engine->ops == &utrace_detached_ops) {
+		engine->ops = &utrace_detached_ops;
+		report->detaches = true;
+	} else {
+		if (action < report->action)
+			report->action = action;
+
+		if (action == UTRACE_STOP) {
+			if (!engine_wants_stop(engine)) {
+				spin_lock(&utrace->lock);
+				mark_engine_wants_stop(engine);
+				spin_unlock(&utrace->lock);
+			}
+		} else if (engine_wants_stop(engine)) {
+			spin_lock(&utrace->lock);
+			clear_engine_wants_stop(engine);
+			spin_unlock(&utrace->lock);
+		}
+	}
+
+	/*
+	 * Now that we have applied the effect of the return value,
+	 * clear this so that utrace_barrier() can stop waiting.
+	 * A subsequent utrace_control() can stop or resume @engine
+	 * and know this was ordered after its callback's action.
+	 */
 	utrace->reporting = NULL;
 
 	/*
@@ -1487,33 +1519,7 @@ static bool finish_callback(struct utrace *utrace,
 	if (need_resched())
 		cond_resched();
 
-	report->result = ret & ~UTRACE_RESUME_MASK;
-
-	/*
-	 * If utrace_control() was used, treat that like UTRACE_DETACH here.
-	 */
-	if (action == UTRACE_DETACH || engine->ops == &utrace_detached_ops) {
-		engine->ops = &utrace_detached_ops;
-		report->detaches = true;
-		return true;
-	}
-
-	if (action < report->action)
-		report->action = action;
-
-	if (action == UTRACE_STOP) {
-		if (!engine_wants_stop(engine)) {
-			spin_lock(&utrace->lock);
-			mark_engine_wants_stop(engine);
-			spin_unlock(&utrace->lock);
-		}
-	} else if (engine_wants_stop(engine)) {
-		spin_lock(&utrace->lock);
-		clear_engine_wants_stop(engine);
-		spin_unlock(&utrace->lock);
-	}
-
-	return false;
+	return engine->ops == &utrace_detached_ops;
 }
 
 /*
