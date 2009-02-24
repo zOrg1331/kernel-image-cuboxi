@@ -287,6 +287,7 @@ static int do_rst_semundo(struct cpt_object_hdr *sui, loff_t pos, struct cpt_con
 
 	atomic_set(&undo_list->refcnt, 1);
 	spin_lock_init(&undo_list->lock);
+	INIT_LIST_HEAD(&undo_list->list_proc);
 	current->sysvsem.undo_list = undo_list;
 
 	if (sui->cpt_next > sui->cpt_hdrlen) {
