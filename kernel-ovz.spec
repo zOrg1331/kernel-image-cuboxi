@@ -27,6 +27,7 @@
 # Build options
 # You can change compiler version by editing this line:
 %define kgcc_version	4.1
+%set_gcc_version %kgcc_version
 
 #
 # Polite request for people who spin their own kernel rpms:
@@ -36,7 +37,7 @@
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define krelease alt2.M40.2
+%define krelease alt1.M50.1
 %define xen_hv_cset 15502
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
@@ -100,7 +101,7 @@ AutoProv: yes
 #
 BuildPreReq: module-init-tools, patch >= 2.5.4, bash >= 2.03, coreutils, tar
 BuildPreReq: bzip2, findutils, gzip, m4, perl, make >= 3.78, diffutils
-BuildRequires: gcc >= 3.4.2, binutils >= 2.12
+BuildRequires: binutils >= 2.12
 %if %with_headers
 BuildRequires: unifdef
 %endif
@@ -4964,6 +4965,9 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Tue Feb 24 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt1.M50.1
+- Build for M50
+
 * Fri Jan 30 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt2.M40.2
 - Build on i586 instead of i686
 
