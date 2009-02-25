@@ -68,7 +68,7 @@ struct utrace {
 	struct list_head attached, attaching;
 	spinlock_t lock;
 
-	struct utrace_attached_engine *reporting;
+	struct utrace_engine *reporting;
 
 	unsigned int stopped:1;
 	unsigned int report:1;
@@ -86,7 +86,7 @@ static const struct utrace_engine_ops utrace_detached_ops; /* forward decl */
 static int __init utrace_init(void)
 {
 	utrace_cachep = KMEM_CACHE(utrace, SLAB_PANIC);
-	utrace_engine_cachep = KMEM_CACHE(utrace_attached_engine, SLAB_PANIC);
+	utrace_engine_cachep = KMEM_CACHE(utrace_engine, SLAB_PANIC);
 	return 0;
 }
 module_init(utrace_init);
@@ -123,14 +123,14 @@ static void splice_attaching(struct utrace *utrace)
  */
 void __utrace_engine_release(struct kref *kref)
 {
-	struct utrace_attached_engine *engine =
-		container_of(kref, struct utrace_attached_engine, kref);
+	struct utrace_engine *engine = container_of(kref, struct utrace_engine,
+						    kref);
 	BUG_ON(!list_empty(&engine->entry));
 	kmem_cache_free(utrace_engine_cachep, engine);
 }
 EXPORT_SYMBOL_GPL(__utrace_engine_release);
 
-static bool engine_matches(struct utrace_attached_engine *engine, int flags,
+static bool engine_matches(struct utrace_engine *engine, int flags,
 			   const struct utrace_engine_ops *ops, void *data)
 {
 	if ((flags & UTRACE_ATTACH_MATCH_OPS) && engine->ops != ops)
@@ -140,11 +140,11 @@ static bool engine_matches(struct utrace_attached_engine *engine, int flags,
 	return engine->ops && engine->ops != &utrace_detached_ops;
 }
 
-static struct utrace_attached_engine *matching_engine(
+static struct utrace_engine *matching_engine(
 	struct utrace *utrace, int flags,
 	const struct utrace_engine_ops *ops, void *data)
 {
-	struct utrace_attached_engine *engine;
+	struct utrace_engine *engine;
 	list_for_each_entry(engine, &utrace->attached, entry)
 		if (engine_matches(engine, flags, ops, data))
 			return engine;
@@ -199,7 +199,7 @@ static inline int utrace_attach_delay(struct task_struct *target)
  * setting it up, return -EAGAIN.  This function mediates startup races.
  */
 static int utrace_first_engine(struct task_struct *target,
-			       struct utrace_attached_engine *engine)
+			       struct utrace_engine *engine)
 {
 	int ret;
 	struct utrace *utrace;
@@ -263,7 +263,7 @@ static int utrace_first_engine(struct task_struct *target,
  */
 static int utrace_add_engine(struct task_struct *target,
 			     struct utrace *utrace,
-			     struct utrace_attached_engine *engine,
+			     struct utrace_engine *engine,
 			     int flags,
 			     const struct utrace_engine_ops *ops,
 			     void *data)
@@ -334,12 +334,12 @@ static int utrace_add_engine(struct task_struct *target,
  * UTRACE_ATTACH_MATCH_OPS: Only consider engines matching @ops.
  * UTRACE_ATTACH_MATCH_DATA: Only consider engines matching @data.
  */
-struct utrace_attached_engine *utrace_attach_task(
+struct utrace_engine *utrace_attach_task(
 	struct task_struct *target, int flags,
 	const struct utrace_engine_ops *ops, void *data)
 {
 	struct utrace *utrace;
-	struct utrace_attached_engine *engine;
+	struct utrace_engine *engine;
 	int ret;
 
 restart:
@@ -433,11 +433,11 @@ EXPORT_SYMBOL_GPL(utrace_attach_task);
  * staying valid.  If it's been reaped so that @pid points nowhere,
  * then this call returns -%ESRCH.
  */
-struct utrace_attached_engine *utrace_attach_pid(
+struct utrace_engine *utrace_attach_pid(
 	struct pid *pid, int flags,
 	const struct utrace_engine_ops *ops, void *data)
 {
-	struct utrace_attached_engine *engine = ERR_PTR(-ESRCH);
+	struct utrace_engine *engine = ERR_PTR(-ESRCH);
 	struct task_struct *task = get_pid_task(pid, PIDTYPE_PID);
 	if (task) {
 		engine = utrace_attach_task(task, flags, ops, data);
@@ -457,14 +457,14 @@ EXPORT_SYMBOL_GPL(utrace_attach_pid);
  * supply that callback too.
  */
 static u32 utrace_detached_quiesce(enum utrace_resume_action action,
-				   struct utrace_attached_engine *engine,
+				   struct utrace_engine *engine,
 				   struct task_struct *task,
 				   unsigned long event)
 {
 	return UTRACE_DETACH;
 }
 
-static void utrace_detached_reap(struct utrace_attached_engine *engine,
+static void utrace_detached_reap(struct utrace_engine *engine,
 				 struct task_struct *task)
 {
 }
@@ -603,7 +603,7 @@ static bool utrace_stop(struct task_struct *task, struct utrace *utrace)
  *	utrace_release_task
  */
 static struct utrace *get_utrace_lock(struct task_struct *target,
-				      struct utrace_attached_engine *engine,
+				      struct utrace_engine *engine,
 				      bool attached)
 	__acquires(utrace->lock)
 {
@@ -676,7 +676,7 @@ static struct utrace *get_utrace_lock(struct task_struct *target,
  */
 static void put_detached_list(struct list_head *list)
 {
-	struct utrace_attached_engine *engine, *next;
+	struct utrace_engine *engine, *next;
 	list_for_each_entry_safe(engine, next, list, entry) {
 		list_del_init(&engine->entry);
 		utrace_engine_put(engine);
@@ -690,7 +690,7 @@ static void put_detached_list(struct list_head *list)
 static void utrace_reap(struct task_struct *target, struct utrace *utrace)
 	__releases(utrace->lock)
 {
-	struct utrace_attached_engine *engine, *next;
+	struct utrace_engine *engine, *next;
 	const struct utrace_engine_ops *ops;
 	LIST_HEAD(detached);
 
@@ -770,22 +770,22 @@ void utrace_release_task(struct task_struct *target)
 }
 
 /*
- * We use an extra bit in utrace_attached_engine.flags past the event bits,
+ * We use an extra bit in utrace_engine.flags past the event bits,
  * to record whether the engine is keeping the target thread stopped.
  */
 #define ENGINE_STOP		(1UL << _UTRACE_NEVENTS)
 
-static void mark_engine_wants_stop(struct utrace_attached_engine *engine)
+static void mark_engine_wants_stop(struct utrace_engine *engine)
 {
 	engine->flags |= ENGINE_STOP;
 }
 
-static void clear_engine_wants_stop(struct utrace_attached_engine *engine)
+static void clear_engine_wants_stop(struct utrace_engine *engine)
 {
 	engine->flags &= ~ENGINE_STOP;
 }
 
-static bool engine_wants_stop(struct utrace_attached_engine *engine)
+static bool engine_wants_stop(struct utrace_engine *engine)
 {
 	return (engine->flags & ENGINE_STOP) != 0;
 }
@@ -829,7 +829,7 @@ static bool engine_wants_stop(struct utrace_attached_engine *engine)
  * even when %SIGKILL is breaking its normal simple rules.
  */
 int utrace_set_events(struct task_struct *target,
-		      struct utrace_attached_engine *engine,
+		      struct utrace_engine *engine,
 		      unsigned long events)
 {
 	struct utrace *utrace;
@@ -925,7 +925,7 @@ EXPORT_SYMBOL_GPL(utrace_set_events);
  * Hence, utrace_detached_ops might be used with any old flags in place.
  * It has report_quiesce() and report_reap() callbacks to handle all cases.
  */
-static void mark_engine_detached(struct utrace_attached_engine *engine)
+static void mark_engine_detached(struct utrace_engine *engine)
 {
 	engine->ops = &utrace_detached_ops;
 	smp_wmb();
@@ -1020,7 +1020,7 @@ static void utrace_reset(struct task_struct *task, struct utrace *utrace,
 			 enum utrace_resume_action *action)
 	__releases(utrace->lock)
 {
-	struct utrace_attached_engine *engine, *next;
+	struct utrace_engine *engine, *next;
 	unsigned long flags = 0;
 	LIST_HEAD(detached);
 	bool wake = !action;
@@ -1201,7 +1201,7 @@ static void utrace_reset(struct task_struct *task, struct utrace *utrace,
  * tracing engine is using %UTRACE_SINGLESTEP at the same time.
  */
 int utrace_control(struct task_struct *target,
-		   struct utrace_attached_engine *engine,
+		   struct utrace_engine *engine,
 		   enum utrace_resume_action action)
 {
 	struct utrace *utrace;
@@ -1392,7 +1392,7 @@ EXPORT_SYMBOL_GPL(utrace_control);
  * an unwanted callback can be in progress.
  */
 int utrace_barrier(struct task_struct *target,
-		   struct utrace_attached_engine *engine)
+		   struct utrace_engine *engine)
 {
 	struct utrace *utrace;
 	int ret = -ERESTARTSYS;
@@ -1487,7 +1487,7 @@ static void finish_report(struct utrace_report *report,
  */
 static bool finish_callback(struct utrace *utrace,
 			    struct utrace_report *report,
-			    struct utrace_attached_engine *engine,
+			    struct utrace_engine *engine,
 			    u32 ret)
 {
 	enum utrace_resume_action action = utrace_resume_action(ret);
@@ -1544,7 +1544,7 @@ static bool finish_callback(struct utrace *utrace,
  */
 static const struct utrace_engine_ops *start_callback(
 	struct utrace *utrace, struct utrace_report *report,
-	struct utrace_attached_engine *engine, struct task_struct *task,
+	struct utrace_engine *engine, struct task_struct *task,
 	unsigned long event)
 {
 	const struct utrace_engine_ops *ops;
@@ -1602,7 +1602,7 @@ nocall:
 	} while (0)
 #define REPORT_CALLBACKS(task, utrace, report, event, callback, ...)	      \
 	do {								      \
-		struct utrace_attached_engine *engine, *next;		      \
+		struct utrace_engine *engine, *next;			      \
 		const struct utrace_engine_ops *ops;			      \
 		list_for_each_entry_safe(engine, next,			      \
 					 &utrace->attached, entry) {	      \
@@ -1932,7 +1932,7 @@ void utrace_resume(struct task_struct *task, struct pt_regs *regs)
 {
 	struct utrace *utrace = task_utrace_struct(task);
 	INIT_REPORT(report);
-	struct utrace_attached_engine *engine, *next;
+	struct utrace_engine *engine, *next;
 
 	/*
 	 * Some machines get here with interrupts disabled.  The same arch
@@ -2032,7 +2032,7 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 	struct utrace *utrace;
 	struct k_sigaction *ka;
 	INIT_REPORT(report);
-	struct utrace_attached_engine *engine, *next;
+	struct utrace_engine *engine, *next;
 	const struct utrace_engine_ops *ops;
 	unsigned long event, want;
 	u32 ret;
@@ -2437,7 +2437,7 @@ void utrace_signal_handler(struct task_struct *task, int stepping)
  * completed safely.
  */
 int utrace_prepare_examine(struct task_struct *target,
-			   struct utrace_attached_engine *engine,
+			   struct utrace_engine *engine,
 			   struct utrace_examiner *exam)
 {
 	int ret = 0;
@@ -2490,7 +2490,7 @@ EXPORT_SYMBOL_GPL(utrace_prepare_examine);
  * keeping @target stopped, or -%EAGAIN if @target woke up unexpectedly.
  */
 int utrace_finish_examine(struct task_struct *target,
-			  struct utrace_attached_engine *engine,
+			  struct utrace_engine *engine,
 			  struct utrace_examiner *exam)
 {
 	int ret = 0;
@@ -2540,7 +2540,7 @@ EXPORT_SYMBOL_GPL(task_user_regset_view);
 struct task_struct *utrace_tracer_task(struct task_struct *target)
 {
 	struct list_head *pos, *next;
-	struct utrace_attached_engine *engine;
+	struct utrace_engine *engine;
 	const struct utrace_engine_ops *ops;
 	struct task_struct *tracer = NULL;
 	struct utrace *utrace;
@@ -2550,7 +2550,7 @@ struct task_struct *utrace_tracer_task(struct task_struct *target)
 		return NULL;
 
 	list_for_each_safe(pos, next, &utrace->attached) {
-		engine = list_entry(pos, struct utrace_attached_engine,
+		engine = list_entry(pos, struct utrace_engine,
 				    entry);
 		ops = rcu_dereference(engine->ops);
 		if (ops->tracer_task) {
@@ -2570,7 +2570,7 @@ struct task_struct *utrace_tracer_task(struct task_struct *target)
 int utrace_unsafe_exec(struct task_struct *task)
 {
 	struct utrace *utrace = task_utrace_struct(task);
-	struct utrace_attached_engine *engine, *next;
+	struct utrace_engine *engine, *next;
 	const struct utrace_engine_ops *ops;
 	int unsafe = 0;
 

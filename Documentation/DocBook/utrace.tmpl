@@ -218,7 +218,7 @@
   <sect2 id="refcount"><title>Engine and task pointers</title>
   <para>
     The first sort of guarantee concerns the core data structures
-    themselves.  <structname>struct utrace_attached_engine</structname> is
+    themselves.  <structname>struct utrace_engine</structname> is
     a reference-counted data structure.  While you hold a reference, an
     engine pointer will always stay valid so that you can safely pass it to
     any <application>utrace</application> call.  Each call to
@@ -261,7 +261,7 @@
     <function>rcu_read_lock</function> nor any other lock is held while
     making a callback, it's always guaranteed that the <structname>struct
     task_struct</structname> and the <structname>struct
-    utrace_attached_engine</structname> passed as arguments remain valid
+    utrace_engine</structname> passed as arguments remain valid
     until the callback function returns.
   </para>
 
@@ -326,7 +326,7 @@
     <function>report_death</function> or <function>report_reap</function>
     callback will try to do the same.  <constant>utrace_detach</constant>
     returns <constant>-ESRCH</constant> when the <structname>struct
-    utrace_attached_engine</structname> has already been detached, but is
+    utrace_engine</structname> has already been detached, but is
     still a valid pointer because of its reference count.  A tracing engine
     can use this to safely synchronize its own independent multiple threads
     of control with each other and with its event callbacks that detach.

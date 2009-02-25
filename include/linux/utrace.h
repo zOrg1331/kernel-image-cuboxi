@@ -1,7 +1,7 @@
 /*
  * utrace infrastructure interface for debugging user processes
  *
- * Copyright (C) 2006, 2007, 2008 Red Hat, Inc.  All rights reserved.
+ * Copyright (C) 2006-2009 Red Hat, Inc.  All rights reserved.
  *
  * This copyrighted material is made available to anyone wishing to use,
  * modify, copy, or redistribute it subject to the terms and conditions
@@ -17,7 +17,7 @@
  * A tracing engine starts by calling utrace_attach_task() or
  * utrace_attach_pid() on the chosen thread, passing in a set of hooks
  * (&struct utrace_engine_ops), and some associated data.  This produces a
- * &struct utrace_attached_engine, which is the handle used for all other
+ * &struct utrace_engine, which is the handle used for all other
  * operations.  An attached engine has its ops vector, its data, and an
  * event mask controlled by utrace_set_events().
  *
@@ -44,7 +44,7 @@ struct user_regset_view;
 /*
  * Event bits passed to utrace_set_events().
  * These appear in &struct task_struct.@utrace_flags
- * and &struct utrace_attached_engine.@flags.
+ * and &struct utrace_engine.@flags.
  */
 enum utrace_events {
 	_UTRACE_EVENT_QUIESCE,	/* Thread is available for examination.  */
@@ -288,7 +288,7 @@ static inline enum utrace_syscall_action utrace_syscall_action(u32 action)
 #define UTRACE_ATTACH_MATCH_MASK	0x000f
 
 /**
- * struct utrace_attached_engine - per-engine structure
+ * struct utrace_engine - per-engine structure
  * @ops:	&struct utrace_engine_ops pointer passed to utrace_attach_task()
  * @data:	engine-private &void * passed to utrace_attach_task()
  * @flags:	event mask set by utrace_set_events() plus internal flag bits
@@ -301,7 +301,7 @@ static inline enum utrace_syscall_action utrace_syscall_action(u32 action)
  * When it drops to zero, the structure is freed.  One reference is held
  * implicitly while the engine is attached to its task.
  */
-struct utrace_attached_engine {
+struct utrace_engine {
 /* private: */
 	struct kref kref;
 	struct list_head entry;
@@ -314,12 +314,12 @@ struct utrace_attached_engine {
 };
 
 /**
- * utrace_engine_get - acquire a reference on a &struct utrace_attached_engine
- * @engine:	&struct utrace_attached_engine pointer
+ * utrace_engine_get - acquire a reference on a &struct utrace_engine
+ * @engine:	&struct utrace_engine pointer
  *
  * You must hold a reference on @engine, and you get another.
  */
-static inline void utrace_engine_get(struct utrace_attached_engine *engine)
+static inline void utrace_engine_get(struct utrace_engine *engine)
 {
 	kref_get(&engine->kref);
 }
@@ -327,13 +327,13 @@ static inline void utrace_engine_get(struct utrace_attached_engine *engine)
 void __utrace_engine_release(struct kref *);
 
 /**
- * utrace_engine_put - release a reference on a &struct utrace_attached_engine
- * @engine:	&struct utrace_attached_engine pointer
+ * utrace_engine_put - release a reference on a &struct utrace_engine
+ * @engine:	&struct utrace_engine pointer
  *
  * You must hold a reference on @engine, and you lose that reference.
  * If it was the last one, @engine becomes an invalid pointer.
  */
-static inline void utrace_engine_put(struct utrace_attached_engine *engine)
+static inline void utrace_engine_put(struct utrace_engine *engine)
 {
 	kref_put(&engine->kref, __utrace_engine_release);
 }
@@ -550,54 +550,53 @@ static inline void utrace_engine_put(struct utrace_attached_engine *engine)
  */
 struct utrace_engine_ops {
 	u32 (*report_quiesce)(enum utrace_resume_action action,
-			      struct utrace_attached_engine *engine,
+			      struct utrace_engine *engine,
 			      struct task_struct *task,
 			      unsigned long event);
 	u32 (*report_signal)(u32 action,
-			     struct utrace_attached_engine *engine,
+			     struct utrace_engine *engine,
 			     struct task_struct *task,
 			     struct pt_regs *regs,
 			     siginfo_t *info,
 			     const struct k_sigaction *orig_ka,
 			     struct k_sigaction *return_ka);
 	u32 (*report_clone)(enum utrace_resume_action action,
-			    struct utrace_attached_engine *engine,
+			    struct utrace_engine *engine,
 			    struct task_struct *parent,
 			    unsigned long clone_flags,
 			    struct task_struct *child);
 	u32 (*report_jctl)(enum utrace_resume_action action,
-			   struct utrace_attached_engine *engine,
+			   struct utrace_engine *engine,
 			   struct task_struct *task,
 			   int type, int notify);
 	u32 (*report_exec)(enum utrace_resume_action action,
-			   struct utrace_attached_engine *engine,
+			   struct utrace_engine *engine,
 			   struct task_struct *task,
 			   const struct linux_binfmt *fmt,
 			   const struct linux_binprm *bprm,
 			   struct pt_regs *regs);
 	u32 (*report_syscall_entry)(u32 action,
-				    struct utrace_attached_engine *engine,
+				    struct utrace_engine *engine,
 				    struct task_struct *task,
 				    struct pt_regs *regs);
 	u32 (*report_syscall_exit)(enum utrace_resume_action action,
-				   struct utrace_attached_engine *engine,
+				   struct utrace_engine *engine,
 				   struct task_struct *task,
 				   struct pt_regs *regs);
 	u32 (*report_exit)(enum utrace_resume_action action,
-			   struct utrace_attached_engine *engine,
+			   struct utrace_engine *engine,
 			   struct task_struct *task,
 			   long orig_code, long *code);
-	u32 (*report_death)(struct utrace_attached_engine *engine,
+	u32 (*report_death)(struct utrace_engine *engine,
 			    struct task_struct *task,
 			    bool group_dead, int signal);
-	void (*report_reap)(struct utrace_attached_engine *engine,
+	void (*report_reap)(struct utrace_engine *engine,
 			    struct task_struct *task);
 
-	int (*unsafe_exec)(struct utrace_attached_engine *engine,
+	int (*unsafe_exec)(struct utrace_engine *engine,
 			   struct task_struct *task);
-	struct task_struct *(*tracer_task)(
-		struct utrace_attached_engine *engine,
-		struct task_struct *task);
+	struct task_struct *(*tracer_task)(struct utrace_engine *engine,
+					   struct task_struct *task);
 };
 
 /**
@@ -617,23 +616,25 @@ struct utrace_examiner {
  * These are the exported entry points for tracing engines to use.
  * See kernel/utrace.c for their kerneldoc comments with interface details.
  */
-struct utrace_attached_engine *utrace_attach_task(
-	struct task_struct *, int, const struct utrace_engine_ops *, void *);
-struct utrace_attached_engine *utrace_attach_pid(
-	struct pid *, int, const struct utrace_engine_ops *, void *);
+struct utrace_engine *utrace_attach_task(struct task_struct *, int,
+					 const struct utrace_engine_ops *,
+					 void *);
+struct utrace_engine *utrace_attach_pid(struct pid *, int,
+					const struct utrace_engine_ops *,
+					void *);
 int __must_check utrace_control(struct task_struct *,
-				struct utrace_attached_engine *,
+				struct utrace_engine *,
 				enum utrace_resume_action);
 int __must_check utrace_set_events(struct task_struct *,
-				   struct utrace_attached_engine *,
+				   struct utrace_engine *,
 				   unsigned long eventmask);
 int __must_check utrace_barrier(struct task_struct *,
-				struct utrace_attached_engine *);
+				struct utrace_engine *);
 int __must_check utrace_prepare_examine(struct task_struct *,
-					struct utrace_attached_engine *,
+					struct utrace_engine *,
 					struct utrace_examiner *);
 int __must_check utrace_finish_examine(struct task_struct *,
-				       struct utrace_attached_engine *,
+				       struct utrace_engine *,
 				       struct utrace_examiner *);
 
 /**
@@ -649,7 +650,7 @@ int __must_check utrace_finish_examine(struct task_struct *,
  * then this call returns -%ESRCH.
  */
 static inline __must_check int utrace_control_pid(
-	struct pid *pid, struct utrace_attached_engine *engine,
+	struct pid *pid, struct utrace_engine *engine,
 	enum utrace_resume_action action)
 {
 	/*
@@ -676,8 +677,7 @@ static inline __must_check int utrace_control_pid(
  * then this call returns -%ESRCH.
  */
 static inline __must_check int utrace_set_events_pid(
-	struct pid *pid, struct utrace_attached_engine *engine,
-	unsigned long eventmask)
+	struct pid *pid, struct utrace_engine *engine, unsigned long eventmask)
 {
 	struct task_struct *task = pid_task(pid, PIDTYPE_PID);
 	return unlikely(!task) ? -ESRCH :
@@ -695,8 +695,8 @@ static inline __must_check int utrace_set_events_pid(
  * staying valid.  If it's been reaped so that @pid points nowhere,
  * then this call returns -%ESRCH.
  */
-static inline __must_check int utrace_barrier_pid(
-	struct pid *pid, struct utrace_attached_engine *engine)
+static inline __must_check int utrace_barrier_pid(struct pid *pid,
+						  struct utrace_engine *engine)
 {
 	struct task_struct *task = pid_task(pid, PIDTYPE_PID);
 	return unlikely(!task) ? -ESRCH : utrace_barrier(task, engine);
