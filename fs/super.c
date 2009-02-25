@@ -540,7 +540,7 @@ rescan:
 }
 EXPORT_SYMBOL(user_get_super);
 
-asmlinkage long sys_ustat(unsigned dev, struct ustat __user * ubuf)
+SYSCALL_DEFINE2(ustat, unsigned, dev, struct ustat __user *, ubuf)
 {
 	dev_t kdev;
         struct super_block *s;
