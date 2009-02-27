@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-smp
 Version: 2.6.27
-Release: alt0.1
+Release: alt1
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -467,6 +467,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Fri Feb 27 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.27-alt1
+- Build for Sisyphus
+
 * Wed Jan 28 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.27-alt0.1
 - Rename package, disable htmldocs
 
