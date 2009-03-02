@@ -166,6 +166,16 @@ static inline void utrace_init_task(struct task_struct *task)
 void utrace_release_task(struct task_struct *);
 void task_utrace_proc_status(struct seq_file *m, struct task_struct *p);
 
+
+/*
+ * Version number of the API defined in this file.  This will change
+ * whenever a tracing engine's code would need some updates to keep
+ * working.  We maintain this here for the benefit of tracing engine code
+ * that is developed concurrently with utrace API improvements before they
+ * are merged into the kernel, making LINUX_VERSION_CODE checks unwieldy.
+ */
+#define UTRACE_API_VERSION	20090302
+
 /**
  * enum utrace_resume_action - engine's choice of action for a traced task
  * @UTRACE_STOP:		Stay quiescent after callbacks.
