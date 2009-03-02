@@ -38,14 +38,16 @@
  * only for a dead struct with some local state used only for a live utrace
  * on an active thread.
  *
- * The two lists @attached and @attaching work together for smooth
- * asynchronous attaching with low overhead.  Modifying either list
- * requires @lock.  The @attaching list can be modified any time while
- * holding @lock.  New engines being attached always go on this list.
+ * The common event reporting loops are done by the task making the
+ * report without ever taking any locks.  To facilitate this, the two
+ * lists @attached and @attaching work together for smooth asynchronous
+ * attaching with low overhead.  Modifying either list requires @lock.
+ * The @attaching list can be modified any time while holding @lock.
+ * New engines being attached always go on this list.
  *
  * The @attached list is what the task itself uses for its reporting
  * loops.  When the task itself is not quiescent, it can use the
- * @attached list without taking any lock.  Noone may modify the list
+ * @attached list without taking any lock.  Nobody may modify the list
  * when the task is not quiescent.  When it is quiescent, that means
  * that it won't run again without taking @lock itself before using
  * the list.
@@ -2120,7 +2122,7 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 		memset(return_ka, 0, sizeof *return_ka);
 	} else if ((task->utrace_flags & UTRACE_EVENT_SIGNAL_ALL) == 0) {
 		/*
-		 * If noone is interested in intercepting signals,
+		 * If no engine is interested in intercepting signals,
 		 * let the caller just dequeue them normally.
 		 */
 		rcu_read_unlock();
@@ -2201,8 +2203,8 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 		}
 
 		/*
-		 * Now that we know what event type this signal is,
-		 * we can short-circuit if noone cares about those.
+		 * Now that we know what event type this signal is, we
+		 * can short-circuit if no engines care about those.
 		 */
 		if ((task->utrace_flags & (event | UTRACE_EVENT(QUIESCE))) == 0)
 			return signr;
