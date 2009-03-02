@@ -1,7 +1,7 @@
 /*
  * Tracing hooks
  *
- * Copyright (C) 2008 Red Hat, Inc.  All rights reserved.
+ * Copyright (C) 2008-2009 Red Hat, Inc.  All rights reserved.
  *
  * This copyrighted material is made available to anyone wishing to use,
  * modify, copy, or redistribute it subject to the terms and conditions
@@ -367,9 +367,7 @@ static inline void tracehook_report_vfork_done(struct task_struct *child,
  */
 static inline void tracehook_prepare_release_task(struct task_struct *task)
 {
-	smp_mb();
-	if (task_utrace_struct(task) != NULL)
-		utrace_release_task(task);
+	utrace_release_task(task);
 }
 
 /**
@@ -383,21 +381,8 @@ static inline void tracehook_prepare_release_task(struct task_struct *task)
  */
 static inline void tracehook_finish_release_task(struct task_struct *task)
 {
-	int bad = 0;
 	ptrace_release_task(task);
 	BUG_ON(task->exit_state != EXIT_DEAD);
-	if (unlikely(task_utrace_struct(task) != NULL)) {
-		/*
-		 * In a race condition, utrace_attach() will temporarily set
-		 * it, but then check @task->exit_state and clear it.  It does
-		 * all this under task_lock(), so we take the lock to check
-		 * that there is really a bug and not just that known race.
-		 */
-		task_lock(task);
-		bad = unlikely(task_utrace_struct(task) != NULL);
-		task_unlock(task);
-	}
-	BUG_ON(bad);
 }
 
 /**

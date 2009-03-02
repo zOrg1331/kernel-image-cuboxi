@@ -87,8 +87,6 @@ enum utrace_events {
  * tracehook.h doesn't need to #ifndef CONFIG_UTRACE them to
  * avoid external references in case of unoptimized compilation.
  */
-void utrace_release_task(struct task_struct *)
-	__attribute__((weak));
 bool utrace_interrupt_pending(void)
 	__attribute__((weak));
 void utrace_resume(struct task_struct *, struct pt_regs *)
@@ -136,6 +134,9 @@ static inline struct utrace *task_utrace_struct(struct task_struct *task)
 static inline void utrace_init_task(struct task_struct *child)
 {
 }
+static inline void utrace_release_task(struct task_struct *task)
+{
+}
 
 static inline void task_utrace_proc_status(struct seq_file *m,
 					   struct task_struct *p)
@@ -151,15 +152,18 @@ static inline unsigned long task_utrace_flags(struct task_struct *task)
 
 static inline struct utrace *task_utrace_struct(struct task_struct *task)
 {
-	return task->utrace;
+	return &task->utrace;
 }
 
-static inline void utrace_init_task(struct task_struct *child)
+static inline void utrace_init_task(struct task_struct *task)
 {
-	child->utrace_flags = 0;
-	child->utrace = NULL;
+	task->utrace_flags = 0;
+	INIT_LIST_HEAD(&task->utrace.attached);
+	INIT_LIST_HEAD(&task->utrace.attaching);
+	spin_lock_init(&task->utrace.lock);
 }
 
+void utrace_release_task(struct task_struct *);
 void task_utrace_proc_status(struct seq_file *m, struct task_struct *p);
 
 /**

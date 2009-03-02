@@ -178,7 +178,7 @@ bool ptrace_may_access(struct task_struct *task, unsigned int mode)
  */
 static inline bool exclude_ptrace(struct task_struct *task)
 {
-	return unlikely(!!task_utrace_struct(task));
+	return unlikely(!!task_utrace_flags(task));
 }
 
 int ptrace_attach(struct task_struct *task)
