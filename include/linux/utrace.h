@@ -158,6 +158,7 @@ static inline struct utrace *task_utrace_struct(struct task_struct *task)
 static inline void utrace_init_task(struct task_struct *task)
 {
 	task->utrace_flags = 0;
+	memset(&task->utrace, 0, sizeof(task->utrace));
 	INIT_LIST_HEAD(&task->utrace.attached);
 	INIT_LIST_HEAD(&task->utrace.attaching);
 	spin_lock_init(&task->utrace.lock);
