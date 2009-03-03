@@ -123,15 +123,12 @@ static inline bool exclude_utrace(struct task_struct *task)
  */
 static inline int utrace_attach_delay(struct task_struct *target)
 {
-	if (target->flags & PF_STARTING) {
-		struct utrace *utrace = task_utrace_struct(current);
-		if (!utrace || utrace->cloning != target) {
-			yield();
+	if ((target->flags & PF_STARTING) && target->real_parent != current)
+		do {
+			schedule_timeout_interruptible(1);
 			if (signal_pending(current))
 				return -ERESTARTNOINTR;
-			return -EAGAIN;
-		}
-	}
+		} while (target->flags & PF_STARTING);
 
 	return 0;
 }
@@ -1516,21 +1513,8 @@ void utrace_report_clone(unsigned long clone_flags, struct task_struct *child)
 	struct utrace *utrace = task_utrace_struct(task);
 	INIT_REPORT(report);
 
-	/*
-	 * We don't use the REPORT() macro here, because we need
-	 * to clear utrace->cloning before finish_report().
-	 * After finish_report(), utrace can be a stale pointer
-	 * in cases when report.action is still UTRACE_RESUME.
-	 */
-	start_report(utrace);
-	utrace->cloning = child;
-
-	REPORT_CALLBACKS(task, utrace, &report,
-			 UTRACE_EVENT(CLONE), report_clone,
-			 report.action, engine, task, clone_flags, child);
-
-	utrace->cloning = NULL;
-	finish_report(&report, task, utrace);
+	REPORT(task, utrace, &report, UTRACE_EVENT(CLONE),
+	       report_clone, clone_flags, child);
 
 	/*
 	 * For a vfork, we will go into an uninterruptible block waiting
