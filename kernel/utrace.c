@@ -456,14 +456,6 @@ static struct utrace *get_utrace_lock(struct task_struct *target,
 {
 	struct utrace *utrace;
 
-	/*
-	 * You must hold a ref to be making a call.  A call from within
-	 * a report_* callback in @target might only have the ref for
-	 * being attached, not a second one of its own.
-	 */
-	if (unlikely(atomic_read(&engine->kref.refcount) < 1))
-		return ERR_PTR(-EINVAL);
-
 	rcu_read_lock();
 
 	/*
