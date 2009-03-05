@@ -147,7 +147,12 @@ static int utrace_add_engine(struct task_struct *target,
 
 	spin_lock(&utrace->lock);
 
-	if ((flags & UTRACE_ATTACH_EXCLUSIVE) &&
+	if (utrace->reap) {
+		/*
+		 * Already entered utrace_release_task(), cannot attach now.
+		 */
+		ret = -ESRCH;
+	} if ((flags & UTRACE_ATTACH_EXCLUSIVE) &&
 	    unlikely(matching_engine(utrace, flags, ops, data))) {
 		ret = -EEXIST;
 	} else {
@@ -216,7 +221,8 @@ struct utrace_engine *utrace_attach_task(
 	if (unlikely(target->exit_state == EXIT_DEAD)) {
 		/*
 		 * The target has already been reaped.
-		 * Check this first; a race with reaping may lead to restart.
+		 * Check this early, though it's not synchronized.
+		 * utrace_add_engine() will do the final check.
 		 */
 		if (!(flags & UTRACE_ATTACH_CREATE))
 			return ERR_PTR(-ENOENT);
@@ -572,28 +578,23 @@ void utrace_release_task(struct task_struct *target)
 	utrace = &target->utrace;
 
 	spin_lock(&utrace->lock);
-	/*
-	 * If the list is empty, utrace is already on its way to be freed.
-	 * We raced with detach and we won the task_lock race but lost the
-	 * utrace->lock race.  All we have to do is let RCU run.
-	 */
-	if (likely(!list_empty(&utrace->attached))) {
-		utrace->reap = 1;
 
-		if (!(target->utrace_flags & DEATH_EVENTS)) {
-			utrace_reap(target, utrace); /* Unlocks and frees.  */
-			return;
-		}
+	utrace->reap = 1;
 
-		/*
-		 * The target will do some final callbacks but hasn't
-		 * finished them yet.  We know because it clears these
-		 * event bits after it's done.  Instead of cleaning up here
-		 * and requiring utrace_report_death to cope with it, we
-		 * delay the REAP report and the teardown until after the
-		 * target finishes its death reports.
-		 */
+	if (!(target->utrace_flags & DEATH_EVENTS)) {
+		utrace_reap(target, utrace); /* Unlocks and frees.  */
+		return;
 	}
+
+	/*
+	 * The target will do some final callbacks but hasn't
+	 * finished them yet.  We know because it clears these
+	 * event bits after it's done.  Instead of cleaning up here
+	 * and requiring utrace_report_death to cope with it, we
+	 * delay the REAP report and the teardown until after the
+	 * target finishes its death reports.
+	 */
+
 	spin_unlock(&utrace->lock);
 }
 
