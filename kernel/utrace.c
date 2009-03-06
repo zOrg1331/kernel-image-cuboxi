@@ -548,6 +548,12 @@ restart:
 		if (!(engine->flags & UTRACE_EVENT(REAP)))
 			continue;
 
+		/*
+		 * This synchronizes with utrace_barrier().  Since we
+		 * need the utrace->lock here anyway (unlike the other
+		 * reporting loops), we don't need any memory barrier
+		 * as utrace_barrier() holds the lock.
+		 */
 		utrace->reporting = engine;
 		spin_unlock(&utrace->lock);
 
@@ -730,6 +736,14 @@ int utrace_set_events(struct task_struct *target,
 
 	ret = 0;
 	if (!utrace->stopped && target != current) {
+		/*
+		 * This barrier ensures that our engine->flags changes
+		 * have hit before we examine utrace->reporting,
+		 * pairing with the barrier in start_callback().  If
+		 * @target has not yet hit finish_callback() to clear
+		 * utrace->reporting, we might be in the middle of a
+		 * callback to @engine.
+		 */
 		smp_mb();
 		if (utrace->reporting == engine)
 			ret = -EINPROGRESS;
@@ -1075,6 +1089,14 @@ int utrace_control(struct task_struct *target,
 		mark_engine_detached(engine);
 		resume = resume || utrace_do_stop(target, utrace);
 		if (!resume) {
+			/*
+			 * As in utrace_set_events(), this barrier ensures
+			 * that our engine->flags changes have hit before we
+			 * examine utrace->reporting, pairing with the barrier
+			 * in start_callback().  If @target has not yet hit
+			 * finish_callback() to clear utrace->reporting, we
+			 * might be in the middle of a callback to @engine.
+			 */
 			smp_mb();
 			if (utrace->reporting == engine)
 				ret = -EINPROGRESS;
@@ -1207,8 +1229,7 @@ EXPORT_SYMBOL_GPL(utrace_control);
  * still be in progress; utrace_barrier() waits until there is no chance
  * an unwanted callback can be in progress.
  */
-int utrace_barrier(struct task_struct *target,
-		   struct utrace_engine *engine)
+int utrace_barrier(struct task_struct *target, struct utrace_engine *engine)
 {
 	struct utrace *utrace;
 	int ret = -ERESTARTSYS;
@@ -1223,7 +1244,19 @@ int utrace_barrier(struct task_struct *target,
 			if (ret != -ERESTARTSYS)
 				break;
 		} else {
-			if (utrace->stopped || utrace->reporting != engine)
+			/*
+			 * All engine state changes are done while
+			 * holding the lock, i.e. before we get here.
+			 * Since we have the lock, we only need to
+			 * worry about @target making a callback.
+			 * When it has entered start_callback() but
+			 * not yet gotten to finish_callback(), we
+			 * will see utrace->reporting == @engine.
+			 * When @target doesn't take the lock, it uses
+			 * barriers to order setting utrace->reporting
+			 * before it examines the engine state.
+			 */
+			if (utrace->reporting != engine)
 				ret = 0;
 			spin_unlock(&utrace->lock);
 			if (!ret)
@@ -1338,6 +1371,11 @@ static bool finish_callback(struct utrace *utrace,
 	 * clear this so that utrace_barrier() can stop waiting.
 	 * A subsequent utrace_control() can stop or resume @engine
 	 * and know this was ordered after its callback's action.
+	 *
+	 * We don't need any barriers here because utrace_barrier()
+	 * takes utrace->lock.  If we touched engine->flags above,
+	 * the lock guaranteed this change was before utrace_barrier()
+	 * examined utrace->reporting.
 	 */
 	utrace->reporting = NULL;
 
@@ -1366,6 +1404,13 @@ static const struct utrace_engine_ops *start_callback(
 	const struct utrace_engine_ops *ops;
 	unsigned long want;
 
+	/*
+	 * This barrier ensures that we've set utrace->reporting before
+	 * we examine engine->flags or engine->ops.  utrace_barrier()
+	 * relies on this ordering to indicate that the effect of any
+	 * utrace_control() and utrace_set_events() calls is in place
+	 * by the time utrace->reporting can be seen to be NULL.
+	 */
 	utrace->reporting = engine;
 	smp_mb();
 
@@ -1383,8 +1428,15 @@ static const struct utrace_engine_ops *start_callback(
 				    (*ops->report_quiesce)(report->action,
 							   engine, task,
 							   event)))
-			goto nocall;
+			return NULL;
 
+		/*
+		 * finish_callback() reset utrace->reporting after the
+		 * quiesce callback.  Now we set it again (as above)
+		 * before re-examining engine->flags, which could have
+		 * been changed synchronously by ->report_quiesce or
+		 * asynchronously by utrace_control() or utrace_set_events().
+		 */
 		utrace->reporting = engine;
 		smp_mb();
 		want = engine->flags;
@@ -1398,8 +1450,6 @@ static const struct utrace_engine_ops *start_callback(
 		return ops;
 	}
 
-nocall:
-	utrace->reporting = NULL;
 	return NULL;
 }
 
@@ -1959,6 +2009,9 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 	 * This reporting pass chooses what signal disposition we'll act on.
 	 */
 	list_for_each_entry_safe(engine, next, &utrace->attached, entry) {
+		/*
+		 * See start_callback() comment about this barrier.
+		 */
 		utrace->reporting = engine;
 		smp_mb();
 
