@@ -25,6 +25,8 @@
  *
  */
 struct utrace {
+	struct task_struct *cloning;
+
 	struct list_head attached, attaching;
 	spinlock_t lock;
 
