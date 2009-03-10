@@ -421,7 +421,6 @@ static bool utrace_stop(struct task_struct *task, struct utrace *utrace)
 	 */
 	try_to_freeze();
 
-	killed = false;
 	killed = finish_utrace_stop(task, utrace);
 
 	/*
