@@ -153,7 +153,7 @@ static int utrace_add_engine(struct task_struct *target,
 		 * Already entered utrace_release_task(), cannot attach now.
 		 */
 		ret = -ESRCH;
-	} if ((flags & UTRACE_ATTACH_EXCLUSIVE) &&
+	} else if ((flags & UTRACE_ATTACH_EXCLUSIVE) &&
 	    unlikely(matching_engine(utrace, flags, ops, data))) {
 		ret = -EEXIST;
 	} else {
