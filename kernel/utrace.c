@@ -1468,10 +1468,9 @@ static const struct utrace_engine_ops *start_callback(
 	} while (0)
 #define REPORT_CALLBACKS(task, utrace, report, event, callback, ...)	      \
 	do {								      \
-		struct utrace_engine *engine, *next;			      \
+		struct utrace_engine *engine;				      \
 		const struct utrace_engine_ops *ops;			      \
-		list_for_each_entry_safe(engine, next,			      \
-					 &utrace->attached, entry) {	      \
+		list_for_each_entry(engine, &utrace->attached, entry) {	      \
 			ops = start_callback(utrace, report, engine, task,    \
 					     event);			      \
 			if (!ops)					      \
@@ -1786,7 +1785,7 @@ void utrace_resume(struct task_struct *task, struct pt_regs *regs)
 {
 	struct utrace *utrace = task_utrace_struct(task);
 	INIT_REPORT(report);
-	struct utrace_engine *engine, *next;
+	struct utrace_engine *engine;
 
 	/*
 	 * Some machines get here with interrupts disabled.  The same arch
@@ -1824,7 +1823,7 @@ void utrace_resume(struct task_struct *task, struct pt_regs *regs)
 	 */
 	start_report(utrace);
 
-	list_for_each_entry_safe(engine, next, &utrace->attached, entry)
+	list_for_each_entry(engine, &utrace->attached, entry)
 		start_callback(utrace, &report, engine, task, 0);
 
 	/*
@@ -1886,7 +1885,7 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 	struct utrace *utrace;
 	struct k_sigaction *ka;
 	INIT_REPORT(report);
-	struct utrace_engine *engine, *next;
+	struct utrace_engine *engine;
 	const struct utrace_engine_ops *ops;
 	unsigned long event, want;
 	u32 ret;
@@ -2021,7 +2020,7 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 	/*
 	 * This reporting pass chooses what signal disposition we'll act on.
 	 */
-	list_for_each_entry_safe(engine, next, &utrace->attached, entry) {
+	list_for_each_entry(engine, &utrace->attached, entry) {
 		/*
 		 * See start_callback() comment about this barrier.
 		 */
@@ -2373,11 +2372,11 @@ struct task_struct *utrace_tracer_task(struct task_struct *target)
 int utrace_unsafe_exec(struct task_struct *task)
 {
 	struct utrace *utrace = task_utrace_struct(task);
-	struct utrace_engine *engine, *next;
+	struct utrace_engine *engine;
 	const struct utrace_engine_ops *ops;
 	int unsafe = 0;
 
-	list_for_each_entry_safe(engine, next, &utrace->attached, entry) {
+	list_for_each_entry(engine, &utrace->attached, entry) {
 		ops = rcu_dereference(engine->ops);
 		if (ops->unsafe_exec)
 			unsafe |= (*ops->unsafe_exec)(engine, task);
