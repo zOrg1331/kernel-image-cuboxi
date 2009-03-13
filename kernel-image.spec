@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.29
-Release: alt0.rc7
+Release: alt0.rc8
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -339,6 +339,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Fri Mar 13 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.29-alt0.rc8
+- 2.6.29-rc8
+
 * Wed Mar 04 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.29-alt0.rc7
 - 2.6.29-rc7
 
