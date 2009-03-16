@@ -583,8 +583,7 @@ static inline void tracehook_report_death(struct task_struct *task,
 					  int group_dead)
 {
 	smp_mb();
-	if (task_utrace_flags(task) & (UTRACE_EVENT(DEATH) |
-				       UTRACE_EVENT(QUIESCE)))
+	if (task_utrace_flags(task) & _UTRACE_DEATH_EVENTS)
 		utrace_report_death(task, death_cookie, group_dead, signal);
 }
 

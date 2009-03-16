@@ -82,6 +82,11 @@ enum utrace_events {
 	(UTRACE_EVENT(SYSCALL_ENTRY) | UTRACE_EVENT(SYSCALL_EXIT))
 
 /*
+ * The event reports triggered synchronously by task death.
+ */
+#define _UTRACE_DEATH_EVENTS (UTRACE_EVENT(DEATH) | UTRACE_EVENT(QUIESCE))
+
+/*
  * Hooks in <linux/tracehook.h> call these entry points to the
  * utrace dispatch.  They are weak references here only so
  * tracehook.h doesn't need to #ifndef CONFIG_UTRACE them to

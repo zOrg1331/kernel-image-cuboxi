@@ -578,8 +578,6 @@ restart:
 	put_detached_list(&detached);
 }
 
-#define DEATH_EVENTS (UTRACE_EVENT(DEATH) | UTRACE_EVENT(QUIESCE))
-
 /*
  * Called by release_task.  After this, target->utrace must be cleared.
  */
@@ -593,7 +591,7 @@ void utrace_release_task(struct task_struct *target)
 
 	utrace->reap = 1;
 
-	if (!(target->utrace_flags & DEATH_EVENTS)) {
+	if (!(target->utrace_flags & _UTRACE_DEATH_EVENTS)) {
 		utrace_reap(target, utrace); /* Unlocks and frees.  */
 		return;
 	}
@@ -688,8 +686,9 @@ int utrace_set_events(struct task_struct *target,
 	old_flags = engine->flags;
 
 	if (target->exit_state &&
-	    (((events & ~old_flags) & DEATH_EVENTS) ||
-	     (utrace->death && ((old_flags & ~events) & DEATH_EVENTS)) ||
+	    (((events & ~old_flags) & _UTRACE_DEATH_EVENTS) ||
+	     (utrace->death &&
+	      ((old_flags & ~events) & _UTRACE_DEATH_EVENTS)) ||
 	     (utrace->reap && ((old_flags & ~events) & UTRACE_EVENT(REAP))))) {
 		spin_unlock(&utrace->lock);
 		return -EALREADY;
@@ -722,7 +721,7 @@ int utrace_set_events(struct task_struct *target,
 	 * knows positively that utrace_report_death() will be called or
 	 * that it won't.
 	 */
-	if ((set_utrace_flags & ~old_utrace_flags) & DEATH_EVENTS) {
+	if ((set_utrace_flags & ~old_utrace_flags) & _UTRACE_DEATH_EVENTS) {
 		read_lock(&tasklist_lock);
 		if (unlikely(target->exit_state)) {
 			read_unlock(&tasklist_lock);
@@ -797,7 +796,7 @@ static bool utrace_do_stop(struct task_struct *target, struct utrace *utrace)
 		 * if it has already been through
 		 * utrace_report_death(), or never will.
 		 */
-		if (!(target->utrace_flags & DEATH_EVENTS))
+		if (!(target->utrace_flags & _UTRACE_DEATH_EVENTS))
 			utrace->stopped = stopped = true;
 	} else if (task_is_stopped(target)) {
 		/*
@@ -914,6 +913,37 @@ static void utrace_reset(struct task_struct *task, struct utrace *utrace,
 	}
 
 	put_detached_list(&detached);
+}
+
+/*
+ * You can't do anything to a dead task but detach it.
+ * If release_task() has been called, you can't do that.
+ *
+ * On the exit path, DEATH and QUIESCE event bits are set only
+ * before utrace_report_death() has taken the lock.  At that point,
+ * the death report will come soon, so disallow detach until it's
+ * done.  This prevents us from racing with it detaching itself.
+ *
+ * Called with utrace->lock held, when @target->exit_state is nonzero.
+ */
+static inline int utrace_control_dead(struct task_struct *target,
+				      struct utrace *utrace,
+				      enum utrace_resume_action action)
+{
+	if (action != UTRACE_DETACH || unlikely(utrace->reap))
+		return -ESRCH;
+
+	if (unlikely(target->utrace_flags & _UTRACE_DEATH_EVENTS) ||
+	    unlikely(utrace->death))
+		/*
+		 * We have already started the death report, or
+		 * are about to very soon.  We can't prevent
+		 * the report_death and report_reap callbacks,
+		 * so tell the caller they will happen.
+		 */
+		return -EALREADY;
+
+	return 0;
 }
 
 /**
@@ -1045,30 +1075,10 @@ int utrace_control(struct task_struct *target,
 		return PTR_ERR(utrace);
 
 	if (target->exit_state) {
-		/*
-		 * You can't do anything to a dead task but detach it.
-		 * If release_task() has been called, you can't do that.
-		 *
-		 * On the exit path, DEATH and QUIESCE event bits are
-		 * set only before utrace_report_death() has taken the
-		 * lock.  At that point, the death report will come
-		 * soon, so disallow detach until it's done.  This
-		 * prevents us from racing with it detaching itself.
-		 */
-		if (action != UTRACE_DETACH ||
-		    unlikely(utrace->reap)) {
+		ret = utrace_control_dead(target, utrace, action);
+		if (ret) {
 			spin_unlock(&utrace->lock);
-			return -ESRCH;
-		} else if (unlikely(target->utrace_flags & DEATH_EVENTS) ||
-			   unlikely(utrace->death)) {
-			/*
-			 * We have already started the death report, or
-			 * are about to very soon.  We can't prevent
-			 * the report_death and report_reap callbacks,
-			 * so tell the caller they will happen.
-			 */
-			spin_unlock(&utrace->lock);
-			return -EALREADY;
+			return ret;
 		}
 	}
 
