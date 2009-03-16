@@ -163,8 +163,6 @@ static inline int tracehook_unsafe_exec(struct task_struct *task)
 		else
 			unsafe |= LSM_UNSAFE_PTRACE;
 	}
-	if (unlikely(task_utrace_flags(task)))
-		unsafe |= utrace_unsafe_exec(task);
 	return unsafe;
 }
 
@@ -183,8 +181,6 @@ static inline struct task_struct *tracehook_tracer_task(struct task_struct *tsk)
 {
 	if (task_ptrace(tsk) & PT_PTRACED)
 		return rcu_dereference(tsk->parent);
-	if (unlikely(task_utrace_flags(tsk)))
-		return utrace_tracer_task(tsk);
 	return NULL;
 }
 

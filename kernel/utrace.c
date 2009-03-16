@@ -2355,61 +2355,6 @@ EXPORT_SYMBOL_GPL(utrace_finish_examine);
 EXPORT_SYMBOL_GPL(task_user_regset_view);
 
 /*
- * Return the &struct task_struct for the task using ptrace on this one,
- * or %NULL.  Must be called with rcu_read_lock() held to keep the returned
- * struct alive.
- *
- * At exec time, this may be called with task_lock() still held from when
- * tracehook_unsafe_exec() was just called.  In that case it must give
- * results consistent with those unsafe_exec() results, i.e. non-%NULL if
- * any %LSM_UNSAFE_PTRACE_* bits were set.
- *
- * The value is also used to display after "TracerPid:" in /proc/PID/status,
- * where it is called with only rcu_read_lock() held.
- */
-struct task_struct *utrace_tracer_task(struct task_struct *target)
-{
-	struct list_head *pos, *next;
-	struct utrace_engine *engine;
-	const struct utrace_engine_ops *ops;
-	struct task_struct *tracer = NULL;
-	struct utrace *utrace = task_utrace_struct(target);
-
-	list_for_each_safe(pos, next, &utrace->attached) {
-		engine = list_entry(pos, struct utrace_engine,
-				    entry);
-		ops = rcu_dereference(engine->ops);
-		if (ops->tracer_task) {
-			tracer = (*ops->tracer_task)(engine, target);
-			if (tracer != NULL)
-				break;
-		}
-	}
-
-	return tracer;
-}
-
-/*
- * Called on the current task to return LSM_UNSAFE_* bits implied by tracing.
- * Called with task_lock() held.
- */
-int utrace_unsafe_exec(struct task_struct *task)
-{
-	struct utrace *utrace = task_utrace_struct(task);
-	struct utrace_engine *engine;
-	const struct utrace_engine_ops *ops;
-	int unsafe = 0;
-
-	list_for_each_entry(engine, &utrace->attached, entry) {
-		ops = rcu_dereference(engine->ops);
-		if (ops->unsafe_exec)
-			unsafe |= (*ops->unsafe_exec)(engine, task);
-	}
-
-	return unsafe;
-}
-
-/*
  * Called with rcu_read_lock() held.
  */
 void task_utrace_proc_status(struct seq_file *m, struct task_struct *p)

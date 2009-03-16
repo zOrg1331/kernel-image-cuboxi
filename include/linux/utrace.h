@@ -116,10 +116,6 @@ bool utrace_report_syscall_entry(struct pt_regs *)
 	__attribute__((weak));
 void utrace_report_syscall_exit(struct pt_regs *)
 	__attribute__((weak));
-struct task_struct *utrace_tracer_task(struct task_struct *)
-	__attribute__((weak));
-int utrace_unsafe_exec(struct task_struct *)
-	__attribute__((weak));
 void utrace_signal_handler(struct task_struct *, int)
 	__attribute__((weak));
 
@@ -407,11 +403,6 @@ static inline void utrace_engine_put(struct utrace_engine *engine)
  * external events!  If you want the thread to block, use %UTRACE_STOP
  * in your hook's return value; then later wake it up with utrace_control().
  *
- * The @unsafe_exec and @tracer_task hooks are not associated with
- * event reports.  These may be %NULL if the engine has nothing to say.
- * These hooks are called in more constrained environments and should
- * not block or do very much.
- *
  * @report_quiesce:
  *	Requested by %UTRACE_EVENT(%QUIESCE).
  *	This does not indicate any event, but just that @task (the current
@@ -546,27 +537,6 @@ static inline void utrace_engine_put(struct utrace_engine *engine)
  *	Unlike other callbacks, this can be called from the parent's context
  *	rather than from the traced thread itself--it must not delay the
  *	parent by blocking.
- *
- * @unsafe_exec:
- *	Used if not %NULL.
- *	Return %LSM_UNSAFE_* bits that apply to the exec in progress
- *	due to tracing done by this engine.  These bits indicate that
- *	someone is able to examine the process and so a set-UID or similar
- *	privilege escalation may not be safe to permit.
- *	Called with task_lock() held.
- *
- * @tracer_task:
- *	Used if not %NULL.
- *	Return the &struct task_struct for the task using ptrace() on
- *	@task, or %NULL.  Always called with rcu_read_lock() held to
- *	keep the returned struct alive.  At exec time, this may be
- *	called with task_lock() still held from when unsafe_exec() was
- *	just called.  In that case it must give results consistent
- *	with those unsafe_exec() results, i.e. non-%NULL if any
- *	%LSM_UNSAFE_PTRACE_* bits were set.  The value is also used to
- *	display after "TracerPid:" in /proc/PID/status, where it is
- *	called with only rcu_read_lock() held.  If this engine returns
- *	%NULL, another engine may supply the result.
  */
 struct utrace_engine_ops {
 	u32 (*report_quiesce)(enum utrace_resume_action action,
@@ -612,11 +582,6 @@ struct utrace_engine_ops {
 			    bool group_dead, int signal);
 	void (*report_reap)(struct utrace_engine *engine,
 			    struct task_struct *task);
-
-	int (*unsafe_exec)(struct utrace_engine *engine,
-			   struct task_struct *task);
-	struct task_struct *(*tracer_task)(struct utrace_engine *engine,
-					   struct task_struct *task);
 };
 
 /**
