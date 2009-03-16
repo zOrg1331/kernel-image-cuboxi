@@ -336,16 +336,6 @@ static const struct utrace_engine_ops utrace_detached_ops = {
 };
 
 /*
- * Only these flags matter any more for a dead task (exit_state set).
- * We use this mask on flags installed in ->utrace_flags after
- * exit_notify (and possibly utrace_report_death) has run.
- * This ensures that utrace_release_task knows positively that
- * utrace_report_death will not run later.
- */
-#define DEAD_FLAGS_MASK	(UTRACE_EVENT(REAP))
-#define LIVE_FLAGS_MASK	(~0UL)
-
-/*
  * After waking up from TASK_TRACED, clear bookkeeping in @utrace.
  * Returns true if we were woken up prematurely by SIGKILL.
  */
@@ -886,8 +876,15 @@ static void utrace_reset(struct task_struct *task, struct utrace *utrace,
 	}
 
 	if (task->exit_state) {
+		/*
+		 * Once it's already dead, we never install any flags
+		 * except REAP.  When ->exit_state is set and events
+		 * like DEATH are not set, then they never can be set.
+		 * This ensures that utrace_release_task() knows
+		 * positively that utrace_report_death() can never run.
+		 */
 		BUG_ON(utrace->death);
-		flags &= DEAD_FLAGS_MASK;
+		flags &= UTRACE_EVENT(REAP);
 		wake = false;
 	} else if (!(flags & UTRACE_EVENT_SYSCALL) &&
 		   test_tsk_thread_flag(task, TIF_SYSCALL_TRACE)) {
