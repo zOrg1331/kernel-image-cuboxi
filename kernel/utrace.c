@@ -174,7 +174,13 @@ static int utrace_add_engine(struct task_struct *target,
 		 * also set.  Otherwise utrace_control() or utrace_do_stop()
 		 * might skip setting TIF_NOTIFY_RESUME upon seeing ->report
 		 * already set, and we'd miss a necessary callback.
+		 *
+		 * In case we had no engines before, make sure that
+		 * utrace_flags is not zero when tracehook_notify_resume()
+		 * checks.  That would bypass utrace reporting clearing
+		 * TIF_NOTIFY_RESUME, and thus violate the same invariant.
 		 */
+		target->utrace_flags |= UTRACE_EVENT(REAP);
 		list_add_tail(&engine->entry, &utrace->attaching);
 		utrace->report = 1;
 		set_notify_resume(target);
