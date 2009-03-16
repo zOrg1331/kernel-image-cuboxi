@@ -371,7 +371,8 @@ static inline bool finish_utrace_stop(struct task_struct *task,
  * Return true if we were woken up by SIGKILL even though some utrace
  * engine may still want us to stay stopped.
  */
-static bool utrace_stop(struct task_struct *task, struct utrace *utrace)
+static bool utrace_stop(struct task_struct *task, struct utrace *utrace,
+			bool report)
 {
 	bool killed;
 
@@ -393,6 +394,14 @@ static bool utrace_stop(struct task_struct *task, struct utrace *utrace)
 		spin_unlock_irq(&task->sighand->siglock);
 		spin_unlock(&utrace->lock);
 		return true;
+	}
+
+	if (report) {
+		/*
+		 * Ensure a reporting pass when we're resumed.
+		 */
+		utrace->report = 1;
+		set_thread_flag(TIF_NOTIFY_RESUME);
 	}
 
 	utrace->stopped = 1;
@@ -1282,12 +1291,14 @@ struct utrace_report {
 	enum utrace_resume_action action;
 	u32 result;
 	bool detaches;
+	bool reports;
 	bool takers;
 	bool killed;
 };
 
 #define INIT_REPORT(var) \
-	struct utrace_report var = { UTRACE_RESUME, 0, false, false, false }
+	struct utrace_report var = { UTRACE_RESUME, 0, \
+				     false, false, false, false }
 
 /*
  * We are now making the report, so clear the flag saying we need one.
@@ -1365,10 +1376,15 @@ static bool finish_callback(struct utrace *utrace,
 				mark_engine_wants_stop(engine);
 				spin_unlock(&utrace->lock);
 			}
-		} else if (engine_wants_stop(engine)) {
-			spin_lock(&utrace->lock);
-			clear_engine_wants_stop(engine);
-			spin_unlock(&utrace->lock);
+		} else {
+			if (action == UTRACE_REPORT)
+				report->reports = true;
+
+			if (engine_wants_stop(engine)) {
+				spin_lock(&utrace->lock);
+				clear_engine_wants_stop(engine);
+				spin_unlock(&utrace->lock);
+			}
 		}
 	}
 
@@ -1516,7 +1532,8 @@ bool utrace_report_syscall_entry(struct pt_regs *regs)
 			 engine, current, regs);
 	finish_report(&report, task, utrace);
 
-	if (report.action == UTRACE_STOP && unlikely(utrace_stop(task, utrace)))
+	if (report.action == UTRACE_STOP &&
+	    unlikely(utrace_stop(task, utrace, false)))
 		/*
 		 * We are continuing despite UTRACE_STOP because of a
 		 * SIGKILL.  Don't let the system call actually proceed.
@@ -1613,7 +1630,7 @@ void utrace_finish_vfork(struct task_struct *task)
 	else {
 		utrace->vfork_stop = 0;
 		spin_unlock(&utrace->lock);
-		utrace_stop(task, utrace);
+		utrace_stop(task, utrace, false);
 	}
 }
 
@@ -1688,7 +1705,7 @@ void utrace_report_exit(long *exit_code)
 	       report_exit, orig_code, exit_code);
 
 	if (report.action == UTRACE_STOP)
-		utrace_stop(task, utrace);
+		utrace_stop(task, utrace, false);
 }
 
 /*
@@ -1758,6 +1775,10 @@ static void finish_resume_report(struct utrace_report *report,
 	}
 
 	switch (report->action) {
+	case UTRACE_STOP:
+		report->killed = utrace_stop(task, utrace, report->reports);
+		break;
+
 	case UTRACE_INTERRUPT:
 		if (!signal_pending(task))
 			set_tsk_thread_flag(task, TIF_SIGPENDING);
@@ -1769,10 +1790,6 @@ static void finish_resume_report(struct utrace_report *report,
 
 	case UTRACE_BLOCKSTEP:
 		user_enable_block_step(task);
-		break;
-
-	case UTRACE_STOP:
-		report->killed = utrace_stop(task, utrace);
 		break;
 
 	case UTRACE_REPORT:
