@@ -1641,7 +1641,8 @@ void utrace_report_jctl(int notify, int what)
 	spin_unlock(&utrace->lock);
 
 	REPORT(task, utrace, &report, UTRACE_EVENT(JCTL),
-	       report_jctl, was_stopped ? CLD_STOPPED : CLD_CONTINUED, what);
+	       report_jctl, was_stopped ? CLD_STOPPED : CLD_CONTINUED,
+	       notify ? what : 0);
 
 	if (was_stopped && !task_is_stopped(task)) {
 		/*
