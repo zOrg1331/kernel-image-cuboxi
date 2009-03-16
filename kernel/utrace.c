@@ -782,23 +782,8 @@ static void mark_engine_detached(struct utrace_engine *engine)
  */
 static bool utrace_do_stop(struct task_struct *target, struct utrace *utrace)
 {
-	bool stopped;
+	bool stopped = false;
 
-	/*
-	 * If it will call utrace_report_jctl() but has not gotten
-	 * through it yet, then don't consider it quiescent yet.
-	 * utrace_report_jctl() will take @utrace->lock and
-	 * set @utrace->stopped itself once it finishes.  After that,
-	 * it is considered quiescent; when it wakes up, it will go
-	 * through utrace_get_signal() before doing anything else.
-	 */
-	if (task_is_stopped(target) &&
-	    !(target->utrace_flags & UTRACE_EVENT(JCTL))) {
-		utrace->stopped = 1;
-		return true;
-	}
-
-	stopped = false;
 	spin_lock_irq(&target->sighand->siglock);
 	if (unlikely(target->exit_state)) {
 		/*
@@ -809,6 +794,14 @@ static bool utrace_do_stop(struct task_struct *target, struct utrace *utrace)
 		if (!(target->utrace_flags & DEATH_EVENTS))
 			utrace->stopped = stopped = true;
 	} else if (task_is_stopped(target)) {
+		/*
+		 * If it will call utrace_report_jctl() but has not gotten
+		 * through it yet, then don't consider it quiescent yet.
+		 * utrace_report_jctl() will take @utrace->lock and
+		 * set @utrace->stopped itself once it finishes.  After that,
+		 * it is considered quiescent; when it wakes up, it will go
+		 * through utrace_get_signal() before doing anything else.
+		 */
 		if (!(target->utrace_flags & UTRACE_EVENT(JCTL)))
 			utrace->stopped = stopped = true;
 	} else if (!utrace->report && !utrace->interrupt) {
