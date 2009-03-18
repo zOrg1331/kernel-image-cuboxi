@@ -672,8 +672,6 @@ int utrace_set_events(struct task_struct *target,
 {
 	struct utrace *utrace;
 	unsigned long old_flags, old_utrace_flags, set_utrace_flags;
-	struct sighand_struct *sighand;
-	unsigned long flags;
 	int ret;
 
 	utrace = get_utrace_lock(target, engine, true);
@@ -691,23 +689,6 @@ int utrace_set_events(struct task_struct *target,
 	     (utrace->reap && ((old_flags & ~events) & UTRACE_EVENT(REAP))))) {
 		spin_unlock(&utrace->lock);
 		return -EALREADY;
-	}
-
-	/*
-	 * When it's in TASK_STOPPED state and UTRACE_EVENT(JCTL) is set,
-	 * utrace_do_stop() will think it is still running and needs to
-	 * finish utrace_report_jctl() before it's really stopped.  But
-	 * if the bit wasn't already set, it can't be running in there
-	 * and really is quiescent now in its existing job control stop.
-	 */
-	if (!utrace->stopped &&
-	    ((set_utrace_flags & ~old_utrace_flags) & UTRACE_EVENT(JCTL))) {
-		sighand = lock_task_sighand(target, &flags);
-		if (likely(sighand)) {
-			if (task_is_stopped(target))
-				utrace->stopped = 1;
-			unlock_task_sighand(target, &flags);
-		}
 	}
 
 	/*
@@ -799,15 +780,10 @@ static bool utrace_do_stop(struct task_struct *target, struct utrace *utrace)
 			utrace->stopped = stopped = true;
 	} else if (task_is_stopped(target)) {
 		/*
-		 * If it will call utrace_report_jctl() but has not gotten
-		 * through it yet, then don't consider it quiescent yet.
-		 * utrace_report_jctl() will take @utrace->lock and
-		 * set @utrace->stopped itself once it finishes.  After that,
-		 * it is considered quiescent; when it wakes up, it will go
-		 * through utrace_get_signal() before doing anything else.
+		 * Stopped is considered quiescent; when it wakes up, it will
+		 * go through utrace_get_signal() before doing anything else.
 		 */
-		if (!(target->utrace_flags & UTRACE_EVENT(JCTL)))
-			utrace->stopped = stopped = true;
+		utrace->stopped = stopped = true;
 	} else if (!utrace->report && !utrace->interrupt) {
 		utrace->report = 1;
 		set_notify_resume(target);
@@ -1634,13 +1610,27 @@ void utrace_finish_vfork(struct task_struct *task)
 
 /*
  * Called iff UTRACE_EVENT(JCTL) flag is set.
+ *
+ * Called with siglock held.
  */
 void utrace_report_jctl(int notify, int what)
 {
 	struct task_struct *task = current;
 	struct utrace *utrace = task_utrace_struct(task);
 	INIT_REPORT(report);
-	bool was_stopped = task_is_stopped(task);
+	bool stop = task_is_stopped(task);
+
+ 	/*
+	 * We have to come out of TASK_STOPPED in case the event report
+	 * hooks might block.  Since we held the siglock throughout, it's
+	 * as if we were never in TASK_STOPPED yet at all.
+	 */
+	if (stop) {
+		__set_current_state(TASK_RUNNING);
+		task->signal->flags &= ~SIGNAL_STOP_STOPPED;
+		++task->signal->group_stop_count;
+	}
+	spin_unlock_irq(&task->sighand->siglock);
 
 	/*
 	 * We get here with CLD_STOPPED when we've just entered
@@ -1662,30 +1652,17 @@ void utrace_report_jctl(int notify, int what)
 	spin_unlock(&utrace->lock);
 
 	REPORT(task, utrace, &report, UTRACE_EVENT(JCTL),
-	       report_jctl, was_stopped ? CLD_STOPPED : CLD_CONTINUED,
-	       notify ? what : 0);
+	       report_jctl, what, notify);
 
-	if (was_stopped && !task_is_stopped(task)) {
-		/*
-		 * The event report hooks could have blocked, though
-		 * it should have been briefly.  Make sure we're in
-		 * TASK_STOPPED state again to block properly, unless
-		 * we've just come back out of job control stop.
-		 */
-		spin_lock_irq(&task->sighand->siglock);
-		if (task->signal->flags & SIGNAL_STOP_STOPPED)
-			__set_current_state(TASK_STOPPED);
-		spin_unlock_irq(&task->sighand->siglock);
-	}
-
-	if (task_is_stopped(current)) {
-		/*
-		 * While in TASK_STOPPED, we can be considered safely
-		 * stopped by utrace_do_stop() only once we set this.
-		 */
-		spin_lock(&utrace->lock);
-		utrace->stopped = 1;
-		spin_unlock(&utrace->lock);
+	/*
+	 * Retake the lock, and go back into TASK_STOPPED
+	 * unless the stop was just cleared.
+	 */
+	spin_lock_irq(&task->sighand->siglock);
+	if (stop && task->signal->group_stop_count > 0) {
+		__set_current_state(TASK_STOPPED);
+		if (--task->signal->group_stop_count == 0)
+			task->signal->flags |= SIGNAL_STOP_STOPPED;
 	}
 }
 
@@ -1938,6 +1915,7 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 		 * interrupt path, so clear the flags asking for those.
 		 */
 		utrace->interrupt = utrace->report = utrace->signal_handler = 0;
+		utrace->stopped = 0;
 
 		/*
 		 * Make sure signal_pending() only returns true
@@ -1966,7 +1944,8 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 		event = 0;
 		ka = NULL;
 		memset(return_ka, 0, sizeof *return_ka);
-	} else if ((task->utrace_flags & UTRACE_EVENT_SIGNAL_ALL) == 0) {
+	} else if ((task->utrace_flags & UTRACE_EVENT_SIGNAL_ALL) == 0 &&
+		   !utrace->stopped) {
 		/*
 		 * If no engine is interested in intercepting signals,
 		 * let the caller just dequeue them normally.
@@ -1974,6 +1953,7 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 		return 0;
 	} else {
 		if (unlikely(utrace->stopped)) {
+			spin_unlock_irq(&task->sighand->siglock);
 			spin_lock(&utrace->lock);
 			utrace->stopped = 0;
 			spin_unlock(&utrace->lock);
