@@ -616,6 +616,12 @@ static inline void set_notify_resume(struct task_struct *task)
 static inline void tracehook_notify_resume(struct pt_regs *regs)
 {
 	struct task_struct *task = current;
+	/*
+	 * This pairs with the barrier implicit in set_notify_resume().
+	 * It ensures that we read the nonzero utrace_flags set before
+	 * set_notify_resume() was called by utrace setup.
+	 */
+	smp_rmb();
 	if (task_utrace_flags(task))
 		utrace_resume(task, regs);
 }

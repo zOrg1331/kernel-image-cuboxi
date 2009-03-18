@@ -2232,7 +2232,7 @@ void utrace_signal_handler(struct task_struct *task, int stepping)
 		utrace->interrupt = 1;
 		set_tsk_thread_flag(task, TIF_SIGPENDING);
 	} else {
-		set_notify_resume(task);
+		set_tsk_thread_flag(task, TIF_NOTIFY_RESUME);
 	}
 
 	spin_unlock(&utrace->lock);
