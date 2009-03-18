@@ -939,12 +939,10 @@ static inline int utrace_control_dead(struct task_struct *target,
 	if (action != UTRACE_DETACH || unlikely(utrace->reap))
 		return -ESRCH;
 
-	if (unlikely(target->utrace_flags & _UTRACE_DEATH_EVENTS) ||
-	    unlikely(utrace->death))
+	if (unlikely(utrace->death))
 		/*
-		 * We have already started the death report, or
-		 * are about to very soon.  We can't prevent
-		 * the report_death and report_reap callbacks,
+		 * We have already started the death report.  We can't
+		 * prevent the report_death and report_reap callbacks,
 		 * so tell the caller they will happen.
 		 */
 		return -EALREADY;
