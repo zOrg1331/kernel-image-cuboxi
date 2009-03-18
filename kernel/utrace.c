@@ -1620,7 +1620,7 @@ void utrace_report_jctl(int notify, int what)
 	INIT_REPORT(report);
 	bool stop = task_is_stopped(task);
 
- 	/*
+	/*
 	 * We have to come out of TASK_STOPPED in case the event report
 	 * hooks might block.  Since we held the siglock throughout, it's
 	 * as if we were never in TASK_STOPPED yet at all.
