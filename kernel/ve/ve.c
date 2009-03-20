@@ -109,7 +109,8 @@ struct ve_struct ve0 = {
 #ifdef CONFIG_VE_IPTABLES
 	.ipt_mask 		= ~0ULL,
 #endif
-	.features		= VE_FEATURE_SIT | VE_FEATURE_IPIP,
+	.features		= VE_FEATURE_SIT | VE_FEATURE_IPIP |
+				VE_FEATURE_PPP,
 };
 
 EXPORT_SYMBOL(ve0);
