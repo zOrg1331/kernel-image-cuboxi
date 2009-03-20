@@ -339,10 +339,8 @@ void zap_pid_ns_processes(struct pid_namespace *pid_ns)
 	acct_exit_ns(pid_ns);
 
 #ifdef CONFIG_VE
-	if(get_exec_env()!=&ve0)
+	if (get_exec_env()->ve_ns->pid_ns == pid_ns)
 		zap_ve_processes(get_exec_env());
-	else
-		printk("Error: trying to zap ve0\n");
 #endif
 	return;
 }
