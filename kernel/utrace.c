@@ -1648,7 +1648,11 @@ void utrace_report_jctl(int notify, int what)
 	 */
 	spin_lock(&utrace->lock);
 	utrace->stopped = 0;
+	/*
+	 * Do start_report()'s work too since we already have the lock anyway.
+	 */
 	utrace->report = 0;
+	splice_attaching(utrace);
 	spin_unlock(&utrace->lock);
 
 	REPORT(task, utrace, &report, UTRACE_EVENT(JCTL),
