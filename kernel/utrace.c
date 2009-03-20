@@ -1812,10 +1812,8 @@ void utrace_resume(struct task_struct *task, struct pt_regs *regs)
 	 * If UTRACE_INTERRUPT was just used, we don't bother with a
 	 * report here.  We will report and stop in utrace_get_signal().
 	 */
-	if (unlikely(utrace->interrupt)) {
-		BUG_ON(!signal_pending(task));
+	if (unlikely(utrace->interrupt))
 		return;
-	}
 
 	/*
 	 * Do a simple reporting pass, with no callback after report_quiesce.
