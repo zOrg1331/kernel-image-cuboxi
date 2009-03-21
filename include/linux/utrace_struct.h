@@ -47,7 +47,7 @@ struct utrace {
 		.lock = __SPIN_LOCK_UNLOCKED(tsk.utrace.lock),		      \
 		.attached = LIST_HEAD_INIT(tsk.utrace.attached),	      \
 		.attaching = LIST_HEAD_INIT(tsk.utrace.attaching),	      \
-	}
+	},
 
 #else
 
