@@ -2340,7 +2340,7 @@ EXPORT_SYMBOL_GPL(task_user_regset_view);
 void task_utrace_proc_status(struct seq_file *m, struct task_struct *p)
 {
 	struct utrace *utrace = &p->utrace;
-	seq_printf(m, "Utrace: %lx%s%s%s\n",
+	seq_printf(m, "Utrace:\t%lx%s%s%s\n",
 		   p->utrace_flags,
 		   utrace->stopped ? " (stopped)" : "",
 		   utrace->report ? " (report)" : "",
