@@ -1813,11 +1813,15 @@ void utrace_resume(struct task_struct *task, struct pt_regs *regs)
 	}
 
 	/*
-	 * If UTRACE_INTERRUPT was just used, we don't bother with a
-	 * report here.  We will report and stop in utrace_get_signal().
+	 * If UTRACE_INTERRUPT was just used, we don't bother with a report
+	 * here.  We will report and stop in utrace_get_signal().  In case
+	 * of a race with utrace_control(), make sure we don't momentarily
+	 * return to user mode because TIF_SIGPENDING was not set yet.
 	 */
-	if (unlikely(utrace->interrupt))
+	if (unlikely(utrace->interrupt)) {
+		set_thread_flag(TIF_SIGPENDING);
 		return;
+	}
 
 	/*
 	 * Do a simple reporting pass, with no callback after report_quiesce.
