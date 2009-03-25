@@ -1514,25 +1514,7 @@ bool utrace_report_syscall_entry(struct pt_regs *regs)
 		 */
 		return true;
 
-	if (unlikely(report.result == UTRACE_SYSCALL_ABORT))
-		return true;
-
-	if (signal_pending(task)) {
-		/*
-		 * Clear TIF_SIGPENDING if it no longer needs to be set.
-		 * It may have been set as part of quiescence, and won't
-		 * ever have been cleared by another thread.  For other
-		 * reports, we can just leave it set and will go through
-		 * utrace_get_signal() to reset things.  But here we are
-		 * about to enter a syscall, which might bail out with an
-		 * -ERESTART* error if it's set now.
-		 */
-		spin_lock_irq(&task->sighand->siglock);
-		recalc_sigpending();
-		spin_unlock_irq(&task->sighand->siglock);
-	}
-
-	return false;
+	return report.result == UTRACE_SYSCALL_ABORT;
 }
 
 /*
