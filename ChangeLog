@@ -1,0 +1,958 @@
+commit a823a6fc58bff0e1ce4ff8affd756b32f94e5d35
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Mar 25 22:15:32 2009 +0900
+
+    aufs: bugfix: missing lock for sbinfo
+    
+    It is necessary to lock sbinfo to open <debugfs>/aufs/{xib,xigen} in
+    order to prevent race condition between umount.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit eaad6a929e8dbf4b64a5f856512cd1256351e226
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Mar 25 02:48:39 2009 +0900
+
+    aufs: bugfix: call mntget() before unlock vfsmount_lock
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 31ffd4af435be3f51288864071176e380428151f
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Mar 25 02:32:56 2009 +0900
+
+    aufs: tiny: fix version srting
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 56e3f74919b63c2e4f97465daf09ca29e185de66
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Mar 25 01:47:02 2009 +0900
+
+    aufs: convert some aufs entries from sysfs to debugfs, documentation
+    
+    Follow the comments from Greg KH on LKML.
+    Move 'xib', 'xigen' and 'xi0 ... xiN' entries from sysaufs to debugfs.
+    They show how many disk blocks are consumed.
+    - move the description of some aufs entries from sysfs-aufs to debugfs-aufs.
+    - fix the manual.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 1ed26a83899ad5fead8b9c7f6a4f99fe01093493
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Mar 25 01:47:02 2009 +0900
+
+    aufs: convert some aufs entries from sysfs to debugfs
+    
+    Follow the comments from Greg KH on LKML.
+    Move 'xib', 'xigen' and 'xi0 ... xiN' entries from sysaufs to debugfs.
+    They show how many disk blocks are consumed.
+    - compile dbgaufs.c.
+    - remove 'xigen', 'xib' and 'xi0 ... xiN' entries from sysfs.
+    - new members of struct au_sbinfo for dentries under debugfs.
+    - replace members in struct au_xino_file by a dentry of debugfs.
+    - intialization and finalization for aufs entries under debugfs.
+    - show the xino file path in /proc/mounts only when CONFIG_SYSFS is disabled.
+    - minor enhancement, make sure that sysaufs_si_mask is not zero.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 598e7614a3d89e9e309e929f7d6fef9710651a76
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Mar 25 01:47:01 2009 +0900
+
+    aufs: convert some aufs entries from sysfs to debugfs, new files
+    
+    Follow the comments from Greg KH on LKML.
+    Move 'xib', 'xigen' and 'xi0 ... xiN' entries from sysaufs to debugfs.
+    They show how many disk blocks are consumed.
+    - new aufs entries under debugfs.
+    - new files dbgaufs.c and dbgaufs.h.
+    - it trusts that CONFIG_DEBUG_FS "depends on SYSFS".
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 3dc6375353c96e2b0bde23b9f544fa9944c83950
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Mar 23 17:24:12 2009 +0900
+
+    aufs: forbid the combination of AUFS=y + EXPORTFS=m
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 4d724469cd7b65dae83b35b26642a9902abf9af2
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sat Mar 21 15:06:39 2009 +0900
+
+    [aufs] f_op is always set
+    
+    Remove testing f_op since it is always set.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 946ae476cb72850e6258cb21558acafca067095a
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sat Mar 21 12:20:47 2009 +0900
+
+    [aufs] temporary workaround for a bug in NFSD readdir
+    
+    There is a regression in the commit
+    14f7dd632011bb89c035722edd6ea0d90ca6b078
+    "[PATCH] Copy XFS readdir hack into nfsd code".
+    While will be fixed soon.
+    cf. http://marc.info/?l=linux-kernel&m=123747448209411&w=2
+    
+    This patch produces a warning for the bug instead of BUG_ON() as a
+    temporay workaround.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 7bbd22bc9b202baaf0c916cabaff58ab83edd037
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sat Mar 21 12:15:06 2009 +0900
+
+    [aufs] bugfix: test inode type in au_store_oflag()
+    
+    Add a parameter inode to au_store_oflag(), and make sure that inode is a
+    regular file.
+    This patch will fix a bug reported by David and James.
+    Message-ID: <56f71f8d0903170101n7105cfc6odabb6816237c1a79@mail.gmail.com>
+    Message-ID: <565e902e0903171707w7ebb2f34wb3997b87026b962b@mail.gmail.com>
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 8ecb364ba070ede64a61ea7809804701e669ea02
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Mar 19 13:31:09 2009 +0900
+
+    split 'xino' entry under sysfs
+    
+    Follow the comments from Greg KH on LKML.
+    - make all entries "one value per file".
+    - split 'xino' into 'xi_path', 'xib' and 'xi0'...'xiN'.
+    - new members in struct au_xino_file for xi[0-9]* entry.
+    - remove sysaufs_si_attr_xino.
+    - sysaufs_si_xino() shows only a size info of one xino file.
+    - new variables sysaufs_si_attr_xi_path and sysaufs_si_attr_xib.
+    - new functions sysaufs_si_xi_path() and sysaufs_si_xib().
+    - rename sysaufs_sbi_xi() to sysaufs_xi_attr().
+    - sysaufs_si_show() supports xiN.
+    - sysaufs_br_init() initializes br->br_xino.xi_attr too.
+    - sysaufs_brs_del() and sysaufs_brs_add() always handle
+      br->br_xino.xi_attr.
+    - new static function sysaufs_brs_do_add() to generate brN and xiN
+      names.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit de60b9f607e0cd0826177f39e5681290d80d7b4e
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Mar 19 13:07:43 2009 +0900
+
+    replace /sys/fs/aufs/debug by /sys/module/aufs/parmaters/debug
+    
+    Follow the comments from Greg KH on LKML.
+    - remove the global variable 'au_cond'.
+    - new global variable 'aufs_debug' as a module parameter.
+    - describe the new module parameter 'debug' in the manual.
+    - remove the global variable 'sysaufs_ktype', debug_show(),
+      debug_store(), au_debug_attr, au_attr_show(), au_attr_store(), and
+      sysaufs_ktype_body.
+    - make au_attr empty.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit f230bd0527d75e20d0b0422ee8bca4df6e3474e2
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Mar 17 22:43:07 2009 +0900
+
+    tiny: fix the conflict in last commit
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit d2a87add7049a1bdad6712f4732e8240c032eafe
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Mar 17 17:35:31 2009 +0900
+
+    minor optimization: new variable h_inode in au_h_verify_dentry()
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 211602fa4957fbbde4903ecc8be2185367741cec
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Mar 17 16:50:25 2009 +0900
+
+    support exporting via NFS in 2.6.28, replace path_lookup() by kern_path()
+    
+    - remove noinline_for_stack from decode_by_path().
+    - replace struct nameidata by struct path.
+    - replace path_lookup() by kern_path().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 9327c246e4a1c7dcf91a368ec2bca6724eab1377
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Mar 17 16:21:47 2009 +0900
+
+    stdalone: AUFS_EXPORT supports EXPORTFS = m
+    
+    EXPORTFS can be a module too in this standalone version.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit fb54ec71da3d119d06b83ef5b9d56816028a9469
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Mar 17 16:02:00 2009 +0900
+
+    AUFS_EXPORT depends on EXPORTFS = y
+    
+    As long as CONFIG_AUFS is not tristate, EXPORTFS has to be y too.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit e0f60d27235e27b29270293bae0e25d9528f92d2
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Mar 15 17:39:38 2009 +0900
+
+    support exporting via NFS, export vfsmount_lock
+    
+    - export vfsmount_lock for external modules.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 570053093211ba114da17140830c574cca2f9b2e
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Mar 9 17:43:15 2009 +0900
+
+    restore priv_def.mk
+    
+    In the standalone version, keep using priv_def.mk.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit c35679c7d7e369ba5aa86149df726c21fca5ab8a
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Mar 1 23:02:36 2009 +0900
+
+    expand MAX_LOCKDEP_SUBCLASSES
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 1cfb6c2c9e3e38a175891efd1e3afcf37234df38
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Mar 1 23:01:59 2009 +0900
+
+    export do_truncate() for modules
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit abe17d4a4b7691742ae7c7f1ddcbd2dd1927e6fd
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Feb 22 01:23:40 2009 +0900
+
+    fix ecryptfs original bug to test aufs2
+    
+    - stop unnecessary d_drop()s from ecyrptfs_link().
+    - insert dget()/dput()/i_count in ecyrptfs_unlink().
+    - update dir iattr in ecryptfs_rmdir().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 17415212943e7732f3f7df24047e236fad978226
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Mar 17 12:54:04 2009 +0900
+
+    make aufs modulable/tristate
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit df3b87daf44c36273b2349d2b1826468484f4068
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Mar 17 12:54:04 2009 +0900
+
+    export some symbols for modules
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit bdcfa3ce3b53d863d137ee281ffb5597e97a4542
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Mar 17 12:54:03 2009 +0900
+
+    version string for standalone version
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 22e144fd4f71612bea8e53e85f2401558f67bb86
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Mar 16 02:08:28 2009 +0900
+
+    support exporting via NFS, documents
+    
+    - rename 08plan.txt to 99plan.txt
+    - extract the export part from plan.txt, and make a new file
+      08export.txt
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 9efed339969b0590923de975f2085f79e8dd458b
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Mar 16 02:08:13 2009 +0900
+
+    support exporting via NFS, documents
+    
+    - rename 08plan.txt to 99plan.txt
+    - extract the export part from plan.txt, and make a new file
+      08export.txt
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit b5fd902af9dec8e5e451201d2f76fe1d6efd2463
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Mar 15 17:39:38 2009 +0900
+
+    support exporting via NFS, documents
+    
+    - documentation.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 8903afc2848bf9aa5d09fd285ef175f9e3e4382e
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Mar 15 17:39:37 2009 +0900
+
+    support exporting via NFS, sysfs
+    
+    - new sysfs entry for xigen.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit d9efb1c4abf53179de64d90186692fd7e84fdbe5
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Mar 15 17:39:36 2009 +0900
+
+    support exporting via NFS, EBUSY
+    
+    - convert -EBUSY into -ESTALE for NFSD by a new function
+      au_busy_or_stale().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 1fe04442a055620a84b70a9b67fa42f387c84a37
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Mar 15 17:39:35 2009 +0900
+
+    support exporting via NFS, readdir
+    
+    - aufs_readdir() unlocks dinfo and sbinfo just before calling NFSD
+      filldir.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 2373392bdb24f9d229da96a5fab1bb08069736c6
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Mar 15 17:39:34 2009 +0900
+
+    support exporting via NFS, export functions
+    
+    - new file export.c.
+    - make au_xino_create2() global.
+    - new configurations AUFS_EXPORT and AUFS_INO_T_64.
+    - new macro Au_LOFF_MAX.
+    - new functions au_export_init(), au_test_nfsd(),
+      au_xigen_{inc,new,set,clr}() and au_busy_or_stale().
+    - new members si_xigen and si_xigen_next in struct au_sbinfo.
+    - initialize s_export_ops by au_export_init() in aufs_fill_super().
+    - initialize xigen in au_iget_locked().
+    - update xigen for removed inode in au_iinfo_fin().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit a90e2b3981dd7886c9c942cb63c063d882603a88
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Mar 16 14:04:04 2009 +0900
+
+    tiny: initialize ia to shut gcc warning up
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 262896c00fad1e099937c4b7f559cd8257950144
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Mar 16 13:11:14 2009 +0900
+
+    tiny: mark some parameters __maybe_unused
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 7093ca37a29d0c465784b67d96351e38abe727c6
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Mar 16 02:35:41 2009 +0900
+
+    tiny: add a note about aufs2 branch
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 2d8394e7c71c14136243a35be0ea05f0348a8dc1
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Mar 13 14:43:44 2009 +0900
+
+    correct the name of a donor
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 7978e9025b067042087830fe65e115560348b171
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Mar 13 14:30:19 2009 +0900
+
+    name in the title
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 175015ae7c619f92d8bdf3fccb6f8c6513fff286
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Mar 13 14:28:23 2009 +0900
+
+    Acknowledgements
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit fb3c73738041e96dda88a1a899b5f3f6a2f48bdf
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Mar 9 17:39:11 2009 +0900
+
+    remove priv_def.mk
+    
+    A review comment from Sam Ravnborg.
+    Remove the makefile for individual customizing or debugging.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 41a7be5b98afb5200879cf68b8c527f35b30aaa2
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Mar 9 17:38:17 2009 +0900
+
+    add aufs_type.h to Kbuild
+    
+    A review comment from Sam Ravnborg.
+    Since include/linux/aufs_type.h contains ioctl command and macros for
+    userspace, it should be included in Kbuild.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 4bf89244930c172a1d5266a5d94729b6b13c722d
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Mar 6 00:07:06 2009 +0900
+
+    add some feature ideas
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 01c3e79e382ab196eeb21200e7b559ab230baa23
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Mar 5 14:03:33 2009 +0900
+
+    note about MAP_SHARED
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit f296ca35e0b5eaa90ca04df71ccb7c9006d509f3
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Mar 4 14:18:45 2009 +0900
+
+    tiny: fix an indentation
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 05b55411acfe04a46a0b4a876e356afc7ab67c60
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Mar 4 14:17:17 2009 +0900
+
+    workaround for fmode_t
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 8cf6e539dee0bc3475c369fb47dea8788308524f
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Mar 2 12:01:32 2009 +0900
+
+    support linux-2.6.29-rcN
+    
+    - replace do_fsync() by vfs_fsync().
+    - add credential to dentry_open().
+    - support squashfs, btrfs and xenfs (untested).
+    - eliminate the test for inode->i_op.
+    - replace current->fsuid by current_fsuid() call.
+    - support security_path_*() functions.
+    - version string.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 8539eb36613fd22af5ec2b21d7a0276c3aefc208
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Mar 1 19:51:50 2009 +0900
+
+    refine file truncate
+    
+    - move au_attr_trunc() from i_op.c to vfsub.c as vfsub_trunc().
+    - remove AuIcpup_GOT_WACC.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 128e8f2b195d948161b3b84f0fb91b41761de074
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Mar 1 06:36:40 2009 +0900
+
+    call fsnotify_open() from au_h_open()
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 7dbb58b72d1dab79e32b80fdd4dad5dc4bfa4135
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Mar 1 06:32:36 2009 +0900
+
+    bugfix: make modifying branch permission revertible
+    
+    - split au_br_mod_files_ro() into two loops, and make files readonly in
+      the second loop.
+    - when au_br_mod_files_ro() returns an error, rebuild the whiteout base.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit b21fe05308e7cd231ff286b10c4552c078f7f936
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Mar 1 04:32:17 2009 +0900
+
+    refresh i_mode in file-write
+    
+    write to a lower file may change i_mode too.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit b3a6cf7c6db300a79da7ce486afdffec2a5b77ca
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sat Feb 28 16:02:20 2009 +0900
+
+    bugfix: initilize br_id earlier
+    
+    initilize br_id in au_br_init() before calling au_wbr_init() since
+    au_wh_init() refers it.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 9a9704a3a91111de0477af9cce137c3fac706340
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Feb 27 22:34:15 2009 +0900
+
+    replace au_test_aufs_file() by special_file()
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit e9874767a900b671941eee0f12944499693d714c
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Feb 23 23:48:49 2009 +0900
+
+    fix the instruction how to checkout
+    
+    follow the comment from Julian Andres Klode.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 797afdeaaa26c4f89561036963e22ad6d3b72a52
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Feb 23 23:27:04 2009 +0900
+
+    follow the review comment on LKML
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit cc158228664a585be3d66233000386c04feda97f
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Feb 23 15:56:03 2009 +0900
+
+    tiny: fix typos
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit aefc8980b77541ec88b37feb0a1951bd2da6babb
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sat Feb 21 22:20:11 2009 +0900
+
+    skip test for a negative dentry in nfs
+    
+    nfs d_revalidate may return 0 for negative dentry, so the test in
+    au_h_verify_dentry() for udba=inotify lost its meaning, as well as fuse
+    case.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 92c0263ab157fa0e05d08efea1ba214b1354575c
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Feb 20 18:08:49 2009 +0900
+
+    support linux-2.6.18
+    
+    - remove ->prepare_write() and ->commit_write() from aufs_aop.
+    - support the new type fmode_t.
+    - reject securityfs as a branch.
+    - remove TMPFS_MAGIC and SYSFS_MAGIC from magic.mk.
+    - replace path_lookup() by a new function kern_path().
+    - version string.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 6b55e4d3a286dcb427b68f037b7cdb8c892c8e35
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Feb 20 17:40:33 2009 +0900
+
+    tiny: fix for copyright
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 9da2511c11dc94f25795a17b4ce79ebda4ebe1cb
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Feb 20 17:40:12 2009 +0900
+
+    tiny: fix for copyright and version string
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 365ce5b7210fe3546b751452c848f610ec93163e
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Feb 20 17:39:55 2009 +0900
+
+    restore notes about git trees
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 514213ceff443e69ea3ea29089fad5ccc3650c53
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 15:14:27 2009 +0900
+
+    fix version string
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 0ca7f2d3af9bd70e16297cf375f190edd6d7fab4
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 15:14:07 2009 +0900
+
+    cosmetic: add a single sentence
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 2511ef9937c3ae1d35884c00e940bc1a9848f0cc
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:58 2009 +0900
+
+    kbuild aufs
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 2061044dfdc1ad3fcb1570a67c00f1a1a29fb575
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:57 2009 +0900
+
+    export lookup functions
+    
+    export lookup functions to aufs module and others
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 7d26a2937b379ae0ea62d3894a0300eeb3ae0095
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:56 2009 +0900
+
+    export splice functions
+    
+    export splice functions to aufs module and others
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit c459d4df336003b016e877a620acad29dec18678
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:55 2009 +0900
+
+    aufs debug
+    
+    initial commit
+    debug print
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 72f20441ed75b545319539c479c9225d2c360722
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:54 2009 +0900
+
+    aufs test for fstype
+    
+    initial commit
+    judge the type of filesystem of branch
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit b5ccb505ec055bbe969f804900ec50e2ab729ca4
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:54 2009 +0900
+
+    aufs internal inotify
+    
+    initial commit
+    detect bypassing aufs by inotify-watch
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit eaf310945bb878647a03eb0197c717e15eb47f24
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:53 2009 +0900
+
+    aufs branch for loopback block device
+    
+    initial commit
+    support and test loopback block device as a branch
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 52dfc86d0feab1d35d1b89ee9adbb22c5cdb6509
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:52 2009 +0900
+
+    aufs sysfs entries
+    
+    initial commit
+    sysfs entries, compiled only when CONFIG_SYSFS is enabled
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 48889307cd1316e50724712b75e71ec461a44e78
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:51 2009 +0900
+
+    aufs ioctl
+    
+    initial commit
+    currently for maintenance only
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit bcdcaef25a1a9d3df108bdffd7f20614df9b522c
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:50 2009 +0900
+
+    aufs inode
+    
+    initial commit
+    inode operations and private data
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit dbc42886136fd78ce7070d15a8a778d1fd0b6a37
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:49 2009 +0900
+
+    aufs direcotry
+    
+    initial commit
+    directory operations
+    virtual or vertical(stacked) directory
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 28e89abff7f6ed12159fd1dce31ee7e7dfca38e2
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:49 2009 +0900
+
+    aufs file
+    
+    initial commit
+    private data, file operations, vm operations, and address_space
+    operations.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit b5b030501d231752f4555fdcc92a155b92acdf7a
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:48 2009 +0900
+
+    aufs dentry and lookup
+    
+    initial commit
+    dentry operations and private data
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit d35469e6f0f47fc2b4c1af1e7524976ca5cd2ba8
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:47 2009 +0900
+
+    aufs policies to select one among multiple writable branches
+    
+    initial commit
+    when creating/removing an entry and there are multiple writable branches
+    specified in aufs, aufs has to decide which branch is the target.
+    aufs has several policies for that such as, round-robin, most-free-space
+    and so on.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 76b8ccda4ce020eeeb0afeb475535b278ac3fe5f
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:46 2009 +0900
+
+    aufs pseudo-link
+    
+    initial commit
+    pseudo-link is a logical hardlink over branches or different filesystems.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit ac1bb696929b195fb1c578d87866a33655297fdb
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:45 2009 +0900
+
+    aufs whiteout
+    
+    initial commit
+    whiteout for logical deletion and opaque directory
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 13238fb9f5227ea9b6f15fe6d3712327285c31d9
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:45 2009 +0900
+
+    aufs copy-up
+    
+    initial commit
+    internal copy-up functions
+    see wbr_policy.c for copy-down
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit b484bd5875c9d4723a0a845b932711b275286a3e
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:44 2009 +0900
+
+    aufs sub-dcache
+    
+    initial commit
+    sub-routines or simple wrappers for dentry cache
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 0d7c916ed66be202e4310097a2967e729cd4fd95
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:43 2009 +0900
+
+    aufs sub-VFS
+    
+    initial commit
+    sub-routines or simple wrappers for VFS
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 966882e7eea4b97354cd346aa10290437f8814c3
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:42 2009 +0900
+
+    aufs workqueue
+    
+    initial commit
+    workqueue for asynchronous and super-io operations.
+    they are used for:
+    - handling 'opaque' directory and whiteout
+    - lookup and copy-up/down with credential
+    - internal xino file i/o
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 77d47c0e4e6c35976d23cfd019eecac7bccc8f2a
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:41 2009 +0900
+
+    aufs mount options/flags
+    
+    initial commit
+    handling mount options/flags
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit cb5accaa25e4afe4dcbd9c4fbceee33783928ebf
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:41 2009 +0900
+
+    aufs object lifetime management via sysfs
+    
+    initial commit
+    some aufs objects have a corresponding entry under sysfs, so the
+    lifetime will be managed by struct kref even if CONFIG_SYSFS is
+    disabled.
+    This file is compiled unconditionally.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit a992247ca951423aff0968ef02a85fda94adeec6
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:40 2009 +0900
+
+    aufs xino
+    
+    initial commit
+    external inode number translation table and bitmap
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 4cb5420cf1e7f3c41444073532bb1d7c211ee41f
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:39 2009 +0900
+
+    aufs branch directory/filesystem
+    
+    initial commit
+    branch management
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit b2aaf154254413d64715c5f09798d47a316c369a
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:38 2009 +0900
+
+    aufs super_block
+    
+    initial commit
+    super_block operations and private data
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit d8cf659501ebe7840d462c9a4c80c9a9e06b03bd
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:37 2009 +0900
+
+    aufs module global
+    
+    initial commit
+    common header file
+    module initialization and module global vars
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 7c78697a796a7c30575e89c5c55f023a53d923ed
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:37 2009 +0900
+
+    aufs public header file
+    
+    initial commit
+    public header file
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 83e17c9c35b135e9acaffabc78f299e6aacc736a
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Feb 19 01:26:36 2009 +0900
+
+    aufs documents
+    
+    initial commit
+    design and manual
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
