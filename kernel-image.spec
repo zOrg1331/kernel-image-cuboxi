@@ -190,8 +190,9 @@ install -Dp -m644 .config %buildroot/boot/config-$KernelVer
 
 make modules_install INSTALL_MOD_PATH=%buildroot INSTALL_FW_PATH=%buildroot/lib/firmware/$KernelVer
 
-install -d %buildroot%kbuild_dir
+mkdir -p %buildroot%kbuild_dir/arch/x86
 cp -a include %buildroot%kbuild_dir/include
+cp -a arch/x86/include %buildroot%kbuild_dir/arch/x86
 
 # remove asm-* include files for other architectures
 pushd %buildroot%kbuild_dir/include
