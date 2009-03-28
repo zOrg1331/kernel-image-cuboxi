@@ -1,3 +1,63 @@
+commit 0288e1ef929bb5211347a96324ae1945054d37b1
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Mar 29 01:07:45 2009 +0900
+
+    aufs: tiny: modify a message string
+    
+    There still left a problem of lookup without locking the parent dir in
+    2.6.29, which is the commit 14f7dd632011bb89c035722edd6ea0d90ca6b078
+    "[PATCH] Copy XFS readdir hack into nfsd code".
+    See the thread begin with
+    <http://marc.info/?l=linux-kernel&m=123747448209411&w=2>
+    in detail.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit c32bf1947381120410d25a75f04c531dbf3cdb7f
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Mar 27 02:19:13 2009 +0900
+
+    aufs: support fmode_t in linux-2.6.28
+    
+    Faking cast operation by union in au_store_oflag().
+    While it is not beautiful, I don't like cast more.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit a46e40c4b90ac7545c931b377bb7f62eb083e00c
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Mar 26 23:41:53 2009 +0900
+
+    aufs: fix typo in CONFIG_AUFS_EXPORT
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 917d4775e384756b2223d7c78c3ae153cc2364eb
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Mar 25 23:36:09 2009 +0900
+
+    aufs: bugfix: typo in a declaration
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit d11b13a4369b3934b9f2d3089602b321a02c55f8
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Mar 25 23:27:11 2009 +0900
+
+    aufs: support linux-2.6.29
+    
+    Append the struct cred* paramter to dentry_open().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit e3d592b19c2aac6c95d580545987bfd870eaacdf
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Mar 25 22:53:40 2009 +0900
+
+    aufs: fix missing delcaration
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 38d7dba73c4b1d5e6be64d4b719bbca0c362b2bd
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Wed Mar 25 22:42:30 2009 +0900
