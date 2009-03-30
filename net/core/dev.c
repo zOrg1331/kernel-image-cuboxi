@@ -2199,6 +2199,9 @@ int netif_receive_skb(struct sk_buff *skb)
 	__be16 type;
 	struct ve_struct *old_ve;
 
+	if (skb->vlan_tci && vlan_hwaccel_do_receive(skb))
+		return NET_RX_SUCCESS;
+
 	/* if we've gotten here through NAPI, check netpoll */
 	if (netpoll_receive_skb(skb))
 		return NET_RX_DROP;

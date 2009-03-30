@@ -244,10 +244,8 @@ void lru_add_drain(void)
 	drain_cpu_pagevecs(get_cpu());
 	put_cpu();
 }
-
 EXPORT_SYMBOL(lru_add_drain);
 
-#ifdef CONFIG_NUMA
 static void lru_add_drain_per_cpu(struct work_struct *dummy)
 {
 	lru_add_drain();
@@ -260,18 +258,6 @@ int lru_add_drain_all(void)
 {
 	return schedule_on_each_cpu(lru_add_drain_per_cpu);
 }
-
-#else
-
-/*
- * Returns 0 for success
- */
-int lru_add_drain_all(void)
-{
-	lru_add_drain();
-	return 0;
-}
-#endif
 
 /*
  * Batched page_cache_release().  Decrement the reference count on all the

@@ -205,6 +205,7 @@ static int __pid_ns_attach_task(struct pid_namespace *ns,
 	set_task_session(tsk, pid_nr(pid));
 	reattach_pid(tsk, PIDTYPE_PGID, pid);
 	tsk->signal->__pgrp = pid_nr(pid);
+	tsk->signal->leader_pid = pid;
 	current->signal->tty_old_pgrp = NULL;
 
 	reattach_pid(tsk, PIDTYPE_PID, pid);
@@ -245,13 +246,10 @@ EXPORT_SYMBOL_GPL(pid_ns_attach_init);
 #ifdef CONFIG_VE
 static noinline void show_lost_task(struct task_struct *p)
 {
-	char buf[512] = "N/A";
-#ifdef CONFIG_PROC_FS
-	extern char * task_sig(struct task_struct *p, char *buffer);
-
-	task_sig(p, buf);
-#endif
-	printk("Lost task: %d/%s/%p\nSignals:%s\n", p->pid, p->comm, p, buf);
+	printk("Lost task: %d/%s/%p blocked: %lx pending: %lx\n",
+			p->pid, p->comm, p,
+			p->blocked.sig[0],
+			p->pending.signal.sig[0]);
 }
 
 static void zap_ve_processes(struct ve_struct *env)
@@ -338,10 +336,8 @@ void zap_pid_ns_processes(struct pid_namespace *pid_ns)
 	acct_exit_ns(pid_ns);
 
 #ifdef CONFIG_VE
-	if(get_exec_env()!=&ve0)
+	if (get_exec_env()->ve_ns->pid_ns == pid_ns)
 		zap_ve_processes(get_exec_env());
-	else
-		printk("Error: trying to zap ve0\n");
 #endif
 	return;
 }

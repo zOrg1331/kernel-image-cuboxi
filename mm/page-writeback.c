@@ -964,10 +964,17 @@ continue_unlock:
 					goto continue_unlock;
 			}
 
+			/*
+			 * Must do it before clear_page_dirty_for_io
+			 * since it will clear the context
+			 */
 			old_ub = bc_io_switch_context(page);
+
 			BUG_ON(PageWriteback(page));
-			if (!clear_page_dirty_for_io(page))
+			if (!clear_page_dirty_for_io(page)) {
+				bc_io_restore_context(old_ub);
 				goto continue_unlock;
+			}
 
 			ret = (*writepage)(page, wbc, data);
 			bc_io_restore_context(old_ub);
@@ -991,13 +998,25 @@ continue_unlock:
 				}
  			}
 
-			if (wbc->sync_mode == WB_SYNC_NONE) {
+			if (wbc->nr_to_write > 0) {
 				wbc->nr_to_write--;
-				if (wbc->nr_to_write <= 0) {
+				if (wbc->nr_to_write == 0 &&
+				    wbc->sync_mode == WB_SYNC_NONE) {
+					/*
+					 * We stop writing back only if we are
+					 * not doing integrity sync. In case of
+					 * integrity sync we have to keep going
+					 * because someone may be concurrently
+					 * dirtying pages, and we might have
+					 * synced a lot of newly appeared dirty
+					 * pages, but have not synced all of the
+					 * old dirty pages.
+					 */
 					done = 1;
 					break;
 				}
 			}
+
 			if (wbc->nonblocking && bdi_write_congested(bdi)) {
 				wbc->encountered_congestion = 1;
 				done = 1;
@@ -1007,7 +1026,7 @@ continue_unlock:
 		pagevec_release(&pvec);
 		cond_resched();
 	}
-	if (!cycled) {
+	if (!cycled && !done) {
 		/*
 		 * range_cyclic:
 		 * We hit the last page and there is more work to be done: wrap

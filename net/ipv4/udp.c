@@ -108,8 +108,10 @@
  *	Snmp MIB for the UDP layer
  */
 
+#ifndef CONFIG_IPV6
 DEFINE_SNMP_STAT(struct udp_mib, udp_stats_in6) __read_mostly;
 EXPORT_SYMBOL(udp_stats_in6);
+#endif
 
 struct hlist_head udp_hash[UDP_HTABLE_SIZE];
 DEFINE_RWLOCK(udp_hash_lock);
@@ -959,9 +961,11 @@ static int __udp_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
 
 	if ((rc = sock_queue_rcv_skb(sk, skb)) < 0) {
 		/* Note that an ENOMEM error is charged twice */
-		if (rc == -ENOMEM)
+		if (rc == -ENOMEM) {
 			UDP_INC_STATS_BH(sock_net(sk), UDP_MIB_RCVBUFERRORS,
 					 is_udplite);
+			atomic_inc(&sk->sk_drops);
+		}
 		goto drop;
 	}
 
@@ -1172,7 +1176,7 @@ int __udp4_lib_rcv(struct sk_buff *skb, struct hlist_head udptable[],
 		   int proto)
 {
 	struct sock *sk;
-	struct udphdr *uh = udp_hdr(skb);
+	struct udphdr *uh;
 	unsigned short ulen;
 	struct rtable *rt = (struct rtable*)skb->dst;
 	__be32 saddr = ip_hdr(skb)->saddr;
@@ -1185,6 +1189,7 @@ int __udp4_lib_rcv(struct sk_buff *skb, struct hlist_head udptable[],
 	if (!pskb_may_pull(skb, sizeof(struct udphdr)))
 		goto drop;		/* No space for header. */
 
+	uh   = udp_hdr(skb);
 	ulen = ntohs(uh->len);
 	if (ulen > skb->len)
 		goto short_packet;

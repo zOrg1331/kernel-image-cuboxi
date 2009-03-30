@@ -263,14 +263,6 @@ int ipc_addid(struct ipc_ids* ids, struct kern_ipc_perm* new, int size, int reqi
 {
 	int id, err;
 
-	if (reqid >= 0) {
-		id = reqid % SEQ_MULTIPLIER;
-		err = idr_get_new_above(&ids->ipcs_idr, new, id, &id);
-		if (err || id != (reqid % SEQ_MULTIPLIER))
-			return -EEXIST;
-		goto found;
-	}
-
 	if (size > IPCMNI)
 		size = IPCMNI;
 
@@ -282,14 +274,22 @@ int ipc_addid(struct ipc_ids* ids, struct kern_ipc_perm* new, int size, int reqi
 	rcu_read_lock();
 	spin_lock(&new->lock);
 
-	err = idr_get_new(&ids->ipcs_idr, new, &id);
+	if (reqid >= 0) {
+		id = reqid % SEQ_MULTIPLIER;
+		err = idr_get_new_above(&ids->ipcs_idr, new, id, &id);
+		if (!err && id != (reqid % SEQ_MULTIPLIER)) {
+			idr_remove(&ids->ipcs_idr, id);
+			err = -EEXIST;
+		}
+	} else
+		err = idr_get_new(&ids->ipcs_idr, new, &id);
+
 	if (err) {
 		spin_unlock(&new->lock);
 		rcu_read_unlock();
 		return err;
 	}
 
-found:
 	ids->in_use++;
 
 	new->cuid = new->uid = current->euid;

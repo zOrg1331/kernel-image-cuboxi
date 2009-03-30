@@ -1104,6 +1104,7 @@ int vz_security_family_check(int family)
 	case PF_UNIX:
 	case PF_INET:
 	case PF_INET6:
+	case PF_PPPOX:
 		break;
 	default:
 		return -EAFNOSUPPORT;
