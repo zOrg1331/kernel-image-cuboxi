@@ -2068,7 +2068,8 @@ cfq_set_request(struct request_queue *q, struct request *rq, gfp_t gfp_mask)
 	unsigned long flags;
 	struct ub_iopriv *iopriv;
 	struct cfq_bc_data *cfq_bc = NULL;
-
+	struct user_beancounter *bc; 
+	int alloced=0;
 	might_sleep_if(gfp_mask & __GFP_WAIT);
 
 	cic = cfq_get_io_context(cfqd, gfp_mask);
@@ -2084,7 +2085,7 @@ cfq_set_request(struct request_queue *q, struct request *rq, gfp_t gfp_mask)
 	cfqq = cic_to_cfqq(cic, is_sync);
 	if (!cfqq) {
 		cfqq = cfq_get_queue(cfqd, is_sync, cic->ioc, gfp_mask);
-
+		alloced=1;
 		if (!cfqq)
 			goto queue_fail;
 
@@ -2099,7 +2100,13 @@ cfq_set_request(struct request_queue *q, struct request *rq, gfp_t gfp_mask)
 
 	rq->elevator_private = cic;
 	rq->elevator_private2 = cfqq;
-	get_beancounter(ub_by_iopriv(cfqq->cfq_bc->ub_iopriv));
+	bc=ub_by_iopriv(cfqq->cfq_bc->ub_iopriv);
+	if((((int)bc>>16)&0xff)==0x6b)
+	{
+		printk("ERROR: bc is 0x%x(alloced=%i)\n",bc,alloced);
+		BUG();
+	}
+	get_beancounter(bc);
 	return 0;
 
 queue_fail:
