@@ -1745,12 +1745,29 @@ static void finish_resume_report(struct utrace_report *report,
 			set_tsk_thread_flag(task, TIF_SIGPENDING);
 		break;
 
-	case UTRACE_SINGLESTEP:
-		user_enable_single_step(task);
-		break;
-
 	case UTRACE_BLOCKSTEP:
-		user_enable_block_step(task);
+		if (likely(arch_has_block_step())) {
+			user_enable_block_step(task);
+			break;
+		}
+
+		/*
+		 * This means some callback is to blame for failing
+		 * to check arch_has_block_step() itself.  Warn and
+		 * then fall through to treat it as SINGLESTEP.
+		 */
+		WARN_ON(1);
+
+	case UTRACE_SINGLESTEP:
+		if (likely(arch_has_single_step()))
+			user_enable_single_step(task);
+		else
+			/*
+			 * This means some callback is to blame for failing
+			 * to check arch_has_single_step() itself.  Spew
+			 * about it so the loser will fix his module.
+			 */
+			WARN_ON(1);
 		break;
 
 	case UTRACE_REPORT:
