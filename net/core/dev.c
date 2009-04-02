@@ -914,12 +914,10 @@ int dev_change_name(struct net_device *dev, char *newname)
 		strlcpy(dev->name, newname, IFNAMSIZ);
 
 rollback:
-	if (net == get_exec_env()->ve_netns) {
-		err = device_rename(&dev->dev, dev->name);
-		if (err) {
-			memcpy(dev->name, oldname, IFNAMSIZ);
-			return err;
-		}
+	err = device_rename(&dev->dev, dev->name);
+	if (err) {
+		memcpy(dev->name, oldname, IFNAMSIZ);
+		return err;
 	}
 
 	write_lock_bh(&dev_base_lock);
@@ -4517,10 +4515,6 @@ int __dev_change_net_namespace(struct net_device *dev, struct net *net, const ch
 	 */
 	dev_addr_discard(dev);
 
-	set_exec_env(src_ve);
-	netdev_unregister_kobject(dev);
-	set_exec_env(cur_ve);
-
 	/* Actually switch the network namespace */
 	dev_net_set(dev, net);
 
@@ -4537,6 +4531,8 @@ int __dev_change_net_namespace(struct net_device *dev, struct net *net, const ch
 	}
 
 	/* Fixup kobjects */
+	set_exec_env(src_ve);
+	netdev_unregister_kobject(dev);
 	set_exec_env(dst_ve);
 	err = netdev_register_kobject(dev);
 	set_exec_env(cur_ve);

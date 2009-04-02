@@ -468,10 +468,6 @@ void netdev_unregister_kobject(struct net_device * net)
 	struct device *dev = &(net->dev);
 
 	kobject_get(&dev->kobj);
-
-	if (dev_net(net) != get_exec_env()->ve_netns)
-		return;
-
 	device_del(dev);
 }
 
@@ -496,9 +492,6 @@ int netdev_register_kobject(struct net_device *net)
 		*groups++ = &wireless_group;
 #endif
 #endif /* CONFIG_SYSFS */
-
-	if (dev_net(net) != get_exec_env()->ve_netns)
-		return 0;
 
 	return device_add(dev);
 }
