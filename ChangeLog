@@ -1,3 +1,132 @@
+commit 2baf9179aefd03e28105bd7997233788847991da
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Apr 2 23:51:12 2009 +0900
+
+    aufs: tiny: export vfsmount_lock for CONFIG_AUFS_EXPORT only
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 0121223ea7fbe7a7c96b9f7d372e498c6bca71c2
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Apr 2 21:36:57 2009 +0900
+
+    aufs: tiny: debugfs cannot be an aufs branch
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 234788bba81259687324d9df9cf0f8f9500c5c44
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Apr 2 17:43:52 2009 +0900
+
+    aufs: tiny: remove the macro Au_LOFF_MAX
+    
+    Replace the macro Au_LOFF_MAX by a constant au_loff_max.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 755689e786e51d3e69dd9a55401e5bf0fe9f1b0a
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Apr 1 00:25:40 2009 +0900
+
+    aufs: ramfs branch
+    
+    Aufs2 stopped supproting initramfs (ramfs/rootfs) branch since they are
+    unusable after switch_root. But user may not execute switch_root.
+    To support such case, aufs2 supports ramfs explicitly.
+    In order to prevent user from wrong usage, new configuration is added.
+    
+    - documentations.
+    - new configuration AUFS_BR_RAMFS.
+    - allow ramfs in au_test_fs_unsuppoted() and au_test_fs_bad_xino().
+    - truncate xino files on ramfs automatically as tmpfs.
+    - ramfs is very simple and does not check the link count in
+      link(2). Since it is critical for aufs whiteout, set the limit
+      individually.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit a83852b2365880d07dcd128223d14fc74b1f40bd
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Apr 1 12:36:51 2009 +0900
+
+    aufs: export devcgroup_inode_permission for modules
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 19c777af2bef18f1cb9b134fed5337e869230622
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Mar 31 01:13:20 2009 +0900
+
+    aufs: tiny: constantify struct file_operations
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit ecb8ebcd9d12bb16bd963eb927583ec10dbbf37c
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Mar 31 00:38:05 2009 +0900
+
+    aufs: tiny: simplify 'if' condition
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 180301f716ab38eb60722fa68a830e70c1819db8
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Mar 31 00:37:20 2009 +0900
+
+    aufs: tiny: f_op is always set
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit be7c39b29b850489f3eb2ea2d977ec51d13126a4
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Mar 30 20:57:30 2009 +0900
+
+    aufs: tiny: workaround to convert fmode_t
+    
+    New functions vfsub_fmode_to_uint() and vfsub_uint_to_fmode() converts
+    uint <--> fmode_t.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit d6543b424cf42688b11f090d9b8f3ab40d8bbd27
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Mar 30 15:25:15 2009 +0900
+
+    aufs: tiny: remove fake-cast by union
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 4542b753320f3eeb4a379d3df5a676bc693ed39a
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Mar 30 15:04:51 2009 +0900
+
+    aufs: tiny: suppress a warning in LP64
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 29774cd800a687ae1a53e290f42d750b4390d34d
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Mar 30 13:53:33 2009 +0900
+
+    aufs: support linux-2.6.30-rcN, f_flags
+    
+    Protect file->f_flags by a new spinlock file->f_f_lock.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 200bdb23a671cff6da1a989c462ca75821c72ee6
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Mar 30 13:39:23 2009 +0900
+
+    aufs: bugfix: stop modifying f_flags at changing branch permission
+    
+    When a user changes the branch permission from rw to ro,
+    au_br_mod_files_ro() used to drop the flags for writing from f_flags. It
+    might not be good and this patch stops it. But dropping FMODE_WRITE is
+    left of course.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 0288e1ef929bb5211347a96324ae1945054d37b1
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Sun Mar 29 01:07:45 2009 +0900

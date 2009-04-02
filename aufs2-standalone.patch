@@ -1,10 +1,10 @@
 aufs2 standalone patch for linux-2.6.
 
 diff --git a/fs/Kconfig b/fs/Kconfig
-index 93945dd..75156dd 100644
+index cef8b18..e3e1bab 100644
 --- a/fs/Kconfig
 +++ b/fs/Kconfig
-@@ -222,6 +222,7 @@ source "fs/qnx4/Kconfig"
+@@ -168,6 +168,7 @@ source "fs/qnx4/Kconfig"
  source "fs/romfs/Kconfig"
  source "fs/sysv/Kconfig"
  source "fs/ufs/Kconfig"
@@ -13,19 +13,19 @@ index 93945dd..75156dd 100644
  endif # MISC_FILESYSTEMS
  
 diff --git a/fs/Makefile b/fs/Makefile
-index dc20db3..a4e9a65 100644
+index 6e82a30..201a89f 100644
 --- a/fs/Makefile
 +++ b/fs/Makefile
-@@ -124,3 +124,4 @@ obj-$(CONFIG_DEBUG_FS)		+= debugfs/
+@@ -120,3 +120,4 @@ obj-$(CONFIG_DEBUG_FS)		+= debugfs/
  obj-$(CONFIG_OCFS2_FS)		+= ocfs2/
  obj-$(CONFIG_BTRFS_FS)		+= btrfs/
  obj-$(CONFIG_GFS2_FS)           += gfs2/
 +obj-$(CONFIG_AUFS_FS)           += aufs/
 diff --git a/fs/namei.c b/fs/namei.c
-index bbc15c2..e54d1b2 100644
+index d040ce1..a60f9e9 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
-@@ -335,6 +335,7 @@ int deny_write_access(struct file * file)
+@@ -336,6 +336,7 @@ int deny_write_access(struct file * file)
  
  	return 0;
  }
@@ -33,7 +33,7 @@ index bbc15c2..e54d1b2 100644
  
  /**
   * path_get - get a reference to a path
-@@ -1196,7 +1197,7 @@ out:
+@@ -1199,7 +1200,7 @@ out:
   * needs parent already locked. Doesn't follow mounts.
   * SMP-safe.
   */
@@ -42,7 +42,7 @@ index bbc15c2..e54d1b2 100644
  {
  	int err;
  
-@@ -1205,8 +1206,9 @@ static struct dentry *lookup_hash(struct nameidata *nd)
+@@ -1208,8 +1209,9 @@ static struct dentry *lookup_hash(struct nameidata *nd)
  		return ERR_PTR(err);
  	return __lookup_hash(&nd->last, nd->path.dentry, nd);
  }
@@ -53,7 +53,7 @@ index bbc15c2..e54d1b2 100644
  		struct dentry *base, int len)
  {
  	unsigned long hash;
-@@ -1227,6 +1229,7 @@ static int __lookup_one_len(const char *name, struct qstr *this,
+@@ -1230,6 +1232,7 @@ static int __lookup_one_len(const char *name, struct qstr *this,
  	this->hash = end_name_hash(hash);
  	return 0;
  }
@@ -62,19 +62,21 @@ index bbc15c2..e54d1b2 100644
  /**
   * lookup_one_len - filesystem helper to lookup single pathname component
 diff --git a/fs/namespace.c b/fs/namespace.c
-index 06f8e63..f71793e 100644
+index 0a42e0e..3b3ce3b 100644
 --- a/fs/namespace.c
 +++ b/fs/namespace.c
-@@ -37,6 +37,7 @@
+@@ -37,6 +37,9 @@
  
  /* spinlock for vfsmount related operations, inplace of dcache_lock */
  __cacheline_aligned_in_smp DEFINE_SPINLOCK(vfsmount_lock);
++#ifdef CONFIG_AUFS_EXPORT
 +EXPORT_SYMBOL(vfsmount_lock);
++#endif
  
  static int event;
  static DEFINE_IDA(mnt_id_ida);
 diff --git a/fs/open.c b/fs/open.c
-index a3a78ce..d2f61c7 100644
+index 75b6167..1e06033 100644
 --- a/fs/open.c
 +++ b/fs/open.c
 @@ -220,6 +220,7 @@ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
@@ -127,7 +129,7 @@ index 4ed0ba4..57cce07 100644
  /**
   * splice_direct_to_actor - splices data directly between two non-pipes
 diff --git a/fs/super.c b/fs/super.c
-index 6ce5014..af66b69 100644
+index 2ba4815..a15d48a 100644
 --- a/fs/super.c
 +++ b/fs/super.c
 @@ -287,6 +287,7 @@ int fsync_super(struct super_block *sb)
@@ -139,7 +141,7 @@ index 6ce5014..af66b69 100644
  /**
   *	generic_shutdown_super	-	common helper for ->kill_sb()
 diff --git a/include/linux/Kbuild b/include/linux/Kbuild
-index 106c3ba..d0c7262 100644
+index e9581fd..91ebd1b 100644
 --- a/include/linux/Kbuild
 +++ b/include/linux/Kbuild
 @@ -34,6 +34,7 @@ header-y += atmppp.h
@@ -192,8 +194,20 @@ index 528dcb9..5123bc6 100644
 +			 unsigned int flags);
 +
  #endif
+diff --git a/security/device_cgroup.c b/security/device_cgroup.c
+index 3aacd0f..b900dc3 100644
+--- a/security/device_cgroup.c
++++ b/security/device_cgroup.c
+@@ -507,6 +507,7 @@ acc_check:
+ 
+ 	return -EPERM;
+ }
++EXPORT_SYMBOL(devcgroup_inode_permission);
+ 
+ int devcgroup_inode_mknod(int mode, dev_t dev)
+ {
 diff --git a/security/security.c b/security/security.c
-index c3586c0..f6a60c4 100644
+index 206e538..55bbf3d 100644
 --- a/security/security.c
 +++ b/security/security.c
 @@ -506,6 +506,7 @@ int security_inode_readlink(struct dentry *dentry)

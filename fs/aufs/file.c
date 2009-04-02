@@ -22,24 +22,17 @@
  */
 void au_store_oflag(struct nameidata *nd, struct inode *inode)
 {
-	union {
-		fmode_t fm;
-		unsigned int u;
-	} u = {
-		.fm = FMODE_EXEC
-	};
-
-	BUILD_BUG_ON(sizeof(u.fm) != sizeof(u.u));
-
 	if (nd
 	    /* && !(nd->flags & LOOKUP_CONTINUE) */
 	    && (nd->flags & LOOKUP_OPEN)
-	    && (nd->intent.open.flags & u.u)
+	    && (nd->intent.open.flags & vfsub_fmode_to_uint(FMODE_EXEC))
 	    && inode
-	    && S_ISREG(inode->i_mode))
-		nd->intent.open.file->private_data
-			= (void *)nd->intent.open.flags;
-	/* smp_mb(); */
+	    && S_ISREG(inode->i_mode)) {
+		/* suppress a warning in lp64 */
+		unsigned long flags = nd->intent.open.flags;
+		nd->intent.open.file->private_data = (void *)flags;
+		/* smp_mb(); */
+	}
 }
 
 /* drop flags for writing */
@@ -108,6 +101,7 @@ struct file *au_h_open(struct dentry *dentry, aufs_bindex_t bindex, int flags,
 int au_do_open(struct file *file, int (*open)(struct file *file, int flags))
 {
 	int err;
+	unsigned int flags;
 	struct dentry *dentry;
 	struct super_block *sb;
 
@@ -119,7 +113,10 @@ int au_do_open(struct file *file, int (*open)(struct file *file, int flags))
 		goto out;
 
 	di_read_lock_child(dentry, AuLock_IR);
-	err = open(file, file->f_flags);
+	spin_lock(&file->f_lock);
+	flags = file->f_flags;
+	spin_unlock(&file->f_lock);
+	err = open(file, flags);
 	di_read_unlock(dentry, AuLock_IR);
 
 	fi_write_unlock(file);
@@ -133,6 +130,7 @@ int au_do_open(struct file *file, int (*open)(struct file *file, int flags))
 int au_reopen_nondir(struct file *file)
 {
 	int err;
+	unsigned int flags;
 	aufs_bindex_t bstart, bindex, bend;
 	struct dentry *dentry;
 	struct file *h_file, *h_file_tmp;
@@ -151,7 +149,10 @@ int au_reopen_nondir(struct file *file)
 	AuDebugOn(au_fbstart(file) < bstart
 		  || au_fi(file)->fi_hfile[0 + bstart].hf_file);
 
-	h_file = au_h_open(dentry, bstart, file->f_flags & ~O_TRUNC, file);
+	spin_lock(&file->f_lock);
+	flags = file->f_flags & ~O_TRUNC;
+	spin_unlock(&file->f_lock);
+	h_file = au_h_open(dentry, bstart, flags, file);
 	err = PTR_ERR(h_file);
 	if (IS_ERR(h_file))
 		goto out; /* todo: close all? */

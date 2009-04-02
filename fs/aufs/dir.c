@@ -54,7 +54,9 @@ static int reopen_dir(struct file *file)
 		au_set_h_fptr(file, bindex, NULL);
 	au_set_fbend(file, btail);
 
+	spin_lock(&file->f_lock);
 	flags = file->f_flags;
+	spin_unlock(&file->f_lock);
 	for (bindex = bstart; bindex <= btail; bindex++) {
 		h_dentry = au_h_dptr(dentry, bindex);
 		if (!h_dentry)
@@ -167,7 +169,6 @@ static int au_do_fsync_dir_no_file(struct dentry *dentry, int datasync)
 	for (bindex = au_dbstart(dentry); !err && bindex <= bend; bindex++) {
 		struct path h_path;
 		struct inode *h_inode;
-		struct file_operations *fop;
 
 		if (au_test_ro(sb, bindex, inode))
 			continue;
@@ -183,10 +184,11 @@ static int au_do_fsync_dir_no_file(struct dentry *dentry, int datasync)
 		/* todo: inotiry fired? */
 		h_path.mnt = au_sbr_mnt(sb, bindex);
 		mutex_lock(&h_inode->i_mutex);
-		fop = (void *)h_inode->i_fop;
 		err = filemap_fdatawrite(h_inode->i_mapping);
-		if (!err && fop && fop->fsync)
-			err = fop->fsync(NULL, h_path.dentry, datasync);
+		AuDebugOn(!h_inode->i_fop);
+		if (!err && h_inode->i_fop->fsync)
+			err = h_inode->i_fop->fsync(NULL, h_path.dentry,
+						    datasync);
 		if (!err)
 			err = filemap_fdatawrite(h_inode->i_mapping);
 		if (!err)
@@ -502,7 +504,7 @@ int au_test_empty(struct dentry *dentry, struct au_nhash *whlist)
 
 /* ---------------------------------------------------------------------- */
 
-struct file_operations aufs_dir_fop = {
+const struct file_operations aufs_dir_fop = {
 	.read		= generic_read_dir,
 	.readdir	= aufs_readdir,
 	.unlocked_ioctl	= aufs_ioctl_dir,

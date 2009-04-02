@@ -149,9 +149,8 @@ int vfsub_create(struct inode *dir, struct path *path, int mode)
 
 		memset(&h_nd, 0, sizeof(h_nd));
 		h_nd.flags = LOOKUP_CREATE;
-		/* cf. fs/namei.c:open_to_namei_flags() */
-		h_nd.intent.open.flags = O_CREAT | O_RDONLY;
-		h_nd.intent.open.flags++;
+		h_nd.intent.open.flags = O_CREAT
+			| vfsub_fmode_to_uint(FMODE_READ);
 		h_nd.intent.open.create_mode = mode;
 		h_nd.path.dentry = path->dentry->d_parent;
 		h_nd.path.mnt = path->mnt;
@@ -238,12 +237,32 @@ int vfsub_mknod(struct inode *dir, struct path *path, int mode, dev_t dev)
 	return err;
 }
 
+/* ramfs doesn't check i_nlink in link(2), aufs sets a limit for it */
+static int au_test_nlink(struct inode *inode)
+{
+#ifndef CONFIG_AUFS_BR_RAMFS
+	return 0;
+#else
+	/* borrowing the upper limit from EXT2_LINK_MAX */
+	const unsigned int ramfs_link_max = 32000;
+
+	if (!au_test_ramfs(inode->i_sb)
+	    || inode->i_nlink < ramfs_link_max)
+		return 0;
+	return -EMLINK;
+#endif
+}
+
 int vfsub_link(struct dentry *src_dentry, struct inode *dir, struct path *path)
 {
 	int err;
 	struct dentry *d;
 
 	IMustLock(dir);
+
+	err = au_test_nlink(src_dentry->d_inode);
+	if (unlikely(err))
+		return err;
 
 	d = path->dentry;
 	path->dentry = d->d_parent;
@@ -473,12 +492,6 @@ int vfsub_trunc(struct path *h_path, loff_t length, unsigned int attr,
 {
 	int err;
 	struct inode *h_inode;
-	union {
-		unsigned int u;
-		fmode_t m;
-	} u;
-
-	BUILD_BUG_ON(sizeof(u.m) != sizeof(u.u));
 
 	h_inode = h_path->dentry->d_inode;
 	if (!h_file) {
@@ -491,8 +504,7 @@ int vfsub_trunc(struct path *h_path, loff_t length, unsigned int attr,
 		err = get_write_access(h_inode);
 		if (err)
 			goto out_mnt;
-		u.m = FMODE_WRITE;
-		err = break_lease(h_inode, u.u);
+		err = break_lease(h_inode, vfsub_fmode_to_uint(FMODE_WRITE));
 		if (err)
 			goto out_inode;
 	}
