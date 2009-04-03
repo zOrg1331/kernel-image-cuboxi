@@ -1,3 +1,21 @@
+commit 7517ad361f50e4955e92a7c24856d13598d50a80
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sat Apr 4 01:46:25 2009 +0900
+
+    aufs: export security_path functions
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit b55a0733f04437216fcc09f32b1496d485f99a83
+Author: Ryousei Takano <ryousei@psptest00.localdomain>
+Date:   Fri Apr 3 17:44:19 2009 +0900
+
+    Fix typos in aufs man page
+    
+    This patch fixes typos in aufs man page.
+    
+    Signed-off-by: Ryousei Takano <takano-ryousei@aist.go.jp>
+
 commit 2baf9179aefd03e28105bd7997233788847991da
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Thu Apr 2 23:51:12 2009 +0900
