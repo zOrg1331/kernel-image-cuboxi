@@ -2,7 +2,7 @@ VERSION = 2
 PATCHLEVEL = 6
 SUBLEVEL = 27
 EXTRAVERSION = .21
-VZVERSION = aivazovsky
+VZVERSION = briullov
 NAME = Trembling Tortoise
 
 # *DOCUMENTATION*
