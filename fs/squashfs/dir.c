@@ -177,6 +177,9 @@ static int squashfs_readdir(struct file *file, void *dirent, filldir_t filldir)
 			goto failed_read;
 
 		while (dir_count--) {
+			struct qstr qstr;
+			struct dentry *d;
+
 			/*
 			 * Read directory entry.
 			 */
@@ -206,21 +209,28 @@ static int squashfs_readdir(struct file *file, void *dirent, filldir_t filldir)
 				((short) le16_to_cpu(dire->inode_number));
 			type = le16_to_cpu(dire->type);
 
-			TRACE("Calling filldir(%p, %s, %d, %lld, %x:%x, %d, %d)"
-					"\n", dirent, dire->name, size,
-					file->f_pos,
-					le32_to_cpu(dirh.start_block),
-					le16_to_cpu(dire->offset),
-					inode_number,
-					squashfs_filetype_table[type]);
+			qstr.len = size;
+			qstr.name = dire->name;
+			d = d_hash_and_lookup(file->f_path.dentry, &qstr);
 
-			if (filldir(dirent, dire->name, size, file->f_pos,
-					inode_number,
-					squashfs_filetype_table[type]) < 0) {
-				TRACE("Filldir returned less than 0\n");
-				goto finish;
+			if (!d || (d->d_inode)) {
+				TRACE("Calling filldir(%p, %s, %d, %lld, %x:%x,"
+				      "%d, %d)\n", dirent, dire->name, size,
+				      file->f_pos,
+				      le32_to_cpu(dirh.start_block),
+				      le16_to_cpu(dire->offset),
+				      inode_number,
+				      squashfs_filetype_table[type]);
+
+				if (filldir(dirent, dire->name, size,
+					    file->f_pos, inode_number,
+					    squashfs_filetype_table[type]) < 0) {
+					TRACE("Filldir returned less than 0\n");
+					goto finish;
+				}
 			}
 
+			dput(d);
 			file->f_pos = length;
 		}
 	}

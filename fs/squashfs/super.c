@@ -400,6 +400,48 @@ static struct dentry *squashfs_mount(struct file_system_type *fs_type,
 	return mount_bdev(fs_type, flags, dev_name, data, squashfs_fill_super);
 }
 
+/* Something like d_genocide(sb->s_root) */
+void squashfs_shadow_genocide(struct dentry *root)
+{
+	struct dentry *this_parent = root;
+	struct list_head *next;
+
+	spin_lock(&this_parent->d_lock);
+repeat:
+	next = this_parent->d_subdirs.next;
+resume:
+	while (next != &this_parent->d_subdirs) {
+		struct list_head *tmp = next;
+		struct dentry *dentry = list_entry(tmp, struct dentry, d_u.d_child);
+		next = tmp->next;
+		if (d_unhashed(dentry))
+			continue;
+		if (!list_empty(&dentry->d_subdirs)) {
+			this_parent = dentry;
+			goto repeat;
+		}
+		if (dentry->d_fsdata)
+			dentry->d_count--;
+	}
+	if (this_parent != root) {
+		next = this_parent->d_u.d_child.next;
+		if (this_parent->d_fsdata)
+			this_parent->d_count--;
+		this_parent = this_parent->d_parent;
+		goto resume;
+	}
+	spin_lock(&this_parent->d_lock);
+}
+
+void squashfs_kill_super(struct super_block *sb)
+{
+	if (sb->s_root) {
+		shrink_dcache_parent(sb->s_root);
+		squashfs_shadow_genocide(sb->s_root);
+	}
+
+	kill_block_super(sb);
+}
 
 static struct kmem_cache *squashfs_inode_cachep;
 
@@ -480,7 +522,7 @@ static struct file_system_type squashfs_fs_type = {
 	.owner = THIS_MODULE,
 	.name = "squashfs",
 	.mount = squashfs_mount,
-	.kill_sb = kill_block_super,
+	.kill_sb = squashfs_kill_super,
 	.fs_flags = FS_REQUIRES_DEV
 };
 
@@ -489,7 +531,8 @@ static const struct super_operations squashfs_super_ops = {
 	.destroy_inode = squashfs_destroy_inode,
 	.statfs = squashfs_statfs,
 	.put_super = squashfs_put_super,
-	.remount_fs = squashfs_remount
+	.remount_fs = squashfs_remount,
+	.drop_inode = generic_delete_inode,
 };
 
 module_init(init_squashfs_fs);

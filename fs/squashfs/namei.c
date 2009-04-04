@@ -240,9 +240,28 @@ failed:
 	return ERR_PTR(err);
 }
 
+static int squashfs_unlink(struct inode *dir, struct dentry *dentry)
+{
+	struct inode *inode = dentry->d_inode;
+	struct dentry *new;
+
+	inode->i_ctime = dir->i_ctime = dir->i_mtime = CURRENT_TIME;
+	drop_nlink(inode);
+	d_drop(dentry);
+
+	new = d_alloc(dentry->d_parent, &dentry->d_name);
+	d_add(new, NULL);
+	/*
+	 * Don't pin the dentry in memory, since we already got a reference
+	 * from d_alloc()
+	 */
+	new->d_fsdata = (void *) 0xdeadbeef;
+	return 0;
+}
 
 const struct inode_operations squashfs_dir_inode_ops = {
 	.lookup = squashfs_lookup,
+	.unlink = squashfs_unlink,
 	.getxattr = generic_getxattr,
 	.listxattr = squashfs_listxattr
 };
