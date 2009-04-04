@@ -41,6 +41,7 @@
 #include <linux/fs.h>
 #include <linux/vfs.h>
 #include <linux/xattr.h>
+#include <linux/ramfs.h>
 
 #include "squashfs_fs.h"
 #include "squashfs_fs_sb.h"
@@ -73,7 +74,7 @@ struct inode *get_squashfs_inode(struct super_block *sb, mode_t mode,
 	inode->i_private = (void *) 0xdeadbeef;
 
 	if (S_ISREG(mode)) {
-		inode->i_fop = &generic_ro_fops;
+		inode->i_fop = &ramfs_file_operations;
 		inode->i_data.a_ops = &squashfs_aops;
 	} else if (S_ISDIR(mode)) {
 		inode->i_op = &squashfs_dir_inode_ops;
@@ -204,7 +205,7 @@ int squashfs_read_inode(struct inode *inode, long long ino)
 
 		set_nlink(inode, 1);
 		inode->i_size = le32_to_cpu(sqsh_ino->file_size);
-		inode->i_fop = &generic_ro_fops;
+		inode->i_fop = &ramfs_file_operations;
 		inode->i_mode |= S_IFREG;
 		inode->i_blocks = ((inode->i_size - 1) >> 9) + 1;
 		squashfs_i(inode)->fragment_block = frag_blk;
@@ -249,7 +250,7 @@ int squashfs_read_inode(struct inode *inode, long long ino)
 		set_nlink(inode, le32_to_cpu(sqsh_ino->nlink));
 		inode->i_size = le64_to_cpu(sqsh_ino->file_size);
 		inode->i_op = &squashfs_inode_ops;
-		inode->i_fop = &generic_ro_fops;
+		inode->i_fop = &ramfs_file_operations;
 		inode->i_mode |= S_IFREG;
 		inode->i_blocks = (inode->i_size -
 				le64_to_cpu(sqsh_ino->sparse) + 511) >> 9;

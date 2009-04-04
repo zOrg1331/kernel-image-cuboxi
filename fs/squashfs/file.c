@@ -385,6 +385,11 @@ static int squashfs_readpage(struct file *file, struct page *page)
 	int end_index = start_index | mask;
 	int file_end = i_size_read(inode) >> msblk->block_log;
 
+	/* FIXME: not enough we also need to handle sparse files
+	 * that originally came from the disk */
+	if (inode->i_private)
+		return simple_readpage(file, page);
+
 	TRACE("Entered squashfs_readpage, page index %lx, start block %llx\n",
 				page->index, squashfs_i(inode)->start);
 
@@ -497,5 +502,8 @@ out:
 
 
 const struct address_space_operations squashfs_aops = {
-	.readpage = squashfs_readpage
+	.readpage = squashfs_readpage,
+	.write_begin = simple_write_begin,
+	.write_end = simple_write_end,
+	.set_page_dirty = __set_page_dirty_no_writeback,
 };

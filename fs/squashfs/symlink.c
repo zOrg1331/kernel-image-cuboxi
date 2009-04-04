@@ -56,6 +56,11 @@ static int squashfs_symlink_readpage(struct file *file, struct page *page)
 	void *pageaddr;
 	struct squashfs_cache_entry *entry;
 
+	/* FIXME: not enough we also need to handle sparse files
+	 * that originally came from the disk */
+	if (inode->i_private)
+		return simple_readpage(file, page);
+
 	TRACE("Entered squashfs_symlink_readpage, page index %ld, start block "
 			"%llx, offset %x\n", page->index, block, offset);
 
@@ -114,7 +119,10 @@ error_out:
 
 
 const struct address_space_operations squashfs_symlink_aops = {
-	.readpage = squashfs_symlink_readpage
+	.readpage = squashfs_symlink_readpage,
+	.write_begin = simple_write_begin,
+	.write_end = simple_write_end,
+	.set_page_dirty = __set_page_dirty_no_writeback,
 };
 
 const struct inode_operations squashfs_symlink_inode_ops = {
