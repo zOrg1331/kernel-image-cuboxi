@@ -259,8 +259,64 @@ static int squashfs_unlink(struct inode *dir, struct dentry *dentry)
 	return 0;
 }
 
+/*
+ * We use the readdir infrastructure to test whether a directory is
+ * empty or not. squashfs_test_filldir will get called for any on-disk
+ * dentries that have not been unlinked.
+ */
+static int squashfs_test_filldir(void * __buf, const char * name, int namlen,
+			       loff_t offset, u64 ino, unsigned int d_type)
+{
+	int *buf = __buf;
+
+	switch(namlen) {
+	case 2:
+		if (name[1] != '.')
+			*buf = 0;
+	case 1:
+		if (name[0] != '.')
+			*buf = 0;
+		break;
+	default:
+		*buf = 0;
+	}
+
+	return (*buf == 0 ? -ENOTEMPTY : 0);
+}
+
+static int squashfs_empty(struct dentry *dentry)
+{
+	loff_t pos = 0;
+	int empty = 1;
+	int ret;
+
+	if (!dentry->d_inode || !S_ISDIR(dentry->d_inode->i_mode))
+		return 1;
+
+	if (!simple_empty(dentry))
+		return 0;
+
+	ret = squashfs_readdir_ondisk(dentry, &empty, squashfs_test_filldir,
+				      &pos);
+	if (ret)
+		return ret;
+
+	return empty;
+}
+
+static int squashfs_rmdir(struct inode *dir, struct dentry *dentry)
+{
+	if (!squashfs_empty(dentry))
+		return -ENOTEMPTY;
+
+	squashfs_unlink(dir, dentry);
+	squashfs_shadow_genocide(dentry);
+	return 0;
+}
+
 const struct inode_operations squashfs_dir_inode_ops = {
 	.lookup = squashfs_lookup,
+	.rmdir = squashfs_rmdir,
 	.unlink = squashfs_unlink,
 	.getxattr = generic_getxattr,
 	.listxattr = squashfs_listxattr

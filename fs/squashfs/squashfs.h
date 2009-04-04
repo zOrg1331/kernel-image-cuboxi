@@ -70,6 +70,9 @@ extern struct inode *squashfs_iget(struct super_block *, long long,
 extern int squashfs_read_inode(struct inode *, long long);
 extern struct inode *get_squashfs_inode(struct super_block *, mode_t, dev_t);
 
+/* super.c */
+extern void squashfs_shadow_genocide(struct dentry *);
+
 /* xattr.c */
 extern ssize_t squashfs_listxattr(struct dentry *, char *, size_t);
 
@@ -79,6 +82,8 @@ extern ssize_t squashfs_listxattr(struct dentry *, char *, size_t);
 
 /* dir.c */
 extern const struct file_operations squashfs_dir_ops;
+extern int squashfs_readdir_ondisk(struct dentry *dentry, void *dirent,
+				   filldir_t filldir, loff_t *pos);
 
 /* export.c */
 extern const struct export_operations squashfs_export_ops;
