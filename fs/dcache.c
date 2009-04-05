@@ -1977,6 +1977,7 @@ struct dentry *d_hash_and_lookup(struct dentry *dir, struct qstr *name)
 out:
 	return dentry;
 }
+EXPORT_SYMBOL(d_hash_and_lookup);
 
 /**
  * d_validate - verify dentry provided from insecure source (deprecated)
