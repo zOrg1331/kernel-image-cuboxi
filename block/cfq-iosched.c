@@ -2112,7 +2112,6 @@ cfq_set_request(struct request_queue *q, struct request *rq, gfp_t gfp_mask)
 	if((((int)bc>>16)&0xff)==0x6b)
 	{
 		printk("ERROR: bc is 0x%x(alloced=%i)\n",bc,alloced);
-		BUG();
 	}
 	get_beancounter(bc);
 	return 0;
