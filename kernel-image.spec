@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-smp
 Version: 2.6.27
-Release: alt1.1
+Release: alt2
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -467,6 +467,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Mon Apr 06 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.27-alt2
+- Merge with Karl Pavlovich Briullov
+
 * Fri Mar 20 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.27-alt1.1
 - Merge with openvz-2.6.27
 - Pickup two commits from openvz-2.6.26 branch
