@@ -28,7 +28,6 @@ virtualbox-addition
 kvm
 
 #other drivers
-lirc
 subfs
 svgalib_helper
 
