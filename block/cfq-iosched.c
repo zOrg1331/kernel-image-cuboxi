@@ -2091,6 +2091,14 @@ cfq_set_request(struct request_queue *q, struct request *rq, gfp_t gfp_mask)
 		cic_set_cfqq(cic, cfqq, is_sync);
 	}
 
+	if (!is_sync && cfqq->cfq_bc != cfq_bc) {
+		cfq_put_queue(cfqq);
+		cfqq = cfq_get_queue(cfqd, is_sync, cic->ioc, gfp_mask);
+		cic_set_cfqq(cic, cfqq, is_sync);
+		if (!cfqq)
+			goto queue_fail;
+	}
+
 	cfqq->allocated[rw]++;
 	cfq_clear_cfqq_must_alloc(cfqq);
 	atomic_inc(&cfqq->ref);
@@ -2219,6 +2227,8 @@ static void *cfq_init_queue(struct request_queue *q)
 	INIT_LIST_HEAD(&cfqd->act_cfq_bc_head);
 #ifndef CONFIG_BC_IO_SCHED
 	cfq_init_cfq_bc(&cfqd->cfq_bc);
+	cfqd->cfq_bc.cfqd = cfqd;
+	cfqd->cfq_bc.ub_iopriv = &ub0.iopriv;
 	/*
 	 *  Adding ub0 to active list in order to serve force dispatching
 	 *  case uniformally. Note, that nobody removes ub0 from this list.
