@@ -189,9 +189,10 @@ static ssize_t show_via_phys_dev_state(struct device *cd,
 	return sprintf(buf, "%d\n", br->via_phys_dev);
 }
 
-static void set_via_phys_dev_state(struct net_bridge *br, unsigned long val)
+static int set_via_phys_dev_state(struct net_bridge *br, unsigned long val)
 {
-	br->via_phys_dev = val;
+	br->via_phys_dev = val ? 1 : 0;
+	return 0;
 }
 
 static ssize_t store_via_phys_dev_state(struct device *cd,
