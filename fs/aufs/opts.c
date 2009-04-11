@@ -21,7 +21,7 @@ enum {
 	Opt_br,
 	Opt_add, Opt_del, Opt_mod, Opt_reorder, Opt_append, Opt_prepend,
 	Opt_idel, Opt_imod, Opt_ireorder,
-	Opt_dirwh, Opt_rdcache, Opt_deblk, Opt_nhash, Opt_rendir,
+	Opt_dirwh, Opt_rdcache, Opt_rdblk, Opt_rdhash, Opt_rendir,
 	Opt_xino, Opt_zxino, Opt_noxino,
 	Opt_trunc_xino, Opt_trunc_xino_v, Opt_notrunc_xino,
 	Opt_trunc_xino_path, Opt_itrunc_xino,
@@ -93,7 +93,6 @@ static match_table_t options = {
 	{Opt_ignore_silent, "nodlgt"},
 	{Opt_ignore_silent, "nodirperm1"},
 	{Opt_ignore_silent, "noshwh"},
-	{Opt_ignore_silent, "noshwh"},
 	{Opt_ignore_silent, "clean_plink"},
 
 	{Opt_rendir, "rendir=%d"},
@@ -113,7 +112,8 @@ static match_table_t options = {
 	{Opt_wsum, "wsum"},
 
 	{Opt_rdcache, "rdcache=%d"},
-	{Opt_rdcache, "rdcache:%d"},
+	{Opt_rdblk, "rdblk=%d"},
+	{Opt_rdhash, "rdhash=%d"},
 
 	{Opt_wbr_create, "create=%s"},
 	{Opt_wbr_create, "create_policy=%s"},
@@ -129,6 +129,9 @@ static match_table_t options = {
 	{Opt_ignore, "delete=whiteout"},
 	{Opt_ignore, "delete=all"},
 	{Opt_ignore, "imap=%s"},
+
+	/* temporary workaround, due to old mount(8)? */
+	{Opt_ignore_silent, "relatime"},
 
 	{Opt_err, NULL}
 };
@@ -388,6 +391,12 @@ static void dump_opts(struct au_opts *opts)
 			break;
 		case Opt_rdcache:
 			AuDbg("rdcache %d\n", opt->rdcache);
+			break;
+		case Opt_rdblk:
+			AuDbg("rdblk %u\n", opt->rdblk);
+			break;
+		case Opt_rdhash:
+			AuDbg("rdhash %u\n", opt->rdhash);
 			break;
 		case Opt_xino:
 			u.xino = &opt->xino;
@@ -867,6 +876,34 @@ int au_opts_parse(struct super_block *sb, char *str, struct au_opts *opts)
 			err = 0;
 			opt->type = token;
 			break;
+		case Opt_rdblk:
+			if (unlikely(match_int(&a->args[0], &n)
+				     || n <= 0
+				     || n > KMALLOC_MAX_SIZE)) {
+				AuErr("bad integer in %s\n", opt_str);
+				break;
+			}
+			if (unlikely(n < NAME_MAX)) {
+				AuErr("rdblk must be larger than %d\n",
+				      NAME_MAX);
+				break;
+			}
+			opt->rdblk = n;
+			err = 0;
+			opt->type = token;
+			break;
+		case Opt_rdhash:
+			if (unlikely(match_int(&a->args[0], &n)
+				     || n <= 0
+				     || n * sizeof(struct hlist_head)
+				     > KMALLOC_MAX_SIZE)) {
+				AuErr("bad integer in %s\n", opt_str);
+				break;
+			}
+			opt->rdhash = n;
+			err = 0;
+			opt->type = token;
+			break;
 
 		case Opt_trunc_xino:
 		case Opt_notrunc_xino:
@@ -1072,6 +1109,12 @@ static int au_opt_simple(struct super_block *sb, struct au_opt *opt,
 
 	case Opt_rdcache:
 		sbinfo->si_rdcache = opt->rdcache * HZ;
+		break;
+	case Opt_rdblk:
+		sbinfo->si_rdblk = opt->rdblk;
+		break;
+	case Opt_rdhash:
+		sbinfo->si_rdhash = opt->rdhash;
 		break;
 
 	case Opt_trunc_xino:

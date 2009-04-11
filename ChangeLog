@@ -1,3 +1,191 @@
+commit 6dc4c8e2550dd25ac80ddc5c6271d24eb61e001b
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sat Apr 11 12:00:46 2009 +0900
+
+    aufs: tiny: documents
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit aa24149e869a19d7613ac3c6b4b0aefd5a2894ca
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Apr 10 12:14:04 2009 +0900
+
+    aufs: tiny: version string
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 0d0e16ff2b16472eba27c2c01985f30bf2b2a52e
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Apr 10 00:14:01 2009 +0900
+
+    aufs: tiny: version string
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit c45ac8bde47e110480c041d514ae8e1433edc9cc
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Apr 9 19:15:14 2009 +0900
+
+    aufs: support linux-2.6.30, IMA
+    
+    Supports "Integrity Measurement Architecture(IMA)" in 2.6.30.
+    Since IMA checks the number of file open, aufs needs to adjust it as
+    shmfs does.
+    But IMA seems to need more work since NFSD doesn't support it yet.
+    
+    - export ima_shm_check() for modules.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 08d0e1b3e380ea7446066d53a55324238de6910d
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Apr 9 18:25:53 2009 +0900
+
+    aufs: support linux-2.6.30, temporary workaround for relatime option
+    
+    The mount option 'relatime' becomes set by default.
+    Although it is VFS option, mount(8) may pass it to aufs (or all
+    filesystems) since old version of mount(8) may not know about
+    relatime. When common VFS option is passed to aufs, aufs does NOT handle
+    it and will return an error as "unknown option".
+    It may be unconvenient for users. So here is a temporary workaround to
+    ignore relatime silently.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 1ac7aa726828469fe4972210a834992cbb3cafd4
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Apr 9 18:17:21 2009 +0900
+
+    aufs: support linux-2.6.30, xino for nilfs
+    
+    The aufs xino files are not suitable for the new filesystem nilfs.
+    Forbid it.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit a9b9a9ffe592f595fc499dcf5d79be4e06fc0cee
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Apr 9 18:13:59 2009 +0900
+
+    aufs: support linux-2.6.30, IMA
+    
+    Supports "Integrity Measurement Architecture(IMA)" in 2.6.30.
+    Since IMA checks the number of file open, aufs needs to adjust it as
+    shmfs does.
+    But IMA seems to need more work since NFSD doesn't support it yet.
+    
+    - new wrapper function vfsub_dentry_open() for dentry_open() which calls
+      ima_shm_check().
+    - vfsub_filp_open() calls ima_shm_check() too.
+    - minor re-arrangement for vfsub.h.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 4cb0182305175262cef327177b71c41c1d794172
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Apr 9 02:15:18 2009 +0900
+
+    aufs: more checks for new options
+    
+    Reject negative or too large value for rdblk and rdhash.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 2007abcd083f4473c5d83f385c24bdea3e9b9bc3
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Apr 9 01:49:48 2009 +0900
+
+    aufs: tiny changes in readme
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 1566b5a1c4a99b2a0343c4ac54a14d321dea1195
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Apr 8 14:33:14 2009 +0900
+
+    aufs: stop copying-up in mmap(2) with MAP_PRIVATE
+    
+    aufs_mmap() used to copyup the file when FMODE_WRITE is specified.
+    Now check the VM_SHARED flag too and stop copying-up when MAP_PRIVATE is
+    specified.
+    This patch prevents copyup from mmap in modprobe(8) which opens file
+    with O_RDONLY and then mmap with PROTO_WRITE and MAP_PRIVATE.
+    
+    mmap support in aufs has already minor limitation due to its
+    implementation, and this patch simply follows the limitation.
+    
+    Reported-by: Matthew Harrell <mharrell@bittwiddlers.com>
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 027d6e4ecf193bba92f11786c8a417f59bb7ed48
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Apr 7 07:32:39 2009 +0900
+
+    aufs: variable vdir, documentation
+    
+    Make the hash list in struct au_nhash and the dir-entry block in memory
+    'au_vdir_deblk_t' having variable size.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 8ceed9f520cecea08a8c1038153d4b4baf497948
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Apr 7 07:32:38 2009 +0900
+
+    aufs: variable vdir, main part
+    
+    Make the hash list in struct au_nhash and the dir-entry block in memory
+    'au_vdir_deblk_t' having variable size.
+    Make 'whlist' in struct au_whtmp_rmdir_args variable size too.
+    In rename(2) when the target dir already exists, replace the whlist in
+    struct au_whtmp_rmdir by an external whlist.
+    
+    - new member nh_num in struct au_nhash.
+    - convert the fixed-sized array 'heads' in struct au_nhash to a
+      dynamic-sized one.
+    - new member vd_deblk_sz in struct au_vdir.
+    - convert the fixed-sized array au_vdir_deblk_t to a dynamic-sized one.
+    - replace functions au_nhash_new/del/init/move/fin() by new functions
+      au_nhash_alloc/wh_free() which supports mutiple layers.
+    - rename struct au_whtmp_rmdir_args to struct au_whtmp_rmdir.
+    - convert whlist in struct au_whtmp_rmdir and struct au_ren_args to a
+      pointer.
+    - remove the parameter whlist from au_whtmp_kick_rmdir().
+    - new functions au_wtmp_rmdir_alloc/free() for a new structure
+      au_whtmp_rmdir with dynamic-layered au_nhash, replacing
+      au_whtmp_rmdir_free_args().
+    - new internal functions au_nhash_de_do_free() and au_nhash_de_free(),
+      replacing free_dehlist().
+    - au_name_hash() supports the variable hash size and returns a pointer
+      to struct hlist_head.
+    - pass the parameter super_block to alloc_vdir() and au_nhash_alloc().
+    - new internal flag WHABLE to skip storing whiteouts into whlist when
+      the branch is bottom or its attribute is not specified as whiteout-able.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit a180e4b4b5ecaed3d74be525c797362397d1ebd6
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Apr 7 07:32:37 2009 +0900
+
+    aufs: variable vdir, new options
+    
+    Make the hash list in struct au_nhash and the dir-entry block in memory
+    'au_vdir_deblk_t' having variable size.
+    
+    - new mount options rdblk and rdhash which spcifies the size of one
+      block and the size of hash table respectively.
+    - rdblk has to be larger than NAME_MAX and kmalloc-able size.
+    - rdhash will be multiplied by sizeof(struct hlist_head) and the result
+      has to be kmalloc-able size.
+    - new members for them in struct au_sbinfo and struct au_opt.
+    - their default values are AUFS_RDBLK_DEF and AUFS_RDHASH_DEF
+      respectively.
+    - show thier values other than defaults in /proc/mounts.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 7517ad361f50e4955e92a7c24856d13598d50a80
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Sat Apr 4 01:46:25 2009 +0900

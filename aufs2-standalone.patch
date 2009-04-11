@@ -1,31 +1,31 @@
 aufs2 standalone patch for linux-2.6.
 
 diff --git a/fs/Kconfig b/fs/Kconfig
-index cef8b18..e3e1bab 100644
+index 9f7270f..7b7f62a 100644
 --- a/fs/Kconfig
 +++ b/fs/Kconfig
-@@ -168,6 +168,7 @@ source "fs/qnx4/Kconfig"
- source "fs/romfs/Kconfig"
- source "fs/sysv/Kconfig"
- source "fs/ufs/Kconfig"
-+source "fs/aufs/Kconfig"
+@@ -203,6 +203,7 @@ config NILFS2_FS
+ 	  To compile this file system support as a module, choose M here: the
+ 	  module will be called nilfs2.  If unsure, say N.
  
++source "fs/aufs/Kconfig"
  endif # MISC_FILESYSTEMS
  
+ menuconfig NETWORK_FILESYSTEMS
 diff --git a/fs/Makefile b/fs/Makefile
-index 6e82a30..201a89f 100644
+index af6d047..dba1ce1 100644
 --- a/fs/Makefile
 +++ b/fs/Makefile
-@@ -120,3 +120,4 @@ obj-$(CONFIG_DEBUG_FS)		+= debugfs/
- obj-$(CONFIG_OCFS2_FS)		+= ocfs2/
+@@ -124,3 +124,4 @@ obj-$(CONFIG_OCFS2_FS)		+= ocfs2/
  obj-$(CONFIG_BTRFS_FS)		+= btrfs/
  obj-$(CONFIG_GFS2_FS)           += gfs2/
+ obj-$(CONFIG_EXOFS_FS)          += exofs/
 +obj-$(CONFIG_AUFS_FS)           += aufs/
 diff --git a/fs/namei.c b/fs/namei.c
-index d040ce1..a60f9e9 100644
+index b8433eb..4541c0b 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
-@@ -336,6 +336,7 @@ int deny_write_access(struct file * file)
+@@ -337,6 +337,7 @@ int deny_write_access(struct file * file)
  
  	return 0;
  }
@@ -33,7 +33,7 @@ index d040ce1..a60f9e9 100644
  
  /**
   * path_get - get a reference to a path
-@@ -1199,7 +1200,7 @@ out:
+@@ -1200,7 +1201,7 @@ out:
   * needs parent already locked. Doesn't follow mounts.
   * SMP-safe.
   */
@@ -42,7 +42,7 @@ index d040ce1..a60f9e9 100644
  {
  	int err;
  
-@@ -1208,8 +1209,9 @@ static struct dentry *lookup_hash(struct nameidata *nd)
+@@ -1209,8 +1210,9 @@ static struct dentry *lookup_hash(struct nameidata *nd)
  		return ERR_PTR(err);
  	return __lookup_hash(&nd->last, nd->path.dentry, nd);
  }
@@ -53,7 +53,7 @@ index d040ce1..a60f9e9 100644
  		struct dentry *base, int len)
  {
  	unsigned long hash;
-@@ -1230,6 +1232,7 @@ static int __lookup_one_len(const char *name, struct qstr *this,
+@@ -1231,6 +1233,7 @@ static int __lookup_one_len(const char *name, struct qstr *this,
  	this->hash = end_name_hash(hash);
  	return 0;
  }
@@ -62,10 +62,10 @@ index d040ce1..a60f9e9 100644
  /**
   * lookup_one_len - filesystem helper to lookup single pathname component
 diff --git a/fs/namespace.c b/fs/namespace.c
-index 0a42e0e..3b3ce3b 100644
+index c6f54e4..8e66ee6 100644
 --- a/fs/namespace.c
 +++ b/fs/namespace.c
-@@ -37,6 +37,9 @@
+@@ -38,6 +38,9 @@
  
  /* spinlock for vfsmount related operations, inplace of dcache_lock */
  __cacheline_aligned_in_smp DEFINE_SPINLOCK(vfsmount_lock);
@@ -76,10 +76,10 @@ index 0a42e0e..3b3ce3b 100644
  static int event;
  static DEFINE_IDA(mnt_id_ida);
 diff --git a/fs/open.c b/fs/open.c
-index 75b6167..1e06033 100644
+index 377eb25..a6dcf89 100644
 --- a/fs/open.c
 +++ b/fs/open.c
-@@ -220,6 +220,7 @@ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
+@@ -221,6 +221,7 @@ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
  	mutex_unlock(&dentry->d_inode->i_mutex);
  	return err;
  }
@@ -88,10 +88,10 @@ index 75b6167..1e06033 100644
  static long do_sys_truncate(const char __user *pathname, loff_t length)
  {
 diff --git a/fs/splice.c b/fs/splice.c
-index 4ed0ba4..57cce07 100644
+index c18aa7e..d5cfb1c 100644
 --- a/fs/splice.c
 +++ b/fs/splice.c
-@@ -888,8 +888,8 @@ EXPORT_SYMBOL(generic_splice_sendpage);
+@@ -904,8 +904,8 @@ EXPORT_SYMBOL(generic_splice_sendpage);
  /*
   * Attempt to initiate a splice from pipe to file.
   */
@@ -102,7 +102,7 @@ index 4ed0ba4..57cce07 100644
  {
  	int ret;
  
-@@ -908,13 +908,14 @@ static long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
+@@ -924,13 +924,14 @@ static long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
  
  	return out->f_op->splice_write(pipe, out, ppos, len, flags);
  }
@@ -120,7 +120,7 @@ index 4ed0ba4..57cce07 100644
  {
  	int ret;
  
-@@ -930,6 +931,7 @@ static long do_splice_to(struct file *in, loff_t *ppos,
+@@ -946,6 +947,7 @@ static long do_splice_to(struct file *in, loff_t *ppos,
  
  	return in->f_op->splice_read(in, ppos, pipe, len, flags);
  }
@@ -128,20 +128,8 @@ index 4ed0ba4..57cce07 100644
  
  /**
   * splice_direct_to_actor - splices data directly between two non-pipes
-diff --git a/fs/super.c b/fs/super.c
-index 2ba4815..a15d48a 100644
---- a/fs/super.c
-+++ b/fs/super.c
-@@ -287,6 +287,7 @@ int fsync_super(struct super_block *sb)
- 	__fsync_super(sb);
- 	return sync_blockdev(sb->s_bdev);
- }
-+EXPORT_SYMBOL(fsync_super);
- 
- /**
-  *	generic_shutdown_super	-	common helper for ->kill_sb()
 diff --git a/include/linux/Kbuild b/include/linux/Kbuild
-index e9581fd..91ebd1b 100644
+index ca9b9b9..d05472c 100644
 --- a/include/linux/Kbuild
 +++ b/include/linux/Kbuild
 @@ -34,6 +34,7 @@ header-y += atmppp.h
@@ -153,12 +141,12 @@ index e9581fd..91ebd1b 100644
  header-y += ax25.h
  header-y += b1lli.h
 diff --git a/include/linux/lockdep.h b/include/linux/lockdep.h
-index 23bf02f..49e5b47 100644
+index da5a5a1..261b136 100644
 --- a/include/linux/lockdep.h
 +++ b/include/linux/lockdep.h
-@@ -58,7 +58,7 @@ enum lock_usage_bit
- #define LOCKF_USED_IN_IRQ_READ \
- 		(LOCKF_USED_IN_HARDIRQ_READ | LOCKF_USED_IN_SOFTIRQ_READ)
+@@ -25,7 +25,7 @@ struct lockdep_map;
+  */
+ #define XXX_LOCK_USAGE_STATES		(1+3*4)
  
 -#define MAX_LOCKDEP_SUBCLASSES		8UL
 +#define MAX_LOCKDEP_SUBCLASSES		12UL
@@ -195,10 +183,10 @@ index 528dcb9..5123bc6 100644
 +
  #endif
 diff --git a/security/device_cgroup.c b/security/device_cgroup.c
-index 3aacd0f..b900dc3 100644
+index 5fda7df..440e476 100644
 --- a/security/device_cgroup.c
 +++ b/security/device_cgroup.c
-@@ -507,6 +507,7 @@ acc_check:
+@@ -512,6 +512,7 @@ acc_check:
  
  	return -EPERM;
  }
@@ -206,8 +194,20 @@ index 3aacd0f..b900dc3 100644
  
  int devcgroup_inode_mknod(int mode, dev_t dev)
  {
+diff --git a/security/integrity/ima/ima_main.c b/security/integrity/ima/ima_main.c
+index f4e7266..cef5d70 100644
+--- a/security/integrity/ima/ima_main.c
++++ b/security/integrity/ima/ima_main.c
+@@ -283,6 +283,7 @@ void ima_shm_check(struct file *file)
+ 	opencount_get(file);
+ 	return;
+ }
++EXPORT_SYMBOL(ima_shm_check);
+ 
+ /**
+  * ima_bprm_check - based on policy, collect/store measurement.
 diff --git a/security/security.c b/security/security.c
-index 206e538..a6ab2aa 100644
+index 5284255..62a2392 100644
 --- a/security/security.c
 +++ b/security/security.c
 @@ -389,6 +389,7 @@ int security_path_mkdir(struct path *path, struct dentry *dentry, int mode)
@@ -266,7 +266,7 @@ index 206e538..a6ab2aa 100644
  #endif
  
  int security_inode_create(struct inode *dir, struct dentry *dentry, int mode)
-@@ -506,6 +513,7 @@ int security_inode_readlink(struct dentry *dentry)
+@@ -508,6 +515,7 @@ int security_inode_readlink(struct dentry *dentry)
  		return 0;
  	return security_ops->inode_readlink(dentry);
  }
@@ -274,7 +274,7 @@ index 206e538..a6ab2aa 100644
  
  int security_inode_follow_link(struct dentry *dentry, struct nameidata *nd)
  {
-@@ -520,6 +528,7 @@ int security_inode_permission(struct inode *inode, int mask)
+@@ -522,6 +530,7 @@ int security_inode_permission(struct inode *inode, int mask)
  		return 0;
  	return security_ops->inode_permission(inode, mask);
  }
