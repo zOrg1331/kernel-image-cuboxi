@@ -91,5 +91,5 @@ static inline char *nd_get_link(struct nameidata *nd)
 {
 	return nd->saved_names[nd->depth];
 }
-
+struct dentry * __lookup_hash(struct qstr *name, struct dentry * base, struct nameidata *nd);
 #endif /* _LINUX_NAMEI_H */
