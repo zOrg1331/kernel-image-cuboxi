@@ -37,7 +37,7 @@
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define krelease alt3
+%define krelease alt4
 %define xen_hv_cset 15502
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
@@ -4965,6 +4965,9 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Mon Apr 13 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt4
+- Disable IPv6 support
+
 * Thu Feb 26 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt3
 - Build for Sisyhpus
 
