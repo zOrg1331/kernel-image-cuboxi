@@ -77,6 +77,9 @@ struct kmem_cache_list {
 				/* Total number of slabs allocated */
 	unsigned long		nr_slabs;
 
+				/* Protects nr_partial, nr_slabs, and partial */
+	spinlock_t		page_lock;
+
 #ifdef CONFIG_SMP
 	/*
 	 * In the case of per-cpu lists, remote_free is for objects freed by

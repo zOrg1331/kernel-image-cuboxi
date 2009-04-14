@@ -1089,6 +1089,7 @@ static void flush_free_list(struct kmem_cache *s, struct kmem_cache_list *l)
 {
 	void **head;
 	int nr;
+	int locked = 0;
 
 	nr = l->freelist.nr;
 	if (unlikely(!nr))
@@ -1115,16 +1116,30 @@ static void flush_free_list(struct kmem_cache *s, struct kmem_cache_list *l)
 		if (page->list != l) {
 			struct kmem_cache_cpu *c;
 
+			if (locked) {
+				spin_unlock(&l->page_lock);
+				locked = 0;
+			}
+
 			c = get_cpu_slab(s, smp_processor_id());
 
 			slab_free_to_remote(s, page, object, c);
 			slqb_stat_inc(l, FLUSH_FREE_LIST_REMOTE);
 		} else
 #endif
+		{
+			if (!locked) {
+				spin_lock(&l->page_lock);
+				locked = 1;
+			}
 			free_object_to_page(s, l, page, object);
+		}
 
 		nr--;
 	} while (nr);
+
+	if (locked)
+		spin_unlock(&l->page_lock);
 
 	l->freelist.head = head;
 	if (!l->freelist.nr)
@@ -1272,6 +1287,21 @@ static noinline void *__cache_list_get_page(struct kmem_cache *s,
 	return object;
 }
 
+static void *cache_list_get_page(struct kmem_cache *s,
+				struct kmem_cache_list *l)
+{
+	void *object;
+
+	if (unlikely(!l->nr_partial))
+		return NULL;
+
+	spin_lock(&l->page_lock);
+	object = __cache_list_get_page(s, l);
+	spin_unlock(&l->page_lock);
+
+	return object;
+}
+
 /*
  * Allocation slowpath. Allocate a new slab page from the page allocator, and
  * put it on the list's partial list. Must be followed by an allocation so
@@ -1315,12 +1345,14 @@ static noinline void *__slab_alloc_page(struct kmem_cache *s,
 		l = &c->list;
 		page->list = l;
 
+		spin_lock(&l->page_lock);
 		l->nr_slabs++;
 		l->nr_partial++;
 		list_add(&page->lru, &l->partial);
 		slqb_stat_inc(l, ALLOC);
 		slqb_stat_inc(l, ALLOC_SLAB_NEW);
 		object = __cache_list_get_page(s, l);
+		spin_unlock(&l->page_lock);
 	} else {
 #ifdef CONFIG_NUMA
 		struct kmem_cache_node *n;
@@ -1378,7 +1410,7 @@ static void *__remote_slab_alloc_node(struct kmem_cache *s,
 
 	object = __cache_list_get_object(s, l);
 	if (unlikely(!object)) {
-		object = __cache_list_get_page(s, l);
+		object = cache_list_get_page(s, l);
 		if (unlikely(!object)) {
 			spin_unlock(&n->list_lock);
 			return __slab_alloc_page(s, gfpflags, node);
@@ -1441,7 +1473,7 @@ try_remote:
 	l = &c->list;
 	object = __cache_list_get_object(s, l);
 	if (unlikely(!object)) {
-		object = __cache_list_get_page(s, l);
+		object = cache_list_get_page(s, l);
 		if (unlikely(!object)) {
 			object = __slab_alloc_page(s, gfpflags, node);
 #ifdef CONFIG_NUMA
@@ -1544,6 +1576,37 @@ static void flush_remote_free_cache(struct kmem_cache *s,
 
 	dst = c->remote_cache_list;
 
+	/*
+	 * Less common case, dst is filling up so free synchronously.
+	 * No point in having remote CPU free thse as it will just
+	 * free them back to the page list anyway.
+	 */
+	if (unlikely(dst->remote_free.list.nr > (slab_hiwater(s) >> 1))) {
+		void **head;
+
+		head = src->head;
+		spin_lock(&dst->page_lock);
+		do {
+			struct slqb_page *page;
+			void **object;
+
+			object = head;
+			VM_BUG_ON(!object);
+			head = get_freepointer(s, object);
+			page = virt_to_head_slqb_page(object);
+
+			free_object_to_page(s, dst, page, object);
+			nr--;
+		} while (nr);
+		spin_unlock(&dst->page_lock);
+
+		src->head = NULL;
+		src->tail = NULL;
+		src->nr = 0;
+
+		return;
+	}
+
 	spin_lock(&dst->remote_free.lock);
 
 	if (!dst->remote_free.list.head)
@@ -1598,7 +1661,7 @@ static noinline void slab_free_to_remote(struct kmem_cache *s,
 	r->tail = object;
 	r->nr++;
 
-	if (unlikely(r->nr > slab_freebatch(s)))
+	if (unlikely(r->nr >= slab_freebatch(s)))
 		flush_remote_free_cache(s, c);
 }
 #endif
@@ -1777,6 +1840,7 @@ static void init_kmem_cache_list(struct kmem_cache *s,
 	l->nr_partial		= 0;
 	l->nr_slabs		= 0;
 	INIT_LIST_HEAD(&l->partial);
+	spin_lock_init(&l->page_lock);
 
 #ifdef CONFIG_SMP
 	l->remote_free_check	= 0;
@@ -3059,6 +3123,7 @@ static void __gather_stats(void *arg)
 	int i;
 #endif
 
+	spin_lock(&l->page_lock);
 	nr_slabs = l->nr_slabs;
 	nr_partial = l->nr_partial;
 	nr_inuse = (nr_slabs - nr_partial) * s->objects;
@@ -3066,6 +3131,7 @@ static void __gather_stats(void *arg)
 	list_for_each_entry(page, &l->partial, lru) {
 		nr_inuse += page->inuse;
 	}
+	spin_unlock(&l->page_lock);
 
 	spin_lock(&gather->lock);
 	gather->nr_slabs += nr_slabs;
