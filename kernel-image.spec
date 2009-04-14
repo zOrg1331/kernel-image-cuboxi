@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-smp
 Version: 2.6.27
-Release: alt4
+Release: alt5
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -467,6 +467,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Tue Apr 14 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.27-alt5
+- Disable aufs debug
+
 * Mon Apr 13 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.27-alt4
 - Enable AUFS support
 
