@@ -3121,12 +3121,14 @@ static void gather_stats_locked(struct kmem_cache *s,
 	stats->nr_objects = stats->nr_slabs * s->objects;
 }
 
+#ifdef CONFIG_SLQB_SYSFS
 static void gather_stats(struct kmem_cache *s, struct stats_gather *stats)
 {
 	down_read(&slqb_lock); /* hold off hotplug */
 	gather_stats_locked(s, stats);
 	up_read(&slqb_lock);
 }
+#endif
 #endif
 
 /*
