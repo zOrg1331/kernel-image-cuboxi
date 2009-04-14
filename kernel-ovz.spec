@@ -36,7 +36,7 @@
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define krelease alt2.M40.2
+%define krelease alt2.M40.3
 %define xen_hv_cset 15502
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
@@ -4964,6 +4964,9 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Tue Apr 14 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt2.M40.3
+- Disable IPv6 support
+
 * Fri Jan 30 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt2.M40.2
 - Build on i586 instead of i686
 
