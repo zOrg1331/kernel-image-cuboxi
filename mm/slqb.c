@@ -56,6 +56,17 @@ static inline void struct_slqb_page_wrong_size(void)
 
 #define PG_SLQB_BIT (1 << PG_slab)
 
+/*
+ * slqb_min_order: minimum allocation order for slabs
+ */
+static int slqb_min_order = 0;
+
+/*
+ * slqb_min_objects: minimum number of objects per slab. Increasing this
+ * will increase the allocation order for slabs with larger objects
+ */
+static int slqb_min_objects = 1;
+
 #ifdef CONFIG_NUMA
 static inline int slab_numa(struct kmem_cache *s)
 {
@@ -856,8 +867,24 @@ check_slabs:
 out:
 	return 1;
 }
-
 __setup("slqb_debug", setup_slqb_debug);
+
+static int __init setup_slqb_min_order(char *str)
+{
+	get_option(&str, &slqb_min_order);
+
+	return 1;
+}
+__setup("slqb_min_order=", setup_slqb_min_order);
+
+static int __init setup_slqb_min_objects(char *str)
+{
+	get_option(&str, &slqb_min_objects);
+
+	return 1;
+}
+
+__setup("slqb_min_objects=", setup_slqb_min_objects);
 
 static unsigned long kmem_cache_flags(unsigned long objsize,
 				unsigned long flags, const char *name,
@@ -1758,6 +1785,8 @@ static int slab_order(int size, int max_order, int frac)
 		order = 0;
 	else
 		order = fls(size - 1) - PAGE_SHIFT;
+	if (order < slqb_min_order)
+		order = slqb_min_order;
 
 	while (order <= max_order) {
 		unsigned long slab_size = PAGE_SIZE << order;
@@ -1766,13 +1795,23 @@ static int slab_order(int size, int max_order, int frac)
 
 		objects = slab_size / size;
 		if (!objects)
-			continue;
+			goto next;
+
+		if (order < MAX_ORDER && objects < slqb_min_objects) {
+			/*
+			 * if we don't have enough objects for min_objects,
+			 * then try the next size up. Unless we have reached
+			 * our maximum possible page size.
+			 */
+			goto next;
+		}
 
 		waste = slab_size - (objects * size);
 
 		if (waste * frac <= slab_size)
 			break;
 
+next:
 		order++;
 	}
 
