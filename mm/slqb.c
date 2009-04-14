@@ -1087,7 +1087,6 @@ static void slab_free_to_remote(struct kmem_cache *s, struct slqb_page *page,
  */
 static void flush_free_list(struct kmem_cache *s, struct kmem_cache_list *l)
 {
-	struct kmem_cache_cpu *c;
 	void **head;
 	int nr;
 
@@ -1099,8 +1098,6 @@ static void flush_free_list(struct kmem_cache *s, struct kmem_cache_list *l)
 
 	slqb_stat_inc(l, FLUSH_FREE_LIST);
 	slqb_stat_add(l, FLUSH_FREE_LIST_OBJECTS, nr);
-
-	c = get_cpu_slab(s, smp_processor_id());
 
 	l->freelist.nr -= nr;
 	head = l->freelist.head;
@@ -1116,6 +1113,10 @@ static void flush_free_list(struct kmem_cache *s, struct kmem_cache_list *l)
 
 #ifdef CONFIG_SMP
 		if (page->list != l) {
+			struct kmem_cache_cpu *c;
+
+			c = get_cpu_slab(s, smp_processor_id());
+
 			slab_free_to_remote(s, page, object, c);
 			slqb_stat_inc(l, FLUSH_FREE_LIST_REMOTE);
 		} else
@@ -2251,6 +2252,7 @@ void kmem_cache_destroy(struct kmem_cache *s)
 	down_write(&slqb_lock);
 	list_del(&s->list);
 
+	local_irq_disable();
 #ifdef CONFIG_SMP
 	for_each_online_cpu(cpu) {
 		struct kmem_cache_cpu *c = get_cpu_slab(s, cpu);
@@ -2297,6 +2299,7 @@ void kmem_cache_destroy(struct kmem_cache *s)
 
 	free_kmem_cache_nodes(s);
 #endif
+	local_irq_enable();
 
 	sysfs_slab_remove(s);
 	up_write(&slqb_lock);
