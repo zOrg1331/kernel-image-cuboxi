@@ -199,7 +199,7 @@ static int aufs_show_options(struct seq_file *m, struct vfsmount *mnt)
 		if (unlikely(err <= 0))
 			goto out;
 		err = 0;
-#define Deleted "\\040(deleted)"
+#define Deleted "\040(deleted)"
 		m->count -= sizeof(Deleted) - 1;
 		AuDebugOn(memcmp(m->buf + m->count, Deleted,
 				 sizeof(Deleted) - 1));
