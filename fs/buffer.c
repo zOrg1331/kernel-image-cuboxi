@@ -547,7 +547,7 @@ repeat:
 	return err;
 }
 
-void do_thaw_all(unsigned long unused)
+void do_thaw_all(struct work_struct *work)
 {
 	struct super_block *sb;
 	char b[BDEVNAME_SIZE];
@@ -567,6 +567,7 @@ restart:
 			goto restart;
 	}
 	spin_unlock(&sb_lock);
+	kfree(work);
 	printk(KERN_WARNING "Emergency Thaw complete\n");
 }
 
@@ -577,7 +578,13 @@ restart:
  */
 void emergency_thaw_all(void)
 {
-	pdflush_operation(do_thaw_all, 0);
+	struct work_struct *work;
+
+	work = kmalloc(sizeof(*work), GFP_ATOMIC);
+	if (work) {
+		INIT_WORK(work, do_thaw_all);
+		schedule_work(work);
+	}
 }
 
 /**
@@ -1596,6 +1603,16 @@ EXPORT_SYMBOL(unmap_underlying_metadata);
  * locked buffer.   This only can happen if someone has written the buffer
  * directly, with submit_bh().  At the address_space level PageWriteback
  * prevents this contention from occurring.
+ *
+ * If block_write_full_page() is called with wbc->sync_mode ==
+ * WB_SYNC_ALL, the writes are posted using WRITE_SYNC_PLUG; this
+ * causes the writes to be flagged as synchronous writes, but the
+ * block device queue will NOT be unplugged, since usually many pages
+ * will be pushed to the out before the higher-level caller actually
+ * waits for the writes to be completed.  The various wait functions,
+ * such as wait_on_writeback_range() will ultimately call sync_page()
+ * which will ultimately call blk_run_backing_dev(), which will end up
+ * unplugging the device queue.
  */
 static int __block_write_full_page(struct inode *inode, struct page *page,
 			get_block_t *get_block, struct writeback_control *wbc)
@@ -1606,7 +1623,8 @@ static int __block_write_full_page(struct inode *inode, struct page *page,
 	struct buffer_head *bh, *head;
 	const unsigned blocksize = 1 << inode->i_blkbits;
 	int nr_underway = 0;
-	int write_op = (wbc->sync_mode == WB_SYNC_ALL ? WRITE_SYNC : WRITE);
+	int write_op = (wbc->sync_mode == WB_SYNC_ALL ?
+			WRITE_SYNC_PLUG : WRITE);
 
 	BUG_ON(!PageLocked(page));
 
