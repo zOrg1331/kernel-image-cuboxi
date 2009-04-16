@@ -1457,16 +1457,16 @@ static const struct utrace_engine_ops *start_callback(
 #define REPORT(task, utrace, report, event, callback, ...)		      \
 	do {								      \
 		start_report(utrace);					      \
-		REPORT_CALLBACKS(task, utrace, report, event, callback,	      \
+		REPORT_CALLBACKS(, task, utrace, report, event, callback,     \
 				 (report)->action, engine, current,	      \
 				 ## __VA_ARGS__);  	   		      \
 		finish_report(report, task, utrace);			      \
 	} while (0)
-#define REPORT_CALLBACKS(task, utrace, report, event, callback, ...)	      \
+#define REPORT_CALLBACKS(rev, task, utrace, report, event, callback, ...)     \
 	do {								      \
 		struct utrace_engine *engine;				      \
 		const struct utrace_engine_ops *ops;			      \
-		list_for_each_entry(engine, &utrace->attached, entry) {	      \
+		list_for_each_entry##rev(engine, &utrace->attached, entry) {  \
 			ops = start_callback(utrace, report, engine, task,    \
 					     event);			      \
 			if (!ops)					      \
@@ -1501,9 +1501,9 @@ bool utrace_report_syscall_entry(struct pt_regs *regs)
 	INIT_REPORT(report);
 
 	start_report(utrace);
-	REPORT_CALLBACKS(task, utrace, &report, UTRACE_EVENT(SYSCALL_ENTRY),
-			 report_syscall_entry, report.result | report.action,
-			 engine, current, regs);
+	REPORT_CALLBACKS(_reverse, task, utrace, &report,
+			 UTRACE_EVENT(SYSCALL_ENTRY), report_syscall_entry,
+			 report.result | report.action, engine, current, regs);
 	finish_report(&report, task, utrace);
 
 	if (report.action == UTRACE_STOP &&
@@ -1551,7 +1551,7 @@ void utrace_report_clone(unsigned long clone_flags, struct task_struct *child)
 	start_report(utrace);
 	utrace->cloning = child;
 
-	REPORT_CALLBACKS(task, utrace, &report,
+	REPORT_CALLBACKS(, task, utrace, &report,
 			 UTRACE_EVENT(CLONE), report_clone,
 			 report.action, engine, task, clone_flags, child);
 
@@ -1701,7 +1701,7 @@ void utrace_report_death(struct task_struct *task, struct utrace *utrace,
 	utrace->interrupt = 0;
 	spin_unlock(&utrace->lock);
 
-	REPORT_CALLBACKS(task, utrace, &report, UTRACE_EVENT(DEATH),
+	REPORT_CALLBACKS(, task, utrace, &report, UTRACE_EVENT(DEATH),
 			 report_death, engine, task, group_dead, signal);
 
 	spin_lock(&utrace->lock);

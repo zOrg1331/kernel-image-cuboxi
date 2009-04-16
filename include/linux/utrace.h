@@ -176,7 +176,7 @@ void task_utrace_proc_status(struct seq_file *m, struct task_struct *p);
  * that is developed concurrently with utrace API improvements before they
  * are merged into the kernel, making LINUX_VERSION_CODE checks unwieldy.
  */
-#define UTRACE_API_VERSION	20090302
+#define UTRACE_API_VERSION	20090416
 
 /**
  * enum utrace_resume_action - engine's choice of action for a traced task
