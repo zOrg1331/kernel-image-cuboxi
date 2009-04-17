@@ -95,7 +95,7 @@
     special in two ways.  For this event, engines are called in reverse of
     the normal order (this includes the <function>report_quiesce</function>
     call that precedes a <function>report_syscall_entry</function> call).
-    This preserves the semantics that the first engine to attach is called
+    This preserves the semantics that the last engine to attach is called
     "closest to user mode"--the engine that is first to see a thread's user
     state when it enters the kernel is also the last to see that state when
     the thread returns to user mode.  For the same reason, if these
