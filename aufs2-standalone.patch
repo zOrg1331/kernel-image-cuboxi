@@ -195,17 +195,25 @@ index 5fda7df..440e476 100644
  int devcgroup_inode_mknod(int mode, dev_t dev)
  {
 diff --git a/security/integrity/ima/ima_main.c b/security/integrity/ima/ima_main.c
-index f4e7266..cef5d70 100644
+index f4e7266..2a0d58a 100644
 --- a/security/integrity/ima/ima_main.c
 +++ b/security/integrity/ima/ima_main.c
-@@ -283,6 +283,7 @@ void ima_shm_check(struct file *file)
- 	opencount_get(file);
- 	return;
+@@ -206,6 +206,7 @@ out:
+ 	kref_put(&iint->refcount, iint_free);
+ 	return 0;
  }
-+EXPORT_SYMBOL(ima_shm_check);
++EXPORT_SYMBOL(ima_path_check);
  
- /**
-  * ima_bprm_check - based on policy, collect/store measurement.
+ static int process_measurement(struct file *file, const unsigned char *filename,
+ 			       int mask, int function)
+@@ -271,6 +272,7 @@ int ima_file_mmap(struct file *file, unsigned long prot)
+ 					 MAY_EXEC, FILE_MMAP);
+ 	return 0;
+ }
++EXPORT_SYMBOL(ima_file_mmap);
+ 
+ /*
+  * ima_shm_check - IPC shm and shmat create/fput a file
 diff --git a/security/security.c b/security/security.c
 index 5284255..62a2392 100644
 --- a/security/security.c

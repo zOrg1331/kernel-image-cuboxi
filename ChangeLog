@@ -1,3 +1,71 @@
+commit fdc8c21f10c3547a60d8461900c3e2a62142fd87
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Apr 16 22:48:21 2009 +0900
+
+    aufs: support linux-2.6.30-rcN, IMA
+    
+    Call ima_path_check() instead of ima_shm_file().
+    Call ima_file_mmap() before mmap.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit d4b149a1e797b4879a2b674021df8a812d65d3a1
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Apr 16 22:47:29 2009 +0900
+
+    aufs: support linux-2.6.30-rcN, IMA
+    
+    Call ima_path_check() instead of ima_shm_file().
+    Call ima_file_mmap() before mmap.
+    - add 'exec_flag' to vfsub_dentry_open().
+    - a new function vfsub_ima_mask() for ima_path_check().
+    - a new function au_prot_conv() for IMA.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 951cf70af64f2141c5234afc99573697cba69684
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Apr 15 10:26:29 2009 +0900
+
+    aufs: bugfix: check f_op and ->mmap
+    
+    We need to check it since f_op MAY be null.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit ec64f350678dffe1ac0f2274ff0743f612afba09
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Apr 15 09:56:49 2009 +0900
+
+    Revert "[aufs] f_op is always set"
+    
+    This reverts commit 4d724469cd7b65dae83b35b26642a9902abf9af2.
+    Since f_op on some branch fs may not be always set.
+    
+    Reported-by: Patrick Lane <patrick@hq.newdream.net>
+
+commit b0960d27684305c783aaf82901e6269af050eeda
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Apr 15 09:56:25 2009 +0900
+
+    aufs: tiny: depends on AUFS_EXPORT
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit f5207890d02d204df08818ec3fcdece20e24d6d2
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Apr 15 00:27:52 2009 +0900
+
+    aufs: tiny: test i_nlink for tmpfs
+    
+    tmpfs doesn't check i_nlink in link(2), and aufs sets a limit for it.
+    vfsub_link() already support ramfs which doesn't check i_nlink
+    either. let's make it general to support tmpfs.
+    
+    - new function au_test_fs_no_limit_nlink().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 6dc4c8e2550dd25ac80ddc5c6271d24eb61e001b
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Sat Apr 11 12:00:46 2009 +0900

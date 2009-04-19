@@ -37,18 +37,37 @@ int vfsub_update_h_iattr(struct path *h_path, int *did)
 
 /* ---------------------------------------------------------------------- */
 
-struct file *vfsub_dentry_open(struct dentry *parent, struct vfsmount *mnt,
-			       int flags, const struct cred *cred)
+static int vfsub_ima_mask(int flags, int exec_flag)
+{
+	int mask;
+
+	mask = 0; /* MAY_OPEN */
+	switch (flags & O_ACCMODE) {
+	case O_RDONLY:
+		mask = MAY_READ;
+		break;
+	case O_WRONLY:
+		mask = MAY_WRITE;
+		break;
+	case O_RDWR:
+		mask = MAY_READ | MAY_WRITE;
+		break;
+	}
+	if (exec_flag)
+		mask |= MAY_EXEC;
+	return mask;
+}
+
+struct file *vfsub_dentry_open(struct path *path, int flags, int exec_flag,
+			       const struct cred *cred)
 {
 	struct file *file;
+	int err;
 
-	file = dentry_open(parent, mnt, flags, cred);
-	if (IS_ERR(file))
-		goto out;
-
-	ima_shm_check(file);
-
- out:
+	err = ima_path_check(path, vfsub_ima_mask(flags, exec_flag));
+	file = ERR_PTR(err);
+	if (!err)
+		file = dentry_open(path->dentry, path->mnt, flags, cred);
 	return file;
 }
 
@@ -61,8 +80,6 @@ struct file *vfsub_filp_open(const char *path, int oflags, int mode)
 	lockdep_on();
 	if (IS_ERR(file))
 		goto out;
-	AuDebugOn(!file->f_op);
-	ima_shm_check(file);
 	vfsub_update_h_iattr(&file->f_path, /*did*/NULL); /*ignore*/
 
  out:
@@ -254,20 +271,14 @@ int vfsub_mknod(struct inode *dir, struct path *path, int mode, dev_t dev)
 	return err;
 }
 
-/* ramfs doesn't check i_nlink in link(2), aufs sets a limit for it */
 static int au_test_nlink(struct inode *inode)
 {
-#ifndef CONFIG_AUFS_BR_RAMFS
-	return 0;
-#else
-	/* borrowing the upper limit from EXT2_LINK_MAX */
-	const unsigned int ramfs_link_max = 32000;
+	const unsigned int link_max = UINT_MAX >> 1; /* rough margin */
 
-	if (!au_test_ramfs(inode->i_sb)
-	    || inode->i_nlink < ramfs_link_max)
+	if (!au_test_fs_no_limit_nlink(inode->i_sb)
+	    || inode->i_nlink < link_max)
 		return 0;
 	return -EMLINK;
-#endif
 }
 
 int vfsub_link(struct dentry *src_dentry, struct inode *dir, struct path *path)

@@ -121,6 +121,7 @@ struct file *au_xino_create2(struct file *base_file, struct file *copy_src)
 	struct inode *dir;
 	struct qstr *name;
 	int err;
+	struct path path;
 
 	base = base_file->f_dentry;
 	parent = base->d_parent; /* dir inode is locked */
@@ -144,14 +145,15 @@ struct file *au_xino_create2(struct file *base_file, struct file *copy_src)
 		goto out_dput;
 	}
 
-	file = vfsub_dentry_open(dget(dentry), mntget(base_file->f_vfsmnt),
-				 O_RDWR | O_CREAT | O_EXCL | O_LARGEFILE,
-				 current_cred());
+	path.dentry = dentry;
+	path.mnt = base_file->f_vfsmnt;
+	path_get(&path);
+	file = vfsub_dentry_open(&path, O_RDWR | O_CREAT | O_EXCL | O_LARGEFILE,
+				 /*exec_flag*/0, current_cred());
 	if (IS_ERR(file)) {
 		AuErr("%.*s open err %ld\n", AuLNPair(name), PTR_ERR(file));
 		goto out_dput;
 	}
-	AuDebugOn(!file->f_op);
 
 	err = vfsub_unlink(dir, &file->f_path, /*force*/0);
 	if (unlikely(err)) {
@@ -866,10 +868,12 @@ static au_readf_t find_readf(struct file *h_file)
 {
 	const struct file_operations *fop = h_file->f_op;
 
-	if (fop->read)
-		return fop->read;
-	if (fop->aio_read)
-		return do_sync_read;
+	if (fop) {
+		if (fop->read)
+			return fop->read;
+		if (fop->aio_read)
+			return do_sync_read;
+	}
 	return ERR_PTR(-ENOSYS);
 }
 
@@ -877,10 +881,12 @@ static au_writef_t find_writef(struct file *h_file)
 {
 	const struct file_operations *fop = h_file->f_op;
 
-	if (fop->write)
-		return fop->write;
-	if (fop->aio_write)
-		return do_sync_write;
+	if (fop) {
+		if (fop->write)
+			return fop->write;
+		if (fop->aio_write)
+			return do_sync_write;
+	}
 	return ERR_PTR(-ENOSYS);
 }
 

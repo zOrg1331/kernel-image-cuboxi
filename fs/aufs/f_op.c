@@ -12,6 +12,8 @@
  */
 
 #include <linux/fs_stack.h>
+#include <linux/ima.h>
+#include <linux/mman.h>
 #include <linux/poll.h>
 #include "aufs.h"
 
@@ -32,7 +34,7 @@ int aufs_flush(struct file *file, fl_owner_t id)
 	bend = au_fbend(file);
 	for (bindex = au_fbstart(file); !err && bindex <= bend; bindex++) {
 		h_file = au_h_fptr(file, bindex);
-		if (!h_file || !h_file->f_op->flush)
+		if (!h_file || !h_file->f_op || !h_file->f_op->flush)
 			continue;
 
 		err = h_file->f_op->flush(h_file, id);
@@ -301,16 +303,40 @@ static struct vm_operations_struct aufs_vm_ops = {
 
 /* ---------------------------------------------------------------------- */
 
+static unsigned long au_prot_conv(unsigned long flags)
+{
+	unsigned long prot;
+
+	prot = 0;
+	if (flags & VM_READ)
+		prot |= PROT_READ;
+	if (flags & VM_WRITE)
+		prot |= PROT_WRITE;
+	if (flags & VM_EXEC)
+		prot |= PROT_EXEC;
+	return prot;
+}
+
 static struct vm_operations_struct *au_vm_ops(struct file *h_file,
 					      struct vm_area_struct *vma)
 {
 	struct vm_operations_struct *vm_ops;
 	int err;
 
+	vm_ops = ERR_PTR(-ENODEV);
+	if (!h_file->f_op || !h_file->f_op->mmap)
+		goto out;
+
+	err = ima_file_mmap(h_file, au_prot_conv(vma->vm_flags));
+	vm_ops = ERR_PTR(err);
+	if (err)
+		goto out;
+
 	err = h_file->f_op->mmap(h_file, vma);
 	vm_ops = ERR_PTR(err);
 	if (unlikely(err))
 		goto out;
+
 	vm_ops = vma->vm_ops;
 	err = do_munmap(current->mm, vma->vm_start,
 			vma->vm_end - vma->vm_start);
@@ -423,7 +449,7 @@ static unsigned int aufs_poll(struct file *file, poll_table *wait)
 	/* it is not an error if h_file has no operation */
 	mask = DEFAULT_POLLMASK;
 	h_file = au_h_fptr(file, au_fbstart(file));
-	if (h_file->f_op->poll)
+	if (h_file->f_op && h_file->f_op->poll)
 		mask = h_file->f_op->poll(h_file, wait);
 
 	di_read_unlock(dentry, AuLock_IR);
@@ -470,7 +496,7 @@ static int aufs_fsync_nondir(struct file *file, struct dentry *dentry,
 
 	err = -EINVAL;
 	h_file = au_h_fptr(file, au_fbstart(file));
-	if (h_file->f_op->fsync) {
+	if (h_file->f_op && h_file->f_op->fsync) {
 		struct dentry *h_d;
 		struct mutex *h_mtx;
 
@@ -516,7 +542,7 @@ static int aufs_fasync(int fd, struct file *file, int flag)
 		goto out;
 
 	h_file = au_h_fptr(file, au_fbstart(file));
-	if (h_file->f_op->fasync)
+	if (h_file->f_op && h_file->f_op->fasync)
 		err = h_file->f_op->fasync(fd, h_file, flag);
 
 	di_read_unlock(dentry, AuLock_IR);
