@@ -303,6 +303,11 @@ static inline void vfsub_copy_inode_size(struct inode *inode,
 }
 #endif
 
+#ifndef CONFIG_AUFS_UNIONFS23_PATCH
+#define vfs_splice_to       do_splice_to
+#define vfs_splice_from     do_splice_from
+#endif
+
 #ifdef CONFIG_AUFS_SPLICE_PATCH
 long do_vfsub_splice_to(struct file *in, loff_t *ppos,
 			struct pipe_inode_info *pipe, size_t len,
