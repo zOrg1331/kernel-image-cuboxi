@@ -44,7 +44,6 @@ Module.symvers
 #
 # Generated include files
 #
-include/asm
 include/config
 include/linux/autoconf.h
 include/linux/compile.h
