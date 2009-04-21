@@ -165,7 +165,7 @@ forward:
 		/* fall through */
 	case BR_STATE_LEARNING:
 		if (skb->brmark == BR_ALREADY_SEEN)
-			return 0;
+			return skb;
 
 		out = p->br->via_phys_dev ? p->br->master_dev : p->br->dev;
 
