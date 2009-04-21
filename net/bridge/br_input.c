@@ -160,7 +160,7 @@ struct sk_buff *br_handle_frame(struct net_bridge_port *p, struct sk_buff *skb)
 		/* fall through */
 	case BR_STATE_LEARNING:
 		if (skb->brmark == BR_ALREADY_SEEN)
-			return 0;
+			return skb;
 
 		out = p->br->via_phys_dev ? p->br->master_dev : p->br->dev;
 
