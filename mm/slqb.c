@@ -1224,6 +1224,11 @@ static void claim_remote_free_list(struct kmem_cache *s,
 	slqb_stat_inc(l, CLAIM_REMOTE_LIST);
 	slqb_stat_add(l, CLAIM_REMOTE_LIST_OBJECTS, nr);
 }
+#else
+static inline void claim_remote_free_list(struct kmem_cache *s,
+					struct kmem_cache_list *l)
+{
+}
 #endif
 
 /*
@@ -1728,7 +1733,7 @@ static __always_inline void __slab_free(struct kmem_cache *s,
 			flush_free_list(s, l);
 
 	} else {
-#ifdef CONFIG_NUMA
+#ifdef CONFIG_SMP
 		/*
 		 * Freeing an object that was allocated on a remote node.
 		 */
@@ -1937,7 +1942,9 @@ static DEFINE_PER_CPU(struct kmem_cache_node, kmem_cpu_nodes); /* XXX per-nid */
 
 #ifdef CONFIG_NUMA
 static struct kmem_cache kmem_node_cache;
+#ifdef CONFIG_SMP
 static DEFINE_PER_CPU(struct kmem_cache_cpu, kmem_node_cpus);
+#endif
 static DEFINE_PER_CPU(struct kmem_cache_node, kmem_node_nodes); /*XXX per-nid */
 #endif
 
@@ -2270,7 +2277,7 @@ static int kmem_cache_open(struct kmem_cache *s,
 error_nodes:
 	free_kmem_cache_nodes(s);
 error_node_array:
-#ifdef CONFIG_NUMA
+#if defined(CONFIG_NUMA) && defined(CONFIG_SMP)
 	kmem_cache_dyn_array_free(s->node_slab);
 error_cpu_array:
 #endif
@@ -2370,9 +2377,7 @@ void kmem_cache_destroy(struct kmem_cache *s)
 		struct kmem_cache_cpu *c = get_cpu_slab(s, cpu);
 		struct kmem_cache_list *l = &c->list;
 
-#ifdef CONFIG_SMP
 		claim_remote_free_list(s, l);
-#endif
 		flush_free_list_all(s, l);
 
 		WARN_ON(l->freelist.nr);
@@ -2595,9 +2600,7 @@ static void kmem_cache_trim_percpu(void *arg)
 	struct kmem_cache_cpu *c = get_cpu_slab(s, cpu);
 	struct kmem_cache_list *l = &c->list;
 
-#ifdef CONFIG_SMP
 	claim_remote_free_list(s, l);
-#endif
 	flush_free_list(s, l);
 #ifdef CONFIG_SMP
 	flush_remote_free_cache(s, c);
@@ -2881,11 +2884,11 @@ void __init kmem_cache_init(void)
 		n = &per_cpu(kmem_cache_nodes, i);
 		init_kmem_cache_node(&kmem_cache_cache, n);
 		kmem_cache_cache.node_slab[i] = n;
-
+#ifdef CONFIG_SMP
 		n = &per_cpu(kmem_cpu_nodes, i);
 		init_kmem_cache_node(&kmem_cpu_cache, n);
 		kmem_cpu_cache.node_slab[i] = n;
-
+#endif
 		n = &per_cpu(kmem_node_nodes, i);
 		init_kmem_cache_node(&kmem_node_cache, n);
 		kmem_node_cache.node_slab[i] = n;
