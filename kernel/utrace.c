@@ -969,6 +969,7 @@ static inline int utrace_control_dead(struct task_struct *target,
  * (In that event, this fails with -%ESRCH or -%EALREADY, see above.)
  *
  * UTRACE_STOP:
+ *
  * This asks that @target stop running.  This returns 0 only if
  * @target is already stopped, either for tracing or for job
  * control.  Then @target will remain stopped until another
@@ -1273,6 +1274,8 @@ struct utrace_report {
 #define INIT_REPORT(var) \
 	struct utrace_report var = { UTRACE_RESUME, 0, \
 				     false, false, false, false }
+#define RESET_REPORT(var) \
+	((var).detaches = (var).reports = (var).takers = (var).killed = false)
 
 /*
  * We are now making the report, so clear the flag saying we need one.
@@ -1499,22 +1502,41 @@ bool utrace_report_syscall_entry(struct pt_regs *regs)
 	struct task_struct *task = current;
 	struct utrace *utrace = task_utrace_struct(task);
 	INIT_REPORT(report);
+	u32 resume_report = 0;
 
+report:
 	start_report(utrace);
 	REPORT_CALLBACKS(_reverse, task, utrace, &report,
 			 UTRACE_EVENT(SYSCALL_ENTRY), report_syscall_entry,
-			 report.result | report.action, engine, current, regs);
+			 resume_report | report.result | report.action,
+			 engine, current, regs);
 	finish_report(&report, task, utrace);
 
-	if (report.action == UTRACE_STOP &&
-	    unlikely(utrace_stop(task, utrace, false)))
-		/*
-		 * We are continuing despite UTRACE_STOP because of a
-		 * SIGKILL.  Don't let the system call actually proceed.
-		 */
-		return true;
+	if (report.action == UTRACE_STOP) {
+		if (utrace_stop(task, utrace, report.reports))
+			/*
+			 * We are continuing despite UTRACE_STOP because of a
+			 * SIGKILL.  Don't let the system call actually proceed.
+			 */
+			return true;
 
-	return report.result == UTRACE_SYSCALL_ABORT;
+		/*
+		 * If we've been asked for another report after our stop,
+		 * go back to report (and maybe stop) again before running
+		 * the system call.  The second (and later) reports are
+		 * marked with the UTRACE_SYSCALL_RESUMED flag so that
+		 * engines know this is a second report at the same entry.
+		 * This gives them the chance to examine the registers anew
+		 * after they might have been changed while we were stopped.
+		 */
+		if (utrace->report) {
+			RESET_REPORT(report);
+			resume_report = UTRACE_SYSCALL_RESUMED;
+			goto report;
+		}
+	}
+
+	return utrace_syscall_action(report.result) == UTRACE_SYSCALL_ABORT;
 }
 
 /*
@@ -1666,7 +1688,7 @@ void utrace_report_exit(long *exit_code)
 	       report_exit, orig_code, exit_code);
 
 	if (report.action == UTRACE_STOP)
-		utrace_stop(task, utrace, false);
+		utrace_stop(task, utrace, report.reports);
 }
 
 /*
@@ -2231,7 +2253,7 @@ void utrace_signal_handler(struct task_struct *task, int stepping)
  * &struct user_regset calls, or direct access to thread-synchronous fields.
  *
  * When @target is current, this call is superfluous.  When @target is
- * another thread, it must held stopped via %UTRACE_STOP by @engine.
+ * another thread, it must be held stopped via %UTRACE_STOP by @engine.
  *
  * This call may block the caller until @target stays stopped, so it must
  * be called only after the caller is sure @target is about to unschedule.
