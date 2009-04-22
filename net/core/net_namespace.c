@@ -75,6 +75,7 @@ out_undo:
 	}
 
 	rcu_barrier();
+	net->gen = NULL;
 	kfree(ng);
 	goto out;
 }
