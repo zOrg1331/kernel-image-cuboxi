@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.29
-Release: alt2
+Release: alt3
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -340,6 +340,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Sat Apr 25 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.29-alt3
+- merged bluetooth-next
+- disabled CONFIG_USB_DEVICE_CLASS
+
 * Fri Apr 03 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.29-alt2
 - 2.6.29.1
 
