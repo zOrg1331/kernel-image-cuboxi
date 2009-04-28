@@ -214,6 +214,11 @@ static int utrace_add_engine(struct task_struct *target,
  *
  * UTRACE_ATTACH_MATCH_OPS: Only consider engines matching @ops.
  * UTRACE_ATTACH_MATCH_DATA: Only consider engines matching @data.
+ *
+ * Calls with neither %UTRACE_ATTACH_MATCH_OPS nor %UTRACE_ATTACH_MATCH_DATA
+ * match the first among any engines attached to @target.  That means that
+ * %UTRACE_ATTACH_EXCLUSIVE in such a call fails with -%EEXIST if there
+ * are any engines on @target at all.
  */
 struct utrace_engine *utrace_attach_task(
 	struct task_struct *target, int flags,
