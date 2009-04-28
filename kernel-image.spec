@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.29
-Release: alt4
+Release: alt5
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -340,6 +340,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Tue Apr 28 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.29-alt5
+- 2.6.29.2
+
 * Mon Apr 27 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.29-alt4
 - merged drm-next
 - disabled CONFIG_INPUT_PCSPKR, CONFIG_SND_PCSP
