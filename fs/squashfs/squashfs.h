@@ -68,6 +68,7 @@ extern __le64 *squashfs_read_id_index_table(struct super_block *, u64, u64,
 extern struct inode *squashfs_iget(struct super_block *, long long,
 				unsigned int);
 extern int squashfs_read_inode(struct inode *, long long);
+extern struct inode *get_squashfs_inode(struct super_block *, mode_t, dev_t);
 
 /* xattr.c */
 extern ssize_t squashfs_listxattr(struct dentry *, char *, size_t);

@@ -48,13 +48,56 @@
 #include "squashfs.h"
 #include "xattr.h"
 
+static ino_t get_last_ino(struct super_block *sb)
+{
+	struct squashfs_sb_info *msblk = sb->s_fs_info;
+	u64 blocks;
+
+	blocks = ((msblk->bytes_used - 1) >> msblk->block_log) + 1;
+	return SQUASHFS_MKINODE(blocks, 0);
+}
+
+struct inode *get_squashfs_inode(struct super_block *sb, mode_t mode,
+				 dev_t dev)
+{
+	static ino_t last_ino = 1;
+	struct inode *inode;
+
+	inode = iget_locked(sb, get_last_ino(sb) + last_ino++);
+	if (!inode)
+		return ERR_PTR(-ENOMEM);
+	if (!(inode->i_state & I_NEW))
+		return inode;
+
+	inode->i_mode = mode;
+	inode->i_private = (void *) 0xdeadbeef;
+
+	if (S_ISREG(mode)) {
+		inode->i_fop = &generic_ro_fops;
+		inode->i_data.a_ops = &squashfs_aops;
+	} else if (S_ISDIR(mode)) {
+		inode->i_op = &squashfs_dir_inode_ops;
+		inode->i_fop = &squashfs_dir_ops;
+	} else if (S_ISLNK(mode)) {
+		inode->i_op = &page_symlink_inode_operations;
+		inode->i_data.a_ops = &squashfs_symlink_aops;
+	} else {
+		inode->i_size = 0;
+		inode->i_blocks = 0;
+		init_special_inode(inode, mode, dev);
+	}
+
+	return inode;
+}
+
 /*
  * Initialise VFS inode with the base inode information common to all
  * Squashfs inode types.  Sqsh_ino contains the unswapped base inode
  * off disk.
  */
-static int squashfs_new_inode(struct super_block *sb, struct inode *inode,
-				struct squashfs_base_inode *sqsh_ino)
+static int squashfs_new_inode_ondisk(struct super_block *sb,
+				     struct inode *inode,
+				     struct squashfs_base_inode *sqsh_ino)
 {
 	int err;
 
@@ -125,7 +168,7 @@ int squashfs_read_inode(struct inode *inode, long long ino)
 	if (err < 0)
 		goto failed_read;
 
-	err = squashfs_new_inode(sb, inode, sqshb_ino);
+	err = squashfs_new_inode_ondisk(sb, inode, sqshb_ino);
 	if (err)
 		goto failed_read;
 
