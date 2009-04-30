@@ -314,10 +314,140 @@ static int squashfs_rmdir(struct inode *dir, struct dentry *dentry)
 	return 0;
 }
 
+/*
+ * File creation. Allocate an inode, and we're done..
+ */
+static int squashfs_mknod(struct inode *dir, struct dentry *dentry, int mode,
+			  dev_t dev)
+{
+	struct inode * inode = get_squashfs_inode(dir->i_sb, mode, dev);
+	int error = -ENOSPC;
+
+	if (inode) {
+		if (dir->i_mode & S_ISGID) {
+			inode->i_gid = dir->i_gid;
+			if (S_ISDIR(mode))
+				inode->i_mode |= S_ISGID;
+		}
+		d_instantiate(dentry, inode);
+		dget(dentry);   /* Extra count - pin the dentry in core */
+		dentry->d_fsdata = (void *) 0xdeadbeef;
+		error = 0;
+		dir->i_mtime = dir->i_ctime = CURRENT_TIME;
+		unlock_new_inode(inode);
+	}
+	return error;
+}
+
+static int squashfs_mkdir(struct inode * dir, struct dentry * dentry, int mode)
+{
+	return squashfs_mknod(dir, dentry, mode | S_IFDIR, 0);
+}
+
+static int squashfs_create(struct inode *dir, struct dentry *dentry, int mode,
+			   struct nameidata *nd)
+{
+	return squashfs_mknod(dir, dentry, mode | S_IFREG, 0);
+}
+
+static int squashfs_link(struct dentry *old_dentry, struct inode *dir,
+			 struct dentry *dentry)
+{
+	(void) simple_link(old_dentry, dir, dentry);
+	dentry->d_fsdata = (void *) 0xdeadbeef;
+	return 0;
+}
+
+static int squashfs_symlink(struct inode * dir, struct dentry *dentry,
+			    const char * symname)
+{
+	struct inode *inode;
+	int error = -ENOSPC;
+
+	inode = get_squashfs_inode(dir->i_sb, S_IFLNK|S_IRWXUGO, 0);
+	if (inode) {
+		int l = strlen(symname)+1;
+		error = page_symlink(inode, symname, l);
+		if (!error) {
+			if (dir->i_mode & S_ISGID)
+				inode->i_gid = dir->i_gid;
+			d_instantiate(dentry, inode);
+			dget(dentry);
+			dentry->d_fsdata = (void *) 0xdeadbeef;
+			dir->i_mtime = dir->i_ctime = CURRENT_TIME;
+			unlock_new_inode(inode);
+		} else {
+			unlock_new_inode(inode);
+			iput(inode);
+		}
+	}
+	return error;
+}
+
+/* TODO: Fix rename from disk->dcache */
+int squashfs_rename(struct inode *old_dir, struct dentry *old_dentry,
+		    struct inode *new_dir, struct dentry *new_dentry)
+{
+	struct inode *inode = old_dentry->d_inode;
+	struct dentry *tmp;
+
+	if (!squashfs_empty(new_dentry))
+		return -ENOTEMPTY;
+
+	/*
+	 * If the target doesn't exist (either is was removed or it never
+	 * existed before) we don't care. If the target exist we care about the
+	 * inode only, since new_dentry is going away in d_move() later.
+	 */
+	if (new_dentry->d_inode) {
+		new_dentry->d_inode->i_ctime = new_dir->i_ctime =
+			new_dir->i_mtime = CURRENT_TIME;
+		drop_nlink(new_dentry->d_inode);
+	}
+
+	/* Un-pin dentry that have lived in dcache before */
+	if (new_dentry->d_fsdata) {
+		new_dentry->d_fsdata = (void *)0;
+		dput(new_dentry);
+	}
+
+	/*
+	 * The old_dentry is moving to the new parent in d_move() so lets pin
+	 * it to memory.
+	 */
+	if (!old_dentry->d_fsdata) {
+		dget(old_dentry);
+		old_dentry->d_fsdata = (void *)0xdeadbeef;
+	}
+
+	/*
+	 * Now we need to prevent the old name from being found
+	 */
+	tmp = d_alloc(old_dentry->d_parent, &old_dentry->d_name);
+	d_add(tmp, NULL);
+
+	/*
+	 * Don't pin the dentry in memory, since we already got a reference
+	 * from d_alloc()
+	 */
+	tmp->d_fsdata = (void *) 0xdeadbeef;
+
+	old_dir->i_ctime = old_dir->i_mtime = new_dir->i_ctime =
+		new_dir->i_mtime = inode->i_ctime = CURRENT_TIME;
+
+	return 0;
+}
+
 const struct inode_operations squashfs_dir_inode_ops = {
 	.lookup = squashfs_lookup,
 	.rmdir = squashfs_rmdir,
 	.unlink = squashfs_unlink,
+	.create = squashfs_create,
+	.link = squashfs_link,
+	.symlink = squashfs_symlink,
+	.mkdir = squashfs_mkdir,
+	.mknod = squashfs_mknod,
+	.rename = squashfs_rename,
 	.getxattr = generic_getxattr,
 	.listxattr = squashfs_listxattr
 };
