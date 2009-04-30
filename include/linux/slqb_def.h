@@ -237,8 +237,6 @@ static __always_inline struct kmem_cache *kmalloc_slab(size_t size, gfp_t flags)
 {
 	int index;
 
-	BUILD_BUG_ON(!__builtin_constant_p(size));
-
 	index = kmalloc_index(size);
 	if (unlikely(index == 0))
 		return ZERO_SIZE_PTR;
