@@ -371,7 +371,6 @@ static int squashfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 
 static int squashfs_remount(struct super_block *sb, int *flags, char *data)
 {
-	*flags |= MS_RDONLY;
 	return 0;
 }
 
