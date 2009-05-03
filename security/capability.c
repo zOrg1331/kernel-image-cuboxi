@@ -172,6 +172,12 @@ static int cap_inode_symlink(struct inode *inode, struct dentry *dentry,
 	return 0;
 }
 
+static int cap_inode_reflink(struct dentry *old_dentry, struct inode *inode,
+			     bool preserve)
+{
+	return 0;
+}
+
 static int cap_inode_mkdir(struct inode *inode, struct dentry *dentry,
 			   int mask)
 {
@@ -905,6 +911,7 @@ void security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, inode_link);
 	set_to_cap_if_null(ops, inode_unlink);
 	set_to_cap_if_null(ops, inode_symlink);
+	set_to_cap_if_null(ops, inode_reflink);
 	set_to_cap_if_null(ops, inode_mkdir);
 	set_to_cap_if_null(ops, inode_rmdir);
 	set_to_cap_if_null(ops, inode_mknod);

@@ -695,6 +695,9 @@ asmlinkage long sys_symlinkat(const char __user * oldname,
 			      int newdfd, const char __user * newname);
 asmlinkage long sys_linkat(int olddfd, const char __user *oldname,
 			   int newdfd, const char __user *newname, int flags);
+asmlinkage long sys_reflinkat(int olddfd, const char __user *oldname,
+			      int newdfd, const char __user *newname,
+			      int preserve, int flags);
 asmlinkage long sys_renameat(int olddfd, const char __user * oldname,
 			     int newdfd, const char __user * newname);
 asmlinkage long sys_futimesat(int dfd, char __user *filename,
