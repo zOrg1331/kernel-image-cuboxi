@@ -528,6 +528,18 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	@inode contains a pointer to the inode.
  *	@secid contains a pointer to the location where result will be saved.
  *	In case of failure, @secid will be set to zero.
+ * @inode_reflink:
+ *	Check permission before creating a new reference-counted link to
+ *	a file.
+ *	@old_dentry contains the dentry structure for an existing link to
+ *	the file.
+ *	@dir contains the inode structure of the parent directory of the
+ *	new reflink.
+ *	@preserve specifies whether the caller wishes to preserve the
+ *	file's attributes.  If true, the caller wishes to clone the file's
+ *	attributes exactly.  If false, the caller expects to reflink the
+ *	data extents but reset the attributes.
+ *	Return 0 if permission is granted.
  *
  * Security hooks for file operations
  *
@@ -1415,6 +1427,8 @@ struct security_operations {
 	int (*inode_unlink) (struct inode *dir, struct dentry *dentry);
 	int (*inode_symlink) (struct inode *dir,
 			      struct dentry *dentry, const char *old_name);
+	int (*inode_reflink) (struct dentry *old_dentry, struct inode *dir,
+			      bool preserve);
 	int (*inode_mkdir) (struct inode *dir, struct dentry *dentry, int mode);
 	int (*inode_rmdir) (struct inode *dir, struct dentry *dentry);
 	int (*inode_mknod) (struct inode *dir, struct dentry *dentry,
@@ -1675,6 +1689,8 @@ int security_inode_link(struct dentry *old_dentry, struct inode *dir,
 int security_inode_unlink(struct inode *dir, struct dentry *dentry);
 int security_inode_symlink(struct inode *dir, struct dentry *dentry,
 			   const char *old_name);
+int security_inode_reflink(struct dentry *old_dentry, struct inode *dir,
+			   bool preserve);
 int security_inode_mkdir(struct inode *dir, struct dentry *dentry, int mode);
 int security_inode_rmdir(struct inode *dir, struct dentry *dentry);
 int security_inode_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t dev);
@@ -2052,6 +2068,13 @@ static inline int security_inode_unlink(struct inode *dir,
 static inline int security_inode_symlink(struct inode *dir,
 					  struct dentry *dentry,
 					  const char *old_name)
+{
+	return 0;
+}
+
+static inline int security_inode_reflink(struct dentry *old_dentry,
+					 struct inode *dir,
+					 bool preserve)
 {
 	return 0;
 }

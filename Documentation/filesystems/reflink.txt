@@ -1,0 +1,174 @@
+reflink(2)
+==========
+
+
+INTRODUCTION
+------------
+
+A reflink is a reference-counted link.  The reflink(2) operation is
+analogous to the link(2) operation, except that instead of two directory
+entries pointing to the same inode, there are two identical inodes
+pointing to the same data.  Writes do not modify the shared data; they
+use copy-on-write (CoW).  Thus, after the reflink has been created, the
+inodes can diverge without impacting each other.
+
+
+SYNOPSIS
+--------
+
+The reflink(2) call looks almost like link(2):
+
+    int reflink(const char *oldpath, const char *newpath, int preserve);
+
+The actual system call is reflinkat(2):
+
+    int reflinkat(int olddirfd, const char *oldpath,
+                  int newdirfd, const char *newpath,
+                  int preserve, int flags);
+
+For details on how olddirfd, newdirfd, and flags behave, see linkat(2).
+The reflink(2) call won't be implemented by the kernel, because it's a
+trivial wrapper around reflinkat(2).
+
+
+DESCRIPTION
+-----------
+
+One way of viewing reflink is to look at the level of sharing.  A
+symbolic link does its sharing at the directory entry level; many names
+end up pointing at the same directory entry.  Hard links are one step
+down.  Multiple directory entries are sharing one inode.  Reflinks are
+down one more level: multiple inodes share the same data extents.
+
+When you symlink a file, you can then access it via the symlink or the
+real directory entry, and for the most part they look identical.  When
+accessing more than one name for a hard link, the object returned looks
+identical.  Similarly, a newly created reflink is identical to its
+source in almost every way and can be treated as such.  This includes
+ownership, permissions, security state, and data.  The only things
+that are different are the inode number, the link count, and the ctime.
+
+A reflink is a snapshot of the source file at the time it is created.
+
+Once created, though, a reflink can be modified like any other normal
+file without affecting the source file.  Changes to trivial fields like
+permissions, owner, or times are guaranteed not to trigger CoW of file
+data and will not return any error that wouldn't happen on a truly
+distinct file.  Changes to the file's data will trigger CoW of the data
+affected - the actual CoW granularity is up to the filesystem, from
+exact bytes up to the entire file.  ocfs2, for example, will copy out an
+entire extent or 1MB, whichever is smaller.
+
+Preserving the security state of the source file obviously requires
+the privilege to do so.  Because of this, the reflink(2) call has the
+preserve argument.  If it is set to REFLINK_ATTR_PRESERVE, the security
+state and file attributes will match the source as described above.
+Callers that do not own the source file and do not have CAP_CHOWN will
+see reflink(2) fail with EPERM.  If preserve is set to
+REFLINK_ATTR_NONE, the new reflink will still share all the data extents
+of the source file, including extended attributes.  The security state
+and attributes of the new reflink will be as a newly created file by
+that user.  With REFLINK_ATTR_NONE, the caller must have read access to
+the source file.
+
+Partial reflinks are not allowed.  The new inode will only appear in the
+directory structure after it is fully formed.  This prevents a crash or
+lack of space from creating a partial reflink.
+
+If a filesystem does not support reflinks, the kernel and libc MUST NOT
+fake it.  Callers are expecting to get snapshots, and faking it will
+violate that trust.
+
+The userspace view is as follows.  When reflink(2) returns, opening
+oldpath and newpath returns identical-looking files, just like link(2).
+After that, oldpath and newpath behave as distinct files, and
+modifications to one have no impact on the other.
+
+
+RESTRICTIONS
+------------
+
+Just as the sharing gets lower as you move from symlink() -> link() ->
+reflink(), the restrictions on the call get tighter.  A symlink doesn't
+require any access permissions other than being able to create its
+inode.  It can cross filesystems and mount points, and it can point to
+any type of file.  A hard link requires both source and target to be on
+the same filesystem under the same mount point, and that the source not
+be a directory.  A reflink tightens that to regular files only.  Like
+hard links and symlinks, a reflink cannot be created if newpath exists.
+
+Reflinks adds one big restriction on top of hard links: only the owner
+or someone with elevated privileges (CAP_CHOWN) can preserve the
+security state (permissions, ownership, ACLs, etc) across a reflink.
+A reflink is a point-in-time snapshot of a file.  Without the
+appropriate privilege, the caller specifying REFLINK_ATTR_PRESERVE
+will receive EPERM.
+
+A caller specifying REFLINK_ATTR_NONE must have read access to reflink a
+file.
+
+
+SHARING
+-------
+
+A reflink creates a new inode.  It shares all data extents of the source
+file; this includes file data and extended attribute data.  All of the
+sharing is in a CoW fashion, and any modification of the data will break
+the sharing.
+
+For some filesystems, certain data structures are not in allocated
+storage extents.  Creating a reflink might make a copy of these extents.
+An example is ext3's ability to store small extended attributes inside
+the ext3 inode.  Since a reflink is creating a new inode, those extended
+attributes are merely copied to the new inode.
+
+
+EXCEPTIONS
+----------
+
+When REFLINK_ATTR_PRESERVE is specified, all file attributes and
+extended attributes of the new file must identical to the source file
+with the following exceptions:
+
+- The new file must have a new inode number.  This allows POSIX
+  programs to treat the source and new files as separate objects.  From
+  the view of the POSIX application, the files are distinct.  The
+  sharing is invisible outside of the filesystem's internal structures.
+- The ctime of the source file only changes if the source's metadata
+  must be changed to accommodate the copy-on-write linkage.  The ctime
+  of the new file is set to represent its creation.
+- The link count of the source file is unchanged, and the link count of
+  the new file is one.
+
+The mtime of the source file is unmodified, and the mtime of the new
+file is set identical to the source file.  This reflects that the data
+is unchanged.
+
+If REFLINK_ATTR_NONE is specified, all data extents will be reflinked,
+but file attributes and security state will be as any new file.
+
+
+INODE OPERATION
+---------------
+
+Filesystems implement the ->reflink() inode operation.  It has almost
+the same prototype as ->link():
+
+    int (*reflink)(struct dentry *old_dentry, struct inode *dir,
+                   struct dentry *new_dentry, bool preserve);
+
+When the filesystem is called, the VFS has already checked the
+permissions and mountpoint of the operation.  It has determined whether
+the file attributes and security state should be preserved or
+reinitialized, as specified by the preserve argument.  The filesystem
+just needs to create the new inode identical to the old one with the
+exceptions noted above, link up the shared data extents, and then link
+the new inode into dir.
+
+
+FOLLOWING SYMBOLIC LINKS
+------------------------
+
+reflink() deferences symbolic links in the same manner that link(2)
+does.  The AT_SYMLINK_FOLLOW flag is honored just as for linkat(2).
+
