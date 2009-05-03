@@ -22,7 +22,7 @@ index af6d047..dba1ce1 100644
  obj-$(CONFIG_EXOFS_FS)          += exofs/
 +obj-$(CONFIG_AUFS_FS)           += aufs/
 diff --git a/fs/namei.c b/fs/namei.c
-index b8433eb..4541c0b 100644
+index 78f253c..b832aa3 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
 @@ -337,6 +337,7 @@ int deny_write_access(struct file * file)
@@ -62,7 +62,7 @@ index b8433eb..4541c0b 100644
  /**
   * lookup_one_len - filesystem helper to lookup single pathname component
 diff --git a/fs/namespace.c b/fs/namespace.c
-index d9138f8..a1ebece 100644
+index 4119620..ae9b883 100644
 --- a/fs/namespace.c
 +++ b/fs/namespace.c
 @@ -38,6 +38,9 @@

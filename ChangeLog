@@ -1,3 +1,15 @@
+commit ac34732e859bcffd8363d21a1999f9941d8c68f8
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Apr 27 15:11:17 2009 +0900
+
+    aufs: remove temporary workaround for a bug in NFSD readdir
+    
+    In linux-2.6.30-rc3 the bug is fixed, and remove temporary workaround in
+    aufs. A check for i_mutex is introcued in lookup_one_len() too. But it
+    is by WARN_ON_ONCE(), so I keep IMustLock() in vfsub_lookup_one_len().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 642c5b8fbffc9adcd306e9e44bc09512d5329794
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Fri Apr 24 14:34:17 2009 +0900

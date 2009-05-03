@@ -1,10 +1,10 @@
 aufs2 standalone patch for linux-2.6.
 
 diff --git a/fs/ecryptfs/inode.c b/fs/ecryptfs/inode.c
-index 55b3145..4af299a 100644
+index 93bc0f8..9da9f7a 100644
 --- a/fs/ecryptfs/inode.c
 +++ b/fs/ecryptfs/inode.c
-@@ -459,9 +459,6 @@ out_lock:
+@@ -463,9 +463,6 @@ out_lock:
  	unlock_dir(lower_dir_dentry);
  	dput(lower_new_dentry);
  	dput(lower_old_dentry);
@@ -14,7 +14,7 @@ index 55b3145..4af299a 100644
  	return rc;
  }
  
-@@ -473,7 +470,10 @@ static int ecryptfs_unlink(struct inode *dir, struct dentry *dentry)
+@@ -477,7 +474,10 @@ static int ecryptfs_unlink(struct inode *dir, struct dentry *dentry)
  	struct dentry *lower_dir_dentry;
  
  	lower_dir_dentry = lock_parent(lower_dentry);
@@ -25,7 +25,7 @@ index 55b3145..4af299a 100644
  	if (rc) {
  		printk(KERN_ERR "Error in vfs_unlink; rc = [%d]\n", rc);
  		goto out_unlock;
-@@ -484,6 +484,7 @@ static int ecryptfs_unlink(struct inode *dir, struct dentry *dentry)
+@@ -488,6 +488,7 @@ static int ecryptfs_unlink(struct inode *dir, struct dentry *dentry)
  	dentry->d_inode->i_ctime = dir->i_ctime;
  	d_drop(dentry);
  out_unlock:
@@ -33,7 +33,7 @@ index 55b3145..4af299a 100644
  	unlock_dir(lower_dir_dentry);
  	return rc;
  }
-@@ -569,8 +570,12 @@ static int ecryptfs_rmdir(struct inode *dir, struct dentry *dentry)
+@@ -573,8 +574,12 @@ static int ecryptfs_rmdir(struct inode *dir, struct dentry *dentry)
  	fsstack_copy_attr_times(dir, lower_dir_dentry->d_inode);
  	dir->i_nlink = lower_dir_dentry->d_inode->i_nlink;
  	unlock_dir(lower_dir_dentry);
