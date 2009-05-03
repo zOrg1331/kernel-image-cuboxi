@@ -59,7 +59,7 @@ static inline void struct_slqb_page_wrong_size(void)
 /*
  * slqb_min_order: minimum allocation order for slabs
  */
-static int slqb_min_order = 0;
+static int slqb_min_order;
 
 /*
  * slqb_min_objects: minimum number of objects per slab. Increasing this
@@ -193,12 +193,12 @@ static inline void __free_slqb_pages(struct slqb_page *page, unsigned int order)
 #ifdef CONFIG_SLQB_DEBUG
 static inline int slab_debug(struct kmem_cache *s)
 {
-	return (s->flags &
+	return s->flags &
 			(SLAB_DEBUG_FREE |
 			 SLAB_RED_ZONE |
 			 SLAB_POISON |
 			 SLAB_STORE_USER |
-			 SLAB_TRACE));
+			 SLAB_TRACE);
 }
 static inline int slab_poison(struct kmem_cache *s)
 {
@@ -945,7 +945,7 @@ static inline unsigned long kmem_cache_flags(unsigned long objsize,
 	return flags;
 }
 
-static const int slqb_debug = 0;
+static const int slqb_debug;
 #endif
 
 /*
@@ -1954,8 +1954,11 @@ static struct kmem_cache_cpu *alloc_kmem_cache_cpu(struct kmem_cache *s,
 				int cpu)
 {
 	struct kmem_cache_cpu *c;
+	int node;
 
-	c = kmem_cache_alloc_node(&kmem_cpu_cache, GFP_KERNEL, cpu_to_node(cpu));
+	node = cpu_to_node(cpu);
+
+	c = kmem_cache_alloc_node(&kmem_cpu_cache, GFP_KERNEL, node);
 	if (!c)
 		return NULL;
 
@@ -2292,7 +2295,7 @@ error_lock:
 	up_write(&slqb_lock);
 error:
 	if (flags & SLAB_PANIC)
-		panic("kmem_cache_create(): failed to create slab `%s'\n", name);
+		panic("%s: failed to create slab `%s'\n", __func__, name);
 	return 0;
 }
 
@@ -3006,7 +3009,7 @@ static int kmem_cache_create_ok(const char *name, size_t size,
 
 		if (!strcmp(tmp->name, name)) {
 			printk(KERN_ERR
-			       "kmem_cache_create(): duplicate cache %s\n", name);
+			       "SLAB: duplicate cache %s\n", name);
 			dump_stack();
 			up_read(&slqb_lock);
 
@@ -3042,7 +3045,7 @@ struct kmem_cache *kmem_cache_create(const char *name, size_t size,
 
 err:
 	if (flags & SLAB_PANIC)
-		panic("kmem_cache_create(): failed to create slab `%s'\n", name);
+		panic("%s: failed to create slab `%s'\n", __func__, name);
 
 	return NULL;
 }
@@ -3676,7 +3679,7 @@ static struct kset_uevent_ops slab_uevent_ops = {
 
 static struct kset *slab_kset;
 
-static int sysfs_available __read_mostly = 0;
+static int sysfs_available __read_mostly;
 
 static int sysfs_slab_add(struct kmem_cache *s)
 {
