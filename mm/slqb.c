@@ -8,6 +8,7 @@
  */
 
 #include <linux/mm.h>
+#include <linux/swap.h> /* struct reclaim_state */
 #include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/slab.h>
@@ -178,7 +179,8 @@ static inline struct slqb_page *virt_to_head_slqb_page(const void *addr)
 	return (struct slqb_page *)p;
 }
 
-static inline void __free_slqb_pages(struct slqb_page *page, unsigned int order)
+static inline void __free_slqb_pages(struct slqb_page *page, unsigned int order,
+					int pages)
 {
 	struct page *p = &page->page;
 
@@ -187,6 +189,8 @@ static inline void __free_slqb_pages(struct slqb_page *page, unsigned int order)
 	VM_BUG_ON(!(p->flags & PG_SLQB_BIT));
 	p->flags &= ~PG_SLQB_BIT;
 
+	if (current->reclaim_state)
+		current->reclaim_state->reclaimed_slab += pages;
 	__free_pages(p, order);
 }
 
@@ -1043,7 +1047,7 @@ static void __free_slab(struct kmem_cache *s, struct slqb_page *page)
 		NR_SLAB_RECLAIMABLE : NR_SLAB_UNRECLAIMABLE,
 		-pages);
 
-	__free_slqb_pages(page, s->order);
+	__free_slqb_pages(page, s->order, pages);
 }
 
 static void rcu_free_slab(struct rcu_head *h)
