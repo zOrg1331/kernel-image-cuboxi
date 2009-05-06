@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.29
-Release: alt5
+Release: alt6
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -18,7 +18,7 @@ Release: alt5
 
 # Build options
 # You can change compiler version by editing this line:
-%define kgcc_version	4.3
+%define kgcc_version	4.4
 
 # Enable/disable SGML docs formatting
 %def_disable docs
@@ -340,6 +340,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Wed May 06 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.29-alt6
+- rebuild with gcc4.4
+
 * Tue Apr 28 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.29-alt5
 - 2.6.29.2
 
