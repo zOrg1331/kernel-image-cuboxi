@@ -1,6 +1,6 @@
 Name: kernel-image-std-srv
 Version: 2.6.27
-Release: alt16
+Release: alt17
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -469,6 +469,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Fri May 08 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt17
+- fix build in new environment
+- Fix snd_card_create() backport (ALT#19978)(vsu@)
+
 * Wed Apr 01 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt16
 - alsa: alsa 1.0.19 repleaced by vanilla alsa with patches
 - alsa: turn off pcspeeker support (closes: 19653)
