@@ -1,3 +1,114 @@
+commit c6ad1c9b6635c23c017ca37c6aec15ce3276fbf3
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sat May 9 13:40:13 2009 +0900
+
+    aufs: tiny, Stop supporting ecryptfs
+    
+    Since no aufs user uses it as a branch.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit ac7cbfc0922f812d515358ee9f2e4e72b32b5de0
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sat May 9 13:37:47 2009 +0900
+
+    Revert "fix ecryptfs original bug to test aufs2"
+    
+    This reverts commit abe17d4a4b7691742ae7c7f1ddcbd2dd1927e6fd.
+    Stop supporting ecryptfs sinoce no aufs user uses it as a branch.
+
+commit 07ddf542918274a01fd6f8d7bd70d850d3a538d6
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sat May 9 12:55:52 2009 +0900
+
+    aufs: update a donor
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 6840b8336502c70b193ce75e768266d9496251c8
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu May 7 15:39:50 2009 +0900
+
+    aufs: tiny, revert full copyright sentences
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit da917963ac747bae7d3054cc6bf925512f02c9d8
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed May 6 16:54:20 2009 +0900
+
+    aufs: vdir, minor optimization
+    
+    Replace au_kzrealloc() by krealloc().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 154d61f57ea91f49cfa2fb3b524ea9f0d609225e
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed May 6 14:28:44 2009 +0900
+
+    aufs: update donors
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 0d1254fd68a7f0fc626ca33eba42ae7d5c661682
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed May 6 02:24:22 2009 +0900
+
+    aufs: optimize vdir
+    
+    - new options rdblk=def and rdhash=def which are re-initialize the
+      values.
+    - print the distribution of name hashing (disabled by default).
+    - simplify name hashing, becomes effective.
+    - new small function au_nhash_test_name().
+    - move test_known() and append_de() earlier in the file.
+    - use kmemdup() instead of kmalloc() and memcpy().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit b936102f95e73c2b31fdf88a58bd787d388fda55
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue May 5 13:31:48 2009 +0900
+
+    aufs: make au_nhash single layerd
+    
+    VDIR may become generic in the future (in the experimental 'rum'
+    branch). Let's prepare for it slowly. I don't care if it won't be
+    generic, because this work optimizes VDIR.
+    This is a porting from a part of 'rum' branch.
+    
+    - convert the au_nhash pointer in struct test_empty_arg, struct
+      au_ren_args, struct fillvdir_arg, struct del_wh_children_args and
+      struct au_whtmp_rmdir to au_nhash itself.
+    - pass au_nhash* and num_hash to au_nhash_alloc().
+    - delete the layer parameter from au_nhash_wh_free().
+    - re-initialize nh_num in whlist, to protect double free.
+    - convert the parameter for au_nhash_wh_do_free() from struct au_nhash
+      to struct hlist_head.
+    - new internal generic function au_nhash_do_free().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 646c8b86508c346c94e7df8f9de03cfec1f5ebd7
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue May 5 13:11:56 2009 +0900
+
+    aufs: tiny: rename namelen to nlen
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 9125a96a77c2f3924563577d0b17265959be414a
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon May 4 15:24:32 2009 +0900
+
+    aufs: tiny: simplified vdir
+    
+    - rename all 'namelen' to 'nlen'.
+    - use ALIGN() macro in calc_size().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit ac34732e859bcffd8363d21a1999f9941d8c68f8
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Mon Apr 27 15:11:17 2009 +0900
