@@ -1,0 +1,36 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Thu, 21 Aug 2008 13:09:15 -0400
+Subject: [xen] fix GDT allocation for 128 CPUs
+Message-id: 20080821170915.9528.2106.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.3 PATCH 2/3] Xen fix GDT allocation for 128 CPUs
+Bugzilla: 447958
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+Fixes bz 447958
+
+The second issue was a crash that occurred when
+cpu 126 was being initialized. This was the result
+of exhausting the GDT space reserved for per CPU
+elements. A simple change to add a second page
+solves this issue. This part is not upstream as
+they are searching for a more portable fix.
+Kudos to Clalance for the GDT fix.
+
+diff --git a/include/asm-x86/desc.h b/include/asm-x86/desc.h
+index aa354aa..a79627f 100644
+--- a/include/asm-x86/desc.h
++++ b/include/asm-x86/desc.h
+@@ -5,7 +5,11 @@
+  * Xen reserves a memory page of GDT entries.
+  * No guest GDT entries exist beyond the Xen reserved area.
+  */
++#if MAX_PHYS_CPUS > 64
++#define NR_RESERVED_GDT_PAGES   2
++#else
+ #define NR_RESERVED_GDT_PAGES   1
++#endif
+ #define NR_RESERVED_GDT_BYTES   (NR_RESERVED_GDT_PAGES * PAGE_SIZE)
+ #define NR_RESERVED_GDT_ENTRIES (NR_RESERVED_GDT_BYTES / 8)
+ 

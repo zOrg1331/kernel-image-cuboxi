@@ -1,0 +1,40 @@
+From: Bob Peterson <rpeterso@redhat.com>
+Date: Tue, 24 Jun 2008 17:03:44 -0500
+Subject: [gfs2] bad subtraction in while-loop can cause panic
+Message-id: 1214345024.24741.13.camel@technetium.msp.redhat.com
+O-Subject: [RHEL5.3 PATCH] GFS2: BUG: unable to handle kernel paging request at ffff81002690e000
+Bugzilla: 452004
+RH-Acked-by: Mikulas Patocka <mpatocka@redhat.com>
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+
+Hi,
+
+This patch fixes bug 452004.  The code is now upstream and tested.
+
+The intent was to stop the while loop one "unsigned long" less than
+the end, but the cast to (unsigned char *) made it one byte rather
+than one unsigned long.  That meant it did not exit when it should
+have and that caused the kernel to BUG out under some page
+boundary conditions.
+
+Regards,
+
+Bob Peterson
+Red Hat GFS
+
+Signed-off-by: Bob Peterson <rpeterso@redhat.com>
+--
+
+diff --git a/fs/gfs2/rgrp.c b/fs/gfs2/rgrp.c
+index 0100533..5c8678a 100644
+--- a/fs/gfs2/rgrp.c
++++ b/fs/gfs2/rgrp.c
+@@ -186,7 +186,7 @@ ulong_aligned:
+ 	   depending on architecture.  I've experimented with several ways
+ 	   of writing this section such as using an else before the goto
+ 	   but this one seems to be the fastest. */
+-	while ((unsigned char *)plong < end - 1) {
++	while ((unsigned char *)plong < end - sizeof(unsigned long)) {
+ 		prefetch(plong + 1);
+ 		if (((*plong) & LBITMASK) != lskipval)
+ 			break;

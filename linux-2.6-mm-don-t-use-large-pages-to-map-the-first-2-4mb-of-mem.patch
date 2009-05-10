@@ -1,0 +1,51 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Tue, 15 Jul 2008 15:31:43 -0400
+Subject: [mm] don't use large pages to map the first 2/4MB of mem
+Message-id: 1216150303.21188.8.camel@localhost.localdomain
+O-Subject: [RHEL5-U3 patch] Backport of don't use large pages to map the first 2/4MB of memory form 2.6.26 to RHEL5-U3
+Bugzilla: 455504
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+The attached patch is a backport of using 4KB pages for the first 2MB of
+kernel space for performance reasons.
+
+Fixes BZ 455504.
+
+Gitweb:
+http://git.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=f5c24a7fd0798d636af184cc7032e7e0cb149112
+Commit:     f5c24a7fd0798d636af184cc7032e7e0cb149112
+Parent:     c9caa02c529d5e113e40cbc77254558fcdfa4215
+Author:     Andi Kleen <andi@firstfloor.org>
+AuthorDate: Wed Mar 12 03:53:30 2008 +0100
+Committer:  Ingo Molnar <mingo@elte.hu>
+CommitDate: Thu Apr 17 17:41:30 2008 +0200
+
+    x86: don't use large pages to map the first 2/4MB of memory
+
+    Intel recommends to not use large pages for the first 1MB
+    of the physical memory because there are fixed size MTRRs there
+    which cause splitups in the TLBs.
+
+    On AMD doing so is also a good idea.
+
+diff --git a/arch/i386/mm/init.c b/arch/i386/mm/init.c
+index b9786bd..a7bcfbb 100644
+--- a/arch/i386/mm/init.c
++++ b/arch/i386/mm/init.c
+@@ -162,8 +162,13 @@ static void __init kernel_physical_mapping_init(pgd_t *pgd_base)
+ 		for (pmd_idx = 0; pmd_idx < PTRS_PER_PMD && pfn < max_low_pfn; pmd++, pmd_idx++) {
+ 			unsigned int address = pfn * PAGE_SIZE + PAGE_OFFSET;
+ 
+-			/* Map with big pages if possible, otherwise create normal page tables. */
+-			if (cpu_has_pse) {
++			/* Map with big pages if possible, otherwise create normal page tables. 
++			 * Don't use a large page for the first 2/4MB of memory
++			 * because there are often fixed size MTRRs in there
++			 * and overlapping MTRRs into large pages can cause
++			 * slowdowns.
++			 */
++			if (cpu_has_pse && !(pgd_idx == 0 && pmd_idx == 0)) {
+ 				unsigned int address2 = (pfn + PTRS_PER_PTE - 1) * PAGE_SIZE + PAGE_OFFSET + PAGE_SIZE-1;
+ 
+ 				if (is_kernel_text(address) || is_kernel_text(address2))

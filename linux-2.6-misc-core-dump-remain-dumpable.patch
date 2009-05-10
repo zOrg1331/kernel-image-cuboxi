@@ -1,0 +1,67 @@
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Mon, 14 Jul 2008 11:26:39 +0200
+Subject: [misc] core dump: remain dumpable
+Message-id: 487B1BCF.2000508@redhat.com
+O-Subject: [RHEL5.3 PATCH] BZ437958 core dump: remain dumpable
+Bugzilla: 437958
+RH-Acked-by: Roland McGrath <roland@redhat.com>
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=437958
+
+Description (from git commit):
+The coredump code always calls set_dumpable(0) when it starts (even if
+RLIMIT_CORE prevents any core from being dumped).  The effect of this
+(via task_dumpable) is to make /proc/pid/* files owned by root instead
+of the user, so the user can no longer examine his own process--in a
+case where there was never any privileged data to protect.  This
+affects e.g. auxv, environ, fd; in Fedora (execshield) kernels, also
+maps.  In practice, you can only notice this when a debugger has
+requested PTRACE_EVENT_EXIT tracing.
+
+set_dumpable was only used in do_coredump for synchronization and not
+intended for any security purpose.  (It doesn't secure anything that
+wasn't already unsecured when a process dies by SIGTERM instead of
+SIGQUIT.)
+
+This changes do_coredump to check the core_waiters count as the means
+of synchronization, which is sufficient.  Now we leave the "dumpable"
+bits alone.
+
+Upstream status:
+commit 00ec99da43a7c2aed46c6595aa271b84bb1b1462
+
+Brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1383466
+
+Test status:
+Built on all arch, tested on i686 using the reproducer attached to
+bugzilla.
+
+Regards,
+Jerome
+
+diff --git a/fs/exec.c b/fs/exec.c
+index 0581532..966613c 100644
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -1476,7 +1476,10 @@ int do_coredump(long signr, int exit_code, struct pt_regs * regs)
+ 	if (current->tux_exit)
+ 		current->tux_exit();
+ 	down_write(&mm->mmap_sem);
+-	if (!mm->dumpable) {
++	/*
++	 * If another thread got here first, or we are not dumpable, bail out.
++	 */
++	if (mm->core_waiters || !mm->dumpable) {
+ 		up_write(&mm->mmap_sem);
+ 		goto fail;
+ 	}
+@@ -1490,7 +1493,6 @@ int do_coredump(long signr, int exit_code, struct pt_regs * regs)
+ 		flag = O_EXCL;		/* Stop rewrite attacks */
+ 		current->fsuid = 0;	/* Dump root private */
+ 	}
+-	mm->dumpable = 0;
+ 
+ 	retval = coredump_wait(exit_code);
+ 	if (retval < 0)

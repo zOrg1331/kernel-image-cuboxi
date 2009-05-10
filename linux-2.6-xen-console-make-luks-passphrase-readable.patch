@@ -1,0 +1,70 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Thu, 4 Dec 2008 06:26:05 -0500
+Subject: [xen] console: make LUKS passphrase readable
+Message-id: 4937BE4D.3020309@redhat.com
+O-Subject: Re: [RHEL5.3 PATCH 1/1 v3] Make LUKS passphrase readable on Xen
+Bugzilla: 466240
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+Same patch actually, just added a patch description as requested
+during review. So please use this one with the description.
+
+ Bill
+
+#
+Fix readability of user mode prompts by not overprinting
+them on top of the Xen hypervisor startup messages.
+
+After the Xen hypervisor has left it's output on the screen and dom0
+starts up, printing from the dom0 begins again at the top of
+the video screen. There is no "clear" operation first, so the
+output is all mixed in with the previous HV output until there
+are enough lines output to cause scrolling. Once the new output
+reaches the bottom of the screen, scrolling starts and things
+are clean from then on. This happens with or without the kernel
+quiet boot arg.
+
+So without the quiet arg the initial N lines look ugly but
+you almost never see them as the kernel output comes
+so fast that you never really see the Xen HV messages.
+
+With quiet, there are only a couple kernel printk's of
+severity level high enough to get printed. So the screen
+sits there with the Xen messages much longer. When
+the user space output starts it has the same issue
+with the first N lines intermixed with the Xen HV output.
+Trouble is, that if you are using encryption there is
+a prompt there that is hard to see and reply too.
+
+diff --git a/drivers/xen/console/console.c b/drivers/xen/console/console.c
+index d16096d..0e7d088 100644
+--- a/drivers/xen/console/console.c
++++ b/drivers/xen/console/console.c
+@@ -189,6 +189,8 @@ static struct console kcons_info = {
+ 
+ static int __init xen_console_init(void)
+ {
++        int i;
++
+ 	if (!is_running_on_xen())
+ 		goto out;
+ 
+@@ -235,6 +237,17 @@ static int __init xen_console_init(void)
+ 
+ 	register_console(&kcons_info);
+ 
++        /*
++         * If loglevel is low assume "quiet" arg and clear
++         * the screen to remove Hypervisor messages
++         * so that user startup prompts/messages
++         * can be seen clearly. Fixes BZ 466240.
++         */
++        if ((console_loglevel <  default_console_loglevel) &&
++            (screen_info.orig_video_mode == 3)) {
++                for (i = 0; i < screen_info.orig_video_lines; i++)
++                        printk(KERN_ERR "\n");
++        }
+  out:
+ 	return 0;
+ }

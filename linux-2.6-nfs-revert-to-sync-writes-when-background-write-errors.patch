@@ -1,0 +1,204 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Thu, 22 May 2008 06:52:21 -0400
+Subject: [nfs] revert to sync writes when background write errors
+Message-id: 1211453541-18972-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.3 PATCH] BZ#438423: NFS: Fall back to synchronous writes when a background write errors
+Bugzilla: 438423
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+The NFS client currently buffers writes very aggressively. When a
+mounted NFS filesystem is at or near capacity or a user is near quota,
+the client will happily keep dirtying pages even if all the writes to an
+inode are failing. Userspace will not be aware of these failures until a
+close() or fsync() call. Not only is this a waste of time and resources
+for the client, but it can bog down the server with failing write
+attempts.
+
+The following patch is backported from upstream and changes the NFS
+client to flip to synchronous writes whenever a background write on
+the wire fails. When the write attempts start succeeding again, it
+will flip back to asynchronous writes.
+
+Successfully tested with a reproducer I wrote for this.
+
+diff --git a/fs/nfs/file.c b/fs/nfs/file.c
+index d949d4a..426ae9f 100644
+--- a/fs/nfs/file.c
++++ b/fs/nfs/file.c
+@@ -169,6 +169,31 @@ static loff_t nfs_file_llseek(struct file *filp, loff_t offset, int origin)
+ }
+ 
+ /*
++ * Helper for nfs_file_flush() and nfs_fsync()
++ *
++ * Notice that it clears the NFS_CONTEXT_ERROR_WRITE before synching to
++ * disk, but it retrieves and clears ctx->error after synching, despite
++ * the two being set at the same time in nfs_context_set_write_error().
++ * This is because the former is used to notify the _next_ call to
++ * nfs_file_write() that a write error occured, and hence cause it to
++ * fall back to doing a synchronous write.
++ */
++static int nfs_do_fsync(struct nfs_open_context *ctx, struct inode *inode)
++{
++	int have_error, status;
++	int ret = 0;
++
++	have_error = test_and_clear_bit(NFS_CONTEXT_ERROR_WRITE, &ctx->flags);
++	status = nfs_wb_all(inode);
++	have_error |= test_bit(NFS_CONTEXT_ERROR_WRITE, &ctx->flags);
++	if (have_error)
++		ret = xchg(&ctx->error, 0);
++	if (!ret)
++		ret = status;
++	return ret;
++}
++
++/*
+  * Flush all dirty pages, and check for write errors.
+  *
+  */
+@@ -184,16 +209,11 @@ nfs_file_flush(struct file *file, fl_owner_t id)
+ 	if ((file->f_mode & FMODE_WRITE) == 0)
+ 		return 0;
+ 	nfs_inc_stats(inode, NFSIOS_VFSFLUSH);
+-	lock_kernel();
++
+ 	/* Ensure that data+attribute caches are up to date after close() */
+-	status = nfs_wb_all(inode);
+-	if (!status) {
+-		status = ctx->error;
+-		ctx->error = 0;
+-		if (!status)
+-			nfs_revalidate_inode(NFS_SERVER(inode), inode);
+-	}
+-	unlock_kernel();
++	status = nfs_do_fsync(ctx, inode);
++	if (!status)
++		nfs_revalidate_inode(NFS_SERVER(inode), inode);
+ 	return status;
+ }
+ 
+@@ -268,19 +288,11 @@ nfs_fsync(struct file *file, struct dentry *dentry, int datasync)
+ {
+ 	struct nfs_open_context *ctx = (struct nfs_open_context *)file->private_data;
+ 	struct inode *inode = dentry->d_inode;
+-	int status;
+ 
+ 	dfprintk(VFS, "nfs: fsync(%s/%ld)\n", inode->i_sb->s_id, inode->i_ino);
+ 
+ 	nfs_inc_stats(inode, NFSIOS_VFSFSYNC);
+-	lock_kernel();
+-	status = nfs_wb_all(inode);
+-	if (!status) {
+-		status = ctx->error;
+-		ctx->error = 0;
+-	}
+-	unlock_kernel();
+-	return status;
++	return nfs_do_fsync(ctx, inode);
+ }
+ 
+ /*
+@@ -371,6 +383,18 @@ const struct address_space_operations nfs_file_aops = {
+ /* 
+  * Write to a file (through the page cache).
+  */
++static int nfs_need_sync_write(struct file *filp, struct inode *inode)
++{
++	struct nfs_open_context *ctx;
++
++	if (IS_SYNC(inode) || (filp->f_flags & O_SYNC))
++		return 1;
++	ctx = filp->private_data;
++	if (test_bit(NFS_CONTEXT_ERROR_WRITE, &ctx->flags))
++		return 1;
++	return 0;
++}
++
+ static ssize_t
+ nfs_file_write(struct kiocb *iocb, const char __user *buf, size_t count, loff_t pos)
+ {
+@@ -406,8 +430,8 @@ nfs_file_write(struct kiocb *iocb, const char __user *buf, size_t count, loff_t
+ 	nfs_add_stats(inode, NFSIOS_NORMALWRITTENBYTES, count);
+ 	result = generic_file_aio_write(iocb, buf, count, pos);
+ 	/* Return error values for O_SYNC and IS_SYNC() */
+-	if (result >= 0 && (IS_SYNC(inode) || (iocb->ki_filp->f_flags & O_SYNC))) {
+-		int err = nfs_fsync(iocb->ki_filp, dentry, 1);
++	if (result >= 0 && nfs_need_sync_write(iocb->ki_filp, inode)) {
++		int err = nfs_do_fsync(iocb->ki_filp->private_data, inode);
+ 		if (err < 0)
+ 			result = err;
+ 	}
+diff --git a/fs/nfs/inode.c b/fs/nfs/inode.c
+index c82cf26..e4cabd1 100644
+--- a/fs/nfs/inode.c
++++ b/fs/nfs/inode.c
+@@ -484,6 +484,7 @@ static struct nfs_open_context *alloc_nfs_open_context(struct vfsmount *mnt, str
+ 		ctx->cred = get_rpccred(cred);
+ 		ctx->state = NULL;
+ 		ctx->lockowner = current->files;
++		ctx->flags = 0;
+ 		ctx->error = 0;
+ 		ctx->dir_cookie = 0;
+ 	}
+diff --git a/fs/nfs/write.c b/fs/nfs/write.c
+index 69db0fb..31c3f23 100644
+--- a/fs/nfs/write.c
++++ b/fs/nfs/write.c
+@@ -462,6 +462,13 @@ static void nfs_inode_remove_request(struct nfs_page *req)
+ 	nfs_release_request(req);
+ }
+ 
++static void nfs_context_set_write_error(struct nfs_open_context *ctx, int error)
++{
++	ctx->error = error;
++	smp_wmb();
++	set_bit(NFS_CONTEXT_ERROR_WRITE, &ctx->flags);
++}
++
+ /*
+  * Find a request
+  */
+@@ -1180,7 +1187,7 @@ static void nfs_writeback_done_partial(struct rpc_task *task, void *calldata)
+ 	if (task->tk_status < 0) {
+ 		ClearPageUptodate(page);
+ 		SetPageError(page);
+-		req->wb_context->error = task->tk_status;
++		nfs_context_set_write_error(req->wb_context, task->tk_status);
+ 		dprintk(", error = %d\n", task->tk_status);
+ 	} else {
+ #if defined(CONFIG_NFS_V3) || defined(CONFIG_NFS_V4)
+@@ -1238,7 +1245,8 @@ static void nfs_writeback_done_full(struct rpc_task *task, void *calldata)
+ 		if (task->tk_status < 0) {
+ 			ClearPageUptodate(page);
+ 			SetPageError(page);
+-			req->wb_context->error = task->tk_status;
++			nfs_context_set_write_error(req->wb_context,
++						    task->tk_status);
+ 			end_page_writeback(page);
+ 			nfs_inode_remove_request(req);
+ 			dprintk(", error = %d\n", task->tk_status);
+@@ -1447,7 +1455,8 @@ static void nfs_commit_done(struct rpc_task *task, void *calldata)
+ 			req->wb_bytes,
+ 			(long long)req_offset(req));
+ 		if (task->tk_status < 0) {
+-			req->wb_context->error = task->tk_status;
++			nfs_context_set_write_error(req->wb_context,
++						    task->tk_status);
+ 			nfs_inode_remove_request(req);
+ 			dprintk(", error = %d\n", task->tk_status);
+ 			goto next;
+diff --git a/include/linux/nfs_fs.h b/include/linux/nfs_fs.h
+index 623c099..40524d9 100644
+--- a/include/linux/nfs_fs.h
++++ b/include/linux/nfs_fs.h
+@@ -91,6 +91,9 @@ struct nfs_open_context {
+ 	struct nfs4_state *state;
+ 	fl_owner_t lockowner;
+ 	int mode;
++
++	unsigned long flags;
++#define NFS_CONTEXT_ERROR_WRITE		(0)
+ 	int error;
+ 
+ 	struct list_head list;

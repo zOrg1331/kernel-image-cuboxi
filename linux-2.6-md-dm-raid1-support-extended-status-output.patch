@@ -1,0 +1,272 @@
+From: Jonathan Brassow <jbrassow@redhat.com>
+Date: Tue, 4 Nov 2008 13:44:14 -0600
+Subject: [md] dm-raid1: support extended status output
+Message-id: 1225827854.16843.8.camel@hydrogen.msp.redhat.com
+O-Subject: [RHEL5.3 PATCH] dm-raid1.c: support extended status output (repost)
+Bugzilla: 437177
+RH-Acked-by: Heinz Mauelshagen <heinzm@redhat.com>
+RH-Acked-by: Mikulas Patocka <mpatocka@redhat.com>
+
+I've added Mikulas' flush_scheduled_work patch to the original patch
+posted by Heinz
+(http://post-office.corp.redhat.com/archives/rhkernel-list/2008-November/msg00043.html).
+
+This patch gives the device-mapper mirror target the ability to report
+the /type/ of error encountered, rather than just stating an error /did/
+occur.  Userspace tools are able to take more appropriate action because
+of the extra information.
+
+The items in this patch have all been back-ported from upstream.
+
+ brassow
+
+diff --git a/drivers/md/dm-raid1.c b/drivers/md/dm-raid1.c
+index 759f4ef..43fd75d 100644
+--- a/drivers/md/dm-raid1.c
++++ b/drivers/md/dm-raid1.c
+@@ -110,8 +110,15 @@ struct region {
+ /*-----------------------------------------------------------------
+  * Mirror set structures.
+  *---------------------------------------------------------------*/
++enum dm_raid1_error {
++	DM_RAID1_WRITE_ERROR,
++	DM_RAID1_SYNC_ERROR,
++	DM_RAID1_READ_ERROR
++};
++
+ struct mirror {
+ 	atomic_t error_count;  /* Error counter to flag mirror failure */
++	unsigned long error_type;
+ 	struct mirror_set *ms;
+ 	struct dm_dev *dev;
+ 	sector_t offset;
+@@ -148,6 +155,8 @@ struct mirror_set {
+ 	struct timer_list timer;
+ 	unsigned long timer_pending;
+ 
++	struct work_struct trigger_event;
++
+ 	struct mirror mirror[0];
+ };
+ 
+@@ -705,7 +714,7 @@ static void bio_set_m(struct bio *bio, struct mirror *m)
+  * are in the no-sync state.  We have to recover these by
+  * recopying from the default mirror to all the others.
+  *---------------------------------------------------------------*/
+-static void fail_mirror(struct mirror *m);
++static void fail_mirror(struct mirror *m, enum dm_raid1_error error_type);
+ static void recovery_complete(int read_err, unsigned int write_err,
+ 			      void *context)
+ {
+@@ -717,7 +726,7 @@ static void recovery_complete(int read_err, unsigned int write_err,
+ 	if (read_err) {
+ 		/* Read error means the failure of default mirror. */
+ 		DMERR("Unable to read from primary mirror during recovery");
+-		fail_mirror(ms->default_mirror);
++		fail_mirror(ms->default_mirror, DM_RAID1_SYNC_ERROR);
+ 	}
+ 
+ 	if (write_error) {
+@@ -731,7 +740,7 @@ static void recovery_complete(int read_err, unsigned int write_err,
+ 			if (&ms->mirror[m] == ms->default_mirror)
+ 				continue;
+ 			if (test_bit(bit, &write_error))
+-				fail_mirror(ms->mirror + m);
++				fail_mirror(ms->mirror + m, DM_RAID1_SYNC_ERROR);
+ 			bit++;
+ 		}
+ 	}
+@@ -861,27 +870,36 @@ use_mirror:
+ 
+ /* fail_mirror
+  * @m: mirror device to fail
++ * @error_type: one of the enum's, DM_RAID1_*_ERROR
+  *
+- * If the device is valid, mark it invalid.  Also,
+- * if this is the default mirror device (i.e. the primary
+- * device) and the mirror set is in-sync, choose an
+- * alternate primary device.
++ * If errors are being handled, record the type of
++ * error encountered for this device.  If this type
++ * of error has already been recorded, we can return;
++ * otherwise, we must signal userspace by triggering
++ * an event.  Additionally, if the device is the
++ * primary device, we must choose a new primary, but
++ * only if the mirror is in-sync.
+  *
+  * This function cannot block.
+  */
+-static void fail_mirror(struct mirror *m)
++static void fail_mirror(struct mirror *m, enum dm_raid1_error error_type)
+ {
+ 	struct mirror_set *ms = m->ms;
+ 	struct mirror *new;
++	struct dm_dirty_log *log = ms->rh.log;
+ 
+ 	atomic_inc(&m->error_count);
+ 
+-	if (atomic_read(&m->error_count) > 1)
++	if (test_and_set_bit(error_type, &m->error_type))
+ 		return;
+ 
+-	if (m != ms->default_mirror)
++	if (!log->type->get_failure_response ||
++	    (log->type->get_failure_response(log) != DMLOG_IOERR_BLOCK))
+ 		return;
+ 
++	if (m != ms->default_mirror)
++		goto out;
++
+ 	/*
+ 	 * If the default mirror fails, change it.
+ 	 * In the case of cluster mirroring, the default
+@@ -895,7 +913,7 @@ static void fail_mirror(struct mirror *m)
+ 		 */
+ 		DMERR("Primary mirror device has failed while mirror is not in-sync");
+ 		DMERR("Unable to choose alternative primary device");
+-		return;
++		goto out;
+ 	}
+ 
+ 	for (new = ms->mirror; new < ms->mirror + ms->nr_mirrors; new++)
+@@ -906,6 +924,9 @@ static void fail_mirror(struct mirror *m)
+ 
+ 	if (unlikely(new == ms->mirror + ms->nr_mirrors))
+ 		DMWARN("All sides of mirror have failed.");
++
++out:
++	schedule_work(&ms->trigger_event);
+ }
+ 
+ static int default_ok(struct mirror *m)
+@@ -958,7 +979,7 @@ static void read_callback(unsigned long error, void *context)
+ 
+ 	if (unlikely(error)) {
+ 		DMWARN("A read failure occurred on a mirror device.");
+-		fail_mirror(m);
++		fail_mirror(m, DM_RAID1_READ_ERROR);
+ 		if (likely(default_ok(m)) || mirror_available(m->ms, bio)) {
+ 			DMWARN("Trying different device.");
+ 			queue_bio(m->ms, bio, bio_rw(bio));
+@@ -1099,7 +1120,7 @@ static void write_callback(unsigned long error, void *context)
+ 	if (unlikely(error)) {
+ 		for (i = 0; i < ms->nr_mirrors; i++) {
+ 			if (test_bit(i, &error))
+-				fail_mirror(ms->mirror + i);
++				fail_mirror(ms->mirror + i, DM_RAID1_WRITE_ERROR);
+ 			else
+ 				uptodate = 1;
+ 		}
+@@ -1247,7 +1268,6 @@ static void do_writes(struct mirror_set *ms, struct bio_list *writes)
+ static void do_failures(struct mirror_set *ms, struct bio_list *failures)
+ {
+ 	struct bio *bio;
+-	struct dm_dirty_log *log = ms->rh.log;
+ 
+ 	if (!failures->head)
+ 		return;
+@@ -1285,13 +1305,18 @@ static void do_failures(struct mirror_set *ms, struct bio_list *failures)
+ 		return;
+ 	}
+ 
+-	if (log->type->get_failure_response(log) == DMLOG_IOERR_BLOCK)
+-		dm_table_event(ms->ti->table);
+-
+ 	while ((bio = bio_list_pop(failures)))
+ 		__bio_mark_nosync(ms, bio, bio->bi_size, 0);
+ }
+ 
++static void trigger_event(void *data)
++{
++	struct mirror_set *ms = data;
++
++	dm_table_event(ms->ti->table);
++}
++
++
+ /*-----------------------------------------------------------------
+  * kmirrord
+  *---------------------------------------------------------------*/
+@@ -1408,6 +1433,7 @@ static int get_mirror(struct mirror_set *ms, struct dm_target *ti,
+ 
+ 	ms->mirror[mirror].offset = offset;
+ 	atomic_set(&(ms->mirror[mirror].error_count), 0);
++	ms->mirror[mirror].error_type = 0;
+ 	ms->mirror[mirror].ms = ms;
+ 
+ 	return 0;
+@@ -1522,6 +1548,7 @@ static int mirror_ctr(struct dm_target *ti, unsigned int argc, char **argv)
+ 	INIT_WORK(&ms->kmirrord_work, do_mirror, ms);
+ 	init_timer(&ms->timer);
+ 	ms->timer_pending = 0;
++	INIT_WORK(&ms->trigger_event, trigger_event, ms);
+ 
+ 	r = kcopyd_client_create(DM_IO_PAGES, &ms->kcopyd_client);
+ 	if (r) {
+@@ -1540,6 +1567,7 @@ static void mirror_dtr(struct dm_target *ti)
+ 
+ 	del_timer_sync(&ms->timer);
+ 	flush_workqueue(ms->kmirrord_wq);
++	flush_scheduled_work();
+ 	kcopyd_client_destroy(ms->kcopyd_client);
+ 	destroy_workqueue(ms->kmirrord_wq);
+ 	free_context(ms, ti, ms->nr_mirrors);
+@@ -1664,7 +1692,7 @@ static int mirror_end_io(struct dm_target *ti, struct bio *bio,
+ 			return -EIO;
+ 		}
+ 		m = ((struct bio_map_info *)map_context->ptr)->bmi_m;
+-		fail_mirror(m); /* Flag error on mirror. */
++		fail_mirror(m, DM_RAID1_READ_ERROR); /* Flag error on mirror. */
+ 
+ 		/*
+ 		 * A failed read needs to get queued
+@@ -1672,8 +1700,7 @@ static int mirror_end_io(struct dm_target *ti, struct bio *bio,
+ 		 * one (if any) intact mirrors.
+ 		 */
+ 		if (default_ok(m) || mirror_available(ms, bio)) {
+-			bd = &(((struct bio_map_info *)map_context->ptr)->bmi_bd
+-				);
++			bd = &(((struct bio_map_info *)map_context->ptr)->bmi_bd);
+ 
+ 			DMWARN("Trying different device.");
+ 			dm_bio_restore(bd, bio);
+@@ -1743,6 +1770,29 @@ static void mirror_resume(struct dm_target *ti)
+ 	rh_start_recovery(&ms->rh);
+ }
+ 
++/*
++ * device_status_char
++ * @m: mirror device/leg we want the status of
++ *
++ * We return one character representing the most severe error
++ * we have encountered.
++ *    A => Alive - No failures
++ *    D => Dead - A write failure occurred leaving mirror out-of-sync
++ *    S => Sync - A sychronization failure occurred, mirror out-of-sync
++ *    R => Read - A read failure occurred, mirror data unaffected
++ *
++ * Returns: <char>
++ */
++static char device_status_char(struct mirror *m)
++{
++	if (!atomic_read(&(m->error_count)))
++		return 'A';
++
++	return (test_bit(DM_RAID1_WRITE_ERROR, &(m->error_type))) ? 'D' :
++		(test_bit(DM_RAID1_SYNC_ERROR, &(m->error_type))) ? 'S' :
++		(test_bit(DM_RAID1_READ_ERROR, &(m->error_type))) ? 'R' : 'U';
++}
++
+ static int mirror_status(struct dm_target *ti, status_type_t type,
+ 			 char *result, unsigned int maxlen)
+ {
+@@ -1755,8 +1805,7 @@ static int mirror_status(struct dm_target *ti, status_type_t type,
+ 		DMEMIT("%d ", ms->nr_mirrors);
+ 		for (m = 0; m < ms->nr_mirrors; m++) {
+ 			DMEMIT("%s ", ms->mirror[m].dev->name);
+-			buffer[m] = atomic_read(&(ms->mirror[m].error_count)) ?
+-				'D' : 'A';
++			buffer[m] = device_status_char(&(ms->mirror[m]));
+ 		}
+ 		buffer[m] = '\0';
+ 

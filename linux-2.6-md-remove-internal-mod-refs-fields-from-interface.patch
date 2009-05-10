@@ -1,0 +1,220 @@
+From: Jonathan Brassow <jbrassow@redhat.com>
+Date: Tue, 12 Aug 2008 13:46:21 -0500
+Subject: [md] remove internal mod refs fields from interface
+Message-id: 1218566781.22247.30.camel@hydrogen
+O-Subject: [RHEL 5.3 Patch 6 of 8]: device-mapper interface exposure (bz 429337)
+Bugzilla: 429337
+RH-Acked-by: Alasdair G Kergon <agk@redhat.com>
+
+Patch: dm-log-make-module-use-tracking-internal.patch
+
+ brassow
+
+Remove internal module reference fields from the interface.
+
+Signed-off-by: Jonathan Brassow <jbrassow@redhat.com>
+
+diff --git a/drivers/md/dm-log.c b/drivers/md/dm-log.c
+index 0cd48e5..110549d 100644
+--- a/drivers/md/dm-log.c
++++ b/drivers/md/dm-log.c
+@@ -15,27 +15,44 @@
+ 
+ #define DM_MSG_PREFIX "dirty region log"
+ 
++struct dm_dirty_log_internal {
++	struct dm_dirty_log_type *type;
++
++	struct list_head list;
++	long use;
++};
++
+ static LIST_HEAD(_log_types);
+ static DEFINE_SPINLOCK(_lock);
+ 
+-static struct dm_dirty_log_type *_get_type(const char *type_name)
++static struct dm_dirty_log_internal *__find_dirty_log_type(const char *name)
+ {
+-	struct dm_dirty_log_type *type;
++	struct dm_dirty_log_internal *log_type;
++
++	list_for_each_entry(log_type, &_log_types, list)
++		if (!strcmp(name, log_type->type->name))
++			return log_type;
++
++        return NULL;
++}
++
++static struct dm_dirty_log_internal *_get_dirty_log_type(const char *name)
++{
++	struct dm_dirty_log_internal *log_type;
+ 
+ 	spin_lock(&_lock);
+-	list_for_each_entry (type, &_log_types, list)
+-		if (!strcmp(type_name, type->name)) {
+-			if (!type->use_count && !try_module_get(type->module)){
+-				spin_unlock(&_lock);
+-				return NULL;
+-			}
+-			type->use_count++;
+-			spin_unlock(&_lock);
+-			return type;
+-		}
++
++	log_type = __find_dirty_log_type(name);
++	if (log_type) {
++		if (!log_type->use && !try_module_get(log_type->type->module))
++			log_type = NULL;
++		else
++			log_type->use++;
++	}
+ 
+ 	spin_unlock(&_lock);
+-	return NULL;
++
++	return log_type;
+ }
+ 
+ /*
+@@ -64,11 +81,14 @@ static struct dm_dirty_log_type *_get_type(const char *type_name)
+ static struct dm_dirty_log_type *get_type(const char *type_name)
+ {
+ 	char *p, *type_name_dup;
+-	struct dm_dirty_log_type *type;
++	struct dm_dirty_log_internal *log_type;
++
++	if (!type_name)
++		return NULL;
+ 
+-	type = _get_type(type_name);
+-	if (type)
+-		return type;
++	log_type = _get_dirty_log_type(type_name);
++	if (log_type)
++		return log_type->type;
+ 
+ 	type_name_dup = kstrdup(type_name, GFP_KERNEL);
+ 	if (!type_name_dup) {
+@@ -78,7 +98,7 @@ static struct dm_dirty_log_type *get_type(const char *type_name)
+ 	}
+ 
+ 	while (request_module("dm-log-%s", type_name_dup) ||
+-	       !(type = _get_type(type_name))) {
++	       !(log_type = _get_dirty_log_type(type_name))) {
+ 		/* find the last '-' */
+ 		p = strrchr(type_name_dup, '-');
+ 		if (!p)
+@@ -86,43 +106,88 @@ static struct dm_dirty_log_type *get_type(const char *type_name)
+ 		p[0] = '\0';
+ 	}
+ 
+-	if (!type)
++	if (!log_type)
+ 		DMWARN("Module for logging type \"%s\" not found.", type_name);
+ 
+ 	kfree(type_name_dup);
+ 
+-	return type;
++	return log_type ? log_type->type : NULL;
+ }
+ 
+ static void put_type(struct dm_dirty_log_type *type)
+ {
++	struct dm_dirty_log_internal *log_type;
++
++	if (!type)
++		return;
++
+ 	spin_lock(&_lock);
+-	if (!--type->use_count)
++	log_type = __find_dirty_log_type(type->name);
++	if (!log_type)
++		goto out;
++
++	if (!--log_type->use)
+ 		module_put(type->module);
++
++	BUG_ON(log_type->use < 0);
++out:
+ 	spin_unlock(&_lock);
+ }
+ 
++static struct dm_dirty_log_internal *_alloc_dirty_log_type(struct dm_dirty_log_type *type)
++{
++	struct dm_dirty_log_internal *log_type;
++
++	log_type = kzalloc(sizeof(*log_type), GFP_KERNEL);
++	if (log_type)
++		log_type->type = type;
++
++	return log_type;
++}
++
+ int dm_dirty_log_type_register(struct dm_dirty_log_type *type)
+ {
++	struct dm_dirty_log_internal *log_type;
++	int r = 0;
++
++	log_type = _alloc_dirty_log_type(type);
++	if (!log_type)
++		return -ENOMEM;
++
+ 	spin_lock(&_lock);
+-	type->use_count = 0;
+-	list_add(&type->list, &_log_types);
++	if (!__find_dirty_log_type(type->name))
++		list_add(&log_type->list, &_log_types);
++	else {
++		kfree(log_type);
++		r = -EEXIST;
++	}
+ 	spin_unlock(&_lock);
+ 
+-	return 0;
++	return r;
+ }
+ EXPORT_SYMBOL(dm_dirty_log_type_register);
+ 
+ int dm_dirty_log_type_unregister(struct dm_dirty_log_type *type)
+ {
++	struct dm_dirty_log_internal *log_type;
++
+ 	spin_lock(&_lock);
+ 
+-	if (type->use_count)
+-		DMWARN("Attempt to unregister a log type that is still in use");
+-	else
+-		list_del(&type->list);
++	log_type = __find_dirty_log_type(type->name);
++	if (!log_type) {
++		spin_unlock(&_lock);
++		return -EINVAL;
++	}
++
++	if (log_type->use) {
++		spin_unlock(&_lock);
++		return -ETXTBSY;
++	}
++
++	list_del(&log_type->list);
+ 
+ 	spin_unlock(&_lock);
++	kfree(log_type);
+ 
+ 	return 0;
+ }
+diff --git a/drivers/md/dm-log.h b/drivers/md/dm-log.h
+index d3df7f3..e8f19d4 100644
+--- a/drivers/md/dm-log.h
++++ b/drivers/md/dm-log.h
+@@ -29,10 +29,8 @@ struct dm_dirty_log {
+ 
+ struct dm_dirty_log_type {
+ 	uint64_t features;
+-	struct list_head list;
+ 	const char *name;
+ 	struct module *module;
+-	unsigned int use_count;
+ 	unsigned int flags;
+ 
+ 	int (*ctr)(struct dm_dirty_log *log, struct dm_target *ti,

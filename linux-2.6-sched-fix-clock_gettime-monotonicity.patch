@@ -1,0 +1,60 @@
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Date: Fri, 16 Jan 2009 16:29:04 +0100
+Subject: [sched] fix clock_gettime monotonicity
+Message-id: 1232119744.3688.43.camel@twins
+O-Subject: [PATCH RHEL5] BZ#477763 sched: fix clock_gettime(CLOCK_THREAD_CPUTIME_ID,) monotonicity
+Bugzilla: 477763
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Ingo Molnar <mingo@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+Because update_cpu_clock() relies on consistency between 'p->timestamp',
+'rq->timestamp_last_tick' and 'now' we need to read 'now' and call
+update_cpu_clock() in a single IRQs disabled section.
+
+This requires two changes. Firstly, we need to move reading 'now'
+under IRQs disabled, and secondly move update_cpu_clock() upwards before
+idle_balance() because that can drop the rq->lock and open a window for
+another cpu to fiddle with prev's timestamp.
+
+Signed-off-by: Peter Zijlstra <pzijlstr@redhat.com>
+
+diff --git a/kernel/sched.c b/kernel/sched.c
+index c01759b..31acebe 100644
+--- a/kernel/sched.c
++++ b/kernel/sched.c
+@@ -3550,6 +3550,7 @@ need_resched_nonpreemptible:
+ 	}
+ 
+ 	schedstat_inc(rq, sched_cnt);
++	spin_lock_irq(&rq->lock);
+ 	now = sched_clock();
+ 	if (likely((long long)(now - prev->timestamp) < NS_MAX_SLEEP_AVG)) {
+ 		run_time = now - prev->timestamp;
+@@ -3564,8 +3565,6 @@ need_resched_nonpreemptible:
+ 	 */
+ 	run_time /= (CURRENT_BONUS(prev) ? : 1);
+ 
+-	spin_lock_irq(&rq->lock);
+-
+ 	if (unlikely(prev->flags & PF_DEAD))
+ 		prev->state = EXIT_DEAD;
+ 
+@@ -3582,6 +3581,8 @@ need_resched_nonpreemptible:
+ 		}
+ 	}
+ 
++	update_cpu_clock(prev, rq, now);
++
+ 	cpu = smp_processor_id();
+ 	if (unlikely(!rq->nr_running)) {
+ 		idle_balance(cpu, rq);
+@@ -3638,8 +3639,6 @@ switch_tasks:
+ 	clear_tsk_need_resched(prev);
+ 	rcu_qsctr_inc(task_cpu(prev));
+ 
+-	update_cpu_clock(prev, rq, now);
+-
+ 	prev->sleep_avg -= run_time;
+ 	if ((long)prev->sleep_avg <= 0)
+ 		prev->sleep_avg = 0;

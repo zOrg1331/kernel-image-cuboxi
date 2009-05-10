@@ -1,0 +1,65 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Wed, 20 Aug 2008 12:56:08 +0200
+Subject: [xen] x86: fix endless loop when GPF
+Message-id: 48ABF848.70508@redhat.com
+O-Subject: [RHEL5.3 PATCH]: Fix endless loop when GPF on i386
+Bugzilla: 457093
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+
+All,
+     Attached is a patch to fix an endless loop problem on i386 Xen guests.  If
+you have a program like this:
+
+main(){
+   char c;
+   int i = -1;
+   c = ((char *)i)[0];
+}
+
+When run, it will just sit in an endless loop an never SEGV (like it should).
+The reason for this has to do with execshield checking.  I'll quote from Stephen
+Tweedie's original patch:
+
+Under Xen, loading the user_cs descriptor does not necessarily load
+the descriptor with the exact same values the kernel requested: some
+of the control bits in the descriptor may be modified by the
+hypervisor.
+
+With execshield, the check_lazy_exec_limit() function is needed to
+test whether a fault has been caused by the existing user_cs
+descriptor being too constrained: if so, it performs a lazy expansion
+of the legal cs segment bounds.  But it does so via an exact match on
+the descriptor values against their current expected values, so if
+Xen modifies any control bits in the descriptor, it looks as if the
+user_cs is out-of-sync; so check_lazy_exec_limit() resets the
+descriptor and retakes the fault unnecessarily.
+
+This means that a GPF fault can be retried indefinitely, with the
+kernel always seeing the wrong values in user_cs and continually
+trying to correct them and retake the fault.
+
+Fix it by masking off the xen-sensitive control bits when checking
+that the segment descriptor is up-to-date, and comparing only the
+bits which affect the segment base and limit.
+
+This patch is just a backport to RHEL-5.  This fixes BZ 457093.  Please review
+and ACK.
+
+Chris Lalancette
+
+diff --git a/arch/i386/kernel/traps-xen.c b/arch/i386/kernel/traps-xen.c
+index 8986b4f..3e4e34a 100644
+--- a/arch/i386/kernel/traps-xen.c
++++ b/arch/i386/kernel/traps-xen.c
+@@ -613,7 +613,8 @@ check_lazy_exec_limit(int cpu, struct pt_regs *regs, long error_code)
+ 	desc1 = &current->mm->context.user_cs;
+ 	desc2 = get_cpu_gdt_table(cpu) + GDT_ENTRY_DEFAULT_USER_CS;
+ 
+-	if (desc1->a != desc2->a || desc1->b != desc2->b) {
++	if ((desc1->a & 0xff0000ff) != (desc2->a & 0xff0000ff) ||
++            desc1->b != desc2->b) {
+ 		/*
+ 		 * The CS was not in sync - reload it and retry the
+ 		 * instruction. If the instruction still faults then

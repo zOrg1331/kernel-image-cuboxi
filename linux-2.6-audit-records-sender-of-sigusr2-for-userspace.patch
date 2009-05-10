@@ -1,0 +1,36 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Mon, 16 Jun 2008 14:55:30 -0400
+Subject: [audit] records sender of SIGUSR2 for userspace
+Message-id: 1213642530.3029.76.camel@localhost.localdomain
+O-Subject: [PATCH RHEL5.3 BZ428277] Records sender of SIGUSR2 for userspace to later request
+Bugzilla: 428277
+RH-Acked-by: James Morris <jmorris@redhat.com>
+RH-Acked-by: Alexander Viro <aviro@redhat.com>
+
+BZ 428277
+
+This patch is not yet upstream but is dead simple and I'm going to send
+it later today.  I thought I had sent it months ago.
+
+Makes the kernel audit subsystem collect information about the sending
+process when that process sends SIGUSR2 to the userspace audit daemon.
+SIGUSR2 is a new interesting signal to auditd telling auditd that it
+should try to start logging to disk again and the error condition which
+caused it to stop logging to disk (usually out of space) has been
+rectified.
+
+Signed-off-by: Eric Paris <eparis@redhat.com>
+
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index 071877c..efc81cd 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -2292,7 +2292,7 @@ int __audit_signal_info(int sig, struct task_struct *t)
+ 	extern u32 audit_sig_sid;
+ 
+ 	if (audit_pid && t->tgid == audit_pid) {
+-		if (sig == SIGTERM || sig == SIGHUP || sig == SIGUSR1) {
++		if (sig == SIGTERM || sig == SIGHUP || sig == SIGUSR1 || sig == SIGUSR2) {
+ 			audit_sig_pid = tsk->pid;
+ 			if (ctx)
+ 				audit_sig_uid = ctx->loginuid;

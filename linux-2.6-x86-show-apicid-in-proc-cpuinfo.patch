@@ -1,0 +1,44 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Tue, 15 Jul 2008 16:25:21 -0400
+Subject: [x86] show apicid in /proc/cpuinfo
+Message-id: 20080715202443.11554.76571.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5 PATCH]: show apicid in /proc/cpuinfo
+Bugzilla: 455424
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: Chuck Ebbert <cebbert@redhat.com>
+
+Backport of 282bfe21cf0e2af9eac052c89bcc0a5ace80352f
+
+    x86: show apicid for cpu in proc
+
+    Signed-off-by: Yinghai Lu <yhlu.kernel@gmail.com>
+    Signed-off-by: Ingo Molnar <mingo@elte.hu>
+
+Successfully tested by me.
+
+Resolves BZ 455424.
+
+diff --git a/arch/i386/kernel/cpu/proc.c b/arch/i386/kernel/cpu/proc.c
+index 01a4f4e..fa4ad05 100644
+--- a/arch/i386/kernel/cpu/proc.c
++++ b/arch/i386/kernel/cpu/proc.c
+@@ -117,6 +117,7 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+ 		seq_printf(m, "siblings\t: %d\n", cpus_weight(cpu_core_map[n]));
+ 		seq_printf(m, "core id\t\t: %d\n", c->cpu_core_id);
+ 		seq_printf(m, "cpu cores\t: %d\n", c->booted_cores);
++		seq_printf(m, "apicid\t\t: %d\n", c->apicid);
+ 	}
+ #endif
+ 	
+diff --git a/arch/x86_64/kernel/setup.c b/arch/x86_64/kernel/setup.c
+index afef71b..98b9b25 100644
+--- a/arch/x86_64/kernel/setup.c
++++ b/arch/x86_64/kernel/setup.c
+@@ -1304,6 +1304,7 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+ 		seq_printf(m, "siblings\t: %d\n", cpus_weight(cpu_core_map[cpu]));
+ 		seq_printf(m, "core id\t\t: %d\n", c->cpu_core_id);
+ 		seq_printf(m, "cpu cores\t: %d\n", c->booted_cores);
++		seq_printf(m, "apicid\t\t: %d\n", c->apicid);
+ 	}
+ #endif	
+ 

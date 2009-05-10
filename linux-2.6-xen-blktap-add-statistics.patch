@@ -1,0 +1,241 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Thu, 17 Jul 2008 17:28:08 +0200
+Subject: [xen] blktap: add statistics
+Message-id: 487F6508.8080103@redhat.com
+O-Subject: [RHEL5.3 PATCH 2/7]: Add blktap statistics v2
+Bugzilla: 250104
+RH-Acked-by: Stephen Tweedie <sct@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+The heart of the patch series, that actually adds in the statistics for blktap
+and extends the statistics for blkback to include the number of sectors
+read/wrote.  From xen-3.1-testing.hg c/s 14040
+
+diff --git a/drivers/xen/blkback/blkback.c b/drivers/xen/blkback/blkback.c
+index 3d5914c..12378bd 100644
+--- a/drivers/xen/blkback/blkback.c
++++ b/drivers/xen/blkback/blkback.c
+@@ -468,6 +468,12 @@ static void dispatch_rw_block_io(blkif_t *blkif,
+ 	for (i = 0; i < nbio; i++)
+ 		submit_bio(operation, biolist[i]);
+ 
++        if (operation == READ) {
++                blkif->st_rd_sect += preq.nr_sects;
++        } else if (operation == WRITE) {
++                blkif->st_wr_sect += preq.nr_sects;
++        }
++
+ 	return;
+ 
+  fail_put_bio:
+diff --git a/drivers/xen/blkback/common.h b/drivers/xen/blkback/common.h
+index a5ee16a..785e482 100644
+--- a/drivers/xen/blkback/common.h
++++ b/drivers/xen/blkback/common.h
+@@ -86,6 +86,8 @@ typedef struct blkif_st {
+ 	int                 st_rd_req;
+ 	int                 st_wr_req;
+ 	int                 st_oo_req;
++	int                 st_rd_sect;
++	int                 st_wr_sect;
+ 
+ 	wait_queue_head_t waiting_to_free;
+ 
+diff --git a/drivers/xen/blkback/xenbus.c b/drivers/xen/blkback/xenbus.c
+index 05a8bb1..ddb77de 100644
+--- a/drivers/xen/blkback/xenbus.c
++++ b/drivers/xen/blkback/xenbus.c
+@@ -112,14 +112,18 @@ static void update_blkif_status(blkif_t *blkif)
+ 	}								\
+ 	DEVICE_ATTR(name, S_IRUGO, show_##name, NULL)
+ 
+-VBD_SHOW(oo_req, "%d\n", be->blkif->st_oo_req);
+-VBD_SHOW(rd_req, "%d\n", be->blkif->st_rd_req);
+-VBD_SHOW(wr_req, "%d\n", be->blkif->st_wr_req);
++VBD_SHOW(oo_req,  "%d\n", be->blkif->st_oo_req);
++VBD_SHOW(rd_req,  "%d\n", be->blkif->st_rd_req);
++VBD_SHOW(wr_req,  "%d\n", be->blkif->st_wr_req);
++VBD_SHOW(rd_sect, "%d\n", be->blkif->st_rd_sect);
++VBD_SHOW(wr_sect, "%d\n", be->blkif->st_wr_sect);
+ 
+ static struct attribute *vbdstat_attrs[] = {
+ 	&dev_attr_oo_req.attr,
+ 	&dev_attr_rd_req.attr,
+ 	&dev_attr_wr_req.attr,
++	&dev_attr_rd_sect.attr,
++	&dev_attr_wr_sect.attr,
+ 	NULL
+ };
+ 
+diff --git a/drivers/xen/blktap/blktapmain.c b/drivers/xen/blktap/blktapmain.c
+index 5adf488..6d377e8 100644
+--- a/drivers/xen/blktap/blktapmain.c
++++ b/drivers/xen/blktap/blktapmain.c
+@@ -1151,7 +1151,7 @@ static void dispatch_rw_block_io(blkif_t *blkif,
+ 	int op, operation = (req->operation == BLKIF_OP_WRITE) ? WRITE : READ;
+ 	struct gnttab_map_grant_ref map[BLKIF_MAX_SEGMENTS_PER_REQUEST*2];
+ 	unsigned int nseg;
+-	int ret, i;
++	int ret, i, nr_sects = 0;
+ 	tap_blkif_t *info = tapfds[blkif->dev_num];
+ 	
+ 	blkif_request_t *target;
+@@ -1226,6 +1226,9 @@ static void dispatch_rw_block_io(blkif_t *blkif,
+ 					  req->seg[i].gref, blkif->domid);
+ 			op++;
+ 		}
++
++		nr_sects += (req->seg[i].last_sect - 
++			     req->seg[i].first_sect + 1);
+ 	}
+ 
+ 	ret = HYPERVISOR_grant_table_op(GNTTABOP_map_grant_ref, map, op);
+@@ -1347,6 +1350,13 @@ static void dispatch_rw_block_io(blkif_t *blkif,
+ 	target->id = usr_idx;
+ 	wmb(); /* blktap_poll() reads req_prod_pvt asynchronously */
+ 	info->ufe_ring.req_prod_pvt++;
++
++	if (operation == READ) {
++		blkif->st_rd_sect += nr_sects;
++	} else if (operation == WRITE) {
++		blkif->st_wr_sect += nr_sects;
++	}
++
+ 	return;
+ 
+  fail_flush:
+diff --git a/drivers/xen/blktap/common.h b/drivers/xen/blktap/common.h
+index 561058a..222c50b 100644
+--- a/drivers/xen/blktap/common.h
++++ b/drivers/xen/blktap/common.h
+@@ -76,6 +76,8 @@ typedef struct blkif_st {
+ 	int                 st_rd_req;
+ 	int                 st_wr_req;
+ 	int                 st_oo_req;
++	int                 st_rd_sect;
++	int                 st_wr_sect;
+ 
+ 	wait_queue_head_t waiting_to_free;
+ 
+diff --git a/drivers/xen/blktap/xenbus.c b/drivers/xen/blktap/xenbus.c
+index 58a79e7..526ce05 100644
+--- a/drivers/xen/blktap/xenbus.c
++++ b/drivers/xen/blktap/xenbus.c
+@@ -112,6 +112,74 @@ static int blktap_name(blkif_t *blkif, char *buf)
+ 	return 0;
+ }
+ 
++/****************************************************************
++ *  sysfs interface for VBD I/O requests
++ */
++
++#define VBD_SHOW(name, format, args...)					\
++	static ssize_t show_##name(struct device *_dev,			\
++				   struct device_attribute *attr,	\
++				   char *buf)				\
++	{								\
++		struct xenbus_device *dev = to_xenbus_device(_dev);	\
++		struct backend_info *be = dev->dev.driver_data;		\
++									\
++		return sprintf(buf, format, ##args);			\
++	}								\
++	DEVICE_ATTR(name, S_IRUGO, show_##name, NULL)
++
++VBD_SHOW(tap_oo_req,  "%d\n", be->blkif->st_oo_req);
++VBD_SHOW(tap_rd_req,  "%d\n", be->blkif->st_rd_req);
++VBD_SHOW(tap_wr_req,  "%d\n", be->blkif->st_wr_req);
++VBD_SHOW(tap_rd_sect, "%d\n", be->blkif->st_rd_sect);
++VBD_SHOW(tap_wr_sect, "%d\n", be->blkif->st_wr_sect);
++
++static struct attribute *tapstat_attrs[] = {
++	&dev_attr_tap_oo_req.attr,
++	&dev_attr_tap_rd_req.attr,
++	&dev_attr_tap_wr_req.attr,
++	&dev_attr_tap_rd_sect.attr,
++	&dev_attr_tap_wr_sect.attr,
++	NULL
++};
++
++static struct attribute_group tapstat_group = {
++	.name = "statistics",
++	.attrs = tapstat_attrs,
++};
++
++int xentap_sysfs_addif(struct xenbus_device *dev)
++{
++	return sysfs_create_group(&dev->dev.kobj, &tapstat_group);
++}
++
++void xentap_sysfs_delif(struct xenbus_device *dev)
++{
++	sysfs_remove_group(&dev->dev.kobj, &tapstat_group);
++}
++
++static int blktap_remove(struct xenbus_device *dev)
++{
++	struct backend_info *be = dev->dev.driver_data;
++
++	if (be->backend_watch.node) {
++		unregister_xenbus_watch(&be->backend_watch);
++		kfree(be->backend_watch.node);
++		be->backend_watch.node = NULL;
++	}
++	if (be->blkif) {
++		if (be->blkif->xenblkd)
++			kthread_stop(be->blkif->xenblkd);
++		signal_tapdisk(be->blkif->dev_num);
++		tap_blkif_free(be->blkif);
++		be->blkif = NULL;
++	}
++	xentap_sysfs_delif(be->dev);
++	kfree(be);
++	dev->dev.driver_data = NULL;
++	return 0;
++}
++
+ static void tap_update_blkif_status(blkif_t *blkif)
+ { 
+ 	int err;
+@@ -137,6 +205,13 @@ static void tap_update_blkif_status(blkif_t *blkif)
+ 		return;
+ 	}
+ 
++	err = xentap_sysfs_addif(blkif->be->dev);
++	if (err) {
++		xenbus_dev_fatal(blkif->be->dev, err, 
++				 "creating sysfs entries");
++		return;
++	}
++
+ 	blkif->xenblkd = kthread_run(tap_blkif_schedule, blkif, name);
+ 	if (IS_ERR(blkif->xenblkd)) {
+ 		err = PTR_ERR(blkif->xenblkd);
+@@ -146,27 +221,6 @@ static void tap_update_blkif_status(blkif_t *blkif)
+ 	}
+ }
+ 
+-static int blktap_remove(struct xenbus_device *dev)
+-{
+-	struct backend_info *be = dev->dev.driver_data;
+-
+-	if (be->backend_watch.node) {
+-		unregister_xenbus_watch(&be->backend_watch);
+-		kfree(be->backend_watch.node);
+-		be->backend_watch.node = NULL;
+-	}
+-	if (be->blkif) {
+-		if (be->blkif->xenblkd)
+-			kthread_stop(be->blkif->xenblkd);
+-		signal_tapdisk(be->blkif->dev_num);
+-		tap_blkif_free(be->blkif);
+-		be->blkif = NULL;
+-	}
+-	kfree(be);
+-	dev->dev.driver_data = NULL;
+-	return 0;
+-}
+-
+ /**
+  * Entry point to this code when a new device is created.  Allocate
+  * the basic structures, and watch the store waiting for the

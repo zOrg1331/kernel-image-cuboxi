@@ -43,6 +43,9 @@
 	unset_nmi_callback
 [rhel5_arch_x86_64_kernel_u2]
 	x86_cpu_to_apicid
+[rhel5_arch_x86_64_kernel_cpu_mtrr_u3]
+	mtrr_add
+	mtrr_del
 [rhel5_arch_x86_64_lib_ga]
 	__memcpy_fromio
 	__memcpy_toio
@@ -163,6 +166,11 @@
 	dlm_new_lockspace
 	dlm_release_lockspace
 	dlm_unlock
+[rhel5_dlm_u3]
+	dlm_posix_get
+	dlm_posix_lock
+	dlm_posix_set_fsid
+	dlm_posix_unlock
 [rhel5_drivers_atm_ga]
 	suni_init
 [rhel5_drivers_base_ga]
@@ -2021,6 +2029,8 @@
 	down_write_trylock
 	round_jiffies
 	round_jiffies_relative
+[rhel5_kernel_u3]
+	down_write_trylock
 [rhel5_kernel_irq_ga]
 	disable_irq
 	disable_irq_nosync
@@ -2180,6 +2190,8 @@
 	__bitmap_intersects
 [rhel5_lib_u2]
 	radix_tree_preload
+[rhel5_lib_u3]
+	vscnprintf
 [rhel5_lib_reed_solomon_ga]
 	decode_rs16
 	free_rs

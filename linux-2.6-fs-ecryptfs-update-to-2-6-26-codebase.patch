@@ -1,0 +1,3050 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Fri, 27 Jun 2008 11:45:44 -0500
+Subject: [fs] ecryptfs: update to 2.6.26 codebase
+Message-id: 48651938.8080006@redhat.com
+O-Subject: [PATCH RHEL5.3 3/3] update ecryptfs to 2.6.26 codebase
+Bugzilla: 449668
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+
+For BZ 449668: RHEL5.3: update ecryptfs kernelspace to 2.6.26 codebase
+
+This pulls in many/most updates since ecryptfs was first submitted for RHEL5.2
+(2.6.24) to current (2.6.26).  Upstream infrastructure changes (many related to
+sysfs) not included.  This also resolves the mmap corruption issue seen with
+fsx running over ecryptfs.
+
+It includes updates through the following changes to fs/ecryptfs:
+
+(M=merged, X=not merged, A=already in 5.2)
+
+M  2008-06-06 	Michael Halcrow 	eCryptfs: remove unnecessary page decrypt call
+M  2008-05-24 	Cyrill Gorcunov 	ecryptfs: fix missed mutex_unlock
+M  2008-05-21 	Al Viro 		ecryptfs fixes
+M  2008-05-13 	Cyrill Gorcunov 	eCryptFS: fix imbalanced mutex locking
+M  2008-05-13 	Miklos Szeredi 		ecryptfs: clean up (un)lock_parent
+M  2008-04-29 	Hirofumi Nakagawa 	Remove duplicated unlikely() in IS_ERR()
+M  2008-04-29 	Michael Halcrow 	eCryptfs: protect crypt_stat->flags in ecryptfs_open()
+X  2008-04-29 	Michael Halcrow 	eCryptfs: make key module subsystem respect namespaces
+M  2008-04-29 	Michael Halcrow 	eCryptfs: integrate eCryptfs device handle into the ...
+M  2008-04-29 	Michael Halcrow 	eCryptfs: introduce device handle for userspace daemon ...
+M  2008-04-29 	Miklos Szeredi 		ecryptfs: add missing lock around notify_change
+M  2008-04-29 	Harvey Harrison 	ecryptfs: replace remaining __FUNCTION__ occurrences
+M  2008-04-29 	Adrian Bunk 		remove ecryptfs_header_cache_0
+M  2008-03-20 	Michael Halcrow 	eCryptfs: Swap dput() and mntput()
+M  2008-03-05 	Michael Halcrow 	eCryptfs: make ecryptfs_prepare_write decrypt the page
+X  2008-02-15 	Jan Blunck 		Introduce path_put()
+X  2008-02-15 	Jan Blunck 		Embed a struct path into struct nameidata instead of ...
+A  2008-02-06 	Eric Sandeen 		ecryptfs: check for existing key_tfm at mount time
+M  2008-02-06 	Trevor Highland 	eCryptfs: change the type of cipher_code from u16 to u8
+M  2008-02-06 	Michael Halcrow 	eCryptfs: Minor fixes to printk messages
+M  2008-02-06 	Eric Sandeen 		ecryptfs: remove debug as mount option, and warn if ...
+A  2008-02-06 	Eric Sandeen 		ecryptfs: make show_options reflect actual mount options
+M  2008-02-06 	Trevor Highland 	eCryptfs: set inode key only once per crypto operation
+M  2008-02-06 	Michael Halcrow 	eCryptfs: track header bytes rather than extents
+M  2008-02-06 	Adrian Bunk 		fs/ecryptfs/: possible cleanups
+M  2008-02-05 	Christoph Lameter 	Pagecache zeroing: zero_user_segment, zero_user_segment ...
+X  2008-01-28 	Denis V. Lunev 		[NETNS]: Consolidate kernel netlink socket destruction.
+X  2008-01-25 	Greg Kroah-Hartman 	Kobject: convert fs/* from kobject_unregister() to ...
+X  2008-01-25 	Greg Kroah-Hartman 	kobject: convert ecryptfs to use kobject_create
+M  2008-01-25 	Greg Kroah-Hartman 	ecryptfs: remove version_str file from sysfs
+X  2008-01-25 	Kay Sievers 		Driver Core: switch all dynamic ksets to kobj_sysfs_ops
+X  2008-01-25 	Greg Kroah-Hartman 	kobject: convert main fs kobject to use kobject_create
+X  2008-01-25 	Greg Kroah-Hartman 	kset: convert ecryptfs to use kset_create
+X  2008-01-25 	Greg Kroah-Hartman 	kobject: remove struct kobj_type from struct kset
+M  2008-01-25 	Greg Kroah-Hartman 	ecryptfs: clean up attribute mess
+A  2008-01-09 	Michael Halcrow 	eCryptfs: fix dentry handling on create error, unlink, ...
+A  2007-12-23 	Eric Sandeen 		ecryptfs: redo dget,mntget on dentry_open failure
+M  2007-12-23 	Eric Sandeen 		ecryptfs: fix unlocking in error paths
+A  2007-12-23 	Eric Sandeen 		ecryptfs: fix string overflow on long cipher names
+A  2007-12-18 	Eric Sandeen 		ecryptfs: fix fsx data corruption problems
+A  2007-12-18 	Eric Sandeen 		ecryptfs: set s_blocksize from lower fs in sb
+A  2007-12-18 	Eric Sandeen 		ecryptfs: initialize new auth_tokens before teardown
+
+Brew build at http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1367752
+
+Thanks,
+-Eric
+
+diff --git a/fs/ecryptfs/Makefile b/fs/ecryptfs/Makefile
+index 7688570..1e34a7f 100644
+--- a/fs/ecryptfs/Makefile
++++ b/fs/ecryptfs/Makefile
+@@ -4,4 +4,4 @@
+ 
+ obj-$(CONFIG_ECRYPT_FS) += ecryptfs.o
+ 
+-ecryptfs-objs := dentry.o file.o inode.o main.o super.o mmap.o read_write.o crypto.o keystore.o messaging.o netlink.o debug.o
++ecryptfs-objs := dentry.o file.o inode.o main.o super.o mmap.o read_write.o crypto.o keystore.o messaging.o netlink.o miscdev.o debug.o
+diff --git a/fs/ecryptfs/crypto.c b/fs/ecryptfs/crypto.c
+index e8b6fbf..d017cb9 100644
+--- a/fs/ecryptfs/crypto.c
++++ b/fs/ecryptfs/crypto.c
+@@ -305,8 +305,11 @@ static int encrypt_scatterlist(struct ecryptfs_crypt_stat *crypt_stat,
+ 	}
+ 	/* Consider doing this once, when the file is opened */
+ 	mutex_lock(&crypt_stat->cs_tfm_mutex);
+-	rc = crypto_cipher_setkey(crypt_stat->tfm, crypt_stat->key,
+-				  crypt_stat->key_size);
++	if (!(crypt_stat->flags & ECRYPTFS_KEY_SET)) {
++		rc = crypto_cipher_setkey(crypt_stat->tfm, crypt_stat->key,
++					  crypt_stat->key_size);
++		crypt_stat->flags |= ECRYPTFS_KEY_SET;
++	}
+ 	if (rc) {
+ 		ecryptfs_printk(KERN_ERR, "Error setting key; rc = [%d]\n",
+ 				rc);
+@@ -326,11 +329,10 @@ out:
+  *
+  * Convert an eCryptfs page index into a lower byte offset
+  */
+-void ecryptfs_lower_offset_for_extent(loff_t *offset, loff_t extent_num,
+-				      struct ecryptfs_crypt_stat *crypt_stat)
++static void ecryptfs_lower_offset_for_extent(loff_t *offset, loff_t extent_num,
++					     struct ecryptfs_crypt_stat *crypt_stat)
+ {
+-	(*offset) = ((crypt_stat->extent_size
+-		      * crypt_stat->num_header_extents_at_front)
++	(*offset) = (crypt_stat->num_header_bytes_at_front
+ 		     + (crypt_stat->extent_size * extent_num));
+ }
+ 
+@@ -385,7 +387,7 @@ static int ecryptfs_encrypt_extent(struct page *enc_extent_page,
+ 	if (rc < 0) {
+ 		printk(KERN_ERR "%s: Error attempting to encrypt page with "
+ 		       "page->index = [%ld], extent_offset = [%ld]; "
+-		       "rc = [%d]\n", __FUNCTION__, page->index, extent_offset,
++		       "rc = [%d]\n", __func__, page->index, extent_offset,
+ 		       rc);
+ 		goto out;
+ 	}
+@@ -435,7 +437,7 @@ int ecryptfs_encrypt_page(struct page *page)
+ 						       0, PAGE_CACHE_SIZE);
+ 		if (rc)
+ 			printk(KERN_ERR "%s: Error attempting to copy "
+-			       "page at index [%ld]\n", __FUNCTION__,
++			       "page at index [%ld]\n", __func__,
+ 			       page->index);
+ 		goto out;
+ 	}
+@@ -456,7 +458,7 @@ int ecryptfs_encrypt_page(struct page *page)
+ 					     extent_offset);
+ 		if (rc) {
+ 			printk(KERN_ERR "%s: Error encrypting extent; "
+-			       "rc = [%d]\n", __FUNCTION__, rc);
++			       "rc = [%d]\n", __func__, rc);
+ 			goto out;
+ 		}
+ 		ecryptfs_lower_offset_for_extent(
+@@ -520,7 +522,7 @@ static int ecryptfs_decrypt_extent(struct page *page,
+ 	if (rc < 0) {
+ 		printk(KERN_ERR "%s: Error attempting to decrypt to page with "
+ 		       "page->index = [%ld], extent_offset = [%ld]; "
+-		       "rc = [%d]\n", __FUNCTION__, page->index, extent_offset,
++		       "rc = [%d]\n", __func__, page->index, extent_offset,
+ 		       rc);
+ 		goto out;
+ 	}
+@@ -573,7 +575,7 @@ int ecryptfs_decrypt_page(struct page *page)
+ 						      ecryptfs_inode);
+ 		if (rc)
+ 			printk(KERN_ERR "%s: Error attempting to copy "
+-			       "page at index [%ld]\n", __FUNCTION__,
++			       "page at index [%ld]\n", __func__,
+ 			       page->index);
+ 		goto out;
+ 	}
+@@ -607,7 +609,7 @@ int ecryptfs_decrypt_page(struct page *page)
+ 					     extent_offset);
+ 		if (rc) {
+ 			printk(KERN_ERR "%s: Error encrypting extent; "
+-			       "rc = [%d]\n", __FUNCTION__, rc);
++			       "rc = [%d]\n", __func__, rc);
+ 			goto out;
+ 		}
+ 	}
+@@ -787,15 +789,13 @@ void ecryptfs_set_default_sizes(struct ecryptfs_crypt_stat *crypt_stat)
+ 	set_extent_mask_and_shift(crypt_stat);
+ 	crypt_stat->iv_bytes = ECRYPTFS_DEFAULT_IV_BYTES;
+ 	if (crypt_stat->flags & ECRYPTFS_METADATA_IN_XATTR)
+-		crypt_stat->num_header_extents_at_front = 0;
++		crypt_stat->num_header_bytes_at_front = 0;
+ 	else {
+ 		if (PAGE_CACHE_SIZE <= ECRYPTFS_MINIMUM_HEADER_EXTENT_SIZE)
+-			crypt_stat->num_header_extents_at_front =
+-				(ECRYPTFS_MINIMUM_HEADER_EXTENT_SIZE
+-				 / crypt_stat->extent_size);
++			crypt_stat->num_header_bytes_at_front =
++				ECRYPTFS_MINIMUM_HEADER_EXTENT_SIZE;
+ 		else
+-			crypt_stat->num_header_extents_at_front =
+-				(PAGE_CACHE_SIZE / crypt_stat->extent_size);
++			crypt_stat->num_header_bytes_at_front =	PAGE_CACHE_SIZE;
+ 	}
+ }
+ 
+@@ -1073,7 +1073,7 @@ write_ecryptfs_flags(char *page_virt, struct ecryptfs_crypt_stat *crypt_stat,
+ 
+ struct ecryptfs_cipher_code_str_map_elem {
+ 	char cipher_str[16];
+-	u16 cipher_code;
++	u8 cipher_code;
+ };
+ 
+ /* Add support for additional ciphers by adding elements here. The
+@@ -1097,10 +1097,10 @@ ecryptfs_cipher_code_str_map[] = {
+  *
+  * Returns zero on no match, or the cipher code on match
+  */
+-u16 ecryptfs_code_for_cipher_string(struct ecryptfs_crypt_stat *crypt_stat)
++u8 ecryptfs_code_for_cipher_string(struct ecryptfs_crypt_stat *crypt_stat)
+ {
+ 	int i;
+-	u16 code = 0;
++	u8 code = 0;
+ 	struct ecryptfs_cipher_code_str_map_elem *map =
+ 		ecryptfs_cipher_code_str_map;
+ 
+@@ -1132,7 +1132,7 @@ u16 ecryptfs_code_for_cipher_string(struct ecryptfs_crypt_stat *crypt_stat)
+  *
+  * Returns zero on success
+  */
+-int ecryptfs_cipher_code_to_string(char *str, u16 cipher_code)
++int ecryptfs_cipher_code_to_string(char *str, u8 cipher_code)
+ {
+ 	int rc = 0;
+ 	int i;
+@@ -1160,7 +1160,7 @@ int ecryptfs_read_and_validate_header_region(char *data,
+ 				 ecryptfs_inode);
+ 	if (rc) {
+ 		printk(KERN_ERR "%s: Error reading header region; rc = [%d]\n",
+-		       __FUNCTION__, rc);
++		       __func__, rc);
+ 		goto out;
+ 	}
+ 	if (!contains_ecryptfs_marker(data + ECRYPTFS_FILE_SIZE_BYTES)) {
+@@ -1181,7 +1181,8 @@ ecryptfs_write_header_metadata(char *virt,
+ 
+ 	header_extent_size = (u32)crypt_stat->extent_size;
+ 	num_header_extents_at_front =
+-		(u16)crypt_stat->num_header_extents_at_front;
++		(u16)(crypt_stat->num_header_bytes_at_front
++		      / crypt_stat->extent_size);
+ 	header_extent_size = cpu_to_be32(header_extent_size);
+ 	memcpy(virt, &header_extent_size, 4);
+ 	virt += 4;
+@@ -1190,7 +1191,6 @@ ecryptfs_write_header_metadata(char *virt,
+ 	(*written) = 6;
+ }
+ 
+-struct kmem_cache *ecryptfs_header_cache_0;
+ struct kmem_cache *ecryptfs_header_cache_1;
+ struct kmem_cache *ecryptfs_header_cache_2;
+ 
+@@ -1256,40 +1256,16 @@ static int ecryptfs_write_headers_virt(char *page_virt, size_t *size,
+ static int
+ ecryptfs_write_metadata_to_contents(struct ecryptfs_crypt_stat *crypt_stat,
+ 				    struct dentry *ecryptfs_dentry,
+-				    char *page_virt)
++				    char *virt)
+ {
+-	int current_header_page;
+-	int header_pages;
+ 	int rc;
+ 
+-	rc = ecryptfs_write_lower(ecryptfs_dentry->d_inode, page_virt,
+-				  0, PAGE_CACHE_SIZE);
+-	if (rc) {
++	rc = ecryptfs_write_lower(ecryptfs_dentry->d_inode, virt,
++				  0, crypt_stat->num_header_bytes_at_front);
++	if (rc)
+ 		printk(KERN_ERR "%s: Error attempting to write header "
+-		       "information to lower file; rc = [%d]\n", __FUNCTION__,
++		       "information to lower file; rc = [%d]\n", __func__,
+ 		       rc);
+-		goto out;
+-	}
+-	header_pages = ((crypt_stat->extent_size
+-			 * crypt_stat->num_header_extents_at_front)
+-			/ PAGE_CACHE_SIZE);
+-	memset(page_virt, 0, PAGE_CACHE_SIZE);
+-	current_header_page = 1;
+-	while (current_header_page < header_pages) {
+-		loff_t offset;
+-
+-		offset = (((loff_t)current_header_page) << PAGE_CACHE_SHIFT);
+-		if ((rc = ecryptfs_write_lower(ecryptfs_dentry->d_inode,
+-					       page_virt, offset,
+-					       PAGE_CACHE_SIZE))) {
+-			printk(KERN_ERR "%s: Error attempting to write header "
+-			       "information to lower file; rc = [%d]\n",
+-			       __FUNCTION__, rc);
+-			goto out;
+-		}
+-		current_header_page++;
+-	}
+-out:
+ 	return rc;
+ }
+ 
+@@ -1315,15 +1291,13 @@ ecryptfs_write_metadata_to_xattr(struct dentry *ecryptfs_dentry,
+  * retrieved via a prompt.  Exactly what happens at this point should
+  * be policy-dependent.
+  *
+- * TODO: Support header information spanning multiple pages
+- *
+  * Returns zero on success; non-zero on error
+  */
+ int ecryptfs_write_metadata(struct dentry *ecryptfs_dentry)
+ {
+ 	struct ecryptfs_crypt_stat *crypt_stat =
+ 		&ecryptfs_inode_to_private(ecryptfs_dentry->d_inode)->crypt_stat;
+-	char *page_virt;
++	char *virt;
+ 	size_t size = 0;
+ 	int rc = 0;
+ 
+@@ -1334,40 +1308,39 @@ int ecryptfs_write_metadata(struct dentry *ecryptfs_dentry)
+ 			goto out;
+ 		}
+ 	} else {
++		printk(KERN_WARNING "%s: Encrypted flag not set\n",
++		       __func__);
+ 		rc = -EINVAL;
+-		ecryptfs_printk(KERN_WARNING,
+-				"Called with crypt_stat->encrypted == 0\n");
+ 		goto out;
+ 	}
+ 	/* Released in this function */
+-	page_virt = kmem_cache_zalloc(ecryptfs_header_cache_0, GFP_USER);
+-	if (!page_virt) {
+-		ecryptfs_printk(KERN_ERR, "Out of memory\n");
++	virt = kzalloc(crypt_stat->num_header_bytes_at_front, GFP_KERNEL);
++	if (!virt) {
++		printk(KERN_ERR "%s: Out of memory\n", __func__);
+ 		rc = -ENOMEM;
+ 		goto out;
+ 	}
+-	rc = ecryptfs_write_headers_virt(page_virt, &size, crypt_stat,
+-  					 ecryptfs_dentry);
++	rc = ecryptfs_write_headers_virt(virt, &size, crypt_stat,
++					 ecryptfs_dentry);
+ 	if (unlikely(rc)) {
+-		ecryptfs_printk(KERN_ERR, "Error whilst writing headers\n");
+-		memset(page_virt, 0, PAGE_CACHE_SIZE);
++		printk(KERN_ERR "%s: Error whilst writing headers; rc = [%d]\n",
++		       __func__, rc);
+ 		goto out_free;
+ 	}
+ 	if (crypt_stat->flags & ECRYPTFS_METADATA_IN_XATTR)
+ 		rc = ecryptfs_write_metadata_to_xattr(ecryptfs_dentry,
+-						      crypt_stat, page_virt,
+-						      size);
++						      crypt_stat, virt, size);
+ 	else
+ 		rc = ecryptfs_write_metadata_to_contents(crypt_stat,
+-							 ecryptfs_dentry,
+-							 page_virt);
++							 ecryptfs_dentry, virt);
+ 	if (rc) {
+-		printk(KERN_ERR "Error writing metadata out to lower file; "
+-		       "rc = [%d]\n", rc);
++		printk(KERN_ERR "%s: Error writing metadata out to lower file; "
++		       "rc = [%d]\n", __func__, rc);
+ 		goto out_free;
+ 	}
+ out_free:
+-	kmem_cache_free(ecryptfs_header_cache_0, page_virt);
++	memset(virt, 0, crypt_stat->num_header_bytes_at_front);
++	kfree(virt);
+ out:
+ 	return rc;
+ }
+@@ -1387,16 +1360,16 @@ static int parse_header_metadata(struct ecryptfs_crypt_stat *crypt_stat,
+ 	virt += sizeof(u32);
+ 	memcpy(&num_header_extents_at_front, virt, sizeof(u16));
+ 	num_header_extents_at_front = be16_to_cpu(num_header_extents_at_front);
+-	crypt_stat->num_header_extents_at_front =
+-		(int)num_header_extents_at_front;
++	crypt_stat->num_header_bytes_at_front =
++		(((size_t)num_header_extents_at_front
++		  * (size_t)header_extent_size));
+ 	(*bytes_read) = (sizeof(u32) + sizeof(u16));
+ 	if ((validate_header_size == ECRYPTFS_VALIDATE_HEADER_SIZE)
+-	    && ((crypt_stat->extent_size
+-		 * crypt_stat->num_header_extents_at_front)
++	    && (crypt_stat->num_header_bytes_at_front
+ 		< ECRYPTFS_MINIMUM_HEADER_EXTENT_SIZE)) {
+ 		rc = -EINVAL;
+-		printk(KERN_WARNING "Invalid number of header extents: [%zd]\n",
+-		       crypt_stat->num_header_extents_at_front);
++		printk(KERN_WARNING "Invalid header size: [%zd]\n",
++		       crypt_stat->num_header_bytes_at_front);
+ 	}
+ 	return rc;
+ }
+@@ -1411,7 +1384,8 @@ static int parse_header_metadata(struct ecryptfs_crypt_stat *crypt_stat,
+  */
+ static void set_default_header_data(struct ecryptfs_crypt_stat *crypt_stat)
+ {
+-	crypt_stat->num_header_extents_at_front = 2;
++	crypt_stat->num_header_bytes_at_front =
++		ECRYPTFS_MINIMUM_HEADER_EXTENT_SIZE;
+ }
+ 
+ /**
+@@ -1497,9 +1471,10 @@ int ecryptfs_read_xattr_region(char *page_virt, struct inode *ecryptfs_inode)
+ 	size = ecryptfs_getxattr_lower(lower_dentry, ECRYPTFS_XATTR_NAME,
+ 				       page_virt, ECRYPTFS_DEFAULT_EXTENT_SIZE);
+ 	if (size < 0) {
+-		printk(KERN_ERR "Error attempting to read the [%s] "
+-		       "xattr from the lower file; return value = [%zd]\n",
+-		       ECRYPTFS_XATTR_NAME, size);
++		if (unlikely(ecryptfs_verbosity > 0))
++			printk(KERN_INFO "Error attempting to read the [%s] "
++			       "xattr from the lower file; return value = "
++			       "[%zd]\n", ECRYPTFS_XATTR_NAME, size);
+ 		rc = -EINVAL;
+ 		goto out;
+ 	}
+@@ -1554,7 +1529,7 @@ int ecryptfs_read_metadata(struct dentry *ecryptfs_dentry)
+ 	if (!page_virt) {
+ 		rc = -ENOMEM;
+ 		printk(KERN_ERR "%s: Unable to allocate page_virt\n",
+-		       __FUNCTION__);
++		       __func__);
+ 		goto out;
+ 	}
+ 	rc = ecryptfs_read_lower(page_virt, 0, crypt_stat->extent_size,
+@@ -1739,7 +1714,7 @@ out:
+ }
+ 
+ struct kmem_cache *ecryptfs_key_tfm_cache;
+-struct list_head key_tfm_list;
++static struct list_head key_tfm_list;
+ struct mutex key_tfm_list_mutex;
+ 
+ int ecryptfs_init_crypto(void)
+@@ -1868,9 +1843,9 @@ int ecryptfs_get_tfm_and_mutex_for_cipher_name(struct crypto_tfm **tfm,
+ 			goto out;
+ 		}
+ 	}
+-	mutex_unlock(&key_tfm_list_mutex);
+ 	(*tfm) = key_tfm->key_tfm;
+ 	(*tfm_mutex) = &key_tfm->key_tfm_mutex;
+ out:
++	mutex_unlock(&key_tfm_list_mutex);
+ 	return rc;
+ }
+diff --git a/fs/ecryptfs/dentry.c b/fs/ecryptfs/dentry.c
+index cb20b96..bc89ecb 100644
+--- a/fs/ecryptfs/dentry.c
++++ b/fs/ecryptfs/dentry.c
+@@ -80,8 +80,8 @@ static void ecryptfs_d_release(struct dentry *dentry)
+ {
+ 	if (ecryptfs_dentry_to_private(dentry)) {
+ 		if (ecryptfs_dentry_to_lower(dentry)) {
+-			mntput(ecryptfs_dentry_to_lower_mnt(dentry));
+ 			dput(ecryptfs_dentry_to_lower(dentry));
++			mntput(ecryptfs_dentry_to_lower_mnt(dentry));
+ 		}
+ 		kmem_cache_free(ecryptfs_dentry_info_cache,
+ 				ecryptfs_dentry_to_private(dentry));
+diff --git a/fs/ecryptfs/ecryptfs_kernel.h b/fs/ecryptfs/ecryptfs_kernel.h
+index 597ddf5..cc63925 100644
+--- a/fs/ecryptfs/ecryptfs_kernel.h
++++ b/fs/ecryptfs/ecryptfs_kernel.h
+@@ -4,7 +4,7 @@
+  *
+  * Copyright (C) 1997-2003 Erez Zadok
+  * Copyright (C) 2001-2003 Stony Brook University
+- * Copyright (C) 2004-2007 International Business Machines Corp.
++ * Copyright (C) 2004-2008 International Business Machines Corp.
+  *   Author(s): Michael A. Halcrow <mahalcro@us.ibm.com>
+  *              Trevor S. Highland <trevor.highland@gmail.com>
+  *              Tyler Hicks <tyhicks@ou.edu>
+@@ -48,11 +48,13 @@
+ #define ECRYPTFS_VERSIONING_POLICY                0x00000008
+ #define ECRYPTFS_VERSIONING_XATTR                 0x00000010
+ #define ECRYPTFS_VERSIONING_MULTKEY               0x00000020
++#define ECRYPTFS_VERSIONING_DEVMISC               0x00000040
+ #define ECRYPTFS_VERSIONING_MASK (ECRYPTFS_VERSIONING_PASSPHRASE \
+ 				  | ECRYPTFS_VERSIONING_PLAINTEXT_PASSTHROUGH \
+ 				  | ECRYPTFS_VERSIONING_PUBKEY \
+ 				  | ECRYPTFS_VERSIONING_XATTR \
+-				  | ECRYPTFS_VERSIONING_MULTKEY)
++				  | ECRYPTFS_VERSIONING_MULTKEY \
++				  | ECRYPTFS_VERSIONING_DEVMISC)
+ #define ECRYPTFS_MAX_PASSWORD_LENGTH 64
+ #define ECRYPTFS_MAX_PASSPHRASE_BYTES ECRYPTFS_MAX_PASSWORD_LENGTH
+ #define ECRYPTFS_SALT_SIZE 8
+@@ -72,17 +74,14 @@
+ #define ECRYPTFS_DEFAULT_MSG_CTX_ELEMS 32
+ #define ECRYPTFS_DEFAULT_SEND_TIMEOUT HZ
+ #define ECRYPTFS_MAX_MSG_CTX_TTL (HZ*3)
+-#define ECRYPTFS_NLMSG_HELO 100
+-#define ECRYPTFS_NLMSG_QUIT 101
+-#define ECRYPTFS_NLMSG_REQUEST 102
+-#define ECRYPTFS_NLMSG_RESPONSE 103
+ #define ECRYPTFS_MAX_PKI_NAME_BYTES 16
+ #define ECRYPTFS_DEFAULT_NUM_USERS 4
+ #define ECRYPTFS_MAX_NUM_USERS 32768
+ #define ECRYPTFS_TRANSPORT_NETLINK 0
+ #define ECRYPTFS_TRANSPORT_CONNECTOR 1
+ #define ECRYPTFS_TRANSPORT_RELAYFS 2
+-#define ECRYPTFS_DEFAULT_TRANSPORT ECRYPTFS_TRANSPORT_NETLINK
++#define ECRYPTFS_TRANSPORT_MISCDEV 3
++#define ECRYPTFS_DEFAULT_TRANSPORT ECRYPTFS_TRANSPORT_MISCDEV
+ #define ECRYPTFS_XATTR_NAME "user.ecryptfs"
+ 
+ #define RFC2440_CIPHER_DES3_EDE 0x02
+@@ -233,10 +232,11 @@ struct ecryptfs_crypt_stat {
+ #define ECRYPTFS_KEY_VALID          0x00000080
+ #define ECRYPTFS_METADATA_IN_XATTR  0x00000100
+ #define ECRYPTFS_VIEW_AS_ENCRYPTED  0x00000200
++#define ECRYPTFS_KEY_SET            0x00000400
+ 	u32 flags;
+ 	unsigned int file_version;
+ 	size_t iv_bytes;
+-	size_t num_header_extents_at_front;
++	size_t num_header_bytes_at_front;
+ 	size_t extent_size; /* Data extent size; default is 4096 */
+ 	size_t key_size;
+ 	size_t extent_shift;
+@@ -322,7 +322,6 @@ struct ecryptfs_key_tfm {
+ 	unsigned char cipher_name[ECRYPTFS_MAX_CIPHER_NAME_SIZE + 1];
+ };
+ 
+-extern struct list_head key_tfm_list;
+ extern struct mutex key_tfm_list_mutex;
+ 
+ /**
+@@ -366,32 +365,62 @@ struct ecryptfs_auth_tok_list_item {
+ };
+ 
+ struct ecryptfs_message {
++	/* Can never be greater than ecryptfs_message_buf_len */
++	/* Used to find the parent msg_ctx */
++	/* Inherits from msg_ctx->index */
+ 	u32 index;
+ 	u32 data_len;
+ 	u8 data[];
+ };
+ 
+ struct ecryptfs_msg_ctx {
+-#define ECRYPTFS_MSG_CTX_STATE_FREE      0x0001
+-#define ECRYPTFS_MSG_CTX_STATE_PENDING   0x0002
+-#define ECRYPTFS_MSG_CTX_STATE_DONE      0x0003
+-	u32 state;
+-	unsigned int index;
+-	unsigned int counter;
++#define ECRYPTFS_MSG_CTX_STATE_FREE     0x01
++#define ECRYPTFS_MSG_CTX_STATE_PENDING  0x02
++#define ECRYPTFS_MSG_CTX_STATE_DONE     0x03
++#define ECRYPTFS_MSG_CTX_STATE_NO_REPLY 0x04
++	u8 state;
++#define ECRYPTFS_MSG_HELO 100
++#define ECRYPTFS_MSG_QUIT 101
++#define ECRYPTFS_MSG_REQUEST 102
++#define ECRYPTFS_MSG_RESPONSE 103
++	u8 type;
++	u32 index;
++	/* Counter converts to a sequence number. Each message sent
++	 * out for which we expect a response has an associated
++	 * sequence number. The response must have the same sequence
++	 * number as the counter for the msg_stc for the message to be
++	 * valid. */
++	u32 counter;
++	size_t msg_size;
+ 	struct ecryptfs_message *msg;
+ 	struct task_struct *task;
+ 	struct list_head node;
++	struct list_head daemon_out_list;
+ 	struct mutex mux;
+ };
+ 
+ extern unsigned int ecryptfs_transport;
+ 
+-struct ecryptfs_daemon_id {
++struct ecryptfs_daemon;
++
++struct ecryptfs_daemon {
++#define ECRYPTFS_DAEMON_IN_READ      0x00000001
++#define ECRYPTFS_DAEMON_IN_POLL      0x00000002
++#define ECRYPTFS_DAEMON_ZOMBIE       0x00000004
++#define ECRYPTFS_DAEMON_MISCDEV_OPEN 0x00000008
++	u32 flags;
++	u32 num_queued_msg_ctx;
+ 	pid_t pid;
+-	uid_t uid;
+-	struct hlist_node id_chain;
++	uid_t euid;
++	struct task_struct *task;
++	struct mutex mux;
++	struct list_head msg_ctx_out_queue;
++	wait_queue_head_t wait;
++	struct hlist_node euid_chain;
+ };
+ 
++extern struct mutex ecryptfs_daemon_hash_mux;
++
+ static inline struct ecryptfs_file_info *
+ ecryptfs_file_to_private(struct file *file)
+ {
+@@ -500,7 +529,7 @@ ecryptfs_set_dentry_lower_mnt(struct dentry *dentry, struct vfsmount *lower_mnt)
+ }
+ 
+ #define ecryptfs_printk(type, fmt, arg...) \
+-        __ecryptfs_printk(type "%s: " fmt, __FUNCTION__, ## arg);
++        __ecryptfs_printk(type "%s: " fmt, __func__, ## arg);
+ void __ecryptfs_printk(const char *fmt, ...);
+ 
+ extern const struct file_operations ecryptfs_main_fops;
+@@ -521,11 +550,9 @@ extern struct kmem_cache *ecryptfs_file_info_cache;
+ extern struct kmem_cache *ecryptfs_dentry_info_cache;
+ extern struct kmem_cache *ecryptfs_inode_info_cache;
+ extern struct kmem_cache *ecryptfs_sb_info_cache;
+-extern struct kmem_cache *ecryptfs_header_cache_0;
+ extern struct kmem_cache *ecryptfs_header_cache_1;
+ extern struct kmem_cache *ecryptfs_header_cache_2;
+ extern struct kmem_cache *ecryptfs_xattr_cache;
+-extern struct kmem_cache *ecryptfs_lower_page_cache;
+ extern struct kmem_cache *ecryptfs_key_record_cache;
+ extern struct kmem_cache *ecryptfs_key_sig_cache;
+ extern struct kmem_cache *ecryptfs_global_auth_tok_cache;
+@@ -562,8 +589,8 @@ int ecryptfs_read_and_validate_header_region(char *data,
+ 					     struct inode *ecryptfs_inode);
+ int ecryptfs_read_and_validate_xattr_region(char *page_virt,
+ 					    struct dentry *ecryptfs_dentry);
+-u16 ecryptfs_code_for_cipher_string(struct ecryptfs_crypt_stat *crypt_stat);
+-int ecryptfs_cipher_code_to_string(char *str, u16 cipher_code);
++u8 ecryptfs_code_for_cipher_string(struct ecryptfs_crypt_stat *crypt_stat);
++int ecryptfs_cipher_code_to_string(char *str, u8 cipher_code);
+ void ecryptfs_set_default_sizes(struct ecryptfs_crypt_stat *crypt_stat);
+ int ecryptfs_generate_key_packet_set(char *dest_base,
+ 				     struct ecryptfs_crypt_stat *crypt_stat,
+@@ -576,8 +603,6 @@ int ecryptfs_truncate(struct dentry *dentry, loff_t new_length);
+ int ecryptfs_inode_test(struct inode *inode, void *candidate_lower_inode);
+ int ecryptfs_inode_set(struct inode *inode, void *lower_inode);
+ void ecryptfs_init_inode(struct inode *inode, struct inode *lower_inode);
+-ssize_t ecryptfs_getxattr(struct dentry *dentry, const char *name, void *value,
+-			  size_t size);
+ ssize_t
+ ecryptfs_getxattr_lower(struct dentry *lower_dentry, const char *name,
+ 			void *value, size_t size);
+@@ -597,13 +622,13 @@ int ecryptfs_init_messaging(unsigned int transport);
+ void ecryptfs_release_messaging(unsigned int transport);
+ 
+ int ecryptfs_send_netlink(char *data, int data_len,
+-			  struct ecryptfs_msg_ctx *msg_ctx, u16 msg_type,
++			  struct ecryptfs_msg_ctx *msg_ctx, u8 msg_type,
+ 			  u16 msg_flags, pid_t daemon_pid);
+ int ecryptfs_init_netlink(void);
+ void ecryptfs_release_netlink(void);
+ 
+ int ecryptfs_send_connector(char *data, int data_len,
+-			    struct ecryptfs_msg_ctx *msg_ctx, u16 msg_type,
++			    struct ecryptfs_msg_ctx *msg_ctx, u8 msg_type,
+ 			    u16 msg_flags, pid_t daemon_pid);
+ int ecryptfs_init_connector(void);
+ void ecryptfs_release_connector(void);
+@@ -630,10 +655,6 @@ int ecryptfs_get_tfm_and_mutex_for_cipher_name(struct crypto_tfm **tfm,
+ int ecryptfs_keyring_auth_tok_for_sig(struct key **auth_tok_key,
+ 				      struct ecryptfs_auth_tok **auth_tok,
+ 				      char *sig);
+-int ecryptfs_write_zeros(struct file *file, pgoff_t index, int start,
+-			 int num_zeros);
+-void ecryptfs_lower_offset_for_extent(loff_t *offset, loff_t extent_num,
+-				      struct ecryptfs_crypt_stat *crypt_stat);
+ int ecryptfs_write_lower(struct inode *ecryptfs_inode, char *data,
+ 			 loff_t offset, size_t size);
+ int ecryptfs_write_lower_page_segment(struct inode *ecryptfs_inode,
+@@ -647,8 +668,20 @@ int ecryptfs_read_lower_page_segment(struct page *page_for_ecryptfs,
+ 				     pgoff_t page_index,
+ 				     size_t offset_in_page, size_t size,
+ 				     struct inode *ecryptfs_inode);
+-int ecryptfs_read(char *data, loff_t offset, size_t size,
+-		  struct file *ecryptfs_file);
+ struct page *ecryptfs_get_locked_page(struct file *file, loff_t index);
++int ecryptfs_exorcise_daemon(struct ecryptfs_daemon *daemon);
++int ecryptfs_find_daemon_by_euid(struct ecryptfs_daemon **daemon, uid_t euid);
++int ecryptfs_parse_packet_length(unsigned char *data, size_t *size,
++				 size_t *length_size);
++int ecryptfs_write_packet_length(char *dest, size_t size,
++				 size_t *packet_size_length);
++int ecryptfs_init_ecryptfs_miscdev(void);
++void ecryptfs_destroy_ecryptfs_miscdev(void);
++int ecryptfs_send_miscdev(char *data, size_t data_size,
++			  struct ecryptfs_msg_ctx *msg_ctx, u8 msg_type,
++			  u16 msg_flags, struct ecryptfs_daemon *daemon);
++void ecryptfs_msg_ctx_alloc_to_free(struct ecryptfs_msg_ctx *msg_ctx);
++int
++ecryptfs_spawn_daemon(struct ecryptfs_daemon **daemon, uid_t euid, pid_t pid);
+ 
+ #endif /* #ifndef ECRYPTFS_KERNEL_H */
+diff --git a/fs/ecryptfs/file.c b/fs/ecryptfs/file.c
+index d60697f..b6e6aa4 100644
+--- a/fs/ecryptfs/file.c
++++ b/fs/ecryptfs/file.c
+@@ -195,7 +195,9 @@ static int ecryptfs_open(struct inode *inode, struct file *file)
+ 		file, ecryptfs_inode_to_private(inode)->lower_file);
+ 	if (S_ISDIR(ecryptfs_dentry->d_inode->i_mode)) {
+ 		ecryptfs_printk(KERN_DEBUG, "This is a directory\n");
++		mutex_lock(&crypt_stat->cs_mutex);
+ 		crypt_stat->flags &= ~(ECRYPTFS_ENCRYPTED);
++		mutex_unlock(&crypt_stat->cs_mutex);
+ 		rc = 0;
+ 		goto out;
+ 	}
+@@ -209,9 +211,10 @@ static int ecryptfs_open(struct inode *inode, struct file *file)
+ 			if (!(mount_crypt_stat->flags
+ 			      & ECRYPTFS_PLAINTEXT_PASSTHROUGH_ENABLED)) {
+ 				rc = -EIO;
+-				printk(KERN_WARNING "Attempt to read file that "
++				printk(KERN_WARNING "Either the lower file "
+ 				       "is not in a valid eCryptfs format, "
+-				       "and plaintext passthrough mode is not "
++				       "or the key could not be retrieved. "
++				       "Plaintext passthrough mode is not "
+ 				       "enabled; returning -EIO\n");
+ 				mutex_unlock(&crypt_stat->cs_mutex);
+ 				goto out_free;
+diff --git a/fs/ecryptfs/inode.c b/fs/ecryptfs/inode.c
+index 40a66a9..c7215ad 100644
+--- a/fs/ecryptfs/inode.c
++++ b/fs/ecryptfs/inode.c
+@@ -37,17 +37,11 @@ static struct dentry *lock_parent(struct dentry *dentry)
+ {
+ 	struct dentry *dir;
+ 
+-	dir = dget(dentry->d_parent);
++	dir = dget_parent(dentry);
+ 	mutex_lock_nested(&(dir->d_inode->i_mutex), I_MUTEX_PARENT);
+ 	return dir;
+ }
+ 
+-static void unlock_parent(struct dentry *dentry)
+-{
+-	mutex_unlock(&(dentry->d_parent->d_inode->i_mutex));
+-	dput(dentry->d_parent);
+-}
+-
+ static void unlock_dir(struct dentry *dir)
+ {
+ 	mutex_unlock(&dir->d_inode->i_mutex);
+@@ -111,7 +105,7 @@ ecryptfs_do_create(struct inode *directory_inode,
+ 
+ 	lower_dentry = ecryptfs_dentry_to_lower(ecryptfs_dentry);
+ 	lower_dir_dentry = lock_parent(lower_dentry);
+-	if (unlikely(IS_ERR(lower_dir_dentry))) {
++	if (IS_ERR(lower_dir_dentry)) {
+ 		ecryptfs_printk(KERN_ERR, "Error locking directory of "
+ 				"dentry\n");
+ 		rc = PTR_ERR(lower_dir_dentry);
+@@ -121,7 +115,7 @@ ecryptfs_do_create(struct inode *directory_inode,
+ 					     ecryptfs_dentry, mode, nd);
+ 	if (rc) {
+ 		printk(KERN_ERR "%s: Failure to create dentry in lower fs; "
+-		       "rc = [%d]\n", __FUNCTION__, rc);
++		       "rc = [%d]\n", __func__, rc);
+ 		goto out_lock;
+ 	}
+ 	rc = ecryptfs_interpose(lower_dentry, ecryptfs_dentry,
+@@ -365,8 +359,7 @@ static struct dentry *ecryptfs_lookup(struct inode *dir, struct dentry *dentry,
+ 		dentry->d_sb)->mount_crypt_stat;
+ 	if (mount_crypt_stat->flags & ECRYPTFS_ENCRYPTED_VIEW_ENABLED) {
+ 		if (crypt_stat->flags & ECRYPTFS_METADATA_IN_XATTR)
+-			file_size = ((crypt_stat->extent_size
+-				      * crypt_stat->num_header_extents_at_front)
++			file_size = (crypt_stat->num_header_bytes_at_front
+ 				     + i_size_read(lower_dentry->d_inode));
+ 		else
+ 			file_size = i_size_read(lower_dentry->d_inode);
+@@ -427,8 +420,9 @@ static int ecryptfs_unlink(struct inode *dir, struct dentry *dentry)
+ 	int rc = 0;
+ 	struct dentry *lower_dentry = ecryptfs_dentry_to_lower(dentry);
+ 	struct inode *lower_dir_inode = ecryptfs_inode_to_lower(dir);
++	struct dentry *lower_dir_dentry;
+ 
+-	lock_parent(lower_dentry);
++	lower_dir_dentry = lock_parent(lower_dentry);
+ 	rc = vfs_unlink(lower_dir_inode, lower_dentry);
+ 	if (rc) {
+ 		printk(KERN_ERR "Error in vfs_unlink; rc = [%d]\n", rc);
+@@ -440,7 +434,7 @@ static int ecryptfs_unlink(struct inode *dir, struct dentry *dentry)
+ 	dentry->d_inode->i_ctime = dir->i_ctime;
+ 	d_drop(dentry);
+ out_unlock:
+-	unlock_parent(lower_dentry);
++	unlock_dir(lower_dir_dentry);
+ 	return rc;
+ }
+ 
+@@ -685,7 +679,7 @@ ecryptfs_put_link(struct dentry *dentry, struct nameidata *nd, void *ptr)
+  * @crypt_stat: Crypt_stat associated with file
+  * @upper_size: Size of the upper file
+  *
+- * Calculate the requried size of the lower file based on the
++ * Calculate the required size of the lower file based on the
+  * specified size of the upper file. This calculation is based on the
+  * number of headers in the underlying file and the extent size.
+  *
+@@ -697,8 +691,7 @@ upper_size_to_lower_size(struct ecryptfs_crypt_stat *crypt_stat,
+ {
+ 	loff_t lower_size;
+ 
+-	lower_size = (crypt_stat->extent_size
+-		      * crypt_stat->num_header_extents_at_front);
++	lower_size = crypt_stat->num_header_bytes_at_front;
+ 	if (upper_size != 0) {
+ 		loff_t num_extents;
+ 
+@@ -875,11 +868,11 @@ static int ecryptfs_setattr(struct dentry *dentry, struct iattr *ia)
+ 			if (!(mount_crypt_stat->flags
+ 			      & ECRYPTFS_PLAINTEXT_PASSTHROUGH_ENABLED)) {
+ 				rc = -EIO;
+-				printk(KERN_WARNING "Attempt to read file that "
++				printk(KERN_WARNING "Either the lower file "
+ 				       "is not in a valid eCryptfs format, "
+-				       "and plaintext passthrough mode is not "
++				       "or the key could not be retrieved. "
++				       "Plaintext passthrough mode is not "
+ 				       "enabled; returning -EIO\n");
+-
+ 				mutex_unlock(&crypt_stat->cs_mutex);
+ 				goto out;
+ 			}
+@@ -910,7 +903,9 @@ static int ecryptfs_setattr(struct dentry *dentry, struct iattr *ia)
+ 	if (ia->ia_valid & (ATTR_KILL_SUID | ATTR_KILL_SGID))
+ 		ia->ia_valid &= ~ATTR_MODE;
+ 
++	mutex_lock(&lower_dentry->d_inode->i_mutex);
+ 	rc = notify_change(lower_dentry, ia);
++	mutex_unlock(&lower_dentry->d_inode->i_mutex);
+ out:
+ 	fsstack_copy_attr_all(inode, lower_inode, NULL);
+ 	return rc;
+@@ -954,7 +949,7 @@ out:
+ 	return rc;
+ }
+ 
+-ssize_t
++static ssize_t
+ ecryptfs_getxattr(struct dentry *dentry, const char *name, void *value,
+ 		  size_t size)
+ {
+diff --git a/fs/ecryptfs/keystore.c b/fs/ecryptfs/keystore.c
+index 5993724..5911e19 100644
+--- a/fs/ecryptfs/keystore.c
++++ b/fs/ecryptfs/keystore.c
+@@ -65,7 +65,7 @@ static int process_request_key_err(long err_code)
+ }
+ 
+ /**
+- * parse_packet_length
++ * ecryptfs_parse_packet_length
+  * @data: Pointer to memory containing length at offset
+  * @size: This function writes the decoded size to this memory
+  *        address; zero on error
+@@ -73,8 +73,8 @@ static int process_request_key_err(long err_code)
+  *
+  * Returns zero on success; non-zero on error
+  */
+-static int parse_packet_length(unsigned char *data, size_t *size,
+-			       size_t *length_size)
++int ecryptfs_parse_packet_length(unsigned char *data, size_t *size,
++				 size_t *length_size)
+ {
+ 	int rc = 0;
+ 
+@@ -105,7 +105,7 @@ out:
+ }
+ 
+ /**
+- * write_packet_length
++ * ecryptfs_write_packet_length
+  * @dest: The byte array target into which to write the length. Must
+  *        have at least 5 bytes allocated.
+  * @size: The length to write.
+@@ -114,8 +114,8 @@ out:
+  *
+  * Returns zero on success; non-zero on error.
+  */
+-static int write_packet_length(char *dest, size_t size,
+-			       size_t *packet_size_length)
++int ecryptfs_write_packet_length(char *dest, size_t size,
++				 size_t *packet_size_length)
+ {
+ 	int rc = 0;
+ 
+@@ -162,8 +162,8 @@ write_tag_64_packet(char *signature, struct ecryptfs_session_key *session_key,
+ 		goto out;
+ 	}
+ 	message[i++] = ECRYPTFS_TAG_64_PACKET_TYPE;
+-	rc = write_packet_length(&message[i], ECRYPTFS_SIG_SIZE_HEX,
+-				 &packet_size_len);
++	rc = ecryptfs_write_packet_length(&message[i], ECRYPTFS_SIG_SIZE_HEX,
++					  &packet_size_len);
+ 	if (rc) {
+ 		ecryptfs_printk(KERN_ERR, "Error generating tag 64 packet "
+ 				"header; cannot generate packet length\n");
+@@ -172,8 +172,9 @@ write_tag_64_packet(char *signature, struct ecryptfs_session_key *session_key,
+ 	i += packet_size_len;
+ 	memcpy(&message[i], signature, ECRYPTFS_SIG_SIZE_HEX);
+ 	i += ECRYPTFS_SIG_SIZE_HEX;
+-	rc = write_packet_length(&message[i], session_key->encrypted_key_size,
+-				 &packet_size_len);
++	rc = ecryptfs_write_packet_length(&message[i],
++					  session_key->encrypted_key_size,
++					  &packet_size_len);
+ 	if (rc) {
+ 		ecryptfs_printk(KERN_ERR, "Error generating tag 64 packet "
+ 				"header; cannot generate packet length\n");
+@@ -189,7 +190,7 @@ out:
+ }
+ 
+ static int
+-parse_tag_65_packet(struct ecryptfs_session_key *session_key, u16 *cipher_code,
++parse_tag_65_packet(struct ecryptfs_session_key *session_key, u8 *cipher_code,
+ 		    struct ecryptfs_message *msg)
+ {
+ 	size_t i = 0;
+@@ -225,7 +226,7 @@ parse_tag_65_packet(struct ecryptfs_session_key *session_key, u16 *cipher_code,
+ 		rc = -EIO;
+ 		goto out;
+ 	}
+-	rc = parse_packet_length(&data[i], &m_size, &data_len);
++	rc = ecryptfs_parse_packet_length(&data[i], &m_size, &data_len);
+ 	if (rc) {
+ 		ecryptfs_printk(KERN_WARNING, "Error parsing packet length; "
+ 				"rc = [%d]\n", rc);
+@@ -275,7 +276,7 @@ out:
+ 
+ 
+ static int
+-write_tag_66_packet(char *signature, size_t cipher_code,
++write_tag_66_packet(char *signature, u8 cipher_code,
+ 		    struct ecryptfs_crypt_stat *crypt_stat, char **packet,
+ 		    size_t *packet_len)
+ {
+@@ -304,8 +305,8 @@ write_tag_66_packet(char *signature, size_t cipher_code,
+ 		goto out;
+ 	}
+ 	message[i++] = ECRYPTFS_TAG_66_PACKET_TYPE;
+-	rc = write_packet_length(&message[i], ECRYPTFS_SIG_SIZE_HEX,
+-				 &packet_size_len);
++	rc = ecryptfs_write_packet_length(&message[i], ECRYPTFS_SIG_SIZE_HEX,
++					  &packet_size_len);
+ 	if (rc) {
+ 		ecryptfs_printk(KERN_ERR, "Error generating tag 66 packet "
+ 				"header; cannot generate packet length\n");
+@@ -315,8 +316,8 @@ write_tag_66_packet(char *signature, size_t cipher_code,
+ 	memcpy(&message[i], signature, ECRYPTFS_SIG_SIZE_HEX);
+ 	i += ECRYPTFS_SIG_SIZE_HEX;
+ 	/* The encrypted key includes 1 byte cipher code and 2 byte checksum */
+-	rc = write_packet_length(&message[i], crypt_stat->key_size + 3,
+-				 &packet_size_len);
++	rc = ecryptfs_write_packet_length(&message[i], crypt_stat->key_size + 3,
++					  &packet_size_len);
+ 	if (rc) {
+ 		ecryptfs_printk(KERN_ERR, "Error generating tag 66 packet "
+ 				"header; cannot generate packet length\n");
+@@ -357,20 +358,25 @@ parse_tag_67_packet(struct ecryptfs_key_record *key_rec,
+ 	/* verify that everything through the encrypted FEK size is present */
+ 	if (message_len < 4) {
+ 		rc = -EIO;
++		printk(KERN_ERR "%s: message_len is [%Zd]; minimum acceptable "
++		       "message length is [%d]\n", __func__, message_len, 4);
+ 		goto out;
+ 	}
+ 	if (data[i++] != ECRYPTFS_TAG_67_PACKET_TYPE) {
+-		ecryptfs_printk(KERN_ERR, "Type should be ECRYPTFS_TAG_67\n");
+ 		rc = -EIO;
++		printk(KERN_ERR "%s: Type should be ECRYPTFS_TAG_67\n",
++		       __func__);
+ 		goto out;
+ 	}
+ 	if (data[i++]) {
+-		ecryptfs_printk(KERN_ERR, "Status indicator has non zero value"
+-				" [%d]\n", data[i-1]);
+ 		rc = -EIO;
++		printk(KERN_ERR "%s: Status indicator has non zero "
++		       "value [%d]\n", __func__, data[i-1]);
++
+ 		goto out;
+ 	}
+-	rc = parse_packet_length(&data[i], &key_rec->enc_key_size, &data_len);
++	rc = ecryptfs_parse_packet_length(&data[i], &key_rec->enc_key_size,
++					  &data_len);
+ 	if (rc) {
+ 		ecryptfs_printk(KERN_WARNING, "Error parsing packet length; "
+ 				"rc = [%d]\n", rc);
+@@ -378,17 +384,17 @@ parse_tag_67_packet(struct ecryptfs_key_record *key_rec,
+ 	}
+ 	i += data_len;
+ 	if (message_len < (i + key_rec->enc_key_size)) {
+-		ecryptfs_printk(KERN_ERR, "message_len [%d]; max len is [%d]\n",
+-				message_len, (i + key_rec->enc_key_size));
+ 		rc = -EIO;
++		printk(KERN_ERR "%s: message_len [%Zd]; max len is [%Zd]\n",
++		       __func__, message_len, (i + key_rec->enc_key_size));
+ 		goto out;
+ 	}
+ 	if (key_rec->enc_key_size > ECRYPTFS_MAX_ENCRYPTED_KEY_BYTES) {
+-		ecryptfs_printk(KERN_ERR, "Encrypted key_size [%d] larger than "
+-				"the maximum key size [%d]\n",
+-				key_rec->enc_key_size,
+-				ECRYPTFS_MAX_ENCRYPTED_KEY_BYTES);
+ 		rc = -EIO;
++		printk(KERN_ERR "%s: Encrypted key_size [%Zd] larger than "
++		       "the maximum key size [%d]\n", __func__,
++		       key_rec->enc_key_size,
++		       ECRYPTFS_MAX_ENCRYPTED_KEY_BYTES);
+ 		goto out;
+ 	}
+ 	memcpy(key_rec->enc_key, &data[i], key_rec->enc_key_size);
+@@ -428,7 +434,7 @@ static int
+ decrypt_pki_encrypted_session_key(struct ecryptfs_auth_tok *auth_tok,
+ 				  struct ecryptfs_crypt_stat *crypt_stat)
+ {
+-	u16 cipher_code = 0;
++	u8 cipher_code = 0;
+ 	struct ecryptfs_msg_ctx *msg_ctx;
+ 	struct ecryptfs_message *msg = NULL;
+ 	char *auth_tok_sig;
+@@ -445,7 +451,7 @@ decrypt_pki_encrypted_session_key(struct ecryptfs_auth_tok *auth_tok,
+ 	rc = write_tag_64_packet(auth_tok_sig, &(auth_tok->session_key),
+ 				 &netlink_message, &netlink_message_length);
+ 	if (rc) {
+-		ecryptfs_printk(KERN_ERR, "Failed to write tag 64 packet");
++		ecryptfs_printk(KERN_ERR, "Failed to write tag 64 packet\n");
+ 		goto out;
+ 	}
+ 	rc = ecryptfs_send_message(ecryptfs_transport, netlink_message,
+@@ -570,8 +576,8 @@ parse_tag_1_packet(struct ecryptfs_crypt_stat *crypt_stat,
+ 		goto out;
+ 	}
+ 	(*new_auth_tok) = &auth_tok_list_item->auth_tok;
+-	rc = parse_packet_length(&data[(*packet_size)], &body_size,
+-				 &length_size);
++	rc = ecryptfs_parse_packet_length(&data[(*packet_size)], &body_size,
++					  &length_size);
+ 	if (rc) {
+ 		printk(KERN_WARNING "Error parsing packet length; "
+ 		       "rc = [%d]\n", rc);
+@@ -704,8 +710,8 @@ parse_tag_3_packet(struct ecryptfs_crypt_stat *crypt_stat,
+ 		goto out;
+ 	}
+ 	(*new_auth_tok) = &auth_tok_list_item->auth_tok;
+-	rc = parse_packet_length(&data[(*packet_size)], &body_size,
+-				 &length_size);
++	rc = ecryptfs_parse_packet_length(&data[(*packet_size)], &body_size,
++					  &length_size);
+ 	if (rc) {
+ 		printk(KERN_WARNING "Error parsing packet length; rc = [%d]\n",
+ 		       rc);
+@@ -852,8 +858,8 @@ parse_tag_11_packet(unsigned char *data, unsigned char *contents,
+ 		rc = -EINVAL;
+ 		goto out;
+ 	}
+-	rc = parse_packet_length(&data[(*packet_size)], &body_size,
+-				 &length_size);
++	rc = ecryptfs_parse_packet_length(&data[(*packet_size)], &body_size,
++					  &length_size);
+ 	if (rc) {
+ 		printk(KERN_WARNING "Invalid tag 11 packet format\n");
+ 		goto out;
+@@ -1400,8 +1406,8 @@ write_tag_1_packet(char *dest, size_t *remaining_bytes,
+ 			auth_tok->token.private_key.key_size;
+ 	rc = pki_encrypt_session_key(auth_tok, crypt_stat, key_rec);
+ 	if (rc) {
+-		ecryptfs_printk(KERN_ERR, "Failed to encrypt session key "
+-				"via a pki");
++		printk(KERN_ERR "Failed to encrypt session key via a key "
++		       "module; rc = [%d]\n", rc);
+ 		goto out;
+ 	}
+ 	if (ecryptfs_verbosity > 0) {
+@@ -1425,8 +1431,9 @@ encrypted_session_key_set:
+ 		goto out;
+ 	}
+ 	dest[(*packet_size)++] = ECRYPTFS_TAG_1_PACKET_TYPE;
+-	rc = write_packet_length(&dest[(*packet_size)], (max_packet_size - 4),
+-				 &packet_size_length);
++	rc = ecryptfs_write_packet_length(&dest[(*packet_size)],
++					  (max_packet_size - 4),
++					  &packet_size_length);
+ 	if (rc) {
+ 		ecryptfs_printk(KERN_ERR, "Error generating tag 1 packet "
+ 				"header; cannot generate packet length\n");
+@@ -1484,8 +1491,9 @@ write_tag_11_packet(char *dest, size_t *remaining_bytes, char *contents,
+ 		goto out;
+ 	}
+ 	dest[(*packet_length)++] = ECRYPTFS_TAG_11_PACKET_TYPE;
+-	rc = write_packet_length(&dest[(*packet_length)],
+-				 (max_packet_size - 4), &packet_size_length);
++	rc = ecryptfs_write_packet_length(&dest[(*packet_length)],
++					  (max_packet_size - 4),
++					  &packet_size_length);
+ 	if (rc) {
+ 		printk(KERN_ERR "Error generating tag 11 packet header; cannot "
+ 		       "generate packet length. rc = [%d]\n", rc);
+@@ -1532,7 +1540,7 @@ write_tag_3_packet(char *dest, size_t *remaining_bytes,
+ 	struct scatterlist dst_sg;
+ 	struct scatterlist src_sg;
+ 	struct mutex *tfm_mutex = NULL;
+-	size_t cipher_code;
++	u8 cipher_code;
+ 	size_t packet_size_length;
+ 	size_t max_packet_size;
+ 	struct ecryptfs_mount_crypt_stat *mount_crypt_stat =
+@@ -1673,8 +1681,9 @@ encrypted_session_key_set:
+ 	dest[(*packet_size)++] = ECRYPTFS_TAG_3_PACKET_TYPE;
+ 	/* Chop off the Tag 3 identifier(1) and Tag 3 packet size(3)
+ 	 * to get the number of octets in the actual Tag 3 packet */
+-	rc = write_packet_length(&dest[(*packet_size)], (max_packet_size - 4),
+-				 &packet_size_length);
++	rc = ecryptfs_write_packet_length(&dest[(*packet_size)],
++					  (max_packet_size - 4),
++					  &packet_size_length);
+ 	if (rc) {
+ 		printk(KERN_ERR "Error generating tag 3 packet header; cannot "
+ 		       "generate packet length. rc = [%d]\n", rc);
+diff --git a/fs/ecryptfs/main.c b/fs/ecryptfs/main.c
+index 37c2ab9..8eef175 100644
+--- a/fs/ecryptfs/main.c
++++ b/fs/ecryptfs/main.c
+@@ -117,7 +117,7 @@ void __ecryptfs_printk(const char *fmt, ...)
+  *
+  * Returns zero on success; non-zero otherwise
+  */
+-int ecryptfs_init_persistent_file(struct dentry *ecryptfs_dentry)
++static int ecryptfs_init_persistent_file(struct dentry *ecryptfs_dentry)
+ {
+ 	struct ecryptfs_inode_info *inode_info =
+ 		ecryptfs_inode_to_private(ecryptfs_dentry->d_inode);
+@@ -219,24 +219,22 @@ int ecryptfs_interpose(struct dentry *lower_dentry, struct dentry *dentry,
+ 	if (rc) {
+ 		printk(KERN_ERR "%s: Error attempting to initialize the "
+ 		       "persistent file for the dentry with name [%s]; "
+-		       "rc = [%d]\n", __FUNCTION__, dentry->d_name.name, rc);
++		       "rc = [%d]\n", __func__, dentry->d_name.name, rc);
+ 		goto out;
+ 	}
+ out:
+ 	return rc;
+ }
+ 
+-enum { ecryptfs_opt_sig, ecryptfs_opt_ecryptfs_sig, ecryptfs_opt_debug,
+-       ecryptfs_opt_ecryptfs_debug, ecryptfs_opt_cipher,
+-       ecryptfs_opt_ecryptfs_cipher, ecryptfs_opt_ecryptfs_key_bytes,
++enum { ecryptfs_opt_sig, ecryptfs_opt_ecryptfs_sig,
++       ecryptfs_opt_cipher, ecryptfs_opt_ecryptfs_cipher,
++       ecryptfs_opt_ecryptfs_key_bytes,
+        ecryptfs_opt_passthrough, ecryptfs_opt_xattr_metadata,
+        ecryptfs_opt_encrypted_view, ecryptfs_opt_err };
+ 
+ static match_table_t tokens = {
+ 	{ecryptfs_opt_sig, "sig=%s"},
+ 	{ecryptfs_opt_ecryptfs_sig, "ecryptfs_sig=%s"},
+-	{ecryptfs_opt_debug, "debug=%u"},
+-	{ecryptfs_opt_ecryptfs_debug, "ecryptfs_debug=%u"},
+ 	{ecryptfs_opt_cipher, "cipher=%s"},
+ 	{ecryptfs_opt_ecryptfs_cipher, "ecryptfs_cipher=%s"},
+ 	{ecryptfs_opt_ecryptfs_key_bytes, "ecryptfs_key_bytes=%u"},
+@@ -313,7 +311,6 @@ static int ecryptfs_parse_options(struct super_block *sb, char *options)
+ 	substring_t args[MAX_OPT_ARGS];
+ 	int token;
+ 	char *sig_src;
+-	char *debug_src;
+ 	char *cipher_name_dst;
+ 	char *cipher_name_src;
+ 	char *cipher_key_bytes_src;
+@@ -341,16 +338,6 @@ static int ecryptfs_parse_options(struct super_block *sb, char *options)
+ 			}
+ 			sig_set = 1;
+ 			break;
+-		case ecryptfs_opt_debug:
+-		case ecryptfs_opt_ecryptfs_debug:
+-			debug_src = args[0].from;
+-			ecryptfs_verbosity =
+-				(int)simple_strtol(debug_src, &debug_src,
+-						   0);
+-			ecryptfs_printk(KERN_DEBUG,
+-					"Verbosity set to [%d]" "\n",
+-					ecryptfs_verbosity);
+-			break;
+ 		case ecryptfs_opt_cipher:
+ 		case ecryptfs_opt_ecryptfs_cipher:
+ 			cipher_name_src = args[0].from;
+@@ -658,11 +645,6 @@ static struct ecryptfs_cache_info {
+ 		.size = sizeof(struct ecryptfs_sb_info),
+ 	},
+ 	{
+-		.cache = &ecryptfs_header_cache_0,
+-		.name = "ecryptfs_headers_0",
+-		.size = PAGE_CACHE_SIZE,
+-	},
+-	{
+ 		.cache = &ecryptfs_header_cache_1,
+ 		.name = "ecryptfs_headers_1",
+ 		.size = PAGE_CACHE_SIZE,
+@@ -739,100 +721,24 @@ static int ecryptfs_init_kmem_caches(void)
+ 	return 0;
+ }
+ 
+-struct ecryptfs_obj {
+-	char *name;
+-	struct list_head slot_list;
+-	struct kobject kobj;
+-};
+-
+-struct ecryptfs_attribute {
+-	struct attribute attr;
+-	ssize_t(*show) (struct ecryptfs_obj *, char *);
+-	ssize_t(*store) (struct ecryptfs_obj *, const char *, size_t);
+-};
++static decl_subsys(ecryptfs, NULL, NULL);
+ 
+-static ssize_t
+-ecryptfs_attr_store(struct kobject *kobj,
+-		    struct attribute *attr, const char *buf, size_t len)
++static ssize_t version_show(struct subsystem *subsys, char *buff)
+ {
+-	struct ecryptfs_obj *obj = container_of(kobj, struct ecryptfs_obj,
+-						kobj);
+-	struct ecryptfs_attribute *attribute =
+-		container_of(attr, struct ecryptfs_attribute, attr);
+-
+-	return (attribute->store ? attribute->store(obj, buf, len) : 0);
+-}
+-
+-static ssize_t
+-ecryptfs_attr_show(struct kobject *kobj, struct attribute *attr, char *buf)
+-{
+-	struct ecryptfs_obj *obj = container_of(kobj, struct ecryptfs_obj,
+-						kobj);
+-	struct ecryptfs_attribute *attribute =
+-		container_of(attr, struct ecryptfs_attribute, attr);
+-
+-	return (attribute->show ? attribute->show(obj, buf) : 0);
++	return snprintf(buff, PAGE_SIZE, "%d\n", ECRYPTFS_VERSIONING_MASK);
+ }
+ 
+-static struct sysfs_ops ecryptfs_sysfs_ops = {
+-	.show = ecryptfs_attr_show,
+-	.store = ecryptfs_attr_store
+-};
++static struct subsys_attribute version_attr = __ATTR_RO(version);
+ 
+-static struct kobj_type ecryptfs_ktype = {
+-	.sysfs_ops = &ecryptfs_sysfs_ops
++static struct attribute *attributes[] = {
++	&version_attr.attr,
++	NULL,
+ };
+ 
+-static decl_subsys(ecryptfs, &ecryptfs_ktype, NULL);
+-
+-static ssize_t version_show(struct ecryptfs_obj *obj, char *buff)
+-{
+-	return snprintf(buff, PAGE_SIZE, "%d\n", ECRYPTFS_VERSIONING_MASK);
+-}
+-
+-static struct ecryptfs_attribute sysfs_attr_version = __ATTR_RO(version);
+-
+-static struct ecryptfs_version_str_map_elem {
+-	u32 flag;
+-	char *str;
+-} ecryptfs_version_str_map[] = {
+-	{ECRYPTFS_VERSIONING_PASSPHRASE, "passphrase"},
+-	{ECRYPTFS_VERSIONING_PUBKEY, "pubkey"},
+-	{ECRYPTFS_VERSIONING_PLAINTEXT_PASSTHROUGH, "plaintext passthrough"},
+-	{ECRYPTFS_VERSIONING_POLICY, "policy"},
+-	{ECRYPTFS_VERSIONING_XATTR, "metadata in extended attribute"},
+-	{ECRYPTFS_VERSIONING_MULTKEY, "multiple keys per file"}
++static struct attribute_group attr_group = {
++	.attrs = attributes,
+ };
+ 
+-static ssize_t version_str_show(struct ecryptfs_obj *obj, char *buff)
+-{
+-	int i;
+-	int remaining = PAGE_SIZE;
+-	int total_written = 0;
+-
+-	buff[0] = '\0';
+-	for (i = 0; i < ARRAY_SIZE(ecryptfs_version_str_map); i++) {
+-		int entry_size;
+-
+-		if (!(ECRYPTFS_VERSIONING_MASK
+-		      & ecryptfs_version_str_map[i].flag))
+-			continue;
+-		entry_size = strlen(ecryptfs_version_str_map[i].str);
+-		if ((entry_size + 2) > remaining)
+-			goto out;
+-		memcpy(buff, ecryptfs_version_str_map[i].str, entry_size);
+-		buff[entry_size++] = '\n';
+-		buff[entry_size] = '\0';
+-		buff += entry_size;
+-		total_written += entry_size;
+-		remaining -= entry_size;
+-	}
+-out:
+-	return total_written;
+-}
+-
+-static struct ecryptfs_attribute sysfs_attr_version_str = __ATTR_RO(version_str);
+-
+ static int do_sysfs_registration(void)
+ {
+ 	int rc;
+@@ -843,23 +749,11 @@ static int do_sysfs_registration(void)
+ 		       "Unable to register ecryptfs sysfs subsystem\n");
+ 		goto out;
+ 	}
+-	rc = sysfs_create_file(&ecryptfs_subsys.kset.kobj,
+-			       &sysfs_attr_version.attr);
++	rc = sysfs_create_group(&ecryptfs_subsys.kset.kobj, &attr_group);
+ 	if (rc) {
+ 		printk(KERN_ERR
+-		       "Unable to create ecryptfs version attribute\n");
++	 	      "Unable to create ecryptfs version attributes\n");
+ 		subsystem_unregister(&ecryptfs_subsys);
+-		goto out;
+-	}
+-	rc = sysfs_create_file(&ecryptfs_subsys.kset.kobj,
+-			       &sysfs_attr_version_str.attr);
+-	if (rc) {
+-		printk(KERN_ERR
+-		       "Unable to create ecryptfs version_str attribute\n");
+-		sysfs_remove_file(&ecryptfs_subsys.kset.kobj,
+-				  &sysfs_attr_version.attr);
+-		subsystem_unregister(&ecryptfs_subsys);
+-		goto out;
+ 	}
+ out:
+ 	return rc;
+@@ -867,10 +761,7 @@ out:
+ 
+ static void do_sysfs_unregistration(void)
+ {
+-	sysfs_remove_file(&ecryptfs_subsys.kset.kobj,
+-			  &sysfs_attr_version.attr);
+-	sysfs_remove_file(&ecryptfs_subsys.kset.kobj,
+-			  &sysfs_attr_version_str.attr);
++	sysfs_remove_group(&ecryptfs_subsys.kset.kobj, &attr_group);
+ 	subsystem_unregister(&ecryptfs_subsys);
+ }
+ 
+@@ -917,6 +808,10 @@ static int __init ecryptfs_init(void)
+ 		       "rc = [%d]\n", rc);
+ 		goto out_release_messaging;
+ 	}
++	if (ecryptfs_verbosity > 0)
++		printk(KERN_CRIT "eCryptfs verbosity set to %d. Secret values "
++			"will be written to the syslog!\n", ecryptfs_verbosity);
++
+ 	goto out;
+ out_release_messaging:
+ 	ecryptfs_release_messaging(ecryptfs_transport);
+diff --git a/fs/ecryptfs/messaging.c b/fs/ecryptfs/messaging.c
+index a96d341..c6038bd 100644
+--- a/fs/ecryptfs/messaging.c
++++ b/fs/ecryptfs/messaging.c
+@@ -1,7 +1,7 @@
+ /**
+  * eCryptfs: Linux filesystem encryption layer
+  *
+- * Copyright (C) 2004-2006 International Business Machines Corp.
++ * Copyright (C) 2004-2008 International Business Machines Corp.
+  *   Author(s): Michael A. Halcrow <mhalcrow@us.ibm.com>
+  *		Tyler Hicks <tyhicks@ou.edu>
+  *
+@@ -26,13 +26,13 @@ static LIST_HEAD(ecryptfs_msg_ctx_free_list);
+ static LIST_HEAD(ecryptfs_msg_ctx_alloc_list);
+ static struct mutex ecryptfs_msg_ctx_lists_mux;
+ 
+-static struct hlist_head *ecryptfs_daemon_id_hash;
+-static struct mutex ecryptfs_daemon_id_hash_mux;
++static struct hlist_head *ecryptfs_daemon_hash;
++struct mutex ecryptfs_daemon_hash_mux;
+ static int ecryptfs_hash_buckets;
+ #define ecryptfs_uid_hash(uid) \
+         hash_long((unsigned long)uid, ecryptfs_hash_buckets)
+ 
+-static unsigned int ecryptfs_msg_counter;
++static u32 ecryptfs_msg_counter;
+ static struct ecryptfs_msg_ctx *ecryptfs_msg_ctx_arr;
+ 
+ /**
+@@ -40,9 +40,10 @@ static struct ecryptfs_msg_ctx *ecryptfs_msg_ctx_arr;
+  * @msg_ctx: The context that was acquired from the free list
+  *
+  * Acquires a context element from the free list and locks the mutex
+- * on the context.  Returns zero on success; non-zero on error or upon
+- * failure to acquire a free context element.  Be sure to lock the
+- * list mutex before calling.
++ * on the context.  Sets the msg_ctx task to current.  Returns zero on
++ * success; non-zero on error or upon failure to acquire a free
++ * context element.  Must be called with ecryptfs_msg_ctx_lists_mux
++ * held.
+  */
+ static int ecryptfs_acquire_free_msg_ctx(struct ecryptfs_msg_ctx **msg_ctx)
+ {
+@@ -50,11 +51,11 @@ static int ecryptfs_acquire_free_msg_ctx(struct ecryptfs_msg_ctx **msg_ctx)
+ 	int rc;
+ 
+ 	if (list_empty(&ecryptfs_msg_ctx_free_list)) {
+-		ecryptfs_printk(KERN_WARNING, "The eCryptfs free "
+-				"context list is empty.  It may be helpful to "
+-				"specify the ecryptfs_message_buf_len "
+-				"parameter to be greater than the current "
+-				"value of [%d]\n", ecryptfs_message_buf_len);
++		printk(KERN_WARNING "%s: The eCryptfs free "
++		       "context list is empty.  It may be helpful to "
++		       "specify the ecryptfs_message_buf_len "
++		       "parameter to be greater than the current "
++		       "value of [%d]\n", __func__, ecryptfs_message_buf_len);
+ 		rc = -ENOMEM;
+ 		goto out;
+ 	}
+@@ -75,8 +76,7 @@ out:
+  * ecryptfs_msg_ctx_free_to_alloc
+  * @msg_ctx: The context to move from the free list to the alloc list
+  *
+- * Be sure to lock the list mutex and the context mutex before
+- * calling.
++ * Must be called with ecryptfs_msg_ctx_lists_mux held.
+  */
+ static void ecryptfs_msg_ctx_free_to_alloc(struct ecryptfs_msg_ctx *msg_ctx)
+ {
+@@ -89,36 +89,37 @@ static void ecryptfs_msg_ctx_free_to_alloc(struct ecryptfs_msg_ctx *msg_ctx)
+  * ecryptfs_msg_ctx_alloc_to_free
+  * @msg_ctx: The context to move from the alloc list to the free list
+  *
+- * Be sure to lock the list mutex and the context mutex before
+- * calling.
++ * Must be called with ecryptfs_msg_ctx_lists_mux held.
+  */
+-static void ecryptfs_msg_ctx_alloc_to_free(struct ecryptfs_msg_ctx *msg_ctx)
++void ecryptfs_msg_ctx_alloc_to_free(struct ecryptfs_msg_ctx *msg_ctx)
+ {
+ 	list_move(&(msg_ctx->node), &ecryptfs_msg_ctx_free_list);
+ 	if (msg_ctx->msg)
+ 		kfree(msg_ctx->msg);
++	msg_ctx->msg = NULL;
+ 	msg_ctx->state = ECRYPTFS_MSG_CTX_STATE_FREE;
+ }
+ 
+ /**
+- * ecryptfs_find_daemon_id
+- * @uid: The user id which maps to the desired daemon id
+- * @id: If return value is zero, points to the desired daemon id
+- *      pointer
++ * ecryptfs_find_daemon_by_euid
++ * @euid: The effective user id which maps to the desired daemon id
++ * @daemon: If return value is zero, points to the desired daemon pointer
+  *
+- * Search the hash list for the given user id.  Returns zero if the
+- * user id exists in the list; non-zero otherwise.  The daemon id hash
+- * mutex should be held before calling this function.
++ * Must be called with ecryptfs_daemon_hash_mux held.
++ *
++ * Search the hash list for the given user id.
++ *
++ * Returns zero if the user id exists in the list; non-zero otherwise.
+  */
+-static int ecryptfs_find_daemon_id(uid_t uid, struct ecryptfs_daemon_id **id)
++int ecryptfs_find_daemon_by_euid(struct ecryptfs_daemon **daemon, uid_t euid)
+ {
+ 	struct hlist_node *elem;
+ 	int rc;
+ 
+-	hlist_for_each_entry(*id, elem,
+-			     &ecryptfs_daemon_id_hash[ecryptfs_uid_hash(uid)],
+-			     id_chain) {
+-		if ((*id)->uid == uid) {
++	hlist_for_each_entry(*daemon, elem,
++			     &ecryptfs_daemon_hash[ecryptfs_uid_hash(euid)],
++			     euid_chain) {
++		if ((*daemon)->euid == euid) {
+ 			rc = 0;
+ 			goto out;
+ 		}
+@@ -128,181 +129,291 @@ out:
+ 	return rc;
+ }
+ 
+-static int ecryptfs_send_raw_message(unsigned int transport, u16 msg_type,
+-				     pid_t pid)
++static int
++ecryptfs_send_message_locked(unsigned int transport, char *data, int data_len,
++			     u8 msg_type, struct ecryptfs_msg_ctx **msg_ctx);
++
++/**
++ * ecryptfs_send_raw_message
++ * @transport: Transport type
++ * @msg_type: Message type
++ * @daemon: Daemon struct for recipient of message
++ *
++ * A raw message is one that does not include an ecryptfs_message
++ * struct. It simply has a type.
++ *
++ * Must be called with ecryptfs_daemon_hash_mux held.
++ *
++ * Returns zero on success; non-zero otherwise
++ */
++static int ecryptfs_send_raw_message(unsigned int transport, u8 msg_type,
++				     struct ecryptfs_daemon *daemon)
+ {
++	struct ecryptfs_msg_ctx *msg_ctx;
+ 	int rc;
+ 
+ 	switch(transport) {
+ 	case ECRYPTFS_TRANSPORT_NETLINK:
+-		rc = ecryptfs_send_netlink(NULL, 0, NULL, msg_type, 0, pid);
++		rc = ecryptfs_send_netlink(NULL, 0, NULL, msg_type, 0,
++					   daemon->pid);
++		break;
++	case ECRYPTFS_TRANSPORT_MISCDEV:
++		rc = ecryptfs_send_message_locked(transport, NULL, 0, msg_type,
++						  &msg_ctx);
++		if (rc) {
++			printk(KERN_ERR "%s: Error whilst attempting to send "
++			       "message via procfs; rc = [%d]\n", __func__, rc);
++			goto out;
++		}
++		/* Raw messages are logically context-free (e.g., no
++		 * reply is expected), so we set the state of the
++		 * ecryptfs_msg_ctx object to indicate that it should
++		 * be freed as soon as the transport sends out the message. */
++		mutex_lock(&msg_ctx->mux);
++		msg_ctx->state = ECRYPTFS_MSG_CTX_STATE_NO_REPLY;
++		mutex_unlock(&msg_ctx->mux);
+ 		break;
+ 	case ECRYPTFS_TRANSPORT_CONNECTOR:
+ 	case ECRYPTFS_TRANSPORT_RELAYFS:
+ 	default:
+ 		rc = -ENOSYS;
+ 	}
++out:
++	return rc;
++}
++
++/**
++ * ecryptfs_spawn_daemon - Create and initialize a new daemon struct
++ * @daemon: Pointer to set to newly allocated daemon struct
++ * @euid: Effective user id for the daemon
++ * @pid: Process id for the daemon
++ *
++ * Must be called ceremoniously while in possession of
++ * ecryptfs_sacred_daemon_hash_mux
++ *
++ * Returns zero on success; non-zero otherwise
++ */
++int
++ecryptfs_spawn_daemon(struct ecryptfs_daemon **daemon, uid_t euid, pid_t pid)
++{
++	int rc = 0;
++
++	(*daemon) = kzalloc(sizeof(**daemon), GFP_KERNEL);
++	if (!(*daemon)) {
++		rc = -ENOMEM;
++		printk(KERN_ERR "%s: Failed to allocate [%Zd] bytes of "
++		       "GFP_KERNEL memory\n", __func__, sizeof(**daemon));
++		goto out;
++	}
++	(*daemon)->euid = euid;
++	(*daemon)->pid = pid;
++	(*daemon)->task = current;
++	mutex_init(&(*daemon)->mux);
++	INIT_LIST_HEAD(&(*daemon)->msg_ctx_out_queue);
++	init_waitqueue_head(&(*daemon)->wait);
++	(*daemon)->num_queued_msg_ctx = 0;
++	hlist_add_head(&(*daemon)->euid_chain,
++		       &ecryptfs_daemon_hash[ecryptfs_uid_hash(euid)]);
++out:
+ 	return rc;
+ }
+ 
+ /**
+  * ecryptfs_process_helo
+  * @transport: The underlying transport (netlink, etc.)
+- * @uid: The user ID owner of the message
++ * @euid: The user ID owner of the message
+  * @pid: The process ID for the userspace program that sent the
+  *       message
+  *
+- * Adds the uid and pid values to the daemon id hash.  If a uid
++ * Adds the euid and pid values to the daemon euid hash.  If an euid
+  * already has a daemon pid registered, the daemon will be
+- * unregistered before the new daemon id is put into the hash list.
+- * Returns zero after adding a new daemon id to the hash list;
++ * unregistered before the new daemon is put into the hash list.
++ * Returns zero after adding a new daemon to the hash list;
+  * non-zero otherwise.
+  */
+-int ecryptfs_process_helo(unsigned int transport, uid_t uid, pid_t pid)
++int ecryptfs_process_helo(unsigned int transport, uid_t euid, pid_t pid)
+ {
+-	struct ecryptfs_daemon_id *new_id;
+-	struct ecryptfs_daemon_id *old_id;
++	struct ecryptfs_daemon *new_daemon;
++	struct ecryptfs_daemon *old_daemon;
+ 	int rc;
+ 
+-	mutex_lock(&ecryptfs_daemon_id_hash_mux);
+-	new_id = kmalloc(sizeof(*new_id), GFP_KERNEL);
+-	if (!new_id) {
+-		rc = -ENOMEM;
+-		ecryptfs_printk(KERN_ERR, "Failed to allocate memory; unable "
+-				"to register daemon [%d] for user [%d]\n",
+-				pid, uid);
+-		goto unlock;
+-	}
+-	if (!ecryptfs_find_daemon_id(uid, &old_id)) {
++	mutex_lock(&ecryptfs_daemon_hash_mux);
++	rc = ecryptfs_find_daemon_by_euid(&old_daemon, euid);
++	if (rc != 0) {
+ 		printk(KERN_WARNING "Received request from user [%d] "
+ 		       "to register daemon [%d]; unregistering daemon "
+-		       "[%d]\n", uid, pid, old_id->pid);
+-		hlist_del(&old_id->id_chain);
+-		rc = ecryptfs_send_raw_message(transport, ECRYPTFS_NLMSG_QUIT,
+-					       old_id->pid);
++		       "[%d]\n", euid, pid, old_daemon->pid);
++		rc = ecryptfs_send_raw_message(transport, ECRYPTFS_MSG_QUIT,
++					       old_daemon);
+ 		if (rc)
+ 			printk(KERN_WARNING "Failed to send QUIT "
+ 			       "message to daemon [%d]; rc = [%d]\n",
+-			       old_id->pid, rc);
+-		kfree(old_id);
++			       old_daemon->pid, rc);
++		hlist_del(&old_daemon->euid_chain);
++		kfree(old_daemon);
+ 	}
+-	new_id->uid = uid;
+-	new_id->pid = pid;
+-	hlist_add_head(&new_id->id_chain,
+-		       &ecryptfs_daemon_id_hash[ecryptfs_uid_hash(uid)]);
+-	rc = 0;
+-unlock:
+-	mutex_unlock(&ecryptfs_daemon_id_hash_mux);
++	rc = ecryptfs_spawn_daemon(&new_daemon, euid, pid);
++	if (rc)
++		printk(KERN_ERR "%s: The gods are displeased with this attempt "
++		       "to create a new daemon object for euid [%d]; pid [%d]; "
++		       "rc = [%d]\n", __func__, euid, pid, rc);
++	mutex_unlock(&ecryptfs_daemon_hash_mux);
++	return rc;
++}
++
++/**
++ * ecryptfs_exorcise_daemon - Destroy the daemon struct
++ *
++ * Must be called ceremoniously while in possession of
++ * ecryptfs_daemon_hash_mux and the daemon's own mux.
++ */
++int ecryptfs_exorcise_daemon(struct ecryptfs_daemon *daemon)
++{
++	struct ecryptfs_msg_ctx *msg_ctx, *msg_ctx_tmp;
++	int rc = 0;
++
++	mutex_lock(&daemon->mux);
++	if ((daemon->flags & ECRYPTFS_DAEMON_IN_READ)
++	    || (daemon->flags & ECRYPTFS_DAEMON_IN_POLL)) {
++		rc = -EBUSY;
++		printk(KERN_WARNING "%s: Attempt to destroy daemon with pid "
++		       "[%d], but it is in the midst of a read or a poll\n",
++		       __func__, daemon->pid);
++		mutex_unlock(&daemon->mux);
++		goto out;
++	}
++	list_for_each_entry_safe(msg_ctx, msg_ctx_tmp,
++				 &daemon->msg_ctx_out_queue, daemon_out_list) {
++		list_del(&msg_ctx->daemon_out_list);
++		daemon->num_queued_msg_ctx--;
++		printk(KERN_WARNING "%s: Warning: dropping message that is in "
++		       "the out queue of a dying daemon\n", __func__);
++		ecryptfs_msg_ctx_alloc_to_free(msg_ctx);
++	}
++	hlist_del(&daemon->euid_chain);
++	if (daemon->task)
++		wake_up_process(daemon->task);
++	mutex_unlock(&daemon->mux);
++	memset(daemon, 0, sizeof(*daemon));
++	kfree(daemon);
++out:
+ 	return rc;
+ }
+ 
+ /**
+  * ecryptfs_process_quit
+- * @uid: The user ID owner of the message
++ * @euid: The user ID owner of the message
+  * @pid: The process ID for the userspace program that sent the
+  *       message
+  *
+- * Deletes the corresponding daemon id for the given uid and pid, if
++ * Deletes the corresponding daemon for the given euid and pid, if
+  * it is the registered that is requesting the deletion. Returns zero
+- * after deleting the desired daemon id; non-zero otherwise.
++ * after deleting the desired daemon; non-zero otherwise.
+  */
+-int ecryptfs_process_quit(uid_t uid, pid_t pid)
++int ecryptfs_process_quit(uid_t euid, pid_t pid)
+ {
+-	struct ecryptfs_daemon_id *id;
++	struct ecryptfs_daemon *daemon;
+ 	int rc;
+ 
+-	mutex_lock(&ecryptfs_daemon_id_hash_mux);
+-	if (ecryptfs_find_daemon_id(uid, &id)) {
+-		rc = -EINVAL;
+-		ecryptfs_printk(KERN_ERR, "Received request from user [%d] to "
+-				"unregister unrecognized daemon [%d]\n", uid,
+-				pid);
+-		goto unlock;
+-	}
+-	if (id->pid != pid) {
++	mutex_lock(&ecryptfs_daemon_hash_mux);
++	rc = ecryptfs_find_daemon_by_euid(&daemon, euid);
++	if (rc || !daemon) {
+ 		rc = -EINVAL;
+-		ecryptfs_printk(KERN_WARNING, "Received request from user [%d] "
+-				"with pid [%d] to unregister daemon [%d]\n",
+-				uid, pid, id->pid);
+-		goto unlock;
++		printk(KERN_ERR "Received request from user [%d] to "
++		       "unregister unrecognized daemon [%d]\n", euid, pid);
++		goto out_unlock;
+ 	}
+-	hlist_del(&id->id_chain);
+-	kfree(id);
+-	rc = 0;
+-unlock:
+-	mutex_unlock(&ecryptfs_daemon_id_hash_mux);
++	rc = ecryptfs_exorcise_daemon(daemon);
++out_unlock:
++	mutex_unlock(&ecryptfs_daemon_hash_mux);
+ 	return rc;
+ }
+ 
+ /**
+  * ecryptfs_process_reponse
+  * @msg: The ecryptfs message received; the caller should sanity check
+- *       msg->data_len
++ *       msg->data_len and free the memory
+  * @pid: The process ID of the userspace application that sent the
+  *       message
+- * @seq: The sequence number of the message
++ * @seq: The sequence number of the message; must match the sequence
++ *       number for the existing message context waiting for this
++ *       response
++ *
++ * Processes a response message after sending an operation request to
++ * userspace. Some other process is awaiting this response. Before
++ * sending out its first communications, the other process allocated a
++ * msg_ctx from the ecryptfs_msg_ctx_arr at a particular index. The
++ * response message contains this index so that we can copy over the
++ * response message into the msg_ctx that the process holds a
++ * reference to. The other process is going to wake up, check to see
++ * that msg_ctx->state == ECRYPTFS_MSG_CTX_STATE_DONE, and then
++ * proceed to read off and process the response message. Returns zero
++ * upon delivery to desired context element; non-zero upon delivery
++ * failure or error.
+  *
+- * Processes a response message after sending a operation request to
+- * userspace. Returns zero upon delivery to desired context element;
+- * non-zero upon delivery failure or error.
++ * Returns zero on success; non-zero otherwise
+  */
+-int ecryptfs_process_response(struct ecryptfs_message *msg, uid_t uid,
++int ecryptfs_process_response(struct ecryptfs_message *msg, uid_t euid,
+ 			      pid_t pid, u32 seq)
+ {
+-	struct ecryptfs_daemon_id *id;
++	struct ecryptfs_daemon *daemon;
+ 	struct ecryptfs_msg_ctx *msg_ctx;
+-	int msg_size;
++	size_t msg_size;
+ 	int rc;
+ 
+ 	if (msg->index >= ecryptfs_message_buf_len) {
+ 		rc = -EINVAL;
+-		ecryptfs_printk(KERN_ERR, "Attempt to reference "
+-				"context buffer at index [%d]; maximum "
+-				"allowable is [%d]\n", msg->index,
+-				(ecryptfs_message_buf_len - 1));
++		printk(KERN_ERR "%s: Attempt to reference "
++		       "context buffer at index [%d]; maximum "
++		       "allowable is [%d]\n", __func__, msg->index,
++		       (ecryptfs_message_buf_len - 1));
+ 		goto out;
+ 	}
+ 	msg_ctx = &ecryptfs_msg_ctx_arr[msg->index];
+ 	mutex_lock(&msg_ctx->mux);
+-	if (ecryptfs_find_daemon_id(msg_ctx->task->euid, &id)) {
++	mutex_lock(&ecryptfs_daemon_hash_mux);
++	rc = ecryptfs_find_daemon_by_euid(&daemon, msg_ctx->task->euid);
++	mutex_unlock(&ecryptfs_daemon_hash_mux);
++	if (rc) {
+ 		rc = -EBADMSG;
+-		ecryptfs_printk(KERN_WARNING, "User [%d] received a "
+-				"message response from process [%d] but does "
+-				"not have a registered daemon\n",
+-				msg_ctx->task->euid, pid);
++		printk(KERN_WARNING "%s: User [%d] received a "
++		       "message response from process [%d] but does "
++		       "not have a registered daemon\n", __func__,
++		       msg_ctx->task->euid, pid);
+ 		goto wake_up;
+ 	}
+-	if (msg_ctx->task->euid != uid) {
++	if (msg_ctx->task->euid != euid) {
+ 		rc = -EBADMSG;
+-		ecryptfs_printk(KERN_WARNING, "Received message from user "
+-				"[%d]; expected message from user [%d]\n",
+-				uid, msg_ctx->task->euid);
++		printk(KERN_WARNING "%s: Received message from user "
++		       "[%d]; expected message from user [%d]\n", __func__,
++		       euid, msg_ctx->task->euid);
+ 		goto unlock;
+ 	}
+-	if (id->pid != pid) {
++	if (daemon->pid != pid) {
+ 		rc = -EBADMSG;
+-		ecryptfs_printk(KERN_ERR, "User [%d] received a "
+-				"message response from an unrecognized "
+-				"process [%d]\n", msg_ctx->task->euid, pid);
++		printk(KERN_ERR "%s: User [%d] sent a message response "
++		       "from an unrecognized process [%d]\n",
++		       __func__, msg_ctx->task->euid, pid);
+ 		goto unlock;
+ 	}
+ 	if (msg_ctx->state != ECRYPTFS_MSG_CTX_STATE_PENDING) {
+ 		rc = -EINVAL;
+-		ecryptfs_printk(KERN_WARNING, "Desired context element is not "
+-				"pending a response\n");
++		printk(KERN_WARNING "%s: Desired context element is not "
++		       "pending a response\n", __func__);
+ 		goto unlock;
+ 	} else if (msg_ctx->counter != seq) {
+ 		rc = -EINVAL;
+-		ecryptfs_printk(KERN_WARNING, "Invalid message sequence; "
+-				"expected [%d]; received [%d]\n",
+-				msg_ctx->counter, seq);
++		printk(KERN_WARNING "%s: Invalid message sequence; "
++		       "expected [%d]; received [%d]\n", __func__,
++		       msg_ctx->counter, seq);
+ 		goto unlock;
+ 	}
+-	msg_size = sizeof(*msg) + msg->data_len;
++	msg_size = (sizeof(*msg) + msg->data_len);
+ 	msg_ctx->msg = kmalloc(msg_size, GFP_KERNEL);
+ 	if (!msg_ctx->msg) {
+ 		rc = -ENOMEM;
+-		ecryptfs_printk(KERN_ERR, "Failed to allocate memory\n");
++		printk(KERN_ERR "%s: Failed to allocate [%Zd] bytes of "
++		       "GFP_KERNEL memory\n", __func__, msg_size);
+ 		goto unlock;
+ 	}
+ 	memcpy(msg_ctx->msg, msg, msg_size);
+@@ -317,34 +428,37 @@ out:
+ }
+ 
+ /**
+- * ecryptfs_send_message
++ * ecryptfs_send_message_locked
+  * @transport: The transport over which to send the message (i.e.,
+  *             netlink)
+  * @data: The data to send
+  * @data_len: The length of data
+  * @msg_ctx: The message context allocated for the send
++ *
++ * Must be called with ecryptfs_daemon_hash_mux held.
++ *
++ * Returns zero on success; non-zero otherwise
+  */
+-int ecryptfs_send_message(unsigned int transport, char *data, int data_len,
+-			  struct ecryptfs_msg_ctx **msg_ctx)
++static int
++ecryptfs_send_message_locked(unsigned int transport, char *data, int data_len,
++			     u8 msg_type, struct ecryptfs_msg_ctx **msg_ctx)
+ {
+-	struct ecryptfs_daemon_id *id;
++	struct ecryptfs_daemon *daemon;
+ 	int rc;
+ 
+-	mutex_lock(&ecryptfs_daemon_id_hash_mux);
+-	if (ecryptfs_find_daemon_id(current->euid, &id)) {
+-		mutex_unlock(&ecryptfs_daemon_id_hash_mux);
++	rc = ecryptfs_find_daemon_by_euid(&daemon, current->euid);
++	if (rc || !daemon) {
+ 		rc = -ENOTCONN;
+-		ecryptfs_printk(KERN_ERR, "User [%d] does not have a daemon "
+-				"registered\n", current->euid);
++		printk(KERN_ERR "%s: User [%d] does not have a daemon "
++		       "registered\n", __func__, current->euid);
+ 		goto out;
+ 	}
+-	mutex_unlock(&ecryptfs_daemon_id_hash_mux);
+ 	mutex_lock(&ecryptfs_msg_ctx_lists_mux);
+ 	rc = ecryptfs_acquire_free_msg_ctx(msg_ctx);
+ 	if (rc) {
+ 		mutex_unlock(&ecryptfs_msg_ctx_lists_mux);
+-		ecryptfs_printk(KERN_WARNING, "Could not claim a free "
+-				"context element\n");
++		printk(KERN_WARNING "%s: Could not claim a free "
++		       "context element\n", __func__);
+ 		goto out;
+ 	}
+ 	ecryptfs_msg_ctx_free_to_alloc(*msg_ctx);
+@@ -352,23 +466,50 @@ int ecryptfs_send_message(unsigned int transport, char *data, int data_len,
+ 	mutex_unlock(&ecryptfs_msg_ctx_lists_mux);
+ 	switch (transport) {
+ 	case ECRYPTFS_TRANSPORT_NETLINK:
+-		rc = ecryptfs_send_netlink(data, data_len, *msg_ctx,
+-					   ECRYPTFS_NLMSG_REQUEST, 0, id->pid);
++		rc = ecryptfs_send_netlink(data, data_len, *msg_ctx, msg_type,
++					   0, daemon->pid);
++		break;
++	case ECRYPTFS_TRANSPORT_MISCDEV:
++		rc = ecryptfs_send_miscdev(data, data_len, *msg_ctx, msg_type,
++					   0, daemon);
+ 		break;
+ 	case ECRYPTFS_TRANSPORT_CONNECTOR:
+ 	case ECRYPTFS_TRANSPORT_RELAYFS:
+ 	default:
+ 		rc = -ENOSYS;
+ 	}
+-	if (rc) {
+-		printk(KERN_ERR "Error attempting to send message to userspace "
+-		       "daemon; rc = [%d]\n", rc);
+-	}
++	if (rc)
++		printk(KERN_ERR "%s: Error attempting to send message to "
++		       "userspace daemon; rc = [%d]\n", __func__, rc);
+ out:
+ 	return rc;
+ }
+ 
+ /**
++ * ecryptfs_send_message
++ * @transport: The transport over which to send the message (i.e.,
++ *             netlink)
++ * @data: The data to send
++ * @data_len: The length of data
++ * @msg_ctx: The message context allocated for the send
++ *
++ * Grabs ecryptfs_daemon_hash_mux.
++ *
++ * Returns zero on success; non-zero otherwise
++ */
++int ecryptfs_send_message(unsigned int transport, char *data, int data_len,
++			  struct ecryptfs_msg_ctx **msg_ctx)
++{
++	int rc;
++
++	mutex_lock(&ecryptfs_daemon_hash_mux);
++	rc = ecryptfs_send_message_locked(transport, data, data_len,
++					  ECRYPTFS_MSG_REQUEST, msg_ctx);
++	mutex_unlock(&ecryptfs_daemon_hash_mux);
++	return rc;
++}
++
++/**
+  * ecryptfs_wait_for_response
+  * @msg_ctx: The context that was assigned when sending a message
+  * @msg: The incoming message from userspace; not set if rc != 0
+@@ -377,7 +518,7 @@ out:
+  * of time exceeds ecryptfs_message_wait_timeout.  If zero is
+  * returned, msg will point to a valid message from userspace; a
+  * non-zero value is returned upon failure to receive a message or an
+- * error occurs.
++ * error occurs. Callee must free @msg on success.
+  */
+ int ecryptfs_wait_for_response(struct ecryptfs_msg_ctx *msg_ctx,
+ 			       struct ecryptfs_message **msg)
+@@ -413,31 +554,32 @@ int ecryptfs_init_messaging(unsigned int transport)
+ 
+ 	if (ecryptfs_number_of_users > ECRYPTFS_MAX_NUM_USERS) {
+ 		ecryptfs_number_of_users = ECRYPTFS_MAX_NUM_USERS;
+-		ecryptfs_printk(KERN_WARNING, "Specified number of users is "
+-				"too large, defaulting to [%d] users\n",
+-				ecryptfs_number_of_users);
++		printk(KERN_WARNING "%s: Specified number of users is "
++		       "too large, defaulting to [%d] users\n", __func__,
++		       ecryptfs_number_of_users);
+ 	}
+-	mutex_init(&ecryptfs_daemon_id_hash_mux);
+-	mutex_lock(&ecryptfs_daemon_id_hash_mux);
++	mutex_init(&ecryptfs_daemon_hash_mux);
++	mutex_lock(&ecryptfs_daemon_hash_mux);
+ 	ecryptfs_hash_buckets = 1;
+ 	while (ecryptfs_number_of_users >> ecryptfs_hash_buckets)
+ 		ecryptfs_hash_buckets++;
+-	ecryptfs_daemon_id_hash = kmalloc(sizeof(struct hlist_head)
+-					  * ecryptfs_hash_buckets, GFP_KERNEL);
+-	if (!ecryptfs_daemon_id_hash) {
++	ecryptfs_daemon_hash = kmalloc((sizeof(struct hlist_head)
++					* ecryptfs_hash_buckets), GFP_KERNEL);
++	if (!ecryptfs_daemon_hash) {
+ 		rc = -ENOMEM;
+-		ecryptfs_printk(KERN_ERR, "Failed to allocate memory\n");
++		printk(KERN_ERR "%s: Failed to allocate memory\n", __func__);
++		mutex_unlock(&ecryptfs_daemon_hash_mux);
+ 		goto out;
+ 	}
+ 	for (i = 0; i < ecryptfs_hash_buckets; i++)
+-		INIT_HLIST_HEAD(&ecryptfs_daemon_id_hash[i]);
+-	mutex_unlock(&ecryptfs_daemon_id_hash_mux);
+-
++		INIT_HLIST_HEAD(&ecryptfs_daemon_hash[i]);
++	mutex_unlock(&ecryptfs_daemon_hash_mux);
+ 	ecryptfs_msg_ctx_arr = kmalloc((sizeof(struct ecryptfs_msg_ctx)
+-				      * ecryptfs_message_buf_len), GFP_KERNEL);
++					* ecryptfs_message_buf_len),
++				       GFP_KERNEL);
+ 	if (!ecryptfs_msg_ctx_arr) {
+ 		rc = -ENOMEM;
+-		ecryptfs_printk(KERN_ERR, "Failed to allocate memory\n");
++		printk(KERN_ERR "%s: Failed to allocate memory\n", __func__);
+ 		goto out;
+ 	}
+ 	mutex_init(&ecryptfs_msg_ctx_lists_mux);
+@@ -445,6 +587,7 @@ int ecryptfs_init_messaging(unsigned int transport)
+ 	ecryptfs_msg_counter = 0;
+ 	for (i = 0; i < ecryptfs_message_buf_len; i++) {
+ 		INIT_LIST_HEAD(&ecryptfs_msg_ctx_arr[i].node);
++		INIT_LIST_HEAD(&ecryptfs_msg_ctx_arr[i].daemon_out_list);
+ 		mutex_init(&ecryptfs_msg_ctx_arr[i].mux);
+ 		mutex_lock(&ecryptfs_msg_ctx_arr[i].mux);
+ 		ecryptfs_msg_ctx_arr[i].index = i;
+@@ -463,6 +606,11 @@ int ecryptfs_init_messaging(unsigned int transport)
+ 		if (rc)
+ 			ecryptfs_release_messaging(transport);
+ 		break;
++	case ECRYPTFS_TRANSPORT_MISCDEV:
++		rc = ecryptfs_init_ecryptfs_miscdev();
++		if (rc)
++			ecryptfs_release_messaging(transport);
++		break;
+ 	case ECRYPTFS_TRANSPORT_CONNECTOR:
+ 	case ECRYPTFS_TRANSPORT_RELAYFS:
+ 	default:
+@@ -487,27 +635,37 @@ void ecryptfs_release_messaging(unsigned int transport)
+ 		kfree(ecryptfs_msg_ctx_arr);
+ 		mutex_unlock(&ecryptfs_msg_ctx_lists_mux);
+ 	}
+-	if (ecryptfs_daemon_id_hash) {
++	if (ecryptfs_daemon_hash) {
+ 		struct hlist_node *elem;
+-		struct ecryptfs_daemon_id *id;
++		struct ecryptfs_daemon *daemon;
+ 		int i;
+ 
+-		mutex_lock(&ecryptfs_daemon_id_hash_mux);
++		mutex_lock(&ecryptfs_daemon_hash_mux);
+ 		for (i = 0; i < ecryptfs_hash_buckets; i++) {
+-			hlist_for_each_entry(id, elem,
+-					     &ecryptfs_daemon_id_hash[i],
+-					     id_chain) {
+-				hlist_del(elem);
+-				kfree(id);
++			int rc;
++
++			hlist_for_each_entry(daemon, elem,
++					     &ecryptfs_daemon_hash[i],
++					     euid_chain) {
++				rc = ecryptfs_exorcise_daemon(daemon);
++				if (rc)
++					printk(KERN_ERR "%s: Error whilst "
++					       "attempting to destroy daemon; "
++					       "rc = [%d]. Dazed and confused, "
++					       "but trying to continue.\n",
++					       __func__, rc);
+ 			}
+ 		}
+-		kfree(ecryptfs_daemon_id_hash);
+-		mutex_unlock(&ecryptfs_daemon_id_hash_mux);
++		kfree(ecryptfs_daemon_hash);
++		mutex_unlock(&ecryptfs_daemon_hash_mux);
+ 	}
+ 	switch(transport) {
+ 	case ECRYPTFS_TRANSPORT_NETLINK:
+ 		ecryptfs_release_netlink();
+ 		break;
++	case ECRYPTFS_TRANSPORT_MISCDEV:
++		ecryptfs_destroy_ecryptfs_miscdev();
++		break;
+ 	case ECRYPTFS_TRANSPORT_CONNECTOR:
+ 	case ECRYPTFS_TRANSPORT_RELAYFS:
+ 	default:
+diff --git a/fs/ecryptfs/miscdev.c b/fs/ecryptfs/miscdev.c
+new file mode 100644
+index 0000000..41938af
+--- /dev/null
++++ b/fs/ecryptfs/miscdev.c
+@@ -0,0 +1,580 @@
++/**
++ * eCryptfs: Linux filesystem encryption layer
++ *
++ * Copyright (C) 2008 International Business Machines Corp.
++ *   Author(s): Michael A. Halcrow <mhalcrow@us.ibm.com>
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License version
++ * 2 as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
++ * 02111-1307, USA.
++ */
++
++#include <linux/fs.h>
++#include <linux/hash.h>
++#include <linux/random.h>
++#include <linux/miscdevice.h>
++#include <linux/poll.h>
++#include <linux/wait.h>
++#include <linux/module.h>
++#include "ecryptfs_kernel.h"
++
++static atomic_t ecryptfs_num_miscdev_opens;
++
++/**
++ * ecryptfs_miscdev_poll
++ * @file: dev file (ignored)
++ * @pt: dev poll table (ignored)
++ *
++ * Returns the poll mask
++ */
++static unsigned int
++ecryptfs_miscdev_poll(struct file *file, poll_table *pt)
++{
++	struct ecryptfs_daemon *daemon;
++	unsigned int mask = 0;
++	int rc;
++
++	mutex_lock(&ecryptfs_daemon_hash_mux);
++	/* TODO: Just use file->private_data? */
++	rc = ecryptfs_find_daemon_by_euid(&daemon, current->euid);
++	BUG_ON(rc || !daemon);
++	mutex_lock(&daemon->mux);
++	mutex_unlock(&ecryptfs_daemon_hash_mux);
++	if (daemon->flags & ECRYPTFS_DAEMON_ZOMBIE) {
++		printk(KERN_WARNING "%s: Attempt to poll on zombified "
++		       "daemon\n", __func__);
++		goto out_unlock_daemon;
++	}
++	if (daemon->flags & ECRYPTFS_DAEMON_IN_READ)
++		goto out_unlock_daemon;
++	if (daemon->flags & ECRYPTFS_DAEMON_IN_POLL)
++		goto out_unlock_daemon;
++	daemon->flags |= ECRYPTFS_DAEMON_IN_POLL;
++	mutex_unlock(&daemon->mux);
++	poll_wait(file, &daemon->wait, pt);
++	mutex_lock(&daemon->mux);
++	if (!list_empty(&daemon->msg_ctx_out_queue))
++		mask |= POLLIN | POLLRDNORM;
++out_unlock_daemon:
++	daemon->flags &= ~ECRYPTFS_DAEMON_IN_POLL;
++	mutex_unlock(&daemon->mux);
++	return mask;
++}
++
++/**
++ * ecryptfs_miscdev_open
++ * @inode: inode of miscdev handle (ignored)
++ * @file: file for miscdev handle (ignored)
++ *
++ * Returns zero on success; non-zero otherwise
++ */
++static int
++ecryptfs_miscdev_open(struct inode *inode, struct file *file)
++{
++	struct ecryptfs_daemon *daemon = NULL;
++	int rc;
++
++	mutex_lock(&ecryptfs_daemon_hash_mux);
++	rc = try_module_get(THIS_MODULE);
++	if (rc == 0) {
++		rc = -EIO;
++		printk(KERN_ERR "%s: Error attempting to increment module use "
++		       "count; rc = [%d]\n", __func__, rc);
++		goto out_unlock_daemon_list;
++	}
++	rc = ecryptfs_find_daemon_by_euid(&daemon, current->euid);
++	if (rc || !daemon) {
++		rc = ecryptfs_spawn_daemon(&daemon, current->euid,
++					   current->pid);
++		if (rc) {
++			printk(KERN_ERR "%s: Error attempting to spawn daemon; "
++			       "rc = [%d]\n", __func__, rc);
++			goto out_module_put_unlock_daemon_list;
++		}
++	}
++	mutex_lock(&daemon->mux);
++	if (daemon->pid != current->pid) {
++		rc = -EINVAL;
++		printk(KERN_ERR "%s: pid [%d] has registered with euid [%d], "
++		       "but pid [%d] has attempted to open the handle "
++		       "instead\n", __func__, daemon->pid, daemon->euid,
++		       current->pid);
++		goto out_unlock_daemon;
++	}
++	if (daemon->flags & ECRYPTFS_DAEMON_MISCDEV_OPEN) {
++		rc = -EBUSY;
++		printk(KERN_ERR "%s: Miscellaneous device handle may only be "
++		       "opened once per daemon; pid [%d] already has this "
++		       "handle open\n", __func__, daemon->pid);
++		goto out_unlock_daemon;
++	}
++	daemon->flags |= ECRYPTFS_DAEMON_MISCDEV_OPEN;
++	atomic_inc(&ecryptfs_num_miscdev_opens);
++out_unlock_daemon:
++	mutex_unlock(&daemon->mux);
++out_module_put_unlock_daemon_list:
++	if (rc)
++		module_put(THIS_MODULE);
++out_unlock_daemon_list:
++	mutex_unlock(&ecryptfs_daemon_hash_mux);
++	return rc;
++}
++
++/**
++ * ecryptfs_miscdev_release
++ * @inode: inode of fs/ecryptfs/euid handle (ignored)
++ * @file: file for fs/ecryptfs/euid handle (ignored)
++ *
++ * This keeps the daemon registered until the daemon sends another
++ * ioctl to fs/ecryptfs/ctl or until the kernel module unregisters.
++ *
++ * Returns zero on success; non-zero otherwise
++ */
++static int
++ecryptfs_miscdev_release(struct inode *inode, struct file *file)
++{
++	struct ecryptfs_daemon *daemon = NULL;
++	int rc;
++
++	mutex_lock(&ecryptfs_daemon_hash_mux);
++	rc = ecryptfs_find_daemon_by_euid(&daemon, current->euid);
++	BUG_ON(rc || !daemon);
++	mutex_lock(&daemon->mux);
++	BUG_ON(daemon->pid != current->pid);
++	BUG_ON(!(daemon->flags & ECRYPTFS_DAEMON_MISCDEV_OPEN));
++	daemon->flags &= ~ECRYPTFS_DAEMON_MISCDEV_OPEN;
++	atomic_dec(&ecryptfs_num_miscdev_opens);
++	mutex_unlock(&daemon->mux);
++	rc = ecryptfs_exorcise_daemon(daemon);
++	if (rc) {
++		printk(KERN_CRIT "%s: Fatal error whilst attempting to "
++		       "shut down daemon; rc = [%d]. Please report this "
++		       "bug.\n", __func__, rc);
++		BUG();
++	}
++	module_put(THIS_MODULE);
++	mutex_unlock(&ecryptfs_daemon_hash_mux);
++	return rc;
++}
++
++/**
++ * ecryptfs_send_miscdev
++ * @data: Data to send to daemon; may be NULL
++ * @data_size: Amount of data to send to daemon
++ * @msg_ctx: Message context, which is used to handle the reply. If
++ *           this is NULL, then we do not expect a reply.
++ * @msg_type: Type of message
++ * @msg_flags: Flags for message
++ * @daemon: eCryptfs daemon object
++ *
++ * Add msg_ctx to queue and then, if it exists, notify the blocked
++ * miscdevess about the data being available. Must be called with
++ * ecryptfs_daemon_hash_mux held.
++ *
++ * Returns zero on success; non-zero otherwise
++ */
++int ecryptfs_send_miscdev(char *data, size_t data_size,
++			  struct ecryptfs_msg_ctx *msg_ctx, u8 msg_type,
++			  u16 msg_flags, struct ecryptfs_daemon *daemon)
++{
++	int rc = 0;
++
++	mutex_lock(&msg_ctx->mux);
++	if (data) {
++		msg_ctx->msg = kmalloc((sizeof(*msg_ctx->msg) + data_size),
++				       GFP_KERNEL);
++		if (!msg_ctx->msg) {
++			rc = -ENOMEM;
++			printk(KERN_ERR "%s: Out of memory whilst attempting "
++			       "to kmalloc(%Zd, GFP_KERNEL)\n", __func__,
++			       (sizeof(*msg_ctx->msg) + data_size));
++			goto out_unlock;
++		}
++	} else
++		msg_ctx->msg = NULL;
++	msg_ctx->msg->index = msg_ctx->index;
++	msg_ctx->msg->data_len = data_size;
++	msg_ctx->type = msg_type;
++	if (data) {
++		memcpy(msg_ctx->msg->data, data, data_size);
++		msg_ctx->msg_size = (sizeof(*msg_ctx->msg) + data_size);
++	} else
++		msg_ctx->msg_size = 0;
++	mutex_lock(&daemon->mux);
++	list_add_tail(&msg_ctx->daemon_out_list, &daemon->msg_ctx_out_queue);
++	daemon->num_queued_msg_ctx++;
++	wake_up_interruptible(&daemon->wait);
++	mutex_unlock(&daemon->mux);
++out_unlock:
++	mutex_unlock(&msg_ctx->mux);
++	return rc;
++}
++
++/**
++ * ecryptfs_miscdev_read - format and send message from queue
++ * @file: fs/ecryptfs/euid miscdevfs handle (ignored)
++ * @buf: User buffer into which to copy the next message on the daemon queue
++ * @count: Amount of space available in @buf
++ * @ppos: Offset in file (ignored)
++ *
++ * Pulls the most recent message from the daemon queue, formats it for
++ * being sent via a miscdevfs handle, and copies it into @buf
++ *
++ * Returns the number of bytes copied into the user buffer
++ */
++static ssize_t
++ecryptfs_miscdev_read(struct file *file, char __user *buf, size_t count,
++		      loff_t *ppos)
++{
++	struct ecryptfs_daemon *daemon;
++	struct ecryptfs_msg_ctx *msg_ctx;
++	size_t packet_length_size;
++	char packet_length[3];
++	size_t i;
++	size_t total_length;
++	int rc;
++
++	mutex_lock(&ecryptfs_daemon_hash_mux);
++	/* TODO: Just use file->private_data? */
++	rc = ecryptfs_find_daemon_by_euid(&daemon, current->euid);
++	BUG_ON(rc || !daemon);
++	mutex_lock(&daemon->mux);
++	if (daemon->flags & ECRYPTFS_DAEMON_ZOMBIE) {
++		rc = 0;
++		mutex_unlock(&ecryptfs_daemon_hash_mux);
++		printk(KERN_WARNING "%s: Attempt to read from zombified "
++		       "daemon\n", __func__);
++		goto out_unlock_daemon;
++	}
++	if (daemon->flags & ECRYPTFS_DAEMON_IN_READ) {
++		rc = 0;
++		mutex_unlock(&ecryptfs_daemon_hash_mux);
++		goto out_unlock_daemon;
++	}
++	/* This daemon will not go away so long as this flag is set */
++	daemon->flags |= ECRYPTFS_DAEMON_IN_READ;
++	mutex_unlock(&ecryptfs_daemon_hash_mux);
++check_list:
++	if (list_empty(&daemon->msg_ctx_out_queue)) {
++		mutex_unlock(&daemon->mux);
++		rc = wait_event_interruptible(
++			daemon->wait, !list_empty(&daemon->msg_ctx_out_queue));
++		mutex_lock(&daemon->mux);
++		if (rc < 0) {
++			rc = 0;
++			goto out_unlock_daemon;
++		}
++	}
++	if (daemon->flags & ECRYPTFS_DAEMON_ZOMBIE) {
++		rc = 0;
++		goto out_unlock_daemon;
++	}
++	if (list_empty(&daemon->msg_ctx_out_queue)) {
++		/* Something else jumped in since the
++		 * wait_event_interruptable() and removed the
++		 * message from the queue; try again */
++		goto check_list;
++	}
++	BUG_ON(current->euid != daemon->euid);
++	BUG_ON(current->pid != daemon->pid);
++	msg_ctx = list_first_entry(&daemon->msg_ctx_out_queue,
++				   struct ecryptfs_msg_ctx, daemon_out_list);
++	BUG_ON(!msg_ctx);
++	mutex_lock(&msg_ctx->mux);
++	if (msg_ctx->msg) {
++		rc = ecryptfs_write_packet_length(packet_length,
++						  msg_ctx->msg_size,
++						  &packet_length_size);
++		if (rc) {
++			rc = 0;
++			printk(KERN_WARNING "%s: Error writing packet length; "
++			       "rc = [%d]\n", __func__, rc);
++			goto out_unlock_msg_ctx;
++		}
++	} else {
++		packet_length_size = 0;
++		msg_ctx->msg_size = 0;
++	}
++	/* miscdevfs packet format:
++	 *  Octet 0: Type
++	 *  Octets 1-4: network byte order msg_ctx->counter
++	 *  Octets 5-N0: Size of struct ecryptfs_message to follow
++	 *  Octets N0-N1: struct ecryptfs_message (including data)
++	 *
++	 *  Octets 5-N1 not written if the packet type does not
++	 *  include a message */
++	total_length = (1 + 4 + packet_length_size + msg_ctx->msg_size);
++	if (count < total_length) {
++		rc = 0;
++		printk(KERN_WARNING "%s: Only given user buffer of "
++		       "size [%Zd], but we need [%Zd] to read the "
++		       "pending message\n", __func__, count, total_length);
++		goto out_unlock_msg_ctx;
++	}
++	rc = -EFAULT;
++	if (put_user(msg_ctx->type, buf))
++		goto out_unlock_msg_ctx;
++	if (put_user(cpu_to_be32(msg_ctx->counter), (__be32 __user *)(buf + 1)))
++		goto out_unlock_msg_ctx;
++	i = 5;
++	if (msg_ctx->msg) {
++		if (copy_to_user(&buf[i], packet_length, packet_length_size))
++			goto out_unlock_msg_ctx;
++		i += packet_length_size;
++		if (copy_to_user(&buf[i], msg_ctx->msg, msg_ctx->msg_size))
++			goto out_unlock_msg_ctx;
++		i += msg_ctx->msg_size;
++	}
++	rc = i;
++	list_del(&msg_ctx->daemon_out_list);
++	kfree(msg_ctx->msg);
++	msg_ctx->msg = NULL;
++	/* We do not expect a reply from the userspace daemon for any
++	 * message type other than ECRYPTFS_MSG_REQUEST */
++	if (msg_ctx->type != ECRYPTFS_MSG_REQUEST)
++		ecryptfs_msg_ctx_alloc_to_free(msg_ctx);
++out_unlock_msg_ctx:
++	mutex_unlock(&msg_ctx->mux);
++out_unlock_daemon:
++	daemon->flags &= ~ECRYPTFS_DAEMON_IN_READ;
++	mutex_unlock(&daemon->mux);
++	return rc;
++}
++
++/**
++ * ecryptfs_miscdev_helo
++ * @euid: effective user id of miscdevess sending helo packet
++ * @pid: miscdevess id of miscdevess sending helo packet
++ *
++ * Returns zero on success; non-zero otherwise
++ */
++static int ecryptfs_miscdev_helo(uid_t uid, pid_t pid)
++{
++	int rc;
++
++	rc = ecryptfs_process_helo(ECRYPTFS_TRANSPORT_MISCDEV, uid, pid);
++	if (rc)
++		printk(KERN_WARNING "Error processing HELO; rc = [%d]\n", rc);
++	return rc;
++}
++
++/**
++ * ecryptfs_miscdev_quit
++ * @euid: effective user id of miscdevess sending quit packet
++ * @pid: miscdevess id of miscdevess sending quit packet
++ *
++ * Returns zero on success; non-zero otherwise
++ */
++static int ecryptfs_miscdev_quit(uid_t euid, pid_t pid)
++{
++	int rc;
++
++	rc = ecryptfs_process_quit(euid, pid);
++	if (rc)
++		printk(KERN_WARNING
++		       "Error processing QUIT message; rc = [%d]\n", rc);
++	return rc;
++}
++
++/**
++ * ecryptfs_miscdev_response - miscdevess response to message previously sent to daemon
++ * @data: Bytes comprising struct ecryptfs_message
++ * @data_size: sizeof(struct ecryptfs_message) + data len
++ * @euid: Effective user id of miscdevess sending the miscdev response
++ * @pid: Miscdevess id of miscdevess sending the miscdev response
++ * @seq: Sequence number for miscdev response packet
++ *
++ * Returns zero on success; non-zero otherwise
++ */
++static int ecryptfs_miscdev_response(char *data, size_t data_size,
++					  uid_t euid, pid_t pid, u32 seq)
++{
++	struct ecryptfs_message *msg = (struct ecryptfs_message *)data;
++	int rc;
++
++	if ((sizeof(*msg) + msg->data_len) != data_size) {
++		printk(KERN_WARNING "%s: (sizeof(*msg) + msg->data_len) = "
++		       "[%Zd]; data_size = [%Zd]. Invalid packet.\n", __func__,
++		       (sizeof(*msg) + msg->data_len), data_size);
++		rc = -EINVAL;
++		goto out;
++	}
++	rc = ecryptfs_process_response(msg, euid, pid, seq);
++	if (rc)
++		printk(KERN_ERR
++		       "Error processing response message; rc = [%d]\n", rc);
++out:
++	return rc;
++}
++
++/**
++ * ecryptfs_miscdev_write - handle write to daemon miscdev handle
++ * @file: File for misc dev handle (ignored)
++ * @buf: Buffer containing user data
++ * @count: Amount of data in @buf
++ * @ppos: Pointer to offset in file (ignored)
++ *
++ * miscdevfs packet format:
++ *  Octet 0: Type
++ *  Octets 1-4: network byte order msg_ctx->counter (0's for non-response)
++ *  Octets 5-N0: Size of struct ecryptfs_message to follow
++ *  Octets N0-N1: struct ecryptfs_message (including data)
++ *
++ * Returns the number of bytes read from @buf
++ */
++static ssize_t
++ecryptfs_miscdev_write(struct file *file, const char __user *buf,
++		       size_t count, loff_t *ppos)
++{
++	__be32 counter_nbo;
++	u32 seq;
++	size_t packet_size, packet_size_length, i;
++	ssize_t sz = 0;
++	char *data;
++	int rc;
++
++	if (count == 0)
++		goto out;
++	data = kmalloc(count, GFP_KERNEL);
++	if (!data) {
++		printk(KERN_ERR "%s: Out of memory whilst attempting to "
++		       "kmalloc([%Zd], GFP_KERNEL)\n", __func__, count);
++		goto out;
++	}
++	rc = copy_from_user(data, buf, count);
++	if (rc) {
++		printk(KERN_ERR "%s: copy_from_user returned error [%d]\n",
++		       __func__, rc);
++		goto out_free;
++	}
++	sz = count;
++	i = 0;
++	switch (data[i++]) {
++	case ECRYPTFS_MSG_RESPONSE:
++		if (count < (1 + 4 + 1 + sizeof(struct ecryptfs_message))) {
++			printk(KERN_WARNING "%s: Minimum acceptable packet "
++			       "size is [%Zd], but amount of data written is "
++			       "only [%Zd]. Discarding response packet.\n",
++			       __func__,
++			       (1 + 4 + 1 + sizeof(struct ecryptfs_message)),
++			       count);
++			goto out_free;
++		}
++		memcpy(&counter_nbo, &data[i], 4);
++		seq = be32_to_cpu(counter_nbo);
++		i += 4;
++		rc = ecryptfs_parse_packet_length(&data[i], &packet_size,
++						  &packet_size_length);
++		if (rc) {
++			printk(KERN_WARNING "%s: Error parsing packet length; "
++			       "rc = [%d]\n", __func__, rc);
++			goto out_free;
++		}
++		i += packet_size_length;
++		if ((1 + 4 + packet_size_length + packet_size) != count) {
++			printk(KERN_WARNING "%s: (1 + packet_size_length([%Zd])"
++			       " + packet_size([%Zd]))([%Zd]) != "
++			       "count([%Zd]). Invalid packet format.\n",
++			       __func__, packet_size_length, packet_size,
++			       (1 + packet_size_length + packet_size), count);
++			goto out_free;
++		}
++		rc = ecryptfs_miscdev_response(&data[i], packet_size,
++					       current->euid,
++					       current->pid, seq);
++		if (rc)
++			printk(KERN_WARNING "%s: Failed to deliver miscdev "
++			       "response to requesting operation; rc = [%d]\n",
++			       __func__, rc);
++		break;
++	case ECRYPTFS_MSG_HELO:
++		rc = ecryptfs_miscdev_helo(current->euid, current->pid);
++		if (rc) {
++			printk(KERN_ERR "%s: Error attempting to process "
++			       "helo from pid [%d]; rc = [%d]\n", __func__,
++			       current->pid, rc);
++			goto out_free;
++		}
++		break;
++	case ECRYPTFS_MSG_QUIT:
++		rc = ecryptfs_miscdev_quit(current->euid, current->pid);
++		if (rc) {
++			printk(KERN_ERR "%s: Error attempting to process "
++			       "quit from pid [%d]; rc = [%d]\n", __func__,
++			       current->pid, rc);
++			goto out_free;
++		}
++		break;
++	default:
++		ecryptfs_printk(KERN_WARNING, "Dropping miscdev "
++				"message of unrecognized type [%d]\n",
++				data[0]);
++		break;
++	}
++out_free:
++	kfree(data);
++out:
++	return sz;
++}
++
++
++static const struct file_operations ecryptfs_miscdev_fops = {
++	.open    = ecryptfs_miscdev_open,
++	.poll    = ecryptfs_miscdev_poll,
++	.read    = ecryptfs_miscdev_read,
++	.write   = ecryptfs_miscdev_write,
++	.release = ecryptfs_miscdev_release,
++};
++
++static struct miscdevice ecryptfs_miscdev = {
++	.minor = MISC_DYNAMIC_MINOR,
++	.name  = "ecryptfs",
++	.fops  = &ecryptfs_miscdev_fops
++};
++
++/**
++ * ecryptfs_init_ecryptfs_miscdev
++ *
++ * Messages sent to the userspace daemon from the kernel are placed on
++ * a queue associated with the daemon. The next read against the
++ * miscdev handle by that daemon will return the oldest message placed
++ * on the message queue for the daemon.
++ *
++ * Returns zero on success; non-zero otherwise
++ */
++int ecryptfs_init_ecryptfs_miscdev(void)
++{
++	int rc;
++
++	atomic_set(&ecryptfs_num_miscdev_opens, 0);
++	mutex_lock(&ecryptfs_daemon_hash_mux);
++	rc = misc_register(&ecryptfs_miscdev);
++	if (rc)
++		printk(KERN_ERR "%s: Failed to register miscellaneous device "
++		       "for communications with userspace daemons; rc = [%d]\n",
++		       __func__, rc);
++	mutex_unlock(&ecryptfs_daemon_hash_mux);
++	return rc;
++}
++
++/**
++ * ecryptfs_destroy_ecryptfs_miscdev
++ *
++ * All of the daemons must be exorcised prior to calling this
++ * function.
++ */
++void ecryptfs_destroy_ecryptfs_miscdev(void)
++{
++	BUG_ON(atomic_read(&ecryptfs_num_miscdev_opens) != 0);
++	misc_deregister(&ecryptfs_miscdev);
++}
+diff --git a/fs/ecryptfs/mmap.c b/fs/ecryptfs/mmap.c
+index f02cb00..5ea7f24 100644
+--- a/fs/ecryptfs/mmap.c
++++ b/fs/ecryptfs/mmap.c
+@@ -34,8 +34,6 @@
+ #include <linux/scatterlist.h>
+ #include "ecryptfs_kernel.h"
+ 
+-struct kmem_cache *ecryptfs_lower_page_cache;
+-
+ /**
+  * ecryptfs_get_locked_page
+  *
+@@ -102,13 +100,14 @@ static void set_header_info(char *page_virt,
+ 			    struct ecryptfs_crypt_stat *crypt_stat)
+ {
+ 	size_t written;
+-	int save_num_header_extents_at_front =
+-		crypt_stat->num_header_extents_at_front;
++	size_t save_num_header_bytes_at_front =
++		crypt_stat->num_header_bytes_at_front;
+ 
+-	crypt_stat->num_header_extents_at_front = 1;
++	crypt_stat->num_header_bytes_at_front =
++		ECRYPTFS_MINIMUM_HEADER_EXTENT_SIZE;
+ 	ecryptfs_write_header_metadata(page_virt + 20, crypt_stat, &written);
+-	crypt_stat->num_header_extents_at_front =
+-		save_num_header_extents_at_front;
++	crypt_stat->num_header_bytes_at_front =
++		save_num_header_bytes_at_front;
+ }
+ 
+ /**
+@@ -134,8 +133,11 @@ ecryptfs_copy_up_encrypted_with_header(struct page *page,
+ 		loff_t view_extent_num = ((((loff_t)page->index)
+ 					   * num_extents_per_page)
+ 					  + extent_num_in_page);
++		size_t num_header_extents_at_front =
++			(crypt_stat->num_header_bytes_at_front
++			 / crypt_stat->extent_size);
+ 
+-		if (view_extent_num < crypt_stat->num_header_extents_at_front) {
++		if (view_extent_num < num_header_extents_at_front) {
+ 			/* This is a header extent */
+ 			char *page_virt;
+ 
+@@ -151,15 +153,14 @@ ecryptfs_copy_up_encrypted_with_header(struct page *page,
+ 			flush_dcache_page(page);
+ 			if (rc) {
+ 				printk(KERN_ERR "%s: Error reading xattr "
+-				       "region; rc = [%d]\n", __FUNCTION__, rc);
++				       "region; rc = [%d]\n", __func__, rc);
+ 				goto out;
+ 			}
+ 		} else {
+ 			/* This is an encrypted data extent */
+ 			loff_t lower_offset =
+-				((view_extent_num -
+-				  crypt_stat->num_header_extents_at_front)
+-				 * crypt_stat->extent_size);
++				((view_extent_num * crypt_stat->extent_size)
++				 - crypt_stat->num_header_bytes_at_front);
+ 
+ 			rc = ecryptfs_read_lower_page_segment(
+ 				page, (lower_offset >> PAGE_CACHE_SHIFT),
+@@ -168,7 +169,7 @@ ecryptfs_copy_up_encrypted_with_header(struct page *page,
+ 			if (rc) {
+ 				printk(KERN_ERR "%s: Error attempting to read "
+ 				       "extent at offset [%lld] in the lower "
+-				       "file; rc = [%d]\n", __FUNCTION__,
++				       "file; rc = [%d]\n", __func__,
+ 				       lower_offset, rc);
+ 				goto out;
+ 			}
+@@ -211,7 +212,7 @@ static int ecryptfs_readpage(struct file *file, struct page *page)
+ 				       "the encrypted content from the lower "
+ 				       "file whilst inserting the metadata "
+ 				       "from the xattr into the header; rc = "
+-				       "[%d]\n", __FUNCTION__, rc);
++				       "[%d]\n", __func__, rc);
+ 				goto out;
+ 			}
+ 
+@@ -257,58 +258,107 @@ static int fill_zeros_to_end_of_page(struct page *page, unsigned int to)
+ 	end_byte_in_page = i_size_read(inode) % PAGE_CACHE_SIZE;
+ 	if (to > end_byte_in_page)
+ 		end_byte_in_page = to;
+-	memclear_highpage_flush(page, end_byte_in_page,
+-		PAGE_CACHE_SIZE - end_byte_in_page);
++	zero_user_segment(page, end_byte_in_page, PAGE_CACHE_SIZE);
+ out:
+ 	return 0;
+ }
+ 
+-/* This function must zero any hole we create */
++/**
++ * ecryptfs_prepare_write
++ * @file: The eCryptfs file
++ * @page: The eCryptfs page
++ * @from: The start byte from which we will write
++ * @to: The end byte to which we will write
++ *
++ * This function must zero any hole we create
++ *
++ * Returns zero on success; non-zero otherwise
++ */
+ static int ecryptfs_prepare_write(struct file *file, struct page *page,
+ 				  unsigned from, unsigned to)
+ {
+-	int rc = 0;
+ 	loff_t prev_page_end_size;
++	int rc = 0;
+ 
+ 	if (!PageUptodate(page)) {
+-		rc = ecryptfs_read_lower_page_segment(page, page->index, 0,
+-						      PAGE_CACHE_SIZE,
+-						      page->mapping->host);
+-		if (rc) {
+-			printk(KERN_ERR "%s: Error attemping to read lower "
+-			       "page segment; rc = [%d]\n", __FUNCTION__, rc);
+-			ClearPageUptodate(page);
+-			goto out;
+-		} else
++		struct ecryptfs_crypt_stat *crypt_stat =
++			&ecryptfs_inode_to_private(
++				file->f_dentry->d_inode)->crypt_stat;
++
++		if (!(crypt_stat->flags & ECRYPTFS_ENCRYPTED)
++		    || (crypt_stat->flags & ECRYPTFS_NEW_FILE)) {
++			rc = ecryptfs_read_lower_page_segment(
++				page, page->index, 0, PAGE_CACHE_SIZE,
++				page->mapping->host);
++			if (rc) {
++				printk(KERN_ERR "%s: Error attemping to read "
++				       "lower page segment; rc = [%d]\n",
++				       __func__, rc);
++				ClearPageUptodate(page);
++				goto out;
++			} else
++				SetPageUptodate(page);
++		} else if (crypt_stat->flags & ECRYPTFS_VIEW_AS_ENCRYPTED) {
++			if (crypt_stat->flags & ECRYPTFS_METADATA_IN_XATTR) {
++				rc = ecryptfs_copy_up_encrypted_with_header(
++					page, crypt_stat);
++				if (rc) {
++					printk(KERN_ERR "%s: Error attempting "
++					       "to copy the encrypted content "
++					       "from the lower file whilst "
++					       "inserting the metadata from "
++					       "the xattr into the header; rc "
++					       "= [%d]\n", __func__, rc);
++					ClearPageUptodate(page);
++					goto out;
++				}
++				SetPageUptodate(page);
++			} else {
++				rc = ecryptfs_read_lower_page_segment(
++					page, page->index, 0, PAGE_CACHE_SIZE,
++					page->mapping->host);
++				if (rc) {
++					printk(KERN_ERR "%s: Error reading "
++					       "page; rc = [%d]\n",
++					       __func__, rc);
++					ClearPageUptodate(page);
++					goto out;
++				}
++				SetPageUptodate(page);
++			}
++		} else {
++			rc = ecryptfs_decrypt_page(page);
++			if (rc) {
++				printk(KERN_ERR "%s: Error decrypting page "
++				       "at index [%ld]; rc = [%d]\n",
++				       __func__, page->index, rc);
++				ClearPageUptodate(page);
++				goto out;
++			}
+ 			SetPageUptodate(page);
++		}
+ 	}
+-
+ 	prev_page_end_size = ((loff_t)page->index << PAGE_CACHE_SHIFT);
+-
+-	/*
+-	 * If creating a page or more of holes, zero them out via truncate.
+-	 * Note, this will increase i_size.
+-	 */
++	/* If creating a page or more of holes, zero them out via truncate.
++	 * Note, this will increase i_size. */
+ 	if (page->index != 0) {
+ 		if (prev_page_end_size > i_size_read(page->mapping->host)) {
+ 			rc = ecryptfs_truncate(file->f_dentry,
+ 					       prev_page_end_size);
+ 			if (rc) {
+-				printk(KERN_ERR "Error on attempt to "
++				printk(KERN_ERR "%s: Error on attempt to "
+ 				       "truncate to (higher) offset [%lld];"
+-				       " rc = [%d]\n", prev_page_end_size, rc);
++				       " rc = [%d]\n", __func__,
++				       prev_page_end_size, rc);
+ 				goto out;
+ 			}
+ 		}
+ 	}
+-	/*
+-	 * Writing to a new page, and creating a small hole from start of page?
+-	 * Zero it out.
+-	 */
+-	if ((i_size_read(page->mapping->host) == prev_page_end_size) &&
+-	    (from != 0)) {
+-		memclear_highpage_flush(page, 0, PAGE_CACHE_SIZE);
+-	}
++	/* Writing to a new page, and creating a small hole from start
++	 * of page?  Zero it out. */
++	if ((i_size_read(page->mapping->host) == prev_page_end_size)
++	    && (from != 0))
++		zero_user(page, 0, PAGE_CACHE_SIZE);
+ out:
+ 	return rc;
+ }
+@@ -339,7 +389,7 @@ static int ecryptfs_write_inode_size_to_header(struct inode *ecryptfs_inode)
+ 	kfree(file_size_virt);
+ 	if (rc)
+ 		printk(KERN_ERR "%s: Error writing file size to header; "
+-		       "rc = [%d]\n", __FUNCTION__, rc);
++		       "rc = [%d]\n", __func__, rc);
+ out:
+ 	return rc;
+ }
+diff --git a/fs/ecryptfs/netlink.c b/fs/ecryptfs/netlink.c
+index 9d41560..a1526da 100644
+--- a/fs/ecryptfs/netlink.c
++++ b/fs/ecryptfs/netlink.c
+@@ -44,7 +44,7 @@ static struct sock *ecryptfs_nl_sock;
+  * upon sending the message; non-zero upon error.
+  */
+ int ecryptfs_send_netlink(char *data, int data_len,
+-			  struct ecryptfs_msg_ctx *msg_ctx, u16 msg_type,
++			  struct ecryptfs_msg_ctx *msg_ctx, u8 msg_type,
+ 			  u16 msg_flags, pid_t daemon_pid)
+ {
+ 	struct sk_buff *skb;
+@@ -188,20 +188,20 @@ receive:
+ 		goto free;
+ 	}
+ 	switch (nlh->nlmsg_type) {
+-		case ECRYPTFS_NLMSG_RESPONSE:
++		case ECRYPTFS_MSG_RESPONSE:
+ 			if (ecryptfs_process_nl_response(skb)) {
+ 				ecryptfs_printk(KERN_WARNING, "Failed to "
+ 						"deliver netlink response to "
+ 						"requesting operation\n");
+ 			}
+ 			break;
+-		case ECRYPTFS_NLMSG_HELO:
++		case ECRYPTFS_MSG_HELO:
+ 			if (ecryptfs_process_nl_helo(skb)) {
+ 				ecryptfs_printk(KERN_WARNING, "Failed to "
+ 						"fulfill HELO request\n");
+ 			}
+ 			break;
+-		case ECRYPTFS_NLMSG_QUIT:
++		case ECRYPTFS_MSG_QUIT:
+ 			if (ecryptfs_process_nl_quit(skb)) {
+ 				ecryptfs_printk(KERN_WARNING, "Failed to "
+ 						"fulfill QUIT request\n");
+diff --git a/fs/ecryptfs/read_write.c b/fs/ecryptfs/read_write.c
+index 948f576..75c2ea9 100644
+--- a/fs/ecryptfs/read_write.c
++++ b/fs/ecryptfs/read_write.c
+@@ -55,7 +55,7 @@ int ecryptfs_write_lower(struct inode *ecryptfs_inode, char *data,
+ 	set_fs(fs_save);
+ 	if (octets_written < 0) {
+ 		printk(KERN_ERR "%s: octets_written = [%td]; "
+-		       "expected [%td]\n", __FUNCTION__, octets_written, size);
++		       "expected [%td]\n", __func__, octets_written, size);
+ 		rc = -EINVAL;
+ 	}
+ 	mutex_unlock(&inode_info->lower_file_mutex);
+@@ -153,24 +153,10 @@ int ecryptfs_write(struct file *ecryptfs_file, char *data, loff_t offset,
+ 			rc = PTR_ERR(ecryptfs_page);
+ 			printk(KERN_ERR "%s: Error getting page at "
+ 			       "index [%ld] from eCryptfs inode "
+-			       "mapping; rc = [%d]\n", __FUNCTION__,
++			       "mapping; rc = [%d]\n", __func__,
+ 			       ecryptfs_page_idx, rc);
+ 			goto out;
+ 		}
+-		if (start_offset_in_page) {
+-			/* Read in the page from the lower
+-			 * into the eCryptfs inode page cache,
+-			 * decrypting */
+-			rc = ecryptfs_decrypt_page(ecryptfs_page);
+-			if (rc) {
+-				printk(KERN_ERR "%s: Error decrypting "
+-				       "page; rc = [%d]\n",
+-				       __FUNCTION__, rc);
+-				ClearPageUptodate(ecryptfs_page);
+-				page_cache_release(ecryptfs_page);
+-				goto out;
+-			}
+-		}
+ 		ecryptfs_page_virt = kmap_atomic(ecryptfs_page, KM_USER0);
+ 
+ 		/*
+@@ -202,7 +188,7 @@ int ecryptfs_write(struct file *ecryptfs_file, char *data, loff_t offset,
+ 		page_cache_release(ecryptfs_page);
+ 		if (rc) {
+ 			printk(KERN_ERR "%s: Error encrypting "
+-			       "page; rc = [%d]\n", __FUNCTION__, rc);
++			       "page; rc = [%d]\n", __func__, rc);
+ 			goto out;
+ 		}
+ 		pos += num_bytes;
+@@ -254,7 +240,7 @@ int ecryptfs_read_lower(char *data, loff_t offset, size_t size,
+ 	set_fs(fs_save);
+ 	if (octets_read < 0) {
+ 		printk(KERN_ERR "%s: octets_read = [%td]; "
+-		       "expected [%td]\n", __FUNCTION__, octets_read, size);
++		       "expected [%td]\n", __func__, octets_read, size);
+ 		rc = -EINVAL;
+ 	}
+ 	mutex_unlock(&inode_info->lower_file_mutex);
+@@ -293,6 +279,7 @@ int ecryptfs_read_lower_page_segment(struct page *page_for_ecryptfs,
+ 	return rc;
+ }
+ 
++#if 0
+ /**
+  * ecryptfs_read
+  * @data: The virtual address into which to write the data read (and
+@@ -326,7 +313,7 @@ int ecryptfs_read(char *data, loff_t offset, size_t size,
+ 		printk(KERN_ERR "%s: Attempt to read data past the end of the "
+ 			"file; offset = [%lld]; size = [%td]; "
+ 		       "ecryptfs_file_size = [%lld]\n",
+-		       __FUNCTION__, offset, size, ecryptfs_file_size);
++		       __func__, offset, size, ecryptfs_file_size);
+ 		goto out;
+ 	}
+ 	pos = offset;
+@@ -344,18 +331,10 @@ int ecryptfs_read(char *data, loff_t offset, size_t size,
+ 			rc = PTR_ERR(ecryptfs_page);
+ 			printk(KERN_ERR "%s: Error getting page at "
+ 			       "index [%ld] from eCryptfs inode "
+-			       "mapping; rc = [%d]\n", __FUNCTION__,
++			       "mapping; rc = [%d]\n", __func__,
+ 			       ecryptfs_page_idx, rc);
+ 			goto out;
+ 		}
+-		rc = ecryptfs_decrypt_page(ecryptfs_page);
+-		if (rc) {
+-			printk(KERN_ERR "%s: Error decrypting "
+-			       "page; rc = [%d]\n", __FUNCTION__, rc);
+-			ClearPageUptodate(ecryptfs_page);
+-			page_cache_release(ecryptfs_page);
+-			goto out;
+-		}
+ 		ecryptfs_page_virt = kmap_atomic(ecryptfs_page, KM_USER0);
+ 		memcpy((data + data_offset),
+ 		       ((char *)ecryptfs_page_virt + start_offset_in_page),
+@@ -371,3 +350,4 @@ int ecryptfs_read(char *data, loff_t offset, size_t size,
+ out:
+ 	return rc;
+ }
++#endif  /*  0  */
+diff --git a/fs/ecryptfs/super.c b/fs/ecryptfs/super.c
+index 97ea463..7c65d0d 100644
+--- a/fs/ecryptfs/super.c
++++ b/fs/ecryptfs/super.c
+@@ -174,10 +174,6 @@ static int ecryptfs_show_options(struct seq_file *m, struct vfsmount *mnt)
+ 	}
+ 	mutex_unlock(&mount_crypt_stat->global_auth_tok_list_mutex);
+ 
+-	/* Note this is global and probably shouldn't be a mount option */
+-	if (ecryptfs_verbosity)
+-		seq_printf(m, ",ecryptfs_debug=%d\n", ecryptfs_verbosity);
+-
+ 	seq_printf(m, ",ecryptfs_cipher=%s",
+ 		mount_crypt_stat->global_default_cipher_name);
+ 

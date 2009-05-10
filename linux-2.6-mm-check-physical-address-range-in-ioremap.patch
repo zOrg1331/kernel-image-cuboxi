@@ -1,0 +1,70 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Tue, 15 Jul 2008 14:01:27 -0400
+Subject: [mm] check physical address range in ioremap
+Message-id: 1216144887.13816.13.camel@localhost.localdomain
+O-Subject: [RHEL5-U3 patch] 2.6.26 backport of "check physical address range in ioremap" into RHEL5-U3
+Bugzilla: 455478
+
+The attached patch is a backport from 2.6.26 to RHEL5-U3.
+
+Fixes BZ 455478
+
+Gitweb:
+http://git.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=e3100c82abd9aa643dc15828202aceeae3504e03
+Commit:     e3100c82abd9aa643dc15828202aceeae3504e03
+Parent:     b8c2d3dfbc117dff26058fbac316b8acfc2cb5f7
+Author:     Thomas Gleixner <tglx@linutronix.de>
+AuthorDate: Wed Feb 27 20:57:40 2008 +0100
+Committer:  Ingo Molnar <mingo@elte.hu>
+CommitDate: Thu Apr 17 17:40:51 2008 +0200
+
+    x86: check physical address range in ioremap
+
+    Roland Dreier reported in http://lkml.org/lkml/2008/2/27/194
+
+    [ 8425.915139] BUG: unable to handle kernel paging request at
+ffffc20001a0a000
+    [ 8425.919087] IP: [<ffffffff8021dacc>] clflush_cache_range+0xc/0x25
+    [ 8425.919087] PGD 1bf80e067 PUD 1bf80f067 PMD 1bb497067 PTE
+80000047000ee17b
+
+    This is on a Intel machine with 36bit physical address space. The
+PTE
+    entry references 47000ee000, which is outside of it.
+
+    Add a check for the physical address space and warn/printk about the
+    stupid caller.
+
+    Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+    Signed-off-by: Ingo Molnar <mingo@elte.hu>
+
+diff --git a/arch/x86_64/mm/ioremap.c b/arch/x86_64/mm/ioremap.c
+index 45d7d82..024efc9 100644
+--- a/arch/x86_64/mm/ioremap.c
++++ b/arch/x86_64/mm/ioremap.c
+@@ -22,6 +22,11 @@
+ #define ISA_START_ADDRESS      0xa0000
+ #define ISA_END_ADDRESS                0x100000
+ 
++static inline int phys_addr_valid(unsigned long addr)
++{
++	return addr < (1UL << boot_cpu_data.x86_phys_bits);
++}
++
+ static inline void remap_area_pte(pte_t * pte, unsigned long address, unsigned long size,
+ 	unsigned long phys_addr, unsigned long flags)
+ {
+@@ -171,6 +176,13 @@ void __iomem * __ioremap(unsigned long phys_addr, unsigned long size, unsigned l
+ 	if (!size || last_addr < phys_addr)
+ 		return NULL;
+ 
++	if (!phys_addr_valid(phys_addr)) {
++		printk(KERN_WARNING "ioremap: invalid physical address %lx\n",
++			phys_addr);
++		WARN_ON_ONCE(1);
++		return NULL;
++	}
++
+ 	/*
+ 	 * Don't remap the low PCI/ISA area, it's always mapped..
+ 	 */

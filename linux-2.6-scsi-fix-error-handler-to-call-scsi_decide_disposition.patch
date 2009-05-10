@@ -1,0 +1,54 @@
+From: Tom Coughlan <coughlan@redhat.com>
+Date: Fri, 5 Dec 2008 16:10:17 -0500
+Subject: [scsi] fix error handler to call scsi_decide_disposition
+Message-id: 1228511417.30284.109.camel@p670.boston.redhat.com
+O-Subject: [RHEL5.3 PATCH] fix scsi error handler to call scsi_decide_disposition
+Bugzilla: 474345
+RH-Acked-by: Peter Martuccelli <peterm@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: Rob Evers <revers@redhat.com>
+
+The interface of scsi_decide_disposition() was changed in
+linux-2.6-scsi-modify-failfast-so-it-does-not-always-fail-fast.patch.
+
+The scsi_decide_disposition() is called from scsi_softirq_done() and
+scsi_eh_get_sense().  scsi_softirq_done() was modified to match the new
+interface. However, the new interface support is missing in scsi_eh_get_sense().
+
+This change will cause an unnecessary SCSI bus reset.  This is because
+if a SCSI command to the SCSI device fails, SCSI middle layer queues
+the failed command to the EH queue and wakes up the error handler, but
+the error handler of SCSI middle layer calls "request sense" SCSI
+command in scsi_eh_get_sense(), which will fail because of the above change.
+
+When a SAS tape device is connected to MegaRAID SAS HBA controlled by
+megaraid_sas driver, the status of the tape device under the SCSI bus
+cannot be retrieved through mt command because mt command fails after
+the bus reset caused by the above problem, and the tape drive
+will no longer be usable.
+
+The interface change is newly introduced in RHEL5.3 beta, so this case
+is a regression.
+
+Resolves Bug 474345
+
+diff --git a/drivers/scsi/scsi_error.c b/drivers/scsi/scsi_error.c
+index 918ec68..b769b29 100644
+--- a/drivers/scsi/scsi_error.c
++++ b/drivers/scsi/scsi_error.c
+@@ -840,13 +840,13 @@ int scsi_eh_get_sense(struct list_head *work_q,
+ 		 * if the result was normal, then just pass it along to the
+ 		 * upper level.
+ 		 */
+-		if (rtn == SUCCESS)
++		if (scsi_disposition_finish(rtn))
+ 			/* we don't want this command reissued, just
+ 			 * finished with the sense data, so set
+ 			 * retries to the max allowed to ensure it
+ 			 * won't get reissued */
+ 			scmd->retries = scmd->allowed;
+-		else if (rtn != NEEDS_RETRY)
++		else if (!scsi_disposition_retry(rtn))
+ 			continue;
+ 
+ 		scsi_eh_finish_cmd(scmd, done_q);

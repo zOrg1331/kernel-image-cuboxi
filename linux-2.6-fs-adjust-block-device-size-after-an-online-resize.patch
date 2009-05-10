@@ -1,0 +1,93 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Mon, 8 Sep 2008 13:48:03 -0400
+Subject: [fs] adjust block device size after an online resize
+Message-id: x49bpyyv8a4.fsf@segfault.boston.devel.redhat.com
+O-Subject: [rhel5 patch 2/6 - v2] Adjust block device size after an online resize of a disk.
+Bugzilla: 444964
+RH-Acked-by: Josef Bacik <jbacik@redhat.com>
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+
+Adjust block device size after an online resize of a disk.
+
+The revalidate_disk routine now checks if a disk has been resized by
+comparing the gendisk capacity to the bdev inode size.  If they are
+different (usually because the disk has been resized underneath the kernel)
+the bdev inode size is adjusted to match the capacity.
+
+Signed-off-by: Andrew Patterson <andrew.patterson@hp.com>
+
+diff --git a/fs/block_dev.c b/fs/block_dev.c
+index 22e0aa8..063c494 100644
+--- a/fs/block_dev.c
++++ b/fs/block_dev.c
+@@ -825,6 +825,34 @@ struct block_device *open_by_devnum(dev_t dev, unsigned mode)
+ EXPORT_SYMBOL(open_by_devnum);
+ 
+ /**
++ * check_disk_size_change - checks for disk size change and adjusts
++ *                          bdev size.
++ *
++ * @disk: struct gendisk to check
++ * @bdev: struct bdev to adjust.
++ *
++ * This routine checks to see if the bdev size does not match the disk size
++ * and adjusts it if it differs.
++ */
++void check_disk_size_change(struct gendisk *disk, struct block_device *bdev)
++{
++	loff_t disk_size, bdev_size;
++
++	disk_size = (loff_t)get_capacity(disk) << 9;
++	bdev_size = i_size_read(bdev->bd_inode);
++	if (disk_size != bdev_size) {
++		char name[BDEVNAME_SIZE];
++
++		disk_name(disk, 0, name);
++		printk(KERN_INFO
++		       "%s: detected capacity change from %lld to %lld\n",
++		       name, bdev_size, disk_size);
++		i_size_write(bdev->bd_inode, disk_size);
++	}
++}
++EXPORT_SYMBOL(check_disk_size_change);
++
++/**
+  * revalidate_disk - wrapper for lower-level driver's revalidate_disk
+  *                   call-back
+  *
+@@ -836,11 +864,22 @@ EXPORT_SYMBOL(open_by_devnum);
+  */
+ int revalidate_disk(struct gendisk *disk)
+ {
++	struct block_device *bdev;
+ 	int ret = 0;
+ 
+ 	if (disk->fops->revalidate_disk)
+ 		ret = disk->fops->revalidate_disk(disk);
++	else
++		return ret;
+ 
++	bdev = bdget_disk(disk, 0);
++	if (!bdev)
++		return ret;
++
++	mutex_lock(&bdev->bd_mutex);
++	check_disk_size_change(disk, bdev);
++	mutex_unlock(&bdev->bd_mutex);
++	bdput(bdev);
+ 	return ret;
+ }
+ EXPORT_SYMBOL(revalidate_disk);
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index bf709b7..c3bbf7c 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -1616,6 +1616,8 @@ extern int fs_may_remount_ro(struct super_block *);
+  */
+ #define bio_data_dir(bio)	((bio)->bi_rw & 1)
+ 
++extern void check_disk_size_change(struct gendisk *disk,
++				   struct block_device *bdev);
+ extern int revalidate_disk(struct gendisk *);
+ extern int check_disk_change(struct block_device *);
+ extern int invalidate_inodes(struct super_block *);

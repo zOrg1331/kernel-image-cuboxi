@@ -1,0 +1,70 @@
+From: Joachim Deguara <jdeguara@redhat.com>
+Date: Thu, 4 Dec 2008 10:18:56 -0800
+Subject: [x86_64] fix AMD IOMMU boot issue
+Message-id: 1228414736.13859.15.camel@localhost.localdomain
+O-Subject: [RHEL5.3 PATCH] BZ#473464 fix AMD IOMMU boot issue
+Bugzilla: 473464
+RH-Acked-by: Peter Martuccelli <peterm@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+bz 473464 AMD IOMMU issue
+
+A very simple bug whre u32 was used on a variable instead of u64 and was
+fixed upstream in commit f609891f428e1c20e270e7c350daf8c93cc459d7
+
+Without this patch the system does not boot.
+
+built in brew build
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1598851
+
+The patch was applied and tested and shows that it resolves the issue.
+
+-Joachim
+
+From: joachim <joachim@stallion.localdomain>
+Date: Wed, 3 Dec 2008 14:52:20 -0800
+Subject: fix u32 to u64
+
+This is take from upstream commit
+f609891f428e1c20e270e7c350daf8c93cc459d7
+"commit f609891f428e1c20e270e7c350daf8c93cc459d7
+Author: Andreas Herrmann <andreas.herrmann3@amd.com>
+Date:   Thu Oct 16 16:27:36 2008 +0200
+
+    amd_iommu: fix nasty bug that caused ILLEGAL_DEVICE_TABLE_ENTRY
+errors
+
+    We are on 64-bit so better use u64 instead of u32 to deal with
+    addresses:
+
+    static void __init iommu_set_device_table(struct amd_iommu *iommu)
+    {
+            u64 entry;
+      ...
+            entry = virt_to_phys(amd_iommu_dev_table);
+      ...
+
+    (I am wondering why gcc 4.2.x did not warn about the assignment
+    between u32 and unsigned long.)
+
+    Cc: iommu@lists.linux-foundation.org
+    Cc: stable@kernel.org
+    Signed-off-by: Andreas Herrmann <andreas.herrmann3@amd.com>
+    Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+    Signed-off-by: David Woodhouse <David.Woodhouse@intel.com>
+"
+
+diff --git a/arch/x86_64/kernel/amd_iommu_init.c b/arch/x86_64/kernel/amd_iommu_init.c
+index 3a6c371..1ce0b18 100644
+--- a/arch/x86_64/kernel/amd_iommu_init.c
++++ b/arch/x86_64/kernel/amd_iommu_init.c
+@@ -211,7 +211,7 @@ static void __init iommu_set_exclusion_range(struct amd_iommu *iommu)
+ /* Programs the physical address of the device table into the IOMMU hardware */
+ static void __init iommu_set_device_table(struct amd_iommu *iommu)
+ {
+-	u32 entry;
++	u64 entry;
+ 
+ 	BUG_ON(iommu->mmio_base == NULL);
+ 

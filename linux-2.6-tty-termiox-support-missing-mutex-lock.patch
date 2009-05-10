@@ -1,0 +1,41 @@
+From: aris <aris@redhat.com>
+Date: Wed, 24 Sep 2008 09:58:56 -0400
+Subject: [tty] termiox support missing mutex lock
+Message-id: 20080924135855.GA21197@redhat.com
+O-Subject: Re: [RHEL5.3 PATCH 1/2] tty: add termiox support v3
+Bugzilla: 445211
+
+> > +	ld = tty_ldisc_ref(tty);
+> > +	if (ld != NULL) {
+> > +		if ((opt & TERMIOS_FLUSH) && ld->flush_buffer)
+> > +			ld->flush_buffer(tty);
+> > +		tty_ldisc_deref(ld);
+> > +	}
+> > +	if (opt & TERMIOS_WAIT) {
+> > +		tty_wait_until_sent(tty, 0);
+> > +		if (signal_pending(current))
+> > +			return -EINTR;
+> > +	}
+> > +
+> >
+> Sorry for being late, but your version v1 and linus-next has on this position
+> +	mutex_lock(&tty->termios_mutex);
+> don't we also need this here ?
+ouch!
+yes, you're right.
+Thanks a lot Tomas!
+
+Don, since you commited this already, please add this patch:
+
+diff --git a/drivers/char/tty_ioctl.c b/drivers/char/tty_ioctl.c
+index dc25af0..cb882ed 100644
+--- a/drivers/char/tty_ioctl.c
++++ b/drivers/char/tty_ioctl.c
+@@ -467,6 +467,7 @@ static int set_termiox(struct tty_struct *tty, void __user *arg, int opt)
+ 			return -EINTR;
+ 	}
+ 
++	mutex_lock(&tty->termios_mutex);
+ 	ret = tty->driver->set_termiox(tty, &tnew);
+ 	mutex_unlock(&tty->termios_mutex);
+ 

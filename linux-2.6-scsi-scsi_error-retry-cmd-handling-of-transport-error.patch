@@ -1,0 +1,61 @@
+From: mchristi@redhat.com <mchristi@redhat.com>
+Date: Thu, 2 Oct 2008 13:58:01 -0500
+Subject: [scsi] scsi_error: retry cmd handling of transport error
+Message-id: 1222973881-4441-2-git-send-email-mchristi@redhat.com
+O-Subject: [PATCH 2/2] scsi_error: Fix retry command handling for transport errors
+Bugzilla: 463206
+RH-Acked-by: Doug Ledford <dledford@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for BZ 463206.
+
+Drivers want to be able to return DID_TRANSPORT_DISRUPTED and
+have it do the right thing for commands like tape and passthrouh
+as far as retries go. The LLDs previously used DID_BUS_BUSY or DID_ERROR
+which followed the cmd->retries limit, but DID_TRANSPORT_DISRUPTED
+was skipping that check so it could have caused a problem with tape
+commands.
+
+This patch has DID_TRANSPORT_DISRUPTED check the cmd->retries/cmd->allowed.
+It also removes the target blocking behavior for now because it is not needed
+as drivers are checking for this scenario and may change behavior in ways
+out of tree drivers were not expecting.
+
+I tested for regressions with iscsi by pulling cables and making sure
+IO is still not fastfailed or is fast failed when dm-multipath is used
+Then I tested with sg io to make sure that those commands are not retried.
+
+It is not upstream. I just sent it the other day.
+
+diff --git a/drivers/scsi/scsi_error.c b/drivers/scsi/scsi_error.c
+index 341a82a..e6bc2de 100644
+--- a/drivers/scsi/scsi_error.c
++++ b/drivers/scsi/scsi_error.c
+@@ -1242,9 +1242,10 @@ int scsi_decide_disposition(struct scsi_cmnd *scmd)
+ 		 * LLD/transport was disrupted during processing of the IO.
+ 		 * The transport class is now blocked/blocking,
+ 		 * and the transport will decide what to do with the IO
+-		 * based on its timers and recovery capablilities.
++		 * based on its timers and recovery capablilities if
++		 * cmd->retries permits.
+ 		 */
+-		return SCSI_MLQUEUE_TARGET_BUSY2;
++		return SCSI_MLQUEUE_TARGET_COM_ERR;
+ 	case DID_TRANSPORT_FAILFAST:
+ 		/*
+ 		 * The transport decided to failfast the IO (most likely
+diff --git a/include/scsi/scsi.h b/include/scsi/scsi.h
+index 4dd674e..660cfc9 100644
+--- a/include/scsi/scsi.h
++++ b/include/scsi/scsi.h
+@@ -403,6 +403,8 @@ enum {
+ 	SCSI_MLQUEUE_IMM_RETRY		= (0x08 << SCSI_MLQUEUE_BUSY_SHIFT) |
+ 		SCSI_MLQUEUE_DIS_RETRY | SCSI_IGN_BLK_FAILFAST |
+ 		SCSI_IGN_ALLOWED,
++	SCSI_MLQUEUE_TARGET_COM_ERR	= (0x10 << SCSI_MLQUEUE_BUSY_SHIFT) |
++		SCSI_MLQUEUE_DIS_RETRY | SCSI_IGN_BLK_FAILFAST,
+ };
+ 
+ #define scsi_disposition_finish(dis) (dis & SCSI_MLQUEUE_DIS_FINISH)

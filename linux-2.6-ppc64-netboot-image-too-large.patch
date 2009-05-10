@@ -1,0 +1,149 @@
+From: Ameet Paranjape <aparanja@redhat.com>
+Date: Thu, 2 Oct 2008 18:34:46 -0400
+Subject: [ppc64] netboot image too large
+Message-id: 20081002223446.21610.33300.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.3 BZ462663] Netboot image for ppc too large
+Bugzilla: 462663
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:462663
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=462663
+
+Description:
+===========
+The size of the RHEL netboot image has grown resulting in it being too large
+for open firmware to support.  As a result, the network boot hangs with no
+indication of root cause.
+
+This patch extends the amount of memory available to the system during boot.
+Specifically, the real-base is set to 2000000, RMA is increased to 128,
+and large page support is added.  The result is images larger than 4MB will
+boot.
+
+RHEL Version Found:
+================
+RHEL 5.2
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1500435
+
+Upstream Status:
+================
+This patch is in the process of being posted for upstream acceptance.
+
+Test Status:
+============
+Initial tests have indicated the patch works.  A zImage was created based on
+the patch kernel which was netbooted.  Without the patch the kernel does not
+boot.
+
+===============================================================
+
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/arch/powerpc/boot/addnote.c b/arch/powerpc/boot/addnote.c
+index 8041a98..fb0228b 100644
+--- a/arch/powerpc/boot/addnote.c
++++ b/arch/powerpc/boot/addnote.c
+@@ -25,7 +25,7 @@ char arch[] = "PowerPC";
+ #define N_DESCR	6
+ unsigned int descr[N_DESCR] = {
+ 	0xffffffff,		/* real-mode = true */
+-	0x00c00000,		/* real-base, i.e. where we expect OF to be */
++	0x02000000,		/* real-base, i.e. where we expect OF to be */
+ 	0xffffffff,		/* real-size */
+ 	0xffffffff,		/* virt-base */
+ 	0xffffffff,		/* virt-size */
+@@ -41,16 +41,18 @@ char rpaname[] = "IBM,RPA-Client-Config";
+  * it looks at the splpar field at least.  So these values need to be
+  * reasonable.
+  */
+-#define N_RPA_DESCR	8
++#define N_RPA_DESCR	10
+ unsigned int rpanote[N_RPA_DESCR] = {
+-	0,			/* lparaffinity */
+-	64,			/* min_rmo_size */
++	1,			/* lparaffinity */
++	128,			/* min_rmo_size */
+ 	0,			/* min_rmo_percent */
+-	40,			/* max_pft_size */
++	46,			/* max_pft_size */
+ 	1,			/* splpar */
+ 	-1,			/* min_load */
+ 	0,			/* new_mem_def */
+-	1,			/* ignore_my_client_config */
++	0,			/* ignore_my_client_config */
++	1,			/* large_page_ready */
++	0,			/* force_alpha_mode */
+ };
+ 
+ #define ROUNDUP(len)	(((len) + 3) & ~3)
+diff --git a/arch/powerpc/boot/zImage.lds b/arch/powerpc/boot/zImage.lds
+index 4b6bb3f..0d0046d 100644
+--- a/arch/powerpc/boot/zImage.lds
++++ b/arch/powerpc/boot/zImage.lds
+@@ -2,7 +2,7 @@ OUTPUT_ARCH(powerpc:common)
+ ENTRY(_zimage_start)
+ SECTIONS
+ {
+-  . = (4*1024*1024);
++  . = (56*1024*1024);
+   _start = .;
+   .text      :
+   {
+diff --git a/arch/powerpc/kernel/prom_init.c b/arch/powerpc/kernel/prom_init.c
+index e31088a..a3eb953 100644
+--- a/arch/powerpc/kernel/prom_init.c
++++ b/arch/powerpc/kernel/prom_init.c
+@@ -663,10 +663,10 @@ static unsigned char ibm_architecture_vec[] = {
+ 	W(0xffffffff),			/* virt_base */
+ 	W(0xffffffff),			/* virt_size */
+ 	W(0xffffffff),			/* load_base */
+-	W(64),				/* 128MB min RMA */
++	W(128),				/* 128MB min RMA */
+ 	W(0xffffffff),			/* full client load */
+ 	0,				/* min RMA percentage of total RAM */
+-	48,				/* max log_2(hash table size) */
++	46,				/* max log_2(hash table size) */
+ 
+ 	/* option vector 3: processor options supported */
+ 	3 - 2,				/* length */
+@@ -715,6 +715,8 @@ static struct fake_elf {
+ 			u32	min_load;
+ 			u32	new_mem_def;
+ 			u32	ignore_me;
++			u32	large_page_ready;
++			u32	force_alpha_mode;
+ 		} rpadesc;
+ 	} rpanote;
+ } fake_elf = {
+@@ -759,13 +761,14 @@ static struct fake_elf {
+ 		.type = 0x12759999,
+ 		.name = "IBM,RPA-Client-Config",
+ 		.rpadesc = {
+-			.lpar_affinity = 0,
+-			.min_rmo_size = 64,	/* in megabytes */
++			.lpar_affinity = 1,
++			.min_rmo_size = 128,	/* in megabytes */
+ 			.min_rmo_percent = 0,
+-			.max_pft_size = 48,	/* 2^48 bytes max PFT size */
++			.max_pft_size = 46,	/* 2^46 bytes max PFT size */
+ 			.splpar = 1,
+ 			.min_load = ~0U,
+-			.new_mem_def = 0
++			.new_mem_def = 0,
++			.large_page_ready = 1
+ 		}
+ 	}
+ };

@@ -1,0 +1,5331 @@
+From: John W. Linville <linville@redhat.com>
+Date: Wed, 13 Aug 2008 12:37:29 -0400
+Subject: [wireless] update zd1211rw to last non-mac80211 version
+Message-id: 20080813163729.GF18695@redhat.com
+O-Subject: [RHEL5 patch 4/3 (sorry, I can't count)] Update zd1211rw driver to match last non-mac80211 version
+Bugzilla: 448762
+
+This patch updates the zd1211rw driver to match what was current in
+git commit f59d9782, the last non-mac80211 version.
+
+BZ448762
+
+Tested against the related drivers by me with good results.
+
+unchanged:
+
+diff --git a/drivers/net/wireless/zd1211rw/Kconfig b/drivers/net/wireless/zd1211rw/Kconfig
+index 66ed55b..1f7ddfb 100644
+--- a/drivers/net/wireless/zd1211rw/Kconfig
++++ b/drivers/net/wireless/zd1211rw/Kconfig
+@@ -1,6 +1,7 @@
+ config ZD1211RW
+ 	tristate "ZyDAS ZD1211/ZD1211B USB-wireless support"
+-	depends on USB && IEEE80211 && IEEE80211_SOFTMAC && NET_RADIO && EXPERIMENTAL
++	depends on USB && IEEE80211_SOFTMAC && NET_RADIO && EXPERIMENTAL
++	select WIRELESS_EXT
+ 	select FW_LOADER
+ 	---help---
+ 	  This is an experimental driver for the ZyDAS ZD1211/ZD1211B wireless
+diff --git a/drivers/net/wireless/zd1211rw/Makefile b/drivers/net/wireless/zd1211rw/Makefile
+index 500314f..7a2f2a9 100644
+--- a/drivers/net/wireless/zd1211rw/Makefile
++++ b/drivers/net/wireless/zd1211rw/Makefile
+@@ -3,7 +3,8 @@ obj-$(CONFIG_ZD1211RW) += zd1211rw.o
+ zd1211rw-objs := zd_chip.o zd_ieee80211.o \
+ 		zd_mac.o zd_netdev.o \
+ 		zd_rf_al2230.o zd_rf_rf2959.o \
+-		zd_rf.o zd_usb.o zd_util.o
++		zd_rf_al7230b.o zd_rf_uw2453.o \
++		zd_rf.o zd_usb.o
+ 
+ ifeq ($(CONFIG_ZD1211RW_DEBUG),y)
+ EXTRA_CFLAGS += -DDEBUG
+diff --git a/drivers/net/wireless/zd1211rw/zd_chip.c b/drivers/net/wireless/zd1211rw/zd_chip.c
+index 4b971a9..002db11 100644
+--- a/drivers/net/wireless/zd1211rw/zd_chip.c
++++ b/drivers/net/wireless/zd1211rw/zd_chip.c
+@@ -28,7 +28,6 @@
+ #include "zd_ieee80211.h"
+ #include "zd_mac.h"
+ #include "zd_rf.h"
+-#include "zd_util.h"
+ 
+ void zd_chip_init(struct zd_chip *chip,
+ 	         struct net_device *netdev,
+@@ -42,16 +41,16 @@ void zd_chip_init(struct zd_chip *chip,
+ 
+ void zd_chip_clear(struct zd_chip *chip)
+ {
+-	mutex_lock(&chip->mutex);
++	ZD_ASSERT(!mutex_is_locked(&chip->mutex));
+ 	zd_usb_clear(&chip->usb);
+ 	zd_rf_clear(&chip->rf);
+-	mutex_unlock(&chip->mutex);
+ 	mutex_destroy(&chip->mutex);
+-	memset(chip, 0, sizeof(*chip));
++	ZD_MEMCLEAR(chip, sizeof(*chip));
+ }
+ 
+-static int scnprint_mac_oui(const u8 *addr, char *buffer, size_t size)
++static int scnprint_mac_oui(struct zd_chip *chip, char *buffer, size_t size)
+ {
++	u8 *addr = zd_usb_to_netdev(&chip->usb)->dev_addr;
+ 	return scnprintf(buffer, size, "%02x-%02x-%02x",
+ 		         addr[0], addr[1], addr[2]);
+ }
+@@ -62,16 +61,18 @@ static int scnprint_id(struct zd_chip *chip, char *buffer, size_t size)
+ 	int i = 0;
+ 
+ 	i = scnprintf(buffer, size, "zd1211%s chip ",
+-		      chip->is_zd1211b ? "b" : "");
++		      zd_chip_is_zd1211b(chip) ? "b" : "");
+ 	i += zd_usb_scnprint_id(&chip->usb, buffer+i, size-i);
+ 	i += scnprintf(buffer+i, size-i, " ");
+-	i += scnprint_mac_oui(chip->e2p_mac, buffer+i, size-i);
++	i += scnprint_mac_oui(chip, buffer+i, size-i);
+ 	i += scnprintf(buffer+i, size-i, " ");
+ 	i += zd_rf_scnprint_id(&chip->rf, buffer+i, size-i);
+-	i += scnprintf(buffer+i, size-i, " pa%1x %c%c%c", chip->pa_type,
++	i += scnprintf(buffer+i, size-i, " pa%1x %c%c%c%c%c", chip->pa_type,
+ 		chip->patch_cck_gain ? 'g' : '-',
+ 		chip->patch_cr157 ? '7' : '-',
+-		chip->patch_6m_band_edge ? '6' : '-');
++		chip->patch_6m_band_edge ? '6' : '-',
++		chip->new_phy_layout ? 'N' : '-',
++		chip->al2230s_bit ? 'S' : '-');
+ 	return i;
+ }
+ 
+@@ -84,6 +85,18 @@ static void print_id(struct zd_chip *chip)
+ 	dev_info(zd_chip_dev(chip), "%s\n", buffer);
+ }
+ 
++static zd_addr_t inc_addr(zd_addr_t addr)
++{
++	u16 a = (u16)addr;
++	/* Control registers use byte addressing, but everything else uses word
++	 * addressing. */
++	if ((a & 0xf000) == CR_START)
++		a += 2;
++	else
++		a += 1;
++	return (zd_addr_t)a;
++}
++
+ /* Read a variable number of 32-bit values. Parameter count is not allowed to
+  * exceed USB_MAX_IOREAD32_COUNT.
+  */
+@@ -92,7 +105,7 @@ int zd_ioread32v_locked(struct zd_chip *chip, u32 *values, const zd_addr_t *addr
+ {
+ 	int r;
+ 	int i;
+-	zd_addr_t *a16 = (zd_addr_t *)NULL;
++	zd_addr_t *a16;
+ 	u16 *v16;
+ 	unsigned int count16;
+ 
+@@ -101,8 +114,8 @@ int zd_ioread32v_locked(struct zd_chip *chip, u32 *values, const zd_addr_t *addr
+ 
+ 	/* Allocate a single memory block for values and addresses. */
+ 	count16 = 2*count;
+-	a16 = (zd_addr_t *)kmalloc(count16 * (sizeof(zd_addr_t) + sizeof(u16)),
+-		                   GFP_NOFS);
++	a16 = (zd_addr_t *) kmalloc(count16 * (sizeof(zd_addr_t) + sizeof(u16)),
++		                   GFP_KERNEL);
+ 	if (!a16) {
+ 		dev_dbg_f(zd_chip_dev(chip),
+ 			  "error ENOMEM in allocation of a16\n");
+@@ -114,7 +127,7 @@ int zd_ioread32v_locked(struct zd_chip *chip, u32 *values, const zd_addr_t *addr
+ 	for (i = 0; i < count; i++) {
+ 		int j = 2*i;
+ 		/* We read the high word always first. */
+-		a16[j] = zd_inc_word(addr[i]);
++		a16[j] = inc_addr(addr[i]);
+ 		a16[j+1] = addr[i];
+ 	}
+ 
+@@ -151,7 +164,7 @@ int _zd_iowrite32v_locked(struct zd_chip *chip, const struct zd_ioreq32 *ioreqs,
+ 
+ 	/* Allocate a single memory block for values and addresses. */
+ 	count16 = 2*count;
+-	ioreqs16 = kmalloc(count16 * sizeof(struct zd_ioreq16), GFP_NOFS);
++	ioreqs16 = kmalloc(count16 * sizeof(struct zd_ioreq16), GFP_KERNEL);
+ 	if (!ioreqs16) {
+ 		r = -ENOMEM;
+ 		dev_dbg_f(zd_chip_dev(chip),
+@@ -163,7 +176,7 @@ int _zd_iowrite32v_locked(struct zd_chip *chip, const struct zd_ioreq32 *ioreqs,
+ 		j = 2*i;
+ 		/* We write the high word always first. */
+ 		ioreqs16[j].value   = ioreqs[i].value >> 16;
+-		ioreqs16[j].addr    = zd_inc_word(ioreqs[i].addr);
++		ioreqs16[j].addr    = inc_addr(ioreqs[i].addr);
+ 		ioreqs16[j+1].value = ioreqs[i].value;
+ 		ioreqs16[j+1].addr  = ioreqs[i].addr;
+ 	}
+@@ -249,7 +262,6 @@ int zd_ioread16(struct zd_chip *chip, zd_addr_t addr, u16 *value)
+ {
+ 	int r;
+ 
+-	ZD_ASSERT(!mutex_is_locked(&chip->mutex));
+ 	mutex_lock(&chip->mutex);
+ 	r = zd_ioread16_locked(chip, value, addr);
+ 	mutex_unlock(&chip->mutex);
+@@ -260,7 +272,6 @@ int zd_ioread32(struct zd_chip *chip, zd_addr_t addr, u32 *value)
+ {
+ 	int r;
+ 
+-	ZD_ASSERT(!mutex_is_locked(&chip->mutex));
+ 	mutex_lock(&chip->mutex);
+ 	r = zd_ioread32_locked(chip, value, addr);
+ 	mutex_unlock(&chip->mutex);
+@@ -271,7 +282,6 @@ int zd_iowrite16(struct zd_chip *chip, zd_addr_t addr, u16 value)
+ {
+ 	int r;
+ 
+-	ZD_ASSERT(!mutex_is_locked(&chip->mutex));
+ 	mutex_lock(&chip->mutex);
+ 	r = zd_iowrite16_locked(chip, value, addr);
+ 	mutex_unlock(&chip->mutex);
+@@ -282,7 +292,6 @@ int zd_iowrite32(struct zd_chip *chip, zd_addr_t addr, u32 value)
+ {
+ 	int r;
+ 
+-	ZD_ASSERT(!mutex_is_locked(&chip->mutex));
+ 	mutex_lock(&chip->mutex);
+ 	r = zd_iowrite32_locked(chip, value, addr);
+ 	mutex_unlock(&chip->mutex);
+@@ -294,7 +303,6 @@ int zd_ioread32v(struct zd_chip *chip, const zd_addr_t *addresses,
+ {
+ 	int r;
+ 
+-	ZD_ASSERT(!mutex_is_locked(&chip->mutex));
+ 	mutex_lock(&chip->mutex);
+ 	r = zd_ioread32v_locked(chip, values, addresses, count);
+ 	mutex_unlock(&chip->mutex);
+@@ -306,7 +314,6 @@ int zd_iowrite32a(struct zd_chip *chip, const struct zd_ioreq32 *ioreqs,
+ {
+ 	int r;
+ 
+-	ZD_ASSERT(!mutex_is_locked(&chip->mutex));
+ 	mutex_lock(&chip->mutex);
+ 	r = zd_iowrite32a_locked(chip, ioreqs, count);
+ 	mutex_unlock(&chip->mutex);
+@@ -330,13 +337,24 @@ static int read_pod(struct zd_chip *chip, u8 *rf_type)
+ 	chip->patch_cck_gain = (value >> 8) & 0x1;
+ 	chip->patch_cr157 = (value >> 13) & 0x1;
+ 	chip->patch_6m_band_edge = (value >> 21) & 0x1;
++	chip->new_phy_layout = (value >> 31) & 0x1;
++	chip->al2230s_bit = (value >> 7) & 0x1;
++	chip->link_led = ((value >> 4) & 1) ? LED1 : LED2;
++	chip->supports_tx_led = 1;
++	if (value & (1 << 24)) { /* LED scenario */
++		if (value & (1 << 29))
++			chip->supports_tx_led = 0;
++	}
+ 
+ 	dev_dbg_f(zd_chip_dev(chip),
+ 		"RF %s %#01x PA type %#01x patch CCK %d patch CR157 %d "
+-		"patch 6M %d\n",
++		"patch 6M %d new PHY %d link LED%d tx led %d\n",
+ 		zd_rf_name(*rf_type), *rf_type,
+ 		chip->pa_type, chip->patch_cck_gain,
+-		chip->patch_cr157, chip->patch_6m_band_edge);
++		chip->patch_cr157, chip->patch_6m_band_edge,
++		chip->new_phy_layout,
++		chip->link_led == LED1 ? 1 : 2,
++		chip->supports_tx_led);
+ 	return 0;
+ error:
+ 	*rf_type = 0;
+@@ -344,67 +362,13 @@ error:
+ 	chip->patch_cck_gain = 0;
+ 	chip->patch_cr157 = 0;
+ 	chip->patch_6m_band_edge = 0;
++	chip->new_phy_layout = 0;
+ 	return r;
+ }
+ 
+-static int _read_mac_addr(struct zd_chip *chip, u8 *mac_addr,
+-	                  const zd_addr_t *addr)
+-{
+-	int r;
+-	u32 parts[2];
+-
+-	r = zd_ioread32v_locked(chip, parts, (const zd_addr_t *)addr, 2);
+-	if (r) {
+-		dev_dbg_f(zd_chip_dev(chip),
+-			"error: couldn't read e2p macs. Error number %d\n", r);
+-		return r;
+-	}
+-
+-	mac_addr[0] = parts[0];
+-	mac_addr[1] = parts[0] >>  8;
+-	mac_addr[2] = parts[0] >> 16;
+-	mac_addr[3] = parts[0] >> 24;
+-	mac_addr[4] = parts[1];
+-	mac_addr[5] = parts[1] >>  8;
+-
+-	return 0;
+-}
+-
+-static int read_e2p_mac_addr(struct zd_chip *chip)
+-{
+-	static const zd_addr_t addr[2] = { E2P_MAC_ADDR_P1, E2P_MAC_ADDR_P2 };
+-
+-	ZD_ASSERT(mutex_is_locked(&chip->mutex));
+-	return _read_mac_addr(chip, chip->e2p_mac, (const zd_addr_t *)addr);
+-}
+-
+ /* MAC address: if custom mac addresses are to to be used CR_MAC_ADDR_P1 and
+  *              CR_MAC_ADDR_P2 must be overwritten
+  */
+-void zd_get_e2p_mac_addr(struct zd_chip *chip, u8 *mac_addr)
+-{
+-	mutex_lock(&chip->mutex);
+-	memcpy(mac_addr, chip->e2p_mac, ETH_ALEN);
+-	mutex_unlock(&chip->mutex);
+-}
+-
+-static int read_mac_addr(struct zd_chip *chip, u8 *mac_addr)
+-{
+-	static const zd_addr_t addr[2] = { CR_MAC_ADDR_P1, CR_MAC_ADDR_P2 };
+-	return _read_mac_addr(chip, mac_addr, (const zd_addr_t *)addr);
+-}
+-
+-int zd_read_mac_addr(struct zd_chip *chip, u8 *mac_addr)
+-{
+-	int r;
+-
+-	dev_dbg_f(zd_chip_dev(chip), "\n");
+-	mutex_lock(&chip->mutex);
+-	r = read_mac_addr(chip, mac_addr);
+-	mutex_unlock(&chip->mutex);
+-	return r;
+-}
+-
+ int zd_write_mac_addr(struct zd_chip *chip, const u8 *mac_addr)
+ {
+ 	int r;
+@@ -425,12 +389,6 @@ int zd_write_mac_addr(struct zd_chip *chip, const u8 *mac_addr)
+ 
+ 	mutex_lock(&chip->mutex);
+ 	r = zd_iowrite32a_locked(chip, reqs, ARRAY_SIZE(reqs));
+-#ifdef DEBUG
+-	{
+-		u8 tmp[ETH_ALEN];
+-		read_mac_addr(chip, tmp);
+-	}
+-#endif /* DEBUG */
+ 	mutex_unlock(&chip->mutex);
+ 	return r;
+ }
+@@ -461,7 +419,8 @@ static int read_values(struct zd_chip *chip, u8 *values, size_t count,
+ 
+ 	ZD_ASSERT(mutex_is_locked(&chip->mutex));
+ 	for (i = 0;;) {
+-		r = zd_ioread32_locked(chip, &v, e2p_addr+i/2);
++		r = zd_ioread32_locked(chip, &v,
++			               (zd_addr_t)((u16)e2p_addr+i/2));
+ 		if (r)
+ 			return r;
+ 		v -= guard;
+@@ -540,8 +499,6 @@ int zd_chip_lock_phy_regs(struct zd_chip *chip)
+ 		return r;
+ 	}
+ 
+-	dev_dbg_f(zd_chip_dev(chip),
+-		"CR_REG1: 0x%02x -> 0x%02x\n", tmp, tmp & ~UNLOCK_PHY_REGS);
+ 	tmp &= ~UNLOCK_PHY_REGS;
+ 
+ 	r = zd_iowrite32_locked(chip, tmp, CR_REG1);
+@@ -563,8 +520,6 @@ int zd_chip_unlock_phy_regs(struct zd_chip *chip)
+ 		return r;
+ 	}
+ 
+-	dev_dbg_f(zd_chip_dev(chip),
+-		"CR_REG1: 0x%02x -> 0x%02x\n", tmp, tmp | UNLOCK_PHY_REGS);
+ 	tmp |= UNLOCK_PHY_REGS;
+ 
+ 	r = zd_iowrite32_locked(chip, tmp, CR_REG1);
+@@ -573,16 +528,16 @@ int zd_chip_unlock_phy_regs(struct zd_chip *chip)
+ 	return r;
+ }
+ 
+-/* CR157 can be optionally patched by the EEPROM */
++/* CR157 can be optionally patched by the EEPROM for original ZD1211 */
+ static int patch_cr157(struct zd_chip *chip)
+ {
+ 	int r;
+-	u32 value;
++	u16 value;
+ 
+ 	if (!chip->patch_cr157)
+ 		return 0;
+ 
+-	r = zd_ioread32_locked(chip, &value, E2P_PHY_REG);
++	r = zd_ioread16_locked(chip, &value, E2P_PHY_REG);
+ 	if (r)
+ 		return r;
+ 
+@@ -595,16 +550,24 @@ static int patch_cr157(struct zd_chip *chip)
+  * Vendor driver says: for FCC regulation, enabled per HWFeature 6M band edge
+  * bit (for AL2230, AL2230S)
+  */
+-static int patch_6m_band_edge(struct zd_chip *chip, int channel)
++static int patch_6m_band_edge(struct zd_chip *chip, u8 channel)
++{
++	ZD_ASSERT(mutex_is_locked(&chip->mutex));
++	if (!chip->patch_6m_band_edge)
++		return 0;
++
++	return zd_rf_patch_6m_band_edge(&chip->rf, channel);
++}
++
++/* Generic implementation of 6M band edge patching, used by most RFs via
++ * zd_rf_generic_patch_6m() */
++int zd_chip_generic_patch_6m_band(struct zd_chip *chip, int channel)
+ {
+ 	struct zd_ioreq16 ioreqs[] = {
+ 		{ CR128, 0x14 }, { CR129, 0x12 }, { CR130, 0x10 },
+ 		{ CR47,  0x1e },
+ 	};
+ 
+-	if (!chip->patch_6m_band_edge || !chip->rf.patch_6m_band_edge)
+-		return 0;
+-
+ 	/* FIXME: Channel 11 is not the edge for all regulatory domains. */
+ 	if (channel == 1 || channel == 11)
+ 		ioreqs[0].value = 0x12;
+@@ -664,17 +627,17 @@ static int zd1211_hw_reset_phy(struct zd_chip *chip)
+ 		{ CR111, 0x27 }, { CR112, 0x27 }, { CR113, 0x27 },
+ 		{ CR114, 0x27 }, { CR115, 0x26 }, { CR116, 0x24 },
+ 		{ CR117, 0xfc }, { CR118, 0xfa }, { CR120, 0x4f },
+-		{ CR123, 0x27 }, { CR125, 0xaa }, { CR127, 0x03 },
+-		{ CR128, 0x14 }, { CR129, 0x12 }, { CR130, 0x10 },
+-		{ CR131, 0x0C }, { CR136, 0xdf }, { CR137, 0x40 },
+-		{ CR138, 0xa0 }, { CR139, 0xb0 }, { CR140, 0x99 },
+-		{ CR141, 0x82 }, { CR142, 0x54 }, { CR143, 0x1c },
+-		{ CR144, 0x6c }, { CR147, 0x07 }, { CR148, 0x4c },
+-		{ CR149, 0x50 }, { CR150, 0x0e }, { CR151, 0x18 },
+-		{ CR160, 0xfe }, { CR161, 0xee }, { CR162, 0xaa },
+-		{ CR163, 0xfa }, { CR164, 0xfa }, { CR165, 0xea },
+-		{ CR166, 0xbe }, { CR167, 0xbe }, { CR168, 0x6a },
+-		{ CR169, 0xba }, { CR170, 0xba }, { CR171, 0xba },
++		{ CR125, 0xaa }, { CR127, 0x03 }, { CR128, 0x14 },
++		{ CR129, 0x12 }, { CR130, 0x10 }, { CR131, 0x0C },
++		{ CR136, 0xdf }, { CR137, 0x40 }, { CR138, 0xa0 },
++		{ CR139, 0xb0 }, { CR140, 0x99 }, { CR141, 0x82 },
++		{ CR142, 0x54 }, { CR143, 0x1c }, { CR144, 0x6c },
++		{ CR147, 0x07 }, { CR148, 0x4c }, { CR149, 0x50 },
++		{ CR150, 0x0e }, { CR151, 0x18 }, { CR160, 0xfe },
++		{ CR161, 0xee }, { CR162, 0xaa }, { CR163, 0xfa },
++		{ CR164, 0xfa }, { CR165, 0xea }, { CR166, 0xbe },
++		{ CR167, 0xbe }, { CR168, 0x6a }, { CR169, 0xba },
++		{ CR170, 0xba }, { CR171, 0xba },
+ 		/* Note: CR204 must lead the CR203 */
+ 		{ CR204, 0x7d },
+ 		{ },
+@@ -772,11 +735,6 @@ static int zd1211b_hw_reset_phy(struct zd_chip *chip)
+ 		goto out;
+ 
+ 	r = zd_iowrite16a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
+-	if (r)
+-		goto unlock;
+-
+-	r = patch_cr157(chip);
+-unlock:
+ 	t = zd_chip_unlock_phy_regs(chip);
+ 	if (t && !r)
+ 		r = t;
+@@ -786,55 +744,25 @@ out:
+ 
+ static int hw_reset_phy(struct zd_chip *chip)
+ {
+-	return chip->is_zd1211b ? zd1211b_hw_reset_phy(chip) :
++	return zd_chip_is_zd1211b(chip) ? zd1211b_hw_reset_phy(chip) :
+ 		                  zd1211_hw_reset_phy(chip);
+ }
+ 
+ static int zd1211_hw_init_hmac(struct zd_chip *chip)
+ {
+ 	static const struct zd_ioreq32 ioreqs[] = {
+-		{ CR_ACK_TIMEOUT_EXT,		0x20 },
+-		{ CR_ADDA_MBIAS_WARMTIME,	0x30000808 },
+ 		{ CR_ZD1211_RETRY_MAX,		0x2 },
+-		{ CR_SNIFFER_ON,		0 },
+-		{ CR_RX_FILTER,			STA_RX_FILTER },
+-		{ CR_GROUP_HASH_P1,		0x00 },
+-		{ CR_GROUP_HASH_P2,		0x80000000 },
+-		{ CR_REG1,			0xa4 },
+-		{ CR_ADDA_PWR_DWN,		0x7f },
+-		{ CR_BCN_PLCP_CFG,		0x00f00401 },
+-		{ CR_PHY_DELAY,			0x00 },
+-		{ CR_ACK_TIMEOUT_EXT,		0x80 },
+-		{ CR_ADDA_PWR_DWN,		0x00 },
+-		{ CR_ACK_TIME_80211,		0x100 },
+-		{ CR_IFS_VALUE,			0x547c032 },
+-		{ CR_RX_PE_DELAY,		0x70 },
+-		{ CR_PS_CTRL,			0x10000000 },
+-		{ CR_RTS_CTS_RATE,		0x02030203 },
+ 		{ CR_RX_THRESHOLD,		0x000c0640 },
+-		{ CR_AFTER_PNP,			0x1 },
+-		{ CR_WEP_PROTECT,		0x114 },
+ 	};
+ 
+-	int r;
+-
+ 	dev_dbg_f(zd_chip_dev(chip), "\n");
+ 	ZD_ASSERT(mutex_is_locked(&chip->mutex));
+-	r = zd_iowrite32a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
+-#ifdef DEBUG
+-	if (r) {
+-		dev_err(zd_chip_dev(chip),
+-			"error in zd_iowrite32a_locked. Error number %d\n", r);
+-	}
+-#endif /* DEBUG */
+-	return r;
++	return zd_iowrite32a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
+ }
+ 
+ static int zd1211b_hw_init_hmac(struct zd_chip *chip)
+ {
+ 	static const struct zd_ioreq32 ioreqs[] = {
+-		{ CR_ACK_TIMEOUT_EXT,		0x20 },
+-		{ CR_ADDA_MBIAS_WARMTIME,	0x30000808 },
+ 		{ CR_ZD1211B_RETRY_MAX,		0x02020202 },
+ 		{ CR_ZD1211B_TX_PWR_CTL4,	0x007f003f },
+ 		{ CR_ZD1211B_TX_PWR_CTL3,	0x007f003f },
+@@ -843,6 +771,20 @@ static int zd1211b_hw_init_hmac(struct zd_chip *chip)
+ 		{ CR_ZD1211B_AIFS_CTL1,		0x00280028 },
+ 		{ CR_ZD1211B_AIFS_CTL2,		0x008C003C },
+ 		{ CR_ZD1211B_TXOP,		0x01800824 },
++		{ CR_RX_THRESHOLD,		0x000c0eff, },
++	};
++
++	dev_dbg_f(zd_chip_dev(chip), "\n");
++	ZD_ASSERT(mutex_is_locked(&chip->mutex));
++	return zd_iowrite32a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
++}
++
++static int hw_init_hmac(struct zd_chip *chip)
++{
++	int r;
++	static const struct zd_ioreq32 ioreqs[] = {
++		{ CR_ACK_TIMEOUT_EXT,		0x20 },
++		{ CR_ADDA_MBIAS_WARMTIME,	0x30000808 },
+ 		{ CR_SNIFFER_ON,		0 },
+ 		{ CR_RX_FILTER,			STA_RX_FILTER },
+ 		{ CR_GROUP_HASH_P1,		0x00 },
+@@ -854,30 +796,20 @@ static int zd1211b_hw_init_hmac(struct zd_chip *chip)
+ 		{ CR_ACK_TIMEOUT_EXT,		0x80 },
+ 		{ CR_ADDA_PWR_DWN,		0x00 },
+ 		{ CR_ACK_TIME_80211,		0x100 },
+-		{ CR_IFS_VALUE,			0x547c032 },
+ 		{ CR_RX_PE_DELAY,		0x70 },
+ 		{ CR_PS_CTRL,			0x10000000 },
+ 		{ CR_RTS_CTS_RATE,		0x02030203 },
+-		{ CR_RX_THRESHOLD,		0x000c0640 },
+ 		{ CR_AFTER_PNP,			0x1 },
+ 		{ CR_WEP_PROTECT,		0x114 },
++		{ CR_IFS_VALUE,			IFS_VALUE_DEFAULT },
+ 	};
+ 
+-	int r;
+-
+-	dev_dbg_f(zd_chip_dev(chip), "\n");
+ 	ZD_ASSERT(mutex_is_locked(&chip->mutex));
+ 	r = zd_iowrite32a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
+-	if (r) {
+-		dev_dbg_f(zd_chip_dev(chip),
+-			"error in zd_iowrite32a_locked. Error number %d\n", r);
+-	}
+-	return r;
+-}
++	if (r)
++		return r;
+ 
+-static int hw_init_hmac(struct zd_chip *chip)
+-{
+-	return chip->is_zd1211b ?
++	return zd_chip_is_zd1211b(chip) ?
+ 		zd1211b_hw_init_hmac(chip) : zd1211_hw_init_hmac(chip);
+ }
+ 
+@@ -904,8 +836,6 @@ static int get_aw_pt_bi(struct zd_chip *chip, struct aw_pt_bi *s)
+ 	s->atim_wnd_period = values[0];
+ 	s->pre_tbtt = values[1];
+ 	s->beacon_interval = values[2];
+-	dev_dbg_f(zd_chip_dev(chip), "aw %u pt %u bi %u\n",
+-		s->atim_wnd_period, s->pre_tbtt, s->beacon_interval);
+ 	return 0;
+ }
+ 
+@@ -927,9 +857,6 @@ static int set_aw_pt_bi(struct zd_chip *chip, struct aw_pt_bi *s)
+ 	reqs[2].addr = CR_BCN_INTERVAL;
+ 	reqs[2].value = s->beacon_interval;
+ 
+-	dev_dbg_f(zd_chip_dev(chip),
+-		"aw %u pt %u bi %u\n", s->atim_wnd_period, s->pre_tbtt,
+-		                       s->beacon_interval);
+ 	return zd_iowrite32a_locked(chip, reqs, ARRAY_SIZE(reqs));
+ }
+ 
+@@ -970,10 +897,13 @@ static int hw_init(struct zd_chip *chip)
+ 	r = hw_init_hmac(chip);
+ 	if (r)
+ 		return r;
+-	r = set_beacon_interval(chip, 100);
+-	if (r)
+-		return r;
+-	return 0;
++
++	return set_beacon_interval(chip, 100);
++}
++
++static zd_addr_t fw_reg_addr(struct zd_chip *chip, u16 offset)
++{
++	return (zd_addr_t)((u16)chip->fw_regs_base + offset);
+ }
+ 
+ #ifdef DEBUG
+@@ -1010,9 +940,11 @@ static int test_init(struct zd_chip *chip)
+ 
+ static void dump_fw_registers(struct zd_chip *chip)
+ {
+-	static const zd_addr_t addr[4] = {
+-		FW_FIRMWARE_VER, FW_USB_SPEED, FW_FIX_TX_RATE,
+-		FW_LINK_STATUS
++	const zd_addr_t addr[4] = {
++		fw_reg_addr(chip, FW_REG_FIRMWARE_VER),
++		fw_reg_addr(chip, FW_REG_USB_SPEED),
++		fw_reg_addr(chip, FW_REG_FIX_TX_RATE),
++		fw_reg_addr(chip, FW_REG_LED_LINK_STATUS),
+ 	};
+ 
+ 	int r;
+@@ -1038,7 +970,8 @@ static int print_fw_version(struct zd_chip *chip)
+ 	int r;
+ 	u16 version;
+ 
+-	r = zd_ioread16_locked(chip, &version, FW_FIRMWARE_VER);
++	r = zd_ioread16_locked(chip, &version,
++		fw_reg_addr(chip, FW_REG_FIRMWARE_VER));
+ 	if (r)
+ 		return r;
+ 
+@@ -1093,7 +1026,30 @@ int zd_chip_disable_hwint(struct zd_chip *chip)
+ 	return r;
+ }
+ 
+-int zd_chip_init_hw(struct zd_chip *chip, u8 device_type)
++static int read_fw_regs_offset(struct zd_chip *chip)
++{
++	int r;
++
++	ZD_ASSERT(mutex_is_locked(&chip->mutex));
++	r = zd_ioread16_locked(chip, (u16*)&chip->fw_regs_base,
++		               FWRAW_REGS_ADDR);
++	if (r)
++		return r;
++	dev_dbg_f(zd_chip_dev(chip), "fw_regs_base: %#06hx\n",
++		  (u16)chip->fw_regs_base);
++
++	return 0;
++}
++
++/* Read mac address using pre-firmware interface */
++int zd_chip_read_mac_addr_fw(struct zd_chip *chip, u8 *addr)
++{
++	dev_dbg_f(zd_chip_dev(chip), "\n");
++	return zd_usb_read_fw(&chip->usb, E2P_MAC_ADDR_P1, addr,
++		ETH_ALEN);
++}
++
++int zd_chip_init_hw(struct zd_chip *chip)
+ {
+ 	int r;
+ 	u8 rf_type;
+@@ -1101,7 +1057,6 @@ int zd_chip_init_hw(struct zd_chip *chip, u8 device_type)
+ 	dev_dbg_f(zd_chip_dev(chip), "\n");
+ 
+ 	mutex_lock(&chip->mutex);
+-	chip->is_zd1211b = (device_type == DEVICE_ZD1211B) != 0;
+ 
+ #ifdef DEBUG
+ 	r = test_init(chip);
+@@ -1112,7 +1067,7 @@ int zd_chip_init_hw(struct zd_chip *chip, u8 device_type)
+ 	if (r)
+ 		goto out;
+ 
+-	r = zd_usb_init_hw(&chip->usb);
++	r = read_fw_regs_offset(chip);
+ 	if (r)
+ 		goto out;
+ 
+@@ -1157,10 +1112,6 @@ int zd_chip_init_hw(struct zd_chip *chip, u8 device_type)
+ 		goto out;
+ #endif /* DEBUG */
+ 
+-	r = read_e2p_mac_addr(chip);
+-	if (r)
+-		goto out;
+-
+ 	r = read_cal_int_tables(chip);
+ 	if (r)
+ 		goto out;
+@@ -1174,22 +1125,18 @@ out:
+ static int update_pwr_int(struct zd_chip *chip, u8 channel)
+ {
+ 	u8 value = chip->pwr_int_values[channel - 1];
+-	dev_dbg_f(zd_chip_dev(chip), "channel %d pwr_int %#04x\n",
+-		 channel, value);
+-	return zd_iowrite32_locked(chip, value, CR31);
++	return zd_iowrite16_locked(chip, value, CR31);
+ }
+ 
+ static int update_pwr_cal(struct zd_chip *chip, u8 channel)
+ {
+ 	u8 value = chip->pwr_cal_values[channel-1];
+-	dev_dbg_f(zd_chip_dev(chip), "channel %d pwr_cal %#04x\n",
+-		 channel, value);
+-	return zd_iowrite32_locked(chip, value, CR68);
++	return zd_iowrite16_locked(chip, value, CR68);
+ }
+ 
+ static int update_ofdm_cal(struct zd_chip *chip, u8 channel)
+ {
+-	struct zd_ioreq32 ioreqs[3];
++	struct zd_ioreq16 ioreqs[3];
+ 
+ 	ioreqs[0].addr = CR67;
+ 	ioreqs[0].value = chip->ofdm_cal_values[OFDM_36M_INDEX][channel-1];
+@@ -1198,10 +1145,7 @@ static int update_ofdm_cal(struct zd_chip *chip, u8 channel)
+ 	ioreqs[2].addr = CR65;
+ 	ioreqs[2].value = chip->ofdm_cal_values[OFDM_54M_INDEX][channel-1];
+ 
+-	dev_dbg_f(zd_chip_dev(chip),
+-		"channel %d ofdm_cal 36M %#04x 48M %#04x 54M %#04x\n",
+-		channel, ioreqs[0].value, ioreqs[1].value, ioreqs[2].value);
+-	return zd_iowrite32a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
++	return zd_iowrite16a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
+ }
+ 
+ static int update_channel_integration_and_calibration(struct zd_chip *chip,
+@@ -1209,11 +1153,14 @@ static int update_channel_integration_and_calibration(struct zd_chip *chip,
+ {
+ 	int r;
+ 
++	if (!zd_rf_should_update_pwr_int(&chip->rf))
++		return 0;
++
+ 	r = update_pwr_int(chip, channel);
+ 	if (r)
+ 		return r;
+-	if (chip->is_zd1211b) {
+-		static const struct zd_ioreq32 ioreqs[] = {
++	if (zd_chip_is_zd1211b(chip)) {
++		static const struct zd_ioreq16 ioreqs[] = {
+ 			{ CR69, 0x28 },
+ 			{},
+ 			{ CR69, 0x2a },
+@@ -1225,7 +1172,7 @@ static int update_channel_integration_and_calibration(struct zd_chip *chip,
+ 		r = update_pwr_cal(chip, channel);
+ 		if (r)
+ 			return r;
+-		r = zd_iowrite32a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
++		r = zd_iowrite16a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
+ 		if (r)
+ 			return r;
+ 	}
+@@ -1239,7 +1186,7 @@ static int patch_cck_gain(struct zd_chip *chip)
+ 	int r;
+ 	u32 value;
+ 
+-	if (!chip->patch_cck_gain)
++	if (!chip->patch_cck_gain || !zd_rf_should_patch_cck_gain(&chip->rf))
+ 		return 0;
+ 
+ 	ZD_ASSERT(mutex_is_locked(&chip->mutex));
+@@ -1247,7 +1194,7 @@ static int patch_cck_gain(struct zd_chip *chip)
+ 	if (r)
+ 		return r;
+ 	dev_dbg_f(zd_chip_dev(chip), "patching value %x\n", value & 0xff);
+-	return zd_iowrite32_locked(chip, value & 0xff, CR47);
++	return zd_iowrite16_locked(chip, value & 0xff, CR47);
+ }
+ 
+ int zd_chip_set_channel(struct zd_chip *chip, u8 channel)
+@@ -1290,89 +1237,60 @@ u8 zd_chip_get_channel(struct zd_chip *chip)
+ 	return channel;
+ }
+ 
+-static u16 led_mask(int led)
+-{
+-	switch (led) {
+-	case 1:
+-		return LED1;
+-	case 2:
+-		return LED2;
+-	default:
+-		return 0;
+-	}
+-}
+-
+-static int read_led_reg(struct zd_chip *chip, u16 *status)
+-{
+-	ZD_ASSERT(mutex_is_locked(&chip->mutex));
+-	return zd_ioread16_locked(chip, status, CR_LED);
+-}
+-
+-static int write_led_reg(struct zd_chip *chip, u16 status)
++int zd_chip_control_leds(struct zd_chip *chip, enum led_status status)
+ {
+-	ZD_ASSERT(mutex_is_locked(&chip->mutex));
+-	return zd_iowrite16_locked(chip, status, CR_LED);
+-}
++	const zd_addr_t a[] = {
++		fw_reg_addr(chip, FW_REG_LED_LINK_STATUS),
++		CR_LED,
++	};
+ 
+-int zd_chip_led_status(struct zd_chip *chip, int led, enum led_status status)
+-{
+-	int r, ret;
+-	u16 mask = led_mask(led);
+-	u16 reg;
++	int r;
++	u16 v[ARRAY_SIZE(a)];
++	struct zd_ioreq16 ioreqs[ARRAY_SIZE(a)] = {
++		[0] = { fw_reg_addr(chip, FW_REG_LED_LINK_STATUS) },
++		[1] = { CR_LED },
++	};
++	u16 other_led;
+ 
+-	if (!mask)
+-		return -EINVAL;
+ 	mutex_lock(&chip->mutex);
+-	r = read_led_reg(chip, &reg);
++	r = zd_ioread16v_locked(chip, v, (const zd_addr_t *)a, ARRAY_SIZE(a));
+ 	if (r)
+-		return r;
++		goto out;
++
++	other_led = chip->link_led == LED1 ? LED2 : LED1;
++
+ 	switch (status) {
+-	case LED_STATUS:
+-		return (reg & mask) ? LED_ON : LED_OFF;
+ 	case LED_OFF:
+-		reg &= ~mask;
+-		ret = LED_OFF;
++		ioreqs[0].value = FW_LINK_OFF;
++		ioreqs[1].value = v[1] & ~(LED1|LED2);
+ 		break;
+-	case LED_FLIP:
+-		reg ^= mask;
+-		ret = (reg&mask) ? LED_ON : LED_OFF;
++	case LED_SCANNING:
++		ioreqs[0].value = FW_LINK_OFF;
++		ioreqs[1].value = v[1] & ~other_led;
++		if (get_seconds() % 3 == 0) {
++			ioreqs[1].value &= ~chip->link_led;
++		} else {
++			ioreqs[1].value |= chip->link_led;
++		}
+ 		break;
+-	case LED_ON:
+-		reg |= mask;
+-		ret = LED_ON;
++	case LED_ASSOCIATED:
++		ioreqs[0].value = FW_LINK_TX;
++		ioreqs[1].value = v[1] & ~other_led;
++		ioreqs[1].value |= chip->link_led;
+ 		break;
+ 	default:
+-		return -EINVAL;
+-	}
+-	r = write_led_reg(chip, reg);
+-	if (r) {
+-		ret = r;
++		r = -EINVAL;
+ 		goto out;
+ 	}
+-out:
+-	mutex_unlock(&chip->mutex);
+-	return r;
+-}
+-
+-int zd_chip_led_flip(struct zd_chip *chip, int led,
+-	const unsigned int *phases_msecs, unsigned int count)
+-{
+-	int i, r;
+-	enum led_status status;
+ 
+-	r = zd_chip_led_status(chip, led, LED_STATUS);
+-	if (r)
+-		return r;
+-	status = r;
+-	for (i = 0; i < count; i++) {
+-		r = zd_chip_led_status(chip, led, LED_FLIP);
+-		if (r < 0)
++	if (v[0] != ioreqs[0].value || v[1] != ioreqs[1].value) {
++		r = zd_iowrite16a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
++		if (r)
+ 			goto out;
+-		msleep(phases_msecs[i]);
+ 	}
+-
++	r = 0;
+ out:
+-	zd_chip_led_status(chip, led, status);
++	mutex_unlock(&chip->mutex);
+ 	return r;
+ }
+ 
+@@ -1389,7 +1307,7 @@ int zd_chip_set_basic_rates(struct zd_chip *chip, u16 cr_rates)
+ 	return r;
+ }
+ 
+-static int ofdm_qual_db(u8 status_quality, u8 rate, unsigned int size)
++static int ofdm_qual_db(u8 status_quality, u8 zd_rate, unsigned int size)
+ {
+ 	static const u16 constants[] = {
+ 		715, 655, 585, 540, 470, 410, 360, 315,
+@@ -1403,7 +1321,7 @@ static int ofdm_qual_db(u8 status_quality, u8 rate, unsigned int size)
+ 	/* It seems that their quality parameter is somehow per signal
+ 	 * and is now transferred per bit.
+ 	 */
+-	switch (rate) {
++	switch (zd_rate) {
+ 	case ZD_OFDM_RATE_6M:
+ 	case ZD_OFDM_RATE_12M:
+ 	case ZD_OFDM_RATE_24M:
+@@ -1430,7 +1348,7 @@ static int ofdm_qual_db(u8 status_quality, u8 rate, unsigned int size)
+ 			break;
+ 	}
+ 
+-	switch (rate) {
++	switch (zd_rate) {
+ 	case ZD_OFDM_RATE_6M:
+ 	case ZD_OFDM_RATE_9M:
+ 		i += 3;
+@@ -1454,11 +1372,11 @@ static int ofdm_qual_db(u8 status_quality, u8 rate, unsigned int size)
+ 	return i;
+ }
+ 
+-static int ofdm_qual_percent(u8 status_quality, u8 rate, unsigned int size)
++static int ofdm_qual_percent(u8 status_quality, u8 zd_rate, unsigned int size)
+ {
+ 	int r;
+ 
+-	r = ofdm_qual_db(status_quality, rate, size);
++	r = ofdm_qual_db(status_quality, zd_rate, size);
+ 	ZD_ASSERT(r >= 0);
+ 	if (r < 0)
+ 		r = 0;
+@@ -1519,12 +1437,17 @@ static int cck_qual_percent(u8 status_quality)
+ 	return r <= 100 ? r : 100;
+ }
+ 
++static inline u8 zd_rate_from_ofdm_plcp_header(const void *rx_frame)
++{
++	return ZD_OFDM | zd_ofdm_plcp_header_rate(rx_frame);
++}
++
+ u8 zd_rx_qual_percent(const void *rx_frame, unsigned int size,
+ 	              const struct rx_status *status)
+ {
+ 	return (status->frame_status&ZD_RX_OFDM) ?
+ 		ofdm_qual_percent(status->signal_quality_ofdm,
+-			          zd_ofdm_plcp_header_rate(rx_frame),
++					  zd_rate_from_ofdm_plcp_header(rx_frame),
+ 			          size) :
+ 		cck_qual_percent(status->signal_quality_cck);
+ }
+@@ -1540,32 +1463,32 @@ u8 zd_rx_strength_percent(u8 rssi)
+ u16 zd_rx_rate(const void *rx_frame, const struct rx_status *status)
+ {
+ 	static const u16 ofdm_rates[] = {
+-		[ZD_OFDM_RATE_6M]  = 60,
+-		[ZD_OFDM_RATE_9M]  = 90,
+-		[ZD_OFDM_RATE_12M] = 120,
+-		[ZD_OFDM_RATE_18M] = 180,
+-		[ZD_OFDM_RATE_24M] = 240,
+-		[ZD_OFDM_RATE_36M] = 360,
+-		[ZD_OFDM_RATE_48M] = 480,
+-		[ZD_OFDM_RATE_54M] = 540,
++		[ZD_OFDM_PLCP_RATE_6M]  = 60,
++		[ZD_OFDM_PLCP_RATE_9M]  = 90,
++		[ZD_OFDM_PLCP_RATE_12M] = 120,
++		[ZD_OFDM_PLCP_RATE_18M] = 180,
++		[ZD_OFDM_PLCP_RATE_24M] = 240,
++		[ZD_OFDM_PLCP_RATE_36M] = 360,
++		[ZD_OFDM_PLCP_RATE_48M] = 480,
++		[ZD_OFDM_PLCP_RATE_54M] = 540,
+ 	};
+ 	u16 rate;
+ 	if (status->frame_status & ZD_RX_OFDM) {
++		/* Deals with PLCP OFDM rate (not zd_rates) */
+ 		u8 ofdm_rate = zd_ofdm_plcp_header_rate(rx_frame);
+ 		rate = ofdm_rates[ofdm_rate & 0xf];
+ 	} else {
+-		u8 cck_rate = zd_cck_plcp_header_rate(rx_frame);
+-		switch (cck_rate) {
+-		case ZD_CCK_SIGNAL_1M:
++		switch (zd_cck_plcp_header_signal(rx_frame)) {
++		case ZD_CCK_PLCP_SIGNAL_1M:
+ 			rate = 10;
+ 			break;
+-		case ZD_CCK_SIGNAL_2M:
++		case ZD_CCK_PLCP_SIGNAL_2M:
+ 			rate = 20;
+ 			break;
+-		case ZD_CCK_SIGNAL_5M5:
++		case ZD_CCK_PLCP_SIGNAL_5M5:
+ 			rate = 55;
+ 			break;
+-		case ZD_CCK_SIGNAL_11M:
++		case ZD_CCK_PLCP_SIGNAL_11M:
+ 			rate = 110;
+ 			break;
+ 		default:
+@@ -1644,3 +1567,44 @@ int zd_rfwritev_locked(struct zd_chip *chip,
+ 
+ 	return 0;
+ }
++
++/*
++ * We can optionally program the RF directly through CR regs, if supported by
++ * the hardware. This is much faster than the older method.
++ */
++int zd_rfwrite_cr_locked(struct zd_chip *chip, u32 value)
++{
++	struct zd_ioreq16 ioreqs[] = {
++		{ CR244, (value >> 16) & 0xff },
++		{ CR243, (value >>  8) & 0xff },
++		{ CR242,  value        & 0xff },
++	};
++	ZD_ASSERT(mutex_is_locked(&chip->mutex));
++	return zd_iowrite16a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
++}
++
++int zd_rfwritev_cr_locked(struct zd_chip *chip,
++	                  const u32 *values, unsigned int count)
++{
++	int r;
++	unsigned int i;
++
++	for (i = 0; i < count; i++) {
++		r = zd_rfwrite_cr_locked(chip, values[i]);
++		if (r)
++			return r;
++	}
++
++	return 0;
++}
++
++int zd_chip_set_multicast_hash(struct zd_chip *chip,
++	                       struct zd_mc_hash *hash)
++{
++	struct zd_ioreq32 ioreqs[] = {
++		{ CR_GROUP_HASH_P1, hash->low },
++		{ CR_GROUP_HASH_P2, hash->high },
++	};
++
++	return zd_iowrite32a(chip, ioreqs, ARRAY_SIZE(ioreqs));
++}
+diff --git a/drivers/net/wireless/zd1211rw/zd_chip.h b/drivers/net/wireless/zd1211rw/zd_chip.h
+index 069d2b4..5b57567 100644
+--- a/drivers/net/wireless/zd1211rw/zd_chip.h
++++ b/drivers/net/wireless/zd1211rw/zd_chip.h
+@@ -18,7 +18,6 @@
+ #ifndef _ZD_CHIP_H
+ #define _ZD_CHIP_H
+ 
+-#include "zd_types.h"
+ #include "zd_rf.h"
+ #include "zd_usb.h"
+ 
+@@ -27,6 +26,37 @@
+  * adds a processor for handling the USB protocol.
+  */
+ 
++/* Address space */
++enum {
++	/* CONTROL REGISTERS */
++	CR_START			= 0x9000,
++
++
++	/* FIRMWARE */
++	FW_START			= 0xee00,
++
++
++	/* EEPROM */
++	E2P_START			= 0xf800,
++	E2P_LEN				= 0x800,
++
++	/* EEPROM layout */
++	E2P_LOAD_CODE_LEN		= 0xe,		/* base 0xf800 */
++	E2P_LOAD_VECT_LEN		= 0x9,		/* base 0xf80e */
++	/* E2P_DATA indexes into this */
++	E2P_DATA_LEN			= 0x7e,		/* base 0xf817 */
++	E2P_BOOT_CODE_LEN		= 0x760,	/* base 0xf895 */
++	E2P_INTR_VECT_LEN		= 0xb,		/* base 0xfff5 */
++
++	/* Some precomputed offsets into the EEPROM */
++	E2P_DATA_OFFSET			= E2P_LOAD_CODE_LEN + E2P_LOAD_VECT_LEN,
++	E2P_BOOT_CODE_OFFSET		= E2P_DATA_OFFSET + E2P_DATA_LEN,
++};
++
++#define CTL_REG(offset) ((zd_addr_t)(CR_START + (offset)))
++#define E2P_DATA(offset) ((zd_addr_t)(E2P_START + E2P_DATA_OFFSET + (offset)))
++#define FWRAW_DATA(offset) ((zd_addr_t)(FW_START + (offset)))
++
+ /* 8-bit hardware registers */
+ #define CR0   CTL_REG(0x0000)
+ #define CR1   CTL_REG(0x0004)
+@@ -302,7 +332,7 @@
+ 
+ #define CR_MAX_PHY_REG 255
+ 
+-/* Taken from the ZYDAS driver, not all of them are relevant for the ZSD1211
++/* Taken from the ZYDAS driver, not all of them are relevant for the ZD1211
+  * driver.
+  */
+ 
+@@ -337,24 +367,24 @@
+ #define CR_MAC_PS_STATE			CTL_REG(0x050C)
+ 
+ #define CR_INTERRUPT			CTL_REG(0x0510)
+-#define INT_TX_COMPLETE			0x00000001
+-#define INT_RX_COMPLETE			0x00000002
+-#define INT_RETRY_FAIL			0x00000004
+-#define INT_WAKEUP			0x00000008
+-#define INT_DTIM_NOTIFY			0x00000020
+-#define INT_CFG_NEXT_BCN		0x00000040
+-#define INT_BUS_ABORT			0x00000080
+-#define INT_TX_FIFO_READY		0x00000100
+-#define INT_UART			0x00000200
+-#define INT_TX_COMPLETE_EN		0x00010000
+-#define INT_RX_COMPLETE_EN		0x00020000
+-#define INT_RETRY_FAIL_EN		0x00040000
+-#define INT_WAKEUP_EN			0x00080000
+-#define INT_DTIM_NOTIFY_EN		0x00200000
+-#define INT_CFG_NEXT_BCN_EN		0x00400000
+-#define INT_BUS_ABORT_EN		0x00800000
+-#define INT_TX_FIFO_READY_EN		0x01000000
+-#define INT_UART_EN			0x02000000
++#define INT_TX_COMPLETE			(1 <<  0)
++#define INT_RX_COMPLETE			(1 <<  1)
++#define INT_RETRY_FAIL			(1 <<  2)
++#define INT_WAKEUP			(1 <<  3)
++#define INT_DTIM_NOTIFY			(1 <<  5)
++#define INT_CFG_NEXT_BCN		(1 <<  6)
++#define INT_BUS_ABORT			(1 <<  7)
++#define INT_TX_FIFO_READY		(1 <<  8)
++#define INT_UART			(1 <<  9)
++#define INT_TX_COMPLETE_EN		(1 << 16)
++#define INT_RX_COMPLETE_EN		(1 << 17)
++#define INT_RETRY_FAIL_EN		(1 << 18)
++#define INT_WAKEUP_EN			(1 << 19)
++#define INT_DTIM_NOTIFY_EN		(1 << 21)
++#define INT_CFG_NEXT_BCN_EN		(1 << 22)
++#define INT_BUS_ABORT_EN		(1 << 23)
++#define INT_TX_FIFO_READY_EN		(1 << 24)
++#define INT_UART_EN			(1 << 25)
+ 
+ #define CR_TSF_LOW_PART			CTL_REG(0x0514)
+ #define CR_TSF_HIGH_PART		CTL_REG(0x0518)
+@@ -390,26 +420,35 @@
+ #define CR_BSSID_P1			CTL_REG(0x0618)
+ #define CR_BSSID_P2			CTL_REG(0x061C)
+ #define CR_BCN_PLCP_CFG			CTL_REG(0x0620)
++
++/* Group hash table for filtering incoming packets.
++ *
++ * The group hash table is 64 bit large and split over two parts. The first
++ * part is the lower part. The upper 6 bits of the last byte of the target
++ * address are used as index. Packets are received if the hash table bit is
++ * set. This is used for multicast handling, but for broadcasts (address
++ * ff:ff:ff:ff:ff:ff) the highest bit in the second table must also be set.
++ */
+ #define CR_GROUP_HASH_P1		CTL_REG(0x0624)
+ #define CR_GROUP_HASH_P2		CTL_REG(0x0628)
+-#define CR_RX_TIMEOUT			CTL_REG(0x062C)
+ 
++#define CR_RX_TIMEOUT			CTL_REG(0x062C)
+ /* Basic rates supported by the BSS. When producing ACK or CTS messages, the
+  * device will use a rate in this table that is less than or equal to the rate
+  * of the incoming frame which prompted the response */
+ #define CR_BASIC_RATE_TBL		CTL_REG(0x0630)
+-#define CR_RATE_1M	0x0001	/* 802.11b */
+-#define CR_RATE_2M	0x0002	/* 802.11b */
+-#define CR_RATE_5_5M	0x0004	/* 802.11b */
+-#define CR_RATE_11M	0x0008	/* 802.11b */
+-#define CR_RATE_6M      0x0100	/* 802.11g */
+-#define CR_RATE_9M      0x0200	/* 802.11g */
+-#define CR_RATE_12M	0x0400	/* 802.11g */
+-#define CR_RATE_18M	0x0800	/* 802.11g */
+-#define CR_RATE_24M     0x1000	/* 802.11g */
+-#define CR_RATE_36M     0x2000	/* 802.11g */
+-#define CR_RATE_48M     0x4000	/* 802.11g */
+-#define CR_RATE_54M     0x8000	/* 802.11g */
++#define CR_RATE_1M	(1 <<  0)	/* 802.11b */
++#define CR_RATE_2M	(1 <<  1)	/* 802.11b */
++#define CR_RATE_5_5M	(1 <<  2)	/* 802.11b */
++#define CR_RATE_11M	(1 <<  3)	/* 802.11b */
++#define CR_RATE_6M      (1 <<  8)	/* 802.11g */
++#define CR_RATE_9M      (1 <<  9)	/* 802.11g */
++#define CR_RATE_12M	(1 << 10)	/* 802.11g */
++#define CR_RATE_18M	(1 << 11)	/* 802.11g */
++#define CR_RATE_24M     (1 << 12)	/* 802.11g */
++#define CR_RATE_36M     (1 << 13)	/* 802.11g */
++#define CR_RATE_48M     (1 << 14)	/* 802.11g */
++#define CR_RATE_54M     (1 << 15)	/* 802.11g */
+ #define CR_RATES_80211G	0xff00
+ #define CR_RATES_80211B	0x000f
+ 
+@@ -426,8 +465,9 @@
+ /* register for controlling the LEDS */
+ #define CR_LED				CTL_REG(0x0644)
+ /* masks for controlling LEDs */
+-#define LED1				0x0100
+-#define LED2				0x0200
++#define LED1				(1 <<  8)
++#define LED2				(1 <<  9)
++#define LED_SW				(1 << 10)
+ 
+ /* Seems to indicate that the configuration is over.
+  */
+@@ -454,18 +494,18 @@
+  * registers, so one could argue it is a LOCK bit. But calling it
+  * LOCK_PHY_REGS makes it confusing.
+  */
+-#define UNLOCK_PHY_REGS			0x0080
++#define UNLOCK_PHY_REGS			(1 << 7)
+ 
+ #define CR_DEVICE_STATE			CTL_REG(0x0684)
+ #define CR_UNDERRUN_CNT			CTL_REG(0x0688)
+ 
+ #define CR_RX_FILTER			CTL_REG(0x068c)
+-#define RX_FILTER_ASSOC_RESPONSE	0x0002
+-#define RX_FILTER_REASSOC_RESPONSE	0x0008
+-#define RX_FILTER_PROBE_RESPONSE	0x0020
+-#define RX_FILTER_BEACON		0x0100
+-#define RX_FILTER_DISASSOC		0x0400
+-#define RX_FILTER_AUTH			0x0800
++#define RX_FILTER_ASSOC_RESPONSE	(1 <<  1)
++#define RX_FILTER_REASSOC_RESPONSE	(1 <<  3)
++#define RX_FILTER_PROBE_RESPONSE	(1 <<  5)
++#define RX_FILTER_BEACON		(1 <<  8)
++#define RX_FILTER_DISASSOC		(1 << 10)
++#define RX_FILTER_AUTH			(1 << 11)
+ #define AP_RX_FILTER			0x0400feff
+ #define STA_RX_FILTER			0x0000ffff
+ 
+@@ -473,7 +513,15 @@
+ 
+ #define CR_ACK_TIMEOUT_EXT		CTL_REG(0x0690)
+ #define CR_BCN_FIFO_SEMAPHORE		CTL_REG(0x0694)
++
+ #define CR_IFS_VALUE			CTL_REG(0x0698)
++#define IFS_VALUE_DIFS_SH		0
++#define IFS_VALUE_EIFS_SH		12
++#define IFS_VALUE_SIFS_SH		24
++#define IFS_VALUE_DEFAULT		((  50 << IFS_VALUE_DIFS_SH) | \
++					 (1148 << IFS_VALUE_EIFS_SH) | \
++					 (  10 << IFS_VALUE_SIFS_SH))
++
+ #define CR_RX_TIME_OUT			CTL_REG(0x069C)
+ #define CR_TOTAL_RX_FRM			CTL_REG(0x06A0)
+ #define CR_CRC32_CNT			CTL_REG(0x06A4)
+@@ -551,6 +599,9 @@
+ #define CR_ZD1211B_TXOP			CTL_REG(0x0b20)
+ #define CR_ZD1211B_RETRY_MAX		CTL_REG(0x0b28)
+ 
++/* Used to detect PLL lock */
++#define UW2453_INTR_REG			((zd_addr_t)0x85c1)
++
+ #define CWIN_SIZE			0x007f043f
+ 
+ 
+@@ -567,74 +618,69 @@
+ /*
+  * Upper 16 bit contains the regulatory domain.
+  */
+-#define E2P_SUBID		E2P_REG(0x00)
+-#define E2P_POD			E2P_REG(0x02)
+-#define E2P_MAC_ADDR_P1		E2P_REG(0x04)
+-#define E2P_MAC_ADDR_P2		E2P_REG(0x06)
+-#define E2P_PWR_CAL_VALUE1	E2P_REG(0x08)
+-#define E2P_PWR_CAL_VALUE2	E2P_REG(0x0a)
+-#define E2P_PWR_CAL_VALUE3	E2P_REG(0x0c)
+-#define E2P_PWR_CAL_VALUE4      E2P_REG(0x0e)
+-#define E2P_PWR_INT_VALUE1	E2P_REG(0x10)
+-#define E2P_PWR_INT_VALUE2	E2P_REG(0x12)
+-#define E2P_PWR_INT_VALUE3	E2P_REG(0x14)
+-#define E2P_PWR_INT_VALUE4	E2P_REG(0x16)
++#define E2P_SUBID		E2P_DATA(0x00)
++#define E2P_POD			E2P_DATA(0x02)
++#define E2P_MAC_ADDR_P1		E2P_DATA(0x04)
++#define E2P_MAC_ADDR_P2		E2P_DATA(0x06)
++#define E2P_PWR_CAL_VALUE1	E2P_DATA(0x08)
++#define E2P_PWR_CAL_VALUE2	E2P_DATA(0x0a)
++#define E2P_PWR_CAL_VALUE3	E2P_DATA(0x0c)
++#define E2P_PWR_CAL_VALUE4      E2P_DATA(0x0e)
++#define E2P_PWR_INT_VALUE1	E2P_DATA(0x10)
++#define E2P_PWR_INT_VALUE2	E2P_DATA(0x12)
++#define E2P_PWR_INT_VALUE3	E2P_DATA(0x14)
++#define E2P_PWR_INT_VALUE4	E2P_DATA(0x16)
+ 
+ /* Contains a bit for each allowed channel. It gives for Europe (ETSI 0x30)
+  * also only 11 channels. */
+-#define E2P_ALLOWED_CHANNEL	E2P_REG(0x18)
+-
+-#define E2P_PHY_REG		E2P_REG(0x1a)
+-#define E2P_DEVICE_VER		E2P_REG(0x20)
+-#define E2P_36M_CAL_VALUE1	E2P_REG(0x28)
+-#define E2P_36M_CAL_VALUE2      E2P_REG(0x2a)
+-#define E2P_36M_CAL_VALUE3      E2P_REG(0x2c)
+-#define E2P_36M_CAL_VALUE4	E2P_REG(0x2e)
+-#define E2P_11A_INT_VALUE1	E2P_REG(0x30)
+-#define E2P_11A_INT_VALUE2	E2P_REG(0x32)
+-#define E2P_11A_INT_VALUE3	E2P_REG(0x34)
+-#define E2P_11A_INT_VALUE4	E2P_REG(0x36)
+-#define E2P_48M_CAL_VALUE1	E2P_REG(0x38)
+-#define E2P_48M_CAL_VALUE2	E2P_REG(0x3a)
+-#define E2P_48M_CAL_VALUE3	E2P_REG(0x3c)
+-#define E2P_48M_CAL_VALUE4	E2P_REG(0x3e)
+-#define E2P_48M_INT_VALUE1	E2P_REG(0x40)
+-#define E2P_48M_INT_VALUE2	E2P_REG(0x42)
+-#define E2P_48M_INT_VALUE3	E2P_REG(0x44)
+-#define E2P_48M_INT_VALUE4	E2P_REG(0x46)
+-#define E2P_54M_CAL_VALUE1	E2P_REG(0x48)	/* ??? */
+-#define E2P_54M_CAL_VALUE2	E2P_REG(0x4a)
+-#define E2P_54M_CAL_VALUE3	E2P_REG(0x4c)
+-#define E2P_54M_CAL_VALUE4	E2P_REG(0x4e)
+-#define E2P_54M_INT_VALUE1	E2P_REG(0x50)
+-#define E2P_54M_INT_VALUE2	E2P_REG(0x52)
+-#define E2P_54M_INT_VALUE3	E2P_REG(0x54)
+-#define E2P_54M_INT_VALUE4	E2P_REG(0x56)
+-
+-/* All 16 bit values */
+-#define FW_FIRMWARE_VER         FW_REG(0)
+-/* non-zero if USB high speed connection */
+-#define FW_USB_SPEED            FW_REG(1)
+-#define FW_FIX_TX_RATE          FW_REG(2)
+-/* Seems to be able to control LEDs over the firmware */
+-#define FW_LINK_STATUS          FW_REG(3)
+-#define FW_SOFT_RESET           FW_REG(4)
+-#define FW_FLASH_CHK            FW_REG(5)
+-
++#define E2P_ALLOWED_CHANNEL	E2P_DATA(0x18)
++
++#define E2P_DEVICE_VER		E2P_DATA(0x20)
++#define E2P_PHY_REG		E2P_DATA(0x25)
++#define E2P_36M_CAL_VALUE1	E2P_DATA(0x28)
++#define E2P_36M_CAL_VALUE2      E2P_DATA(0x2a)
++#define E2P_36M_CAL_VALUE3      E2P_DATA(0x2c)
++#define E2P_36M_CAL_VALUE4	E2P_DATA(0x2e)
++#define E2P_11A_INT_VALUE1	E2P_DATA(0x30)
++#define E2P_11A_INT_VALUE2	E2P_DATA(0x32)
++#define E2P_11A_INT_VALUE3	E2P_DATA(0x34)
++#define E2P_11A_INT_VALUE4	E2P_DATA(0x36)
++#define E2P_48M_CAL_VALUE1	E2P_DATA(0x38)
++#define E2P_48M_CAL_VALUE2	E2P_DATA(0x3a)
++#define E2P_48M_CAL_VALUE3	E2P_DATA(0x3c)
++#define E2P_48M_CAL_VALUE4	E2P_DATA(0x3e)
++#define E2P_48M_INT_VALUE1	E2P_DATA(0x40)
++#define E2P_48M_INT_VALUE2	E2P_DATA(0x42)
++#define E2P_48M_INT_VALUE3	E2P_DATA(0x44)
++#define E2P_48M_INT_VALUE4	E2P_DATA(0x46)
++#define E2P_54M_CAL_VALUE1	E2P_DATA(0x48)	/* ??? */
++#define E2P_54M_CAL_VALUE2	E2P_DATA(0x4a)
++#define E2P_54M_CAL_VALUE3	E2P_DATA(0x4c)
++#define E2P_54M_CAL_VALUE4	E2P_DATA(0x4e)
++#define E2P_54M_INT_VALUE1	E2P_DATA(0x50)
++#define E2P_54M_INT_VALUE2	E2P_DATA(0x52)
++#define E2P_54M_INT_VALUE3	E2P_DATA(0x54)
++#define E2P_54M_INT_VALUE4	E2P_DATA(0x56)
++
++/* This word contains the base address of the FW_REG_ registers below */
++#define FWRAW_REGS_ADDR		FWRAW_DATA(0x1d)
++
++/* All 16 bit values, offset from the address in FWRAW_REGS_ADDR */
+ enum {
+-	CR_BASE_OFFSET			= 0x9000,
+-	FW_START_OFFSET			= 0xee00,
+-	FW_BASE_ADDR_OFFSET		= FW_START_OFFSET + 0x1d,
+-	EEPROM_START_OFFSET		= 0xf800,
+-	EEPROM_SIZE			= 0x800, /* words */
+-	LOAD_CODE_SIZE			= 0xe, /* words */
+-	LOAD_VECT_SIZE			= 0x10000 - 0xfff7, /* words */
+-	EEPROM_REGS_OFFSET		= LOAD_CODE_SIZE + LOAD_VECT_SIZE,
+-	E2P_BASE_OFFSET			= EEPROM_START_OFFSET +
+-		                          EEPROM_REGS_OFFSET,
++	FW_REG_FIRMWARE_VER	= 0,
++	/* non-zero if USB high speed connection */
++	FW_REG_USB_SPEED	= 1,
++	FW_REG_FIX_TX_RATE	= 2,
++	/* Seems to be able to control LEDs over the firmware */
++	FW_REG_LED_LINK_STATUS	= 3,
++	FW_REG_SOFT_RESET	= 4,
++	FW_REG_FLASH_CHK	= 5,
+ };
+ 
+-#define FW_REG_TABLE_ADDR	USB_ADDR(FW_START_OFFSET + 0x1d)
++/* Values for FW_LINK_STATUS */
++#define FW_LINK_OFF		0x0
++#define FW_LINK_TX		0x1
++/* 0x2 - link led on? */
+ 
+ enum {
+ 	/* indices for ofdm_cal_values */
+@@ -647,15 +693,19 @@ struct zd_chip {
+ 	struct zd_usb usb;
+ 	struct zd_rf rf;
+ 	struct mutex mutex;
+-	u8 e2p_mac[ETH_ALEN];
++	/* Base address of FW_REG_ registers */
++	zd_addr_t fw_regs_base;
+ 	/* EepSetPoint in the vendor driver */
+ 	u8 pwr_cal_values[E2P_CHANNEL_COUNT];
+ 	/* integration values in the vendor driver */
+ 	u8 pwr_int_values[E2P_CHANNEL_COUNT];
+ 	/* SetPointOFDM in the vendor driver */
+ 	u8 ofdm_cal_values[3][E2P_CHANNEL_COUNT];
+-	u8 pa_type:4, patch_cck_gain:1, patch_cr157:1, patch_6m_band_edge:1,
+-	   is_zd1211b:1;
++	u16 link_led;
++	unsigned int pa_type:4,
++		patch_cck_gain:1, patch_cr157:1, patch_6m_band_edge:1,
++		new_phy_layout:1, al2230s_bit:1,
++		supports_tx_led:1;
+ };
+ 
+ static inline struct zd_chip *zd_usb_to_chip(struct zd_usb *usb)
+@@ -674,9 +724,15 @@ void zd_chip_init(struct zd_chip *chip,
+ 	         struct net_device *netdev,
+ 	         struct usb_interface *intf);
+ void zd_chip_clear(struct zd_chip *chip);
+-int zd_chip_init_hw(struct zd_chip *chip, u8 device_type);
++int zd_chip_read_mac_addr_fw(struct zd_chip *chip, u8 *addr);
++int zd_chip_init_hw(struct zd_chip *chip);
+ int zd_chip_reset(struct zd_chip *chip);
+ 
++static inline int zd_chip_is_zd1211b(struct zd_chip *chip)
++{
++	return chip->usb.is_zd1211b;
++}
++
+ static inline int zd_ioread16v_locked(struct zd_chip *chip, u16 *values,
+ 	                              const zd_addr_t *addresses,
+ 				      unsigned int count)
+@@ -739,8 +795,12 @@ static inline int zd_rfwrite_locked(struct zd_chip *chip, u32 value, u8 bits)
+ 	return zd_usb_rfwrite(&chip->usb, value, bits);
+ }
+ 
++int zd_rfwrite_cr_locked(struct zd_chip *chip, u32 value);
++
+ int zd_rfwritev_locked(struct zd_chip *chip,
+ 	               const u32* values, unsigned int count, u8 bits);
++int zd_rfwritev_cr_locked(struct zd_chip *chip,
++	                  const u32* values, unsigned int count);
+ 
+ /* Locking functions for reading and writing registers.
+  * The different parameters are intentional.
+@@ -761,8 +821,6 @@ static inline u8 _zd_chip_get_channel(struct zd_chip *chip)
+ }
+ u8  zd_chip_get_channel(struct zd_chip *chip);
+ int zd_read_regdomain(struct zd_chip *chip, u8 *regdomain);
+-void zd_get_e2p_mac_addr(struct zd_chip *chip, u8 *mac_addr);
+-int zd_read_mac_addr(struct zd_chip *chip, u8 *mac_addr);
+ int zd_write_mac_addr(struct zd_chip *chip, const u8 *mac_addr);
+ int zd_chip_switch_radio_on(struct zd_chip *chip);
+ int zd_chip_switch_radio_off(struct zd_chip *chip);
+@@ -772,6 +830,7 @@ int zd_chip_enable_rx(struct zd_chip *chip);
+ void zd_chip_disable_rx(struct zd_chip *chip);
+ int zd_chip_enable_hwint(struct zd_chip *chip);
+ int zd_chip_disable_hwint(struct zd_chip *chip);
++int zd_chip_generic_patch_6m_band(struct zd_chip *chip, int channel);
+ 
+ static inline int zd_get_encryption_type(struct zd_chip *chip, u32 *type)
+ {
+@@ -790,24 +849,16 @@ static inline int zd_chip_get_basic_rates(struct zd_chip *chip, u16 *cr_rates)
+ 
+ int zd_chip_set_basic_rates(struct zd_chip *chip, u16 cr_rates);
+ 
+-static inline int zd_chip_set_rx_filter(struct zd_chip *chip, u32 filter)
+-{
+-	return zd_iowrite32(chip, CR_RX_FILTER, filter);
+-}
+-
+ int zd_chip_lock_phy_regs(struct zd_chip *chip);
+ int zd_chip_unlock_phy_regs(struct zd_chip *chip);
+ 
+ enum led_status {
+-	LED_OFF	   = 0,
+-	LED_ON     = 1,
+-	LED_FLIP   = 2,
+-	LED_STATUS = 3,
++	LED_OFF = 0,
++	LED_SCANNING = 1,
++	LED_ASSOCIATED = 2,
+ };
+ 
+-int zd_chip_led_status(struct zd_chip *chip, int led, enum led_status status);
+-int zd_chip_led_flip(struct zd_chip *chip, int led,
+-	             const unsigned int *phases_msecs, unsigned int count);
++int zd_chip_control_leds(struct zd_chip *chip, enum led_status status);
+ 
+ int zd_set_beacon_interval(struct zd_chip *chip, u32 interval);
+ 
+@@ -824,4 +875,36 @@ u8 zd_rx_strength_percent(u8 rssi);
+ 
+ u16 zd_rx_rate(const void *rx_frame, const struct rx_status *status);
+ 
++struct zd_mc_hash {
++	u32 low;
++	u32 high;
++};
++
++static inline void zd_mc_clear(struct zd_mc_hash *hash)
++{
++	hash->low = 0;
++	/* The interfaces must always received broadcasts.
++	 * The hash of the broadcast address ff:ff:ff:ff:ff:ff is 63.
++	 */
++	hash->high = 0x80000000;
++}
++
++static inline void zd_mc_add_all(struct zd_mc_hash *hash)
++{
++	hash->low = hash->high = 0xffffffff;
++}
++
++static inline void zd_mc_add_addr(struct zd_mc_hash *hash, u8 *addr)
++{
++	unsigned int i = addr[5] >> 2;
++	if (i < 32) {
++		hash->low |= 1 << i;
++	} else {
++		hash->high |= 1 << (i-32);
++	}
++}
++
++int zd_chip_set_multicast_hash(struct zd_chip *chip,
++	                       struct zd_mc_hash *hash);
++
+ #endif /* _ZD_CHIP_H */
+diff --git a/drivers/net/wireless/zd1211rw/zd_def.h b/drivers/net/wireless/zd1211rw/zd_def.h
+index 4659068..505b4d7 100644
+--- a/drivers/net/wireless/zd1211rw/zd_def.h
++++ b/drivers/net/wireless/zd1211rw/zd_def.h
+@@ -21,7 +21,8 @@
+ #include <linux/kernel.h>
+ #include <linux/stringify.h>
+ #include <linux/device.h>
+-#include <linux/kernel.h>
++
++typedef u16 __nocast zd_addr_t;
+ 
+ #define dev_printk_f(level, dev, fmt, args...) \
+ 	dev_printk(level, dev, "%s() " fmt, __func__, ##args)
+@@ -39,10 +40,17 @@ do { \
+ 	if (!(x)) { \
+ 		pr_debug("%s:%d ASSERT %s VIOLATED!\n", \
+ 			__FILE__, __LINE__, __stringify(x)); \
++		dump_stack(); \
+ 	} \
+ } while (0)
+ #else
+ #  define ZD_ASSERT(x) do { } while (0)
+ #endif
+ 
++#ifdef DEBUG
++#  define ZD_MEMCLEAR(pointer, size) memset((pointer), 0xff, (size))
++#else
++#  define ZD_MEMCLEAR(pointer, size) do { } while (0)
++#endif
++
+ #endif /* _ZD_DEF_H */
+diff --git a/drivers/net/wireless/zd1211rw/zd_ieee80211.c b/drivers/net/wireless/zd1211rw/zd_ieee80211.c
+index 66905f7..189160e 100644
+--- a/drivers/net/wireless/zd1211rw/zd_ieee80211.c
++++ b/drivers/net/wireless/zd1211rw/zd_ieee80211.c
+@@ -37,7 +37,12 @@ static const struct channel_range channel_ranges[] = {
+ 	[ZD_REGDOMAIN_JAPAN]	 = { 1, 14},
+ 	[ZD_REGDOMAIN_SPAIN]	 = { 1, 14},
+ 	[ZD_REGDOMAIN_FRANCE]	 = { 1, 14},
+-	[ZD_REGDOMAIN_JAPAN_ADD] = {14, 15},
++
++	/* Japan originally only had channel 14 available (see CHNL_ID 0x40 in
++	 * 802.11). However, in 2001 the range was extended to include channels
++	 * 1-13. The ZyDAS devices still use the old region code but are
++	 * designed to allow the extra channel access in Japan. */
++	[ZD_REGDOMAIN_JAPAN_ADD] = { 1, 15},
+ };
+ 
+ const struct channel_range *zd_channel_range(u8 regdomain)
+@@ -133,9 +138,6 @@ int zd_find_channel(u8 *channel, const struct iw_freq *freq)
+ 	int i, r;
+ 	u32 mhz;
+ 
+-	if (!(freq->flags & IW_FREQ_FIXED))
+-		return 0;
+-
+ 	if (freq->m < 1000) {
+ 		if (freq->m  > NUM_CHANNELS || freq->m == 0)
+ 			return -EINVAL;
+diff --git a/drivers/net/wireless/zd1211rw/zd_ieee80211.h b/drivers/net/wireless/zd1211rw/zd_ieee80211.h
+index 3632989..fbf6491 100644
+--- a/drivers/net/wireless/zd1211rw/zd_ieee80211.h
++++ b/drivers/net/wireless/zd1211rw/zd_ieee80211.h
+@@ -2,7 +2,6 @@
+ #define _ZD_IEEE80211_H
+ 
+ #include <net/ieee80211.h>
+-#include "zd_types.h"
+ 
+ /* Additional definitions from the standards.
+  */
+@@ -44,20 +43,25 @@ struct ofdm_plcp_header {
+ 	__le16 service;
+ } __attribute__((packed));
+ 
+-static inline u8 zd_ofdm_plcp_header_rate(
+-	const struct ofdm_plcp_header *header)
++static inline u8 zd_ofdm_plcp_header_rate(const struct ofdm_plcp_header *header)
+ {
+ 	return header->prefix[0] & 0xf;
+ }
+ 
+-#define ZD_OFDM_RATE_6M		0xb
+-#define ZD_OFDM_RATE_9M		0xf
+-#define ZD_OFDM_RATE_12M	0xa
+-#define ZD_OFDM_RATE_18M	0xe
+-#define ZD_OFDM_RATE_24M	0x9
+-#define ZD_OFDM_RATE_36M	0xd
+-#define ZD_OFDM_RATE_48M	0x8
+-#define ZD_OFDM_RATE_54M	0xc
++/* The following defines give the encoding of the 4-bit rate field in the
++ * OFDM (802.11a/802.11g) PLCP header. Notify that these values are used to
++ * define the zd-rate values for OFDM.
++ *
++ * See the struct zd_ctrlset definition in zd_mac.h.
++ */
++#define ZD_OFDM_PLCP_RATE_6M		0xb
++#define ZD_OFDM_PLCP_RATE_9M		0xf
++#define ZD_OFDM_PLCP_RATE_12M	0xa
++#define ZD_OFDM_PLCP_RATE_18M	0xe
++#define ZD_OFDM_PLCP_RATE_24M	0x9
++#define ZD_OFDM_PLCP_RATE_36M	0xd
++#define ZD_OFDM_PLCP_RATE_48M	0x8
++#define ZD_OFDM_PLCP_RATE_54M	0xc
+ 
+ struct cck_plcp_header {
+ 	u8 signal;
+@@ -66,15 +70,22 @@ struct cck_plcp_header {
+ 	__le16 crc16;
+ } __attribute__((packed));
+ 
+-static inline u8 zd_cck_plcp_header_rate(const struct cck_plcp_header *header)
++static inline u8 zd_cck_plcp_header_signal(const struct cck_plcp_header *header)
+ {
+ 	return header->signal;
+ }
+ 
+-#define ZD_CCK_SIGNAL_1M	0x0a
+-#define ZD_CCK_SIGNAL_2M	0x14
+-#define ZD_CCK_SIGNAL_5M5	0x37
+-#define ZD_CCK_SIGNAL_11M	0x6e
++/* These defines give the encodings of the signal field in the 802.11b PLCP
++ * header. The signal field gives the bit rate of the following packet. Even
++ * if technically wrong we use CCK here also for the 1 MBit/s and 2 MBit/s
++ * rate to stay consistent with Zydas and our use of the term.
++ *
++ * Notify that these values are *not* used in the zd-rates.
++ */
++#define ZD_CCK_PLCP_SIGNAL_1M	0x0a
++#define ZD_CCK_PLCP_SIGNAL_2M	0x14
++#define ZD_CCK_PLCP_SIGNAL_5M5	0x37
++#define ZD_CCK_PLCP_SIGNAL_11M	0x6e
+ 
+ enum ieee80211_std {
+ 	IEEE80211B = 0x01,
+diff --git a/drivers/net/wireless/zd1211rw/zd_mac.c b/drivers/net/wireless/zd1211rw/zd_mac.c
+index a9bd80a..dbb07f7 100644
+--- a/drivers/net/wireless/zd1211rw/zd_mac.c
++++ b/drivers/net/wireless/zd1211rw/zd_mac.c
+@@ -28,11 +28,20 @@
+ #include "zd_ieee80211.h"
+ #include "zd_netdev.h"
+ #include "zd_rf.h"
+-#include "zd_util.h"
++
++#define IS_ALIGNED(x,a)		(((x) % ((typeof(x))(a))) == 0)
+ 
+ static void ieee_init(struct ieee80211_device *ieee);
+ static void softmac_init(struct ieee80211softmac_device *sm);
+ 
++static void housekeeping_init(struct zd_mac *mac);
++static void housekeeping_enable(struct zd_mac *mac);
++static void housekeeping_disable(struct zd_mac *mac);
++
++static void set_multicast_hash_handler(struct zd_mac *mac);
++
++static void do_rx(unsigned long mac_ptr);
++
+ int zd_mac_init(struct zd_mac *mac,
+ 	        struct net_device *netdev,
+ 	        struct usb_interface *intf)
+@@ -43,9 +52,16 @@ int zd_mac_init(struct zd_mac *mac,
+ 	spin_lock_init(&mac->lock);
+ 	mac->netdev = netdev;
+ 
++	skb_queue_head_init(&mac->rx_queue);
++	tasklet_init(&mac->rx_tasklet, do_rx, (unsigned long)mac);
++	tasklet_disable(&mac->rx_tasklet);
++
+ 	ieee_init(ieee);
+ 	softmac_init(ieee80211_priv(netdev));
+ 	zd_chip_init(&mac->chip, netdev, intf);
++	housekeeping_init(mac);
++	INIT_WORK(&mac->set_multicast_hash_work,
++			(void (*)(void *))set_multicast_hash_handler, mac);
+ 	return 0;
+ }
+ 
+@@ -68,38 +84,46 @@ out:
+ 	return r;
+ }
+ 
+-int zd_mac_init_hw(struct zd_mac *mac, u8 device_type)
++int zd_mac_preinit_hw(struct zd_mac *mac)
+ {
+ 	int r;
+-	struct zd_chip *chip = &mac->chip;
+ 	u8 addr[ETH_ALEN];
++
++	r = zd_chip_read_mac_addr_fw(&mac->chip, addr);
++	if (r)
++		return r;
++
++	memcpy(mac->netdev->dev_addr, addr, ETH_ALEN);
++	return 0;
++}
++
++int zd_mac_init_hw(struct zd_mac *mac)
++{
++	int r;
++	struct zd_chip *chip = &mac->chip;
+ 	u8 default_regdomain;
+ 
+ 	r = zd_chip_enable_int(chip);
+ 	if (r)
+ 		goto out;
+-	r = zd_chip_init_hw(chip, device_type);
++	r = zd_chip_init_hw(chip);
+ 	if (r)
+ 		goto disable_int;
+ 
+-	zd_get_e2p_mac_addr(chip, addr);
+-	r = zd_write_mac_addr(chip, addr);
+-	if (r)
+-		goto disable_int;
+ 	ZD_ASSERT(!irqs_disabled());
+-	spin_lock_irq(&mac->lock);
+-	memcpy(mac->netdev->dev_addr, addr, ETH_ALEN);
+-	spin_unlock_irq(&mac->lock);
+ 
+ 	r = zd_read_regdomain(chip, &default_regdomain);
+ 	if (r)
+ 		goto disable_int;
+ 	if (!zd_regdomain_supported(default_regdomain)) {
+-		dev_dbg_f(zd_mac_dev(mac),
+-			  "Regulatory Domain %#04x is not supported.\n",
+-		          default_regdomain);
+-		r = -EINVAL;
+-		goto disable_int;
++		/* The vendor driver overrides the regulatory domain and
++		 * allowed channel registers and unconditionally restricts
++		 * available channels to 1-11 everywhere. Match their
++		 * questionable behaviour only for regdomains which we don't
++		 * recognise. */
++		dev_warn(zd_mac_dev(mac),  "Unrecognised regulatory domain: "
++			"%#04x. Defaulting to FCC.\n", default_regdomain);
++		default_regdomain = ZD_REGDOMAIN_FCC;
+ 	}
+ 	spin_lock_irq(&mac->lock);
+ 	mac->regdomain = mac->default_regdomain = default_regdomain;
+@@ -127,44 +151,74 @@ out:
+ 
+ void zd_mac_clear(struct zd_mac *mac)
+ {
+-	/* Aquire the lock. */
+-	spin_lock(&mac->lock);
+-	spin_unlock(&mac->lock);
++	flush_workqueue(zd_workqueue);
++	skb_queue_purge(&mac->rx_queue);
++	tasklet_kill(&mac->rx_tasklet);
+ 	zd_chip_clear(&mac->chip);
+-	memset(mac, 0, sizeof(*mac));
++	ZD_ASSERT(!spin_is_locked(&mac->lock));
++	ZD_MEMCLEAR(mac, sizeof(struct zd_mac));
+ }
+ 
+-static int reset_mode(struct zd_mac *mac)
++static int set_rx_filter(struct zd_mac *mac)
+ {
+ 	struct ieee80211_device *ieee = zd_mac_to_ieee80211(mac);
+-	struct zd_ioreq32 ioreqs[3] = {
+-		{ CR_RX_FILTER, STA_RX_FILTER },
+-		{ CR_SNIFFER_ON, 0U },
+-	};
++	u32 filter = (ieee->iw_mode == IW_MODE_MONITOR) ? ~0 : STA_RX_FILTER;
++	return zd_iowrite32(&mac->chip, CR_RX_FILTER, filter);
++}
+ 
+-	if (ieee->iw_mode == IW_MODE_MONITOR) {
+-		ioreqs[0].value = 0xffffffff;
+-		ioreqs[1].value = 0x1;
+-		ioreqs[2].value = ENC_SNIFFER;
+-	}
++static int set_sniffer(struct zd_mac *mac)
++{
++	struct ieee80211_device *ieee = zd_mac_to_ieee80211(mac);
++	return zd_iowrite32(&mac->chip, CR_SNIFFER_ON,
++		ieee->iw_mode == IW_MODE_MONITOR ? 1 : 0);
++	return 0;
++}
++
++static int set_mc_hash(struct zd_mac *mac)
++{
++	struct zd_mc_hash hash;
++	struct ieee80211_device *ieee = zd_mac_to_ieee80211(mac);
++
++	zd_mc_clear(&hash);
++	if (ieee->iw_mode == IW_MODE_MONITOR)
++		zd_mc_add_all(&hash);
+ 
+-	return zd_iowrite32a(&mac->chip, ioreqs, 3);
++	return zd_chip_set_multicast_hash(&mac->chip, &hash);
+ }
+ 
+ int zd_mac_open(struct net_device *netdev)
+ {
+ 	struct zd_mac *mac = zd_netdev_mac(netdev);
+ 	struct zd_chip *chip = &mac->chip;
++	struct zd_usb *usb = &chip->usb;
+ 	int r;
+ 
++	if (!usb->initialized) {
++		r = zd_usb_init_hw(usb);
++		if (r)
++			goto out;
++	}
++
++	tasklet_enable(&mac->rx_tasklet);
++
+ 	r = zd_chip_enable_int(chip);
+ 	if (r < 0)
+ 		goto out;
+ 
++	r = zd_write_mac_addr(chip, netdev->dev_addr);
++	if (r)
++		goto disable_int;
++
+ 	r = zd_chip_set_basic_rates(chip, CR_RATES_80211B | CR_RATES_80211G);
+ 	if (r < 0)
+ 		goto disable_int;
+-	r = reset_mode(mac);
++	r = set_rx_filter(mac);
++	if (r)
++		goto disable_int;
++	r = set_sniffer(mac);
++	if (r)
++		goto disable_int;
++	r = set_mc_hash(mac);
+ 	if (r)
+ 		goto disable_int;
+ 	r = zd_chip_switch_radio_on(chip);
+@@ -180,6 +234,7 @@ int zd_mac_open(struct net_device *netdev)
+ 	if (r < 0)
+ 		goto disable_rx;
+ 
++	housekeeping_enable(mac);
+ 	ieee80211softmac_start(netdev);
+ 	return 0;
+ disable_rx:
+@@ -206,6 +261,9 @@ int zd_mac_stop(struct net_device *netdev)
+ 	 */
+ 
+ 	zd_chip_disable_rx(chip);
++	skb_queue_purge(&mac->rx_queue);
++	tasklet_disable(&mac->rx_tasklet);
++	housekeeping_disable(mac);
+ 	ieee80211softmac_stop(netdev);
+ 
+ 	zd_chip_disable_hwint(chip);
+@@ -229,9 +287,11 @@ int zd_mac_set_mac_address(struct net_device *netdev, void *p)
+ 	dev_dbg_f(zd_mac_dev(mac),
+ 		  "Setting MAC to " MAC_FMT "\n", MAC_ARG(addr->sa_data));
+ 
+-	r = zd_write_mac_addr(chip, addr->sa_data);
+-	if (r)
+-		return r;
++	if (netdev->flags & IFF_UP) {
++		r = zd_write_mac_addr(chip, addr->sa_data);
++		if (r)
++			return r;
++	}
+ 
+ 	spin_lock_irqsave(&mac->lock, flags);
+ 	memcpy(netdev->dev_addr, addr->sa_data, ETH_ALEN);
+@@ -240,6 +300,43 @@ int zd_mac_set_mac_address(struct net_device *netdev, void *p)
+ 	return 0;
+ }
+ 
++static void set_multicast_hash_handler(struct zd_mac *mac)
++{
++	struct zd_mc_hash hash;
++
++	spin_lock_irq(&mac->lock);
++	hash = mac->multicast_hash;
++	spin_unlock_irq(&mac->lock);
++
++	zd_chip_set_multicast_hash(&mac->chip, &hash);
++}
++
++void zd_mac_set_multicast_list(struct net_device *dev)
++{
++	struct zd_mac *mac = zd_netdev_mac(dev);
++	struct ieee80211_device *ieee = zd_mac_to_ieee80211(mac);
++	struct zd_mc_hash hash;
++	struct dev_mc_list *mc;
++	unsigned long flags;
++
++	if (dev->flags & (IFF_PROMISC|IFF_ALLMULTI) ||
++			ieee->iw_mode == IW_MODE_MONITOR) {
++		zd_mc_add_all(&hash);
++	} else {
++		zd_mc_clear(&hash);
++		for (mc = dev->mc_list; mc; mc = mc->next) {
++			dev_dbg_f(zd_mac_dev(mac), "mc addr " MAC_FMT "\n",
++				  MAC_ARG(mc->dmi_addr));
++			zd_mc_add_addr(&hash, mc->dmi_addr);
++		}
++	}
++
++	spin_lock_irqsave(&mac->lock, flags);
++	mac->multicast_hash = hash;
++	spin_unlock_irqrestore(&mac->lock, flags);
++	queue_work(zd_workqueue, &mac->set_multicast_hash_work);
++}
++
+ int zd_mac_set_regdomain(struct zd_mac *mac, u8 regdomain)
+ {
+ 	int r;
+@@ -290,7 +387,6 @@ static void set_channel(struct net_device *netdev, u8 channel)
+ 	zd_chip_set_channel(&mac->chip, channel);
+ }
+ 
+-/* TODO: Should not work in Managed mode. */
+ int zd_mac_request_channel(struct zd_mac *mac, u8 channel)
+ {
+ 	unsigned long lock_flags;
+@@ -312,55 +408,24 @@ int zd_mac_request_channel(struct zd_mac *mac, u8 channel)
+ 		return 0;
+ }
+ 
+-int zd_mac_get_channel(struct zd_mac *mac, u8 *channel, u8 *flags)
++u8 zd_mac_get_channel(struct zd_mac *mac)
+ {
+-	struct ieee80211_device *ieee = zd_mac_to_ieee80211(mac);
+-
+-	*channel = zd_chip_get_channel(&mac->chip);
+-	if (ieee->iw_mode != IW_MODE_INFRA) {
+-		spin_lock_irq(&mac->lock);
+-		*flags = *channel == mac->requested_channel ?
+-			MAC_FIXED_CHANNEL : 0;
+-		spin_unlock(&mac->lock);
+-	} else {
+-		*flags = 0;
+-	}
+-	dev_dbg_f(zd_mac_dev(mac), "channel %u flags %u\n", *channel, *flags);
+-	return 0;
+-}
+-
+-/* If wrong rate is given, we are falling back to the slowest rate: 1MBit/s */
+-static u8 cs_typed_rate(u8 cs_rate)
+-{
+-	static const u8 typed_rates[16] = {
+-		[ZD_CS_CCK_RATE_1M]	= ZD_CS_CCK|ZD_CS_CCK_RATE_1M,
+-		[ZD_CS_CCK_RATE_2M]	= ZD_CS_CCK|ZD_CS_CCK_RATE_2M,
+-		[ZD_CS_CCK_RATE_5_5M]	= ZD_CS_CCK|ZD_CS_CCK_RATE_5_5M,
+-		[ZD_CS_CCK_RATE_11M]	= ZD_CS_CCK|ZD_CS_CCK_RATE_11M,
+-		[ZD_OFDM_RATE_6M]	= ZD_CS_OFDM|ZD_OFDM_RATE_6M,
+-		[ZD_OFDM_RATE_9M]	= ZD_CS_OFDM|ZD_OFDM_RATE_9M,
+-		[ZD_OFDM_RATE_12M]	= ZD_CS_OFDM|ZD_OFDM_RATE_12M,
+-		[ZD_OFDM_RATE_18M]	= ZD_CS_OFDM|ZD_OFDM_RATE_18M,
+-		[ZD_OFDM_RATE_24M]	= ZD_CS_OFDM|ZD_OFDM_RATE_24M,
+-		[ZD_OFDM_RATE_36M]	= ZD_CS_OFDM|ZD_OFDM_RATE_36M,
+-		[ZD_OFDM_RATE_48M]	= ZD_CS_OFDM|ZD_OFDM_RATE_48M,
+-		[ZD_OFDM_RATE_54M]	= ZD_CS_OFDM|ZD_OFDM_RATE_54M,
+-	};
++	u8 channel = zd_chip_get_channel(&mac->chip);
+ 
+-	ZD_ASSERT(ZD_CS_RATE_MASK == 0x0f);
+-	return typed_rates[cs_rate & ZD_CS_RATE_MASK];
++	dev_dbg_f(zd_mac_dev(mac), "channel %u\n", channel);
++	return channel;
+ }
+ 
+ /* Fallback to lowest rate, if rate is unknown. */
+-static u8 rate_to_cs_rate(u8 rate)
++static u8 rate_to_zd_rate(u8 rate)
+ {
+ 	switch (rate) {
+ 	case IEEE80211_CCK_RATE_2MB:
+-		return ZD_CS_CCK_RATE_2M;
++		return ZD_CCK_RATE_2M;
+ 	case IEEE80211_CCK_RATE_5MB:
+-		return ZD_CS_CCK_RATE_5_5M;
++		return ZD_CCK_RATE_5_5M;
+ 	case IEEE80211_CCK_RATE_11MB:
+-		return ZD_CS_CCK_RATE_11M;
++		return ZD_CCK_RATE_11M;
+ 	case IEEE80211_OFDM_RATE_6MB:
+ 		return ZD_OFDM_RATE_6M;
+ 	case IEEE80211_OFDM_RATE_9MB:
+@@ -378,7 +443,7 @@ static u8 rate_to_cs_rate(u8 rate)
+ 	case IEEE80211_OFDM_RATE_54MB:
+ 		return ZD_OFDM_RATE_54M;
+ 	}
+-	return ZD_CS_CCK_RATE_1M;
++	return ZD_CCK_RATE_1M;
+ }
+ 
+ int zd_mac_set_mode(struct zd_mac *mac, u32 mode)
+@@ -405,8 +470,12 @@ int zd_mac_set_mode(struct zd_mac *mac, u32 mode)
+ 	ieee->iw_mode = mode;
+ 	spin_unlock_irq(&ieee->lock);
+ 
+-	if (netif_running(mac->netdev))
+-		return reset_mode(mac);
++	if (netif_running(mac->netdev)) {
++		int r = set_rx_filter(mac);
++		if (r)
++			return r;
++		return set_sniffer(mac);
++	}
+ 
+ 	return 0;
+ }
+@@ -459,6 +528,9 @@ int zd_mac_get_range(struct zd_mac *mac, struct iw_range *range)
+ 	range->we_version_compiled = WIRELESS_EXT;
+ 	range->we_version_source = 20;
+ 
++	range->enc_capa = IW_ENC_CAPA_WPA |  IW_ENC_CAPA_WPA2 |
++			  IW_ENC_CAPA_CIPHER_TKIP | IW_ENC_CAPA_CIPHER_CCMP;
++
+ 	ZD_ASSERT(!irqs_disabled());
+ 	spin_lock_irq(&mac->lock);
+ 	regdomain = mac->regdomain;
+@@ -479,35 +551,40 @@ int zd_mac_get_range(struct zd_mac *mac, struct iw_range *range)
+ 	return 0;
+ }
+ 
+-static int zd_calc_tx_length_us(u8 *service, u8 cs_rate, u16 tx_length)
++static int zd_calc_tx_length_us(u8 *service, u8 zd_rate, u16 tx_length)
+ {
++	/* ZD_PURE_RATE() must be used to remove the modulation type flag of
++	 * the zd-rate values. */
+ 	static const u8 rate_divisor[] = {
+-		[ZD_CS_CCK_RATE_1M]	=  1,
+-		[ZD_CS_CCK_RATE_2M]	=  2,
+-		[ZD_CS_CCK_RATE_5_5M]	= 11, /* bits must be doubled */
+-		[ZD_CS_CCK_RATE_11M]	= 11,
+-		[ZD_OFDM_RATE_6M]	=  6,
+-		[ZD_OFDM_RATE_9M]	=  9,
+-		[ZD_OFDM_RATE_12M]	= 12,
+-		[ZD_OFDM_RATE_18M]	= 18,
+-		[ZD_OFDM_RATE_24M]	= 24,
+-		[ZD_OFDM_RATE_36M]	= 36,
+-		[ZD_OFDM_RATE_48M]	= 48,
+-		[ZD_OFDM_RATE_54M]	= 54,
++		[ZD_PURE_RATE(ZD_CCK_RATE_1M)]		=  1,
++		[ZD_PURE_RATE(ZD_CCK_RATE_2M)]		=  2,
++
++		/* bits must be doubled */
++		[ZD_PURE_RATE(ZD_CCK_RATE_5_5M)]	= 11,
++
++		[ZD_PURE_RATE(ZD_CCK_RATE_11M)]		= 11,
++		[ZD_PURE_RATE(ZD_OFDM_RATE_6M)]		=  6,
++		[ZD_PURE_RATE(ZD_OFDM_RATE_9M)]		=  9,
++		[ZD_PURE_RATE(ZD_OFDM_RATE_12M)]	= 12,
++		[ZD_PURE_RATE(ZD_OFDM_RATE_18M)]	= 18,
++		[ZD_PURE_RATE(ZD_OFDM_RATE_24M)]	= 24,
++		[ZD_PURE_RATE(ZD_OFDM_RATE_36M)]	= 36,
++		[ZD_PURE_RATE(ZD_OFDM_RATE_48M)]	= 48,
++		[ZD_PURE_RATE(ZD_OFDM_RATE_54M)]	= 54,
+ 	};
+ 
+ 	u32 bits = (u32)tx_length * 8;
+ 	u32 divisor;
+ 
+-	divisor = rate_divisor[cs_rate];
++	divisor = rate_divisor[ZD_PURE_RATE(zd_rate)];
+ 	if (divisor == 0)
+ 		return -EINVAL;
+ 
+-	switch (cs_rate) {
+-	case ZD_CS_CCK_RATE_5_5M:
++	switch (zd_rate) {
++	case ZD_CCK_RATE_5_5M:
+ 		bits = (2*bits) + 10; /* round up to the next integer */
+ 		break;
+-	case ZD_CS_CCK_RATE_11M:
++	case ZD_CCK_RATE_11M:
+ 		if (service) {
+ 			u32 t = bits % 11;
+ 			*service &= ~ZD_PLCP_SERVICE_LENGTH_EXTENSION;
+@@ -522,46 +599,18 @@ static int zd_calc_tx_length_us(u8 *service, u8 cs_rate, u16 tx_length)
+ 	return bits/divisor;
+ }
+ 
+-enum {
+-	R2M_SHORT_PREAMBLE = 0x01,
+-	R2M_11A		   = 0x02,
+-};
+-
+-static u8 cs_rate_to_modulation(u8 cs_rate, int flags)
+-{
+-	u8 modulation;
+-
+-	modulation = cs_typed_rate(cs_rate);
+-	if (flags & R2M_SHORT_PREAMBLE) {
+-		switch (ZD_CS_RATE(modulation)) {
+-		case ZD_CS_CCK_RATE_2M:
+-		case ZD_CS_CCK_RATE_5_5M:
+-		case ZD_CS_CCK_RATE_11M:
+-			modulation |= ZD_CS_CCK_PREA_SHORT;
+-			return modulation;
+-		}
+-	}
+-	if (flags & R2M_11A) {
+-		if (ZD_CS_TYPE(modulation) == ZD_CS_OFDM)
+-			modulation |= ZD_CS_OFDM_MODE_11A;
+-	}
+-	return modulation;
+-}
+-
+ static void cs_set_modulation(struct zd_mac *mac, struct zd_ctrlset *cs,
+ 	                      struct ieee80211_hdr_4addr *hdr)
+ {
+ 	struct ieee80211softmac_device *softmac = ieee80211_priv(mac->netdev);
+ 	u16 ftype = WLAN_FC_GET_TYPE(le16_to_cpu(hdr->frame_ctl));
+-	u8 rate, cs_rate;
++	u8 rate;
+ 	int is_mgt = (ftype == IEEE80211_FTYPE_MGMT) != 0;
+ 
+ 	/* FIXME: 802.11a? short preamble? */
+ 	rate = ieee80211softmac_suggest_txrate(softmac,
+ 		is_multicast_ether_addr(hdr->addr1), is_mgt);
+-
+-	cs_rate = rate_to_cs_rate(rate);
+-	cs->modulation = cs_rate_to_modulation(cs_rate, 0);
++	cs->modulation = rate_to_zd_rate(rate);;
+ }
+ 
+ static void cs_set_control(struct zd_mac *mac, struct zd_ctrlset *cs,
+@@ -599,7 +648,7 @@ static void cs_set_control(struct zd_mac *mac, struct zd_ctrlset *cs,
+ 		cs->control |= ZD_CS_MULTICAST;
+ 
+ 	/* PS-POLL */
+-	if (stype == IEEE80211_STYPE_PSPOLL)
++	if (ftype == IEEE80211_FTYPE_CTL && stype == IEEE80211_STYPE_PSPOLL)
+ 		cs->control |= ZD_CS_PS_POLL_FRAME;
+ 
+ 	if (!is_multicast_ether_addr(header->addr1) &&
+@@ -607,7 +656,7 @@ static void cs_set_control(struct zd_mac *mac, struct zd_ctrlset *cs,
+ 	    tx_length > zd_netdev_ieee80211(mac->netdev)->rts)
+ 	{
+ 		/* FIXME: check the logic */
+-		if (ZD_CS_TYPE(cs->modulation) == ZD_CS_OFDM) {
++		if (ZD_MODULATION_TYPE(cs->modulation) == ZD_OFDM) {
+ 			/* 802.11g */
+ 			cs->control |= ZD_CS_SELF_CTS;
+ 		} else { /* 802.11b */
+@@ -652,7 +701,7 @@ static int fill_ctrlset(struct zd_mac *mac,
+ 	/* ZD1211B: Computing the length difference this way, gives us
+ 	 * flexibility to compute the packet length.
+ 	 */
+-	cs->packet_length = cpu_to_le16(mac->chip.is_zd1211b ?
++	cs->packet_length = cpu_to_le16(zd_chip_is_zd1211b(&mac->chip) ?
+ 			packet_length - frag_len : packet_length);
+ 
+ 	/*
+@@ -669,7 +718,7 @@ static int fill_ctrlset(struct zd_mac *mac,
+ 	 * - see line 53 of zdinlinef.h
+ 	 */
+ 	cs->service = 0;
+-	r = zd_calc_tx_length_us(&cs->service, ZD_CS_RATE(cs->modulation),
++	r = zd_calc_tx_length_us(&cs->service, ZD_RATE(cs->modulation),
+ 		                 le16_to_cpu(cs->tx_length));
+ 	if (r < 0)
+ 		return r;
+@@ -678,7 +727,7 @@ static int fill_ctrlset(struct zd_mac *mac,
+ 	if (next_frag_len == 0) {
+ 		cs->next_frame_length = 0;
+ 	} else {
+-		r = zd_calc_tx_length_us(NULL, ZD_CS_RATE(cs->modulation),
++		r = zd_calc_tx_length_us(NULL, ZD_RATE(cs->modulation),
+ 			                 next_frag_len);
+ 		if (r < 0)
+ 			return r;
+@@ -691,16 +740,21 @@ static int fill_ctrlset(struct zd_mac *mac,
+ static int zd_mac_tx(struct zd_mac *mac, struct ieee80211_txb *txb, int pri)
+ {
+ 	int i, r;
++	struct ieee80211_device *ieee = zd_mac_to_ieee80211(mac);
+ 
+ 	for (i = 0; i < txb->nr_frags; i++) {
+ 		struct sk_buff *skb = txb->fragments[i];
+ 
+ 		r = fill_ctrlset(mac, txb, i);
+-		if (r)
++		if (r) {
++			ieee->stats.tx_dropped++;
+ 			return r;
++		}
+ 		r = zd_usb_tx(&mac->chip.usb, skb->data, skb->len);
+-		if (r)
++		if (r) {
++			ieee->stats.tx_dropped++;
+ 			return r;
++		}
+ 	}
+ 
+ 	/* FIXME: shouldn't this be handled by the upper layers? */
+@@ -757,14 +811,14 @@ static int is_data_packet_for_us(struct ieee80211_device *ieee,
+ 	switch (ieee->iw_mode) {
+ 	case IW_MODE_ADHOC:
+ 		if ((fc & (IEEE80211_FCTL_TODS|IEEE80211_FCTL_FROMDS)) != 0 ||
+-		    memcmp(hdr->addr3, ieee->bssid, ETH_ALEN) != 0)
++		    compare_ether_addr(hdr->addr3, ieee->bssid) != 0)
+ 			return 0;
+ 		break;
+ 	case IW_MODE_AUTO:
+ 	case IW_MODE_INFRA:
+ 		if ((fc & (IEEE80211_FCTL_TODS|IEEE80211_FCTL_FROMDS)) !=
+ 		    IEEE80211_FCTL_FROMDS ||
+-		    memcmp(hdr->addr2, ieee->bssid, ETH_ALEN) != 0)
++		    compare_ether_addr(hdr->addr2, ieee->bssid) != 0)
+ 			return 0;
+ 		break;
+ 	default:
+@@ -772,14 +826,17 @@ static int is_data_packet_for_us(struct ieee80211_device *ieee,
+ 		return 0;
+ 	}
+ 
+-	return memcmp(hdr->addr1, netdev->dev_addr, ETH_ALEN) == 0 ||
+-	       is_multicast_ether_addr(hdr->addr1) ||
++	return compare_ether_addr(hdr->addr1, netdev->dev_addr) == 0 ||
++	       (is_multicast_ether_addr(hdr->addr1) &&
++		compare_ether_addr(hdr->addr3, netdev->dev_addr) != 0) ||
+ 	       (netdev->flags & IFF_PROMISC);
+ }
+ 
+-/* Filters receiving packets. If it returns 1 send it to ieee80211_rx, if 0
+- * return. If an error is detected -EINVAL is returned. ieee80211_rx_mgt() is
+- * called here.
++/* Filters received packets. The function returns 1 if the packet should be
++ * forwarded to ieee80211_rx(). If the packet should be ignored the function
++ * returns 0. If an invalid packet is found the function returns -EINVAL.
++ *
++ * The function calls ieee80211_rx_mgt() directly.
+  *
+  * It has been based on ieee80211_rx_any.
+  */
+@@ -805,9 +862,9 @@ static int filter_rx(struct ieee80211_device *ieee,
+ 		ieee80211_rx_mgt(ieee, hdr, stats);
+ 		return 0;
+ 	case IEEE80211_FTYPE_CTL:
+-		/* Ignore invalid short buffers */
+ 		return 0;
+ 	case IEEE80211_FTYPE_DATA:
++		/* Ignore invalid short buffers */
+ 		if (length < sizeof(struct ieee80211_hdr_3addr))
+ 			return -EINVAL;
+ 		return is_data_packet_for_us(ieee, hdr);
+@@ -827,7 +884,7 @@ static void update_qual_rssi(struct zd_mac *mac,
+ 	hdr = (struct ieee80211_hdr_3addr *)buffer;
+ 	if (length < offsetof(struct ieee80211_hdr_3addr, addr3))
+ 		return;
+-	if (memcmp(hdr->addr2, zd_mac_to_ieee80211(mac)->bssid, ETH_ALEN) != 0)
++	if (compare_ether_addr(hdr->addr2, zd_mac_to_ieee80211(mac)->bssid) != 0)
+ 		return;
+ 
+ 	spin_lock_irqsave(&mac->lock, flags);
+@@ -845,11 +902,26 @@ static int fill_rx_stats(struct ieee80211_rx_stats *stats,
+ {
+ 	const struct rx_status *status;
+ 
+-	*pstatus = status = zd_tail(buffer, length, sizeof(struct rx_status));
++	*pstatus = status = (struct rx_status *)
++		(buffer + (length - sizeof(struct rx_status)));
+ 	if (status->frame_status & ZD_RX_ERROR) {
+-		/* FIXME: update? */
++		struct ieee80211_device *ieee = zd_mac_to_ieee80211(mac);
++		ieee->stats.rx_errors++;
++		if (status->frame_status & ZD_RX_TIMEOUT_ERROR)
++			ieee->stats.rx_missed_errors++;
++		else if (status->frame_status & ZD_RX_FIFO_OVERRUN_ERROR)
++			ieee->stats.rx_fifo_errors++;
++		else if (status->frame_status & ZD_RX_DECRYPTION_ERROR)
++			ieee->ieee_stats.rx_discards_undecryptable++;
++		else if (status->frame_status & ZD_RX_CRC32_ERROR) {
++			ieee->stats.rx_crc_errors++;
++			ieee->ieee_stats.rx_fcs_errors++;
++		}
++		else if (status->frame_status & ZD_RX_CRC16_ERROR)
++			ieee->stats.rx_crc_errors++;
+ 		return -EINVAL;
+ 	}
++
+ 	memset(stats, 0, sizeof(struct ieee80211_rx_stats));
+ 	stats->len = length - (ZD_PLCP_HEADER_SIZE + IEEE80211_FCS_LEN +
+ 		               + sizeof(struct rx_status));
+@@ -868,45 +940,87 @@ static int fill_rx_stats(struct ieee80211_rx_stats *stats,
+ 	return 0;
+ }
+ 
+-int zd_mac_rx(struct zd_mac *mac, const u8 *buffer, unsigned int length)
++static void zd_mac_rx(struct zd_mac *mac, struct sk_buff *skb)
+ {
+ 	int r;
+ 	struct ieee80211_device *ieee = zd_mac_to_ieee80211(mac);
+ 	struct ieee80211_rx_stats stats;
+ 	const struct rx_status *status;
+-	struct sk_buff *skb;
+ 
+-	if (length < ZD_PLCP_HEADER_SIZE + IEEE80211_1ADDR_LEN +
+-	             IEEE80211_FCS_LEN + sizeof(struct rx_status))
+-		return -EINVAL;
++	if (skb->len < ZD_PLCP_HEADER_SIZE + IEEE80211_1ADDR_LEN +
++	               IEEE80211_FCS_LEN + sizeof(struct rx_status))
++	{
++		ieee->stats.rx_errors++;
++		ieee->stats.rx_length_errors++;
++		goto free_skb;
++	}
+ 
+-	r = fill_rx_stats(&stats, &status, mac, buffer, length);
+-	if (r)
+-		return r;
++	r = fill_rx_stats(&stats, &status, mac, skb->data, skb->len);
++	if (r) {
++		/* Only packets with rx errors are included here.
++		 * The error stats have already been set in fill_rx_stats.
++		 */
++		goto free_skb;
++	}
+ 
+-	length -= ZD_PLCP_HEADER_SIZE+IEEE80211_FCS_LEN+
+-		  sizeof(struct rx_status);
+-	buffer += ZD_PLCP_HEADER_SIZE;
++	__skb_pull(skb, ZD_PLCP_HEADER_SIZE);
++	__skb_trim(skb, skb->len -
++		        (IEEE80211_FCS_LEN + sizeof(struct rx_status)));
+ 
+-	update_qual_rssi(mac, buffer, length, stats.signal, stats.rssi);
++	ZD_ASSERT(IS_ALIGNED((unsigned long)skb->data, 4));
+ 
+-	r = filter_rx(ieee, buffer, length, &stats);
+-	if (r <= 0)
+-		return r;
++	update_qual_rssi(mac, skb->data, skb->len, stats.signal,
++		         status->signal_strength);
++
++	r = filter_rx(ieee, skb->data, skb->len, &stats);
++	if (r <= 0) {
++		if (r < 0) {
++			ieee->stats.rx_errors++;
++			dev_dbg_f(zd_mac_dev(mac), "Error in packet.\n");
++		}
++		goto free_skb;
++	}
+ 
+-	skb = dev_alloc_skb(sizeof(struct zd_rt_hdr) + length);
+-	if (!skb)
+-		return -ENOMEM;
+ 	if (ieee->iw_mode == IW_MODE_MONITOR)
+-		fill_rt_header(skb_put(skb, sizeof(struct zd_rt_hdr)), mac,
++		fill_rt_header(skb_push(skb, sizeof(struct zd_rt_hdr)), mac,
+ 			       &stats, status);
+-	memcpy(skb_put(skb, length), buffer, length);
+ 
+ 	r = ieee80211_rx(ieee, skb, &stats);
+-	if (!r) {
+-		ZD_ASSERT(in_irq());
+-		dev_kfree_skb_irq(skb);
++	if (r)
++		return;
++free_skb:
++	/* We are always in a soft irq. */
++	dev_kfree_skb(skb);
++}
++
++static void do_rx(unsigned long mac_ptr)
++{
++	struct zd_mac *mac = (struct zd_mac *)mac_ptr;
++	struct sk_buff *skb;
++
++	while ((skb = skb_dequeue(&mac->rx_queue)) != NULL)
++		zd_mac_rx(mac, skb);
++}
++
++int zd_mac_rx_irq(struct zd_mac *mac, const u8 *buffer, unsigned int length)
++{
++	struct sk_buff *skb;
++	unsigned int reserved =
++		ALIGN(max_t(unsigned int,
++		            sizeof(struct zd_rt_hdr), ZD_PLCP_HEADER_SIZE), 4) -
++		ZD_PLCP_HEADER_SIZE;
++
++	skb = dev_alloc_skb(reserved + length);
++	if (!skb) {
++		struct ieee80211_device *ieee = zd_mac_to_ieee80211(mac);
++		dev_warn(zd_mac_dev(mac), "Could not allocate skb.\n");
++		ieee->stats.rx_dropped++;
++		return -ENOMEM;
+ 	}
++	skb_reserve(skb, reserved);
++	memcpy(__skb_put(skb, length), buffer, length);
++	skb_queue_tail(&mac->rx_queue, skb);
++	tasklet_schedule(&mac->rx_tasklet);
+ 	return 0;
+ }
+ 
+@@ -1023,62 +1137,45 @@ struct iw_statistics *zd_mac_get_wireless_stats(struct net_device *ndev)
+ 	return iw_stats;
+ }
+ 
+-#ifdef DEBUG
+-static const char* decryption_types[] = {
+-	[ZD_RX_NO_WEP] = "none",
+-	[ZD_RX_WEP64] = "WEP64",
+-	[ZD_RX_TKIP] = "TKIP",
+-	[ZD_RX_AES] = "AES",
+-	[ZD_RX_WEP128] = "WEP128",
+-	[ZD_RX_WEP256] = "WEP256",
+-};
+-
+-static const char *decryption_type_string(u8 type)
++#define LINK_LED_WORK_DELAY HZ
++
++static void link_led_handler(struct zd_mac *mac)
+ {
+-	const char *s;
++	struct zd_chip *chip = &mac->chip;
++	struct ieee80211softmac_device *sm = ieee80211_priv(mac->netdev);
++	int is_associated;
++	int r;
+ 
+-	if (type < ARRAY_SIZE(decryption_types)) {
+-		s = decryption_types[type];
+-	} else {
+-		s = NULL;
+-	}
+-	return s ? s : "unknown";
++	spin_lock_irq(&mac->lock);
++	is_associated = sm->associated != 0;
++	spin_unlock_irq(&mac->lock);
++
++	r = zd_chip_control_leds(chip,
++		                 is_associated ? LED_ASSOCIATED : LED_SCANNING);
++	if (r)
++		dev_err(zd_mac_dev(mac), "zd_chip_control_leds error %d\n", r);
++
++	queue_delayed_work(zd_workqueue, &mac->housekeeping.link_led_work,
++		           LINK_LED_WORK_DELAY);
+ }
+ 
+-static int is_ofdm(u8 frame_status)
++static void housekeeping_init(struct zd_mac *mac)
+ {
+-	return (frame_status & ZD_RX_OFDM);
++	INIT_WORK(&mac->housekeeping.link_led_work,
++			(void (*)(void *))link_led_handler, mac);
+ }
+ 
+-void zd_dump_rx_status(const struct rx_status *status)
++static void housekeeping_enable(struct zd_mac *mac)
+ {
+-	const char* modulation;
+-	u8 quality;
++	dev_dbg_f(zd_mac_dev(mac), "\n");
++	queue_delayed_work(zd_workqueue, &mac->housekeeping.link_led_work,
++			   0);
++}
+ 
+-	if (is_ofdm(status->frame_status)) {
+-		modulation = "ofdm";
+-		quality = status->signal_quality_ofdm;
+-	} else {
+-		modulation = "cck";
+-		quality = status->signal_quality_cck;
+-	}
+-	pr_debug("rx status %s strength %#04x qual %#04x decryption %s\n",
+-		modulation, status->signal_strength, quality,
+-		decryption_type_string(status->decryption_type));
+-	if (status->frame_status & ZD_RX_ERROR) {
+-		pr_debug("rx error %s%s%s%s%s%s\n",
+-			(status->frame_status & ZD_RX_TIMEOUT_ERROR) ?
+-				"timeout " : "",
+-			(status->frame_status & ZD_RX_FIFO_OVERRUN_ERROR) ?
+-				"fifo " : "",
+-			(status->frame_status & ZD_RX_DECRYPTION_ERROR) ?
+-				"decryption " : "",
+-			(status->frame_status & ZD_RX_CRC32_ERROR) ?
+-				"crc32 " : "",
+-			(status->frame_status & ZD_RX_NO_ADDR1_MATCH_ERROR) ?
+-				"addr1 " : "",
+-			(status->frame_status & ZD_RX_CRC16_ERROR) ?
+-				"crc16" : "");
+-	}
++static void housekeeping_disable(struct zd_mac *mac)
++{
++	dev_dbg_f(zd_mac_dev(mac), "\n");
++	cancel_rearming_delayed_workqueue(zd_workqueue,
++		&mac->housekeeping.link_led_work);
++	zd_chip_control_leds(&mac->chip, LED_OFF);
+ }
+-#endif /* DEBUG */
+diff --git a/drivers/net/wireless/zd1211rw/zd_mac.h b/drivers/net/wireless/zd1211rw/zd_mac.h
+index b3ba49b..68bd86a 100644
+--- a/drivers/net/wireless/zd1211rw/zd_mac.h
++++ b/drivers/net/wireless/zd1211rw/zd_mac.h
+@@ -39,27 +39,51 @@ struct zd_ctrlset {
+ 
+ #define ZD_CS_RESERVED_SIZE	25
+ 
+-/* zd_crtlset field modulation */
+-#define ZD_CS_RATE_MASK		0x0f
+-#define ZD_CS_TYPE_MASK		0x10
+-#define ZD_CS_RATE(modulation) ((modulation) & ZD_CS_RATE_MASK)
+-#define ZD_CS_TYPE(modulation) ((modulation) & ZD_CS_TYPE_MASK)
+-
+-#define ZD_CS_CCK		0x00
+-#define ZD_CS_OFDM		0x10
+-
+-#define ZD_CS_CCK_RATE_1M	0x00
+-#define ZD_CS_CCK_RATE_2M	0x01
+-#define ZD_CS_CCK_RATE_5_5M	0x02
+-#define ZD_CS_CCK_RATE_11M	0x03
+-/* The rates for OFDM are encoded as in the PLCP header. Use ZD_OFDM_RATE_*.
++/* The field modulation of struct zd_ctrlset controls the bit rate, the use
++ * of short or long preambles in 802.11b (CCK mode) or the use of 802.11a or
++ * 802.11g in OFDM mode.
++ *
++ * The term zd-rate is used for the combination of the modulation type flag
++ * and the "pure" rate value.
+  */
+-
+-/* bit 5 is preamble (when in CCK mode), or a/g selection (when in OFDM mode) */
+-#define ZD_CS_CCK_PREA_LONG	0x00
+-#define ZD_CS_CCK_PREA_SHORT	0x20
+-#define ZD_CS_OFDM_MODE_11G	0x00
+-#define ZD_CS_OFDM_MODE_11A	0x20
++#define ZD_PURE_RATE_MASK       0x0f
++#define ZD_MODULATION_TYPE_MASK 0x10
++#define ZD_RATE_MASK            (ZD_PURE_RATE_MASK|ZD_MODULATION_TYPE_MASK)
++#define ZD_PURE_RATE(modulation) ((modulation) & ZD_PURE_RATE_MASK)
++#define ZD_MODULATION_TYPE(modulation) ((modulation) & ZD_MODULATION_TYPE_MASK)
++#define ZD_RATE(modulation) ((modulation) & ZD_RATE_MASK)
++
++/* The two possible modulation types. Notify that 802.11b doesn't use the CCK
++ * codeing for the 1 and 2 MBit/s rate. We stay with the term here to remain
++ * consistent with uses the term at other places.
++  */
++#define ZD_CCK                  0x00
++#define ZD_OFDM                 0x10
++
++/* The ZD1211 firmware uses proprietary encodings of the 802.11b (CCK) rates.
++ * For OFDM the PLCP rate encodings are used. We combine these "pure" rates
++ * with the modulation type flag and call the resulting values zd-rates.
++ */
++#define ZD_CCK_RATE_1M          (ZD_CCK|0x00)
++#define ZD_CCK_RATE_2M          (ZD_CCK|0x01)
++#define ZD_CCK_RATE_5_5M        (ZD_CCK|0x02)
++#define ZD_CCK_RATE_11M         (ZD_CCK|0x03)
++#define ZD_OFDM_RATE_6M         (ZD_OFDM|ZD_OFDM_PLCP_RATE_6M)
++#define ZD_OFDM_RATE_9M         (ZD_OFDM|ZD_OFDM_PLCP_RATE_9M)
++#define ZD_OFDM_RATE_12M        (ZD_OFDM|ZD_OFDM_PLCP_RATE_12M)
++#define ZD_OFDM_RATE_18M        (ZD_OFDM|ZD_OFDM_PLCP_RATE_18M)
++#define ZD_OFDM_RATE_24M        (ZD_OFDM|ZD_OFDM_PLCP_RATE_24M)
++#define ZD_OFDM_RATE_36M        (ZD_OFDM|ZD_OFDM_PLCP_RATE_36M)
++#define ZD_OFDM_RATE_48M        (ZD_OFDM|ZD_OFDM_PLCP_RATE_48M)
++#define ZD_OFDM_RATE_54M        (ZD_OFDM|ZD_OFDM_PLCP_RATE_54M)
++
++/* The bit 5 of the zd_ctrlset modulation field controls the preamble in CCK
++ * mode or the 802.11a/802.11g selection in OFDM mode.
++ */
++#define ZD_CCK_PREA_LONG        0x00
++#define ZD_CCK_PREA_SHORT       0x20
++#define ZD_OFDM_MODE_11G        0x00
++#define ZD_OFDM_MODE_11A        0x20
+ 
+ /* zd_ctrlset control field */
+ #define ZD_CS_NEED_RANDOM_BACKOFF	0x01
+@@ -116,18 +140,24 @@ struct rx_status {
+ #define ZD_RX_CRC16_ERROR		0x40
+ #define ZD_RX_ERROR			0x80
+ 
+-enum mac_flags {
+-	MAC_FIXED_CHANNEL = 0x01,
++struct housekeeping {
++	struct work_struct link_led_work;
+ };
+ 
+ #define ZD_MAC_STATS_BUFFER_SIZE 16
+ 
+ struct zd_mac {
+-	struct net_device *netdev;
+ 	struct zd_chip chip;
+ 	spinlock_t lock;
++	struct net_device *netdev;
+ 	/* Unlocked reading possible */
+ 	struct iw_statistics iw_stats;
++	struct housekeeping housekeeping;
++	struct work_struct set_multicast_hash_work;
++	struct zd_mc_hash multicast_hash;
++	struct tasklet_struct rx_tasklet;
++	struct sk_buff_head rx_queue;
++
+ 	unsigned int stats_count;
+ 	u8 qual_buffer[ZD_MAC_STATS_BUFFER_SIZE];
+ 	u8 rssi_buffer[ZD_MAC_STATS_BUFFER_SIZE];
+@@ -163,19 +193,21 @@ int zd_mac_init(struct zd_mac *mac,
+ 		struct usb_interface *intf);
+ void zd_mac_clear(struct zd_mac *mac);
+ 
+-int zd_mac_init_hw(struct zd_mac *mac, u8 device_type);
++int zd_mac_preinit_hw(struct zd_mac *mac);
++int zd_mac_init_hw(struct zd_mac *mac);
+ 
+ int zd_mac_open(struct net_device *netdev);
+ int zd_mac_stop(struct net_device *netdev);
+ int zd_mac_set_mac_address(struct net_device *dev, void *p);
++void zd_mac_set_multicast_list(struct net_device *netdev);
+ 
+-int zd_mac_rx(struct zd_mac *mac, const u8 *buffer, unsigned int length);
++int zd_mac_rx_irq(struct zd_mac *mac, const u8 *buffer, unsigned int length);
+ 
+ int zd_mac_set_regdomain(struct zd_mac *zd_mac, u8 regdomain);
+ u8 zd_mac_get_regdomain(struct zd_mac *zd_mac);
+ 
+ int zd_mac_request_channel(struct zd_mac *mac, u8 channel);
+-int zd_mac_get_channel(struct zd_mac *mac, u8 *channel, u8 *flags);
++u8 zd_mac_get_channel(struct zd_mac *mac);
+ 
+ int zd_mac_set_mode(struct zd_mac *mac, u32 mode);
+ int zd_mac_get_mode(struct zd_mac *mac, u32 *mode);
+diff --git a/drivers/net/wireless/zd1211rw/zd_netdev.c b/drivers/net/wireless/zd1211rw/zd_netdev.c
+index 9df232c..2cedf11 100644
+--- a/drivers/net/wireless/zd1211rw/zd_netdev.c
++++ b/drivers/net/wireless/zd1211rw/zd_netdev.c
+@@ -72,10 +72,18 @@ static int iw_get_name(struct net_device *netdev,
+ 	               struct iw_request_info *info,
+ 		       union iwreq_data *req, char *extra)
+ {
+-	/* FIXME: check whether 802.11a will also supported, add also
+-	 *        zd1211B, if we support it.
+-	 */
+-	strlcpy(req->name, "802.11g zd1211", IFNAMSIZ);
++	/* FIXME: check whether 802.11a will also supported */
++	strlcpy(req->name, "IEEE 802.11b/g", IFNAMSIZ);
++	return 0;
++}
++
++static int iw_get_nick(struct net_device *netdev,
++	               struct iw_request_info *info,
++		       union iwreq_data *req, char *extra)
++{
++	strcpy(extra, "zd1211");
++	req->data.length = strlen(extra) + 1;
++	req->data.flags = 1;
+ 	return 0;
+ }
+ 
+@@ -99,21 +107,10 @@ static int iw_get_freq(struct net_device *netdev,
+ 	           struct iw_request_info *info,
+ 		   union iwreq_data *req, char *extra)
+ {
+-	int r;
+ 	struct zd_mac *mac = zd_netdev_mac(netdev);
+ 	struct iw_freq *freq = &req->freq;
+-	u8 channel;
+-	u8 flags;
+-
+-	r = zd_mac_get_channel(mac, &channel, &flags);
+-	if (r)
+-		return r;
+ 
+-	freq->flags = (flags & MAC_FIXED_CHANNEL) ?
+-		      IW_FREQ_FIXED : IW_FREQ_AUTO;
+-	dev_dbg_f(zd_mac_dev(mac), "channel %s\n",
+-		  (flags & MAC_FIXED_CHANNEL) ? "fixed" : "auto");
+-	return zd_channel_to_freq(freq, channel);
++	return zd_channel_to_freq(freq, zd_mac_get_channel(mac));
+ }
+ 
+ static int iw_set_mode(struct net_device *netdev,
+@@ -181,6 +178,7 @@ static int iw_get_encodeext(struct net_device *netdev,
+ 
+ static const iw_handler zd_standard_iw_handlers[] = {
+ 	WX(SIOCGIWNAME)		= iw_get_name,
++	WX(SIOCGIWNICKN)	= iw_get_nick,
+ 	WX(SIOCSIWFREQ)		= iw_set_freq,
+ 	WX(SIOCGIWFREQ)		= iw_get_freq,
+ 	WX(SIOCSIWMODE)		= iw_set_mode,
+@@ -235,7 +233,6 @@ struct net_device *zd_netdev_alloc(struct usb_interface *intf)
+ 		return NULL;
+ 	}
+ 
+-	SET_MODULE_OWNER(netdev);
+ 	SET_NETDEV_DEV(netdev, &intf->dev);
+ 
+ 	dev_dbg_f(&intf->dev, "netdev->flags %#06hx\n", netdev->flags);
+@@ -244,7 +241,7 @@ struct net_device *zd_netdev_alloc(struct usb_interface *intf)
+ 	netdev->open = zd_mac_open;
+ 	netdev->stop = zd_mac_stop;
+ 	/* netdev->get_stats = */
+-	/* netdev->set_multicast_list = */
++	netdev->set_multicast_list = zd_mac_set_multicast_list;
+ 	netdev->set_mac_address = zd_mac_set_mac_address;
+ 	netdev->wireless_handlers = &iw_handler_def;
+ 	/* netdev->ethtool_ops = */
+diff --git a/drivers/net/wireless/zd1211rw/zd_rf.c b/drivers/net/wireless/zd1211rw/zd_rf.c
+index d3770d2..abe5d38 100644
+--- a/drivers/net/wireless/zd1211rw/zd_rf.c
++++ b/drivers/net/wireless/zd1211rw/zd_rf.c
+@@ -23,7 +23,7 @@
+ #include "zd_ieee80211.h"
+ #include "zd_chip.h"
+ 
+-static const char *rfs[] = {
++static const char * const rfs[] = {
+ 	[0]		= "unknown RF0",
+ 	[1]		= "unknown RF1",
+ 	[UW2451_RF]	= "UW2451_RF",
+@@ -52,29 +52,39 @@ const char *zd_rf_name(u8 type)
+ void zd_rf_init(struct zd_rf *rf)
+ {
+ 	memset(rf, 0, sizeof(*rf));
++
++	/* default to update channel integration, as almost all RF's do want
++	 * this */
++	rf->update_channel_int = 1;
+ }
+ 
+ void zd_rf_clear(struct zd_rf *rf)
+ {
+-	memset(rf, 0, sizeof(*rf));
++	if (rf->clear)
++		rf->clear(rf);
++	ZD_MEMCLEAR(rf, sizeof(*rf));
+ }
+ 
+ int zd_rf_init_hw(struct zd_rf *rf, u8 type)
+ {
+-	int r, t;
++	int r = 0;
++	int t;
+ 	struct zd_chip *chip = zd_rf_to_chip(rf);
+ 
+ 	ZD_ASSERT(mutex_is_locked(&chip->mutex));
+ 	switch (type) {
+ 	case RF2959_RF:
+ 		r = zd_rf_init_rf2959(rf);
+-		if (r)
+-			return r;
+ 		break;
+ 	case AL2230_RF:
++	case AL2230S_RF:
+ 		r = zd_rf_init_al2230(rf);
+-		if (r)
+-			return r;
++		break;
++	case AL7230B_RF:
++		r = zd_rf_init_al7230b(rf);
++		break;
++	case UW2453_RF:
++		r = zd_rf_init_uw2453(rf);
+ 		break;
+ 	default:
+ 		dev_err(zd_chip_dev(chip),
+@@ -83,6 +93,9 @@ int zd_rf_init_hw(struct zd_rf *rf, u8 type)
+ 		return -ENODEV;
+ 	}
+ 
++	if (r)
++		return r;
++
+ 	rf->type = type;
+ 
+ 	r = zd_chip_lock_phy_regs(chip);
+@@ -149,3 +162,17 @@ int zd_switch_radio_off(struct zd_rf *rf)
+ 		r = t;
+ 	return r;
+ }
++
++int zd_rf_patch_6m_band_edge(struct zd_rf *rf, u8 channel)
++{
++	if (!rf->patch_6m_band_edge)
++		return 0;
++
++	return rf->patch_6m_band_edge(rf, channel);
++}
++
++int zd_rf_generic_patch_6m(struct zd_rf *rf, u8 channel)
++{
++	return zd_chip_generic_patch_6m_band(zd_rf_to_chip(rf), channel);
++}
++
+diff --git a/drivers/net/wireless/zd1211rw/zd_rf.h b/drivers/net/wireless/zd1211rw/zd_rf.h
+index ea30f69..30502f2 100644
+--- a/drivers/net/wireless/zd1211rw/zd_rf.h
++++ b/drivers/net/wireless/zd1211rw/zd_rf.h
+@@ -18,8 +18,6 @@
+ #ifndef _ZD_RF_H
+ #define _ZD_RF_H
+ 
+-#include "zd_types.h"
+-
+ #define UW2451_RF			0x2
+ #define UCHIP_RF			0x3
+ #define AL2230_RF			0x4
+@@ -49,17 +47,27 @@ struct zd_rf {
+ 	u8 type;
+ 
+ 	u8 channel;
+-	/*
+-	 * Whether this RF should patch the 6M band edge
+-	 * (assuming E2P_POD agrees)
+-	 */
+-	u8 patch_6m_band_edge:1;
++
++	/* whether channel integration and calibration should be updated
++	 * defaults to 1 (yes) */
++	u8 update_channel_int:1;
++
++	/* whether CR47 should be patched from the EEPROM, if the appropriate
++	 * flag is set in the POD. The vendor driver suggests that this should
++	 * be done for all RF's, but a bug in their code prevents but their
++	 * HW_OverWritePhyRegFromE2P() routine from ever taking effect. */
++	u8 patch_cck_gain:1;
++
++	/* private RF driver data */
++	void *priv;
+ 
+ 	/* RF-specific functions */
+ 	int (*init_hw)(struct zd_rf *rf);
+ 	int (*set_channel)(struct zd_rf *rf, u8 channel);
+ 	int (*switch_radio_on)(struct zd_rf *rf);
+ 	int (*switch_radio_off)(struct zd_rf *rf);
++	int (*patch_6m_band_edge)(struct zd_rf *rf, u8 channel);
++	void (*clear)(struct zd_rf *rf);
+ };
+ 
+ const char *zd_rf_name(u8 type);
+@@ -74,9 +82,27 @@ int zd_rf_set_channel(struct zd_rf *rf, u8 channel);
+ int zd_switch_radio_on(struct zd_rf *rf);
+ int zd_switch_radio_off(struct zd_rf *rf);
+ 
++int zd_rf_patch_6m_band_edge(struct zd_rf *rf, u8 channel);
++int zd_rf_generic_patch_6m(struct zd_rf *rf, u8 channel);
++
++static inline int zd_rf_should_update_pwr_int(struct zd_rf *rf)
++{
++	return rf->update_channel_int;
++}
++
++static inline int zd_rf_should_patch_cck_gain(struct zd_rf *rf)
++{
++	return rf->patch_cck_gain;
++}
++
++int zd_rf_patch_6m_band_edge(struct zd_rf *rf, u8 channel);
++int zd_rf_generic_patch_6m(struct zd_rf *rf, u8 channel);
++
+ /* Functions for individual RF chips */
+ 
+ int zd_rf_init_rf2959(struct zd_rf *rf);
+ int zd_rf_init_al2230(struct zd_rf *rf);
++int zd_rf_init_al7230b(struct zd_rf *rf);
++int zd_rf_init_uw2453(struct zd_rf *rf);
+ 
+ #endif /* _ZD_RF_H */
+diff --git a/drivers/net/wireless/zd1211rw/zd_rf_al2230.c b/drivers/net/wireless/zd1211rw/zd_rf_al2230.c
+index 0948b25..006774d 100644
+--- a/drivers/net/wireless/zd1211rw/zd_rf_al2230.c
++++ b/drivers/net/wireless/zd1211rw/zd_rf_al2230.c
+@@ -21,7 +21,9 @@
+ #include "zd_usb.h"
+ #include "zd_chip.h"
+ 
+-static const u32 al2230_table[][3] = {
++#define IS_AL2230S(chip) ((chip)->al2230s_bit || (chip)->rf.type == AL2230S_RF)
++
++static const u32 zd1211_al2230_table[][3] = {
+ 	RF_CHANNEL( 1) = { 0x03f790, 0x033331, 0x00000d, },
+ 	RF_CHANNEL( 2) = { 0x03f790, 0x0b3331, 0x00000d, },
+ 	RF_CHANNEL( 3) = { 0x03e790, 0x033331, 0x00000d, },
+@@ -38,12 +40,71 @@ static const u32 al2230_table[][3] = {
+ 	RF_CHANNEL(14) = { 0x03e7c0, 0x066661, 0x00000d, },
+ };
+ 
++static const u32 zd1211b_al2230_table[][3] = {
++	RF_CHANNEL( 1) = { 0x09efc0, 0x8cccc0, 0xb00000, },
++	RF_CHANNEL( 2) = { 0x09efc0, 0x8cccd0, 0xb00000, },
++	RF_CHANNEL( 3) = { 0x09e7c0, 0x8cccc0, 0xb00000, },
++	RF_CHANNEL( 4) = { 0x09e7c0, 0x8cccd0, 0xb00000, },
++	RF_CHANNEL( 5) = { 0x05efc0, 0x8cccc0, 0xb00000, },
++	RF_CHANNEL( 6) = { 0x05efc0, 0x8cccd0, 0xb00000, },
++	RF_CHANNEL( 7) = { 0x05e7c0, 0x8cccc0, 0xb00000, },
++	RF_CHANNEL( 8) = { 0x05e7c0, 0x8cccd0, 0xb00000, },
++	RF_CHANNEL( 9) = { 0x0defc0, 0x8cccc0, 0xb00000, },
++	RF_CHANNEL(10) = { 0x0defc0, 0x8cccd0, 0xb00000, },
++	RF_CHANNEL(11) = { 0x0de7c0, 0x8cccc0, 0xb00000, },
++	RF_CHANNEL(12) = { 0x0de7c0, 0x8cccd0, 0xb00000, },
++	RF_CHANNEL(13) = { 0x03efc0, 0x8cccc0, 0xb00000, },
++	RF_CHANNEL(14) = { 0x03e7c0, 0x866660, 0xb00000, },
++};
++
++static const struct zd_ioreq16 zd1211b_ioreqs_shared_1[] = {
++	{ CR240, 0x57 }, { CR9,   0xe0 },
++};
++
++static const struct zd_ioreq16 ioreqs_init_al2230s[] = {
++	{ CR47,   0x1e }, /* MARK_002 */
++	{ CR106,  0x22 },
++	{ CR107,  0x2a }, /* MARK_002 */
++	{ CR109,  0x13 }, /* MARK_002 */
++	{ CR118,  0xf8 }, /* MARK_002 */
++	{ CR119,  0x12 }, { CR122,  0xe0 },
++	{ CR128,  0x10 }, /* MARK_001 from 0xe->0x10 */
++	{ CR129,  0x0e }, /* MARK_001 from 0xd->0x0e */
++	{ CR130,  0x10 }, /* MARK_001 from 0xb->0x0d */
++};
++
++static int zd1211b_al2230_finalize_rf(struct zd_chip *chip)
++{
++	int r;
++	static const struct zd_ioreq16 ioreqs[] = {
++		{ CR80,  0x30 }, { CR81,  0x30 }, { CR79,  0x58 },
++		{ CR12,  0xf0 }, { CR77,  0x1b }, { CR78,  0x58 },
++		{ CR203, 0x06 },
++		{ },
++
++		{ CR240, 0x80 },
++	};
++
++	r = zd_iowrite16a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
++	if (r)
++		return r;
++
++	/* related to antenna selection? */
++	if (chip->new_phy_layout) {
++		r = zd_iowrite16_locked(chip, 0xe1, CR9);
++		if (r)
++			return r;
++	}
++
++	return zd_iowrite16_locked(chip, 0x06, CR203);
++}
++
+ static int zd1211_al2230_init_hw(struct zd_rf *rf)
+ {
+ 	int r;
+ 	struct zd_chip *chip = zd_rf_to_chip(rf);
+ 
+-	static const struct zd_ioreq16 ioreqs[] = {
++	static const struct zd_ioreq16 ioreqs_init[] = {
+ 		{ CR15,   0x20 }, { CR23,   0x40 }, { CR24,  0x20 },
+ 		{ CR26,   0x11 }, { CR28,   0x3e }, { CR29,  0x00 },
+ 		{ CR44,   0x33 }, { CR106,  0x2a }, { CR107, 0x1a },
+@@ -70,10 +131,9 @@ static int zd1211_al2230_init_hw(struct zd_rf *rf)
+ 		{ CR119,  0x10 }, { CR120,  0x4f }, { CR121, 0x77 },
+ 		{ CR122,  0xe0 }, { CR137,  0x88 }, { CR252, 0xff },
+ 		{ CR253,  0xff },
++	};
+ 
+-		/* These following happen separately in the vendor driver */
+-		{ },
+-
++	static const struct zd_ioreq16 ioreqs_pll[] = {
+ 		/* shdnb(PLL_ON)=0 */
+ 		{ CR251,  0x2f },
+ 		/* shdnb(PLL_ON)=1 */
+@@ -81,7 +141,7 @@ static int zd1211_al2230_init_hw(struct zd_rf *rf)
+ 		{ CR138,  0x28 }, { CR203,  0x06 },
+ 	};
+ 
+-	static const u32 rv[] = {
++	static const u32 rv1[] = {
+ 		/* Channel 1 */
+ 		0x03f790,
+ 		0x033331,
+@@ -90,6 +150,9 @@ static int zd1211_al2230_init_hw(struct zd_rf *rf)
+ 		0x0b3331,
+ 		0x03b812,
+ 		0x00fff3,
++	};
++
++	static const u32 rv2[] = {
+ 		0x000da4,
+ 		0x0f4dc5, /* fix freq shift, 0x04edc5 */
+ 		0x0805b6,
+@@ -101,8 +164,9 @@ static int zd1211_al2230_init_hw(struct zd_rf *rf)
+ 		0x0bdffc,
+ 		0x00000d,
+ 		0x00500f,
++	};
+ 
+-		/* These writes happen separately in the vendor driver */
++	static const u32 rv3[] = {
+ 		0x00d00f,
+ 		0x004c0f,
+ 		0x00540f,
+@@ -110,11 +174,38 @@ static int zd1211_al2230_init_hw(struct zd_rf *rf)
+ 		0x00500f,
+ 	};
+ 
+-	r = zd_iowrite16a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
++	r = zd_iowrite16a_locked(chip, ioreqs_init, ARRAY_SIZE(ioreqs_init));
++	if (r)
++		return r;
++
++	if (IS_AL2230S(chip)) {
++		r = zd_iowrite16a_locked(chip, ioreqs_init_al2230s,
++			ARRAY_SIZE(ioreqs_init_al2230s));
++		if (r)
++			return r;
++	}
++
++	r = zd_rfwritev_locked(chip, rv1, ARRAY_SIZE(rv1), RF_RV_BITS);
++	if (r)
++		return r;
++
++	/* improve band edge for AL2230S */
++	if (IS_AL2230S(chip))
++		r = zd_rfwrite_locked(chip, 0x000824, RF_RV_BITS);
++	else
++		r = zd_rfwrite_locked(chip, 0x0005a4, RF_RV_BITS);
++	if (r)
++		return r;
++
++	r = zd_rfwritev_locked(chip, rv2, ARRAY_SIZE(rv2), RF_RV_BITS);
++	if (r)
++		return r;
++
++	r = zd_iowrite16a_locked(chip, ioreqs_pll, ARRAY_SIZE(ioreqs_pll));
+ 	if (r)
+ 		return r;
+ 
+-	r = zd_rfwritev_locked(chip, rv, ARRAY_SIZE(rv), RF_RV_BITS);
++	r = zd_rfwritev_locked(chip, rv3, ARRAY_SIZE(rv3), RF_RV_BITS);
+ 	if (r)
+ 		return r;
+ 
+@@ -139,7 +230,7 @@ static int zd1211b_al2230_init_hw(struct zd_rf *rf)
+ 		{ CR47,  0x1e },
+ 
+ 		/* ZD1211B 05.06.10 */
+-		{ CR48,  0x00 }, { CR49,  0x00 }, { CR51,  0x01 },
++		{ CR48,  0x06 }, { CR49,  0xf9 }, { CR51,  0x01 },
+ 		{ CR52,  0x80 }, { CR53,  0x7e }, { CR65,  0x00 },
+ 		{ CR66,  0x00 }, { CR67,  0x00 }, { CR68,  0x00 },
+ 		{ CR69,  0x28 },
+@@ -172,79 +263,99 @@ static int zd1211b_al2230_init_hw(struct zd_rf *rf)
+ 		{ CR137, 0x50 }, /* 5614 */
+ 		{ CR138, 0xa8 },
+ 		{ CR144, 0xac }, /* 5621 */
+-		{ CR150, 0x0d }, { CR252, 0x00 }, { CR253, 0x00 },
++		{ CR150, 0x0d }, { CR252, 0x34 }, { CR253, 0x34 },
+ 	};
+ 
+ 	static const u32 rv1[] = {
+-		/* channel 1 */
+-		0x03f790,
+-		0x033331,
+-		0x00000d,
+-
+-		0x0b3331,
+-		0x03b812,
+-		0x00fff3,
+-		0x0005a4,
+-		0x0f4dc5, /* fix freq shift 0x044dc5 */
+-		0x0805b6,
+-		0x0146c7,
+-		0x000688,
+-		0x0403b9, /* External control TX power (CR31) */
+-		0x00dbba,
+-		0x00099b,
+-		0x0bdffc,
+-		0x00000d,
+-		0x00580f,
+-	};
+-
+-	static const struct zd_ioreq16 ioreqs2[] = {
+-		{ CR47,  0x1e }, { CR_RFCFG, 0x03 },
++		0x8cccd0,
++		0x481dc0,
++		0xcfff00,
++		0x25a000,
+ 	};
+ 
+ 	static const u32 rv2[] = {
+-		0x00880f,
+-		0x00080f,
++		/* To improve AL2230 yield, improve phase noise, 4713 */
++		0x25a000,
++		0xa3b2f0,
++
++		0x6da010, /* Reg6 update for MP versio */
++		0xe36280, /* Modified by jxiao for Bor-Chin on 2004/08/02 */
++		0x116000,
++		0x9dc020, /* External control TX power (CR31) */
++		0x5ddb00, /* RegA update for MP version */
++		0xd99000, /* RegB update for MP version */
++		0x3ffbd0, /* RegC update for MP version */
++		0xb00000, /* RegD update for MP version */
++
++		/* improve phase noise and remove phase calibration,4713 */
++		0xf01a00,
+ 	};
+ 
+-	static const struct zd_ioreq16 ioreqs3[] = {
+-		{ CR_RFCFG, 0x00 }, { CR47, 0x1e }, { CR251, 0x7f },
++	static const struct zd_ioreq16 ioreqs2[] = {
++		{ CR251, 0x2f }, /* shdnb(PLL_ON)=0 */
++		{ CR251, 0x7f }, /* shdnb(PLL_ON)=1 */
+ 	};
+ 
+ 	static const u32 rv3[] = {
+-		0x00d80f,
+-		0x00780f,
+-		0x00580f,
++		/* To improve AL2230 yield, 4713 */
++		0xf01b00,
++		0xf01e00,
++		0xf01a00,
+ 	};
+ 
+-	static const struct zd_ioreq16 ioreqs4[] = {
+-		{ CR138, 0x28 }, { CR203, 0x06 },
++	static const struct zd_ioreq16 ioreqs3[] = {
++		/* related to 6M band edge patching, happens unconditionally */
++		{ CR128, 0x14 }, { CR129, 0x12 }, { CR130, 0x10 },
+ 	};
+ 
++	r = zd_iowrite16a_locked(chip, zd1211b_ioreqs_shared_1,
++		ARRAY_SIZE(zd1211b_ioreqs_shared_1));
++	if (r)
++		return r;
+ 	r = zd_iowrite16a_locked(chip, ioreqs1, ARRAY_SIZE(ioreqs1));
+ 	if (r)
+ 		return r;
+-	r = zd_rfwritev_locked(chip, rv1, ARRAY_SIZE(rv1), RF_RV_BITS);
++
++	if (IS_AL2230S(chip)) {
++		r = zd_iowrite16a_locked(chip, ioreqs_init_al2230s,
++			ARRAY_SIZE(ioreqs_init_al2230s));
++		if (r)
++			return r;
++	}
++
++	r = zd_rfwritev_cr_locked(chip, zd1211b_al2230_table[0], 3);
+ 	if (r)
+ 		return r;
+-	r = zd_iowrite16a_locked(chip, ioreqs2, ARRAY_SIZE(ioreqs2));
++	r = zd_rfwritev_cr_locked(chip, rv1, ARRAY_SIZE(rv1));
+ 	if (r)
+ 		return r;
+-	r = zd_rfwritev_locked(chip, rv2, ARRAY_SIZE(rv2), RF_RV_BITS);
++
++	if (IS_AL2230S(chip))
++		r = zd_rfwrite_locked(chip, 0x241000, RF_RV_BITS);
++	else
++		r = zd_rfwrite_locked(chip, 0x25a000, RF_RV_BITS);
+ 	if (r)
+ 		return r;
+-	r = zd_iowrite16a_locked(chip, ioreqs3, ARRAY_SIZE(ioreqs3));
++
++	r = zd_rfwritev_cr_locked(chip, rv2, ARRAY_SIZE(rv2));
+ 	if (r)
+ 		return r;
+-	r = zd_rfwritev_locked(chip, rv3, ARRAY_SIZE(rv3), RF_RV_BITS);
++	r = zd_iowrite16a_locked(chip, ioreqs2, ARRAY_SIZE(ioreqs2));
++	if (r)
++		return r;
++	r = zd_rfwritev_cr_locked(chip, rv3, ARRAY_SIZE(rv3));
++	if (r)
++		return r;
++	r = zd_iowrite16a_locked(chip, ioreqs3, ARRAY_SIZE(ioreqs3));
+ 	if (r)
+ 		return r;
+-	return zd_iowrite16a_locked(chip, ioreqs4, ARRAY_SIZE(ioreqs4));
++	return zd1211b_al2230_finalize_rf(chip);
+ }
+ 
+-static int al2230_set_channel(struct zd_rf *rf, u8 channel)
++static int zd1211_al2230_set_channel(struct zd_rf *rf, u8 channel)
+ {
+ 	int r;
+-	const u32 *rv = al2230_table[channel-1];
++	const u32 *rv = zd1211_al2230_table[channel-1];
+ 	struct zd_chip *chip = zd_rf_to_chip(rf);
+ 	static const struct zd_ioreq16 ioreqs[] = {
+ 		{ CR138, 0x28 },
+@@ -257,6 +368,24 @@ static int al2230_set_channel(struct zd_rf *rf, u8 channel)
+ 	return zd_iowrite16a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
+ }
+ 
++static int zd1211b_al2230_set_channel(struct zd_rf *rf, u8 channel)
++{
++	int r;
++	const u32 *rv = zd1211b_al2230_table[channel-1];
++	struct zd_chip *chip = zd_rf_to_chip(rf);
++
++	r = zd_iowrite16a_locked(chip, zd1211b_ioreqs_shared_1,
++		ARRAY_SIZE(zd1211b_ioreqs_shared_1));
++	if (r)
++		return r;
++
++	r = zd_rfwritev_cr_locked(chip, rv, 3);
++	if (r)
++		return r;
++
++	return zd1211b_al2230_finalize_rf(chip);
++}
++
+ static int zd1211_al2230_switch_radio_on(struct zd_rf *rf)
+ {
+ 	struct zd_chip *chip = zd_rf_to_chip(rf);
+@@ -294,15 +423,17 @@ int zd_rf_init_al2230(struct zd_rf *rf)
+ {
+ 	struct zd_chip *chip = zd_rf_to_chip(rf);
+ 
+-	rf->set_channel = al2230_set_channel;
+ 	rf->switch_radio_off = al2230_switch_radio_off;
+-	if (chip->is_zd1211b) {
++	if (zd_chip_is_zd1211b(chip)) {
+ 		rf->init_hw = zd1211b_al2230_init_hw;
++		rf->set_channel = zd1211b_al2230_set_channel;
+ 		rf->switch_radio_on = zd1211b_al2230_switch_radio_on;
+ 	} else {
+ 		rf->init_hw = zd1211_al2230_init_hw;
++		rf->set_channel = zd1211_al2230_set_channel;
+ 		rf->switch_radio_on = zd1211_al2230_switch_radio_on;
+ 	}
+-	rf->patch_6m_band_edge = 1;
++	rf->patch_6m_band_edge = zd_rf_generic_patch_6m;
++	rf->patch_cck_gain = 1;
+ 	return 0;
+ }
+diff --git a/drivers/net/wireless/zd1211rw/zd_rf_al7230b.c b/drivers/net/wireless/zd1211rw/zd_rf_al7230b.c
+new file mode 100644
+index 0000000..73d0bb2
+--- /dev/null
++++ b/drivers/net/wireless/zd1211rw/zd_rf_al7230b.c
+@@ -0,0 +1,492 @@
++/* zd_rf_al7230b.c: Functions for the AL7230B RF controller
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
++ */
++
++#include <linux/kernel.h>
++
++#include "zd_rf.h"
++#include "zd_usb.h"
++#include "zd_chip.h"
++
++static const u32 chan_rv[][2] = {
++	RF_CHANNEL( 1) = { 0x09ec00, 0x8cccc8 },
++	RF_CHANNEL( 2) = { 0x09ec00, 0x8cccd8 },
++	RF_CHANNEL( 3) = { 0x09ec00, 0x8cccc0 },
++	RF_CHANNEL( 4) = { 0x09ec00, 0x8cccd0 },
++	RF_CHANNEL( 5) = { 0x05ec00, 0x8cccc8 },
++	RF_CHANNEL( 6) = { 0x05ec00, 0x8cccd8 },
++	RF_CHANNEL( 7) = { 0x05ec00, 0x8cccc0 },
++	RF_CHANNEL( 8) = { 0x05ec00, 0x8cccd0 },
++	RF_CHANNEL( 9) = { 0x0dec00, 0x8cccc8 },
++	RF_CHANNEL(10) = { 0x0dec00, 0x8cccd8 },
++	RF_CHANNEL(11) = { 0x0dec00, 0x8cccc0 },
++	RF_CHANNEL(12) = { 0x0dec00, 0x8cccd0 },
++	RF_CHANNEL(13) = { 0x03ec00, 0x8cccc8 },
++	RF_CHANNEL(14) = { 0x03ec00, 0x866660 },
++};
++
++static const u32 std_rv[] = {
++	0x4ff821,
++	0xc5fbfc,
++	0x21ebfe,
++	0xafd401, /* freq shift 0xaad401 */
++	0x6cf56a,
++	0xe04073,
++	0x193d76,
++	0x9dd844,
++	0x500007,
++	0xd8c010,
++};
++
++static const u32 rv_init1[] = {
++	0x3c9000,
++	0xbfffff,
++	0x700000,
++	0xf15d58,
++};
++
++static const u32 rv_init2[] = {
++	0xf15d59,
++	0xf15d5c,
++	0xf15d58,
++};
++
++static const struct zd_ioreq16 ioreqs_sw[] = {
++	{ CR128, 0x14 }, { CR129, 0x12 }, { CR130, 0x10 },
++	{ CR38,  0x38 }, { CR136, 0xdf },
++};
++
++static int zd1211b_al7230b_finalize(struct zd_chip *chip)
++{
++	int r;
++	static const struct zd_ioreq16 ioreqs[] = {
++		{ CR80,  0x30 }, { CR81,  0x30 }, { CR79,  0x58 },
++		{ CR12,  0xf0 }, { CR77,  0x1b }, { CR78,  0x58 },
++		{ CR203, 0x04 },
++		{ },
++		{ CR240, 0x80 },
++	};
++
++	r = zd_iowrite16a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
++	if (r)
++		return r;
++
++	if (chip->new_phy_layout) {
++		/* antenna selection? */
++		r = zd_iowrite16_locked(chip, 0xe5, CR9);
++		if (r)
++			return r;
++	}
++
++	return zd_iowrite16_locked(chip, 0x04, CR203);
++}
++
++static int zd1211_al7230b_init_hw(struct zd_rf *rf)
++{
++	int r;
++	struct zd_chip *chip = zd_rf_to_chip(rf);
++
++	/* All of these writes are identical to AL2230 unless otherwise
++	 * specified */
++	static const struct zd_ioreq16 ioreqs_1[] = {
++		/* This one is 7230-specific, and happens before the rest */
++		{ CR240,  0x57 },
++		{ },
++
++		{ CR15,   0x20 }, { CR23,   0x40 }, { CR24,  0x20 },
++		{ CR26,   0x11 }, { CR28,   0x3e }, { CR29,  0x00 },
++		{ CR44,   0x33 },
++		/* This value is different for 7230 (was: 0x2a) */
++		{ CR106,  0x22 },
++		{ CR107,  0x1a }, { CR109,  0x09 }, { CR110,  0x27 },
++		{ CR111,  0x2b }, { CR112,  0x2b }, { CR119,  0x0a },
++		/* This happened further down in AL2230,
++		 * and the value changed (was: 0xe0) */
++		{ CR122,  0xfc },
++		{ CR10,   0x89 },
++		/* for newest (3rd cut) AL2300 */
++		{ CR17,   0x28 },
++		{ CR26,   0x93 }, { CR34,   0x30 },
++		/* for newest (3rd cut) AL2300 */
++		{ CR35,   0x3e },
++		{ CR41,   0x24 }, { CR44,   0x32 },
++		/* for newest (3rd cut) AL2300 */
++		{ CR46,   0x96 },
++		{ CR47,   0x1e }, { CR79,   0x58 }, { CR80,  0x30 },
++		{ CR81,   0x30 }, { CR87,   0x0a }, { CR89,  0x04 },
++		{ CR92,   0x0a }, { CR99,   0x28 },
++		/* This value is different for 7230 (was: 0x00) */
++		{ CR100,  0x02 },
++		{ CR101,  0x13 }, { CR102,  0x27 },
++		/* This value is different for 7230 (was: 0x24) */
++		{ CR106,  0x22 },
++		/* This value is different for 7230 (was: 0x2a) */
++		{ CR107,  0x3f },
++		{ CR109,  0x09 },
++		/* This value is different for 7230 (was: 0x13) */
++		{ CR110,  0x1f },
++		{ CR111,  0x1f }, { CR112,  0x1f }, { CR113, 0x27 },
++		{ CR114,  0x27 },
++		/* for newest (3rd cut) AL2300 */
++		{ CR115,  0x24 },
++		/* This value is different for 7230 (was: 0x24) */
++		{ CR116,  0x3f },
++		/* This value is different for 7230 (was: 0xf4) */
++		{ CR117,  0xfa },
++		{ CR118,  0xfc }, { CR119,  0x10 }, { CR120, 0x4f },
++		{ CR121,  0x77 }, { CR137,  0x88 },
++		/* This one is 7230-specific */
++		{ CR138,  0xa8 },
++		/* This value is different for 7230 (was: 0xff) */
++		{ CR252,  0x34 },
++		/* This value is different for 7230 (was: 0xff) */
++		{ CR253,  0x34 },
++
++		/* PLL_OFF */
++		{ CR251, 0x2f },
++	};
++
++	static const struct zd_ioreq16 ioreqs_2[] = {
++		{ CR251, 0x3f }, /* PLL_ON */
++		{ CR128, 0x14 }, { CR129, 0x12 }, { CR130, 0x10 },
++		{ CR38,  0x38 }, { CR136, 0xdf },
++	};
++
++	r = zd_iowrite16a_locked(chip, ioreqs_1, ARRAY_SIZE(ioreqs_1));
++	if (r)
++		return r;
++
++	r = zd_rfwritev_cr_locked(chip, chan_rv[0], ARRAY_SIZE(chan_rv[0]));
++	if (r)
++		return r;
++
++	r = zd_rfwritev_cr_locked(chip, std_rv, ARRAY_SIZE(std_rv));
++	if (r)
++		return r;
++
++	r = zd_rfwritev_cr_locked(chip, rv_init1, ARRAY_SIZE(rv_init1));
++	if (r)
++		return r;
++
++	r = zd_iowrite16a_locked(chip, ioreqs_2, ARRAY_SIZE(ioreqs_2));
++	if (r)
++		return r;
++
++	r = zd_rfwritev_cr_locked(chip, rv_init2, ARRAY_SIZE(rv_init2));
++	if (r)
++		return r;
++
++	r = zd_iowrite16_locked(chip, 0x06, CR203);
++	if (r)
++		return r;
++	r = zd_iowrite16_locked(chip, 0x80, CR240);
++	if (r)
++		return r;
++
++	return 0;
++}
++
++static int zd1211b_al7230b_init_hw(struct zd_rf *rf)
++{
++	int r;
++	struct zd_chip *chip = zd_rf_to_chip(rf);
++
++	static const struct zd_ioreq16 ioreqs_1[] = {
++		{ CR240, 0x57 }, { CR9,   0x9 },
++		{ },
++		{ CR10,  0x8b }, { CR15,  0x20 },
++		{ CR17,  0x2B }, /* for newest (3rd cut) AL2230 */
++		{ CR20,  0x10 }, /* 4N25->Stone Request */
++		{ CR23,  0x40 }, { CR24,  0x20 }, { CR26,  0x93 },
++		{ CR28,  0x3e }, { CR29,  0x00 },
++		{ CR33,  0x28 }, /* 5613 */
++		{ CR34,  0x30 },
++		{ CR35,  0x3e }, /* for newest (3rd cut) AL2230 */
++		{ CR41,  0x24 }, { CR44,  0x32 },
++		{ CR46,  0x99 }, /* for newest (3rd cut) AL2230 */
++		{ CR47,  0x1e },
++
++		/* ZD1215 5610 */
++		{ CR48,  0x00 }, { CR49,  0x00 }, { CR51,  0x01 },
++		{ CR52,  0x80 }, { CR53,  0x7e }, { CR65,  0x00 },
++		{ CR66,  0x00 }, { CR67,  0x00 }, { CR68,  0x00 },
++		{ CR69,  0x28 },
++
++		{ CR79,  0x58 }, { CR80,  0x30 }, { CR81,  0x30 },
++		{ CR87,  0x0A }, { CR89,  0x04 },
++		{ CR90,  0x58 }, /* 5112 */
++		{ CR91,  0x00 }, /* 5613 */
++		{ CR92,  0x0a },
++		{ CR98,  0x8d }, /* 4804, for 1212 new algorithm */
++		{ CR99,  0x00 }, { CR100, 0x02 }, { CR101, 0x13 },
++		{ CR102, 0x27 },
++		{ CR106, 0x20 }, /* change to 0x24 for AL7230B */
++		{ CR109, 0x13 }, /* 4804, for 1212 new algorithm */
++		{ CR112, 0x1f },
++	};
++
++	static const struct zd_ioreq16 ioreqs_new_phy[] = {
++		{ CR107, 0x28 },
++		{ CR110, 0x1f }, /* 5127, 0x13->0x1f */
++		{ CR111, 0x1f }, /* 0x13 to 0x1f for AL7230B */
++		{ CR116, 0x2a }, { CR118, 0xfa }, { CR119, 0x12 },
++		{ CR121, 0x6c }, /* 5613 */
++	};
++
++	static const struct zd_ioreq16 ioreqs_old_phy[] = {
++		{ CR107, 0x24 },
++		{ CR110, 0x13 }, /* 5127, 0x13->0x1f */
++		{ CR111, 0x13 }, /* 0x13 to 0x1f for AL7230B */
++		{ CR116, 0x24 }, { CR118, 0xfc }, { CR119, 0x11 },
++		{ CR121, 0x6a }, /* 5613 */
++	};
++
++	static const struct zd_ioreq16 ioreqs_2[] = {
++		{ CR113, 0x27 }, { CR114, 0x27 }, { CR115, 0x24 },
++		{ CR117, 0xfa }, { CR120, 0x4f },
++		{ CR122, 0xfc }, /* E0->FCh at 4901 */
++		{ CR123, 0x57 }, /* 5613 */
++		{ CR125, 0xad }, /* 4804, for 1212 new algorithm */
++		{ CR126, 0x6c }, /* 5613 */
++		{ CR127, 0x03 }, /* 4804, for 1212 new algorithm */
++		{ CR130, 0x10 },
++		{ CR131, 0x00 }, /* 5112 */
++		{ CR137, 0x50 }, /* 5613 */
++		{ CR138, 0xa8 }, /* 5112 */
++		{ CR144, 0xac }, /* 5613 */
++		{ CR148, 0x40 }, /* 5112 */
++		{ CR149, 0x40 }, /* 4O07, 50->40 */
++		{ CR150, 0x1a }, /* 5112, 0C->1A */
++		{ CR252, 0x34 }, { CR253, 0x34 },
++		{ CR251, 0x2f }, /* PLL_OFF */
++	};
++
++	static const struct zd_ioreq16 ioreqs_3[] = {
++		{ CR251, 0x7f }, /* PLL_ON */
++		{ CR128, 0x14 }, { CR129, 0x12 }, { CR130, 0x10 },
++		{ CR38,  0x38 }, { CR136, 0xdf },
++	};
++
++	r = zd_iowrite16a_locked(chip, ioreqs_1, ARRAY_SIZE(ioreqs_1));
++	if (r)
++		return r;
++
++	if (chip->new_phy_layout)
++		r = zd_iowrite16a_locked(chip, ioreqs_new_phy,
++			ARRAY_SIZE(ioreqs_new_phy));
++	else
++		r = zd_iowrite16a_locked(chip, ioreqs_old_phy,
++			ARRAY_SIZE(ioreqs_old_phy));
++	if (r)
++		return r;
++
++	r = zd_iowrite16a_locked(chip, ioreqs_2, ARRAY_SIZE(ioreqs_2));
++	if (r)
++		return r;
++
++	r = zd_rfwritev_cr_locked(chip, chan_rv[0], ARRAY_SIZE(chan_rv[0]));
++	if (r)
++		return r;
++
++	r = zd_rfwritev_cr_locked(chip, std_rv, ARRAY_SIZE(std_rv));
++	if (r)
++		return r;
++
++	r = zd_rfwritev_cr_locked(chip, rv_init1, ARRAY_SIZE(rv_init1));
++	if (r)
++		return r;
++
++	r = zd_iowrite16a_locked(chip, ioreqs_3, ARRAY_SIZE(ioreqs_3));
++	if (r)
++		return r;
++
++	r = zd_rfwritev_cr_locked(chip, rv_init2, ARRAY_SIZE(rv_init2));
++	if (r)
++		return r;
++
++	return zd1211b_al7230b_finalize(chip);
++}
++
++static int zd1211_al7230b_set_channel(struct zd_rf *rf, u8 channel)
++{
++	int r;
++	const u32 *rv = chan_rv[channel-1];
++	struct zd_chip *chip = zd_rf_to_chip(rf);
++
++	static const struct zd_ioreq16 ioreqs[] = {
++		/* PLL_ON */
++		{ CR251, 0x3f },
++		{ CR203, 0x06 }, { CR240, 0x08 },
++	};
++
++	r = zd_iowrite16_locked(chip, 0x57, CR240);
++	if (r)
++		return r;
++
++	/* PLL_OFF */
++	r = zd_iowrite16_locked(chip, 0x2f, CR251);
++	if (r)
++		return r;
++
++	r = zd_rfwritev_cr_locked(chip, std_rv, ARRAY_SIZE(std_rv));
++	if (r)
++		return r;
++
++	r = zd_rfwrite_cr_locked(chip, 0x3c9000);
++	if (r)
++		return r;
++	r = zd_rfwrite_cr_locked(chip, 0xf15d58);
++	if (r)
++		return r;
++
++	r = zd_iowrite16a_locked(chip, ioreqs_sw, ARRAY_SIZE(ioreqs_sw));
++	if (r)
++		return r;
++
++	r = zd_rfwritev_cr_locked(chip, rv, 2);
++	if (r)
++		return r;
++
++	r = zd_rfwrite_cr_locked(chip, 0x3c9000);
++	if (r)
++		return r;
++
++	return zd_iowrite16a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
++}
++
++static int zd1211b_al7230b_set_channel(struct zd_rf *rf, u8 channel)
++{
++	int r;
++	const u32 *rv = chan_rv[channel-1];
++	struct zd_chip *chip = zd_rf_to_chip(rf);
++
++	r = zd_iowrite16_locked(chip, 0x57, CR240);
++	if (r)
++		return r;
++	r = zd_iowrite16_locked(chip, 0xe4, CR9);
++	if (r)
++		return r;
++
++	/* PLL_OFF */
++	r = zd_iowrite16_locked(chip, 0x2f, CR251);
++	if (r)
++		return r;
++	r = zd_rfwritev_cr_locked(chip, std_rv, ARRAY_SIZE(std_rv));
++	if (r)
++		return r;
++
++	r = zd_rfwrite_cr_locked(chip, 0x3c9000);
++	if (r)
++		return r;
++	r = zd_rfwrite_cr_locked(chip, 0xf15d58);
++	if (r)
++		return r;
++
++	r = zd_iowrite16a_locked(chip, ioreqs_sw, ARRAY_SIZE(ioreqs_sw));
++	if (r)
++		return r;
++
++	r = zd_rfwritev_cr_locked(chip, rv, 2);
++	if (r)
++		return r;
++
++	r = zd_rfwrite_cr_locked(chip, 0x3c9000);
++	if (r)
++		return r;
++
++	r = zd_iowrite16_locked(chip, 0x7f, CR251);
++	if (r)
++		return r;
++
++	return zd1211b_al7230b_finalize(chip);
++}
++
++static int zd1211_al7230b_switch_radio_on(struct zd_rf *rf)
++{
++	struct zd_chip *chip = zd_rf_to_chip(rf);
++	static const struct zd_ioreq16 ioreqs[] = {
++		{ CR11,  0x00 },
++		{ CR251, 0x3f },
++	};
++
++	return zd_iowrite16a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
++}
++
++static int zd1211b_al7230b_switch_radio_on(struct zd_rf *rf)
++{
++	struct zd_chip *chip = zd_rf_to_chip(rf);
++	static const struct zd_ioreq16 ioreqs[] = {
++		{ CR11,  0x00 },
++		{ CR251, 0x7f },
++	};
++
++	return zd_iowrite16a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
++}
++
++static int al7230b_switch_radio_off(struct zd_rf *rf)
++{
++	struct zd_chip *chip = zd_rf_to_chip(rf);
++	static const struct zd_ioreq16 ioreqs[] = {
++		{ CR11,  0x04 },
++		{ CR251, 0x2f },
++	};
++
++	return zd_iowrite16a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
++}
++
++/* ZD1211B+AL7230B 6m band edge patching differs slightly from other
++ * configurations */
++static int zd1211b_al7230b_patch_6m(struct zd_rf *rf, u8 channel)
++{
++	struct zd_chip *chip = zd_rf_to_chip(rf);
++	struct zd_ioreq16 ioreqs[] = {
++		{ CR128, 0x14 }, { CR129, 0x12 },
++	};
++
++	/* FIXME: Channel 11 is not the edge for all regulatory domains. */
++	if (channel == 1) {
++		ioreqs[0].value = 0x0e;
++		ioreqs[1].value = 0x10;
++	} else if (channel == 11) {
++		ioreqs[0].value = 0x10;
++		ioreqs[1].value = 0x10;
++	}
++
++	dev_dbg_f(zd_chip_dev(chip), "patching for channel %d\n", channel);
++	return zd_iowrite16a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
++}
++
++int zd_rf_init_al7230b(struct zd_rf *rf)
++{
++	struct zd_chip *chip = zd_rf_to_chip(rf);
++
++	if (zd_chip_is_zd1211b(chip)) {
++		rf->init_hw = zd1211b_al7230b_init_hw;
++		rf->switch_radio_on = zd1211b_al7230b_switch_radio_on;
++		rf->set_channel = zd1211b_al7230b_set_channel;
++		rf->patch_6m_band_edge = zd1211b_al7230b_patch_6m;
++	} else {
++		rf->init_hw = zd1211_al7230b_init_hw;
++		rf->switch_radio_on = zd1211_al7230b_switch_radio_on;
++		rf->set_channel = zd1211_al7230b_set_channel;
++		rf->patch_6m_band_edge = zd_rf_generic_patch_6m;
++		rf->patch_cck_gain = 1;
++	}
++
++	rf->switch_radio_off = al7230b_switch_radio_off;
++
++	return 0;
++}
+diff --git a/drivers/net/wireless/zd1211rw/zd_rf_rf2959.c b/drivers/net/wireless/zd1211rw/zd_rf_rf2959.c
+index 5824727..cc70d40 100644
+--- a/drivers/net/wireless/zd1211rw/zd_rf_rf2959.c
++++ b/drivers/net/wireless/zd1211rw/zd_rf_rf2959.c
+@@ -21,7 +21,7 @@
+ #include "zd_usb.h"
+ #include "zd_chip.h"
+ 
+-static u32 rf2959_table[][2] = {
++static const u32 rf2959_table[][2] = {
+ 	RF_CHANNEL( 1) = { 0x181979, 0x1e6666 },
+ 	RF_CHANNEL( 2) = { 0x181989, 0x1e6666 },
+ 	RF_CHANNEL( 3) = { 0x181999, 0x1e6666 },
+@@ -228,7 +228,7 @@ static int rf2959_init_hw(struct zd_rf *rf)
+ static int rf2959_set_channel(struct zd_rf *rf, u8 channel)
+ {
+ 	int i, r;
+-	u32 *rv = rf2959_table[channel-1];
++	const u32 *rv = rf2959_table[channel-1];
+ 	struct zd_chip *chip = zd_rf_to_chip(rf);
+ 
+ 	for (i = 0; i < 2; i++) {
+@@ -265,7 +265,7 @@ int zd_rf_init_rf2959(struct zd_rf *rf)
+ {
+ 	struct zd_chip *chip = zd_rf_to_chip(rf);
+ 
+-	if (chip->is_zd1211b) {
++	if (zd_chip_is_zd1211b(chip)) {
+ 		dev_err(zd_chip_dev(chip),
+ 		       "RF2959 is currently not supported for ZD1211B"
+ 		       " devices\n");
+diff --git a/drivers/net/wireless/zd1211rw/zd_rf_uw2453.c b/drivers/net/wireless/zd1211rw/zd_rf_uw2453.c
+new file mode 100644
+index 0000000..3c1cca4
+--- /dev/null
++++ b/drivers/net/wireless/zd1211rw/zd_rf_uw2453.c
+@@ -0,0 +1,534 @@
++/* zd_rf_uw2453.c: Functions for the UW2453 RF controller
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
++ */
++
++#include <linux/kernel.h>
++
++#include "zd_rf.h"
++#include "zd_usb.h"
++#include "zd_chip.h"
++
++/* This RF programming code is based upon the code found in v2.16.0.0 of the
++ * ZyDAS vendor driver. Unlike other RF's, Ubec publish full technical specs
++ * for this RF on their website, so we're able to understand more than
++ * usual as to what is going on. Thumbs up for Ubec for doing that. */
++
++/* The 3-wire serial interface provides access to 8 write-only registers.
++ * The data format is a 4 bit register address followed by a 20 bit value. */
++#define UW2453_REGWRITE(reg, val) ((((reg) & 0xf) << 20) | ((val) & 0xfffff))
++
++/* For channel tuning, we have to configure registers 1 (synthesizer), 2 (synth
++ * fractional divide ratio) and 3 (VCO config).
++ *
++ * We configure the RF to produce an interrupt when the PLL is locked onto
++ * the configured frequency. During initialization, we run through a variety
++ * of different VCO configurations on channel 1 until we detect a PLL lock.
++ * When this happens, we remember which VCO configuration produced the lock
++ * and use it later. Actually, we use the configuration *after* the one that
++ * produced the lock, which seems odd, but it works.
++ *
++ * If we do not see a PLL lock on any standard VCO config, we fall back on an
++ * autocal configuration, which has a fixed (as opposed to per-channel) VCO
++ * config and different synth values from the standard set (divide ratio
++ * is still shared with the standard set). */
++
++/* The per-channel synth values for all standard VCO configurations. These get
++ * written to register 1. */
++static const u8 uw2453_std_synth[] = {
++	RF_CHANNEL( 1) = 0x47,
++	RF_CHANNEL( 2) = 0x47,
++	RF_CHANNEL( 3) = 0x67,
++	RF_CHANNEL( 4) = 0x67,
++	RF_CHANNEL( 5) = 0x67,
++	RF_CHANNEL( 6) = 0x67,
++	RF_CHANNEL( 7) = 0x57,
++	RF_CHANNEL( 8) = 0x57,
++	RF_CHANNEL( 9) = 0x57,
++	RF_CHANNEL(10) = 0x57,
++	RF_CHANNEL(11) = 0x77,
++	RF_CHANNEL(12) = 0x77,
++	RF_CHANNEL(13) = 0x77,
++	RF_CHANNEL(14) = 0x4f,
++};
++
++/* This table stores the synthesizer fractional divide ratio for *all* VCO
++ * configurations (both standard and autocal). These get written to register 2.
++ */
++static const u16 uw2453_synth_divide[] = {
++	RF_CHANNEL( 1) = 0x999,
++	RF_CHANNEL( 2) = 0x99b,
++	RF_CHANNEL( 3) = 0x998,
++	RF_CHANNEL( 4) = 0x99a,
++	RF_CHANNEL( 5) = 0x999,
++	RF_CHANNEL( 6) = 0x99b,
++	RF_CHANNEL( 7) = 0x998,
++	RF_CHANNEL( 8) = 0x99a,
++	RF_CHANNEL( 9) = 0x999,
++	RF_CHANNEL(10) = 0x99b,
++	RF_CHANNEL(11) = 0x998,
++	RF_CHANNEL(12) = 0x99a,
++	RF_CHANNEL(13) = 0x999,
++	RF_CHANNEL(14) = 0xccc,
++};
++
++/* Here is the data for all the standard VCO configurations. We shrink our
++ * table a little by observing that both channels in a consecutive pair share
++ * the same value. We also observe that the high 4 bits ([0:3] in the specs)
++ * are all 'Reserved' and are always set to 0x4 - we chop them off in the data
++ * below. */
++#define CHAN_TO_PAIRIDX(a) ((a - 1) / 2)
++#define RF_CHANPAIR(a,b) [CHAN_TO_PAIRIDX(a)]
++static const u16 uw2453_std_vco_cfg[][7] = {
++	{ /* table 1 */
++		RF_CHANPAIR( 1,  2) = 0x664d,
++		RF_CHANPAIR( 3,  4) = 0x604d,
++		RF_CHANPAIR( 5,  6) = 0x6675,
++		RF_CHANPAIR( 7,  8) = 0x6475,
++		RF_CHANPAIR( 9, 10) = 0x6655,
++		RF_CHANPAIR(11, 12) = 0x6455,
++		RF_CHANPAIR(13, 14) = 0x6665,
++	},
++	{ /* table 2 */
++		RF_CHANPAIR( 1,  2) = 0x666d,
++		RF_CHANPAIR( 3,  4) = 0x606d,
++		RF_CHANPAIR( 5,  6) = 0x664d,
++		RF_CHANPAIR( 7,  8) = 0x644d,
++		RF_CHANPAIR( 9, 10) = 0x6675,
++		RF_CHANPAIR(11, 12) = 0x6475,
++		RF_CHANPAIR(13, 14) = 0x6655,
++	},
++	{ /* table 3 */
++		RF_CHANPAIR( 1,  2) = 0x665d,
++		RF_CHANPAIR( 3,  4) = 0x605d,
++		RF_CHANPAIR( 5,  6) = 0x666d,
++		RF_CHANPAIR( 7,  8) = 0x646d,
++		RF_CHANPAIR( 9, 10) = 0x664d,
++		RF_CHANPAIR(11, 12) = 0x644d,
++		RF_CHANPAIR(13, 14) = 0x6675,
++	},
++	{ /* table 4 */
++		RF_CHANPAIR( 1,  2) = 0x667d,
++		RF_CHANPAIR( 3,  4) = 0x607d,
++		RF_CHANPAIR( 5,  6) = 0x665d,
++		RF_CHANPAIR( 7,  8) = 0x645d,
++		RF_CHANPAIR( 9, 10) = 0x666d,
++		RF_CHANPAIR(11, 12) = 0x646d,
++		RF_CHANPAIR(13, 14) = 0x664d,
++	},
++	{ /* table 5 */
++		RF_CHANPAIR( 1,  2) = 0x6643,
++		RF_CHANPAIR( 3,  4) = 0x6043,
++		RF_CHANPAIR( 5,  6) = 0x667d,
++		RF_CHANPAIR( 7,  8) = 0x647d,
++		RF_CHANPAIR( 9, 10) = 0x665d,
++		RF_CHANPAIR(11, 12) = 0x645d,
++		RF_CHANPAIR(13, 14) = 0x666d,
++	},
++	{ /* table 6 */
++		RF_CHANPAIR( 1,  2) = 0x6663,
++		RF_CHANPAIR( 3,  4) = 0x6063,
++		RF_CHANPAIR( 5,  6) = 0x6643,
++		RF_CHANPAIR( 7,  8) = 0x6443,
++		RF_CHANPAIR( 9, 10) = 0x667d,
++		RF_CHANPAIR(11, 12) = 0x647d,
++		RF_CHANPAIR(13, 14) = 0x665d,
++	},
++	{ /* table 7 */
++		RF_CHANPAIR( 1,  2) = 0x6653,
++		RF_CHANPAIR( 3,  4) = 0x6053,
++		RF_CHANPAIR( 5,  6) = 0x6663,
++		RF_CHANPAIR( 7,  8) = 0x6463,
++		RF_CHANPAIR( 9, 10) = 0x6643,
++		RF_CHANPAIR(11, 12) = 0x6443,
++		RF_CHANPAIR(13, 14) = 0x667d,
++	},
++	{ /* table 8 */
++		RF_CHANPAIR( 1,  2) = 0x6673,
++		RF_CHANPAIR( 3,  4) = 0x6073,
++		RF_CHANPAIR( 5,  6) = 0x6653,
++		RF_CHANPAIR( 7,  8) = 0x6453,
++		RF_CHANPAIR( 9, 10) = 0x6663,
++		RF_CHANPAIR(11, 12) = 0x6463,
++		RF_CHANPAIR(13, 14) = 0x6643,
++	},
++	{ /* table 9 */
++		RF_CHANPAIR( 1,  2) = 0x664b,
++		RF_CHANPAIR( 3,  4) = 0x604b,
++		RF_CHANPAIR( 5,  6) = 0x6673,
++		RF_CHANPAIR( 7,  8) = 0x6473,
++		RF_CHANPAIR( 9, 10) = 0x6653,
++		RF_CHANPAIR(11, 12) = 0x6453,
++		RF_CHANPAIR(13, 14) = 0x6663,
++	},
++	{ /* table 10 */
++		RF_CHANPAIR( 1,  2) = 0x666b,
++		RF_CHANPAIR( 3,  4) = 0x606b,
++		RF_CHANPAIR( 5,  6) = 0x664b,
++		RF_CHANPAIR( 7,  8) = 0x644b,
++		RF_CHANPAIR( 9, 10) = 0x6673,
++		RF_CHANPAIR(11, 12) = 0x6473,
++		RF_CHANPAIR(13, 14) = 0x6653,
++	},
++	{ /* table 11 */
++		RF_CHANPAIR( 1,  2) = 0x665b,
++		RF_CHANPAIR( 3,  4) = 0x605b,
++		RF_CHANPAIR( 5,  6) = 0x666b,
++		RF_CHANPAIR( 7,  8) = 0x646b,
++		RF_CHANPAIR( 9, 10) = 0x664b,
++		RF_CHANPAIR(11, 12) = 0x644b,
++		RF_CHANPAIR(13, 14) = 0x6673,
++	},
++
++};
++
++/* The per-channel synth values for autocal. These get written to register 1. */
++static const u16 uw2453_autocal_synth[] = {
++	RF_CHANNEL( 1) = 0x6847,
++	RF_CHANNEL( 2) = 0x6847,
++	RF_CHANNEL( 3) = 0x6867,
++	RF_CHANNEL( 4) = 0x6867,
++	RF_CHANNEL( 5) = 0x6867,
++	RF_CHANNEL( 6) = 0x6867,
++	RF_CHANNEL( 7) = 0x6857,
++	RF_CHANNEL( 8) = 0x6857,
++	RF_CHANNEL( 9) = 0x6857,
++	RF_CHANNEL(10) = 0x6857,
++	RF_CHANNEL(11) = 0x6877,
++	RF_CHANNEL(12) = 0x6877,
++	RF_CHANNEL(13) = 0x6877,
++	RF_CHANNEL(14) = 0x684f,
++};
++
++/* The VCO configuration for autocal (all channels) */
++static const u16 UW2453_AUTOCAL_VCO_CFG = 0x6662;
++
++/* TX gain settings. The array index corresponds to the TX power integration
++ * values found in the EEPROM. The values get written to register 7. */
++static u32 uw2453_txgain[] = {
++	[0x00] = 0x0e313,
++	[0x01] = 0x0fb13,
++	[0x02] = 0x0e093,
++	[0x03] = 0x0f893,
++	[0x04] = 0x0ea93,
++	[0x05] = 0x1f093,
++	[0x06] = 0x1f493,
++	[0x07] = 0x1f693,
++	[0x08] = 0x1f393,
++	[0x09] = 0x1f35b,
++	[0x0a] = 0x1e6db,
++	[0x0b] = 0x1ff3f,
++	[0x0c] = 0x1ffff,
++	[0x0d] = 0x361d7,
++	[0x0e] = 0x37fbf,
++	[0x0f] = 0x3ff8b,
++	[0x10] = 0x3ff33,
++	[0x11] = 0x3fb3f,
++	[0x12] = 0x3ffff,
++};
++
++/* RF-specific structure */
++struct uw2453_priv {
++	/* index into synth/VCO config tables where PLL lock was found
++	 * -1 means autocal */
++	int config;
++};
++
++#define UW2453_PRIV(rf) ((struct uw2453_priv *) (rf)->priv)
++
++static int uw2453_synth_set_channel(struct zd_chip *chip, int channel,
++	bool autocal)
++{
++	int r;
++	int idx = channel - 1;
++	u32 val;
++
++	if (autocal)
++		val = UW2453_REGWRITE(1, uw2453_autocal_synth[idx]);
++	else
++		val = UW2453_REGWRITE(1, uw2453_std_synth[idx]);
++
++	r = zd_rfwrite_locked(chip, val, RF_RV_BITS);
++	if (r)
++		return r;
++
++	return zd_rfwrite_locked(chip,
++		UW2453_REGWRITE(2, uw2453_synth_divide[idx]), RF_RV_BITS);
++}
++
++static int uw2453_write_vco_cfg(struct zd_chip *chip, u16 value)
++{
++	/* vendor driver always sets these upper bits even though the specs say
++	 * they are reserved */
++	u32 val = 0x40000 | value;
++	return zd_rfwrite_locked(chip, UW2453_REGWRITE(3, val), RF_RV_BITS);
++}
++
++static int uw2453_init_mode(struct zd_chip *chip)
++{
++	static const u32 rv[] = {
++		UW2453_REGWRITE(0, 0x25f98), /* enter IDLE mode */
++		UW2453_REGWRITE(0, 0x25f9a), /* enter CAL_VCO mode */
++		UW2453_REGWRITE(0, 0x25f94), /* enter RX/TX mode */
++		UW2453_REGWRITE(0, 0x27fd4), /* power down RSSI circuit */
++	};
++
++	return zd_rfwritev_locked(chip, rv, ARRAY_SIZE(rv), RF_RV_BITS);
++}
++
++static int uw2453_set_tx_gain_level(struct zd_chip *chip, int channel)
++{
++	u8 int_value = chip->pwr_int_values[channel - 1];
++
++	if (int_value >= ARRAY_SIZE(uw2453_txgain)) {
++		dev_dbg_f(zd_chip_dev(chip), "can't configure TX gain for "
++			  "int value %x on channel %d\n", int_value, channel);
++		return 0;
++	}
++
++	return zd_rfwrite_locked(chip,
++		UW2453_REGWRITE(7, uw2453_txgain[int_value]), RF_RV_BITS);
++}
++
++static int uw2453_init_hw(struct zd_rf *rf)
++{
++	int i, r;
++	int found_config = -1;
++	u16 intr_status;
++	struct zd_chip *chip = zd_rf_to_chip(rf);
++
++	static const struct zd_ioreq16 ioreqs[] = {
++		{ CR10,  0x89 }, { CR15,  0x20 },
++		{ CR17,  0x28 }, /* 6112 no change */
++		{ CR23,  0x38 }, { CR24,  0x20 }, { CR26,  0x93 },
++		{ CR27,  0x15 }, { CR28,  0x3e }, { CR29,  0x00 },
++		{ CR33,  0x28 }, { CR34,  0x30 },
++		{ CR35,  0x43 }, /* 6112 3e->43 */
++		{ CR41,  0x24 }, { CR44,  0x32 },
++		{ CR46,  0x92 }, /* 6112 96->92 */
++		{ CR47,  0x1e },
++		{ CR48,  0x04 }, /* 5602 Roger */
++		{ CR49,  0xfa }, { CR79,  0x58 }, { CR80,  0x30 },
++		{ CR81,  0x30 }, { CR87,  0x0a }, { CR89,  0x04 },
++		{ CR91,  0x00 }, { CR92,  0x0a }, { CR98,  0x8d },
++		{ CR99,  0x28 }, { CR100, 0x02 },
++		{ CR101, 0x09 }, /* 6112 13->1f 6220 1f->13 6407 13->9 */
++		{ CR102, 0x27 },
++		{ CR106, 0x1c }, /* 5d07 5112 1f->1c 6220 1c->1f 6221 1f->1c */
++		{ CR107, 0x1c }, /* 6220 1c->1a 5221 1a->1c */
++		{ CR109, 0x13 },
++		{ CR110, 0x1f }, /* 6112 13->1f 6221 1f->13 6407 13->0x09 */
++		{ CR111, 0x13 }, { CR112, 0x1f }, { CR113, 0x27 },
++		{ CR114, 0x23 }, /* 6221 27->23 */
++		{ CR115, 0x24 }, /* 6112 24->1c 6220 1c->24 */
++		{ CR116, 0x24 }, /* 6220 1c->24 */
++		{ CR117, 0xfa }, /* 6112 fa->f8 6220 f8->f4 6220 f4->fa */
++		{ CR118, 0xf0 }, /* 5d07 6112 f0->f2 6220 f2->f0 */
++		{ CR119, 0x1a }, /* 6112 1a->10 6220 10->14 6220 14->1a */
++		{ CR120, 0x4f },
++		{ CR121, 0x1f }, /* 6220 4f->1f */
++		{ CR122, 0xf0 }, { CR123, 0x57 }, { CR125, 0xad },
++		{ CR126, 0x6c }, { CR127, 0x03 },
++		{ CR128, 0x14 }, /* 6302 12->11 */
++		{ CR129, 0x12 }, /* 6301 10->0f */
++		{ CR130, 0x10 }, { CR137, 0x50 }, { CR138, 0xa8 },
++		{ CR144, 0xac }, { CR146, 0x20 }, { CR252, 0xff },
++		{ CR253, 0xff },
++	};
++
++	static const u32 rv[] = {
++		UW2453_REGWRITE(4, 0x2b),    /* configure reciever gain */
++		UW2453_REGWRITE(5, 0x19e4f), /* configure transmitter gain */
++		UW2453_REGWRITE(6, 0xf81ad), /* enable RX/TX filter tuning */
++		UW2453_REGWRITE(7, 0x3fffe), /* disable TX gain in test mode */
++
++		/* enter CAL_FIL mode, TX gain set by registers, RX gain set by pins,
++		 * RSSI circuit powered down, reduced RSSI range */
++		UW2453_REGWRITE(0, 0x25f9c), /* 5d01 cal_fil */
++
++		/* synthesizer configuration for channel 1 */
++		UW2453_REGWRITE(1, 0x47),
++		UW2453_REGWRITE(2, 0x999),
++
++		/* disable manual VCO band selection */
++		UW2453_REGWRITE(3, 0x7602),
++
++		/* enable manual VCO band selection, configure current level */
++		UW2453_REGWRITE(3, 0x46063),
++	};
++
++	r = zd_iowrite16a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
++	if (r)
++		return r;
++
++	r = zd_rfwritev_locked(chip, rv, ARRAY_SIZE(rv), RF_RV_BITS);
++	if (r)
++		return r;
++
++	r = uw2453_init_mode(chip);
++	if (r)
++		return r;
++
++	/* Try all standard VCO configuration settings on channel 1 */
++	for (i = 0; i < ARRAY_SIZE(uw2453_std_vco_cfg) - 1; i++) {
++		/* Configure synthesizer for channel 1 */
++		r = uw2453_synth_set_channel(chip, 1, false);
++		if (r)
++			return r;
++
++		/* Write VCO config */
++		r = uw2453_write_vco_cfg(chip, uw2453_std_vco_cfg[i][0]);
++		if (r)
++			return r;
++
++		/* ack interrupt event */
++		r = zd_iowrite16_locked(chip, 0x0f, UW2453_INTR_REG);
++		if (r)
++			return r;
++
++		/* check interrupt status */
++		r = zd_ioread16_locked(chip, &intr_status, UW2453_INTR_REG);
++		if (r)
++			return r;
++
++		if (!(intr_status & 0xf)) {
++			dev_dbg_f(zd_chip_dev(chip),
++				"PLL locked on configuration %d\n", i);
++			found_config = i;
++			break;
++		}
++	}
++
++	if (found_config == -1) {
++		/* autocal */
++		dev_dbg_f(zd_chip_dev(chip),
++			"PLL did not lock, using autocal\n");
++
++		r = uw2453_synth_set_channel(chip, 1, true);
++		if (r)
++			return r;
++
++		r = uw2453_write_vco_cfg(chip, UW2453_AUTOCAL_VCO_CFG);
++		if (r)
++			return r;
++	}
++
++	/* To match the vendor driver behaviour, we use the configuration after
++	 * the one that produced a lock. */
++	UW2453_PRIV(rf)->config = found_config + 1;
++
++	return zd_iowrite16_locked(chip, 0x06, CR203);
++}
++
++static int uw2453_set_channel(struct zd_rf *rf, u8 channel)
++{
++	int r;
++	u16 vco_cfg;
++	int config = UW2453_PRIV(rf)->config;
++	bool autocal = (config == -1);
++	struct zd_chip *chip = zd_rf_to_chip(rf);
++
++	static const struct zd_ioreq16 ioreqs[] = {
++		{ CR80,  0x30 }, { CR81,  0x30 }, { CR79,  0x58 },
++		{ CR12,  0xf0 }, { CR77,  0x1b }, { CR78,  0x58 },
++	};
++
++	r = uw2453_synth_set_channel(chip, channel, autocal);
++	if (r)
++		return r;
++
++	if (autocal)
++		vco_cfg = UW2453_AUTOCAL_VCO_CFG;
++	else
++		vco_cfg = uw2453_std_vco_cfg[config][CHAN_TO_PAIRIDX(channel)];
++
++	r = uw2453_write_vco_cfg(chip, vco_cfg);
++	if (r)
++		return r;
++
++	r = uw2453_init_mode(chip);
++	if (r)
++		return r;
++
++	r = zd_iowrite16a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
++	if (r)
++		return r;
++
++	r = uw2453_set_tx_gain_level(chip, channel);
++	if (r)
++		return r;
++
++	return zd_iowrite16_locked(chip, 0x06, CR203);
++}
++
++static int uw2453_switch_radio_on(struct zd_rf *rf)
++{
++	int r;
++	struct zd_chip *chip = zd_rf_to_chip(rf);
++	struct zd_ioreq16 ioreqs[] = {
++		{ CR11,  0x00 }, { CR251, 0x3f },
++	};
++
++	/* enter RXTX mode */
++	r = zd_rfwrite_locked(chip, UW2453_REGWRITE(0, 0x25f94), RF_RV_BITS);
++	if (r)
++		return r;
++
++	if (zd_chip_is_zd1211b(chip))
++		ioreqs[1].value = 0x7f;
++
++	return zd_iowrite16a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
++}
++
++static int uw2453_switch_radio_off(struct zd_rf *rf)
++{
++	int r;
++	struct zd_chip *chip = zd_rf_to_chip(rf);
++	static const struct zd_ioreq16 ioreqs[] = {
++		{ CR11,  0x04 }, { CR251, 0x2f },
++	};
++
++	/* enter IDLE mode */
++	/* FIXME: shouldn't we go to SLEEP? sent email to zydas */
++	r = zd_rfwrite_locked(chip, UW2453_REGWRITE(0, 0x25f90), RF_RV_BITS);
++	if (r)
++		return r;
++
++	return zd_iowrite16a_locked(chip, ioreqs, ARRAY_SIZE(ioreqs));
++}
++
++static void uw2453_clear(struct zd_rf *rf)
++{
++	kfree(rf->priv);
++}
++
++int zd_rf_init_uw2453(struct zd_rf *rf)
++{
++	rf->init_hw = uw2453_init_hw;
++	rf->set_channel = uw2453_set_channel;
++	rf->switch_radio_on = uw2453_switch_radio_on;
++	rf->switch_radio_off = uw2453_switch_radio_off;
++	rf->patch_6m_band_edge = zd_rf_generic_patch_6m;
++	rf->clear = uw2453_clear;
++	/* we have our own TX integration code */
++	rf->update_channel_int = 0;
++
++	rf->priv = kmalloc(sizeof(struct uw2453_priv), GFP_KERNEL);
++	if (rf->priv == NULL)
++		return -ENOMEM;
++
++	return 0;
++}
++
+diff --git a/drivers/net/wireless/zd1211rw/zd_types.h b/drivers/net/wireless/zd1211rw/zd_types.h
+index 0155a15..e69de29 100644
+--- a/drivers/net/wireless/zd1211rw/zd_types.h
++++ b/drivers/net/wireless/zd1211rw/zd_types.h
+@@ -1,71 +0,0 @@
+-/* zd_types.h
+- *
+- * This program is free software; you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License as published by
+- * the Free Software Foundation; either version 2 of the License, or
+- * (at your option) any later version.
+- *
+- * This program is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- * GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License
+- * along with this program; if not, write to the Free Software
+- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+- */
+-
+-#ifndef _ZD_TYPES_H
+-#define _ZD_TYPES_H
+-
+-#include <linux/types.h>
+-
+-/* We have three register spaces mapped into the overall USB address space of
+- * 64K words (16-bit values). There is the control register space of
+- * double-word registers, the eeprom register space and the firmware register
+- * space. The control register space is byte mapped, the others are word
+- * mapped.
+- *
+- * For that reason, we are using byte offsets for control registers and word
+- * offsets for everything else.
+- */
+-
+-typedef u32 __nocast zd_addr_t;
+-
+-enum {
+-	ADDR_BASE_MASK		= 0xff000000,
+-	ADDR_OFFSET_MASK	= 0x0000ffff,
+-	ADDR_ZERO_MASK		= 0x00ff0000,
+-	NULL_BASE		= 0x00000000,
+-	USB_BASE		= 0x01000000,
+-	CR_BASE			= 0x02000000,
+-	CR_MAX_OFFSET		= 0x0b30,
+-	E2P_BASE		= 0x03000000,
+-	E2P_MAX_OFFSET		= 0x007e,
+-	FW_BASE			= 0x04000000,
+-	FW_MAX_OFFSET		= 0x0005,
+-};
+-
+-#define ZD_ADDR_BASE(addr) ((u32)(addr) & ADDR_BASE_MASK)
+-#define ZD_OFFSET(addr) ((u32)(addr) & ADDR_OFFSET_MASK)
+-
+-#define ZD_ADDR(base, offset) \
+-	((zd_addr_t)(((base) & ADDR_BASE_MASK) | ((offset) & ADDR_OFFSET_MASK)))
+-
+-#define ZD_NULL_ADDR    ((zd_addr_t)0)
+-#define USB_REG(offset)  ZD_ADDR(USB_BASE, offset)	/* word addressing */
+-#define CTL_REG(offset)  ZD_ADDR(CR_BASE, offset)	/* byte addressing */
+-#define E2P_REG(offset)  ZD_ADDR(E2P_BASE, offset)	/* word addressing */
+-#define FW_REG(offset)   ZD_ADDR(FW_BASE, offset)	/* word addressing */
+-
+-static inline zd_addr_t zd_inc_word(zd_addr_t addr)
+-{
+-	u32 base = ZD_ADDR_BASE(addr);
+-	u32 offset = ZD_OFFSET(addr);
+-
+-	offset += base == CR_BASE ? 2 : 1;
+-
+-	return base | offset;
+-}
+-
+-#endif /* _ZD_TYPES_H */
+diff --git a/drivers/net/wireless/zd1211rw/zd_usb.c b/drivers/net/wireless/zd1211rw/zd_usb.c
+index 6320984..ca4cebd 100644
+--- a/drivers/net/wireless/zd1211rw/zd_usb.c
++++ b/drivers/net/wireless/zd1211rw/zd_usb.c
+@@ -15,7 +15,7 @@
+  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+  */
+ 
+-#include <asm/unaligned.h>
++#include <linux/kernel.h>
+ #include <linux/init.h>
+ #include <linux/module.h>
+ #include <linux/firmware.h>
+@@ -23,13 +23,14 @@
+ #include <linux/errno.h>
+ #include <linux/skbuff.h>
+ #include <linux/usb.h>
++#include <linux/workqueue.h>
+ #include <net/ieee80211.h>
++#include <asm/unaligned.h>
+ 
+ #include "zd_def.h"
+ #include "zd_netdev.h"
+ #include "zd_mac.h"
+ #include "zd_usb.h"
+-#include "zd_util.h"
+ 
+ static struct usb_device_id usb_ids[] = {
+ 	/* ZD1211 */
+@@ -38,10 +39,47 @@ static struct usb_device_id usb_ids[] = {
+ 	{ USB_DEVICE(0x126f, 0xa006), .driver_info = DEVICE_ZD1211 },
+ 	{ USB_DEVICE(0x6891, 0xa727), .driver_info = DEVICE_ZD1211 },
+ 	{ USB_DEVICE(0x0df6, 0x9071), .driver_info = DEVICE_ZD1211 },
++	{ USB_DEVICE(0x0df6, 0x9075), .driver_info = DEVICE_ZD1211 },
+ 	{ USB_DEVICE(0x157e, 0x300b), .driver_info = DEVICE_ZD1211 },
++	{ USB_DEVICE(0x079b, 0x004a), .driver_info = DEVICE_ZD1211 },
++	{ USB_DEVICE(0x1740, 0x2000), .driver_info = DEVICE_ZD1211 },
++	{ USB_DEVICE(0x157e, 0x3204), .driver_info = DEVICE_ZD1211 },
++	{ USB_DEVICE(0x0586, 0x3402), .driver_info = DEVICE_ZD1211 },
++	{ USB_DEVICE(0x0b3b, 0x5630), .driver_info = DEVICE_ZD1211 },
++	{ USB_DEVICE(0x0b05, 0x170c), .driver_info = DEVICE_ZD1211 },
++	{ USB_DEVICE(0x1435, 0x0711), .driver_info = DEVICE_ZD1211 },
++	{ USB_DEVICE(0x0586, 0x3409), .driver_info = DEVICE_ZD1211 },
++	{ USB_DEVICE(0x0b3b, 0x1630), .driver_info = DEVICE_ZD1211 },
++	{ USB_DEVICE(0x0586, 0x3401), .driver_info = DEVICE_ZD1211 },
++	{ USB_DEVICE(0x14ea, 0xab13), .driver_info = DEVICE_ZD1211 },
++	{ USB_DEVICE(0x13b1, 0x001e), .driver_info = DEVICE_ZD1211 },
++	{ USB_DEVICE(0x0586, 0x3407), .driver_info = DEVICE_ZD1211 },
++	{ USB_DEVICE(0x129b, 0x1666), .driver_info = DEVICE_ZD1211 },
+ 	/* ZD1211B */
+ 	{ USB_DEVICE(0x0ace, 0x1215), .driver_info = DEVICE_ZD1211B },
+ 	{ USB_DEVICE(0x157e, 0x300d), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x079b, 0x0062), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x1582, 0x6003), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x050d, 0x705c), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x083a, 0x4505), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x0471, 0x1236), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x13b1, 0x0024), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x0586, 0x340f), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x0b05, 0x171b), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x0586, 0x3410), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x0baf, 0x0121), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x0586, 0x3412), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x0586, 0x3413), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x0053, 0x5301), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x0411, 0x00da), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x2019, 0x5303), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x129b, 0x1667), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x0cde, 0x001a), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x0586, 0x340a), .driver_info = DEVICE_ZD1211B },
++	{ USB_DEVICE(0x0471, 0x1237), .driver_info = DEVICE_ZD1211B },
++	/* "Driverless" devices that need ejecting */
++	{ USB_DEVICE(0x0ace, 0x2011), .driver_info = DEVICE_INSTALLER },
++	{ USB_DEVICE(0x0ace, 0x20ff), .driver_info = DEVICE_INSTALLER },
+ 	{}
+ };
+ 
+@@ -55,96 +93,6 @@ MODULE_DEVICE_TABLE(usb, usb_ids);
+ #define FW_ZD1211_PREFIX	"zd1211/zd1211_"
+ #define FW_ZD1211B_PREFIX	"zd1211/zd1211b_"
+ 
+-/* register address handling */
+-
+-#ifdef DEBUG
+-static int check_addr(struct zd_usb *usb, zd_addr_t addr)
+-{
+-	u32 base = ZD_ADDR_BASE(addr);
+-	u32 offset = ZD_OFFSET(addr);
+-
+-	if ((u32)addr & ADDR_ZERO_MASK)
+-		goto invalid_address;
+-	switch (base) {
+-	case USB_BASE:
+-		break;
+-	case CR_BASE:
+-		if (offset > CR_MAX_OFFSET) {
+-			dev_dbg(zd_usb_dev(usb),
+-				"CR offset %#010x larger than"
+-				" CR_MAX_OFFSET %#10x\n",
+-				offset, CR_MAX_OFFSET);
+-			goto invalid_address;
+-		}
+-		if (offset & 1) {
+-			dev_dbg(zd_usb_dev(usb),
+-				"CR offset %#010x is not a multiple of 2\n",
+-				offset);
+-			goto invalid_address;
+-		}
+-		break;
+-	case E2P_BASE:
+-		if (offset > E2P_MAX_OFFSET) {
+-			dev_dbg(zd_usb_dev(usb),
+-				"E2P offset %#010x larger than"
+-				" E2P_MAX_OFFSET %#010x\n",
+-				offset, E2P_MAX_OFFSET);
+-			goto invalid_address;
+-		}
+-		break;
+-	case FW_BASE:
+-		if (!usb->fw_base_offset) {
+-			dev_dbg(zd_usb_dev(usb),
+-			       "ERROR: fw base offset has not been set\n");
+-			return -EAGAIN;
+-		}
+-		if (offset > FW_MAX_OFFSET) {
+-			dev_dbg(zd_usb_dev(usb),
+-				"FW offset %#10x is larger than"
+-				" FW_MAX_OFFSET %#010x\n",
+-				offset, FW_MAX_OFFSET);
+-			goto invalid_address;
+-		}
+-		break;
+-	default:
+-		dev_dbg(zd_usb_dev(usb),
+-			"address has unsupported base %#010x\n", addr);
+-		goto invalid_address;
+-	}
+-
+-	return 0;
+-invalid_address:
+-	dev_dbg(zd_usb_dev(usb),
+-		"ERROR: invalid address: %#010x\n", addr);
+-	return -EINVAL;
+-}
+-#endif /* DEBUG */
+-
+-static u16 usb_addr(struct zd_usb *usb, zd_addr_t addr)
+-{
+-	u32 base;
+-	u16 offset;
+-
+-	base = ZD_ADDR_BASE(addr);
+-	offset = ZD_OFFSET(addr);
+-
+-	ZD_ASSERT(check_addr(usb, addr) == 0);
+-
+-	switch (base) {
+-	case CR_BASE:
+-		offset += CR_BASE_OFFSET;
+-		break;
+-	case E2P_BASE:
+-		offset += E2P_BASE_OFFSET;
+-		break;
+-	case FW_BASE:
+-		offset += usb->fw_base_offset;
+-		break;
+-	}
+-
+-	return offset;
+-}
+-
+ /* USB device initialization */
+ 
+ static int request_fw_file(
+@@ -253,21 +201,55 @@ static u16 get_word(const void *data, u16 offset)
+ 	return le16_to_cpu(p[offset]);
+ }
+ 
+-static char *get_fw_name(char *buffer, size_t size, u8 device_type,
++static char *get_fw_name(struct zd_usb *usb, char *buffer, size_t size,
+ 	               const char* postfix)
+ {
+ 	scnprintf(buffer, size, "%s%s",
+-		device_type == DEVICE_ZD1211B ?
++		usb->is_zd1211b ?
+ 			FW_ZD1211B_PREFIX : FW_ZD1211_PREFIX,
+ 		postfix);
+ 	return buffer;
+ }
+ 
+-static int upload_firmware(struct usb_device *udev, u8 device_type)
++static int handle_version_mismatch(struct zd_usb *usb,
++	const struct firmware *ub_fw)
++{
++	struct usb_device *udev = zd_usb_to_usbdev(usb);
++	const struct firmware *ur_fw = NULL;
++	int offset;
++	int r = 0;
++	char fw_name[128];
++
++	r = request_fw_file(&ur_fw,
++		get_fw_name(usb, fw_name, sizeof(fw_name), "ur"),
++		&udev->dev);
++	if (r)
++		goto error;
++
++	r = upload_code(udev, ur_fw->data, ur_fw->size, FW_START, REBOOT);
++	if (r)
++		goto error;
++
++	offset = (E2P_BOOT_CODE_OFFSET * sizeof(u16));
++	r = upload_code(udev, ub_fw->data + offset, ub_fw->size - offset,
++		E2P_START + E2P_BOOT_CODE_OFFSET, REBOOT);
++
++	/* At this point, the vendor driver downloads the whole firmware
++	 * image, hacks around with version IDs, and uploads it again,
++	 * completely overwriting the boot code. We do not do this here as
++	 * it is not required on any tested devices, and it is suspected to
++	 * cause problems. */
++error:
++	release_firmware(ur_fw);
++	return r;
++}
++
++static int upload_firmware(struct zd_usb *usb)
+ {
+ 	int r;
+ 	u16 fw_bcdDevice;
+ 	u16 bcdDevice;
++	struct usb_device *udev = zd_usb_to_usbdev(usb);
+ 	const struct firmware *ub_fw = NULL;
+ 	const struct firmware *uph_fw = NULL;
+ 	char fw_name[128];
+@@ -275,22 +257,24 @@ static int upload_firmware(struct usb_device *udev, u8 device_type)
+ 	bcdDevice = get_bcdDevice(udev);
+ 
+ 	r = request_fw_file(&ub_fw,
+-		get_fw_name(fw_name, sizeof(fw_name), device_type,  "ub"),
++		get_fw_name(usb, fw_name, sizeof(fw_name), "ub"),
+ 		&udev->dev);
+ 	if (r)
+ 		goto error;
+ 
+-	fw_bcdDevice = get_word(ub_fw->data, EEPROM_REGS_OFFSET);
++	fw_bcdDevice = get_word(ub_fw->data, E2P_DATA_OFFSET);
+ 
+-	/* FIXME: do we have any reason to perform the kludge that the vendor
+-	 * driver does when there is a version mismatch? (their driver uploads
+-	 * different firmwares and stuff)
+-	 */
+ 	if (fw_bcdDevice != bcdDevice) {
+ 		dev_info(&udev->dev,
+-			"firmware device id %#06x and actual device id "
+-			"%#06x differ, continuing anyway\n",
+-			fw_bcdDevice, bcdDevice);
++			"firmware version %#06x and device bootcode version "
++			"%#06x differ\n", fw_bcdDevice, bcdDevice);
++		if (bcdDevice <= 0x4313)
++			dev_warn(&udev->dev, "device has old bootcode, please "
++				"report success or failure\n");
++
++		r = handle_version_mismatch(usb, ub_fw);
++		if (r)
++			goto error;
+ 	} else {
+ 		dev_dbg_f(&udev->dev,
+ 			"firmware device id %#06x is equal to the "
+@@ -299,13 +283,12 @@ static int upload_firmware(struct usb_device *udev, u8 device_type)
+ 
+ 
+ 	r = request_fw_file(&uph_fw,
+-		get_fw_name(fw_name, sizeof(fw_name), device_type, "uphr"),
++		get_fw_name(usb, fw_name, sizeof(fw_name), "uphr"),
+ 		&udev->dev);
+ 	if (r)
+ 		goto error;
+ 
+-	r = upload_code(udev, uph_fw->data, uph_fw->size, FW_START_OFFSET,
+-		        REBOOT);
++	r = upload_code(udev, uph_fw->data, uph_fw->size, FW_START, REBOOT);
+ 	if (r) {
+ 		dev_err(&udev->dev,
+ 			"Could not upload firmware code uph. Error number %d\n",
+@@ -319,13 +302,28 @@ error:
+ 	return r;
+ }
+ 
+-static void disable_read_regs_int(struct zd_usb *usb)
++/* Read data from device address space using "firmware interface" which does
++ * not require firmware to be loaded. */
++int zd_usb_read_fw(struct zd_usb *usb, zd_addr_t addr, u8 *data, u16 len)
+ {
+-	struct zd_usb_interrupt *intr = &usb->intr;
++	int r;
++	struct usb_device *udev = zd_usb_to_usbdev(usb);
+ 
+-	spin_lock(&intr->lock);
+-	intr->read_regs_enabled = 0;
+-	spin_unlock(&intr->lock);
++	r = usb_control_msg(udev, usb_rcvctrlpipe(udev, 0),
++		USB_REQ_FIRMWARE_READ_DATA, USB_DIR_IN | 0x40, addr, 0,
++		data, len, 5000);
++	if (r < 0) {
++		dev_err(&udev->dev,
++			"read over firmware interface failed: %d\n", r);
++		return r;
++	} else if (r != len) {
++		dev_err(&udev->dev,
++			"incomplete read over firmware interface: %d/%d\n",
++			r, len);
++		return -EIO;
++	}
++
++	return 0;
+ }
+ 
+ #define urb_dev(urb) (&(urb)->dev->dev)
+@@ -357,11 +355,17 @@ out:
+ 
+ static inline void handle_retry_failed_int(struct urb *urb)
+ {
++	struct zd_usb *usb = urb->context;
++	struct zd_mac *mac = zd_usb_to_mac(usb);
++	struct ieee80211_device *ieee = zd_mac_to_ieee80211(mac);
++
++	ieee->stats.tx_errors++;
++	ieee->ieee_stats.tx_retry_limit_exceeded++;
+ 	dev_dbg_f(urb_dev(urb), "retry failed interrupt\n");
+ }
+ 
+ 
+-static void int_urb_complete(struct urb *urb, struct pt_regs *pt_regs)
++static void int_urb_complete(struct urb *urb, struct pt_regs *regs)
+ {
+ 	int r;
+ 	struct usb_int_header *hdr;
+@@ -450,7 +454,7 @@ int zd_usb_enable_int(struct zd_usb *usb)
+ 
+ 	dev_dbg_f(zd_usb_dev(usb), "\n");
+ 
+-	urb = usb_alloc_urb(0, GFP_NOFS);
++	urb = usb_alloc_urb(0, GFP_KERNEL);
+ 	if (!urb) {
+ 		r = -ENOMEM;
+ 		goto out;
+@@ -468,7 +472,7 @@ int zd_usb_enable_int(struct zd_usb *usb)
+ 
+ 	/* TODO: make it a DMA buffer */
+ 	r = -ENOMEM;
+-	transfer_buffer = kmalloc(USB_MAX_EP_INT_BUFFER, GFP_NOFS);
++	transfer_buffer = kmalloc(USB_MAX_EP_INT_BUFFER, GFP_KERNEL);
+ 	if (!transfer_buffer) {
+ 		dev_dbg_f(zd_usb_dev(usb),
+ 			"couldn't allocate transfer_buffer\n");
+@@ -482,7 +486,7 @@ int zd_usb_enable_int(struct zd_usb *usb)
+ 			 intr->interval);
+ 
+ 	dev_dbg_f(zd_usb_dev(usb), "submit urb %p\n", intr->urb);
+-	r = usb_submit_urb(urb, GFP_NOFS);
++	r = usb_submit_urb(urb, GFP_KERNEL);
+ 	if (r) {
+ 		dev_dbg_f(zd_usb_dev(usb),
+ 			 "Couldn't submit urb. Error number %d\n", r);
+@@ -531,6 +535,9 @@ static void handle_rx_packet(struct zd_usb *usb, const u8 *buffer,
+ 
+ 	if (length < sizeof(struct rx_length_info)) {
+ 		/* It's not a complete packet anyhow. */
++		struct ieee80211_device *ieee = zd_mac_to_ieee80211(mac);
++		ieee->stats.rx_errors++;
++		ieee->stats.rx_length_errors++;
+ 		return;
+ 	}
+ 	length_info = (struct rx_length_info *)
+@@ -549,20 +556,22 @@ static void handle_rx_packet(struct zd_usb *usb, const u8 *buffer,
+ 		unsigned int l, k, n;
+ 		for (i = 0, l = 0;; i++) {
+ 			k = le16_to_cpu(get_unaligned(&length_info->length[i]));
++			if (k == 0)
++				return;
+ 			n = l+k;
+ 			if (n > length)
+ 				return;
+-			zd_mac_rx(mac, buffer+l, k);
++			zd_mac_rx_irq(mac, buffer+l, k);
+ 			if (i >= 2)
+ 				return;
+ 			l = (n+3) & ~3;
+ 		}
+ 	} else {
+-		zd_mac_rx(mac, buffer, length);
++		zd_mac_rx_irq(mac, buffer, length);
+ 	}
+ }
+ 
+-static void rx_urb_complete(struct urb *urb, struct pt_regs *pt_regs)
++static void rx_urb_complete(struct urb *urb, struct pt_regs *regs)
+ {
+ 	struct zd_usb *usb;
+ 	struct zd_usb_rx *rx;
+@@ -620,16 +629,16 @@ resubmit:
+ 	usb_submit_urb(urb, GFP_ATOMIC);
+ }
+ 
+-struct urb *alloc_urb(struct zd_usb *usb)
++static struct urb *alloc_urb(struct zd_usb *usb)
+ {
+ 	struct usb_device *udev = zd_usb_to_usbdev(usb);
+ 	struct urb *urb;
+ 	void *buffer;
+ 
+-	urb = usb_alloc_urb(0, GFP_NOFS);
++	urb = usb_alloc_urb(0, GFP_KERNEL);
+ 	if (!urb)
+ 		return NULL;
+-	buffer = usb_buffer_alloc(udev, USB_MAX_RX_SIZE, GFP_NOFS,
++	buffer = usb_buffer_alloc(udev, USB_MAX_RX_SIZE, GFP_KERNEL,
+ 		                  &urb->transfer_dma);
+ 	if (!buffer) {
+ 		usb_free_urb(urb);
+@@ -644,7 +653,7 @@ struct urb *alloc_urb(struct zd_usb *usb)
+ 	return urb;
+ }
+ 
+-void free_urb(struct urb *urb)
++static void free_urb(struct urb *urb)
+ {
+ 	if (!urb)
+ 		return;
+@@ -662,7 +671,7 @@ int zd_usb_enable_rx(struct zd_usb *usb)
+ 	dev_dbg_f(zd_usb_dev(usb), "\n");
+ 
+ 	r = -ENOMEM;
+-	urbs = kcalloc(URBS_COUNT, sizeof(struct urb *), GFP_NOFS);
++	urbs = kcalloc(URBS_COUNT, sizeof(struct urb *), GFP_KERNEL);
+ 	if (!urbs)
+ 		goto error;
+ 	for (i = 0; i < URBS_COUNT; i++) {
+@@ -683,7 +692,7 @@ int zd_usb_enable_rx(struct zd_usb *usb)
+ 	spin_unlock_irq(&rx->lock);
+ 
+ 	for (i = 0; i < URBS_COUNT; i++) {
+-		r = usb_submit_urb(urbs[i], GFP_NOFS);
++		r = usb_submit_urb(urbs[i], GFP_KERNEL);
+ 		if (r)
+ 			goto error_submit;
+ 	}
+@@ -732,7 +741,7 @@ void zd_usb_disable_rx(struct zd_usb *usb)
+ 	spin_unlock_irqrestore(&rx->lock, flags);
+ }
+ 
+-static void tx_urb_complete(struct urb *urb, struct pt_regs *pt_regs)
++static void tx_urb_complete(struct urb *urb, struct pt_regs *regs)
+ {
+ 	int r;
+ 
+@@ -812,7 +821,7 @@ static inline void init_usb_interrupt(struct zd_usb *usb)
+ 	spin_lock_init(&intr->lock);
+ 	intr->interval = int_urb_interval(zd_usb_to_usbdev(usb));
+ 	init_completion(&intr->read_regs.completion);
+-	intr->read_regs.cr_int_addr = cpu_to_le16(usb_addr(usb, CR_INTERRUPT));
++	intr->read_regs.cr_int_addr = cpu_to_le16((u16)CR_INTERRUPT);
+ }
+ 
+ static inline void init_usb_rx(struct zd_usb *usb)
+@@ -844,27 +853,11 @@ void zd_usb_init(struct zd_usb *usb, struct net_device *netdev,
+ 	init_usb_rx(usb);
+ }
+ 
+-int zd_usb_init_hw(struct zd_usb *usb)
+-{
+-	int r;
+-	struct zd_chip *chip = zd_usb_to_chip(usb);
+-
+-	ZD_ASSERT(mutex_is_locked(&chip->mutex));
+-	r = zd_ioread16_locked(chip, &usb->fw_base_offset,
+-		        USB_REG((u16)FW_BASE_ADDR_OFFSET));
+-	if (r)
+-		return r;
+-	dev_dbg_f(zd_usb_dev(usb), "fw_base_offset: %#06hx\n",
+-		 usb->fw_base_offset);
+-
+-	return 0;
+-}
+-
+ void zd_usb_clear(struct zd_usb *usb)
+ {
+ 	usb_set_intfdata(usb->intf, NULL);
+ 	usb_put_intf(usb->intf);
+-	memset(usb, 0, sizeof(*usb));
++	ZD_MEMCLEAR(usb, sizeof(*usb));
+ 	/* FIXME: usb_interrupt, usb_tx, usb_rx? */
+ }
+ 
+@@ -910,14 +903,99 @@ static void print_id(struct usb_device *udev)
+ #define print_id(udev) do { } while (0)
+ #endif
+ 
++static int eject_installer(struct usb_interface *intf)
++{
++	struct usb_device *udev = interface_to_usbdev(intf);
++	struct usb_host_interface *iface_desc = &intf->altsetting[0];
++	struct usb_endpoint_descriptor *endpoint;
++	unsigned char *cmd;
++	u8 bulk_out_ep;
++	int r;
++
++	/* Find bulk out endpoint */
++	endpoint = &iface_desc->endpoint[1].desc;
++	if ((endpoint->bEndpointAddress & USB_TYPE_MASK) == USB_DIR_OUT &&
++	    (endpoint->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK) ==
++	    USB_ENDPOINT_XFER_BULK) {
++		bulk_out_ep = endpoint->bEndpointAddress;
++	} else {
++		dev_err(&udev->dev,
++			"zd1211rw: Could not find bulk out endpoint\n");
++		return -ENODEV;
++	}
++
++	cmd = kzalloc(31, GFP_KERNEL);
++	if (cmd == NULL)
++		return -ENODEV;
++
++	/* USB bulk command block */
++	cmd[0] = 0x55;	/* bulk command signature */
++	cmd[1] = 0x53;	/* bulk command signature */
++	cmd[2] = 0x42;	/* bulk command signature */
++	cmd[3] = 0x43;	/* bulk command signature */
++	cmd[14] = 6;	/* command length */
++
++	cmd[15] = 0x1b;	/* SCSI command: START STOP UNIT */
++	cmd[19] = 0x2;	/* eject disc */
++
++	dev_info(&udev->dev, "Ejecting virtual installer media...\n");
++	r = usb_bulk_msg(udev, usb_sndbulkpipe(udev, bulk_out_ep),
++		cmd, 31, NULL, 2000);
++	kfree(cmd);
++	if (r)
++		return r;
++
++	/* At this point, the device disconnects and reconnects with the real
++	 * ID numbers. */
++
++	usb_set_intfdata(intf, NULL);
++	return 0;
++}
++
++int zd_usb_init_hw(struct zd_usb *usb)
++{
++	int r;
++	struct zd_mac *mac = zd_usb_to_mac(usb);
++
++	dev_dbg_f(zd_usb_dev(usb), "\n");
++
++	r = upload_firmware(usb);
++	if (r) {
++		dev_err(zd_usb_dev(usb),
++		       "couldn't load firmware. Error number %d\n", r);
++		return r;
++	}
++
++	r = usb_reset_configuration(zd_usb_to_usbdev(usb));
++	if (r) {
++		dev_dbg_f(zd_usb_dev(usb),
++			"couldn't reset configuration. Error number %d\n", r);
++		return r;
++	}
++
++	r = zd_mac_init_hw(mac);
++	if (r) {
++		dev_dbg_f(zd_usb_dev(usb),
++		         "couldn't initialize mac. Error number %d\n", r);
++		return r;
++	}
++
++	usb->initialized = 1;
++	return 0;
++}
++
+ static int probe(struct usb_interface *intf, const struct usb_device_id *id)
+ {
+ 	int r;
++	struct zd_usb *usb;
+ 	struct usb_device *udev = interface_to_usbdev(intf);
+ 	struct net_device *netdev = NULL;
+ 
+ 	print_id(udev);
+ 
++	if (id->driver_info & DEVICE_INSTALLER)
++		return eject_installer(intf);
++
+ 	switch (udev->speed) {
+ 	case USB_SPEED_LOW:
+ 	case USB_SPEED_FULL:
+@@ -929,32 +1007,18 @@ static int probe(struct usb_interface *intf, const struct usb_device_id *id)
+ 		goto error;
+ 	}
+ 
++	usb_reset_device(interface_to_usbdev(intf));
++
+ 	netdev = zd_netdev_alloc(intf);
+ 	if (netdev == NULL) {
+ 		r = -ENOMEM;
+ 		goto error;
+ 	}
+ 
+-	r = upload_firmware(udev, id->driver_info);
+-	if (r) {
+-		dev_err(&intf->dev,
+-		       "couldn't load firmware. Error number %d\n", r);
+-		goto error;
+-	}
++	usb = &zd_netdev_mac(netdev)->chip.usb;
++	usb->is_zd1211b = (id->driver_info == DEVICE_ZD1211B) != 0;
+ 
+-	r = usb_reset_configuration(udev);
+-	if (r) {
+-		dev_dbg_f(&intf->dev,
+-			"couldn't reset configuration. Error number %d\n", r);
+-		goto error;
+-	}
+-
+-	/* At this point the interrupt endpoint is not generally enabled. We
+-	 * save the USB bandwidth until the network device is opened. But
+-	 * notify that the initialization of the MAC will require the
+-	 * interrupts to be temporary enabled.
+-	 */
+-	r = zd_mac_init_hw(zd_netdev_mac(netdev), id->driver_info);
++	r = zd_mac_preinit_hw(zd_netdev_mac(netdev));
+ 	if (r) {
+ 		dev_dbg_f(&intf->dev,
+ 		         "couldn't initialize mac. Error number %d\n", r);
+@@ -980,8 +1044,16 @@ error:
+ static void disconnect(struct usb_interface *intf)
+ {
+ 	struct net_device *netdev = zd_intf_to_netdev(intf);
+-	struct zd_mac *mac = zd_netdev_mac(netdev);
+-	struct zd_usb *usb = &mac->chip.usb;
++	struct zd_mac *mac;
++	struct zd_usb *usb;
++
++	/* Either something really bad happened, or we're just dealing with
++	 * a DEVICE_INSTALLER. */
++	if (netdev == NULL)
++		return;
++
++	mac = zd_netdev_mac(netdev);
++	usb = &mac->chip.usb;
+ 
+ 	dev_dbg_f(zd_usb_dev(usb), "\n");
+ 
+@@ -998,7 +1070,6 @@ static void disconnect(struct usb_interface *intf)
+ 	 */
+ 	usb_reset_device(interface_to_usbdev(intf));
+ 
+-	/* If somebody still waits on this lock now, this is an error. */
+ 	zd_netdev_free(netdev);
+ 	dev_dbg(&intf->dev, "disconnected\n");
+ }
+@@ -1010,26 +1081,37 @@ static struct usb_driver driver = {
+ 	.disconnect	= disconnect,
+ };
+ 
++struct workqueue_struct *zd_workqueue;
++
+ static int __init usb_init(void)
+ {
+ 	int r;
+ 
+-	pr_debug("usb_init()\n");
++	pr_debug("%s usb_init()\n", driver.name);
++
++	zd_workqueue = create_singlethread_workqueue(driver.name);
++	if (zd_workqueue == NULL) {
++		printk(KERN_ERR "%s couldn't create workqueue\n", driver.name);
++		return -ENOMEM;
++	}
+ 
+ 	r = usb_register(&driver);
+ 	if (r) {
+-		printk(KERN_ERR "usb_register() failed. Error number %d\n", r);
++		destroy_workqueue(zd_workqueue);
++		printk(KERN_ERR "%s usb_register() failed. Error number %d\n",
++		       driver.name, r);
+ 		return r;
+ 	}
+ 
+-	pr_debug("zd1211rw initialized\n");
++	pr_debug("%s initialized\n", driver.name);
+ 	return 0;
+ }
+ 
+ static void __exit usb_exit(void)
+ {
+-	pr_debug("usb_exit()\n");
++	pr_debug("%s usb_exit()\n", driver.name);
+ 	usb_deregister(&driver);
++	destroy_workqueue(zd_workqueue);
+ }
+ 
+ module_init(usb_init);
+@@ -1044,10 +1126,19 @@ static void prepare_read_regs_int(struct zd_usb *usb)
+ {
+ 	struct zd_usb_interrupt *intr = &usb->intr;
+ 
+-	spin_lock(&intr->lock);
++	spin_lock_irq(&intr->lock);
+ 	intr->read_regs_enabled = 1;
+ 	INIT_COMPLETION(intr->read_regs.completion);
+-	spin_unlock(&intr->lock);
++	spin_unlock_irq(&intr->lock);
++}
++
++static void disable_read_regs_int(struct zd_usb *usb)
++{
++	struct zd_usb_interrupt *intr = &usb->intr;
++
++	spin_lock_irq(&intr->lock);
++	intr->read_regs_enabled = 0;
++	spin_unlock_irq(&intr->lock);
+ }
+ 
+ static int get_results(struct zd_usb *usb, u16 *values,
+@@ -1059,7 +1150,7 @@ static int get_results(struct zd_usb *usb, u16 *values,
+ 	struct read_regs_int *rr = &intr->read_regs;
+ 	struct usb_int_regs *regs = (struct usb_int_regs *)rr->buffer;
+ 
+-	spin_lock(&intr->lock);
++	spin_lock_irq(&intr->lock);
+ 
+ 	r = -EIO;
+ 	/* The created block size seems to be larger than expected.
+@@ -1092,7 +1183,7 @@ static int get_results(struct zd_usb *usb, u16 *values,
+ 
+ 	r = 0;
+ error_unlock:
+-	spin_unlock(&intr->lock);
++	spin_unlock_irq(&intr->lock);
+ 	return r;
+ }
+ 
+@@ -1127,12 +1218,12 @@ int zd_usb_ioread16v(struct zd_usb *usb, u16 *values,
+ 	}
+ 
+ 	req_len = sizeof(struct usb_req_read_regs) + count * sizeof(__le16);
+-	req = kmalloc(req_len, GFP_NOFS);
++	req = kmalloc(req_len, GFP_KERNEL);
+ 	if (!req)
+ 		return -ENOMEM;
+ 	req->id = cpu_to_le16(USB_REQ_READ_REGS);
+ 	for (i = 0; i < count; i++)
+-		req->addr[i] = cpu_to_le16(usb_addr(usb, addresses[i]));
++		req->addr[i] = cpu_to_le16((u16)addresses[i]);
+ 
+ 	udev = zd_usb_to_usbdev(usb);
+ 	prepare_read_regs_int(usb);
+@@ -1190,14 +1281,14 @@ int zd_usb_iowrite16v(struct zd_usb *usb, const struct zd_ioreq16 *ioreqs,
+ 
+ 	req_len = sizeof(struct usb_req_write_regs) +
+ 		  count * sizeof(struct reg_data);
+-	req = kmalloc(req_len, GFP_NOFS);
++	req = kmalloc(req_len, GFP_KERNEL);
+ 	if (!req)
+ 		return -ENOMEM;
+ 
+ 	req->id = cpu_to_le16(USB_REQ_WRITE_REGS);
+ 	for (i = 0; i < count; i++) {
+ 		struct reg_data *rw  = &req->reg_writes[i];
+-		rw->addr = cpu_to_le16(usb_addr(usb, ioreqs[i].addr));
++		rw->addr = cpu_to_le16((u16)ioreqs[i].addr);
+ 		rw->value = cpu_to_le16(ioreqs[i].value);
+ 	}
+ 
+@@ -1270,7 +1361,7 @@ int zd_usb_rfwrite(struct zd_usb *usb, u32 value, u8 bits)
+ 	bit_value_template &= ~(RF_IF_LE|RF_CLK|RF_DATA);
+ 
+ 	req_len = sizeof(struct usb_req_rfwrite) + bits * sizeof(__le16);
+-	req = kmalloc(req_len, GFP_NOFS);
++	req = kmalloc(req_len, GFP_KERNEL);
+ 	if (!req)
+ 		return -ENOMEM;
+ 
+diff --git a/drivers/net/wireless/zd1211rw/zd_usb.h b/drivers/net/wireless/zd1211rw/zd_usb.h
+index d642028..961a7a1 100644
+--- a/drivers/net/wireless/zd1211rw/zd_usb.h
++++ b/drivers/net/wireless/zd1211rw/zd_usb.h
+@@ -25,11 +25,11 @@
+ #include <linux/usb.h>
+ 
+ #include "zd_def.h"
+-#include "zd_types.h"
+ 
+ enum devicetype {
+ 	DEVICE_ZD1211  = 0,
+ 	DEVICE_ZD1211B = 1,
++	DEVICE_INSTALLER = 2,
+ };
+ 
+ enum endpoints {
+@@ -180,15 +180,15 @@ struct zd_usb_tx {
+ 	spinlock_t lock;
+ };
+ 
+-/* Contains the usb parts. The structure doesn't require a lock, because intf
+- * and fw_base_offset, will not be changed after initialization.
++/* Contains the usb parts. The structure doesn't require a lock because intf
++ * will not be changed after initialization.
+  */
+ struct zd_usb {
+ 	struct zd_usb_interrupt intr;
+ 	struct zd_usb_rx rx;
+ 	struct zd_usb_tx tx;
+ 	struct usb_interface *intf;
+-	u16 fw_base_offset;
++	u8 is_zd1211b:1, initialized:1;
+ };
+ 
+ #define zd_usb_dev(usb) (&usb->intf->dev)
+@@ -237,4 +237,8 @@ int zd_usb_iowrite16v(struct zd_usb *usb, const struct zd_ioreq16 *ioreqs,
+ 
+ int zd_usb_rfwrite(struct zd_usb *usb, u32 value, u8 bits);
+ 
++int zd_usb_read_fw(struct zd_usb *usb, zd_addr_t addr, u8 *data, u16 len);
++
++extern struct workqueue_struct *zd_workqueue;
++
+ #endif /* _ZD_USB_H */
+diff --git a/drivers/net/wireless/zd1211rw/zd_util.c b/drivers/net/wireless/zd1211rw/zd_util.c
+index d20036c..e69de29 100644
+--- a/drivers/net/wireless/zd1211rw/zd_util.c
++++ b/drivers/net/wireless/zd1211rw/zd_util.c
+@@ -1,82 +0,0 @@
+-/* zd_util.c
+- *
+- * This program is free software; you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License as published by
+- * the Free Software Foundation; either version 2 of the License, or
+- * (at your option) any later version.
+- *
+- * This program is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- * GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License
+- * along with this program; if not, write to the Free Software
+- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+- *
+- * Utility program
+- */
+-
+-#include "zd_def.h"
+-#include "zd_util.h"
+-
+-#ifdef DEBUG
+-static char hex(u8 v)
+-{
+-	v &= 0xf;
+-	return (v < 10 ? '0' : 'a' - 10) + v;
+-}
+-
+-static char hex_print(u8 c)
+-{
+-	return (0x20 <= c && c < 0x7f) ? c : '.';
+-}
+-
+-static void dump_line(const u8 *bytes, size_t size)
+-{
+-	char c;
+-	size_t i;
+-
+-	size = size <= 8 ? size : 8;
+-	printk(KERN_DEBUG "zd1211 %p ", bytes);
+-	for (i = 0; i < 8; i++) {
+-		switch (i) {
+-		case 1:
+-		case 5:
+-			c = '.';
+-			break;
+-		case 3:
+-			c = ':';
+-			break;
+-		default:
+-			c = ' ';
+-		}
+-		if (i < size) {
+-			printk("%c%c%c", hex(bytes[i] >> 4), hex(bytes[i]), c);
+-		} else {
+-			printk("  %c", c);
+-		}
+-	}
+-
+-	for (i = 0; i < size; i++)
+-		printk("%c", hex_print(bytes[i]));
+-	printk("\n");
+-}
+-
+-void zd_hexdump(const void *bytes, size_t size)
+-{
+-	size_t i = 0;
+-
+-	do {
+-		dump_line((u8 *)bytes + i, size-i);
+-		i += 8;
+-	} while (i < size);
+-}
+-#endif /* DEBUG */
+-
+-void *zd_tail(const void *buffer, size_t buffer_size, size_t tail_size)
+-{
+-	if (buffer_size < tail_size)
+-		return NULL;
+-	return (u8 *)buffer + (buffer_size - tail_size);
+-}
+diff --git a/drivers/net/wireless/zd1211rw/zd_util.h b/drivers/net/wireless/zd1211rw/zd_util.h
+index ce26f7a..e69de29 100644
+--- a/drivers/net/wireless/zd1211rw/zd_util.h
++++ b/drivers/net/wireless/zd1211rw/zd_util.h
+@@ -1,29 +0,0 @@
+-/* zd_util.h
+- *
+- * This program is free software; you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License as published by
+- * the Free Software Foundation; either version 2 of the License, or
+- * (at your option) any later version.
+- *
+- * This program is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- * GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License
+- * along with this program; if not, write to the Free Software
+- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+- */
+-
+-#ifndef _ZD_UTIL_H
+-#define _ZD_UTIL_H
+-
+-void *zd_tail(const void *buffer, size_t buffer_size, size_t tail_size);
+-
+-#ifdef DEBUG
+-void zd_hexdump(const void *bytes, size_t size);
+-#else
+-#define zd_hexdump(bytes, size)
+-#endif /* DEBUG */
+-
+-#endif /* _ZD_UTIL_H */

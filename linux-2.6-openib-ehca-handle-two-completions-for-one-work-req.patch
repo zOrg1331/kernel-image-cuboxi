@@ -1,0 +1,341 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Tue, 19 Aug 2008 15:16:35 -0400
+Subject: [openib] ehca: handle two completions for one work req
+Message-id: 20080819191635.11290.26166.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.3 bz459142] IB/ehca: Handling of two completions for one work request causes kernel panic
+Bugzilla: 459142
+RH-Acked-by: David Howells <dhowells@redhat.com>
+RH-Acked-by: Doug Ledford <dledford@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=459142
+
+Description:
+===========
+Under rare circumstances, the ehca hardware might erroneously generate
+two completions (CQE) for the same work queue request (WQE), which is
+not compliant  with the IB spec and will cause unpredictable errors
+like memory being freed twice. To avoid this problem, the driver needs
+to detect the second CQE and discard it.
+
+For this purpose, this patch will introduce an array holding as many
+elements as the SQ of the QP, called sq_map. Each sq_map entry stores
+a "reported" flag for one WQE in the SQ. When a work request is posted
+to the SQ, the respective "reported" flag is set to zero. After the
+arrival of a CQE, the flag is set to 1, which allows to detect the
+occurence of a second CQE.
+
+The mapping between WQE / CQE and the corresponding sq_map element is
+implemented by replacing the lowest 16 Bits of the wr_id with the index in
+the queue map. The original 16 Bits are stored in the sq_map entry and are
+restored when the CQE is passed to the application.
+
+RHEL Version Found:
+================
+RHEL 5.2
+
+kABI Status:
+============
+Will test once brew is back online
+
+Brew:
+=====
+To be built and tested once brew is back online
+
+Upstream Status:
+================
+It has been posted to the LKML and has been accepted into
+mainline.
+
+http://marc.info/?l=linux-kernel&m=121854895723395&w=2
+
+Test Status:
+============
+Tested by Alexander Schmidt, IBM, 8/14/08
+
+using the following procedure:
+
+1) First ensure that the patch from bug RHBZ# 459378 (ack timeout delay) is not applied because a low ack delay value increases the chance of hitting this bug.
+
+2) We recreated with three systems and galaxy1. ipoib must be configured in
+connected mode.
+
+3) Run the netperf server on one system.
+
+4) On the clients, we ran up to 20 sessions of the netperf client in parallel
+over ipoib.
+
+After a while, you will hit a kernel panic on the server.
+
+We tested in the described environment that this patch solves the problem. With
+the patch applied, you will see some "Double cqe on qp..." messages in the dmesg
+output when the driver hits the double cqe case.
+
+Because of the low local ack delay value for this test, a lot of qp errors will
+appear which causes the ipoib device to deactivate itself after a while. This is
+an expected behaviour caused by the revert of the local ack delay patch.
+
+===============================================================
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+
+Proposed Patch:
+===============
+This patch is based on 2.6.18-104.el5
+
+diff --git a/drivers/infiniband/hw/ehca/ehca_classes.h b/drivers/infiniband/hw/ehca/ehca_classes.h
+index 7e725ba..55e5efb 100644
+--- a/drivers/infiniband/hw/ehca/ehca_classes.h
++++ b/drivers/infiniband/hw/ehca/ehca_classes.h
+@@ -157,6 +157,14 @@ struct ehca_mod_qp_parm {
+ 
+ #define EHCA_MOD_QP_PARM_MAX 4
+ 
++#define QMAP_IDX_MASK 0xFFFFULL
++
++/* struct for tracking if cqes have been reported to the application */
++struct ehca_qmap_entry {
++	u16 app_wr_id;
++	u16 reported;
++};
++
+ struct ehca_qp {
+ 	union {
+ 		struct ib_qp ib_qp;
+@@ -165,6 +173,7 @@ struct ehca_qp {
+ 	u32 qp_type;
+ 	enum ehca_ext_qp_type ext_type;
+ 	struct ipz_queue ipz_squeue;
++	struct ehca_qmap_entry *sq_map;
+ 	struct ipz_queue ipz_rqueue;
+ 	struct h_galpas galpas;
+ 	u32 qkey;
+diff --git a/drivers/infiniband/hw/ehca/ehca_qes.h b/drivers/infiniband/hw/ehca/ehca_qes.h
+index 8188030..5d28e3e 100644
+--- a/drivers/infiniband/hw/ehca/ehca_qes.h
++++ b/drivers/infiniband/hw/ehca/ehca_qes.h
+@@ -213,6 +213,7 @@ struct ehca_wqe {
+ #define WC_STATUS_ERROR_BIT 0x80000000
+ #define WC_STATUS_REMOTE_ERROR_FLAGS 0x0000F800
+ #define WC_STATUS_PURGE_BIT 0x10
++#define WC_SEND_RECEIVE_BIT 0x80
+ 
+ struct ehca_cqe {
+ 	u64 work_request_id;
+diff --git a/drivers/infiniband/hw/ehca/ehca_qp.c b/drivers/infiniband/hw/ehca/ehca_qp.c
+index 162ce6f..c9f9013 100644
+--- a/drivers/infiniband/hw/ehca/ehca_qp.c
++++ b/drivers/infiniband/hw/ehca/ehca_qp.c
+@@ -415,6 +415,7 @@ static struct ehca_qp *internal_create_qp(
+ 	struct ehca_shca *shca = container_of(pd->device, struct ehca_shca,
+ 					      ib_device);
+ 	struct ib_ucontext *context = NULL;
++	u32 nr_qes;
+ 	u64 h_ret;
+ 	int is_llqp = 0, has_srq = 0;
+ 	int qp_type, max_send_sge, max_recv_sge, ret;
+@@ -710,6 +711,15 @@ static struct ehca_qp *internal_create_qp(
+ 				 "and pages ret=%i", ret);
+ 			goto create_qp_exit2;
+ 		}
++		nr_qes = my_qp->ipz_squeue.queue_length /
++			 my_qp->ipz_squeue.qe_size;
++		my_qp->sq_map = vmalloc(nr_qes *
++					sizeof(struct ehca_qmap_entry));
++		if (!my_qp->sq_map) {
++			ehca_err(pd->device, "Couldn't allocate squeue "
++				 "map ret=%i", ret);
++			goto create_qp_exit3;
++		}
+ 	}
+ 
+ 	if (HAS_RQ(my_qp)) {
+@@ -719,7 +729,7 @@ static struct ehca_qp *internal_create_qp(
+ 		if (ret) {
+ 			ehca_err(pd->device, "Couldn't initialize rqueue "
+ 				 "and pages ret=%i", ret);
+-			goto create_qp_exit3;
++			goto create_qp_exit4;
+ 		}
+ 	}
+ 
+@@ -765,7 +775,7 @@ static struct ehca_qp *internal_create_qp(
+ 			if (!my_qp->mod_qp_parm) {
+ 				ehca_err(pd->device,
+ 					 "Could not alloc mod_qp_parm");
+-				goto create_qp_exit4;
++				goto create_qp_exit5;
+ 			}
+ 		}
+ 	}
+@@ -775,7 +785,7 @@ static struct ehca_qp *internal_create_qp(
+ 		h_ret = ehca_define_sqp(shca, my_qp, init_attr);
+ 		if (h_ret != H_SUCCESS) {
+ 			ret = ehca2ib_return_code(h_ret);
+-			goto create_qp_exit5;
++			goto create_qp_exit6;
+ 		}
+ 	}
+ 
+@@ -784,7 +794,7 @@ static struct ehca_qp *internal_create_qp(
+ 		if (ret) {
+ 			ehca_err(pd->device,
+ 				 "Couldn't assign qp to send_cq ret=%i", ret);
+-			goto create_qp_exit5;
++			goto create_qp_exit6;
+ 		}
+ 	}
+ 
+@@ -810,22 +820,26 @@ static struct ehca_qp *internal_create_qp(
+ 		if (ib_copy_to_udata(udata, &resp, sizeof resp)) {
+ 			ehca_err(pd->device, "Copy to udata failed");
+ 			ret = -EINVAL;
+-			goto create_qp_exit6;
++			goto create_qp_exit7;
+ 		}
+ 	}
+ 
+ 	return my_qp;
+ 
+-create_qp_exit6:
++create_qp_exit7:
+ 	ehca_cq_unassign_qp(my_qp->send_cq, my_qp->real_qp_num);
+ 
+-create_qp_exit5:
++create_qp_exit6:
+ 	kfree(my_qp->mod_qp_parm);
+ 
+-create_qp_exit4:
++create_qp_exit5:
+ 	if (HAS_RQ(my_qp))
+ 		ipz_queue_dtor(my_pd, &my_qp->ipz_rqueue);
+ 
++create_qp_exit4:
++	if (HAS_SQ(my_qp))
++		vfree(my_qp->sq_map);
++
+ create_qp_exit3:
+ 	if (HAS_SQ(my_qp))
+ 		ipz_queue_dtor(my_pd, &my_qp->ipz_squeue);
+@@ -2006,8 +2020,10 @@ static int internal_destroy_qp(struct ib_device *dev, struct ehca_qp *my_qp,
+ 
+ 	if (HAS_RQ(my_qp))
+ 		ipz_queue_dtor(my_pd, &my_qp->ipz_rqueue);
+-	if (HAS_SQ(my_qp))
++	if (HAS_SQ(my_qp)) {
+ 		ipz_queue_dtor(my_pd, &my_qp->ipz_squeue);
++		vfree(my_qp->sq_map);
++	}
+ 	kmem_cache_free(qp_cache, my_qp);
+ 	atomic_dec(&shca->num_qps);
+ 	return 0;
+diff --git a/drivers/infiniband/hw/ehca/ehca_reqs.c b/drivers/infiniband/hw/ehca/ehca_reqs.c
+index 2ce8cff..fcce580 100644
+--- a/drivers/infiniband/hw/ehca/ehca_reqs.c
++++ b/drivers/infiniband/hw/ehca/ehca_reqs.c
+@@ -139,6 +139,7 @@ static void trace_send_wr_ud(const struct ib_send_wr *send_wr)
+ static inline int ehca_write_swqe(struct ehca_qp *qp,
+ 				  struct ehca_wqe *wqe_p,
+ 				  const struct ib_send_wr *send_wr,
++				  u32 sq_map_idx,
+ 				  int hidden)
+ {
+ 	u32 idx;
+@@ -157,7 +158,11 @@ static inline int ehca_write_swqe(struct ehca_qp *qp,
+ 	/* clear wqe header until sglist */
+ 	memset(wqe_p, 0, offsetof(struct ehca_wqe, u.ud_av.sg_list));
+ 
+-	wqe_p->work_request_id = send_wr->wr_id;
++	wqe_p->work_request_id = send_wr->wr_id & ~QMAP_IDX_MASK;
++	wqe_p->work_request_id |= sq_map_idx & QMAP_IDX_MASK;
++
++	qp->sq_map[sq_map_idx].app_wr_id = send_wr->wr_id & QMAP_IDX_MASK;
++	qp->sq_map[sq_map_idx].reported = 0;
+ 
+ 	switch (send_wr->opcode) {
+ 	case IB_WR_SEND:
+@@ -381,6 +386,7 @@ static inline int post_one_send(struct ehca_qp *my_qp,
+ {
+ 	struct ehca_wqe *wqe_p;
+ 	int ret;
++	u32 sq_map_idx;
+ 	u64 start_offset = my_qp->ipz_squeue.current_q_offset;
+ 
+ 	/* get pointer next to free WQE */
+@@ -393,8 +399,15 @@ static inline int post_one_send(struct ehca_qp *my_qp,
+ 			 "qp_num=%x", my_qp->ib_qp.qp_num);
+ 		return -ENOMEM;
+ 	}
++
++	/*
++	 * Get the index of the WQE in the send queue. The same index is used
++	 * for writing into the sq_map.
++	 */
++	sq_map_idx = start_offset / my_qp->ipz_squeue.qe_size;
++
+ 	/* write a SEND WQE into the QUEUE */
+-	ret = ehca_write_swqe(my_qp, wqe_p, cur_send_wr, hidden);
++	ret = ehca_write_swqe(my_qp, wqe_p, cur_send_wr, sq_map_idx, hidden);
+ 	/*
+ 	 * if something failed,
+ 	 * reset the free entry pointer to the start value
+@@ -634,8 +647,34 @@ poll_cq_one_read_cqe:
+ 			 my_cq, my_cq->cq_number);
+ 	}
+ 
+-	/* we got a completion! */
+-	wc->wr_id = cqe->work_request_id;
++	read_lock(&ehca_qp_idr_lock);
++	my_qp = idr_find(&ehca_qp_idr, cqe->qp_token);
++	read_unlock(&ehca_qp_idr_lock);
++	if (!my_qp)
++		goto poll_cq_one_read_cqe;
++	wc->qp = &my_qp->ib_qp;
++
++	if (!(cqe->w_completion_flags & WC_SEND_RECEIVE_BIT)) {
++		struct ehca_qmap_entry *qmap_entry;
++		/*
++		 * We got a send completion and need to restore the original
++		 * wr_id.
++		 */
++		qmap_entry = &my_qp->sq_map[cqe->work_request_id &
++					    QMAP_IDX_MASK];
++
++		if (qmap_entry->reported) {
++			ehca_warn(cq->device, "Double cqe on qp_num=%#x",
++				  my_qp->real_qp_num);
++			/* found a double cqe, discard it and read next one */
++			goto poll_cq_one_read_cqe;
++		}
++		wc->wr_id = cqe->work_request_id & ~QMAP_IDX_MASK;
++		wc->wr_id |= qmap_entry->app_wr_id;
++		qmap_entry->reported = 1;
++	} else
++		/* We got a receive completion. */
++		wc->wr_id = cqe->work_request_id;
+ 
+ 	/* eval ib_wc_opcode */
+ 	wc->opcode = ib_wc_opcode[cqe->optype]-1;
+@@ -647,7 +686,7 @@ poll_cq_one_read_cqe:
+ 		ehca_dmp(cqe, 64, "ehca_cq=%p cq_num=%x",
+ 			 my_cq, my_cq->cq_number);
+ 		/* update also queue adder to throw away this entry!!! */
+-		goto poll_cq_one_exit0;
++		goto poll_cq_one_read_cqe;
+ 	}
+ 	/* eval ib_wc_status */
+ 	if (unlikely(cqe->status & WC_STATUS_ERROR_BIT)) {
+@@ -657,11 +696,6 @@ poll_cq_one_read_cqe:
+ 	} else
+ 		wc->status = IB_WC_SUCCESS;
+ 
+-	read_lock(&ehca_qp_idr_lock);
+-	my_qp = idr_find(&ehca_qp_idr, cqe->qp_token);
+-	wc->qp = &my_qp->ib_qp;
+-	read_unlock(&ehca_qp_idr_lock);
+-
+ 	wc->byte_len = cqe->nr_bytes_transferred;
+ 	wc->pkey_index = cqe->pkey_index;
+ 	wc->slid = cqe->rlid;

@@ -1,0 +1,29 @@
+--- ./kernel/audit.c.auditfx	2009-03-19 15:18:18.000000000 +0300
++++ ./kernel/audit.c	2009-03-20 18:34:11.000000000 +0300
+@@ -464,7 +464,7 @@ static int audit_prepare_user_tty(pid_t 
+ 	int err;
+ 
+ 	read_lock(&tasklist_lock);
+-	tsk = find_task_by_pid(pid);
++	tsk = find_task_by_pid_all(pid);
+ 	err = -ESRCH;
+ 	if (!tsk)
+ 		goto out;
+@@ -929,7 +929,7 @@ static int audit_receive_msg(struct sk_b
+ 		struct task_struct *tsk;
+ 
+ 		read_lock(&tasklist_lock);
+-		tsk = find_task_by_pid(pid);
++		tsk = find_task_by_pid_all(pid);
+ 		if (!tsk)
+ 			err = -ESRCH;
+ 		else {
+@@ -952,7 +952,7 @@ static int audit_receive_msg(struct sk_b
+ 		if (s->enabled != 0 && s->enabled != 1)
+ 			return -EINVAL;
+ 		read_lock(&tasklist_lock);
+-		tsk = find_task_by_pid(pid);
++		tsk = find_task_by_pid_all(pid);
+ 		if (!tsk)
+ 			err = -ESRCH;
+ 		else {

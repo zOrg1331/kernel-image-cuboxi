@@ -1,0 +1,89 @@
+From: Don Zickus <dzickus@redhat.com>
+Date: Fri, 8 Aug 2008 14:14:35 -0400
+Subject: [misc] cleanup header warnings and enable header check
+Message-id: 1218219275-31709-1-git-send-email-dzickus@redhat.com
+O-Subject: [RHEL-5 PATCH] cleanup header warnings and enable header check
+Bugzilla: 458360
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=458360
+
+A bunch of warnings were issued during the build complaining about userspace
+headers accessing non-existing kernel headers.  These warnings came from the
+fact we did not strip the userspace header files of the #ifdef __KERNEL__
+tags.  This is done by the tool unifdef.
+
+This patch fixes those warnings and allows applications to use those headers
+files now.  In addition, I have enabled the header file check to FAIL
+instead of WARN on these messages now.  This will allow us to catch these
+problems earlier instead of randomly in beta during an application rebuild.
+
+Test on x86_64.
+
+Upstream commits 0a6114d94b6d6f82e81cb8e0d8b0d4cf50739fec and
+b119f13f56a7a47915278ab5eb3c666ca5dbb067.  I didn't use much of the second
+commit because a lot of it was irrelevant.  We added kref.h to utsname.h
+ourselves and wrapped it correctly with #ifdef __KERNEL__.
+
+Please ACK.
+
+Cheers,
+Don
+
+diff --git a/include/linux/Kbuild b/include/linux/Kbuild
+index 7870517..05d7251 100644
+--- a/include/linux/Kbuild
++++ b/include/linux/Kbuild
+@@ -75,9 +75,7 @@ header-y += hpfs_fs.h
+ header-y += hysdn_if.h
+ header-y += i2c-dev.h
+ header-y += i8k.h
+-header-y += icmp.h
+ header-y += if_arcnet.h
+-header-y += if_arp.h
+ header-y += if_bonding.h
+ header-y += if_cablemodem.h
+ header-y += if_fc.h
+@@ -94,7 +92,6 @@ header-y += if_tunnel.h
+ header-y += in6.h
+ header-y += in_route.h
+ header-y += ioctl.h
+-header-y += ip.h
+ header-y += ipmi_msgdefs.h
+ header-y += ip_mp_alg.h
+ header-y += ipsec.h
+@@ -161,7 +158,6 @@ header-y += toshiba.h
+ header-y += ultrasound.h
+ header-y += un.h
+ header-y += utime.h
+-header-y += utsname.h
+ header-y += video_decoder.h
+ header-y += video_encoder.h
+ header-y += videotext.h
+@@ -226,8 +222,10 @@ unifdef-y += hiddev.h
+ unifdef-y += hpet.h
+ unifdef-y += i2c.h
+ unifdef-y += i2o-dev.h
++unifdef-y += icmp.h
+ unifdef-y += icmpv6.h
+ unifdef-y += if_addr.h 
++unifdef-y += if_arp.h
+ unifdef-y += if_bridge.h
+ unifdef-y += if_ec.h
+ unifdef-y += if_eql.h
+@@ -245,6 +243,7 @@ unifdef-y += inet_diag.h
+ unifdef-y += in.h
+ unifdef-y += inotify.h
+ unifdef-y += input.h
++unifdef-y += ip.h
+ unifdef-y += ipc.h
+ unifdef-y += ipmi.h
+ unifdef-y += ipv6.h
+@@ -343,6 +342,7 @@ unifdef-y += unistd.h
+ unifdef-y += usb_ch9.h
+ unifdef-y += usbdevice_fs.h
+ unifdef-y += user.h
++unifdef-y += utsname.h
+ unifdef-y += videodev2.h
+ unifdef-y += videodev.h
+ unifdef-y += wait.h

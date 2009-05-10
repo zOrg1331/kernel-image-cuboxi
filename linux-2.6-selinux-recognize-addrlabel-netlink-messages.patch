@@ -1,0 +1,44 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Tue, 11 Nov 2008 12:39:19 +0100
+Subject: [selinux] recognize addrlabel netlink messages
+Message-id: 20081111113919.GA20722@plip.localdomain
+O-Subject: [RHEL5.3 PATCH] selinux: recognize addrlabel netlink messages
+Bugzilla: 446063
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Eric Paris <eparis@redhat.com>
+RH-Acked-by: James Morris <jmorris@redhat.com>
+
+This patch makes selinux aware of addrlabel netlink messages
+which was missing upstream at the time addrlabel support was
+back ported to RHEL5.3. This patch is required for the addrlabel
+subsystem to work if selinux is enabled.
+
+Solves BZ446063
+
+Upstream fix:
+In enforcing mode '/sbin/ip addrlabel' results in a SELinux error:
+type=SELINUX_ERR msg=audit(1225698822.073:42): SELinux:  unrecognized
+netlink message type=74 for sclass=43
+
+The problem is missing RTM_*ADDRLABEL entries in SELinux's netlink
+message types table.
+
+Reported in https://bugzilla.redhat.com/show_bug.cgi?id=469423
+
+Signed-off-by: Michal Schmidt <mschmidt@redhat.com>
+
+diff --git a/security/selinux/nlmsgtab.c b/security/selinux/nlmsgtab.c
+index 2030b1d..38a87c7 100644
+--- a/security/selinux/nlmsgtab.c
++++ b/security/selinux/nlmsgtab.c
+@@ -65,6 +65,9 @@ static struct nlmsg_perm nlmsg_route_perms[] =
+ 	{ RTM_GETANYCAST,	NETLINK_ROUTE_SOCKET__NLMSG_READ  },
+ 	{ RTM_GETNEIGHTBL,	NETLINK_ROUTE_SOCKET__NLMSG_READ  },
+ 	{ RTM_SETNEIGHTBL,	NETLINK_ROUTE_SOCKET__NLMSG_WRITE },
++	{ RTM_NEWADDRLABEL,	NETLINK_ROUTE_SOCKET__NLMSG_WRITE },
++	{ RTM_DELADDRLABEL,	NETLINK_ROUTE_SOCKET__NLMSG_WRITE },
++	{ RTM_GETADDRLABEL,	NETLINK_ROUTE_SOCKET__NLMSG_READ  },
+ };
+ 
+ static struct nlmsg_perm nlmsg_firewall_perms[] =

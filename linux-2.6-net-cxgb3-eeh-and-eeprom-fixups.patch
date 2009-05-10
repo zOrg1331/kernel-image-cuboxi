@@ -1,0 +1,149 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Thu, 4 Dec 2008 16:56:48 -0500
+Subject: [net] cxgb3: eeh and eeprom fixups
+Message-id: 20081204215648.GJ26358@gospo.rdu.redhat.com
+O-Subject: [RHEL5.3 PATCH] cxgb3: eeh and eeprom fixups
+Bugzilla: 441959
+RH-Acked-by: John W. Linville <linville@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+Hopefully this is the last set of changes that Chelsio would like us to
+include for 5.3.  In addition to a fixing a bug introduced by one of my
+backports, this patch adds the following upstream commits:
+
+    commit 0ca41c0413a4d9ca58767d53d23accea9aa1cdef
+    Author: Divy Le Ray <divy@chelsio.com>
+    Date:   Thu Sep 25 14:05:28 2008 +0000
+
+        [2.6.28,1/1] cxgb3 - fix race in EEH
+
+    commit 9f64306b8a3949b74cb11d3b2f613e8a2af20fa6
+    Author: Divy Le Ray <divy@chelsio.com>
+    Date:   Sun Nov 9 00:55:28 2008 -0800
+
+        cxgb3 - eeprom read fixes
+
+This has been tested by a partner and was suggested by the driver
+maintainer at Chelsio, so I feel good about it.
+
+This will resolve RHBZ 441959.
+
+diff --git a/drivers/net/cxgb3/adapter.h b/drivers/net/cxgb3/adapter.h
+index 1b6ff1c..3c1b1bb 100644
+--- a/drivers/net/cxgb3/adapter.h
++++ b/drivers/net/cxgb3/adapter.h
+@@ -295,6 +295,7 @@ void t3_os_link_changed(struct adapter *adapter, int port_id, int link_status,
+ 
+ void t3_sge_start(struct adapter *adap);
+ void t3_sge_stop(struct adapter *adap);
++void t3_stop_sge_timers(struct adapter *adap);
+ void t3_free_sge_resources(struct adapter *adap);
+ void t3_sge_err_intr_handler(struct adapter *adapter);
+ intr_handler_t t3_intr_handler(struct adapter *adap, int polling, 
+diff --git a/drivers/net/cxgb3/cxgb3_main.c b/drivers/net/cxgb3/cxgb3_main.c
+index cb7efd3..7873d53 100644
+--- a/drivers/net/cxgb3/cxgb3_main.c
++++ b/drivers/net/cxgb3/cxgb3_main.c
+@@ -533,9 +533,10 @@ static int setup_sge_qsets(struct adapter *adap)
+ 				(adap->flags & USING_MSIX) ? qset_idx + 1 :
+ 							     irq_idx,
+ 				&adap->params.sge.qset[qset_idx], ntxq,
+-				j == 0 ? dev :
++				j == pi->first_qset ? dev :
+ 					 adap-> dummy_netdev[dummy_dev_idx++]);
+ 			if (err) {
++				t3_stop_sge_timers(adap);
+ 				t3_free_sge_resources(adap);
+ 				return err;
+ 			}
+@@ -2580,6 +2581,9 @@ static pci_ers_result_t t3_io_error_detected(struct pci_dev *pdev,
+ 	    test_bit(OFFLOAD_DEVMAP_BIT, &adapter->open_device_map))
+ 		offload_close(&adapter->tdev);
+ 
++	/* Stop SGE timers */
++	t3_stop_sge_timers(adapter);
++
+ 	adapter->flags &= ~FULL_INIT_DONE;
+ 
+ 	pci_disable_device(pdev);
+@@ -2663,7 +2667,7 @@ static void set_nqsets(struct adapter *adap)
+ 	int hwports = adap->params.nports;
+ 	int nqsets = SGE_QSETS;
+ 
+-	if (adap->params.rev > 0) {
++	if (adap->params.rev > 0 && adap->flags & USING_MSIX) {
+ 		if (hwports == 2 &&
+ 		    (hwports * nqsets > SGE_QSETS ||
+ 		     num_cpus >= nqsets / hwports))
+@@ -2970,6 +2974,7 @@ static void __devexit remove_one(struct pci_dev *pdev)
+ 		    if (test_bit(i, &adapter->registered_device_map))
+ 			unregister_netdev(adapter->port[i]);
+ 
++		t3_stop_sge_timers(adapter);
+ 		t3_free_sge_resources(adapter);
+ 		cxgb_disable_msi(adapter);
+ 
+diff --git a/drivers/net/cxgb3/sge.c b/drivers/net/cxgb3/sge.c
+index f958232..95d18ac 100644
+--- a/drivers/net/cxgb3/sge.c
++++ b/drivers/net/cxgb3/sge.c
+@@ -583,7 +583,7 @@ static void t3_reset_qset(struct sge_qset *q)
+ 	memset(q->fl, 0, sizeof(struct sge_fl) * SGE_RXQ_PER_SET);
+ 	memset(q->txq, 0, sizeof(struct sge_txq) * SGE_TXQ_PER_SET);
+ 	q->txq_stopped = 0;
+-	memset(&q->tx_reclaim_timer, 0, sizeof(q->tx_reclaim_timer));
++	q->tx_reclaim_timer.function = NULL; /* for t3_stop_sge_timers() */
+ 	kfree(q->lro_frag_tbl);
+ 	q->lro_nfrags = q->lro_frag_len = 0;
+ }
+@@ -3044,6 +3044,24 @@ err:
+ }
+ 
+ /**
++ *	t3_stop_sge_timers - stop SGE timer call backs
++ *	@adap: the adapter
++ *
++ *	Stops each SGE queue set's timer call back
++ */
++void t3_stop_sge_timers(struct adapter *adap)
++{
++	int i;
++
++	for (i = 0; i < SGE_QSETS; ++i) {
++		struct sge_qset *q = &adap->sge.qs[i];
++
++		if (q->tx_reclaim_timer.function)
++			del_timer_sync(&q->tx_reclaim_timer);
++	}
++}
++
++/**
+  *	t3_free_sge_resources - free SGE resources
+  *	@adap: the adapter
+  *
+diff --git a/drivers/net/cxgb3/t3_hw.c b/drivers/net/cxgb3/t3_hw.c
+index dce82ac..3be0058 100644
+--- a/drivers/net/cxgb3/t3_hw.c
++++ b/drivers/net/cxgb3/t3_hw.c
+@@ -522,7 +522,7 @@ struct t3_vpd {
+ 	u32 pad;		/* for multiple-of-4 sizing and alignment */
+ };
+ 
+-#define EEPROM_MAX_POLL   4
++#define EEPROM_MAX_POLL   40
+ #define EEPROM_STAT_ADDR  0x4000
+ #define VPD_BASE          0xc00
+ 
+@@ -3628,6 +3628,12 @@ int t3_prep_adapter(struct adapter *adapter, const struct adapter_info *ai,
+ 			++j;
+ 
+ 		p->port_type = &port_types[adapter->params.vpd.port_type[j]];
++		if (!p->port_type->phy_prep) {
++			CH_ALERT(adapter, "Invalid port type index %d\n",
++				 adapter->params.vpd.port_type[j]);
++			return -EINVAL;
++		}
++
+ 		p->port_type->phy_prep(&p->phy, adapter, ai->phy_base_addr + j,
+ 				       ai->mdio_ops);
+ 		mac_prep(&p->mac, adapter, j);

@@ -1,0 +1,35 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Mon, 8 Dec 2008 17:48:20 +0100
+Subject: [scsi] mpt fusion: disable msi by default
+Message-id: 493D4FD4.4020103@redhat.com
+O-Subject: [RHEL5.3 PATCH] bz#474465 Calgary DMA errors on IBM systems
+Bugzilla: 474465
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+During testing has been found that our system ibm-x3950m2-02.rhts.bos.redhat.com
+does not boot with mptbase driver and MSI enabled.
+The patch "Update mpt fusion to version 3.04.07" introduced the MSI option
+switched on by default.
+
+This patch removes the MSI option switched on by default. I don't know if the
+problem is in the controller or in the mainboard. I've also seen other more
+sensible approaches on this issue on lkml, but given the fact that it is too late
+for every kind of testing I would go with this patch, because it is very
+simple.
+
+Tomas
+
+diff --git a/drivers/message/fusion/mptbase.c b/drivers/message/fusion/mptbase.c
+index 8818587..04795a9 100644
+--- a/drivers/message/fusion/mptbase.c
++++ b/drivers/message/fusion/mptbase.c
+@@ -79,7 +79,7 @@ MODULE_VERSION(my_VERSION);
+ /*
+  *  cmd line parameters
+  */
+-static int mpt_msi_enable = -1;
++static int mpt_msi_enable = 0;
+ module_param(mpt_msi_enable, int, 0);
+ MODULE_PARM_DESC(mpt_msi_enable, " MSI Support Enable (default=0)");
+ 
