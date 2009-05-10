@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.29
-Release: alt6
+Release: alt7
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -340,6 +340,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Sun May 10 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.29-alt7
+- 2.6.29.3
+
 * Wed May 06 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.29-alt6
 - rebuild with gcc4.4
 
