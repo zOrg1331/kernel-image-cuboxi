@@ -146,6 +146,9 @@ static struct dentry *squashfs_lookup(struct inode *dir, struct dentry *dentry,
 	int offset = squashfs_i(dir)->offset;
 	int err, length, dir_count, size;
 
+	if (dir->i_private)
+		return simple_lookup(dir, dentry, nd);
+
 	TRACE("Entered squashfs_lookup [%llx:%x]\n", block, offset);
 
 	dire = kmalloc(sizeof(*dire) + SQUASHFS_NAME_LEN + 1, GFP_KERNEL);

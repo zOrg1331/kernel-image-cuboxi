@@ -112,6 +112,10 @@ int squashfs_readdir_ondisk(struct dentry *dentry, void *dirent,
 	struct squashfs_dir_header dirh;
 	struct squashfs_dir_entry *dire;
 
+	/* If the directory only exist in memory we are done already */
+	if (inode->i_private)
+		return 0;
+
 	TRACE("Entered squashfs_readdir [%llx:%x]\n", block, offset);
 
 	dire = kmalloc(sizeof(*dire) + SQUASHFS_NAME_LEN + 1, GFP_KERNEL);
