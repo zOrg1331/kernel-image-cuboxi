@@ -1,0 +1,45 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Fri, 31 Oct 2008 15:38:01 -0400
+Subject: [scsi] qla3xxx, qla4xxx: update/use new version format
+Message-id: 20081031193801.8820.18791.sendpatchset@file.bos.redhat.com
+O-Subject: [rhel 5.3 patch] qla3xxx, qla4xxx - Update version numbers and use new format.
+Bugzilla: 469414
+
+BZ 469414
+
+qla3xxx, qla4xxx- Update version numbers and use new format.
+
+The version numbers for these drivers should be updated to reflect the new RHEL
+release and conform to requests for our venders for a simpler numeric format.
+
+It's important for us to provide the distro release and patch level for each driver,
+so that they are uniquely identifiable.
+
+qla4xxx: -"5.01.00-k8_rhel5.2-01" becomes "5.01.00.00.05.03-k8"
+
+qla3xxx - "v2.03.00-k4-RHEL5.2-01" becomes "v2.03.00.00.05.03-k4"
+
+diff --git a/drivers/net/qla3xxx.c b/drivers/net/qla3xxx.c
+index 935f027..891b8c4 100644
+--- a/drivers/net/qla3xxx.c
++++ b/drivers/net/qla3xxx.c
+@@ -39,7 +39,7 @@
+ 
+ #define DRV_NAME  	"qla3xxx"
+ #define DRV_STRING 	"QLogic ISP3XXX Network Driver"
+-#define DRV_VERSION	"v2.03.00-k4-RHEL5.2-01"
++#define DRV_VERSION	"v2.03.00.00.05.03-k4"
+ #define PFX		DRV_NAME " "
+ 
+ static const char ql3xxx_driver_name[] = DRV_NAME;
+diff --git a/drivers/scsi/qla4xxx/ql4_version.h b/drivers/scsi/qla4xxx/ql4_version.h
+index 2d5a6a3..5c9041b 100644
+--- a/drivers/scsi/qla4xxx/ql4_version.h
++++ b/drivers/scsi/qla4xxx/ql4_version.h
+@@ -5,5 +5,5 @@
+  * See LICENSE.qla4xxx for copyright and licensing details.
+  */
+ 
+-#define QLA4XXX_DRIVER_VERSION	"5.01.00-k8_rhel5.2-01"
++#define QLA4XXX_DRIVER_VERSION	"5.01.00.00.05.03-k8"
+ 

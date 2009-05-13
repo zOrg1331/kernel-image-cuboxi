@@ -1,0 +1,100 @@
+From: Markus Armbruster <armbru@redhat.com>
+Date: Wed, 13 Aug 2008 16:59:38 -0400
+Subject: [x86] oprofile: enable additional perf counters
+Message-id: m3iqu4fx6t.fsf@crossbow.pond.sub.org
+O-Subject: [PATCH RHEL-5.3] Oprofile enable intel family 6 add'l perf counters
+Bugzilla: 426096
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+
+Our current oprofile code can use only one performance counter with
+intel family 6 cpus.  This was fixed upstream:
+
+commit 6b77df08a36d989f7dd00ccb6a026a0e96170d16
+Author: Arun Sharma <arun.sharma@google.com>
+Date:   Fri Sep 29 02:00:01 2006 -0700
+
+    [PATCH] oprofile: ppro: need to enable/disable all the counters
+
+    Need to enable/disable all the counters instead of just counter 0.
+
+    This affects all cpus with family=6, including i386/core.  Usual symptom:
+    only counter 0 provides samples.  Other counters don't produce samples.
+
+Unfortunately, that patch doesn't apply, because it depends on this
+one:
+
+commit cb9c448c661d40ce2efbce8e9c19cc4d420d8ccc
+Author: Don Zickus <dzickus@redhat.com>
+Date:   Tue Sep 26 10:52:26 2006 +0200
+
+    [PATCH] i386: Utilize performance counter reservation framework in oprofile
+
+    Incorporates the new performance counter reservation system in oprofile.
+    Also cleans up a lot of the initialization code.  The code original zero'd
+    out every register associated with performance counters regardless if those
+    registers were used or not.  This causes issues with the nmi watchdog.
+    Now oprofile tries to reserve registers and gives up if it can't get them.
+
+which is just one part of a fairly invasive rework of the NMI
+watchdog.  I figure we just need parts of the initialization cleanup
+here, but please review that idea critically.
+
+The patch is very close to the one we already took to fix the same
+issue for the hypervisor (bug 426096).
+
+I built rpms, which intel tested successfully.
+
+Bug 458824.  Please ACK.
+
+diff --git a/arch/i386/oprofile/op_model_ppro.c b/arch/i386/oprofile/op_model_ppro.c
+index 5e2b21f..daf581e 100644
+--- a/arch/i386/oprofile/op_model_ppro.c
++++ b/arch/i386/oprofile/op_model_ppro.c
+@@ -93,6 +93,8 @@ static int ppro_check_ctrs(struct pt_regs * const regs,
+ 	int i;
+  
+ 	for (i = 0 ; i < NUM_COUNTERS; ++i) {
++		if (!reset_value[i])
++			continue;
+ 		CTR_READ(low, high, msrs, i);
+ 		if (CTR_OVERFLOWED(low)) {
+ 			oprofile_add_sample(regs, i);
+@@ -118,18 +120,30 @@ static int ppro_check_ctrs(struct pt_regs * const regs,
+ static void ppro_start(struct op_msrs const * const msrs)
+ {
+ 	unsigned int low,high;
+-	CTRL_READ(low, high, msrs, 0);
+-	CTRL_SET_ACTIVE(low);
+-	CTRL_WRITE(low, high, msrs, 0);
++	int i;
++
++	for (i = 0; i < NUM_COUNTERS; ++i) {
++		if (reset_value[i]) {
++			CTRL_READ(low, high, msrs, i);
++			CTRL_SET_ACTIVE(low);
++			CTRL_WRITE(low, high, msrs, i);
++		}
++	}
+ }
+ 
+ 
+ static void ppro_stop(struct op_msrs const * const msrs)
+ {
+ 	unsigned int low,high;
+-	CTRL_READ(low, high, msrs, 0);
+-	CTRL_SET_INACTIVE(low);
+-	CTRL_WRITE(low, high, msrs, 0);
++	int i;
++
++	for (i = 0; i < NUM_COUNTERS; ++i) {
++		if (!reset_value[i])
++			continue;
++		CTRL_READ(low, high, msrs, i);
++		CTRL_SET_INACTIVE(low);
++		CTRL_WRITE(low, high, msrs, i);
++	}
+ }
+ 
+ 

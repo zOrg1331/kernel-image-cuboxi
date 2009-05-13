@@ -144,6 +144,11 @@
 	dlm_new_lockspace
 	dlm_release_lockspace
 	dlm_unlock
+[rhel5_dlm_u3]
+	dlm_posix_get
+	dlm_posix_lock
+	dlm_posix_set_fsid
+	dlm_posix_unlock
 [rhel5_crypto_ga]
 	crypto_alg_available
 	crypto_alloc_tfm
@@ -2011,6 +2016,8 @@
 	__put_task_struct
 	round_jiffies
 	round_jiffies_relative
+[rhel5_kernel_u3]
+	down_write_trylock
 [rhel5_kernel_irq_ga]
 	disable_irq
 	disable_irq_nosync
@@ -2156,6 +2163,8 @@
 [rhel5_lib_u1]
 	__bitmap_equal
 	__bitmap_intersects
+[rhel5_lib_u3]
+	vscnprintf
 [rhel5_lib_reed_solomon_ga]
 	decode_rs16
 	free_rs

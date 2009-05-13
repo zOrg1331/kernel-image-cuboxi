@@ -1,0 +1,180 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Mon, 4 Aug 2008 15:48:25 -0400
+Subject: [xen] ia64: disable paravirt to remap /dev/mem
+Message-id: 20080804194825.8452.55422.sendpatchset@pq0-1.lab.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH 6/10] xen-ia64: Disable paravirtualization to remap /dev/mem
+Bugzilla: 430219
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+
+bz430219
+# HG changeset patch
+# User Alex Williamson <alex.williamson@hp.com>
+# Date 1185814416 21600
+# Node ID f017328288ea42600509b62882f687d7331ce194
+# Parent  6d84769b52563c8ecdbe3ee001befcbfbbf6bfcd
+[IA64] Disable paravirtualization to remap /dev/mem.
+
+Signed-off-by: Jun Kamada <kama@jp.fujitsu.com>
+
+diff --git a/arch/ia64/Kconfig b/arch/ia64/Kconfig
+index faed779..278056e 100644
+--- a/arch/ia64/Kconfig
++++ b/arch/ia64/Kconfig
+@@ -633,6 +633,9 @@ config XEN_REBOOT
+ 
+ config XEN_SMPBOOT
+ 	default n
++
++config XEN_DEVMEM
++	default n
+ endif
+ 
+ source "drivers/xen/Kconfig"
+diff --git a/arch/ia64/xen/Makefile b/arch/ia64/xen/Makefile
+index 6d19da2..ed85198 100644
+--- a/arch/ia64/xen/Makefile
++++ b/arch/ia64/xen/Makefile
+@@ -4,6 +4,6 @@
+ 
+ obj-y := hypercall.o xenivt.o xenentry.o xensetup.o xenpal.o xenhpski.o \
+ 	 hypervisor.o util.o xencomm.o xcom_hcall.o xcom_mini.o \
+-	 xcom_privcmd.o mem.o xen_dma.o
++	 xcom_privcmd.o xen_dma.o
+ 
+ obj-$(CONFIG_IA64_GENERIC) += machvec.o
+diff --git a/arch/ia64/xen/mem.c b/arch/ia64/xen/mem.c
+deleted file mode 100644
+index 9064105..0000000
+--- a/arch/ia64/xen/mem.c
++++ /dev/null
+@@ -1,76 +0,0 @@
+-/*
+- *  Originally from linux/drivers/char/mem.c
+- *
+- *  Copyright (C) 1991, 1992  Linus Torvalds
+- *
+- *  Added devfs support.
+- *    Jan-11-1998, C. Scott Ananian <cananian@alumni.princeton.edu>
+- *  Shared /dev/zero mmaping support, Feb 2000, Kanoj Sarcar <kanoj@sgi.com>
+- */
+-/*
+- * taken from
+- * linux/drivers/char/mem.c and linux-2.6-xen-sparse/drivers/xen/char/mem.c.
+- * adjusted for IA64 and made transparent.
+- * Copyright (c) 2006 Isaku Yamahata <yamahata at valinux co jp>
+- *                    VA Linux Systems Japan K.K.
+- */
+-
+-#include <linux/config.h>
+-#include <linux/mm.h>
+-#include <linux/efi.h>
+-
+-/*
+- * Architectures vary in how they handle caching for addresses
+- * outside of main memory.
+- *
+- */
+-static inline int uncached_access(struct file *file, unsigned long addr)
+-{
+-	/*
+-	 * On ia64, we ignore O_SYNC because we cannot tolerate memory attribute aliases.
+-	 */
+-	return !(efi_mem_attributes(addr) & EFI_MEMORY_WB);
+-}
+-
+-int xen_mmap_mem(struct file * file, struct vm_area_struct * vma)
+-{
+-	unsigned long addr = vma->vm_pgoff << PAGE_SHIFT;
+-	size_t size = vma->vm_end - vma->vm_start;
+-
+-
+-#if 0
+-	/*
+-	 *XXX FIXME: linux-2.6.16.29, linux-2.6.17
+-	 *    valid_mmap_phys_addr_range() in linux/arch/ia64/kernel/efi.c
+-	 *    fails checks.
+-	 *    linux-2.6.18.1's returns always 1.
+-	 *    Its comments says
+-	 *
+-         * MMIO regions are often missing from the EFI memory map.
+-         * We must allow mmap of them for programs like X, so we
+-         * currently can't do any useful validation.
+-         */
+-	if (!valid_mmap_phys_addr_range(addr, &size))
+-		return -EINVAL;
+-	if (size < vma->vm_end - vma->vm_start)
+-		return -EINVAL;
+-#endif
+-
+-	if (is_running_on_xen()) {
+-		unsigned long offset = HYPERVISOR_ioremap(addr, size);
+-		if (IS_ERR_VALUE(offset))
+-			return offset;
+-	}
+-
+-	if (uncached_access(file, vma->vm_pgoff << PAGE_SHIFT))
+-		vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+-
+-        /* Remap-pfn-range will mark the range VM_IO and VM_RESERVED */
+-        if (remap_pfn_range(vma,
+-                            vma->vm_start,
+-                            vma->vm_pgoff,
+-                            size,
+-                            vma->vm_page_prot))
+-                return -EAGAIN;
+-        return 0;
+-}
+diff --git a/include/asm-ia64/io.h b/include/asm-ia64/io.h
+index c8a9b65..95f2db2 100644
+--- a/include/asm-ia64/io.h
++++ b/include/asm-ia64/io.h
+@@ -132,11 +132,6 @@ extern int valid_mmap_phys_addr_range (unsigned long pfn, size_t count);
+ 	(((bvec_to_bus((vec1)) + (vec1)->bv_len) == bvec_to_bus((vec2))) && \
+ 	 ((bvec_to_pseudophys((vec1)) + (vec1)->bv_len) ==		\
+ 	  bvec_to_pseudophys((vec2))))
+-
+-/* We will be supplying our own /dev/mem implementation */
+-#define ARCH_HAS_DEV_MEM
+-#define ARCH_HAS_DEV_MEM_MMAP_MEM
+-int xen_mmap_mem(struct file * file, struct vm_area_struct * vma);
+ #endif /* CONFIG_XEN */
+ 
+ # endif /* KERNEL */
+diff --git a/include/asm-ia64/uaccess.h b/include/asm-ia64/uaccess.h
+index e015fd0..9adb512 100644
+--- a/include/asm-ia64/uaccess.h
++++ b/include/asm-ia64/uaccess.h
+@@ -365,7 +365,6 @@ ia64_done_with_exception (struct pt_regs *regs)
+ }
+ 
+ #define ARCH_HAS_TRANSLATE_MEM_PTR	1
+-#ifndef CONFIG_XEN
+ static __inline__ char *
+ xlate_dev_mem_ptr (unsigned long p)
+ {
+@@ -380,25 +379,6 @@ xlate_dev_mem_ptr (unsigned long p)
+ 
+ 	return ptr;
+ }
+-#else
+-static __inline__ char *
+-xlate_dev_mem_ptr (unsigned long p, ssize_t sz)
+-{
+-	unsigned long pfn = p >> PAGE_SHIFT;
+-
+-	if (pfn_valid(pfn) && !PageUncached(pfn_to_page(pfn)))
+-		return __va(p);
+-
+-	return ioremap(p, sz);
+-}
+-
+-static __inline__ void
+-xlate_dev_mem_ptr_unmap (char* v)
+-{
+-	if (REGION_NUMBER(v) == RGN_UNCACHED)
+-		iounmap(v);
+-}
+-#endif
+ 
+ /*
+  * Convert a virtual cached kernel memory pointer to an uncached pointer

@@ -1,0 +1,102 @@
+From: David Teigland <teigland@redhat.com>
+Date: Thu, 5 Jun 2008 14:10:29 -0500
+Subject: [dlm] reject messages from non-members
+Message-id: 20080605191029.GH18635@redhat.com
+O-Subject: [RHEL5.3 PATCH 08/18] dlm: reject messages from non-members
+Bugzilla: 450132
+RH-Acked-by: Bob Peterson <rpeterso@redhat.com>
+
+bz 450132  dlm: fixes for recovery of user lockspace
+
+Fix bugs when userland apps using the dlm join/leave the lockspace,
+causing recovery.
+
+brew build including this patch
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1344633
+
+upstream commit:
+
+>From 46b43eed7018bab3a4e8c259eed27697b9170cb8 Mon Sep 17 00:00:00 2001
+>From: David Teigland <teigland@redhat.com>
+>Date: Tue, 8 Jan 2008 16:24:00 -0600
+>Subject: [PATCH] dlm: reject messages from non-members
+
+Messages from nodes that are no longer members of the lockspace should be
+ignored.  When nodes are removed from the lockspace, recovery can
+sometimes complete quickly enough that messages arrive from a removed node
+after recovery has completed.  When processed, these messages would often
+cause an error message, and could in some cases change some state, causing
+problems.
+
+Signed-off-by: David Teigland <teigland@redhat.com>
+
+diff --git a/fs/dlm/lock.c b/fs/dlm/lock.c
+index 37a2988..c95101e 100644
+--- a/fs/dlm/lock.c
++++ b/fs/dlm/lock.c
+@@ -1,7 +1,7 @@
+ /******************************************************************************
+ *******************************************************************************
+ **
+-**  Copyright (C) 2005-2007 Red Hat, Inc.  All rights reserved.
++**  Copyright (C) 2005-2008 Red Hat, Inc.  All rights reserved.
+ **
+ **  This copyrighted material is made available to anyone wishing to use,
+ **  modify, copy, or redistribute it subject to the terms and conditions
+@@ -3644,6 +3644,13 @@ static void receive_lookup_reply(struct dlm_ls *ls, struct dlm_message *ms)
+ 
+ static void _receive_message(struct dlm_ls *ls, struct dlm_message *ms)
+ {
++	if (!dlm_is_member(ls, ms->m_header.h_nodeid)) {
++		log_debug(ls, "ignore non-member message %d from %d %x %x %d",
++			  ms->m_type, ms->m_header.h_nodeid, ms->m_lkid,
++			  ms->m_remid, ms->m_result);
++		return;
++	}
++
+ 	switch (ms->m_type) {
+ 
+ 	/* messages sent to a master node */
+diff --git a/fs/dlm/member.c b/fs/dlm/member.c
+index e9cdcab..fa17f5a 100644
+--- a/fs/dlm/member.c
++++ b/fs/dlm/member.c
+@@ -1,7 +1,7 @@
+ /******************************************************************************
+ *******************************************************************************
+ **
+-**  Copyright (C) 2005-2007 Red Hat, Inc.  All rights reserved.
++**  Copyright (C) 2005-2008 Red Hat, Inc.  All rights reserved.
+ **
+ **  This copyrighted material is made available to anyone wishing to use,
+ **  modify, copy, or redistribute it subject to the terms and conditions
+@@ -70,7 +70,7 @@ static void dlm_remove_member(struct dlm_ls *ls, struct dlm_member *memb)
+ 	ls->ls_num_nodes--;
+ }
+ 
+-static int dlm_is_member(struct dlm_ls *ls, int nodeid)
++int dlm_is_member(struct dlm_ls *ls, int nodeid)
+ {
+ 	struct dlm_member *memb;
+ 
+diff --git a/fs/dlm/member.h b/fs/dlm/member.h
+index 927c08c..7a26fca 100644
+--- a/fs/dlm/member.h
++++ b/fs/dlm/member.h
+@@ -1,7 +1,7 @@
+ /******************************************************************************
+ *******************************************************************************
+ **
+-**  Copyright (C) 2005 Red Hat, Inc.  All rights reserved.
++**  Copyright (C) 2005-2008 Red Hat, Inc.  All rights reserved.
+ **
+ **  This copyrighted material is made available to anyone wishing to use,
+ **  modify, copy, or redistribute it subject to the terms and conditions
+@@ -19,6 +19,7 @@ void dlm_clear_members(struct dlm_ls *ls);
+ void dlm_clear_members_gone(struct dlm_ls *ls);
+ int dlm_recover_members(struct dlm_ls *ls, struct dlm_recover *rv,int *neg_out);
+ int dlm_is_removed(struct dlm_ls *ls, int nodeid);
++int dlm_is_member(struct dlm_ls *ls, int nodeid);
+ 
+ #endif                          /* __MEMBER_DOT_H__ */
+ 

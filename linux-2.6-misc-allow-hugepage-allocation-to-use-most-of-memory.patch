@@ -1,0 +1,67 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Thu, 13 Mar 2008 14:10:11 -0500
+Subject: [misc] allow hugepage allocation to use most of memory
+Message-id: 47D97C13.80104@redhat.com
+O-Subject: [RHEL5 patch] Allow hugepage allocation to use most of memory.
+Bugzilla: 438889
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+In RHEL5-U2 we included 2 patches that conflict and potentially prevent
+hugepages from using all or most of memory.   This can result in database
+restart failures when the shared cache/SGA is large enough to consume most
+of the RAM and hugepages are requested.
+
+1.) linux-2.6-ppc64-unequal-allocation_of_huge_pages.patch added the
+alloc_pages_thisnode() routine which builds a private zonelist that includes
+only the zones on the node passed in as the "nid" argument.
+
+2.) linux-2.6-mm-make-zonelist-order-selectable-in-numa.patch adds a the
+boot cmdline argument numa_zonelist_order to allow you to select the default
+zonelist ordered by zones or nodes.
+
+If all of the zones for a given node are not contiguous in the zonelist
+alloc_pages_thisnode() will terminate pre-maturely and build a private
+zonelist
+that does not include all of the nodes for the specified zone.  This can
+result in
+the system failing to allocate most of the memory for hugepages even
+though it
+is free.
+
+The attached patch fixes this problem:
+
+ include/linux/gfp.h |   12 ++++++------
+ 1 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/include/linux/gfp.h b/include/linux/gfp.h
+index ab4fb53..f35b414 100644
+--- a/include/linux/gfp.h
++++ b/include/linux/gfp.h
+@@ -114,7 +114,7 @@ static inline struct page *alloc_pages_thisnode(int nid, gfp_t gfp_mask,
+ {
+ 	struct zonelist *zl;
+ 	struct zonelist thisnode_zl;
+-	int i;
++	int i, j;
+ 
+ 	if (unlikely(order >= MAX_ORDER))
+ 		return NULL;
+@@ -131,12 +131,12 @@ static inline struct page *alloc_pages_thisnode(int nid, gfp_t gfp_mask,
+ 	if (zl->zones[0]->zone_pgdat->node_id != nid)
+ 		return NULL;
+ 
+-	for (i = 0; zl->zones[i] != NULL; i++) {
+-		if (zl->zones[i]->zone_pgdat->node_id != nid)
+-			break;
+-		thisnode_zl.zones[i] = zl->zones[i];
++	/* make zonelist with every zone on this node and null terminate */
++	for (i = 0, j = 0; zl->zones[i] != NULL; i++) {
++		if (zl->zones[i]->zone_pgdat->node_id == nid)
++			thisnode_zl.zones[j++] = zl->zones[i];
+ 	}
+-	thisnode_zl.zones[i] = NULL;
++	thisnode_zl.zones[j] = NULL;
+ 
+ 	return __alloc_pages(gfp_mask, order, &thisnode_zl);
+ }

@@ -1,0 +1,28 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Fri, 10 Oct 2008 15:32:37 +0200
+Subject: [scsi] cciss: the output of LUN size and type wrong
+Message-id: 48EF5975.2090506@redhat.com
+O-Subject: [RHEL5.3 PATCH] BZ#466030 Regression - RHEL 5.2 reports CCISS LUN size and type wrong
+Bugzilla: 466030
+
+Hi,
+this patch adds the missing (int) which caused the output messed up.
+It is the same upstream has in scsi-misc.
+
+Compiled and tested on i686.
+
+Tomas
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 884d20f..a6b04da 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -327,7 +327,7 @@ static int cciss_seq_show(struct seq_file *seq, void *v)
+ 		drv->raid_level = RAID_UNKNOWN;
+ 	seq_printf(seq, "cciss/c%dd%d:"
+ 			"\t%4u.%02uGB\tRAID %s\n",
+-			ctlr, *pos, (int)vol_sz, (int)vol_sz_frac,
++			ctlr, (int)*pos, (int)vol_sz, (int)vol_sz_frac,
+ 			raid_label[drv->raid_level]);
+ 
+ 	return 0;

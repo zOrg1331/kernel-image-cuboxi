@@ -1,0 +1,95 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Tue, 9 Sep 2008 08:05:44 -0400
+Subject: [x86_64] AMD 8-socket APICID patches
+Message-id: 48C66698.1030805@redhat.com
+O-Subject: Re: [RHEL5 PATCH]: AMD 8-socket APICID patches
+Bugzilla: 459813
+RH-Acked-by: Peter Martuccelli <peterm@redhat.com>
+
+Backport of 322850af8d93735f67b8ebf84bb1350639be3f34 and f8fffa458368ed3d57385698f775880db629bd1a.
+
+apic_is_clustered_box() should bail when an AMD or vsmp system is detected.
+
+This functionality is required for new Sun and HP AMD hardware.
+
+Compiled and regression tested on 4-way (8 cpu) Barcelona system.
+
+Resolves BZ 459813.
+
+diff --git a/arch/x86_64/kernel/apic.c b/arch/x86_64/kernel/apic.c
+index e2354f6..9798e8e 100644
+--- a/arch/x86_64/kernel/apic.c
++++ b/arch/x86_64/kernel/apic.c
+@@ -1009,6 +1009,15 @@ __cpuinit int apic_is_clustered_box(void)
+ 	unsigned id;
+ 	DECLARE_BITMAP(clustermap, NUM_APIC_CLUSTERS);
+ 
++	/*
++	* there is not this kind of box with AMD CPU yet.
++	* Some AMD box with quadcore cpu and 8 sockets apicid
++	* will be [4, 0x23] or [8, 0x27] could be thought to
++	* have three apic_clusters. So go out early.
++	*/
++	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD && !is_vsmp_box())
++		return 0;
++
+ 	bitmap_zero(clustermap, NUM_APIC_CLUSTERS);
+ 
+ 	for (i = 0; i < NR_CPUS; i++) {
+diff --git a/arch/x86_64/kernel/vsmp.c b/arch/x86_64/kernel/vsmp.c
+index 92f70c7..475c670 100644
+--- a/arch/x86_64/kernel/vsmp.c
++++ b/arch/x86_64/kernel/vsmp.c
+@@ -15,14 +15,30 @@
+ #include <linux/pci_regs.h>
+ #include <asm/pci-direct.h>
+ 
++static int vsmp = -1;
++
++int is_vsmp_box(void)
++{
++	if (vsmp != -1)
++		return vsmp;
++
++	vsmp = 0;
++
++	/* Check if we are running on a ScaleMP vSMP box */
++	if (read_pci_config(0, 0x1f, 0, PCI_VENDOR_ID) ==
++	     (PCI_VENDOR_ID_SCALEMP || (PCI_DEVICE_ID_SCALEMP_VSMP_CTL << 16)))
++		vsmp = 1;
++
++	return vsmp;
++}
++
+ static int __init vsmp_init(void)
+ {
+ 	void *address;
+ 	unsigned int cap, ctl;
+ 
+-	/* Check if we are running on a ScaleMP vSMP box */
+-	if ((read_pci_config_16(0, 0x1f, 0, PCI_VENDOR_ID) != PCI_VENDOR_ID_SCALEMP) ||
+-	    (read_pci_config_16(0, 0x1f, 0, PCI_DEVICE_ID) != PCI_DEVICE_ID_SCALEMP_VSMP_CTL))
++
++	if (!is_vsmp_box())
+ 		return 0;
+ 
+ 	/* set vSMP magic bits to indicate vSMP capable kernel */
+diff --git a/include/asm-x86_64/apic.h b/include/asm-x86_64/apic.h
+index 12e8714..2a26391 100644
+--- a/include/asm-x86_64/apic.h
++++ b/include/asm-x86_64/apic.h
+@@ -103,8 +103,13 @@ extern int disable_timer_pin_1;
+ void smp_send_timer_broadcast_ipi(void);
+ void switch_APIC_timer_to_ipi(void *cpumask);
+ void switch_ipi_to_APIC_timer(void *cpumask);
+-
+ #define ARCH_APICTIMER_STOPS_ON_C3	1
++static int inline is_vsmp_box(void)
++{
++	return 0;
++}
++#else
++extern int is_vsmp_box(void);
+ #endif
+ 
+ #endif /* CONFIG_X86_LOCAL_APIC */

@@ -1,0 +1,90 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Tue, 25 Nov 2008 10:44:23 -0500
+Subject: [net] mlx4: panic when inducing pci bus error
+Message-id: 20081125154404.10801.79439.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.3 BZ472769] fix panic when inducing pci bus error on any powerpc systems with Mellanox device drivers
+Bugzilla: 472769
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=472769
+
+Description:
+===========
+This problem happens on all powerpc platforms with Mellanox device drivers:
+mlx4 and mthca. When there is any pci bus error from the HW, both EEH error
+handling for PPC and device driver internal error reset are triggered to do the
+error recovery. Thus all HW resources will be double released, which causes
+systems crash and hang forever. The risk for this fix is extremely low, since
+we just disable internal error reset by default in the device driver, so for
+i386/ia_64 platforms, customers can enable it manually from the module
+parameters; for PPC platforms, EEH error handling will be used.
+
+RHEL Version Found:
+================
+RHEL 5.3 snapshot3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1584402
+
+Upstream Status:
+================
+Not available yet.  Will update the thread as soon as it is available.
+
+Test Status:
+============
+To reproduce this problem:
+
+1. run ./eeh.script --install (only need to run one time)
+
+2. run ./03bounce-ib.sh configure file as background ib interface activities
+
+3. run ./test.ssh to inject the pci bus error
+
+Eventually after around 10 mins, the system is able to read the pci bus error
+induced by the test.ssh script, which will cause the node crashes.
+
+After the fix, the node won't crash, however, the ib interface will be waiting
+forever by not responding to firmware (FW) commands.  IBM will talk to Mellanox
+regarding the FW no response issue to see whether they can find the root cause
+and fix the FW.  (This will need its own bug.)
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/drivers/infiniband/hw/mthca/mthca_catas.c b/drivers/infiniband/hw/mthca/mthca_catas.c
+index 732bc85..baa576c 100644
+--- a/drivers/infiniband/hw/mthca/mthca_catas.c
++++ b/drivers/infiniband/hw/mthca/mthca_catas.c
+@@ -53,7 +53,7 @@ static LIST_HEAD(catas_list);
+ static struct workqueue_struct *catas_wq;
+ static struct work_struct catas_work;
+ 
+-static int catas_reset_disable;
++static int catas_reset_disable = 1;
+ module_param_named(catas_reset_disable, catas_reset_disable, int, 0644);
+ MODULE_PARM_DESC(catas_reset_disable, "disable reset on catastrophic event if nonzero");
+ 
+diff --git a/drivers/net/mlx4/catas.c b/drivers/net/mlx4/catas.c
+index 6b32ec9..844aac9 100644
+--- a/drivers/net/mlx4/catas.c
++++ b/drivers/net/mlx4/catas.c
+@@ -44,7 +44,7 @@ static LIST_HEAD(catas_list);
+ static struct workqueue_struct *catas_wq;
+ static struct work_struct catas_work;
+ 
+-static int internal_err_reset = 1;
++static int internal_err_reset = 0;
+ module_param(internal_err_reset, int, 0644);
+ MODULE_PARM_DESC(internal_err_reset,
+ 		 "Reset device on internal errors if non-zero (default 1)");

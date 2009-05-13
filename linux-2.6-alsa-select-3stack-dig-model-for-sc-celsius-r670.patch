@@ -1,0 +1,47 @@
+From: Jaroslav Kysela <jkysela@redhat.com>
+Date: Wed, 3 Dec 2008 10:00:09 -0500
+Subject: [alsa] select 3stack-dig model for SC CELSIUS R670
+Message-id: 200812031500.mB3F09rn000338@ns3.rdu.redhat.com
+O-Subject: [RHEL 5.3 PATCH] ALSA - select 3stack-dig model for SC CELSIUS R670 workstation
+Bugzilla: 470449
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Bugzilla
+========
+BZ#470449
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=470449
+
+Description
+===========
+This patch select basic ALC663 configuration for SC CELSIUM R670 workstation
+(prototype). See the bug for details.
+
+Upstream Status of the patch
+============================
+Not applied (upstream auto-configuration code works without this explicit
+model specification).
+
+Test Status
+===========
+model=3stack-dig was tested by reporter.
+
+Notes
+=====
+It is not the best solution, but fixing of the auto-configuration code might
+take more time and I expect to backport latest ALSA HDA driver for RHEL 5.4
+which does not show this issue.
+
+diff --git a/sound/pci/hda/patch_realtek.c b/sound/pci/hda/patch_realtek.c
+index ca89812..717925c 100644
+--- a/sound/pci/hda/patch_realtek.c
++++ b/sound/pci/hda/patch_realtek.c
+@@ -14338,6 +14338,7 @@ static struct snd_pci_quirk alc662_cfg_tbl[] = {
+ 	SND_PCI_QUIRK(0x1043, 0x8290, "ASUS P5GC-MX", ALC662_3ST_6ch_DIG),
+ 	SND_PCI_QUIRK(0x1043, 0x82a1, "ASUS Eeepc", ALC662_ASUS_EEEPC_P701),
+ 	SND_PCI_QUIRK(0x1043, 0x82d1, "ASUS Eeepc EP20", ALC662_ASUS_EEEPC_EP20),
++	SND_PCI_QUIRK(0x1734, 0x1157, "FSC CELSIUS R670", ALC662_3ST_2ch_DIG),
+ 	SND_PCI_QUIRK(0x17aa, 0x101e, "Lenovo", ALC662_LENOVO_101E),
+ 	SND_PCI_QUIRK(0x1854, 0x2000, "ASUS H13-2000", ALC663_ASUS_H13),
+ 	SND_PCI_QUIRK(0x1854, 0x2001, "ASUS H13-2001", ALC663_ASUS_H13),

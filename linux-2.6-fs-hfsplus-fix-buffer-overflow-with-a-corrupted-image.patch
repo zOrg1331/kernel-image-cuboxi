@@ -1,0 +1,49 @@
+From: Anton Arapov <aarapov@redhat.com>
+Date: Thu, 13 Nov 2008 16:13:07 +0100
+Subject: [fs] hfsplus: fix buffer overflow with a corrupted image
+Message-id: 20081113151306.GF10438@redhat.com
+O-Subject: [RHEL5.4 PATCH] BZ469638: CVE-2008-4933 kernel: hfsplus: fix Buffer overflow with a corrupted image
+Bugzilla: 469638
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Eugene Teo <eteo@redhat.com>
+CVE: CVE-2008-4933
+
+Bugzilla: 469638
+
+Description:
+  When an hfsplus image gets corrupted it might happen that the catalog
+namelength field gets b0rked. If we mount such an image the memcpy() in
+hfsplus_cat_build_key_uni() writes more than the 255 that fit in the name
+field. Depending on the size of the overwritten data, we either only get
+memory corruption or also trigger an oops.
+
+Upstream status:
+  commit# efc7ffcb4237f8cb9938909041c4ed38f6e1bf40
+
+Test status:
+  patched kernel has been successfuly built, tested for boot.
+  hfsplus module successfully inserts and removes in/from kernel.
+  https://brewweb.devel.redhat.com/taskinfo?taskID=1572078
+
+Notice:
+  CVE-2008-4933
+  BZ469636 clone of this bug for RHEL4.8
+
+==
+
+diff --git a/fs/hfsplus/catalog.c b/fs/hfsplus/catalog.c
+index f2d7c49..3de2349 100644
+--- a/fs/hfsplus/catalog.c
++++ b/fs/hfsplus/catalog.c
+@@ -169,6 +169,11 @@ int hfsplus_find_cat(struct super_block *sb, u32 cnid,
+ 		return -EIO;
+ 	}
+ 
++	if (be16_to_cpu(tmp.thread.nodeName.length) > 255) {
++		printk(KERN_ERR "hfs: catalog name length corrupted\n");
++		return -EIO;
++	}
++
+ 	hfsplus_cat_build_key_uni(fd->search_key, be32_to_cpu(tmp.thread.parentID),
+ 				 &tmp.thread.nodeName);
+ 	return hfs_brec_find(fd);

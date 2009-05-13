@@ -1,0 +1,2876 @@
+From: Mark McLoughlin <markmc@redhat.com>
+Date: Fri, 22 Aug 2008 16:05:27 +0100
+Subject: [xen] virtio: add PV network and block drivers for KVM
+Message-id: 1219417527.24064.18.camel@muff
+O-Subject: Re: [RHEL5.3 PATCH] virtio: Add paravirtual network and block drivers for KVM
+Bugzilla: 446214
+RH-Acked-by: Herbert Xu <herbert.xu@redhat.com>
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+https://bugzilla.redhat.com/446214
+
+virtio is a driver framework for virtual I/O devices. Drivers
+are coded against a device enumeration and data transport
+abstraction and individual hypervisors provide the
+implementation for the abstraction. virtio was first added
+upstream in 2.6.24.
+
+In order to provide superior network and disk performance
+when running RHEL5 under KVM, we are backporting the network
+and block drivers (virtio_net and virtio_blk), the virtio
+abstraction (virtio and virtio_ring) and the KVM
+implementation (virtio_pci).
+
+The 2.6.27-rc3 version of the code is used because a number
+of fairly well tested performance related changes have been
+included recently (e.g. GSO support in virtio_net).
+
+A number of userspace changes are also required to make use
+of these drivers:
+
+  - /dev/vda labelling in selinux-policy (#446229)
+  - LVM support for discovering /dev/vda (#446228)
+  - making mkinitrd include virtio_pci (#446227)
+  - kudzu support (#446230)
+  - anaconda support (#446232)
+
+Basic testing - e.g. test installs - have been performed
+with these drivers in RHEL5 guests running on F-9 and
+rawhide KVM hosts.
+
+The drivers were backported as follows:
+
+  - copy over the 2.6.27-rc3 sources
+  - run hack-module.awk from kvm-guest-drivers-linux to make
+    the code buildable on RHEL5
+  - replace all the compat hacks added by hack-module.awk
+    with cleaner, easier to review changes
+
+I will follow up this mail with a patch showing the diff
+between the code below and the code in 2.6.27-rc3 in order
+to ease review.
+
+Signed-off-by: Mark McLoughlin <markmc@redhat.com>
+
+diff --git a/arch/i386/Kconfig b/arch/i386/Kconfig
+index 5173059..0f4c8b5 100644
+--- a/arch/i386/Kconfig
++++ b/arch/i386/Kconfig
+@@ -1107,6 +1107,8 @@ config XEN_PCIDEV_FE_DEBUG
+ 	help
+ 	  Enables some debug statements within the PCI Frontend.
+ 
++source "drivers/virtio/Kconfig"
++
+ source "drivers/pci/pcie/Kconfig"
+ 
+ config PCI_DOMAINS
+diff --git a/arch/x86_64/Kconfig b/arch/x86_64/Kconfig
+index d8361e5..5c2a9eb 100644
+--- a/arch/x86_64/Kconfig
++++ b/arch/x86_64/Kconfig
+@@ -686,6 +686,8 @@ config XEN_PCIDEV_FE_DEBUG
+ 	help
+ 	  Enables some debug statements within the PCI Frontend.
+ 
++source "drivers/virtio/Kconfig"
++
+ source "drivers/pci/pcie/Kconfig"
+ 
+ config PCI_DOMAINS
+diff --git a/drivers/Makefile b/drivers/Makefile
+index 083ac5b..7dbed7d 100644
+--- a/drivers/Makefile
++++ b/drivers/Makefile
+@@ -80,3 +80,4 @@ obj-$(CONFIG_CRYPTO)		+= crypto/
+ obj-$(CONFIG_SUPERH)		+= sh/
+ obj-$(CONFIG_GENERIC_TIME)	+= clocksource/
+ obj-$(CONFIG_DMA_ENGINE)	+= dma/
++obj-$(CONFIG_VIRTIO)		+= virtio/
+diff --git a/drivers/block/Kconfig b/drivers/block/Kconfig
+index b5382ce..4c5af7d 100644
+--- a/drivers/block/Kconfig
++++ b/drivers/block/Kconfig
+@@ -467,4 +467,11 @@ config ATA_OVER_ETH
+ 	This driver provides Support for ATA over Ethernet block
+ 	devices like the Coraid EtherDrive (R) Storage Blade.
+ 
++config VIRTIO_BLK
++	tristate "Virtio block driver (EXPERIMENTAL)"
++	depends on EXPERIMENTAL && VIRTIO
++	---help---
++	  This is the virtual block driver for virtio.  It can be used with
++          lguest or QEMU based VMMs (like KVM or Xen).  Say Y or M.
++
+ endmenu
+diff --git a/drivers/block/Makefile b/drivers/block/Makefile
+index 410f259..380c08b 100644
+--- a/drivers/block/Makefile
++++ b/drivers/block/Makefile
+@@ -25,6 +25,7 @@ obj-$(CONFIG_CDROM_PKTCDVD)	+= pktcdvd.o
+ obj-$(CONFIG_BLK_DEV_UMEM)	+= umem.o
+ obj-$(CONFIG_BLK_DEV_NBD)	+= nbd.o
+ obj-$(CONFIG_BLK_DEV_CRYPTOLOOP) += cryptoloop.o
++obj-$(CONFIG_VIRTIO_BLK)	+= virtio_blk.o
+ 
+ obj-$(CONFIG_VIODASD)		+= viodasd.o
+ obj-$(CONFIG_BLK_DEV_SX8)	+= sx8.o
+diff --git a/drivers/block/virtio_blk.c b/drivers/block/virtio_blk.c
+new file mode 100644
+index 0000000..a102e31
+--- /dev/null
++++ b/drivers/block/virtio_blk.c
+@@ -0,0 +1,375 @@
++//#define DEBUG
++#include <linux/spinlock.h>
++#include <linux/blkdev.h>
++#include <linux/hdreg.h>
++#include <linux/virtio.h>
++#include <linux/virtio_blk.h>
++#include <linux/scatterlist.h>
++
++#define VIRTIO_MAX_SG	(3+MAX_PHYS_SEGMENTS)
++#define PART_BITS 4
++
++static int major, index;
++
++struct virtio_blk
++{
++	spinlock_t lock;
++
++	struct virtio_device *vdev;
++	struct virtqueue *vq;
++
++	/* The disk structure for the kernel. */
++	struct gendisk *disk;
++
++	/* Request tracking. */
++	struct list_head reqs;
++
++	mempool_t *pool;
++
++	/* Scatterlist: can be too big for stack. */
++	struct scatterlist sg[VIRTIO_MAX_SG];
++};
++
++struct virtblk_req
++{
++	struct list_head list;
++	struct request *req;
++	struct virtio_blk_outhdr out_hdr;
++	u8 status;
++};
++
++static void blk_done(struct virtqueue *vq)
++{
++	struct virtio_blk *vblk = vq->vdev->priv;
++	struct virtblk_req *vbr;
++	unsigned int len;
++	unsigned long flags;
++
++	spin_lock_irqsave(&vblk->lock, flags);
++	while ((vbr = vblk->vq->vq_ops->get_buf(vblk->vq, &len)) != NULL) {
++		int uptodate;
++		switch (vbr->status) {
++		case VIRTIO_BLK_S_OK:
++			uptodate = 1;
++			break;
++		case VIRTIO_BLK_S_UNSUPP:
++			uptodate = -ENOTTY;
++			break;
++		default:
++			uptodate = 0;
++			break;
++		}
++
++		if (!end_that_request_first(vbr->req, uptodate, vbr->req->hard_nr_sectors)) {
++			add_disk_randomness(vbr->req->rq_disk);
++			end_that_request_last(vbr->req, uptodate);
++		}
++		list_del(&vbr->list);
++		mempool_free(vbr, vblk->pool);
++	}
++	/* In case queue is stopped waiting for more buffers. */
++	blk_start_queue(vblk->disk->queue);
++	spin_unlock_irqrestore(&vblk->lock, flags);
++}
++
++static bool do_req(struct request_queue *q, struct virtio_blk *vblk,
++		   struct request *req)
++{
++	unsigned long num, out, in;
++	struct virtblk_req *vbr;
++
++	vbr = mempool_alloc(vblk->pool, GFP_ATOMIC);
++	if (!vbr)
++		/* When another request finishes we'll try again. */
++		return false;
++
++	vbr->req = req;
++	if (blk_fs_request(vbr->req)) {
++		vbr->out_hdr.type = 0;
++		vbr->out_hdr.sector = vbr->req->sector;
++		vbr->out_hdr.ioprio = vbr->req->ioprio;
++	} else if (blk_pc_request(vbr->req)) {
++		vbr->out_hdr.type = VIRTIO_BLK_T_SCSI_CMD;
++		vbr->out_hdr.sector = 0;
++		vbr->out_hdr.ioprio = vbr->req->ioprio;
++	} else {
++		/* We don't put anything else in the queue. */
++		BUG();
++	}
++
++	if (blk_barrier_rq(vbr->req))
++		vbr->out_hdr.type |= VIRTIO_BLK_T_BARRIER;
++
++	/* This init could be done at vblk creation time */
++	sg_set_buf(&vblk->sg[0], &vbr->out_hdr, sizeof(vbr->out_hdr));
++	num = blk_rq_map_sg(q, vbr->req, vblk->sg+1);
++	sg_set_buf(&vblk->sg[num+1], &vbr->status, sizeof(vbr->status));
++
++	if (rq_data_dir(vbr->req) == WRITE) {
++		vbr->out_hdr.type |= VIRTIO_BLK_T_OUT;
++		out = 1 + num;
++		in = 1;
++	} else {
++		vbr->out_hdr.type |= VIRTIO_BLK_T_IN;
++		out = 1;
++		in = 1 + num;
++	}
++
++	if (vblk->vq->vq_ops->add_buf(vblk->vq, vblk->sg, out, in, vbr)) {
++		mempool_free(vbr, vblk->pool);
++		return false;
++	}
++
++	list_add_tail(&vbr->list, &vblk->reqs);
++	return true;
++}
++
++static void do_virtblk_request(struct request_queue *q)
++{
++	struct virtio_blk *vblk = NULL;
++	struct request *req;
++	unsigned int issued = 0;
++
++	while ((req = elv_next_request(q)) != NULL) {
++		vblk = req->rq_disk->private_data;
++		BUG_ON(req->nr_phys_segments > ARRAY_SIZE(vblk->sg));
++
++		/* If this request fails, stop queue and wait for something to
++		   finish to restart it. */
++		if (!do_req(q, vblk, req)) {
++			blk_stop_queue(q);
++			break;
++		}
++		blkdev_dequeue_request(req);
++		issued++;
++	}
++
++	if (issued)
++		vblk->vq->vq_ops->kick(vblk->vq);
++}
++
++static int virtblk_ioctl(struct inode *inode, struct file *filp,
++			 unsigned cmd, unsigned long data)
++{
++	return scsi_cmd_ioctl(filp,
++			      inode->i_bdev->bd_disk, cmd,
++			      (void __user *)data);
++}
++
++/* We provide getgeo only to please some old bootloader/partitioning tools */
++static int virtblk_getgeo(struct block_device *bd, struct hd_geometry *geo)
++{
++	struct virtio_blk *vblk = bd->bd_disk->private_data;
++	struct virtio_blk_geometry vgeo;
++	int err;
++
++	/* see if the host passed in geometry config */
++	err = virtio_config_val(vblk->vdev, VIRTIO_BLK_F_GEOMETRY,
++				offsetof(struct virtio_blk_config, geometry),
++				&vgeo);
++
++	if (!err) {
++		geo->heads = vgeo.heads;
++		geo->sectors = vgeo.sectors;
++		geo->cylinders = vgeo.cylinders;
++	} else {
++		/* some standard values, similar to sd */
++		geo->heads = 1 << 6;
++		geo->sectors = 1 << 5;
++		geo->cylinders = get_capacity(bd->bd_disk) >> 11;
++	}
++	return 0;
++}
++
++static struct block_device_operations virtblk_fops = {
++	.ioctl  = virtblk_ioctl,
++	.owner  = THIS_MODULE,
++	.getgeo = virtblk_getgeo,
++};
++
++static int index_to_minor(int index)
++{
++	return index << PART_BITS;
++}
++
++static int virtblk_probe(struct virtio_device *vdev)
++{
++	struct virtio_blk *vblk;
++	int err;
++	u64 cap;
++	u32 v;
++	u32 blk_size;
++
++	if (index_to_minor(index) >= 1 << MINORBITS)
++		return -ENOSPC;
++
++	vdev->priv = vblk = kmalloc(sizeof(*vblk), GFP_KERNEL);
++	if (!vblk) {
++		err = -ENOMEM;
++		goto out;
++	}
++
++	INIT_LIST_HEAD(&vblk->reqs);
++	spin_lock_init(&vblk->lock);
++	vblk->vdev = vdev;
++
++	/* We expect one virtqueue, for output. */
++	vblk->vq = vdev->config->find_vq(vdev, 0, blk_done);
++	if (IS_ERR(vblk->vq)) {
++		err = PTR_ERR(vblk->vq);
++		goto out_free_vblk;
++	}
++
++	vblk->pool = mempool_create_kmalloc_pool(1,sizeof(struct virtblk_req));
++	if (!vblk->pool) {
++		err = -ENOMEM;
++		goto out_free_vq;
++	}
++
++	/* FIXME: How many partitions?  How long is a piece of string? */
++	vblk->disk = alloc_disk(1 << PART_BITS);
++	if (!vblk->disk) {
++		err = -ENOMEM;
++		goto out_mempool;
++	}
++
++	vblk->disk->queue = blk_init_queue(do_virtblk_request, &vblk->lock);
++	if (!vblk->disk->queue) {
++		err = -ENOMEM;
++		goto out_put_disk;
++	}
++
++	if (index < 26) {
++		sprintf(vblk->disk->disk_name, "vd%c", 'a' + index % 26);
++	} else if (index < (26 + 1) * 26) {
++		sprintf(vblk->disk->disk_name, "vd%c%c",
++			'a' + index / 26 - 1, 'a' + index % 26);
++	} else {
++		const unsigned int m1 = (index / 26 - 1) / 26 - 1;
++		const unsigned int m2 = (index / 26 - 1) % 26;
++		const unsigned int m3 =  index % 26;
++		sprintf(vblk->disk->disk_name, "vd%c%c%c",
++			'a' + m1, 'a' + m2, 'a' + m3);
++	}
++
++	vblk->disk->major = major;
++	vblk->disk->first_minor = index_to_minor(index);
++	vblk->disk->private_data = vblk;
++	vblk->disk->fops = &virtblk_fops;
++	vblk->disk->driverfs_dev = &vdev->dev;
++	index++;
++
++	/* If barriers are supported, tell block layer that queue is ordered */
++	if (virtio_has_feature(vdev, VIRTIO_BLK_F_BARRIER))
++		blk_queue_ordered(vblk->disk->queue, QUEUE_ORDERED_TAG, NULL);
++
++	/* If disk is read-only in the host, the guest should obey */
++	if (virtio_has_feature(vdev, VIRTIO_BLK_F_RO))
++		set_disk_ro(vblk->disk, 1);
++
++	/* Host must always specify the capacity. */
++	vdev->config->get(vdev, offsetof(struct virtio_blk_config, capacity),
++			  &cap, sizeof(cap));
++
++	/* If capacity is too big, truncate with warning. */
++	if ((sector_t)cap != cap) {
++		dev_warn(&vdev->dev, "Capacity %llu too large: truncating\n",
++			 (unsigned long long)cap);
++		cap = (sector_t)-1;
++	}
++	set_capacity(vblk->disk, cap);
++
++	/* Host can optionally specify maximum segment size and number of
++	 * segments. */
++	err = virtio_config_val(vdev, VIRTIO_BLK_F_SIZE_MAX,
++				offsetof(struct virtio_blk_config, size_max),
++				&v);
++	if (!err)
++		blk_queue_max_segment_size(vblk->disk->queue, v);
++
++	err = virtio_config_val(vdev, VIRTIO_BLK_F_SEG_MAX,
++				offsetof(struct virtio_blk_config, seg_max),
++				&v);
++	if (!err)
++		blk_queue_max_hw_segments(vblk->disk->queue, v);
++
++	/* Host can optionally specify the block size of the device */
++	err = virtio_config_val(vdev, VIRTIO_BLK_F_BLK_SIZE,
++				offsetof(struct virtio_blk_config, blk_size),
++				&blk_size);
++	if (!err)
++		blk_queue_hardsect_size(vblk->disk->queue, blk_size);
++
++	add_disk(vblk->disk);
++	return 0;
++
++out_put_disk:
++	put_disk(vblk->disk);
++out_mempool:
++	mempool_destroy(vblk->pool);
++out_free_vq:
++	vdev->config->del_vq(vblk->vq);
++out_free_vblk:
++	kfree(vblk);
++out:
++	return err;
++}
++
++static void virtblk_remove(struct virtio_device *vdev)
++{
++	struct virtio_blk *vblk = vdev->priv;
++
++	/* Nothing should be pending. */
++	BUG_ON(!list_empty(&vblk->reqs));
++
++	/* Stop all the virtqueues. */
++	vdev->config->reset(vdev);
++
++	del_gendisk(vblk->disk);
++	blk_cleanup_queue(vblk->disk->queue);
++	put_disk(vblk->disk);
++	mempool_destroy(vblk->pool);
++	vdev->config->del_vq(vblk->vq);
++	kfree(vblk);
++}
++
++static struct virtio_device_id id_table[] = {
++	{ VIRTIO_ID_BLOCK, VIRTIO_DEV_ANY_ID },
++	{ 0 },
++};
++
++static unsigned int features[] = {
++	VIRTIO_BLK_F_BARRIER, VIRTIO_BLK_F_SEG_MAX, VIRTIO_BLK_F_SIZE_MAX,
++	VIRTIO_BLK_F_GEOMETRY, VIRTIO_BLK_F_RO, VIRTIO_BLK_F_BLK_SIZE,
++};
++
++static struct virtio_driver virtio_blk = {
++	.feature_table = features,
++	.feature_table_size = ARRAY_SIZE(features),
++	.driver.name =	KBUILD_MODNAME,
++	.driver.owner =	THIS_MODULE,
++	.id_table =	id_table,
++	.probe =	virtblk_probe,
++	.remove =	__devexit_p(virtblk_remove),
++};
++
++static int __init init(void)
++{
++	major = register_blkdev(0, "virtblk");
++	if (major < 0)
++		return major;
++	return register_virtio_driver(&virtio_blk);
++}
++
++static void __exit fini(void)
++{
++	unregister_blkdev(major, "virtblk");
++	unregister_virtio_driver(&virtio_blk);
++}
++module_init(init);
++module_exit(fini);
++
++MODULE_DEVICE_TABLE(virtio, id_table);
++MODULE_ALIAS("virtio:d00000002v*");
++MODULE_DESCRIPTION("Virtio block driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/net/Kconfig b/drivers/net/Kconfig
+index 46b940c..18c5829 100644
+--- a/drivers/net/Kconfig
++++ b/drivers/net/Kconfig
+@@ -2957,4 +2957,11 @@ config NETPOLL_TRAP
+ config NET_POLL_CONTROLLER
+ 	def_bool NETPOLL
+ 
++config VIRTIO_NET
++	tristate "Virtio network driver (EXPERIMENTAL)"
++	depends on EXPERIMENTAL && VIRTIO
++	---help---
++	  This is the virtual network driver for virtio.  It can be used with
++          lguest or QEMU based VMMs (like KVM or Xen).  Say Y or M.
++
+ endmenu
+diff --git a/drivers/net/Makefile b/drivers/net/Makefile
+index aa39eaa..17eb8bd 100644
+--- a/drivers/net/Makefile
++++ b/drivers/net/Makefile
+@@ -230,3 +230,4 @@ obj-$(CONFIG_FS_ENET) += fs_enet/
+ 
+ obj-$(CONFIG_NETXEN_NIC) += netxen/
+ obj-$(CONFIG_NIU) += niu.o
++obj-$(CONFIG_VIRTIO_NET) += virtio_net.o
+diff --git a/drivers/net/virtio_net.c b/drivers/net/virtio_net.c
+new file mode 100644
+index 0000000..d743b1e
+--- /dev/null
++++ b/drivers/net/virtio_net.c
+@@ -0,0 +1,687 @@
++/* A simple network driver using virtio.
++ *
++ * Copyright 2007 Rusty Russell <rusty@rustcorp.com.au> IBM Corporation
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ */
++//#define DEBUG
++#include <linux/netdevice.h>
++#include <linux/etherdevice.h>
++#include <linux/ethtool.h>
++#include <linux/module.h>
++#include <linux/virtio.h>
++#include <linux/virtio_net.h>
++#include <linux/scatterlist.h>
++#include <net/esp.h> /* for skb_to_sgvec() */
++
++static int napi_weight = 128;
++module_param(napi_weight, int, 0444);
++
++static int csum = 1, gso = 1;
++module_param(csum, bool, 0444);
++module_param(gso, bool, 0444);
++
++/* FIXME: MTU in config. */
++#define MAX_PACKET_LEN (ETH_HLEN+ETH_DATA_LEN)
++
++struct virtnet_info
++{
++	struct virtio_device *vdev;
++	struct virtqueue *rvq, *svq;
++	struct net_device *dev;
++
++	/* The skb we couldn't send because buffers were full. */
++	struct sk_buff *last_xmit_skb;
++
++	/* If we need to free in a timer, this is it. */
++	struct timer_list xmit_free_timer;
++
++	/* Number of input buffers, and max we've ever had. */
++	unsigned int num, max;
++
++	/* For cleaning up after transmission. */
++	struct tasklet_struct tasklet;
++	bool free_in_tasklet;
++
++	/* I like... big packets and I cannot lie! */
++	bool big_packets;
++
++	/* Receive & send queues. */
++	struct sk_buff_head recv;
++	struct sk_buff_head send;
++
++	/* Chain pages by the private ptr. */
++	struct page *pages;
++
++	struct net_device_stats stats;
++};
++
++static inline struct virtio_net_hdr *skb_vnet_hdr(struct sk_buff *skb)
++{
++	return (struct virtio_net_hdr *)skb->cb;
++}
++
++static inline void vnet_hdr_to_sg(struct scatterlist *sg, struct sk_buff *skb)
++{
++	sg_init_one(sg, skb_vnet_hdr(skb), sizeof(struct virtio_net_hdr));
++}
++
++static void give_a_page(struct virtnet_info *vi, struct page *page)
++{
++	page->private = (unsigned long)vi->pages;
++	vi->pages = page;
++}
++
++static struct page *get_a_page(struct virtnet_info *vi, gfp_t gfp_mask)
++{
++	struct page *p = vi->pages;
++
++	if (p)
++		vi->pages = (struct page *)p->private;
++	else
++		p = alloc_page(gfp_mask);
++	return p;
++}
++
++static void skb_xmit_done(struct virtqueue *svq)
++{
++	struct virtnet_info *vi = svq->vdev->priv;
++
++	/* Suppress further interrupts. */
++	svq->vq_ops->disable_cb(svq);
++
++	/* We were probably waiting for more output buffers. */
++	netif_wake_queue(vi->dev);
++
++	/* Make sure we re-xmit last_xmit_skb: if there are no more packets
++	 * queued, start_xmit won't be called. */
++	tasklet_schedule(&vi->tasklet);
++}
++
++static void receive_skb(struct net_device *dev, struct sk_buff *skb,
++			unsigned len)
++{
++	struct virtnet_info *vi = netdev_priv(dev);
++	struct virtio_net_hdr *hdr = skb_vnet_hdr(skb);
++	int err;
++
++	if (unlikely(len < sizeof(struct virtio_net_hdr) + ETH_HLEN)) {
++		pr_debug("%s: short packet %i\n", dev->name, len);
++		vi->stats.rx_length_errors++;
++		goto drop;
++	}
++	len -= sizeof(struct virtio_net_hdr);
++
++	if (len <= MAX_PACKET_LEN) {
++		unsigned int i;
++
++		for (i = 0; i < skb_shinfo(skb)->nr_frags; i++)
++			give_a_page(dev->priv, skb_shinfo(skb)->frags[i].page);
++		skb->data_len = 0;
++		skb_shinfo(skb)->nr_frags = 0;
++	}
++
++	err = pskb_trim(skb, len);
++	if (err) {
++		pr_debug("%s: pskb_trim failed %i %d\n", dev->name, len, err);
++		vi->stats.rx_dropped++;
++		goto drop;
++	}
++	skb->truesize += skb->data_len;
++	vi->stats.rx_bytes += skb->len;
++	vi->stats.rx_packets++;
++
++	if (hdr->flags & VIRTIO_NET_HDR_F_NEEDS_CSUM)
++		skb->ip_summed = CHECKSUM_UNNECESSARY;
++
++	skb->protocol = eth_type_trans(skb, dev);
++	pr_debug("Receiving skb proto 0x%04x len %i type %i\n",
++		 ntohs(skb->protocol), skb->len, skb->pkt_type);
++
++	if (hdr->gso_type != VIRTIO_NET_HDR_GSO_NONE) {
++		pr_debug("GSO!\n");
++		switch (hdr->gso_type & ~VIRTIO_NET_HDR_GSO_ECN) {
++		case VIRTIO_NET_HDR_GSO_TCPV4:
++			skb_shinfo(skb)->gso_type = SKB_GSO_TCPV4;
++			break;
++		case VIRTIO_NET_HDR_GSO_UDP:
++			skb_shinfo(skb)->gso_type = SKB_GSO_UDP;
++			break;
++		case VIRTIO_NET_HDR_GSO_TCPV6:
++			skb_shinfo(skb)->gso_type = SKB_GSO_TCPV6;
++			break;
++		default:
++			if (net_ratelimit())
++				printk(KERN_WARNING "%s: bad gso type %u.\n",
++				       dev->name, hdr->gso_type);
++			goto frame_err;
++		}
++
++		if (hdr->gso_type & VIRTIO_NET_HDR_GSO_ECN)
++			skb_shinfo(skb)->gso_type |= SKB_GSO_TCP_ECN;
++
++		skb_shinfo(skb)->gso_size = hdr->gso_size;
++		if (skb_shinfo(skb)->gso_size == 0) {
++			if (net_ratelimit())
++				printk(KERN_WARNING "%s: zero gso size.\n",
++				       dev->name);
++			goto frame_err;
++		}
++
++		/* Header must be checked, and gso_segs computed. */
++		skb_shinfo(skb)->gso_type |= SKB_GSO_DODGY;
++		skb_shinfo(skb)->gso_segs = 0;
++	}
++
++	netif_receive_skb(skb);
++	return;
++
++frame_err:
++	vi->stats.rx_frame_errors++;
++drop:
++	dev_kfree_skb(skb);
++}
++
++static void try_fill_recv(struct virtnet_info *vi)
++{
++	struct sk_buff *skb;
++	struct scatterlist sg[2+MAX_SKB_FRAGS];
++	int num, err, i;
++
++	for (;;) {
++		skb = netdev_alloc_skb(vi->dev, MAX_PACKET_LEN);
++		if (unlikely(!skb))
++			break;
++
++		skb_put(skb, MAX_PACKET_LEN);
++		vnet_hdr_to_sg(sg, skb);
++
++		if (vi->big_packets) {
++			for (i = 0; i < MAX_SKB_FRAGS; i++) {
++				skb_frag_t *f = &skb_shinfo(skb)->frags[i];
++				f->page = get_a_page(vi, GFP_ATOMIC);
++				if (!f->page)
++					break;
++
++				f->page_offset = 0;
++				f->size = PAGE_SIZE;
++
++				skb->data_len += PAGE_SIZE;
++				skb->len += PAGE_SIZE;
++
++				skb_shinfo(skb)->nr_frags++;
++			}
++		}
++
++		num = skb_to_sgvec(skb, sg+1, 0, skb->len) + 1;
++		skb_queue_head(&vi->recv, skb);
++
++		err = vi->rvq->vq_ops->add_buf(vi->rvq, sg, 0, num, skb);
++		if (err) {
++			skb_unlink(skb, &vi->recv);
++			kfree_skb(skb);
++			break;
++		}
++		vi->num++;
++	}
++	if (unlikely(vi->num > vi->max))
++		vi->max = vi->num;
++	vi->rvq->vq_ops->kick(vi->rvq);
++}
++
++static void skb_recv_done(struct virtqueue *rvq)
++{
++	struct virtnet_info *vi = rvq->vdev->priv;
++	/* Schedule NAPI, Suppress further interrupts if successful. */
++	if (netif_rx_schedule_prep(vi->dev)) {
++		rvq->vq_ops->disable_cb(rvq);
++		__netif_rx_schedule(vi->dev);
++	}
++}
++
++static int virtnet_poll(struct net_device *dev, int *budget)
++{
++	struct virtnet_info *vi = netdev_priv(dev);
++	int max_received = min(dev->quota, *budget);
++	bool no_work;
++	struct sk_buff *skb = NULL;
++	unsigned int len, received = 0;
++
++again:
++	while (received < max_received &&
++	       (skb = vi->rvq->vq_ops->get_buf(vi->rvq, &len)) != NULL) {
++		__skb_unlink(skb, &vi->recv);
++		receive_skb(vi->dev, skb, len);
++		vi->num--;
++		received++;
++	}
++
++	/* FIXME: If we oom and completely run out of inbufs, we need
++	 * to start a timer trying to fill more. */
++	if (vi->num < vi->max / 2)
++		try_fill_recv(vi);
++
++	/* Out of packets? */
++	if (skb) {
++		*budget -= received;
++		dev->quota -= received;
++		return 1;
++	}
++
++	netif_rx_complete(vi->dev);
++	no_work = vi->rvq->vq_ops->enable_cb(vi->rvq);
++
++	if (!no_work && netif_rx_schedule_prep(vi->dev)) {
++		vi->rvq->vq_ops->disable_cb(vi->rvq);
++		__netif_rx_schedule(vi->dev);
++		goto again;
++	}
++
++	dev->quota -= received;
++	*budget -= received;
++
++	return 0;
++}
++
++static void free_old_xmit_skbs(struct virtnet_info *vi)
++{
++	struct sk_buff *skb;
++	unsigned int len;
++
++	while ((skb = vi->svq->vq_ops->get_buf(vi->svq, &len)) != NULL) {
++		pr_debug("Sent skb %p\n", skb);
++		__skb_unlink(skb, &vi->send);
++		vi->stats.tx_bytes += skb->len;
++		vi->stats.tx_packets++;
++		kfree_skb(skb);
++	}
++}
++
++/* If the virtio transport doesn't always notify us when all in-flight packets
++ * are consumed, we fall back to using this function on a timer to free them. */
++static void xmit_free(unsigned long data)
++{
++	struct virtnet_info *vi = (void *)data;
++
++	netif_tx_lock(vi->dev);
++
++	free_old_xmit_skbs(vi);
++
++	if (!skb_queue_empty(&vi->send))
++		mod_timer(&vi->xmit_free_timer, jiffies + (HZ/10));
++
++	netif_tx_unlock(vi->dev);
++}
++
++static int xmit_skb(struct virtnet_info *vi, struct sk_buff *skb)
++{
++	int num, err;
++	struct scatterlist sg[2+MAX_SKB_FRAGS];
++	struct virtio_net_hdr *hdr;
++
++#ifdef DEBUG
++	const unsigned char *dest = ((struct ethhdr *)skb->data)->h_dest;
++
++	pr_debug("%s: xmit %p " MAC_FMT "\n", vi->dev->name, skb,
++		 dest[0], dest[1], dest[2],
++		 dest[3], dest[4], dest[5]);
++#endif
++
++	/* Encode metadata header at front. */
++	hdr = skb_vnet_hdr(skb);
++	if (skb->ip_summed == CHECKSUM_HW) {
++		hdr->flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
++		hdr->csum_start = skb->h.raw - skb->data;
++		hdr->csum_offset = skb->csum;
++	} else {
++		hdr->flags = 0;
++		hdr->csum_offset = hdr->csum_start = 0;
++	}
++
++	if (skb_is_gso(skb)) {
++		hdr->hdr_len = skb->h.raw - skb->data;
++		hdr->gso_size = skb_shinfo(skb)->gso_size;
++		if (skb_shinfo(skb)->gso_type & SKB_GSO_TCPV4)
++			hdr->gso_type = VIRTIO_NET_HDR_GSO_TCPV4;
++		else if (skb_shinfo(skb)->gso_type & SKB_GSO_TCPV6)
++			hdr->gso_type = VIRTIO_NET_HDR_GSO_TCPV6;
++		else if (skb_shinfo(skb)->gso_type & SKB_GSO_UDP)
++			hdr->gso_type = VIRTIO_NET_HDR_GSO_UDP;
++		else
++			BUG();
++		if (skb_shinfo(skb)->gso_type & SKB_GSO_TCP_ECN)
++			hdr->gso_type |= VIRTIO_NET_HDR_GSO_ECN;
++	} else {
++		hdr->gso_type = VIRTIO_NET_HDR_GSO_NONE;
++		hdr->gso_size = hdr->hdr_len = 0;
++	}
++
++	vnet_hdr_to_sg(sg, skb);
++	num = skb_to_sgvec(skb, sg+1, 0, skb->len) + 1;
++
++	err = vi->svq->vq_ops->add_buf(vi->svq, sg, num, 0, skb);
++	if (!err && !vi->free_in_tasklet)
++		mod_timer(&vi->xmit_free_timer, jiffies + (HZ/10));
++
++	return err;
++}
++
++static void xmit_tasklet(unsigned long data)
++{
++	struct virtnet_info *vi = (void *)data;
++
++	netif_tx_lock_bh(vi->dev);
++	if (vi->last_xmit_skb && xmit_skb(vi, vi->last_xmit_skb) == 0) {
++		vi->svq->vq_ops->kick(vi->svq);
++		vi->last_xmit_skb = NULL;
++	}
++	if (vi->free_in_tasklet)
++		free_old_xmit_skbs(vi);
++	netif_tx_unlock_bh(vi->dev);
++}
++
++static int start_xmit(struct sk_buff *skb, struct net_device *dev)
++{
++	struct virtnet_info *vi = netdev_priv(dev);
++
++again:
++	/* Free up any pending old buffers before queueing new ones. */
++	free_old_xmit_skbs(vi);
++
++	/* If we has a buffer left over from last time, send it now. */
++	if (unlikely(vi->last_xmit_skb) &&
++	    xmit_skb(vi, vi->last_xmit_skb) != 0)
++		goto stop_queue;
++
++	vi->last_xmit_skb = NULL;
++
++	/* Put new one in send queue and do transmit */
++	if (likely(skb)) {
++		__skb_queue_head(&vi->send, skb);
++		if (xmit_skb(vi, skb) != 0) {
++			vi->last_xmit_skb = skb;
++			skb = NULL;
++			goto stop_queue;
++		}
++	}
++done:
++	vi->svq->vq_ops->kick(vi->svq);
++	return NETDEV_TX_OK;
++
++stop_queue:
++	pr_debug("%s: virtio not prepared to send\n", dev->name);
++	netif_stop_queue(dev);
++
++	/* Activate callback for using skbs: if this returns false it
++	 * means some were used in the meantime. */
++	if (unlikely(!vi->svq->vq_ops->enable_cb(vi->svq))) {
++		vi->svq->vq_ops->disable_cb(vi->svq);
++		netif_start_queue(dev);
++		goto again;
++	}
++	if (skb) {
++		/* Drop this skb: we only queue one. */
++		vi->stats.tx_dropped++;
++		kfree_skb(skb);
++	}
++	goto done;
++}
++
++#ifdef CONFIG_NET_POLL_CONTROLLER
++static void virtnet_netpoll(struct net_device *dev)
++{
++	netif_rx_schedule(dev);
++}
++#endif
++
++struct net_device_stats *virtnet_get_stats(struct net_device *dev)
++{
++	struct virtnet_info *vi = netdev_priv(dev);
++
++	return &vi->stats;
++}
++
++static int virtnet_open(struct net_device *dev)
++{
++	struct virtnet_info *vi = netdev_priv(dev);
++
++	memset(&vi->stats, 0, sizeof(vi->stats));
++
++	netif_poll_enable(dev);
++
++	/* If all buffers were filled by other side before we napi_enabled, we
++	 * won't get another interrupt, so process any outstanding packets
++	 * now.  virtnet_poll wants re-enable the queue, so we disable here.
++	 * We synchronize against interrupts via NAPI_STATE_SCHED */
++	if (netif_rx_schedule_prep(dev)) {
++		vi->rvq->vq_ops->disable_cb(vi->rvq);
++		__netif_rx_schedule(vi->dev);
++	}
++	return 0;
++}
++
++static int virtnet_close(struct net_device *dev)
++{
++	netif_poll_disable(dev);
++
++	return 0;
++}
++
++static int virtnet_set_tx_csum(struct net_device *dev, u32 data)
++{
++	struct virtnet_info *vi = netdev_priv(dev);
++	struct virtio_device *vdev = vi->vdev;
++
++	if (data && !virtio_has_feature(vdev, VIRTIO_NET_F_CSUM))
++		return -ENOSYS;
++
++	return ethtool_op_set_tx_hw_csum(dev, data);
++}
++
++static struct ethtool_ops virtnet_ethtool_ops = {
++	.set_tx_csum = virtnet_set_tx_csum,
++	.set_sg = ethtool_op_set_sg,
++};
++
++static int virtnet_probe(struct virtio_device *vdev)
++{
++	int err;
++	struct net_device *dev;
++	struct virtnet_info *vi;
++
++	/* Allocate ourselves a network device with room for our info */
++	dev = alloc_etherdev(sizeof(struct virtnet_info));
++	if (!dev)
++		return -ENOMEM;
++
++	/* Set up network device as normal. */
++	dev->open = virtnet_open;
++	dev->stop = virtnet_close;
++	dev->hard_start_xmit = start_xmit;
++	dev->get_stats = virtnet_get_stats;
++	dev->features = NETIF_F_HIGHDMA;
++#ifdef CONFIG_NET_POLL_CONTROLLER
++	dev->poll_controller = virtnet_netpoll;
++#endif
++	SET_ETHTOOL_OPS(dev, &virtnet_ethtool_ops);
++	SET_NETDEV_DEV(dev, &vdev->dev);
++
++	/* Do we support "hardware" checksums? */
++	if (csum && virtio_has_feature(vdev, VIRTIO_NET_F_CSUM)) {
++		/* This opens up the world of extra features. */
++		dev->features |= NETIF_F_HW_CSUM|NETIF_F_SG|NETIF_F_FRAGLIST;
++		if (gso && virtio_has_feature(vdev, VIRTIO_NET_F_GSO)) {
++			dev->features |= NETIF_F_TSO | NETIF_F_UFO
++				| NETIF_F_TSO_ECN | NETIF_F_TSO6;
++		}
++		/* Individual feature bits: what can host handle? */
++		if (gso && virtio_has_feature(vdev, VIRTIO_NET_F_HOST_TSO4))
++			dev->features |= NETIF_F_TSO;
++		if (gso && virtio_has_feature(vdev, VIRTIO_NET_F_HOST_TSO6))
++			dev->features |= NETIF_F_TSO6;
++		if (gso && virtio_has_feature(vdev, VIRTIO_NET_F_HOST_ECN))
++			dev->features |= NETIF_F_TSO_ECN;
++		if (gso && virtio_has_feature(vdev, VIRTIO_NET_F_HOST_UFO))
++			dev->features |= NETIF_F_UFO;
++	}
++
++	/* Configuration may specify what MAC to use.  Otherwise random. */
++	if (virtio_has_feature(vdev, VIRTIO_NET_F_MAC)) {
++		vdev->config->get(vdev,
++				  offsetof(struct virtio_net_config, mac),
++				  dev->dev_addr, dev->addr_len);
++	} else
++		random_ether_addr(dev->dev_addr);
++
++	/* Set up our device-specific information */
++	vi = netdev_priv(dev);
++	dev->poll = virtnet_poll;
++	dev->weight = 16;
++	vi->dev = dev;
++	vi->vdev = vdev;
++	vdev->priv = vi;
++	vi->pages = NULL;
++
++	/* If they give us a callback when all buffers are done, we don't need
++	 * the timer. */
++	vi->free_in_tasklet = virtio_has_feature(vdev,VIRTIO_F_NOTIFY_ON_EMPTY);
++
++	/* If we can receive ANY GSO packets, we must allocate large ones. */
++	if (virtio_has_feature(vdev, VIRTIO_NET_F_GUEST_TSO4)
++	    || virtio_has_feature(vdev, VIRTIO_NET_F_GUEST_TSO6)
++	    || virtio_has_feature(vdev, VIRTIO_NET_F_GUEST_ECN))
++		vi->big_packets = true;
++
++	/* We expect two virtqueues, receive then send. */
++	vi->rvq = vdev->config->find_vq(vdev, 0, skb_recv_done);
++	if (IS_ERR(vi->rvq)) {
++		err = PTR_ERR(vi->rvq);
++		goto free;
++	}
++
++	vi->svq = vdev->config->find_vq(vdev, 1, skb_xmit_done);
++	if (IS_ERR(vi->svq)) {
++		err = PTR_ERR(vi->svq);
++		goto free_recv;
++	}
++
++	/* Initialize our empty receive and send queues. */
++	skb_queue_head_init(&vi->recv);
++	skb_queue_head_init(&vi->send);
++
++	tasklet_init(&vi->tasklet, xmit_tasklet, (unsigned long)vi);
++
++	if (!vi->free_in_tasklet)
++		setup_timer(&vi->xmit_free_timer, xmit_free, (unsigned long)vi);
++
++	err = register_netdev(dev);
++	if (err) {
++		pr_debug("virtio_net: registering device failed\n");
++		goto free_send;
++	}
++
++	/* Last of all, set up some receive buffers. */
++	try_fill_recv(vi);
++
++	/* If we didn't even get one input buffer, we're useless. */
++	if (vi->num == 0) {
++		err = -ENOMEM;
++		goto unregister;
++	}
++
++	pr_debug("virtnet: registered device %s\n", dev->name);
++	return 0;
++
++unregister:
++	unregister_netdev(dev);
++free_send:
++	vdev->config->del_vq(vi->svq);
++free_recv:
++	vdev->config->del_vq(vi->rvq);
++free:
++	free_netdev(dev);
++	return err;
++}
++
++static void virtnet_remove(struct virtio_device *vdev)
++{
++	struct virtnet_info *vi = vdev->priv;
++	struct sk_buff *skb;
++
++	/* Stop all the virtqueues. */
++	vdev->config->reset(vdev);
++
++	if (!vi->free_in_tasklet)
++		del_timer_sync(&vi->xmit_free_timer);
++
++	/* Free our skbs in send and recv queues, if any. */
++	while ((skb = __skb_dequeue(&vi->recv)) != NULL) {
++		kfree_skb(skb);
++		vi->num--;
++	}
++	__skb_queue_purge(&vi->send);
++
++	BUG_ON(vi->num != 0);
++
++	vdev->config->del_vq(vi->svq);
++	vdev->config->del_vq(vi->rvq);
++	unregister_netdev(vi->dev);
++
++	while (vi->pages)
++		__free_pages(get_a_page(vi, GFP_KERNEL), 0);
++
++	free_netdev(vi->dev);
++}
++
++static struct virtio_device_id id_table[] = {
++	{ VIRTIO_ID_NET, VIRTIO_DEV_ANY_ID },
++	{ 0 },
++};
++
++static unsigned int features[] = {
++	VIRTIO_NET_F_CSUM, VIRTIO_NET_F_GUEST_CSUM,
++	VIRTIO_NET_F_GSO, VIRTIO_NET_F_MAC,
++	VIRTIO_NET_F_HOST_TSO4, VIRTIO_NET_F_HOST_UFO, VIRTIO_NET_F_HOST_TSO6,
++	VIRTIO_NET_F_HOST_ECN, VIRTIO_NET_F_GUEST_TSO4, VIRTIO_NET_F_GUEST_TSO6,
++	VIRTIO_NET_F_GUEST_ECN, /* We don't yet handle UFO input. */
++	VIRTIO_F_NOTIFY_ON_EMPTY,
++};
++
++static struct virtio_driver virtio_net = {
++	.feature_table = features,
++	.feature_table_size = ARRAY_SIZE(features),
++	.driver.name =	KBUILD_MODNAME,
++	.driver.owner =	THIS_MODULE,
++	.id_table =	id_table,
++	.probe =	virtnet_probe,
++	.remove =	__devexit_p(virtnet_remove),
++};
++
++static int __init init(void)
++{
++	return register_virtio_driver(&virtio_net);
++}
++
++static void __exit fini(void)
++{
++	unregister_virtio_driver(&virtio_net);
++}
++module_init(init);
++module_exit(fini);
++
++MODULE_DEVICE_TABLE(virtio, id_table);
++MODULE_ALIAS("virtio:d00000001v*");
++MODULE_DESCRIPTION("Virtio network driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/virtio/Kconfig b/drivers/virtio/Kconfig
+new file mode 100644
+index 0000000..e37f69e
+--- /dev/null
++++ b/drivers/virtio/Kconfig
+@@ -0,0 +1,25 @@
++# Virtio always gets selected by whoever wants it.
++config VIRTIO
++	tristate
++
++# Similarly the virtio ring implementation.
++config VIRTIO_RING
++	tristate
++	depends on VIRTIO
++
++config VIRTIO_PCI
++	tristate "PCI driver for virtio devices (EXPERIMENTAL)"
++	depends on PCI && EXPERIMENTAL
++        depends on !X86_XEN && !X86_64_XEN
++	select VIRTIO
++	select VIRTIO_RING
++	---help---
++	  This drivers provides support for virtio based paravirtual device
++	  drivers over PCI.  This requires that your VMM has appropriate PCI
++	  virtio backends.  Most QEMU based VMMs should support these devices
++	  (like KVM or Xen).
++
++	  Currently, the ABI is not considered stable so there is no guarantee
++	  that this version of the driver will work with your VMM.
++
++	  If unsure, say M.
+diff --git a/drivers/virtio/Makefile b/drivers/virtio/Makefile
+new file mode 100644
+index 0000000..cc84999
+--- /dev/null
++++ b/drivers/virtio/Makefile
+@@ -0,0 +1,3 @@
++obj-$(CONFIG_VIRTIO) += virtio.o
++obj-$(CONFIG_VIRTIO_RING) += virtio_ring.o
++obj-$(CONFIG_VIRTIO_PCI) += virtio_pci.o
+diff --git a/drivers/virtio/virtio.c b/drivers/virtio/virtio.c
+new file mode 100644
+index 0000000..e631221
+--- /dev/null
++++ b/drivers/virtio/virtio.c
+@@ -0,0 +1,220 @@
++#include <linux/virtio.h>
++#include <linux/spinlock.h>
++#include <linux/virtio_config.h>
++
++/* Unique numbering for virtio devices. */
++static unsigned int dev_index;
++
++static ssize_t device_show(struct device *_d,
++			   struct device_attribute *attr, char *buf)
++{
++	struct virtio_device *dev = container_of(_d,struct virtio_device,dev);
++	return sprintf(buf, "%hu", dev->id.device);
++}
++static ssize_t vendor_show(struct device *_d,
++			   struct device_attribute *attr, char *buf)
++{
++	struct virtio_device *dev = container_of(_d,struct virtio_device,dev);
++	return sprintf(buf, "%hu", dev->id.vendor);
++}
++static ssize_t status_show(struct device *_d,
++			   struct device_attribute *attr, char *buf)
++{
++	struct virtio_device *dev = container_of(_d,struct virtio_device,dev);
++	return sprintf(buf, "0x%08x", dev->config->get_status(dev));
++}
++static ssize_t modalias_show(struct device *_d,
++			     struct device_attribute *attr, char *buf)
++{
++	struct virtio_device *dev = container_of(_d,struct virtio_device,dev);
++
++	return sprintf(buf, "virtio:d%08Xv%08X\n",
++		       dev->id.device, dev->id.vendor);
++}
++static struct device_attribute virtio_dev_attrs[] = {
++	__ATTR_RO(device),
++	__ATTR_RO(vendor),
++	__ATTR_RO(status),
++	__ATTR_RO(modalias),
++	__ATTR_NULL
++};
++
++static inline int virtio_id_match(const struct virtio_device *dev,
++				  const struct virtio_device_id *id)
++{
++	if (id->device != dev->id.device)
++		return 0;
++
++	return id->vendor == VIRTIO_DEV_ANY_ID || id->vendor != dev->id.vendor;
++}
++
++/* This looks through all the IDs a driver claims to support.  If any of them
++ * match, we return 1 and the kernel will call virtio_dev_probe(). */
++static int virtio_dev_match(struct device *_dv, struct device_driver *_dr)
++{
++	unsigned int i;
++	struct virtio_device *dev = container_of(_dv,struct virtio_device,dev);
++	const struct virtio_device_id *ids;
++
++	ids = container_of(_dr, struct virtio_driver, driver)->id_table;
++	for (i = 0; ids[i].device; i++)
++		if (virtio_id_match(dev, &ids[i]))
++			return 1;
++	return 0;
++}
++
++static int virtio_uevent(struct device *_dv, char **envp, int num_envp,
++                         char *buffer, int buffer_size)
++{
++	struct virtio_device *dev = container_of(_dv,struct virtio_device,dev);
++	int cur_index = 0, cur_len = 0;
++
++	return add_uevent_var(envp, num_envp, &cur_index, buffer, buffer_size,
++			      &cur_len, "MODALIAS=virtio:d%08Xv%08X",
++			      dev->id.device, dev->id.vendor);
++}
++
++static void add_status(struct virtio_device *dev, unsigned status)
++{
++	dev->config->set_status(dev, dev->config->get_status(dev) | status);
++}
++
++void virtio_check_driver_offered_feature(const struct virtio_device *vdev,
++					 unsigned int fbit)
++{
++	unsigned int i;
++	struct virtio_driver *drv = container_of(vdev->dev.driver,
++						 struct virtio_driver, driver);
++
++	for (i = 0; i < drv->feature_table_size; i++)
++		if (drv->feature_table[i] == fbit)
++			return;
++	BUG();
++}
++EXPORT_SYMBOL_GPL(virtio_check_driver_offered_feature);
++
++static int virtio_dev_probe(struct device *_d)
++{
++	int err, i;
++	struct virtio_device *dev = container_of(_d,struct virtio_device,dev);
++	struct virtio_driver *drv = container_of(dev->dev.driver,
++						 struct virtio_driver, driver);
++	u32 device_features;
++
++	/* We have a driver! */
++	add_status(dev, VIRTIO_CONFIG_S_DRIVER);
++
++	/* Figure out what features the device supports. */
++	device_features = dev->config->get_features(dev);
++
++	/* Features supported by both device and driver into dev->features. */
++	memset(dev->features, 0, sizeof(dev->features));
++	for (i = 0; i < drv->feature_table_size; i++) {
++		unsigned int f = drv->feature_table[i];
++		BUG_ON(f >= 32);
++		if (device_features & (1 << f))
++			set_bit(f, dev->features);
++	}
++
++	/* Transport features always preserved to pass to finalize_features. */
++	for (i = VIRTIO_TRANSPORT_F_START; i < VIRTIO_TRANSPORT_F_END; i++)
++		if (device_features & (1 << i))
++			set_bit(i, dev->features);
++
++	err = drv->probe(dev);
++	if (err)
++		add_status(dev, VIRTIO_CONFIG_S_FAILED);
++	else {
++		dev->config->finalize_features(dev);
++		add_status(dev, VIRTIO_CONFIG_S_DRIVER_OK);
++	}
++	return err;
++}
++
++static int virtio_dev_remove(struct device *_d)
++{
++	struct virtio_device *dev = container_of(_d,struct virtio_device,dev);
++	struct virtio_driver *drv = container_of(dev->dev.driver,
++						 struct virtio_driver, driver);
++
++	drv->remove(dev);
++
++	/* Driver should have reset device. */
++	BUG_ON(dev->config->get_status(dev));
++
++	/* Acknowledge the device's existence again. */
++	add_status(dev, VIRTIO_CONFIG_S_ACKNOWLEDGE);
++	return 0;
++}
++
++static struct bus_type virtio_bus = {
++	.name  = "virtio",
++	.match = virtio_dev_match,
++	.dev_attrs = virtio_dev_attrs,
++	.uevent = virtio_uevent,
++	.probe = virtio_dev_probe,
++	.remove = virtio_dev_remove,
++};
++
++int register_virtio_driver(struct virtio_driver *driver)
++{
++	/* Catch this early. */
++	BUG_ON(driver->feature_table_size && !driver->feature_table);
++	driver->driver.bus = &virtio_bus;
++	return driver_register(&driver->driver);
++}
++EXPORT_SYMBOL_GPL(register_virtio_driver);
++
++void unregister_virtio_driver(struct virtio_driver *driver)
++{
++	driver_unregister(&driver->driver);
++}
++EXPORT_SYMBOL_GPL(unregister_virtio_driver);
++
++int register_virtio_device(struct virtio_device *dev)
++{
++	int err;
++
++	dev->dev.bus = &virtio_bus;
++
++	/* Assign a unique device index and hence name. */
++	dev->index = dev_index++;
++	sprintf(dev->dev.bus_id, "virtio%u", dev->index);
++
++	/* We always start by resetting the device, in case a previous
++	 * driver messed it up.  This also tests that code path a little. */
++	dev->config->reset(dev);
++
++	/* Acknowledge that we've seen the device. */
++	add_status(dev, VIRTIO_CONFIG_S_ACKNOWLEDGE);
++
++	/* device_register() causes the bus infrastructure to look for a
++	 * matching driver. */
++	err = device_register(&dev->dev);
++	if (err)
++		add_status(dev, VIRTIO_CONFIG_S_FAILED);
++	return err;
++}
++EXPORT_SYMBOL_GPL(register_virtio_device);
++
++void unregister_virtio_device(struct virtio_device *dev)
++{
++	device_unregister(&dev->dev);
++}
++EXPORT_SYMBOL_GPL(unregister_virtio_device);
++
++static int virtio_init(void)
++{
++	if (bus_register(&virtio_bus) != 0)
++		panic("virtio bus registration failed");
++	return 0;
++}
++
++static void __exit virtio_exit(void)
++{
++	bus_unregister(&virtio_bus);
++}
++core_initcall(virtio_init);
++module_exit(virtio_exit);
++
++MODULE_LICENSE("GPL");
+diff --git a/drivers/virtio/virtio_pci.c b/drivers/virtio/virtio_pci.c
+new file mode 100644
+index 0000000..06909a4
+--- /dev/null
++++ b/drivers/virtio/virtio_pci.c
+@@ -0,0 +1,452 @@
++/*
++ * Virtio PCI driver
++ *
++ * This module allows virtio devices to be used over a virtual PCI device.
++ * This can be used with QEMU based VMMs like KVM or Xen.
++ *
++ * Copyright IBM Corp. 2007
++ *
++ * Authors:
++ *  Anthony Liguori  <aliguori@us.ibm.com>
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ *
++ */
++
++#include <linux/module.h>
++#include <linux/list.h>
++#include <linux/pci.h>
++#include <linux/interrupt.h>
++#include <linux/virtio.h>
++#include <linux/virtio_config.h>
++#include <linux/virtio_ring.h>
++#include <linux/virtio_pci.h>
++#include <linux/highmem.h>
++#include <linux/spinlock.h>
++
++MODULE_AUTHOR("Anthony Liguori <aliguori@us.ibm.com>");
++MODULE_DESCRIPTION("virtio-pci");
++MODULE_LICENSE("GPL");
++MODULE_VERSION("1");
++
++/* Our device structure */
++struct virtio_pci_device
++{
++	struct virtio_device vdev;
++	struct pci_dev *pci_dev;
++
++	/* the IO mapping for the PCI config space */
++	void __iomem *ioaddr;
++
++	/* a list of queues so we can dispatch IRQs */
++	spinlock_t lock;
++	struct list_head virtqueues;
++};
++
++struct virtio_pci_vq_info
++{
++	/* the actual virtqueue */
++	struct virtqueue *vq;
++
++	/* the number of entries in the queue */
++	int num;
++
++	/* the index of the queue */
++	int queue_index;
++
++	/* the virtual address of the ring queue */
++	void *queue;
++
++	/* the list node for the virtqueues list */
++	struct list_head node;
++};
++
++/* Qumranet donated their vendor ID for devices 0x1000 thru 0x10FF. */
++static struct pci_device_id virtio_pci_id_table[] = {
++	{ 0x1af4, PCI_ANY_ID, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0 },
++	{ 0 },
++};
++
++MODULE_DEVICE_TABLE(pci, virtio_pci_id_table);
++
++/* A PCI device has it's own struct device and so does a virtio device so
++ * we create a place for the virtio devices to show up in sysfs.  I think it
++ * would make more sense for virtio to not insist on having it's own device. */
++static struct device virtio_pci_root = {
++	.parent		= NULL,
++	.bus_id		= "virtio-pci",
++};
++
++/* Convert a generic virtio device to our structure */
++static struct virtio_pci_device *to_vp_device(struct virtio_device *vdev)
++{
++	return container_of(vdev, struct virtio_pci_device, vdev);
++}
++
++/* virtio config->get_features() implementation */
++static u32 vp_get_features(struct virtio_device *vdev)
++{
++	struct virtio_pci_device *vp_dev = to_vp_device(vdev);
++
++	/* When someone needs more than 32 feature bits, we'll need to
++	 * steal a bit to indicate that the rest are somewhere else. */
++	return ioread32(vp_dev->ioaddr + VIRTIO_PCI_HOST_FEATURES);
++}
++
++/* virtio config->finalize_features() implementation */
++static void vp_finalize_features(struct virtio_device *vdev)
++{
++	struct virtio_pci_device *vp_dev = to_vp_device(vdev);
++
++	/* Give virtio_ring a chance to accept features. */
++	vring_transport_features(vdev);
++
++	/* We only support 32 feature bits. */
++	BUILD_BUG_ON(ARRAY_SIZE(vdev->features) != 1);
++	iowrite32(vdev->features[0], vp_dev->ioaddr+VIRTIO_PCI_GUEST_FEATURES);
++}
++
++/* virtio config->get() implementation */
++static void vp_get(struct virtio_device *vdev, unsigned offset,
++		   void *buf, unsigned len)
++{
++	struct virtio_pci_device *vp_dev = to_vp_device(vdev);
++	void __iomem *ioaddr = vp_dev->ioaddr + VIRTIO_PCI_CONFIG + offset;
++	u8 *ptr = buf;
++	int i;
++
++	for (i = 0; i < len; i++)
++		ptr[i] = ioread8(ioaddr + i);
++}
++
++/* the config->set() implementation.  it's symmetric to the config->get()
++ * implementation */
++static void vp_set(struct virtio_device *vdev, unsigned offset,
++		   const void *buf, unsigned len)
++{
++	struct virtio_pci_device *vp_dev = to_vp_device(vdev);
++	void __iomem *ioaddr = vp_dev->ioaddr + VIRTIO_PCI_CONFIG + offset;
++	const u8 *ptr = buf;
++	int i;
++
++	for (i = 0; i < len; i++)
++		iowrite8(ptr[i], ioaddr + i);
++}
++
++/* config->{get,set}_status() implementations */
++static u8 vp_get_status(struct virtio_device *vdev)
++{
++	struct virtio_pci_device *vp_dev = to_vp_device(vdev);
++	return ioread8(vp_dev->ioaddr + VIRTIO_PCI_STATUS);
++}
++
++static void vp_set_status(struct virtio_device *vdev, u8 status)
++{
++	struct virtio_pci_device *vp_dev = to_vp_device(vdev);
++	/* We should never be setting status to 0. */
++	BUG_ON(status == 0);
++	iowrite8(status, vp_dev->ioaddr + VIRTIO_PCI_STATUS);
++}
++
++static void vp_reset(struct virtio_device *vdev)
++{
++	struct virtio_pci_device *vp_dev = to_vp_device(vdev);
++	/* 0 status means a reset. */
++	iowrite8(0, vp_dev->ioaddr + VIRTIO_PCI_STATUS);
++}
++
++/* the notify function used when creating a virt queue */
++static void vp_notify(struct virtqueue *vq)
++{
++	struct virtio_pci_device *vp_dev = to_vp_device(vq->vdev);
++	struct virtio_pci_vq_info *info = vq->priv;
++
++	/* we write the queue's selector into the notification register to
++	 * signal the other end */
++	iowrite16(info->queue_index, vp_dev->ioaddr + VIRTIO_PCI_QUEUE_NOTIFY);
++}
++
++/* A small wrapper to also acknowledge the interrupt when it's handled.
++ * I really need an EIO hook for the vring so I can ack the interrupt once we
++ * know that we'll be handling the IRQ but before we invoke the callback since
++ * the callback may notify the host which results in the host attempting to
++ * raise an interrupt that we would then mask once we acknowledged the
++ * interrupt. */
++static irqreturn_t vp_interrupt(int irq, void *opaque, struct pt_regs *regs)
++{
++	struct virtio_pci_device *vp_dev = opaque;
++	struct virtio_pci_vq_info *info;
++	irqreturn_t ret = IRQ_NONE;
++	unsigned long flags;
++	u8 isr;
++
++	/* reading the ISR has the effect of also clearing it so it's very
++	 * important to save off the value. */
++	isr = ioread8(vp_dev->ioaddr + VIRTIO_PCI_ISR);
++
++	/* It's definitely not us if the ISR was not high */
++	if (!isr)
++		return IRQ_NONE;
++
++	/* Configuration change?  Tell driver if it wants to know. */
++	if (isr & VIRTIO_PCI_ISR_CONFIG) {
++		struct virtio_driver *drv;
++		drv = container_of(vp_dev->vdev.dev.driver,
++				   struct virtio_driver, driver);
++
++		if (drv->config_changed)
++			drv->config_changed(&vp_dev->vdev);
++	}
++
++	spin_lock_irqsave(&vp_dev->lock, flags);
++	list_for_each_entry(info, &vp_dev->virtqueues, node) {
++		if (vring_interrupt(irq, info->vq) == IRQ_HANDLED)
++			ret = IRQ_HANDLED;
++	}
++	spin_unlock_irqrestore(&vp_dev->lock, flags);
++
++	return ret;
++}
++
++/* the config->find_vq() implementation */
++static struct virtqueue *vp_find_vq(struct virtio_device *vdev, unsigned index,
++				    void (*callback)(struct virtqueue *vq))
++{
++	struct virtio_pci_device *vp_dev = to_vp_device(vdev);
++	struct virtio_pci_vq_info *info;
++	struct virtqueue *vq;
++	unsigned long flags;
++	u16 num;
++	int err;
++
++	/* Select the queue we're interested in */
++	iowrite16(index, vp_dev->ioaddr + VIRTIO_PCI_QUEUE_SEL);
++
++	/* Check if queue is either not available or already active. */
++	num = ioread16(vp_dev->ioaddr + VIRTIO_PCI_QUEUE_NUM);
++	if (!num || ioread32(vp_dev->ioaddr + VIRTIO_PCI_QUEUE_PFN))
++		return ERR_PTR(-ENOENT);
++
++	/* allocate and fill out our structure the represents an active
++	 * queue */
++	info = kmalloc(sizeof(struct virtio_pci_vq_info), GFP_KERNEL);
++	if (!info)
++		return ERR_PTR(-ENOMEM);
++
++	info->queue_index = index;
++	info->num = num;
++
++	info->queue = kzalloc(PAGE_ALIGN(vring_size(num,PAGE_SIZE)), GFP_KERNEL);
++	if (info->queue == NULL) {
++		err = -ENOMEM;
++		goto out_info;
++	}
++
++	/* activate the queue */
++	iowrite32(virt_to_phys(info->queue) >> PAGE_SHIFT,
++		  vp_dev->ioaddr + VIRTIO_PCI_QUEUE_PFN);
++
++	/* create the vring */
++	vq = vring_new_virtqueue(info->num, vdev, info->queue,
++				 vp_notify, callback);
++	if (!vq) {
++		err = -ENOMEM;
++		goto out_activate_queue;
++	}
++
++	vq->priv = info;
++	info->vq = vq;
++
++	spin_lock_irqsave(&vp_dev->lock, flags);
++	list_add(&info->node, &vp_dev->virtqueues);
++	spin_unlock_irqrestore(&vp_dev->lock, flags);
++
++	return vq;
++
++out_activate_queue:
++	iowrite32(0, vp_dev->ioaddr + VIRTIO_PCI_QUEUE_PFN);
++	kfree(info->queue);
++out_info:
++	kfree(info);
++	return ERR_PTR(err);
++}
++
++/* the config->del_vq() implementation */
++static void vp_del_vq(struct virtqueue *vq)
++{
++	struct virtio_pci_device *vp_dev = to_vp_device(vq->vdev);
++	struct virtio_pci_vq_info *info = vq->priv;
++	unsigned long flags;
++
++	spin_lock_irqsave(&vp_dev->lock, flags);
++	list_del(&info->node);
++	spin_unlock_irqrestore(&vp_dev->lock, flags);
++
++	vring_del_virtqueue(vq);
++
++	/* Select and deactivate the queue */
++	iowrite16(info->queue_index, vp_dev->ioaddr + VIRTIO_PCI_QUEUE_SEL);
++	iowrite32(0, vp_dev->ioaddr + VIRTIO_PCI_QUEUE_PFN);
++
++	kfree(info->queue);
++	kfree(info);
++}
++
++static struct virtio_config_ops virtio_pci_config_ops = {
++	.get		= vp_get,
++	.set		= vp_set,
++	.get_status	= vp_get_status,
++	.set_status	= vp_set_status,
++	.reset		= vp_reset,
++	.find_vq	= vp_find_vq,
++	.del_vq		= vp_del_vq,
++	.get_features	= vp_get_features,
++	.finalize_features = vp_finalize_features,
++};
++
++/* the PCI probing function */
++static int __devinit virtio_pci_probe(struct pci_dev *pci_dev,
++				      const struct pci_device_id *id)
++{
++	struct virtio_pci_device *vp_dev;
++	u32 rev;
++	int err;
++
++	/* We only own devices >= 0x1000 and <= 0x103f: leave the rest. */
++	if (pci_dev->device < 0x1000 || pci_dev->device > 0x103f)
++		return -ENODEV;
++
++	pci_read_config_dword(pci_dev, PCI_CLASS_REVISION, &rev);
++	rev &= 0xff;
++
++	if (rev != VIRTIO_PCI_ABI_VERSION) {
++		printk(KERN_ERR "virtio_pci: expected ABI version %d, got %d\n",
++		       VIRTIO_PCI_ABI_VERSION, rev);
++		return -ENODEV;
++	}
++
++	/* allocate our structure and fill it out */
++	vp_dev = kzalloc(sizeof(struct virtio_pci_device), GFP_KERNEL);
++	if (vp_dev == NULL)
++		return -ENOMEM;
++
++	vp_dev->vdev.dev.parent = &virtio_pci_root;
++	vp_dev->vdev.config = &virtio_pci_config_ops;
++	vp_dev->pci_dev = pci_dev;
++	INIT_LIST_HEAD(&vp_dev->virtqueues);
++	spin_lock_init(&vp_dev->lock);
++
++	/* enable the device */
++	err = pci_enable_device(pci_dev);
++	if (err)
++		goto out;
++
++	err = pci_request_regions(pci_dev, "virtio-pci");
++	if (err)
++		goto out_enable_device;
++
++	vp_dev->ioaddr = pci_iomap(pci_dev, 0, 0);
++	if (vp_dev->ioaddr == NULL)
++		goto out_req_regions;
++
++	pci_set_drvdata(pci_dev, vp_dev);
++
++	/* we use the subsystem vendor/device id as the virtio vendor/device
++	 * id.  this allows us to use the same PCI vendor/device id for all
++	 * virtio devices and to identify the particular virtio driver by
++	 * the subsytem ids */
++	vp_dev->vdev.id.vendor = pci_dev->subsystem_vendor;
++	vp_dev->vdev.id.device = pci_dev->subsystem_device;
++
++	/* register a handler for the queue with the PCI device's interrupt */
++	err = request_irq(vp_dev->pci_dev->irq, vp_interrupt, IRQF_SHARED,
++			  vp_dev->vdev.dev.bus_id, vp_dev);
++	if (err)
++		goto out_set_drvdata;
++
++	/* finally register the virtio device */
++	err = register_virtio_device(&vp_dev->vdev);
++	if (err)
++		goto out_req_irq;
++
++	return 0;
++
++out_req_irq:
++	free_irq(pci_dev->irq, vp_dev);
++out_set_drvdata:
++	pci_set_drvdata(pci_dev, NULL);
++	pci_iounmap(pci_dev, vp_dev->ioaddr);
++out_req_regions:
++	pci_release_regions(pci_dev);
++out_enable_device:
++	pci_disable_device(pci_dev);
++out:
++	kfree(vp_dev);
++	return err;
++}
++
++static void __devexit virtio_pci_remove(struct pci_dev *pci_dev)
++{
++	struct virtio_pci_device *vp_dev = pci_get_drvdata(pci_dev);
++
++	unregister_virtio_device(&vp_dev->vdev);
++	free_irq(pci_dev->irq, vp_dev);
++	pci_set_drvdata(pci_dev, NULL);
++	pci_iounmap(pci_dev, vp_dev->ioaddr);
++	pci_release_regions(pci_dev);
++	pci_disable_device(pci_dev);
++	kfree(vp_dev);
++}
++
++#ifdef CONFIG_PM
++static int virtio_pci_suspend(struct pci_dev *pci_dev, pm_message_t state)
++{
++	pci_save_state(pci_dev);
++	pci_set_power_state(pci_dev, PCI_D3hot);
++	return 0;
++}
++
++static int virtio_pci_resume(struct pci_dev *pci_dev)
++{
++	pci_restore_state(pci_dev);
++	pci_set_power_state(pci_dev, PCI_D0);
++	return 0;
++}
++#endif
++
++static struct pci_driver virtio_pci_driver = {
++	.name		= "virtio-pci",
++	.id_table	= virtio_pci_id_table,
++	.probe		= virtio_pci_probe,
++	.remove		= virtio_pci_remove,
++#ifdef CONFIG_PM
++	.suspend	= virtio_pci_suspend,
++	.resume		= virtio_pci_resume,
++#endif
++};
++
++static int __init virtio_pci_init(void)
++{
++	int err;
++
++	err = device_register(&virtio_pci_root);
++	if (err)
++		return err;
++
++	err = pci_register_driver(&virtio_pci_driver);
++	if (err)
++		device_unregister(&virtio_pci_root);
++
++	return err;
++}
++
++module_init(virtio_pci_init);
++
++static void __exit virtio_pci_exit(void)
++{
++	device_unregister(&virtio_pci_root);
++	pci_unregister_driver(&virtio_pci_driver);
++}
++
++module_exit(virtio_pci_exit);
+diff --git a/drivers/virtio/virtio_ring.c b/drivers/virtio/virtio_ring.c
+new file mode 100644
+index 0000000..7da8fb8
+--- /dev/null
++++ b/drivers/virtio/virtio_ring.c
+@@ -0,0 +1,343 @@
++/* Virtio ring implementation.
++ *
++ *  Copyright 2007 Rusty Russell IBM Corporation
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
++ */
++#include <linux/virtio.h>
++#include <linux/virtio_ring.h>
++#include <linux/virtio_config.h>
++#include <linux/device.h>
++#include <asm/io.h> /* for page_to_phys() */
++
++#ifdef DEBUG
++/* For development, we want to crash whenever the ring is screwed. */
++#define BAD_RING(vq, fmt...)			\
++	do { dev_err(&vq->vq.vdev->dev, fmt); BUG(); } while(0)
++#define START_USE(vq) \
++	do { if ((vq)->in_use) panic("in_use = %i\n", (vq)->in_use); (vq)->in_use = __LINE__; mb(); } while(0)
++#define END_USE(vq) \
++	do { BUG_ON(!(vq)->in_use); (vq)->in_use = 0; mb(); } while(0)
++#else
++#define BAD_RING(vq, fmt...)			\
++	do { dev_err(&vq->vq.vdev->dev, fmt); (vq)->broken = true; } while(0)
++#define START_USE(vq)
++#define END_USE(vq)
++#endif
++
++struct vring_virtqueue
++{
++	struct virtqueue vq;
++
++	/* Actual memory layout for this queue */
++	struct vring vring;
++
++	/* Other side has made a mess, don't try any more. */
++	bool broken;
++
++	/* Number of free buffers */
++	unsigned int num_free;
++	/* Head of free buffer list. */
++	unsigned int free_head;
++	/* Number we've added since last sync. */
++	unsigned int num_added;
++
++	/* Last used index we've seen. */
++	u16 last_used_idx;
++
++	/* How to notify other side. FIXME: commonalize hcalls! */
++	void (*notify)(struct virtqueue *vq);
++
++#ifdef DEBUG
++	/* They're supposed to lock for us. */
++	unsigned int in_use;
++#endif
++
++	/* Tokens for callbacks. */
++	void *data[];
++};
++
++#define to_vvq(_vq) container_of(_vq, struct vring_virtqueue, vq)
++
++static int vring_add_buf(struct virtqueue *_vq,
++			 struct scatterlist sg[],
++			 unsigned int out,
++			 unsigned int in,
++			 void *data)
++{
++	struct vring_virtqueue *vq = to_vvq(_vq);
++	unsigned int i, avail, head, uninitialized_var(prev);
++
++	BUG_ON(data == NULL);
++	BUG_ON(out + in > vq->vring.num);
++	BUG_ON(out + in == 0);
++
++	START_USE(vq);
++
++	if (vq->num_free < out + in) {
++		pr_debug("Can't add buf len %i - avail = %i\n",
++			 out + in, vq->num_free);
++		/* FIXME: for historical reasons, we force a notify here if
++		 * there are outgoing parts to the buffer.  Presumably the
++		 * host should service the ring ASAP. */
++		if (out)
++			vq->notify(&vq->vq);
++		END_USE(vq);
++		return -ENOSPC;
++	}
++
++	/* We're about to use some buffers from the free list. */
++	vq->num_free -= out + in;
++
++	head = vq->free_head;
++	for (i = vq->free_head; out; i = vq->vring.desc[i].next, out--) {
++		vq->vring.desc[i].flags = VRING_DESC_F_NEXT;
++		vq->vring.desc[i].addr = page_to_phys(sg->page) + sg->offset;
++		vq->vring.desc[i].len = sg->length;
++		prev = i;
++		sg++;
++	}
++	for (; in; i = vq->vring.desc[i].next, in--) {
++		vq->vring.desc[i].flags = VRING_DESC_F_NEXT|VRING_DESC_F_WRITE;
++		vq->vring.desc[i].addr = page_to_phys(sg->page) + sg->offset;
++		vq->vring.desc[i].len = sg->length;
++		prev = i;
++		sg++;
++	}
++	/* Last one doesn't continue. */
++	vq->vring.desc[prev].flags &= ~VRING_DESC_F_NEXT;
++
++	/* Update free pointer */
++	vq->free_head = i;
++
++	/* Set token. */
++	vq->data[head] = data;
++
++	/* Put entry in available array (but don't update avail->idx until they
++	 * do sync).  FIXME: avoid modulus here? */
++	avail = (vq->vring.avail->idx + vq->num_added++) % vq->vring.num;
++	vq->vring.avail->ring[avail] = head;
++
++	pr_debug("Added buffer head %i to %p\n", head, vq);
++	END_USE(vq);
++	return 0;
++}
++
++static void vring_kick(struct virtqueue *_vq)
++{
++	struct vring_virtqueue *vq = to_vvq(_vq);
++	START_USE(vq);
++	/* Descriptors and available array need to be set before we expose the
++	 * new available array entries. */
++	wmb();
++
++	vq->vring.avail->idx += vq->num_added;
++	vq->num_added = 0;
++
++	/* Need to update avail index before checking if we should notify */
++	mb();
++
++	if (!(vq->vring.used->flags & VRING_USED_F_NO_NOTIFY))
++		/* Prod other side to tell it about changes. */
++		vq->notify(&vq->vq);
++
++	END_USE(vq);
++}
++
++static void detach_buf(struct vring_virtqueue *vq, unsigned int head)
++{
++	unsigned int i;
++
++	/* Clear data ptr. */
++	vq->data[head] = NULL;
++
++	/* Put back on free list: find end */
++	i = head;
++	while (vq->vring.desc[i].flags & VRING_DESC_F_NEXT) {
++		i = vq->vring.desc[i].next;
++		vq->num_free++;
++	}
++
++	vq->vring.desc[i].next = vq->free_head;
++	vq->free_head = head;
++	/* Plus final descriptor */
++	vq->num_free++;
++}
++
++static inline bool more_used(const struct vring_virtqueue *vq)
++{
++	return vq->last_used_idx != vq->vring.used->idx;
++}
++
++static void *vring_get_buf(struct virtqueue *_vq, unsigned int *len)
++{
++	struct vring_virtqueue *vq = to_vvq(_vq);
++	void *ret;
++	unsigned int i;
++
++	START_USE(vq);
++
++	if (unlikely(vq->broken)) {
++		END_USE(vq);
++		return NULL;
++	}
++
++	if (!more_used(vq)) {
++		pr_debug("No more buffers in queue\n");
++		END_USE(vq);
++		return NULL;
++	}
++
++	i = vq->vring.used->ring[vq->last_used_idx%vq->vring.num].id;
++	*len = vq->vring.used->ring[vq->last_used_idx%vq->vring.num].len;
++
++	if (unlikely(i >= vq->vring.num)) {
++		BAD_RING(vq, "id %u out of range\n", i);
++		return NULL;
++	}
++	if (unlikely(!vq->data[i])) {
++		BAD_RING(vq, "id %u is not a head!\n", i);
++		return NULL;
++	}
++
++	/* detach_buf clears data, so grab it now. */
++	ret = vq->data[i];
++	detach_buf(vq, i);
++	vq->last_used_idx++;
++	END_USE(vq);
++	return ret;
++}
++
++static void vring_disable_cb(struct virtqueue *_vq)
++{
++	struct vring_virtqueue *vq = to_vvq(_vq);
++
++	vq->vring.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
++}
++
++static bool vring_enable_cb(struct virtqueue *_vq)
++{
++	struct vring_virtqueue *vq = to_vvq(_vq);
++
++	START_USE(vq);
++
++	/* We optimistically turn back on interrupts, then check if there was
++	 * more to do. */
++	vq->vring.avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
++	mb();
++	if (unlikely(more_used(vq))) {
++		END_USE(vq);
++		return false;
++	}
++
++	END_USE(vq);
++	return true;
++}
++
++irqreturn_t vring_interrupt(int irq, void *_vq)
++{
++	struct vring_virtqueue *vq = to_vvq(_vq);
++
++	if (!more_used(vq)) {
++		pr_debug("virtqueue interrupt with no work for %p\n", vq);
++		return IRQ_NONE;
++	}
++
++	if (unlikely(vq->broken))
++		return IRQ_HANDLED;
++
++	pr_debug("virtqueue callback for %p (%p)\n", vq, vq->vq.callback);
++	if (vq->vq.callback)
++		vq->vq.callback(&vq->vq);
++
++	return IRQ_HANDLED;
++}
++EXPORT_SYMBOL_GPL(vring_interrupt);
++
++static struct virtqueue_ops vring_vq_ops = {
++	.add_buf = vring_add_buf,
++	.get_buf = vring_get_buf,
++	.kick = vring_kick,
++	.disable_cb = vring_disable_cb,
++	.enable_cb = vring_enable_cb,
++};
++
++struct virtqueue *vring_new_virtqueue(unsigned int num,
++				      struct virtio_device *vdev,
++				      void *pages,
++				      void (*notify)(struct virtqueue *),
++				      void (*callback)(struct virtqueue *))
++{
++	struct vring_virtqueue *vq;
++	unsigned int i;
++
++	/* We assume num is a power of 2. */
++	if (num & (num - 1)) {
++		dev_warn(&vdev->dev, "Bad virtqueue length %u\n", num);
++		return NULL;
++	}
++
++	vq = kmalloc(sizeof(*vq) + sizeof(void *)*num, GFP_KERNEL);
++	if (!vq)
++		return NULL;
++
++	vring_init(&vq->vring, num, pages, PAGE_SIZE);
++	vq->vq.callback = callback;
++	vq->vq.vdev = vdev;
++	vq->vq.vq_ops = &vring_vq_ops;
++	vq->notify = notify;
++	vq->broken = false;
++	vq->last_used_idx = 0;
++	vq->num_added = 0;
++#ifdef DEBUG
++	vq->in_use = false;
++#endif
++
++	/* No callback?  Tell other side not to bother us. */
++	if (!callback)
++		vq->vring.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
++
++	/* Put everything in free lists. */
++	vq->num_free = num;
++	vq->free_head = 0;
++	for (i = 0; i < num-1; i++)
++		vq->vring.desc[i].next = i+1;
++
++	return &vq->vq;
++}
++EXPORT_SYMBOL_GPL(vring_new_virtqueue);
++
++void vring_del_virtqueue(struct virtqueue *vq)
++{
++	kfree(to_vvq(vq));
++}
++EXPORT_SYMBOL_GPL(vring_del_virtqueue);
++
++/* Manipulates transport-specific feature bits. */
++void vring_transport_features(struct virtio_device *vdev)
++{
++	unsigned int i;
++
++	for (i = VIRTIO_TRANSPORT_F_START; i < VIRTIO_TRANSPORT_F_END; i++) {
++		switch (i) {
++		default:
++			/* We don't understand this bit. */
++			clear_bit(i, vdev->features);
++		}
++	}
++}
++EXPORT_SYMBOL_GPL(vring_transport_features);
++
++MODULE_LICENSE("GPL");
+diff --git a/include/linux/virtio.h b/include/linux/virtio.h
+new file mode 100644
+index 0000000..3eb49b8
+--- /dev/null
++++ b/include/linux/virtio.h
+@@ -0,0 +1,127 @@
++#ifndef _LINUX_VIRTIO_H
++#define _LINUX_VIRTIO_H
++/* Everything a virtio driver needs to work with any particular virtio
++ * implementation. */
++#include <linux/types.h>
++#include <linux/scatterlist.h>
++#include <linux/spinlock.h>
++#include <linux/device.h>
++#include <linux/mod_devicetable.h>
++
++/**
++ * virtqueue - a queue to register buffers for sending or receiving.
++ * @callback: the function to call when buffers are consumed (can be NULL).
++ * @vdev: the virtio device this queue was created for.
++ * @vq_ops: the operations for this virtqueue (see below).
++ * @priv: a pointer for the virtqueue implementation to use.
++ */
++struct virtqueue
++{
++	void (*callback)(struct virtqueue *vq);
++	struct virtio_device *vdev;
++	struct virtqueue_ops *vq_ops;
++	void *priv;
++};
++
++/**
++ * virtqueue_ops - operations for virtqueue abstraction layer
++ * @add_buf: expose buffer to other end
++ *	vq: the struct virtqueue we're talking about.
++ *	sg: the description of the buffer(s).
++ *	out_num: the number of sg readable by other side
++ *	in_num: the number of sg which are writable (after readable ones)
++ *	data: the token identifying the buffer.
++ *      Returns 0 or an error.
++ * @kick: update after add_buf
++ *	vq: the struct virtqueue
++ *	After one or more add_buf calls, invoke this to kick the other side.
++ * @get_buf: get the next used buffer
++ *	vq: the struct virtqueue we're talking about.
++ *	len: the length written into the buffer
++ *	Returns NULL or the "data" token handed to add_buf.
++ * @disable_cb: disable callbacks
++ *	vq: the struct virtqueue we're talking about.
++ *	Note that this is not necessarily synchronous, hence unreliable and only
++ *	useful as an optimization.
++ * @enable_cb: restart callbacks after disable_cb.
++ *	vq: the struct virtqueue we're talking about.
++ *	This re-enables callbacks; it returns "false" if there are pending
++ *	buffers in the queue, to detect a possible race between the driver
++ *	checking for more work, and enabling callbacks.
++ *
++ * Locking rules are straightforward: the driver is responsible for
++ * locking.  No two operations may be invoked simultaneously, with the exception
++ * of @disable_cb.
++ *
++ * All operations can be called in any context.
++ */
++struct virtqueue_ops {
++	int (*add_buf)(struct virtqueue *vq,
++		       struct scatterlist sg[],
++		       unsigned int out_num,
++		       unsigned int in_num,
++		       void *data);
++
++	void (*kick)(struct virtqueue *vq);
++
++	void *(*get_buf)(struct virtqueue *vq, unsigned int *len);
++
++	void (*disable_cb)(struct virtqueue *vq);
++	bool (*enable_cb)(struct virtqueue *vq);
++};
++
++struct virtio_device_id {
++	__u32 device;
++	__u32 vendor;
++};
++
++#define VIRTIO_DEV_ANY_ID 0xffffffff
++
++/**
++ * virtio_device - representation of a device using virtio
++ * @index: unique position on the virtio bus
++ * @dev: underlying device.
++ * @id: the device type identification (used to match it with a driver).
++ * @config: the configuration ops for this device.
++ * @features: the features supported by both driver and device.
++ * @priv: private pointer for the driver's use.
++ */
++struct virtio_device
++{
++	int index;
++	struct device dev;
++	struct virtio_device_id id;
++	struct virtio_config_ops *config;
++	/* Note that this is a Linux set_bit-style bitmap. */
++	unsigned long features[1];
++	void *priv;
++};
++
++int register_virtio_device(struct virtio_device *dev);
++void unregister_virtio_device(struct virtio_device *dev);
++
++/**
++ * virtio_driver - operations for a virtio I/O driver
++ * @driver: underlying device driver (populate name and owner).
++ * @id_table: the ids serviced by this driver.
++ * @feature_table: an array of feature numbers supported by this device.
++ * @feature_table_size: number of entries in the feature table array.
++ * @probe: the function to call when a device is found.  Returns a token for
++ *    remove, or PTR_ERR().
++ * @remove: the function when a device is removed.
++ * @config_changed: optional function to call when the device configuration
++ *    changes; may be called in interrupt context.
++ */
++struct virtio_driver {
++	struct device_driver driver;
++	const struct virtio_device_id *id_table;
++	const unsigned int *feature_table;
++	unsigned int feature_table_size;
++	int (*probe)(struct virtio_device *dev);
++	void (*remove)(struct virtio_device *dev);
++	void (*config_changed)(struct virtio_device *dev);
++};
++
++int register_virtio_driver(struct virtio_driver *drv);
++void unregister_virtio_driver(struct virtio_driver *drv);
++#endif /* _LINUX_VIRTIO_H */
+diff --git a/include/linux/virtio_blk.h b/include/linux/virtio_blk.h
+new file mode 100644
+index 0000000..c1aef85
+--- /dev/null
++++ b/include/linux/virtio_blk.h
+@@ -0,0 +1,61 @@
++#ifndef _LINUX_VIRTIO_BLK_H
++#define _LINUX_VIRTIO_BLK_H
++/* This header is BSD licensed so anyone can use the definitions to implement
++ * compatible drivers/servers. */
++#include <linux/virtio_config.h>
++
++/* The ID for virtio_block */
++#define VIRTIO_ID_BLOCK	2
++
++/* Feature bits */
++#define VIRTIO_BLK_F_BARRIER	0	/* Does host support barriers? */
++#define VIRTIO_BLK_F_SIZE_MAX	1	/* Indicates maximum segment size */
++#define VIRTIO_BLK_F_SEG_MAX	2	/* Indicates maximum # of segments */
++#define VIRTIO_BLK_F_GEOMETRY	4	/* Legacy geometry available  */
++#define VIRTIO_BLK_F_RO		5	/* Disk is read-only */
++#define VIRTIO_BLK_F_BLK_SIZE	6	/* Block size of disk is available*/
++
++struct virtio_blk_config
++{
++	/* The capacity (in 512-byte sectors). */
++	__u64 capacity;
++	/* The maximum segment size (if VIRTIO_BLK_F_SIZE_MAX) */
++	__u32 size_max;
++	/* The maximum number of segments (if VIRTIO_BLK_F_SEG_MAX) */
++	__u32 seg_max;
++	/* geometry the device (if VIRTIO_BLK_F_GEOMETRY) */
++	struct virtio_blk_geometry {
++		__u16 cylinders;
++		__u8 heads;
++		__u8 sectors;
++	} geometry;
++	/* block size of device (if VIRTIO_BLK_F_BLK_SIZE) */
++	__u32 blk_size;
++} __attribute__((packed));
++
++/* These two define direction. */
++#define VIRTIO_BLK_T_IN		0
++#define VIRTIO_BLK_T_OUT	1
++
++/* This bit says it's a scsi command, not an actual read or write. */
++#define VIRTIO_BLK_T_SCSI_CMD	2
++
++/* Barrier before this op. */
++#define VIRTIO_BLK_T_BARRIER	0x80000000
++
++/* This is the first element of the read scatter-gather list. */
++struct virtio_blk_outhdr
++{
++	/* VIRTIO_BLK_T* */
++	__u32 type;
++	/* io priority. */
++	__u32 ioprio;
++	/* Sector (ie. 512 byte offset) */
++	__u64 sector;
++};
++
++/* And this is the final byte of the write scatter-gather list. */
++#define VIRTIO_BLK_S_OK		0
++#define VIRTIO_BLK_S_IOERR	1
++#define VIRTIO_BLK_S_UNSUPP	2
++#endif /* _LINUX_VIRTIO_BLK_H */
+diff --git a/include/linux/virtio_config.h b/include/linux/virtio_config.h
+new file mode 100644
+index 0000000..bf8ec28
+--- /dev/null
++++ b/include/linux/virtio_config.h
+@@ -0,0 +1,130 @@
++#ifndef _LINUX_VIRTIO_CONFIG_H
++#define _LINUX_VIRTIO_CONFIG_H
++/* This header, excluding the #ifdef __KERNEL__ part, is BSD licensed so
++ * anyone can use the definitions to implement compatible drivers/servers. */
++
++/* Virtio devices use a standardized configuration space to define their
++ * features and pass configuration information, but each implementation can
++ * store and access that space differently. */
++#include <linux/types.h>
++
++/* Status byte for guest to report progress, and synchronize features. */
++/* We have seen device and processed generic fields (VIRTIO_CONFIG_F_VIRTIO) */
++#define VIRTIO_CONFIG_S_ACKNOWLEDGE	1
++/* We have found a driver for the device. */
++#define VIRTIO_CONFIG_S_DRIVER		2
++/* Driver has used its parts of the config, and is happy */
++#define VIRTIO_CONFIG_S_DRIVER_OK	4
++/* We've given up on this device. */
++#define VIRTIO_CONFIG_S_FAILED		0x80
++
++/* Some virtio feature bits (currently bits 28 through 31) are reserved for the
++ * transport being used (eg. virtio_ring), the rest are per-device feature
++ * bits. */
++#define VIRTIO_TRANSPORT_F_START	28
++#define VIRTIO_TRANSPORT_F_END		32
++
++/* Do we get callbacks when the ring is completely used, even if we've
++ * suppressed them? */
++#define VIRTIO_F_NOTIFY_ON_EMPTY	24
++
++#ifdef __KERNEL__
++#include <linux/virtio.h>
++
++/**
++ * virtio_config_ops - operations for configuring a virtio device
++ * @get: read the value of a configuration field
++ *	vdev: the virtio_device
++ *	offset: the offset of the configuration field
++ *	buf: the buffer to write the field value into.
++ *	len: the length of the buffer
++ * @set: write the value of a configuration field
++ *	vdev: the virtio_device
++ *	offset: the offset of the configuration field
++ *	buf: the buffer to read the field value from.
++ *	len: the length of the buffer
++ * @get_status: read the status byte
++ *	vdev: the virtio_device
++ *	Returns the status byte
++ * @set_status: write the status byte
++ *	vdev: the virtio_device
++ *	status: the new status byte
++ * @reset: reset the device
++ *	vdev: the virtio device
++ *	After this, status and feature negotiation must be done again
++ * @find_vq: find a virtqueue and instantiate it.
++ *	vdev: the virtio_device
++ *	index: the 0-based virtqueue number in case there's more than one.
++ *	callback: the virqtueue callback
++ *	Returns the new virtqueue or ERR_PTR() (eg. -ENOENT).
++ * @del_vq: free a virtqueue found by find_vq().
++ * @get_features: get the array of feature bits for this device.
++ *	vdev: the virtio_device
++ *	Returns the first 32 feature bits (all we currently need).
++ * @finalize_features: confirm what device features we'll be using.
++ *	vdev: the virtio_device
++ *	This gives the final feature bits for the device: it can change
++ *	the dev->feature bits if it wants.
++ */
++struct virtio_config_ops
++{
++	void (*get)(struct virtio_device *vdev, unsigned offset,
++		    void *buf, unsigned len);
++	void (*set)(struct virtio_device *vdev, unsigned offset,
++		    const void *buf, unsigned len);
++	u8 (*get_status)(struct virtio_device *vdev);
++	void (*set_status)(struct virtio_device *vdev, u8 status);
++	void (*reset)(struct virtio_device *vdev);
++	struct virtqueue *(*find_vq)(struct virtio_device *vdev,
++				     unsigned index,
++				     void (*callback)(struct virtqueue *));
++	void (*del_vq)(struct virtqueue *vq);
++	u32 (*get_features)(struct virtio_device *vdev);
++	void (*finalize_features)(struct virtio_device *vdev);
++};
++
++/* If driver didn't advertise the feature, it will never appear. */
++void virtio_check_driver_offered_feature(const struct virtio_device *vdev,
++					 unsigned int fbit);
++
++/**
++ * virtio_has_feature - helper to determine if this device has this feature.
++ * @vdev: the device
++ * @fbit: the feature bit
++ */
++static inline bool virtio_has_feature(const struct virtio_device *vdev,
++				      unsigned int fbit)
++{
++	/* Did you forget to fix assumptions on max features? */
++	if (__builtin_constant_p(fbit))
++		BUILD_BUG_ON(fbit >= 32);
++
++	virtio_check_driver_offered_feature(vdev, fbit);
++	return test_bit(fbit, vdev->features);
++}
++
++/**
++ * virtio_config_val - look for a feature and get a virtio config entry.
++ * @vdev: the virtio device
++ * @fbit: the feature bit
++ * @offset: the type to search for.
++ * @val: a pointer to the value to fill in.
++ *
++ * The return value is -ENOENT if the feature doesn't exist.  Otherwise
++ * the config value is copied into whatever is pointed to by v. */
++#define virtio_config_val(vdev, fbit, offset, v) \
++	virtio_config_buf((vdev), (fbit), (offset), (v), sizeof(*v))
++
++static inline int virtio_config_buf(struct virtio_device *vdev,
++				    unsigned int fbit,
++				    unsigned int offset,
++				    void *buf, unsigned len)
++{
++	if (!virtio_has_feature(vdev, fbit))
++		return -ENOENT;
++
++	vdev->config->get(vdev, offset, buf, len);
++	return 0;
++}
++#endif /* __KERNEL__ */
++#endif /* _LINUX_VIRTIO_CONFIG_H */
+diff --git a/include/linux/virtio_net.h b/include/linux/virtio_net.h
+new file mode 100644
+index 0000000..5e33761
+--- /dev/null
++++ b/include/linux/virtio_net.h
+@@ -0,0 +1,47 @@
++#ifndef _LINUX_VIRTIO_NET_H
++#define _LINUX_VIRTIO_NET_H
++/* This header is BSD licensed so anyone can use the definitions to implement
++ * compatible drivers/servers. */
++#include <linux/virtio_config.h>
++
++/* The ID for virtio_net */
++#define VIRTIO_ID_NET	1
++
++/* The feature bitmap for virtio net */
++#define VIRTIO_NET_F_CSUM	0	/* Host handles pkts w/ partial csum */
++#define VIRTIO_NET_F_GUEST_CSUM	1	/* Guest handles pkts w/ partial csum */
++#define VIRTIO_NET_F_MAC	5	/* Host has given MAC address. */
++#define VIRTIO_NET_F_GSO	6	/* Host handles pkts w/ any GSO type */
++#define VIRTIO_NET_F_GUEST_TSO4	7	/* Guest can handle TSOv4 in. */
++#define VIRTIO_NET_F_GUEST_TSO6	8	/* Guest can handle TSOv6 in. */
++#define VIRTIO_NET_F_GUEST_ECN	9	/* Guest can handle TSO[6] w/ ECN in. */
++#define VIRTIO_NET_F_GUEST_UFO	10	/* Guest can handle UFO in. */
++#define VIRTIO_NET_F_HOST_TSO4	11	/* Host can handle TSOv4 in. */
++#define VIRTIO_NET_F_HOST_TSO6	12	/* Host can handle TSOv6 in. */
++#define VIRTIO_NET_F_HOST_ECN	13	/* Host can handle TSO[6] w/ ECN in. */
++#define VIRTIO_NET_F_HOST_UFO	14	/* Host can handle UFO in. */
++
++struct virtio_net_config
++{
++	/* The config defining mac address (if VIRTIO_NET_F_MAC) */
++	__u8 mac[6];
++} __attribute__((packed));
++
++/* This is the first element of the scatter-gather list.  If you don't
++ * specify GSO or CSUM features, you can simply ignore the header. */
++struct virtio_net_hdr
++{
++#define VIRTIO_NET_HDR_F_NEEDS_CSUM	1	// Use csum_start, csum_offset
++	__u8 flags;
++#define VIRTIO_NET_HDR_GSO_NONE		0	// Not a GSO frame
++#define VIRTIO_NET_HDR_GSO_TCPV4	1	// GSO frame, IPv4 TCP (TSO)
++#define VIRTIO_NET_HDR_GSO_UDP		3	// GSO frame, IPv4 UDP (UFO)
++#define VIRTIO_NET_HDR_GSO_TCPV6	4	// GSO frame, IPv6 TCP
++#define VIRTIO_NET_HDR_GSO_ECN		0x80	// TCP has ECN set
++	__u8 gso_type;
++	__u16 hdr_len;		/* Ethernet + IP + tcp/udp hdrs */
++	__u16 gso_size;		/* Bytes to append to hdr_len per frame */
++	__u16 csum_start;	/* Position to start checksumming from */
++	__u16 csum_offset;	/* Offset after that to place checksum */
++};
++#endif /* _LINUX_VIRTIO_NET_H */
+diff --git a/include/linux/virtio_pci.h b/include/linux/virtio_pci.h
+new file mode 100644
+index 0000000..cdef357
+--- /dev/null
++++ b/include/linux/virtio_pci.h
+@@ -0,0 +1,56 @@
++/*
++ * Virtio PCI driver
++ *
++ * This module allows virtio devices to be used over a virtual PCI device.
++ * This can be used with QEMU based VMMs like KVM or Xen.
++ *
++ * Copyright IBM Corp. 2007
++ *
++ * Authors:
++ *  Anthony Liguori  <aliguori@us.ibm.com>
++ *
++ * This header is BSD licensed so anyone can use the definitions to implement
++ * compatible drivers/servers.
++ */
++
++#ifndef _LINUX_VIRTIO_PCI_H
++#define _LINUX_VIRTIO_PCI_H
++
++#include <linux/virtio_config.h>
++
++/* A 32-bit r/o bitmask of the features supported by the host */
++#define VIRTIO_PCI_HOST_FEATURES	0
++
++/* A 32-bit r/w bitmask of features activated by the guest */
++#define VIRTIO_PCI_GUEST_FEATURES	4
++
++/* A 32-bit r/w PFN for the currently selected queue */
++#define VIRTIO_PCI_QUEUE_PFN		8
++
++/* A 16-bit r/o queue size for the currently selected queue */
++#define VIRTIO_PCI_QUEUE_NUM		12
++
++/* A 16-bit r/w queue selector */
++#define VIRTIO_PCI_QUEUE_SEL		14
++
++/* A 16-bit r/w queue notifier */
++#define VIRTIO_PCI_QUEUE_NOTIFY		16
++
++/* An 8-bit device status register.  */
++#define VIRTIO_PCI_STATUS		18
++
++/* An 8-bit r/o interrupt status register.  Reading the value will return the
++ * current contents of the ISR and will also clear it.  This is effectively
++ * a read-and-acknowledge. */
++#define VIRTIO_PCI_ISR			19
++
++/* The bit of the ISR which indicates a device configuration change. */
++#define VIRTIO_PCI_ISR_CONFIG		0x2
++
++/* The remaining space is defined by each driver as the per-driver
++ * configuration space */
++#define VIRTIO_PCI_CONFIG		20
++
++/* Virtio ABI version, this must match exactly */
++#define VIRTIO_PCI_ABI_VERSION		0
++#endif
+diff --git a/include/linux/virtio_ring.h b/include/linux/virtio_ring.h
+new file mode 100644
+index 0000000..c4a598f
+--- /dev/null
++++ b/include/linux/virtio_ring.h
+@@ -0,0 +1,128 @@
++#ifndef _LINUX_VIRTIO_RING_H
++#define _LINUX_VIRTIO_RING_H
++/* An interface for efficient virtio implementation, currently for use by KVM
++ * and lguest, but hopefully others soon.  Do NOT change this since it will
++ * break existing servers and clients.
++ *
++ * This header is BSD licensed so anyone can use the definitions to implement
++ * compatible drivers/servers.
++ *
++ * Copyright Rusty Russell IBM Corporation 2007. */
++#include <linux/types.h>
++
++/* This marks a buffer as continuing via the next field. */
++#define VRING_DESC_F_NEXT	1
++/* This marks a buffer as write-only (otherwise read-only). */
++#define VRING_DESC_F_WRITE	2
++
++/* The Host uses this in used->flags to advise the Guest: don't kick me when
++ * you add a buffer.  It's unreliable, so it's simply an optimization.  Guest
++ * will still kick if it's out of buffers. */
++#define VRING_USED_F_NO_NOTIFY	1
++/* The Guest uses this in avail->flags to advise the Host: don't interrupt me
++ * when you consume a buffer.  It's unreliable, so it's simply an
++ * optimization.  */
++#define VRING_AVAIL_F_NO_INTERRUPT	1
++
++/* Virtio ring descriptors: 16 bytes.  These can chain together via "next". */
++struct vring_desc
++{
++	/* Address (guest-physical). */
++	__u64 addr;
++	/* Length. */
++	__u32 len;
++	/* The flags as indicated above. */
++	__u16 flags;
++	/* We chain unused descriptors via this, too */
++	__u16 next;
++};
++
++struct vring_avail
++{
++	__u16 flags;
++	__u16 idx;
++	__u16 ring[];
++};
++
++/* u32 is used here for ids for padding reasons. */
++struct vring_used_elem
++{
++	/* Index of start of used descriptor chain. */
++	__u32 id;
++	/* Total length of the descriptor chain which was used (written to) */
++	__u32 len;
++};
++
++struct vring_used
++{
++	__u16 flags;
++	__u16 idx;
++	struct vring_used_elem ring[];
++};
++
++struct vring {
++	unsigned int num;
++
++	struct vring_desc *desc;
++
++	struct vring_avail *avail;
++
++	struct vring_used *used;
++};
++
++/* The standard layout for the ring is a continuous chunk of memory which looks
++ * like this.  We assume num is a power of 2.
++ *
++ * struct vring
++ * {
++ *	// The actual descriptors (16 bytes each)
++ *	struct vring_desc desc[num];
++ *
++ *	// A ring of available descriptor heads with free-running index.
++ *	__u16 avail_flags;
++ *	__u16 avail_idx;
++ *	__u16 available[num];
++ *
++ *	// Padding to the next page boundary.
++ *	char pad[];
++ *
++ *	// A ring of used descriptor heads with free-running index.
++ *	__u16 used_flags;
++ *	__u16 used_idx;
++ *	struct vring_used_elem used[num];
++ * };
++ */
++static inline void vring_init(struct vring *vr, unsigned int num, void *p,
++			      unsigned long pagesize)
++{
++	vr->num = num;
++	vr->desc = p;
++	vr->avail = p + num*sizeof(struct vring_desc);
++	vr->used = (void *)(((unsigned long)&vr->avail->ring[num] + pagesize-1)
++			    & ~(pagesize - 1));
++}
++
++static inline unsigned vring_size(unsigned int num, unsigned long pagesize)
++{
++	return ((sizeof(struct vring_desc) * num + sizeof(__u16) * (2 + num)
++		 + pagesize - 1) & ~(pagesize - 1))
++		+ sizeof(__u16) * 2 + sizeof(struct vring_used_elem) * num;
++}
++
++#ifdef __KERNEL__
++#include <linux/irqreturn.h>
++struct virtio_device;
++struct virtqueue;
++
++struct virtqueue *vring_new_virtqueue(unsigned int num,
++				      struct virtio_device *vdev,
++				      void *pages,
++				      void (*notify)(struct virtqueue *vq),
++				      void (*callback)(struct virtqueue *vq));
++void vring_del_virtqueue(struct virtqueue *vq);
++/* Filter out transport-specific feature bits. */
++void vring_transport_features(struct virtio_device *vdev);
++
++irqreturn_t vring_interrupt(int irq, void *_vq);
++#endif /* __KERNEL__ */
++#endif /* _LINUX_VIRTIO_RING_H */

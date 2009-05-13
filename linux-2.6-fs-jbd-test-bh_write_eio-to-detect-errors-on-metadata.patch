@@ -1,0 +1,92 @@
+From: Hideo AOKI <haoki@redhat.com>
+Date: Thu, 11 Sep 2008 15:54:25 -0400
+Subject: [fs] jbd: test BH_write_EIO to detect errors on metadata
+Message-id: 48C97771.8060607@redhat.com
+O-Subject: [RHEL 5.3 PATCH 7/6] bz#439581: jbd: test BH_write_EIO to detect errors on metadata
+Bugzilla: 439581
+RH-Acked-by: Josef Bacik <jbacik@redhat.com>
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+
+BZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=439581
+
+Description and Upstream Status:
+--------------------------------
+Thanks to Eric Sandeen, we noticed that 4th patch of this series
+should be updated. We developed the update patch and the patch is
+included in -mm tree now.
+http://marc.info/?l=linux-mm-commits&m=122108347301421&w=2
+
+Since Andrew Morton added the update patch to his tree instead of
+updating original patch, I also would like to add the patch to
+this series.
+
+The last hunk is from the following upstream commit:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=58ff407bee5a55f9c1188a3f9d70ffc79485183c
+
+kABI Status:
+------------
+This patch has no kABI issue.
+
+Brew:
+-----
+Built in brew.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1467510
+
+Detailed description from upstream commit:
+------------------------------------------
+__try_to_free_cp_buf(), __process_buffer(), and __wait_cp_io()
+test BH_Uptodate flag to detect write I/O errors on metadata
+buffers.  But by commit 95450f5a7e53d5752ce1a0d0b8282e10fe745ae0
+"ext3: don't read inode block if the buffer has a write error",
+BH_Uptodate flag can be set to inode buffers with BH_Write_EIO
+in order to avoid reading old inode data.  So now, we have to
+test BH_Write_EIO flag of checkpointing inode buffers instead
+of BH_Uptodate.  This patch does it.
+
+Signed-off-by: Hidehiro Kawai <hidehiro.kawai.ez@hitachi.com>
+
+diff --git a/fs/buffer.c b/fs/buffer.c
+index c3880ab..9b33385 100644
+--- a/fs/buffer.c
++++ b/fs/buffer.c
+@@ -591,6 +591,7 @@ static void end_buffer_async_write(struct buffer_head *bh, int uptodate)
+ 			       bdevname(bh->b_bdev, b));
+ 		}
+ 		set_bit(AS_EIO, &page->mapping->flags);
++		set_buffer_write_io_error(bh);
+ 		clear_buffer_uptodate(bh);
+ 		SetPageError(page);
+ 	}
+diff --git a/fs/jbd/checkpoint.c b/fs/jbd/checkpoint.c
+index 7eae735..2d5768f 100644
+--- a/fs/jbd/checkpoint.c
++++ b/fs/jbd/checkpoint.c
+@@ -94,7 +94,7 @@ static int __try_to_free_cp_buf(struct journal_head *jh)
+ 	struct buffer_head *bh = jh2bh(jh);
+ 
+ 	if (jh->b_jlist == BJ_None && !buffer_locked(bh) &&
+-	    !buffer_dirty(bh) && buffer_uptodate(bh)) {
++	    !buffer_dirty(bh) && !buffer_write_io_error(bh)) {
+ 		JBUFFER_TRACE(jh, "remove from checkpoint list");
+ 		ret = __journal_remove_checkpoint(jh) + 1;
+ 		jbd_unlock_bh_state(bh);
+@@ -198,7 +198,7 @@ restart:
+ 			spin_lock(&journal->j_list_lock);
+ 			goto restart;
+ 		}
+-		if (unlikely(!buffer_uptodate(bh)))
++		if (unlikely(buffer_write_io_error(bh)))
+ 			ret = -EIO;
+ 
+ 		/*
+@@ -267,7 +267,7 @@ static int __process_buffer(journal_t *journal, struct journal_head *jh,
+ 		ret = 1;
+ 	} else if (!buffer_dirty(bh)) {
+ 		ret = 1;
+-		if (unlikely(!buffer_uptodate(bh)))
++		if (unlikely(buffer_write_io_error(bh)))
+ 			ret = -EIO;
+ 		J_ASSERT_JH(jh, !buffer_jbddirty(bh));
+ 		BUFFER_TRACE(bh, "remove from checkpoint");

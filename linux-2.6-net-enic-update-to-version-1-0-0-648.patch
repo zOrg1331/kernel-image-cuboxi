@@ -1,0 +1,470 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Fri, 5 Dec 2008 14:57:14 -0500
+Subject: [net] enic: update to version 1.0.0.648
+Message-id: 20081205195713.GA29788@gospo.rdu.redhat.com
+O-Subject: [RHEL5.3 PATCH] enic: upstream update to version 1.0.0.648
+Bugzilla: 473871
+RH-Acked-by: Jeff Garzik <jgarzik@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+This patch contains backports of five upstream commits as well an
+addition of a module option to disable LRO when loading the module, so
+that this card can still be used as a forwarding device.
+
+The upstream commits that were backported are:
+
+    commit 21fc578dcaa66dd30bad3c2f2cd7578e2865e8f2
+    Author: Scott Feldman <scofeldm@cisco.com>
+    Date:   Fri Nov 21 21:29:25 2008 -0800
+
+        enic: misc cleanup items:
+
+        Clarrify reading PBA has no side-effect (clearing).
+        Add missing GPL license text.
+
+    commit 845964515a76381e204d3399af82c149f8abcc1c
+    Author: Scott Feldman <scofeldm@cisco.com>
+    Date:   Fri Nov 21 21:29:01 2008 -0800
+
+        enic: move wmb closer to where needed: before writing posted_index to hw
+
+    commit cb3c766975985885e64e20cc72c4a36d90da2b30
+    Author: Scott Feldman <scofeldm@cisco.com>
+    Date:   Fri Nov 21 21:28:40 2008 -0800
+
+        enic: mask off some reserved bits in CQ descriptor for future use
+
+    commit 27372bf5fa5ffc0fee3ddb486a0da942295fd8e0
+    Author: Scott Feldman <scofeldm@cisco.com>
+    Date:   Fri Nov 21 21:28:18 2008 -0800
+
+        enic: driver/firmware API updates
+
+        Add driver/firmware compatibility check.
+        Update firmware notify cmd to honor notify area size.
+        Add new version of init cmd.
+        Add link_down_cnt to notify area to track link down count.
+
+    commit 86ca9db794a285f18f31ed15601696b238ccb57a
+    Author: Scott Feldman <scofeldm@cisco.com>
+    Date:   Fri Nov 21 21:26:55 2008 -0800
+
+        enic: enable ethtool LRO support
+
+        Enable ethtool support for get/set_flags so LRO can be turned on/off
+        by fwding drivers such as the bridge driver.  LRO is not compatible
+        with fwding drivers.
+
+This will resolve the request made in RHBZ 473871.
+
+diff --git a/drivers/net/enic/cq_desc.h b/drivers/net/enic/cq_desc.h
+index c036a8b..1eb289f 100644
+--- a/drivers/net/enic/cq_desc.h
++++ b/drivers/net/enic/cq_desc.h
+@@ -44,9 +44,10 @@ struct cq_desc {
+ 	u8 type_color;
+ };
+ 
+-#define CQ_DESC_TYPE_BITS        7
++#define CQ_DESC_TYPE_BITS        4
+ #define CQ_DESC_TYPE_MASK        ((1 << CQ_DESC_TYPE_BITS) - 1)
+ #define CQ_DESC_COLOR_MASK       1
++#define CQ_DESC_COLOR_SHIFT      7
+ #define CQ_DESC_Q_NUM_BITS       10
+ #define CQ_DESC_Q_NUM_MASK       ((1 << CQ_DESC_Q_NUM_BITS) - 1)
+ #define CQ_DESC_COMP_NDX_BITS    12
+@@ -58,7 +59,7 @@ static inline void cq_desc_dec(const struct cq_desc *desc_arg,
+ 	const struct cq_desc *desc = desc_arg;
+ 	const u8 type_color = desc->type_color;
+ 
+-	*color = (type_color >> CQ_DESC_TYPE_BITS) & CQ_DESC_COLOR_MASK;
++	*color = (type_color >> CQ_DESC_COLOR_SHIFT) & CQ_DESC_COLOR_MASK;
+ 
+ 	/*
+ 	 * Make sure color bit is read from desc *before* other fields
+diff --git a/drivers/net/enic/enic.h b/drivers/net/enic/enic.h
+index f20168a..df8b131 100644
+--- a/drivers/net/enic/enic.h
++++ b/drivers/net/enic/enic.h
+@@ -34,7 +34,7 @@
+ 
+ #define DRV_NAME		"enic"
+ #define DRV_DESCRIPTION		"Cisco 10G Ethernet Driver"
+-#define DRV_VERSION		"0.0.1-18163.472-k1"
++#define DRV_VERSION		"1.0.0.648"
+ #define DRV_COPYRIGHT		"Copyright 2008 Cisco Systems, Inc"
+ #define PFX			DRV_NAME ": "
+ 
+diff --git a/drivers/net/enic/enic_main.c b/drivers/net/enic/enic_main.c
+index 76540d0..e458cfa 100644
+--- a/drivers/net/enic/enic_main.c
++++ b/drivers/net/enic/enic_main.c
+@@ -57,6 +57,10 @@ MODULE_LICENSE("GPL");
+ MODULE_VERSION(DRV_VERSION);
+ MODULE_DEVICE_TABLE(pci, enic_id_table);
+ 
++static int lro_disable;
++module_param(lro_disable, int, 0);
++MODULE_PARM_DESC(lro_disable, "disable Large Receive Offload");
++
+ struct enic_stat {
+ 	char name[ETH_GSTRING_LEN];
+ 	unsigned int offset;
+@@ -889,6 +893,7 @@ static void enic_rq_indicate_buf(struct vnic_rq *rq,
+ 	int skipped, void *opaque)
+ {
+ 	struct enic *enic = vnic_dev_priv(rq->vdev);
++	struct net_device *netdev = enic->netdev;
+ 	struct sk_buff *skb;
+ 
+ 	u8 type, color, eop, sop, ingress_port, vlan_stripped;
+@@ -923,7 +928,7 @@ static void enic_rq_indicate_buf(struct vnic_rq *rq,
+ 			if (net_ratelimit())
+ 				printk(KERN_ERR PFX
+ 					"%s: packet error: bad FCS\n",
+-					enic->netdev->name);
++					netdev->name);
+ 		}
+ 
+ 		dev_kfree_skb_any(skb);
+@@ -937,14 +942,14 @@ static void enic_rq_indicate_buf(struct vnic_rq *rq,
+ 		 */
+ 
+ 		skb_put(skb, bytes_written);
+-		skb->protocol = eth_type_trans(skb, enic->netdev);
++		skb->protocol = eth_type_trans(skb, netdev);
+ 
+ 		if (enic->csum_rx_enabled && !csum_not_calc) {
+ 			skb->csum = htons(checksum);
+ 			skb->ip_summed = CHECKSUM_COMPLETE;
+ 		}
+ 
+-		skb->dev = enic->netdev;
++		skb->dev = netdev;
+ 		enic->netdev->last_rx = jiffies;
+ 
+ 		if (enic->vlan_group && vlan_stripped) {
+@@ -1737,14 +1742,19 @@ static int __devinit enic_probe(struct pci_dev *pdev,
+ 		goto err_out_dev_close;
+ 	}
+ 
+-	/* Get available resource counts
++	/* Disable LRO if required 
+ 	*/
++	if (lro_disable) {
++		enic->config.flags &= ~VENETF_LRO;
++	}
++	/* Get available resource counts
++	 */
+ 
+ 	enic_get_res_counts(enic);
+ 
+ 	/* Set interrupt mode based on resource counts and system
+ 	 * capabilities
+-	*/
++	 */
+ 
+ 	err = enic_set_intr_mode(enic);
+ 	if (err) {
+diff --git a/drivers/net/enic/enic_res.h b/drivers/net/enic/enic_res.h
+index 68534a2..7bf272f 100644
+--- a/drivers/net/enic/enic_res.h
++++ b/drivers/net/enic/enic_res.h
+@@ -58,8 +58,6 @@ static inline void enic_queue_wq_desc_ex(struct vnic_wq *wq,
+ 		(u16)vlan_tag,
+ 		0 /* loopback */);
+ 
+-	wmb();
+-
+ 	vnic_wq_post(wq, os_buf, dma_addr, len, sop, eop);
+ }
+ 
+@@ -127,8 +125,6 @@ static inline void enic_queue_rq_desc(struct vnic_rq *rq,
+ 		(u64)dma_addr | VNIC_PADDR_TARGET,
+ 		type, (u16)len);
+ 
+-	wmb();
+-
+ 	vnic_rq_post(rq, os_buf, os_buf_index, dma_addr, len);
+ }
+ 
+diff --git a/drivers/net/enic/vnic_dev.c b/drivers/net/enic/vnic_dev.c
+index 4d104f5..4a537d1 100644
+--- a/drivers/net/enic/vnic_dev.c
++++ b/drivers/net/enic/vnic_dev.c
+@@ -43,6 +43,7 @@ struct vnic_dev {
+ 	struct vnic_devcmd_notify *notify;
+ 	struct vnic_devcmd_notify notify_copy;
+ 	dma_addr_t notify_pa;
++	u32 notify_sz;
+ 	u32 *linkstatus;
+ 	dma_addr_t linkstatus_pa;
+ 	struct vnic_stats *stats;
+@@ -235,14 +236,6 @@ int vnic_dev_cmd(struct vnic_dev *vdev, enum vnic_devcmd_cmd cmd,
+ 	struct vnic_devcmd __iomem *devcmd = vdev->devcmd;
+ 	int delay;
+ 	u32 status;
+-	int dev_cmd_err[] = {
+-		/* convert from fw's version of error.h to host's version */
+-		0,	/* ERR_SUCCESS */
+-		EINVAL,	/* ERR_EINVAL */
+-		EFAULT,	/* ERR_EFAULT */
+-		EPERM,	/* ERR_EPERM */
+-		EBUSY,  /* ERR_EBUSY */
+-	};
+ 	int err;
+ 
+ 	status = ioread32(&devcmd->status);
+@@ -270,10 +263,12 @@ int vnic_dev_cmd(struct vnic_dev *vdev, enum vnic_devcmd_cmd cmd,
+ 		if (!(status & STAT_BUSY)) {
+ 
+ 			if (status & STAT_ERROR) {
+-				err = dev_cmd_err[(int)readq(&devcmd->args[0])];
+-				printk(KERN_ERR "Error %d devcmd %d\n",
+-					err, _CMD_N(cmd));
+-				return -err;
++				err = (int)readq(&devcmd->args[0]);
++				if (err != ERR_ECMDUNKNOWN ||
++				    cmd != CMD_CAPABILITY)
++					printk(KERN_ERR "Error %d devcmd %d\n",
++						err, _CMD_N(cmd));
++				return err;
+ 			}
+ 
+ 			if (_CMD_DIR(cmd) & _CMD_DIR_READ) {
+@@ -290,6 +285,17 @@ int vnic_dev_cmd(struct vnic_dev *vdev, enum vnic_devcmd_cmd cmd,
+ 	return -ETIMEDOUT;
+ }
+ 
++int vnic_dev_capable(struct vnic_dev *vdev, enum vnic_devcmd_cmd cmd)
++{
++	u64 a0 = (u32)cmd, a1 = 0;
++	int wait = 1000;
++	int err;
++
++	err = vnic_dev_cmd(vdev, CMD_CAPABILITY, &a0, &a1, wait);
++
++	return !(err || a0);
++}
++
+ int vnic_dev_fw_info(struct vnic_dev *vdev,
+ 	struct vnic_devcmd_fw_info **fw_info)
+ {
+@@ -517,6 +523,7 @@ int vnic_dev_notify_set(struct vnic_dev *vdev, u16 intr)
+ {
+ 	u64 a0, a1;
+ 	int wait = 1000;
++	int r;
+ 
+ 	if (!vdev->notify) {
+ 		vdev->notify = pci_alloc_consistent(vdev->pdev,
+@@ -524,13 +531,16 @@ int vnic_dev_notify_set(struct vnic_dev *vdev, u16 intr)
+ 			&vdev->notify_pa);
+ 		if (!vdev->notify)
+ 			return -ENOMEM;
++		memset(vdev->notify, 0, sizeof(struct vnic_devcmd_notify));
+ 	}
+ 
+ 	a0 = vdev->notify_pa;
+ 	a1 = ((u64)intr << 32) & 0x0000ffff00000000ULL;
+ 	a1 += sizeof(struct vnic_devcmd_notify);
+ 
+-	return vnic_dev_cmd(vdev, CMD_NOTIFY, &a0, &a1, wait);
++	r = vnic_dev_cmd(vdev, CMD_NOTIFY, &a0, &a1, wait);
++	vdev->notify_sz = (r == 0) ? (u32)a1 : 0;
++	return r;
+ }
+ 
+ void vnic_dev_notify_unset(struct vnic_dev *vdev)
+@@ -543,22 +553,22 @@ void vnic_dev_notify_unset(struct vnic_dev *vdev)
+ 	a1 += sizeof(struct vnic_devcmd_notify);
+ 
+ 	vnic_dev_cmd(vdev, CMD_NOTIFY, &a0, &a1, wait);
++	vdev->notify_sz = 0;
+ }
+ 
+ static int vnic_dev_notify_ready(struct vnic_dev *vdev)
+ {
+ 	u32 *words;
+-	unsigned int nwords = sizeof(struct vnic_devcmd_notify) / 4;
++	unsigned int nwords = vdev->notify_sz / 4;
+ 	unsigned int i;
+ 	u32 csum;
+ 
+-	if (!vdev->notify)
++	if (!vdev->notify || !vdev->notify_sz)
+ 		return 0;
+ 
+ 	do {
+ 		csum = 0;
+-		memcpy(&vdev->notify_copy, vdev->notify,
+-			sizeof(struct vnic_devcmd_notify));
++		memcpy(&vdev->notify_copy, vdev->notify, vdev->notify_sz);
+ 		words = (u32 *)&vdev->notify_copy;
+ 		for (i = 1; i < nwords; i++)
+ 			csum += words[i];
+@@ -571,7 +581,20 @@ int vnic_dev_init(struct vnic_dev *vdev, int arg)
+ {
+ 	u64 a0 = (u32)arg, a1 = 0;
+ 	int wait = 1000;
+-	return vnic_dev_cmd(vdev, CMD_INIT, &a0, &a1, wait);
++        int r = 0;
++
++	if (vnic_dev_capable(vdev, CMD_INIT))
++		r = vnic_dev_cmd(vdev, CMD_INIT, &a0, &a1, wait);
++	else {
++		vnic_dev_cmd(vdev, CMD_INIT_v1, &a0, &a1, wait);
++		if (a0 & CMD_INITF_DEFAULT_MAC) {
++			// Emulate these for old CMD_INIT_v1 which
++			// didn't pass a0 so no CMD_INITF_*.
++			vnic_dev_cmd(vdev, CMD_MAC_ADDR, &a0, &a1, wait);
++			vnic_dev_cmd(vdev, CMD_ADDR_ADD, &a0, &a1, wait);
++		}
++        }
++        return r;
+ }
+ 
+ int vnic_dev_link_status(struct vnic_dev *vdev)
+@@ -672,3 +695,4 @@ err_out:
+ 	return NULL;
+ }
+ 
++
+diff --git a/drivers/net/enic/vnic_devcmd.h b/drivers/net/enic/vnic_devcmd.h
+index d8617a3..8062c75 100644
+--- a/drivers/net/enic/vnic_devcmd.h
++++ b/drivers/net/enic/vnic_devcmd.h
+@@ -168,7 +168,8 @@ enum vnic_devcmd_cmd {
+ 	CMD_CLOSE		= _CMDC(_CMD_DIR_NONE, _CMD_VTYPE_ALL, 25),
+ 
+ 	/* initialize virtual link: (u32)a0=flags (see CMD_INITF_*) */
+-	CMD_INIT		= _CMDCNW(_CMD_DIR_READ, _CMD_VTYPE_ALL, 26),
++/***** Replaced by CMD_INIT *****/
++	CMD_INIT_v1		= _CMDCNW(_CMD_DIR_READ, _CMD_VTYPE_ALL, 26),
+ 
+ 	/* variant of CMD_INIT, with provisioning info
+ 	 *     (u64)a0=paddr of vnic_devcmd_provinfo
+@@ -198,6 +199,14 @@ enum vnic_devcmd_cmd {
+ 
+ 	/* undo initialize of virtual link */
+ 	CMD_DEINIT		= _CMDCNW(_CMD_DIR_NONE, _CMD_VTYPE_ALL, 34),
++
++	/* initialize virtual link: (u32)a0=flags (see CMD_INITF_*) */
++	CMD_INIT		= _CMDCNW(_CMD_DIR_WRITE, _CMD_VTYPE_ALL, 35),
++
++	/* check fw capability of a cmd:
++	 * in:  (u32)a0=cmd
++	 * out: (u32)a0=errno, 0:valid cmd, a1=supported VNIC_STF_* bits */
++	CMD_CAPABILITY		= _CMDC(_CMD_DIR_RW, _CMD_VTYPE_ALL, 36),
+ };
+ 
+ /* flags for CMD_OPEN */
+@@ -249,8 +258,16 @@ struct vnic_devcmd_notify {
+ 	u32 uif;		/* uplink interface */
+ 	u32 status;		/* status bits (see VNIC_STF_*) */
+ 	u32 error;		/* error code (see ERR_*) for first ERR */
++	u32 link_down_cnt;	/* running count of link down transitions */
+ };
+ #define VNIC_STF_FATAL_ERR	0x0001	/* fatal fw error */
++#define VNIC_STF_STD_PAUSE	0x0002	/* standard link-level pause on */
++#define VNIC_STF_PFC_PAUSE	0x0004	/* priority flow control pause on */
++/* all supported status flags */
++#define VNIC_STF_ALL		(VNIC_STF_FATAL_ERR |\
++				 VNIC_STF_STD_PAUSE |\
++				 VNIC_STF_PFC_PAUSE |\
++				 0)
+ 
+ struct vnic_devcmd_provinfo {
+ 	u8 oui[3];
+diff --git a/drivers/net/enic/vnic_intr.h b/drivers/net/enic/vnic_intr.h
+index ccc4081..ce633a5 100644
+--- a/drivers/net/enic/vnic_intr.h
++++ b/drivers/net/enic/vnic_intr.h
+@@ -78,7 +78,7 @@ static inline void vnic_intr_return_credits(struct vnic_intr *intr,
+ 
+ static inline u32 vnic_intr_legacy_pba(u32 __iomem *legacy_pba)
+ {
+-	/* get and ack interrupt in one read (clear-and-ack-on-read) */
++	/* read PBA without clearing */
+ 	return ioread32(legacy_pba);
+ }
+ 
+diff --git a/drivers/net/enic/vnic_resource.h b/drivers/net/enic/vnic_resource.h
+index 144d281..b61c22a 100644
+--- a/drivers/net/enic/vnic_resource.h
++++ b/drivers/net/enic/vnic_resource.h
+@@ -38,7 +38,7 @@ enum vnic_res_type {
+ 	RES_TYPE_INTR_CTRL,		/* Interrupt ctrl table */
+ 	RES_TYPE_INTR_TABLE,		/* MSI/MSI-X Interrupt table */
+ 	RES_TYPE_INTR_PBA,		/* MSI/MSI-X PBA table */
+-	RES_TYPE_INTR_PBA_LEGACY,	/* Legacy intr status, r2c */
++	RES_TYPE_INTR_PBA_LEGACY,	/* Legacy intr status */
+ 	RES_TYPE_RSVD6,
+ 	RES_TYPE_RSVD7,
+ 	RES_TYPE_DEVCMD,		/* Device command region */
+diff --git a/drivers/net/enic/vnic_rq.h b/drivers/net/enic/vnic_rq.h
+index 82bfca6..fd0ef66 100644
+--- a/drivers/net/enic/vnic_rq.h
++++ b/drivers/net/enic/vnic_rq.h
+@@ -132,8 +132,15 @@ static inline void vnic_rq_post(struct vnic_rq *rq,
+ #define VNIC_RQ_RETURN_RATE		0xf	/* keep 2^n - 1 */
+ #endif
+ 
+-	if ((buf->index & VNIC_RQ_RETURN_RATE) == 0)
++	if ((buf->index & VNIC_RQ_RETURN_RATE) == 0) {
++		/* Adding write memory barrier prevents compiler and/or CPU
++		 * reordering, thus avoiding descriptor posting before
++		 * descriptor is initialized. Otherwise, hardware can read
++		 * stale descriptor fields.
++		 */
++		wmb();
+ 		iowrite32(buf->index, &rq->ctrl->posted_index);
++	}
+ }
+ 
+ static inline void vnic_rq_return_descs(struct vnic_rq *rq, unsigned int count)
+diff --git a/drivers/net/enic/vnic_rss.h b/drivers/net/enic/vnic_rss.h
+index e325d65..5fbb3c9 100644
+--- a/drivers/net/enic/vnic_rss.h
++++ b/drivers/net/enic/vnic_rss.h
+@@ -1,6 +1,19 @@
+ /*
+  * Copyright 2008 Cisco Systems, Inc.  All rights reserved.
+  * Copyright 2007 Nuova Systems, Inc.  All rights reserved.
++ *
++ * This program is free software; you may redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; version 2 of the License.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
+  */
+ 
+ #ifndef _VNIC_RSS_H_
+diff --git a/drivers/net/enic/vnic_wq.h b/drivers/net/enic/vnic_wq.h
+index 7081828..c826137 100644
+--- a/drivers/net/enic/vnic_wq.h
++++ b/drivers/net/enic/vnic_wq.h
+@@ -108,8 +108,15 @@ static inline void vnic_wq_post(struct vnic_wq *wq,
+ 	buf->len = len;
+ 
+ 	buf = buf->next;
+-	if (eop)
++	if (eop) {
++		/* Adding write memory barrier prevents compiler and/or CPU
++		 * reordering, thus avoiding descriptor posting before
++		 * descriptor is initialized. Otherwise, hardware can read
++		 * stale descriptor fields.
++		 */
++		wmb();
+ 		iowrite32(buf->index, &wq->ctrl->posted_index);
++	}
+ 	wq->to_use = buf;
+ 
+ 	wq->ring.desc_avail--;

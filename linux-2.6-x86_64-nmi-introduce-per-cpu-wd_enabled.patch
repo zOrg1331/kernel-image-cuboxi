@@ -1,0 +1,28 @@
+From: Aristeu Rozanski <aris@redhat.com>
+Date: Wed, 20 Aug 2008 13:16:48 -0400
+Subject: [x86_64] nmi: introduce per-cpu wd_enabled
+Message-id: 20080820171647.024471000@redhat.com
+O-Subject: [RHEL5.3 PATCH 02/25] nmi: introduce per-cpu wd_enabled
+Bugzilla: 447618
+
+https://bugzilla.redhat.com/show_bug.cgi?id=447618
+
+introduce wd_enabled per-cpu variable: it'll determine if the NMI watchdog is
+enabled on the current cpu
+
+upstream: 05cb007dac9a50148daf87d0b9469e0cd05fd5e7
+	  09198e68501a7e34737cd9264d266f42429abcdc (for i386)
+
+diff --git a/arch/x86_64/kernel/nmi.c b/arch/x86_64/kernel/nmi.c
+index 006f6fc..85f2fff 100644
+--- a/arch/x86_64/kernel/nmi.c
++++ b/arch/x86_64/kernel/nmi.c
+@@ -53,6 +53,8 @@ static unsigned int lapic_nmi_owner;
+ int nmi_active;		/* oprofile uses this */
+ int panic_on_timeout;
+ 
++static DEFINE_PER_CPU(short, wd_enabled);
++
+ unsigned int nmi_watchdog = NMI_DEFAULT;
+ static unsigned int nmi_hz = HZ;
+ static unsigned int nmi_perfctr_msr;	/* the MSR to reset in NMI handler */

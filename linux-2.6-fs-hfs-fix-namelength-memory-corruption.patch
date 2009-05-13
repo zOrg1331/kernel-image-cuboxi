@@ -1,0 +1,47 @@
+From: Anton Arapov <aarapov@redhat.com>
+Date: Thu, 13 Nov 2008 16:05:39 +0100
+Subject: [fs] hfs: fix namelength memory corruption
+Message-id: 20081113150539.GA10438@redhat.com
+O-Subject: [RHEL5.4 PATCH] BZ470773: CVE-2008-5025 kernel: hfs: fix namelength memory corruption
+Bugzilla: 470773
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Eugene Teo <eteo@redhat.com>
+CVE: CVE-2008-5025
+
+Bugzilla: 470773
+
+Description:
+  Fix a stack corruption caused by a corrupted hfs filesystem. If
+the catalog name length is corrupted the memcpy overwrites the catalog
+btree structure. Since the field is limited to HFS_NAMELEN bytes in the
+structure and the file format, we throw an error if it is too long.
+
+Upstream status:
+  commit# d38b7aa7fc3371b52d036748028db50b585ade2e
+
+Test status:
+  patched kernel has been successfuly built, tested for boot.
+  hfs module successfully inserts and removes in/from kernel.
+  https://brewweb.devel.redhat.com/taskinfo?taskID=1572148
+
+Notice:
+  CVE-2008-5025
+  BZ470771 clone of this bug for RHEL4.8
+
+==
+
+diff --git a/fs/hfs/catalog.c b/fs/hfs/catalog.c
+index ba85157..6d98f11 100644
+--- a/fs/hfs/catalog.c
++++ b/fs/hfs/catalog.c
+@@ -190,6 +190,10 @@ int hfs_cat_find_brec(struct super_block *sb, u32 cnid,
+ 
+ 	fd->search_key->cat.ParID = rec.thread.ParID;
+ 	len = fd->search_key->cat.CName.len = rec.thread.CName.len;
++	if (len > HFS_NAMELEN) {
++		printk(KERN_ERR "hfs: bad catalog namelength\n");
++		return -EIO;
++	}
+ 	memcpy(fd->search_key->cat.CName.name, rec.thread.CName.name, len);
+ 	return hfs_brec_find(fd);
+ }

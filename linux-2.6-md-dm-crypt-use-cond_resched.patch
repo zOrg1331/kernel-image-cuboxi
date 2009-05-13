@@ -1,0 +1,36 @@
+From: Milan Broz <mbroz@redhat.com>
+Date: Sat, 16 Aug 2008 01:52:00 +0200
+Subject: [md] dm crypt: use cond_resched
+Message-id: 48A616A0.90406@redhat.com
+O-Subject: [RHEL 5.3 PATCH] dm crypt: use cond_resched (#459095)
+Bugzilla: 459095
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+RH-Acked-by: Alasdair G Kergon <agk@redhat.com>
+
+RHEL5.3 dm crypt: use cond_resched
+Resolves: rhbz#459095
+Patch is upstream, commit c7f1b2044191a82e7f0a1a674751ed582289e2e0
+
+Add cond_resched() to prevent monopolising CPU when processing large bios.
+
+dm-crypt processes encryption of bios in sector units.  If the bio request
+is big it can spend a long time in the encryption call.
+
+This helps for example on encrypted laptops to not stuck for long time when
+processing large writes.
+
+Kernel with patch compiled and tested.
+
+diff --git a/drivers/md/dm-crypt.c b/drivers/md/dm-crypt.c
+index 0c7f22e..d5ce9ce 100644
+--- a/drivers/md/dm-crypt.c
++++ b/drivers/md/dm-crypt.c
+@@ -305,6 +305,7 @@ static int crypt_convert(struct crypt_config *cc,
+ 			break;
+ 
+ 		ctx->sector++;
++		cond_resched();
+ 	}
+ 
+ 	return r;

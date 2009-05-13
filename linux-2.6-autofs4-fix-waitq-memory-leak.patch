@@ -1,0 +1,93 @@
+From: Ian Kent <ikent@redhat.com>
+Date: Tue, 12 Aug 2008 12:27:47 +0800
+Subject: [autofs4] fix waitq memory leak
+Message-id: 20080812042746.15842.1881.stgit@web.messagingengine.com
+O-Subject: [RHEL 5.3 PATCH 13/20] autofs4 - fix waitq memory leak [Related: bz452139]
+Bugzilla: 452139
+
+This patch is an upstream bug fix and shoud be associated with
+bug 452139.
+
+If an autofs mount becomes catatonic before autofs4_wait_release() is
+called the wait queue counter will not be decremented down to zero
+and the entry will never be freed. There are also races decrementing
+the wait counter in the wait release function. To deal with this the
+counter needs to be updated while holding the wait queue mutex and
+waiters need to be woken up unconditionally when the wait is removed
+from the queue to ensure we eventually free the wait.
+
+Signed-off-by: Ian Kent <raven@themaw.net>
+
+diff --git a/fs/autofs4/autofs_i.h b/fs/autofs4/autofs_i.h
+index bbc5995..ac0abdf 100644
+--- a/fs/autofs4/autofs_i.h
++++ b/fs/autofs4/autofs_i.h
+@@ -86,7 +86,7 @@ struct autofs_wait_queue {
+ 	pid_t tgid;
+ 	/* This is for status reporting upon return */
+ 	int status;
+-	atomic_t wait_ctr;
++	unsigned int wait_ctr;
+ };
+ 
+ #define AUTOFS_SBI_MAGIC 0x6d4a556d
+diff --git a/fs/autofs4/waitq.c b/fs/autofs4/waitq.c
+index 8849768..338faa3 100644
+--- a/fs/autofs4/waitq.c
++++ b/fs/autofs4/waitq.c
+@@ -46,6 +46,7 @@ void autofs4_catatonic_mode(struct autofs_sb_info *sbi)
+ 			kfree(wq->name.name);
+ 			wq->name.name = NULL;
+ 		}
++		wq->wait_ctr--;
+ 		wake_up_interruptible(&wq->queue);
+ 		wq = nwq;
+ 	}
+@@ -376,7 +377,7 @@ int autofs4_wait(struct autofs_sb_info *sbi, struct dentry *dentry,
+ 		wq->pid = current->pid;
+ 		wq->tgid = current->tgid;
+ 		wq->status = -EINTR; /* Status return if interrupted */
+-		atomic_set(&wq->wait_ctr, 2);
++		wq->wait_ctr = 2;
+ 		mutex_unlock(&sbi->wq_mutex);
+ 
+ 		if (sbi->version < 5) {
+@@ -402,7 +403,7 @@ int autofs4_wait(struct autofs_sb_info *sbi, struct dentry *dentry,
+ 		/* autofs4_notify_daemon() may block */
+ 		autofs4_notify_daemon(sbi, wq, type);
+ 	} else {
+-		atomic_inc(&wq->wait_ctr);
++		wq->wait_ctr++;
+ 		mutex_unlock(&sbi->wq_mutex);
+ 		kfree(qstr.name);
+ 		DPRINTK("existing wait id = 0x%08lx, name = %.*s, nfy=%d",
+@@ -438,8 +439,10 @@ int autofs4_wait(struct autofs_sb_info *sbi, struct dentry *dentry,
+ 	status = wq->status;
+ 
+ 	/* Are we the last process to need status? */
+-	if (atomic_dec_and_test(&wq->wait_ctr))
++	mutex_lock(&sbi->wq_mutex);
++	if (!--wq->wait_ctr)
+ 		kfree(wq);
++	mutex_unlock(&sbi->wq_mutex);
+ 
+ 	return status;
+ }
+@@ -463,14 +466,11 @@ int autofs4_wait_release(struct autofs_sb_info *sbi, autofs_wqt_t wait_queue_tok
+ 	*wql = wq->next;	/* Unlink from chain */
+ 	kfree(wq->name.name);
+ 	wq->name.name = NULL;	/* Do not wait on this queue */
+-	mutex_unlock(&sbi->wq_mutex);
+-
+ 	wq->status = status;
+-
+-	if (atomic_dec_and_test(&wq->wait_ctr))	/* Is anyone still waiting for this guy? */
++	wake_up_interruptible(&wq->queue);
++	if (!--wq->wait_ctr)
+ 		kfree(wq);
+-	else
+-		wake_up_interruptible(&wq->queue);
++	mutex_unlock(&sbi->wq_mutex);
+ 
+ 	return 0;
+ }

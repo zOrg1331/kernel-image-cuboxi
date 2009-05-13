@@ -1,0 +1,177 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Thu, 21 Aug 2008 16:22:29 -0400
+Subject: [net] neigh_destroy: call destructor before unloading
+Message-id: 20080821202229.21195.58972.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.3 bz449161] system crashes (.neigh_destroy) when stopping openibd
+Bugzilla: 449161
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=449161
+
+Description:
+===========
+System crashes when stopping open infiniband (openibd).
+
+Configured IPoIB interfaces: ib1
+Currently active IPoIB interfaces: ib1
+[root@uli05 ~]# /etc/init.d/openibd stop
+Unloading OpenIB kernel modules:Unable to handle kernel paging request for data
+at address 0xd000000000a8fc10
+Faulting instruction address: 0xc00000000033237c
+cpu 0x2: Vector: 300 (Data Access) at [c00000000ffefa10]
+    pc: c00000000033237c: .neigh_destroy+0x11c/0x1e0
+    lr: c0000000003322e4: .neigh_destroy+0x84/0x1e0
+    sp: c00000000ffefc90
+   msr: 8000000000009032
+   dar: d000000000a8fc10
+ dsisr: 40000000
+  current = 0xc0000000018d5960
+  paca    = 0xc0000000004d5280
+    pid   = 0, comm = swapper
+enter ? for help
+2:mon>
+
+>From what xmon says the problem lies with the destructor call :
+(neigh->parms->neigh_destructor)(neigh).
+When the openibd module is unloaded, the bottom half executes "neigh_destroy"
+which in turn calls "neigh->parms->neigh_destructor". However, neigh_destructor
+is set by the driver in neigh_params. Hence, the destructor being called after
+the module has been unloaded causes this bug.
+
+RHEL Version Found:
+================
+RHEL 5.2
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1429363
+
+Upstream Status:
+================
+Patch accepted upstream at:
+
+http://lkml.org/lkml/2007/3/19/394
+
+Test Status:
+============
+Carrie N. Mitsuyoshi <IBM>
+Reproduced crash regularly using the following method:
+- Create a pair system with the infiniband interface.
+- On first system, we are actively using the infiniband interface to ping the
+second system.
+- On second system, we just try to start/stop the openibd. It will drop to xmon
+immediately after a few trial.
+
+With patch, this test was run regularly for over 40 hours, without seeing a
+crash
+
+============================================================
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+
+Proposed Patch:
+===============
+This patch is based on 2.6.18-104.el5
+
+diff --git a/net/atm/clip.c b/net/atm/clip.c
+index 7af2c41..5c43847 100644
+--- a/net/atm/clip.c
++++ b/net/atm/clip.c
+@@ -262,14 +262,6 @@ static void clip_pop(struct atm_vcc *vcc, struct sk_buff *skb)
+ 	spin_unlock_irqrestore(&PRIV(dev)->xoff_lock, flags);
+ }
+ 
+-static void clip_neigh_destroy(struct neighbour *neigh)
+-{
+-	DPRINTK("clip_neigh_destroy (neigh %p)\n", neigh);
+-	if (NEIGH2ENTRY(neigh)->vccs)
+-		printk(KERN_CRIT "clip_neigh_destroy: vccs != NULL !!!\n");
+-	NEIGH2ENTRY(neigh)->vccs = (void *) NEIGHBOR_DEAD;
+-}
+-
+ static void clip_neigh_solicit(struct neighbour *neigh, struct sk_buff *skb)
+ {
+ 	DPRINTK("clip_neigh_solicit (neigh %p, skb %p)\n", neigh, skb);
+@@ -343,7 +335,6 @@ static struct neigh_table clip_tbl = {
+ 	/* parameters are copied from ARP ... */
+ 	.parms = {
+ 		.tbl 			= &clip_tbl,
+-		.neigh_destructor	= clip_neigh_destroy,
+ 		.base_reachable_time 	= 30 * HZ,
+ 		.retrans_time 		= 1 * HZ,
+ 		.gc_staletime 		= 60 * HZ,
+diff --git a/net/core/neighbour.c b/net/core/neighbour.c
+index 74e9d51..32a4c4f 100644
+--- a/net/core/neighbour.c
++++ b/net/core/neighbour.c
+@@ -104,6 +104,15 @@ static int neigh_blackhole(struct sk_buff *skb)
+ 	return -ENETDOWN;
+ }
+ 
++static void neigh_cleanup_and_release(struct neighbour *neigh)
++{
++	if (neigh->parms->neigh_destructor)
++		neigh->parms->neigh_destructor(neigh);
++
++	neigh_release(neigh);
++}
++
++
+ /*
+  * It is random distribution in the interval (1/2)*base...(3/2)*base.
+  * It corresponds to default IPv6 settings and is not overridable,
+@@ -140,7 +149,7 @@ static int neigh_forced_gc(struct neigh_table *tbl)
+ 				n->dead = 1;
+ 				shrunk	= 1;
+ 				write_unlock(&n->lock);
+-				neigh_release(n);
++				neigh_cleanup_and_release(n);
+ 				continue;
+ 			}
+ 			write_unlock(&n->lock);
+@@ -211,7 +220,7 @@ static void neigh_flush_dev(struct neigh_table *tbl, struct net_device *dev)
+ 				NEIGH_PRINTK2("neigh %p is stray.\n", n);
+ 			}
+ 			write_unlock(&n->lock);
+-			neigh_release(n);
++			neigh_cleanup_and_release(n);
+ 		}
+ 	}
+ }
+@@ -583,9 +592,6 @@ void neigh_destroy(struct neighbour *neigh)
+ 			kfree(hh);
+ 	}
+ 
+-	if (neigh->parms->neigh_destructor)
+-		(neigh->parms->neigh_destructor)(neigh);
+-
+ 	skb_queue_purge(&neigh->arp_queue);
+ 
+ 	dev_put(neigh->dev);
+@@ -676,7 +682,7 @@ static void neigh_periodic_timer(unsigned long arg)
+ 			*np = n->next;
+ 			n->dead = 1;
+ 			write_unlock(&n->lock);
+-			neigh_release(n);
++			neigh_cleanup_and_release(n);
+ 			continue;
+ 		}
+ 		write_unlock(&n->lock);
+@@ -2015,7 +2021,7 @@ void __neigh_for_each_release(struct neigh_table *tbl,
+ 				np = &n->next;
+ 			write_unlock(&n->lock);
+ 			if (release)
+-				neigh_release(n);
++				neigh_cleanup_and_release(n);
+ 		}
+ 	}
+ }

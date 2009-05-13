@@ -1,0 +1,55 @@
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Wed, 16 Jul 2008 16:20:15 -0500
+Subject: [gfs2] initial write performance very slow
+Message-id: 20080716212015.GA28996@ether.msp.redhat.com
+O-Subject: [RHEL 5.3 PATCH] GFS2 - bz #432826: GFS2: Initial Write Performance very slow
+Bugzilla: 432826
+RH-Acked-by: Josef Bacik <jbacik@redhat.com>
+RH-Acked-by: Bob Peterson <rpeterso@redhat.com>
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+
+BZ#432826
+https://bugzilla.redhat.com/show_bug.cgi?id=432826
+
+In GFS2, we already allows local SH locks while we hold a cached EX
+glock, so here we allow DF locks as well. This works only because we
+rely on the VFS's invalidation for locally cached data, and because if
+we hold an EX lock, then we know that no other node can be caching data
+relating to this file.
+
+It dramatically speeds up initial writes to O_DIRECT files since we
+fall back to buffered I/O for this and would otherwise bounce between DF
+and EX modes on each and every write call. The lessons to be learned
+from that are to ensure that (for the time being anyway) O_DIRECT files
+are preallocated and that they are written to using reasonably large I/O
+sizes. Even so this change fixes that corner case nicely
+
+This patch has been submitted upstream.
+
+-Ben
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+--
+ glock.c |    8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/fs/gfs2/glock.c b/fs/gfs2/glock.c
+index 7ceadee..aae1b90 100644
+--- a/fs/gfs2/glock.c
++++ b/fs/gfs2/glock.c
+@@ -299,8 +299,12 @@ static inline int may_grant(const struct gfs2_glock *gl, const struct gfs2_holde
+ 		return 1;
+ 	if (gh->gh_flags & GL_EXACT)
+ 		return 0;
+-	if (gh->gh_state == LM_ST_SHARED && gl->gl_state == LM_ST_EXCLUSIVE)
+-		return 1;
++	if (gl->gl_state == LM_ST_EXCLUSIVE) {
++		if (gh->gh_state == LM_ST_SHARED && gh_head->gh_state == LM_ST_SHARED)
++			return 1;
++		if (gh->gh_state == LM_ST_DEFERRED && gh_head->gh_state == LM_ST_DEFERRED)
++			return 1;
++	}
+ 	if (gl->gl_state != LM_ST_UNLOCKED && (gh->gh_flags & LM_FLAG_ANY))
+ 		return 1;
+ 	return 0;

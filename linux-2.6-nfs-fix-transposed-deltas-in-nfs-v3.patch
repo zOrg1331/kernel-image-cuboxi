@@ -1,0 +1,46 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 31 Mar 2008 15:15:48 -0400
+Subject: [nfs] fix transposed deltas in nfs v3
+Message-id: 1206990948-28285-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.3 PATCH] BZ#437544: fix transposed deltas in nfs3_write_done and nfs3_commit_done
+Bugzilla: 437544
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+There appear to be transposed deltas in nfs3_write_done and
+nfs3_commit_done in the patch for BZ 321111. COMMIT calls shouldn't
+change the mtimes and so we shouldn't need to use the force_wcc call
+after one. WRITE's on the other hand generally do change the mtime, so we
+want to make sure we force_wcc after one so that we don't invalidate the
+cache due to our own writes.
+
+The effect of this problem isn't particularly dire, but it can make the
+client invalidate the cache more frequently than it should when the
+server doesn't send a pre_op_attr struct in a write reply.
+
+ fs/nfs/nfs3proc.c |    6 +++---
+ 1 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/fs/nfs/nfs3proc.c b/fs/nfs/nfs3proc.c
+index 86e1529..0246904 100644
+--- a/fs/nfs/nfs3proc.c
++++ b/fs/nfs/nfs3proc.c
+@@ -822,7 +822,8 @@ static int nfs3_write_done(struct rpc_task *task, struct nfs_write_data *data)
+ {
+ 	if (nfs3_async_handle_jukebox(task, data->inode))
+ 		return -EAGAIN;
+-	nfs_refresh_inode(data->inode, data->res.fattr);
++	if (task->tk_status >= 0)
++		nfs_post_op_update_inode_force_wcc(data->inode, data->res.fattr);
+ 	return 0;
+ }
+ 
+@@ -850,8 +851,7 @@ static int nfs3_commit_done(struct rpc_task *task, struct nfs_write_data *data)
+ {
+ 	if (nfs3_async_handle_jukebox(task, data->inode))
+ 		return -EAGAIN;
+-	if (task->tk_status >= 0)
+-		nfs_post_op_update_inode_force_wcc(data->inode, data->res.fattr);
++	nfs_refresh_inode(data->inode, data->res.fattr);
+ 	return 0;
+ }
+ 

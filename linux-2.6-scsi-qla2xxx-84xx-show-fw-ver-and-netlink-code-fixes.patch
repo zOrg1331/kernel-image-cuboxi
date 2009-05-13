@@ -1,0 +1,128 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Sun, 26 Oct 2008 00:32:21 -0400
+Subject: [scsi] qla2xxx: 84xx show FW VER and netlink code fixes
+Message-id: 20081026043221.27116.66313.sendpatchset@file.bos.redhat.com
+O-Subject: [rhel 5.3 bug] qla2xxx - 84xx advertise firmware version and netlink code fixes.
+Bugzilla: 464681
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+BZ 464681
+
+qla2xxx - 84xx advertise firmware version and netlink code fixes.
+
+The following fixes are	 required to support the management applications
+for the FCoE adapters. Without these fixes it is not possible to retrieve
+the FW version or update the firmware. This firmware is	embedded in chips
+providing ethernet support beneath the Fibre Channel interface.
+
+Being able to update this FW and providing management application support
+is considered critical by our OEM's.
+
+Tested at QLogic.
+
+This patch applies and builds cleanly with 2.6.18-120.
+
+diff --git a/drivers/scsi/qla2xxx/qla_attr.c b/drivers/scsi/qla2xxx/qla_attr.c
+index ac50c39..f7137f4 100644
+--- a/drivers/scsi/qla2xxx/qla_attr.c
++++ b/drivers/scsi/qla2xxx/qla_attr.c
+@@ -1076,6 +1076,26 @@ qla2x00_total_isp_aborts_show(struct class_device *cdev, char *buf)
+ 	    ha->qla_stats.total_isp_aborts);
+ }
+ 
++static ssize_t
++qla24xx_84xx_fw_version_show(struct class_device *cdev, char *buf)
++{
++	int rval = QLA_SUCCESS;
++	uint16_t status[2] = {0, 0};
++	scsi_qla_host_t *ha = to_qla_host(class_to_shost(cdev));
++
++	if (IS_QLA84XX(ha) && ha->cs84xx) {
++		if (ha->cs84xx->op_fw_version == 0) {
++			rval = qla84xx_verify_chip(ha, status);
++		}
++
++		if ((rval == QLA_SUCCESS) && (status[0] == 0))
++			return snprintf(buf, PAGE_SIZE, "%u\n",
++			    (uint32_t)ha->cs84xx->op_fw_version);
++	}
++
++	return snprintf(buf, PAGE_SIZE, "\n");
++}
++
+ scsi_qla_host_t *
+ qla24xx_vport_create(scsi_qla_host_t *ha, uint64_t fc_wwpn, uint64_t fc_wwnn)
+ {
+@@ -1453,6 +1473,8 @@ static CLASS_DEVICE_ATTR(optrom_fw_version, S_IRUGO,
+     qla2x00_optrom_fw_version_show, NULL);
+ static CLASS_DEVICE_ATTR(total_isp_aborts, S_IRUGO,
+     qla2x00_total_isp_aborts_show, NULL);
++static CLASS_DEVICE_ATTR(84xx_fw_version, S_IRUGO,
++    qla24xx_84xx_fw_version_show, NULL);
+ static CLASS_DEVICE_ATTR(vport_create, S_IWUGO, NULL, qla24xx_vport_create_cdev);
+ static CLASS_DEVICE_ATTR(vport_delete, S_IWUGO, NULL, qla24xx_vport_delete);
+ static CLASS_DEVICE_ATTR(max_npiv_vports, S_IRUGO,
+@@ -1507,6 +1529,7 @@ struct class_device_attribute *qla24xx_host_attrs[] = {
+ 	&class_device_attr_zio,
+ 	&class_device_attr_zio_timer,
+ 	&class_device_attr_beacon,
++	&class_device_attr_84xx_fw_version,
+ 	&class_device_attr_vport_create,
+ 	&class_device_attr_vport_delete,
+ 	&class_device_attr_max_npiv_vports,
+@@ -1826,10 +1849,6 @@ struct fc_function_template qla2xxx_transport_functions = {
+ 	.issue_fc_host_lip = qla2x00_issue_lip,
+ 	.dev_loss_tmo_callbk = qla2x00_dev_loss_tmo_callbk,
+ 	.terminate_rport_io = qla2x00_terminate_rport_io,
+-	.dev_loss_tmo_callbk = qla2x00_dev_loss_tmo_callbk,
+-	.terminate_rport_io = qla2x00_terminate_rport_io,
+-	.dev_loss_tmo_callbk = qla2x00_dev_loss_tmo_callbk,
+-	.terminate_rport_io = qla2x00_terminate_rport_io,
+ 	.get_fc_host_stats = qla2x00_get_fc_host_stats,
+ };
+ 
+diff --git a/drivers/scsi/qla2xxx/qla_nlnk.c b/drivers/scsi/qla2xxx/qla_nlnk.c
+index be37370..de96010 100644
+--- a/drivers/scsi/qla2xxx/qla_nlnk.c
++++ b/drivers/scsi/qla2xxx/qla_nlnk.c
+@@ -64,7 +64,8 @@ static int qla84xx_update_fw(struct scsi_qla_host *ha, int rlen,
+ 			}
+ 			qlfw->len = upd_fw->fw_len;
+ 		}
+-		fw_ver = le32_to_cpu(*((uint32_t *)upd_fw->fw_bytes));
++		fw_ver = le32_to_cpu(*((uint32_t *)
++				((uint32_t *)upd_fw->fw_bytes + 2)));
+ 		if (!fw_ver) {
+ 			printk(KERN_ERR "%s(%lu): invalid fw revision 0x%x\n",
+ 				__func__, ha->host_no, fw_ver);
+@@ -93,7 +94,7 @@ static int qla84xx_update_fw(struct scsi_qla_host *ha, int rlen,
+ 		return -ENOMEM;
+ 	}
+ 
+-	fw_ver = le32_to_cpu(*((uint32_t *)qlfw->fw_buf));
++	fw_ver = le32_to_cpu(*((uint32_t *)((uint32_t *)qlfw->fw_buf + 2)));
+ 
+ 	/* Create iocb and issue it */
+ 	memset(mn, 0, sizeof(*mn));
+@@ -112,9 +113,10 @@ static int qla84xx_update_fw(struct scsi_qla_host *ha, int rlen,
+ 
+ 	mn->dseg_address[0] = cpu_to_le32(LSD(qlfw->fw_dma));
+ 	mn->dseg_address[1] = cpu_to_le32(MSD(qlfw->fw_dma));
+-	mn->dseg_length = cpu_to_le16(1);
++	mn->dseg_length = cpu_to_le32(qlfw->len);
++	mn->data_seg_cnt = cpu_to_le16(1);
+ 	
+-	ret = qla2x00_issue_iocb(ha, mn, mn_dma, 0);
++	ret = qla2x00_issue_iocb_timeout(ha, mn, mn_dma, 0, 120);
+ 
+ 	if (ret != QLA_SUCCESS) {
+ 		printk(KERN_ERR "%s(%lu): failed\n", __func__, ha->host_no);
+@@ -331,7 +333,7 @@ ql_fc_proc_nl_rcv_msg(struct sk_buff *skb, struct nlmsghdr *nlh, int rcvlen)
+ 
+ 	ha = (struct scsi_qla_host *)shost->hostdata;
+ 	
+-	if (!ha || !IS_QLA84XX(ha)) {
++	if (!ha || (!IS_QLA84XX(ha) && (ql_cmd->cmd != QLFC_GET_AEN))) {
+ 		printk(KERN_ERR "%s: invalid host ha = %p dtype = 0x%x\n",
+ 			__FUNCTION__, ha, (ha ? DT_MASK(ha): ~0));
+ 		err = -ENODEV;

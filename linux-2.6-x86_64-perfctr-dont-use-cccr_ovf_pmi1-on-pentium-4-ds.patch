@@ -1,0 +1,39 @@
+From: Aristeu Rozanski <aris@redhat.com>
+Date: Wed, 20 Aug 2008 13:17:11 -0400
+Subject: [x86_64] perfctr: dont use CCCR_OVF_PMI1 on Pentium 4 Ds
+Message-id: 20080820171652.438775000@redhat.com
+O-Subject: [RHEL5.3 PATCH 25/25] perfctr-watchdog: dont use CCCR_OVF_PMI1 on Pentium 4 Ds
+Bugzilla: 447618
+
+https://bugzilla.redhat.com/show_bug.cgi?id=447618
+
+Currently, setup_p4_watchdog() use CCCR_OVF_PMI1 to enable the counter
+overflow interrupts to the second logical core. But this bit doesn't work
+on Pentium 4 Ds (model 4, stepping 4) and this patch avoids its use on
+these processors. Tested on 4 different machines that have this
+specific model with success.
+
+Tested on Dave's box (where the problem was found) and other similar
+Pentium 4 Ds in RHTS.
+
+Upstream: Ingo merged it on his tip/x86/urgent tree
+
+diff --git a/arch/x86_64/kernel/perfctr-watchdog.c b/arch/x86_64/kernel/perfctr-watchdog.c
+index f68e71c..96eead0 100644
+--- a/arch/x86_64/kernel/perfctr-watchdog.c
++++ b/arch/x86_64/kernel/perfctr-watchdog.c
+@@ -473,7 +473,13 @@ static int setup_p4_watchdog(unsigned nmi_hz)
+ 		perfctr_msr = MSR_P4_IQ_PERFCTR1;
+ 		evntsel_msr = MSR_P4_CRU_ESCR0;
+ 		cccr_msr = MSR_P4_IQ_CCCR1;
+-		cccr_val = P4_CCCR_OVF_PMI1 | P4_CCCR_ESCR_SELECT(4);
++
++		/* Pentium 4 D processors don't support P4_CCCR_OVF_PMI1 */
++		if (boot_cpu_data.x86_model == 4 && boot_cpu_data.x86_mask == 4)
++			cccr_val = P4_CCCR_OVF_PMI0;
++		else
++			cccr_val = P4_CCCR_OVF_PMI1;
++		cccr_val |= P4_CCCR_ESCR_SELECT(4);
+ 	}
+ 
+ 	evntsel = P4_ESCR_EVENT_SELECT(0x3F)

@@ -1,0 +1,41 @@
+From: Roland McGrath <roland@redhat.com>
+Date: Fri, 22 Aug 2008 12:21:43 -0700
+Subject: [utrace] signal interception breaks systemtap uprobes
+Message-id: 20080822192143.BAF0415426C@magilla.localdomain
+O-Subject: [RHEL5.3 PATCH] fix utrace signal interception breaking systemtap uprobes (RHBZ#459786)
+Bugzilla: 459786
+
+This fixes a bug in the utrace code, the cause of stap SWBZ#6828 / RHBZ#459786.
+The bug affects a code path only taken when using the utrace kernel API,
+never used by ptrace.  RHEL5.3's systemtap will exploit this code path.
+
+The bug hits when intercepting a signal that has a handler installed with
+the SA_ONESHOT flag (aka SA_RESETHAND).  It causes the traced process to
+jump to 0 instead of the proper signal handler entry point.
+
+The fix has been tested by systemtap developers.
+
+Signed-off-by: Roland McGrath <roland@redhat.com>
+
+diff --git a/kernel/utrace.c b/kernel/utrace.c
+index 5083288..7eaff6a 100644
+--- a/kernel/utrace.c
++++ b/kernel/utrace.c
+@@ -2108,8 +2108,15 @@ utrace_get_signal(struct task_struct *tsk, struct pt_regs *regs,
+ 		 * The handler will run.  We do the SA_ONESHOT work here
+ 		 * since the normal path will only touch *return_ka now.
+ 		 */
+-		if (return_ka->sa.sa_flags & SA_ONESHOT)
+-			ka->sa.sa_handler = SIG_DFL;
++		signal.signr = info->si_signo;
++		if (likely(signal.signr) &&
++		    unlikely(return_ka->sa.sa_flags & SA_ONESHOT)) {
++			return_ka->sa.sa_flags &= ~SA_ONESHOT;
++			if (likely(valid_signal(signal.signr))) {
++				ka = &tsk->sighand->action[signal.signr - 1];
++				ka->sa.sa_handler = SIG_DFL;
++			}
++		}
+ 		break;
+ 
+ 	case UTRACE_SIGNAL_TSTP:

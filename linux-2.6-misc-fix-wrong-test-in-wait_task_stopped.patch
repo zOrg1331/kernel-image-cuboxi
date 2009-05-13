@@ -1,0 +1,47 @@
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Wed, 30 Jul 2008 09:17:47 +0200
+Subject: [misc] fix wrong test in wait_task_stopped
+Message-id: 4890159B.2030001@redhat.com
+O-Subject: [RHEL5.3 Patch] BZ382161: fix wrong test in wait_task_stopped()
+Bugzilla: 382211
+RH-Acked-by: Roland McGrath <roland@redhat.com>
+CVE: CVE-2007-5500
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=382161
+
+Description:
+There is a wrong test in wait_task_stopped().
+There was an old (p->state > TASK_STOPPED) test which used to mean not
+dead (that was before TASK_TRACED and exit_state existed). Then, it
+has been misunderstood as a wrong check of TASK_TRACED bit (commit
+14bf01bb0599c89fc7f426d20353b76e12555308).
+I'm not sure there is an actual bug on rhel5, but that test is very
+wrong.
+
+Upstream status:
+commit a3474224e6a01924be40a8255636ea5522c1023a
+
+Brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1413558
+
+Test status:
+Build on all archs, booted on i686.
+
+Regards,
+Jerome Marchand
+
+diff --git a/kernel/exit.c b/kernel/exit.c
+index 24d2b68..6afde30 100644
+--- a/kernel/exit.c
++++ b/kernel/exit.c
+@@ -1247,8 +1247,7 @@ static int wait_task_stopped(struct task_struct *p, int delayed_group_leader,
+ 		uid_t uid = p->uid;
+ 
+ 		exit_code = p->exit_code;
+-		if (unlikely(!exit_code) ||
+-		    unlikely(p->state & TASK_TRACED))
++		if (unlikely(!exit_code) || unlikely(p->exit_state))
+ 			goto bail_ref;
+ 		return wait_noreap_copyout(p, pid, uid, CLD_STOPPED,
+ 					   (exit_code << 8) | 0x7f,

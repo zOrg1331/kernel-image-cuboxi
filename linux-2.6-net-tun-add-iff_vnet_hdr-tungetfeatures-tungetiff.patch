@@ -1,0 +1,391 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Wed, 10 Sep 2008 01:09:17 +1000
+Subject: [net] tun: add IFF_VNET_HDR, TUNGETFEATURES, TUNGETIFF
+Message-id: 20080909150917.GA30451@gondor.apana.org.au
+O-Subject: Re: [RHEL5.3 PATCH] tun: Add IFF_VNET_HDR, TUNGETFEATURES, TUNGETIFF and TUNSETOFFLOAD
+Bugzilla: 459719
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Mark McLoughlin <markmc@redhat.com>
+
+On Thu, Aug 21, 2008 at 04:29:26PM +0100, Mark McLoughlin wrote:
+> https://bugzilla.redhat.com/459719
+
+Here's a respin of Mark's patch with the proto_csum_blank stuff
+replaces with explicit checksumming.  Apart from the kABI issues,
+the proto_csum_blank doesn't fully work for virtio because unlike
+Xen it supports IPv6 checksum offload which proto_csum_blank does
+not handle at all.
+
+In any case, as we have to do a copy in the tunnel driver we can
+calculate the checksum at the same time for almost no cost at all.
+
+Unfortunately I haven't been able to test this yet because I keep
+hitting a prefetch crash in udp_v4_get_port on my x86-64 laptop
+with the RHEL5 kernel.
+
+Until I track that down, I'd very much apppreciate it if someone
+else could run this to make sure that it still spits out the correct
+checksum.
+
+tun: Backport a number of tun/tap APIs recently added upstream.
+
+Together these allow KVM to enable GSO in guests using the virtio_net
+paravirt driver, because packets from the guest can be passed to the
+host, along with metadata to describe whether packets have partial
+checksums and/or need to be segmented via GSO.
+
+This provides a significant improvement in the throughput achievable
+by KVM guests.
+
+Signed-off-by: Mark McLoughlin <markmc@redhat.com>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+diff --git a/drivers/net/tun.c b/drivers/net/tun.c
+index 329d9fe..671bb39 100644
+--- a/drivers/net/tun.c
++++ b/drivers/net/tun.c
+@@ -58,6 +58,7 @@
+ #include <linux/if_ether.h>
+ #include <linux/if_tun.h>
+ #include <linux/crc32.h>
++#include <linux/virtio_net.h>
+ 
+ #include <asm/system.h>
+ #include <asm/uaccess.h>
+@@ -229,6 +230,7 @@ static __inline__ ssize_t tun_get_user(struct tun_struct *tun, struct iovec *iv,
+ 	struct tun_pi pi = { 0, __constant_htons(ETH_P_IP) };
+ 	struct sk_buff *skb;
+ 	size_t len = count, align = 0;
++	struct virtio_net_hdr gso = { 0 };
+ 
+ 	if (!(tun->flags & TUN_NO_PI)) {
+ 		if ((len -= sizeof(pi)) > count)
+@@ -238,6 +240,17 @@ static __inline__ ssize_t tun_get_user(struct tun_struct *tun, struct iovec *iv,
+ 			return -EFAULT;
+ 	}
+ 
++	if (tun->flags & TUN_VNET_HDR) {
++		if ((len -= sizeof(gso)) > count)
++			return -EINVAL;
++
++		if (memcpy_fromiovec((void *)&gso, iv, sizeof(gso)))
++			return -EFAULT;
++
++		if (gso.hdr_len > len)
++			return -EINVAL;
++	}
++
+ 	if ((tun->flags & TUN_TYPE_MASK) == TUN_TAP_DEV)
+ 		align = NET_IP_ALIGN;
+  
+@@ -248,10 +261,49 @@ static __inline__ ssize_t tun_get_user(struct tun_struct *tun, struct iovec *iv,
+ 
+ 	if (align)
+ 		skb_reserve(skb, align);
+-	if (memcpy_fromiovec(skb_put(skb, len), iv, len)) {
+-		tun->stats.rx_dropped++;
+-		kfree_skb(skb);
+-		return -EFAULT;
++
++	skb_put(skb, len);
++
++	if (gso.flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) {
++		unsigned int csum = 0;
++
++		if (gso.csum_start + gso.csum_offset > len - 2) {
++			if (net_ratelimit())
++				printk(KERN_WARNING
++				       "bad partial csum: csum=%u/%u len=%u\n",
++				       gso.csum_start, gso.csum_offset, len);
++			tun->stats.rx_dropped++;
++			kfree_skb(skb);
++			return -EINVAL;
++		}
++
++		if (memcpy_fromiovec(skb->data, iv, gso.csum_start)) {
++			tun->stats.rx_dropped++;
++			kfree_skb(skb);
++			return -EFAULT;
++		}
++
++		if (csum_partial_copy_fromiovecend(skb->data + gso.csum_start,
++						   iv, 0, len - gso.csum_start,
++						   &csum)) {
++			tun->stats.rx_dropped++;
++			kfree_skb(skb);
++			return -EFAULT;
++		}
++
++		*(u16 *)(skb->data + gso.csum_start + gso.csum_offset) =
++			csum_fold(csum);
++
++		skb->ip_summed = CHECKSUM_UNNECESSARY;
++	} else {
++		if (memcpy_fromiovec(skb->data, iv, len)) {
++			tun->stats.rx_dropped++;
++			kfree_skb(skb);
++			return -EFAULT;
++		}
++
++		if (tun->flags & TUN_NOCHECKSUM)
++			skb->ip_summed = CHECKSUM_UNNECESSARY;
+ 	}
+ 
+ 	skb->dev = tun->dev;
+@@ -265,9 +317,36 @@ static __inline__ ssize_t tun_get_user(struct tun_struct *tun, struct iovec *iv,
+ 		break;
+ 	};
+ 
+-	if (tun->flags & TUN_NOCHECKSUM)
+-		skb->ip_summed = CHECKSUM_UNNECESSARY;
+- 
++	if (gso.gso_type != VIRTIO_NET_HDR_GSO_NONE) {
++		pr_debug("GSO!\n");
++		switch (gso.gso_type & ~VIRTIO_NET_HDR_GSO_ECN) {
++		case VIRTIO_NET_HDR_GSO_TCPV4:
++			skb_shinfo(skb)->gso_type = SKB_GSO_TCPV4;
++			break;
++		case VIRTIO_NET_HDR_GSO_TCPV6:
++			skb_shinfo(skb)->gso_type = SKB_GSO_TCPV6;
++			break;
++		default:
++			tun->stats.rx_frame_errors++;
++			kfree_skb(skb);
++			return -EINVAL;
++		}
++
++		if (gso.gso_type & VIRTIO_NET_HDR_GSO_ECN)
++			skb_shinfo(skb)->gso_type |= SKB_GSO_TCP_ECN;
++
++		skb_shinfo(skb)->gso_size = gso.gso_size;
++		if (skb_shinfo(skb)->gso_size == 0) {
++			tun->stats.rx_frame_errors++;
++			kfree_skb(skb);
++			return -EINVAL;
++		}
++
++		/* Header must be checked, and gso_segs computed. */
++		skb_shinfo(skb)->gso_type |= SKB_GSO_DODGY;
++		skb_shinfo(skb)->gso_segs = 0;
++	}
++
+ 	netif_rx_ni(skb);
+ 	tun->dev->last_rx = jiffies;
+    
+@@ -332,6 +411,39 @@ static __inline__ ssize_t tun_put_user(struct tun_struct *tun,
+ 		total += sizeof(pi);
+ 	}       
+ 
++	if (tun->flags & TUN_VNET_HDR) {
++		struct virtio_net_hdr gso = { 0 }; /* no info leak */
++		if ((len -= sizeof(gso)) < 0)
++			return -EINVAL;
++
++		if (skb_is_gso(skb)) {
++			struct skb_shared_info *sinfo = skb_shinfo(skb);
++
++			/* This is a hint as to how much should be linear. */
++			gso.hdr_len = skb_headlen(skb);
++			gso.gso_size = sinfo->gso_size;
++			if (sinfo->gso_type & SKB_GSO_TCPV4)
++				gso.gso_type = VIRTIO_NET_HDR_GSO_TCPV4;
++			else if (sinfo->gso_type & SKB_GSO_TCPV6)
++				gso.gso_type = VIRTIO_NET_HDR_GSO_TCPV6;
++			else
++				BUG();
++			if (sinfo->gso_type & SKB_GSO_TCP_ECN)
++				gso.gso_type |= VIRTIO_NET_HDR_GSO_ECN;
++		} else
++			gso.gso_type = VIRTIO_NET_HDR_GSO_NONE;
++
++		if (skb->ip_summed == CHECKSUM_PARTIAL) {
++			gso.flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
++			gso.csum_start = skb->h.raw - skb->data;
++			gso.csum_offset = skb->csum;
++		} /* else everything is zero */
++
++		if (unlikely(memcpy_toiovec(iv, (void *)&gso, sizeof(gso))))
++			return -EFAULT;
++		total += sizeof(gso);
++	}
++
+ 	len = min_t(int, skb->len, len);
+ 
+ 	skb_copy_datagram_iovec(skb, 0, iv, len);
+@@ -545,6 +657,11 @@ static int tun_set_iff(struct file *file, struct ifreq *ifr)
+ 	if (ifr->ifr_flags & IFF_ONE_QUEUE)
+ 		tun->flags |= TUN_ONE_QUEUE;
+ 
++	if (ifr->ifr_flags & IFF_VNET_HDR)
++		tun->flags |= TUN_VNET_HDR;
++	else
++		tun->flags &= ~TUN_VNET_HDR;
++
+ 	file->private_data = tun;
+ 	tun->attached = 1;
+ 
+@@ -557,12 +674,83 @@ static int tun_set_iff(struct file *file, struct ifreq *ifr)
+ 	return err;
+ }
+ 
++static int tun_get_iff(struct file *file, struct ifreq *ifr)
++{
++	struct tun_struct *tun = file->private_data;
++
++	if (!tun)
++		return -EBADFD;
++
++	DBG(KERN_INFO "%s: tun_get_iff\n", tun->dev->name);
++
++	strcpy(ifr->ifr_name, tun->dev->name);
++
++	ifr->ifr_flags = 0;
++
++	if (ifr->ifr_flags & TUN_TUN_DEV)
++		ifr->ifr_flags |= IFF_TUN;
++	else
++		ifr->ifr_flags |= IFF_TAP;
++
++	if (tun->flags & TUN_NO_PI)
++		ifr->ifr_flags |= IFF_NO_PI;
++
++	if (tun->flags & TUN_ONE_QUEUE)
++		ifr->ifr_flags |= IFF_ONE_QUEUE;
++
++	if (tun->flags & TUN_VNET_HDR)
++		ifr->ifr_flags |= IFF_VNET_HDR;
++
++	return 0;
++}
++
++/* This is like a cut-down ethtool ops, except done via tun fd so no
++ * privs required. */
++static int set_offload(struct net_device *dev, unsigned long arg)
++{
++	unsigned int old_features, features;
++
++	old_features = dev->features;
++	/* Unset features, set them as we chew on the arg. */
++	features = (old_features & ~(NETIF_F_HW_CSUM|NETIF_F_SG|NETIF_F_FRAGLIST
++				    |NETIF_F_TSO_ECN|NETIF_F_TSO|NETIF_F_TSO6));
++
++	if (arg & TUN_F_CSUM) {
++		features |= NETIF_F_HW_CSUM|NETIF_F_SG|NETIF_F_FRAGLIST;
++		arg &= ~TUN_F_CSUM;
++
++		if (arg & (TUN_F_TSO4|TUN_F_TSO6)) {
++			if (arg & TUN_F_TSO_ECN) {
++				features |= NETIF_F_TSO_ECN;
++				arg &= ~TUN_F_TSO_ECN;
++			}
++			if (arg & TUN_F_TSO4)
++				features |= NETIF_F_TSO;
++			if (arg & TUN_F_TSO6)
++				features |= NETIF_F_TSO6;
++			arg &= ~(TUN_F_TSO4|TUN_F_TSO6);
++		}
++	}
++
++	/* This gives the user a way to test for new features in future by
++	 * trying to set them. */
++	if (arg)
++		return -EINVAL;
++
++	dev->features = features;
++	if (old_features != dev->features)
++		netdev_features_change(dev);
++
++	return 0;
++}
++
+ static int tun_chr_ioctl(struct inode *inode, struct file *file, 
+ 			 unsigned int cmd, unsigned long arg)
+ {
+ 	struct tun_struct *tun = file->private_data;
+ 	void __user* argp = (void __user*)arg;
+ 	struct ifreq ifr;
++	int ret;
+ 
+ 	if (cmd == TUNSETIFF || _IOC_TYPE(cmd) == 0x89)
+ 		if (copy_from_user(&ifr, argp, sizeof ifr))
+@@ -585,12 +773,30 @@ static int tun_chr_ioctl(struct inode *inode, struct file *file,
+ 		return 0;
+ 	}
+ 
++	if (cmd == TUNGETFEATURES) {
++		/* Currently this just means: "what IFF flags are valid?".
++		 * This is needed because we never checked for invalid flags on
++		 * TUNSETIFF. */
++		return put_user(IFF_TUN | IFF_TAP | IFF_NO_PI | IFF_ONE_QUEUE |
++				IFF_VNET_HDR,
++				(unsigned int __user*)argp);
++	}
++
+ 	if (!tun)
+ 		return -EBADFD;
+ 
+ 	DBG(KERN_INFO "%s: tun_chr_ioctl cmd %d\n", tun->dev->name, cmd);
+ 
+ 	switch (cmd) {
++	case TUNGETIFF:
++		ret = tun_get_iff(file, &ifr);
++		if (ret)
++			return ret;
++
++		if (copy_to_user(argp, &ifr, sizeof(ifr)))
++			return -EFAULT;
++		break;
++
+ 	case TUNSETNOCSUM:
+ 		/* Disable/Enable checksum */
+ 		if (arg)
+@@ -638,6 +844,12 @@ static int tun_chr_ioctl(struct inode *inode, struct file *file,
+ 		break;
+ #endif
+ 
++	case TUNSETOFFLOAD:
++		rtnl_lock();
++		ret = set_offload(tun->dev, arg);
++		rtnl_unlock();
++		return ret;
++
+ 	case SIOCGIFFLAGS:
+ 		ifr.ifr_flags = tun->if_flags;
+ 		if (copy_to_user( argp, &ifr, sizeof ifr))
+diff --git a/include/linux/if_tun.h b/include/linux/if_tun.h
+index 88aef7b..6860229 100644
+--- a/include/linux/if_tun.h
++++ b/include/linux/if_tun.h
+@@ -70,6 +70,7 @@ struct tun_struct {
+ #define TUN_NO_PI	0x0040
+ #define TUN_ONE_QUEUE	0x0080
+ #define TUN_PERSIST 	0x0100	
++#define TUN_VNET_HDR 	0x0200
+ 
+ /* Ioctl defines */
+ #define TUNSETNOCSUM  _IOW('T', 200, int) 
+@@ -78,12 +79,22 @@ struct tun_struct {
+ #define TUNSETPERSIST _IOW('T', 203, int) 
+ #define TUNSETOWNER   _IOW('T', 204, int)
+ #define TUNSETLINK    _IOW('T', 205, int)
++#define TUNGETFEATURES _IOR('T', 207, unsigned int)
++#define TUNSETOFFLOAD _IOW('T', 208, unsigned int)
++#define TUNGETIFF      _IOR('T', 210, unsigned int)
+ 
+ /* TUNSETIFF ifr flags */
+ #define IFF_TUN		0x0001
+ #define IFF_TAP		0x0002
+ #define IFF_NO_PI	0x1000
+ #define IFF_ONE_QUEUE	0x2000
++#define IFF_VNET_HDR	0x4000
++
++/* Features for GSO (TUNSETOFFLOAD). */
++#define TUN_F_CSUM	0x01	/* You can hand me unchecksummed packets. */
++#define TUN_F_TSO4	0x02	/* I can handle TSO for IPv4 packets */
++#define TUN_F_TSO6	0x04	/* I can handle TSO for IPv6 packets */
++#define TUN_F_TSO_ECN	0x08	/* I can handle TSO with ECN bits. */
+ 
+ struct tun_pi {
+ 	unsigned short flags;

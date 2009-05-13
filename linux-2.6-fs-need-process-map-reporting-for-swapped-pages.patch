@@ -1,0 +1,92 @@
+From: Anton Arapov <aarapov@redhat.com>
+Date: Fri, 16 May 2008 12:59:22 +0200
+Subject: [fs] need process map reporting for swapped pages
+Message-id: 482D690A.4080906@redhat.com
+O-Subject: [RHEL5.3 PATCH] BZ443749: [RFE] Need process map reporting in RHEL for swapped pages *RESEND*
+Bugzilla: 443749
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Nacked-by: Anton Arapov <aarapov@redhat.com>
+RH-Nacked-by: Rik van Riel <riel@redhat.com>
+
+Bugzilla:
+  BZ#443749
+
+Details:
+  Basically all it does is add swap usage to each of the processes
+memory mappings.
+
+Upstream status:
+  in upstream
+  commit# 214e471ff99064726b2d8af3aa0e24a73c775531
+
+Test status:
+  patch has been tested for compilation, boot and behavior.
+  http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1319208
+
+Notice:
+  Completely aligned to upstream one, is_swap_pte() was unfolded only.
+
+==
+
+commit 214e471ff99064726b2d8af3aa0e24a73c775531
+Author: Peter Zijlstra <peterz@infradead.org>
+Date:   Mon Apr 28 02:12:55 2008 -0700
+
+    smaps: account swap entries
+
+    Show the amount of swap for each vma.  This can be used to see where all the
+    swap goes.
+
+    [akpm@linux-foundation.org: coding-style fixes]
+    Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+    Acked-by: Matt Mackall <mpm@selenic.com>
+    Acked-by: KOSAKI Motohiro <kosaki.motohiro@jp.fujitsu.com>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
+index cdfef56..a0f5c3f 100644
+--- a/fs/proc/task_mmu.c
++++ b/fs/proc/task_mmu.c
+@@ -130,6 +130,7 @@ struct mem_size_stats
+ 	unsigned long shared_dirty;
+ 	unsigned long private_clean;
+ 	unsigned long private_dirty;
++	unsigned long swap;
+ };
+ 
+ __attribute__((weak)) const char *arch_vma_name(struct vm_area_struct *vma)
+@@ -214,13 +215,15 @@ static int show_map_internal(struct seq_file *m, void *v, struct mem_size_stats
+ 			   "Shared_Clean:  %8lu kB\n"
+ 			   "Shared_Dirty:  %8lu kB\n"
+ 			   "Private_Clean: %8lu kB\n"
+-			   "Private_Dirty: %8lu kB\n",
++			   "Private_Dirty: %8lu kB\n"
++			   "Swap: %8lu kB\n",
+ 			   (vma->vm_end - vma->vm_start) >> 10,
+ 			   mss->resident >> 10,
+ 			   mss->shared_clean  >> 10,
+ 			   mss->shared_dirty  >> 10,
+ 			   mss->private_clean >> 10,
+-			   mss->private_dirty >> 10);
++			   mss->private_dirty >> 10,
++			   mss->swap >> 10);
+ 
+ 	if (m->count < m->size)  /* vma is copied successfully */
+ 		m->version = (vma != get_gate_vma(task))? vma->vm_start: 0;
+@@ -243,6 +246,12 @@ static void smaps_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
+ 	pte = pte_offset_map_lock(vma->vm_mm, pmd, addr, &ptl);
+ 	do {
+ 		ptent = *pte;
++
++		if (!pte_none(ptent) && !pte_present(ptent) && !pte_file(ptent)) {
++			mss->swap += PAGE_SIZE;
++			continue;
++		}
++
+ 		if (!pte_present(ptent))
+ 			continue;
+ 

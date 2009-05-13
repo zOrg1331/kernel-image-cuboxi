@@ -1,0 +1,135 @@
+From: Jeff Burke <jburke@redhat.com>
+Date: Thu, 10 Jul 2008 16:26:10 -0400
+Subject: [fs] inotify: previous event should be last in list
+Message-id: 48767062.5070204@redhat.com
+O-Subject: [RHEL5.3 PATCH] BZ453990: Bug in inotify_user.c
+Bugzilla: 453990
+RH-Acked-by: Jarod Wilson <jwilson@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+Red Hat BZ#:
+453990
+------
+
+Description:
+ltp test failure with inotify02 testcase
+------------
+
+RHEL Version Found:
+Red Hat Enterprise Linux Server 5.2
+Red Hat MRG Kernel
+------------------
+
+Upstream Status:
+> From: Linux Kernel Mailing List <linux-kernel@...>
+> To: <git-commits-head@...>
+> Subject: A potential bug in inotify_user.c
+> Date: Wednesday, February 6, 2008 - 7:01 pm
+>
+> Gitweb:     http://git.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=1c17d1...
+> Commit:     1c17d18e3775485bf1e0ce79575eb637a94494a2
+> Parent:     19c561a60ffe52df88dd63de0bff480ca094efe4
+> Author:     Yan Zheng <yanzheng@21cn.com>
+> AuthorDate: Wed Feb 6 01:36:09 2008 -0800
+> Committer:  Linus Torvalds <torvalds@woody.linux-foundation.org>
+> CommitDate: Wed Feb 6 10:41:00 2008 -0800
+>
+>     A potential bug in inotify_user.c
+>
+>     Following comment is at fs/inotify_user.c:287
+>     /* coalescing: drop this event if it is a dupe of the previous */
+>
+>     I think the previous event in the comment should be the last event in the
+>     link list.  But inotify_dev_get_event return the first event in the list.
+>     In addition, it doesn't check whether the list is empty
+>
+>     Signed-off-by: Yan Zheng<yanzheng@21cn.com>
+>     Acked-by: Robert Love <rlove@rlove.org>
+>     Cc: John McCutchan <ttb@tentacle.dhs.org>
+>     Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+>     Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+----------------
+
+Test Status:
+Tested with RHEL5.2, 2.6.24-7.72.el5rt and 2.6.24-7.72.el5vanilla
+------------
+
+Test Case:
+http://ltp.cvs.sourceforge.net/ltp/ltp/testcases/kernel/syscalls/inotify/inotify02.c?view=log
+----------
+
+Actual results:
+   Without patch - 2.6.24-7.72.el5rtvanilla
+   Testcase       Result     Exit Value
+   --------       ------     ----------
+   inotify01       FAIL       0
+
+   With patch - 2.6.24-7.72.el5rt
+   Testcase       Result     Exit Value
+   --------       ------     ----------
+   inotify01       PASS       0
+
+Expected results:
+Test should pass all the time
+
+BREW scratch build:
+N/A Used realtime kernel for testing
+-------------------
+
+Thanks,
+Jeff
+
+From: Yan Zheng <yanzheng@21cn.com>
+Date: Wed, 6 Feb 2008 09:36:09 +0000 (-0800)
+Subject: A potential bug in inotify_user.c
+X-Git-Tag: v2.6.25-rc1~775
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=1c17d18e3775485bf1e0ce79575eb637a94494a2;hp=19c561a60ffe52df88dd63de0bff480ca094efe4
+
+A potential bug in inotify_user.c
+
+Following comment is at fs/inotify_user.c:287
+/* coalescing: drop this event if it is a dupe of the previous */
+
+I think the previous event in the comment should be the last event in the
+link list.  But inotify_dev_get_event return the first event in the list.
+In addition, it doesn't check whether the list is empty
+
+Signed-off-by: Yan Zheng<yanzheng@21cn.com>
+Acked-by: Robert Love <rlove@rlove.org>
+Cc: John McCutchan <ttb@tentacle.dhs.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/fs/inotify_user.c b/fs/inotify_user.c
+index 017cb0f..0f3889e 100644
+--- a/fs/inotify_user.c
++++ b/fs/inotify_user.c
+@@ -247,6 +247,19 @@ inotify_dev_get_event(struct inotify_device *dev)
+ }
+ 
+ /*
++ * inotify_dev_get_last_event - return the last event in the given dev's queue
++ *
++ * Caller must hold dev->ev_mutex.
++ */
++static inline struct inotify_kernel_event *
++inotify_dev_get_last_event(struct inotify_device *dev)
++{
++	if (list_empty(&dev->events))
++		return NULL;
++	return list_entry(dev->events.prev, struct inotify_kernel_event, list);
++}
++
++/*
+  * inotify_dev_queue_event - event handler registered with core inotify, adds
+  * a new event to the given device
+  *
+@@ -272,7 +285,7 @@ static void inotify_dev_queue_event(struct inotify_watch *w, u32 wd, u32 mask,
+ 		put_inotify_watch(w); /* final put */
+ 
+ 	/* coalescing: drop this event if it is a dupe of the previous */
+-	last = inotify_dev_get_event(dev);
++	last = inotify_dev_get_last_event(dev);
+ 	if (last && last->event.mask == mask && last->event.wd == wd &&
+ 			last->event.cookie == cookie) {
+ 		const char *lastname = last->name;

@@ -1,0 +1,143 @@
+From: jbaron@redhat.com <jbaron@redhat.com>
+Date: Fri, 22 Aug 2008 14:04:54 -0400
+Subject: [misc] markers and tracepoints: sched patch
+Message-id: 1219428298-7519-11-git-send-email-jbaron@redhat.com
+O-Subject: [rhel5.3 patch 10/14] markers and tracepoints - hitachi sched patch
+Bugzilla: 329821
+
+bz# 329821
+
+diff --git a/include/trace/sched.h b/include/trace/sched.h
+new file mode 100644
+index 0000000..363b7f5
+--- /dev/null
++++ b/include/trace/sched.h
+@@ -0,0 +1,32 @@
++#ifndef _TRACE_SCHED_H
++#define _TRACE_SCHED_H
++
++#include <linux/tracepoint.h>
++#include <linux/sched.h>
++
++struct rq;
++
++DEFINE_TRACE(sched_wakeup,
++	TPPROTO(struct rq *rq, struct task_struct *p),
++	TPARGS(rq, p));
++DEFINE_TRACE(sched_wakeup_new,
++	TPPROTO(struct rq *rq, struct task_struct *p),
++	TPARGS(rq, p));
++DEFINE_TRACE(sched_switch,
++	TPPROTO(struct rq *rq, struct task_struct *prev,
++		struct task_struct *next),
++	TPARGS(rq, prev, next));
++DEFINE_TRACE(sched_process_free,
++	TPPROTO(struct task_struct *p),
++	TPARGS(p));
++DEFINE_TRACE(sched_process_exit,
++	TPPROTO(struct task_struct *p),
++	TPARGS(p));
++DEFINE_TRACE(sched_process_wait,
++	TPPROTO(pid_t pid),
++	TPARGS(pid));
++DEFINE_TRACE(sched_process_fork,
++	TPPROTO(struct task_struct *parent, struct task_struct *child),
++	TPARGS(parent, child));
++
++#endif
+diff --git a/kernel/exit.c b/kernel/exit.c
+index 6afde30..e5b43ef 100644
+--- a/kernel/exit.c
++++ b/kernel/exit.c
+@@ -39,6 +39,7 @@
+ #include <linux/pipe_fs_i.h>
+ #include <linux/audit.h> /* for audit_free() */
+ #include <linux/resource.h>
++#include <trace/sched.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/unistd.h>
+@@ -132,6 +133,7 @@ static void __exit_signal(struct task_struct *tsk)
+ 
+ static void delayed_put_task_struct(struct rcu_head *rhp)
+ {
++	trace_sched_process_free(container_of(rhp, struct task_struct, rcu));
+ 	put_task_struct(container_of(rhp, struct task_struct, rcu));
+ }
+ 
+@@ -895,6 +897,8 @@ fastcall NORET_TYPE void do_exit(long code)
+ 
+ 	if (group_dead)
+ 		acct_process();
++	trace_sched_process_exit(tsk);
++
+ 	exit_sem(tsk);
+ 	__exit_files(tsk);
+ 	__exit_fs(tsk);
+@@ -1381,6 +1385,8 @@ static long do_wait(pid_t pid, int options, struct siginfo __user *infop,
+ 	struct task_struct *tsk;
+ 	int flag, retval;
+ 
++	trace_sched_process_wait(pid);
++
+ 	add_wait_queue(&current->signal->wait_chldexit,&wait);
+ repeat:
+ 	/*
+diff --git a/kernel/fork.c b/kernel/fork.c
+index bd74ccf..dc24edc 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -49,6 +49,7 @@
+ #ifndef __GENKSYMS__
+ #include <linux/ptrace.h>
+ #endif
++#include <trace/sched.h>
+ 
+ #include <asm/pgtable.h>
+ #include <asm/pgalloc.h>
+@@ -1461,6 +1462,8 @@ long do_fork(unsigned long clone_flags,
+ 		int is_user = likely(user_mode(regs));
+ 		struct completion vfork;
+ 
++		trace_sched_process_fork(current, p);
++
+ 		if (clone_flags & CLONE_VFORK) {
+ 			p->vfork_done = &vfork;
+ 			init_completion(&vfork);
+diff --git a/kernel/sched.c b/kernel/sched.c
+index 5ba632f..58ad69d 100644
+--- a/kernel/sched.c
++++ b/kernel/sched.c
+@@ -53,6 +53,7 @@
+ #include <linux/kprobes.h>
+ #include <linux/delayacct.h>
+ #include <asm/tlb.h>
++#include <trace/sched.h>
+ 
+ #include <asm/unistd.h>
+ 
+@@ -1536,6 +1537,7 @@ out_activate:
+ 	success = 1;
+ 
+ out_running:
++	trace_sched_wakeup(rq, p);
+ 	p->state = TASK_RUNNING;
+ out:
+ 	task_rq_unlock(rq, &flags);
+@@ -1700,6 +1702,7 @@ void fastcall wake_up_new_task(struct task_struct *p, unsigned long clone_flags)
+ 	}
+ 	current->sleep_avg = JIFFIES_TO_NS(CURRENT_BONUS(current) *
+ 		PARENT_PENALTY / 100 * MAX_SLEEP_AVG / MAX_BONUS);
++	trace_sched_wakeup_new(this_rq, p);
+ 	task_rq_unlock(this_rq, &flags);
+ }
+ 
+@@ -1835,6 +1838,8 @@ context_switch(struct rq *rq, struct task_struct *prev,
+ 	struct mm_struct *mm = next->mm;
+ 	struct mm_struct *oldmm = prev->active_mm;
+ 
++	trace_sched_switch(rq, prev, next);
++
+ 	if (unlikely(!mm)) {
+ 		next->active_mm = oldmm;
+ 		atomic_inc(&oldmm->mm_count);

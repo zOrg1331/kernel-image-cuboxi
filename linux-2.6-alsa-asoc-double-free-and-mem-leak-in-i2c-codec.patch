@@ -1,0 +1,99 @@
+From: Jaroslav Kysela <jkysela@redhat.com>
+Date: Thu, 28 Aug 2008 09:02:00 -0400
+Subject: [alsa] asoc: double free and mem leak in i2c codec
+Message-id: 200808281302.m7SD205x031440@ns3.rdu.redhat.com
+O-Subject: [RHEL 5.3 PATCH] alsa: asoc: fix double free and memory leak in i2c codec drivers
+Bugzilla: 460103
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+RH-Acked-by: Eugene Teo <eteo@redhat.com>
+
+Resolves: BZ#460103
+
+Many SoC audio codec drivers have improper freeing of memory in error paths.
+
+* codec is allocated in the platform device probe function, but is not freed
+there in case of error. Instead it is freed in the i2c device probe function's
+error path. However the success or failure of both functions is not linked, so
+this could result in a double free (if the platform device is successfully
+probed, the i2c device probing fails and then the platform driver is
+unregistered.)
+
+* codec->private_data is allocated in many platform device probe functions but
+not freed in their error paths.
+
+The patch is backport from upstream:
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=3051e41ab7daaa59d4564f20b25dcb8c03f35f2b
+
+diff --git a/sound/soc/codecs/wm8731.c b/sound/soc/codecs/wm8731.c
+index 7ca0b52..c37d764 100644
+--- a/sound/soc/codecs/wm8731.c
++++ b/sound/soc/codecs/wm8731.c
+@@ -624,10 +624,8 @@ static int wm8731_codec_probe(struct i2c_adapter *adap, int addr, int kind)
+ 	client_template.addr = addr;
+ 
+ 	i2c = kmemdup(&client_template, sizeof(client_template), GFP_KERNEL);
+-	if (i2c == NULL) {
+-		kfree(codec);
++	if (i2c == NULL)
+ 		return -ENOMEM;
+-	}
+ 	i2c_set_clientdata(i2c, codec);
+ 	codec->control_data = i2c;
+ 
+@@ -645,7 +643,6 @@ static int wm8731_codec_probe(struct i2c_adapter *adap, int addr, int kind)
+ 	return ret;
+ 
+ err:
+-	kfree(codec);
+ 	kfree(i2c);
+ 	return ret;
+ }
+@@ -721,6 +718,11 @@ static int wm8731_probe(struct platform_device *pdev)
+ #else
+ 	/* Add other interfaces here */
+ #endif
++
++	if (ret != 0) {
++		kfree(codec->private_data);
++		kfree(codec);
++	}
+ 	return ret;
+ }
+ 
+diff --git a/sound/soc/codecs/wm8750.c b/sound/soc/codecs/wm8750.c
+index 7073e8e..af62704 100644
+--- a/sound/soc/codecs/wm8750.c
++++ b/sound/soc/codecs/wm8750.c
+@@ -896,10 +896,8 @@ static int wm8750_codec_probe(struct i2c_adapter *adap, int addr, int kind)
+ 	client_template.addr = addr;
+ 
+ 	i2c = kmemdup(&client_template, sizeof(client_template), GFP_KERNEL);
+-	if (i2c == NULL) {
+-		kfree(codec);
++	if (i2c == NULL)
+ 		return -ENOMEM;
+-	}
+ 	i2c_set_clientdata(i2c, codec);
+ 	codec->control_data = i2c;
+ 
+@@ -917,7 +915,6 @@ static int wm8750_codec_probe(struct i2c_adapter *adap, int addr, int kind)
+ 	return ret;
+ 
+ err:
+-	kfree(codec);
+ 	kfree(i2c);
+ 	return ret;
+ }
+@@ -993,6 +990,10 @@ static int wm8750_probe(struct platform_device *pdev)
+ 		/* Add other interfaces here */
+ #endif
+ 
++	if (ret != 0) {
++		kfree(codec->private_data);
++		kfree(codec);
++	}
+ 	return ret;
+ }
+ 

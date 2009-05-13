@@ -1,0 +1,188 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Mon, 3 Nov 2008 09:09:01 +0100
+Subject: [xen] ia64: backport check_pages_physically_contiguous
+Message-id: 490EB19D.3090804@redhat.com
+O-Subject: [RHEL5.3 PATCH 1/2]: Backport Xen ia64 check_pages_physically_contiguous
+Bugzilla: 463500
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+Despite the fact that this patch series is intended to fix i386, this first
+patch only ends up touching ia64.  That's to ensure that the swiotlb exhaustion
+that Stephen fixed for i386 doesn't happen on ia64.
+
+This patch is a backport of upstream Xen linux-2.6.18-xen.hg c/s 51, 166, and
+167.  The main change is in c/s 166; 51 and 167 are just in there for compile fixes.
+
+I would appreciate it if some of the ia64 (Xen or not) people could look at
+this; in particular, I want to make sure I haven't done anything crazy, and I
+also want to make sure I haven't affected bare-metal with this patch.
+
+diff --git a/arch/ia64/hp/common/sba_iommu.c b/arch/ia64/hp/common/sba_iommu.c
+index 69ff026..57f249b 100644
+--- a/arch/ia64/hp/common/sba_iommu.c
++++ b/arch/ia64/hp/common/sba_iommu.c
+@@ -43,6 +43,7 @@
+ #include <asm/kexec.h>
+ 
+ #include <asm/acpi-ext.h>
++#include <asm/maddr.h>          /* range_straddles_page_boundary() */
+ 
+ extern int swiotlb_late_init_with_default_size (size_t size);
+ 
+@@ -911,7 +912,7 @@ sba_map_single(struct device *dev, void *addr, size_t size, int dir)
+  	** Check if the PCI device can DMA to ptr... if so, just return ptr
+  	*/
+ 	if (likely(pci_addr & ~to_pci_dev(dev)->dma_mask) == 0 &&
+-		   !range_straddles_page_boundary(addr, size)) {
++		   !range_straddles_page_boundary(__pa(addr), size)) {
+ 		/*
+  		** Device is bit capable of DMA'ing to the buffer...
+ 		** just return the PCI address of ptr
+diff --git a/arch/ia64/xen/swiotlb.c b/arch/ia64/xen/swiotlb.c
+index 047abab..10d16da 100644
+--- a/arch/ia64/xen/swiotlb.c
++++ b/arch/ia64/xen/swiotlb.c
+@@ -606,7 +606,7 @@ swiotlb_map_single(struct device *hwdev, void *ptr, size_t size, int dir)
+ 	 * we can safely return the device addr and not worry about bounce
+ 	 * buffering it.
+ 	 */
+-	if (!range_straddles_page_boundary(ptr, size) &&
++	if (!range_straddles_page_boundary(__pa(ptr), size) &&
+ 	    !address_needs_mapping(hwdev, dev_addr) && !swiotlb_force)
+ 		return dev_addr;
+ 
+@@ -775,7 +775,10 @@ swiotlb_map_sg(struct device *hwdev, struct scatterlist *sg, int nelems,
+ 	for (i = 0; i < nelems; i++, sg++) {
+ 		addr = SG_ENT_VIRT_ADDRESS(sg);
+ 		dev_addr = virt_to_bus(addr);
+-		if (swiotlb_force || address_needs_mapping(hwdev, dev_addr)) {
++		if (swiotlb_force ||
++		    range_straddles_page_boundary(page_to_pseudophys(sg->page)
++						  + sg->offset, sg->length) ||
++		    address_needs_mapping(hwdev, dev_addr)) {
+ 			void *map = map_single(hwdev, addr, sg->length, dir);
+ 			sg->dma_address = virt_to_bus(map);
+ 			if (!map) {
+diff --git a/arch/ia64/xen/xen_dma.c b/arch/ia64/xen/xen_dma.c
+index ae97c18..9b277ed 100644
+--- a/arch/ia64/xen/xen_dma.c
++++ b/arch/ia64/xen/xen_dma.c
+@@ -35,6 +35,41 @@ do {								\
+ 	}							\
+ } while (0)
+ 
++static int check_pages_physically_contiguous(unsigned long pfn, 
++					     unsigned int offset,
++					     size_t length)
++{
++	unsigned long next_bus;
++	int i;
++	int nr_pages;
++
++	next_bus = pfn_to_mfn_for_dma(pfn);
++	nr_pages = (offset + length + PAGE_SIZE-1) >> PAGE_SHIFT;
++
++	for (i = 1; i < nr_pages; i++) {
++		if (pfn_to_mfn_for_dma(++pfn) != ++next_bus) 
++			return 0;
++	}
++	return 1;
++}
++
++int range_straddles_page_boundary(paddr_t p, size_t size)
++{
++	extern unsigned long *contiguous_bitmap;
++	unsigned long pfn = p >> PAGE_SHIFT;
++	unsigned int offset = p & ~PAGE_MASK;
++
++	if (!is_running_on_xen())
++		return 0;
++
++	if (offset + size <= PAGE_SIZE)
++		return 0;
++	if (test_bit(pfn, contiguous_bitmap))
++		return 0;
++	if (check_pages_physically_contiguous(pfn, offset, size))
++		return 0;
++	return 1;
++}
+ 
+ /*
+  * This should be broken out of swiotlb and put in a common place
+@@ -62,6 +97,9 @@ xen_map_sg(struct device *dev, struct scatterlist *sg, int nents,
+ 		sg[i].dma_length  = sg[i].length;
+ 
+ 		IOMMU_BUG_ON(address_needs_mapping(dev, sg[i].dma_address));
++		IOMMU_BUG_ON(range_straddles_page_boundary( 
++			page_to_pseudophys(sg[i].page) + sg[i].offset,
++			sg[i].length));
+ 	}
+ 
+ 	return nents;
+@@ -131,7 +169,7 @@ xen_map_single(struct device *dev, void *ptr, size_t size,
+ {
+ 	dma_addr_t dma_addr = virt_to_bus(ptr);
+ 
+-	IOMMU_BUG_ON(range_straddles_page_boundary(ptr, size));
++	IOMMU_BUG_ON(range_straddles_page_boundary(__pa(ptr), size));
+ 	IOMMU_BUG_ON(address_needs_mapping(dev, dma_addr));
+ 
+ 	return dma_addr;
+diff --git a/include/asm-ia64/dma-mapping.h b/include/asm-ia64/dma-mapping.h
+index 533952e..a85a10c 100644
+--- a/include/asm-ia64/dma-mapping.h
++++ b/include/asm-ia64/dma-mapping.h
+@@ -75,18 +75,4 @@ dma_cache_sync (void *vaddr, size_t size, enum dma_data_direction dir)
+ 
+ #define dma_is_consistent(dma_handle)	(1)	/* all we do is coherent memory... */
+ 
+-#define contiguous_bitmap_init(end_pfn)	((void)end_pfn)
+-
+-static inline int
+-range_straddles_page_boundary(void *p, size_t size)
+-{
+-	extern unsigned long *contiguous_bitmap;
+-
+-	if (!is_running_on_xen())
+-		return 0;
+-
+-	return (((((unsigned long)p & ~PAGE_MASK) + size) > PAGE_SIZE) &&
+-	        !test_bit(__pa(p) >> PAGE_SHIFT, contiguous_bitmap));
+-}
+-
+ #endif /* _ASM_IA64_DMA_MAPPING_H */
+diff --git a/include/asm-ia64/maddr.h b/include/asm-ia64/maddr.h
+index 1b05e4c..10c22db 100644
+--- a/include/asm-ia64/maddr.h
++++ b/include/asm-ia64/maddr.h
+@@ -102,5 +102,14 @@ extern void xen_machphys_update(unsigned long mfn, unsigned long pfn);
+ #endif /* CONFIG_VMX_GUEST */
+ 
+ typedef unsigned long maddr_t;	// to compile netback, netfront
++#ifndef _ASM_IA64_SN_TYPES_H /* paddr_t is defined in asm-ia64/sn/types.h */
++typedef unsigned long paddr_t;
++#endif
++
++#ifdef CONFIG_XEN
++int range_straddles_page_boundary(paddr_t p, size_t size);
++#else
++#define range_straddles_page_boundary(addr, size)	(0)
++#endif
+ 
+ #endif /* _ASM_IA64_MADDR_H */
+diff --git a/include/asm-ia64/sn/types.h b/include/asm-ia64/sn/types.h
+index 8e04ee2..20f13bf 100644
+--- a/include/asm-ia64/sn/types.h
++++ b/include/asm-ia64/sn/types.h
+@@ -20,7 +20,9 @@ typedef unsigned char	slotid_t;	/* slot (blade) within module */
+ typedef unsigned char	slabid_t;	/* slab (asic) within slot */
+ typedef u64 nic_t;
+ typedef unsigned long iopaddr_t;
++#ifndef _ASM_IA64_MADDR_H /* paddr_t is defined in asm-ia64/maddr.h */
+ typedef unsigned long paddr_t;
++#endif
+ typedef short cnodeid_t;
+ 
+ #endif /* _ASM_IA64_SN_TYPES_H */
