@@ -4,7 +4,7 @@
 %define with_doc       0
 %define with_headers   1
 %define with_openafs   0
-%define ovzver 028stab060
+%define ovzver 028stab062
 
 # Whether to apply the Xen patches -- leave this enabled.
 %define includexen 1
