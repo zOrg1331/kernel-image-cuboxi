@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
-Version: 2.6.29
-Release: alt8
+Version: 2.6.30
+Release: alt0.rc6
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -8,7 +8,7 @@ Release: alt8
 # 0.0.X -- preX
 # 0.X.0 -- rcX
 # 1.0.0 -- release
-%define kernel_extra_version_numeric 1.0.0
+%define kernel_extra_version_numeric 0.6.0
 
 %define krelease	%release
 
@@ -340,6 +340,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Sat May 16 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.30-alt0.rc6
+- 2.6.30-rc6
+
 * Tue May 12 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.29-alt8
 - updated ALSA to 1.0.20
 
