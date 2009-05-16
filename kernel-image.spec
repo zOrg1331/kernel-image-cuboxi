@@ -45,7 +45,7 @@ ExclusiveArch: i686 x86_64
 ExclusiveOS: Linux
 
 BuildRequires(pre): rpm-build-kernel
-BuildRequires: dev86 flex
+BuildRequires: dev86 flex lzma-utils
 BuildRequires: libdb4-devel
 BuildRequires: gcc%kgcc_version
 BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeric
