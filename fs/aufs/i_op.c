@@ -22,6 +22,9 @@
 
 #include <linux/device_cgroup.h>
 #include <linux/fs_stack.h>
+#include <linux/mm.h>
+#include <linux/namei.h>
+#include <linux/security.h>
 #include <linux/uaccess.h>
 #include "aufs.h"
 
@@ -177,7 +180,6 @@ static struct dentry *aufs_lookup(struct inode *dir, struct dentry *dentry,
 	ret = d_splice_alias(inode, dentry);
 	if (unlikely(IS_ERR(ret) && inode))
 		ii_write_unlock(inode);
-	au_store_oflag(nd, inode);
 
  out_unlock:
 	di_write_unlock(dentry);

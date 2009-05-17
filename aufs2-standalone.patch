@@ -22,7 +22,7 @@ index af6d047..dba1ce1 100644
  obj-$(CONFIG_EXOFS_FS)          += exofs/
 +obj-$(CONFIG_AUFS_FS)           += aufs/
 diff --git a/fs/namei.c b/fs/namei.c
-index 78f253c..b832aa3 100644
+index 967c3db..64a5060 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
 @@ -337,6 +337,7 @@ int deny_write_access(struct file * file)
@@ -62,7 +62,7 @@ index 78f253c..b832aa3 100644
  /**
   * lookup_one_len - filesystem helper to lookup single pathname component
 diff --git a/fs/namespace.c b/fs/namespace.c
-index 4119620..ae9b883 100644
+index 134d494..7cd1919 100644
 --- a/fs/namespace.c
 +++ b/fs/namespace.c
 @@ -38,6 +38,9 @@
@@ -76,7 +76,7 @@ index 4119620..ae9b883 100644
  static int event;
  static DEFINE_IDA(mnt_id_ida);
 diff --git a/fs/open.c b/fs/open.c
-index 377eb25..a6dcf89 100644
+index bdfbf03..81c39b3 100644
 --- a/fs/open.c
 +++ b/fs/open.c
 @@ -221,6 +221,7 @@ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
@@ -129,7 +129,7 @@ index 666953d..fbc3f77 100644
  /**
   * splice_direct_to_actor - splices data directly between two non-pipes
 diff --git a/include/linux/Kbuild b/include/linux/Kbuild
-index ca9b9b9..d05472c 100644
+index 3f0eaa3..6b7611f 100644
 --- a/include/linux/Kbuild
 +++ b/include/linux/Kbuild
 @@ -34,6 +34,7 @@ header-y += atmppp.h
@@ -154,10 +154,10 @@ index da5a5a1..261b136 100644
  /*
   * Lock-classes are keyed via unique addresses, by embedding the
 diff --git a/include/linux/namei.h b/include/linux/namei.h
-index fc2e035..182d43b 100644
+index 518098f..42a5279 100644
 --- a/include/linux/namei.h
 +++ b/include/linux/namei.h
-@@ -75,6 +75,9 @@ extern struct file *lookup_instantiate_filp(struct nameidata *nd, struct dentry
+@@ -74,6 +74,9 @@ extern struct file *lookup_instantiate_filp(struct nameidata *nd, struct dentry
  extern struct file *nameidata_to_filp(struct nameidata *nd, int flags);
  extern void release_open_intent(struct nameidata *);
  

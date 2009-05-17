@@ -1,3 +1,127 @@
+commit badfd949ba17cde83c3d9ba3174dc414b330fdf8
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri May 15 11:01:47 2009 +0900
+
+    aufs: support linux-2.6.30-rcN
+    
+    - the argument of ->page_mkwrite() chages.
+    - support fmode_t.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 925a836876513343c5a234c1f702bf7f3f72e6ff
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri May 15 00:20:12 2009 +0900
+
+    aufs: generic support for vm operations
+    
+    Aufs has to implement vm_ops->page_mkwrite in order to support
+    ubifs. But it is a hazard when other branch fs does not implement
+    ->page_mkwrite.
+    Finally, aufs sets ->page_mkwrite dynamically, and ->close for fuse.
+    
+    - new member fi_vm_ops in struct au_finfo.
+    - aufs_page_mkwrite() calls lower ->page_mkwrite unconditionally.
+    - new function aufs_vm_close().
+    - new function au_custom_vm_ops() allocates fi_vm_ops and sets
+      ->page_mkwrite and ->close.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit e487d9bfabcd9aa271af841f7b169b59972283e4
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu May 14 12:36:02 2009 +0900
+
+    aufs: begin supporting ubifs
+    
+    Addition to last commit by Joonwoo Park which implements
+    vm_operations_struct.page_mkwrite(), support ubsifs too
+    in au_test_fs_bad_mapping().
+    Also in au_test_fs_no_limit_nlink() and au_test_fs_notime().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 5a2bd9c671a941cf34dbc434ab657fbfafdc209c
+Author: Joonwoo Park <joonwpark81@gmail.com>
+Date:   Tue May 12 15:19:26 2009 -0700
+
+    Fwd: aufs2 with ubifs mmap problem
+    
+    I've encounter a aufs related problem when I use mmap on ubifs as
+    read-write branch.
+    FYI, I cannot see this problem on ubifs only partition, aufs with
+    tmpfs branch and aufs with ext3 branch.
+    
+    The problem that I encountered was ubifs set_page_dirty() assertion
+    failure when mmap-ing to aufs filesystem which has branch as ubifs
+    filesystem.
+    I had a quick aufs hacking and I've inclined that aufs should have
+    handled page_mkwrite of vm_operation. =A0The current version of aufs2 is
+    registering only aufs_fault.
+    Please find attached patch file aufs-mmap-fault.patch and correct me
+    if I'm wrong.
+    
+    Attached patch looked like solve this problem but no luck.
+    This patch reduced lots of ubifs assertion failures but I'm still
+    seeing assertion failure after large size of mmap writing (actually
+    exiting the process after mmap writing).
+    It seems that I still have a problem when do_munmap from sys_exit is called=
+    .
+    
+    Do you have any idea for this issue?
+    
+    Thanks,
+    Joonwoo
+    
+    Signed-off-by: Joonwoo Park <joonwpark81@gmail.com>
+
+commit 0562f63f7f98a0d1db23e1f5821b253aef481d48
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon May 11 10:07:38 2009 +0900
+
+    aufs: remove handling FMODE_EXEC code
+    
+    By the commit 6e8341a11eb21826b7192d0bb88cb5b44900a9af
+    "Switch open_exec() and sys_uselib() to do_open_filp()",
+    FMODE_EXEC flag is passed to struct file.
+    Remove a long-lived dirty trick in aufs.
+    
+    - remove au_store_oflag().
+    - test ->f_flags instead of f_mode.
+    - stop storing FMODE_EXEC in file->private_data and re-setting it.
+    - remove 'exec_flag' parameter from vfsub_dentry_open().h and
+      vfsub_ima_mask().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit d2c3e73ea8b469cd5b3af12da89ab42cc8639af5
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue May 12 12:00:43 2009 +0900
+
+    aufs: tiny, missing header file
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 83c15942cd143f6206460500f24f95a7fa3ff1f9
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon May 11 16:06:07 2009 +0900
+
+    aufs: tiny, just a comment
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 7266a9757ae38d515578075ac3e9626c2fa0931b
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon May 11 23:43:44 2009 +0900
+
+    aufs: simplify header file inclusion
+    
+    Instead of including header files, declare some structure names.
+    
+    - move au_igrab() from inode.h to inode.c.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit c6ad1c9b6635c23c017ca37c6aec15ce3276fbf3
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Sat May 9 13:40:13 2009 +0900

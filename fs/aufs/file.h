@@ -25,7 +25,6 @@
 
 #ifdef __KERNEL__
 
-#include <linux/file.h>
 #include <linux/fs.h>
 #include <linux/aufs_type.h>
 #include "rwsem.h"
@@ -46,7 +45,10 @@ struct au_finfo {
 
 	union {
 		/* non-dir only */
-		struct vm_operations_struct	*fi_h_vm_ops;
+		struct {
+			struct vm_operations_struct	*fi_h_vm_ops;
+			struct vm_operations_struct	*fi_vm_ops;
+		};
 
 		/* dir only */
 		struct {
@@ -60,7 +62,6 @@ struct au_finfo {
 
 /* file.c */
 extern struct address_space_operations aufs_aop;
-void au_store_oflag(struct nameidata *nd, struct inode *inode);
 unsigned int au_file_roflags(unsigned int flags);
 struct file *au_h_open(struct dentry *dentry, aufs_bindex_t bindex, int flags,
 		       struct file *file);

@@ -20,6 +20,7 @@
  * lookup and dentry operations
  */
 
+#include <linux/namei.h>
 #include "aufs.h"
 
 static void au_h_nd(struct nameidata *h_nd, struct nameidata *nd)
@@ -824,7 +825,6 @@ static int aufs_d_revalidate(struct dentry *dentry, struct nameidata *nd)
  out_dgrade:
 	di_downgrade_lock(dentry, AuLock_IR);
  out:
-	au_store_oflag(nd, inode);
 	aufs_read_unlock(dentry, AuLock_IR);
 	AuTraceErr(err);
 	valid = !err;
