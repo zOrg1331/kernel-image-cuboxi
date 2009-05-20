@@ -1,26 +1,5 @@
 aufs2 standalone patch for linux-2.6.
 
-diff --git a/fs/Kconfig b/fs/Kconfig
-index 9f7270f..7b7f62a 100644
---- a/fs/Kconfig
-+++ b/fs/Kconfig
-@@ -203,6 +203,7 @@ config NILFS2_FS
- 	  To compile this file system support as a module, choose M here: the
- 	  module will be called nilfs2.  If unsure, say N.
- 
-+source "fs/aufs/Kconfig"
- endif # MISC_FILESYSTEMS
- 
- menuconfig NETWORK_FILESYSTEMS
-diff --git a/fs/Makefile b/fs/Makefile
-index af6d047..dba1ce1 100644
---- a/fs/Makefile
-+++ b/fs/Makefile
-@@ -124,3 +124,4 @@ obj-$(CONFIG_OCFS2_FS)		+= ocfs2/
- obj-$(CONFIG_BTRFS_FS)		+= btrfs/
- obj-$(CONFIG_GFS2_FS)           += gfs2/
- obj-$(CONFIG_EXOFS_FS)          += exofs/
-+obj-$(CONFIG_AUFS_FS)           += aufs/
 diff --git a/fs/namei.c b/fs/namei.c
 index 967c3db..64a5060 100644
 --- a/fs/namei.c
@@ -128,18 +107,6 @@ index 666953d..fbc3f77 100644
  
  /**
   * splice_direct_to_actor - splices data directly between two non-pipes
-diff --git a/include/linux/Kbuild b/include/linux/Kbuild
-index 3f0eaa3..6b7611f 100644
---- a/include/linux/Kbuild
-+++ b/include/linux/Kbuild
-@@ -34,6 +34,7 @@ header-y += atmppp.h
- header-y += atmsap.h
- header-y += atmsvc.h
- header-y += atm_zatm.h
-+header-y += aufs_type.h
- header-y += auto_fs4.h
- header-y += ax25.h
- header-y += b1lli.h
 diff --git a/include/linux/lockdep.h b/include/linux/lockdep.h
 index da5a5a1..261b136 100644
 --- a/include/linux/lockdep.h

@@ -1,3 +1,43 @@
+commit 081a7bb8a97076c3bb184f29bb0ff6bef5673463
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed May 20 11:50:32 2009 +0900
+
+    aufs: declare earlier
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit ea041877aa1f155e86d8d8ff2ab73149ab4d331d
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon May 18 12:06:55 2009 +0900
+
+    aufs: describe how to build
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 4855da921a425534e58e97a4be6b65b6f2585faf
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon May 18 11:27:36 2009 +0900
+
+    aufs: remove S_DEAD test
+    
+    By last commit "ehnahce link", testing S_DEAD flag becomes unnecessary.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 105fc7be86a143c9aa69d6c91661510faec305f8
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon May 18 08:01:45 2009 +0900
+
+    aufs: enhance link(2)
+    
+    I noticed vfs_link() doesn't hold dir->i_mutex (after lookup), and
+    unlink/rename may race with link, when I was reading ubifs.
+    <http://marc.info/?l=linux-fsdevel&m=124223234505544&w=2>
+    The same race can happen in aufs too. While fixing vfs_link() may be one
+    option, here I fix aufs.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit badfd949ba17cde83c3d9ba3174dc414b330fdf8
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Fri May 15 11:01:47 2009 +0900
