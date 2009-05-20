@@ -37,7 +37,7 @@
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define krelease alt5
+%define krelease alt6
 %define xen_hv_cset 15502
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
@@ -6756,6 +6756,11 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Wed May 20 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt6
+- Compile processor.ko into kernel
+- Don't build ntfs.ko
+- Release of 2.6.18-128.1.1.el5.028stab062.3
+
 * Mon Apr 20 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt5
 - Disable CONFIG_KEYS (ALT #17478)
 
