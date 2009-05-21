@@ -1,4 +1,4 @@
-Name: kernel-image-std-def
+Name: kernel-image-rt-smp
 Version: 2.6.29
 Release: alt1
 epoch:1 
