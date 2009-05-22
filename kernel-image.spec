@@ -34,7 +34,7 @@ epoch:1
 %define kbuild_dir	%_prefix/src/linux-%kversion-%flavour-%krelease
 %define old_kbuild_dir	%_prefix/src/linux-%kversion-%flavour
 
-Summary: The Linux kernel (the core of the Linux operating system)
+Summary: The Linux kernel with xenomai(RT) patch
 License: GPL
 Group: System/Kernel and hardware
 Url: http://www.kernel.org/
@@ -85,11 +85,8 @@ Most hardware drivers for this kernel are built as modules.  Some of
 these drivers are built separately from the kernel; they are available
 in separate packages (kernel-modules-*-%flavour).
 
-The "std" variant of kernel packages is a generic 2.6.x kernel which
-should support wide range of hardware, but does not contain patches
-which are useful only for some special applications (and may have
-undesirable side effects in other cases).  This is the default 2.6.x
-kernel variant for ALT Linux distributions.
+This is special kernel for real time application. Use it if you make real-time environment.
+This kernel have not powersaving features support like CPUFreq, so it can overheat you CPU.
 
 %package -n kernel-modules-oss-%flavour
 Summary: OSS sound driver modules (obsolete)
@@ -478,7 +475,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Mon Apr 27 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.29-alt1
-- 2.6.29.1
+- add xenomai RT patch
+- 2.6.29.4
 
 * Wed Apr 01 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt16
 - alsa: alsa 1.0.19 repleaced by vanilla alsa with patches
