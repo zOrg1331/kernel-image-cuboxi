@@ -136,7 +136,7 @@ void rthal_latency_above_max(struct pt_regs *regs)
 			 sizeof(buf),
 			 "NMI watchdog detected timer latency above %u us\n",
 			 rthal_maxlat_us);
-		die_nmi(regs, buf);
+		die_nmi( buf,regs,1);
 	}
 }
 
