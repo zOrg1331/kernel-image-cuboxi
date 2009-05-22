@@ -165,6 +165,10 @@ void native_flush_tlb_others(const cpumask_t *cpumaskp, struct mm_struct *mm,
 	 */
 	send_IPI_mask(&cpumask, INVALIDATE_TLB_VECTOR);
 
+#ifdef CONFIG_IPIPE
+	WARN_ON_ONCE(irqs_disabled_hw()); 
+#endif
+
 	while (!cpus_empty(flush_cpumask))
 		/* nothing. lockup detection does not belong here */
 		cpu_relax();
