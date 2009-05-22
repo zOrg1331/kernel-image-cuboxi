@@ -1096,7 +1096,7 @@ void __cpuinit cpu_init(void)
 
 #else
 
-void __cpuinit cpu_init(void)
+void notrace __cpuinit cpu_init(void)
 {
 	int cpu = smp_processor_id();
 	struct task_struct *curr = current;

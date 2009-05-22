@@ -187,7 +187,7 @@ all: bzImage
 zImage zlilo zdisk: KBUILD_IMAGE := $(boot)/zImage
 
 zImage bzImage: vmlinux
-	$(Q)$(MAKE) $(build)=$(boot) $(KBUILD_IMAGE)
+	$(Q)$(MAKE) $(build)=$(boot) mflags-y="$(mflags-y)" $(KBUILD_IMAGE)
 	$(Q)mkdir -p $(objtree)/arch/$(UTS_MACHINE)/boot
 	$(Q)ln -fsn ../../x86/boot/bzImage $(objtree)/arch/$(UTS_MACHINE)/boot/$@
 
@@ -232,3 +232,5 @@ endef
 CLEAN_FILES += arch/x86/boot/fdimage \
 	       arch/x86/boot/image.iso \
 	       arch/x86/boot/mtools.conf
+
+drivers-$(CONFIG_XENOMAI) += arch/x86/xenomai/
