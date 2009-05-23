@@ -1,3 +1,16 @@
+commit 436c2d96e9f3f92c227c23e7f7638f13bb0b4ac5
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun May 24 01:37:41 2009 +0900
+
+    aufs: bugfix, regression in last week
+    
+    The newly added fi_vm_ops member in struct au_finfo caused a bug.
+    It should be freed in case of the file is NOT a dir.
+    
+    Reported-by: Joerg <realKano@directbox.com>
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 081a7bb8a97076c3bb184f29bb0ff6bef5673463
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Wed May 20 11:50:32 2009 +0900
