@@ -191,16 +191,6 @@ static int proc_cwd_link(struct inode *inode, struct path *path)
 		result = get_fs_path(task, path, 0);
 		put_task_struct(task);
 	}
-	if (fs) {
-		read_lock(&fs->lock);
-		result = d_root_check(&fs->pwd);
-		if (result == 0) {
-			*path = fs->pwd;
-			path_get(&fs->pwd);
-		}
-		read_unlock(&fs->lock);
-		put_fs_struct(fs);
-	}
 	return result;
 }
 

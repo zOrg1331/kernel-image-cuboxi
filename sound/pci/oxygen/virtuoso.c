@@ -154,22 +154,6 @@ static void pcm1796_write(struct oxygen *chip, unsigned int codec,
 			 (reg << 8) | value);
 }
 
-static inline void pcm1796_write_i2c(struct oxygen *chip, unsigned int codec,
-				     u8 reg, u8 value)
-{
-	oxygen_write_i2c(chip, I2C_DEVICE_PCM1796(codec), reg, value);
-}
-
-static void pcm1796_write(struct oxygen *chip, unsigned int codec,
-			  u8 reg, u8 value)
-{
-	if ((chip->model.function_flags & OXYGEN_FUNCTION_2WIRE_SPI_MASK) ==
-	    OXYGEN_FUNCTION_SPI)
-		pcm1796_write_spi(chip, codec, reg, value);
-	else
-		pcm1796_write_i2c(chip, codec, reg, value);
-}
-
 static void cs4398_write(struct oxygen *chip, u8 reg, u8 value)
 {
 	oxygen_write_i2c(chip, I2C_DEVICE_CS4398, reg, value);
