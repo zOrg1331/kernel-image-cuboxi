@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-smp
 Version: 2.6.27
-Release: alt6
+Release: alt7
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -468,6 +468,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Mon May 25 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.27-alt7
+- Merge with silicium's std-def
+
 * Mon Apr 20 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.27-alt6
 - Remove unionfs support
 
