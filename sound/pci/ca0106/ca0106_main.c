@@ -254,7 +254,7 @@ static struct snd_ca0106_details ca0106_chip_details[] = {
 	   .name   = "MSI K8N Diamond MB",
 	   .gpio_type = 2,
 	   .i2c_adc = 1,
-	   .spi_dac = 1 } ,
+	   .spi_dac = 2 },
 	 /* Shuttle XPC SD31P which has an onboard Creative Labs
 	  * Sound Blaster Live! 24-bit EAX
 	  * high-definition 7.1 audio processor".
@@ -305,15 +305,9 @@ static struct snd_pcm_hardware snd_ca0106_capture_hw = {
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER |
 				 SNDRV_PCM_INFO_MMAP_VALID),
 	.formats =		SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S32_LE,
-#if 0 /* FIXME: looks like 44.1kHz capture causes noisy output on 48kHz */
 	.rates =		(SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000 |
 				 SNDRV_PCM_RATE_96000 | SNDRV_PCM_RATE_192000),
 	.rate_min =		44100,
-#else
-	.rates =		(SNDRV_PCM_RATE_48000 |
-				 SNDRV_PCM_RATE_96000 | SNDRV_PCM_RATE_192000),
-	.rate_min =		48000,
-#endif /* FIXME */
 	.rate_max =		192000,
 	.channels_min =		2,
 	.channels_max =		2,
@@ -485,15 +479,6 @@ static const int spi_dacd_bit[] = {
 	[PCM_UNKNOWN_CHANNEL]	= SPI_DACD1_BIT,
 };
 
-static void restore_spdif_bits(struct snd_ca0106 *chip, int idx)
-{
-	if (chip->spdif_str_bits[idx] != chip->spdif_bits[idx]) {
-		chip->spdif_str_bits[idx] = chip->spdif_bits[idx];
-		snd_ca0106_ptr_write(chip, SPCS0 + idx, 0,
-				     chip->spdif_str_bits[idx]);
-	}
-}
-
 /* open_playback callback */
 static int snd_ca0106_pcm_open_playback_channel(struct snd_pcm_substream *substream,
 						int channel_id)
@@ -539,9 +524,6 @@ static int snd_ca0106_pcm_open_playback_channel(struct snd_pcm_substream *substr
 		if (err < 0)
 			return err;
 	}
-
-	restore_spdif_bits(chip, channel_id);
-
 	return 0;
 }
 
@@ -552,8 +534,6 @@ static int snd_ca0106_pcm_close_playback(struct snd_pcm_substream *substream)
 	struct snd_pcm_runtime *runtime = substream->runtime;
         struct snd_ca0106_pcm *epcm = runtime->private_data;
 	chip->playback_channels[epcm->channel_id].use = 0;
-
-	restore_spdif_bits(chip, epcm->channel_id);
 
 	if (chip->details->spi_dac && epcm->channel_id != PCM_FRONT_CHANNEL) {
 		const int reg = spi_dacd_reg[epcm->channel_id];
@@ -779,6 +759,7 @@ static int snd_ca0106_pcm_prepare_playback(struct snd_pcm_substream *substream)
 			       SPCS_CHANNELNUM_LEFT | SPCS_SOURCENUM_UNSPEC |
 			       SPCS_GENERATIONSTATUS | 0x00001200 |
 			       0x00000000 | SPCS_EMPHASIS_NONE | SPCS_COPYRIGHT );
+	}
 #endif
 
 	return 0;
@@ -1323,10 +1304,9 @@ static unsigned int i2c_adc_init[][2] = {
 	{ 0x15, ADC_MUX_LINEIN },  /* ADC Mixer control */
 };
 
-static void ca0106_init_chip(struct snd_ca0106 *chip, int resume)
+static void ca0106_init_chip(struct snd_ca0106 *chip)
 {
 	int ch;
-	unsigned int def_bits;
 
 	outl(0, chip->port + INTE);
 
@@ -1344,22 +1324,31 @@ static void ca0106_init_chip(struct snd_ca0106 *chip, int resume)
 	 *  AN                = 0     (Audio data)
 	 *  P                 = 0     (Consumer)
 	 */
-	def_bits =
+	chip->spdif_bits[0] =
 		SPCS_CLKACCY_1000PPM | SPCS_SAMPLERATE_48 |
 		SPCS_CHANNELNUM_LEFT | SPCS_SOURCENUM_UNSPEC |
 		SPCS_GENERATIONSTATUS | 0x00001200 |
 		0x00000000 | SPCS_EMPHASIS_NONE | SPCS_COPYRIGHT;
-	if (!resume) {
-		chip->spdif_str_bits[0] = chip->spdif_bits[0] = def_bits;
-		chip->spdif_str_bits[1] = chip->spdif_bits[1] = def_bits;
-		chip->spdif_str_bits[2] = chip->spdif_bits[2] = def_bits;
-		chip->spdif_str_bits[3] = chip->spdif_bits[3] = def_bits;
-	}
+	snd_ca0106_ptr_write(chip, SPCS0, 0, chip->spdif_bits[0]);
 	/* Only SPCS1 has been tested */
-	snd_ca0106_ptr_write(chip, SPCS1, 0, chip->spdif_str_bits[1]);
-	snd_ca0106_ptr_write(chip, SPCS0, 0, chip->spdif_str_bits[0]);
-	snd_ca0106_ptr_write(chip, SPCS2, 0, chip->spdif_str_bits[2]);
-	snd_ca0106_ptr_write(chip, SPCS3, 0, chip->spdif_str_bits[3]);
+	chip->spdif_bits[1] =
+		SPCS_CLKACCY_1000PPM | SPCS_SAMPLERATE_48 |
+		SPCS_CHANNELNUM_LEFT | SPCS_SOURCENUM_UNSPEC |
+		SPCS_GENERATIONSTATUS | 0x00001200 |
+		0x00000000 | SPCS_EMPHASIS_NONE | SPCS_COPYRIGHT;
+	snd_ca0106_ptr_write(chip, SPCS1, 0, chip->spdif_bits[1]);
+	chip->spdif_bits[2] =
+		SPCS_CLKACCY_1000PPM | SPCS_SAMPLERATE_48 |
+		SPCS_CHANNELNUM_LEFT | SPCS_SOURCENUM_UNSPEC |
+		SPCS_GENERATIONSTATUS | 0x00001200 |
+		0x00000000 | SPCS_EMPHASIS_NONE | SPCS_COPYRIGHT;
+	snd_ca0106_ptr_write(chip, SPCS2, 0, chip->spdif_bits[2]);
+	chip->spdif_bits[3] =
+		SPCS_CLKACCY_1000PPM | SPCS_SAMPLERATE_48 |
+		SPCS_CHANNELNUM_LEFT | SPCS_SOURCENUM_UNSPEC |
+		SPCS_GENERATIONSTATUS | 0x00001200 |
+		0x00000000 | SPCS_EMPHASIS_NONE | SPCS_COPYRIGHT;
+	snd_ca0106_ptr_write(chip, SPCS3, 0, chip->spdif_bits[3]);
 
         snd_ca0106_ptr_write(chip, PLAYBACK_MUTE, 0, 0x00fc0000);
         snd_ca0106_ptr_write(chip, CAPTURE_MUTE, 0, 0x00fc0000);
@@ -1419,20 +1408,17 @@ static void ca0106_init_chip(struct snd_ca0106 *chip, int resume)
 	        /* Select MIC, Line in, TAD in, AUX in */
 	        snd_ca0106_ptr_write(chip, CAPTURE_SOURCE, 0x0, 0x333300e4);
 		/* Default to CAPTURE_SOURCE to i2s in */
-		if (!resume)
-			chip->capture_source = 3;
+		chip->capture_source = 3;
 	} else if (chip->details->ac97 == 1) {
 	        /* Default to AC97 in */
 	        snd_ca0106_ptr_write(chip, CAPTURE_SOURCE, 0x0, 0x444400e4);
 		/* Default to CAPTURE_SOURCE to AC97 in */
-		if (!resume)
-			chip->capture_source = 4;
+		chip->capture_source = 4;
 	} else {
 	        /* Select MIC, Line in, TAD in, AUX in */
 	        snd_ca0106_ptr_write(chip, CAPTURE_SOURCE, 0x0, 0x333300e4);
 		/* Default to Set CAPTURE_SOURCE to i2s in */
-		if (!resume)
-			chip->capture_source = 3;
+		chip->capture_source = 3;
 	}
 
 	if (chip->details->gpio_type == 2) {
@@ -1598,7 +1584,7 @@ static int __devinit snd_ca0106_create(int dev, struct snd_card *card,
 	sprintf(card->longname, "%s at 0x%lx irq %i",
 		c->name, chip->port, chip->irq);
 
-	ca0106_init_chip(chip, 0);
+	ca0106_init_chip(chip);
 
 	err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops);
 	if (err < 0) {
@@ -1707,14 +1693,13 @@ static int __devinit snd_ca0106_probe(struct pci_dev *pci,
 		return -ENOENT;
 	}
 
-	err = snd_card_create(index[dev], id[dev], THIS_MODULE, 0, &card);
-	if (err < 0)
-		return err;
+	card = snd_card_new(index[dev], id[dev], THIS_MODULE, 0);
+	if (card == NULL)
+		return -ENOMEM;
 
 	err = snd_ca0106_create(dev, card, pci, &chip);
 	if (err < 0)
 		goto error;
-	card->private_data = chip;
 
 	for (i = 0; i < 4; i++) {
 		err = snd_ca0106_pcm(chip, i);
@@ -1773,8 +1758,7 @@ static int snd_ca0106_suspend(struct pci_dev *pci, pm_message_t state)
 	snd_power_change_state(card, SNDRV_CTL_POWER_D3hot);
 	for (i = 0; i < 4; i++)
 		snd_pcm_suspend_all(chip->pcm[i]);
-	if (chip->details->ac97)
-		snd_ac97_suspend(chip->ac97);
+	snd_ac97_suspend(chip->ac97);
 	snd_ca0106_mixer_suspend(chip);
 
 	ca0106_stop_chip(chip);
@@ -1793,18 +1777,12 @@ static int snd_ca0106_resume(struct pci_dev *pci)
 
 	pci_set_power_state(pci, PCI_D0);
 	pci_restore_state(pci);
-
-	if (pci_enable_device(pci) < 0) {
-		snd_card_disconnect(card);
-		return -EIO;
-	}
-
+	pci_enable_device(pci);
 	pci_set_master(pci);
 
-	ca0106_init_chip(chip, 1);
+	ca0106_init_chip(chip);
 
-	if (chip->details->ac97)
-		snd_ac97_resume(chip->ac97);
+	snd_ac97_resume(chip->ac97);
 	snd_ca0106_mixer_resume(chip);
 	if (chip->details->spi_dac) {
 		for (i = 0; i < ARRAY_SIZE(chip->spi_dac_reg); i++)
@@ -1829,10 +1807,8 @@ static struct pci_driver driver = {
 	.id_table = snd_ca0106_ids,
 	.probe = snd_ca0106_probe,
 	.remove = __devexit_p(snd_ca0106_remove),
-#ifdef CONFIG_PM
 	.suspend = snd_ca0106_suspend,
 	.resume = snd_ca0106_resume,
-#endif
 };
 
 // initialization of the module

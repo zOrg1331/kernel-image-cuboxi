@@ -267,6 +267,14 @@ static inline int dummy_algo_control(struct i2c_adapter *adapter,
 })
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 28)
+#ifndef pci_ioremap_bar
+#define pci_ioremap_bar(pci, a)				\
+	 ioremap_nocache(pci_resource_start(pci, a),	\
+			 pci_resource_len(pci, a))
+#endif
+#endif
+
 #ifndef PCI_DEVICE_ID_MARVELL_88ALP01_CCIC
 #define PCI_DEVICE_ID_MARVELL_88ALP01_CCIC     0x4102
 #endif

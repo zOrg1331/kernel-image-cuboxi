@@ -12,13 +12,13 @@ madwifi-dfs
 madwifi-ar5007
 rt2860
 rtl8187se
+bcmwl
 
 #vendor specific  hardware features drives
 acerhk
 tp_smapi
 heci
 omnibook
-eeepc
 
 #virtualization drivers
 kqemu
@@ -30,6 +30,7 @@ kvm
 #other drivers
 subfs
 svgalib_helper
+etercifs
 
 #telephony drivers
 zaptel

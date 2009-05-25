@@ -52,6 +52,7 @@ BuildRequires: libdb4-devel
 BuildRequires: gcc%kgcc_version
 BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeric
 BuildRequires: module-init-tools >= 3.1
+Provides: kernel-modules-eeepc-%flavour
 
 %if_enabled docs
 BuildRequires: xmlto transfig ghostscript
@@ -495,6 +496,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 * Sun Jan 25 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt11
 - 2.6.27.13 
 - alsa 1.0.19
+- replaced unionfs by aufs
 
 * Thu Jan 15 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt10
 - 2.6.27.12 
@@ -509,6 +511,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 - update config on x86_64: turn off CONFIG_SYSFS_DEPRECATED 
 - fix thinkpad and prism54 aliases
 - add conntrack RTSP support
+- add AUFS
 
 * Thu Dec 18 2008 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt8
 - 2.6.27.10 
