@@ -13,13 +13,14 @@ endif
 CONFIG_AUFS_FS = m
 AUFS_DEF_CONFIG = -DCONFIG_AUFS_MODULE -UCONFIG_AUFS
 include config.mk
+export CONFIG_AUFS_FS
 
-ccflags-y += -I${CURDIR}/include
-ccflags-y += ${AUFS_DEF_CONFIG}
-export ccflags-y
+EXTRA_CFLAGS := -I${CURDIR}/include
+EXTRA_CFLAGS += ${AUFS_DEF_CONFIG}
 
 all: aufs.ko
 aufs.ko: fs/aufs/aufs.ko
 	ln -f $< $@
 fs/aufs/aufs.ko:
-	${MAKE} -C ${KDIR} M=${CURDIR}/fs/aufs modules
+	@echo ${EXTRA_CFLAGS}
+	${MAKE} -C ${KDIR} M=${CURDIR}/fs/aufs EXTRA_CFLAGS="${EXTRA_CFLAGS}" modules
