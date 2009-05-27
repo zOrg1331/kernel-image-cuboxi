@@ -42,11 +42,7 @@ static void epu_cmd(struct cx18 *cx, u32 sw1)
 		cx18_api_epu_cmd_irq(cx, APU);
 }
 
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 18)
-irqreturn_t cx18_irq_handler(int irq, void *dev_id, struct pt_regs *regs)
-#else
 irqreturn_t cx18_irq_handler(int irq, void *dev_id)
-#endif
 {
 	struct cx18 *cx = (struct cx18 *)dev_id;
 	u32 sw1, sw2, hw2;

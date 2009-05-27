@@ -16,7 +16,6 @@
 
 #include <linux/videodev.h>
 #include <linux/i2c.h>
-#include <media/compat.h>
 #include <media/ir-common.h>
 #include <media/ir-kbd-i2c.h>
 #include <media/i2c-addr.h>
@@ -274,7 +273,6 @@ extern int bttv_handle_chipset(struct bttv *btv);
 /* ---------------------------------------------------------- */
 /* exported by bttv-if.c                                      */
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,7,0)
 /* this obsolete -- please use the sysfs-based
    interface below for new code */
 
@@ -299,7 +297,6 @@ extern int bttv_read_gpio(unsigned int card, unsigned long *data);
 extern int bttv_write_gpio(unsigned int card,
 			   unsigned long mask, unsigned long data);
 
-#endif
 
 
 

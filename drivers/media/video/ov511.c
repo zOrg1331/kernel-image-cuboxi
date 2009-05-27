@@ -637,7 +637,7 @@ ov511_i2c_write_internal(struct usb_ov511 *ov,
 			rc = 0;
 			break;
 		}
-#if 0 /* keep */
+#if 0
 		/* I2C abort */
 		reg_w(ov, R511_I2C_CTL, 0x10);
 #endif
@@ -1105,7 +1105,7 @@ ov51x_clear_snapshot(struct usb_ov511 *ov)
 	}
 }
 
-#if 0 /* keep */
+#if 0
 /* Checks the status of the snapshot button. Returns 1 if it was pressed since
  * it was last cleared, and zero in all other cases (including errors) */
 static int
@@ -1675,7 +1675,7 @@ sensor_set_hue(struct usb_ov511 *ov, unsigned short val)
 		break;
 	case SEN_OV7620:
 // Hue control is causing problems. I will enable it once it's fixed.
-#if 0 /* keep */
+#if 0
 		rc = i2c_w(ov, 0x7a, (unsigned char)(val >> 8) + 0xb);
 		if (rc < 0)
 			goto out;
@@ -1806,7 +1806,7 @@ sensor_get_picture(struct usb_ov511 *ov, struct video_picture *p)
 	return 0;
 }
 
-#if 0 /* keep */
+#if 0
 // FIXME: Exposure range is only 0x00-0x7f in interlace mode
 /* Sets current exposure for sensor. This only has an effect if auto-exposure
  * is off */
@@ -2173,7 +2173,7 @@ mode_init_ov_sensor_regs(struct usb_ov511 *ov, int width, int height,
 	case SEN_OV7610:
 		i2c_w(ov, 0x14, qvga?0x24:0x04);
 // FIXME: Does this improve the image quality or frame rate?
-#if 0 /* keep */
+#if 0
 		i2c_w_mask(ov, 0x28, qvga?0x00:0x20, 0x20);
 		i2c_w(ov, 0x24, 0x10);
 		i2c_w(ov, 0x25, qvga?0x40:0x8a);
@@ -2195,7 +2195,7 @@ mode_init_ov_sensor_regs(struct usb_ov511 *ov, int width, int height,
 //		i2c_w(ov, 0x2b, 0x00);
 		i2c_w(ov, 0x14, qvga?0xa4:0x84);
 // FIXME: Enable this once 7620AE uses 7620 initial settings
-#if 0 /* keep */
+#if 0
 		i2c_w_mask(ov, 0x28, qvga?0x00:0x20, 0x20);
 		i2c_w(ov, 0x24, qvga?0x20:0x3a);
 		i2c_w(ov, 0x25, qvga?0x30:0x60);
@@ -3440,7 +3440,7 @@ sof:
 	PDEBUG(4, "Starting capture on frame %d", frame->framenum);
 
 // Snapshot not reverse-engineered yet.
-#if 0 /* keep */
+#if 0
 	/* Check to see if it's a snapshot frame */
 	/* FIXME?? Should the snapshot reset go here? Performance? */
 	if (in[8] & 0x02) {
@@ -3508,11 +3508,7 @@ check_middle:
 }
 
 static void
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-ov51x_isoc_irq(struct urb *urb, struct pt_regs *regs)
-#else
 ov51x_isoc_irq(struct urb *urb)
-#endif
 {
 	int i;
 	struct usb_ov511 *ov;
@@ -3919,7 +3915,7 @@ ov51x_dealloc(struct usb_ov511 *ov)
  ***************************************************************************/
 
 static int
-ov51x_v4l1_open(struct inode *inode, struct file *file)
+ov51x_v4l1_open(struct file *file)
 {
 	struct video_device *vdev = video_devdata(file);
 	struct usb_ov511 *ov = video_get_drvdata(vdev);
@@ -3976,7 +3972,7 @@ out:
 }
 
 static int
-ov51x_v4l1_close(struct inode *inode, struct file *file)
+ov51x_v4l1_close(struct file *file)
 {
 	struct video_device *vdev = file->private_data;
 	struct usb_ov511 *ov = video_get_drvdata(vdev);
@@ -4014,7 +4010,7 @@ ov51x_v4l1_close(struct inode *inode, struct file *file)
 }
 
 /* Do not call this function directly! */
-static int
+static long
 ov51x_v4l1_ioctl_internal(struct file *file, unsigned int cmd, void *arg)
 {
 	struct video_device *vdev = file->private_data;
@@ -4205,7 +4201,7 @@ ov51x_v4l1_ioctl_internal(struct file *file, unsigned int cmd, void *arg)
 
 		PDEBUG(4, "VIDIOCSWIN: %dx%d", vw->width, vw->height);
 
-#if 0 /* keep */
+#if 0
 		if (vw->flags)
 			return -EINVAL;
 		if (vw->clipcount)
@@ -4318,7 +4314,7 @@ ov51x_v4l1_ioctl_internal(struct file *file, unsigned int cmd, void *arg)
 
 			rc = mode_init_regs(ov, vm->width, vm->height,
 				vm->format, ov->sub_flag);
-#if 0 /* keep */
+#if 0
 			if (rc < 0) {
 				PDEBUG(1, "Got error while initializing regs ");
 				return ret;
@@ -4453,8 +4449,8 @@ redo:
 	return 0;
 }
 
-static int
-ov51x_v4l1_ioctl(struct inode *inode, struct file *file,
+static long
+ov51x_v4l1_ioctl(struct file *file,
 		 unsigned int cmd, unsigned long arg)
 {
 	struct video_device *vdev = file->private_data;
@@ -4665,17 +4661,13 @@ ov51x_v4l1_mmap(struct file *file, struct vm_area_struct *vma)
 	return 0;
 }
 
-static const struct file_operations ov511_fops = {
+static const struct v4l2_file_operations ov511_fops = {
 	.owner =	THIS_MODULE,
 	.open =		ov51x_v4l1_open,
 	.release =	ov51x_v4l1_close,
 	.read =		ov51x_v4l1_read,
 	.mmap =		ov51x_v4l1_mmap,
 	.ioctl =	ov51x_v4l1_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl = v4l_compat_ioctl32,
-#endif
-	.llseek =	no_llseek,
 };
 
 static struct video_device vdev_template = {
@@ -5080,7 +5072,7 @@ ks0127_configure(struct usb_ov511 *ov)
 	int rc;
 
 // FIXME: I don't know how to sync or reset it yet
-#if 0 /* keep */
+#if 0
 	if (ov51x_init_ks_sensor(ov) < 0) {
 		err("Failed to initialize the KS0127");
 		return -1;
@@ -5167,7 +5159,7 @@ saa7111a_configure(struct usb_ov511 *ov)
 	};
 
 // FIXME: I don't know how to sync or reset it yet
-#if 0 /* keep */
+#if 0
 	if (ov51x_init_saa_sensor(ov) < 0) {
 		err("Failed to initialize the SAA7111A");
 		return -1;

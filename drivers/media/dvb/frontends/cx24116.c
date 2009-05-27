@@ -369,7 +369,7 @@ static int cx24116_set_inversion(struct cx24116_state *state,
  * Not all S2 mmodulation schemes are support and not all rates with
  * a scheme are support. Especially, no auto detect when in S2 mode.
  */
-struct cx24116_modfec {
+static struct cx24116_modfec {
 	fe_delivery_system_t delivery_system;
 	fe_modulation_t modulation;
 	fe_code_rate_t fec;
@@ -1128,23 +1128,6 @@ error1: return NULL;
 }
 EXPORT_SYMBOL(cx24116_attach);
 
-#if 0
-static int cx24116_get_params(struct dvb_frontend *fe)
-{
-	struct cx24116_state *state = fe->demodulator_priv;
-	struct dtv_frontend_properties *cache = &fe->dtv_property_cache;
-
-	dprintk("%s()\n", __func__);
-
-	cache->frequency = state->dcur.frequency;
-	cache->inversion = state->dcur.inversion;
-	cache->modulation = state->dcur.modulation;
-	cache->fec_inner = state->dcur.fec;
-	cache->symbol_rate = state->dcur.symbol_rate;
-
-	return 0;
-}
-#endif
 /*
  * Initialise or wake up device
  *
@@ -1480,6 +1463,7 @@ static struct dvb_frontend_ops cx24116_ops = {
 			FE_CAN_FEC_1_2 | FE_CAN_FEC_2_3 | FE_CAN_FEC_3_4 |
 			FE_CAN_FEC_4_5 | FE_CAN_FEC_5_6 | FE_CAN_FEC_6_7 |
 			FE_CAN_FEC_7_8 | FE_CAN_FEC_AUTO |
+			FE_CAN_2G_MODULATION |
 			FE_CAN_QPSK | FE_CAN_RECOVER
 	},
 

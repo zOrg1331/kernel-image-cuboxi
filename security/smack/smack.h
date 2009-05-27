@@ -16,6 +16,7 @@
 #include <linux/capability.h>
 #include <linux/spinlock.h>
 #include <linux/security.h>
+#include <linux/in.h>
 #include <net/netlabel.h>
 
 /*
@@ -80,6 +81,16 @@ struct smack_cipso {
 };
 
 /*
+ * An entry in the table identifying hosts.
+ */
+struct smk_netlbladdr {
+	struct smk_netlbladdr	*smk_next;
+	struct sockaddr_in	smk_host;	/* network address */
+	struct in_addr		smk_mask;	/* network mask */
+	char			*smk_label;	/* label */
+};
+
+/*
  * This is the repository for labels seen so that it is
  * not necessary to keep allocating tiny chuncks of memory
  * and so that they can be shared.
@@ -127,6 +138,20 @@ struct smack_known {
 #define XATTR_NAME_SMACKIPOUT	XATTR_SECURITY_PREFIX XATTR_SMACK_IPOUT
 
 /*
+ * How communications on this socket are treated.
+ * Usually it's determined by the underlying netlabel code
+ * but there are certain cases, including single label hosts
+ * and potentially single label interfaces for which the
+ * treatment can not be known in advance.
+ *
+ * The possibility of additional labeling schemes being
+ * introduced in the future exists as well.
+ */
+#define SMACK_UNLABELED_SOCKET	0
+#define SMACK_CIPSO_SOCKET	1
+
+/*
+ * smackfs magic number
  * smackfs macic number
  */
 #define SMACK_MAGIC	0x43415d53 /* "SMAC" */
@@ -141,6 +166,7 @@ struct smack_known {
  * CIPSO defaults.
  */
 #define SMACK_CIPSO_DOI_DEFAULT		3	/* Historical */
+#define SMACK_CIPSO_DOI_INVALID		-1	/* Not a DOI */
 #define SMACK_CIPSO_DIRECT_DEFAULT	250	/* Arbitrary */
 #define SMACK_CIPSO_MAXCATVAL		63	/* Bigger gets harder */
 #define SMACK_CIPSO_MAXLEVEL            255     /* CIPSO 2.2 standard */
@@ -176,8 +202,8 @@ u32 smack_to_secid(const char *);
  * Shared data.
  */
 extern int smack_cipso_direct;
-extern int smack_net_nltype;
 extern char *smack_net_ambient;
+extern char *smack_onlycap;
 
 extern struct smack_known *smack_known;
 extern struct smack_known smack_known_floor;
@@ -185,9 +211,10 @@ extern struct smack_known smack_known_hat;
 extern struct smack_known smack_known_huh;
 extern struct smack_known smack_known_invalid;
 extern struct smack_known smack_known_star;
-extern struct smack_known smack_known_unset;
+extern struct smack_known smack_known_web;
 
 extern struct smk_list_entry *smack_list;
+extern struct smk_netlbladdr *smack_netlbladdrs;
 extern struct security_operations smack_ops;
 
 /*

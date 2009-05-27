@@ -175,30 +175,6 @@ lgs8gl5_soft_reset(struct lgs8gl5_state *state)
 	msleep(5);
 }
 
-#if 0
-static int
-lgs8gl5_set_inversion(struct lgs8gl5_state *state, int inversion)
-{
-	u8 val;
-
-	dprintk("%s\n", __func__);
-
-	switch (inversion) {
-	case INVERSION_AUTO:
-		return -EOPNOTSUPP;
-	case INVERSION_ON:
-		val = lgs8gl5_read_reg(state, REG_INVERSION);
-		return lgs8gl5_write_reg(state, REG_INVERSION,
-			val | REG_INVERSION_ON);
-	case INVERSION_OFF:
-		val = lgs8gl5_read_reg(state, REG_INVERSION);
-		return lgs8gl5_write_reg(state, REG_INVERSION,
-			val & ~REG_INVERSION_ON);
-	default:
-		return -EINVAL;
-	}
-}
-#endif
 
 /* Starts demodulation */
 static void

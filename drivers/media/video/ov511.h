@@ -2,7 +2,6 @@
 #define __LINUX_OV511_H
 
 #include <asm/uaccess.h>
-#include <media/compat.h>
 #include <linux/videodev.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>

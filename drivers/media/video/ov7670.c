@@ -18,7 +18,6 @@
 #include <media/v4l2-common.h>
 #include <media/v4l2-chip-ident.h>
 #include <linux/i2c.h>
-#include <media/compat.h>
 
 
 MODULE_AUTHOR("Jonathan Corbet <corbet@lwn.net>");
@@ -424,27 +423,6 @@ static int ov7670_write(struct i2c_client *c, unsigned char reg,
 	return ret;
 }
 
-#if 0 /* Not currently used, but maybe should be  */
-
-static int ov7670_write_mask(struct i2c_client *c, unsigned char reg,
-		unsigned char value, unsigned char mask)
-{
-	unsigned char v;
-	int ret, tries = 0;
-
-	ret = ov7670_read(c, reg, &v);
-	if (ret < 0)
-		return ret;
-	v &= ~mask;
-	v |= (value & mask);
-	msleep(10); /* FIXME experiment */
-	do {
-		ret = ov7670_write(c, reg, v);
-	} while (ret < 0 && ++tries < 3);
-	return ret;
-}
-
-#endif
 
 /*
  * Write a list of register settings; ff/ff stops the process.
@@ -847,28 +825,6 @@ static int ov7670_s_parm(struct i2c_client *c, struct v4l2_streamparm *parms)
  * Code for dealing with controls.
  */
 
-#if 0  /* This seems unneeded after all, should probably come out */
-/*
- * Fetch and store the color matrix.
- */
-static int ov7670_get_cmatrix(struct i2c_client *client,
-	int matrix[CMATRIX_LEN])
-{
-	int i, ret;
-	unsigned char signbits;
-
-	ret = ov7670_read(client, REG_CMATRIX_SIGN, &signbits);
-	for (i = 0; i < CMATRIX_LEN; i++) {
-		unsigned char raw;
-
-		ret += ov7670_read(client, REG_CMATRIX_BASE + i, &raw);
-		matrix[i] = (int) raw;
-		if (signbits & (1 << i))
-			matrix[i] *= -1;
-	}
-	return ret;
-}
-#endif
 
 
 
@@ -1354,7 +1310,7 @@ static int ov7670_command(struct i2c_client *client, unsigned int cmd,
 		void *arg)
 {
 	switch (cmd) {
-	case VIDIOC_G_CHIP_IDENT:
+	case VIDIOC_DBG_G_CHIP_IDENT:
 		return v4l2_chip_ident_i2c_client(client, arg, V4L2_IDENT_OV7670, 0);
 
 	case VIDIOC_INT_RESET:
@@ -1391,7 +1347,6 @@ static struct i2c_driver ov7670_driver = {
 		.name = "ov7670",
 	},
 	.id 		= I2C_DRIVERID_OV7670,
-	.class 		= I2C_CLASS_CAM_DIGITAL,
 	.attach_adapter = ov7670_attach,
 	.detach_client	= ov7670_detach,
 	.command	= ov7670_command,

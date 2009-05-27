@@ -164,7 +164,7 @@ static struct ctrl sd_ctrls[] = {
 	},
 };
 
-static struct v4l2_pix_format vga_mode[] = {
+static const struct v4l2_pix_format vga_mode[] = {
 	{320, 240, V4L2_PIX_FMT_JPEG, V4L2_FIELD_NONE,
 		.bytesperline = 320,
 		.sizeimage = 320 * 240 * 3 / 8 + 590,
@@ -176,7 +176,7 @@ static struct v4l2_pix_format vga_mode[] = {
 		.colorspace = V4L2_COLORSPACE_JPEG,
 		.priv = 0},
 };
-static struct v4l2_pix_format sif_mode[] = {
+static const struct v4l2_pix_format sif_mode[] = {
 	{176, 144, V4L2_PIX_FMT_JPEG, V4L2_FIELD_NONE,
 		.bytesperline = 176,
 		.sizeimage = 176 * 144 * 3 / 8 + 590,
@@ -1592,25 +1592,9 @@ static int mode_init_ov_sensor_regs(struct sd *sd)
 	case SEN_OV8610:
 		/* For OV8610 qvga means qsvga */
 		i2c_w_mask(sd, OV7610_REG_COM_C, qvga ? (1 << 5) : 0, 1 << 5);
-#if 0
-		/* FIXME: Does this improve the image quality or frame rate? */
-		i2c_w_mask(sd, 0x28, qvga ? 0x00 : 0x20, 0x20);
-		i2c_w(sd, 0x24, 0x10);
-		i2c_w(sd, 0x25, qvga ? 0x40 : 0x8a);
-		i2c_w(sd, 0x2f, qvga ? 0x30 : 0xb0);
-		i2c_w(sd, 0x35, qvga ? 0x1c : 0x9c);
-#endif
 		break;
 	case SEN_OV7610:
 		i2c_w_mask(sd, 0x14, qvga ? 0x20 : 0x00, 0x20);
-#if 0
-		/* FIXME: Does this improve the image quality or frame rate? */
-		i2c_w_mask(sd, 0x28, qvga?0x00:0x20, 0x20);
-		i2c_w(sd, 0x24, 0x10);
-		i2c_w(sd, 0x25, qvga?0x40:0x8a);
-		i2c_w(sd, 0x2f, qvga?0x30:0xb0);
-		i2c_w(sd, 0x35, qvga?0x1c:0x9c);
-#endif
 		break;
 	case SEN_OV7620:
 /*		i2c_w(sd, 0x2b, 0x00); */
@@ -1625,15 +1609,6 @@ static int mode_init_ov_sensor_regs(struct sd *sd)
 	case SEN_OV76BE:
 /*		i2c_w(sd, 0x2b, 0x00); */
 		i2c_w_mask(sd, 0x14, qvga ? 0x20 : 0x00, 0x20);
-#if 0
-		/* FIXME: Enable this once 7620AE uses 7620 initial settings */
-		i2c_w_mask(sd, 0x28, qvga ? 0x00 : 0x20, 0x20);
-		i2c_w(sd, 0x24, qvga ? 0x20 : 0x3a);
-		i2c_w(sd, 0x25, qvga ? 0x30 : 0x60);
-		i2c_w_mask(sd, 0x2d, qvga ? 0x40 : 0x00, 0x40);
-		i2c_w_mask(sd, 0x67, qvga ? 0xb0 : 0x90, 0xf0);
-		i2c_w_mask(sd, 0x74, qvga ? 0x20 : 0x00, 0x20);
-#endif
 		break;
 	case SEN_OV7640:
 /*		i2c_w(sd, 0x2b, 0x00); */

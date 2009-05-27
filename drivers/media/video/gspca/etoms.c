@@ -112,7 +112,7 @@ static struct ctrl sd_ctrls[] = {
 	 },
 };
 
-static struct v4l2_pix_format vga_mode[] = {
+static const struct v4l2_pix_format vga_mode[] = {
 	{320, 240, V4L2_PIX_FMT_SBGGR8, V4L2_FIELD_NONE,
 		.bytesperline = 320,
 		.sizeimage = 320 * 240,
@@ -125,7 +125,7 @@ static struct v4l2_pix_format vga_mode[] = {
 		.priv = 0}, */
 };
 
-static struct v4l2_pix_format sif_mode[] = {
+static const struct v4l2_pix_format sif_mode[] = {
 	{176, 144, V4L2_PIX_FMT_SBGGR8, V4L2_FIELD_NONE,
 		.bytesperline = 176,
 		.sizeimage = 176 * 144,
@@ -733,12 +733,6 @@ static void Et_setgainG(struct gspca_dev *gspca_dev, __u8 gain)
 
 		i2c_w(gspca_dev, PAS106_REG13, &i2cflags, 1, 3);
 		i2c_w(gspca_dev, PAS106_REG0e, &gain, 1, 1);
-#if 0
-		i2c_w(gspca_dev, 0x09, &gain, 1, 1);
-		i2c_w(gspca_dev, 0x0a, &gain, 1, 1);
-		i2c_w(gspca_dev, 0x0b, &gain, 1, 1);
-		i2c_w(gspca_dev, 0x0c, &gain, 1, 1);
-#endif
 	}
 }
 

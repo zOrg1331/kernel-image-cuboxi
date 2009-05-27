@@ -37,12 +37,13 @@
 #include <linux/thermal.h>
 #include <linux/video_output.h>
 #include <linux/sort.h>
+#include <linux/pci.h>
+#include <linux/pci_ids.h>
 #include <asm/uaccess.h>
 
 #include <acpi/acpi_bus.h>
 #include <acpi/acpi_drivers.h>
 
-#define ACPI_VIDEO_COMPONENT		0x08000000
 #define ACPI_VIDEO_CLASS		"video"
 #define ACPI_VIDEO_BUS_NAME		"Video Bus"
 #define ACPI_VIDEO_DEVICE_NAME		"Video Device"
@@ -759,7 +760,8 @@ static void acpi_video_device_find_cap(struct acpi_video_device *device)
 		device->cap._DSS = 1;
 	}
 
-	max_level = acpi_video_init_brightness(device);
+	if (acpi_video_backlight_support())
+		max_level = acpi_video_init_brightness(device);
 
 	if (device->cap._BCL && device->cap._BCM && max_level > 0) {
 		int result;
@@ -805,18 +807,21 @@ static void acpi_video_device_find_cap(struct acpi_video_device *device)
 			printk(KERN_ERR PREFIX "Create sysfs link\n");
 
 	}
-	if (device->cap._DCS && device->cap._DSS){
-		static int count = 0;
-		char *name;
-		name = kzalloc(MAX_NAME_LEN, GFP_KERNEL);
-		if (!name)
-			return;
-		sprintf(name, "acpi_video%d", count++);
-		device->output_dev = video_output_register(name,
-				NULL, device, &acpi_output_properties);
-		kfree(name);
+
+	if (acpi_video_display_switch_support()) {
+
+		if (device->cap._DCS && device->cap._DSS) {
+			static int count;
+			char *name;
+			name = kzalloc(MAX_NAME_LEN, GFP_KERNEL);
+			if (!name)
+				return;
+			sprintf(name, "acpi_video%d", count++);
+			device->output_dev = video_output_register(name,
+					NULL, device, &acpi_output_properties);
+			kfree(name);
+		}
 	}
-	return;
 }
 
 /*
@@ -862,10 +867,15 @@ static void acpi_video_bus_find_cap(struct acpi_video_bus *video)
 static int acpi_video_bus_check(struct acpi_video_bus *video)
 {
 	acpi_status status = -ENOENT;
-
+	struct device *dev;
 
 	if (!video)
 		return -EINVAL;
+
+	dev = acpi_get_physical_pci_device(video->device->handle);
+	if (!dev)
+		return -ENODEV;
+	put_device(dev);
 
 	/* Since there is no HID, CID and so on for VGA driver, we have
 	 * to check well known required nodes.
@@ -1252,7 +1262,7 @@ static int acpi_video_bus_POST_info_seq_show(struct seq_file *seq, void *offset)
 			printk(KERN_WARNING PREFIX
 			       "This indicates a BIOS bug. Please contact the manufacturer.\n");
 		}
-		printk("%llx\n", options);
+		printk(KERN_WARNING "%llx\n", options);
 		seq_printf(seq, "can POST: <integrated video>");
 		if (options & 2)
 			seq_printf(seq, " <PCI video>");
@@ -1511,7 +1521,7 @@ acpi_video_bus_get_one_device(struct acpi_device *device,
 
 		strcpy(acpi_device_name(device), ACPI_VIDEO_DEVICE_NAME);
 		strcpy(acpi_device_class(device), ACPI_VIDEO_CLASS);
-		acpi_driver_data(device) = data;
+		device->driver_data = data;
 
 		data->device_id = device_id;
 		data->video = video;
@@ -1550,8 +1560,8 @@ acpi_video_bus_get_one_device(struct acpi_device *device,
 						     acpi_video_device_notify,
 						     data);
 		if (ACPI_FAILURE(status)) {
-			ACPI_DEBUG_PRINT((ACPI_DB_ERROR,
-					  "Error installing notify handler\n"));
+			printk(KERN_ERR PREFIX
+					  "Error installing notify handler\n");
 			if(data->brightness)
 				kfree(data->brightness->levels);
 			kfree(data->brightness);
@@ -1765,8 +1775,8 @@ acpi_video_bus_get_devices(struct acpi_video_bus *video,
 
 		status = acpi_video_bus_get_one_device(dev, video);
 		if (ACPI_FAILURE(status)) {
-			ACPI_DEBUG_PRINT((ACPI_DB_WARN,
-					"Cant attach device"));
+			printk(KERN_WARNING PREFIX
+					"Cant attach device");
 			continue;
 		}
 	}
@@ -2008,7 +2018,7 @@ static int acpi_video_bus_add(struct acpi_device *device)
 	video->device = device;
 	strcpy(acpi_device_name(device), ACPI_VIDEO_BUS_NAME);
 	strcpy(acpi_device_class(device), ACPI_VIDEO_CLASS);
-	acpi_driver_data(device) = video;
+	device->driver_data = video;
 
 	acpi_video_bus_find_cap(video);
 	error = acpi_video_bus_check(video);
@@ -2029,8 +2039,8 @@ static int acpi_video_bus_add(struct acpi_device *device)
 					     ACPI_DEVICE_NOTIFY,
 					     acpi_video_bus_notify, video);
 	if (ACPI_FAILURE(status)) {
-		ACPI_DEBUG_PRINT((ACPI_DB_ERROR,
-				  "Error installing notify handler\n"));
+		printk(KERN_ERR PREFIX
+				  "Error installing notify handler\n");
 		error = -ENODEV;
 		goto err_stop_video;
 	}
@@ -2084,7 +2094,7 @@ static int acpi_video_bus_add(struct acpi_device *device)
 	acpi_video_bus_remove_fs(device);
  err_free_video:
 	kfree(video);
-	acpi_driver_data(device) = NULL;
+	device->driver_data = NULL;
 
 	return error;
 }
@@ -2116,15 +2126,29 @@ static int acpi_video_bus_remove(struct acpi_device *device, int type)
 	return 0;
 }
 
-static int __init acpi_video_init(void)
+static int __init intel_opregion_present(void)
+{
+#if defined(CONFIG_DRM_I915) || defined(CONFIG_DRM_I915_MODULE)
+	struct pci_dev *dev = NULL;
+	u32 address;
+
+	for_each_pci_dev(dev) {
+		if ((dev->class >> 8) != PCI_CLASS_DISPLAY_VGA)
+			continue;
+		if (dev->vendor != PCI_VENDOR_ID_INTEL)
+			continue;
+		pci_read_config_dword(dev, 0xfc, &address);
+		if (!address)
+			continue;
+		return 1;
+	}
+#endif
+	return 0;
+}
+
+int acpi_video_register(void)
 {
 	int result = 0;
-
-
-	/*
-	   acpi_dbg_level = 0xFFFFFFFF;
-	   acpi_dbg_layer = 0x08000000;
-	 */
 
 	acpi_video_dir = proc_mkdir(ACPI_VIDEO_CLASS, acpi_root_dir);
 	if (!acpi_video_dir)
@@ -2139,8 +2163,24 @@ static int __init acpi_video_init(void)
 
 	return 0;
 }
+EXPORT_SYMBOL(acpi_video_register);
 
-static void __exit acpi_video_exit(void)
+/*
+ * This is kind of nasty. Hardware using Intel chipsets may require
+ * the video opregion code to be run first in order to initialise
+ * state before any ACPI video calls are made. To handle this we defer
+ * registration of the video class until the opregion code has run.
+ */
+
+static int __init acpi_video_init(void)
+{
+	if (intel_opregion_present())
+		return 0;
+
+	return acpi_video_register();
+}
+
+void __exit acpi_video_exit(void)
 {
 
 	acpi_bus_unregister_driver(&acpi_video_bus);
@@ -2149,6 +2189,7 @@ static void __exit acpi_video_exit(void)
 
 	return;
 }
+EXPORT_SYMBOL(acpi_video_exit);
 
 module_init(acpi_video_init);
 module_exit(acpi_video_exit);

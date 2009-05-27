@@ -52,10 +52,6 @@
 #include <linux/kthread.h>
 #include <asm/unaligned.h>
 #include <asm/byteorder.h>
-#include <linux/version.h>
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 28)
-#include <linux/byteorder/swabb.h>
-#endif
 
 #include <asm/system.h>
 
@@ -452,7 +448,7 @@ static void debiirq(unsigned long cookie)
 
 	case DATA_COMMON_INTERFACE:
 		CI_handle(av7110, (u8 *)av7110->debi_virt, av7110->debilen);
-#if 0 /* keep */
+#if 0
 	{
 		int i;
 
@@ -1286,7 +1282,7 @@ static void vpeirq(unsigned long cookie)
 	/* Ensure streamed PCI data is synced to CPU */
 	pci_dma_sync_sg_for_cpu(budget->dev->pci, budget->pt.slist, budget->pt.nents, PCI_DMA_FROMDEVICE);
 
-#if 0 /* keep */
+#if 0
 	/* track rps1 activity */
 	printk("vpeirq: %02x Event Counter 1 0x%04x\n",
 	       mem[olddma],

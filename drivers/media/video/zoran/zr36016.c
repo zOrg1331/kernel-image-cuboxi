@@ -42,7 +42,6 @@
 //#include<errno.h>
 
 /* v4l  API */
-#include <media/compat.h>
 #include <linux/videodev.h>
 
 /* headerfile of this module */
@@ -228,7 +227,7 @@ zr36016_basic_test (struct zr36016 *ptr)
    simple loop for pushing the init datasets - NO USE --
    ========================================================================= */
 
-#if 0 /* keep */
+#if 0
 static int zr36016_pushit (struct zr36016 *ptr,
 			   u16             startreg,
 			   u16             len,

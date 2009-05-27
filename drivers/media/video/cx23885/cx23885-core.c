@@ -28,7 +28,6 @@
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
-#include <media/compat.h>
 #include <asm/div64.h>
 
 #include "cx23885.h"
@@ -1290,12 +1289,6 @@ static int cx23885_stop_dma(struct cx23885_tsport *port)
 		/* clear TS1_SOP_OE and TS1_OE_HI */
 		reg = reg & ~0xa;
 		cx_write(PAD_CTRL, reg);
-#if 0
-		/*
-		 * cx_write(CLK_DELAY, cx_read(CLK_DELAY) & ~0x80000011); ????
-		 * cx_write(ALT_PIN_OUT_SEL, 0x10100045); ?? need to undo this?
-		 */
-#endif
 		cx_write(port->reg_src_sel, 0);
 		cx_write(port->reg_gen_ctrl, 8);
 
@@ -1606,11 +1599,7 @@ static int cx23885_irq_ts(struct cx23885_tsport *port, u32 status)
 	return handled;
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 19)
-static irqreturn_t cx23885_irq(int irq, void *dev_id, struct pt_regs *regs)
-#else
 static irqreturn_t cx23885_irq(int irq, void *dev_id)
-#endif
 {
 	struct cx23885_dev *dev = dev_id;
 	struct cx23885_tsport *ts1 = &dev->ts1;

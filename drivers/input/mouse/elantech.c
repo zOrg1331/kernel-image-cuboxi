@@ -18,9 +18,6 @@
 #include "psmouse.h"
 #include "elantech.h"
 
-/* Quickest way to access etd->debug in the macro below */
-static struct elantech_data *etd;
-
 #define elantech_debug(format, arg...)				\
 	do {							\
 		if (etd->debug)					\
@@ -45,11 +42,13 @@ static int synaptics_send_cmd(struct psmouse *psmouse, unsigned char c,
 /*
  * A retrying version of ps2_command
  */
-static int elantech_ps2_command(struct ps2dev *ps2dev, unsigned char *param,
-				int command)
+static int elantech_ps2_command(struct psmouse *psmouse,
+				unsigned char *param, int command)
 {
-	int	rc;
-	int	tries = ETP_PS2_COMMAND_TRIES;
+	struct ps2dev *ps2dev = &psmouse->ps2dev;
+	struct elantech_data *etd = psmouse->private;
+	int rc;
+	int tries = ETP_PS2_COMMAND_TRIES;
 
 	do {
 		rc = ps2_command(ps2dev, param, command);
@@ -73,29 +72,31 @@ static int elantech_ps2_command(struct ps2dev *ps2dev, unsigned char *param,
 static int elantech_read_reg(struct psmouse *psmouse, unsigned char reg,
 				unsigned char *val)
 {
-	struct ps2dev		*ps2dev = &psmouse->ps2dev;
-	unsigned char		param[3];
-	int			rc = 0;
+	struct elantech_data *etd = psmouse->private;
+	unsigned char param[3];
+	int rc = 0;
 
-	if ((reg < 0x10) || (reg > 0x26))
+	if (reg < 0x10 || reg > 0x26)
 		return -1;
-	if ((reg > 0x11) && (reg < 0x20))
+
+	if (reg > 0x11 && reg < 0x20)
 		return -1;
 
 	switch (etd->hw_version) {
 	case 1:
 		if (psmouse_sliced_command(psmouse, ETP_REGISTER_READ) ||
 		    psmouse_sliced_command(psmouse, reg) ||
-		    ps2_command(ps2dev, param, PSMOUSE_CMD_GETINFO)) {
+		    ps2_command(&psmouse->ps2dev, param, PSMOUSE_CMD_GETINFO)) {
 			rc = -1;
 		}
 		break;
+
 	case 2:
-		if (elantech_ps2_command(ps2dev,  NULL, ETP_PS2_CUSTOM_COMMAND) ||
-		    elantech_ps2_command(ps2dev,  NULL, ETP_REGISTER_READ) ||
-		    elantech_ps2_command(ps2dev,  NULL, ETP_PS2_CUSTOM_COMMAND) ||
-		    elantech_ps2_command(ps2dev,  NULL, reg) ||
-		    elantech_ps2_command(ps2dev, param, PSMOUSE_CMD_GETINFO)) {
+		if (elantech_ps2_command(psmouse,  NULL, ETP_PS2_CUSTOM_COMMAND) ||
+		    elantech_ps2_command(psmouse,  NULL, ETP_REGISTER_READ) ||
+		    elantech_ps2_command(psmouse,  NULL, ETP_PS2_CUSTOM_COMMAND) ||
+		    elantech_ps2_command(psmouse,  NULL, reg) ||
+		    elantech_ps2_command(psmouse, param, PSMOUSE_CMD_GETINFO)) {
 			rc = -1;
 		}
 		break;
@@ -115,12 +116,13 @@ static int elantech_read_reg(struct psmouse *psmouse, unsigned char reg,
 static int elantech_write_reg(struct psmouse *psmouse, unsigned char reg,
 				unsigned char val)
 {
-	struct ps2dev		*ps2dev = &psmouse->ps2dev;
-	int			rc = 0;
+	struct elantech_data *etd = psmouse->private;
+	int rc = 0;
 
-	if ((reg < 0x10) || (reg > 0x26))
+	if (reg < 0x10 || reg > 0x26)
 		return -1;
-	if ((reg > 0x11) && (reg < 0x20))
+
+	if (reg > 0x11 && reg < 0x20)
 		return -1;
 
 	switch (etd->hw_version) {
@@ -128,18 +130,19 @@ static int elantech_write_reg(struct psmouse *psmouse, unsigned char reg,
 		if (psmouse_sliced_command(psmouse, ETP_REGISTER_WRITE) ||
 		    psmouse_sliced_command(psmouse, reg) ||
 		    psmouse_sliced_command(psmouse, val) ||
-		    ps2_command(ps2dev, NULL, PSMOUSE_CMD_SETSCALE11)) {
+		    ps2_command(&psmouse->ps2dev, NULL, PSMOUSE_CMD_SETSCALE11)) {
 			rc = -1;
 		}
 		break;
+
 	case 2:
-		if (elantech_ps2_command(ps2dev, NULL, ETP_PS2_CUSTOM_COMMAND) ||
-		    elantech_ps2_command(ps2dev, NULL, ETP_REGISTER_WRITE) ||
-		    elantech_ps2_command(ps2dev, NULL, ETP_PS2_CUSTOM_COMMAND) ||
-		    elantech_ps2_command(ps2dev, NULL, reg) ||
-		    elantech_ps2_command(ps2dev, NULL, ETP_PS2_CUSTOM_COMMAND) ||
-		    elantech_ps2_command(ps2dev, NULL, val) ||
-		    elantech_ps2_command(ps2dev, NULL, PSMOUSE_CMD_SETSCALE11)) {
+		if (elantech_ps2_command(psmouse, NULL, ETP_PS2_CUSTOM_COMMAND) ||
+		    elantech_ps2_command(psmouse, NULL, ETP_REGISTER_WRITE) ||
+		    elantech_ps2_command(psmouse, NULL, ETP_PS2_CUSTOM_COMMAND) ||
+		    elantech_ps2_command(psmouse, NULL, reg) ||
+		    elantech_ps2_command(psmouse, NULL, ETP_PS2_CUSTOM_COMMAND) ||
+		    elantech_ps2_command(psmouse, NULL, val) ||
+		    elantech_ps2_command(psmouse, NULL, PSMOUSE_CMD_SETSCALE11)) {
 			rc = -1;
 		}
 		break;
@@ -171,9 +174,10 @@ static void elantech_packet_dump(unsigned char *packet, int size)
  */
 static void elantech_report_absolute_v1(struct psmouse *psmouse)
 {
-	struct input_dev 	*dev = psmouse->dev;
-	unsigned char 		*packet = psmouse->packet;
-	int			fingers;
+	struct input_dev *dev = psmouse->dev;
+	struct elantech_data *etd = psmouse->private;
+	unsigned char *packet = psmouse->packet;
+	int fingers;
 
 	if (etd->fw_version_maj == 0x01) {
 		/* byte 0:  D   U  p1  p2   1  p3   R   L
@@ -187,6 +191,7 @@ static void elantech_report_absolute_v1(struct psmouse *psmouse)
 	}
 
 	input_report_key(dev, BTN_TOUCH, fingers != 0);
+
 	/* byte 2: x7  x6  x5  x4  x3  x2  x1  x0
 	   byte 3: y7  y6  y5  y4  y3  y2  y1  y0 */
 	if (fingers) {
@@ -195,12 +200,13 @@ static void elantech_report_absolute_v1(struct psmouse *psmouse)
 		input_report_abs(dev, ABS_Y, ETP_YMAX_V1 -
 			(((packet[1] & 0x03) << 8) | packet[3]));
 	}
-	input_report_abs(dev, ABS_PRESSURE, (fingers) ? ETP_DEF_PRESSURE : 0);
+
 	input_report_key(dev, BTN_TOOL_FINGER, fingers == 1);
 	input_report_key(dev, BTN_TOOL_DOUBLETAP, fingers == 2);
 	input_report_key(dev, BTN_TOOL_TRIPLETAP, fingers == 3);
 	input_report_key(dev, BTN_LEFT, packet[0] & 0x01);
 	input_report_key(dev, BTN_RIGHT, packet[0] & 0x02);
+
 	if ((etd->fw_version_maj == 0x01) &&
 	    (etd->capabilities & ETP_CAP_HAS_ROCKER)) {
 		/* rocker up */
@@ -208,6 +214,8 @@ static void elantech_report_absolute_v1(struct psmouse *psmouse)
 		/* rocker down */
 		input_report_key(dev, BTN_BACK, packet[0] & 0x80);
 	}
+
+	input_sync(dev);
 }
 
 /*
@@ -216,13 +224,14 @@ static void elantech_report_absolute_v1(struct psmouse *psmouse)
  */
 static void elantech_report_absolute_v2(struct psmouse *psmouse)
 {
-	struct input_dev 	*dev = psmouse->dev;
-	unsigned char 		*packet = psmouse->packet;
-	int			fingers, x1, y1, x2, y2;
+	struct input_dev *dev = psmouse->dev;
+	unsigned char *packet = psmouse->packet;
+	int fingers, x1, y1, x2, y2;
 
 	/* byte 0: n1  n0   .   .   .   .   R   L */
 	fingers = (packet[0] & 0xc0) >> 6;
 	input_report_key(dev, BTN_TOUCH, fingers != 0);
+
 	switch (fingers) {
 	case 1:
 		/* byte 1: x15 x14 x13 x12 x11 x10 x9  x8
@@ -233,6 +242,7 @@ static void elantech_report_absolute_v2(struct psmouse *psmouse)
 		input_report_abs(dev, ABS_Y, ETP_YMAX_V2 -
 			((packet[4] << 8) | packet[5]));
 		break;
+
 	case 2:
 		/* The coordinate of each finger is reported separately with
 		   a lower resolution for two finger touches */
@@ -258,12 +268,38 @@ static void elantech_report_absolute_v2(struct psmouse *psmouse)
 		input_report_abs(dev, ABS_HAT1Y, y2);
 		break;
 	}
-	input_report_abs(dev, ABS_PRESSURE, (fingers) ? ETP_DEF_PRESSURE : 0);
+
 	input_report_key(dev, BTN_TOOL_FINGER, fingers == 1);
 	input_report_key(dev, BTN_TOOL_DOUBLETAP, fingers == 2);
 	input_report_key(dev, BTN_TOOL_TRIPLETAP, fingers == 3);
 	input_report_key(dev, BTN_LEFT, packet[0] & 0x01);
 	input_report_key(dev, BTN_RIGHT, packet[0] & 0x02);
+
+	input_sync(dev);
+}
+
+static int elantech_check_parity_v1(struct psmouse *psmouse)
+{
+	struct elantech_data *etd = psmouse->private;
+	unsigned char *packet = psmouse->packet;
+	unsigned char p1, p2, p3;
+
+	/* Parity bits are placed differently */
+	if (etd->fw_version_maj == 0x01) {
+		/* byte 0:  D   U  p1  p2   1  p3   R   L */
+		p1 = (packet[0] & 0x20) >> 5;
+		p2 = (packet[0] & 0x10) >> 4;
+	} else {
+		/* byte 0: n1  n0  p2  p1   1  p3   R   L */
+		p1 = (packet[0] & 0x10) >> 4;
+		p2 = (packet[0] & 0x20) >> 5;
+	}
+
+	p3 = (packet[0] & 0x04) >> 2;
+
+	return etd->parity[packet[1]] == p1 &&
+	       etd->parity[packet[2]] == p2 &&
+	       etd->parity[packet[3]] == p3;
 }
 
 /*
@@ -271,51 +307,27 @@ static void elantech_report_absolute_v2(struct psmouse *psmouse)
  */
 static psmouse_ret_t elantech_process_byte(struct psmouse *psmouse)
 {
-	struct input_dev 	*dev = psmouse->dev;
-	unsigned char 		*packet = psmouse->packet;
-	unsigned char		p1, p2, p3;
+	struct elantech_data *etd = psmouse->private;
 
 	if (psmouse->pktcnt < psmouse->pktsize)
 		return PSMOUSE_GOOD_DATA;
 
 	if (etd->debug > 1)
-		elantech_packet_dump(packet, psmouse->pktsize);
-
-	if (etd->paritycheck) {
-		switch (etd->hw_version) {
-		case 1:
-			/* Parity bits are placed differently */
-			if (etd->fw_version_maj == 0x01) {
-				/* byte 0:  D   U  p1  p2   1  p3   R   L */
-				p1 = (packet[0] & 0x20) >> 5;
-				p2 = (packet[0] & 0x10) >> 4;
-			} else {
-				/* byte 0: n1  n0  p2  p1   1  p3   R   L */
-				p1 = (packet[0] & 0x10) >> 4;
-				p2 = (packet[0] & 0x20) >> 5;
-			}
-			p3 = (packet[0] & 0x04) >> 2;
-			if ((etd->parity[packet[1]] != p1) ||
-			    (etd->parity[packet[2]] != p2) ||
-			    (etd->parity[packet[3]] != p3))
-				return PSMOUSE_BAD_DATA;
-			break;
-		case 2:
-			/* Does version 2 hardware have parity bits? */
-			break;
-		}
-	}
+		elantech_packet_dump(psmouse->packet, psmouse->pktsize);
 
 	switch (etd->hw_version) {
 	case 1:
+		if (etd->paritycheck && !elantech_check_parity_v1(psmouse))
+			return PSMOUSE_BAD_DATA;
+
 		elantech_report_absolute_v1(psmouse);
 		break;
+
 	case 2:
+		/* We don't know how to check parity in protocol v2 */
 		elantech_report_absolute_v2(psmouse);
 		break;
 	}
-
-	input_sync(dev);
 
 	return PSMOUSE_FULL_PACKET;
 }
@@ -325,9 +337,10 @@ static psmouse_ret_t elantech_process_byte(struct psmouse *psmouse)
  */
 static int elantech_set_absolute_mode(struct psmouse *psmouse)
 {
-	int		rc = 0;
-	unsigned char	val;
-	int		tries = ETP_READ_BACK_TRIES;
+	struct elantech_data *etd = psmouse->private;
+	unsigned char val;
+	int tries = ETP_READ_BACK_TRIES;
+	int rc = 0;
 
 	switch (etd->hw_version) {
 	case 1:
@@ -338,6 +351,7 @@ static int elantech_set_absolute_mode(struct psmouse *psmouse)
 			rc = -1;
 		}
 		break;
+
 	case 2:
 					/* Windows driver values */
 		etd->reg_10 = 0x54;
@@ -378,30 +392,32 @@ static int elantech_set_absolute_mode(struct psmouse *psmouse)
  */
 static void elantech_set_input_params(struct psmouse *psmouse)
 {
-	struct input_dev 	*dev = psmouse->dev;
+	struct input_dev *dev = psmouse->dev;
+	struct elantech_data *etd = psmouse->private;
 
-	set_bit(EV_KEY, dev->evbit);
-	set_bit(EV_ABS, dev->evbit);
+	__set_bit(EV_KEY, dev->evbit);
+	__set_bit(EV_ABS, dev->evbit);
 
-	set_bit(BTN_LEFT, dev->keybit);
-	set_bit(BTN_RIGHT, dev->keybit);
+	__set_bit(BTN_LEFT, dev->keybit);
+	__set_bit(BTN_RIGHT, dev->keybit);
 
-	set_bit(BTN_TOUCH, dev->keybit);
-	set_bit(BTN_TOOL_FINGER, dev->keybit);
-	set_bit(BTN_TOOL_DOUBLETAP, dev->keybit);
-	set_bit(BTN_TOOL_TRIPLETAP, dev->keybit);
+	__set_bit(BTN_TOUCH, dev->keybit);
+	__set_bit(BTN_TOOL_FINGER, dev->keybit);
+	__set_bit(BTN_TOOL_DOUBLETAP, dev->keybit);
+	__set_bit(BTN_TOOL_TRIPLETAP, dev->keybit);
 
 	switch (etd->hw_version) {
 	case 1:
 		/* Rocker button */
 		if ((etd->fw_version_maj == 0x01) &&
 		    (etd->capabilities & ETP_CAP_HAS_ROCKER)) {
-			set_bit(BTN_FORWARD, dev->keybit);
-			set_bit(BTN_BACK, dev->keybit);
+			__set_bit(BTN_FORWARD, dev->keybit);
+			__set_bit(BTN_BACK, dev->keybit);
 		}
 		input_set_abs_params(dev, ABS_X, ETP_XMIN_V1, ETP_XMAX_V1, 0, 0);
 		input_set_abs_params(dev, ABS_Y, ETP_YMIN_V1, ETP_YMAX_V1, 0, 0);
 		break;
+
 	case 2:
 		input_set_abs_params(dev, ABS_X, ETP_XMIN_V2, ETP_XMAX_V2, 0, 0);
 		input_set_abs_params(dev, ABS_Y, ETP_YMIN_V2, ETP_YMAX_V2, 0, 0);
@@ -409,9 +425,8 @@ static void elantech_set_input_params(struct psmouse *psmouse)
 		input_set_abs_params(dev, ABS_HAT0Y, ETP_2FT_YMIN, ETP_2FT_YMAX, 0, 0);
 		input_set_abs_params(dev, ABS_HAT1X, ETP_2FT_XMIN, ETP_2FT_XMAX, 0, 0);
 		input_set_abs_params(dev, ABS_HAT1Y, ETP_2FT_YMIN, ETP_2FT_YMAX, 0, 0);
+		break;
 	}
-
-	input_set_abs_params(dev, ABS_PRESSURE, 0, ETP_MAX_PRESSURE, 0, 0);
 }
 
 struct elantech_attr_data {
@@ -425,11 +440,10 @@ struct elantech_attr_data {
 static ssize_t elantech_show_int_attr(struct psmouse *psmouse, void *data,
 					char *buf)
 {
-	struct elantech_data		*etd = psmouse->private;
-	struct elantech_attr_data	*attr = data;
-	unsigned char			*reg = (unsigned char *)
-						etd + attr->field_offset;
-	int				rc = 0;
+	struct elantech_data *etd = psmouse->private;
+	struct elantech_attr_data *attr = data;
+	unsigned char *reg = (unsigned char *) etd + attr->field_offset;
+	int rc = 0;
 
 	if (attr->reg)
 		rc = elantech_read_reg(psmouse, attr->reg, reg);
@@ -440,18 +454,19 @@ static ssize_t elantech_show_int_attr(struct psmouse *psmouse, void *data,
 /*
  * Write a register value by writing a sysfs entry
  */
-static ssize_t elantech_set_int_attr(struct psmouse *psmouse, void *data,
-						const char *buf, size_t count)
+static ssize_t elantech_set_int_attr(struct psmouse *psmouse,
+				     void *data, const char *buf, size_t count)
 {
-	struct elantech_attr_data	*attr = data;
-	unsigned char 			*reg = (unsigned char *)
-						etd + attr->field_offset;
-	unsigned long			value;
-	int				err;
+	struct elantech_data *etd = psmouse->private;
+	struct elantech_attr_data *attr = data;
+	unsigned char *reg = (unsigned char *) etd + attr->field_offset;
+	unsigned long value;
+	int err;
 
 	err = strict_strtoul(buf, 16, &value);
 	if (err)
 		return err;
+
 	if (value > 0xff)
 		return -EINVAL;
 
@@ -465,12 +480,8 @@ static ssize_t elantech_set_int_attr(struct psmouse *psmouse, void *data,
 			value |= ETP_R11_4_BYTE_MODE;
 	}
 
-	if (attr->reg) {
-		if (elantech_write_reg(psmouse, attr->reg, value) == 0)
-			*reg = value;
-	} else {
+	if (!attr->reg || elantech_write_reg(psmouse, attr->reg, value) == 0)
 		*reg = value;
-	}
 
 	return count;
 }
@@ -521,15 +532,17 @@ static struct attribute_group elantech_attr_group = {
  */
 int elantech_detect(struct psmouse *psmouse, int set_properties)
 {
-	struct ps2dev	*ps2dev = &psmouse->ps2dev;
-	unsigned char	param[3];
+	struct ps2dev *ps2dev = &psmouse->ps2dev;
+	unsigned char param[3];
+
+	ps2_command(&psmouse->ps2dev, NULL, PSMOUSE_CMD_RESET_DIS);
 
 	if (ps2_command(ps2dev,  NULL, PSMOUSE_CMD_DISABLE) ||
 	    ps2_command(ps2dev,  NULL, PSMOUSE_CMD_SETSCALE11) ||
 	    ps2_command(ps2dev,  NULL, PSMOUSE_CMD_SETSCALE11) ||
 	    ps2_command(ps2dev,  NULL, PSMOUSE_CMD_SETSCALE11) ||
 	    ps2_command(ps2dev, param, PSMOUSE_CMD_GETINFO)) {
-		pr_err("elantech.c: sending Elantech magic knock failed.\n");
+		pr_debug("elantech.c: sending Elantech magic knock failed.\n");
 		return -1;
 	}
 
@@ -537,9 +550,28 @@ int elantech_detect(struct psmouse *psmouse, int set_properties)
 	 * Report this in case there are Elantech models that use a different
 	 * set of magic numbers
 	 */
-	if ((param[0] != 0x3c) || (param[1] != 0x03) || (param[2] != 0xc8)) {
-		pr_info("elantech.c: unexpected magic knock result 0x%02x, 0x%02x, 0x%02x.\n",
-			param[0], param[1], param[2]);
+	if (param[0] != 0x3c || param[1] != 0x03 || param[2] != 0xc8) {
+		pr_debug("elantech.c: "
+			 "unexpected magic knock result 0x%02x, 0x%02x, 0x%02x.\n",
+			 param[0], param[1], param[2]);
+		return -1;
+	}
+
+	/*
+	 * Query touchpad's firmware version and see if it reports known
+	 * value to avoid mis-detection. Logitech mice are known to respond
+	 * to Elantech magic knock and there might be more.
+	 */
+	if (synaptics_send_cmd(psmouse, ETP_FW_VERSION_QUERY, param)) {
+		pr_debug("elantech.c: failed to query firmware version.\n");
+		return -1;
+	}
+
+	pr_debug("elantech.c: Elantech version query result 0x%02x, 0x%02x, 0x%02x.\n",
+		 param[0], param[1], param[2]);
+
+	if (param[0] == 0 || param[1] != 0) {
+		pr_debug("elantech.c: Probably not a real Elantech touchpad. Aborting.\n");
 		return -1;
 	}
 
@@ -557,7 +589,7 @@ int elantech_detect(struct psmouse *psmouse, int set_properties)
 static void elantech_disconnect(struct psmouse *psmouse)
 {
 	sysfs_remove_group(&psmouse->ps2dev.serio->dev.kobj,
-				&elantech_attr_group);
+			   &elantech_attr_group);
 	kfree(psmouse->private);
 	psmouse->private = NULL;
 }
@@ -583,27 +615,25 @@ static int elantech_reconnect(struct psmouse *psmouse)
  */
 int elantech_init(struct psmouse *psmouse)
 {
-	int		i, error;
-	unsigned char	param[3];
+	struct elantech_data *etd;
+	int i, error;
+	unsigned char param[3];
 
-	etd = kzalloc(sizeof(struct elantech_data), GFP_KERNEL);
-	psmouse->private = etd;
+	psmouse->private = etd = kzalloc(sizeof(struct elantech_data), GFP_KERNEL);
 	if (!etd)
 		return -1;
 
 	etd->parity[0] = 1;
 	for (i = 1; i < 256; i++)
-		etd->parity[i] = (etd->parity[i & (i - 1)] ^ 1);
+		etd->parity[i] = etd->parity[i & (i - 1)] ^ 1;
 
 	/*
-	 * Find out what version hardware this is
+	 * Do the version query again so we can store the result
 	 */
 	if (synaptics_send_cmd(psmouse, ETP_FW_VERSION_QUERY, param)) {
 		pr_err("elantech.c: failed to query firmware version.\n");
 		goto init_fail;
 	}
-	pr_info("elantech.c: Elantech version query result 0x%02x, 0x%02x, 0x%02x.\n",
-		param[0], param[1], param[2]);
 	etd->fw_version_maj = param[0];
 	etd->fw_version_min = param[2];
 
@@ -611,7 +641,7 @@ int elantech_init(struct psmouse *psmouse)
 	 * Assume every version greater than this is new EeePC style
 	 * hardware with 6 byte packets
 	 */
-	if ((etd->fw_version_maj >= 0x02) && (etd->fw_version_min >= 0x30)) {
+	if (etd->fw_version_maj >= 0x02 && etd->fw_version_min >= 0x30) {
 		etd->hw_version = 2;
 		/* For now show extra debug information */
 		etd->debug = 1;
@@ -636,10 +666,11 @@ int elantech_init(struct psmouse *psmouse)
 		pr_err("elantech.c: failed to put touchpad into absolute mode.\n");
 		goto init_fail;
 	}
+
 	elantech_set_input_params(psmouse);
 
 	error = sysfs_create_group(&psmouse->ps2dev.serio->dev.kobj,
-					&elantech_attr_group);
+				   &elantech_attr_group);
 	if (error) {
 		pr_err("elantech.c: failed to create sysfs attributes, error: %d.\n",
 			error);
@@ -649,14 +680,11 @@ int elantech_init(struct psmouse *psmouse)
 	psmouse->protocol_handler = elantech_process_byte;
 	psmouse->disconnect = elantech_disconnect;
 	psmouse->reconnect = elantech_reconnect;
-	if (etd->hw_version == 2)
-		psmouse->pktsize = 6;
-	else
-		psmouse->pktsize = 4;
+	psmouse->pktsize = etd->hw_version == 2 ? 6 : 4;
 
 	return 0;
 
-init_fail:
+ init_fail:
 	kfree(etd);
 	return -1;
 }

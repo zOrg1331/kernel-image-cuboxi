@@ -11,11 +11,7 @@
 #include "dvb-usb-common.h"
 
 /* URB stuff for streaming */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static void usb_urb_complete(struct urb *urb, struct pt_regs *ptregs)
-#else
 static void usb_urb_complete(struct urb *urb)
-#endif
 {
 	struct usb_data_stream *stream = urb->context;
 	int ptype = usb_pipetype(urb->pipe);
@@ -160,7 +156,8 @@ static int usb_bulk_urb_init(struct usb_data_stream *stream)
 				stream->props.u.bulk.buffersize,
 				usb_urb_complete, stream);
 
-		stream->urb_list[i]->transfer_flags = 0;
+		stream->urb_list[i]->transfer_flags = URB_NO_TRANSFER_DMA_MAP;
+		stream->urb_list[i]->transfer_dma = stream->dma_addr[i];
 		stream->urbs_initialized++;
 	}
 	return 0;

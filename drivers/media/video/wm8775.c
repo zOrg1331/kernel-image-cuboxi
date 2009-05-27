@@ -35,7 +35,6 @@
 #include <media/v4l2-device.h>
 #include <media/v4l2-chip-ident.h>
 #include <media/v4l2-i2c-drv-legacy.h>
-#include <media/compat.h>
 
 MODULE_DESCRIPTION("wm8775 driver");
 MODULE_AUTHOR("Ulf Eklund, Hans Verkuil");
@@ -131,7 +130,7 @@ static int wm8775_s_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 	return 0;
 }
 
-static int wm8775_g_chip_ident(struct v4l2_subdev *sd, struct v4l2_chip_ident *chip)
+static int wm8775_g_chip_ident(struct v4l2_subdev *sd, struct v4l2_dbg_chip_ident *chip)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
@@ -261,21 +260,17 @@ static int wm8775_remove(struct i2c_client *client)
 	return 0;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id wm8775_id[] = {
 	{ "wm8775", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, wm8775_id);
 
-#endif
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "wm8775",
 	.driverid = I2C_DRIVERID_WM8775,
 	.command = wm8775_command,
 	.probe = wm8775_probe,
 	.remove = wm8775_remove,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = wm8775_id,
-#endif
 };

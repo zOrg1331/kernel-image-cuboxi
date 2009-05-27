@@ -257,7 +257,7 @@ static enum ParseState ibmcam_find_header(struct uvd *uvd) /* FIXME: Add frame h
 			    (RING_QUEUE_PEEK(&uvd->dp, 1) == 0xFF) &&
 			    (RING_QUEUE_PEEK(&uvd->dp, 2) == 0x00))
 			{
-#if 0 /* keep */				/* This code helps to detect new frame markers */
+#if 0				/* This code helps to detect new frame markers */
 				dev_info(&uvd->dev->dev,
 					 "Header sig: 00 FF 00 %02X\n",
 					 RING_QUEUE_PEEK(&uvd->dp, 3));
@@ -267,7 +267,7 @@ static enum ParseState ibmcam_find_header(struct uvd *uvd) /* FIXME: Add frame h
 				    (frame->header == HDRSIG_MODEL1_176x144) ||
 				    (frame->header == HDRSIG_MODEL1_352x288))
 				{
-#if 0 /* keep */
+#if 0
 					dev_info(&uvd->dev->dev,
 						 "Header found.\n");
 #endif
@@ -297,7 +297,7 @@ case IBMCAM_MODEL_4:
 			if ((RING_QUEUE_PEEK(&uvd->dp, 0) == 0x00) &&
 			    (RING_QUEUE_PEEK(&uvd->dp, 1) == 0xFF))
 			{
-#if 0 /* keep */
+#if 0
 				dev_info(&uvd->dev->dev, "Header found.\n");
 #endif
 				RING_QUEUE_DEQUEUE_BYTES(&uvd->dp, marker_len);
@@ -340,7 +340,7 @@ case IBMCAM_MODEL_4:
 				byte3 = RING_QUEUE_PEEK(&uvd->dp, 2);
 				byte4 = RING_QUEUE_PEEK(&uvd->dp, 3);
 				frame->header = (byte3 << 8) | byte4;
-#if 0 /* keep */
+#if 0
 				dev_info(&uvd->dev->dev, "Header found.\n");
 #endif
 				RING_QUEUE_DEQUEUE_BYTES(&uvd->dp, marker_len);
@@ -1141,7 +1141,7 @@ static void ibmcam_ProcessIsocData(struct uvd *uvd,
 	/* Update the frame's uncompressed length. */
 	frame->seqRead_Length += copylen;
 
-#if 0 /* keep */
+#if 0
 	{
 		static unsigned char j=0;
 		memset(frame->data, j++, uvd->max_frame_size);
@@ -1180,7 +1180,7 @@ static int ibmcam_veio(
 			cp,
 			sizeof(cp),
 			1000);
-#if 0 /* keep */
+#if 0
 		dev_info(&uvd->dev->dev,
 			 "USB => %02x%02x%02x%02x%02x%02x%02x%02x "
 			 "(req=$%02x val=$%04x ind=$%04x)\n",
@@ -1474,7 +1474,7 @@ static void ibmcam_change_lighting_conditions(struct uvd *uvd)
 		break;
 	}
 	case IBMCAM_MODEL_2:
-#if 0 /* keep */
+#if 0
 		/*
 		 * This command apparently requires camera to be stopped. My
 		 * experiments showed that it -is- possible to alter the lighting
@@ -1651,7 +1651,7 @@ static void ibmcam_set_hue(struct uvd *uvd)
 	}
 	case IBMCAM_MODEL_3:
 	{
-#if 0 /* keep */ /* This seems not to work. No problem, will fix programmatically */
+#if 0 /* This seems not to work. No problem, will fix programmatically */
 		unsigned short hue = 0x05 + (uvd->vpic.hue / (0xFFFF / (0x37 - 0x05 + 1)));
 		RESTRICT_TO_RANGE(hue, 0x05, 0x37);
 		if (uvd->vpic_old.hue == hue)
@@ -1900,7 +1900,7 @@ static int ibmcam_model1_setup(struct uvd *uvd)
 		ibmcam_veio(uvd, 0, 0x04, 0x011a);	/* Same everywhere */
 		ibmcam_veio(uvd, 0, 0x2b, 0x011c);
 		ibmcam_veio(uvd, 0, 0x23, 0x012a);	/* Same everywhere */
-#if 0 /* keep */
+#if 0
 		ibmcam_veio(uvd, 0, 0x00, 0x0106);
 		ibmcam_veio(uvd, 0, 0x38, 0x0107);
 #else
@@ -3543,7 +3543,7 @@ case IBMCAM_MODEL_4:
 		ibmcam_veio(uvd, 0, 0x0000, 0x0112);
 		break;
 	case IBMCAM_MODEL_3:
-#if 1 /* keep */
+#if 1
 		ibmcam_veio(uvd, 0, 0x0000, 0x010c);
 
 		/* Here we are supposed to select video interface alt. setting 0 */
@@ -3779,11 +3779,11 @@ static int ibmcam_probe(struct usb_interface *intf, const struct usb_device_id *
 			err("Alternate settings have different endpoint addresses!");
 			return -ENODEV;
 		}
-		if ((endpoint->bmAttributes & 0x03) != 0x01) {
+		if (!usb_endpoint_xfer_isoc(endpoint)) {
 			err("Interface %d. has non-ISO endpoint!", ifnum);
 			return -ENODEV;
 		}
-		if ((endpoint->bEndpointAddress & 0x80) == 0) {
+		if (usb_endpoint_dir_out(endpoint)) {
 			err("Interface %d. has ISO OUT endpoint!", ifnum);
 			return -ENODEV;
 		}

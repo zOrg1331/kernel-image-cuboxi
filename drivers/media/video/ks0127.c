@@ -43,7 +43,6 @@
 #include <media/v4l2-common.h>
 #include <media/v4l2-i2c-drv-legacy.h>
 #include "ks0127.h"
-#include <media/compat.h>
 
 MODULE_DESCRIPTION("KS0127 video decoder driver");
 MODULE_AUTHOR("Ryan Drake");
@@ -777,13 +776,11 @@ static int ks0127_legacy_probe(struct i2c_adapter *adapter)
 	return adapter->id == I2C_HW_B_ZR36067;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id ks0127_id[] = {
 	{ "ks0127", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, ks0127_id);
-#endif
 
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "ks0127",
@@ -792,7 +789,5 @@ static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.probe = ks0127_probe,
 	.remove = ks0127_remove,
 	.legacy_probe = ks0127_legacy_probe,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = ks0127_id,
-#endif
 };

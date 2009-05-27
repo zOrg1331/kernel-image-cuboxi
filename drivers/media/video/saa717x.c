@@ -30,7 +30,6 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
@@ -39,7 +38,6 @@
 #include <linux/i2c.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-i2c-drv.h>
-#include <media/compat.h>
 
 MODULE_DESCRIPTION("Philips SAA717x audio/video decoder driver");
 MODULE_AUTHOR("K. Ohta, T. Adachi, Hans Verkuil");
@@ -53,11 +51,6 @@ MODULE_PARM_DESC(debug, "Debug level (0-1)");
  * Generic i2c probe
  * concerning the addresses: i2c wants 7 bit (without the r/w bit), so '>>1'
  */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22)
-static unsigned short normal_i2c[] = { 0x42 >> 1, I2C_CLIENT_END };
-
-I2C_CLIENT_INSMOD;
-#endif
 
 struct saa717x_state {
 	struct v4l2_subdev sd;
@@ -1177,25 +1170,26 @@ static int saa717x_queryctrl(struct v4l2_subdev *sd, struct v4l2_queryctrl *qc)
 }
 
 #ifdef CONFIG_VIDEO_ADV_DEBUG
-static int saa717x_g_register(struct v4l2_subdev *sd, struct v4l2_register *reg)
+static int saa717x_g_register(struct v4l2_subdev *sd, struct v4l2_dbg_register *reg)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
-	if (!v4l2_chip_match_i2c_client(client, reg->match_type, reg->match_chip))
+	if (!v4l2_chip_match_i2c_client(client, &reg->match))
 		return -EINVAL;
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 	reg->val = saa717x_read(sd, reg->reg);
+	reg->size = 1;
 	return 0;
 }
 
-static int saa717x_s_register(struct v4l2_subdev *sd, struct v4l2_register *reg)
+static int saa717x_s_register(struct v4l2_subdev *sd, struct v4l2_dbg_register *reg)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	u16 addr = reg->reg & 0xffff;
 	u8 val = reg->val & 0xff;
 
-	if (!v4l2_chip_match_i2c_client(client, reg->match_type, reg->match_chip))
+	if (!v4l2_chip_match_i2c_client(client, &reg->match))
 		return -EINVAL;
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -1452,9 +1446,6 @@ static int saa717x_probe(struct i2c_client *client,
 	sd = &decoder->sd;
 	v4l2_i2c_subdev_init(sd, client, &saa717x_ops);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
-	snprintf(client->name, sizeof(client->name) - 1, "saa717x");
-#endif
 	if (saa717x_write(sd, 0x5a4, 0xfe) &&
 			saa717x_write(sd, 0x5a5, 0x0f) &&
 			saa717x_write(sd, 0x5a6, 0x00) &&
@@ -1529,14 +1520,12 @@ static int saa717x_remove(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id saa717x_id[] = {
 	{ "saa717x", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, saa717x_id);
 
-#endif
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "saa717x",
 	.driverid = I2C_DRIVERID_SAA717X,
@@ -1544,7 +1533,5 @@ static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.probe = saa717x_probe,
 	.remove = saa717x_remove,
 	.legacy_class = I2C_CLASS_TV_ANALOG | I2C_CLASS_TV_DIGITAL,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = saa717x_id,
-#endif
 };

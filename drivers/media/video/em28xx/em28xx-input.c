@@ -28,7 +28,6 @@
 #include <linux/input.h>
 #include <linux/usb.h>
 
-#include <media/compat.h>
 #include "em28xx.h"
 
 #define EM28XX_SNAPSHOT_KEY KEY_CAMERA
@@ -123,11 +122,6 @@ int em28xx_get_key_em_haup(struct IR_i2c *ir, u32 *ir_key, u32 *ir_raw)
 	if (buf[1] == 0xff)
 		return 0;
 
-#if 0
-	/* avoid reapeating keystrokes */
-	if (buf[1] == ir->old)
-		return 0;
-#endif
 	ir->old = buf[1];
 
 	/* Rearranges bits to the right order */
@@ -305,30 +299,18 @@ static void ir_timer(unsigned long data)
 	schedule_work(&ir->work);
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 20)
-static void em28xx_ir_work(void *data)
-#else
 static void em28xx_ir_work(struct work_struct *work)
-#endif
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 20)
-	struct em28xx_IR *ir = data;
-#else
 	struct em28xx_IR *ir = container_of(work, struct em28xx_IR, work);
-#endif
 
 	em28xx_ir_handle_key(ir);
 	mod_timer(&ir->timer, jiffies + msecs_to_jiffies(ir->polling));
 }
 
-void em28xx_ir_start(struct em28xx_IR *ir)
+static void em28xx_ir_start(struct em28xx_IR *ir)
 {
 	setup_timer(&ir->timer, ir_timer, (unsigned long)ir);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 20)
-	INIT_WORK(&ir->work, em28xx_ir_work, ir);
-#else
 	INIT_WORK(&ir->work, em28xx_ir_work);
-#endif
 	schedule_work(&ir->work);
 }
 
@@ -392,11 +374,7 @@ int em28xx_ir_init(struct em28xx *dev)
 	input_dev->id.vendor = le16_to_cpu(dev->udev->descriptor.idVendor);
 	input_dev->id.product = le16_to_cpu(dev->udev->descriptor.idProduct);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
 	input_dev->dev.parent = &dev->udev->dev;
-#else
-	input_dev->cdev.dev = &dev->udev->dev;
-#endif
 	/* record handles to ourself */
 	ir->dev = dev;
 	dev->ir = ir;
@@ -439,19 +417,11 @@ int em28xx_ir_fini(struct em28xx *dev)
  Handle Webcam snapshot button
  **********************************************************/
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 20)
-static void em28xx_query_sbutton(void *data)
-#else
 static void em28xx_query_sbutton(struct work_struct *work)
-#endif
 {
 	/* Poll the register and see if the button is depressed */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 20)
-	struct em28xx *dev = data;
-#else
 	struct em28xx *dev =
 		container_of(work, struct em28xx, sbutton_query_work.work);
-#endif
 	int ret;
 
 	ret = em28xx_read_reg(dev, EM28XX_R0C_USBSUSP);
@@ -491,11 +461,7 @@ void em28xx_register_snapshot_button(struct em28xx *dev)
 		      sizeof(dev->snapshot_button_path));
 	strlcat(dev->snapshot_button_path, "/sbutton",
 		sizeof(dev->snapshot_button_path));
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 20)
-	INIT_WORK(&dev->sbutton_query_work, em28xx_query_sbutton, dev);
-#else
 	INIT_DELAYED_WORK(&dev->sbutton_query_work, em28xx_query_sbutton);
-#endif
 
 	input_dev->name = "em28xx snapshot button";
 	input_dev->phys = dev->snapshot_button_path;
@@ -507,11 +473,7 @@ void em28xx_register_snapshot_button(struct em28xx *dev)
 	input_dev->id.vendor = le16_to_cpu(dev->udev->descriptor.idVendor);
 	input_dev->id.product = le16_to_cpu(dev->udev->descriptor.idProduct);
 	input_dev->id.version = 1;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
 	input_dev->dev.parent = &dev->udev->dev;
-#else
-	input_dev->cdev.dev = &dev->udev->dev;
-#endif
 
 	err = input_register_device(input_dev);
 	if (err) {

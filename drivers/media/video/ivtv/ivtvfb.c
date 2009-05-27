@@ -368,18 +368,9 @@ static int ivtvfb_prep_frame(struct ivtv *itv, int cmd, void __user *source,
 	return ivtvfb_prep_dec_dma_to_device(itv, dest_offset, source, count);
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
 static ssize_t ivtvfb_write(struct fb_info *info, const char __user *buf,
 						size_t count, loff_t *ppos)
 {
-#else
-static ssize_t ivtvfb_write(struct file *file, const char __user *buf,
-						size_t count, loff_t *ppos)
-{
-	struct inode *inode = file->f_dentry->d_inode;
-	int fbidx = iminor(inode);
-	struct fb_info *info = registered_fb[fbidx];
-#endif
 	unsigned long p = *ppos;
 	void *dst;
 	int err = 0;

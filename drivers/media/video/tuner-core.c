@@ -15,7 +15,6 @@
 #include <linux/i2c.h>
 #include <linux/types.h>
 #include <linux/init.h>
-#include <media/compat.h>
 #include <linux/videodev.h>
 #include <media/tuner.h>
 #include <media/tuner-types.h>
@@ -539,9 +538,6 @@ static void set_addr(struct i2c_client *c, struct tuner_setup *tun_setup)
 static inline int check_mode(struct tuner *t, char *cmd)
 {
 	if ((1 << t->mode & t->mode_mask) == 0) {
-#if 0
-		tuner_dbg("Cmd %s rejected for mode %i\n", cmd,t->mode);
-#endif
 		return -EINVAL;
 	}
 
@@ -737,6 +733,8 @@ static inline int set_mode(struct i2c_client *client, struct tuner *t, int mode,
 	t->mode = mode;
 
 	if (check_mode(t, cmd) == -EINVAL) {
+		tuner_dbg("Tuner doesn't support this mode. "
+			  "Putting tuner to sleep\n");
 		t->mode = T_STANDBY;
 		if (analog_ops->standby)
 			analog_ops->standby(&t->fe);
@@ -755,12 +753,6 @@ static inline int check_v4l2(struct tuner *t)
 	   TV, v4l1 for radio), until that is fixed this code is disabled.
 	   Otherwise the radio (v4l1) wouldn't tune after using the TV (v4l2)
 	   first. */
-#if 0
-	if (t->using_v4l2) {
-		tuner_dbg ("ignore v4l1 call\n");
-		return EINVAL;
-	}
-#endif
 	return 0;
 }
 
@@ -797,6 +789,8 @@ static int tuner_s_standby(struct v4l2_subdev *sd, u32 standby)
 	struct tuner *t = to_tuner(sd);
 	struct analog_demod_ops *analog_ops = &t->fe.ops.analog_ops;
 
+	tuner_dbg("Putting tuner to sleep\n");
+
 	if (check_mode(t, "TUNER_SET_STANDBY") == -EINVAL)
 		return 0;
 	t->mode = T_STANDBY;
@@ -806,7 +800,7 @@ static int tuner_s_standby(struct v4l2_subdev *sd, u32 standby)
 }
 
 #ifdef CONFIG_VIDEO_ALLOW_V4L1
-static int tuner_ioctl(struct v4l2_subdev *sd, int cmd, void *arg)
+static long tuner_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 {
 	struct tuner *t = to_tuner(sd);
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
@@ -1118,7 +1112,9 @@ static int tuner_resume(struct i2c_client *c)
 static const struct v4l2_subdev_core_ops tuner_core_ops = {
 	.log_status = tuner_log_status,
 	.s_standby = tuner_s_standby,
+#ifdef CONFIG_VIDEO_ALLOW_V4L1
 	.ioctl = tuner_ioctl,
+#endif
 };
 
 static const struct v4l2_subdev_tuner_ops tuner_tuner_ops = {
@@ -1350,7 +1346,6 @@ static int tuner_remove(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 /* This driver supports many devices and the idea is to let the driver
    detect which device is present. So rather than listing all supported
    devices here, we pretend to support a single, fake device type. */
@@ -1359,7 +1354,6 @@ static const struct i2c_device_id tuner_id[] = {
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, tuner_id);
-#endif
 
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "tuner",
@@ -1370,9 +1364,7 @@ static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.suspend = tuner_suspend,
 	.resume = tuner_resume,
 	.legacy_probe = tuner_legacy_probe,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = tuner_id,
-#endif
 };
 
 /*

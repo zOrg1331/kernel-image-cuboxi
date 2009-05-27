@@ -38,7 +38,6 @@
 #include <linux/video_encoder.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-i2c-drv-legacy.h>
-#include <media/compat.h>
 
 MODULE_DESCRIPTION("Brooktree-856A video encoder driver");
 MODULE_AUTHOR("Mike Bernson & Dave Perks");
@@ -288,13 +287,11 @@ static int bt856_remove(struct i2c_client *client)
 	return 0;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id bt856_id[] = {
 	{ "bt856", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, bt856_id);
-#endif
 
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "bt856",
@@ -302,7 +299,5 @@ static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.command = bt856_command,
 	.probe = bt856_probe,
 	.remove = bt856_remove,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = bt856_id,
-#endif
 };

@@ -25,7 +25,6 @@
 #ifndef _EM28XX_H
 #define _EM28XX_H
 
-#include <media/compat.h>
 #include <linux/videodev2.h>
 #include <media/videobuf-vmalloc.h>
 
@@ -68,7 +67,6 @@
 #define EM2820_BOARD_HERCULES_SMART_TV_USB2	  26
 #define EM2820_BOARD_PINNACLE_USB_2_FM1216ME	  27
 #define EM2820_BOARD_LEADTEK_WINFAST_USBII_DELUXE 28
-#define EM2820_BOARD_PINNACLE_DVC_100		  29
 #define EM2820_BOARD_VIDEOLOGY_20K14XUSB	  30
 #define EM2821_BOARD_USBGEAR_VD204		  31
 #define EM2821_BOARD_SUPERCOMP_USB_2		  32
@@ -96,10 +94,10 @@
 #define EM2882_BOARD_KWORLD_VS_DVBT		  54
 #define EM2882_BOARD_TERRATEC_HYBRID_XS		  55
 #define EM2882_BOARD_PINNACLE_HYBRID_PRO	  56
-#define EM2883_BOARD_KWORLD_HYBRID_A316		  57
+#define EM2883_BOARD_KWORLD_HYBRID_330U                  57
 #define EM2820_BOARD_COMPRO_VIDEOMATE_FORYOU	  58
-#define EM2874_BOARD_PINNACLE_PCTV_80E		  59
 #define EM2883_BOARD_HAUPPAUGE_WINTV_HVR_850	  60
+#define EM2820_BOARD_PROLINK_PLAYTV_BOX4_USB2	  61
 
 /* Limits minimum and default number of buffers */
 #define EM28XX_MIN_BUF 4
@@ -210,9 +208,12 @@ struct em28xx_usb_isoc_ctl {
 
 };
 
+/* Struct to enumberate video formats */
 struct em28xx_fmt {
 	char  *name;
 	u32   fourcc;          /* v4l2 format id */
+	int   depth;
+	int   reg;
 };
 
 /* buffer for one video frame */
@@ -299,12 +300,31 @@ enum em28xx_amux {
 };
 
 enum em28xx_aout {
+	/* AC97 outputs */
 	EM28XX_AOUT_MASTER = 1 << 0,
 	EM28XX_AOUT_LINE   = 1 << 1,
 	EM28XX_AOUT_MONO   = 1 << 2,
 	EM28XX_AOUT_LFE    = 1 << 3,
 	EM28XX_AOUT_SURR   = 1 << 4,
+
+	/* PCM IN Mixer - used by AC97_RECORD_SELECT register */
+	EM28XX_AOUT_PCM_IN = 1 << 7,
+
+	/* Bits 10-8 are used to indicate the PCM IN record select */
+	EM28XX_AOUT_PCM_MIC_PCM = 0 << 8,
+	EM28XX_AOUT_PCM_CD	= 1 << 8,
+	EM28XX_AOUT_PCM_VIDEO	= 2 << 8,
+	EM28XX_AOUT_PCM_AUX	= 3 << 8,
+	EM28XX_AOUT_PCM_LINE	= 4 << 8,
+	EM28XX_AOUT_PCM_STEREO	= 5 << 8,
+	EM28XX_AOUT_PCM_MONO	= 6 << 8,
+	EM28XX_AOUT_PCM_PHONE	= 7 << 8,
 };
+
+static inline int ac97_return_record_select(int a_out)
+{
+	return (a_out & 0x700) >> 8;
+}
 
 struct em28xx_reg_seq {
 	int reg;
@@ -395,18 +415,10 @@ struct em28xx_audio {
 	struct urb *urb[EM28XX_AUDIO_BUFS];
 	struct usb_device *udev;
 	unsigned int capture_transfer_done;
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
-	snd_pcm_substream_t        *capture_pcm_substream;
-#else
 	struct snd_pcm_substream   *capture_pcm_substream;
-#endif
 
 	unsigned int hwptr_done_capture;
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
-	snd_card_t                 *sndcard;
-#else
 	struct snd_card            *sndcard;
-#endif
 
 	int users, shutdown;
 	enum em28xx_stream_state capture_stream;
@@ -438,6 +450,8 @@ struct em28xx {
 	unsigned int stream_on:1;	/* Locks streams */
 	unsigned int has_audio_class:1;
 	unsigned int has_alsa_audio:1;
+
+	struct em28xx_fmt *format;
 
 	struct em28xx_IR *ir;
 
@@ -478,7 +492,7 @@ struct em28xx {
 	unsigned long i2c_hash;	/* i2c devicelist hash -
 				   for boards with generic ID */
 
-	struct em28xx_audio *adev;
+	struct em28xx_audio adev;
 
 	/* states */
 	enum em28xx_dev_state state;
@@ -533,11 +547,7 @@ struct em28xx {
 	/* Snapshot button */
 	char snapshot_button_path[30];	/* path of the input dev */
 	struct input_dev *sbutton_input_dev;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 20)
-	struct work_struct sbutton_query_work;
-#else
 	struct delayed_work sbutton_query_work;
-#endif
 
 	struct em28xx_dvb *dvb;
 };
@@ -572,12 +582,15 @@ int em28xx_write_regs_req(struct em28xx *dev, u8 req, u16 reg, char *buf,
 int em28xx_write_regs(struct em28xx *dev, u16 reg, char *buf, int len);
 int em28xx_write_reg(struct em28xx *dev, u16 reg, u8 val);
 
+int em28xx_read_ac97(struct em28xx *dev, u8 reg);
+int em28xx_write_ac97(struct em28xx *dev, u8 reg, u16 val);
+
 int em28xx_audio_analog_set(struct em28xx *dev);
 int em28xx_audio_setup(struct em28xx *dev);
 
 int em28xx_colorlevels_set_default(struct em28xx *dev);
 int em28xx_capture_start(struct em28xx *dev, int start);
-int em28xx_outfmt_set_yuv422(struct em28xx *dev);
+int em28xx_set_outfmt(struct em28xx *dev);
 int em28xx_resolution_set(struct em28xx *dev);
 int em28xx_set_alternate(struct em28xx *dev);
 int em28xx_init_isoc(struct em28xx *dev, int max_packets,
@@ -586,10 +599,20 @@ int em28xx_init_isoc(struct em28xx *dev, int max_packets,
 void em28xx_uninit_isoc(struct em28xx *dev);
 int em28xx_set_mode(struct em28xx *dev, enum em28xx_mode set_mode);
 int em28xx_gpio_set(struct em28xx *dev, struct em28xx_reg_seq *gpio);
-
-/* Provided by em28xx-video.c */
+void em28xx_wake_i2c(struct em28xx *dev);
+void em28xx_remove_from_devlist(struct em28xx *dev);
+void em28xx_add_into_devlist(struct em28xx *dev);
+struct em28xx *em28xx_get_device(int minor,
+				 enum v4l2_buf_type *fh_type,
+				 int *has_radio);
 int em28xx_register_extension(struct em28xx_ops *dev);
 void em28xx_unregister_extension(struct em28xx_ops *dev);
+void em28xx_init_extension(struct em28xx *dev);
+void em28xx_close_extension(struct em28xx *dev);
+
+/* Provided by em28xx-video.c */
+int em28xx_register_analog_devices(struct em28xx *dev);
+void em28xx_release_analog_resources(struct em28xx *dev);
 
 /* Provided by em28xx-cards.c */
 extern int em2800_variant_detect(struct usb_device *udev, int model);
@@ -600,6 +623,7 @@ extern struct usb_device_id em28xx_id_table[];
 extern const unsigned int em28xx_bcount;
 void em28xx_set_ir(struct em28xx *dev, struct IR_i2c *ir);
 int em28xx_tuner_callback(void *ptr, int component, int command, int arg);
+void em28xx_release_resources(struct em28xx *dev);
 
 /* Provided by em28xx-input.c */
 int em28xx_get_key_terratec(struct IR_i2c *ir, u32 *ir_key, u32 *ir_raw);

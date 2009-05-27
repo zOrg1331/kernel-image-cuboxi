@@ -28,7 +28,6 @@
 #include <linux/kthread.h>
 #include <linux/file.h>
 #include <linux/suspend.h>
-#include <media/compat.h>
 
 #include "cx88.h"
 #include "dvb-pll.h"
@@ -137,6 +136,28 @@ static int cx88_dvb_bus_ctrl(struct dvb_frontend* fe, int acquire)
 	}
 
 	return ret;
+}
+
+static void cx88_dvb_gate_ctrl(struct cx88_core  *core, int open)
+{
+	struct videobuf_dvb_frontends *f;
+	struct videobuf_dvb_frontend *fe;
+
+	if (!core->dvbdev)
+		return;
+
+	f = &core->dvbdev->frontends;
+
+	if (!f)
+		return;
+
+	if (f->gate <= 1) /* undefined or fe0 */
+		fe = videobuf_dvb_get_frontend(f, 1);
+	else
+		fe = videobuf_dvb_get_frontend(f, f->gate);
+
+	if (fe && fe->dvb.frontend && fe->dvb.frontend->ops.i2c_gate_ctrl)
+		fe->dvb.frontend->ops.i2c_gate_ctrl(fe->dvb.frontend, open);
 }
 
 /* ------------------------------------------------------------------ */
@@ -474,12 +495,6 @@ static struct zl10353_config cx88_pinnacle_hybrid_pctv = {
 static struct zl10353_config cx88_geniatech_x8000_mt = {
        .demod_address = (0x1e >> 1),
        .no_tuner = 1,
-#if 0
-       .input_frequency = 0xe609,
-       .parallel_ts = 1,
-       .r56_agc_targets =  0x2b,
-       .r5c_clk_mpegts_output = 0x75,
-#endif
 };
 
 static struct s5h1411_config dvico_fusionhdtv7_config = {
@@ -599,6 +614,31 @@ static struct stv0288_config tevii_tuner_earda_config = {
 	.set_ts_params = cx24116_set_ts_param,
 };
 
+static int cx8802_alloc_frontends(struct cx8802_dev *dev)
+{
+	struct cx88_core *core = dev->core;
+	struct videobuf_dvb_frontend *fe = NULL;
+	int i;
+
+	mutex_init(&dev->frontends.lock);
+	INIT_LIST_HEAD(&dev->frontends.felist);
+
+	if (!core->board.num_frontends)
+		return -ENODEV;
+
+	printk(KERN_INFO "%s() allocating %d frontend(s)\n", __func__,
+			 core->board.num_frontends);
+	for (i = 1; i <= core->board.num_frontends; i++) {
+		fe = videobuf_dvb_alloc_frontend(&dev->frontends, i);
+		if (!fe) {
+			printk(KERN_ERR "%s() failed to alloc\n", __func__);
+			videobuf_dvb_dealloc_frontends(&dev->frontends);
+			return -ENOMEM;
+		}
+	}
+	return 0;
+}
+
 static int dvb_register(struct cx8802_dev *dev)
 {
 	struct cx88_core *core = dev->core;
@@ -617,6 +657,9 @@ static int dvb_register(struct cx8802_dev *dev)
 
 	/* multi-frontend gate control is undefined or defaults to fe0 */
 	dev->frontends.gate = 0;
+
+	/* Sets the gate control callback to be used by i2c command calls */
+	core->gate_ctrl = cx88_dvb_gate_ctrl;
 
 	/* init frontend(s) */
 	switch (core->boardnr) {
@@ -1116,6 +1159,7 @@ static int dvb_register(struct cx8802_dev *dev)
 		&dev->pci->dev, adapter_nr, mfe_shared);
 
 frontend_detach:
+	core->gate_ctrl = NULL;
 	videobuf_dvb_dealloc_frontends(&dev->frontends);
 	return -EINVAL;
 }
@@ -1191,9 +1235,6 @@ static int cx8802_dvb_advise_release(struct cx8802_driver *drv)
 	switch (core->boardnr) {
 	case CX88_BOARD_HAUPPAUGE_HVR1300:
 		/* Do Nothing, leave the cx22702 on the bus. */
-#if 0
-		 cx_set(MO_GP0_IO, 0x00000004);
-#endif
 		break;
 	case CX88_BOARD_HAUPPAUGE_HVR3000:
 	case CX88_BOARD_HAUPPAUGE_HVR4000:
@@ -1209,6 +1250,8 @@ static int cx8802_dvb_probe(struct cx8802_driver *drv)
 	struct cx88_core *core = drv->core;
 	struct cx8802_dev *dev = drv->core->dvbdev;
 	int err;
+	struct videobuf_dvb_frontend *fe;
+	int i;
 
 	dprintk( 1, "%s\n", __func__);
 	dprintk( 1, " ->being probed by Card=%d Name=%s, PCI %02x:%02x\n",
@@ -1224,39 +1267,34 @@ static int cx8802_dvb_probe(struct cx8802_driver *drv)
 	/* If vp3054 isn't enabled, a stub will just return 0 */
 	err = vp3054_i2c_probe(dev);
 	if (0 != err)
-		goto fail_probe;
+		goto fail_core;
 
 	/* dvb stuff */
 	printk(KERN_INFO "%s/2: cx2388x based DVB/ATSC card\n", core->name);
 	dev->ts_gen_cntrl = 0x0c;
 
-	err = -ENODEV;
-	if (core->board.num_frontends) {
-		struct videobuf_dvb_frontend *fe;
-		int i;
+	err = cx8802_alloc_frontends(dev);
+	if (err)
+		goto fail_core;
 
-		for (i = 1; i <= core->board.num_frontends; i++) {
-			fe = videobuf_dvb_get_frontend(&core->dvbdev->frontends, i);
-			if (fe == NULL) {
-				printk(KERN_ERR "%s() failed to get frontend(%d)\n",
+	err = -ENODEV;
+	for (i = 1; i <= core->board.num_frontends; i++) {
+		fe = videobuf_dvb_get_frontend(&core->dvbdev->frontends, i);
+		if (fe == NULL) {
+			printk(KERN_ERR "%s() failed to get frontend(%d)\n",
 					__func__, i);
-				goto fail_probe;
-			}
-			videobuf_queue_sg_init(&fe->dvb.dvbq, &dvb_qops,
+			goto fail_probe;
+		}
+		videobuf_queue_sg_init(&fe->dvb.dvbq, &dvb_qops,
 				    &dev->pci->dev, &dev->slock,
 				    V4L2_BUF_TYPE_VIDEO_CAPTURE,
 				    V4L2_FIELD_TOP,
 				    sizeof(struct cx88_buffer),
 				    dev);
-			/* init struct videobuf_dvb */
-			fe->dvb.name = dev->core->name;
-		}
-	} else {
-		/* no frontends allocated */
-		printk(KERN_ERR "%s/2 .num_frontends should be non-zero\n",
-			core->name);
-		goto fail_core;
+		/* init struct videobuf_dvb */
+		fe->dvb.name = dev->core->name;
 	}
+
 	err = dvb_register(dev);
 	if (err)
 		/* frontends/adapter de-allocated in dvb_register */
@@ -1279,6 +1317,8 @@ static int cx8802_dvb_remove(struct cx8802_driver *drv)
 	videobuf_dvb_unregister_bus(&dev->frontends);
 
 	vp3054_i2c_remove(dev);
+
+	core->gate_ctrl = NULL;
 
 	return 0;
 }

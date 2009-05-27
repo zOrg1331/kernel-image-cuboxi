@@ -155,7 +155,7 @@ static int ultracam_veio(
 			cp,
 			sizeof(cp),
 			1000);
-#if 1 /* keep */
+#if 1
 		dev_info(&uvd->dev->dev,
 			 "USB => %02x%02x%02x%02x%02x%02x%02x%02x "
 			 "(req=$%02x val=$%04x ind=$%04x)\n",
@@ -556,12 +556,12 @@ static int ultracam_probe(struct usb_interface *intf, const struct usb_device_id
 			err("Alternate settings have different endpoint addresses!");
 			return -ENODEV;
 		}
-		if ((endpoint->bmAttributes & 0x03) != 0x01) {
+		if (!usb_endpoint_xfer_isoc(endpoint)) {
 			err("Interface %d. has non-ISO endpoint!",
 			    interface->desc.bInterfaceNumber);
 			return -ENODEV;
 		}
-		if ((endpoint->bEndpointAddress & 0x80) == 0) {
+		if (usb_endpoint_dir_out(endpoint)) {
 			err("Interface %d. has ISO OUT endpoint!",
 			    interface->desc.bInterfaceNumber);
 			return -ENODEV;

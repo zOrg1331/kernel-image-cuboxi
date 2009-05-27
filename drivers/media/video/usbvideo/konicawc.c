@@ -15,15 +15,9 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/version.h>
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,18)
 #include <linux/usb/input.h>
-#else
-#include <linux/usb_input.h>
-#endif
 
 #include "usbvideo.h"
-#include <media/compat.h>
 
 #define MAX_BRIGHTNESS	108
 #define MAX_CONTRAST	108
@@ -243,11 +237,7 @@ static void konicawc_register_input(struct konicawc *cam, struct usb_device *dev
 	input_dev->name = "Konicawc snapshot button";
 	input_dev->phys = cam->input_physname;
 	usb_to_input_id(dev, &input_dev->id);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 	input_dev->dev.parent = &dev->dev;
-#else
-	input_dev->cdev.dev = &dev->dev;
-#endif
 
 	input_dev->evbit[0] = BIT_MASK(EV_KEY);
 	input_dev->keybit[BIT_WORD(BTN_0)] = BIT_MASK(BTN_0);
@@ -398,11 +388,7 @@ static void resubmit_urb(struct uvd *uvd, struct urb *urb)
 }
 
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static void konicawc_isoc_irq(struct urb *urb, struct pt_regs *regs)
-#else
 static void konicawc_isoc_irq(struct urb *urb)
-#endif
 {
 	struct uvd *uvd = urb->context;
 	struct konicawc *cam = (struct konicawc *)uvd->user_data;
@@ -837,12 +823,12 @@ static int konicawc_probe(struct usb_interface *intf, const struct usb_device_id
 			err("Alternate settings have different endpoint addresses!");
 			return -ENODEV;
 		}
-		if ((endpoint->bmAttributes & 0x03) != 0x01) {
+		if (!usb_endpoint_xfer_isoc(endpoint)) {
 			err("Interface %d. has non-ISO endpoint!",
 			    interface->desc.bInterfaceNumber);
 			return -ENODEV;
 		}
-		if ((endpoint->bEndpointAddress & 0x80) == 0) {
+		if (usb_endpoint_dir_out(endpoint)) {
 			err("Interface %d. has ISO OUT endpoint!",
 			    interface->desc.bInterfaceNumber);
 			return -ENODEV;

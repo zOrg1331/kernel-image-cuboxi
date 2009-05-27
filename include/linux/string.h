@@ -1,7 +1,7 @@
 #ifndef _LINUX_STRING_H_
 #define _LINUX_STRING_H_
 
-/* We don't want strings.h stuff being user by user stuff by accident */
+/* We don't want strings.h stuff being used by user stuff by accident */
 
 #ifndef __KERNEL__
 #include <string.h>
@@ -12,6 +12,7 @@
 #include <linux/stddef.h>	/* for NULL */
 
 extern char *strndup_user(const char __user *, long);
+extern void *memdup_user(const void __user *, size_t);
 
 /*
  * Include machine specific inline routines

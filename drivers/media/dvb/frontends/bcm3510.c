@@ -38,7 +38,6 @@
 #include <linux/jiffies.h>
 #include <linux/string.h>
 #include <linux/slab.h>
-#include <media/compat.h>
 #include <linux/mutex.h>
 
 #include "dvb_frontend.h"
@@ -230,7 +229,7 @@ error:
 	return ret;
 }
 
-#if 0 /* keep */
+#if 0
 /* not needed, we use a semaphore to prevent HAB races */
 static int bcm3510_is_ap_ready(struct bcm3510_state *st)
 {

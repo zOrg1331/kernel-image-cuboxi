@@ -24,7 +24,6 @@
 #include <linux/device.h>
 #include <linux/suspend.h>
 #include <media/v4l2-common.h>
-#include <media/compat.h>
 
 #include "au0828.h"
 #include "au8522.h"
@@ -94,11 +93,7 @@ static struct tda18271_config hauppauge_woodbury_tunerconfig = {
 };
 
 /*-------------------------------------------------------------------*/
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 19)
-static void urb_completion(struct urb *purb, struct pt_regs *regs)
-#else
 static void urb_completion(struct urb *purb)
-#endif
 {
 	u8 *ptr;
 	struct au0828_dev *dev = purb->context;

@@ -37,7 +37,6 @@
 #include <linux/usb.h>
 #include <linux/poll.h>
 
-#include <media/compat.h>
 #include "cpia2dev.h"
 #include "cpia2_registers.h"
 

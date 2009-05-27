@@ -39,7 +39,6 @@
 #include <linux/video_decoder.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-i2c-drv-legacy.h>
-#include <media/compat.h>
 
 MODULE_DESCRIPTION("Brooktree-819 video decoder driver");
 MODULE_AUTHOR("Mike Bernson & Dave Perks");
@@ -487,7 +486,6 @@ static int bt819_remove(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id bt819_id[] = {
 	{ "bt819a", 0 },
 	{ "bt817a", 0 },
@@ -496,14 +494,11 @@ static const struct i2c_device_id bt819_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, bt819_id);
 
-#endif
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "bt819",
 	.driverid = I2C_DRIVERID_BT819,
 	.command = bt819_command,
 	.probe = bt819_probe,
 	.remove = bt819_remove,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = bt819_id,
-#endif
 };

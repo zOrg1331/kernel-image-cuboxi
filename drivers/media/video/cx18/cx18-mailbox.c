@@ -247,16 +247,10 @@ void free_epu_work_order(struct cx18 *cx, struct cx18_epu_work_order *order)
 	atomic_set(&order->pending, 0);
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20)
 void cx18_epu_work_handler(struct work_struct *work)
 {
 	struct cx18_epu_work_order *order =
 			container_of(work, struct cx18_epu_work_order, work);
-#else
-void cx18_epu_work_handler(void *arg)
-{
-	struct cx18_epu_work_order *order = arg;
-#endif
 	struct cx18 *cx = order->cx;
 	epu_cmd(cx, order);
 	free_epu_work_order(cx, order);

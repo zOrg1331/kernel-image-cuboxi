@@ -26,6 +26,7 @@
 #include <linux/module.h>
 #include <linux/usb.h>
 #include <linux/vmalloc.h>
+#include <media/v4l2-common.h>
 
 #include "em28xx.h"
 
@@ -259,7 +260,7 @@ static int em28xx_is_ac97_ready(struct em28xx *dev)
  * em28xx_read_ac97()
  * write a 16 bit value to the specified AC97 address (LSB first!)
  */
-static int em28xx_read_ac97(struct em28xx *dev, u8 reg)
+int em28xx_read_ac97(struct em28xx *dev, u8 reg)
 {
 	int ret;
 	u8 addr = (reg & 0x7f) | 0x80;
@@ -285,7 +286,7 @@ static int em28xx_read_ac97(struct em28xx *dev, u8 reg)
  * em28xx_write_ac97()
  * write a 16 bit value to the specified AC97 address (LSB first!)
  */
-static int em28xx_write_ac97(struct em28xx *dev, u8 reg, u16 val)
+int em28xx_write_ac97(struct em28xx *dev, u8 reg, u16 val)
 {
 	int ret;
 	u8 addr = reg & 0x7f;
@@ -392,7 +393,7 @@ static int em28xx_set_audio_source(struct em28xx *dev)
 	return ret;
 }
 
-struct em28xx_vol_table outputs[] = {
+static const struct em28xx_vol_table outputs[] = {
 	{ EM28XX_AOUT_MASTER, AC97_MASTER_VOL      },
 	{ EM28XX_AOUT_LINE,   AC97_LINE_LEVEL_VOL  },
 	{ EM28XX_AOUT_MONO,   AC97_MASTER_MONO_VOL },
@@ -437,6 +438,10 @@ int em28xx_audio_analog_set(struct em28xx *dev)
 	if (dev->audio_mode.ac97 != EM28XX_NO_AC97) {
 		int vol;
 
+		em28xx_write_ac97(dev, AC97_POWER_DOWN_CTRL, 0x4200);
+		em28xx_write_ac97(dev, AC97_EXT_AUD_CTRL, 0x0031);
+		em28xx_write_ac97(dev, AC97_PCM_IN_SRATE, 0xbb80);
+
 		/* LSB: left channel - both channels with the same level */
 		vol = (0x1f - dev->volume) | ((0x1f - dev->volume) << 8);
 
@@ -453,6 +458,15 @@ int em28xx_audio_analog_set(struct em28xx *dev)
 				em28xx_warn("couldn't setup AC97 register %d\n",
 				     outputs[i].reg);
 		}
+
+		if (dev->ctl_aoutput & EM28XX_AOUT_PCM_IN) {
+			int sel = ac97_return_record_select(dev->ctl_aoutput);
+
+			/* Use the same input for both left and right channels */
+			sel |= (sel << 8);
+
+			em28xx_write_ac97(dev, AC97_RECORD_SELECT, sel);
+		}
 	}
 
 	return ret;
@@ -464,7 +478,7 @@ int em28xx_audio_setup(struct em28xx *dev)
 	int vid1, vid2, feat, cfg;
 	u32 vid;
 
-	if (dev->chip_id == CHIP_ID_EM2874) {
+	if (dev->chip_id == CHIP_ID_EM2870 || dev->chip_id == CHIP_ID_EM2874) {
 		/* Digital only device - don't load any alsa module */
 		dev->audio_mode.has_audio = 0;
 		dev->has_audio_class = 0;
@@ -496,7 +510,8 @@ int em28xx_audio_setup(struct em28xx *dev)
 		dev->audio_mode.i2s_5rates = 1;
 	}
 
-	if (!(cfg & EM28XX_CHIPCFG_AC97)) {
+	if ((cfg & EM28XX_CHIPCFG_AUDIOMASK) != EM28XX_CHIPCFG_AC97) {
+		/* Skip the code that does AC97 vendor detection */
 		dev->audio_mode.ac97 = EM28XX_NO_AC97;
 		goto init_audio;
 	}
@@ -621,10 +636,19 @@ int em28xx_capture_start(struct em28xx *dev, int start)
 	return rc;
 }
 
-int em28xx_outfmt_set_yuv422(struct em28xx *dev)
+int em28xx_set_outfmt(struct em28xx *dev)
 {
-	em28xx_write_reg(dev, EM28XX_R27_OUTFMT, 0x34);
-	em28xx_write_reg(dev, EM28XX_R10_VINMODE, 0x10);
+	int ret;
+
+	ret = em28xx_write_reg_bits(dev, EM28XX_R27_OUTFMT,
+				    dev->format->reg | 0x20, 0x3f);
+	if (ret < 0)
+		return ret;
+
+	ret = em28xx_write_reg(dev, EM28XX_R10_VINMODE, 0x10);
+	if (ret < 0)
+		return ret;
+
 	return em28xx_write_reg(dev, EM28XX_R11_VINCTRL, 0x11);
 }
 
@@ -686,7 +710,7 @@ int em28xx_resolution_set(struct em28xx *dev)
 	width = norm_maxw(dev);
 	height = norm_maxh(dev) >> 1;
 
-	em28xx_outfmt_set_yuv422(dev);
+	em28xx_set_outfmt(dev);
 	em28xx_accumulator_set(dev, 1, (width - 4) >> 2, 1, (height - 4) >> 2);
 	em28xx_capture_area_set(dev, 0, 0, width >> 2, height >> 2);
 	return em28xx_scaler_set(dev, dev->hscale, dev->vscale);
@@ -781,11 +805,6 @@ int em28xx_set_mode(struct em28xx *dev, enum em28xx_mode set_mode)
 		return em28xx_gpio_set(dev, dev->board.suspend_gpio);
 	}
 
-#if 0
-	/* Resource is locked */
-	if (dev->mode != EM28XX_SUSPEND)
-		return -EINVAL;
-#endif
 	dev->mode = set_mode;
 
 	if (dev->mode == EM28XX_DIGITAL_MODE)
@@ -802,11 +821,7 @@ EXPORT_SYMBOL_GPL(em28xx_set_mode);
 /*
  * IRQ callback, called by URB callback
  */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 19)
-static void em28xx_irq_callback(struct urb *urb, struct pt_regs *regs)
-#else
 static void em28xx_irq_callback(struct urb *urb)
-#endif
 {
 	struct em28xx_dmaqueue  *dma_q = urb->context;
 	struct em28xx *dev = container_of(dma_q, struct em28xx, vidq);
@@ -845,8 +860,11 @@ void em28xx_uninit_isoc(struct em28xx *dev)
 	for (i = 0; i < dev->isoc_ctl.num_bufs; i++) {
 		urb = dev->isoc_ctl.urb[i];
 		if (urb) {
-			usb_kill_urb(urb);
-			usb_unlink_urb(urb);
+			if (!irqs_disabled())
+				usb_kill_urb(urb);
+			else
+				usb_unlink_urb(urb);
+
 			if (dev->isoc_ctl.transfer_buffer[i]) {
 				usb_buffer_free(dev->udev,
 					urb->transfer_buffer_length,
@@ -974,3 +992,144 @@ int em28xx_init_isoc(struct em28xx *dev, int max_packets,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(em28xx_init_isoc);
+
+/*
+ * em28xx_wake_i2c()
+ * configure i2c attached devices
+ */
+void em28xx_wake_i2c(struct em28xx *dev)
+{
+	struct v4l2_routing route;
+	int zero = 0;
+
+	route.input = INPUT(dev->ctl_input)->vmux;
+	route.output = 0;
+	em28xx_i2c_call_clients(dev, VIDIOC_INT_RESET, &zero);
+	em28xx_i2c_call_clients(dev, VIDIOC_INT_S_VIDEO_ROUTING, &route);
+	em28xx_i2c_call_clients(dev, VIDIOC_STREAMON, NULL);
+}
+
+/*
+ * Device control list
+ */
+
+static LIST_HEAD(em28xx_devlist);
+static DEFINE_MUTEX(em28xx_devlist_mutex);
+
+struct em28xx *em28xx_get_device(int minor,
+				 enum v4l2_buf_type *fh_type,
+				 int *has_radio)
+{
+	struct em28xx *h, *dev = NULL;
+
+	*fh_type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+	*has_radio = 0;
+
+	mutex_lock(&em28xx_devlist_mutex);
+	list_for_each_entry(h, &em28xx_devlist, devlist) {
+		if (h->vdev->minor == minor)
+			dev = h;
+		if (h->vbi_dev->minor == minor) {
+			dev = h;
+			*fh_type = V4L2_BUF_TYPE_VBI_CAPTURE;
+		}
+		if (h->radio_dev &&
+		    h->radio_dev->minor == minor) {
+			dev = h;
+			*has_radio = 1;
+		}
+	}
+	mutex_unlock(&em28xx_devlist_mutex);
+
+	return dev;
+}
+
+/*
+ * em28xx_realease_resources()
+ * unregisters the v4l2,i2c and usb devices
+ * called when the device gets disconected or at module unload
+*/
+void em28xx_remove_from_devlist(struct em28xx *dev)
+{
+	mutex_lock(&em28xx_devlist_mutex);
+	list_del(&dev->devlist);
+	mutex_unlock(&em28xx_devlist_mutex);
+};
+
+void em28xx_add_into_devlist(struct em28xx *dev)
+{
+	mutex_lock(&em28xx_devlist_mutex);
+	list_add_tail(&dev->devlist, &em28xx_devlist);
+	mutex_unlock(&em28xx_devlist_mutex);
+};
+
+/*
+ * Extension interface
+ */
+
+static LIST_HEAD(em28xx_extension_devlist);
+static DEFINE_MUTEX(em28xx_extension_devlist_lock);
+
+int em28xx_register_extension(struct em28xx_ops *ops)
+{
+	struct em28xx *dev = NULL;
+
+	mutex_lock(&em28xx_devlist_mutex);
+	mutex_lock(&em28xx_extension_devlist_lock);
+	list_add_tail(&ops->next, &em28xx_extension_devlist);
+	list_for_each_entry(dev, &em28xx_devlist, devlist) {
+		if (dev)
+			ops->init(dev);
+	}
+	printk(KERN_INFO "Em28xx: Initialized (%s) extension\n", ops->name);
+	mutex_unlock(&em28xx_extension_devlist_lock);
+	mutex_unlock(&em28xx_devlist_mutex);
+	return 0;
+}
+EXPORT_SYMBOL(em28xx_register_extension);
+
+void em28xx_unregister_extension(struct em28xx_ops *ops)
+{
+	struct em28xx *dev = NULL;
+
+	mutex_lock(&em28xx_devlist_mutex);
+	list_for_each_entry(dev, &em28xx_devlist, devlist) {
+		if (dev)
+			ops->fini(dev);
+	}
+
+	mutex_lock(&em28xx_extension_devlist_lock);
+	printk(KERN_INFO "Em28xx: Removed (%s) extension\n", ops->name);
+	list_del(&ops->next);
+	mutex_unlock(&em28xx_extension_devlist_lock);
+	mutex_unlock(&em28xx_devlist_mutex);
+}
+EXPORT_SYMBOL(em28xx_unregister_extension);
+
+void em28xx_init_extension(struct em28xx *dev)
+{
+	struct em28xx_ops *ops = NULL;
+
+	mutex_lock(&em28xx_extension_devlist_lock);
+	if (!list_empty(&em28xx_extension_devlist)) {
+		list_for_each_entry(ops, &em28xx_extension_devlist, next) {
+			if (ops->init)
+				ops->init(dev);
+		}
+	}
+	mutex_unlock(&em28xx_extension_devlist_lock);
+}
+
+void em28xx_close_extension(struct em28xx *dev)
+{
+	struct em28xx_ops *ops = NULL;
+
+	mutex_lock(&em28xx_extension_devlist_lock);
+	if (!list_empty(&em28xx_extension_devlist)) {
+		list_for_each_entry(ops, &em28xx_extension_devlist, next) {
+			if (ops->fini)
+				ops->fini(dev);
+		}
+	}
+	mutex_unlock(&em28xx_extension_devlist_lock);
+}

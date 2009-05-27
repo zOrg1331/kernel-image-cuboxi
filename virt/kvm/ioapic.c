@@ -39,6 +39,7 @@
 
 #include "ioapic.h"
 #include "lapic.h"
+#include "irq.h"
 
 #if 0
 #define ioapic_debug(fmt,arg...) printk(KERN_WARNING fmt,##arg)
@@ -100,6 +101,7 @@ static void ioapic_service(struct kvm_ioapic *ioapic, unsigned int idx)
 static void ioapic_write_indirect(struct kvm_ioapic *ioapic, u32 val)
 {
 	unsigned index;
+	bool mask_before, mask_after;
 
 	switch (ioapic->ioregsel) {
 	case IOAPIC_REG_VERSION:
@@ -119,6 +121,7 @@ static void ioapic_write_indirect(struct kvm_ioapic *ioapic, u32 val)
 		ioapic_debug("change redir index %x val %x\n", index, val);
 		if (index >= IOAPIC_NUM_PINS)
 			return;
+		mask_before = ioapic->redirtbl[index].fields.mask;
 		if (ioapic->ioregsel & 1) {
 			ioapic->redirtbl[index].bits &= 0xffffffff;
 			ioapic->redirtbl[index].bits |= (u64) val << 32;
@@ -127,6 +130,9 @@ static void ioapic_write_indirect(struct kvm_ioapic *ioapic, u32 val)
 			ioapic->redirtbl[index].bits |= (u32) val;
 			ioapic->redirtbl[index].fields.remote_irr = 0;
 		}
+		mask_after = ioapic->redirtbl[index].fields.mask;
+		if (mask_before != mask_after)
+			kvm_fire_mask_notifiers(ioapic->kvm, index, mask_after);
 		if (ioapic->irr & (1 << index))
 			ioapic_service(ioapic, index);
 		break;
@@ -149,10 +155,11 @@ static int ioapic_inj_irq(struct kvm_ioapic *ioapic,
 static void ioapic_inj_nmi(struct kvm_vcpu *vcpu)
 {
 	kvm_inject_nmi(vcpu);
+	kvm_vcpu_kick(vcpu);
 }
 
-static u32 ioapic_get_delivery_bitmask(struct kvm_ioapic *ioapic, u8 dest,
-				       u8 dest_mode)
+u32 kvm_ioapic_get_delivery_bitmask(struct kvm_ioapic *ioapic, u8 dest,
+				    u8 dest_mode)
 {
 	u32 mask = 0;
 	int i;
@@ -206,7 +213,8 @@ static int ioapic_deliver(struct kvm_ioapic *ioapic, int irq)
 		     "vector=%x trig_mode=%x\n",
 		     dest, dest_mode, delivery_mode, vector, trig_mode);
 
-	deliver_bitmask = ioapic_get_delivery_bitmask(ioapic, dest, dest_mode);
+	deliver_bitmask = kvm_ioapic_get_delivery_bitmask(ioapic, dest,
+							  dest_mode);
 	if (!deliver_bitmask) {
 		ioapic_debug("no target on destination\n");
 		return 0;
@@ -285,26 +293,31 @@ void kvm_ioapic_set_irq(struct kvm_ioapic *ioapic, int irq, int level)
 	}
 }
 
-static void __kvm_ioapic_update_eoi(struct kvm_ioapic *ioapic, int gsi)
+static void __kvm_ioapic_update_eoi(struct kvm_ioapic *ioapic, int gsi,
+				    int trigger_mode)
 {
 	union ioapic_redir_entry *ent;
 
 	ent = &ioapic->redirtbl[gsi];
-	ASSERT(ent->fields.trig_mode == IOAPIC_LEVEL_TRIG);
 
-	ent->fields.remote_irr = 0;
-	if (!ent->fields.mask && (ioapic->irr & (1 << gsi)))
-		ioapic_service(ioapic, gsi);
+	kvm_notify_acked_irq(ioapic->kvm, gsi);
+
+	if (trigger_mode == IOAPIC_LEVEL_TRIG) {
+		ASSERT(ent->fields.trig_mode == IOAPIC_LEVEL_TRIG);
+		ent->fields.remote_irr = 0;
+		if (!ent->fields.mask && (ioapic->irr & (1 << gsi)))
+			ioapic_service(ioapic, gsi);
+	}
 }
 
-void kvm_ioapic_update_eoi(struct kvm *kvm, int vector)
+void kvm_ioapic_update_eoi(struct kvm *kvm, int vector, int trigger_mode)
 {
 	struct kvm_ioapic *ioapic = kvm->arch.vioapic;
 	int i;
 
 	for (i = 0; i < IOAPIC_NUM_PINS; i++)
 		if (ioapic->redirtbl[i].fields.vector == vector)
-			__kvm_ioapic_update_eoi(ioapic, i);
+			__kvm_ioapic_update_eoi(ioapic, i, trigger_mode);
 }
 
 static int ioapic_in_range(struct kvm_io_device *this, gpa_t addr,
@@ -380,7 +393,7 @@ static void ioapic_mmio_write(struct kvm_io_device *this, gpa_t addr, int len,
 		break;
 #ifdef	CONFIG_IA64
 	case IOAPIC_REG_EOI:
-		kvm_ioapic_update_eoi(ioapic->kvm, data);
+		kvm_ioapic_update_eoi(ioapic->kvm, data, IOAPIC_LEVEL_TRIG);
 		break;
 #endif
 
@@ -418,3 +431,4 @@ int kvm_ioapic_init(struct kvm *kvm)
 	kvm_io_bus_register_dev(&kvm->mmio_bus, &ioapic->dev);
 	return 0;
 }
+

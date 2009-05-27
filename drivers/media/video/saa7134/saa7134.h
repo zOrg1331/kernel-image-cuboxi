@@ -33,7 +33,6 @@
 
 #include <asm/io.h>
 
-#include <media/compat.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
 #include <media/tuner.h>
@@ -277,7 +276,7 @@ struct saa7134_format {
 #define SAA7134_BOARD_ADS_INSTANT_HDTV_PCI  151
 #define SAA7134_BOARD_ASUSTeK_TIGER         152
 #define SAA7134_BOARD_KWORLD_PLUS_TV_ANALOG 153
-#define SAA7134_BOARD_AVERMEDIA_CARDBUS_PLUS 154
+#define SAA7134_BOARD_AVERMEDIA_GO_007_FM_PLUS 154
 
 #define SAA7134_MAXBOARDS 32
 #define SAA7134_INPUT_MAX 8
@@ -451,11 +450,7 @@ struct saa7134_dmasound {
 	unsigned int               read_offset;
 	unsigned int               read_count;
 	void *			   priv_data;
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,16)
-	snd_pcm_substream_t        *substream;
-#else
 	struct snd_pcm_substream   *substream;
-#endif
 };
 
 /* ts/mpeg status */

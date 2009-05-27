@@ -70,15 +70,9 @@ static void ivtv_pio_work_handler(struct ivtv *itv)
 	write_reg(IVTV_IRQ_ENC_PIO_COMPLETE, 0x44);
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20)
 void ivtv_irq_work_handler(struct work_struct *work)
 {
 	struct ivtv *itv = container_of(work, struct ivtv, irq_work_queue);
-#else
-void ivtv_irq_work_handler(void *arg)
-{
-	struct ivtv *itv = arg;
-#endif
 
 	DEFINE_WAIT(wait);
 
@@ -834,11 +828,7 @@ static void ivtv_irq_vsync(struct ivtv *itv)
 
 #define IVTV_IRQ_DMA (IVTV_IRQ_DMA_READ | IVTV_IRQ_ENC_DMA_COMPLETE | IVTV_IRQ_DMA_ERR | IVTV_IRQ_ENC_START_CAP | IVTV_IRQ_ENC_VBI_CAP | IVTV_IRQ_DEC_DATA_REQ | IVTV_IRQ_DEC_VBI_RE_INSERT)
 
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 18)
-irqreturn_t ivtv_irq_handler(int irq, void *dev_id, struct pt_regs *regs)
-#else
 irqreturn_t ivtv_irq_handler(int irq, void *dev_id)
-#endif
 {
 	struct ivtv *itv = (struct ivtv *)dev_id;
 	u32 combo;

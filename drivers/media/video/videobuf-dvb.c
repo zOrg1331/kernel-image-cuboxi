@@ -19,16 +19,11 @@
 #include <linux/fs.h>
 #include <linux/kthread.h>
 #include <linux/file.h>
-#include <linux/version.h>
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
-#include <linux/suspend.h>
-#else
+
 #include <linux/freezer.h>
-#endif
 
 #include <media/videobuf-core.h>
 #include <media/videobuf-dvb.h>
-#include <media/compat.h>
 
 /* ------------------------------------------------------------------ */
 

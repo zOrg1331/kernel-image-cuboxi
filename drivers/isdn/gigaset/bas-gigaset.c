@@ -2070,7 +2070,7 @@ static int gigaset_initbcshw(struct bc_state *bcs)
 
 	bcs->hw.bas = ubc = kmalloc(sizeof(struct bas_bc_state), GFP_KERNEL);
 	if (!ubc) {
-		err("could not allocate bas_bc_state");
+		pr_err("out of memory\n");
 		return 0;
 	}
 
@@ -2084,7 +2084,7 @@ static int gigaset_initbcshw(struct bc_state *bcs)
 	ubc->isooutdone = ubc->isooutfree = ubc->isooutovfl = NULL;
 	ubc->numsub = 0;
 	if (!(ubc->isooutbuf = kmalloc(sizeof(struct isowbuf_t), GFP_KERNEL))) {
-		err("could not allocate isochronous output buffer");
+		pr_err("out of memory\n");
 		kfree(ubc);
 		bcs->hw.bas = NULL;
 		return 0;
@@ -2140,8 +2140,16 @@ static int gigaset_initcshw(struct cardstate *cs)
 	struct bas_cardstate *ucs;
 
 	cs->hw.bas = ucs = kmalloc(sizeof *ucs, GFP_KERNEL);
-	if (!ucs)
+	if (!ucs) {
+		pr_err("out of memory\n");
 		return 0;
+	}
+	ucs->int_in_buf = kmalloc(IP_MSGSIZE, GFP_KERNEL);
+	if (!ucs->int_in_buf) {
+		kfree(ucs);
+		pr_err("out of memory\n");
+		return 0;
+	}
 
 	ucs->urb_cmd_in = NULL;
 	ucs->urb_cmd_out = NULL;
@@ -2235,12 +2243,6 @@ static int gigaset_probe(struct usb_interface *interface,
 			return -ENODEV;
 		}
 		hostif = interface->cur_altsetting;
-	}
-	ucs->int_in_buf = kmalloc(IP_MSGSIZE, GFP_KERNEL);
-	if (!ucs->int_in_buf) {
-		kfree(ucs);
-		pr_err("out of memory\n");
-		return 0;
 	}
 
 	/* Reject application specific interfaces
@@ -2513,12 +2515,11 @@ static int __init bas_gigaset_init(void)
 	/* register this driver with the USB subsystem */
 	result = usb_register(&gigaset_usb_driver);
 	if (result < 0) {
-		err("usb_register failed (error %d)", -result);
+		pr_err("error %d registering USB driver\n", -result);
 		goto error;
 	}
 
-	info(DRIVER_AUTHOR);
-	info(DRIVER_DESC);
+	pr_info(DRIVER_DESC "\n");
 	return 0;
 
 error:

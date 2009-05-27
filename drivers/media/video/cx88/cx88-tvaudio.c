@@ -37,12 +37,7 @@
 
 #include <linux/module.h>
 #include <linux/errno.h>
-#include <linux/version.h>
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
-#include <linux/suspend.h>
-#else
 #include <linux/freezer.h>
-#endif
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/mm.h>
@@ -816,55 +811,6 @@ void cx88_get_stereo(struct cx88_core *core, struct v4l2_tuner *t)
 	Add some code here later.
 */
 
-# if 0
-	t->capability = V4L2_TUNER_CAP_STEREO | V4L2_TUNER_CAP_SAP |
-	    V4L2_TUNER_CAP_LANG1 | V4L2_TUNER_CAP_LANG2;
-	t->rxsubchans = V4L2_TUNER_SUB_MONO;
-	t->audmode = V4L2_TUNER_MODE_MONO;
-
-	switch (core->tvaudio) {
-	case WW_BTSC:
-		t->capability = V4L2_TUNER_CAP_STEREO | V4L2_TUNER_CAP_SAP;
-		t->rxsubchans = V4L2_TUNER_SUB_STEREO;
-		if (1 == pilot) {
-			/* SAP */
-			t->rxsubchans |= V4L2_TUNER_SUB_SAP;
-		}
-		break;
-	case WW_A2_BG:
-	case WW_A2_DK:
-	case WW_A2_M:
-		if (1 == pilot) {
-			/* stereo */
-			t->rxsubchans =
-			    V4L2_TUNER_SUB_MONO | V4L2_TUNER_SUB_STEREO;
-			if (0 == mode)
-				t->audmode = V4L2_TUNER_MODE_STEREO;
-		}
-		if (2 == pilot) {
-			/* dual language -- FIXME */
-			t->rxsubchans =
-			    V4L2_TUNER_SUB_LANG1 | V4L2_TUNER_SUB_LANG2;
-			t->audmode = V4L2_TUNER_MODE_LANG1;
-		}
-		break;
-	case WW_NICAM_BGDKL:
-		if (0 == mode) {
-			t->audmode = V4L2_TUNER_MODE_STEREO;
-			t->rxsubchans |= V4L2_TUNER_SUB_STEREO;
-		}
-		break;
-	case WW_SYSTEM_L_AM:
-		if (0x0 == mode && !(cx_read(AUD_INIT) & 0x04)) {
-			t->audmode = V4L2_TUNER_MODE_STEREO;
-			t->rxsubchans |= V4L2_TUNER_SUB_STEREO;
-		}
-		break;
-	default:
-		/* nothing */
-		break;
-	}
-# endif
 	return;
 }
 

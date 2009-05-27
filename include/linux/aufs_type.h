@@ -1,31 +1,20 @@
 /*
- * Copyright (C) 2005-2008 Junjiro Okajima
+ * Copyright (C) 2005-2009 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
-
-/* $Id: aufs_type.h,v 1.133 2008/12/08 06:12:34 sfjro Exp $ */
-
-#include <linux/ioctl.h>
 
 #ifndef __AUFS_TYPE_H__
 #define __AUFS_TYPE_H__
 
-#define AUFS_VERSION	"20081208"
+#include <linux/ioctl.h>
 
-/* move this to linux-2.6.19/include/magic.h */
+#define AUFS_VERSION	"2-29"
+
+/* todo? move this to linux-2.6.19/include/magic.h */
 #define AUFS_SUPER_MAGIC	('a' << 24 | 'u' << 16 | 'f' << 8 | 's')
 
 /* ---------------------------------------------------------------------- */
@@ -42,10 +31,16 @@ typedef short aufs_bindex_t;
 #define AUFS_BRANCH_MAX 1023
 #elif defined(CONFIG_AUFS_BRANCH_MAX_32767)
 #define AUFS_BRANCH_MAX 32767
-#else
+#endif
+#endif
+
+#ifdef __KERNEL__
+#ifndef AUFS_BRANCH_MAX
 #error unknown CONFIG_AUFS_BRANCH_MAX value
 #endif
-#endif
+#endif /* __KERNEL__ */
+
+/* ---------------------------------------------------------------------- */
 
 #define AUFS_NAME		"aufs"
 #define AUFS_FSTYPE		AUFS_NAME
@@ -61,67 +56,45 @@ typedef short aufs_bindex_t;
 #define AUFS_XINO_TRUNC_STEP	4  /* blocks */
 #define AUFS_DIRWH_DEF		3
 #define AUFS_RDCACHE_DEF	10 /* seconds */
+#define AUFS_RDBLK_DEF		512 /* bytes */
+#define AUFS_RDHASH_DEF		32
 #define AUFS_WKQ_NAME		AUFS_NAME "d"
 #define AUFS_NWKQ_DEF		4
 #define AUFS_MFS_SECOND_DEF	30 /* seconds */
 #define AUFS_PLINK_WARN		100 /* number of plinks */
 
-#ifdef CONFIG_AUFS_COMPAT
-#define AUFS_DIROPQ_NAME	"__dir_opaque"
-#else
 #define AUFS_DIROPQ_NAME	AUFS_WH_PFX ".opq" /* whiteouted doubly */
-#endif
 #define AUFS_WH_DIROPQ		AUFS_WH_PFX AUFS_DIROPQ_NAME
 
 #define AUFS_BASE_NAME		AUFS_WH_PFX AUFS_NAME
 #define AUFS_PLINKDIR_NAME	AUFS_WH_PFX "plnk"
-#define AUFS_TMPDIR_NAME	AUFS_WH_PFX ".tmp"
+#define AUFS_ORPHDIR_NAME	AUFS_WH_PFX "orph"
 
 /* doubly whiteouted */
 #define AUFS_WH_BASE		AUFS_WH_PFX AUFS_BASE_NAME
 #define AUFS_WH_PLINKDIR	AUFS_WH_PFX AUFS_PLINKDIR_NAME
-#define AUFS_WH_TMPDIR		AUFS_WH_PFX AUFS_TMPDIR_NAME
+#define AUFS_WH_ORPHDIR		AUFS_WH_PFX AUFS_ORPHDIR_NAME
+
+/* branch permission */
+#define AUFS_BRPERM_RW		"rw"
+#define AUFS_BRPERM_RO		"ro"
+#define AUFS_BRPERM_RR		"rr"
+#define AUFS_BRPERM_WH		"wh"
+#define AUFS_BRPERM_NLWH	"nolwh"
+#define AUFS_BRPERM_ROWH	AUFS_BRPERM_RO "+" AUFS_BRPERM_WH
+#define AUFS_BRPERM_RRWH	AUFS_BRPERM_RR "+" AUFS_BRPERM_WH
+#define AUFS_BRPERM_RWNLWH	AUFS_BRPERM_RW "+" AUFS_BRPERM_NLWH
 
 /* ---------------------------------------------------------------------- */
 
 /* ioctl */
-#if 0 /* reserved for future use */
 enum {
-	AuCtlErr,
-	AuCtlErr_Last
-};
-enum {
-	AuCtl_DIROPQ_GET, AuCtl_DIROPQ_SET,
-	AuCtl_MOVE,
-	AuCtl_MVDOWN,
-
-	/* unimplmented */
-	AuCtl_REFRESH, AuCtl_REFRESHV,
-	AuCtl_FLUSH_PLINK,
-	AuCtl_CPUP,
-	AuCtl_CPDOWN
-};
-
-struct aufs_ctl {
-	int err;
-	aufs_bindex_t bsrc, bdst;
-	char *path;
+	AuCtl_PLINK_MAINT,
+	AuCtl_PLINK_CLEAN
 };
 
 #define AuCtlType		'A'
-#define AUFS_CTL_DIROPQ_GET	_IO(AuCtlType, AuCtl_DIROPQ_GET)
-#define AUFS_CTL_DIROPQ_SET	_IOW(AuCtlType, AuCtl_DIROPQ_SET, aufs_bindex_t)
-#define AUFS_CTL_MOVE \
-	_IOW(AuCtlType, AuCtl_MVDOWN, aufs_bindex_t)
-#define AUFS_CTL_MVDOWN \
-	_IOWR(AuCtlType, AuCtl_MVDOWN, struct aufs_ctl)
-
-#define AUFS_CTL_REFRESH	_IO(AuCtlType, AuCtl_REFRESH)
-#define AUFS_CTL_REFRESHV	_IO(AuCtlType, AuCtl_REFRESHV)
-#define AUFS_CTL_FLUSH_PLINK	_IOR(AuCtlType, AuCtl_FLUSH_PLINK)
-#define AUFS_CTL_CPUP		_IOWR(AuCtlType, AuCtl_CPUP, struct aufs_ctl)
-#define AUFS_CTL_CPDOWN \
-	_IOWR(AuCtlType, AuCtl_CPDOWN, struct aufs_ctl_cp)
-#endif
+#define AUFS_CTL_PLINK_MAINT	_IO(AuCtlType, AuCtl_PLINK_MAINT)
+#define AUFS_CTL_PLINK_CLEAN	_IO(AuCtlType, AuCtl_PLINK_CLEAN)
 
 #endif /* __AUFS_TYPE_H__ */

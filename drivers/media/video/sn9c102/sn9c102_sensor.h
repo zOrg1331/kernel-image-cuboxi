@@ -27,7 +27,6 @@
 #include <linux/stddef.h>
 #include <linux/errno.h>
 #include <asm/types.h>
-#include <media/compat.h>
 
 struct sn9c102_device;
 struct sn9c102_sensor;

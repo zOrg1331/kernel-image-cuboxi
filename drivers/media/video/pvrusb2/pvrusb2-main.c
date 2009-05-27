@@ -34,7 +34,6 @@
 #ifdef CONFIG_VIDEO_PVRUSB2_SYSFS
 #include "pvrusb2-sysfs.h"
 #endif /* CONFIG_VIDEO_PVRUSB2_SYSFS */
-#include <media/compat.h>
 
 #define DRIVER_AUTHOR "Mike Isely <isely@pobox.com>"
 #define DRIVER_DESC "Hauppauge WinTV-PVR-USB2 MPEG2 Encoder/Tuner"

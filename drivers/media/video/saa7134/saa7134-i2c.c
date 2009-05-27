@@ -198,10 +198,6 @@ static inline int i2c_send_byte(struct saa7134_dev *dev,
 	enum i2c_status status;
 	__u32 dword;
 
-#if 0
-	i2c_set_attr(dev,attr);
-	saa_writeb(SAA7134_I2C_DATA, data);
-#else
 	/* have to write both attr + data in one 32bit word */
 	dword  = saa_readl(SAA7134_I2C_ATTR_STATUS >> 2);
 	dword &= 0x0f;
@@ -211,7 +207,6 @@ static inline int i2c_send_byte(struct saa7134_dev *dev,
 //	dword |= 0x40 << 16;  /* 400 kHz */
 	dword |= 0xf0 << 24;
 	saa_writel(SAA7134_I2C_ATTR_STATUS >> 2, dword);
-#endif
 	d2printk(KERN_DEBUG "%s: i2c data => 0x%x\n",dev->name,data);
 
 	if (!i2c_is_busy_wait(dev))
@@ -260,7 +255,7 @@ static int saa7134_i2c_xfer(struct i2c_adapter *i2c_adap,
 			addr  = msgs[i].addr << 1;
 			if (msgs[i].flags & I2C_M_RD)
 				addr |= 1;
-			if (i > 0 && msgs[i].flags & I2C_M_RD && msgs[i].addr != 0x40) {
+			if (i > 0 && msgs[i].flags & I2C_M_RD) {
 				/* workaround for a saa7134 i2c bug
 				 * needed to talk to the mt352 demux
 				 * thanks to pinnacle for the hint */
@@ -358,9 +353,6 @@ static int attach_inform(struct i2c_client *client)
 static struct i2c_algorithm saa7134_algo = {
 	.master_xfer   = saa7134_i2c_xfer,
 	.functionality = functionality,
-#ifdef NEED_ALGO_CONTROL
-	.algo_control = dummy_algo_control,
-#endif
 };
 
 static struct i2c_adapter saa7134_adap_template = {

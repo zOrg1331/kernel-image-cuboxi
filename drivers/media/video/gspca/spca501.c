@@ -132,7 +132,7 @@ static struct ctrl sd_ctrls[] = {
 	},
 };
 
-static struct v4l2_pix_format vga_mode[] = {
+static const struct v4l2_pix_format vga_mode[] = {
 	{160, 120, V4L2_PIX_FMT_SPCA501, V4L2_FIELD_NONE,
 		.bytesperline = 160,
 		.sizeimage = 160 * 120 * 3 / 2,
@@ -1856,31 +1856,6 @@ static int reg_write(struct usb_device *dev,
 	return ret;
 }
 
-#if 0
-/* returns: negative is error, pos or zero is data */
-static int reg_read(struct gspca_dev *gspca_dev,
-			__u16 req,	/* bRequest */
-			__u16 index,	/* wIndex */
-			__u16 length)	/* wLength (1 or 2 only) */
-{
-	int ret;
-
-	gspca_dev->usb_buf[1] = 0;
-	ret = usb_control_msg(gspca_dev->dev,
-			usb_rcvctrlpipe(gspca_dev->dev, 0),
-			req,
-			USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-			0,		/* value */
-			index,
-			gspca_dev->usb_buf, length,
-			500);			/* timeout */
-	if (ret < 0) {
-		PDEBUG(D_ERR, "reg_read err %d", ret);
-		return -1;
-	}
-	return (gspca_dev->usb_buf[1] << 8) + gspca_dev->usb_buf[0];
-}
-#endif
 
 static int write_vector(struct gspca_dev *gspca_dev,
 			const __u16 data[][3])
@@ -1910,13 +1885,6 @@ static void setbrightness(struct gspca_dev *gspca_dev)
 
 static void getbrightness(struct gspca_dev *gspca_dev)
 {
-#if 0
-	struct sd *sd = (struct sd *) gspca_dev;
-	__u16 brightness;
-
-	brightness = reg_read(gspca_dev, SPCA501_REG_CCDSP, 0x12, 2);
-	sd->brightness = brightness;
-#endif
 }
 
 static void setcontrast(struct gspca_dev *gspca_dev)
@@ -1931,17 +1899,6 @@ static void setcontrast(struct gspca_dev *gspca_dev)
 
 static void getcontrast(struct gspca_dev *gspca_dev)
 {
-#if 0
-	__u8 byte = 0;
-	byte = (reg_read(gspca_dev,
-				 0x00,
-				 0x00,
-				 1) & 0xff) << 8;
-	ss->contrast = byte | (reg_read(gspca_dev,
-				 0x00,
-				 0x01,
-				 1) & 0xff);
-#endif
 }
 
 static void setcolors(struct gspca_dev *gspca_dev)
@@ -1953,11 +1910,6 @@ static void setcolors(struct gspca_dev *gspca_dev)
 
 static void getcolors(struct gspca_dev *gspca_dev)
 {
-#if 0
-	struct sd *sd = (struct sd *) gspca_dev;
-
-	sd->colors = reg_read(gspca_dev, SPCA501_REG_CCDSP, 0x0c, 2);
-#endif
 }
 
 static void setblue_balance(struct gspca_dev *gspca_dev)

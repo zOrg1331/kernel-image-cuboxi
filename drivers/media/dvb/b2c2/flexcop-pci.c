@@ -13,9 +13,9 @@ static int enable_pid_filtering = 1;
 module_param(enable_pid_filtering, int, 0444);
 MODULE_PARM_DESC(enable_pid_filtering, "enable hardware pid filtering: supported values: 0 (fullts), 1");
 
-static int irq_chk_intv;
+static int irq_chk_intv = 100;
 module_param(irq_chk_intv, int, 0644);
-MODULE_PARM_DESC(irq_chk_intv, "set the interval for IRQ watchdog (currently just debugging).");
+MODULE_PARM_DESC(irq_chk_intv, "set the interval for IRQ streaming watchdog.");
 
 #ifdef CONFIG_DVB_B2C2_FLEXCOP_DEBUG
 #define dprintk(level,args...) \
@@ -34,7 +34,9 @@ MODULE_PARM_DESC(irq_chk_intv, "set the interval for IRQ watchdog (currently jus
 
 static int debug;
 module_param(debug, int, 0644);
-MODULE_PARM_DESC(debug, "set debug level (1=info,2=regs,4=TS,8=irqdma (|-able))." DEBSTATUS);
+MODULE_PARM_DESC(debug,
+	"set debug level (1=info,2=regs,4=TS,8=irqdma,16=check (|-able))."
+	 DEBSTATUS);
 
 #define DRIVER_VERSION "0.1"
 #define DRIVER_NAME "Technisat/B2C2 FlexCop II/IIb/III Digital TV PCI Driver"
@@ -58,16 +60,14 @@ struct flexcop_pci {
 	int active_dma1_addr; /* 0 = addr0 of dma1; 1 = addr1 of dma1 */
 	u32 last_dma1_cur_pos; /* position of the pointer last time the timer/packet irq occured */
 	int count;
+	int count_prev;
+	int stream_problem;
 
 	spinlock_t irq_lock;
 
 	unsigned long last_irq;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
-	struct work_struct irq_check_work;
-#else
 	struct delayed_work irq_check_work;
-#endif
 
 	struct flexcop_device *fc_dev;
 };
@@ -101,32 +101,38 @@ static int flexcop_pci_write_ibi_reg(struct flexcop_device *fc, flexcop_ibi_regi
 	return 0;
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
-static void flexcop_pci_irq_check_work(void *data)
-#else
 static void flexcop_pci_irq_check_work(struct work_struct *work)
-#endif
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
-	struct flexcop_pci *fc_pci = data;
-#else
 	struct flexcop_pci *fc_pci =
 		container_of(work, struct flexcop_pci, irq_check_work.work);
-#endif
 	struct flexcop_device *fc = fc_pci->fc_dev;
 
-	flexcop_ibi_value v = fc->read_ibi_reg(fc,sram_dest_reg_714);
+	if (fc->feedcount) {
 
-	flexcop_dump_reg(fc_pci->fc_dev,dma1_000,4);
+		if (fc_pci->count == fc_pci->count_prev) {
+			deb_chk("no IRQ since the last check\n");
+			if (fc_pci->stream_problem++ == 3) {
+				struct dvb_demux_feed *feed;
 
-	if (v.sram_dest_reg_714.net_ovflow_error)
-		deb_chk("sram net_ovflow_error\n");
-	if (v.sram_dest_reg_714.media_ovflow_error)
-		deb_chk("sram media_ovflow_error\n");
-	if (v.sram_dest_reg_714.cai_ovflow_error)
-		deb_chk("sram cai_ovflow_error\n");
-	if (v.sram_dest_reg_714.cai_ovflow_error)
-		deb_chk("sram cai_ovflow_error\n");
+				spin_lock_irq(&fc->demux.lock);
+				list_for_each_entry(feed, &fc->demux.feed_list,
+					list_head) {
+					flexcop_pid_feed_control(fc, feed, 0);
+				}
+
+				list_for_each_entry(feed, &fc->demux.feed_list,
+					list_head) {
+					flexcop_pid_feed_control(fc, feed, 1);
+				}
+				spin_unlock_irq(&fc->demux.lock);
+
+				fc_pci->stream_problem = 0;
+			}
+		} else {
+			fc_pci->stream_problem = 0;
+			fc_pci->count_prev = fc_pci->count;
+		}
+	}
 
 	schedule_delayed_work(&fc_pci->irq_check_work,
 			msecs_to_jiffies(irq_chk_intv < 100 ? 100 : irq_chk_intv));
@@ -135,11 +141,7 @@ static void flexcop_pci_irq_check_work(struct work_struct *work)
 /* When PID filtering is turned on, we use the timer IRQ, because small amounts
  * of data need to be passed to the user space instantly as well. When PID
  * filtering is turned off, we use the page-change-IRQ */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static irqreturn_t flexcop_pci_isr(int irq, void *dev_id, struct pt_regs *regs)
-#else
 static irqreturn_t flexcop_pci_isr(int irq, void *dev_id)
-#endif
 {
 	struct flexcop_pci *fc_pci = dev_id;
 	struct flexcop_device *fc = fc_pci->fc_dev;
@@ -232,16 +234,12 @@ static int flexcop_pci_stream_control(struct flexcop_device *fc, int onoff)
 		flexcop_dma_control_timer_irq(fc,FC_DMA_1,1);
 		deb_irq("IRQ enabled\n");
 
+		fc_pci->count_prev = fc_pci->count;
+
 //		fc_pci->active_dma1_addr = 0;
 //		flexcop_dma_control_size_irq(fc,FC_DMA_1,1);
 
-		if (irq_chk_intv > 0)
-			schedule_delayed_work(&fc_pci->irq_check_work,
-					msecs_to_jiffies(irq_chk_intv < 100 ? 100 : irq_chk_intv));
 	} else {
-		if (irq_chk_intv > 0)
-			cancel_delayed_work(&fc_pci->irq_check_work);
-
 		flexcop_dma_control_timer_irq(fc,FC_DMA_1,0);
 		deb_irq("IRQ disabled\n");
 
@@ -315,8 +313,6 @@ static int flexcop_pci_init(struct flexcop_pci *fc_pci)
 					IRQF_SHARED, DRIVER_NAME, fc_pci)) != 0)
 		goto err_pci_iounmap;
 
-
-
 	fc_pci->init_state |= FC_PCI_INIT;
 	return ret;
 
@@ -389,11 +385,11 @@ static int flexcop_pci_probe(struct pci_dev *pdev, const struct pci_device_id *e
 	if ((ret = flexcop_pci_dma_init(fc_pci)) != 0)
 		goto err_fc_exit;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
-	INIT_WORK(&fc_pci->irq_check_work, flexcop_pci_irq_check_work, fc_pci);
-#else
 	INIT_DELAYED_WORK(&fc_pci->irq_check_work, flexcop_pci_irq_check_work);
-#endif
+
+		if (irq_chk_intv > 0)
+			schedule_delayed_work(&fc_pci->irq_check_work,
+		msecs_to_jiffies(irq_chk_intv < 100 ? 100 : irq_chk_intv));
 
 	return ret;
 
@@ -412,6 +408,9 @@ err_kfree:
 static void flexcop_pci_remove(struct pci_dev *pdev)
 {
 	struct flexcop_pci *fc_pci = pci_get_drvdata(pdev);
+
+	if (irq_chk_intv > 0)
+		cancel_delayed_work(&fc_pci->irq_check_work);
 
 	flexcop_pci_dma_exit(fc_pci);
 	flexcop_device_exit(fc_pci->fc_dev);

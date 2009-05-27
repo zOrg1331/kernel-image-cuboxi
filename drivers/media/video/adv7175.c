@@ -34,7 +34,6 @@
 #include <linux/video_encoder.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-i2c-drv-legacy.h>
-#include <media/compat.h>
 
 MODULE_DESCRIPTION("Analog Devices ADV7175 video encoder driver");
 MODULE_AUTHOR("Dave Perks");
@@ -395,14 +394,12 @@ static int adv7175_remove(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id adv7175_id[] = {
 	{ "adv7175", 0 },
 	{ "adv7176", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, adv7175_id);
-#endif
 
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "adv7175",
@@ -410,7 +407,5 @@ static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.command = adv7175_command,
 	.probe = adv7175_probe,
 	.remove = adv7175_remove,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = adv7175_id,
-#endif
 };

@@ -30,7 +30,7 @@ unsigned int saa7146_debug;
 module_param(saa7146_debug, uint, 0644);
 MODULE_PARM_DESC(saa7146_debug, "debug level (default: 0)");
 
-#if 0 /* keep */
+#if 0
 static void dump_registers(struct saa7146_dev* dev)
 {
 	int i = 0;
@@ -291,11 +291,7 @@ int saa7146_pgtable_build_single(struct pci_dev *pci, struct saa7146_pgtable *pt
 
 /********************************************************************************/
 /* interrupt handler */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static irqreturn_t interrupt_hw(int irq, void *dev_id, struct pt_regs *regs)
-#else
 static irqreturn_t interrupt_hw(int irq, void *dev_id)
-#endif
 {
 	struct saa7146_dev *dev = dev_id;
 	u32 isr;

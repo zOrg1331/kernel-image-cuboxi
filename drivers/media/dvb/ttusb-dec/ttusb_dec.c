@@ -32,7 +32,6 @@
 #include <linux/init.h>
 #include <linux/input.h>
 
-#include <media/compat.h>
 #include <linux/mutex.h>
 
 #include "dmxdev.h"
@@ -205,11 +204,7 @@ static u16 rc_keys[] = {
 static void ttusb_dec_set_model(struct ttusb_dec *dec,
 				enum ttusb_dec_model model);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static void ttusb_dec_handle_irq( struct urb *urb, struct pt_regs *regs)
-#else
 static void ttusb_dec_handle_irq( struct urb *urb)
-#endif
 {
 	struct ttusb_dec * dec = urb->context;
 	char *buffer = dec->irq_buffer;
@@ -762,11 +757,7 @@ static void ttusb_dec_process_urb_frame_list(unsigned long data)
 	}
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static void ttusb_dec_process_urb(struct urb *urb, struct pt_regs *ptregs)
-#else
 static void ttusb_dec_process_urb(struct urb *urb)
-#endif
 {
 	struct ttusb_dec *dec = urb->context;
 
@@ -1393,7 +1384,7 @@ static int ttusb_dec_boot_dsp(struct ttusb_dec *dec)
 static int ttusb_dec_init_stb(struct ttusb_dec *dec)
 {
 	int result;
-	unsigned int mode, model, version;
+	unsigned int mode = 0, model = 0, version = 0;
 
 	dprintk("%s\n", __func__);
 

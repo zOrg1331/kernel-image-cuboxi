@@ -35,7 +35,6 @@
 #include "pvrusb2-encoder.h"
 #include "pvrusb2-debug.h"
 #include "pvrusb2-fx2-cmd.h"
-#include <media/compat.h>
 
 #define TV_MIN_FREQ     55250000L
 #define TV_MAX_FREQ    850000000L
@@ -1318,15 +1317,6 @@ static void pvr2_hdw_set_cur_freq(struct pvr2_hdw *hdw,unsigned long val)
 	}
 }
 
-#if 0
-struct pvr2_hdw *pvr2_hdw_find(int unit_number)
-{
-	if (unit_number < 0) return NULL;
-	if (unit_number >= PVR_NUM) return NULL;
-	return unit_pointers[unit_number];
-}
-
-#endif  /*  0  */
 int pvr2_hdw_get_unit_number(struct pvr2_hdw *hdw)
 {
 	return hdw->unit_number;
@@ -1701,13 +1691,6 @@ int pvr2_hdw_untrip(struct pvr2_hdw *hdw)
 }
 
 
-#if 0
-const char *pvr2_hdw_get_state_name(unsigned int id)
-{
-	if (id >= ARRAY_SIZE(pvr2_state_names)) return NULL;
-	return pvr2_state_names[id];
-}
-#endif  /*  0  */
 
 
 int pvr2_hdw_get_streaming(struct pvr2_hdw *hdw)
@@ -2398,15 +2381,8 @@ struct pvr2_hdw *pvr2_hdw_create(struct usb_interface *intf,
 	hdw->name[cnt1] = 0;
 
 	hdw->workqueue = create_singlethread_workqueue(hdw->name);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
-	INIT_WORK(&hdw->workpoll,(void (*)(void*))pvr2_hdw_worker_poll,
-		  &hdw->workpoll);
-	INIT_WORK(&hdw->worki2csync,(void (*)(void*))pvr2_hdw_worker_i2c,
-		  &hdw->worki2csync);
-#else
 	INIT_WORK(&hdw->workpoll,pvr2_hdw_worker_poll);
 	INIT_WORK(&hdw->worki2csync,pvr2_hdw_worker_i2c);
-#endif
 
 	pvr2_trace(PVR2_TRACE_INIT,"Driver unit number is %d, name is %s",
 		   hdw->unit_number,hdw->name);
@@ -3282,31 +3258,7 @@ void pvr2_hdw_v4l_store_minor_number(struct pvr2_hdw *hdw,
 }
 
 
-#if 0
-/* Attempt to recover from a USB foul-up (in practice I find that if you
-   have to do this, then it's already too late). */
-void pvr2_reset_ctl_endpoints(struct pvr2_hdw *hdw)
-{
-	if (!hdw->usb_dev) return;
-	usb_settoggle(hdw->usb_dev, PVR2_CTL_WRITE_ENDPOINT & 0xf,
-		      !(PVR2_CTL_WRITE_ENDPOINT & USB_DIR_IN), 0);
-	usb_settoggle(hdw->usb_dev, PVR2_CTL_READ_ENDPOINT & 0xf,
-		      !(PVR2_CTL_READ_ENDPOINT & USB_DIR_IN), 0);
-	usb_clear_halt(hdw->usb_dev,
-		       usb_rcvbulkpipe(hdw->usb_dev,
-				       PVR2_CTL_READ_ENDPOINT & 0x7f));
-	usb_clear_halt(hdw->usb_dev,
-		       usb_sndbulkpipe(hdw->usb_dev,
-				       PVR2_CTL_WRITE_ENDPOINT & 0x7f));
-}
-
-
-#endif  /*  0  */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static void pvr2_ctl_write_complete(struct urb *urb, struct pt_regs *regs)
-#else
 static void pvr2_ctl_write_complete(struct urb *urb)
-#endif
 {
 	struct pvr2_hdw *hdw = urb->context;
 	hdw->ctl_write_pend_flag = 0;
@@ -3315,11 +3267,7 @@ static void pvr2_ctl_write_complete(struct urb *urb)
 }
 
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static void pvr2_ctl_read_complete(struct urb *urb, struct pt_regs *regs)
-#else
 static void pvr2_ctl_read_complete(struct urb *urb)
-#endif
 {
 	struct pvr2_hdw *hdw = urb->context;
 	hdw->ctl_read_pend_flag = 0;
@@ -3400,27 +3348,6 @@ static int pvr2_send_request_ex(struct pvr2_hdw *hdw,
 		return -EINVAL;
 	}
 
-#if 0
-	printk(KERN_INFO "pvrusb2: REQUEST BEGIN writeCnt=%u readCnt=%u",
-	       write_len,read_len);
-	if (probe_fl) {
-		printk(" <probe>");
-	}
-	for (idx = 0; idx < write_len; idx++) {
-		if (idx > 5) {
-			printk(" ...");
-			break;
-		}
-		if (idx) {
-			printk(" ");
-		} else {
-			printk(" [");
-		}
-		printk("%02x",((unsigned char *)write_data)[idx]);
-	}
-	if (write_len) printk("]");
-	printk("\n");
-#endif
 
 	hdw->cmd_debug_state = 1;
 	if (write_len) {
@@ -3585,25 +3512,6 @@ static int pvr2_send_request_ex(struct pvr2_hdw *hdw,
 	}
 
  done:
-#if 0
-	printk(KERN_INFO "pvrusb2: REQUEST END status=%d",status);
-	if (status >= 0) {
-		for (idx = 0; idx < read_len; idx++) {
-			if (idx > 5) {
-				printk(" ...");
-				break;
-			}
-			if (idx) {
-				printk(" ");
-			} else {
-				printk(" [");
-			}
-			printk("%02x",((unsigned char *)read_data)[idx]);
-		}
-		if (read_len) printk("]");
-	}
-	printk("\n");
-#endif
 
 	hdw->cmd_debug_state = 0;
 	if ((status < 0) && (!probe_fl)) {
@@ -3747,7 +3655,7 @@ void pvr2_hdw_device_reset(struct pvr2_hdw *hdw)
 	int ret;
 	pvr2_trace(PVR2_TRACE_INIT,"Performing a device reset...");
 	ret = usb_lock_device_for_reset(hdw->usb_dev,NULL);
-	if (ret == 1) {
+	if (ret == 0) {
 		ret = usb_reset_device(hdw->usb_dev);
 		usb_unlock_device(hdw->usb_dev);
 	} else {
@@ -4673,49 +4581,6 @@ static void pvr2_hdw_state_sched(struct pvr2_hdw *hdw)
 	queue_work(hdw->workqueue,&hdw->workpoll);
 }
 
-#if 0
-
-void pvr2_hdw_get_debug_info_unlocked(const struct pvr2_hdw *hdw,
-				      struct pvr2_hdw_debug_info *ptr)
-{
-	ptr->big_lock_held = hdw->big_lock_held;
-	ptr->ctl_lock_held = hdw->ctl_lock_held;
-	ptr->flag_disconnected = hdw->flag_disconnected;
-	ptr->flag_init_ok = hdw->flag_init_ok;
-	ptr->flag_ok = hdw->flag_ok;
-	ptr->fw1_state = hdw->fw1_state;
-	ptr->flag_decoder_missed = hdw->flag_decoder_missed;
-	ptr->flag_tripped = hdw->flag_tripped;
-	ptr->state_encoder_ok = hdw->state_encoder_ok;
-	ptr->state_encoder_run = hdw->state_encoder_run;
-	ptr->state_decoder_run = hdw->state_decoder_run;
-	ptr->state_usbstream_run = hdw->state_usbstream_run;
-	ptr->state_decoder_quiescent = hdw->state_decoder_quiescent;
-	ptr->state_pipeline_config = hdw->state_pipeline_config;
-	ptr->state_pipeline_req = hdw->state_pipeline_req;
-	ptr->state_pipeline_pause = hdw->state_pipeline_pause;
-	ptr->state_pipeline_idle = hdw->state_pipeline_idle;
-	ptr->cmd_debug_state = hdw->cmd_debug_state;
-	ptr->cmd_code = hdw->cmd_debug_code;
-	ptr->cmd_debug_write_len = hdw->cmd_debug_write_len;
-	ptr->cmd_debug_read_len = hdw->cmd_debug_read_len;
-	ptr->cmd_debug_timeout = hdw->ctl_timeout_flag;
-	ptr->cmd_debug_write_pend = hdw->ctl_write_pend_flag;
-	ptr->cmd_debug_read_pend = hdw->ctl_read_pend_flag;
-	ptr->cmd_debug_rstatus = hdw->ctl_read_urb->status;
-	ptr->cmd_debug_wstatus = hdw->ctl_read_urb->status;
-}
-
-
-void pvr2_hdw_get_debug_info_locked(struct pvr2_hdw *hdw,
-				    struct pvr2_hdw_debug_info *ptr)
-{
-	LOCK_TAKE(hdw->ctl_lock); do {
-		pvr2_hdw_get_debug_info_unlocked(hdw,ptr);
-	} while(0); LOCK_GIVE(hdw->ctl_lock);
-}
-
-#endif  /*  0  */
 
 int pvr2_hdw_gpio_get_dir(struct pvr2_hdw *hdw,u32 *dp)
 {
@@ -4867,26 +4732,25 @@ static int pvr2_hdw_get_eeprom_addr(struct pvr2_hdw *hdw)
 
 
 int pvr2_hdw_register_access(struct pvr2_hdw *hdw,
-			     u32 match_type, u32 match_chip, u64 reg_id,
-			     int setFl,u64 *val_ptr)
+			     struct v4l2_dbg_match *match, u64 reg_id,
+			     int setFl, u64 *val_ptr)
 {
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 	struct pvr2_i2c_client *cp;
-	struct v4l2_register req;
+	struct v4l2_dbg_register req;
 	int stat = 0;
 	int okFl = 0;
 
 	if (!capable(CAP_SYS_ADMIN)) return -EPERM;
 
-	req.match_type = match_type;
-	req.match_chip = match_chip;
+	req.match = *match;
 	req.reg = reg_id;
 	if (setFl) req.val = *val_ptr;
 	mutex_lock(&hdw->i2c_list_lock); do {
 		list_for_each_entry(cp, &hdw->i2c_clients, list) {
 			if (!v4l2_chip_match_i2c_client(
 				    cp->client,
-				    req.match_type, req.match_chip)) {
+				    &req.match)) {
 				continue;
 			}
 			stat = pvr2_i2c_client_cmd(

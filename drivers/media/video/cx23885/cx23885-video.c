@@ -28,7 +28,6 @@
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
-#include <media/compat.h>
 #include <linux/kthread.h>
 #include <asm/div64.h>
 
@@ -85,82 +84,51 @@ static struct cx23885_fmt formats[] = {
 	{
 		.name     = "8 bpp, gray",
 		.fourcc   = V4L2_PIX_FMT_GREY,
-#if 0
-		.cxformat = ColorFormatY8,
-#endif
 		.depth    = 8,
 		.flags    = FORMAT_FLAGS_PACKED,
 	}, {
 		.name     = "15 bpp RGB, le",
 		.fourcc   = V4L2_PIX_FMT_RGB555,
-#if 0
-		.cxformat = ColorFormatRGB15,
-#endif
 		.depth    = 16,
 		.flags    = FORMAT_FLAGS_PACKED,
 	}, {
 		.name     = "15 bpp RGB, be",
 		.fourcc   = V4L2_PIX_FMT_RGB555X,
-#if 0
-		.cxformat = ColorFormatRGB15 | ColorFormatBSWAP,
-#endif
 		.depth    = 16,
 		.flags    = FORMAT_FLAGS_PACKED,
 	}, {
 		.name     = "16 bpp RGB, le",
 		.fourcc   = V4L2_PIX_FMT_RGB565,
-#if 0
-		.cxformat = ColorFormatRGB16,
-#endif
 		.depth    = 16,
 		.flags    = FORMAT_FLAGS_PACKED,
 	}, {
 		.name     = "16 bpp RGB, be",
 		.fourcc   = V4L2_PIX_FMT_RGB565X,
-#if 0
-		.cxformat = ColorFormatRGB16 | ColorFormatBSWAP,
-#endif
 		.depth    = 16,
 		.flags    = FORMAT_FLAGS_PACKED,
 	}, {
 		.name     = "24 bpp RGB, le",
 		.fourcc   = V4L2_PIX_FMT_BGR24,
-#if 0
-		.cxformat = ColorFormatRGB24,
-#endif
 		.depth    = 24,
 		.flags    = FORMAT_FLAGS_PACKED,
 	}, {
 		.name     = "32 bpp RGB, le",
 		.fourcc   = V4L2_PIX_FMT_BGR32,
-#if 0
-		.cxformat = ColorFormatRGB32,
-#endif
 		.depth    = 32,
 		.flags    = FORMAT_FLAGS_PACKED,
 	}, {
 		.name     = "32 bpp RGB, be",
 		.fourcc   = V4L2_PIX_FMT_RGB32,
-#if 0
-		.cxformat = ColorFormatRGB32 | ColorFormatBSWAP |
-			ColorFormatWSWAP,
-#endif
 		.depth    = 32,
 		.flags    = FORMAT_FLAGS_PACKED,
 	}, {
 		.name     = "4:2:2, packed, YUYV",
 		.fourcc   = V4L2_PIX_FMT_YUYV,
-#if 0
-		.cxformat = ColorFormatYUY2,
-#endif
 		.depth    = 16,
 		.flags    = FORMAT_FLAGS_PACKED,
 	}, {
 		.name     = "4:2:2, packed, UYVY",
 		.fourcc   = V4L2_PIX_FMT_UYVY,
-#if 0
-		.cxformat = ColorFormatYUY2 | ColorFormatBSWAP,
-#endif
 		.depth    = 16,
 		.flags    = FORMAT_FLAGS_PACKED,
 	},
@@ -283,9 +251,6 @@ static const u32 cx23885_user_ctrls[] = {
 	V4L2_CID_SATURATION,
 	V4L2_CID_HUE,
 	V4L2_CID_AUDIO_VOLUME,
-#if 0
-	V4L2_CID_AUDIO_BALANCE,
-#endif
 	V4L2_CID_AUDIO_MUTE,
 	0
 };
@@ -451,11 +416,6 @@ static int cx23885_video_mux(struct cx23885_dev *dev, unsigned int input)
 	/* Tell the internal A/V decoder */
 	cx23885_call_i2c_clients(&dev->i2c_bus[2],
 		VIDIOC_INT_S_VIDEO_ROUTING, &route);
-#if 0
-	route.input = 0; /* Let the AVCore default */
-	cx23885_call_i2c_clients(&dev->i2c_bus[2],
-		VIDIOC_INT_S_AUDIO_ROUTING, &route);
-#endif
 
 	return 0;
 }
@@ -494,22 +454,6 @@ static int cx23885_start_video_dma(struct cx23885_dev *dev,
 	return 0;
 }
 
-#if 0
-#ifdef CONFIG_PM
-static int cx23885_stop_video_dma(struct cx23885_dev *dev)
-{
-	dprintk(1, "%s()\n", __func__);
-	/* stop dma */
-	cx_clear(VID_A_DMA_CTL, 0x11);
-
-	/* disable irqs */
-	cx_clear(PCI_INT_MSK, 0x000001);
-	cx_clear(VID_A_INT_MSK, 0x000011);
-
-	return 0;
-}
-#endif
-#endif
 
 static int cx23885_restart_video_queue(struct cx23885_dev *dev,
 			       struct cx23885_dmaqueue *q)
@@ -774,9 +718,9 @@ static int get_resource(struct cx23885_fh *fh)
 	}
 }
 
-static int video_open(struct inode *inode, struct file *file)
+static int video_open(struct file *file)
 {
-	int minor = iminor(inode);
+	int minor = video_devdata(file)->minor;
 	struct cx23885_dev *h, *dev = NULL;
 	struct cx23885_fh *fh;
 	struct list_head *list;
@@ -833,21 +777,6 @@ static int video_open(struct inode *inode, struct file *file)
 
 	dprintk(1, "post videobuf_queue_init()\n");
 
-#if 0
-	if (fh->radio) {
-		int board = dev->board;
-		dprintk(1, "video_open: setting radio device\n");
-		cx_write(MO_GP3_IO, cx88_boards[board].radio.gpio3);
-		cx_write(MO_GP0_IO, cx88_boards[board].radio.gpio0);
-		cx_write(MO_GP1_IO, cx88_boards[board].radio.gpio1);
-		cx_write(MO_GP2_IO, cx88_boards[board].radio.gpio2);
-		dev->tvaudio = WW_FM;
-		cx23885_set_tvaudio(dev);
-		cx23885_set_stereo(dev, V4L2_TUNER_MODE_STEREO, 1);
-		cx23885_call_i2c_clients(&dev->i2c_bus[1],
-			AUDC_SET_RADIO, NULL);
-	}
-#endif
 	unlock_kernel();
 
 	return 0;
@@ -906,7 +835,7 @@ static unsigned int video_poll(struct file *file,
 	return 0;
 }
 
-static int video_release(struct inode *inode, struct file *file)
+static int video_release(struct file *file)
 {
 	struct cx23885_fh *fh = file->private_data;
 	struct cx23885_dev *dev = fh->dev;
@@ -937,9 +866,6 @@ static int video_release(struct inode *inode, struct file *file)
 	}
 
 	videobuf_mmap_free(&fh->vidq);
-#if 0
-	videobuf_mmap_free(&fh->vbiq);
-#endif
 	file->private_data = NULL;
 	kfree(fh);
 
@@ -947,9 +873,6 @@ static int video_release(struct inode *inode, struct file *file)
 	 * we want to use the mpeg encoder in another session to capture
 	 * tuner video. Closing this will result in no video to the encoder.
 	 */
-#if 0
-	cx23885_call_i2c_clients(&dev->i2c_bus[1], TUNER_SET_STANDBY, NULL);
-#endif
 
 	return 0;
 }
@@ -977,9 +900,6 @@ static int cx23885_set_control(struct cx23885_dev *dev,
 {
 	dprintk(1, "%s() calling cx25840(VIDIOC_S_CTRL)"
 		" (disabled - no action)\n", __func__);
-#if 0
-	cx23885_call_i2c_clients(&dev->i2c_bus[2], VIDIOC_S_CTRL, ctl);
-#endif
 	return 0;
 }
 
@@ -1100,9 +1020,6 @@ static int vidioc_querycap(struct file *file, void  *priv,
 	sprintf(cap->bus_info, "PCIe:%s", pci_name(dev->pci));
 	cap->version = CX23885_VERSION_CODE;
 	cap->capabilities =
-#if 0
-		V4L2_CAP_VIDEO_OVERLAY |
-#endif
 		V4L2_CAP_VIDEO_CAPTURE |
 		V4L2_CAP_READWRITE     |
 		V4L2_CAP_STREAMING     |
@@ -1339,9 +1256,6 @@ static int vidioc_g_tuner(struct file *file, void *priv,
 	t->type       = V4L2_TUNER_ANALOG_TV;
 	t->capability = V4L2_TUNER_CAP_NORM;
 	t->rangehigh  = 0xffffffffUL;
-#if 0
-	cx23885_get_stereo(dev, t);
-#endif
 	t->signal = 0xffff ; /* LOCKED */
 	return 0;
 }
@@ -1355,9 +1269,6 @@ static int vidioc_s_tuner(struct file *file, void *priv,
 		return -EINVAL;
 	if (0 != t->index)
 		return -EINVAL;
-#if 0
-	cx23885_set_stereo(dev, t->audmode, 1);
-#endif
 	return 0;
 }
 
@@ -1416,11 +1327,11 @@ static int vidioc_s_frequency(struct file *file, void *priv,
 
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 static int vidioc_g_register(struct file *file, void *fh,
-				struct v4l2_register *reg)
+				struct v4l2_dbg_register *reg)
 {
 	struct cx23885_dev *dev = ((struct cx23885_fh *)fh)->dev;
 
-	if (!v4l2_chip_match_host(reg->match_type, reg->match_chip))
+	if (!v4l2_chip_match_host(&reg->match))
 		return -EINVAL;
 
 	cx23885_call_i2c_clients(&dev->i2c_bus[2], VIDIOC_DBG_G_REGISTER, reg);
@@ -1429,11 +1340,11 @@ static int vidioc_g_register(struct file *file, void *fh,
 }
 
 static int vidioc_s_register(struct file *file, void *fh,
-				struct v4l2_register *reg)
+				struct v4l2_dbg_register *reg)
 {
 	struct cx23885_dev *dev = ((struct cx23885_fh *)fh)->dev;
 
-	if (!v4l2_chip_match_host(reg->match_type, reg->match_chip))
+	if (!v4l2_chip_match_host(&reg->match))
 		return -EINVAL;
 
 	cx23885_call_i2c_clients(&dev->i2c_bus[2], VIDIOC_DBG_S_REGISTER, reg);
@@ -1442,105 +1353,6 @@ static int vidioc_s_register(struct file *file, void *fh,
 }
 #endif
 
-#if 0
-/* ----------------------------------------------------------- */
-/* RADIO ESPECIFIC IOCTLS                                      */
-/* ----------------------------------------------------------- */
-
-static int radio_querycap(struct file *file, void  *priv,
-					struct v4l2_capability *cap)
-{
-	struct cx23885_dev *dev = ((struct cx23885_fh *)priv)->dev;
-
-	strcpy(cap->driver, "cx23885");
-	strlcpy(cap->card, cx23885_boards[dev->board].name,
-		sizeof(cap->card));
-	sprintf(cap->bus_info, "PCIe:%s", pci_name(dev->pci));
-	cap->version = CX23885_VERSION_CODE;
-	cap->capabilities = V4L2_CAP_TUNER;
-	return 0;
-}
-
-static int radio_g_tuner(struct file *file, void *priv,
-				struct v4l2_tuner *t)
-{
-	struct cx23885_dev *dev = ((struct cx23885_fh *)priv)->dev;
-
-	if (unlikely(t->index > 0))
-		return -EINVAL;
-
-	strcpy(t->name, "Radio");
-	t->type = V4L2_TUNER_RADIO;
-
-	cx23885_call_i2c_clients(&dev->i2c_bus[1], VIDIOC_G_TUNER, t);
-	return 0;
-}
-
-static int radio_enum_input(struct file *file, void *priv,
-				struct v4l2_input *i)
-{
-	if (i->index != 0)
-		return -EINVAL;
-	strcpy(i->name, "Radio");
-	i->type = V4L2_INPUT_TYPE_TUNER;
-
-	return 0;
-}
-
-static int radio_g_audio(struct file *file, void *priv, struct v4l2_audio *a)
-{
-	if (unlikely(a->index))
-		return -EINVAL;
-
-	memset(a, 0, sizeof(*a));
-	strcpy(a->name, "Radio");
-	return 0;
-}
-
-/* FIXME: Should add a standard for radio */
-
-static int radio_s_tuner(struct file *file, void *priv,
-				struct v4l2_tuner *t)
-{
-	struct cx23885_dev *dev = ((struct cx23885_fh *)priv)->dev;
-
-	if (0 != t->index)
-		return -EINVAL;
-
-	cx23885_call_i2c_clients(&dev->i2c_bus[1], VIDIOC_S_TUNER, t);
-
-	return 0;
-}
-
-static int radio_s_audio(struct file *file, void *fh,
-			  struct v4l2_audio *a)
-{
-	return 0;
-}
-
-static int radio_s_input(struct file *file, void *fh, unsigned int i)
-{
-	return 0;
-}
-
-static int radio_queryctrl(struct file *file, void *priv,
-			    struct v4l2_queryctrl *c)
-{
-	int i;
-
-	if (c->id <  V4L2_CID_BASE ||
-		c->id >= V4L2_CID_LASTP1)
-		return -EINVAL;
-	if (c->id == V4L2_CID_AUDIO_MUTE) {
-		for (i = 0; i < CX23885_CTLS; i++)
-			if (cx23885_ctls[i].v.id == c->id)
-				break;
-		*c = cx23885_ctls[i].v;
-	} else
-		*c = no_ctl;
-	return 0;
-}
-#endif
 /* ----------------------------------------------------------- */
 
 static void cx23885_vid_timeout(unsigned long data)
@@ -1596,16 +1408,6 @@ int cx23885_video_irq(struct cx23885_dev *dev, u32 status)
 		spin_unlock(&dev->slock);
 		handled++;
 	}
-#if 0
-	/* risc1 vbi */
-	if (status & 0x08) {
-		spin_lock(&dev->slock);
-		count = cx_read(MO_VBI_GPCNT);
-		cx88_wakeup(core, &dev->vbiq, count);
-		spin_unlock(&dev->slock);
-		handled++;
-	}
-#endif
 	/* risc2 y */
 	if (status & 0x10) {
 		dprintk(2, "stopper video\n");
@@ -1614,16 +1416,6 @@ int cx23885_video_irq(struct cx23885_dev *dev, u32 status)
 		spin_unlock(&dev->slock);
 		handled++;
 	}
-#if 0
-	/* risc2 vbi */
-	if (status & 0x80) {
-		dprintk(2, "stopper vbi\n");
-		spin_lock(&dev->slock);
-		cx8800_restart_vbi_queue(dev, &dev->vbiq);
-		spin_unlock(&dev->slock);
-		handled++;
-	}
-#endif
 
 	return handled;
 }
@@ -1631,7 +1423,7 @@ int cx23885_video_irq(struct cx23885_dev *dev, u32 status)
 /* ----------------------------------------------------------- */
 /* exported stuff                                              */
 
-static const struct file_operations video_fops = {
+static const struct v4l2_file_operations video_fops = {
 	.owner	       = THIS_MODULE,
 	.open	       = video_open,
 	.release       = video_release,
@@ -1639,8 +1431,6 @@ static const struct file_operations video_fops = {
 	.poll          = video_poll,
 	.mmap	       = video_mmap,
 	.ioctl	       = video_ioctl2,
-	.compat_ioctl  = v4l_compat_ioctl32,
-	.llseek        = no_llseek,
 };
 
 static const struct v4l2_ioctl_ops video_ioctl_ops = {
@@ -1688,61 +1478,19 @@ static struct video_device cx23885_video_template = {
 	.current_norm         = V4L2_STD_NTSC_M,
 };
 
-static const struct file_operations radio_fops = {
+static const struct v4l2_file_operations radio_fops = {
 	.owner         = THIS_MODULE,
 	.open          = video_open,
 	.release       = video_release,
 	.ioctl         = video_ioctl2,
-	.compat_ioctl  = v4l_compat_ioctl32,
-	.llseek        = no_llseek,
 };
 
-#if 0
-static const struct v4l2_ioctl_ops radio_ioctl_ops = {
-	.vidioc_querycap      = radio_querycap,
-	.vidioc_g_tuner       = radio_g_tuner,
-	.vidioc_enum_input    = radio_enum_input,
-	.vidioc_g_audio       = radio_g_audio,
-	.vidioc_s_tuner       = radio_s_tuner,
-	.vidioc_s_audio       = radio_s_audio,
-	.vidioc_s_input       = radio_s_input,
-	.vidioc_queryctrl     = radio_queryctrl,
-	.vidioc_g_ctrl        = vidioc_g_ctrl,
-	.vidioc_s_ctrl        = vidioc_s_ctrl,
-	.vidioc_g_frequency   = vidioc_g_frequency,
-	.vidioc_s_frequency   = vidioc_s_frequency,
-};
-
-static struct video_device cx23885_radio_template = {
-	.name                 = "cx23885-radio",
-	.fops                 = &radio_fops,
-	.ioctl_ops 	      = &radio_ioctl_ops,
-	.minor                = -1,
-};
-#endif
 
 void cx23885_video_unregister(struct cx23885_dev *dev)
 {
 	dprintk(1, "%s()\n", __func__);
 	cx_clear(PCI_INT_MSK, 1);
 
-#if 0
-	if (dev->radio_dev) {
-		if (-1 != dev->radio_dev->minor)
-			video_unregister_device(dev->radio_dev);
-		else
-			video_device_release(dev->radio_dev);
-		dev->radio_dev = NULL;
-	}
-	if (dev->vbi_dev) {
-		if (-1 != dev->vbi_dev->minor)
-			video_unregister_device(dev->vbi_dev);
-		else
-			video_device_release(dev->vbi_dev);
-		dev->vbi_dev = NULL;
-		btcx_riscmem_free(dev->pci, &dev->vbiq.stopper);
-	}
-#endif
 	if (dev->video_dev) {
 		if (-1 != dev->video_dev->minor)
 			video_unregister_device(dev->video_dev);
@@ -1778,27 +1526,8 @@ int cx23885_video_register(struct cx23885_dev *dev)
 		VID_A_DMA_CTL, 0x11, 0x00);
 
 	/* Don't enable VBI yet */
-#if 0
-	/* init vbi dma queues */
-	INIT_LIST_HEAD(&dev->vbiq.active);
-	INIT_LIST_HEAD(&dev->vbiq.queued);
-	dev->vbiq.timeout.function = cx23885_vbi_timeout;
-	dev->vbiq.timeout.data = (unsigned long)dev;
-	init_timer(&dev->vbiq.timeout);
-	cx23885_risc_stopper(dev->pci, &dev->vbiq.stopper,
-		VID_A_DMA_CTL, 0x88, 0x00);
-#endif
 	cx_set(PCI_INT_MSK, 1);
 
-#if 0
-	/* FIXME: These should be correctly defined */
-	/* load and configure helper modules */
-	if (TUNER_ABSENT != core->tuner_type)
-		request_module("tuner");
-
-	if (cx23885_boards[dev->board].audio_chip == V4L2_IDENT_WM8775)
-		request_module("wm8775");
-#endif
 
 	/* register v4l devices */
 	dev->video_dev = cx23885_vdev_init(dev, dev->pci,
@@ -1812,33 +1541,6 @@ int cx23885_video_register(struct cx23885_dev *dev)
 	}
 	printk(KERN_INFO "%s/0: registered device video%d [v4l2]\n",
 	       dev->name, dev->video_dev->num);
-#if 0
-	dev->vbi_dev = cx23885_vdev_init(dev, dev->pci,
-		&cx23885_vbi_template, "vbi");
-	err = video_register_device(dev->vbi_dev, VFL_TYPE_VBI,
-				    vbi_nr[dev->nr]);
-	if (err < 0) {
-		printk(KERN_INFO "%s/0: can't register vbi device\n",
-			dev->name);
-		goto fail_unreg;
-	}
-	printk(KERN_INFO "%s/0: registered device vbi%d\n",
-	       dev->name, dev->vbi_dev->num);
-
-	if (dev->has_radio) {
-		dev->radio_dev = cx23885_vdev_init(dev, dev->pci,
-			&cx23885_radio_template, "radio");
-		err = video_register_device(dev->radio_dev, VFL_TYPE_RADIO,
-					    radio_nr[dev->nr]);
-		if (err < 0) {
-			printk(KERN_INFO "%s/0: can't register radio device\n",
-			       dev->name);
-			goto fail_unreg;
-		}
-		printk(KERN_INFO "%s/0: registered device radio%d\n",
-		       dev->name, dev->radio_dev->num);
-	}
-#endif
 	/* initial device configuration */
 	mutex_lock(&dev->lock);
 	cx23885_set_tvnorm(dev, dev->tvnorm);

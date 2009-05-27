@@ -32,7 +32,6 @@
 #include <linux/poll.h>
 #include <linux/i2c.h>
 #include <linux/types.h>
-#include <media/compat.h>
 #include <linux/videodev2.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-chip-ident.h>
@@ -839,7 +838,7 @@ saa6752hs_command(struct i2c_client *client, unsigned int cmd, void *arg)
 		h->standard = *((v4l2_std_id *) arg);
 		break;
 
-	case VIDIOC_G_CHIP_IDENT:
+	case VIDIOC_DBG_G_CHIP_IDENT:
 		return v4l2_chip_ident_i2c_client(client,
 				arg, h->chip, h->revision);
 
@@ -886,23 +885,19 @@ static int saa6752hs_remove(struct i2c_client *client)
 	return 0;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id saa6752hs_id[] = {
 	{ "saa6752hs", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, saa6752hs_id);
 
-#endif
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "saa6752hs",
 	.driverid = I2C_DRIVERID_SAA6752HS,
 	.command = saa6752hs_command,
 	.probe = saa6752hs_probe,
 	.remove = saa6752hs_remove,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = saa6752hs_id,
-#endif
 };
 
 /*

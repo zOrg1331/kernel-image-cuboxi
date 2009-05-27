@@ -778,11 +778,6 @@ static int tda10048_read_ucblocks(struct dvb_frontend *fe, u32 *ucblocks)
 	struct tda10048_state *state = fe->demodulator_priv;
 
 	dprintk(1, "%s()\n", __func__);
-#if 0
-	/* Reset and begin counting */
-	tda10048_writereg(state, TDA10048_UNCOR_CTRL, 0x01);
-	msleep(10);
-#endif
 
 	*ucblocks = tda10048_readreg(state, TDA10048_UNCOR_CPT_MSB) << 8 |
 		tda10048_readreg(state, TDA10048_UNCOR_CPT_LSB);

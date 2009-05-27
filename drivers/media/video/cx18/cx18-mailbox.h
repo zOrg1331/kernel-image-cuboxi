@@ -95,10 +95,6 @@ int cx18_api_func(void *priv, u32 cmd, int in, int out,
 
 void cx18_api_epu_cmd_irq(struct cx18 *cx, int rpu);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20)
 void cx18_epu_work_handler(struct work_struct *work);
-#else
-void cx18_epu_work_handler(void *arg);
-#endif
 
 #endif

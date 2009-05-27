@@ -69,7 +69,7 @@ struct tuner_setup;
    not yet implemented) since ops provide proper type-checking.
  */
 struct v4l2_subdev_core_ops {
-	int (*g_chip_ident)(struct v4l2_subdev *sd, struct v4l2_chip_ident *chip);
+	int (*g_chip_ident)(struct v4l2_subdev *sd, struct v4l2_dbg_chip_ident *chip);
 	int (*log_status)(struct v4l2_subdev *sd);
 	int (*init)(struct v4l2_subdev *sd, u32 val);
 	int (*s_standby)(struct v4l2_subdev *sd, u32 standby);
@@ -79,10 +79,10 @@ struct v4l2_subdev_core_ops {
 	int (*g_ctrl)(struct v4l2_subdev *sd, struct v4l2_control *ctrl);
 	int (*s_ctrl)(struct v4l2_subdev *sd, struct v4l2_control *ctrl);
 	int (*querymenu)(struct v4l2_subdev *sd, struct v4l2_querymenu *qm);
-	int (*ioctl)(struct v4l2_subdev *sd, int cmd, void *arg);
+	long (*ioctl)(struct v4l2_subdev *sd, unsigned int cmd, void *arg);
 #ifdef CONFIG_VIDEO_ADV_DEBUG
-	int (*g_register)(struct v4l2_subdev *sd, struct v4l2_register *reg);
-	int (*s_register)(struct v4l2_subdev *sd, struct v4l2_register *reg);
+	int (*g_register)(struct v4l2_subdev *sd, struct v4l2_dbg_register *reg);
+	int (*s_register)(struct v4l2_subdev *sd, struct v4l2_dbg_register *reg);
 #endif
 };
 
@@ -110,6 +110,7 @@ struct v4l2_subdev_video_ops {
 	int (*decode_vbi_line)(struct v4l2_subdev *sd, struct v4l2_decode_vbi_line *vbi_line);
 	int (*s_vbi_data)(struct v4l2_subdev *sd, const struct v4l2_sliced_vbi_data *vbi_data);
 	int (*g_vbi_data)(struct v4l2_subdev *sd, struct v4l2_sliced_vbi_data *vbi_data);
+	int (*g_sliced_vbi_cap)(struct v4l2_subdev *sd, struct v4l2_sliced_vbi_cap *cap);
 	int (*s_std_output)(struct v4l2_subdev *sd, v4l2_std_id std);
 	int (*s_stream)(struct v4l2_subdev *sd, int enable);
 	int (*s_fmt)(struct v4l2_subdev *sd, struct v4l2_format *fmt);

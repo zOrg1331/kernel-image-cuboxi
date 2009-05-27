@@ -819,12 +819,6 @@ struct dvb_frontend *au8522_attach(const struct au8522_config *config,
 	/* setup the state */
 	state->config = config;
 	state->i2c = i2c;
-#if 0
-	/* check if the demod exists */
-	reg = au8522_readreg(state, 0x04);
-	if ((reg != 0x0066) && (reg != 0x007f))
-		goto error;
-#endif
 	/* create dvb_frontend */
 	memcpy(&state->frontend.ops, &au8522_ops,
 	       sizeof(struct dvb_frontend_ops));

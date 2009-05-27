@@ -36,7 +36,6 @@
 #include <linux/proc_fs.h>
 #include <linux/i2c.h>
 #include <linux/i2c-algo-bit.h>
-#include <media/compat.h>
 #include <linux/videodev.h>
 #include <linux/spinlock.h>
 #include <linux/sem.h>
@@ -1373,12 +1372,7 @@ error_handler (struct zoran *zr,
 
 irqreturn_t
 zoran_irq (int             irq,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-	   void           *dev_id,
-	   struct pt_regs *regs)
-#else
 	   void           *dev_id)
-#endif
 {
 	u32 stat, astat;
 	int count;

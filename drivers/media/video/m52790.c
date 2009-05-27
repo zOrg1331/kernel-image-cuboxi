@@ -31,17 +31,11 @@
 #include <media/v4l2-device.h>
 #include <media/v4l2-chip-ident.h>
 #include <media/v4l2-i2c-drv.h>
-#include <media/compat.h>
 
 MODULE_DESCRIPTION("i2c device driver for m52790 A/V switch");
 MODULE_AUTHOR("Hans Verkuil");
 MODULE_LICENSE("GPL");
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22)
-static unsigned short normal_i2c[] = { 0x90 >> 1, I2C_CLIENT_END };
-
-I2C_CLIENT_INSMOD;
-#endif
 
 struct m52790_state {
 	struct v4l2_subdev sd;
@@ -86,29 +80,28 @@ static int m52790_s_routing(struct v4l2_subdev *sd, const struct v4l2_routing *r
 }
 
 #ifdef CONFIG_VIDEO_ADV_DEBUG
-static int m52790_g_register(struct v4l2_subdev *sd, struct v4l2_register *reg)
+static int m52790_g_register(struct v4l2_subdev *sd, struct v4l2_dbg_register *reg)
 {
 	struct m52790_state *state = to_state(sd);
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
-	if (!v4l2_chip_match_i2c_client(client,
-				reg->match_type, reg->match_chip))
+	if (!v4l2_chip_match_i2c_client(client, &reg->match))
 		return -EINVAL;
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 	if (reg->reg != 0)
 		return -EINVAL;
+	reg->size = 1;
 	reg->val = state->input | state->output;
 	return 0;
 }
 
-static int m52790_s_register(struct v4l2_subdev *sd, struct v4l2_register *reg)
+static int m52790_s_register(struct v4l2_subdev *sd, struct v4l2_dbg_register *reg)
 {
 	struct m52790_state *state = to_state(sd);
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
-	if (!v4l2_chip_match_i2c_client(client,
-				reg->match_type, reg->match_chip))
+	if (!v4l2_chip_match_i2c_client(client, &reg->match))
 		return -EINVAL;
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -121,7 +114,7 @@ static int m52790_s_register(struct v4l2_subdev *sd, struct v4l2_register *reg)
 }
 #endif
 
-static int m52790_g_chip_ident(struct v4l2_subdev *sd, struct v4l2_chip_ident *chip)
+static int m52790_g_chip_ident(struct v4l2_subdev *sd, struct v4l2_dbg_chip_ident *chip)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
@@ -183,10 +176,6 @@ static int m52790_probe(struct i2c_client *client,
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA))
 		return -EIO;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
-	snprintf(client->name, sizeof(client->name) - 1, "m52790");
-
-#endif
 	v4l_info(client, "chip found @ 0x%x (%s)\n",
 			client->addr << 1, client->adapter->name);
 
@@ -213,21 +202,17 @@ static int m52790_remove(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id m52790_id[] = {
 	{ "m52790", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, m52790_id);
 
-#endif
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "m52790",
 	.driverid = I2C_DRIVERID_M52790,
 	.command = m52790_command,
 	.probe = m52790_probe,
 	.remove = m52790_remove,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = m52790_id,
-#endif
 };

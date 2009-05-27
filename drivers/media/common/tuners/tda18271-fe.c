@@ -19,7 +19,6 @@
 */
 
 #include <linux/delay.h>
-#include <media/compat.h>
 #include <linux/videodev2.h>
 #include "tda18271-priv.h"
 
@@ -876,7 +875,7 @@ static int tda18271_set_params(struct dvb_frontend *fe,
 			tda_warn("modulation not set!\n");
 			return -EINVAL;
 		}
-#if 0 /* keep */
+#if 0
 		/* userspace request is already center adjusted */
 		freq += 1750000; /* Adjust to center (+1.75MHZ) */
 #endif

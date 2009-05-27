@@ -20,7 +20,6 @@
 
 #include <linux/i2c.h>
 #include <linux/types.h>
-#include <media/compat.h>
 #include <linux/videodev2.h>
 #include "tuner-i2c.h"
 #include "mxl5007t.h"
@@ -167,11 +166,7 @@ struct mxl5007t_state {
 	struct list_head hybrid_tuner_instance_list;
 	struct tuner_i2c_props i2c_props;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,16)
 	struct mutex lock;
-#else
-	struct semaphore lock;
-#endif
 
 	struct mxl5007t_config *config;
 
@@ -662,7 +657,7 @@ static int mxl5007t_get_status(struct dvb_frontend *fe, u32 *status)
 {
 	struct mxl5007t_state *state = fe->tuner_priv;
 	int rf_locked, ref_locked;
-	s32 rf_input_level;
+	s32 rf_input_level = 0;
 	int ret;
 
 	if (fe->ops.i2c_gate_ctrl)
@@ -768,14 +763,7 @@ static int mxl5007t_set_analog_params(struct dvb_frontend *fe,
 	int ret;
 	u32 freq = params->frequency * 62500;
 
-#if 0
-	if (params->mode == V4L2_TUNER_RADIO) {
-		freq = freq / 1000;
-		mode_name = "fm";
-	} else
-#else
 #define cable 1
-#endif
 	if (params->std & V4L2_STD_MN) {
 		cbl_mode = MxL_MODE_CABLE_NTSC_PAL_GH;
 		ota_mode = MxL_MODE_OTA_NTSC_PAL_GH;
@@ -919,11 +907,6 @@ static int mxl5007t_release(struct dvb_frontend *fe)
 static struct dvb_tuner_ops mxl5007t_tuner_ops = {
 	.info = {
 		.name = "MaxLinear MxL5007T",
-#if 0
-		.frequency_min  = ,
-		.frequency_max  = ,
-		.frequency_step = ,
-#endif
 	},
 	.init              = mxl5007t_init,
 	.sleep             = mxl5007t_sleep,
@@ -965,13 +948,8 @@ static int mxl5007t_get_chip_id(struct mxl5007t_state *state)
 		name = "MxL5007.v2.200.f2";
 		break;
 	default:
-#if 0
-		ret = -EINVAL;
-		goto fail;
-#else
 		name = "MxL5007T";
 		id = MxL_UNKNOWN_ID;
-#endif
 	}
 	state->chip_id = id;
 	mxl_info("%s detected @ %d-%04x", name,

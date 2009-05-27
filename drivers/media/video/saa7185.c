@@ -34,7 +34,6 @@
 #include <linux/video_encoder.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-i2c-drv-legacy.h>
-#include <media/compat.h>
 
 MODULE_DESCRIPTION("Philips SAA7185 video encoder driver");
 MODULE_AUTHOR("Dave Perks");
@@ -380,13 +379,11 @@ static int saa7185_remove(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id saa7185_id[] = {
 	{ "saa7185", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, saa7185_id);
-#endif
 
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "saa7185",
@@ -394,7 +391,5 @@ static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.command = saa7185_command,
 	.probe = saa7185_probe,
 	.remove = saa7185_remove,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = saa7185_id,
-#endif
 };

@@ -939,7 +939,6 @@ void smscore_onresponse(struct smscore_device_t *coredev,
 		smscore_find_client(coredev, phdr->msgType, phdr->msgDstId);
 	int rc = -EBUSY;
 
-#if 1
 	static unsigned long last_sample_time; /* = 0; */
 	static int data_total; /* = 0; */
 	unsigned long time_now = jiffies_to_msecs(jiffies);
@@ -957,13 +956,8 @@ void smscore_onresponse(struct smscore_device_t *coredev,
 	}
 
 	data_total += cb->size;
-#endif
 	/* If no client registered for type & id,
 	 * check for control client where type is not registered */
-#if 0
-	if (!client)
-		client = smscore_find_client(coredev, 0, phdr->msgDstId);
-#endif
 	if (client)
 		rc = client->onresponse_handler(client->context, cb);
 
@@ -1007,11 +1001,6 @@ void smscore_onresponse(struct smscore_device_t *coredev,
 			complete(&coredev->resume_done);
 			break;
 		default:
-#if 0
-			sms_info("no client (%p) or error (%d), "
-				 "type:%d dstid:%d", client, rc,
-				 phdr->msgType, phdr->msgDstId);
-#endif
 			break;
 		}
 		smscore_putbuffer(coredev, cb);
@@ -1205,56 +1194,6 @@ int smsclient_sendrequest(struct smscore_client_t *client,
 	return coredev->sendrequest_handler(coredev->context, buffer, size);
 }
 
-#if 0
-/**
- * return the size of large (common) buffer
- *
- * @param coredev pointer to a coredev object from clients hotplug
- *
- * @return size (in bytes) of the buffer
- */
-int smscore_get_common_buffer_size(struct smscore_device_t *coredev)
-{
-	return coredev->common_buffer_size;
-}
-
-/**
- * maps common buffer (if supported by platform)
- *
- * @param coredev pointer to a coredev object from clients hotplug
- * @param vma pointer to vma struct from mmap handler
- *
- * @return 0 on success, <0 on error.
- */
-static int smscore_map_common_buffer(struct smscore_device_t *coredev,
-				     struct vm_area_struct *vma)
-{
-	unsigned long end = vma->vm_end,
-		      start = vma->vm_start,
-		      size = PAGE_ALIGN(coredev->common_buffer_size);
-
-	if (!(vma->vm_flags & (VM_READ | VM_SHARED)) ||
-	     (vma->vm_flags & VM_WRITE)) {
-		sms_err("invalid vm flags");
-		return -EINVAL;
-	}
-
-	if ((end - start) != size) {
-		sms_err("invalid size %d expected %d",
-			 (int)(end - start), (int) size);
-		return -EINVAL;
-	}
-
-	if (remap_pfn_range(vma, start,
-			    coredev->common_buffer_phys >> PAGE_SHIFT,
-			    size, pgprot_noncached(vma->vm_page_prot))) {
-		sms_err("remap_page_range failed");
-		return -EAGAIN;
-	}
-
-	return 0;
-}
-#endif
 
 int smscore_configure_gpio(struct smscore_device_t *coredev, u32 pin,
 			   struct smscore_gpio_config *pinconfig)

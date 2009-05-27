@@ -60,9 +60,6 @@ static int of_isp1760_probe(struct of_device *dev,
 	if (of_device_is_compatible(dp, "nxp,usb-isp1761"))
 		devflags |= ISP1760_FLAG_ISP1761;
 
-	if (of_get_property(dp, "port1-disable", NULL) != NULL)
-		devflags |= ISP1760_FLAG_PORT1_DIS;
-
 	/* Some systems wire up only 16 of the 32 data lines */
 	prop = of_get_property(dp, "bus-width", NULL);
 	if (prop && *prop == 16)
@@ -224,7 +221,7 @@ static int __devinit isp1761_pci_probe(struct pci_dev *dev,
 	 * and reading back and checking the contents are same or not
 	 */
 	if (reg_data != 0xFACE) {
-		err("scratch register mismatch %x", reg_data);
+		dev_err(&dev->dev, "scratch register mismatch %x\n", reg_data);
 		ret_status = -ENOMEM;
 		goto cleanup3;
 	}

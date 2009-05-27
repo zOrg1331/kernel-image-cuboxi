@@ -225,7 +225,7 @@ static __u32 ctrl_dis[] = {
 						/* SENSOR_OV7660 6 */
 };
 
-static struct v4l2_pix_format vga_mode[] = {
+static const struct v4l2_pix_format vga_mode[] = {
 	{160, 120, V4L2_PIX_FMT_JPEG, V4L2_FIELD_NONE,
 		.bytesperline = 160,
 		.sizeimage = 160 * 120 * 4 / 8 + 590,
@@ -851,11 +851,7 @@ static int configure_gpio(struct gspca_dev *gspca_dev,
 	static const __u8 regd4[] = {0x60, 0x00, 0x00};
 
 	reg_w1(gspca_dev, 0xf1, 0x00);
-#if 1
 	reg_w1(gspca_dev, 0x01, sn9c1xx[1]);
-#else
-	reg_w1(gspca_dev, 0x01, 0x00);		/*jfm: in some win traces*/
-#endif
 
 	/* configure gpio */
 	reg_w(gspca_dev, 0x01, &sn9c1xx[1], 2);
@@ -882,7 +878,6 @@ static int configure_gpio(struct gspca_dev *gspca_dev,
 		reg_w1(gspca_dev, 0x17, 0x64);
 		reg_w1(gspca_dev, 0x01, 0x42);
 		break;
-#if 1
 /*jfm: from win trace */
 	case SENSOR_OV7630:
 		reg_w1(gspca_dev, 0x01, 0x61);
@@ -890,13 +885,11 @@ static int configure_gpio(struct gspca_dev *gspca_dev,
 		reg_w1(gspca_dev, 0x01, 0x60);
 		reg_w1(gspca_dev, 0x01, 0x40);
 		break;
-#endif
 	case SENSOR_OV7648:
 		reg_w1(gspca_dev, 0x01, 0x63);
 		reg_w1(gspca_dev, 0x17, 0x20);
 		reg_w1(gspca_dev, 0x01, 0x42);
 		break;
-#if 1
 /*jfm: from win trace */
 	case SENSOR_OV7660:
 		if (sd->bridge == BRIDGE_SN9C120) {
@@ -907,7 +900,6 @@ static int configure_gpio(struct gspca_dev *gspca_dev,
 			break;
 		}
 		/* fall thru */
-#endif
 	default:
 		reg_w1(gspca_dev, 0x01, 0x43);
 		reg_w1(gspca_dev, 0x17, 0x61);
@@ -1265,15 +1257,9 @@ static void setvflip(struct sd *sd)
 static void setinfrared(struct sd *sd)
 {
 /*fixme: different sequence for StarCam Clip and StarCam 370i */
-#if 1
 /* Clip */
 	i2c_w1(&sd->gspca_dev, 0x02,			/* gpio */
 		sd->infrared ? 0x66 : 0x64);
-#else
-/* 370i */
-	i2c_w1(&sd->gspca_dev, 0x02,			/* gpio */
-		sd->infrared ? 0x55 : 0x54);
-#endif
 }
 
 /* -- start the camera -- */
@@ -1312,7 +1298,6 @@ static int sd_start(struct gspca_dev *gspca_dev)
 	case SENSOR_OV7648:
 		reg17 = 0x20;
 		break;
-#if 1
 /*jfm: from win trace */
 	case SENSOR_OV7660:
 		if (sd->bridge == BRIDGE_SN9C120) {
@@ -1320,7 +1305,6 @@ static int sd_start(struct gspca_dev *gspca_dev)
 			break;
 		}
 		/* fall thru */
-#endif
 	default:
 		reg17 = 0x60;
 		break;

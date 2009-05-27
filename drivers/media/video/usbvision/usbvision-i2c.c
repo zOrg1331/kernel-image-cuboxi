@@ -36,7 +36,6 @@
 #include <linux/errno.h>
 #include <linux/usb.h>
 #include <linux/i2c.h>
-#include <media/compat.h>
 #include "usbvision.h"
 
 #define DBG_I2C		1<<0
@@ -158,7 +157,7 @@ usbvision_i2c_xfer(struct i2c_adapter *i2c_adap, struct i2c_msg msgs[], int num)
 	struct i2c_msg *pmsg;
 	struct usb_usbvision *usbvision;
 	int i, ret;
-	unsigned char addr;
+	unsigned char addr = 0;
 
 	usbvision = (struct usb_usbvision *)i2c_get_adapdata(i2c_adap);
 
@@ -198,9 +197,6 @@ static struct i2c_algorithm usbvision_algo = {
 	.master_xfer   = usbvision_i2c_xfer,
 	.smbus_xfer    = NULL,
 	.functionality = functionality,
-#ifdef NEED_ALGO_CONTROL
-	.algo_control = dummy_algo_control,
-#endif
 };
 
 

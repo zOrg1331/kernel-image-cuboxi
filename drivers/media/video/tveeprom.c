@@ -41,7 +41,6 @@
 #include <media/tveeprom.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-chip-ident.h>
-#include <media/compat.h>
 
 MODULE_DESCRIPTION("i2c Hauppauge eeprom decoder driver");
 MODULE_AUTHOR("John Klar");
@@ -428,6 +427,9 @@ void tveeprom_hauppauge_analog(struct i2c_client *c, struct tveeprom *tvee,
 	const char *t_fmt_name2[8] = { " none", "", "", "", "", "", "", "" };
 
 	memset(tvee, 0, sizeof(*tvee));
+	tvee->tuner_type = TUNER_ABSENT;
+	tvee->tuner2_type = TUNER_ABSENT;
+
 	done = len = beenhere = 0;
 
 	/* Different eeprom start offsets for em28xx, cx2388x and cx23418 */

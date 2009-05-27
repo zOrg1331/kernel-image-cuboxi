@@ -6,7 +6,7 @@
  *	This code is released under the GNU General Public License version 2 or
  *	later.
  */
-#include <linux/mc146818rtc.h>
+#include <linux/seq_file.h>
 #include <linux/proc_fs.h>
 #include <linux/kernel.h>
 
@@ -200,6 +200,7 @@ static int uv_wait_completion(struct bau_desc *bau_desc,
 				destination_timeouts = 0;
 			}
 		}
+		cpu_relax();
 	}
 	return FLUSH_COMPLETE;
 }
@@ -566,14 +567,10 @@ static int __init uv_ptc_init(void)
 	if (!is_uv_system())
 		return 0;
 
-	if (!proc_mkdir("sgi_uv", NULL))
-		return -EINVAL;
-
 	proc_uv_ptc = create_proc_entry(UV_PTC_BASENAME, 0444, NULL);
 	if (!proc_uv_ptc) {
 		printk(KERN_ERR "unable to create %s proc entry\n",
 		       UV_PTC_BASENAME);
-		remove_proc_entry("sgi_uv", NULL);
 		return -EINVAL;
 	}
 	proc_uv_ptc->proc_fops = &proc_uv_ptc_operations;
@@ -745,7 +742,7 @@ static int __init uv_bau_init(void)
 	int node;
 	int nblades;
 	int last_blade;
-	int cur_cpu = 0;
+	int cur_cpu;
 
 	if (!is_uv_system())
 		return 0;
@@ -755,6 +752,7 @@ static int __init uv_bau_init(void)
 	uv_mmask = (1UL << uv_hub_info->n_val) - 1;
 	nblades = 0;
 	last_blade = -1;
+	cur_cpu = 0;
 	for_each_online_node(node) {
 		blade = uv_node_to_blade_id(node);
 		if (blade == last_blade)

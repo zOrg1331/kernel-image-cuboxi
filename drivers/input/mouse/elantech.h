@@ -46,7 +46,7 @@
  * Register bitmasks for hardware version 1
  */
 #define ETP_R10_ABSOLUTE_MODE		0x04
-#define ETP_R11_4_BYTE_MODE 		0x02
+#define ETP_R11_4_BYTE_MODE		0x02
 
 /*
  * Capability bitmasks
@@ -60,10 +60,10 @@
  */
 #define ETP_EDGE_FUZZ_V1		32
 
-#define ETP_XMIN_V1 			(  0 + ETP_EDGE_FUZZ_V1)
-#define ETP_XMAX_V1 			(576 - ETP_EDGE_FUZZ_V1)
-#define ETP_YMIN_V1 			(  0 + ETP_EDGE_FUZZ_V1)
-#define ETP_YMAX_V1 			(384 - ETP_EDGE_FUZZ_V1)
+#define ETP_XMIN_V1			(  0 + ETP_EDGE_FUZZ_V1)
+#define ETP_XMAX_V1			(576 - ETP_EDGE_FUZZ_V1)
+#define ETP_YMIN_V1			(  0 + ETP_EDGE_FUZZ_V1)
+#define ETP_YMAX_V1			(384 - ETP_EDGE_FUZZ_V1)
 
 /*
  * It seems the resolution for hardware version 2 doubled.
@@ -72,10 +72,10 @@
  */
 #define ETP_EDGE_FUZZ_V2		8
 
-#define ETP_XMIN_V2 			(   0 + ETP_EDGE_FUZZ_V2)
-#define ETP_XMAX_V2 			(1152 - ETP_EDGE_FUZZ_V2)
-#define ETP_YMIN_V2 			(   0 + ETP_EDGE_FUZZ_V2)
-#define ETP_YMAX_V2 			( 768 - ETP_EDGE_FUZZ_V2)
+#define ETP_XMIN_V2			(   0 + ETP_EDGE_FUZZ_V2)
+#define ETP_XMAX_V2			(1152 - ETP_EDGE_FUZZ_V2)
+#define ETP_YMIN_V2			(   0 + ETP_EDGE_FUZZ_V2)
+#define ETP_YMAX_V2			( 768 - ETP_EDGE_FUZZ_V2)
 
 /*
  * For two finger touches the coordinate of each finger gets reported
@@ -87,13 +87,6 @@
 #define ETP_2FT_XMAX			(288 - ETP_2FT_FUZZ)
 #define ETP_2FT_YMIN			(  0 + ETP_2FT_FUZZ)
 #define ETP_2FT_YMAX			(192 - ETP_2FT_FUZZ)
-
-/*
- * It seems the touchpad does not report pressure.
- * Just choose some values for compatibility with X Synaptics driver
- */
-#define ETP_MAX_PRESSURE		255
-#define ETP_DEF_PRESSURE		128
 
 struct elantech_data {
 	unsigned char reg_10;

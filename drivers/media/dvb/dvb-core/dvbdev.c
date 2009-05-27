@@ -31,7 +31,6 @@
 #include <linux/device.h>
 #include <linux/fs.h>
 #include <linux/cdev.h>
-#include <media/compat.h>
 #include <linux/mutex.h>
 #include <linux/smp_lock.h>
 #include "dvbdev.h"
@@ -75,15 +74,15 @@ static int dvb_device_open(struct inode *inode, struct file *file)
 
 	if (dvbdev && dvbdev->fops) {
 		int err = 0;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,17)
 		const struct file_operations *old_fops;
-#else
-		struct file_operations *old_fops;
-#endif
 
 		file->private_data = dvbdev;
 		old_fops = file->f_op;
 		file->f_op = fops_get(dvbdev->fops);
+		if (file->f_op == NULL) {
+			file->f_op = old_fops;
+			goto fail;
+		}
 		if(file->f_op->open)
 			err = file->f_op->open(inode,file);
 		if (err) {
@@ -95,6 +94,7 @@ static int dvb_device_open(struct inode *inode, struct file *file)
 		unlock_kernel();
 		return err;
 	}
+fail:
 	up_read(&minor_rwsem);
 	unlock_kernel();
 	return -ENODEV;
@@ -192,11 +192,7 @@ int dvb_register_device(struct dvb_adapter *adap, struct dvb_device **pdvbdev,
 {
 	struct dvb_device *dvbdev;
 	struct file_operations *dvbdevfops;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,18)
 	struct device *clsdev;
-#else
-	struct class_device *clsdev;
-#endif
 	int minor;
 	int id;
 
@@ -259,19 +255,9 @@ int dvb_register_device(struct dvb_adapter *adap, struct dvb_device **pdvbdev,
 
 	mutex_unlock(&dvbdev_register_lock);
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 27)
 	clsdev = device_create(dvb_class, adap->device,
 			       MKDEV(DVB_MAJOR, minor),
 			       dvbdev, "dvb%d.%s%d", adap->num, dnames[type], id);
-#elif LINUX_VERSION_CODE == KERNEL_VERSION(2, 6, 27)
-	clsdev = device_create_drvdata(dvb_class, adap->device,
-			       MKDEV(DVB_MAJOR, minor),
-			       dvbdev, "dvb%d.%s%d", adap->num, dnames[type], id);
-#else
-	clsdev = device_create(dvb_class, adap->device,
-			       MKDEV(DVB_MAJOR, minor),
-			       "dvb%d.%s%d", adap->num, dnames[type], id);
-#endif
 	if (IS_ERR(clsdev)) {
 		printk(KERN_ERR "%s: failed to create device dvb%d.%s%d (%ld)\n",
 		       __func__, adap->num, dnames[type], id, PTR_ERR(clsdev));
@@ -451,16 +437,15 @@ out:
 	return err;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 27)
 static int dvb_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
 	struct dvb_device *dvbdev = dev_get_drvdata(dev);
 
-	add_uevent_var(env, "DVB_DEVICE_NUM=%d", dvbdev->id);
 	add_uevent_var(env, "DVB_ADAPTER_NUM=%d", dvbdev->adapter->num);
+	add_uevent_var(env, "DVB_DEVICE_TYPE=%s", dnames[dvbdev->type]);
+	add_uevent_var(env, "DVB_DEVICE_NUM=%d", dvbdev->id);
 	return 0;
 }
-#endif
 
 static int __init init_dvbdev(void)
 {
@@ -472,12 +457,7 @@ static int __init init_dvbdev(void)
 		return retval;
 	}
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 17)
 	cdev_init(&dvb_device_cdev, &dvb_device_fops);
-#else
-	cdev_init(&dvb_device_cdev,
-			(struct file_operations *)&dvb_device_fops);
-#endif
 	if ((retval = cdev_add(&dvb_device_cdev, dev, MAX_DVB_MINORS)) != 0) {
 		printk(KERN_ERR "dvb-core: unable register character device\n");
 		goto error;
@@ -488,9 +468,7 @@ static int __init init_dvbdev(void)
 		retval = PTR_ERR(dvb_class);
 		goto error;
 	}
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 27)
 	dvb_class->dev_uevent = dvb_uevent;
-#endif
 	return 0;
 
 error:

@@ -25,7 +25,6 @@
 #include <linux/delay.h>
 #include <asm/io.h>
 
-#include <media/compat.h>
 #include "cx23885.h"
 
 #include <media/v4l2-common.h>
@@ -280,24 +279,6 @@ static int attach_inform(struct i2c_client *client)
 
 	if (!client->driver->command)
 		return 0;
-#if 0
-      if (dev->radio_type != UNSET) {
-
-		dprintk(1, "%s  (radio) i2c attach [addr=0x%x,client=%s]\n",
-			client->driver->driver.name, client->addr,
-			client->name);
-
-		if ((dev->radio_addr == ADDR_UNSET) ||
-			(dev->radio_addr == client->addr)) {
-			tun_setup.mode_mask = T_RADIO;
-			tun_setup.type = dev->radio_type;
-			tun_setup.addr = dev->radio_addr;
-
-			client->driver->command(client, TUNER_SET_TYPE_ADDR,
-				&tun_setup);
-		}
-	}
-#endif
 
 	if (dev->tuner_type != UNSET) {
 
@@ -353,9 +334,6 @@ static u32 cx23885_functionality(struct i2c_adapter *adap)
 static struct i2c_algorithm cx23885_i2c_algo_template = {
 	.master_xfer	= i2c_xfer,
 	.functionality	= cx23885_functionality,
-#ifdef NEED_ALGO_CONTROL
-	.algo_control = dummy_algo_control,
-#endif
 };
 
 /* ----------------------------------------------------------------------- */

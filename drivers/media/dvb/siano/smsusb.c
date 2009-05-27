@@ -55,11 +55,7 @@ struct smsusb_device_t {
 static int smsusb_submit_urb(struct smsusb_device_t *dev,
 			     struct smsusb_urb_t *surb);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 19)
 static void smsusb_onresponse(struct urb *urb)
-#else
-static void smsusb_onresponse(struct urb *urb, struct pt_regs *regs)
-#endif
 {
 	struct smsusb_urb_t *surb = (struct smsusb_urb_t *) urb->context;
 	struct smsusb_device_t *dev = surb->dev;

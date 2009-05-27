@@ -252,9 +252,6 @@ static u32 dib0700_i2c_func(struct i2c_adapter *adapter)
 struct i2c_algorithm dib0700_i2c_algo = {
 	.master_xfer   = dib0700_i2c_xfer,
 	.functionality = dib0700_i2c_func,
-#ifdef NEED_ALGO_CONTROL
-	.algo_control = dummy_algo_control,
-#endif
 };
 
 int dib0700_identify_state(struct usb_device *udev, struct dvb_usb_device_properties *props,
@@ -407,16 +404,6 @@ static int dib0700_probe(struct usb_interface *intf,
 {
 	int i;
 	struct dvb_usb_device *dev;
-#if 0
-	struct usb_device *udev = interface_to_usbdev(intf);
-
-	if (udev->actconfig->desc.bNumInterfaces == 2) {
-		if (intf->cur_altsetting->desc.bInterfaceNumber == 1) { // second one
-			info("USB-HID interface not handled yet.");
-			return -ENODEV;
-		}
-	}
-#endif
 
 	for (i = 0; i < dib0700_device_count; i++)
 		if (dvb_usb_device_init(intf, &dib0700_devices[i], THIS_MODULE,

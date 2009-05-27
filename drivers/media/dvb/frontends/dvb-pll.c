@@ -21,7 +21,6 @@
 #include <linux/module.h>
 #include <linux/dvb/frontend.h>
 #include <asm/types.h>
-#include <media/compat.h>
 
 #include "dvb-pll.h"
 

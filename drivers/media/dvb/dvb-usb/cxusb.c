@@ -213,9 +213,6 @@ static u32 cxusb_i2c_func(struct i2c_adapter *adapter)
 static struct i2c_algorithm cxusb_i2c_algo = {
 	.master_xfer   = cxusb_i2c_xfer,
 	.functionality = cxusb_i2c_func,
-#ifdef NEED_ALGO_CONTROL
-	.algo_control = dummy_algo_control,
-#endif
 };
 
 static int cxusb_power_ctrl(struct dvb_usb_device *d, int onoff)

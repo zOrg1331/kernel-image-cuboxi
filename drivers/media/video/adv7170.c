@@ -38,7 +38,6 @@
 #include <linux/video_encoder.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-i2c-drv-legacy.h>
-#include <media/compat.h>
 
 MODULE_DESCRIPTION("Analog Devices ADV7170 video encoder driver");
 MODULE_AUTHOR("Maxim Yevtyushkin");
@@ -193,7 +192,7 @@ static int adv7170_command(struct i2c_client *client, unsigned cmd, void *arg)
 
 	switch (cmd) {
 	case 0:
-#if 0 /* keep */
+#if 0
 		/* This is just for testing!!! */
 		adv7170_write_block(client, init_common,
 				    sizeof(init_common));
@@ -363,7 +362,6 @@ static int adv7170_remove(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id adv7170_id[] = {
 	{ "adv7170", 0 },
 	{ "adv7171", 0 },
@@ -371,14 +369,11 @@ static const struct i2c_device_id adv7170_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, adv7170_id);
 
-#endif
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "adv7170",
 	.driverid = I2C_DRIVERID_ADV7170,
 	.command = adv7170_command,
 	.probe = adv7170_probe,
 	.remove = adv7170_remove,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = adv7170_id,
-#endif
 };

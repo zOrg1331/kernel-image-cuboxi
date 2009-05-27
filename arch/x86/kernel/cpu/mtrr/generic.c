@@ -14,14 +14,6 @@
 #include <asm/pat.h>
 #include "mtrr.h"
 
-struct mtrr_state {
-	struct mtrr_var_range var_ranges[MAX_VAR_RANGES];
-	mtrr_type fixed_ranges[NUM_FIXED_RANGES];
-	unsigned char enabled;
-	unsigned char have_fixed;
-	mtrr_type def_type;
-};
-
 struct fixed_range_block {
 	int base_msr; /* start address of an MTRR block */
 	int ranges;   /* number of MTRRs in this block  */
@@ -35,15 +27,19 @@ static struct fixed_range_block fixed_range_blocks[] = {
 };
 
 static unsigned long smp_changes_mask;
-static struct mtrr_state mtrr_state = {};
 static int mtrr_state_set;
 u64 mtrr_tom2;
 
-#undef MODULE_PARAM_PREFIX
-#define MODULE_PARAM_PREFIX "mtrr."
+struct mtrr_state_type mtrr_state = {};
+EXPORT_SYMBOL_GPL(mtrr_state);
 
-static int mtrr_show;
-module_param_named(show, mtrr_show, bool, 0);
+static int __initdata mtrr_show;
+static int __init mtrr_debug(char *opt)
+{
+	mtrr_show = 1;
+	return 0;
+}
+early_param("mtrr.show", mtrr_debug);
 
 /**
  * BIOS is expected to clear MtrrFixDramModEn bit, see for example
@@ -63,7 +59,7 @@ static inline void k8_check_syscfg_dram_mod_en(void)
 
 	rdmsr(MSR_K8_SYSCFG, lo, hi);
 	if (lo & K8_MTRRFIXRANGE_DRAM_MODIFY) {
-		printk(KERN_ERR "MTRR: CPU %u: SYSCFG[MtrrFixDramModEn]"
+		printk(KERN_ERR FW_WARN "MTRR: CPU %u: SYSCFG[MtrrFixDramModEn]"
 		       " not cleared by BIOS, clearing this bit\n",
 		       smp_processor_id());
 		lo &= ~K8_MTRRFIXRANGE_DRAM_MODIFY;
@@ -408,12 +404,7 @@ static void generic_get_mtrr(unsigned int reg, unsigned long *base,
 		tmp |= ~((1<<(hi - 1)) - 1);
 
 		if (tmp != mask_lo) {
-			static int once = 1;
-
-			if (once) {
-				printk(KERN_INFO "mtrr: your BIOS has set up an incorrect mask, fixing it up.\n");
-				once = 0;
-			}
+			WARN_ONCE(1, KERN_INFO "mtrr: your BIOS has set up an incorrect mask, fixing it up.\n");
 			mask_lo = tmp;
 		}
 	}

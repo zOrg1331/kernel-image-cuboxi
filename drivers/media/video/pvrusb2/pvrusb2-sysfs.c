@@ -26,7 +26,6 @@
 #ifdef CONFIG_VIDEO_PVRUSB2_DEBUGIFC
 #include "pvrusb2-debugifc.h"
 #endif /* CONFIG_VIDEO_PVRUSB2_DEBUGIFC */
-#include <media/compat.h>
 
 #define pvr2_sysfs_trace(...) pvr2_trace(PVR2_TRACE_SYSFS,__VA_ARGS__)
 
@@ -499,19 +498,11 @@ static void pvr2_sysfs_class_release(struct class *class)
 }
 
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static void pvr2_sysfs_release(struct class_device *class_dev)
-{
-	pvr2_sysfs_trace("Releasing class_dev id=%p",class_dev);
-	kfree(class_dev);
-}
-#else
 static void pvr2_sysfs_release(struct device *class_dev)
 {
 	pvr2_sysfs_trace("Releasing class_dev id=%p",class_dev);
 	kfree(class_dev);
 }
-#endif
 
 
 static void class_dev_destroy(struct pvr2_sysfs *sfp)
@@ -776,15 +767,6 @@ struct pvr2_sysfs *pvr2_sysfs_create(struct pvr2_context *mp,
 }
 
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static int pvr2_sysfs_hotplug(struct class_device *cd,char **envp,
-			      int numenvp,char *buf,int size)
-{
-	/* Even though we don't do anything here, we still need this function
-	   because sysfs will still try to call it. */
-	return 0;
-}
-#endif
 
 struct pvr2_sysfs_class *pvr2_sysfs_class_create(void)
 {
@@ -794,14 +776,7 @@ struct pvr2_sysfs_class *pvr2_sysfs_class_create(void)
 	pvr2_sysfs_trace("Creating pvr2_sysfs_class id=%p",clp);
 	clp->class.name = "pvrusb2";
 	clp->class.class_release = pvr2_sysfs_class_release;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-	clp->class.release = pvr2_sysfs_release;
-#else
 	clp->class.dev_release = pvr2_sysfs_release;
-#endif
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-	clp->class.uevent = pvr2_sysfs_hotplug;
-#endif
 	if (class_register(&clp->class)) {
 		pvr2_sysfs_trace(
 			"Registration failed for pvr2_sysfs_class id=%p",clp);

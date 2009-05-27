@@ -41,7 +41,6 @@
 #include <media/v4l2-chip-ident.h>
 #include <media/v4l2-i2c-drv-legacy.h>
 #include <media/cx25840.h>
-#include <media/compat.h>
 
 #include "cx25840-core.h"
 
@@ -182,15 +181,9 @@ static void cx25836_initialize(struct i2c_client *client)
 	cx25840_and_or(client, 0x15b, ~0x1e, 0x10);
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20)
 static void cx25840_work_handler(struct work_struct *work)
 {
 	struct cx25840_state *state = container_of(work, struct cx25840_state, fw_work);
-#else
-void cx25840_work_handler(void *arg)
-{
-	struct cx25840_state *state = arg;
-#endif
 	cx25840_loadfw(state->c);
 	wake_up(&state->fw_wait);
 }
@@ -219,11 +212,7 @@ static void cx25840_initialize(struct i2c_client *client)
 	   Otherwise the kernel is blocked waiting for the
 	   bit-banging i2c interface to finish uploading the
 	   firmware. */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20)
 	INIT_WORK(&state->fw_work, cx25840_work_handler);
-#else
-	INIT_WORK(&state->fw_work, cx25840_work_handler, state);
-#endif
 	init_waitqueue_head(&state->fw_wait);
 	q = create_singlethread_workqueue("cx25840_fw");
 	prepare_to_wait(&state->fw_wait, &wait, TASK_UNINTERRUPTIBLE);
@@ -328,10 +317,6 @@ static void cx23885_initialize(struct i2c_client *client)
 
 	/* Enable format auto detect */
 	cx25840_write(client, 0x400, 0);
-#if 0
-	/* Force to NTSC-M and Disable autoconf regs */
-	cx25840_write(client, 0x400, 0x21);
-#endif
 	/* Fast subchroma lock */
 	/* White crush, Chroma AGC & Chroma Killer enabled */
 	cx25840_write(client, 0x401, 0xe8);
@@ -343,11 +328,7 @@ static void cx23885_initialize(struct i2c_client *client)
 	   Otherwise the kernel is blocked waiting for the
 	   bit-banging i2c interface to finish uploading the
 	   firmware. */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20)
 	INIT_WORK(&state->fw_work, cx25840_work_handler);
-#else
-	INIT_WORK(&state->fw_work, cx25840_work_handler, state);
-#endif
 	init_waitqueue_head(&state->fw_wait);
 	q = create_singlethread_workqueue("cx25840_fw");
 	prepare_to_wait(&state->fw_wait, &wait, TASK_UNINTERRUPTIBLE);
@@ -1139,25 +1120,24 @@ static int cx25840_init(struct v4l2_subdev *sd, u32 val)
 }
 
 #ifdef CONFIG_VIDEO_ADV_DEBUG
-static int cx25840_g_register(struct v4l2_subdev *sd, struct v4l2_register *reg)
+static int cx25840_g_register(struct v4l2_subdev *sd, struct v4l2_dbg_register *reg)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
-	if (!v4l2_chip_match_i2c_client(client,
-				reg->match_type, reg->match_chip))
+	if (!v4l2_chip_match_i2c_client(client, &reg->match))
 		return -EINVAL;
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
+	reg->size = 1;
 	reg->val = cx25840_read(client, reg->reg & 0x0fff);
 	return 0;
 }
 
-static int cx25840_s_register(struct v4l2_subdev *sd, struct v4l2_register *reg)
+static int cx25840_s_register(struct v4l2_subdev *sd, struct v4l2_dbg_register *reg)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
-	if (!v4l2_chip_match_i2c_client(client,
-				reg->match_type, reg->match_chip))
+	if (!v4l2_chip_match_i2c_client(client, &reg->match))
 		return -EINVAL;
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -1381,7 +1361,7 @@ static int cx25840_reset(struct v4l2_subdev *sd, u32 val)
 	return 0;
 }
 
-static int cx25840_g_chip_ident(struct v4l2_subdev *sd, struct v4l2_chip_ident *chip)
+static int cx25840_g_chip_ident(struct v4l2_subdev *sd, struct v4l2_dbg_chip_ident *chip)
 {
 	struct cx25840_state *state = to_state(sd);
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
@@ -1402,6 +1382,14 @@ static int cx25840_log_status(struct v4l2_subdev *sd)
 
 static int cx25840_command(struct i2c_client *client, unsigned cmd, void *arg)
 {
+	/* ignore this command */
+	if (cmd == TUNER_SET_TYPE_ADDR || cmd == TUNER_SET_CONFIG)
+		return 0;
+
+	/* Old-style drivers rely on initialization on first use, so
+	   call the init whenever a command is issued to this driver.
+	   New-style drivers using v4l2_subdev should call init explicitly. */
+	cx25840_init(i2c_get_clientdata(client), 0);
 	return v4l2_subdev_command(i2c_get_clientdata(client), cmd, arg);
 }
 
@@ -1532,21 +1520,17 @@ static int cx25840_remove(struct i2c_client *client)
 	return 0;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id cx25840_id[] = {
 	{ "cx25840", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, cx25840_id);
 
-#endif
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "cx25840",
 	.driverid = I2C_DRIVERID_CX25840,
 	.command = cx25840_command,
 	.probe = cx25840_probe,
 	.remove = cx25840_remove,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = cx25840_id,
-#endif
 };

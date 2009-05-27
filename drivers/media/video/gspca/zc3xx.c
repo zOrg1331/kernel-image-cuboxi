@@ -173,7 +173,7 @@ static struct ctrl sd_ctrls[] = {
 	},
 };
 
-static struct v4l2_pix_format vga_mode[] = {
+static const struct v4l2_pix_format vga_mode[] = {
 	{320, 240, V4L2_PIX_FMT_JPEG, V4L2_FIELD_NONE,
 		.bytesperline = 320,
 		.sizeimage = 320 * 240 * 3 / 8 + 590,
@@ -186,7 +186,7 @@ static struct v4l2_pix_format vga_mode[] = {
 		.priv = 0},
 };
 
-static struct v4l2_pix_format sif_mode[] = {
+static const struct v4l2_pix_format sif_mode[] = {
 	{176, 144, V4L2_PIX_FMT_JPEG, V4L2_FIELD_NONE,
 		.bytesperline = 176,
 		.sizeimage = 176 * 144 * 3 / 8 + 590,
@@ -3306,12 +3306,7 @@ static const struct usb_action MC501CB_NoFlikerScale[] = {
 static const struct usb_action OV7620_mode0[] = {
 	{0xa0, 0x01, ZC3XX_R000_SYSTEMCONTROL}, /* 00,00,01,cc */
 	{0xa0, 0x40, ZC3XX_R002_CLOCKSELECT}, /* 00,02,40,cc */
-#if 1 /*jfm*/
 	{0xa0, 0x00, ZC3XX_R008_CLOCKSETTING}, /* 00,08,00,cc */
-#else
-	{0xa0, 0x03, ZC3XX_R008_CLOCKSETTING}, /* 00,08,00,cc */
-						/* mx change? */
-#endif
 	{0xa0, 0x01, ZC3XX_R001_SYSTEMOPERATING}, /* 00,01,01,cc */
 	{0xa0, 0x06, ZC3XX_R010_CMOSSENSORSELECT}, /* 00,10,06,cc */
 	{0xa0, 0x02, ZC3XX_R083_RGAINADDR}, /* 00,83,02,cc */
@@ -7270,10 +7265,6 @@ static int sd_start(struct gspca_dev *gspca_dev)
 		reg_w(dev, 0x00, 0x0008);
 		break;
 	case SENSOR_PAS202B:
-#if 0/*fixme*/
-		reg_r(gspca_dev, ZC3XX_R002_CLOCKSELECT);
-		/* fall thru */
-#endif
 	case SENSOR_GC0305:
 		reg_r(gspca_dev, 0x0008);
 		/* fall thru */
@@ -7542,6 +7533,7 @@ static const __devinitdata struct usb_device_id device_table[] = {
 	{USB_DEVICE(0x0458, 0x700c)},
 	{USB_DEVICE(0x0458, 0x700f)},
 	{USB_DEVICE(0x0461, 0x0a00)},
+	{USB_DEVICE(0x046d, 0x089d), .driver_info = SENSOR_MC501CB},
 	{USB_DEVICE(0x046d, 0x08a0)},
 	{USB_DEVICE(0x046d, 0x08a1)},
 	{USB_DEVICE(0x046d, 0x08a2)},

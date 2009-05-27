@@ -62,7 +62,6 @@
 #include <media/v4l2-chip-ident.h>
 
 #include <linux/videodev2.h>
-#include <media/compat.h>
 
 MODULE_AUTHOR("Bill Dirks, Justin Schoeman, Gerd Knorr");
 MODULE_DESCRIPTION("misc helper functions for v4l2 device drivers");
@@ -798,11 +797,11 @@ u32 v4l2_ctrl_next(const u32 * const * ctrl_classes, u32 id)
 }
 EXPORT_SYMBOL(v4l2_ctrl_next);
 
-int v4l2_chip_match_host(u32 match_type, u32 match_chip)
+int v4l2_chip_match_host(const struct v4l2_dbg_match *match)
 {
-	switch (match_type) {
+	switch (match->type) {
 	case V4L2_CHIP_MATCH_HOST:
-		return match_chip == 0;
+		return match->addr == 0;
 	default:
 		return 0;
 	}
@@ -810,23 +809,34 @@ int v4l2_chip_match_host(u32 match_type, u32 match_chip)
 EXPORT_SYMBOL(v4l2_chip_match_host);
 
 #if defined(CONFIG_I2C) || (defined(CONFIG_I2C_MODULE) && defined(MODULE))
-int v4l2_chip_match_i2c_client(struct i2c_client *c, u32 match_type, u32 match_chip)
+int v4l2_chip_match_i2c_client(struct i2c_client *c, const struct v4l2_dbg_match *match)
 {
-	switch (match_type) {
+	int len;
+
+	if (c == NULL || match == NULL)
+		return 0;
+
+	switch (match->type) {
 	case V4L2_CHIP_MATCH_I2C_DRIVER:
-		return (c != NULL && c->driver != NULL && c->driver->id == match_chip);
+		if (c->driver == NULL || c->driver->driver.name == NULL)
+			return 0;
+		len = strlen(c->driver->driver.name);
+		/* legacy drivers have a ' suffix, don't try to match that */
+		if (len && c->driver->driver.name[len - 1] == '\'')
+			len--;
+		return len && !strncmp(c->driver->driver.name, match->name, len);
 	case V4L2_CHIP_MATCH_I2C_ADDR:
-		return (c != NULL && c->addr == match_chip);
+		return c->addr == match->addr;
 	default:
 		return 0;
 	}
 }
 EXPORT_SYMBOL(v4l2_chip_match_i2c_client);
 
-int v4l2_chip_ident_i2c_client(struct i2c_client *c, struct v4l2_chip_ident *chip,
+int v4l2_chip_ident_i2c_client(struct i2c_client *c, struct v4l2_dbg_chip_ident *chip,
 		u32 ident, u32 revision)
 {
-	if (!v4l2_chip_match_i2c_client(c, chip->match_type, chip->match_chip))
+	if (!v4l2_chip_match_i2c_client(c, &chip->match))
 		return 0;
 	if (chip->ident == V4L2_IDENT_NONE) {
 		chip->ident = ident;
@@ -886,35 +896,6 @@ void v4l2_i2c_subdev_init(struct v4l2_subdev *sd, struct i2c_client *client,
 }
 EXPORT_SYMBOL_GPL(v4l2_i2c_subdev_init);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22)
-/* Supporting function to find a client on a specific address on the
-   given adapter. Used for legacy i2c drivers. */
-static struct i2c_client *v4l2_i2c_legacy_find_client(struct i2c_adapter *adap, u8 addr)
-{
-	struct i2c_client *result = NULL;
-	struct i2c_client *client;
-	struct list_head  *item;
-
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
-	down(&adap->clist_lock);
-#else
-	mutex_lock(&adap->clist_lock);
-#endif
-	list_for_each(item, &adap->clients) {
-		client = list_entry(item, struct i2c_client, list);
-		if (client->addr == addr) {
-			result = client;
-			break;
-		}
-	}
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 16)
-	up(&adap->clist_lock);
-#else
-	mutex_unlock(&adap->clist_lock);
-#endif
-	return result;
-}
-#endif
 
 
 /* Load an i2c sub-device. It assumes that i2c_get_adapdata(adapter)
@@ -926,34 +907,21 @@ struct v4l2_subdev *v4l2_i2c_new_subdev(struct i2c_adapter *adapter,
 	struct v4l2_device *dev = i2c_get_adapdata(adapter);
 	struct v4l2_subdev *sd = NULL;
 	struct i2c_client *client;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
 	struct i2c_board_info info;
-#endif
 
 	BUG_ON(!dev);
-#ifdef MODULE
+
 	if (module_name)
 		request_module(module_name);
-#endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
+
 	/* Setup the i2c board info with the device type and
 	   the device address. */
 	memset(&info, 0, sizeof(info));
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
-	strlcpy(info.driver_name, client_type, sizeof(info.driver_name));
-#else
 	strlcpy(info.type, client_type, sizeof(info.type));
-#endif
 	info.addr = addr;
 
 	/* Create the i2c client */
 	client = i2c_new_device(adapter, &info);
-#else
-	/* Legacy code: loading the module automatically
-	   probes and creates the i2c_client on the adapter.
-	   Try to find the client by walking the adapter's client list. */
-	client = v4l2_i2c_legacy_find_client(adapter, addr);
-#endif
 	/* Note: it is possible in the future that
 	   c->driver is NULL if the driver is still being loaded.
 	   We need better support from the kernel so that we
@@ -987,35 +955,20 @@ struct v4l2_subdev *v4l2_i2c_new_probed_subdev(struct i2c_adapter *adapter,
 	struct v4l2_device *dev = i2c_get_adapdata(adapter);
 	struct v4l2_subdev *sd = NULL;
 	struct i2c_client *client = NULL;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
 	struct i2c_board_info info;
-#endif
 
 	BUG_ON(!dev);
-#ifdef MODULE
+
 	if (module_name)
 		request_module(module_name);
-#endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
+
 	/* Setup the i2c board info with the device type and
 	   the device address. */
 	memset(&info, 0, sizeof(info));
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
-	strlcpy(info.driver_name, client_type, sizeof(info.driver_name));
-#else
 	strlcpy(info.type, client_type, sizeof(info.type));
-#endif
 
 	/* Probe and create the i2c client */
 	client = i2c_new_probed_device(adapter, &info, addrs);
-#else
-	/* Legacy code: loading the module should automatically
-	   probe and create the i2c_client on the adapter.
-	   Try to find the client by walking the adapter's client list
-	   for each of the possible addresses. */
-	while (!client && *addrs != I2C_CLIENT_END)
-		client = v4l2_i2c_legacy_find_client(adapter, *addrs++);
-#endif
 	/* Note: it is possible in the future that
 	   c->driver is NULL if the driver is still being loaded.
 	   We need better support from the kernel so that we

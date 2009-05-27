@@ -34,11 +34,6 @@
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/input.h>
-#include <linux/version.h>
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 23)
-/* Fix compile warning */
-#undef BIT
-#endif
 #include <linux/spinlock.h>
 #include <media/ir-common.h>
 
@@ -220,11 +215,7 @@ static int msp430_ir_init(struct budget_ci *budget_ci)
 		input_dev->id.vendor = saa->pci->vendor;
 		input_dev->id.product = saa->pci->device;
 	}
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 	input_dev->dev.parent = &saa->pci->dev;
-#else
-	input_dev->cdev.dev = &saa->pci->dev;
-#endif
 
 	/* Select keymap and address */
 	switch (budget_ci->budget.dev->pci->subsystem_device) {
@@ -1346,7 +1337,7 @@ static struct stb0899_config tt3200_config = {
 	.tuner_set_rfsiggain	= NULL
 };
 
-struct stb6100_config tt3200_stb6100_config = {
+static struct stb6100_config tt3200_stb6100_config = {
 	.tuner_address	= 0x60,
 	.refclock	= 27000000,
 };
@@ -1459,7 +1450,7 @@ static void frontend_init(struct budget_ci *budget_ci)
 		if (budget_ci->budget.dvb_frontend) {
 			if (dvb_attach(stb6100_attach, budget_ci->budget.dvb_frontend, &tt3200_stb6100_config, &budget_ci->budget.i2c_adap)) {
 				if (!dvb_attach(lnbp21_attach, budget_ci->budget.dvb_frontend, &budget_ci->budget.i2c_adap, 0, 0)) {
-					printk("%s: No LNBP21 found!\n", __FUNCTION__);
+					printk("%s: No LNBP21 found!\n", __func__);
 					dvb_frontend_detach(budget_ci->budget.dvb_frontend);
 					budget_ci->budget.dvb_frontend = NULL;
 				}

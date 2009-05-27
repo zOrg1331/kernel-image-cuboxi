@@ -6,7 +6,6 @@
  */
 #include <linux/delay.h>
 #include <linux/i2c.h>
-#include <media/compat.h>
 #include <linux/videodev2.h>
 #include <media/tuner.h>
 #include <media/v4l2-common.h>
@@ -160,12 +159,6 @@ static inline int tuner_afcstatus(const int status)
 	return (status & TUNER_AFC) - 2;
 }
 
-#if 0 /* unused */
-static inline int tuner_mode(const int status)
-{
-	return (status & TUNER_MODE) >> 3;
-}
-#endif
 
 static int simple_get_status(struct dvb_frontend *fe, u32 *status)
 {
@@ -325,7 +318,6 @@ static int simple_std_setup(struct dvb_frontend *fe,
 			    u8 *config, u8 *cb)
 {
 	struct tuner_simple_priv *priv = fe->tuner_priv;
-	u8 tuneraddr;
 	int rc;
 
 	/* tv norm specific stuff for multi-norm tuners */
@@ -394,6 +386,7 @@ static int simple_std_setup(struct dvb_frontend *fe,
 
 	case TUNER_PHILIPS_TUV1236D:
 	{
+		struct tuner_i2c_props i2c = priv->i2c_props;
 		/* 0x40 -> ATSC antenna input 1 */
 		/* 0x48 -> ATSC antenna input 2 */
 		/* 0x00 -> NTSC antenna input 1 */
@@ -405,17 +398,15 @@ static int simple_std_setup(struct dvb_frontend *fe,
 			buffer[1] = 0x04;
 		}
 		/* set to the correct mode (analog or digital) */
-		tuneraddr = priv->i2c_props.addr;
-		priv->i2c_props.addr = 0x0a;
-		rc = tuner_i2c_xfer_send(&priv->i2c_props, &buffer[0], 2);
+		i2c.addr = 0x0a;
+		rc = tuner_i2c_xfer_send(&i2c, &buffer[0], 2);
 		if (2 != rc)
 			tuner_warn("i2c i/o error: rc == %d "
 				   "(should be 2)\n", rc);
-		rc = tuner_i2c_xfer_send(&priv->i2c_props, &buffer[2], 2);
+		rc = tuner_i2c_xfer_send(&i2c, &buffer[2], 2);
 		if (2 != rc)
 			tuner_warn("i2c i/o error: rc == %d "
 				   "(should be 2)\n", rc);
-		priv->i2c_props.addr = tuneraddr;
 		break;
 	}
 	}
@@ -434,18 +425,6 @@ static int simple_post_tune(struct dvb_frontend *fe, u8 *buffer,
 	switch (priv->type) {
 	case TUNER_LG_TDVS_H06XF:
 		/* Set the Auxiliary Byte. */
-#if 0
-		buffer[2] &= ~0x20;
-		buffer[2] |= 0x18;
-		buffer[3] = 0x20;
-		tuner_dbg("tv 0x%02x 0x%02x 0x%02x 0x%02x\n",
-			  buffer[0], buffer[1], buffer[2], buffer[3]);
-
-		rc = tuner_i2c_xfer_send(&priv->i2c_props, buffer, 4);
-		if (4 != rc)
-			tuner_warn("i2c i/o error: rc == %d "
-				   "(should be 4)\n", rc);
-#else
 		buffer[0] = buffer[2];
 		buffer[0] &= ~0x20;
 		buffer[0] |= 0x18;
@@ -456,7 +435,6 @@ static int simple_post_tune(struct dvb_frontend *fe, u8 *buffer,
 		if (2 != rc)
 			tuner_warn("i2c i/o error: rc == %d "
 				   "(should be 2)\n", rc);
-#endif
 		break;
 	case TUNER_MICROTUNE_4042FI5:
 	{
@@ -840,6 +818,15 @@ static u32 simple_dvb_configure(struct dvb_frontend *fe, u8 *buf,
 	int ret;
 	unsigned frequency = params->frequency / 62500;
 
+	if (!tun->stepsize) {
+		/* tuner-core was loaded before the digital tuner was
+		 * configured and somehow picked the wrong tuner type */
+		tuner_err("attempt to treat tuner %d (%s) as digital tuner "
+			  "without stepsize defined.\n",
+			  priv->type, priv->tun->name);
+		return 0; /* failure */
+	}
+
 	t_params = simple_tuner_params(fe, TUNER_PARAM_TYPE_DIGITAL);
 	ret = simple_config_lookup(fe, t_params, &frequency, &config, &cb);
 	if (ret < 0)
@@ -1002,14 +989,6 @@ static int simple_get_bandwidth(struct dvb_frontend *fe, u32 *bandwidth)
 }
 
 static struct dvb_tuner_ops simple_tuner_ops = {
-#if 0
-	.info = {
-		.name           = "tuner-simple",
-		.frequency_min  = ,
-		.frequency_max  = ,
-		.frequency_step = ,
-	},
-#endif
 	.init              = simple_init,
 	.sleep             = simple_sleep,
 	.set_analog_params = simple_set_params,
@@ -1079,14 +1058,6 @@ struct dvb_frontend *simple_tuner_attach(struct dvb_frontend *fe,
 		break;
 	default:
 		fe->tuner_priv = priv;
-#if 0
-		/* caller didn't pass in a configuration last time
-		 * use current configuration, instead */
-		if (!priv->tun) {
-			priv->type = type;
-			priv->tun  = &tuners[type];
-		}
-#endif
 		break;
 	}
 
@@ -1095,7 +1066,12 @@ struct dvb_frontend *simple_tuner_attach(struct dvb_frontend *fe,
 	memcpy(&fe->ops.tuner_ops, &simple_tuner_ops,
 	       sizeof(struct dvb_tuner_ops));
 
-	tuner_info("type set to %d (%s)\n", type, priv->tun->name);
+	if (type != priv->type)
+		tuner_warn("couldn't set type to %d. Using %d (%s) instead\n",
+			    type, priv->type, priv->tun->name);
+	else
+		tuner_info("type set to %d (%s)\n",
+			   priv->type, priv->tun->name);
 
 	if ((debug) || ((atv_input[priv->nr] > 0) ||
 			(dtv_input[priv->nr] > 0))) {

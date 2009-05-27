@@ -28,7 +28,6 @@
 #include <media/v4l2-i2c-drv-legacy.h>
 #include <linux/videodev.h>
 #include <linux/video_decoder.h>
-#include <media/compat.h>
 
 MODULE_DESCRIPTION("vpx3220a/vpx3216b/vpx3214c video decoder driver");
 MODULE_AUTHOR("Laurent Pinchart");
@@ -584,7 +583,6 @@ static int vpx3220_remove(struct i2c_client *client)
 	return 0;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id vpx3220_id[] = {
 	{ "vpx3220a", 0 },
 	{ "vpx3216b", 0 },
@@ -592,7 +590,6 @@ static const struct i2c_device_id vpx3220_id[] = {
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, vpx3220_id);
-#endif
 
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "vpx3220",
@@ -600,7 +597,5 @@ static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.command = vpx3220_command,
 	.probe = vpx3220_probe,
 	.remove = vpx3220_remove,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = vpx3220_id,
-#endif
 };

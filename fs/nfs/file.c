@@ -188,13 +188,16 @@ static loff_t nfs_file_llseek(struct file *filp, loff_t offset, int origin)
 	/* origin == SEEK_END => we must revalidate the cached file length */
 	if (origin == SEEK_END) {
 		struct inode *inode = filp->f_mapping->host;
+
 		int retval = nfs_revalidate_file_size(inode, filp);
 		if (retval < 0)
 			return (loff_t)retval;
-	}
-	lock_kernel();	/* BKL needed? */
-	loff = generic_file_llseek_unlocked(filp, offset, origin);
-	unlock_kernel();
+
+		spin_lock(&inode->i_lock);
+		loff = generic_file_llseek_unlocked(filp, offset, origin);
+		spin_unlock(&inode->i_lock);
+	} else
+		loff = generic_file_llseek_unlocked(filp, offset, origin);
 	return loff;
 }
 
@@ -448,8 +451,9 @@ const struct address_space_operations nfs_file_aops = {
 	.launder_page = nfs_launder_page,
 };
 
-static int nfs_vm_page_mkwrite(struct vm_area_struct *vma, struct page *page)
+static int nfs_vm_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
+	struct page *page = vmf->page;
 	struct file *filp = vma->vm_file;
 	struct dentry *dentry = filp->f_path.dentry;
 	unsigned pagelen;
@@ -476,11 +480,11 @@ static int nfs_vm_page_mkwrite(struct vm_area_struct *vma, struct page *page)
 		goto out_unlock;
 
 	ret = nfs_updatepage(filp, page, 0, pagelen);
-	if (ret == 0)
-		ret = pagelen;
 out_unlock:
+	if (!ret)
+		return VM_FAULT_LOCKED;
 	unlock_page(page);
-	return ret;
+	return VM_FAULT_SIGBUS;
 }
 
 static struct vm_operations_struct nfs_file_vm_ops = {
@@ -699,13 +703,6 @@ static int nfs_flock(struct file *filp, int cmd, struct file_lock *fl)
 			filp->f_path.dentry->d_name.name,
 			fl->fl_type, fl->fl_flags);
 
-	/*
-	 * No BSD flocks over NFS allowed.
-	 * Note: we could try to fake a POSIX lock request here by
-	 * using ((u32) filp | 0x80000000) or some such as the pid.
-	 * Not sure whether that would be unique, though, or whether
-	 * that would break in other places.
-	 */
 	if (!(fl->fl_flags & FL_FLOCK))
 		return -ENOLCK;
 

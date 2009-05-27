@@ -26,8 +26,7 @@
 #ifndef _DVBFRONTEND_H_
 #define _DVBFRONTEND_H_
 
-#include <asm/types.h>
-
+#include <linux/types.h>
 
 typedef enum fe_type {
 	FE_QPSK,
@@ -62,10 +61,11 @@ typedef enum fe_caps {
 	FE_CAN_HIERARCHY_AUTO		= 0x100000,
 	FE_CAN_8VSB			= 0x200000,
 	FE_CAN_16VSB			= 0x400000,
-	FE_HAS_EXTENDED_CAPS		= 0x800000,   // We need more bitspace for newer APIs, indicate this.
-	FE_NEEDS_BENDING		= 0x20000000, // not supported anymore, don't use (frontend requires frequency bending)
-	FE_CAN_RECOVER			= 0x40000000, // frontend can recover from a cable unplug automatically
-	FE_CAN_MUTE_TS			= 0x80000000  // frontend can stop spurious TS data output
+	FE_HAS_EXTENDED_CAPS		= 0x800000,   /* We need more bitspace for newer APIs, indicate this. */
+	FE_CAN_2G_MODULATION		= 0x10000000, /* frontend supports "2nd generation modulation" (DVB-S2) */
+	FE_NEEDS_BENDING		= 0x20000000, /* not supported anymore, don't use (frontend requires frequency bending) */
+	FE_CAN_RECOVER			= 0x40000000, /* frontend can recover from a cable unplug automatically */
+	FE_CAN_MUTE_TS			= 0x80000000  /* frontend can stop spurious TS data output */
 } fe_caps_t;
 
 
@@ -121,15 +121,15 @@ typedef enum fe_sec_mini_cmd {
 
 
 typedef enum fe_status {
-	FE_HAS_SIGNAL	= 0x01,   /*  found something above the noise level */
-	FE_HAS_CARRIER	= 0x02,   /*  found a DVB signal  */
-	FE_HAS_VITERBI	= 0x04,   /*  FEC is stable  */
-	FE_HAS_SYNC	= 0x08,   /*  found sync bytes  */
-	FE_HAS_LOCK	= 0x10,   /*  everything's working... */
-	FE_TIMEDOUT	= 0x20,   /*  no lock within the last ~2 seconds */
-	FE_REINIT	= 0x40    /*  frontend was reinitialized,  */
-} fe_status_t;			  /*  application is recommended to reset */
-				  /*  DiSEqC, tone and parameters */
+	FE_HAS_SIGNAL	= 0x01,   /* found something above the noise level */
+	FE_HAS_CARRIER	= 0x02,   /* found a DVB signal  */
+	FE_HAS_VITERBI	= 0x04,   /* FEC is stable  */
+	FE_HAS_SYNC	= 0x08,   /* found sync bytes  */
+	FE_HAS_LOCK	= 0x10,   /* everything's working... */
+	FE_TIMEDOUT	= 0x20,   /* no lock within the last ~2 seconds */
+	FE_REINIT	= 0x40    /* frontend was reinitialized,  */
+} fe_status_t;			  /* application is recommended to reset */
+				  /* DiSEqC, tone and parameters */
 
 typedef enum fe_spectral_inversion {
 	INVERSION_OFF,
@@ -268,37 +268,6 @@ struct dvb_frontend_event {
 #define DTV_FE_CAPABILITY	16
 #define DTV_DELIVERY_SYSTEM	17
 
-#if 0
-/* ISDB */
-/* maybe a dup of DTV_ISDB_SOUND_BROADCASTING_SUBCHANNEL_ID ??? */
-#define DTV_ISDB_SEGMENT_IDX	18
-/* 1, 3 or 13 ??? */
-#define DTV_ISDB_SEGMENT_WIDTH	19
-
-/* the central segment can be received independently or 1/3 seg in SB-mode */
-#define DTV_ISDB_PARTIAL_RECEPTION	20
-/* sound broadcasting is used 0 = 13segment, 1 = 1 or 3 see DTV_ISDB_PARTIAL_RECEPTION */
-#define DTV_ISDB_SOUND_BROADCASTING	21
-
-/* only used in SB */
-/* determines the initial PRBS of the segment (to match with 13seg channel) */
-#define DTV_ISDB_SOUND_BROADCASTING_SUBCHANNEL_ID	22
-
-#define DTV_ISDB_LAYERA_FEC			23
-#define DTV_ISDB_LAYERA_MODULATION		24
-#define DTV_ISDB_LAYERA_SEGMENT_WIDTH		25
-#define DTV_ISDB_LAYERA_TIME_INTERLEAVER	26
-
-#define DTV_ISDB_LAYERB_FEC			27
-#define DTV_ISDB_LAYERB_MODULATION		28
-#define DTV_ISDB_LAYERB_SEGMENT_WIDTH		29
-#define DTV_ISDB_LAYERB_TIME_INTERLEAVING	30
-
-#define DTV_ISDB_LAYERC_FEC			31
-#define DTV_ISDB_LAYERC_MODULATION		32
-#define DTV_ISDB_LAYERC_SEGMENT_WIDTH		33
-#define DTV_ISDB_LAYERC_TIME_INTERLEAVING	34
-#endif
 #define DTV_API_VERSION				35
 #define DTV_API_VERSION				35
 #define DTV_CODE_RATE_HP			36

@@ -911,7 +911,7 @@ static int vino_allocate_buffer(struct vino_framebuffer *fb,
 	return ret;
 }
 
-#if 0 /* keep */
+#if 0
 /* user buffers not fully implemented yet */
 static int vino_prepare_user_buffer(struct vino_framebuffer *fb,
 				     void *user,
@@ -1040,7 +1040,7 @@ static inline int vino_fifo_has_id(struct vino_framebuffer_fifo *f,
 	return 0;
 }
 
-#if 0 /* keep */
+#if 0
 /* returns true/false */
 static inline int vino_fifo_full(struct vino_framebuffer_fifo *f)
 {
@@ -1396,7 +1396,7 @@ out:
 	return ret;
 }
 
-#if 0 /* keep */
+#if 0
 static int vino_queue_get_total(struct vino_framebuffer_queue *q,
 				unsigned int *total)
 {
@@ -2205,7 +2205,7 @@ out:
 	spin_unlock_irqrestore(&vcs->capture_lock, flags);
 }
 
-#if 0 /* keep */
+#if 0
 static int vino_capture_failed(struct vino_channel_settings *vcs)
 {
 	struct vino_framebuffer *fb;
@@ -2320,11 +2320,7 @@ static void vino_capture_tasklet(unsigned long channel) {
 	}
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static irqreturn_t vino_interrupt(int irq, void *dev_id, struct pt_regs *regs)
-#else
 static irqreturn_t vino_interrupt(int irq, void *dev_id)
-#endif
 {
 	u32 ctrl, intr;
 	unsigned int fc_a, fc_b;
@@ -4023,7 +4019,7 @@ out:
 
 /* File operations */
 
-static int vino_open(struct inode *inode, struct file *file)
+static int vino_open(struct file *file)
 {
 	struct vino_channel_settings *vcs = video_drvdata(file);
 	int ret = 0;
@@ -4054,7 +4050,7 @@ static int vino_open(struct inode *inode, struct file *file)
 	return ret;
 }
 
-static int vino_close(struct inode *inode, struct file *file)
+static int vino_close(struct file *file)
 {
 	struct vino_channel_settings *vcs = video_drvdata(file);
 	dprintk("close():\n");
@@ -4241,7 +4237,7 @@ error:
 	return ret;
 }
 
-static int vino_do_ioctl(struct file *file, unsigned int cmd, void *arg)
+static long vino_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 {
 	struct vino_channel_settings *vcs = video_drvdata(file);
 
@@ -4347,11 +4343,11 @@ static int vino_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 	return 0;
 }
 
-static int vino_ioctl(struct inode *inode, struct file *file,
+static long vino_ioctl(struct file *file,
 		      unsigned int cmd, unsigned long arg)
 {
 	struct vino_channel_settings *vcs = video_drvdata(file);
-	int ret;
+	long ret;
 
 	if (mutex_lock_interruptible(&vcs->mutex))
 		return -EINTR;
@@ -4368,14 +4364,13 @@ static int vino_ioctl(struct inode *inode, struct file *file,
 /* __initdata */
 static int vino_init_stage;
 
-static const struct file_operations vino_fops = {
+static const struct v4l2_file_operations vino_fops = {
 	.owner		= THIS_MODULE,
 	.open		= vino_open,
 	.release	= vino_close,
 	.ioctl		= vino_ioctl,
 	.mmap		= vino_mmap,
 	.poll		= vino_poll,
-	.llseek		= no_llseek,
 };
 
 static struct video_device v4l_device_template = {

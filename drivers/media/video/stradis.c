@@ -50,7 +50,6 @@
 #include "ibmmpeg2.h"
 #include "saa7121.h"
 #include "cs8420.h"
-#include <media/compat.h>
 
 #define DEBUG(x)		/* debug driver */
 #undef  IDEBUG			/* debug irq handler */
@@ -408,11 +407,7 @@ static void send_osd_data(struct saa7146 *saa)
 	}
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static irqreturn_t saa7146_irq(int irq, void *dev_id, struct pt_regs *regs)
-#else
 static irqreturn_t saa7146_irq(int irq, void *dev_id)
-#endif
 {
 	struct saa7146 *saa = dev_id;
 	u32 stat, astat;
@@ -461,7 +456,7 @@ static irqreturn_t saa7146_irq(int irq, void *dev_id)
 				saa->vidinfo.frame_count = 0;
 				saa->vidinfo.h_size = 704;
 				saa->vidinfo.v_size = 480;
-#if 0 /* keep */
+#if 0
 				if (saa->endmarkhead != saa->endmarktail) {
 					saa->audhead =
 						saa->endmark[saa->endmarkhead];
@@ -946,7 +941,7 @@ send_fpga_stuff:
 		if (NewCard)
 			set_genlock_offset(saa, 0);
 		debiwrite(saa, debNormal, IBM_MP2_FRNT_ATTEN, 0, 2);
-#if 0 /* keep */
+#if 0
 		/* enable genlock */
 		debiwrite(saa, debNormal, XILINX_CTL0, 0x8000, 2);
 #else
@@ -1049,7 +1044,7 @@ static int initialize_ibmmpeg2(struct video_code *microcode)
 		if (i != 0xa55a) {
 			printk(KERN_INFO "stradis%d: %04x != 0xa55a\n",
 				saa->nr, i);
-#if 0 /* keep */
+#if 0
 			return -1;
 #endif
 		}
@@ -1280,7 +1275,7 @@ static void make_clip_tab(struct saa7146 *saa, struct video_clip *cr, int ncr)
 		clip_draw_rectangle(clipmap, 0, 0, 1024, -saa->win.y);
 }
 
-static int saa_ioctl(struct inode *inode, struct file *file,
+static long saa_ioctl(struct file *file,
 		     unsigned int cmd, unsigned long argl)
 {
 	struct saa7146 *saa = file->private_data;
@@ -1882,7 +1877,7 @@ static ssize_t saa_write(struct file *file, const char __user * buf,
 	return count;
 }
 
-static int saa_open(struct inode *inode, struct file *file)
+static int saa_open(struct file *file)
 {
 	struct video_device *vdev = video_devdata(file);
 	struct saa7146 *saa = container_of(vdev, struct saa7146, video_dev);
@@ -1900,7 +1895,7 @@ static int saa_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static int saa_release(struct inode *inode, struct file *file)
+static int saa_release(struct file *file)
 {
 	struct saa7146 *saa = file->private_data;
 	saa->user--;
@@ -1911,16 +1906,12 @@ static int saa_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static const struct file_operations saa_fops = {
+static const struct v4l2_file_operations saa_fops = {
 	.owner = THIS_MODULE,
 	.open = saa_open,
 	.release = saa_release,
 	.ioctl = saa_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl = v4l_compat_ioctl32,
-#endif
 	.read = saa_read,
-	.llseek = no_llseek,
 	.write = saa_write,
 	.mmap = saa_mmap,
 };
@@ -2059,7 +2050,7 @@ static int __devinit init_saa7146(struct pci_dev *pdev)
 		dev_err(&pdev->dev, "%d: debi kmalloc failed\n", saa->nr);
 		goto err;
 	}
-#if 0 /* keep */
+#if 0
 	saa->pagedebi = saa->dmadebi + 32768;	/* top 4k is for mmu */
 	saawrite(virt_to_bus(saa->pagedebi) /*|0x800 */ , SAA7146_DEBI_PAGE);
 	for (i = 0; i < 12; i++)	/* setup mmu page table */

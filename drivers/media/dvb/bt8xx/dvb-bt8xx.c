@@ -28,7 +28,6 @@
 #include <linux/slab.h>
 #include <linux/i2c.h>
 
-#include <media/compat.h>
 #include "dmxdev.h"
 #include "dvbdev.h"
 #include "dvb_demux.h"

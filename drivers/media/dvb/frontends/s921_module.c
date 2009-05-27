@@ -38,70 +38,6 @@ static int s921_set_parameters(struct dvb_frontend *fe, struct dvb_frontend_para
 	struct s921_isdb_t_tune_params tune_params;
 
 	tune_params.frequency = param->frequency;
-#if 0
-	struct dvb_ofdm_parameters *op = &param->u.ofdm;
-
-	switch (op->bandwidth) {
-	case BANDWIDTH_6_MHZ:
-	case BANDWIDTH_7_MHZ:
-	case BANDWIDTH_8_MHZ:
-	default:
-		break;
-	}
-
-	switch (op->code_rate_HP) {
-	case FEC_2_3:
-	case FEC_3_4:
-	case FEC_5_6:
-	case FEC_7_8:
-	case FEC_1_2:
-	case FEC_AUTO:
-		break;
-	default:
-		break;
-	}
-
-	switch(op->code_rate_LP) {
-	case FEC_2_3:
-	case FEC_3_4:
-	case FEC_5_6:
-	case FEC_7_8:
-	case FEC_1_2:
-	case FEC_AUTO:
-	case FEC_NONE:
-	default:
-		break;
-	}
-
-	switch (op->constellation) {
-	case QPSK:
-	case QAM_AUTO:
-	case QAM_16:
-	default:
-		break;
-	}
-
-	switch (op->guard_interval) {
-	case GUARD_INTERVAL_1_32:
-	case GUARD_INTERVAL_AUTO:
-	case GUARD_INTERVAL_1_16:
-	case GUARD_INTERVAL_1_8:
-	case GUARD_INTERVAL_1_4:
-	default:
-		break;
-	}
-
-	switch (op->hierarchy_information) {
-	case HIERARCHY_AUTO:
-	case HIERARCHY_NONE:
-	case HIERARCHY_1:
-	case HIERARCHY_2:
-	case HIERARCHY_4:
-	default:
-		break;
-	}
-
-#endif
 	s921_isdb_cmd(&state->dev, ISDB_T_CMD_SET_PARAM, &params);
 	s921_isdb_cmd(&state->dev, ISDB_T_CMD_TUNE, &tune_params);
 	mdelay(100);
@@ -200,7 +136,7 @@ static int s921_write(void *dev, u8 reg, u8 val) {
 	};
 
 	if((err = i2c_transfer(state->i2c, &i2cmsgs, 1))<0) {
-		printk("%s i2c_transfer error %d\n", __FUNCTION__, err);
+		printk("%s i2c_transfer error %d\n", __func__, err);
 		if (err < 0)
 			return err;
 		else

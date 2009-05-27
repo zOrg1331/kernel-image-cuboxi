@@ -19,11 +19,8 @@
 #include <linux/time.h>
 #include <linux/errno.h>
 #include <linux/jiffies.h>
-#include <media/compat.h>
 #include <linux/mutex.h>
-#ifdef TTUSB_KERNEL
 #include <linux/firmware.h>
-#endif
 
 #include "dvb_frontend.h"
 #include "dmxdev.h"
@@ -290,19 +287,12 @@ static int master_xfer(struct i2c_adapter* adapter, struct i2c_msg *msg, int num
 	return i;
 }
 
-#ifndef TTUSB_KERNEL
-#include "dvb-ttusb-dspbootcode.h"
-
-#endif
 static int ttusb_boot_dsp(struct ttusb *ttusb)
 {
-#ifdef TTUSB_KERNEL
 	const struct firmware *fw;
-#endif
 	int i, err;
 	u8 b[40];
 
-#ifdef TTUSB_KERNEL
 	err = request_firmware(&fw, "ttusb-budget/dspbootcode.bin",
 			       &ttusb->dev->dev);
 	if (err) {
@@ -310,7 +300,6 @@ static int ttusb_boot_dsp(struct ttusb *ttusb)
 		return err;
 	}
 
-#endif
 	/* BootBlock */
 	b[0] = 0xaa;
 	b[2] = 0x13;
@@ -318,13 +307,8 @@ static int ttusb_boot_dsp(struct ttusb *ttusb)
 
 	/* upload dsp code in 32 byte steps (36 didn't work for me ...) */
 	/* 32 is max packet size, no messages should be splitted. */
-#ifndef TTUSB_KERNEL
-	for (i = 0; i < sizeof(dsp_bootcode); i += 28) {
-		memcpy(&b[4], &dsp_bootcode[i], 28);
-#else
 	for (i = 0; i < fw->size; i += 28) {
 		memcpy(&b[4], &fw->data[i], 28);
-#endif
 
 		b[1] = ++ttusb->c;
 
@@ -544,7 +528,7 @@ static int ttusb_set_tone(struct dvb_frontend* fe, fe_sec_tone_mode_t tone)
 #endif
 
 
-#if 0 /* keep */
+#if 0
 static void ttusb_set_led_freq(struct ttusb *ttusb, u8 freq)
 {
 	u8 b[] = { 0xaa, ++ttusb->c, 0x19, 1, freq };
@@ -756,18 +740,14 @@ static void ttusb_process_frame(struct ttusb *ttusb, u8 * data, int len)
 	}
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static void ttusb_iso_irq(struct urb *urb, struct pt_regs *ptregs)
-#else
 static void ttusb_iso_irq(struct urb *urb)
-#endif
 {
 	struct ttusb *ttusb = urb->context;
 
 	if (!ttusb->iso_streaming)
 		return;
 
-#if 0 /* keep */
+#if 0
 	printk("%s: status %d, errcount == %d, length == %i\n",
 	       __func__,
 	       urb->status, urb->error_count, urb->actual_length);
@@ -999,7 +979,7 @@ static int ttusb_setup_interfaces(struct ttusb *ttusb)
 	return 0;
 }
 
-#if 0 /* keep */
+#if 0
 static u8 stc_firmware[8192];
 
 static int stc_open(struct inode *inode, struct file *file)
@@ -1657,9 +1637,6 @@ static void frontend_init(struct ttusb* ttusb)
 static struct i2c_algorithm ttusb_dec_algo = {
 	.master_xfer	= master_xfer,
 	.functionality	= functionality,
-#ifdef NEED_ALGO_CONTROL
-	.algo_control = dummy_algo_control,
-#endif
 };
 
 static int ttusb_probe(struct usb_interface *intf, const struct usb_device_id *id)
@@ -1847,6 +1824,4 @@ module_exit(ttusb_exit);
 MODULE_AUTHOR("Holger Waechtler <holger@convergence.de>");
 MODULE_DESCRIPTION("TTUSB DVB Driver");
 MODULE_LICENSE("GPL");
-#ifdef TTUSB_KERNEL
 MODULE_FIRMWARE("ttusb-budget/dspbootcode.bin");
-#endif

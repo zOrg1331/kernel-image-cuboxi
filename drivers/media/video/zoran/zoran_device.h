@@ -64,13 +64,7 @@ extern int wait_grab_pending(struct zoran *zr);
 /* interrupts */
 extern void print_interrupts(struct zoran *zr);
 extern void clear_interrupt_counters(struct zoran *zr);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-extern irqreturn_t zoran_irq(int irq,
-			     void *dev_id,
-			     struct pt_regs *regs);
-#else
 extern irqreturn_t zoran_irq(int irq, void *dev_id);
-#endif
 
 /* JPEG codec access */
 extern void jpeg_start(struct zoran *zr);

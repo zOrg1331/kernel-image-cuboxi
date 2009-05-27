@@ -23,7 +23,6 @@
 
 #include <linux/input.h>
 #include <media/ir-common.h>
-#include <media/compat.h>
 
 /* empty keytable, can be used as placeholder for not-yet created keytables */
 IR_KEYTAB_TYPE ir_codes_empty[IR_KEYTAB_SIZE] = {
@@ -153,65 +152,6 @@ IR_KEYTAB_TYPE ir_codes_avermedia_m135a[IR_KEYTAB_SIZE] = {
 	[0x1b] = KEY_STOP,
 };
 EXPORT_SYMBOL_GPL(ir_codes_avermedia_m135a);
-
-/* Oldrich Jedlicka <oldium.pro@seznam.cz> */
-IR_KEYTAB_TYPE ir_codes_avermedia_cardbus[IR_KEYTAB_SIZE] = {
-	[ 0x00 ] = KEY_POWER,
-	[ 0x01 ] = KEY_TUNER,		/* TV/FM */
-	[ 0x03 ] = KEY_TEXT,		/* Teletext */
-	[ 0x04 ] = KEY_EPG,
-	[ 0x05 ] = KEY_1,
-	[ 0x06 ] = KEY_2,
-	[ 0x07 ] = KEY_3,
-	[ 0x08 ] = KEY_AUDIO,
-	[ 0x09 ] = KEY_4,
-	[ 0x0a ] = KEY_5,
-	[ 0x0b ] = KEY_6,
-	[ 0x0c ] = KEY_ZOOM,		/* Full screen */
-	[ 0x0d ] = KEY_7,
-	[ 0x0e ] = KEY_8,
-	[ 0x0f ] = KEY_9,
-	[ 0x10 ] = KEY_PAGEUP,		/* 16-CH PREV */
-	[ 0x11 ] = KEY_0,
-	[ 0x12 ] = KEY_INFO,
-	[ 0x13 ] = KEY_AGAIN,		/* CH RTN - channel return */
-	[ 0x14 ] = KEY_MUTE,
-	[ 0x15 ] = KEY_EDIT,		/* Autoscan */
-	[ 0x17 ] = KEY_SAVE,		/* Screenshot */
-	[ 0x18 ] = KEY_PLAYPAUSE,
-	[ 0x19 ] = KEY_RECORD,
-	[ 0x1a ] = KEY_PLAY,
-	[ 0x1b ] = KEY_STOP,
-	[ 0x1c ] = KEY_FASTFORWARD,
-	[ 0x1d ] = KEY_REWIND,
-	[ 0x1e ] = KEY_VOLUMEDOWN,
-	[ 0x1f ] = KEY_VOLUMEUP,
-	[ 0x22 ] = KEY_SLEEP,		/* Sleep */
-	[ 0x23 ] = KEY_ZOOM,		/* Aspect */
-	[ 0x26 ] = KEY_SCREEN,		/* Pos */
-	[ 0x27 ] = KEY_ANGLE,		/* Size */
-	[ 0x28 ] = KEY_SELECT,		/* Select */
-	[ 0x29 ] = KEY_BLUE,		/* Blue/Picture */
-	[ 0x2a ] = KEY_BACKSPACE,	/* Back */
-	[ 0x2b ] = KEY_MEDIA,		/* PIP (Picture-in-picture) */
-	[ 0x2c ] = KEY_DOWN,
-	[ 0x2e ] = KEY_DOT,
-	[ 0x2f ] = KEY_TV,		/* Live TV */
-	[ 0x32 ] = KEY_LEFT,
-	[ 0x33 ] = KEY_CLEAR,		/* Clear */
-	[ 0x35 ] = KEY_RED,		/* Red/TV */
-	[ 0x36 ] = KEY_UP,
-	[ 0x37 ] = KEY_HOME,		/* Home */
-	[ 0x39 ] = KEY_GREEN,		/* Green/Video */
-	[ 0x3d ] = KEY_YELLOW,		/* Yellow/Music */
-	[ 0x3e ] = KEY_OK,		/* Ok */
-	[ 0x3f ] = KEY_RIGHT,
-	[ 0x40 ] = KEY_NEXT,		/* Next */
-	[ 0x41 ] = KEY_PREVIOUS,	/* Previous */
-	[ 0x42 ] = KEY_CHANNELDOWN,	/* Channel down */
-	[ 0x43 ] = KEY_CHANNELUP	/* Channel up */
-};
-EXPORT_SYMBOL_GPL(ir_codes_avermedia_cardbus);
 
 /* Attila Kondoros <attila.kondoros@chello.hu> */
 IR_KEYTAB_TYPE ir_codes_apac_viewcomp[IR_KEYTAB_SIZE] = {
@@ -1390,9 +1330,6 @@ IR_KEYTAB_TYPE ir_codes_purpletv[IR_KEYTAB_SIZE] = {
 	[ 0x48 ] = KEY_ZOOM,
 
 	[ 0x1b ] = KEY_VIDEO,           /* Video source */
-#if 0
-	[ 0x1f ] = KEY_S,               /* Snapshot */
-#endif
 	[ 0x49 ] = KEY_LANGUAGE,        /* MTS Select */
 	[ 0x19 ] = KEY_SEARCH,          /* Auto Scan */
 
@@ -1400,12 +1337,6 @@ IR_KEYTAB_TYPE ir_codes_purpletv[IR_KEYTAB_SIZE] = {
 	[ 0x46 ] = KEY_PLAY,
 	[ 0x45 ] = KEY_PAUSE,           /* Pause */
 	[ 0x44 ] = KEY_STOP,
-#if 0
-	[ 0x43 ] = KEY_T,               // Time Shift
-	[ 0x47 ] = KEY_Y,               // Time Shift OFF
-	[ 0x4a ] = KEY_O,               // TOP
-	[ 0x17 ] = KEY_F,               // SURF CH
-#endif
 	[ 0x40 ] = KEY_FORWARD,         /* Forward ? */
 	[ 0x42 ] = KEY_REWIND,          /* Backward ? */
 
@@ -1537,39 +1468,6 @@ IR_KEYTAB_TYPE ir_codes_rc5_tv[IR_KEYTAB_SIZE] = {
 	[ 0x3c ] = KEY_TEXT,    	/* teletext submode (Japan: 12) */
 	[ 0x3d ] = KEY_SUSPEND,		/* system standby */
 
-#if 0 /* FIXME */
-	[ 0x0a ] = KEY_RESERVED,        // 1/2/3 digits (japan: 10)
-	[ 0x0e ] = KEY_RESERVED,        // P.P. (personal preference)
-	[ 0x14 ] = KEY_RESERVED,        // colour saturation +
-	[ 0x15 ] = KEY_RESERVED,        // colour saturation -
-	[ 0x16 ] = KEY_RESERVED,        // bass +
-	[ 0x17 ] = KEY_RESERVED,        // bass -
-	[ 0x18 ] = KEY_RESERVED,        // treble +
-	[ 0x19 ] = KEY_RESERVED,        // treble -
-	[ 0x1a ] = KEY_RESERVED,        // balance right
-	[ 0x1b ] = KEY_RESERVED,        // balance left
-	[ 0x1c ] = KEY_RESERVED,        // contrast +
-	[ 0x1d ] = KEY_RESERVED,        // contrast -
-	[ 0x1f ] = KEY_RESERVED,        // tint/hue +
-	[ 0x24 ] = KEY_RESERVED,        // spacial stereo on/off
-	[ 0x25 ] = KEY_RESERVED,        // mono / stereo (USA)
-	[ 0x27 ] = KEY_RESERVED,        // tint / hue -
-	[ 0x28 ] = KEY_RESERVED,        // RF switch/PIP select
-	[ 0x29 ] = KEY_RESERVED,        // vote
-	[ 0x2a ] = KEY_RESERVED,        // timed page/channel clck
-	[ 0x2b ] = KEY_RESERVED,        // increment (USA)
-	[ 0x2c ] = KEY_RESERVED,        // decrement (USA)
-	[ 0x2d ] = KEY_RESERVED,        //
-	[ 0x2f ] = KEY_RESERVED,        // PIP shift
-	[ 0x31 ] = KEY_RESERVED,        // erase
-	[ 0x34 ] = KEY_RESERVED,        // wind
-	[ 0x38 ] = KEY_RESERVED,        // external 1
-	[ 0x39 ] = KEY_RESERVED,        // external 2
-	[ 0x3a ] = KEY_RESERVED,        // PIP display mode
-	[ 0x3b ] = KEY_RESERVED,        // view data mode / advance
-	[ 0x3e ] = KEY_RESERVED,        // crispener on/off
-	[ 0x3f ] = KEY_RESERVED,        // system select
-#endif
 };
 
 EXPORT_SYMBOL_GPL(ir_codes_rc5_tv);
@@ -1992,17 +1890,10 @@ IR_KEYTAB_TYPE ir_codes_encore_enltv[IR_KEYTAB_SIZE] = {
 
 	[ 0x14 ] = KEY_HOME,		/* win start menu */
 	[ 0x15 ] = KEY_EXIT,		/* exit */
-#if 0
-	[ 0x16 ] = KEY_CHANNELUP,	/* UP */
-	[ 0x12 ] = KEY_CHANNELDOWN,	/* DOWN */
-	[ 0x0c ] = KEY_VOLUMEUP,	/* RIGHT */
-	[ 0x17 ] = KEY_VOLUMEDOWN,	/* LEFT */
-#else
 	[ 0x16 ] = KEY_UP,
 	[ 0x12 ] = KEY_DOWN,
 	[ 0x0c ] = KEY_RIGHT,
 	[ 0x17 ] = KEY_LEFT,
-#endif
 
 	[ 0x18 ] = KEY_ENTER,		/* OK */
 

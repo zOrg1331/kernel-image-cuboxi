@@ -32,8 +32,4 @@
 #define SW2_INT_ENABLE_CPU              0xc73158
 #define SW2_INT_ENABLE_PCI              0xc7315c
 
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 18)
-irqreturn_t cx18_irq_handler(int irq, void *dev_id, struct pt_regs *regs);
-#else
 irqreturn_t cx18_irq_handler(int irq, void *dev_id);
-#endif

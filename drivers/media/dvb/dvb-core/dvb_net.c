@@ -62,7 +62,6 @@
 #include <linux/uio.h>
 #include <asm/uaccess.h>
 #include <linux/crc32.h>
-#include <media/compat.h>
 #include <linux/mutex.h>
 
 #include "dvb_demux.h"
@@ -126,11 +125,8 @@ static void hexdump( const unsigned char *buf, unsigned short len )
 
 struct dvb_net_priv {
 	int in_use;
-	struct net_device_stats stats;
 	u16 pid;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,20)
 	struct net_device *net;
-#endif
 	struct dvb_net *host;
 	struct dmx_demux *demux;
 	struct dmx_section_feed *secfeed;
@@ -177,11 +173,7 @@ static __be16 dvb_net_eth_type_trans(struct sk_buff *skb,
 	struct ethhdr *eth;
 	unsigned char *rawp;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
-	skb->mac.raw=skb->data;
-#else
 	skb_reset_mac_header(skb);
-#endif
 	skb_pull(skb,dev->hard_header_len);
 	eth = eth_hdr(skb);
 
@@ -352,7 +344,7 @@ static inline void reset_ule( struct dvb_net_priv *p )
  */
 static void dvb_net_ule( struct net_device *dev, const u8 *buf, size_t buf_len )
 {
-	struct dvb_net_priv *priv = dev->priv;
+	struct dvb_net_priv *priv = netdev_priv(dev);
 	unsigned long skipped = 0L;
 	const u8 *ts, *ts_end, *from_where = NULL;
 	u8 ts_remain = 0, how_much = 0, new_ts = 1;
@@ -391,8 +383,8 @@ static void dvb_net_ule( struct net_device *dev, const u8 *buf, size_t buf_len )
 				if (priv->ule_skb) {
 					dev_kfree_skb( priv->ule_skb );
 					/* Prepare for next SNDU. */
-					priv->stats.rx_errors++;
-					priv->stats.rx_frame_errors++;
+					dev->stats.rx_errors++;
+					dev->stats.rx_frame_errors++;
 				}
 				reset_ule(priv);
 				priv->need_pusi = 1;
@@ -445,8 +437,8 @@ static void dvb_net_ule( struct net_device *dev, const u8 *buf, size_t buf_len )
 					dev_kfree_skb( priv->ule_skb );
 					/* Prepare for next SNDU. */
 					// reset_ule(priv);  moved to below.
-					priv->stats.rx_errors++;
-					priv->stats.rx_frame_errors++;
+					dev->stats.rx_errors++;
+					dev->stats.rx_frame_errors++;
 				}
 				reset_ule(priv);
 				/* skip to next PUSI. */
@@ -467,8 +459,8 @@ static void dvb_net_ule( struct net_device *dev, const u8 *buf, size_t buf_len )
 						/* Drop partly decoded SNDU, reset state, resync on PUSI. */
 						if (priv->ule_skb) {
 							dev_kfree_skb( priv->ule_skb );
-							((struct dvb_net_priv *) dev->priv)->stats.rx_errors++;
-							((struct dvb_net_priv *) dev->priv)->stats.rx_frame_errors++;
+							dev->stats.rx_errors++;
+							dev->stats.rx_frame_errors++;
 						}
 						reset_ule(priv);
 						priv->need_pusi = 1;
@@ -484,8 +476,8 @@ static void dvb_net_ule( struct net_device *dev, const u8 *buf, size_t buf_len )
 				if (priv->ule_sndu_remain > 183) {
 					/* Current SNDU lacks more data than there could be available in the
 					 * current TS cell. */
-					priv->stats.rx_errors++;
-					priv->stats.rx_length_errors++;
+					dev->stats.rx_errors++;
+					dev->stats.rx_length_errors++;
 					printk(KERN_WARNING "%lu: Expected %d more SNDU bytes, but "
 					       "got PUSI (pf %d, ts_remain %d).  Flushing incomplete payload.\n",
 					       priv->ts_count, priv->ule_sndu_remain, ts[4], ts_remain);
@@ -527,8 +519,8 @@ static void dvb_net_ule( struct net_device *dev, const u8 *buf, size_t buf_len )
 				if (priv->ule_sndu_len < 5) {
 					printk(KERN_WARNING "%lu: Invalid ULE SNDU length %u. "
 					       "Resyncing.\n", priv->ts_count, priv->ule_sndu_len);
-					priv->stats.rx_errors++;
-					priv->stats.rx_length_errors++;
+					dev->stats.rx_errors++;
+					dev->stats.rx_length_errors++;
 					priv->ule_sndu_len = 0;
 					priv->need_pusi = 1;
 					new_ts = 1;
@@ -580,7 +572,7 @@ static void dvb_net_ule( struct net_device *dev, const u8 *buf, size_t buf_len )
 			if (priv->ule_skb == NULL) {
 				printk(KERN_NOTICE "%s: Memory squeeze, dropping packet.\n",
 				       dev->name);
-				((struct dvb_net_priv *)dev->priv)->stats.rx_dropped++;
+				dev->stats.rx_dropped++;
 				return;
 			}
 
@@ -603,9 +595,7 @@ static void dvb_net_ule( struct net_device *dev, const u8 *buf, size_t buf_len )
 			/* Check CRC32, we've got it in our skb already. */
 			__be16 ulen = htons(priv->ule_sndu_len);
 			__be16 utype = htons(priv->ule_sndu_type);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 			const u8 *tail;
-#endif
 			struct kvec iov[3] = {
 				{ &ulen, sizeof ulen },
 				{ &utype, sizeof utype },
@@ -619,18 +609,11 @@ static void dvb_net_ule( struct net_device *dev, const u8 *buf, size_t buf_len )
 			}
 
 			ule_crc = iov_crc32(ule_crc, iov, 3);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
-			expected_crc = *((u8 *)priv->ule_skb->tail - 4) << 24 |
-				       *((u8 *)priv->ule_skb->tail - 3) << 16 |
-				       *((u8 *)priv->ule_skb->tail - 2) << 8 |
-				       *((u8 *)priv->ule_skb->tail - 1);
-#else
 			tail = skb_tail_pointer(priv->ule_skb);
 			expected_crc = *(tail - 4) << 24 |
 				       *(tail - 3) << 16 |
 				       *(tail - 2) << 8 |
 				       *(tail - 1);
-#endif
 			if (ule_crc != expected_crc) {
 				printk(KERN_WARNING "%lu: CRC32 check FAILED: %08x / %08x, SNDU len %d type %#x, ts_remain %d, next 2: %x.\n",
 				       priv->ts_count, ule_crc, expected_crc, priv->ule_sndu_len, priv->ule_sndu_type, ts_remain, ts_remain > 2 ? *(unsigned short *)from_where : 0);
@@ -653,8 +636,8 @@ static void dvb_net_ule( struct net_device *dev, const u8 *buf, size_t buf_len )
 				ule_dump = 1;
 #endif
 
-				priv->stats.rx_errors++;
-				priv->stats.rx_crc_errors++;
+				dev->stats.rx_errors++;
+				dev->stats.rx_crc_errors++;
 				dev_kfree_skb(priv->ule_skb);
 			} else {
 				/* CRC32 verified OK. */
@@ -709,13 +692,9 @@ static void dvb_net_ule( struct net_device *dev, const u8 *buf, size_t buf_len )
 					}
 					else
 					{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
-						memcpy(dest_addr,  priv->ule_skb->data, ETH_ALEN);
-#else
 						skb_copy_from_linear_data(priv->ule_skb,
 							      dest_addr,
 							      ETH_ALEN);
-#endif
 						skb_pull(priv->ule_skb, ETH_ALEN);
 					}
 				}
@@ -764,8 +743,8 @@ static void dvb_net_ule( struct net_device *dev, const u8 *buf, size_t buf_len )
 				 * receive the packet anyhow. */
 				/* if (priv->ule_dbit && skb->pkt_type == PACKET_OTHERHOST)
 					priv->ule_skb->pkt_type = PACKET_HOST; */
-				priv->stats.rx_packets++;
-				priv->stats.rx_bytes += priv->ule_skb->len;
+				dev->stats.rx_packets++;
+				dev->stats.rx_bytes += priv->ule_skb->len;
 				netif_rx(priv->ule_skb);
 			}
 			sndu_done:
@@ -820,7 +799,7 @@ static void dvb_net_sec(struct net_device *dev,
 {
 	u8 *eth;
 	struct sk_buff *skb;
-	struct net_device_stats *stats = &(((struct dvb_net_priv *) dev->priv)->stats);
+	struct net_device_stats *stats = &dev->stats;
 	int snap = 0;
 
 	/* note: pkt_len includes a 32bit checksum */
@@ -833,7 +812,7 @@ static void dvb_net_sec(struct net_device *dev,
 	}
 /* it seems some ISPs manage to screw up here, so we have to
  * relax the error checks... */
-#if 0 /* keep */
+#if 0
 	if ((pkt[5] & 0xfd) != 0xc1) {
 		/* drop scrambled or broken packets */
 #else
@@ -937,7 +916,7 @@ static int dvb_net_filter_sec_set(struct net_device *dev,
 		   struct dmx_section_filter **secfilter,
 		   u8 *mac, u8 *mac_mask)
 {
-	struct dvb_net_priv *priv = dev->priv;
+	struct dvb_net_priv *priv = netdev_priv(dev);
 	int ret;
 
 	*secfilter=NULL;
@@ -981,7 +960,7 @@ static int dvb_net_filter_sec_set(struct net_device *dev,
 static int dvb_net_feed_start(struct net_device *dev)
 {
 	int ret = 0, i;
-	struct dvb_net_priv *priv = dev->priv;
+	struct dvb_net_priv *priv = netdev_priv(dev);
 	struct dmx_demux *demux = priv->demux;
 	unsigned char *mac = (unsigned char *) dev->dev_addr;
 
@@ -1080,7 +1059,7 @@ error:
 
 static int dvb_net_feed_stop(struct net_device *dev)
 {
-	struct dvb_net_priv *priv = dev->priv;
+	struct dvb_net_priv *priv = netdev_priv(dev);
 	int i, ret = 0;
 
 	dprintk("%s\n", __func__);
@@ -1133,7 +1112,7 @@ static int dvb_net_feed_stop(struct net_device *dev)
 
 static int dvb_set_mc_filter (struct net_device *dev, struct dev_mc_list *mc)
 {
-	struct dvb_net_priv *priv = dev->priv;
+	struct dvb_net_priv *priv = netdev_priv(dev);
 
 	if (priv->multi_num == DVB_NET_MULTICAST_MAX)
 		return -ENOMEM;
@@ -1145,32 +1124,15 @@ static int dvb_set_mc_filter (struct net_device *dev, struct dev_mc_list *mc)
 }
 
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
-static void wq_set_multicast_list (void *data)
-#else
 static void wq_set_multicast_list (struct work_struct *work)
-#endif
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
-	struct net_device *dev = data;
-	struct dvb_net_priv *priv = dev->priv;
-#else
 	struct dvb_net_priv *priv =
 		container_of(work, struct dvb_net_priv, set_multicast_list_wq);
 	struct net_device *dev = priv->net;
-#endif
 
 	dvb_net_feed_stop(dev);
 	priv->rx_mode = RX_MODE_UNI;
-#ifdef OLD_XMIT_LOCK	/* Kernels equal or lower than 2.6.17 */
-	spin_lock_bh(&dev->xmit_lock);
-#else
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 26)
-	netif_tx_lock_bh(dev);
-#else
 	netif_addr_lock_bh(dev);
-#endif
-#endif
 
 	if (dev->flags & IFF_PROMISC) {
 		dprintk("%s: promiscuous mode\n", dev->name);
@@ -1195,39 +1157,23 @@ static void wq_set_multicast_list (struct work_struct *work)
 		}
 	}
 
-#ifdef OLD_XMIT_LOCK	/* Kernels equal or lower than 2.6.17 */
-	spin_unlock_bh(&dev->xmit_lock);
-#else
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 26)
-	netif_tx_unlock_bh(dev);
-#else
 	netif_addr_unlock_bh(dev);
-#endif
-#endif
 	dvb_net_feed_start(dev);
 }
 
 
 static void dvb_net_set_multicast_list (struct net_device *dev)
 {
-	struct dvb_net_priv *priv = dev->priv;
+	struct dvb_net_priv *priv = netdev_priv(dev);
 	schedule_work(&priv->set_multicast_list_wq);
 }
 
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
-static void wq_restart_net_feed (void *data)
-#else
 static void wq_restart_net_feed (struct work_struct *work)
-#endif
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
-	struct net_device *dev = data;
-#else
 	struct dvb_net_priv *priv =
 		container_of(work, struct dvb_net_priv, restart_net_feed_wq);
 	struct net_device *dev = priv->net;
-#endif
 
 	if (netif_running(dev)) {
 		dvb_net_feed_stop(dev);
@@ -1238,7 +1184,7 @@ static void wq_restart_net_feed (struct work_struct *work)
 
 static int dvb_net_set_mac (struct net_device *dev, void *p)
 {
-	struct dvb_net_priv *priv = dev->priv;
+	struct dvb_net_priv *priv = netdev_priv(dev);
 	struct sockaddr *addr=p;
 
 	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
@@ -1252,7 +1198,7 @@ static int dvb_net_set_mac (struct net_device *dev, void *p)
 
 static int dvb_net_open(struct net_device *dev)
 {
-	struct dvb_net_priv *priv = dev->priv;
+	struct dvb_net_priv *priv = netdev_priv(dev);
 
 	priv->in_use++;
 	dvb_net_feed_start(dev);
@@ -1262,40 +1208,35 @@ static int dvb_net_open(struct net_device *dev)
 
 static int dvb_net_stop(struct net_device *dev)
 {
-	struct dvb_net_priv *priv = dev->priv;
+	struct dvb_net_priv *priv = netdev_priv(dev);
 
 	priv->in_use--;
 	return dvb_net_feed_stop(dev);
 }
 
-static struct net_device_stats * dvb_net_get_stats(struct net_device *dev)
-{
-	return &((struct dvb_net_priv*) dev->priv)->stats;
-}
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,24)
 static const struct header_ops dvb_header_ops = {
 	.create		= eth_header,
 	.parse		= eth_header_parse,
 	.rebuild	= eth_rebuild_header,
 };
-#endif
+
+
+static const struct net_device_ops dvb_netdev_ops = {
+	.ndo_open		= dvb_net_open,
+	.ndo_stop		= dvb_net_stop,
+	.ndo_start_xmit		= dvb_net_tx,
+	.ndo_set_multicast_list = dvb_net_set_multicast_list,
+	.ndo_set_mac_address    = dvb_net_set_mac,
+	.ndo_change_mtu		= eth_change_mtu,
+	.ndo_validate_addr	= eth_validate_addr,
+};
 
 static void dvb_net_setup(struct net_device *dev)
 {
 	ether_setup(dev);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,24)
 	dev->header_ops		= &dvb_header_ops;
-#else
-	dev->hard_header_cache  = NULL;
-#endif
-	dev->open		= dvb_net_open;
-	dev->stop		= dvb_net_stop;
-	dev->hard_start_xmit	= dvb_net_tx;
-	dev->get_stats		= dvb_net_get_stats;
-	dev->set_multicast_list = dvb_net_set_multicast_list;
-	dev->set_mac_address    = dvb_net_set_mac;
+	dev->netdev_ops		= &dvb_netdev_ops;
 	dev->mtu		= 4096;
 	dev->mc_count           = 0;
 
@@ -1346,10 +1287,8 @@ static int dvb_net_add_if(struct dvb_net *dvbnet, u16 pid, u8 feedtype)
 
 	dvbnet->device[if_num] = net;
 
-	priv = net->priv;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,20)
+	priv = netdev_priv(net);
 	priv->net = net;
-#endif
 	priv->demux = dvbnet->demux;
 	priv->pid = pid;
 	priv->rx_mode = RX_MODE_UNI;
@@ -1358,13 +1297,8 @@ static int dvb_net_add_if(struct dvb_net *dvbnet, u16 pid, u8 feedtype)
 	priv->feedtype = feedtype;
 	reset_ule(priv);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
-	INIT_WORK(&priv->set_multicast_list_wq, wq_set_multicast_list, net);
-	INIT_WORK(&priv->restart_net_feed_wq, wq_restart_net_feed, net);
-#else
 	INIT_WORK(&priv->set_multicast_list_wq, wq_set_multicast_list);
 	INIT_WORK(&priv->restart_net_feed_wq, wq_restart_net_feed);
-#endif
 	mutex_init(&priv->mutex);
 
 	net->base_addr = pid;
@@ -1386,7 +1320,7 @@ static int dvb_net_remove_if(struct dvb_net *dvbnet, unsigned long num)
 
 	if (!dvbnet->state[num])
 		return -EINVAL;
-	priv = net->priv;
+	priv = netdev_priv(net);
 	if (priv->in_use)
 		return -EBUSY;
 
@@ -1442,7 +1376,7 @@ static int dvb_net_do_ioctl(struct inode *inode, struct file *file,
 
 		netdev = dvbnet->device[dvbnetif->if_num];
 
-		priv_data = netdev->priv;
+		priv_data = netdev_priv(netdev);
 		dvbnetif->pid=priv_data->pid;
 		dvbnetif->feedtype=priv_data->feedtype;
 		break;
@@ -1493,7 +1427,7 @@ static int dvb_net_do_ioctl(struct inode *inode, struct file *file,
 
 		netdev = dvbnet->device[dvbnetif->if_num];
 
-		priv_data = netdev->priv;
+		priv_data = netdev_priv(netdev);
 		dvbnetif->pid=priv_data->pid;
 		break;
 	}

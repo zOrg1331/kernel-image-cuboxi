@@ -27,7 +27,7 @@
 #include "qt1010.h"
 #include "tda18271.h"
 #include "mxl5005s.h"
-#if 0 /* keep */
+#if 0
 #include "mc44s80x.h"
 #endif
 
@@ -318,9 +318,6 @@ static u32 af9015_i2c_func(struct i2c_adapter *adapter)
 static struct i2c_algorithm af9015_i2c_algo = {
 	.master_xfer = af9015_i2c_xfer,
 	.functionality = af9015_i2c_func,
-#ifdef NEED_ALGO_CONTROL
-	.algo_control = dummy_algo_control,
-#endif
 };
 
 static int af9015_do_reg_bit(struct dvb_usb_device *d, u16 addr, u8 bit, u8 op)
@@ -697,7 +694,12 @@ static int af9015_read_config(struct usb_device *udev)
 
 	/* IR remote controller */
 	req.addr = AF9015_EEPROM_IR_MODE;
-	ret = af9015_rw_udev(udev, &req);
+	/* first message will timeout often due to possible hw bug */
+	for (i = 0; i < 4; i++) {
+		ret = af9015_rw_udev(udev, &req);
+		if (!ret)
+			break;
+	}
 	if (ret)
 		goto error;
 	deb_info("%s: IR mode:%d\n", __func__, val);
@@ -838,18 +840,19 @@ static int af9015_read_config(struct usb_device *udev)
 	if (!dvb_usb_af9015_dual_mode)
 		af9015_config.dual_mode = 0;
 
-	/* set buffer size according to USB port speed */
+	/* Set adapter0 buffer size according to USB port speed, adapter1 buffer
+	   size can be static because it is enabled only USB2.0 */
 	for (i = 0; i < af9015_properties_count; i++) {
 		/* USB1.1 set smaller buffersize and disable 2nd adapter */
 		if (udev->speed == USB_SPEED_FULL) {
-			af9015_properties[i].adapter->stream.u.bulk.buffersize =
-				TS_USB11_MAX_PACKET_SIZE;
+			af9015_properties[i].adapter[0].stream.u.bulk.buffersize
+				= TS_USB11_MAX_PACKET_SIZE;
 			/* disable 2nd adapter because we don't have
 			   PID-filters */
 			af9015_config.dual_mode = 0;
 		} else {
-			af9015_properties[i].adapter->stream.u.bulk.buffersize =
-				TS_USB20_MAX_PACKET_SIZE;
+			af9015_properties[i].adapter[0].stream.u.bulk.buffersize
+				= TS_USB20_MAX_PACKET_SIZE;
 		}
 	}
 
@@ -1176,7 +1179,7 @@ static int af9015_tuner_attach(struct dvb_usb_adapter *adap)
 			DVB_PLL_TDA665X) == NULL ? -ENODEV : 0;
 		break;
 	case AF9013_TUNER_MC44S803:
-#if 0 /* keep */
+#if 0
 		ret = dvb_attach(mc44s80x_attach, adap->fe, i2c_adap)
 			== NULL ? -ENODEV : 0;
 #else
@@ -1257,6 +1260,12 @@ static struct dvb_usb_device_properties af9015_properties[] = {
 					.type = USB_BULK,
 					.count = 6,
 					.endpoint = 0x85,
+					.u = {
+						.bulk = {
+							.buffersize =
+						TS_USB20_MAX_PACKET_SIZE,
+						}
+					}
 				},
 			}
 		},
@@ -1356,6 +1365,12 @@ static struct dvb_usb_device_properties af9015_properties[] = {
 					.type = USB_BULK,
 					.count = 6,
 					.endpoint = 0x85,
+					.u = {
+						.bulk = {
+							.buffersize =
+						TS_USB20_MAX_PACKET_SIZE,
+						}
+					}
 				},
 			}
 		},
@@ -1469,9 +1484,6 @@ static void af9015_usb_device_exit(struct usb_interface *intf)
 
 /* usb specific object needed to register this driver with the usb subsystem */
 static struct usb_driver af9015_usb_driver = {
-#if LINUX_VERSION_CODE <=  KERNEL_VERSION(2, 6, 15)
-	.owner = THIS_MODULE,
-#endif
 	.name = "dvb_usb_af9015",
 	.probe = af9015_usb_probe,
 	.disconnect = af9015_usb_device_exit,

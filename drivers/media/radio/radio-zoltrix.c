@@ -35,7 +35,6 @@
 #include <linux/delay.h>	/* udelay, msleep                 */
 #include <asm/io.h>		/* outb, outb_p                   */
 #include <asm/uaccess.h>	/* copy to/from user              */
-#include <media/compat.h>
 #include <linux/videodev2.h>	/* kernel radio structs           */
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
@@ -354,7 +353,7 @@ static int vidioc_s_ctrl(struct file *file, void *priv,
 		printk(KERN_WARNING "zoltrix: Set frequency failed.\n");
 		return -EINVAL;
 	}
-#if 0 /*keep*/
+#if 0
 /* FIXME: Implement stereo/mono switch on V4L2 */
 			if (v->mode & VIDEO_SOUND_STEREO) {
 				zol->stereo = 1;
@@ -402,27 +401,23 @@ static int vidioc_s_audio(struct file *file, void *priv,
 
 static struct zol_device zoltrix_unit;
 
-static int zoltrix_exclusive_open(struct inode *inode, struct file *file)
+static int zoltrix_exclusive_open(struct file *file)
 {
 	return test_and_set_bit(0, &zoltrix_unit.in_use) ? -EBUSY : 0;
 }
 
-static int zoltrix_exclusive_release(struct inode *inode, struct file *file)
+static int zoltrix_exclusive_release(struct file *file)
 {
 	clear_bit(0, &zoltrix_unit.in_use);
 	return 0;
 }
 
-static const struct file_operations zoltrix_fops =
+static const struct v4l2_file_operations zoltrix_fops =
 {
 	.owner		= THIS_MODULE,
 	.open           = zoltrix_exclusive_open,
 	.release        = zoltrix_exclusive_release,
 	.ioctl		= video_ioctl2,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl	= v4l_compat_ioctl32,
-#endif
-	.llseek         = no_llseek,
 };
 
 static const struct v4l2_ioctl_ops zoltrix_ioctl_ops = {

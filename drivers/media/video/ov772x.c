@@ -51,6 +51,7 @@
 #define COM8        0x13 /* Common control 8 */
 #define COM9        0x14 /* Common control 9 */
 #define COM10       0x15 /* Common control 10 */
+#define REG16       0x16 /* Register 16 */
 #define HSTART      0x17 /* Horizontal sensor size */
 #define HSIZE       0x18 /* Horizontal frame (HREF column) end high 8-bit */
 #define VSTART      0x19 /* Vertical frame (row) start high 8-bit */
@@ -65,6 +66,7 @@
 #define AEW         0x24 /* AGC/AEC - Stable operating region (upper limit) */
 #define AEB         0x25 /* AGC/AEC - Stable operating region (lower limit) */
 #define VPT         0x26 /* AGC/AEC Fast mode operating region */
+#define REG28       0x28 /* Register 28 */
 #define HOUTSIZE    0x29 /* Horizontal data output size MSBs */
 #define EXHCH       0x2A /* Dummy pixel insert MSB */
 #define EXHCL       0x2B /* Dummy pixel insert LSB */
@@ -94,6 +96,7 @@
 #define TGT_R       0x43 /* BLC red  channel target value */
 #define TGT_GB      0x44 /* BLC Gb   channel target value */
 #define TGT_GR      0x45 /* BLC Gr   channel target value */
+/* for ov7720 */
 #define LCC0        0x46 /* Lens correction control 0 */
 #define LCC1        0x47 /* Lens correction option 1 - X coordinate */
 #define LCC2        0x48 /* Lens correction option 2 - Y coordinate */
@@ -101,6 +104,15 @@
 #define LCC4        0x4A /* Lens correction option 4 - radius of the circular */
 #define LCC5        0x4B /* Lens correction option 5 */
 #define LCC6        0x4C /* Lens correction option 6 */
+/* for ov7725 */
+#define LC_CTR      0x46 /* Lens correction control */
+#define LC_XC       0x47 /* X coordinate of lens correction center relative */
+#define LC_YC       0x48 /* Y coordinate of lens correction center relative */
+#define LC_COEF     0x49 /* Lens correction coefficient */
+#define LC_RADI     0x4A /* Lens correction radius */
+#define LC_COEFB    0x4B /* Lens B channel compensation coefficient */
+#define LC_COEFR    0x4C /* Lens R channel compensation coefficient */
+
 #define FIXGAIN     0x4D /* Analog fix gain amplifer */
 #define AREF0       0x4E /* Sensor reference control */
 #define AREF1       0x4F /* Sensor reference current control */
@@ -182,8 +194,13 @@
 #define SDE         0xA6 /* Special digital effect control */
 #define USAT        0xA7 /* U component saturation control */
 #define VSAT        0xA8 /* V component saturation control */
+/* for ov7720 */
 #define HUE0        0xA9 /* Hue control 0 */
 #define HUE1        0xAA /* Hue control 1 */
+/* for ov7725 */
+#define HUECOS      0xA9 /* Cosine value */
+#define HUESIN      0xAA /* Sine value */
+
 #define SIGN        0xAB /* Sign bit for Hue and contrast */
 #define DSPAUTO     0xAC /* DSP auto function ON/OFF control */
 
@@ -346,6 +363,13 @@
 #define OP_SWAP_RGB 0x00000002
 
 /*
+ * ID
+ */
+#define OV7720  0x7720
+#define OV7725  0x7721
+#define VERSION(pid, ver) ((pid<<8)|(ver&0xFF))
+
+/*
  * struct
  */
 struct regval_list {
@@ -374,34 +398,22 @@ struct ov772x_priv {
 	struct soc_camera_device          icd;
 	const struct ov772x_color_format *fmt;
 	const struct ov772x_win_size     *win;
+	int                               model;
 };
 
 #define ENDMARKER { 0xff, 0xff }
-
-static const struct regval_list ov772x_default_regs[] =
-{
-	{ COM3,  0x00 },
-	{ COM4,  PLL_4x | 0x01 },
-	{ 0x16,  0x00 }, /* Mystery */
-	{ COM11, 0x10 }, /* Mystery */
-	{ 0x28,  0x00 }, /* Mystery */
-	{ HREF,  0x00 },
-	{ COM13, 0xe2 }, /* Mystery */
-	{ AREF0, 0xef },
-	{ AREF2, 0x60 },
-	{ AREF6, 0x7a },
-	ENDMARKER,
-};
 
 /*
  * register setting for color format
  */
 static const struct regval_list ov772x_RGB555_regs[] = {
+	{ COM3, 0x00 },
 	{ COM7, FMT_RGB555 | OFMT_RGB },
 	ENDMARKER,
 };
 
 static const struct regval_list ov772x_RGB565_regs[] = {
+	{ COM3, 0x00 },
 	{ COM7, FMT_RGB565 | OFMT_RGB },
 	ENDMARKER,
 };
@@ -413,6 +425,7 @@ static const struct regval_list ov772x_YYUV_regs[] = {
 };
 
 static const struct regval_list ov772x_UVYY_regs[] = {
+	{ COM3, 0x00 },
 	{ COM7, OFMT_YUV },
 	ENDMARKER,
 };
@@ -624,7 +637,6 @@ static int ov772x_start_capture(struct soc_camera_device *icd)
 	struct ov772x_priv *priv = container_of(icd, struct ov772x_priv, icd);
 	int                 ret;
 
-
 	if (!priv->win)
 		priv->win = &ov772x_win_vga;
 	if (!priv->fmt)
@@ -634,9 +646,6 @@ static int ov772x_start_capture(struct soc_camera_device *icd)
 	 * reset hardware
 	 */
 	ov772x_reset(priv->client);
-	ret = ov772x_write_array(priv->client, ov772x_default_regs);
-	if (ret < 0)
-		goto start_end;
 
 	/*
 	 * set color format
@@ -680,7 +689,7 @@ static int ov772x_start_capture(struct soc_camera_device *icd)
 			goto start_end;
 	}
 
-	dev_info(&icd->dev,
+	dev_dbg(&icd->dev,
 		 "format %s, win %s\n", priv->fmt->name, priv->win->name);
 
 start_end:
@@ -706,18 +715,20 @@ static int ov772x_set_bus_param(struct soc_camera_device *icd,
 static unsigned long ov772x_query_bus_param(struct soc_camera_device *icd)
 {
 	struct ov772x_priv *priv = container_of(icd, struct ov772x_priv, icd);
-
-	return  SOCAM_PCLK_SAMPLE_RISING |
-		SOCAM_HSYNC_ACTIVE_HIGH  |
-		SOCAM_VSYNC_ACTIVE_HIGH  |
-		SOCAM_MASTER             |
+	struct soc_camera_link *icl = priv->client->dev.platform_data;
+	unsigned long flags = SOCAM_PCLK_SAMPLE_RISING | SOCAM_MASTER |
+		SOCAM_VSYNC_ACTIVE_HIGH | SOCAM_HSYNC_ACTIVE_HIGH |
 		priv->info->buswidth;
+
+	return soc_camera_apply_sensor_flags(icl, flags);
 }
 
 static int ov772x_get_chip_id(struct soc_camera_device *icd,
-			      struct v4l2_chip_ident   *id)
+			      struct v4l2_dbg_chip_ident   *id)
 {
-	id->ident    = V4L2_IDENT_OV772X;
+	struct ov772x_priv *priv = container_of(icd, struct ov772x_priv, icd);
+
+	id->ident    = priv->model;
 	id->revision = 0;
 
 	return 0;
@@ -725,11 +736,12 @@ static int ov772x_get_chip_id(struct soc_camera_device *icd,
 
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 static int ov772x_get_register(struct soc_camera_device *icd,
-			       struct v4l2_register *reg)
+			       struct v4l2_dbg_register *reg)
 {
 	struct ov772x_priv *priv = container_of(icd, struct ov772x_priv, icd);
 	int                 ret;
 
+	reg->size = 1;
 	if (reg->reg > 0xff)
 		return -EINVAL;
 
@@ -743,7 +755,7 @@ static int ov772x_get_register(struct soc_camera_device *icd,
 }
 
 static int ov772x_set_register(struct soc_camera_device *icd,
-			       struct v4l2_register *reg)
+			       struct v4l2_dbg_register *reg)
 {
 	struct ov772x_priv *priv = container_of(icd, struct ov772x_priv, icd);
 
@@ -754,6 +766,27 @@ static int ov772x_set_register(struct soc_camera_device *icd,
 	return i2c_smbus_write_byte_data(priv->client, reg->reg, reg->val);
 }
 #endif
+
+static const struct ov772x_win_size*
+ov772x_select_win(u32 width, u32 height)
+{
+	__u32 diff;
+	const struct ov772x_win_size *win;
+
+	/* default is QVGA */
+	diff = abs(width - ov772x_win_qvga.width) +
+		abs(height - ov772x_win_qvga.height);
+	win = &ov772x_win_qvga;
+
+	/* VGA */
+	if (diff >
+	    abs(width  - ov772x_win_vga.width) +
+	    abs(height - ov772x_win_vga.height))
+		win = &ov772x_win_vga;
+
+	return win;
+}
+
 
 static int ov772x_set_fmt(struct soc_camera_device *icd,
 			  __u32                     pixfmt,
@@ -775,34 +808,28 @@ static int ov772x_set_fmt(struct soc_camera_device *icd,
 		}
 	}
 
+	/*
+	 * select win
+	 */
+	priv->win = ov772x_select_win(rect->width, rect->height);
+
 	return ret;
 }
 
 static int ov772x_try_fmt(struct soc_camera_device *icd,
 			  struct v4l2_format       *f)
 {
-	struct v4l2_pix_format *pix  = &f->fmt.pix;
-	struct ov772x_priv     *priv;
+	struct v4l2_pix_format *pix = &f->fmt.pix;
+	const struct ov772x_win_size *win;
 
-	priv = container_of(icd, struct ov772x_priv, icd);
+	/*
+	 * select suitable win
+	 */
+	win = ov772x_select_win(pix->width, pix->height);
 
-	/* QVGA */
-	if (pix->width  <= ov772x_win_qvga.width ||
-	    pix->height <= ov772x_win_qvga.height) {
-		priv->win   = &ov772x_win_qvga;
-		pix->width  =  ov772x_win_qvga.width;
-		pix->height =  ov772x_win_qvga.height;
-	}
-
-	/* VGA */
-	else if (pix->width  <= ov772x_win_vga.width ||
-		 pix->height <= ov772x_win_vga.height) {
-		priv->win   = &ov772x_win_vga;
-		pix->width  =  ov772x_win_vga.width;
-		pix->height =  ov772x_win_vga.height;
-	}
-
-	pix->field = V4L2_FIELD_NONE;
+	pix->width  = win->width;
+	pix->height = win->height;
+	pix->field  = V4L2_FIELD_NONE;
 
 	return 0;
 }
@@ -811,6 +838,7 @@ static int ov772x_video_probe(struct soc_camera_device *icd)
 {
 	struct ov772x_priv *priv = container_of(icd, struct ov772x_priv, icd);
 	u8                  pid, ver;
+	const char         *devname;
 
 	/*
 	 * We must have a parent by now. And it cannot be a wrong one.
@@ -837,15 +865,25 @@ static int ov772x_video_probe(struct soc_camera_device *icd)
 	 */
 	pid = i2c_smbus_read_byte_data(priv->client, PID);
 	ver = i2c_smbus_read_byte_data(priv->client, VER);
-	if (pid != 0x77 ||
-	    ver != 0x21) {
+
+	switch (VERSION(pid, ver)) {
+	case OV7720:
+		devname     = "ov7720";
+		priv->model = V4L2_IDENT_OV7720;
+		break;
+	case OV7725:
+		devname     = "ov7725";
+		priv->model = V4L2_IDENT_OV7725;
+		break;
+	default:
 		dev_err(&icd->dev,
 			"Product ID error %x:%x\n", pid, ver);
 		return -ENODEV;
 	}
 
 	dev_info(&icd->dev,
-		 "ov772x Product ID %0x:%0x Manufacturer ID %x:%x\n",
+		 "%s Product ID %0x:%0x Manufacturer ID %x:%x\n",
+		 devname,
 		 pid,
 		 ver,
 		 i2c_smbus_read_byte_data(priv->client, MIDH),
@@ -883,12 +921,8 @@ static struct soc_camera_ops ov772x_ops = {
  * i2c_driver function
  */
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
-static int ov772x_probe(struct i2c_client *client)
-#else
 static int ov772x_probe(struct i2c_client *client,
 			 const struct i2c_device_id *did)
-#endif
 {
 	struct ov772x_priv        *priv;
 	struct ov772x_camera_info *info;
@@ -924,8 +958,10 @@ static int ov772x_probe(struct i2c_client *client,
 
 	ret = soc_camera_device_register(icd);
 
-	if (ret)
+	if (ret) {
+		i2c_set_clientdata(client, NULL);
 		kfree(priv);
+	}
 
 	return ret;
 }
@@ -935,17 +971,16 @@ static int ov772x_remove(struct i2c_client *client)
 	struct ov772x_priv *priv = i2c_get_clientdata(client);
 
 	soc_camera_device_unregister(&priv->icd);
+	i2c_set_clientdata(client, NULL);
 	kfree(priv);
 	return 0;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id ov772x_id[] = {
-	{"ov772x", 0},
+	{ "ov772x", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, ov772x_id);
-#endif
 
 static struct i2c_driver ov772x_i2c_driver = {
 	.driver = {
@@ -953,9 +988,7 @@ static struct i2c_driver ov772x_i2c_driver = {
 	},
 	.probe    = ov772x_probe,
 	.remove   = ov772x_remove,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = ov772x_id,
-#endif
 };
 
 /*
@@ -964,7 +997,6 @@ static struct i2c_driver ov772x_i2c_driver = {
 
 static int __init ov772x_module_init(void)
 {
-	printk(KERN_INFO "ov772x driver\n");
 	return i2c_add_driver(&ov772x_i2c_driver);
 }
 

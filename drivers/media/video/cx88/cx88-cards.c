@@ -25,7 +25,6 @@
 #include <linux/pci.h>
 #include <linux/delay.h>
 
-#include <media/compat.h>
 #include "cx88.h"
 #include "tea5767.h"
 
@@ -1194,23 +1193,7 @@ static const struct cx88_board cx88_boards[] = {
 			.type   = CX88_VMUX_TELEVISION,
 			.vmux   = 0,
 			.gpio0  = 0x0000BDE6
-#if 0
-		},{
-			.type   = CX88_VMUX_COMPOSITE1,
-			.vmux   = 1,
-			.gpio0  = 0x0000BDE6,
-		},{
-			.type   = CX88_VMUX_SVIDEO,
-			.vmux   = 2,
-			.gpio0  = 0x0000BDE6,
-#endif
 		}},
-#if 0
-		.radio = {
-			.gpio0  = 0x0000BDE6,
-			.type   = CX88_RADIO,
-		},
-#endif
 		.mpeg           = CX88_MPEG_BLACKBIRD,
 	},
 	[CX88_BOARD_PIXELVIEW_PLAYTV_P7000] = {
@@ -1226,23 +1209,7 @@ static const struct cx88_board cx88_boards[] = {
 			.type   = CX88_VMUX_TELEVISION,
 			.vmux   = 0,
 			.gpio0  = 0x5da6,
-#if 0
-		},{
-			.type   = CX88_VMUX_COMPOSITE1,
-			.vmux   = 1,
-			.gpio0	= 0x5da4,
-		},{
-			.type   = CX88_VMUX_SVIDEO,
-			.vmux   = 2,
-			.gpio0	= 0x5da5,
-#endif
 		}},
-#if 0
-		.radio = {
-			 .type  = CX88_RADIO,
-			 .gpio0 = 0x5da3,
-		},
-#endif
 		.mpeg           = CX88_MPEG_BLACKBIRD,
 	},
 	[CX88_BOARD_NPGTECH_REALTV_TOP10FM] = {

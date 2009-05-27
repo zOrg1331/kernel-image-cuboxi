@@ -123,7 +123,7 @@ static struct ctrl sd_ctrls[] = {
 	},
 };
 
-static struct v4l2_pix_format vga_mode[] = {
+static const struct v4l2_pix_format vga_mode[] = {
 	{320, 240, V4L2_PIX_FMT_JPEG, V4L2_FIELD_NONE,
 		.bytesperline = 320,
 		.sizeimage = 320 * 240 * 3 / 8 + 590,
@@ -136,7 +136,7 @@ static struct v4l2_pix_format vga_mode[] = {
 		.priv = 1},
 };
 
-static struct v4l2_pix_format custom_mode[] = {
+static const struct v4l2_pix_format custom_mode[] = {
 	{320, 240, V4L2_PIX_FMT_JPEG, V4L2_FIELD_NONE,
 		.bytesperline = 320,
 		.sizeimage = 320 * 240 * 3 / 8 + 590,
@@ -149,7 +149,7 @@ static struct v4l2_pix_format custom_mode[] = {
 		.priv = 1},
 };
 
-static struct v4l2_pix_format vga_mode2[] = {
+static const struct v4l2_pix_format vga_mode2[] = {
 	{176, 144, V4L2_PIX_FMT_JPEG, V4L2_FIELD_NONE,
 		.bytesperline = 176,
 		.sizeimage = 176 * 144 * 3 / 8 + 590,
@@ -198,13 +198,6 @@ static const __u16 spca504_pccam600_init_data[][3] = {
 	{0x00, 0x0000, 0x21ad},	/* hue */
 	{0x00, 0x001a, 0x21ae},	/* saturation */
 	{0x00, 0x0002, 0x21a3},	/* gamma */
-#if 0
-	{0xb0, 0x0000, 0x0000},	/* reset auto exposure */
-	{0x0c, 0x0000, 0x0000},	/* reset auto whiteness */
-	{0x0c, 0x0004, 0x0000},	/* enable auto whiteness */
-	{0x30, 0x020f, 0x0001},	/* exposure compensation */
-	{0x30, 0x01f7, 0x0002},	/* whiteness balance */
-#endif
 	{0x30, 0x0154, 0x0008},
 	{0x30, 0x0004, 0x0006},
 	{0x30, 0x0258, 0x0009},
@@ -244,20 +237,10 @@ static const __u16 spca504A_clicksmart420_init_data[][3] = {
 	{0x00, 0x0000, 0x21ad},	/* hue */
 	{0x00, 0x001a, 0x21ae},	/* saturation */
 	{0x00, 0x0002, 0x21a3},	/* gamma */
-#if 1
 	{0x30, 0x0004, 0x000a},
 	{0xb0, 0x0001, 0x0000},
-#endif
 
-#if 0
-	{0xb0, 0x0000, 0x0000},	/* reset auto exposure */
-	{0x0c, 0x0000, 0x0000},	/* reset auto whiteness */
-	{0x0c, 0x0004, 0x0000},	/* enable auto whiteness */
-	{0x30, 0x020f, 0x0001},	/* exposure compensation */
-	{0x30, 0x01f7, 0x0002},	/* whiteness balance */
-#endif
 
-#if 1
 	{0x0a1, 0x0080, 0x0001},
 	{0x30, 0x0049, 0x0000},
 	{0x30, 0x0060, 0x0005},
@@ -267,21 +250,7 @@ static const __u16 spca504A_clicksmart420_init_data[][3] = {
 	{0x00, 0x0013, 0x2301},
 	{0x00, 0x0003, 0x2000},
 	{0x00, 0x0000, 0x2000},
-#endif
 
-#if 0
-	{0x30, 0x0154, 0x0008},
-	{0x30, 0x0004, 0x0006},
-	{0x30, 0x0258, 0x0009},
-	{0x30, 0x0004, 0x0000},
-	{0x30, 0x0093, 0x0004},
-	{0x30, 0x0066, 0x0005},
-	{0x00, 0x0000, 0x2000},
-	{0x00, 0x0013, 0x2301},
-	{0x00, 0x0003, 0x2000},
-	{0x00, 0x0013, 0x2301},
-	{0x00, 0x0003, 0x2000},
-#endif
 	{}
 };
 

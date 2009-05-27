@@ -73,7 +73,7 @@ static struct ctrl sd_ctrls[] = {
 	 },
 };
 
-static struct v4l2_pix_format sif_mode[] = {
+static const struct v4l2_pix_format sif_mode[] = {
 	{176, 144, V4L2_PIX_FMT_SBGGR8, V4L2_FIELD_NONE,
 		.bytesperline = 176,
 		.sizeimage = 176 * 144,
@@ -486,15 +486,6 @@ static void sd_pkt_scan(struct gspca_dev *gspca_dev,
 
 static void setcontrast(struct gspca_dev *gspca_dev)
 {
-#if 0
-	value[0] = (gspca_dev->contrast) & 0xff;
-	value[1] = (gspca_dev->contrast >> 8) & 0xff;
-	reg_w_1(gspca_dev, 0x0020, value[1]);
-	reg_w_1(gspca_dev, 0x0022, value[1]);
-	reg_w_1(gspca_dev, 0x0024, value[1]);
-	reg_w_1(gspca_dev, 0x0026, value[1]);
-	reg_w_1(gspca_dev, TV8532_PART_CTRL, TV8532_CMD_UPDATE);
-#endif
 }
 
 static int sd_setbrightness(struct gspca_dev *gspca_dev, __s32 val)

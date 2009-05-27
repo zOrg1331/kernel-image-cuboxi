@@ -134,7 +134,7 @@ static const struct stb0899_tab stb0899_dvbs2rf_tab[] = {
 };
 
 /* DVB-S2 Es/N0 quant in dB/100 vs read value * 100*/
-struct stb0899_tab stb0899_quant_tab[] = {
+static struct stb0899_tab stb0899_quant_tab[] = {
 	{    0,	    0 },
 	{    0,	  100 },
 	{  600,	  200 },
@@ -177,7 +177,7 @@ struct stb0899_tab stb0899_quant_tab[] = {
 };
 
 /* DVB-S2 Es/N0 estimate in dB/100 vs read value */
-struct stb0899_tab stb0899_est_tab[] = {
+static struct stb0899_tab stb0899_est_tab[] = {
 	{    0,	     0 },
 	{    0,	     1 },
 	{  301,	     2 },
@@ -217,7 +217,7 @@ struct stb0899_tab stb0899_est_tab[] = {
 	{ 5721,	526017 },
 };
 
-int _stb0899_read_reg(struct stb0899_state *state, unsigned int reg)
+static int _stb0899_read_reg(struct stb0899_state *state, unsigned int reg)
 {
 	int ret;
 
@@ -794,7 +794,7 @@ static int stb0899_send_diseqc_burst(struct dvb_frontend *fe, fe_sec_mini_cmd_t 
 	reg = stb0899_read_reg(state, STB0899_DISCNTRL1);
 	old_state = reg;
 	/* set to burst mode	*/
-	STB0899_SETFIELD_VAL(DISEQCMODE, reg, 0x02);
+	STB0899_SETFIELD_VAL(DISEQCMODE, reg, 0x03);
 	STB0899_SETFIELD_VAL(DISPRECHARGE, reg, 0x01);
 	stb0899_write_reg(state, STB0899_DISCNTRL1, reg);
 	switch (burst) {
@@ -829,11 +829,6 @@ static int stb0899_diseqc_init(struct stb0899_state *state)
 	u8 f22_tx, f22_rx, reg;
 
 	u32 mclk, tx_freq = 22000;/* count = 0, i; */
-#if 0
-	u32 trial = 0;	/* try max = 2 (try 20khz and 17.5 khz)	*/
-	u32 ret_1 = 0;	/* 20 Khz status	*/
-	u32 ret_2 = 0;	/* 17.5 Khz status	*/
-#endif
 	tx_data.msg[0] = 0xe2;
 	tx_data.msg_len = 3;
 	reg = stb0899_read_reg(state, STB0899_DISCNTRL2);
@@ -855,42 +850,6 @@ static int stb0899_diseqc_init(struct stb0899_state *state)
 	state->rx_freq = 20000;
 	f22_rx = mclk / (state->rx_freq * 32);
 
-#if 0
-	while ((count < 5) && (trial < 2)) {
-		stb0899_write_reg(state, STB0899_DISF22RX, f22_rx); /* 2 possible values 17.5k/20k	*/
-
-		for (i = 0; i < 5; i++) {
-			msleep(50);
-			stb0899_send_diseqc_msg(&state->frontend, &tx_data);
-			msleep(100);
-			stb0899_recv_slave_reply(&state->frontend, &rx_data);
-			if (rx_data.msg_len >= 1) {
-				if ((rx_data.msg[0] == 0xe4) || (rx_data.msg[0] == 0xe5))
-					count++;
-			}
-		}
-		if (trial == 0)
-			ret_1 = count;
-		else
-			ret_2 = count;
-
-		trial++;
-		state->rx_freq = 17500;
-		f22_rx = mclk / (state->rx_freq * 32);
-	}
-	if (ret_1 > ret_2) {
-		state->rx_freq = 20000;
-		f22_rx = mclk / (state->rx_freq * 32);
-	} else {
-		state->rx_freq = 17500;
-		f22_rx = mclk / (state->rx_freq * 32);
-	}
-
-	stb0899_write_reg(state, STB0899_DISF22RX, f22_rx);
-	if ((ret_1 == 0) && (ret_2 == 0))
-			state->rx_freq = 0;	/* no DiSEqC 2.0 slave	*/
-
-#endif
 	return 0;
 }
 
@@ -901,11 +860,6 @@ static int stb0899_sleep(struct dvb_frontend *fe)
 	u8 reg;
 */
 	dprintk(state->verbose, FE_DEBUG, 1, "Going to Sleep .. (Really tired .. :-))");
-#if 0
-	reg = stb0899_read_reg(state, STB0899_SYNTCTRL);
-	STB0899_SETFIELD_VAL(STANDBY, reg, 1);
-	stb0899_write_reg(state, STB0899_SYNTCTRL, reg);
-#endif
 	/* post process event */
 	stb0899_postproc(state, STB0899_POSTPROC_GPIO_POWER, 0);
 
@@ -1613,195 +1567,6 @@ static enum dvbfe_search stb0899_search(struct dvb_frontend *fe, struct dvb_fron
 
 	return DVBFE_ALGO_SEARCH_ERROR;
 }
-#if 0
-static enum stb0899_status stb0899_track_carrier(struct stb0899_state *state)
-{
-	u8 reg;
-
-	reg = stb0899_read_reg(state, STB0899_DSTATUS);
-	dprintk(state->verbose, FE_DEBUG, 1, "--------------------> STB0899_DSTATUS=[0x%02x]", reg);
-	if (STB0899_GETFIELD(CARRIER_FOUND, reg)) {
-		dprintk(state->verbose, FE_DEBUG, 1, "-------------> CARRIEROK !");
-		return CARRIEROK;
-	} else {
-		dprintk(state->verbose, FE_DEBUG, 1, "-------------> NOCARRIER !");
-		return NOCARRIER;
-	}
-
-	return NOCARRIER;
-}
-
-static enum stb0899_status stb0899_get_ifagc(struct stb0899_state *state)
-{
-	u8 reg;
-
-	reg = STB0899_READ_S2REG(STB0899_S2DEMOD, DMD_STATUS);
-	dprintk(state->verbose, FE_DEBUG, 1, "DMD_STATUS=[0x%02x]", reg);
-	if (STB0899_GETFIELD(IF_AGC_LOCK, reg)) {
-		dprintk(state->verbose, FE_DEBUG, 1, "------------->IF AGC LOCKED !");
-		return AGC1OK;
-	} else {
-		dprintk(state->verbose, FE_DEBUG, 1, "------------->IF AGC LOCK LOST !");
-		return NOAGC1;
-	}
-
-	return NOAGC1;
-}
-
-static int stb0899_get_s1fec(struct stb0899_internal *internal, enum fe_code_rate *fec)
-{
-	switch (internal->fecrate) {
-	case STB0899_FEC_1_2:
-		*fec = FEC_1_2;
-		break;
-	case STB0899_FEC_2_3:
-		*fec = FEC_2_3;
-		break;
-	case STB0899_FEC_3_4:
-		*fec = FEC_3_4;
-		break;
-	case STB0899_FEC_5_6:
-		*fec = FEC_5_6;
-		break;
-	case STB0899_FEC_6_7:
-		*fec = FEC_6_7;
-		break;
-	case STB0899_FEC_7_8:
-		*fec = FEC_7_8;
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	return 0;
-}
-
-static int stb0899_get_modcod(struct stb0899_internal *internal, struct dvbs2_params *params)
-{
-	switch (internal->modcod) {
-	case STB0899_DUMMY_PLF:
-		params->modulation	= DVBFE_MOD_NONE;
-		params->fec		= DVBFE_FEC_NONE;
-		break;
-	case STB0899_QPSK_14:
-		params->modulation	= DVBFE_MOD_QPSK;
-		params->fec		= DVBFE_FEC_1_4;
-		break;
-	case STB0899_QPSK_13:
-		params->modulation	= DVBFE_MOD_QPSK;
-		params->fec		= DVBFE_FEC_1_3;
-		break;
-	case STB0899_QPSK_25:
-		params->modulation	= DVBFE_MOD_QPSK;
-		params->fec		= DVBFE_FEC_2_5;
-		break;
-	case STB0899_QPSK_12:
-		params->modulation	= DVBFE_MOD_QPSK;
-		params->fec		= DVBFE_FEC_1_2;
-		break;
-	case STB0899_QPSK_35:
-		params->modulation	= DVBFE_MOD_QPSK;
-		params->fec		= DVBFE_FEC_3_5;
-		break;
-	case STB0899_QPSK_23:
-		params->modulation	= DVBFE_MOD_QPSK;
-		params->fec		= DVBFE_FEC_2_3;
-		break;
-	case STB0899_QPSK_34:
-		params->modulation	= DVBFE_MOD_QPSK;
-		params->fec		= DVBFE_FEC_3_4;
-		break;
-	case STB0899_QPSK_45:
-		params->modulation	= DVBFE_MOD_QPSK;
-		params->fec		= DVBFE_FEC_4_5;
-		break;
-	case STB0899_QPSK_56:
-		params->modulation	= DVBFE_MOD_QPSK;
-		params->fec		= DVBFE_FEC_5_6;
-		break;
-	case STB0899_QPSK_89:
-		params->modulation	= DVBFE_MOD_QPSK;
-		params->fec		= DVBFE_FEC_8_9;
-		break;
-	case STB0899_QPSK_910:
-		params->modulation	= DVBFE_MOD_QPSK;
-		params->fec		= DVBFE_FEC_9_10;
-		break;
-	case STB0899_8PSK_35:
-		params->modulation	= DVBFE_MOD_8PSK;
-		params->fec		= DVBFE_FEC_3_5;
-		break;
-	case STB0899_8PSK_23:
-		params->modulation	= DVBFE_MOD_8PSK;
-		params->fec		= DVBFE_FEC_2_3;
-		break;
-	case STB0899_8PSK_34:
-		params->modulation	= DVBFE_MOD_8PSK;
-		params->fec		= DVBFE_FEC_3_4;
-		break;
-	case STB0899_8PSK_56:
-		params->modulation	= DVBFE_MOD_8PSK;
-		params->fec		= DVBFE_FEC_5_6;
-		break;
-	case STB0899_8PSK_89:
-		params->modulation	= DVBFE_MOD_8PSK;
-		params->fec		= DVBFE_FEC_8_9;
-		break;
-	case STB0899_8PSK_910:
-		params->modulation	= DVBFE_MOD_8PSK;
-		params->fec		= DVBFE_FEC_9_10;
-		break;
-	case STB0899_16APSK_23:
-		params->modulation	= DVBFE_MOD_16APSK;
-		params->fec		= DVBFE_FEC_2_3;
-		break;
-	case STB0899_16APSK_34:
-		params->modulation	= DVBFE_MOD_16APSK;
-		params->fec		= DVBFE_FEC_3_4;
-		break;
-	case STB0899_16APSK_45:
-		params->modulation	= DVBFE_MOD_16APSK;
-		params->fec		= DVBFE_FEC_4_5;
-		break;
-	case STB0899_16APSK_56:
-		params->modulation	= DVBFE_MOD_16APSK;
-		params->fec		= DVBFE_FEC_5_6;
-		break;
-	case STB0899_16APSK_89:
-		params->modulation	= DVBFE_MOD_16APSK;
-		params->fec		= DVBFE_FEC_8_9;
-		break;
-	case STB0899_16APSK_910:
-		params->modulation	= DVBFE_MOD_16APSK;
-		params->fec		= DVBFE_FEC_9_10;
-		break;
-	case STB0899_32APSK_34:
-		params->modulation	= DVBFE_MOD_32APSK;
-		params->fec		= DVBFE_FEC_3_4;
-		break;
-	case STB0899_32APSK_45:
-		params->modulation	= DVBFE_MOD_32APSK;
-		params->fec		= DVBFE_FEC_4_5;
-		break;
-	case STB0899_32APSK_56:
-		params->modulation	= DVBFE_MOD_32APSK;
-		params->fec		= DVBFE_FEC_5_6;
-		break;
-	case STB0899_32APSK_89:
-		params->modulation	= DVBFE_MOD_32APSK;
-		params->fec		= DVBFE_FEC_8_9;
-		break;
-	case STB0899_32APSK_910:
-		params->modulation	= DVBFE_MOD_32APSK;
-		params->fec		= DVBFE_FEC_9_10;
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	return 0;
-}
-#endif
 /*
  * stb0899_track
  * periodically check the signal level against a specified
@@ -1820,66 +1585,6 @@ static int stb0899_get_modcod(struct stb0899_internal *internal, struct dvbs2_pa
  */
 static int stb0899_track(struct dvb_frontend *fe, struct dvb_frontend_parameters *p)
 {
-#if 0
-	u32 lock_lost;
-
-	struct stb0899_state *state		= fe->demodulator_priv;
-	struct stb0899_internal *internal	= &state->internal;
-
-	switch (state->delsys) {
-	case DVBFE_DELSYS_DVBS:
-		dprintk(state->verbose, FE_DEBUG, 1, "Tracking DVB-S state");
-		if (stb0899_track_carrier(state) == CARRIEROK) {
-			params->frequency			= internal->freq;
-			params->inversion			= internal->inversion;
-			params->delivery			= state->delsys;
-			params->delsys.dvbs.symbol_rate		= internal->srate;
-			params->delsys.dvbs.modulation		= DVBFE_MOD_QPSK;
-			stb0899_get_s1fec(internal, &params->delsys.dvbs.fec);
-		}
-		break;
-	case DVBFE_DELSYS_DSS:
-		dprintk(state->verbose, FE_DEBUG, 1, "Tracking DSS state");
-		if (stb0899_track_carrier(state) == CARRIEROK) {
-			params->frequency			= internal->freq;
-			params->inversion			= internal->inversion;
-			params->delivery			= state->delsys;
-			params->delsys.dss.symbol_rate		= internal->srate;
-			params->delsys.dss.modulation		= DVBFE_MOD_QPSK;
-			stb0899_get_s1fec(internal, &params->delsys.dss.fec);
-		}
-		break;
-	case DVBFE_DELSYS_DVBS2:
-		dprintk(state->verbose, FE_DEBUG, 1, "Tracking DVB-S2 state");
-		if (stb0899_get_ifagc(state) == AGC1OK) {
-			params->frequency			= internal->freq;
-			params->inversion			= internal->inversion;
-			params->delivery			= state->delsys;
-			params->delsys.dvbs2.symbol_rate	= internal->srate;
-			stb0899_get_modcod(internal, &params->delsys.dvbs2);
-			params->delsys.dvbs2.rolloff		= internal->rolloff;
-			params->delsys.dvbs2.matype_1		= stb0899_read_reg(state, STB0899_MATSTRL);
-			params->delsys.dvbs2.matype_2		= stb0899_read_reg(state, STB0899_MATSTRM);
-			params->delsys.dvbs2.upl_1		= stb0899_read_reg(state, STB0899_UPLSTRL);
-			params->delsys.dvbs2.upl_2		= stb0899_read_reg(state, STB0899_UPLSTRM);
-			params->delsys.dvbs2.dfl_1		= stb0899_read_reg(state, STB0899_DFLSTRL);
-			params->delsys.dvbs2.dfl_2		= stb0899_read_reg(state, STB0899_DFLSTRM);
-			params->delsys.dvbs2.sync		= stb0899_read_reg(state, STB0899_SYNCSTR);
-			params->delsys.dvbs2.syncd_1		= stb0899_read_reg(state, STB0899_SYNCDSTRL);
-			params->delsys.dvbs2.syncd_2		= stb0899_read_reg(state, STB0899_SYNCDSTRM);
-		}
-		lock_lost = STB0899_READ_S2REG(STB0899_S2DEMOD, LOCK_LOST);
-		dprintk(state->verbose, FE_DEBUG, 1, "Lock Lost=[0x%02x]\n", lock_lost);
-		if (STB0899_GETFIELD(LOCK_LOST, lock_lost))
-			dprintk(state->verbose, FE_ERROR, 1, "Demodulator LOST LOCK !\n");
-		break;
-	default:
-		dprintk(state->verbose, FE_ERROR, 1, "Unsupported delivery system");
-		return -EINVAL;
-	}
-
-//	*delay = HZ/10;
-#endif
 	return 0;
 }
 
@@ -1913,6 +1618,7 @@ static struct dvb_frontend_ops stb0899_ops = {
 
 		.caps 			= FE_CAN_INVERSION_AUTO	|
 					  FE_CAN_FEC_AUTO	|
+					  FE_CAN_2G_MODULATION	|
 					  FE_CAN_QPSK
 	},
 

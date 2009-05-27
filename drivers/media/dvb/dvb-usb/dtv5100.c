@@ -104,9 +104,6 @@ static u32 dtv5100_i2c_func(struct i2c_adapter *adapter)
 static struct i2c_algorithm dtv5100_i2c_algo = {
 	.master_xfer   = dtv5100_i2c_xfer,
 	.functionality = dtv5100_i2c_func,
-#ifdef NEED_ALGO_CONTROL
-	.algo_control = dummy_algo_control,
-#endif
 };
 
 /* Callbacks for DVB USB */

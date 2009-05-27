@@ -38,7 +38,6 @@
 #include <media/v4l2-common.h>
 #include <media/tuner.h>
 #include <linux/videodev2.h>
-#include <media/compat.h>
 
 #define USBVISION_DEBUG		/* Turn on debug messages */
 

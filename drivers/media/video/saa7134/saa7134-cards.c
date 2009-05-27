@@ -1664,38 +1664,6 @@ struct saa7134_board saa7134_boards[] = {
 			.amux = LINE1,
 		},
 	},
-	[SAA7134_BOARD_AVERMEDIA_CARDBUS_PLUS] = {
-		.name           = "AVerMedia Cardbus Plus TV/Radio (E501)",
-		.audio_clock    = 0x187de7,
-		.tuner_type     = TUNER_ALPS_TSBE5_PAL,
-		.radio_type     = TUNER_TEA5767,
-		.tuner_addr	= 0x61,
-		.radio_addr	= 0x60,
-		.tda9887_conf	= TDA9887_PRESENT,
-		.gpiomask	= 0x08000003,
-		.inputs         = {{
-			.name = name_tv,
-			.vmux = 1,
-			.amux = TV,
-			.tv   = 1,
-			.gpio = 0x08000001,
-		},{
-			.name = name_comp1,
-			.vmux = 3,
-			.amux = LINE1,
-			.gpio = 0x08000002,
-		},{
-			.name = name_svideo,
-			.vmux = 8,
-			.amux = LINE1,
-			.gpio = 0x08000002,
-		}},
-		.radio = {
-			.name = name_radio,
-			.amux = LINE2,
-			.gpio = 0x00000001,
-		},
-	},
 	[SAA7134_BOARD_CINERGY400_CARDBUS] = {
 		.name           = "Terratec Cinergy 400 mobile",
 		.audio_clock    = 0x187de7,
@@ -2937,32 +2905,6 @@ struct saa7134_board saa7134_boards[] = {
 		.radio_addr	= ADDR_UNSET,
 		.tda9887_conf   = TDA9887_PRESENT,
 		.gpiomask       = 0x0a60000,
-#if 0
-		.inputs         = {{
-			.name = name_tv,
-			.vmux = 4,
-			.amux = TV,
-			.tv   = 1,
-			.gpio = 0x00a68300,
-		},{
-			.name = name_comp1,
-			.vmux = 3,
-			.amux = LINE1,
-		},{
-			.name = name_comp2,  /*  Composite SVIDEO (B/W if signal is carried with SVIDEO) */
-			.vmux = 1,
-			.amux = LINE1,
-		},{
-			.name = name_svideo,
-			.vmux = 9,           /*    9 is correct as S-VIDEO according to a169.inf! */
-			.amux = LINE1,
-		}},
-		.radio = {
-			.name = name_radio,
-			.amux = LINE2,
-			.gpio = 0x00a68300,
-		},
-#endif
 	},
 	[SAA7134_BOARD_AVERMEDIA_A169_B1] = {
 		/* AVerMedia A169 */
@@ -2981,12 +2923,6 @@ struct saa7134_board saa7134_boards[] = {
 			.amux = TV,
 			.tv   = 1,
 			.gpio = 0x04a61000,
-#if 0
-		},{
-			.name = name_comp1,
-			.vmux = 3,
-			.amux = LINE1,
-#endif
 		},{
 			.name = name_comp2,  /*  Composite SVIDEO (B/W if signal is carried with SVIDEO) */
 			.vmux = 1,
@@ -2996,13 +2932,6 @@ struct saa7134_board saa7134_boards[] = {
 			.vmux = 9,           /* 9 is correct as S-VIDEO1 according to a169.inf! */
 			.amux = LINE1,
 		}},
-#if 0
-		.radio = {
-			.name = name_radio,
-			.amux = LINE2,
-			.gpio = 0x0ca61000,
-		},
-#endif
 	},
 	[SAA7134_BOARD_MD7134_BRIDGE_2] = {
 		/* The second saa7134 on this card only serves as DVB-S host bridge */
@@ -4533,6 +4462,7 @@ struct saa7134_board saa7134_boards[] = {
 		.tuner_addr     = ADDR_UNSET,
 		.radio_addr     = ADDR_UNSET,
 		.tda9887_conf   = TDA9887_PRESENT,
+		.mpeg           = SAA7134_MPEG_DVB,
 		.inputs         = {{
 			.name = name_tv,
 			.vmux = 3,
@@ -4551,8 +4481,6 @@ struct saa7134_board saa7134_boards[] = {
 			.name = name_radio,
 			.amux = LINE2,
 		},
-		/* no DVB support for now */
-		/* .mpeg           = SAA7134_MPEG_DVB, */
 	},
 	[SAA7134_BOARD_ASUSTeK_TIGER_3IN1] = {
 		.name           = "Asus Tiger 3in1",
@@ -4712,6 +4640,38 @@ struct saa7134_board saa7134_boards[] = {
 			.name = name_mute,
 			.vmux = 8,
 			.amux = 2,
+		},
+	},
+	[SAA7134_BOARD_AVERMEDIA_GO_007_FM_PLUS] = {
+		.name           = "Avermedia AVerTV GO 007 FM Plus",
+		.audio_clock    = 0x00187de7,
+		.tuner_type     = TUNER_PHILIPS_TDA8290,
+		.radio_type     = UNSET,
+		.tuner_addr	= ADDR_UNSET,
+		.radio_addr	= ADDR_UNSET,
+		.gpiomask       = 0x00300003,
+		/* .gpiomask       = 0x8c240003, */
+		.inputs         = { {
+			.name = name_tv,
+			.vmux = 1,
+			.amux = TV,
+			.tv   = 1,
+			.gpio = 0x01,
+		}, {
+			.name = name_svideo,
+			.vmux = 6,
+			.amux = LINE1,
+			.gpio = 0x02,
+		} },
+		.radio = {
+			.name = name_radio,
+			.amux = TV,
+			.gpio = 0x00300001,
+		},
+		.mute = {
+			.name = name_mute,
+			.amux = TV,
+			.gpio = 0x01,
 		},
 	},
 };
@@ -4987,13 +4947,6 @@ struct pci_device_id saa7134_pci_tbl[] = {
 		.subvendor    = 0x1461, /* Avermedia Technologies Inc */
 		.subdevice    = 0xd6ee,
 		.driver_data  = SAA7134_BOARD_AVERMEDIA_CARDBUS,
-	},{
-		/* AVerMedia CardBus Plus */
-		.vendor       = PCI_VENDOR_ID_PHILIPS,
-		.device       = PCI_DEVICE_ID_PHILIPS_SAA7134,
-		.subvendor    = 0x1461, /* Avermedia Technologies Inc */
-		.subdevice    = 0xb7e9,
-		.driver_data  = SAA7134_BOARD_AVERMEDIA_CARDBUS_PLUS,
 	},{
 		/* TransGear 3000TV */
 		.vendor       = PCI_VENDOR_ID_PHILIPS,
@@ -5780,6 +5733,13 @@ struct pci_device_id saa7134_pci_tbl[] = {
 		.subdevice    = 0x7128,
 		.driver_data  = SAA7134_BOARD_KWORLD_PLUS_TV_ANALOG,
 	}, {
+		.vendor       = PCI_VENDOR_ID_PHILIPS,
+		.device       = PCI_DEVICE_ID_PHILIPS_SAA7133,
+		.subvendor    = 0x1461, /* Avermedia Technologies Inc */
+		.subdevice    = 0xf31d,
+		.driver_data  = SAA7134_BOARD_AVERMEDIA_GO_007_FM_PLUS,
+
+	}, {
 		/* --- boards without eeprom + subsystem ID --- */
 		.vendor       = PCI_VENDOR_ID_PHILIPS,
 		.device       = PCI_DEVICE_ID_PHILIPS_SAA7134,
@@ -5826,46 +5786,9 @@ MODULE_DEVICE_TABLE(pci, saa7134_pci_tbl);
 /* ----------------------------------------------------------- */
 /* flyvideo tweaks                                             */
 
-#if 0
-static struct {
-	char  *model;
-	int   tuner_type;
-} fly_list[0x20] = {
-	/* default catch ... */
-	[ 0 ... 0x1f ] = {
-		.model      = "UNKNOWN",
-		.tuner_type = TUNER_ABSENT,
-	},
-	/* ... the ones known so far */
-	[ 0x05 ] = {
-		.model      = "PAL-BG",
-		.tuner_type = TUNER_LG_PAL_NEW_TAPC,
-	},
-	[ 0x10 ] = {
-		.model      = "PAL-BG / PAL-DK",
-		.tuner_type = TUNER_PHILIPS_PAL,
-	},
-	[ 0x15 ] = {
-		.model      = "NTSC",
-		.tuner_type = TUNER_ABSENT /* FIXME */,
-	},
-};
-#endif
 
 static void board_flyvideo(struct saa7134_dev *dev)
 {
-#if 0
-	/* non-working attempt to detect the correct tuner type ... */
-	u32 value;
-	int index;
-
-	value = dev->gpio_value;
-	index = (value & 0x1f00) >> 8;
-	printk(KERN_INFO "%s: flyvideo: gpio is 0x%x [model=%s,tuner=%d]\n",
-	       dev->name, value, fly_list[index].model,
-	       fly_list[index].tuner_type);
-	dev->tuner_type = fly_list[index].tuner_type;
-#endif
 	printk("%s: there are different flyvideo cards with different tuners\n"
 	       "%s: out there, you might have to use the tuner=<nr> insmod\n"
 	       "%s: option to override the default value.\n",
@@ -5897,25 +5820,6 @@ static int saa7134_xc2028_callback(struct saa7134_dev *dev,
 	return -EINVAL;
 }
 
-#if 0
-static int saa7134_xc5000_callback(struct saa7134_dev *dev,
-				   int command, int arg)
-{
-	switch (dev->board) {
-	default:
-		saa_andorl(SAA7134_GPIO_GPMODE0 >> 2, 0x06e20000, 0x06e20000);
-		saa_andorl(SAA7134_GPIO_GPSTATUS0 >> 2, 0x06a20000, 0x06a20000);
-		saa_andorl(SAA7133_ANALOG_IO_SELECT >> 2, 0x02, 0x02);
-		saa_andorl(SAA7134_ANALOG_IN_CTRL1 >> 2, 0x81, 0x81);
-		saa_andorl(SAA7134_AUDIO_CLOCK0 >> 2, 0x03187de7, 0x03187de7);
-		saa_andorl(SAA7134_AUDIO_PLL_CTRL >> 2, 0x03, 0x03);
-		saa_andorl(SAA7134_AUDIO_CLOCKS_PER_FIELD0 >> 2,
-			   0x0001e000, 0x0001e000);
-		break;
-	}
-	return 0;
-}
-#endif
 
 static int saa7134_tda8290_callback(struct saa7134_dev *dev,
 				    int command, int arg)
@@ -5953,10 +5857,6 @@ int saa7134_tuner_callback(void *priv, int component, int command, int arg)
 			return saa7134_tda8290_callback(dev, command, arg);
 		case TUNER_XC2028:
 			return saa7134_xc2028_callback(dev, command, arg);
-#if 0
-		case TUNER_XC5000:
-			return saa7134_xc5000_callback(dev, command, arg);
-#endif
 		}
 	} else {
 		printk(KERN_ERR "saa7134: Error - device struct undefined.\n");
@@ -6068,6 +5968,7 @@ int saa7134_board_init1(struct saa7134_dev *dev)
 	case SAA7134_BOARD_GENIUS_TVGO_A11MCE:
 	case SAA7134_BOARD_REAL_ANGEL_220:
 	case SAA7134_BOARD_KWORLD_PLUS_TV_ANALOG:
+	case SAA7134_BOARD_AVERMEDIA_GO_007_FM_PLUS:
 		dev->has_remote = SAA7134_REMOTE_GPIO;
 		break;
 	case SAA7134_BOARD_FLYDVBS_LR300:
@@ -6108,34 +6009,16 @@ int saa7134_board_init1(struct saa7134_dev *dev)
 		break;
 	case SAA7134_BOARD_AVERMEDIA_CARDBUS:
 	case SAA7134_BOARD_AVERMEDIA_M115:
-#if 1
 		/* power-down tuner chip */
 		saa_andorl(SAA7134_GPIO_GPMODE0 >> 2,   0xffffffff, 0);
 		saa_andorl(SAA7134_GPIO_GPSTATUS0 >> 2, 0xffffffff, 0);
-#endif
 		msleep(10);
 		/* power-up tuner chip */
 		saa_andorl(SAA7134_GPIO_GPMODE0 >> 2,   0xffffffff, 0xffffffff);
 		saa_andorl(SAA7134_GPIO_GPSTATUS0 >> 2, 0xffffffff, 0xffffffff);
 		msleep(10);
 		break;
-	case SAA7134_BOARD_AVERMEDIA_CARDBUS_PLUS:
-		/* power-down tuner chip */
-		saa_andorl(SAA7134_GPIO_GPMODE0 >> 2,   0x0C440003, 0x0C440003);
-		saa_andorl(SAA7134_GPIO_GPSTATUS0 >> 2, 0x0C440003, 0);
-		msleep(10);
-		/* power-up tuner chip */
-		saa_andorl(SAA7134_GPIO_GPMODE0 >> 2,   0x0C440003, 0x0C440003);
-		saa_andorl(SAA7134_GPIO_GPSTATUS0 >> 2, 0x0C400000, 0x0C400000);
-		msleep(10);
-		dev->has_remote = SAA7134_REMOTE_I2C;
-		break;
 	case SAA7134_BOARD_AVERMEDIA_CARDBUS_506:
-		saa7134_set_gpio(dev, 23, 0);
-		msleep(10);
-		saa7134_set_gpio(dev, 23, 1);
-		dev->has_remote = SAA7134_REMOTE_I2C;
-		break;
 	case SAA7134_BOARD_AVERMEDIA_M103:
 		saa7134_set_gpio(dev, 23, 0);
 		msleep(10);
@@ -6149,11 +6032,9 @@ int saa7134_board_init1(struct saa7134_dev *dev)
 		dev->has_remote = SAA7134_REMOTE_GPIO;
 		break;
 	case SAA7134_BOARD_BEHOLD_COLUMBUS_TVFM:
-#if 1
 		/* power-down tuner chip */
 		saa_andorl(SAA7134_GPIO_GPMODE0 >> 2,   0x000A8004, 0x000A8004);
 		saa_andorl(SAA7134_GPIO_GPSTATUS0 >> 2, 0x000A8004, 0);
-#endif
 		msleep(10);
 		/* power-up tuner chip */
 		saa_andorl(SAA7134_GPIO_GPMODE0 >> 2,   0x000A8004, 0x000A8004);
@@ -6183,6 +6064,7 @@ int saa7134_board_init1(struct saa7134_dev *dev)
 	case SAA7134_BOARD_BEHOLD_M6:
 	case SAA7134_BOARD_BEHOLD_M63:
 	case SAA7134_BOARD_BEHOLD_M6_EXTRA:
+	case SAA7134_BOARD_BEHOLD_H6:
 		dev->has_remote = SAA7134_REMOTE_I2C;
 		break;
 	case SAA7134_BOARD_AVERMEDIA_A169_B:

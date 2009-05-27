@@ -2054,9 +2054,7 @@ static u16 MXL_BlockInit(struct dvb_frontend *fe)
 			status += MXL_ControlWrite(fe, BB_IQSWAP, 0);
 		else /* High IF */
 			status += MXL_ControlWrite(fe, BB_IQSWAP, 1);
-#if 1
 		status += MXL_ControlWrite(fe, RFSYN_CHP_GAIN, 2);
-#endif
 
 	}
 	if (state->Mod_Type == MXL_ANALOG_CABLE) {

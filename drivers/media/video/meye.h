@@ -255,11 +255,7 @@
 /****************************************************************************/
 
 /* Sony Programmable I/O Controller for accessing the camera commands */
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,21)
 #include <linux/sony-laptop.h>
-#else
-#include <linux/sonypi.h>
-#endif
 
 /* private API definitions */
 #include <linux/meye.h>

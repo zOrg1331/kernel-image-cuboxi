@@ -1,7 +1,7 @@
 /*
  *      uvc_v4l2.c  --  USB Video Class driver - V4L2 API
  *
- *      Copyright (C) 2005-2008
+ *      Copyright (C) 2005-2009
  *          Laurent Pinchart (laurent.pinchart@skynet.be)
  *
  *      This program is free software; you can redistribute it and/or modify
@@ -37,7 +37,7 @@
  * must be grouped (for instance the Red Balance, Blue Balance and Do White
  * Balance V4L2 controls use the White Balance Component UVC control) or
  * otherwise translated. The approach we take here is to use a translation
- * table for the controls which can be mapped directly, and handle the others
+ * table for the controls that can be mapped directly, and handle the others
  * manually.
  */
 static int uvc_v4l2_query_menu(struct uvc_video_device *video,
@@ -110,7 +110,7 @@ static int uvc_v4l2_try_format(struct uvc_video_device *video,
 	int ret = 0;
 	__u8 *fcc;
 
-	if (fmt->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+	if (fmt->type != video->streaming->type)
 		return -EINVAL;
 
 	fcc = (__u8 *)&fmt->fmt.pix.pixelformat;
@@ -189,7 +189,7 @@ static int uvc_v4l2_try_format(struct uvc_video_device *video,
 		probe->dwMaxVideoFrameSize =
 			video->streaming->ctrl.dwMaxVideoFrameSize;
 
-	/* Probe the device */
+	/* Probe the device. */
 	if ((ret = uvc_probe_video(video, probe)) < 0)
 		goto done;
 
@@ -216,7 +216,7 @@ static int uvc_v4l2_get_format(struct uvc_video_device *video,
 	struct uvc_format *format = video->streaming->cur_format;
 	struct uvc_frame *frame = video->streaming->cur_frame;
 
-	if (fmt->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+	if (fmt->type != video->streaming->type)
 		return -EINVAL;
 
 	if (format == NULL || frame == NULL)
@@ -242,7 +242,7 @@ static int uvc_v4l2_set_format(struct uvc_video_device *video,
 	struct uvc_frame *frame;
 	int ret;
 
-	if (fmt->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+	if (fmt->type != video->streaming->type)
 		return -EINVAL;
 
 	if (uvc_queue_streaming(&video->queue))
@@ -264,7 +264,7 @@ static int uvc_v4l2_get_streamparm(struct uvc_video_device *video,
 {
 	uint32_t numerator, denominator;
 
-	if (parm->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+	if (parm->type != video->streaming->type)
 		return -EINVAL;
 
 	numerator = video->streaming->ctrl.dwFrameInterval;
@@ -272,13 +272,21 @@ static int uvc_v4l2_get_streamparm(struct uvc_video_device *video,
 	uvc_simplify_fraction(&numerator, &denominator, 8, 333);
 
 	memset(parm, 0, sizeof *parm);
-	parm->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-	parm->parm.capture.capability = V4L2_CAP_TIMEPERFRAME;
-	parm->parm.capture.capturemode = 0;
-	parm->parm.capture.timeperframe.numerator = numerator;
-	parm->parm.capture.timeperframe.denominator = denominator;
-	parm->parm.capture.extendedmode = 0;
-	parm->parm.capture.readbuffers = 0;
+	parm->type = video->streaming->type;
+
+	if (video->streaming->type == V4L2_BUF_TYPE_VIDEO_CAPTURE) {
+		parm->parm.capture.capability = V4L2_CAP_TIMEPERFRAME;
+		parm->parm.capture.capturemode = 0;
+		parm->parm.capture.timeperframe.numerator = numerator;
+		parm->parm.capture.timeperframe.denominator = denominator;
+		parm->parm.capture.extendedmode = 0;
+		parm->parm.capture.readbuffers = 0;
+	} else {
+		parm->parm.output.capability = V4L2_CAP_TIMEPERFRAME;
+		parm->parm.output.outputmode = 0;
+		parm->parm.output.timeperframe.numerator = numerator;
+		parm->parm.output.timeperframe.denominator = denominator;
+	}
 
 	return 0;
 }
@@ -288,24 +296,27 @@ static int uvc_v4l2_set_streamparm(struct uvc_video_device *video,
 {
 	struct uvc_frame *frame = video->streaming->cur_frame;
 	struct uvc_streaming_control probe;
+	struct v4l2_fract timeperframe;
 	uint32_t interval;
 	int ret;
 
-	if (parm->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+	if (parm->type != video->streaming->type)
 		return -EINVAL;
 
 	if (uvc_queue_streaming(&video->queue))
 		return -EBUSY;
 
+	if (parm->type == V4L2_BUF_TYPE_VIDEO_CAPTURE)
+		timeperframe = parm->parm.capture.timeperframe;
+	else
+		timeperframe = parm->parm.output.timeperframe;
+
 	memcpy(&probe, &video->streaming->ctrl, sizeof probe);
-	interval = uvc_fraction_to_interval(
-			parm->parm.capture.timeperframe.numerator,
-			parm->parm.capture.timeperframe.denominator);
+	interval = uvc_fraction_to_interval(timeperframe.numerator,
+		timeperframe.denominator);
 
 	uvc_trace(UVC_TRACE_FORMAT, "Setting frame interval to %u/%u (%u).\n",
-			parm->parm.capture.timeperframe.numerator,
-			parm->parm.capture.timeperframe.denominator,
-			interval);
+		timeperframe.numerator, timeperframe.denominator, interval);
 	probe.dwFrameInterval = uvc_try_frame_interval(frame, interval);
 
 	/* Probe the device with the new settings. */
@@ -315,11 +326,15 @@ static int uvc_v4l2_set_streamparm(struct uvc_video_device *video,
 	memcpy(&video->streaming->ctrl, &probe, sizeof probe);
 
 	/* Return the actual frame period. */
-	parm->parm.capture.timeperframe.numerator = probe.dwFrameInterval;
-	parm->parm.capture.timeperframe.denominator = 10000000;
-	uvc_simplify_fraction(&parm->parm.capture.timeperframe.numerator,
-				&parm->parm.capture.timeperframe.denominator,
-				8, 333);
+	timeperframe.numerator = probe.dwFrameInterval;
+	timeperframe.denominator = 10000000;
+	uvc_simplify_fraction(&timeperframe.numerator,
+		&timeperframe.denominator, 8, 333);
+
+	if (parm->type == V4L2_BUF_TYPE_VIDEO_CAPTURE)
+		parm->parm.capture.timeperframe = timeperframe;
+	else
+		parm->parm.output.timeperframe = timeperframe;
 
 	return 0;
 }
@@ -339,11 +354,11 @@ static int uvc_v4l2_set_streamparm(struct uvc_video_device *video,
  *
  * Each open instance of a UVC device can either be in a privileged or
  * unprivileged state. Only a single instance can be in a privileged state at
- * a given time. Trying to perform an operation which requires privileges will
+ * a given time. Trying to perform an operation that requires privileges will
  * automatically acquire the required privileges if possible, or return -EBUSY
  * otherwise. Privileges are dismissed when closing the instance.
  *
- * Operations which require privileges are:
+ * Operations that require privileges are:
  *
  * - VIDIOC_S_INPUT
  * - VIDIOC_S_PARM
@@ -391,7 +406,7 @@ static int uvc_has_privileges(struct uvc_fh *handle)
  * V4L2 file operations
  */
 
-static int uvc_v4l2_open(struct inode *inode, struct file *file)
+static int uvc_v4l2_open(struct file *file)
 {
 	struct uvc_video_device *video;
 	struct uvc_fh *handle;
@@ -406,18 +421,14 @@ static int uvc_v4l2_open(struct inode *inode, struct file *file)
 		goto done;
 	}
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 19)
 	ret = usb_autopm_get_interface(video->dev->intf);
 	if (ret < 0)
 		goto done;
-#endif
 
 	/* Create the device handle. */
 	handle = kzalloc(sizeof *handle, GFP_KERNEL);
 	if (handle == NULL) {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 19)
 		usb_autopm_put_interface(video->dev->intf);
-#endif
 		ret = -ENOMEM;
 		goto done;
 	}
@@ -433,7 +444,7 @@ done:
 	return ret;
 }
 
-static int uvc_v4l2_release(struct inode *inode, struct file *file)
+static int uvc_v4l2_release(struct file *file)
 {
 	struct uvc_video_device *video = video_drvdata(file);
 	struct uvc_fh *handle = (struct uvc_fh *)file->private_data;
@@ -456,19 +467,17 @@ static int uvc_v4l2_release(struct inode *inode, struct file *file)
 	kfree(handle);
 	file->private_data = NULL;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 19)
 	usb_autopm_put_interface(video->dev->intf);
-#endif
 	kref_put(&video->dev->kref, uvc_delete);
 	return 0;
 }
 
-static int uvc_v4l2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
+static long uvc_v4l2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 {
 	struct video_device *vdev = video_devdata(file);
 	struct uvc_video_device *video = video_get_drvdata(vdev);
 	struct uvc_fh *handle = (struct uvc_fh *)file->private_data;
-	int ret = 0;
+	long ret = 0;
 
 	switch (cmd) {
 	/* Query capabilities */
@@ -482,8 +491,12 @@ static int uvc_v4l2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 		strncpy(cap->bus_info, video->dev->udev->bus->bus_name,
 			sizeof cap->bus_info);
 		cap->version = DRIVER_VERSION_NUMBER;
-		cap->capabilities = V4L2_CAP_VIDEO_CAPTURE
-				  | V4L2_CAP_STREAMING;
+		if (video->streaming->type == V4L2_BUF_TYPE_VIDEO_CAPTURE)
+			cap->capabilities = V4L2_CAP_VIDEO_CAPTURE
+					  | V4L2_CAP_STREAMING;
+		else
+			cap->capabilities = V4L2_CAP_VIDEO_OUTPUT
+					  | V4L2_CAP_STREAMING;
 		break;
 	}
 
@@ -661,7 +674,7 @@ static int uvc_v4l2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 		struct v4l2_fmtdesc *fmt = arg;
 		struct uvc_format *format;
 
-		if (fmt->type != V4L2_BUF_TYPE_VIDEO_CAPTURE ||
+		if (fmt->type != video->streaming->type ||
 		    fmt->index >= video->streaming->nformats)
 			return -EINVAL;
 
@@ -800,7 +813,7 @@ static int uvc_v4l2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 		struct v4l2_cropcap *ccap = arg;
 		struct uvc_frame *frame = video->streaming->cur_frame;
 
-		if (ccap->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+		if (ccap->type != video->streaming->type)
 			return -EINVAL;
 
 		ccap->bounds.left = 0;
@@ -826,7 +839,7 @@ static int uvc_v4l2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 		unsigned int bufsize =
 			video->streaming->ctrl.dwMaxVideoFrameSize;
 
-		if (rb->type != V4L2_BUF_TYPE_VIDEO_CAPTURE ||
+		if (rb->type != video->streaming->type ||
 		    rb->memory != V4L2_MEMORY_MMAP)
 			return -EINVAL;
 
@@ -846,7 +859,7 @@ static int uvc_v4l2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 	{
 		struct v4l2_buffer *buf = arg;
 
-		if (buf->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+		if (buf->type != video->streaming->type)
 			return -EINVAL;
 
 		if (!uvc_has_privileges(handle))
@@ -872,7 +885,7 @@ static int uvc_v4l2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 	{
 		int *type = arg;
 
-		if (*type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+		if (*type != video->streaming->type)
 			return -EINVAL;
 
 		if (!uvc_has_privileges(handle))
@@ -887,7 +900,7 @@ static int uvc_v4l2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 	{
 		int *type = arg;
 
-		if (*type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+		if (*type != video->streaming->type)
 			return -EINVAL;
 
 		if (!uvc_has_privileges(handle))
@@ -983,7 +996,7 @@ static int uvc_v4l2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 	return ret;
 }
 
-static int uvc_v4l2_ioctl(struct inode *inode, struct file *file,
+static long uvc_v4l2_ioctl(struct file *file,
 		     unsigned int cmd, unsigned long arg)
 {
 	if (uvc_trace_param & UVC_TRACE_IOCTL) {
@@ -1084,13 +1097,11 @@ static unsigned int uvc_v4l2_poll(struct file *file, poll_table *wait)
 	return uvc_queue_poll(&video->queue, file, wait);
 }
 
-struct file_operations uvc_fops = {
+const struct v4l2_file_operations uvc_fops = {
 	.owner		= THIS_MODULE,
 	.open		= uvc_v4l2_open,
 	.release	= uvc_v4l2_release,
 	.ioctl		= uvc_v4l2_ioctl,
-	.compat_ioctl	= v4l_compat_ioctl32,
-	.llseek		= no_llseek,
 	.read		= uvc_v4l2_read,
 	.mmap		= uvc_v4l2_mmap,
 	.poll		= uvc_v4l2_poll,

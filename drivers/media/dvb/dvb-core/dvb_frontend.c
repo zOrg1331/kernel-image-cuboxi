@@ -33,19 +33,13 @@
 #include <linux/poll.h>
 #include <linux/module.h>
 #include <linux/list.h>
-#include <linux/version.h>
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
-#include <linux/suspend.h>
-#else
 #include <linux/freezer.h>
-#endif
 #include <linux/jiffies.h>
 #include <linux/kthread.h>
 #include <asm/processor.h>
 
 #include "dvb_frontend.h"
 #include "dvbdev.h"
-#include <media/compat.h>
 #include <linux/dvb/version.h>
 
 static int dvb_frontend_debug;
@@ -542,16 +536,10 @@ static int dvb_frontend_thread(void *data)
 	while (1) {
 		up(&fepriv->sem);	    /* is locked when we enter the thread... */
 restart:
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
-		timeout = wait_event_interruptible_timeout(fepriv->wait_queue,
-			dvb_frontend_should_wakeup(fe) || kthread_should_stop(),
-			fepriv->delay);
-#else
 		timeout = wait_event_interruptible_timeout(fepriv->wait_queue,
 			dvb_frontend_should_wakeup(fe) || kthread_should_stop()
 				|| freezing(current),
 			fepriv->delay);
-#endif
 
 		if (kthread_should_stop() || dvb_frontend_is_exiting(fe)) {
 			/* got signal or quitting */
@@ -836,7 +824,7 @@ static int dvb_frontend_check_parameters(struct dvb_frontend *fe,
 	return 0;
 }
 
-struct dtv_cmds_h dtv_cmds[] = {
+static struct dtv_cmds_h dtv_cmds[] = {
 	[DTV_TUNE] = {
 		.name	= "DTV_TUNE",
 		.cmd	= DTV_TUNE,
@@ -915,18 +903,6 @@ struct dtv_cmds_h dtv_cmds[] = {
 		.cmd	= DTV_HIERARCHY,
 		.set	= 1,
 	},
-#if 0
-	[DTV_ISDB_SEGMENT_IDX] = {
-		.name	= "DTV_ISDB_SEGMENT_IDX",
-		.cmd	= DTV_ISDB_SEGMENT_IDX,
-		.set	= 1,
-	},
-	[DTV_ISDB_SEGMENT_WIDTH] = {
-		.name	= "DTV_ISDB_SEGMENT_WIDTH",
-		.cmd	= DTV_ISDB_SEGMENT_WIDTH,
-		.set	= 1,
-	},
-#endif
 	[DTV_CODE_RATE_HP] = {
 		.name	= "DTV_CODE_RATE_HP",
 		.cmd	= DTV_CODE_RATE_HP,
@@ -954,53 +930,6 @@ struct dtv_cmds_h dtv_cmds[] = {
 		.set	= 0,
 		.buffer	= 1,
 	},
-#if 0
-	[DTV_ISDB_LAYERA_FEC] = {
-		.name	= "DTV_ISDB_LAYERA_FEC",
-		.cmd	= DTV_ISDB_LAYERA_FEC,
-		.set	= 0,
-	},
-	[DTV_ISDB_LAYERA_MODULATION] = {
-		.name	= "DTV_ISDB_LAYERA_MODULATION",
-		.cmd	= DTV_ISDB_LAYERA_MODULATION,
-		.set	= 0,
-	},
-	[DTV_ISDB_LAYERA_SEGMENT_WIDTH] = {
-		.name	= "DTV_ISDB_LAYERA_SEGMENT_WIDTH",
-		.cmd	= DTV_ISDB_LAYERA_SEGMENT_WIDTH,
-		.set	= 0,
-	},
-	[DTV_ISDB_LAYERB_FEC] = {
-		.name	= "DTV_ISDB_LAYERB_FEC",
-		.cmd	= DTV_ISDB_LAYERB_FEC,
-		.set	= 0,
-	},
-	[DTV_ISDB_LAYERB_MODULATION] = {
-		.name	= "DTV_ISDB_LAYERB_MODULATION",
-		.cmd	= DTV_ISDB_LAYERB_MODULATION,
-		.set	= 0,
-	},
-	[DTV_ISDB_LAYERB_SEGMENT_WIDTH] = {
-		.name	= "DTV_ISDB_LAYERB_SEGMENT_WIDTH",
-		.cmd	= DTV_ISDB_LAYERB_SEGMENT_WIDTH,
-		.set	= 0,
-	},
-	[DTV_ISDB_LAYERC_FEC] = {
-		.name	= "DTV_ISDB_LAYERC_FEC",
-		.cmd	= DTV_ISDB_LAYERC_FEC,
-		.set	= 0,
-	},
-	[DTV_ISDB_LAYERC_MODULATION] = {
-		.name	= "DTV_ISDB_LAYERC_MODULATION",
-		.cmd	= DTV_ISDB_LAYERC_MODULATION,
-		.set	= 0,
-	},
-	[DTV_ISDB_LAYERC_SEGMENT_WIDTH] = {
-		.name	= "DTV_ISDB_LAYERC_SEGMENT_WIDTH",
-		.cmd	= DTV_ISDB_LAYERC_SEGMENT_WIDTH,
-		.set	= 0,
-	},
-#endif
 	[DTV_API_VERSION] = {
 		.name	= "DTV_API_VERSION",
 		.cmd	= DTV_API_VERSION,
@@ -1033,7 +962,7 @@ struct dtv_cmds_h dtv_cmds[] = {
 	},
 };
 
-void dtv_property_dump(struct dtv_property *tvp)
+static void dtv_property_dump(struct dtv_property *tvp)
 {
 	int i;
 
@@ -1064,7 +993,7 @@ void dtv_property_dump(struct dtv_property *tvp)
 		dprintk("%s() tvp.u.data = 0x%08x\n", __func__, tvp->u.data);
 }
 
-int is_legacy_delivery_system(fe_delivery_system_t s)
+static int is_legacy_delivery_system(fe_delivery_system_t s)
 {
 	if((s == SYS_UNDEFINED) || (s == SYS_DVBC_ANNEX_AC) ||
 	   (s == SYS_DVBC_ANNEX_B) || (s == SYS_DVBT) || (s == SYS_DVBS) ||
@@ -1078,7 +1007,8 @@ int is_legacy_delivery_system(fe_delivery_system_t s)
  * drivers can use a single set_frontend tuning function, regardless of whether
  * it's being used for the legacy or new API, reducing code and complexity.
  */
-void dtv_property_cache_sync(struct dvb_frontend *fe, struct dvb_frontend_parameters *p)
+static void dtv_property_cache_sync(struct dvb_frontend *fe,
+				    struct dvb_frontend_parameters *p)
 {
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 
@@ -1130,7 +1060,7 @@ void dtv_property_cache_sync(struct dvb_frontend *fe, struct dvb_frontend_parame
 /* Ensure the cached values are set correctly in the frontend
  * legacy tuning structures, for the advanced tuning API.
  */
-void dtv_property_legacy_params_sync(struct dvb_frontend *fe)
+static void dtv_property_legacy_params_sync(struct dvb_frontend *fe)
 {
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	struct dvb_frontend_private *fepriv = fe->frontend_priv;
@@ -1185,7 +1115,7 @@ void dtv_property_legacy_params_sync(struct dvb_frontend *fe)
 /* Ensure the cached values are set correctly in the frontend
  * legacy tuning structures, for the legacy tuning API.
  */
-void dtv_property_adv_params_sync(struct dvb_frontend *fe)
+static void dtv_property_adv_params_sync(struct dvb_frontend *fe)
 {
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	struct dvb_frontend_private *fepriv = fe->frontend_priv;
@@ -1220,7 +1150,7 @@ void dtv_property_adv_params_sync(struct dvb_frontend *fe)
 	}
 }
 
-void dtv_property_cache_submit(struct dvb_frontend *fe)
+static void dtv_property_cache_submit(struct dvb_frontend *fe)
 {
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 
@@ -1251,8 +1181,9 @@ static int dvb_frontend_ioctl_legacy(struct inode *inode, struct file *file,
 static int dvb_frontend_ioctl_properties(struct inode *inode, struct file *file,
 			unsigned int cmd, void *parg);
 
-int dtv_property_process_get(struct dvb_frontend *fe, struct dtv_property *tvp,
-	struct inode *inode, struct file *file)
+static int dtv_property_process_get(struct dvb_frontend *fe,
+				    struct dtv_property *tvp,
+				    struct inode *inode, struct file *file)
 {
 	int r = 0;
 
@@ -1293,42 +1224,6 @@ int dtv_property_process_get(struct dvb_frontend *fe, struct dtv_property *tvp,
 	case DTV_DELIVERY_SYSTEM:
 		tvp->u.data = fe->dtv_property_cache.delivery_system;
 		break;
-#if 0
-	/* ISDB-T Support here */
-	case DTV_ISDB_SEGMENT_IDX:
-		tvp->u.data = fe->dtv_property_cache.isdb_segment_idx;
-		break;
-	case DTV_ISDB_SEGMENT_WIDTH:
-		tvp->u.data = fe->dtv_property_cache.isdb_segment_width;
-		break;
-	case DTV_ISDB_LAYERA_FEC:
-		tvp->u.data = fe->dtv_property_cache.isdb_layera_fec;
-		break;
-	case DTV_ISDB_LAYERA_MODULATION:
-		tvp->u.data = fe->dtv_property_cache.isdb_layera_modulation;
-		break;
-	case DTV_ISDB_LAYERA_SEGMENT_WIDTH:
-		tvp->u.data = fe->dtv_property_cache.isdb_layera_segment_width;
-		break;
-	case DTV_ISDB_LAYERB_FEC:
-		tvp->u.data = fe->dtv_property_cache.isdb_layerb_fec;
-		break;
-	case DTV_ISDB_LAYERB_MODULATION:
-		tvp->u.data = fe->dtv_property_cache.isdb_layerb_modulation;
-		break;
-	case DTV_ISDB_LAYERB_SEGMENT_WIDTH:
-		tvp->u.data = fe->dtv_property_cache.isdb_layerb_segment_width;
-		break;
-	case DTV_ISDB_LAYERC_FEC:
-		tvp->u.data = fe->dtv_property_cache.isdb_layerc_fec;
-		break;
-	case DTV_ISDB_LAYERC_MODULATION:
-		tvp->u.data = fe->dtv_property_cache.isdb_layerc_modulation;
-		break;
-	case DTV_ISDB_LAYERC_SEGMENT_WIDTH:
-		tvp->u.data = fe->dtv_property_cache.isdb_layerc_segment_width;
-		break;
-#endif
 	case DTV_VOLTAGE:
 		tvp->u.data = fe->dtv_property_cache.voltage;
 		break;
@@ -1360,8 +1255,10 @@ int dtv_property_process_get(struct dvb_frontend *fe, struct dtv_property *tvp,
 	return r;
 }
 
-int dtv_property_process_set(struct dvb_frontend *fe, struct dtv_property *tvp,
-	struct inode *inode, struct file *file)
+static int dtv_property_process_set(struct dvb_frontend *fe,
+				    struct dtv_property *tvp,
+				    struct inode *inode,
+				    struct file *file)
 {
 	int r = 0;
 	struct dvb_frontend_private *fepriv = fe->frontend_priv;
@@ -1393,9 +1290,6 @@ int dtv_property_process_set(struct dvb_frontend *fe, struct dtv_property *tvp,
 		dprintk("%s() Finalised property cache\n", __func__);
 		dtv_property_cache_submit(fe);
 
-		/* Request the search algorithm to search */
-		fepriv->algo_status |= DVBFE_ALGO_SEARCH_AGAIN;
-
 		r |= dvb_frontend_ioctl_legacy(inode, file, FE_SET_FRONTEND,
 			&fepriv->parameters);
 		break;
@@ -1426,15 +1320,6 @@ int dtv_property_process_set(struct dvb_frontend *fe, struct dtv_property *tvp,
 	case DTV_DELIVERY_SYSTEM:
 		fe->dtv_property_cache.delivery_system = tvp->u.data;
 		break;
-#if 0
-	/* ISDB-T Support here */
-	case DTV_ISDB_SEGMENT_IDX:
-		fe->dtv_property_cache.isdb_segment_idx = tvp->u.data;
-		break;
-	case DTV_ISDB_SEGMENT_WIDTH:
-		fe->dtv_property_cache.isdb_segment_width = tvp->u.data;
-		break;
-#endif
 	case DTV_VOLTAGE:
 		fe->dtv_property_cache.voltage = tvp->u.data;
 		r = dvb_frontend_ioctl_legacy(inode, file, FE_SET_VOLTAGE,
@@ -1829,6 +1714,10 @@ static int dvb_frontend_ioctl_legacy(struct inode *inode, struct file *file,
 			fepriv->min_delay = (dvb_override_tune_delay * HZ) / 1000;
 
 		fepriv->state = FESTATE_RETUNE;
+
+		/* Request the search algorithm to search */
+		fepriv->algo_status |= DVBFE_ALGO_SEARCH_AGAIN;
+
 		dvb_frontend_wakeup(fe);
 		dvb_frontend_add_event(fe, 0);
 		fepriv->status = 0;

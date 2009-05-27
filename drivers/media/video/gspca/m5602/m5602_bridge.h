@@ -109,7 +109,6 @@ static const unsigned char sensor_urb_skeleton[] = {
 	0x13, M5602_XB_I2C_CTRL, 0x81, 0x11
 };
 
-/* m5602 device descriptor, currently it just wraps the m5602_camera struct */
 struct sd {
 	struct gspca_dev gspca_dev;
 
@@ -133,5 +132,11 @@ int m5602_read_bridge(
 
 int m5602_write_bridge(
 	struct sd *sd, u8 address, u8 i2c_data);
+
+int m5602_write_sensor(struct sd *sd, const u8 address,
+		       u8 *i2c_data, const u8 len);
+
+int m5602_read_sensor(struct sd *sd, const u8 address,
+		      u8 *i2c_data, const u8 len);
 
 #endif

@@ -153,7 +153,7 @@ enum v4l2_buf_type {
 	V4L2_BUF_TYPE_VBI_OUTPUT           = 5,
 	V4L2_BUF_TYPE_SLICED_VBI_CAPTURE   = 6,
 	V4L2_BUF_TYPE_SLICED_VBI_OUTPUT    = 7,
-#if 1 /*KEEP*/
+#if 1
 	/* Experimental */
 	V4L2_BUF_TYPE_VIDEO_OUTPUT_OVERLAY = 8,
 #endif
@@ -305,6 +305,8 @@ struct v4l2_pix_format {
 /* two planes -- one Y, one Cr + Cb interleaved  */
 #define V4L2_PIX_FMT_NV12    v4l2_fourcc('N', 'V', '1', '2') /* 12  Y/CbCr 4:2:0  */
 #define V4L2_PIX_FMT_NV21    v4l2_fourcc('N', 'V', '2', '1') /* 12  Y/CrCb 4:2:0  */
+#define V4L2_PIX_FMT_NV16    v4l2_fourcc('N', 'V', '1', '6') /* 16  Y/CbCr 4:2:2  */
+#define V4L2_PIX_FMT_NV61    v4l2_fourcc('N', 'V', '6', '1') /* 16  Y/CrCb 4:2:2  */
 
 /*  The following formats are not defined in the V4L2 specification */
 #define V4L2_PIX_FMT_YUV410  v4l2_fourcc('Y', 'U', 'V', '9') /*  9  YUV 4:1:0     */
@@ -359,7 +361,7 @@ struct v4l2_fmtdesc {
 
 #define V4L2_FMT_FLAG_COMPRESSED 0x0001
 
-#if 1 /*KEEP*/
+#if 1
 	/* Experimental Frame Size and frame rate enumeration */
 /*
  *	F R A M E   S I Z E   E N U M E R A T I O N
@@ -1051,7 +1053,7 @@ enum v4l2_mpeg_video_bitrate_mode {
 #define V4L2_CID_MPEG_VIDEO_MUTE 		(V4L2_CID_MPEG_BASE+210)
 #define V4L2_CID_MPEG_VIDEO_MUTE_YUV 		(V4L2_CID_MPEG_BASE+211)
 
-/*  MPEG-class control IDs specific to the CX2584x driver as defined by V4L2 */
+/*  MPEG-class control IDs specific to the CX2341x driver as defined by V4L2 */
 #define V4L2_CID_MPEG_CX2341X_BASE 				(V4L2_CTRL_CLASS_MPEG | 0x1000)
 #define V4L2_CID_MPEG_CX2341X_VIDEO_SPATIAL_FILTER_MODE 	(V4L2_CID_MPEG_CX2341X_BASE+0)
 enum v4l2_mpeg_cx2341x_video_spatial_filter_mode {
@@ -1220,7 +1222,7 @@ struct v4l2_audioout {
  *
  *	NOTE: EXPERIMENTAL API
  */
-#if 1 /*KEEP*/
+#if 1
 #define V4L2_ENC_IDX_FRAME_I    (0)
 #define V4L2_ENC_IDX_FRAME_P    (1)
 #define V4L2_ENC_IDX_FRAME_B    (2)
@@ -1368,24 +1370,41 @@ struct v4l2_streamparm {
 /*
  *	A D V A N C E D   D E B U G G I N G
  *
- *	NOTE: EXPERIMENTAL API
+ *	NOTE: EXPERIMENTAL API, NEVER RELY ON THIS IN APPLICATIONS!
+ *	FOR DEBUGGING, TESTING AND INTERNAL USE ONLY!
  */
 
 /* VIDIOC_DBG_G_REGISTER and VIDIOC_DBG_S_REGISTER */
 
 #define V4L2_CHIP_MATCH_HOST       0  /* Match against chip ID on host (0 for the host) */
-#define V4L2_CHIP_MATCH_I2C_DRIVER 1  /* Match against I2C driver ID */
+#define V4L2_CHIP_MATCH_I2C_DRIVER 1  /* Match against I2C driver name */
 #define V4L2_CHIP_MATCH_I2C_ADDR   2  /* Match against I2C 7-bit address */
+#define V4L2_CHIP_MATCH_AC97       3  /* Match against anciliary AC97 chip */
 
-struct v4l2_register {
-	__u32 match_type; /* Match type */
-	__u32 match_chip; /* Match this chip, meaning determined by match_type */
+struct v4l2_dbg_match {
+	__u32 type; /* Match type */
+	union {     /* Match this chip, meaning determined by type */
+		__u32 addr;
+		char name[32];
+	};
+} __attribute__ ((packed));
+
+struct v4l2_dbg_register {
+	struct v4l2_dbg_match match;
+	__u32 size;	/* register size in bytes */
 	__u64 reg;
 	__u64 val;
-};
+} __attribute__ ((packed));
 
-/* VIDIOC_G_CHIP_IDENT */
-struct v4l2_chip_ident {
+/* VIDIOC_DBG_G_CHIP_IDENT */
+struct v4l2_dbg_chip_ident {
+	struct v4l2_dbg_match match;
+	__u32 ident;       /* chip identifier as specified in <media/v4l2-chip-ident.h> */
+	__u32 revision;    /* chip revision, chip specific */
+} __attribute__ ((packed));
+
+/* VIDIOC_G_CHIP_IDENT_OLD: Deprecated, do not use */
+struct v4l2_chip_ident_old {
 	__u32 match_type;  /* Match type */
 	__u32 match_chip;  /* Match this chip, meaning determined by match_type */
 	__u32 ident;       /* chip identifier as specified in <media/v4l2-chip-ident.h> */
@@ -1451,20 +1470,31 @@ struct v4l2_chip_ident {
 #define VIDIOC_G_EXT_CTRLS	_IOWR('V', 71, struct v4l2_ext_controls)
 #define VIDIOC_S_EXT_CTRLS	_IOWR('V', 72, struct v4l2_ext_controls)
 #define VIDIOC_TRY_EXT_CTRLS	_IOWR('V', 73, struct v4l2_ext_controls)
-#if 1 /*KEEP*/
+#if 1
 #define VIDIOC_ENUM_FRAMESIZES	_IOWR('V', 74, struct v4l2_frmsizeenum)
 #define VIDIOC_ENUM_FRAMEINTERVALS _IOWR('V', 75, struct v4l2_frmivalenum)
 #define VIDIOC_G_ENC_INDEX       _IOR('V', 76, struct v4l2_enc_idx)
 #define VIDIOC_ENCODER_CMD      _IOWR('V', 77, struct v4l2_encoder_cmd)
 #define VIDIOC_TRY_ENCODER_CMD  _IOWR('V', 78, struct v4l2_encoder_cmd)
-
-/* Experimental, only implemented if CONFIG_VIDEO_ADV_DEBUG is defined */
-#define	VIDIOC_DBG_S_REGISTER 	 _IOW('V', 79, struct v4l2_register)
-#define	VIDIOC_DBG_G_REGISTER 	_IOWR('V', 80, struct v4l2_register)
-
-#define VIDIOC_G_CHIP_IDENT     _IOWR('V', 81, struct v4l2_chip_ident)
 #endif
+
+#if 1
+/* Experimental, meant for debugging, testing and internal use.
+   Only implemented if CONFIG_VIDEO_ADV_DEBUG is defined.
+   You must be root to use these ioctls. Never use these in applications! */
+#define	VIDIOC_DBG_S_REGISTER 	 _IOW('V', 79, struct v4l2_dbg_register)
+#define	VIDIOC_DBG_G_REGISTER 	_IOWR('V', 80, struct v4l2_dbg_register)
+
+/* Experimental, meant for debugging, testing and internal use.
+   Never use this ioctl in applications! */
+#define VIDIOC_DBG_G_CHIP_IDENT _IOWR('V', 81, struct v4l2_dbg_chip_ident)
+/* This is deprecated and will go away in 2.6.30 */
+#define VIDIOC_G_CHIP_IDENT_OLD _IOWR('V', 81, struct v4l2_chip_ident_old)
+#endif
+
 #define VIDIOC_S_HW_FREQ_SEEK	 _IOW('V', 82, struct v4l2_hw_freq_seek)
+/* Reminder: when adding new ioctls please add support for them to
+   drivers/media/video/v4l2-compat-ioctl32.c as well! */
 
 #ifdef __OLD_VIDIOC_
 /* for compatibility, will go away some day */

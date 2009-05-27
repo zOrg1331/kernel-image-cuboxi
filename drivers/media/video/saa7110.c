@@ -37,7 +37,6 @@
 #include <linux/video_decoder.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-i2c-drv-legacy.h>
-#include <media/compat.h>
 
 MODULE_DESCRIPTION("Philips SAA7110 video decoder driver");
 MODULE_AUTHOR("Pauline Middelink");
@@ -475,21 +474,17 @@ static int saa7110_remove(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id saa7110_id[] = {
 	{ "saa7110", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, saa7110_id);
 
-#endif
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "saa7110",
 	.driverid = I2C_DRIVERID_SAA7110,
 	.command = saa7110_command,
 	.probe = saa7110_probe,
 	.remove = saa7110_remove,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = saa7110_id,
-#endif
 };

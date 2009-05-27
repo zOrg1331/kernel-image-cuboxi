@@ -52,19 +52,13 @@
 #include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/kthread.h>
-#include <linux/version.h>
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 20)
-#include <linux/suspend.h>
-#else
 #include <linux/freezer.h>
-#endif
 #include <linux/videodev2.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-i2c-drv-legacy.h>
 #include <media/msp3400.h>
 #include <media/tvaudio.h>
-#include <media/compat.h>
 #include "msp3400-driver.h"
 
 /* ---------------------------------------------------------------------- */
@@ -489,7 +483,7 @@ static int msp_s_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 }
 
 #ifdef CONFIG_VIDEO_ALLOW_V4L1
-static int msp_ioctl(struct v4l2_subdev *sd, int cmd, void *arg)
+static long msp_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 {
 	struct msp_state *state = to_state(sd);
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
@@ -739,7 +733,7 @@ static int msp_queryctrl(struct v4l2_subdev *sd, struct v4l2_queryctrl *qc)
 	return 0;
 }
 
-static int msp_g_chip_ident(struct v4l2_subdev *sd, struct v4l2_chip_ident *chip)
+static int msp_g_chip_ident(struct v4l2_subdev *sd, struct v4l2_dbg_chip_ident *chip)
 {
 	struct msp_state *state = to_state(sd);
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
@@ -863,12 +857,8 @@ static int msp_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	int msp_product, msp_prod_hi, msp_prod_lo;
 	int msp_rom;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
-	snprintf(client->name, sizeof(client->name) - 1, "msp3400");
-#else
 	if (!id)
 		strlcpy(client->name, "msp3400", sizeof(client->name));
-#endif
 
 	if (msp_reset(client) == -1) {
 		v4l_dbg(1, msp_debug, client, "msp3400 not found\n");
@@ -909,10 +899,6 @@ static int msp_probe(struct i2c_client *client, const struct i2c_device_id *id)
 		return -ENODEV;
 	}
 
-#if 0
-	/* this will turn on a 1kHz beep - might be useful for debugging... */
-	msp_write_dsp(client, 0x0014, 0x1040);
-#endif
 	msp_set_audio(client);
 
 	msp_family = ((state->rev1 >> 4) & 0x0f) + 3;
@@ -922,11 +908,6 @@ static int msp_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	msp_revision = (state->rev1 & 0x0f) + '@';
 	msp_hard = ((state->rev1 >> 8) & 0xff) + '@';
 	msp_rom = state->rev2 & 0x1f;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
-	snprintf(client->name, sizeof(client->name), "MSP%d4%02d%c-%c%d",
-			msp_family, msp_product,
-			msp_revision, msp_hard, msp_rom);
-#endif
 	/* Rev B=2, C=3, D=4, G=7 */
 	state->ident = msp_family * 10000 + 4000 + msp_product * 10 +
 			msp_revision - '@';
@@ -1050,14 +1031,12 @@ static int msp_remove(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id msp_id[] = {
 	{ "msp3400", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, msp_id);
 
-#endif
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "msp3400",
 	.driverid = I2C_DRIVERID_MSP3400,
@@ -1066,9 +1045,7 @@ static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.remove = msp_remove,
 	.suspend = msp_suspend,
 	.resume = msp_resume,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = msp_id,
-#endif
 };
 
 /*

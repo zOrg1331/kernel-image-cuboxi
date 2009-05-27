@@ -29,7 +29,6 @@
 #include <media/tuner.h>
 #include <media/cx2341x.h>
 #include <media/v4l2-common.h>
-#include <media/compat.h>
 
 MODULE_DESCRIPTION("cx23415/6 driver");
 MODULE_AUTHOR("Hans Verkuil");

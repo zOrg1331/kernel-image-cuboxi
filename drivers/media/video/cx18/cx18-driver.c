@@ -573,12 +573,7 @@ static int __devinit cx18_init_struct1(struct cx18 *cx)
 	for (i = 0; i < CX18_MAX_EPU_WORK_ORDERS; i++) {
 		cx->epu_work_order[i].cx = cx;
 		cx->epu_work_order[i].str = cx->epu_debug_str;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20)
 		INIT_WORK(&cx->epu_work_order[i].work, cx18_epu_work_handler);
-#else
-		INIT_WORK(&cx->epu_work_order[i].work, cx18_epu_work_handler,
-			  &cx->epu_work_order[i].work);
-#endif
 	}
 
 	/* start counting open_id at 1 */
@@ -1088,7 +1083,6 @@ int cx18_init_on_first_open(struct cx18 *cx)
 	return 0;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
 static void cx18_cancel_epu_work_orders(struct cx18 *cx)
 {
 	int i;
@@ -1096,7 +1090,6 @@ static void cx18_cancel_epu_work_orders(struct cx18 *cx)
 		cancel_work_sync(&cx->epu_work_order[i].work);
 }
 
-#endif
 static void cx18_remove(struct pci_dev *pci_dev)
 {
 	struct cx18 *cx = pci_get_drvdata(pci_dev);
@@ -1110,20 +1103,11 @@ static void cx18_remove(struct pci_dev *pci_dev)
 
 	/* Interrupts */
 	cx18_sw1_irq_disable(cx, IRQ_CPU_TO_EPU | IRQ_APU_TO_EPU);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
 	cx18_sw2_irq_disable(cx, IRQ_CPU_TO_EPU_ACK | IRQ_APU_TO_EPU_ACK);
 
 	cx18_halt_firmware(cx);
 
 	cx18_cancel_epu_work_orders(cx);
-#else
-
-	flush_workqueue(cx->work_queue);
-
-	cx18_sw2_irq_disable(cx, IRQ_CPU_TO_EPU_ACK | IRQ_APU_TO_EPU_ACK);
-
-	cx18_halt_firmware(cx);
-#endif
 
 	destroy_workqueue(cx->work_queue);
 

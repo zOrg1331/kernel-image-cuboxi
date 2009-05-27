@@ -449,6 +449,7 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 	case SAA7134_BOARD_AVERMEDIA_STUDIO_507:
 	case SAA7134_BOARD_AVERMEDIA_GO_007_FM:
 	case SAA7134_BOARD_AVERMEDIA_M102:
+	case SAA7134_BOARD_AVERMEDIA_GO_007_FM_PLUS:
 		ir_codes     = ir_codes_avermedia;
 		mask_keycode = 0x0007C8;
 		mask_keydown = 0x000010;
@@ -642,11 +643,7 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 		input_dev->id.vendor  = dev->pci->vendor;
 		input_dev->id.product = dev->pci->device;
 	}
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 	input_dev->dev.parent = &dev->pci->dev;
-#else
-	input_dev->cdev.dev = &dev->pci->dev;
-#endif
 
 	dev->remote = ir;
 	saa7134_ir_start(dev, ir);
@@ -838,10 +835,6 @@ static void nec_task(unsigned long data)
 				tv.tv_usec - ir->base_time.tv_usec;
 
 		if (!pulse) {
-#if 0
-			if (!ngap && gap < 4000)
-				break;
-#endif
 			/* Bit 0 has 560 us, while bit 1 has 1120 us.
 			   Do something only if bit == 1
 			 */

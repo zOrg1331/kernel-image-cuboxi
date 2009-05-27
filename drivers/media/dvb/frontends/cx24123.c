@@ -29,7 +29,6 @@
 
 #include "dvb_frontend.h"
 #include "cx24123.h"
-#include <media/compat.h>
 
 #define XTAL 10111000
 
@@ -192,17 +191,6 @@ static struct cx24123_bandselect_val {
 		.VCOdivider	= 2,
 		.progdata	= (0 << 19) | (1 << 9) | 0x40,
 	},
-#if 0
-/* This band is not useful with the /2 divider, as its center frequency
-   is approximately 2300MHz, which is outside of the tunable range. It is
-   useful only with the /4 divider, as used in band #2. */
-	{
-		.freq_low	= 2150000,
-		.freq_high	= 2356000,
-		.VCOdivider	= 2,
-		.progdata	= (0 << 19) | (1 << 9) | 0x80,
-	},
-#endif
 };
 
 static struct {
@@ -1066,9 +1054,6 @@ static u32 cx24123_tuner_i2c_func(struct i2c_adapter *adapter)
 static struct i2c_algorithm cx24123_tuner_i2c_algo = {
 	.master_xfer   = cx24123_tuner_i2c_tuner_xfer,
 	.functionality = cx24123_tuner_i2c_func,
-#ifdef NEED_ALGO_CONTROL
-	.algo_control = dummy_algo_control,
-#endif
 };
 
 struct i2c_adapter *

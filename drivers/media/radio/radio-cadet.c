@@ -37,7 +37,6 @@
 #include <linux/delay.h>	/* udelay			*/
 #include <asm/io.h>		/* outb, outb_p			*/
 #include <asm/uaccess.h>	/* copy to/from user		*/
-#include <media/compat.h>
 #include <linux/videodev2.h>	/* V4L2 API defs		*/
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
@@ -90,35 +89,6 @@ static int cadet_probe(void);
  */
 static __u16 sigtable[2][4]={{5,10,30,150},{28,40,63,1000}};
 
-#if 0
-/*
-Note: cadet_getrds() is not used at the moment. It will be useful for future
-extensions, e.g. an ioctl to query RDS reception quality. - Hans J. Koch
-*/
-static int
-cadet_getrds(void)
-{
-	int rds_mbs_stat=0;
-
-	spin_lock(&cadet_io_lock);
-	outb(3,io);                 /* Select Decoder Control/Status */
-	outb(inb(io+1)&0x7f,io+1);  /* Reset RDS detection */
-	spin_unlock(&cadet_io_lock);
-
-	msleep(100);
-
-	spin_lock(&cadet_io_lock);
-	outb(3,io);                 /* Select Decoder Control/Status */
-	if((inb(io+1)&0x80)!=0) {
-		rds_mbs_stat |= RDS_RX_FLAG;
-	}
-	if((inb(io+1)&0x10)!=0) {
-		rds_mbs_stat |= MBS_RX_FLAG;
-	}
-	spin_unlock(&cadet_io_lock);
-	return rds_mbs_stat;
-}
-#endif
 
 static int
 cadet_getstereo(void)
@@ -559,7 +529,7 @@ static int vidioc_s_audio(struct file *file, void *priv,
 }
 
 static int
-cadet_open(struct inode *inode, struct file *file)
+cadet_open(struct file *file)
 {
 	users++;
 	if (1 == users) init_waitqueue_head(&read_queue);
@@ -567,7 +537,7 @@ cadet_open(struct inode *inode, struct file *file)
 }
 
 static int
-cadet_release(struct inode *inode, struct file *file)
+cadet_release(struct file *file)
 {
 	users--;
 	if (0 == users){
@@ -587,17 +557,13 @@ cadet_poll(struct file *file, struct poll_table_struct *wait)
 }
 
 
-static const struct file_operations cadet_fops = {
+static const struct v4l2_file_operations cadet_fops = {
 	.owner		= THIS_MODULE,
 	.open		= cadet_open,
 	.release       	= cadet_release,
 	.read		= cadet_read,
 	.ioctl		= video_ioctl2,
 	.poll		= cadet_poll,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl	= v4l_compat_ioctl32,
-#endif
-	.llseek         = no_llseek,
 };
 
 static const struct v4l2_ioctl_ops cadet_ioctl_ops = {

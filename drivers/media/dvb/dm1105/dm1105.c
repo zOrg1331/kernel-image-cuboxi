@@ -330,9 +330,6 @@ static u32 functionality(struct i2c_adapter *adap)
 static struct i2c_algorithm dm1105_algo = {
 	.master_xfer   = dm1105_i2c_xfer,
 	.functionality = functionality,
-#ifdef NEED_ALGO_CONTROL
-	.algo_control = dummy_algo_control,
-#endif
 };
 
 static inline struct dm1105dvb *feed_to_dm1105dvb(struct dvb_demux_feed *feed)
@@ -434,11 +431,7 @@ static void dm1105_emit_key(unsigned long parm)
 
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 19)
-static irqreturn_t dm1105dvb_irq(int irq, void *dev_id, struct pt_regs *regs)
-#else
 static irqreturn_t dm1105dvb_irq(int irq, void *dev_id)
-#endif
 {
 	struct dm1105dvb *dm1105dvb = dev_id;
 	unsigned int piece;
@@ -703,8 +696,7 @@ static void __devinit dm1105dvb_read_mac(struct dm1105dvb *dm1105dvb, u8 *mac)
 	};
 
 	dm1105_i2c_xfer(&dm1105dvb->i2c_adap, msg , 2);
-	dev_info(&dm1105dvb->pdev->dev, "MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
-			mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+	dev_info(&dm1105dvb->pdev->dev, "MAC %pM\n", mac);
 }
 
 static int __devinit dm1105_probe(struct pci_dev *pdev,

@@ -278,9 +278,6 @@ static int smsdvb_set_frontend(struct dvb_frontend *fe,
 	case BANDWIDTH_8_MHZ: Msg.Data[1] = BW_8_MHZ; break;
 	case BANDWIDTH_7_MHZ: Msg.Data[1] = BW_7_MHZ; break;
 	case BANDWIDTH_6_MHZ: Msg.Data[1] = BW_6_MHZ; break;
-#if 0
-	case BANDWIDTH_5_MHZ: Msg.Data[1] = BW_5_MHZ; break;
-#endif
 	case BANDWIDTH_AUTO: return -EOPNOTSUPP;
 	default: return -EINVAL;
 	}
@@ -375,15 +372,9 @@ static int smsdvb_hotplug(struct smscore_device_t *coredev,
 		return 0;
 
 	if (smscore_get_device_mode(coredev) != 4) {
-#if 1 /* new siano drop (1.2.17) does this -- yuck */
 		sms_err("SMS Device mode is not set for "
 			"DVB operation.");
 		return 0;
-#else
-		rc = smscore_set_device_mode(coredev, 4);
-		if (rc < 0)
-			return rc;
-#endif
 	}
 
 	client = kzalloc(sizeof(struct smsdvb_client_t), GFP_KERNEL);

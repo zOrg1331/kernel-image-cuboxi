@@ -1,6 +1,6 @@
 Name: kernel-image-std-pae
-Version: 2.6.27
-Release: alt17
+Version: 2.6.29
+Release: alt1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -281,8 +281,11 @@ install -Dp -m644 .config %buildroot/boot/config-$KernelVer
 
 make modules_install INSTALL_MOD_PATH=%buildroot INSTALL_FW_PATH=%buildroot/lib/firmware/$KernelVer
 
+
+mkdir -p %buildroot%kbuild_dir/arch/x86
 install -d %buildroot%kbuild_dir
 cp -a include %buildroot%kbuild_dir/include
+cp -a arch/x86/include %buildroot%kbuild_dir/arch/x86
 
 # remove asm-* include files for other architectures
 pushd %buildroot%kbuild_dir/include
@@ -353,6 +356,7 @@ KbuildFiles="
 	scripts/kallsyms
 	scripts/genksyms/genksyms
 	scripts/basic/fixdep
+	scripts/basic/hash
 	scripts/extract-ikconfig
 	scripts/conmakehash
 	scripts/checkversion.pl
@@ -360,6 +364,9 @@ KbuildFiles="
 	scripts/checkconfig.pl
 	scripts/bin2c
 	scripts/gcc-version.sh
+	scripts/recordmcount.pl
+	scripts/gcc-x86_64-has-stack-protector.sh
+
 
 	.config
 	.kernelrelease
@@ -380,6 +387,8 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 
 # Provide kernel headers for userspace
 make headers_install INSTALL_HDR_PATH=%buildroot%kheaders_dir
+
+
 
 # install documentation
 %if_enabled docs
@@ -470,10 +479,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
-* Fri May 08 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt17
-- 2.6.27.22
-- fix build in new environment
-- Fix snd_card_create() backport (ALT#19978)(vsu@)
+* Mon Apr 27 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.29-alt1
+- 2.6.29.4
 
 * Wed Apr 01 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt16
 - alsa: alsa 1.0.19 repleaced by vanilla alsa with patches

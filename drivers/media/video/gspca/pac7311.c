@@ -226,7 +226,7 @@ static struct ctrl sd_ctrls[] = {
 	},
 };
 
-static struct v4l2_pix_format vga_mode[] = {
+static const struct v4l2_pix_format vga_mode[] = {
 	{160, 120, V4L2_PIX_FMT_PJPG, V4L2_FIELD_NONE,
 		.bytesperline = 160,
 		.sizeimage = 160 * 120 * 3 / 8 + 590,
@@ -408,20 +408,6 @@ static void reg_w_buf(struct gspca_dev *gspca_dev,
 			500);
 }
 
-#if 0 /* not used */
-static __u8 reg_r(struct gspca_dev *gspca_dev,
-			     __u8 index)
-{
-	usb_control_msg(gspca_dev->dev,
-			usb_rcvctrlpipe(gspca_dev->dev, 0),
-			0,			/* request */
-			USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-			0,			/* value */
-			index, gspca_dev->usb_buf, 1,
-			500);
-	return gspca_dev->usb_buf[0];
-}
-#endif
 
 static void reg_w(struct gspca_dev *gspca_dev,
 		  __u8 index,
@@ -1078,11 +1064,13 @@ static __devinitdata struct usb_device_id device_table[] = {
 	{USB_DEVICE(0x093a, 0x2608), .driver_info = SENSOR_PAC7311},
 	{USB_DEVICE(0x093a, 0x260e), .driver_info = SENSOR_PAC7311},
 	{USB_DEVICE(0x093a, 0x260f), .driver_info = SENSOR_PAC7311},
+	{USB_DEVICE(0x093a, 0x2620), .driver_info = SENSOR_PAC7302},
 	{USB_DEVICE(0x093a, 0x2621), .driver_info = SENSOR_PAC7302},
 	{USB_DEVICE(0x093a, 0x2622), .driver_info = SENSOR_PAC7302},
 	{USB_DEVICE(0x093a, 0x2624), .driver_info = SENSOR_PAC7302},
 	{USB_DEVICE(0x093a, 0x2626), .driver_info = SENSOR_PAC7302},
 	{USB_DEVICE(0x093a, 0x262a), .driver_info = SENSOR_PAC7302},
+	{USB_DEVICE(0x093a, 0x262c), .driver_info = SENSOR_PAC7302},
 	{}
 };
 MODULE_DEVICE_TABLE(usb, device_table);

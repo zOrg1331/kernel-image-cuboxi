@@ -30,7 +30,6 @@
 #include <media/v4l2-device.h>
 #include <media/v4l2-chip-ident.h>
 #include <media/v4l2-i2c-drv-legacy.h>
-#include <media/compat.h>
 
 MODULE_DESCRIPTION("i2c device driver for cs53l32a Audio ADC");
 MODULE_AUTHOR("Martin Vaughan");
@@ -103,7 +102,7 @@ static int cs53l32a_s_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 	return 0;
 }
 
-static int cs53l32a_g_chip_ident(struct v4l2_subdev *sd, struct v4l2_chip_ident *chip)
+static int cs53l32a_g_chip_ident(struct v4l2_subdev *sd, struct v4l2_dbg_chip_ident *chip)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
@@ -165,12 +164,8 @@ static int cs53l32a_probe(struct i2c_client *client,
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA))
 		return -EIO;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
-	snprintf(client->name, sizeof(client->name) - 1, "cs53l32a");
-#else
 	if (!id)
 		strlcpy(client->name, "cs53l32a", sizeof(client->name));
-#endif
 
 	v4l_info(client, "chip found @ 0x%x (%s)\n",
 			client->addr << 1, client->adapter->name);
@@ -215,21 +210,17 @@ static int cs53l32a_remove(struct i2c_client *client)
 	return 0;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id cs53l32a_id[] = {
 	{ "cs53l32a", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, cs53l32a_id);
 
-#endif
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "cs53l32a",
 	.driverid = I2C_DRIVERID_CS53L32A,
 	.command = cs53l32a_command,
 	.remove = cs53l32a_remove,
 	.probe = cs53l32a_probe,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = cs53l32a_id,
-#endif
 };

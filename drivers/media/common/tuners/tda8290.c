@@ -22,7 +22,6 @@
 
 #include <linux/i2c.h>
 #include <linux/delay.h>
-#include <media/compat.h>
 #include <linux/videodev.h>
 #include "tuner-i2c.h"
 #include "tda8290.h"
@@ -78,7 +77,6 @@ static int tda8290_i2c_bridge(struct dvb_frontend *fe, int close)
 	return 0;
 }
 
-#if 1
 static int tda8295_i2c_bridge(struct dvb_frontend *fe, int close)
 {
 	struct tda8290_priv *priv = fe->analog_demod_priv;
@@ -109,27 +107,6 @@ static int tda8295_i2c_bridge(struct dvb_frontend *fe, int close)
 
 	return 0;
 }
-#else
-static int tda8295_i2c_bridge(struct dvb_frontend *fe, int close)
-{
-	struct tda8290_priv *priv = fe->analog_demod_priv;
-
-	unsigned char buf[] = { 0x45, 0x00 };
-
-	tuner_i2c_xfer_send(&priv->i2c_props, &buf[0], 1);
-	tuner_i2c_xfer_recv(&priv->i2c_props, &buf[1], 1);
-
-	buf[1] &= 0x3f;
-	if (close)
-		buf[1] |= 0xc0;
-	else
-		buf[1] |= 0x80;
-
-	tuner_i2c_xfer_send(&priv->i2c_props, buf, 2);
-
-	return 0;
-}
-#endif
 
 /*---------------------------------------------------------------------*/
 
@@ -173,7 +150,7 @@ static void set_audio(struct dvb_frontend *fe,
 	}
 }
 
-struct {
+static struct {
 	unsigned char seq[2];
 } fm_mode[] = {
 	{ { 0x01, 0x81} },	/* Put device into expert mode */
@@ -230,7 +207,6 @@ static void tda8290_set_params(struct dvb_frontend *fe,
 	msleep(1);
 
 	if (params->mode == V4L2_TUNER_RADIO) {
-		int i;
 		unsigned char deemphasis[]  = { 0x13, 1 };
 
 		/* FIXME: allow using a different deemphasis */
@@ -796,9 +772,6 @@ struct dvb_frontend *tda829x_attach(struct dvb_frontend *fe,
 	} else if (priv->ver & TDA8295)
 		tda8295_init_if(fe);
 
-#if 0
-	t->mode = V4L2_TUNER_ANALOG_TV;
-#endif
 	return fe;
 
 fail:

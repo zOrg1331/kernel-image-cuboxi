@@ -341,20 +341,6 @@ struct dtv_frontend_properties {
 	fe_rolloff_t		rolloff;
 
 	fe_delivery_system_t	delivery_system;
-#if 0
-	/* ISDB-T specifics */
-	u32			isdb_segment_idx;
-	u32			isdb_segment_width;
-	fe_code_rate_t		isdb_layera_fec;
-	fe_modulation_t		isdb_layera_modulation;
-	u32			isdb_layera_segment_width;
-	fe_code_rate_t		isdb_layerb_fec;
-	fe_modulation_t		isdb_layerb_modulation;
-	u32			isdb_layerb_segment_width;
-	fe_code_rate_t		isdb_layerc_fec;
-	fe_modulation_t		isdb_layerc_modulation;
-	u32			isdb_layerc_segment_width;
-#endif
 };
 
 struct dvb_frontend {

@@ -165,39 +165,6 @@ static void cx18_dualwatch(struct cx18 *cx)
 	CX18_DEBUG_INFO("dualwatch: changing stereo flag failed\n");
 }
 
-#if 0
-static void cx18_update_pgm_info(struct cx18 *cx)
-{
-	u32 wr_idx = (cx18_read_enc(cx, cx->pgm_info_offset)
-			- cx->pgm_info_offset - 4) / 24;
-	int cnt;
-	int i = 0;
-
-	if (wr_idx >= cx->pgm_info_num) {
-		CX18_DEBUG_WARN("Invalid PGM index %d (>= %d)\n", wr_idx, cx->pgm_info_num);
-		return;
-	}
-	cnt = (wr_idx + cx->pgm_info_num - cx->pgm_info_write_idx) % cx->pgm_info_num;
-	while (i < cnt) {
-		int idx = (cx->pgm_info_write_idx + i) % cx->pgm_info_num;
-		struct v4l2_enc_idx_entry *e = cx->pgm_info + idx;
-		u32 addr = cx->pgm_info_offset + 4 + idx * 24;
-		const int mapping[] = { V4L2_ENC_IDX_FRAME_P, V4L2_ENC_IDX_FRAME_I, V4L2_ENC_IDX_FRAME_B, 0 };
-
-		e->offset = cx18_read_enc(cx, addr + 4)
-				+ ((u64)cx18_read_enc(cx, addr + 8) << 32);
-		if (e->offset > cx->mpg_data_received)
-			break;
-		e->offset += cx->vbi_data_inserted;
-		e->length = cx18_read_enc(cx, addr);
-		e->pts = cx18_read_enc(cx, addr + 16)
-			 + ((u64)(cx18_read_enc(cx, addr + 20) & 1) << 32);
-		e->flags = mapping[cx18_read_enc(cx, addr + 12) & 3];
-		i++;
-	}
-	cx->pgm_info_write_idx = (cx->pgm_info_write_idx + i) % cx->pgm_info_num;
-}
-#endif
 
 static struct cx18_buffer *cx18_get_buffer(struct cx18_stream *s, int non_block, int *err)
 {
@@ -209,11 +176,6 @@ static struct cx18_buffer *cx18_get_buffer(struct cx18_stream *s, int non_block,
 	*err = 0;
 	while (1) {
 		if (s->type == CX18_ENC_STREAM_TYPE_MPG) {
-#if 0
-			/* Process pending program info updates and pending
-			   VBI data */
-			cx18_update_pgm_info(cx);
-#endif
 
 			if (time_after(jiffies, cx->dualwatch_jiffies + msecs_to_jiffies(1000))) {
 				cx->dualwatch_jiffies = jiffies;
@@ -590,7 +552,7 @@ void cx18_stop_capture(struct cx18_open_id *id, int gop_end)
 	}
 }
 
-int cx18_v4l2_close(struct inode *inode, struct file *filp)
+int cx18_v4l2_close(struct file *filp)
 {
 	struct cx18_open_id *id = filp->private_data;
 	struct cx18 *cx = id->cx;
@@ -688,12 +650,12 @@ static int cx18_serialized_open(struct cx18_stream *s, struct file *filp)
 	return 0;
 }
 
-int cx18_v4l2_open(struct inode *inode, struct file *filp)
+int cx18_v4l2_open(struct file *filp)
 {
 	int res, x, y = 0;
 	struct cx18 *cx = NULL;
 	struct cx18_stream *s = NULL;
-	int minor = iminor(inode);
+	int minor = video_devdata(filp)->minor;
 
 	/* Find which card this open was on */
 	spin_lock(&cx18_cards_lock);

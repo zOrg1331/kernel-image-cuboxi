@@ -500,9 +500,6 @@ static u32 af9005_i2c_func(struct i2c_adapter *adapter)
 static struct i2c_algorithm af9005_i2c_algo = {
 	.master_xfer = af9005_i2c_xfer,
 	.functionality = af9005_i2c_func,
-#ifdef NEED_ALGO_CONTROL
-	.algo_control = dummy_algo_control,
-#endif
 };
 
 int af9005_send_command(struct dvb_usb_device *d, u8 command, u8 * wbuf,

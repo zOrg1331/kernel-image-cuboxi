@@ -29,12 +29,8 @@
 
 #ifndef _DVB_USB_CINERGYT2_H_
 #define _DVB_USB_CINERGYT2_H_
-#include <linux/version.h>
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 18)
+
 #include <linux/usb/input.h>
-#else
-#include <linux/usb_input.h>
-#endif
 
 #define DVB_USB_LOG_PREFIX "cinergyT2"
 #include "dvb-usb.h"

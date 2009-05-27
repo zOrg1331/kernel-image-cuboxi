@@ -21,7 +21,6 @@
 #include <linux/time.h>
 #include <linux/wait.h>
 #include <linux/module.h>
-#include <media/compat.h>
 #include <sound/core.h>
 #include <sound/control.h>
 #include <sound/pcm.h>
@@ -207,11 +206,7 @@ static void saa7134_irq_alsa_done(struct saa7134_dev *dev,
  *
  */
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static irqreturn_t saa7134_alsa_irq(int irq, void *dev_id, struct pt_regs *regs)
-#else
 static irqreturn_t saa7134_alsa_irq(int irq, void *dev_id)
-#endif
 {
 	struct saa7134_dmasound *dmasound = dev_id;
 	struct saa7134_dev *dev = dmasound->priv_data;
@@ -493,10 +488,12 @@ static int snd_card_saa7134_hw_params(struct snd_pcm_substream * substream,
 	period_size = params_period_bytes(hw_params);
 	periods = params_periods(hw_params);
 
-	if (snd_BUG_ON(period_size <= 0x100 || period_size >= 0x10000))
-		   return -EINVAL;
-	if (snd_BUG_ON(periods <= 4)) return -EINVAL;
-	if (snd_BUG_ON(period_size * periods >= 1024 * 1024)) return -EINVAL;
+	if (period_size < 0x100 || period_size > 0x10000)
+		return -EINVAL;
+	if (periods < 4)
+		return -EINVAL;
+	if (period_size * periods > 1024 * 1024)
+		return -EINVAL;
 
 	dev = saa7134->dev;
 
@@ -993,10 +990,10 @@ static int alsa_card_saa7134_create(struct saa7134_dev *dev, int devnum)
 	if (!enable[devnum])
 		return -ENODEV;
 
-	err = snd_card_create(index[devnum], id[devnum], THIS_MODULE, sizeof(snd_card_saa7134_t), &card);
-
+	err = snd_card_create(index[devnum], id[devnum], THIS_MODULE,
+			      sizeof(snd_card_saa7134_t), &card);
 	if (err < 0)
-		return -ENOMEM;
+		return err;
 
 	strcpy(card->driver, "SAA7134");
 
@@ -1092,7 +1089,11 @@ static int saa7134_alsa_init(void)
 
 	list_for_each(list,&saa7134_devlist) {
 		dev = list_entry(list, struct saa7134_dev, devlist);
-		alsa_device_init(dev);
+		if (dev->pci->device == PCI_DEVICE_ID_PHILIPS_SAA7130)
+			printk(KERN_INFO "%s/alsa: %s doesn't support digital audio\n",
+				dev->name, saa7134_boards[dev->board].name);
+		else
+			alsa_device_init(dev);
 	}
 
 	if (dev == NULL)

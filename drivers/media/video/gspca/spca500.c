@@ -111,7 +111,7 @@ static struct ctrl sd_ctrls[] = {
 	},
 };
 
-static struct v4l2_pix_format vga_mode[] = {
+static const struct v4l2_pix_format vga_mode[] = {
 	{320, 240, V4L2_PIX_FMT_JPEG, V4L2_FIELD_NONE,
 		.bytesperline = 320,
 		.sizeimage = 320 * 240 * 3 / 8 + 590,
@@ -124,7 +124,7 @@ static struct v4l2_pix_format vga_mode[] = {
 		.priv = 0},
 };
 
-static struct v4l2_pix_format sif_mode[] = {
+static const struct v4l2_pix_format sif_mode[] = {
 	{176, 144, V4L2_PIX_FMT_JPEG, V4L2_FIELD_NONE,
 		.bytesperline = 176,
 		.sizeimage = 176 * 144 * 3 / 8 + 590,
@@ -151,23 +151,6 @@ static struct v4l2_pix_format sif_mode[] = {
 #define SPCA500_OFFSET_AUGPIO    12
 #define SPCA500_OFFSET_DATA      16
 
-#if 0
-static const __u16 spca500_read_stats[][3] = {
-	{0x0c, 0x0000, 0x0000},
-	{0x30, 0x03fd, 0x0001},
-	/* possible values for following call: 0x01b3, 0x01e6, 0x01f7, 0x0218 */
-	{0x30, 0x01b3, 0x0002},
-	/* possible values for following call: 0x0000, 0x0001, 0x0002 */
-	{0x30, 0x0000, 0x0003},
-	{0x30, 0x003b, 0x0004},
-	/* possible values for following call: 0x00aa, 0x00e0 */
-	{0x30, 0x00e0, 0x0005},
-	{0x30, 0x0001, 0x0006},
-	{0x30, 0x0080, 0x0007},
-	{0x30, 0x0004, 0x0000},
-	{}
-};
-#endif
 
 static const __u16 spca500_visual_defaults[][3] = {
 	{0x00, 0x0003, 0x816b},	/* SSI not active sync with vsync,

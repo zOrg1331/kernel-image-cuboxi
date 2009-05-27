@@ -736,10 +736,16 @@ config MT9M001_PCA9536_SWITCH
 	  extender to switch between 8 and 10 bit datawidth modes
 
 config SOC_CAMERA_MT9M111
-	tristate "mt9m111 support"
+	tristate "mt9m111 and mt9m112 support"
 	depends on SOC_CAMERA && I2C
 	help
-	  This driver supports MT9M111 cameras from Micron
+	  This driver supports MT9M111 and MT9M112 cameras from Micron
+
+config SOC_CAMERA_MT9T031
+	tristate "mt9t031 support"
+	depends on SOC_CAMERA && I2C
+	help
+	  This driver supports MT9T031 cameras from Micron.
 
 config SOC_CAMERA_MT9V022
 	tristate "mt9v022 support"
@@ -754,6 +760,12 @@ config MT9V022_PCA9536_SWITCH
 	help
 	  Select this if your MT9V022 camera uses a PCA9536 I2C GPIO
 	  extender to switch between 8 and 10 bit datawidth modes
+
+config SOC_CAMERA_TW9910
+	tristate "tw9910 support"
+	depends on SOC_CAMERA && I2C
+	help
+	  This is a tw9910 video driver
 
 config SOC_CAMERA_PLATFORM
 	tristate "platform camera support"
@@ -776,7 +788,7 @@ config VIDEO_PXA27x
 
 config VIDEO_SH_MOBILE_CEU
 	tristate "SuperH Mobile CEU Interface driver"
-	depends on VIDEO_DEV && SOC_CAMERA && HAS_DMA
+	depends on VIDEO_DEV && SOC_CAMERA && HAS_DMA && HAVE_CLK
 	select VIDEOBUF_DMA_CONTIG
 	---help---
 	  This is a v4l2 driver for the SuperH Mobile CEU Interface

@@ -30,9 +30,11 @@
 #include <linux/init_task.h>
 #include <linux/module.h>
 #include <linux/kallsyms.h>
+#include <linux/perfctr.h>
 #include <linux/mqueue.h>
 #include <linux/hardirq.h>
 #include <linux/utsname.h>
+#include <linux/kernel_stat.h>
 
 #include <asm/pgtable.h>
 #include <asm/uaccess.h>
@@ -405,8 +407,10 @@ struct task_struct *__switch_to(struct task_struct *prev,
 	 * window where the kernel stack SLB and the kernel stack are out
 	 * of sync. Hard disable here.
 	 */
+	perfctr_suspend_thread(&prev->thread);
 	hard_irq_disable();
 	last = _switch(old_thread, new_thread);
+	perfctr_resume_thread(&current->thread);
 
 	local_irq_restore(flags);
 
@@ -467,6 +471,8 @@ static struct regbit {
 	{MSR_VEC,	"VEC"},
 	{MSR_VSX,	"VSX"},
 	{MSR_ME,	"ME"},
+	{MSR_CE,	"CE"},
+	{MSR_DE,	"DE"},
 	{MSR_IR,	"IR"},
 	{MSR_DR,	"DR"},
 	{0,		NULL}
@@ -544,6 +550,7 @@ void show_regs(struct pt_regs * regs)
 void exit_thread(void)
 {
 	discard_lazy_cpu_state();
+	perfctr_exit_thread(&current->thread);
 }
 
 void flush_thread(void)
@@ -669,6 +676,8 @@ int copy_thread(int nr, unsigned long clone_flags, unsigned long usp,
 #else
 	kregs->nip = (unsigned long)ret_from_fork;
 #endif
+
+	perfctr_copy_task(p, regs);
 
 	return 0;
 }
@@ -998,7 +1007,7 @@ unsigned long get_wchan(struct task_struct *p)
 	return 0;
 }
 
-static int kstack_depth_to_print = 64;
+static int kstack_depth_to_print = CONFIG_PRINT_STACK_DEPTH;
 
 void show_stack(struct task_struct *tsk, unsigned long *stack)
 {

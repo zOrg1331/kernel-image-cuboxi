@@ -57,7 +57,6 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/delay.h>
-#include <media/compat.h>
 #include <linux/videodev2.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
@@ -161,7 +160,7 @@ static inline void w9966_pdev_release(struct w9966_dev *vdev);
 
 static int w9966_rReg(struct w9966_dev* cam, int reg);
 static int w9966_wReg(struct w9966_dev* cam, int reg, int data);
-#if 0 /* keep */
+#if 0
 static int w9966_rReg_i2c(struct w9966_dev* cam, int reg);
 #endif
 static int w9966_wReg_i2c(struct w9966_dev* cam, int reg, int data);
@@ -177,23 +176,23 @@ static inline int  w9966_i2c_setscl(struct w9966_dev* cam, int state);
 static inline int  w9966_i2c_getsda(struct w9966_dev* cam);
 static inline int  w9966_i2c_getscl(struct w9966_dev* cam);
 static int w9966_i2c_wbyte(struct w9966_dev* cam, int data);
-#if 0 /* keep */
+#if 0
 static int w9966_i2c_rbyte(struct w9966_dev* cam);
 #endif
 
-static int w9966_v4l_ioctl(struct inode *inode, struct file *file,
+static long w9966_v4l_ioctl(struct file *file,
 			   unsigned int cmd, unsigned long arg);
 static ssize_t w9966_v4l_read(struct file *file, char __user *buf,
 			      size_t count, loff_t *ppos);
 
-static int w9966_exclusive_open(struct inode *inode, struct file *file)
+static int w9966_exclusive_open(struct file *file)
 {
 	struct w9966_dev *cam = video_drvdata(file);
 
 	return test_and_set_bit(0, &cam->in_use) ? -EBUSY : 0;
 }
 
-static int w9966_exclusive_release(struct inode *inode, struct file *file)
+static int w9966_exclusive_release(struct file *file)
 {
 	struct w9966_dev *cam = video_drvdata(file);
 
@@ -201,16 +200,12 @@ static int w9966_exclusive_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static const struct file_operations w9966_fops = {
+static const struct v4l2_file_operations w9966_fops = {
 	.owner		= THIS_MODULE,
 	.open           = w9966_exclusive_open,
 	.release        = w9966_exclusive_release,
 	.ioctl          = w9966_v4l_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl	= v4l_compat_ioctl32,
-#endif
 	.read           = w9966_v4l_read,
-	.llseek         = no_llseek,
 };
 static struct video_device w9966_template = {
 	.name           = W9966_DRIVERNAME,
@@ -641,7 +636,7 @@ static int w9966_i2c_wbyte(struct w9966_dev* cam, int data)
 
 // Read a data byte with ack from the i2c-bus
 // Expects a claimed pdev. -1 on error
-#if 0 /* keep */
+#if 0
 static int w9966_i2c_rbyte(struct w9966_dev* cam)
 {
 	unsigned char data = 0x00;
@@ -665,7 +660,7 @@ static int w9966_i2c_rbyte(struct w9966_dev* cam)
 
 // Read a register from the i2c device.
 // Expects claimed pdev. -1 on error
-#if 0 /* keep */
+#if 0
 static int w9966_rReg_i2c(struct w9966_dev* cam, int reg)
 {
 	int data;
@@ -728,7 +723,7 @@ static int w9966_wReg_i2c(struct w9966_dev* cam, int reg, int data)
  *	Video4linux interfacing
  */
 
-static int w9966_v4l_do_ioctl(struct file *file, unsigned int cmd, void *arg)
+static long w9966_v4l_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 {
 	struct w9966_dev *cam = video_drvdata(file);
 
@@ -878,7 +873,7 @@ static int w9966_v4l_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 	return 0;
 }
 
-static int w9966_v4l_ioctl(struct inode *inode, struct file *file,
+static long w9966_v4l_ioctl(struct file *file,
 			   unsigned int cmd, unsigned long arg)
 {
 	return video_usercopy(file, cmd, arg, w9966_v4l_do_ioctl);

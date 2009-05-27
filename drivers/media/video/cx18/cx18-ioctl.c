@@ -102,21 +102,6 @@ void cx18_expand_service_set(struct v4l2_sliced_vbi_format *fmt, int is_pal)
 	}
 }
 
-#if 0
-static int check_service_set(struct v4l2_sliced_vbi_format *fmt, int is_pal)
-{
-	int f, l;
-	u16 set = 0;
-
-	for (f = 0; f < 2; f++) {
-		for (l = 0; l < 24; l++) {
-			fmt->service_lines[f][l] = select_service_from_set(f, l, fmt->service_lines[f][l], is_pal);
-			set |= fmt->service_lines[f][l];
-		}
-	}
-	return set != 0;
-}
-#endif
 
 u16 cx18_get_service_set(struct v4l2_sliced_vbi_format *fmt)
 {
@@ -179,22 +164,7 @@ static int cx18_g_fmt_vbi_cap(struct file *file, void *fh,
 static int cx18_g_fmt_sliced_vbi_cap(struct file *file, void *fh,
 					struct v4l2_format *fmt)
 {
-#if 0
-	/* Supported by the cx23418 but not yet implemented. */
-	struct cx18 *cx = ((struct cx18_open_id *)fh)->cx;
-	struct v4l2_sliced_vbi_format *vbifmt = &fmt->fmt.sliced;
-
-	vbifmt->reserved[0] = 0;
-	vbifmt->reserved[1] = 0;
-	vbifmt->io_size = sizeof(struct v4l2_sliced_vbi_data) * 36;
-	memset(vbifmt->service_lines, 0, sizeof(vbifmt->service_lines));
-
-	cx18_av_cmd(cx, VIDIOC_G_FMT, fmt);
-	vbifmt->service_set = cx18_get_service_set(vbifmt);
-	return 0;
-#else
 	return -EINVAL;
-#endif
 }
 
 static int cx18_try_fmt_vid_cap(struct file *file, void *fh,
@@ -224,23 +194,7 @@ static int cx18_try_fmt_vbi_cap(struct file *file, void *fh,
 static int cx18_try_fmt_sliced_vbi_cap(struct file *file, void *fh,
 					struct v4l2_format *fmt)
 {
-#if 0
-	/* Supported by the cx23418 but not yet implemented. */
-	struct cx18 *cx = ((struct cx18_open_id *)fh)->cx;
-	struct v4l2_sliced_vbi_format *vbifmt = &fmt->fmt.sliced;
-
-	vbifmt->io_size = sizeof(struct v4l2_sliced_vbi_data) * 36;
-	vbifmt->reserved[0] = 0;
-	vbifmt->reserved[1] = 0;
-
-	if (vbifmt->service_set)
-		cx18_expand_service_set(vbifmt, cx->is_50hz);
-	check_service_set(vbifmt, cx->is_50hz);
-	vbifmt->service_set = cx18_get_service_set(vbifmt);
-	return 0;
-#else
 	return -EINVAL;
-#endif
 }
 
 static int cx18_s_fmt_vid_cap(struct file *file, void *fh,
@@ -296,60 +250,28 @@ static int cx18_s_fmt_vbi_cap(struct file *file, void *fh,
 static int cx18_s_fmt_sliced_vbi_cap(struct file *file, void *fh,
 					struct v4l2_format *fmt)
 {
-#if 0
-	/* Supported by the cx23418 but not yet implemented. */
-	struct cx18_open_id *id = fh;
-	struct cx18 *cx = id->cx;
-	int ret;
-	struct v4l2_sliced_vbi_format *vbifmt = &fmt->fmt.sliced;
-
-	ret = v4l2_prio_check(&cx->prio, &id->prio);
-	if (ret)
-		return ret;
-
-	ret = cx18_try_fmt_sliced_vbi_cap(file, fh, fmt);
-	if (ret)
-		return ret;
-
-	if (check_service_set(vbifmt, cx->is_50hz) == 0)
-		return -EINVAL;
-
-	if (cx18_raw_vbi(cx) && atomic_read(&cx->ana_capturing) > 0)
-		return -EBUSY;
-	cx->vbi.in.type =  V4L2_BUF_TYPE_SLICED_VBI_CAPTURE;
-	cx18_av_cmd(cx, VIDIOC_S_FMT, fmt);
-	memcpy(cx->vbi.sliced_in, vbifmt, sizeof(*cx->vbi.sliced_in));
-	return 0;
-#else
 	return -EINVAL;
-#endif
 }
 
 static int cx18_g_chip_ident(struct file *file, void *fh,
-				struct v4l2_chip_ident *chip)
+				struct v4l2_dbg_chip_ident *chip)
 {
 	struct cx18 *cx = ((struct cx18_open_id *)fh)->cx;
 
 	chip->ident = V4L2_IDENT_NONE;
 	chip->revision = 0;
-	if (chip->match_type == V4L2_CHIP_MATCH_HOST) {
-		if (v4l2_chip_match_host(chip->match_type, chip->match_chip))
-			chip->ident = V4L2_IDENT_CX23418;
+	if (v4l2_chip_match_host(&chip->match)) {
+		chip->ident = V4L2_IDENT_CX23418;
 		return 0;
 	}
-	if (chip->match_type == V4L2_CHIP_MATCH_I2C_DRIVER)
-		return cx18_i2c_id(cx, chip->match_chip, VIDIOC_G_CHIP_IDENT,
-					chip);
-	if (chip->match_type == V4L2_CHIP_MATCH_I2C_ADDR)
-		return cx18_call_i2c_client(cx, chip->match_chip,
-						VIDIOC_G_CHIP_IDENT, chip);
-	return -EINVAL;
+	cx18_call_i2c_clients(cx, VIDIOC_DBG_G_CHIP_IDENT, chip);
+	return 0;
 }
 
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 static int cx18_cxc(struct cx18 *cx, unsigned int cmd, void *arg)
 {
-	struct v4l2_register *regs = arg;
+	struct v4l2_dbg_register *regs = arg;
 	unsigned long flags;
 
 	if (!capable(CAP_SYS_ADMIN))
@@ -358,6 +280,7 @@ static int cx18_cxc(struct cx18 *cx, unsigned int cmd, void *arg)
 		return -EINVAL;
 
 	spin_lock_irqsave(&cx18_cards_lock, flags);
+	regs->size = 4;
 	if (cmd == VIDIOC_DBG_G_REGISTER)
 		regs->val = cx18_read_enc(cx, regs->reg);
 	else
@@ -367,31 +290,25 @@ static int cx18_cxc(struct cx18 *cx, unsigned int cmd, void *arg)
 }
 
 static int cx18_g_register(struct file *file, void *fh,
-				struct v4l2_register *reg)
+				struct v4l2_dbg_register *reg)
 {
 	struct cx18 *cx = ((struct cx18_open_id *)fh)->cx;
 
-	if (v4l2_chip_match_host(reg->match_type, reg->match_chip))
+	if (v4l2_chip_match_host(&reg->match))
 		return cx18_cxc(cx, VIDIOC_DBG_G_REGISTER, reg);
-	if (reg->match_type == V4L2_CHIP_MATCH_I2C_DRIVER)
-		return cx18_i2c_id(cx, reg->match_chip, VIDIOC_DBG_G_REGISTER,
-					reg);
-	return cx18_call_i2c_client(cx, reg->match_chip, VIDIOC_DBG_G_REGISTER,
-					reg);
+	cx18_call_i2c_clients(cx, VIDIOC_DBG_G_REGISTER, reg);
+	return 0;
 }
 
 static int cx18_s_register(struct file *file, void *fh,
-				struct v4l2_register *reg)
+				struct v4l2_dbg_register *reg)
 {
 	struct cx18 *cx = ((struct cx18_open_id *)fh)->cx;
 
-	if (v4l2_chip_match_host(reg->match_type, reg->match_chip))
+	if (v4l2_chip_match_host(&reg->match))
 		return cx18_cxc(cx, VIDIOC_DBG_S_REGISTER, reg);
-	if (reg->match_type == V4L2_CHIP_MATCH_I2C_DRIVER)
-		return cx18_i2c_id(cx, reg->match_chip, VIDIOC_DBG_S_REGISTER,
-					reg);
-	return cx18_call_i2c_client(cx, reg->match_chip, VIDIOC_DBG_S_REGISTER,
-					reg);
+	cx18_call_i2c_clients(cx, VIDIOC_DBG_S_REGISTER, reg);
+	return 0;
 }
 #endif
 
@@ -681,46 +598,13 @@ static int cx18_g_tuner(struct file *file, void *fh, struct v4l2_tuner *vt)
 static int cx18_g_sliced_vbi_cap(struct file *file, void *fh,
 					struct v4l2_sliced_vbi_cap *cap)
 {
-#if 0
-	/* Supported by the cx23418 but not yet implemented. */
-	struct cx18 *cx = ((struct cx18_open_id *)fh)->cx;
-	int set = cx->is_50hz ? V4L2_SLICED_VBI_625 : V4L2_SLICED_VBI_525;
-	int f, l;
-
-	if (cap->type == V4L2_BUF_TYPE_SLICED_VBI_CAPTURE) {
-		for (f = 0; f < 2; f++) {
-			for (l = 0; l < 24; l++) {
-				if (valid_service_line(f, l, cx->is_50hz))
-					cap->service_lines[f][l] = set;
-			}
-		}
-		return 0;
-	}
-#endif
 	return -EINVAL;
 }
 
 static int cx18_g_enc_index(struct file *file, void *fh,
 				struct v4l2_enc_idx *idx)
 {
-#if 0
-	/* Supported by the cx23418 but not yet implemented. */
-	struct cx18 *cx = ((struct cx18_open_id *)fh)->cx;
-	int i;
-
-	idx->entries = (cx->pgm_info_write_idx + CX18_MAX_PGM_INDEX
-			- cx->pgm_info_read_idx) % CX18_MAX_PGM_INDEX;
-	if (idx->entries > V4L2_ENC_IDX_ENTRIES)
-		idx->entries = V4L2_ENC_IDX_ENTRIES;
-	for (i = 0; i < idx->entries; i++)
-		idx->entry[i] = cx->pgm_info [(cx->pgm_info_read_idx + i)
-							% CX18_MAX_PGM_INDEX];
-	cx->pgm_info_read_idx =
-		(cx->pgm_info_read_idx + idx->entries) % CX18_MAX_PGM_INDEX;
-	return 0;
-#else
 	return -EINVAL;
-#endif
 }
 
 static int cx18_encoder_cmd(struct file *file, void *fh,
@@ -860,7 +744,7 @@ static int cx18_log_status(struct file *file, void *fh)
 	return 0;
 }
 
-static int cx18_default(struct file *file, void *fh, int cmd, void *arg)
+static long cx18_default(struct file *file, void *fh, int cmd, void *arg)
 {
 	struct cx18 *cx = ((struct cx18_open_id *)fh)->cx;
 
@@ -888,19 +772,19 @@ static int cx18_default(struct file *file, void *fh, int cmd, void *arg)
 	return 0;
 }
 
-int cx18_v4l2_ioctl(struct inode *inode, struct file *filp, unsigned int cmd,
+long cx18_v4l2_ioctl(struct file *filp, unsigned int cmd,
 		    unsigned long arg)
 {
 	struct video_device *vfd = video_devdata(filp);
 	struct cx18_open_id *id = (struct cx18_open_id *)filp->private_data;
 	struct cx18 *cx = id->cx;
-	int res;
+	long res;
 
 	mutex_lock(&cx->serialize_lock);
 
 	if (cx18_debug & CX18_DBGFLG_IOCTL)
 		vfd->debug = V4L2_DEBUG_IOCTL | V4L2_DEBUG_IOCTL_ARG;
-	res = video_ioctl2(inode, filp, cmd, arg);
+	res = video_ioctl2(filp, cmd, arg);
 	vfd->debug = 0;
 	mutex_unlock(&cx->serialize_lock);
 	return res;

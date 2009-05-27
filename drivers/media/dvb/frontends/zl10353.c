@@ -25,7 +25,6 @@
 #include <linux/delay.h>
 #include <linux/string.h>
 #include <linux/slab.h>
-#include <media/compat.h>
 #include <asm/div64.h>
 
 #include "dvb_frontend.h"
@@ -47,9 +46,7 @@ static int debug;
 		if (debug) printk(KERN_DEBUG "zl10353: " args); \
 	} while (0)
 
-#if 1
 static int debug_regs;
-#endif
 
 static int zl10353_single_write(struct dvb_frontend *fe, u8 reg, u8 val)
 {
@@ -98,7 +95,6 @@ static int zl10353_read_register(struct zl10353_state *state, u8 reg)
 	return b1[0];
 }
 
-#if 1
 static void zl10353_dump_regs(struct dvb_frontend *fe)
 {
 	struct zl10353_state *state = fe->demodulator_priv;
@@ -124,7 +120,6 @@ static void zl10353_dump_regs(struct dvb_frontend *fe)
 	}
 	printk(KERN_DEBUG "%s\n", buf);
 }
-#endif
 
 static void zl10353_calc_nominal_rate(struct dvb_frontend *fe,
 				      enum fe_bandwidth bandwidth,
@@ -537,10 +532,8 @@ static int zl10353_read_snr(struct dvb_frontend *fe, u16 *snr)
 	struct zl10353_state *state = fe->demodulator_priv;
 	u8 _snr;
 
-#if 1
 	if (debug_regs)
 		zl10353_dump_regs(fe);
-#endif
 
 	_snr = zl10353_read_register(state, SNR);
 	*snr = (_snr << 8) | _snr;
@@ -575,10 +568,8 @@ static int zl10353_init(struct dvb_frontend *fe)
 	u8 zl10353_reset_attach[6] = { 0x50, 0x03, 0x64, 0x46, 0x15, 0x0F };
 	int rc = 0;
 
-#if 1
 	if (debug_regs)
 		zl10353_dump_regs(fe);
-#endif
 	if (state->config.parallel_ts)
 		zl10353_reset_attach[2] &= ~0x20;
 
@@ -587,10 +578,8 @@ static int zl10353_init(struct dvb_frontend *fe)
 	    zl10353_read_register(state, 0x51) != zl10353_reset_attach[2]) {
 		rc = zl10353_write(fe, zl10353_reset_attach,
 				   sizeof(zl10353_reset_attach));
-#if 1
 		if (debug_regs)
 			zl10353_dump_regs(fe);
-#endif
 	}
 
 	return 0;
@@ -598,7 +587,14 @@ static int zl10353_init(struct dvb_frontend *fe)
 
 static int zl10353_i2c_gate_ctrl(struct dvb_frontend* fe, int enable)
 {
+	struct zl10353_state *state = fe->demodulator_priv;
 	u8 val = 0x0a;
+
+	if (state->config.disable_i2c_gate_ctrl) {
+		/* No tuner attached to the internal I2C bus */
+		/* If set enable I2C bridge, the main I2C bus stopped hardly */
+		return 0;
+	}
 
 	if (enable)
 		val |= 0x10;
@@ -681,10 +677,8 @@ static struct dvb_frontend_ops zl10353_ops = {
 module_param(debug, int, 0644);
 MODULE_PARM_DESC(debug, "Turn on/off frontend debugging (default:off).");
 
-#if 1
 module_param(debug_regs, int, 0644);
 MODULE_PARM_DESC(debug_regs, "Turn on/off frontend register dumps (default:off).");
-#endif
 
 MODULE_DESCRIPTION("Zarlink ZL10353 DVB-T demodulator driver");
 MODULE_AUTHOR("Chris Pascoe");

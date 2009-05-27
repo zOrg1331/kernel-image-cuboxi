@@ -332,24 +332,6 @@ static int si21_readregs(struct si21xx_state *state, u8 reg1, u8 *b, u8 len)
 
 	return ret == 2 ? 0 : -1;
 }
-#if 0
-static int si21xx_wait_diseqc_fifo(struct si21xx_state *state, int timeout)
-{
-	unsigned long start = jiffies;
-
-	dprintk("%s\n", __func__);
-
-	while (((si21_readreg(state, 0xc4) >> 7) & 1) == 0) {
-		if (jiffies - start > timeout) {
-			dprintk("%s: timeout!!\n", __func__);
-			return -ETIMEDOUT;
-		}
-		msleep(10);
-	};
-
-	return 0;
-}
-#endif
 
 static int si21xx_wait_diseqc_idle(struct si21xx_state *state, int timeout)
 {
@@ -401,35 +383,6 @@ static int si21xx_send_diseqc_msg(struct dvb_frontend *fe,
 					struct dvb_diseqc_master_cmd *m)
 {
 	struct si21xx_state *state = fe->demodulator_priv;
-#if 0
-	u8 val;
-	int i;
-
-		if (si21xx_wait_diseqc_idle(state, 100) < 0)
-			return -ETIMEDOUT;
-
-		val = si21_readreg(state, 0x08);
-		/* DiSEqC mode */
-		if (si21_writereg(state, 0x08, (val & ~0x7) | 0x6))
-			return -EREMOTEIO;
-
-		for (i = 0; i < m->msg_len; i++) {
-			if (si21xx_wait_diseqc_fifo(state, 100) < 0)
-				return -ETIMEDOUT;
-
-			if (si21_writereg(state, 0x09, m->msg[i]))
-				return -EREMOTEIO;
-		}
-
-		if (si21xx_wait_diseqc_idle(state, 100) < 0)
-			return -ETIMEDOUT;
-
-		return 0;
-	}
-
-int si21xx_set_lnb_msg(state, lnb_cmd)
-{
-#endif
 	u8 lnb_status;
 	u8 LNB_CTRL_1;
 	int status;
@@ -446,12 +399,6 @@ int si21xx_set_lnb_msg(state, lnb_cmd)
 	status |= si21_writeregs(state, LNB_FIFO_REGS_0, m->msg, m->msg_len);
 
 	LNB_CTRL_1 = (lnb_status & 0x70);
-#if 0
-	LNB_CTRL_1 |= voltage << 6;	/*voltage select*/
-	LNB_CTRL_1 |= tone << 5;	/*continuous tone selection*/
-	LNB_CTRL_1 |= burst << 4;	/*tone burst selection*/
-	LNB_CTRL_1 |= mmsg << 3;	/*more messages indicator*/
-#endif
 	LNB_CTRL_1 |= m->msg_len;
 
 	LNB_CTRL_1 |= 0x80;	/* begin LNB signaling */
@@ -473,11 +420,6 @@ static int si21xx_send_diseqc_burst(struct dvb_frontend *fe,
 		return -ETIMEDOUT;
 
 	val = (0x80 | si21_readreg(state, 0xc1));
-#if 0
-	/* burst mode */
-	if (si21_writereg(state, LNB_CTRL_REG_1, (val & ~0x10))
-		return -EREMOTEIO;
-#endif
 	if (si21_writereg(state, LNB_CTRL_REG_1,
 			burst == SEC_MINI_A ? (val & ~0x10) : (val | 0x10)))
 		return -EREMOTEIO;
@@ -497,10 +439,6 @@ static int si21xx_set_tone(struct dvb_frontend *fe, fe_sec_tone_mode_t tone)
 	u8 val;
 
 	dprintk("%s\n", __func__);
-#if 0
-	if (si21xx_wait_diseqc_idle(state, 100) < 0)
-		return -ETIMEDOUT;
-#endif
 	val = (0x80 | si21_readreg(state, LNB_CTRL_REG_1));
 
 	switch (tone) {
@@ -593,19 +531,6 @@ static int si21xx_init(struct dvb_frontend *fe)
 	if (status != 0)
 		dprintk(" %s : TS Set Error\n", __func__);
 
-#if 0
-	lnb_cmd.tone = ON; /* 22khz continuous */
-	lnb_cmd.mmsg = OFF; /* diseqc more message */
-	/* diseqc  command */
-	lnb_cmd.msg[6] = { "0xE0", "0x10", "0x38", "0xF0" };
-	lnb_cmd.msg_len = OFF; /* diseqc command length */
-	lnb_cmd.burst = OFF; /* tone burst a,b */
-	lnb_cmd.volt = OFF; /* 13v 18v select */
-
-	status |= si21xx_set_lnb_msg(state, lnb_cmd);
-	if (status != PASS)
-		dprintk("%s LNB Set Error\n", __func__);
-#endif
 	return 0;
 
 }

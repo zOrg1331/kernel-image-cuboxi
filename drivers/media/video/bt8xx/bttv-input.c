@@ -379,11 +379,7 @@ int bttv_input_init(struct bttv *btv)
 		input_dev->id.vendor  = btv->c.pci->vendor;
 		input_dev->id.product = btv->c.pci->device;
 	}
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 	input_dev->dev.parent = &btv->c.pci->dev;
-#else
-	input_dev->cdev.dev = &btv->c.pci->dev;
-#endif
 
 	btv->remote = ir;
 	bttv_ir_start(btv, ir);

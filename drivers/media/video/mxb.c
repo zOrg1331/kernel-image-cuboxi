@@ -28,7 +28,6 @@
 #include <linux/video_decoder.h>
 #include <media/v4l2-common.h>
 #include <media/saa7115.h>
-#include <media/compat.h>
 
 #include "mxb.h"
 #include "tea6415c.h"
@@ -490,7 +489,7 @@ static int mxb_detach(struct saa7146_dev *dev)
 	return 0;
 }
 
-static int mxb_ioctl(struct saa7146_fh *fh, unsigned int cmd, void *arg)
+static long mxb_ioctl(struct saa7146_fh *fh, unsigned int cmd, void *arg)
 {
 	struct saa7146_dev *dev = fh->dev;
 	struct mxb *mxb = (struct mxb *)dev->ext_priv;

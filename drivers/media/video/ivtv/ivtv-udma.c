@@ -22,7 +22,6 @@
 
 #include "ivtv-driver.h"
 #include "ivtv-udma.h"
-#include <media/compat.h>
 
 void ivtv_udma_get_page_info(struct ivtv_dma_page_info *dma_page, unsigned long first, unsigned long size)
 {

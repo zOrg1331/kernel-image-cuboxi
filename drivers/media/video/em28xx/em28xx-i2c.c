@@ -523,9 +523,6 @@ static int attach_inform(struct i2c_client *client)
 static struct i2c_algorithm em28xx_algo = {
 	.master_xfer   = em28xx_i2c_xfer,
 	.functionality = functionality,
-#ifdef NEED_ALGO_CONTROL
-	.algo_control = dummy_algo_control,
-#endif
 };
 
 static struct i2c_adapter em28xx_adap_template = {

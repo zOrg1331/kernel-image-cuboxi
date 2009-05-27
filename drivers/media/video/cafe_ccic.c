@@ -25,7 +25,6 @@
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
 #include <linux/videodev2.h>
-#include <media/compat.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-chip-ident.h>
@@ -489,12 +488,6 @@ static int cafe_smbus_xfer(struct i2c_adapter *adapter, u16 addr,
 	 * Refuse to talk to anything but OV cam chips.  We should
 	 * never even see an attempt to do so, but one never knows.
 	 */
-#if 0  /* client needs to talk during attach process */
-	if (! cam->sensor) {
-		cam_err(cam, "SMBUS xfer with no client\n");
-		return -EINVAL;
-	}
-#endif
 	if (cam->sensor && addr != cam->sensor->addr) {
 		cam_err(cam, "funky smbus addr %d\n", addr);
 		return -EINVAL;
@@ -576,7 +569,6 @@ static int cafe_smbus_setup(struct cafe_camera *cam)
 
 	cafe_smbus_enable_irq(cam);
 	adap->id = I2C_HW_SMBUS_CAFE;
-	adap->class = I2C_CLASS_CAM_DIGITAL;
 	adap->owner = THIS_MODULE;
 	adap->client_register = cafe_smbus_attach;
 	adap->client_unregister = cafe_smbus_detach;
@@ -866,7 +858,7 @@ static int __cafe_cam_reset(struct cafe_camera *cam)
  */
 static int cafe_cam_init(struct cafe_camera *cam)
 {
-	struct v4l2_chip_ident chip = { V4L2_CHIP_MATCH_I2C_ADDR, 0, 0, 0 };
+	struct v4l2_dbg_chip_ident chip;
 	int ret;
 
 	mutex_lock(&cam->s_mutex);
@@ -876,8 +868,9 @@ static int cafe_cam_init(struct cafe_camera *cam)
 	ret = __cafe_cam_reset(cam);
 	if (ret)
 		goto out;
-	chip.match_chip = cam->sensor->addr;
-	ret = __cafe_cam_cmd(cam, VIDIOC_G_CHIP_IDENT, &chip);
+	chip.match.type = V4L2_CHIP_MATCH_I2C_ADDR;
+	chip.match.addr = cam->sensor->addr;
+	ret = __cafe_cam_cmd(cam, VIDIOC_DBG_G_CHIP_IDENT, &chip);
 	if (ret)
 		goto out;
 	cam->sensor_type = chip.ident;
@@ -1479,11 +1472,11 @@ static int cafe_v4l_mmap(struct file *filp, struct vm_area_struct *vma)
 
 
 
-static int cafe_v4l_open(struct inode *inode, struct file *filp)
+static int cafe_v4l_open(struct file *filp)
 {
 	struct cafe_camera *cam;
 
-	cam = cafe_find_dev(iminor(inode));
+	cam = cafe_find_dev(video_devdata(filp)->minor);
 	if (cam == NULL)
 		return -ENODEV;
 	filp->private_data = cam;
@@ -1501,7 +1494,7 @@ static int cafe_v4l_open(struct inode *inode, struct file *filp)
 }
 
 
-static int cafe_v4l_release(struct inode *inode, struct file *filp)
+static int cafe_v4l_release(struct file *filp)
 {
 	struct cafe_camera *cam = filp->private_data;
 
@@ -1766,7 +1759,7 @@ static void cafe_v4l_dev_release(struct video_device *vd)
  * clone it for specific real devices.
  */
 
-static const struct file_operations cafe_v4l_fops = {
+static const struct v4l2_file_operations cafe_v4l_fops = {
 	.owner = THIS_MODULE,
 	.open = cafe_v4l_open,
 	.release = cafe_v4l_release,
@@ -1774,7 +1767,6 @@ static const struct file_operations cafe_v4l_fops = {
 	.poll = cafe_v4l_poll,
 	.mmap = cafe_v4l_mmap,
 	.ioctl = video_ioctl2,
-	.llseek = no_llseek,
 };
 
 static const struct v4l2_ioctl_ops cafe_v4l_ioctl_ops = {

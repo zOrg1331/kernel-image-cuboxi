@@ -13,7 +13,6 @@
 #include <linux/dvb/ca.h>
 #include <linux/dvb/osd.h>
 #include <linux/dvb/net.h>
-#include <media/compat.h>
 #include <linux/mutex.h>
 
 #include "dvbdev.h"
@@ -31,7 +30,6 @@
 #include "sp8870.h"
 #include "stv0297.h"
 #include "l64781.h"
-#include <media/compat.h>
 
 #include <media/saa7146_vv.h>
 

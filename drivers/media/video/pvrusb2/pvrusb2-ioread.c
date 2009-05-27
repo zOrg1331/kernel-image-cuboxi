@@ -26,7 +26,6 @@
 #include <linux/slab.h>
 #include <linux/mutex.h>
 #include <asm/uaccess.h>
-#include <media/compat.h>
 
 #define BUFFER_COUNT 32
 #define BUFFER_SIZE PAGE_ALIGN(0x4000)
@@ -253,13 +252,6 @@ int pvr2_ioread_set_enabled(struct pvr2_ioread *cp,int fl)
 	return ret;
 }
 
-#if 0
-int pvr2_ioread_get_enabled(struct pvr2_ioread *cp)
-{
-	return cp->enabled != 0;
-}
-
-#endif  /*  0  */
 static int pvr2_ioread_get_buffer(struct pvr2_ioread *cp)
 {
 	int stat;

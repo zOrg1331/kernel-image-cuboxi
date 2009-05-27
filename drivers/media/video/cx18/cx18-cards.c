@@ -307,10 +307,6 @@ static const struct cx18_card cx18_card_toshiba_qosmio_dvbt = {
 		  "\tTo help, mail the ivtv-devel list (www.ivtvdriver.org).\n",
 	.v4l2_capabilities = CX18_CAP_ENCODER,
 	.hw_audio_ctrl = CX18_HW_CX23418,
-#if 0
-	.hw_muxer = CX18_HW_GPIO,
-	.hw_all = CX18_HW_TUNER | CX18_HW_GPIO,
-#endif
 	.hw_all = CX18_HW_TUNER,
 	.video_inputs = {
 		{ CX18_CARD_INPUT_VID_TUNER,  0, CX18_AV_COMPOSITE6 },
@@ -333,12 +329,6 @@ static const struct cx18_card cx18_card_toshiba_qosmio_dvbt = {
 		.tune_lane = 0,
 		.initial_emrs = 0x42,
 	},
-#if 0
-	.gpio_init.initial_value = 0x1,
-	.gpio_init.direction = 0x1,
-	.gpio_audio_input = { .mask   = 0x1,
-			      .tuner  = 0x1, .linein = 0x0, .radio  = 0x1 },
-#endif
 	.xceive_pin = 15,
 	.pci_list = cx18_pci_toshiba_qosmio_dvbt,
 	.i2c = &cx18_i2c_std,

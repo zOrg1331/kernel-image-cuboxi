@@ -81,7 +81,6 @@
 
 #include <linux/video_decoder.h>
 #include <linux/video_encoder.h>
-#include <media/compat.h>
 #include <linux/mutex.h>
 #include "zoran.h"
 #include "zoran_device.h"
@@ -193,14 +192,7 @@ const struct zoran_format zoran_formats[] = {
 #define NUM_FORMATS ARRAY_SIZE(zoran_formats)
 
 // RJ: Test only - want to test BUZ_USE_HIMEM even when CONFIG_BIGPHYS_AREA is defined
-#if !defined(CONFIG_BIGPHYS_AREA) && !defined(BUZ_USE_HIMEM)
-//#undef CONFIG_BIGPHYS_AREA
-#define BUZ_USE_HIMEM
-#endif
 
-#if defined(CONFIG_BIGPHYS_AREA)
-#   include <linux/bigphysarea.h>
-#endif
 
 static int lock_norm;	/* 0 = default 1 = Don't change TV standard (norm) */
 module_param(lock_norm, int, 0644);
@@ -244,7 +236,6 @@ static void jpg_fbuffer_free(struct file *file);
  *   Linux with the necessary memory left over).
  */
 
-#if defined(BUZ_USE_HIMEM) && !defined(CONFIG_BIGPHYS_AREA)
 static unsigned long
 get_high_mem (unsigned long size)
 {
@@ -308,7 +299,6 @@ get_high_mem (unsigned long size)
 
 	return hi_mem_ph;
 }
-#endif
 
 static int
 v4l_fbuffer_alloc (struct file *file)
@@ -317,9 +307,7 @@ v4l_fbuffer_alloc (struct file *file)
 	struct zoran *zr = fh->zr;
 	int i, off;
 	unsigned char *mem;
-#if defined(BUZ_USE_HIMEM) && !defined(CONFIG_BIGPHYS_AREA)
 	unsigned long pmem = 0;
-#endif
 
 	/* we might have old buffers lying around... */
 	if (fh->v4l_buffers.ready_to_be_freed) {
@@ -360,39 +348,6 @@ v4l_fbuffer_alloc (struct file *file)
 				ZR_DEVNAME(zr), i, (unsigned long) mem,
 				virt_to_bus(mem));
 		} else {
-#if defined(CONFIG_BIGPHYS_AREA)
-			/* Use bigphysarea_alloc_pages */
-
-			int n =
-			    (fh->v4l_buffers.buffer_size + PAGE_SIZE -
-			     1) / PAGE_SIZE;
-
-			mem =
-			    (unsigned char *) bigphysarea_alloc_pages(n, 0,
-								      GFP_KERNEL);
-			if (mem == 0) {
-				dprintk(1,
-					KERN_ERR
-					"%s: v4l_fbuffer_alloc() - bigphysarea_alloc_pages for V4L buf %d failed\n",
-					ZR_DEVNAME(zr), i);
-				v4l_fbuffer_free(file);
-				return -ENOBUFS;
-			}
-			fh->v4l_buffers.buffer[i].fbuffer = mem;
-			fh->v4l_buffers.buffer[i].fbuffer_phys =
-			    virt_to_phys(mem);
-			fh->v4l_buffers.buffer[i].fbuffer_bus =
-			    virt_to_bus(mem);
-			dprintk(4,
-				KERN_INFO
-				"%s: Bigphysarea frame %d mem %p (bus: 0x%lx)\n",
-				ZR_DEVNAME(zr), i, mem, virt_to_bus(mem));
-
-			/* Zero out the allocated memory */
-			memset(fh->v4l_buffers.buffer[i].fbuffer, 0,
-			       fh->v4l_buffers.buffer_size);
-#else
-#if defined(BUZ_USE_HIMEM)
 
 			/* Use high memory which has been left at boot time */
 
@@ -432,21 +387,6 @@ v4l_fbuffer_alloc (struct file *file)
 				fh->v4l_buffers.buffer[i].fbuffer_bus =
 				    pmem + i * fh->v4l_buffers.buffer_size;
 			}
-#else
-			/* No bigphysarea present, usage of high memory disabled,
-			 * but user wants buffers of more than MAX_KMALLOC_MEM */
-			dprintk(1,
-				KERN_ERR
-				"%s: v4l_fbuffer_alloc() - no bigphysarea_patch present, usage of high memory disabled,\n",
-				ZR_DEVNAME(zr));
-			dprintk(1,
-				KERN_ERR
-				"%s: v4l_fbuffer_alloc() - sorry, could not allocate %d V4L buffers of size %d KB.\n",
-				ZR_DEVNAME(zr), fh->v4l_buffers.num_buffers,
-				fh->v4l_buffers.buffer_size >> 10);
-			return -ENOBUFS;
-#endif
-#endif
 		}
 	}
 
@@ -477,11 +417,6 @@ v4l_fbuffer_free (struct file *file)
 				ClearPageReserved(MAP_NR(mem + off));
 			kfree((void *) fh->v4l_buffers.buffer[i].fbuffer);
 		}
-#if defined(CONFIG_BIGPHYS_AREA)
-		else
-			bigphysarea_free_pages((void *) fh->v4l_buffers.
-					       buffer[i].fbuffer);
-#endif
 		fh->v4l_buffers.buffer[i].fbuffer = NULL;
 	}
 
@@ -1261,83 +1196,53 @@ zoran_close_end_session (struct file *file)
  *   Open a zoran card. Right now the flags stuff is just playing
  */
 
-static int
-zoran_open (struct inode *inode,
-	    struct file  *file)
+static int zoran_open(struct file *file)
 {
-	unsigned int minor = iminor(inode);
-	struct zoran *zr = NULL;
+	struct zoran *zr = video_drvdata(file);
 	struct zoran_fh *fh;
-	int i, res, first_open = 0, have_module_locks = 0;
+	int res, first_open = 0;
+
+	dprintk(2, KERN_INFO "%s: zoran_open(%s, pid=[%d]), users(-)=%d\n",
+		ZR_DEVNAME(zr), current->comm, task_pid_nr(current), zr->user + 1);
 
 	lock_kernel();
-	/* find the device */
-	for (i = 0; i < zoran_num; i++) {
-		if (zoran[i]->video_dev->minor == minor) {
-			zr = zoran[i];
-			break;
-		}
-	}
-
-	if (!zr) {
-		dprintk(1, KERN_ERR "%s: device not found!\n", ZORAN_NAME);
-		res = -ENODEV;
-		goto open_unlock_and_return;
-	}
 
 	/* see fs/device.c - the kernel already locks during open(),
 	 * so locking ourselves only causes deadlocks */
 	/*mutex_lock(&zr->resource_lock);*/
+
+	if (zr->user >= 2048) {
+		dprintk(1, KERN_ERR "%s: too many users (%d) on device\n",
+			ZR_DEVNAME(zr), zr->user);
+		res = -EBUSY;
+		goto fail_unlock;
+	}
 
 	if (!zr->decoder) {
 		dprintk(1,
 			KERN_ERR "%s: no TV decoder loaded for device!\n",
 			ZR_DEVNAME(zr));
 		res = -EIO;
-		goto open_unlock_and_return;
+		goto fail_unlock;
 	}
 
-	/* try to grab a module lock */
-	if (!try_module_get(THIS_MODULE)) {
-		dprintk(1,
-			KERN_ERR
-			"%s: failed to acquire my own lock! PANIC!\n",
-			ZR_DEVNAME(zr));
-		res = -ENODEV;
-		goto open_unlock_and_return;
-	}
 	if (!try_module_get(zr->decoder->driver->driver.owner)) {
 		dprintk(1,
 			KERN_ERR
-			"%s: failed to grab ownership of i2c decoder\n",
+			"%s: failed to grab ownership of video decoder\n",
 			ZR_DEVNAME(zr));
 		res = -EIO;
-		module_put(THIS_MODULE);
-		goto open_unlock_and_return;
+		goto fail_unlock;
 	}
 	if (zr->encoder &&
 	    !try_module_get(zr->encoder->driver->driver.owner)) {
 		dprintk(1,
 			KERN_ERR
-			"%s: failed to grab ownership of i2c encoder\n",
+			"%s: failed to grab ownership of video encoder\n",
 			ZR_DEVNAME(zr));
 		res = -EIO;
-		module_put(zr->decoder->driver->driver.owner);
-		module_put(THIS_MODULE);
-		goto open_unlock_and_return;
+		goto fail_decoder;
 	}
-
-	have_module_locks = 1;
-
-	if (zr->user >= 2048) {
-		dprintk(1, KERN_ERR "%s: too many users (%d) on device\n",
-			ZR_DEVNAME(zr), zr->user);
-		res = -EBUSY;
-		goto open_unlock_and_return;
-	}
-
-	dprintk(1, KERN_INFO "%s: zoran_open(%s, pid=[%d]), users(-)=%d\n",
-		ZR_DEVNAME(zr), current->comm, task_pid_nr(current), zr->user);
 
 	/* now, create the open()-specific file_ops struct */
 	fh = kzalloc(sizeof(struct zoran_fh), GFP_KERNEL);
@@ -1347,7 +1252,7 @@ zoran_open (struct inode *inode,
 			"%s: zoran_open() - allocation of zoran_fh failed\n",
 			ZR_DEVNAME(zr));
 		res = -ENOMEM;
-		goto open_unlock_and_return;
+		goto fail_encoder;
 	}
 	/* used to be BUZ_MAX_WIDTH/HEIGHT, but that gives overflows
 	 * on norm-change! */
@@ -1358,9 +1263,8 @@ zoran_open (struct inode *inode,
 			KERN_ERR
 			"%s: zoran_open() - allocation of overlay_mask failed\n",
 			ZR_DEVNAME(zr));
-		kfree(fh);
 		res = -ENOMEM;
-		goto open_unlock_and_return;
+		goto fail_fh;
 	}
 
 	if (zr->user++ == 0)
@@ -1385,34 +1289,30 @@ zoran_open (struct inode *inode,
 
 	return 0;
 
-open_unlock_and_return:
-	/* if we grabbed locks, release them accordingly */
-	if (have_module_locks) {
-		module_put(zr->decoder->driver->driver.owner);
-		if (zr->encoder) {
-			module_put(zr->encoder->driver->driver.owner);
-		}
-		module_put(THIS_MODULE);
-	}
-
-	/* if there's no device found, we didn't obtain the lock either */
-	if (zr) {
-		/*mutex_unlock(&zr->resource_lock);*/
-	}
+fail_fh:
+	kfree(fh);
+fail_encoder:
+	if (zr->encoder)
+		module_put(zr->encoder->driver->driver.owner);
+fail_decoder:
+	module_put(zr->decoder->driver->driver.owner);
+fail_unlock:
 	unlock_kernel();
+
+	dprintk(2, KERN_INFO "%s: open failed (%d), users(-)=%d\n",
+		ZR_DEVNAME(zr), res, zr->user);
 
 	return res;
 }
 
 static int
-zoran_close (struct inode *inode,
-	     struct file  *file)
+zoran_close(struct file  *file)
 {
 	struct zoran_fh *fh = file->private_data;
 	struct zoran *zr = fh->zr;
 
-	dprintk(1, KERN_INFO "%s: zoran_close(%s, pid=[%d]), users(+)=%d\n",
-		ZR_DEVNAME(zr), current->comm, task_pid_nr(current), zr->user);
+	dprintk(2, KERN_INFO "%s: zoran_close(%s, pid=[%d]), users(+)=%d\n",
+		ZR_DEVNAME(zr), current->comm, task_pid_nr(current), zr->user - 1);
 
 	/* kernel locks (fs/device.c), so don't do that ourselves
 	 * (prevents deadlocks) */
@@ -1458,10 +1358,8 @@ zoran_close (struct inode *inode,
 
 	/* release locks on the i2c modules */
 	module_put(zr->decoder->driver->driver.owner);
-	if (zr->encoder) {
-		 module_put(zr->encoder->driver->driver.owner);
-	}
-	module_put(THIS_MODULE);
+	if (zr->encoder)
+		module_put(zr->encoder->driver->driver.owner);
 
 	/*mutex_unlock(&zr->resource_lock);*/
 
@@ -1519,7 +1417,7 @@ setup_fbuffer (struct file               *file,
 	if (!bytesperline)
 		bytesperline = width * ((fmt->depth + 7) & ~7) / 8;
 
-#if 0 /* keep */
+#if 0
 	if (zr->overlay_active) {
 		/* dzjee... stupid users... don't even bother to turn off
 		 * overlay before changing the memory location...
@@ -2005,7 +1903,7 @@ zoran_set_input (struct zoran *zr,
  *   ioctl routine
  */
 
-static int zoran_do_ioctl(struct file *file, unsigned int cmd, void *arg)
+static long zoran_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 {
 	struct zoran_fh *fh = file->private_data;
 	struct zoran *zr = fh->zr;
@@ -4256,11 +4154,10 @@ static int zoran_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 }
 
 
-static int
-zoran_ioctl (struct inode *inode,
-	     struct file  *file,
-	     unsigned int  cmd,
-	     unsigned long arg)
+static long
+zoran_ioctl(struct file  *file,
+	    unsigned int  cmd,
+	    unsigned long arg)
 {
 	return video_usercopy(file, cmd, arg, zoran_do_ioctl);
 }
@@ -4685,15 +4582,11 @@ zoran_mmap (struct file           *file,
 	return 0;
 }
 
-static const struct file_operations zoran_fops = {
+static const struct v4l2_file_operations zoran_fops = {
 	.owner = THIS_MODULE,
 	.open = zoran_open,
 	.release = zoran_close,
 	.ioctl = zoran_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl	= v4l_compat_ioctl32,
-#endif
-	.llseek = no_llseek,
 	.read = zoran_read,
 	.write = zoran_write,
 	.mmap = zoran_mmap,

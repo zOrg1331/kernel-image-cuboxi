@@ -29,7 +29,6 @@
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/init.h>
-#include <media/compat.h>
 #include <linux/videodev.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
@@ -745,7 +744,7 @@ static int mchip_compress_frame(u8 *buf, int bufsize)
 	return len;
 }
 
-#if 0 /* keep */
+#if 0
 /* uncompress one image into a buffer */
 static int mchip_uncompress_frame(u8 *img, int imgsize, u8 *buf, int bufsize)
 {
@@ -782,11 +781,7 @@ static void mchip_cont_compression_start(void)
 /* Interrupt handling                                                       */
 /****************************************************************************/
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static irqreturn_t meye_irq(int irq, void *dev_id, struct pt_regs *regs)
-#else
 static irqreturn_t meye_irq(int irq, void *dev_id)
-#endif
 {
 	u32 v;
 	int reqnr;
@@ -846,7 +841,7 @@ again:
 /* video4linux integration                                                  */
 /****************************************************************************/
 
-static int meye_open(struct inode *inode, struct file *file)
+static int meye_open(struct file *file)
 {
 	int i;
 
@@ -868,7 +863,7 @@ static int meye_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static int meye_release(struct inode *inode, struct file *file)
+static int meye_release(struct file *file)
 {
 	mchip_hic_stop();
 	mchip_dma_free();
@@ -1582,7 +1577,7 @@ static int vidioc_streamoff(struct file *file, void *fh, enum v4l2_buf_type i)
 	return 0;
 }
 
-static int vidioc_default(struct file *file, void *fh, int cmd, void *arg)
+static long vidioc_default(struct file *file, void *fh, int cmd, void *arg)
 {
 	switch (cmd) {
 	case MEYEIOC_G_PARAMS:
@@ -1689,17 +1684,13 @@ static int meye_mmap(struct file *file, struct vm_area_struct *vma)
 	return 0;
 }
 
-static const struct file_operations meye_fops = {
+static const struct v4l2_file_operations meye_fops = {
 	.owner		= THIS_MODULE,
 	.open		= meye_open,
 	.release	= meye_release,
 	.mmap		= meye_mmap,
 	.ioctl		= video_ioctl2,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl	= v4l_compat_ioctl32,
-#endif
 	.poll		= meye_poll,
-	.llseek		= no_llseek,
 };
 
 static const struct v4l2_ioctl_ops meye_ioctl_ops = {
@@ -1899,13 +1890,8 @@ static int __devinit meye_probe(struct pci_dev *pcidev,
 
 	printk(KERN_INFO "meye: Motion Eye Camera Driver v%s.\n",
 	       MEYE_DRIVER_VERSION);
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,22)
 	printk(KERN_INFO "meye: mchip KL5A72002 rev. %d, base %lx, irq %d\n",
 	       meye.mchip_dev->revision, mchip_adr, meye.mchip_irq);
-#else
-	printk(KERN_INFO "meye: mchip KL5A72002 rev. %d, base %lx, irq %d\n",
-	       v4l_compat_pci_rev(meye.mchip_dev), mchip_adr, meye.mchip_irq);
-#endif
 
 	return 0;
 

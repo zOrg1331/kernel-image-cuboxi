@@ -34,7 +34,6 @@
 #if defined(CONFIG_VIDEO_CX88_DVB) || defined(CONFIG_VIDEO_CX88_DVB_MODULE)
 #include <media/videobuf-dvb.h>
 #endif
-#include <media/compat.h>
 
 #include "btcx-risc.h"
 #include "cx88-reg.h"
@@ -283,9 +282,6 @@ struct cx88_subid {
 #define RESOURCE_VBI           4
 
 #define BUFFER_TIMEOUT     msecs_to_jiffies(500)  /* 0.5 seconds */
-#if 0
-#define BUFFER_TIMEOUT     msecs_to_jiffies(2000)
-#endif
 
 /* buffer for one video frame */
 struct cx88_buffer {
@@ -306,6 +302,7 @@ struct cx88_dmaqueue {
 	struct btcx_riscmem    stopper;
 	u32                    count;
 };
+struct cx88_core;
 
 struct cx88_core {
 	struct list_head           devlist;
@@ -338,8 +335,9 @@ struct cx88_core {
 
 	/* config info -- dvb */
 #if defined(CONFIG_VIDEO_CX88_DVB) || defined(CONFIG_VIDEO_CX88_DVB_MODULE)
-	int 			   (*prev_set_voltage)(struct dvb_frontend* fe, fe_sec_voltage_t voltage);
+	int 			   (*prev_set_voltage)(struct dvb_frontend *fe, fe_sec_voltage_t voltage);
 #endif
+	void			   (*gate_ctrl)(struct cx88_core  *core, int open);
 
 	/* state info */
 	struct task_struct         *kthread;
@@ -400,10 +398,6 @@ struct cx8800_suspend_state {
 struct cx8800_dev {
 	struct cx88_core           *core;
 	struct list_head           devlist;
-#if 0
-	/* moved to cx88_core */
-	struct semaphore           lock;
-#endif
 	spinlock_t                 slock;
 
 	/* various device info */
@@ -416,21 +410,12 @@ struct cx8800_dev {
 	struct pci_dev             *pci;
 	unsigned char              pci_rev,pci_lat;
 
-#if 0
-	/* video overlay */
-	struct v4l2_framebuffer    fbuf;
-	struct cx88_buffer         *screen;
-#endif
 
 	/* capture queues */
 	struct cx88_dmaqueue       vidq;
 	struct cx88_dmaqueue       vbiq;
 
 	/* various v4l controls */
-#if 0
-	/* moved to cx88_core */
-	u32                        freq;
-#endif
 
 	/* other global state info */
 	struct cx8800_suspend_state state;
@@ -482,10 +467,6 @@ struct cx8802_driver {
 
 struct cx8802_dev {
 	struct cx88_core           *core;
-#if 0
-	/* moved to cx88_core ? */
-	struct semaphore           lock;
-#endif
 	spinlock_t                 slock;
 
 	/* pci i/o */
@@ -664,7 +645,7 @@ int cx88_audio_thread(void *data);
 
 int cx8802_register_driver(struct cx8802_driver *drv);
 int cx8802_unregister_driver(struct cx8802_driver *drv);
-struct cx8802_dev * cx8802_get_device(struct inode *inode);
+struct cx8802_dev *cx8802_get_device(int minor);
 struct cx8802_driver * cx8802_get_driver(struct cx8802_dev *dev, enum cx88_board_type btype);
 
 /* ----------------------------------------------------------- */

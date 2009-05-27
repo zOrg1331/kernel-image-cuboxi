@@ -11,7 +11,6 @@
 #include <media/tuner.h>
 #include "tuner-i2c.h"
 #include "tda9887.h"
-#include <media/compat.h>
 
 
 /* Chips:

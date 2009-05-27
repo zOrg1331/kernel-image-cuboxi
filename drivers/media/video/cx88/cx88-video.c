@@ -34,7 +34,6 @@
 #include <linux/interrupt.h>
 #include <linux/dma-mapping.h>
 #include <linux/delay.h>
-#include <media/compat.h>
 #include <linux/kthread.h>
 #include <asm/div64.h>
 
@@ -729,231 +728,6 @@ static struct videobuf_queue_ops cx8800_video_qops = {
 
 /* ------------------------------------------------------------------ */
 
-#if 0 /* overlay support not finished yet */
-static u32* ov_risc_field(struct cx8800_dev *dev, struct cx8800_fh *fh,
-			  u32 *rp, struct btcx_skiplist *skips,
-			  u32 sync_line, int skip_even, int skip_odd)
-{
-	int line,maxy,start,end,skip,nskips;
-	u32 ri,ra;
-	u32 addr;
-
-	/* sync instruction */
-	*(rp++) = cpu_to_le32(RISC_RESYNC | sync_line);
-
-	addr  = (unsigned long)dev->fbuf.base;
-	addr += dev->fbuf.fmt.bytesperline * fh->win.w.top;
-	addr += (fh->fmt->depth >> 3)      * fh->win.w.left;
-
-	/* scan lines */
-	for (maxy = -1, line = 0; line < fh->win.w.height;
-	     line++, addr += dev->fbuf.fmt.bytesperline) {
-		if ((line%2) == 0  &&  skip_even)
-			continue;
-		if ((line%2) == 1  &&  skip_odd)
-			continue;
-
-		/* calculate clipping */
-		if (line > maxy)
-			btcx_calc_skips(line, fh->win.w.width, &maxy,
-					skips, &nskips, fh->clips, fh->nclips);
-
-		/* write out risc code */
-		for (start = 0, skip = 0; start < fh->win.w.width; start = end) {
-			if (skip >= nskips) {
-				ri  = RISC_WRITE;
-				end = fh->win.w.width;
-			} else if (start < skips[skip].start) {
-				ri  = RISC_WRITE;
-				end = skips[skip].start;
-			} else {
-				ri  = RISC_SKIP;
-				end = skips[skip].end;
-				skip++;
-			}
-			if (RISC_WRITE == ri)
-				ra = addr + (fh->fmt->depth>>3)*start;
-			else
-				ra = 0;
-
-			if (0 == start)
-				ri |= RISC_SOL;
-			if (fh->win.w.width == end)
-				ri |= RISC_EOL;
-			ri |= (fh->fmt->depth>>3) * (end-start);
-
-			*(rp++)=cpu_to_le32(ri);
-			if (0 != ra)
-				*(rp++)=cpu_to_le32(ra);
-		}
-	}
-	kfree(skips);
-	return rp;
-}
-
-static int ov_risc_frame(struct cx8800_dev *dev, struct cx8800_fh *fh,
-			 struct cx88_buffer *buf)
-{
-	struct btcx_skiplist *skips;
-	u32 instructions,fields;
-	u32 *rp;
-	int rc;
-
-	/* skip list for window clipping */
-	if (NULL == (skips = kmalloc(sizeof(*skips) * fh->nclips,GFP_KERNEL)))
-		return -ENOMEM;
-
-	fields = 0;
-	if (V4L2_FIELD_HAS_TOP(fh->win.field))
-		fields++;
-	if (V4L2_FIELD_HAS_BOTTOM(fh->win.field))
-		fields++;
-
-	/* estimate risc mem: worst case is (clip+1) * lines instructions
-	   + syncs + jump (all 2 dwords) */
-	instructions  = (fh->nclips+1) * fh->win.w.height;
-	instructions += 3 + 4;
-	if ((rc = btcx_riscmem_alloc(dev->pci,&buf->risc,instructions*8)) < 0) {
-		kfree(skips);
-		return rc;
-	}
-
-	/* write risc instructions */
-	rp = buf->risc.cpu;
-	switch (fh->win.field) {
-	case V4L2_FIELD_TOP:
-		rp = ov_risc_field(dev, fh, rp, skips, 0,     0, 0);
-		break;
-	case V4L2_FIELD_BOTTOM:
-		rp = ov_risc_field(dev, fh, rp, skips, 0x200, 0, 0);
-		break;
-	case V4L2_FIELD_INTERLACED:
-		rp = ov_risc_field(dev, fh, rp, skips, 0,     0, 1);
-		rp = ov_risc_field(dev, fh, rp, skips, 0x200, 1, 0);
-		break;
-	default:
-		BUG();
-	}
-
-	/* save pointer to jmp instruction address */
-	buf->risc.jmp = rp;
-	kfree(skips);
-	return 0;
-}
-
-static int verify_window(struct cx8800_dev *dev, struct v4l2_window *win)
-{
-	enum v4l2_field field;
-	int maxw, maxh;
-
-	if (NULL == dev->fbuf.base)
-		return -EINVAL;
-	if (win->w.width < 48 || win->w.height <  32)
-		return -EINVAL;
-	if (win->clipcount > 2048)
-		return -EINVAL;
-
-	field = win->field;
-	maxw  = norm_maxw(core->tvnorm);
-	maxh  = norm_maxh(core->tvnorm);
-
-	if (V4L2_FIELD_ANY == field) {
-		field = (win->w.height > maxh/2)
-			? V4L2_FIELD_INTERLACED
-			: V4L2_FIELD_TOP;
-	}
-	switch (field) {
-	case V4L2_FIELD_TOP:
-	case V4L2_FIELD_BOTTOM:
-		maxh = maxh / 2;
-		break;
-	case V4L2_FIELD_INTERLACED:
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	win->field = field;
-	if (win->w.width > maxw)
-		win->w.width = maxw;
-	if (win->w.height > maxh)
-		win->w.height = maxh;
-	return 0;
-}
-
-static int setup_window(struct cx8800_dev *dev, struct cx8800_fh *fh,
-			struct v4l2_window *win)
-{
-	struct v4l2_clip *clips = NULL;
-	int n,size,retval = 0;
-
-	if (NULL == fh->fmt)
-		return -EINVAL;
-	retval = verify_window(dev,win);
-	if (0 != retval)
-		return retval;
-
-	/* copy clips  --  luckily v4l1 + v4l2 are binary
-	   compatible here ...*/
-	n = win->clipcount;
-	size = sizeof(*clips)*(n+4);
-	clips = kmalloc(size,GFP_KERNEL);
-	if (NULL == clips)
-		return -ENOMEM;
-	if (n > 0) {
-		if (copy_from_user(clips,win->clips,sizeof(struct v4l2_clip)*n)) {
-			kfree(clips);
-			return -EFAULT;
-		}
-	}
-
-	/* clip against screen */
-	if (NULL != dev->fbuf.base)
-		n = btcx_screen_clips(dev->fbuf.fmt.width, dev->fbuf.fmt.height,
-				      &win->w, clips, n);
-	btcx_sort_clips(clips,n);
-
-	/* 4-byte alignments */
-	switch (fh->fmt->depth) {
-	case 8:
-	case 24:
-		btcx_align(&win->w, clips, n, 3);
-		break;
-	case 16:
-		btcx_align(&win->w, clips, n, 1);
-		break;
-	case 32:
-		/* no alignment fixups needed */
-		break;
-	default:
-		BUG();
-	}
-
-	down(&fh->vidq.lock);
-	if (fh->clips)
-		kfree(fh->clips);
-	fh->clips    = clips;
-	fh->nclips   = n;
-	fh->win      = *win;
-/* #if 0 */
-	fh->ov.setup_ok = 1;
-/* #endif */
-
-	/* update overlay if needed */
-	retval = 0;
-/* #if 0 */
-	if (check_btres(fh, RESOURCE_OVERLAY)) {
-		struct bttv_buffer *new;
-
-		new = videobuf_pci_alloc(sizeof(*new));
-		bttv_overlay_risc(btv, &fh->ov, fh->ovfmt, new);
-		retval = bttv_switch_overlay(btv,fh,new);
-	}
-/* #endif */
-	up(&fh->vidq.lock);
-	return retval;
-}
-#endif
 
 /* ------------------------------------------------------------------ */
 
@@ -983,9 +757,9 @@ static int get_ressource(struct cx8800_fh *fh)
 	}
 }
 
-static int video_open(struct inode *inode, struct file *file)
+static int video_open(struct file *file)
 {
-	int minor = iminor(inode);
+	int minor = video_devdata(file)->minor;
 	struct cx8800_dev *h,*dev = NULL;
 	struct cx88_core *core;
 	struct cx8800_fh *fh;
@@ -1130,7 +904,7 @@ video_poll(struct file *file, struct poll_table_struct *wait)
 	return 0;
 }
 
-static int video_release(struct inode *inode, struct file *file)
+static int video_release(struct file *file)
 {
 	struct cx8800_fh  *fh  = file->private_data;
 	struct cx8800_dev *dev = fh->dev;
@@ -1226,17 +1000,9 @@ int cx88_set_control(struct cx88_core *core, struct v4l2_control *ctl)
 		return -EINVAL;
 
 	if (ctl->value < c->v.minimum)
-#if 0
-		return -ERANGE;
-#else
 		ctl->value = c->v.minimum;
-#endif
 	if (ctl->value > c->v.maximum)
-#if 0
-		return -ERANGE;
-#else
 		ctl->value = c->v.maximum;
-#endif
 	mask=c->mask;
 	switch (ctl->id) {
 	case V4L2_CID_AUDIO_BALANCE:
@@ -1390,9 +1156,6 @@ static int vidioc_querycap (struct file *file, void  *priv,
 	sprintf(cap->bus_info,"PCI:%s",pci_name(dev->pci));
 	cap->version = CX88_VERSION_CODE;
 	cap->capabilities =
-#if 0
-		V4L2_CAP_VIDEO_OVERLAY |
-#endif
 		V4L2_CAP_VIDEO_CAPTURE |
 		V4L2_CAP_READWRITE     |
 		V4L2_CAP_STREAMING     |
@@ -1562,35 +1325,6 @@ static int vidioc_s_input (struct file *file, void *priv, unsigned int i)
 }
 
 
-#if 0
-static int vidioc_g_audio (struct file *file, void *priv, unsigned int i)
-{
-	struct v4l2_audio *a = arg;
-	unsigned int n = a->index;
-
-	memset(a,0,sizeof(*a));
-	a->index = n;
-	switch (n) {
-	case 0:
-		if ((CX88_VMUX_TELEVISION == INPUT(n).type) ||
-		    (CX88_VMUX_CABLE == INPUT(n).type)) {
-			strcpy(a->name,"Television");
-			/* FIXME figure out if stereo received and set V4L2_AUDCAP_STEREO. */
-			return 0;
-		}
-		break;
-	case 1:
-		if (CX88_BOARD_DVICO_FUSIONHDTV_3_GOLD_Q == core->boardnr) {
-			strcpy(a->name,"Line In");
-			a->capability = V4L2_AUDCAP_STEREO;
-			return 0;
-		}
-		break;
-	}
-	/* Audio input not available. */
-	return -EINVAL;
-}
-#endif
 
 static int vidioc_queryctrl (struct file *file, void *priv,
 				struct v4l2_queryctrl *qctrl)
@@ -1713,25 +1447,26 @@ static int vidioc_s_frequency (struct file *file, void *priv,
 
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 static int vidioc_g_register (struct file *file, void *fh,
-				struct v4l2_register *reg)
+				struct v4l2_dbg_register *reg)
 {
 	struct cx88_core *core = ((struct cx8800_fh*)fh)->dev->core;
 
-	if (!v4l2_chip_match_host(reg->match_type, reg->match_chip))
+	if (!v4l2_chip_match_host(&reg->match))
 		return -EINVAL;
 	/* cx2388x has a 24-bit register space */
-	reg->val = cx_read(reg->reg&0xffffff);
+	reg->val = cx_read(reg->reg & 0xffffff);
+	reg->size = 4;
 	return 0;
 }
 
 static int vidioc_s_register (struct file *file, void *fh,
-				struct v4l2_register *reg)
+				struct v4l2_dbg_register *reg)
 {
 	struct cx88_core *core = ((struct cx8800_fh*)fh)->dev->core;
 
-	if (!v4l2_chip_match_host(reg->match_type, reg->match_chip))
+	if (!v4l2_chip_match_host(&reg->match))
 		return -EINVAL;
-	cx_write(reg->reg&0xffffff, reg->val);
+	cx_write(reg->reg & 0xffffff, reg->val);
 	return 0;
 }
 #endif
@@ -1926,11 +1661,7 @@ static void cx8800_vid_irq(struct cx8800_dev *dev)
 	}
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static irqreturn_t cx8800_irq(int irq, void *dev_id, struct pt_regs *regs)
-#else
 static irqreturn_t cx8800_irq(int irq, void *dev_id)
-#endif
 {
 	struct cx8800_dev *dev = dev_id;
 	struct cx88_core *core = dev->core;
@@ -1963,7 +1694,7 @@ static irqreturn_t cx8800_irq(int irq, void *dev_id)
 /* ----------------------------------------------------------- */
 /* exported stuff                                              */
 
-static const struct file_operations video_fops =
+static const struct v4l2_file_operations video_fops =
 {
 	.owner	       = THIS_MODULE,
 	.open	       = video_open,
@@ -1972,8 +1703,6 @@ static const struct file_operations video_fops =
 	.poll          = video_poll,
 	.mmap	       = video_mmap,
 	.ioctl	       = video_ioctl2,
-	.compat_ioctl  = v4l_compat_ioctl32,
-	.llseek        = no_llseek,
 };
 
 static const struct v4l2_ioctl_ops video_ioctl_ops = {
@@ -2022,14 +1751,12 @@ static struct video_device cx8800_video_template = {
 	.current_norm         = V4L2_STD_NTSC_M,
 };
 
-static const struct file_operations radio_fops =
+static const struct v4l2_file_operations radio_fops =
 {
 	.owner         = THIS_MODULE,
 	.open          = video_open,
 	.release       = video_release,
 	.ioctl         = video_ioctl2,
-	.compat_ioctl  = v4l_compat_ioctl32,
-	.llseek        = no_llseek,
 };
 
 static const struct v4l2_ioctl_ops radio_ioctl_ops = {
@@ -2131,10 +1858,6 @@ static int __devinit cx8800_initdev(struct pci_dev *pci_dev,
 	strcpy(cx8800_vbi_template.name,"cx8800-vbi");
 
 	/* initialize driver struct */
-#if 0
-	/* moved to cx88_core_get */
-	init_MUTEX(&dev->lock);
-#endif
 	spin_lock_init(&dev->slock);
 	core->tvnorm = cx8800_video_template.current_norm;
 
@@ -2302,10 +2025,8 @@ static int cx8800_suspend(struct pci_dev *pci_dev, pm_message_t state)
 
 	if (core->ir)
 		cx88_ir_stop(core, core->ir);
-#if 1
 	/* FIXME -- shutdown device */
 	cx88_shutdown(core);
-#endif
 
 	pci_save_state(pci_dev);
 	if (0 != pci_set_power_state(pci_dev, pci_choose_state(pci_dev, state))) {
@@ -2341,10 +2062,8 @@ static int cx8800_resume(struct pci_dev *pci_dev)
 	}
 	pci_restore_state(pci_dev);
 
-#if 1
 	/* FIXME: re-initialize hardware */
 	cx88_reset(core);
-#endif
 	if (core->ir)
 		cx88_ir_start(core, core->ir);
 

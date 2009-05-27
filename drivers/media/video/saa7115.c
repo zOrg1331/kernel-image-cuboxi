@@ -49,7 +49,6 @@
 #include <media/v4l2-i2c-drv-legacy.h>
 #include <media/saa7115.h>
 #include <asm/div64.h>
-#include <media/compat.h>
 
 #define VRES_60HZ	(480+16)
 
@@ -998,7 +997,7 @@ static void saa711x_set_lcr(struct v4l2_subdev *sd, struct v4l2_sliced_vbi_forma
 	u8 lcr[24];
 	int i, x;
 
-#if 1 /* keep */
+#if 1
 	/* saa7113/7114/7118 VBI support are experimental */
 	if (!saa711x_has_reg(state->ident, R_41_LCR_BASE))
 		return;
@@ -1372,25 +1371,24 @@ static int saa711x_g_vbi_data(struct v4l2_subdev *sd, struct v4l2_sliced_vbi_dat
 }
 
 #ifdef CONFIG_VIDEO_ADV_DEBUG
-static int saa711x_g_register(struct v4l2_subdev *sd, struct v4l2_register *reg)
+static int saa711x_g_register(struct v4l2_subdev *sd, struct v4l2_dbg_register *reg)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
-	if (!v4l2_chip_match_i2c_client(client,
-				reg->match_type, reg->match_chip))
+	if (!v4l2_chip_match_i2c_client(client, &reg->match))
 		return -EINVAL;
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 	reg->val = saa711x_read(sd, reg->reg & 0xff);
+	reg->size = 1;
 	return 0;
 }
 
-static int saa711x_s_register(struct v4l2_subdev *sd, struct v4l2_register *reg)
+static int saa711x_s_register(struct v4l2_subdev *sd, struct v4l2_dbg_register *reg)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
-	if (!v4l2_chip_match_i2c_client(client,
-				reg->match_type, reg->match_chip))
+	if (!v4l2_chip_match_i2c_client(client, &reg->match))
 		return -EINVAL;
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -1399,7 +1397,7 @@ static int saa711x_s_register(struct v4l2_subdev *sd, struct v4l2_register *reg)
 }
 #endif
 
-static int saa711x_g_chip_ident(struct v4l2_subdev *sd, struct v4l2_chip_ident *chip)
+static int saa711x_g_chip_ident(struct v4l2_subdev *sd, struct v4l2_dbg_chip_ident *chip)
 {
 	struct saa711x_state *state = to_state(sd);
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
@@ -1514,18 +1512,12 @@ static int saa711x_probe(struct i2c_client *client,
 	int	i;
 	char	name[17];
 	char chip_id;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	int autodetect = !id || id->driver_data == 1;
-#endif
 
 	/* Check if the adapter supports the needed features */
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA))
 		return -EIO;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
-	snprintf(client->name, sizeof(client->name) - 1, "saa7115");
-
-#endif
 	for (i = 0; i < 0x0f; i++) {
 		i2c_smbus_write_byte_data(client, 0, i);
 		name[i] = (i2c_smbus_read_byte_data(client, 0) & 0x0f) + '0';
@@ -1543,13 +1535,11 @@ static int saa711x_probe(struct i2c_client *client,
 		return -ENODEV;
 	}
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	/* Safety check */
 	if (!autodetect && id->name[6] != chip_id) {
 		v4l_warn(client, "found saa711%c while %s was expected\n",
 			 chip_id, id->name);
 	}
-#endif
 	snprintf(client->name, sizeof(client->name), "saa711%c", chip_id);
 	v4l_info(client, "saa711%c found (%s) @ 0x%x (%s)\n", chip_id, name,
 		 client->addr << 1, client->adapter->name);
@@ -1627,7 +1617,6 @@ static int saa711x_remove(struct i2c_client *client)
 	return 0;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id saa7115_id[] = {
 	{ "saa7115_auto", 1 }, /* autodetect */
 	{ "saa7111", 0 },
@@ -1639,7 +1628,6 @@ static const struct i2c_device_id saa7115_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, saa7115_id);
 
-#endif
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "saa7115",
 	.driverid = I2C_DRIVERID_SAA711X,
@@ -1647,7 +1635,5 @@ static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.probe = saa711x_probe,
 	.remove = saa711x_remove,
 	.legacy_class = I2C_CLASS_TV_ANALOG | I2C_CLASS_TV_DIGITAL,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = saa7115_id,
-#endif
 };

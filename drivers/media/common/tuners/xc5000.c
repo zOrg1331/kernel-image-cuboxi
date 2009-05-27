@@ -411,25 +411,6 @@ static int xc_set_RF_frequency(struct xc5000_priv *priv, u32 freq_hz)
 	return xc_write_reg(priv, XREG_RF_FREQ, freq_code);
 }
 
-#if 0
-/* We'll probably need these for analog support */
-static int xc_FineTune_RF_frequency(struct xc5000_priv *priv, u32 freq_hz)
-{
-	u16 freq_code = (u16)(freq_hz / 15625);
-
-	if ((freq_hz > xc5000_tuner_ops.info.frequency_max) ||
-		(freq_hz < xc5000_tuner_ops.info.frequency_min))
-		return XC_RESULT_OUT_OF_RANGE;
-
-	return xc_write_reg(priv, XREG_FINERFFREQ, freq_code);
-}
-
-static int xc_set_Xtal_frequency(struct xc5000_priv *priv, u32 xtalFreqInKHz)
-{
-	u16 xtalRatio = (32000 * 0x8000)/xtalFreqInKHz;
-	return xc_write_reg(priv, XREG_XTALFREQ, xtalRatio);
-}
-#endif
 
 static int xc_set_IF_frequency(struct xc5000_priv *priv, u32 freq_khz)
 {

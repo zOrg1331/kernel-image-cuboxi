@@ -38,7 +38,6 @@
 #include <linux/video_encoder.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-i2c-drv-legacy.h>
-#include <media/compat.h>
 
 MODULE_DESCRIPTION("Brooktree-866 video encoder driver");
 MODULE_AUTHOR("Mike Bernson & Dave Perks");
@@ -270,13 +269,11 @@ static int bt866_legacy_probe(struct i2c_adapter *adapter)
 	return adapter->id == I2C_HW_B_ZR36067;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id bt866_id[] = {
 	{ "bt866", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, bt866_id);
-#endif
 
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "bt866",
@@ -285,7 +282,5 @@ static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.probe = bt866_probe,
 	.remove = bt866_remove,
 	.legacy_probe = bt866_legacy_probe,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = bt866_id,
-#endif
 };

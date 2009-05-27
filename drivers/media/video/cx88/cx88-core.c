@@ -35,7 +35,6 @@
 #include <linux/interrupt.h>
 #include <linux/pci.h>
 #include <linux/delay.h>
-#include <media/compat.h>
 #include <linux/videodev2.h>
 #include <linux/mutex.h>
 
@@ -418,25 +417,6 @@ static int cx88_risc_decode(u32 risc)
 	return incr[risc >> 28] ? incr[risc >> 28] : 1;
 }
 
-#if 0 /* currently unused, but useful for debugging */
-void cx88_risc_disasm(struct cx88_core *core,
-		      struct btcx_riscmem *risc)
-{
-	unsigned int i,j,n;
-
-	printk("%s: risc disasm: %p [dma=0x%08lx]\n",
-	       core->name, risc->cpu, (unsigned long)risc->dma);
-	for (i = 0; i < (risc->size >> 2); i += n) {
-		printk("%s:   %04d: ", core->name, i);
-		n = cx88_risc_decode(risc->cpu[i]);
-		for (j = 1; j < n; j++)
-			printk("%s:   %04d: 0x%08x [ arg #%d ]\n",
-			       core->name, i+j, risc->cpu[i+j], j);
-		if (risc->cpu[i] == RISC_JUMP)
-			break;
-	}
-}
-#endif
 
 void cx88_sram_channel_dump(struct cx88_core *core,
 			    struct sram_channel *ch)
@@ -551,16 +531,11 @@ void cx88_wakeup(struct cx88_core *core,
 			break;
 		buf = list_entry(q->active.next,
 				 struct cx88_buffer, vb.queue);
-#if 0
-		if (buf->count > count)
-			break;
-#else
 		/* count comes from the hw and is is 16bit wide --
 		 * this trick handles wrap-arounds correctly for
 		 * up to 32767 buffers in flight... */
 		if ((s16) (count - buf->count) < 0)
 			break;
-#endif
 		do_gettimeofday(&buf->vb.ts);
 		dprintk(2,"[%p/%d] wakeup reg=%d buf=%d\n",buf,buf->vb.i,
 			count, buf->count);
@@ -893,13 +868,11 @@ static int set_tvaudio(struct cx88_core *core)
 	cx88_set_tvaudio(core);
 	/* cx88_set_stereo(dev,V4L2_TUNER_MODE_STEREO); */
 
-#if 1
 /*
    This should be needed only on cx88-alsa. It seems that some cx88 chips have
    bugs and does require DMA enabled for it to work.
  */
 	cx88_start_audio_dma(core);
-#endif
 	return 0;
 }
 
@@ -966,12 +939,10 @@ int cx88_set_tvnorm(struct cx88_core *core, v4l2_std_id norm)
 	cx_andor(MO_INPUT_FORMAT, 0x40f,
 		 norm & V4L2_STD_SECAM ? cxiformat : cxiformat | 0x400);
 
-#if 1
 	// FIXME: as-is from DScaler
 	dprintk(1,"set_tvnorm: MO_OUTPUT_FORMAT 0x%08x [old=0x%08x]\n",
 		cxoformat, cx_read(MO_OUTPUT_FORMAT));
 	cx_write(MO_OUTPUT_FORMAT, cxoformat);
-#endif
 
 	// MO_SCONV_REG = adc clock / video dec clock * 2^17
 	tmp64  = adc_clock * (u64)(1 << 17);

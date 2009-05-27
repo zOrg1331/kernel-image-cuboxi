@@ -133,11 +133,7 @@ static const char *hw_modules[] = {
 static const char * const hw_devicenames[] = {
 	"cx25840",
 	"saa7115",
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	"saa7127_auto",	/* saa7127 or saa7129 */
-#else
-	"saa7127",	/* saa7127 or saa7129 */
-#endif
 	"msp3400",
 	"tuner",
 	"wm8775",
@@ -505,9 +501,6 @@ static u32 ivtv_functionality(struct i2c_adapter *adap)
 static struct i2c_algorithm ivtv_algo = {
 	.master_xfer   = ivtv_xfer,
 	.functionality = ivtv_functionality,
-#ifdef NEED_ALGO_CONTROL
-	.algo_control = dummy_algo_control,
-#endif
 };
 
 /* template for our-bit banger */
@@ -517,9 +510,6 @@ static struct i2c_adapter ivtv_i2c_adap_hw_template = {
 	.algo = &ivtv_algo,
 	.algo_data = NULL,			/* filled from template */
 	.owner = THIS_MODULE,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22)
-	.class = I2C_CLASS_TV_ANALOG,
-#endif
 };
 
 static void ivtv_setscl_old(void *data, int state)
@@ -571,9 +561,6 @@ static struct i2c_adapter ivtv_i2c_adap_template = {
 	.algo = NULL,                   /* set by i2c-algo-bit */
 	.algo_data = NULL,              /* filled from template */
 	.owner = THIS_MODULE,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22)
-	.class = I2C_CLASS_TV_ANALOG,
-#endif
 };
 
 static const struct i2c_algo_bit_data ivtv_i2c_algo_template = {
@@ -622,9 +609,7 @@ int init_ivtv_i2c(struct ivtv *itv)
 	memcpy(&itv->i2c_client, &ivtv_i2c_client_template,
 	       sizeof(struct i2c_client));
 	itv->i2c_client.adapter = &itv->i2c_adap;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20)
 	itv->i2c_adap.dev.parent = &itv->dev->dev;
-#endif
 
 	IVTV_DEBUG_I2C("setting scl and sda to 1\n");
 	ivtv_setscl(itv, 1);
@@ -640,13 +625,5 @@ void exit_ivtv_i2c(struct ivtv *itv)
 {
 	IVTV_DEBUG_I2C("i2c exit\n");
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20)
 	i2c_del_adapter(&itv->i2c_adap);
-#else
-	if (itv->options.newi2c > 0) {
-		i2c_del_adapter(&itv->i2c_adap);
-	} else {
-		i2c_bit_del_bus(&itv->i2c_adap);
-	}
-#endif
 }

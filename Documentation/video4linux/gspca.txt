@@ -50,9 +50,14 @@ ov519		045e:028c	Micro$oft xbox cam
 spca508		0461:0815	Micro Innovation IC200
 sunplus		0461:0821	Fujifilm MV-1
 zc3xx		0461:0a00	MicroInnovation WebCam320
+stv06xx		046d:0840	QuickCam Express
+stv06xx		046d:0850	LEGO cam / QuickCam Web
+stv06xx		046d:0870	Dexxa WebCam USB
 spca500		046d:0890	Logitech QuickCam traveler
 vc032x		046d:0892	Logitech Orbicam
 vc032x		046d:0896	Logitech Orbicam
+vc032x		046d:0897	Logitech QuickCam for Dell notebooks
+zc3xx		046d:089d	Logitech QuickCam E2500
 zc3xx		046d:08a0	Logitech QC IM
 zc3xx		046d:08a1	Logitech QC IM 0x08A1 +sound
 zc3xx		046d:08a2	Labtec Webcam Pro
@@ -202,7 +207,8 @@ sunplus		08ca:2050	Medion MD 41437
 sunplus		08ca:2060	Aiptek PocketDV5300
 tv8532		0923:010f	ICM532 cams
 mars		093a:050f	Mars-Semi Pc-Camera
-pac207		093a:2460	PAC207 Qtec Webcam 100
+pac207		093a:2460	Qtec Webcam 100
+pac207		093a:2461	HP Webcam
 pac207		093a:2463	Philips SPC 220 NC
 pac207		093a:2464	Labtec Webcam 1200
 pac207		093a:2468	PAC207
@@ -216,11 +222,13 @@ pac7311		093a:2603	PAC7312
 pac7311		093a:2608	Trust WB-3300p
 pac7311		093a:260e	Gigaware VGA PC Camera, Trust WB-3350p, SIGMA cam 2350
 pac7311		093a:260f	SnakeCam
+pac7311		093a:2620	Apollo AC-905
 pac7311		093a:2621	PAC731x
 pac7311		093a:2622	Genius Eye 312
 pac7311		093a:2624	PAC7302
 pac7311		093a:2626	Labtec 2200
 pac7311		093a:262a	Webcam 300k
+pac7311		093a:262c	Philips SPC 230 NC
 zc3xx		0ac8:0302	Z-star Vimicro zc0302
 vc032x		0ac8:0321	Vimicro generic vc0321
 vc032x		0ac8:0323	Vimicro Vc0323

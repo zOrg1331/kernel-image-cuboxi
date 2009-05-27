@@ -21,7 +21,6 @@
 #include <linux/ioport.h>
 #include <asm/io.h>
 #include <asm/uaccess.h>
-#include <media/compat.h>
 #include <linux/videodev2.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
@@ -303,9 +302,6 @@ static int vidioc_s_ctrl(struct file *file, void *priv,
 		tr_settreble(ctrl->value);
 		return 0;
 	}
-#if 0 /* Should implement mono/stereo on V4L2 */
-			tr_setstereo(v->mode & VIDEO_SOUND_STEREO);
-#endif
 	return -EINVAL;
 }
 
@@ -341,26 +337,22 @@ static int vidioc_s_audio(struct file *file, void *priv,
 	return 0;
 }
 
-static int trust_exclusive_open(struct inode *inode, struct file *file)
+static int trust_exclusive_open(struct file *file)
 {
 	return test_and_set_bit(0, &in_use) ? -EBUSY : 0;
 }
 
-static int trust_exclusive_release(struct inode *inode, struct file *file)
+static int trust_exclusive_release(struct file *file)
 {
 	clear_bit(0, &in_use);
 	return 0;
 }
 
-static const struct file_operations trust_fops = {
+static const struct v4l2_file_operations trust_fops = {
 	.owner		= THIS_MODULE,
 	.open           = trust_exclusive_open,
 	.release        = trust_exclusive_release,
 	.ioctl		= video_ioctl2,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl	= v4l_compat_ioctl32,
-#endif
-	.llseek         = no_llseek,
 };
 
 static const struct v4l2_ioctl_ops trust_ioctl_ops = {

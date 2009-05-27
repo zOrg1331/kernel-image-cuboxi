@@ -81,7 +81,6 @@ static const char * const hw_devicenames[] = {
 
 int cx18_i2c_register(struct cx18 *cx, unsigned idx)
 {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
 	struct i2c_board_info info;
 	struct i2c_client *c;
 	u8 id, bus;
@@ -93,12 +92,7 @@ int cx18_i2c_register(struct cx18 *cx, unsigned idx)
 	id = hw_driverids[idx];
 	bus = hw_bus[idx];
 	memset(&info, 0, sizeof(info));
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)
-	strlcpy(info.driver_name, hw_devicenames[idx],
-			sizeof(info.driver_name));
-#else
 	strlcpy(info.type, hw_devicenames[idx], sizeof(info.type));
-#endif
 	info.addr = hw_addrs[idx];
 	for (i = 0; i < I2C_CLIENTS_MAX; i++)
 		if (cx->i2c_clients[i] == NULL)
@@ -135,27 +129,10 @@ int cx18_i2c_register(struct cx18 *cx, unsigned idx)
 	else if (c)
 		cx->i2c_clients[i++] = c;
 	return 0;
-#else
-	return 0;
-#endif
 }
 
 static int attach_inform(struct i2c_client *client)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22)
-	struct cx18 *cx = (struct cx18 *)i2c_get_adapdata(client->adapter);
-	int i;
-
-	CX18_DEBUG_I2C("i2c client attach\n");
-	for (i = 0; i < I2C_CLIENTS_MAX; i++) {
-		if (cx->i2c_clients[i] == NULL) {
-			cx->i2c_clients[i] = client;
-			break;
-		}
-	}
-	if (i == I2C_CLIENTS_MAX)
-		CX18_ERR("Insufficient room for new I2C client\n");
-#endif
 	return 0;
 }
 
@@ -230,9 +207,6 @@ static struct i2c_adapter cx18_i2c_adap_template = {
 	.client_register = attach_inform,
 	.client_unregister = detach_inform,
 	.owner = THIS_MODULE,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22)
-	.class = I2C_CLASS_TV_ANALOG,
-#endif
 };
 
 #define CX18_SCL_PERIOD (10) /* usecs. 10 usec is period for a 100 KHz clock */
@@ -268,7 +242,7 @@ int cx18_call_i2c_client(struct cx18 *cx, int addr, unsigned cmd, void *arg)
 			return retval;
 		}
 	}
-	if (cmd != VIDIOC_G_CHIP_IDENT)
+	if (cmd != VIDIOC_DBG_G_CHIP_IDENT)
 		CX18_ERR("i2c addr 0x%02x not found for cmd 0x%x!\n",
 			       addr, cmd);
 	return -ENODEV;
@@ -292,17 +266,6 @@ static int cx18_i2c_id_addr(struct cx18 *cx, u32 id)
 		}
 	}
 	return retval;
-}
-
-/* Find the i2c device name matching the DRIVERID */
-static const char *cx18_i2c_id_name(u32 id)
-{
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(hw_driverids); i++)
-		if (hw_driverids[i] == id)
-			return hw_devicenames[i];
-	return "unknown device";
 }
 
 /* Find the i2c device name matching the CX18_HW_ flag */
@@ -347,21 +310,6 @@ int cx18_i2c_hw(struct cx18 *cx, u32 hw, unsigned int cmd, void *arg)
 	if (addr < 0) {
 		CX18_ERR("i2c hardware 0x%08x (%s) not found for cmd 0x%x!\n",
 			       hw, cx18_i2c_hw_name(hw), cmd);
-		return addr;
-	}
-	return cx18_call_i2c_client(cx, addr, cmd, arg);
-}
-
-/* Calls i2c device based on I2C driver ID. */
-int cx18_i2c_id(struct cx18 *cx, u32 id, unsigned int cmd, void *arg)
-{
-	int addr;
-
-	addr = cx18_i2c_id_addr(cx, id);
-	if (addr < 0) {
-		if (cmd != VIDIOC_G_CHIP_IDENT)
-			CX18_ERR("i2c ID 0x%08x (%s) not found for cmd 0x%x!\n",
-				id, cx18_i2c_id_name(id), cmd);
 		return addr;
 	}
 	return cx18_call_i2c_client(cx, addr, cmd, arg);
@@ -418,9 +366,7 @@ int init_cx18_i2c(struct cx18 *cx)
 		sprintf(cx->i2c_client[i].name +
 				strlen(cx->i2c_client[i].name), "%d", i);
 		cx->i2c_client[i].adapter = &cx->i2c_adap[i];
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20)
 		cx->i2c_adap[i].dev.parent = &cx->dev->dev;
-#endif
 	}
 
 	if (cx18_read_reg(cx, CX18_REG_I2C_2_WR) != 0x0003c02f) {
@@ -472,11 +418,7 @@ void exit_cx18_i2c(struct cx18 *cx)
 							CX18_REG_I2C_2_WR);
 
 	for (i = 0; i < 2; i++) {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20)
 		i2c_del_adapter(&cx->i2c_adap[i]);
-#else
-		i2c_bit_del_bus(&cx->i2c_adap[i]);
-#endif
 	}
 }
 

@@ -368,33 +368,21 @@ static u32 dw210x_i2c_func(struct i2c_adapter *adapter)
 static struct i2c_algorithm dw2102_i2c_algo = {
 	.master_xfer = dw2102_i2c_transfer,
 	.functionality = dw210x_i2c_func,
-#ifdef NEED_ALGO_CONTROL
-	.algo_control = dummy_algo_control,
-#endif
 };
 
 static struct i2c_algorithm dw2102_serit_i2c_algo = {
 	.master_xfer = dw2102_serit_i2c_transfer,
 	.functionality = dw210x_i2c_func,
-#ifdef NEED_ALGO_CONTROL
-	.algo_control = dummy_algo_control,
-#endif
 };
 
 static struct i2c_algorithm dw2102_earda_i2c_algo = {
 	.master_xfer = dw2102_earda_i2c_transfer,
 	.functionality = dw210x_i2c_func,
-#ifdef NEED_ALGO_CONTROL
-	.algo_control = dummy_algo_control,
-#endif
 };
 
 static struct i2c_algorithm dw2104_i2c_algo = {
 	.master_xfer = dw2104_i2c_transfer,
 	.functionality = dw210x_i2c_func,
-#ifdef NEED_ALGO_CONTROL
-	.algo_control = dummy_algo_control,
-#endif
 };
 
 static int dw210x_read_mac_address(struct dvb_usb_device *d, u8 mac[6])

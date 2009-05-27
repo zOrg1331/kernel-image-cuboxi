@@ -30,7 +30,6 @@
 
 #include "dvb_frontend.h"
 #include "drx397xD.h"
-#include <media/compat.h>
 
 static const char mod_name[] = "drx397xD";
 
@@ -40,7 +39,7 @@ static const char mod_name[] = "drx397xD";
 #define F_SET_0D4h	2
 
 enum fw_ix {
-#define _FW_ENTRY(a, b)		b
+#define _FW_ENTRY(a, b, c)	b
 #include "drx397xD_fw.h"
 };
 
@@ -73,11 +72,11 @@ static struct {
 	int refcnt;
 	const u8 *data[ARRAY_SIZE(blob_name)];
 } fw[] = {
-#define _FW_ENTRY(a, b)		{			\
-			.name	= a,			\
-			.file	= 0,			\
-			.lock	= RW_LOCK_UNLOCKED,	\
-			.refcnt = 0,			\
+#define _FW_ENTRY(a, b, c)	{					\
+			.name	= a,					\
+			.file	= 0,					\
+			.lock	= __RW_LOCK_UNLOCKED(fw[c].lock),	\
+			.refcnt = 0,					\
 			.data	= { }		}
 #include "drx397xD_fw.h"
 };
@@ -647,7 +646,7 @@ static int drx_tune(struct drx397xD_state *s,
 	u32 edi = 0, ebx = 0, ebp = 0, edx = 0;
 	u16 v20 = 0, v1E = 0, v16 = 0, v14 = 0, v12 = 0, v10 = 0, v0E = 0;
 
-	int rc, df_tuner;
+	int rc, df_tuner = 0;
 	int a, b, c, d;
 	pr_debug("%s %d\n", __func__, s->config.d60);
 
@@ -661,42 +660,6 @@ static int drx_tune(struct drx397xD_state *s,
 	rc = ConfigureMPEGOutput(s, 0);
 	if (rc < 0)
 		goto set_tuner;
-#if 0
-
-	if (s->chip_rev != DRXD_FW_B1) {
-		rc = WR16(s, 0x2150000, 0);
-		if (rc < 0)
-			goto loc_800111A;
-		rc = WR16(s, 0x2110000, 0);
-		if (rc < 0)
-			goto loc_800111A;
-		rc = WR16(s, 0x0800000, 0);
-		if (rc < 0)
-			goto loc_800111A;
-		rc = WR16(s, 0x2800000, 0);
-	} else {
-		rc = WR16(s, 0x0800000, 0);
-		if (rc < 0)
-			goto loc_800111A;
-		rc = WR16(s, 0x2800000, 0);
-		if (rc < 0)
-			goto loc_800111A;
-		rc = WR16(s, 0x1000000, 0);
-		if (rc < 0)
-			goto loc_800111A;
-		rc = WR16(s, 0x1400000, 0);
-		if (rc < 0)
-			goto loc_800111A;
-		rc = WR16(s, 0x1800000, 0);
-		if (rc < 0)
-			goto loc_800111A;
-		rc = WR16(s, 0x1c00000, 0);
-		if (rc < 0)
-			goto loc_800111A;
-		rc = WR16(s, 0x2000000, 0);
-	}
-      loc_800111A:
-#endif
 set_tuner:
 
 	rc = PLL_Set(s, fep, &df_tuner);
@@ -1084,11 +1047,6 @@ set_tuner:
 	EXIT_RC(WR16(s, 0x0800000, 1));
 	EXIT_RC(RD16(s, 0x0800000));
 
-#if 0
-	rc = WR16(s, 0x0810000, 1);
-	if (rc < 0)
-		goto exit_rc;
-#endif
 
 	EXIT_RC(SC_WaitForReady(s));
 	EXIT_RC(WR16(s, 0x0820042, 0));
@@ -1104,11 +1062,6 @@ set_tuner:
 	WR16(s, 0x0820040, 1);
 	SC_SendCommand(s, 1);
 
-#if 0
-	rc = WR16(s, 0x2150000, 1);
-	if (rc < 0)
-		goto exit_rc;
-#endif
 
 	rc = WR16(s, 0x2150000, 2);
 	rc = WR16(s, 0x2150016, a);
@@ -1239,28 +1192,6 @@ static int drx397x_init(struct dvb_frontend *fe)
 		goto error;
 
 	s->f_osc = s->config.f_osc * 1000;	/* initial estimator */
-#if 0
-	{
-		int deviation, val, edi;
-
-		/* osc_deviation(struct state *x, int deviation, int io)
-		 *
-		 * io == 0      : read_deviation from eeprom
-		 * io != 0      : write deviation to eeprom
-		 */
-		s->config.w64 = x->osc_deviation(x, 0, 0);
-		val = s->config.w64 * s->config.w66;
-		deviation = val / 1000000;
-
-		edi = 2;
-		if (val <= 0)
-			edi = -2;
-		val = val % 1000000;
-		if (edi * val > 1000000)
-			deviation += edi >> 1;
-		s->clk_if_corrected += deviation;
-	}
-#endif
 
 	s->config.w56 = 1;
 
@@ -1374,26 +1305,11 @@ write_DRXD_InitFE_1:
 	if (rc < 0)
 		goto error;
 
-#if 1
 	rc = ConfigureMPEGOutput(s, 1);
 	rc = WR16(s, 0x08201fe, 0x0017);
 	rc = WR16(s, 0x08201ff, 0x0101);
 
 	s->config.d5C = 0;
-#else
-	s->config.d5C = 0;
-	rc = CorrectSysClockDeviation(s);
-	if (rc < 0)
-		goto error;
-
-// rc = ConfigureWR16(s, 0x0420033, 0x200);
-
-	rc = WR16(s, 0x0800000, 0);
-	if (rc < 0)
-		goto error;
-
-	rc = WR16(s, 0x2800000, 0);
-#endif
 	s->config.d60 = 1;
 	s->config.d48 = 1;
 
@@ -1434,11 +1350,6 @@ static int drx397x_read_status(struct dvb_frontend *fe, fe_status_t *status)
 	int lockstat;
 
 	GetLockStatus(s, &lockstat);
-#if 0
-	/* TODO */
-	if (lockstat & 1)
-		CorrectSysClockDeviation(s);
-#endif
 
 	*status = 0;
 	if (lockstat & 2) {

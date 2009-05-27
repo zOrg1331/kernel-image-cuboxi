@@ -23,7 +23,6 @@
 #include "pvrusb2-debug.h"
 #include "pvrusb2-fx2-cmd.h"
 #include "pvrusb2.h"
-#include <media/compat.h>
 
 #define trace_i2c(...) pvr2_trace(PVR2_TRACE_I2C,__VA_ARGS__)
 
@@ -55,9 +54,6 @@ static int pvr2_i2c_write(struct pvr2_hdw *hdw, /* Context */
 	/* Return value - default 0 means success */
 	int ret;
 
-#if 0
-	trace_i2c("pvr2_i2c_write");
-#endif
 
 	if (!data) length = 0;
 	if (length > (sizeof(hdw->cmd_buffer) - 3)) {
@@ -96,10 +92,6 @@ static int pvr2_i2c_write(struct pvr2_hdw *hdw, /* Context */
 			}
 		}
 	}
-#if 0
-	trace_i2c("i2c_write(0x%x) len=%d ret=%d stat=%d",i2c_addr,length,ret,
-		  hdw->cmd_buffer[0]);
-#endif
 
 	LOCK_GIVE(hdw->ctl_lock);
 
@@ -116,9 +108,6 @@ static int pvr2_i2c_read(struct pvr2_hdw *hdw, /* Context */
 	/* Return value - default 0 means success */
 	int ret;
 
-#if 0
-	trace_i2c("pvr2_i2c_read");
-#endif
 
 	if (!data) dlen = 0;
 	if (dlen > (sizeof(hdw->cmd_buffer) - 4)) {
@@ -168,10 +157,6 @@ static int pvr2_i2c_read(struct pvr2_hdw *hdw, /* Context */
 		}
 	}
 
-#if 0
-	trace_i2c("i2c_read(0x%x) wlen=%d rlen=%d ret=%d stat=%d",
-		  i2c_addr,dlen,rlen,ret,hdw->cmd_buffer[0]);
-#endif
 	/* Copy back the result */
 	if (res && rlen) {
 		if (ret) {
@@ -205,66 +190,6 @@ static int pvr2_i2c_basic_op(struct pvr2_hdw *hdw,
 	}
 }
 
-#if 0
-/* This is special code for spying on IR transactions for 29xxx devices.
-   We use this to reverse-engineer the IR protocol in order to simulate it
-   correctly for 24xxx devices. */
-static int i2c_29xxx_ir(struct pvr2_hdw *hdw,
-			u8 i2c_addr,u8 *wdata,u16 wlen,u8 *rdata,u16 rlen)
-{
-	char buf[200];
-	unsigned int c1,c2;
-	unsigned int idx,stat;
-	if (!(rlen || wlen)) {
-		/* This is a probe attempt.  Just let it succeed. */
-		pvr2_trace(PVR2_TRACE_DEBUG,"IR: probe");
-		return 0;
-	}
-	stat = pvr2_i2c_basic_op(hdw,i2c_addr,wdata,wlen,rdata,rlen);
-	if ((wlen == 0) && (rlen == 3) && (stat == 0) &&
-	    (rdata[0] == 0) && (rdata[1] == 0) && (rdata[2] == 0xc1)) {
-		return stat;
-	}
-	c1 = 0;
-	c2 = scnprintf(buf+c1,sizeof(buf)-c1,
-			       "IR: stat=%d",stat);
-	c1 += c2;
-	if (wlen) {
-		c2 = scnprintf(buf+c1,sizeof(buf)-c1,
-			       " write [");
-		c1 += c2;
-		for (idx = 0; idx < wlen; idx++) {
-			c2 = scnprintf(buf+c1,sizeof(buf)-c1,
-				       "%s%02x",idx == 0 ? "" : " ",
-				       wdata[idx]);
-			c1 += c2;
-		}
-		c2 = scnprintf(buf+c1,sizeof(buf)-c1,
-			       "]");
-		c1 += c2;
-	}
-	if (rlen && (stat == 0)) {
-		c2 = scnprintf(buf+c1,sizeof(buf)-c1,
-			       " read [");
-		c1 += c2;
-		for (idx = 0; idx < rlen; idx++) {
-			c2 = scnprintf(buf+c1,sizeof(buf)-c1,
-				       "%s%02x",idx == 0 ? "" : " ",
-				       rdata[idx]);
-			c1 += c2;
-		}
-		c2 = scnprintf(buf+c1,sizeof(buf)-c1,
-			       "]");
-		c1 += c2;
-	} else if (rlen) {
-		c2 = scnprintf(buf+c1,sizeof(buf)-c1,
-			       " read cnt=%u",rlen);
-		c1 += c2;
-	}
-	pvr2_trace(PVR2_TRACE_DEBUG,"%.*s",c1,buf);
-	return stat;
-}
-#endif
 
 /* This is a special entry point for cases of I2C transaction attempts to
    the IR receiver.  The implementation here simulates the IR receiver by
@@ -1013,9 +938,6 @@ static int pvr2_i2c_detach_inform(struct i2c_client *client)
 static struct i2c_algorithm pvr2_i2c_algo_template = {
 	.master_xfer   = pvr2_i2c_xfer,
 	.functionality = pvr2_i2c_functionality,
-#ifdef NEED_ALGO_CONTROL
-	.algo_control = dummy_algo_control,
-#endif
 };
 
 static struct i2c_adapter pvr2_i2c_adap_template = {

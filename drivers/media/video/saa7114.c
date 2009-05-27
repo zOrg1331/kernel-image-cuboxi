@@ -38,7 +38,6 @@
 #include <linux/video_decoder.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-i2c-drv-legacy.h>
-#include <media/compat.h>
 
 MODULE_DESCRIPTION("Philips SAA7114H video decoder driver");
 MODULE_AUTHOR("Maxim Yevtyushkin");
@@ -1053,21 +1052,17 @@ static int saa7114_remove(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id saa7114_id[] = {
 	{ "saa7114_old", 0 },	/* "saa7114" maps to the saa7115 driver */
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, saa7114_id);
 
-#endif
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "saa7114",
 	.driverid = I2C_DRIVERID_SAA7114,
 	.command = saa7114_command,
 	.probe = saa7114_probe,
 	.remove = saa7114_remove,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = saa7114_id,
-#endif
 };

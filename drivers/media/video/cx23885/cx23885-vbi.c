@@ -25,7 +25,6 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 
-#include <media/compat.h>
 #include "cx23885.h"
 
 static unsigned int vbibufs = 4;
@@ -86,19 +85,6 @@ static int cx23885_start_vbi_dma(struct cx23885_dev    *dev,
 	return 0;
 }
 
-#if 0
-/* not (yet) used */
-static int cx23885_stop_vbi_dma(struct cx23885_dev *dev)
-{
-	/* stop dma */
-	cx_clear(VID_A_DMA_CTL, 0x00000022);
-
-	/* disable irqs */
-	cx_clear(PCI_INT_MSK, 0x000001);
-	cx_clear(VID_A_INT_MSK, 0x00000022);
-	return 0;
-}
-#endif
 
 static int cx23885_restart_vbi_queue(struct cx23885_dev    *dev,
 			     struct cx23885_dmaqueue *q)

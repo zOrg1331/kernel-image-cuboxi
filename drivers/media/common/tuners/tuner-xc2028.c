@@ -15,7 +15,6 @@
 #include <linux/delay.h>
 #include <media/tuner.h>
 #include <linux/mutex.h>
-#include <media/compat.h>
 #include <asm/unaligned.h>
 #include "tuner-i2c.h"
 #include "tuner-xc2028.h"
@@ -24,9 +23,6 @@
 #include <linux/dvb/frontend.h>
 #include "dvb_frontend.h"
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22)
-#define strcasecmp(a, b) strnicmp(a, b, sizeof(a))
-#endif
 
 static int debug;
 module_param(debug, int, 0644);
@@ -1210,10 +1206,6 @@ static const struct dvb_tuner_ops xc2028_dvb_tuner_ops = {
 	.get_rf_strength   = xc2028_signal,
 	.set_params        = xc2028_set_params,
 	.sleep             = xc2028_sleep,
-#if 0
-	int (*get_bandwidth)(struct dvb_frontend *fe, u32 *bandwidth);
-	int (*get_status)(struct dvb_frontend *fe, u32 *status);
-#endif
 };
 
 struct dvb_frontend *xc2028_attach(struct dvb_frontend *fe,

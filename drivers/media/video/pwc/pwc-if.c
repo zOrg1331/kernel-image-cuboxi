@@ -62,7 +62,6 @@
 #include <linux/poll.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
-#include <linux/version.h>
 #include <asm/io.h>
 
 #include "pwc.h"
@@ -142,16 +141,16 @@ static struct {
 
 /***/
 
-static int pwc_video_open(struct inode *inode, struct file *file);
-static int pwc_video_close(struct inode *inode, struct file *file);
+static int pwc_video_open(struct file *file);
+static int pwc_video_close(struct file *file);
 static ssize_t pwc_video_read(struct file *file, char __user *buf,
 			  size_t count, loff_t *ppos);
 static unsigned int pwc_video_poll(struct file *file, poll_table *wait);
-static int  pwc_video_ioctl(struct inode *inode, struct file *file,
+static long  pwc_video_ioctl(struct file *file,
 			    unsigned int ioctlnr, unsigned long arg);
 static int  pwc_video_mmap(struct file *file, struct vm_area_struct *vma);
 
-static const struct file_operations pwc_fops = {
+static const struct v4l2_file_operations pwc_fops = {
 	.owner =	THIS_MODULE,
 	.open =		pwc_video_open,
 	.release =     	pwc_video_close,
@@ -159,10 +158,6 @@ static const struct file_operations pwc_fops = {
 	.poll =		pwc_video_poll,
 	.mmap =		pwc_video_mmap,
 	.ioctl =        pwc_video_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl = v4l_compat_ioctl32,
-#endif
-	.llseek =       no_llseek,
 };
 static struct video_device pwc_template = {
 	.name =		"Philips Webcam",	/* Filled in later */
@@ -680,11 +675,7 @@ static int pwc_rcv_short_packet(struct pwc_device *pdev, const struct pwc_frame_
 /* This gets called for the Isochronous pipe (video). This is done in
  * interrupt time, so it has to be fast, not crash, and not stall. Neat.
  */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static void pwc_isoc_handler(struct urb *urb, struct pt_regs *regs)
-#else
 static void pwc_isoc_handler(struct urb *urb)
-#endif
 {
 	struct pwc_device *pdev;
 	int i, fst, flen;
@@ -1108,7 +1099,7 @@ static const char *pwc_sensor_type_to_string(unsigned int sensor_type)
 /***************************************************************************/
 /* Video4Linux functions */
 
-static int pwc_video_open(struct inode *inode, struct file *file)
+static int pwc_video_open(struct file *file)
 {
 	int i, ret;
 	struct video_device *vdev = video_devdata(file);
@@ -1228,7 +1219,7 @@ static void pwc_cleanup(struct pwc_device *pdev)
 }
 
 /* Note that all cleanup is done in the reverse order as in _open */
-static int pwc_video_close(struct inode *inode, struct file *file)
+static int pwc_video_close(struct file *file)
 {
 	struct video_device *vdev = file->private_data;
 	struct pwc_device *pdev;
@@ -1403,12 +1394,12 @@ static unsigned int pwc_video_poll(struct file *file, poll_table *wait)
 	return 0;
 }
 
-static int pwc_video_ioctl(struct inode *inode, struct file *file,
+static long pwc_video_ioctl(struct file *file,
 			   unsigned int cmd, unsigned long arg)
 {
 	struct video_device *vdev = file->private_data;
 	struct pwc_device *pdev;
-	int r = -ENODEV;
+	long r = -ENODEV;
 
 	if (!vdev)
 		goto out;

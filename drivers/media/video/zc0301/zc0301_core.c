@@ -303,11 +303,7 @@ int zc0301_i2c_write(struct zc0301_device* cam, u16 address, u16 value)
 
 /*****************************************************************************/
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static void zc0301_urb_complete(struct urb *urb, struct pt_regs* regs)
-#else
 static void zc0301_urb_complete(struct urb *urb)
-#endif
 {
 	struct zc0301_device* cam = urb->context;
 	struct zc0301_frame_t** f;
@@ -653,7 +649,7 @@ static void zc0301_release_resources(struct kref *kref)
 }
 
 
-static int zc0301_open(struct inode* inode, struct file* filp)
+static int zc0301_open(struct file *filp)
 {
 	struct zc0301_device* cam;
 	int err = 0;
@@ -737,7 +733,7 @@ out:
 }
 
 
-static int zc0301_release(struct inode* inode, struct file* filp)
+static int zc0301_release(struct file *filp)
 {
 	struct zc0301_device* cam;
 
@@ -1797,8 +1793,8 @@ zc0301_vidioc_s_parm(struct zc0301_device* cam, void __user * arg)
 }
 
 
-static int zc0301_ioctl_v4l2(struct inode* inode, struct file* filp,
-			     unsigned int cmd, void __user * arg)
+static long zc0301_ioctl_v4l2(struct file *filp,
+			     unsigned int cmd, void __user *arg)
 {
 	struct zc0301_device *cam = video_drvdata(filp);
 
@@ -1892,7 +1888,7 @@ static int zc0301_ioctl_v4l2(struct inode* inode, struct file* filp,
 }
 
 
-static int zc0301_ioctl(struct inode* inode, struct file* filp,
+static long zc0301_ioctl(struct file *filp,
 			unsigned int cmd, unsigned long arg)
 {
 	struct zc0301_device *cam = video_drvdata(filp);
@@ -1916,7 +1912,7 @@ static int zc0301_ioctl(struct inode* inode, struct file* filp,
 
 	V4LDBG(3, "zc0301", cmd);
 
-	err = zc0301_ioctl_v4l2(inode, filp, cmd, (void __user *)arg);
+	err = zc0301_ioctl_v4l2(filp, cmd, (void __user *)arg);
 
 	mutex_unlock(&cam->fileop_mutex);
 
@@ -1924,18 +1920,14 @@ static int zc0301_ioctl(struct inode* inode, struct file* filp,
 }
 
 
-static const struct file_operations zc0301_fops = {
+static const struct v4l2_file_operations zc0301_fops = {
 	.owner =   THIS_MODULE,
 	.open =    zc0301_open,
 	.release = zc0301_release,
 	.ioctl =   zc0301_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl = v4l_compat_ioctl32,
-#endif
 	.read =    zc0301_read,
 	.poll =    zc0301_poll,
 	.mmap =    zc0301_mmap,
-	.llseek =  no_llseek,
 };
 
 /*****************************************************************************/

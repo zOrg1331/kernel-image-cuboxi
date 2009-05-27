@@ -21,7 +21,6 @@
  * 02110-1301, USA.
  */
 
-#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/i2c.h>
@@ -30,7 +29,6 @@
 #include <media/v4l2-chip-ident.h>
 #include <media/v4l2-i2c-drv.h>
 #include <media/upd64083.h>
-#include <media/compat.h>
 
 MODULE_DESCRIPTION("uPD64083 driver");
 MODULE_AUTHOR("T. Adachi, Takeru KOMORIYA, Hans Verkuil");
@@ -41,11 +39,6 @@ module_param(debug, bool, 0644);
 
 MODULE_PARM_DESC(debug, "Debug level (0-1)");
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 22)
-static unsigned short normal_i2c[] = { 0xb8 >> 1, 0xba >> 1, I2C_CLIENT_END };
-
-I2C_CLIENT_INSMOD;
-#endif
 
 enum {
 	R00 = 0, R01, R02, R03, R04,
@@ -126,25 +119,24 @@ static int upd64083_s_routing(struct v4l2_subdev *sd, const struct v4l2_routing 
 }
 
 #ifdef CONFIG_VIDEO_ADV_DEBUG
-static int upd64083_g_register(struct v4l2_subdev *sd, struct v4l2_register *reg)
+static int upd64083_g_register(struct v4l2_subdev *sd, struct v4l2_dbg_register *reg)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
-	if (!v4l2_chip_match_i2c_client(client,
-				reg->match_type, reg->match_chip))
+	if (!v4l2_chip_match_i2c_client(client, &reg->match))
 		return -EINVAL;
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 	reg->val = upd64083_read(sd, reg->reg & 0xff);
+	reg->size = 1;
 	return 0;
 }
 
-static int upd64083_s_register(struct v4l2_subdev *sd, struct v4l2_register *reg)
+static int upd64083_s_register(struct v4l2_subdev *sd, struct v4l2_dbg_register *reg)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
-	if (!v4l2_chip_match_i2c_client(client,
-				reg->match_type, reg->match_chip))
+	if (!v4l2_chip_match_i2c_client(client, &reg->match))
 		return -EINVAL;
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -153,7 +145,7 @@ static int upd64083_s_register(struct v4l2_subdev *sd, struct v4l2_register *reg
 }
 #endif
 
-static int upd64083_g_chip_ident(struct v4l2_subdev *sd, struct v4l2_chip_ident *chip)
+static int upd64083_g_chip_ident(struct v4l2_subdev *sd, struct v4l2_dbg_chip_ident *chip)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
@@ -239,13 +231,11 @@ static int upd64083_remove(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 static const struct i2c_device_id upd64083_id[] = {
 	{ "upd64083", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, upd64083_id);
-#endif
 
 static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.name = "upd64083",
@@ -253,7 +243,5 @@ static struct v4l2_i2c_driver_data v4l2_i2c_data = {
 	.command = upd64083_command,
 	.probe = upd64083_probe,
 	.remove = upd64083_remove,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 26)
 	.id_table = upd64083_id,
-#endif
 };

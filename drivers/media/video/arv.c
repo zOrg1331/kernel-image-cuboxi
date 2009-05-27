@@ -27,7 +27,6 @@
 #include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/sched.h>
-#include <media/compat.h>
 #include <linux/videodev.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
@@ -39,7 +38,7 @@
 #include <asm/dma.h>
 #include <asm/byteorder.h>
 
-#if 0 /* keep */
+#if 0
 #define DEBUG(n, args...) printk(args)
 #define CHECK_LOST	1
 #else
@@ -397,7 +396,7 @@ out_up:
 	return ret;
 }
 
-static int ar_do_ioctl(struct file *file, unsigned int cmd, void *arg)
+static long ar_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 {
 	struct video_device *dev = video_devdata(file);
 	struct ar_device *ar = video_get_drvdata(dev);
@@ -540,7 +539,7 @@ static int ar_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 	return 0;
 }
 
-static int ar_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
+static long ar_ioctl(struct file *file, unsigned int cmd,
 		    unsigned long arg)
 {
 	return video_usercopy(file, cmd, arg, ar_do_ioctl);
@@ -550,11 +549,7 @@ static int ar_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
 /*
  * Interrupt handler
  */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static void ar_interrupt(int irq, void *dev, struct pt_regs *regs)
-#else
 static void ar_interrupt(int irq, void *dev)
-#endif
 {
 	struct ar_device *ar = dev;
 	unsigned int line_count;
@@ -579,11 +574,11 @@ static void ar_interrupt(int irq, void *dev)
 		 * we have to start capture.
 		 */
 		disable_dma();
-#if 0 /* keep */
+#if 0
 		ar_outl(ar->line_buff, M32R_DMA0CDA_PORTL);	/* needless? */
 #endif
 		memcpy(ar->frame[0], ar->line_buff, ar->line_bytes);
-#if 0 /* keep */
+#if 0
 		ar_outl(0xa1861300, M32R_DMA0CR0_PORTL);
 #endif
 		enable_dma();
@@ -609,7 +604,7 @@ static void ar_interrupt(int irq, void *dev)
 			ar_outl(arvcr1, ARVCR1);	/* disable */
 			wake_up_interruptible(&ar->wait);
 		} else {
-#if 0 /* keep */
+#if 0
 			ar_outl(ar->line_buff, M32R_DMA0CDA_PORTL);
 			ar_outl(0xa1861300, M32R_DMA0CR0_PORTL);
 #endif
@@ -693,7 +688,7 @@ static int ar_initialize(struct video_device *dev)
 	printk(".");
 	iic(2,0x78,0x8e,0x0c,0x00);
 	iic(2,0x78,0x8f,0x00,0x00);
-#if 0 /* keep */
+#if 0
 	iic(2,0x78,0x90,0x00,0x00);	/* AWB on=1 off=0 */
 #endif
 	iic(2,0x78,0x93,0x01,0x00);
@@ -712,7 +707,7 @@ static int ar_initialize(struct video_device *dev)
 	iic(2,0x78,0x9e,0x2e,0x00);
 	iic(2,0x78,0xb8,0x78,0x00);
 	iic(2,0x78,0xba,0x05,0x00);
-#if 0 /* keep */
+#if 0
 	iic(2,0x78,0x83,0x8c,0x00);	/* brightness */
 #endif
 	printk(".");
@@ -749,27 +744,23 @@ void ar_release(struct video_device *vfd)
  ****************************************************************************/
 static struct ar_device ardev;
 
-static int ar_exclusive_open(struct inode *inode, struct file *file)
+static int ar_exclusive_open(struct file *file)
 {
 	return test_and_set_bit(0, &ardev.in_use) ? -EBUSY : 0;
 }
 
-static int ar_exclusive_release(struct inode *inode, struct file *file)
+static int ar_exclusive_release(struct file *file)
 {
 	clear_bit(0, &ardev.in_use);
 	return 0;
 }
 
-static const struct file_operations ar_fops = {
+static const struct v4l2_file_operations ar_fops = {
 	.owner		= THIS_MODULE,
 	.open		= ar_exclusive_open,
 	.release	= ar_exclusive_release,
 	.read		= ar_read,
 	.ioctl		= ar_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl	= v4l_compat_ioctl32,
-#endif
-	.llseek		= no_llseek,
 };
 
 static struct video_device ar_template = {

@@ -242,11 +242,7 @@ static int __devinit pluto_dma_map(struct pluto *pluto)
 	pluto->dma_addr = pci_map_single(pluto->pdev, pluto->dma_buf,
 			TS_DMA_BYTES, PCI_DMA_FROMDEVICE);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 27)
-	return pci_dma_mapping_error(pluto->dma_addr);
-#else
 	return pci_dma_mapping_error(pluto->pdev, pluto->dma_addr);
-#endif
 }
 
 static void pluto_dma_unmap(struct pluto *pluto)
@@ -329,11 +325,7 @@ static void pluto_dma_end(struct pluto *pluto, unsigned int nbpackets)
 			TS_DMA_BYTES, PCI_DMA_FROMDEVICE);
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
-static irqreturn_t pluto_irq(int irq, void *dev_id, struct pt_regs *regs)
-#else
 static irqreturn_t pluto_irq(int irq, void *dev_id)
-#endif
 {
 	struct pluto *pluto = dev_id;
 	u32 tscr;
@@ -568,8 +560,7 @@ static void __devinit pluto_read_mac(struct pluto *pluto, u8 *mac)
 	mac[4] = (val >> 8) & 0xff;
 	mac[5] = (val >> 0) & 0xff;
 
-	dev_info(&pluto->pdev->dev, "MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
-			mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+	dev_info(&pluto->pdev->dev, "MAC %pM\n", mac);
 }
 
 static int __devinit pluto_read_serial(struct pluto *pluto)
