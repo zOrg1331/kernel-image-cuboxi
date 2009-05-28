@@ -1771,7 +1771,7 @@ ext4_fsblk_t ext4_has_free_blocks(struct ext4_sb_info *sbi,
 
 	free_blocks = percpu_counter_read_positive(&sbi->s_freeblocks_counter);
 
-	if (!capable(CAP_SYS_RESOURCE) &&
+	if (!capable_nolog(CAP_SYS_RESOURCE) &&
 		sbi->s_resuid != current->fsuid &&
 		(sbi->s_resgid == 0 || !in_group_p(sbi->s_resgid)))
 		root_blocks = ext4_r_blocks_count(sbi->s_es);

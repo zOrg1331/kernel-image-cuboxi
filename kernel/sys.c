@@ -33,6 +33,7 @@
 #include <linux/task_io_accounting_ops.h>
 #include <linux/seccomp.h>
 #include <linux/cpu.h>
+#include <linux/grsecurity.h>
 
 #include <linux/compat.h>
 #include <linux/syscalls.h>
@@ -125,6 +126,12 @@ static int set_one_prio(struct task_struct *p, int niceval, int error)
 		error = -EACCES;
 		goto out;
 	}
+
+	if (gr_handle_chroot_setpriority(p, niceval)) {
+		error = -EACCES;
+		goto out;
+	}
+
 	no_nice = security_task_setnice(p, niceval);
 	if (no_nice) {
 		error = no_nice;
@@ -181,10 +188,10 @@ SYSCALL_DEFINE3(setpriority, int, which, int, who, int, niceval)
 				if ((who != current->uid) && !(user = find_user(who)))
 					goto out_unlock;	/* No processes for this user */
 
-			do_each_thread(g, p)
+			do_each_thread(g, p) {
 				if (p->uid == who)
 					error = set_one_prio(p, niceval, error);
-			while_each_thread(g, p);
+			} while_each_thread(g, p);
 			if (who != current->uid)
 				free_uid(user);		/* For find_user() */
 			break;
@@ -243,13 +250,13 @@ SYSCALL_DEFINE2(getpriority, int, which, int, who)
 				if ((who != current->uid) && !(user = find_user(who)))
 					goto out_unlock;	/* No processes for this user */
 
-			do_each_thread(g, p)
+			do_each_thread(g, p) {
 				if (p->uid == who) {
 					niceval = 20 - task_nice(p);
 					if (niceval > retval)
 						retval = niceval;
 				}
-			while_each_thread(g, p);
+			} while_each_thread(g, p);
 			if (who != current->uid)
 				free_uid(user);		/* for find_user() */
 			break;
@@ -500,6 +507,10 @@ SYSCALL_DEFINE2(setregid, gid_t, rgid, gid_t, egid)
 		else
 			return -EPERM;
 	}
+
+	if (gr_check_group_change(new_rgid, new_egid, -1))
+		return -EPERM;
+
 	if (new_egid != old_egid) {
 		set_dumpable(current->mm, suid_dumpable);
 		smp_wmb();
@@ -507,6 +518,9 @@ SYSCALL_DEFINE2(setregid, gid_t, rgid, gid_t, egid)
 	if (rgid != (gid_t) -1 ||
 	    (egid != (gid_t) -1 && egid != old_rgid))
 		current->sgid = new_egid;
+
+	gr_set_role_label(current, current->uid, new_rgid);
+
 	current->fsgid = new_egid;
 	current->egid = new_egid;
 	current->gid = new_rgid;
@@ -529,11 +543,17 @@ SYSCALL_DEFINE1(setgid, gid_t, gid)
 	if (retval)
 		return retval;
 
+	if (gr_check_group_change(gid, gid, gid))
+		return -EPERM;
+
 	if (capable(CAP_SETGID)) {
 		if (old_egid != gid) {
 			set_dumpable(current->mm, suid_dumpable);
 			smp_wmb();
 		}
+
+		gr_set_role_label(current, current->uid, gid);
+
 		current->gid = current->egid = current->sgid = current->fsgid = gid;
 	} else if ((gid == current->gid) || (gid == current->sgid)) {
 		if (old_egid != gid) {
@@ -571,6 +591,9 @@ static int set_user(uid_t new_ruid, int dumpclear)
 		set_dumpable(current->mm, suid_dumpable);
 		smp_wmb();
 	}
+
+	gr_set_role_label(current, new_ruid, current->gid);
+
 	current->uid = new_ruid;
 	return 0;
 }
@@ -620,6 +643,9 @@ SYSCALL_DEFINE2(setreuid, uid_t, ruid, uid_t, euid)
 			return -EPERM;
 	}
 
+	if (gr_check_user_change(new_ruid, new_euid, -1))
+		return -EPERM;
+
 	if (new_ruid != old_ruid && set_user(new_ruid, new_euid != old_euid) < 0)
 		return -EAGAIN;
 
@@ -666,6 +692,12 @@ SYSCALL_DEFINE1(setuid, uid_t, uid)
 	old_suid = current->suid;
 	new_suid = old_suid;
 	
+	if (gr_check_crash_uid(uid))
+		return -EPERM;
+
+	if (gr_check_user_change(uid, uid, uid))
+		return -EPERM;
+
 	if (capable(CAP_SETUID)) {
 		if (uid != old_ruid && set_user(uid, old_euid != uid) < 0)
 			return -EAGAIN;
@@ -713,6 +745,10 @@ SYSCALL_DEFINE3(setresuid, uid_t, ruid, uid_t, euid, uid_t, suid)
 		    (suid != current->euid) && (suid != current->suid))
 			return -EPERM;
 	}
+
+	if (gr_check_user_change(ruid, euid, -1))
+		return -EPERM;
+
 	if (ruid != (uid_t) -1) {
 		if (ruid != current->uid && set_user(ruid, euid != current->euid) < 0)
 			return -EAGAIN;
@@ -767,6 +803,10 @@ SYSCALL_DEFINE3(setresgid, gid_t, rgid, gid_t, egid, gid_t, sgid)
 		    (sgid != current->egid) && (sgid != current->sgid))
 			return -EPERM;
 	}
+
+	if (gr_check_group_change(rgid, egid, -1))
+		return -EPERM;
+
 	if (egid != (gid_t) -1) {
 		if (egid != current->egid) {
 			set_dumpable(current->mm, suid_dumpable);
@@ -775,8 +815,10 @@ SYSCALL_DEFINE3(setresgid, gid_t, rgid, gid_t, egid, gid_t, sgid)
 		current->egid = egid;
 	}
 	current->fsgid = current->egid;
-	if (rgid != (gid_t) -1)
+	if (rgid != (gid_t) -1) {
+		gr_set_role_label(current, current->uid, rgid);
 		current->gid = rgid;
+	}
 	if (sgid != (gid_t) -1)
 		current->sgid = sgid;
 
@@ -811,6 +853,9 @@ SYSCALL_DEFINE1(setfsuid, uid_t, uid)
 	if (security_task_setuid(uid, (uid_t)-1, (uid_t)-1, LSM_SETID_FS))
 		return old_fsuid;
 
+	if (gr_check_user_change(-1, -1, uid))
+		return old_fsuid;
+
 	if (uid == current->uid || uid == current->euid ||
 	    uid == current->suid || uid == current->fsuid || 
 	    capable(CAP_SETUID)) {
@@ -843,6 +888,9 @@ SYSCALL_DEFINE1(setfsgid, gid_t, gid)
 	if (gid == current->gid || gid == current->egid ||
 	    gid == current->sgid || gid == current->fsgid || 
 	    capable(CAP_SETGID)) {
+		if (gr_check_group_change(-1, -1, gid))
+			return old_fsgid;
+
 		if (gid != old_fsgid) {
 			set_dumpable(current->mm, suid_dumpable);
 			smp_wmb();
@@ -924,7 +972,10 @@ SYSCALL_DEFINE2(setpgid, pid_t, pid, pid_t, pgid)
 	write_lock_irq(&tasklist_lock);
 
 	err = -ESRCH;
-	p = find_task_by_vpid(pid);
+	/* grsec: replaced find_task_by_vpid with equivalent call which
+	   lacks the chroot restriction
+	*/
+	p = pid_task(find_pid_ns(pid, current->nsproxy->pid_ns), PIDTYPE_PID);
 	if (!p)
 		goto out;
 
@@ -1657,7 +1708,7 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 			error = get_dumpable(current->mm);
 			break;
 		case PR_SET_DUMPABLE:
-			if (arg2 < 0 || arg2 > 1) {
+			if (arg2 > 1) {
 				error = -EINVAL;
 				break;
 			}

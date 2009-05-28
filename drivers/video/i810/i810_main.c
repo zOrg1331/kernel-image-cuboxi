@@ -120,7 +120,7 @@ static struct pci_device_id i810fb_pci_tbl[] = {
 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 4 },
 	{ PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82815_CGC,
 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 5 },
-	{ 0 },
+	{ 0, 0, 0, 0, 0, 0, 0 },
 };
 
 static struct pci_driver i810fb_driver = {
@@ -1509,7 +1509,7 @@ static int i810fb_cursor(struct fb_info *info, struct fb_cursor *cursor)
 		int size = ((cursor->image.width + 7) >> 3) *
 			cursor->image.height;
 		int i;
-		u8 *data = kmalloc(64 * 8, GFP_ATOMIC);
+		u8 *data = kmalloc(64 * 8, GFP_KERNEL);
 
 		if (data == NULL)
 			return -ENOMEM;

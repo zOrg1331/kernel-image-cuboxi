@@ -26,10 +26,13 @@
 #include <linux/sched.h>
 #include <linux/prctl.h>
 #include <linux/securebits.h>
+#include <linux/grsecurity.h>
+
+extern kernel_cap_t gr_cap_rtnetlink(struct sock *sk);
 
 int cap_netlink_send(struct sock *sk, struct sk_buff *skb)
 {
-	NETLINK_CB(skb).eff_cap = current->cap_effective;
+	NETLINK_CB(skb).eff_cap = gr_cap_rtnetlink(sk);
 	return 0;
 }
 
@@ -51,7 +54,15 @@ EXPORT_SYMBOL(cap_netlink_recv);
 int cap_capable (struct task_struct *tsk, int cap)
 {
 	/* Derived from include/linux/sched.h:capable. */
-	if (cap_raised(tsk->cap_effective, cap))
+	if (cap_raised (tsk->cap_effective, cap))
+		return 0;
+	return -EPERM;
+}
+
+int cap_capable_nolog (struct task_struct *tsk, int cap)
+{
+	/* tsk = current for all callers */
+	if (cap_raised(tsk->cap_effective, cap) && gr_is_capable_nolog(cap))
 		return 0;
 	return -EPERM;
 }
@@ -379,8 +390,11 @@ void cap_bprm_apply_creds (struct linux_binprm *bprm, int unsafe)
 		}
 	}
 
-	current->suid = current->euid = current->fsuid = bprm->e_uid;
-	current->sgid = current->egid = current->fsgid = bprm->e_gid;
+	if (!gr_check_user_change(-1, bprm->e_uid, bprm->e_uid))
+		current->suid = current->euid = current->fsuid = bprm->e_uid;
+
+	if (!gr_check_group_change(-1, bprm->e_gid, bprm->e_gid))
+		current->sgid = current->egid = current->fsgid = bprm->e_gid;
 
 	/* For init, we want to retain the capabilities set
 	 * in the init_task struct. Thus we skip the usual
@@ -392,6 +406,8 @@ void cap_bprm_apply_creds (struct linux_binprm *bprm, int unsafe)
 		else
 			cap_clear(current->cap_effective);
 	}
+
+	gr_handle_chroot_caps(current);
 
 	/* AUD: Audit candidate if current->cap_effective is set */
 
@@ -723,7 +739,7 @@ int cap_vm_enough_memory(struct mm_struct *mm, long pages)
 {
 	int cap_sys_admin = 0;
 
-	if (cap_capable(current, CAP_SYS_ADMIN) == 0)
+	if (cap_capable_nolog(current, CAP_SYS_ADMIN) == 0)
 		cap_sys_admin = 1;
 	return __vm_enough_memory(mm, pages, cap_sys_admin);
 }

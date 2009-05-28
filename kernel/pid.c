@@ -36,6 +36,7 @@
 #include <linux/pid_namespace.h>
 #include <linux/init_task.h>
 #include <linux/syscalls.h>
+#include <linux/grsecurity.h>
 
 #define pid_hashfn(nr, ns)	\
 	hash_long((unsigned long)nr + (unsigned long)ns, pidhash_shift)
@@ -45,7 +46,7 @@ struct pid init_struct_pid = INIT_STRUCT_PID;
 
 int pid_max = PID_MAX_DEFAULT;
 
-#define RESERVED_PIDS		300
+#define RESERVED_PIDS		500
 
 int pid_max_min = RESERVED_PIDS + 1;
 int pid_max_max = PID_MAX_LIMIT;
@@ -381,7 +382,14 @@ EXPORT_SYMBOL(pid_task);
 struct task_struct *find_task_by_pid_type_ns(int type, int nr,
 		struct pid_namespace *ns)
 {
-	return pid_task(find_pid_ns(nr, ns), type);
+	struct task_struct *task;
+
+	task = pid_task(find_pid_ns(nr, ns), type);
+
+	if (gr_pid_is_chrooted(task))
+		return NULL;
+
+	return task;
 }
 
 EXPORT_SYMBOL(find_task_by_pid_type_ns);

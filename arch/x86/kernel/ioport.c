@@ -14,6 +14,7 @@
 #include <linux/slab.h>
 #include <linux/thread_info.h>
 #include <linux/syscalls.h>
+#include <linux/grsecurity.h>
 
 /* Set EXTENT bits starting at BASE in BITMAP to value TURN_ON. */
 static void set_bitmap(unsigned long *bitmap, unsigned int base,
@@ -40,6 +41,12 @@ asmlinkage long sys_ioperm(unsigned long from, unsigned long num, int turn_on)
 
 	if ((from + num <= from) || (from + num > IO_BITMAP_BITS))
 		return -EINVAL;
+#ifdef CONFIG_GRKERNSEC_IO
+	if (turn_on) {
+		gr_handle_ioperm();
+		return -EPERM;
+	}
+#endif
 	if (turn_on && !capable(CAP_SYS_RAWIO))
 		return -EPERM;
 
@@ -66,7 +73,7 @@ asmlinkage long sys_ioperm(unsigned long from, unsigned long num, int turn_on)
 	 * because the ->io_bitmap_max value must match the bitmap
 	 * contents:
 	 */
-	tss = &per_cpu(init_tss, get_cpu());
+	tss = init_tss + get_cpu();
 
 	set_bitmap(t->io_bitmap_ptr, from, num, !turn_on);
 
@@ -121,8 +128,13 @@ static int do_iopl(unsigned int level, struct pt_regs *regs)
 		return -EINVAL;
 	/* Trying to gain more privileges? */
 	if (level > old) {
+#ifdef CONFIG_GRKERNSEC_IO
+		gr_handle_iopl();
+		return -EPERM;
+#else
 		if (!capable(CAP_SYS_RAWIO))
 			return -EPERM;
+#endif
 	}
 	regs->flags = (regs->flags & ~X86_EFLAGS_IOPL) | (level << 12);
 

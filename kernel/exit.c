@@ -40,13 +40,17 @@
 #include <linux/cn_proc.h>
 #include <linux/mutex.h>
 #include <linux/futex.h>
-#include <linux/compat.h>
 #include <linux/pipe_fs_i.h>
 #include <linux/audit.h> /* for audit_free() */
 #include <linux/resource.h>
 #include <linux/blkdev.h>
 #include <linux/task_io_accounting_ops.h>
 #include <linux/tracehook.h>
+#include <linux/grsecurity.h>
+
+#ifdef CONFIG_GRKERNSEC
+extern rwlock_t grsec_exec_file_lock;
+#endif
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -133,7 +137,6 @@ static void __exit_signal(struct task_struct *tsk)
 	 * doing sigqueue_free() if we have SIGQUEUE_PREALLOC signals.
 	 */
 	flush_sigqueue(&tsk->pending);
-
 	tsk->signal = NULL;
 	tsk->sighand = NULL;
 	spin_unlock(&sighand->siglock);
@@ -158,6 +161,8 @@ void release_task(struct task_struct * p)
 	struct task_struct *leader;
 	int zap_leader;
 repeat:
+	gr_del_task_from_ip_table(p);
+
 	tracehook_prepare_release_task(p);
 	atomic_dec(&p->user->processes);
 	proc_flush_task(p);
@@ -321,10 +326,21 @@ static void reparent_to_kthreadd(void)
 {
 	write_lock_irq(&tasklist_lock);
 
+#ifdef CONFIG_GRKERNSEC
+	write_lock(&grsec_exec_file_lock);
+	if (current->exec_file) {
+		fput(current->exec_file);
+		current->exec_file = NULL;
+	}
+	write_unlock(&grsec_exec_file_lock);
+#endif
+
 	ptrace_unlink(current);
 	/* Reparent to init */
 	current->real_parent = current->parent = kthreadd_task;
 	list_move_tail(&current->sibling, &current->real_parent->children);
+
+	gr_set_kernel_label(current);
 
 	/* Set the exit signal to SIGCHLD so we signal init on exit */
 	current->exit_signal = SIGCHLD;
@@ -418,6 +434,17 @@ void daemonize(const char *name, ...)
 	va_start(args, name);
 	vsnprintf(current->comm, sizeof(current->comm), name, args);
 	va_end(args);
+
+#ifdef CONFIG_GRKERNSEC
+	write_lock(&grsec_exec_file_lock);
+	if (current->exec_file) {
+		fput(current->exec_file);
+		current->exec_file = NULL;
+	}
+	write_unlock(&grsec_exec_file_lock);
+#endif
+
+	gr_set_kernel_label(current);
 
 	/*
 	 * If we were started as result of loading a module, close all of the
@@ -1053,14 +1080,6 @@ NORET_TYPE void do_exit(long code)
 		exit_itimers(tsk->signal);
 	}
 	acct_collect(code, group_dead);
-#ifdef CONFIG_FUTEX
-	if (unlikely(tsk->robust_list))
-		exit_robust_list(tsk);
-#ifdef CONFIG_COMPAT
-	if (unlikely(tsk->compat_robust_list))
-		compat_exit_robust_list(tsk);
-#endif
-#endif
 	if (group_dead)
 		tty_audit_exit();
 	if (unlikely(tsk->audit_context))
@@ -1068,6 +1087,9 @@ NORET_TYPE void do_exit(long code)
 
 	tsk->exit_code = code;
 	taskstats_exit(tsk, group_dead);
+
+	gr_acl_handle_psacct(tsk, code);
+	gr_acl_handle_exit();
 
 	exit_mm(tsk);
 
@@ -1273,7 +1295,7 @@ static int wait_task_zombie(struct task_struct *p, int options,
 	if (unlikely(options & WNOWAIT)) {
 		uid_t uid = p->uid;
 		int exit_code = p->exit_code;
-		int why, status;
+		int why;
 
 		get_task_struct(p);
 		read_unlock(&tasklist_lock);

@@ -21,6 +21,7 @@
 #include <linux/audit.h>
 #include <linux/pid_namespace.h>
 #include <linux/syscalls.h>
+#include <linux/grsecurity.h>
 
 #include <asm/pgtable.h>
 #include <asm/uaccess.h>
@@ -132,12 +133,12 @@ int __ptrace_may_access(struct task_struct *task, unsigned int mode)
 	     (current->uid != task->uid) ||
 	     (current->gid != task->egid) ||
 	     (current->gid != task->sgid) ||
-	     (current->gid != task->gid)) && !capable(CAP_SYS_PTRACE))
+	     (current->gid != task->gid)) && !capable_nolog(CAP_SYS_PTRACE))
 		return -EPERM;
 	smp_rmb();
 	if (task->mm)
 		dumpable = get_dumpable(task->mm);
-	if (!dumpable && !capable(CAP_SYS_PTRACE))
+	if (!dumpable && !capable_nolog(CAP_SYS_PTRACE))
 		return -EPERM;
 
 	return security_ptrace_may_access(task, mode);
@@ -193,7 +194,7 @@ repeat:
 
 	/* Go */
 	task->ptrace |= PT_PTRACED;
-	if (capable(CAP_SYS_PTRACE))
+	if (capable_nolog(CAP_SYS_PTRACE))
 		task->ptrace |= PT_PTRACE_CAP;
 
 	__ptrace_link(task, current);
@@ -581,6 +582,11 @@ SYSCALL_DEFINE4(ptrace, long, request, long, pid, long, addr, long, data)
 	ret = ptrace_check_attach(child, request == PTRACE_KILL);
 	if (ret < 0)
 		goto out_put_task_struct;
+
+	if (gr_handle_ptrace(child, request)) {
+		ret = -EPERM;
+		goto out_put_task_struct;
+	}
 
 	ret = arch_ptrace(child, request, addr, data);
 	if (ret < 0)

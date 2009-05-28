@@ -860,6 +860,8 @@ struct proc_dir_entry *proc_root_kcore;
 
 void __init proc_misc_init(void)
 {
+	int gr_mode = 0;
+
 	static struct {
 		char *name;
 		int (*read_proc)(char*,char**,off_t,int,int*,void*);
@@ -875,12 +877,23 @@ void __init proc_misc_init(void)
 		{"stram",	stram_read_proc},
 #endif
 		{"filesystems",	filesystems_read_proc},
+#ifndef CONFIG_GRKERNSEC_PROC_ADD
 		{"cmdline",	cmdline_read_proc},
+#endif
 		{"execdomains",	execdomains_read_proc},
 		{NULL,}
 	};
 	for (p = simple_ones; p->name; p++)
 		create_proc_read_entry(p->name, 0, NULL, p->read_proc, NULL);
+
+#ifdef CONFIG_GRKERNSEC_PROC_USER
+	gr_mode = S_IRUSR;
+#elif defined(CONFIG_GRKERNSEC_PROC_USERGROUP)
+	gr_mode = S_IRUSR | S_IRGRP;
+#endif
+#ifdef CONFIG_GRKERNSEC_PROC_ADD
+	create_proc_read_entry("cmdline", gr_mode, NULL, &cmdline_read_proc, NULL);
+#endif
 
 	proc_symlink("mounts", NULL, "self/mounts");
 
@@ -889,14 +902,18 @@ void __init proc_misc_init(void)
 	proc_create("kmsg", S_IRUSR, NULL, &proc_kmsg_operations);
 #endif
 	proc_create("locks", 0, NULL, &proc_locks_operations);
+#ifdef CONFIG_GRKERNSEC_PROC_ADD
+	proc_create("devices", gr_mode, NULL, &proc_devinfo_operations);
+#else
 	proc_create("devices", 0, NULL, &proc_devinfo_operations);
+#endif
 	proc_create("cpuinfo", 0, NULL, &proc_cpuinfo_operations);
 #ifdef CONFIG_BLOCK
 	proc_create("partitions", 0, NULL, &proc_partitions_operations);
 #endif
 	proc_create("stat", 0, NULL, &proc_stat_operations);
 	proc_create("interrupts", 0, NULL, &proc_interrupts_operations);
-#ifdef CONFIG_SLABINFO
+#if defined(CONFIG_SLABINFO) && !defined(CONFIG_GRKERNSEC_PROC_ADD)
 	proc_create("slabinfo",S_IWUSR|S_IRUGO,NULL,&proc_slabinfo_operations);
 #ifdef CONFIG_DEBUG_SLAB_LEAK
 	proc_create("slab_allocators", 0, NULL, &proc_slabstats_operations);
@@ -918,7 +935,7 @@ void __init proc_misc_init(void)
 #ifdef CONFIG_SCHEDSTATS
 	proc_create("schedstat", 0, NULL, &proc_schedstat_operations);
 #endif
-#ifdef CONFIG_PROC_KCORE
+#if defined(CONFIG_PROC_KCORE) && !defined(CONFIG_GRKERNSEC_PROC_ADD)
 	proc_root_kcore = proc_create("kcore", S_IRUSR, NULL, &proc_kcore_operations);
 	if (proc_root_kcore)
 		proc_root_kcore->size =

@@ -2483,7 +2483,7 @@ static struct file_system_type tmpfs_fs_type = {
 	.get_sb		= shmem_get_sb,
 	.kill_sb	= kill_litter_super,
 };
-static struct vfsmount *shm_mnt;
+struct vfsmount *shm_mnt;
 
 static int __init init_tmpfs(void)
 {

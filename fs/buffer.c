@@ -41,6 +41,7 @@
 #include <linux/bitops.h>
 #include <linux/mpage.h>
 #include <linux/bit_spinlock.h>
+#include <linux/grsecurity.h>
 
 static int fsync_buffers_list(spinlock_t *lock, struct list_head *list);
 
@@ -2249,6 +2250,7 @@ int generic_cont_expand_simple(struct inode *inode, loff_t size)
 
 	err = -EFBIG;
         limit = current->signal->rlim[RLIMIT_FSIZE].rlim_cur;
+	gr_learn_resource(current, RLIMIT_FSIZE, (unsigned long) size, 1);
 	if (limit != RLIM_INFINITY && size > (loff_t)limit) {
 		send_sig(SIGXFSZ, current, 0);
 		goto out;

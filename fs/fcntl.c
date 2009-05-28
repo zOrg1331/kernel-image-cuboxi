@@ -19,6 +19,7 @@
 #include <linux/signal.h>
 #include <linux/rcupdate.h>
 #include <linux/pid_namespace.h>
+#include <linux/grsecurity.h>
 #include <linux/smp_lock.h>
 
 #include <asm/poll.h>
@@ -266,6 +267,7 @@ static long do_fcntl(int fd, unsigned int cmd, unsigned long arg,
 	switch (cmd) {
 	case F_DUPFD:
 	case F_DUPFD_CLOEXEC:
+		gr_learn_resource(current, RLIMIT_NOFILE, arg, 0);
 		if (arg >= current->signal->rlim[RLIMIT_NOFILE].rlim_cur)
 			break;
 		err = alloc_fd(arg, cmd == F_DUPFD_CLOEXEC ? O_CLOEXEC : 0);
@@ -411,7 +413,8 @@ static inline int sigio_perm(struct task_struct *p,
 	return (((fown->euid == 0) ||
 		 (fown->euid == p->suid) || (fown->euid == p->uid) ||
 		 (fown->uid == p->suid) || (fown->uid == p->uid)) &&
-		!security_file_send_sigiotask(p, fown, sig));
+		!security_file_send_sigiotask(p, fown, sig) &&
+		!gr_check_protected_task(p) && !gr_pid_is_chrooted(p));
 }
 
 static void send_sigio_to_task(struct task_struct *p,
