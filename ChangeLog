@@ -1,3 +1,44 @@
+commit c899cd42545d2487b140bc58610555156c94f469
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed May 27 13:04:43 2009 +0900
+
+    aufs: tiny, mail addr in MODULE_AUTHOR
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 989d48f247d6eb72433b5b01fd81ad2cf59ef4d5
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon May 25 23:15:13 2009 +0900
+
+    move the manual from here to aufs2-util.git
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 178e6e6048d8da445f98c2821b820590c563934a
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue May 19 13:02:59 2009 +0900
+
+    aufs: restore 'shwh' from aufs1, show whiteout mode
+    
+    Originally this feature was requested by an aufs user and actually
+    implemented in aufs1. But it was dropped from aufs2 in order to make
+    source files simpler and easier to be reviewed.
+    Now the feature comes back.
+    
+    - describe it in the manual.
+    - new configuration AUFS_SHWH.
+    - new function au_test_shwh() for lookup.
+    - new flag AuTestEmpty_SHWH for test_empty.
+    - new members for struct au_vdir_wh.
+    - extra parameters for au_nhash_append_wh().
+    - new options shwh and noshwh.
+    - new function au_shwh_init_wh() for au_nhash_append_wh().
+    - new function au_wh_ino() and new flag AuFillVdir_SHWH for fillvdir().
+    - new function au_handle_shwh() for au_do_read_vdir().
+    - documentation.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 436c2d96e9f3f92c227c23e7f7638f13bb0b4ac5
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Sun May 24 01:37:41 2009 +0900
