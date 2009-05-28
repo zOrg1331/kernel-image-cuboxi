@@ -1,6 +1,6 @@
-Name: kernel-image-std-def
+Name: kernel-image-sec-def
 Version: 2.6.27
-Release: alt17
+Release: alt1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -85,11 +85,7 @@ Most hardware drivers for this kernel are built as modules.  Some of
 these drivers are built separately from the kernel; they are available
 in separate packages (kernel-modules-*-%flavour).
 
-The "std" variant of kernel packages is a generic 2.6.x kernel which
-should support wide range of hardware, but does not contain patches
-which are useful only for some special applications (and may have
-undesirable side effects in other cases).  This is the default 2.6.x
-kernel variant for ALT Linux distributions.
+This is std kernel with grsecurity patch.
 
 %package -n kernel-modules-oss-%flavour
 Summary: OSS sound driver modules (obsolete)
@@ -468,6 +464,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Thu May 28 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt1
+- add grsecurity patch
+
 * Fri May 08 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt17
 - 2.6.27.22
 - fix build in new environment
