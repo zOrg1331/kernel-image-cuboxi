@@ -1,6 +1,6 @@
 Name: kernel-image-std-pae
 Version: 2.6.29
-Release: alt1
+Release: alt2
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -479,6 +479,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Thu May 28 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.29-alt2
+- add missed bootsplash patch 
+
 * Mon Apr 27 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.29-alt1
 - 2.6.29.4
 
