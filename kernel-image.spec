@@ -1,4 +1,4 @@
-Name: kernel-image-rt-smp
+Name: kernel-image-rt-up
 Version: 2.6.29
 Release: alt1
 epoch:1 
@@ -21,7 +21,7 @@ epoch:1
 %define kgcc_version	4.3
 
 # Enable/disable SGML docs formatting
-%def_enable docs
+%def_disable docs
 
 #Remove oss
 %def_enable oss
