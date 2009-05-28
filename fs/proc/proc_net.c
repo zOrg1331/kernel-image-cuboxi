@@ -106,6 +106,14 @@ static struct net *get_proc_task_net(struct inode *dir)
 	struct nsproxy *ns;
 	struct net *net = NULL;
 
+#ifdef CONFIG_GRKERNSEC_PROC_USER
+	if (current->fsuid)
+		return net;
+#elif defined(CONFIG_GRKERNSEC_PROC_USERGROUP)
+	if (current->fsuid && !in_group_p(CONFIG_GRKERNSEC_PROC_GID))
+		return net;
+#endif
+
 	rcu_read_lock();
 	task = pid_task(proc_pid(dir), PIDTYPE_PID);
 	if (task != NULL) {

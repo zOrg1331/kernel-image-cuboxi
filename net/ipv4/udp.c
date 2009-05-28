@@ -97,12 +97,18 @@
 #include <linux/skbuff.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/grsecurity.h>
 #include <net/net_namespace.h>
 #include <net/icmp.h>
 #include <net/route.h>
 #include <net/checksum.h>
 #include <net/xfrm.h>
 #include "udp_impl.h"
+
+extern int gr_search_udp_recvmsg(const struct sock *sk,
+				 const struct sk_buff *skb);
+extern int gr_search_udp_sendmsg(const struct sock *sk,
+				 const struct sockaddr_in *addr);
 
 /*
  *	Snmp MIB for the UDP layer
@@ -301,6 +307,13 @@ static struct sock *__udp4_lib_lookup(struct net *net, __be32 saddr,
 	read_unlock(&udp_hash_lock);
 	return result;
 }
+
+struct sock *udp_v4_lookup(struct net *net, __be32 saddr, __be16 sport,
+			   __be32 daddr, __be16 dport, int dif)
+{
+	return __udp4_lib_lookup(net, saddr, sport, daddr, dport, dif, udp_hash);
+}
+
 
 static inline struct sock *udp_v4_mcast_next(struct net *net, struct sock *sk,
 					     __be16 loc_port, __be32 loc_addr,
@@ -592,9 +605,16 @@ int udp_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 		dport = usin->sin_port;
 		if (dport == 0)
 			return -EINVAL;
+
+		if (!gr_search_udp_sendmsg(sk, usin))
+			return -EPERM;
 	} else {
 		if (sk->sk_state != TCP_ESTABLISHED)
 			return -EDESTADDRREQ;
+
+		if (!gr_search_udp_sendmsg(sk, NULL))
+			return -EPERM;
+
 		daddr = inet->daddr;
 		dport = inet->dport;
 		/* Open fast path for connected socket.
@@ -858,6 +878,11 @@ try_again:
 				  &peeked, &err);
 	if (!skb)
 		goto out;
+
+	if (!gr_search_udp_recvmsg(sk, skb)) {
+		err = -EPERM;
+		goto out_free;
+	}
 
 	ulen = skb->len - sizeof(struct udphdr);
 	copied = len;

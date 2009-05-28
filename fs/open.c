@@ -29,6 +29,7 @@
 #include <linux/rcupdate.h>
 #include <linux/audit.h>
 #include <linux/falloc.h>
+#include <linux/grsecurity.h>
 
 int vfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
@@ -206,6 +207,9 @@ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
 	/* Not pretty: "inode->i_size" shouldn't really be signed. But it is. */
 	if (length < 0)
 		return -EINVAL;
+
+	if (filp && !gr_acl_handle_truncate(dentry, filp->f_path.mnt))
+		return -EACCES;
 
 	newattrs.ia_size = length;
 	newattrs.ia_valid = ATTR_SIZE | time_attrs;
@@ -491,6 +495,9 @@ asmlinkage long sys_faccessat(int dfd, const char __user *filename, int mode)
 	if (__mnt_is_readonly(path.mnt))
 		res = -EROFS;
 
+	if (!res && !gr_acl_handle_access(path.dentry, path.mnt, mode))
+		res = -EACCES;
+
 out_path_release:
 	path_put(&path);
 out:
@@ -521,6 +528,8 @@ asmlinkage long sys_chdir(const char __user * filename)
 	if (error)
 		goto dput_and_out;
 
+	gr_log_chdir(path.dentry, path.mnt);
+
 	set_fs_pwd(current->fs, &path);
 
 dput_and_out:
@@ -547,6 +556,13 @@ asmlinkage long sys_fchdir(unsigned int fd)
 		goto out_putf;
 
 	error = inode_permission(inode, MAY_EXEC | MAY_ACCESS);
+
+	if (!error && !gr_chroot_fchdir(file->f_path.dentry, file->f_path.mnt))
+		error = -EPERM;
+
+	if (!error)
+		gr_log_chdir(file->f_path.dentry, file->f_path.mnt);
+
 	if (!error)
 		set_fs_pwd(current->fs, &file->f_path);
 out_putf:
@@ -572,7 +588,14 @@ asmlinkage long sys_chroot(const char __user * filename)
 	if (!capable(CAP_SYS_CHROOT))
 		goto dput_and_out;
 
+	if (gr_handle_chroot_chroot(path.dentry, path.mnt))
+		goto dput_and_out;
+
 	set_fs_root(current->fs, &path);
+
+	gr_handle_chroot_caps(current);
+	gr_handle_chroot_chdir(&path);
+
 	error = 0;
 dput_and_out:
 	path_put(&path);
@@ -600,13 +623,28 @@ asmlinkage long sys_fchmod(unsigned int fd, mode_t mode)
 	err = mnt_want_write(file->f_path.mnt);
 	if (err)
 		goto out_putf;
+
+	if (!gr_acl_handle_fchmod(dentry, file->f_path.mnt, mode)) {
+		err = -EACCES;
+		goto out_drop_write;
+	}
+
 	mutex_lock(&inode->i_mutex);
 	if (mode == (mode_t) -1)
 		mode = inode->i_mode;
+
+	if (gr_handle_chroot_chmod(dentry, file->f_path.mnt, mode)) {
+		err = -EPERM;
+		mutex_unlock(&inode->i_mutex);
+		goto out_drop_write;
+	}
+
 	newattrs.ia_mode = (mode & S_IALLUGO) | (inode->i_mode & ~S_IALLUGO);
 	newattrs.ia_valid = ATTR_MODE | ATTR_CTIME;
 	err = notify_change(dentry, &newattrs);
 	mutex_unlock(&inode->i_mutex);
+
+out_drop_write:
 	mnt_drop_write(file->f_path.mnt);
 out_putf:
 	fput(file);
@@ -630,13 +668,28 @@ asmlinkage long sys_fchmodat(int dfd, const char __user *filename,
 	error = mnt_want_write(path.mnt);
 	if (error)
 		goto dput_and_out;
+
+	if (!gr_acl_handle_chmod(path.dentry, path.mnt, mode)) {
+		error = -EACCES;
+		goto out_drop_write;
+	}
+
 	mutex_lock(&inode->i_mutex);
 	if (mode == (mode_t) -1)
 		mode = inode->i_mode;
+
+	if (gr_handle_chroot_chmod(path.dentry, path.mnt, mode)) {
+		error = -EACCES;
+		mutex_unlock(&inode->i_mutex);
+		goto out_drop_write;
+	}
+
 	newattrs.ia_mode = (mode & S_IALLUGO) | (inode->i_mode & ~S_IALLUGO);
 	newattrs.ia_valid = ATTR_MODE | ATTR_CTIME;
 	error = notify_change(path.dentry, &newattrs);
 	mutex_unlock(&inode->i_mutex);
+
+out_drop_write:
 	mnt_drop_write(path.mnt);
 dput_and_out:
 	path_put(&path);
@@ -649,11 +702,14 @@ asmlinkage long sys_chmod(const char __user *filename, mode_t mode)
 	return sys_fchmodat(AT_FDCWD, filename, mode);
 }
 
-static int chown_common(struct dentry * dentry, uid_t user, gid_t group)
+static int chown_common(struct dentry * dentry, uid_t user, gid_t group, struct vfsmount *mnt)
 {
 	struct inode *inode = dentry->d_inode;
 	int error;
 	struct iattr newattrs;
+
+	if (!gr_acl_handle_chown(dentry, mnt))
+		return -EACCES;
 
 	newattrs.ia_valid =  ATTR_CTIME;
 	if (user != (uid_t) -1) {
@@ -685,7 +741,7 @@ asmlinkage long sys_chown(const char __user * filename, uid_t user, gid_t group)
 	error = mnt_want_write(path.mnt);
 	if (error)
 		goto out_release;
-	error = chown_common(path.dentry, user, group);
+	error = chown_common(path.dentry, user, group, path.mnt);
 	mnt_drop_write(path.mnt);
 out_release:
 	path_put(&path);
@@ -710,7 +766,7 @@ asmlinkage long sys_fchownat(int dfd, const char __user *filename, uid_t user,
 	error = mnt_want_write(path.mnt);
 	if (error)
 		goto out_release;
-	error = chown_common(path.dentry, user, group);
+	error = chown_common(path.dentry, user, group, path.mnt);
 	mnt_drop_write(path.mnt);
 out_release:
 	path_put(&path);
@@ -729,7 +785,7 @@ asmlinkage long sys_lchown(const char __user * filename, uid_t user, gid_t group
 	error = mnt_want_write(path.mnt);
 	if (error)
 		goto out_release;
-	error = chown_common(path.dentry, user, group);
+	error = chown_common(path.dentry, user, group, path.mnt);
 	mnt_drop_write(path.mnt);
 out_release:
 	path_put(&path);
@@ -753,7 +809,7 @@ asmlinkage long sys_fchown(unsigned int fd, uid_t user, gid_t group)
 		goto out_fput;
 	dentry = file->f_path.dentry;
 	audit_inode(NULL, dentry);
-	error = chown_common(dentry, user, group);
+	error = chown_common(dentry, user, group, file->f_path.mnt);
 	mnt_drop_write(file->f_path.mnt);
 out_fput:
 	fput(file);

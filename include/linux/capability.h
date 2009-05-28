@@ -516,6 +516,7 @@ kernel_cap_t cap_set_effective(const kernel_cap_t pE_new);
 #define has_capability(t, cap) (security_capable((t), (cap)) == 0)
 
 extern int capable(int cap);
+int capable_nolog(int cap);
 
 #endif /* __KERNEL__ */
 

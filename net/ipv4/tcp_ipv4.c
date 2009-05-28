@@ -59,6 +59,7 @@
 #include <linux/jhash.h>
 #include <linux/init.h>
 #include <linux/times.h>
+#include <linux/grsecurity.h>
 
 #include <net/net_namespace.h>
 #include <net/icmp.h>

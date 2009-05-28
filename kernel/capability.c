@@ -13,6 +13,7 @@
 #include <linux/security.h>
 #include <linux/syscalls.h>
 #include <linux/pid_namespace.h>
+#include <linux/grsecurity.h>
 #include <asm/uaccess.h>
 
 /*
@@ -498,10 +499,21 @@ asmlinkage long sys_capset(cap_user_header_t header, const cap_user_data_t data)
  */
 int capable(int cap)
 {
-	if (has_capability(current, cap)) {
+	if (has_capability(current, cap) && gr_task_is_capable(current, cap)) {
 		current->flags |= PF_SUPERPRIV;
 		return 1;
 	}
 	return 0;
 }
+
+int capable_nolog(int cap)
+{
+	if (has_capability(current, cap) && gr_is_capable_nolog(cap)) {
+		current->flags |= PF_SUPERPRIV;
+		return 1;
+	}
+	return 0;
+}
+
 EXPORT_SYMBOL(capable);
+EXPORT_SYMBOL(capable_nolog);

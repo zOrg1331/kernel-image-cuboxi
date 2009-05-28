@@ -19,6 +19,7 @@
 #include <linux/spinlock.h>
 #include <linux/rcupdate.h>
 #include <linux/workqueue.h>
+#include <linux/grsecurity.h>
 
 struct fdtable_defer {
 	spinlock_t lock;
@@ -256,6 +257,8 @@ int expand_files(struct files_struct *files, int nr)
 	 * N.B. For clone tasks sharing a files structure, this test
 	 * will limit the total number of files that can be opened.
 	 */
+
+	gr_learn_resource(current, RLIMIT_NOFILE, nr, 0);
 	if (nr >= current->signal->rlim[RLIMIT_NOFILE].rlim_cur)
 		return -EMFILE;
 

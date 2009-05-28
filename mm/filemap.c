@@ -33,6 +33,7 @@
 #include <linux/cpuset.h>
 #include <linux/hardirq.h> /* for BUG_ON(!in_atomic()) only */
 #include <linux/memcontrol.h>
+#include <linux/grsecurity.h>
 #include "internal.h"
 
 /*
@@ -1588,7 +1589,7 @@ int generic_file_mmap(struct file * file, struct vm_area_struct * vma)
 	struct address_space *mapping = file->f_mapping;
 
 	if (!mapping->a_ops->readpage)
-		return -ENOEXEC;
+		return -ENODEV;
 	file_accessed(file);
 	vma->vm_ops = &generic_file_vm_ops;
 	vma->vm_flags |= VM_CAN_NONLINEAR;
@@ -1949,6 +1950,7 @@ inline int generic_write_checks(struct file *file, loff_t *pos, size_t *count, i
                         *pos = i_size_read(inode);
 
 		if (limit != RLIM_INFINITY) {
+			gr_learn_resource(current, RLIMIT_FSIZE,*pos, 0);
 			if (*pos >= limit) {
 				send_sig(SIGXFSZ, current, 0);
 				return -EFBIG;

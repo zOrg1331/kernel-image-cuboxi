@@ -8,6 +8,7 @@
 #include <linux/stat.h>
 #include <linux/utime.h>
 #include <linux/syscalls.h>
+#include <linux/grsecurity.h>
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
 
@@ -101,6 +102,12 @@ static int utimes_common(struct path *path, struct timespec *times)
 				goto mnt_drop_write_and_out;
 		}
 	}
+
+	if (!gr_acl_handle_utime(path->dentry, path->mnt)) {
+		error = -EACCES;
+		goto mnt_drop_write_and_out;
+	}
+
 	mutex_lock(&inode->i_mutex);
 	error = notify_change(path->dentry, &newattrs);
 	mutex_unlock(&inode->i_mutex);

@@ -79,6 +79,8 @@
 #include <linux/oom.h>
 #include <linux/elf.h>
 #include <linux/pid_namespace.h>
+#include <linux/grsecurity.h>
+
 #include "internal.h"
 
 /* NOTE:
@@ -148,7 +150,7 @@ static unsigned int pid_entry_count_dirs(const struct pid_entry *entries,
 	return count;
 }
 
-int maps_protect;
+int maps_protect = 1;
 EXPORT_SYMBOL(maps_protect);
 
 static struct fs_struct *get_fs_struct(struct task_struct *task)
@@ -228,6 +230,9 @@ static int check_mem_permission(struct task_struct *task)
 	 */
 	if (task == current)
 		return 0;
+
+	if (gr_handle_proc_ptrace(task) || gr_acl_handle_procpidmem(task))
+		return -EPERM;
 
 	/*
 	 * If current is actively ptrace'ing, and would also be
@@ -312,9 +317,9 @@ static int proc_pid_auxv(struct task_struct *task, char *buffer)
 	struct mm_struct *mm = get_task_mm(task);
 	if (mm) {
 		unsigned int nwords = 0;
-		do
+		do {
 			nwords += 2;
-		while (mm->saved_auxv[nwords - 2] != 0); /* AT_NULL */
+		} while (mm->saved_auxv[nwords - 2] != 0); /* AT_NULL */
 		res = nwords * sizeof(mm->saved_auxv[0]);
 		if (res > PAGE_SIZE)
 			res = PAGE_SIZE;
@@ -1437,7 +1442,11 @@ static struct inode *proc_pid_make_inode(struct super_block * sb, struct task_st
 	inode->i_gid = 0;
 	if (task_dumpable(task)) {
 		inode->i_uid = task->euid;
+#ifdef CONFIG_GRKERNSEC_PROC_USERGROUP
+		inode->i_gid = CONFIG_GRKERNSEC_PROC_GID;
+#else
 		inode->i_gid = task->egid;
+#endif
 	}
 	security_task_to_inode(task, inode);
 
@@ -1453,17 +1462,45 @@ static int pid_getattr(struct vfsmount *mnt, struct dentry *dentry, struct kstat
 {
 	struct inode *inode = dentry->d_inode;
 	struct task_struct *task;
+#if defined(CONFIG_GRKERNSEC_PROC_USER) || defined(CONFIG_GRKERNSEC_PROC_USERGROUP)
+	struct task_struct *tmp = current;
+#endif
+
 	generic_fillattr(inode, stat);
 
 	rcu_read_lock();
 	stat->uid = 0;
 	stat->gid = 0;
 	task = pid_task(proc_pid(inode), PIDTYPE_PID);
-	if (task) {
+
+	if (task && (gr_pid_is_chrooted(task) || gr_check_hidden_task(task))) {
+		rcu_read_unlock();
+		return -ENOENT;
+	}
+
+
+	if (task
+#if defined(CONFIG_GRKERNSEC_PROC_USER) || defined(CONFIG_GRKERNSEC_PROC_USERGROUP)
+	    && (!tmp->uid || (tmp->uid == task->uid)
+#ifdef CONFIG_GRKERNSEC_PROC_USERGROUP
+	    || in_group_p(CONFIG_GRKERNSEC_PROC_GID)
+#endif
+	    )
+#endif
+	) {
 		if ((inode->i_mode == (S_IFDIR|S_IRUGO|S_IXUGO)) ||
+#ifdef CONFIG_GRKERNSEC_PROC_USER
+		    (inode->i_mode == (S_IFDIR|S_IRUSR|S_IXUSR)) ||
+#elif defined(CONFIG_GRKERNSEC_PROC_USERGROUP)
+		    (inode->i_mode == (S_IFDIR|S_IRUSR|S_IRGRP|S_IXUSR|S_IXGRP)) ||
+#endif
 		    task_dumpable(task)) {
 			stat->uid = task->euid;
+#ifdef CONFIG_GRKERNSEC_PROC_USERGROUP
+			stat->gid = CONFIG_GRKERNSEC_PROC_GID;
+#else
 			stat->gid = task->egid;
+#endif
 		}
 	}
 	rcu_read_unlock();
@@ -1491,11 +1528,21 @@ static int pid_revalidate(struct dentry *dentry, struct nameidata *nd)
 {
 	struct inode *inode = dentry->d_inode;
 	struct task_struct *task = get_proc_task(inode);
+
 	if (task) {
 		if ((inode->i_mode == (S_IFDIR|S_IRUGO|S_IXUGO)) ||
+#ifdef CONFIG_GRKERNSEC_PROC_USER
+		    (inode->i_mode == (S_IFDIR|S_IRUSR|S_IXUSR)) ||
+#elif defined(CONFIG_GRKERNSEC_PROC_USERGROUP)
+		    (inode->i_mode == (S_IFDIR|S_IRUSR|S_IRGRP|S_IXUSR|S_IXGRP)) ||
+#endif
 		    task_dumpable(task)) {
 			inode->i_uid = task->euid;
+#ifdef CONFIG_GRKERNSEC_PROC_USERGROUP
+			inode->i_gid = CONFIG_GRKERNSEC_PROC_GID;
+#else
 			inode->i_gid = task->egid;
+#endif
 		} else {
 			inode->i_uid = 0;
 			inode->i_gid = 0;
@@ -1863,12 +1910,22 @@ static const struct file_operations proc_fd_operations = {
 static int proc_fd_permission(struct inode *inode, int mask)
 {
 	int rv;
+	struct task_struct *task;
 
 	rv = generic_permission(inode, mask, NULL);
-	if (rv == 0)
-		return 0;
+
 	if (task_pid(current) == proc_pid(inode))
 		rv = 0;
+
+	task = get_proc_task(inode);
+	if (task == NULL)
+		return rv;
+
+	if (gr_acl_handle_procpidmem(task))
+		rv = -EACCES;
+
+	put_task_struct(task);
+
 	return rv;
 }
 
@@ -1979,6 +2036,9 @@ static struct dentry *proc_pident_lookup(struct inode *dir,
 	if (!task)
 		goto out_no_task;
 
+	if (gr_pid_is_chrooted(task) || gr_check_hidden_task(task))
+		goto out;
+
 	/*
 	 * Yes, it does not scale. And it should not. Don't add
 	 * new entries into /proc/<tgid>/ without very good reasons.
@@ -2022,6 +2082,9 @@ static int proc_pident_readdir(struct file *filp,
 	ret = -ENOENT;
 	if (!task)
 		goto out_no_task;
+
+	if (gr_pid_is_chrooted(task) || gr_check_hidden_task(task))
+		goto out;
 
 	ret = 0;
 	i = filp->f_pos;
@@ -2385,6 +2448,9 @@ static struct dentry *proc_base_lookup(struct inode *dir, struct dentry *dentry)
 	if (p > last)
 		goto out;
 
+	if (gr_pid_is_chrooted(task) || gr_check_hidden_task(task))
+		goto out;
+
 	error = proc_base_instantiate(dir, dentry, task, p);
 
 out:
@@ -2518,6 +2584,9 @@ static const struct pid_entry tgid_base_stuff[] = {
 #ifdef CONFIG_TASK_IO_ACCOUNTING
 	INF("io",	S_IRUGO, tgid_io_accounting),
 #endif
+#ifdef CONFIG_GRKERNSEC_PROC_IPADDR
+	INF("ipaddr",	  S_IRUSR, pid_ipaddr),
+#endif
 };
 
 static int proc_tgid_base_readdir(struct file * filp,
@@ -2647,7 +2716,14 @@ static struct dentry *proc_pid_instantiate(struct inode *dir,
 	if (!inode)
 		goto out;
 
+#ifdef CONFIG_GRKERNSEC_PROC_USER
+	inode->i_mode = S_IFDIR|S_IRUSR|S_IXUSR;
+#elif defined(CONFIG_GRKERNSEC_PROC_USERGROUP)
+	inode->i_gid = CONFIG_GRKERNSEC_PROC_GID;
+	inode->i_mode = S_IFDIR|S_IRUSR|S_IRGRP|S_IXUSR|S_IXGRP;
+#else
 	inode->i_mode = S_IFDIR|S_IRUGO|S_IXUGO;
+#endif
 	inode->i_op = &proc_tgid_base_inode_operations;
 	inode->i_fop = &proc_tgid_base_operations;
 	inode->i_flags|=S_IMMUTABLE;
@@ -2689,7 +2765,11 @@ struct dentry *proc_pid_lookup(struct inode *dir, struct dentry * dentry, struct
 	if (!task)
 		goto out;
 
+	if (gr_check_hidden_task(task))
+		goto out_put_task;
+
 	result = proc_pid_instantiate(dir, dentry, task, NULL);
+out_put_task:
 	put_task_struct(task);
 out:
 	return result;
@@ -2754,6 +2834,9 @@ int proc_pid_readdir(struct file * filp, void * dirent, filldir_t filldir)
 {
 	unsigned int nr = filp->f_pos - FIRST_PROCESS_ENTRY;
 	struct task_struct *reaper = get_proc_task(filp->f_path.dentry->d_inode);
+#if defined(CONFIG_GRKERNSEC_PROC_USER) || defined(CONFIG_GRKERNSEC_PROC_USERGROUP)
+	struct task_struct *tmp = current;
+#endif
 	struct tgid_iter iter;
 	struct pid_namespace *ns;
 
@@ -2772,6 +2855,17 @@ int proc_pid_readdir(struct file * filp, void * dirent, filldir_t filldir)
 	for (iter = next_tgid(ns, iter);
 	     iter.task;
 	     iter.tgid += 1, iter = next_tgid(ns, iter)) {
+		if (gr_pid_is_chrooted(iter.task) || gr_check_hidden_task(iter.task)
+#if defined(CONFIG_GRKERNSEC_PROC_USER) || defined(CONFIG_GRKERNSEC_PROC_USERGROUP)
+		    || (tmp->uid && (iter.task->uid != tmp->uid)
+#ifdef CONFIG_GRKERNSEC_PROC_USERGROUP
+			&& !in_group_p(CONFIG_GRKERNSEC_PROC_GID)
+#endif
+			)
+#endif
+		)
+			continue;
+
 		filp->f_pos = iter.tgid + TGID_OFFSET;
 		if (proc_pid_fill_cache(filp, dirent, filldir, iter) < 0) {
 			put_task_struct(iter.task);

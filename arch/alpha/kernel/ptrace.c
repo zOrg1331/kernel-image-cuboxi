@@ -15,6 +15,7 @@
 #include <linux/slab.h>
 #include <linux/security.h>
 #include <linux/signal.h>
+#include <linux/grsecurity.h>
 
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
@@ -265,6 +266,9 @@ long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 	unsigned long tmp;
 	size_t copied;
 	long ret;
+
+	if (gr_handle_ptrace(child, request))
+		return -EPERM;
 
 	switch (request) {
 	/* When I and D space are separate, these will need to be fixed.  */

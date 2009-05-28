@@ -114,6 +114,7 @@
 #include <linux/mount.h>
 #include <net/checksum.h>
 #include <linux/security.h>
+#include <linux/grsecurity.h>
 
 static struct hlist_head unix_socket_table[UNIX_HASH_SIZE + 1];
 static DEFINE_SPINLOCK(unix_table_lock);
@@ -725,6 +726,12 @@ static struct sock *unix_find_other(struct net *net,
 		err = -ECONNREFUSED;
 		if (!S_ISSOCK(nd.path.dentry->d_inode->i_mode))
 			goto put_fail;
+
+		if (!gr_acl_handle_unix(nd.path.dentry, nd.path.mnt)) {
+			err = -EACCES;
+			goto put_fail;
+		}
+
 		u = unix_find_socket_byinode(net, nd.path.dentry->d_inode);
 		if (!u)
 			goto put_fail;
@@ -745,6 +752,13 @@ static struct sock *unix_find_other(struct net *net,
 		if (u) {
 			struct dentry *dentry;
 			dentry = unix_sk(u)->dentry;
+
+			if (!gr_handle_chroot_unix(u->sk_peercred.pid)) {
+				err = -EPERM;
+				sock_put(u);
+				goto fail;
+			}
+
 			if (dentry)
 				touch_atime(unix_sk(u)->mnt, dentry);
 		} else
@@ -827,10 +841,20 @@ static int unix_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 		err = mnt_want_write(nd.path.mnt);
 		if (err)
 			goto out_mknod_dput;
+
+		if (!gr_acl_handle_mknod(dentry, nd.path.dentry, nd.path.mnt, mode)) {
+			err = -EACCES;
+			mnt_drop_write(nd.path.mnt);
+			goto out_mknod_dput;
+		}
+
 		err = vfs_mknod(nd.path.dentry->d_inode, dentry, mode, 0);
 		mnt_drop_write(nd.path.mnt);
 		if (err)
 			goto out_mknod_dput;
+
+		gr_handle_create(dentry, nd.path.mnt);
+
 		mutex_unlock(&nd.path.dentry->d_inode->i_mutex);
 		dput(nd.path.dentry);
 		nd.path.dentry = dentry;
@@ -847,6 +871,10 @@ static int unix_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 			unix_release_addr(addr);
 			goto out_unlock;
 		}
+
+#ifdef CONFIG_GRKERNSEC_CHROOT_UNIX
+		sk->sk_peercred.pid = current->pid;
+#endif
 
 		list = &unix_socket_table[addr->hash];
 	} else {

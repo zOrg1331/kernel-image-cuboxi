@@ -561,6 +561,7 @@ config SYSCTL_SYSCALL
 config KALLSYMS
 	 bool "Load all symbols for debugging/ksymoops" if EMBEDDED
 	 default y
+	 depends on !GRKERNSEC_HIDESYM
 	 help
 	   Say Y here to let the kernel print out symbolic crash information and
 	   symbolic stack backtraces. This increases the size of the kernel
@@ -780,8 +781,8 @@ config MARKERS
 source "arch/Kconfig"
 
 config PROC_PAGE_MONITOR
- 	default y
-	depends on PROC_FS && MMU
+ 	default n
+	depends on PROC_FS && MMU && !GRKERNSEC
 	bool "Enable /proc page monitoring" if EMBEDDED
  	help
 	  Various /proc files exist to monitor process memory utilization:
@@ -797,9 +798,9 @@ config HAVE_GENERIC_DMA_COHERENT
 
 config SLABINFO
 	bool
-	depends on PROC_FS
+	depends on PROC_FS && !GRKERNSEC_PROC_ADD
 	depends on SLAB || SLUB_DEBUG
-	default y
+	default n
 
 config RT_MUTEXES
 	boolean
