@@ -1,3 +1,13 @@
+commit cec399a7e2642cf1501aac59043649851598c22c
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri May 29 22:56:50 2009 +0900
+
+    aufs: shwh, fix an editing failure
+    
+    Replace LKTRLabel() by AuLabel().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit c899cd42545d2487b140bc58610555156c94f469
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Wed May 27 13:04:43 2009 +0900
