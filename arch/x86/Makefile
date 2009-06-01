@@ -240,4 +240,3 @@ define OLD_LD
 endef
 
 archprepare:
-	$(if $(LDFLAGS_BUILD_ID),,$(error $(OLD_LD)))
