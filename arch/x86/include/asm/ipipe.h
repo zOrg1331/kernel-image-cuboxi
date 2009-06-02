@@ -25,9 +25,9 @@
 #ifdef CONFIG_IPIPE
 
 #ifndef IPIPE_ARCH_STRING
-#define IPIPE_ARCH_STRING	"2.3-01"
+#define IPIPE_ARCH_STRING	"2.4-01"
 #define IPIPE_MAJOR_NUMBER	2
-#define IPIPE_MINOR_NUMBER	3
+#define IPIPE_MINOR_NUMBER	4
 #define IPIPE_PATCH_NUMBER	1
 #endif
 
@@ -66,9 +66,9 @@ do {						\
 } while(0)
 
 #define task_hijacked(p)						\
-	({ int x = !ipipe_root_domain_p; \
+	({ int x = __ipipe_root_domain_p;				\
 	__clear_bit(IPIPE_SYNC_FLAG, &ipipe_root_cpudom_var(status));	\
-	local_irq_enable_hw(); x; })
+	if (x) local_irq_enable_hw(); !x; })
 
 struct ipipe_domain;
 

@@ -152,7 +152,7 @@ __ipipe_store_domain_states(struct ipipe_trace_point *point)
 		if (test_bit(IPIPE_STALL_FLAG, &ipipe_cpudom_var(ipd, status)))
 			point->flags |= 1 << (i + IPIPE_TFLG_DOMSTATE_SHIFT);
 
-		if (ipd == ipipe_current_domain)
+		if (ipd == __ipipe_current_domain)
 			point->flags |= i << IPIPE_TFLG_CURRDOM_SHIFT;
 
 		if (++i > IPIPE_TFLG_DOMSTATE_BITS)
@@ -1329,10 +1329,9 @@ static int __ipipe_wr_enable(struct file *file, const char __user *buffer,
 	if (ipipe_trace_enable) {
 		if (!val)
 			unregister_ftrace_function(&ipipe_trace_ops);
-	} else if (val) {
-		ftrace_enabled = 1;
+	} else if (val)
 		register_ftrace_function(&ipipe_trace_ops);
-	}
+
 	ipipe_trace_enable = val;
 
 	mutex_unlock(&out_mutex);
@@ -1406,7 +1405,6 @@ void __init __ipipe_init_tracer(void)
 #ifdef CONFIG_IPIPE_TRACE_ENABLE
 	ipipe_trace_enable = 1;
 #ifdef CONFIG_IPIPE_TRACE_MCOUNT
-	ftrace_enabled = 1;
 	register_ftrace_function(&ipipe_trace_ops);
 #endif /* CONFIG_IPIPE_TRACE_MCOUNT */
 #endif /* CONFIG_IPIPE_TRACE_ENABLE */

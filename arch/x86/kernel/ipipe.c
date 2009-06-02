@@ -492,11 +492,13 @@ asmlinkage int __ipipe_kpreempt_root(struct pt_regs regs)
 
 asmlinkage void __ipipe_unstall_iret_root(struct pt_regs regs)
 {
-	struct ipipe_percpu_domain_data *p = ipipe_root_cpudom_ptr();
+	struct ipipe_percpu_domain_data *p;
 
 	/* Emulate IRET's handling of the interrupt flag. */
 
 	local_irq_disable_hw();
+
+	p = ipipe_root_cpudom_ptr();
 
 	/*
 	 * Restore the software state as it used to be on kernel
@@ -512,14 +514,14 @@ asmlinkage void __ipipe_unstall_iret_root(struct pt_regs regs)
 			trace_hardirqs_on();
 			__clear_bit(IPIPE_STALL_FLAG, &p->status);
 		}
-
 		/*
-		 * Only sync virtual IRQs here, so that we don't
-		 * recurse indefinitely in case of an external
-		 * interrupt flood.
+		 * We could have received and logged interrupts while
+		 * stalled in the syscall path: play the log now to
+		 * release any pending event. The SYNC_BIT prevents
+		 * infinite recursion in case of flooding.
 		 */
-		if ((p->irqpend_himask & IPIPE_IRQMASK_VIRT) != 0)
-			__ipipe_sync_pipeline(IPIPE_IRQMASK_VIRT);
+		if (unlikely(p->irqpend_himask != 0))
+			__ipipe_sync_pipeline(IPIPE_IRQMASK_ANY);
 	}
 #ifdef CONFIG_IPIPE_TRACE_IRQSOFF
 	ipipe_trace_end(0x8000000D);
@@ -538,18 +540,33 @@ asmlinkage void preempt_schedule_irq(void);
 
 void __ipipe_preempt_schedule_irq(void)
 {
-	unsigned long flags; 
-	/* 
-	 * We have no IRQ state fixup on entry to exceptions in
-	 * x86_64, so we have to stall the root stage before
-	 * rescheduling.
-	 */ 
-	BUG_ON(!irqs_disabled_hw()); 
-	local_irq_save(flags); 
-	local_irq_enable_hw(); 
-	preempt_schedule_irq(); /* Ok, may reschedule now. */ 
+	struct ipipe_percpu_domain_data *p; 
+	unsigned long flags;  
+	/*  
+	 * We have no IRQ state fixup on entry to exceptions in 
+	 * x86_64, so we have to stall the root stage before 
+	 * rescheduling. 
+	 */  
+	BUG_ON(!irqs_disabled_hw());  
+	local_irq_save(flags);	
+	local_irq_enable_hw();	
+	preempt_schedule_irq(); /* Ok, may reschedule now. */  
 	local_irq_disable_hw(); 
-	local_irq_restore_nosync(flags); 
+
+	/*
+	 * Flush any pending interrupt that may have been logged after
+	 * preempt_schedule_irq() stalled the root stage before
+	 * returning to us, and now.
+	 */
+	p = ipipe_root_cpudom_ptr(); 
+	if (unlikely(p->irqpend_himask != 0)) { 
+		add_preempt_count(PREEMPT_ACTIVE);
+		clear_bit(IPIPE_STALL_FLAG, &p->status); 
+		__ipipe_sync_pipeline(IPIPE_IRQMASK_ANY); 
+		sub_preempt_count(PREEMPT_ACTIVE);
+	} 
+
+	__local_irq_restore_nosync(flags);  
 }
 
 #endif	/* CONFIG_PREEMPT */
@@ -670,7 +687,7 @@ int __ipipe_handle_exception(struct pt_regs *regs, long error_code, int vector)
 		struct ipipe_domain *ipd = ipipe_current_domain;
 
 		/* Switch to root so that Linux can handle the fault cleanly. */
-		ipipe_current_domain = ipipe_root_domain;
+		__ipipe_current_domain = ipipe_root_domain;
 
 		ipipe_trace_panic_freeze();
 
@@ -774,9 +791,9 @@ int __ipipe_syscall_root(struct pt_regs *regs)
 		return 1;
 	}
 
+	local_irq_save_hw(flags);
 	p = ipipe_root_cpudom_ptr();
 	__fixup_if(test_bit(IPIPE_STALL_FLAG, &p->status), regs);
-	local_irq_save_hw(flags);
 	/*
 	 * If allowed, sync pending VIRQs before _TIF_NEED_RESCHED is
 	 * tested.
