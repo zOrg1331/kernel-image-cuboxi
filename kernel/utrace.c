@@ -1451,6 +1451,7 @@ static const struct utrace_engine_ops *start_callback(
 		return ops;
 	}
 
+	utrace->reporting = NULL;
 	return NULL;
 }
 
