@@ -334,6 +334,15 @@ fs_initcall(init_annotated_branch_stats);
 
 #ifdef CONFIG_PROFILE_ALL_BRANCHES
 
+int sysctl_branch_profiling_enabled __read_mostly;
+
+static int __init set_enable_branch_profiler(char *str)
+{
+	sysctl_branch_profiling_enabled = 1;
+	return 1;
+}
+__setup("enable_branch_profiler", set_enable_branch_profiler);
+
 extern unsigned long __start_branch_profile[];
 extern unsigned long __stop_branch_profile[];
 
