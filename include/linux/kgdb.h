@@ -297,6 +297,7 @@ extern int __weak kgdb_hex2mem(char *buf, char *mem, int count);
 extern int __weak kgdb_ebin2mem(char *buf, char *mem, int count);
 
 extern int kgdb_isremovedbreak(unsigned long addr);
+extern void kgdb_schedule_breakpoint(void);
 
 extern int
 kgdb_handle_exception(int ex_vector, int signo, int err_code,
