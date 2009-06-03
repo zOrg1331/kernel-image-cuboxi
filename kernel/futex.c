@@ -534,7 +534,7 @@ lookup_pi_state(u32 uval, struct futex_hash_bucket *hb,
 
 			WARN_ON(!atomic_read(&pi_state->refcount));
 			WARN_ON(pid && pi_state->owner &&
-				pi_state->owner->pid != pid);
+				task_pid_vnr(pi_state->owner) != pid);
 
 			atomic_inc(&pi_state->refcount);
 			*ps = pi_state;
