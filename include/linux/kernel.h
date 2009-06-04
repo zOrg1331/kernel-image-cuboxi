@@ -78,6 +78,15 @@ void ftrace_likely_update(struct ftrace_branch_data *f, int val, int expect);
 
 #ifdef CONFIG_PROFILE_ALL_BRANCHES
 extern int sysctl_branch_profiling_enabled;
+#ifdef CONFIG_PROFILE_BRANCHES_PER_CPU
+extern void branch_profiler(struct ftrace_branch_data *data, int cond);
+#else
+static inline void branch_profiler(struct ftrace_branch_data *data, int cond)
+{
+	data->miss_hit[cond]++;
+}
+#endif
+
 /*
  * "Define 'is'", Bill Clinton
  * "Define 'if'", Steven Rostedt
@@ -97,7 +106,7 @@ extern int sysctl_branch_profiling_enabled;
 				.line = __LINE__,			\
 			};						\
 		______r = !!(cond);					\
-		______f.miss_hit[______r]++;				\
+		branch_profiler(&______f, ______r);			\
 		______r;						\
 	}))
 #endif /* CONFIG_PROFILE_ALL_BRANCHES */
