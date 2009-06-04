@@ -476,6 +476,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %changelog
 * Thu Jun 04 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.29-alt2
 - config-*:
+	+ turn off LAPIC and HPET support. It make xenomai works on some systems.
 	+ turn off kernel function tracer. It fix boot with lilo
 	+ turn off SELinux
 	+ turn off build with frame pointer
