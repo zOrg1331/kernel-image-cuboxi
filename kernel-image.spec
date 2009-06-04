@@ -1,6 +1,6 @@
 Name: kernel-image-rt-up
 Version: 2.6.29
-Release: alt1
+Release: alt2
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -474,6 +474,13 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Thu Jun 04 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.29-alt2
+- config-*:
+	+ turn off kernel function tracer. It fix boot with lilo
+	+ turn off SELinux
+	+ turn off build with frame pointer
+	+ turn off some other debug and security features
+
 * Mon Apr 27 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.29-alt1
 - add xenomai RT patch
 - 2.6.29.4
