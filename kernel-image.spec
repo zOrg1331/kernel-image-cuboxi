@@ -3,7 +3,6 @@ Version: 2.6.27
 Release: alt1
 epoch:1 
 %define kernel_base_version	%version
-%define _binary_payload w9.gzdio
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
 # 0.0.X -- preX
