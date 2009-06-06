@@ -285,7 +285,7 @@ endchoice
 
 config PROFILE_BRANCHES_PER_CPU
 	bool "Profile branches on a per cpu basis"
-	depends on PROFILE_ALL_BRANCHES
+	depends on PROFILE_ALL_BRANCHES && SMP
 	help
 	  When profiling all branches, the system can take a big cache line
 	  bouncing hit. On boxes with lots of CPUs, this can slow the system
