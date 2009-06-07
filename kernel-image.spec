@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.29
-Release: alt9
+Release: alt10
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -340,6 +340,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Sun Jun 07 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.29-alt10
+- disabled KMS by default
+
 * Tue May 19 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.29-alt9
 - 2.6.29.4
 
