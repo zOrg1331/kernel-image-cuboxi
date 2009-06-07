@@ -18,7 +18,7 @@
  * Foundation, Inc.,
  * 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
-
+#include <asm/olpc.h>
 #include "global.h"
 
 static struct pll_map pll_value[] = {
@@ -2036,6 +2036,13 @@ static void init_gfx_chip_info(struct pci_dev *pdev,
 
 static void init_tmds_chip_info(void)
 {
+	/*
+	 * OLPC XO 1.5 systems are wired differently, so there is
+	 * no point in probing them here.
+	 */
+	if (machine_is_olpc())
+		return;
+
 	viafb_tmds_trasmitter_identify();
 
 	if (INTERFACE_NONE == viaparinfo->chip_info->tmds_chip_info.
