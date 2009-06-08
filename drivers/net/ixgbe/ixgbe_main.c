@@ -474,7 +474,7 @@ static void ixgbe_alloc_rx_buffers(struct ixgbe_adapter *adapter,
 
 		if (!rx_buffer_info->page &&
 				(adapter->flags & IXGBE_FLAG_RX_PS_ENABLED)) {
-			rx_buffer_info->page = alloc_page(GFP_ATOMIC);
+			rx_buffer_info->page = netdev_alloc_page(netdev);
 			if (!rx_buffer_info->page) {
 				adapter->alloc_rx_page_failed++;
 				goto no_buffers;
@@ -595,13 +595,9 @@ static bool ixgbe_clean_rx_irq(struct ixgbe_adapter *adapter,
 			pci_unmap_page(pdev, rx_buffer_info->page_dma,
 				       PAGE_SIZE, PCI_DMA_FROMDEVICE);
 			rx_buffer_info->page_dma = 0;
-			skb_fill_page_desc(skb, skb_shinfo(skb)->nr_frags,
-					   rx_buffer_info->page, 0, upper_len);
+			skb_add_rx_frag(skb, skb_shinfo(skb)->nr_frags,
+					rx_buffer_info->page, 0, upper_len);
 			rx_buffer_info->page = NULL;
-
-			skb->len += upper_len;
-			skb->data_len += upper_len;
-			skb->truesize += upper_len;
 		}
 
 		i++;
