@@ -425,6 +425,7 @@ static int proc_dointvec_route(struct ctl_table *table, int write,
 }
 
 static int sysctl_intvec_route(struct ctl_table *table,
+		int __user *name, int nlen,
 		void __user *oldval, size_t __user *oldlenp,
 		void __user *newval, size_t newlen)
 {
@@ -438,7 +439,7 @@ static int sysctl_intvec_route(struct ctl_table *table,
 		table = &tmp;
 	}
 
-	ret = sysctl_intvec(table, oldval, oldlenp, newval, newlen);
+	ret = sysctl_intvec(table, name, nlen, oldval, oldlenp, newval, newlen);
 
 	if (!ret && write) {
 		ret = mem_reserve_kmem_cache_set(&ipv4_route_reserve,
