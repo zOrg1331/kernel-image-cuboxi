@@ -2270,6 +2270,7 @@ config BNX2
 
 config CNIC
 	tristate "Broadcom CNIC support"
+	depends on 0
 	depends on BNX2
 	depends on UIO
 	help
