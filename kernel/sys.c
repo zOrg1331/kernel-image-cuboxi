@@ -14,6 +14,7 @@
 #include <linux/prctl.h>
 #include <linux/highuid.h>
 #include <linux/fs.h>
+#include <linux/perf_counter.h>
 #include <linux/resource.h>
 #include <linux/kernel.h>
 #include <linux/kexec.h>
@@ -360,6 +361,7 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 		void __user *, arg)
 {
 	char buffer[256];
+	int ret = 0;
 
 	/* We only trust the superuser with rebooting the system. */
 	if (!capable(CAP_SYS_BOOT))
@@ -397,7 +399,7 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 		kernel_halt();
 		unlock_kernel();
 		do_exit(0);
-		break;
+		panic("cannot halt");
 
 	case LINUX_REBOOT_CMD_POWER_OFF:
 		kernel_power_off();
@@ -417,29 +419,22 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 
 #ifdef CONFIG_KEXEC
 	case LINUX_REBOOT_CMD_KEXEC:
-		{
-			int ret;
-			ret = kernel_kexec();
-			unlock_kernel();
-			return ret;
-		}
+		ret = kernel_kexec();
+		break;
 #endif
 
 #ifdef CONFIG_HIBERNATION
 	case LINUX_REBOOT_CMD_SW_SUSPEND:
-		{
-			int ret = hibernate();
-			unlock_kernel();
-			return ret;
-		}
+		ret = hibernate();
+		break;
 #endif
 
 	default:
-		unlock_kernel();
-		return -EINVAL;
+		ret = -EINVAL;
+		break;
 	}
 	unlock_kernel();
-	return 0;
+	return ret;
 }
 
 static void deferred_cad(struct work_struct *dummy)
@@ -1798,6 +1793,12 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 			break;
 		case PR_SET_TSC:
 			error = SET_TSC_CTL(arg2);
+			break;
+		case PR_TASK_PERF_COUNTERS_DISABLE:
+			error = perf_counter_task_disable();
+			break;
+		case PR_TASK_PERF_COUNTERS_ENABLE:
+			error = perf_counter_task_enable();
 			break;
 		case PR_GET_TIMERSLACK:
 			error = current->timer_slack_ns;

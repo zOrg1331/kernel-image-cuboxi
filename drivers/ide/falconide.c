@@ -20,6 +20,7 @@
 #include <asm/atarihw.h>
 #include <asm/atariints.h>
 #include <asm/atari_stdma.h>
+#include <asm/ide.h>
 
 #define DRV_NAME "falconide"
 
@@ -67,8 +68,10 @@ static void falconide_input_data(ide_drive_t *drive, struct ide_cmd *cmd,
 {
 	unsigned long data_addr = drive->hwif->io_ports.data_addr;
 
-	if (drive->media == ide_disk && cmd && (cmd->tf_flags & IDE_TFLAG_FS))
-		return insw(data_addr, buf, (len + 1) / 2);
+	if (drive->media == ide_disk && cmd && (cmd->tf_flags & IDE_TFLAG_FS)) {
+		__ide_mm_insw(data_addr, buf, (len + 1) / 2);
+		return;
+	}
 
 	raw_insw_swapw((u16 *)data_addr, buf, (len + 1) / 2);
 }
@@ -78,8 +81,10 @@ static void falconide_output_data(ide_drive_t *drive, struct ide_cmd *cmd,
 {
 	unsigned long data_addr = drive->hwif->io_ports.data_addr;
 
-	if (drive->media == ide_disk && cmd && (cmd->tf_flags & IDE_TFLAG_FS))
-		return outsw(data_addr, buf, (len + 1) / 2);
+	if (drive->media == ide_disk && cmd && (cmd->tf_flags & IDE_TFLAG_FS)) {
+		__ide_mm_outsw(data_addr, buf, (len + 1) / 2);
+		return;
+	}
 
 	raw_outsw_swapw((u16 *)data_addr, buf, (len + 1) / 2);
 }
@@ -106,9 +111,10 @@ static const struct ide_port_info falconide_port_info = {
 	.host_flags		= IDE_HFLAG_MMIO | IDE_HFLAG_SERIALIZE |
 				  IDE_HFLAG_NO_DMA,
 	.irq_flags		= IRQF_SHARED,
+	.chipset		= ide_generic,
 };
 
-static void __init falconide_setup_ports(hw_regs_t *hw)
+static void __init falconide_setup_ports(struct ide_hw *hw)
 {
 	int i;
 
@@ -123,8 +129,6 @@ static void __init falconide_setup_ports(hw_regs_t *hw)
 
 	hw->irq = IRQ_MFP_IDE;
 	hw->ack_intr = NULL;
-
-	hw->chipset = ide_generic;
 }
 
     /*
@@ -134,7 +138,7 @@ static void __init falconide_setup_ports(hw_regs_t *hw)
 static int __init falconide_init(void)
 {
 	struct ide_host *host;
-	hw_regs_t hw, *hws[] = { &hw, NULL, NULL, NULL };
+	struct ide_hw hw, *hws[] = { &hw };
 	int rc;
 
 	if (!MACH_IS_ATARI || !ATARIHW_PRESENT(IDE))
@@ -149,7 +153,7 @@ static int __init falconide_init(void)
 
 	falconide_setup_ports(&hw);
 
-	host = ide_host_alloc(&falconide_port_info, hws);
+	host = ide_host_alloc(&falconide_port_info, hws, 1);
 	if (host == NULL) {
 		rc = -ENOMEM;
 		goto err;

@@ -33,8 +33,8 @@
 
 #include <plat/regs-s3c2412-iis.h>
 
-#include <plat/regs-gpio.h>
 #include <plat/audio.h>
+#include <mach/regs-gpio.h>
 #include <mach/dma.h>
 
 #include "s3c24xx-pcm.h"
@@ -120,7 +120,7 @@ static int s3c2412_i2s_probe(struct platform_device *pdev,
 
 	s3c2412_i2s.iis_cclk = clk_get(&pdev->dev, "i2sclk");
 	if (s3c2412_i2s.iis_cclk == NULL) {
-		pr_debug("failed to get i2sclk clock\n");
+		pr_err("failed to get i2sclk clock\n");
 		iounmap(s3c2412_i2s.regs);
 		return -ENODEV;
 	}

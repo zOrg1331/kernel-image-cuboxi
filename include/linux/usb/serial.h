@@ -29,7 +29,7 @@
 /**
  * usb_serial_port: structure for the specific ports of a device.
  * @serial: pointer back to the struct usb_serial owner of this port.
- * @tty: pointer to the corresponding tty for this port.
+ * @port: pointer to the corresponding tty_port for this port.
  * @lock: spinlock to grab when updating portions of this structure.
  * @mutex: mutex used to synchronize serial_open() and serial_close()
  *	access for this port.
@@ -44,19 +44,22 @@
  * @interrupt_out_endpointAddress: endpoint address for the interrupt out pipe
  * 	for this port.
  * @bulk_in_buffer: pointer to the bulk in buffer for this port.
+ * @bulk_in_size: the size of the bulk_in_buffer, in bytes.
  * @read_urb: pointer to the bulk in struct urb for this port.
  * @bulk_in_endpointAddress: endpoint address for the bulk in pipe for this
  *	port.
  * @bulk_out_buffer: pointer to the bulk out buffer for this port.
  * @bulk_out_size: the size of the bulk_out_buffer, in bytes.
  * @write_urb: pointer to the bulk out struct urb for this port.
+ * @write_urb_busy: port`s writing status
  * @bulk_out_endpointAddress: endpoint address for the bulk out pipe for this
  *	port.
  * @write_wait: a wait_queue_head_t used by the port.
  * @work: work queue entry for the line discipline waking up.
- * @open_count: number of times this port has been opened.
  * @throttled: nonzero if the read urb is inactive to throttle the device
  * @throttle_req: nonzero if the tty wants to throttle us
+ * @console: attached usb serial console
+ * @dev: pointer to the serial device
  *
  * This structure is used by the usb-serial core and drivers for the specific
  * ports of a device.
@@ -221,8 +224,7 @@ struct usb_serial_driver {
 	/* Called by console with tty = NULL and by tty */
 	int  (*open)(struct tty_struct *tty,
 			struct usb_serial_port *port, struct file *filp);
-	void (*close)(struct tty_struct *tty,
-			struct usb_serial_port *port, struct file *filp);
+	void (*close)(struct usb_serial_port *port);
 	int  (*write)(struct tty_struct *tty, struct usb_serial_port *port,
 			const unsigned char *buf, int count);
 	/* Called only by the tty layer */
@@ -238,6 +240,10 @@ struct usb_serial_driver {
 	int  (*tiocmget)(struct tty_struct *tty, struct file *file);
 	int  (*tiocmset)(struct tty_struct *tty, struct file *file,
 			 unsigned int set, unsigned int clear);
+	/* Called by the tty layer for port level work. There may or may not
+	   be an attached tty at this point */
+	void (*dtr_rts)(struct usb_serial_port *port, int on);
+	int  (*carrier_raised)(struct usb_serial_port *port);
 	/* USB events */
 	void (*read_int_callback)(struct urb *urb);
 	void (*write_int_callback)(struct urb *urb);
@@ -280,8 +286,7 @@ extern int usb_serial_generic_open(struct tty_struct *tty,
 		struct usb_serial_port *port, struct file *filp);
 extern int usb_serial_generic_write(struct tty_struct *tty,
 	struct usb_serial_port *port, const unsigned char *buf, int count);
-extern void usb_serial_generic_close(struct tty_struct *tty,
-			struct usb_serial_port *port, struct file *filp);
+extern void usb_serial_generic_close(struct usb_serial_port *port);
 extern int usb_serial_generic_resume(struct usb_serial *serial);
 extern int usb_serial_generic_write_room(struct tty_struct *tty);
 extern int usb_serial_generic_chars_in_buffer(struct tty_struct *tty);

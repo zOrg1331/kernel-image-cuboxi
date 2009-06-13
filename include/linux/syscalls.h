@@ -55,6 +55,7 @@ struct compat_timeval;
 struct robust_list_head;
 struct getcpu_cache;
 struct old_linux_dirent;
+struct perf_counter_attr;
 
 #include <linux/types.h>
 #include <linux/aio_abi.h>
@@ -65,7 +66,7 @@ struct old_linux_dirent;
 #include <asm/signal.h>
 #include <linux/quota.h>
 #include <linux/key.h>
-#include <linux/ftrace.h>
+#include <trace/syscall.h>
 
 #define __SC_DECL1(t1, a1)	t1 a1
 #define __SC_DECL2(t2, a2, ...) t2 a2, __SC_DECL1(__VA_ARGS__)
@@ -148,7 +149,7 @@ struct old_linux_dirent;
 	asm ("\t.globl " #alias "\n\t.set " #alias ", " #name "\n"	\
 	     "\t.globl ." #alias "\n\t.set ." #alias ", ." #name)
 #else
-#ifdef CONFIG_ALPHA
+#if defined(CONFIG_ALPHA) || defined(CONFIG_MIPS)
 #define SYSCALL_ALIAS(alias, name)					\
 	asm ( #alias " = " #name "\n\t.globl " #alias)
 #else
@@ -433,6 +434,7 @@ asmlinkage long sys_fcntl(unsigned int fd, unsigned int cmd, unsigned long arg);
 asmlinkage long sys_fcntl64(unsigned int fd,
 				unsigned int cmd, unsigned long arg);
 #endif
+asmlinkage long sys_pipe2(int __user *fildes, int flags);
 asmlinkage long sys_dup(unsigned int fildes);
 asmlinkage long sys_dup2(unsigned int oldfd, unsigned int newfd);
 asmlinkage long sys_dup3(unsigned int oldfd, unsigned int newfd, int flags);
@@ -754,4 +756,8 @@ asmlinkage long sys_pipe(int __user *);
 
 int kernel_execve(const char *filename, char *const argv[], char *const envp[]);
 
+
+asmlinkage long sys_perf_counter_open(
+		struct perf_counter_attr __user *attr_uptr,
+		pid_t pid, int cpu, int group_fd, unsigned long flags);
 #endif

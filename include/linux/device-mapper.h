@@ -116,7 +116,6 @@ void dm_put_device(struct dm_target *ti, struct dm_dev *d);
 /*
  * Target features
  */
-#define DM_TARGET_SUPPORTS_BARRIERS 0x00000001
 
 struct target_type {
 	uint64_t features;
@@ -150,7 +149,7 @@ struct io_restrictions {
 	unsigned max_hw_sectors;
 	unsigned max_sectors;
 	unsigned max_segment_size;
-	unsigned short hardsect_size;
+	unsigned short logical_block_size;
 	unsigned short max_hw_segments;
 	unsigned short max_phys_segments;
 	unsigned char no_cluster; /* inverted so that 0 is default */

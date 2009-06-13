@@ -11,6 +11,7 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/ctype.h>
+#include <linux/ftrace.h>
 #include <linux/lockdep.h>
 #include <linux/module.h>
 #include <linux/pfn.h>
@@ -34,8 +35,25 @@
 
 char kernel_nss_name[NSS_NAME_SIZE + 1];
 
+static unsigned long machine_flags;
+
 static void __init setup_boot_command_line(void);
 
+/*
+ * Get the TOD clock running.
+ */
+static void __init reset_tod_clock(void)
+{
+	u64 time;
+
+	if (store_clock(&time) == 0)
+		return;
+	/* TOD clock not running. Set the clock to Unix Epoch. */
+	if (set_clock(TOD_UNIX_EPOCH) != 0 || store_clock(&time) != 0)
+		disabled_wait(0);
+
+	sched_clock_base_cc = TOD_UNIX_EPOCH;
+}
 
 #ifdef CONFIG_SHARED_KERNEL
 int __init savesys_ipl_nss(char *cmd, const int cmdlen);
@@ -370,6 +388,7 @@ static void __init setup_boot_command_line(void)
  */
 void __init startup_init(void)
 {
+	reset_tod_clock();
 	ipl_save_parameters();
 	rescue_initrd();
 	clear_bss_section();
@@ -391,5 +410,9 @@ void __init startup_init(void)
 	setup_hpage();
 	sclp_facilities_detect();
 	detect_memory_layout(memory_chunk);
+	S390_lowcore.machine_flags = machine_flags;
+#ifdef CONFIG_DYNAMIC_FTRACE
+	S390_lowcore.ftrace_func = (unsigned long)ftrace_caller;
+#endif
 	lockdep_on();
 }

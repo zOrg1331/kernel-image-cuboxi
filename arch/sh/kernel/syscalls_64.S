@@ -387,3 +387,6 @@ sys_call_table:
 	.long sys_dup3
 	.long sys_pipe2
 	.long sys_inotify_init1		/* 360 */
+	.long sys_preadv
+	.long sys_pwritev
+	.long sys_rt_tgsigqueueinfo

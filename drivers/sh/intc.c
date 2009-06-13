@@ -24,6 +24,7 @@
 #include <linux/sh_intc.h>
 #include <linux/sysdev.h>
 #include <linux/list.h>
+#include <linux/topology.h>
 
 #define _INTC_MK(fn, mode, addr_e, addr_d, width, shift) \
 	((shift) | ((width) << 5) | ((fn) << 9) | ((mode) << 13) | \
@@ -44,6 +45,7 @@ struct intc_handle_int {
 struct intc_desc_int {
 	struct list_head list;
 	struct sys_device sysdev;
+	pm_message_t state;
 	unsigned long *reg;
 #ifdef CONFIG_SMP
 	unsigned long *smp;
@@ -769,11 +771,19 @@ void __init register_intc_controller(struct intc_desc *desc)
 	/* register the vectors one by one */
 	for (i = 0; i < desc->nr_vectors; i++) {
 		struct intc_vect *vect = desc->vectors + i;
+		unsigned int irq = evt2irq(vect->vect);
+		struct irq_desc *irq_desc;
 
 		if (!vect->enum_id)
 			continue;
 
-		intc_register_irq(desc, d, vect->enum_id, evt2irq(vect->vect));
+		irq_desc = irq_to_desc_alloc_node(irq, numa_node_id());
+		if (unlikely(!irq_desc)) {
+			printk(KERN_INFO "can not get irq_desc for %d\n", irq);
+			continue;
+		}
+
+		intc_register_irq(desc, d, vect->enum_id, irq);
 	}
 }
 
@@ -786,18 +796,44 @@ static int intc_suspend(struct sys_device *dev, pm_message_t state)
 	/* get intc controller associated with this sysdev */
 	d = container_of(dev, struct intc_desc_int, sysdev);
 
-	/* enable wakeup irqs belonging to this intc controller */
-	for_each_irq_desc(irq, desc) {
-		if ((desc->status & IRQ_WAKEUP) && (desc->chip == &d->chip))
-			intc_enable(irq);
+	switch (state.event) {
+	case PM_EVENT_ON:
+		if (d->state.event != PM_EVENT_FREEZE)
+			break;
+		for_each_irq_desc(irq, desc) {
+			if (desc->chip != &d->chip)
+				continue;
+			if (desc->status & IRQ_DISABLED)
+				intc_disable(irq);
+			else
+				intc_enable(irq);
+		}
+		break;
+	case PM_EVENT_FREEZE:
+		/* nothing has to be done */
+		break;
+	case PM_EVENT_SUSPEND:
+		/* enable wakeup irqs belonging to this intc controller */
+		for_each_irq_desc(irq, desc) {
+			if ((desc->status & IRQ_WAKEUP) && (desc->chip == &d->chip))
+				intc_enable(irq);
+		}
+		break;
 	}
+	d->state = state;
 
 	return 0;
+}
+
+static int intc_resume(struct sys_device *dev)
+{
+	return intc_suspend(dev, PMSG_ON);
 }
 
 static struct sysdev_class intc_sysdev_class = {
 	.name = "intc",
 	.suspend = intc_suspend,
+	.resume = intc_resume,
 };
 
 /* register this intc as sysdev to allow suspend/resume */

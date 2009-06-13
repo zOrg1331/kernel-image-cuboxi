@@ -15,19 +15,6 @@
 extern struct files_struct init_files;
 extern struct fs_struct init_fs;
 
-#define INIT_KIOCTX(name, which_mm) \
-{							\
-	.users		= ATOMIC_INIT(1),		\
-	.dead		= 0,				\
-	.mm		= &which_mm,			\
-	.user_id	= 0,				\
-	.next		= NULL,				\
-	.wait		= __WAIT_QUEUE_HEAD_INITIALIZER(name.wait), \
-	.ctx_lock	= __SPIN_LOCK_UNLOCKED(name.ctx_lock), \
-	.reqs_active	= 0U,				\
-	.max_reqs	= ~0U,				\
-}
-
 #define INIT_MM(name) \
 {			 					\
 	.mm_rb		= RB_ROOT,				\
@@ -121,6 +108,15 @@ extern struct group_info init_groups;
 
 extern struct cred init_cred;
 
+#ifdef CONFIG_PERF_COUNTERS
+# define INIT_PERF_COUNTERS(tsk)					\
+	.perf_counter_mutex = 						\
+		 __MUTEX_INITIALIZER(tsk.perf_counter_mutex),		\
+	.perf_counter_list = LIST_HEAD_INIT(tsk.perf_counter_list),
+#else
+# define INIT_PERF_COUNTERS(tsk)
+#endif
+
 /*
  *  INIT_TASK is used to set up the first task table, touch at
  * your own risk!. Base=0, limit=0x1fffff (=2MB)
@@ -158,8 +154,8 @@ extern struct cred init_cred;
 	.group_leader	= &tsk,						\
 	.real_cred	= &init_cred,					\
 	.cred		= &init_cred,					\
-	.cred_exec_mutex =						\
-		 __MUTEX_INITIALIZER(tsk.cred_exec_mutex),		\
+	.cred_guard_mutex =						\
+		 __MUTEX_INITIALIZER(tsk.cred_guard_mutex),		\
 	.comm		= "swapper",					\
 	.thread		= INIT_THREAD,					\
 	.fs		= &init_fs,					\
@@ -184,9 +180,11 @@ extern struct cred init_cred;
 	},								\
 	.dirties = INIT_PROP_LOCAL_SINGLE(dirties),			\
 	INIT_IDS							\
+	INIT_PERF_COUNTERS(tsk)						\
 	INIT_TRACE_IRQFLAGS						\
 	INIT_LOCKDEP							\
 	INIT_FTRACE_GRAPH						\
+	INIT_TRACE_RECURSION						\
 }
 
 

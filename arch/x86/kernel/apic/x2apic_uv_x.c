@@ -19,6 +19,7 @@
 #include <linux/timer.h>
 #include <linux/cpu.h>
 #include <linux/init.h>
+#include <linux/io.h>
 
 #include <asm/uv/uv_mmrs.h>
 #include <asm/uv/uv_hub.h>
@@ -34,6 +35,17 @@ DEFINE_PER_CPU(int, x2apic_extra_bits);
 
 static enum uv_system_type uv_system_type;
 
+static int early_get_nodeid(void)
+{
+	union uvh_node_id_u node_id;
+	unsigned long *mmr;
+
+	mmr = early_ioremap(UV_LOCAL_MMR_BASE | UVH_NODE_ID, sizeof(*mmr));
+	node_id.v = *mmr;
+	early_iounmap(mmr, sizeof(*mmr));
+	return node_id.s.node_id;
+}
+
 static int uv_acpi_madt_oem_check(char *oem_id, char *oem_table_id)
 {
 	if (!strcmp(oem_id, "SGI")) {
@@ -42,6 +54,8 @@ static int uv_acpi_madt_oem_check(char *oem_id, char *oem_table_id)
 		else if (!strcmp(oem_table_id, "UVX"))
 			uv_system_type = UV_X2APIC;
 		else if (!strcmp(oem_table_id, "UVH")) {
+			__get_cpu_var(x2apic_extra_bits) =
+				early_get_nodeid() << (UV_APIC_PNODE_SHIFT - 1);
 			uv_system_type = UV_NON_UNIQUE_APIC;
 			return 1;
 		}
@@ -91,7 +105,7 @@ static void uv_vector_allocation_domain(int cpu, struct cpumask *retmask)
 	cpumask_set_cpu(cpu, retmask);
 }
 
-static int uv_wakeup_secondary(int phys_apicid, unsigned long start_rip)
+static int __cpuinit uv_wakeup_secondary(int phys_apicid, unsigned long start_rip)
 {
 #ifdef CONFIG_SMP
 	unsigned long val;
@@ -548,8 +562,9 @@ void __init uv_system_init(void)
 	union uvh_node_id_u node_id;
 	unsigned long gnode_upper, lowmem_redir_base, lowmem_redir_size;
 	int bytes, nid, cpu, lcpu, pnode, blade, i, j, m_val, n_val;
-	int max_pnode = 0;
-	unsigned long mmr_base, present;
+	int gnode_extra, max_pnode = 0;
+	unsigned long mmr_base, present, paddr;
+	unsigned short pnode_mask;
 
 	map_low_mmrs();
 
@@ -559,6 +574,13 @@ void __init uv_system_init(void)
 	mmr_base =
 	    uv_read_local_mmr(UVH_RH_GAM_MMR_OVERLAY_CONFIG_MMR) &
 	    ~UV_MMR_ENABLE;
+	pnode_mask = (1 << n_val) - 1;
+	node_id.v = uv_read_local_mmr(UVH_NODE_ID);
+	gnode_extra = (node_id.s.node_id & ~((1 << n_val) - 1)) >> 1;
+	gnode_upper = ((unsigned long)gnode_extra  << m_val);
+	printk(KERN_DEBUG "UV: N %d, M %d, gnode_upper 0x%lx, gnode_extra 0x%x\n",
+			n_val, m_val, gnode_upper, gnode_extra);
+
 	printk(KERN_DEBUG "UV: global MMR base 0x%lx\n", mmr_base);
 
 	for(i = 0; i < UVH_NODE_PRESENT_TABLE_DEPTH; i++)
@@ -568,15 +590,18 @@ void __init uv_system_init(void)
 
 	bytes = sizeof(struct uv_blade_info) * uv_num_possible_blades();
 	uv_blade_info = kmalloc(bytes, GFP_KERNEL);
+	BUG_ON(!uv_blade_info);
 
 	get_lowmem_redirect(&lowmem_redir_base, &lowmem_redir_size);
 
 	bytes = sizeof(uv_node_to_blade[0]) * num_possible_nodes();
 	uv_node_to_blade = kmalloc(bytes, GFP_KERNEL);
+	BUG_ON(!uv_node_to_blade);
 	memset(uv_node_to_blade, 255, bytes);
 
 	bytes = sizeof(uv_cpu_to_blade[0]) * num_possible_cpus();
 	uv_cpu_to_blade = kmalloc(bytes, GFP_KERNEL);
+	BUG_ON(!uv_cpu_to_blade);
 	memset(uv_cpu_to_blade, 255, bytes);
 
 	blade = 0;
@@ -591,10 +616,6 @@ void __init uv_system_init(void)
 			blade++;
 		}
 	}
-
-	node_id.v = uv_read_local_mmr(UVH_NODE_ID);
-	gnode_upper = (((unsigned long)node_id.s.node_id) &
-		       ~((1 << n_val) - 1)) << m_val;
 
 	uv_bios_init();
 	uv_bios_get_sn_info(0, &uv_type, &sn_partition_id,
@@ -615,9 +636,10 @@ void __init uv_system_init(void)
 		uv_cpu_hub_info(cpu)->numa_blade_id = blade;
 		uv_cpu_hub_info(cpu)->blade_processor_id = lcpu;
 		uv_cpu_hub_info(cpu)->pnode = pnode;
-		uv_cpu_hub_info(cpu)->pnode_mask = (1 << n_val) - 1;
+		uv_cpu_hub_info(cpu)->pnode_mask = pnode_mask;
 		uv_cpu_hub_info(cpu)->gpa_mask = (1 << (m_val + n_val)) - 1;
 		uv_cpu_hub_info(cpu)->gnode_upper = gnode_upper;
+		uv_cpu_hub_info(cpu)->gnode_extra = gnode_extra;
 		uv_cpu_hub_info(cpu)->global_mmr_base = mmr_base;
 		uv_cpu_hub_info(cpu)->coherency_domain_number = sn_coherency_id;
 		uv_cpu_hub_info(cpu)->scir.offset = SCIR_LOCAL_MMR_BASE + lcpu;
@@ -629,6 +651,17 @@ void __init uv_system_init(void)
 			"lcpu %d, blade %d\n",
 			cpu, per_cpu(x86_cpu_to_apicid, cpu), pnode, nid,
 			lcpu, blade);
+	}
+
+	/* Add blade/pnode info for nodes without cpus */
+	for_each_online_node(nid) {
+		if (uv_node_to_blade[nid] >= 0)
+			continue;
+		paddr = node_start_pfn(nid) << PAGE_SHIFT;
+		paddr = uv_soc_phys_ram_to_gpa(paddr);
+		pnode = (paddr >> m_val) & pnode_mask;
+		blade = boot_pnode_to_blade(pnode);
+		uv_node_to_blade[nid] = blade;
 	}
 
 	map_gru_high(max_pnode);

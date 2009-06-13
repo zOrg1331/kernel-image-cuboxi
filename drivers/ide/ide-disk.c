@@ -82,7 +82,7 @@ static ide_startstop_t __ide_do_rw_disk(ide_drive_t *drive, struct request *rq,
 					sector_t block)
 {
 	ide_hwif_t *hwif	= drive->hwif;
-	u16 nsectors		= (u16)rq->nr_sectors;
+	u16 nsectors		= (u16)blk_rq_sectors(rq);
 	u8 lba48		= !!(drive->dev_flags & IDE_DFLAG_LBA48);
 	u8 dma			= !!(drive->dev_flags & IDE_DFLAG_USING_DMA);
 	struct ide_cmd		cmd;
@@ -90,42 +90,45 @@ static ide_startstop_t __ide_do_rw_disk(ide_drive_t *drive, struct request *rq,
 	ide_startstop_t		rc;
 
 	if ((hwif->host_flags & IDE_HFLAG_NO_LBA48_DMA) && lba48 && dma) {
-		if (block + rq->nr_sectors > 1ULL << 28)
+		if (block + blk_rq_sectors(rq) > 1ULL << 28)
 			dma = 0;
 		else
 			lba48 = 0;
 	}
 
 	memset(&cmd, 0, sizeof(cmd));
-	cmd.tf_flags = IDE_TFLAG_TF | IDE_TFLAG_DEVICE;
+	cmd.valid.out.tf = IDE_VALID_OUT_TF | IDE_VALID_DEVICE;
+	cmd.valid.in.tf  = IDE_VALID_IN_TF  | IDE_VALID_DEVICE;
 
 	if (drive->dev_flags & IDE_DFLAG_LBA) {
 		if (lba48) {
 			pr_debug("%s: LBA=0x%012llx\n", drive->name,
 					(unsigned long long)block);
 
-			tf->hob_nsect = (nsectors >> 8) & 0xff;
-			tf->hob_lbal  = (u8)(block >> 24);
-			if (sizeof(block) != 4) {
-				tf->hob_lbam = (u8)((u64)block >> 32);
-				tf->hob_lbah = (u8)((u64)block >> 40);
-			}
-
 			tf->nsect  = nsectors & 0xff;
 			tf->lbal   = (u8) block;
 			tf->lbam   = (u8)(block >>  8);
 			tf->lbah   = (u8)(block >> 16);
+			tf->device = ATA_LBA;
 
-			cmd.tf_flags |= (IDE_TFLAG_LBA48 | IDE_TFLAG_HOB);
+			tf = &cmd.hob;
+			tf->nsect = (nsectors >> 8) & 0xff;
+			tf->lbal  = (u8)(block >> 24);
+			if (sizeof(block) != 4) {
+				tf->lbam = (u8)((u64)block >> 32);
+				tf->lbah = (u8)((u64)block >> 40);
+			}
+
+			cmd.valid.out.hob = IDE_VALID_OUT_HOB;
+			cmd.valid.in.hob  = IDE_VALID_IN_HOB;
+			cmd.tf_flags |= IDE_TFLAG_LBA48;
 		} else {
 			tf->nsect  = nsectors & 0xff;
 			tf->lbal   = block;
 			tf->lbam   = block >>= 8;
 			tf->lbah   = block >>= 8;
-			tf->device = (block >> 8) & 0xf;
+			tf->device = ((block >> 8) & 0xf) | ATA_LBA;
 		}
-
-		tf->device |= ATA_LBA;
 	} else {
 		unsigned int sect, head, cyl, track;
 
@@ -192,9 +195,9 @@ static ide_startstop_t ide_do_rw_disk(ide_drive_t *drive, struct request *rq,
 
 	ledtrig_ide_activity();
 
-	pr_debug("%s: %sing: block=%llu, sectors=%lu, buffer=0x%08lx\n",
+	pr_debug("%s: %sing: block=%llu, sectors=%u, buffer=0x%08lx\n",
 		 drive->name, rq_data_dir(rq) == READ ? "read" : "writ",
-		 (unsigned long long)block, rq->nr_sectors,
+		 (unsigned long long)block, blk_rq_sectors(rq),
 		 (unsigned long)rq->buffer);
 
 	if (hwif->rw_disk)
@@ -220,15 +223,19 @@ static u64 idedisk_read_native_max_address(ide_drive_t *drive, int lba48)
 		tf->command = ATA_CMD_READ_NATIVE_MAX;
 	tf->device  = ATA_LBA;
 
-	cmd.tf_flags = IDE_TFLAG_TF | IDE_TFLAG_DEVICE;
-	if (lba48)
-		cmd.tf_flags |= (IDE_TFLAG_LBA48 | IDE_TFLAG_HOB);
+	cmd.valid.out.tf = IDE_VALID_OUT_TF | IDE_VALID_DEVICE;
+	cmd.valid.in.tf  = IDE_VALID_IN_TF  | IDE_VALID_DEVICE;
+	if (lba48) {
+		cmd.valid.out.hob = IDE_VALID_OUT_HOB;
+		cmd.valid.in.hob  = IDE_VALID_IN_HOB;
+		cmd.tf_flags = IDE_TFLAG_LBA48;
+	}
 
 	ide_no_data_taskfile(drive, &cmd);
 
 	/* if OK, compute maximum address value */
 	if (!(tf->status & ATA_ERR))
-		addr = ide_get_lba_addr(tf, lba48) + 1;
+		addr = ide_get_lba_addr(&cmd, lba48) + 1;
 
 	return addr;
 }
@@ -250,9 +257,9 @@ static u64 idedisk_set_max_address(ide_drive_t *drive, u64 addr_req, int lba48)
 	tf->lbam     = (addr_req >>= 8) & 0xff;
 	tf->lbah     = (addr_req >>= 8) & 0xff;
 	if (lba48) {
-		tf->hob_lbal = (addr_req >>= 8) & 0xff;
-		tf->hob_lbam = (addr_req >>= 8) & 0xff;
-		tf->hob_lbah = (addr_req >>= 8) & 0xff;
+		cmd.hob.lbal = (addr_req >>= 8) & 0xff;
+		cmd.hob.lbam = (addr_req >>= 8) & 0xff;
+		cmd.hob.lbah = (addr_req >>= 8) & 0xff;
 		tf->command  = ATA_CMD_SET_MAX_EXT;
 	} else {
 		tf->device   = (addr_req >>= 8) & 0x0f;
@@ -260,15 +267,19 @@ static u64 idedisk_set_max_address(ide_drive_t *drive, u64 addr_req, int lba48)
 	}
 	tf->device |= ATA_LBA;
 
-	cmd.tf_flags = IDE_TFLAG_TF | IDE_TFLAG_DEVICE;
-	if (lba48)
-		cmd.tf_flags |= (IDE_TFLAG_LBA48 | IDE_TFLAG_HOB);
+	cmd.valid.out.tf = IDE_VALID_OUT_TF | IDE_VALID_DEVICE;
+	cmd.valid.in.tf  = IDE_VALID_IN_TF  | IDE_VALID_DEVICE;
+	if (lba48) {
+		cmd.valid.out.hob = IDE_VALID_OUT_HOB;
+		cmd.valid.in.hob  = IDE_VALID_IN_HOB;
+		cmd.tf_flags = IDE_TFLAG_LBA48;
+	}
 
 	ide_no_data_taskfile(drive, &cmd);
 
 	/* if OK, compute maximum address value */
 	if (!(tf->status & ATA_ERR))
-		addr_set = ide_get_lba_addr(tf, lba48) + 1;
+		addr_set = ide_get_lba_addr(&cmd, lba48) + 1;
 
 	return addr_set;
 }
@@ -291,14 +302,12 @@ static const struct drive_list_entry hpa_list[] = {
 	{ NULL,		NULL }
 };
 
-static void idedisk_check_hpa(ide_drive_t *drive)
+static u64 ide_disk_hpa_get_native_capacity(ide_drive_t *drive, int lba48)
 {
-	unsigned long long capacity, set_max;
-	int lba48 = ata_id_lba48_enabled(drive->id);
+	u64 capacity, set_max;
 
 	capacity = drive->capacity64;
-
-	set_max = idedisk_read_native_max_address(drive, lba48);
+	set_max  = idedisk_read_native_max_address(drive, lba48);
 
 	if (ide_in_drive_list(drive->id, hpa_list)) {
 		/*
@@ -309,8 +318,30 @@ static void idedisk_check_hpa(ide_drive_t *drive)
 			set_max--;
 	}
 
+	return set_max;
+}
+
+static u64 ide_disk_hpa_set_capacity(ide_drive_t *drive, u64 set_max, int lba48)
+{
+	set_max = idedisk_set_max_address(drive, set_max, lba48);
+	if (set_max)
+		drive->capacity64 = set_max;
+
+	return set_max;
+}
+
+static void idedisk_check_hpa(ide_drive_t *drive)
+{
+	u64 capacity, set_max;
+	int lba48 = ata_id_lba48_enabled(drive->id);
+
+	capacity = drive->capacity64;
+	set_max  = ide_disk_hpa_get_native_capacity(drive, lba48);
+
 	if (set_max <= capacity)
 		return;
+
+	drive->probed_capacity = set_max;
 
 	printk(KERN_INFO "%s: Host Protected Area detected.\n"
 			 "\tcurrent capacity is %llu sectors (%llu MB)\n"
@@ -319,13 +350,13 @@ static void idedisk_check_hpa(ide_drive_t *drive)
 			 capacity, sectors_to_MB(capacity),
 			 set_max, sectors_to_MB(set_max));
 
-	set_max = idedisk_set_max_address(drive, set_max, lba48);
+	if ((drive->dev_flags & IDE_DFLAG_NOHPA) == 0)
+		return;
 
-	if (set_max) {
-		drive->capacity64 = set_max;
+	set_max = ide_disk_hpa_set_capacity(drive, set_max, lba48);
+	if (set_max)
 		printk(KERN_INFO "%s: Host Protected Area disabled.\n",
 				 drive->name);
-	}
 }
 
 static int ide_disk_get_capacity(ide_drive_t *drive)
@@ -347,6 +378,8 @@ static int ide_disk_get_capacity(ide_drive_t *drive)
 		drive->capacity64 = drive->cyl * drive->head * drive->sect;
 	}
 
+	drive->probed_capacity = drive->capacity64;
+
 	if (lba) {
 		drive->dev_flags |= IDE_DFLAG_LBA;
 
@@ -365,7 +398,7 @@ static int ide_disk_get_capacity(ide_drive_t *drive)
 		       "%llu sectors (%llu MB)\n",
 		       drive->name, (unsigned long long)drive->capacity64,
 		       sectors_to_MB(drive->capacity64));
-		drive->capacity64 = 1ULL << 28;
+		drive->probed_capacity = drive->capacity64 = 1ULL << 28;
 	}
 
 	if ((drive->hwif->host_flags & IDE_HFLAG_NO_LBA48_DMA) &&
@@ -379,6 +412,34 @@ static int ide_disk_get_capacity(ide_drive_t *drive)
 	}
 
 	return 0;
+}
+
+static u64 ide_disk_set_capacity(ide_drive_t *drive, u64 capacity)
+{
+	u64 set = min(capacity, drive->probed_capacity);
+	u16 *id = drive->id;
+	int lba48 = ata_id_lba48_enabled(id);
+
+	if ((drive->dev_flags & IDE_DFLAG_LBA) == 0 ||
+	    ata_id_hpa_enabled(id) == 0)
+		goto out;
+
+	/*
+	 * according to the spec the SET MAX ADDRESS command shall be
+	 * immediately preceded by a READ NATIVE MAX ADDRESS command
+	 */
+	capacity = ide_disk_hpa_get_native_capacity(drive, lba48);
+	if (capacity == 0)
+		goto out;
+
+	set = ide_disk_hpa_set_capacity(drive, set, lba48);
+	if (set) {
+		/* needed for ->resume to disable HPA */
+		drive->dev_flags |= IDE_DFLAG_NOHPA;
+		return set;
+	}
+out:
+	return drive->capacity64;
 }
 
 static void idedisk_prepare_flush(struct request_queue *q, struct request *rq)
@@ -395,12 +456,11 @@ static void idedisk_prepare_flush(struct request_queue *q, struct request *rq)
 		cmd->tf.command = ATA_CMD_FLUSH_EXT;
 	else
 		cmd->tf.command = ATA_CMD_FLUSH;
-	cmd->tf_flags = IDE_TFLAG_OUT_TF | IDE_TFLAG_OUT_DEVICE |
-			IDE_TFLAG_DYN;
+	cmd->valid.out.tf = IDE_VALID_OUT_TF | IDE_VALID_DEVICE;
+	cmd->tf_flags = IDE_TFLAG_DYN;
 	cmd->protocol = ATA_PROT_NODATA;
 
 	rq->cmd_type = REQ_TYPE_ATA_TASKFILE;
-	rq->cmd_flags |= REQ_SOFTBARRIER;
 	rq->special = cmd;
 }
 
@@ -418,14 +478,14 @@ static int set_multcount(ide_drive_t *drive, int arg)
 	if (arg < 0 || arg > (drive->id[ATA_ID_MAX_MULTSECT] & 0xff))
 		return -EINVAL;
 
-	if (drive->special.b.set_multmode)
+	if (drive->special_flags & IDE_SFLAG_SET_MULTMODE)
 		return -EBUSY;
 
 	rq = blk_get_request(drive->queue, READ, __GFP_WAIT);
 	rq->cmd_type = REQ_TYPE_ATA_TASKFILE;
 
 	drive->mult_req = arg;
-	drive->special.b.set_multmode = 1;
+	drive->special_flags |= IDE_SFLAG_SET_MULTMODE;
 	error = blk_execute_rq(drive->queue, NULL, rq, 0);
 	blk_put_request(rq);
 
@@ -457,7 +517,8 @@ static int ide_do_setfeature(ide_drive_t *drive, u8 feature, u8 nsect)
 	cmd.tf.feature = feature;
 	cmd.tf.nsect   = nsect;
 	cmd.tf.command = ATA_CMD_SET_FEATURES;
-	cmd.tf_flags   = IDE_TFLAG_TF | IDE_TFLAG_DEVICE;
+	cmd.valid.out.tf = IDE_VALID_OUT_TF | IDE_VALID_DEVICE;
+	cmd.valid.in.tf  = IDE_VALID_IN_TF  | IDE_VALID_DEVICE;
 
 	return ide_no_data_taskfile(drive, &cmd);
 }
@@ -533,7 +594,8 @@ static int do_idedisk_flushcache(ide_drive_t *drive)
 		cmd.tf.command = ATA_CMD_FLUSH_EXT;
 	else
 		cmd.tf.command = ATA_CMD_FLUSH;
-	cmd.tf_flags = IDE_TFLAG_TF | IDE_TFLAG_DEVICE;
+	cmd.valid.out.tf = IDE_VALID_OUT_TF | IDE_VALID_DEVICE;
+	cmd.valid.in.tf  = IDE_VALID_IN_TF  | IDE_VALID_DEVICE;
 
 	return ide_no_data_taskfile(drive, &cmd);
 }
@@ -627,7 +689,7 @@ static void ide_disk_setup(ide_drive_t *drive)
 	}
 
 	printk(KERN_INFO "%s: max request size: %dKiB\n", drive->name,
-		q->max_sectors / 2);
+	       queue_max_sectors(q) / 2);
 
 	if (ata_id_is_ssd(id))
 		queue_flag_set_unlocked(QUEUE_FLAG_NONROT, q);
@@ -715,7 +777,8 @@ static int ide_disk_set_doorlock(ide_drive_t *drive, struct gendisk *disk,
 
 	memset(&cmd, 0, sizeof(cmd));
 	cmd.tf.command = on ? ATA_CMD_MEDIA_LOCK : ATA_CMD_MEDIA_UNLOCK;
-	cmd.tf_flags   = IDE_TFLAG_TF | IDE_TFLAG_DEVICE;
+	cmd.valid.out.tf = IDE_VALID_OUT_TF | IDE_VALID_DEVICE;
+	cmd.valid.in.tf  = IDE_VALID_IN_TF  | IDE_VALID_DEVICE;
 
 	ret = ide_no_data_taskfile(drive, &cmd);
 
@@ -727,6 +790,7 @@ static int ide_disk_set_doorlock(ide_drive_t *drive, struct gendisk *disk,
 
 const struct ide_disk_ops ide_ata_disk_ops = {
 	.check		= ide_disk_check,
+	.set_capacity	= ide_disk_set_capacity,
 	.get_capacity	= ide_disk_get_capacity,
 	.setup		= ide_disk_setup,
 	.flush		= ide_disk_flush,

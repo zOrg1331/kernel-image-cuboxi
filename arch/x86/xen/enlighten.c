@@ -20,6 +20,7 @@
 #include <linux/delay.h>
 #include <linux/start_kernel.h>
 #include <linux/sched.h>
+#include <linux/kprobes.h>
 #include <linux/bootmem.h>
 #include <linux/module.h>
 #include <linux/mm.h>
@@ -42,7 +43,9 @@
 #include <asm/xen/hypervisor.h>
 #include <asm/fixmap.h>
 #include <asm/processor.h>
+#include <asm/proto.h>
 #include <asm/msr-index.h>
+#include <asm/traps.h>
 #include <asm/setup.h>
 #include <asm/desc.h>
 #include <asm/pgtable.h>
@@ -168,21 +171,23 @@ static void __init xen_banner(void)
 	       xen_feature(XENFEAT_mmu_pt_update_preserve_ad) ? " (preserve-AD)" : "");
 }
 
+static __read_mostly unsigned int cpuid_leaf1_edx_mask = ~0;
+static __read_mostly unsigned int cpuid_leaf1_ecx_mask = ~0;
+
 static void xen_cpuid(unsigned int *ax, unsigned int *bx,
 		      unsigned int *cx, unsigned int *dx)
 {
+	unsigned maskecx = ~0;
 	unsigned maskedx = ~0;
 
 	/*
 	 * Mask out inconvenient features, to try and disable as many
 	 * unsupported kernel subsystems as possible.
 	 */
-	if (*ax == 1)
-		maskedx = ~((1 << X86_FEATURE_APIC) |  /* disable APIC */
-			    (1 << X86_FEATURE_ACPI) |  /* disable ACPI */
-			    (1 << X86_FEATURE_MCE)  |  /* disable MCE */
-			    (1 << X86_FEATURE_MCA)  |  /* disable MCA */
-			    (1 << X86_FEATURE_ACC));   /* thermal monitoring */
+	if (*ax == 1) {
+		maskecx = cpuid_leaf1_ecx_mask;
+		maskedx = cpuid_leaf1_edx_mask;
+	}
 
 	asm(XEN_EMULATE_PREFIX "cpuid"
 		: "=a" (*ax),
@@ -190,7 +195,41 @@ static void xen_cpuid(unsigned int *ax, unsigned int *bx,
 		  "=c" (*cx),
 		  "=d" (*dx)
 		: "0" (*ax), "2" (*cx));
+
+	*cx &= maskecx;
 	*dx &= maskedx;
+}
+
+static __init void xen_init_cpuid_mask(void)
+{
+	unsigned int ax, bx, cx, dx;
+
+	cpuid_leaf1_edx_mask =
+		~((1 << X86_FEATURE_MCE)  |  /* disable MCE */
+		  (1 << X86_FEATURE_MCA)  |  /* disable MCA */
+		  (1 << X86_FEATURE_ACC));   /* thermal monitoring */
+
+	if (!xen_initial_domain())
+		cpuid_leaf1_edx_mask &=
+			~((1 << X86_FEATURE_APIC) |  /* disable local APIC */
+			  (1 << X86_FEATURE_ACPI));  /* disable ACPI */
+
+	ax = 1;
+	xen_cpuid(&ax, &bx, &cx, &dx);
+
+	/* cpuid claims we support xsave; try enabling it to see what happens */
+	if (cx & (1 << (X86_FEATURE_XSAVE % 32))) {
+		unsigned long cr4;
+
+		set_in_cr4(X86_CR4_OSXSAVE);
+		
+		cr4 = read_cr4();
+
+		if ((cr4 & X86_CR4_OSXSAVE) == 0)
+			cpuid_leaf1_ecx_mask &= ~(1 << (X86_FEATURE_XSAVE % 32));
+
+		clear_in_cr4(X86_CR4_OSXSAVE);
+	}
 }
 
 static void xen_set_debugreg(int reg, unsigned long val)
@@ -203,10 +242,10 @@ static unsigned long xen_get_debugreg(int reg)
 	return HYPERVISOR_get_debugreg(reg);
 }
 
-void xen_leave_lazy(void)
+static void xen_end_context_switch(struct task_struct *next)
 {
-	paravirt_leave_lazy(paravirt_get_lazy_mode());
 	xen_mc_flush();
+	paravirt_end_context_switch(next);
 }
 
 static unsigned long xen_store_tr(void)
@@ -284,12 +323,11 @@ static void xen_set_ldt(const void *addr, unsigned entries)
 
 static void xen_load_gdt(const struct desc_ptr *dtr)
 {
-	unsigned long *frames;
 	unsigned long va = dtr->address;
 	unsigned int size = dtr->size + 1;
 	unsigned pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+	unsigned long frames[pages];
 	int f;
-	struct multicall_space mcs;
 
 	/* A GDT can be up to 64k in size, which corresponds to 8192
 	   8-byte entries, or 16 4k pages.. */
@@ -297,19 +335,26 @@ static void xen_load_gdt(const struct desc_ptr *dtr)
 	BUG_ON(size > 65536);
 	BUG_ON(va & ~PAGE_MASK);
 
-	mcs = xen_mc_entry(sizeof(*frames) * pages);
-	frames = mcs.args;
-
 	for (f = 0; va < dtr->address + size; va += PAGE_SIZE, f++) {
-		frames[f] = arbitrary_virt_to_mfn((void *)va);
+		int level;
+		pte_t *ptep = lookup_address(va, &level);
+		unsigned long pfn, mfn;
+		void *virt;
+
+		BUG_ON(ptep == NULL);
+
+		pfn = pte_pfn(*ptep);
+		mfn = pfn_to_mfn(pfn);
+		virt = __va(PFN_PHYS(pfn));
+
+		frames[f] = mfn;
 
 		make_lowmem_page_readonly((void *)va);
-		make_lowmem_page_readonly(mfn_to_virt(frames[f]));
+		make_lowmem_page_readonly(virt);
 	}
 
-	MULTI_set_gdt(mcs.mc, frames, size / sizeof(struct desc_struct));
-
-	xen_mc_issue(PARAVIRT_LAZY_CPU);
+	if (HYPERVISOR_set_gdt(frames, size / sizeof(struct desc_struct)))
+		BUG();
 }
 
 static void load_TLS_descriptor(struct thread_struct *t,
@@ -385,16 +430,49 @@ static void xen_write_ldt_entry(struct desc_struct *dt, int entrynum,
 static int cvt_gate_to_trap(int vector, const gate_desc *val,
 			    struct trap_info *info)
 {
-	if (val->type != 0xf && val->type != 0xe)
+	unsigned long addr;
+
+	if (val->type != GATE_TRAP && val->type != GATE_INTERRUPT)
 		return 0;
 
 	info->vector = vector;
-	info->address = gate_offset(*val);
+
+	addr = gate_offset(*val);
+#ifdef CONFIG_X86_64
+	/*
+	 * Look for known traps using IST, and substitute them
+	 * appropriately.  The debugger ones are the only ones we care
+	 * about.  Xen will handle faults like double_fault and
+	 * machine_check, so we should never see them.  Warn if
+	 * there's an unexpected IST-using fault handler.
+	 */
+	if (addr == (unsigned long)debug)
+		addr = (unsigned long)xen_debug;
+	else if (addr == (unsigned long)int3)
+		addr = (unsigned long)xen_int3;
+	else if (addr == (unsigned long)stack_segment)
+		addr = (unsigned long)xen_stack_segment;
+	else if (addr == (unsigned long)double_fault ||
+		 addr == (unsigned long)nmi) {
+		/* Don't need to handle these */
+		return 0;
+#ifdef CONFIG_X86_MCE
+	} else if (addr == (unsigned long)machine_check) {
+		return 0;
+#endif
+	} else {
+		/* Some other trap using IST? */
+		if (WARN_ON(val->ist != 0))
+			return 0;
+	}
+#endif	/* CONFIG_X86_64 */
+	info->address = addr;
+
 	info->cs = gate_segment(*val);
 	info->flags = val->dpl;
 	/* interrupt gates clear IF */
-	if (val->type == 0xe)
-		info->flags |= 4;
+	if (val->type == GATE_INTERRUPT)
+		info->flags |= 1 << 2;
 
 	return 1;
 }
@@ -580,9 +658,25 @@ static void xen_clts(void)
 	xen_mc_issue(PARAVIRT_LAZY_CPU);
 }
 
+static DEFINE_PER_CPU(unsigned long, xen_cr0_value);
+
+static unsigned long xen_read_cr0(void)
+{
+	unsigned long cr0 = percpu_read(xen_cr0_value);
+
+	if (unlikely(cr0 == 0)) {
+		cr0 = native_read_cr0();
+		percpu_write(xen_cr0_value, cr0);
+	}
+
+	return cr0;
+}
+
 static void xen_write_cr0(unsigned long cr0)
 {
 	struct multicall_space mcs;
+
+	percpu_write(xen_cr0_value, cr0);
 
 	/* Only pay attention to cr0.TS; everything else is
 	   ignored. */
@@ -769,7 +863,7 @@ static const struct pv_cpu_ops xen_cpu_ops __initdata = {
 
 	.clts = xen_clts,
 
-	.read_cr0 = native_read_cr0,
+	.read_cr0 = xen_read_cr0,
 	.write_cr0 = xen_write_cr0,
 
 	.read_cr4 = native_read_cr4,
@@ -817,10 +911,8 @@ static const struct pv_cpu_ops xen_cpu_ops __initdata = {
 	/* Xen takes care of %gs when switching to usermode for us */
 	.swapgs = paravirt_nop,
 
-	.lazy_mode = {
-		.enter = paravirt_enter_lazy_cpu,
-		.leave = xen_leave_lazy,
-	},
+	.start_context_switch = paravirt_start_context_switch,
+	.end_context_switch = xen_end_context_switch,
 };
 
 static const struct pv_apic_ops xen_apic_ops __initdata = {
@@ -872,7 +964,6 @@ static const struct machine_ops __initdata xen_machine_ops = {
 	.emergency_restart = xen_emergency_restart,
 };
 
-
 /* First C function to be called on Xen boot */
 asmlinkage void __init xen_start_kernel(void)
 {
@@ -896,6 +987,8 @@ asmlinkage void __init xen_start_kernel(void)
 	pv_mmu_ops = xen_mmu_ops;
 
 	xen_init_irq_ops();
+
+	xen_init_cpuid_mask();
 
 #ifdef CONFIG_X86_LOCAL_APIC
 	/*
@@ -937,6 +1030,11 @@ asmlinkage void __init xen_start_kernel(void)
 	__supported_pte_mask &= ~_PAGE_GLOBAL;
 	if (!xen_initial_domain())
 		__supported_pte_mask &= ~(_PAGE_PWT | _PAGE_PCD);
+
+#ifdef CONFIG_X86_64
+	/* Work out if we support NX */
+	check_efer();
+#endif
 
 	/* Don't do the full vcpu_info placement stuff until we have a
 	   possible map and a non-dummy shared_info. */

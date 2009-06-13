@@ -25,16 +25,6 @@
 
 
 /*
- * Initialize a new task whose father had been ptraced.
- *
- * Called from copy_process().
- */
-void ptrace_fork(struct task_struct *child, unsigned long clone_flags)
-{
-	arch_ptrace_fork(child, clone_flags);
-}
-
-/*
  * ptrace a task: make the debugger its new parent and
  * move it to the ptrace list.
  *
@@ -185,10 +175,11 @@ int ptrace_attach(struct task_struct *task)
 	if (same_thread_group(task, current))
 		goto out;
 
-	/* Protect exec's credential calculations against our interference;
-	 * SUID, SGID and LSM creds get determined differently under ptrace.
+	/* Protect the target's credential calculations against our
+	 * interference; SUID, SGID and LSM creds get determined differently
+	 * under ptrace.
 	 */
-	retval = mutex_lock_interruptible(&current->cred_exec_mutex);
+	retval = mutex_lock_interruptible(&task->cred_guard_mutex);
 	if (retval  < 0)
 		goto out;
 
@@ -232,7 +223,7 @@ repeat:
 bad:
 	write_unlock_irqrestore(&tasklist_lock, flags);
 	task_unlock(task);
-	mutex_unlock(&current->cred_exec_mutex);
+	mutex_unlock(&task->cred_guard_mutex);
 out:
 	return retval;
 }
@@ -304,6 +295,8 @@ int ptrace_detach(struct task_struct *child, unsigned int data)
 	if (child->ptrace) {
 		child->exit_code = data;
 		dead = __ptrace_detach(current, child);
+		if (!child->exit_state)
+			wake_up_process(child);
 	}
 	write_unlock_irq(&tasklist_lock);
 
@@ -604,10 +597,11 @@ repeat:
 		ret = security_ptrace_traceme(current->parent);
 
 		/*
-		 * Set the ptrace bit in the process ptrace flags.
-		 * Then link us on our parent's ptraced list.
+		 * Check PF_EXITING to ensure ->real_parent has not passed
+		 * exit_ptrace(). Otherwise we don't report the error but
+		 * pretend ->real_parent untraces us right after return.
 		 */
-		if (!ret) {
+		if (!ret && !(current->real_parent->flags & PF_EXITING)) {
 			current->ptrace |= PT_PTRACED;
 			__ptrace_link(current, current->real_parent);
 		}

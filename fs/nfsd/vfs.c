@@ -55,6 +55,7 @@
 #include <linux/security.h>
 #endif /* CONFIG_NFSD_V4 */
 #include <linux/jhash.h>
+#include <linux/ima.h>
 
 #include <asm/uaccess.h>
 
@@ -100,31 +101,35 @@ nfsd_cross_mnt(struct svc_rqst *rqstp, struct dentry **dpp,
 {
 	struct svc_export *exp = *expp, *exp2 = NULL;
 	struct dentry *dentry = *dpp;
-	struct vfsmount *mnt = mntget(exp->ex_path.mnt);
-	struct dentry *mounts = dget(dentry);
+	struct path path = {.mnt = mntget(exp->ex_path.mnt),
+			    .dentry = dget(dentry)};
 	int err = 0;
 
-	while (follow_down(&mnt,&mounts)&&d_mountpoint(mounts));
+	while (d_mountpoint(path.dentry) && follow_down(&path))
+		;
 
-	exp2 = rqst_exp_get_by_name(rqstp, mnt, mounts);
+	exp2 = rqst_exp_get_by_name(rqstp, &path);
 	if (IS_ERR(exp2)) {
 		if (PTR_ERR(exp2) != -ENOENT)
 			err = PTR_ERR(exp2);
-		dput(mounts);
-		mntput(mnt);
+		path_put(&path);
 		goto out;
 	}
 	if ((exp->ex_flags & NFSEXP_CROSSMOUNT) || EX_NOHIDE(exp2)) {
 		/* successfully crossed mount point */
-		exp_put(exp);
+		/*
+		 * This is subtle: path.dentry is *not* on path.mnt
+		 * at this point.  The only reason we are safe is that
+		 * original mnt is pinned down by exp, so we should
+		 * put path *before* putting exp
+		 */
+		*dpp = path.dentry;
+		path.dentry = dentry;
 		*expp = exp2;
-		dput(dentry);
-		*dpp = mounts;
-	} else {
-		exp_put(exp2);
-		dput(mounts);
+		exp2 = exp;
 	}
-	mntput(mnt);
+	path_put(&path);
+	exp_put(exp2);
 out:
 	return err;
 }
@@ -163,28 +168,29 @@ nfsd_lookup_dentry(struct svc_rqst *rqstp, struct svc_fh *fhp,
 			/* checking mountpoint crossing is very different when stepping up */
 			struct svc_export *exp2 = NULL;
 			struct dentry *dp;
-			struct vfsmount *mnt = mntget(exp->ex_path.mnt);
-			dentry = dget(dparent);
-			while(dentry == mnt->mnt_root && follow_up(&mnt, &dentry))
-				;
-			dp = dget_parent(dentry);
-			dput(dentry);
-			dentry = dp;
+			struct path path = {.mnt = mntget(exp->ex_path.mnt),
+					    .dentry = dget(dparent)};
 
-			exp2 = rqst_exp_parent(rqstp, mnt, dentry);
+			while (path.dentry == path.mnt->mnt_root &&
+			       follow_up(&path))
+				;
+			dp = dget_parent(path.dentry);
+			dput(path.dentry);
+			path.dentry = dp;
+
+			exp2 = rqst_exp_parent(rqstp, &path);
 			if (PTR_ERR(exp2) == -ENOENT) {
-				dput(dentry);
 				dentry = dget(dparent);
 			} else if (IS_ERR(exp2)) {
 				host_err = PTR_ERR(exp2);
-				dput(dentry);
-				mntput(mnt);
+				path_put(&path);
 				goto out_nfserr;
 			} else {
+				dentry = dget(path.dentry);
 				exp_put(exp);
 				exp = exp2;
 			}
-			mntput(mnt);
+			path_put(&path);
 		}
 	} else {
 		fh_lock(fhp);
@@ -730,6 +736,8 @@ nfsd_open(struct svc_rqst *rqstp, struct svc_fh *fhp, int type,
 			    flags, cred);
 	if (IS_ERR(*filp))
 		host_err = PTR_ERR(*filp);
+	else
+		ima_counts_get(*filp);
 out_nfserr:
 	err = nfserrno(host_err);
 out:
@@ -1010,6 +1018,7 @@ nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp, struct file *file,
 	host_err = vfs_writev(file, (struct iovec __user *)vec, vlen, &offset);
 	set_fs(oldfs);
 	if (host_err >= 0) {
+		*cnt = host_err;
 		nfsdstats.io_write += host_err;
 		fsnotify_modify(file->f_path.dentry);
 	}
@@ -1055,10 +1064,9 @@ nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp, struct file *file,
 	}
 
 	dprintk("nfsd: write complete host_err=%d\n", host_err);
-	if (host_err >= 0) {
+	if (host_err >= 0)
 		err = 0;
-		*cnt = host_err;
-	} else
+	else
 		err = nfserrno(host_err);
 out:
 	return err;
@@ -1885,8 +1893,8 @@ static int nfsd_buffered_filldir(void *__buf, const char *name, int namlen,
 	return 0;
 }
 
-static int nfsd_buffered_readdir(struct file *file, filldir_t func,
-				 struct readdir_cd *cdp, loff_t *offsetp)
+static __be32 nfsd_buffered_readdir(struct file *file, filldir_t func,
+				    struct readdir_cd *cdp, loff_t *offsetp)
 {
 	struct readdir_data buf;
 	struct buffered_dirent *de;
@@ -1896,11 +1904,12 @@ static int nfsd_buffered_readdir(struct file *file, filldir_t func,
 
 	buf.dirent = (void *)__get_free_page(GFP_KERNEL);
 	if (!buf.dirent)
-		return -ENOMEM;
+		return nfserrno(-ENOMEM);
 
 	offset = *offsetp;
 
 	while (1) {
+		struct inode *dir_inode = file->f_path.dentry->d_inode;
 		unsigned int reclen;
 
 		cdp->err = nfserr_eof; /* will be cleared on successful read */
@@ -1919,26 +1928,38 @@ static int nfsd_buffered_readdir(struct file *file, filldir_t func,
 		if (!size)
 			break;
 
+		/*
+		 * Various filldir functions may end up calling back into
+		 * lookup_one_len() and the file system's ->lookup() method.
+		 * These expect i_mutex to be held, as it would within readdir.
+		 */
+		host_err = mutex_lock_killable(&dir_inode->i_mutex);
+		if (host_err)
+			break;
+
 		de = (struct buffered_dirent *)buf.dirent;
 		while (size > 0) {
 			offset = de->offset;
 
 			if (func(cdp, de->name, de->namlen, de->offset,
 				 de->ino, de->d_type))
-				goto done;
+				break;
 
 			if (cdp->err != nfs_ok)
-				goto done;
+				break;
 
 			reclen = ALIGN(sizeof(*de) + de->namlen,
 				       sizeof(u64));
 			size -= reclen;
 			de = (struct buffered_dirent *)((char *)de + reclen);
 		}
+		mutex_unlock(&dir_inode->i_mutex);
+		if (size > 0) /* We bailed out early */
+			break;
+
 		offset = vfs_llseek(file, 0, SEEK_CUR);
 	}
 
- done:
 	free_page((unsigned long)(buf.dirent));
 
 	if (host_err)
@@ -2006,6 +2027,7 @@ nfsd_permission(struct svc_rqst *rqstp, struct svc_export *exp,
 					struct dentry *dentry, int acc)
 {
 	struct inode	*inode = dentry->d_inode;
+	struct path	path;
 	int		err;
 
 	if (acc == NFSD_MAY_NOP)
@@ -2078,7 +2100,17 @@ nfsd_permission(struct svc_rqst *rqstp, struct svc_export *exp,
 	if (err == -EACCES && S_ISREG(inode->i_mode) &&
 	    acc == (NFSD_MAY_READ | NFSD_MAY_OWNER_OVERRIDE))
 		err = inode_permission(inode, MAY_EXEC);
+	if (err)
+		goto nfsd_out;
 
+	/* Do integrity (permission) checking now, but defer incrementing
+	 * IMA counts to the actual file open.
+	 */
+	path.mnt = exp->ex_path.mnt;
+	path.dentry = dentry;
+	err = ima_path_check(&path, acc & (MAY_READ | MAY_WRITE | MAY_EXEC),
+			     IMA_COUNT_LEAVE);
+nfsd_out:
 	return err? nfserrno(err) : 0;
 }
 

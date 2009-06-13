@@ -233,8 +233,6 @@ extern int ftrace_arch_read_dyn_info(char *buf, int size);
 
 extern int skip_trace(unsigned long ip);
 
-extern void ftrace_release(void *start, unsigned long size);
-
 extern void ftrace_disable_daemon(void);
 extern void ftrace_enable_daemon(void);
 #else
@@ -325,13 +323,8 @@ static inline void __ftrace_enabled_restore(int enabled)
 
 #ifdef CONFIG_FTRACE_MCOUNT_RECORD
 extern void ftrace_init(void);
-extern void ftrace_init_module(struct module *mod,
-			       unsigned long *start, unsigned long *end);
 #else
 static inline void ftrace_init(void) { }
-static inline void
-ftrace_init_module(struct module *mod,
-		   unsigned long *start, unsigned long *end) { }
 #endif
 
 /*
@@ -357,7 +350,7 @@ struct ftrace_graph_ret {
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
 
 /* for init task */
-#define INIT_FTRACE_GRAPH		.ret_stack = NULL
+#define INIT_FTRACE_GRAPH		.ret_stack = NULL,
 
 /*
  * Stack of return addresses for functions
@@ -368,6 +361,7 @@ struct ftrace_ret_stack {
 	unsigned long ret;
 	unsigned long func;
 	unsigned long long calltime;
+	unsigned long long subtime;
 };
 
 /*
@@ -379,8 +373,6 @@ extern void return_to_handler(void);
 
 extern int
 ftrace_push_return_trace(unsigned long ret, unsigned long func, int *depth);
-extern void
-ftrace_pop_return_trace(struct ftrace_graph_ret *trace, unsigned long *ret);
 
 /*
  * Sometimes we don't want to trace a function with the function
@@ -496,8 +488,15 @@ static inline int test_tsk_trace_graph(struct task_struct *tsk)
 
 extern int ftrace_dump_on_oops;
 
+#ifdef CONFIG_PREEMPT
+#define INIT_TRACE_RECURSION		.trace_recursion = 0,
+#endif
+
 #endif /* CONFIG_TRACING */
 
+#ifndef INIT_TRACE_RECURSION
+#define INIT_TRACE_RECURSION
+#endif
 
 #ifdef CONFIG_HW_BRANCH_TRACER
 
@@ -510,34 +509,5 @@ static inline void trace_hw_branch(u64 from, u64 to) {}
 static inline void trace_hw_branch_oops(void) {}
 
 #endif /* CONFIG_HW_BRANCH_TRACER */
-
-/*
- * A syscall entry in the ftrace syscalls array.
- *
- * @name: name of the syscall
- * @nb_args: number of parameters it takes
- * @types: list of types as strings
- * @args: list of args as strings (args[i] matches types[i])
- */
-struct syscall_metadata {
-	const char	*name;
-	int		nb_args;
-	const char	**types;
-	const char	**args;
-};
-
-#ifdef CONFIG_FTRACE_SYSCALLS
-extern void arch_init_ftrace_syscalls(void);
-extern struct syscall_metadata *syscall_nr_to_meta(int nr);
-extern void start_ftrace_syscalls(void);
-extern void stop_ftrace_syscalls(void);
-extern void ftrace_syscall_enter(struct pt_regs *regs);
-extern void ftrace_syscall_exit(struct pt_regs *regs);
-#else
-static inline void start_ftrace_syscalls(void) { }
-static inline void stop_ftrace_syscalls(void) { }
-static inline void ftrace_syscall_enter(struct pt_regs *regs) { }
-static inline void ftrace_syscall_exit(struct pt_regs *regs) { }
-#endif
 
 #endif /* _LINUX_FTRACE_H */

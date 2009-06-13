@@ -568,7 +568,7 @@ void audit_trim_trees(void)
 		if (err)
 			goto skip_it;
 
-		root_mnt = collect_mounts(path.mnt, path.dentry);
+		root_mnt = collect_mounts(&path);
 		path_put(&path);
 		if (!root_mnt)
 			goto skip_it;
@@ -660,7 +660,7 @@ int audit_add_tree_rule(struct audit_krule *rule)
 	err = kern_path(tree->pathname, 0, &path);
 	if (err)
 		goto Err;
-	mnt = collect_mounts(path.mnt, path.dentry);
+	mnt = collect_mounts(&path);
 	path_put(&path);
 	if (!mnt) {
 		err = -ENOMEM;
@@ -720,7 +720,7 @@ int audit_tag_tree(char *old, char *new)
 	err = kern_path(new, 0, &path);
 	if (err)
 		return err;
-	tagged = collect_mounts(path.mnt, path.dentry);
+	tagged = collect_mounts(&path);
 	path_put(&path);
 	if (!tagged)
 		return -ENOMEM;
@@ -733,9 +733,6 @@ int audit_tag_tree(char *old, char *new)
 	mnt = mntget(path.mnt);
 	dentry = dget(path.dentry);
 	path_put(&path);
-
-	if (dentry == tagged->mnt_root && dentry == mnt->mnt_root)
-		follow_up(&mnt, &dentry);
 
 	list_add_tail(&list, &tagged->mnt_list);
 
