@@ -1,3 +1,11 @@
+commit 88836c24039388d60347780252449e87146f15a7
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Jun 12 13:32:57 2009 +0900
+
+    aufs: tiny, revise README
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit cec399a7e2642cf1501aac59043649851598c22c
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Fri May 29 22:56:50 2009 +0900
