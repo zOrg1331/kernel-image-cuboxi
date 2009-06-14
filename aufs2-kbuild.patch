@@ -1,10 +1,18 @@
 aufs2 kbuild patch for linux-2.6.
 
 diff --git a/fs/Kconfig b/fs/Kconfig
-index 9f7270f..7b7f62a 100644
+index 525da2e..51fd4d9 100644
 --- a/fs/Kconfig
 +++ b/fs/Kconfig
-@@ -203,6 +203,7 @@ config NILFS2_FS
+@@ -186,6 +186,7 @@ source "fs/romfs/Kconfig"
+ source "fs/sysv/Kconfig"
+ source "fs/ufs/Kconfig"
+ source "fs/exofs/Kconfig"
++source "fs/aufs/Kconfig"
+ 
+ config NILFS2_FS
+ 	tristate "NILFS2 file system support (EXPERIMENTAL)"
+@@ -213,6 +214,7 @@ config NILFS2_FS
  	  To compile this file system support as a module, choose M here: the
  	  module will be called nilfs2.  If unsure, say N.
  
@@ -22,7 +30,7 @@ index af6d047..dba1ce1 100644
  obj-$(CONFIG_EXOFS_FS)          += exofs/
 +obj-$(CONFIG_AUFS_FS)           += aufs/
 diff --git a/include/linux/Kbuild b/include/linux/Kbuild
-index 3f0eaa3..6b7611f 100644
+index b3afd22..fd24ad7 100644
 --- a/include/linux/Kbuild
 +++ b/include/linux/Kbuild
 @@ -34,6 +34,7 @@ header-y += atmppp.h
