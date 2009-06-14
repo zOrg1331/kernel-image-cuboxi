@@ -361,6 +361,7 @@ void tty_ldisc_deref(struct tty_ldisc *ld)
 	unsigned long flags;
 
 	BUG_ON(ld == NULL);
+	WARN_ON_ONCE(ld->refcount == (int)0xa56b6b6b);
 
 	spin_lock_irqsave(&tty_ldisc_lock, flags);
 	if (ld->refcount == 0)
