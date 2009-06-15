@@ -1,3 +1,29 @@
+commit 9c94f4d725414b9caac0e7df1bbb5a2ae96c7cac
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Jun 15 16:00:16 2009 +0900
+
+    aufs: support linux-2.6.28
+    
+    Forgot to remove re-difining DEBUGFS_MAGIC.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit a46eedf43f9b32aae52459d5817e87e5728c2439
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Jun 15 10:04:52 2009 +0900
+
+    aufs: support 2.6.30, page_mkwrite
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 72053c8878846198f08ce6dbd3dd2e1265ae8439
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Jun 15 09:10:42 2009 +0900
+
+    aufs: tiny, fix an editing failure
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 88836c24039388d60347780252449e87146f15a7
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Fri Jun 12 13:32:57 2009 +0900

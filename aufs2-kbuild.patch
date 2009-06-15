@@ -1,7 +1,7 @@
 aufs2 kbuild patch for linux-2.6.
 
 diff --git a/fs/Kconfig b/fs/Kconfig
-index 525da2e..51fd4d9 100644
+index 525da2e..91469d6 100644
 --- a/fs/Kconfig
 +++ b/fs/Kconfig
 @@ -186,6 +186,7 @@ source "fs/romfs/Kconfig"
@@ -12,14 +12,6 @@ index 525da2e..51fd4d9 100644
  
  config NILFS2_FS
  	tristate "NILFS2 file system support (EXPERIMENTAL)"
-@@ -213,6 +214,7 @@ config NILFS2_FS
- 	  To compile this file system support as a module, choose M here: the
- 	  module will be called nilfs2.  If unsure, say N.
- 
-+source "fs/aufs/Kconfig"
- endif # MISC_FILESYSTEMS
- 
- menuconfig NETWORK_FILESYSTEMS
 diff --git a/fs/Makefile b/fs/Makefile
 index af6d047..dba1ce1 100644
 --- a/fs/Makefile
