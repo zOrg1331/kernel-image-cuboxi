@@ -20,7 +20,6 @@ comment "Packet Radio protocols"
 
 config AX25
 	tristate "Amateur Radio AX.25 Level 2 protocol"
-	depends on 0
 	depends on HAMRADIO
 	help
 	  This is the protocol used for computer communication over amateur
