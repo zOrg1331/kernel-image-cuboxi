@@ -408,6 +408,7 @@ __nf_conntrack_confirm(struct sk_buff *skb)
 	NF_CT_ASSERT(!nf_ct_is_confirmed(ct));
 	pr_debug("Confirming conntrack %p\n", ct);
 
+	spin_lock_bh(&ct->lock);
 	spin_lock_bh(&nf_conntrack_lock);
 
 	/* See if there's one in the list already, including reverse:
@@ -435,6 +436,7 @@ __nf_conntrack_confirm(struct sk_buff *skb)
 	set_bit(IPS_CONFIRMED_BIT, &ct->status);
 	NF_CT_STAT_INC(net, insert);
 	spin_unlock_bh(&nf_conntrack_lock);
+	spin_unlock_bh(&ct->lock);
 	help = nfct_help(ct);
 	if (help && help->helper)
 		nf_conntrack_event_cache(IPCT_HELPER, ct);
@@ -446,6 +448,7 @@ __nf_conntrack_confirm(struct sk_buff *skb)
 out:
 	NF_CT_STAT_INC(net, insert_failed);
 	spin_unlock_bh(&nf_conntrack_lock);
+	spin_unlock_bh(&ct->lock);
 	return NF_DROP;
 }
 EXPORT_SYMBOL_GPL(__nf_conntrack_confirm);
@@ -848,6 +851,7 @@ void __nf_ct_refresh_acct(struct nf_conn *ct,
 	NF_CT_ASSERT(ct->timeout.data == (unsigned long)ct);
 	NF_CT_ASSERT(skb);
 
+	spin_lock_bh(&ct->lock);
 	/* Only update if this is not a fixed timeout */
 	if (test_bit(IPS_FIXED_TIMEOUT_BIT, &ct->status))
 		goto acct;
@@ -871,13 +875,12 @@ acct:
 
 		acct = nf_conn_acct_find(ct);
 		if (acct) {
-			spin_lock_bh(&ct->lock);
 			acct[CTINFO2DIR(ctinfo)].packets++;
 			acct[CTINFO2DIR(ctinfo)].bytes +=
 				skb->len - skb_network_offset(skb);
-			spin_unlock_bh(&ct->lock);
 		}
 	}
+	spin_unlock_bh(&ct->lock);
 }
 EXPORT_SYMBOL_GPL(__nf_ct_refresh_acct);
 
