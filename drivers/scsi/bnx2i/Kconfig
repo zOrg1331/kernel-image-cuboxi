@@ -3,6 +3,7 @@ config SCSI_BNX2_ISCSI
 	depends on 0
 	select SCSI_ISCSI_ATTRS
 	select CNIC
+	depends on PCI
 	---help---
 	This driver supports iSCSI offload for the Broadcom NetXtreme II
 	devices.
