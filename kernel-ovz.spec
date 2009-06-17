@@ -37,7 +37,7 @@
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define krelease alt6
+%define krelease alt7
 %define xen_hv_cset 15502
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
@@ -3175,8 +3175,9 @@ Patch99990: linux-2.6-rhel-version-h.patch
 # empty final patch file to facilitate testing of kernel patches
 Patch99999: linux-kernel-test.patch
 
-# ALT-specific patch
+# ALT-specific patches
 Patch200000: our_kernel.patch
+Patch200001: fix_getcpu_call.patch
 
 # END OF PATCH DEFINITIONS
 
@@ -6298,6 +6299,7 @@ perl -p -i -e "s/^RHEL_MINOR.*/RHEL_MINOR = %rh_release_minor/" Makefile
 
 # ALT-specific patch
 %patch200000 -p1
+%patch200001 -p1
 
 # END OF PATCH APPLICATIONS
 
@@ -6756,6 +6758,9 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Wed Jun 17 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt7
+- Apply patch from Cyrill Gorcunov (fix getcpu syscall, upstream#1149)
+
 * Wed May 20 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt6
 - Compile processor.ko into kernel
 - Don't build ntfs.ko
