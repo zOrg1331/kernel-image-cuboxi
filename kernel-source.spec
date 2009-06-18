@@ -1,5 +1,5 @@
-%define original_kernel_version	2.6.29
-%define kernel_version		2.6.29
+%define original_kernel_version	2.6.30
+%define kernel_version		2.6.30
 %define patch_level		%nil
 
 %define testing			0
@@ -50,6 +50,9 @@ tar --owner=root --group=root --mode=u+w,go-w,go+rX -cjf \
 %kernel_src/kernel-source-%kernel_version.tar.bz2
 
 %changelog
+* Thu Jun 18 2009 Michail Yakushin <silicium@altlinux.ru> 1.0.0-alt1
+- 2.6.30 
+
 * Tue Mar 24 2009 Michail Yakushin <silicium@altlinux.ru> 1.0.0-alt1
 - 2.6.29 
 
