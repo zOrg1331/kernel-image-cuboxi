@@ -176,14 +176,16 @@ index 5fda7df..047168b 100644
  int devcgroup_inode_mknod(int mode, dev_t dev)
  {
 diff --git a/security/integrity/ima/ima_main.c b/security/integrity/ima/ima_main.c
-index 6f61187..0577604 100644
+index 6f61187..d020bd2 100644
 --- a/security/integrity/ima/ima_main.c
 +++ b/security/integrity/ima/ima_main.c
-@@ -289,6 +289,7 @@ int ima_file_mmap(struct file *file, unsigned long prot)
+@@ -289,6 +289,9 @@ int ima_file_mmap(struct file *file, unsigned long prot)
  					 MAY_EXEC, FILE_MMAP);
  	return 0;
  }
++#ifdef CONFIG_AUFS_FS_MODULE
 +EXPORT_SYMBOL(ima_file_mmap);
++#endif
  
  /**
   * ima_bprm_check - based on policy, collect/store measurement.
