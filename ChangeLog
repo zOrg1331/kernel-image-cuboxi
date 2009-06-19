@@ -1,3 +1,19 @@
+commit c5ab5f1c137639ac3ac91fbefe497372abfbf6c4
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Jun 19 17:47:08 2009 +0900
+
+    aufs standalone: export symbols for aufs module only
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 060c9f56cd8c45098dbdc4cad88374f82f94a4ab
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Jun 19 17:33:54 2009 +0900
+
+    aufs standalone: export symbols for aufs module only
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 6fb2bd0123071ceef3937a9b83b87e93148a41e5
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Fri Jun 19 11:04:52 2009 +0900
