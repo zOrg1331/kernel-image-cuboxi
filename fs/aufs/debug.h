@@ -27,13 +27,15 @@
 
 #include <linux/bug.h>
 /* #include <linux/err.h> */
-/* #include <linux/init.h> */
+#include <linux/init.h>
 /* #include <linux/kernel.h> */
 #include <linux/delay.h>
 /* #include <linux/kd.h> */
 /* #include <linux/vt_kern.h> */
 #include <linux/sysrq.h>
 #include <linux/aufs_type.h>
+
+#include <asm/system.h>
 
 #ifdef CONFIG_AUFS_DEBUG
 #define AuDebugOn(a)		BUG_ON(a)
