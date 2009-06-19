@@ -1,3 +1,43 @@
+commit 0169266e0dac23752d9d5a0531fc9232362d17d0
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Jun 18 14:57:13 2009 +0900
+
+    aufs: tiny, revise supporting IMA
+    
+    IMA needs more work since simple tests (without aufs) reports several
+    incorrect IMA messages.
+    I am afraid IMA is not usable regradless aufs.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 807583180d02c01709693e24fdb059e5ef60320b
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Jun 18 14:57:13 2009 +0900
+
+    aufs: tiny, revise supporting IMA
+    
+    IMA needs more work since simple tests (without aufs) reports several
+    incorrect IMA messages.
+    I am afraid IMA is not usable regradless aufs.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 78131c7e317993379efc34dbd1884f35cd8d98f9
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Jun 18 14:53:07 2009 +0900
+
+    aufs: 2.6.31-rcN, replace fsync_super() by sync_filesystem()
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit d6b6872d9b78314d604520ba527942ca752ab232
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Jun 17 12:02:43 2009 +0900
+
+    aufs: tiny, version string
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 9c94f4d725414b9caac0e7df1bbb5a2ae96c7cac
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Mon Jun 15 16:00:16 2009 +0900
