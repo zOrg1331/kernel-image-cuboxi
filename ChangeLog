@@ -1,3 +1,13 @@
+commit 6fb2bd0123071ceef3937a9b83b87e93148a41e5
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Jun 19 11:04:52 2009 +0900
+
+    aufs: negative support IMA in 2.6.30
+    
+    Warn about IMA at modifying branch permission.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 0169266e0dac23752d9d5a0531fc9232362d17d0
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Thu Jun 18 14:57:13 2009 +0900
