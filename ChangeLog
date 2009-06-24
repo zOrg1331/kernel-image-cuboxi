@@ -1,3 +1,13 @@
+commit 7283795044149d8619153b4b1e50e871f9881b95
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Jun 24 19:57:17 2009 +0900
+
+    aufs: export symbols unconditionally
+    
+    Pointed out by Michael Towers.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit faf12180300e725f83fce09b7ed4bddedb298c9c
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Wed Jun 24 16:36:34 2009 +0900
