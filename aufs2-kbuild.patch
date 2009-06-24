@@ -22,7 +22,7 @@ index af6d047..dba1ce1 100644
  obj-$(CONFIG_EXOFS_FS)          += exofs/
 +obj-$(CONFIG_AUFS_FS)           += aufs/
 diff --git a/include/linux/Kbuild b/include/linux/Kbuild
-index a2df703..9dd0a46 100644
+index 03f2207..4a40e09 100644
 --- a/include/linux/Kbuild
 +++ b/include/linux/Kbuild
 @@ -34,6 +34,7 @@ header-y += atmppp.h

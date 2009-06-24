@@ -1,3 +1,31 @@
+commit faf12180300e725f83fce09b7ed4bddedb298c9c
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Jun 24 16:36:34 2009 +0900
+
+    Revert "aufs standalone: export symbols for aufs module only"
+    
+    This reverts commit d0196d4cda0a4c622554b37638eee36b445103dd.
+    It was a bad approach. Now export symbols unconditionally.
+
+commit c1d75ee0b58940c827fc0894446d8d7e8f68afa1
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Jun 24 16:29:53 2009 +0900
+
+    Revert "aufs standalone: export symbols for aufs module only"
+    
+    This reverts commit c5ab5f1c137639ac3ac91fbefe497372abfbf6c4.
+    It was a bad approach. Now export symbols unconditionally.
+
+commit d45185f807f68eec3749b6f021414f54a160c38e
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Jun 24 16:13:50 2009 +0900
+
+    Revert "aufs standalone: export symbols for aufs module only"
+    
+    This reverts commit 060c9f56cd8c45098dbdc4cad88374f82f94a4ab.
+    
+    It was a bad approach. Now export symbols unconditionally.
+
 commit 3ce8846625352ee79bc9e7fe4583452b54342353
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Sat Jun 20 15:48:26 2009 +0900
