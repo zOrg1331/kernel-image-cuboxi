@@ -19,6 +19,7 @@ CONFIG_AUFS_INO_T_64 =
 define conf
 ifdef $(1)
 AUFS_DEF_CONFIG += -D$(1)
+export $(1)
 endif
 endef
 
