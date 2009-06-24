@@ -1,6 +1,6 @@
 Name: kernel-image-std-pae
-Version: 2.6.29
-Release: alt4
+Version: 2.6.30
+Release: alt1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -51,6 +51,7 @@ BuildRequires: libdb4-devel
 BuildRequires: gcc%kgcc_version
 BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeric
 BuildRequires: module-init-tools >= 3.1
+BuildRequires: lzma-utils
 Provides: kernel-modules-eeepc-%flavour
 
 %if_enabled docs
@@ -371,6 +372,7 @@ KbuildFiles="
 	.config
 	.kernelrelease
 	gcc_version.inc
+	System.map
 "
 for f in $KbuildFiles; do
 	[ -e "$f" ] || continue
@@ -479,9 +481,13 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
-* Thu Jun 11 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.29-alt4
-- 2.6.29.5 
-- turn off EDAC Debugging (closes: #20437)
+* Tue Jun 16 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt1
+- 2.6.30 
+- missed perfcounter patch
+- vanilla ALSA
+- missed DSDT from initrd patch.
+- Infiniband support from kernel source
+
 * Sun Jun 07 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.29-alt3
 - fix i915 support(shrek@) (closes #20239):
 	+disable GEM on i8xx 

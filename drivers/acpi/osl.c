@@ -95,11 +95,6 @@ static DEFINE_SPINLOCK(acpi_res_lock);
 #define	OSI_STRING_LENGTH_MAX 64	/* arbitrary */
 static char osi_additional_string[OSI_STRING_LENGTH_MAX];
 
-#ifdef CONFIG_ACPI_CUSTOM_DSDT_INITRD
-static __initdata int acpi_no_initrd_override;
-extern struct acpi_table_header *acpi_find_dsdt_initrd(void);
-#endif
-
 /*
  * The story of _OSI(Linux)
  *
@@ -277,13 +272,20 @@ acpi_os_map_memory(acpi_physical_address phys, acpi_size size)
 }
 EXPORT_SYMBOL_GPL(acpi_os_map_memory);
 
-void acpi_os_unmap_memory(void __iomem * virt, acpi_size size)
+void __ref acpi_os_unmap_memory(void __iomem *virt, acpi_size size)
 {
-	if (acpi_gbl_permanent_mmap) {
+	if (acpi_gbl_permanent_mmap)
 		iounmap(virt);
-	}
+	else
+		__acpi_unmap_table(virt, size);
 }
 EXPORT_SYMBOL_GPL(acpi_os_unmap_memory);
+
+void __init early_acpi_os_unmap_memory(void __iomem *virt, acpi_size size)
+{
+	if (!acpi_gbl_permanent_mmap)
+		__acpi_unmap_table(virt, size);
+}
 
 #ifdef ACPI_FUTURE_USAGE
 acpi_status
@@ -332,16 +334,6 @@ acpi_os_table_override(struct acpi_table_header * existing_table,
 	if (strncmp(existing_table->signature, "DSDT", 4) == 0)
 		*new_table = (struct acpi_table_header *)AmlCode;
 #endif
-#ifdef CONFIG_ACPI_CUSTOM_DSDT_INITRD
-	if ((strncmp(existing_table->signature, "DSDT", 4) == 0) &&
-	    !acpi_no_initrd_override) {
-		struct acpi_table_header *initrd_table;
-
-		initrd_table = acpi_find_dsdt_initrd();
-		if (initrd_table)
-			*new_table = initrd_table;
-	}
-#endif
 	if (*new_table != NULL) {
 		printk(KERN_WARNING PREFIX "Override [%4.4s-%8.8s], "
 			   "this is unsafe: tainting kernel\n",
@@ -352,15 +344,6 @@ acpi_os_table_override(struct acpi_table_header * existing_table,
 	return AE_OK;
 }
 
-#ifdef CONFIG_ACPI_CUSTOM_DSDT_INITRD
-static int __init acpi_no_initrd_override_setup(char *s)
-{
-	acpi_no_initrd_override = 1;
-	return 1;
-}
-__setup("acpi_no_initrd_override", acpi_no_initrd_override_setup);
-#endif
-
 static irqreturn_t acpi_irq(int irq, void *dev_id)
 {
 	u32 handled;
@@ -370,8 +353,10 @@ static irqreturn_t acpi_irq(int irq, void *dev_id)
 	if (handled) {
 		acpi_irq_handled++;
 		return IRQ_HANDLED;
-	} else
+	} else {
+		acpi_irq_not_handled++;
 		return IRQ_NONE;
+	}
 }
 
 acpi_status
@@ -1087,9 +1072,9 @@ __setup("acpi_wake_gpes_always_on", acpi_wake_gpes_always_on_setup);
  * in arbitrary AML code and can interfere with legacy drivers.
  * acpi_enforce_resources= can be set to:
  *
- *   - strict           (2)
+ *   - strict (default) (2)
  *     -> further driver trying to access the resources will not load
- *   - lax (default)    (1)
+ *   - lax              (1)
  *     -> further driver trying to access the resources will load, but you
  *     get a system message that something might go wrong...
  *
@@ -1101,7 +1086,7 @@ __setup("acpi_wake_gpes_always_on", acpi_wake_gpes_always_on_setup);
 #define ENFORCE_RESOURCES_LAX    1
 #define ENFORCE_RESOURCES_NO     0
 
-static unsigned int acpi_enforce_resources = ENFORCE_RESOURCES_LAX;
+static unsigned int acpi_enforce_resources = ENFORCE_RESOURCES_STRICT;
 
 static int __init acpi_enforce_resources_setup(char *str)
 {
