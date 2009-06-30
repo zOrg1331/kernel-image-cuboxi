@@ -2514,18 +2514,28 @@ static struct kmem_cache *get_slab(size_t size, gfp_t flags)
 {
 	int index;
 
+	if (unlikely(size <= KMALLOC_MIN_SIZE)) {
+		if (unlikely(!size))
+			return ZERO_SIZE_PTR;
+
+		index = KMALLOC_SHIFT_LOW;
+		goto got_index;
+	}
+
 #if L1_CACHE_BYTES >= 128
 	if (size <= 128) {
 #else
 	if (size <= 192) {
 #endif
-		if (unlikely(!size))
-			return ZERO_SIZE_PTR;
-
 		index = size_index[(size - 1) / 8];
-	} else
-		index = fls(size - 1);
+	} else {
+		if (unlikely(size > 1UL << KMALLOC_SHIFT_SLQB_HIGH))
+			return NULL;
 
+		index = fls(size - 1);
+	}
+
+got_index:
 	if (unlikely((flags & SLQB_DMA)))
 		return &kmalloc_caches_dma[index];
 	else
