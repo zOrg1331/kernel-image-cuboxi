@@ -184,10 +184,7 @@ extern struct kmem_cache kmalloc_caches_dma[KMALLOC_SHIFT_SLQB_HIGH + 1];
  */
 static __always_inline int kmalloc_index(size_t size)
 {
-	if (unlikely(!size))
-		return 0;
-	if (unlikely(size > 1UL << KMALLOC_SHIFT_SLQB_HIGH))
-		return 0;
+	extern int ____kmalloc_too_large(void);
 
 	if (unlikely(size <= KMALLOC_MIN_SIZE))
 		return KMALLOC_SHIFT_LOW;
@@ -219,7 +216,11 @@ static __always_inline int kmalloc_index(size_t size)
 	if (size <= 512 * 1024) return 19;
 	if (size <= 1024 * 1024) return 20;
 	if (size <=  2 * 1024 * 1024) return 21;
-	return -1;
+	if (size <=  4 * 1024 * 1024) return 22;
+	if (size <=  8 * 1024 * 1024) return 23;
+	if (size <=  16 * 1024 * 1024) return 24;
+	if (size <=  32 * 1024 * 1024) return 25;
+	return ____kmalloc_too_large();
 }
 
 #ifdef CONFIG_ZONE_DMA
@@ -238,10 +239,12 @@ static __always_inline struct kmem_cache *kmalloc_slab(size_t size, gfp_t flags)
 {
 	int index;
 
-	index = kmalloc_index(size);
-	if (unlikely(index == 0))
+	if (unlikely(size > 1UL << KMALLOC_SHIFT_SLQB_HIGH))
+		return NULL;
+	if (unlikely(!size))
 		return ZERO_SIZE_PTR;
 
+	index = kmalloc_index(size);
 	if (likely(!(flags & SLQB_DMA)))
 		return &kmalloc_caches[index];
 	else
