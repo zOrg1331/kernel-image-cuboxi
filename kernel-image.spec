@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.30
-Release: alt1
+Release: alt2
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -340,6 +340,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Wed Jul 01 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.30-alt2
+- drm:
+  + added support RV740/RV790
+  + disabled KMS for intel
+
 * Wed Jun 10 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.30-alt1
 - 2.6.30
 
