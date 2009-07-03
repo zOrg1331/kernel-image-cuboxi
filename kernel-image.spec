@@ -340,7 +340,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
-* Wed Jul 01 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.30-alt2
+* Fri Jul 03 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.30-alt2
+- 2.6.30.1
 - drm:
   + added support RV740/RV790
   + disabled KMS for intel
