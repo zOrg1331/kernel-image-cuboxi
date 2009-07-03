@@ -1,3 +1,25 @@
+commit 6fa3c3ac6d760a974947e6a2f32d7c080b94e7d4
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Jul 3 15:52:56 2009 +0900
+
+    aufs: export for aio support
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 183e762a8596ee22a457b122bab48658749a375a
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Jul 2 22:52:43 2009 +0900
+
+    aufs: testing aio
+    
+    Implement aio_read and aio_write.
+    aio_fsync is too, but no one supports this operation, currently. So it
+    is commented out now.
+    I don't know why aio_splice_{read,write} does not exist. I may try
+    implementing them in the future.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 7283795044149d8619153b4b1e50e871f9881b95
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Wed Jun 24 19:57:17 2009 +0900

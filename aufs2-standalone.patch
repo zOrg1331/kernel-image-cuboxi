@@ -1,7 +1,7 @@
 aufs2 standalone patch for linux-2.6.
 
 diff --git a/fs/namei.c b/fs/namei.c
-index 527119a..345fe8b 100644
+index 5b961eb..055f685 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
 @@ -337,6 +337,7 @@ int deny_write_access(struct file * file)
@@ -41,7 +41,7 @@ index 527119a..345fe8b 100644
  /**
   * lookup_one_len - filesystem helper to lookup single pathname component
 diff --git a/fs/namespace.c b/fs/namespace.c
-index 2dd333b..ec727da 100644
+index 3dc283f..3009529 100644
 --- a/fs/namespace.c
 +++ b/fs/namespace.c
 @@ -38,6 +38,7 @@
@@ -53,7 +53,7 @@ index 2dd333b..ec727da 100644
  static int event;
  static DEFINE_IDA(mnt_id_ida);
 diff --git a/fs/open.c b/fs/open.c
-index 7200e23..6cfecb2 100644
+index dd98e80..04b9aad 100644
 --- a/fs/open.c
 +++ b/fs/open.c
 @@ -221,6 +221,7 @@ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
@@ -106,7 +106,7 @@ index 73766d2..0e7b0b9 100644
  /**
   * splice_direct_to_actor - splices data directly between two non-pipes
 diff --git a/include/linux/lockdep.h b/include/linux/lockdep.h
-index da5a5a1..261b136 100644
+index b25d1b5..b03f7e1 100644
 --- a/include/linux/lockdep.h
 +++ b/include/linux/lockdep.h
 @@ -25,7 +25,7 @@ struct lockdep_map;
@@ -172,7 +172,7 @@ index 6f61187..0577604 100644
  /**
   * ima_bprm_check - based on policy, collect/store measurement.
 diff --git a/security/security.c b/security/security.c
-index dc7674f..2f5222c 100644
+index dc7674f..b309f88 100644
 --- a/security/security.c
 +++ b/security/security.c
 @@ -386,6 +386,7 @@ int security_path_mkdir(struct path *path, struct dentry *dentry, int mode)
@@ -246,4 +246,12 @@ index dc7674f..2f5222c 100644
 +EXPORT_SYMBOL(security_inode_permission);
  
  int security_inode_setattr(struct dentry *dentry, struct iattr *attr)
+ {
+@@ -619,6 +628,7 @@ int security_file_permission(struct file *file, int mask)
+ {
+ 	return security_ops->file_permission(file, mask);
+ }
++EXPORT_SYMBOL(security_file_permission);
+ 
+ int security_file_alloc(struct file *file)
  {
