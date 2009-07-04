@@ -1,3 +1,19 @@
+commit a9b16ba615b988ecc4eb3cbddd217fb1156d719a
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sat Jul 4 10:06:31 2009 +0900
+
+    aufs: aio, warn for readv/writev
+    
+    Basically readv/writev depend on aio_read/aio_write.
+    When fs doesn't implement aio_read/aio_write, but regular read/write,
+    VFS calls read/write instead of aio_read/aio_write.
+    If aufs_aio_read/aufs_aio_write is called from readv/writev context and
+    the branch fs implements read/write only, aufs has to return -ENOSYS.
+    Currently there is no such fs, but I'd like to produce a warning in this
+    case.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 915bc858386cd9dda9dc668980f40c313956af07
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Fri Jul 3 21:57:23 2009 +0900
