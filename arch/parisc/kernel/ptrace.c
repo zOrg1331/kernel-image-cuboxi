@@ -469,6 +469,26 @@ const struct user_regset_view *task_user_regset_view(struct task_struct *t)
 	return &user_parisc_native_view;
 }
 
+static inline int regset_size(struct task_struct *t, enum pa_regset r)
+{
+#ifdef CONFIG_COMPAT
+	if (__is_compat_task(t))
+		return user_parisc_compat_view.regsets[r].n *
+			user_parisc_compat_view.regsets[r].size;
+#endif
+	return user_parisc_native_view.regsets[r].n *
+		user_parisc_native_view.regsets[r].size;
+}
+
+static inline void __user *regset_ptr(struct task_struct *t, long data)
+{
+#ifdef CONFIG_COMPAT
+	if (__is_compat_task(t))
+		return (void __user *)compat_ptr(data);
+#endif
+	return (void *)data;
+}
+
 long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 {
 	unsigned long tmp;
@@ -523,20 +543,24 @@ long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 		break;
 
 	case PTRACE_GETREGS:
-		return copy_regset_to_user(child, &user_parisc_native_view,
-			REGSET_GR, 0, sizeof(elf_gregset_t), (void __user *)data);
+		return copy_regset_to_user(child, task_user_regset_view(child),
+			REGSET_GR, 0, regset_size(child, REGSET_GR),
+			regset_ptr(child, data));
 
 	case PTRACE_SETREGS:
-		return copy_regset_from_user(child, &user_parisc_native_view,
-			REGSET_GR, 0, sizeof(elf_gregset_t), (const void __user *)data);
+		return copy_regset_from_user(child, task_user_regset_view(child),
+			REGSET_GR, 0, regset_size(child, REGSET_GR),
+			(const void __user *)regset_ptr(child, data));
 
 	case PTRACE_GETFPREGS:
-		return copy_regset_to_user(child, &user_parisc_native_view,
-			REGSET_FR, 0, sizeof(elf_fpregset_t), (void __user *)data);
+		return copy_regset_to_user(child, task_user_regset_view(child),
+			REGSET_FR, 0, regset_size(child, REGSET_FR),
+			regset_ptr(child, data));
 
 	case PTRACE_SETFPREGS:
-		return copy_regset_from_user(child, &user_parisc_native_view,
-			REGSET_FR, 0, sizeof(elf_fpregset_t), (const void __user *)data);
+		return copy_regset_from_user(child, task_user_regset_view(child),
+			REGSET_FR, 0, regset_size(child, REGSET_FR),
+			(const void __user *)regset_ptr(child, data));
 
 	default:
 		ret = ptrace_request(child, request, addr, data);
@@ -632,13 +656,7 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 		break;
 
 	case PTRACE_GETREGS:
-		return copy_regset_to_user(child, task_user_regset_view(child), REGSET_GR,
-			0, ELF_NGREG * sizeof(compat_ulong_t), compat_ptr(data));
-
 	case PTRACE_SETREGS:
-		return copy_regset_from_user(child, task_user_regset_view(child), REGSET_GR,
-			0, ELF_NGREG * sizeof(compat_ulong_t), compat_ptr(data));
-
 	case PTRACE_GETFPREGS:
 	case PTRACE_SETFPREGS:
 		ret = arch_ptrace(child, request, addr, data);
