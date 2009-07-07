@@ -188,11 +188,18 @@ static int gr_set(struct task_struct *tsk, const struct user_regset *regset,
 	const void *kbuf, const void __user *ubuf)
 {
 	struct pt_regs *regs = task_pt_regs(tsk);
+	unsigned long psw;
 	const unsigned long *ubuf_reg = ubuf, *kbuf_reg = kbuf;
 	int ret;
 
+	/* spirit away our PSW, which is in %r0. and only let the user update
+	 * USER_PSW_BITS.
+	 */
+	psw = regs->gr[0];
 	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &regs->gr[0],
-		offsetof(struct pt_regs, gr[0]), 32 * sizeof(long));
+		0, 32 * sizeof(long));
+	if (regs->gr[0] != psw)
+		regs->gr[0] = (psw & ~USER_PSW_BITS) | (regs->gr[0] & USER_PSW_BITS);
 	if (ret || count <= 0)
 		goto out;
 
@@ -295,14 +302,15 @@ static int gr_get_compat(struct task_struct *tsk,
 	struct pt_regs *regs = task_pt_regs(tsk);
 	compat_ulong_t *kbuf = _kbuf;
 	compat_ulong_t __user *ubuf = _ubuf;
-	compat_ulong_t reg;
+	compat_ulong_t psw, reg;
 	unsigned long cr[16];
 	int i, ret = 0;
 
 	pos /= sizeof(reg);
 	count /= sizeof(reg);
 
-	/* gprs */
+	/* gprs, with some evil */
+	psw = regs->gr[0];
 	if (kbuf)
 		for (i = 0; count > 0 && i < 32; count--, pos++)
 			*kbuf++ = (compat_ulong_t)(regs->gr[i++]);
@@ -312,6 +320,8 @@ static int gr_get_compat(struct task_struct *tsk,
 			if (ret < 0)
 				goto out;
 		}
+	if (regs->gr[0] != psw)
+		regs->gr[0] = (psw & ~USER_PSW_BITS) | (regs->gr[0] & USER_PSW_BITS);
 
 	/* space registers */
 	if (kbuf)
