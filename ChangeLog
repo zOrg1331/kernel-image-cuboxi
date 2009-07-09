@@ -1,3 +1,28 @@
+commit 3f0532e85ec40d117c6ff31e704dc1b5866b5a66
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Jul 9 13:54:43 2009 +0900
+
+    aufs: aufs_poll() strikes back
+    
+    FUSE implemented ->poll() in linux-2.6.29, so aufs_poll() came back with
+    two new configurations AUFS_BR_FUSE and AUFS_POLL and a new file
+    fs/aufs/poll.c.
+    While AUFS_BR_FUSE is selectable by users, AUFS_POLL is internal and
+    hidden from users.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit edd06b50ae852e073922db65f0a6e7134b338f02
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Jul 8 20:10:28 2009 +0900
+
+    aufs: remove unused aufs_poll
+    
+    As long as there is no filesystem which implements ->poll(),
+    aufs_poll() is unnecessary.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit a9b16ba615b988ecc4eb3cbddd217fb1156d719a
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Sat Jul 4 10:06:31 2009 +0900
