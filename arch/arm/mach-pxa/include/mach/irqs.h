@@ -70,7 +70,7 @@
 #define IRQ_CIR		PXA_IRQ(34)	/* Consumer IR */
 #define IRQ_TSI		PXA_IRQ(36)	/* Touch Screen Interface (PXA320) */
 #define IRQ_USIM2	PXA_IRQ(38)	/* USIM2 Controller */
-#define IRQ_GRPHICS	PXA_IRQ(39)	/* Graphics Controller */
+#define IRQ_GCU		PXA_IRQ(39)	/* Graphics Controller */
 #define IRQ_MMC2	PXA_IRQ(41)	/* MMC2 Controller */
 #define IRQ_1WIRE	PXA_IRQ(44)	/* 1-Wire Controller */
 #define IRQ_NAND	PXA_IRQ(45)	/* NAND Controller */
