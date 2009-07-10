@@ -1,3 +1,11 @@
+commit 38d53328059091828b3b45e4e1f88bdd8cc580cf
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sat Jul 11 00:48:48 2009 +0900
+
+    aufs: add a donor
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 3f0532e85ec40d117c6ff31e704dc1b5866b5a66
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Thu Jul 9 13:54:43 2009 +0900
