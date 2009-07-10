@@ -420,46 +420,6 @@ EXPORT_SYMBOL(blk_queue_io_opt);
 #define min_not_zero(l, r) (l == 0) ? r : ((r == 0) ? l : min(l, r))
 
 /**
- * blk_queue_stack_limits - inherit underlying queue limits for stacked drivers
- * @t:	the stacking driver (top)
- * @b:  the underlying device (bottom)
- **/
-void blk_queue_stack_limits(struct request_queue *t, struct request_queue *b)
-{
-	/* zero is "infinity" */
-	t->limits.max_sectors = min_not_zero(queue_max_sectors(t),
-					     queue_max_sectors(b));
-
-	t->limits.max_hw_sectors = min_not_zero(queue_max_hw_sectors(t),
-						queue_max_hw_sectors(b));
-
-	t->limits.seg_boundary_mask = min_not_zero(queue_segment_boundary(t),
-						   queue_segment_boundary(b));
-
-	t->limits.max_phys_segments = min_not_zero(queue_max_phys_segments(t),
-						   queue_max_phys_segments(b));
-
-	t->limits.max_hw_segments = min_not_zero(queue_max_hw_segments(t),
-						 queue_max_hw_segments(b));
-
-	t->limits.max_segment_size = min_not_zero(queue_max_segment_size(t),
-						  queue_max_segment_size(b));
-
-	t->limits.logical_block_size = max(queue_logical_block_size(t),
-					   queue_logical_block_size(b));
-
-	if (!t->queue_lock)
-		WARN_ON_ONCE(1);
-	else if (!test_bit(QUEUE_FLAG_CLUSTER, &b->queue_flags)) {
-		unsigned long flags;
-		spin_lock_irqsave(t->queue_lock, flags);
-		queue_flag_clear(QUEUE_FLAG_CLUSTER, t);
-		spin_unlock_irqrestore(t->queue_lock, flags);
-	}
-}
-EXPORT_SYMBOL(blk_queue_stack_limits);
-
-/**
  * blk_stack_limits - adjust queue_limits for stacked devices
  * @t:	the stacking driver limits (top)
  * @b:  the underlying queue limits (bottom)
