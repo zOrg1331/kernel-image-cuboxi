@@ -210,13 +210,11 @@ static void sg_put_dev(Sg_device *sdp);
 static int sg_allow_access(struct file *filp, unsigned char *cmd)
 {
 	struct sg_fd *sfp = (struct sg_fd *)filp->private_data;
-	struct request_queue *q = sfp->parentdp->device->request_queue;
 
 	if (sfp->parentdp->device->type == TYPE_SCANNER)
 		return 0;
 
-	return blk_verify_command(&q->cmd_filter,
-				  cmd, filp->f_mode & FMODE_WRITE);
+	return blk_verify_command(cmd, filp->f_mode & FMODE_WRITE);
 }
 
 static int
@@ -621,7 +619,7 @@ sg_write(struct file *filp, const char __user *buf, size_t count, loff_t * ppos)
 		if (strcmp(current->comm, cmd) && printk_ratelimit()) {
 			printk(KERN_WARNING
 			       "sg_write: data in/out %d/%d bytes for SCSI command 0x%x--"
-			       "guessing data in;\n" KERN_WARNING "   "
+			       "guessing data in;\n   "
 			       "program %s not setting count and/or reply_len properly\n",
 			       old_hdr.reply_len - (int)SZ_SG_HEADER,
 			       input_size, (unsigned int) cmnd[0],
