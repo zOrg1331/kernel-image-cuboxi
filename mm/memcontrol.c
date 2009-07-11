@@ -1974,7 +1974,7 @@ try_to_free:
 		if (!progress) {
 			nr_retries--;
 			/* maybe some writeback is necessary */
-			congestion_wait(WRITE, HZ/10);
+			congestion_wait(BLK_RW_ASYNC, HZ/10);
 		}
 
 	}
