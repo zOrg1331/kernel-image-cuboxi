@@ -1,3 +1,18 @@
+commit 68e382216ede29f432e57ac75c370edb5286c399
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sat Jul 11 10:49:42 2009 +0900
+
+    aufs: new lockclass for copyup whiteout
+    
+    When a process writes a file which exists in the lower readonly branch
+    and was already removed with its parent dir, aufs copies it up by
+    au_sio_cpup_wh().
+    Since the parent dir is already removed, the function has to copy the
+    file to the internal temporary dir. At this point, new lock class is
+    necessary.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 38d53328059091828b3b45e4e1f88bdd8cc580cf
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Sat Jul 11 00:48:48 2009 +0900
