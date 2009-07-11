@@ -1,6 +1,14 @@
 #ifndef _LINUX_BLKDEV_H
 #define _LINUX_BLKDEV_H
 
+/*
+ * Definitions used on the !CONFIG_BLOCK case too:
+ */
+enum {
+	BLK_RW_ASYNC	= 0,
+	BLK_RW_SYNC	= 1,
+};
+
 #ifdef CONFIG_BLOCK
 
 #include <linux/sched.h>
@@ -68,11 +76,6 @@ enum rq_cmd_type_bits {
 	 */
 	REQ_TYPE_ATA_TASKFILE,
 	REQ_TYPE_ATA_PC,
-};
-
-enum {
-	BLK_RW_ASYNC	= 0,
-	BLK_RW_SYNC	= 1,
 };
 
 /*
