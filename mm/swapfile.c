@@ -50,7 +50,6 @@ struct swap_list_t swap_list = {-1, -1};
 
 struct swap_info_struct swap_info[MAX_SWAPFILES];
 EXPORT_SYMBOL(total_swap_pages);
-EXPORT_SYMBOL(swap_lock);
 EXPORT_SYMBOL(swap_list);
 EXPORT_SYMBOL(swap_info);
 

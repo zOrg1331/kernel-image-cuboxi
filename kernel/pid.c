@@ -122,7 +122,6 @@ static void free_pidmap(struct upid *upid)
 	clear_bit(offset, map->page);
 	atomic_inc(&map->nr_free);
 }
-EXPORT_SYMBOL_GPL(free_pidmap);
 
 int alloc_pidmap(struct pid_namespace *pid_ns)
 {

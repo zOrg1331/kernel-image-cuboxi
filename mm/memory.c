@@ -2867,9 +2867,8 @@ int __pud_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address)
 	spin_unlock(&mm->page_table_lock);
 	return 0;
 }
-#endif /* __PAGETABLE_PUD_FOLDED */
-
 EXPORT_SYMBOL_GPL(__pud_alloc);
+#endif /* __PAGETABLE_PUD_FOLDED */
 
 #ifndef __PAGETABLE_PMD_FOLDED
 /*
@@ -2899,9 +2898,8 @@ int __pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address)
 	spin_unlock(&mm->page_table_lock);
 	return 0;
 }
-#endif /* __PAGETABLE_PMD_FOLDED */
-
 EXPORT_SYMBOL_GPL(__pmd_alloc);
+#endif /* __PAGETABLE_PMD_FOLDED */
 
 int make_pages_present(unsigned long addr, unsigned long end)
 {

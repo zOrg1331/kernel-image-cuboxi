@@ -492,8 +492,6 @@ static struct socket *sock_alloc(void)
 	return sock;
 }
 
-EXPORT_SYMBOL(sock_alloc);
-
 /*
  *	In theory you can't get an open on this inode, but /proc provides
  *	a back door. Remember to keep it shut otherwise you'll let the
