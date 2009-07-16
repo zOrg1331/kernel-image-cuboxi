@@ -3854,6 +3854,13 @@ L:	cbe-oss-dev@ozlabs.org
 W:	http://www.ibm.com/developerworks/power/cell/
 S:	Supported
 
+SQUASHFS FILE SYSTEM
+P:	Phillip Lougher
+M:	phillip@lougher.demon.co.uk
+L:	squashfs-devel@lists.sourceforge.net (subscribers-only)
+W:	http://squashfs.org.uk
+S:	Maintained
+
 STABLE BRANCH:
 P:	Greg Kroah-Hartman
 M:	greg@kroah.com
