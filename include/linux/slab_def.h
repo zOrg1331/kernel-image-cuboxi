@@ -84,6 +84,7 @@ struct kmem_cache {
 	unsigned long high_mark;
 	unsigned long grown;
 	unsigned long reaped;
+	unsigned long shrunk;
 	unsigned long errors;
 	unsigned long max_freeable;
 	unsigned long node_allocs;
@@ -103,6 +104,9 @@ struct kmem_cache {
 	int obj_offset;
 	int obj_size;
 #endif /* CONFIG_DEBUG_SLAB */
+#ifdef CONFIG_BEANCOUNTERS
+	int objuse;
+#endif
 
 	/*
 	 * We put nodelists[] at the end of kmem_cache, because we want to size
