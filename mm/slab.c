@@ -399,12 +399,13 @@ struct kmem_cache {
 	struct list_head next;
 
 /* 6) statistics */
-#if STATS
+#if SLAB_STATS
 	unsigned long num_active;
 	unsigned long num_allocations;
 	unsigned long high_mark;
 	unsigned long grown;
 	unsigned long reaped;
+	unsigned long shrunk;
 	unsigned long errors;
 	unsigned long max_freeable;
 	unsigned long node_allocs;
@@ -415,7 +416,7 @@ struct kmem_cache {
 	atomic_t freehit;
 	atomic_t freemiss;
 #endif
-#if DEBUG
+#if SLAB_DEBUG
 	/*
 	 * If debugging is enabled, then the allocator can add additional
 	 * fields and/or padding to every object. buffer_size contains the total
@@ -424,6 +425,9 @@ struct kmem_cache {
 	 */
 	int obj_offset;
 	int obj_size;
+#endif
+#ifdef CONFIG_BEANCOUNTERS
+	int objuse;
 #endif
 	/*
 	 * We put nodelists[] at the end of kmem_cache, because we want to size
@@ -452,11 +456,11 @@ struct kmem_cache {
 #define REAPTIMEOUT_CPUC	(2*HZ)
 #define REAPTIMEOUT_LIST3	(4*HZ)
 
+#if SLAB_STATS
 #define	STATS_INC_GROWN(x)	((x)->grown++)
 #define	STATS_ADD_REAPED(x,y)	((x)->reaped += (y))
 #define	STATS_INC_SHRUNK(x)	((x)->shrunk++)
 
-#if SLAB_STATS
 #define	STATS_INC_ACTIVE(x)	((x)->num_active++)
 #define	STATS_DEC_ACTIVE(x)	((x)->num_active--)
 #define	STATS_INC_ALLOCED(x)	((x)->num_allocations++)
@@ -479,6 +483,9 @@ struct kmem_cache {
 #define STATS_INC_FREEHIT(x)	atomic_inc(&(x)->freehit)
 #define STATS_INC_FREEMISS(x)	atomic_inc(&(x)->freemiss)
 #else
+#define	STATS_INC_GROWN(x)	do { } while (0)
+#define	STATS_ADD_REAPED(x,y)	do { } while (0)
+#define	STATS_INC_SHRUNK(x)	do { } while (0)
 #define	STATS_INC_ACTIVE(x)	do { } while (0)
 #define	STATS_DEC_ACTIVE(x)	do { } while (0)
 #define	STATS_INC_ALLOCED(x)	do { } while (0)
@@ -841,8 +848,12 @@ int kmem_dname_objuse(void *obj)
 
 unsigned long ub_cache_growth(struct kmem_cache *cachep)
 {
+#if SLAB_STATS
 	return (cachep->grown - cachep->reaped - cachep->shrunk)
 		<< cachep->gfporder;
+#else
+	return 0;
+#endif
 }
 
 #define slab_ubcs(cachep, slabp) ((struct user_beancounter **)\
