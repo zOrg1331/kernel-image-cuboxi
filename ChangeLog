@@ -1,3 +1,22 @@
+commit f4e1cac387992d00ba09ddbd238d5eff20bf7f44
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Jul 15 02:56:00 2009 +0900
+
+    Revert "expand MAX_LOCKDEP_SUBCLASSES"
+    
+    This reverts commit c35679c7d7e369ba5aa86149df726c21fca5ab8a.
+    Since this is for aufs debugging purpose only. User may not be interested.
+
+commit e7655518276192510e7a98a36286aa5d7f816112
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Jul 15 23:41:54 2009 +0900
+
+    aufs: 2.6.31-rcN, tiny, include nsproxy.h
+    
+    Follow the chnages made by upstream.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 68e382216ede29f432e57ac75c370edb5286c399
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Sat Jul 11 10:49:42 2009 +0900
