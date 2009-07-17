@@ -1,3 +1,35 @@
+commit 67f41e76f398719e698e3d65796f0531f96a86bb
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Jul 14 02:24:50 2009 +0900
+
+    aufs: define macros for debugging rw_semaphore
+    
+    Define ...MustNoWaiters(), Must{Any,Write}Lock() macros for every struct
+    au_rwsem instance.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 4be45b91a0028e0e0710729f27ab46903455c698
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Jul 14 02:05:16 2009 +0900
+
+    aufs: debugging rw_semaphore
+    
+    Restoring the old aufs1 feature for debugging with a new conter for write_lock.
+    Because I forget everything after I don't touch sources for a few weeks.
+    - rename au_rwsem_destroy() to AuRwDestroy().
+    - replacing,
+      + struct rw_semaphore	by struct au_rwsem.
+      + init_rwsem()	by au_rw_init(), au_rw_init_wlock() or
+    			   au_rw_init_wlock_nested().
+      + down_read_nested()	by au_rw_read_lock().
+      + up_read()		by au_rw_read_unlock().
+      + downgrade_write()	by au_rw_dgrade_lock().
+      + down_write_nested()	by au_rw_write_unlock().
+      + up_write()		by au_rw_write_unlock().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit f4e1cac387992d00ba09ddbd238d5eff20bf7f44
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Wed Jul 15 02:56:00 2009 +0900
