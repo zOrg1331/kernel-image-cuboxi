@@ -302,7 +302,6 @@ static int veth_xmit(struct sk_buff *skb, struct net_device *dev)
 out:
 	skb->owner_env = rcv->owner_env;
 
-	skb->dev = rcv;
 	skb->pkt_type = PACKET_HOST;
 	skb->protocol = eth_type_trans(skb, rcv);
 
