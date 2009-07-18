@@ -312,6 +312,7 @@ out:
 	skb->dst = NULL;
 	nf_reset(skb);
 	length = skb->len;
+	skb_init_brmark(skb);
 
 	netif_rx(skb);
 
