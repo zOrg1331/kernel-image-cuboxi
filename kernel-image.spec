@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.30
-Release: alt3
+Release: alt4
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -340,6 +340,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Mon Jul 20 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.30-alt4
+- 2.6.30.2
+
 * Tue Jul 14 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.30-alt3
 - CVE-2009-1895: personality: fix PER_CLEAR_ON_SETID
 
