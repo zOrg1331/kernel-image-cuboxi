@@ -1,8 +1,8 @@
 Name: kernel-image-tmc-tc
 Version: 2.6.27
-Release: alt1
+Release: alt2
 
-%define kernel_stable_version 25
+%define kernel_stable_version 26
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -43,7 +43,7 @@ Packager: Kernel Maintainers Team <kernel@packages.altlinux.org>
 Source1: config-i586
 Patch0: linux-%kernel_base_version.%kernel_stable_version.patch
 Patch1: fix-vm_deadlock.patch
-Patch2: fix-core-getline.patch
+Patch2: feat-fs-squashfs.patch
 
 ### there are no reasons for x86_64 thin clients so far
 ExclusiveArch: i586
@@ -487,6 +487,15 @@ rm -rf %buildroot%kbuild_dir/include/media
 # - <M> subfs
 
 %changelog
+* Mon Jul 20 2009 Michael Shigorin <mike@altlinux.org> 2.6.27-alt2
+- 2.6.27.26
+- patches:
+  + dropped fix-core-getline (merged upstream)
+  + added feat-fs-squashfs (by led@)
+- config:
+  + enabled CONFIG_ACPI_PROCFS_POWER, CONFIG_ACPI_SYSFS_POWER
+    (following led@'s tmc-hpc)
+
 * Sat Jun 13 2009 Michael Shigorin <mike@altlinux.org> 2.6.27-alt1
 - new flavour: tmc-tc (for LTSP-powered Thin Clients)
   + 2.6.27.25
