@@ -1,0 +1,13 @@
+object 49cbf4089ff5c1a26cfda73e69e1eff7e378b706
+type commit
+tag v2.6.27.26
+tagger Greg Kroah-Hartman <gregkh@suse.de> 1246577627 -0700
+
+This is the 2.6.27.26 stable release
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v2.0.12 (GNU/Linux)
+
+iEYEABECAAYFAkpNQ98ACgkQMUfUDdst+ykU3gCfThbMFac3UusmKPwXoqh+snki
+LlUAn1HcK07XozCz51efouj1xgAJZo3y
+=uHOl
+-----END PGP SIGNATURE-----
