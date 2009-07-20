@@ -1,3 +1,14 @@
+commit c3469842d25e9b5037161aa12790412ff81be2e8
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Jul 20 23:20:44 2009 +0900
+
+    aufs: tiny, replace some au_xino_write0() calls by au_xino_write()
+    
+    Since passing 0 as the inode number parameter to au_xino_write0() with
+    known branch index is equivalent to au_xino_write().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 221cf7294ea8045ff043e26e6864708f001dc3ee
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Mon Jul 20 22:28:41 2009 +0900
