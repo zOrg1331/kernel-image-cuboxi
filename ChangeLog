@@ -1,3 +1,128 @@
+commit 221cf7294ea8045ff043e26e6864708f001dc3ee
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Jul 20 22:28:41 2009 +0900
+
+    aufs: tiny, reduce the stack usage
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 2a055186b1c6c15bb088683fe9b738c69f3b264b
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Jul 20 22:13:37 2009 +0900
+
+    aufs: bugfix, imbalance lock/unlock in error handling of aufs_link()
+    
+    In an error handling, aufs_link() unlocked a lock illegally.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 209cf3641b9daa3e6dd6e61af47633a28322a326
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Jul 20 21:52:43 2009 +0900
+
+    aufs: tiny, add prefix some messages
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 735869d863fc739fa506f366632e1d229f3b4e5e
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Jul 20 21:51:18 2009 +0900
+
+    aufs: possible bugfix, file might be removed before aufs_link()
+    
+    The file to be being linked by aufs_link may be remobed already.
+    Test and make sure the file still exists.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 9325f789c9f36289d068ffdb581544471ea721b0
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Jul 15 04:34:50 2009 +0900
+
+    aufs: possible bugfix, give up lock free root dinfo in aufs_getattr()
+    
+    In aufs_getattr() tries not to lock for root dir. But it may cause
+    incorrect nlink value. Lock root as well as children.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 54ff893c8319f2fe3632fa84baf62ab84b164776
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Jul 20 14:08:21 2009 +0900
+
+    aufs: possible bugfix, memory barrier at the end of MAINTAIN_PLINK
+    
+    Since AuSi_MAINTAIN_PLINK of au_si_status is cleared without write-lock,
+    insert the memory barrier after it.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 9fcd4eee5d42d81d97a5710c7ac5ea2cd12db7f6
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Jul 15 04:35:52 2009 +0900
+
+    aufs: debugging iinfo rw_semaphore
+    
+    Insert debug macros everywhere.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit d348753c496697e61741606a48cfb37be8cb45f8
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Jul 15 10:52:50 2009 +0900
+
+    aufs: tiny, add a lock for debugging
+    
+    A new debug-able rw_semaphore reports a problem in reinit_br_wh().
+    But it is NOT an actual problem, since Big Aufs Lock is already held and
+    locking sb->s_root after that is meaningless.
+    Here I follow the message from debug macros, but it may be changed in
+    the future.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 7516d576076c07948196f77da451ef70db619131
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Jul 15 01:54:00 2009 +0900
+
+    aufs: debugging dinfo rw_semaphore
+    
+    Insert debug macros everywhere.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 823bf33bcd6cc5acdfa9fb6a23df7c5746db3951
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Jul 14 16:58:11 2009 +0900
+
+    aufs: debugging wbr_wh_rwsem rw_semaphore
+    
+    Insert debug macros to check br->br_wbr->wbr_wh_rwsem.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 407a102f34c437f773e6970d6b940ef6f9749e3d
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Jul 14 15:50:24 2009 +0900
+
+    aufs: debugging fi_rwsem rw_semaphore
+    
+    Insert debug macros to check file->fi_rwsem.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit c8db44567bf314c7625a7ded4abe7de947e10eb7
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Jul 14 15:49:06 2009 +0900
+
+    aufs: possible bugfix, mmap race
+    
+    Between two mmap(2)s, there may be a race condition.
+    To solve the problem, aufs_mmap() always acquire the write-lock for the
+    aufs file object.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 69515f11ae589e4c4206a5a285e76f7d66353476
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Fri Jul 17 23:17:37 2009 +0900
