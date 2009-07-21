@@ -29,6 +29,12 @@
 #define cpu_relax()	asm volatile("" ::: "memory")
 #endif
 
+#ifdef __hppa__
+#include "../../arch/parisc/include/asm/unistd.h"
+#define rmb()		asm volatile("" ::: "memory")
+#define cpu_relax()	asm volatile("" ::: "memory");
+#endif
+
 #include <time.h>
 #include <unistd.h>
 #include <sys/types.h>
@@ -61,6 +67,8 @@ static inline unsigned long long rdclock(void)
  */
 #define __user
 #define asmlinkage
+
+#define __used		__attribute__((__unused__))
 
 #define unlikely(x)	__builtin_expect(!!(x), 0)
 #define min(x, y) ({				\
