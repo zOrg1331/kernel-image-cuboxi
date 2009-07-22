@@ -23,7 +23,6 @@ omnibook
 #virtualization drivers
 kqemu
 virtualbox
-virtualbox-vfs
 virtualbox-addition
 kvm
 
