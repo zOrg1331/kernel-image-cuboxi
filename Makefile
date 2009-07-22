@@ -24,3 +24,8 @@ aufs.ko: fs/aufs/aufs.ko
 fs/aufs/aufs.ko:
 	@echo ${EXTRA_CFLAGS}
 	${MAKE} -C ${KDIR} M=${CURDIR}/fs/aufs EXTRA_CFLAGS="${EXTRA_CFLAGS}" modules
+
+clean:
+	${MAKE} -C ${KDIR} M=${CURDIR}/fs/aufs EXTRA_CFLAGS="${EXTRA_CFLAGS}" $@
+	find . -type f -name '*~' | xargs -r ${RM}
+	${RM} aufs.ko
