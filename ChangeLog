@@ -1,3 +1,11 @@
+commit 70900bf9ae2a73ab2e73e0177b9ee263f62677e5
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Jul 22 19:00:43 2009 +0900
+
+    aufs: tiny, describe how to git
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit c3469842d25e9b5037161aa12790412ff81be2e8
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Mon Jul 20 23:20:44 2009 +0900
