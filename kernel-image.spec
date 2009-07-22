@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-smp
 Version: 2.6.27
-Release: alt7
+Release: alt8
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -468,6 +468,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Tue Jul 21 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.27-alt8
+- Merge with 2.6.27.27
+- Don't build virtualbox-vfs module
+
 * Mon May 25 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.27-alt7
 - Merge with silicium's std-def
 
