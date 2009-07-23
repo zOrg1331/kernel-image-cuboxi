@@ -549,6 +549,7 @@ restart:
 	list_for_each_entry_safe(engine, next, &utrace->attached, entry) {
 		ops = engine->ops;
 		engine->ops = NULL;
+		engine->flags = 0;
 		list_move(&engine->entry, &detached);
 
 		/*
