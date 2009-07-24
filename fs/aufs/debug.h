@@ -25,6 +25,7 @@
 
 #ifdef __KERNEL__
 
+#include <asm/system.h>
 #include <linux/bug.h>
 /* #include <linux/err.h> */
 #include <linux/init.h>

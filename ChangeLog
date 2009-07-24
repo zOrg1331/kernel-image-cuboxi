@@ -1,3 +1,14 @@
+commit ec38dd1c7fd6fb7c368be98835be5a80a890a155
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sat Jul 25 02:03:11 2009 +0900
+
+    aufs: bugfix, include files in debug.h
+    
+    Just follow the changes made by upstream.
+    
+    Reported-by: Alan Zheng <machinecat1666@gmail.com>
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 049de2b1a34c3145ea82a2fe92c286393c4f6310
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Fri Jul 24 12:51:40 2009 +0900
