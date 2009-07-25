@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.30
-Release: alt5
+Release: alt6
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -340,6 +340,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Sat Jul 25 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.30-alt6
+- 2.6.30.3
+- ALSA: disabled OSS emulation
+
 * Wed Jul 22 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.30-alt5
 - drm/intel: merged Intel 2009Q2
 
