@@ -1,0 +1,62 @@
+--- linux-2.6.17.noarch/lib/spinlock_debug.c~	2006-07-04 16:23:43.000000000 -0400
++++ linux-2.6.17.noarch/lib/spinlock_debug.c	2006-07-04 16:24:45.000000000 -0400
+@@ -57,9 +57,9 @@ static void spin_bug(spinlock_t *lock, c
+ 
+ 	if (lock->owner && lock->owner != SPINLOCK_OWNER_INIT)
+ 		owner = lock->owner;
+-	printk(KERN_EMERG "BUG: spinlock %s on CPU#%d, %s/%d\n",
++	printk(KERN_EMERG "BUG: spinlock %s on CPU#%d, %s/%d (%s)\n",
+ 		msg, raw_smp_processor_id(),
+-		current->comm, current->pid);
++		current->comm, current->pid, print_tainted());
+ 	printk(KERN_EMERG " lock: %p, .magic: %08x, .owner: %s/%d, "
+ 			".owner_cpu: %d\n",
+ 		lock, lock->magic,
+@@ -112,9 +112,9 @@ static void __spin_lock_debug(spinlock_t
+ 		if (print_once) {
+ 			print_once = 0;
+ 			printk(KERN_EMERG "BUG: spinlock lockup on CPU#%d, "
+-					"%s/%d, %p\n",
++					"%s/%d, %p (%s)\n",
+ 				raw_smp_processor_id(), current->comm,
+-				current->pid, lock);
++				current->pid, lock, print_tainted());
+ 			dump_stack();
+ 		}
+ 	}
+@@ -154,9 +154,9 @@ static void rwlock_bug(rwlock_t *lock, c
+ 	if (!debug_locks_off())
+ 		return;
+ 
+-	printk(KERN_EMERG "BUG: rwlock %s on CPU#%d, %s/%d, %p\n",
++	printk(KERN_EMERG "BUG: rwlock %s on CPU#%d, %s/%d, %p (%s)\n",
+ 		msg, raw_smp_processor_id(), current->comm,
+-		current->pid, lock);
++		current->pid, lock, print_tainted());
+ 	dump_stack();
+ }
+ 
+@@ -177,9 +177,9 @@ static void __read_lock_debug(rwlock_t *
+ 		if (print_once) {
+ 			print_once = 0;
+ 			printk(KERN_EMERG "BUG: read-lock lockup on CPU#%d, "
+-					"%s/%d, %p\n",
++					"%s/%d, %p (%s)\n",
+ 				raw_smp_processor_id(), current->comm,
+-				current->pid, lock);
++				current->pid, lock, print_tainted());
+ 			dump_stack();
+ 		}
+ 	}
+@@ -250,9 +250,9 @@ static void __write_lock_debug(rwlock_t 
+ 		if (print_once) {
+ 			print_once = 0;
+ 			printk(KERN_EMERG "BUG: write-lock lockup on CPU#%d, "
+-					"%s/%d, %p\n",
++					"%s/%d, %p (%s)\n",
+ 				raw_smp_processor_id(), current->comm,
+-				current->pid, lock);
++				current->pid, lock, print_tainted());
+ 			dump_stack();
+ 		}
+ 	}

@@ -1,0 +1,156 @@
+From: Vince Worthington <vincew@redhat.com>
+Subject: REPOST [RHEL5 U1 PATCH] BZ 241798 - IPSec - Make XFRM_ACQ_EXPIRES proc-tunable
+Date: Mon, 11 Jun 2007 15:56:30 -0400
+Bugzilla: 241798
+Message-Id: <20070611195629.GA28977@cobrajet.rdu.redhat.com>
+Changelog: [ipsec] Make XFRM_ACQ_EXPIRES proc-tunable
+
+
+The following is a proposed backport of the patch David Miller wrote for
+upstream to create a proc-tunable value to govern the amount of time the userspace
+IPSec keying daemon must wait in order to attempt to establish another ISAKMP-SA
+(phase 1) with a host when the previous attempt failed.
+
+David has committed the patch in his upstream tree:
+http://git.kernel.org/?p=linux/kernel/git/davem/net-2.6.git;a=commit;h=d8d8bb7d21ea6df9c452e9731b799cd0313072a8
+
+While the phase 1 timeout period is configurable for the keying daemon (how long
+the keying daemon will wait before giving up on the ISAKMP-SA), currently the
+kernel hard-codes (with the XFRM_ACQ_EXPIRES #define in include/net/xfrm.h) to
+30 seconds the amount of time that must pass before another phase 1 can be
+attempted.  By making this value proc-tunable, we allow the keying daemon to try
+again sooner.
+
+Thanks to David Miller for the upstream patch and the assistance with some
+questions I had back-porting it.
+
+The new proc-tunable would be at /proc/sys/net/core/xfrm_acq_expires, with a
+default value of 30 (seconds), in keeping with the previous hard-coded value.
+
+--vince
+
+
+
+Index: latest/net/xfrm/xfrm_state.c
+===================================================================
+--- latest.orig/net/xfrm/xfrm_state.c
++++ latest/net/xfrm/xfrm_state.c
+@@ -20,16 +20,20 @@
+ #include <linux/module.h>
+ #include <asm/uaccess.h>
+ #include <linux/audit.h>
++#include <linux/cache.h>
+ 
+ struct sock *xfrm_nl;
+ EXPORT_SYMBOL(xfrm_nl);
+ 
+-u32 sysctl_xfrm_aevent_etime = XFRM_AE_ETIME;
++u32 sysctl_xfrm_aevent_etime __read_mostly = XFRM_AE_ETIME;
+ EXPORT_SYMBOL(sysctl_xfrm_aevent_etime);
+ 
+-u32 sysctl_xfrm_aevent_rseqth = XFRM_AE_SEQT_SIZE;
++u32 sysctl_xfrm_aevent_rseqth __read_mostly = XFRM_AE_SEQT_SIZE;
+ EXPORT_SYMBOL(sysctl_xfrm_aevent_rseqth);
+ 
++u32 sysctl_xfrm_acq_expires __read_mostly = 30;
++EXPORT_SYMBOL(sysctl_xfrm_acq_expires);
++
+ /* Each xfrm_state may be linked to two tables:
+ 
+    1. Hash table by (spi,daddr,ah/esp) to find SA by SPI. (input,ctl)
+@@ -471,9 +475,9 @@ xfrm_state_find(xfrm_address_t *daddr, x
+ 				list_add(&x->byspi, xfrm_state_byspi+h);
+ 				xfrm_state_hold(x);
+ 			}
+-			x->lft.hard_add_expires_seconds = XFRM_ACQ_EXPIRES;
++			x->lft.hard_add_expires_seconds = sysctl_xfrm_acq_expires;
+ 			xfrm_state_hold(x);
+-			x->timer.expires = jiffies + XFRM_ACQ_EXPIRES*HZ;
++			x->timer.expires = jiffies + sysctl_xfrm_acq_expires*HZ;
+ 			add_timer(&x->timer);
+ 		} else {
+ 			x->km.state = XFRM_STATE_DEAD;
+Index: latest/net/ipv4/xfrm4_state.c
+===================================================================
+--- latest.orig/net/ipv4/xfrm4_state.c
++++ latest/net/ipv4/xfrm4_state.c
+@@ -116,9 +116,9 @@ __xfrm4_find_acq(u8 mode, u32 reqid, u8 
+ 		x0->props.mode = mode;
+ 		x0->props.reqid = reqid;
+ 		x0->props.family = AF_INET;
+-		x0->lft.hard_add_expires_seconds = XFRM_ACQ_EXPIRES;
++		x0->lft.hard_add_expires_seconds = sysctl_xfrm_acq_expires;
+ 		xfrm_state_hold(x0);
+-		x0->timer.expires = jiffies + XFRM_ACQ_EXPIRES*HZ;
++		x0->timer.expires = jiffies + sysctl_xfrm_acq_expires*HZ;
+ 		add_timer(&x0->timer);
+ 		xfrm_state_hold(x0);
+ 		list_add_tail(&x0->bydst, xfrm4_state_afinfo.state_bydst+h);
+Index: latest/net/ipv6/xfrm6_state.c
+===================================================================
+--- latest.orig/net/ipv6/xfrm6_state.c
++++ latest/net/ipv6/xfrm6_state.c
+@@ -120,9 +120,9 @@ __xfrm6_find_acq(u8 mode, u32 reqid, u8 
+ 		x0->props.family = AF_INET6;
+ 		x0->props.mode = mode;
+ 		x0->props.reqid = reqid;
+-		x0->lft.hard_add_expires_seconds = XFRM_ACQ_EXPIRES;
++		x0->lft.hard_add_expires_seconds = sysctl_xfrm_acq_expires;
+ 		xfrm_state_hold(x0);
+-		x0->timer.expires = jiffies + XFRM_ACQ_EXPIRES*HZ;
++		x0->timer.expires = jiffies + sysctl_xfrm_acq_expires*HZ;
+ 		add_timer(&x0->timer);
+ 		xfrm_state_hold(x0);
+ 		list_add_tail(&x0->bydst, xfrm6_state_afinfo.state_bydst+h);
+Index: latest/net/core/sysctl_net_core.c
+===================================================================
+--- latest.orig/net/core/sysctl_net_core.c
++++ latest/net/core/sysctl_net_core.c
+@@ -28,6 +28,7 @@ extern char sysctl_divert_version[];
+ #ifdef CONFIG_XFRM
+ extern u32 sysctl_xfrm_aevent_etime;
+ extern u32 sysctl_xfrm_aevent_rseqth;
++extern u32 sysctl_xfrm_acq_expires;
+ #endif
+ 
+ ctl_table core_table[] = {
+@@ -132,6 +133,14 @@ ctl_table core_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= &proc_dointvec
+ 	},
++	{
++		.ctl_name	= NET_CORE_XFRM_ACQ_EXPIRES,
++		.procname	= "xfrm_acq_expires",
++		.data		= &sysctl_xfrm_acq_expires,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec
++	},
+ #endif /* CONFIG_XFRM */
+ #endif /* CONFIG_NET */
+ 	{
+Index: latest/include/net/xfrm.h
+===================================================================
+--- latest.orig/include/net/xfrm.h
++++ latest/include/net/xfrm.h
+@@ -226,7 +226,7 @@ extern int xfrm_policy_register_afinfo(s
+ extern int xfrm_policy_unregister_afinfo(struct xfrm_policy_afinfo *afinfo);
+ extern void km_policy_notify(struct xfrm_policy *xp, int dir, struct km_event *c);
+ extern void km_state_notify(struct xfrm_state *x, struct km_event *c);
+-#define XFRM_ACQ_EXPIRES	30
++extern u32 sysctl_xfrm_acq_expires;
+ 
+ struct xfrm_tmpl;
+ extern int km_query(struct xfrm_state *x, struct xfrm_tmpl *t, struct xfrm_policy *pol);
+Index: latest/include/linux/sysctl.h
+===================================================================
+--- latest.orig/include/linux/sysctl.h
++++ latest/include/linux/sysctl.h
+@@ -278,6 +278,7 @@ enum
+ 	NET_CORE_BUDGET=19,
+ 	NET_CORE_AEVENT_ETIME=20,
+ 	NET_CORE_AEVENT_RSEQTH=21,
++	NET_CORE_XFRM_ACQ_EXPIRES=23,
+ };
+ 
+ /* /proc/sys/net/ethernet */

@@ -1,0 +1,738 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [RHEL5.1 PATCH] bz237858 Enable DLPAR support for HEA
+Date: Wed, 23 May 2007 11:27:30 -0400 (EDT)
+Bugzilla: 237858
+Message-Id: <Pine.LNX.4.64.0705231123470.4382@squad5-lp1.lab.boston.redhat.com>
+Changelog: [ppc64] Enable DLPAR support for HEA
+
+
+RHBZ#: 237858 [FEATURE]
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=237858
+
+Description:
+------------
+This bug addresses changes needed to the ibmebus and eHEA driver for complete
+support of Dynamic LPAR (Add/Remove) functionality.
+
+HEA is the integrated Ethernet on all Power6 systems, the DLPAR capability
+is important to be provided as users will need to rely on it for proper
+device configuration across partitions. 
+
+RHEL Version Found:
+-------------------
+requested as a feature for 5.1
+
+Upstream Status:
+----------------
+This code is upstream in 2.6.22-rc1
+
+Test Status:
+------------
+A brew scratch build has been done with these 2 patches.
+The following are dependencies that are required and have been included:
+ - bz 234225 [2]
+ - bz 228099 additional patch 4/7 [3]
+
+Brew Build is task id 791747 [4].
+
+The code has been tested by Jan-Bernd Themann and Marcus Eder of IBM.
+
+Addapter add/remove and port add/remove have been tested using the command
+line interfaces into IBMEBUS and the eHEA device driver.
+
+Proposed Patch:
+----------------
+See following emails in 2 parts.
+
+-- 
+[1] http://post-office.corp.redhat.com/archives/rhkernel-list/2007-April/msg00528.html
+[2] http://post-office.corp.redhat.com/archives/rhkernel-list/2007-April/msg00528.html
+[3] http://post-office.corp.redhat.com/archives/rhkernel-list/2007-May/msg00121.html
+[4] http://brewweb.devel.redhat.com/brew/taskinfo?taskID=791747
+
+--- 
+
+From: Scott Moser <smoser@redhat.com>
+Subject: [RHEL5.1 PATCH] bz237858 Enable DLPAR support for HEA [1/2]
+Date: Wed, 23 May 2007 11:30:21 -0400 (EDT)
+Bugzilla: 237858
+Message-Id: <Pine.LNX.4.64.0705231128410.4382@squad5-lp1.lab.boston.redhat.com>
+
+
+Description:
+------------
+This patch combines the following 2 upstream git commits:
+d1dea38d54311f6b3dd37ce485e794bd133e3593
+    ehea: fix for sysfs entries
+    
+    Create symbolic link from each logical port to ehea driver
+    
+    Signed-off-by: Thomas Klein <tklein@de.ibm.com>
+    Signed-off-by: Jeff Garzik <jeff@garzik.org>
+
+1211bb6dcd935c48e864d4eecbf8a684e982419a
+    ehea: fix for dlpar support
+    
+    Certain resources may only be allocated when first logical port is
+    available and must be removed when last logical port has been removed.
+    
+    Signed-off-by: Thomas Klein <tklein@de.ibm.com>
+    Signed-off-by: Jeff Garzik <jeff@garzik.org>
+
+
+Upstream Status:
+----------------
+These are present in 2.6.22-rc1 [1],[2]
+
+--
+[1] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=1211bb6dcd935c48e864d4eecbf8a684e982419a
+[2] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=d1dea38d54311f6b3dd37ce485e794bd133e3593
+
+---
+ ehea.h      |    2 
+ ehea_main.c |  144 ++++++++++++++++++++++++++++++++++++++++++++----------------
+ 2 files changed, 107 insertions(+), 39 deletions(-)
+
+Index: b/drivers/net/ehea/ehea.h
+===================================================================
+--- a/drivers/net/ehea/ehea.h
++++ b/drivers/net/ehea/ehea.h
+@@ -39,7 +39,7 @@
+ #include <asm/io.h>
+ 
+ #define DRV_NAME	"ehea"
+-#define DRV_VERSION	"EHEA_0055"
++#define DRV_VERSION	"EHEA_0058"
+ 
+ #define EHEA_MSG_DEFAULT (NETIF_MSG_LINK | NETIF_MSG_TIMER \
+ 	| NETIF_MSG_RX_ERR | NETIF_MSG_TX_ERR)
+Index: b/drivers/net/ehea/ehea_main.c
+===================================================================
+--- a/drivers/net/ehea/ehea_main.c
++++ b/drivers/net/ehea/ehea_main.c
+@@ -78,6 +78,28 @@ MODULE_PARM_DESC(sq_entries, " Number of
+ 		 __MODULE_STRING(EHEA_DEF_ENTRIES_SQ) ")");
+ MODULE_PARM_DESC(use_mcs, " 0:NAPI, 1:Multiple receive queues, Default = 1 ");
+ 
++static int port_name_cnt = 0;
++
++static int __devinit ehea_probe_adapter(struct ibmebus_dev *dev,
++                                        const struct of_device_id *id);
++
++static int __devexit ehea_remove(struct ibmebus_dev *dev);
++
++static struct of_device_id ehea_device_table[] = {
++	{
++		.name = "lhea",
++		.compatible = "IBM,lhea",
++	},
++	{},
++};
++
++static struct ibmebus_driver ehea_driver = {
++	.name = "ehea",
++	.id_table = ehea_device_table,
++	.probe = ehea_probe_adapter,
++	.remove = ehea_remove,
++};
++
+ void ehea_dump(void *adr, int len, char *msg) {
+ 	int x;
+ 	unsigned char *deb = adr;
+@@ -2111,6 +2133,28 @@ static int ehea_clean_all_portres(struct
+ 	return ret;
+ }
+ 
++static void ehea_remove_adapter_mr (struct ehea_adapter *adapter)
++{
++	int i;
++
++	for (i=0; i < EHEA_MAX_PORTS; i++)
++		if (adapter->port[i])
++			return;
++
++	ehea_rem_mr(&adapter->mr);
++}
++
++static int ehea_add_adapter_mr (struct ehea_adapter *adapter)
++{
++	int i;
++
++	for (i=0; i < EHEA_MAX_PORTS; i++)
++		if (adapter->port[i])
++			return 0;
++
++	return ehea_reg_kernel_mr(adapter, &adapter->mr);
++}
++
+ static int ehea_up(struct net_device *dev)
+ {
+ 	int ret, i;
+@@ -2363,6 +2407,34 @@ static void __devinit logical_port_relea
+ 	of_node_put(port->ofdev.node);
+ }
+ 
++static int ehea_driver_sysfs_add(struct device *dev,
++                                 struct device_driver *driver)
++{
++	int ret;
++
++	ret = sysfs_create_link(&driver->kobj, &dev->kobj,
++				kobject_name(&dev->kobj));
++	if (ret == 0) {
++		ret = sysfs_create_link(&dev->kobj, &driver->kobj,
++					"driver");
++		if (ret)
++			sysfs_remove_link(&driver->kobj,
++					  kobject_name(&dev->kobj));
++	}
++	return ret;
++}
++
++static void ehea_driver_sysfs_remove(struct device *dev,
++                                     struct device_driver *driver)
++{
++	struct device_driver *drv = driver;
++
++	if (drv) {
++		sysfs_remove_link(&drv->kobj, kobject_name(&dev->kobj));
++		sysfs_remove_link(&dev->kobj, "driver");
++	}
++}
++
+ static struct device *ehea_register_port(struct ehea_port *port,
+ 					 struct device_node *dn)
+ {
+@@ -2370,8 +2442,9 @@ static struct device *ehea_register_port
+ 
+ 	port->ofdev.node = of_node_get(dn);
+ 	port->ofdev.dev.parent = &port->adapter->ebus_dev->ofdev.dev;
++	port->ofdev.dev.bus = &ibmebus_bus_type;
+ 
+-	sprintf(port->ofdev.dev.bus_id, "port%d", port->logical_port_id);
++	sprintf(port->ofdev.dev.bus_id, "port%d", port_name_cnt++);
+ 	port->ofdev.dev.release = logical_port_release;
+ 
+ 	ret = of_device_register(&port->ofdev);
+@@ -2386,8 +2459,16 @@ static struct device *ehea_register_port
+ 		goto out_unreg_of_dev;
+ 	}
+ 
++	ret = ehea_driver_sysfs_add(&port->ofdev.dev, &ehea_driver.driver);
++	if (ret) {
++		ehea_error("failed to register sysfs driver link");
++		goto out_rem_dev_file;
++	}
++
+ 	return &port->ofdev.dev;
+ 
++out_rem_dev_file:
++	device_remove_file(&port->ofdev.dev, &dev_attr_log_port_id);
+ out_unreg_of_dev:
+ 	of_device_unregister(&port->ofdev);
+ out:
+@@ -2396,6 +2477,7 @@ out:
+ 
+ static void ehea_unregister_port(struct ehea_port *port)
+ {
++	ehea_driver_sysfs_remove(&port->ofdev.dev, &ehea_driver.driver);
+ 	device_remove_file(&port->ofdev.dev, &dev_attr_log_port_id);
+ 	of_device_unregister(&port->ofdev);
+ }
+@@ -2522,7 +2604,6 @@ static int ehea_setup_ports(struct ehea_
+ 	struct device_node *eth_dn = NULL;
+ 
+ 	u32 *dn_log_port_id;
+-	int port_setup_ok = 0;
+ 	int i = 0;
+ 
+ 	lhea_dn = adapter->ebus_dev->ofdev.node;
+@@ -2536,6 +2617,12 @@ static int ehea_setup_ports(struct ehea_
+ 			continue;
+ 		}
+ 
++		if (ehea_add_adapter_mr(adapter)) {
++			ehea_error("creating MR failed");
++			of_node_put(eth_dn);
++			return -EIO;
++		}
++
+ 		adapter->port[i] = ehea_setup_single_port(adapter,
+ 							  *dn_log_port_id,
+ 							  eth_dn);
+@@ -2543,18 +2630,13 @@ static int ehea_setup_ports(struct ehea_
+ 			ehea_info("%s -> logical port id #%d",
+ 				  adapter->port[i]->netdev->name,
+ 				  *dn_log_port_id);
++		else
++			ehea_remove_adapter_mr(adapter);
++
+ 		i++;
+ 	};
+ 
+-	/* Check for succesfully set up ports */
+-	for (i = 0; i < EHEA_MAX_PORTS; i++)
+-		if (adapter->port[i])
+-			port_setup_ok++;
+-
+-	if (port_setup_ok)
+-		return 0;	/* At least some ports are setup correctly */
+-
+-	return -EINVAL;
++	return 0;
+ }
+ 
+ static struct device_node *ehea_get_eth_dn(struct ehea_adapter *adapter,
+@@ -2606,6 +2688,11 @@ static ssize_t ehea_probe_port(struct de
+ 		return -EINVAL;
+ 	}
+ 
++	if (ehea_add_adapter_mr(adapter)) {
++		ehea_error("creating MR failed");
++		return -EIO;
++	}
++
+ 	port = ehea_setup_single_port(adapter, logical_port_id, eth_dn);
+ 
+ 	of_node_put(eth_dn);
+@@ -2619,8 +2706,10 @@ static ssize_t ehea_probe_port(struct de
+ 
+ 		ehea_info("added %s (logical port id=%d)", port->netdev->name,
+ 			  logical_port_id);
+-	} else
++	} else {
++		ehea_remove_adapter_mr(adapter);
+ 		return -EIO;
++	}
+ 
+ 	return (ssize_t) count;
+ }
+@@ -2655,6 +2744,8 @@ static ssize_t ehea_remove_port(struct d
+ 		return -EINVAL;
+ 	}
+ 
++	ehea_remove_adapter_mr(adapter);
++
+ 	return (ssize_t) count;
+ }
+ 
+@@ -2715,18 +2806,13 @@ static int __devinit ehea_probe_adapter(
+ 
+ 	dev->ofdev.dev.driver_data = adapter;
+ 
+-	ret = ehea_reg_kernel_mr(adapter, &adapter->mr);
+-	if (ret) {
+-		dev_err(&dev->ofdev.dev, "reg_mr_adapter failed\n");
+-		goto out_free_ad;
+-	}
+ 
+ 	/* initialize adapter and ports */
+ 	/* get adapter properties */
+ 	ret = ehea_sense_adapter_attr(adapter);
+ 	if (ret) {
+ 		dev_err(&dev->ofdev.dev, "sense_adapter_attr failed: %d", ret);
+-		goto out_free_res;
++		goto out_free_ad;
+ 	}
+ 
+ 	adapter->neq = ehea_create_eq(adapter,
+@@ -2734,7 +2820,7 @@ static int __devinit ehea_probe_adapter(
+ 	if (!adapter->neq) {
+ 		ret = -EIO;
+ 		dev_err(&dev->ofdev.dev, "NEQ creation failed");
+-		goto out_free_res;
++		goto out_free_ad;
+ 	}
+ 
+ 	tasklet_init(&adapter->neq_tasklet, ehea_neq_tasklet,
+@@ -2779,9 +2865,6 @@ out_free_irq:
+ out_kill_eq:
+ 	ehea_destroy_eq(adapter->neq);
+ 
+-out_free_res:
+-	ehea_rem_mr(&adapter->mr);
+-
+ out_free_ad:
+ 	kfree(adapter);
+ out:
+@@ -2807,7 +2890,7 @@ static int __devexit ehea_remove(struct 
+ 	tasklet_kill(&adapter->neq_tasklet);
+ 
+ 	ehea_destroy_eq(adapter->neq);
+-	ehea_rem_mr(&adapter->mr);
++	ehea_remove_adapter_mr(adapter);
+ 	kfree(adapter);
+ 	return 0;
+ }
+@@ -2840,21 +2923,6 @@ static int check_module_parm(void)
+ 	return ret;
+ }
+ 
+-static struct of_device_id ehea_device_table[] = {
+-	{
+-		.name = "lhea",
+-		.compatible = "IBM,lhea",
+-	},
+-	{},
+-};
+-
+-static struct ibmebus_driver ehea_driver = {
+-	.name = "ehea",
+-	.id_table = ehea_device_table,
+-	.probe = ehea_probe_adapter,
+-	.remove = ehea_remove,
+-};
+-
+ int __init ehea_module_init(void)
+ {
+ 	int ret;
+
+From: Scott Moser <smoser@redhat.com>
+Subject: [RHEL5.1 PATCH] bz237858 Enable DLPAR support for HEA [2/2]
+Date: Wed, 23 May 2007 11:31:17 -0400 (EDT)
+Bugzilla: 237858
+Message-Id: <Pine.LNX.4.64.0705231130420.4382@squad5-lp1.lab.boston.redhat.com>
+
+
+Description:
+------------
+This patch includes the following git commit:
+6bccf755ff53241d46c01c229b3c2452b9029ec4
+  [POWERPC] ibmebus: dynamic addition/removal of adapters, some code cleanup
+  
+  This adds two sysfs attributes to /sys/bus/ibmebus which can be used to
+  notify the ebus driver of added / removed ebus devices in the OF device
+  tree.
+  
+  Echoing the device's location code (as found in the OFDT "ibm,loc-code"
+  property) into the "probe" attribute will notify ebus of addition of the
+  device and cause the appropriate device driver's probe function to be
+  called on the device.
+  
+  Likewise, echoing the location code into the "remove" attribute will cause
+  the device to be removed from the system.
+  
+  The writes will block until the respective operation has finished and
+  return an error code if the operation failed.
+  
+  In addition, two minor tidbits are fixed:
+  
+  - The fake root device used to provide a common parent for all ebus
+    devices is now based on device instead of of_device - it had no
+    associated devtree node. This saves several checks throughout the ebus
+    driver.
+  
+  - The sysfs attributes are now generated automagically by
+    device_register() instead of by the ibmebus code, which saves a few
+    compiler warnings about unused return codes.
+  
+  Signed-off-by: Joachim Fenkes <fenkes@de.ibm.com>
+  Signed-off-by: Paul Mackerras <paulus@samba.org>
+
+Upstream Status:
+----------------
+This is present in 2.6.22-rc1 [1]
+
+--
+http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=6bccf755ff53241d46c01c229b3c2452b9029ec4
+
+---
+ ibmebus.c |  175 +++++++++++++++++++++++++++++++++++++++++++++++++-------------
+ 1 file changed, 139 insertions(+), 36 deletions(-)
+
+Index: b/arch/powerpc/kernel/ibmebus.c
+===================================================================
+--- a/arch/powerpc/kernel/ibmebus.c
++++ b/arch/powerpc/kernel/ibmebus.c
+@@ -2,6 +2,7 @@
+  * IBM PowerPC IBM eBus Infrastructure Support.
+  *
+  * Copyright (c) 2005 IBM Corporation
++ *  Joachim Fenkes <fenkes@de.ibm.com>
+  *  Heiko J Schick <schickhj@de.ibm.com>
+  *    
+  * All rights reserved.
+@@ -43,12 +44,12 @@
+ #include <asm/ibmebus.h>
+ #include <asm/abs_addr.h>
+ 
+-static struct ibmebus_dev ibmebus_bus_device = { /* fake "parent" device */
+-	.name = ibmebus_bus_device.ofdev.dev.bus_id,
+-	.ofdev.dev.bus_id = "ibmebus",
+-	.ofdev.dev.bus    = &ibmebus_bus_type,
++static struct device ibmebus_bus_device = { /* fake "parent" device */
++	.bus_id = "ibmebus",
+ };
+ 
++struct bus_type ibmebus_bus_type;
++
+ static void *ibmebus_alloc_coherent(struct device *dev,
+ 				    size_t size,
+ 				    dma_addr_t *dma_handle,
+@@ -158,21 +159,13 @@ static void __devinit ibmebus_dev_releas
+ 	kfree(to_ibmebus_dev(dev));
+ }
+ 
+-static ssize_t ibmebusdev_show_name(struct device *dev, 
+-				    struct device_attribute *attr, char *buf)
+-{
+-	return sprintf(buf, "%s\n", to_ibmebus_dev(dev)->name);
+-}
+-static DEVICE_ATTR(name, S_IRUSR | S_IRGRP | S_IROTH, ibmebusdev_show_name, 
+-		   NULL);
+-
+-static struct ibmebus_dev* __devinit ibmebus_register_device_common(
++static int __devinit ibmebus_register_device_common(
+ 	struct ibmebus_dev *dev, char *name)
+ {
+ 	int err = 0;
+ 
+ 	dev->name = name;
+-	dev->ofdev.dev.parent  = &ibmebus_bus_device.ofdev.dev;
++	dev->ofdev.dev.parent  = &ibmebus_bus_device;
+ 	dev->ofdev.dev.bus     = &ibmebus_bus_type;
+ 	dev->ofdev.dev.release = ibmebus_dev_release;
+ 
+@@ -182,12 +175,10 @@ static struct ibmebus_dev* __devinit ibm
+ 	if ((err = of_device_register(&dev->ofdev)) != 0) {
+ 		printk(KERN_ERR "%s: failed to register device (%d).\n",
+ 		       __FUNCTION__, err);
+-		return NULL;
++		return -ENODEV;
+ 	}
+-	
+-	device_create_file(&dev->ofdev.dev, &dev_attr_name);
+-	
+-	return dev;
++
++	return 0;
+ }
+ 
+ static struct ibmebus_dev* __devinit ibmebus_register_device_node(
+@@ -201,20 +192,19 @@ static struct ibmebus_dev* __devinit ibm
+ 	if (!loc_code) {
+                 printk(KERN_WARNING "%s: node %s missing 'ibm,loc-code'\n",
+ 		       __FUNCTION__, dn->name ? dn->name : "<unknown>");
+-		return NULL;
++		return ERR_PTR(-EINVAL);
+         }
+ 	
+ 	if (strlen(loc_code) == 0) {
+ 	        printk(KERN_WARNING "%s: 'ibm,loc-code' is invalid\n",
+ 		       __FUNCTION__);
+-		return NULL;
++		return ERR_PTR(-EINVAL);
+ 	}
+ 
+-	dev = kmalloc(sizeof(struct ibmebus_dev), GFP_KERNEL);
++	dev = kzalloc(sizeof(struct ibmebus_dev), GFP_KERNEL);
+ 	if (!dev) {
+-		return NULL;
++		return ERR_PTR(-ENOMEM);
+ 	}
+-	memset(dev, 0, sizeof(struct ibmebus_dev));
+ 
+ 	dev->ofdev.node = of_node_get(dn);
+        
+@@ -224,9 +214,9 @@ static struct ibmebus_dev* __devinit ibm
+ 		min(length, BUS_ID_SIZE - 1));
+ 
+ 	/* Register with generic device framework. */
+-	if (ibmebus_register_device_common(dev, dn->name) == NULL) {
++	if (ibmebus_register_device_common(dev, dn->name) != 0) {
+ 		kfree(dev);
+-		return NULL;
++		return ERR_PTR(-ENODEV);
+ 	}
+ 
+ 	return dev;
+@@ -237,9 +227,8 @@ static void ibmebus_probe_of_nodes(char*
+ 	struct device_node *dn = NULL;
+ 	
+ 	while ((dn = of_find_node_by_name(dn, name))) {
+-		if (ibmebus_register_device_node(dn) == NULL) {
++		if (IS_ERR(ibmebus_register_device_node(dn))) {
+ 			of_node_put(dn);
+-			
+ 			return;
+ 		}
+ 	}
+@@ -259,9 +248,15 @@ static void ibmebus_add_devices_by_id(st
+ 	return;
+ }
+ 
+-static int ibmebus_match_helper(struct device *dev, void *data)
++static int ibmebus_match_name(struct device *dev, void *data)
+ {
+-	if (strcmp((char*)data, to_ibmebus_dev(dev)->name) == 0)
++	const struct ibmebus_dev *ebus_dev = to_ibmebus_dev(dev);
++	char *name;
++
++	name = (char*)get_property(
++		ebus_dev->ofdev.node, "name", NULL);
++
++	if (name && (strcmp((char*)data, name) == 0))
+ 		return 1;
+ 	
+ 	return 0;
+@@ -269,7 +264,6 @@ static int ibmebus_match_helper(struct d
+ 
+ static int ibmebus_unregister_device(struct device *dev)
+ {
+-	device_remove_file(dev, &dev_attr_name);
+ 	of_device_unregister(to_of_device(dev));
+ 
+ 	return 0;
+@@ -282,11 +276,10 @@ static void ibmebus_remove_devices_by_id
+ 	while (strlen(idt->name) > 0) {
+ 		while ((dev = bus_find_device(&ibmebus_bus_type, NULL, 
+ 					      (void*)idt->name,
+-					      ibmebus_match_helper))) {
++					      ibmebus_match_name))) {
+ 			ibmebus_unregister_device(dev);
+ 		}
+ 		idt++;
+-		
+ 	}
+ 	
+ 	return;
+@@ -304,6 +297,9 @@ int ibmebus_register_driver(struct ibmeb
+ 	if ((err = driver_register(&drv->driver) != 0))
+ 		return err;
+ 
++	/* remove all supported devices first, in case someone
++	 * probed them manually before registering the driver */
++	ibmebus_remove_devices_by_id(drv->id_table);
+ 	ibmebus_add_devices_by_id(drv->id_table);
+ 	
+ 	return 0;
+@@ -358,9 +354,116 @@ static int ibmebus_bus_match(struct devi
+ 	return 0;
+ }
+ 
++static ssize_t name_show(struct device *dev,
++			 struct device_attribute *attr, char *buf)
++{
++	struct ibmebus_dev *ebus_dev = to_ibmebus_dev(dev);
++	char *name = (char*)get_property(ebus_dev->ofdev.node, "name", NULL);
++	return sprintf(buf, "%s\n", name);
++}
++
++static struct device_attribute ibmebus_dev_attrs[] = {
++	__ATTR_RO(name),
++	__ATTR_NULL
++};
++
++static int ibmebus_match_path(struct device *dev, void *data)
++{
++	int rc;
++	struct device_node *dn =
++		of_node_get(to_ibmebus_dev(dev)->ofdev.node);
++
++	rc = (dn->full_name && (strcasecmp((char*)data, dn->full_name) == 0));
++
++	of_node_put(dn);
++	return rc;
++}
++
++static char *ibmebus_chomp(const char *in, size_t count)
++{
++	char *out = (char*)kmalloc(count + 1, GFP_KERNEL);
++	if (!out)
++		return NULL;
++
++	memcpy(out, in, count);
++	out[count] = '\0';
++	if (out[count - 1] == '\n')
++		out[count - 1] = '\0';
++
++	return out;
++}
++
++static ssize_t ibmebus_store_probe(struct bus_type *bus,
++				   const char *buf, size_t count)
++{
++	struct device_node *dn = NULL;
++	struct ibmebus_dev *dev;
++	char *path;
++	ssize_t rc;
++
++	path = ibmebus_chomp(buf, count);
++	if (!path)
++		return -ENOMEM;
++
++	if (bus_find_device(&ibmebus_bus_type, NULL, path,
++			     ibmebus_match_path)) {
++		printk(KERN_WARNING "%s: %s has already been probed\n",
++		       __FUNCTION__, path);
++		rc = -EINVAL;
++		goto out;
++	}
++
++	if ((dn = of_find_node_by_path(path))) {
++		dev = ibmebus_register_device_node(dn);
++		of_node_put(dn);
++		rc = IS_ERR(dev) ? PTR_ERR(dev) : count;
++	} else {
++		printk(KERN_WARNING "%s: no such device node: %s",
++		       __FUNCTION__, path);
++		rc = -ENODEV;
++	}
++
++out:
++	kfree(path);
++	return rc;
++}
++
++static ssize_t ibmebus_store_remove(struct bus_type *bus,
++				    const char *buf, size_t count)
++{
++	struct device *dev;
++	char *path;
++
++	path = ibmebus_chomp(buf, count);
++	if (!path)
++		return -ENOMEM;
++
++	if ((dev = bus_find_device(&ibmebus_bus_type, NULL, path,
++				   ibmebus_match_path))) {
++		ibmebus_unregister_device(dev);
++
++		kfree(path);
++		return count;
++	} else {
++		printk(KERN_WARNING "%s: %s not on the bus\n",
++		       __FUNCTION__, path);
++
++		kfree(path);
++		return -ENODEV;
++	}
++}
++
++static struct bus_attribute ibmebus_bus_attrs[] = {
++	__ATTR(probe, S_IWUSR, NULL, ibmebus_store_probe),
++	__ATTR(remove, S_IWUSR, NULL, ibmebus_store_remove),
++	__ATTR_NULL
++};
++
+ struct bus_type ibmebus_bus_type = {
+-	.name = "ibmebus",
+-	.match = ibmebus_bus_match,
++	.name      = "ibmebus",
++	.match     = ibmebus_bus_match,
++	.dev_attrs = ibmebus_dev_attrs,
++	.bus_attrs = ibmebus_bus_attrs
+ };
+ EXPORT_SYMBOL(ibmebus_bus_type);
+ 
+@@ -377,7 +480,7 @@ static int __init ibmebus_bus_init(void)
+ 		return err;
+ 	}
+ 	
+-	err = device_register(&ibmebus_bus_device.ofdev.dev);
++	err = device_register(&ibmebus_bus_device);
+ 	if (err) {
+ 		printk(KERN_WARNING "%s: device_register returned %i\n", 
+ 		       __FUNCTION__, err);
+

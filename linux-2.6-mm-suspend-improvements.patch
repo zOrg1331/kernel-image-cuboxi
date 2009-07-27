@@ -1,0 +1,1815 @@
+swsusp-write-timer.patch
+swsusp-write-speedup.patch
+swsusp-read-timer.patch
+swsusp-read-speedup.patch
+swsusp-read-speedup-fix.patch
+swsusp-read-speedup-cleanup.patch
+swsusp-read-speedup-cleanup-2.patch
+swsusp-clean-up-browsing-of-pfns.patch
+swsusp-struct-snapshot_handle-cleanup.patch
+make-swsusp-avoid-memory-holes-and-reserved-memory-regions-on-x86_64.patch
+disable-cpu-hotplug-during-suspend-2.patch
+From: Andrew Morton <akpm@osdl.org>
+
+Add some instrumentation to the swsusp writeout code to show what bandwidth
+we're achieving.
+
+Cc: Pavel Machek <pavel@ucw.cz>
+Cc: "Rafael J. Wysocki" <rjw@sisk.pl>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ kernel/power/swap.c |   32 +++++++++++++++++++++++++++++---
+ 1 file changed, 29 insertions(+), 3 deletions(-)
+
+diff -puN kernel/power/swap.c~swsusp-write-timer kernel/power/swap.c
+--- a/kernel/power/swap.c~swsusp-write-timer
++++ a/kernel/power/swap.c
+@@ -146,6 +146,26 @@ static void release_swap_writer(struct s
+ 	handle->bitmap = NULL;
+ }
+ 
++static void show_speed(struct timeval *start, struct timeval *stop,
++			unsigned nr_pages, char *msg)
++{
++	s64 elapsed_centisecs64;
++	int centisecs;
++	int k;
++	int kps;
++
++	elapsed_centisecs64 = timeval_to_ns(stop) - timeval_to_ns(start);
++	do_div(elapsed_centisecs64, NSEC_PER_SEC / 100);
++	centisecs = elapsed_centisecs64;
++	if (centisecs == 0)
++		centisecs = 1;	/* avoid div-by-zero */
++	k = nr_pages * (PAGE_SIZE / 1024);
++	kps = (k * 100) / centisecs;
++	printk("%s %d kbytes in %d.%02d seconds (%d.%02d MB/s)\n", msg, k,
++			centisecs / 100, centisecs % 100,
++			kps / 1000, (kps % 1000) / 10);
++}
++
+ static int get_swap_writer(struct swap_map_handle *handle)
+ {
+ 	handle->cur = (struct swap_map_page *)get_zeroed_page(GFP_KERNEL);
+@@ -206,17 +226,21 @@ static int flush_swap_writer(struct swap
+ 
+ static int save_image(struct swap_map_handle *handle,
+                       struct snapshot_handle *snapshot,
+-                      unsigned int nr_pages)
++                      unsigned int nr_to_write)
+ {
+ 	unsigned int m;
+ 	int ret;
+ 	int error = 0;
++	int nr_pages;
++	struct timeval start;
++	struct timeval stop;
+ 
+-	printk("Saving image data pages (%u pages) ...     ", nr_pages);
+-	m = nr_pages / 100;
++	printk("Saving image data pages (%u pages) ...     ", nr_to_write);
++	m = nr_to_write / 100;
+ 	if (!m)
+ 		m = 1;
+ 	nr_pages = 0;
++	do_gettimeofday(&start);
+ 	do {
+ 		ret = snapshot_read_next(snapshot, PAGE_SIZE);
+ 		if (ret > 0) {
+@@ -228,8 +252,10 @@ static int save_image(struct swap_map_ha
+ 			nr_pages++;
+ 		}
+ 	} while (ret > 0);
++	do_gettimeofday(&stop);
+ 	if (!error)
+ 		printk("\b\b\b\bdone\n");
++	show_speed(&start, &stop, nr_to_write, "Wrote");
+ 	return error;
+ }
+ 
+_
+From: Andrew Morton <akpm@osdl.org>
+
+Switch the swsusp writeout code from 4k-at-a-time to 4MB-at-a-time.
+
+Crufty old PIII testbox:
+	12.9 MB/s -> 20.9 MB/s
+
+Sony Vaio:
+	14.7 MB/s -> 26.5 MB/s
+
+The implementation is crude.  A better one would use larger BIOs, but wouldn't
+gain any performance.
+
+The memcpys will be mostly pipelined with the IO and basically come for free.
+
+The ENOMEM path has not been tested.  It should be.
+
+Cc: Pavel Machek <pavel@ucw.cz>
+Cc: "Rafael J. Wysocki" <rjw@sisk.pl>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ include/linux/swap.h |    5 +-
+ kernel/power/swap.c  |   93 +++++++++++++++++++++++++++++++++--------
+ mm/page_io.c         |   23 +++++++---
+ 3 files changed, 97 insertions(+), 24 deletions(-)
+
+diff -puN include/linux/swap.h~swsusp-write-speedup include/linux/swap.h
+--- a/include/linux/swap.h~swsusp-write-speedup
++++ a/include/linux/swap.h
+@@ -12,6 +12,8 @@
+ 
+ struct notifier_block;
+ 
++struct bio;
++
+ #define SWAP_FLAG_PREFER	0x8000	/* set if swap priority specified */
+ #define SWAP_FLAG_PRIO_MASK	0x7fff
+ #define SWAP_FLAG_PRIO_SHIFT	0
+@@ -215,7 +217,8 @@ extern void swap_unplug_io_fn(struct bac
+ /* linux/mm/page_io.c */
+ extern int swap_readpage(struct file *, struct page *);
+ extern int swap_writepage(struct page *page, struct writeback_control *wbc);
+-extern int rw_swap_page_sync(int, swp_entry_t, struct page *);
++extern int rw_swap_page_sync(int rw, swp_entry_t entry, struct page *page,
++				struct bio **bio_chain);
+ 
+ /* linux/mm/swap_state.c */
+ extern struct address_space swapper_space;
+diff -puN kernel/power/swap.c~swsusp-write-speedup kernel/power/swap.c
+--- a/kernel/power/swap.c~swsusp-write-speedup
++++ a/kernel/power/swap.c
+@@ -49,18 +49,16 @@ static int mark_swapfiles(swp_entry_t st
+ {
+ 	int error;
+ 
+-	rw_swap_page_sync(READ,
+-			  swp_entry(root_swap, 0),
+-			  virt_to_page((unsigned long)&swsusp_header));
++	rw_swap_page_sync(READ, swp_entry(root_swap, 0),
++			  virt_to_page((unsigned long)&swsusp_header), NULL);
+ 	if (!memcmp("SWAP-SPACE",swsusp_header.sig, 10) ||
+ 	    !memcmp("SWAPSPACE2",swsusp_header.sig, 10)) {
+ 		memcpy(swsusp_header.orig_sig,swsusp_header.sig, 10);
+ 		memcpy(swsusp_header.sig,SWSUSP_SIG, 10);
+ 		swsusp_header.image = start;
+-		error = rw_swap_page_sync(WRITE,
+-					  swp_entry(root_swap, 0),
+-					  virt_to_page((unsigned long)
+-						       &swsusp_header));
++		error = rw_swap_page_sync(WRITE, swp_entry(root_swap, 0),
++				virt_to_page((unsigned long)&swsusp_header),
++				NULL);
+ 	} else {
+ 		pr_debug("swsusp: Partition is not swap space.\n");
+ 		error = -ENODEV;
+@@ -88,16 +86,37 @@ static int swsusp_swap_check(void) /* Th
+  *	write_page - Write one page to given swap location.
+  *	@buf:		Address we're writing.
+  *	@offset:	Offset of the swap page we're writing to.
++ *	@bio_chain:	Link the next write BIO here
+  */
+ 
+-static int write_page(void *buf, unsigned long offset)
++static int write_page(void *buf, unsigned long offset, struct bio **bio_chain)
+ {
+ 	swp_entry_t entry;
+ 	int error = -ENOSPC;
+ 
+ 	if (offset) {
++		struct page *page = virt_to_page(buf);
++
++		if (bio_chain) {
++			/*
++			 * Whether or not we successfully allocated a copy page,
++			 * we take a ref on the page here.  It gets undone in
++			 * wait_on_bio_chain().
++			 */
++			struct page *page_copy;
++			page_copy = alloc_page(GFP_ATOMIC);
++			if (page_copy == NULL) {
++				WARN_ON_ONCE(1);
++				bio_chain = NULL;	/* Go synchronous */
++				get_page(page);
++			} else {
++				memcpy(page_address(page_copy),
++					page_address(page), PAGE_SIZE);
++				page = page_copy;
++			}
++		}
+ 		entry = swp_entry(root_swap, offset);
+-		error = rw_swap_page_sync(WRITE, entry, virt_to_page(buf));
++		error = rw_swap_page_sync(WRITE, entry, page, bio_chain);
+ 	}
+ 	return error;
+ }
+@@ -185,37 +204,68 @@ static int get_swap_writer(struct swap_m
+ 	return 0;
+ }
+ 
+-static int swap_write_page(struct swap_map_handle *handle, void *buf)
++static int wait_on_bio_chain(struct bio **bio_chain)
+ {
+-	int error;
++	struct bio *bio;
++	struct bio *next_bio;
++	int ret = 0;
++
++	if (bio_chain == NULL)
++		return 0;
++
++	bio = *bio_chain;
++	while (bio) {
++		struct page *page;
++
++		next_bio = bio->bi_private;
++		page = bio->bi_io_vec[0].bv_page;
++		wait_on_page_locked(page);
++		if (!PageUptodate(page) || PageError(page))
++			ret = -EIO;
++		put_page(page);
++		bio_put(bio);
++		bio = next_bio;
++	}
++	*bio_chain = NULL;
++	return ret;
++}
++
++static int swap_write_page(struct swap_map_handle *handle, void *buf,
++				struct bio **bio_chain)
++{
++	int error = 0;
+ 	unsigned long offset;
+ 
+ 	if (!handle->cur)
+ 		return -EINVAL;
+ 	offset = alloc_swap_page(root_swap, handle->bitmap);
+-	error = write_page(buf, offset);
++	error = write_page(buf, offset, bio_chain);
+ 	if (error)
+ 		return error;
+ 	handle->cur->entries[handle->k++] = offset;
+ 	if (handle->k >= MAP_PAGE_ENTRIES) {
++		error = wait_on_bio_chain(bio_chain);
++		if (error)
++			goto out;
+ 		offset = alloc_swap_page(root_swap, handle->bitmap);
+ 		if (!offset)
+ 			return -ENOSPC;
+ 		handle->cur->next_swap = offset;
+-		error = write_page(handle->cur, handle->cur_swap);
++		error = write_page(handle->cur, handle->cur_swap, NULL);
+ 		if (error)
+-			return error;
++			goto out;
+ 		memset(handle->cur, 0, PAGE_SIZE);
+ 		handle->cur_swap = offset;
+ 		handle->k = 0;
+ 	}
+-	return 0;
++out:
++	return error;
+ }
+ 
+ static int flush_swap_writer(struct swap_map_handle *handle)
+ {
+ 	if (handle->cur && handle->cur_swap)
+-		return write_page(handle->cur, handle->cur_swap);
++		return write_page(handle->cur, handle->cur_swap, NULL);
+ 	else
+ 		return -EINVAL;
+ }
+@@ -232,6 +282,8 @@ static int save_image(struct swap_map_ha
+ 	int ret;
+ 	int error = 0;
+ 	int nr_pages;
++	int err2;
++	struct bio *bio;
+ 	struct timeval start;
+ 	struct timeval stop;
+ 
+@@ -240,11 +292,13 @@ static int save_image(struct swap_map_ha
+ 	if (!m)
+ 		m = 1;
+ 	nr_pages = 0;
++	bio = NULL;
+ 	do_gettimeofday(&start);
+ 	do {
+ 		ret = snapshot_read_next(snapshot, PAGE_SIZE);
+ 		if (ret > 0) {
+-			error = swap_write_page(handle, data_of(*snapshot));
++			error = swap_write_page(handle, data_of(*snapshot),
++						&bio);
+ 			if (error)
+ 				break;
+ 			if (!(nr_pages % m))
+@@ -252,8 +306,11 @@ static int save_image(struct swap_map_ha
+ 			nr_pages++;
+ 		}
+ 	} while (ret > 0);
++	err2 = wait_on_bio_chain(&bio);
+ 	do_gettimeofday(&stop);
+ 	if (!error)
++		error = err2;
++	if (!error)
+ 		printk("\b\b\b\bdone\n");
+ 	show_speed(&start, &stop, nr_to_write, "Wrote");
+ 	return error;
+@@ -307,7 +364,7 @@ int swsusp_write(void)
+ 	error = get_swap_writer(&handle);
+ 	if (!error) {
+ 		unsigned long start = handle.cur_swap;
+-		error = swap_write_page(&handle, header);
++		error = swap_write_page(&handle, header, NULL);
+ 		if (!error)
+ 			error = save_image(&handle, &snapshot,
+ 					header->pages - 1);
+diff -puN mm/page_io.c~swsusp-write-speedup mm/page_io.c
+--- a/mm/page_io.c~swsusp-write-speedup
++++ a/mm/page_io.c
+@@ -137,10 +137,12 @@ out:
+  * We use end_swap_bio_read() even for writes, because it happens to do what
+  * we want.
+  */
+-int rw_swap_page_sync(int rw, swp_entry_t entry, struct page *page)
++int rw_swap_page_sync(int rw, swp_entry_t entry, struct page *page,
++			struct bio **bio_chain)
+ {
+ 	struct bio *bio;
+ 	int ret = 0;
++	int bio_rw;
+ 
+ 	lock_page(page);
+ 
+@@ -151,11 +153,22 @@ int rw_swap_page_sync(int rw, swp_entry_
+ 		goto out;
+ 	}
+ 
+-	submit_bio(rw | (1 << BIO_RW_SYNC), bio);
+-	wait_on_page_locked(page);
++	bio_rw = rw;
++	if (!bio_chain)
++		bio_rw |= (1 << BIO_RW_SYNC);
++	if (bio_chain)
++		bio_get(bio);
++	submit_bio(bio_rw, bio);
++	if (bio_chain == NULL) {
++		wait_on_page_locked(page);
+ 
+-	if (!PageUptodate(page) || PageError(page))
+-		ret = -EIO;
++		if (!PageUptodate(page) || PageError(page))
++			ret = -EIO;
++	}
++	if (bio_chain) {
++		bio->bi_private = *bio_chain;
++		*bio_chain = bio;
++	}
+ out:
+ 	return ret;
+ }
+_
+From: Andrew Morton <akpm@osdl.org>
+
+Add some instrumentation to the swsusp readin code to show what bandwidth
+we're achieving.
+
+Cc: Pavel Machek <pavel@ucw.cz>
+Cc: "Rafael J. Wysocki" <rjw@sisk.pl>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ kernel/power/swap.c |    5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff -puN kernel/power/swap.c~swsusp-read-timer kernel/power/swap.c
+--- a/kernel/power/swap.c~swsusp-read-timer
++++ a/kernel/power/swap.c
+@@ -522,12 +522,15 @@ static int load_image(struct swap_map_ha
+ 	unsigned int m;
+ 	int ret;
+ 	int error = 0;
++	struct timeval start;
++	struct timeval stop;
+ 
+ 	printk("Loading image data pages (%u pages) ...     ", nr_pages);
+ 	m = nr_pages / 100;
+ 	if (!m)
+ 		m = 1;
+ 	nr_pages = 0;
++	do_gettimeofday(&start);
+ 	do {
+ 		ret = snapshot_write_next(snapshot, PAGE_SIZE);
+ 		if (ret > 0) {
+@@ -539,11 +542,13 @@ static int load_image(struct swap_map_ha
+ 			nr_pages++;
+ 		}
+ 	} while (ret > 0);
++	do_gettimeofday(&stop);
+ 	if (!error) {
+ 		printk("\b\b\b\bdone\n");
+ 		if (!snapshot_image_loaded(snapshot))
+ 			error = -ENODATA;
+ 	}
++	show_speed(&start, &stop, nr_pages, "Read");
+ 	return error;
+ }
+ 
+_
+From: Andrew Morton <akpm@osdl.org>
+
+Implement async reads for swsusp resuming.
+
+Crufty old PIII testbox:
+	15.7 MB/s -> 20.3 MB/s
+
+Sony Vaio:
+	14.6 MB/s -> 33.3 MB/s
+
+I didn't implement the post-resume bio_set_pages_dirty().  I don't really
+understand why resume needs to run set_page_dirty() against these pages.
+
+It might be a worry that this code modifies PG_Uptodate, PG_Error and
+PG_Locked against the image pages.  Can this possibly affect the resumed-into
+kernel?  Hopefully not, if we're atomically restoring its mem_map?
+
+Cc: Pavel Machek <pavel@ucw.cz>
+Cc: "Rafael J. Wysocki" <rjw@sisk.pl>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ include/linux/swap.h    |    1 
+ kernel/power/power.h    |    1 
+ kernel/power/snapshot.c |   11 ++-
+ kernel/power/swap.c     |  109 +++++++++++++++++++++++++-------------
+ mm/page_io.c            |    2 
+ 5 files changed, 83 insertions(+), 41 deletions(-)
+
+diff -puN include/linux/swap.h~swsusp-read-speedup include/linux/swap.h
+--- a/include/linux/swap.h~swsusp-read-speedup
++++ a/include/linux/swap.h
+@@ -219,6 +219,7 @@ extern int swap_readpage(struct file *, 
+ extern int swap_writepage(struct page *page, struct writeback_control *wbc);
+ extern int rw_swap_page_sync(int rw, swp_entry_t entry, struct page *page,
+ 				struct bio **bio_chain);
++extern int end_swap_bio_read(struct bio *bio, unsigned int bytes_done, int err);
+ 
+ /* linux/mm/swap_state.c */
+ extern struct address_space swapper_space;
+diff -puN kernel/power/power.h~swsusp-read-speedup kernel/power/power.h
+--- a/kernel/power/power.h~swsusp-read-speedup
++++ a/kernel/power/power.h
+@@ -58,6 +58,7 @@ struct snapshot_handle {
+ 	struct pbe	*pbe, *last_pbe;
+ 	void		*buffer;
+ 	unsigned int	buf_offset;
++	int		sync_read;
+ };
+ 
+ #define data_of(handle)	((handle).buffer + (handle).buf_offset)
+diff -puN kernel/power/snapshot.c~swsusp-read-speedup kernel/power/snapshot.c
+--- a/kernel/power/snapshot.c~swsusp-read-speedup
++++ a/kernel/power/snapshot.c
+@@ -314,7 +314,7 @@ static unsigned int unsafe_pages;
+  *	and we count them using unsafe_pages
+  */
+ 
+-static inline void *alloc_image_page(gfp_t gfp_mask, int safe_needed)
++static void *alloc_image_page(gfp_t gfp_mask, int safe_needed)
+ {
+ 	void *res;
+ 
+@@ -828,13 +828,16 @@ int snapshot_write_next(struct snapshot_
+ 	}
+ 	if (!handle->offset)
+ 		handle->buffer = buffer;
++	handle->sync_read = 1;
+ 	if (handle->prev < handle->page) {
+ 		if (!handle->prev) {
+-			error = load_header(handle, (struct swsusp_info *)buffer);
++			error = load_header(handle,
++					(struct swsusp_info *)buffer);
+ 			if (error)
+ 				return error;
+ 		} else if (handle->prev <= nr_meta_pages) {
+-			handle->pbe = unpack_orig_addresses(buffer, handle->pbe);
++			handle->pbe = unpack_orig_addresses(buffer,
++							handle->pbe);
+ 			if (!handle->pbe) {
+ 				error = prepare_image(handle);
+ 				if (error)
+@@ -842,10 +845,12 @@ int snapshot_write_next(struct snapshot_
+ 				handle->pbe = pagedir_nosave;
+ 				handle->last_pbe = NULL;
+ 				handle->buffer = get_buffer(handle);
++				handle->sync_read = 0;
+ 			}
+ 		} else {
+ 			handle->pbe = handle->pbe->next;
+ 			handle->buffer = get_buffer(handle);
++			handle->sync_read = 0;
+ 		}
+ 		handle->prev = handle->page;
+ 	}
+diff -puN kernel/power/swap.c~swsusp-read-speedup kernel/power/swap.c
+--- a/kernel/power/swap.c~swsusp-read-speedup
++++ a/kernel/power/swap.c
+@@ -22,6 +22,7 @@
+ #include <linux/device.h>
+ #include <linux/buffer_head.h>
+ #include <linux/bio.h>
++#include <linux/blkdev.h>
+ #include <linux/swap.h>
+ #include <linux/swapops.h>
+ #include <linux/pm.h>
+@@ -214,6 +215,8 @@ static int wait_on_bio_chain(struct bio 
+ 		return 0;
+ 
+ 	bio = *bio_chain;
++	if (bio == NULL)
++		return 0;
+ 	while (bio) {
+ 		struct page *page;
+ 
+@@ -349,7 +353,8 @@ int swsusp_write(void)
+ 	int error;
+ 
+ 	if ((error = swsusp_swap_check())) {
+-		printk(KERN_ERR "swsusp: Cannot find swap device, try swapon -a.\n");
++		printk(KERN_ERR "swsusp: Cannot find swap device, try "
++				"swapon -a.\n");
+ 		return error;
+ 	}
+ 	memset(&snapshot, 0, sizeof(struct snapshot_handle));
+@@ -415,7 +420,8 @@ static struct block_device *resume_bdev;
+  *	Then submit it and wait.
+  */
+ 
+-static int submit(int rw, pgoff_t page_off, void *page)
++static int submit(int rw, pgoff_t page_off, struct page *page,
++			struct bio **bio_chain)
+ {
+ 	int error = 0;
+ 	struct bio *bio;
+@@ -427,31 +433,41 @@ static int submit(int rw, pgoff_t page_o
+ 	bio->bi_bdev = resume_bdev;
+ 	bio->bi_end_io = end_io;
+ 
+-	if (bio_add_page(bio, virt_to_page(page), PAGE_SIZE, 0) < PAGE_SIZE) {
+-		printk("swsusp: ERROR: adding page to bio at %ld\n",page_off);
++	if (bio_add_page(bio, page, PAGE_SIZE, 0) < PAGE_SIZE) {
++		printk("swsusp: ERROR: adding page to bio at %ld\n", page_off);
+ 		error = -EFAULT;
+ 		goto Done;
+ 	}
+ 
+-	atomic_set(&io_done, 1);
+-	submit_bio(rw | (1 << BIO_RW_SYNC), bio);
+-	while (atomic_read(&io_done))
+-		yield();
+-	if (rw == READ)
+-		bio_set_pages_dirty(bio);
++	if (bio_chain == NULL) {
++		atomic_set(&io_done, 1);
++		submit_bio(rw | (1 << BIO_RW_SYNC), bio);
++		while (atomic_read(&io_done))
++			yield();
++		if (rw == READ)
++			bio_set_pages_dirty(bio);
++		bio_put(bio);
++	} else {
++		lock_page(page);
++		get_page(page);
++		bio_get(bio);
++		bio->bi_end_io = end_swap_bio_read;
++		bio->bi_private = *bio_chain;
++		*bio_chain = bio;
++		submit_bio(rw, bio);
++	}
+  Done:
+-	bio_put(bio);
+ 	return error;
+ }
+ 
+-static int bio_read_page(pgoff_t page_off, void *page)
++static int bio_read_page(pgoff_t page_off, void *addr, struct bio **bio_chain)
+ {
+-	return submit(READ, page_off, page);
++	return submit(READ, page_off, virt_to_page(addr), bio_chain);
+ }
+ 
+-static int bio_write_page(pgoff_t page_off, void *page)
++static int bio_write_page(pgoff_t page_off, void *addr)
+ {
+-	return submit(WRITE, page_off, page);
++	return submit(WRITE, page_off, virt_to_page(addr), NULL);
+ }
+ 
+ /**
+@@ -476,7 +492,7 @@ static int get_swap_reader(struct swap_m
+ 	handle->cur = (struct swap_map_page *)get_zeroed_page(GFP_ATOMIC);
+ 	if (!handle->cur)
+ 		return -ENOMEM;
+-	error = bio_read_page(swp_offset(start), handle->cur);
++	error = bio_read_page(swp_offset(start), handle->cur, NULL);
+ 	if (error) {
+ 		release_swap_reader(handle);
+ 		return error;
+@@ -485,7 +501,8 @@ static int get_swap_reader(struct swap_m
+ 	return 0;
+ }
+ 
+-static int swap_read_page(struct swap_map_handle *handle, void *buf)
++static int swap_read_page(struct swap_map_handle *handle, void *buf,
++				struct bio **bio_chain)
+ {
+ 	unsigned long offset;
+ 	int error;
+@@ -495,16 +512,17 @@ static int swap_read_page(struct swap_ma
+ 	offset = handle->cur->entries[handle->k];
+ 	if (!offset)
+ 		return -EFAULT;
+-	error = bio_read_page(offset, buf);
++	error = bio_read_page(offset, buf, bio_chain);
+ 	if (error)
+ 		return error;
+ 	if (++handle->k >= MAP_PAGE_ENTRIES) {
++		error = wait_on_bio_chain(bio_chain);
+ 		handle->k = 0;
+ 		offset = handle->cur->next_swap;
+ 		if (!offset)
+ 			release_swap_reader(handle);
+-		else
+-			error = bio_read_page(offset, handle->cur);
++		else if (!error)
++			error = bio_read_page(offset, handle->cur, NULL);
+ 	}
+ 	return error;
+ }
+@@ -517,38 +535,55 @@ static int swap_read_page(struct swap_ma
+ 
+ static int load_image(struct swap_map_handle *handle,
+                       struct snapshot_handle *snapshot,
+-                      unsigned int nr_pages)
++                      unsigned int nr_to_read)
+ {
+ 	unsigned int m;
+-	int ret;
+ 	int error = 0;
+ 	struct timeval start;
+ 	struct timeval stop;
++	struct bio *bio;
++	int err2;
++	unsigned nr_pages;
++	int sync = 0;
++	int async = 0;
+ 
+-	printk("Loading image data pages (%u pages) ...     ", nr_pages);
+-	m = nr_pages / 100;
++	printk("Loading image data pages (%u pages) ...     ", nr_to_read);
++	m = nr_to_read / 100;
+ 	if (!m)
+ 		m = 1;
+ 	nr_pages = 0;
++	bio = NULL;
+ 	do_gettimeofday(&start);
+-	do {
+-		ret = snapshot_write_next(snapshot, PAGE_SIZE);
+-		if (ret > 0) {
+-			error = swap_read_page(handle, data_of(*snapshot));
+-			if (error)
+-				break;
+-			if (!(nr_pages % m))
+-				printk("\b\b\b\b%3d%%", nr_pages / m);
+-			nr_pages++;
++	for ( ; ; ) {
++		error = snapshot_write_next(snapshot, PAGE_SIZE);
++		if (error <= 0)
++			break;
++		error = swap_read_page(handle, data_of(*snapshot), &bio);
++		if (error)
++			break;
++		if (snapshot->sync_read) {
++			error = wait_on_bio_chain(&bio);
++			sync++;
++		} else {
++			async++;
+ 		}
+-	} while (ret > 0);
++		if (error)
++			break;
++		if (!(nr_pages % m))
++			printk("\b\b\b\b%3d%%", nr_pages / m);
++		nr_pages++;
++	}
++	err2 = wait_on_bio_chain(&bio);
+ 	do_gettimeofday(&stop);
++	if (!error)
++		error = err2;
+ 	if (!error) {
+ 		printk("\b\b\b\bdone\n");
+ 		if (!snapshot_image_loaded(snapshot))
+ 			error = -ENODATA;
+ 	}
+-	show_speed(&start, &stop, nr_pages, "Read");
++	show_speed(&start, &stop, nr_to_read, "Read");
++	printk("sync=%d async=%d\n", sync, async);
+ 	return error;
+ }
+ 
+@@ -571,7 +606,7 @@ int swsusp_read(void)
+ 	header = (struct swsusp_info *)data_of(snapshot);
+ 	error = get_swap_reader(&handle, swsusp_header.image);
+ 	if (!error)
+-		error = swap_read_page(&handle, header);
++		error = swap_read_page(&handle, header, NULL);
+ 	if (!error)
+ 		error = load_image(&handle, &snapshot, header->pages - 1);
+ 	release_swap_reader(&handle);
+@@ -597,7 +632,7 @@ int swsusp_check(void)
+ 	if (!IS_ERR(resume_bdev)) {
+ 		set_blocksize(resume_bdev, PAGE_SIZE);
+ 		memset(&swsusp_header, 0, sizeof(swsusp_header));
+-		if ((error = bio_read_page(0, &swsusp_header)))
++		if ((error = bio_read_page(0, &swsusp_header, NULL)))
+ 			return error;
+ 		if (!memcmp(SWSUSP_SIG, swsusp_header.sig, 10)) {
+ 			memcpy(swsusp_header.sig, swsusp_header.orig_sig, 10);
+diff -puN mm/page_io.c~swsusp-read-speedup mm/page_io.c
+--- a/mm/page_io.c~swsusp-read-speedup
++++ a/mm/page_io.c
+@@ -59,7 +59,7 @@ static int end_swap_bio_write(struct bio
+ 	return 0;
+ }
+ 
+-static int end_swap_bio_read(struct bio *bio, unsigned int bytes_done, int err)
++int end_swap_bio_read(struct bio *bio, unsigned int bytes_done, int err)
+ {
+ 	const int uptodate = test_bit(BIO_UPTODATE, &bio->bi_flags);
+ 	struct page *page = bio->bi_io_vec[0].bv_page;
+_
+From: Andrew Morton <akpm@osdl.org>
+
+Fix an error-path BIO leak.
+
+Cc: Pavel Machek <pavel@ucw.cz>
+Cc: "Rafael J. Wysocki" <rjw@sisk.pl>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ kernel/power/swap.c |    8 +++-----
+ 1 file changed, 3 insertions(+), 5 deletions(-)
+
+diff -puN kernel/power/swap.c~swsusp-read-speedup-fix kernel/power/swap.c
+--- a/kernel/power/swap.c~swsusp-read-speedup-fix
++++ a/kernel/power/swap.c
+@@ -423,7 +423,6 @@ static struct block_device *resume_bdev;
+ static int submit(int rw, pgoff_t page_off, struct page *page,
+ 			struct bio **bio_chain)
+ {
+-	int error = 0;
+ 	struct bio *bio;
+ 
+ 	bio = bio_alloc(GFP_ATOMIC, 1);
+@@ -435,8 +434,8 @@ static int submit(int rw, pgoff_t page_o
+ 
+ 	if (bio_add_page(bio, page, PAGE_SIZE, 0) < PAGE_SIZE) {
+ 		printk("swsusp: ERROR: adding page to bio at %ld\n", page_off);
+-		error = -EFAULT;
+-		goto Done;
++		bio_put(bio);
++		return -EFAULT;
+ 	}
+ 
+ 	if (bio_chain == NULL) {
+@@ -456,8 +455,7 @@ static int submit(int rw, pgoff_t page_o
+ 		*bio_chain = bio;
+ 		submit_bio(rw, bio);
+ 	}
+- Done:
+-	return error;
++	return 0;
+ }
+ 
+ static int bio_read_page(pgoff_t page_off, void *addr, struct bio **bio_chain)
+_
+From: Andrew Morton <akpm@osdl.org>
+
+Kill off the polled-mode read completion code, clean a few little things up.
+
+Cc: Pavel Machek <pavel@ucw.cz>
+Cc: "Rafael J. Wysocki" <rjw@sisk.pl>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ kernel/power/swap.c |   39 ++++++++-------------------------------
+ 1 file changed, 8 insertions(+), 31 deletions(-)
+
+diff -puN kernel/power/swap.c~swsusp-read-speedup-cleanup kernel/power/swap.c
+--- a/kernel/power/swap.c~swsusp-read-speedup-cleanup
++++ a/kernel/power/swap.c
+@@ -386,27 +386,6 @@ int swsusp_write(void)
+ 	return error;
+ }
+ 
+-/*
+- *	Using bio to read from swap.
+- *	This code requires a bit more work than just using buffer heads
+- *	but, it is the recommended way for 2.5/2.6.
+- *	The following are to signal the beginning and end of I/O. Bios
+- *	finish asynchronously, while we want them to happen synchronously.
+- *	A simple atomic_t, and a wait loop take care of this problem.
+- */
+-
+-static atomic_t io_done = ATOMIC_INIT(0);
+-
+-static int end_io(struct bio *bio, unsigned int num, int err)
+-{
+-	if (!test_bit(BIO_UPTODATE, &bio->bi_flags)) {
+-		printk(KERN_ERR "I/O error reading swsusp image.\n");
+-		return -EIO;
+-	}
+-	atomic_set(&io_done, 0);
+-	return 0;
+-}
+-
+ static struct block_device *resume_bdev;
+ 
+ /**
+@@ -414,12 +393,12 @@ static struct block_device *resume_bdev;
+  *	@rw:	READ or WRITE.
+  *	@off	physical offset of page.
+  *	@page:	page we're reading or writing.
++ *	@bio_chain: list of pending biod (for async reading)
+  *
+  *	Straight from the textbook - allocate and initialize the bio.
+- *	If we're writing, make sure the page is marked as dirty.
+- *	Then submit it and wait.
++ *	If we're reading, make sure the page is marked as dirty.
++ *	Then submit it and, if @bio_chain == NULL, wait.
+  */
+-
+ static int submit(int rw, pgoff_t page_off, struct page *page,
+ 			struct bio **bio_chain)
+ {
+@@ -430,7 +409,7 @@ static int submit(int rw, pgoff_t page_o
+ 		return -ENOMEM;
+ 	bio->bi_sector = page_off * (PAGE_SIZE >> 9);
+ 	bio->bi_bdev = resume_bdev;
+-	bio->bi_end_io = end_io;
++	bio->bi_end_io = end_swap_bio_read;
+ 
+ 	if (bio_add_page(bio, page, PAGE_SIZE, 0) < PAGE_SIZE) {
+ 		printk("swsusp: ERROR: adding page to bio at %ld\n", page_off);
+@@ -438,19 +417,17 @@ static int submit(int rw, pgoff_t page_o
+ 		return -EFAULT;
+ 	}
+ 
++	lock_page(page);
++	bio_get(bio);
++
+ 	if (bio_chain == NULL) {
+-		atomic_set(&io_done, 1);
+ 		submit_bio(rw | (1 << BIO_RW_SYNC), bio);
+-		while (atomic_read(&io_done))
+-			yield();
++		wait_on_page_locked(page);
+ 		if (rw == READ)
+ 			bio_set_pages_dirty(bio);
+ 		bio_put(bio);
+ 	} else {
+-		lock_page(page);
+ 		get_page(page);
+-		bio_get(bio);
+-		bio->bi_end_io = end_swap_bio_read;
+ 		bio->bi_private = *bio_chain;
+ 		*bio_chain = bio;
+ 		submit_bio(rw, bio);
+_
+From: Andrew Morton <akpm@osdl.org>
+
+Remove left-over diagnostic stuff.
+
+Cc: Pavel Machek <pavel@ucw.cz>
+Cc: "Rafael J. Wysocki" <rjw@sisk.pl>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ kernel/power/swap.c |    9 +--------
+ 1 file changed, 1 insertion(+), 8 deletions(-)
+
+diff -puN kernel/power/swap.c~swsusp-read-speedup-cleanup-2 kernel/power/swap.c
+--- a/kernel/power/swap.c~swsusp-read-speedup-cleanup-2
++++ a/kernel/power/swap.c
+@@ -519,8 +519,6 @@ static int load_image(struct swap_map_ha
+ 	struct bio *bio;
+ 	int err2;
+ 	unsigned nr_pages;
+-	int sync = 0;
+-	int async = 0;
+ 
+ 	printk("Loading image data pages (%u pages) ...     ", nr_to_read);
+ 	m = nr_to_read / 100;
+@@ -536,12 +534,8 @@ static int load_image(struct swap_map_ha
+ 		error = swap_read_page(handle, data_of(*snapshot), &bio);
+ 		if (error)
+ 			break;
+-		if (snapshot->sync_read) {
++		if (snapshot->sync_read)
+ 			error = wait_on_bio_chain(&bio);
+-			sync++;
+-		} else {
+-			async++;
+-		}
+ 		if (error)
+ 			break;
+ 		if (!(nr_pages % m))
+@@ -558,7 +552,6 @@ static int load_image(struct swap_map_ha
+ 			error = -ENODATA;
+ 	}
+ 	show_speed(&start, &stop, nr_to_read, "Read");
+-	printk("sync=%d async=%d\n", sync, async);
+ 	return error;
+ }
+ 
+_
+From: "Rafael J. Wysocki" <rjw@sisk.pl>
+
+Clean up some loops over pfns for each zone in snapshot.c: reduce the
+number of additions to perform, rework detection of saveable pages and make
+the code a bit less difficult to understand, hopefully.
+
+Signed-off-by: Rafael J. Wysocki <rjw@sisk.pl>
+Acked-by: Pavel Machek <pavel@ucw.cz>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ kernel/power/snapshot.c |   62 +++++++++++++++++++-------------------
+ 1 file changed, 32 insertions(+), 30 deletions(-)
+
+diff -puN kernel/power/snapshot.c~swsusp-clean-up-browsing-of-pfns kernel/power/snapshot.c
+--- a/kernel/power/snapshot.c~swsusp-clean-up-browsing-of-pfns
++++ a/kernel/power/snapshot.c
+@@ -156,7 +156,7 @@ static inline int save_highmem(void) {re
+ static inline int restore_highmem(void) {return 0;}
+ #endif
+ 
+-static int pfn_is_nosave(unsigned long pfn)
++static inline int pfn_is_nosave(unsigned long pfn)
+ {
+ 	unsigned long nosave_begin_pfn = __pa(&__nosave_begin) >> PAGE_SHIFT;
+ 	unsigned long nosave_end_pfn = PAGE_ALIGN(__pa(&__nosave_end)) >> PAGE_SHIFT;
+@@ -167,43 +167,43 @@ static int pfn_is_nosave(unsigned long p
+  *	saveable - Determine whether a page should be cloned or not.
+  *	@pfn:	The page
+  *
+- *	We save a page if it's Reserved, and not in the range of pages
+- *	statically defined as 'unsaveable', or if it isn't reserved, and
+- *	isn't part of a free chunk of pages.
++ *	We save a page if it isn't Nosave, and is not in the range of pages
++ *	statically defined as 'unsaveable', and it
++ *	isn't a part of a free chunk of pages.
+  */
+ 
+-static int saveable(struct zone *zone, unsigned long *zone_pfn)
++static struct page *saveable_page(unsigned long pfn)
+ {
+-	unsigned long pfn = *zone_pfn + zone->zone_start_pfn;
+ 	struct page *page;
+ 
+ 	if (!pfn_valid(pfn))
+-		return 0;
++		return NULL;
+ 
+ 	page = pfn_to_page(pfn);
+-	BUG_ON(PageReserved(page) && PageNosave(page));
++
+ 	if (PageNosave(page))
+-		return 0;
++		return NULL;
+ 	if (PageReserved(page) && pfn_is_nosave(pfn))
+-		return 0;
++		return NULL;
+ 	if (PageNosaveFree(page))
+-		return 0;
++		return NULL;
+ 
+-	return 1;
++	return page;
+ }
+ 
+ unsigned int count_data_pages(void)
+ {
+ 	struct zone *zone;
+-	unsigned long zone_pfn;
++	unsigned long pfn, max_zone_pfn;
+ 	unsigned int n = 0;
+ 
+ 	for_each_zone (zone) {
+ 		if (is_highmem(zone))
+ 			continue;
+ 		mark_free_pages(zone);
+-		for (zone_pfn = 0; zone_pfn < zone->spanned_pages; ++zone_pfn)
+-			n += saveable(zone, &zone_pfn);
++		max_zone_pfn = zone->zone_start_pfn + zone->spanned_pages;
++		for (pfn = zone->zone_start_pfn; pfn < max_zone_pfn; pfn++)
++			n += !!saveable_page(pfn);
+ 	}
+ 	return n;
+ }
+@@ -211,7 +211,7 @@ unsigned int count_data_pages(void)
+ static void copy_data_pages(struct pbe *pblist)
+ {
+ 	struct zone *zone;
+-	unsigned long zone_pfn;
++	unsigned long pfn, max_zone_pfn;
+ 	struct pbe *pbe, *p;
+ 
+ 	pbe = pblist;
+@@ -224,13 +224,14 @@ static void copy_data_pages(struct pbe *
+ 			SetPageNosaveFree(virt_to_page(p));
+ 		for_each_pbe (p, pblist)
+ 			SetPageNosaveFree(virt_to_page(p->address));
+-		for (zone_pfn = 0; zone_pfn < zone->spanned_pages; ++zone_pfn) {
+-			if (saveable(zone, &zone_pfn)) {
+-				struct page *page;
++		max_zone_pfn = zone->zone_start_pfn + zone->spanned_pages;
++		for (pfn = zone->zone_start_pfn; pfn < max_zone_pfn; pfn++) {
++			struct page *page = saveable_page(pfn);
++
++			if (page) {
+ 				long *src, *dst;
+ 				int n;
+ 
+-				page = pfn_to_page(zone_pfn + zone->zone_start_pfn);
+ 				BUG_ON(!pbe);
+ 				pbe->orig_address = (unsigned long)page_address(page);
+ 				/* copy_page and memcpy are not usable for copying task structs. */
+@@ -383,13 +384,14 @@ static struct pbe *alloc_pagedir(unsigne
+ void swsusp_free(void)
+ {
+ 	struct zone *zone;
+-	unsigned long zone_pfn;
++	unsigned long pfn, max_zone_pfn;
+ 
+ 	for_each_zone(zone) {
+-		for (zone_pfn = 0; zone_pfn < zone->spanned_pages; ++zone_pfn)
+-			if (pfn_valid(zone_pfn + zone->zone_start_pfn)) {
+-				struct page *page;
+-				page = pfn_to_page(zone_pfn + zone->zone_start_pfn);
++		max_zone_pfn = zone->zone_start_pfn + zone->spanned_pages;
++		for (pfn = zone->zone_start_pfn; pfn < max_zone_pfn; pfn++)
++			if (pfn_valid(pfn)) {
++				struct page *page = pfn_to_page(pfn);
++
+ 				if (PageNosave(page) && PageNosaveFree(page)) {
+ 					ClearPageNosave(page);
+ 					ClearPageNosaveFree(page);
+@@ -598,7 +600,7 @@ int snapshot_read_next(struct snapshot_h
+ static int mark_unsafe_pages(struct pbe *pblist)
+ {
+ 	struct zone *zone;
+-	unsigned long zone_pfn;
++	unsigned long pfn, max_zone_pfn;
+ 	struct pbe *p;
+ 
+ 	if (!pblist) /* a sanity check */
+@@ -606,10 +608,10 @@ static int mark_unsafe_pages(struct pbe 
+ 
+ 	/* Clear page flags */
+ 	for_each_zone (zone) {
+-		for (zone_pfn = 0; zone_pfn < zone->spanned_pages; ++zone_pfn)
+-			if (pfn_valid(zone_pfn + zone->zone_start_pfn))
+-				ClearPageNosaveFree(pfn_to_page(zone_pfn +
+-					zone->zone_start_pfn));
++		max_zone_pfn = zone->zone_start_pfn + zone->spanned_pages;
++		for (pfn = zone->zone_start_pfn; pfn < max_zone_pfn; pfn++)
++			if (pfn_valid(pfn))
++				ClearPageNosaveFree(pfn_to_page(pfn));
+ 	}
+ 
+ 	/* Mark orig addresses */
+_
+From: "Rafael J. Wysocki" <rjw@sisk.pl>
+
+Add comments describing struct snapshot_handle and its members, change the
+confusing name of its member 'page' to 'cur'.
+
+Signed-off-by: Rafael J. Wysocki <rjw@sisk.pl>
+Cc: Pavel Machek <pavel@ucw.cz>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ kernel/power/power.h    |   64 +++++++++++++++++++++++++++++++++-----
+ kernel/power/snapshot.c |   40 +++++++++++------------
+ 2 files changed, 76 insertions(+), 28 deletions(-)
+
+diff -puN kernel/power/power.h~swsusp-struct-snapshot_handle-cleanup kernel/power/power.h
+--- a/kernel/power/power.h~swsusp-struct-snapshot_handle-cleanup
++++ a/kernel/power/power.h
+@@ -50,17 +50,65 @@ extern asmlinkage int swsusp_arch_resume
+ 
+ extern unsigned int count_data_pages(void);
+ 
++/**
++ *	Auxiliary structure used for reading the snapshot image data and
++ *	metadata from and writing them to the list of page backup entries
++ *	(PBEs) which is the main data structure of swsusp.
++ *
++ *	Using struct snapshot_handle we can transfer the image, including its
++ *	metadata, as a continuous sequence of bytes with the help of
++ *	snapshot_read_next() and snapshot_write_next().
++ *
++ *	The code that writes the image to a storage or transfers it to
++ *	the user land is required to use snapshot_read_next() for this
++ *	purpose and it should not make any assumptions regarding the internal
++ *	structure of the image.  Similarly, the code that reads the image from
++ *	a storage or transfers it from the user land is required to use
++ *	snapshot_write_next().
++ *
++ *	This may allow us to change the internal structure of the image
++ *	in the future with considerably less effort.
++ */
++
+ struct snapshot_handle {
+-	loff_t		offset;
+-	unsigned int	page;
+-	unsigned int	page_offset;
+-	unsigned int	prev;
+-	struct pbe	*pbe, *last_pbe;
+-	void		*buffer;
+-	unsigned int	buf_offset;
+-	int		sync_read;
++	loff_t		offset;	/* number of the last byte ready for reading
++				 * or writing in the sequence
++				 */
++	unsigned int	cur;	/* number of the block of PAGE_SIZE bytes the
++				 * next operation will refer to (ie. current)
++				 */
++	unsigned int	cur_offset;	/* offset with respect to the current
++					 * block (for the next operation)
++					 */
++	unsigned int	prev;	/* number of the block of PAGE_SIZE bytes that
++				 * was the current one previously
++				 */
++	struct pbe	*pbe;	/* PBE that corresponds to 'buffer' */
++	struct pbe	*last_pbe;	/* When the image is restored (eg. read
++					 * from disk) we can store some image
++					 * data directly in the page frames
++					 * in which they were before suspend.
++					 * In such a case the PBEs that
++					 * correspond to them will be unused.
++					 * This is the last PBE, so far, that
++					 * does not correspond to such data.
++					 */
++	void		*buffer;	/* address of the block to read from
++					 * or write to
++					 */
++	unsigned int	buf_offset;	/* location to read from or write to,
++					 * given as a displacement from 'buffer'
++					 */
++	int		sync_read;	/* Set to one to notify the caller of
++					 * snapshot_write_next() that it may
++					 * need to call wait_on_bio_chain()
++					 */
+ };
+ 
++/* This macro returns the address from/to which the caller of
++ * snapshot_read_next()/snapshot_write_next() is allowed to
++ * read/write data after the function returns
++ */
+ #define data_of(handle)	((handle).buffer + (handle).buf_offset)
+ 
+ extern int snapshot_read_next(struct snapshot_handle *handle, size_t count);
+diff -puN kernel/power/snapshot.c~swsusp-struct-snapshot_handle-cleanup kernel/power/snapshot.c
+--- a/kernel/power/snapshot.c~swsusp-struct-snapshot_handle-cleanup
++++ a/kernel/power/snapshot.c
+@@ -555,7 +555,7 @@ static inline struct pbe *pack_orig_addr
+ 
+ int snapshot_read_next(struct snapshot_handle *handle, size_t count)
+ {
+-	if (handle->page > nr_meta_pages + nr_copy_pages)
++	if (handle->cur > nr_meta_pages + nr_copy_pages)
+ 		return 0;
+ 	if (!buffer) {
+ 		/* This makes the buffer be freed by swsusp_free() */
+@@ -568,8 +568,8 @@ int snapshot_read_next(struct snapshot_h
+ 		handle->buffer = buffer;
+ 		handle->pbe = pagedir_nosave;
+ 	}
+-	if (handle->prev < handle->page) {
+-		if (handle->page <= nr_meta_pages) {
++	if (handle->prev < handle->cur) {
++		if (handle->cur <= nr_meta_pages) {
+ 			handle->pbe = pack_orig_addresses(buffer, handle->pbe);
+ 			if (!handle->pbe)
+ 				handle->pbe = pagedir_nosave;
+@@ -577,15 +577,15 @@ int snapshot_read_next(struct snapshot_h
+ 			handle->buffer = (void *)handle->pbe->address;
+ 			handle->pbe = handle->pbe->next;
+ 		}
+-		handle->prev = handle->page;
++		handle->prev = handle->cur;
+ 	}
+-	handle->buf_offset = handle->page_offset;
+-	if (handle->page_offset + count >= PAGE_SIZE) {
+-		count = PAGE_SIZE - handle->page_offset;
+-		handle->page_offset = 0;
+-		handle->page++;
++	handle->buf_offset = handle->cur_offset;
++	if (handle->cur_offset + count >= PAGE_SIZE) {
++		count = PAGE_SIZE - handle->cur_offset;
++		handle->cur_offset = 0;
++		handle->cur++;
+ 	} else {
+-		handle->page_offset += count;
++		handle->cur_offset += count;
+ 	}
+ 	handle->offset += count;
+ 	return count;
+@@ -820,7 +820,7 @@ int snapshot_write_next(struct snapshot_
+ {
+ 	int error = 0;
+ 
+-	if (handle->prev && handle->page > nr_meta_pages + nr_copy_pages)
++	if (handle->prev && handle->cur > nr_meta_pages + nr_copy_pages)
+ 		return 0;
+ 	if (!buffer) {
+ 		/* This makes the buffer be freed by swsusp_free() */
+@@ -831,7 +831,7 @@ int snapshot_write_next(struct snapshot_
+ 	if (!handle->offset)
+ 		handle->buffer = buffer;
+ 	handle->sync_read = 1;
+-	if (handle->prev < handle->page) {
++	if (handle->prev < handle->cur) {
+ 		if (!handle->prev) {
+ 			error = load_header(handle,
+ 					(struct swsusp_info *)buffer);
+@@ -854,15 +854,15 @@ int snapshot_write_next(struct snapshot_
+ 			handle->buffer = get_buffer(handle);
+ 			handle->sync_read = 0;
+ 		}
+-		handle->prev = handle->page;
++		handle->prev = handle->cur;
+ 	}
+-	handle->buf_offset = handle->page_offset;
+-	if (handle->page_offset + count >= PAGE_SIZE) {
+-		count = PAGE_SIZE - handle->page_offset;
+-		handle->page_offset = 0;
+-		handle->page++;
++	handle->buf_offset = handle->cur_offset;
++	if (handle->cur_offset + count >= PAGE_SIZE) {
++		count = PAGE_SIZE - handle->cur_offset;
++		handle->cur_offset = 0;
++		handle->cur++;
+ 	} else {
+-		handle->page_offset += count;
++		handle->cur_offset += count;
+ 	}
+ 	handle->offset += count;
+ 	return count;
+@@ -871,5 +871,5 @@ int snapshot_write_next(struct snapshot_
+ int snapshot_image_loaded(struct snapshot_handle *handle)
+ {
+ 	return !(!handle->pbe || handle->pbe->next || !nr_copy_pages ||
+-		handle->page <= nr_meta_pages + nr_copy_pages);
++		handle->cur <= nr_meta_pages + nr_copy_pages);
+ }
+_
+From: "Rafael J. Wysocki" <rjw@sisk.pl>
+
+On x86_64 machines with more than 2 GB of RAM there are large memory gaps
+(with no corresponding kernel virtual addresses) and reserved memory
+regions between areas of usable physical RAM.  Moreover, if CONFIG_FLATMEM
+is set, they appear within the normal zone.  swsusp should not try to save
+them, so the corresponding page structs have to be marked as 'nosave'.
+
+Signed-off-by: Rafael J. Wysocki <rjw@sisk.pl>
+Cc: Mel Gorman <mel@csn.ul.ie>
+Acked-by: Pavel Machek <pavel@ucw.cz>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ arch/x86_64/kernel/e820.c  |   48 +++++++++++++++++++++++++++++++++++
+ arch/x86_64/kernel/setup.c |    1 
+ include/asm-x86_64/e820.h  |    1 
+ 3 files changed, 50 insertions(+)
+
+diff -puN arch/x86_64/kernel/e820.c~make-swsusp-avoid-memory-holes-and-reserved-memory-regions-on-x86_64 arch/x86_64/kernel/e820.c
+--- a/arch/x86_64/kernel/e820.c~make-swsusp-avoid-memory-holes-and-reserved-memory-regions-on-x86_64
++++ a/arch/x86_64/kernel/e820.c
+@@ -16,6 +16,7 @@
+ #include <linux/string.h>
+ #include <linux/kexec.h>
+ #include <linux/module.h>
++#include <linux/mm.h>
+ 
+ #include <asm/pgtable.h>
+ #include <asm/page.h>
+@@ -293,6 +294,53 @@ void __init e820_reserve_resources(void)
+ 	}
+ }
+ 
++/* Mark pages corresponding to given address range as nosave */
++static void __init
++e820_mark_nosave_range(unsigned long start, unsigned long end)
++{
++	unsigned long pfn, max_pfn;
++
++	if (start >= end)
++		return;
++
++	printk("Nosave address range: %016lx - %016lx\n", start, end);
++	max_pfn = end >> PAGE_SHIFT;
++	for (pfn = start >> PAGE_SHIFT; pfn < max_pfn; pfn++)
++		if (pfn_valid(pfn))
++			SetPageNosave(pfn_to_page(pfn));
++}
++
++/*
++ * Find the ranges of physical addresses that do not correspond to
++ * e820 RAM areas and mark the corresponding pages as nosave for software
++ * suspend and suspend to RAM.
++ *
++ * This function requires the e820 map to be sorted and without any
++ * overlapping entries and assumes the first e820 area to be RAM.
++ */
++void __init e820_mark_nosave_regions(void)
++{
++	int i;
++	unsigned long paddr;
++
++	paddr = round_down(e820.map[0].addr + e820.map[0].size, PAGE_SIZE);
++	for (i = 1; i < e820.nr_map; i++) {
++		struct e820entry *ei = &e820.map[i];
++
++		if (paddr < ei->addr)
++			e820_mark_nosave_range(paddr,
++					round_up(ei->addr, PAGE_SIZE));
++
++		paddr = round_down(ei->addr + ei->size, PAGE_SIZE);
++		if (ei->type != E820_RAM)
++			e820_mark_nosave_range(round_up(ei->addr, PAGE_SIZE),
++					paddr);
++
++		if (paddr >= (end_pfn << PAGE_SHIFT))
++			break;
++	}
++}
++
+ /* 
+  * Add a memory region to the kernel e820 map.
+  */ 
+diff -puN arch/x86_64/kernel/setup.c~make-swsusp-avoid-memory-holes-and-reserved-memory-regions-on-x86_64 arch/x86_64/kernel/setup.c
+--- a/arch/x86_64/kernel/setup.c~make-swsusp-avoid-memory-holes-and-reserved-memory-regions-on-x86_64
++++ a/arch/x86_64/kernel/setup.c
+@@ -678,6 +678,7 @@ void __init setup_arch(char **cmdline_p)
+ 	 */
+ 	probe_roms();
+ 	e820_reserve_resources(); 
++	e820_mark_nosave_regions();
+ 
+ 	request_resource(&iomem_resource, &video_ram_resource);
+ 
+diff -puN include/asm-x86_64/e820.h~make-swsusp-avoid-memory-holes-and-reserved-memory-regions-on-x86_64 include/asm-x86_64/e820.h
+--- a/include/asm-x86_64/e820.h~make-swsusp-avoid-memory-holes-and-reserved-memory-regions-on-x86_64
++++ a/include/asm-x86_64/e820.h
+@@ -46,6 +46,7 @@ extern void setup_memory_region(void);
+ extern void contig_e820_setup(void); 
+ extern unsigned long e820_end_of_ram(void);
+ extern void e820_reserve_resources(void);
++extern void e820_mark_nosave_regions(void);
+ extern void e820_print_map(char *who);
+ extern int e820_any_mapped(unsigned long start, unsigned long end, unsigned type);
+ extern int e820_all_mapped(unsigned long start, unsigned long end, unsigned type);
+_
+From: "Rafael J. Wysocki" <rjw@sisk.pl>
+
+The current suspend code has to be run on one CPU, so we use the CPU
+hotplug to take the non-boot CPUs offline on SMP machines.  However, we
+should also make sure that these CPUs will not be enabled by someone else
+after we have disabled them.
+
+The functions disable_nonboot_cpus() and enable_nonboot_cpus() are moved to
+kernel/cpu.c, because they now refer to some stuff in there that should
+better be static.  Also it's better if disable_nonboot_cpus() returns an
+error instead of panicking if something goes wrong, and
+enable_nonboot_cpus() has no reason to panic(), because the CPUs may have
+been enabled by the userland before it tries to take them online.
+
+Signed-off-by: Rafael J. Wysocki <rjw@sisk.pl>
+Acked-by: Pavel Machek <pavel@ucw.cz>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ include/linux/cpu.h     |    8 ++
+ include/linux/suspend.h |    8 --
+ kernel/cpu.c            |  138 ++++++++++++++++++++++++++++++++------
+ kernel/power/Makefile   |    2 
+ kernel/power/disk.c     |    7 +
+ kernel/power/main.c     |   10 +-
+ kernel/power/smp.c      |   62 -----------------
+ kernel/power/user.c     |   14 ++-
+ 8 files changed, 145 insertions(+), 104 deletions(-)
+
+diff -puN include/linux/cpu.h~disable-cpu-hotplug-during-suspend-2 include/linux/cpu.h
+--- a/include/linux/cpu.h~disable-cpu-hotplug-during-suspend-2
++++ a/include/linux/cpu.h
+@@ -89,4 +89,12 @@ int cpu_down(unsigned int cpu);
+ static inline int cpu_is_offline(int cpu) { return 0; }
+ #endif
+ 
++#ifdef CONFIG_SUSPEND_SMP
++extern int disable_nonboot_cpus(void);
++extern void enable_nonboot_cpus(void);
++#else
++static inline int disable_nonboot_cpus(void) { return 0; }
++static inline void enable_nonboot_cpus(void) {}
++#endif
++
+ #endif /* _LINUX_CPU_H_ */
+diff -puN include/linux/suspend.h~disable-cpu-hotplug-during-suspend-2 include/linux/suspend.h
+--- a/include/linux/suspend.h~disable-cpu-hotplug-during-suspend-2
++++ a/include/linux/suspend.h
+@@ -57,14 +57,6 @@ static inline int software_suspend(void)
+ }
+ #endif /* CONFIG_PM */
+ 
+-#ifdef CONFIG_SUSPEND_SMP
+-extern void disable_nonboot_cpus(void);
+-extern void enable_nonboot_cpus(void);
+-#else
+-static inline void disable_nonboot_cpus(void) {}
+-static inline void enable_nonboot_cpus(void) {}
+-#endif
+-
+ void save_processor_state(void);
+ void restore_processor_state(void);
+ struct saved_context;
+diff -puN kernel/cpu.c~disable-cpu-hotplug-during-suspend-2 kernel/cpu.c
+--- a/kernel/cpu.c~disable-cpu-hotplug-during-suspend-2
++++ a/kernel/cpu.c
+@@ -21,6 +21,11 @@ static DEFINE_MUTEX(cpu_bitmask_lock);
+ 
+ static __cpuinitdata BLOCKING_NOTIFIER_HEAD(cpu_chain);
+ 
++/* If set, cpu_up and cpu_down will return -EBUSY and do nothing.
++ * Should always be manipulated under cpu_add_remove_lock
++ */
++static int cpu_hotplug_disabled;
++
+ #ifdef CONFIG_HOTPLUG_CPU
+ 
+ /* Crappy recursive lock-takers in cpufreq! Complain loudly about idiots */
+@@ -108,30 +113,25 @@ static int take_cpu_down(void *unused)
+ 	return 0;
+ }
+ 
+-int cpu_down(unsigned int cpu)
++/* Requires cpu_add_remove_lock to be held */
++static int _cpu_down(unsigned int cpu)
+ {
+ 	int err;
+ 	struct task_struct *p;
+ 	cpumask_t old_allowed, tmp;
+ 
+-	mutex_lock(&cpu_add_remove_lock);
+-	if (num_online_cpus() == 1) {
+-		err = -EBUSY;
+-		goto out;
+-	}
++	if (num_online_cpus() == 1)
++		return -EBUSY;
+ 
+-	if (!cpu_online(cpu)) {
+-		err = -EINVAL;
+-		goto out;
+-	}
++	if (!cpu_online(cpu))
++		return -EINVAL;
+ 
+ 	err = blocking_notifier_call_chain(&cpu_chain, CPU_DOWN_PREPARE,
+ 						(void *)(long)cpu);
+ 	if (err == NOTIFY_BAD) {
+ 		printk("%s: attempt to take down CPU %u failed\n",
+ 				__FUNCTION__, cpu);
+-		err = -EINVAL;
+-		goto out;
++		return -EINVAL;
+ 	}
+ 
+ 	/* Ensure that we are not runnable on dying cpu */
+@@ -179,22 +179,32 @@ out_thread:
+ 	err = kthread_stop(p);
+ out_allowed:
+ 	set_cpus_allowed(current, old_allowed);
+-out:
++	return err;
++}
++
++int cpu_down(unsigned int cpu)
++{
++	int err = 0;
++
++	mutex_lock(&cpu_add_remove_lock);
++	if (cpu_hotplug_disabled)
++		err = -EBUSY;
++	else
++		err = _cpu_down(cpu);
++
+ 	mutex_unlock(&cpu_add_remove_lock);
+ 	return err;
+ }
+ #endif /*CONFIG_HOTPLUG_CPU*/
+ 
+-int __devinit cpu_up(unsigned int cpu)
++/* Requires cpu_add_remove_lock to be held */
++static int __devinit _cpu_up(unsigned int cpu)
+ {
+ 	int ret;
+ 	void *hcpu = (void *)(long)cpu;
+ 
+-	mutex_lock(&cpu_add_remove_lock);
+-	if (cpu_online(cpu) || !cpu_present(cpu)) {
+-		ret = -EINVAL;
+-		goto out;
+-	}
++	if (cpu_online(cpu) || !cpu_present(cpu))
++		return -EINVAL;
+ 
+ 	ret = blocking_notifier_call_chain(&cpu_chain, CPU_UP_PREPARE, hcpu);
+ 	if (ret == NOTIFY_BAD) {
+@@ -219,7 +229,95 @@ out_notify:
+ 	if (ret != 0)
+ 		blocking_notifier_call_chain(&cpu_chain,
+ 				CPU_UP_CANCELED, hcpu);
++
++	return ret;
++}
++
++int __devinit cpu_up(unsigned int cpu)
++{
++	int err = 0;
++
++	mutex_lock(&cpu_add_remove_lock);
++	if (cpu_hotplug_disabled)
++		err = -EBUSY;
++	else
++		err = _cpu_up(cpu);
++
++	mutex_unlock(&cpu_add_remove_lock);
++	return err;
++}
++
++#ifdef CONFIG_SUSPEND_SMP
++static cpumask_t frozen_cpus;
++
++int disable_nonboot_cpus(void)
++{
++	int cpu, first_cpu, error;
++
++	mutex_lock(&cpu_add_remove_lock);
++	first_cpu = first_cpu(cpu_present_map);
++	if (!cpu_online(first_cpu)) {
++		error = _cpu_up(first_cpu);
++		if (error) {
++			printk(KERN_ERR "Could not bring CPU%d up.\n",
++				first_cpu);
++			goto out;
++		}
++	}
++	error = set_cpus_allowed(current, cpumask_of_cpu(first_cpu));
++	if (error) {
++		printk(KERN_ERR "Could not run on CPU%d\n", first_cpu);
++		goto out;
++	}
++	/* We take down all of the non-boot CPUs in one shot to avoid races
++	 * with the userspace trying to use the CPU hotplug at the same time
++	 */
++	cpus_clear(frozen_cpus);
++	printk("Disabling non-boot CPUs ...\n");
++	for_each_online_cpu(cpu) {
++		if (cpu == first_cpu)
++			continue;
++		error = _cpu_down(cpu);
++		if (!error) {
++			cpu_set(cpu, frozen_cpus);
++			printk("CPU%d is down\n", cpu);
++		} else {
++			printk(KERN_ERR "Error taking CPU%d down: %d\n",
++				cpu, error);
++			break;
++		}
++	}
++	if (!error) {
++		BUG_ON(num_online_cpus() > 1);
++		/* Make sure the CPUs won't be enabled by someone else */
++		cpu_hotplug_disabled = 1;
++	} else {
++		printk(KERN_ERR "Non-boot CPUs are not disabled");
++	}
+ out:
+ 	mutex_unlock(&cpu_add_remove_lock);
+-	return ret;
++	return error;
++}
++
++void enable_nonboot_cpus(void)
++{
++	int cpu, error;
++
++	/* Allow everyone to use the CPU hotplug again */
++	mutex_lock(&cpu_add_remove_lock);
++	cpu_hotplug_disabled = 0;
++	mutex_unlock(&cpu_add_remove_lock);
++
++	printk("Enabling non-boot CPUs ...\n");
++	for_each_cpu_mask(cpu, frozen_cpus) {
++		error = cpu_up(cpu);
++		if (!error) {
++			printk("CPU%d is up\n", cpu);
++			continue;
++		}
++		printk(KERN_WARNING "Error taking CPU%d up: %d\n",
++			cpu, error);
++	}
++	cpus_clear(frozen_cpus);
+ }
++#endif
+diff -puN kernel/power/disk.c~disable-cpu-hotplug-during-suspend-2 kernel/power/disk.c
+--- a/kernel/power/disk.c~disable-cpu-hotplug-during-suspend-2
++++ a/kernel/power/disk.c
+@@ -18,6 +18,7 @@
+ #include <linux/fs.h>
+ #include <linux/mount.h>
+ #include <linux/pm.h>
++#include <linux/cpu.h>
+ 
+ #include "power.h"
+ 
+@@ -72,7 +73,10 @@ static int prepare_processes(void)
+ 	int error;
+ 
+ 	pm_prepare_console();
+-	disable_nonboot_cpus();
++
++	error = disable_nonboot_cpus();
++	if (error)
++		goto enable_cpus;
+ 
+ 	if (freeze_processes()) {
+ 		error = -EBUSY;
+@@ -84,6 +88,7 @@ static int prepare_processes(void)
+ 		return 0;
+ thaw:
+ 	thaw_processes();
++enable_cpus:
+ 	enable_nonboot_cpus();
+ 	pm_restore_console();
+ 	return error;
+diff -puN kernel/power/main.c~disable-cpu-hotplug-during-suspend-2 kernel/power/main.c
+--- a/kernel/power/main.c~disable-cpu-hotplug-during-suspend-2
++++ a/kernel/power/main.c
+@@ -16,6 +16,7 @@
+ #include <linux/init.h>
+ #include <linux/pm.h>
+ #include <linux/console.h>
++#include <linux/cpu.h>
+ 
+ #include "power.h"
+ 
+@@ -51,7 +52,7 @@ void pm_set_ops(struct pm_ops * ops)
+ 
+ static int suspend_prepare(suspend_state_t state)
+ {
+-	int error = 0;
++	int error;
+ 	unsigned int free_pages;
+ 
+ 	if (!pm_ops || !pm_ops->enter)
+@@ -63,12 +64,9 @@ static int suspend_prepare(suspend_state
+ 
+ 	pm_prepare_console();
+ 
+-	disable_nonboot_cpus();
+-
+-	if (num_online_cpus() != 1) {
+-		error = -EPERM;
++	error = disable_nonboot_cpus();
++	if (error)
+ 		goto Enable_cpu;
+-	}
+ 
+ 	if (freeze_processes()) {
+ 		error = -EAGAIN;
+diff -puN kernel/power/Makefile~disable-cpu-hotplug-during-suspend-2 kernel/power/Makefile
+--- a/kernel/power/Makefile~disable-cpu-hotplug-during-suspend-2
++++ a/kernel/power/Makefile
+@@ -7,6 +7,4 @@ obj-y				:= main.o process.o console.o
+ obj-$(CONFIG_PM_LEGACY)		+= pm.o
+ obj-$(CONFIG_SOFTWARE_SUSPEND)	+= swsusp.o disk.o snapshot.o swap.o user.o
+ 
+-obj-$(CONFIG_SUSPEND_SMP)	+= smp.o
+-
+ obj-$(CONFIG_MAGIC_SYSRQ)	+= poweroff.o
+diff -puN kernel/power/smp.c~disable-cpu-hotplug-during-suspend-2 /dev/null
+--- a/kernel/power/smp.c
++++ /dev/null
+@@ -1,62 +0,0 @@
+-/*
+- * drivers/power/smp.c - Functions for stopping other CPUs.
+- *
+- * Copyright 2004 Pavel Machek <pavel@suse.cz>
+- * Copyright (C) 2002-2003 Nigel Cunningham <ncunningham@clear.net.nz>
+- *
+- * This file is released under the GPLv2.
+- */
+-
+-#undef DEBUG
+-
+-#include <linux/smp_lock.h>
+-#include <linux/interrupt.h>
+-#include <linux/suspend.h>
+-#include <linux/module.h>
+-#include <linux/cpu.h>
+-#include <asm/atomic.h>
+-#include <asm/tlbflush.h>
+-
+-/* This is protected by pm_sem semaphore */
+-static cpumask_t frozen_cpus;
+-
+-void disable_nonboot_cpus(void)
+-{
+-	int cpu, error;
+-
+-	error = 0;
+-	cpus_clear(frozen_cpus);
+-	printk("Freezing cpus ...\n");
+-	for_each_online_cpu(cpu) {
+-		if (cpu == 0)
+-			continue;
+-		error = cpu_down(cpu);
+-		if (!error) {
+-			cpu_set(cpu, frozen_cpus);
+-			printk("CPU%d is down\n", cpu);
+-			continue;
+-		}
+-		printk("Error taking cpu %d down: %d\n", cpu, error);
+-	}
+-	BUG_ON(raw_smp_processor_id() != 0);
+-	if (error)
+-		panic("cpus not sleeping");
+-}
+-
+-void enable_nonboot_cpus(void)
+-{
+-	int cpu, error;
+-
+-	printk("Thawing cpus ...\n");
+-	for_each_cpu_mask(cpu, frozen_cpus) {
+-		error = cpu_up(cpu);
+-		if (!error) {
+-			printk("CPU%d is up\n", cpu);
+-			continue;
+-		}
+-		printk("Error taking cpu %d up: %d\n", cpu, error);
+-		panic("Not enough cpus");
+-	}
+-	cpus_clear(frozen_cpus);
+-}
+-
+diff -puN kernel/power/user.c~disable-cpu-hotplug-during-suspend-2 kernel/power/user.c
+--- a/kernel/power/user.c~disable-cpu-hotplug-during-suspend-2
++++ a/kernel/power/user.c
+@@ -19,6 +19,7 @@
+ #include <linux/swapops.h>
+ #include <linux/pm.h>
+ #include <linux/fs.h>
++#include <linux/cpu.h>
+ 
+ #include <asm/uaccess.h>
+ 
+@@ -139,12 +140,15 @@ static int snapshot_ioctl(struct inode *
+ 		if (data->frozen)
+ 			break;
+ 		down(&pm_sem);
+-		disable_nonboot_cpus();
+-		if (freeze_processes()) {
+-			thaw_processes();
+-			enable_nonboot_cpus();
+-			error = -EBUSY;
++		error = disable_nonboot_cpus();
++		if (!error) {
++			error = freeze_processes();
++			if (error) {
++				thaw_processes();
++				error = -EBUSY;
++			}
+ 		}
++		enable_nonboot_cpus();
+ 		up(&pm_sem);
+ 		if (!error)
+ 			data->frozen = 1;
+_

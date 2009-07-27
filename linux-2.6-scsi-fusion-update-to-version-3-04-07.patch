@@ -1,0 +1,1441 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Thu, 28 Aug 2008 16:10:27 +0200
+Subject: [scsi] fusion: update to version 3.04.07
+Message-id: 48B6B1D3.2070806@redhat.com
+O-Subject: [RHEL 5.3 PATCH] Bug 442025 - Update mpt fusion to version 3.04.07
+Bugzilla: 442025
+
+This patch comes from LSI and is a backport
+from upstream :
+23a274c8a5adafc74a66f16988776fc7dd6f6e51
+d54d48b80fb523ce1b1a644e4876b08835ad757f
+4d4109d0eb6930e59942d019980b83af679f187b
+e78d5b8f1e73ab82f3fd041d05824cfee7d83a2c
+
+It is and it will be tested by our partners.
+
+Comments from LSI:
+Generic:
+ADD:
+CLEANUP:
+ * Kconfig cleanup :Adding 949X, 949E, and 1078 to Kconfig.   Adding "depends
+on FUSION" required in the FUSION_LOGGING section, and fixing a spelling error.
+ * Removing Dell copyright : Some other vender has concerns over this
+copyright, and Dell has approved removing it.
+FIX:
+ * Fix docbook problems in fusion source files.
+ * The semaphore inactive_list_mutex in the driver is used as a mutex, convert
+it to the mutex API.
+ * Fix panic when mptsas and mptcl module are loaded in parallel, Set the IOC
+pointer in drvrdata of pcidev before adding the IOC into the list of IOCs.
+Without this patch the driver oops when the mptsas and mptctl modules are
+loaded in parallel.
+SCSI specific:
+FIX:
+Fix for module unload problem in flash less controller environment: Fixes the
+module unload problem in flash less 1030 controller environment where firmware
+download boot functionality is invoked. The problem is due to the firmware
+download is being done in the reverse order, which this patch solves by
+insureing the download occurs to the last controller being reset.
+SAS specific:
+ADD:
+ * Enable MSI by default for SAS controllers
+FIX:
+ * Avoid oops when zero phy count is reported for an expander by firmware,
+This is because the expander is zoned to initator A, and initiator B doesn't
+not have access to those phys hence why the firmware is reporting a zero phy
+count.
+ * Power Management fixes for MPT SAS PCI-E controllers: The system power
+state changes like hibernation and standby are not happening properly with
+106XE controllers, this fix modifies the driver to free resources and allocate
+resources in power management entry points
+ * Avoid using ioc->handle to locate hba portinfo structure to fix the problem
+of devices not getting deleted properly.
+
+Brew build taskID=1441489
+Resolves 442025
+
+Tomas
+
+diff --git a/drivers/message/fusion/Kconfig b/drivers/message/fusion/Kconfig
+index 3c44a2f..49c90d4 100644
+--- a/drivers/message/fusion/Kconfig
++++ b/drivers/message/fusion/Kconfig
+@@ -38,6 +38,8 @@ config FUSION_FC
+ 	  LSIFC929
+ 	  LSIFC929X
+ 	  LSIFC929XL
++	  LSIFC949X
++	  LSIFC949E
+ 	  Brocade FC 410/420
+ 
+ config FUSION_SAS
+@@ -54,6 +56,7 @@ config FUSION_SAS
+ 	  LSISAS1068
+ 	  LSISAS1064E
+ 	  LSISAS1068E
++	  LSISAS1078
+ 
+ config FUSION_MAX_SGE
+ 	int "Maximum number of scatter gather entries (16 - 128)"
+@@ -114,7 +117,7 @@ config FUSION_LOGGING
+ 
+ 	  echo [level] > /sys/class/scsi_host/host#/debug_level
+ 
+-	  There are various debug levels that an be found in the source:
++	  There are various debug levels that can be found in the source:
+ 	  file:drivers/message/fusion/mptdebug.h
+ 
+ endmenu
+diff --git a/drivers/message/fusion/lsi/mpi.h b/drivers/message/fusion/lsi/mpi.h
+index 1acbdd6..10b6ef7 100644
+--- a/drivers/message/fusion/lsi/mpi.h
++++ b/drivers/message/fusion/lsi/mpi.h
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright (c) 2000-2007 LSI Corporation.
++ *  Copyright (c) 2000-2008 LSI Corporation.
+  *
+  *
+  *           Name:  mpi.h
+diff --git a/drivers/message/fusion/lsi/mpi_cnfg.h b/drivers/message/fusion/lsi/mpi_cnfg.h
+index 2bd8ada..b2db333 100644
+--- a/drivers/message/fusion/lsi/mpi_cnfg.h
++++ b/drivers/message/fusion/lsi/mpi_cnfg.h
+@@ -1,5 +1,5 @@
+ /*
+- *  Copyright (c) 2000-2007 LSI Corporation.
++ *  Copyright (c) 2000-2008 LSI Corporation.
+  *
+  *
+  *           Name:  mpi_cnfg.h
+diff --git a/drivers/message/fusion/mptbase.c b/drivers/message/fusion/mptbase.c
+index eea5287..8818587 100644
+--- a/drivers/message/fusion/mptbase.c
++++ b/drivers/message/fusion/mptbase.c
+@@ -5,7 +5,7 @@
+  *      For use with LSI PCI chip/adapter(s)
+  *      running LSI Fusion MPT (Message Passing Technology) firmware.
+  *
+- *  Copyright (c) 1999-2007 LSI Corporation
++ *  Copyright (c) 1999-2008 LSI Corporation
+  *  (mailto:DL-MPTFusionLinux@lsi.com)
+  *
+  */
+@@ -79,7 +79,7 @@ MODULE_VERSION(my_VERSION);
+ /*
+  *  cmd line parameters
+  */
+-static int mpt_msi_enable;
++static int mpt_msi_enable = -1;
+ module_param(mpt_msi_enable, int, 0);
+ MODULE_PARM_DESC(mpt_msi_enable, " MSI Support Enable (default=0)");
+ 
+@@ -253,6 +253,54 @@ mpt_get_cb_idx(MPT_DRIVER_CLASS dclass)
+ 	return 0;
+ }
+ 
++/**
++ *	mpt_fault_reset_work - work performed on workq after ioc fault
++ *	@work: input argument, used to derive ioc
++ *
++**/
++static void
++mpt_fault_reset_work(void *arg)
++{
++	MPT_ADAPTER     *ioc = (MPT_ADAPTER *)arg;
++	u32		 ioc_raw_state;
++	int		 rc;
++	unsigned long	 flags;
++
++	if (ioc->diagPending || !ioc->active)
++		goto out;
++
++	ioc_raw_state = mpt_GetIocState(ioc, 0);
++	if ((ioc_raw_state & MPI_IOC_STATE_MASK) == MPI_IOC_STATE_FAULT) {
++		printk(MYIOC_s_WARN_FMT "IOC is in FAULT state (%04xh)!!!\n",
++		    ioc->name, ioc_raw_state & MPI_DOORBELL_DATA_MASK);
++		printk(MYIOC_s_WARN_FMT "Issuing HardReset from %s!!\n",
++		    ioc->name, __FUNCTION__);
++		rc = mpt_HardResetHandler(ioc, CAN_SLEEP);
++		printk(MYIOC_s_WARN_FMT "%s: HardReset: %s\n", ioc->name,
++		    __FUNCTION__, (rc == 0) ? "success" : "failed");
++		ioc_raw_state = mpt_GetIocState(ioc, 0);
++		if ((ioc_raw_state & MPI_IOC_STATE_MASK) == MPI_IOC_STATE_FAULT)
++			printk(MYIOC_s_WARN_FMT "IOC is in FAULT state after "
++			    "reset (%04xh)\n", ioc->name, ioc_raw_state &
++			    MPI_DOORBELL_DATA_MASK);
++	}
++
++ out:
++	/*
++	 * Take turns polling alternate controller
++	 */
++	if (ioc->alt_ioc)
++		ioc = ioc->alt_ioc;
++
++	/* rearm the timer */
++	spin_lock_irqsave(&ioc->fault_reset_work_lock, flags);
++	if (ioc->reset_work_q)
++		queue_delayed_work(ioc->reset_work_q, &ioc->fault_reset_work,
++			msecs_to_jiffies(MPT_POLLING_INTERVAL));
++	spin_unlock_irqrestore(&ioc->fault_reset_work_lock, flags);
++}
++
++
+ /*
+  *  Process turbo (context) reply...
+  */
+@@ -654,8 +702,7 @@ mpt_event_register(u8 cb_idx, MPT_EVHANDLER ev_cbfunc)
+ 
+ /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
+ /**
+- *	mpt_event_deregister - Deregister protocol-specific event callback
+- *	handler.
++ *	mpt_event_deregister-Deregister protocol-specific event callback handler
+  *	@cb_idx: previously registered callback handle
+  *
+  *	Each protocol-specific driver should call this routine
+@@ -765,11 +812,13 @@ mpt_device_driver_deregister(u8 cb_idx)
+ 
+ /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
+ /**
+- *	mpt_get_msg_frame - Obtain a MPT request frame from the pool (of 1024)
+- *	allocated per MPT adapter.
++ *	mpt_get_msg_frame - Obtain a MPT request frame from the pool
+  *	@cb_idx: Handle of registered MPT protocol driver
+  *	@ioc: Pointer to MPT adapter structure
+  *
++ *	Obtain an MPT request frame from the pool (of 1024) that are
++ *	allocated per MPT adapter.
++ *
+  *	Returns pointer to a MPT request frame or %NULL if none are available
+  *	or IOC is not active.
+  */
+@@ -834,13 +883,12 @@ mpt_get_msg_frame(u8 cb_idx, MPT_ADAPTER *ioc)
+ 
+ /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
+ /**
+- *	mpt_put_msg_frame - Send a protocol specific MPT request frame
+- *	to a IOC.
++ *	mpt_put_msg_frame - Send a protocol specific MPT request frame to an IOC
+  *	@cb_idx: Handle of registered MPT protocol driver
+  *	@ioc: Pointer to MPT adapter structure
+  *	@mf: Pointer to MPT request frame
+  *
+- *	This routine posts a MPT request frame to the request post FIFO of a
++ *	This routine posts an MPT request frame to the request post FIFO of a
+  *	specific MPT adapter.
+  */
+ void
+@@ -868,13 +916,15 @@ mpt_put_msg_frame(u8 cb_idx, MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf)
+ }
+ 
+ /**
+- *	mpt_put_msg_frame_hi_pri - Send a protocol specific MPT request frame
+- *	to a IOC using hi priority request queue.
++ *	mpt_put_msg_frame_hi_pri - Send a protocol-specific MPT request frame
+  *	@cb_idx: Handle of registered MPT protocol driver
+  *	@ioc: Pointer to MPT adapter structure
+  *	@mf: Pointer to MPT request frame
+  *
+- *	This routine posts a MPT request frame to the request post FIFO of a
++ *	Send a protocol-specific MPT request frame to an IOC using
++ *	hi-priority request queue.
++ *
++ *	This routine posts an MPT request frame to the request post FIFO of a
+  *	specific MPT adapter.
+  **/
+ void
+@@ -1471,6 +1521,95 @@ mpt_get_product_name(u16 vendor, u16 device, u8 revision, char *prod_name)
+ 		sprintf(prod_name, "%s", product_str);
+ }
+ 
++/**
++ *	mpt_mapresources - map in memory mapped io
++ *	@ioc: Pointer to pointer to IOC adapter
++ *
++ **/
++static int
++mpt_mapresources(MPT_ADAPTER *ioc)
++{
++	u8		__iomem *mem;
++	int		 ii;
++	unsigned long	 mem_phys;
++	unsigned long	 port;
++	u32		 msize;
++	u32		 psize;
++	u8		 revision;
++	int		 r = -ENODEV;
++	struct pci_dev *pdev;
++
++	pdev = ioc->pcidev;
++
++	if (pci_enable_device(pdev)) {
++		printk(MYIOC_s_WARN_FMT "pci_enable_device: failed\n",
++			ioc->name);
++		return r;
++	}
++
++	pci_read_config_byte(pdev, PCI_CLASS_REVISION, &revision);
++
++	if (!pci_set_dma_mask(pdev, DMA_64BIT_MASK)
++	    && !pci_set_consistent_dma_mask(pdev, DMA_64BIT_MASK)) {
++		ioc->dma_mask = DMA_64BIT_MASK;
++		dinitprintk(ioc, printk(MYIOC_s_INFO_FMT
++		    ": 64 BIT PCI BUS DMA ADDRESSING SUPPORTED\n",
++		    ioc->name));
++	} else if (!pci_set_dma_mask(pdev, DMA_32BIT_MASK)
++	    && !pci_set_consistent_dma_mask(pdev, DMA_32BIT_MASK)) {
++		ioc->dma_mask = DMA_32BIT_MASK;
++		dinitprintk(ioc, printk(MYIOC_s_INFO_FMT
++		    ": 32 BIT PCI BUS DMA ADDRESSING SUPPORTED\n",
++		    ioc->name));
++	} else {
++		printk(MYIOC_s_WARN_FMT "no suitable DMA mask for %s\n",
++		    ioc->name, pci_name(pdev));
++		return r;
++	}
++
++	mem_phys = msize = 0;
++	port = psize = 0;
++	for (ii = 0; ii < DEVICE_COUNT_RESOURCE; ii++) {
++		if (pci_resource_flags(pdev, ii) & PCI_BASE_ADDRESS_SPACE_IO) {
++			if (psize)
++				continue;
++			/* Get I/O space! */
++			port = pci_resource_start(pdev, ii);
++			psize = pci_resource_len(pdev, ii);
++		} else {
++			if (msize)
++				continue;
++			/* Get memmap */
++			mem_phys = pci_resource_start(pdev, ii);
++			msize = pci_resource_len(pdev, ii);
++		}
++	}
++	ioc->mem_size = msize;
++
++	mem = NULL;
++	/* Get logical ptr for PciMem0 space */
++	/*mem = ioremap(mem_phys, msize);*/
++	mem = ioremap(mem_phys, msize);
++	if (mem == NULL) {
++		printk(MYIOC_s_ERR_FMT ": ERROR - Unable to map adapter"
++			" memory!\n", ioc->name);
++		return -EINVAL;
++	}
++	ioc->memmap = mem;
++	dinitprintk(ioc, printk(MYIOC_s_INFO_FMT "mem = %p, mem_phys = %lx\n",
++	    ioc->name, mem, mem_phys));
++
++	ioc->mem_phys = mem_phys;
++	ioc->chip = (SYSIF_REGS __iomem *)mem;
++
++	/* Save Port IO values in case we need to do downloadboot */
++	ioc->pio_mem_phys = port;
++	ioc->pio_chip = (SYSIF_REGS __iomem *)port;
++
++	return 0;
++}
++
++
+ /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
+ /**
+  *	mpt_attach - Install a PCI intelligent MPT adapter.
+@@ -1493,13 +1632,6 @@ int
+ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
+ {
+ 	MPT_ADAPTER	*ioc;
+-	u8		__iomem *mem;
+-	u8		__iomem *pmem;
+-	unsigned long	 mem_phys;
+-	unsigned long	 port;
+-	u32		 msize;
+-	u32		 psize;
+-	int		 ii;
+ 	u8		 cb_idx;
+ 	int		 r = -ENODEV;
+ 	u8		 revision;
+@@ -1509,45 +1641,27 @@ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
+ 	struct proc_dir_entry *dent, *ent;
+ #endif
+ 
+-	if (mpt_debug_level)
+-		printk(KERN_INFO MYNAM ": mpt_debug_level=%xh\n", mpt_debug_level);
+-
+-	if (pci_enable_device(pdev))
+-		return r;
+-
+ 	ioc = kzalloc(sizeof(MPT_ADAPTER), GFP_ATOMIC);
+ 	if (ioc == NULL) {
+ 		printk(KERN_ERR MYNAM ": ERROR - Insufficient memory to add adapter!\n");
+ 		return -ENOMEM;
+ 	}
+-	ioc->debug_level = mpt_debug_level;
++
+ 	ioc->id = mpt_ids++;
+ 	sprintf(ioc->name, "ioc%d", ioc->id);
+ 
+-	dinitprintk(ioc, printk(MYIOC_s_INFO_FMT ": mpt_adapter_install\n", ioc->name));
++	/*
++	 * set initial debug level
++	 * (refer to mptdebug.h)
++	 *
++	 */
++	ioc->debug_level = mpt_debug_level;
++	if (mpt_debug_level)
++		printk(KERN_INFO "mpt_debug_level=%xh\n", mpt_debug_level);
+ 
+-	if (!pci_set_dma_mask(pdev, DMA_64BIT_MASK)
+-	    && !pci_set_consistent_dma_mask(pdev, DMA_64BIT_MASK)) {
+-		ioc->dma_mask = DMA_64BIT_MASK;
+-		dinitprintk(ioc, printk(MYIOC_s_INFO_FMT
+-		    ": 64 BIT PCI BUS DMA ADDRESSING SUPPORTED\n",
+-		    ioc->name));
+-	} else if (!pci_set_dma_mask(pdev, DMA_32BIT_MASK)
+-	    && !pci_set_consistent_dma_mask(pdev, DMA_32BIT_MASK)) {
+-		ioc->dma_mask = DMA_32BIT_MASK;
+-		dinitprintk(ioc, printk(MYIOC_s_INFO_FMT
+-		    ": 32 BIT PCI BUS DMA ADDRESSING SUPPORTED\n",
+-		    ioc->name));
+-	} else {
+-		printk(MYIOC_s_WARN_FMT "no suitable DMA mask for %s\n",
+-		    ioc->name, pci_name(pdev));
+-		kfree(ioc);
+-		return r;
+-	}
++	dinitprintk(ioc,
++		printk(MYIOC_s_INFO_FMT ": mpt_adapter_install\n", ioc->name));
+ 
+-	ioc->alloc_total = sizeof(MPT_ADAPTER);
+-	ioc->req_sz = MPT_DEFAULT_FRAME_SIZE;		/* avoid div by zero! */
+-	ioc->reply_sz = MPT_REPLY_FRAME_SIZE;
+ 
+ 	/*
+ 	 * Setting up proper handlers for scatter gather handling
+@@ -1561,6 +1675,16 @@ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
+ 		ioc->add_sge = &mpt_add_sge;
+ 
+ 	ioc->pcidev = pdev;
++	if (mpt_mapresources(ioc)) {
++		kfree(ioc);
++		return r;
++	}
++
++	ioc->alloc_total = sizeof(MPT_ADAPTER);
++	ioc->req_sz = MPT_DEFAULT_FRAME_SIZE;		/* avoid div by zero! */
++	ioc->reply_sz = MPT_REPLY_FRAME_SIZE;
++
++	ioc->pcidev = pdev;
+ 	ioc->diagPending = 0;
+ 	spin_lock_init(&ioc->diagLock);
+ 	spin_lock_init(&ioc->initializing_hba_lock);
+@@ -1593,48 +1717,23 @@ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
+ 	/* Find lookup slot. */
+ 	INIT_LIST_HEAD(&ioc->list);
+ 
+-	mem_phys = msize = 0;
+-	port = psize = 0;
+-	for (ii=0; ii < DEVICE_COUNT_RESOURCE; ii++) {
+-		if (pci_resource_flags(pdev, ii) & PCI_BASE_ADDRESS_SPACE_IO) {
+-			if (psize)
+-				continue;
+-			/* Get I/O space! */
+-			port = pci_resource_start(pdev, ii);
+-			psize = pci_resource_len(pdev,ii);
+-		} else {
+-			if (msize)
+-				continue;
+-			/* Get memmap */
+-			mem_phys = pci_resource_start(pdev, ii);
+-			msize = pci_resource_len(pdev,ii);
+-		}
+-	}
+-	ioc->mem_size = msize;
++	/* Initialize workqueue */
++	INIT_WORK(&ioc->fault_reset_work, mpt_fault_reset_work, (void *)ioc);
++	spin_lock_init(&ioc->fault_reset_work_lock);
+ 
+-	mem = NULL;
+-	/* Get logical ptr for PciMem0 space */
+-	/*mem = ioremap(mem_phys, msize);*/
+-	mem = ioremap(mem_phys, msize);
+-	if (mem == NULL) {
+-		printk(MYIOC_s_ERR_FMT "Unable to map adapter memory!\n", ioc->name);
++	snprintf(ioc->reset_work_q_name, KOBJ_NAME_LEN, "mpt_poll_%d", ioc->id);
++	ioc->reset_work_q =
++		create_singlethread_workqueue(ioc->reset_work_q_name);
++	if (!ioc->reset_work_q) {
++		printk(MYIOC_s_ERR_FMT "Insufficient memory to add adapter!\n",
++		    ioc->name);
+ 		kfree(ioc);
+-		return -EINVAL;
++		return -ENOMEM;
+ 	}
+-	ioc->memmap = mem;
+-	dinitprintk(ioc, printk(MYIOC_s_INFO_FMT "mem = %p, mem_phys = %lx\n", ioc->name, mem, mem_phys));
+ 
+ 	dinitprintk(ioc, printk(MYIOC_s_INFO_FMT "facts @ %p, pfacts[0] @ %p\n",
+ 	    ioc->name, &ioc->facts, &ioc->pfacts[0]));
+ 
+-	ioc->mem_phys = mem_phys;
+-	ioc->chip = (SYSIF_REGS __iomem *)mem;
+-
+-	/* Save Port IO values in case we need to do downloadboot */
+-	ioc->pio_mem_phys = port;
+-	pmem = (u8 __iomem *)port;
+-	ioc->pio_chip = (SYSIF_REGS __iomem *)pmem;
+-
+ 	pci_read_config_byte(pdev, PCI_CLASS_REVISION, &revision);
+ 	mpt_get_product_name(pdev->vendor, pdev->device, revision, ioc->prod_name);
+ 
+@@ -1702,6 +1801,11 @@ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
+ 		ioc->bus_type = SAS;
+ 	}
+ 
++	if (ioc->bus_type == SAS && mpt_msi_enable == -1)
++		ioc->msi_enable = 1;
++	else
++		ioc->msi_enable = mpt_msi_enable;
++
+ 	if (ioc->errata_flag_1064)
+ 		pci_disable_io_access(pdev);
+ 
+@@ -1712,6 +1816,9 @@ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
+ 	ioc->active = 0;
+ 	CHIPREG_WRITE32(&ioc->chip->IntStatus, 0);
+ 
++	/* Set IOC ptr in the pcidev's driver data. */
++	pci_set_drvdata(ioc->pcidev, ioc);
++
+ 	/* Set lookup ptr. */
+ 	list_add_tail(&ioc->list, &ioc_list);
+ 
+@@ -1727,7 +1834,10 @@ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
+ 		list_del(&ioc->list);
+ 		if (ioc->alt_ioc)
+ 			ioc->alt_ioc->alt_ioc = NULL;
+-		iounmap(mem);
++		iounmap(ioc->memmap);
++		destroy_workqueue(ioc->reset_work_q);
++		ioc->reset_work_q = NULL;
++
+ 		kfree(ioc);
+ 		pci_set_drvdata(pdev, NULL);
+ 		return r;
+@@ -1760,6 +1870,10 @@ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
+ 	}
+ #endif
+ 
++	if (!ioc->alt_ioc)
++		queue_delayed_work(ioc->reset_work_q, &ioc->fault_reset_work,
++			msecs_to_jiffies(MPT_POLLING_INTERVAL));
++
+ 	return 0;
+ }
+ 
+@@ -1775,6 +1889,18 @@ mpt_detach(struct pci_dev *pdev)
+ 	MPT_ADAPTER 	*ioc = pci_get_drvdata(pdev);
+ 	char pname[32];
+ 	u8 cb_idx;
++	unsigned long flags;
++	struct workqueue_struct *wq;
++
++	/*
++	 * Stop polling ioc for fault condition
++	 */
++	spin_lock_irqsave(&ioc->fault_reset_work_lock, flags);
++	wq = ioc->reset_work_q;
++	ioc->reset_work_q = NULL;
++	spin_unlock_irqrestore(&ioc->fault_reset_work_lock, flags);
++	cancel_delayed_work(&ioc->fault_reset_work);
++	destroy_workqueue(wq);
+ 
+ 	sprintf(pname, MPT_PROCFS_MPTBASEDIR "/%s/summary", ioc->name);
+ 	remove_proc_entry(pname, NULL);
+@@ -1823,13 +1949,10 @@ mpt_suspend(struct pci_dev *pdev, pm_message_t state)
+ 	u32 device_state;
+ 	MPT_ADAPTER *ioc = pci_get_drvdata(pdev);
+ 
+-	device_state=pci_choose_state(pdev, state);
+-
+-	printk(MYIOC_s_INFO_FMT
+-	"pci-suspend: pdev=0x%p, slot=%s, Entering operating state [D%d]\n",
+-		ioc->name, pdev, pci_name(pdev), device_state);
+-
+-	pci_save_state(pdev);
++	device_state = pci_choose_state(pdev, state);
++	printk(MYIOC_s_INFO_FMT "pci-suspend: pdev=0x%p, slot=%s, Entering "
++	    "operating state [D%d]\n", ioc->name, pdev, pci_name(pdev),
++	    device_state);
+ 
+ 	/* put ioc into READY_STATE */
+ 	if(SendIocReset(ioc, MPI_FUNCTION_IOC_MESSAGE_UNIT_RESET, CAN_SLEEP)) {
+@@ -1844,9 +1967,13 @@ mpt_suspend(struct pci_dev *pdev, pm_message_t state)
+ 	/* Clear any lingering interrupt */
+ 	CHIPREG_WRITE32(&ioc->chip->IntStatus, 0);
+ 
++	free_irq(ioc->pci_irq, ioc);
++	if (ioc->msi_enable == 1)
++		pci_disable_msi(ioc->pcidev);
++	ioc->pci_irq = -1;
++	pci_save_state(pdev);
+ 	pci_disable_device(pdev);
+ 	pci_set_power_state(pdev, device_state);
+-
+ 	return 0;
+ }
+ 
+@@ -1863,38 +1990,52 @@ mpt_resume(struct pci_dev *pdev)
+ 	int recovery_state;
+ 	int err;
+ 
+-	printk(MYIOC_s_INFO_FMT
+-	"pci-resume: pdev=0x%p, slot=%s, Previous operating state [D%d]\n",
+-		ioc->name, pdev, pci_name(pdev), device_state);
++	printk(MYIOC_s_INFO_FMT "pci-resume: pdev=0x%p, slot=%s, Previous "
++	    "operating state [D%d]\n", ioc->name, pdev, pci_name(pdev),
++	    device_state);
+ 
+-	pci_set_power_state(pdev, 0);
++	pci_set_power_state(pdev, PCI_D0);
++	pci_enable_wake(pdev, PCI_D0, 0);
+ 	pci_restore_state(pdev);
+-	err = pci_enable_device(pdev);
++	ioc->pcidev = pdev;
++	err = mpt_mapresources(ioc);
+ 	if (err)
+ 		return err;
+ 
+-	/* enable interrupts */
+-	CHIPREG_WRITE32(&ioc->chip->IntMask, MPI_HIM_DIM);
+-	ioc->active = 1;
++	printk(MYIOC_s_INFO_FMT "pci-resume: ioc-state=0x%x,doorbell=0x%x\n",
++	    ioc->name, (mpt_GetIocState(ioc, 1) >> MPI_IOC_STATE_SHIFT),
++	    CHIPREG_READ32(&ioc->chip->Doorbell));
+ 
+-	printk(MYIOC_s_INFO_FMT
+-		"pci-resume: ioc-state=0x%x,doorbell=0x%x\n",
+-		ioc->name,
+-		(mpt_GetIocState(ioc, 1) >> MPI_IOC_STATE_SHIFT),
+-		CHIPREG_READ32(&ioc->chip->Doorbell));
++	/*
++	 * Errata workaround for SAS pci express:
++	 * Upon returning to the D0 state, the contents of the doorbell will be
++	 * stale data, and this will incorrectly signal to the host driver that
++	 * the firmware is ready to process mpt commands.   The workaround is
++	 * to issue a diagnostic reset.
++	 */
++	if (ioc->bus_type == SAS && (pdev->device ==
++	    MPI_MANUFACTPAGE_DEVID_SAS1068E || pdev->device ==
++	    MPI_MANUFACTPAGE_DEVID_SAS1064E)) {
++		if (KickStart(ioc, 1, CAN_SLEEP) < 0) {
++			printk(MYIOC_s_WARN_FMT "pci-resume: Cannot recover\n",
++			    ioc->name);
++			goto out;
++		}
++	}
+ 
+ 	/* bring ioc to operational state */
+-	if ((recovery_state = mpt_do_ioc_recovery(ioc,
+-	    MPT_HOSTEVENT_IOC_RECOVER, CAN_SLEEP)) != 0) {
+-		printk(MYIOC_s_INFO_FMT
+-			"pci-resume: Cannot recover, error:[%x]\n",
+-			ioc->name, recovery_state);
+-	} else {
++	printk(MYIOC_s_INFO_FMT "Sending mpt_do_ioc_recovery\n", ioc->name);
++	recovery_state = mpt_do_ioc_recovery(ioc, MPT_HOSTEVENT_IOC_BRINGUP,
++						 CAN_SLEEP);
++	if (recovery_state != 0)
++		printk(MYIOC_s_WARN_FMT "pci-resume: Cannot recover, "
++		    "error:[%x]\n", ioc->name, recovery_state);
++	else
+ 		printk(MYIOC_s_INFO_FMT
+-			"pci-resume: success\n", ioc->name);
+-	}
+-
++		    "pci-resume: success\n", ioc->name);
++ out:
+ 	return 0;
++
+ }
+ #endif
+ 
+@@ -1932,6 +2073,7 @@ mpt_signal_reset(u8 index, MPT_ADAPTER *ioc, int reset_phase)
+  *		-2 if READY but IOCFacts Failed
+  *		-3 if READY but PrimeIOCFifos Failed
+  *		-4 if READY but IOCInit Failed
++ *		-5 if failed to upload firmware
+  */
+ static int
+ mpt_do_ioc_recovery(MPT_ADAPTER *ioc, u32 reason, int sleepFlag)
+@@ -2038,22 +2180,24 @@ mpt_do_ioc_recovery(MPT_ADAPTER *ioc, u32 reason, int sleepFlag)
+ 	if ((ret == 0) && (reason == MPT_HOSTEVENT_IOC_BRINGUP)) {
+ 		ioc->pci_irq = -1;
+ 		if (ioc->pcidev->irq) {
+-			if (mpt_msi_enable && !pci_enable_msi(ioc->pcidev))
++			if (ioc->msi_enable == 1 &&
++					!pci_enable_msi(ioc->pcidev))
+ 				printk(MYIOC_s_INFO_FMT "PCI-MSI enabled\n",
+ 				    ioc->name);
++			else
++				ioc->msi_enable = 0;
+ 			rc = request_irq(ioc->pcidev->irq, mpt_interrupt,
+ 			    IRQF_SHARED, ioc->name, ioc);
+ 			if (rc < 0) {
+ 				printk(MYIOC_s_ERR_FMT "Unable to allocate "
+ 				    "interrupt %d!\n", ioc->name, ioc->pcidev->irq);
+-				if (mpt_msi_enable)
++				if (ioc->msi_enable == 1)
+ 					pci_disable_msi(ioc->pcidev);
+ 				return -EBUSY;
+ 			}
+ 			irq_allocated = 1;
+ 			ioc->pci_irq = ioc->pcidev->irq;
+ 			pci_set_master(ioc->pcidev);		/* ?? */
+-			pci_set_drvdata(ioc->pcidev, ioc);
+ 			dprintk(ioc, printk(MYIOC_s_INFO_FMT "installed at interrupt "
+ 			    "%d\n", ioc->name, ioc->pcidev->irq));
+ 		}
+@@ -2110,7 +2254,7 @@ mpt_do_ioc_recovery(MPT_ADAPTER *ioc, u32 reason, int sleepFlag)
+ 						ddlprintk(ioc, printk(MYIOC_s_DEBUG_FMT
+ 						    "mpt_upload:  alt_%s has cached_fw=%p \n",
+ 						    ioc->name, ioc->alt_ioc->name, ioc->alt_ioc->cached_fw));
+-						ioc->alt_ioc->cached_fw = NULL;
++						ioc->cached_fw = NULL;
+ 					}
+ 				} else {
+ 					printk(MYIOC_s_WARN_FMT
+@@ -2155,7 +2299,7 @@ mpt_do_ioc_recovery(MPT_ADAPTER *ioc, u32 reason, int sleepFlag)
+ 		/*
+ 		 * Initalize link list for inactive raid volumes.
+ 		 */
+-		init_MUTEX(&ioc->raid_data.inactive_list_mutex);
++		mutex_init(&ioc->raid_data.inactive_list_mutex);
+ 		INIT_LIST_HEAD(&ioc->raid_data.inactive_list);
+ 
+ 		if (ioc->bus_type == SAS) {
+@@ -2243,7 +2387,7 @@ mpt_do_ioc_recovery(MPT_ADAPTER *ioc, u32 reason, int sleepFlag)
+  out:
+ 	if ((ret != 0) && irq_allocated) {
+ 		free_irq(ioc->pci_irq, ioc);
+-		if (mpt_msi_enable)
++		if (ioc->msi_enable == 1)
+ 			pci_disable_msi(ioc->pcidev);
+ 	}
+ 	return ret;
+@@ -2316,10 +2460,12 @@ mpt_adapter_disable(MPT_ADAPTER *ioc)
+ 	int ret;
+ 
+ 	if (ioc->cached_fw != NULL) {
+-		ddlprintk(ioc, printk(MYIOC_s_INFO_FMT
+-		    "mpt_adapter_disable: Pushing FW onto adapter\n", ioc->name));
+-		if ((ret = mpt_downloadboot(ioc, (MpiFwHeader_t *)ioc->cached_fw, NO_SLEEP)) < 0) {
+-			printk(MYIOC_s_WARN_FMT "firmware downloadboot failure (%d)!\n",
++		ddlprintk(ioc, printk(MYIOC_s_DEBUG_FMT "%s: Pushing FW onto "
++		    "adapter\n", __FUNCTION__, ioc->name));
++		if ((ret = mpt_downloadboot(ioc, (MpiFwHeader_t *)
++		    ioc->cached_fw, CAN_SLEEP)) < 0) {
++			printk(MYIOC_s_WARN_FMT
++			    ": firmware downloadboot failure (%d)!\n",
+ 			    ioc->name, ret);
+ 		}
+ 	}
+@@ -2357,13 +2503,7 @@ mpt_adapter_disable(MPT_ADAPTER *ioc)
+ 		ioc->alloc_total -= sz;
+ 	}
+ 
+-	if (ioc->cached_fw != NULL) {
+-		sz = ioc->facts.FWImageSize;
+-		pci_free_consistent(ioc->pcidev, sz,
+-			ioc->cached_fw, ioc->cached_fw_dma);
+-		ioc->cached_fw = NULL;
+-		ioc->alloc_total -= sz;
+-	}
++	mpt_free_fw_memory(ioc);
+ 
+ 	kfree(ioc->spi_data.nvram);
+ 	mpt_inactive_raid_list_free(ioc);
+@@ -2434,6 +2574,8 @@ mpt_adapter_dispose(MPT_ADAPTER *ioc)
+ 		ioc->pci_irq = -1;
+ 	}
+ 
++	pci_disable_device(ioc->pcidev);
++
+ 	if (ioc->memmap != NULL) {
+ 		iounmap(ioc->memmap);
+ 		ioc->memmap = NULL;
+@@ -3111,41 +3253,65 @@ SendPortEnable(MPT_ADAPTER *ioc, int portnum, int sleepFlag)
+  *
+  *	If memory has already been allocated, the same (cached) value
+  *	is returned.
+- */
+-void
++ *
++ *	Return 0 if successfull, or non-zero for failure
++ **/
++int
+ mpt_alloc_fw_memory(MPT_ADAPTER *ioc, int size)
+ {
+-	if (ioc->cached_fw)
+-		return;  /* use already allocated memory */
+-	if (ioc->alt_ioc && ioc->alt_ioc->cached_fw) {
++	int rc;
++
++	if (ioc->cached_fw) {
++		rc = 0;  /* use already allocated memory */
++		goto out;
++	} else if (ioc->alt_ioc && ioc->alt_ioc->cached_fw) {
+ 		ioc->cached_fw = ioc->alt_ioc->cached_fw;  /* use alt_ioc's memory */
+ 		ioc->cached_fw_dma = ioc->alt_ioc->cached_fw_dma;
+-		ioc->alloc_total += size;
+-		ioc->alt_ioc->alloc_total -= size;
++		rc = 0;
++		goto out;
++	}
++	ioc->cached_fw = pci_alloc_consistent(ioc->pcidev, size,
++						&ioc->cached_fw_dma);
++	if (!ioc->cached_fw) {
++		printk(MYIOC_s_ERR_FMT "Unable to allocate memory for"
++			" the cached firmware image!\n",
++			ioc->name);
++		rc = -1;
+ 	} else {
+-		if ( (ioc->cached_fw = pci_alloc_consistent(ioc->pcidev, size, &ioc->cached_fw_dma) ) )
+-			ioc->alloc_total += size;
++		dinitprintk(ioc, printk(MYIOC_s_DEBUG_FMT
++			"FW Image  @ %p[%p], sz=%d[%x] bytes\n",
++			ioc->name, ioc->cached_fw,
++			(void *)(ulong)ioc->cached_fw_dma, size, size));
++		ioc->alloc_total += size;
++		rc = 0;
+ 	}
++ out:
++	return rc;
+ }
++
+ /**
+  *	mpt_free_fw_memory - free firmware memory
+  *	@ioc: Pointer to MPT_ADAPTER structure
+  *
+  *	If alt_img is NULL, delete from ioc structure.
+  *	Else, delete a secondary image in same format.
+- */
++ **/
+ void
+ mpt_free_fw_memory(MPT_ADAPTER *ioc)
+ {
+ 	int sz;
+ 
++	if (!ioc->cached_fw)
++		return;
++
+ 	sz = ioc->facts.FWImageSize;
+-	dinitprintk(ioc, printk(MYIOC_s_INFO_FMT "free_fw_memory: FW Image  @ %p[%p], sz=%d[%x] bytes\n",
+-	    ioc->name, ioc->cached_fw, (void *)(ulong)ioc->cached_fw_dma, sz, sz));
++	dinitprintk(ioc, printk(MYIOC_s_DEBUG_FMT
++		"free_fw_memory: FW Image  @ %p[%p], sz=%d[%x] bytes\n",
++		ioc->name, ioc->cached_fw, (void *)(ulong)ioc->cached_fw_dma,
++		sz, sz));
+ 	pci_free_consistent(ioc->pcidev, sz, ioc->cached_fw, ioc->cached_fw_dma);
++	ioc->alloc_total -= sz;
+ 	ioc->cached_fw = NULL;
+-
+-	return;
+ }
+ 
+ 
+@@ -3180,17 +3346,12 @@ mpt_do_upload(MPT_ADAPTER *ioc, int sleepFlag)
+ 	if ((sz = ioc->facts.FWImageSize) == 0)
+ 		return 0;
+ 
+-	mpt_alloc_fw_memory(ioc, sz);
++	if (mpt_alloc_fw_memory(ioc, ioc->facts.FWImageSize) != 0)
++		return -ENOMEM;
+ 
+ 	dinitprintk(ioc, printk(MYIOC_s_INFO_FMT ": FW Image  @ %p[%p], sz=%d[%x] bytes\n",
+ 	    ioc->name, ioc->cached_fw, (void *)(ulong)ioc->cached_fw_dma, sz, sz));
+ 
+-	if (ioc->cached_fw == NULL) {
+-		/* Major Failure.
+-		 */
+-		return -ENOMEM;
+-	}
+-
+ 	prequest = (sleepFlag == NO_SLEEP) ? kzalloc(ioc->req_sz, GFP_ATOMIC) :
+ 	    kzalloc(ioc->req_sz, GFP_KERNEL);
+ 	if (!prequest) {
+@@ -3562,12 +3723,12 @@ KickStart(MPT_ADAPTER *ioc, int force, int sleepFlag)
+ static int
+ mpt_diag_reset(MPT_ADAPTER *ioc, int ignore, int sleepFlag)
+ {
+-	MPT_ADAPTER	*iocp=NULL;
+ 	u32 diag0val;
+ 	u32 doorbell;
+ 	int hard_reset_done = 0;
+ 	int count = 0;
+ 	u32 diag1val = 0;
++	MpiFwHeader_t *cached_fw;	/* Pointer to FW */
+ 
+ 	/* Clear any existing interrupts */
+ 	CHIPREG_WRITE32(&ioc->chip->IntStatus, 0);
+@@ -3699,22 +3860,25 @@ mpt_diag_reset(MPT_ADAPTER *ioc, int ignore, int sleepFlag)
+ 		}
+ 
+ 		if (ioc->cached_fw)
+-			iocp = ioc;
++			cached_fw = (MpiFwHeader_t *)ioc->cached_fw;
+ 		else if (ioc->alt_ioc && ioc->alt_ioc->cached_fw)
+-			iocp = ioc->alt_ioc;
+-		if (iocp) {
++			cached_fw = (MpiFwHeader_t *)ioc->alt_ioc->cached_fw;
++		else
++			cached_fw = NULL;
++		if (cached_fw) {
+ 			/* If the DownloadBoot operation fails, the
+ 			 * IOC will be left unusable. This is a fatal error
+ 			 * case.  _diag_reset will return < 0
+ 			 */
+ 			for (count = 0; count < 30; count ++) {
+-				diag0val = CHIPREG_READ32(&iocp->chip->Diagnostic);
++				diag0val =
++					CHIPREG_READ32(&ioc->chip->Diagnostic);
+ 				if (!(diag0val & MPI_DIAG_RESET_ADAPTER)) {
+ 					break;
+ 				}
+ 
+ 				dprintk(ioc, printk(MYIOC_s_DEBUG_FMT "cached_fw: diag0val=%x count=%d\n",
+-					iocp->name, diag0val, count));
++					ioc->name, diag0val, count));
+ 				/* wait 1 sec */
+ 				if (sleepFlag == CAN_SLEEP) {
+ 					msleep (1000);
+@@ -3723,9 +3887,10 @@ mpt_diag_reset(MPT_ADAPTER *ioc, int ignore, int sleepFlag)
+ 				}
+ 			}
+ 			if ((count = mpt_downloadboot(ioc,
+-				(MpiFwHeader_t *)iocp->cached_fw, sleepFlag)) < 0) {
++						cached_fw, sleepFlag)) < 0) {
+ 				printk(MYIOC_s_WARN_FMT
+-					"firmware downloadboot failure (%d)!\n", ioc->name, count);
++					"firmware downloadboot failure (%d)!\n",
++					ioc->name, count);
+ 			}
+ 
+ 		} else {
+@@ -5172,13 +5337,13 @@ mpt_inactive_raid_list_free(MPT_ADAPTER *ioc)
+ 	if (list_empty(&ioc->raid_data.inactive_list))
+ 		return;
+ 
+-	down(&ioc->raid_data.inactive_list_mutex);
++	mutex_lock(&ioc->raid_data.inactive_list_mutex);
+ 	list_for_each_entry_safe(component_info, pNext,
+ 	    &ioc->raid_data.inactive_list, list) {
+ 		list_del(&component_info->list);
+ 		kfree(component_info);
+ 	}
+-	up(&ioc->raid_data.inactive_list_mutex);
++	mutex_unlock(&ioc->raid_data.inactive_list_mutex);
+ }
+ 
+ /**
+@@ -5237,7 +5402,7 @@ mpt_inactive_raid_volumes(MPT_ADAPTER *ioc, u8 channel, u8 id)
+ 	if (!handle_inactive_volumes)
+ 		goto out;
+ 
+-	down(&ioc->raid_data.inactive_list_mutex);
++	mutex_lock(&ioc->raid_data.inactive_list_mutex);
+ 	for (i = 0; i < buffer->NumPhysDisks; i++) {
+ 		if(mpt_raid_phys_disk_pg0(ioc,
+ 		    buffer->PhysDisk[i].PhysDiskNum, &phys_disk) != 0)
+@@ -5257,7 +5422,7 @@ mpt_inactive_raid_volumes(MPT_ADAPTER *ioc, u8 channel, u8 id)
+ 		list_add_tail(&component_info->list,
+ 		    &ioc->raid_data.inactive_list);
+ 	}
+-	up(&ioc->raid_data.inactive_list_mutex);
++	mutex_unlock(&ioc->raid_data.inactive_list_mutex);
+ 
+  out:
+ 	if (buffer)
+diff --git a/drivers/message/fusion/mptbase.h b/drivers/message/fusion/mptbase.h
+index d6d7c6f..f7011c8 100644
+--- a/drivers/message/fusion/mptbase.h
++++ b/drivers/message/fusion/mptbase.h
+@@ -5,7 +5,7 @@
+  *          LSIFC9xx/LSI409xx Fibre Channel
+  *      running LSI Fusion MPT (Message Passing Technology) firmware.
+  *
+- *  Copyright (c) 1999-2007 LSI Corporation
++ *  Copyright (c) 1999-2008 LSI Corporation
+  *  (mailto:DL-MPTFusionLinux@lsi.com)
+  *
+  */
+@@ -51,6 +51,7 @@
+ 
+ #include <linux/kernel.h>
+ #include <linux/pci.h>
++#include <linux/mutex.h>
+ 
+ #include "lsi/mpi_type.h"
+ #include "lsi/mpi.h"		/* Fusion MPI(nterface) basic defs */
+@@ -72,11 +73,11 @@
+ #endif
+ 
+ #ifndef COPYRIGHT
+-#define COPYRIGHT	"Copyright (c) 1999-2007 " MODULEAUTHOR
++#define COPYRIGHT	"Copyright (c) 1999-2008 " MODULEAUTHOR
+ #endif
+ 
+-#define MPT_LINUX_VERSION_COMMON	"3.04.05"
+-#define MPT_LINUX_PACKAGE_NAME		"@(#)mptlinux-3.04.05"
++#define MPT_LINUX_VERSION_COMMON	"3.04.07"
++#define MPT_LINUX_PACKAGE_NAME		"@(#)mptlinux-3.04.07"
+ #define WHAT_MAGIC_STRING		"@" "(" "#" ")"
+ 
+ #define show_mptmod_ver(s,ver)  \
+@@ -177,6 +178,8 @@
+ /* debug print string length used for events and iocstatus */
+ # define EVENT_DESCR_STR_SZ             100
+ 
++#define MPT_POLLING_INTERVAL		1000	/* in milliseconds */
++
+ #ifdef __KERNEL__	/* { */
+ /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
+ 
+@@ -533,7 +536,7 @@ struct inactive_raid_component_info {
+ typedef	struct _RaidCfgData {
+ 	IOCPage2_t	*pIocPg2;		/* table of Raid Volumes */
+ 	IOCPage3_t	*pIocPg3;		/* table of physical disks */
+-	struct semaphore	inactive_list_mutex;
++	struct mutex	inactive_list_mutex;
+ 	struct list_head	inactive_list; /* link list for physical
+ 						disk that belong in
+ 						inactive volumes */
+@@ -635,6 +638,7 @@ typedef struct _MPT_ADAPTER
+ 	dma_addr_t		HostPageBuffer_dma;
+ 	int			 mtrr_reg;
+ 	struct pci_dev		*pcidev;	/* struct pci_dev pointer */
++	int			msi_enable;
+ 	u8			__iomem *memmap;	/* mmap address */
+ 	struct Scsi_Host	*sh;		/* Scsi Host pointer */
+ 	SpiCfgData		spi_data;	/* Scsi config. data */
+@@ -698,7 +702,6 @@ typedef struct _MPT_ADAPTER
+ 	struct mutex		 sas_discovery_mutex;
+ 	u8			 sas_discovery_runtime;
+ 	u8			 sas_discovery_ignore_events;
+-	u16			 handle;
+ 	int			 sas_index; /* index refrencing */
+ 	MPT_SAS_MGMT		 sas_mgmt;
+ 	struct work_struct	 sas_persist_task;
+@@ -713,6 +716,12 @@ typedef struct _MPT_ADAPTER
+ 	struct workqueue_struct *fc_rescan_work_q;
+ 	struct scsi_cmnd	**ScsiLookup;
+ 	spinlock_t		  scsi_lookup_lock;
++
++	char			 reset_work_q_name[KOBJ_NAME_LEN];
++	struct workqueue_struct *reset_work_q;
++	struct work_struct	 fault_reset_work;
++	spinlock_t		 fault_reset_work_lock;
++
+ } MPT_ADAPTER;
+ 
+ /*
+@@ -911,7 +920,7 @@ extern u32	 mpt_GetIocState(MPT_ADAPTER *ioc, int cooked);
+ extern void	 mpt_print_ioc_summary(MPT_ADAPTER *ioc, char *buf, int *size, int len, int showlan);
+ extern int	 mpt_HardResetHandler(MPT_ADAPTER *ioc, int sleepFlag);
+ extern int	 mpt_config(MPT_ADAPTER *ioc, CONFIGPARMS *cfg);
+-extern void	 mpt_alloc_fw_memory(MPT_ADAPTER *ioc, int size);
++extern int	 mpt_alloc_fw_memory(MPT_ADAPTER *ioc, int size);
+ extern void	 mpt_free_fw_memory(MPT_ADAPTER *ioc);
+ extern int	 mpt_findImVolumes(MPT_ADAPTER *ioc);
+ extern int	 mptbase_sas_persist_operation(MPT_ADAPTER *ioc, u8 persist_opcode);
+diff --git a/drivers/message/fusion/mptctl.c b/drivers/message/fusion/mptctl.c
+index 7e5ec0d..deb9abb 100644
+--- a/drivers/message/fusion/mptctl.c
++++ b/drivers/message/fusion/mptctl.c
+@@ -4,7 +4,7 @@
+  *      For use with LSI PCI chip/adapters
+  *      running LSI Fusion MPT (Message Passing Technology) firmware.
+  *
+- *  Copyright (c) 1999-2007 LSI Corporation
++ *  Copyright (c) 1999-2008 LSI Corporation
+  *  (mailto:DL-MPTFusionLinux@lsi.com)
+  *
+  */
+@@ -66,7 +66,7 @@
+ #include <scsi/scsi_host.h>
+ #include <scsi/scsi_tcq.h>
+ 
+-#define COPYRIGHT	"Copyright (c) 1999-2007 LSI Corporation"
++#define COPYRIGHT	"Copyright (c) 1999-2008 LSI Corporation"
+ #define MODULEAUTHOR	"LSI Corporation"
+ #include "mptbase.h"
+ #include "mptctl.h"
+diff --git a/drivers/message/fusion/mptctl.h b/drivers/message/fusion/mptctl.h
+index 2c18901..d564cc9 100644
+--- a/drivers/message/fusion/mptctl.h
++++ b/drivers/message/fusion/mptctl.h
+@@ -5,7 +5,7 @@
+  *          LSIFC9xx/LSI409xx Fibre Channel
+  *      running LSI Fusion MPT (Message Passing Technology) firmware.
+  *
+- *  Copyright (c) 1999-2007 LSI Corporation
++ *  Copyright (c) 1999-2008 LSI Corporation
+  *  (mailto:DL-MPTFusionLinux@lsi.com)
+  *
+  */
+diff --git a/drivers/message/fusion/mptdebug.h b/drivers/message/fusion/mptdebug.h
+index 34016a2..962ccbe 100644
+--- a/drivers/message/fusion/mptdebug.h
++++ b/drivers/message/fusion/mptdebug.h
+@@ -3,7 +3,7 @@
+  *      For use with LSI PCI chip/adapter(s)
+  *      running LSI Fusion MPT (Message Passing Technology) firmware.
+  *
+- *  Copyright (c) 1999-2007 LSI Corporation
++ *  Copyright (c) 1999-2008 LSI Corporation
+  *  (mailto:DL-MPTFusionLinux@lsi.com)
+  *
+  */
+diff --git a/drivers/message/fusion/mptfc.c b/drivers/message/fusion/mptfc.c
+index fce544e..5d6f351 100644
+--- a/drivers/message/fusion/mptfc.c
++++ b/drivers/message/fusion/mptfc.c
+@@ -3,7 +3,7 @@
+  *      For use with LSI PCI chip/adapter(s)
+  *      running LSI Fusion MPT (Message Passing Technology) firmware.
+  *
+- *  Copyright (c) 1999-2007 LSI Corporation
++ *  Copyright (c) 1999-2008 LSI Corporation
+  *  (mailto:DL-MPTFusionLinux@lsi.com)
+  *
+  */
+diff --git a/drivers/message/fusion/mptlan.c b/drivers/message/fusion/mptlan.c
+index e1b0af0..e19e660 100644
+--- a/drivers/message/fusion/mptlan.c
++++ b/drivers/message/fusion/mptlan.c
+@@ -4,7 +4,7 @@
+  *      For use with LSI Fibre Channel PCI chip/adapters
+  *      running LSI Fusion MPT (Message Passing Technology) firmware.
+  *
+- *  Copyright (c) 2000-2007 LSI Corporation
++ *  Copyright (c) 2000-2008 LSI Corporation
+  *  (mailto:DL-MPTFusionLinux@lsi.com)
+  *
+  */
+diff --git a/drivers/message/fusion/mptlan.h b/drivers/message/fusion/mptlan.h
+index bafb67f..33927ee 100644
+--- a/drivers/message/fusion/mptlan.h
++++ b/drivers/message/fusion/mptlan.h
+@@ -4,7 +4,7 @@
+  *      For use with LSI Fibre Channel PCI chip/adapters
+  *      running LSI Fusion MPT (Message Passing Technology) firmware.
+  *
+- *  Copyright (c) 2000-2007 LSI Corporation
++ *  Copyright (c) 2000-2008 LSI Corporation
+  *  (mailto:DL-MPTFusionLinux@lsi.com)
+  *
+  */
+diff --git a/drivers/message/fusion/mptsas.c b/drivers/message/fusion/mptsas.c
+index 44e6e3d..34304bf 100644
+--- a/drivers/message/fusion/mptsas.c
++++ b/drivers/message/fusion/mptsas.c
+@@ -3,9 +3,8 @@
+  *      For use with LSI PCI chip/adapter(s)
+  *      running LSI Fusion MPT (Message Passing Technology) firmware.
+  *
+- *  Copyright (c) 1999-2007 LSI Corporation
++ *  Copyright (c) 1999-2008 LSI Corporation
+  *  (mailto:DL-MPTFusionLinux@lsi.com)
+- *  Copyright (c) 2005-2007 Dell
+  */
+ /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
+ /*
+@@ -231,6 +230,20 @@ static inline MPT_ADAPTER *rphy_to_ioc(struct sas_rphy *rphy)
+ 	return ((MPT_SCSI_HOST *)shost->hostdata)->ioc;
+ }
+ 
++static struct mptsas_portinfo *
++mptsas_get_hba_portinfo(MPT_ADAPTER *ioc)
++{
++	struct list_head	*head = &ioc->sas_topology;
++	struct mptsas_portinfo	*pi = NULL;
++
++	/* always the first entry on sas_topology list */
++
++	if (!list_empty(head))
++		pi = list_entry(head->next, struct mptsas_portinfo, list);
++
++	return pi;
++}
++
+ /*
+  * mptsas_find_portinfo_by_handle
+  *
+@@ -1574,6 +1587,12 @@ mptsas_sas_expander_pg0(MPT_ADAPTER *ioc, struct mptsas_portinfo *port_info,
+ 	if (error)
+ 		goto out_free_consistent;
+ 
++
++	if (!buffer->NumPhys) {
++		error = -ENODEV;
++		goto out_free_consistent;
++	}
++
+ 	/* save config data */
+ 	port_info->num_phys = buffer->NumPhys;
+ 	port_info->phy_info = kcalloc(port_info->num_phys,
+@@ -1896,8 +1915,7 @@ static int mptsas_probe_one_phy(struct device *dev,
+ 			int i;
+ 
+ 			mutex_lock(&ioc->sas_topology_mutex);
+-			port_info = mptsas_find_portinfo_by_handle(ioc,
+-								   ioc->handle);
++			port_info = mptsas_get_hba_portinfo(ioc);
+ 			mutex_unlock(&ioc->sas_topology_mutex);
+ 
+ 			for (i = 0; i < port_info->num_phys; i++)
+@@ -1967,8 +1985,7 @@ mptsas_probe_hba_phys(MPT_ADAPTER *ioc)
+ 
+ 	mptsas_sas_io_unit_pg1(ioc);
+ 	mutex_lock(&ioc->sas_topology_mutex);
+-	ioc->handle = hba->phy_info[0].handle;
+-	port_info = mptsas_find_portinfo_by_handle(ioc, ioc->handle);
++	port_info = mptsas_get_hba_portinfo(ioc);
+ 	if (!port_info) {
+ 		port_info = hba;
+ 		list_add_tail(&port_info->list, &ioc->sas_topology);
+@@ -2025,11 +2042,8 @@ mptsas_probe_expander_phys(MPT_ADAPTER *ioc, u32 *handle)
+ 	struct mptsas_portinfo *port_info, *p, *ex;
+ 	struct device *parent;
+ 	struct sas_rphy *rphy;
+-	int error = -ENOMEM, i;
+-	u8	add_new_expander;
+-	u64	expander_sas_address;
++	int error = -ENOMEM, i, j;
+ 
+-	add_new_expander = 0;
+ 	ex = kzalloc(sizeof(*port_info), GFP_KERNEL);
+ 	if (!ex)
+ 		goto out;
+@@ -2047,7 +2061,6 @@ mptsas_probe_expander_phys(MPT_ADAPTER *ioc, u32 *handle)
+ 	if (!port_info) {
+ 		port_info = ex;
+ 		list_add_tail(&port_info->list, &ioc->sas_topology);
+-		add_new_expander = 1;
+ 	} else {
+ 		for (i = 0; i < ex->num_phys; i++) {
+ 			port_info->phy_info[i].handle =
+@@ -2087,28 +2100,20 @@ mptsas_probe_expander_phys(MPT_ADAPTER *ioc, u32 *handle)
+ 		}
+ 	}
+ 
+-	expander_sas_address = port_info->phy_info[0].identify.sas_address;
+-
+-	if (add_new_expander)
+-		printk(MYIOC_s_INFO_FMT "add expander: num_phys %d, "
+-		    "sas_addr (0x%llx)\n", ioc->name, port_info->num_phys,
+-		    (unsigned long long)expander_sas_address);
+-
+-	parent = NULL;
+-	mutex_lock(&ioc->sas_topology_mutex);
+-	list_for_each_entry(p, &ioc->sas_topology, list) {
+-		for (i = 0; i < p->num_phys && parent == NULL; i++) {
+-			if (expander_sas_address !=
+-			    p->phy_info[i].attached.sas_address)
+-				continue;
+-			rphy = mptsas_get_rphy(&p->phy_info[i]);
+-			parent = &rphy->dev;
++	parent = &ioc->sh->shost_gendev;
++	for (i = 0; i < port_info->num_phys; i++) {
++		mutex_lock(&ioc->sas_topology_mutex);
++		list_for_each_entry(p, &ioc->sas_topology, list) {
++			for (j = 0; j < p->num_phys; j++) {
++				if (port_info->phy_info[i].identify.handle !=
++						p->phy_info[j].attached.handle)
++					continue;
++				rphy = mptsas_get_rphy(&p->phy_info[j]);
++				parent = &rphy->dev;
++			}
+ 		}
++		mutex_unlock(&ioc->sas_topology_mutex);
+ 	}
+-	mutex_unlock(&ioc->sas_topology_mutex);
+-
+-	if (!parent)
+-		parent = &ioc->sh->shost_gendev;
+ 
+ 	mptsas_setup_wide_ports(ioc, port_info);
+ 
+diff --git a/drivers/message/fusion/mptsas.h b/drivers/message/fusion/mptsas.h
+index 7c150f5..2b544e0 100644
+--- a/drivers/message/fusion/mptsas.h
++++ b/drivers/message/fusion/mptsas.h
+@@ -5,7 +5,7 @@
+  *          LSIFC9xx/LSI409xx Fibre Channel
+  *      running LSI MPT (Message Passing Technology) firmware.
+  *
+- *  Copyright (c) 1999-2007 LSI Corporation
++ *  Copyright (c) 1999-2008 LSI Corporation
+  *  (mailto:DL-MPTFusionLinux@lsi.com)
+  *
+  */
+diff --git a/drivers/message/fusion/mptscsih.c b/drivers/message/fusion/mptscsih.c
+index acb9463..bf62173 100644
+--- a/drivers/message/fusion/mptscsih.c
++++ b/drivers/message/fusion/mptscsih.c
+@@ -3,7 +3,7 @@
+  *      For use with LSI PCI chip/adapter(s)
+  *      running LSI Fusion MPT (Message Passing Technology) firmware.
+  *
+- *  Copyright (c) 1999-2007 LSI Corporation
++ *  Copyright (c) 1999-2008 LSI Corporation
+  *  (mailto:DL-MPTFusionLinux@lsi.com)
+  *
+  */
+@@ -1185,6 +1185,10 @@ mptscsih_shutdown(struct pci_dev *pdev)
+ int
+ mptscsih_suspend(struct pci_dev *pdev, pm_message_t state)
+ {
++	MPT_ADAPTER 		*ioc = pci_get_drvdata(pdev);
++
++	scsi_block_requests(ioc->sh);
++	flush_scheduled_work();
+ 	mptscsih_shutdown(pdev);
+ 	return mpt_suspend(pdev,state);
+ }
+@@ -1198,7 +1202,12 @@ mptscsih_suspend(struct pci_dev *pdev, pm_message_t state)
+ int
+ mptscsih_resume(struct pci_dev *pdev)
+ {
+-	return mpt_resume(pdev);
++	MPT_ADAPTER 		*ioc = pci_get_drvdata(pdev);
++	int rc;
++
++	rc = mpt_resume(pdev);
++	scsi_unblock_requests(ioc->sh);
++	return rc;
+ }
+ 
+ #endif
+@@ -1548,7 +1557,7 @@ mptscsih_freeChainBuffers(MPT_ADAPTER *ioc, int req_idx)
+  *
+  *	Remark: Currently invoked from a non-interrupt thread (_bh).
+  *
+- *	Remark: With old EH code, at most 1 SCSI TaskMgmt function per IOC
++ *	Note: With old EH code, at most 1 SCSI TaskMgmt function per IOC
+  *	will be active.
+  *
+  *	Returns 0 for SUCCESS, or %FAILED.
+@@ -1751,7 +1760,7 @@ mptscsih_IssueTaskMgmt(MPT_SCSI_HOST *hd, u8 type, u8 channel, u8 id, int lun, i
+  fail_out:
+ 
+ 	/*
+-	 * Free task managment mf, and corresponding tm flags
++	 * Free task management mf, and corresponding tm flags
+ 	 */
+ 	mpt_free_msg_frame(ioc, mf);
+ 	hd->tmPending = 0;
+@@ -2313,14 +2322,14 @@ mptscsih_is_phys_disk(MPT_ADAPTER *ioc, u8 channel, u8 id)
+ 	if (list_empty(&ioc->raid_data.inactive_list))
+ 		goto out;
+ 
+-	down(&ioc->raid_data.inactive_list_mutex);
++	mutex_lock(&ioc->raid_data.inactive_list_mutex);
+ 	list_for_each_entry(component_info, &ioc->raid_data.inactive_list,
+ 	    list) {
+ 		if ((component_info->d.PhysDiskID == id) &&
+ 		    (component_info->d.PhysDiskBus == channel))
+ 			rc = 1;
+ 	}
+-	up(&ioc->raid_data.inactive_list_mutex);
++	mutex_unlock(&ioc->raid_data.inactive_list_mutex);
+ 
+  out:
+ 	return rc;
+@@ -2350,14 +2359,14 @@ mptscsih_raid_id_to_num(MPT_ADAPTER *ioc, u8 channel, u8 id)
+ 	if (list_empty(&ioc->raid_data.inactive_list))
+ 		goto out;
+ 
+-	down(&ioc->raid_data.inactive_list_mutex);
++	mutex_lock(&ioc->raid_data.inactive_list_mutex);
+ 	list_for_each_entry(component_info, &ioc->raid_data.inactive_list,
+ 	    list) {
+ 		if ((component_info->d.PhysDiskID == id) &&
+ 		    (component_info->d.PhysDiskBus == channel))
+ 			rc = component_info->d.PhysDiskNum;
+ 	}
+-	up(&ioc->raid_data.inactive_list_mutex);
++	mutex_unlock(&ioc->raid_data.inactive_list_mutex);
+ 
+  out:
+ 	return rc;
+@@ -2555,14 +2564,12 @@ mptscsih_copy_sense_data(struct scsi_cmnd *sc, MPT_SCSI_HOST *hd, MPT_FRAME_HDR
+ 
+ /**
+  * mptscsih_get_scsi_lookup
+- *
+- * retrieves scmd entry from ScsiLookup[] array list
+- *
+  * @ioc: Pointer to MPT_ADAPTER structure
+  * @i: index into the array
+  *
+- * Returns the scsi_cmd pointer
++ * retrieves scmd entry from ScsiLookup[] array list
+  *
++ * Returns the scsi_cmd pointer
+  **/
+ static struct scsi_cmnd *
+ mptscsih_get_scsi_lookup(MPT_ADAPTER *ioc, int i)
+@@ -2579,14 +2586,12 @@ mptscsih_get_scsi_lookup(MPT_ADAPTER *ioc, int i)
+ 
+ /**
+  * mptscsih_getclear_scsi_lookup
+- *
+- * retrieves and clears scmd entry from ScsiLookup[] array list
+- *
+  * @ioc: Pointer to MPT_ADAPTER structure
+  * @i: index into the array
+  *
+- * Returns the scsi_cmd pointer
++ * retrieves and clears scmd entry from ScsiLookup[] array list
+  *
++ * Returns the scsi_cmd pointer
+  **/
+ static struct scsi_cmnd *
+ mptscsih_getclear_scsi_lookup(MPT_ADAPTER *ioc, int i)
+diff --git a/drivers/message/fusion/mptscsih.h b/drivers/message/fusion/mptscsih.h
+index d289e97..de84413 100644
+--- a/drivers/message/fusion/mptscsih.h
++++ b/drivers/message/fusion/mptscsih.h
+@@ -5,7 +5,7 @@
+  *          LSIFC9xx/LSI409xx Fibre Channel
+  *      running LSI Fusion MPT (Message Passing Technology) firmware.
+  *
+- *  Copyright (c) 1999-2007 LSI Corporation
++ *  Copyright (c) 1999-2008 LSI Corporation
+  *  (mailto:DL-MPTFusionLinux@lsi.com)
+  *
+  */
+diff --git a/drivers/message/fusion/mptspi.c b/drivers/message/fusion/mptspi.c
+index 5624d72..7f11435 100644
+--- a/drivers/message/fusion/mptspi.c
++++ b/drivers/message/fusion/mptspi.c
+@@ -3,7 +3,7 @@
+  *      For use with LSI PCI chip/adapter(s)
+  *      running LSI Fusion MPT (Message Passing Technology) firmware.
+  *
+- *  Copyright (c) 1999-2007 LSI Corporation
++ *  Copyright (c) 1999-2008 LSI Corporation
+  *  (mailto:DL-MPTFusionLinux@lsi.com)
+  *
+  */
+@@ -448,6 +448,7 @@ static int mptspi_target_alloc(struct scsi_target *starget)
+ 	spi_max_offset(starget) = ioc->spi_data.maxSyncOffset;
+ 
+ 	spi_offset(starget) = 0;
++	spi_period(starget) = 0xFF;
+ 	mptspi_write_width(starget, 0);
+ 
+ 	return 0;

@@ -1,0 +1,64 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Wed, 16 Apr 2008 11:08:07 -0400
+Subject: [xen] ia64: set memory attribute in inline asm
+Message-id: 48061657.7090806@redhat.com
+O-Subject: [RHEL5.2][PATCH] ia64-xen: set memory attribute in inline asm
+Bugzilla: 426015
+
+This is an additional patch for BZ#426015
+
+- [xen-ia64] Dom0 panic while we run ftp test tool between HVM and Dom0.
+https://bugzilla.redhat.com/show_bug.cgi?id=426015
+
+[Description]
+Inline assembler code for ssm instruction did not have 'memory'
+attribute.  In that case, a compiler optimizes the code and generates
+unintented assembler code.  This problem affect the ftp stress test
+between Dom0/HVM.  This patch fix it by adding 'memory' attribute to
+inline assmbler code to avoid the compiler optimization.  Besides that,
+this patch removes XEN_HYPER_GET_IVR which is wrong (does not return any
+value) and never used.
+
+Unfortunately, this patch can not yet fix the ftp problem completely,
+but it makes some improvement; running time for ftp test is improved
+from 3days to 4 days.
+
+[Upstream Status]
+Committed in the ia64 tree:
+- [IA64] Set memory attribute in inline asm
+http://xenbits.xensource.com/ext/ia64/linux-2.6.18-xen.hg?rev/dbe8a35dcaf7
+
+The backported patch has only the part relevant to RHEL5 kernel.
+
+[brew ID]
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1272787
+
+[Test Status]
+Run ftp stress test between Dom0 and HVM domain.  The time Dom0 can run
+without panic is:
+ w/o patch: 3 days
+ w/  patch: 4 days
+
+Please review and ACK.
+
+Regards,
+
+Tetsu Yamamoto
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+diff --git a/include/asm-ia64/xen/privop.h b/include/asm-ia64/xen/privop.h
+index 1bee5ef..b7a2bca 100644
+--- a/include/asm-ia64/xen/privop.h
++++ b/include/asm-ia64/xen/privop.h
+@@ -64,8 +64,7 @@
+ #endif
+ 
+ #ifndef __ASSEMBLY__
+-#define	XEN_HYPER_SSM_I		asm("break %0" : : "i" (HYPERPRIVOP_SSM_I))
+-#define	XEN_HYPER_GET_IVR	asm("break %0" : : "i" (HYPERPRIVOP_GET_IVR))
++#define	XEN_HYPER_SSM_I		asm ("break %0" : : "i" (HYPERPRIVOP_SSM_I) : "memory")
+ 
+ /************************************************/
+ /* Instructions paravirtualized for correctness */

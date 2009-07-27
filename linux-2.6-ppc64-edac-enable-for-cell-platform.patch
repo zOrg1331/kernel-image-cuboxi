@@ -1,0 +1,40 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Fri, 22 Aug 2008 11:21:04 -0400
+Subject: [ppc64] edac: enable for cell platform
+Message-id: 48AED960.90504@redhat.com
+O-Subject: Re: [PATCH RHEL5.3 BZ 439507] Include the EDAC (Error Detection and Correction) driver for the Cell platform - Config update
+Bugzilla: 439507
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+> RHBZ#:
+> ======
+> https://bugzilla.redhat.com/show_bug.cgi?id=439507
+>
+>
+> ========================
+> CONFIG Updates Required!
+> ========================
+> The patch attached here should be applied manually applies to the
+> /SOURCES build dir
+>
+>
+This patch is updated so CELL_EDAC is set to build as a module, per
+feedback from David Howell.
+> Proposed Patch:
+> ===============
+> This patch is based on 2.6.18-102.el5
+>
+
+diff --git a/drivers/edac/Kconfig b/drivers/edac/Kconfig
+index 55a72f9..9a65b90 100644
+--- a/drivers/edac/Kconfig
++++ b/drivers/edac/Kconfig
+@@ -9,7 +9,7 @@
+ menu 'EDAC - error detection and reporting (RAS) (EXPERIMENTAL)'
+ 
+ config EDAC
+-	bool "EDAC core system error reporting (EXPERIMENTAL)"
++	tristate "EDAC core system error reporting (EXPERIMENTAL)"
+ 	depends on EXPERIMENTAL
+ 	depends on X86 || PPC64
+ 	help

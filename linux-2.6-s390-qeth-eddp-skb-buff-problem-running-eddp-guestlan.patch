@@ -1,0 +1,56 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 25 Apr 2008 15:07:12 +0200
+Subject: [s390] qeth: eddp skb buff problem running EDDP guestlan
+Message-id: 20080425130712.GB22728@redhat.com
+O-Subject: [RHEL5 U3 PATCH 2/5] s390 - qeth: eddp skb buff problem running EDDP guestlan
+Bugzilla: 444014
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: John W. Linville <linville@redhat.com>
+
+Description
+============
+
+Packet Length in qdio header is broken when using
+EDDP on Layer2 devices. This leads to skb_under_panic on receiver
+system when running on z/VM GuestLAN devices.
+
+Bugzilla
+=========
+
+BZ 444014
+https://bugzilla.redhat.com/show_bug.cgi?id=444014
+
+Upstream status of the patch:
+=============================
+
+Patch is contained in linux-2.6 as git commit
+cd3e76ebcb41c48ef6e706006b793d45030bae75
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/net/qeth_eddp.c b/drivers/s390/net/qeth_eddp.c
+index a363721..60147fe 100644
+--- a/drivers/s390/net/qeth_eddp.c
++++ b/drivers/s390/net/qeth_eddp.c
+@@ -422,9 +422,8 @@ __qeth_eddp_fill_context_tcp(struct qeth_eddp_context *ctx,
+ 			       (int)(eddp->skb->len - eddp->skb_offset));
+ 		/* prepare qdio hdr */
+ 		if (eddp->qh.hdr.l2.id == QETH_HEADER_TYPE_LAYER2){
+-			eddp->qh.hdr.l2.pkt_length = data_len + ETH_HLEN +
+-						     eddp->nhl + eddp->thl -
+-						     sizeof(struct qeth_hdr);
++			eddp->qh.hdr.l2.pkt_length =
++				 data_len + ETH_HLEN + eddp->nhl + eddp->thl;
+ #ifdef CONFIG_QETH_VLAN
+ 			if (eddp->mac.h_proto == __constant_htons(ETH_P_8021Q))
+ 				eddp->qh.hdr.l2.pkt_length += VLAN_HLEN;

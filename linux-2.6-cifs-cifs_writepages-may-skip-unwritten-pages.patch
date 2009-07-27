@@ -1,0 +1,46 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Wed, 17 Dec 2008 08:43:45 -0500
+Subject: [cifs] cifs_writepages may skip unwritten pages
+Message-id: 1229521425-20811-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.3 PATCH] BZ#470267: prevent cifs_writepages() from skipping unwritten pages
+Bugzilla: 470267
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+Fixes a data corruption under heavy stress in which pages could be left
+dirty after all open instances of a inode have been closed.
+
+In order to write contiguous pages whenever possible, cifs_writepages()
+asks pagevec_lookup_tag() for more pages than it may write at one time.
+Normally, it then resets index just past the last page written before
+calling pagevec_lookup_tag() again.
+
+If cifs_writepages() can't write the first page returned, it wasn't
+resetting index, and the next call to pagevec_lookup_tag() resulted in
+skipping all of the pages it previously returned, even though
+cifs_writepages() did nothing with them.  This can result in data loss
+when the file descriptor is about to be closed.
+
+This patch ensures that index gets set back to the next returned page so
+that none get skipped.
+
+Signed-off-by: Dave Kleikamp <shaggy@linux.vnet.ibm.com>
+Acked-by: Jeff Layton <jlayton@redhat.com>
+Cc: Shirish S Pargaonkar <shirishp@us.ibm.com>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/file.c b/fs/cifs/file.c
+index 85e9425..d50f7a6 100644
+--- a/fs/cifs/file.c
++++ b/fs/cifs/file.c
+@@ -1581,7 +1581,10 @@ retry:
+ 			if ((wbc->nr_to_write -= n_iov) <= 0)
+ 				done = 1;
+ 			index = next;
+-		}
++		} else
++			/* Need to re-find the pages we skipped */
++			index = pvec.pages[0]->index + 1;
++
+ 		pagevec_release(&pvec);
+ 	}
+ 	if (!scanned && !done) {

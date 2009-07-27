@@ -1,0 +1,140 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [RHEL5.1 PATCH] bz243009 [PPC] eHEA driver can cause kernel panic on recv of VLAN packets
+Date: Tue, 10 Jul 2007 12:03:41 -0400 (EDT)
+Bugzilla: 243009
+Message-Id: <Pine.LNX.4.64.0707101202510.18157@squad5-lp1.lab.boston.redhat.com>
+Changelog: [PPC] eHEA driver can cause kernel panic on recv of VLAN packets
+
+
+RHBZ#: 243009
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=243009
+
+Description:
+------------
+The eHEA driver causes kernel panic if exclusively non-VLAN interfaces are
+setup and one of those interfaces receives a VLAN packet.
+
+This patch fixes the described kernel panic and VLAN/PHYP registration. The
+panic was caused by the fact that an arriving VLAN packet was passed to the
+Linux kernel's VLAN packet handler function without checking if the respective
+VLAN group is valid. This finally lead to a NULL-pointer access which caused
+the kernel to crash.
+
+The patched driver succesfully executed the following tests:
+
+- ipv4: ping, flood ping, broadcast ping
+- ipv6: ping, flood ping
+- flood ping with big pakets
+- ftp tests with large files using 4 connections with TSO on/off
+- ftp long run using 4 connections with TSO on/off
+- vlan ping
+- vlan panic check
+- multicast basic
+
+RHEL Version Found:
+-------------------
+This bug was found in RHEL 5.1 Beta
+
+Upstream Status:
+----------------
+This code is upstream in 2.6.22-rc5. The relevant git commit is
+dec590c1bb05c1553b68cab7aa3ea36d77e7f9a3 [1]
+
+Test Status:
+------------
+Thomas Klein of IBM has tested this patch with other IBM patches on top of
+2.5.18-32.el5.
+
+The test consist of:
+ - Attempting to reproduce bug.
+ - eHEA test suit
+
+To reproduce:
+ 1. Configure an LPAR and allow it to receive VLAN packets for VLAN id #2.
+ 2. Boot Linux and configure VLAN #2 for an eHEA interface.
+ 3. Reboot the LPAR without unregistering from the VLAN. E.g. because the
+    driver doesn't unregister correctly or some other crash occurs which
+    prevents the driver from unregistering.
+ 4. Boot the LPAR again. Configure a eHEA interface but don't configure a
+    VLAN.
+ 5. Send a VLAN id #2 packet from anywhere in the network which targets
+    that interface.
+ 6. The packet reaches the interface because firmware lets it pass.
+ 7. Driver sees the packet, recognizes it as a VLAN packet and calls the
+    appropriate kernel function which needs a pointer to the respective
+    VLAN group.
+ 8. Pointer is NULL because there's no VLAN registered.
+ 9. Panic!!!                                                  
+
+With the patch applied the problem no longer exists.
+
+A brew scratch build of 2.6.18-32.el5 with this patch applied is at [2].
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+-- 
+[1] http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=dec590c1bb05c1553b68cab7aa3ea36d77e7f9a3
+---
+ drivers/net/ehea/ehea.h      |    2 +-
+ drivers/net/ehea/ehea_main.c |   12 +++++-------
+ 2 files changed, 6 insertions(+), 8 deletions(-)
+
+diff -Nurp -X dontdiff linux-2.6.18-8.el5.20070524/drivers/net/ehea/ehea.h patched_kernel/drivers/net/ehea/ehea.h
+--- linux-2.6.18-8.el5.20070524/drivers/net/ehea/ehea.h	1970-04-24 12:49:40.000000000 +0100
++++ patched_kernel/drivers/net/ehea/ehea.h	2007-06-06 17:24:03.000000000 +0200
+@@ -39,7 +39,7 @@
+ #include <asm/io.h>
+ 
+ #define DRV_NAME	"ehea"
+-#define DRV_VERSION	"EHEA_0058"
++#define DRV_VERSION	"EHEA_0058-01"
+ 
+ #define EHEA_MSG_DEFAULT (NETIF_MSG_LINK | NETIF_MSG_TIMER \
+ 	| NETIF_MSG_RX_ERR | NETIF_MSG_TX_ERR)
+diff -Nurp -X dontdiff linux-2.6.18-8.el5.20070524/drivers/net/ehea/ehea_main.c patched_kernel/drivers/net/ehea/ehea_main.c
+--- linux-2.6.18-8.el5.20070524/drivers/net/ehea/ehea_main.c	1970-04-24 12:49:40.000000000 +0100
++++ patched_kernel/drivers/net/ehea/ehea_main.c	2007-06-06 17:24:03.000000000 +0200
+@@ -451,7 +451,8 @@ static struct ehea_cqe *ehea_proc_rwqes(
+ 				processed_rq3++;
+ 			}
+ 
+-			if (cqe->status & EHEA_CQE_VLAN_TAG_XTRACT)
++			if ((cqe->status & EHEA_CQE_VLAN_TAG_XTRACT)
++			    && port->vgrp)
+ 				vlan_hwaccel_receive_skb(skb, port->vgrp,
+ 							 cqe->vlan_tag);
+ 			else
+@@ -1910,10 +1911,7 @@ static void ehea_vlan_rx_register(struct
+ 		goto out;
+ 	}
+ 
+-	if (grp)
+-		memset(cb1->vlan_filter, 0, sizeof(cb1->vlan_filter));
+-	else
+-		memset(cb1->vlan_filter, 0xFF, sizeof(cb1->vlan_filter));
++	memset(cb1->vlan_filter, 0, sizeof(cb1->vlan_filter));
+ 
+ 	hret = ehea_h_modify_ehea_port(adapter->handle, port->logical_port_id,
+ 				       H_PORT_CB1, H_PORT_CB1_ALL, cb1);
+@@ -1947,7 +1945,7 @@ static void ehea_vlan_rx_add_vid(struct 
+ 	}
+ 
+ 	index = (vid / 64);
+-	cb1->vlan_filter[index] |= ((u64)(1 << (vid & 0x3F)));
++	cb1->vlan_filter[index] |= ((u64)(0x8000000000000000 >> (vid & 0x3F)));
+ 
+ 	hret = ehea_h_modify_ehea_port(adapter->handle, port->logical_port_id,
+ 				       H_PORT_CB1, H_PORT_CB1_ALL, cb1);
+@@ -1982,7 +1980,7 @@ static void ehea_vlan_rx_kill_vid(struct
+ 	}
+ 
+ 	index = (vid / 64);
+-	cb1->vlan_filter[index] &= ~((u64)(1 << (vid & 0x3F)));
++	cb1->vlan_filter[index] &= ~((u64)(0x8000000000000000 >> (vid & 0x3F)));
+ 
+ 	hret = ehea_h_modify_ehea_port(adapter->handle, port->logical_port_id,
+ 				       H_PORT_CB1, H_PORT_CB1_ALL, cb1);
+

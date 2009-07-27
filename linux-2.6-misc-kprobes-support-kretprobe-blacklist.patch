@@ -1,0 +1,248 @@
+From: Dave Anderson <anderson@redhat.com>
+Date: Wed, 23 Jan 2008 15:18:48 -0500
+Subject: [misc] kprobes: support kretprobe blacklist
+Message-id: 4797A128.1000702@redhat.com
+O-Subject: [RHEL5.2 PATCH 2/4] kprobes: BZ #232489: need kprobes improvement patches
+Bugzilla: 232489
+
+BZ #232489: need kprobes improvement patches
+https://bugzilla.redhat.com/show_bug.cgi?id=232489
+linux-2.6.git-f438d914b220051d4cbc65cbc5d98e163c85c93b
+
+Backport of this commit, which required the paring down of
+the file list to not include unsupported RHEL5 architectures
+and to deal with the upstream collusion of the i386 and x86_64
+directories.  It touches files for all supported architectures,
+but only affects x86 and x86_64:
+
+   commit f438d914b220051d4cbc65cbc5d98e163c85c93b
+   Author: Masami Hiramatsu <mhiramat@redhat.com>
+   Date:   Tue Oct 16 01:27:49 2007 -0700
+
+   kprobes: support kretprobe blacklist
+
+   Introduce architecture dependent kretprobe blacklists to prohibit users
+   from inserting return probes on the function in which kprobes can be
+   inserted but kretprobes can not.
+
+   This patch also removes "__kprobes" mark from "__switch_to" on x86_64 and
+   registers "__switch_to" to the blacklist on x86-64, because that mark is to
+   prohibit user from inserting only kretprobe.
+
+   Signed-off-by: Masami Hiramatsu <mhiramat@redhat.com>
+   Cc: Prasanna S Panchamukhi <prasanna@in.ibm.com>
+   Acked-by: Ananth N Mavinakayanahalli <ananth@in.ibm.com>
+   Cc: Anil S Keshavamurthy <anil.s.keshavamurthy@intel.com>
+   Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+   Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+Tested by me on x86 and x86_64.
+
+diff --git a/arch/i386/kernel/kprobes.c b/arch/i386/kernel/kprobes.c
+index afe6505..fbcad23 100644
+--- a/arch/i386/kernel/kprobes.c
++++ b/arch/i386/kernel/kprobes.c
+@@ -41,6 +41,13 @@ void jprobe_return_end(void);
+ DEFINE_PER_CPU(struct kprobe *, current_kprobe) = NULL;
+ DEFINE_PER_CPU(struct kprobe_ctlblk, kprobe_ctlblk);
+ 
++struct kretprobe_blackpoint kretprobe_blacklist[] = {
++	{"__switch_to", }, /* This function switches only current task, but
++			      doesn't switch kernel stack.*/
++	{NULL, NULL}       /* Terminator */
++};
++const int kretprobe_blacklist_size = ARRAY_SIZE(kretprobe_blacklist);
++
+ /* insert a jmp code */
+ static __always_inline void set_jmp_op(void *from, void *to)
+ {
+diff --git a/arch/ia64/kernel/kprobes.c b/arch/ia64/kernel/kprobes.c
+index 4f87e63..570d938 100644
+--- a/arch/ia64/kernel/kprobes.c
++++ b/arch/ia64/kernel/kprobes.c
+@@ -40,6 +40,8 @@ extern void jprobe_inst_return(void);
+ DEFINE_PER_CPU(struct kprobe *, current_kprobe) = NULL;
+ DEFINE_PER_CPU(struct kprobe_ctlblk, kprobe_ctlblk);
+ 
++struct kretprobe_blackpoint kretprobe_blacklist[] = {{NULL, NULL}};
++
+ enum instruction_type {A, I, M, F, B, L, X, u};
+ static enum instruction_type bundle_encoding[32][3] = {
+   { M, I, I },				/* 00 */
+diff --git a/arch/powerpc/kernel/kprobes.c b/arch/powerpc/kernel/kprobes.c
+index cd65c36..9cb1f9d 100644
+--- a/arch/powerpc/kernel/kprobes.c
++++ b/arch/powerpc/kernel/kprobes.c
+@@ -38,6 +38,8 @@
+ DEFINE_PER_CPU(struct kprobe *, current_kprobe) = NULL;
+ DEFINE_PER_CPU(struct kprobe_ctlblk, kprobe_ctlblk);
+ 
++struct kretprobe_blackpoint kretprobe_blacklist[] = {{NULL, NULL}};
++
+ int __kprobes arch_prepare_kprobe(struct kprobe *p)
+ {
+ 	int ret = 0;
+diff --git a/arch/s390/kernel/kprobes.c b/arch/s390/kernel/kprobes.c
+index 66a16a8..6363356 100644
+--- a/arch/s390/kernel/kprobes.c
++++ b/arch/s390/kernel/kprobes.c
+@@ -33,6 +33,8 @@
+ DEFINE_PER_CPU(struct kprobe *, current_kprobe) = NULL;
+ DEFINE_PER_CPU(struct kprobe_ctlblk, kprobe_ctlblk);
+ 
++struct kretprobe_blackpoint kretprobe_blacklist[] = {{NULL, NULL}};
++
+ int __kprobes arch_prepare_kprobe(struct kprobe *p)
+ {
+ 	/* Make sure the probe isn't going on a difficult instruction */
+diff --git a/arch/x86_64/kernel/kprobes.c b/arch/x86_64/kernel/kprobes.c
+index ffc73ac..ad9d2f4 100644
+--- a/arch/x86_64/kernel/kprobes.c
++++ b/arch/x86_64/kernel/kprobes.c
+@@ -49,6 +49,13 @@ static void __kprobes arch_copy_kprobe(struct kprobe *p);
+ DEFINE_PER_CPU(struct kprobe *, current_kprobe) = NULL;
+ DEFINE_PER_CPU(struct kprobe_ctlblk, kprobe_ctlblk);
+ 
++struct kretprobe_blackpoint kretprobe_blacklist[] = {
++	{"__switch_to", }, /* This function switches only current task, but
++			      doesn't switch kernel stack.*/
++	{NULL, NULL}       /* Terminator */
++};
++const int kretprobe_blacklist_size = ARRAY_SIZE(kretprobe_blacklist);
++
+ /*
+  * returns non-zero if opcode modifies the interrupt flag.
+  */
+diff --git a/arch/x86_64/kernel/process.c b/arch/x86_64/kernel/process.c
+index 24836bd..cce5327 100644
+--- a/arch/x86_64/kernel/process.c
++++ b/arch/x86_64/kernel/process.c
+@@ -510,7 +510,7 @@ out:
+  *
+  * Kprobes not supported here. Set the probe on schedule instead.
+  */
+-__kprobes struct task_struct *
++struct task_struct *
+ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
+ {
+ 	struct thread_struct *prev = &prev_p->thread,
+diff --git a/include/asm-i386/kprobes.h b/include/asm-i386/kprobes.h
+index 8774d06..912d8a3 100644
+--- a/include/asm-i386/kprobes.h
++++ b/include/asm-i386/kprobes.h
+@@ -47,6 +47,8 @@ typedef u8 kprobe_opcode_t;
+ #define  ARCH_INACTIVE_KPROBE_COUNT 0
+ #define flush_insn_slot(p)	do { } while (0)
+ 
++extern const int kretprobe_blacklist_size;
++
+ void arch_remove_kprobe(struct kprobe *p);
+ void kretprobe_trampoline(void);
+ 
+diff --git a/include/asm-ia64/kprobes.h b/include/asm-ia64/kprobes.h
+index 1b45b71..8301061 100644
+--- a/include/asm-ia64/kprobes.h
++++ b/include/asm-ia64/kprobes.h
+@@ -83,6 +83,7 @@ struct kprobe_ctlblk {
+ #define JPROBE_ENTRY(pentry)	(kprobe_opcode_t *)pentry
+ 
+ #define ARCH_SUPPORTS_KRETPROBES
++#define kretprobe_blacklist_size 0
+ #define  ARCH_INACTIVE_KPROBE_COUNT 1
+ 
+ #define SLOT0_OPCODE_SHIFT	(37)
+diff --git a/include/asm-powerpc/kprobes.h b/include/asm-powerpc/kprobes.h
+index 3aa8cd5..4522a15 100644
+--- a/include/asm-powerpc/kprobes.h
++++ b/include/asm-powerpc/kprobes.h
+@@ -80,6 +80,7 @@ typedef unsigned int kprobe_opcode_t;
+ #define ARCH_SUPPORTS_KRETPROBES
+ #define  ARCH_INACTIVE_KPROBE_COUNT 1
+ #define flush_insn_slot(p)	do { } while (0)
++#define kretprobe_blacklist_size 0
+ 
+ void kretprobe_trampoline(void);
+ extern void arch_remove_kprobe(struct kprobe *p);
+diff --git a/include/asm-s390/kprobes.h b/include/asm-s390/kprobes.h
+index 2fef8d6..022dd9a 100644
+--- a/include/asm-s390/kprobes.h
++++ b/include/asm-s390/kprobes.h
+@@ -49,6 +49,7 @@ typedef u16 kprobe_opcode_t;
+ #define JPROBE_ENTRY(pentry) (kprobe_opcode_t *)((func_descr_t *)pentry)
+ 
+ #define ARCH_SUPPORTS_KRETPROBES
++#define kretprobe_blacklist_size 0
+ #define ARCH_INACTIVE_KPROBE_COUNT 0
+ #define flush_insn_slot(p)	do { } while (0)
+ 
+diff --git a/include/asm-x86_64/kprobes.h b/include/asm-x86_64/kprobes.h
+index cf53178..63dfa21 100644
+--- a/include/asm-x86_64/kprobes.h
++++ b/include/asm-x86_64/kprobes.h
+@@ -43,6 +43,7 @@ typedef u8 kprobe_opcode_t;
+ 
+ #define JPROBE_ENTRY(pentry)	(kprobe_opcode_t *)pentry
+ #define ARCH_SUPPORTS_KRETPROBES
++extern const int kretprobe_blacklist_size;
+ #define  ARCH_INACTIVE_KPROBE_COUNT 1
+ 
+ void kretprobe_trampoline(void);
+diff --git a/include/linux/kprobes.h b/include/linux/kprobes.h
+index a5c5a0c..5fd9323 100644
+--- a/include/linux/kprobes.h
++++ b/include/linux/kprobes.h
+@@ -157,6 +157,12 @@ struct kretprobe_instance {
+ 	struct task_struct *task;
+ };
+ 
++struct kretprobe_blackpoint {
++	const char *name;
++	void *addr;
++};
++extern struct kretprobe_blackpoint kretprobe_blacklist[];
++
+ extern spinlock_t kretprobe_lock;
+ extern struct mutex kprobe_mutex;
+ extern int arch_prepare_kprobe(struct kprobe *p);
+diff --git a/kernel/kprobes.c b/kernel/kprobes.c
+index f66b8e6..419dab6 100644
+--- a/kernel/kprobes.c
++++ b/kernel/kprobes.c
+@@ -649,6 +649,18 @@ int __kprobes register_kretprobe(struct kretprobe *rp)
+ 	int ret = 0;
+ 	struct kretprobe_instance *inst;
+ 	int i;
++	void *addr = rp->kp.addr;
++
++	if (kretprobe_blacklist_size) {
++		if (addr == NULL)
++			kprobe_lookup_name(rp->kp.symbol_name, addr);
++		addr += rp->kp.offset;
++
++		for (i = 0; kretprobe_blacklist[i].name != NULL; i++) {
++			if (kretprobe_blacklist[i].addr == addr)
++				return -EINVAL;
++		}
++	}
+ 
+ 	rp->kp.pre_handler = pre_handler_kretprobe;
+ 	rp->kp.post_handler = NULL;
+@@ -718,6 +730,18 @@ static int __init init_kprobes(void)
+ 		INIT_HLIST_HEAD(&kprobe_table[i]);
+ 		INIT_HLIST_HEAD(&kretprobe_inst_table[i]);
+ 	}
++
++	if (kretprobe_blacklist_size) {
++		/* lookup the function address from its name */
++		for (i = 0; kretprobe_blacklist[i].name != NULL; i++) {
++			kprobe_lookup_name(kretprobe_blacklist[i].name,
++					   kretprobe_blacklist[i].addr);
++			if (!kretprobe_blacklist[i].addr)
++				printk("kretprobe: lookup failed: %s\n",
++					kretprobe_blacklist[i].name);
++		}
++	}
++
+ 	atomic_set(&kprobe_count, 0);
+ 
+ 	err = arch_init_kprobes();

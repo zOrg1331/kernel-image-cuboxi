@@ -1,0 +1,143 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Fri, 20 Feb 2009 17:29:39 -0500
+Subject: [net] enic: return notify intr credits
+Message-id: 20090220223036.GR12660@gospo.rdu.redhat.com
+O-Subject: [RHEL5.3.z PATCH] enic: return notify intr credits
+Bugzilla: 472474
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+
+This patch was suggested to us by the hardware vendor to work around
+issues using legacy mode interrupts.  Without this, the NIC doesn't work
+well under Xen.  This patch was recently posted upstream and included in
+Dave's net-next-2.6 tree:
+
+    commit ed8af6b288c0643dfe0ad91f1bfc8c56c0d307cc
+    Author: Scott Feldman <scofeldm@cisco.com>
+    Date:   Mon Feb 9 23:23:50 2009 -0800
+
+        enic: bug fix: return notify intr credits
+
+        Return notify intr credits after notify intr from firmware.  This is
+        especially important for legacy PCI intr mode, where not returning
+        credits would cause PBA to remain asserted which would get us right
+        back into the ISR.
+
+This will resolve partially resolve RHBZ 472474.
+
+---
+ drivers/net/enic/enic.h      |    2 +-
+ drivers/net/enic/enic_main.c |   17 +++++++++++------
+ drivers/net/enic/vnic_intr.h |   14 ++++++++++++++
+ 3 files changed, 26 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/net/enic/enic.h b/drivers/net/enic/enic.h
+index df8b131..23c3c56 100644
+--- a/drivers/net/enic/enic.h
++++ b/drivers/net/enic/enic.h
+@@ -34,7 +34,7 @@
+ 
+ #define DRV_NAME		"enic"
+ #define DRV_DESCRIPTION		"Cisco 10G Ethernet Driver"
+-#define DRV_VERSION		"1.0.0.648"
++#define DRV_VERSION		"1.0.0.648-1"
+ #define DRV_COPYRIGHT		"Copyright 2008 Cisco Systems, Inc"
+ #define PFX			DRV_NAME ": "
+ 
+diff --git a/drivers/net/enic/enic_main.c b/drivers/net/enic/enic_main.c
+index e458cfa..25f39df 100644
+--- a/drivers/net/enic/enic_main.c
++++ b/drivers/net/enic/enic_main.c
+@@ -397,10 +397,13 @@ static irqreturn_t enic_isr_legacy(int irq, void *data, struct pt_regs *regs)
+ 		return IRQ_NONE;	/* not our interrupt */
+ 	}
+ 
+-	if (ENIC_TEST_INTR(pba, ENIC_INTX_NOTIFY))
++	if (ENIC_TEST_INTR(pba, ENIC_INTX_NOTIFY)) {
++		vnic_intr_return_all_credits(&enic->intr[ENIC_INTX_NOTIFY]);
+ 		enic_notify_check(enic);
++	}
+ 
+ 	if (ENIC_TEST_INTR(pba, ENIC_INTX_ERR)) {
++		vnic_intr_return_all_credits(&enic->intr[ENIC_INTX_ERR]);
+ 		enic_log_q_error(enic);
+ 		/* schedule recovery from WQ/RQ error */
+ 		schedule_work(&enic->reset);
+@@ -473,6 +476,8 @@ static irqreturn_t enic_isr_msix_err(int irq, void *data, struct pt_regs *regs)
+ {
+ 	struct enic *enic = data;
+ 
++	vnic_intr_return_all_credits(&enic->intr[ENIC_MSIX_ERR]);
++
+ 	enic_log_q_error(enic);
+ 
+ 	/* schedule recovery from WQ/RQ error */
+@@ -485,8 +490,8 @@ static irqreturn_t enic_isr_msix_notify(int irq, void *data, struct pt_regs *reg
+ {
+ 	struct enic *enic = data;
+ 
++	vnic_intr_return_all_credits(&enic->intr[ENIC_MSIX_NOTIFY]);
+ 	enic_notify_check(enic);
+-	vnic_intr_unmask(&enic->intr[ENIC_MSIX_NOTIFY]);
+ 
+ 	return IRQ_HANDLED;
+ }
+@@ -613,7 +618,7 @@ static inline void enic_queue_wq_skb(struct enic *enic,
+ 			vlan_tag_insert, vlan_tag);
+ }
+ 
+-/* netif_tx_lock held, process context with BHs disabled */
++/* netif_tx_lock held, process context with BHs disabled, or BH */
+ static int enic_hard_start_xmit(struct sk_buff *skb, struct net_device *netdev)
+ {
+ 	struct enic *enic = netdev_priv(netdev);
+@@ -1065,7 +1070,7 @@ static int enic_poll(struct net_device *netdev, int *budget)
+ 			lro_flush_all(&enic->lro_mgr);
+ 
+ 		netif_rx_complete(netdev);
+-		vnic_intr_unmask(&enic->intr[ENIC_MSIX_RQ]);
++		vnic_intr_unmask(&enic->intr[ENIC_INTX_WQ_RQ]);
+ 		return 0;
+ 	}
+ 
+@@ -1091,9 +1096,9 @@ static int enic_poll_msix(struct net_device *netdev, int *budget)
+ 
+ 		vnic_rq_fill(&enic->rq[0], enic_rq_alloc_buf);
+ 
+-		/* Accumulate intr event credits for this polling
++		/* Return intr event credits for this polling
+ 		 * cycle.  An intr event is the completion of a
+-		 * a WQ or RQ packet.
++		 * RQ packet.
+ 		 */
+ 
+ 		vnic_intr_return_credits(&enic->intr[ENIC_MSIX_RQ],
+diff --git a/drivers/net/enic/vnic_intr.h b/drivers/net/enic/vnic_intr.h
+index ce633a5..9a53604 100644
+--- a/drivers/net/enic/vnic_intr.h
++++ b/drivers/net/enic/vnic_intr.h
+@@ -76,6 +76,20 @@ static inline void vnic_intr_return_credits(struct vnic_intr *intr,
+ 	iowrite32(int_credit_return, &intr->ctrl->int_credit_return);
+ }
+ 
++static inline unsigned int vnic_intr_credits(struct vnic_intr *intr)
++{
++	return ioread32(&intr->ctrl->int_credits);
++}
++
++static inline void vnic_intr_return_all_credits(struct vnic_intr *intr)
++{
++	unsigned int credits = vnic_intr_credits(intr);
++	int unmask = 1;
++	int reset_timer = 1;
++
++	vnic_intr_return_credits(intr, credits, unmask, reset_timer);
++}
++
+ static inline u32 vnic_intr_legacy_pba(u32 __iomem *legacy_pba)
+ {
+ 	/* read PBA without clearing */
+-- 
+1.5.2.1
+

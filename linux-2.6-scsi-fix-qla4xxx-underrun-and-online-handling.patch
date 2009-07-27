@@ -1,0 +1,172 @@
+From: Mike Christie <mchristi@redhat.com>
+Subject: [RHEL 5.1 PATCH] fix qla4xxx underrun and online handling
+Date: Fri, 13 Jul 2007 03:37:01 -0500
+Bugzilla: 242828
+Message-Id: <1184315821.4891.34.camel@max>
+Changelog: [scsi] fix qla4xxx underrun and online handling
+
+
+This is for BZ 242828.
+
+This patch fixes two issues Qlogic found while testing our update. The
+first is one is that the driver was not handling overrun and underrun
+correctly. For overrun and underrun it was not returning a error when it
+should. This patch is not yet upstream. It was sent here
+http://marc.info/?l=linux-scsi&m=118115620513087&w=2
+
+The other bug was that if the HBA did not have a IP address then we were
+not bringing it online. If you had no already set an IP address or not
+done it through the BIOS utility, then you cannot set the IP address
+from their tools. This patch is only in James's pending tree
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-pending-2.6.git;a=commit;h=46235e600acfb6d13ee164c5539ad4309e848eab
+
+Qlogic wrote and tested the patches. I ran some basic setup tests with
+their iscli tool to check for regressions for the second bug. I was not
+able to hit the code path for the first bug, so I am relying on Qlogic's
+testing.
+
+diff -aurp linux-2.6.18.noarch/drivers/scsi/qla4xxx/ql4_init.c linux-2.6.18.noarch.work//drivers/scsi/qla4xxx/ql4_init.c
+--- linux-2.6.18.noarch/drivers/scsi/qla4xxx/ql4_init.c	2007-07-11 18:23:58.000000000 -0500
++++ linux-2.6.18.noarch.work//drivers/scsi/qla4xxx/ql4_init.c	2007-07-11 18:55:03.000000000 -0500
+@@ -1157,32 +1157,30 @@ int qla4xxx_initialize_adapter(struct sc
+ 
+ 	/* Initialize the Host adapter request/response queues and firmware */
+ 	if (qla4xxx_start_firmware(ha) == QLA_ERROR)
+-		return status;
++		goto exit_init_hba;
+ 
+ 	if (qla4xxx_validate_mac_address(ha) == QLA_ERROR)
+-		return status;
++		goto exit_init_hba;
+ 
+ 	if (qla4xxx_init_local_data(ha) == QLA_ERROR)
+-		return status;
++		goto exit_init_hba;
+ 
+ 	status = qla4xxx_init_firmware(ha);
+ 	if (status == QLA_ERROR)
+-		return status;
++		goto exit_init_hba;
+ 
+ 	/*
+ 	 * FW is waiting to get an IP address from DHCP server: Skip building
+ 	 * the ddb_list and wait for DHCP lease acquired aen to come in
+ 	 * followed by 0x8014 aen" to trigger the tgt discovery process.
+ 	 */
+-	if (ha->firmware_state & FW_STATE_DHCP_IN_PROGRESS){
+-		set_bit(AF_ONLINE, &ha->flags);
+-		return status;
+-	}
++	if (ha->firmware_state & FW_STATE_DHCP_IN_PROGRESS)
++		goto exit_init_hba0;
+ 
+ 	/* Skip device discovery if ip and subnet is zero */
+ 	if (memcmp(ha->ip_address, ip_address, IP_ADDR_LEN) == 0 ||
+ 	    memcmp(ha->subnet_mask, ip_address, IP_ADDR_LEN) == 0)
+-		return status;
++		goto exit_init_hba0;
+ 
+ 	if (renew_ddb_list == PRESERVE_DDB_LIST) {
+ 		/*
+@@ -1211,10 +1209,10 @@ int qla4xxx_initialize_adapter(struct sc
+ 			      ha->host_no));
+ 	}
+ 
++exit_init_hba0:
+ 	set_bit(AF_ONLINE, &ha->flags);
+- exit_init_hba:
++exit_init_hba:
+ 	return status;
+-
+ }
+ 
+ /**
+diff -aurp linux-2.6.18.noarch/drivers/scsi/qla4xxx/ql4_isr.c linux-2.6.18.noarch.work//drivers/scsi/qla4xxx/ql4_isr.c
+--- linux-2.6.18.noarch/drivers/scsi/qla4xxx/ql4_isr.c	2007-07-11 18:23:58.000000000 -0500
++++ linux-2.6.18.noarch.work//drivers/scsi/qla4xxx/ql4_isr.c	2007-07-11 18:55:03.000000000 -0500
+@@ -93,9 +93,18 @@ static void qla4xxx_status_entry(struct 
+ 			break;
+ 		}
+ 
+-		if (sts_entry->iscsiFlags &
+-		    (ISCSI_FLAG_RESIDUAL_OVER|ISCSI_FLAG_RESIDUAL_UNDER))
++		if (sts_entry->iscsiFlags & ISCSI_FLAG_RESIDUAL_OVER) {
++			cmd->result = DID_ERROR << 16;
++			break;
++		}
++		if (sts_entry->iscsiFlags & ISCSI_FLAG_RESIDUAL_UNDER) {
+ 			cmd->resid = residual;
++			if (!scsi_status && ((cmd->request_bufflen - residual) <
++				   cmd->underflow)) {
++				cmd->result = DID_ERROR << 16;
++				break;
++			}
++		}
+ 
+ 		cmd->result = DID_OK << 16 | scsi_status;
+ 
+@@ -164,7 +173,8 @@ static void qla4xxx_status_entry(struct 
+ 
+ 	case SCS_DATA_UNDERRUN:
+ 	case SCS_DATA_OVERRUN:
+-		if (sts_entry->iscsiFlags & ISCSI_FLAG_RESIDUAL_OVER) {
++		if ((sts_entry->iscsiFlags & ISCSI_FLAG_RESIDUAL_OVER) ||
++			(sts_entry->completionStatus == SCS_DATA_OVERRUN)) {
+ 			DEBUG2(printk("scsi%ld:%d:%d:%d: %s: " "Data overrun, "
+ 				      "residual = 0x%x\n", ha->host_no,
+ 				      cmd->device->channel, cmd->device->id,
+@@ -174,21 +184,7 @@ static void qla4xxx_status_entry(struct 
+ 			break;
+ 		}
+ 
+-		if ((sts_entry->iscsiFlags & ISCSI_FLAG_RESIDUAL_UNDER) == 0) {
+-			/*
+-			 * Firmware detected a SCSI transport underrun
+-			 * condition
+-			 */
+-			cmd->resid = residual;
+-			DEBUG2(printk("scsi%ld:%d:%d:%d: %s: UNDERRUN status "
+-				      "detected, xferlen = 0x%x, residual = "
+-				      "0x%x\n",
+-				      ha->host_no, cmd->device->channel,
+-				      cmd->device->id,
+-				      cmd->device->lun, __func__,
+-				      cmd->request_bufflen,
+-				      residual));
+-		}
++		cmd->resid = residual;
+ 
+ 		/*
+ 		 * If there is scsi_status, it takes precedense over
+@@ -245,13 +241,13 @@ static void qla4xxx_status_entry(struct 
+ 				 * will return DID_ERROR.
+ 				 */
+ 				DEBUG2(printk("scsi%ld:%d:%d:%d: %s: "
+-					      "Mid-layer Data underrun, "
+-					      "xferlen = 0x%x, "
+-					      "residual = 0x%x\n", ha->host_no,
+-					      cmd->device->channel,
+-					      cmd->device->id,
+-					      cmd->device->lun, __func__,
+-					      cmd->request_bufflen, residual));
++ 					"Mid-layer Data underrun len = 0x%x, "
++					"resid = 0x%x, compstat = 0x%x\n",
++					ha->host_no, cmd->device->channel,
++					cmd->device->id, cmd->device->lun,
++					__func__, cmd->request_bufflen,
++					residual,
++					sts_entry->completionStatus));
+ 
+ 				cmd->result = DID_ERROR << 16;
+ 			} else {
+diff -aurp linux-2.6.18.noarch/drivers/scsi/qla4xxx/ql4_version.h linux-2.6.18.noarch.work//drivers/scsi/qla4xxx/ql4_version.h
+--- linux-2.6.18.noarch/drivers/scsi/qla4xxx/ql4_version.h	2007-07-11 18:23:58.000000000 -0500
++++ linux-2.6.18.noarch.work//drivers/scsi/qla4xxx/ql4_version.h	2007-07-11 18:55:03.000000000 -0500
+@@ -5,5 +5,5 @@
+  * See LICENSE.qla4xxx for copyright and licensing details.
+  */
+ 
+-#define QLA4XXX_DRIVER_VERSION	"5.01.00-k7_rhel5"
++#define QLA4XXX_DRIVER_VERSION	"5.01.00-k8_rhel5"
+ 
+

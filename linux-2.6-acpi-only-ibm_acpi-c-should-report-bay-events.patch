@@ -1,0 +1,126 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 31 Mar 2008 11:30:23 -0400
+Subject: [acpi] only ibm_acpi.c should report bay events
+Message-id: 20080331153023.2772.48041.sendpatchset@prarit.boston.redhat.com
+O-Subject: [RHEL 5.2 PATCH]: ONLY ibm_acpi.c should report IBM & Lenovo bay events
+Bugzilla: 439380
+
+drivers/acpi/bay.c is built in and registers a notifier for bay events,
+bay_events().  This handler is *very* simple and printks an event message and
+indicates that a status change has occurred through a uevent file.  AFAICT,
+there is no way to determine what the status change actually was with the bay.c
+driver.
+
+drivers/acpi/ibm_acpi is loaded and creates sysfs files (which are the files we
+are currently using to manually interact with the device) and then attempts to
+register its own handler and fails because bay.c has already registered a
+handler.
+
+This results in the odd situation that RHEL5 is actually using TWO drivers for
+one device.
+
+ibm_acpi.c is not upstream so upstream doesn't have this situation.
+
+Make sure that bay events are reported by the ibm_acpi.c driver.
+
+Resolves BZ 439380.
+
+Successfully tested by me.
+
+Acked-by: Jeff Garzik <jgarzik@redhat.com>
+
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index d622569..bd4e2a9 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -564,6 +564,10 @@ running once the system is up.
+ 
+ 	gamma=		[HW,DRM]
+ 
++	generic_bay_driver=
++			[HW]
++			Enable(1) or disable(0) the generic ACPI bay driver
++
+ 	gdth=		[HW,SCSI]
+ 			See header of drivers/scsi/gdth.c.
+ 
+diff --git a/drivers/acpi/bay.c b/drivers/acpi/bay.c
+index fb3f31b..94e8fd8 100644
+--- a/drivers/acpi/bay.c
++++ b/drivers/acpi/bay.c
+@@ -31,6 +31,7 @@
+ #include <linux/seq_file.h>
+ #include <asm/uaccess.h>
+ #include <linux/platform_device.h>
++#include <linux/dmi.h>
+ 
+ ACPI_MODULE_NAME("bay");
+ MODULE_AUTHOR("Kristen Carlson Accardi");
+@@ -360,10 +361,55 @@ find_bay(acpi_handle handle, u32 lvl, void *context, void **rv)
+ 	return AE_OK;
+ }
+ 
++static unsigned int generic_bay_driver = 1;
++static unsigned int override_bay_driver = 0;
++
++static int __init setup_generic_bay_driver(char *str)
++{
++	int value;
++
++	override_bay_driver = 1;
++	get_option(&str, &value);
++	generic_bay_driver = value;
++
++	return 1;
++}
++
++/* generic_bay_driver can have values of 0 or 1 */
++__setup("generic_bay_driver=", setup_generic_bay_driver);
++
++static int __init private_bay_driver(struct dmi_system_id *d)
++{
++	generic_bay_driver = 0;
++
++	return 0;
++}
++
++static struct dmi_system_id __initdata private_driver_table[] = {
++	{
++		.callback = private_bay_driver,
++		.ident = "Lenovo T60 laptop",
++		.matches = {DMI_MATCH(DMI_PRODUCT_VERSION, "ThinkPad T60"),},
++	},
++	{
++		.callback = private_bay_driver,
++		.ident = "Lenovo T61 laptop",
++		.matches = {DMI_MATCH(DMI_PRODUCT_VERSION, "ThinkPad T61"),},
++	},
++
++	{ }
++};
++
+ static int __init bay_init(void)
+ {
+ 	int bays = 0;
+ 
++	if (!override_bay_driver)
++		dmi_check_system(private_driver_table);
++
++	if (!generic_bay_driver)
++		return -EBUSY;
++
+ 	INIT_LIST_HEAD(&drive_bays);
+ 
+ 	/* look for dockable drive bays */
+diff --git a/drivers/acpi/ibm_acpi.c b/drivers/acpi/ibm_acpi.c
+index c7fcb46..d4370fd 100644
+--- a/drivers/acpi/ibm_acpi.c
++++ b/drivers/acpi/ibm_acpi.c
+@@ -162,6 +162,7 @@ IBM_HANDLE(dock, root, "\\_SB.GDCK",	/* X30, X31, X40 */
+ IBM_HANDLE(bay, root, "\\_SB.PCI.IDE.SECN.MAST",	/* 570 */
+ 	   "\\_SB.PCI0.IDE0.IDES.IDSM",	/* 600e/x, 770e, 770x */
+ 	   "\\_SB.PCI0.SATA.SCND.MSTR",	/* T60, X60, Z60 */ 
++	   "\\_SB.PCI0.IDE0.PRIM.MSTR",	/* T61 */ 
+ 	   "\\_SB.PCI0.IDE0.SCND.MSTR",	/* all others */
+     );				/* A21e, R30, R31 */
+ 

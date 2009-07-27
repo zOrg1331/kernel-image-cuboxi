@@ -1,0 +1,56 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Fri, 15 May 2009 09:39:31 -0400
+Subject: [fs] cifs: fix error handling in parse_DFS_referrals
+Message-id: 1242394771-23125-2-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.3.z PATCH 2/2] BZ#496576: cifs: fix error handling in parse_DFS_referrals
+Bugzilla: 496576
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+CVE: CVE-2009-1633
+
+This patch is a backport of the second patch for BZ#496577 to 5.3.z
+
+Upstream commit d8e2f53ac99f4ce7d63807a84f98d1b80df598cf
+
+cifs_strndup_from_ucs returns NULL on error, not an ERR_PTR
+
+This patch is currently in Steve French's tree and should make its
+way to Linus soon.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+---
+ fs/cifs/cifssmb.c |   12 ++++--------
+ 1 files changed, 4 insertions(+), 8 deletions(-)
+
+diff --git a/fs/cifs/cifssmb.c b/fs/cifs/cifssmb.c
+index e5db411..fab834d 100644
+--- a/fs/cifs/cifssmb.c
++++ b/fs/cifs/cifssmb.c
+@@ -3941,9 +3941,8 @@ parse_DFS_referrals(TRANSACTION2_GET_DFS_REFER_RSP *pSMBr,
+ 		max_len = data_end - temp;
+ 		node->path_name = cifs_strndup_from_ucs(temp, max_len,
+ 						      is_unicode, nls_codepage);
+-		if (IS_ERR(node->path_name)) {
+-			rc = PTR_ERR(node->path_name);
+-			node->path_name = NULL;
++		if (!node->path_name) {
++			rc = -ENOMEM;
+ 			goto parse_DFS_referrals_exit;
+ 		}
+ 
+@@ -3952,11 +3951,8 @@ parse_DFS_referrals(TRANSACTION2_GET_DFS_REFER_RSP *pSMBr,
+ 		max_len = data_end - temp;
+ 		node->node_name = cifs_strndup_from_ucs(temp, max_len,
+ 						      is_unicode, nls_codepage);
+-		if (IS_ERR(node->node_name)) {
+-			rc = PTR_ERR(node->node_name);
+-			node->node_name = NULL;
+-			goto parse_DFS_referrals_exit;
+-		}
++		if (!node->node_name)
++			rc = -ENOMEM;
+ 	}
+ 
+ parse_DFS_referrals_exit:
+-- 
+1.5.5.6
+

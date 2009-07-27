@@ -1,0 +1,46 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Wed, 19 Dec 2007 16:16:29 +0100
+Subject: [scsi] cciss: move READ_AHEAD to block layer
+Message-id: 476935CD.80109@redhat.com
+O-Subject: [RHEL5.2 PATCH 4/8] RHEL 5.2: Cciss driver update remove READ_AHEAD from driver and use block layer
+Bugzilla: 424371
+
+This patch resolves the bz#424371: RH 5.2: Cciss driver update: Remove READ_AHEAD from driver and use block layer
+
+Comment from HP:
+We have found that under certain workloads our READ_AHEAD = 1024 can cause
+systems to hang. We do not believe this is a cciss bug, per say. We have found
+that by either setting the READ_AHEAD to 256 or just using the block layer
+default of 256 the hangs do not occur. Very preliminary benchmark testing shows
+the difference in performance is within the margin of error. Random read ops
+improved slightly, while sequential reads dropped slightly. The delta is <2% in
+our preliminary tests.
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 8fd1abc..d25ae75 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -149,7 +149,6 @@ static struct board_type products[] = {
+ /*define how many times we will try a command because of bus resets */
+ #define MAX_CMD_RETRIES 3
+ 
+-#define READ_AHEAD 	 1024
+ #define MAX_CTLR	32
+ 
+ /* Originally cciss driver only supports 8 major numbers */
+@@ -1346,7 +1345,6 @@ static void cciss_update_drive_info(int ctlr, int drv_index)
+ 		disk->private_data = &h->drv[drv_index];
+ 
+ 		/* Set up queue information */
+-		disk->queue->backing_dev_info.ra_pages = READ_AHEAD;
+ 		blk_queue_bounce_limit(disk->queue, hba[ctlr]->pdev->dma_mask);
+ 
+ 		/* This is a hardware imposed limit. */
+@@ -3362,7 +3360,6 @@ static int __devinit cciss_init_one(struct pci_dev *pdev,
+ 		}
+ 		drv->queue = q;
+ 
+-		q->backing_dev_info.ra_pages = READ_AHEAD;
+ 		blk_queue_bounce_limit(q, hba[i]->pdev->dma_mask);
+ 
+ 		/* This is a hardware imposed limit. */

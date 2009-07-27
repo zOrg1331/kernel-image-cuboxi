@@ -1,0 +1,614 @@
+From: Rik van Riel <riel@redhat.com>
+Date: Thu, 13 Dec 2007 14:19:30 -0500
+Subject: [xen] kernel: cpu frequency scaling
+Message-id: 20071213141930.48df89bd@cuia.boston.redhat.com
+O-Subject: [RHEL 5.2 PATCH 2/3] cpu frequency scaling for Xen BZ#251969
+Bugzilla: 251969
+
+Linux side of Xen CPU frequency change support.  Based on
+upstream changesets:
+
+Backport of powernow-k8 cpufreq changes, required for power management
+	215:8a407c41dfb0
+
+cpufreq: Xen support for the ondemand governor in Linux dom0
+	287:7aaec9c0a213
+
+cpufreq: minor clean-ups for ondemand governor on Xen.
+	304:98de2b149423
+
+cpufreq: Support cpufreq updates on AMD hardware by dom0 kernel.
+	15924:2477e94450aa
+
+cpufreq: Fix the ondemand driver for Xen. No 64-bit division allowed
+	310:fced90d566f1
+
+[cpufreq] Correctly calculate load
+	336:ba918cb2cf75
+
+Acked-by: Bill Burns <bburns@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+
+diff --git a/arch/i386/kernel/cpu/cpufreq/powernow-k8.c b/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
+index 2874dc5..9b7578b 100644
+--- a/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
++++ b/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
+@@ -767,6 +767,7 @@ static int find_psb_table(struct powernow_k8_data *data)
+ 
+ 		data->numps = psb->numps;
+ 		dprintk("numpstates: 0x%x\n", data->numps);
++		data->starting_core_affinity = cpumask_of_cpu(0);
+ 		return fill_powernow_table(data, (struct pst_s *)(psb+1), maxvid);
+ 	}
+ 	/*
+@@ -787,15 +788,43 @@ static int find_psb_table(struct powernow_k8_data *data)
+ #ifdef CONFIG_X86_POWERNOW_K8_ACPI
+ static void powernow_k8_acpi_pst_values(struct powernow_k8_data *data, unsigned int index)
+ {
+-	if (!data->acpi_data.state_count || (cpu_family == CPU_HW_PSTATE))
++	if (!data->acpi_data->state_count || (cpu_family == CPU_HW_PSTATE))
+ 		return;
+ 
+-	data->irt = (data->acpi_data.states[index].control >> IRT_SHIFT) & IRT_MASK;
+-	data->rvo = (data->acpi_data.states[index].control >> RVO_SHIFT) & RVO_MASK;
+-	data->exttype = (data->acpi_data.states[index].control >> EXT_TYPE_SHIFT) & EXT_TYPE_MASK;
+-	data->plllock = (data->acpi_data.states[index].control >> PLL_L_SHIFT) & PLL_L_MASK;
+-	data->vidmvs = 1 << ((data->acpi_data.states[index].control >> MVS_SHIFT) & MVS_MASK);
+-	data->vstable = (data->acpi_data.states[index].control >> VST_SHIFT) & VST_MASK;
++	data->irt = (data->acpi_data->states[index].control >> IRT_SHIFT) & IRT_MASK;
++	data->rvo = (data->acpi_data->states[index].control >> RVO_SHIFT) & RVO_MASK;
++	data->exttype = (data->acpi_data->states[index].control >> EXT_TYPE_SHIFT) & EXT_TYPE_MASK;
++	data->plllock = (data->acpi_data->states[index].control >> PLL_L_SHIFT) & PLL_L_MASK;
++	data->vidmvs = 1 << ((data->acpi_data->states[index].control >> MVS_SHIFT) & MVS_MASK);
++	data->vstable = (data->acpi_data->states[index].control >> VST_SHIFT) & VST_MASK;
++}
++
++static struct acpi_processor_performance *acpi_perf_data[NR_CPUS];
++static int preregister_valid = 0;
++
++static int powernow_k8_cpu_preinit_acpi()
++{
++	int i; 
++	struct acpi_processor_performance *data;
++	for_each_possible_cpu(i) {
++		data = kzalloc(sizeof(struct acpi_processor_performance),
++				GFP_KERNEL);
++		if (!data) {
++			int j;
++			for_each_possible_cpu(j) {
++				kfree(acpi_perf_data[j]);
++				acpi_perf_data[j] = NULL;
++			}
++			return -ENODEV;
++		}
++		acpi_perf_data[i] = data;
++	}
++
++	if (acpi_processor_preregister_performance(acpi_perf_data))
++		return -ENODEV;
++	else 
++		preregister_valid = 1;
++	return 0;
+ }
+ 
+ static int powernow_k8_cpu_init_acpi(struct powernow_k8_data *data)
+@@ -803,28 +832,29 @@ static int powernow_k8_cpu_init_acpi(struct powernow_k8_data *data)
+ 	struct cpufreq_frequency_table *powernow_table;
+ 	int ret_val;
+ 
+-	if (acpi_processor_register_performance(&data->acpi_data, data->cpu)) {
++	data->acpi_data = acpi_perf_data[data->cpu];
++	if (acpi_processor_register_performance(data->acpi_data, data->cpu)) {
+ 		dprintk("register performance failed: bad ACPI data\n");
+ 		return -EIO;
+ 	}
+ 
+ 	/* verify the data contained in the ACPI structures */
+-	if (data->acpi_data.state_count <= 1) {
++	if (data->acpi_data->state_count <= 1) {
+ 		dprintk("No ACPI P-States\n");
+ 		goto err_out;
+ 	}
+ 
+-	if ((data->acpi_data.control_register.space_id != ACPI_ADR_SPACE_FIXED_HARDWARE) ||
+-		(data->acpi_data.status_register.space_id != ACPI_ADR_SPACE_FIXED_HARDWARE)) {
++	if ((data->acpi_data->control_register.space_id != ACPI_ADR_SPACE_FIXED_HARDWARE) ||
++		(data->acpi_data->status_register.space_id != ACPI_ADR_SPACE_FIXED_HARDWARE)) {
+ 		dprintk("Invalid control/status registers (%x - %x)\n",
+-			data->acpi_data.control_register.space_id,
+-			data->acpi_data.status_register.space_id);
++			data->acpi_data->control_register.space_id,
++			data->acpi_data->status_register.space_id);
+ 		goto err_out;
+ 	}
+ 
+ 	/* fill in data->powernow_table */
+ 	powernow_table = kmalloc((sizeof(struct cpufreq_frequency_table)
+-		* (data->acpi_data.state_count + 1)), GFP_KERNEL);
++		* (data->acpi_data->state_count + 1)), GFP_KERNEL);
+ 	if (!powernow_table) {
+ 		dprintk("powernow_table memory alloc failure\n");
+ 		goto err_out;
+@@ -837,12 +867,12 @@ static int powernow_k8_cpu_init_acpi(struct powernow_k8_data *data)
+ 	if (ret_val)
+ 		goto err_out_mem;
+ 
+-	powernow_table[data->acpi_data.state_count].frequency = CPUFREQ_TABLE_END;
+-	powernow_table[data->acpi_data.state_count].index = 0;
++	powernow_table[data->acpi_data->state_count].frequency = CPUFREQ_TABLE_END;
++	powernow_table[data->acpi_data->state_count].index = 0;
+ 	data->powernow_table = powernow_table;
+ 
+ 	/* fill in data */
+-	data->numps = data->acpi_data.state_count;
++	data->numps = data->acpi_data->state_count;
+ 	if (first_cpu(cpu_core_map[data->cpu]) == data->cpu)
+ 		print_basics(data);
+ 	powernow_k8_acpi_pst_values(data, 0);
+@@ -850,16 +880,31 @@ static int powernow_k8_cpu_init_acpi(struct powernow_k8_data *data)
+ 	/* notify BIOS that we exist */
+ 	acpi_processor_notify_smm(THIS_MODULE);
+ 
++	/* determine affinity, from ACPI if available */
++	if (preregister_valid) {
++		if ((data->acpi_data->shared_type == CPUFREQ_SHARED_TYPE_ALL) ||
++		    (data->acpi_data->shared_type == CPUFREQ_SHARED_TYPE_ANY))
++			data->starting_core_affinity = data->acpi_data->shared_cpu_map;
++		else
++			data->starting_core_affinity = cpumask_of_cpu(data->cpu);
++	} else {
++		/* best guess from family if not */
++		if (cpu_family == CPU_HW_PSTATE)
++			data->starting_core_affinity = cpumask_of_cpu(data->cpu);
++		else
++			data->starting_core_affinity = cpu_core_map[data->cpu];
++	}
++
+ 	return 0;
+ 
+ err_out_mem:
+ 	kfree(powernow_table);
+ 
+ err_out:
+-	acpi_processor_unregister_performance(&data->acpi_data, data->cpu);
++	acpi_processor_unregister_performance(data->acpi_data, data->cpu);
+ 
+-	/* data->acpi_data.state_count informs us at ->exit() whether ACPI was used */
+-	data->acpi_data.state_count = 0;
++	/* data->acpi_data->state_count informs us at ->exit() whether ACPI was used */
++	data->acpi_data->state_count = 0;
+ 
+ 	return -ENODEV;
+ }
+@@ -868,13 +913,13 @@ static int fill_powernow_table_pstate(struct powernow_k8_data *data, struct cpuf
+ {
+ 	int i;
+ 
+-	for (i = 0; i < data->acpi_data.state_count; i++) {
++	for (i = 0; i < data->acpi_data->state_count; i++) {
+ 		u32 index;
+ 		u32 hi = 0, lo = 0;
+ 		u32 fid;
+ 		u32 did;
+ 
+-		index = data->acpi_data.states[i].control & HW_PSTATE_MASK;
++		index = data->acpi_data->states[i].control & HW_PSTATE_MASK;
+ 		if (index > MAX_HW_PSTATE) {
+ 			printk(KERN_ERR PFX "invalid pstate %d - bad value %d.\n", i, index);
+ 			printk(KERN_ERR PFX "Please report to BIOS manufacturer\n");
+@@ -895,10 +940,10 @@ static int fill_powernow_table_pstate(struct powernow_k8_data *data, struct cpuf
+ 
+ 		powernow_table[i].frequency = find_khz_freq_from_fiddid(fid, did);
+ 
+-		if (powernow_table[i].frequency != (data->acpi_data.states[i].core_frequency * 1000)) {
++		if (powernow_table[i].frequency != (data->acpi_data->states[i].core_frequency * 1000)) {
+ 			printk(KERN_INFO PFX "invalid freq entries %u kHz vs. %u kHz\n",
+ 				powernow_table[i].frequency,
+-				(unsigned int) (data->acpi_data.states[i].core_frequency * 1000));
++				(unsigned int) (data->acpi_data->states[i].core_frequency * 1000));
+ 			powernow_table[i].frequency = CPUFREQ_ENTRY_INVALID;
+ 			continue;
+ 		}
+@@ -910,16 +955,16 @@ static int fill_powernow_table_fidvid(struct powernow_k8_data *data, struct cpuf
+ {
+ 	int i;
+ 	int cntlofreq = 0;
+-	for (i = 0; i < data->acpi_data.state_count; i++) {
++	for (i = 0; i < data->acpi_data->state_count; i++) {
+ 		u32 fid;
+ 		u32 vid;
+ 
+ 		if (data->exttype) {
+-			fid = data->acpi_data.states[i].status & EXT_FID_MASK;
+-			vid = (data->acpi_data.states[i].status >> VID_SHIFT) & EXT_VID_MASK;
++			fid = data->acpi_data->states[i].status & EXT_FID_MASK;
++			vid = (data->acpi_data->states[i].status >> VID_SHIFT) & EXT_VID_MASK;
+ 		} else {
+-			fid = data->acpi_data.states[i].control & FID_MASK;
+-			vid = (data->acpi_data.states[i].control >> VID_SHIFT) & VID_MASK;
++			fid = data->acpi_data->states[i].control & FID_MASK;
++			vid = (data->acpi_data->states[i].control >> VID_SHIFT) & VID_MASK;
+ 		}
+ 
+ 		dprintk("   %d : fid 0x%x, vid 0x%x\n", i, fid, vid);
+@@ -960,10 +1005,10 @@ static int fill_powernow_table_fidvid(struct powernow_k8_data *data, struct cpuf
+ 				cntlofreq = i;
+ 		}
+ 
+-		if (powernow_table[i].frequency != (data->acpi_data.states[i].core_frequency * 1000)) {
++		if (powernow_table[i].frequency != (data->acpi_data->states[i].core_frequency * 1000)) {
+ 			printk(KERN_INFO PFX "invalid freq entries %u kHz vs. %u kHz\n",
+ 				powernow_table[i].frequency,
+-				(unsigned int) (data->acpi_data.states[i].core_frequency * 1000));
++				(unsigned int) (data->acpi_data->states[i].core_frequency * 1000));
+ 			powernow_table[i].frequency = CPUFREQ_ENTRY_INVALID;
+ 			continue;
+ 		}
+@@ -973,14 +1018,15 @@ static int fill_powernow_table_fidvid(struct powernow_k8_data *data, struct cpuf
+ 
+ static void powernow_k8_cpu_exit_acpi(struct powernow_k8_data *data)
+ {
+-	if (data->acpi_data.state_count)
+-		acpi_processor_unregister_performance(&data->acpi_data, data->cpu);
++	if (data->acpi_data->state_count)
++		acpi_processor_unregister_performance(data->acpi_data, data->cpu);
+ }
+ 
+ #else
+ static int powernow_k8_cpu_init_acpi(struct powernow_k8_data *data) { return -ENODEV; }
+ static void powernow_k8_cpu_exit_acpi(struct powernow_k8_data *data) { return; }
+ static void powernow_k8_acpi_pst_values(struct powernow_k8_data *data, unsigned int index) { return; }
++static int powernow_k8_cpu_preinit_acpi() { return -ENODEV; }
+ #endif /* CONFIG_X86_POWERNOW_K8_ACPI */
+ 
+ /* Take a frequency, and issue the fid/vid transition command */
+@@ -1243,7 +1289,7 @@ static int __cpuinit powernowk8_cpu_init(struct cpufreq_policy *pol)
+ 		 * an UP version, and is deprecated by AMD.
+ 		 */
+ 		if (num_online_cpus() != 1) {
+-			printk(KERN_ERR PFX "MP systems not supported by PSB BIOS structure\n");
++			printk(KERN_ERR PFX "Your BIOS does not provide _PSS objects.  PowerNow! does not work on SMP systems without _PSS objects.  Complain to your BIOS vendor.\n");
+ 			kfree(data);
+ 			return -ENODEV;
+ 		}
+@@ -1283,10 +1329,7 @@ static int __cpuinit powernowk8_cpu_init(struct cpufreq_policy *pol)
+ 	set_cpus_allowed(current, oldmask);
+ 
+ 	pol->governor = CPUFREQ_DEFAULT_GOVERNOR;
+-	if (cpu_family == CPU_HW_PSTATE)
+-		pol->cpus = cpumask_of_cpu(pol->cpu);
+-	else
+-		pol->cpus = cpu_core_map[pol->cpu];
++	pol->cpus = data->starting_core_affinity;
+ 	data->available_cores = &(pol->cpus);
+ 
+ 	/* Take a crude guess here.
+@@ -1431,6 +1474,7 @@ static int __cpuinit powernowk8_init(void)
+ 			for(i=0; i < num_possible_cpus(); i++)
+ 				req_state[i] = 99;
+ 		}
++		powernow_k8_cpu_preinit_acpi();
+ 		printk(KERN_INFO PFX "Found %d %s "
+ 			"processors (%d cpu cores) (" VERSION ")\n", supported_cpus/cpu_data[0].booted_cores,
+ 			boot_cpu_data.x86_model_id, supported_cpus);
+diff --git a/arch/i386/kernel/cpu/cpufreq/powernow-k8.h b/arch/i386/kernel/cpu/cpufreq/powernow-k8.h
+index 268af0e..281e52d 100644
+--- a/arch/i386/kernel/cpu/cpufreq/powernow-k8.h
++++ b/arch/i386/kernel/cpu/cpufreq/powernow-k8.h
+@@ -32,12 +32,13 @@ struct powernow_k8_data {
+ #ifdef CONFIG_X86_POWERNOW_K8_ACPI
+ 	/* the acpi table needs to be kept. it's only available if ACPI was
+ 	 * used to determine valid frequency/vid/fid states */
+-	struct acpi_processor_performance acpi_data;
++	struct acpi_processor_performance *acpi_data;
+ #endif
+ 	/* we need to keep track of associated cores, but let cpufreq
+ 	 * handle hotplug events - so just point at cpufreq pol->cpus
+ 	 * structure */
+ 	cpumask_t *available_cores;
++	cpumask_t starting_core_affinity;
+ };
+ 
+ 
+diff --git a/arch/i386/kernel/time-xen.c b/arch/i386/kernel/time-xen.c
+index a43d912..532ad14 100644
+--- a/arch/i386/kernel/time-xen.c
++++ b/arch/i386/kernel/time-xen.c
+@@ -50,6 +50,7 @@
+ #include <linux/percpu.h>
+ #include <linux/kernel_stat.h>
+ #include <linux/posix-timers.h>
++#include <linux/cpufreq.h>
+ 
+ #include <asm/io.h>
+ #include <asm/smp.h>
+@@ -1089,6 +1090,45 @@ void local_teardown_timer(unsigned int cpu)
+ }
+ #endif
+ 
++#if CONFIG_CPU_FREQ
++static int time_cpufreq_notifier(struct notifier_block *nb, unsigned long val, 
++				void *data)
++{
++	struct cpufreq_freqs *freq = data;
++	dom0_op_t op;
++
++	if (cpu_has(&cpu_data[freq->cpu], X86_FEATURE_CONSTANT_TSC))
++		return 0;
++
++	if (val == CPUFREQ_PRECHANGE)
++		return 0;
++
++	op.cmd = DOM0_change_freq;
++	op.u.change_freq.flags = 0;
++	op.u.change_freq.cpu = freq->cpu;
++	op.u.change_freq.freq = (u64)freq->new * 1000;
++	HYPERVISOR_dom0_op(&op);
++
++	return 0;
++}
++
++static struct notifier_block time_cpufreq_notifier_block = {
++	.notifier_call = time_cpufreq_notifier
++};
++
++static int __init cpufreq_time_setup(void)
++{
++	if (!cpufreq_register_notifier(&time_cpufreq_notifier_block,
++			CPUFREQ_TRANSITION_NOTIFIER)) {
++		printk(KERN_ERR "failed to set up cpufreq notifier\n");
++		return -ENODEV;
++	}
++	return 0;
++}
++
++core_initcall(cpufreq_time_setup);
++#endif
++
+ /*
+  * /proc/sys/xen: This really belongs in another file. It can stay here for
+  * now however.
+diff --git a/drivers/cpufreq/cpufreq_ondemand.c b/drivers/cpufreq/cpufreq_ondemand.c
+index 9853ef5..5f5a118 100644
+--- a/drivers/cpufreq/cpufreq_ondemand.c
++++ b/drivers/cpufreq/cpufreq_ondemand.c
+@@ -224,17 +224,14 @@ static struct attribute_group dbs_attr_group = {
+ 
+ /************************** sysfs end ************************/
+ 
+-static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
++#ifndef CONFIG_XEN
++static int dbs_calc_load(struct cpu_dbs_info_s *this_dbs_info)
+ {
+-	unsigned int idle_ticks, total_ticks;
+-	unsigned int load;
+-	cputime64_t cur_jiffies;
+-
+ 	struct cpufreq_policy *policy;
++	cputime64_t cur_jiffies;
++	cputime64_t total_ticks, idle_ticks;
+ 	unsigned int j;
+-
+-	if (!this_dbs_info->enable)
+-		return;
++	int load;
+ 
+ 	policy = this_dbs_info->cur_policy;
+ 	cur_jiffies = jiffies64_to_cputime64(get_jiffies_64());
+@@ -242,7 +239,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
+ 			this_dbs_info->prev_cpu_wall);
+ 	this_dbs_info->prev_cpu_wall = cur_jiffies;
+ 	if (!total_ticks)
+-		return;
++		return 200;
+ 	/*
+ 	 * Every sampling_rate, we check, if current idle time is less
+ 	 * than 20% (default), then we try to increase frequency
+@@ -272,6 +269,83 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
+ 			idle_ticks = tmp_idle_ticks;
+ 	}
+ 	load = (100 * (total_ticks - idle_ticks)) / total_ticks;
++	return load;
++}
++#else
++
++#include <xen/interface/platform.h>
++static int dbs_calc_load(struct cpu_dbs_info_s *this_dbs_info)
++{
++	int load = 0;
++	dom0_op_t op;
++	uint64_t idletime[NR_CPUS];
++	struct cpufreq_policy *policy;
++	unsigned int j;
++	cpumask_t cpumap;
++
++	policy = this_dbs_info->cur_policy;
++	cpumap = policy->cpus;
++
++	op.cmd = DOM0_getidletime;
++	set_xen_guest_handle(op.u.getidletime.cpumap_bitmap, (uint8_t *) cpus_addr(cpumap));
++	op.u.getidletime.cpumap_nr_cpus = NR_CPUS;
++	set_xen_guest_handle(op.u.getidletime.idletime, idletime);
++	if (HYPERVISOR_dom0_op(&op))
++		return 200;
++
++	for_each_cpu_mask(j, cpumap) {
++		cputime64_t total_idle_nsecs, tmp_idle_nsecs;
++		cputime64_t total_wall_nsecs, tmp_wall_nsecs;
++		struct cpu_dbs_info_s *j_dbs_info;
++		unsigned long tmp_load, tmp_wall_msecs, tmp_idle_msecs;
++
++		j_dbs_info = &per_cpu(cpu_dbs_info, j);
++		total_idle_nsecs = idletime[j];
++		tmp_idle_nsecs = cputime64_sub(total_idle_nsecs,
++				j_dbs_info->prev_cpu_idle);
++		total_wall_nsecs = op.u.getidletime.now;
++		tmp_wall_nsecs = cputime64_sub(total_wall_nsecs,
++				j_dbs_info->prev_cpu_wall);
++
++		if (tmp_wall_nsecs == 0)
++			return 200;
++
++		j_dbs_info->prev_cpu_wall = total_wall_nsecs;
++		j_dbs_info->prev_cpu_idle = total_idle_nsecs;
++
++		/* Convert nsecs to msecs and clamp times to sane values. */
++		do_div(tmp_wall_nsecs, 1000000);
++		tmp_wall_msecs = tmp_wall_nsecs;
++		do_div(tmp_idle_nsecs, 1000000);
++		tmp_idle_msecs = tmp_idle_nsecs;
++		if (tmp_wall_msecs == 0)
++			tmp_wall_msecs = 1;
++		if (tmp_idle_msecs > tmp_wall_msecs)
++			tmp_idle_msecs = tmp_wall_msecs;
++
++		tmp_load = (100 * (tmp_wall_msecs - tmp_idle_msecs)) /
++				tmp_wall_msecs;
++		tmp_wall_msecs = tmp_wall_nsecs;
++		
++		load = max(load, min(100, (int) tmp_load));
++	}
++	return load;
++}
++#endif
++
++static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
++{
++	int load;
++
++	struct cpufreq_policy *policy;
++
++	if (!this_dbs_info->enable)
++		return;
++
++	policy = this_dbs_info->cur_policy;
++	load = dbs_calc_load(this_dbs_info);
++	if (load > 100) 
++		return;
+ 
+ 	/* Check for frequency increase */
+ 	if (load > dbs_tuners_ins.up_threshold) {
+diff --git a/drivers/cpufreq/cpufreq_stats.c b/drivers/cpufreq/cpufreq_stats.c
+index 9926997..86a5603 100644
+--- a/drivers/cpufreq/cpufreq_stats.c
++++ b/drivers/cpufreq/cpufreq_stats.c
+@@ -292,6 +292,9 @@ cpufreq_stat_notifier_trans (struct notifier_block *nb, unsigned long val,
+ 	if (old_index == new_index)
+ 		return 0;
+ 
++        if ((old_index < 0) || (new_index < 0))
++                return 0;
++
+ 	spin_lock(&cpufreq_stats_lock);
+ 	stat->last_index = new_index;
+ #ifdef CONFIG_CPU_FREQ_STAT_DETAILS
+diff --git a/include/xen/interface/dom0_ops.h b/include/xen/interface/dom0_ops.h
+index 4edf430..9f56a80 100644
+--- a/include/xen/interface/dom0_ops.h
++++ b/include/xen/interface/dom0_ops.h
+@@ -71,6 +71,41 @@ struct dom0_memory_map_entry {
+ typedef struct dom0_memory_map_entry dom0_memory_map_entry_t;
+ DEFINE_XEN_GUEST_HANDLE(dom0_memory_map_entry_t);
+ 
++#define DOM0_change_freq         52
++struct dom0_change_freq {
++    /* IN variables */
++    uint32_t flags; /* Must be zero. */
++    uint32_t cpu;   /* Physical cpu. */
++    uint64_t freq;  /* New frequency (Hz). */
++};
++typedef struct dom0_change_freq dom0_change_freq_t;
++DEFINE_XEN_GUEST_HANDLE(dom0_change_freq_t);
++
++/*
++ * Get idle times (nanoseconds since boot) for physical CPUs specified in the
++ * @cpumap_bitmap with range [0..@cpumap_nr_cpus-1]. The @idletime array is
++ * indexed by CPU number; only entries with the corresponding @cpumap_bitmap
++ * bit set are written to. On return, @cpumap_bitmap is modified so that any
++ * non-existent CPUs are cleared. Such CPUs have their @idletime array entry
++ * cleared.
++ */
++#define DOM0_getidletime         53
++struct dom0_getidletime {
++    /* IN/OUT variables */
++    /* IN: CPUs to interrogate; OUT: subset of IN which are present */
++    XEN_GUEST_HANDLE(uint8_t) cpumap_bitmap;
++    /* IN variables */
++    /* Size of cpumap bitmap. */
++    uint32_t cpumap_nr_cpus;
++    /* Must be indexable for every cpu in cpumap_bitmap. */
++    XEN_GUEST_HANDLE(uint64_t) idletime;
++    /* OUT variables */
++    /* System time when the idletime snapshots were taken. */
++    uint64_t now;
++};
++typedef struct dom0_getidletime dom0_getidletime_t;
++DEFINE_XEN_GUEST_HANDLE(dom0_getidletime_t);
++
+ struct dom0_op {
+     uint32_t cmd;
+     uint32_t interface_version; /* DOM0_INTERFACE_VERSION */
+@@ -83,6 +118,8 @@ struct dom0_op {
+         struct dom0_microcode         microcode;
+         struct dom0_platform_quirk    platform_quirk;
+         struct dom0_memory_map_entry  physical_memory_map;
++	struct dom0_change_freq       change_freq;
++	struct dom0_getidletime       getidletime;
+ #ifdef CONFIG_X86_64
+ 	struct xenpf_stratus_call     stratus_call;
+ #endif
+diff --git a/include/xen/interface/platform.h b/include/xen/interface/platform.h
+index 79f82da..f20f844 100644
+--- a/include/xen/interface/platform.h
++++ b/include/xen/interface/platform.h
+@@ -99,6 +99,41 @@ struct xenpf_platform_quirk {
+ typedef struct xenpf_platform_quirk xenpf_platform_quirk_t;
+ DEFINE_XEN_GUEST_HANDLE(xenpf_platform_quirk_t);
+ 
++#define XENPF_change_freq         52
++struct xenpf_change_freq {
++    /* IN variables */
++    uint32_t flags; /* Must be zero. */
++    uint32_t cpu;   /* Physical cpu. */
++    uint64_t freq;  /* New frequency (Hz). */
++};
++typedef struct xenpf_change_freq xenpf_change_freq_t;
++DEFINE_XEN_GUEST_HANDLE(xenpf_change_freq_t);
++
++/*
++ * Get idle times (nanoseconds since boot) for physical CPUs specified in the
++ * @cpumap_bitmap with range [0..@cpumap_nr_cpus-1]. The @idletime array is
++ * indexed by CPU number; only entries with the corresponding @cpumap_bitmap
++ * bit set are written to. On return, @cpumap_bitmap is modified so that any
++ * non-existent CPUs are cleared. Such CPUs have their @idletime array entry
++ * cleared.
++ */
++#define XENPF_getidletime         53
++struct xenpf_getidletime {
++    /* IN/OUT variables */
++    /* IN: CPUs to interrogate; OUT: subset of IN which are present */
++    XEN_GUEST_HANDLE(uint8_t) cpumap_bitmap;
++    /* IN variables */
++    /* Size of cpumap bitmap. */
++    uint32_t cpumap_nr_cpus;
++    /* Must be indexable for every cpu in cpumap_bitmap. */
++    XEN_GUEST_HANDLE(uint64_t) idletime;
++    /* OUT variables */
++    /* System time when the idletime snapshots were taken. */
++    uint64_t now;
++};
++typedef struct xenpf_getidletime xenpf_getidletime_t;
++DEFINE_XEN_GUEST_HANDLE(xenpf_getidletime_t);
++
+ struct xen_platform_op {
+     uint32_t cmd;
+     uint32_t interface_version; /* XENPF_INTERFACE_VERSION */
+@@ -109,6 +144,8 @@ struct xen_platform_op {
+         struct xenpf_read_memtype      read_memtype;
+         struct xenpf_microcode_update  microcode;
+         struct xenpf_platform_quirk    platform_quirk;
++        struct xenpf_change_freq       change_freq;
++        struct xenpf_getidletime       getidletime;
+         uint8_t                        pad[128];
+     } u;
+ };

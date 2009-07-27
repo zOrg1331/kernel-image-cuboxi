@@ -1,0 +1,60 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Wed, 13 Aug 2008 16:09:05 -0400
+Subject: [scsi] aic79xx: reset HBA on kdump kernel boot
+Message-id: 20080813200905.GF439@devserv.devel.redhat.com
+O-Subject: [RHEL 5.3] PATCH: aic79xx: reset HBA on kdump kernel boot
+Bugzilla: 458620
+RH-Acked-by: Vivek Goyal <vgoyal@redhat.com>
+
+Hey all-
+	We have a problem on some aic 79xx HBAs.  Its possible for them to be in
+a paused state during a crash (for various and sundry reasons), when a crash
+occurs.  Since the driver doesn't fully reset the HBA hardware on module load,
+its possible for this state to not get cleared, and as a result the driver can't
+issue any requests to attached devices during the kdump kernel boot, and as a
+result we can't capture the vmcore, mount the rootfs, or do any of that other
+good stuff that kdump would like to be able to do.
+
+Upstream has (inadvertently) fixed this with a series of patches that has
+reworked how the device detects the need for resets, and how it executes those
+There was no directed effort toward this goal, but there is a series of commits
+over the last several months to the aic79xx driver which changes the reset
+behavior, causing the most recent version to "just work".
+
+Given that its a series of 3 or 4 commits spread
+over a long period with lots of interviening change, the proximity of the 5.3
+kernel freeze deadline, and my profound lack of knoweldge in the scsi HBA arena,
+I think it would be best if for 5.3 we instead fixed aic79xx with the patch
+below. It isolates the change to only kdump kernel boots, and while it can cause
+loss of in flight data we are guaranteed to not be accessing any devices on the
+HBA's bus while this additional reset introduced by this patch is taking place.
+We can do a proper backport for 5.4 from upstream when we have time to suck in
+the actually commits, its dependencies and manage to verify that we're not going
+to do anything catasrophic to the attached disks.
+
+Regards
+Neil
+
+diff --git a/drivers/scsi/aic7xxx/aic79xx_pci.c b/drivers/scsi/aic7xxx/aic79xx_pci.c
+index 328e38f..1285716 100644
+--- a/drivers/scsi/aic7xxx/aic79xx_pci.c
++++ b/drivers/scsi/aic7xxx/aic79xx_pci.c
+@@ -385,6 +385,18 @@ ahd_pci_config(struct ahd_softc *ahd, struct ahd_pci_identity *entry)
+ 	error = ahd_pci_map_int(ahd);
+ 	if (!error)
+ 		ahd->init_level++;
++
++	/*
++	 * If we are a kdump kernel rebooting the box, this controller was not
++	 * shut down properly, and as a result its possible for I/O operations
++	 * to be left in flight that can cause the device to stop responding
++	 * specifically the card can be in a paused state, and requests can
++	 * be queued to it prior to it being unpaused in ahd_resume, leading to
++	 * panic.  Handle this by resetting the card here, as we do in shutdown
++	 */
++	if (reset_devices)
++		error = ahd_reset(ahd, TRUE);
++
+ 	return error;
+ }
+ 

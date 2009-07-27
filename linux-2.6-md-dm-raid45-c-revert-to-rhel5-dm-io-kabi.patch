@@ -1,0 +1,30 @@
+From: Heinz Mauelshagen <heinzm@redhat.com>
+Date: Fri, 31 Oct 2008 14:36:06 +0100
+Subject: [md] dm-raid45.c: revert to RHEL5 dm-io kabi
+Message-id: 1225460166.1196.34.camel@o
+O-Subject: [RHEL5.3 PATCH] dm-raid45.c: revert to RHEL5 dm-io kabi
+Bugzilla: 437180
+RH-Acked-by: Jonathan Brassow <jbrassow@redhat.com>
+RH-Acked-by: Alasdair G Kergon <agk@redhat.com>
+RH-Acked-by: Mikulas Patocka <mpatocka@redhat.com>
+
+This patch reverts struct dm_io_region to io_region, hence conforming to
+RHEL5 kabi.
+
+It adresses RHBZ 327180.
+
+Heinz
+
+diff --git a/drivers/md/dm-raid45.c b/drivers/md/dm-raid45.c
+index 5c1daa7..8ed75b8 100644
+--- a/drivers/md/dm-raid45.c
++++ b/drivers/md/dm-raid45.c
+@@ -2182,7 +2182,7 @@ static void page_list_rw(struct stripe *stripe, unsigned p)
+ 	struct page_list *pl = obj->pl;
+ 	struct page *page = pl->page;
+ 	struct raid_dev *dev = rs->dev + p;
+-	struct dm_io_region io = {
++	struct io_region io = {
+ 		.bdev = dev->dev->bdev,
+ 		.sector = stripe->key,
+ 		.count = stripe->io.size,

@@ -1,0 +1,749 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 2 Nov 2007 14:48:36 +0100
+Subject: [s390] z/VM monitor stream state 2
+Message-id: 20071102134836.GH13909@redhat.com
+O-Subject: [RHEL5.2 PATCH 7/7] FEAT: s390 Linux & z/VM monitor stream state 2 - application support
+Bugzilla: 253026
+
+Description
+============
+
+Provide a programmatic interface to feed application
+monitoring data into the z/VM monitor stream and expose this data through CIM
+interfaces at a chosen data aggregation point.
+
+The following needs to be set
+CONFIG_MONWRITER=m
+
+Bugzilla
+=========
+
+BZ 253026
+https://bugzilla.redhat.com/show_bug.cgi?id=253026
+
+Upstream status of the patch:
+=============================
+Patch included in git as commit 31b58088292c7f00f0b81088bfb557285b0b6247
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/arch/s390/appldata/appldata_base.c b/arch/s390/appldata/appldata_base.c
+index a0a94e0..2e1bcba 100644
+--- a/arch/s390/appldata/appldata_base.c
++++ b/arch/s390/appldata/appldata_base.c
+@@ -14,20 +14,20 @@
+ #include <linux/init.h>
+ #include <linux/slab.h>
+ #include <linux/errno.h>
+-#include <asm/uaccess.h>
+-#include <asm/io.h>
+-#include <asm/smp.h>
+ #include <linux/interrupt.h>
+ #include <linux/proc_fs.h>
+ #include <linux/page-flags.h>
+ #include <linux/swap.h>
+ #include <linux/pagemap.h>
+ #include <linux/sysctl.h>
+-#include <asm/timer.h>
+-//#include <linux/kernel_stat.h>
+ #include <linux/notifier.h>
+ #include <linux/cpu.h>
+ #include <linux/workqueue.h>
++#include <asm/appldata.h>
++#include <asm/timer.h>
++#include <asm/uaccess.h>
++#include <asm/io.h>
++#include <asm/smp.h>
+ 
+ #include "appldata.h"
+ 
+@@ -39,34 +39,6 @@
+ 
+ #define TOD_MICRO	0x01000			/* nr. of TOD clock units
+ 						   for 1 microsecond */
+-
+-/*
+- * Parameter list for DIAGNOSE X'DC'
+- */
+-#ifndef CONFIG_64BIT
+-struct appldata_parameter_list {
+-	u16 diag;		/* The DIAGNOSE code X'00DC'          */
+-	u8  function;		/* The function code for the DIAGNOSE */
+-	u8  parlist_length;	/* Length of the parameter list       */
+-	u32 product_id_addr;	/* Address of the 16-byte product ID  */
+-	u16 reserved;
+-	u16 buffer_length;	/* Length of the application data buffer  */
+-	u32 buffer_addr;	/* Address of the application data buffer */
+-};
+-#else
+-struct appldata_parameter_list {
+-	u16 diag;
+-	u8  function;
+-	u8  parlist_length;
+-	u32 unused01;
+-	u16 reserved;
+-	u16 buffer_length;
+-	u32 unused02;
+-	u64 product_id_addr;
+-	u64 buffer_addr;
+-};
+-#endif /* CONFIG_64BIT */
+-
+ /*
+  * /proc entries (sysctl)
+  */
+@@ -181,46 +153,17 @@ static void appldata_work_fn(void *data)
+ int appldata_diag(char record_nr, u16 function, unsigned long buffer,
+ 			u16 length, char *mod_lvl)
+ {
+-	unsigned long ry;
+-	struct appldata_product_id {
+-		char prod_nr[7];			/* product nr. */
+-		char prod_fn[2];			/* product function */
+-		char record_nr;				/* record nr. */
+-		char version_nr[2];			/* version */
+-		char release_nr[2];			/* release */
+-		char mod_lvl[2];			/* modification lvl. */
+-	} appldata_product_id = {
+-	/* all strings are EBCDIC, record_nr is byte */
++	struct appldata_product_id id = {
+ 		.prod_nr    = {0xD3, 0xC9, 0xD5, 0xE4,
+-				0xE7, 0xD2, 0xD9},	/* "LINUXKR" */
+-		.prod_fn    = {0xD5, 0xD3},		/* "NL" */
+-		.record_nr  = record_nr,
+-		.version_nr = {0xF2, 0xF6},		/* "26" */
+-		.release_nr = {0xF0, 0xF1},		/* "01" */
+-		.mod_lvl    = {mod_lvl[0], mod_lvl[1]},
+-	};
+-	struct appldata_parameter_list appldata_parameter_list = {
+-				.diag = 0xDC,
+-				.function = function,
+-				.parlist_length =
+-					sizeof(appldata_parameter_list),
+-				.buffer_length = length,
+-				.product_id_addr =
+-					(unsigned long) &appldata_product_id,
+-				.buffer_addr = virt_to_phys((void *) buffer)
++			       0xE7, 0xD2, 0xD9},	/* "LINUXKR" */
++		.prod_fn    = 0xD5D3,			/* "NL" */
++		.version_nr = 0xF2F6,			/* "26" */
++		.release_nr = 0xF0F1,			/* "01" */
+ 	};
+ 
+-	if (!MACHINE_IS_VM)
+-		return -ENOSYS;
+-	ry = -1;
+-	asm volatile(
+-			"diag %1,%0,0xDC\n\t"
+-			: "=d" (ry)
+-			: "d" (&appldata_parameter_list),
+-			  "m" (appldata_parameter_list),
+-			  "m" (appldata_product_id)
+-			: "cc");
+-	return (int) ry;
++	id.record_nr = record_nr;
++	id.mod_lvl = (mod_lvl[0]) << 8 | mod_lvl[1];
++	return appldata_asm(&id, function, (void *) buffer, length);
+ }
+ /************************ timer, work, DIAG <END> ****************************/
+ 
+@@ -367,6 +310,7 @@ appldata_interval_handler(ctl_table *ctl, int write, struct file *filp,
+ 	if (copy_from_user(buf, buffer, len > sizeof(buf) ? sizeof(buf) : len)) {
+ 		return -EFAULT;
+ 	}
++	interval = 0;
+ 	sscanf(buf, "%i", &interval);
+ 	if (interval <= 0) {
+ 		P_ERROR("Timer CPU interval has to be > 0!\n");
+@@ -665,106 +609,20 @@ static int __init appldata_init(void)
+ 	register_hotcpu_notifier(&appldata_nb);
+ 
+ 	appldata_sysctl_header = register_sysctl_table(appldata_dir_table, 1);
+-#ifdef MODULE
+-	appldata_dir_table[0].de->owner = THIS_MODULE;
+-	appldata_table[0].de->owner = THIS_MODULE;
+-	appldata_table[1].de->owner = THIS_MODULE;
+-#endif
+ 
+ 	P_DEBUG("Base interface initialized.\n");
+ 	return 0;
+ }
+ 
+-/*
+- * appldata_exit()
+- *
+- * stop timer, unregister /proc entries
+- */
+-static void __exit appldata_exit(void)
+-{
+-	struct list_head *lh;
+-	struct appldata_ops *ops;
+-	int rc, i;
+-
+-	P_DEBUG("Unloading module ...\n");
+-	/*
+-	 * ops list should be empty, but just in case something went wrong...
+-	 */
+-	spin_lock(&appldata_ops_lock);
+-	list_for_each(lh, &appldata_ops_list) {
+-		ops = list_entry(lh, struct appldata_ops, list);
+-		rc = appldata_diag(ops->record_nr, APPLDATA_STOP_REC,
+-				(unsigned long) ops->data, ops->size,
+-				ops->mod_lvl);
+-		if (rc != 0) {
+-			P_ERROR("STOP DIAG 0xDC for %s failed, "
+-				"return code: %d\n", ops->name, rc);
+-		}
+-	}
+-	spin_unlock(&appldata_ops_lock);
+-
+-	for_each_online_cpu(i)
+-		appldata_offline_cpu(i);
++__initcall(appldata_init);
+ 
+-	appldata_timer_active = 0;
+-
+-	unregister_sysctl_table(appldata_sysctl_header);
+-
+-	destroy_workqueue(appldata_wq);
+-	P_DEBUG("... module unloaded!\n");
+-}
+ /**************************** init / exit <END> ******************************/
+ 
+-
+-module_init(appldata_init);
+-module_exit(appldata_exit);
+-MODULE_LICENSE("GPL");
+-MODULE_AUTHOR("Gerald Schaefer");
+-MODULE_DESCRIPTION("Linux-VM Monitor Stream, base infrastructure");
+-
+ EXPORT_SYMBOL_GPL(appldata_register_ops);
+ EXPORT_SYMBOL_GPL(appldata_unregister_ops);
+ EXPORT_SYMBOL_GPL(appldata_diag);
+ 
+-#ifdef MODULE
+-/*
+- * Kernel symbols needed by appldata_mem and appldata_os modules.
+- * However, if this file is compiled as a module (for testing only), these
+- * symbols are not exported. In this case, we define them locally and export
+- * those.
+- */
+-void si_swapinfo(struct sysinfo *val)
+-{
+-	val->freeswap = -1ul;
+-	val->totalswap = -1ul;
+-}
+-
+-unsigned long avenrun[3] = {-1 - FIXED_1/200, -1 - FIXED_1/200,
+-				-1 - FIXED_1/200};
+-int nr_threads = -1;
+-
+-void get_full_page_state(struct page_state *ps)
+-{
+-	memset(ps, -1, sizeof(struct page_state));
+-}
+-
+-unsigned long nr_running(void)
+-{
+-	return -1;
+-}
+-
+-unsigned long nr_iowait(void)
+-{
+-	return -1;
+-}
+-
+-/*unsigned long nr_context_switches(void)
+-{
+-	return -1;
+-}*/
+-#endif /* MODULE */
+ EXPORT_SYMBOL_GPL(si_swapinfo);
+ EXPORT_SYMBOL_GPL(nr_threads);
+ EXPORT_SYMBOL_GPL(nr_running);
+ EXPORT_SYMBOL_GPL(nr_iowait);
+-//EXPORT_SYMBOL_GPL(nr_context_switches);
+diff --git a/drivers/s390/Kconfig b/drivers/s390/Kconfig
+index 45dcca2..2fceefc 100644
+--- a/drivers/s390/Kconfig
++++ b/drivers/s390/Kconfig
+@@ -219,6 +219,12 @@ config S390_VMUR
+ 	help
+ 	  Character device driver for z/VM reader, puncher and printer.
+ 
++config MONWRITER
++	tristate "API for writing z/VM monitor service records"
++	default "m"
++	help
++	  Character device driver for writing z/VM monitor service records
++
+ endmenu
+ 
+ menu "Cryptographic devices"
+diff --git a/drivers/s390/char/Makefile b/drivers/s390/char/Makefile
+index c84931d..bf90ae9 100644
+--- a/drivers/s390/char/Makefile
++++ b/drivers/s390/char/Makefile
+@@ -28,6 +28,7 @@ obj-$(CONFIG_S390_TAPE) += tape.o tape_class.o
+ obj-$(CONFIG_S390_TAPE_34XX) += tape_34xx.o
+ obj-$(CONFIG_S390_TAPE_3590) += tape_3590.o
+ obj-$(CONFIG_MONREADER) += monreader.o
++obj-$(CONFIG_MONWRITER) += monwriter.o
+ obj-$(CONFIG_S390_VMUR) += vmur.o
+ zcore_mod-objs := sclp_sdias.o zcore.o
+ obj-$(CONFIG_ZFCPDUMP) += zcore_mod.o
+diff --git a/drivers/s390/char/monwriter.c b/drivers/s390/char/monwriter.c
+new file mode 100644
+index 0000000..314efb5
+--- /dev/null
++++ b/drivers/s390/char/monwriter.c
+@@ -0,0 +1,304 @@
++/*
++ * drivers/s390/char/monwriter.c
++ *
++ * Character device driver for writing z/VM *MONITOR service records.
++ *
++ * Copyright (C) IBM Corp. 2006
++ *
++ * Author(s): Melissa Howland <Melissa.Howland@us.ibm.com>
++ */
++
++#include <linux/module.h>
++#include <linux/moduleparam.h>
++#include <linux/init.h>
++#include <linux/errno.h>
++#include <linux/types.h>
++#include <linux/kernel.h>
++#include <linux/miscdevice.h>
++#include <linux/ctype.h>
++#include <linux/poll.h>
++#include <linux/mutex.h>
++#include <asm/uaccess.h>
++#include <asm/ebcdic.h>
++#include <asm/io.h>
++#include <asm/appldata.h>
++#include <asm/monwriter.h>
++
++#define MONWRITE_MAX_DATALEN	4010
++
++static int mon_max_bufs = 255;
++static int mon_buf_count;
++
++struct mon_buf {
++	struct list_head list;
++	struct monwrite_hdr hdr;
++	int diag_done;
++	char *data;
++};
++
++struct mon_private {
++	struct list_head list;
++	struct monwrite_hdr hdr;
++	size_t hdr_to_read;
++	size_t data_to_read;
++	struct mon_buf *current_buf;
++	struct mutex thread_mutex;
++};
++
++/*
++ * helper functions
++ */
++
++static int monwrite_diag(struct monwrite_hdr *myhdr, char *buffer, int fcn)
++{
++	struct appldata_product_id id;
++	int rc;
++
++	strcpy(id.prod_nr, "LNXAPPL");
++	id.prod_fn = myhdr->applid;
++	id.record_nr = myhdr->record_num;
++	id.version_nr = myhdr->version;
++	id.release_nr = myhdr->release;
++	id.mod_lvl = myhdr->mod_level;
++	rc = appldata_asm(&id, fcn, (void *) buffer, myhdr->datalen);
++	if (rc <= 0)
++		return rc;
++	if (rc == 5)
++		return -EPERM;
++	printk("DIAG X'DC' error with return code: %i\n", rc);
++	return -EINVAL;
++}
++
++static struct mon_buf *monwrite_find_hdr(struct mon_private *monpriv,
++					 struct monwrite_hdr *monhdr)
++{
++	struct mon_buf *entry, *next;
++
++	list_for_each_entry_safe(entry, next, &monpriv->list, list)
++		if ((entry->hdr.mon_function == monhdr->mon_function ||
++		     monhdr->mon_function == MONWRITE_STOP_INTERVAL) &&
++		    entry->hdr.applid == monhdr->applid &&
++		    entry->hdr.record_num == monhdr->record_num &&
++		    entry->hdr.version == monhdr->version &&
++		    entry->hdr.release == monhdr->release &&
++		    entry->hdr.mod_level == monhdr->mod_level)
++			return entry;
++
++	return NULL;
++}
++
++static int monwrite_new_hdr(struct mon_private *monpriv)
++{
++	struct monwrite_hdr *monhdr = &monpriv->hdr;
++	struct mon_buf *monbuf;
++	int rc;
++
++	if (monhdr->datalen > MONWRITE_MAX_DATALEN ||
++	    monhdr->mon_function > MONWRITE_START_CONFIG ||
++	    monhdr->hdrlen != sizeof(struct monwrite_hdr))
++		return -EINVAL;
++	monbuf = NULL;
++	if (monhdr->mon_function != MONWRITE_GEN_EVENT)
++		monbuf = monwrite_find_hdr(monpriv, monhdr);
++	if (monbuf) {
++		if (monhdr->mon_function == MONWRITE_STOP_INTERVAL) {
++			monhdr->datalen = monbuf->hdr.datalen;
++			rc = monwrite_diag(monhdr, monbuf->data,
++					   APPLDATA_STOP_REC);
++			list_del(&monbuf->list);
++			mon_buf_count--;
++			kfree(monbuf->data);
++			kfree(monbuf);
++			monbuf = NULL;
++		}
++	} else if (monhdr->mon_function != MONWRITE_STOP_INTERVAL) {
++		if (mon_buf_count >= mon_max_bufs)
++			return -ENOSPC;
++		monbuf = kzalloc(sizeof(struct mon_buf), GFP_KERNEL);
++		if (!monbuf)
++			return -ENOMEM;
++		monbuf->data = kzalloc(monhdr->datalen,
++				       GFP_KERNEL | GFP_DMA);
++		if (!monbuf->data) {
++			kfree(monbuf);
++			return -ENOMEM;
++		}
++		monbuf->hdr = *monhdr;
++		list_add_tail(&monbuf->list, &monpriv->list);
++		if (monhdr->mon_function != MONWRITE_GEN_EVENT)
++			mon_buf_count++;
++	}
++	monpriv->current_buf = monbuf;
++	return 0;
++}
++
++static int monwrite_new_data(struct mon_private *monpriv)
++{
++	struct monwrite_hdr *monhdr = &monpriv->hdr;
++	struct mon_buf *monbuf = monpriv->current_buf;
++	int rc = 0;
++
++	switch (monhdr->mon_function) {
++	case MONWRITE_START_INTERVAL:
++		if (!monbuf->diag_done) {
++			rc = monwrite_diag(monhdr, monbuf->data,
++					   APPLDATA_START_INTERVAL_REC);
++			monbuf->diag_done = 1;
++		}
++		break;
++	case MONWRITE_START_CONFIG:
++		if (!monbuf->diag_done) {
++			rc = monwrite_diag(monhdr, monbuf->data,
++					   APPLDATA_START_CONFIG_REC);
++			monbuf->diag_done = 1;
++		}
++		break;
++	case MONWRITE_GEN_EVENT:
++		rc = monwrite_diag(monhdr, monbuf->data,
++				   APPLDATA_GEN_EVENT_REC);
++		list_del(&monpriv->current_buf->list);
++		kfree(monpriv->current_buf->data);
++		kfree(monpriv->current_buf);
++		monpriv->current_buf = NULL;
++		break;
++	default:
++		/* monhdr->mon_function is checked in monwrite_new_hdr */
++		BUG();
++	}
++	return rc;
++}
++
++/*
++ * file operations
++ */
++
++static int monwrite_open(struct inode *inode, struct file *filp)
++{
++	struct mon_private *monpriv;
++
++	monpriv = kzalloc(sizeof(struct mon_private), GFP_KERNEL);
++	if (!monpriv)
++		return -ENOMEM;
++	INIT_LIST_HEAD(&monpriv->list);
++	monpriv->hdr_to_read = sizeof(monpriv->hdr);
++	mutex_init(&monpriv->thread_mutex);
++	filp->private_data = monpriv;
++	return nonseekable_open(inode, filp);
++}
++
++static int monwrite_close(struct inode *inode, struct file *filp)
++{
++	struct mon_private *monpriv = filp->private_data;
++	struct mon_buf *entry, *next;
++
++	list_for_each_entry_safe(entry, next, &monpriv->list, list) {
++		if (entry->hdr.mon_function != MONWRITE_GEN_EVENT)
++			monwrite_diag(&entry->hdr, entry->data,
++				      APPLDATA_STOP_REC);
++		mon_buf_count--;
++		list_del(&entry->list);
++		kfree(entry->data);
++		kfree(entry);
++	}
++	kfree(monpriv);
++	return 0;
++}
++
++static ssize_t monwrite_write(struct file *filp, const char __user *data,
++			      size_t count, loff_t *ppos)
++{
++	struct mon_private *monpriv = filp->private_data;
++	size_t len, written;
++	void *to;
++	int rc;
++
++	mutex_lock(&monpriv->thread_mutex);
++	for (written = 0; written < count; ) {
++		if (monpriv->hdr_to_read) {
++			len = min(count - written, monpriv->hdr_to_read);
++			to = (char *) &monpriv->hdr +
++				sizeof(monpriv->hdr) - monpriv->hdr_to_read;
++			if (copy_from_user(to, data + written, len)) {
++				rc = -EFAULT;
++				goto out_error;
++			}
++			monpriv->hdr_to_read -= len;
++			written += len;
++			if (monpriv->hdr_to_read > 0)
++				continue;
++			rc = monwrite_new_hdr(monpriv);
++			if (rc)
++				goto out_error;
++			monpriv->data_to_read = monpriv->current_buf ?
++				monpriv->current_buf->hdr.datalen : 0;
++		}
++
++		if (monpriv->data_to_read) {
++			len = min(count - written, monpriv->data_to_read);
++			to = monpriv->current_buf->data +
++				monpriv->hdr.datalen - monpriv->data_to_read;
++			if (copy_from_user(to, data + written, len)) {
++				rc = -EFAULT;
++				goto out_error;
++			}
++			monpriv->data_to_read -= len;
++			written += len;
++			if (monpriv->data_to_read > 0)
++				continue;
++			rc = monwrite_new_data(monpriv);
++			if (rc)
++				goto out_error;
++		}
++		monpriv->hdr_to_read = sizeof(monpriv->hdr);
++	}
++	mutex_unlock(&monpriv->thread_mutex);
++	return written;
++
++out_error:
++	monpriv->data_to_read = 0;
++	monpriv->hdr_to_read = sizeof(struct monwrite_hdr);
++	mutex_unlock(&monpriv->thread_mutex);
++	return rc;
++}
++
++static struct file_operations monwrite_fops = {
++	.owner	 = THIS_MODULE,
++	.open	 = &monwrite_open,
++	.release = &monwrite_close,
++	.write	 = &monwrite_write,
++};
++
++static struct miscdevice mon_dev = {
++	.name	= "monwriter",
++	.fops	= &monwrite_fops,
++	.minor	= MISC_DYNAMIC_MINOR,
++};
++
++/*
++ * module init/exit
++ */
++
++static int __init mon_init(void)
++{
++	if (MACHINE_IS_VM)
++		return misc_register(&mon_dev);
++	else
++		return -ENODEV;
++}
++
++static void __exit mon_exit(void)
++{
++	WARN_ON(misc_deregister(&mon_dev) != 0);
++}
++
++module_init(mon_init);
++module_exit(mon_exit);
++
++module_param_named(max_bufs, mon_max_bufs, int, 0644);
++MODULE_PARM_DESC(max_bufs, "Maximum number of sample monitor data buffers"
++		 "that can be active at one time");
++
++MODULE_AUTHOR("Melissa Howland <Melissa.Howland@us.ibm.com>");
++MODULE_DESCRIPTION("Character device driver for writing z/VM "
++		   "APPLDATA monitor records.");
++MODULE_LICENSE("GPL");
+diff --git a/include/asm-s390/appldata.h b/include/asm-s390/appldata.h
+new file mode 100644
+index 0000000..79283da
+--- /dev/null
++++ b/include/asm-s390/appldata.h
+@@ -0,0 +1,90 @@
++/*
++ * include/asm-s390/appldata.h
++ *
++ * Copyright (C) IBM Corp. 2006
++ *
++ * Author(s): Melissa Howland <melissah@us.ibm.com>
++ */
++
++#ifndef _ASM_S390_APPLDATA_H
++#define _ASM_S390_APPLDATA_H
++
++#include <asm/io.h>
++
++#ifndef CONFIG_64BIT
++
++#define APPLDATA_START_INTERVAL_REC	0x00	/* Function codes for */
++#define APPLDATA_STOP_REC		0x01	/* DIAG 0xDC	      */
++#define APPLDATA_GEN_EVENT_REC		0x02
++#define APPLDATA_START_CONFIG_REC	0x03
++
++/*
++ * Parameter list for DIAGNOSE X'DC'
++ */
++struct appldata_parameter_list {
++	u16 diag;		/* The DIAGNOSE code X'00DC'	      */
++	u8  function;		/* The function code for the DIAGNOSE */
++	u8  parlist_length;	/* Length of the parameter list       */
++	u32 product_id_addr;	/* Address of the 16-byte product ID  */
++	u16 reserved;
++	u16 buffer_length;	/* Length of the application data buffer  */
++	u32 buffer_addr;	/* Address of the application data buffer */
++} __attribute__ ((packed));
++
++#else /* CONFIG_64BIT */
++
++#define APPLDATA_START_INTERVAL_REC	0x80
++#define APPLDATA_STOP_REC		0x81
++#define APPLDATA_GEN_EVENT_REC		0x82
++#define APPLDATA_START_CONFIG_REC	0x83
++
++/*
++ * Parameter list for DIAGNOSE X'DC'
++ */
++struct appldata_parameter_list {
++	u16 diag;
++	u8  function;
++	u8  parlist_length;
++	u32 unused01;
++	u16 reserved;
++	u16 buffer_length;
++	u32 unused02;
++	u64 product_id_addr;
++	u64 buffer_addr;
++} __attribute__ ((packed));
++
++#endif /* CONFIG_64BIT */
++
++struct appldata_product_id {
++	char prod_nr[7];	/* product number */
++	u16  prod_fn;		/* product function */
++	u8   record_nr; 	/* record number */
++	u16  version_nr;	/* version */
++	u16  release_nr;	/* release */
++	u16  mod_lvl;		/* modification level */
++} __attribute__ ((packed));
++
++static inline int appldata_asm(struct appldata_product_id *id,
++			       unsigned short fn, void *buffer,
++			       unsigned short length)
++{
++	struct appldata_parameter_list parm_list;
++	int ry;
++
++	if (!MACHINE_IS_VM)
++		return -ENOSYS;
++	parm_list.diag = 0xdc;
++	parm_list.function = fn;
++	parm_list.parlist_length = sizeof(parm_list);
++	parm_list.buffer_length = length;
++	parm_list.product_id_addr = (unsigned long) id;
++	parm_list.buffer_addr = virt_to_phys(buffer);
++	asm volatile(
++		"	diag	%1,%0,0xdc"
++		: "=d" (ry)
++		: "d" (&parm_list), "m" (parm_list), "m" (*id)
++		: "cc");
++	return ry;
++}
++
++#endif /* _ASM_S390_APPLDATA_H */
+diff --git a/include/asm-s390/monwriter.h b/include/asm-s390/monwriter.h
+new file mode 100644
+index 0000000..f0cbf96
+--- /dev/null
++++ b/include/asm-s390/monwriter.h
+@@ -0,0 +1,33 @@
++/*
++ * include/asm-s390/monwriter.h
++ *
++ * Copyright (C) IBM Corp. 2006
++ * Character device driver for writing z/VM APPLDATA monitor records
++ * Version 1.0
++ * Author(s): Melissa Howland <melissah@us.ibm.com>
++ *
++ */
++
++#ifndef _ASM_390_MONWRITER_H
++#define _ASM_390_MONWRITER_H
++
++/* mon_function values */
++#define MONWRITE_START_INTERVAL	0x00 /* start interval recording */
++#define MONWRITE_STOP_INTERVAL	0x01 /* stop interval or config recording */
++#define MONWRITE_GEN_EVENT	0x02 /* generate event record */
++#define MONWRITE_START_CONFIG	0x03 /* start configuration recording */
++
++/* the header the app uses in its write() data */
++struct monwrite_hdr {
++	unsigned char mon_function;
++	unsigned short applid;
++	unsigned char record_num;
++	unsigned short version;
++	unsigned short release;
++	unsigned short mod_level;
++	unsigned short datalen;
++	unsigned char hdrlen;
++
++} __attribute__((packed));
++
++#endif /* _ASM_390_MONWRITER_H */

@@ -1,0 +1,155 @@
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Subject: [RHEL 5.1 PATCH] GFS2 - bz #253089: GFS2: mount hung after recovery
+Date: Fri, 14 Sep 2007 14:39:54 -0500
+Bugzilla: 253089
+Message-Id: <20070914193954.GD5841@ether.msp.redhat.com>
+Changelog: [gfs2] mount hung after recovery
+
+
+BZ#253089
+https://bugzilla.redhat.com/show_bug.cgi?id=253089
+
+Description:
+There is a lock ordering problem problem in GFS2. Usually, GFS2 acquires a
+read lock on the sd_log_flush_lock, and starts a transaction before locking
+the necessary pages.  However, writepage is called with the page already locked.This could cause the following deadlock:
+
+1. process A begins a transaction (acquiring a read lock on the
+sd_log_flush_lock), and process B locks page X, in either order.
+2. process C tries to acquire a write lock on the sd_log_flush_lock, before
+process B can begin its transaction (and acquire a read lock).
+3. process A tries to lock page X during its transaction
+
+To solve this problem, this patch does a trylock on the sd_log_flush_lock from
+gfs2_writepage, instead of a blocking lock. If it fails to get the lock, it
+will simply redirty the page and return.
+
+This patch is upstream:
+http://git.kernel.org/?p=linux/kernel/git/steve/gfs2-2.6-nmw.git;a=commit;h=13bce1cdebacd0f70c9d4297b710fcd8e48f96b2
+
+Signed-off-by: Benjamin E. Marzinski <bmarzins@redhat.com>
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+
+
+diff -urpN --exclude-from=linux-2.6.18-44.gfs2abhi.003_test_clean/Documentation/dontdiff linux-2.6.18-44.gfs2abhi.003_test_clean/fs/gfs2/log.c linux-2.6.18-44.gfs2abhi.003_test/fs/gfs2/log.c
+--- linux-2.6.18-44.gfs2abhi.003_test_clean/fs/gfs2/log.c	2007-09-05 09:33:11.000000000 -0500
++++ linux-2.6.18-44.gfs2abhi.003_test/fs/gfs2/log.c	2007-09-11 10:03:48.000000000 -0500
+@@ -288,7 +288,7 @@ static void ail2_empty(struct gfs2_sbd *
+  * Returns: errno
+  */
+ 
+-int gfs2_log_reserve(struct gfs2_sbd *sdp, unsigned int blks)
++int gfs2_log_reserve(struct gfs2_sbd *sdp, unsigned int blks, int wait)
+ {
+ 	unsigned int try = 0;
+ 	unsigned reserved_blks = 6 * (4096 / sdp->sd_vfs->s_blocksize);
+@@ -301,6 +301,10 @@ int gfs2_log_reserve(struct gfs2_sbd *sd
+ 	gfs2_log_lock(sdp);
+ 	while(sdp->sd_log_blks_free <= (blks + reserved_blks)) {
+ 		gfs2_log_unlock(sdp);
++		if (!wait) {
++			mutex_unlock(&sdp->sd_log_reserve_mutex);
++			return -EBUSY;
++		}
+ 		gfs2_ail1_empty(sdp, 0);
+ 		gfs2_log_flush(sdp, NULL);
+ 
+@@ -310,10 +314,21 @@ int gfs2_log_reserve(struct gfs2_sbd *sd
+ 	}
+ 	sdp->sd_log_blks_free -= blks;
+ 	gfs2_log_unlock(sdp);
+-	mutex_unlock(&sdp->sd_log_reserve_mutex);
+-
+-	down_read(&sdp->sd_log_flush_lock);
+ 
++	if (wait){
++		mutex_unlock(&sdp->sd_log_reserve_mutex);
++		down_read(&sdp->sd_log_flush_lock);
++	}
++	else {
++		if (!down_read_trylock(&sdp->sd_log_flush_lock)) {
++			gfs2_log_lock(sdp);
++			sdp->sd_log_blks_free += blks;
++			gfs2_log_unlock(sdp);
++			mutex_unlock(&sdp->sd_log_reserve_mutex);
++			return -EBUSY;
++		}
++		mutex_unlock(&sdp->sd_log_reserve_mutex);
++	}
+ 	return 0;
+ }
+ 
+diff -urpN --exclude-from=linux-2.6.18-44.gfs2abhi.003_test_clean/Documentation/dontdiff linux-2.6.18-44.gfs2abhi.003_test_clean/fs/gfs2/log.h linux-2.6.18-44.gfs2abhi.003_test/fs/gfs2/log.h
+--- linux-2.6.18-44.gfs2abhi.003_test_clean/fs/gfs2/log.h	2007-08-29 14:11:37.000000000 -0500
++++ linux-2.6.18-44.gfs2abhi.003_test/fs/gfs2/log.h	2007-09-09 08:18:08.000000000 -0500
+@@ -50,7 +50,7 @@ unsigned int gfs2_struct2blk(struct gfs2
+ 
+ int gfs2_ail1_empty(struct gfs2_sbd *sdp, int flags);
+ 
+-int gfs2_log_reserve(struct gfs2_sbd *sdp, unsigned int blks);
++int gfs2_log_reserve(struct gfs2_sbd *sdp, unsigned int blks, int wait);
+ void gfs2_log_release(struct gfs2_sbd *sdp, unsigned int blks);
+ 
+ struct buffer_head *gfs2_log_get_buf(struct gfs2_sbd *sdp);
+diff -urpN --exclude-from=linux-2.6.18-44.gfs2abhi.003_test_clean/Documentation/dontdiff linux-2.6.18-44.gfs2abhi.003_test_clean/fs/gfs2/ops_address.c linux-2.6.18-44.gfs2abhi.003_test/fs/gfs2/ops_address.c
+--- linux-2.6.18-44.gfs2abhi.003_test_clean/fs/gfs2/ops_address.c	2007-08-29 14:11:37.000000000 -0500
++++ linux-2.6.18-44.gfs2abhi.003_test/fs/gfs2/ops_address.c	2007-09-09 08:20:50.000000000 -0500
+@@ -140,7 +140,7 @@ static int gfs2_writepage(struct page *p
+ 	if ((sdp->sd_args.ar_data == GFS2_DATA_ORDERED || gfs2_is_jdata(ip)) &&
+ 	    PageChecked(page)) {
+ 		ClearPageChecked(page);
+-		error = gfs2_trans_begin(sdp, RES_DINODE + 1, 0);
++		error = gfs2_do_trans_begin(sdp, RES_DINODE + 1, 0, 0);
+ 		if (error)
+ 			goto out_ignore;
+ 		if (!page_has_buffers(page)) {
+diff -urpN --exclude-from=linux-2.6.18-44.gfs2abhi.003_test_clean/Documentation/dontdiff linux-2.6.18-44.gfs2abhi.003_test_clean/fs/gfs2/trans.c linux-2.6.18-44.gfs2abhi.003_test/fs/gfs2/trans.c
+--- linux-2.6.18-44.gfs2abhi.003_test_clean/fs/gfs2/trans.c	2007-09-04 07:45:25.000000000 -0500
++++ linux-2.6.18-44.gfs2abhi.003_test/fs/gfs2/trans.c	2007-09-09 09:23:05.000000000 -0500
+@@ -25,8 +25,8 @@
+ #include "trans.h"
+ #include "util.h"
+ 
+-int gfs2_trans_begin(struct gfs2_sbd *sdp, unsigned int blocks,
+-		     unsigned int revokes)
++int gfs2_do_trans_begin(struct gfs2_sbd *sdp, unsigned int blocks,
++		     unsigned int revokes, int wait)
+ {
+ 	struct gfs2_trans *tr;
+ 	int error;
+@@ -61,7 +61,7 @@ int gfs2_trans_begin(struct gfs2_sbd *sd
+ 		goto fail_gunlock;
+ 	}
+ 
+-	error = gfs2_log_reserve(sdp, tr->tr_reserved);
++	error = gfs2_log_reserve(sdp, tr->tr_reserved, wait);
+ 	if (error)
+ 		goto fail_gunlock;
+ 
+diff -urpN --exclude-from=linux-2.6.18-44.gfs2abhi.003_test_clean/Documentation/dontdiff linux-2.6.18-44.gfs2abhi.003_test_clean/fs/gfs2/trans.h linux-2.6.18-44.gfs2abhi.003_test/fs/gfs2/trans.h
+--- linux-2.6.18-44.gfs2abhi.003_test_clean/fs/gfs2/trans.h	2007-09-04 07:45:25.000000000 -0500
++++ linux-2.6.18-44.gfs2abhi.003_test/fs/gfs2/trans.h	2007-09-09 08:21:29.000000000 -0500
+@@ -25,8 +25,8 @@ struct gfs2_glock;
+ #define RES_STATFS	1
+ #define RES_QUOTA	2
+ 
+-int gfs2_trans_begin(struct gfs2_sbd *sdp, unsigned int blocks,
+-		     unsigned int revokes);
++int gfs2_do_trans_begin(struct gfs2_sbd *sdp, unsigned int blocks,
++			unsigned int revokes, int wait);
+ 
+ void gfs2_trans_end(struct gfs2_sbd *sdp);
+ 
+@@ -36,4 +36,11 @@ void gfs2_trans_add_revoke(struct gfs2_s
+ void gfs2_trans_add_unrevoke(struct gfs2_sbd *sdp, u64 blkno);
+ void gfs2_trans_add_rg(struct gfs2_rgrpd *rgd);
+ 
++
++static inline int gfs2_trans_begin(struct gfs2_sbd *sdp, unsigned int blocks,
++                     unsigned int revokes)
++{
++        return gfs2_do_trans_begin(sdp, blocks, revokes, 1);
++}
++
+ #endif /* __TRANS_DOT_H__ */
+

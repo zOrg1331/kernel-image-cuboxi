@@ -1,0 +1,92 @@
+From: Alexander Viro <aviro@redhat.com>
+Subject: [PATCH] auditing ptrace
+Date: Mon, 11 Jun 2007 13:48:15 -0400
+Bugzilla: 228384
+Message-Id: <200706111748.l5BHmFBZ000472@devserv.devel.redhat.com>
+Changelog: [audit] auditing ptrace
+
+
+
+---
+ include/linux/audit.h |    9 +++++++++
+ kernel/auditsc.c      |    8 ++++++++
+ kernel/ptrace.c       |    3 +++
+ 3 files changed, 20 insertions(+), 0 deletions(-)
+
+diff --git a/include/linux/audit.h b/include/linux/audit.h
+index 5e2a94b..ab2f568 100644
+--- a/include/linux/audit.h
++++ b/include/linux/audit.h
+@@ -354,6 +354,8 @@ extern void __audit_inode(const char *name, const struct inode *inode);
+ extern void __audit_inode_child(const char *dname, const struct inode *inode,
+ 				const struct inode *parent);
+ extern void __audit_inode_update(const struct inode *inode);
++extern void __audit_ptrace(struct task_struct *t);
++
+ static inline int audit_dummy_context(void)
+ {
+ 	void *p = current->audit_context;
+@@ -379,6 +381,12 @@ static inline void audit_inode_update(const struct inode *inode) {
+ 		__audit_inode_update(inode);
+ }
+ 
++static inline void audit_ptrace(struct task_struct *t)
++{
++	if (unlikely(!audit_dummy_context()))
++		__audit_ptrace(t);
++}
++
+ 				/* Private API (for audit.c only) */
+ extern unsigned int audit_serial(void);
+ extern void auditsc_get_stamp(struct audit_context *ctx,
+@@ -472,6 +480,7 @@ extern int audit_signals;
+ #define audit_mq_timedreceive(d,l,p,t) ({ 0; })
+ #define audit_mq_notify(d,n) ({ 0; })
+ #define audit_mq_getsetattr(d,s) ({ 0; })
++#define audit_ptrace(t) ((void)0)
+ #define audit_n_rules 0
+ #define audit_signals 0
+ #endif
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index d46094c..de0adf4 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -1906,6 +1906,14 @@ int audit_sockaddr(int len, void *a)
+ 	return 0;
+ }
+ 
++void __audit_ptrace(struct task_struct *t)
++{
++	struct audit_context *context = current->audit_context;
++
++	context->target_pid = t->pid;
++	selinux_task_ctxid(t, &context->target_sid);
++}
++
+ /**
+  * audit_avc_path - record the granting or denial of permissions
+  * @dentry: dentry to record
+diff --git a/kernel/ptrace.c b/kernel/ptrace.c
+index 8ece89a..49b6633 100644
+--- a/kernel/ptrace.c
++++ b/kernel/ptrace.c
+@@ -18,6 +18,7 @@
+ #include <linux/ptrace.h>
+ #include <linux/security.h>
+ #include <linux/signal.h>
++#include <linux/audit.h>
+ 
+ #include <asm/pgtable.h>
+ #include <asm/uaccess.h>
+@@ -369,6 +370,8 @@ static int ptrace_attach(struct task_struct *task)
+ 	struct ptrace_state *state;
+ 	int retval;
+ 
++	audit_ptrace(task);
++
+ 	retval = -EPERM;
+ 	if (task->pid <= 1)
+ 		goto bad;
+-- 
+1.5.0-rc2.GIT
+

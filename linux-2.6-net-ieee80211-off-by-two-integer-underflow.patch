@@ -1,0 +1,53 @@
+From: Anton Arapov <aarapov@redhat.com>
+Subject: [RHEL5.2 PATCH] BZ346401: CVE-2007-4997 kernel ieee80211 off-by-two 	integer underflow
+Date: Tue, 23 Oct 2007 13:25:15 +0200
+Bugzilla: 346401
+Message-Id: <m3sl422hus.fsf@bandura.englab.brq.redhat.com>
+Changelog: [net] ieee80211: off-by-two integer underflow
+
+
+BZ#346401:
+  https://bugzilla.redhat.com/show_bug.cgi?id=346401
+
+Descriprion: (upstream patch quote)
+  ieee80211_rx() does not explicitly check that "skb->len >=
+hdrlen". There are other skb->len checks, but not enough to prevent a
+subtle off-by-two error if the frame has the IEEE80211_STYPE_QOS_DATA
+flag set.
+  This leads to integer underflow and crash here:
+    if (frag != 0)
+        flen -= hdrlen;
+
+Upstream status:
+  commit# 04045f98e0457aba7d4e6736f37eed189c48a5f7
+          [IEEE80211]: avoid integer underflow for runt rx frames
+
+Test status:
+  has been tested for comilation and boot.
+
+Notice:
+  BZ#346381 - clone of this bug for rhel 4.7
+
+==
+diff -urpN linux-2.6.18.noarch.orig/net/ieee80211/ieee80211_rx.c linux-2.6.18.noarch/net/ieee80211/ieee80211_rx.c
+--- linux-2.6.18.noarch.orig/net/ieee80211/ieee80211_rx.c	2007-10-23 10:13:47.000000000 +0200
++++ linux-2.6.18.noarch/net/ieee80211/ieee80211_rx.c	2007-10-23 10:14:07.000000000 +0200
+@@ -366,6 +366,12 @@ int ieee80211_rx(struct ieee80211_device
+ 	frag = WLAN_GET_SEQ_FRAG(sc);
+ 	hdrlen = ieee80211_get_hdrlen(fc);
+ 
++	if (skb->len < hdrlen) {
++		printk(KERN_INFO "%s: invalid SKB length %d\n",
++			dev->name, skb->len);
++		goto rx_dropped;
++	}
++
+ 	/* Put this code here so that we avoid duplicating it in all
+ 	 * Rx paths. - Jean II */
+ #ifdef CONFIG_WIRELESS_EXT
+
+-- 
+Anton Arapov, <aarapov@redhat.com>
+GPG Key ID: 0x6FA8C812
+
+

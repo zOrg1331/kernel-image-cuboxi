@@ -1,0 +1,81 @@
+From: Eric Sandeen <esandeen@redhat.com>
+Subject: [PATCH RHEL5] [CIFS] Explicitly set stat->blksize
+Date: Wed, 8 Nov 2006 11:10:40 -0600
+Bugzilla: 214607
+Message-Id: <200611081710.kA8HAejT016661@neon.msp.redhat.com>
+Changelog: CIFS: Explicitly set stat->blksize
+
+
+For Bug 214607: [RHEL5 / FC6] - update cifs_getattr to set preferred IO size
+
+Thanks,
+
+-Eric
+
+---
+
+GIT 5fe14c851efedf95b0e7652a3a7b93ec899d1599 git+ssh://master.kernel.org/pub/scm/linux/kernel/git/sfrench/cifs-2.6.git
+
+commit 
+Author: Steve French <sfrench@us.ibm.com>
+
+    [CIFS] Explicitly set stat->blksize
+    
+    CIFS may perform I/O over the network in larger chunks than the page size,
+    so it should explicitly set stat->blksize to ensure optimal I/O bandwidth
+    
+    Signed-off-by: Dave Kleikamp <shaggy@linux.vnet.ibm.com>
+    Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+Index: linux-2.6.18-1.2732.el5/fs/cifs/inode.c
+===================================================================
+--- linux-2.6.18-1.2732.el5.orig/fs/cifs/inode.c
++++ linux-2.6.18-1.2732.el5/fs/cifs/inode.c
+@@ -1080,8 +1080,10 @@ int cifs_getattr(struct vfsmount *mnt, s
+ 	struct kstat *stat)
+ {
+ 	int err = cifs_revalidate(dentry);
+-	if (!err)
++	if (!err) {
+ 		generic_fillattr(dentry->d_inode, stat);
++		stat->blksize = CIFS_MAX_MSGSIZE;
++	}
+ 	return err;
+ }
+ 
+
+commit 7ca85ba752e521f1b5ead1f3b91c562cc3910c7b
+Author: Steve French <sfrench@us.ibm.com>
+
+    [CIFS] Fix readdir breakage when blocksize set too small
+    
+    Do not treat filldir running out of space as an error that needs
+    to be returned.
+    
+    Fixes Redhat bugzilla bug # 211070
+    
+    Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+--- linux-2.6.18.i686/fs/cifs/readdir.c.orig	2006-12-04 11:35:18.040360000 -0500
++++ linux-2.6.18.i686/fs/cifs/readdir.c	2006-12-04 13:14:16.227764000 -0500
+@@ -878,6 +878,10 @@ static int cifs_filldir(char *pfindEntry
+ 		     tmp_inode->i_ino,obj_type);
+ 	if(rc) {
+ 		cFYI(1,("filldir rc = %d",rc));
++		/* we can not return filldir errors to the caller
++		since they are "normal" when the stat blocksize
++		is too small - we return remapped error instead */
++		rc = -EOVERFLOW;
+ 	}
+ 
+ 	dput(tmp_dentry);
+@@ -1055,7 +1059,7 @@ int cifs_readdir(struct file *file, void
+ 			we want to check for that here? */
+ 			rc = cifs_filldir(current_entry, file,
+ 					filldir, direntry, tmp_buf, max_len);
+-			if(rc!=0) {
++			if(rc == -EOVERFLOW) {
+ 				rc = 0;
+ 				break;
+ 			}
+

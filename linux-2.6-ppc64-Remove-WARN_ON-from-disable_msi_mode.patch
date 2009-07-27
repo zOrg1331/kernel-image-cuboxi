@@ -1,0 +1,59 @@
+From: Scott Moser <smoser@redhat.com>
+Date: Tue, 6 Nov 2007 14:03:01 -0500
+Subject: [ppc64] Remove WARN_ON from disable_msi_mode()
+Message-id: Pine.LNX.4.64.0711061401470.4372@squad5-lp1.lab.boston.redhat.com
+O-Subject: [PATCH RHEL5u2] bz354241 Remove WARN_ON() from disable_msi_mode()
+Bugzilla: 354241
+
+Bug 354241 [1]
+---------------
+
+Description:
+-----------
+There is a WARN_ON() in disable_msi_mode() of arch/powerpc/kernel/msi.c
+which was used while debugging, unfortunately it was not removed before
+U1.
+
+This debugging message just needs to be removed.
+
+Kernel Version:
+--------------
+Patch built against 2.6.18-54
+
+Upstream Status:
+---------------
+This code not relevant upstream. The relevent code came from a rhel5u1
+backport.
+
+Test Status:
+----
+To ensure cross platform build, a brew scratch build has been done against
+2.6.18-54 at [2].
+
+Please review patch below for RHEL5u2
+--
+[1]:https://bugzilla.redhat.com/show_bug.cgi?id=354241
+--
+ arch/powerpc/kernel/msi.c |    1 -
+ 1 file changed, 1 deletion(-)
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+---
+ arch/powerpc/kernel/msi.c |    1 -
+ 1 files changed, 0 insertions(+), 1 deletions(-)
+
+diff --git a/arch/powerpc/kernel/msi.c b/arch/powerpc/kernel/msi.c
+index 0042f7a..4e5a3e9 100644
+--- a/arch/powerpc/kernel/msi.c
++++ b/arch/powerpc/kernel/msi.c
+@@ -746,7 +746,6 @@ struct pci_dn *get_pdn(struct pci_dev *pdev)
+ 
+ void disable_msi_mode(struct pci_dev *dev, int pos, int type)
+ {
+-	WARN_ON(1);
+ }
+ 
+ void pci_scan_msi_device(struct pci_dev *dev)
+-- 
+1.5.3.5.645.gbb47
+

@@ -1,0 +1,220 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL 5.1 PATCH] BZ 228557 xfrm_policy delete security check 	misplaced
+Date: Thu, 05 Apr 2007 15:24:42 -0400
+Bugzilla: 228557
+Message-Id: <1175801082.20396.184.camel@localhost.localdomain>
+Changelog: [net] xfrm_policy delete security check misplaced
+
+
+BZ 228557
+
+The security hooks to check permissions to remove an xfrm_policy were
+actually done after the policy was removed.  Since the unlinking and
+deletion are done in xfrm_policy_by* functions this moves the hooks
+inside those 2 functions.  There we have all the information needed to
+do the security check and it can be done before the deletion.  Since
+auditing requires the result of that security check err has to be passed
+back and forth from the xfrm_policy_by* functions.
+
+This patch also fixes a bug where a deletion that failed the security
+check could cause improper accounting on the xfrm_policy
+(xfrm_get_policy didn't have a put on the exit path for the hold taken
+by xfrm_policy_by*)
+
+It also fixes the return code when no policy is found in
+xfrm_add_pol_expire.  In old code err wasn't used before the return when
+no policy is found and so the initialization would cause err to be
+ENOENT.  But since err has since been used above when we don't get a
+policy back from the xfrm_policy_by* function we would always return 0
+instead of the intended ENOENT.  Also fixed some white space damage in
+the same area.
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=ef41aaa0b755f479012341ac11db9ca5b8928d98
+
+Has been in the LSPP kernel and no problems have arisen.  Testing was
+done by IBM to show that before this patch deletions 'denied' by
+security policy were being allowed and after the patch things were
+properly enforced.
+
+diff -Naupr linux-2.6.18.i386.orig/include/net/xfrm.h linux-2.6.18.i386/include/net/xfrm.h
+--- linux-2.6.18.i386.orig/include/net/xfrm.h	2007-02-22 16:27:13.000000000 -0500
++++ linux-2.6.18.i386/include/net/xfrm.h	2007-02-22 17:09:43.000000000 -0500
+@@ -964,8 +964,9 @@ struct xfrm_policy *xfrm_policy_alloc(gf
+ extern int xfrm_policy_walk(int (*func)(struct xfrm_policy *, int, int, void*), void *);
+ int xfrm_policy_insert(int dir, struct xfrm_policy *policy, int excl);
+ struct xfrm_policy *xfrm_policy_bysel_ctx(int dir, struct xfrm_selector *sel,
+-					  struct xfrm_sec_ctx *ctx, int delete);
+-struct xfrm_policy *xfrm_policy_byid(int dir, u32 id, int delete);
++					  struct xfrm_sec_ctx *ctx, int delete,
++					  int *err);
++struct xfrm_policy *xfrm_policy_byid(int dir, u32 id, int delete, int *err);
+ void xfrm_policy_flush(struct xfrm_audit *audit_info);
+ u32 xfrm_get_acqseq(void);
+ void xfrm_alloc_spi(struct xfrm_state *x, u32 minspi, u32 maxspi);
+diff -Naupr linux-2.6.18.i386.orig/net/key/af_key.c linux-2.6.18.i386/net/key/af_key.c
+--- linux-2.6.18.i386.orig/net/key/af_key.c	2007-02-22 16:24:53.000000000 -0500
++++ linux-2.6.18.i386/net/key/af_key.c	2007-02-22 17:27:14.000000000 -0500
+@@ -2282,14 +2282,13 @@ static int pfkey_spddelete(struct sock *
+ 			return err;
+ 	}
+ 
+-	xp = xfrm_policy_bysel_ctx(pol->sadb_x_policy_dir-1, &sel, tmp.security, 1);
++	xp = xfrm_policy_bysel_ctx(pol->sadb_x_policy_dir-1, &sel, tmp.security,
++				   1, &err);
+ 	security_xfrm_policy_free(&tmp);
+ 
+ 	if (xp == NULL)
+ 		return -ENOENT;
+ 
+-	err = security_xfrm_policy_delete(xp);
+-
+ 	xfrm_audit_log(audit_get_loginuid(current->audit_context), 0,
+ 		       AUDIT_MAC_IPSEC_DELSPD, err ? 0 : 1, xp, NULL);
+ 
+@@ -2350,11 +2349,12 @@ static int pfkey_spdget(struct sock *sk,
+ 		return -EINVAL;
+ 
+ 	xp = xfrm_policy_byid(dir, pol->sadb_x_policy_id,
+-			      hdr->sadb_msg_type == SADB_X_SPDDELETE2);
++			      hdr->sadb_msg_type == SADB_X_SPDDELETE2, &err);
+ 	if (xp == NULL)
+ 		return -ENOENT;
+ 
+-	err = 0;
++	if (err)
++		goto out;
+ 
+ 	c.seq = hdr->sadb_msg_seq;
+ 	c.pid = hdr->sadb_msg_pid;
+@@ -2366,6 +2366,7 @@ static int pfkey_spdget(struct sock *sk,
+ 		err = key_pol_get_resp(sk, xp, hdr, dir);
+ 	}
+ 
++out:
+ 	xfrm_pol_put(xp);
+ 	return err;
+ }
+diff -Naupr linux-2.6.18.i386.orig/net/xfrm/xfrm_policy.c linux-2.6.18.i386/net/xfrm/xfrm_policy.c
+--- linux-2.6.18.i386.orig/net/xfrm/xfrm_policy.c	2007-02-22 16:24:56.000000000 -0500
++++ linux-2.6.18.i386/net/xfrm/xfrm_policy.c	2007-02-22 17:18:33.000000000 -0500
+@@ -495,16 +495,23 @@ int xfrm_policy_insert(int dir, struct x
+ EXPORT_SYMBOL(xfrm_policy_insert);
+ 
+ struct xfrm_policy *xfrm_policy_bysel_ctx(int dir, struct xfrm_selector *sel,
+-					  struct xfrm_sec_ctx *ctx, int delete)
++					  struct xfrm_sec_ctx *ctx, int delete,
++					  int *err)
+ {
+ 	struct xfrm_policy *pol, **p;
+ 
++	*err = 0;
+ 	write_lock_bh(&xfrm_policy_lock);
+ 	for (p = &xfrm_policy_list[dir]; (pol=*p)!=NULL; p = &pol->next) {
+ 		if ((memcmp(sel, &pol->selector, sizeof(*sel)) == 0) &&
+ 		    (xfrm_sec_ctx_match(ctx, pol->security))) {
+ 			xfrm_pol_hold(pol);
+ 			if (delete)
++				*err = security_xfrm_policy_delete(pol);
++				if (*err) {
++					write_unlock_bh(&xfrm_policy_lock);
++					return pol;
++				}
+ 				*p = pol->next;
+ 			break;
+ 		}
+@@ -519,15 +526,21 @@ struct xfrm_policy *xfrm_policy_bysel_ct
+ }
+ EXPORT_SYMBOL(xfrm_policy_bysel_ctx);
+ 
+-struct xfrm_policy *xfrm_policy_byid(int dir, u32 id, int delete)
++struct xfrm_policy *xfrm_policy_byid(int dir, u32 id, int delete, int *err)
+ {
+ 	struct xfrm_policy *pol, **p;
+ 
++	*err = 0;
+ 	write_lock_bh(&xfrm_policy_lock);
+ 	for (p = &xfrm_policy_list[dir]; (pol=*p)!=NULL; p = &pol->next) {
+ 		if (pol->index == id) {
+ 			xfrm_pol_hold(pol);
+ 			if (delete)
++				*err = security_xfrm_policy_delete(pol);
++				if (*err) {
++					write_unlock_bh(&xfrm_policy_lock);
++					return pol;
++				}
+ 				*p = pol->next;
+ 			break;
+ 		}
+diff -Naupr linux-2.6.18.i386.orig/net/xfrm/xfrm_user.c linux-2.6.18.i386/net/xfrm/xfrm_user.c
+--- linux-2.6.18.i386.orig/net/xfrm/xfrm_user.c	2007-02-22 16:24:56.000000000 -0500
++++ linux-2.6.18.i386/net/xfrm/xfrm_user.c	2007-02-22 17:28:01.000000000 -0500
+@@ -1046,7 +1046,7 @@ static int xfrm_get_policy(struct sk_buf
+ 		return err;
+ 
+ 	if (p->index)
+-		xp = xfrm_policy_byid(p->dir, p->index, delete);
++		xp = xfrm_policy_byid(p->dir, p->index, delete, &err);
+ 	else {
+ 		struct rtattr **rtattrs = (struct rtattr **)xfrma;
+ 		struct rtattr *rt = rtattrs[XFRMA_SEC_CTX-1];
+@@ -1063,7 +1063,8 @@ static int xfrm_get_policy(struct sk_buf
+ 			if ((err = security_xfrm_policy_alloc(&tmp, uctx)))
+ 				return err;
+ 		}
+-		xp = xfrm_policy_bysel_ctx(p->dir, &p->sel, tmp.security, delete);
++		xp = xfrm_policy_bysel_ctx(p->dir, &p->sel, tmp.security, 
++					   delete, &err);
+ 		security_xfrm_policy_free(&tmp);
+ 	}
+ 	if (xp == NULL)
+@@ -1081,8 +1082,6 @@ static int xfrm_get_policy(struct sk_buf
+ 					      MSG_DONTWAIT);
+ 		}
+ 	} else {
+-		err = security_xfrm_policy_delete(xp);
+-
+ 		xfrm_audit_log(NETLINK_CB(skb).loginuid, NETLINK_CB(skb).sid,
+ 			       AUDIT_MAC_IPSEC_DELSPD, err ? 0 : 1, xp, NULL);
+ 
+@@ -1096,9 +1095,8 @@ static int xfrm_get_policy(struct sk_buf
+ 		km_policy_notify(xp, p->dir, &c);
+ 	}
+ 
+-	xfrm_pol_put(xp);
+-
+ out:
++	xfrm_pol_put(xp);
+ 	return err;
+ }
+ 
+@@ -1273,10 +1271,10 @@ static int xfrm_add_pol_expire(struct sk
+ 	struct xfrm_policy *xp;
+ 	struct xfrm_user_polexpire *up = NLMSG_DATA(nlh);
+ 	struct xfrm_userpolicy_info *p = &up->pol;
+-	int err = -ENOENT;
++	int err = 0;
+ 
+ 	if (p->index)
+-		xp = xfrm_policy_byid(p->dir, p->index, 0);
++		xp = xfrm_policy_byid(p->dir, p->index, 0, &err);
+ 	else {
+ 		struct rtattr **rtattrs = (struct rtattr **)xfrma;
+ 		struct rtattr *rt = rtattrs[XFRMA_SEC_CTX-1];
+@@ -1293,13 +1291,13 @@ static int xfrm_add_pol_expire(struct sk
+ 			if ((err = security_xfrm_policy_alloc(&tmp, uctx)))
+ 				return err;
+ 		}
+-		xp = xfrm_policy_bysel_ctx(p->dir, &p->sel, tmp.security, 0);
++		xp = xfrm_policy_bysel_ctx(p->dir, &p->sel, tmp.security, 0, &err);
+ 		security_xfrm_policy_free(&tmp);
+ 	}
+ 
+ 	if (xp == NULL)
+-		return err;
+-											read_lock(&xp->lock);
++		return -ENOENT;
++	read_lock(&xp->lock);
+ 	if (xp->dead) {
+ 		read_unlock(&xp->lock);
+ 		goto out;
+

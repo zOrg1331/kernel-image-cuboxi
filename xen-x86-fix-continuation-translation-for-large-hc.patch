@@ -1,0 +1,58 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Tue, 18 Dec 2007 15:55:58 -0500
+Subject: [xen] x86: fix continuation translation for large HC
+Message-id: 20071218205558.15371.41378.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH 1/3] Correct continuation translation for large hypercalls
+Bugzilla: 227614
+
+[XEN, 32on64]: Correct continuation translation for large
+compat_mmuext hypercalls.
+
+At the point where we translate the continuation "nat_ops" points to
+the beginning of the batch of "i" entries, therefore it must be
+incremented by the number of entries processed "i - left". At the same
+point "cmp_uops" points to the end of the batch of entries and must
+therefore be decremented by "left".
+
+The new count value has already been set by do_mmuext_op to "left" and
+therefore it is correct to add "count - i" since that is the number of
+entries that remain after this batch.
+
+Signed-off-by: Ian Campbell <ian.campbell@xensource.com>
+xen-unstable changeset: 16543:46776e65e6796f7751a15649f275b78e848d7ed5
+xen-unstable date: Thu Dec 06 11:24:02 2007 +0000
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Chris Lalancette <clalance@redhat.com>
+
+diff --git a/arch/x86/x86_64/compat/mm.c b/arch/x86/x86_64/compat/mm.c
+index a9c1363..34795d1 100644
+--- a/arch/x86/x86_64/compat/mm.c
++++ b/arch/x86/x86_64/compat/mm.c
+@@ -298,9 +298,8 @@ int compat_mmuext_op(XEN_GUEST_HANDLE(mmuext_op_compat_t) cmp_uops,
+ 
+                 BUG_ON(left == arg1);
+                 BUG_ON(left > count);
+-                guest_handle_add_offset(nat_ops, count - left);
+-                BUG_ON(left + i < count);
+-                guest_handle_add_offset(cmp_uops, (signed int)(count - left - i));
++                guest_handle_add_offset(nat_ops, i - left);
++                guest_handle_subtract_offset(cmp_uops, left);
+                 left = 1;
+                 BUG_ON(!hypercall_xlat_continuation(&left, 0x01, nat_ops, cmp_uops));
+                 BUG_ON(left != arg1);
+diff --git a/include/asm-x86/guest_access.h b/include/asm-x86/guest_access.h
+index f95a4d1..468b02b 100644
+--- a/include/asm-x86/guest_access.h
++++ b/include/asm-x86/guest_access.h
+@@ -17,7 +17,8 @@
+ 
+ /* Offset the given guest handle into the array it refers to. */
+ #define guest_handle_add_offset(hnd, nr) ((hnd).p += (nr))
+-
++#define guest_handle_subtract_offset(hnd, nr) ((hnd).p -= (nr))
++ 
+ /* Cast a guest handle to the specified type of handle. */
+ #define guest_handle_cast(hnd, type) ({         \
+     type *_x = (hnd).p;                         \

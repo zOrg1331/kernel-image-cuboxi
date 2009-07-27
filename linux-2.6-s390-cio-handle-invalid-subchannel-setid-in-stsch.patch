@@ -1,0 +1,63 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 30 Oct 2007 17:04:18 +0100
+Subject: [s390] cio: handle invalid subchannel setid in stsch
+Message-id: 20071030160418.GE6604@redhat.com
+O-Subject: [RHEL5.2 PATCH 5/5] s390 cio: Handle invalid subchannel set id in stsch
+Bugzilla: 354831
+
+Problem:
+=========
+
+When the common I/O layer is forced to rescan on all possible
+subchannels on a machine check, it looks at all subchannel ids
+created by for_each_subchannel().
+Those subchannel ids may contain an invalid subchannel set id, which will
+cause an operand exception on stsch.
+Using stsch_err which can handle this operand exceptions.
+
+Bugzilla
+=========
+
+BZ 354831
+https://bugzilla.redhat.com/show_bug.cgi?id=354831
+
+Upstream status of the patch:
+=============================
+Fix is in git, commit 758976f9a55cb22ddc602a0690d67f9546e3e43f
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/cio/chsc.c b/drivers/s390/cio/chsc.c
+index 1310dbf..1554416 100644
+--- a/drivers/s390/cio/chsc.c
++++ b/drivers/s390/cio/chsc.c
+@@ -618,7 +618,7 @@ __chp_add_new_sch(struct subchannel_id schid)
+ 	struct schib schib;
+ 	int ret;
+ 
+-	if (stsch(schid, &schib))
++	if (stsch_err(schid, &schib))
+ 		/* We're through */
+ 		return need_rescan ? -EAGAIN : -ENXIO;
+ 
+diff --git a/drivers/s390/cio/css.c b/drivers/s390/cio/css.c
+index ca0a31d..e822faa 100644
+--- a/drivers/s390/cio/css.c
++++ b/drivers/s390/cio/css.c
+@@ -294,7 +294,7 @@ static int css_evaluate_new_subchannel(struct subchannel_id schid, int slow)
+ 		/* Will be done on the slow path. */
+ 		return -EAGAIN;
+ 	}
+-	if (stsch(schid, &schib) || !schib.pmcw.dnv) {
++	if (stsch_err(schid, &schib) || !schib.pmcw.dnv) {
+ 		/* Unusable - ignore. */
+ 		return 0;
+ 	}

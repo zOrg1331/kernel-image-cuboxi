@@ -1,0 +1,101 @@
+From: Aristeu Rozanski <arozansk@redhat.com>
+Date: Wed, 9 Jul 2008 14:22:01 -0400
+Subject: [tty] add NULL pointer checks
+Message-id: 20080709182201.GB15538@redhat.com
+O-Subject: Re: RHEL5 patch for tty holes
+Bugzilla: 453154
+
+This fixes cases where users or admins can get the kernel to execute through
+a NULL pointer due to missing checks in the tty code. (Our security folks saw
+this several weeks ago on the security list but nothing has happened since then)
+
+I finally got time to hack together a quick patch that I think fixes it. In
+the RHEL case we mostly happen not to ship the code that is problematic
+enabled...
+
+ drivers/net/irda/irtty-sir.c |    4 +++-
+ drivers/net/ppp_async.c      |    3 +++
+ drivers/net/ppp_synctty.c    |    3 +++
+ drivers/net/slip.c           |   13 ++++++++++---
+ 4 files changed, 19 insertions(+), 4 deletions(-)
+
+ drivers/net/irda/irtty-sir.c |    4 +++-
+ drivers/net/ppp_async.c      |    3 +++
+ drivers/net/ppp_synctty.c    |    3 +++
+ drivers/net/slip.c           |   13 ++++++++++---
+ 4 files changed, 19 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/net/irda/irtty-sir.c b/drivers/net/irda/irtty-sir.c
+index 6a98b7a..3c414dd 100644
+--- a/drivers/net/irda/irtty-sir.c
++++ b/drivers/net/irda/irtty-sir.c
+@@ -64,7 +64,9 @@ static int irtty_chars_in_buffer(struct sir_dev *dev)
+ 	IRDA_ASSERT(priv != NULL, return -1;);
+ 	IRDA_ASSERT(priv->magic == IRTTY_MAGIC, return -1;);
+ 
+-	return priv->tty->driver->chars_in_buffer(priv->tty);
++	if (priv->tty->driver->chars_in_buffer)
++		return priv->tty->driver->chars_in_buffer(priv->tty);
++	return 0;
+ }
+ 
+ /* Wait (sleep) until underlaying hardware finished transmission
+diff --git a/drivers/net/ppp_async.c b/drivers/net/ppp_async.c
+index 23659fd..30bb05b 100644
+--- a/drivers/net/ppp_async.c
++++ b/drivers/net/ppp_async.c
+@@ -158,6 +158,9 @@ ppp_asynctty_open(struct tty_struct *tty)
+ 	struct asyncppp *ap;
+ 	int err;
+ 
++	if (!tty->driver->write)
++		return -EOPNOTSUPP;
++
+ 	err = -ENOMEM;
+ 	ap = kmalloc(sizeof(*ap), GFP_KERNEL);
+ 	if (ap == 0)
+diff --git a/drivers/net/ppp_synctty.c b/drivers/net/ppp_synctty.c
+index 33255fe..c49d6c9 100644
+--- a/drivers/net/ppp_synctty.c
++++ b/drivers/net/ppp_synctty.c
+@@ -207,6 +207,9 @@ ppp_sync_open(struct tty_struct *tty)
+ 	struct syncppp *ap;
+ 	int err;
+ 
++	if (!tty->driver->write)
++		return -EOPNOTSUPP;
++
+ 	ap = kmalloc(sizeof(*ap), GFP_KERNEL);
+ 	err = -ENOMEM;
+ 	if (ap == 0)
+diff --git a/drivers/net/slip.c b/drivers/net/slip.c
+index 1588cb7..13025d4 100644
+--- a/drivers/net/slip.c
++++ b/drivers/net/slip.c
+@@ -463,9 +463,14 @@ static void sl_tx_timeout(struct net_device *dev)
+ 			/* 20 sec timeout not reached */
+ 			goto out;
+ 		}
+-		printk(KERN_WARNING "%s: transmit timed out, %s?\n", dev->name,
+-		       (sl->tty->driver->chars_in_buffer(sl->tty) || sl->xleft) ?
+-		       "bad line quality" : "driver error");
++		{
++			int cib = 0;
++			if (sl->tty->driver->chars_in_buffer)
++				cib = sl->tty->driver->chars_in_buffer(sl->tty);
++			printk(KERN_WARNING "%s: transmit timed out, %s?\n",
++				dev->name, (cib || sl->xleft) ?
++				       "bad line quality" : "driver error");
++		}
+ 		sl->xleft = 0;
+ 		sl->tty->flags &= ~(1 << TTY_DO_WRITE_WAKEUP);
+ 		sl_unlock(sl);
+@@ -836,6 +841,8 @@ static int slip_open(struct tty_struct *tty)
+ 
+ 	if(!capable(CAP_NET_ADMIN))
+ 		return -EPERM;
++	if (!tty->driver->write)
++		return -EOPNOTSUPP;
+ 		
+ 	/* RTnetlink lock is misused here to serialize concurrent
+ 	   opens of slip channels. There are better ways, but it is

@@ -1,0 +1,161 @@
+From: Steve Dickson <SteveD@redhat.com>
+Date: Wed, 21 Nov 2007 11:42:19 -0500
+Subject: [nfs] let rpciod finish sillyrename then umount
+Message-id: 47445FEB.2050407@RedHat.com
+O-Subject: [RHEL5.2/RHEL5.1-z] [5/5] NFS: silly rename races with umounts
+Bugzilla: 253663
+
+This patch stop the "Busy inode" warning by holding
+off umount until the async rpciod daemon finishes
+the silly rename processing.
+
+commit 4fa2c6f5bfab435e41a3650e40b7e2aa2132106f
+Author: Steve Dickson <steved@redhat.com>
+Date:   Thu Nov 15 14:39:38 2007 -0500
+
+    Initialize the active_wq queue and active count in the
+    nfs_server structure for nfs4 mounts.
+
+    Signed-off-by: Steve Dickson <steved@redhat.com>
+
+commit 68ef300e375554f3dc9388ca529b7a39f15d36ef
+Author: Steve Dickson <steved@redhat.com>
+Date:   Wed Nov 7 14:54:59 2007 -0500
+
+    Added an active/deactive mechanism to the nfs_server structure
+    allowing async operations to hold off umount until the
+    operations are done.
+
+    Signed-off-by: Steve Dickson <steved@redhat.com>
+
+diff --git a/fs/nfs/client.c b/fs/nfs/client.c
+index 1013b1a..8d5cdbd 100644
+--- a/fs/nfs/client.c
++++ b/fs/nfs/client.c
+@@ -761,6 +761,9 @@ static struct nfs_server *nfs_alloc_server(void)
+ 	INIT_LIST_HEAD(&server->client_link);
+ 	INIT_LIST_HEAD(&server->master_link);
+ 
++	init_waitqueue_head(&server->active_wq);
++	atomic_set(&server->active, 0);
++
+ 	server->io_stats = nfs_alloc_iostats();
+ 	if (!server->io_stats) {
+ 		kfree(server);
+diff --git a/fs/nfs/internal.h b/fs/nfs/internal.h
+index 2fce9bd..10d477e 100644
+--- a/fs/nfs/internal.h
++++ b/fs/nfs/internal.h
+@@ -165,6 +165,8 @@ extern struct rpc_stat nfs_rpcstat;
+ 
+ extern int __init register_nfs_fs(void);
+ extern void __exit unregister_nfs_fs(void);
++extern void nfs_sb_active(struct nfs_server *server);
++extern void nfs_sb_deactive(struct nfs_server *server);
+ 
+ /* namespace.c */
+ extern char *nfs_path(const char *base,
+diff --git a/fs/nfs/super.c b/fs/nfs/super.c
+index da1e9a0..753508d 100644
+--- a/fs/nfs/super.c
++++ b/fs/nfs/super.c
+@@ -64,6 +64,7 @@ static int nfs_get_sb(struct file_system_type *, int, const char *, void *, stru
+ static int nfs_xdev_get_sb(struct file_system_type *fs_type,
+ 		int flags, const char *dev_name, void *raw_data, struct vfsmount *mnt);
+ static void nfs_kill_super(struct super_block *);
++static void nfs_put_super(struct super_block *);
+ 
+ static struct file_system_type nfs_fs_type = {
+ 	.owner		= THIS_MODULE,
+@@ -85,6 +86,7 @@ static struct super_operations nfs_sops = {
+ 	.alloc_inode	= nfs_alloc_inode,
+ 	.destroy_inode	= nfs_destroy_inode,
+ 	.write_inode	= nfs_write_inode,
++	.put_super		= nfs_put_super,
+ 	.statfs		= nfs_statfs,
+ 	.clear_inode	= nfs_clear_inode,
+ 	.umount_begin	= nfs_umount_begin,
+@@ -185,6 +187,28 @@ void __exit unregister_nfs_fs(void)
+ 	unregister_filesystem(&nfs_fs_type);
+ }
+ 
++void nfs_sb_active(struct nfs_server *server)
++{
++	atomic_inc(&server->active);
++}
++
++void nfs_sb_deactive(struct nfs_server *server)
++{
++	if (atomic_dec_and_test(&server->active))
++		wake_up(&server->active_wq);
++}
++
++static void nfs_put_super(struct super_block *sb)
++{
++	struct nfs_server *server = NFS_SB(sb);
++	/*
++	 * Make sure there are no outstanding ops to this server.
++	 * If so, wait for them to finish before allowing the
++	 * unmount to continue.
++	 */
++	wait_event(server->active_wq, atomic_read(&server->active) == 0);
++}
++
+ /*
+  * Deliver file system statistics to userspace
+  */
+diff --git a/fs/nfs/unlink.c b/fs/nfs/unlink.c
+index 8efd7a5..698402b 100644
+--- a/fs/nfs/unlink.c
++++ b/fs/nfs/unlink.c
+@@ -16,6 +16,8 @@
+ 
+ 
+ 
++#include "internal.h"
++
+ struct nfs_unlinkdata {
+ 	struct hlist_node list;
+ 	struct nfs_removeargs args;
+@@ -31,6 +33,7 @@ struct nfs_unlinkdata {
+ static void
+ nfs_free_unlinkdata(struct nfs_unlinkdata *data)
+ {
++	nfs_sb_deactive(NFS_SERVER(data->dir));
+ 	iput(data->dir);
+ 	put_rpccred(data->cred);
+ 	kfree(data->args.name.name);
+@@ -156,6 +159,7 @@ static int nfs_do_call_unlink(struct dentry *parent, struct inode *dir, struct n
+ 		nfs_dec_sillycount(dir);
+ 		return 0;
+ 	}
++	nfs_sb_active(NFS_SERVER(dir));
+ 	data->args.fh = NFS_FH(dir);
+ 	nfs_fattr_init(&data->res.dir_attr);
+ 
+diff --git a/include/linux/nfs_fs_sb.h b/include/linux/nfs_fs_sb.h
+index c44be53..aae61ca 100644
+--- a/include/linux/nfs_fs_sb.h
++++ b/include/linux/nfs_fs_sb.h
+@@ -3,8 +3,11 @@
+ 
+ #include <linux/list.h>
+ #include <linux/backing-dev.h>
++#include <linux/wait.h>
+ #include <linux/fscache.h>
+ 
++#include <asm/atomic.h>
++
+ struct nfs_iostats;
+ 
+ /*
+@@ -116,6 +119,9 @@ struct nfs_server {
+ 						   filesystem */
+ #endif
+ 	void (*destroy)(struct nfs_server *);
++
++	atomic_t active; /* Keep trace of any activity to this server */
++	wait_queue_head_t active_wq;  /* Wait for any activity to stop  */
+ };
+ 
+ /* Server capabilities */

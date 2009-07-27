@@ -1,0 +1,42 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 11 Dec 2007 10:05:47 -0500
+Subject: [fs] cifs: small fixes to make cifs-1.50c compile
+Message-id: 1197385560-21991-3-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.2 PATCH 02/15] BZ#417961: [CIFS] small fixes to make cifs-1.50c compile on RHEL5
+Bugzilla: 417961
+
+Two small fixes to make cifs-1.50c compile correctly on RHEL5:
+
+- remove duplicate inc_nlink() definition
+- don't include config.h
+
+diff --git a/fs/cifs/asn1.c b/fs/cifs/asn1.c
+index 389640e..2a01f3e 100644
+--- a/fs/cifs/asn1.c
++++ b/fs/cifs/asn1.c
+@@ -26,9 +26,6 @@
+ #include "cifsglob.h"
+ #include "cifs_debug.h"
+ #include "cifsproto.h"
+-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+-#include <linux/config.h>
+-#endif
+ 
+ /*****************************************************************************
+  *
+diff --git a/fs/cifs/inode.c b/fs/cifs/inode.c
+index 12f72bc..0dc603d 100644
+--- a/fs/cifs/inode.c
++++ b/fs/cifs/inode.c
+@@ -41,11 +41,6 @@ static inline void drop_nlink(struct inode *inode)
+ {
+ 	inode->i_nlink--;
+ }
+-
+-static inline void inc_nlink(struct inode *inode)
+-{
+-	inode->i_nlink++;
+-}
+ #endif
+ 
+ 

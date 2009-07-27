@@ -1,0 +1,1416 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Tue, 12 Aug 2008 18:17:05 -0400
+Subject: [xen] PV: shared use of xenbus, netfront, blkfront
+Message-id: 48A20BE1.309@redhat.com
+O-Subject: Re: [RHEL5.3 PATCH 2/5]: xenbus, netfront, blkfront changes to enable shared use with PV-on-HVM drivers in bare metal kernel
+Bugzilla: 442991
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+
+BZ 442991 -- Include xenpv-driver in bare metal kernel rpm.
+
+The following patches modify the files used
+by the -xen kernel's drivers/xen pv drivers
+so they can be used/shared by the bare metal kernel's
+drivers/xenpv_hvm (xen pv-on-hvm) drivers
+
+(in fortcoming patch).
+
+The changes mimic the changes made to RHEL4's xenbus,netfront,blkfront
+files,
+and bring the files closer to upstream Xen.
+
+See 0/5 for testing.
+
+Please review & ACK.
+
+- Don
+
+diff --git a/drivers/xen/balloon/balloon.c b/drivers/xen/balloon/balloon.c
+index 7722159..d704a9f 100644
+--- a/drivers/xen/balloon/balloon.c
++++ b/drivers/xen/balloon/balloon.c
+@@ -33,6 +33,7 @@
+  */
+ 
+ #include <linux/kernel.h>
++#include <linux/version.h>
+ #include <linux/module.h>
+ #include <linux/sched.h>
+ #include <linux/errno.h>
+@@ -47,14 +48,26 @@
+ #include <asm/hypervisor.h>
+ #include <xen/balloon.h>
+ #include <xen/interface/memory.h>
++#ifdef CONFIG_XEN_PV_ON_HVM
++#include <asm/maddr.h>
++#include <asm/page.h>
++#endif
+ #include <asm/pgalloc.h>
+ #include <asm/pgtable.h>
+ #include <asm/uaccess.h>
+ #include <asm/tlb.h>
++#ifdef CONFIG_XEN_PV_ON_HVM
++#include <linux/highmem.h>
++#endif
+ #include <linux/list.h>
+ 
+ #include <xen/xenbus.h>
+ 
++/* for pv-on-hvm */
++#ifdef HAVE_XEN_PLATFORM_COMPAT_H   
++#include <xen/platform-compat.h>
++#endif
++
+ #define PAGES2KB(_p) ((_p)<<(PAGE_SHIFT-10))
+ 
+ #ifdef CONFIG_PROC_FS
+@@ -229,6 +242,8 @@ static int increase_reservation(unsigned long nr_pages)
+ 
+ 		/* Update P->M and M->P tables. */
+ 		set_phys_to_machine(pfn, frame_list[i]);
++
++#ifdef CONFIG_XEN
+ 		xen_machphys_update(frame_list[i], pfn);
+ 
+ 		/* Link back into the page tables if not highmem. */
+@@ -240,7 +255,7 @@ static int increase_reservation(unsigned long nr_pages)
+ 				0);
+ 			BUG_ON(ret);
+ 		}
+-
++#endif
+ 		/* Relinquish the page back to the allocator. */
+ 		ClearPageReserved(page);
+ 		init_page_count(page);
+@@ -285,9 +300,11 @@ static int decrease_reservation(unsigned long nr_pages)
+ 		if (!PageHighMem(page)) {
+ 			v = phys_to_virt(pfn << PAGE_SHIFT);
+ 			scrub_pages(v, 1);
++#ifdef CONFIG_XEN
+ 			ret = HYPERVISOR_update_va_mapping(
+ 				(unsigned long)v, __pte_ma(0), 0);
+ 			BUG_ON(ret);
++#endif
+ 		}
+ #ifdef CONFIG_XEN_SCRUB_PAGES
+ 		else {
+@@ -298,9 +315,11 @@ static int decrease_reservation(unsigned long nr_pages)
+ #endif
+ 	}
+ 
++#ifdef CONFIG_XEN
+ 	/* Ensure that ballooned highmem pages don't have kmaps. */
+ 	kmap_flush_unused();
+ 	flush_tlb_all();
++#endif
+ 
+ 	balloon_lock(flags);
+ 
+@@ -459,7 +478,7 @@ static struct notifier_block xenstore_notifier;
+ 
+ static int __init balloon_init(void)
+ {
+-#ifdef CONFIG_X86
++#if defined(CONFIG_X86) && defined(CONFIG_XEN) 
+ 	unsigned long pfn;
+ 	struct page *page;
+ #endif
+@@ -469,8 +488,12 @@ static int __init balloon_init(void)
+ 
+ 	IPRINTK("Initialising balloon driver.\n");
+ 
++#ifdef CONFIG_XEN
+ 	current_pages = min(xen_start_info->nr_pages, max_pfn);
+ 	totalram_pages = current_pages;
++#else
++	current_pages = totalram_pages;
++#endif
+ 	target_pages  = current_pages;
+ 	balloon_low   = 0;
+ 	balloon_high  = 0;
+@@ -491,7 +514,7 @@ static int __init balloon_init(void)
+ 	balloon_pde->write_proc = balloon_write;
+ #endif
+     
+-#ifdef CONFIG_X86
++#if defined(CONFIG_X86) && defined(CONFIG_XEN) 
+ 	/* Initialise the balloon with excess memory space. */
+ 	for (pfn = xen_start_info->nr_pages; pfn < max_pfn; pfn++) {
+ 		page = pfn_to_page(pfn);
+@@ -519,6 +542,7 @@ void balloon_update_driver_allowance(long delta)
+ 	balloon_unlock(flags);
+ }
+ 
++#ifdef CONFIG_XEN
+ static int dealloc_pte_fn(
+ 	pte_t *pte, struct page *pmd_page, unsigned long addr, void *data)
+ {
+@@ -536,6 +560,7 @@ static int dealloc_pte_fn(
+ 	BUG_ON(ret != 1);
+ 	return 0;
+ }
++#endif
+ 
+ struct page **alloc_empty_pages_and_pagevec(int nr_pages)
+ {
+@@ -567,12 +592,17 @@ struct page **alloc_empty_pages_and_pagevec(int nr_pages)
+ 			};
+ 			set_xen_guest_handle(reservation.extent_start, &gmfn);
+ 			ret = HYPERVISOR_memory_op(XENMEM_decrease_reservation,
+-						&reservation);
++						   &reservation);
+ 			if (ret == 1)
+ 				ret = 0; /* success */
+ 		} else {
++#ifdef CONFIG_XEN
+ 			ret = apply_to_page_range(&init_mm, vaddr, PAGE_SIZE,
+-						dealloc_pte_fn, NULL);
++						  dealloc_pte_fn, NULL);
++#else
++			/* Cannot handle non-auto translate mode. */
++			ret = 1;
++#endif
+ 		}
+ 
+ 		if (ret != 0) {
+@@ -588,7 +618,9 @@ struct page **alloc_empty_pages_and_pagevec(int nr_pages)
+ 
+  out:
+ 	schedule_work(&balloon_worker);
++#ifdef CONFIG_XEN
+ 	flush_tlb_all();
++#endif
+ 	return pagevec;
+ 
+  err:
+diff --git a/drivers/xen/blkfront/blkfront.c b/drivers/xen/blkfront/blkfront.c
+index 4cfff93..6b4b0c2 100644
+--- a/drivers/xen/blkfront/blkfront.c
++++ b/drivers/xen/blkfront/blkfront.c
+@@ -49,6 +49,10 @@
+ #include <asm/hypervisor.h>
+ #include <asm/maddr.h>
+ 
++#ifdef HAVE_XEN_PLATFORM_COMPAT_H
++#include <xen/platform-compat.h>
++#endif
++
+ #define BLKIF_STATE_DISCONNECTED 0
+ #define BLKIF_STATE_CONNECTED    1
+ #define BLKIF_STATE_SUSPENDED    2
+@@ -220,7 +224,7 @@ static int setup_blkring(struct xenbus_device *dev,
+ 
+ 	info->ring_ref = GRANT_INVALID_REF;
+ 
+-	sring = (blkif_sring_t *)__get_free_page(GFP_KERNEL);
++	sring = (blkif_sring_t *)__get_free_page(GFP_NOIO| __GFP_HIGH);
+ 	if (!sring) {
+ 		xenbus_dev_fatal(dev, -ENOMEM, "allocating shared ring");
+ 		return -ENOMEM;
+@@ -765,7 +769,7 @@ static void blkif_recover(struct blkfront_info *info)
+ 	int j;
+ 
+ 	/* Stage 1: Make a safe copy of the shadow state. */
+-	copy = kmalloc(sizeof(info->shadow), GFP_KERNEL | __GFP_NOFAIL);
++	copy = kmalloc(sizeof(info->shadow), GFP_NOIO | __GFP_NOFAIL | __GFP_HIGH);
+ 	memcpy(copy, info->shadow, sizeof(info->shadow));
+ 
+ 	/* Stage 2: Set up free list. */
+@@ -837,6 +841,9 @@ static struct xenbus_device_id blkfront_ids[] = {
+ 	{ "vbd" },
+ 	{ "" }
+ };
++#ifdef CONFIG_XEN_PV_ON_HVM
++MODULE_ALIAS("xen:vbd");
++#endif
+ 
+ 
+ static struct xenbus_driver blkfront = {
+diff --git a/drivers/xen/blkfront/vbd.c b/drivers/xen/blkfront/vbd.c
+index 6671ca0..36d8d0f 100644
+--- a/drivers/xen/blkfront/vbd.c
++++ b/drivers/xen/blkfront/vbd.c
+@@ -44,6 +44,10 @@
+ #define VDEV_IS_EXTENDED(dev) ((dev)&(EXTENDED))
+ #define BLKIF_MINOR_EXT(dev) ((dev)&(~EXTENDED))
+ 
++#ifdef HAVE_XEN_PLATFORM_COMPAT_H
++#include <xen/platform-compat.h>
++#endif
++
+ /*
+  * For convenience we distinguish between ide, scsi and 'other' (i.e.,
+  * potentially combinations of the two) in the naming scheme and in a few other
+diff --git a/drivers/xen/core/gnttab.c b/drivers/xen/core/gnttab.c
+index e6dd198..0b165b8 100644
+--- a/drivers/xen/core/gnttab.c
++++ b/drivers/xen/core/gnttab.c
+@@ -43,6 +43,10 @@
+ #include <xen/interface/memory.h>
+ #include <xen/driver_util.h>
+ 
++#ifdef HAVE_XEN_PLATFORM_COMPAT_H
++#include <xen/platform-compat.h>
++#endif
++
+ /* External tools reserve first few grant table entries. */
+ #define NR_RESERVED_ENTRIES 8
+ #define GNTTAB_LIST_END 0xffffffff
+@@ -56,9 +60,6 @@ static grant_ref_t gnttab_free_head;
+ static DEFINE_SPINLOCK(gnttab_list_lock);
+ 
+ static struct grant_entry *shared;
+-#ifndef CONFIG_XEN
+-static unsigned long resume_frames;
+-#endif
+ 
+ static struct gnttab_free_callback *gnttab_free_callback_list;
+ 
+@@ -184,7 +185,7 @@ int gnttab_end_foreign_access_ref(grant_ref_t ref, int readonly)
+ 	nflags = shared[ref].flags;
+ 	do {
+ 		if ((flags = nflags) & (GTF_reading|GTF_writing)) {
+-			printk(KERN_ALERT "WARNING: g.e. still in use!\n");
++			printk(KERN_DEBUG "WARNING: g.e. still in use!\n");
+ 			return 0;
+ 		}
+ 	} while ((nflags = synch_cmpxchg_subword(&shared[ref].flags, flags, 0)) !=
+@@ -204,7 +205,7 @@ void gnttab_end_foreign_access(grant_ref_t ref, int readonly,
+ 	} else {
+ 		/* XXX This needs to be fixed so that the ref and page are
+ 		   placed on a list to be freed up later. */
+-		printk(KERN_WARNING
++		printk(KERN_DEBUG
+ 		       "WARNING: leaking g.e. and page still in use!\n");
+ 	}
+ }
+@@ -514,51 +515,48 @@ int gnttab_suspend(void)
+ 
+ #include <platform-pci.h>
+ 
++static unsigned long resume_frames;
++
+ static int gnttab_map(unsigned int start_idx, unsigned int end_idx)
+ {
+ 	struct xen_add_to_physmap xatp;
+-	unsigned int i;
++	unsigned int i=end_idx;
+ 
+ 	/* Loop backwards, so that the first hypercall has the largest index,
+ 	 * ensuring that the table will grow only once.
+ 	 */
+-	for (i = end_idx; i >= start_idx; i--) {
++	do {
+ 		xatp.domid = DOMID_SELF;
+ 		xatp.idx = i;
+ 		xatp.space = XENMAPSPACE_grant_table;
+ 		xatp.gpfn = (resume_frames >> PAGE_SHIFT) + i;
+ 		if (HYPERVISOR_memory_op(XENMEM_add_to_physmap, &xatp))
+ 			BUG();
+-	}
++	} while (i-- > start_idx);
++
++	return 0;
+ }
+ 
+ int gnttab_resume(void)
+ {
+-	struct xen_add_to_physmap xatp;
+-	unsigned int i, max_nr_gframes, nr_gframes;
++	unsigned int max_nr_gframes, nr_gframes;
+ 
+ 	nr_gframes = nr_grant_frames;
+ 	max_nr_gframes = max_nr_grant_frames();
+ 	if (max_nr_gframes < nr_gframes)
+ 		return -ENOSYS;
+ 
+-	resume_frames = alloc_xen_mmio(PAGE_SIZE * max_nr_gframes);
+-
+-	gnttab_map(0, nr_gframes - 1);
+-
+-	shared = ioremap(resume_frames, PAGE_SIZE * max_nr_gframes);
+-	if (shared == NULL) {
+-		printk("error to ioremap gnttab share frames\n");
+-		return -1;
++	if (!resume_frames) {
++		resume_frames = alloc_xen_mmio(PAGE_SIZE * max_nr_gframes);
++		shared = ioremap(resume_frames, PAGE_SIZE * max_nr_gframes);
++		if (shared == NULL) {
++			printk("error to ioremap gnttab share frames\n");
++			return -1;
++		}
+ 	}
+ 
+-	return 0;
+-}
++	gnttab_map(0, nr_gframes - 1);
+ 
+-int gnttab_suspend(void)
+-{
+-	iounmap(shared);
+- 	resume_frames = 0;
+ 	return 0;
+ }
+ 
+diff --git a/drivers/xen/core/reboot.c b/drivers/xen/core/reboot.c
+index 9842f99..7c22041 100644
+--- a/drivers/xen/core/reboot.c
++++ b/drivers/xen/core/reboot.c
+@@ -19,7 +19,9 @@
+ #include <xen/xencons.h>
+ #include <xen/cpu_hotplug.h>
+ 
+-extern void ctrl_alt_del(void);
++#ifdef HAVE_XEN_PLATFORM_COMPAT_H
++#include <xen/platform-compat.h>
++#endif
+ 
+ #define SHUTDOWN_INVALID  -1
+ #define SHUTDOWN_POWEROFF  0
+@@ -31,6 +33,7 @@ extern void ctrl_alt_del(void);
+  */
+ #define SHUTDOWN_HALT      4
+ 
++#ifdef CONFIG_XEN /* non-pv-on-hvm */
+ #if defined(__i386__) || defined(__x86_64__)
+ 
+ /*
+@@ -71,6 +74,7 @@ EXPORT_SYMBOL(machine_halt);
+ EXPORT_SYMBOL(machine_power_off);
+ 
+ #endif /* defined(__i386__) || defined(__x86_64__) */
++#endif /* CONFIG_XEN */
+ 
+ /******************************************************************************
+  * Stop/pickle callback handling.
+@@ -78,9 +82,14 @@ EXPORT_SYMBOL(machine_power_off);
+ 
+ /* Ignore multiple shutdown requests. */
+ static int shutting_down = SHUTDOWN_INVALID;
++
++/* Can we leave APs online when we suspend? */
++static int fast_suspend;
++
+ static void __shutdown_handler(void *unused);
+ static DECLARE_WORK(shutdown_work, __shutdown_handler, NULL);
+ 
++#ifdef CONFIG_XEN
+ #if defined(__i386__) || defined(__x86_64__)
+ 
+ /* Ensure we run on the idle task page tables so that we will
+@@ -214,6 +223,9 @@ static int __do_suspend(void *ignore)
+ 
+ 	return err;
+ }
++#endif /* CONFIG_XEN */
++
++extern int __xen_suspend(int fast_suspend);
+ 
+ static int shutdown_process(void *__unused)
+ {
+@@ -221,16 +233,20 @@ static int shutdown_process(void *__unused)
+ 				"PATH=/sbin:/usr/sbin:/bin:/usr/bin", NULL };
+ 	static char *poweroff_argv[] = { "/sbin/poweroff", NULL };
+ 
++#ifdef CONFIG_XEN
+ 	extern asmlinkage long sys_reboot(int magic1, int magic2,
+ 					  unsigned int cmd, void *arg);
++#endif
+ 
+ 	if ((shutting_down == SHUTDOWN_POWEROFF) ||
+ 	    (shutting_down == SHUTDOWN_HALT)) {
+ 		if (execve("/sbin/poweroff", poweroff_argv, envp) < 0) {
++#ifdef CONFIG_XEN
+ 			sys_reboot(LINUX_REBOOT_MAGIC1,
+ 				   LINUX_REBOOT_MAGIC2,
+ 				   LINUX_REBOOT_CMD_POWER_OFF,
+ 				   NULL);
++#endif /* CONFIG_XEN */
+ 		}
+ 	}
+ 
+@@ -239,6 +255,17 @@ static int shutdown_process(void *__unused)
+ 	return 0;
+ }
+ 
++#ifndef CONFIG_XEN /* pv-on-hvm */
++static int xen_suspend(void *__unused)
++{
++	int err = __xen_suspend(fast_suspend);
++	if (err)
++		printk(KERN_ERR "Xen suspend failed (%d)\n", err);
++	shutting_down = SHUTDOWN_INVALID;
++	return 0;
++}
++#endif
++
+ static int kthread_create_on_cpu(int (*f)(void *arg),
+ 				 void *arg,
+ 				 const char *name,
+@@ -261,7 +288,11 @@ static void __shutdown_handler(void *unused)
+ 		err = kernel_thread(shutdown_process, NULL,
+ 				    CLONE_FS | CLONE_FILES);
+ 	else
++#ifndef CONFIG_XEN /* pv-on-hvm */
++		err = kthread_create_on_cpu(xen_suspend, NULL, "suspend", 0);
++#else /* domU */
+ 		err = kthread_create_on_cpu(__do_suspend, NULL, "suspend", 0);
++#endif
+ 
+ 	if (err < 0) {
+ 		printk(KERN_WARNING "Error creating shutdown process (%d): "
+@@ -273,6 +304,7 @@ static void __shutdown_handler(void *unused)
+ static void shutdown_handler(struct xenbus_watch *watch,
+ 			     const char **vec, unsigned int len)
+ {
++	extern void ctrl_alt_del(void);
+ 	char *str;
+ 	struct xenbus_transaction xbt;
+ 	int err;
+@@ -359,30 +391,59 @@ static struct xenbus_watch sysrq_watch = {
+ 	.callback = sysrq_handler
+ };
+ 
+-static int setup_shutdown_watcher(struct notifier_block *notifier,
+-				  unsigned long event,
+-				  void *data)
++
++static int setup_shutdown_watcher(void)
++
++
+ {
+ 	int err;
+ 
++	xenbus_scanf(XBT_NIL, "control",
++		     "platform-feature-multiprocessor-suspend",
++		     "%d", &fast_suspend);
++
+ 	err = register_xenbus_watch(&shutdown_watch);
+-	if (err)
++	if (err) {
+ 		printk(KERN_ERR "Failed to set shutdown watcher\n");
++		return err;
++	}
+ 
+ 	err = register_xenbus_watch(&sysrq_watch);
+-	if (err)
++	if (err) {
+ 		printk(KERN_ERR "Failed to set sysrq watcher\n");
++		return err;
++	}
++
++	return 0;
++}
+ 
++#ifdef CONFIG_XEN
++
++static int shutdown_event(struct notifier_block *notifier,
++			  unsigned long event,
++			  void *data)
++{
++	setup_shutdown_watcher();
+ 	return NOTIFY_DONE;
+ }
+ 
+ static int __init setup_shutdown_event(void)
+ {
+ 	static struct notifier_block xenstore_notifier = {
+-		.notifier_call = setup_shutdown_watcher
++		.notifier_call = shutdown_event
+ 	};
+ 	register_xenstore_notifier(&xenstore_notifier);
++
+ 	return 0;
+ }
+ 
+ subsys_initcall(setup_shutdown_event);
++
++#else /* !defined(CONFIG_XEN) */
++
++int xen_reboot_init(void)
++{
++	return setup_shutdown_watcher();
++}
++
++#endif /* !defined(CONFIG_XEN) */
+diff --git a/drivers/xen/netfront/netfront.c b/drivers/xen/netfront/netfront.c
+index ce9c1cf..6310448 100644
+--- a/drivers/xen/netfront/netfront.c
++++ b/drivers/xen/netfront/netfront.c
+@@ -64,6 +64,11 @@
+ #include <xen/interface/grant_table.h>
+ #include <xen/gnttab.h>
+ 
++
++#ifdef HAVE_XEN_PLATFORM_COMPAT_H
++#include <xen/platform-compat.h>
++#endif
++
+ /*
+  * Mutually-exclusive module options to select receive data path:
+  *  rx_copy : Packets are copied by network backend into local memory
+@@ -120,6 +125,7 @@ static inline int netif_needs_gso(struct net_device *dev, struct sk_buff *skb)
+                 unlikely(skb->ip_summed != CHECKSUM_HW));
+ }
+ #else
++#define HAVE_NO_CSUM_OFFLOAD           1
+ #define netif_needs_gso(dev, skb)	0
+ #define dev_disable_gso_features(dev)	((void)0)
+ #endif
+@@ -416,6 +422,14 @@ again:
+ 		goto abort_transaction;
+ 	}
+ 
++#ifdef HAVE_NO_CSUM_OFFLOAD
++	err = xenbus_printf(xbt, dev->nodename, "feature-no-csum-offload", "%d", 1);
++	if (err) {
++		message = "writing feature-no-csum-offload";
++		goto abort_transaction;
++	}
++#endif
++
+ 	err = xenbus_printf(xbt, dev->nodename, "feature-sg", "%d", 1);
+ 	if (err) {
+ 		message = "writing feature-sg";
+@@ -1148,16 +1162,22 @@ static int xennet_get_responses(struct netfront_info *np,
+ 				struct page *page =
+ 					skb_shinfo(skb)->frags[0].page;
+ 				unsigned long pfn = page_to_pfn(page);
++/* to avoid build warnings */
++#if defined CONFIG_XEN || (!defined CONFIG_X86_PAE && defined CONFIG_XEN_PV_ON_HVM)
+ 				void *vaddr = page_address(page);
++#endif
+ 
+ 				mcl = np->rx_mcl + pages_flipped;
+ 				mmu = np->rx_mmu + pages_flipped;
+ 
++/* not for rhel4 & rhel5 -- _supported_pte_mask not exported for pfn_pte_ma */
++#if defined CONFIG_XEN || (!defined CONFIG_X86_PAE && defined CONFIG_XEN_PV_ON_HVM)
+ 				MULTI_update_va_mapping(mcl,
+ 							(unsigned long)vaddr,
+ 							pfn_pte_ma(mfn,
+ 								   PAGE_KERNEL),
+ 							0);
++#endif
+ 				mmu->ptr = ((maddr_t)mfn << PAGE_SHIFT)
+ 					| MMU_MACHPHYS_UPDATE;
+ 				mmu->val = pfn;
+@@ -1484,7 +1504,7 @@ static void netif_release_tx_bufs(struct netfront_info *np)
+ 	}
+ }
+ 
+-static void netif_release_rx_bufs(struct netfront_info *np)
++static void netif_release_rx_bufs_flip(struct netfront_info *np)
+ {
+ 	struct mmu_update      *mmu = np->rx_mmu;
+ 	struct multicall_entry *mcl = np->rx_mcl;
+@@ -1494,11 +1514,6 @@ static void netif_release_rx_bufs(struct netfront_info *np)
+ 	int xfer = 0, noxfer = 0, unused = 0;
+ 	int id, ref;
+ 
+-	if (np->copying_receiver) {
+-		printk("%s: fix me for copying receiver.\n", __FUNCTION__);
+-		return;
+-	}
+-
+ 	skb_queue_head_init(&free_list);
+ 
+ 	spin_lock(&np->rx_lock);
+@@ -1528,11 +1543,14 @@ static void netif_release_rx_bufs(struct netfront_info *np)
+ 			/* Remap the page. */
+ 			struct page *page = skb_shinfo(skb)->frags[0].page;
+ 			unsigned long pfn = page_to_pfn(page);
++/* to avoid build warnings */
++#if defined CONFIG_XEN || (!defined CONFIG_X86_PAE && defined CONFIG_XEN_PV_ON_HVM)
+ 			void *vaddr = page_address(page);
+ 
+ 			MULTI_update_va_mapping(mcl, (unsigned long)vaddr,
+ 						pfn_pte_ma(mfn, PAGE_KERNEL),
+ 						0);
++#endif
+ 			mcl++;
+ 			mmu->ptr = ((maddr_t)mfn << PAGE_SHIFT)
+ 				| MMU_MACHPHYS_UPDATE;
+@@ -1545,7 +1563,7 @@ static void netif_release_rx_bufs(struct netfront_info *np)
+ 		xfer++;
+ 	}
+ 
+-	printk("%s: %d xfer, %d noxfer, %d unused\n",
++	printk(KERN_DEBUG "%s: %d xfer, %d noxfer, %d unused\n",
+ 	       __FUNCTION__, xfer, noxfer, unused);
+ 
+ 	if (xfer) {
+@@ -1570,6 +1588,45 @@ static void netif_release_rx_bufs(struct netfront_info *np)
+ 	spin_unlock(&np->rx_lock);
+ }
+ 
++static void netif_release_rx_bufs_copy(struct netfront_info *np)
++{
++	struct sk_buff *skb;
++	int i, ref;
++	int busy = 0, inuse = 0;
++
++	spin_lock_bh(&np->rx_lock);
++
++	for (i = 0; i < NET_RX_RING_SIZE; i++) {
++		ref = np->grant_rx_ref[i];
++
++		if (ref == GRANT_INVALID_REF)
++			continue;
++
++		inuse++;
++
++		skb = np->rx_skbs[i];
++
++		if (!gnttab_end_foreign_access_ref(ref, 0))
++		{
++			busy++;
++			continue;
++		}
++
++		gnttab_release_grant_reference(&np->gref_rx_head, ref);
++		np->grant_rx_ref[i] = GRANT_INVALID_REF;
++		add_id_to_freelist(np->rx_skbs, i);
++
++/*		skb_shinfo(skb)->nr_frags = 0; */ /* bz 452370, 452303 */
++		dev_kfree_skb(skb);
++	}
++
++	if (busy)
++		DPRINTK("%s: Unable to release %d of %d inuse grant references out of %ld total.\n",
++			__FUNCTION__, busy, inuse, NET_RX_RING_SIZE);
++
++	spin_unlock_bh(&np->rx_lock);
++}
++
+ static int network_close(struct net_device *dev)
+ {
+ 	struct netfront_info *np = netdev_priv(dev);
+@@ -1742,7 +1799,10 @@ static void netif_uninit(struct net_device *dev)
+ {
+ 	struct netfront_info *np = netdev_priv(dev);
+ 	netif_release_tx_bufs(np);
+-	netif_release_rx_bufs(np);
++	if (np->copying_receiver)
++		netif_release_rx_bufs_copy(np);
++	else
++		netif_release_rx_bufs_flip(np);
+ 	gnttab_free_grant_references(np->gref_tx_head);
+ 	gnttab_free_grant_references(np->gref_rx_head);
+ }
+@@ -2059,7 +2119,9 @@ static struct xenbus_device_id netfront_ids[] = {
+ 	{ "vif" },
+ 	{ "" }
+ };
+-
++#ifdef CONFIG_XEN_PV_ON_HVM
++MODULE_ALIAS("xen:vif");
++#endif
+ 
+ static struct xenbus_driver netfront = {
+ 	.name = "vif",
+diff --git a/drivers/xen/xenbus/xenbus_client.c b/drivers/xen/xenbus/xenbus_client.c
+index d167970..38d1b6d 100644
+--- a/drivers/xen/xenbus/xenbus_client.c
++++ b/drivers/xen/xenbus/xenbus_client.c
+@@ -35,6 +35,10 @@
+ #include <xen/xenbus.h>
+ #include <xen/driver_util.h>
+ 
++#ifdef HAVE_XEN_PLATFORM_COMPAT_H
++#include <xen/platform-compat.h>
++#endif
++
+ #define DPRINTK(fmt, args...) \
+     pr_debug("xenbus_client (%s:%d) " fmt ".\n", __FUNCTION__, __LINE__, ##args)
+ 
+@@ -81,7 +85,7 @@ int xenbus_watch_path2(struct xenbus_device *dev, const char *path,
+ 					const char **, unsigned int))
+ {
+ 	int err;
+-	char *state = kasprintf(GFP_KERNEL, "%s/%s", path, path2);
++	char *state = kasprintf((GFP_NOIO | __GFP_HIGH), "%s/%s", path, path2);
+ 	if (!state) {
+ 		xenbus_dev_fatal(dev, -ENOMEM, "allocating path for watch");
+ 		return -ENOMEM;
+@@ -149,7 +153,7 @@ EXPORT_SYMBOL_GPL(xenbus_frontend_closed);
+  */
+ static char *error_path(struct xenbus_device *dev)
+ {
+-	return kasprintf(GFP_KERNEL, "error/%s", dev->nodename);
++	return kasprintf((GFP_NOIO | __GFP_HIGH), "error/%s", dev->nodename);
+ }
+ 
+ 
+diff --git a/drivers/xen/xenbus/xenbus_comms.c b/drivers/xen/xenbus/xenbus_comms.c
+index 38da320..ea8f3c2 100644
+--- a/drivers/xen/xenbus/xenbus_comms.c
++++ b/drivers/xen/xenbus/xenbus_comms.c
+@@ -39,6 +39,10 @@
+ #include <xen/xenbus.h>
+ #include "xenbus_comms.h"
+ 
++#ifdef HAVE_XEN_PLATFORM_COMPAT_H
++#include <xen/platform-compat.h>
++#endif
++
+ static int xenbus_irq;
+ 
+ extern void xenbus_probe(void *);
+diff --git a/drivers/xen/xenbus/xenbus_dev.c b/drivers/xen/xenbus/xenbus_dev.c
+index c95c48b..b1b1548 100644
+--- a/drivers/xen/xenbus/xenbus_dev.c
++++ b/drivers/xen/xenbus/xenbus_dev.c
+@@ -48,6 +48,10 @@
+ #include <xen/xen_proc.h>
+ #include <asm/hypervisor.h>
+ 
++#ifdef HAVE_XEN_PLATFORM_COMPAT_H
++#include <xen/platform-compat.h>
++#endif
++
+ struct xenbus_dev_transaction {
+ 	struct list_head list;
+ 	struct xenbus_transaction handle;
+diff --git a/drivers/xen/xenbus/xenbus_probe.c b/drivers/xen/xenbus/xenbus_probe.c
+index bbf903c..e66c8fa 100644
+--- a/drivers/xen/xenbus/xenbus_probe.c
++++ b/drivers/xen/xenbus/xenbus_probe.c
+@@ -57,21 +57,36 @@
+ 
+ #include "xenbus_comms.h"
+ 
++#ifdef HAVE_XEN_PLATFORM_COMPAT_H
++#include <xen/platform-compat.h>
++#endif
++
+ int xen_store_evtchn;
+ struct xenstore_domain_interface *xen_store_interface;
+ static unsigned long xen_store_mfn;
+ 
+ extern struct mutex xenwatch_mutex;
+ 
++static int xenpv_notify_ide_disable = 0;
++
++/* struct & lock to remove unconnected vbd's at boostrap */
++struct xendev_rem {
++	struct list_head list;
++	struct xenbus_device* xendev;
++};
++struct xendev_rem xendev_rem_hd;
++static spinlock_t xendev_rem_lock = SPIN_LOCK_UNLOCKED;
++
+ static BLOCKING_NOTIFIER_HEAD(xenstore_notifier_list);
+ 
+ static void wait_for_devices(struct xenbus_driver *xendrv);
+ 
+ static int xenbus_probe_frontend(const char *type, const char *name);
++#ifdef CONFIG_XEN
+ static int xenbus_uevent_backend(struct device *dev, char **envp,
+ 				 int num_envp, char *buffer, int buffer_size);
+ static int xenbus_probe_backend(const char *type, const char *domid);
+-
++#endif
+ static int xenbus_dev_probe(struct device *_dev);
+ static int xenbus_dev_remove(struct device *_dev);
+ static void xenbus_dev_shutdown(struct device *_dev);
+@@ -100,6 +115,7 @@ static int xenbus_match(struct device *_dev, struct device_driver *_drv)
+ struct xen_bus_type
+ {
+ 	char *root;
++	int error;
+ 	unsigned int levels;
+ 	int (*get_bus_id)(char bus_id[BUS_ID_SIZE], const char *nodename);
+ 	int (*probe)(const char *type, const char *dir);
+@@ -176,12 +192,35 @@ static int read_backend_details(struct xenbus_device *xendev)
+ 	return read_otherend_details(xendev, "backend-id", "backend");
+ }
+ 
+-
++#ifdef CONFIG_XEN
+ static int read_frontend_details(struct xenbus_device *xendev)
+ {
+ 	return read_otherend_details(xendev, "frontend-id", "frontend");
+ }
++#endif
+ 
++static int xenbus_uevent_frontend(struct device *dev, char **envp,
++				  int num_envp, char *buffer, int buffer_size)
++{
++	struct xenbus_device *xdev;
++	int length = 0, i = 0;
++
++	if (dev == NULL)
++		return -ENODEV;
++	xdev = to_xenbus_device(dev);
++	if (xdev == NULL)
++		return -ENODEV;
++
++	/* stuff we want to pass to /sbin/hotplug */
++	add_uevent_var(envp, num_envp, &i, buffer, buffer_size, &length,
++		       "XENBUS_TYPE=%s", xdev->devicetype);
++	add_uevent_var(envp, num_envp, &i, buffer, buffer_size, &length,
++		       "XENBUS_PATH=%s", xdev->nodename);
++	add_uevent_var(envp, num_envp, &i, buffer, buffer_size, &length,
++		       "MODALIAS=xen:%s", xdev->devicetype);
++
++	return 0;
++}
+ 
+ /* Bus type for frontend drivers. */
+ static struct xen_bus_type xenbus_frontend = {
+@@ -189,18 +228,24 @@ static struct xen_bus_type xenbus_frontend = {
+ 	.levels = 2, 		/* device/type/<id> */
+ 	.get_bus_id = frontend_bus_id,
+ 	.probe = xenbus_probe_frontend,
++	/* to ensure loading pv-on-hvm drivers on bare metal doesn't 
++         * blowup trying to use uninit'd xenbus.
++	 */
++	.error = -ENODEV,
+ 	.bus = {
+ 		.name     = "xen",
+ 		.match    = xenbus_match,
+ 		.probe    = xenbus_dev_probe,
+ 		.remove   = xenbus_dev_remove,
+ 		.shutdown = xenbus_dev_shutdown,
++		.uevent	  = xenbus_uevent_frontend,
+ 	},
+ 	.dev = {
+ 		.bus_id = "xen",
+ 	},
+ };
+ 
++#ifdef CONFIG_XEN
+ /* backend/<type>/<fe-uuid>/<id> => <type>-<fe-domid>-<id> */
+ static int backend_bus_id(char bus_id[BUS_ID_SIZE], const char *nodename)
+ {
+@@ -300,6 +345,7 @@ static int xenbus_uevent_backend(struct device *dev, char **envp,
+ 
+ 	return 0;
+ }
++#endif /* CONFIG_XEN */
+ 
+ static void otherend_changed(struct xenbus_watch *watch,
+ 			     const char **vec, unsigned int len)
+@@ -450,6 +496,9 @@ static int xenbus_register_driver_common(struct xenbus_driver *drv,
+ {
+ 	int ret;
+ 
++	if (bus->error)
++		return bus->error;
++
+ 	drv->driver.name = drv->name;
+ 	drv->driver.bus = &bus->bus;
+ 	drv->driver.owner = drv->owner;
+@@ -477,6 +526,7 @@ int xenbus_register_frontend(struct xenbus_driver *drv)
+ }
+ EXPORT_SYMBOL_GPL(xenbus_register_frontend);
+ 
++#ifdef CONFIG_XEN
+ int xenbus_register_backend(struct xenbus_driver *drv)
+ {
+ 	drv->read_otherend_details = read_frontend_details;
+@@ -484,6 +534,7 @@ int xenbus_register_backend(struct xenbus_driver *drv)
+ 	return xenbus_register_driver_common(drv, &xenbus_backend);
+ }
+ EXPORT_SYMBOL_GPL(xenbus_register_backend);
++#endif
+ 
+ void xenbus_unregister_driver(struct xenbus_driver *drv)
+ {
+@@ -586,6 +637,9 @@ static int xenbus_probe_node(struct xen_bus_type *bus,
+ 
+ 	enum xenbus_state state = xenbus_read_driver_state(nodename);
+ 
++	if (bus->error)
++		return bus->error;
++
+ 	if (state != XenbusStateInitialising) {
+ 		/* Device is not new, so ignore it.  This can happen if a
+ 		   device is going away after switching to Closed.  */
+@@ -647,6 +701,7 @@ static int xenbus_probe_frontend(const char *type, const char *name)
+ 	return err;
+ }
+ 
++#ifdef CONFIG_XEN
+ /* backend/<typename>/<frontend-uuid>/<name> */
+ static int xenbus_probe_backend_unit(const char *dir,
+ 				     const char *type,
+@@ -695,6 +750,7 @@ static int xenbus_probe_backend(const char *type, const char *domid)
+ 	kfree(nodename);
+ 	return err;
+ }
++#endif /* CONFIG_XEN */
+ 
+ static int xenbus_probe_device_type(struct xen_bus_type *bus, const char *type)
+ {
+@@ -722,6 +778,9 @@ static int xenbus_probe_devices(struct xen_bus_type *bus)
+ 	char **dir;
+ 	unsigned int i, dir_n;
+ 
++	if (bus->error)
++		return bus->error;
++
+ 	dir = xenbus_directory(XBT_NIL, bus->root, "", &dir_n);
+ 	if (IS_ERR(dir))
+ 		return PTR_ERR(dir);
+@@ -765,7 +824,7 @@ static void dev_changed(const char *node, struct xen_bus_type *bus)
+ 	char type[BUS_ID_SIZE];
+ 	const char *p, *root;
+ 
+-	if (char_count(node, '/') < 2)
++	if (bus->error || char_count(node, '/') < 2)
+  		return;
+ 
+ 	exists = xenbus_exists(XBT_NIL, node, "");
+@@ -803,6 +862,7 @@ static void frontend_changed(struct xenbus_watch *watch,
+ 	dev_changed(vec[XS_WATCH_PATH], &xenbus_frontend);
+ }
+ 
++#ifdef CONFIG_XEN
+ static void backend_changed(struct xenbus_watch *watch,
+ 			    const char **vec, unsigned int len)
+ {
+@@ -811,17 +871,18 @@ static void backend_changed(struct xenbus_watch *watch,
+ 	dev_changed(vec[XS_WATCH_PATH], &xenbus_backend);
+ }
+ 
++static struct xenbus_watch be_watch = {
++	.node = "backend",
++	.callback = backend_changed,
++};
++#endif
++
+ /* We watch for devices appearing and vanishing. */
+ static struct xenbus_watch fe_watch = {
+ 	.node = "device",
+ 	.callback = frontend_changed,
+ };
+ 
+-static struct xenbus_watch be_watch = {
+-	.node = "backend",
+-	.callback = backend_changed,
+-};
+-
+ static int suspend_dev(struct device *dev, void *data)
+ {
+ 	int err = 0;
+@@ -842,6 +903,29 @@ static int suspend_dev(struct device *dev, void *data)
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_XEN_PV_ON_HVM
++static int suspend_cancel_dev(struct device *dev, void *data)
++{
++	int err = 0;
++	struct xenbus_driver *drv;
++	struct xenbus_device *xdev;
++
++	DPRINTK("");
++
++	if (dev->driver == NULL)
++		return 0;
++	drv = to_xenbus_driver(dev->driver);
++	xdev = container_of(dev, struct xenbus_device, dev);
++	if (drv->suspend_cancel)
++		err = drv->suspend_cancel(xdev);
++	if (err)
++		printk(KERN_WARNING
++		       "xenbus: suspend_cancel %s failed: %i\n",
++		       dev->bus_id, err);
++	return 0;
++}
++#endif /* CONFIG_XEN_PV_ON_HVM */
++
+ static int resume_dev(struct device *dev, void *data)
+ {
+ 	int err;
+@@ -891,8 +975,11 @@ void xenbus_suspend(void)
+ {
+ 	DPRINTK("");
+ 
+-	bus_for_each_dev(&xenbus_frontend.bus, NULL, NULL, suspend_dev);
++        if (!xenbus_frontend.error)
++		bus_for_each_dev(&xenbus_frontend.bus, NULL, NULL, suspend_dev);
++#ifdef CONFIG_XEN
+ 	bus_for_each_dev(&xenbus_backend.bus, NULL, NULL, suspend_dev);
++#endif
+ 	xs_suspend();
+ }
+ EXPORT_SYMBOL_GPL(xenbus_suspend);
+@@ -901,11 +988,26 @@ void xenbus_resume(void)
+ {
+ 	xb_init_comms();
+ 	xs_resume();
+-	bus_for_each_dev(&xenbus_frontend.bus, NULL, NULL, resume_dev);
++        if (!xenbus_frontend.error)
++		bus_for_each_dev(&xenbus_frontend.bus, NULL, NULL, resume_dev);
++#ifdef CONFIG_XEN
+ 	bus_for_each_dev(&xenbus_backend.bus, NULL, NULL, resume_dev);
++#endif
+ }
+ EXPORT_SYMBOL_GPL(xenbus_resume);
+ 
++#ifdef CONFIG_XEN_PV_ON_HVM
++void xenbus_suspend_cancel(void)
++{
++	xs_suspend_cancel();
++	if (!xenbus_frontend.error)
++		bus_for_each_dev(&xenbus_frontend.bus, NULL, NULL, suspend_cancel_dev);
++#if 0 /* does nothing for frontend drivers */
++	xenbus_backend_resume(suspend_cancel_dev);
++#endif 
++}
++EXPORT_SYMBOL_GPL(xenbus_suspend_cancel);
++#endif /* CONFIG_XEN_PV_ON_HVM */
+ 
+ /* A flag to determine if xenstored is 'ready' (i.e. has started) */
+ int xenstored_ready = 0;
+@@ -937,18 +1039,20 @@ void xenbus_probe(void *unused)
+ 
+ 	/* Enumerate devices in xenstore. */
+ 	xenbus_probe_devices(&xenbus_frontend);
++#ifdef CONFIG_XEN
+ 	xenbus_probe_devices(&xenbus_backend);
+-
++#endif
+ 	/* Watch for changes. */
+ 	register_xenbus_watch(&fe_watch);
++#ifdef CONFIG_XEN
+ 	register_xenbus_watch(&be_watch);
++#endif
+ 
+ 	/* Notify others that xenstore is up */
+ 	blocking_notifier_call_chain(&xenstore_notifier_list, 0, NULL);
+ }
+ 
+-
+-#ifdef CONFIG_PROC_FS
++#if defined(CONFIG_PROC_FS) && defined(CONFIG_XEN_PRIVILEGED_GUEST)
+ static struct file_operations xsd_kva_fops;
+ static struct proc_dir_entry *xsd_kva_intf;
+ static struct proc_dir_entry *xsd_port_intf;
+@@ -986,7 +1090,7 @@ static int xsd_port_read(char *page, char **start, off_t off,
+ 	*eof = 1;
+ 	return len;
+ }
+-#endif
++#endif /* CONFIG_PROC_FS && CONFIG_XEN_PRIVILEGED_GUEST */
+ 
+ static int __init xenbus_probe_init(void)
+ {
+@@ -998,9 +1102,15 @@ static int __init xenbus_probe_init(void)
+ 	if (!is_running_on_xen())
+ 		return -ENODEV;
+ 
+-	/* Register ourselves with the kernel bus subsystem */
+-	bus_register(&xenbus_frontend.bus);
++	/* Register ourselves with the kernel bus & device subsystems */
++        xenbus_frontend.error = bus_register(&xenbus_frontend.bus);
++        if (xenbus_frontend.error)
++                printk(KERN_WARNING
++                       "XENBUS: Error registering frontend bus: %i\n",
++                       xenbus_frontend.error);
++#ifdef CONFIG_XEN
+ 	bus_register(&xenbus_backend.bus);
++#endif
+ 
+ 	/*
+ 	 * Domain0 doesn't have a store_evtchn or store_mfn yet.
+@@ -1029,7 +1139,7 @@ static int __init xenbus_probe_init(void)
+ 		xen_store_evtchn = xen_start_info->store_evtchn =
+ 			alloc_unbound.port;
+ 
+-#ifdef CONFIG_PROC_FS
++#if defined(CONFIG_PROC_FS) && defined(CONFIG_XEN_PRIVILEGED_GUEST)
+ 		/* And finally publish the above info in /proc/xen */
+ 		xsd_kva_intf = create_xen_proc_entry("xsd_kva", 0600);
+ 		if (xsd_kva_intf) {
+@@ -1071,14 +1181,15 @@ static int __init xenbus_probe_init(void)
+ 
+ 	/* Register ourselves with the kernel device subsystem */
+ 	device_register(&xenbus_frontend.dev);
++#ifdef CONFIG_XEN
+ 	device_register(&xenbus_backend.dev);
+-
++#endif
+ 	if (!is_initial_xendomain())
+ 		xenbus_probe(NULL);
+ 
+ 	return 0;
+ 
+- err:
++err:
+ 	if (page)
+ 		free_page(page);
+ 
+@@ -1091,10 +1202,16 @@ static int __init xenbus_probe_init(void)
+ 	return err;
+ }
+ 
++#ifdef CONFIG_XEN
+ postcore_initcall(xenbus_probe_init);
+ 
+ MODULE_LICENSE("Dual BSD/GPL");
+-
++#else
++int xenbus_init(void)
++{
++	return xenbus_probe_init();
++}
++#endif
+ 
+ static int is_disconnected_device(struct device *dev, void *data)
+ {
+@@ -1120,10 +1237,55 @@ static int is_disconnected_device(struct device *dev, void *data)
+ 
+ static int exists_disconnected_device(struct device_driver *drv)
+ {
++        if (xenbus_frontend.error)
++                return xenbus_frontend.error;
+ 	return bus_for_each_dev(&xenbus_frontend.bus, NULL, drv,
+ 				is_disconnected_device);
+ }
+ 
++static void xendev_rem_add(struct xenbus_device *dev)
++{
++	struct xendev_rem *new;
++	struct xendev_rem *ptr;
++
++	/*
++	 * do nothing if ide is disabled, since
++	 * may need vbd in this case;
++	 */
++	if (xenpv_notify_ide_disable == 1) {
++		printk("xenpv_notify_ide_disable set \n");
++		return;
++	}
++
++	/* only add vbd devices */
++	if (strncmp(dev->dev.bus_id, "vbd", 3)) 
++		return;
++
++	new = kmalloc(sizeof(*new), GFP_KERNEL);
++	if (new == 0L) {
++		printk(KERN_INFO "XENBUS: failed xendev_rem struct alloc\n");
++		printk(KERN_INFO "- couldn't removed %s from avail dev list\n",
++			dev->nodename);
++		return;
++	}
++	new->xendev = dev;
++
++	spin_lock(&xendev_rem_lock);
++	/* make sure xendev not already on the list */
++	list_for_each_entry(ptr, &xendev_rem_hd.list, list) {
++		struct xenbus_device *xendev = ptr->xendev;
++		if (xendev == dev) {
++			/* ok to have dev added via multiple code paths */
++			spin_unlock(&xendev_rem_lock);
++			kfree(new);
++			return;
++		}
++	}
++	list_add_tail(&new->list, &xendev_rem_hd.list);
++	spin_unlock(&xendev_rem_lock);
++
++	return;
++}
+ static int print_device_status(struct device *dev, void *data)
+ {
+ 	struct xenbus_device *xendev = to_xenbus_device(dev);
+@@ -1137,15 +1299,44 @@ static int print_device_status(struct device *dev, void *data)
+ 		/* Information only: is this too noisy? */
+ 		printk(KERN_INFO "XENBUS: Device with no driver: %s\n",
+ 		       xendev->nodename);
++		xendev_rem_add(xendev);
+ 	} else if (xendev->state != XenbusStateConnected) {
+ 		printk(KERN_WARNING "XENBUS: Timeout connecting "
+ 		       "to device: %s (state %d)\n",
+ 		       xendev->nodename, xendev->state);
++		xendev_rem_add(xendev);
+ 	}
+ 
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_XEN_PV_ON_HVM
++/*
++ * Remove unused xvd's (vbd devices) at bootstrap so anaconda
++ * doesn't have a nutty seeing xvd's that are not connected
++ */
++static void 
++xvd_dev_shutdown(void)
++{
++	struct xendev_rem *ptr;
++	struct xendev_rem *tmp;
++	
++	spin_lock(&xendev_rem_lock);
++	list_for_each_entry_safe(ptr, tmp, &xendev_rem_hd.list, list) {
++		struct device *dev = &ptr->xendev->dev;
++		device_remove_file(dev, &dev_attr_devtype);
++		device_remove_file(dev, &dev_attr_nodename);
++		device_unregister(dev);
++/*		put_device(dev); */
++		/* remove list entry once processed */
++		list_del(&ptr->list);
++		/* free memory of this list entry */
++		kfree(ptr);
++	}
++	spin_unlock(&xendev_rem_lock);
++}
++#endif
++
+ /* We only wait for device setup after most initcalls have run. */
+ static int ready_to_wait_for_devices;
+ 
+@@ -1179,15 +1370,67 @@ static void wait_for_devices(struct xenbus_driver *xendrv)
+ 
+ 	bus_for_each_dev(&xenbus_frontend.bus, NULL, drv,
+ 			 print_device_status);
++
++#ifdef CONFIG_XEN_PV_ON_HVM
++	/* now see about removing unused xvd's */
++	xvd_dev_shutdown();
++#endif
++
+ }
+ 
+ #ifndef MODULE
+ static int __init boot_wait_for_devices(void)
+ {
+-	ready_to_wait_for_devices = 1;
+-	wait_for_devices(NULL);
++	INIT_LIST_HEAD(&xendev_rem_hd.list);
++	if (!xenbus_frontend.error) {
++		ready_to_wait_for_devices = 1;
++		wait_for_devices(NULL);
++	}
+ 	return 0;
+ }
+ 
+ late_initcall(boot_wait_for_devices);
+ #endif
++
++
++/*
++ * xen_ide_cmdline_check_setup() gets called VERY EARLY during initialization,
++ * to scan kernel "command line" strings beginning with "ide0=noprobe" 
++ * or "ide=disable".
++ *
++ * Note: always return 0, so as not to indicate consumption of cmdline,
++ *       enabling ide subsystem to receive & parse it.
++ */
++int __init xen_ide_cmdline_check_setup(char *s)
++{
++
++	/*
++	 * only look at cmdline args starting with 'ide'
++	 */
++	if (strncmp(s, "ide", 3))
++		return 0;
++
++/*	printk(KERN_DEBUG "XENBUS: xen_ide_cmdline_check_setup: %s \n", s);  */
++
++	/* assume disable */
++	xenpv_notify_ide_disable=1;
++	if (strncmp(s, "ide=disable", 11) == 0) { 
++		printk(KERN_INFO "drivers/ide subsystem to be disabled ");
++		printk("-- skipping xvd_dev_shutdown()\n");
++		return 0;
++	}
++
++	if (strncmp(s, "ide0=noprobe", 12) == 0) { 
++		printk(KERN_INFO "ide0 not going to be probed ");
++		printk("-- skipping xvd_dev_shutdown()\n");
++		return 0;
++	}
++	/* re-enable xvd_dev_shutdown if ide isn't disabled */
++	xenpv_notify_ide_disable=0;
++/*	printk(KERN_DEBUG " -- xvd_dev_shutdown to be exec'd \n"); */
++
++	return 0;
++}
++
++/* scan entire kernel cmdline, as ide subys does */
++__setup("", xen_ide_cmdline_check_setup);
+diff --git a/drivers/xen/xenbus/xenbus_xs.c b/drivers/xen/xenbus/xenbus_xs.c
+index 0cb7700..895a7e2 100644
+--- a/drivers/xen/xenbus/xenbus_xs.c
++++ b/drivers/xen/xenbus/xenbus_xs.c
+@@ -45,6 +45,10 @@
+ #include <xen/xenbus.h>
+ #include "xenbus_comms.h"
+ 
++#ifdef HAVE_XEN_PLATFORM_COMPAT_H
++#include <xen/platform-compat.h>
++#endif
++
+ struct xs_stored_msg {
+ 	struct list_head list;
+ 
+@@ -286,9 +290,9 @@ static char *join(const char *dir, const char *name)
+ 	char *buffer;
+ 
+ 	if (strlen(name) == 0)
+-		buffer = kasprintf(GFP_KERNEL, "%s", dir);
++		buffer = kasprintf(GFP_NOIO | __GFP_HIGH, "%s", dir);
+ 	else
+-		buffer = kasprintf(GFP_KERNEL, "%s/%s", dir, name);
++		buffer = kasprintf(GFP_NOIO | __GFP_HIGH, "%s/%s", dir, name);
+ 	return (!buffer) ? ERR_PTR(-ENOMEM) : buffer;
+ }
+ 
+@@ -300,7 +304,7 @@ static char **split(char *strings, unsigned int len, unsigned int *num)
+ 	*num = count_strings(strings, len);
+ 
+ 	/* Transfer to one big alloc for easy freeing. */
+-	ret = kmalloc(*num * sizeof(char *) + len, GFP_KERNEL);
++	ret = kmalloc(*num * sizeof(char *) + len, GFP_NOIO | __GFP_HIGH);
+ 	if (!ret) {
+ 		kfree(strings);
+ 		return ERR_PTR(-ENOMEM);
+@@ -501,7 +505,7 @@ int xenbus_printf(struct xenbus_transaction t,
+ #define PRINTF_BUFFER_SIZE 4096
+ 	char *printf_buffer;
+ 
+-	printf_buffer = kmalloc(PRINTF_BUFFER_SIZE, GFP_KERNEL);
++	printf_buffer = kmalloc(PRINTF_BUFFER_SIZE, GFP_NOIO | __GFP_HIGH);
+ 	if (printf_buffer == NULL)
+ 		return -ENOMEM;
+ 
+@@ -692,6 +696,14 @@ void xs_resume(void)
+ 	up_write(&xs_state.suspend_mutex);
+ }
+ 
++#ifdef CONFIG_XEN_PV_ON_HVM
++void xs_suspend_cancel(void)
++{
++	mutex_unlock(&xs_state.request_mutex);
++	up_write(&xs_state.suspend_mutex);
++}
++#endif
++
+ static int xenwatch_handle_callback(void *data)
+ {
+ 	struct xs_stored_msg *msg = data;
+@@ -751,7 +763,7 @@ static int process_msg(void)
+ 	char *body;
+ 	int err;
+ 
+-	msg = kmalloc(sizeof(*msg), GFP_KERNEL);
++	msg = kmalloc(sizeof(*msg), GFP_NOIO | __GFP_HIGH);
+ 	if (msg == NULL)
+ 		return -ENOMEM;
+ 
+@@ -761,7 +773,7 @@ static int process_msg(void)
+ 		return err;
+ 	}
+ 
+-	body = kmalloc(msg->hdr.len + 1, GFP_KERNEL);
++	body = kmalloc(msg->hdr.len + 1, GFP_NOIO | __GFP_HIGH);
+ 	if (body == NULL) {
+ 		kfree(msg);
+ 		return -ENOMEM;

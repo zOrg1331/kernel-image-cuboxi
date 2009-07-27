@@ -1,0 +1,104 @@
+From: Neil Horman <nhorman@redhat.com>
+Subject: [RHEL 5.1 PATCH] cciss: ignore results from unsent commands on kexec boot
+Date: Fri, 11 May 2007 11:02:40 -0400
+Bugzilla: 239520
+Message-Id: <20070511150240.GD13296@hmsendeavour.rdu.redhat.com>
+Changelog: [scsi] cciss: ignore results from unsent commands on kexec boot
+
+
+Hey-
+	cciss systems can oops on systems during a kexec because they try to
+honor results sent back from the device for commands that were issued prior to
+the kexec reboot.  This patch is a backport of upstream commit:
+7e96287ddc4f42081e18248b6167041c0908004c
+Plus the extra code needed in cciss to ignore results from unsent commands
+during a kexec reboot.  Tested and confirmed to fix bz 239520
+
+Thanks & Regards
+Neil
+
+
+--- linux-2.6.18.noarch/include/linux/init.h.orig	2007-05-10 07:56:14.000000000 -0400
++++ linux-2.6.18.noarch/include/linux/init.h	2007-05-10 08:41:10.000000000 -0400
+@@ -76,6 +76,7 @@
+ 
+ /* Defined in init/main.c */
+ extern char saved_command_line[];
++extern unsigned int reset_devices;
+ 
+ /* used by init/main.c */
+ extern void setup_arch(char **);
+--- linux-2.6.18.noarch/init/main.c.orig	2007-05-10 07:56:14.000000000 -0400
++++ linux-2.6.18.noarch/init/main.c	2007-05-10 08:41:10.000000000 -0400
+@@ -128,6 +128,18 @@
+ static unsigned int max_cpus = NR_CPUS;
+ 
+ /*
++ * If set, this is an indication to the drivers that reset the underlying
++ * device before going ahead with the initialization otherwise driver might
++ * rely on the BIOS and skip the reset operation.
++ *
++ * This is useful if kernel is booting in an unreliable environment.
++ * For ex. kdump situaiton where previous kernel has crashed, BIOS has been
++ * skipped and devices will be in unknown state.
++ */
++unsigned int reset_devices;
++EXPORT_SYMBOL(reset_devices);
++
++/*
+  * Setup routine for controlling SMP activation
+  *
+  * Command-line option of "nosmp" or "maxcpus=0" will disable SMP
+@@ -153,6 +165,14 @@
+ 
+ __setup("maxcpus=", maxcpus);
+ 
++static int __init set_reset_devices(char *str)
++{
++	reset_devices = 1;
++	return 1;
++}
++
++__setup("reset_devices", set_reset_devices);
++
+ static char * argv_init[MAX_INIT_ARGS+2] = { "init", NULL, };
+ char * envp_init[MAX_INIT_ENVS+2] = { "HOME=/", "TERM=linux", NULL, };
+ static const char *panic_later, *panic_param;
+--- linux-2.6.18.noarch/Documentation/kernel-parameters.txt.orig	2007-05-10 07:56:08.000000000 -0400
++++ linux-2.6.18.noarch/Documentation/kernel-parameters.txt	2007-05-10 08:41:09.000000000 -0400
+@@ -1367,6 +1367,9 @@
+ 
+ 	reserve=	[KNL,BUGS] Force the kernel to ignore some iomem area
+ 
++	reset_devices	[KNL] Force drivers to reset the underlying device
++			during initialization.
++
+ 	resume=		[SWSUSP]
+ 			Specify the partition device for software suspend
+ 
+--- linux-2.6.18.noarch/drivers/block/cciss.c.orig	2007-05-10 08:01:50.000000000 -0400
++++ linux-2.6.18.noarch/drivers/block/cciss.c	2007-05-10 08:40:59.000000000 -0400
+@@ -2074,6 +2074,13 @@
+ 		       ctlr, complete);
+ 		/* not much we can do. */
+ #ifdef CONFIG_CISS_SCSI_TAPE
++		/* We might get notification of completion of commands
++		 * which we never issued in this kernel if this boot is
++		 * taking place after previous kernel's crash. Simply
++		 * ignore the commands in this case.
++		 */
++		if (reset_devices)
++			return 0;
+ 		return 1;
+ 	}
+ 
+-- 
+/***************************************************
+ *Neil Horman
+ *Software Engineer
+ *Red Hat, Inc.
+ *nhorman@redhat.com
+ *gpg keyid: 1024D / 0x92A74FA1
+ *http://pgp.mit.edu
+ ***************************************************/
+

@@ -1,0 +1,54 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Wed, 19 Dec 2007 18:28:42 -0500
+Subject: [ia64] altix acpi iosapic warning cleanup
+Message-id: 4769A92A.3060100@redhat.com
+O-Subject: [RHEL5.2 PATCH] Altix ACPI IOSAPIC warning cleanup
+Bugzilla: 246130
+
+BZ#246130
+
+On Altix machines the boot messages currently have an error
+because the ACPI is nonstandard.  Don Zickus filed this bug
+asking for this to be cleaned up in the 5.1 time frame, but
+the patch did not make it upstream in time.  Now it has;
+backported and tested version attached.
+
+# HG changeset patch
+# User George Beshers <gbeshers@sgi.com>
+# Date 1194642580 28800
+# Node ID 3c26c9bf966c26aedc232e3f4abd4393f7de7927
+# Parent e579e6d776dc23c938522c43c857a5ce0a15f9a7
+[IA64] IOSAPIC bogus error cleanup
+
+On Altix (sn2) machines the "Error parsing MADT" message is
+misleading because the lack of IOSAPIC entries is expected.
+
+Since I am sure someone will ask, I have been told that
+the chance of this changing anytime soon is close to nil.
+
+Signed-off-by: George Beshers <gbeshers@sgi.com>
+Signed-off-by: Tony Luck <tony.luck@intel.com>
+
+committer: Tony Luck <tony.luck@intel.com>
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/arch/ia64/kernel/acpi.c b/arch/ia64/kernel/acpi.c
+index d0af057..f2bf59d 100644
+--- a/arch/ia64/kernel/acpi.c
++++ b/arch/ia64/kernel/acpi.c
+@@ -697,9 +697,11 @@ int __init acpi_boot_init(void)
+ 	/* I/O APIC */
+ 
+ 	if (acpi_table_parse_madt
+-	    (ACPI_MADT_IOSAPIC, acpi_parse_iosapic, NR_IOSAPICS) < 1)
+-		printk(KERN_ERR PREFIX
+-		       "Error parsing MADT - no IOSAPIC entries\n");
++	    (ACPI_MADT_IOSAPIC, acpi_parse_iosapic, NR_IOSAPICS) < 1) {
++		if (!ia64_platform_is("sn2"))
++			printk(KERN_ERR PREFIX
++			       "Error parsing MADT - no IOSAPIC entries\n");
++	}
+ 
+ 	/* System-Level Interrupt Routing */
+ 

@@ -1,0 +1,107 @@
+From: John Feeney <jfeeney@redhat.com>
+Subject: [PATCH RHEL-5] BZ219288 /proc/bus/pci/devices speaks LIES
+Date: Mon, 08 Jan 2007 15:52:30 -0500
+Bugzilla: 219288
+Message-Id: <45A2AF0E.5080901@redhat.com>
+Changelog: edac: fix /proc/bus/pci/devices to allow X to start
+
+
+RHBZ#: 219288 /proc/bus/pci/devices speaks LIES
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=219288
+
+Description:
+On specific Dell systems (e.g. PE 700), X fails to start with the following
+errors in /var/log/Xorg.0.log:
+
+(EE) No devices detected.
+
+Fatal server error:
+no screens found
+XIO:  fatal IO error 104 (Connection reset by peer) on X server ":0.0"
+    after 0 requests (0 known processed) with 0 events remaining.
+
+After some investigation, by Ajax, it was determined that the
+/proc/bus/pci/devices file and the /proc/bus/pci/* tree did not match,  
+that is,
+the devices file could list 15 devices while there would be 16 entries 
+in the
+tree. This discrepancy caused X to be unable to find its device, e.g. 
+mach64.
+
+Upon further review, it was determined that the device with the 8086:257e
+pci id was missing from the devices file, hence the investigation lead to
+drivers/edac/i82875p_edac.c where Dell determined that this driver was
+adding an entry to the /proc tree with a call to pci_proc_attach_device()
+but not to the global list of devices, the list that the devices file 
+displays.
+
+RHEL Version Found:
+RHEL5-B2 (2.6.18-1.2767.el5)
+
+The Proposed Fix:
+The pci_bus_add_device function will replace pci_proc_attach_device()
+because pci_bus_add_device() calls pci_proc_attach_device() while
+populating the devices file as well.
+
+In lieu of qualifying the call (with a "if(dev->procent==NULL)"), the
+pci_bus_add_device() will be included in the if statement that detects a 
+hidden
+device. Thus, when the device previously hidden by BIOS is enabled and
+detected, the /proc file system components will be fully implemented 
+with the
+pci_bus_add_device() call.
+
+Note: In the drivers subdirectory, it appears as though i82875p_edac.c
+is the only place outside of the pci directory where 
+pci_proc_attach_device()
+is called while pci_bus_add_device() is called by 17 other drivers. 
+Perhaps,
+this and the fact that pci_proc_attach_device() needed to be externed 
+should
+have been a red flag to the author of the original patch that added this
+functionality.
+
+Also note: even though the original code had pci_proc_attach_device() call
+enveloped in "#ifdef CONFIG_PROC_FS", all other situations in drivers/*
+where pci_bus_add_device() was called did not use this ifdef so it was not
+carried forward.
+
+Upstream Status:
+It  does not  appear as though this fix is upstream at this point in
+time. The offending function was added to 2.6.17-git17 in June of
+2006. This patch will be submitted upstream.
+
+--- linux-2.6.18.noarch/drivers/edac/i82875p_edac.c.dell
++++ linux-2.6.18.noarch/drivers/edac/i82875p_edac.c
+@@ -261,10 +261,6 @@ static void i82875p_check(struct mem_ctl
+ 	i82875p_process_error_info(mci, &info, 1);
+ }
+ 
+-#ifdef CONFIG_PROC_FS
+-extern int pci_proc_attach_device(struct pci_dev *);
+-#endif
+-
+ /* Return 0 on success or 1 on failure. */
+ static int i82875p_setup_overfl_dev(struct pci_dev *pdev,
+ 		struct pci_dev **ovrfl_pdev, void __iomem **ovrfl_window)
+@@ -287,17 +283,12 @@ static int i82875p_setup_overfl_dev(stru
+ 
+ 		if (dev == NULL)
+ 			return 1;
++
++        	pci_bus_add_device(dev);
+ 	}
+ 
+ 	*ovrfl_pdev = dev;
+ 
+-#ifdef CONFIG_PROC_FS
+-	if ((dev->procent == NULL) && pci_proc_attach_device(dev)) {
+-		i82875p_printk(KERN_ERR, "%s(): Failed to attach overflow "
+-			       "device\n", __func__);
+-		return 1;
+-	}
+-#endif  /* CONFIG_PROC_FS */
+ 	if (pci_enable_device(dev)) {
+ 		i82875p_printk(KERN_ERR, "%s(): Failed to enable overflow "
+ 			       "device\n", __func__);
+

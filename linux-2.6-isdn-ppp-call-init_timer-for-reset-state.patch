@@ -1,0 +1,38 @@
+From: Marcel Holtmann <holtmann@redhat.com>
+Subject: [RHEL5 PATCH] Call init_timer() for ISDN PPP CCP reset state timer  (CVE-2006-5749)
+Date: Fri, 22 Dec 2006 17:23:06 +0100
+Bugzilla: 220163
+Message-Id: <458C066A.5050907@redhat.com>
+Changelog: Call init_timer() for ISDN PPP CCP reset state timer
+
+
+Hi,
+
+this is the backported patch proposed for upstream inclusion that fixes 
+CVE-2006-5749. The RHEL5 Bugzilla report is #220163.
+
+Regards
+
+Marcel
+
+[PATCH] Call init_timer() for ISDN PPP CCP reset state timer
+
+The function isdn_ppp_ccp_reset_alloc_state() sets ->timer.function
+and ->timer.data and later on calls add_timer() with no init_timer()
+ever done. The call of init_timer() is needed, because otherwise the
+call of add_timer() will result in an instant death.
+
+This fixes Bugzilla #220163 (CVE-2006-5749)
+
+diff -urN linux-2.6.18.noarch/drivers/isdn/i4l/isdn_ppp.c linux-2.6.18.holtmann/drivers/isdn/i4l/isdn_ppp.c
+--- linux-2.6.18.noarch/drivers/isdn/i4l/isdn_ppp.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18.holtmann/drivers/isdn/i4l/isdn_ppp.c	2006-12-22 17:13:35.000000000 +0100
+@@ -2345,6 +2345,7 @@
+ 		rs->state = CCPResetIdle;
+ 		rs->is = is;
+ 		rs->id = id;
++		init_timer(&rs->timer);
+ 		rs->timer.data = (unsigned long)rs;
+ 		rs->timer.function = isdn_ppp_ccp_timer_callback;
+ 		is->reset->rs[id] = rs;
+

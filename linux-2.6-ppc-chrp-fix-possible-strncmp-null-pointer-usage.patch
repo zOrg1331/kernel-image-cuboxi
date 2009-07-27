@@ -1,0 +1,64 @@
+From: Vitaly Mayatskikh <vmayatsk@redhat.com>
+Date: Sat, 2 Feb 2008 12:43:36 +0100
+Subject: [ppc] chrp: fix possible strncmp NULL pointer usage
+Message-id: m363x7a8if.fsf@dhcp-lab-230.englab.brq.redhat.com
+O-Subject: Re: [RHEL-5.2 PATCH] BZ396831 Fix possible NULL pointer dereference inside of strncmp() if of_get_property() failed. (Oops possible). [rhel-5.2]
+Bugzilla: 396831
+
+BZ#396831
+
+https://bugzilla.redhat.com/show_bug.cgi?id=396831
+
+Description:
+============
+This patch fixes possible NULL pointer dereference inside of
+strncmp() when of_get_property() fail to find the "model"
+property. Similar checks exist in sources for other ppc platforms,
+but missed for the case of IBM CHRP.
+
+Test status of the patch:
+=========================
+Patched kernel was built without errors
+
+diff --git a/arch/powerpc/platforms/chrp/setup.c b/arch/powerpc/platforms/chrp/setup.c
+index 9c08ff3..f4def08 100644
+--- a/arch/powerpc/platforms/chrp/setup.c
++++ b/arch/powerpc/platforms/chrp/setup.c
+@@ -97,11 +97,15 @@ void chrp_show_cpuinfo(struct seq_file *m)
+ 	int i, sdramen;
+ 	unsigned int t;
+ 	struct device_node *root;
+-	const char *model = "";
++	const char *model = NULL;
+ 
+ 	root = find_path_device("/");
+ 	if (root)
+ 		model = get_property(root, "model", NULL);
++
++	if (!model)
++		model = "";
++
+ 	seq_printf(m, "machine\t\t: CHRP %s\n", model);
+ 
+ 	/* longtrail (goldengate) stuff */
+@@ -191,10 +195,17 @@ static void __init sio_fixup_irq(const char *name, u8 device, u8 level,
+ 
+ static void __init sio_init(void)
+ {
+-	struct device_node *root;
++	struct device_node *root = find_path_device("/");
++	const char *model;
++
++	if (!root)
++		return;
++
++	model = get_property(root, model, NULL);
++	if (!model)
++		return;
+ 
+-	if ((root = find_path_device("/")) &&
+-	    !strncmp(get_property(root, "model", NULL), "IBM,LongTrail", 13)) {
++	if (!strncmp(model, "IBM,LongTrail", 13)) {
+ 		/* logical device 0 (KBC/Keyboard) */
+ 		sio_fixup_irq("keyboard", 0, 1, 2);
+ 		/* select logical device 1 (KBC/Mouse) */

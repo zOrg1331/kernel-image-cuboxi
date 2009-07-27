@@ -1,0 +1,293 @@
+Date: Mon, 9 Oct 2006 03:03:32 -0400
+From: Jeff Garzik <jgarzik@redhat.com>
+Subject: [RHEL5 PATCH 1/2] block & scsi: fix shared tag maps
+
+
+Update shared TCQ map support, which was always fundamentally incomplete
+and broken.  From upstream.
+
+The only publicly visible change is an added struct member to Scsi_Host.
+
+Required for patch #2, which addresses BZ#209179.
+
+
+ block/ll_rw_blk.c        |  122 +++++++++++++++++++++++++++++++++++++----------
+ drivers/scsi/hosts.c     |    3 +
+ include/linux/blkdev.h   |    2 
+ include/scsi/scsi_host.h |    7 ++
+ include/scsi/scsi_tcq.h  |   15 +++++
+ 5 files changed, 123 insertions(+), 26 deletions(-)
+
+diff -urN linux-2.6.18.x86_64/block/ll_rw_blk.c linux-2.6.18.x86_64.stex1/block/ll_rw_blk.c
+--- linux-2.6.18.x86_64/block/ll_rw_blk.c	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.x86_64.stex1/block/ll_rw_blk.c	2006-10-08 21:28:47.000000000 -0400
+@@ -848,21 +848,18 @@
+ EXPORT_SYMBOL(blk_queue_find_tag);
+ 
+ /**
+- * __blk_queue_free_tags - release tag maintenance info
+- * @q:  the request queue for the device
++ * __blk_free_tags - release a given set of tag maintenance info
++ * @bqt:	the tag map to free
+  *
+- *  Notes:
+- *    blk_cleanup_queue() will take care of calling this function, if tagging
+- *    has been used. So there's no need to call this directly.
+- **/
+-static void __blk_queue_free_tags(request_queue_t *q)
++ * Tries to free the specified @bqt@.  Returns true if it was
++ * actually freed and false if there are still references using it
++ */
++static int __blk_free_tags(struct blk_queue_tag *bqt)
+ {
+-	struct blk_queue_tag *bqt = q->queue_tags;
++	int retval;
+ 
+-	if (!bqt)
+-		return;
+-
+-	if (atomic_dec_and_test(&bqt->refcnt)) {
++	retval = atomic_dec_and_test(&bqt->refcnt);
++	if (retval) {
+ 		BUG_ON(bqt->busy);
+ 		BUG_ON(!list_empty(&bqt->busy_list));
+ 
+@@ -873,12 +870,49 @@
+ 		bqt->tag_map = NULL;
+ 
+ 		kfree(bqt);
++
+ 	}
+ 
++	return retval;
++}
++
++/**
++ * __blk_queue_free_tags - release tag maintenance info
++ * @q:  the request queue for the device
++ *
++ *  Notes:
++ *    blk_cleanup_queue() will take care of calling this function, if tagging
++ *    has been used. So there's no need to call this directly.
++ **/
++static void __blk_queue_free_tags(request_queue_t *q)
++{
++	struct blk_queue_tag *bqt = q->queue_tags;
++
++	if (!bqt)
++		return;
++
++	__blk_free_tags(bqt);
++
+ 	q->queue_tags = NULL;
+ 	q->queue_flags &= ~(1 << QUEUE_FLAG_QUEUED);
+ }
+ 
++
++/**
++ * blk_free_tags - release a given set of tag maintenance info
++ * @bqt:	the tag map to free
++ *
++ * For externally managed @bqt@ frees the map.  Callers of this
++ * function must guarantee to have released all the queues that
++ * might have been using this tag map.
++ */
++void blk_free_tags(struct blk_queue_tag *bqt)
++{
++	if (unlikely(!__blk_free_tags(bqt)))
++		BUG();
++}
++EXPORT_SYMBOL(blk_free_tags);
++
+ /**
+  * blk_queue_free_tags - release tag maintenance info
+  * @q:  the request queue for the device
+@@ -901,7 +935,7 @@
+ 	unsigned long *tag_map;
+ 	int nr_ulongs;
+ 
+-	if (depth > q->nr_requests * 2) {
++	if (q && depth > q->nr_requests * 2) {
+ 		depth = q->nr_requests * 2;
+ 		printk(KERN_ERR "%s: adjusted depth to %d\n",
+ 				__FUNCTION__, depth);
+@@ -927,6 +961,38 @@
+ 	return -ENOMEM;
+ }
+ 
++static struct blk_queue_tag *__blk_queue_init_tags(struct request_queue *q,
++						   int depth)
++{
++	struct blk_queue_tag *tags;
++
++	tags = kmalloc(sizeof(struct blk_queue_tag), GFP_ATOMIC);
++	if (!tags)
++		goto fail;
++
++	if (init_tag_map(q, tags, depth))
++		goto fail;
++
++	INIT_LIST_HEAD(&tags->busy_list);
++	tags->busy = 0;
++	atomic_set(&tags->refcnt, 1);
++	return tags;
++fail:
++	kfree(tags);
++	return NULL;
++}
++
++/**
++ * blk_init_tags - initialize the tag info for an external tag map
++ * @depth:	the maximum queue depth supported
++ * @tags: the tag to use
++ **/
++struct blk_queue_tag *blk_init_tags(int depth)
++{
++	return __blk_queue_init_tags(NULL, depth);
++}
++EXPORT_SYMBOL(blk_init_tags);
++
+ /**
+  * blk_queue_init_tags - initialize the queue tag info
+  * @q:  the request queue for the device
+@@ -941,16 +1007,10 @@
+ 	BUG_ON(tags && q->queue_tags && tags != q->queue_tags);
+ 
+ 	if (!tags && !q->queue_tags) {
+-		tags = kmalloc(sizeof(struct blk_queue_tag), GFP_ATOMIC);
+-		if (!tags)
+-			goto fail;
++		tags = __blk_queue_init_tags(q, depth);
+ 
+-		if (init_tag_map(q, tags, depth))
++		if (!tags)
+ 			goto fail;
+-
+-		INIT_LIST_HEAD(&tags->busy_list);
+-		tags->busy = 0;
+-		atomic_set(&tags->refcnt, 1);
+ 	} else if (q->queue_tags) {
+ 		if ((rc = blk_queue_resize_tags(q, depth)))
+ 			return rc;
+@@ -1002,6 +1062,13 @@
+ 	}
+ 
+ 	/*
++	 * Currently cannot replace a shared tag map with a new
++	 * one, so error out if this is the case
++	 */
++	if (atomic_read(&bqt->refcnt) != 1)
++		return -EBUSY;
++
++	/*
+ 	 * save the old state info, so we can copy it back
+ 	 */
+ 	tag_index = bqt->tag_index;
+@@ -1101,11 +1168,16 @@
+ 		BUG();
+ 	}
+ 
+-	tag = find_first_zero_bit(bqt->tag_map, bqt->max_depth);
+-	if (tag >= bqt->max_depth)
+-		return 1;
++	/*
++	 * Protect against shared tag maps, as we may not have exclusive
++	 * access to the tag map.
++	 */
++	do {
++		tag = find_first_zero_bit(bqt->tag_map, bqt->max_depth);
++		if (tag >= bqt->max_depth)
++			return 1;
+ 
+-	__set_bit(tag, bqt->tag_map);
++	} while (test_and_set_bit(tag, bqt->tag_map));
+ 
+ 	rq->flags |= REQ_QUEUED;
+ 	rq->tag = tag;
+diff -urN linux-2.6.18.x86_64/drivers/scsi/hosts.c linux-2.6.18.x86_64.stex1/drivers/scsi/hosts.c
+--- linux-2.6.18.x86_64/drivers/scsi/hosts.c	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.x86_64.stex1/drivers/scsi/hosts.c	2006-10-08 21:28:45.000000000 -0400
+@@ -265,6 +265,9 @@
+ 		destroy_workqueue(shost->work_q);
+ 
+ 	scsi_destroy_command_freelist(shost);
++	if (shost->bqt)
++		blk_free_tags(shost->bqt);
++
+ 	kfree(shost->shost_data);
+ 
+ 	if (parent)
+diff -urN linux-2.6.18.x86_64/include/linux/blkdev.h linux-2.6.18.x86_64.stex1/include/linux/blkdev.h
+--- linux-2.6.18.x86_64/include/linux/blkdev.h	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.x86_64.stex1/include/linux/blkdev.h	2006-10-08 21:28:46.000000000 -0400
+@@ -746,6 +746,8 @@
+ extern int blk_queue_resize_tags(request_queue_t *, int);
+ extern void blk_queue_invalidate_tags(request_queue_t *);
+ extern long blk_congestion_wait(int rw, long timeout);
++extern struct blk_queue_tag *blk_init_tags(int);
++extern void blk_free_tags(struct blk_queue_tag *);
+ 
+ extern void blk_rq_bio_prep(request_queue_t *, struct request *, struct bio *);
+ extern int blkdev_issue_flush(struct block_device *, sector_t *);
+diff -urN linux-2.6.18.x86_64/include/scsi/scsi_host.h linux-2.6.18.x86_64.stex1/include/scsi/scsi_host.h
+--- linux-2.6.18.x86_64/include/scsi/scsi_host.h	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.x86_64.stex1/include/scsi/scsi_host.h	2006-10-08 21:28:45.000000000 -0400
+@@ -16,6 +16,7 @@
+ struct Scsi_Host;
+ struct scsi_host_cmd_pool;
+ struct scsi_transport_template;
++struct blk_queue_tags;
+ 
+ 
+ /*
+@@ -466,6 +467,12 @@
+ 	struct scsi_transport_template *transportt;
+ 
+ 	/*
++	 * area to keep a shared tag map (if needed, will be
++	 * NULL if not)
++	 */
++	struct blk_queue_tag	*bqt;
++
++	/*
+ 	 * The following two fields are protected with host_lock;
+ 	 * however, eh routines can safely access during eh processing
+ 	 * without acquiring the lock.
+diff -urN linux-2.6.18.x86_64/include/scsi/scsi_tcq.h linux-2.6.18.x86_64.stex1/include/scsi/scsi_tcq.h
+--- linux-2.6.18.x86_64/include/scsi/scsi_tcq.h	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.x86_64.stex1/include/scsi/scsi_tcq.h	2006-10-08 21:28:48.000000000 -0400
+@@ -4,6 +4,7 @@
+ #include <linux/blkdev.h>
+ #include <scsi/scsi_cmnd.h>
+ #include <scsi/scsi_device.h>
++#include <scsi/scsi_host.h>
+ 
+ 
+ #define MSG_SIMPLE_TAG	0x20
+@@ -66,7 +67,8 @@
+ 		return;
+ 
+ 	if (!blk_queue_tagged(sdev->request_queue))
+-		blk_queue_init_tags(sdev->request_queue, depth, NULL);
++		blk_queue_init_tags(sdev->request_queue, depth,
++				    sdev->host->bqt);
+ 
+ 	scsi_adjust_queue_depth(sdev, scsi_get_tag_type(sdev), depth);
+ }
+@@ -131,4 +133,15 @@
+ 	return sdev->current_cmnd;
+ }
+ 
++/**
++ * scsi_init_shared_tag_map - create a shared tag map
++ * @shost:	the host to share the tag map among all devices
++ * @depth:	the total depth of the map
++ */
++static inline int scsi_init_shared_tag_map(struct Scsi_Host *shost, int depth)
++{
++	shost->bqt = blk_init_tags(depth);
++	return shost->bqt ? 0 : -ENOMEM;
++}
++
+ #endif /* _SCSI_SCSI_TCQ_H */
+

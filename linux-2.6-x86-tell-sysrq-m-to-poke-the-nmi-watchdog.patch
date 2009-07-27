@@ -1,0 +1,55 @@
+From: Konrad Rzeszutek <konradr@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] BZ# 229563: LTC32322-HTS Info test causes 4 Node 3950 to lock up
+Date: Sat, 24 Mar 2007 09:49:29 -0400
+Bugzilla: 229563
+Message-Id: <20070324134929.GA23210@localhost.localdomain>
+Changelog: [x86] tell sysrq-m to poke the nmi watchdog
+
+
+> Have you timed sysrq-m before/after the patch?
+
+I did. The original proposed patch is horribly slow. It adds about 156% performance degradation.
+
+
+> >+			/* this loop can take a while with 256 GB and 4k 
+> >pages
+> >+			   so update the NMI watchdog */
+> >+			touch_nmi_watchdog();
+> > 			page = pfn_to_page(pgdat->node_start_pfn + i);
+> > 			total++;
+> > 			if (PageReserved(page))
+> 
+> I'm concerned that touch_nmi_watchdog() for every single page might be a 
+> bit expensive.  If the difference is negligible, it's fine as it is.  If 
+> it's a substantial difference, we might want to wrap it in something 
+> like if(unlikely(i & ~(MAX_ORDER_NR_PAGES - 1) == 0)).  If we can't scan 
+
+I am not sure how that would work, as it would still touch every page after
+the first 1024. I think you meant something along these lines:
+
+diff --git a/arch/x86_64/mm/init.c b/arch/x86_64/mm/init.c
+index ec31534..fd7f8a6 100644
+--- a/arch/x86_64/mm/init.c
++++ b/arch/x86_64/mm/init.c
+@@ -26,6 +26,7 @@ #include <linux/poison.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/module.h>
+ #include <linux/memory_hotplug.h>
++#include <linux/nmi.h>
+ 
+ #include <asm/processor.h>
+ #include <asm/system.h>
+@@ -72,6 +73,11 @@ void show_mem(void)
+ 
+ 	for_each_online_pgdat(pgdat) {
+                for (i = 0; i < pgdat->node_spanned_pages; ++i) {
++			/* this loop can take a while with 256 GB and 4k pages
++			   so update the NMI watchdog */
++			if (unlikely(i % MAX_ORDER_NR_PAGES == 0)) {
++				touch_nmi_watchdog();
++			}
+ 			page = pfn_to_page(pgdat->node_start_pfn + i);
+ 			total++;
+ 			if (PageReserved(page))
+
+

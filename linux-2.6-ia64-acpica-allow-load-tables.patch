@@ -1,0 +1,51 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Thu, 30 Aug 2007 15:06:09 +0800
+Subject: [ia64] ACPICA: allow Load tables
+Message-id: 46D66C61.7040505@redhat.com
+O-Subject: [RHEL 5.2 PATCH] bz 247596 ACPICA: allow Load(OEMx) tables
+Bugzilla: 247596
+
+bz 247596
+
+Description of problem:
+
+HP and Hitachi machines have been implemented with SSDT's
+that use the "OEMx" signatures.  But upon Load, ACPICA is rejecting
+these tables because they are not using the "SSDT" signature.
+
+ACPI Error (tbinstal-0134): Table has invalid signature [OEMx], must be SSDT...
+
+Upstream status:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=0efabac9b7c8535eeb199d2f16d3eb44dc4761b2
+
+The following back port is tested by me on tiger4 to prevent regression.It works.
+But I don't have machine that has been implemented with SSDT's that use the "OEMx"..
+So please give it your review, test and ACK.
+
+Thanks,
+Luming
+
+Acked-by: Brian Maly <bmaly@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/drivers/acpi/executer/exconfig.c b/drivers/acpi/executer/exconfig.c
+index c8341fa..f94e569 100644
+--- a/drivers/acpi/executer/exconfig.c
++++ b/drivers/acpi/executer/exconfig.c
+@@ -418,12 +418,13 @@ acpi_ex_load_op(union acpi_operand_object *obj_desc,
+ 		return_ACPI_STATUS(AE_AML_OPERAND_TYPE);
+ 	}
+ 
+-	/* The table must be either an SSDT or a PSDT */
++	/* The table must be either an SSDT or a PSDT or an OEMx */
+ 
+ 	if ((!ACPI_COMPARE_NAME(table_ptr->signature, PSDT_SIG)) &&
+-	    (!ACPI_COMPARE_NAME(table_ptr->signature, SSDT_SIG))) {
++	    (!ACPI_COMPARE_NAME(table_ptr->signature, SSDT_SIG)) &&
++		(strncmp(table_ptr->signature, "OEM", 3))) {
+ 		ACPI_ERROR((AE_INFO,
+-			    "Table has invalid signature [%4.4s], must be SSDT or PSDT",
++			    "Table has invalid signature [%4.4s], must be SSDT, PSDT or OEMx",
+ 			    table_ptr->signature));
+ 		status = AE_BAD_SIGNATURE;
+ 		goto cleanup;

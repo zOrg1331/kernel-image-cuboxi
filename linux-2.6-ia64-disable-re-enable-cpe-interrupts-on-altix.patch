@@ -1,0 +1,68 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Thu, 31 Jul 2008 15:34:05 -0400
+Subject: [IA64] Disable/re-enable CPE interrupts on Altix
+Message-id: 20080731192810.4411.18140.sendpatchset@dhcp-100-2-194.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH 17/19] [IA64] Disable/re-enable CPE interrupts on Altix
+Bugzilla: 455308
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+[IA64] Disable/re-enable CPE interrupts on Altix
+
+BZ#455308
+
+Upstream: http://git.kernel.org/?p=linux/kernel/git/aegl/linux-2.6.git;a=commitdiff;h=1f3b6045f783ee394076ad6dba2d72ecaaecd243
+
+When the CPE handler encounters too many CPEs (such as a solid single
+bit memory error), it sets up a polling timer and disables the CPE
+interrupt (to avoid excessive overhead logging the stream of single
+bit errors).  disable_irq_nosync() calls chip->disable() to provide
+a chipset specifiec interface for disabling the interrupt.  This patch
+adds the Altix specific support to disable and re-enable the CPE interrupt.
+
+Signed-off-by: Russ Anderson (rja@sgi.com)
+
+diff --git a/arch/ia64/kernel/mca.c b/arch/ia64/kernel/mca.c
+index 1350dd8..c666582 100644
+--- a/arch/ia64/kernel/mca.c
++++ b/arch/ia64/kernel/mca.c
+@@ -568,7 +568,7 @@ out:
+  *  Outputs
+  *      None
+  */
+-static void
++void
+ ia64_mca_register_cpev (int cpev)
+ {
+ 	/* Register the CPE interrupt vector with SAL */
+diff --git a/arch/ia64/sn/kernel/irq.c b/arch/ia64/sn/kernel/irq.c
+index bf67369..5654bfc 100644
+--- a/arch/ia64/sn/kernel/irq.c
++++ b/arch/ia64/sn/kernel/irq.c
+@@ -5,7 +5,7 @@
+  * License.  See the file "COPYING" in the main directory of this archive
+  * for more details.
+  *
+- * Copyright (c) 2000-2006 Silicon Graphics, Inc.  All Rights Reserved.
++ * Copyright (c) 2000-2007 Silicon Graphics, Inc.  All Rights Reserved.
+  */
+ 
+ #include <linux/irq.h>
+@@ -68,12 +68,18 @@ static void sn_shutdown_irq(unsigned int irq)
+ {
+ }
+ 
++extern void ia64_mca_register_cpev(int);
++
+ static void sn_disable_irq(unsigned int irq)
+ {
++	if (irq == local_vector_to_irq(IA64_CPE_VECTOR))
++		ia64_mca_register_cpev(0);
+ }
+ 
+ static void sn_enable_irq(unsigned int irq)
+ {
++	if (irq == local_vector_to_irq(IA64_CPE_VECTOR))
++		ia64_mca_register_cpev(irq);
+ }
+ 
+ static void sn_ack_irq(unsigned int irq)

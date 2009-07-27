@@ -1,0 +1,163 @@
+From: Ed Pollard <epollard@redhat.com>
+Date: Thu, 10 Jan 2008 16:07:38 -0500
+Subject: [net] IPV6 SNMP counters fix
+Message-id: 4786891A.1040104@redhat.com
+O-Subject: [RHE 5.2 PATCH] RHBZ#421401 IPV6 SNMP counters fix
+Bugzilla: 421401
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=421401
+
+Description:
+------------
+The feature request patch at LTC Bugzilla #37879, RedHat Bugzilla #253278,
+"Kernel enhancements to support IPv6 requirements to meet US DoD and US
+Federal Govt. Mandates" has some minor bugs in some of the SNMP statistics where the
+following counters are not properly updated:
+
+ IPv4 - InNoRoutes
+ IPv4 - OutNoRoutes
+ IPv6 - OutNoRoutes
+ Icmp6OutRouterSolicits
+ Icmp6OutNeighborSolicits
+ Icmp6OutNeighborAdvertisements
+
+RHEL Version Found:
+------------------
+NA  Fix for Feature going into 5.2
+
+kABI Status:
+------------
+No symbols were harmed.
+
+Upstream Status:
+----------------
+I checked and this is in upstream 2.6.24.rc7
+
+Test Status:
+------------
+The SNMP counters do move after the patched kernel is applied.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-58 and applies cleanly to 2.6.18-65, and 2.6.18-66.
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Herbert Xu <herbert.xu@redhat.com>
+Acked-by: Neil Horman <nhorman@redhat.com>
+
+diff --git a/net/ipv4/datagram.c b/net/ipv4/datagram.c
+index 5836e1e..9105aeb 100644
+--- a/net/ipv4/datagram.c
++++ b/net/ipv4/datagram.c
+@@ -50,8 +50,12 @@ int ip4_datagram_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
+ 			       RT_CONN_FLAGS(sk), oif,
+ 			       sk->sk_protocol,
+ 			       inet->sport, usin->sin_port, sk, 1);
+-	if (err)
++	if (err) {
++		if (err == -ENETUNREACH)
++			IP_INC_STATS_BH(IPSTATS_MIB_OUTNOROUTES);
+ 		return err;
++	}
++
+ 	if ((rt->rt_flags & RTCF_BROADCAST) && !sock_flag(sk, SOCK_BROADCAST)) {
+ 		ip_rt_put(rt);
+ 		return -EACCES;
+diff --git a/net/ipv4/route.c b/net/ipv4/route.c
+index f722729..5fd3ed0 100644
+--- a/net/ipv4/route.c
++++ b/net/ipv4/route.c
+@@ -1354,6 +1354,7 @@ static int ip_error(struct sk_buff *skb)
+ 			break;
+ 		case ENETUNREACH:
+ 			code = ICMP_NET_UNREACH;
++			IP_INC_STATS_BH(IPSTATS_MIB_INNOROUTES);
+ 			break;
+ 		case EACCES:
+ 			code = ICMP_PKT_FILTERED;
+@@ -2056,6 +2057,8 @@ no_route:
+ 	RT_CACHE_STAT_INC(in_no_route);
+ 	spec_dst = inet_select_addr(dev, 0, RT_SCOPE_UNIVERSE);
+ 	res.type = RTN_UNREACHABLE;
++	if (err == -ESRCH)
++		err = -ENETUNREACH;
+ 	goto local_input;
+ 
+ 	/*
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index 35a6e26..4f58a8d 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -180,8 +180,11 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
+ 			       RT_CONN_FLAGS(sk), sk->sk_bound_dev_if,
+ 			       IPPROTO_TCP,
+ 			       inet->sport, usin->sin_port, sk, 1);
+-	if (tmp < 0)
++	if (tmp < 0) {
++		if (tmp == -ENETUNREACH)
++			IP_INC_STATS_BH(IPSTATS_MIB_OUTNOROUTES);
+ 		return tmp;
++	}
+ 
+ 	if (rt->rt_flags & (RTCF_MULTICAST | RTCF_BROADCAST)) {
+ 		ip_rt_put(rt);
+diff --git a/net/ipv4/udp.c b/net/ipv4/udp.c
+index a6cf50a..0bf7923 100644
+--- a/net/ipv4/udp.c
++++ b/net/ipv4/udp.c
+@@ -605,8 +605,11 @@ int udp_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
+ 						 .dport = dport } } };
+ 		security_sk_classify_flow(sk, &fl);
+ 		err = ip_route_output_flow(&rt, &fl, sk, 1);
+-		if (err)
++		if (err) {
++			if (err == -ENETUNREACH)
++				IP_INC_STATS_BH(IPSTATS_MIB_OUTNOROUTES);
+ 			goto out;
++		}
+ 
+ 		err = -EACCES;
+ 		if ((rt->rt_flags & RTCF_BROADCAST) &&
+diff --git a/net/ipv6/ip6_output.c b/net/ipv6/ip6_output.c
+index 9f647f2..5770ba7 100644
+--- a/net/ipv6/ip6_output.c
++++ b/net/ipv6/ip6_output.c
+@@ -847,6 +847,8 @@ static int ip6_dst_lookup_tail(struct sock *sk,
+ 	return 0;
+ 
+ out_err_release:
++	if (err == -ENETUNREACH)
++		IP6_INC_STATS_BH(NULL, IPSTATS_MIB_OUTNOROUTES);
+ 	dst_release(*dst);
+ 	*dst = NULL;
+ 	return err;
+diff --git a/net/ipv6/ndisc.c b/net/ipv6/ndisc.c
+index dacb4c2..f63001f 100644
+--- a/net/ipv6/ndisc.c
++++ b/net/ipv6/ndisc.c
+@@ -518,6 +518,7 @@ static void ndisc_send_na(struct net_device *dev, struct neighbour *neigh,
+ 	IP6_INC_STATS(idev, IPSTATS_MIB_OUTREQUESTS);
+ 	err = NF_HOOK(PF_INET6, NF_IP6_LOCAL_OUT, skb, NULL, dst->dev, dst_output);
+ 	if (!err) {
++		ICMP6MSGOUT_INC_STATS(idev, NDISC_NEIGHBOUR_ADVERTISEMENT);
+ 		ICMP6_INC_STATS(idev, ICMP6_MIB_OUTMSGS);
+ 	}
+ 
+@@ -602,6 +603,7 @@ void ndisc_send_ns(struct net_device *dev, struct neighbour *neigh,
+ 	IP6_INC_STATS(idev, IPSTATS_MIB_OUTREQUESTS);
+ 	err = NF_HOOK(PF_INET6, NF_IP6_LOCAL_OUT, skb, NULL, dst->dev, dst_output);
+ 	if (!err) {
++		ICMP6MSGOUT_INC_STATS(idev, NDISC_NEIGHBOUR_SOLICITATION);
+ 		ICMP6_INC_STATS(idev, ICMP6_MIB_OUTMSGS);
+ 	}
+ 
+@@ -696,6 +698,7 @@ void ndisc_send_rs(struct net_device *dev, struct in6_addr *saddr,
+ 	IP6_INC_STATS(idev, IPSTATS_MIB_OUTREQUESTS);
+ 	err = NF_HOOK(PF_INET6, NF_IP6_LOCAL_OUT, skb, NULL, dst->dev, dst_output);
+ 	if (!err) {
++		ICMP6MSGOUT_INC_STATS(idev, NDISC_ROUTER_SOLICITATION);
+ 		ICMP6_INC_STATS(idev, ICMP6_MIB_OUTMSGS);
+ 	}
+ 

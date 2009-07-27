@@ -1,0 +1,136 @@
+From: Aristeu Rozanski <aris@redhat.com>
+Date: Wed, 20 Aug 2008 13:16:57 -0400
+Subject: [x86_64] nmi: disable LAPIC/IO APIC on unknown_nmi_panic
+Message-id: 20080820171649.129332000@redhat.com
+O-Subject: [RHEL5.3 PATCH 11/25] nmi: disable LAPIC and IO APIC NMIs on unknown_nmi_panic
+Bugzilla: 447618
+
+https://bugzilla.redhat.com/show_bug.cgi?id=447618
+
+in RHEL-5 (and upstream), when unknown_nmi_panic is set, the nmi watchdog is
+disabled. this is necessary for IO APIC NMI watchdog because there's no way to
+determine if the NMI was triggered by the watchdog or not.
+
+upstream: the IO APIC enable/disable patch was submitted upstream, but not merged
+          yet.
+
+diff --git a/arch/x86_64/kernel/nmi.c b/arch/x86_64/kernel/nmi.c
+index 05db057..671531f 100644
+--- a/arch/x86_64/kernel/nmi.c
++++ b/arch/x86_64/kernel/nmi.c
+@@ -85,23 +85,6 @@ static __init void nmi_cpu_busy(void *data)
+ }
+ #endif
+ 
+-static unsigned int adjust_for_32bit_ctr(unsigned int hz)
+-{
+-	unsigned int retval = hz;
+-
+-	/*
+-	 * On Intel CPUs with ARCH_PERFMON only 32 bits in the counter
+-	 * are writable, with higher bits sign extending from bit 31.
+-	 * So, we can only program the counter with 31 bit values and
+-	 * 32nd bit should be 1, for 33.. to be 1.
+-	 * Find the appropriate nmi_hz
+-	 */
+-	if ((((u64)cpu_khz * 1000) / retval) > 0x7fffffffULL) {
+-		retval = ((u64)cpu_khz * 1000) / 0x7fffffffUL + 1;
+-	}
+-	return retval;
+-}
+-
+ int __init check_nmi_watchdog (void)
+ {
+ 	int *counts;
+@@ -279,19 +262,6 @@ late_initcall(init_lapic_nmi_sysfs);
+ 
+ #endif	/* CONFIG_PM */
+ 
+-/*
+- * Activate the NMI watchdog via the local APIC.
+- * Original code written by Keith Owens.
+- */
+-
+-static void clear_msr_range(unsigned int base, unsigned int n)
+-{
+-	unsigned int i;
+-
+-	for(i = 0; i < n; ++i)
+-		wrmsr(base+i, 0, 0);
+-}
+-
+ void setup_apic_nmi_watchdog(void)
+ {
+ 	if (__get_cpu_var(wd_enabled) == 1)
+@@ -327,6 +297,46 @@ void stop_apic_nmi_watchdog(void)
+ 		nmi_active = 0;
+ }
+ 
++static void __acpi_nmi_enable(void *__unused)
++{
++	if (__get_cpu_var(wd_enabled) == 1)
++		return;
++
++	__get_cpu_var(wd_enabled) = 1;
++	if (atomic_inc_return(&nmi_watchdog_active) == 1)
++		nmi_active = 1;
++	apic_write(APIC_LVT0, APIC_DM_NMI);
++}
++
++/*
++ * Enable timer based NMIs on all CPUs:
++ */
++void acpi_nmi_enable(void)
++{
++	if (atomic_read(&nmi_watchdog_active) == 0)
++		on_each_cpu(__acpi_nmi_enable, NULL, 0, 1);
++	touch_nmi_watchdog();
++}
++
++static void __acpi_nmi_disable(void *__unused)
++{
++	if (__get_cpu_var(wd_enabled) == 0)
++		return;
++	apic_write(APIC_LVT0, APIC_DM_NMI | APIC_LVT_MASKED);
++	__get_cpu_var(wd_enabled) = 0;
++	if (atomic_dec_and_test(&nmi_watchdog_active))
++		nmi_active = 0;
++}
++
++/*
++ * Disable timer based NMIs on all CPUs:
++ */
++void acpi_nmi_disable(void)
++{
++	if (atomic_read(&nmi_watchdog_active))
++		on_each_cpu(__acpi_nmi_disable, NULL, 0, 1);
++}
++
+ /*
+  * the best way to detect whether a CPU has a 'hard lockup' problem
+  * is to check it's local APIC timer IRQ counts. If they are not
+@@ -484,13 +494,17 @@ int proc_unknown_nmi_panic(struct ctl_table *table, int write, struct file *file
+ 	if (!!old_state == !!unknown_nmi_panic)
+ 		return 0;
+ 
+-	if (unknown_nmi_panic) {
+-		if (reserve_lapic_nmi() < 0) {
+-			unknown_nmi_panic = 0;
+-			return -EBUSY;
+-		}
+-	} else
+-		release_lapic_nmi();
++ 	if (unknown_nmi_panic) {
++		if (nmi_watchdog == NMI_LOCAL_APIC)
++			disable_lapic_nmi_watchdog();
++		else if (nmi_watchdog == NMI_IO_APIC)
++			acpi_nmi_disable();
++ 	} else {
++		if (nmi_watchdog == NMI_LOCAL_APIC)
++			enable_lapic_nmi_watchdog();
++		else if (nmi_watchdog == NMI_IO_APIC)
++			acpi_nmi_enable();
++ 	}
+ 
+ 	return 0;
+ }

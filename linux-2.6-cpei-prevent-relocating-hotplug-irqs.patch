@@ -1,0 +1,51 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5 PATCH] CPEI gets warning at kernel/irq/migration.c:27/move_native_irq()
+Date: Mon, 18 Dec 2006 11:45:25 -0500
+Bugzilla: 218520
+Message-Id: <4586C5A5.1050603@redhat.com>
+Changelog: CPEI - prevent relocating hotplug irqs
+
+
+BZ218520
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=218520
+
+This is a backported upstream patch to suppress unnecessary
+warnings on CPEI.
+
+CPEI is PER_CPU irq but it has set_affinity handler for a special
+use (hotplug).  Function irq_affinity_write_proc() only checks
+the existence of handler to determine whether the irq can be
+relocated.
+
+Therefore this function allows users (ex. irqbalance) to attempt
+to move CPEI which is not relocatable PER_CPU irq.  Once such
+an attempt is done with CPEI, every CPEI gets warnings because
+it hits WARN_ON() at end of every interruption process.
+
+Thanks,
+Kei
+
+
+
+
+---
+
+ linux-2.6.18-1.2878.el5-kei/kernel/irq/proc.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff -puN kernel/irq/proc.c~bz218520-suppress_CPEI_warning kernel/irq/proc.c
+--- linux-2.6.18-1.2878.el5/kernel/irq/proc.c~bz218520-suppress_CPEI_warning	2006-12-15 09:40:43.000000000 -0500
++++ linux-2.6.18-1.2878.el5-kei/kernel/irq/proc.c	2006-12-15 09:40:43.000000000 -0500
+@@ -54,7 +54,8 @@ static int irq_affinity_write_proc(struc
+ 	unsigned int irq = (int)(long)data, full_count = count, err;
+ 	cpumask_t new_value, tmp;
+ 
+-	if (!irq_desc[irq].chip->set_affinity || no_irq_affinity)
++	if (!irq_desc[irq].chip->set_affinity || no_irq_affinity ||
++				CHECK_IRQ_PER_CPU(irq_desc[irq].status))
+ 		return -EIO;
+ 
+ 	err = cpumask_parse(buffer, count, new_value);
+
+_
+

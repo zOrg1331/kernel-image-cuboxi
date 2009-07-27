@@ -1,0 +1,87 @@
+From: Brian Maly <bmaly@redhat.com>
+Subject: [RHEL5.1 patch] fix panic in hda_codec
+Date: Sun, 12 Aug 2007 13:11:44 -0400
+Bugzilla: 251854
+Message-Id: <46BF3F50.6090408@redhat.com>
+Changelog: [sound] fix panic in hda_codec
+
+
+I dont have a BZ yet... bugzilla seems to be unresponsive at the moment. 
+I will followup with a BZ when I have one.
+This should be a stop ship issue. So far this issue has affected both 
+Dell and HP systems, perhaps others.
+
+The problem is that on certain hardware that uses the snd_hda_intel 
+driver, there is a panic at boot that occurs in hda_codec. This issue is 
+a regression introduced with the ALSA 1.0.14-rc3 update. This patch 
+resolves this panic, and without this patch RHEL5.1 is not shippable on 
+affected hardware.
+
+Testing of this patch reveals the panic dissapears and all audio 
+functionality on the affected hardware works fine now.
+
+Brian
+
+
+--- linux-2.6.18.noarch/sound/pci/hda/hda_local.h.orig	2007-08-12 00:55:40.000000000 -0400
++++ linux-2.6.18.noarch/sound/pci/hda/hda_local.h	2007-08-12 00:56:44.000000000 -0400
+@@ -199,6 +199,7 @@ struct hda_bus_unsolicited {
+ 	unsigned int rp, wp;
+ 
+ 	/* workqueue */
++	struct workqueue_struct *workq;
+ 	struct work_struct work;
+ 	struct hda_bus *bus;
+ };
+--- linux-2.6.18.noarch/sound/pci/hda/hda_codec.c.orig	2007-08-12 00:05:46.000000000 -0400
++++ linux-2.6.18.noarch/sound/pci/hda/hda_codec.c	2007-08-12 00:07:49.000000000 -0400
+@@ -264,7 +264,7 @@ int snd_hda_queue_unsol_event(struct hda
+ 	unsol->queue[wp] = res;
+ 	unsol->queue[wp + 1] = res_ex;
+ 
+-	schedule_work(&unsol->work);
++	queue_work(unsol->workq, &unsol->work);
+ 
+ 	return 0;
+ }
+@@ -274,11 +274,10 @@ EXPORT_SYMBOL(snd_hda_queue_unsol_event)
+ /*
+  * process queueud unsolicited events
+  */
+-static void process_unsol_events(struct work_struct *work)
++static void process_unsol_events(void *data)
+ {
+-	struct hda_bus_unsolicited *unsol =
+-		container_of(work, struct hda_bus_unsolicited, work);
+-	struct hda_bus *bus = unsol->bus;
++	struct hda_bus *bus = data;
++	struct hda_bus_unsolicited *unsol = bus->unsol;
+ 	struct hda_codec *codec;
+ 	unsigned int rp, caddr, res;
+ 
+@@ -311,8 +310,13 @@ static int init_unsol_queue(struct hda_b
+ 		snd_printk(KERN_ERR "hda_codec: can't allocate unsolicited queue\n");
+ 		return -ENOMEM;
+ 	}
+-	INIT_WORK(&unsol->work, process_unsol_events, &unsol);
+-	unsol->bus = bus;
++	unsol->workq = create_singlethread_workqueue("hda_codec");
++	if (! unsol->workq) {
++		snd_printk(KERN_ERR "hda_codec: can't create workqueue\n");
++		kfree(unsol);
++		return -ENOMEM;
++	}
++	INIT_WORK(&unsol->work, process_unsol_events, bus);
+ 	bus->unsol = unsol;
+ 	return 0;
+ }
+@@ -329,7 +333,7 @@ static int snd_hda_bus_free(struct hda_b
+ 	if (! bus)
+ 		return 0;
+ 	if (bus->unsol) {
+-		flush_scheduled_work();
++		destroy_workqueue(bus->unsol->workq);
+ 		kfree(bus->unsol);
+ 	}
+ 	list_for_each_safe(p, n, &bus->codec_list) {
+

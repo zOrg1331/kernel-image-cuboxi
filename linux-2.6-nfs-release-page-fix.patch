@@ -1,0 +1,47 @@
+Date: Mon, 09 Oct 2006 17:52:48 -0400
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [RHEL5/FC6] [PATCH] NFS data corruption
+
+The attached patch fixes RHEL5 bz210071 and FC6 bz209420
+which are both blockers for each relative release...
+(Note for the FC6 version of this patch, please grab it
+from the bz because it will apply cleaner)....
+
+The patch is pretty self explanatory, but for NFS to
+invalidate its pages correctly, the gfp_mask has to
+have at least the __GFP_FS bit set (see nfs_release_page()).
+
+The path was tested by me and a couple upstream people...
+
+steved.
+
+
+
+If try_to_release_page() is called with a zero gfp mask, then the
+filesystem is effectively denied the possibility of sleeping while
+attempting to release the page.  There doesn't appear to be any valid
+reason why this should be banned, given that we're not calling this from a
+memory allocation context.
+
+For this reason, change the gfp_mask argument of the call to GFP_KERNEL.
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+Cc: Steve Dickson <SteveD@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ mm/truncate.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- linux-2.6.18.i686/mm/truncate.c.orig	2006-10-09 15:05:42.102684000 -0400
++++ linux-2.6.18.i686/mm/truncate.c	2006-10-09 16:54:20.026163000 -0400
+@@ -287,7 +287,7 @@ invalidate_complete_page2(struct address
+ 	if (page->mapping != mapping)
+ 		return 0;
+ 
+-	if (PagePrivate(page) && !try_to_release_page(page, 0))
++	if (PagePrivate(page) && !try_to_release_page(page, GFP_KERNEL))
+ 		return 0;
+ 
+ 	write_lock_irq(&mapping->tree_lock);
+

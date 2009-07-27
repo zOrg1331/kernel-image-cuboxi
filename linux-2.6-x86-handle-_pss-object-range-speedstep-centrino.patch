@@ -1,0 +1,58 @@
+From: Brian Maly <bmaly@redhat.com>
+Subject: [RHEL5 patch] handle _PSS object range corectly in speedstep-centrino
+Date: Mon, 18 Dec 2006 12:40:27 -0500
+Bugzilla: 211690
+Message-Id: <4586D28B.3050502@redhat.com>
+Changelog: x86: handle _PSS object range corectly in speedstep-centrino
+
+
+resolves BZ 211690
+
+On some systems there could be bits set in the upper half of the control 
+value provided by the _PSS object.  These bits are only relevant for 
+cpufreq drivers that use IO ports which are not currently supported by 
+the speedstep-centrino driver.  The current MSR oriented code assumes 
+that upper bits are not set and thus fails to work correctly when they 
+are.  e.g. the control and status value equality check failed on the IBM 
+x3650 even though the ACPI spec allows inequality. The solution is 
+simply to ignore the upper bits, which is what this patch does.
+
+This patch is a backport from upstream and has been tested with success 
+by IBM.
+
+Brian
+
+
+
+--- linux-2.6.18.noarch/arch/i386/kernel/cpu/cpufreq/speedstep-centrino.c.orig	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.noarch/arch/i386/kernel/cpu/cpufreq/speedstep-centrino.c	2006-12-18 11:56:07.000000000 -0500
+@@ -35,6 +35,7 @@
+ 
+ #define dprintk(msg...) cpufreq_debug_printk(CPUFREQ_DEBUG_DRIVER, "speedstep-centrino", msg)
+ 
++#define INTEL_MSR_RANGE	(0xffff)
+ 
+ struct cpu_id
+ {
+@@ -423,8 +424,9 @@ static int centrino_cpu_init_acpi(struct
+ 	}
+ 
+ 	for (i=0; i<p->state_count; i++) {
+-		if (p->states[i].control != p->states[i].status) {
+-			dprintk("Different control (%llu) and status values (%llu)\n",
++		if ((p->states[i].control & INTEL_MSR_RANGE) != 
++		    (p->states[i].status & INTEL_MSR_RANGE)) {
++			dprintk("Different MSR bits in control (%llu) and status (%llu)\n",
+ 				p->states[i].control, p->states[i].status);
+ 			result = -EINVAL;
+ 			goto err_unreg;
+@@ -460,7 +462,7 @@ static int centrino_cpu_init_acpi(struct
+         }
+ 
+         for (i=0; i<p->state_count; i++) {
+-		centrino_model[cpu]->op_points[i].index = p->states[i].control;
++		centrino_model[cpu]->op_points[i].index = p->states[i].control & INTEL_MSR_RANGE;
+ 		centrino_model[cpu]->op_points[i].frequency = p->states[i].core_frequency * 1000;
+ 		dprintk("adding state %i with frequency %u and control value %04x\n", 
+ 			i, centrino_model[cpu]->op_points[i].frequency, centrino_model[cpu]->op_points[i].index);
+

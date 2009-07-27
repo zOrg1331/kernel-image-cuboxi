@@ -1,0 +1,36 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Thu, 27 Mar 2008 15:10:02 -0400
+Subject: [x86_64] EXPORT smp_call_function_single
+Message-id: 47EBF10A.9060103@redhat.com
+O-Subject: [PATCH RHEL5.2] EXPORT smp_call_function_single
+Bugzilla: 438720
+
+This resolves BZ#438720
+
+This is a simple backport of 64a26a731235b59c9d73bbe82c1f896d57400d37
+
+Please note that smp_call_function_single is already exported on ia64
+and i386.
+
+The recent LSPP security certification has raised significant interest
+with our DoD customers; this was an oversight and is needed to offer
+all of ProPack.
+
+Please ACK.
+
+Acked-by: Alan Cox <alan@redhat.com>
+Acked-by: Jon Masters <jcm@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/arch/x86_64/kernel/smp.c b/arch/x86_64/kernel/smp.c
+index f76b586..ac38b08 100644
+--- a/arch/x86_64/kernel/smp.c
++++ b/arch/x86_64/kernel/smp.c
+@@ -386,6 +386,7 @@ int smp_call_function_single (int cpu, void (*func) (void *info), void *info,
+ 	put_cpu();
+ 	return 0;
+ }
++EXPORT_SYMBOL(smp_call_function_single);
+ 
+ /*
+  * this function sends a 'generic call function' IPI to all other CPUs

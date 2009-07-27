@@ -1,0 +1,64 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Mon, 17 Dec 2007 15:54:47 -0500
+Subject: [acpi] docking/undocking: check if parent is on dock
+Message-id: 4766E217.3030106@redhat.com
+O-Subject: RHEL-5.2 PATCH 4/5] Docking/undocking support
+Bugzilla: 252214
+
+bz252214 FEAT: RHEL 5.2 hot dock / undock support for mobile
+w/docking station
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=252214
+
+Problem:
+  ACPI: dock: check if parent is on dock
+
+Solution:
+  When determining if a device is on a dock station, we should
+  check the parent of the device as well.
+
+Upstream Status:
+commit: fe9a2f77e5ad508b18671571c0b3f6f79ea709a8
+
+Testing:
+The patches in this series were successfully tested by me on
+a T60p, Dell Converse, and Dell Fila mobiles.
+
+As always, acks would be appreciated.
+
+diff --git a/drivers/acpi/dock.c b/drivers/acpi/dock.c
+index 73a6721..91b18df 100644
+--- a/drivers/acpi/dock.c
++++ b/drivers/acpi/dock.c
+@@ -613,13 +613,21 @@ static acpi_status
+ find_dock_devices(acpi_handle handle, u32 lvl, void *context, void **rv)
+ {
+ 	acpi_status status;
+-	acpi_handle tmp;
++	acpi_handle tmp, parent;
+ 	struct dock_station *ds = (struct dock_station *)context;
+ 	struct dock_dependent_device *dd;
+ 
+ 	status = acpi_bus_get_ejd(handle, &tmp);
+-	if (ACPI_FAILURE(status))
+-		return AE_OK;
++	if (ACPI_FAILURE(status)) {
++		/* try the parent device as well */
++		status = acpi_get_parent(handle, &parent);
++		if (ACPI_FAILURE(status))
++			goto fdd_out;
++		/* see if parent is dependent on dock */
++		status = acpi_bus_get_ejd(parent, &tmp);
++		if (ACPI_FAILURE(status))
++			goto fdd_out;
++	}
+ 
+ 	if (tmp == ds->handle) {
+ 		dd = alloc_dock_dependent_device(handle);
+@@ -627,6 +635,7 @@ find_dock_devices(acpi_handle handle, u32 lvl, void *context, void **rv)
+ 			add_dock_dependent_device(ds, dd);
+ 	}
+ 
++fdd_out:
+ 	return AE_OK;
+ }
+ 

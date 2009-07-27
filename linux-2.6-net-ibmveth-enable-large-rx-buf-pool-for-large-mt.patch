@@ -1,0 +1,93 @@
+From: Scott Moser <smoser@redhat.com>
+Date: Tue, 23 Oct 2007 15:56:59 -0400
+Subject: [net] ibmveth: enable large rx buf pool for large mtu
+Message-id: 11931694203521-do-send-email-smoser@redhat.com
+O-Subject: [PATCH RHEL5u2] bz250827 Jumbo frames cannot be enabled on ibmveth [3/3]
+Bugzilla: 250827
+
+Description:
+-----------
+Jumbo frames cannot be enabled on ibmveth. For example, adding MTU=9000 to
+/etc/sysconfig/network-scripts/ifcfg-eth1 does not work since receive
+buffer pools are not getting allocated. When attempting to use the ibmveth
+sysfs interface to allocate the buffer pools prior to activating the
+interface, an oops resulted.
+
+Currently (2.6.18-52.el5), with inf=eth1 and mtu=9000 :
+- ip link set dev $inf mtu $mtu
+ fails with: SIOCSIFMTU: Invalid argument
+- echo 1 > /sys/bus/vio/devices/30000004/pool3/active
+ and
+  echo 65536 > /sys/class/net/$i/device/pool0/size
+ drops into xmon
+
+The patch below fixes the listed crashes above and makes 'ip' able to set
+the mtu as it should.
+
+commit ce6eea58eb8f50f563663c6e723b4bbbe55b012e
+Author: Brian King <brking@linux.vnet.ibm.com>
+Date:   Fri Jun 8 14:05:17 2007 -0500
+
+ibmveth: Automatically enable larger rx buffer pools for larger mtu
+
+Currently, ibmveth maintains several rx buffer pools, which can
+be modified through sysfs. By default, pools are not allocated by
+default such that jumbo frames cannot be supported without first
+activating larger rx buffer pools. This results in failures when
+attempting to change the mtu. This patch makes ibmveth automatically
+allocate these larger buffer pools when the mtu is changed.
+
+Signed-off-by: Brian King <brking@linux.vnet.ibm.com>
+Signed-off-by: Jeff Garzik <jeff@garzik.org>
+---
+ drivers/net/ibmveth.c |   27 +++++++++++++++++++++++----
+ 1 files changed, 23 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/net/ibmveth.c b/drivers/net/ibmveth.c
+index 3d72317..a6e864e 100644
+--- a/drivers/net/ibmveth.c
++++ b/drivers/net/ibmveth.c
+@@ -916,17 +916,36 @@ static int ibmveth_change_mtu(struct net_device *dev, int new_mtu)
+ {
+ 	struct ibmveth_adapter *adapter = dev->priv;
+ 	int new_mtu_oh = new_mtu + IBMVETH_BUFF_OH;
+-	int i;
++	int reinit = 0;
++	int i, rc;
+ 
+ 	if (new_mtu < IBMVETH_MAX_MTU)
+ 		return -EINVAL;
+ 
++	for (i = 0; i < IbmVethNumBufferPools; i++)
++		if (new_mtu_oh < adapter->rx_buff_pool[i].buff_size)
++			break;
++
++	if (i == IbmVethNumBufferPools)
++		return -EINVAL;
++
+ 	/* Look for an active buffer pool that can hold the new MTU */
+ 	for(i = 0; i<IbmVethNumBufferPools; i++) {
+-		if (!adapter->rx_buff_pool[i].active)
+-			continue;
++		if (!adapter->rx_buff_pool[i].active) {
++			adapter->rx_buff_pool[i].active = 1;
++			reinit = 1;
++		}
++
+ 		if (new_mtu_oh < adapter->rx_buff_pool[i].buff_size) {
+-			dev->mtu = new_mtu;
++			if (reinit && netif_running(adapter->netdev)) {
++				adapter->pool_config = 1;
++				ibmveth_close(adapter->netdev);
++				adapter->pool_config = 0;
++				dev->mtu = new_mtu;
++				if ((rc = ibmveth_open(adapter->netdev)))
++					return rc;
++			} else
++				dev->mtu = new_mtu;
+ 			return 0;
+ 		}
+ 	}
+-- 
+1.5.3.5.645.gbb47
+

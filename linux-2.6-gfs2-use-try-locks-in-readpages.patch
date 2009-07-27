@@ -1,0 +1,98 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5] bz 218966 Use try locks [3/4]
+Date: Fri, 15 Dec 2006 17:46:41 +0000
+Bugzilla: 218966
+Message-Id: <1166204801.3752.1254.camel@quoit.chygwyn.com>
+Changelog: gfs2: Use try locks in readpages
+
+
+Hi,
+
+This is the main part of the GFS2 fix for this particular bug. See
+the initial message in the series for a full explanation.
+
+This patch is taken from upstream. It uses "try locks" in readpages,
+readpage and prepare_write in order to avoid a deadlock between glocks
+the page lock.
+
+Steve.
+
+>From 2ca99501fa5422e84f18333918a503433449e2b5 Mon Sep 17 00:00:00 2001
+
+This fixes a race between the glock and the page lock encountered
+during truncate in gfs2_readpage and gfs2_prepare_write. The gfs2_readpages
+function doesn't need the same fix since it only uses a try lock anyway, so
+it will fail back to gfs2_readpage in the case of a potential deadlock.
+
+This bug was spotted by Russell Cattelan.
+
+Cc: Russell Cattelan <cattelan@redhat.com>
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+---
+ fs/gfs2/glock.h       |    1 -
+ fs/gfs2/ops_address.c |   13 +++++++++----
+ 2 files changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/fs/gfs2/glock.h b/fs/gfs2/glock.h
+index b985627..a331bf8 100644
+--- a/fs/gfs2/glock.h
++++ b/fs/gfs2/glock.h
+@@ -27,7 +27,6 @@
+ #define GL_ATIME		0x00000200
+ #define GL_NOCACHE		0x00000400
+ #define GL_NOCANCEL		0x00001000
+-#define GL_AOP			0x00004000
+ #define GL_DUMP			0x00008000
+ 
+ #define GLR_TRYFAILED		13
+diff --git a/fs/gfs2/ops_address.c b/fs/gfs2/ops_address.c
+index 5c3962c..3822189 100644
+--- a/fs/gfs2/ops_address.c
++++ b/fs/gfs2/ops_address.c
+@@ -230,7 +230,7 @@ static int gfs2_readpage(struct file *fi
+ 				/* gfs2_sharewrite_nopage has grabbed the ip->i_gl already */
+ 				goto skip_lock;
+ 		}
+-		gfs2_holder_init(ip->i_gl, LM_ST_SHARED, GL_ATIME|GL_AOP, &gh);
++		gfs2_holder_init(ip->i_gl, LM_ST_SHARED, GL_ATIME|LM_FLAG_TRY_1CB, &gh);
+ 		do_unlock = 1;
+ 		error = gfs2_glock_nq_m_atime(1, &gh);
+ 		if (unlikely(error))
+@@ -254,6 +254,8 @@ skip_lock:
+ out:
+ 	return error;
+ out_unlock:
++	if (error == GLR_TRYFAILED)
++		error = AOP_TRUNCATED_PAGE;
+ 	unlock_page(page);
+ 	if (do_unlock)
+ 		gfs2_holder_uninit(&gh);
+@@ -293,7 +295,7 @@ static int gfs2_readpages(struct file *f
+ 				goto skip_lock;
+ 		}
+ 		gfs2_holder_init(ip->i_gl, LM_ST_SHARED,
+-				 LM_FLAG_TRY_1CB|GL_ATIME|GL_AOP, &gh);
++				 LM_FLAG_TRY_1CB|GL_ATIME, &gh);
+ 		do_unlock = 1;
+ 		ret = gfs2_glock_nq_m_atime(1, &gh);
+ 		if (ret == GLR_TRYFAILED)
+@@ -366,10 +368,13 @@ static int gfs2_prepare_write(struct fil
+ 	unsigned int write_len = to - from;
+ 
+ 
+-	gfs2_holder_init(ip->i_gl, LM_ST_EXCLUSIVE, GL_ATIME|GL_AOP, &ip->i_gh);
++	gfs2_holder_init(ip->i_gl, LM_ST_EXCLUSIVE, GL_ATIME|LM_FLAG_TRY_1CB, &ip->i_gh);
+ 	error = gfs2_glock_nq_m_atime(1, &ip->i_gh);
+-	if (error)
++	if (unlikely(error)) {
++		if (error == GLR_TRYFAILED)
++			error = AOP_TRUNCATED_PAGE;
+ 		goto out_uninit;
++	}
+ 
+ 	gfs2_write_calc_reserv(ip, write_len, &data_blocks, &ind_blocks);
+ 
+-- 
+1.4.1
+
+

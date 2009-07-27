@@ -1,0 +1,705 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 18 Jan 2008 14:36:52 +0100
+Subject: [s390] system z large page support
+Message-id: 20080118133652.GA5507@redhat.com
+O-Subject: Re: [RHEL5.2 PATCH] 3/3: s390 hugetlbfs support
+Bugzilla: 318951
+
+Summary:     kernel (new function): System z large page support.
+Description: This adds hugetlbfs support on System z, using both hardware
+             large page support if available and software large page emulation
+             (with shared hugetlbfs pagetables) on older hardware.
+
+diff --git a/arch/s390/defconfig b/arch/s390/defconfig
+index 083ab96..6b24f1e 100644
+--- a/arch/s390/defconfig
++++ b/arch/s390/defconfig
+@@ -549,7 +549,8 @@ CONFIG_PROC_FS=y
+ CONFIG_PROC_KCORE=y
+ CONFIG_SYSFS=y
+ CONFIG_TMPFS=y
+-# CONFIG_HUGETLB_PAGE is not set
++CONFIG_HUGETLBFS=y
++CONFIG_HUGETLB_PAGE=y
+ CONFIG_RAMFS=y
+ # CONFIG_CONFIGFS_FS is not set
+ 
+diff --git a/arch/s390/kernel/head64.S b/arch/s390/kernel/head64.S
+index b2d88d4..587625b 100644
+--- a/arch/s390/kernel/head64.S
++++ b/arch/s390/kernel/head64.S
+@@ -311,6 +311,16 @@ startup_continue:
+ 	oi     6(%r12),1		# set diag9c flag
+ 0:
+ 
++	la	%r1,0f-.LPG1(%r13)
++	stg	%r1,__LC_PGM_NEW_PSW+8
++	lhi	%r1,-1
++	.short	0xb9af
++	.short	0x0011
++0:	tm	0x8f,0x6		# specification exception?
++	bno	1f-.LPG1(%r13)
++	oi	6(%r12),8
++1:
++
+         lpswe .Lentry-.LPG1(13)         # jump to _stext in primary-space,
+                                         # virtual and never return ...
+         .align 16
+diff --git a/arch/s390/kernel/setup.c b/arch/s390/kernel/setup.c
+index 5189c23..b11747d 100644
+--- a/arch/s390/kernel/setup.c
++++ b/arch/s390/kernel/setup.c
+@@ -59,6 +59,8 @@ unsigned int console_devno = -1;
+ unsigned int console_irq = -1;
+ unsigned long memory_size = 0;
+ unsigned long machine_flags = 0;
++unsigned long elf_hwcap = 0;
++char elf_platform[ELF_PLATFORM_SIZE];
+ struct {
+ 	unsigned long addr, size, type;
+ } memory_chunk[MEMORY_CHUNKS] = { { 0 } };
+@@ -594,6 +596,108 @@ setup_memory(void)
+ #endif
+ }
+ 
++static unsigned int __init stfl(void)
++{
++	asm volatile(
++		"	.insn	s,0xb2b10000,0(0)\n" /* stfl */
++		"0:\n"
++		EX_TABLE(0b,0b));
++	return S390_lowcore.stfl_fac_list;
++}
++
++static int __init __stfle(unsigned long long *list, int doublewords)
++{
++	typedef struct { unsigned long long _[doublewords]; } addrtype;
++	register unsigned long __nr asm("0") = doublewords - 1;
++
++	asm volatile(".insn s,0xb2b00000,%0" /* stfle */
++		     : "=m" (*(addrtype *) list), "+d" (__nr) : : "cc");
++	return __nr + 1;
++}
++
++int __init stfle(unsigned long long *list, int doublewords)
++{
++	if (!(stfl() & (1UL << 24)))
++		return -EOPNOTSUPP;
++	return __stfle(list, doublewords);
++}
++
++/*
++ * Setup hardware capabilities.
++ */
++static void __init setup_hwcaps(void)
++{
++	static const int stfl_bits[6] = { 0, 2, 7, 17, 19, 21 };
++	struct cpuinfo_S390 *cpuinfo = &S390_lowcore.cpu_data;
++	unsigned long long facility_list_extended;
++	unsigned int facility_list;
++	int i;
++
++	facility_list = stfl();
++	/*
++	 * The store facility list bits numbers as found in the principles
++	 * of operation are numbered with bit 1UL<<31 as number 0 to
++	 * bit 1UL<<0 as number 31.
++	 *   Bit 0: instructions named N3, "backported" to esa-mode
++	 *   Bit 2: z/Architecture mode is active
++	 *   Bit 7: the store-facility-list-extended facility is installed
++	 *   Bit 17: the message-security assist is installed
++	 *   Bit 19: the long-displacement facility is installed
++	 *   Bit 21: the extended-immediate facility is installed
++	 * These get translated to:
++	 *   HWCAP_S390_ESAN3 bit 0, HWCAP_S390_ZARCH bit 1,
++	 *   HWCAP_S390_STFLE bit 2, HWCAP_S390_MSA bit 3,
++	 *   HWCAP_S390_LDISP bit 4, and HWCAP_S390_EIMM bit 5.
++	 */
++	for (i = 0; i < 6; i++)
++		if (facility_list & (1UL << (31 - stfl_bits[i])))
++			elf_hwcap |= 1UL << i;
++
++	/*
++	 * Check for additional facilities with store-facility-list-extended.
++	 * stfle stores doublewords (8 byte) with bit 1ULL<<63 as bit 0
++	 * and 1ULL<<0 as bit 63. Bits 0-31 contain the same information
++	 * as stored by stfl, bits 32-xxx contain additional facilities.
++	 * How many facility words are stored depends on the number of
++	 * doublewords passed to the instruction. The additional facilites
++	 * are:
++	 *   Bit 43: decimal floating point facility is installed
++	 * translated to:
++	 *   HWCAP_S390_DFP bit 6.
++	 */
++	if ((elf_hwcap & (1UL << 2)) &&
++	    stfle(&facility_list_extended, 1) > 0) {
++		if (facility_list_extended & (1ULL << (64 - 43)))
++			elf_hwcap |= 1UL << 6;
++	}
++
++	if (facility_list & (1UL << 23))
++		elf_hwcap |= 1UL << 7;
++
++	switch (cpuinfo->cpu_id.machine) {
++	case 0x9672:
++#if !defined(CONFIG_64BIT)
++	default:	/* Use "g5" as default for 31 bit kernels. */
++#endif
++		strcpy(elf_platform, "g5");
++		break;
++	case 0x2064:
++	case 0x2066:
++#if defined(CONFIG_64BIT)
++	default:	/* Use "z900" as default for 64 bit kernels. */
++#endif
++		strcpy(elf_platform, "z900");
++		break;
++	case 0x2084:
++	case 0x2086:
++		strcpy(elf_platform, "z990");
++		break;
++	case 0x2094:
++		strcpy(elf_platform, "z9-109");
++		break;
++	}
++}
++
+ /*
+  * Setup function called from init/main.c just after the banner
+  * was printed.
+@@ -664,6 +768,16 @@ setup_arch(char **cmdline_p)
+ 	smp_setup_cpu_possible_map();
+ 
+ 	/*
++	 * Setup capabilities (ELF_HWCAP & ELF_PLATFORM).
++	 */
++	setup_hwcaps();
++
++	if (S390_lowcore.stfl_fac_list & (1UL << 23)) {
++		__ctl_set_bit(0, 23);
++		machine_flags |= 1024;
++	}
++
++	/*
+ 	 * Create kernel page tables and switch to virtual addressing.
+ 	 */
+         paging_init();
+@@ -698,8 +812,13 @@ void print_cpu_info(struct cpuinfo_S390 *cpuinfo)
+ 
+ static int show_cpuinfo(struct seq_file *m, void *v)
+ {
++	static const char *hwcap_str[8] = {
++		"esan3", "zarch", "stfle", "msa", "ldisp", "eimm", "dfp",
++		"edat"
++	};
+         struct cpuinfo_S390 *cpuinfo;
+ 	unsigned long n = (unsigned long) v - 1;
++	int i;
+ 
+ 	preempt_disable();
+ 	if (!n) {
+@@ -708,7 +827,13 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+ 			       "bogomips per cpu: %lu.%02lu\n",
+ 			       num_online_cpus(), loops_per_jiffy/(500000/HZ),
+ 			       (loops_per_jiffy/(5000/HZ))%100);
++		seq_puts(m, "features\t: ");
++		for (i = 0; i < 8; i++)
++			if (hwcap_str[i] && (elf_hwcap & (1UL << i)))
++				seq_printf(m, "%s ", hwcap_str[i]);
++		seq_puts(m, "\n");
+ 	}
++
+ 	if (cpu_online(n)) {
+ #ifdef CONFIG_SMP
+ 		if (smp_processor_id() == n)
+diff --git a/arch/s390/mm/Makefile b/arch/s390/mm/Makefile
+index aa9a42b..b311eb5 100644
+--- a/arch/s390/mm/Makefile
++++ b/arch/s390/mm/Makefile
+@@ -4,4 +4,4 @@
+ 
+ obj-y	 := init.o fault.o ioremap.o extmem.o mmap.o
+ obj-$(CONFIG_CMM) += cmm.o
+-
++obj-$(CONFIG_HUGETLB_PAGE) += hugetlbpage.o
+diff --git a/arch/s390/mm/fault.c b/arch/s390/mm/fault.c
+index 44f0cda..8f73a35 100644
+--- a/arch/s390/mm/fault.c
++++ b/arch/s390/mm/fault.c
+@@ -26,6 +26,7 @@
+ #include <linux/module.h>
+ #include <linux/hardirq.h>
+ #include <linux/kprobes.h>
++#include <linux/hugetlb.h>
+ 
+ #include <asm/system.h>
+ #include <asm/uaccess.h>
+@@ -281,6 +282,8 @@ good_area:
+ 	}
+ 
+ survive:
++	if (is_vm_hugetlb_page(vma))
++		address &= HPAGE_MASK;
+ 	/*
+ 	 * If for any reason at all we couldn't handle the fault,
+ 	 * make sure we exit gracefully rather than endlessly redo
+diff --git a/arch/s390/mm/hugetlbpage.c b/arch/s390/mm/hugetlbpage.c
+new file mode 100644
+index 0000000..7df6f1f
+--- /dev/null
++++ b/arch/s390/mm/hugetlbpage.c
+@@ -0,0 +1,134 @@
++/*
++ *  IBM System z Huge TLB Page Support for Kernel.
++ *
++ *    Copyright 2007 IBM Corp.
++ *    Author(s): Gerald Schaefer <gerald.schaefer@de.ibm.com>
++ */
++
++#include <linux/mm.h>
++#include <linux/hugetlb.h>
++#include <asm/io.h>
++#include <asm/pgalloc.h>
++
++
++void set_huge_pte_at(struct mm_struct *mm, unsigned long addr,
++				   pte_t *pteptr, pte_t pteval)
++{
++	pmd_t *pmdp = (pmd_t *) pteptr;
++	unsigned long mask, offset = 1UL << 20;
++
++	if (!MACHINE_HAS_HPAGE) {
++		offset = 2048;
++		pteptr = (pte_t *) pte_page(pteval)->private;
++		mask = pte_val(pteval) &
++				(_SEGMENT_ENTRY_INV | _SEGMENT_ENTRY_RO);
++		pte_val(pteval) = (_PMD_ENTRY + __pa(pteptr)) | mask;
++	}
++
++	pmd_val(*pmdp) = pte_val(pteval);
++	pmd_val1(*pmdp) = pte_val(pteval) + offset;
++}
++
++int arch_prepare_hugepage(struct page *page)
++{
++	struct page *ptepage;
++	unsigned long addr = page_to_phys(page);
++	pte_t pte;
++	pte_t *ptep;
++	int i;
++
++	if (MACHINE_HAS_HPAGE)
++		return 0;
++
++	ptepage = pte_alloc_one(&init_mm, addr);
++	if (!ptepage)
++		return -ENOMEM;
++
++	pte = mk_pte(page, PAGE_RW);
++	ptep = (pte_t *) page_to_phys(ptepage);
++	for (i = 0; i < PTRS_PER_PTE; i++) {
++		set_pte_at(&init_mm, addr + i * PAGE_SIZE, ptep + i, pte);
++		pte_val(pte) += PAGE_SIZE;
++	}
++	pte_lock_init(ptepage);
++	page->private = (unsigned long) ptep;
++	inc_zone_page_state(ptepage, NR_PAGETABLE);
++	return 0;
++}
++
++void arch_release_hugepage(struct page *page)
++{
++	struct page *ptepage;
++
++	if (MACHINE_HAS_HPAGE)
++		return;
++
++	ptepage = virt_to_page(page->private);
++	if (!ptepage)
++		return;
++	pte_lock_deinit(ptepage);
++	pte_free(ptepage);
++	page->private = 0;
++	dec_zone_page_state(ptepage, NR_PAGETABLE);
++}
++
++pte_t *huge_pte_alloc(struct mm_struct *mm, unsigned long addr)
++{
++	pgd_t *pgdp;
++	pud_t *pudp;
++	pmd_t *pmdp = NULL;
++
++	pgdp = pgd_offset(mm, addr);
++	pudp = pud_alloc(mm, pgdp, addr);
++	if (pudp)
++		pmdp = pmd_alloc(mm, pudp, addr);
++	return (pte_t *) pmdp;
++}
++
++pte_t *huge_pte_offset(struct mm_struct *mm, unsigned long addr)
++{
++	pgd_t *pgdp;
++	pud_t *pudp;
++	pmd_t *pmdp = NULL;
++
++	pgdp = pgd_offset(mm, addr);
++	if (pgd_present(*pgdp)) {
++		pudp = pud_offset(pgdp, addr);
++		if (pud_present(*pudp))
++			pmdp = pmd_offset(pudp, addr);
++	}
++	return (pte_t *) pmdp;
++}
++
++int huge_pmd_unshare(struct mm_struct *mm, unsigned long *addr, pte_t *ptep)
++{
++	return 0;
++}
++
++struct page *follow_huge_addr(struct mm_struct *mm, unsigned long address,
++			      int write)
++{
++	return ERR_PTR(-EINVAL);
++}
++
++int pmd_huge(pmd_t pmd)
++{
++	if (!MACHINE_HAS_HPAGE)
++		return 0;
++
++	return !!(pmd_val(pmd) & _SEGMENT_ENTRY_LARGE);
++}
++
++struct page *follow_huge_pmd(struct mm_struct *mm, unsigned long address,
++			     pmd_t *pmdp, int write)
++{
++	struct page *page;
++
++	if (!MACHINE_HAS_HPAGE)
++		return NULL;
++
++	page = pmd_page(*pmdp);
++	if (page)
++		page += ((address & ~HPAGE_MASK) >> PAGE_SHIFT);
++	return page;
++}
+diff --git a/arch/s390/mm/init.c b/arch/s390/mm/init.c
+index 02f90f8..e04b4cd 100644
+--- a/arch/s390/mm/init.c
++++ b/arch/s390/mm/init.c
+@@ -221,7 +221,18 @@ void __init paging_init(void)
+                                 pmd_clear(pm_dir);
+                                 continue; 
+                         }          
+-                        
++
++			if (MACHINE_HAS_HPAGE &&
++			    pfn + PTRS_PER_PTE <= max_low_pfn &&
++			    pfn >= 1UL << HUGETLB_PAGE_ORDER) {
++				pte = pfn_pte(pfn, PAGE_KERNEL);
++				pte_val(pte) |= _SEGMENT_ENTRY_LARGE;
++				pmd_val(*pm_dir) = pte_val(pte);
++				pmd_val1(*pm_dir) = pte_val(pte) + (1UL << 20);
++				pfn += PTRS_PER_PTE;
++				continue;
++			}
++
+ 			pt_dir = (pte_t *) alloc_bootmem_pages(PAGE_SIZE);
+                         pmd_populate_kernel(&init_mm, pm_dir, pt_dir);
+ 	
+diff --git a/fs/Kconfig b/fs/Kconfig
+index 7917d4d..8a33980 100644
+--- a/fs/Kconfig
++++ b/fs/Kconfig
+@@ -900,7 +900,8 @@ config TMPFS
+ 
+ config HUGETLBFS
+ 	bool "HugeTLB file system support"
+-	depends X86 || IA64 || PPC64 || SPARC64 || SUPERH || BROKEN
++	depends X86 || IA64 || PPC64 || SPARC64 || SUPERH || (S390 && 64BIT) \
++		    || BROKEN
+ 	depends !XEN
+ 	help
+ 	  hugetlbfs is a filesystem backing for HugeTLB pages, based on
+diff --git a/include/asm-s390/elf.h b/include/asm-s390/elf.h
+index c0d629d..91d0632 100644
+--- a/include/asm-s390/elf.h
++++ b/include/asm-s390/elf.h
+@@ -188,7 +188,8 @@ static inline int dump_task_fpu(struct task_struct *tsk, elf_fpregset_t *fpregs)
+ /* This yields a mask that user programs can use to figure out what
+    instruction set this CPU supports. */
+ 
+-#define ELF_HWCAP (0)
++extern unsigned long elf_hwcap;
++#define ELF_HWCAP (elf_hwcap)
+ 
+ /* This yields a string that ld.so will use to load implementation
+    specific libraries for optimization.  This is more specific in
+@@ -197,7 +198,9 @@ static inline int dump_task_fpu(struct task_struct *tsk, elf_fpregset_t *fpregs)
+    For the moment, we have only optimizations for the Intel generations,
+    but that could change... */
+ 
+-#define ELF_PLATFORM (NULL)
++#define ELF_PLATFORM_SIZE 8
++extern char elf_platform[];
++#define ELF_PLATFORM (elf_platform)
+ 
+ #ifndef __s390x__
+ #define SET_PERSONALITY(ex, ibcs2) set_personality((ibcs2)?PER_SVR4:PER_LINUX)
+diff --git a/include/asm-s390/lowcore.h b/include/asm-s390/lowcore.h
+index 2f5c63b..9b05b5a 100644
+--- a/include/asm-s390/lowcore.h
++++ b/include/asm-s390/lowcore.h
+@@ -228,17 +228,19 @@ struct _lowcore
+ 	__u16        subchannel_nr;            /* 0x0ba */
+ 	__u32        io_int_parm;              /* 0x0bc */
+ 	__u32        io_int_word;              /* 0x0c0 */
+-        __u8         pad3[0xD4-0xC4];          /* 0x0c4 */
++	__u8	     pad3[0xc8-0xc4];	       /* 0x0c4 */
++	__u32	     stfl_fac_list;	       /* 0x0c8 */
++	__u8	     pad4[0xd4-0xcc];	       /* 0x0cc */
+ 	__u32        extended_save_area_addr;  /* 0x0d4 */
+ 	__u32        cpu_timer_save_area[2];   /* 0x0d8 */
+ 	__u32        clock_comp_save_area[2];  /* 0x0e0 */
+ 	__u32        mcck_interruption_code[2]; /* 0x0e8 */
+-	__u8         pad4[0xf4-0xf0];          /* 0x0f0 */
++	__u8	     pad5[0xf4-0xf0];	       /* 0x0f0 */
+ 	__u32        external_damage_code;     /* 0x0f4 */
+ 	__u32        failing_storage_address;  /* 0x0f8 */
+-	__u8         pad5[0x100-0xfc];         /* 0x0fc */
++	__u8	     pad6[0x100-0xfc];	       /* 0x0fc */
+ 	__u32        st_status_fixed_logout[4];/* 0x100 */
+-	__u8         pad6[0x120-0x110];        /* 0x110 */
++	__u8	     pad7[0x120-0x110];        /* 0x110 */
+ 	__u32        access_regs_save_area[16];/* 0x120 */
+ 	__u32        floating_pt_save_area[8]; /* 0x160 */
+ 	__u32        gpregs_save_area[16];     /* 0x180 */
+diff --git a/include/asm-s390/page.h b/include/asm-s390/page.h
+index b59fea4..4c45958 100644
+--- a/include/asm-s390/page.h
++++ b/include/asm-s390/page.h
+@@ -18,6 +18,15 @@
+ #define PAGE_DEFAULT_ACC	0
+ #define PAGE_DEFAULT_KEY	(PAGE_DEFAULT_ACC << 4)
+ 
++#define HPAGE_SHIFT	21
++#define HPAGE_SIZE	(1UL << HPAGE_SHIFT)
++#define HPAGE_MASK	(~(HPAGE_SIZE - 1))
++#define HUGETLB_PAGE_ORDER	(HPAGE_SHIFT - PAGE_SHIFT)
++
++#define ARCH_HAS_SETCLEAR_HUGE_PTE
++#define ARCH_HAS_HUGE_PTE_TYPE
++#define ARCH_HAS_PREPARE_HUGEPAGE
++
+ #ifdef __KERNEL__
+ #include <asm/setup.h>
+ #ifndef __ASSEMBLY__
+@@ -67,12 +76,18 @@ static inline void copy_page(void *to, void *from)
+ 
+ static inline void clear_page(void *page)
+ {
+-        asm volatile ("   lgr  2,%0\n"
+-                      "   lghi 3,4096\n"
+-                      "   slgr 1,1\n"
+-                      "   mvcl 2,0"
+-                      : : "a" ((void *) (page))
+-		      : "memory", "cc", "1", "2", "3" );
++	if (MACHINE_HAS_CPAGE) {
++		asm volatile(
++			"	.insn	rre,0xb9af0000,%0,%1"
++			: : "d" (0x10000), "a" (page) : "memory", "cc");
++	} else {
++		asm volatile ("   lgr  2,%0\n"
++			      "   lghi 3,4096\n"
++			      "   slgr 1,1\n"
++			      "   mvcl 2,0"
++			      : : "a" ((void *) (page))
++			      : "memory", "cc", "1", "2", "3" );
++	}
+ }
+ 
+ static inline void copy_page(void *to, void *from)
+diff --git a/include/asm-s390/pgtable.h b/include/asm-s390/pgtable.h
+index 8a4774f..acbca01 100644
+--- a/include/asm-s390/pgtable.h
++++ b/include/asm-s390/pgtable.h
+@@ -214,6 +214,15 @@ extern char empty_zero_page[PAGE_SIZE];
+ #define _PAGE_TYPE_RW		0x000
+ 
+ /*
++ * Only four types for huge pages, using the invalid bit and protection bit
++ * of a segment table entry.
++ */
++#define _HPAGE_TYPE_EMPTY	0x020	/* _SEGMENT_ENTRY_INV */
++#define _HPAGE_TYPE_NONE	0x220
++#define _HPAGE_TYPE_RO		0x200	/* _SEGMENT_ENTRY_RO  */
++#define _HPAGE_TYPE_RW		0x000
++
++/*
+  * PTE type bits are rather complicated. handle_pte_fault uses pte_present,
+  * pte_none and pte_file to find out the pte type WITHOUT holding the page
+  * table lock. ptep_clear_flush on the other hand uses ptep_clear_flush to
+@@ -272,8 +281,13 @@ extern char empty_zero_page[PAGE_SIZE];
+ #else /* __s390x__ */
+ 
+ /* Bits in the segment table entry */
+-#define _PMD_ENTRY_INV   0x20          /* invalid segment table entry      */
+-#define _PMD_ENTRY       0x00        
++#define _PMD_ENTRY_INV	0x20		/* invalid segment table entry      */
++#define _PMD_ENTRY	0x00
++#define _SEGMENT_ENTRY_ORIGIN	~0x7ffUL/* segment table origin		    */
++#define _SEGMENT_ENTRY_LARGE	0x400
++#define _SEGMENT_ENTRY_CO	0x100
++#define _SEGMENT_ENTRY_RO	0x200	/* page protection bit		    */
++#define _SEGMENT_ENTRY_INV	0x20	/* invalid segment table entry	    */
+ 
+ /* Bits in the region third table entry */
+ #define _PGD_ENTRY_INV   0x20          /* invalid region table entry       */
+@@ -733,6 +747,128 @@ static inline pmd_t * pmd_offset(pgd_t * dir, unsigned long address)
+ #define pte_unmap(pte) do { } while (0)
+ #define pte_unmap_nested(pte) do { } while (0)
+ 
++#ifdef __s390x__
++static inline pte_t pte_mkhuge(pte_t pte)
++{
++	/*
++	 * PROT_NONE needs to be remapped from the pte type to the ste type.
++	 * The HW invalid bit is also different for pte and ste. The pte
++	 * invalid bit happens to be the same as the ste _SEGMENT_ENTRY_LARGE
++	 * bit, so we don't have to clear it.
++	 */
++	if (pte_val(pte) & _PAGE_INVALID) {
++		if (pte_val(pte) & _PAGE_SWT)
++			pte_val(pte) |= _HPAGE_TYPE_NONE;
++		pte_val(pte) |= _PMD_ENTRY_INV;
++	}
++	/*
++	 * Clear SW pte bits SWT and SWX, there are no SW bits in a segment
++	 * table entry.
++	 */
++	pte_val(pte) &= ~(_PAGE_SWT | _PAGE_SWX);
++	pte_val(pte) |= (_SEGMENT_ENTRY_LARGE | _SEGMENT_ENTRY_CO);
++	return pte;
++}
++
++static inline pte_t huge_pte_wrprotect(pte_t pte)
++{
++	pte_val(pte) |= _PAGE_RO;
++	return pte;
++}
++
++static inline int huge_pte_none(pte_t pte)
++{
++	return (pte_val(pte) & _SEGMENT_ENTRY_INV) &&
++		!(pte_val(pte) & _SEGMENT_ENTRY_RO);
++}
++
++static inline pte_t huge_ptep_get(pte_t *ptep)
++{
++	pte_t pte = *ptep;
++	unsigned long mask;
++
++	if (!MACHINE_HAS_HPAGE) {
++		ptep = (pte_t *) (pte_val(pte) & _SEGMENT_ENTRY_ORIGIN);
++		if (ptep) {
++			mask = pte_val(pte) &
++				(_SEGMENT_ENTRY_INV | _SEGMENT_ENTRY_RO);
++			pte = pte_mkhuge(*ptep);
++			pte_val(pte) |= mask;
++		}
++	}
++	return pte;
++}
++
++static inline pte_t huge_ptep_get_and_clear(struct mm_struct *mm,
++					    unsigned long addr, pte_t *ptep)
++{
++	pte_t pte = huge_ptep_get(ptep);
++
++	pmd_clear((pmd_t *) ptep);
++	return pte;
++}
++
++static inline void __pmd_csp(pmd_t *pmdp)
++{
++	register unsigned long reg2 asm("2") = pmd_val(*pmdp);
++	register unsigned long reg3 asm("3") = pmd_val(*pmdp) |
++					       _PMD_ENTRY_INV;
++	register unsigned long reg4 asm("4") = ((unsigned long) pmdp) + 5;
++
++	asm volatile(
++		"	csp %1,%3"
++		: "=m" (*pmdp)
++		: "d" (reg2), "d" (reg3), "d" (reg4), "m" (*pmdp) : "cc");
++	pmd_val(*pmdp) = _PMD_ENTRY_INV | _PMD_ENTRY;
++}
++
++static inline void __pmd_idte(unsigned long address, pmd_t *pmdp)
++{
++	unsigned long sto = (unsigned long) pmdp -
++				pmd_index(address) * sizeof(pmd_t);
++
++	if (!(pmd_val(*pmdp) & _PMD_ENTRY_INV)) {
++		asm volatile(
++			"	.insn	rrf,0xb98e0000,%2,%3,0,0"
++			: "=m" (*pmdp)
++			: "m" (*pmdp), "a" (sto),
++			  "a" ((address & HPAGE_MASK) + 1)
++		);
++	}
++	pmd_val(*pmdp) = _PMD_ENTRY_INV | _PMD_ENTRY;
++	pmd_val1(*pmdp) = _PMD_ENTRY_INV | _PMD_ENTRY;
++}
++
++static inline void huge_ptep_invalidate(unsigned long address, pte_t *ptep)
++{
++	pmd_t *pmdp = (pmd_t *) ptep;
++
++	if (!MACHINE_HAS_IDTE) {
++		__pmd_csp(pmdp);
++		__pmd_csp((void *) pmdp + 8);
++		return;
++	}
++
++	__pmd_idte(address, pmdp);
++	return;
++}
++
++#define huge_ptep_set_access_flags(__vma, __addr, __ptep, __entry, __dirty) \
++({									    \
++	huge_ptep_invalidate(__addr, __ptep);				    \
++	set_huge_pte_at((__vma)->vm_mm, __addr, __ptep, __entry);	    \
++})
++
++#define huge_ptep_set_wrprotect(__mm, __addr, __ptep)			\
++({									\
++	pte_t __pte = huge_ptep_get(__ptep);				\
++	if (pte_write(__pte)) {						\
++		set_huge_pte_at(__mm, __addr, __ptep,			\
++				huge_pte_wrprotect(__pte));		\
++	}								\
++})
++#endif /* __s390x__ */
++
+ /*
+  * 31 bit swap entry format:
+  * A page-table entry has some bits we have to treat in a special way.
+diff --git a/include/asm-s390/setup.h b/include/asm-s390/setup.h
+index c051718..c1d0b37 100644
+--- a/include/asm-s390/setup.h
++++ b/include/asm-s390/setup.h
+@@ -48,10 +48,14 @@ extern unsigned long machine_flags;
+ #define MACHINE_HAS_IEEE	(machine_flags & 2)
+ #define MACHINE_HAS_CSP		(machine_flags & 8)
+ #define MACHINE_HAS_DIAG44	(1)
++#define MACHINE_HAS_HPAGE	(0)
++#define MACHINE_HAS_CPAGE	(0)
+ #else /* __s390x__ */
+ #define MACHINE_HAS_IEEE	(1)
+ #define MACHINE_HAS_CSP		(1)
+ #define MACHINE_HAS_DIAG44	(machine_flags & 32)
++#define MACHINE_HAS_HPAGE	(machine_flags & 1024)
++#define MACHINE_HAS_CPAGE	(machine_flags & 2048)
+ #endif /* __s390x__ */
+ 
+ 

@@ -1,0 +1,180 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Wed, 16 Jul 2008 09:36:08 -0400
+Subject: [fs] lockd: nlmsvc_lookup_host called with f_sema held
+Message-id: 1216215368-12308-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.3 PATCH] BZ#453094: lockd: don't call nlmsvc_lookup_host with the f_sema held
+Bugzilla: 453094
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+There is a possible deadlock in the NLM code where lockd can try to take
+the f_sema for an nlm_file that it already holds. The call chain is
+something like:
+
+nlmsvc_lock (take the f_sema)
+  nlmsvc_create_block
+     nlmsvc_lookup_host
+	nlm_lookup_host
+          nlm_gc_hosts
+            nlmsvc_traverse_files (try to take the f_sema)
+
+...obviously, this will deadlock. This appears to be a regression caused
+by the patch for BZ#196318. Prior to that patch, nlmsvc_create_block
+wasn't called with the f_sema held.
+
+The fix is to just use the host pointer that we get from
+nlmsvc_retrieve_args and pass it down to nlmsvc_create_block. This is
+also more efficient since we're currently doing two calls into
+nlm_lookup_hosts for each lock and testlock.
+
+This was originally fixed upstream in 2.6.25 by just moving the
+nlmsvc_lookup_host call from nlmsvc_create_block into its callers.  The
+change to just pass the host pointer instead of doing these duplicate
+calls was just taken upstream into Bruce Fields' git tree and is slated
+for 2.6.27.
+
+This is a difficult problem to reproduce on a stock kernel because
+nlm_gc_hosts is only called by nlm_lookup_host when a timer expires.  I
+was able to easily reproduce it however by modifying nlm_lookup_host to
+always call nlm_gc_hosts. With that I was able to verify that this patch
+fixes the problem.
+
+diff --git a/fs/lockd/svc4proc.c b/fs/lockd/svc4proc.c
+index 2eb0a61..236b211 100644
+--- a/fs/lockd/svc4proc.c
++++ b/fs/lockd/svc4proc.c
+@@ -103,7 +103,7 @@ nlm4svc_proc_test(struct svc_rqst *rqstp, struct nlm_args *argp,
+ 			rpc_drop_reply :rpc_success;
+ 
+ 	/* Now check for conflicting locks */
+-	resp->status = nlmsvc_testlock(rqstp, file, &argp->lock,
++	resp->status = nlmsvc_testlock(rqstp, file, host, &argp->lock,
+ 				       &resp->lock, &resp->cookie);
+ 	if (resp->status == nlm_drop_reply)
+ 		return rpc_drop_reply;
+@@ -149,7 +149,7 @@ nlm4svc_proc_lock(struct svc_rqst *rqstp, struct nlm_args *argp,
+ #endif
+ 
+ 	/* Now try to lock the file */
+-	resp->status = nlmsvc_lock(rqstp, file, &argp->lock,
++	resp->status = nlmsvc_lock(rqstp, file, host, &argp->lock,
+ 					argp->block, &argp->cookie);
+ 	if (resp->status == nlm_drop_reply)
+ 		return rpc_drop_reply;
+diff --git a/fs/lockd/svclock.c b/fs/lockd/svclock.c
+index 60ca5f1..48acce0 100644
+--- a/fs/lockd/svclock.c
++++ b/fs/lockd/svclock.c
+@@ -171,18 +171,14 @@ nlmsvc_find_block(struct nlm_cookie *cookie,  struct sockaddr_in *sin)
+  * logging industries.
+  */
+ static inline struct nlm_block *
+-nlmsvc_create_block(struct svc_rqst *rqstp, struct nlm_file *file,
+-		struct nlm_lock *lock, struct nlm_cookie *cookie, int conf)
++nlmsvc_create_block(struct svc_rqst *rqstp, struct nlm_host *host,
++		struct nlm_file *file, struct nlm_lock *lock,
++		struct nlm_cookie *cookie, int conf)
+ {
+ 	struct nlm_block	*block;
+-	struct nlm_host		*host;
+ 	struct nlm_rqst		*call = NULL;
+ 
+-	/* Create host handle for callback */
+-	host = nlmsvc_lookup_host(rqstp);
+-	if (host == NULL)
+-		return NULL;
+-
++	nlm_get_host(host);
+ 	call = nlm_alloc_call(host);
+ 	if (call == NULL)
+ 		return NULL;
+@@ -387,7 +383,8 @@ nlmsvc_defer_lock_rqst(struct svc_rqst *rqstp, struct nlm_block *block)
+  */
+ u32
+ nlmsvc_lock(struct svc_rqst *rqstp, struct nlm_file *file,
+-			struct nlm_lock *lock, int wait, struct nlm_cookie *cookie)
++		struct nlm_host *host, struct nlm_lock *lock,
++		int wait, struct nlm_cookie *cookie)
+ {
+ 	struct nlm_block	*block = NULL;
+ 	int			error;
+@@ -401,7 +398,6 @@ nlmsvc_lock(struct svc_rqst *rqstp, struct nlm_file *file,
+ 				(long long)lock->fl.fl_end,
+ 				wait);
+ 
+-
+ 	/* Lock file against concurrent access */
+ 	down(&file->f_sema);
+ 	/* Get existing block (in case client is busy-waiting)
+@@ -409,7 +405,7 @@ nlmsvc_lock(struct svc_rqst *rqstp, struct nlm_file *file,
+ 	 */
+ 	block = nlmsvc_lookup_block(file, lock);
+ 	if (block == NULL) {
+-		block = nlmsvc_create_block(rqstp, file, lock, cookie, 0);
++		block = nlmsvc_create_block(rqstp, host, file, lock, cookie, 0);
+ 		ret = nlm_lck_denied_nolocks;
+ 		if (block == NULL)
+ 			goto out;
+@@ -482,8 +478,8 @@ out:
+  */
+ u32
+ nlmsvc_testlock(struct svc_rqst *rqstp, struct nlm_file *file,
+-		struct nlm_lock *lock, struct nlm_lock *conflock,
+-		struct nlm_cookie *cookie)
++		struct nlm_host *host, struct nlm_lock *lock,
++		struct nlm_lock *conflock, struct nlm_cookie *cookie)
+ {
+ 	struct nlm_block 	*block = NULL;
+ 	int			error;
+@@ -500,7 +496,7 @@ nlmsvc_testlock(struct svc_rqst *rqstp, struct nlm_file *file,
+ 	block = nlmsvc_lookup_block(file, lock);
+ 
+ 	if (block == NULL) {
+-		block = nlmsvc_create_block(rqstp, file, lock, cookie, 1);
++		block = nlmsvc_create_block(rqstp, host, file, lock, cookie, 1);
+ 		if (block == NULL)
+ 			return nlm_granted;
+ 	}
+diff --git a/fs/lockd/svcproc.c b/fs/lockd/svcproc.c
+index dc6e5f7..46cf060 100644
+--- a/fs/lockd/svcproc.c
++++ b/fs/lockd/svcproc.c
+@@ -132,8 +132,8 @@ nlmsvc_proc_test(struct svc_rqst *rqstp, struct nlm_args *argp,
+ 			rpc_drop_reply :rpc_success;
+ 
+ 	/* Now check for conflicting locks */
+-	resp->status = cast_status(nlmsvc_testlock(rqstp, file, &argp->lock,
+-				   &resp->lock, &resp->cookie));
++	resp->status = cast_status(nlmsvc_testlock(rqstp, file, host,
++				   &argp->lock, &resp->lock, &resp->cookie));
+ 	if (resp->status == nlm_drop_reply)
+ 		return rpc_drop_reply;
+ 
+@@ -179,7 +179,7 @@ nlmsvc_proc_lock(struct svc_rqst *rqstp, struct nlm_args *argp,
+ #endif
+ 
+ 	/* Now try to lock the file */
+-	resp->status = cast_status(nlmsvc_lock(rqstp, file, &argp->lock,
++	resp->status = cast_status(nlmsvc_lock(rqstp, file, host, &argp->lock,
+ 					       argp->block, &argp->cookie));
+ 	if (resp->status == nlm_drop_reply)
+ 		return rpc_drop_reply;
+diff --git a/include/linux/lockd/lockd.h b/include/linux/lockd/lockd.h
+index 0f92d53..eeaf356 100644
+--- a/include/linux/lockd/lockd.h
++++ b/include/linux/lockd/lockd.h
+@@ -186,11 +186,12 @@ extern struct nlm_host *nlm_find_client(void);
+  * Server-side lock handling
+  */
+ u32		  nlmsvc_lock(struct svc_rqst *, struct nlm_file *,
+-					struct nlm_lock *, int, struct nlm_cookie *);
++				struct nlm_host *, struct nlm_lock *, int,
++				struct nlm_cookie *);
+ u32		  nlmsvc_unlock(struct nlm_file *, struct nlm_lock *);
+ u32		  nlmsvc_testlock(struct svc_rqst *, struct nlm_file *,
+-				  struct nlm_lock *, struct nlm_lock *,
+-				  struct nlm_cookie *);
++				  struct nlm_host *, struct nlm_lock *,
++				  struct nlm_lock *, struct nlm_cookie *);
+ u32		  nlmsvc_cancel_blocked(struct nlm_file *, struct nlm_lock *);
+ unsigned long	  nlmsvc_retry_blocked(void);
+ void		  nlmsvc_traverse_blocks(struct nlm_host *, struct nlm_file *,

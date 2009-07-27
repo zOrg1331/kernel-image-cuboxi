@@ -1,0 +1,28 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5.1] Fix bz 229873, alternate test: assertion !ip->i_inode.i_mapping->nrpages failed
+Date: Thu, 08 Mar 2007 10:11:47 +0000
+Bugzilla: 229873
+Message-Id: <1173348707.32601.8.camel@quoit.chygwyn.com>
+Changelog: [gfs2] remove an incorrect assert
+
+
+Hi,
+
+This patch fixes bz 229873 by removing an assert that was asserting the wrong thing,
+
+Steve.
+
+
+diff --git a/fs/gfs2/glops.c b/fs/gfs2/glops.c
+index 4221110..39c8ae2 100644
+--- a/fs/gfs2/glops.c
++++ b/fs/gfs2/glops.c
+@@ -245,7 +245,6 @@ static void inode_go_inval(struct gfs2_glock *gl, int flags)
+ 
+ 	if (ip && S_ISREG(ip->i_inode.i_mode)) {
+ 		truncate_inode_pages(ip->i_inode.i_mapping, 0);
+-		gfs2_assert_withdraw(GFS2_SB(&ip->i_inode), !ip->i_inode.i_mapping->nrpages);
+ 		clear_bit(GIF_PAGED, &ip->i_flags);
+ 	}
+ }
+

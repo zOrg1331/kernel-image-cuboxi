@@ -1,0 +1,215 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 3 Dec 2008 17:37:06 -0500
+Subject: [x86_64] Calgary IOMMU sysdata fixes
+Message-id: 20081203223706.32135.31422.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH]: Calgary IOMMU sysdata fixes
+Bugzilla: 474047
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Jeff Garzik <jgarzik@redhat.com>
+RH-Acked-by: Alan Cox <alan@redhat.com>
+
+Backport of 2.6.27's pci_iommu().
+
+PCI domain and Calgary IOMMU both attempt to use the sysdata pointer.  This
+leads to a panic on IBM Calgary IOMMU enabled systems.
+
+Tested* and compiled by me.
+
+Resolves BZ 474047.
+
+* Testing yielded another problem with the mpt driver.  AFAICT, this new issue
+is independent of PCI domain support and BZ 474047.  I have opened a new BZ
+to track the new issue.
+
+diff --git a/arch/x86_64/kernel/pci-calgary.c b/arch/x86_64/kernel/pci-calgary.c
+index a79e968..bb71924 100644
+--- a/arch/x86_64/kernel/pci-calgary.c
++++ b/arch/x86_64/kernel/pci-calgary.c
+@@ -383,7 +383,7 @@ static inline struct iommu_table *find_iommu_table(struct device *dev)
+ 		pbus = pbus->parent;
+ 
+ 	if (pbus->self)
+-		tbl = pbus->self->sysdata;
++		tbl = pci_iommu(pbus);
+ 	else
+ 		tbl = NULL;
+ 
+@@ -807,7 +807,7 @@ static void __init calgary_reserve_mem_region(struct pci_dev *dev, u64 start,
+ 	limit++;
+ 
+ 	numpages = ((limit - start) >> PAGE_SHIFT);
+-	iommu_range_reserve(dev->sysdata, start, numpages);
++	iommu_range_reserve(pci_iommu(dev->bus), start, numpages);
+ }
+ 
+ static void __init calgary_reserve_peripheral_mem_1(struct pci_dev *dev)
+@@ -815,7 +815,7 @@ static void __init calgary_reserve_peripheral_mem_1(struct pci_dev *dev)
+ 	void __iomem *target;
+ 	u64 low, high, sizelow;
+ 	u64 start, limit;
+-	struct iommu_table *tbl = dev->sysdata;
++	struct iommu_table *tbl = pci_iommu(dev->bus);
+ 	unsigned char busnum = dev->bus->number;
+ 	void __iomem *bbar = tbl->bbar;
+ 
+@@ -839,7 +839,7 @@ static void __init calgary_reserve_peripheral_mem_2(struct pci_dev *dev)
+ 	u32 val32;
+ 	u64 low, high, sizelow, sizehigh;
+ 	u64 start, limit;
+-	struct iommu_table *tbl = dev->sysdata;
++	struct iommu_table *tbl = pci_iommu(dev->bus);
+ 	unsigned char busnum = dev->bus->number;
+ 	void __iomem *bbar = tbl->bbar;
+ 
+@@ -875,7 +875,7 @@ static void __init calgary_reserve_regions(struct pci_dev *dev)
+ {
+ 	unsigned int npages;
+ 	u64 start;
+-	struct iommu_table *tbl = dev->sysdata;
++	struct iommu_table *tbl = pci_iommu(dev->bus);
+ 
+ 	/* reserve EMERGENCY_PAGES from bad_dma_address and up */
+ 	iommu_range_reserve(tbl, bad_dma_address, EMERGENCY_PAGES);
+@@ -915,7 +915,7 @@ static int __init calgary_setup_tar(struct pci_dev *dev, void __iomem *bbar)
+ 	if (ret)
+ 		return ret;
+ 
+-	tbl = dev->sysdata;
++	tbl = pci_iommu(dev->bus);
+ 	tbl->it_base = (unsigned long)bus_info[dev->bus->number].tce_space;
+ 
+ 	if (is_kdump_kernel())
+@@ -956,7 +956,7 @@ static int __init calgary_setup_tar(struct pci_dev *dev, void __iomem *bbar)
+ static void __init calgary_free_bus(struct pci_dev *dev)
+ {
+ 	u64 val64;
+-	struct iommu_table *tbl = dev->sysdata;
++	struct iommu_table *tbl = pci_iommu(dev->bus);
+ 	void __iomem *target;
+ 	unsigned int bitmapsz;
+ 
+@@ -972,7 +972,7 @@ static void __init calgary_free_bus(struct pci_dev *dev)
+ 
+ 	kfree(tbl);
+ 
+-	dev->sysdata = NULL;
++	set_pci_iommu(dev->bus, NULL);
+ 
+ 	/* Can't free bootmem allocated memory after system is up :-( */
+ 	bus_info[dev->bus->number].tce_space = NULL;
+@@ -1045,7 +1045,7 @@ static void calioc2_dump_error_regs(struct iommu_table *tbl)
+ static void calgary_watchdog(unsigned long data)
+ {
+ 	struct pci_dev *dev = (struct pci_dev *)data;
+-	struct iommu_table *tbl = dev->sysdata;
++	struct iommu_table *tbl = pci_iommu(dev->bus);
+ 	void __iomem *bbar = tbl->bbar;
+ 	u32 val32;
+ 	void __iomem *target;
+@@ -1143,7 +1143,7 @@ static void __init calgary_enable_translation(struct pci_dev *dev)
+ 	struct iommu_table *tbl;
+ 
+ 	busnum = dev->bus->number;
+-	tbl = dev->sysdata;
++	tbl = pci_iommu(dev->bus);
+ 	bbar = tbl->bbar;
+ 
+ 	/* enable TCE in PHB Config Register */
+@@ -1175,7 +1175,7 @@ static void __init calgary_disable_translation(struct pci_dev *dev)
+ 	struct iommu_table *tbl;
+ 
+ 	busnum = dev->bus->number;
+-	tbl = dev->sysdata;
++	tbl = pci_iommu(dev->bus);
+ 	bbar = tbl->bbar;
+ 
+ 	/* disable TCE in PHB Config Register */
+@@ -1193,7 +1193,7 @@ static void __init calgary_disable_translation(struct pci_dev *dev)
+ static void __init calgary_init_one_nontraslated(struct pci_dev *dev)
+ {
+ 	pci_dev_get(dev);
+-	dev->sysdata = NULL;
++	set_pci_iommu(dev->bus, NULL);
+ 
+ 	/* is the device behind a bridge? */
+ 	if (dev->bus->parent)
+@@ -1225,7 +1225,7 @@ static int __init calgary_init_one(struct pci_dev *dev)
+ 	} else
+ 		dev->bus->self = dev;
+ 
+-	tbl = dev->sysdata;
++	tbl = pci_iommu(dev->bus);
+ 	tbl->chip_ops->handle_quirks(tbl, dev);
+ 
+ 	calgary_enable_translation(dev);
+@@ -1689,7 +1689,7 @@ static void __init calgary_fixup_one_tce_space(struct pci_dev *dev)
+ 	unsigned int npages;
+ 	int i;
+ 
+-	tbl = dev->sysdata;
++	tbl = pci_iommu(dev->bus);
+ 
+ 	for (i = 0; i < 4; i++) {
+ 		struct resource *r = &dev->resource[PCI_BRIDGE_RESOURCES + i];
+diff --git a/arch/x86_64/kernel/tce.c b/arch/x86_64/kernel/tce.c
+index e979fc2..67076c3 100644
+--- a/arch/x86_64/kernel/tce.c
++++ b/arch/x86_64/kernel/tce.c
+@@ -136,9 +136,9 @@ int __init build_tce_table(struct pci_dev *dev, void __iomem *bbar)
+ 	struct iommu_table *tbl;
+ 	int ret;
+ 
+-	if (dev->sysdata) {
++	if (pci_iommu(dev->bus)) {
+ 		printk(KERN_ERR "Calgary: dev %p has sysdata %p\n",
+-		       dev, dev->sysdata);
++		       dev, pci_iommu(dev->bus));
+ 		BUG();
+ 	}
+ 
+@@ -159,7 +159,7 @@ int __init build_tce_table(struct pci_dev *dev, void __iomem *bbar)
+ 	 * NUMA is already using the bus's sysdata pointer, so we use
+ 	 * the bus's pci_dev's sysdata instead.
+ 	 */
+-	dev->sysdata = tbl;
++	set_pci_iommu(dev->bus, tbl);
+ 
+ 	return 0;
+ 
+diff --git a/include/asm-x86_64/pci.h b/include/asm-x86_64/pci.h
+index f2ca179..e0af482 100644
+--- a/include/asm-x86_64/pci.h
++++ b/include/asm-x86_64/pci.h
+@@ -8,7 +8,11 @@
+ struct pci_sysdata {
+ 	int		domain;		/* PCI domain */
+ 	int		node;		/* NUMA node */
++#ifdef CONFIG_X86_64
++	void		*iommu;		/*IOMMU private data*/
++#endif
+ };
++
+ extern struct pci_sysdata pci_default_sysdata;
+ 
+ #ifdef CONFIG_PCI_DOMAINS
+@@ -24,6 +28,20 @@ static inline int pci_proc_domain(struct pci_bus *bus)
+ }
+ #endif /* CONFIG_PCI_DOMAINS */
+ 
++#ifdef CONFIG_CALGARY_IOMMU
++static inline void *pci_iommu(struct pci_bus *bus)
++{
++	struct pci_sysdata *sd = bus->sysdata;
++	return sd->iommu;
++}
++
++static inline void set_pci_iommu(struct pci_bus *bus, void *val)
++{
++	struct pci_sysdata *sd = bus->sysdata;
++	sd->iommu = val;
++}
++#endif /* CONFIG_CALGARY_IOMMU */
++
+ #include <linux/mm.h> /* for struct page */
+ 
+ /* Can be used to override the logic in pci_scan_bus for skipping

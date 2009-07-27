@@ -1,0 +1,55 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] dlm: fix master recovery
+Date: Thu, 25 Jan 2007 09:16:17 -0600
+Bugzilla: 222307
+Message-Id: <20070125151616.GE21980@redhat.com>
+Changelog: [dlm] fix master recovery
+
+
+bz 222307
+
+If master recovery happens on an rsb in one recovery sequence, then that
+sequence is aborted before lock recovery happens, then in the next
+sequence, we rely on the previous master recovery (which may now be
+invalid due to another node ignoring a lookup result) and go on do to the
+lock recovery where we get stuck due to an invalid master value.
+
+ recovery cycle begins: master of rsb X has left
+ nodes A and B send node C an rcom lookup for X to find the new master
+ C gets lookup from B first, sets B as new master, and sends reply back to B
+ C gets lookup from A next, and sends reply back to A saying B is master
+ A gets lookup reply from C and sets B as the new master in the rsb
+ recovery cycle on A, B and C is aborted to start a new recovery
+ B gets lookup reply from C and ignores it since there's a new recovery
+ recovery cycle begins: some other node has joined
+ B doesn't think it's the master of X so it doesn't rebuild it in the directory
+ C looks up the master of X, no one is master, so it becomes new master
+ B looks up the master of X, finds it's C
+ A believes that B is the master of X, so it sends its lock to B
+ B sends an error back to A
+ A resends
+ this repeats forever, the incorrect master value on A is never corrected
+
+The fix is to do master recovery on an rsb that still has the NEW_MASTER
+flag set from an earlier recovery sequence, and therefore didn't complete
+lock recovery.
+
+patch is in upstream gfs2 git tree
+
+
+Index: linux-rhel5-quilt/fs/dlm/recover.c
+===================================================================
+--- linux-rhel5-quilt.orig/fs/dlm/recover.c	2007-01-24 14:58:29.000000000 -0600
++++ linux-rhel5-quilt/fs/dlm/recover.c	2007-01-24 15:03:44.000000000 -0600
+@@ -397,7 +397,9 @@
+ 
+ 		if (dlm_no_directory(ls))
+ 			count += recover_master_static(r);
+-		else if (!is_master(r) && dlm_is_removed(ls, r->res_nodeid)) {
++		else if (!is_master(r) &&
++			 (dlm_is_removed(ls, r->res_nodeid) ||
++			  rsb_flag(r, RSB_NEW_MASTER))) {
+ 			recover_master(r);
+ 			count++;
+ 		}
+

@@ -1,0 +1,78 @@
+From: Alexander Viro <aviro@redhat.com>
+Subject: [RHEL5.2] bz#360841
+Date: Fri, 9 Nov 2007 11:52:24 -0500
+Bugzilla: 360841
+Message-Id: <20071109165224.GE28304@devserv.devel.redhat.com>
+Changelog: [audit] still allocate contexts when audit is disabled
+
+
+	Disabling audit at runtime by auditctl doesn't mean that we can
+stop allocating contexts for new processes; we don't want to miss them
+when that sucker is reenabled.
+
+diff --git a/kernel/audit.c b/kernel/audit.c
+index f93c271..83227f8 100644
+--- a/kernel/audit.c
++++ b/kernel/audit.c
+@@ -70,6 +70,7 @@ static int	audit_initialized;
+  * 1 - auditing enabled
+  * 2 - auditing enabled and configuration is locked/unchangeable. */
+ int		audit_enabled;
++int		audit_ever_enabled;
+ 
+ /* Default state when kernel boots without any parameters. */
+ static int	audit_default;
+@@ -340,8 +341,10 @@ static int audit_set_enabled(int state, uid_t loginuid, u32 sid)
+ 		state, old, loginuid, res);
+ 
+ 	/* If we are allowed, make the change */
+-	if (res == 1)
++	if (res == 1) {
+ 		audit_enabled = state;
++		audit_ever_enabled |= !!state;
++	}
+ 	/* Not allowed, update reason */
+ 	else if (rc == 0)
+ 		rc = -EPERM;
+@@ -965,6 +968,7 @@ static int __init audit_init(void)
+ 	skb_queue_head_init(&audit_skb_queue);
+ 	audit_initialized = 1;
+ 	audit_enabled = audit_default;
++	audit_ever_enabled |= !!audit_default;
+ 
+ 	/* Register the callback with selinux.  This callback will be invoked
+ 	 * when a new policy is loaded. */
+@@ -992,8 +996,10 @@ static int __init audit_enable(char *str)
+ 	printk(KERN_INFO "audit: %s%s\n",
+ 	       audit_default ? "enabled" : "disabled",
+ 	       audit_initialized ? "" : " (after initialization)");
+-	if (audit_initialized)
++	if (audit_initialized) {
+ 		audit_enabled = audit_default;
++		audit_ever_enabled |= !!audit_default;
++	}
+ 	return 1;
+ }
+ 
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index bce9ecd..250f00f 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -70,6 +70,7 @@
+ #include "audit.h"
+ 
+ extern struct list_head audit_filter_list[];
++extern int audit_ever_enabled;
+ 
+ /* AUDIT_NAMES is the number of slots we reserve in the audit_context
+  * for saving names from getname(). */
+@@ -814,7 +815,7 @@ int audit_alloc(struct task_struct *tsk)
+ 	struct audit_context *context;
+ 	enum audit_state     state;
+ 
+-	if (likely(!audit_enabled))
++	if (likely(!audit_ever_enabled))
+ 		return 0; /* Return if not auditing. */
+ 
+ 	state = audit_filter_task(tsk);
+

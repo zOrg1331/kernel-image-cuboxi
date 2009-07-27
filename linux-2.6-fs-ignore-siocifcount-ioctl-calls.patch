@@ -1,0 +1,55 @@
+From: Josef Bacik <jbacik@redhat.com>
+Date: Wed, 14 Nov 2007 15:01:23 -0500
+Subject: [fs] ignore SIOCIFCOUNT ioctl calls
+Message-id: 20071114200122.GA1535@dhcp243-37.rdu.redhat.com
+O-Subject: [RHEL5.2 PATCH] ignore SIOCIFCOUNT ioctl calls
+Bugzilla: 310011
+
+Hello,
+
+This patch is for bz 310011, provided by IBM.  32bit java on a 64bit os will
+make these SIOCGIFCOUNT calls and complain because its not a valid ioctl.  This
+patch is from two different upstream patches
+
+9d016dd43b8df0228f1022f483f582eeb52d256e
+421f028100cbef0ba15086d63cad87fb6e5c3da9
+
+This is purely a cosmetic change to keep java from complaining when it does
+this.  It applies to the latest RHEL5 kernel in brew, and has been tested and
+verified by IBM.  Thank you,
+
+Josef
+
+Acked-by: Eric Sandeen <sandeen@redhat.com>
+Acked-by: Eric Sandeen <sandeen@redhat.com>
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/fs/compat_ioctl.c b/fs/compat_ioctl.c
+index 22d142a..0ae09f1 100644
+--- a/fs/compat_ioctl.c
++++ b/fs/compat_ioctl.c
+@@ -2674,6 +2674,14 @@ lp_timeout_trans(unsigned int fd, unsigned int cmd, unsigned long arg)
+ #define ULONG_IOCTL(cmd) \
+ 	{ (cmd), (ioctl_trans_handler_t)sys_ioctl },
+ 
++/* ioctl should not be warned about even if it's not implemented.
++   Valid reasons to use this:
++   - It is implemented with ->compat_ioctl on some device, but programs
++   call it on others too.
++   - The ioctl is not implemented in the native kernel, but programs
++   call it commonly anyways.
++   Most other reasons are not valid. */
++#define IGNORE_IOCTL(cmd) COMPATIBLE_IOCTL(cmd)
+ 
+ struct ioctl_trans ioctl_start[] = {
+ #include <linux/compat_ioctl.h>
+@@ -2867,6 +2875,8 @@ HANDLE_IOCTL(SIOCSIWENCODE, do_wireless_ioctl)
+ HANDLE_IOCTL(SIOCGIWENCODE, do_wireless_ioctl)
+ HANDLE_IOCTL(SIOCSIFBR, old_bridge_ioctl)
+ HANDLE_IOCTL(SIOCGIFBR, old_bridge_ioctl)
++/* Not implemented in the native kernel */
++IGNORE_IOCTL(SIOCGIFCOUNT)
+ HANDLE_IOCTL(RTC_IRQP_READ32, rtc_ioctl)
+ HANDLE_IOCTL(RTC_IRQP_SET32, rtc_ioctl)
+ HANDLE_IOCTL(RTC_EPOCH_READ32, rtc_ioctl)

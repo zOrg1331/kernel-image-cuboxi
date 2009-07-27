@@ -1,0 +1,57 @@
+From: Tom Coughlan <coughlan@redhat.com>
+Date: Mon, 24 Nov 2008 10:00:44 -0500
+Subject: [scsi] cciss: add two new PCI IDs
+Message-id: 1227538845.2407.31.camel@p670.boston.redhat.com
+O-Subject: [RHEL 5.3 PATCH] Add two PCI IDs to the cciss driver.
+Bugzilla: 471679
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Jon Masters <jcm@redhat.com>
+RH-Acked-by: Peter Martuccelli <peterm@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+BZ 471679.
+
+This patch adds support for 2 new mezzanine controllers for the next gen
+blades. The hardware will ship first calendar quarter of 2009. The patch
+simply adds PCI IDs and strings to existing tables. It is posted
+upstream. Very low risk. I compiled it. HP has the hardware and will
+test.
+
+Signed-off-by: Mike Miller <mike.miller@hp.com>
+
+diff --git a/Documentation/cciss.txt b/Documentation/cciss.txt
+index 47962d4..3a59058 100644
+--- a/Documentation/cciss.txt
++++ b/Documentation/cciss.txt
+@@ -27,6 +27,8 @@ This driver is known to work with the following cards:
+ 	* SA P410i
+ 	* SA P411
+ 	* SA P812
++       * SA 712m
++       * SA 711m
+ 
+ If nodes are not already created in the /dev/cciss directory, run as root:
+ 
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index a6b04da..bc3c3ef 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -94,6 +94,8 @@ static const struct pci_device_id cciss_pci_device_id[] = {
+ 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3245},
+ 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3247},
+ 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3249},
++	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x324A},
++	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x324B},
+ 	{PCI_VENDOR_ID_HP,     PCI_ANY_ID,      PCI_ANY_ID, PCI_ANY_ID,
+ 		PCI_CLASS_STORAGE_RAID << 8, 0xffff << 8, 0},
+ 	{0,}
+@@ -131,6 +133,8 @@ static struct board_type products[] = {
+ 	{0x3245103C, "Smart Array P410i", &SA5_access},
+ 	{0x3247103C, "Smart Array P411", &SA5_access},
+ 	{0x3249103C, "Smart Array P812", &SA5_access},
++	{0x324A103C, "Smart Array P712m", &SA5_access},
++	{0x324B103C, "Smart Array P711m", &SA5_access},
+ 	{0xFFFF103C, "Unknown Smart Array", &SA5_access},
+ };
+ 

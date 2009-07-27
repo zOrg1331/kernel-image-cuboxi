@@ -1,0 +1,105 @@
+From: Aristeu Rozanski <arozansk@redhat.com>
+Date: Tue, 5 Feb 2008 16:39:29 -0500
+Subject: [ide] ide-io: fail request when device is dead
+Message-id: 20080205213921.GA9054@redhat.com
+O-Subject: [RHEL5.2 PATCH] ide-io: mark request as failed when device is dead
+Bugzilla: 354461
+
+https://bugzilla.redhat.com/show_bug.cgi?id=354461
+
+I copied here the full explanation from the commit log that will detail
+the problem better. The solution for this bug was only found in beta
+testing because another bug (BZ#429418) made it a lot easier to reproduce.
+
+Upstream: b5e1a4e2869af5ffaa102535ad63d184d86e66ec
+
+Tested by me in the same machine the problem was being reproduced
+(dell-pe700-01.rhts.lab.boston.redhat.com) with success.
+
+------
+
+Currently it's possible to ide-cd to set an incorrect blocksize by
+reading garbage if the drive is dead:
+
+ide_cd_probe()
+-> cdrom_read_toc()
+ -> cdrom_read_capacity()
+     -> cdrom_queue_packet_command()
+	 -> ide_do_drive_cmd()
+	     -> ide_do_request()
+		 -> start_request()
+
+on start_request():
+
+    /* bail early if we've exceeded max_failures */
+    if (drive->max_failures && (drive->failures > drive->max_failures)) {
+	    goto kill_rq;
+    }
+(...)
+kill_rq:
+    ide_kill_rq(drive, rq);
+    return ide_stopped;
+
+ide_kill_rq() and the next calls won't set REQ_FAILED on rq->cmd_flags and thus
+cdrom_queue_packet_command() won't return an error. then:
+
+    stat = cdrom_queue_packet_command(drive, &req);
+    if (stat == 0) {
+	    *capacity = 1 + be32_to_cpu(capbuf.lba);
+	    *sectors_per_frame =
+		    be32_to_cpu(capbuf.blocklen) >> SECTOR_BITS;
+    }
+
+cdrom_read_capacity() ends believing capbuf is valid but in fact it's just
+uninitialized data. back to cdrom_read_toc():
+
+    /* Try to get the total cdrom capacity and sector size. */
+    stat = cdrom_read_capacity(drive, &toc->capacity, &sectors_per_frame,
+			       sense);
+    if (stat)
+	    toc->capacity = 0x1fffff;
+
+    set_capacity(info->disk, toc->capacity * sectors_per_frame);
+    /* Save a private copy of te TOC capacity for error handling */
+    drive->probed_capacity = toc->capacity * sectors_per_frame;
+
+    blk_queue_hardsect_size(drive->queue,
+			    sectors_per_frame << SECTOR_BITS);
+
+that will set drive->queue->hardsect_size to be the random value.
+hardsect_size is used to calculate inode->i_blkbits. later on, on a read
+path:
+
+void create_empty_buffers(struct page *page,
+		    unsigned long blocksize, unsigned long b_state)
+{
+    struct buffer_head *bh, *head, *tail;
+
+    head = alloc_page_buffers(page, blocksize, 1);
+    bh = head;
+    do {
+	    bh->b_state |= b_state;
+	    tail = bh;
+	    bh = bh->b_this_page;
+    } while (bh);
+    tail->b_this_page = head;
+
+alloc_page_buffers() will return NULL if blocksize > 4096. blocksize is
+calculed based on inode->i_blkbits. that will trigger a null
+dereference on create_empty_buffers().
+
+Acked-by: Alan Cox <alan@redhat.com>
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/drivers/ide/ide-io.c b/drivers/ide/ide-io.c
+index fb67952..72cb55c 100644
+--- a/drivers/ide/ide-io.c
++++ b/drivers/ide/ide-io.c
+@@ -989,6 +989,7 @@ static ide_startstop_t start_request (ide_drive_t *drive, struct request *rq)
+ 
+ 	/* bail early if we've exceeded max_failures */
+ 	if (drive->max_failures && (drive->failures > drive->max_failures)) {
++		rq->flags |= REQ_FAILED;
+ 		goto kill_rq;
+ 	}
+ 

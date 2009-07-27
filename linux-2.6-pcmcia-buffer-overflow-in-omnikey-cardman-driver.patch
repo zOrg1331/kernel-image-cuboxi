@@ -1,0 +1,47 @@
+From: Don Howard <dhoward@redhat.com>
+Subject: buffer overflow in omnikey cardman driver   
+Date: Wed, 14 Feb 2007 16:30:37 -0800 (PST)
+Bugzilla: 227478
+Message-Id: <Pine.LNX.4.64.0702131215340.5706@sugarmagnolia.remotee.org>
+Changelog: [pcmcia] buffer overflow in omnikey cardman driver   
+
+
+>From Daniel Roethlisberger:
+
+"While using the Linux drivers for the CM4040 as a reference for writing a 
+ cmx FreeBSD driver I found two buffer overflows in the Linux drivers, one 
+ in the write() and one in the read() handler.
+
+ When calling write() with a buffer larger than 512 bytes, the driver's 
+ write buffer overflows, allowing to overwrite the EIP and execute 
+ arbitrary code with kernel privileges.
+
+ In read(), we have a similar problem, but coming from the device. A 
+ malicous or buggy device sending more than 512 bytes can overflow of the 
+ driver's read buffer, with the same effects as above."
+
+Patch updated to return -EINVAL for too large/small write requests.
+
+--- linux-2.6.18.noarch/drivers/char/pcmcia/cm4040_cs.c.orig	2007-02-14 19:56:00.000000000 -0800
++++ linux-2.6.18.noarch/drivers/char/pcmcia/cm4040_cs.c	2007-02-14 20:00:14.000000000 -0800
+@@ -273,6 +273,7 @@ static ssize_t cm4040_read(struct file *
+ 	DEBUGP(6, dev, "BytesToRead=%lu\n", bytes_to_read);
+ 
+ 	min_bytes_to_read = min(count, bytes_to_read + 5);
++	min_bytes_to_read = min_t(size_t, min_bytes_to_read, READ_WRITE_BUFFER_SIZE);
+ 
+ 	DEBUGP(6, dev, "Min=%lu\n", min_bytes_to_read);
+ 
+@@ -340,9 +341,9 @@ static ssize_t cm4040_write(struct file 
+ 		return 0;
+ 	}
+ 
+-	if (count < 5) {
++	if ((count < 5) || (count > READ_WRITE_BUFFER_SIZE)) {
+ 		DEBUGP(2, dev, "<- cm4040_write buffersize=%Zd < 5\n", count);
+-		return -EIO;
++		return -EINVAL;
+ 	}
+ 
+ 	if (filp->f_flags & O_NONBLOCK) {
+

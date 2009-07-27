@@ -1,0 +1,30 @@
+From: David Teigland <teigland@redhat.com>
+Date: Thu, 29 Nov 2007 10:25:53 -0600
+Subject: [dlm] don't print common non-errors
+Message-id: 20071129162553.GF8513@redhat.com
+O-Subject: [RHEL5.2 PATCH] dlm: don't print common non-errors
+Bugzilla: 404561
+
+bz 404561
+
+Change log_error() to log_debug() for conditions that can occur in
+large number in normal operation.
+
+Upstream commit
+http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/steve/gfs2-2.6-nmw.git;a=commitdiff;h=f803e8d2518a9c1187b5e60adfcba55c8cf80aff
+
+Acked-by: Bob Peterson <rpeterso@redhat.com>
+
+diff --git a/fs/dlm/lock.c b/fs/dlm/lock.c
+index d8d9834..4eab2b3 100644
+--- a/fs/dlm/lock.c
++++ b/fs/dlm/lock.c
+@@ -4260,7 +4260,7 @@ int dlm_recover_master_copy(struct dlm_ls *ls, struct dlm_rcom *rc)
+ 	put_rsb(r);
+  out:
+ 	if (error)
+-		log_print("recover_master_copy %d %x", error, rl->rl_lkid);
++		log_debug(ls, "recover_master_copy %d %x", error, rl->rl_lkid);
+ 	rl->rl_result = error;
+ 	return error;
+ }

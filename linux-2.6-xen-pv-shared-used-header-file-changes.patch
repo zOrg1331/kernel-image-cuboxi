@@ -1,0 +1,436 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Tue, 12 Aug 2008 17:56:09 -0400
+Subject: [xen] PV: shared used header file changes
+Message-id: 48A206F9.7030502@redhat.com
+O-Subject: Re: [RHEL5.3 PATCH 1/5]: Xen h-file changes to enable shared use with PV-on-HVM drivers in bare metal kernel
+Bugzilla: 442991
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+
+BZ 442991 -- Include xenpv-driver in bare metal kernel rpm.
+
+The following patches modify the h-file used
+by the -xen kernel and drivers/xen pv drivers
+so they can be used by the pv-on-hvm drivers
+(in fortcoming patch).
+
+The changes mimic the changes made to RHEL4's xen h files,
+and bring the files closer to upstream Xen.
+
+See 0/5 for testing.
+
+Please review & ACK.
+
+- Don
+
+diff --git a/include/asm-i386/mach-xen/asm/hypercall.h b/include/asm-i386/mach-xen/asm/hypercall.h
+index ad36c14..08ab8f5 100644
+--- a/include/asm-i386/mach-xen/asm/hypercall.h
++++ b/include/asm-i386/mach-xen/asm/hypercall.h
+@@ -35,9 +35,15 @@
+ 
+ #include <linux/string.h> /* memcpy() */
+ 
+-#ifndef __HYPERVISOR_H__
+-# error "please don't include this file directly"
+-#endif
++#include <xen/interface/dom0_ops.h>
++#include <xen/interface/xen.h>
++#include <xen/interface/sched.h>
++#include <xen/interface/nmi.h>
++#include <linux/errno.h>
++
++/* moved from hypervisor.h to resolve cyclic inclusion */
++/* Turn jiffies into Xen system time. */
++u64 jiffies_to_st(unsigned long jiffies);
+ 
+ #define __STR(x) #x
+ #define STR(x) __STR(x)
+@@ -296,6 +302,7 @@ HYPERVISOR_physdev_op(
+ 	int cmd, void *arg)
+ {
+ 	int rc = _hypercall2(int, physdev_op, cmd, arg);
++#ifndef CONFIG_XEN_PV_ON_HVM
+ 	if (unlikely(rc == -ENOSYS)) {
+ 		struct physdev_op op;
+ 		op.cmd = cmd;
+@@ -303,6 +310,7 @@ HYPERVISOR_physdev_op(
+ 		rc = _hypercall1(int, physdev_op_compat, &op);
+ 		memcpy(arg, &op.u, sizeof(op.u));
+ 	}
++#endif
+ 	return rc;
+ }
+ 
+diff --git a/include/asm-i386/mach-xen/asm/hypervisor.h b/include/asm-i386/mach-xen/asm/hypervisor.h
+index 2e22141..d03f63d 100644
+--- a/include/asm-i386/mach-xen/asm/hypervisor.h
++++ b/include/asm-i386/mach-xen/asm/hypervisor.h
+@@ -112,6 +112,12 @@ void xen_destroy_contiguous_region(
+ /* Turn jiffies into Xen system time. */
+ u64 jiffies_to_st(unsigned long jiffies);
+ 
++#ifdef CONFIG_XEN_SCRUB_PAGES
++#define scrub_pages(_p,_n) memset((void *)(_p), 0, (_n) << PAGE_SHIFT)
++#else
++#define scrub_pages(_p,_n) ((void)0)
++#endif
++
+ #include <asm/hypercall.h>
+ 
+ #if defined(CONFIG_X86_64)
+diff --git a/include/asm-i386/mach-xen/asm/maddr.h b/include/asm-i386/mach-xen/asm/maddr.h
+index b49131c..4ded6ed 100644
+--- a/include/asm-i386/mach-xen/asm/maddr.h
++++ b/include/asm-i386/mach-xen/asm/maddr.h
+@@ -9,6 +9,15 @@
+ #define FOREIGN_FRAME_BIT	(1UL<<31)
+ #define FOREIGN_FRAME(m)	((m) | FOREIGN_FRAME_BIT)
+ 
++/* Definitions for machine and pseudophysical addresses. */
++#ifdef CONFIG_X86_PAE
++typedef unsigned long long paddr_t;
++typedef unsigned long long maddr_t;
++#else
++typedef unsigned long paddr_t;
++typedef unsigned long maddr_t;
++#endif
++
+ #ifdef CONFIG_XEN
+ 
+ extern unsigned long *phys_to_machine_mapping;
+@@ -102,26 +111,6 @@ static inline void set_phys_to_machine(unsigned long pfn, unsigned long mfn)
+ 	phys_to_machine_mapping[pfn] = mfn;
+ }
+ 
+-
+-#else /* !CONFIG_XEN */
+-
+-#define pfn_to_mfn(pfn) (pfn)
+-#define mfn_to_pfn(mfn) (mfn)
+-#define mfn_to_local_pfn(mfn) (mfn)
+-#define set_phys_to_machine(pfn, mfn) BUG_ON((pfn) != (mfn))
+-#define phys_to_machine_mapping_valid(pfn) (1)
+-
+-#endif /* !CONFIG_XEN */
+-
+-/* Definitions for machine and pseudophysical addresses. */
+-#ifdef CONFIG_X86_PAE
+-typedef unsigned long long paddr_t;
+-typedef unsigned long long maddr_t;
+-#else
+-typedef unsigned long paddr_t;
+-typedef unsigned long maddr_t;
+-#endif
+-
+ static inline maddr_t phys_to_machine(paddr_t phys)
+ {
+ 	maddr_t machine = pfn_to_mfn(phys >> PAGE_SHIFT);
+@@ -164,11 +153,6 @@ static inline paddr_t pte_machine_to_phys(maddr_t machine)
+ }
+ #endif
+ 
+-/* VIRT <-> MACHINE conversion */
+-#define virt_to_machine(v)	(phys_to_machine(__pa(v)))
+-#define virt_to_mfn(v)		(pfn_to_mfn(__pa(v) >> PAGE_SHIFT))
+-#define mfn_to_virt(m)		(__va(mfn_to_pfn(m) << PAGE_SHIFT))
+-
+ #ifdef CONFIG_X86_PAE
+ static inline pte_t pfn_pte_ma(unsigned long page_nr, pgprot_t pgprot)
+ {
+@@ -187,4 +171,23 @@ static inline pte_t pfn_pte_ma(unsigned long page_nr, pgprot_t pgprot)
+ 
+ #define __pte_ma(x)	((pte_t) { (x) } )
+ 
++#else /* !CONFIG_XEN */
++
++#define pfn_to_mfn(pfn) (pfn)
++#define mfn_to_pfn(mfn) (mfn)
++#define mfn_to_local_pfn(mfn) (mfn)
++#define set_phys_to_machine(pfn, mfn) ((void)0)
++#define phys_to_machine_mapping_valid(pfn) (1)
++#define phys_to_machine(phys) ((maddr_t)(phys))
++#define machine_to_phys(mach) ((paddr_t)(mach))
++#define pfn_pte_ma(pfn, prot) pfn_pte(pfn, prot)
++#define __pte_ma(x) __pte(x)
++
++#endif /* !CONFIG_XEN */
++
++/* VIRT <-> MACHINE conversion */
++#define virt_to_machine(v)	(phys_to_machine(__pa(v)))
++#define virt_to_mfn(v)		(pfn_to_mfn(__pa(v) >> PAGE_SHIFT))
++#define mfn_to_virt(m)		(__va(mfn_to_pfn(m) << PAGE_SHIFT))
++
+ #endif /* _I386_MADDR_H */
+diff --git a/include/asm-i386/mach-xen/asm/page.h b/include/asm-i386/mach-xen/asm/page.h
+index 4756ccc..5300c86 100644
+--- a/include/asm-i386/mach-xen/asm/page.h
++++ b/include/asm-i386/mach-xen/asm/page.h
+@@ -46,12 +46,6 @@
+ })
+ #define HAVE_ARCH_FREE_PAGE
+ 
+-#ifdef CONFIG_XEN_SCRUB_PAGES
+-#define scrub_pages(_p,_n) memset((void *)(_p), 0, (_n) << PAGE_SHIFT)
+-#else
+-#define scrub_pages(_p,_n) ((void)0)
+-#endif
+-
+ #ifdef CONFIG_X86_USE_3DNOW
+ 
+ #include <asm/mmx.h>
+diff --git a/include/asm-x86_64/mach-xen/asm/hw_irq.h b/include/asm-x86_64/mach-xen/asm/hw_irq.h
+index ae438de..fd7f99f 100644
+--- a/include/asm-x86_64/mach-xen/asm/hw_irq.h
++++ b/include/asm-x86_64/mach-xen/asm/hw_irq.h
+@@ -38,29 +38,6 @@ struct hw_interrupt_type;
+  */
+ 
+ /*
+- * Special IRQ vectors used by the SMP architecture, 0xf0-0xff
+- *
+- *  some of the following vectors are 'rare', they are merged
+- *  into a single vector (CALL_FUNCTION_VECTOR) to save vector space.
+- *  TLB, reschedule and local APIC vectors are performance-critical.
+- */
+-#ifndef CONFIG_XEN
+-#define SPURIOUS_APIC_VECTOR	0xff
+-#define ERROR_APIC_VECTOR	0xfe
+-#define RESCHEDULE_VECTOR	0xfd
+-#define CALL_FUNCTION_VECTOR	0xfc
+-/* fb free - please don't readd KDB here because it's useless
+-   (hint - think what a NMI bit does to a vector) */
+-#define THERMAL_APIC_VECTOR	0xfa
+-#define THRESHOLD_APIC_VECTOR   0xf9
+-/* f8 free */
+-#define INVALIDATE_TLB_VECTOR_END	0xf7
+-#define INVALIDATE_TLB_VECTOR_START	0xf0	/* f0-f7 used for TLB flush */
+-
+-#define NUM_INVALIDATE_TLB_VECTORS	8
+-#endif
+-
+-/*
+  * Local APIC timer IRQ vector is on a different priority level,
+  * to work around the 'lost local interrupt if more than 2 IRQ
+  * sources per level' errata.
+diff --git a/include/asm-x86_64/mach-xen/asm/hypercall.h b/include/asm-x86_64/mach-xen/asm/hypercall.h
+index ab43c0c..7e6b828 100644
+--- a/include/asm-x86_64/mach-xen/asm/hypercall.h
++++ b/include/asm-x86_64/mach-xen/asm/hypercall.h
+@@ -39,9 +39,13 @@
+ 
+ #include <linux/string.h> /* memcpy() */
+ 
+-#ifndef __HYPERVISOR_H__
+-# error "please don't include this file directly"
++#ifdef CONFIG_XEN_PV_ON_HVM
++#include <xen/interface/dom0_ops.h>
+ #endif
++#include <xen/interface/xen.h>
++#include <xen/interface/sched.h>
++#include <xen/interface/nmi.h>
++#include <linux/errno.h>
+ 
+ #define __STR(x) #x
+ #define STR(x) __STR(x)
+@@ -294,6 +298,7 @@ HYPERVISOR_physdev_op(
+ 	int cmd, void *arg)
+ {
+ 	int rc = _hypercall2(int, physdev_op, cmd, arg);
++#ifndef CONFIG_XEN_PV_ON_HVM
+ 	if (unlikely(rc == -ENOSYS)) {
+ 		struct physdev_op op;
+ 		op.cmd = cmd;
+@@ -301,6 +306,7 @@ HYPERVISOR_physdev_op(
+ 		rc = _hypercall1(int, physdev_op_compat, &op);
+ 		memcpy(arg, &op.u, sizeof(op.u));
+ 	}
++#endif
+ 	return rc;
+ }
+ 
+diff --git a/include/asm-x86_64/mach-xen/asm/maddr.h b/include/asm-x86_64/mach-xen/asm/maddr.h
+index baca328..0524e2c 100644
+--- a/include/asm-x86_64/mach-xen/asm/maddr.h
++++ b/include/asm-x86_64/mach-xen/asm/maddr.h
+@@ -9,6 +9,10 @@
+ #define FOREIGN_FRAME_BIT	(1UL<<63)
+ #define FOREIGN_FRAME(m)	((m) | FOREIGN_FRAME_BIT)
+ 
++/* Definitions for machine and pseudophysical addresses. */
++typedef unsigned long paddr_t;
++typedef unsigned long maddr_t;
++
+ #ifdef CONFIG_XEN
+ 
+ extern unsigned long *phys_to_machine_mapping;
+@@ -101,20 +105,6 @@ static inline void set_phys_to_machine(unsigned long pfn, unsigned long mfn)
+ 	phys_to_machine_mapping[pfn] = mfn;
+ }
+ 
+-#else /* !CONFIG_XEN */
+-
+-#define pfn_to_mfn(pfn) (pfn)
+-#define mfn_to_pfn(mfn) (mfn)
+-#define mfn_to_local_pfn(mfn) (mfn)
+-#define set_phys_to_machine(pfn, mfn) BUG_ON((pfn) != (mfn))
+-#define phys_to_machine_mapping_valid(pfn) (1)
+-
+-#endif /* !CONFIG_XEN */
+-
+-/* Definitions for machine and pseudophysical addresses. */
+-typedef unsigned long paddr_t;
+-typedef unsigned long maddr_t;
+-
+ static inline maddr_t phys_to_machine(paddr_t phys)
+ {
+ 	maddr_t machine = pfn_to_mfn(phys >> PAGE_SHIFT);
+@@ -145,13 +135,27 @@ static inline paddr_t pte_machine_to_phys(maddr_t machine)
+ 	return phys;
+ }
+ 
++#define __pte_ma(x)     ((pte_t) { (x) } )
++#define pfn_pte_ma(pfn, prot)	__pte_ma((((pfn) << PAGE_SHIFT) | pgprot_val(prot)) & __supported_pte_mask)
++
++#else /* !CONFIG_XEN */
++
++#define pfn_to_mfn(pfn) (pfn)
++#define mfn_to_pfn(mfn) (mfn)
++#define mfn_to_local_pfn(mfn) (mfn)
++#define set_phys_to_machine(pfn, mfn) ((void)0)
++#define phys_to_machine_mapping_valid(pfn) (1)
++#define phys_to_machine(phys) ((maddr_t)(phys))
++#define machine_to_phys(mach) ((paddr_t)(mach))
++#define pfn_pte_ma(pfn, prot) pfn_pte(pfn, prot)
++#define __pte_ma(x) __pte(x)
++
++#endif /* !CONFIG_XEN */
++
+ /* VIRT <-> MACHINE conversion */
+ #define virt_to_machine(v)	(phys_to_machine(__pa(v)))
+ #define virt_to_mfn(v)		(pfn_to_mfn(__pa(v) >> PAGE_SHIFT))
+ #define mfn_to_virt(m)		(__va(mfn_to_pfn(m) << PAGE_SHIFT))
+ 
+-#define __pte_ma(x)     ((pte_t) { (x) } )
+-#define pfn_pte_ma(pfn, prot)	__pte_ma((((pfn) << PAGE_SHIFT) | pgprot_val(prot)) & __supported_pte_mask)
+-
+ #endif /* _X86_64_MADDR_H */
+ 
+diff --git a/include/asm-x86_64/mach-xen/asm/page.h b/include/asm-x86_64/mach-xen/asm/page.h
+index 084a3bc..106be8f 100644
+--- a/include/asm-x86_64/mach-xen/asm/page.h
++++ b/include/asm-x86_64/mach-xen/asm/page.h
+@@ -28,12 +28,6 @@
+ })
+ #define HAVE_ARCH_FREE_PAGE
+ 
+-#ifdef CONFIG_XEN_SCRUB_PAGES
+-#define scrub_pages(_p,_n) memset((void *)(_p), 0, (_n) << PAGE_SHIFT)
+-#else
+-#define scrub_pages(_p,_n) ((void)0)
+-#endif
+-
+ /* PAGE_SHIFT determines the page size */
+ #define PAGE_SHIFT	12
+ #define PAGE_SIZE	(_AC(1,UL) << PAGE_SHIFT)
+diff --git a/include/xen/evtchn.h b/include/xen/evtchn.h
+index bfe32fe..0889060 100644
+--- a/include/xen/evtchn.h
++++ b/include/xen/evtchn.h
+@@ -53,6 +53,13 @@
+  * Returns IRQ or negative errno.
+  * UNBIND: Takes IRQ to unbind from; automatically closes the event channel.
+  */
++/*
++ * To enable RHEL to build w/o porting bind_evtchn_to_irqhandler
++ * to bind_caller_port_to_irqhandler
++ */
++#ifdef CONFIG_XEN_PV_ON_HVM
++#define bind_evtchn_to_irqhandler bind_caller_port_to_irqhandler
++#endif
+ extern int bind_evtchn_to_irqhandler(
+ 	unsigned int evtchn,
+ 	irqreturn_t (*handler)(int, void *, struct pt_regs *),
+diff --git a/include/xen/interface/hvm/params.h b/include/xen/interface/hvm/params.h
+index cb23f12..fab89a4 100644
+--- a/include/xen/interface/hvm/params.h
++++ b/include/xen/interface/hvm/params.h
+@@ -3,12 +3,38 @@
+ 
+ #include "hvm_op.h"
+ 
+-/* Parameter space for HVMOP_{set,get}_param. */
++/*
++ * Parameter space for HVMOP_{set,get}_param.
++ */
++
++/*
++ * How should CPU0 event-channel notifications be delivered?
++ * val[63:56] == 0: val[55:0] is a delivery GSI (Global System Interrupt).
++ * val[63:56] == 1: val[55:0] is a delivery PCI INTx line, as follows:
++ *                  Domain = val[47:32], Bus  = val[31:16],
++ *                  DevFn  = val[15: 8], IntX = val[ 1: 0]
++ * If val == 0 then CPU0 event-channel notifications are not delivered.
++ */
+ #define HVM_PARAM_CALLBACK_IRQ 0
++
++/*
++ * These are not used by Xen. They are here for convenience of HVM-guest
++ * xenbus implementations.
++ */
+ #define HVM_PARAM_STORE_PFN    1
+ #define HVM_PARAM_STORE_EVTCHN 2
+-#define HVM_PARAM_APIC_ENABLED 3
++
+ #define HVM_PARAM_PAE_ENABLED  4
+-#define HVM_NR_PARAMS          5
++
++#define HVM_PARAM_IOREQ_PFN    5
++
++#define HVM_PARAM_BUFIOREQ_PFN 6
++
++#ifdef __ia64__
++#define HVM_PARAM_NVRAM_FD     7
++#define HVM_NR_PARAMS          8
++#else
++#define HVM_NR_PARAMS          7
++#endif
+ 
+ #endif /* __XEN_PUBLIC_HVM_PARAMS_H__ */
+diff --git a/include/xen/xenbus.h b/include/xen/xenbus.h
+index d0d25bd..d81b80a 100644
+--- a/include/xen/xenbus.h
++++ b/include/xen/xenbus.h
+@@ -100,6 +100,9 @@ struct xenbus_driver {
+ 				 enum xenbus_state backend_state);
+ 	int (*remove)(struct xenbus_device *dev);
+ 	int (*suspend)(struct xenbus_device *dev);
++#ifdef CONFIG_XEN_PV_ON_HVM
++	int (*suspend_cancel)(struct xenbus_device *dev);
++#endif
+ 	int (*resume)(struct xenbus_device *dev);
+ 	int (*uevent)(struct xenbus_device *, char **, int, char *, int);
+ 	struct device_driver driver;
+@@ -160,6 +163,9 @@ int register_xenbus_watch(struct xenbus_watch *watch);
+ void unregister_xenbus_watch(struct xenbus_watch *watch);
+ void xs_suspend(void);
+ void xs_resume(void);
++#ifdef CONFIG_XEN_PV_ON_HVM
++void xs_suspend_cancel(void);
++#endif
+ 
+ /* Used by xenbus_dev to borrow kernel's store connection. */
+ void *xenbus_dev_request_and_reply(struct xsd_sockmsg *msg);
+@@ -167,6 +173,9 @@ void *xenbus_dev_request_and_reply(struct xsd_sockmsg *msg);
+ /* Called from xen core code. */
+ void xenbus_suspend(void);
+ void xenbus_resume(void);
++#ifdef CONFIG_XEN_PV_ON_HVM
++void xenbus_suspend_cancel(void);
++#endif
+ 
+ #define XENBUS_IS_ERR_READ(str) ({			\
+ 	if (!IS_ERR(str) && strlen(str) == 0) {		\

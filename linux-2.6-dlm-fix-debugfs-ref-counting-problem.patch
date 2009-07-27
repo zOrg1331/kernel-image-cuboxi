@@ -1,0 +1,59 @@
+From: Josef Bacik <jwhiter@redhat.com>
+Subject: [PATCH 5.1] dlm: fix debugfs ref counting problem
+Date: Tue, 5 Jun 2007 17:58:01 -0400
+Bugzilla: 242807
+Message-Id: <20070605215800.GE28363@korben.rdu.redhat.com>
+Changelog: [dlm] fix debugfs ref counting problem
+
+
+Hello,
+
+This patch is related to bz 242807.  This patch is from the upstream commit
+
+http://git.kernel.org/?p=linux/kernel/git/steve/gfs2-2.6-nmw.git;a=commit;h=021d2ff3a08019260a1dc002793c92d6bf18afb6
+
+and another smaller patch that corrects a problem with the original commit which
+will be included upstream shortly.  This patch holds a reference on the rsb
+while we are using it so it doesn't get freed out from underneath us while we
+are trying to print it out.  Thank you,
+
+Josef
+
+Index: latest/fs/dlm/debug_fs.c
+===================================================================
+--- latest.orig/fs/dlm/debug_fs.c
++++ latest/fs/dlm/debug_fs.c
+@@ -224,6 +224,9 @@ static int rsb_iter_next(struct rsb_iter
+ 			read_lock(&ls->ls_rsbtbl[i].lock);
+ 			if (!list_empty(&ls->ls_rsbtbl[i].list)) {
+ 				ri->next = ls->ls_rsbtbl[i].list.next;
++				ri->rsb = list_entry(ri->next, struct dlm_rsb,
++							res_hashchain);
++				dlm_hold_rsb(ri->rsb);
+ 				read_unlock(&ls->ls_rsbtbl[i].lock);
+ 				break;
+ 			}
+@@ -234,6 +237,7 @@ static int rsb_iter_next(struct rsb_iter
+ 		if (ri->entry >= ls->ls_rsbtbl_size)
+ 			return 1;
+ 	} else {
++		struct dlm_rsb *old = ri->rsb;
+ 		i = ri->entry;
+ 		read_lock(&ls->ls_rsbtbl[i].lock);
+ 		ri->next = ri->next->next;
+@@ -242,11 +246,14 @@ static int rsb_iter_next(struct rsb_iter
+ 			ri->next = NULL;
+ 			ri->entry++;
+ 			read_unlock(&ls->ls_rsbtbl[i].lock);
++			dlm_put_rsb(old);
+ 			goto top;
+                 }
++		ri->rsb = list_entry(ri->next, struct dlm_rsb, res_hashchain);
++		dlm_hold_rsb(ri->rsb);
+ 		read_unlock(&ls->ls_rsbtbl[i].lock);
++		dlm_put_rsb(old);
+ 	}
+-	ri->rsb = list_entry(ri->next, struct dlm_rsb, res_hashchain);
+ 
+ 	return 0;
+ }

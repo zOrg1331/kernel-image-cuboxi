@@ -1,0 +1,25 @@
+Date: Thu, 21 Sep 2006 16:49:34 +0100
+From: Alasdair G Kergon <agk@redhat.com>
+Subject: [RHEL5 PATCH 20/30] dm: add uevent change event on resume
+
+Device-mapper devices are not accessible until a 'resume' ioctl has been
+issued.  For userspace to find out when this happens we need to generate an
+uevent for udev to take appropriate action.
+
+As discussed at OLS we should send 'change' events for 'resume'.
+We can think of no useful purpose served by also having 'suspend' events.
+
+Index: linux-2.6.18.noarch/drivers/md/dm.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/dm.c
++++ linux-2.6.18.noarch/drivers/md/dm.c
+@@ -1378,6 +1378,8 @@ int dm_resume(struct mapped_device *md)
+ 
+ 	dm_table_unplug_all(map);
+ 
++	kobject_uevent(&md->disk->kobj, KOBJ_CHANGE);
++
+ 	r = 0;
+ 
+ out:
+

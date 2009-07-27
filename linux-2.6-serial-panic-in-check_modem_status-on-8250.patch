@@ -1,0 +1,35 @@
+From: Norm Murray <nmurray@redhat.com>
+Subject: [PATCH RHEL5.1 BZ238394] panic in check_modem_status on 8250
+Date: Mon, 30 Apr 2007 15:42:09 +1000
+Bugzilla: 238394
+Message-Id: <1177911729.31878.11.camel@strange.brisbane.redhat.com>
+Changelog: [serial] panic in check_modem_status on 8250
+
+
+Fujitsu is encountering a panic in check_modem_status with the 8250
+serial device where there's a possible NULL pointer dereference in
+check_modem_status if called before uart_open(). 
+
+Upstream discussion at:
+http://www.ussg.iu.edu/hypermail/linux/kernel/0704.2/0331.html
+
+The attached was committed in 2.6.21 and the only difference is line
+numbers for the backport to RHEL 5.
+
+BZ238394, IT119124
+
+
+
+--- linux-2.6.18.x86_64/drivers/serial/8250.c.orig	2007-04-30 15:06:16.000000000 +1000
++++ linux-2.6.18.x86_64/drivers/serial/8250.c	2007-04-30 15:15:27.000000000 +1000
+@@ -1292,7 +1292,8 @@ static unsigned int check_modem_status(s
+ {
+ 	unsigned int status = serial_in(up, UART_MSR);
+ 
+-	if (status & UART_MSR_ANY_DELTA && up->ier & UART_IER_MSI) {
++	if (status & UART_MSR_ANY_DELTA && up->ier & UART_IER_MSI &&
++	    up->port.info != NULL) {
+ 		if (status & UART_MSR_TERI)
+ 			up->port.icount.rng++;
+ 		if (status & UART_MSR_DDSR)
+

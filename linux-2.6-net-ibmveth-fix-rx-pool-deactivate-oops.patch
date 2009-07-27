@@ -1,0 +1,105 @@
+From: Scott Moser <smoser@redhat.com>
+Date: Tue, 23 Oct 2007 15:56:57 -0400
+Subject: [net] ibmveth: fix rx pool deactivate oops
+Message-id: 1193169420229-do-send-email-smoser@redhat.com
+O-Subject: [PATCH RHEL5u2] bz250827 Jumbo frames cannot be enabled on ibmveth [1/3]
+Bugzilla: 250827
+
+Description:
+-----------
+Jumbo frames cannot be enabled on ibmveth. For example, adding MTU=9000 to
+/etc/sysconfig/network-scripts/ifcfg-eth1 does not work since receive
+buffer pools are not getting allocated. When attempting to use the ibmveth
+sysfs interface to allocate the buffer pools prior to activating the
+interface, an oops resulted.
+
+Currently (2.6.18-52.el5), with inf=eth1 and mtu=9000 :
+- ip link set dev $inf mtu $mtu
+ fails with: SIOCSIFMTU: Invalid argument
+- echo 1 > /sys/bus/vio/devices/30000004/pool3/active
+ and
+  echo 65536 > /sys/class/net/$i/device/pool0/size
+ drops into xmon
+
+The patch below fixes the listed crashes above and makes 'ip' able to set
+the mtu as it should.
+
+commit 76b9cfccb39f542ce48a79b9ad50af25e422506c
+Author: Brian King <brking@linux.vnet.ibm.com>
+Date:   Fri Aug 3 13:55:19 2007 +1000
+
+ibmveth: Fix rx pool deactivate oops
+
+This fixes an oops which can occur when trying to deallocate receive
+buffer pools using sysfs with the ibmveth driver.
+
+Signed-off-by: Brian King <brking@linux.vnet.ibm.com>
+Signed-off-by: Paul Mackerras <paulus@samba.org>
+Signed-off-by: Jeff Garzik <jeff@garzik.org>
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+---
+ drivers/net/ibmveth.c |   24 ++++++++++++++----------
+ drivers/net/ibmveth.h |    3 ---
+ 2 files changed, 14 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/net/ibmveth.c b/drivers/net/ibmveth.c
+index 9d7d9d8..fbb2d81 100644
+--- a/drivers/net/ibmveth.c
++++ b/drivers/net/ibmveth.c
+@@ -1260,24 +1260,28 @@ const char * buf, size_t count)
+ 			int i;
+ 			/* Make sure there is a buffer pool with buffers that
+ 			   can hold a packet of the size of the MTU */
+-			for(i = 0; i<IbmVethNumBufferPools; i++) {
++			for (i = 0; i < IbmVethNumBufferPools; i++) {
+ 				if (pool == &adapter->rx_buff_pool[i])
+ 					continue;
+ 				if (!adapter->rx_buff_pool[i].active)
+ 					continue;
+-				if (mtu < adapter->rx_buff_pool[i].buff_size) {
+-					pool->active = 0;
+-					h_free_logical_lan_buffer(adapter->
+-								  vdev->
+-								  unit_address,
+-								  pool->
+-								  buff_size);
+-				}
++				if (mtu <= adapter->rx_buff_pool[i].buff_size)
++					break;
+ 			}
+-			if (pool->active) {
++
++			if (i == IbmVethNumBufferPools) {
+ 				ibmveth_error_printk("no active pool >= MTU\n");
+ 				return -EPERM;
+ 			}
++
++			pool->active = 0;
++			if (netif_running(netdev)) {
++				adapter->pool_config = 1;
++				ibmveth_close(netdev);
++				adapter->pool_config = 0;
++				if ((rc = ibmveth_open(netdev)))
++					return rc;
++			}
+ 		}
+ 	} else if (attr == &veth_num_attr) {
+ 		if (value <= 0 || value > IBMVETH_MAX_POOL_COUNT)
+diff --git a/drivers/net/ibmveth.h b/drivers/net/ibmveth.h
+index 8385bf8..413002f 100644
+--- a/drivers/net/ibmveth.h
++++ b/drivers/net/ibmveth.h
+@@ -70,9 +70,6 @@
+ #define h_change_logical_lan_mac(ua, mac) \
+   plpar_hcall_norets(H_CHANGE_LOGICAL_LAN_MAC, ua, mac)
+ 
+-#define h_free_logical_lan_buffer(ua, bufsize) \
+-  plpar_hcall_norets(H_FREE_LOGICAL_LAN_BUFFER, ua, bufsize)
+-
+ #define IbmVethNumBufferPools 5
+ #define IBMVETH_BUFF_OH 22 /* Overhead: 14 ethernet header + 8 opaque handle */
+ #define IBMVETH_MAX_MTU 68
+-- 
+1.5.3.5.645.gbb47
+

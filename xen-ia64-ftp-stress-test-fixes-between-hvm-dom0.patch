@@ -1,0 +1,111 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Wed, 12 Mar 2008 11:27:15 -0400
+Subject: [xen] ia64: ftp stress test fixes between HVM/Dom0
+Message-id: 47D7F653.1030700@redhat.com
+O-Subject: Re: [RHEL5.2 PATCH] Dom0 panic while we run ftp test tool between HVM and Dom0.
+Bugzilla: 426015
+
+This is an additional patch for BZ#426015.
+https://bugzilla.redhat.com/show_bug.cgi?id=426015
+
+The patch which was previously posted and committed in -67 kernel fixes
+the problem caused by wrong ssm_i emulation, but we found that there is
+another cause to panic while ftp test.
+
+The vcpu emulation of psr.ic in vcpu_rfi() has also a problem
+that the bit is always changed to be set.  This can set wrong psr.i
+value on return from interruption.
+
+This additional patch fixes the rfi emulation in the same way as in the
+upstream, but does not include any other parts than psr.ic and psr.i to
+minimize the modification.
+- [IA64] vcpu_set_psr added and used by vcpu_rfi.
+http://xenbits.xensource.com/xen-unstable.hg?rev/409f9849fa68
+
+I've tested this patch with kernel -84.  Unfortunately, the problem
+still occur with this patch, but the possibility of panic can be less.
+
+The time the ftp test program can run for is:
+  w/o this patch: 24 hours
+  w/  this patch: 72 hours
+
+So I believe this patch can make some improvement.
+
+Please review and ACK.
+
+Regards,
+
+Tetsu Yamamoto
+
+Tetsu Yamamoto wrote::
+> These patches fix BZ#426015.
+> https://bugzilla.redhat.com/show_bug.cgi?id=426015
+>
+> Dom0 panic while FTP stress test is caused by wrong ssm_i emulation
+> which is not barriered.  This means that interruption may not be
+> delivered correctly and kernel hit BUG_ON like a BUG_ON(irqs_disabled()).
+>
+> To fix it, the following upstream patches are backported:
+> - [IA64] Fix vdso paravirtualization.
+> http://xenbits.xensource.com/ext/ia64/linux-2.6.18-xen.hg?rev/8257a66108c0
+> - [IA64] Cleanup vdso paravirtualization.
+> http://xenbits.xensource.com/ext/ia64/linux-2.6.18-xen.hg?rev/b64323b3a963
+> - [IA64] Fix xen_ssm_i()
+> http://xenbits.xensource.com/ext/ia64/linux-2.6.18-xen.hg?rev/0f9032c33df4
+> - [IA64] barrier in xen_rsm_i
+> http://xenbits.xensource.com/ext/ia64/linux-2.6.18-xen.hg?rev/76c09a3354a8
+>
+> I've tested these patches with kernel-2.6.18-58.el5, and confirmed that
+> Dom0 hang does not occur on FTP stress test.
+>
+> Please review and ACK.
+>
+> Regards,
+>
+> Tetsu Yamamoto
+>
+
+Acked-by: Bill Burns <bburns@redhat.com>
+
+diff --git a/arch/ia64/xen/vcpu.c b/arch/ia64/xen/vcpu.c
+index 71b120d..9b967c3 100644
+--- a/arch/ia64/xen/vcpu.c
++++ b/arch/ia64/xen/vcpu.c
+@@ -1335,21 +1335,21 @@ IA64FAULT vcpu_rfi(VCPU * vcpu)
+ {
+ 	// TODO: Only allowed for current vcpu
+ 	PSR psr;
+-	u64 int_enable, ifs;
++	u64 ifs, int_enable, psr_ic;
+ 	REGS *regs = vcpu_regs(vcpu);
+ 
+ 	psr.i64 = PSCB(vcpu, ipsr);
++	int_enable = psr.ia64_psr.i;
++	psr_ic = psr.ia64_psr.ic;
+ 	if (psr.ia64_psr.cpl < 3)
+ 		psr.ia64_psr.cpl = 2;
+-	int_enable = psr.ia64_psr.i;
++
+ 	if (psr.ia64_psr.dfh) {
+ 		PSCB(vcpu, vpsr_dfh) = 1;
+ 	} else {
+ 		psr.ia64_psr.dfh = PSCB(vcpu, hpsr_dfh);
+ 		PSCB(vcpu, vpsr_dfh) = 0;
+ 	}
+-	if (psr.ia64_psr.ic)
+-		PSCB(vcpu, interrupt_collection_enabled) = 1;
+ 	if (psr.ia64_psr.dt && psr.ia64_psr.rt && psr.ia64_psr.it)
+ 		vcpu_set_metaphysical_mode(vcpu, FALSE);
+ 	else
+@@ -1368,9 +1368,9 @@ IA64FAULT vcpu_rfi(VCPU * vcpu)
+ 
+ 	regs->cr_ipsr = psr.i64;
+ 	regs->cr_iip = PSCB(vcpu, iip);
+-	PSCB(vcpu, interrupt_collection_enabled) = 1;
+ 	vcpu_bsw1(vcpu);
+-	vcpu->vcpu_info->evtchn_upcall_mask = !int_enable;
++	PSCB(vcpu, interrupt_collection_enabled) = !!(psr_ic);
++	vcpu->vcpu_info->evtchn_upcall_mask = !(int_enable);
+ 	return IA64_NO_FAULT;
+ }
+ 

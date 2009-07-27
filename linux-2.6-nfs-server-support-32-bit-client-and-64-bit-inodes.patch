@@ -1,0 +1,299 @@
+From: Peter Staubach <staubach@redhat.com>
+Date: Fri, 2 Nov 2007 16:10:06 -0400
+Subject: [nfs] server support 32-bit client and 64-bit inodes
+Message-id: 472B841E.2010201@redhat.com
+O-Subject: [PATCH RHEL-5.2] 32 bit nfs client does not handle 64 bit ino numbers correctly [2/2]
+Bugzilla: 253589
+
+Hi.
+
+The server side changes.
+
+       ps
+
+Acked-by: Steve Dickson <SteveD@redhat.com>
+
+diff --git a/fs/nfsd/nfs3xdr.c b/fs/nfsd/nfs3xdr.c
+index 31d1da9..57d91b0 100644
+--- a/fs/nfsd/nfs3xdr.c
++++ b/fs/nfsd/nfs3xdr.c
+@@ -189,37 +189,54 @@ encode_fattr3(struct svc_rqst *rqstp, u32 *p, struct svc_fh *fhp,
+ static inline u32 *
+ encode_saved_post_attr(struct svc_rqst *rqstp, u32 *p, struct svc_fh *fhp)
+ {
+-	struct inode	*inode = fhp->fh_dentry->d_inode;
+-
+ 	/* Attributes to follow */
+ 	*p++ = xdr_one;
+ 
+-	*p++ = htonl(nfs3_ftypes[(fhp->fh_post_mode & S_IFMT) >> 12]);
+-	*p++ = htonl((u32) fhp->fh_post_mode);
+-	*p++ = htonl((u32) fhp->fh_post_nlink);
+-	*p++ = htonl((u32) nfsd_ruid(rqstp, fhp->fh_post_uid));
+-	*p++ = htonl((u32) nfsd_rgid(rqstp, fhp->fh_post_gid));
+-	if (S_ISLNK(fhp->fh_post_mode) && fhp->fh_post_size > NFS3_MAXPATHLEN) {
++	*p++ = htonl(nfs3_ftypes[(fhp->fh_post_attr.mode & S_IFMT) >> 12]);
++	*p++ = htonl((u32) fhp->fh_post_attr.mode);
++	*p++ = htonl((u32) fhp->fh_post_attr.nlink);
++	*p++ = htonl((u32) nfsd_ruid(rqstp, fhp->fh_post_attr.uid));
++	*p++ = htonl((u32) nfsd_rgid(rqstp, fhp->fh_post_attr.gid));
++	if (S_ISLNK(fhp->fh_post_attr.mode) &&
++	    fhp->fh_post_attr.size > NFS3_MAXPATHLEN) {
+ 		p = xdr_encode_hyper(p, (u64) NFS3_MAXPATHLEN);
+ 	} else {
+-		p = xdr_encode_hyper(p, (u64) fhp->fh_post_size);
++		p = xdr_encode_hyper(p, (u64) fhp->fh_post_attr.size);
+ 	}
+-	p = xdr_encode_hyper(p, ((u64)fhp->fh_post_blocks) << 9);
+-	*p++ = fhp->fh_post_rdev[0];
+-	*p++ = fhp->fh_post_rdev[1];
++	p = xdr_encode_hyper(p, ((u64)fhp->fh_post_attr.blocks) << 9);
++	*p++ = MAJOR(fhp->fh_post_attr.rdev);
++	*p++ = MINOR(fhp->fh_post_attr.rdev);
+ 	if (is_fsid(fhp, rqstp->rq_reffh))
+ 		p = xdr_encode_hyper(p, (u64) fhp->fh_export->ex_fsid);
+ 	else
+-		p = xdr_encode_hyper(p, (u64)huge_encode_dev(inode->i_sb->s_dev));
+-	p = xdr_encode_hyper(p, (u64) inode->i_ino);
+-	p = encode_time3(p, &fhp->fh_post_atime);
+-	p = encode_time3(p, &fhp->fh_post_mtime);
+-	p = encode_time3(p, &fhp->fh_post_ctime);
++		p = xdr_encode_hyper(p, (u64)huge_encode_dev(fhp->fh_post_attr.dev));
++	p = xdr_encode_hyper(p, fhp->fh_post_attr.ino);
++	p = encode_time3(p, &fhp->fh_post_attr.atime);
++	p = encode_time3(p, &fhp->fh_post_attr.mtime);
++	p = encode_time3(p, &fhp->fh_post_attr.ctime);
+ 
+ 	return p;
+ }
+ 
+ /*
++ * Fill in the post_op attr for the wcc data
++ */
++void fill_post_wcc(struct svc_fh *fhp)
++{
++	int err;
++
++	if (fhp->fh_post_saved)
++		printk("nfsd: inode locked twice during operation.\n");
++
++	err = vfs_getattr(fhp->fh_export->ex_mnt, fhp->fh_dentry,
++			&fhp->fh_post_attr);
++	if (err)
++		fhp->fh_post_saved = 0;
++	else
++		fhp->fh_post_saved = 1;
++}
++
++/*
+  * Encode post-operation attributes.
+  * The inode may be NULL if the call failed because of a stale file
+  * handle. In this case, no attributes are returned.
+@@ -795,7 +812,7 @@ nfs3svc_encode_readdirres(struct svc_rqst *rqstp, u32 *p,
+ 
+ static inline u32 *
+ encode_entry_baggage(struct nfsd3_readdirres *cd, u32 *p, const char *name,
+-	     int namlen, ino_t ino)
++	     int namlen, u64 ino)
+ {
+ 	*p++ = xdr_one;				 /* mark entry present */
+ 	p    = xdr_encode_hyper(p, ino);	 /* file id */
+@@ -866,7 +883,7 @@ compose_entry_fh(struct nfsd3_readdirres *cd, struct svc_fh *fhp,
+ #define NFS3_ENTRYPLUS_BAGGAGE	(1 + 21 + 1 + (NFS3_FHSIZE >> 2))
+ static int
+ encode_entry(struct readdir_cd *ccd, const char *name,
+-	     int namlen, off_t offset, ino_t ino, unsigned int d_type, int plus)
++	     int namlen, off_t offset, u64 ino, unsigned int d_type, int plus)
+ {
+ 	struct nfsd3_readdirres *cd = container_of(ccd, struct nfsd3_readdirres,
+ 		       					common);
+@@ -1012,14 +1029,14 @@ encode_entry(struct readdir_cd *ccd, const char *name,
+ 
+ int
+ nfs3svc_encode_entry(struct readdir_cd *cd, const char *name,
+-		     int namlen, loff_t offset, ino_t ino, unsigned int d_type)
++		     int namlen, loff_t offset, u64 ino, unsigned int d_type)
+ {
+ 	return encode_entry(cd, name, namlen, offset, ino, d_type, 0);
+ }
+ 
+ int
+ nfs3svc_encode_entry_plus(struct readdir_cd *cd, const char *name,
+-			  int namlen, loff_t offset, ino_t ino, unsigned int d_type)
++			  int namlen, loff_t offset, u64 ino, unsigned int d_type)
+ {
+ 	return encode_entry(cd, name, namlen, offset, ino, d_type, 1);
+ }
+diff --git a/fs/nfsd/nfs4xdr.c b/fs/nfsd/nfs4xdr.c
+index 28e7b13..7295c3f 100644
+--- a/fs/nfsd/nfs4xdr.c
++++ b/fs/nfsd/nfs4xdr.c
+@@ -1616,7 +1616,7 @@ out_acl:
+ 	if (bmval0 & FATTR4_WORD0_FILEID) {
+ 		if ((buflen -= 8) < 0)
+ 			goto out_resource;
+-		WRITE64((u64) stat.ino);
++		WRITE64(stat.ino);
+ 	}
+ 	if (bmval0 & FATTR4_WORD0_FILES_AVAIL) {
+ 		if ((buflen -= 8) < 0)
+@@ -1758,16 +1758,16 @@ out_acl:
+ 		WRITE32(stat.mtime.tv_nsec);
+ 	}
+ 	if (bmval1 & FATTR4_WORD1_MOUNTED_ON_FILEID) {
+-		struct dentry *mnt_pnt, *mnt_root;
+ 
+ 		if ((buflen -= 8) < 0)
+                 	goto out_resource;
+-		mnt_root = exp->ex_mnt->mnt_root;
+-		if (mnt_root->d_inode == dentry->d_inode) {
+-			mnt_pnt = exp->ex_mnt->mnt_mountpoint;
+-			WRITE64((u64) mnt_pnt->d_inode->i_ino);
+-		} else
+-                	WRITE64((u64) stat.ino);
++		if (exp->ex_mnt->mnt_root->d_inode == dentry->d_inode) {
++			status = vfs_getattr(exp->ex_mnt->mnt_parent,
++					exp->ex_mnt->mnt_mountpoint, &stat);
++			if (status)
++				goto out_nfserr;
++		}
++		WRITE64(stat.ino);
+ 	}
+ 	*attrlenp = htonl((char *)p - (char *)attrlenp - 4);
+ 	*countp = p - buffer;
+@@ -1844,7 +1844,7 @@ nfsd4_encode_rdattr_error(u32 *p, int buflen, int nfserr)
+ 
+ static int
+ nfsd4_encode_dirent(struct readdir_cd *ccd, const char *name, int namlen,
+-		    loff_t offset, ino_t ino, unsigned int d_type)
++		    loff_t offset, u64 ino, unsigned int d_type)
+ {
+ 	struct nfsd4_readdir *cd = container_of(ccd, struct nfsd4_readdir, common);
+ 	int buflen;
+diff --git a/fs/nfsd/nfsxdr.c b/fs/nfsd/nfsxdr.c
+index c20878a..8d8c85a 100644
+--- a/fs/nfsd/nfsxdr.c
++++ b/fs/nfsd/nfsxdr.c
+@@ -492,7 +492,7 @@ nfssvc_encode_statfsres(struct svc_rqst *rqstp, u32 *p,
+ 
+ int
+ nfssvc_encode_entry(struct readdir_cd *ccd, const char *name,
+-		    int namlen, loff_t offset, ino_t ino, unsigned int d_type)
++		    int namlen, loff_t offset, u64 ino, unsigned int d_type)
+ {
+ 	struct nfsd_readdirres *cd = container_of(ccd, struct nfsd_readdirres, common);
+ 	u32	*p = cd->buffer;
+diff --git a/include/linux/nfsd/nfsd.h b/include/linux/nfsd/nfsd.h
+index 82abaee..7fb1fe6 100644
+--- a/include/linux/nfsd/nfsd.h
++++ b/include/linux/nfsd/nfsd.h
+@@ -53,7 +53,7 @@ struct readdir_cd {
+ 	int			err;	/* 0, nfserr, or nfserr_eof */
+ };
+ typedef int		(*encode_dent_fn)(struct readdir_cd *, const char *,
+-						int, loff_t, ino_t, unsigned int);
++						int, loff_t, u64, unsigned int);
+ typedef int (*nfsd_dirop_t)(struct inode *, struct dentry *, int, int);
+ 
+ extern struct svc_program	nfsd_program;
+diff --git a/include/linux/nfsd/nfsfh.h b/include/linux/nfsd/nfsfh.h
+index 069257e..0d0dd6e 100644
+--- a/include/linux/nfsd/nfsfh.h
++++ b/include/linux/nfsd/nfsfh.h
+@@ -150,17 +150,7 @@ typedef struct svc_fh {
+ 	struct timespec		fh_pre_ctime;	/* ctime before oper */
+ 
+ 	/* Post-op attributes saved in fh_unlock */
+-	umode_t			fh_post_mode;	/* i_mode */
+-	nlink_t			fh_post_nlink;	/* i_nlink */
+-	uid_t			fh_post_uid;	/* i_uid */
+-	gid_t			fh_post_gid;	/* i_gid */
+-	__u64			fh_post_size;	/* i_size */
+-	unsigned long		fh_post_blocks; /* i_blocks */
+-	unsigned long		fh_post_blksize;/* i_blksize */
+-	__u32			fh_post_rdev[2];/* i_rdev */
+-	struct timespec		fh_post_atime;	/* i_atime */
+-	struct timespec		fh_post_mtime;	/* i_mtime */
+-	struct timespec		fh_post_ctime;	/* i_ctime */
++	struct kstat		fh_post_attr;
+ #endif /* CONFIG_NFSD_V3 */
+ 
+ } svc_fh;
+@@ -253,31 +243,7 @@ fill_pre_wcc(struct svc_fh *fhp)
+ 	}
+ }
+ 
+-/*
+- * Fill in the post_op attr for the wcc data
+- */
+-static inline void
+-fill_post_wcc(struct svc_fh *fhp)
+-{
+-	struct inode    *inode = fhp->fh_dentry->d_inode;
+-
+-	if (fhp->fh_post_saved)
+-		printk("nfsd: inode locked twice during operation.\n");
+-
+-	fhp->fh_post_mode       = inode->i_mode;
+-	fhp->fh_post_nlink      = inode->i_nlink;
+-	fhp->fh_post_uid	= inode->i_uid;
+-	fhp->fh_post_gid	= inode->i_gid;
+-	fhp->fh_post_size       = inode->i_size;
+-	fhp->fh_post_blksize    = BLOCK_SIZE;
+-	fhp->fh_post_blocks     = inode->i_blocks;
+-	fhp->fh_post_rdev[0]    = htonl((u32)imajor(inode));
+-	fhp->fh_post_rdev[1]    = htonl((u32)iminor(inode));
+-	fhp->fh_post_atime      = inode->i_atime;
+-	fhp->fh_post_mtime      = inode->i_mtime;
+-	fhp->fh_post_ctime      = inode->i_ctime;
+-	fhp->fh_post_saved      = 1;
+-}
++extern void fill_post_wcc(struct svc_fh *);
+ #else
+ #define	fill_pre_wcc(ignored)
+ #define fill_post_wcc(notused)
+diff --git a/include/linux/nfsd/xdr.h b/include/linux/nfsd/xdr.h
+index 3f4f714..bbdf369 100644
+--- a/include/linux/nfsd/xdr.h
++++ b/include/linux/nfsd/xdr.h
+@@ -168,7 +168,7 @@ int nfssvc_encode_statfsres(struct svc_rqst *, u32 *, struct nfsd_statfsres *);
+ int nfssvc_encode_readdirres(struct svc_rqst *, u32 *, struct nfsd_readdirres *);
+ 
+ int nfssvc_encode_entry(struct readdir_cd *, const char *name,
+-				int namlen, loff_t offset, ino_t ino, unsigned int);
++				int namlen, loff_t offset, u64 ino, unsigned int);
+ 
+ int nfssvc_release_fhandle(struct svc_rqst *, u32 *, struct nfsd_fhandle *);
+ 
+diff --git a/include/linux/nfsd/xdr3.h b/include/linux/nfsd/xdr3.h
+index a432274..3304fe7 100644
+--- a/include/linux/nfsd/xdr3.h
++++ b/include/linux/nfsd/xdr3.h
+@@ -334,10 +334,10 @@ int nfs3svc_release_fhandle(struct svc_rqst *, u32 *,
+ int nfs3svc_release_fhandle2(struct svc_rqst *, u32 *,
+ 				struct nfsd3_fhandle_pair *);
+ int nfs3svc_encode_entry(struct readdir_cd *, const char *name,
+-				int namlen, loff_t offset, ino_t ino,
++				int namlen, loff_t offset, u64 ino,
+ 				unsigned int);
+ int nfs3svc_encode_entry_plus(struct readdir_cd *, const char *name,
+-				int namlen, loff_t offset, ino_t ino,
++				int namlen, loff_t offset, u64 ino,
+ 				unsigned int);
+ /* Helper functions for NFSv3 ACL code */
+ u32 *nfs3svc_encode_post_op_attr(struct svc_rqst *rqstp, u32 *p,
+diff --git a/include/linux/nfsd/xdr4.h b/include/linux/nfsd/xdr4.h
+index 77adba7..bbf761f 100644
+--- a/include/linux/nfsd/xdr4.h
++++ b/include/linux/nfsd/xdr4.h
+@@ -417,8 +417,8 @@ set_change_info(struct nfsd4_change_info *cinfo, struct svc_fh *fhp)
+ 	cinfo->atomic = 1;
+ 	cinfo->before_ctime_sec = fhp->fh_pre_ctime.tv_sec;
+ 	cinfo->before_ctime_nsec = fhp->fh_pre_ctime.tv_nsec;
+-	cinfo->after_ctime_sec = fhp->fh_post_ctime.tv_sec;
+-	cinfo->after_ctime_nsec = fhp->fh_post_ctime.tv_nsec;
++	cinfo->after_ctime_sec = fhp->fh_post_attr.ctime.tv_sec;
++	cinfo->after_ctime_nsec = fhp->fh_post_attr.ctime.tv_nsec;
+ }
+ 
+ int nfs4svc_encode_voidres(struct svc_rqst *, u32 *, void *);

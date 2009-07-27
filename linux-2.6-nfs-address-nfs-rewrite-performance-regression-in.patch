@@ -1,0 +1,123 @@
+From 1ab3d8b97684be5c3fc985fd266dcf2648205b68 Mon Sep 17 00:00:00 2001
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Thu, 3 Jul 2008 16:52:37 -0400
+Subject: [PATCH] [nfs] address nfs rewrite performance regression in RHEL5
+
+Message-id: <4835D1D7.4050900@redhat.com>
+O-Subject: [PATCH RHEL5] address nfs rewrite performance regression in RHEL5
+Bugzilla: 436004
+
+
+This is for:
+
+[Bug 436004] 50-75 % drop in nfs-server performance compared to rhel 4.6+
+
+This upstream patch addresses the rewrite performance regression noted.
+It does not help the streaming read issues, that's another problem.
+
+The changelog below is pretty self-explanatory.  What I saw in practice
+was that a large streaming rewrite was first reading every block it wrote.
+This is because the iovecs from nfsd were unaligned, and
+__block_prepare_write was getting partial block starts & ends... causing
+read/modify/write of every block even though the client was requesting
+full block writes.
+
+w/o the patch on rhel5, my client saw about 10MB/s on a 2G, 64k IO streaming
+rewrite.  With the patch in place it jumped to more like 40MB/s, with very
+few reads.  Also verified low-level with blktrace.
+
+If you look upstream, this patch was reverted, but I think only as part of
+prep work for a large set of changes from Nick Piggin, and then put
+back into place.  I've pinged Nick with that question just to make sure.
+
+Thanks,
+
+-Eric
+
+-----------
+
+From: NeilBrown <neilb@suse.de>
+Date: Fri, 16 Feb 2007 09:28:38 +0000 (-0800)
+Subject: [PATCH] knfsd: stop NFSD writes from being broken into lots of little writes to files ...
+X-Git-Tag: v2.6.21-rc1~99
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=29dbb3fc8020f025bc38b262ec494e19fd3eac02
+
+[PATCH] knfsd: stop NFSD writes from being broken into lots of little writes to filesystem
+
+When NFSD receives a write request, the data is typically in a number of
+1448 byte segments and writev is used to collect them together.
+
+Unfortunately, generic_file_buffered_write passes these to the filesystem
+one at a time, so an e.g.  32K over-write becomes a series of partial-page
+writes to each page, causing the filesystem to have to pre-read those pages
+- wasted effort.
+
+generic_file_buffered_write handles one segment of the vector at a time as
+it has to pre-fault in each segment to avoid deadlocks.  When writing from
+kernel-space (and nfsd does) this is not an issue, so
+generic_file_buffered_write does not need to break and iovec from nfsd into
+little pieces.
+
+This patch avoids the splitting when  get_fs is KERNEL_DS as it is
+from NFSd.
+
+This issue was introduced by commit 6527c2bdf1f833cc18e8f42bd97973d583e4aa83
+
+Acked-by: Nick Piggin <nickpiggin@yahoo.com.au>
+Cc: Norman Weathers <norman.r.weathers@conocophillips.com>
+Cc: Vladimir V. Saveliev <vs@namesys.com>
+Signed-off-by: Neil Brown <neilb@suse.de>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+ mm/filemap.c |   34 ++++++++++++++++++++--------------
+ 1 files changed, 20 insertions(+), 14 deletions(-)
+
+diff --git a/mm/filemap.c b/mm/filemap.c
+index 9e3585e..6605ba7 100644
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -2140,21 +2140,27 @@ generic_file_buffered_write(struct kiocb *iocb, const struct iovec *iov,
+ 		/* Limit the size of the copy to the caller's write size */
+ 		bytes = min(bytes, count);
+ 
+-		/*
+-		 * Limit the size of the copy to that of the current segment,
+-		 * because fault_in_pages_readable() doesn't know how to walk
+-		 * segments.
++		/* We only need to worry about prefaulting when writes are from
++		 * user-space.  NFSd uses vfs_writev with several non-aligned
++		 * segments in the vector, and limiting to one segment a time is
++		 * a noticeable performance for re-write
+ 		 */
+-		bytes = min(bytes, cur_iov->iov_len - iov_base);
+-
+-		/*
+-		 * Bring in the user page that we will copy from _first_.
+-		 * Otherwise there's a nasty deadlock on copying from the
+-		 * same page as we're writing to, without it being marked
+-		 * up-to-date.
+-		 */
+-		fault_in_pages_readable(buf, bytes);
++		if (!segment_eq(get_fs(), KERNEL_DS)) {
++			/*
++			 * Limit the size of the copy to that of the current
++			 * segment, because fault_in_pages_readable() doesn't
++			 * know how to walk segments.
++			 */
++			bytes = min(bytes, cur_iov->iov_len - iov_base);
+ 
++			/*
++			 * Bring in the user page that we will copy from
++			 * _first_.  Otherwise there's a nasty deadlock on
++			 * copying from the same page as we're writing to,
++			 * without it being marked up-to-date.
++			 */
++			fault_in_pages_readable(buf, bytes);
++		}
+ 		page = __grab_cache_page(mapping,index,&cached_page,&lru_pvec);
+ 		if (!page) {
+ 			status = -ENOMEM;
+-- 
+1.5.5.1
+

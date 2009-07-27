@@ -1,0 +1,764 @@
+From: Mike Christie <mchristi@redhat.com>
+Subject: [PATCH RHEL 5.1] update iser driver
+Date: Wed, 06 Jun 2007 14:07:22 -0500
+Bugzilla: 234352
+Message-Id: <466705EA.4000203@redhat.com>
+Changelog: [scsi] update iser driver
+
+
+This is for BZ 234352, which requests that we rebase the iser driver to
+what was upstream.
+
+The rebase fixes several bugs like a hang during logout, and error handling.
+
+The patches are upstream. Here are the upstream commits
+ 777a71dd4d901f055967ddbd038d2a74ffce0eb8
+ 8072ec2f8f6790df91e85d833e672c9c30a7ab3c
+ 8dfa0876d3dde5f9c1818a4c35caaabc3ddba78b
+ e981f1d4b8288072ba7cf6b7141cd4aefb404383
+ d81110285f7f6c07a0ce8f99a5ff158a647cd649
+ 5755d6dad95808a24a65dd9e61e23c305f9b077c
+ 87e8df7a273c7c1acb864c90b5253609c44375a6
+ 74a2078061409e027ccb51a28cf6174c31ab8f99
+ fd6a79a786b84510d00ee6aa6449a468e6d75dee
+ 2e7a7426282bfa2d7dff6eddc5485af8c79a68f3
+ dee234f48aa6b5ee6041d33c4fd59d2f1176e9a1
+ f0938401f2252bf39615c0815734650eab9053c8
+ 3104a2175dc04b7a597acea90f19b033abcfc7d8
+ 1d426d6418d1914b592c9c307c02e488d9182fa8
+
+
+I just got some inifnniband hardware but do not have a target yet, so I
+only did a compile test. I relied on the upstream maintainers (voltaire)
+to make the patches and test them.
+
+If you apply this patch after the iscsi_tcp update you will get some
+offset warnings but they can be ignored.
+
+diff -rup linux-2.6.18.x86_64-orig/drivers/infiniband/ulp/iser/iscsi_iser.c linux-2.6.18.x86_64/drivers/infiniband/ulp/iser/iscsi_iser.c
+--- linux-2.6.18.x86_64-orig/drivers/infiniband/ulp/iser/iscsi_iser.c	2007-04-10 10:18:11.000000000 +0300
++++ linux-2.6.18.x86_64/drivers/infiniband/ulp/iser/iscsi_iser.c	2007-04-10 10:19:12.000000000 +0300
+@@ -177,7 +177,7 @@ iscsi_iser_mtask_xmit(struct iscsi_conn 
+ 	 * - if yes, the mtask is recycled at iscsi_complete_pdu
+ 	 * - if no,  the mtask is recycled at iser_snd_completion
+ 	 */
+-	if (error && error != -EAGAIN)
++	if (error && error != -ENOBUFS)
+ 		iscsi_conn_failure(conn, ISCSI_ERR_CONN_FAILED);
+ 
+ 	return error;
+@@ -241,7 +241,7 @@ iscsi_iser_ctask_xmit(struct iscsi_conn 
+ 		error = iscsi_iser_ctask_xmit_unsol_data(conn, ctask);
+ 
+  iscsi_iser_ctask_xmit_exit:
+-	if (error && error != -EAGAIN)
++	if (error && error != -ENOBUFS)
+ 		iscsi_conn_failure(conn, ISCSI_ERR_CONN_FAILED);
+ 	return error;
+ }
+@@ -317,6 +317,8 @@ iscsi_iser_conn_destroy(struct iscsi_cls
+ 	struct iscsi_iser_conn *iser_conn = conn->dd_data;
+ 
+ 	iscsi_conn_teardown(cls_conn);
++	if (iser_conn->ib_conn)
++		iser_conn->ib_conn->iser_conn = NULL;
+ 	kfree(iser_conn);
+ }
+ 
+@@ -361,11 +363,11 @@ iscsi_iser_conn_start(struct iscsi_cls_c
+ 	struct iscsi_conn *conn = cls_conn->dd_data;
+ 	int err;
+ 
+-	err = iscsi_conn_start(cls_conn);
++	err = iser_conn_set_full_featured_mode(conn);
+ 	if (err)
+ 		return err;
+ 
+-	return iser_conn_set_full_featured_mode(conn);
++	return iscsi_conn_start(cls_conn);
+ }
+ 
+ static struct iscsi_transport iscsi_iser_transport;
+@@ -545,6 +547,7 @@ static struct scsi_host_template iscsi_i
+ 	.queuecommand           = iscsi_queuecommand,
+ 	.can_queue		= ISCSI_XMIT_CMDS_MAX - 1,
+ 	.sg_tablesize           = ISCSI_ISER_SG_TABLESIZE,
++	.max_sectors		= 1024,
+ 	.cmd_per_lun            = ISCSI_MAX_CMD_PER_LUN,
+ 	.eh_abort_handler       = iscsi_eh_abort,
+ 	.eh_host_reset_handler	= iscsi_eh_host_reset,
+diff -rup linux-2.6.18.x86_64-orig/drivers/infiniband/ulp/iser/iscsi_iser.h linux-2.6.18.x86_64/drivers/infiniband/ulp/iser/iscsi_iser.h
+--- linux-2.6.18.x86_64-orig/drivers/infiniband/ulp/iser/iscsi_iser.h	2007-04-10 10:18:11.000000000 +0300
++++ linux-2.6.18.x86_64/drivers/infiniband/ulp/iser/iscsi_iser.h	2007-04-10 10:36:18.000000000 +0300
+@@ -82,8 +82,12 @@
+ 		       __func__ , ## arg);		\
+ 	} while (0)
+ 
++#define SHIFT_4K	12
++#define SIZE_4K	(1UL << SHIFT_4K)
++#define MASK_4K	(~(SIZE_4K-1))
++
+ 					/* support upto 512KB in one RDMA */
+-#define ISCSI_ISER_SG_TABLESIZE         (0x80000 >> PAGE_SHIFT)
++#define ISCSI_ISER_SG_TABLESIZE         (0x80000 >> SHIFT_4K)
+ #define ISCSI_ISER_MAX_LUN		256
+ #define ISCSI_ISER_MAX_CMD_LEN		16
+ 
+@@ -171,6 +175,7 @@ struct iser_mem_reg {
+ 	u64  va;
+ 	u64  len;
+ 	void *mem_h;
++	int  is_fmr;
+ };
+ 
+ struct iser_regd_buf {
+@@ -187,7 +192,7 @@ struct iser_regd_buf {
+ 
+ struct iser_dto {
+ 	struct iscsi_iser_cmd_task *ctask;
+-	struct iscsi_iser_conn     *conn;
++	struct iser_conn *ib_conn;
+ 	int                        notify_enable;
+ 
+ 	/* vector of registered buffers */
+@@ -240,7 +245,6 @@ struct iser_conn {
+ 	wait_queue_head_t	     wait;          /* waitq for conn/disconn  */
+ 	atomic_t                     post_recv_buf_count; /* posted rx count   */
+ 	atomic_t                     post_send_buf_count; /* posted tx count   */
+-	struct work_struct           comperror_work; /* conn term sleepable ctx*/
+ 	char 			     name[ISER_OBJECT_NAME_SIZE];
+ 	struct iser_page_vec         *page_vec;     /* represents SG to fmr maps*
+ 						     * maps serialized as tx is*/
+@@ -350,4 +354,11 @@ int  iser_post_send(struct iser_desc *tx
+ 
+ int iser_conn_state_comp(struct iser_conn *ib_conn,
+ 			 enum iser_ib_conn_state comp);
++
++int iser_dma_map_task_data(struct iscsi_iser_cmd_task *iser_ctask,
++			    struct iser_data_buf       *data,
++			    enum   iser_data_dir       iser_dir,
++			    enum   dma_data_direction  dma_dir);
++
++void iser_dma_unmap_task_data(struct iscsi_iser_cmd_task *iser_ctask);
+ #endif
+diff -rup linux-2.6.18.x86_64-orig/drivers/infiniband/ulp/iser/iser_initiator.c linux-2.6.18.x86_64/drivers/infiniband/ulp/iser/iser_initiator.c
+--- linux-2.6.18.x86_64-orig/drivers/infiniband/ulp/iser/iser_initiator.c	2007-04-10 10:18:11.000000000 +0300
++++ linux-2.6.18.x86_64/drivers/infiniband/ulp/iser/iser_initiator.c	2007-04-10 10:24:12.000000000 +0300
+@@ -66,42 +66,6 @@ static void iser_dto_add_regd_buff(struc
+ 	dto->regd_vector_len++;
+ }
+ 
+-static int iser_dma_map_task_data(struct iscsi_iser_cmd_task *iser_ctask,
+-				  struct iser_data_buf       *data,
+-				  enum   iser_data_dir       iser_dir,
+-				  enum   dma_data_direction  dma_dir)
+-{
+-	struct device *dma_device;
+-
+-	iser_ctask->dir[iser_dir] = 1;
+-	dma_device = iser_ctask->iser_conn->ib_conn->device->ib_device->dma_device;
+-
+-	data->dma_nents = dma_map_sg(dma_device, data->buf, data->size, dma_dir);
+-	if (data->dma_nents == 0) {
+-		iser_err("dma_map_sg failed!!!\n");
+-		return -EINVAL;
+-	}
+-	return 0;
+-}
+-
+-static void iser_dma_unmap_task_data(struct iscsi_iser_cmd_task *iser_ctask)
+-{
+-	struct device  *dma_device;
+-	struct iser_data_buf *data;
+-
+-	dma_device = iser_ctask->iser_conn->ib_conn->device->ib_device->dma_device;
+-
+-	if (iser_ctask->dir[ISER_DIR_IN]) {
+-		data = &iser_ctask->data[ISER_DIR_IN];
+-		dma_unmap_sg(dma_device, data->buf, data->size, DMA_FROM_DEVICE);
+-	}
+-
+-	if (iser_ctask->dir[ISER_DIR_OUT]) {
+-		data = &iser_ctask->data[ISER_DIR_OUT];
+-		dma_unmap_sg(dma_device, data->buf, data->size, DMA_TO_DEVICE);
+-	}
+-}
+-
+ /* Register user buffer memory and initialize passive rdma
+  *  dto descriptor. Total data size is stored in
+  *  iser_ctask->data[ISER_DIR_IN].data_len
+@@ -249,7 +213,7 @@ static int iser_post_receive_control(str
+ 	}
+ 
+ 	recv_dto = &rx_desc->dto;
+-	recv_dto->conn          = iser_conn;
++	recv_dto->ib_conn = iser_conn->ib_conn;
+ 	recv_dto->regd_vector_len = 0;
+ 
+ 	regd_hdr = &rx_desc->hdr_regd_buf;
+@@ -296,7 +260,7 @@ static void iser_create_send_desc(struct
+ 	regd_hdr->virt_addr  = tx_desc; /* == &tx_desc->iser_header */
+ 	regd_hdr->data_size  = ISER_TOTAL_HEADERS_LEN;
+ 
+-	send_dto->conn          = iser_conn;
++	send_dto->ib_conn         = iser_conn->ib_conn;
+ 	send_dto->notify_enable   = 1;
+ 	send_dto->regd_vector_len = 0;
+ 
+@@ -340,18 +304,14 @@ int iser_conn_set_full_featured_mode(str
+ static int
+ iser_check_xmit(struct iscsi_conn *conn, void *task)
+ {
+-	int rc = 0;
+ 	struct iscsi_iser_conn *iser_conn = conn->dd_data;
+ 
+-	write_lock_bh(conn->recv_lock);
+ 	if (atomic_read(&iser_conn->ib_conn->post_send_buf_count) ==
+ 	    ISER_QP_MAX_REQ_DTOS) {
+-		iser_dbg("%ld can't xmit task %p, suspending tx\n",jiffies,task);
+-		set_bit(ISCSI_SUSPEND_BIT, &conn->suspend_tx);
+-		rc = -EAGAIN;
++		iser_dbg("%ld can't xmit task %p\n",jiffies,task);
++		return -ENOBUFS;
+ 	}
+-	write_unlock_bh(conn->recv_lock);
+-	return rc;
++	return 0;
+ }
+ 
+ 
+@@ -376,7 +336,7 @@ int iser_send_command(struct iscsi_conn 
+ 		return -EPERM;
+ 	}
+ 	if (iser_check_xmit(conn, ctask))
+-		return -EAGAIN;
++		return -ENOBUFS;
+ 
+ 	edtl = ntohl(hdr->data_length);
+ 
+@@ -462,7 +422,7 @@ int iser_send_data_out(struct iscsi_conn
+ 	}
+ 
+ 	if (iser_check_xmit(conn, ctask))
+-		return -EAGAIN;
++		return -ENOBUFS;
+ 
+ 	itt = ntohl(hdr->itt);
+ 	data_seg_len = ntoh24(hdr->dlength);
+@@ -523,10 +483,8 @@ int iser_send_control(struct iscsi_conn 
+ 	struct iscsi_iser_conn *iser_conn = conn->dd_data;
+ 	struct iser_desc *mdesc = mtask->dd_data;
+ 	struct iser_dto *send_dto = NULL;
+-	unsigned int itt;
+ 	unsigned long data_seg_len;
+ 	int err = 0;
+-	unsigned char opcode;
+ 	struct iser_regd_buf *regd_buf;
+ 	struct iser_device *device;
+ 
+@@ -536,7 +494,7 @@ int iser_send_control(struct iscsi_conn 
+ 	}
+ 
+ 	if (iser_check_xmit(conn,mtask))
+-		return -EAGAIN;
++		return -ENOBUFS;
+ 
+ 	/* build the tx desc regd header and add it to the tx desc dto */
+ 	mdesc->type = ISCSI_TX_CONTROL;
+@@ -548,8 +506,6 @@ int iser_send_control(struct iscsi_conn 
+ 
+ 	iser_reg_single(device, send_dto->regd[0], DMA_TO_DEVICE);
+ 
+-	itt = ntohl(mtask->hdr->itt);
+-	opcode = mtask->hdr->opcode & ISCSI_OPCODE_MASK;
+ 	data_seg_len = ntoh24(mtask->hdr->dlength);
+ 
+ 	if (data_seg_len > 0) {
+@@ -588,7 +544,7 @@ void iser_rcv_completion(struct iser_des
+ 			 unsigned long dto_xfer_len)
+ {
+ 	struct iser_dto        *dto = &rx_desc->dto;
+-	struct iscsi_iser_conn *conn = dto->conn;
++	struct iscsi_iser_conn *conn = dto->ib_conn->iser_conn;
+ 	struct iscsi_session *session = conn->iscsi_conn->session;
+ 	struct iscsi_cmd_task *ctask;
+ 	struct iscsi_iser_cmd_task *iser_ctask;
+@@ -641,9 +597,11 @@ void iser_rcv_completion(struct iser_des
+ void iser_snd_completion(struct iser_desc *tx_desc)
+ {
+ 	struct iser_dto        *dto = &tx_desc->dto;
+-	struct iscsi_iser_conn *iser_conn = dto->conn;
++	struct iser_conn       *ib_conn = dto->ib_conn;
++	struct iscsi_iser_conn *iser_conn = ib_conn->iser_conn;
+ 	struct iscsi_conn      *conn = iser_conn->iscsi_conn;
+ 	struct iscsi_mgmt_task *mtask;
++	int resume_tx = 0;
+ 
+ 	iser_dbg("Initiator, Data sent dto=0x%p\n", dto);
+ 
+@@ -652,15 +610,16 @@ void iser_snd_completion(struct iser_des
+ 	if (tx_desc->type == ISCSI_TX_DATAOUT)
+ 		kmem_cache_free(ig.desc_cache, tx_desc);
+ 
+-	atomic_dec(&iser_conn->ib_conn->post_send_buf_count);
++	if (atomic_read(&iser_conn->ib_conn->post_send_buf_count) ==
++	    ISER_QP_MAX_REQ_DTOS)
++		resume_tx = 1;
++
++	atomic_dec(&ib_conn->post_send_buf_count);
+ 
+-	write_lock(conn->recv_lock);
+-	if (conn->suspend_tx) {
++	if (resume_tx) {
+ 		iser_dbg("%ld resuming tx\n",jiffies);
+-		clear_bit(ISCSI_SUSPEND_BIT, &conn->suspend_tx);
+ 		scsi_queue_work(conn->session->host, &conn->xmitwork);
+ 	}
+-	write_unlock(conn->recv_lock);
+ 
+ 	if (tx_desc->type == ISCSI_TX_CONTROL) {
+ 		/* this arithmetic is legal by libiscsi dd_data allocation */
+@@ -698,34 +657,42 @@ void iser_ctask_rdma_init(struct iscsi_i
+ void iser_ctask_rdma_finalize(struct iscsi_iser_cmd_task *iser_ctask)
+ {
+ 	int deferred;
++	int is_rdma_aligned = 1;
++	struct iser_regd_buf *regd;
+ 
+ 	/* if we were reading, copy back to unaligned sglist,
+ 	 * anyway dma_unmap and free the copy
+ 	 */
+-	if (iser_ctask->data_copy[ISER_DIR_IN].copy_buf != NULL)
++	if (iser_ctask->data_copy[ISER_DIR_IN].copy_buf != NULL) {
++		is_rdma_aligned = 0;
+ 		iser_finalize_rdma_unaligned_sg(iser_ctask, ISER_DIR_IN);
+-	if (iser_ctask->data_copy[ISER_DIR_OUT].copy_buf != NULL)
++	}
++	if (iser_ctask->data_copy[ISER_DIR_OUT].copy_buf != NULL) {
++		is_rdma_aligned = 0;
+ 		iser_finalize_rdma_unaligned_sg(iser_ctask, ISER_DIR_OUT);
++	}
+ 
+ 	if (iser_ctask->dir[ISER_DIR_IN]) {
+-		deferred = iser_regd_buff_release
+-			(&iser_ctask->rdma_regd[ISER_DIR_IN]);
++		regd = &iser_ctask->rdma_regd[ISER_DIR_IN];
++		deferred = iser_regd_buff_release(regd);
+ 		if (deferred) {
+-			iser_err("References remain for BUF-IN rdma reg\n");
+-			BUG();
++			iser_err("%d references remain for BUF-IN rdma reg\n",
++				 atomic_read(&regd->ref_count));
+ 		}
+ 	}
+ 
+ 	if (iser_ctask->dir[ISER_DIR_OUT]) {
+-		deferred = iser_regd_buff_release
+-			(&iser_ctask->rdma_regd[ISER_DIR_OUT]);
++		regd = &iser_ctask->rdma_regd[ISER_DIR_OUT];
++		deferred = iser_regd_buff_release(regd);
+ 		if (deferred) {
+-			iser_err("References remain for BUF-OUT rdma reg\n");
+-			BUG();
++			iser_err("%d references remain for BUF-OUT rdma reg\n",
++				 atomic_read(&regd->ref_count));
+ 		}
+ 	}
+ 
+-	iser_dma_unmap_task_data(iser_ctask);
++       /* if the data was unaligned, it was already unmapped and then copied */
++       if (is_rdma_aligned)
++		iser_dma_unmap_task_data(iser_ctask);
+ }
+ 
+ void iser_dto_buffs_release(struct iser_dto *dto)
+diff -rup linux-2.6.18.x86_64-orig/drivers/infiniband/ulp/iser/iser_memory.c linux-2.6.18.x86_64/drivers/infiniband/ulp/iser/iser_memory.c
+--- linux-2.6.18.x86_64-orig/drivers/infiniband/ulp/iser/iser_memory.c	2007-04-10 10:18:11.000000000 +0300
++++ linux-2.6.18.x86_64/drivers/infiniband/ulp/iser/iser_memory.c	2007-04-10 10:19:12.000000000 +0300
+@@ -42,6 +42,7 @@
+ #include "iscsi_iser.h"
+ 
+ #define ISER_KMALLOC_THRESHOLD 0x20000 /* 128K - kmalloc limit */
++
+ /**
+  * Decrements the reference count for the
+  * registered buffer & releases it
+@@ -55,7 +56,7 @@ int iser_regd_buff_release(struct iser_r
+ 	if ((atomic_read(&regd_buf->ref_count) == 0) ||
+ 	    atomic_dec_and_test(&regd_buf->ref_count)) {
+ 		/* if we used the dma mr, unreg is just NOP */
+-		if (regd_buf->reg.rkey != 0)
++		if (regd_buf->reg.is_fmr)
+ 			iser_unreg_mem(&regd_buf->reg);
+ 
+ 		if (regd_buf->dma_addr) {
+@@ -90,9 +91,9 @@ void iser_reg_single(struct iser_device 
+ 	BUG_ON(dma_mapping_error(dma_addr));
+ 
+ 	regd_buf->reg.lkey = device->mr->lkey;
+-	regd_buf->reg.rkey = 0; /* indicate there's no need to unreg */
+ 	regd_buf->reg.len  = regd_buf->data_size;
+ 	regd_buf->reg.va   = dma_addr;
++	regd_buf->reg.is_fmr = 0;
+ 
+ 	regd_buf->dma_addr  = dma_addr;
+ 	regd_buf->direction = direction;
+@@ -233,13 +234,13 @@ static int iser_sg_to_page_vec(struct is
+ {
+ 	struct scatterlist *sg = (struct scatterlist *)data->buf;
+ 	dma_addr_t first_addr, last_addr, page;
+-	int start_aligned, end_aligned;
++	int end_aligned;
+ 	unsigned int cur_page = 0;
+ 	unsigned long total_sz = 0;
+ 	int i;
+ 
+ 	/* compute the offset of first element */
+-	page_vec->offset = (u64) sg[0].offset;
++	page_vec->offset = (u64) sg[0].offset & ~MASK_4K;
+ 
+ 	for (i = 0; i < data->dma_nents; i++) {
+ 		total_sz += sg_dma_len(&sg[i]);
+@@ -247,21 +248,29 @@ static int iser_sg_to_page_vec(struct is
+ 		first_addr = sg_dma_address(&sg[i]);
+ 		last_addr  = first_addr + sg_dma_len(&sg[i]);
+ 
+-		start_aligned = !(first_addr & ~PAGE_MASK);
+-		end_aligned   = !(last_addr  & ~PAGE_MASK);
++		end_aligned   = !(last_addr  & ~MASK_4K);
+ 
+ 		/* continue to collect page fragments till aligned or SG ends */
+ 		while (!end_aligned && (i + 1 < data->dma_nents)) {
+ 			i++;
+ 			total_sz += sg_dma_len(&sg[i]);
+ 			last_addr = sg_dma_address(&sg[i]) + sg_dma_len(&sg[i]);
+-			end_aligned = !(last_addr  & ~PAGE_MASK);
++			end_aligned = !(last_addr  & ~MASK_4K);
+ 		}
+ 
+-		first_addr = first_addr & PAGE_MASK;
+-
+-		for (page = first_addr; page < last_addr; page += PAGE_SIZE)
+-			page_vec->pages[cur_page++] = page;
++		/* handle the 1st page in the 1st DMA element */
++		if (cur_page == 0) {
++			page = first_addr & MASK_4K;
++			page_vec->pages[cur_page] = page;
++			cur_page++;
++			page += SIZE_4K;
++		} else
++			page = first_addr;
++
++		for (; page < last_addr; page += SIZE_4K) {
++			page_vec->pages[cur_page] = page;
++			cur_page++;
++		}
+ 
+ 	}
+ 	page_vec->data_size = total_sz;
+@@ -269,8 +278,7 @@ static int iser_sg_to_page_vec(struct is
+ 	return cur_page;
+ }
+ 
+-#define MASK_4K			((1UL << 12) - 1) /* 0xFFF */
+-#define IS_4K_ALIGNED(addr)	((((unsigned long)addr) & MASK_4K) == 0)
++#define IS_4K_ALIGNED(addr)	((((unsigned long)addr) & ~MASK_4K) == 0)
+ 
+ /**
+  * iser_data_buf_aligned_len - Tries to determine the maximal correctly aligned
+@@ -320,9 +328,9 @@ static void iser_data_buf_dump(struct is
+ 	struct scatterlist *sg = (struct scatterlist *)data->buf;
+ 	int i;
+ 
+-	for (i = 0; i < data->size; i++)
++	for (i = 0; i < data->dma_nents; i++)
+ 		iser_err("sg[%d] dma_addr:0x%lX page:0x%p "
+-			 "off:%d sz:%d dma_len:%d\n",
++			 "off:0x%x sz:0x%x dma_len:0x%x\n",
+ 			 i, (unsigned long)sg_dma_address(&sg[i]),
+ 			 sg[i].page, sg[i].offset,
+ 			 sg[i].length,sg_dma_len(&sg[i]));
+@@ -352,7 +360,7 @@ static void iser_page_vec_build(struct i
+ 
+ 	page_vec->length = page_vec_len;
+ 
+-	if (page_vec_len * PAGE_SIZE < page_vec->data_size) {
++	if (page_vec_len * SIZE_4K < page_vec->data_size) {
+ 		iser_err("page_vec too short to hold this SG\n");
+ 		iser_data_buf_dump(data);
+ 		iser_dump_page_vec(page_vec);
+@@ -360,6 +368,44 @@ static void iser_page_vec_build(struct i
+ 	}
+ }
+ 
++int iser_dma_map_task_data(struct iscsi_iser_cmd_task *iser_ctask,
++			    struct iser_data_buf       *data,
++			    enum   iser_data_dir       iser_dir,
++			    enum   dma_data_direction  dma_dir)
++{
++	struct device *dma_device;
++
++	iser_ctask->dir[iser_dir] = 1;
++	dma_device =
++		iser_ctask->iser_conn->ib_conn->device->ib_device->dma_device;
++
++	data->dma_nents = dma_map_sg(dma_device, data->buf, data->size, dma_dir);
++	if (data->dma_nents == 0) {
++		iser_err("dma_map_sg failed!!!\n");
++		return -EINVAL;
++	}
++	return 0;
++}
++
++void iser_dma_unmap_task_data(struct iscsi_iser_cmd_task *iser_ctask)
++{
++	struct device  *dma_device;
++	struct iser_data_buf *data;
++
++	dma_device =
++		iser_ctask->iser_conn->ib_conn->device->ib_device->dma_device;
++
++	if (iser_ctask->dir[ISER_DIR_IN]) {
++		data = &iser_ctask->data[ISER_DIR_IN];
++		dma_unmap_sg(dma_device, data->buf, data->size, DMA_FROM_DEVICE);
++	}
++
++	if (iser_ctask->dir[ISER_DIR_OUT]) {
++		data = &iser_ctask->data[ISER_DIR_OUT];
++		dma_unmap_sg(dma_device, data->buf, data->size, DMA_TO_DEVICE);
++	}
++}
++
+ /**
+  * iser_reg_rdma_mem - Registers memory intended for RDMA,
+  * obtaining rkey and va
+@@ -370,18 +416,25 @@ int iser_reg_rdma_mem(struct iscsi_iser_
+ 		      enum   iser_data_dir        cmd_dir)
+ {
+ 	struct iser_conn     *ib_conn = iser_ctask->iser_conn->ib_conn;
++	struct iser_device   *device = ib_conn->device;
+ 	struct iser_data_buf *mem = &iser_ctask->data[cmd_dir];
+ 	struct iser_regd_buf *regd_buf;
+ 	int aligned_len;
+ 	int err;
++	int i;
++	struct scatterlist *sg;
+ 
+ 	regd_buf = &iser_ctask->rdma_regd[cmd_dir];
+ 
+ 	aligned_len = iser_data_buf_aligned_len(mem);
+-	if (aligned_len != mem->size) {
++	if (aligned_len != mem->dma_nents) {
+ 		iser_err("rdma alignment violation %d/%d aligned\n",
+ 			 aligned_len, mem->size);
+ 		iser_data_buf_dump(mem);
++
++		/* unmap the command data before accessing it */
++		iser_dma_unmap_task_data(iser_ctask);
++
+ 		/* allocate copy buf, if we are writing, copy the */
+ 		/* unaligned scatterlist, dma map the copy        */
+ 		if (iser_start_rdma_unaligned_sg(iser_ctask, cmd_dir) != 0)
+@@ -389,10 +442,38 @@ int iser_reg_rdma_mem(struct iscsi_iser_
+ 		mem = &iser_ctask->data_copy[cmd_dir];
+ 	}
+ 
+-	iser_page_vec_build(mem, ib_conn->page_vec);
+-	err = iser_reg_page_vec(ib_conn, ib_conn->page_vec, &regd_buf->reg);
+-	if (err)
+-		return err;
++	/* if there a single dma entry, FMR is not needed */
++	if (mem->dma_nents == 1) {
++		sg = (struct scatterlist *)mem->buf;
++
++		regd_buf->reg.lkey = device->mr->lkey;
++		regd_buf->reg.rkey = device->mr->rkey;
++		regd_buf->reg.len  = sg_dma_len(&sg[0]);
++		regd_buf->reg.va   = sg_dma_address(&sg[0]);
++		regd_buf->reg.is_fmr = 0;
++
++		iser_dbg("PHYSICAL Mem.register: lkey: 0x%08X rkey: 0x%08X  "
++			 "va: 0x%08lX sz: %ld]\n",
++			 (unsigned int)regd_buf->reg.lkey,
++			 (unsigned int)regd_buf->reg.rkey,
++			 (unsigned long)regd_buf->reg.va,
++			 (unsigned long)regd_buf->reg.len);
++	} else { /* use FMR for multiple dma entries */
++		iser_page_vec_build(mem, ib_conn->page_vec);
++		err = iser_reg_page_vec(ib_conn, ib_conn->page_vec, &regd_buf->reg);
++		if (err) {
++			iser_data_buf_dump(mem);
++			iser_err("mem->dma_nents = %d (dlength = 0x%x)\n", mem->dma_nents,
++				 ntoh24(iser_ctask->desc.iscsi_header.dlength));
++			iser_err("page_vec: data_size = 0x%x, length = %d, offset = 0x%x\n",
++				 ib_conn->page_vec->data_size, ib_conn->page_vec->length,
++				 ib_conn->page_vec->offset);
++			for (i=0 ; i<ib_conn->page_vec->length ; i++)
++				iser_err("page_vec[%d] = 0x%llx\n", i,
++					 (unsigned long long) ib_conn->page_vec->pages[i]);
++			return err;
++		}
++	}
+ 
+ 	/* take a reference on this regd buf such that it will not be released *
+ 	 * (eg in send dto completion) before we get the scsi response         */
+diff -rup linux-2.6.18.x86_64-orig/drivers/infiniband/ulp/iser/iser_verbs.c linux-2.6.18.x86_64/drivers/infiniband/ulp/iser/iser_verbs.c
+--- linux-2.6.18.x86_64-orig/drivers/infiniband/ulp/iser/iser_verbs.c	2007-04-10 10:18:11.000000000 +0300
++++ linux-2.6.18.x86_64/drivers/infiniband/ulp/iser/iser_verbs.c	2007-04-10 10:41:33.000000000 +0300
+@@ -48,7 +48,6 @@
+ 
+ static void iser_cq_tasklet_fn(unsigned long data);
+ static void iser_cq_callback(struct ib_cq *cq, void *cq_context);
+-static void iser_comp_error_worker(void *data);
+ 
+ static void iser_cq_event_callback(struct ib_event *cause, void *context)
+ {
+@@ -88,8 +87,9 @@ static int iser_create_device_ib_res(str
+ 		     iser_cq_tasklet_fn,
+ 		     (unsigned long)device);
+ 
+-	device->mr = ib_get_dma_mr(device->pd,
+-				   IB_ACCESS_LOCAL_WRITE);
++	device->mr = ib_get_dma_mr(device->pd, IB_ACCESS_LOCAL_WRITE |
++				   IB_ACCESS_REMOTE_WRITE |
++				   IB_ACCESS_REMOTE_READ);
+ 	if (IS_ERR(device->mr))
+ 		goto dma_mr_err;
+ 
+@@ -150,7 +150,7 @@ static int iser_create_ib_conn_res(struc
+ 	}
+ 	ib_conn->page_vec->pages = (u64 *) (ib_conn->page_vec + 1);
+ 
+-	params.page_shift        = PAGE_SHIFT;
++	params.page_shift        = SHIFT_4K;
+ 	/* when the first/last SG element are not start/end *
+ 	 * page aligned, the map whould be of N+1 pages     */
+ 	params.max_pages_per_fmr = ISCSI_ISER_SG_TABLESIZE + 1;
+@@ -479,8 +479,6 @@ int iser_conn_init(struct iser_conn **ib
+ 	init_waitqueue_head(&ib_conn->wait);
+ 	atomic_set(&ib_conn->post_recv_buf_count, 0);
+ 	atomic_set(&ib_conn->post_send_buf_count, 0);
+-	INIT_WORK(&ib_conn->comperror_work, iser_comp_error_worker,
+-		  ib_conn);
+ 	INIT_LIST_HEAD(&ib_conn->conn_list);
+ 	spin_lock_init(&ib_conn->lock);
+ 
+@@ -570,6 +568,8 @@ void iser_conn_release(struct iser_conn 
+ 	/* on EVENT_ADDR_ERROR there's no device yet for this conn */
+ 	if (device != NULL)
+ 		iser_device_try_release(device);
++	if (ib_conn->iser_conn)
++		ib_conn->iser_conn->ib_conn = NULL;
+ 	kfree(ib_conn);
+ }
+ 
+@@ -604,8 +604,9 @@ int iser_reg_page_vec(struct iser_conn  
+ 
+ 	mem_reg->lkey  = mem->fmr->lkey;
+ 	mem_reg->rkey  = mem->fmr->rkey;
+-	mem_reg->len   = page_vec->length * PAGE_SIZE;
++	mem_reg->len   = page_vec->length * SIZE_4K;
+ 	mem_reg->va    = io_addr;
++	mem_reg->is_fmr = 1;
+ 	mem_reg->mem_h = (void *)mem;
+ 
+ 	mem_reg->va   += page_vec->offset;
+@@ -692,7 +693,7 @@ int iser_post_recv(struct iser_desc *rx_
+ 	struct iser_dto   *recv_dto = &rx_desc->dto;
+ 
+ 	/* Retrieve conn */
+-	ib_conn = recv_dto->conn->ib_conn;
++	ib_conn = recv_dto->ib_conn;
+ 
+ 	iser_dto_to_iov(recv_dto, iov, 2);
+ 
+@@ -725,7 +726,7 @@ int iser_post_send(struct iser_desc *tx_
+ 	struct iser_conn  *ib_conn;
+ 	struct iser_dto   *dto = &tx_desc->dto;
+ 
+-	ib_conn = dto->conn->ib_conn;
++	ib_conn = dto->ib_conn;
+ 
+ 	iser_dto_to_iov(dto, iov, MAX_REGD_BUF_VECTOR_LEN);
+ 
+@@ -750,29 +751,10 @@ int iser_post_send(struct iser_desc *tx_
+ 	return ret_val;
+ }
+ 
+-static void iser_comp_error_worker(void *data)
+-{
+-	struct iser_conn *ib_conn = data;
+-
+-	/* getting here when the state is UP means that the conn is being *
+-	 * terminated asynchronously from the iSCSI layer's perspective.  */
+-	if (iser_conn_state_comp_exch(ib_conn, ISER_CONN_UP,
+-				      ISER_CONN_TERMINATING))
+-		iscsi_conn_failure(ib_conn->iser_conn->iscsi_conn,
+-					ISCSI_ERR_CONN_FAILED);
+-
+-	/* complete the termination process if disconnect event was delivered *
+-	 * note there are no more non completed posts to the QP               */
+-	if (ib_conn->disc_evt_flag) {
+-		ib_conn->state = ISER_CONN_DOWN;
+-		wake_up_interruptible(&ib_conn->wait);
+-	}
+-}
+-
+ static void iser_handle_comp_error(struct iser_desc *desc)
+ {
+ 	struct iser_dto  *dto     = &desc->dto;
+-	struct iser_conn *ib_conn = dto->conn->ib_conn;
++	struct iser_conn *ib_conn = dto->ib_conn;
+ 
+ 	iser_dto_buffs_release(dto);
+ 
+@@ -787,8 +769,22 @@ static void iser_handle_comp_error(struc
+ 	}
+ 
+ 	if (atomic_read(&ib_conn->post_recv_buf_count) == 0 &&
+-	    atomic_read(&ib_conn->post_send_buf_count) == 0)
+-		schedule_work(&ib_conn->comperror_work);
++	    atomic_read(&ib_conn->post_send_buf_count) == 0) {
++		/* getting here when the state is UP means that the conn is *
++		 * being terminated asynchronously from the iSCSI layer's   *
++		 * perspective.                                             */
++	        if (iser_conn_state_comp_exch(ib_conn, ISER_CONN_UP,
++        	                              ISER_CONN_TERMINATING))
++                	iscsi_conn_failure(ib_conn->iser_conn->iscsi_conn,
++                        	                ISCSI_ERR_CONN_FAILED);
++
++	        /* complete the termination process if disconnect event was        *
++		 * delivered. note there are no more non completed posts to the QP */
++	        if (ib_conn->disc_evt_flag) {
++        	        ib_conn->state = ISER_CONN_DOWN;
++                	wake_up_interruptible(&ib_conn->wait);
++	        }
++	}
+ }
+ 
+ static void iser_cq_tasklet_fn(unsigned long data)
+diff -rup linux-2.6.18.x86_64-orig/drivers/infiniband/ulp/iser/Kconfig linux-2.6.18.x86_64/drivers/infiniband/ulp/iser/Kconfig
+--- linux-2.6.18.x86_64-orig/drivers/infiniband/ulp/iser/Kconfig	2007-04-10 10:18:11.000000000 +0300
++++ linux-2.6.18.x86_64/drivers/infiniband/ulp/iser/Kconfig	2007-04-10 10:19:12.000000000 +0300
+@@ -1,11 +1,12 @@
+ config INFINIBAND_ISER
+-	tristate "ISCSI RDMA Protocol"
+-	depends on INFINIBAND && SCSI
++	tristate "iSCSI Extensions for RDMA (iSER)"
++	depends on INFINIBAND && SCSI && INET
+ 	select SCSI_ISCSI_ATTRS
+ 	---help---
+-	  Support for the ISCSI RDMA Protocol over InfiniBand.  This
+-	  allows you to access storage devices that speak ISER/ISCSI
+-	  over InfiniBand.
++	  Support for the iSCSI Extensions for RDMA (iSER) Protocol
++          over InfiniBand. This allows you to access storage devices
++          that speak iSCSI over iSER over InfiniBand.
+ 
+-	  The ISER protocol is defined by IETF.
+-	  See <http://www.ietf.org/>.
++	  The iSER protocol is defined by IETF.
++	  See <http://www.ietf.org/internet-drafts/draft-ietf-ips-iser-05.txt>
++	  and <http://www.infinibandta.org/members/spec/iser_annex_060418.pdf>
+
+

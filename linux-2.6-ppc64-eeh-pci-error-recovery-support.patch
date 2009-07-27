@@ -1,0 +1,716 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [PATCH RHEL 5.1 FEATURE] bz# 207968 1/6 [PPC]: EEH PCI error recovery  support
+Date: Tue, 1 May 2007 09:12:09 -0400 (EDT)
+Bugzilla: 207968
+Message-Id: <Pine.LNX.4.64.0704301657030.19648@localhost.localdomain>
+Changelog: [ppc64] EEH PCI error recovery  support
+
+
+RHBZ#: 207968
+------
+http://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=207968
+
+Description:
+------------
+balance pcidev_get/put calls.
+
+This patch corrects a pci_dev get/put imbalance that can occur 
+only in highly unlikely situations (kmalloc failures, pci devices
+with overlapping resource addresses).  No actual failures seen,
+this was spotted during code review.
+
+RHEL Version Found:
+-------------------
+RHEL 5.0
+
+Upstream Status:
+----------------
+Present in 2.6.19 and later
+http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=af525592187951a595c73de11b48969a13b5d5a3
+
+Test Status:
+------------
+Patch with other 5 in this series built with brew --scratch at:
+   http://brewweb.devel.redhat.com/brew/taskinfo?taskID=768219
+
+This patch has been tested by Linas Vestas of IBM.
+
+This patch is based on 2.6.18-16.el5.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+ arch/powerpc/platforms/pseries/eeh_cache.c |   17 ++---------------
+ 1 file changed, 2 insertions(+), 15 deletions(-)
+
+Index: linux-2.6.18.ppc64/arch/powerpc/platforms/pseries/eeh_cache.c
+===================================================================
+--- linux-2.6.18.ppc64.orig/arch/powerpc/platforms/pseries/eeh_cache.c
++++ linux-2.6.18.ppc64/arch/powerpc/platforms/pseries/eeh_cache.c
+@@ -157,6 +157,7 @@ pci_addr_cache_insert(struct pci_dev *de
+ 	if (!piar)
+ 		return NULL;
+ 
++	pci_dev_get(dev);
+ 	piar->addr_lo = alo;
+ 	piar->addr_hi = ahi;
+ 	piar->pcidev = dev;
+@@ -178,7 +179,6 @@ static void __pci_addr_cache_insert_devi
+ 	struct device_node *dn;
+ 	struct pci_dn *pdn;
+ 	int i;
+-	int inserted = 0;
+ 
+ 	dn = pci_device_to_OF_node(dev);
+ 	if (!dn) {
+@@ -197,9 +197,6 @@ static void __pci_addr_cache_insert_devi
+ 		return;
+ 	}
+ 
+-	/* The cache holds a reference to the device... */
+-	pci_dev_get(dev);
+-
+ 	/* Walk resources on this device, poke them into the tree */
+ 	for (i = 0; i < DEVICE_COUNT_RESOURCE; i++) {
+ 		unsigned long start = pci_resource_start(dev,i);
+@@ -212,12 +209,7 @@ static void __pci_addr_cache_insert_devi
+ 		if (start == 0 || ~start == 0 || end == 0 || ~end == 0)
+ 			 continue;
+ 		pci_addr_cache_insert(dev, start, end, flags);
+-		inserted = 1;
+ 	}
+-
+-	/* If there was nothing to add, the cache has no reference... */
+-	if (!inserted)
+-		pci_dev_put(dev);
+ }
+ 
+ /**
+@@ -240,7 +232,6 @@ void pci_addr_cache_insert_device(struct
+ static inline void __pci_addr_cache_remove_device(struct pci_dev *dev)
+ {
+ 	struct rb_node *n;
+-	int removed = 0;
+ 
+ restart:
+ 	n = rb_first(&pci_io_addr_cache_root.rb_root);
+@@ -250,16 +241,12 @@ restart:
+ 
+ 		if (piar->pcidev == dev) {
+ 			rb_erase(n, &pci_io_addr_cache_root.rb_root);
+-			removed = 1;
++			pci_dev_put(piar->pcidev);
+ 			kfree(piar);
+ 			goto restart;
+ 		}
+ 		n = rb_next(n);
+ 	}
+-
+-	/* The cache no longer holds its reference to this device... */
+-	if (removed)
+-		pci_dev_put(dev);
+ }
+ 
+ /**
+
+RHBZ#: 207968
+------
+http://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=207968
+
+Description:
+------------
+Summary: EEH: code comment cleanup
+
+Clean up subroutine documentation; mostly formatting
+changes, with some new content.
+
+RHEL Version Found:
+-------------------
+RHEL 5.0
+
+Upstream Status:
+----------------
+Present in 2.6.19 and later
+http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=cb5b562444c27cf53f5d297bd7a89807ea614cf3
+
+Test Status:
+------------
+Patch with other 5 in this series built with brew against 2.6.18-16.el5 at:
+   http://brewweb.devel.redhat.com/brew/taskinfo?taskID=768219
+
+This patch has been tested by Linas Vestas of IBM.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+ arch/powerpc/platforms/pseries/eeh.c        |   19 ++++++++++++++-----
+ arch/powerpc/platforms/pseries/eeh_driver.c |   27 +++++++++++++++++++++------
+ 2 files changed, 35 insertions(+), 11 deletions(-)
+
+Index: linux-2.6.18.ppc64/arch/powerpc/platforms/pseries/eeh.c
+===================================================================
+--- linux-2.6.18.ppc64.orig/arch/powerpc/platforms/pseries/eeh.c
++++ linux-2.6.18.ppc64/arch/powerpc/platforms/pseries/eeh.c
+@@ -449,7 +449,11 @@ EXPORT_SYMBOL(eeh_check_failure);
+ /* ------------------------------------------------------------- */
+ /* The code below deals with error recovery */
+ 
+-/** Return negative value if a permanent error, else return
++/**
++ * eeh_slot_availability - returns error status of slot
++ * @pdn pci device node
++ *
++ * Return negative value if a permanent error, else return
+  * a number of milliseconds to wait until the PCI slot is
+  * ready to be used.
+  */
+@@ -477,8 +481,10 @@ eeh_slot_availability(struct pci_dn *pdn
+ 	return -1;
+ }
+ 
+-/** rtas_pci_slot_reset raises/lowers the pci #RST line
+- *  state: 1/0 to raise/lower the #RST
++/**
++ * rtas_pci_slot_reset - raises/lowers the pci #RST line
++ * @pdn pci device node
++ * @state: 1/0 to raise/lower the #RST
+  *
+  * Clear the EEH-frozen condition on a slot.  This routine
+  * asserts the PCI #RST line if the 'state' argument is '1',
+@@ -518,8 +524,9 @@ rtas_pci_slot_reset(struct pci_dn *pdn, 
+ 	}
+ }
+ 
+-/** rtas_set_slot_reset -- assert the pci #RST line for 1/4 second
+- *  dn -- device node to be reset.
++/**
++ * rtas_set_slot_reset -- assert the pci #RST line for 1/4 second
++ * @pdn: pci device node to be reset.
+  *
+  *  Return 0 if success, else a non-zero value.
+  */
+@@ -582,6 +589,8 @@ rtas_set_slot_reset(struct pci_dn *pdn)
+ 
+ /**
+  * __restore_bars - Restore the Base Address Registers
++ * @pdn: pci device node
++ *
+  * Loads the PCI configuration space base address registers,
+  * the expansion ROM base address, the latency timer, and etc.
+  * from the saved values in the device node.
+Index: linux-2.6.18.ppc64/arch/powerpc/platforms/pseries/eeh_driver.c
+===================================================================
+--- linux-2.6.18.ppc64.orig/arch/powerpc/platforms/pseries/eeh_driver.c
++++ linux-2.6.18.ppc64/arch/powerpc/platforms/pseries/eeh_driver.c
+@@ -77,8 +77,12 @@ static int irq_in_use(unsigned int irq)
+ }
+ 
+ /* ------------------------------------------------------- */
+-/** eeh_report_error - report an EEH error to each device,
+- *  collect up and merge the device responses.
++/**
++ * eeh_report_error - report pci error to each device driver
++ *
++ * Report an EEH error to each device driver, collect up and
++ * merge the device driver responses. Cumulative response
++ * passed back in "userdata".
+  */
+ 
+ static void eeh_report_error(struct pci_dev *dev, void *userdata)
+@@ -108,8 +112,8 @@ static void eeh_report_error(struct pci_
+ 	     rc == PCI_ERS_RESULT_NEED_RESET) *res = rc;
+ }
+ 
+-/** eeh_report_reset -- tell this device that the pci slot
+- *  has been reset.
++/**
++ * eeh_report_reset - tell device that slot has been reset
+  */
+ 
+ static void eeh_report_reset(struct pci_dev *dev, void *userdata)
+@@ -132,6 +136,10 @@ static void eeh_report_reset(struct pci_
+ 	driver->err_handler->slot_reset(dev);
+ }
+ 
++/**
++ * eeh_report_resume - tell device to resume normal operations
++ */
++
+ static void eeh_report_resume(struct pci_dev *dev, void *userdata)
+ {
+ 	struct pci_driver *driver = dev->driver;
+@@ -148,6 +156,13 @@ static void eeh_report_resume(struct pci
+ 	driver->err_handler->resume(dev);
+ }
+ 
++/**
++ * eeh_report_failure - tell device driver that device is dead.
++ *
++ * This informs the device driver that the device is permanently
++ * dead, and that no further recovery attempts will be made on it.
++ */
++
+ static void eeh_report_failure(struct pci_dev *dev, void *userdata)
+ {
+ 	struct pci_driver *driver = dev->driver;
+@@ -190,11 +205,11 @@ static void eeh_report_failure(struct pc
+ 
+ /**
+  * eeh_reset_device() -- perform actual reset of a pci slot
+- * Args: bus: pointer to the pci bus structure corresponding
++ * @bus: pointer to the pci bus structure corresponding
+  *            to the isolated slot. A non-null value will
+  *            cause all devices under the bus to be removed
+  *            and then re-added.
+- *     pe_dn: pointer to a "Partionable Endpoint" device node.
++ * @pe_dn: pointer to a "Partionable Endpoint" device node.
+  *            This is the top-level structure on which pci
+  *            bus resets can be performed.
+  */
+
+RHBZ#: 207968
+------
+http://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=207968
+
+Description:
+------------
+Summary: enable MMIO/DMA on frozen slot
+
+Add wrapper around the rtas call to enable MMIO or DMA on a frozen pci slot.
+
+RHEL Version Found:
+-------------------
+RHEL 5.0
+
+Upstream Status:
+----------------
+Present in 2.6.19 and later
+#http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=47b5c838af92d3504e99633bf568578203b7305f
+
+Test Status:
+------------
+Patch with other 5 in this series built with brew against 2.6.18-8.1.3.el5 at:
+   http://brewweb.devel.redhat.com/brew/taskinfo?taskID=768219
+
+This patch has been tested by Linas Vestas of IBM.
+
+Proposed Patch:
+----------------
+ arch/powerpc/platforms/pseries/eeh.c |   29 +++++++++++++++++++++++++++++
+ include/asm-powerpc/ppc-pci.h        |   11 +++++++++++
+ 2 files changed, 40 insertions(+)
+
+Index: linux-2.6.18.ppc64/arch/powerpc/platforms/pseries/eeh.c
+===================================================================
+--- linux-2.6.18.ppc64.orig/arch/powerpc/platforms/pseries/eeh.c
++++ linux-2.6.18.ppc64/arch/powerpc/platforms/pseries/eeh.c
+@@ -482,6 +482,35 @@ eeh_slot_availability(struct pci_dn *pdn
+ }
+ 
+ /**
++ * rtas_pci_enable - enable MMIO or DMA transfers for this slot
++ * @pdn pci device node
++ */
++
++int
++rtas_pci_enable(struct pci_dn *pdn, int function)
++{
++	int config_addr;
++	int rc;
++
++	/* Use PE configuration address, if present */
++	config_addr = pdn->eeh_config_addr;
++	if (pdn->eeh_pe_config_addr)
++		config_addr = pdn->eeh_pe_config_addr;
++
++	rc = rtas_call(ibm_set_eeh_option, 4, 1, NULL,
++	               config_addr,
++	               BUID_HI(pdn->phb->buid),
++	               BUID_LO(pdn->phb->buid),
++		            function);
++
++	if (rc)
++		printk(KERN_WARNING "EEH: Cannot enable function %d, err=%d dn=%s\n",
++		        function, rc, pdn->node->full_name);
++
++	return rc;
++}
++
++/**
+  * rtas_pci_slot_reset - raises/lowers the pci #RST line
+  * @pdn pci device node
+  * @state: 1/0 to raise/lower the #RST
+Index: linux-2.6.18.ppc64/include/asm-powerpc/ppc-pci.h
+===================================================================
+--- linux-2.6.18.ppc64.orig/include/asm-powerpc/ppc-pci.h
++++ linux-2.6.18.ppc64/include/asm-powerpc/ppc-pci.h
+@@ -69,6 +69,17 @@ struct pci_dev *pci_get_device_by_addr(u
+ void eeh_slot_error_detail (struct pci_dn *pdn, int severity);
+ 
+ /**
++ * rtas_pci_enableo - enable IO transfers for this slot
++ * @pdn:       pci device node
++ * @function:  either EEH_THAW_MMIO or EEH_THAW_DMA
++ *
++ * Enable I/O transfers to this slot
++ */
++#define EEH_THAW_MMIO 2
++#define EEH_THAW_DMA  3
++int rtas_pci_enable(struct pci_dn *pdn, int function);
++
++/**
+  * rtas_set_slot_reset -- unfreeze a frozen slot
+  *
+  * Clear the EEH-frozen condition on a slot.  This routine
+
+RHBZ#: 207968
+------
+http://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=207968
+
+Description:
+------------
+Summary: EEH: support MMIO enable recovery step
+
+Update to the PowerPC PCI error recovery code.
+
+Add code to enable MMIO if a device driver reports 
+that it is capable of recovering on its own. One
+anticipated use of this having a device driver 
+enable MMIO so that it can take a register dump, 
+which might then be followed by the device driver 
+requesting a full reset.
+
+RHEL Version Found:
+-------------------
+RHEL 5.0
+
+Upstream Status:
+----------------
+Present in 2.6.19 and later
+http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=6a1ca373a16b0e170164ab8a2d6d01eab2a22f6e
+
+Test Status:
+------------
+Patch with other 5 in this series built with brew against 2.6.18-16.el5 at:
+   http://brewweb.devel.redhat.com/brew/taskinfo?taskID=768219
+
+This patch has been tested by Linas Vestas of IBM.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+ arch/powerpc/platforms/pseries/eeh_driver.c |   81 ++++++++++++++++++++++------
+ 1 file changed, 64 insertions(+), 17 deletions(-)
+
+Index: linux-2.6.18.ppc64/arch/powerpc/platforms/pseries/eeh_driver.c
+===================================================================
+--- linux-2.6.18.ppc64.orig/arch/powerpc/platforms/pseries/eeh_driver.c
++++ linux-2.6.18.ppc64/arch/powerpc/platforms/pseries/eeh_driver.c
+@@ -100,14 +100,38 @@ static void eeh_report_error(struct pci_
+ 		PCI_DN(dn)->eeh_mode |= EEH_MODE_IRQ_DISABLED;
+ 		disable_irq_nosync(dev->irq);
+ 	}
+-	if (!driver->err_handler)
+-		return;
+-	if (!driver->err_handler->error_detected)
++	if (!driver->err_handler ||
++	    !driver->err_handler->error_detected)
+ 		return;
+ 
+ 	rc = driver->err_handler->error_detected (dev, pci_channel_io_frozen);
+ 	if (*res == PCI_ERS_RESULT_NONE) *res = rc;
+-	if (*res == PCI_ERS_RESULT_NEED_RESET) return;
++	if (*res == PCI_ERS_RESULT_DISCONNECT &&
++	     rc == PCI_ERS_RESULT_NEED_RESET) *res = rc;
++}
++
++/**
++ * eeh_report_mmio_enabled - tell drivers that MMIO has been enabled
++ *
++ * Report an EEH error to each device driver, collect up and
++ * merge the device driver responses. Cumulative response
++ * passed back in "userdata".
++ */
++
++static void eeh_report_mmio_enabled(struct pci_dev *dev, void *userdata)
++{
++	enum pci_ers_result rc, *res = userdata;
++	struct pci_driver *driver = dev->driver;
++
++	// dev->error_state = pci_channel_mmio_enabled;
++
++	if (!driver ||
++	    !driver->err_handler ||
++	    !driver->err_handler->mmio_enabled)
++		return;
++
++	rc = driver->err_handler->mmio_enabled (dev);
++	if (*res == PCI_ERS_RESULT_NONE) *res = rc;
+ 	if (*res == PCI_ERS_RESULT_DISCONNECT &&
+ 	     rc == PCI_ERS_RESULT_NEED_RESET) *res = rc;
+ }
+@@ -118,6 +142,7 @@ static void eeh_report_error(struct pci_
+ 
+ static void eeh_report_reset(struct pci_dev *dev, void *userdata)
+ {
++	enum pci_ers_result rc, *res = userdata;
+ 	struct pci_driver *driver = dev->driver;
+ 	struct device_node *dn = pci_device_to_OF_node(dev);
+ 
+@@ -128,12 +153,14 @@ static void eeh_report_reset(struct pci_
+ 		PCI_DN(dn)->eeh_mode &= ~EEH_MODE_IRQ_DISABLED;
+ 		enable_irq(dev->irq);
+ 	}
+-	if (!driver->err_handler)
+-		return;
+-	if (!driver->err_handler->slot_reset)
++	if (!driver->err_handler ||
++	    !driver->err_handler->slot_reset)
+ 		return;
+ 
+-	driver->err_handler->slot_reset(dev);
++	rc = driver->err_handler->slot_reset(dev);
++	if (*res == PCI_ERS_RESULT_NONE) *res = rc;
++	if (*res == PCI_ERS_RESULT_DISCONNECT &&
++	     rc == PCI_ERS_RESULT_NEED_RESET) *res = rc;
+ }
+ 
+ /**
+@@ -362,23 +389,43 @@ struct pci_dn * handle_eeh_events (struc
+ 			goto hard_fail;
+ 	}
+ 
+-	/* If any device called out for a reset, then reset the slot */
+-	if (result == PCI_ERS_RESULT_NEED_RESET) {
+-		rc = eeh_reset_device(frozen_pdn, NULL);
+-		if (rc)
+-			goto hard_fail;
+-		pci_walk_bus(frozen_bus, eeh_report_reset, NULL);
++	/* If all devices reported they can proceed, then re-enable MMIO */
++	if (result == PCI_ERS_RESULT_CAN_RECOVER) {
++		rc = rtas_pci_enable(frozen_pdn, EEH_THAW_MMIO);
++
++		if (rc) {
++			result = PCI_ERS_RESULT_NEED_RESET;
++		} else {
++			result = PCI_ERS_RESULT_NONE;
++			pci_walk_bus(frozen_bus, eeh_report_mmio_enabled, &result);
++		}
+ 	}
+ 
+-	/* If all devices reported they can proceed, the re-enable PIO */
++	/* If all devices reported they can proceed, then re-enable DMA */
+ 	if (result == PCI_ERS_RESULT_CAN_RECOVER) {
+-		/* XXX Not supported; we brute-force reset the device */
++		rc = rtas_pci_enable(frozen_pdn, EEH_THAW_DMA);
++
++		if (rc)
++			result = PCI_ERS_RESULT_NEED_RESET;
++	}
++
++	/* If any device has a hard failure, then shut off everything. */
++	if (result == PCI_ERS_RESULT_DISCONNECT)
++		goto hard_fail;
++
++	/* If any device called out for a reset, then reset the slot */
++	if (result == PCI_ERS_RESULT_NEED_RESET) {
+ 		rc = eeh_reset_device(frozen_pdn, NULL);
+ 		if (rc)
+ 			goto hard_fail;
+-		pci_walk_bus(frozen_bus, eeh_report_reset, NULL);
++		result = PCI_ERS_RESULT_NONE;
++		pci_walk_bus(frozen_bus, eeh_report_reset, &result);
+ 	}
+ 
++	/* All devices should claim they have recovered by now. */
++	if (result != PCI_ERS_RESULT_RECOVERED)
++		goto hard_fail;
++
+ 	/* Tell all device drivers that they can resume operations */
+ 	pci_walk_bus(frozen_bus, eeh_report_resume, NULL);
+ 
+
+RHBZ#: 207968
+------
+http://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=207968
+
+Description:
+------------
+Summary: EEH failure to mark pci slot as frozen.
+
+Bug fix: when marking a slot as frozen, we forgot to mark
+pci device itself as frozen. (we did manage to mark the 
+pci children, but forget the parent itself.)
+
+This is needed so that some device drivers can check the 
+pci status in critical sections (e.g. in spin loops with 
+interrupts disabled). 
+
+RHEL Version Found:
+-------------------
+RHEL 5.0
+
+Upstream Status:
+----------------
+Present in 2.6.19 and later
+http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=022d51b1b28d25d50935c39d7968fefe34102a9f
+
+Test Status:
+------------
+Patch with other 5 in this series built with brew against 2.6.18-16.el5 at:
+   http://brewweb.devel.redhat.com/brew/taskinfo?taskID=768219
+
+This patch has been tested by Linas Vestas of IBM.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+ arch/powerpc/platforms/pseries/eeh.c |    7 +++++++
+ 1 file changed, 7 insertions(+)
+
+Index: linux-2.6.18.ppc64/arch/powerpc/platforms/pseries/eeh.c
+===================================================================
+--- linux-2.6.18.ppc64.orig/arch/powerpc/platforms/pseries/eeh.c
++++ linux-2.6.18.ppc64/arch/powerpc/platforms/pseries/eeh.c
+@@ -225,6 +225,7 @@ static void __eeh_mark_slot (struct devi
+ 
+ void eeh_mark_slot (struct device_node *dn, int mode_flag)
+ {
++	struct pci_dev *dev;
+ 	dn = find_device_pe (dn);
+ 
+ 	/* Back up one, since config addrs might be shared */
+@@ -232,6 +233,12 @@ void eeh_mark_slot (struct device_node *
+ 		dn = dn->parent;
+ 
+ 	PCI_DN(dn)->eeh_mode |= mode_flag;
++
++	/* Mark the pci device too */
++	dev = PCI_DN(dn)->pcidev;
++	if (dev)
++		dev->error_state = pci_channel_io_frozen;
++
+ 	__eeh_mark_slot (dn->child, mode_flag);
+ }
+ 
+
+RHBZ#: 207968
+------
+http://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=207968
+
+Description:
+------------
+Summary: EEH: Power4 systems sometimes need multiple resets.
+
+On detection of an EEH error, some Power4 systems seem to 
+occasionally want to be reset twice before they report 
+themselves as fully recovered.  This patch re-arranges 
+the code to attempt additional resets if the first
+one doesn't take. 
+
+RHEL Version Found:
+-------------------
+RHEL 5.0
+
+Upstream Status:
+----------------
+Present in 2.6.19 and later
+http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=e102926385b56e593b995ecc433f041b498a49e1
+
+Test Status:
+------------
+Patch with other 5 in this series built with brew against 2.6.18-16.el5 at:
+   http://brewweb.devel.redhat.com/brew/taskinfo?taskID=768219
+
+This patch has been tested by Linas Vestas of IBM.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+ arch/powerpc/platforms/pseries/eeh.c |   36 +++++++++++++++++++++++------------
+ 1 file changed, 24 insertions(+), 12 deletions(-)
+
+Index: linux-2.6.18.ppc64/arch/powerpc/platforms/pseries/eeh.c
+===================================================================
+--- linux-2.6.18.ppc64.orig/arch/powerpc/platforms/pseries/eeh.c
++++ linux-2.6.18.ppc64/arch/powerpc/platforms/pseries/eeh.c
+@@ -485,7 +485,7 @@ eeh_slot_availability(struct pci_dn *pdn
+ 
+ 	printk (KERN_ERR "EEH: Slot unavailable: rc=%d, rets=%d %d %d\n",
+ 		rc, rets[0], rets[1], rets[2]);
+-	return -1;
++	return -2;
+ }
+ 
+ /**
+@@ -553,11 +553,10 @@ rtas_pci_slot_reset(struct pci_dn *pdn, 
+ 	               BUID_HI(pdn->phb->buid),
+ 	               BUID_LO(pdn->phb->buid),
+ 	               state);
+-	if (rc) {
+-		printk (KERN_WARNING "EEH: Unable to reset the failed slot, (%d) #RST=%d dn=%s\n", 
++	if (rc)
++		printk (KERN_WARNING "EEH: Unable to reset the failed slot,"
++		        " (%d) #RST=%d dn=%s\n",
+ 		        rc, state, pdn->node->full_name);
+-		return;
+-	}
+ }
+ 
+ /**
+@@ -567,11 +566,8 @@ rtas_pci_slot_reset(struct pci_dn *pdn, 
+  *  Return 0 if success, else a non-zero value.
+  */
+ 
+-int
+-rtas_set_slot_reset(struct pci_dn *pdn)
++static void __rtas_set_slot_reset(struct pci_dn *pdn)
+ {
+-	int i, rc;
+-
+ 	rtas_pci_slot_reset (pdn, 1);
+ 
+ 	/* The PCI bus requires that the reset be held high for at least
+@@ -592,17 +588,33 @@ rtas_set_slot_reset(struct pci_dn *pdn)
+ 	 * up traffic. */
+ #define PCI_BUS_SETTLE_TIME_MSEC 1800
+ 	msleep (PCI_BUS_SETTLE_TIME_MSEC);
++}
++
++int rtas_set_slot_reset(struct pci_dn *pdn)
++{
++	int i, rc;
++
++	__rtas_set_slot_reset(pdn);
+ 
+ 	/* Now double check with the firmware to make sure the device is
+ 	 * ready to be used; if not, wait for recovery. */
+ 	for (i=0; i<10; i++) {
+ 		rc = eeh_slot_availability (pdn);
+-		if (rc < 0)
+-			printk (KERN_ERR "EEH: failed (%d) to reset slot %s\n", rc, pdn->node->full_name);
+ 		if (rc == 0)
+ 			return 0;
+-		if (rc < 0)
++
++		if (rc == -2) {
++			printk (KERN_ERR "EEH: failed (%d) to reset slot %s\n",
++			        i, pdn->node->full_name);
++			__rtas_set_slot_reset(pdn);
++			continue;
++		}
++
++		if (rc < 0) {
++			printk (KERN_ERR "EEH: unrecoverable slot failure %s\n",
++			        pdn->node->full_name);
+ 			return -1;
++		}
+ 
+ 		msleep (rc+100);
+ 	}
+

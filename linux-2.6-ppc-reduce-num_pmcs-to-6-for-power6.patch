@@ -1,0 +1,69 @@
+From: Janice M. Girouard <jgirouar@redhat.com>
+Subject: [RHEL 5.1 PATCH] BZ #220144 PPC:num_pmcs=8 instead of 6 for Power6  in cputable.c
+Date: Wed, 14 Mar 2007 13:36:22 -0400 (Eastern Daylight Time)
+Bugzilla: 220114
+Message-Id: <Pine.WNT.4.64.0703141334290.6332@IBM-3MTQI3AXJFW>
+Changelog: [ppc] reduce num_pmcs to 6 for Power6
+
+
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=220114
+
+Description:
+------------
+The attached patch fixes an abort seen when starting the Oprofile daemon:
+
+Stack trace output:
+  [c00000000769fcd0] d0000000004db63c .op_powerpc_cpu_start+0x3c/0x50 [oprofile]
+[c00000000769fd40] c00000000002894c .smp_call_function_interrupt+0x84/0xc4
+[c00000000769fdc0] c000000000048744 .xics_ipi_dispatch+0x80/0x130
+[c00000000769fe50] c000000000095c60 .handle_IRQ_event+0x7c/0xf8
+[c00000000769ff00] c000000000097880 .handle_percpu_irq+0x90/0x10c
+[c00000000769ff90] c000000000025da8 .call_handle_irq+0x1c/0x2c
+[c00000000060b9c0] c00000000000c7d8 .do_IRQ+0xf4/0x1a4
+[c00000000060ba50] c0000000000041ec hardware_interrupt_entry+0xc/0x10
+--- Exception: 501 (Hardware Interrupt) at c000000000043b48
+.plpar_hcall_norets+0x10/0x1c
+[link register   ] c000000000044fe0 .pseries_dedicated_idle_sleep+0x1a4/0x1e8
+[c00000000060bd40] c00000000060bde0 init_thread_union+0x3de0/0x4000
+(unreliable)[c00000000060bdf0] c000000000011aa8 .cpu_idle+0x10c/0x1e0
+[c00000000060be70] c000000000009274 .rest_init+0x44/0x5c
+[c00000000060bef0] c0000000004097ec .start_kernel+0x324/0x340
+[c00000000060bf90] c00000000000855c .start_here_common+0x50/0xf4
+This bug fix is required to support RH 196505 already accepted into the RHEL 5.0 kernel.
+
+The values of num_pmcs assigned in cputable.c is erroneously set to 8.  The value should be 6.
+
+
+RHEL Version Found:
+-------------------
+RHEL 5.0
+
+Upstream Status:
+----------------
+This is accepted into 2.6.20.1 as shown by:
+http://lxr.linux.no/source/arch/powerpc/kernel/cputable.c
+
+
+Test Status:
+------------
+Tested by David Nomura of IBM. It compiles and builds cleanly against the 5.0 base (kernel-2.6.18-9.el5.src.rpm). 
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL 5.
+-
+--- a/arch/powerpc/kernel/cputable.c.orig	2006-11-22 19:51:39.000000000 +0000
++++ b/arch/powerpc/kernel/cputable.c	2006-11-22 19:52:17.000000000 +0000
+@@ -259,7 +259,7 @@
+ 		.cpu_user_features	= COMMON_USER_POWER6,
+ 		.icache_bsize		= 128,
+ 		.dcache_bsize		= 128,
+-		.num_pmcs		= 8,
++		.num_pmcs		= 6,
+ 		.oprofile_cpu_type	= "ppc64/power6",
+ 		.oprofile_type		= PPC_OPROFILE_POWER4,
+  		.oprofile_mmcra_sihv	= POWER6_MMCRA_SIHV,
+

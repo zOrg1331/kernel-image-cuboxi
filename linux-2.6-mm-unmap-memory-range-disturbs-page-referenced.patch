@@ -1,0 +1,63 @@
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Subject: [PATCH RHEL-5] mm: do not disturb page referenced state when unmapping memory range
+Date: Wed, 25 Apr 2007 17:27:28 +0200
+Bugzilla: 232359
+Message-Id: <1177514848.2385.18.camel@taijtu>
+Changelog: [mm] unmapping memory range disturbs page referenced state
+
+
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=232359
+
+patch in -linus
+
+discussion at:
+  http://marc.info/?l=linux-mm&m=117024660714115&w=2
+
+---
+
+When kernel unmaps an address range, it needs to transfer PTE state into
+page struct.  Currently, kernel transfer access bit via
+mark_page_accessed().  The call to mark_page_accessed in the unmap path
+doesn't look logically correct.
+
+At unmap time, calling mark_page_accessed will causes page LRU state to be
+bumped up one step closer to more recently used state.  It is causing quite
+a bit headache in a scenario when a process creates a shmem segment, touch
+a whole bunch of pages, then unmaps it.  The unmapping takes a long time
+because mark_page_accessed() will start moving pages from inactive to
+active list.
+
+I'm not too much concerned with moving the page from one list to another in
+LRU.  Sooner or later it might be moved because of multiple mappings from
+various processes.  But it just doesn't look logical that when user asks a
+range to be unmapped, it's his intention that the process is no longer
+interested in these pages.  Moving those pages to active list (or bumping
+up a state towards more active) seems to be an over reaction.  It also
+prolongs unmapping latency which is the core issue I'm trying to solve.
+
+As suggested by Peter, we should still preserve the info on pte young
+pages, but not more.
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Acked-by: Ken Chen <kenchen@google.com>
+Cc: Hugh Dickins <hugh@veritas.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ mm/memory.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+Index: linux-2.6.18.noarch/mm/memory.c
+===================================================================
+--- linux-2.6.18.noarch.orig/mm/memory.c	2007-04-25 15:15:17.000000000 +0200
++++ linux-2.6.18.noarch/mm/memory.c	2007-04-25 15:34:46.000000000 +0200
+@@ -676,7 +676,7 @@ static unsigned long zap_pte_range(struc
+ 				if (pte_dirty(ptent))
+ 					set_page_dirty(page);
+ 				if (pte_young(ptent))
+-					mark_page_accessed(page);
++					SetPageReferenced(page);
+ 				file_rss--;
+ 			}
+ 			page_remove_rmap(page);
+

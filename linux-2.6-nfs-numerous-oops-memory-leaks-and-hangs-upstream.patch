@@ -1,0 +1,458 @@
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [RHEL5.1][PATCH 0/13] NFS: Numerous oops, memory leaks and hangs  found in upstream
+Date: Wed, 06 Jun 2007 15:59:12 -0400
+Bugzilla: 242975
+Message-Id: <46671210.4070602@RedHat.com>
+Changelog: [nfs] Numerous oops, memory leaks and hangs found in upstream
+
+
+The following patch series is a collection of upstream
+patch that fix fairly obvious oops, memory leaks and hangs.
+
+The majority of them and been in since the beginning
+of the year so they are fairly well baked.
+
+The bz is:
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=242975
+
+steved.
+
+
+--- linux-2.6.18.i686/fs/nfs/file.c.orig	2007-06-08 13:32:11.429680000 -0400
++++ linux-2.6.18.i686/fs/nfs/file.c	2007-06-08 15:03:15.075980000 -0400
+@@ -405,6 +405,12 @@ nfs_file_write(struct kiocb *iocb, const
+ 
+ 	nfs_add_stats(inode, NFSIOS_NORMALWRITTENBYTES, count);
+ 	result = generic_file_aio_write(iocb, buf, count, pos);
++	/* Return error values for O_SYNC and IS_SYNC() */
++	if (result >= 0 && (IS_SYNC(inode) || (iocb->ki_filp->f_flags & O_SYNC))) {
++		int err = nfs_fsync(iocb->ki_filp, dentry, 1);
++		if (err < 0)
++			result = err;
++	}
+ out:
+ 	return result;
+ 
+--- linux-2.6.18.i686/fs/nfs/read.c.orig	2007-06-08 13:32:21.608730000 -0400
++++ linux-2.6.18.i686/fs/nfs/read.c	2007-06-08 15:03:15.083980000 -0400
+@@ -147,12 +147,12 @@ static int nfs_readpage_sync(struct nfs_
+ {
+ 	unsigned int	rsize = NFS_SERVER(inode)->rsize;
+ 	unsigned int	count = PAGE_CACHE_SIZE;
+-	int		result;
++	int result = -ENOMEM;
+ 	struct nfs_read_data *rdata;
+ 
+ 	rdata = nfs_readdata_alloc(count);
+ 	if (!rdata)
+-		return -ENOMEM;
++		goto out_unlock;
+ 
+ 	memset(rdata, 0, sizeof(*rdata));
+ 	rdata->flags = (IS_SWAPFILE(inode)? NFS_RPC_SWAPFLAGS : 0);
+@@ -225,8 +225,9 @@ static int nfs_readpage_sync(struct nfs_
+ 	return result;
+ 
+ io_error:
+-	unlock_page(page);
+ 	nfs_readdata_free(rdata);
++out_unlock:
++	unlock_page(page);
+ 	return result;
+ }
+ 
+@@ -639,9 +640,10 @@ int nfs_readpage(struct file *file, stru
+ 		goto out_error;
+ 
+ 	if (file == NULL) {
++		error = -EBADF;
+ 		ctx = nfs_find_open_context(inode, NULL, FMODE_READ);
+ 		if (ctx == NULL)
+-			return -EBADF;
++			goto out_error;
+ 	} else
+ 		ctx = get_nfs_open_context((struct nfs_open_context *)
+ 				file->private_data);
+--- linux-2.6.18.i686/fs/nfs/direct.c.orig	2007-06-08 13:32:12.016423000 -0400
++++ linux-2.6.18.i686/fs/nfs/direct.c	2007-06-08 15:03:15.092981000 -0400
+@@ -122,19 +122,25 @@ ssize_t nfs_direct_IO(int rw, struct kio
+ 	return -EINVAL;
+ }
+ 
+-static void nfs_direct_dirty_pages(struct page **pages, int npages)
++static void nfs_direct_dirty_pages(struct page **pages, unsigned int pgbase, size_t count)
+ {
+-	int i;
++	unsigned int npages;
++	unsigned int i;
++
++	if (count == 0)
++		return;
++	pages += (pgbase >> PAGE_SHIFT);
++	npages = (count + (pgbase & ~PAGE_MASK) + PAGE_SIZE - 1) >> PAGE_SHIFT;
+ 	for (i = 0; i < npages; i++) {
+ 		struct page *page = pages[i];
+ 		if (!PageCompound(page))
+-			set_page_dirty_lock(page);
++			set_page_dirty(page);
+ 	}
+ }
+ 
+-static void nfs_direct_release_pages(struct page **pages, int npages)
++static void nfs_direct_release_pages(struct page **pages, unsigned int npages)
+ {
+-	int i;
++	unsigned int i;
+ 	for (i = 0; i < npages; i++)
+ 		page_cache_release(pages[i]);
+ }
+@@ -162,7 +168,7 @@ static inline struct nfs_direct_req *nfs
+ 	return dreq;
+ }
+ 
+-static void nfs_direct_req_release(struct kref *kref)
++static void nfs_direct_req_free(struct kref *kref)
+ {
+ 	struct nfs_direct_req *dreq = container_of(kref, struct nfs_direct_req, kref);
+ 
+@@ -171,6 +177,11 @@ static void nfs_direct_req_release(struc
+ 	kmem_cache_free(nfs_direct_cachep, dreq);
+ }
+ 
++static void nfs_direct_req_release(struct nfs_direct_req *dreq)
++{
++	kref_put(&dreq->kref, nfs_direct_req_free);
++}
++
+ /*
+  * Collects and returns the final error value/byte-count.
+  */
+@@ -190,7 +201,6 @@ static ssize_t nfs_direct_wait(struct nf
+ 		result = dreq->count;
+ 
+ out:
+-	kref_put(&dreq->kref, nfs_direct_req_release);
+ 	return (ssize_t) result;
+ }
+ 
+@@ -208,7 +218,7 @@ static void nfs_direct_complete(struct n
+ 	}
+ 	complete_all(&dreq->completion);
+ 
+-	kref_put(&dreq->kref, nfs_direct_req_release);
++	nfs_direct_req_release(dreq);
+ }
+ 
+ /*
+@@ -224,17 +234,18 @@ static void nfs_direct_read_result(struc
+ 	if (nfs_readpage_result(task, data) != 0)
+ 		return;
+ 
+-	nfs_direct_dirty_pages(data->pagevec, data->npages);
+-	nfs_direct_release_pages(data->pagevec, data->npages);
+-
+ 	spin_lock(&dreq->lock);
+-
+-	if (likely(task->tk_status >= 0))
+-		dreq->count += data->res.count;
+-	else
++	if (unlikely(task->tk_status < 0)) {
+ 		dreq->error = task->tk_status;
+-
+-	spin_unlock(&dreq->lock);
++		spin_unlock(&dreq->lock);
++	} else {
++		dreq->count += data->res.count;
++		spin_unlock(&dreq->lock);
++		nfs_direct_dirty_pages(data->pagevec,
++				data->args.pgbase,
++				data->res.count);
++	}
++	nfs_direct_release_pages(data->pagevec, data->npages);
+ 
+ 	if (put_dreq(dreq))
+ 		nfs_direct_complete(dreq);
+@@ -279,9 +290,12 @@ static ssize_t nfs_direct_read_schedule(
+ 		result = get_user_pages(current, current->mm, user_addr,
+ 					data->npages, 1, 0, data->pagevec, NULL);
+ 		up_read(&current->mm->mmap_sem);
+-		if (unlikely(result < data->npages)) {
+-			if (result > 0)
+-				nfs_direct_release_pages(data->pagevec, result);
++		if (result < 0) {
++			nfs_readdata_release(data);
++			break;
++		}
++		if ((unsigned)result < data->npages) {
++			nfs_direct_release_pages(data->pagevec, result);
+ 			nfs_readdata_release(data);
+ 			break;
+ 		}
+@@ -360,6 +374,7 @@ static ssize_t nfs_direct_read(struct ki
+ 	if (!result)
+ 		result = nfs_direct_wait(dreq);
+ 	rpc_clnt_sigunmask(clnt, &oldset);
++	nfs_direct_req_release(dreq);
+ 
+ 	return result;
+ }
+@@ -433,10 +448,10 @@ static void nfs_direct_commit_result(str
+ 	if (NFS_PROTO(data->inode)->commit_done(task, data) != 0)
+ 		return;
+ 	if (unlikely(task->tk_status < 0)) {
+-		dreq->error = task->tk_status;
++		dprintk("NFS: %5u commit failed with error %d.\n",
++				task->tk_pid, task->tk_status);
+ 		dreq->flags = NFS_ODIRECT_RESCHED_WRITES;
+-	}
+-	if (memcmp(&dreq->verf, &data->verf, sizeof(data->verf))) {
++	} else if (memcmp(&dreq->verf, &data->verf, sizeof(data->verf))) {
+ 		dprintk("NFS: %5u commit verify failed\n", task->tk_pid);
+ 		dreq->flags = NFS_ODIRECT_RESCHED_WRITES;
+ 	}
+@@ -532,9 +547,12 @@ static void nfs_direct_write_result(stru
+ 
+ 	spin_lock(&dreq->lock);
+ 
++	if (unlikely(dreq->error != 0))
++		goto out_unlock;
+ 	if (unlikely(status < 0)) {
++		/* An error has occured, so we should not commit */
++		dreq->flags = 0;
+ 		dreq->error = status;
+-		goto out_unlock;
+ 	}
+ 
+ 	dreq->count += data->res.count;
+@@ -608,9 +626,12 @@ static ssize_t nfs_direct_write_schedule
+ 		result = get_user_pages(current, current->mm, user_addr,
+ 					data->npages, 0, 0, data->pagevec, NULL);
+ 		up_read(&current->mm->mmap_sem);
+-		if (unlikely(result < data->npages)) {
+-			if (result > 0)
+-				nfs_direct_release_pages(data->pagevec, result);
++		if (result < 0) {
++			nfs_writedata_release(data);
++			break;
++		}
++		if ((unsigned)result < data->npages) {
++			nfs_direct_release_pages(data->pagevec, result);
+ 			nfs_writedata_release(data);
+ 			break;
+ 		}
+@@ -702,6 +723,7 @@ static ssize_t nfs_direct_write(struct k
+ 	if (!result)
+ 		result = nfs_direct_wait(dreq);
+ 	rpc_clnt_sigunmask(clnt, &oldset);
++	nfs_direct_req_release(dreq);
+ 
+ 	return result;
+ }
+--- linux-2.6.18.i686/fs/nfs/getroot.c.orig	2007-06-08 13:32:10.968767000 -0400
++++ linux-2.6.18.i686/fs/nfs/getroot.c	2007-06-08 15:03:15.100981000 -0400
+@@ -135,17 +135,15 @@ int nfs4_path_walk(struct nfs_server *se
+ 	struct nfs_fh lastfh;
+ 	struct qstr name;
+ 	int ret;
+-	//int referral_count = 0;
+ 
+ 	dprintk("--> nfs4_path_walk(,,%s)\n", path);
+ 
+ 	fsinfo.fattr = &fattr;
+ 	nfs_fattr_init(&fattr);
+ 
+-	if (*path++ != '/') {
+-		dprintk("nfs4_get_root: Path does not begin with a slash\n");
+-		return -EINVAL;
+-	}
++	/* Eat leading slashes */
++	while (*path == '/')
++		path++;
+ 
+ 	/* Start by getting the root filehandle from the server */
+ 	ret = server->nfs_client->rpc_ops->getroot(server, mntfh, &fsinfo);
+@@ -160,6 +158,7 @@ int nfs4_path_walk(struct nfs_server *se
+ 		return -ENOTDIR;
+ 	}
+ 
++	/* FIXME: It is quite valid for the server to return a referral here */
+ 	if (fattr.valid & NFS_ATTR_FATTR_V4_REFERRAL) {
+ 		printk(KERN_ERR "nfs4_get_root:"
+ 		       " getroot obtained referral\n");
+@@ -187,6 +186,7 @@ eat_dot_dir:
+ 		goto eat_dot_dir;
+ 	}
+ 
++	/* FIXME: Why shouldn't the user be able to use ".." in the path? */
+ 	if (path[0] == '.' && path[1] == '.' && (path[2] == '/' || !path[2])
+ 	    ) {
+ 		printk(KERN_ERR "nfs4_get_root:"
+@@ -212,6 +212,7 @@ eat_dot_dir:
+ 		return -ENOTDIR;
+ 	}
+ 
++	/* FIXME: Referrals are quite valid here too */
+ 	if (fattr.valid & NFS_ATTR_FATTR_V4_REFERRAL) {
+ 		printk(KERN_ERR "nfs4_get_root:"
+ 		       " lookupfh obtained referral\n");
+--- linux-2.6.18.i686/fs/nfs/nfs3proc.c.orig	2007-06-08 13:32:11.599680000 -0400
++++ linux-2.6.18.i686/fs/nfs/nfs3proc.c	2007-06-08 15:03:15.109980000 -0400
+@@ -369,7 +369,7 @@ again:
+ 
+ 	/* If the server doesn't support the exclusive creation semantics,
+ 	 * try again with simple 'guarded' mode. */
+-	if (status == NFSERR_NOTSUPP) {
++	if (status == -ENOTSUPP) {
+ 		switch (arg.createmode) {
+ 			case NFS3_CREATE_EXCLUSIVE:
+ 				arg.createmode = NFS3_CREATE_GUARDED;
+--- linux-2.6.18.i686/fs/nfs/nfs4xdr.c.orig	2007-06-08 13:32:10.602975000 -0400
++++ linux-2.6.18.i686/fs/nfs/nfs4xdr.c	2007-06-08 15:03:15.120981000 -0400
+@@ -387,8 +387,10 @@ static int nfs4_stat_to_errno(int);
+ 				decode_putfh_maxsz + \
+ 				op_decode_hdr_maxsz + 12)
+ #define NFS4_enc_server_caps_sz (compound_encode_hdr_maxsz + \
++				encode_putfh_maxsz + \
+ 				encode_getattr_maxsz)
+ #define NFS4_dec_server_caps_sz (compound_decode_hdr_maxsz + \
++				decode_putfh_maxsz + \
+ 				decode_getattr_maxsz)
+ #define NFS4_enc_delegreturn_sz	(compound_encode_hdr_maxsz + \
+ 				encode_putfh_maxsz + \
+--- linux-2.6.18.i686/fs/nfs/dir.c.orig	2007-06-08 13:32:22.918284000 -0400
++++ linux-2.6.18.i686/fs/nfs/dir.c	2007-06-08 15:03:15.130980000 -0400
+@@ -1114,8 +1114,21 @@ static struct dentry *nfs_readdir_lookup
+ 	}
+ 	name.hash = full_name_hash(name.name, name.len);
+ 	dentry = d_lookup(parent, &name);
+-	if (dentry != NULL)
+-		return dentry;
++	if (dentry != NULL) {
++		/* Is this a positive dentry that matches the readdir info? */
++		if (dentry->d_inode != NULL &&
++				(NFS_FILEID(dentry->d_inode) == entry->ino ||
++				d_mountpoint(dentry))) {
++			if (!desc->plus || entry->fh->size == 0)
++				return dentry;
++			if (nfs_compare_fh(NFS_FH(dentry->d_inode),
++						entry->fh) == 0)
++				goto out_renew;
++		}
++		/* No, so d_drop to allow one to be created */
++		d_drop(dentry);
++		dput(dentry);
++	}
+ 	if (!desc->plus || !(entry->fattr->valid & NFS_ATTR_FATTR))
+ 		return NULL;
+ 	/* Note: caller is already holding the dir->i_mutex! */
+@@ -1137,6 +1150,7 @@ static struct dentry *nfs_readdir_lookup
+ 		dentry = alias;
+ 	}
+ 
++out_renew:
+ 	nfs_renew_times(dentry);
+ 	nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
+ 	return dentry;
+--- linux-2.6.18.i686/include/linux/sunrpc/sched.h.orig	2007-06-08 13:32:20.978812000 -0400
++++ linux-2.6.18.i686/include/linux/sunrpc/sched.h	2007-06-08 15:03:15.071980000 -0400
+@@ -254,6 +254,7 @@ void		rpc_init_task(struct rpc_task *tas
+ 				void *data);
+ void		rpc_put_task(struct rpc_task *);
+ void		rpc_exit_task(struct rpc_task *);
++void		rpc_release_calldata(const struct rpc_call_ops *, void *);
+ void		rpc_killall_tasks(struct rpc_clnt *);
+ int		rpc_execute(struct rpc_task *);
+ void		rpc_run_child(struct rpc_task *parent, struct rpc_task *child,
+--- linux-2.6.18.i686/net/sunrpc/clnt.c.orig	2007-06-08 13:32:20.982808000 -0400
++++ linux-2.6.18.i686/net/sunrpc/clnt.c	2007-06-08 15:03:23.595620000 -0400
+@@ -154,7 +154,11 @@ rpc_new_client(struct rpc_xprt *xprt, ch
+ 	clnt->cl_prot     = xprt->prot;
+ 	clnt->cl_stats    = program->stats;
+ 	clnt->cl_metrics  = rpc_alloc_iostats(clnt);
++	err = -ENOMEM;
++	if (clnt->cl_metrics == NULL)
++		goto out_no_stats;
+ 	clnt->cl_program  = program;
++
+ 	rpc_init_wait_queue(&clnt->cl_pmap_default.pm_bindwait, "bindwait");
+ 
+ 	if (!clnt->cl_port)
+@@ -188,6 +192,8 @@ out_no_auth:
+ 		rpc_put_mount();
+ 	}
+ out_no_path:
++	rpc_free_iostats(clnt->cl_metrics);
++out_no_stats:
+ 	if (clnt->cl_server != clnt->cl_inline_name)
+ 		kfree(clnt->cl_server);
+ 	kfree(clnt);
+@@ -244,6 +250,9 @@ rpc_clone_client(struct rpc_clnt *clnt)
+ 	memcpy(new, clnt, sizeof(*new));
+ 	atomic_set(&new->cl_count, 1);
+ 	atomic_set(&new->cl_users, 0);
++	new->cl_metrics = rpc_alloc_iostats(clnt);
++	if (new->cl_metrics == NULL)
++		goto out_no_stats;
+ 	if (clnt->cl_server != clnt->cl_inline_name) {
+ 		new->cl_server = kstrdup(clnt->cl_server, GFP_KERNEL);
+ 		if (new->cl_server == NULL) {
+@@ -274,8 +283,9 @@ rpc_clone_client(struct rpc_clnt *clnt)
+ 	if (new->cl_auth)
+ 		atomic_inc(&new->cl_auth->au_count);
+ 	new->cl_pmap		= &new->cl_pmap_default;
+-	new->cl_metrics         = rpc_alloc_iostats(clnt);
+ 	return new;
++out_no_stats:
++	kfree(new);
+ out_no_clnt:
+ 	printk(KERN_INFO "RPC: out of memory in %s\n", __FUNCTION__);
+ 	return ERR_PTR(-ENOMEM);
+@@ -529,8 +539,7 @@ rpc_call_async(struct rpc_clnt *clnt, st
+ 	rpc_restore_sigmask(&oldset);		
+ 	return status;
+ out_release:
+-	if (tk_ops->rpc_release != NULL)
+-		tk_ops->rpc_release(data);
++	rpc_release_calldata(tk_ops, data);
+ 	return status;
+ }
+ 
+--- linux-2.6.18.i686/net/sunrpc/sched.c.orig	2007-06-08 13:32:20.986804000 -0400
++++ linux-2.6.18.i686/net/sunrpc/sched.c	2007-06-08 15:03:23.603620000 -0400
+@@ -630,6 +630,15 @@ void rpc_exit_task(struct rpc_task *task
+ }
+ EXPORT_SYMBOL(rpc_exit_task);
+ 
++void rpc_release_calldata(const struct rpc_call_ops *ops, void *calldata)
++{
++	if (ops->rpc_release != NULL) {
++		lock_kernel();
++		ops->rpc_release(calldata);
++		unlock_kernel();
++	}
++}
++
+ /*
+  * This is the RPC `scheduler' (or rather, the finite state machine).
+  */
+@@ -905,8 +914,7 @@ void rpc_put_task(struct rpc_task *task)
+ 	}
+ 	if (task->tk_flags & RPC_TASK_DYNAMIC)
+ 		call_rcu_bh(&task->u.tk_rcu, rpc_free_task);
+-	if (tk_ops->rpc_release)
+-		tk_ops->rpc_release(calldata);
++	rpc_release_calldata(tk_ops, calldata);
+ }
+ EXPORT_SYMBOL(rpc_put_task);
+ 
+@@ -950,8 +958,7 @@ struct rpc_task *rpc_run_task(struct rpc
+ 	struct rpc_task *task;
+ 	task = rpc_new_task(clnt, flags, ops, data);
+ 	if (task == NULL) {
+-		if (ops->rpc_release != NULL)
+-			ops->rpc_release(data);
++		rpc_release_calldata(ops, data);
+ 		return ERR_PTR(-ENOMEM);
+ 	}
+ 	atomic_inc(&task->tk_count);
+

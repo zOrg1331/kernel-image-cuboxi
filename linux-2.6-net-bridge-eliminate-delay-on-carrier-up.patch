@@ -1,0 +1,274 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Fri, 8 Aug 2008 21:56:13 +0800
+Subject: [net] bridge: eliminate delay on carrier up
+Message-id: 20080808135613.GA20301@gondor.apana.org.au
+O-Subject: Re: [RHEL5.3 PATCH] bridge: Eliminate delay on carrier up
+Bugzilla: 453526
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+On Thu, Aug 07, 2008 at 11:41:52PM +0800, Herbert Xu wrote:
+> Hi:
+>
+> RHEL5.3 BZ 453526
+>
+> This patch makes the bridge receptive to traffic on a port as
+> soon as its carrier comes up (as is practical).  This is done
+> by back-porting the following two upstream changesets:
+>
+> The reason this is necessary right now is because this delay
+> causes the gratuitous ARP packet from Xen guests to be dropped
+> during live migration which is magnified into a downtime that
+> is many times the actual delay.
+
+commit 269def7c505b4d229f9ad49bf88543d1e605533e
+Author: Stephen Hemminger <shemminger@linux-foundation.org>
+Date:   Thu Feb 22 01:10:18 2007 -0800
+
+    [BRIDGE]: eliminate workqueue for carrier check
+
+    Having a work queue for checking carrier leads to lots of race issues.
+    Simpler to just get the cost when data structure is created and
+    update on change.
+
+    Signed-off-by: Stephen Hemminger <shemminger@linux-foundation.org>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+commit ef647f1300d69adb8223d970554d59d7e244db6d
+Author: Stephen Hemminger <shemminger@vyatta.com>
+Date:	Wed, 6 Aug 2008 01:42:51 +0000 (18:42 -0700)
+
+    bridge: Eliminate unnecessary forward delay
+
+    Based upon original patch by Herbert Xu, which contained
+    the following problem description:
+
+    --------------------
+    When the forward delay is set to zero, we still delay the setting
+    of the forwarding state by one or possibly two timers depending
+    on whether STP is enabled.  This could either turn out to be
+    instantaneous, or horribly slow depending on the load of the
+    machine.
+
+    As there is nothing preventing us from enabling forwarding straight
+    away, this patch eliminates this potential delay by executing the
+    code directly if the forward delay is zero.
+
+    The effect of this problem is that immediately after the carrier
+    comes on a port, the bridge will drop all packets received from
+    that port until it enters forwarding mode, thus causing unnecessary
+    packet loss.
+
+    Note that this patch doesn't fully remove the delay due to the
+    link watcher.  We should also check the carrier state when we
+    are about to drop an incoming packet because the port is disabled.
+    But that's for another patch.
+    --------------------
+
+    This version of the fix takes a different approach, in that
+    it just does the state change directly.
+
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/net/bridge/br_if.c b/net/bridge/br_if.c
+index 9dff48c..95ea4d6 100644
+--- a/net/bridge/br_if.c
++++ b/net/bridge/br_if.c
+@@ -77,22 +77,15 @@ static int port_cost(struct net_device *dev)
+  * Called from work queue to allow for calling functions that
+  * might sleep (such as speed check), and to debounce.
+  */
+-static void port_carrier_check(void *arg)
++void br_port_carrier_check(struct net_bridge_port *p)
+ {
+-	struct net_device *dev = arg;
+-	struct net_bridge_port *p;
+-	struct net_bridge *br;
+-
+-	rtnl_lock();
+-	p = dev->br_port;
+-	if (!p)
+-		goto done;
+-	br = p->br;
++	struct net_device *dev = p->dev;
++	struct net_bridge *br = p->br;
+ 
+ 	if (netif_carrier_ok(dev))
+ 		p->path_cost = port_cost(dev);
+ 
+-	if (br->dev->flags & IFF_UP) {
++	if (netif_running(br->dev)) {
+ 		spin_lock_bh(&br->lock);
+ 		if (netif_carrier_ok(dev)) {
+ 			if (p->state == BR_STATE_DISABLED)
+@@ -103,9 +96,6 @@ static void port_carrier_check(void *arg)
+ 		}
+ 		spin_unlock_bh(&br->lock);
+ 	}
+-done:
+-	dev_put(dev);
+-	rtnl_unlock();
+ }
+ 
+ static void release_nbp(struct kobject *kobj)
+@@ -158,9 +148,6 @@ static void del_nbp(struct net_bridge_port *p)
+ 
+ 	dev_set_promiscuity(dev, -1);
+ 
+-	if (cancel_delayed_work(&p->carrier_check))
+-		dev_put(dev);
+-
+ 	spin_lock_bh(&br->lock);
+ 	br_stp_disable_port(p);
+ 	spin_unlock_bh(&br->lock);
+@@ -278,7 +265,6 @@ static struct net_bridge_port *new_nbp(struct net_bridge *br,
+ 	p->port_no = index;
+ 	br_init_port(p);
+ 	p->state = BR_STATE_DISABLED;
+-	INIT_WORK(&p->carrier_check, port_carrier_check, dev);
+ 	br_stp_port_timer_init(p);
+ 
+ 	kobject_init(&p->kobj);
+@@ -422,12 +408,14 @@ int br_add_if(struct net_bridge *br, struct net_device *dev)
+ 	spin_lock_bh(&br->lock);
+ 	br_stp_recalculate_bridge_id(br);
+ 	br_features_recompute(br);
+-	if (schedule_delayed_work(&p->carrier_check, BR_PORT_DEBOUNCE))
+-		dev_hold(dev);
+ 
++	if ((dev->flags & IFF_UP) && netif_carrier_ok(dev) &&
++	    (br->dev->flags & IFF_UP))
++		br_stp_enable_port(p);
+ 	spin_unlock_bh(&br->lock);
+ 
+ 	dev_set_mtu(br->dev, br_min_mtu(br));
++
+ 	kobject_uevent(&p->kobj, KOBJ_ADD);
+ 
+ 	return 0;
+diff --git a/net/bridge/br_notify.c b/net/bridge/br_notify.c
+index c64742c..c9a4da7 100644
+--- a/net/bridge/br_notify.c
++++ b/net/bridge/br_notify.c
+@@ -42,28 +42,28 @@ static int br_device_event(struct notifier_block *unused, unsigned long event, v
+ 
+ 	br = p->br;
+ 
+-	spin_lock_bh(&br->lock);
+ 	switch (event) {
+ 	case NETDEV_CHANGEMTU:
+ 		dev_set_mtu(br->dev, br_min_mtu(br));
+ 		break;
+ 
+ 	case NETDEV_CHANGEADDR:
++		spin_lock_bh(&br->lock);
+ 		br_fdb_changeaddr(p, dev->dev_addr);
+ 		br_ifinfo_notify(RTM_NEWLINK, p);
+ 		br_stp_recalculate_bridge_id(br);
++		spin_unlock_bh(&br->lock);
+ 		break;
+ 
+ 	case NETDEV_CHANGE:
+-		if (br->dev->flags & IFF_UP)
+-			if (schedule_delayed_work(&p->carrier_check,
+-						BR_PORT_DEBOUNCE))
+-				dev_hold(dev);
++		br_port_carrier_check(p);
+ 		break;
+ 
+ 	case NETDEV_FEAT_CHANGE:
++		spin_lock_bh(&br->lock);
+ 		if (br->dev->flags & IFF_UP) 
+ 			br_features_recompute(br);
++		spin_unlock_bh(&br->lock);
+ 
+ 		/* could do recursive feature change notification
+ 		 * but who would care?? 
+@@ -71,22 +71,23 @@ static int br_device_event(struct notifier_block *unused, unsigned long event, v
+ 		break;
+ 
+ 	case NETDEV_DOWN:
++		spin_lock_bh(&br->lock);
+ 		if (br->dev->flags & IFF_UP)
+ 			br_stp_disable_port(p);
++		spin_unlock_bh(&br->lock);
+ 		break;
+ 
+ 	case NETDEV_UP:
++		spin_lock_bh(&br->lock);
+ 		if (netif_carrier_ok(dev) && (br->dev->flags & IFF_UP)) 
+ 			br_stp_enable_port(p);
++		spin_unlock_bh(&br->lock);
+ 		break;
+ 
+ 	case NETDEV_UNREGISTER:
+-		spin_unlock_bh(&br->lock);
+ 		br_del_if(br, dev);
+-		goto done;
++		break;
+ 	} 
+-	spin_unlock_bh(&br->lock);
+ 
+- done:
+ 	return NOTIFY_DONE;
+ }
+diff --git a/net/bridge/br_private.h b/net/bridge/br_private.h
+index c491fb2..7e47ffb 100644
+--- a/net/bridge/br_private.h
++++ b/net/bridge/br_private.h
+@@ -27,8 +27,6 @@
+ #define BR_PORT_BITS	10
+ #define BR_MAX_PORTS	(1<<BR_PORT_BITS)
+ 
+-#define BR_PORT_DEBOUNCE (HZ/10)
+-
+ #define BR_VERSION	"2.2"
+ 
+ typedef struct bridge_id bridge_id;
+@@ -173,6 +171,7 @@ extern void br_flood_forward(struct net_bridge *br,
+ 		      int clone);
+ 
+ /* br_if.c */
++extern void br_port_carrier_check(struct net_bridge_port *p);
+ extern int br_add_bridge(const char *name);
+ extern int br_del_bridge(const char *name);
+ extern void br_cleanup_bridges(void);
+diff --git a/net/bridge/br_stp.c b/net/bridge/br_stp.c
+index 04ca063..2b3e58b 100644
+--- a/net/bridge/br_stp.c
++++ b/net/bridge/br_stp.c
+@@ -369,14 +369,25 @@ static void br_make_blocking(struct net_bridge_port *p)
+ /* called under bridge lock */
+ static void br_make_forwarding(struct net_bridge_port *p)
+ {
+-	if (p->state == BR_STATE_BLOCKING) {
+-		if (p->br->stp_enabled) {
+-			p->state = BR_STATE_LISTENING;
+-		} else {
+-			p->state = BR_STATE_LEARNING;
+-		}
+-		br_log_state(p);
+-		mod_timer(&p->forward_delay_timer, jiffies + p->br->forward_delay);	}
++	struct net_bridge *br = p->br;
++
++	if (p->state != BR_STATE_BLOCKING)
++		return;
++
++	if (br->forward_delay == 0) {
++		p->state = BR_STATE_FORWARDING;
++		br_topology_change_detection(br);
++		del_timer(&p->forward_delay_timer);
++	}
++	else if (p->br->stp_enabled)
++		p->state = BR_STATE_LISTENING;
++	else
++		p->state = BR_STATE_LEARNING;
++
++	br_log_state(p);
++
++	if (br->forward_delay != 0)
++		mod_timer(&p->forward_delay_timer, jiffies + br->forward_delay);
+ }
+ 
+ /* called under bridge lock */

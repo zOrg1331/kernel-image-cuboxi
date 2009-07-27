@@ -1,0 +1,35 @@
+From: Milan Broz <mbroz@redhat.com>
+Subject: [RHEL 5.1 PATCH] dm multipath: rr path order is inverted
+Date: Thu, 10 May 2007 10:52:56 +0200
+Bugzilla: 239643
+Message-Id: <4642DD68.6050906@redhat.com>
+Changelog: [md] dm multipath: rr path order is inverted
+
+
+RHEL5.1 dm multipath: round-robin path order is inverted
+Resolves: rhbz#239643
+Patch is upstream and in RHEL4.5.
+
+When adding paths to the round-robin path selector, their order gets
+inverted, which is not desirable.
+
+Fix by replacing list_add() with list_add_tail().
+
+---
+ drivers/md/dm-round-robin.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+Index: linux-2.6.18/drivers/md/dm-round-robin.c
+===================================================================
+--- linux-2.6.18.orig/drivers/md/dm-round-robin.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18/drivers/md/dm-round-robin.c	2007-05-10 10:38:09.000000000 +0200
+@@ -136,7 +136,7 @@ static int rr_add_path(struct path_selec
+ 
+ 	path->pscontext = pi;
+ 
+-	list_add(&pi->list, &s->valid_paths);
++	list_add_tail(&pi->list, &s->valid_paths);
+ 
+ 	return 0;
+ }
+

@@ -1,0 +1,120 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Wed, 28 Jan 2009 17:07:43 +0100
+Subject: [net] fix icmp_send and icmpv6_send host re-lookup code
+Message-id: 20090128160742.GB3553@psychotron.englab.brq.redhat.com
+O-Subject: [RHEL5.4 patch] BZ439670 net: fix icmp_send and icmpv6_send host re-lookup code
+Bugzilla: 439670
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Herbert Xu <herbert.xu@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+BZ439670
+https://bugzilla.redhat.com/show_bug.cgi?id=439670
+
+This patch is a backport of following two upstream patches:
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=7c0ecc4c4f8fd90988aab8a95297b9c0038b6160
+
+From: Pavel Emelyanov <xemul@openvz.org>
+Date: Wed, 26 Mar 2008 09:27:09 +0000 (-0700)
+
+	[ICMP]: Dst entry leak in icmp_send host re-lookup code (v2).
+
+	Commit 8b7817f3a959ed99d7443afc12f78a7e1fcc2063 ([IPSEC]: Add ICMP host
+	relookup support) introduced some dst leaks on error paths: the rt
+	pointer can be forgotten to be put. Fix it bu going to a proper label.
+
+	Found after net namespace's lo refused to unregister :) Many thanks to
+	Den for valuable help during debugging.
+
+	Herbert pointed out, that xfrm_lookup() will put the rtable in case
+	of error itself, so the first goto fix is redundant.
+
+	Signed-off-by: Pavel Emelyanov <xemul@openvz.org>
+	Signed-off-by: Denis V. Lunev <den@openvz.org>
+	Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/net/ipv4/icmp.c b/net/ipv4/icmp.c
+index 56558b7..69c7734 100644
+--- a/net/ipv4/icmp.c
++++ b/net/ipv4/icmp.c
+@@ -590,7 +590,7 @@ void icmp_send(struct sk_buff *skb_in, int type, int code, u32 info)
+ 
+ 			fl2.fl4_dst = fl.fl4_src;
+ 			if (ip_route_output_key(&rt2, &fl2))
+-				goto out_unlock;
++				goto relookup_failed;
+ 
+ 			/* Ugh! */
+ 			odst = skb_in->dst;
+@@ -603,21 +603,23 @@ void icmp_send(struct sk_buff *skb_in, int type, int code, u32 info)
+ 		}
+ 
+ 		if (err)
+-			goto out_unlock;
++			goto relookup_failed;
+ 
+ 		err = xfrm_lookup((struct dst_entry **)&rt2, &fl, NULL,
+ 				  XFRM_LOOKUP_ICMP);
+-		if (err == -ENOENT) {
++		switch (err) {
++		case 0:
++			dst_release(&rt->u.dst);
++			rt = rt2;
++			break;
++		case -EPERM:
++			goto ende;
++		default:
++relookup_failed:
+ 			if (!rt)
+ 				goto out_unlock;
+-			goto route_done;
++			break;
+ 		}
+-
+-		dst_release(&rt->u.dst);
+-		rt = rt2;
+-
+-		if (err)
+-			goto out_unlock;
+ 	}
+ 
+ route_done:
+diff --git a/net/ipv6/icmp.c b/net/ipv6/icmp.c
+index 388eb7d..2c73690 100644
+--- a/net/ipv6/icmp.c
++++ b/net/ipv6/icmp.c
+@@ -414,22 +414,23 @@ void icmpv6_send(struct sk_buff *skb, int type, int code, __u32 info,
+ 	xfrm6_decode_session_reverse(skb, &fl2);
+ 
+ 	if (ip6_dst_lookup(sk, &dst2, &fl2))
+-		goto out;
++		goto relookup_failed;
+ 
+ 	err = xfrm_nlookup(&dst2, &fl2, sk, XFRM_LOOKUP_ICMP);
+-	if (err == -ENOENT || err == -ENOSYS) {
+-		err = -ENOENT;
++	switch (err) {
++	case 0:
++		dst_release(dst);
++		dst = dst2;
++		break;
++	case -EPERM:
++		goto out_dst_release;
++	default:
++relookup_failed:
+ 		if (!dst)
+ 			goto out;
+-		goto route_done;
++		break;
+ 	}
+ 
+-	dst_release(dst);
+-	dst = dst2;
+-
+-	if (err)
+-		goto out;
+-
+ route_done:
+ 	if (ipv6_addr_is_multicast(&fl.fl6_dst))
+ 		hlimit = np->mcast_hops;

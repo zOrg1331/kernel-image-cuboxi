@@ -1,0 +1,154 @@
+From: Jerome Marchand <jmarchand@redhat.com>
+Date: Tue, 15 Jul 2008 15:55:43 +0200
+Subject: [block] Enhanced Partition Statistics: update statistics
+Message-id: 20080715135910.089113350@redhat.com
+O-Subject: [Patch RHEL5.3 2/9] Enhanced Partition Statistics: update partition statitics
+Bugzilla: 224322
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+
+bz224322
+
+Updates the enhanced partition statistics in generic block layer
+besides the disk statistics.
+
+commit: 6f2576af5ba5913538fda7dfb7c6a17771025477
+
+diff --git a/block/ll_rw_blk.c b/block/ll_rw_blk.c
+index 26220de..66da02a 100644
+--- a/block/ll_rw_blk.c
++++ b/block/ll_rw_blk.c
+@@ -2655,10 +2655,15 @@ static void drive_stat_acct(struct request *rq, int nr_sectors, int new_io)
+ 		return;
+ 
+ 	if (!new_io) {
+-		__disk_stat_inc(rq->rq_disk, merges[rw]);
++		__all_stat_inc(rq->rq_disk, merges[rw], rq->sector);
+ 	} else {
++		struct hd_struct *part = get_part(rq->rq_disk, rq->sector);
+ 		disk_round_stats(rq->rq_disk);
+ 		rq->rq_disk->in_flight++;
++		if (part) {
++			part_round_stats(part);
++			get_partstats(part)->in_flight++;
++		}
+ 	}
+ }
+ 
+@@ -2713,6 +2718,22 @@ void disk_round_stats(struct gendisk *disk)
+ 
+ EXPORT_SYMBOL_GPL(disk_round_stats);
+ 
++void part_round_stats(struct hd_struct *part)
++{
++	unsigned long now = jiffies;
++	struct partstats *ps = get_partstats(part);
++
++	if (now == ps->stamp)
++		return;
++
++	if (ps->in_flight) {
++		part_stat_add(part, time_in_queue,
++			ps->in_flight * (now - ps->stamp));
++		part_stat_add(part, io_ticks, (now - ps->stamp));
++	}
++	ps->stamp = now;
++}
++
+ /*
+  * queue lock must be held
+  */
+@@ -2854,8 +2875,14 @@ static int attempt_merge(request_queue_t *q, struct request *req,
+ 	elv_merge_requests(q, req, next);
+ 
+ 	if (req->rq_disk) {
++		struct hd_struct *part
++			= get_part(req->rq_disk, req->sector);
+ 		disk_round_stats(req->rq_disk);
+ 		req->rq_disk->in_flight--;
++		if (part) {
++			part_round_stats(part);
++			get_partstats(part)->in_flight--;
++		}
+ 	}
+ 
+ 	req->ioprio = ioprio_best(req->ioprio, next->ioprio);
+@@ -3327,7 +3354,8 @@ static int __end_that_request_first(struct request *req, int uptodate,
+ 	if (blk_fs_request(req) && req->rq_disk) {
+ 		const int rw = rq_data_dir(req);
+ 
+-		disk_stat_add(req->rq_disk, sectors[rw], nr_bytes >> 9);
++		all_stat_add(req->rq_disk, sectors[rw],
++			     nr_bytes >> 9, req->sector);
+ 	}
+ 
+ 	total_bytes = bio_nbytes = 0;
+@@ -3554,11 +3582,16 @@ void end_that_request_last(struct request *req, int uptodate)
+ 	if (disk && blk_fs_request(req) && req != &req->q->bar_rq) {
+ 		unsigned long duration = jiffies - req->start_time;
+ 		const int rw = rq_data_dir(req);
++		struct hd_struct *part = get_part(disk, req->sector);
+ 
+-		__disk_stat_inc(disk, ios[rw]);
+-		__disk_stat_add(disk, ticks[rw], duration);
++		__all_stat_inc(disk, ios[rw], req->sector);
++		__all_stat_add(disk, ticks[rw], duration, req->sector);
+ 		disk_round_stats(disk);
+ 		disk->in_flight--;
++		if (part) {
++			part_round_stats(part);
++			get_partstats(part)->in_flight--;
++		}
+ 	}
+ 	if (req->end_io)
+ 		req->end_io(req, error);
+diff --git a/fs/partitions/check.c b/fs/partitions/check.c
+index c6b362f..075a221 100644
+--- a/fs/partitions/check.c
++++ b/fs/partitions/check.c
+@@ -18,6 +18,7 @@
+ #include <linux/fs.h>
+ #include <linux/kmod.h>
+ #include <linux/ctype.h>
++#include <linux/genhd.h>
+ 
+ #include "check.h"
+ 
+@@ -290,6 +291,7 @@ extern struct subsystem block_subsys;
+ static void part_release(struct kobject *kobj)
+ {
+ 	struct hd_struct * p = container_of(kobj,struct hd_struct,kobj);
++	free_partstats(p);
+ 	kfree(p);
+ }
+ 
+@@ -330,6 +332,7 @@ void delete_partition(struct gendisk *disk, int part)
+ 	p->nr_sects = 0;
+ 	p->ios[0] = p->ios[1] = 0;
+ 	p->sectors[0] = p->sectors[1] = 0;
++	part_stat_reset(p);
+ 	sysfs_remove_link(&p->kobj, "subsystem");
+ 	if (p->holder_dir)
+ 		kobject_unregister(p->holder_dir);
+@@ -347,6 +350,10 @@ void add_partition(struct gendisk *disk, int part, sector_t start, sector_t len)
+ 		return;
+ 	
+ 	memset(p, 0, sizeof(*p));
++	if (!init_partstats(p)) {
++		kfree(p);
++		return;
++	}
+ 	p->start_sect = start;
+ 	p->nr_sects = len;
+ 	p->partno = part;
+diff --git a/include/linux/genhd.h b/include/linux/genhd.h
+index 845e9ab..5f1478e 100644
+--- a/include/linux/genhd.h
++++ b/include/linux/genhd.h
+@@ -385,6 +385,7 @@ static inline void free_part_stats(struct partstats *ps)
+ 
+ /* drivers/block/ll_rw_blk.c */
+ extern void disk_round_stats(struct gendisk *disk);
++extern void part_round_stats(struct hd_struct *part);
+ 
+ /* drivers/block/genhd.c */
+ extern int get_blkdev_list(char *, int);

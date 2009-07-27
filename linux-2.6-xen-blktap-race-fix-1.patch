@@ -1,0 +1,86 @@
+From: Gerd Hoffmann <kraxel@redhat.com>
+Subject: [RHEL-5.1 PATCH 7/10] xen: blktap: race fix #1
+Date: Fri, 15 Jun 2007 10:47:55 +0200
+Bugzilla: 222128
+Message-Id: <4672523B.70500@redhat.com>
+Changelog: [xen] blktap: race fix #1
+
+
+  Hi,
+
+This patch fixes a race in the blktap driver.
+
+cheers,
+  Gerd
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1162898092 0
+# Node ID 3cc7e419b9493485bf67d5a197017cdcd4e3baac
+# Parent  862aca401601062aa6207a00549c19cdac054bbb
+[BLKTAP] avoid race between tapdisk and xvd daemon with ufe_ring.
+- Tapdisk updates rsp_cons by ioctl(). on the other hand xvd daemon
+  reads rsp_cons in do_block_io_op() with RING_FULL().
+  Copy request and memory barrier before updating rsp_cons.
+- Tapdisk access req_prod_pvt with select(). on the other hand xvd
+  daemon updates it in do_block_io_op().
+
+Signed-off-by: Isaku Yamahata <yamahata@valinux.co.jp>
+
+---
+ drivers/xen/blktap/blktapmain.c |   16 +++++++++++-----
+ 1 file changed, 11 insertions(+), 5 deletions(-)
+
+Index: linux-2.6.18.noarch/drivers/xen/blktap/blktapmain.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/xen/blktap/blktapmain.c
++++ linux-2.6.18.noarch/drivers/xen/blktap/blktapmain.c
+@@ -479,8 +479,10 @@ static int blktap_release(struct inode *
+ 	}
+ 	
+ 	if ( (info->status != CLEANSHUTDOWN) && (info->blkif != NULL) ) {
+-		kthread_stop(info->blkif->xenblkd);
+-		info->blkif->xenblkd = NULL;
++		if (info->blkif->xenblkd != NULL) {
++			kthread_stop(info->blkif->xenblkd);
++			info->blkif->xenblkd = NULL;
++		}
+ 		info->status = CLEANSHUTDOWN;
+ 	}	
+ 	return 0;
+@@ -959,11 +961,14 @@ static int blktap_read_ufe_ring(tap_blki
+ 	rmb();
+         
+ 	for (i = info->ufe_ring.rsp_cons; i != rp; i++) {
++		blkif_response_t res;
+ 		resp = RING_GET_RESPONSE(&info->ufe_ring, i);
++		memcpy(&res, resp, sizeof(res));
++		mb(); /* rsp_cons read by RING_FULL() in do_block_io_op(). */
+ 		++info->ufe_ring.rsp_cons;
+ 
+ 		/*retrieve [usr_idx] to [mmap_idx,pending_idx] mapping*/
+-		usr_idx = (int)resp->id;
++		usr_idx = (int)res.id;
+ 		pending_idx = MASK_PEND_IDX(ID_TO_IDX(info->idx_map[usr_idx]));
+ 		mmap_idx = ID_TO_MIDX(info->idx_map[usr_idx]);
+ 
+@@ -996,8 +1001,8 @@ static int blktap_read_ufe_ring(tap_blki
+ 			map[offset] = NULL;
+ 		}
+ 		fast_flush_area(pending_req, pending_idx, usr_idx, info->minor);
+-		make_response(blkif, pending_req->id, resp->operation,
+-			      resp->status);
++		make_response(blkif, pending_req->id, res.operation,
++			      res.status);
+ 		info->idx_map[usr_idx] = INVALID_REQ;
+ 		blkif_put(pending_req->blkif);
+ 		free_req(pending_req);
+@@ -1289,6 +1294,7 @@ static void dispatch_rw_block_io(blkif_t
+ 				  info->ufe_ring.req_prod_pvt);
+ 	memcpy(target, req, sizeof(*req));
+ 	target->id = usr_idx;
++	wmb(); /* blktap_poll() reads req_prod_pvt asynchronously */
+ 	info->ufe_ring.req_prod_pvt++;
+ 	return;
+ 
+

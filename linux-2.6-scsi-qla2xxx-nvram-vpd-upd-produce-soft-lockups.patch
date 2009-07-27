@@ -1,0 +1,218 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Subject: [Bug 260701][QLogic][RHEL 5.1 bug] regression, 	nvram/vpd updates produce soft lockups and system hangs.
+Date: Tue, 28 Aug 2007 15:14:15 -0400
+Bugzilla: 260701
+Message-Id: <20070828191415.3104.35369.sendpatchset@shell.boston.redhat.com>
+Changelog: [scsi] qla2xxx: nvram/vpd updates produce soft lockups and system hangs
+
+BZ 260701
+
+Updates to the nvram / vpd data on the HBA can cause software lockups
+and hangs / nmi watchdog. 
+
+This has been observed in recent testing at QLogic. This was not found
+earlier due to a bug in user space libraries which failed to perform
+proper updateing. 
+
+Regards,
+Marcus Barrow
+
+
+
+---
+ drivers/scsi/qla2xxx/qla_attr.c |   38 +++++++++++++++++++++++---------------
+ drivers/scsi/qla2xxx/qla_def.h  |    4 ++++
+ drivers/scsi/qla2xxx/qla_init.c |   19 +++++++++++--------
+ drivers/scsi/qla2xxx/qla_os.c   |   14 ++++++++++++++
+ 4 files changed, 52 insertions(+), 23 deletions(-)
+
+diff --git a/drivers/scsi/qla2xxx/qla_attr.c b/drivers/scsi/qla2xxx/qla_attr.c
+index 8081b63..aa232a5 100644
+--- a/drivers/scsi/qla2xxx/qla_attr.c
++++ b/drivers/scsi/qla2xxx/qla_attr.c
+@@ -86,18 +86,20 @@ qla2x00_sysfs_read_nvram(struct kobject
+ {
+ 	struct scsi_qla_host *ha = to_qla_host(dev_to_shost(container_of(kobj,
+ 	    struct device, kobj)));
+-	unsigned long	flags;
++	int		size = ha->nvram_size;
++	char		*nvram_cache = ha->nvram;
+ 
+-	if (!capable(CAP_SYS_ADMIN) || off != 0)
++	if (!capable(CAP_SYS_ADMIN) || off > size || count == 0)
+ 		return 0;
++	if (off + count > size) {
++		size -= off;
++		count = size;
++	}
+ 
+-	/* Read NVRAM. */
+-	spin_lock_irqsave(&ha->hardware_lock, flags);
+-	ha->isp_ops.read_nvram(ha, (uint8_t *)buf, ha->nvram_base,
+-	    ha->nvram_size);
+-	spin_unlock_irqrestore(&ha->hardware_lock, flags);
++	/* Read NVRAM data from cache. */
++	memcpy(buf, &nvram_cache[off], count);
+ 
+-	return ha->nvram_size;
++	return count;
+ }
+ 
+ static ssize_t
+@@ -138,6 +140,8 @@ qla2x00_sysfs_write_nvram(struct kobject
+ 	/* Write NVRAM. */
+ 	spin_lock_irqsave(&ha->hardware_lock, flags);
+ 	ha->isp_ops.write_nvram(ha, (uint8_t *)buf, ha->nvram_base, count);
++	ha->isp_ops.read_nvram(ha, (uint8_t *)&ha->nvram, ha->nvram_base,
++	    count);
+ 	spin_unlock_irqrestore(&ha->hardware_lock, flags);
+ 
+ 	set_bit(ISP_ABORT_NEEDED, &ha->dpc_flags);
+@@ -291,17 +295,20 @@ qla2x00_sysfs_read_vpd(struct kobject *k
+ {
+ 	struct scsi_qla_host *ha = to_qla_host(dev_to_shost(container_of(kobj,
+ 	    struct device, kobj)));
+-	unsigned long flags;
++	int           size = ha->vpd_size;
++	char          *vpd_cache = ha->vpd;
+ 
+-	if (!capable(CAP_SYS_ADMIN) || off != 0)
++	if (!capable(CAP_SYS_ADMIN) || off > size || count == 0)
+ 		return 0;
++	if (off + count > size) {
++		size -= off;
++		count = size;
++	}
+ 
+-	/* Read NVRAM. */
+-	spin_lock_irqsave(&ha->hardware_lock, flags);
+-	ha->isp_ops.read_nvram(ha, (uint8_t *)buf, ha->vpd_base, ha->vpd_size);
+-	spin_unlock_irqrestore(&ha->hardware_lock, flags);
++	/* Read NVRAM data from cache. */
++	memcpy(buf, &vpd_cache[off], count);
+ 
+-	return ha->vpd_size;
++	return count;
+ }
+ 
+ static ssize_t
+@@ -318,6 +325,7 @@ qla2x00_sysfs_write_vpd(struct kobject *
+ 	/* Write NVRAM. */
+ 	spin_lock_irqsave(&ha->hardware_lock, flags);
+ 	ha->isp_ops.write_nvram(ha, (uint8_t *)buf, ha->vpd_base, count);
++	ha->isp_ops.read_nvram(ha, (uint8_t *)ha->vpd, ha->vpd_base, count);
+ 	spin_unlock_irqrestore(&ha->hardware_lock, flags);
+ 
+ 	return count;
+diff --git a/drivers/scsi/qla2xxx/qla_def.h b/drivers/scsi/qla2xxx/qla_def.h
+index 7c364e0..bb3931a 100644
+--- a/drivers/scsi/qla2xxx/qla_def.h
++++ b/drivers/scsi/qla2xxx/qla_def.h
+@@ -2272,10 +2272,14 @@ typedef struct scsi_qla_host {
+ 	uint8_t		serial2;
+ 
+ 	/* NVRAM configuration data */
++#define MAX_NVRAM_SIZE	4096
++#define VPD_OFFSET	MAX_NVRAM_SIZE / 2
+ 	uint16_t	nvram_size;
+ 	uint16_t	nvram_base;
++	void		*nvram;
+ 	uint16_t	vpd_size;
+ 	uint16_t	vpd_base;
++	void		*vpd;
+ 
+ 	uint16_t	loop_reset_delay;
+ 	uint8_t		retry_count;
+diff --git a/drivers/scsi/qla2xxx/qla_init.c b/drivers/scsi/qla2xxx/qla_init.c
+index 98c01cd..d137210 100644
+--- a/drivers/scsi/qla2xxx/qla_init.c
++++ b/drivers/scsi/qla2xxx/qla_init.c
+@@ -1413,8 +1413,8 @@ qla2x00_nvram_config(scsi_qla_host_t *ha
+ 	uint16_t        cnt;
+ 	uint8_t         *dptr1, *dptr2;
+ 	init_cb_t       *icb = ha->init_cb;
+-	nvram_t         *nv = (nvram_t *)ha->request_ring;
+-	uint8_t         *ptr = (uint8_t *)ha->request_ring;
++	nvram_t         *nv = ha->nvram;
++	uint8_t         *ptr = ha->nvram;
+ 	struct device_reg_2xxx __iomem *reg = &ha->iobase->isp;
+ 
+ 	/* Determine NVRAM starting address. */
+@@ -1430,8 +1430,7 @@ qla2x00_nvram_config(scsi_qla_host_t *ha
+ 		chksum += *ptr++;
+ 
+ 	DEBUG5(printk("scsi(%ld): Contents of NVRAM\n", ha->host_no));
+-	DEBUG5(qla2x00_dump_buffer((uint8_t *)ha->request_ring,
+-	    ha->nvram_size));
++	DEBUG5(qla2x00_dump_buffer((uint8_t *)nv, ha->nvram_size));
+ 
+ 	/* Bad NVRAM data, set defaults parameters. */
+ 	if (chksum || nv->id[0] != 'I' || nv->id[1] != 'S' ||
+@@ -3301,7 +3300,7 @@ qla24xx_nvram_config(scsi_qla_host_t *ha
+ 	uint16_t cnt;
+ 
+ 	icb = (struct init_cb_24xx *)ha->init_cb;
+-	nv = (struct nvram_24xx *)ha->request_ring;
++	nv = ha->nvram;
+ 
+ 	/* Determine NVRAM starting address. */
+ 	ha->nvram_size = sizeof(struct nvram_24xx);
+@@ -3313,7 +3312,12 @@ qla24xx_nvram_config(scsi_qla_host_t *ha
+ 		ha->vpd_base = FA_NVRAM_VPD1_ADDR;
+ 	}
+ 
+-	/* Get NVRAM data and calculate checksum. */
++	/* Get VPD data into cache */
++	ha->vpd = ha->nvram + VPD_OFFSET;
++	ha->isp_ops.read_nvram(ha, (uint8_t *)ha->vpd,
++	    ha->nvram_base - FA_NVRAM_FUNC0_ADDR, FA_NVRAM_VPD_SIZE * 4);
++
++	/* Get NVRAM data into cache and calculate checksum. */
+ 	dptr = (uint32_t *)nv;
+ 	ha->isp_ops.read_nvram(ha, (uint8_t *)dptr, ha->nvram_base,
+ 	    ha->nvram_size);
+@@ -3321,8 +3325,7 @@ qla24xx_nvram_config(scsi_qla_host_t *ha
+ 		chksum += le32_to_cpu(*dptr++);
+ 
+ 	DEBUG5(printk("scsi(%ld): Contents of NVRAM\n", ha->host_no));
+-	DEBUG5(qla2x00_dump_buffer((uint8_t *)ha->request_ring,
+-	    ha->nvram_size));
++	DEBUG5(qla2x00_dump_buffer((uint8_t *)nv, ha->nvram_size));
+ 
+ 	/* Bad NVRAM data, set defaults parameters. */
+ 	if (chksum || nv->id[0] != 'I' || nv->id[1] != 'S' || nv->id[2] != 'P'
+diff --git a/drivers/scsi/qla2xxx/qla_os.c b/drivers/scsi/qla2xxx/qla_os.c
+index 6388091..5919a59 100644
+--- a/drivers/scsi/qla2xxx/qla_os.c
++++ b/drivers/scsi/qla2xxx/qla_os.c
+@@ -2041,6 +2041,19 @@ qla2x00_mem_alloc(scsi_qla_host_t *ha)
+ 			}
+ 		}
+ 
++		/* Get memory for cached NVRAM */
++		ha->nvram = kzalloc(MAX_NVRAM_SIZE, GFP_KERNEL);
++		if (ha->nvram == NULL) {
++			/* error */
++			qla_printk(KERN_WARNING, ha,
++			    "Memory Allocation failed - nvram cache\n");
++
++			qla2x00_mem_free(ha);
++			msleep(100);
++
++			continue;
++		}
++
+ 		/* Done all allocations without any error. */
+ 		status = 0;
+ 
+@@ -2152,6 +2165,7 @@ qla2x00_mem_free(scsi_qla_host_t *ha)
+ 	ha->fw_dump_reading = 0;
+ 
+ 	vfree(ha->optrom_buffer);
++	kfree(ha->nvram);
+ }
+ 
+ /*
+-- 
+1.4.4.1
+

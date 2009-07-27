@@ -1,0 +1,60 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 30 Oct 2007 17:07:12 +0100
+Subject: [s390] qeth: up sequence number for incoming packets
+Message-id: 20071030160712.GG6604@redhat.com
+O-Subject: [RHEL5.2 PATCH 2/5] s390 qeth: increment sequence number for incoming packets
+Bugzilla: 354851
+
+Problem:
+=========
+
+CCL 1.1 cannot handle SNA-traffic correctly
+For proper CCL 1.1 support sequence numbers need
+to be incremented as well for every arriving packet
+when using eth_type_trans.
+
+Bugzilla
+=========
+
+BZ 354851
+https://bugzilla.redhat.com/show_bug.cgi?id=354851
+
+Upstream status of the patch:
+=============================
+
+Posted upstream
+http://www.mail-archive.com/netdev@vger.kernel.org/msg29210.html
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index 5d9a9b9..5451667 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -2510,9 +2510,15 @@ qeth_process_inbound_buffer(struct qeth_card *card,
+ 	while((skb = qeth_get_next_skb(card, buf->buffer, &element,
+ 				       &offset, &hdr))) {
+ 		skb->dev = card->dev;
+-		if (hdr->hdr.l2.id == QETH_HEADER_TYPE_LAYER2)
+-			vlan_tag = qeth_layer2_rebuild_skb(card, skb, hdr);
+-		else if (hdr->hdr.l3.id == QETH_HEADER_TYPE_LAYER3)
++		if (hdr->hdr.l2.id == QETH_HEADER_TYPE_LAYER2) {
++			skb->pkt_type = PACKET_HOST;
++			skb->protocol = eth_type_trans(skb, skb->dev);
++			if (card->options.checksum_type == NO_CHECKSUMMING)
++				skb->ip_summed = CHECKSUM_UNNECESSARY;
++			else
++				skb->ip_summed = CHECKSUM_NONE;
++			*((__u32 *)skb->cb) = ++card->seqno.pkt_seqno;
++		} else if (hdr->hdr.l3.id == QETH_HEADER_TYPE_LAYER3)
+ 			vlan_tag = qeth_rebuild_skb(card, skb, hdr);
+ 		else { /*in case of OSN*/
+ 			skb_push(skb, sizeof(struct qeth_hdr));

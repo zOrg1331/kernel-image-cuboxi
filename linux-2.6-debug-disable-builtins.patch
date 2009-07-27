@@ -1,0 +1,15 @@
+Disable built-ins
+
+diff -urNp --exclude-from=/home/davej/.exclude linux-3022/arch/i386/Makefile linux-10000/arch/i386/Makefile
+--- linux-3022/arch/i386/Makefile
++++ linux-10000/arch/i386/Makefile
+@@ -22,7 +22,7 @@ OBJCOPYFLAGS	:= -O binary -R .note -R .c
+ LDFLAGS_vmlinux :=
+ CHECKFLAGS	+= -D__i386__
+ 
+-CFLAGS += -pipe -msoft-float
++CFLAGS += -pipe -msoft-float -fno-builtin-sprintf -fno-builtin-log2 -fno-builtin-puts 
+ 
+ # prevent gcc from keeping the stack 16 byte aligned
+ CFLAGS += $(call cc-option,-mpreferred-stack-boundary=2)
+

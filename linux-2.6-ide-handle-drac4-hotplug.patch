@@ -1,0 +1,118 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Tue, 15 Jan 2008 17:26:31 -0500
+Subject: [ide] handle DRAC4 hotplug
+Message-id: 478D3317.40803@redhat.com
+O-Subject: Re: [RHEL-5.2 PATCH] IDE (siimage) panics when DRAC4 reset
+Bugzilla: 212391
+
+A repost of a previously posted patch by Alan Cox.
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=212391
+bz212391 IDE (siimage) driver causes panic with DRAC4 reset
+
+This patch was posted to rhkernel-list and accepted for the
+RHEL-5.1 timeframe but if failed verification when it was
+determined that a conflict with the SATA Super Jumbo patch,
+developed at the same time, caused a piece of this patch to be
+no longer compiled (the new module's Kconfig had a dependency
+on SCSI_SATA which was removed by the SATA Super
+Jumbo patch). The verification failure was found (too) late in the
+RHEL-5.1 cycle and so the patch was removed from RHEL-5.1.
+
+The RHEL-5.1 patch required some changes dictated by the SATA
+Super Jumbo patch (remove deadline arg, change host_set variable
+name to host, add ata_irq_on and ata_irq_ack to structure, remove
+ata_port_stop and ata_host_stop from structure, and change host_flags
+variable name to flags).
+
+The patch below was successfully tested by Dell.
+
+Note that this adds a new module, thus
+CONFIG_SCSI_PATA_SIL680_DRAC will need to be added,
+Don.
+
+Again, for more details, here is some of what Alan wrote the first time...
+
+The Dell DRAC4 effectively does hotplug on the virtual CD/Floppy devices
+that it provides. This can cause a kernel crash with the old IDE layer.
+Dell
+tested the new libata layer and found it handles it fine.
+
+As we cannot switch to libata midstream for other devices this patch
+adds a suitable version of pata_sil680 combined with checks in both siimage
+and pata_sil680 to load the right driver for the right SIL680 card. This
+is ugly because there is no vendor subid to key off.
+
+Other oddity is the PCI table for the pata_sil680 which is exported to the
+module layer, this doesn't match the one used for the driver but ensures
+that
+the right driver is loaded when the DRAC4 is present.
+
+As always, acks would be appreciated.
+
+diff --git a/drivers/ata/pata_sil680.c b/drivers/ata/pata_sil680.c
+index 503245a..0229947 100644
+--- a/drivers/ata/pata_sil680.c
++++ b/drivers/ata/pata_sil680.c
+@@ -338,6 +338,31 @@ static int __devinit sil680_init_one(struct pci_dev *pdev,
+ 	struct ata_host *host;
+ 	void __iomem *mmio_base;
+ 	int rc, try_mmio;
++	struct pci_dev *drac;
++
++	/* DRAC only filter */
++
++	drac = pci_get_device(PCI_VENDOR_ID_DELL, PCI_DEVICE_ID_DELL_RAC4,
++			      NULL);
++
++	if (drac == NULL) {
++	    /* There are two common devices on DRACs. See if we can *
++	     * find the second one if couldn't find the first.      */
++	    printk(KERN_INFO "sil680: Trying SMIC device.\n");
++	    drac = pci_get_device(PCI_VENDOR_ID_DELL, 0x0014, NULL);
++	}
++
++	if (drac == NULL)
++	    return -ENODEV;
++
++	if (drac->bus != pdev->bus)     /* Not the right SIL680 */
++	{
++	    pci_dev_put(drac);
++	    return -ENODEV;
++	}
++	pci_dev_put(drac);
++
++	/* Back to original code */
+ 
+ 	if (!printed_version++)
+ 		dev_printk(KERN_DEBUG, &pdev->dev, "version " DRV_VERSION "\n");
+diff --git a/drivers/ide/pci/siimage.c b/drivers/ide/pci/siimage.c
+index 20b3929..9517586 100644
+--- a/drivers/ide/pci/siimage.c
++++ b/drivers/ide/pci/siimage.c
+@@ -1078,6 +1078,26 @@ static ide_pci_device_t siimage_chipsets[] __devinitdata = {
+  
+ static int __devinit siimage_init_one(struct pci_dev *dev, const struct pci_device_id *id)
+ {
++	struct pci_dev *drac = pci_get_device(PCI_VENDOR_ID_DELL,
++					      PCI_DEVICE_ID_DELL_RAC4, NULL);
++
++	if (drac == NULL) {
++	    /* There are two common devices on DRACs. See if we can *
++	     * find the second one if couldn't find the first.      */
++	    drac = pci_get_device(PCI_VENDOR_ID_DELL,
++				  0x0014, NULL);
++	}
++
++	if (drac) {
++	    /* Watch out, watch out, there's a DRAC about ! */
++	    if (drac->bus == dev->bus) {
++	        pci_dev_put(drac);
++	        printk(KERN_INFO "siimage: Ignoring DRAC controller.\n");
++		return -ENODEV;
++	    }
++	    pci_dev_put(drac);
++	}
++
+ 	return ide_setup_pci_device(dev, &siimage_chipsets[id->driver_data]);
+ }
+ 

@@ -1,0 +1,56 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 18 Dec 2007 15:10:43 -0500
+Subject: [net] sunrpc: make clients take ref to rpciod workq
+Message-id: 200712182010.lBIKAhtc027819@dantu.usersys.redhat.com
+O-Subject: [RHEL5 PATCH 2/2] BZ#246642: SUNRPC: make RPC clients take a reference to the rpciod workqueue
+Bugzilla: 246642
+
+(Reposting patch since I goofed the subject line the first time)
+
+This patch is needed for hosts that are NFS servers but that have no NFS
+mounts themselves. Patch 1 makes it so that all client connect requests
+get queued to rpciod. When nfsd starts, it spawns a new RPC client to
+talk to the portmapper. If rpciod isn't up at that time then it'll be
+queuing the request to a NULL workqueue and will oops. This patch is
+backported from a larger upstream patch and ensures that rpciod is up
+any time the kernel has an active rpc_client.
+
+diff --git a/net/sunrpc/clnt.c b/net/sunrpc/clnt.c
+index 2086f11..da81c76 100644
+--- a/net/sunrpc/clnt.c
++++ b/net/sunrpc/clnt.c
+@@ -118,6 +118,9 @@ rpc_new_client(struct rpc_xprt *xprt, char *servname,
+ 	dprintk("RPC: creating %s client for %s (xprt %p)\n",
+ 		program->name, servname, xprt);
+ 
++	err = rpciod_up();
++	if (err)
++		goto out_no_rpciod;
+ 	err = -EINVAL;
+ 	if (!xprt)
+ 		goto out_no_xprt;
+@@ -200,6 +203,8 @@ out_no_stats:
+ out_err:
+ 	xprt_put(xprt);
+ out_no_xprt:
++	rpciod_down();
++out_no_rpciod:
+ 	return ERR_PTR(err);
+ }
+ 
+@@ -283,6 +288,7 @@ rpc_clone_client(struct rpc_clnt *clnt)
+ 	if (new->cl_auth)
+ 		atomic_inc(&new->cl_auth->au_count);
+ 	new->cl_pmap		= &new->cl_pmap_default;
++	rpciod_up();
+ 	return new;
+ out_no_stats:
+ 	kfree(new);
+@@ -355,6 +361,7 @@ out_free:
+ 	rpc_free_iostats(clnt->cl_metrics);
+ 	clnt->cl_metrics = NULL;
+ 	xprt_put(clnt->cl_xprt);
++	rpciod_down();
+ 	kfree(clnt);
+ 	return 0;
+ }

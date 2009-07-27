@@ -1,0 +1,173 @@
+From: Jarod Wilson <jwilson@redhat.com>
+Date: Mon, 25 Jun 2007 10:07:37 -0400
+Subject: [PPC64] kdump: fix irq distribution on ppc970
+Message-id: 467FCC29.4000804@redhat.com
+O-Subject: [RHEL5.x PATCH] PPC64 kdump - fix irq distribution on ppc970 w/maxcpus=1
+Bugzilla: 208659
+
+This is a multi-part message in MIME format.
+There's a problem with some PowerPC 970 systems where when one specifies
+maxcpus=1, the kernel still tries to distribute IRQ's across all cpus in
+the system. This is particularly problematic in the kexec/kdump context,
+where we always try to bring the kdump environment up on a single cpu.
+
+For RHEL5 GA, we worked around this by adding the extra kernel parameter
+'noirqdistrib' to the ppc64 kdump config, but a proper fix recently made
+its way into the upstream ppc kernel tree:
+
+http://ozlabs.org/pipermail/linuxppc-dev/2007-June/037688.html
+
+I've done the trivial backport to apply this atop our current RHEL5 tree
+and successfully tested it on a previously impacted system and verified
+that it does indeed fix the irq distribution problem (able to capture
+multiple vmcores using kdump w/o the noirqdistrib parameter anymore).
+
+This is the fix for both bug 208657 and bug 208659. Not a must-have for
+5.1, can be delayed to 5.2, but here it is...
+
+--
+Jarod Wilson
+jwilson@redhat.com
+
+In some of the PPC970 based systems, interrupt would be distributed to
+offline cpus also even when booted with "maxcpus=1". So check whether
+cpu online map and cpu present map are equal or not. If they are equal
+default_distrib_server is used as interrupt server otherwise boot cpu
+(default_server) used as interrupt server.
+
+In addition to this, if an interrupt is assigned to a specific cpu (ie
+smp affinity) and if that cpu is not online, the earlier code used to
+return the default_distrib_server as interrupt server. This patch
+introduces an additional paramter to the get_irq function ie
+strict_check, based on this parameter, if the cpu is not online either
+default_distrib_server or -1 is returned.
+
+Cc: Milton Miller <miltonm@bga.com>,
+    Michael Ellerman <michael@ellerman.id.au>
+Signed-off-by: Mohan Kumar M <mohan@in.ibm.com>
+
+Trivial backport to RHEL-5 tree
+
+Signed-off-by: Jarod Wilson <jwilson@redhat.com>
+
+--
+
+diff --git a/arch/powerpc/platforms/pseries/xics.c b/arch/powerpc/platforms/pseries/xics.c
+index 29aec52..a1e133e 100644
+--- a/arch/powerpc/platforms/pseries/xics.c
++++ b/arch/powerpc/platforms/pseries/xics.c
+@@ -176,9 +176,9 @@ static inline void lpar_qirr_info(int n_cpu , u8 value)
+ 
+ 
+ #ifdef CONFIG_SMP
+-static int get_irq_server(unsigned int virq)
++static int get_irq_server(unsigned int virq, unsigned int strict_check)
+ {
+-	unsigned int server;
++	int server;
+ 	/* For the moment only implement delivery to all cpus or one cpu */
+ 	cpumask_t cpumask = irq_desc[virq].affinity;
+ 	cpumask_t tmp = CPU_MASK_NONE;
+@@ -186,22 +186,25 @@ static int get_irq_server(unsigned int virq)
+ 	if (!distribute_irqs)
+ 		return default_server;
+ 
+-	if (cpus_equal(cpumask, CPU_MASK_ALL)) {
+-		server = default_distrib_server;
+-	} else {
++	if (!cpus_equal(cpumask, CPU_MASK_ALL)) {
+ 		cpus_and(tmp, cpu_online_map, cpumask);
+ 
+-		if (cpus_empty(tmp))
+-			server = default_distrib_server;
+-		else
+-			server = get_hard_smp_processor_id(first_cpu(tmp));
++		server = first_cpu(tmp);
++
++		if (server < NR_CPUS)
++			return get_hard_smp_processor_id(server);
++
++		if (strict_check)
++			return -1;
+ 	}
+ 
+-	return server;
++	if (cpus_equal(cpu_online_map, cpu_present_map))
++		return default_distrib_server;
+ 
++	return default_server;
+ }
+ #else
+-static int get_irq_server(unsigned int virq)
++static int get_irq_server(unsigned int virq, unsigned int strict_check)
+ {
+ 	return default_server;
+ }
+@@ -212,7 +215,7 @@ static void xics_unmask_irq(unsigned int virq)
+ {
+ 	unsigned int irq;
+ 	int call_status;
+-	unsigned int server;
++	int server;
+ 
+ 	pr_debug("xics: unmask virq %d\n", virq);
+ 
+@@ -221,7 +224,7 @@ static void xics_unmask_irq(unsigned int virq)
+ 	if (irq == XICS_IPI || irq == XICS_IRQ_SPURIOUS)
+ 		return;
+ 
+-	server = get_irq_server(virq);
++	server = get_irq_server(virq, 0);
+ 
+ 	call_status = rtas_call(ibm_set_xive, 3, 1, NULL, irq, server,
+ 				DEFAULT_PRIORITY);
+@@ -256,7 +259,7 @@ static void xics_mask_real_irq(unsigned int irq)
+ 		return;
+ 	}
+ 
+-	server = get_irq_server(irq);
++	server = get_irq_server(irq, 0);
+ 	/* Have to set XIVE to 0xff to be able to remove a slot */
+ 	call_status = rtas_call(ibm_set_xive, 3, 1, NULL, irq, server, 0xff);
+ 	if (call_status != 0) {
+@@ -419,8 +422,7 @@ static void xics_set_affinity(unsigned int virq, cpumask_t cpumask)
+ 	unsigned int irq;
+ 	int status;
+ 	int xics_status[2];
+-	unsigned long newmask;
+-	cpumask_t tmp = CPU_MASK_NONE;
++	int irq_server;
+ 
+ 	irq = (unsigned int)irq_map[virq].hwirq;
+ 	if (irq == XICS_IPI || irq == XICS_IRQ_SPURIOUS)
+@@ -434,18 +436,21 @@ static void xics_set_affinity(unsigned int virq, cpumask_t cpumask)
+ 		return;
+ 	}
+ 
+-	/* For the moment only implement delivery to all cpus or one cpu */
+-	if (cpus_equal(cpumask, CPU_MASK_ALL)) {
+-		newmask = default_distrib_server;
+-	} else {
+-		cpus_and(tmp, cpu_online_map, cpumask);
+-		if (cpus_empty(tmp))
+-			return;
+-		newmask = get_hard_smp_processor_id(first_cpu(tmp));
++	/*
++	 * For the moment only implement delivery to all cpus or one cpu.
++	 * Get current irq_server for the given irq
++	 */
++	irq_server = get_irq_server(irq, 1);
++	if (irq_server == -1) {
++		char cpulist[128];
++		cpumask_scnprintf(cpulist, sizeof(cpulist), cpumask);
++		printk(KERN_WARNING "xics_set_affinity: No online cpus in "
++				"the mask %s for irq %d\n", cpulist, virq);
++		return;
+ 	}
+ 
+ 	status = rtas_call(ibm_set_xive, 3, 1, NULL,
+-				irq, newmask, xics_status[1]);
++				irq, irq_server, xics_status[1]);
+ 
+ 	if (status) {
+ 		printk(KERN_ERR "xics_set_affinity: irq=%u ibm,set-xive "

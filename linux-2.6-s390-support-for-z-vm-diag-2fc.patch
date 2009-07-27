@@ -1,0 +1,438 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 2 Nov 2007 14:46:09 +0100
+Subject: [s390] support for z/VM DIAG 2FC
+Message-id: 20071102134609.GF13909@redhat.com
+O-Subject: [RHEL5.2 PATCH 6/7] FEAT: s390 Linux support for z/VM DIAG 2FC (eWLM)
+Bugzilla: 253034
+
+Description
+============
+
+New Kernel function: Hypervisor filesystem "s390_hypfs" for z/VM
+
+This is an extension of the already existing hypfs for LPAR
+(DIAG 204).
+
+Data returned by DIAG 2fc is exported using the s390_hypfs when
+Linux is running under z/VM. Information about cpus and memory
+is provided.
+Data is put into different virtual files which can be accessed
+from user space.
+
+All values are represented as ASCII strings.
+
+Bugzilla
+=========
+
+BZ 253034
+https://bugzilla.redhat.com/show_bug.cgi?id=253034
+
+Upstream status of the patch:
+=============================
+Patch included in git as commit 31cb4bd31a48f62105d037ad53192b94d4c08f53
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/arch/s390/hypfs/Makefile b/arch/s390/hypfs/Makefile
+index f4b00cd..b08d2ab 100644
+--- a/arch/s390/hypfs/Makefile
++++ b/arch/s390/hypfs/Makefile
+@@ -4,4 +4,4 @@
+ 
+ obj-$(CONFIG_S390_HYPFS_FS) += s390_hypfs.o
+ 
+-s390_hypfs-objs := inode.o hypfs_diag.o
++s390_hypfs-objs := inode.o hypfs_diag.o hypfs_vm.o
+diff --git a/arch/s390/hypfs/hypfs.h b/arch/s390/hypfs/hypfs.h
+index ea5567b..95486cc 100644
+--- a/arch/s390/hypfs/hypfs.h
++++ b/arch/s390/hypfs/hypfs.h
+@@ -27,4 +27,13 @@ extern struct dentry *hypfs_create_str(struct super_block *sb,
+ 				       struct dentry *dir, const char *name,
+ 				       char *string);
+ 
++/* LPAR Hypervisor */
++extern int hypfs_diag_init(void);
++extern void hypfs_diag_exit(void);
++extern int hypfs_diag_create_files(struct super_block *sb, struct dentry *root);
++
++/* VM Hypervisor */
++extern int hypfs_vm_init(void);
++extern int hypfs_vm_create_files(struct super_block *sb, struct dentry *root);
++
+ #endif /* _HYPFS_H_ */
+diff --git a/arch/s390/hypfs/hypfs_diag.c b/arch/s390/hypfs/hypfs_diag.c
+index 12e6822..d412e69 100644
+--- a/arch/s390/hypfs/hypfs_diag.c
++++ b/arch/s390/hypfs/hypfs_diag.c
+@@ -387,7 +387,7 @@ static void *diag204_alloc_vbuf(int pages)
+ static void *diag204_alloc_rbuf(void)
+ {
+ 	diag204_buf = (void*)__get_free_pages(GFP_KERNEL,0);
+-	if (diag204_buf)
++	if (!diag204_buf)
+ 		return ERR_PTR(-ENOMEM);
+ 	diag204_buf_pages = 1;
+ 	return diag204_buf;
+@@ -525,7 +525,7 @@ __init int hypfs_diag_init(void)
+ 	}
+ 	rc = diag224_get_name_table();
+ 	if (rc) {
+-		diag224_delete_name_table();
++		diag204_free_buffer();
+ 		printk(KERN_ERR "hypfs: could not get name table.\n");
+ 	}
+ 	return rc;
+diff --git a/arch/s390/hypfs/hypfs_diag.h b/arch/s390/hypfs/hypfs_diag.h
+deleted file mode 100644
+index 793dea6..0000000
+--- a/arch/s390/hypfs/hypfs_diag.h
++++ /dev/null
+@@ -1,16 +0,0 @@
+-/*
+- *  fs/hypfs/hypfs_diag.h
+- *    Hypervisor filesystem for Linux on s390.
+- *
+- *    Copyright (C) IBM Corp. 2006
+- *    Author(s): Michael Holzheu <holzheu@de.ibm.com>
+- */
+-
+-#ifndef _HYPFS_DIAG_H_
+-#define _HYPFS_DIAG_H_
+-
+-extern int hypfs_diag_init(void);
+-extern void hypfs_diag_exit(void);
+-extern int hypfs_diag_create_files(struct super_block *sb, struct dentry *root);
+-
+-#endif /* _HYPFS_DIAG_H_ */
+diff --git a/arch/s390/hypfs/hypfs_vm.c b/arch/s390/hypfs/hypfs_vm.c
+new file mode 100644
+index 0000000..1085c52
+--- /dev/null
++++ b/arch/s390/hypfs/hypfs_vm.c
+@@ -0,0 +1,238 @@
++/*
++ *    Hypervisor filesystem for Linux on s390. z/VM implementation.
++ *
++ *    Copyright (C) IBM Corp. 2006
++ *    Author(s): Michael Holzheu <holzheu@de.ibm.com>
++ */
++
++#include <linux/types.h>
++#include <linux/errno.h>
++#include <linux/string.h>
++#include <linux/vmalloc.h>
++#include <asm/ebcdic.h>
++#include "hypfs.h"
++
++#define NAME_LEN 8
++
++static char local_guest[] = "        ";
++static char all_guests[] = "*       ";
++static char *guest_query;
++
++struct diag2fc_data {
++	__u32 version;
++	__u32 flags;
++	__u64 used_cpu;
++	__u64 el_time;
++	__u64 mem_min_kb;
++	__u64 mem_max_kb;
++	__u64 mem_share_kb;
++	__u64 mem_used_kb;
++	__u32 pcpus;
++	__u32 lcpus;
++	__u32 vcpus;
++	__u32 cpu_min;
++	__u32 cpu_max;
++	__u32 cpu_shares;
++	__u32 cpu_use_samp;
++	__u32 cpu_delay_samp;
++	__u32 page_wait_samp;
++	__u32 idle_samp;
++	__u32 other_samp;
++	__u32 total_samp;
++	char  guest_name[NAME_LEN];
++};
++
++struct diag2fc_parm_list {
++	char userid[NAME_LEN];
++	char aci_grp[NAME_LEN];
++	__u64 addr;
++	__u32 size;
++	__u32 fmt;
++};
++
++static int diag2fc(int size, char* query, void *addr)
++{
++	unsigned long residual_cnt;
++	unsigned long rc;
++	struct diag2fc_parm_list parm_list;
++
++	memcpy(parm_list.userid, query, NAME_LEN);
++	ASCEBC(parm_list.userid, NAME_LEN);
++	parm_list.addr = (unsigned long) addr ;
++	parm_list.size = size;
++	parm_list.fmt = 0x02;
++	memset(parm_list.aci_grp, 0x40, NAME_LEN);
++	rc = -1;
++
++	asm volatile(
++		"	diag    %0,%1,0x2fc\n"
++		"0:\n" ".section __ex_table,\"a\"\n"
++#ifndef __s390x__
++		"      .align 4\n"
++		"      .long  0b,0b\n"
++#else
++		"      .align 8\n"
++		"      .quad  0b,0b\n"
++#endif
++		".previous"
++		: "=d" (residual_cnt), "+d" (rc) : "0" (&parm_list) : "memory");
++
++	if ((rc != 0 ) && (rc != -2))
++		return rc;
++	else
++		return -residual_cnt;
++}
++
++static struct diag2fc_data *diag2fc_store(char *query, int *count)
++{
++	int size;
++	struct diag2fc_data *data;
++
++	do {
++		size = diag2fc(0, query, NULL);
++		if (size < 0)
++			return ERR_PTR(-EACCES);
++		data = vmalloc(size);
++		if (!data)
++			return ERR_PTR(-ENOMEM);
++		if (diag2fc(size, query, data) == 0)
++			break;
++		vfree(data);
++	} while (1);
++	*count = (size / sizeof(*data));
++
++	return data;
++}
++
++static void diag2fc_free(void *data)
++{
++	vfree(data);
++}
++
++#define ATTRIBUTE(sb, dir, name, member) \
++do { \
++	void *rc; \
++	rc = hypfs_create_u64(sb, dir, name, member); \
++	if (IS_ERR(rc)) \
++		return PTR_ERR(rc); \
++} while(0)
++
++static int hpyfs_vm_create_guest(struct super_block *sb,
++				 struct dentry *systems_dir,
++				 struct diag2fc_data *data)
++{
++	char guest_name[NAME_LEN + 1] = {};
++	struct dentry *guest_dir, *cpus_dir, *samples_dir, *mem_dir;
++	int dedicated_flag, capped_value;
++
++	capped_value = (data->flags & 0x00000006) >> 1;
++	dedicated_flag = (data->flags & 0x00000008) >> 3;
++
++	/* guest dir */
++	memcpy(guest_name, data->guest_name, NAME_LEN);
++	EBCASC(guest_name, NAME_LEN);
++	strstrip(guest_name);
++	guest_dir = hypfs_mkdir(sb, systems_dir, guest_name);
++	if (IS_ERR(guest_dir))
++		return PTR_ERR(guest_dir);
++	ATTRIBUTE(sb, guest_dir, "onlinetime_us", data->el_time);
++
++	/* logical cpu information */
++	cpus_dir = hypfs_mkdir(sb, guest_dir, "cpus");
++	if (IS_ERR(cpus_dir))
++		return PTR_ERR(cpus_dir);
++	ATTRIBUTE(sb, cpus_dir, "cputime_us", data->used_cpu);
++	ATTRIBUTE(sb, cpus_dir, "capped", capped_value);
++	ATTRIBUTE(sb, cpus_dir, "dedicated", dedicated_flag);
++	ATTRIBUTE(sb, cpus_dir, "count", data->vcpus);
++	ATTRIBUTE(sb, cpus_dir, "weight_min", data->cpu_min);
++	ATTRIBUTE(sb, cpus_dir, "weight_max", data->cpu_max);
++	ATTRIBUTE(sb, cpus_dir, "weight_cur", data->cpu_shares);
++
++	/* memory information */
++	mem_dir = hypfs_mkdir(sb, guest_dir, "mem");
++	if (IS_ERR(mem_dir))
++		return PTR_ERR(mem_dir);
++	ATTRIBUTE(sb, mem_dir, "min_KiB", data->mem_min_kb);
++	ATTRIBUTE(sb, mem_dir, "max_KiB", data->mem_max_kb);
++	ATTRIBUTE(sb, mem_dir, "used_KiB", data->mem_used_kb);
++	ATTRIBUTE(sb, mem_dir, "share_KiB", data->mem_share_kb);
++
++	/* samples */
++	samples_dir = hypfs_mkdir(sb, guest_dir, "samples");
++	if (IS_ERR(samples_dir))
++		return PTR_ERR(samples_dir);
++	ATTRIBUTE(sb, samples_dir, "cpu_using", data->cpu_use_samp);
++	ATTRIBUTE(sb, samples_dir, "cpu_delay", data->cpu_delay_samp);
++	ATTRIBUTE(sb, samples_dir, "mem_delay", data->page_wait_samp);
++	ATTRIBUTE(sb, samples_dir, "idle", data->idle_samp);
++	ATTRIBUTE(sb, samples_dir, "other", data->other_samp);
++	ATTRIBUTE(sb, samples_dir, "total", data->total_samp);
++	return 0;
++}
++
++int hypfs_vm_create_files(struct super_block *sb, struct dentry *root)
++{
++	struct dentry *dir, *file;
++	struct diag2fc_data *data;
++	int rc, i, count = 0;
++
++	data = diag2fc_store(guest_query, &count);
++	if (IS_ERR(data))
++		return PTR_ERR(data);
++
++	/* Hpervisor Info */
++	dir = hypfs_mkdir(sb, root, "hyp");
++	if (IS_ERR(dir)) {
++		rc = PTR_ERR(dir);
++		goto failed;
++	}
++	file = hypfs_create_str(sb, dir, "type", "z/VM Hypervisor");
++	if (IS_ERR(file)) {
++		rc = PTR_ERR(file);
++		goto failed;
++	}
++
++	/* physical cpus */
++	dir = hypfs_mkdir(sb, root, "cpus");
++	if (IS_ERR(dir)) {
++		rc = PTR_ERR(dir);
++		goto failed;
++	}
++	file = hypfs_create_u64(sb, dir, "count", data->lcpus);
++	if (IS_ERR(file)) {
++		rc = PTR_ERR(file);
++		goto failed;
++	}
++
++	/* guests */
++	dir = hypfs_mkdir(sb, root, "systems");
++	if (IS_ERR(dir)) {
++		rc = PTR_ERR(dir);
++		goto failed;
++	}
++
++	for (i = 0; i < count; i++) {
++		rc = hpyfs_vm_create_guest(sb, dir, &(data[i]));
++		if (rc)
++			goto failed;
++	}
++	diag2fc_free(data);
++	return 0;
++
++failed:
++	diag2fc_free(data);
++	return rc;
++}
++
++int hypfs_vm_init(void)
++{
++	if (diag2fc(0, all_guests, NULL) > 0)
++		guest_query = all_guests;
++	else if (diag2fc(0, local_guest, NULL) > 0)
++		guest_query = local_guest;
++	else
++		return -EACCES;
++
++	return 0;
++}
+diff --git a/arch/s390/hypfs/inode.c b/arch/s390/hypfs/inode.c
+index df48773..50b27b9 100644
+--- a/arch/s390/hypfs/inode.c
++++ b/arch/s390/hypfs/inode.c
+@@ -19,7 +19,6 @@
+ #include <linux/module.h>
+ #include <asm/ebcdic.h>
+ #include "hypfs.h"
+-#include "hypfs_diag.h"
+ 
+ #define HYPFS_MAGIC 0x687970	/* ASCII 'hyp' */
+ #define TMP_SIZE 64		/* size of temporary buffers */
+@@ -194,7 +193,10 @@ static ssize_t hypfs_aio_write(struct kiocb *iocb, const char __user *buf,
+ 		goto out;
+ 	}
+ 	hypfs_delete_tree(sb->s_root);
+-	rc = hypfs_diag_create_files(sb, sb->s_root);
++	if (MACHINE_IS_VM)
++		rc = hypfs_vm_create_files(sb, sb->s_root);
++	else
++		rc = hypfs_diag_create_files(sb, sb->s_root);
+ 	if (rc) {
+ 		printk(KERN_ERR "hypfs: Update failed\n");
+ 		hypfs_delete_tree(sb->s_root);
+@@ -291,7 +293,10 @@ static int hypfs_fill_super(struct super_block *sb, void *data, int silent)
+ 		rc = -ENOMEM;
+ 		goto err_alloc;
+ 	}
+-	rc = hypfs_diag_create_files(sb, root_dentry);
++	if (MACHINE_IS_VM)
++		rc = hypfs_vm_create_files(sb, root_dentry);
++	else
++		rc = hypfs_diag_create_files(sb, root_dentry);
+ 	if (rc)
+ 		goto err_tree;
+ 	sbi->update_file = hypfs_create_update_file(sb, root_dentry);
+@@ -470,11 +475,15 @@ static int __init hypfs_init(void)
+ {
+ 	int rc;
+ 
+-	if (MACHINE_IS_VM)
+-		return -ENODATA;
+-	if (hypfs_diag_init()) {
+-		rc = -ENODATA;
+-		goto fail_diag;
++	if (MACHINE_IS_VM) {
++		if (hypfs_vm_init())
++			/* no diag 2fc, just exit */
++			return -ENODATA;
++	} else {
++		if (hypfs_diag_init()) {
++			rc = -ENODATA;
++			goto fail_diag;
++		}
+ 	}
+ 	kset_set_kset_s(&s390_subsys, hypervisor_subsys);
+ 	rc = subsystem_register(&s390_subsys);
+@@ -488,7 +497,8 @@ static int __init hypfs_init(void)
+ fail_filesystem:
+ 	subsystem_unregister(&s390_subsys);
+ fail_sysfs:
+-	hypfs_diag_exit();
++	if (!MACHINE_IS_VM)
++		hypfs_diag_exit();
+ fail_diag:
+ 	printk(KERN_ERR "hypfs: Initialization failed with rc = %i.\n", rc);
+ 	return rc;
+@@ -496,7 +506,8 @@ fail_diag:
+ 
+ static void __exit hypfs_exit(void)
+ {
+-	hypfs_diag_exit();
++	if (!MACHINE_IS_VM)
++		hypfs_diag_exit();
+ 	unregister_filesystem(&hypfs_type);
+ 	subsystem_unregister(&s390_subsys);
+ }

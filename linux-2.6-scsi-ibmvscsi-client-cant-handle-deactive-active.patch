@@ -1,0 +1,82 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [PATCH RHEL5u1.z] bz257321 vSCSI client 'device not ready' after 	deactive/active device on vSCSI server
+Date: Fri, 9 Nov 2007 10:13:02 -0500 (EST)
+Bugzilla: 257321
+Message-Id: <Pine.LNX.4.64.0711091012130.4372@squad5-lp1.lab.boston.redhat.com>
+Changelog: [scsi] ibmvSCSI: client can't handle deactive/active device from server
+
+
+Bug 257321 [1]
+---------------
+
+Description:
+-----------
+When a disk is removed from the vSCSI server and then re-added the client
+vSCSI driver does not handle the re-add and the device does not return to
+a functioning state.
+
+The patch below adds a slave_configure function for the driver. Now the
+disks can be restarted by the scsi mid-layer when the are disconnected and
+reconnected.
+
+Kernel Version:
+--------------
+Patch built against 2.6.18-54
+
+Upstream Status:
+---------------
+These changes are upstream with git commit
+0979c84b4affaf924a894380dd0069638b64de03
+
+Test Status:
+----
+To ensure cross platform build, a brew scratch build has been done against
+2.6.18-54 at [2].
+
+These changes have been tested extensively by IBM with a partition
+mobility test suite
+
+--
+ drivers/scsi/ibmvscsi/ibmvscsi.c |   22 ++++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+Index: b/drivers/scsi/ibmvscsi/ibmvscsi.c
+===================================================================
+--- a/drivers/scsi/ibmvscsi/ibmvscsi.c
++++ b/drivers/scsi/ibmvscsi/ibmvscsi.c
+@@ -1339,6 +1339,27 @@ static int ibmvscsi_do_host_config(struc
+ 	return rc;
+ }
+ 
++/**
++ * ibmvscsi_slave_configure: Set the "allow_restart" flag for each disk.
++ * @sdev:	struct scsi_device device to configure
++ *
++ * Enable allow_restart for a device if it is a disk.  Adjust the
++ * queue_depth here also as is required by the documentation for
++ * struct scsi_host_template.
++ */
++static int ibmvscsi_slave_configure(struct scsi_device *sdev)
++{
++	struct Scsi_Host *shost = sdev->host;
++	unsigned long lock_flags = 0;
++
++	spin_lock_irqsave(shost->host_lock, lock_flags);
++	if(sdev->type == TYPE_DISK)
++		sdev->allow_restart = 1;
++	scsi_adjust_queue_depth(sdev, 0, shost->cmd_per_lun);
++	spin_unlock_irqrestore(shost->host_lock, lock_flags);
++	return 0;
++}
++
+ /* ------------------------------------------------------------
+  * sysfs attributes
+  */
+@@ -1484,6 +1505,7 @@ static struct scsi_host_template driver_
+ 	.queuecommand = ibmvscsi_queuecommand,
+ 	.eh_abort_handler = ibmvscsi_eh_abort_handler,
+ 	.eh_device_reset_handler = ibmvscsi_eh_device_reset_handler,
++	.slave_configure = ibmvscsi_slave_configure,
+ 	.cmd_per_lun = 16,
+ 	.can_queue = 1,		/* Updated after SRP_LOGIN */
+ 	.this_id = -1,
+

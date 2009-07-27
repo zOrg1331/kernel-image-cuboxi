@@ -1,0 +1,89 @@
+From: Dave Anderson <anderson@redhat.com>
+Subject: [RHEL 5.1 PATCH] BZ 213313: Kernel panic - not syncing: Attempted to   kill init! - found in stress-kernel run
+Date: Thu, 15 Feb 2007 14:59:40 -0500
+Bugzilla: 213313
+Message-Id: <45D4BBAC.7804DCF5@redhat.com>
+Changelog: [x86_64] Don't leak NT bit into next task
+
+
+
+BZ #213313: Kernel panic - not syncing: Attempted to kill init! - found in stress-kernel run
+
+Stress testing with crashme in RHEL5 invariably leads to "Attempted to kill init!"
+panics.  When they occur, there is always at least one exiting "crashme" task
+that is waiting to be reaped in schedule(), which has the NT bit set in its
+RFLAGS.  When the NT bit is leaked to another task, an exception occurs on
+its next iretq.  The iretq instruction is protected by an exception table entry,
+which catches the exception and sends a SIGSEGV to the task.  If it happens
+to be the init process, the system crashes.
+
+Subsequent exhaustive testing with this patch applied prevents this panic
+type from occurring.
+
+The patch is this upstream commit:
+
+  commit 658fdbef66e5e9be79b457edc2cbbb3add840aa9
+  Author: Andi Kleen <ak@suse.de>
+  Date:   Tue Sep 26 10:52:41 2006 +0200
+
+      [PATCH] Don't leak NT bit into next task
+
+      SYSENTER can cause a NT to be set which might cause crashes on the IRET
+      in the next task.
+
+      Following similar i386 patch from Linus.
+
+      Signed-off-by: Andi Kleen <ak@suse.de>
+
+
+
+--- linux-2.6.18/arch/x86_64/kernel/entry.S.orig
++++ linux-2.6.18/arch/x86_64/kernel/entry.S
+@@ -146,6 +146,10 @@
+ /* rdi:	prev */	
+ ENTRY(ret_from_fork)
+ 	CFI_DEFAULT_STACK
++	push kernel_eflags(%rip)
++	CFI_ADJUST_CFA_OFFSET 4
++	popf				# reset kernel eflags
++	CFI_ADJUST_CFA_OFFSET -4
+ 	call schedule_tail
+ 	GET_THREAD_INFO(%rcx)
+ 	testl $(_TIF_SYSCALL_TRACE|_TIF_SYSCALL_AUDIT),threadinfo_flags(%rcx)
+--- linux-2.6.18/arch/x86_64/kernel/setup64.c.orig
++++ linux-2.6.18/arch/x86_64/kernel/setup64.c
+@@ -157,6 +157,8 @@ void __cpuinit check_efer(void)
+         }       
+ }
+ 
++unsigned long kernel_eflags;
++
+ /*
+  * cpu_init() initializes state that is per-CPU. Some data is already
+  * initialized (naturally) in the bootstrap process, such as the GDT
+@@ -268,4 +270,6 @@ void __cpuinit cpu_init (void)
+ 	set_debugreg(0UL, 7);
+ 
+ 	fpu_init(); 
++
++	raw_local_save_flags(kernel_eflags);
+ }
+--- linux-2.6.18/include/asm-x86_64/system.h.orig
++++ linux-2.6.18/include/asm-x86_64/system.h
+@@ -14,12 +14,13 @@
+ #define __RESTORE(reg,offset) "movq (14-" #offset ")*8(%%rsp),%%" #reg "\n\t"
+ 
+ /* frame pointer must be last for get_wchan */
+-#define SAVE_CONTEXT    "pushq %%rbp ; movq %%rsi,%%rbp\n\t"
+-#define RESTORE_CONTEXT "movq %%rbp,%%rsi ; popq %%rbp\n\t"
++#define SAVE_CONTEXT    "pushf ; pushq %%rbp ; movq %%rsi,%%rbp\n\t"
++#define RESTORE_CONTEXT "movq %%rbp,%%rsi ; popq %%rbp ; popf\t"
+ 
+ #define __EXTRA_CLOBBER  \
+ 	,"rcx","rbx","rdx","r8","r9","r10","r11","r12","r13","r14","r15"
+ 
++/* Save restore flags to clear handle leaking NT */
+ #define switch_to(prev,next,last) \
+ 	asm volatile(SAVE_CONTEXT						    \
+ 		     "movq %%rsp,%P[threadrsp](%[prev])\n\t" /* save RSP */	  \
+

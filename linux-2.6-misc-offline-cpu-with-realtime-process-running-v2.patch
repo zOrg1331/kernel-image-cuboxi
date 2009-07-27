@@ -1,0 +1,173 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Wed, 9 Jan 2008 14:09:15 +0100
+Subject: [misc] offline CPU with realtime process running v2
+Message-id: 20080109140915.7c7b41d3@brian.englab.brq.redhat.com
+O-Subject: Re: [RHEL5.2 PATCH] offlining a CPU with a realtime process running
+Bugzilla: 240232
+
+On Tue, 18 Dec 2007 12:33:31 +0100
+Michal Schmidt <mschmidt@redhat.com> wrote:
+
+> Dne Sun, 16 Dec 2007 18:09:40 +0100
+> Michal Schmidt <mschmidt@redhat.com> napsal(a):
+>
+> > BZ: https://bugzilla.redhat.com/show_bug.cgi?id=240232
+> >
+> > Description:
+> > If a runaway SCHED_FIFO process is taking 100% CPU time, an attempt
+> > to put that CPU offline will block indefinitely.
+> > kstopmachine thread wants to run with the highest priority, but it
+> > is unable to set its own priority if it's never scheduled to run
+> > (the runaway process won't let it).
+> > Also ksoftirqd thread can't run into completion on the CPU.
+> >
+> > Proposed fix:
+> > Set kstopmachine's priority before waking it up. Set ksoftirqd
+> > to SCHED_FIFO before calling kthread_stop() on it.
+> >
+> > Upstream status:
+> > The patch consists of two upstream commits:
+> > 85653af7d  Fix stop_machine_run problem with naughty real time
+> > process 1c6b4aa94  cpu hotplug: fix ksoftirqd termination on cpu
+> > hotplug with naughty realtime process
+> > Both have been upstream since 2.6.23-rc1.
+> >
+> > kABI:
+> > No interface changes.
+> >
+> > Brew:
+> > A scratch build succeeded on all archs.
+> >
+> > Testing:
+> > The reporter Satoru Takeuchi (from Fujitsu) is actually the author
+> > of both upstream and RHEL5 versions of the fix.
+> > I tested the patch on an ia64 machine in RHTS.
+>
+> With more testing I discovered the fix was not perfect. While the
+> reliability of CPU offlining improved considerably with the fix,
+> occasionaly it still hung. A script putting CPUs offline and back
+> online in a loop could hit it in a few seconds.
+>
+>
+> Description:
+> The problem is with kthread workqueue thread, the creator of other
+> kernel threads. It runs as a normal priority task. There is a
+> potential for priority inversion when a task wants to spawn a
+> high-priority kernel thread. A middle priority SCHED_FIFO task can
+> block kthread's execution indefinitely and thus prevent the timely
+> creation of the high-priority kernel thread.
+>
+> In this case, when a runaway real-time task is eating 100% CPU and we
+> attempt to put the CPU offline, sometimes we block while waiting for
+> the creation of the highest-priority "kstopmachine" thread.
+>
+> Proposed fix:
+> The fix is to run kthread with the highest possible SCHED_FIFO
+> priority. Its children must still run as slightly negatively reniced
+> SCHED_NORMAL tasks.
+>
+> Upstream status:
+> I sent a similar fix upstream:
+> http://www.ussg.iu.edu/hypermail/linux/kernel/0712.2/0683.html
+> It's not merged yet.
+> The patch is a bit different because upstream changed kthread from
+> workqueue to a specialized kthreadd thread.
+>
+> kABI:
+> No symbols harmed. The changed priority of kthread is noticeable from
+> userspace, but I don't see how that could affect anything badly.
+>
+> Testing:
+> I successfully tested it by taking CPUs offline and back online
+> many thousands of times on a ia64 machine in RHTS.
+>
+> Please ACK this additional patch for the bug too.
+
+The kthread.c part of the patch is what Ingo Molnar accepted into his
+sched-devel.git tree as a result ot the recent upstream discussion.
+The softirq.c and stop_machine.c bits are exactly the same as they were
+ACKed on rhkernel-list already by Rik van Riel and Jon Masters.
+
+I have re-tested this patch on a 8 CPU machine, running a script putting
+CPUs offline and back.
+
+Michal
+
+diff --git a/kernel/kthread.c b/kernel/kthread.c
+index 4f9c60e..cb4af43 100644
+--- a/kernel/kthread.c
++++ b/kernel/kthread.c
+@@ -15,6 +15,8 @@
+ #include <linux/mutex.h>
+ #include <asm/semaphore.h>
+ 
++#define KTHREAD_NICE_LEVEL (-5)
++
+ /*
+  * We dont want to execute off keventd since it might
+  * hold a semaphore our callers hold too:
+@@ -121,10 +123,18 @@ static void keventd_create_kthread(void *_create)
+ 	if (pid < 0) {
+ 		create->result = ERR_PTR(pid);
+ 	} else {
++		struct sched_param param = { .sched_priority = 0 };
+ 		wait_for_completion(&create->started);
+ 		read_lock(&tasklist_lock);
+ 		create->result = find_task_by_pid(pid);
+ 		read_unlock(&tasklist_lock);
++		/*
++		 * root may have changed our (kthread wq's) priority or CPU
++		 * mask. The kernel thread should not inherit these properties.
++		 */
++		sched_setscheduler(create->result, SCHED_NORMAL, &param);
++		set_user_nice(create->result, KTHREAD_NICE_LEVEL);
++		set_cpus_allowed(create->result, CPU_MASK_ALL);
+ 	}
+ 	complete(&create->done);
+ }
+diff --git a/kernel/softirq.c b/kernel/softirq.c
+index aee8b98..865589c 100644
+--- a/kernel/softirq.c
++++ b/kernel/softirq.c
+@@ -571,6 +571,7 @@ static int __cpuinit cpu_callback(struct notifier_block *nfb,
+ {
+ 	int hotcpu = (unsigned long)hcpu;
+ 	struct task_struct *p;
++	struct sched_param param = { .sched_priority = MAX_RT_PRIO-1 };
+ 
+ 	switch (action) {
+ 	case CPU_UP_PREPARE:
+@@ -595,6 +596,7 @@ static int __cpuinit cpu_callback(struct notifier_block *nfb,
+ 	case CPU_DEAD:
+ 		p = per_cpu(ksoftirqd, hotcpu);
+ 		per_cpu(ksoftirqd, hotcpu) = NULL;
++		sched_setscheduler(p, SCHED_FIFO, &param);
+ 		kthread_stop(p);
+ 		takeover_tasklets(hotcpu);
+ 		break;
+diff --git a/kernel/stop_machine.c b/kernel/stop_machine.c
+index d4f0546..618363a 100644
+--- a/kernel/stop_machine.c
++++ b/kernel/stop_machine.c
+@@ -87,10 +87,6 @@ static void stopmachine_set_state(enum stopmachine_state state)
+ static int stop_machine(void)
+ {
+ 	int i, ret = 0;
+-	struct sched_param param = { .sched_priority = MAX_RT_PRIO-1 };
+-
+-	/* One high-prio thread per cpu.  We'll do this one. */
+-	sched_setscheduler(current, SCHED_FIFO, &param);
+ 
+ 	atomic_set(&stopmachine_thread_ack, 0);
+ 	stopmachine_num_threads = 0;
+@@ -182,6 +178,10 @@ struct task_struct *__stop_machine_run(int (*fn)(void *), void *data,
+ 
+ 	p = kthread_create(do_stop, &smdata, "kstopmachine");
+ 	if (!IS_ERR(p)) {
++		struct sched_param param = { .sched_priority = MAX_RT_PRIO-1 };
++
++		/* One high-prio thread per cpu.  We'll do this one. */
++		sched_setscheduler(p, SCHED_FIFO, &param);
+ 		kthread_bind(p, cpu);
+ 		wake_up_process(p);
+ 		wait_for_completion(&smdata.done);

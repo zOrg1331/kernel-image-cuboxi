@@ -1,0 +1,88 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Tue, 2 Sep 2008 16:06:01 -0400
+Subject: [xen] ia64: NUMA support
+Message-id: 20080902200601.7876.19489.sendpatchset@pq0-1.lab.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH 3/5] xen-ia64: NUMA support
+Bugzilla: 454711
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+
+bz454711
+This patch is consist of cset 12004/xen-unstable and cset
+126/linux-2.6.18-xen.
+
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1161809335 21600
+# Node ID fd1d742487f84586b96833e5808397647fbfa8aa
+# Parent  3e26719ab827f249e8fefa310db1c1a45af2f1e0
+[IA64] NUMA support
+
+Based on patch from Tristan Gingold
+
+Signed-off-by: Alex Williamson <alex.williamson@hp.com>
+
+# HG changeset patch
+# User Alex Williamson <alex.williamson@hp.com>
+# Date 1184087887 21600
+# Node ID 86ac3059ab675a1c80ab02be513afb57b5e63efa
+# Parent  e57b5bec937fe48ba4d2ba9a8976dffd332def05
+[IA64] Map cpu_to_node table with xencomm for physinfo sysctl
+
+Previously stubbed out.
+
+Signed-off-by: Alex Williamson <alex.williamson@hp.com>
+
+diff --git a/arch/ia64/xen/xcom_privcmd.c b/arch/ia64/xen/xcom_privcmd.c
+index 9ae710b..ec2e70d 100644
+--- a/arch/ia64/xen/xcom_privcmd.c
++++ b/arch/ia64/xen/xcom_privcmd.c
+@@ -216,7 +216,6 @@ xencomm_privcmd_sysctl(privcmd_hypercall_t *hypercall)
+ 		                     (void *)desc);
+ 		break;
+ 	case XEN_SYSCTL_tbuf_op:
+-	case XEN_SYSCTL_physinfo:
+ 	case XEN_SYSCTL_sched_id:
+ 		break;
+ 	case XEN_SYSCTL_perfc_op:
+@@ -272,6 +271,17 @@ xencomm_privcmd_sysctl(privcmd_hypercall_t *hypercall)
+ 		set_xen_guest_handle(kern_op.u.getdomaininfolist.buffer,
+ 				     (void *)desc);
+ 		break;
++	case XEN_SYSCTL_physinfo:
++		ret = xencomm_create(
++			xen_guest_handle(kern_op.u.physinfo.cpu_to_node),
++			kern_op.u.physinfo.max_cpu_id * sizeof(uint32_t),
++			&desc, GFP_KERNEL);
++		if (ret)
++			return ret;
++
++		set_xen_guest_handle(kern_op.u.physinfo.cpu_to_node,
++		                     (void *)desc);
++		break;
+ 	default:
+ 		printk("%s: unknown sysctl cmd %d\n", __func__, kern_op.cmd);
+ 		return -ENOSYS;
+@@ -284,7 +294,7 @@ xencomm_privcmd_sysctl(privcmd_hypercall_t *hypercall)
+ 
+ 	ret = xencomm_arch_hypercall_sysctl(op_desc);
+ 
+-	/* FIXME: should we restore the handle?  */
++	/* FIXME: should we restore the handles?  */
+ 	if (copy_to_user(user_op, &kern_op, sizeof(xen_sysctl_t)))
+ 		ret = -EFAULT;
+ 
+diff --git a/include/xen/interface/arch-ia64.h b/include/xen/interface/arch-ia64.h
+index a15ba1f..dce2f24 100644
+--- a/include/xen/interface/arch-ia64.h
++++ b/include/xen/interface/arch-ia64.h
+@@ -28,6 +28,7 @@
+ __DEFINE_XEN_GUEST_HANDLE(uchar, unsigned char);
+ __DEFINE_XEN_GUEST_HANDLE(uint,  unsigned int);
+ __DEFINE_XEN_GUEST_HANDLE(ulong, unsigned long);
++__DEFINE_XEN_GUEST_HANDLE(u64,   unsigned long);
+ DEFINE_XEN_GUEST_HANDLE(char);
+ DEFINE_XEN_GUEST_HANDLE(int);
+ DEFINE_XEN_GUEST_HANDLE(long);

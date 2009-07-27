@@ -1,0 +1,63 @@
+From: Gerd Hoffmann <kraxel@redhat.com>
+Subject: [RHEL-5.1 PATCH 3/10] xen: bimodal drivers, blkfront driver
+Date: Fri, 15 Jun 2007 10:30:27 +0200
+Bugzilla: 222128
+Message-Id: <46724E23.9080108@redhat.com>
+Changelog: [xen] bimodal drivers, blkfront driver
+
+
+  Hi,
+
+Starting with Xen 3.1 the 64bit hypervisor can run 32bit-pae paravirtual 
+guests.  Some paravirtual drivers have different data structures in 
+32bit vs. 64bit mode.  Thus the backend drivers must be bimodal, i.e.
+
+  (a) must be able to deal with multiple protocols.
+  (b) need to know which protocol the frontend driver speaks.
+
+This patch makes the block device frontend driver signal the protocol it 
+speaks by adding a node to xenstore.
+
+cheers,
+  Gerd
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1169563722 0
+# Node ID c545932a18f33b27e5c889e6e51759b23bd08f12
+# Parent  b9ffa4b49d9711edba34d490a2263fd909b2acfe
+bimodal blkfront: Create a new node "protocol" in xenstore, add the
+protocol name it speaks there.
+
+Signed-off-by: Gerd Hoffmann <kraxel@suse.de>
+
+---
+ drivers/xen/blkfront/blkfront.c |    7 +++++++
+ 1 file changed, 7 insertions(+)
+
+Index: linux-2.6.18.noarch/drivers/xen/blkfront/blkfront.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/xen/blkfront/blkfront.c
++++ linux-2.6.18.noarch/drivers/xen/blkfront/blkfront.c
+@@ -44,6 +44,7 @@
+ #include <xen/evtchn.h>
+ #include <xen/xenbus.h>
+ #include <xen/interface/grant_table.h>
++#include <xen/interface/io/protocols.h>
+ #include <xen/gnttab.h>
+ #include <asm/hypervisor.h>
+ #include <asm/maddr.h>
+@@ -176,6 +177,12 @@ again:
+ 		message = "writing event-channel";
+ 		goto abort_transaction;
+ 	}
++	err = xenbus_printf(xbt, dev->nodename, "protocol", "%s",
++			    XEN_IO_PROTO_ABI_NATIVE);
++	if (err) {
++		message = "writing protocol";
++		goto abort_transaction;
++	}
+ 
+ 	err = xenbus_transaction_end(xbt, 0);
+ 	if (err) {
+

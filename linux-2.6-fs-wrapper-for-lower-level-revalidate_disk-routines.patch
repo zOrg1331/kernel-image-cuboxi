@@ -1,0 +1,67 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Mon, 8 Sep 2008 13:45:05 -0400
+Subject: [fs] wrapper for lower-level revalidate_disk routines
+Message-id: x49iqt6v8f2.fsf@segfault.boston.devel.redhat.com
+O-Subject: [rhel5 patch 1/6 - v2] Wrapper for lower-level revalidate_disk routines.
+Bugzilla: 444964
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+RH-Acked-by: Josef Bacik <jbacik@redhat.com>
+
+OK, so I forgot to update the patch count in the header.  That last
+message should have read 0/6.  ;)
+
+Wrapper for lower-level revalidate_disk routines.
+
+This is a wrapper for the lower-level revalidate_disk call-backs such
+as sd_revalidate_disk(). It allows us to perform pre and post
+operations when calling them.
+
+We will use this wrapper in a later patch to adjust block device sizes
+after an online resize (a _post_ operation).
+
+Signed-off-by: Andrew Patterson <andrew.patterson@hp.com>
+
+diff --git a/fs/block_dev.c b/fs/block_dev.c
+index d7b9a66..22e0aa8 100644
+--- a/fs/block_dev.c
++++ b/fs/block_dev.c
+@@ -824,6 +824,27 @@ struct block_device *open_by_devnum(dev_t dev, unsigned mode)
+ 
+ EXPORT_SYMBOL(open_by_devnum);
+ 
++/**
++ * revalidate_disk - wrapper for lower-level driver's revalidate_disk
++ *                   call-back
++ *
++ * @disk: struct gendisk to be revalidated
++ *
++ * This routine is a wrapper for lower-level driver's revalidate_disk
++ * call-backs.  It is used to do common pre and post operations needed
++ * for all revalidate_disk operations.
++ */
++int revalidate_disk(struct gendisk *disk)
++{
++	int ret = 0;
++
++	if (disk->fops->revalidate_disk)
++		ret = disk->fops->revalidate_disk(disk);
++
++	return ret;
++}
++EXPORT_SYMBOL(revalidate_disk);
++
+ /*
+  * This routine checks whether a removable media has been changed,
+  * and invalidates all buffer-cache-entries in that case. This
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index 69813f5..bf709b7 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -1616,6 +1616,7 @@ extern int fs_may_remount_ro(struct super_block *);
+  */
+ #define bio_data_dir(bio)	((bio)->bi_rw & 1)
+ 
++extern int revalidate_disk(struct gendisk *);
+ extern int check_disk_change(struct block_device *);
+ extern int invalidate_inodes(struct super_block *);
+ extern int __invalidate_device(struct block_device *);

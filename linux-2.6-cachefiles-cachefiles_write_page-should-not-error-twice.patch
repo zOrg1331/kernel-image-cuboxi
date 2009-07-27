@@ -1,0 +1,45 @@
+From: David Howells<dhowells@redhat.com>
+Subject: [RHEL5/FC6 PATCH] CacheFiles: cachefiles_write_page() shouldn't indicate error twice
+Date: Wed, 30 Aug 2006 12:45:49
+Bugzilla: 204570
+Message-Id: <988.1156956349@warthog.cambridge.redhat.com>
+Changelog: CacheFiles: cachefiles_write_page() shouldn't indicate error twice
+
+
+Prevent cachefiles_write_page() from issuing an error twice, instead forgoing
+the callback if it can return the error directly [BZ 204570].
+
+Previously, the netfs was being informed of the error twice, once by the error
+being passed to the netfs callback, and a second time when fscache_write_page()
+returned to the netfs.
+
+In NFS's case, this meant it attempted to do error handling twice, including
+clearing PG_fs_misc twice...
+
+I've reproduced this and tested it on my testbox using a vanilla kernel.  Steve
+Dickson has also tested it.
+
+David Howells
+---
+
+ fs/cachefiles/cf-interface.c |    6 ++++--
+ 1 files changed, 4 insertions(+), 2 deletions(-)
+
+Index: latest/fs/cachefiles/cf-interface.c
+===================================================================
+--- latest.orig/fs/cachefiles/cf-interface.c
++++ latest/fs/cachefiles/cf-interface.c
+@@ -1265,9 +1265,11 @@ static int cachefiles_write_page(struct 
+ 						"write page to backing file"
+ 						" failed");
+ 		ret = -ENOBUFS;
++	} else {
++		/* only invoke the callback if successful, we return the error
++		 * directly otherwise */
++		end_io_func(page, context, ret);
+ 	}
+-
+-	end_io_func(page, context, ret);
+ #endif
+ 
+ 	_leave(" = %d", ret);

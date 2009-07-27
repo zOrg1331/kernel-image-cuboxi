@@ -1,0 +1,95 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5] Initialization of security/acls in gfs2
+Date: Fri, 15 Dec 2006 10:26:09 +0000
+Bugzilla: 206126
+Message-Id: <1166178369.3752.1176.camel@quoit.chygwyn.com>
+Changelog: gfs2: Initialization of security/acls
+
+
+Hi,
+
+For some reason this bug (bz 206126) appears to have got into the POST
+state apparently without a patch actually being posted, so here it is.
+The patch has been upstream for a while and was tested by Ryan at the
+time it went upstream. This patch is taken directly from Linus' git
+tree.
+
+Steve.
+
+
+X-Git-Tag: v2.6.19-rc1
+X-Git-Url: http://www.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=fcb47e0bd279cab5ba8299c0a1e3364d15413a6b
+
+[GFS2] Initialize SELinux extended attributes at inode creation time.
+
+This patch has gfs2_security_init declared as a static function, which
+is correct. As a result, the declaration of this function in inode.h is
+removed (and thus inode.h is unchanged). Also removed #include eaops.h,
+which is not needed.
+
+Signed-Off-By: Ryan O'Hara <rohara@redhat.com>
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+---
+
+--- a/fs/gfs2/inode.c
++++ b/fs/gfs2/inode.c
+@@ -17,6 +17,7 @@
+ #include <linux/gfs2_ondisk.h>
+ #include <linux/crc32.h>
+ #include <linux/lm_interface.h>
++#include <linux/security.h>
+ 
+ #include "gfs2.h"
+ #include "incore.h"
+@@ -806,6 +807,39 @@ fail:
+ 	return error;
+ }
+ 
++static int gfs2_security_init(struct gfs2_inode *dip, struct gfs2_inode *ip)
++{
++	int err;
++	size_t len;
++	void *value;
++	char *name;
++	struct gfs2_ea_request er;
++
++	err = security_inode_init_security(&ip->i_inode, &dip->i_inode,
++					   &name, &value, &len);
++
++	if (err) {
++		if (err == -EOPNOTSUPP)
++			return 0;
++		return err;
++	}
++
++	memset(&er, 0, sizeof(struct gfs2_ea_request));
++
++	er.er_type = GFS2_EATYPE_SECURITY;
++	er.er_name = name;
++	er.er_data = value;
++	er.er_name_len = strlen(name);
++	er.er_data_len = len;
++
++	err = gfs2_ea_set_i(ip, &er);
++
++	kfree(value);
++	kfree(name);
++
++	return err;
++}
++
+ /**
+  * gfs2_createi - Create a new inode
+  * @ghs: An array of two holders
+@@ -897,6 +931,10 @@ struct inode *gfs2_createi(struct gfs2_h
+ 	if (error)
+ 		goto fail_iput;
+ 
++	error = gfs2_security_init(dip, GFS2_I(inode));
++	if (error)
++		goto fail_iput;
++
+ 	error = link_dinode(dip, name, GFS2_I(inode));
+ 	if (error)
+ 		goto fail_iput;
+

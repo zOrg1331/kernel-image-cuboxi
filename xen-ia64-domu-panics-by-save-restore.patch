@@ -1,0 +1,90 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5.1 PATCH 2/10][XEN] DomU panics by save/restore on IA64
+Date: Tue, 26 Jun 2007 00:41:26 -0400
+Bugzilla: 243866
+Message-Id: <468098F6.2060802@redhat.com>
+Changelog: [XEN] ia64: DomU panics by save/restore
+
+
+bz243866
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=243866
+
+Backport of cset#15016 and #15028 (xen-ia64-unstable).
+
+saving/restore the DomU on IA64 causes panic due to
+incorrect emulation of vcpu save/restore.
+These patches fix the problem by clearing pending
+events when vcpu boots.
+
+Thanks,
+Kei
+
+
+# HG changeset patch
+# User Alex Williamson <alex.williamson@hp.com>
+# Date 1178224046 21600
+# Node ID f8aede89c7065a5376a544c0b9bd49d4b22ac954
+# Parent  367d9ab41d804936dfc9707aa22fcd188e7ac59e
+[IA64] Mask event channel when vcpu boots
+
+Actually XenLinux/ia64 disables interrupts right after SAL OS HAND OFF
+and reinitialize all psr so that this won't be an issue.
+Just to be make it sure.
+
+Signed-off-by: Isaku Yamahata <yamahata@valinux.co.jp>
+
+
+
+---
+
+ xen-kei/arch/ia64/xen/vcpu.c |    4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff -puN arch/ia64/xen/vcpu.c~ia64-15016 arch/ia64/xen/vcpu.c
+--- xen/arch/ia64/xen/vcpu.c~ia64-15016	2007-06-25 22:45:53.000000000 -0400
++++ xen-kei/arch/ia64/xen/vcpu.c	2007-06-25 22:45:53.000000000 -0400
+@@ -173,6 +173,10 @@ void vcpu_init_regs(struct vcpu *v)
+ 		    (unsigned char *)v->domain->arch.shared_info_va +
+ 		    INT_ENABLE_OFFSET(v);
+ 		VCPU(v, itv) = (1 << 16);	/* timer vector masked */
++
++		/* SAL specification 3.2.4 */
++		VCPU(v, vpsr) = IA64_PSR_AC | IA64_PSR_IC | IA64_PSR_BN;
++		v->vcpu_info->evtchn_upcall_mask = -1;
+ 	}
+ 
+ 	/* pta.size must not be 0.  The minimum is 15 (32k) */
+
+_
+
+
+# HG changeset patch
+# User Alex Williamson <alex.williamson@hp.com>
+# Date 1178565267 21600
+# Node ID 4b4db1f10147ec58468c06b56e8ecf6319bd516a
+# Parent  1a010d9444baa9c1b44f42856f607ab584574315
+[IA64] Clear pending event when vcpu boots
+
+Signed-off-by: Isaku Yamahata <yamahata@valinux.co.jp>
+
+
+
+---
+
+ xen-kei/arch/ia64/xen/vcpu.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+diff -puN arch/ia64/xen/vcpu.c~ia64-15028 arch/ia64/xen/vcpu.c
+--- xen/arch/ia64/xen/vcpu.c~ia64-15028	2007-06-25 22:45:54.000000000 -0400
++++ xen-kei/arch/ia64/xen/vcpu.c	2007-06-25 22:45:54.000000000 -0400
+@@ -176,6 +176,7 @@ void vcpu_init_regs(struct vcpu *v)
+ 
+ 		/* SAL specification 3.2.4 */
+ 		VCPU(v, vpsr) = IA64_PSR_AC | IA64_PSR_IC | IA64_PSR_BN;
++		v->vcpu_info->evtchn_upcall_pending = 0;
+ 		v->vcpu_info->evtchn_upcall_mask = -1;
+ 	}
+ 
+
+_
+

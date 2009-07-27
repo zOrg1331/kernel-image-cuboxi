@@ -1,0 +1,74 @@
+From: Bruce Allan <ballan@redhat.com>
+Subject: [RHEL5 PATCH] ixgb: fix early TSO completion (bz213642)
+Date: Wed, 13 Dec 2006 11:25:12 -0800
+Bugzilla: 213642
+Message-Id: <45805398.2050806@redhat.com>
+Changelog: [net] ixgb: fix early TSO completion
+
+
+The ixgb 10GbE driver may experience an early completion when using TSO 
+(bz213642) which can lead to a Tx hang.  The attached patch against 
+2.6.18-1.2839.el5 resolves this by appending a 4-byte "sentinel" 
+descriptor. It has been tested at Intel.
+
+A similar fix has been in the e1000 driver for sometime now and a patch 
+for ixgb was committed to the netdev-2.6.git tree in May '06 [1] and 
+shortly thereafter [2] reverted because of a suspicion it introduced 
+another bug and performance problem.  That suspicion turned out to be 
+incorrect and the patch was recently re-submitted and ACKed by 
+jgarzik[3] (note, the thread at the last link mistakenly suggests the 
+patch was for e1000 instead of ixgb; see the actual patch against ixgb 
+by following the [prev in thread] link or access it directly at [4]).
+
+
+-- 
+Bruce Allan
+Intel LAN Access Division
+2111 NE 25th Avenue
+Hillsboro, OR  97124
+503-712-5943
+
+diff -urp linux-2.6.18-1.2839.el5-vanilla/drivers/net/ixgb/ixgb_main.c linux-2.6.18-1.2839.el5/drivers/net/ixgb/ixgb_main.c
+--- linux-2.6.18-1.2839.el5-vanilla/drivers/net/ixgb/ixgb_main.c	2006-09-19 20:42:06.000000000 -0700
++++ linux-2.6.18-1.2839.el5/drivers/net/ixgb/ixgb_main.c	2006-12-12 17:40:35.000000000 -0800
+@@ -1271,6 +1271,7 @@ ixgb_tx_map(struct ixgb_adapter *adapter
+ 	struct ixgb_buffer *buffer_info;
+ 	int len = skb->len;
+ 	unsigned int offset = 0, size, count = 0, i;
++	unsigned int mss = skb_shinfo(skb)->gso_size;
+ 
+ 	unsigned int nr_frags = skb_shinfo(skb)->nr_frags;
+ 	unsigned int f;
+@@ -1282,6 +1283,10 @@ ixgb_tx_map(struct ixgb_adapter *adapter
+ 	while(len) {
+ 		buffer_info = &tx_ring->buffer_info[i];
+ 		size = min(len, IXGB_MAX_DATA_PER_TXD);
++		/* Workaround for premature desc write-backs
++		 * in TSO mode.  Append 4-byte sentinel desc */
++		if (unlikely(mss && !nr_frags && size == len && size > 8))
++			size -= 4;
+ 		buffer_info->length = size;
+ 		buffer_info->dma =
+ 			pci_map_single(adapter->pdev,
+@@ -1307,6 +1312,11 @@ ixgb_tx_map(struct ixgb_adapter *adapter
+ 		while(len) {
+ 			buffer_info = &tx_ring->buffer_info[i];
+ 			size = min(len, IXGB_MAX_DATA_PER_TXD);
++			/* Workaround for premature desc write-backs
++			 * in TSO mode.  Append 4-byte sentinel desc */
++			if (unlikely(mss && !nr_frags && size == len
++			             && size > 8))
++				size -= 4;
+ 			buffer_info->length = size;
+ 			buffer_info->dma =
+ 				pci_map_page(adapter->pdev,
+@@ -1385,7 +1395,7 @@ ixgb_tx_queue(struct ixgb_adapter *adapt
+ #define TXD_USE_COUNT(S) (((S) >> IXGB_MAX_TXD_PWR) + \
+ 			 (((S) & (IXGB_MAX_DATA_PER_TXD - 1)) ? 1 : 0))
+ #define DESC_NEEDED TXD_USE_COUNT(IXGB_MAX_DATA_PER_TXD) + \
+-	MAX_SKB_FRAGS * TXD_USE_COUNT(PAGE_SIZE) + 1
++	MAX_SKB_FRAGS * TXD_USE_COUNT(PAGE_SIZE) + 1 + 1
+ 
+ static int
+ ixgb_xmit_frame(struct sk_buff *skb, struct net_device *netdev)
+

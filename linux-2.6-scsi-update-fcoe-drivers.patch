@@ -1,0 +1,584 @@
+From: mchristi@redhat.com <mchristi@redhat.com>
+Date: Mon, 17 Nov 2008 12:30:56 -0600
+Subject: [scsi] update fcoe drivers
+Message-id: 1226946656-4385-1-git-send-email-mchristi@redhat.com
+O-Subject: [PATCH] RHEL 5.3: Update fcoe drivers
+Bugzilla: 436051
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for 436051.
+
+It handles the review comments from Tomas that did not make in
+the original merge and it incorporates bug fixes from Cisco.
+
+I tested the fcoe driver by running disktest and bonnie++, and
+I have been doing cable pulls and ifdown/ifup of the network
+interfaces.
+
+Cisco has been testing the fnic driver.
+
+diff --git a/drivers/scsi/fcoe/fc_transport_fcoe.c b/drivers/scsi/fcoe/fc_transport_fcoe.c
+index 2ba9aa5..c4b94c4 100644
+--- a/drivers/scsi/fcoe/fc_transport_fcoe.c
++++ b/drivers/scsi/fcoe/fc_transport_fcoe.c
+@@ -71,16 +71,13 @@ static void fcoe_create_percpu_data(int cpu)
+ {
+ 	struct fc_lport *lp;
+ 	struct fcoe_softc *fc;
+-	struct fcoe_dev_stats *p;
+ 
+ 	write_lock_bh(&fcoe_hostlist_lock);
+ 	list_for_each_entry(fc, &fcoe_hostlist, list) {
+ 		lp = fc->lp;
+-		if (lp->dev_stats[cpu] == NULL) {
+-			p = kzalloc(sizeof(struct fcoe_dev_stats), GFP_KERNEL);
+-			if (p)
+-				lp->dev_stats[cpu] = p;
+-		}
++		if (lp->dev_stats[cpu] == NULL)
++			lp->dev_stats[cpu] = kzalloc(sizeof(struct fcoe_dev_stats),
++						     GFP_KERNEL);
+ 	}
+ 	write_unlock_bh(&fcoe_hostlist_lock);
+ }
+@@ -91,18 +88,14 @@ static void fcoe_create_percpu_data(int cpu)
+  */
+ static void fcoe_destroy_percpu_data(int cpu)
+ {
+-	struct fcoe_dev_stats *p;
+ 	struct fc_lport *lp;
+ 	struct fcoe_softc *fc;
+ 
+ 	write_lock_bh(&fcoe_hostlist_lock);
+ 	list_for_each_entry(fc, &fcoe_hostlist, list) {
+ 		lp = fc->lp;
+-		p = lp->dev_stats[cpu];
+-		if (p != NULL) {
+-			lp->dev_stats[cpu] = NULL;
+-			kfree(p);
+-		}
++		kfree(lp->dev_stats[cpu]);
++		lp->dev_stats[cpu] = NULL;
+ 	}
+ 	write_unlock_bh(&fcoe_hostlist_lock);
+ }
+@@ -211,7 +204,8 @@ static int fcoe_device_notification(struct notifier_block *notifier,
+ 			fc_linkup(lp);
+ 		else {
+ 			stats = lp->dev_stats[smp_processor_id()];
+-			stats->LinkFailureCount++;
++			if (stats)
++				stats->LinkFailureCount++;
+ 			fc_linkdown(lp);
+ 			fcoe_clean_pending_queue(lp);
+ 		}
+diff --git a/drivers/scsi/fcoe/fcoe_sw.c b/drivers/scsi/fcoe/fcoe_sw.c
+index 30d6e1c..b442c86 100644
+--- a/drivers/scsi/fcoe/fcoe_sw.c
++++ b/drivers/scsi/fcoe/fcoe_sw.c
+@@ -174,7 +174,6 @@ static struct scsi_host_template fcoe_driver_template = {
+ int fcoe_destroy_interface(struct net_device *netdev)
+ {
+ 	int cpu, idx;
+-	struct fcoe_dev_stats *p;
+ 	struct fcoe_percpu_s *pp;
+ 	struct fcoe_softc *fc;
+ 	struct fcoe_rcv_info *fr;
+@@ -235,13 +234,8 @@ int fcoe_destroy_interface(struct net_device *netdev)
+ 	fcoe_clean_pending_queue(lp);
+ 
+ 	/* Free memory used by statistical counters */
+-	for_each_online_cpu(cpu) {
+-		p = lp->dev_stats[cpu];
+-		if (p) {
+-			lp->dev_stats[cpu] = NULL;
+-			kfree(p);
+-		}
+-	}
++	for_each_online_cpu(cpu)
++		kfree(lp->dev_stats[cpu]);
+ 
+ 	/* Release the net_device and Scsi_Host */
+ 	dev_put(fc->real_dev);
+@@ -295,7 +289,6 @@ static struct libfc_function_template fcoe_libfc_fcn_templ = {
+ static int lport_config(struct fc_lport *lp, struct Scsi_Host *shost)
+ {
+ 	int i = 0;
+-	struct fcoe_dev_stats *p;
+ 
+ 	lp->host = shost;
+ 	lp->drv_priv = (void *)(lp + 1);
+@@ -315,11 +308,9 @@ static int lport_config(struct fc_lport *lp, struct Scsi_Host *shost)
+ 	/*
+ 	 * allocate per cpu stats block
+ 	 */
+-	for_each_online_cpu(i) {
+-		p = kzalloc(sizeof(struct fcoe_dev_stats), GFP_KERNEL);
+-		if (p)
+-			lp->dev_stats[i] = p;
+-	}
++	for_each_online_cpu(i)
++		lp->dev_stats[i] = kzalloc(sizeof(struct fcoe_dev_stats),
++					   GFP_KERNEL);
+ 
+ 	/* Finish fc_lport configuration */
+ 	fc_lport_config(lp);
+diff --git a/drivers/scsi/fcoe/libfcoe.c b/drivers/scsi/fcoe/libfcoe.c
+index f08f7c9..e67fa4a 100644
+--- a/drivers/scsi/fcoe/libfcoe.c
++++ b/drivers/scsi/fcoe/libfcoe.c
+@@ -134,7 +134,8 @@ err:
+ #else
+ 	stats = lp->dev_stats[0];
+ #endif
+-	stats->ErrorFrames++;
++	if (stats)
++		stats->ErrorFrames++;
+ 
+ err2:
+ 	kfree_skb(skb);
+@@ -332,8 +333,10 @@ int fcoe_xmit(struct fc_lport *lp, struct fc_frame *fp)
+ 	hp->fcoe_sof = sof;
+ 
+ 	stats = lp->dev_stats[smp_processor_id()];
+-	stats->TxFrames++;
+-	stats->TxWords += wlen;
++	if (stats) {
++		stats->TxFrames++;
++		stats->TxWords += wlen;
++	}
+ 	skb->dev = fc->real_dev;
+ 
+ 	fr_dev(fp) = lp;
+@@ -421,10 +424,12 @@ int fcoe_percpu_receive_thread(void *arg)
+ 
+ 		hp = (struct fcoe_hdr *)skb->data;
+ 		if (unlikely(FC_FCOE_DECAPS_VER(hp) != FC_FCOE_VER)) {
+-			if (stats->ErrorFrames < 5)
+-				FC_DBG("unknown FCoE version %x",
+-				       FC_FCOE_DECAPS_VER(hp));
+-			stats->ErrorFrames++;
++			if (stats) {
++				if (stats->ErrorFrames < 5)
++					FC_DBG("unknown FCoE version %x",
++					       FC_FCOE_DECAPS_VER(hp));
++				stats->ErrorFrames++;
++			}
+ 			kfree_skb(skb);
+ 			continue;
+ 		}
+@@ -435,15 +440,20 @@ int fcoe_percpu_receive_thread(void *arg)
+ 		tlen = sizeof(struct fcoe_crc_eof);
+ 
+ 		if (unlikely(fr_len > skb->len)) {
+-			if (stats->ErrorFrames < 5)
+-				FC_DBG("length error fr_len 0x%x skb->len 0x%x",
+-				       fr_len, skb->len);
+-			stats->ErrorFrames++;
++			if (stats) {
++				if (stats->ErrorFrames < 5)
++					FC_DBG("length error fr_len 0x%x "
++					       "skb->len 0x%x", fr_len,
++					       skb->len);
++				stats->ErrorFrames++;
++			}
+ 			kfree_skb(skb);
+ 			continue;
+ 		}
+-		stats->RxFrames++;
+-		stats->RxWords += fr_len / FCOE_WORD_TO_BYTE;
++		if (stats) {
++			stats->RxFrames++;
++			stats->RxWords += fr_len / FCOE_WORD_TO_BYTE;
++		}
+ 
+ 		fp = (struct fc_frame *) skb;
+ 		fc_frame_init(fp);
+@@ -468,12 +478,15 @@ int fcoe_percpu_receive_thread(void *arg)
+ 				fcoe_recv_flogi(fc, fp, mac);
+ 			fc_exch_recv(lp, lp->emp, fp);
+ 		} else {
+-			if (debug_fcoe || stats->InvalidCRCCount < 5) {
++			if (debug_fcoe ||
++			    (stats && stats->InvalidCRCCount < 5)) {
+ 				printk(KERN_WARNING \
+ 				       "fcoe: dropping frame with CRC error");
+ 			}
+-			stats->InvalidCRCCount++;
+-			stats->ErrorFrames++;
++			if (stats) {
++				stats->InvalidCRCCount++;
++				stats->ErrorFrames++;
++			}
+ 			fc_frame_free(fp);
+ 		}
+ 	}
+diff --git a/drivers/scsi/fnic/fnic.h b/drivers/scsi/fnic/fnic.h
+index f7ceb72..bde7cca 100644
+--- a/drivers/scsi/fnic/fnic.h
++++ b/drivers/scsi/fnic/fnic.h
+@@ -20,6 +20,7 @@
+ 
+ #include <linux/mempool.h>
+ #include <linux/interrupt.h>
++#include <linux/netdevice.h>
+ #include <scsi/scsi_device.h>
+ #include <scsi/scsi_transport_fc.h>
+ #include <scsi/libfc/libfc.h>
+@@ -212,6 +213,21 @@ struct fnic_event {
+ 	u32    is_flogi_resp_frame:1;
+ };
+ 
++static inline void fnic_fc_frame_free_irq(struct fc_frame *fp)
++{
++	dev_kfree_skb_irq(fp_skb(fp));
++}
++
++static inline void fnic_fc_frame_free(struct fc_frame *fp)
++{
++	dev_kfree_skb(fp_skb(fp));
++}
++
++static inline void fnic_fc_frame_free_any(struct fc_frame *fp)
++{
++	dev_kfree_skb_any(fp_skb(fp));
++}
++
+ /* Fnic Thread for handling FCS Rx Frames*/
+ extern struct task_struct *fnic_thread;
+ extern struct list_head   fnic_eventlist;
+diff --git a/drivers/scsi/fnic/fnic_fcs.c b/drivers/scsi/fnic/fnic_fcs.c
+index e10baa7..05e8a23 100644
+--- a/drivers/scsi/fnic/fnic_fcs.c
++++ b/drivers/scsi/fnic/fnic_fcs.c
+@@ -81,8 +81,8 @@ int fnic_fc_thread(void *arg)
+ 			kmem_cache_free(fnic_ev_cache, event);
+ 
+ 		} else { /* no frame enqueued*/
+-			spin_unlock_irqrestore(&fnic_eventlist_lock, flags);
+ 			set_current_state(TASK_INTERRUPTIBLE);
++			spin_unlock_irqrestore(&fnic_eventlist_lock, flags);
+ 			schedule();
+ 			set_current_state(TASK_RUNNING);
+ 		}
+@@ -97,7 +97,6 @@ static inline void fnic_import_rq_fc_frame(struct sk_buff *skb,
+ 	struct fc_frame *fp = (struct fc_frame *)skb;
+ 
+ 	skb_trim(skb, len);
+-	fr_hdr(fp) = skb->data;
+ 	fr_eof(fp) = eof;
+ 	fr_sof(fp) = sof;
+ }
+@@ -137,7 +136,7 @@ static inline int fnic_import_rq_eth_pkt(struct sk_buff *skb, u32 len)
+ 	ft = (struct fcoe_crc_eof *)(skb->data + len -
+ 				     transport_len - sizeof(*ft));
+ 	fr_eof(fp) = ft->fcoe_eof;
+-	skb_trim(skb, len - sizeof(*ft));
++	skb_trim(skb, len - transport_len - sizeof(*ft));
+ 	return 0;
+ }
+ 
+@@ -165,7 +164,7 @@ static inline int fnic_handle_flogi_resp(struct fnic *fnic,
+ 			       " matching cached oxid, dropping frame\n");
+ 			ret = -1;
+ 			spin_unlock_irqrestore(&fnic->fnic_lock, flags);
+-			fc_frame_free(fp);
++			fnic_fc_frame_free_irq(fp);
+ 			goto handle_flogi_resp_end;
+ 		}
+ 
+@@ -208,7 +207,7 @@ static inline int fnic_handle_flogi_resp(struct fnic *fnic,
+ 		       fnic_state_str[fnic->state]);
+ 		ret = -1;
+ 		spin_unlock_irqrestore(&fnic->fnic_lock, flags);
+-		fc_frame_free(fp);
++		fnic_fc_frame_free_irq(fp);
+ 		goto handle_flogi_resp_end;
+ 	}
+ 
+@@ -216,7 +215,7 @@ static inline int fnic_handle_flogi_resp(struct fnic *fnic,
+ 
+ 	/* Drop older cached frame */
+ 	if (old_flogi_resp)
+-		fc_frame_free(old_flogi_resp);
++		fnic_fc_frame_free_irq(old_flogi_resp);
+ 
+ 	/* send flogi reg request to firmware, this will put the fnic in
+ 	 * in FC mode
+@@ -238,7 +237,7 @@ static inline int fnic_handle_flogi_resp(struct fnic *fnic,
+ 			fnic->state = FNIC_IN_ETH_MODE;
+ 		spin_unlock_irqrestore(&fnic->fnic_lock, flags);
+ 		if (free_fp)
+-			fc_frame_free(fp);
++			fnic_fc_frame_free_irq(fp);
+ 	}
+ 
+  handle_flogi_resp_end:
+@@ -385,7 +384,7 @@ static void fnic_rq_cmpl_frame_recv(struct vnic_rq *rq, struct cq_desc
+ 		wake_up_process(fnic_thread);
+ 	return;
+ drop:
+-	kfree_skb(skb);
++	dev_kfree_skb_irq(skb);
+ }
+ 
+ static int fnic_rq_cmpl_handler_cont(struct vnic_dev *vdev,
+@@ -459,7 +458,7 @@ void fnic_free_rq_buf(struct vnic_rq *rq, struct vnic_rq_buf *buf)
+ 	pci_unmap_single(fnic->pdev, buf->dma_addr, buf->len,
+ 			 PCI_DMA_FROMDEVICE);
+ 
+-	fc_frame_free(fp);
++	fnic_fc_frame_free(fp);
+ 	buf->os_buf = NULL;
+ }
+ 
+@@ -543,7 +542,7 @@ fnic_send_frame_end:
+ 	spin_unlock_irqrestore(&fnic->wq_lock[0], flags);
+ 
+ 	if (ret)
+-		fc_frame_free(fp);
++		fnic_fc_frame_free_any(fp);
+ 
+ 	return ret;
+ }
+@@ -563,7 +562,7 @@ int fnic_send(struct fc_lport *lp, struct fc_frame *fp)
+ 	struct fc_frame *old_flogi_resp = NULL;
+ 
+ 	if (fnic->in_remove) {
+-		fc_frame_free(fp);
++		fnic_fc_frame_free(fp);
+ 		ret = -1;
+ 		goto fnic_send_end;
+ 	}
+@@ -595,11 +594,11 @@ again:
+ 		spin_unlock_irqrestore(&fnic->fnic_lock, flags);
+ 
+ 		if (old_flogi) {
+-			fc_frame_free(old_flogi);
++			fnic_fc_frame_free(old_flogi);
+ 			old_flogi = NULL;
+ 		}
+ 		if (old_flogi_resp) {
+-			fc_frame_free(old_flogi_resp);
++			fnic_fc_frame_free(old_flogi_resp);
+ 			old_flogi_resp = NULL;
+ 		}
+ 
+@@ -611,7 +610,7 @@ again:
+ 		if (ret) {
+ 			fnic->state = old_state;
+ 			spin_unlock_irqrestore(&fnic->fnic_lock, flags);
+-			fc_frame_free(fp);
++			fnic_fc_frame_free(fp);
+ 			goto fnic_send_end;
+ 		}
+ 		old_flogi = fnic->flogi;
+@@ -652,9 +651,9 @@ again:
+ 
+ fnic_send_end:
+ 	if (old_flogi)
+-		fc_frame_free(old_flogi);
++		fnic_fc_frame_free(old_flogi);
+ 	if (old_flogi_resp)
+-		fc_frame_free(old_flogi_resp);
++		fnic_fc_frame_free(old_flogi_resp);
+ 	return ret;
+ }
+ 
+@@ -662,12 +661,13 @@ static void fnic_wq_complete_frame_send(struct vnic_wq *wq,
+ 					struct cq_desc *cq_desc,
+ 					struct vnic_wq_buf *buf, void *opaque)
+ {
+-	struct fc_frame *fp = buf->os_buf;
++	struct sk_buff *skb = buf->os_buf;
++	struct fc_frame *fp = (struct fc_frame *)skb;
+ 	struct fnic *fnic = vnic_dev_priv(wq->vdev);
+ 
+ 	pci_unmap_single(fnic->pdev, buf->dma_addr,
+ 			 buf->len, PCI_DMA_TODEVICE);
+-	fc_frame_free(fp);
++	fnic_fc_frame_free_irq(fp);
+ 	buf->os_buf = NULL;
+ }
+ 
+@@ -711,6 +711,6 @@ void fnic_free_wq_buf(struct vnic_wq *wq, struct vnic_wq_buf *buf)
+ 	pci_unmap_single(fnic->pdev, buf->dma_addr,
+ 			 buf->len, PCI_DMA_TODEVICE);
+ 
+-	fc_frame_free(fp);
++	fnic_fc_frame_free(fp);
+ 	buf->os_buf = NULL;
+ }
+diff --git a/drivers/scsi/fnic/fnic_main.c b/drivers/scsi/fnic/fnic_main.c
+index 1ec57c8..7912167 100644
+--- a/drivers/scsi/fnic/fnic_main.c
++++ b/drivers/scsi/fnic/fnic_main.c
+@@ -428,10 +428,10 @@ static int fnic_cleanup(struct fnic *fnic)
+ 	spin_unlock_irqrestore(&fnic->fnic_lock, flags);
+ 
+ 	if (flogi)
+-		fc_frame_free(flogi);
++		fnic_fc_frame_free(flogi);
+ 
+ 	if (flogi_resp)
+-		fc_frame_free(flogi_resp);
++		fnic_fc_frame_free(flogi_resp);
+ 
+ 	scsi_free_shared_tag_map(fnic->lport->host);
+ 
+@@ -952,6 +952,8 @@ static void __exit fnic_cleanup_module(void)
+ 		event = list_first_entry(&fnic_eventlist,
+ 					 struct fnic_event, list);
+ 		list_del(&event->list);
++		if (event->fp)
++			fnic_fc_frame_free(event->fp);
+ 		kmem_cache_free(fnic_ev_cache, event);
+ 	}
+ 	spin_unlock_irqrestore(&fnic_eventlist_lock, flags);
+diff --git a/drivers/scsi/fnic/fnic_scsi.c b/drivers/scsi/fnic/fnic_scsi.c
+index c93a266..6f60060 100644
+--- a/drivers/scsi/fnic/fnic_scsi.c
++++ b/drivers/scsi/fnic/fnic_scsi.c
+@@ -509,7 +509,7 @@ static int fnic_fcpio_fw_reset_cmpl_handler(struct fnic *fnic,
+ 		fnic->flogi_oxid = FC_XID_UNKNOWN;
+ 		spin_unlock_irqrestore(&fnic->fnic_lock, flags);
+ 		if (flogi)
+-			fc_frame_free(flogi);
++			fnic_fc_frame_free_irq(flogi);
+ 		goto reset_cmpl_handler_end;
+ 	}
+ 
+@@ -573,7 +573,7 @@ static int fnic_fcpio_flogi_reg_cmpl_handler(struct fnic *fnic,
+ 		event = kmem_cache_alloc(fnic_ev_cache, GFP_ATOMIC);
+ 
+ 		if (!event) {
+-			fc_frame_free(flogi_resp);
++			fnic_fc_frame_free_irq(flogi_resp);
+ 			ret = -1;
+ 			goto reg_cmpl_handler_end;
+ 		}
+@@ -596,7 +596,7 @@ static int fnic_fcpio_flogi_reg_cmpl_handler(struct fnic *fnic,
+ 			wake_up_process(fnic_thread);
+ 	} else
+ 		if (flogi_resp)
+-			fc_frame_free(flogi_resp);
++			fnic_fc_frame_free_irq(flogi_resp);
+ 
+ reg_cmpl_handler_end:
+ 	return ret;
+@@ -975,9 +975,9 @@ static void fnic_cleanup_io(struct fnic *fnic, int exclude_id)
+ 		mempool_free(io_req, fnic->io_req_pool);
+ 
+ cleanup_scsi_cmd:
+-		sc->result = DID_NO_CONNECT << 16;
++		sc->result = DID_TRANSPORT_DISRUPTED << 16;
+ 		printk(KERN_DEBUG DFX "fnic_cleanup_io:"
+-		       " did_no_connect\n", fnic->fnic_no);
++		       " DID_TRANSPORT_DISRUPTED\n", fnic->fnic_no);
+ 
+ 		/* Complete the command to SCSI */
+ 		if (sc->scsi_done)
+diff --git a/drivers/scsi/libfc/fc_exch.c b/drivers/scsi/libfc/fc_exch.c
+index b530de0..c46f909 100644
+--- a/drivers/scsi/libfc/fc_exch.c
++++ b/drivers/scsi/libfc/fc_exch.c
+@@ -1834,17 +1834,18 @@ struct fc_exch_mgr *fc_exch_mgr_alloc(struct fc_lport *lp,
+ 	len += sizeof(struct fc_exch_mgr);
+ 
+ 	mp = kzalloc(len, GFP_ATOMIC);
+-	if (mp) {
+-		mp->class = class;
+-		mp->total_exches = 0;
+-		mp->exches = (struct fc_exch **)(mp + 1);
+-		mp->last_xid = min_xid - 1;
+-		mp->min_xid = min_xid;
+-		mp->max_xid = max_xid;
+-		mp->lp = lp;
+-		INIT_LIST_HEAD(&mp->ex_list);
+-		spin_lock_init(&mp->em_lock);
+-	}
++	if (!mp)
++		return NULL;
++
++	mp->class = class;
++	mp->total_exches = 0;
++	mp->exches = (struct fc_exch **)(mp + 1);
++	mp->last_xid = min_xid - 1;
++	mp->min_xid = min_xid;
++	mp->max_xid = max_xid;
++	mp->lp = lp;
++	INIT_LIST_HEAD(&mp->ex_list);
++	spin_lock_init(&mp->em_lock);
+ 
+ 	mp->ep_pool = mempool_create_slab_pool(2, fc_em_cachep);
+ 	if (!mp->ep_pool)
+diff --git a/drivers/scsi/libfc/fc_fcp.c b/drivers/scsi/libfc/fc_fcp.c
+index 248ea7b..2565176 100644
+--- a/drivers/scsi/libfc/fc_fcp.c
++++ b/drivers/scsi/libfc/fc_fcp.c
+@@ -351,7 +351,7 @@ static void fc_fcp_recv_data(struct fc_fcp_pkt *fsp, struct fc_frame *fp)
+ {
+ 	struct scsi_cmnd *sc = fsp->cmd;
+ 	struct fc_lport *lp = fsp->lp;
+-	struct fcoe_dev_stats *sp;
++	struct fcoe_dev_stats *stats;
+ 	struct fc_frame_header *fh;
+ 	size_t start_offset;
+ 	size_t offset;
+@@ -437,10 +437,12 @@ static void fc_fcp_recv_data(struct fc_fcp_pkt *fsp, struct fc_frame *fp)
+ 
+ 		if (~crc != le32_to_cpu(*(__le32 *)(buf + len))) {
+ crc_err:
+-			sp = lp->dev_stats[smp_processor_id()];
+-			sp->ErrorFrames++;
+-			if (sp->InvalidCRCCount++ < 5)
+-				FC_DBG("CRC error on data frame\n");
++			stats = lp->dev_stats[smp_processor_id()];
++			if (stats) {
++				stats->ErrorFrames++;
++				if (stats->InvalidCRCCount++ < 5)
++					FC_DBG("CRC error on data frame\n");
++			}
+ 			/*
+ 			 * Assume the frame is total garbage.
+ 			 * We may have copied it over the good part
+@@ -1824,15 +1826,20 @@ int fc_queuecommand(struct scsi_cmnd *sc_cmd, void (*done)(struct scsi_cmnd *))
+ 	stats = lp->dev_stats[smp_processor_id()];
+ 	if (sc_cmd->sc_data_direction == DMA_FROM_DEVICE) {
+ 		sp->req_flags = FC_SRB_READ;
+-		stats->InputRequests++;
+-		stats->InputMegabytes = sp->data_len;
++		if (stats) {
++			stats->InputRequests++;
++			stats->InputMegabytes += sp->data_len;
++		}
+ 	} else if (sc_cmd->sc_data_direction == DMA_TO_DEVICE) {
+ 		sp->req_flags = FC_SRB_WRITE;
+-		stats->OutputRequests++;
+-		stats->OutputMegabytes = sp->data_len;
++		if (stats) {
++			stats->OutputRequests++;
++			stats->OutputMegabytes = sp->data_len;
++		}
+ 	} else {
+ 		sp->req_flags = 0;
+-		stats->ControlRequests++;
++		if (stats)
++			stats->ControlRequests++;
+ 	}
+ 
+ 	sp->tgt_flags = rp->flags;
+diff --git a/drivers/scsi/libfc/fc_rport.c b/drivers/scsi/libfc/fc_rport.c
+index 51851da..ab131a2 100644
+--- a/drivers/scsi/libfc/fc_rport.c
++++ b/drivers/scsi/libfc/fc_rport.c
+@@ -981,7 +981,6 @@ void fc_rport_recv_req(struct fc_seq *sp, struct fc_frame *fp,
+ 	}
+ 
+ 	mutex_unlock(&rdata->rp_mutex);
+-	fc_frame_free(fp);
+ }
+ 
+ /**

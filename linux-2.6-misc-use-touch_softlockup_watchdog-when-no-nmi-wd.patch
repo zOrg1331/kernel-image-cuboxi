@@ -1,0 +1,48 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 7 Nov 2007 11:50:33 -0500
+Subject: [misc] use touch_softlockup_watchdog when no nmi wd
+Message-id: 20071107165032.18571.52495.sendpatchset@prarit.boston.redhat.com
+O-Subject: [RHEL 5 PATCH 4/4]: Make touch_nmi_watchdog == touch_softlockup_watchdog if !ARCH_HAS_NMI_WATCHDOG
+Bugzilla: 367251
+
+Backport of commit 9938406ab6b2558d60c0c7200cc8e12f1ea7104a
+
+Make touch_nmi_watchdog imply touch_softlockup_watchdog on all archs.
+
+Acked-by: Alan Cox <alan@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+diff --git a/include/asm-s390/irq.h b/include/asm-s390/irq.h
+index bd1a721..7da991a 100644
+--- a/include/asm-s390/irq.h
++++ b/include/asm-s390/irq.h
+@@ -19,8 +19,5 @@ enum interruption_class {
+ 	NR_IRQS,
+ };
+ 
+-#define touch_nmi_watchdog() do { } while(0)
+-
+ #endif /* __KERNEL__ */
+ #endif
+-
+diff --git a/include/linux/nmi.h b/include/linux/nmi.h
+index c8f4d2f..e16904e 100644
+--- a/include/linux/nmi.h
++++ b/include/linux/nmi.h
+@@ -4,6 +4,7 @@
+ #ifndef LINUX_NMI_H
+ #define LINUX_NMI_H
+ 
++#include <linux/sched.h>
+ #include <asm/irq.h>
+ 
+ /**
+@@ -16,7 +17,7 @@
+ #ifdef ARCH_HAS_NMI_WATCHDOG
+ extern void touch_nmi_watchdog(void);
+ #else
+-# define touch_nmi_watchdog() do { } while(0)
++# define touch_nmi_watchdog() touch_softlockup_watchdog()
+ #endif
+ 
+ #endif

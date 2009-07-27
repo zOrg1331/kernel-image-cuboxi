@@ -1,0 +1,82 @@
+From: Wendy Cheng <wcheng@redhat.com>
+Subject: [RHEL 5.1 PATCH] GFS2 - fix truncate panic(s)
+Date: Mon, 20 Aug 2007 11:54:41 -0400
+Bugzilla: 251053
+Message-Id: <46C9B941.3040709@redhat.com>
+Changelog: [gfs2] fix truncate panic
+
+
+Bugzilla 251053: two fixes in this patch submission - both are in upstream 
+GFS2 nmw tree.  
+o Fix a missing journal transaction during directory leaf split - found 
+during accounting sanity check in gfs2_truncatei() that triggered an 
+assertion failure (panic).
+
+o Make setattr code a NO-OP if request size and actual file size are equal 
+(but still updating the inode time stamp). It is more of a performance fix 
+than bug fix. Served as a workaround to avoid generating large amount of 
+unnecessary IOs that end up panic GFS2 during SPECsfs benchmark runs. 
+-- Wendy 
+
+
+
+--- linux-msp/fs/gfs2/bmap.c	2007-08-20 10:57:45.000000000 -0400
++++ linux-touch/fs/gfs2/bmap.c	2007-08-20 00:13:50.000000000 -0400
+@@ -1089,6 +1089,33 @@ static int do_shrink(struct gfs2_inode *
+ 	return error;
+ }
+ 
++static int do_touch(struct gfs2_inode *ip, u64 size)
++{
++	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
++	struct buffer_head *dibh;
++	int error;
++
++	error = gfs2_trans_begin(sdp, RES_DINODE, 0);
++	if (error)
++		return error;
++
++	down_write(&ip->i_rw_mutex);
++
++	error = gfs2_meta_inode_buffer(ip, &dibh);
++	if (error)
++		goto do_touch_out;
++
++	ip->i_inode.i_mtime = ip->i_inode.i_ctime = CURRENT_TIME;
++	gfs2_trans_add_bh(ip->i_gl, dibh, 1);
++	gfs2_dinode_out(ip, dibh->b_data);
++	brelse(dibh);
++
++do_touch_out:
++	up_write(&ip->i_rw_mutex);
++	gfs2_trans_end(sdp);
++	return error;
++}
++
+ /**
+  * gfs2_truncatei - make a file a given size
+  * @ip: the inode
+@@ -1109,8 +1136,11 @@ int gfs2_truncatei(struct gfs2_inode *ip
+ 
+ 	if (size > ip->i_di.di_size)
+ 		error = do_grow(ip, size);
+-	else
++	else if (size < ip->i_di.di_size)
+ 		error = do_shrink(ip, size);
++	else
++		/* update time stamps */
++		error = do_touch(ip, size);
+ 
+ 	return error;
+ }
+--- linux-msp/fs/gfs2/dir.c	2007-08-20 10:57:45.000000000 -0400
++++ linux-touch/fs/gfs2/dir.c	2007-08-18 13:02:37.000000000 -0400
+@@ -1043,6 +1043,7 @@ static int dir_split_leaf(struct inode *
+ 
+ 	error = gfs2_meta_inode_buffer(dip, &dibh);
+ 	if (!gfs2_assert_withdraw(GFS2_SB(&dip->i_inode), !error)) {
++		gfs2_trans_add_bh(dip->i_gl, dibh, 1);
+ 		dip->i_di.di_blocks++;
+ 		gfs2_set_inode_blocks(&dip->i_inode);
+ 		gfs2_dinode_out(dip, dibh->b_data);
+

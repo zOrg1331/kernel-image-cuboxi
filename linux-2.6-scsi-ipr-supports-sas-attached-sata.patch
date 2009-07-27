@@ -1,0 +1,1307 @@
+Date: Tue, 12 Sep 2006 13:36:51 -0400 (EDT)
+From: "Janice M. Girouard" <jgirouar@redhat.com>
+Subject: RHEL5.0 PPC FEATURE 94948 RHBZ# 196336 Native SAS and SATA device
+ support
+
+
+RHBZ#:
+------
+http://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=196336
+
+Description:
+------------
+Update to ipr driver to support SAS attached SATA devices. This feature is 
+required by the eCLips systems to support native SAS and SATA drivers on 
+the planar.
+
+RHEL Version Found:
+-------------------
+RHEL5.0 Feature
+
+History:
+--------
+This patch was  originally was posted 8/03, before the feature deadline:
+http://post-office.corp.redhat.com/archives/rhkernel-list/2006-July/msg00338.html
+A PM exception is being considered for this feature.
+
+These ipr driver changes are dependent on the addition of new SAS 
+interfaces in the libata SATA code.  In the 8/03 time frame,  Jeff Garzik 
+was concerned about the API changing.  This feature was postponed until 
+the API stabilized. Jeff's patch, which contained the necessary api's, was 
+moved to RHEL5 U1.  Therefore an alternative patch was presented that 
+contained just the SAS api additions and minimized changes to the current 
+code base (the only change to the existing code is to export one 
+subroutine, ata_bus_probe):
+http://post-office.corp.redhat.com/archives/rhkernel-list/2006-September/msg00136.html
+
+This ipr patch was described in msg00136.html above.  The identical code 
+is now being posted for formal review.
+
+Upstream Status:
+----------------
+The final libata patches have been accepted by the libata maintainer:
+http://www.kernel.org/git/gitweb.cgi?p=linux/kernel/git/jgarzik/libata-dev.git;a=commitdiff;h=b03732f00
+6bd1ecee32587ec8235c41af5ad905f
+http://www.kernel.org/git/gitweb.cgi?p=linux/kernel/git/jgarzik/libata-dev.git;a=commitdiff;h=155a8a9c8
+f4084016d9e27bf03ba1f19201438f4
+http://www.kernel.org/git/gitweb.cgi?p=linux/kernel/git/jgarzik/libata-dev.git;a=commitdiff;h=f6d950e2a
+5209bd7e3fb1a238f43f24f3697f5b0
+http://www.kernel.org/git/gitweb.cgi?p=linux/kernel/git/jgarzik/libata-dev.git;a=commitdiff;h=80289167f
+d3ebaeb7b2641e69cbec44b61165fe7
+
+
+Test Status:
+------------
+This patch was built and tested against:
+http://people.redhat.com/dzickus/el5/1.2519.4.18.el5/
+        src/kernel-2.6.17-1.2519.4.18.el5.src.rpm
+The patch builds & boot cleanly.  This will be rebuilt if any changes 
+occur in the libata files while this is being considered for inclusion.
+
+Test cases successfully executed described at:
+http://bugzilla.redhat.com/bugzilla/attachment.cgi?id=135572
+and further described in comment #39 of:
+http://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=196336
+
+Please review and ACK for RHEL5
+
+
+Proposed Patch:
+---------------
+See attachments 1 and 2 to this email.
+
+Content-Description: ipr changes to support SAS devices
+
+
+Signed-off-by: Brian King <brking@us.ibm.com>
+---
+
+ linux-2.6.17.ppc64-bjking1/drivers/scsi/Kconfig  |    1 
+ linux-2.6.17.ppc64-bjking1/drivers/scsi/Makefile |    2 
+ linux-2.6.17.ppc64-bjking1/drivers/scsi/ipr.c    |  711 ++++++++++++++++++++++-
+ linux-2.6.17.ppc64-bjking1/drivers/scsi/ipr.h    |   96 ++-
+ 4 files changed, 783 insertions(+), 27 deletions(-)
+
+diff -puN drivers/scsi/ipr.c~ipr_only_sata_rhel5 drivers/scsi/ipr.c
+--- linux-2.6.17.ppc64/drivers/scsi/ipr.c~ipr_only_sata_rhel5	2006-08-28 16:14:30.000000000 -0500
++++ linux-2.6.17.ppc64-bjking1/drivers/scsi/ipr.c	2006-08-28 16:14:30.000000000 -0500
+@@ -70,6 +70,7 @@
+ #include <linux/firmware.h>
+ #include <linux/module.h>
+ #include <linux/moduleparam.h>
++#include <linux/libata.h>
+ #include <asm/io.h>
+ #include <asm/irq.h>
+ #include <asm/processor.h>
+@@ -78,6 +79,7 @@
+ #include <scsi/scsi_tcq.h>
+ #include <scsi/scsi_eh.h>
+ #include <scsi/scsi_cmnd.h>
++#include <scsi/scsi_transport.h>
+ #include "ipr.h"
+ 
+ /*
+@@ -175,6 +177,8 @@ struct ipr_error_table_t ipr_error_table
+ 	"Qualified success"},
+ 	{0x01080000, 1, 1,
+ 	"FFFE: Soft device bus error recovered by the IOA"},
++	{0x01088100, 0, 1,
++	"4101: Soft device bus fabric error"},
+ 	{0x01170600, 0, 1,
+ 	"FFF9: Device sector reassign successful"},
+ 	{0x01170900, 0, 1,
+@@ -225,6 +229,8 @@ struct ipr_error_table_t ipr_error_table
+ 	"3109: IOA timed out a device command"},
+ 	{0x04088000, 0, 0,
+ 	"3120: SCSI bus is not operational"},
++	{0x04088100, 0, 1,
++	"4100: Hard device bus fabric error"},
+ 	{0x04118000, 0, 1,
+ 	"9000: IOA reserved area data check"},
+ 	{0x04118100, 0, 1,
+@@ -257,6 +263,8 @@ struct ipr_error_table_t ipr_error_table
+ 	"Device bus status error"},
+ 	{0x04448600, 0, 1,
+ 	"8157: IOA error requiring IOA reset to recover"},
++	{0x04448700, 0, 0,
++	"ATA device status error"},
+ 	{0x04490000, 0, 0,
+ 	"Message reject received from the device"},
+ 	{0x04449200, 0, 1,
+@@ -273,6 +281,14 @@ struct ipr_error_table_t ipr_error_table
+ 	"9091: Incorrect hardware configuration change has been detected"},
+ 	{0x04678000, 0, 1,
+ 	"9073: Invalid multi-adapter configuration"},
++	{0x04678100, 0, 1,
++	"4010: Incorrect connection between cascaded expanders"},
++	{0x04678200, 0, 1,
++	"4020: Connections exceed IOA design limits"},
++	{0x04678300, 0, 1,
++	"4030: Incorrect multipath connection"},
++	{0x04679000, 0, 1,
++	"4110: Unsupported enclosure function"},
+ 	{0x046E0000, 0, 1,
+ 	"FFF4: Command to logical unit failed"},
+ 	{0x05240000, 1, 0,
+@@ -297,6 +313,8 @@ struct ipr_error_table_t ipr_error_table
+ 	"9031: Array protection temporarily suspended, protection resuming"},
+ 	{0x06040600, 0, 1,
+ 	"9040: Array protection temporarily suspended, protection resuming"},
++	{0x06288000, 0, 1,
++	"3140: Device bus not ready to ready transition"},
+ 	{0x06290000, 0, 1,
+ 	"FFFB: SCSI bus was reset"},
+ 	{0x06290500, 0, 0,
+@@ -319,6 +337,16 @@ struct ipr_error_table_t ipr_error_table
+ 	"3150: SCSI bus configuration error"},
+ 	{0x06678100, 0, 1,
+ 	"9074: Asymmetric advanced function disk configuration"},
++	{0x06678300, 0, 1,
++	"4040: Incomplete multipath connection between IOA and enclosure"},
++	{0x06678400, 0, 1,
++	"4041: Incomplete multipath connection between enclosure and device"},
++	{0x06678500, 0, 1,
++	"9075: Incomplete multipath connection between IOA and remote IOA"},
++	{0x06678600, 0, 1,
++	"9076: Configuration error, missing remote IOA"},
++	{0x06679100, 0, 1,
++	"4050: Enclosure does not support a required multipath function"},
+ 	{0x06690200, 0, 1,
+ 	"9041: Array protection temporarily suspended"},
+ 	{0x06698200, 0, 1,
+@@ -331,6 +359,10 @@ struct ipr_error_table_t ipr_error_table
+ 	"9072: Link not operational transition"},
+ 	{0x066B8200, 0, 1,
+ 	"9032: Array exposed but still protected"},
++	{0x066B9100, 0, 1,
++	"4061: Multipath redundancy level got better"},
++	{0x066B9200, 0, 1,
++	"4060: Multipath redundancy level got worse"},
+ 	{0x07270000, 0, 0,
+ 	"Failure due to other device"},
+ 	{0x07278000, 0, 1,
+@@ -425,7 +457,8 @@ static void ipr_trc_hook(struct ipr_cmnd
+ 	trace_entry->time = jiffies;
+ 	trace_entry->op_code = ipr_cmd->ioarcb.cmd_pkt.cdb[0];
+ 	trace_entry->type = type;
+-	trace_entry->cmd_index = ipr_cmd->cmd_index;
++	trace_entry->ata_op_code = ipr_cmd->ioarcb.add_data.u.regs.command;
++	trace_entry->cmd_index = ipr_cmd->cmd_index & 0xff;
+ 	trace_entry->res_handle = ipr_cmd->ioarcb.res_handle;
+ 	trace_entry->u.add_data = add_data;
+ }
+@@ -452,8 +485,10 @@ static void ipr_reinit_ipr_cmnd(struct i
+ 	ioarcb->read_ioadl_len = 0;
+ 	ioasa->ioasc = 0;
+ 	ioasa->residual_data_len = 0;
++	ioasa->u.gata.status = 0;
+ 
+ 	ipr_cmd->scsi_cmd = NULL;
++	ipr_cmd->qc = NULL;
+ 	ipr_cmd->sense_buffer[0] = 0;
+ 	ipr_cmd->dma_use_sg = 0;
+ }
+@@ -598,6 +633,28 @@ static int ipr_set_pcix_cmd_reg(struct i
+ }
+ 
+ /**
++ * ipr_sata_eh_done - done function for aborted SATA commands
++ * @ipr_cmd:	ipr command struct
++ *
++ * This function is invoked for ops generated to SATA
++ * devices which are being aborted.
++ *
++ * Return value:
++ * 	none
++ **/
++static void ipr_sata_eh_done(struct ipr_cmnd *ipr_cmd)
++{
++	struct ipr_ioa_cfg *ioa_cfg = ipr_cmd->ioa_cfg;
++	struct ata_queued_cmd *qc = ipr_cmd->qc;
++	struct ipr_sata_port *sata_port = qc->ap->private_data;
++
++	qc->err_mask |= AC_ERR_OTHER;
++	sata_port->ioasa.status |= ATA_BUSY;
++	list_add_tail(&ipr_cmd->queue, &ioa_cfg->free_q);
++	ata_qc_complete(qc);
++}
++
++/**
+  * ipr_scsi_eh_done - mid-layer done function for aborted ops
+  * @ipr_cmd:	ipr command struct
+  *
+@@ -641,6 +698,8 @@ static void ipr_fail_all_ops(struct ipr_
+ 
+ 		if (ipr_cmd->scsi_cmd)
+ 			ipr_cmd->done = ipr_scsi_eh_done;
++		else if (ipr_cmd->qc)
++			ipr_cmd->done = ipr_sata_eh_done;
+ 
+ 		ipr_trc_hook(ipr_cmd, IPR_TRACE_FINISH, IPR_IOASC_IOA_WAS_RESET);
+ 		del_timer(&ipr_cmd->timer);
+@@ -797,6 +856,7 @@ static void ipr_init_res_entry(struct ip
+ 	res->del_from_ml = 0;
+ 	res->resetting_device = 0;
+ 	res->sdev = NULL;
++	res->sata_port = NULL;
+ }
+ 
+ /**
+@@ -3023,6 +3083,17 @@ static int ipr_free_dump(struct ipr_ioa_
+  **/
+ static int ipr_change_queue_depth(struct scsi_device *sdev, int qdepth)
+ {
++	struct ipr_ioa_cfg *ioa_cfg = (struct ipr_ioa_cfg *)sdev->host->hostdata;
++	struct ipr_resource_entry *res;
++	unsigned long lock_flags = 0;
++
++	spin_lock_irqsave(ioa_cfg->host->host_lock, lock_flags);
++	res = (struct ipr_resource_entry *)sdev->hostdata;
++
++	if (res && ipr_is_gata(res) && qdepth > IPR_MAX_CMD_PER_ATA_LUN)
++		qdepth = IPR_MAX_CMD_PER_ATA_LUN;
++	spin_unlock_irqrestore(ioa_cfg->host->host_lock, lock_flags);
++
+ 	scsi_adjust_queue_depth(sdev, scsi_get_tag_type(sdev), qdepth);
+ 	return sdev->queue_depth;
+ }
+@@ -3138,6 +3209,122 @@ static int ipr_biosparam(struct scsi_dev
+ }
+ 
+ /**
++ * ipr_find_starget - Find target based on bus/target.
++ * @starget:	scsi target struct
++ *
++ * Return value:
++ * 	resource entry pointer if found / NULL if not found
++ **/
++static struct ipr_resource_entry *ipr_find_starget(struct scsi_target *starget)
++{
++	struct Scsi_Host *shost = dev_to_shost(&starget->dev);
++	struct ipr_ioa_cfg *ioa_cfg = (struct ipr_ioa_cfg *) shost->hostdata;
++	struct ipr_resource_entry *res;
++
++	list_for_each_entry(res, &ioa_cfg->used_res_q, queue) {
++		if ((res->cfgte.res_addr.bus == starget->channel) &&
++		    (res->cfgte.res_addr.target == starget->id) &&
++		    (res->cfgte.res_addr.lun == 0)) {
++			return res;
++		}
++	}
++
++	return NULL;
++}
++
++static struct ata_port_info sata_port_info;
++
++/**
++ * ipr_target_alloc - Prepare for commands to a SCSI target
++ * @starget:	scsi target struct
++ *
++ * If the device is a SATA device, this function allocates an
++ * ATA port with libata, else it does nothing.
++ *
++ * Return value:
++ * 	0 on success / non-0 on failure
++ **/
++static int ipr_target_alloc(struct scsi_target *starget)
++{
++	struct Scsi_Host *shost = dev_to_shost(&starget->dev);
++	struct ipr_ioa_cfg *ioa_cfg = (struct ipr_ioa_cfg *) shost->hostdata;
++	struct ipr_sata_port *sata_port;
++	struct ata_port *ap;
++	struct ipr_resource_entry *res;
++	unsigned long lock_flags;
++
++	spin_lock_irqsave(ioa_cfg->host->host_lock, lock_flags);
++	res = ipr_find_starget(starget);
++	starget->hostdata = NULL;
++
++	if (res && ipr_is_gata(res)) {
++		spin_unlock_irqrestore(ioa_cfg->host->host_lock, lock_flags);
++		sata_port = kzalloc(sizeof(*sata_port), GFP_KERNEL);
++		if (!sata_port)
++			return -ENOMEM;
++
++		ap = ata_sas_port_alloc(&ioa_cfg->ata_host_set, &sata_port_info, shost);
++		if (ap) {
++			spin_lock_irqsave(ioa_cfg->host->host_lock, lock_flags);
++			sata_port->ioa_cfg = ioa_cfg;
++			sata_port->ap = ap;
++			sata_port->res = res;
++
++			res->sata_port = sata_port;
++			ap->private_data = sata_port;
++			starget->hostdata = sata_port;
++		} else {
++			kfree(sata_port);
++			return -ENOMEM;
++		}
++	}
++	spin_unlock_irqrestore(ioa_cfg->host->host_lock, lock_flags);
++
++	return 0;
++}
++
++/**
++ * ipr_target_destroy - Destroy a SCSI target
++ * @starget:	scsi target struct
++ *
++ * If the device was a SATA device, this function frees the libata
++ * ATA port, else it does nothing.
++ *
++ **/
++static void ipr_target_destroy(struct scsi_target *starget)
++{
++	struct ipr_sata_port *sata_port = starget->hostdata;
++
++	if (sata_port) {
++		starget->hostdata = NULL;
++		ata_sas_port_destroy(sata_port->ap);
++		kfree(sata_port);
++	}
++}
++
++/**
++ * ipr_find_sdev - Find device based on bus/target/lun.
++ * @sdev:	scsi device struct
++ *
++ * Return value:
++ * 	resource entry pointer if found / NULL if not found
++ **/
++static struct ipr_resource_entry *ipr_find_sdev(struct scsi_device *sdev)
++{
++	struct ipr_ioa_cfg *ioa_cfg = (struct ipr_ioa_cfg *) sdev->host->hostdata;
++	struct ipr_resource_entry *res;
++
++	list_for_each_entry(res, &ioa_cfg->used_res_q, queue) {
++		if ((res->cfgte.res_addr.bus == sdev->channel) &&
++		    (res->cfgte.res_addr.target == sdev->id) &&
++		    (res->cfgte.res_addr.lun == sdev->lun))
++			return res;
++	}
++
++	return NULL;
++}
++
++/**
+  * ipr_slave_destroy - Unconfigure a SCSI device
+  * @sdev:	scsi device struct
+  *
+@@ -3155,8 +3342,11 @@ static void ipr_slave_destroy(struct scs
+ 	spin_lock_irqsave(ioa_cfg->host->host_lock, lock_flags);
+ 	res = (struct ipr_resource_entry *) sdev->hostdata;
+ 	if (res) {
++		if (res->sata_port)
++			ata_port_disable(res->sata_port->ap);
+ 		sdev->hostdata = NULL;
+ 		res->sdev = NULL;
++		res->sata_port = NULL;
+ 	}
+ 	spin_unlock_irqrestore(ioa_cfg->host->host_lock, lock_flags);
+ }
+@@ -3191,13 +3381,45 @@ static int ipr_slave_configure(struct sc
+ 		}
+ 		if (ipr_is_vset_device(res) || ipr_is_scsi_disk(res))
+ 			sdev->allow_restart = 1;
+-		scsi_adjust_queue_depth(sdev, 0, sdev->host->cmd_per_lun);
++		if (ipr_is_gata(res) && res->sata_port) {
++			scsi_adjust_queue_depth(sdev, 0, IPR_MAX_CMD_PER_ATA_LUN);
++			ata_sas_slave_configure(sdev, res->sata_port->ap);
++		} else {
++			scsi_adjust_queue_depth(sdev, 0, sdev->host->cmd_per_lun);
++		}
+ 	}
+ 	spin_unlock_irqrestore(ioa_cfg->host->host_lock, lock_flags);
+ 	return 0;
+ }
+ 
+ /**
++ * ipr_ata_slave_alloc - Prepare for commands to a SATA device
++ * @sdev:	scsi device struct
++ *
++ * This function initializes an ATA port so that future commands
++ * sent through queuecommand will work.
++ *
++ * Return value:
++ * 	0 on success
++ **/
++static int ipr_ata_slave_alloc(struct scsi_device *sdev)
++{
++	struct ipr_sata_port *sata_port = NULL;
++	int rc = -ENXIO;
++
++	ENTER;
++	if (sdev->sdev_target)
++		sata_port = sdev->sdev_target->hostdata;
++	if (sata_port)
++		rc = ata_sas_port_init(sata_port->ap);
++	if (rc)
++		ipr_slave_destroy(sdev);
++
++	LEAVE;
++	return rc;
++}
++
++/**
+  * ipr_slave_alloc - Prepare for commands to a device.
+  * @sdev:	scsi device struct
+  *
+@@ -3220,18 +3442,18 @@ static int ipr_slave_alloc(struct scsi_d
+ 
+ 	spin_lock_irqsave(ioa_cfg->host->host_lock, lock_flags);
+ 
+-	list_for_each_entry(res, &ioa_cfg->used_res_q, queue) {
+-		if ((res->cfgte.res_addr.bus == sdev->channel) &&
+-		    (res->cfgte.res_addr.target == sdev->id) &&
+-		    (res->cfgte.res_addr.lun == sdev->lun)) {
+-			res->sdev = sdev;
+-			res->add_to_ml = 0;
+-			res->in_erp = 0;
+-			sdev->hostdata = res;
+-			if (!ipr_is_naca_model(res))
+-				res->needs_sync_complete = 1;
+-			rc = 0;
+-			break;
++	res = ipr_find_sdev(sdev);
++	if (res) {
++		res->sdev = sdev;
++		res->add_to_ml = 0;
++		res->in_erp = 0;
++		sdev->hostdata = res;
++		if (!ipr_is_naca_model(res))
++			res->needs_sync_complete = 1;
++		rc = 0;
++		if (ipr_is_gata(res)) {
++			spin_unlock_irqrestore(ioa_cfg->host->host_lock, lock_flags);
++			return ipr_ata_slave_alloc(sdev);
+ 		}
+ 	}
+ 
+@@ -3286,7 +3508,8 @@ static int ipr_eh_host_reset(struct scsi
+  * This function issues a device reset to the affected device.
+  * If the device is a SCSI device, a LUN reset will be sent
+  * to the device first. If that does not work, a target reset
+- * will be sent.
++ * will be sent. If the device is a SATA device, a PHY reset will
++ * be sent.
+  *
+  * Return value:
+  *	0 on success / non-zero on failure
+@@ -3297,26 +3520,79 @@ static int ipr_device_reset(struct ipr_i
+ 	struct ipr_cmnd *ipr_cmd;
+ 	struct ipr_ioarcb *ioarcb;
+ 	struct ipr_cmd_pkt *cmd_pkt;
++	struct ipr_ioarcb_ata_regs *regs;
+ 	u32 ioasc;
+ 
+ 	ENTER;
+ 	ipr_cmd = ipr_get_free_ipr_cmnd(ioa_cfg);
+ 	ioarcb = &ipr_cmd->ioarcb;
+ 	cmd_pkt = &ioarcb->cmd_pkt;
++	regs = &ioarcb->add_data.u.regs;
+ 
+ 	ioarcb->res_handle = res->cfgte.res_handle;
+ 	cmd_pkt->request_type = IPR_RQTYPE_IOACMD;
+ 	cmd_pkt->cdb[0] = IPR_RESET_DEVICE;
++	if (ipr_is_gata(res)) {
++		cmd_pkt->cdb[2] = IPR_ATA_PHY_RESET;
++		ioarcb->add_cmd_parms_len = cpu_to_be32(sizeof(regs->flags));
++		regs->flags |= IPR_ATA_FLAG_STATUS_ON_GOOD_COMPLETION;
++	}
+ 
+ 	ipr_send_blocking_cmd(ipr_cmd, ipr_timeout, IPR_DEVICE_RESET_TIMEOUT);
+ 	ioasc = be32_to_cpu(ipr_cmd->ioasa.ioasc);
+ 	list_add_tail(&ipr_cmd->queue, &ioa_cfg->free_q);
++	if (ipr_is_gata(res) && res->sata_port && ioasc != IPR_IOASC_IOA_WAS_RESET)
++		memcpy(&res->sata_port->ioasa, &ipr_cmd->ioasa.u.gata,
++		       sizeof(struct ipr_ioasa_gata));
+ 
+ 	LEAVE;
+ 	return (IPR_IOASC_SENSE_KEY(ioasc) ? -EIO : 0);
+ }
+ 
+ /**
++ * ipr_sata_reset - Reset the SATA port
++ * @ap:		SATA port to reset
++ * @classes:	class of the attached device
++ *
++ * This function issues a SATA phy reset to the affected ATA port.
++ *
++ * Return value:
++ *	0 on success / non-zero on failure
++ **/
++static int ipr_sata_reset(struct ata_port *ap, unsigned int *classes)
++{
++	struct ipr_sata_port *sata_port = ap->private_data;
++	struct ipr_ioa_cfg *ioa_cfg = sata_port->ioa_cfg;
++	struct ipr_resource_entry *res;
++	unsigned long lock_flags = 0;
++	int rc = -ENXIO;
++
++	ENTER;
++	spin_lock_irqsave(ioa_cfg->host->host_lock, lock_flags);
++	res = sata_port->res;
++	if (res) {
++		rc = ipr_device_reset(ioa_cfg, res);
++		switch(res->cfgte.proto) {
++		case IPR_PROTO_SATA:
++		case IPR_PROTO_SAS_STP:
++			*classes = ATA_DEV_ATA;
++			break;
++		case IPR_PROTO_SATA_ATAPI:
++		case IPR_PROTO_SAS_STP_ATAPI:
++			*classes = ATA_DEV_ATAPI;
++			break;
++		default:
++			*classes = ATA_DEV_UNKNOWN;
++			break;
++		};
++	}
++
++	spin_unlock_irqrestore(ioa_cfg->host->host_lock, lock_flags);
++	LEAVE;
++	return rc;
++}
++
++/**
+  * ipr_eh_dev_reset - Reset the device
+  * @scsi_cmd:	scsi command struct
+  *
+@@ -3332,7 +3608,8 @@ static int __ipr_eh_dev_reset(struct scs
+ 	struct ipr_cmnd *ipr_cmd;
+ 	struct ipr_ioa_cfg *ioa_cfg;
+ 	struct ipr_resource_entry *res;
+-	int rc;
++	struct ata_port *ap;
++	int rc = 0;
+ 
+ 	ENTER;
+ 	ioa_cfg = (struct ipr_ioa_cfg *) scsi_cmd->device->host->hostdata;
+@@ -3360,7 +3637,14 @@ static int __ipr_eh_dev_reset(struct scs
+ 
+ 	res->resetting_device = 1;
+ 	scmd_printk(KERN_ERR, scsi_cmd, "Resetting device\n");
+-	rc = ipr_device_reset(ioa_cfg, res);
++
++	if (ipr_is_gata(res) && res->sata_port) {
++		ap = res->sata_port->ap;
++		spin_unlock_irq(scsi_cmd->device->host->host_lock);
++		ata_do_eh(ap, NULL, NULL, ipr_sata_reset, NULL);
++		spin_lock_irq(scsi_cmd->device->host->host_lock);
++	} else
++		rc = ipr_device_reset(ioa_cfg, res);
+ 	res->resetting_device = 0;
+ 
+ 	LEAVE;
+@@ -4099,8 +4383,7 @@ static int ipr_get_autosense(struct ipr_
+ {
+ 	struct ipr_ioasa *ioasa = &ipr_cmd->ioasa;
+ 
+-	if ((be32_to_cpu(ioasa->ioasc_specific) &
+-	     (IPR_ADDITIONAL_STATUS_FMT | IPR_AUTOSENSE_VALID)) == 0)
++	if ((be32_to_cpu(ioasa->ioasc_specific) & IPR_AUTOSENSE_VALID) == 0)
+ 		return 0;
+ 
+ 	memcpy(ipr_cmd->scsi_cmd->sense_buffer, ioasa->auto_sense.data,
+@@ -4190,7 +4473,8 @@ static void ipr_erp_start(struct ipr_ioa
+ 	case IPR_IOASC_NR_INIT_CMD_REQUIRED:
+ 		break;
+ 	default:
+-		scsi_cmd->result |= (DID_ERROR << 16);
++		if (IPR_IOASC_SENSE_KEY(ioasc) > RECOVERED_ERROR)
++			scsi_cmd->result |= (DID_ERROR << 16);
+ 		if (!ipr_is_vset_device(res) && !ipr_is_naca_model(res))
+ 			res->needs_sync_complete = 1;
+ 		break;
+@@ -4272,6 +4556,9 @@ static int ipr_queuecommand(struct scsi_
+ 		return 0;
+ 	}
+ 
++	if (ipr_is_gata(res) && res->sata_port)
++		return ata_sas_queuecmd(scsi_cmd, done, res->sata_port->ap);
++
+ 	ipr_cmd = ipr_get_free_ipr_cmnd(ioa_cfg);
+ 	ioarcb = &ipr_cmd->ioarcb;
+ 	list_add_tail(&ipr_cmd->queue, &ioa_cfg->pending_q);
+@@ -4317,6 +4604,26 @@ static int ipr_queuecommand(struct scsi_
+ }
+ 
+ /**
++ * ipr_ioctl - IOCTL handler
++ * @sdev:	scsi device struct
++ * @cmd:	IOCTL cmd
++ * @arg:	IOCTL arg
++ *
++ * Return value:
++ * 	0 on success / other on failure
++ **/
++int ipr_ioctl(struct scsi_device *sdev, int cmd, void __user *arg)
++{
++	struct ipr_resource_entry *res;
++
++	res = (struct ipr_resource_entry *)sdev->hostdata;
++	if (res && ipr_is_gata(res))
++		return ata_scsi_ioctl(sdev, cmd, arg);
++
++	return -EINVAL;
++}
++
++/**
+  * ipr_info - Get information about the card/driver
+  * @scsi_host:	scsi host struct
+  *
+@@ -4338,10 +4645,45 @@ static const char * ipr_ioa_info(struct 
+ 	return buffer;
+ }
+ 
++/**
++ * ipr_scsi_timed_out - Handle scsi command timeout
++ * @scsi_cmd:	scsi command struct
++ *
++ * Return value:
++ * 	EH_NOT_HANDLED
++ **/
++enum scsi_eh_timer_return ipr_scsi_timed_out(struct scsi_cmnd *scsi_cmd)
++{
++	struct ipr_ioa_cfg *ioa_cfg;
++	struct ipr_cmnd *ipr_cmd;
++	unsigned long flags;
++
++	ENTER;
++	spin_lock_irqsave(scsi_cmd->device->host->host_lock, flags);
++	ioa_cfg = (struct ipr_ioa_cfg *)scsi_cmd->device->host->hostdata;
++
++	list_for_each_entry(ipr_cmd, &ioa_cfg->pending_q, queue) {
++		if (ipr_cmd->qc && ipr_cmd->qc->scsicmd == scsi_cmd) {
++			ipr_cmd->qc->err_mask |= AC_ERR_TIMEOUT;
++			ipr_cmd->qc->flags |= ATA_QCFLAG_FAILED;
++			break;
++		}
++	}
++
++	spin_unlock_irqrestore(scsi_cmd->device->host->host_lock, flags);
++	LEAVE;
++	return EH_NOT_HANDLED;
++}
++
++static struct scsi_transport_template ipr_transport_template = {
++	.eh_timed_out = ipr_scsi_timed_out
++};
++
+ static struct scsi_host_template driver_template = {
+ 	.module = THIS_MODULE,
+ 	.name = "IPR",
+ 	.info = ipr_ioa_info,
++	.ioctl = ipr_ioctl,
+ 	.queuecommand = ipr_queuecommand,
+ 	.eh_abort_handler = ipr_eh_abort,
+ 	.eh_device_reset_handler = ipr_eh_dev_reset,
+@@ -4349,6 +4691,8 @@ static struct scsi_host_template driver_
+ 	.slave_alloc = ipr_slave_alloc,
+ 	.slave_configure = ipr_slave_configure,
+ 	.slave_destroy = ipr_slave_destroy,
++	.target_alloc = ipr_target_alloc,
++	.target_destroy = ipr_target_destroy,
+ 	.change_queue_depth = ipr_change_queue_depth,
+ 	.change_queue_type = ipr_change_queue_type,
+ 	.bios_param = ipr_biosparam,
+@@ -4363,6 +4707,330 @@ static struct scsi_host_template driver_
+ 	.proc_name = IPR_NAME
+ };
+ 
++/**
++ * ipr_ata_phy_reset - libata phy_reset handler
++ * @ap:		ata port to reset
++ *
++ **/
++static void ipr_ata_phy_reset(struct ata_port *ap)
++{
++	unsigned long flags;
++	struct ipr_sata_port *sata_port = ap->private_data;
++	struct ipr_resource_entry *res = sata_port->res;
++	struct ipr_ioa_cfg *ioa_cfg = sata_port->ioa_cfg;
++	int rc;
++
++	ENTER;
++	spin_lock_irqsave(ioa_cfg->host->host_lock, flags);
++	while(ioa_cfg->in_reset_reload) {
++		spin_unlock_irqrestore(ioa_cfg->host->host_lock, flags);
++		wait_event(ioa_cfg->reset_wait_q, !ioa_cfg->in_reset_reload);
++		spin_lock_irqsave(ioa_cfg->host->host_lock, flags);
++	}
++
++	if (!ioa_cfg->allow_cmds)
++		goto out_unlock;
++
++	rc = ipr_device_reset(ioa_cfg, res);
++
++	if (rc) {
++		ap->ops->port_disable(ap);
++		goto out_unlock;
++	}
++
++	switch(res->cfgte.proto) {
++	case IPR_PROTO_SATA:
++	case IPR_PROTO_SAS_STP:
++		ap->device[0].class = ATA_DEV_ATA;
++		break;
++	case IPR_PROTO_SATA_ATAPI:
++	case IPR_PROTO_SAS_STP_ATAPI:
++		ap->device[0].class = ATA_DEV_ATAPI;
++		break;
++	default:
++		ap->device[0].class = ATA_DEV_UNKNOWN;
++		ap->ops->port_disable(ap);
++		break;
++	};
++
++out_unlock:
++	spin_unlock_irqrestore(ioa_cfg->host->host_lock, flags);
++	LEAVE;
++}
++
++/**
++ * ipr_ata_post_internal - Cleanup after an internal command
++ * @qc:	ATA queued command
++ *
++ * Return value:
++ * 	none
++ **/
++static void ipr_ata_post_internal(struct ata_queued_cmd *qc)
++{
++	struct ipr_sata_port *sata_port = qc->ap->private_data;
++	struct ipr_ioa_cfg *ioa_cfg = sata_port->ioa_cfg;
++	struct ipr_cmnd *ipr_cmd;
++	unsigned long flags;
++
++	spin_lock_irqsave(ioa_cfg->host->host_lock, flags);
++	list_for_each_entry(ipr_cmd, &ioa_cfg->pending_q, queue) {
++		if (ipr_cmd->qc == qc) {
++			ipr_device_reset(ioa_cfg, sata_port->res);
++			break;
++		}
++	}
++	spin_unlock_irqrestore(ioa_cfg->host->host_lock, flags);
++}
++
++/**
++ * ipr_tf_read - Read the current ATA taskfile for the ATA port
++ * @ap:	ATA port
++ * @tf:	destination ATA taskfile
++ *
++ * Return value:
++ * 	none
++ **/
++static void ipr_tf_read(struct ata_port *ap, struct ata_taskfile *tf)
++{
++	struct ipr_sata_port *sata_port = ap->private_data;
++	struct ipr_ioasa_gata *g = &sata_port->ioasa;
++
++	tf->feature = g->error;
++	tf->nsect = g->nsect;
++	tf->lbal = g->lbal;
++	tf->lbam = g->lbam;
++	tf->lbah = g->lbah;
++	tf->device = g->device;
++	tf->command = g->status;
++	tf->hob_nsect = g->hob_nsect;
++	tf->hob_lbal = g->hob_lbal;
++	tf->hob_lbam = g->hob_lbam;
++	tf->hob_lbah = g->hob_lbah;
++	tf->ctl = g->alt_status;
++}
++
++/**
++ * ipr_copy_sata_tf - Copy a SATA taskfile to an IOA data structure
++ * @regs:	destination
++ * @tf:	source ATA taskfile
++ *
++ * Return value:
++ * 	none
++ **/
++static void ipr_copy_sata_tf(struct ipr_ioarcb_ata_regs *regs,
++			     struct ata_taskfile *tf)
++{
++	regs->feature = tf->feature;
++	regs->nsect = tf->nsect;
++	regs->lbal = tf->lbal;
++	regs->lbam = tf->lbam;
++	regs->lbah = tf->lbah;
++	regs->device = tf->device;
++	regs->command = tf->command;
++	regs->hob_feature = tf->hob_feature;
++	regs->hob_nsect = tf->hob_nsect;
++	regs->hob_lbal = tf->hob_lbal;
++	regs->hob_lbam = tf->hob_lbam;
++	regs->hob_lbah = tf->hob_lbah;
++	regs->ctl = tf->ctl;
++}
++
++/**
++ * ipr_sata_done - done function for SATA commands
++ * @ipr_cmd:	ipr command struct
++ *
++ * This function is invoked by the interrupt handler for
++ * ops generated by the SCSI mid-layer to SATA devices
++ *
++ * Return value:
++ * 	none
++ **/
++static void ipr_sata_done(struct ipr_cmnd *ipr_cmd)
++{
++	struct ipr_ioa_cfg *ioa_cfg = ipr_cmd->ioa_cfg;
++	struct ata_queued_cmd *qc = ipr_cmd->qc;
++	struct ipr_sata_port *sata_port = qc->ap->private_data;
++	struct ipr_resource_entry *res = sata_port->res;
++	u32 ioasc = be32_to_cpu(ipr_cmd->ioasa.ioasc);
++
++	memcpy(&sata_port->ioasa, &ipr_cmd->ioasa.u.gata,
++	       sizeof(struct ipr_ioasa_gata));
++	ipr_dump_ioasa(ioa_cfg, ipr_cmd, res);
++
++	if (be32_to_cpu(ipr_cmd->ioasa.ioasc_specific) & IPR_ATA_DEVICE_WAS_RESET)
++		scsi_report_device_reset(ioa_cfg->host, res->cfgte.res_addr.bus,
++					 res->cfgte.res_addr.target);
++
++	if (IPR_IOASC_SENSE_KEY(ioasc) > RECOVERED_ERROR)
++		qc->err_mask |= __ac_err_mask(ipr_cmd->ioasa.u.gata.status);
++	else
++		qc->err_mask |= ac_err_mask(ipr_cmd->ioasa.u.gata.status);
++	list_add_tail(&ipr_cmd->queue, &ioa_cfg->free_q);
++	ata_qc_complete(qc);
++}
++
++/**
++ * ipr_build_ata_ioadl - Build an ATA scatter/gather list
++ * @ipr_cmd:	ipr command struct
++ * @qc:		ATA queued command
++ *
++ **/
++static void ipr_build_ata_ioadl(struct ipr_cmnd *ipr_cmd,
++				struct ata_queued_cmd *qc)
++{
++	u32 ioadl_flags = 0;
++	struct ipr_ioarcb *ioarcb = &ipr_cmd->ioarcb;
++	struct ipr_ioadl_desc *ioadl = ipr_cmd->ioadl;
++	int len = qc->nbytes + qc->pad_len;
++	struct scatterlist *sg;
++
++	if (len == 0)
++		return;
++
++	if (qc->dma_dir == DMA_TO_DEVICE) {
++		ioadl_flags = IPR_IOADL_FLAGS_WRITE;
++		ioarcb->cmd_pkt.flags_hi |= IPR_FLAGS_HI_WRITE_NOT_READ;
++		ioarcb->write_data_transfer_length = cpu_to_be32(len);
++		ioarcb->write_ioadl_len =
++			cpu_to_be32(sizeof(struct ipr_ioadl_desc) * ipr_cmd->dma_use_sg);
++	} else if (qc->dma_dir == DMA_FROM_DEVICE) {
++		ioadl_flags = IPR_IOADL_FLAGS_READ;
++		ioarcb->read_data_transfer_length = cpu_to_be32(len);
++		ioarcb->read_ioadl_len =
++			cpu_to_be32(sizeof(struct ipr_ioadl_desc) * ipr_cmd->dma_use_sg);
++	}
++
++	ata_for_each_sg(sg, qc) {
++		ioadl->flags_and_data_len = cpu_to_be32(ioadl_flags | sg_dma_len(sg));
++		ioadl->address = cpu_to_be32(sg_dma_address(sg));
++		if (ata_sg_is_last(sg, qc))
++			ioadl->flags_and_data_len |= cpu_to_be32(IPR_IOADL_FLAGS_LAST);
++		else
++			ioadl++;
++	}
++}
++
++/**
++ * ipr_qc_issue - Issue a SATA qc to a device
++ * @qc:	queued command
++ *
++ * Return value:
++ * 	0 if success
++ **/
++static unsigned int ipr_qc_issue(struct ata_queued_cmd *qc)
++{
++	struct ata_port *ap = qc->ap;
++	struct ipr_sata_port *sata_port = ap->private_data;
++	struct ipr_resource_entry *res = sata_port->res;
++	struct ipr_ioa_cfg *ioa_cfg = sata_port->ioa_cfg;
++	struct ipr_cmnd *ipr_cmd;
++	struct ipr_ioarcb *ioarcb;
++	struct ipr_ioarcb_ata_regs *regs;
++
++	if (unlikely(!ioa_cfg->allow_cmds || ioa_cfg->ioa_is_dead))
++		return -EIO;
++
++	ipr_cmd = ipr_get_free_ipr_cmnd(ioa_cfg);
++	ioarcb = &ipr_cmd->ioarcb;
++	regs = &ioarcb->add_data.u.regs;
++
++	memset(&ioarcb->add_data, 0, sizeof(ioarcb->add_data));
++	ioarcb->add_cmd_parms_len = cpu_to_be32(sizeof(ioarcb->add_data.u.regs));
++
++	list_add_tail(&ipr_cmd->queue, &ioa_cfg->pending_q);
++	ipr_cmd->qc = qc;
++	ipr_cmd->done = ipr_sata_done;
++	ipr_cmd->ioarcb.res_handle = res->cfgte.res_handle;
++	ioarcb->cmd_pkt.request_type = IPR_RQTYPE_ATA_PASSTHRU;
++	ioarcb->cmd_pkt.flags_hi |= IPR_FLAGS_HI_NO_LINK_DESC;
++	ioarcb->cmd_pkt.flags_hi |= IPR_FLAGS_HI_NO_ULEN_CHK;
++	ipr_cmd->dma_use_sg = qc->pad_len ? qc->n_elem + 1 : qc->n_elem;
++
++	ipr_build_ata_ioadl(ipr_cmd, qc);
++	regs->flags |= IPR_ATA_FLAG_STATUS_ON_GOOD_COMPLETION;
++	ipr_copy_sata_tf(regs, &qc->tf);
++	memcpy(ioarcb->cmd_pkt.cdb, qc->cdb, IPR_MAX_CDB_LEN);
++	ipr_trc_hook(ipr_cmd, IPR_TRACE_START, IPR_GET_PHYS_LOC(res->cfgte.res_addr));
++
++	switch (qc->tf.protocol) {
++	case ATA_PROT_NODATA:
++	case ATA_PROT_PIO:
++		break;
++
++	case ATA_PROT_DMA:
++		regs->flags |= IPR_ATA_FLAG_XFER_TYPE_DMA;
++		break;
++
++	case ATA_PROT_ATAPI:
++	case ATA_PROT_ATAPI_NODATA:
++		regs->flags |= IPR_ATA_FLAG_PACKET_CMD;
++		break;
++
++	case ATA_PROT_ATAPI_DMA:
++		regs->flags |= IPR_ATA_FLAG_PACKET_CMD;
++		regs->flags |= IPR_ATA_FLAG_XFER_TYPE_DMA;
++		break;
++
++	default:
++		WARN_ON(1);
++		return -1;
++	}
++
++	mb();
++	writel(be32_to_cpu(ioarcb->ioarcb_host_pci_addr),
++	       ioa_cfg->regs.ioarrin_reg);
++	return 0;
++}
++
++/**
++ * ipr_ata_check_status - Return last ATA status
++ * @ap:	ATA port
++ *
++ * Return value:
++ * 	ATA status
++ **/
++static u8 ipr_ata_check_status(struct ata_port *ap)
++{
++	struct ipr_sata_port *sata_port = ap->private_data;
++	return sata_port->ioasa.status;
++}
++
++/**
++ * ipr_ata_check_altstatus - Return last ATA altstatus
++ * @ap:	ATA port
++ *
++ * Return value:
++ * 	Alt ATA status
++ **/
++static u8 ipr_ata_check_altstatus(struct ata_port *ap)
++{
++	struct ipr_sata_port *sata_port = ap->private_data;
++	return sata_port->ioasa.alt_status;
++}
++
++static struct ata_port_operations ipr_sata_ops = {
++	.port_disable = ata_port_disable,
++	.check_status = ipr_ata_check_status,
++	.check_altstatus = ipr_ata_check_altstatus,
++	.dev_select = ata_noop_dev_select,
++	.phy_reset = ipr_ata_phy_reset,
++	.post_internal_cmd = ipr_ata_post_internal,
++	.tf_read = ipr_tf_read,
++	.qc_prep = ata_noop_qc_prep,
++	.qc_issue = ipr_qc_issue,
++	.port_start = ata_sas_port_start,
++	.port_stop = ata_sas_port_stop
++};
++
++static struct ata_port_info sata_port_info = {
++	.host_flags	= ATA_FLAG_SATA | ATA_FLAG_NO_LEGACY | ATA_FLAG_SATA_RESET |
++	ATA_FLAG_MMIO | ATA_FLAG_PIO_DMA,
++	.pio_mask	= 0x10, /* pio4 */
++	.mwdma_mask = 0x07,
++	.udma_mask	= 0x7f, /* udma0-6 */
++	.port_ops	= &ipr_sata_ops
++};
++
+ #ifdef CONFIG_PPC_PSERIES
+ static const u16 ipr_blocked_processors[] = {
+ 	PV_NORTHSTAR,
+@@ -6346,6 +7014,9 @@ static int __devinit ipr_probe_ioa(struc
+ 
+ 	ioa_cfg = (struct ipr_ioa_cfg *)host->hostdata;
+ 	memset(ioa_cfg, 0, sizeof(struct ipr_ioa_cfg));
++	host->transportt = &ipr_transport_template;
++	ata_host_set_init(&ioa_cfg->ata_host_set, &pdev->dev,
++			  sata_port_info.host_flags, &ipr_sata_ops);
+ 
+ 	ioa_cfg->chip_cfg = ipr_get_chip_cfg(dev_id);
+ 
+diff -puN drivers/scsi/ipr.h~ipr_only_sata_rhel5 drivers/scsi/ipr.h
+--- linux-2.6.17.ppc64/drivers/scsi/ipr.h~ipr_only_sata_rhel5	2006-08-28 16:14:30.000000000 -0500
++++ linux-2.6.17.ppc64-bjking1/drivers/scsi/ipr.h	2006-08-28 16:14:30.000000000 -0500
+@@ -28,6 +28,7 @@
+ 
+ #include <linux/types.h>
+ #include <linux/completion.h>
++#include <linux/libata.h>
+ #include <linux/list.h>
+ #include <linux/kref.h>
+ #include <scsi/scsi.h>
+@@ -36,8 +37,8 @@
+ /*
+  * Literals
+  */
+-#define IPR_DRIVER_VERSION "2.1.3"
+-#define IPR_DRIVER_DATE "(March 29, 2006)"
++#define IPR_DRIVER_VERSION "2.2.0"
++#define IPR_DRIVER_DATE "(August 3, 2006)"
+ 
+ /*
+  * IPR_MAX_CMD_PER_LUN: This defines the maximum number of outstanding
+@@ -45,6 +46,7 @@
+  *	This can be adjusted at runtime through sysfs device attributes.
+  */
+ #define IPR_MAX_CMD_PER_LUN				6
++#define IPR_MAX_CMD_PER_ATA_LUN			1
+ 
+ /*
+  * IPR_NUM_BASE_CMD_BLKS: This defines the maximum number of
+@@ -106,7 +108,7 @@
+ #define IPR_IOA_BUS						0xff
+ #define IPR_IOA_TARGET					0xff
+ #define IPR_IOA_LUN						0xff
+-#define IPR_MAX_NUM_BUSES				8
++#define IPR_MAX_NUM_BUSES				16
+ #define IPR_MAX_BUS_TO_SCAN				IPR_MAX_NUM_BUSES
+ 
+ #define IPR_NUM_RESET_RELOAD_RETRIES		3
+@@ -145,6 +147,7 @@
+ #define	IPR_LUN_RESET					0x40
+ #define	IPR_TARGET_RESET					0x20
+ #define	IPR_BUS_RESET					0x10
++#define	IPR_ATA_PHY_RESET					0x80
+ #define IPR_ID_HOST_RR_Q				0xC4
+ #define IPR_QUERY_IOA_CONFIG				0xC5
+ #define IPR_CANCEL_ALL_REQUESTS			0xCE
+@@ -295,7 +298,11 @@ struct ipr_std_inq_data {
+ }__attribute__ ((packed));
+ 
+ struct ipr_config_table_entry {
+-	u8 service_level;
++	u8 proto;
++#define IPR_PROTO_SATA			0x02
++#define IPR_PROTO_SATA_ATAPI		0x03
++#define IPR_PROTO_SAS_STP		0x06
++#define IPR_PROTO_SAS_STP_ATAPI	0x07
+ 	u8 array_id;
+ 	u8 flags;
+ #define IPR_IS_IOA_RESOURCE	0x80
+@@ -307,6 +314,7 @@ struct ipr_config_table_entry {
+ #define IPR_SUBTYPE_AF_DASD			0
+ #define IPR_SUBTYPE_GENERIC_SCSI	1
+ #define IPR_SUBTYPE_VOLUME_SET		2
++#define IPR_SUBTYPE_GENERIC_ATA	4
+ 
+ #define IPR_QUEUEING_MODEL(res)	((((res)->cfgte.flags) & 0x70) >> 4)
+ #define IPR_QUEUE_FROZEN_MODEL	0
+@@ -350,6 +358,7 @@ struct ipr_cmd_pkt {
+ #define IPR_RQTYPE_SCSICDB		0x00
+ #define IPR_RQTYPE_IOACMD		0x01
+ #define IPR_RQTYPE_HCAM			0x02
++#define IPR_RQTYPE_ATA_PASSTHRU	0x04
+ 
+ 	u8 luntar_luntrn;
+ 
+@@ -373,6 +382,37 @@ struct ipr_cmd_pkt {
+ 	__be16 timeout;
+ }__attribute__ ((packed, aligned(4)));
+ 
++struct ipr_ioarcb_ata_regs {
++	u8 flags;
++#define IPR_ATA_FLAG_PACKET_CMD			0x80
++#define IPR_ATA_FLAG_XFER_TYPE_DMA			0x40
++#define IPR_ATA_FLAG_STATUS_ON_GOOD_COMPLETION	0x20
++	u8 reserved[3];
++
++	__be16 data;
++	u8 feature;
++	u8 nsect;
++	u8 lbal;
++	u8 lbam;
++	u8 lbah;
++	u8 device;
++	u8 command;
++	u8 reserved2[3];
++	u8 hob_feature;
++	u8 hob_nsect;
++	u8 hob_lbal;
++	u8 hob_lbam;
++	u8 hob_lbah;
++	u8 ctl;
++}__attribute__ ((packed, aligned(4)));
++
++struct ipr_ioarcb_add_data {
++	union {
++		struct ipr_ioarcb_ata_regs regs;
++		__be32 add_cmd_parms[10];
++	}u;
++}__attribute__ ((packed, aligned(4)));
++
+ /* IOA Request Control Block    128 bytes  */
+ struct ipr_ioarcb {
+ 	__be32 ioarcb_host_pci_addr;
+@@ -397,7 +437,7 @@ struct ipr_ioarcb {
+ 	struct ipr_cmd_pkt cmd_pkt;
+ 
+ 	__be32 add_cmd_parms_len;
+-	__be32 add_cmd_parms[10];
++	struct ipr_ioarcb_add_data add_data;
+ }__attribute__((packed, aligned (4)));
+ 
+ struct ipr_ioadl_desc {
+@@ -433,6 +473,21 @@ struct ipr_ioasa_gpdd {
+ 	__be32 ioa_data[2];
+ }__attribute__((packed, aligned (4)));
+ 
++struct ipr_ioasa_gata {
++	u8 error;
++	u8 nsect;		/* Interrupt reason */
++	u8 lbal;
++	u8 lbam;
++	u8 lbah;
++	u8 device;
++	u8 status;
++	u8 alt_status;	/* ATA CTL */
++	u8 hob_nsect;
++	u8 hob_lbal;
++	u8 hob_lbam;
++	u8 hob_lbah;
++}__attribute__((packed, aligned (4)));
++
+ struct ipr_auto_sense {
+ 	__be16 auto_sense_len;
+ 	__be16 ioa_data_len;
+@@ -466,6 +521,7 @@ struct ipr_ioasa {
+ 	__be32 ioasc_specific;	/* status code specific field */
+ #define IPR_ADDITIONAL_STATUS_FMT		0x80000000
+ #define IPR_AUTOSENSE_VALID			0x40000000
++#define IPR_ATA_DEVICE_WAS_RESET		0x20000000
+ #define IPR_IOASC_SPECIFIC_MASK		0x00ffffff
+ #define IPR_FIELD_POINTER_VALID		(0x80000000 >> 8)
+ #define IPR_FIELD_POINTER_MASK		0x0000ffff
+@@ -474,6 +530,7 @@ struct ipr_ioasa {
+ 		struct ipr_ioasa_vset vset;
+ 		struct ipr_ioasa_af_dasd dasd;
+ 		struct ipr_ioasa_gpdd gpdd;
++		struct ipr_ioasa_gata gata;
+ 	} u;
+ 
+ 	struct ipr_auto_sense auto_sense;
+@@ -793,6 +850,13 @@ struct ipr_bus_attributes {
+ 	u32 max_xfer_rate;
+ };
+ 
++struct ipr_sata_port {
++	struct ipr_ioa_cfg *ioa_cfg;
++	struct ata_port *ap;
++	struct ipr_resource_entry *res;
++	struct ipr_ioasa_gata ioasa;
++};
++
+ struct ipr_resource_entry {
+ 	struct ipr_config_table_entry cfgte;
+ 	u8 needs_sync_complete:1;
+@@ -802,6 +866,7 @@ struct ipr_resource_entry {
+ 	u8 resetting_device:1;
+ 
+ 	struct scsi_device *sdev;
++	struct ipr_sata_port *sata_port;
+ 	struct list_head queue;
+ };
+ 
+@@ -872,10 +937,11 @@ struct ipr_trace_entry {
+ 	u32 time;
+ 
+ 	u8 op_code;
++	u8 ata_op_code;
+ 	u8 type;
+ #define IPR_TRACE_START			0x00
+ #define IPR_TRACE_FINISH		0xff
+-	u16 cmd_index;
++	u8 cmd_index;
+ 
+ 	__be32 res_handle;
+ 	union {
+@@ -1017,6 +1083,7 @@ struct ipr_ioa_cfg {
+ 
+ 	struct ipr_cmnd *reset_cmd;
+ 
++	struct ata_host_set ata_host_set;
+ 	char ipr_cmd_label[8];
+ #define IPR_CMD_LABEL		"ipr_cmnd"
+ 	struct ipr_cmnd *ipr_cmnd_list[IPR_NUM_CMD_BLKS];
+@@ -1029,6 +1096,7 @@ struct ipr_cmnd {
+ 	struct ipr_ioadl_desc ioadl[IPR_NUM_IOADL_ENTRIES];
+ 	struct list_head queue;
+ 	struct scsi_cmnd *scsi_cmd;
++	struct ata_queued_cmd *qc;
+ 	struct completion completion;
+ 	struct timer_list timer;
+ 	void (*done) (struct ipr_cmnd *);
+@@ -1308,6 +1376,22 @@ static inline int ipr_is_scsi_disk(struc
+ }
+ 
+ /**
++ * ipr_is_gata - Determine if a resource is a generic ATA resource
++ * @res:	resource entry struct
++ *
++ * Return value:
++ * 	1 if GATA / 0 if not GATA
++ **/
++static inline int ipr_is_gata(struct ipr_resource_entry *res)
++{
++	if (!ipr_is_ioa_resource(res) &&
++	    IPR_RES_SUBTYPE(res) == IPR_SUBTYPE_GENERIC_ATA)
++		return 1;
++	else
++		return 0;
++}
++
++/**
+  * ipr_is_naca_model - Determine if a resource is using NACA queueing model
+  * @res:	resource entry struct
+  *
+diff -puN drivers/scsi/Kconfig~ipr_only_sata_rhel5 drivers/scsi/Kconfig
+--- linux-2.6.17.ppc64/drivers/scsi/Kconfig~ipr_only_sata_rhel5	2006-08-28 16:14:30.000000000 -0500
++++ linux-2.6.17.ppc64-bjking1/drivers/scsi/Kconfig	2006-08-28 16:14:30.000000000 -0500
+@@ -1124,6 +1124,7 @@ config SCSI_IPR
+ 	tristate "IBM Power Linux RAID adapter support"
+ 	depends on PCI && SCSI
+ 	select FW_LOADER
++	select SCSI_SATA
+ 	---help---
+ 	  This driver supports the IBM Power Linux family RAID adapters.
+ 	  This includes IBM pSeries 5712, 5703, 5709, and 570A, as well
+diff -puN drivers/scsi/Makefile~ipr_only_sata_rhel5 drivers/scsi/Makefile
+--- linux-2.6.17.ppc64/drivers/scsi/Makefile~ipr_only_sata_rhel5	2006-08-28 16:14:30.000000000 -0500
++++ linux-2.6.17.ppc64-bjking1/drivers/scsi/Makefile	2006-08-28 16:14:30.000000000 -0500
+@@ -121,7 +121,7 @@ obj-$(CONFIG_SUN3X_ESP)		+= NCR53C9x.o	s
+ obj-$(CONFIG_SCSI_FCAL)		+= fcal.o
+ obj-$(CONFIG_SCSI_LASI700)	+= 53c700.o lasi700.o
+ obj-$(CONFIG_SCSI_NSP32)	+= nsp32.o
+-obj-$(CONFIG_SCSI_IPR)		+= ipr.o
++obj-$(CONFIG_SCSI_IPR)		+= libata.o ipr.o
+ obj-$(CONFIG_SCSI_IBMVSCSI)	+= ibmvscsi/
+ obj-$(CONFIG_SCSI_SATA_AHCI)	+= libata.o ahci.o
+ obj-$(CONFIG_SCSI_SATA_SVW)	+= libata.o sata_svw.o

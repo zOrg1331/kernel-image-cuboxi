@@ -1,0 +1,87 @@
+From: Jeff Layton <jlayton@redhat.com>
+Subject: [RHEL5.1 PATCH] BZ#249394: [CIFS] fix deadlock in 	cifs_get_inode_info_unix
+Date: Wed, 15 Aug 2007 12:46:26 -0400
+Bugzilla: 249394
+Message-Id: <200708151646.l7FGkQ84013759@dantu.rdu.redhat.com>
+Changelog: [fs] CIFS: fix deadlock in cifs_get_inode_info_unix
+
+
+This patch is a very late breaking patch that fixes a regression in the
+latest CIFS code. In February, an upstream patch was committed to fix a
+deadlock that occurred due to CIFS calling i_size_write without holding
+the i_mutex.  This fix involved having CIFS use the i_lock to
+synchronize calls to i_size_read and i_size_write.
+
+Unfortunately, this introduces a new deadlock. CIFS has an internal
+function called is_size_safe_to_change that is now called while holding
+the i_lock. That function can sleep via a sequence of calls starting
+with find_writable_file.
+
+In this case, CIFS doesn't actually need a writable filehandle, it's
+just interested in whether the file might be in the process of being
+written. The fix is to add a new function that answers this question
+without the possibility of sleeping.
+
+This patch has been upstream for about 3 weeks. There is a fairly
+reliable reproducer for this problem and this patch seems to fix it.
+
+---
+ fs/cifs/file.c |   33 +++++++++++++++++++++++----------
+ 1 files changed, 23 insertions(+), 10 deletions(-)
+
+diff --git a/fs/cifs/file.c b/fs/cifs/file.c
+index 26e5453..603cf48 100644
+--- a/fs/cifs/file.c
++++ b/fs/cifs/file.c
+@@ -2047,6 +2047,25 @@ static int cifs_readpage(struct file *file, struct page *page)
+ 	return rc;
+ }
+ 
++static int is_inode_writable(struct cifsInodeInfo *cifs_inode)
++{
++	struct cifsFileInfo *open_file;
++
++	read_lock(&GlobalSMBSeslock);
++	list_for_each_entry(open_file, &cifs_inode->openFileList, flist) {
++		if (open_file->closePend)
++			continue;
++		if (open_file->pfile &&
++		    ((open_file->pfile->f_flags & O_RDWR) ||
++		     (open_file->pfile->f_flags & O_WRONLY))) {
++			read_unlock(&GlobalSMBSeslock);
++			return 1;
++		}
++	}
++	read_unlock(&GlobalSMBSeslock);
++	return 0;
++}
++
+ /* We do not want to update the file size from server for inodes
+    open for write - to avoid races with writepage extending
+    the file - in the future we could consider allowing
+@@ -2055,18 +2074,12 @@ static int cifs_readpage(struct file *file, struct page *page)
+    page caching in the current Linux kernel design */
+ int is_size_safe_to_change(struct cifsInodeInfo *cifsInode, __u64 end_of_file)
+ {
+-	struct cifsFileInfo *open_file = NULL;
+-
+-	if (cifsInode)
+-		open_file =  find_writable_file(cifsInode);
+- 
+-	if(open_file) {
++	if (!cifsInode)
++		return 1;
++	if (is_inode_writable(cifsInode)) {
++		/* This inode is open for write at least once */
+ 		struct cifs_sb_info *cifs_sb;
+ 
+-		/* there is not actually a write pending so let
+-		this handle go free and allow it to
+-		be closable if needed */
+-		atomic_dec(&open_file->wrtPending);
+ #if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ 		cifs_sb = CIFS_SB(cifsInode->vfs_inode.i_sb);
+ #else
+-- 
+1.5.2.2
+

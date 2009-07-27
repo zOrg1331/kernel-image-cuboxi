@@ -1,0 +1,50 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 11 Dec 2007 10:06:00 -0500
+Subject: [fs] cifs: update CHANGES file and version string
+Message-id: 1197385560-21991-16-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.2 PATCH 15/15] BZ#417961: [CIFS] update CHANGES file and version string
+Bugzilla: 417961
+
+...declare this to be version 1.50cRH
+
+diff --git a/fs/cifs/CHANGES b/fs/cifs/CHANGES
+index 41e3b6a..0835c40 100644
+--- a/fs/cifs/CHANGES
++++ b/fs/cifs/CHANGES
+@@ -1,3 +1,25 @@
++Version 1.50cRH
++---------------
++Fix memory leak in statfs when mounted to very old servers (e.g.
++Windows 9x).  Add new feature "POSIX open" which allows servers
++which support the current POSIX Extensions to provide better semantics
++(e.g. delete for open files opened with posix open).  Take into
++account umask on posix mkdir not just older style mkdir.
++
++Also, these patches were backported for this release:
++    BZ#417961: [CIFS] Fix endian conversion problem in posix mkdir
++    BZ#329431: [CIFS] Fix potential data corruption when writing out cached dirty pages
++    BZ#417961: [CIFS] when mount helper missing fix slash wrong direction in share
++    BZ#417961: [CIFS] fix error message about packet signing
++    BZ#417961: [CIFS] Fix cifsd so shuts down when signing fails during mount
++    BZ#417961: [CIFS] Reduce chance of list corruption in find_writable_file
++    BZ#417961: [CIFS] Fix memory leak in statfs to very old servers
++    BZ#373001: [CIFS] Fix buffer overflow if server sends corrupt response to small request
++    BZ#417961: [CIFS] log better errors on failed mounts
++    BZ#354371: [CIFS] fix oops on second mount to same server when null auth is used
++    BZ#417961: [CIFS] Fix spurious reconnect on 2nd peek from read of SMB length
++    BZ#336501: [CIFS] fix bad handling of EAGAIN error on kernel_recvmsg in cifs_demultiplex_thread
++
+ Version 1.50
+ ------------
+ Fix NTLMv2 signing. NFS server mounted over cifs works (if cifs mount is
+diff --git a/fs/cifs/cifsfs.h b/fs/cifs/cifsfs.h
+index 57e22ef..25bf891 100644
+--- a/fs/cifs/cifsfs.h
++++ b/fs/cifs/cifsfs.h
+@@ -145,5 +145,5 @@ extern ssize_t	cifs_getxattr(struct dentry *, const char *, void *, size_t);
+ extern ssize_t	cifs_listxattr(struct dentry *, char *, size_t);
+ extern int cifs_ioctl(struct inode *inode, struct file *filep,
+ 		       unsigned int command, unsigned long arg);
+-#define CIFS_VERSION   "1.51"
++#define CIFS_VERSION   "1.50cRH"
+ #endif				/* _CIFSFS_H */

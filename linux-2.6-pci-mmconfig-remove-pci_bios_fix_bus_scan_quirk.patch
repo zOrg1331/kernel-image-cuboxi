@@ -1,0 +1,152 @@
+From: Tony Camuso <tcamuso@redhat.com>
+Date: Fri, 6 Jun 2008 14:01:59 -0400
+Subject: [pci] mmconfig: remove pci_bios_fix_bus_scan_quirk
+Message-id: 48497B97.3010305@redhat.com
+O-Subject: [RHEL5.3 PATCH 1/3] PCI MMCONFIG: Remove pci_bios_fix_bus_scan_quirk() and references to it
+Bugzilla: 441615 251493
+RH-Acked-by: Alan Cox <alan@redhat.com>
+
+commit c0a90ca1c287586222e1792e2c7522c70eff408c
+Author: Tony Camuso <tony.camuso@hp.com>
+Date:   Sat May 31 07:31:34 2008 -0400
+
+     Remove pcibios_fix_bus_scan_quirk() and references to it
+
+     This function was introduced in the mmcfg patch submitted to RHKL
+     on 2008-01-08 and is not needed to implement the patch that was
+     finally accepted upstream on 2008-01-14 by Ivan Kokshaysky.
+     (commit: a0ca9909609470ad779b9b9cc68ce96e975afff7)
+
+  arch/i386/pci/common.c |   69 ------------------------------------------------
+  drivers/pci/pci.c      |    9 ------
+  drivers/pci/pci.h      |    1 -
+  drivers/pci/probe.c    |    5 ---
+  4 files changed, 0 insertions(+), 84 deletions(-)
+
+     Signed-off-by: Tony Camuso <tcamuso@redhat.com>
+
+diff --git a/arch/i386/pci/common.c b/arch/i386/pci/common.c
+index 1838be8..95f9d14 100644
+--- a/arch/i386/pci/common.c
++++ b/arch/i386/pci/common.c
+@@ -525,72 +525,3 @@ void pcibios_disable_device (struct pci_dev *dev)
+ 	if (pcibios_disable_irq)
+ 		pcibios_disable_irq(dev);
+ }
+-
+-/**
+- * This routine traps devices not correctly responding to MMCONFIG access.
+- * For each device on the current bus, compare a mmconf read of the
+- * vendor/device dword with a legacy PCI config read. If they're not the same,
+- * the bus serving this device must use legacy PCI config accesses instead of
+- * mmconf, as must all buses descending from this bus.
+- */
+-void __devinit pcibios_fix_bus_scan_quirk(struct pci_bus *bus)
+-{
+-	int devfn;
+-	int fail;
+-	int found_nommconf_dev = 0;
+-	static int advised;
+-	u32 mcfg_vendev;
+-	u32 arch_vendev;
+-	struct pci_ops *save_ops = bus->ops;
+-
+-	/*
+-	 * Return here if mmconf is NOT the default platform-wide pci config
+-	 * access mechanism, or if this bus is within the range checked by
+-	 * unreachable_devices().
+-	 */
+-	if (((pci_probe & PCI_USING_MMCONF) == 0) ||
+-	    (bus->number < MAX_CHECK_BUS))
+-		return;
+-	/*
+-	 * If the parent bus has already been programmed for legacy pci config
+-	 * access, then there is no need to scan this bus.
+-	 */
+-	if (bus->parent != NULL)
+-		if (bus->parent->ops == &pci_legacy_ops)
+-			return;
+-
+-	if (!advised) {
+-		pr_info("PCI: If a device isn't working, "
+-			"try \"pci=nommconf\".\n");
+-		advised = 1;
+-	}
+-	pr_debug("PCI: Checking bus %04x:%02x for MMCONFIG compliance.\n",
+-		 pci_domain_nr(bus), bus->number);
+-
+-	for (devfn = 0; devfn < 256; devfn++) {
+-		bus->ops = &pci_legacy_ops;
+-		fail = pci_bus_read_config_dword(bus, devfn, PCI_VENDOR_ID,
+-						 &arch_vendev);
+-		if ((arch_vendev == 0xFFFFFFFF) || (arch_vendev == 0) || fail)
+-			continue;
+-
+-		bus->ops = save_ops;	/* Restore to original value */
+-		pci_bus_read_config_dword(bus, devfn, PCI_VENDOR_ID,
+-					  &mcfg_vendev);
+-		if (mcfg_vendev != arch_vendev) {
+-			found_nommconf_dev = 1;
+-			break;
+-		}
+-	}
+-
+-	if (found_nommconf_dev) {
+-		pr_info("PCI: Device at %04x:%02x.%02x.%x is not MMCONFIG "
+-			"compliant.\n", pci_domain_nr(bus), bus->number,
+-			PCI_SLOT(devfn), PCI_FUNC(devfn));
+-		pr_info("PCI: Bus %04x:%02x and its descendents cannot use "
+-			"MMCONFIG.\n", pci_domain_nr(bus), bus->number);
+-		bus->ops = &pci_legacy_ops;	/* Use Legacy PCI Config */
+-	} else
+-		bus->ops = save_ops;		/* Use MMCONFIG  */
+-	return;
+-}
+diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+index 619f622..6f164fa 100644
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -753,15 +753,6 @@ void pcim_pin_device(struct pci_dev *pdev)
+ }
+ 
+ /**
+- * pcibios_fix_bus_scan_quirk - provide for arch-specific bus scan quirks
+- * @bus: the PCI bus to scan
+- *
+- * Scans the bus for arch-specific quirks. This is the default implementation.
+- * Architecture implementations can override this.
+- */
+-void __attribute__ ((weak)) pcibios_fix_bus_scan_quirk(struct pci_bus *bus) {}
+-
+-/**
+  * pcibios_disable_device - disable arch specific PCI resources for device dev
+  * @dev: the PCI device to disable
+  *
+diff --git a/drivers/pci/pci.h b/drivers/pci/pci.h
+index 24202dd..9550591 100644
+--- a/drivers/pci/pci.h
++++ b/drivers/pci/pci.h
+@@ -73,7 +73,6 @@ static inline int pci_no_d1d2(struct pci_dev *dev)
+ extern int pcie_mch_quirk;
+ extern struct device_attribute pci_dev_attrs[];
+ extern struct class_device_attribute class_device_attr_cpuaffinity;
+-extern void pcibios_fix_bus_scan_quirk(struct pci_bus *bus);
+ 
+ /**
+  * pci_match_one_device - Tell if a PCI device structure has a matching
+diff --git a/drivers/pci/probe.c b/drivers/pci/probe.c
+index d409aca..2ad50f4 100644
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -924,11 +924,6 @@ unsigned int __devinit pci_scan_child_bus(struct pci_bus *bus)
+ 	unsigned int devfn, pass, max = bus->secondary;
+ 	struct pci_dev *dev;
+ 
+-	/*
+-	 * Address arch-dependent bus scanning quirks before scanning the bus.
+-	 */
+-	pcibios_fix_bus_scan_quirk(bus);
+-
+ 	pr_debug("PCI: Scanning bus %04x:%02x\n", pci_domain_nr(bus), bus->number);
+ 
+ 	/* Go find them, Rover! */

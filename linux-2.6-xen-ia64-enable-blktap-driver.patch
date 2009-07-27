@@ -1,0 +1,269 @@
+From: Jarod Wilson <jwilson@redhat.com>
+Subject: [RHEL5.1 PATCH] ia64/xen: (updated) blktap does not build on ia64 (bz#216293)
+Date: Thu, 28 Jun 2007 17:47:51 -0400
+Bugzilla: 216293
+Message-Id: <46842C87.7030800@redhat.com>
+Changelog: [xen] ia64: enable blktap driver
+
+
+The attached is an updated ia64 blktap patch that includes one
+additional line of code over the earlier v2 version of the same patch,
+which kludges around the 'tapdisk memory growing without bound' problem
+in an ia64-specific fashion. Actually, the entire patch is
+ia64-specific, as all changes, while in common code, are conditional on
+XENFEAT_auto_translated_physmap, which is only found on ia64.
+
+-- 
+Jarod Wilson
+jwilson@redhat.com
+
+
+diff -Naurp linux-2.6.18.ia64.orig/drivers/xen/blktap/blktapmain.c linux-2.6.18.ia64/drivers/xen/blktap/blktapmain.c
+--- linux-2.6.18.ia64.orig/drivers/xen/blktap/blktapmain.c	2007-06-28 17:32:15.000000000 -0400
++++ linux-2.6.18.ia64/drivers/xen/blktap/blktapmain.c	2007-06-28 17:38:41.000000000 -0400
+@@ -840,6 +840,16 @@ static void fast_flush_area(pending_req_
+ 		WPRINTK("fast_flush: Couldn't get info!\n");
+ 		return;
+ 	}
++
++	if (info->vma != NULL &&
++	    xen_feature(XENFEAT_auto_translated_physmap)) {
++		down_write(&info->vma->vm_mm->mmap_sem);
++		zap_page_range(info->vma,
++			       MMAP_VADDR(info->user_vstart, u_idx, 0),
++			       req->nr_pages << PAGE_SHIFT, NULL);
++		up_write(&info->vma->vm_mm->mmap_sem);
++	}
++
+ 	mmap_idx = req->mem_idx;
+ 
+ 	for (i = 0; i < req->nr_pages; i++) {
+@@ -856,6 +866,7 @@ static void fast_flush_area(pending_req_
+ 		}
+ 
+ 		if (khandle->user != INVALID_GRANT_HANDLE) {
++			BUG_ON(xen_feature(XENFEAT_auto_translated_physmap));
+ 			if (create_lookup_pte_addr(
+ 		    		info->vma->vm_mm,
+ 		    		MMAP_VADDR(info->user_vstart, u_idx, i),
+@@ -878,7 +889,7 @@ static void fast_flush_area(pending_req_
+ 		GNTTABOP_unmap_grant_ref, unmap, invcount);
+ 	BUG_ON(ret);
+ 	
+-	if (info->vma != NULL)
++	if (info->vma != NULL && !xen_feature(XENFEAT_auto_translated_physmap))
+ 		zap_page_range(info->vma, 
+ 			       MMAP_VADDR(info->user_vstart, u_idx, 0), 
+ 			       req->nr_pages << PAGE_SHIFT, NULL);
+@@ -1210,70 +1221,105 @@ static void dispatch_rw_block_io(blkif_t
+ 				  req->seg[i].gref, blkif->domid);
+ 		op++;
+ 
+-		/* Now map it to user. */
+-		ret = create_lookup_pte_addr(info->vma->vm_mm, 
+-					     uvaddr, &ptep);
+-		if (ret) {
+-			WPRINTK("Couldn't get a pte addr!\n");
+-			fast_flush_area(pending_req, pending_idx, usr_idx, 
+-					blkif->dev_num);
+-			goto fail_flush;
+-		}
++		if (!xen_feature(XENFEAT_auto_translated_physmap)) {
++			/* Now map it to user. */
++			ret = create_lookup_pte_addr(info->vma->vm_mm, 
++						     uvaddr, &ptep);
++			if (ret) {
++				WPRINTK("Couldn't get a pte addr!\n");
++				fast_flush_area(pending_req, pending_idx, usr_idx, 
++						blkif->dev_num);
++				goto fail_flush;
++			}
+ 
+-		flags = GNTMAP_host_map | GNTMAP_application_map
+-			| GNTMAP_contains_pte;
+-		if (operation == WRITE)
+-			flags |= GNTMAP_readonly;
+-		gnttab_set_map_op(&map[op], ptep, flags,
+-				  req->seg[i].gref, blkif->domid);
+-		op++;
++			flags = GNTMAP_host_map | GNTMAP_application_map
++				| GNTMAP_contains_pte;
++			if (operation == WRITE)
++				flags |= GNTMAP_readonly;
++			gnttab_set_map_op(&map[op], ptep, flags,
++					  req->seg[i].gref, blkif->domid);
++			op++;
++		}
+ 	}
+ 
+ 	ret = HYPERVISOR_grant_table_op(GNTTABOP_map_grant_ref, map, op);
+ 	BUG_ON(ret);
+ 
+-	for (i = 0; i < (nseg*2); i+=2) {
+-		unsigned long uvaddr;
+-		unsigned long kvaddr;
+-		unsigned long offset;
+-		struct page *pg;
++	if (!xen_feature(XENFEAT_auto_translated_physmap)) {
++		for (i = 0; i < (nseg*2); i+=2) {
++			unsigned long uvaddr;
++			unsigned long kvaddr;
++			unsigned long offset;
++			struct page *pg;
+ 
+-		uvaddr = MMAP_VADDR(info->user_vstart, usr_idx, i/2);
+-		kvaddr = idx_to_kaddr(mmap_idx, pending_idx, i/2);
++			uvaddr = MMAP_VADDR(info->user_vstart, usr_idx, i/2);
++			kvaddr = idx_to_kaddr(mmap_idx, pending_idx, i/2);
+ 
+-		if (unlikely(map[i].status != 0)) {
+-			WPRINTK("invalid kernel buffer -- "
+-				"could not remap it\n");
+-			ret |= 1;
+-			map[i].handle = INVALID_GRANT_HANDLE;
+-		}
+-
+-		if (unlikely(map[i+1].status != 0)) {
+-			WPRINTK("invalid user buffer -- "
+-				"could not remap it\n");
+-			ret |= 1;
+-			map[i+1].handle = INVALID_GRANT_HANDLE;
+-		}
+-
+-		pending_handle(mmap_idx, pending_idx, i/2).kernel 
+-			= map[i].handle;
+-		pending_handle(mmap_idx, pending_idx, i/2).user   
+-			= map[i+1].handle;
++			if (unlikely(map[i].status != 0)) {
++				WPRINTK("invalid kernel buffer -- "
++					"could not remap it\n");
++				ret |= 1;
++				map[i].handle = INVALID_GRANT_HANDLE;
++			}
+ 
+-		if (ret)
+-			continue;
++			if (unlikely(map[i+1].status != 0)) {
++				WPRINTK("invalid user buffer -- "
++					"could not remap it\n");
++				ret |= 1;
++				map[i+1].handle = INVALID_GRANT_HANDLE;
++			}
+ 
+-		set_phys_to_machine(__pa(kvaddr) >> PAGE_SHIFT,
+-			FOREIGN_FRAME(map[i].dev_bus_addr >> PAGE_SHIFT));
+-		offset = (uvaddr - info->vma->vm_start) >> PAGE_SHIFT;
+-		pg = pfn_to_page(__pa(kvaddr) >> PAGE_SHIFT);
+-		((struct page **)info->vma->vm_private_data)[offset] =
+-			pg;
++			pending_handle(mmap_idx, pending_idx, i/2).kernel 
++				= map[i].handle;
++			pending_handle(mmap_idx, pending_idx, i/2).user   
++				= map[i+1].handle;
++
++			if (ret)
++				continue;
++
++			set_phys_to_machine(__pa(kvaddr) >> PAGE_SHIFT,
++				FOREIGN_FRAME(map[i].dev_bus_addr >> PAGE_SHIFT));
++			offset = (uvaddr - info->vma->vm_start) >> PAGE_SHIFT;
++			pg = pfn_to_page(__pa(kvaddr) >> PAGE_SHIFT);
++			((struct page **)info->vma->vm_private_data)[offset] =
++				pg;
++		}
++	} else {
++		for (i = 0; i < nseg; i++) {
++			unsigned long uvaddr;
++			unsigned long kvaddr;
++			unsigned long offset;
++			struct page *pg;
++
++			uvaddr = MMAP_VADDR(info->user_vstart, usr_idx, i);
++			kvaddr = idx_to_kaddr(mmap_idx, pending_idx, i);
++
++			if (unlikely(map[i].status != 0)) {
++				WPRINTK("invalid kernel buffer -- "
++					"could not remap it\n");
++				ret |= 1;
++				map[i].handle = INVALID_GRANT_HANDLE;
++			}
++
++			pending_handle(mmap_idx, pending_idx, i).kernel 
++				= map[i].handle;
++
++			if (ret)
++				continue;
++
++			offset = (uvaddr - info->vma->vm_start) >> PAGE_SHIFT;
++			pg = pfn_to_page(__pa(kvaddr) >> PAGE_SHIFT);
++			((struct page **)info->vma->vm_private_data)[offset] =
++				pg;
++		}
+ 	}
+ 
+ 	if (ret)
+ 		goto fail_flush;
+ 
++	if (xen_feature(XENFEAT_auto_translated_physmap))
++		down_write(&info->vma->vm_mm->mmap_sem);
++
+ 	/* Mark mapped pages as reserved: */
+ 	for (i = 0; i < req->nr_segments; i++) {
+ 		unsigned long kvaddr;
+@@ -1282,7 +1328,27 @@ static void dispatch_rw_block_io(blkif_t
+ 		kvaddr = idx_to_kaddr(mmap_idx, pending_idx, i);
+ 		pg = pfn_to_page(__pa(kvaddr) >> PAGE_SHIFT);
+ 		SetPageReserved(pg);
++		if (xen_feature(XENFEAT_auto_translated_physmap)) {
++			ret = vm_insert_page(info->vma,
++					     MMAP_VADDR(info->user_vstart,
++							usr_idx, i), pg);
++			if (ret) {
++				up_write(&info->vma->vm_mm->mmap_sem);
++				goto fail_flush;
++			}
++
++			/*
++			 * kludge
++			 * vm_insert_page() increments file_rss but
++			 * we don't want to increment so that compensate here.
++			 * The right fix is to our own vm_insert_page() which
++			 * doesn't increment file_rss.
++			 */
++			dec_mm_counter(info->vma->vm_mm, file_rss);
++		}
+ 	}
++	if (xen_feature(XENFEAT_auto_translated_physmap))
++		up_write(&info->vma->vm_mm->mmap_sem);
+ 	
+ 	/*record [mmap_idx,pending_idx] to [usr_idx] mapping*/
+ 	info->idx_map[usr_idx] = MAKE_ID(mmap_idx, pending_idx);
+diff -Naurp linux-2.6.18.ia64.orig/include/asm-ia64/hypervisor.h linux-2.6.18.ia64/include/asm-ia64/hypervisor.h
+--- linux-2.6.18.ia64.orig/include/asm-ia64/hypervisor.h	2007-06-28 17:32:16.000000000 -0400
++++ linux-2.6.18.ia64/include/asm-ia64/hypervisor.h	2007-06-28 17:38:30.000000000 -0400
+@@ -192,6 +192,22 @@ MULTI_grant_table_op(multicall_entry_t *
+ 	mcl->args[2] = count;
+ }
+ 
++/*
++ * for blktap.c
++ * int create_lookup_pte_addr(struct mm_struct *mm, 
++ *                            unsigned long address,
++ *                            uint64_t *ptep);
++ */
++#define create_lookup_pte_addr(mm, address, ptep)			\
++	({								\
++		printk(KERN_EMERG					\
++		       "%s:%d "						\
++		       "create_lookup_pte_addr() isn't supported.\n",	\
++		       __func__, __LINE__);				\
++		BUG();							\
++		(-ENOSYS);						\
++	})
++
+ // for debug
+ asmlinkage int xprintk(const char *fmt, ...);
+ #define xprintd(fmt, ...)	xprintk("%s:%d " fmt, __func__, __LINE__, \
+
+
+

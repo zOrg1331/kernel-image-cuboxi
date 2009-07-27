@@ -1,0 +1,1441 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Thu, 28 Aug 2008 13:12:33 -0400
+Subject: [xen] Intel EPT Patch
+Message-id: 20080828171234.10349.46817.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.3 PATCH 2/4 v3] Xen Intel EPT Patch
+Bugzilla: 426679
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+Fixes bz 426679
+
+This is the main bulk of the EPT functionality.
+
+Intel Extended Page Table (EPT) support.
+
+changeset: x86, vmx: Enable EPT (Extended PageTable) support on new Intel proces
+sors.
+changeset 17404:        9b635405ef90
+parent 17403:   e1962ac0fb1c
+child 17405:    32e3c81ada56
+author:         Keir Fraser <keir.fraser@citrix.com>
+date:   Wed Apr 09 11:30:32 2008 +0100 (4 months ago)
+files:  tools/libxc/xc_hvm_build.c xen/arch/x86/domain.c xen/arch/x86/hvm/hvm.c
+xen/arch/x86/hvm/vmx/vmcs.c xen/arch/x86/hvm/vmx/vmx.c xen/arch/x86/mm.c xen/arc
+h/x86/mm/hap/Makefile xen/arch/x86/mm/hap/p2m-ept.c xen/arch/x86/mm/p2m.c xen/ar
+ch/x86/mm/paging.c xen/common/domctl.c xen/drivers/passthrough/vtd/iommu.c xen/i
+nclude/asm-x86/domain.h xen/include/asm-x86/hvm/domain.h xen/include/asm-x86/hvm
+/svm/vmcb.h xen/include/asm-x86/hvm/vmx/vmcs.h xen/include/asm-x86/hvm/vmx/vmx.h
+ xen/include/asm-x86/p2m.h xen/include/asm-x86/paging.h xen/include/public/hvm/p
+arams.h xen/include/xen/hypercall.h
+description:    x86, vmx: Enable EPT (Extended PageTable) support on new Intel p
+rocessors.
+We use the EPT page table as P2M (guest physical to machine
+mapping), removing the linear page table when EPT is used for the
+domain (see the new file p2m-ept.c). We did this by adding three
+operations in the p2m_domain. If VT-d is enabled, the EPT page table
+will be used as the VT-d page table as well (i.e. shared).
+
+Signed-off-by: Xin Li <xin.b.li@intel.com>
+Signed-off-by: Jun Nakajima <jun.nakajima@intel.com>
+Signed-off-by: Xiaohui Xin <Xiaohui.xin@intel.com>
+Signed-off-by: Keir Fraser <keir.fraser@citrix.com>
+
+diff --git a/arch/x86/domain.c b/arch/x86/domain.c
+index 298432c..319676c 100644
+--- a/arch/x86/domain.c
++++ b/arch/x86/domain.c
+@@ -625,7 +625,20 @@ int arch_set_info_guest(
+     }
+     else
+     {
++        u32* ident_pt;
++
+         hvm_load_cpu_guest_regs(v, &v->arch.guest_context.user_regs);
++        /* Fill it with 32-bit, non-PAE superpage entries, each mapping 4MB
++         * of virtual address space onto the same physical address range */
++        if ( v->vcpu_id == 0 )
++        {
++            ident_pt = map_domain_page(mfn_x(gfn_to_mfn(v->domain,
++                      (HVM_IDENT_PT_PAGE >> PAGE_SHIFT))));
++            for ( i = 0; i < PAGE_SIZE / sizeof(*ident_pt); i++ )
++                ident_pt[i] = (i << 22) | _PAGE_PRESENT | _PAGE_RW | _PAGE_USER
++                  | _PAGE_ACCESSED | _PAGE_DIRTY | _PAGE_PSE;
++            unmap_domain_page(ident_pt);
++        }
+     }
+ 
+     memset(v->arch.guest_context.debugreg, 0,
+diff --git a/arch/x86/hvm/vmx/vmcs.c b/arch/x86/hvm/vmx/vmcs.c
+index 08bcc54..bc295d4 100644
+--- a/arch/x86/hvm/vmx/vmcs.c
++++ b/arch/x86/hvm/vmx/vmcs.c
+@@ -64,7 +64,7 @@ static u32 adjust_vmx_controls(u32 ctl_min, u32 ctl_opt, u32 msr)
+ }
+ 
+ #define vmx_has_secondary_exec_ctls \
+-    (_vmx_cpu_based_exec_control & ACTIVATE_SECONDARY_CONTROLS)
++    (_vmx_cpu_based_exec_control & CPU_BASED_ACTIVATE_SECONDARY_CONTROLS)
+ 
+ void vmx_init_vmcs_config(void)
+ {
+@@ -75,6 +75,8 @@ void vmx_init_vmcs_config(void)
+     u32 _vmx_vmexit_control;
+     u32 _vmx_vmentry_control;
+ 
++    rdmsr(MSR_IA32_VMX_BASIC_MSR, vmx_msr_low, vmx_msr_high);
++
+     min = (PIN_BASED_EXT_INTR_MASK |
+            PIN_BASED_NMI_EXITING);
+     opt = 0; /*PIN_BASED_VIRTUAL_NMIS*/
+@@ -83,13 +85,15 @@ void vmx_init_vmcs_config(void)
+ 
+     min = (CPU_BASED_HLT_EXITING |
+            CPU_BASED_INVLPG_EXITING |
++           CPU_BASED_CR3_LOAD_EXITING |
++           CPU_BASED_CR3_STORE_EXITING |
+            CPU_BASED_MWAIT_EXITING |
+            CPU_BASED_MOV_DR_EXITING |
+            CPU_BASED_ACTIVATE_IO_BITMAP |
+            CPU_BASED_USE_TSC_OFFSETING);
+-    opt = CPU_BASED_ACTIVATE_MSR_BITMAP;
+-    opt |= CPU_BASED_TPR_SHADOW;
+-    opt |= ACTIVATE_SECONDARY_CONTROLS;
++    opt = (CPU_BASED_ACTIVATE_MSR_BITMAP |
++           CPU_BASED_TPR_SHADOW |
++           CPU_BASED_ACTIVATE_SECONDARY_CONTROLS);
+     _vmx_cpu_based_exec_control = adjust_vmx_controls(
+         min, opt, MSR_IA32_VMX_PROCBASED_CTLS_MSR);
+ #ifdef __x86_64__
+@@ -107,11 +111,29 @@ void vmx_init_vmcs_config(void)
+     if ( vmx_has_secondary_exec_ctls )
+     {
+         min = 0;
+-        opt = SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES;
++
++        opt = (SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES |
++              SECONDARY_EXEC_ENABLE_EPT);
+         _vmx_secondary_exec_control = adjust_vmx_controls(
+             min, opt, MSR_IA32_VMX_PROCBASED_CTLS2);
+     }
+ 
++    if ( _vmx_secondary_exec_control & SECONDARY_EXEC_ENABLE_EPT )
++    {
++        /*
++         * To use EPT we expect to be able to clear certain intercepts.
++         * We check VMX_BASIC_MSR[55] to correctly handle default1 controls.
++         */
++        uint32_t must_be_one, must_be_zero, msr = MSR_IA32_VMX_PROCBASED_CTLS_MSR;
++        if ( vmx_msr_high & (1u << 23) )
++            msr = MSR_IA32_VMX_TRUE_PROCBASED_CTLS;
++        rdmsr(msr, must_be_one, must_be_zero);
++        if ( must_be_one & (CPU_BASED_INVLPG_EXITING |
++                            CPU_BASED_CR3_LOAD_EXITING |
++                            CPU_BASED_CR3_STORE_EXITING) )
++            _vmx_secondary_exec_control &= ~SECONDARY_EXEC_ENABLE_EPT;
++    }
++
+     min = VM_EXIT_ACK_INTR_ON_EXIT;
+     opt = 0;
+ #ifdef __x86_64__
+@@ -124,7 +146,6 @@ void vmx_init_vmcs_config(void)
+     _vmx_vmentry_control = adjust_vmx_controls(
+         min, opt, MSR_IA32_VMX_ENTRY_CTLS_MSR);
+ 
+-    rdmsr(MSR_IA32_VMX_BASIC_MSR, vmx_msr_low, vmx_msr_high);
+ 
+     if ( smp_processor_id() == 0 )
+     {
+@@ -205,34 +226,69 @@ static void vmx_load_vmcs(struct vcpu *v)
+     this_cpu(current_vmcs) = v->arch.hvm_vmx.vmcs;
+ }
+ 
++struct foreign_vmcs {
++    struct vcpu *v;
++    unsigned int count;
++};
++static DEFINE_PER_CPU(struct foreign_vmcs, foreign_vmcs);
++
+ void vmx_vmcs_enter(struct vcpu *v)
+ {
++    struct foreign_vmcs *fv;
++
+     /*
+      * NB. We must *always* run an HVM VCPU on its own VMCS, except for
+      * vmx_vmcs_enter/exit critical regions.
+      */
+-    if ( v == current )
++    if ( likely(v == current) )
+         return;
+ 
+-    vcpu_pause(v);
+-    spin_lock(&v->arch.hvm_vmx.vmcs_lock);
++   fv = &this_cpu(foreign_vmcs);
+ 
+-    vmx_clear_vmcs(v);
+-    vmx_load_vmcs(v);
++   if ( fv->v == v )
++   {
++       BUG_ON(fv->count == 0);
++   }
++   else
++   {
++       BUG_ON(fv->v != NULL);
++       BUG_ON(fv->count != 0);
++
++       vcpu_pause(v);
++       spin_lock(&v->arch.hvm_vmx.vmcs_lock);
++
++       vmx_clear_vmcs(v);
++       vmx_load_vmcs(v);
++
++       fv->v = v;
++   }
++
++   fv->count++;
+ }
+ 
+ void vmx_vmcs_exit(struct vcpu *v)
+ {
+-    if ( v == current )
++   struct foreign_vmcs *fv;
++
++   if ( likely(v == current) )
+         return;
+ 
+-    /* Don't confuse vmx_do_resume (for @v or @current!) */
+-    vmx_clear_vmcs(v);
+-    if ( is_hvm_vcpu(current) )
+-        vmx_load_vmcs(current);
++    fv = &this_cpu(foreign_vmcs);
++    BUG_ON(fv->v != v);
++    BUG_ON(fv->count == 0);
++
++    if ( --fv->count == 0 )
++    {
++        /* Don't confuse vmx_do_resume (for @v or @current!) */
++        vmx_clear_vmcs(v);
++        if ( is_hvm_vcpu(current) )
++            vmx_load_vmcs(current);
++
++        spin_unlock(&v->arch.hvm_vmx.vmcs_lock);
++        vcpu_unpause(v);
+ 
+-    spin_unlock(&v->arch.hvm_vmx.vmcs_lock);
+-    vcpu_unpause(v);
++        fv->v = NULL;
++    }
+ }
+ 
+ struct vmcs_struct *vmx_alloc_host_vmcs(void)
+@@ -306,6 +362,7 @@ static void vmx_set_host_env(struct vcpu *v)
+ 
+ static void construct_vmcs(struct vcpu *v)
+ {
++    struct domain *d = v->domain;
+     unsigned long cr0, cr4;
+     union vmcs_arbytes arbytes;
+ 
+@@ -315,10 +372,25 @@ static void construct_vmcs(struct vcpu *v)
+     __vmwrite(PIN_BASED_VM_EXEC_CONTROL, vmx_pin_based_exec_control);
+     __vmwrite(VM_EXIT_CONTROLS, vmx_vmexit_control);
+     __vmwrite(VM_ENTRY_CONTROLS, vmx_vmentry_control);
+-    __vmwrite(CPU_BASED_VM_EXEC_CONTROL, vmx_cpu_based_exec_control);
++
+     v->arch.hvm_vmx.exec_control = vmx_cpu_based_exec_control;
+-    if ( vmx_cpu_based_exec_control & ACTIVATE_SECONDARY_CONTROLS )
+-        __vmwrite(SECONDARY_VM_EXEC_CONTROL, vmx_secondary_exec_control);
++    v->arch.hvm_vmx.secondary_exec_control = vmx_secondary_exec_control;
++
++    if ( paging_mode_hap(d) )
++    {
++        v->arch.hvm_vmx.exec_control &= ~(CPU_BASED_INVLPG_EXITING |
++                                          CPU_BASED_CR3_LOAD_EXITING |
++                                          CPU_BASED_CR3_STORE_EXITING);
++    }
++    else
++    {
++        v->arch.hvm_vmx.secondary_exec_control &= ~SECONDARY_EXEC_ENABLE_EPT;
++    }
++
++    __vmwrite(CPU_BASED_VM_EXEC_CONTROL, v->arch.hvm_vmx.exec_control);
++    if ( cpu_has_vmx_secondary_exec_control )
++        __vmwrite(SECONDARY_VM_EXEC_CONTROL,
++          v->arch.hvm_vmx.secondary_exec_control);
+ 
+     if ( cpu_has_vmx_msr_bitmap )
+         __vmwrite(MSR_BITMAP, virt_to_maddr(vmx_msr_bitmap));
+@@ -428,7 +500,10 @@ static void construct_vmcs(struct vcpu *v)
+     __vmwrite(VMCS_LINK_POINTER_HIGH, ~0UL);
+ #endif
+ 
+-    __vmwrite(EXCEPTION_BITMAP, HVM_TRAP_MASK | (1U << TRAP_page_fault));
++    if ( paging_mode_hap(d) )
++        __vmwrite(EXCEPTION_BITMAP, HVM_TRAP_MASK);
++    else
++        __vmwrite(EXCEPTION_BITMAP, HVM_TRAP_MASK | (1U << TRAP_page_fault));
+ 
+     /* Guest CR0. */
+     cr0 = read_cr0();
+@@ -439,7 +514,14 @@ static void construct_vmcs(struct vcpu *v)
+ 
+     /* Guest CR4. */
+     cr4 = read_cr4();
+-    __vmwrite(GUEST_CR4, cr4 & ~X86_CR4_PSE);
++    if ( paging_mode_hap(v->domain) )
++    {
++        hvm_update_guest_cr(v, 3);
++        hvm_update_guest_cr(v, 4);
++    }
++    else
++        __vmwrite(GUEST_CR4, cr4 & ~X86_CR4_PSE);
++
+     v->arch.hvm_vmx.cpu_shadow_cr4 =
+         cr4 & ~(X86_CR4_PGE | X86_CR4_VMXE | X86_CR4_PAE);
+     __vmwrite(CR4_READ_SHADOW, v->arch.hvm_vmx.cpu_shadow_cr4);
+@@ -454,6 +536,18 @@ static void construct_vmcs(struct vcpu *v)
+     }
+ #endif
+ 
++    if ( paging_mode_hap(d) )
++    {
++        v->arch.hvm_vmx.ept_control.etmt = EPT_DEFAULT_MT;
++        v->arch.hvm_vmx.ept_control.gaw  = EPT_DEFAULT_GAW;
++        v->arch.hvm_vmx.ept_control.asr  =
++          pagetable_get_pfn(d->arch.phys_table);
++        __vmwrite(EPT_POINTER, v->arch.hvm_vmx.ept_control.eptp);
++#ifdef CONFIG_X86_PAE
++        __vmwrite(EPT_POINTER_HIGH, v->arch.hvm_vmx.ept_control.eptp >> 32);
++#endif
++    }
++
+     /* Memory-mapped based VLAPIC TPR optimization. */
+     if ( cpu_has_vmx_mmap_vtpr_optimization )
+     {
+@@ -618,6 +712,10 @@ void vmcs_dump_vcpu(void)
+     print_section("64-bit RO Data Fields", 0x6400, 0x640A, 2);
+     print_section("Natural 64-bit Guest-State Fields", 0x6800, 0x6826, 2);
+     print_section("Natural 64-bit Host-State Fields", 0x6c00, 0x6c16, 2);
++    printk("secondary exec control = 0x%08x\n",
++      (uint32_t)__vmread(SECONDARY_VM_EXEC_CONTROL));
++    printk("EPT pointer = 0x%08x%08x\n",
++      (uint32_t)__vmread(EPT_POINTER_HIGH), (uint32_t)__vmread(EPT_POINTER));
+ }
+ 
+ 
+diff --git a/arch/x86/hvm/vmx/vmx.c b/arch/x86/hvm/vmx/vmx.c
+index 3c01a84..ed108da 100644
+--- a/arch/x86/hvm/vmx/vmx.c
++++ b/arch/x86/hvm/vmx/vmx.c
+@@ -50,6 +50,7 @@
+ #include <asm/hvm/vpt.h>
+ #include <public/hvm/save.h>
+ #include <asm/hvm/trace.h>
++#include <asm/paging.h>
+ 
+ char *vmx_msr_bitmap;
+ 
+@@ -79,6 +80,7 @@ static int vmx_vcpu_initialise(struct vcpu *v)
+ 
+ static void vmx_vcpu_destroy(struct vcpu *v)
+ {
++    ept_sync_all();
+     vmx_destroy_vmcs(v);
+ }
+ 
+@@ -634,9 +636,104 @@ void vmx_vmcs_save(struct vcpu *v, struct hvm_hw_cpu *c)
+     vmx_vmcs_exit(v);
+ }
+ 
++/* the caller needs to check if the guest is switching to PAE mode */
++static void vmx_load_pdptrs(struct vcpu *v)
++{
++    uint64_t *guest_pdptrs;
++    unsigned long cr3 = v->arch.hvm_vmx.cpu_cr3, mfn;
++    char *p;
++
++    if ( cr3 & 0x1fUL )
++        goto crash;
++
++    mfn = mfn_x(gfn_to_mfn(v->domain, cr3 >> PAGE_SHIFT));
++    p = map_domain_page(mfn);
++    guest_pdptrs = (uint64_t *)(p + (cr3 & ~PAGE_MASK));
++
++    vmx_vmcs_enter(v);
++
++    __vmwrite(GUEST_PDPTR0, guest_pdptrs[0]);
++    __vmwrite(GUEST_PDPTR1, guest_pdptrs[1]);
++    __vmwrite(GUEST_PDPTR2, guest_pdptrs[2]);
++    __vmwrite(GUEST_PDPTR3, guest_pdptrs[3]);
++#ifdef __i386__
++    __vmwrite(GUEST_PDPTR0_HIGH, guest_pdptrs[0] >> 32);
++    __vmwrite(GUEST_PDPTR1_HIGH, guest_pdptrs[1] >> 32);
++    __vmwrite(GUEST_PDPTR2_HIGH, guest_pdptrs[2] >> 32);
++    __vmwrite(GUEST_PDPTR3_HIGH, guest_pdptrs[3] >> 32);
++#endif
++
++    vmx_vmcs_exit(v);
++    unmap_domain_page(p);
++    return;
++
++crash:
++    domain_crash(v->domain);
++}
++
++static void vmx_update_guest_cr(struct vcpu *v, unsigned int cr)
++{
++    unsigned long cr4;
++
++    if ( !hap_enabled(v->domain) )
++        return;
++
++    ASSERT((v == current) || !vcpu_runnable(v));
++
++    vmx_vmcs_enter(v);
++
++    switch (cr)
++    {
++    case 0:
++        if ( vmx_paging_enabled(v) )
++            v->arch.hvm_vmx.exec_control &= ~(CPU_BASED_CR3_LOAD_EXITING |
++                                              CPU_BASED_CR3_STORE_EXITING);
++        else
++            v->arch.hvm_vmx.exec_control |= (CPU_BASED_CR3_LOAD_EXITING |
++                                             CPU_BASED_CR3_STORE_EXITING);
++
++        __vmwrite(CPU_BASED_VM_EXEC_CONTROL, v->arch.hvm_vmx.exec_control);
++        break;
++
++    case 3:
++        if ( vmx_paging_enabled(v) )
++        {
++            if ( vmx_pae_enabled(v) && !vmx_long_mode_enabled(v) )
++                vmx_load_pdptrs(v);
++            __vmwrite(GUEST_CR3, v->arch.hvm_vmx.cpu_cr3);
++        }
++        else
++            __vmwrite(GUEST_CR3, HVM_IDENT_PT_PAGE);
++        break;
++
++    case 4:
++        if ( vmx_paging_enabled(v) )
++        {
++            cr4 = HVM_CR4_HOST_MASK & ~X86_CR4_PAE;
++            cr4 |= v->arch.hvm_vmx.cpu_shadow_cr4;
++            if ( vmx_pae_enabled(v) && !vmx_long_mode_enabled(v) )
++                    vmx_load_pdptrs(v);
++        }
++        else
++        {
++            cr4 = __vmread(GUEST_CR4) | HVM_CR4_HOST_MASK;
++            cr4 |= X86_CR4_PSE;
++            cr4 &= ~X86_CR4_PAE;
++        }
++
++        __vmwrite(GUEST_CR4, cr4);
++        break;
++
++    default:
++        BUG();
++    }
++
++    vmx_vmcs_exit(v);
++}
++
+ int vmx_vmcs_restore(struct vcpu *v, struct hvm_hw_cpu *c)
+ {
+-    unsigned long mfn, old_base_mfn;
++    unsigned long mfn = 0, old_base_mfn;
+ 
+     vmx_vmcs_enter(v);
+ 
+@@ -645,8 +742,13 @@ int vmx_vmcs_restore(struct vcpu *v, struct hvm_hw_cpu *c)
+     __vmwrite(GUEST_RFLAGS, c->rflags);
+ 
+     v->arch.hvm_vmx.cpu_cr0 = (c->cr0 | X86_CR0_PE | X86_CR0_PG |
+-                               X86_CR0_NE | X86_CR0_WP | X86_CR0_ET);
++                               X86_CR0_NE | X86_CR0_ET);
++
++    if ( paging_mode_shadow(v->domain) )
++        v->arch.hvm_vmx.cpu_cr0 |= X86_CR0_WP;
++
+     __vmwrite(GUEST_CR0, v->arch.hvm_vmx.cpu_cr0);
++
+     v->arch.hvm_vmx.cpu_shadow_cr0 = c->cr0;
+     __vmwrite(CR0_READ_SHADOW, v->arch.hvm_vmx.cpu_shadow_cr0);
+ 
+@@ -659,7 +761,7 @@ int vmx_vmcs_restore(struct vcpu *v, struct hvm_hw_cpu *c)
+            __func__, c->cr3, c->cr0, c->cr4);
+ #endif
+ 
+-    if ( !vmx_paging_enabled(v) )
++    if ( !vmx_paging_enabled(v) || paging_mode_hap(v->domain) )
+     {
+         HVM_DBG_LOG(DBG_LEVEL_VMMU, "%s: paging not enabled.", __func__);
+         goto skip_cr3;
+@@ -686,10 +788,14 @@ int vmx_vmcs_restore(struct vcpu *v, struct hvm_hw_cpu *c)
+     if ( vmx_long_mode_enabled(v) )
+         vmx_enable_long_mode(v);
+ 
+-    __vmwrite(GUEST_CR4, (c->cr4 | HVM_CR4_HOST_MASK));
+     v->arch.hvm_vmx.cpu_shadow_cr4 = c->cr4;
+     __vmwrite(CR4_READ_SHADOW, v->arch.hvm_vmx.cpu_shadow_cr4);
+ 
++    if ( paging_mode_shadow(v->domain) )
++        __vmwrite(GUEST_CR4, (c->cr4 | HVM_CR4_HOST_MASK));
++    else
++        v->arch.hvm_vmx.cpu_cr3 = c->cr3;
++
+     __vmwrite(GUEST_IDTR_LIMIT, c->idtr_limit);
+     __vmwrite(GUEST_IDTR_BASE, c->idtr_base);
+ 
+@@ -746,6 +852,13 @@ int vmx_vmcs_restore(struct vcpu *v, struct hvm_hw_cpu *c)
+ 
+     paging_update_paging_modes(v);
+ 
++    if ( paging_mode_hap(v->domain) )
++    {
++        vmx_update_guest_cr(v, 0);
++        vmx_update_guest_cr(v, 3);
++        vmx_update_guest_cr(v, 4);
++    }
++
+     if ( c->pending_valid )
+     {
+         vmx_vmcs_enter(v);
+@@ -1236,7 +1349,8 @@ static struct hvm_function_table vmx_function_table = {
+     .inject_exception     = vmx_inject_exception,
+     .init_ap_context      = vmx_init_ap_context,
+     .init_hypercall_page  = vmx_init_hypercall_page,
+-    .event_injection_faulted = vmx_event_injection_faulted
++    .event_injection_faulted = vmx_event_injection_faulted,
++    .update_guest_cr      = vmx_update_guest_cr
+ };
+ 
+ int start_vmx(void)
+@@ -1291,6 +1405,10 @@ int start_vmx(void)
+         return 0;
+     }
+ 
++    vmx_function_table.hap_supported = cpu_has_vmx_ept;
++
++    ept_sync_all();
++
+     vmx_save_host_msrs();
+ 
+     if ( smp_processor_id() != 0 )
+@@ -1974,7 +2092,7 @@ static int vmx_world_restore(struct vcpu *v, struct vmx_assist_context *c)
+     v->arch.hvm_vmx.cpu_shadow_cr0 = c->cr0;
+     __vmwrite(CR0_READ_SHADOW, v->arch.hvm_vmx.cpu_shadow_cr0);
+ 
+-    if ( !vmx_paging_enabled(v) )
++    if ( !vmx_paging_enabled(v) || paging_mode_hap(v->domain) )
+         goto skip_cr3;
+ 
+     if ( c->cr3 == v->arch.hvm_vmx.cpu_cr3 )
+@@ -2011,10 +2129,18 @@ static int vmx_world_restore(struct vcpu *v, struct vmx_assist_context *c)
+     else
+         HVM_DBG_LOG(DBG_LEVEL_VMMU, "Update CR3 value = %x", c->cr3);
+ 
+-    __vmwrite(GUEST_CR4, (c->cr4 | HVM_CR4_HOST_MASK));
+     v->arch.hvm_vmx.cpu_shadow_cr4 = c->cr4;
+     __vmwrite(CR4_READ_SHADOW, v->arch.hvm_vmx.cpu_shadow_cr4);
+ 
++    if ( paging_mode_shadow(v->domain) )
++        __vmwrite(GUEST_CR4, (c->cr4 | HVM_CR4_HOST_MASK));
++    else
++    {
++        v->arch.hvm_vmx.cpu_cr3 = c->cr3;
++        vmx_update_guest_cr(v, 3);
++        vmx_update_guest_cr(v, 4);
++    }
++
+     __vmwrite(GUEST_IDTR_LIMIT, c->idtr_limit);
+     __vmwrite(GUEST_IDTR_BASE, c->idtr_base);
+ 
+@@ -2153,10 +2279,11 @@ static int vmx_assist(struct vcpu *v, int mode)
+ static int vmx_set_cr0(unsigned long value)
+ {
+     struct vcpu *v = current;
+-    unsigned long mfn;
++    struct domain *d = v->domain;
+     unsigned long eip;
+     int paging_enabled;
+     unsigned long old_cr0;
++    unsigned long mfn;
+     unsigned long old_base_mfn;
+ 
+     HVM_DBG_LOG(DBG_LEVEL_VMMU, "Update CR0 value = %lx", value);
+@@ -2181,12 +2308,23 @@ static int vmx_set_cr0(unsigned long value)
+     paging_enabled = old_cr0 & X86_CR0_PG;
+ 
+     v->arch.hvm_vmx.cpu_cr0 = (value | X86_CR0_PE | X86_CR0_PG
+-                               | X86_CR0_NE | X86_CR0_WP);
++                               | X86_CR0_NE);
++
++    if ( paging_mode_shadow(d) )
++        v->arch.hvm_vmx.cpu_cr0 |= X86_CR0_WP;
++
+     __vmwrite(GUEST_CR0, v->arch.hvm_vmx.cpu_cr0);
+ 
+     v->arch.hvm_vmx.cpu_shadow_cr0 = value;
+     __vmwrite(CR0_READ_SHADOW, v->arch.hvm_vmx.cpu_shadow_cr0);
+ 
++    if ( paging_mode_hap(d) )
++    {
++        vmx_update_guest_cr(v, 0);
++        vmx_update_guest_cr(v, 3);
++        vmx_update_guest_cr(v, 4);
++    }
++
+     /* Trying to enable paging. */
+     if ( (value & X86_CR0_PE) && (value & X86_CR0_PG) && !paging_enabled )
+     {
+@@ -2207,37 +2345,40 @@ static int vmx_set_cr0(unsigned long value)
+         /*
+          * The guest CR3 must be pointing to the guest physical.
+          */
+-        mfn = get_mfn_from_gpfn(v->arch.hvm_vmx.cpu_cr3 >> PAGE_SHIFT);
+-        if ( !mfn_valid(mfn) || !get_page(mfn_to_page(mfn), v->domain) )
++        if ( paging_mode_shadow(v->domain) )
+         {
+-            gdprintk(XENLOG_ERR, "Invalid CR3 value = %lx (mfn=%lx)\n",
+-                     v->arch.hvm_vmx.cpu_cr3, mfn);
+-            domain_crash(v->domain);
+-            return 0;
+-        }
++            mfn = get_mfn_from_gpfn(v->arch.hvm_vmx.cpu_cr3 >> PAGE_SHIFT);
++            if ( !mfn_valid(mfn) || !get_page(mfn_to_page(mfn), v->domain) )
++            {
++                gdprintk(XENLOG_ERR, "Invalid CR3 value = %lx (mfn=%lx)\n",
++                  v->arch.hvm_vmx.cpu_cr3, mfn);
++                domain_crash(v->domain);
++                return 0;
++            }
+ 
+-        /*
+-         * Now arch.guest_table points to machine physical.
+-         */
+-        old_base_mfn = pagetable_get_pfn(v->arch.guest_table);
+-        v->arch.guest_table = pagetable_from_pfn(mfn);
+-        if ( old_base_mfn )
+-            put_page(mfn_to_page(old_base_mfn));
++            /*
++             * Now arch.guest_table points to machine physical.
++             */
++            old_base_mfn = pagetable_get_pfn(v->arch.guest_table);
++            v->arch.guest_table = pagetable_from_pfn(mfn);
++            if ( old_base_mfn )
++                put_page(mfn_to_page(old_base_mfn));
+ 
+-        paging_update_paging_modes(v);
++            HVM_DBG_LOG(DBG_LEVEL_VMMU, "New arch.guest_table = %lx",
++                        (unsigned long) (mfn << PAGE_SHIFT));
+ 
+-        HVM_DBG_LOG(DBG_LEVEL_VMMU, "New arch.guest_table = %lx",
+-                    (unsigned long) (mfn << PAGE_SHIFT));
++            HVM_DBG_LOG(DBG_LEVEL_VMMU, "Update CR3 value = %lx, mfn = %lx",
++                        v->arch.hvm_vmx.cpu_cr3, mfn);
++        }
+ 
+-        HVM_DBG_LOG(DBG_LEVEL_VMMU, "Update CR3 value = %lx, mfn = %lx",
+-                    v->arch.hvm_vmx.cpu_cr3, mfn);
++        paging_update_paging_modes(v);
+     }
+ 
+     /* Trying to disable paging. */
+     if ( ((value & (X86_CR0_PE | X86_CR0_PG)) != (X86_CR0_PE | X86_CR0_PG)) &&
+          paging_enabled )
+     {
+-        if ( v->arch.hvm_vmx.cpu_cr3 )
++        if ( v->arch.hvm_vmx.cpu_cr3 && paging_mode_shadow(v->domain) )
+         {
+             put_page(mfn_to_page(get_mfn_from_gpfn(
+                       v->arch.hvm_vmx.cpu_cr3 >> PAGE_SHIFT)));
+@@ -2351,7 +2492,7 @@ static int mov_to_cr(int gp, int cr, struct cpu_user_regs *regs)
+         /*
+          * If paging is not enabled yet, simply copy the value to CR3.
+          */
+-        if ( !vmx_paging_enabled(v) )
++        if ( !vmx_paging_enabled(v) || paging_mode_hap(v->domain) )
+         {
+             v->arch.hvm_vmx.cpu_cr3 = value;
+             break;
+@@ -2403,7 +2544,7 @@ static int mov_to_cr(int gp, int cr, struct cpu_user_regs *regs)
+ 
+         if ( (value & X86_CR4_PAE) && !(old_cr & X86_CR4_PAE) )
+         {
+-            if ( vmx_pgbit_test(v) )
++            if ( vmx_pgbit_test(v) && paging_mode_shadow(v->domain) )
+             {
+                 /* The guest is a 32-bit PAE guest. */
+ #if CONFIG_PAGING_LEVELS >= 3
+@@ -2441,10 +2582,17 @@ static int mov_to_cr(int gp, int cr, struct cpu_user_regs *regs)
+             }
+         }
+ 
+-        __vmwrite(GUEST_CR4, value | HVM_CR4_HOST_MASK);
+         v->arch.hvm_vmx.cpu_shadow_cr4 = value;
+         __vmwrite(CR4_READ_SHADOW, v->arch.hvm_vmx.cpu_shadow_cr4);
+ 
++        if ( paging_mode_shadow(v->domain) )
++            __vmwrite(GUEST_CR4, (value | HVM_CR4_HOST_MASK));
++        else
++        {
++            vmx_update_guest_cr(v, 3);
++            vmx_update_guest_cr(v, 4);
++        }
++
+         /*
+          * Writing to CR4 to modify the PSE, PGE, or PAE flag invalidates
+          * all TLB entries except global entries.
+@@ -2717,7 +2865,7 @@ static void check_vlapic_msr_for_vtpr(struct vcpu *v)
+         vcpu_vlapic(v)->mmap_vtpr_enabled = 1;
+ 
+         v->arch.hvm_vcpu.u.vmx.exec_control |=
+-            ( ACTIVATE_SECONDARY_CONTROLS | CPU_BASED_TPR_SHADOW );
++            ( CPU_BASED_ACTIVATE_SECONDARY_CONTROLS | CPU_BASED_TPR_SHADOW );
+         __vmwrite(CPU_BASED_VM_EXEC_CONTROL,
+                   v->arch.hvm_vcpu.u.vmx.exec_control);
+         tmp  = __vmread(SECONDARY_VM_EXEC_CONTROL);
+@@ -2885,6 +3033,17 @@ static void vmx_reflect_exception(struct vcpu *v)
+     }
+ }
+ 
++static void ept_handle_violation(unsigned long qualification, paddr_t gpa)
++{
++    if ( unlikely(((qualification >> 7) & 0x3) != 0x3) )
++    {
++        domain_crash(current->domain);
++        return;
++    }
++    /* must be MMIO */
++    handle_mmio(gpa);
++}
++
+ static void vmx_failed_vmentry(unsigned int exit_reason,
+                                struct cpu_user_regs *regs)
+ {
+@@ -2925,6 +3084,15 @@ asmlinkage void vmx_vmexit_handler(struct cpu_user_regs *regs)
+     unsigned long exit_qualification, inst_len = 0;
+     struct vcpu *v = current;
+ 
++    if ( paging_mode_hap(v->domain) && hvm_paging_enabled(v) )
++    {
++        __asm__ __volatile__ ("mov"__OS" %%cr2, %0"
++                              : "=r"(v->arch.hvm_vmx.cpu_cr2));
++
++        /* __hvm_copy() need this when paging is enabled. */
++        v->arch.hvm_vmx.cpu_cr3 = __vmread(GUEST_CR3);
++    }
++ 
+     exit_reason = __vmread(VM_EXIT_REASON);
+ 
+     HVMTRACE_2D(VMEXIT, v, __vmread(GUEST_RIP), exit_reason);
+@@ -3116,6 +3284,21 @@ asmlinkage void vmx_vmexit_handler(struct cpu_user_regs *regs)
+         break;
+     }
+ 
++    case EXIT_REASON_EPT_VIOLATION:
++    {
++        paddr_t gpa = __vmread(GUEST_PHYSICAL_ADDRESS);
++#ifdef __i386__
++        gpa += (unsigned long long)__vmread(GUEST_PHYSICAL_ADDRESS_HIGH) << 32;
++#endif
++        exit_qualification = __vmread(EXIT_QUALIFICATION);
++        ept_handle_violation(exit_qualification, gpa);
++        break;
++    }
++
++    case EXIT_REASON_EPT_MISCONFIG:
++        domain_crash(current->domain);
++        break;
++
+     default:
+     exit_and_crash:
+         gdprintk(XENLOG_ERR, "Bad vmexit (reason %x)\n", exit_reason);
+diff --git a/arch/x86/mm/Makefile b/arch/x86/mm/Makefile
+index 79b2596..3374ee6 100644
+--- a/arch/x86/mm/Makefile
++++ b/arch/x86/mm/Makefile
+@@ -3,3 +3,4 @@ subdir-y += hap
+ 
+ obj-y += paging.o
+ obj-y += p2m.o
++obj-y += p2m-ept.o
+diff --git a/arch/x86/mm/hap/hap.c b/arch/x86/mm/hap/hap.c
+index 67a5e0e..5316fbd 100644
+--- a/arch/x86/mm/hap/hap.c
++++ b/arch/x86/mm/hap/hap.c
+@@ -593,6 +593,7 @@ int hap_invlpg(struct vcpu *v, unsigned long va)
+  */
+ void hap_update_cr3(struct vcpu *v, int do_locking)
+ {
++   hvm_update_guest_cr(v, 3);
+ }
+ 
+ void hap_update_paging_modes(struct vcpu *v)
+@@ -626,8 +627,11 @@ void hap_update_paging_modes(struct vcpu *v)
+         mfn_t mmfn = hap_make_monitor_table(v);
+         v->arch.monitor_table = pagetable_from_mfn(mmfn);
+         make_cr3(v, mfn_x(mmfn));
++        hvm_update_host_cr3(v);
+     }
+ 
++    hap_update_cr3(v, 1);
++
+     hap_unlock(d);
+ }
+ 
+diff --git a/arch/x86/mm/p2m-ept.c b/arch/x86/mm/p2m-ept.c
+new file mode 100644
+index 0000000..10921de
+--- /dev/null
++++ b/arch/x86/mm/p2m-ept.c
+@@ -0,0 +1,208 @@
++/*
++ * p2m-ept.c: use the EPT page table as p2m
++ * Copyright (c) 2007, Intel Corporation.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms and conditions of the GNU General Public License,
++ * version 2, as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program; if not, write to the Free Software Foundation, Inc., 59 Temple
++ * Place - Suite 330, Boston, MA 02111-1307 USA.
++ */
++
++#include <xen/config.h>
++#include <xen/domain_page.h>
++#include <xen/sched.h>
++#include <asm/current.h>
++#include <asm/types.h>
++#include <asm/domain.h>
++#include <asm/hvm/vmx/vmx.h>
++
++#if 1 /* XEN_VERSION == 3 && XEN_SUBVERSION < 2 */
++
++static int ept_set_entry(struct domain *d, unsigned long gfn, mfn_t mfn, p2m_type_t p2mt);
++mfn_t ept_get_entry(struct domain *d, unsigned long gfn, p2m_type_t *t);
++static mfn_t ept_get_entry_fast(unsigned long gfn, p2m_type_t *t);
++
++static inline int 
++compat_ept_set_entry(struct domain *d, unsigned long gfn, mfn_t mfn, u32 l1e_flags)
++{
++    return ept_set_entry(d, gfn, mfn, p2m_ram_rw);
++}
++
++static mfn_t compat_ept_get_entry(struct domain *d, unsigned long gfn)
++{
++    p2m_type_t dummy;
++    return ept_get_entry(d, gfn, &dummy);
++}
++
++static mfn_t compat_ept_get_entry_fast(unsigned long gfn)
++{
++    p2m_type_t dummy;
++    return ept_get_entry_fast(gfn, &dummy);
++}
++#else
++
++#define compat_ept_set_entry ept_set_entry
++#define compat_ept_get_entry ept_get_entry
++#define compat_ept_get_entry_fast 
++
++#endif
++
++static int ept_next_level(struct domain *d, bool_t read_only,
++                          ept_entry_t **table, unsigned long *gfn_remainder,
++                          u32 shift)
++{
++    ept_entry_t *ept_entry, *next;
++    u32 index;
++
++    index = *gfn_remainder >> shift;
++    *gfn_remainder &= (1UL << shift) - 1;
++
++    ept_entry = (*table) + index;
++
++    if ( !(ept_entry->epte & 0x7) )
++    {
++        struct page_info *pg;
++
++        if ( read_only )
++            return 0;
++
++        pg = d->arch.p2m.alloc_page(d);
++        if ( pg == NULL )
++            return 0;
++        pg->count_info = 1;
++        pg->u.inuse.type_info = 1 | PGT_validated;
++        list_add_tail(&pg->list, &d->arch.p2m.pages);
++
++        ept_entry->emt = 0;
++        ept_entry->sp_avail = 0;
++        ept_entry->avail1 = 0;
++        ept_entry->mfn = page_to_mfn(pg);
++        ept_entry->rsvd = 0;
++        ept_entry->avail2 = 0;
++        /* last step */
++        ept_entry->r = ept_entry->w = ept_entry->x = 1;
++    }
++
++    next = map_domain_page(ept_entry->mfn);
++    unmap_domain_page(*table);
++    *table = next;
++
++    return 1;
++}
++
++static int
++ept_set_entry(struct domain *d, unsigned long gfn, mfn_t mfn, p2m_type_t p2mt)
++{
++    ept_entry_t *table =
++        map_domain_page(mfn_x(pagetable_get_mfn(d->arch.phys_table)));
++    unsigned long gfn_remainder = gfn;
++    ept_entry_t *ept_entry;
++    u32 index;
++    int i, rv = 0;
++
++    /* should check if gfn obeys GAW here */
++
++    for ( i = EPT_DEFAULT_GAW; i > 0; i-- )
++        if ( !ept_next_level(d, 0, &table, &gfn_remainder, i * EPT_TABLE_ORDER) )
++            goto out;
++
++    index = gfn_remainder;
++    ept_entry = table + index;
++
++    if ( mfn_valid(mfn_x(mfn)) )
++    {
++        /* Track the highest gfn for which we have ever had a valid mapping */
++        if ( gfn > d->arch.p2m.max_mapped_pfn )
++            d->arch.p2m.max_mapped_pfn = gfn;
++
++        ept_entry->emt = EPT_DEFAULT_MT;
++        ept_entry->sp_avail = 0;
++        ept_entry->avail1 = p2mt;
++        ept_entry->mfn = mfn_x(mfn);
++        ept_entry->rsvd = 0;
++        ept_entry->avail2 = 0;
++        /* last step */
++        ept_entry->r = ept_entry->w = ept_entry->x = 1;
++    }
++    else
++        ept_entry->epte = 0;
++
++    ept_sync_all();
++
++    /* Success */
++    rv = 1;
++
++ out:
++    unmap_domain_page(table);
++    return rv;
++}
++
++/* Read ept p2m entries */
++mfn_t ept_get_entry(struct domain *d, unsigned long gfn, p2m_type_t *t)
++{
++    ept_entry_t *table =
++        map_domain_page(mfn_x(pagetable_get_mfn(d->arch.phys_table)));
++    unsigned long gfn_remainder = gfn;
++    ept_entry_t *ept_entry;
++    u32 index;
++    int i;
++    mfn_t mfn = _mfn(INVALID_MFN);
++
++    *t = p2m_mmio_dm;
++
++    /* This pfn is higher than the highest the p2m map currently holds */
++    if ( gfn > d->arch.p2m.max_mapped_pfn )
++        goto out;
++
++    /* should check if gfn obeys GAW here */
++
++    for ( i = EPT_DEFAULT_GAW; i > 0; i-- )
++        if ( !ept_next_level(d, 1, &table, &gfn_remainder, i * EPT_TABLE_ORDER) )
++            goto out;
++
++    index = gfn_remainder;
++    ept_entry = table + index;
++
++    if ( (ept_entry->epte & 0x7) == 0x7 )
++    {
++        if ( ept_entry->avail1 != p2m_invalid )
++        {
++            *t = ept_entry->avail1;
++            mfn = _mfn(ept_entry->mfn);
++        }
++    }
++
++ out:
++    unmap_domain_page(table);
++    return mfn;
++}
++
++static mfn_t ept_get_entry_fast(unsigned long gfn, p2m_type_t *t)
++{
++    return ept_get_entry(current->domain, gfn, t);
++}
++
++void ept_p2m_init(struct domain *d)
++{
++    d->arch.p2m.set_entry = compat_ept_set_entry;
++    d->arch.p2m.get_entry = compat_ept_get_entry;
++    d->arch.p2m.get_entry_fast = compat_ept_get_entry_fast;
++}
++
++/*
++ * Local variables:
++ * mode: C
++ * c-set-style: "BSD"
++ * c-basic-offset: 4
++ * tab-width: 4
++ * indent-tabs-mode: nil
++ * End:
++ */
+diff --git a/arch/x86/mm/p2m.c b/arch/x86/mm/p2m.c
+index ca7ff41..1205840 100644
+--- a/arch/x86/mm/p2m.c
++++ b/arch/x86/mm/p2m.c
+@@ -27,6 +27,7 @@
+ #include <asm/page.h>
+ #include <asm/paging.h>
+ #include <asm/p2m.h>
++#include <asm/hvm/vmx/vmx.h> /* ept_p2m_init() */
+ 
+ /* Debugging and auditing of the P2M code? */
+ #define P2M_AUDIT     0
+@@ -92,8 +93,6 @@
+ #undef page_to_mfn
+ #define page_to_mfn(_pg) (_mfn((_pg) - frame_table))
+ 
+-
+-
+ // Find the next level's P2M entry, checking for out-of-range gfn's...
+ // Returns NULL on error.
+ //
+@@ -214,7 +213,7 @@ p2m_next_level(struct domain *d, mfn_t *table_mfn, void **table,
+ 
+ // Returns 0 on error (out of memory)
+ static int
+-set_p2m_entry(struct domain *d, unsigned long gfn, mfn_t mfn, u32 l1e_flags)
++p2m_set_entry(struct domain *d, unsigned long gfn, mfn_t mfn, u32 l1e_flags)
+ {
+     // XXX -- this might be able to be faster iff current->domain == d
+     mfn_t table_mfn = pagetable_get_mfn(d->arch.phys_table);
+@@ -304,15 +303,30 @@ set_p2m_entry(struct domain *d, unsigned long gfn, mfn_t mfn, u32 l1e_flags)
+     return rv;
+ }
+ 
++static mfn_t
++p2m_gfn_to_mfn(struct domain *d, unsigned long gfn);
+ 
+ /* Init the datastructures for later use by the p2m code */
+ void p2m_init(struct domain *d)
+ {
+     p2m_lock_init(d);
+     INIT_LIST_HEAD(&d->arch.p2m.pages);
+-}
+ 
++    d->arch.p2m.set_entry = p2m_set_entry;
++    d->arch.p2m.get_entry = p2m_gfn_to_mfn;
++    d->arch.p2m.get_entry_fast = p2m_gfn_to_mfn_fast;
++
++    if ( is_hvm_domain(d) && hap_enabled(d) &&
++         (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL) )
++        ept_p2m_init(d);
++}
+ 
++static inline
++int set_p2m_entry(struct domain *d, unsigned long gfn, mfn_t mfn, u32 l1e_flags)
++{
++    return d->arch.p2m.set_entry(d, gfn, mfn, l1e_flags);
++}
++ 
+ // Allocate a new p2m table for a domain.
+ //
+ // The structure of the p2m table is that of a pagetable for xen (i.e. it is
+@@ -427,7 +441,7 @@ void p2m_teardown(struct domain *d)
+ }
+ 
+ mfn_t
+-gfn_to_mfn_foreign(struct domain *d, unsigned long gpfn)
++p2m_gfn_to_mfn(struct domain *d, unsigned long gpfn)
+ /* Read another domain's p2m entries */
+ {
+     mfn_t mfn;
+diff --git a/arch/x86/mm/paging.c b/arch/x86/mm/paging.c
+index 0be022f..52ea79a 100644
+--- a/arch/x86/mm/paging.c
++++ b/arch/x86/mm/paging.c
+@@ -27,8 +27,6 @@
+ #include <asm/hap.h>
+ #include <asm/guest_access.h>
+ 
+-#define hap_enabled(d) (hvm_funcs.hap_supported && is_hvm_domain(d))
+-
+ /* Printouts */
+ #define PAGING_PRINTK(_f, _a...)                                     \
+     debugtrace_printk("pg: %s(): " _f, __func__, ##_a)
+diff --git a/include/asm-x86/domain.h b/include/asm-x86/domain.h
+index dcf1f53..53028d2 100644
+--- a/include/asm-x86/domain.h
++++ b/include/asm-x86/domain.h
+@@ -139,6 +139,10 @@ struct p2m_domain {
+     struct page_info * (*alloc_page  )(struct domain *d);
+     void               (*free_page   )(struct domain *d, 
+                                        struct page_info *pg);
++    int                (*set_entry   )(struct domain *d, unsigned long gfn,
++                                       mfn_t mfn, u32 l1e_flags);
++    mfn_t              (*get_entry   )(struct domain *d, unsigned long gfn);
++    mfn_t              (*get_entry_fast)(unsigned long gfn);
+ 
+     /* Highest guest frame that's ever been mapped in the p2m */
+     unsigned long max_mapped_pfn;
+diff --git a/include/asm-x86/hvm/hvm.h b/include/asm-x86/hvm/hvm.h
+index 117f167..21f7afd 100644
+--- a/include/asm-x86/hvm/hvm.h
++++ b/include/asm-x86/hvm/hvm.h
+@@ -153,6 +153,8 @@ struct hvm_function_table {
+     void (*init_hypercall_page)(struct domain *d, void *hypercall_page);
+ 
+     int  (*event_injection_faulted)(struct vcpu *v);
++
++    void (*update_guest_cr)(struct vcpu *v, unsigned int cr);
+ };
+ 
+ extern struct hvm_function_table hvm_funcs;
+@@ -241,6 +243,12 @@ hvm_update_vtpr(struct vcpu *v, unsigned long value)
+ 
+ void hvm_update_guest_cr3(struct vcpu *v, unsigned long guest_cr3);
+ 
++static inline void hvm_update_guest_cr(struct vcpu *v, unsigned int cr)
++{
++    if ( hvm_funcs.update_guest_cr )
++        hvm_funcs.update_guest_cr(v, cr);
++}
++
+ static inline void 
+ hvm_flush_guest_tlbs(void)
+ {
+@@ -318,4 +326,6 @@ static inline int hvm_event_injection_faulted(struct vcpu *v)
+ /* These exceptions must always be intercepted. */
+ #define HVM_TRAP_MASK (1U << TRAP_machine_check)
+ 
++#define HVM_IDENT_PT_PAGE 0xE8000
++
+ #endif /* __ASM_X86_HVM_HVM_H__ */
+diff --git a/include/asm-x86/hvm/vmx/vmcs.h b/include/asm-x86/hvm/vmx/vmcs.h
+index c0e715e..355523b 100644
+--- a/include/asm-x86/hvm/vmx/vmcs.h
++++ b/include/asm-x86/hvm/vmx/vmcs.h
+@@ -47,6 +47,9 @@ struct vmx_msr_state {
+     unsigned long msrs[VMX_MSR_COUNT];
+ };
+ 
++#define EPT_DEFAULT_MT      6
++#define EPT_DEFAULT_GAW     3
++
+ struct arch_vmx_struct {
+     /* Virtual address of VMCS. */
+     struct vmcs_struct  *vmcs;
+@@ -62,8 +65,19 @@ struct arch_vmx_struct {
+     int                  active_cpu;
+     int                  launched;
+ 
++    union {
++        struct {
++            u64 etmt :3,
++                gaw  :3,
++                rsvd :6,
++                asr  :52;
++        };
++        u64 eptp;
++    } ept_control;
++
+     /* Cache of cpu execution control. */
+     u32                  exec_control;
++    u32                  secondary_exec_control;
+ 
+     /* If there is vector installed in the INTR_INFO_FIELD. */
+     u32                  vector_injected;
+@@ -101,6 +115,8 @@ void vmx_vmcs_exit(struct vcpu *v);
+ #define CPU_BASED_MWAIT_EXITING         0x00000400
+ #define CPU_BASED_RDPMC_EXITING         0x00000800
+ #define CPU_BASED_RDTSC_EXITING         0x00001000
++#define CPU_BASED_CR3_LOAD_EXITING      0x00008000
++#define CPU_BASED_CR3_STORE_EXITING     0x00010000
+ #define CPU_BASED_CR8_LOAD_EXITING      0x00080000
+ #define CPU_BASED_CR8_STORE_EXITING     0x00100000
+ #define CPU_BASED_TPR_SHADOW            0x00200000
+@@ -111,7 +127,7 @@ void vmx_vmcs_exit(struct vcpu *v);
+ #define CPU_BASED_ACTIVATE_MSR_BITMAP   0x10000000
+ #define CPU_BASED_MONITOR_EXITING       0x20000000
+ #define CPU_BASED_PAUSE_EXITING         0x40000000
+-#define ACTIVATE_SECONDARY_CONTROLS     0x80000000
++#define CPU_BASED_ACTIVATE_SECONDARY_CONTROLS     0x80000000
+ extern u32 vmx_cpu_based_exec_control;
+ 
+ #define PIN_BASED_EXT_INTR_MASK         0x00000001
+@@ -129,6 +145,7 @@ extern u32 vmx_vmexit_control;
+ extern u32 vmx_vmentry_control;
+ 
+ #define SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES 0x00000001
++#define SECONDARY_EXEC_ENABLE_EPT               0x00000002
+ extern u32 vmx_secondary_exec_control;
+ 
+ #define cpu_has_vmx_virtualize_apic_accesses \
+@@ -140,6 +157,11 @@ extern u32 vmx_secondary_exec_control;
+ 
+ #define cpu_has_vmx_msr_bitmap \
+     (vmx_cpu_based_exec_control & CPU_BASED_ACTIVATE_MSR_BITMAP)
++#define cpu_has_vmx_secondary_exec_control \
++    (vmx_cpu_based_exec_control & CPU_BASED_ACTIVATE_SECONDARY_CONTROLS)
++#define cpu_has_vmx_ept \
++    (vmx_secondary_exec_control & SECONDARY_EXEC_ENABLE_EPT)
++
+ extern char *vmx_msr_bitmap;
+ 
+ /* GUEST_INTERRUPTIBILITY_INFO flags. */
+@@ -183,10 +205,22 @@ enum vmcs_field {
+     VIRTUAL_APIC_PAGE_ADDR_HIGH     = 0x00002013,
+     APIC_ACCESS_ADDR                = 0x00002014,
+     APIC_ACCESS_ADDR_HIGH           = 0x00002015, 
++    EPT_POINTER                     = 0x0000201a,
++    EPT_POINTER_HIGH                = 0x0000201b,
++    GUEST_PHYSICAL_ADDRESS          = 0x00002400,
++    GUEST_PHYSICAL_ADDRESS_HIGH     = 0x00002401,
+     VMCS_LINK_POINTER               = 0x00002800,
+     VMCS_LINK_POINTER_HIGH          = 0x00002801,
+     GUEST_IA32_DEBUGCTL             = 0x00002802,
+     GUEST_IA32_DEBUGCTL_HIGH        = 0x00002803,
++    GUEST_PDPTR0                    = 0x0000280a,
++    GUEST_PDPTR0_HIGH               = 0x0000280b,
++    GUEST_PDPTR1                    = 0x0000280c,
++    GUEST_PDPTR1_HIGH               = 0x0000280d,
++    GUEST_PDPTR2                    = 0x0000280e,
++    GUEST_PDPTR2_HIGH               = 0x0000280f,
++    GUEST_PDPTR3                    = 0x00002810,
++    GUEST_PDPTR3_HIGH               = 0x00002811,
+     PIN_BASED_VM_EXEC_CONTROL       = 0x00004000,
+     CPU_BASED_VM_EXEC_CONTROL       = 0x00004002,
+     EXCEPTION_BITMAP                = 0x00004004,
+diff --git a/include/asm-x86/hvm/vmx/vmx.h b/include/asm-x86/hvm/vmx/vmx.h
+index 194fe3a..dc61578 100644
+--- a/include/asm-x86/hvm/vmx/vmx.h
++++ b/include/asm-x86/hvm/vmx/vmx.h
+@@ -23,9 +23,29 @@
+ #include <asm/types.h>
+ #include <asm/regs.h>
+ #include <asm/processor.h>
+-#include <asm/hvm/vmx/vmcs.h>
+ #include <asm/i387.h>
++#include <asm/hvm/support.h>
+ #include <asm/hvm/trace.h>
++#include <asm/hvm/vmx/vmcs.h>
++#include <asm/paging.h>
++#include <asm/p2m.h>
++
++typedef union {
++    struct {
++        u64 r       :   1,
++        w           :   1,
++        x           :   1,
++        emt         :   4,
++        sp_avail    :   1,
++        avail1      :   4,
++        mfn         :   45,
++        rsvd        :   5,
++        avail2      :   2;
++    };
++    u64 epte;
++} ept_entry_t;
++
++#define EPT_TABLE_ORDER     9
+ 
+ void vmx_asm_vmexit_handler(struct cpu_user_regs);
+ void vmx_asm_do_vmentry(void);
+@@ -85,6 +105,8 @@ extern struct page_info *change_guest_physmap_for_vtpr(struct domain *d,
+ 
+ #define EXIT_REASON_TPR_BELOW_THRESHOLD 43
+ #define EXIT_REASON_APIC_ACCESS         44
++#define EXIT_REASON_EPT_VIOLATION       48
++#define EXIT_REASON_EPT_MISCONFIG       49
+ 
+ /*
+  * Interruption-information format
+@@ -153,12 +175,14 @@ extern struct page_info *change_guest_physmap_for_vtpr(struct domain *d,
+ #define VMREAD_OPCODE   ".byte 0x0f,0x78\n"
+ #define VMRESUME_OPCODE ".byte 0x0f,0x01,0xc3\n"
+ #define VMWRITE_OPCODE  ".byte 0x0f,0x79\n"
++#define INVEPT_OPCODE   ".byte 0x66,0x0f,0x38,0x80\n"   /* m128,r64/32 */
+ #define VMXOFF_OPCODE   ".byte 0x0f,0x01,0xc4\n"
+ #define VMXON_OPCODE    ".byte 0xf3,0x0f,0xc7\n"
+ 
++#define MODRM_EAX_08    ".byte 0x08\n" /* ECX, [EAX] */
+ #define MODRM_EAX_06    ".byte 0x30\n" /* [EAX], with reg/opcode: /6 */
+ #define MODRM_EAX_07    ".byte 0x38\n" /* [EAX], with reg/opcode: /7 */
+-#define MODRM_EAX_ECX   ".byte 0xc1\n" /* [EAX], [ECX] */
++#define MODRM_EAX_ECX   ".byte 0xc1\n" /* EAX, ECX */
+ 
+ static inline void __vmptrld(u64 addr)
+ {
+@@ -242,6 +266,21 @@ static inline void __vm_clear_bit(unsigned long field, unsigned int bit)
+     __vmwrite(field, __vmread(field) & ~(1UL << bit));
+ }
+ 
++static inline void __invept(int ext, u64 eptp, u64 gpa)
++{
++    struct {
++        u64 eptp, gpa;
++    } operand = {eptp, gpa};
++
++    __asm__ __volatile__ ( INVEPT_OPCODE
++                           MODRM_EAX_08
++                           /* CF==1 or ZF==1 --> rc = -1 */
++                           "ja 1f ; ud2 ; 1:\n"
++                           :
++                           : "a" (&operand), "c" (ext)
++                           : "memory");
++}
++
+ static inline void __vmxoff (void)
+ {
+     __asm__ __volatile__ ( VMXOFF_OPCODE
+@@ -263,6 +302,14 @@ static inline int __vmxon (u64 addr)
+     return rc;
+ }
+ 
++static inline void ept_sync_all(void)
++{
++    if ( !hap_enabled(current->domain) )
++        return;
++
++    __invept(2, 0, 0);
++}
++
+ static inline void __vmx_inject_exception(struct vcpu *v, int trap, int type,
+                                          int error_code, int ilen)
+ {
+@@ -314,4 +361,6 @@ static inline void vmx_inject_extint(struct vcpu *v, int trap, int error_code)
+     __vmx_inject_exception(v, trap, INTR_TYPE_EXT_INTR, error_code, 0);
+ }
+ 
++void ept_p2m_init(struct domain *d);
++
+ #endif /* __ASM_X86_HVM_VMX_VMX_H__ */
+diff --git a/include/asm-x86/msr.h b/include/asm-x86/msr.h
+index 09b6381..8508183 100644
+--- a/include/asm-x86/msr.h
++++ b/include/asm-x86/msr.h
+@@ -121,6 +121,7 @@ static inline void wrmsrl(unsigned int msr, __u64 val)
+ #define MSR_IA32_VMX_CR4_FIXED0                 0x488
+ #define MSR_IA32_VMX_CR4_FIXED1                 0x489
+ #define MSR_IA32_VMX_PROCBASED_CTLS2            0x48b
++#define MSR_IA32_VMX_TRUE_PROCBASED_CTLS        0x48e
+ #define IA32_FEATURE_CONTROL_MSR                0x3a
+ #define IA32_FEATURE_CONTROL_MSR_LOCK           0x1
+ #define IA32_FEATURE_CONTROL_MSR_ENABLE_VMXON   0x4
+diff --git a/include/asm-x86/p2m.h b/include/asm-x86/p2m.h
+index 53e66e4..40501e0 100644
+--- a/include/asm-x86/p2m.h
++++ b/include/asm-x86/p2m.h
+@@ -26,6 +26,49 @@
+ #ifndef _XEN_P2M_H
+ #define _XEN_P2M_H
+ 
++#include <asm/paging.h>
++
++#if 1 /* XEN_VERSION == 3 && XEN_SUBVERSION < 2 */
++
++typedef enum {
++    p2m_invalid = 0,            /* Nothing mapped here */
++    p2m_ram_rw = 1,             /* Normal read/write guest RAM */
++    p2m_ram_logdirty = 2,       /* Temporarily read-only for log-dirty */
++    p2m_ram_ro = 3,             /* Read-only; writes go to the device model */
++    p2m_mmio_dm = 4,            /* Reads and write go to the device model */
++    p2m_mmio_direct = 5,        /* Read/write mapping of genuine MMIO area */
++} p2m_type_t;
++
++/* We use bitmaps and maks to handle groups of types */
++#define p2m_to_mask(_t) (1UL << (_t))
++
++/* RAM types, which map to real machine frames */
++#define P2M_RAM_TYPES (p2m_to_mask(p2m_ram_rw)          \
++                       | p2m_to_mask(p2m_ram_logdirty)  \
++                       | p2m_to_mask(p2m_ram_ro))
++
++/* MMIO types, which don't have to map to anything in the frametable */
++#define P2M_MMIO_TYPES (p2m_to_mask(p2m_mmio_dm)        \
++                        | p2m_to_mask(p2m_mmio_direct))
++
++/* Read-only types, which must have the _PAGE_RW bit clear in their PTEs */
++#define P2M_RO_TYPES (p2m_to_mask(p2m_ram_logdirty)     \
++                      | p2m_to_mask(p2m_ram_ro))
++
++/* Useful predicates */
++#define p2m_is_ram(_t) (p2m_to_mask(_t) & P2M_RAM_TYPES)
++#define p2m_is_mmio(_t) (p2m_to_mask(_t) & P2M_MMIO_TYPES)
++#define p2m_is_readonly(_t) (p2m_to_mask(_t) & P2M_RO_TYPES)
++#define p2m_is_valid(_t) (p2m_to_mask(_t) & (P2M_RAM_TYPES | P2M_MMIO_TYPES))
++
++/* Extract the type from the PTE flags that store it */
++static inline p2m_type_t p2m_flags_to_type(unsigned long flags)
++{
++    /* Type is stored in the "available" bits, 9, 10 and 11 */
++    return (flags >> 9) & 0x7;
++}
++
++#endif
+ 
+ /* The phys_to_machine_mapping is the reversed mapping of MPT for full
+  * virtualization.  It is only used by shadow_mode_translate()==true
+@@ -38,6 +81,12 @@
+ /* Read the current domain's P2M table. */
+ static inline mfn_t gfn_to_mfn_current(unsigned long gfn)
+ {
++    return current->domain->arch.p2m.get_entry_fast(gfn);
++}
++
++/* Read the current domain's p2m table (through the linear mapping). */
++static inline mfn_t p2m_gfn_to_mfn_fast(unsigned long gfn)
++{
+     l1_pgentry_t l1e = l1e_empty();
+     l2_pgentry_t l2e = l2e_empty();
+     int ret;
+@@ -73,7 +122,11 @@ static inline mfn_t gfn_to_mfn_current(unsigned long gfn)
+ }
+ 
+ /* Read another domain's P2M table, mapping pages as we go */
+-mfn_t gfn_to_mfn_foreign(struct domain *d, unsigned long gpfn);
++static inline
++mfn_t gfn_to_mfn_foreign(struct domain *d, unsigned long gpfn)
++{
++    return d->arch.p2m.get_entry(d, gpfn);
++}
+ 
+ /* General conversion function from gfn to mfn */
+ static inline mfn_t gfn_to_mfn(struct domain *d, unsigned long gfn)
+diff --git a/include/asm-x86/paging.h b/include/asm-x86/paging.h
+index 35067b2..fdbdd8d 100644
+--- a/include/asm-x86/paging.h
++++ b/include/asm-x86/paging.h
+@@ -36,6 +36,8 @@
+ /*****************************************************************************
+  * Macros to tell which paging mode a domain is in */
+ 
++#define hap_enabled(d) (hvm_funcs.hap_supported && is_hvm_domain(d))
++
+ #define PG_SH_shift    20
+ #define PG_HAP_shift   21
+ /* We're in one of the shadow modes */

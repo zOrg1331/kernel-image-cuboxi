@@ -1,0 +1,79 @@
+From: Konrad Rzeszutek <konradr@redhat.com>
+Subject: [RHEL5 U1 PATCH] 263281: LTC38081-[ TPC-C ] madvise call to kernel loops forever
+Date: Thu, 30 Aug 2007 15:07:55 -0400
+Bugzilla: 263281
+Message-Id: <20070830190755.GA25128@mars.boston.redhat.com>
+Changelog: [mm] madvise call to kernel loops forever
+
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=263281
+
+Description:
+------------
+
+This git commnit was posted on RHKL as
+"[PATCH RHEL5] reduce MADV_DONTNEED contention"
+(http://post-office.corp.redhat.com/archives/rhkernel-list/2007-May/msg00623.html)
+but missed the patch for the madvise_remove function. I spoke
+to Rik van Riel (the poster) and he agreed that this should
+have been posted.
+
+commit 0a27a14a62921b438bb6f33772690d345a089be6
+Author: Nick Piggin <npiggin@suse.de>
+
+    mm: madvise avoid exclusive mmap_sem
+
+    Avoid down_write of the mmap_sem in madvise when we can help it.
+
+    Acked-by: Hugh Dickins <hugh@veritas.com>
+    Signed-off-by: Nick Piggin <npiggin@suse.de>
+    Cc: Rik van Riel <riel@redhat.com>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+
+RHEL Version Found:
+------------------
+RHEL5.0
+
+kABI Status:
+------------
+No symbols were harmed.
+
+Upstream Status:
+----------------
+It is upsteam in 2.6.23
+
+Test Status:
+------------
+I have tested the stock and modified kernel with a test-case that exercises
+this code and found it to respectivly not work, and work. I am also
+running LTP test-cases against the modified kernel to make sure that
+there are no regressions introduced.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-44.el5
+
+diff -uNrp linux-2.6.18.i386.orig/mm/madvise.c linux-2.6.18.i386/mm/madvise.c
+--- linux-2.6.18.i386.orig/mm/madvise.c	2007-08-30 10:20:56.000000000 -0400
++++ linux-2.6.18.i386/mm/madvise.c	2007-08-30 10:31:04.000000000 -0400
+@@ -201,9 +201,9 @@ static long madvise_remove(struct vm_are
+ 			+ ((loff_t)vma->vm_pgoff << PAGE_SHIFT);
+ 
+ 	/* vmtruncate_range needs to take i_mutex and i_alloc_sem */
+-	up_write(&current->mm->mmap_sem);
++	up_read(&current->mm->mmap_sem);
+ 	error = vmtruncate_range(mapping->host, offset, endoff);
+-	down_write(&current->mm->mmap_sem);
++	down_read(&current->mm->mmap_sem);
+ 	return error;
+ }
+
+ 
+-- 
+Konrad Rzeszutek 1-(978)-392-3903 or 1-(617)-693-1718
+IBM on-site partner.  
+

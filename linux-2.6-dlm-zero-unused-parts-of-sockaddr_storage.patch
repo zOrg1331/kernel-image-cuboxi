@@ -1,0 +1,33 @@
+From: David Teigland <teigland@redhat.com>
+Date: Thu, 29 Nov 2007 10:25:26 -0600
+Subject: [dlm] zero unused parts of sockaddr_storage
+Message-id: 20071129162526.GB8513@redhat.com
+O-Subject: [RHEL5.2 PATCH] dlm: zero unused parts of sockaddr_storage
+Bugzilla: 358771
+
+bz 358771
+
+When we build a sockaddr_storage for an IP address, clear the unused parts as
+they could be used for node comparisons.
+
+I have seen this occasionally make sctp connections fail.
+
+Signed-Off-By: Patrick Caulfield <pcaulfie@redhat.com>
+
+Upstream commit
+http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=01c8cab25863de007fe8c598d0033919ea8ae65e
+
+Acked-by: Bob Peterson <rpeterso@redhat.com>
+
+diff --git a/fs/dlm/lowcomms.c b/fs/dlm/lowcomms.c
+index d7be4b4..2e81536 100644
+--- a/fs/dlm/lowcomms.c
++++ b/fs/dlm/lowcomms.c
+@@ -313,6 +313,7 @@ static void make_sockaddr(struct sockaddr_storage *saddr, uint16_t port,
+ 		in6_addr->sin6_port = cpu_to_be16(port);
+ 		*addr_len = sizeof(struct sockaddr_in6);
+ 	}
++	memset((char *)saddr + *addr_len, 0, sizeof(struct sockaddr_storage) - *addr_len);
+ }
+ 
+ /* Close a remote connection and tidy up */

@@ -1,0 +1,50 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 4 Apr 2008 19:48:37 +0200
+Subject: [s390] cio: fix vary off of paths
+Message-id: 20080404174837.GB9759@redhat.com
+O-Subject: [RHEL5 U3 PATCH 2/7] s390 - cio: Fix vary off of paths
+Bugzilla: 436106
+
+Description
+============
+
+When checking for I/O on paths, pass in the correct variable
+containing the mask.
+
+Bugzilla
+=========
+
+BZ 436106
+https://bugzilla.redhat.com/show_bug.cgi?id=436106
+
+Upstream status of the patch:
+=============================
+
+This patch will be posted upstream in the next merge window.
+I'll reply to this message as soon as we have a git commit id
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/drivers/s390/cio/chsc.c b/drivers/s390/cio/chsc.c
+index 83e6753..a89c6f3 100644
+--- a/drivers/s390/cio/chsc.c
++++ b/drivers/s390/cio/chsc.c
+@@ -760,7 +760,7 @@ static void __s390_subchannel_vary_chpid(struct subchannel *sch,
+ 		 * can successfully terminate, even using the
+ 		 * just varied off path. Then kill it.
+ 		 */
+-		if (check_for_io_on_path(sch, chp)) {
++		if (check_for_io_on_path(sch, mask)) {
+ 			if (device_is_online(sch))
+ 				/* Wait for I/O to finish */
+ 				device_set_waiting(sch);

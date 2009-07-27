@@ -1,0 +1,76 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Tue, 16 Sep 2008 15:50:48 -0400
+Subject: [pci] allow multiple calls to pcim_enable_device
+Message-id: 48D00E18.5080601@redhat.com
+O-Subject: [RHEL5.3 PATCH] Allow multiple calls to pcim_enable_device()
+Bugzilla: 462500
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: David Milburn <dmilburn@redhat.com>
+RH-Acked-by: Alan Cox <alan@redhat.com>
+
+bugzilla 462500
+BUG: warning when pata_sil680 loaded
+http://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=462500
+
+Description of problem:
+When booting a system with a DRAC4, the following warning is output:
+
+BUG: warning at drivers/pci/pci.c:727/pcim_enable_device() (Not tainted)
+[<c04f110a>] pcim_enable_device+0x7b/0x97
+[<f88ddf5c>] ata_pci_sff_init_one+0x62/0xe4 [libata]
+[<c05532ab>] __driver_attach+0x0/0x6b
+[<f892343c>] sil680_init_one+0x1e9/0x1f8 [pata_sil680]
+[<c04f2d64>] pci_device_probe+0x36/0x57
+[<c05531fe>] driver_probe_device+0x42/0x92
+[<c05532ef>] __driver_attach+0x44/0x6b
+[<c0552c29>] bus_for_each_dev+0x37/0x59
+[<c0553149>] driver_attach+0x11/0x13
+[<c05532ab>] __driver_attach+0x0/0x6b
+[<c0552931>] bus_add_driver+0x64/0xfd
+[<c04f2e89>] __pci_register_driver+0x3e/0x58
+[<c043f238>] sys_init_module+0x1ae0/0x1c95
+[<c04ee980>] pci_bus_read_config_byte+0x0/0x58
+[<c0614d4f>] do_page_fault+0x31e/0x5d3
+[<c0404ead>] sysenter_past_esp+0x56/0x79
+
+Prarit found the code path to be:
+drivers/ata/pata_sil680.c: sil680_init_one(): line 390
+use_ioports:
+       return ata_pci_sff_init_one(pdev, ppi, &sil680_sht, NULL);
+
+which does
+drivers/ata/libata-sff.c: ata_pci_sff_init_one(): line 296
+       rc = pcim_enable_device(pdev);
+       if (rc)
+               goto out;
+
+Since dr->enabled = 1, we hit the WARN_ON call in pcim_enable_device(),
+drivers/pci/pci.c: pcim_enable_device(): line 727
+       WARN_ON(!!dr->enabled);
+
+Solution:
+Upstream has solved this by allowing multiple calls to pcim_enable_device()
+so allow multiple calls to pcim_enable_device().
+
+Note: This is dependent upon the patch for bz459197 (compile pata_sil680)
+as well as David Milburn's SATA update patch.
+
+Testing:
+Prarit tested it successfully on dell-pe830-02.
+
+Acks would be appreciated.
+
+diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+index 4139912..2e7bc75 100644
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -724,7 +724,8 @@ int pcim_enable_device(struct pci_dev *pdev)
+ 	dr = get_pci_dr(pdev);
+ 	if (unlikely(!dr))
+ 		return -ENOMEM;
+-	WARN_ON(!!dr->enabled);
++	if (dr->enabled)
++		return 0;
+ 
+ 	rc = pci_enable_device(pdev);
+ 	if (!rc) {

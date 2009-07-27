@@ -1,0 +1,39 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Subject: Re: [RHEL 5.1 PATCH] : Cannot find IDE device with ATI/AMD SB700
+Date: Thu, 21 Jun 2007 10:59:12 -0400
+Bugzilla: 244150
+Message-Id: <467A9240.2040903@redhat.com>
+Changelog: [ide] Cannot find IDE device with ATI/AMD SB700
+
+
+>>ATI/AMD SB700 is a new south bridge chipset, this chipset is not 
+>>fully supported for lack of the controller device IDs. This patch 
+>>fixes the issue and is accepted upstream (I see it in my git tree).   
+>>Tested on Travelly SB700 prototype system at AMD.
+>>
+>>peterm looked through the patch and asked me to submit to rhkernel-list
+>>
+>>Please ACK.
+>>
+>>
+--- linux-2.6.18.x86_64/drivers/ide/pci/atiixp.c.sb2orig	2007-06-15 10:40:09.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/ide/pci/atiixp.c	2007-06-15 10:41:16.000000000 -0400
+@@ -355,6 +355,7 @@ static struct pci_device_id atiixp_pci_t
+ 	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP300_IDE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
+ 	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP400_IDE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
+ 	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP600_IDE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 1},
++	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP700_IDE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 1},
+ 	{ 0, },
+ };
+ MODULE_DEVICE_TABLE(pci, atiixp_pci_tbl);
+--- linux-2.6.18.x86_64/include/linux/pci_ids.h.sb2orig	2007-06-15 10:25:46.000000000 -0400
++++ linux-2.6.18.x86_64/include/linux/pci_ids.h	2007-06-15 10:48:25.000000000 -0400
+@@ -365,6 +365,7 @@
+ #define PCI_DEVICE_ID_ATI_IXP600_SMBUS	0x4385
+ #define PCI_DEVICE_ID_ATI_IXP600_IDE	0x438c
+ #define PCI_DEVICE_ID_ATI_IXP700_SATA	0x4390
++#define PCI_DEVICE_ID_ATI_IXP700_IDE	0x439c
+ 
+ #define PCI_VENDOR_ID_VLSI		0x1004
+ #define PCI_DEVICE_ID_VLSI_82C592	0x0005
+

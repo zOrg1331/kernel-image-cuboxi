@@ -1,0 +1,33 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 11 Dec 2007 10:05:49 -0500
+Subject: [fs] cifs: fix spurious reconnect on 2nd peek
+Message-id: 1197385560-21991-5-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.2 PATCH 04/15] BZ#417961: [CIFS] Fix spurious reconnect on 2nd peek from read of SMB length
+Bugzilla: 417961
+
+When retrying kernel_recvmsg() because of a short read, check returned
+length against the remaining length, not against total length. This
+avoids unneeded session reconnects which would otherwise occur when
+kernel_recvmsg() finally returns zero when asked to read zero bytes.
+
+Signed-off-by: Petr Tesarik <ptesarik@suse.cz>
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/connect.c b/fs/cifs/connect.c
+index 5f588a8..4f787c3 100644
+--- a/fs/cifs/connect.c
++++ b/fs/cifs/connect.c
+@@ -484,9 +484,9 @@ incomplete_rcv:
+ 			csocket = server->ssocket;
+ 			wake_up(&server->response_q);
+ 			continue;
+-		} else if (length < 4) {
+-			cFYI(1, ("less than four bytes received (%d bytes)",
+-			      length));
++		} else if (length < pdu_length) {
++			cFYI(1, ("requested %d bytes but only got %d bytes",
++				  pdu_length, length));
+ 			pdu_length -= length;
+ 			msleep(1);
+ 			goto incomplete_rcv;

@@ -1,0 +1,45 @@
+From: Milan Broz <mbroz@redhat.com>
+Date: Mon, 12 Nov 2007 19:27:10 +0100
+Subject: [md] dm: bd_mount_sem counter corruption
+Message-id: 47389AFE.8010504@redhat.com
+O-Subject: [RHEL 5.2 PATCH] dm: bd_mount_sem counter corruption
+Bugzilla: 360571
+
+RHEL5.2 device mapper: bd_mount_sem counter corruption
+Resolves: rhbz#360571
+Patch is upstream (in 2.6.24-rc)
+
+This patch fixes a bd_mount_sem counter corruption bug in device-mapper.
+
+thaw_bdev() should be called only when freeze_bdev() was called for the device.
+Otherwise, thaw_bdev() will up bd_mount_sem and corrupt the semaphore counter.
+struct block_device with the corrupted semaphore may remain in slab cache
+and be reused later.
+ upstream commit  ae9da83f6d800fe1f3b23bfbc8f7222ad1c5bb74
+
+Kernel with fix compiled and tested.
+
+Acked-by: Alasdair G Kergon <agk@redhat.com>
+Acked-by: "Bryn M. Reeves" <breeves@redhat.com>
+Acked-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/drivers/md/dm.c b/drivers/md/dm.c
+index 7b6ba6f..0743bae 100644
+--- a/drivers/md/dm.c
++++ b/drivers/md/dm.c
+@@ -1059,12 +1059,14 @@ static struct mapped_device *alloc_dev(int minor)
+ 	return NULL;
+ }
+ 
++static void unlock_fs(struct mapped_device *md);
++
+ static void free_dev(struct mapped_device *md)
+ {
+ 	int minor = md->disk->first_minor;
+ 
+ 	if (md->suspended_bdev) {
+-		thaw_bdev(md->suspended_bdev, NULL);
++		unlock_fs(md);
+ 		bdput(md->suspended_bdev);
+ 	}
+ 	mempool_destroy(md->tio_pool);

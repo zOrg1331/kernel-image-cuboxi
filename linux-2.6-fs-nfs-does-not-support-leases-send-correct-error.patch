@@ -1,0 +1,70 @@
+From: Peter Staubach <staubach@redhat.com>
+Subject: [PATCH RHEL-5] fcntl(F_SETLEASE, F_WRLCK) for a file on NFS always  returns EAGAIN
+Date: Wed, 06 Jun 2007 10:40:19 -0400
+Bugzilla: 216750
+Message-Id: <4666C753.2090907@redhat.com>
+Changelog: [fs] nfs does not support leases, send correct error
+
+
+Hi.
+
+Attached is a patch to address bz216750, "fcntl(F_SETLEASE, F_WRLCK)
+for a file on NFS always returns EAGAIN".
+
+The problem is that NFS does not support leases due to the lack of
+appropriate protocol support.  However, a bogus error is returned
+when an attempt is made to acquire a lease.  These changes modify
+the system so that NFS, and any other file systems which want to
+use the functionality, can notify the file system independent layer
+that it does not support leases.  The file system independent layer
+can then return an error indicating that the request was not valid
+for the underlying file system.
+
+These changes have been accepted into the -mm kernel.
+
+   Thanx...
+
+      ps
+
+--- linux-2.6.18.i686/fs/nfs/super.c.org
++++ linux-2.6.18.i686/fs/nfs/super.c
+@@ -520,6 +520,8 @@ static inline void nfs_initialise_sb(str
+ 
+ 	sb->s_magic = NFS_SUPER_MAGIC;
+ 
++	sb->s_flags |= MS_NO_LEASES;
++
+ 	/* We probably want something more informative here */
+ 	snprintf(sb->s_id, sizeof(sb->s_id),
+ 		 "%x:%x", MAJOR(sb->s_dev), MINOR(sb->s_dev));
+--- linux-2.6.18.i686/fs/locks.c.org
++++ linux-2.6.18.i686/fs/locks.c
+@@ -1486,6 +1486,9 @@ int fcntl_setlease(unsigned int fd, stru
+ 	struct inode *inode = dentry->d_inode;
+ 	int error;
+ 
++	if (IS_NO_LEASES(inode))
++		return -EINVAL;
++
+ 	if ((current->fsuid != inode->i_uid) && !capable(CAP_LEASE))
+ 		return -EACCES;
+ 	if (!S_ISREG(inode->i_mode))
+--- linux-2.6.18.i686/include/linux/fs.h.org
++++ linux-2.6.18.i686/include/linux/fs.h
+@@ -119,6 +119,7 @@ extern int dir_notify_enable;
+ #define MS_PRIVATE	(1<<18)	/* change to private */
+ #define MS_SLAVE	(1<<19)	/* change to slave */
+ #define MS_SHARED	(1<<20)	/* change to shared */
++#define MS_NO_LEASES	(1<<21)	/* fs does not support leases */
+ #define MS_ACTIVE	(1<<30)
+ #define MS_NOUSER	(1<<31)
+ 
+@@ -177,6 +178,7 @@ extern int dir_notify_enable;
+ #define IS_NOCMTIME(inode)	((inode)->i_flags & S_NOCMTIME)
+ #define IS_SWAPFILE(inode)	((inode)->i_flags & S_SWAPFILE)
+ #define IS_PRIVATE(inode)	((inode)->i_flags & S_PRIVATE)
++#define IS_NO_LEASES(inode)	__IS_FLG(inode, MS_NO_LEASES)
+ 
+ /* the read-only stuff doesn't really belong here, but any other place is
+    probably as bad and I don't want to create yet another include file. */
+

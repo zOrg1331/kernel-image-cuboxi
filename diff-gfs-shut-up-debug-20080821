@@ -1,0 +1,24 @@
+diff -up ./fs/gfs/dir.c.gfsdebugoff ./fs/gfs/dir.c
+--- ./fs/gfs/dir.c.gfsdebugoff	2008-08-21 12:55:21.000000000 +0400
++++ ./fs/gfs/dir.c	2008-08-21 15:10:40.000000000 +0400
+@@ -434,7 +434,7 @@ get_leaf(struct gfs_inode *dip, uint64_t
+ 	error = gfs_dread(dip->i_gl, leaf_no, DIO_START | DIO_WAIT, bhp);
+ 	if (!error) {
+ 		if (gfs_metatype_check(dip->i_sbd, *bhp, GFS_METATYPE_LF)) {
+-			printk("GFS: would leak bh 1\n");
++			/* printk("GFS: would leak bh 1\n"); */
+ 			error = -EIO;
+ 			brelse(*bhp);
+ 		}
+diff -up ./fs/gfs/glock.c.gfsdebugoff ./fs/gfs/glock.c
+--- ./fs/gfs/glock.c.gfsdebugoff	2008-08-21 12:55:21.000000000 +0400
++++ ./fs/gfs/glock.c	2008-08-21 15:10:41.000000000 +0400
+@@ -128,7 +128,7 @@ glock_put(struct gfs_glock *gl)
+ 		gfs_glock_schedule_for_reclaim(gl);
+ 	gfs_assert(gl->gl_sbd, atomic_read(&gl->gl_count) > 0,);
+ 	if (atomic_dec_and_test(&gl->gl_count)) {
+-		printk("GFS: would leak glock %p\n", gl);
++		/* printk("GFS: would leak glock %p\n", gl); */
+ 	}
+ }
+ 

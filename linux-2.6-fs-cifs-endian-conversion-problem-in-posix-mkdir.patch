@@ -1,0 +1,80 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 11 Dec 2007 10:05:59 -0500
+Subject: [fs] cifs: endian conversion problem in posix mkdir
+Message-id: 1197385560-21991-15-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.2 PATCH 14/15] BZ#417961: [CIFS] Fix endian conversion problem in posix mkdir
+Bugzilla: 417961
+
+Signed-off-by: Cyrill Gorcunov <gorcunov@gmail.com>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/cifsencrypt.c b/fs/cifs/cifsencrypt.c
+index 3627229..632070b 100644
+--- a/fs/cifs/cifsencrypt.c
++++ b/fs/cifs/cifsencrypt.c
+@@ -345,7 +345,7 @@ static int calc_ntlmv2_hash(struct cifsSesInfo *ses,
+ 	user = kmalloc(2 + (len * 2), GFP_KERNEL);
+ 	if (user == NULL)
+ 		goto calc_exit_2;
+-	len = cifs_strtoUCS(user, ses->userName, len, nls_cp);
++	len = cifs_strtoUCS((__le16 *)user, ses->userName, len, nls_cp);
+ 	UniStrupr(user);
+ 	hmac_md5_update((char *)user, 2*len, pctxt);
+ 
+@@ -356,7 +356,8 @@ static int calc_ntlmv2_hash(struct cifsSesInfo *ses,
+ 		domain = kmalloc(2 + (len * 2), GFP_KERNEL);
+ 		if (domain == NULL)
+ 			goto calc_exit_1;
+-		len = cifs_strtoUCS(domain, ses->domainName, len, nls_cp);
++		len = cifs_strtoUCS((__le16 *)domain, ses->domainName, len,
++					nls_cp);
+ 		/* the following line was removed since it didn't work well
+ 		   with lower cased domain name that passed as an option.
+ 		   Maybe converting the domain name earlier makes sense */
+diff --git a/fs/cifs/cifssmb.c b/fs/cifs/cifssmb.c
+index 2f219da..2c04feb 100644
+--- a/fs/cifs/cifssmb.c
++++ b/fs/cifs/cifssmb.c
+@@ -1075,7 +1075,7 @@ PsxCreat:
+ 				InformationLevel) - 4;
+ 	offset = param_offset + params;
+ 	pdata = (OPEN_PSX_REQ *)(((char *)&pSMB->hdr.Protocol) + offset);
+-	pdata->Level = SMB_QUERY_FILE_UNIX_BASIC;
++	pdata->Level = cpu_to_le16(SMB_QUERY_FILE_UNIX_BASIC);
+ 	pdata->Permissions = cpu_to_le64(mode);
+ 	pdata->PosixOpenFlags = cpu_to_le32(posix_flags);
+ 	pdata->OpenFlags =  cpu_to_le32(*pOplock);
+@@ -1121,8 +1121,8 @@ PsxCreat:
+ 	if (cpu_to_le32(FILE_CREATE) == psx_rsp->CreateAction)
+ 		*pOplock |= CIFS_CREATE_ACTION;
+ 	/* check to make sure response data is there */
+-	if (psx_rsp->ReturnedLevel != SMB_QUERY_FILE_UNIX_BASIC) {
+-		pRetData->Type = -1; /* unknown */
++	if (psx_rsp->ReturnedLevel != cpu_to_le16(SMB_QUERY_FILE_UNIX_BASIC)) {
++		pRetData->Type = cpu_to_le32(-1); /* unknown */
+ #ifdef CONFIG_CIFS_DEBUG2
+ 		cFYI(1, ("unknown type"));
+ #endif
+@@ -1130,7 +1130,7 @@ PsxCreat:
+ 		if (pSMBr->ByteCount < sizeof(OPEN_PSX_RSP)
+ 					+ sizeof(FILE_UNIX_BASIC_INFO)) {
+ 			cERROR(1, ("Open response data too small"));
+-			pRetData->Type = -1;
++			pRetData->Type = cpu_to_le32(-1);
+ 			goto psx_create_err;
+ 		}
+ 		memcpy((char *) pRetData,
+diff --git a/fs/cifs/inode.c b/fs/cifs/inode.c
+index 1b85561..2738e80 100644
+--- a/fs/cifs/inode.c
++++ b/fs/cifs/inode.c
+@@ -948,7 +948,8 @@ int cifs_mkdir(struct inode *inode, struct dentry *direntry, int mode)
+ 			d_drop(direntry);
+ 		} else {
+ 			int obj_type;
+-			if (pInfo->Type == -1) /* no return info - go query */ {
++			if (pInfo->Type == cpu_to_le32(-1)) {
++				/* no return info, go query for it */
+ 				kfree(pInfo);
+ 				goto mkdir_get_info;
+ 			}

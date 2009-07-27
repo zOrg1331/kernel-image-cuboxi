@@ -1,0 +1,421 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Mon, 10 Mar 2008 16:14:13 +0100
+Subject: [crypto] fix SA creation with AH
+Message-id: 20080310151413.GB17931@lsx.localdomain
+O-Subject: [RHEL5.2 PATCH] BZ435243: Fix SA creation with AH
+Bugzilla: 435243
+
+This patch by Herbert Xu with an additional fix from IBM converts AH to
+use the new crypto interface and fixes the issue that an SA with AH
+only configuration could no longer be created on RHEL5.2.
+
+This fix is essential for RHEL5.2 to pass the DoD requirements and
+to have a functional IPSec implementation.
+
+Patch tested by IBM.
+
+Please ACK
+
+diff --git a/include/net/ah.h b/include/net/ah.h
+index ceff00a..d94c111 100644
+--- a/include/net/ah.h
++++ b/include/net/ah.h
+@@ -1,6 +1,7 @@
+ #ifndef _NET_AH_H
+ #define _NET_AH_H
+ 
++#include <linux/ncrypto.h>
+ #include <net/xfrm.h>
+ 
+ /* This is the maximum truncated ICV length that we know of. */
+@@ -14,22 +15,29 @@ struct ah_data
+ 	int			icv_full_len;
+ 	int			icv_trunc_len;
+ 
+-	void			(*icv)(struct ah_data*,
+-	                               struct sk_buff *skb, u8 *icv);
+-
+-	struct crypto_tfm	*tfm;
++	struct crypto_hash	*tfm;
+ };
+ 
+-static inline void
+-ah_hmac_digest(struct ah_data *ahp, struct sk_buff *skb, u8 *auth_data)
++static inline int ah_mac_digest(struct ah_data *ahp, struct sk_buff *skb,
++				u8 *auth_data)
+ {
+-	struct crypto_tfm *tfm = ahp->tfm;
++	struct hash_desc desc;
++	int err;
++
++	desc.tfm = ahp->tfm;
++	desc.flags = 0;
+ 
+ 	memset(auth_data, 0, ahp->icv_trunc_len);
+-	crypto_hmac_init(tfm, ahp->key, &ahp->key_len);
+-	skb_icv_walk(skb, tfm, 0, skb->len, crypto_hmac_update);
+-	crypto_hmac_final(tfm, ahp->key, &ahp->key_len, ahp->work_icv);
+-	memcpy(auth_data, ahp->work_icv, ahp->icv_trunc_len);
++	err = crypto_hash_init(&desc);
++	if (unlikely(err))
++		goto out;
++	err = skb_nicv_walk(skb, &desc, 0, skb->len, crypto_hash_update);
++	if (unlikely(err))
++		goto out;
++	err = crypto_hash_final(&desc, ahp->work_icv);
++
++out:
++	return err;
+ }
+ 
+ #endif
+diff --git a/include/net/xfrm.h b/include/net/xfrm.h
+index cde5633..cdb53ff 100644
+--- a/include/net/xfrm.h
++++ b/include/net/xfrm.h
+@@ -1120,10 +1120,15 @@ extern struct xfrm_nalgo_desc *xfrm_naead_get_byname(char *name, int icv_len,
+ 						     int probe);
+ 
+ struct crypto_tfm;
++struct hash_desc;
+ typedef void (icv_update_fn_t)(struct crypto_tfm *, struct scatterlist *, unsigned int);
++typedef int (nicv_update_fn_t)(struct hash_desc *, struct scatterlist *,
++			       unsigned int);
+ 
+ extern void skb_icv_walk(const struct sk_buff *skb, struct crypto_tfm *tfm,
+ 			 int offset, int len, icv_update_fn_t icv_update);
++extern int skb_nicv_walk(const struct sk_buff *skb, struct hash_desc *tfm,
++			 int offset, int len, nicv_update_fn_t icv_update);
+ 
+ static inline int xfrm_addr_cmp(xfrm_address_t *a, xfrm_address_t *b,
+ 				int family)
+diff --git a/net/ipv4/ah4.c b/net/ipv4/ah4.c
+index 0d1dcf7..3e0f48c 100644
+--- a/net/ipv4/ah4.c
++++ b/net/ipv4/ah4.c
+@@ -1,3 +1,4 @@
++#include <linux/err.h>
+ #include <linux/module.h>
+ #include <net/ip.h>
+ #include <net/xfrm.h>
+@@ -97,7 +98,10 @@ static int ah_output(struct xfrm_state *x, struct sk_buff *skb)
+ 	ah->spi = x->id.spi;
+ 	ah->seq_no = htonl(++x->replay.oseq);
+ 	xfrm_aevent_doreplay(x);
+-	ahp->icv(ahp, skb, ah->auth_data);
++	err = ah_mac_digest(ahp, skb, ah->auth_data);
++	if (err)
++		goto error;
++	memcpy(ah->auth_data, ahp->work_icv, ahp->icv_trunc_len);
+ 
+ 	top_iph->tos = iph->tos;
+ 	top_iph->ttl = iph->ttl;
+@@ -119,6 +123,7 @@ static int ah_input(struct xfrm_state *x, struct sk_buff *skb)
+ {
+ 	int ah_hlen;
+ 	int ihl;
++	int err = -EINVAL;
+ 	struct iphdr *iph;
+ 	struct ip_auth_hdr *ah;
+ 	struct ah_data *ahp;
+@@ -166,8 +171,11 @@ static int ah_input(struct xfrm_state *x, struct sk_buff *skb)
+ 		
+ 		memcpy(auth_data, ah->auth_data, ahp->icv_trunc_len);
+ 		skb_push(skb, ihl);
+-		ahp->icv(ahp, skb, ah->auth_data);
+-		if (memcmp(ah->auth_data, auth_data, ahp->icv_trunc_len)) {
++		err = ah_mac_digest(ahp, skb, ah->auth_data);
++		if (err)
++			goto out;
++		err = -EINVAL;
++		if (memcmp(ahp->work_icv, auth_data, ahp->icv_trunc_len)) {
+ 			xfrm_audit_state_icvfail(x, skb, IPPROTO_AH);
+ 			x->stats.integrity_failed++;
+ 			goto out;
+@@ -180,7 +188,7 @@ static int ah_input(struct xfrm_state *x, struct sk_buff *skb)
+ 	return 0;
+ 
+ out:
+-	return -EINVAL;
++	return err;
+ }
+ 
+ static void ah4_err(struct sk_buff *skb, u32 info)
+@@ -205,6 +213,7 @@ static int ah_init_state(struct xfrm_state *x)
+ {
+ 	struct ah_data *ahp = NULL;
+ 	struct xfrm_algo_desc *aalg_desc;
++	struct crypto_hash *tfm;
+ 
+ 	if (!x->aalg)
+ 		goto error;
+@@ -215,6 +224,10 @@ static int ah_init_state(struct xfrm_state *x)
+ 
+ 	if (x->encap)
+ 		goto error;
++	
++	aalg_desc = xfrm_naalg_get_byname(x->aalg->alg_name, 1);
++	if (!aalg_desc)
++		return -ENOENT;
+ 
+ 	ahp = kzalloc(sizeof(*ahp), GFP_KERNEL);
+ 	if (ahp == NULL)
+@@ -222,24 +235,18 @@ static int ah_init_state(struct xfrm_state *x)
+ 
+ 	ahp->key = x->aalg->alg_key;
+ 	ahp->key_len = (x->aalg->alg_key_len+7)/8;
+-	ahp->tfm = crypto_alloc_tfm(x->aalg->alg_name, 0);
+-	if (!ahp->tfm)
++	tfm = crypto_alloc_hash(aalg_desc->name, 0, NCRYPTO_ALG_ASYNC);
++	if (IS_ERR(tfm))
++		goto error;
++
++	ahp->tfm = tfm;
++	if (crypto_hash_setkey(tfm, ahp->key, ahp->key_len))
+ 		goto error;
+-	ahp->icv = ah_hmac_digest;
+-	
+-	/*
+-	 * Lookup the algorithm description maintained by xfrm_algo,
+-	 * verify crypto transform properties, and store information
+-	 * we need for AH processing.  This lookup cannot fail here
+-	 * after a successful crypto_alloc_tfm().
+-	 */
+-	aalg_desc = xfrm_aalg_get_byname(x->aalg->alg_name, 0);
+-	BUG_ON(!aalg_desc);
+ 
+ 	if (aalg_desc->uinfo.auth.icv_fullbits/8 !=
+-	    crypto_tfm_alg_digestsize(ahp->tfm)) {
++	    crypto_hash_digestsize(tfm)) {
+ 		printk(KERN_INFO "AH: %s digestsize %u != %hu\n",
+-		       x->aalg->alg_name, crypto_tfm_alg_digestsize(ahp->tfm),
++		       x->aalg->alg_name, crypto_hash_digestsize(tfm),
+ 		       aalg_desc->uinfo.auth.icv_fullbits/8);
+ 		goto error;
+ 	}
+@@ -263,7 +270,7 @@ static int ah_init_state(struct xfrm_state *x)
+ error:
+ 	if (ahp) {
+ 		kfree(ahp->work_icv);
+-		crypto_free_tfm(ahp->tfm);
++		crypto_free_hash(ahp->tfm);
+ 		kfree(ahp);
+ 	}
+ 	return -EINVAL;
+@@ -278,7 +285,7 @@ static void ah_destroy(struct xfrm_state *x)
+ 
+ 	kfree(ahp->work_icv);
+ 	ahp->work_icv = NULL;
+-	crypto_free_tfm(ahp->tfm);
++	crypto_free_hash(ahp->tfm);
+ 	ahp->tfm = NULL;
+ 	kfree(ahp);
+ }
+diff --git a/net/ipv6/ah6.c b/net/ipv6/ah6.c
+index 5cdb130..36b51ac 100644
+--- a/net/ipv6/ah6.c
++++ b/net/ipv6/ah6.c
+@@ -213,7 +213,10 @@ static int ah6_output(struct xfrm_state *x, struct sk_buff *skb)
+ 	ah->spi = x->id.spi;
+ 	ah->seq_no = htonl(++x->replay.oseq);
+ 	xfrm_aevent_doreplay(x);
+-	ahp->icv(ahp, skb, ah->auth_data);
++	err = ah_mac_digest(ahp, skb, ah->auth_data);
++	if (err)
++		goto error_free_iph;
++	memcpy(ah->auth_data, ahp->work_icv, ahp->icv_trunc_len);
+ 
+ 	err = 0;
+ 
+@@ -251,6 +254,7 @@ static int ah6_input(struct xfrm_state *x, struct sk_buff *skb)
+ 	u16 hdr_len;
+ 	u16 ah_hlen;
+ 	int nexthdr;
++	int err = -EINVAL;
+ 
+ 	if (!pskb_may_pull(skb, sizeof(struct ip_auth_hdr)))
+ 		goto out;
+@@ -292,8 +296,11 @@ static int ah6_input(struct xfrm_state *x, struct sk_buff *skb)
+ 		memcpy(auth_data, ah->auth_data, ahp->icv_trunc_len);
+ 		memset(ah->auth_data, 0, ahp->icv_trunc_len);
+ 		skb_push(skb, hdr_len);
+-		ahp->icv(ahp, skb, ah->auth_data);
+-		if (memcmp(ah->auth_data, auth_data, ahp->icv_trunc_len)) {
++		err = ah_mac_digest(ahp, skb, ah->auth_data);
++		if (err)
++			goto free_out;
++		err = -EINVAL;
++		if (memcmp(ahp->work_icv, auth_data, ahp->icv_trunc_len)) {
+ 			LIMIT_NETDEBUG(KERN_WARNING "ipsec ah authentication error\n");
+ 			xfrm_audit_state_icvfail(x, skb, IPPROTO_AH);
+ 			x->stats.integrity_failed++;
+@@ -311,7 +318,7 @@ static int ah6_input(struct xfrm_state *x, struct sk_buff *skb)
+ free_out:
+ 	kfree(tmp_hdr);
+ out:
+-	return -EINVAL;
++	return err;
+ }
+ 
+ static void ah6_err(struct sk_buff *skb, struct inet6_skb_parm *opt, 
+@@ -339,6 +346,7 @@ static int ah6_init_state(struct xfrm_state *x)
+ {
+ 	struct ah_data *ahp = NULL;
+ 	struct xfrm_algo_desc *aalg_desc;
++	struct crypto_hash *tfm;
+ 
+ 	if (!x->aalg)
+ 		goto error;
+@@ -350,30 +358,28 @@ static int ah6_init_state(struct xfrm_state *x)
+ 	if (x->encap)
+ 		goto error;
+ 
++	aalg_desc = xfrm_aalg_get_byname(x->aalg->alg_name, 0);
++	if (!aalg_desc)
++		return -ENOENT;
++
+ 	ahp = kzalloc(sizeof(*ahp), GFP_KERNEL);
+ 	if (ahp == NULL)
+ 		return -ENOMEM;
+ 
+ 	ahp->key = x->aalg->alg_key;
+ 	ahp->key_len = (x->aalg->alg_key_len+7)/8;
+-	ahp->tfm = crypto_alloc_tfm(x->aalg->alg_name, 0);
+-	if (!ahp->tfm)
++	tfm = crypto_alloc_hash(aalg_desc->name, 0, NCRYPTO_ALG_ASYNC);
++	if (IS_ERR(tfm))
++		goto error;
++
++	ahp->tfm = tfm;
++	if (crypto_hash_setkey(tfm, ahp->key, ahp->key_len))
+ 		goto error;
+-	ahp->icv = ah_hmac_digest;
+-	
+-	/*
+-	 * Lookup the algorithm description maintained by xfrm_algo,
+-	 * verify crypto transform properties, and store information
+-	 * we need for AH processing.  This lookup cannot fail here
+-	 * after a successful crypto_alloc_tfm().
+-	 */
+-	aalg_desc = xfrm_aalg_get_byname(x->aalg->alg_name, 0);
+-	BUG_ON(!aalg_desc);
+ 
+ 	if (aalg_desc->uinfo.auth.icv_fullbits/8 !=
+-	    crypto_tfm_alg_digestsize(ahp->tfm)) {
++	    crypto_hash_digestsize(tfm)) {
+ 		printk(KERN_INFO "AH: %s digestsize %u != %hu\n",
+-		       x->aalg->alg_name, crypto_tfm_alg_digestsize(ahp->tfm),
++		       x->aalg->alg_name, crypto_hash_digestsize(tfm),
+ 		       aalg_desc->uinfo.auth.icv_fullbits/8);
+ 		goto error;
+ 	}
+@@ -397,7 +403,7 @@ static int ah6_init_state(struct xfrm_state *x)
+ error:
+ 	if (ahp) {
+ 		kfree(ahp->work_icv);
+-		crypto_free_tfm(ahp->tfm);
++		crypto_free_hash(ahp->tfm);
+ 		kfree(ahp);
+ 	}
+ 	return -EINVAL;
+@@ -412,7 +418,7 @@ static void ah6_destroy(struct xfrm_state *x)
+ 
+ 	kfree(ahp->work_icv);
+ 	ahp->work_icv = NULL;
+-	crypto_free_tfm(ahp->tfm);
++	crypto_free_hash(ahp->tfm);
+ 	ahp->tfm = NULL;
+ 	kfree(ahp);
+ }
+diff --git a/net/xfrm/xfrm_nalgo.c b/net/xfrm/xfrm_nalgo.c
+index f0cc84a..6d55cae 100644
+--- a/net/xfrm/xfrm_nalgo.c
++++ b/net/xfrm/xfrm_nalgo.c
+@@ -493,6 +493,87 @@ struct xfrm_nalgo_desc *xfrm_naead_get_byname(char *name, int icv_len,
+ }
+ EXPORT_SYMBOL_GPL(xfrm_naead_get_byname);
+ 
++int skb_nicv_walk(const struct sk_buff *skb, struct hash_desc *desc,
++		  int offset, int len, nicv_update_fn_t icv_update)
++{
++	int start = skb_headlen(skb);
++	int i, copy = start - offset;
++	int err;
++	struct scatterlist sg;
++
++	/* Checksum header. */
++	if (copy > 0) {
++		if (copy > len)
++			copy = len;
++		
++		sg.page = virt_to_page(skb->data + offset);
++		sg.offset = (unsigned long)(skb->data + offset) % PAGE_SIZE;
++		sg.length = copy;
++		
++		err = icv_update(desc, &sg, copy);
++		if (unlikely(err))
++			return err;
++		
++		if ((len -= copy) == 0)
++			return 0;
++		offset += copy;
++	}
++
++	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
++		int end;
++
++		BUG_TRAP(start <= offset + len);
++
++		end = start + skb_shinfo(skb)->frags[i].size;
++		if ((copy = end - offset) > 0) {
++			skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
++
++			if (copy > len)
++				copy = len;
++			
++			sg.page = frag->page;
++			sg.offset = frag->page_offset + offset-start;
++			sg.length = copy;
++			
++			err = icv_update(desc, &sg, copy);
++			if (unlikely(err))
++				return err;
++
++			if (!(len -= copy))
++				return 0;
++			offset += copy;
++		}
++		start = end;
++	}
++
++	if (skb_shinfo(skb)->frag_list) {
++		struct sk_buff *list = skb_shinfo(skb)->frag_list;
++
++		for (; list; list = list->next) {
++			int end;
++
++			BUG_TRAP(start <= offset + len);
++
++			end = start + list->len;
++			if ((copy = end - offset) > 0) {
++				if (copy > len)
++					copy = len;
++				err = skb_nicv_walk(list, desc, offset-start,
++						    copy, icv_update);
++				if (unlikely(err))
++					return err;
++				if ((len -= copy) == 0)
++					return 0;
++				offset += copy;
++			}
++			start = end;
++		}
++	}
++	BUG_ON(len);
++	return 0;
++}
++EXPORT_SYMBOL_GPL(skb_nicv_walk);
++
+ int xfrm_nlookup(struct dst_entry **dst_p, struct flowi *fl,
+ 		 struct sock *sk, int flags)
+ {

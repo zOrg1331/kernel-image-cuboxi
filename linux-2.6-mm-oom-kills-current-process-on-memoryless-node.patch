@@ -1,0 +1,43 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Subject: [RHEL5.1 patch] oom-killer from *always* kills current process on  memoryless node.
+Date: Mon, 09 Apr 2007 14:57:12 -0400
+Bugzilla: 222491
+Message-Id: <461A8C88.2030001@redhat.com>
+Changelog: [mm] oom kills current process on memoryless node.
+
+
+An OOM-kill will always kill the current process if its running on a 
+memory-less NUMA node.
+This is because memory-less node is online but is not included in 
+zonelist[] so constrained_alloc()
+returns CONSTRAINT_MEMORY_POLICY and that causes out_of_memory to kill 
+current.
+The following upstream fixes this:
+
+In addition, while we are at it, out_of_memory() should panic if 
+sysctl_panic_on_oom is set
+before even bothering to call constrained_alloc(), otherwise it can kill 
+current rather than
+panic'ng even though /proc/vm/kernel/panic_on_oom is set to non-zero.
+
+Fixes Bug 222491
+
+
+
+--- linux-2.6.18.noarch/mm/oom_kill.c.orig
++++ linux-2.6.18.noarch/mm/oom_kill.c
+@@ -171,7 +171,13 @@ static inline int constrained_alloc(stru
+ {
+ #ifdef CONFIG_NUMA
+ 	struct zone **z;
+-	nodemask_t nodes = node_online_map;
++	nodemask_t nodes;
++	int node;
++
++	/* node has memory ? */
++	for_each_online_node(node)
++		if (NODE_DATA(node)->node_present_pages)
++			node_set(node, nodes);
+ 
+ 	for (z = zonelist->zones; *z; z++)
+ 		if (cpuset_zone_allowed(*z, gfp_mask))

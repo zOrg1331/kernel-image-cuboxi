@@ -1,0 +1,121 @@
+From: David Howells <dhowells@redhat.com>
+Subject: [RHEL5 PATCH] CacheFiles: Fix object struct recycling
+Date: Thu, 04 Jan 2007 17:09:49 +0000
+Bugzilla: 215599
+Message-Id: <27688.1167930589@redhat.com>
+Changelog: CacheFiles: Fix object struct recycling
+
+
+
+Fix the recycling of the structures used to represent objects in CacheFiles
+[BZ #125599].
+
+The problem was that these structs (cachefiles_object) are being allocated from
+their own slab, and are initialised by the slab constructor rather than being
+reinitialised after allocation each time.
+
+The structs have two dentry pointers: one for the primary VFS representation of
+the cache object, and one for the data storage file.  For index objects, the
+latter is unused; for data storage objects and special objects, the two
+pointers are the same (and point to a file) unless the object has children (in
+which case the former is a directory, and the latter a file in that directory).
+
+What happens is that when an index object is allocated, the "backer" pointer is
+not set (on the assumption that it'll be NULL).  cachefiles_put_object(),
+however, attempts to release it anyway - which is fine, if it is NULL.
+
+cachefiles_put_object(), though, was only attempting to release the dentry
+pointed to by the "backer" pointer if it differed from the representation
+dentry (thus only holding one ref on the dentry, not two), and, critically, was
+only clearing the "backer" pointer if it released what it pointed to.
+
+This means that if the "backer" pointer was the same as the representation
+dentry pointer upon release of a data object, then the "backer" pointer would
+not be cleared before the object was handed back to the slab:
+
+	if (object->backer != object->dentry) {
+		dput(object->backer);
+		object->backer = NULL;
+	}
+
+However, the slab object is not then reconstructed by mm/slab.c unless the page
+holding it is released and reallocated or CONFIG_DEBUG_SLAB=y.
+
+What happens then is that a data object is destroyed and released back to the
+slab and then reallocated.  If it's allocated for use as an index, the "backer"
+pointer from the data object is retained and released again when the index
+object is released.  This leads to an object being dput()'d multiple times,
+which leads to the following BUG occurring when the filesystem with the cache
+on it is unmounted:
+
+BUG: Dentry f5eb4888{i=12fb4,n=Ew0wo0000-VNwe02000g0tS_6TkshDZhP7sIo0000-VNw0000} still in use (-1) [unmount of ext3 loop0]
+------------[ cut here ]------------
+kernel BUG at fs/dcache.c:615!
+
+However, if the dentry gets recycled before it's fully released (cachefilesd
+may be using it when the CacheFiles module releases it), it may then affect
+other filesystems too.
+
+The solution is simply to always clear the backing pointer before releasing the
+object back to the slab.  I've also added in a BUG_ON() to catch the object
+being allocated with the "backer" pointer unexpectedly set.
+
+
+I think the BUG isn't seen much for a few reasons:
+
+ (1) It only happens when an data object is recycled as an index object without
+     the slab page being recycled in between.  However, this is very unlikely
+     to happen.  FS-Cache has one root index, NFS has one general index and one
+     index per server.  All the other cache objects are data objects.
+
+     It's reasonably likely that all the index objects will be allocated up
+     front and not released.
+
+ (2) Data objects always change the "backer" pointer, and so don't suffer from
+     this bug.
+
+ (3) The problem is avoided by turning on CONFIG_DEBUG_SLAB.
+
+
+I've tested this by running the cache in a kernel with only the BUG_ON() part
+of the patch in there.  Starting up the cache and tarring up a kernel tree
+through it, then stopping the cache and unmounting its backing store and then
+starting it up again and rerunning the tar showed up the problem immediately:
+
+---------- [cut here ] --------- [please bite here ] ---------
+Kernel BUG at fs/cachefiles/cf-interface.c:53
+
+Adding in the rest of the patch caused that to go away under the same
+procedure.
+
+
+Barry Donahue managed to reproduce the bug with reasonable reliability.  With
+the patched kernel the bug seems to have gone away for him.
+
+David
+
+--- fscache/fs/cachefiles/cf-interface.c.orig	2007-01-03 18:00:19.000000000 +0000
++++ fscache/fs/cachefiles/cf-interface.c	2007-01-03 18:02:32.000000000 +0000
+@@ -50,6 +50,8 @@ static struct fscache_object *cachefiles
+ 	if (!object)
+ 		goto nomem_object;
+ 
++	BUG_ON(object->backer != NULL);
++
+ 	atomic_set(&object->usage, 1);
+ 	atomic_set(&object->fscache_usage, 1);
+ 
+@@ -230,10 +232,9 @@ static void cachefiles_put_object(struct
+ 	}
+ 
+ 	/* close the filesystem stuff attached to the object */
+-	if (object->backer != object->dentry) {
++	if (object->backer != object->dentry)
+ 		dput(object->backer);
+-		object->backer = NULL;
+-	}
++	object->backer = NULL;
+ 
+ 	/* note that the object is now inactive */
+ 	if (test_bit(CACHEFILES_OBJECT_ACTIVE, &object->flags)) {
+

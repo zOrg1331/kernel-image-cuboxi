@@ -1,0 +1,43 @@
+From: Patrick Caulfield <pcaulfie@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] bz#250464: Make dlm_sendd cond_resched more
+Date: Fri, 14 Sep 2007 14:00:37 +0100
+Bugzilla: 250464
+Message-Id: <46EA85F5.1090105@redhat.com>
+Changelog: [dlm] Make dlm_sendd cond_resched more
+
+
+Under high recovery loads dlm_sendd can monopolise the CPU and cause soft lockups.
+
+This one extra and one moved cond_resched() make it able to yield a little more
+during such times keeping work moving.
+
+Signed-Off-By: Patrick Caulfield <pcaulfie@redhat.com>
+
+Patrick
+
+
+
+diff -up linux-2.6.18.ia64/fs/dlm/lowcomms.c linux-2.6.18.ia64/fs/dlm/lowcomms.c
+--- linux-2.6.18.ia64/fs/dlm/lowcomms.c	2007-09-13 03:03:44.000000000 -0500
++++ linux-2.6.18.ia64/fs/dlm/lowcomms.c	2007-09-13 09:44:40.000000000 -0500
+@@ -1263,14 +1263,15 @@ static void send_to_sock(struct connecti
+ 		if (len) {
+ 			ret = sendpage(con->sock, e->page, offset, len,
+ 				       msg_flags);
+-			if (ret == -EAGAIN || ret == 0)
++			if (ret == -EAGAIN || ret == 0) {
++				cond_resched();
+ 				goto out;
++			}
+ 			if (ret <= 0)
+ 				goto send_error;
+-		} else {
+-			/* Don't starve people filling buffers */
+-			cond_resched();
+ 		}
++		/* Don't starve people filling buffers */
++		cond_resched();
+ 
+ 		spin_lock(&con->writequeue_lock);
+ 		e->offset += ret;
+

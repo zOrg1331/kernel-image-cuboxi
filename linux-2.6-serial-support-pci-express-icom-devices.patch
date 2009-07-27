@@ -1,0 +1,67 @@
+From: Chris Snook <csnook@redhat.com>
+Date: Mon, 11 Jun 2007 20:19:01 -0400
+Subject: [serial] support PCI Express icom devices
+Message-id: 20070612001901.GA19848@bernoulli.boston.redhat.com
+O-Subject: [RHEL 5.2 PATCH] BZ 243806: support PCI Express icom devices
+Bugzilla: 243806
+
+Hi folks --
+
+	This patch, written and tested by IBM, adds support for the new PCI
+Express model of the icom adapter.  It also corrects an unsigned char
+irq_number to unsigned int irq_number, which happened to work on older
+systems, but causes an oops during rmmod on POWER6 systems that use PCI
+Express and have more than 256 IRQs.  This change brings the driver in line
+with the PCI core, which uses unsigned int throughout.  The patch is upstream
+as of 2.6.22-rc3.
+
+	This resolves BZ 243806, please ack.
+
+	-- Chris
+
+Acked-by: Alan Cox <alan@redhat.com>
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/drivers/serial/icom.c b/drivers/serial/icom.c
+index a3c00a2..5b0a8c0 100644
+--- a/drivers/serial/icom.c
++++ b/drivers/serial/icom.c
+@@ -98,6 +98,13 @@ static const struct pci_device_id icom_pci_table[] = {
+ 	      .subdevice = PCI_DEVICE_ID_IBM_ICOM_FOUR_PORT_MODEL,
+ 	      .driver_data = ADAPTER_V2,
+ 	 },
++	{
++	      .vendor = PCI_VENDOR_ID_IBM,
++	      .device = PCI_DEVICE_ID_IBM_ICOM_DEV_ID_2,
++	      .subvendor = PCI_VENDOR_ID_IBM,
++	      .subdevice = PCI_DEVICE_ID_IBM_ICOM_V2_ONE_PORT_RVX_ONE_PORT_MDM_PCIE,
++	      .driver_data = ADAPTER_V2,
++	 },
+ 	{}
+ };
+ 
+diff --git a/drivers/serial/icom.h b/drivers/serial/icom.h
+index 798f1ef..43f03e0 100644
+--- a/drivers/serial/icom.h
++++ b/drivers/serial/icom.h
+@@ -258,7 +258,7 @@ struct icom_port {
+ struct icom_adapter {
+ 	void __iomem * base_addr;
+ 	unsigned long base_addr_pci;
+-	unsigned char irq_number;
++	unsigned int irq_number;
+ 	struct pci_dev *pci_dev;
+ 	struct icom_port port_info[4];
+ 	int index;
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+index d0093fa..92f6066 100644
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -469,6 +469,7 @@
+ #define PCI_DEVICE_ID_IBM_ICOM_V2_TWO_PORTS_RVX		0x021A
+ #define PCI_DEVICE_ID_IBM_ICOM_V2_ONE_PORT_RVX_ONE_PORT_MDM	0x0251
+ #define PCI_DEVICE_ID_IBM_ICOM_FOUR_PORT_MODEL	0x252
++#define PCI_DEVICE_ID_IBM_ICOM_V2_ONE_PORT_RVX_ONE_PORT_MDM_PCIE	0x0361
+ 
+ #define PCI_VENDOR_ID_COMPEX2		0x101a /* pci.ids says "AT&T GIS (NCR)" */
+ #define PCI_DEVICE_ID_COMPEX2_100VG	0x0005

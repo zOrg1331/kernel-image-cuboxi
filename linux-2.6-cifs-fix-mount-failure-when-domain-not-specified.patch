@@ -1,0 +1,86 @@
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [RHEL5][PATCH] [CIFS] Fix mount failure when domain not specified
+Date: Mon, 04 Dec 2006 13:09:22 -0500
+Bugzilla: 218322
+Message-Id: <45746452.2080900@RedHat.com>
+Changelog: cifs: Fix mount failure when domain not specified
+
+
+The CIFS upstream maintainer sent me this patch and strongly
+suggested that we include it in RHEL5
+
+The bz is:
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=218322
+
+steved
+
+commit 6e659c63998881e8f4a842edbe86ac8c5cdaee41
+Author: Steve French <sfrench@us.ibm.com>
+
+    [CIFS]  Fix mount failure when domain not specified
+    
+        Fixes Samba bugzilla #4176
+    
+        When users do not specify their domain on mount, 2.6.18 started sending
+        default domain instead of a null domain (which was the only way on some
+        servers to use a default domain).  Users of 2.6.18 who did not specify
+        their domain name on mounts to certain common Windows servers that were
+        members of a domain, but not the domain controller, would get mount
+        failures which they did not get in 2.6.18
+    
+        This fixes that issue and should remove complaints about mount
+        behavior changing.
+    
+    Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/sess.c b/fs/cifs/sess.c
+index a8a0835..bbdda99 100644
+--- a/fs/cifs/sess.c
++++ b/fs/cifs/sess.c
+@@ -90,7 +90,9 @@ static void unicode_ssetup_strings(char 
+ 	} */
+ 	/* copy user */
+ 	if(ses->userName == NULL) {
+-		/* BB what about null user mounts - check that we do this BB */
++		/* null user mount */
++		*bcc_ptr = 0;
++		*(bcc_ptr+1) = 0;
+ 	} else { /* 300 should be long enough for any conceivable user name */
+ 		bytes_ret = cifs_strtoUCS((__le16 *) bcc_ptr, ses->userName,
+ 					  300, nls_cp);
+@@ -98,10 +100,13 @@ static void unicode_ssetup_strings(char 
+ 	bcc_ptr += 2 * bytes_ret;
+ 	bcc_ptr += 2; /* account for null termination */
+ 	/* copy domain */
+-	if(ses->domainName == NULL)
+-		bytes_ret = cifs_strtoUCS((__le16 *) bcc_ptr,
+-					  "CIFS_LINUX_DOM", 32, nls_cp);
+-	else
++	if(ses->domainName == NULL) {
++		/* Sending null domain better than using a bogus domain name (as
++		we did briefly in 2.6.18) since server will use its default */
++		*bcc_ptr = 0;
++		*(bcc_ptr+1) = 0;
++		bytes_ret = 0;
++	} else
+ 		bytes_ret = cifs_strtoUCS((__le16 *) bcc_ptr, ses->domainName, 
+ 					  256, nls_cp);
+ 	bcc_ptr += 2 * bytes_ret;
+@@ -144,13 +149,11 @@ static void ascii_ssetup_strings(char **
+ 
+         /* copy domain */
+ 	
+-        if(ses->domainName == NULL) {
+-                strcpy(bcc_ptr, "CIFS_LINUX_DOM");
+-		bcc_ptr += 14;  /* strlen(CIFS_LINUX_DOM) */
+- 	} else {
++        if(ses->domainName != NULL) {
+                 strncpy(bcc_ptr, ses->domainName, 256); 
+ 		bcc_ptr += strnlen(ses->domainName, 256);
+-	}
++	} /* else we will send a null domain name 
++	     so the server will default to its own domain */
+ 	*bcc_ptr = 0;
+ 	bcc_ptr++;
+ 
+

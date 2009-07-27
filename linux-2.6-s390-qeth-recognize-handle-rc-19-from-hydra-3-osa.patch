@@ -1,0 +1,86 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 16 Nov 2007 13:54:29 +0100
+Subject: [s390] qeth: recognize/handle RC=19 from Hydra 3 OSA
+Message-id: 20071116125429.GI6053@redhat.com
+O-Subject: [RHEL5 U2 PATCH 1/14] s390 - qeth: recognize/handle RC=19 from Hydra 3 OSA
+Bugzilla: 354891
+
+Description
+============
+
+Exclusive usage of OSA-cards has been introduced. Even though Linux
+does not make use of it, qeth should be prepared to receive a bad RC
+for some initialization steps. A meaningful message is now given,
+if an OSA-device is set online, even though the OSA-adapter is already
+exclusively used by another host.
+
+Bugzilla
+=========
+
+BZ 354891
+https://bugzilla.redhat.com/show_bug.cgi?id=354891
+
+Upstream status of the patch:
+=============================
+
+Patch has been submitted upstream and is accepted:
+http://grmso.net:8090/commit/6e55cab9f004e6e7a9ab5d7b27fb705ed0de838e/
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index af6ff76..b0bd651 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -1475,8 +1475,13 @@ qeth_idx_write_cb(struct qeth_channel *channel, struct qeth_cmd_buffer *iob)
+ 	card = CARD_FROM_CDEV(channel->ccwdev);
+ 
+ 	if (!(QETH_IS_IDX_ACT_POS_REPLY(iob->data))) {
+-		PRINT_ERR("IDX_ACTIVATE on write channel device %s: negative "
+-			  "reply\n", CARD_WDEV_ID(card));
++		if (QETH_IDX_ACT_CAUSE_CODE(iob->data) == 0x19)
++			PRINT_ERR("IDX_ACTIVATE on write channel device %s: "
++				"adapter exclusively used by another host\n",
++				CARD_WDEV_ID(card));
++		else
++			PRINT_ERR("IDX_ACTIVATE on write channel device %s: "
++				"negative reply\n", CARD_WDEV_ID(card));
+ 		goto out;
+ 	}
+ 	memcpy(&temp, QETH_IDX_ACT_FUNC_LEVEL(iob->data), 2);
+@@ -1530,8 +1535,13 @@ qeth_idx_read_cb(struct qeth_channel *channel, struct qeth_cmd_buffer *iob)
+ 			goto out;
+ 	}
+ 	if (!(QETH_IS_IDX_ACT_POS_REPLY(iob->data))) {
+-		PRINT_ERR("IDX_ACTIVATE on read channel device %s: negative "
+-			  "reply\n", CARD_RDEV_ID(card));
++		if (QETH_IDX_ACT_CAUSE_CODE(iob->data) == 0x19)
++			PRINT_ERR("IDX_ACTIVATE on read channel device %s: "
++				"adapter exclusively used by another host\n",
++				CARD_RDEV_ID(card));
++		else
++			PRINT_ERR("IDX_ACTIVATE on read channel device %s: "
++				"negative reply\n", CARD_RDEV_ID(card));
+ 		goto out;
+ 	}
+ 
+diff --git a/drivers/s390/net/qeth_mpc.h b/drivers/s390/net/qeth_mpc.h
+index 0477c47..39c392f 100644
+--- a/drivers/s390/net/qeth_mpc.h
++++ b/drivers/s390/net/qeth_mpc.h
+@@ -529,6 +529,7 @@ extern unsigned char IDX_ACTIVATE_WRITE[];
+ #define QETH_IDX_ACT_QDIO_DEV_REALADDR(buffer) (buffer+0x20)
+ #define QETH_IS_IDX_ACT_POS_REPLY(buffer) (((buffer)[0x08]&3)==2)
+ #define QETH_IDX_REPLY_LEVEL(buffer) (buffer+0x12)
++#define QETH_IDX_ACT_CAUSE_CODE(buffer) (buffer)[0x09]
+ 
+ #define PDU_ENCAPSULATION(buffer) \
+ 	(buffer + *(buffer + (*(buffer+0x0b)) + \

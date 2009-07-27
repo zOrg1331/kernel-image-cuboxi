@@ -1,0 +1,57 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 6 Nov 2008 15:47:28 +0100
+Subject: [s390] qeth: EDDP for large TSO skb fragment list
+Message-id: 20081106144728.GC12027@redhat.com
+O-Subject: [RHEL5 U4 PATCH 3/4] s390 - qeth: EDDP for large TSO skb fragment list
+Bugzilla: 468068
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+We experiemce TSO packet loss (performance) because the TCP/IP stack sends sbk with more fragments than
+the hardware can handle.
+Solution: Switch temporary to EDDP mode.
+
+Bugzilla
+=========
+
+BZ 468068
+https://bugzilla.redhat.com/show_bug.cgi?id=468068
+
+Upstream status of the patch:
+=============================
+
+This problem has been fixes upstream as part of
+the qeth device driver rewrite:
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=4a71df50047f0db65ea09b1be155852e81a45eba
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	--Hans
+
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index 6d9ec25..b0c32aa 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -4557,6 +4557,11 @@ qeth_send_packet(struct qeth_card *card, struct sk_buff *skb)
+ 	}
+ 	if (skb_is_gso(skb))
+ 		large_send = card->options.large_send;
++
++	if ((large_send == QETH_LARGE_SEND_TSO) &&
++		((skb_shinfo(new_skb)->nr_frags + 2) > 16))
++		large_send = QETH_LARGE_SEND_EDDP;
++
+ 	/* check on OSN device*/
+ 	if (card->info.type == QETH_CARD_TYPE_OSN)
+ 		hdr = (struct qeth_hdr *)new_skb->data;

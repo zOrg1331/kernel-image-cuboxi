@@ -1,0 +1,51 @@
+From: Konrad Rzeszutek <konradr@redhat.com>
+Subject: [RHEL5 PATCH] RHBZ# 220246 qla3xxx panics when eth1 (qla3xxx) is sending pings
+Date: Thu, 4 Jan 2007 14:18:48 -0500
+Bugzilla: 220246
+Message-Id: <20070104191848.GA17234@dhcp83-12.boston.redhat.com>
+Changelog: net: qla3xxx panics when eth1 is sending pings
+
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=220246
+
+Description:
+------------
+QLA3XXX dies when an exhaustive ping test is performed.
+The problem was found to be with: "The TX locking was removed 
+some time ago but this flag was overlooked."
+from: http://www.spinics.net/lists/netdev/msg21644.html
+
+
+RHEL Version Found:
+------------------
+RHEL4 U5 and now "up-porting" to RHEL5.
+
+Upstream Status:
+----------------
+Posted on 12/19. Have not yet received any comments.
+
+Test Status:
+------------
+Tested on the QLogic iSCSI card in Westford, MA lab.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-1.2961.
+
+diff -uNr linux-2.6.18.i686.orig/drivers/net/qla3xxx.c linux-2.6.18.i686/drivers/net/qla3xxx.c
+--- linux-2.6.18.i686.orig/drivers/net/qla3xxx.c	2007-01-04 13:54:16.000000000 -0500
++++ linux-2.6.18.i686/drivers/net/qla3xxx.c	2007-01-04 13:55:41.000000000 -0500
+@@ -3365,7 +3365,6 @@
+ 	SET_MODULE_OWNER(ndev);
+ 	SET_NETDEV_DEV(ndev, &pdev->dev);
+ 
+-	ndev->features = NETIF_F_LLTX;
+ 	if (pci_using_dac)
+ 		ndev->features |= NETIF_F_HIGHDMA;
+ 
+-- 
+Konrad Rzeszutek 1-(978)-392-3903 or 1-(617)-693-1718
+IBM on-site partner.
+

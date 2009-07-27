@@ -1,0 +1,105 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Tue, 19 Aug 2008 12:46:29 -0400
+Subject: [serial] support for Digi PCI-E 4-8port Async IO adapter
+Message-id: 20080819164629.5440.94330.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.3 439443] Adds support for a new Digi PCI-E Gen1 4-8port Async IO adapter on i/p6 servers
+Bugzilla: 439443
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: John W. Linville <linville@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=439443
+
+Description:
+===========
+New Feature / Device driver, used on PPC/I only
+
+As all IO's are transitioning from PCI-X to PCI-E, support for this
+new card is essential in order to provide the Async IO on i/p6 servers.
+The old Async adapter is going end-of-life. All the new i/p6 servers are
+requiring PCI-E adapters in 2008.
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1429385
+
+Upstream Status:
+================
+commit # 99da9047e675a4a8d671bbd67b34eb096c308b0d
+
+Test Status:
+============
+The patch was developed and tested by Digi (third party, non-IBM).
+For my part, I confirmed the patch built and the kernel booted, but
+do not have access to hardware for more testing.
+
+===============================================================
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+
+Proposed Patch:
+===============
+This patch is based on 2.6.18-104.el5
+
+diff --git a/drivers/serial/jsm/jsm.h b/drivers/serial/jsm/jsm.h
+index 043f50b..6a0f741 100644
+--- a/drivers/serial/jsm/jsm.h
++++ b/drivers/serial/jsm/jsm.h
+@@ -373,7 +373,7 @@ struct neo_uart_struct {
+ #define PCI_DEVICE_NEO_2DB9PRI_PCI_NAME		"Neo 2 - DB9 Universal PCI - Powered Ring Indicator"
+ #define PCI_DEVICE_NEO_2RJ45_PCI_NAME		"Neo 2 - RJ45 Universal PCI"
+ #define PCI_DEVICE_NEO_2RJ45PRI_PCI_NAME	"Neo 2 - RJ45 Universal PCI - Powered Ring Indicator"
+-
++#define PCIE_DEVICE_NEO_IBM_PCI_NAME            "Neo 4 - PCI Express - IBM"
+ /*
+  * Our Global Variables.
+  */
+diff --git a/drivers/serial/jsm/jsm_driver.c b/drivers/serial/jsm/jsm_driver.c
+index 244f63b..e4c93ff 100644
+--- a/drivers/serial/jsm/jsm_driver.c
++++ b/drivers/serial/jsm/jsm_driver.c
+@@ -83,8 +83,11 @@ static int jsm_probe_one(struct pci_dev *pdev, const struct pci_device_id *ent)
+ 	/* store the info for the board we've found */
+ 	brd->boardnum = adapter_count++;
+ 	brd->pci_dev = pdev;
+-	brd->maxports = 2;
+-
++	if (pdev->device == PCIE_DEVICE_ID_NEO_4_IBM)
++		brd->maxports = 4;
++	else
++		brd->maxports = 2;
++	
+ 	spin_lock_init(&brd->bd_lock);
+ 	spin_lock_init(&brd->bd_intr_lock);
+ 
+@@ -210,6 +213,7 @@ static struct pci_device_id jsm_pci_tbl[] = {
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_DIGI, PCI_DEVICE_ID_NEO_2DB9PRI), 0, 0, 1 },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_DIGI, PCI_DEVICE_ID_NEO_2RJ45), 0, 0, 2 },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_DIGI, PCI_DEVICE_ID_NEO_2RJ45PRI), 0, 0, 3 },
++	{ PCI_DEVICE(PCI_VENDOR_ID_DIGI, PCIE_DEVICE_ID_NEO_4_IBM), 0, 0, 4 },
+ 	{ 0, }
+ };
+ MODULE_DEVICE_TABLE(pci, jsm_pci_tbl);
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+index a136c63..31dfc58 100644
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -1420,7 +1420,7 @@
+ #define PCI_DEVICE_ID_NEO_2DB9PRI       0x00C9
+ #define PCI_DEVICE_ID_NEO_2RJ45         0x00CA
+ #define PCI_DEVICE_ID_NEO_2RJ45PRI      0x00CB
+-
++#define PCIE_DEVICE_ID_NEO_4_IBM        0x00F4
+ 
+ #define PCI_VENDOR_ID_XIRCOM		0x115d
+ #define PCI_DEVICE_ID_XIRCOM_RBM56G	0x0101

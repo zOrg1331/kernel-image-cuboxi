@@ -1,0 +1,67 @@
+From: Jan Glauber <jglauber@redhat.com>
+Subject: [RHEL5.1 PATCH] qdio: system hang with zfcp in case of adapter 	problems
+Date: Fri, 15 Jun 2007 13:17:55 +0000
+Bugzilla: 241298
+Message-Id: <1181913475.5508.43.camel@localhost.localdomain>
+Changelog: [s390] qdio: system hang with zfcp in case of adapter problems
+
+
+BZ 241298
+
+If the qdio-QEBSM-support is active and setting of qdio-buffers
+fails with an error in the ccq value, none of the qdio
+buffers might be set, which causes an endless loop in the qdio-code.
+
+Solution: Stop trying to set qdio-buffers, if an attempt returns 
+with 0 as the number of processed buffers.
+
+Patch is upstream and tested by IBM.
+
+Please ack,
+Jan
+
+-- 
+jglauber@redhat.com
+jang@de.ibm.com
+
+Index: linux-rhel5/drivers/s390/cio/qdio.c
+===================================================================
+--- linux-rhel5.orig/drivers/s390/cio/qdio.c	2007-05-08 17:39:55.000000000 +0200
++++ linux-rhel5/drivers/s390/cio/qdio.c	2007-05-08 17:40:00.000000000 +0200
+@@ -3354,10 +3354,15 @@ qdio_do_qdio_fill_input(struct qdio_q *q
+ 			unsigned int count, struct qdio_buffer *buffers)
+ {
+ 	struct qdio_irq *irq = (struct qdio_irq *) q->irq_ptr;
++	int tmp = 0;
++
+ 	qidx &= (QDIO_MAX_BUFFERS_PER_Q - 1);
+ 	if (irq->is_qebsm) {
+-		while (count)
+-			set_slsb(q, &qidx, SLSB_CU_INPUT_EMPTY, &count);
++		while (count) {
++			tmp = set_slsb(q, &qidx, SLSB_CU_INPUT_EMPTY, &count);
++			if (!tmp)
++				return;
++		}
+ 		return;
+ 	}
+ 	for (;;) {
+@@ -3373,11 +3378,15 @@ qdio_do_qdio_fill_output(struct qdio_q *
+ 			 unsigned int count, struct qdio_buffer *buffers)
+ {
+ 	struct qdio_irq *irq = (struct qdio_irq *) q->irq_ptr;
++	int tmp = 0;
+ 
+ 	qidx &= (QDIO_MAX_BUFFERS_PER_Q - 1);
+ 	if (irq->is_qebsm) {
+-		while (count)
+-			set_slsb(q, &qidx, SLSB_CU_OUTPUT_PRIMED, &count);
++		while (count) {
++			tmp = set_slsb(q, &qidx, SLSB_CU_OUTPUT_PRIMED, &count);
++			if (!tmp)
++				return;
++		}
+ 		return;
+ 	}
+ 
+

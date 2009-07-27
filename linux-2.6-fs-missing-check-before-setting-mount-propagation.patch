@@ -1,0 +1,32 @@
+From: Eugene Teo <eteo@redhat.com>
+Date: Thu, 10 Jul 2008 15:14:31 +0800
+Subject: [fs] missing check before setting mount propagation
+Message-id: 20080710071431.GA14921@kernel.sg
+O-Subject: [RHEL5.3 PATCH] BZ#454393 CVE-2008-2931 missing check before setting mount propagation
+Bugzilla: 454393
+RH-Acked-by: Alexander Viro <aviro@redhat.com>
+RH-Acked-by: Jerome Marchand <jmarchan@redhat.com>
+RH-Acked-by: Josef Bacik <jbacik@redhat.com>
+
+This is for Bugzilla bug #454393.
+
+Backport of upstream commit ee6f958291e2a768fd727e7a67badfff0b67711a
+
+This patch adds a missing check for CAP_SYS_ADMIN in do_change_type().
+
+Signed-off-by: Eugene Teo <eteo@redhat.com>
+
+diff --git a/fs/namespace.c b/fs/namespace.c
+index 3787282..6702466 100644
+--- a/fs/namespace.c
++++ b/fs/namespace.c
+@@ -910,6 +910,9 @@ static int do_change_type(struct nameidata *nd, int flag)
+ 	int recurse = flag & MS_REC;
+ 	int type = flag & ~MS_REC;
+ 
++	if (!capable(CAP_SYS_ADMIN))
++		return -EPERM;
++
+ 	if (nd->dentry != nd->mnt->mnt_root)
+ 		return -EINVAL;
+ 

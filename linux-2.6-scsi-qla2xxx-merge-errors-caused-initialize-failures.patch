@@ -1,0 +1,122 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Thu, 16 Oct 2008 11:24:26 -0400
+Subject: [scsi] qla2xxx: merge errors caused initialize failures
+Message-id: 20081016152426.31822.40960.sendpatchset@file.bos.redhat.com
+O-Subject: [rhel 5.3 patch] [V2] qla2xxx - Fix merge errors which cause failure to initialize..
+Bugzilla: 442946
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+BZ 442946
+
+Version 2 of patch which *does* include the one line fix for the use of dispatch
+table for 25xx adapters...
+
+The recent firmware upgrade from this BZ uncovered an earlier bad merge
+from upstream. This firmware used a mailbox parameter which had been left
+unitialized, due to being skipped in the earlier merge.
+
+During investigation of this failure some additional merge corrections were
+made to better align with upstream and fix issues as listed below.
+
+These fixes have been tested on -118 and confirmed to fix these issues by
+QLogic and RedHat.
+
+qla2xxx - Fix merge errors which cause failure to initialize.
+
+ - Retreieve flash information earlier to support FDT/FLT
+
+ - Add MBX_11 to list for GET_RESOURCE_CNTS mailbox command
+   This caused adapters to fail to initalize. Also correctly
+   handle the count of max NPIV ports retrieved.
+
+ - Use dispatch table to access correct flash read routine.
+   This caused 25xx adapters to fail initialization.
+
+ - Use FLT instead of a fixed offset for RISC code.
+
+diff --git a/drivers/scsi/qla2xxx/qla_init.c b/drivers/scsi/qla2xxx/qla_init.c
+index 0cc374b..0f7a6da 100644
+--- a/drivers/scsi/qla2xxx/qla_init.c
++++ b/drivers/scsi/qla2xxx/qla_init.c
+@@ -88,6 +88,13 @@ qla2x00_initialize_adapter(scsi_qla_host_t *ha)
+ 
+ 	ha->isp_ops->reset_chip(ha);
+ 
++	rval = qla2xxx_get_flash_info(ha);
++	if (rval) {
++		DEBUG2(printk("scsi(%ld): Unable to validate FLASH data.\n",
++		    ha->host_no));
++		return (rval);
++	}
++
+ 	ha->isp_ops->get_flash_version(ha, ha->request_ring);
+ 
+ 	qla_printk(KERN_INFO, ha, "Configure NVRAM parameters...\n");
+@@ -933,17 +940,18 @@ qla2x00_setup_chip(scsi_qla_host_t *ha)
+ 				    &ha->fw_minor_version,
+ 				    &ha->fw_subminor_version,
+ 				    &ha->fw_attributes, &ha->fw_memory_size);
+-				qla2xxx_get_flash_info(ha);
+ 				qla2x00_resize_request_q(ha);
+ 				ha->flags.npiv_supported = 0;
+-				if ((IS_QLA24XX_TYPE(ha) || IS_QLA25XX(ha)) &&
+-				    (ha->fw_attributes & BIT_2))
++				if ((IS_QLA24XX_TYPE(ha) || IS_QLA25XX(ha) ||
++				    IS_QLA84XX(ha)) &&
++				    (ha->fw_attributes & BIT_2)) {
+ 					ha->flags.npiv_supported = 1;
+ 					if ((!ha->max_npiv_vports) ||
+ 					    ((ha->max_npiv_vports + 1) %
+ 					    MIN_MULTI_ID_FABRIC))
+ 						ha->max_npiv_vports =
+ 						    MIN_MULTI_ID_FABRIC - 1;
++				}
+ 
+ 				if (ql2xallocfwdump)
+ 					qla2x00_alloc_fw_dump(ha);
+@@ -1180,7 +1188,9 @@ qla2x00_init_rings(scsi_qla_host_t *ha)
+ 
+ 	DEBUG(printk("scsi(%ld): Issue init firmware.\n", ha->host_no));
+ 
+-	mid_init_cb->count = cpu_to_le16(ha->max_npiv_vports);
++	if (ha->flags.npiv_supported)
++		mid_init_cb->count = cpu_to_le16(ha->max_npiv_vports);	
++
+ 	mid_init_cb->options = __constant_cpu_to_le16(BIT_1);
+ 
+ 	rval = qla2x00_init_firmware(ha, ha->init_cb_size);
+@@ -3617,7 +3627,7 @@ qla24xx_load_risc_flash(scsi_qla_host_t *ha, uint32_t *srisc_addr)
+ 	rval = QLA_SUCCESS;
+ 
+ 	segments = FA_RISC_CODE_SEGMENTS;
+-	faddr = FA_RISC_CODE_ADDR;
++	faddr = ha->flt_region_fw;
+ 	dcode = (uint32_t *)ha->request_ring;
+ 	*srisc_addr = 0;
+ 
+diff --git a/drivers/scsi/qla2xxx/qla_mbx.c b/drivers/scsi/qla2xxx/qla_mbx.c
+index 29e5f19..591b2c3 100644
+--- a/drivers/scsi/qla2xxx/qla_mbx.c
++++ b/drivers/scsi/qla2xxx/qla_mbx.c
+@@ -1906,7 +1906,7 @@ qla2x00_get_resource_cnts(scsi_qla_host_t *ha, uint16_t *cur_xchg_cnt,
+ 
+ 	mcp->mb[0] = MBC_GET_RESOURCE_COUNTS;
+ 	mcp->out_mb = MBX_0;
+-	mcp->in_mb = MBX_10|MBX_7|MBX_6|MBX_3|MBX_2|MBX_1|MBX_0;
++	mcp->in_mb = MBX_11|MBX_10|MBX_7|MBX_6|MBX_3|MBX_2|MBX_1|MBX_0;
+ 	mcp->tov = 30;
+ 	mcp->flags = 0;
+ 	rval = qla2x00_mailbox_command(ha, mcp);
+diff --git a/drivers/scsi/qla2xxx/qla_sup.c b/drivers/scsi/qla2xxx/qla_sup.c
+index 11c06b6..5f93f73 100644
+--- a/drivers/scsi/qla2xxx/qla_sup.c
++++ b/drivers/scsi/qla2xxx/qla_sup.c
+@@ -736,7 +736,7 @@ qla2xxx_get_fdt_info(scsi_qla_host_t *ha)
+ 
+ 	wptr = (uint16_t *)ha->request_ring;
+ 	fdt = (struct qla_fdt_layout *)ha->request_ring;
+-	qla24xx_read_flash_data(ha, (uint32_t *)ha->request_ring,
++	ha->isp_ops->read_optrom(ha, (uint8_t *)ha->request_ring,
+ 	    ha->flt_region_fdt << 2, OPTROM_BURST_SIZE);
+ 	if (*wptr == __constant_cpu_to_le16(0xffff))
+ 		goto no_flash_data;

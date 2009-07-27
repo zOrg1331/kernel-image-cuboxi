@@ -1,0 +1,108 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 18 Aug 2008 08:44:29 -0400
+Subject: [nfs] v4: don't reuse expired nfs4_state_owner structs
+Message-id: 1219063469-27779-4-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.3 PATCH 3/3] BZ#441884: NFSv4: Don't reuse expired nfs4_state_owner structs
+Bugzilla: 441884
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+Upstream commit 7af654f8d1b7460415af5d1d326233478dd0f563
+
+That just confuses certain NFSv4 servers.
+
+diff --git a/fs/nfs/client.c b/fs/nfs/client.c
+index 310c460..a7e914d 100644
+--- a/fs/nfs/client.c
++++ b/fs/nfs/client.c
+@@ -141,7 +141,6 @@ static struct nfs_client *nfs_alloc_client(const char *hostname,
+ 	init_rwsem(&clp->cl_sem);
+ 	INIT_LIST_HEAD(&clp->cl_delegations);
+ 	INIT_LIST_HEAD(&clp->cl_state_owners);
+-	INIT_LIST_HEAD(&clp->cl_unused);
+ 	spin_lock_init(&clp->cl_lock);
+ 	INIT_WORK(&clp->cl_renewd, nfs4_renew_state, clp);
+ 	rpc_init_wait_queue(&clp->cl_rpcwaitq, "NFS client");
+@@ -170,15 +169,6 @@ static void nfs4_shutdown_client(struct nfs_client *clp)
+ #ifdef CONFIG_NFS_V4
+ 	if (__test_and_clear_bit(NFS_CS_RENEWD, &clp->cl_res_state))
+ 		nfs4_kill_renewd(clp);
+-	while (!list_empty(&clp->cl_unused)) {
+-		struct nfs4_state_owner *sp;
+-
+-		sp = list_entry(clp->cl_unused.next,
+-				struct nfs4_state_owner,
+-				so_list);
+-		list_del(&sp->so_list);
+-		kfree(sp);
+-	}
+ 	BUG_ON(!list_empty(&clp->cl_state_owners));
+ 	if (__test_and_clear_bit(NFS_CS_IDMAP, &clp->cl_res_state))
+ 		nfs_idmap_delete(clp);
+diff --git a/fs/nfs/nfs4state.c b/fs/nfs/nfs4state.c
+index 4349907..4bdcc59 100644
+--- a/fs/nfs/nfs4state.c
++++ b/fs/nfs/nfs4state.c
+@@ -75,21 +75,6 @@ nfs4_alloc_lockowner_id(struct nfs_client *clp)
+ 	return clp->cl_lockowner_id ++;
+ }
+ 
+-static struct nfs4_state_owner *
+-nfs4_client_grab_unused(struct nfs_client *clp, struct rpc_cred *cred)
+-{
+-	struct nfs4_state_owner *sp = NULL;
+-
+-	if (!list_empty(&clp->cl_unused)) {
+-		sp = list_entry(clp->cl_unused.next, struct nfs4_state_owner, so_list);
+-		atomic_inc(&sp->so_count);
+-		sp->so_cred = get_rpccred(cred);
+-		list_move(&sp->so_list, &clp->cl_state_owners);
+-		clp->cl_nunused--;
+-	}
+-	return sp;
+-}
+-
+ struct rpc_cred *nfs4_get_renew_cred(struct nfs_client *clp)
+ {
+ 	struct nfs4_state_owner *sp;
+@@ -178,8 +163,6 @@ struct nfs4_state_owner *nfs4_get_state_owner(struct nfs_server *server, struct
+ 	new = nfs4_alloc_state_owner();
+ 	spin_lock(&clp->cl_lock);
+ 	sp = nfs4_find_state_owner(clp, cred);
+-	if (sp == NULL)
+-		sp = nfs4_client_grab_unused(clp, cred);
+ 	if (sp == NULL && new != NULL) {
+ 		list_add(&new->so_list, &clp->cl_state_owners);
+ 		new->so_client = clp;
+@@ -206,17 +189,6 @@ void nfs4_put_state_owner(struct nfs4_state_owner *sp)
+ 
+ 	if (!atomic_dec_and_lock(&sp->so_count, &clp->cl_lock))
+ 		return;
+-	if (clp->cl_nunused >= OPENOWNER_POOL_SIZE)
+-		goto out_free;
+-	if (list_empty(&sp->so_list))
+-		goto out_free;
+-	list_move(&sp->so_list, &clp->cl_unused);
+-	clp->cl_nunused++;
+-	spin_unlock(&clp->cl_lock);
+-	put_rpccred(cred);
+-	cred = NULL;
+-	return;
+-out_free:
+ 	list_del(&sp->so_list);
+ 	spin_unlock(&clp->cl_lock);
+ 	put_rpccred(cred);
+diff --git a/include/linux/nfs_fs_sb.h b/include/linux/nfs_fs_sb.h
+index aae61ca..8cdb1cf 100644
+--- a/include/linux/nfs_fs_sb.h
++++ b/include/linux/nfs_fs_sb.h
+@@ -49,8 +49,6 @@ struct nfs_client {
+ 
+ 	struct list_head	cl_delegations;
+ 	struct list_head	cl_state_owners;
+-	struct list_head	cl_unused;
+-	int			cl_nunused;
+ 	spinlock_t		cl_lock;
+ 
+ 	unsigned long		cl_lease_time;

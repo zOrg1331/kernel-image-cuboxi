@@ -1,0 +1,47 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 17 Oct 2007 12:09:11 -0400
+Subject: [x86] Change command line size to 2048
+Message-id: 20071017160911.16058.4696.sendpatchset@prarit.boston.redhat.com
+O-Subject: [RHEL 5 PATCH]: Change command line size to 2048
+Bugzilla: 247477
+
+Change command line length to 2048 (to match upstream).
+
+This patch depends on the grub modification suggested in BZ 336341.
+
+Succesfully tested (along with the grub patch) on an HP x86/_64 and Dell x86/_64 box.
+
+Resolves BZ 247477.
+
+P.
+
+Acked-by: Andy Gospodarek <gospo@redhat.com>
+Acked-by: Jon Masters <jcm@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+
+diff --git a/include/asm-i386/setup.h b/include/asm-i386/setup.h
+index 2734909..27f7f53 100644
+--- a/include/asm-i386/setup.h
++++ b/include/asm-i386/setup.h
+@@ -17,7 +17,7 @@
+ #endif
+ 
+ #define PARAM_SIZE 4096
+-#define COMMAND_LINE_SIZE 256
++#define COMMAND_LINE_SIZE 2048
+ 
+ #define OLD_CL_MAGIC_ADDR	0x90020
+ #define OLD_CL_MAGIC		0xA33F
+diff --git a/include/asm-x86_64/setup.h b/include/asm-x86_64/setup.h
+index 985d4e3..eaeff73 100644
+--- a/include/asm-x86_64/setup.h
++++ b/include/asm-x86_64/setup.h
+@@ -1,6 +1,6 @@
+ #ifndef _x8664_SETUP_H
+ #define _x8664_SETUP_H
+ 
+-#define COMMAND_LINE_SIZE	256
++#define COMMAND_LINE_SIZE	2048
+ 
+ #endif

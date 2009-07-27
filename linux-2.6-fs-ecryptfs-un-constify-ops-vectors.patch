@@ -1,0 +1,77 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 18 Dec 2007 12:13:11 -0600
+Subject: [fs] ecryptfs: un-constify ops vectors
+Message-id: 47680DB7.2070308@redhat.com
+O-Subject: [RHEL 5.2 PATCH] 9/15: eCryptfs: un-constify ops vectors
+Bugzilla: 228341
+
+Several ops vectors in RHEL5 are not constant as they are upstream.
+
+ ecryptfs_kernel.h |    8 ++++----
+ inode.c           |    6 +++---
+ super.c           |    2 +-
+ 3 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/fs/ecryptfs/ecryptfs_kernel.h b/fs/ecryptfs/ecryptfs_kernel.h
+index a0f1b74..67367f0 100644
+--- a/fs/ecryptfs/ecryptfs_kernel.h
++++ b/fs/ecryptfs/ecryptfs_kernel.h
+@@ -505,10 +505,10 @@ void __ecryptfs_printk(const char *fmt, ...);
+ 
+ extern const struct file_operations ecryptfs_main_fops;
+ extern const struct file_operations ecryptfs_dir_fops;
+-extern const struct inode_operations ecryptfs_main_iops;
+-extern const struct inode_operations ecryptfs_dir_iops;
+-extern const struct inode_operations ecryptfs_symlink_iops;
+-extern const struct super_operations ecryptfs_sops;
++extern struct inode_operations ecryptfs_main_iops;
++extern struct inode_operations ecryptfs_dir_iops;
++extern struct inode_operations ecryptfs_symlink_iops;
++extern struct super_operations ecryptfs_sops;
+ extern struct dentry_operations ecryptfs_dops;
+ extern struct address_space_operations ecryptfs_aops;
+ extern int ecryptfs_verbosity;
+diff --git a/fs/ecryptfs/inode.c b/fs/ecryptfs/inode.c
+index c83990d..2d8f38b 100644
+--- a/fs/ecryptfs/inode.c
++++ b/fs/ecryptfs/inode.c
+@@ -1024,7 +1024,7 @@ int ecryptfs_inode_set(struct inode *inode, void *lower_inode)
+ 	return 0;
+ }
+ 
+-const struct inode_operations ecryptfs_symlink_iops = {
++struct inode_operations ecryptfs_symlink_iops = {
+ 	.readlink = ecryptfs_readlink,
+ 	.follow_link = ecryptfs_follow_link,
+ 	.put_link = ecryptfs_put_link,
+@@ -1036,7 +1036,7 @@ const struct inode_operations ecryptfs_symlink_iops = {
+ 	.removexattr = ecryptfs_removexattr
+ };
+ 
+-const struct inode_operations ecryptfs_dir_iops = {
++struct inode_operations ecryptfs_dir_iops = {
+ 	.create = ecryptfs_create,
+ 	.lookup = ecryptfs_lookup,
+ 	.link = ecryptfs_link,
+@@ -1054,7 +1054,7 @@ const struct inode_operations ecryptfs_dir_iops = {
+ 	.removexattr = ecryptfs_removexattr
+ };
+ 
+-const struct inode_operations ecryptfs_main_iops = {
++struct inode_operations ecryptfs_main_iops = {
+ 	.permission = ecryptfs_permission,
+ 	.setattr = ecryptfs_setattr,
+ 	.setxattr = ecryptfs_setxattr,
+diff --git a/fs/ecryptfs/super.c b/fs/ecryptfs/super.c
+index f8cdab2..b3202a5 100644
+--- a/fs/ecryptfs/super.c
++++ b/fs/ecryptfs/super.c
+@@ -185,7 +185,7 @@ out:
+ 	return rc;
+ }
+ 
+-const struct super_operations ecryptfs_sops = {
++struct super_operations ecryptfs_sops = {
+ 	.alloc_inode = ecryptfs_alloc_inode,
+ 	.destroy_inode = ecryptfs_destroy_inode,
+ 	.drop_inode = generic_delete_inode,

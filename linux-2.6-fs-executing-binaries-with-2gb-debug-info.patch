@@ -1,0 +1,117 @@
+From: Dave Anderson <anderson@redhat.com>
+Date: Mon, 19 Nov 2007 15:28:18 -0500
+Subject: [fs] executing binaries with >2GB debug info
+Message-id: 4741F1E2.1090301@redhat.com
+O-Subject: [RHEL5.2 PATCH] BZ #224679: FEAT: Executing >2GB binaries with <2GB code but >2GB debug
+Bugzilla: 224679
+
+BZ #224679:  FEAT: Executing >2GB binaries with <2GB code but >2GB debug
+    https://bugzilla.redhat.com/show_bug.cgi?id=224679
+
+Description:
+   The feature request contains discussions about the inability of RHEL5
+   to execute an x86_64 binary with less than 2GB of code, but with greater
+   than 2GB of debug data.  There's not much to the supplied binary test
+   program, but it has a .debug_macinfo section that is greater than 2GB:
+
+     # ls -l main
+     -rwx--x--x 1 root root 2588865021 Nov 19 09:32 main
+     # size main
+        text    data     bss     dec     hex filename
+         996     496       8    1500     5dc main
+     # size --format sysv main | grep -e section -e .debug
+     section                 size      addr
+     .debug_aranges            48         0
+     .debug_pubnames           27         0
+     .debug_info              157         0
+     .debug_abbrev             56         0
+     .debug_line               69         0
+     .debug_frame              56         0
+     .debug_loc                76         0
+     .debug_macinfo    2588857187         0
+     #
+
+   It fails like so:
+
+     # ./main
+     -bash: ./main: File too large
+     # strace ./main
+     execve("./main", ["./main"], [/* 24 vars */]) = -1 EFBIG (File too large)
+     ...
+     #
+
+   The problem has nothing to do with the file's format, but simply is a
+   matter of file size.  The failing sys_execve() function trace is this:
+
+     sys_execve()
+       do_execve()
+         open_exec()
+           nameidata_to_filp()
+             __dentry_open()
+               generic_file_open()
+
+   where generic_file_open() returns the EFBIG -- because the inode's file
+   size is greater than MAX_NON_LFS (2GB-1):
+
+     /*
+      * Called when an inode is about to be open.
+      * We use this to disallow opening large files on 32bit systems if
+      * the caller didn't specify O_LARGEFILE.  On 64bit systems we force
+      * on this flag in sys_open.
+      */
+     int generic_file_open(struct inode * inode, struct file * filp)
+     {
+             if (!(filp->f_flags & O_LARGEFILE) && i_size_read(inode) > MAX_NON_LFS)
+                     return -EFBIG;
+             return 0;
+     }
+
+   As the comments above indicate, when a file is opened by sys_open(),
+   this path is taken:
+
+     sys_open()
+       do_sys_open()
+         do_filp_open()
+           nameidata_to_filp()
+             __dentry_open()
+               generic_file_open()
+
+   and O_LARGEFILE gets set in sys_open():
+
+     asmlinkage long sys_open(const char __user *filename, int flags, int mode)
+     {
+             long ret;
+
+             if (force_o_largefile())
+                     flags |= O_LARGEFILE;
+
+   where force_o_largefile() looks like this:
+
+     #define force_o_largefile() (BITS_PER_LONG != 32)
+
+   Therefore, with respect to the exec failure, the EFBIG can be avoided
+   by checking force_o_largefile() somewhere in the sys_execve() path.
+   To me it made the most sense to add the force_o_largefile() check to
+   open_exec().
+
+Testing:
+   The supplied test program runs as expected.
+
+Proposed RHEL5 patch:
+
+Acked-by: Chip Coldwell <coldwell@redhat.com>
+
+diff --git a/fs/exec.c b/fs/exec.c
+index 8ff68d0..0581532 100644
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -488,7 +488,8 @@ struct file *open_exec(const char *name)
+ 			int err = vfs_permission(&nd, MAY_EXEC);
+ 			file = ERR_PTR(err);
+ 			if (!err) {
+-				file = nameidata_to_filp(&nd, O_RDONLY);
++				file = nameidata_to_filp(&nd, force_o_largefile() ?
++					O_RDONLY|O_LARGEFILE : O_RDONLY);
+ 				if (!IS_ERR(file)) {
+ 					err = deny_write_access(file);
+ 					if (err) {

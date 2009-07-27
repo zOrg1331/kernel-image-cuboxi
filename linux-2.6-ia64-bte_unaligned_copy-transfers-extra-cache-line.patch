@@ -1,0 +1,57 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Thu, 9 Aug 2007 12:44:44 +0800
+Subject: [ia64] bte_unaligned_copy transfers extra cache line
+Message-id: 46BA9BBC.4030203@redhat.com
+O-Subject: [RHEL 5.2 PATCH] bz 218298: bte_unaligned_copy transfers extra cache line beyond end of page
+Bugzilla: 218298
+
+bz 218298
+
+Description of problem:
+When called to do a transfer that has a start offset within the cache
+line which is uneven between source and destination and a length which
+terminates the source of the copy exactly on a cache line, one extra
+line gets copied into a temporary buffer.  This is normally not an issue
+since the buffer is a kernel buffer and only the requested information
+gets copied into the user buffer.
+
+The problem arises when the source ends at the very last physical page
+of memory.  That last cache line does not exist and results in the SHUB
+chip raising an MCA.
+
+Upstream status:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=cbf093e8c7447a202e376199cc017161262bd7cd
+
+I reviewed the patch it should go into rhel 5.
+According to bug report, the patch has been tested by George Beshers
+(gbeshers@redhat.com <mailto:gbeshers@redhat.com>).
+Please review, test and ACK.
+
+Thanks,
+Luming
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/arch/ia64/sn/kernel/bte.c b/arch/ia64/sn/kernel/bte.c
+index 27dee45..c55f487 100644
+--- a/arch/ia64/sn/kernel/bte.c
++++ b/arch/ia64/sn/kernel/bte.c
+@@ -382,14 +382,13 @@ bte_result_t bte_unaligned_copy(u64 src, u64 dest, u64 len, u64 mode)
+ 		 * bcopy to the destination.
+ 		 */
+ 
+-		/* Add the leader from source */
+-		headBteLen = len + (src & L1_CACHE_MASK);
+-		/* Add the trailing bytes from footer. */
+-		headBteLen += L1_CACHE_BYTES - (headBteLen & L1_CACHE_MASK);
+-		headBteSource = src & ~L1_CACHE_MASK;
+ 		headBcopySrcOffset = src & L1_CACHE_MASK;
+ 		headBcopyDest = dest;
+ 		headBcopyLen = len;
++
++		headBteSource = src - headBcopySrcOffset;
++		/* Add the leading and trailing bytes from source */
++		headBteLen = L1_CACHE_ALIGN(len + headBcopySrcOffset);
+ 	}
+ 
+ 	if (headBcopyLen > 0) {

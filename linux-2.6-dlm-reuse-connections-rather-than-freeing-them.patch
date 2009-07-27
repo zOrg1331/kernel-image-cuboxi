@@ -1,0 +1,74 @@
+From: Patrick Caulfield <pcaulfie@redhat.com>
+Subject: [RHEL5.1] bz#251179: [DLM] Reuse connections rather than freeing them
+Date: Mon, 20 Aug 2007 16:03:14 +0100
+Bugzilla: 251179
+Message-Id: <46C9AD32.2020004@redhat.com>
+Changelog: [DLM] Reuse connections rather than freeing them
+
+
+This patch reuses 'othercon' connections rather than freeing them, thus avoiding
+shutdown race conditions (bz#238490).
+
+It also, and more importantly, fixes some close conditions missed by the
+previous patch (clear othercon pointers) as well as being much tidier.
+
+It is already upstream.
+
+Signed-Off-By: Patrick Caulfield <pcaulfie@redhat.com>
+
+diff --git a/fs/dlm/lowcomms.c b/fs/dlm/lowcomms.c
+index 631bc43..86c22bb 100644
+--- a/fs/dlm/lowcomms.c
++++ b/fs/dlm/lowcomms.c
+@@ -327,13 +327,12 @@ static void close_connection(struct connection *con, bool and_other)
+ 	if (con->othercon && and_other) {
+ 		/* Will only re-enter once. */
+ 		close_connection(con->othercon, 0);
+-		kmem_cache_free(con_cache, con->othercon);
+-		con->othercon = NULL;
+ 	}
+ 	if (con->rx_page) {
+ 		__free_page(con->rx_page);
+ 		con->rx_page = NULL;
+ 	}
++
+ 	con->retries = 0;
+ 	mutex_unlock(&con->sock_mutex);
+ }
+@@ -633,7 +632,7 @@ out_resched:
+ 
+ out_close:
+ 	mutex_unlock(&con->sock_mutex);
+-	if (ret != -EAGAIN && !test_bit(CF_IS_OTHERCON, &con->flags)) {
++	if (ret != -EAGAIN) {
+ 		close_connection(con, 0);
+ 		/* Reconnect when there is something to send */
+ 	}
+@@ -722,6 +721,8 @@ static int tcp_accept_from_sock(struct connection *con)
+ 			INIT_WORK(&othercon->rwork, process_recv_sockets, othercon);
+ 			set_bit(CF_IS_OTHERCON, &othercon->flags);
+ 			newcon->othercon = othercon;
++		}
++		if (!othercon->sock) {
+ 			othercon->sock = newsock;
+ 			newsock->sk->sk_user_data = othercon;
+ 			add_sock(newsock, othercon);
+@@ -1124,8 +1125,6 @@ static int tcp_listen_for_all(void)
+ 
+ 	log_print("Using TCP for communications");
+ 
+-	set_bit(CF_IS_OTHERCON, &con->flags);
+-
+ 	sock = tcp_create_listen_sock(con, dlm_local_addr[0]);
+ 	if (sock) {
+ 		add_sock(sock, con);
+@@ -1408,7 +1407,7 @@ void dlm_lowcomms_stop(void)
+ 	for (i = 0; i <= max_nodeid; i++) {
+ 		con = __nodeid2con(i, 0);
+ 		if (con) {
+-			con->flags |= 0xFF;
++			con->flags |= 0x0F;
+ 			if (con->sock)
+ 				con->sock->sk->sk_user_data = NULL;
+ 		}
+

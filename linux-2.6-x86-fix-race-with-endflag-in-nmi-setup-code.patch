@@ -1,0 +1,130 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 3 Dec 2007 13:15:52 -0500
+Subject: [x86] fix race with 'endflag' in NMI setup code
+Message-id: 475447D8.3060503@redhat.com
+O-Subject: Re: [RHEL5 PATCH]: Fix race with 'endflag' in NMI setup code
+Bugzilla: 357391
+
+New patch taking into account clalance's suggestions ...
+
+P.
+
+Backport of upstream commit 92715e282be7c7488f892703c8d39b08976a833b, and
+
+http://marc.info/?l=linux-kernel&m=119670171725909&w=2 (as suggested by
+clalance)
+
+Customer hits this issue much more often in virtualized environment than on
+bare-metal.
+
+On a multi-cpu system, if CPU A recognizes that the NMI is stuck the other CPUS
+will spin until CPU sets endflag to 1.
+
+The problem is that endflag is on the stack of CPU A, and it can be overwritten
+by A before the other CPUS have a chance to test endflag.  This could cause
+all other CPUS to hang.
+
+Resolves BZ 357391.  (Original submission was brew built and tested in RHTS.
+Follow up changes are minor -- this patch was compiled and boot tested on i386
+and x86_64 by me.)
+
+Acked-by: Chris Lalancette <clalance@redhat.com>
+
+diff --git a/arch/i386/kernel/nmi.c b/arch/i386/kernel/nmi.c
+index 0721423..fad7ad2 100644
+--- a/arch/i386/kernel/nmi.c
++++ b/arch/i386/kernel/nmi.c
+@@ -98,6 +98,8 @@ int nmi_active;
+ #define ARCH_PERFMON_NMI_EVENT_SEL	ARCH_PERFMON_UNHALTED_CORE_CYCLES_SEL
+ #define ARCH_PERFMON_NMI_EVENT_UMASK	ARCH_PERFMON_UNHALTED_CORE_CYCLES_UMASK
+ 
++static int endflag __initdata = 0;
++
+ #ifdef CONFIG_SMP
+ /* The performance counters used by NMI_LOCAL_APIC don't trigger when
+  * the CPU is idle. To make sure the NMI watchdog really ticks on all
+@@ -105,7 +107,6 @@ int nmi_active;
+  */
+ static __init void nmi_cpu_busy(void *data)
+ {
+-	volatile int *endflag = data;
+ 	local_irq_enable_in_hardirq();
+ 	/* Intentionally don't use cpu_relax here. This is
+ 	   to make sure that the performance counter really ticks,
+@@ -113,8 +114,8 @@ static __init void nmi_cpu_busy(void *data)
+ 	   pause instruction. On a real HT machine this is fine because
+ 	   all other CPUs are busy with "useless" delay loops and don't
+ 	   care if they get somewhat less cycles. */
+-	while (*endflag == 0)
+-		barrier();
++	while (endflag == 0)
++		mb();
+ }
+ #endif
+ 
+@@ -142,7 +143,6 @@ static unsigned int adjust_for_32bit_ctr(unsigned int hz)
+ 
+ static int __init check_nmi_watchdog(void)
+ {
+-	volatile int endflag = 0;
+ 	unsigned int *prev_nmi_count;
+ 	int cpu;
+ 
+@@ -156,7 +156,7 @@ static int __init check_nmi_watchdog(void)
+ 	printk(KERN_INFO "Testing NMI watchdog ... ");
+ 
+ 	if (nmi_watchdog == NMI_LOCAL_APIC)
+-		smp_call_function(nmi_cpu_busy, (void *)&endflag, 0, 0);
++		smp_call_function(nmi_cpu_busy, NULL, 0, 0);
+ 
+ 	for_each_possible_cpu(cpu)
+ 		prev_nmi_count[cpu] = per_cpu(irq_stat, cpu).__nmi_count;
+diff --git a/arch/x86_64/kernel/nmi.c b/arch/x86_64/kernel/nmi.c
+index a2a5eb0..b33fb59 100644
+--- a/arch/x86_64/kernel/nmi.c
++++ b/arch/x86_64/kernel/nmi.c
+@@ -121,6 +121,8 @@ void __cpuinit nmi_watchdog_default(void)
+ 		nmi_watchdog = NMI_IO_APIC;
+ }
+ 
++static int endflag __initdata = 0;
++
+ #ifdef CONFIG_SMP
+ /* The performance counters used by NMI_LOCAL_APIC don't trigger when
+  * the CPU is idle. To make sure the NMI watchdog really ticks on all
+@@ -128,7 +130,6 @@ void __cpuinit nmi_watchdog_default(void)
+  */
+ static __init void nmi_cpu_busy(void *data)
+ {
+-	volatile int *endflag = data;
+ 	local_irq_enable_in_hardirq();
+ 	/* Intentionally don't use cpu_relax here. This is
+ 	   to make sure that the performance counter really ticks,
+@@ -136,8 +137,8 @@ static __init void nmi_cpu_busy(void *data)
+ 	   pause instruction. On a real HT machine this is fine because
+ 	   all other CPUs are busy with "useless" delay loops and don't
+ 	   care if they get somewhat less cycles. */
+-	while (*endflag == 0)
+-		barrier();
++	while (endflag == 0)
++		mb();
+ }
+ #endif
+ 
+@@ -160,7 +161,6 @@ static unsigned int adjust_for_32bit_ctr(unsigned int hz)
+ 
+ int __init check_nmi_watchdog (void)
+ {
+-	volatile int endflag = 0;
+ 	int *counts;
+ 	int cpu;
+ 
+@@ -172,7 +172,7 @@ int __init check_nmi_watchdog (void)
+ 
+ #ifdef CONFIG_SMP
+ 	if (nmi_watchdog == NMI_LOCAL_APIC)
+-		smp_call_function(nmi_cpu_busy, (void *)&endflag, 0, 0);
++		smp_call_function(nmi_cpu_busy, NULL, 0, 0);
+ #endif
+ 
+ 	for (cpu = 0; cpu < NR_CPUS; cpu++)

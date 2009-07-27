@@ -1,0 +1,12 @@
+diff --git a/fs/gfs/ops_super.c b/fs/gfs/ops_super.c
+index 2eb002c..7b4a8e2 100644
+--- a/fs/gfs/ops_super.c
++++ b/fs/gfs/ops_super.c
+@@ -409,7 +409,6 @@ void gfs_delete_inode (struct inode * inode)
+ 
+ 	WARN_ON(ip == NULL);
+ 	if (ip) {
+-		WARN_ON(ip->i_di.di_nlink);
+ 		if (inode->i_blocks != (ip->i_di.di_blocks<<(ip->i_sbd->sd_sb.sb_bsize_shift - GFS_BASIC_BLOCK_SHIFT)))
+ 			printk("gfs_delete_inode: %lu %lu\n", inode->i_blocks, ip->i_di.di_blocks);
+ 	}

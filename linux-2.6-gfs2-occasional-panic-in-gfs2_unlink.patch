@@ -1,0 +1,28 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5.1] Fix bz 229831, gfs2 panic's occasionally in gfs2_unlink 	while running bonnie++
+Date: Tue, 06 Mar 2007 11:08:09 +0000
+Bugzilla: 229831
+Message-Id: <1173179289.11001.716.camel@quoit.chygwyn.com>
+Changelog: [gfs2] occasional panic in gfs2_unlink while running bonnie++
+
+
+Hi,
+
+The following patch is already upstream and fixes bz 229831,
+
+Steve.
+
+Index: linux-2.6.18.noarch/fs/gfs2/inode.c
+===================================================================
+--- linux-2.6.18.noarch.orig/fs/gfs2/inode.c
++++ linux-2.6.18.noarch/fs/gfs2/inode.c
+@@ -71,7 +71,8 @@ static int iget_test(struct inode *inode
+ 	struct gfs2_inode *ip = GFS2_I(inode);
+ 	struct gfs2_inum_host *inum = opaque;
+ 
+-	if (ip && ip->i_num.no_addr == inum->no_addr)
++	if (ip->i_num.no_addr == inum->no_addr &&
++	    inode->i_private != NULL)
+ 		return 1;
+ 
+ 	return 0;

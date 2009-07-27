@@ -1,0 +1,53 @@
+Date: Thu, 21 Sep 2006 14:47:45 +0100
+From: David Howells <dhowells@redhat.com>
+Subject: [FC6/RHEL5 PATCH] PPC64: Export copy_4K_page() [try #2]
+
+
+Export copy_4K_page() on ppc64 and copy_page() on ppc so that they can be used
+by CacheFiles.
+
+CacheFiles uses copy_page() which makes use of copy_4K_page() on ppc64 builds
+and is simply unexported on ppc builds.
+
+This patch was submitted upstream and currently resides in Andrew Morton's
+tree.
+
+David
+---
+This adds a missing copy_page export for the powerpc and ppc arches.
+
+Signed-off-by: Frederik Deweerdt <frederik.deweerdt@gmail.com>
+Acked-by: Aristeu S. Rozanski F. <aris@cathedrallabs.org>
+---
+
+diff --git a/arch/powerpc/kernel/ppc_ksyms.c b/arch/powerpc/kernel/ppc_ksyms.c
+index 39d3bfc..23ccd5d 100644
+--- a/arch/powerpc/kernel/ppc_ksyms.c
++++ b/arch/powerpc/kernel/ppc_ksyms.c
+@@ -93,6 +93,12 @@ EXPORT_SYMBOL(__strncpy_from_user);
+ EXPORT_SYMBOL(__strnlen_user);
+ 
+ #ifndef  __powerpc64__
++EXPORT_SYMBOL(copy_page);
++#else
++EXPORT_SYMBOL(copy_4K_page);
++#endif
++
++#ifndef  __powerpc64__
+ EXPORT_SYMBOL(__ide_mm_insl);
+ EXPORT_SYMBOL(__ide_mm_outsw);
+ EXPORT_SYMBOL(__ide_mm_insw);
+diff --git a/arch/ppc/kernel/ppc_ksyms.c b/arch/ppc/kernel/ppc_ksyms.c
+index d173540..3045cc3 100644
+--- a/arch/ppc/kernel/ppc_ksyms.c
++++ b/arch/ppc/kernel/ppc_ksyms.c
+@@ -106,6 +106,8 @@ EXPORT_SYMBOL(__clear_user);
+ EXPORT_SYMBOL(__strncpy_from_user);
+ EXPORT_SYMBOL(__strnlen_user);
+ 
++EXPORT_SYMBOL(copy_page);
++
+ /*
+ EXPORT_SYMBOL(inb);
+ EXPORT_SYMBOL(inw);
+

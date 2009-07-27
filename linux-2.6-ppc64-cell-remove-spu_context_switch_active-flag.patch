@@ -1,0 +1,118 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Fri, 29 Feb 2008 16:13:00 -0500
+Subject: [ppc64] cell: remove SPU_CONTEXT_SWITCH_ACTIVE flag
+Message-id: 47C8755C.9020708@redhat.com
+O-Subject: [RHEL 5.2 Patch 1/1] Fixes multi-threaded application hang when using huge pages on QS22
+Bugzilla: 434155
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=434155
+
+Description:
+------------
+The SPU_CONTEXT_SWITCH_ACTIVE flag was only being used on two
+sanity checks, which were based on the assumption that
+__spu_trap_data_seg and __spu_trap_data_map are not called
+during the whole save/restore process. That's not true, and
+false errors were being reported when running some applications.
+
+RHEL Version Found:
+------------------
+RHEL 5.1
+
+kABI Status:
+------------
+No symbols were harmed.
+
+Upstream Status:
+----------------
+Patch submitted upstream at:
+http://patchwork.ozlabs.org/cbe-oss-dev/patch?id=16913
+
+Test Status:
+------------
+Tested, confirmed.  2/29/08 <bpeters@redhat.com>
+
+---------------------------------------------------------------
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-83.el5
+
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/arch/powerpc/platforms/cell/spu_base.c b/arch/powerpc/platforms/cell/spu_base.c
+index 1ae67da..9c64e3d 100644
+--- a/arch/powerpc/platforms/cell/spu_base.c
++++ b/arch/powerpc/platforms/cell/spu_base.c
+@@ -154,13 +154,6 @@ static int __spu_trap_data_seg(struct spu *spu, unsigned long ea)
+ 
+ 	pr_debug("%s\n", __FUNCTION__);
+ 
+-	if (test_bit(SPU_CONTEXT_SWITCH_ACTIVE, &spu->flags)) {
+-		/* SLBs are pre-loaded for context switch, so
+-		 * we should never get here!
+-		 */
+-		printk("%s: invalid access during switch!\n", __func__);
+-		return 1;
+-	}
+ 	esid = (ea & ESID_MASK) | SLB_ESID_V;
+ 
+ 	switch(REGION_ID(ea)) {
+@@ -222,11 +215,6 @@ static int __spu_trap_data_map(struct spu *spu, unsigned long ea, u64 dsisr)
+ 		return 0;
+ 	}
+ 
+-	if (test_bit(SPU_CONTEXT_SWITCH_ACTIVE, &spu->flags)) {
+-		printk("%s: invalid access during switch!\n", __func__);
+-		return 1;
+-	}
+-
+ 	spu->dar = ea;
+ 	spu->dsisr = dsisr;
+ 	mb();
+diff --git a/arch/powerpc/platforms/cell/spufs/switch.c b/arch/powerpc/platforms/cell/spufs/switch.c
+index 39ef503..233df8e 100644
+--- a/arch/powerpc/platforms/cell/spufs/switch.c
++++ b/arch/powerpc/platforms/cell/spufs/switch.c
+@@ -748,8 +748,9 @@ static inline void set_switch_active(struct spu_state *csa, struct spu *spu)
+ 	 * Restore, Step 23.
+ 	 *     Change the software context switch pending flag
+ 	 *     to context switch active.
++	 *
++	 *     This implementation does not uses a switch active flag.
+ 	 */
+-	set_bit(SPU_CONTEXT_SWITCH_ACTIVE, &spu->flags);
+ 	clear_bit(SPU_CONTEXT_SWITCH_PENDING, &spu->flags);
+ 	mb();
+ }
+@@ -1767,9 +1768,8 @@ static inline void reset_switch_active(struct spu_state *csa, struct spu *spu)
+ {
+ 	/* Restore, Step 74:
+ 	 *     Reset the "context switch active" flag.
++	 *     Not performed by this implementation.
+ 	 */
+-	clear_bit(SPU_CONTEXT_SWITCH_ACTIVE, &spu->flags);
+-	mb();
+ }
+ 
+ static inline void reenable_interrupts(struct spu_state *csa, struct spu *spu)
+diff --git a/include/asm-powerpc/spu.h b/include/asm-powerpc/spu.h
+index e05643a..ea1e75d 100644
+--- a/include/asm-powerpc/spu.h
++++ b/include/asm-powerpc/spu.h
+@@ -98,9 +98,8 @@
+ #define MFC_PRIV_ATTN_EVENT                 0x00000800
+ #define MFC_MULTI_SRC_EVENT                 0x00001000
+ 
+-/* Flags indicating progress during context switch. */
++/* Flag indicating progress during context switch. */
+ #define SPU_CONTEXT_SWITCH_PENDING	0UL
+-#define SPU_CONTEXT_SWITCH_ACTIVE	1UL
+ 
+ struct spu_context;
+ struct spu_runqueue;

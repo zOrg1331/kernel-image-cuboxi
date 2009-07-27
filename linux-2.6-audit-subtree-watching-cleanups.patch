@@ -1,0 +1,113 @@
+From: Alexander Viro <aviro@redhat.com>
+Subject: [rhel-5.1][bz#182624] fixes for dumb brainos in subtree patches
+Date: Wed, 27 Jun 2007 10:38:30 -0400
+Bugzilla: 182624
+Message-Id: <20070627143830.GU32712@devserv.devel.redhat.com>
+Changelog: [audit] subtree watching cleanups
+
+
+	Brainos galore ;-/  On the brighter side, now that stuff
+appears to do what it's supposed to do (read: auditctl had grown
+support for subtree watching and kernel side of the things got
+some beating).
+
+Index: latest/kernel/audit.c
+===================================================================
+--- latest.orig/kernel/audit.c
++++ latest/kernel/audit.c
+@@ -530,6 +530,8 @@ static int audit_netlink_ok(struct sk_bu
+ 	case AUDIT_DEL:
+ 	case AUDIT_DEL_RULE:
+ 	case AUDIT_SIGNAL_INFO:
++	case AUDIT_TRIM:
++	case AUDIT_MAKE_EQUIV:
+ 		if (security_netlink_recv(skb, CAP_AUDIT_CONTROL))
+ 			err = -EPERM;
+ 		break;
+Index: latest/kernel/auditsc.c
+===================================================================
+--- latest.orig/kernel/auditsc.c
++++ latest/kernel/auditsc.c
+@@ -496,7 +496,7 @@ static int audit_filter_rules(struct tas
+ 					  name->ino == rule->watch->ino);
+ 			break;
+ 		case AUDIT_DIR:
+-			if (name)
++			if (ctx)
+ 				result = match_tree_refs(ctx, rule->tree);
+ 			break;
+ 		case AUDIT_LOGINUID:
+Index: latest/kernel/audit_tree.c
+===================================================================
+--- latest.orig/kernel/audit_tree.c
++++ latest/kernel/audit_tree.c
+@@ -119,6 +119,7 @@ static struct audit_chunk *alloc_chunk(i
+ 		INIT_LIST_HEAD(&chunk->owners[i].list);
+ 		chunk->owners[i].index = i;
+ 	}
++	inotify_init_watch(&chunk->watch);
+ 	return chunk;
+ }
+ 
+@@ -297,7 +298,7 @@ static int create_chunk(struct inode *in
+ 	}
+ 	insert_hash(chunk);
+ 	spin_unlock(&hash_lock);
+-	mutex_lock(&inode->inotify_mutex);
++	mutex_unlock(&inode->inotify_mutex);
+ 	return 0;
+ }
+ 
+@@ -492,10 +493,10 @@ static void trim_marked(struct audit_tre
+ 	}
+ }
+ 
++/* called with audit_filter_mutex */
+ int audit_remove_tree_rule(struct audit_krule *rule)
+ {
+ 	struct audit_tree *tree;
+-	mutex_lock(&audit_filter_mutex);
+ 	tree = rule->tree;
+ 	if (tree) {
+ 		spin_lock(&hash_lock);
+@@ -504,19 +505,16 @@ int audit_remove_tree_rule(struct audit_
+ 			tree->root = NULL;
+ 			list_del_init(&tree->same_root);
+ 			tree->goner = 1;
+-			list_del_init(&tree->list);
++			list_move(&tree->list, &prune_list);
+ 			rule->tree = NULL;
+ 			spin_unlock(&hash_lock);
+-			mutex_unlock(&audit_filter_mutex);
+-			prune_one(tree);
++			audit_schedule_prune();
+ 			return 1;
+ 		}
+ 		rule->tree = NULL;
+ 		spin_unlock(&hash_lock);
+-		mutex_unlock(&audit_filter_mutex);
+ 		return 1;
+ 	}
+-	mutex_unlock(&audit_filter_mutex);
+ 	return 0;
+ }
+ 
+@@ -765,8 +763,8 @@ int audit_tag_tree(char *old, char *new)
+ 
+ 		tree = container_of(barrier.prev, struct audit_tree, list);
+ 		get_tree(tree);
+-		list_del(&cursor);
+-		list_add(&cursor, &tree->list);
++		list_del(&tree->list);
++		list_add(&tree->list, &barrier);
+ 		mutex_unlock(&audit_filter_mutex);
+ 
+ 		if (!failed) {
+@@ -785,6 +783,7 @@ int audit_tag_tree(char *old, char *new)
+ 	list_del(&barrier);
+ 	list_del(&cursor);
+ 	list_del(&list);
++	mutex_unlock(&audit_filter_mutex);
+ 	dput(dentry);
+ 	mntput(mnt);
+ 	drop_collected_mounts(tagged);

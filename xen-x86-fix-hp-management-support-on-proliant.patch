@@ -1,0 +1,207 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Thu, 13 Dec 2007 12:42:43 -0500
+Subject: [xen] x86: fix hp management support on proliant
+Message-id: 47616F13.1070805@redhat.com
+O-Subject: [RHEL5.2 PATCH] Fix HP management support on proliant platforms (Xen)
+Bugzilla: 415691
+
+Fixes bz 415691
+
+This patch allows host-platform-specific handling of I/O port
+traps. Specifically adds support to handle the HP ProLiant I/O
+port in a special way. The patch is upstream at
+
+ http://xenbits.xensource.com/xen-unstable.hg?rev/1936e6a79f85
+
+The patch was applied and brew built here my me and the results
+given to HP for testing. The testing was successful.
+
+Final brew build of the patch is at
+
+ http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1080477
+
+Please review and ACK.
+
+ Thanks,
+ Bill
+
+Acked-by: Don Dutile <ddutile@redhat.com>
+Nacked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Chris Lalancette <clalance@redhat.com>
+
+diff --git a/arch/x86/Makefile b/arch/x86/Makefile
+index 3899874..9fd3076 100644
+--- a/arch/x86/Makefile
++++ b/arch/x86/Makefile
+@@ -24,6 +24,7 @@ obj-y += platform_hypercall.o
+ obj-y += i387.o
+ obj-y += i8259.o
+ obj-y += io_apic.o
++obj-y += ioport_emulate.o
+ obj-y += irq.o
+ obj-y += microcode.o
+ obj-y += mm.o
+diff --git a/arch/x86/ioport_emulate.c b/arch/x86/ioport_emulate.c
+new file mode 100644
+index 0000000..2180b60
+--- /dev/null
++++ b/arch/x86/ioport_emulate.c
+@@ -0,0 +1,125 @@
++/******************************************************************************
++ * ioport_emulate.c
++ * 
++ * Handle I/O port access quirks of various platforms.
++ */
++
++#include <xen/config.h>
++#include <xen/init.h>
++#include <xen/sched.h>
++#include <xen/dmi.h>
++
++/* Function pointer used to handle platform specific I/O port emulation. */
++extern void (*ioemul_handle_quirk)(
++    u8 opcode, char *io_emul_stub, struct cpu_user_regs *regs);
++
++static void ioemul_handle_proliant_quirk(
++    u8 opcode, char *io_emul_stub, struct cpu_user_regs *regs)
++{
++    uint16_t port = regs->edx;
++    uint8_t value = regs->eax;
++
++    if ( (opcode != 0xee) || (port != 0xcd4) || !(value & 0x80) )
++        return;
++
++    /*    pushfw */
++    io_emul_stub[ 0] = 0x66;
++    io_emul_stub[ 1] = 0x9c;
++    /*    cli */
++    io_emul_stub[ 2] = 0xfa;
++    /*    out %al,%dx */
++    io_emul_stub[ 3] = 0xee;
++    /* 1: in %dx,%al */
++    io_emul_stub[ 4] = 0xec;
++    /*    test $0x80,%al */
++    io_emul_stub[ 5] = 0xa8;
++    io_emul_stub[ 6] = 0x80;
++    /*    jnz 1b */
++    io_emul_stub[ 7] = 0x75;
++    io_emul_stub[ 8] = 0xfb;
++    /*    popfw */
++    io_emul_stub[ 9] = 0x66;
++    io_emul_stub[10] = 0x9d;
++    /*    ret */
++    io_emul_stub[11] = 0xc3;
++}
++
++int __init proliant_quirk(struct dmi_system_id *d)
++{
++    ioemul_handle_quirk = ioemul_handle_proliant_quirk;
++    return 0;
++}
++
++/* This table is the set of system-specific I/O emulation hooks. */
++static struct dmi_system_id __initdata ioport_quirks_tbl[] = {
++    /*
++     * I/O emulation hook for certain HP ProLiant servers with
++     * 'special' SMM goodness.
++     */
++    {
++        .callback = proliant_quirk,
++        .ident = "HP ProLiant DL3xx",
++        .matches = {
++            DMI_MATCH(DMI_BIOS_VENDOR, "HP"),
++            DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant DL3"),
++        },
++    },
++    {
++        .callback = proliant_quirk,
++        .ident = "HP ProLiant DL5xx",
++        .matches = {
++            DMI_MATCH(DMI_BIOS_VENDOR, "HP"),
++            DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant DL5"),
++        },
++    },
++    {
++        .callback = proliant_quirk,
++        .ident = "HP ProLiant ML3xx",
++        .matches = {
++            DMI_MATCH(DMI_BIOS_VENDOR, "HP"),
++            DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant ML3"),
++        },
++    },
++    {
++        .callback = proliant_quirk,
++        .ident = "HP ProLiant ML5xx",
++        .matches = {
++            DMI_MATCH(DMI_BIOS_VENDOR, "HP"),
++            DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant ML5"),
++        },
++    },
++    {
++        .callback = proliant_quirk,
++        .ident = "HP ProLiant BL4xx",
++        .matches = {
++            DMI_MATCH(DMI_BIOS_VENDOR, "HP"),
++            DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant BL4"),
++        },
++    },
++    {
++        .callback = proliant_quirk,
++        .ident = "HP ProLiant BL6xx",
++        .matches = {
++            DMI_MATCH(DMI_BIOS_VENDOR, "HP"),
++            DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant BL6"),
++        },
++    },
++    { }
++};
++
++int __init ioport_quirks_init(void)
++{
++    dmi_check_system(ioport_quirks_tbl);
++    return 0;
++}
++__initcall(ioport_quirks_init);
++
++/*
++ * Local variables:
++ * mode: C
++ * c-set-style: "BSD"
++ * c-basic-offset: 4
++ * tab-width: 4
++ * indent-tabs-mode: nil
++ * End:
++ */
+diff --git a/arch/x86/traps.c b/arch/x86/traps.c
+index 263b351..e91e072 100644
+--- a/arch/x86/traps.c
++++ b/arch/x86/traps.c
+@@ -107,6 +107,8 @@ DECLARE_TRAP_HANDLER(spurious_interrupt_bug);
+ 
+ long do_set_debugreg(int reg, unsigned long value);
+ unsigned long do_get_debugreg(int reg);
++void (*ioemul_handle_quirk)(
++    u8 opcode, char *io_emul_stub, struct cpu_user_regs *regs);
+ 
+ static int debug_stack_lines = 20;
+ integer_param("debug_stack_lines", debug_stack_lines);
+@@ -1217,7 +1219,7 @@ static int emulate_privileged_op(struct cpu_user_regs *regs)
+                            ? (*(u32 *)&regs->reg = (val)) \
+                            : (*(u16 *)&regs->reg = (val)))
+     unsigned long code_base, code_limit;
+-    char io_emul_stub[16];
++    char io_emul_stub[32];
+     void (*io_emul)(struct cpu_user_regs *) __attribute__((__regparm__(1)));
+     u32 l, h, eax, edx;
+ 
+@@ -1468,6 +1470,9 @@ static int emulate_privileged_op(struct cpu_user_regs *regs)
+     /* Handy function-typed pointer to the stub. */
+     io_emul = (void *)io_emul_stub;
+ 
++    if ( ioemul_handle_quirk )
++        ioemul_handle_quirk(opcode, &io_emul_stub[12], regs);
++
+     /* I/O Port and Interrupt Flag instructions. */
+     switch ( opcode )
+     {

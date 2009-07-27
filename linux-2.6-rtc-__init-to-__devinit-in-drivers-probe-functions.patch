@@ -1,0 +1,46 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5.1 PATCH]: __init to __devinit in rtc drivers' probe functions
+Date: Fri, 9 Feb 2007 09:57:00 -0500
+Bugzilla: 227834
+Message-Id: <20070209145700.22266.39823.sendpatchset@prarit.boston.redhat.com>
+Changelog: [rtc] __init to __devinit in rtc drivers' probe functions
+
+
+Change __init to __devinit in rtc drivers' probe functions.
+
+Resolves MODPOST warnings:
+
+WARNING: drivers/rtc/rtc-ds1553.o - Section mismatch: reference to
+.init.text:ds1553_rtc_probe from .data.rel between 'ds1553_rtc_driver' (at
+offset 0x0) and 'ds1553_nvram_attr'
+WARNING: drivers/rtc/rtc-ds1742.o - Section mismatch: reference to
+.init.text:ds1742_rtc_probe from .data.rel between 'ds1742_rtc_driver' (at
+offset 0x0) and 'ds1742_nvram_attr'
+
+Now in -mm tree.
+
+Resolves BZ 227834.  Successfully tested by me.
+
+--- linux-2.6.19.ia64.orig/drivers/rtc/rtc-ds1742.c	2007-02-07 09:56:37.000000000 -0500
++++ linux-2.6.19.ia64/drivers/rtc/rtc-ds1742.c	2007-02-08 10:19:47.000000000 -0500
+@@ -165,7 +165,7 @@ static struct bin_attribute ds1742_nvram
+ 	.write = ds1742_nvram_write,
+ };
+ 
+-static int __init ds1742_rtc_probe(struct platform_device *pdev)
++static int __devinit ds1742_rtc_probe(struct platform_device *pdev)
+ {
+ 	struct rtc_device *rtc;
+ 	struct resource *res;
+--- linux-2.6.19.ia64.orig/drivers/rtc/rtc-ds1553.c	2007-02-07 09:56:37.000000000 -0500
++++ linux-2.6.19.ia64/drivers/rtc/rtc-ds1553.c	2007-02-08 10:19:12.000000000 -0500
+@@ -297,7 +297,7 @@ static struct bin_attribute ds1553_nvram
+ 	.write = ds1553_nvram_write,
+ };
+ 
+-static int __init ds1553_rtc_probe(struct platform_device *pdev)
++static int __devinit ds1553_rtc_probe(struct platform_device *pdev)
+ {
+ 	struct rtc_device *rtc;
+ 	struct resource *res;
+

@@ -1,0 +1,91 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] bz184774 [PPC] IDE hotplug support for Promise  pata_pdc2027x
+Date: Wed, 20 Jun 2007 15:59:47 -0400 (EDT)
+Bugzilla: 184774
+Message-Id: <Pine.LNX.4.64.0706201554390.18157@squad5-lp1.lab.boston.redhat.com>
+Changelog: [pata] IDE hotplug support for Promise pata_pdc2027x
+
+
+The patch below will make hotplug via DLPAR work. This has been tested by
+Albert Lee of IBM (who originally posted the fix for this bug).
+
+We simply  need to:
+   1. apply the patch
+   2. set CONFIG_PATA_PDC2027X=m.
+
+Unfortunately, all is not perfect.  If the device is present, unloading
+the module (rmmod pata_pdc2027x) and then reloading will result in the
+following error in dmesg (and a  non-working device):
+  PCI: Unable to reserve mem region #6:4000@401f8000000 for device 0000:cc:01.0
+  pata_pdc2027x: probe of 0000:cc:01.0 failed with error -16
+
+Even if it were not fixed, IBM would be happy to live with the 'rmmod'
+issue with the patch applied.
+
+The patch basically does 3 things:
+  1. changes the ide driver to not claim the device in IBM power hardware
+  2. removes IDs for other devices from the sata driver so that only this
+device ID is present in both the ide and sata drivers.
+  3. modifies the sata driver to refuse to initialize any device on
+systems other than the intended IBM supported system.
+
+---
+ drivers/ata/pata_pdc2027x.c    |   14 ++++++++------
+ drivers/ide/pci/pdc202xx_new.c |   12 ++++++++++++
+ 2 files changed, 20 insertions(+), 6 deletions(-)
+
+Index: linux-2.6.18.ppc64/drivers/ide/pci/pdc202xx_new.c
+===================================================================
+--- linux-2.6.18.ppc64.orig/drivers/ide/pci/pdc202xx_new.c
++++ linux-2.6.18.ppc64/drivers/ide/pci/pdc202xx_new.c
+@@ -355,6 +355,18 @@ static void __devinit init_hwif_pdc202ne
+ 
+ static int __devinit init_setup_pdcnew(struct pci_dev *dev, ide_pci_device_t *d)
+ {
++#ifdef __powerpc64__
++	/* Skip using the IDE device driver on IBM p5 machines
++	 * to load the libata hotplug driver instead later
++	 */
++	if (dev->bus->self &&
++	    dev->bus->self->vendor == PCI_VENDOR_ID_IBM &&
++	    dev->bus->self->device == 0x0188) {
++		printk(KERN_INFO "ide: Skipping Promise PDC20275 "
++		       "on IBM p5 machines.\n");
++		return -ENODEV;
++	}
++#endif
+ 	return ide_setup_pci_device(dev, d);
+ }
+ 
+--- a/drivers/ata/pata_pdc2027x.c	2007-06-20 15:42:08.000000000 -0400
++++ b/drivers/ata/pata_pdc2027x.c	2007-06-20 15:39:09.000000000 -0400
+@@ -110,13 +110,7 @@
+ };
+ 
+ static const struct pci_device_id pdc2027x_pci_tbl[] = {
+-	{ PCI_VDEVICE(PROMISE, PCI_DEVICE_ID_PROMISE_20268), PDC_UDMA_100 },
+-	{ PCI_VDEVICE(PROMISE, PCI_DEVICE_ID_PROMISE_20269), PDC_UDMA_133 },
+-	{ PCI_VDEVICE(PROMISE, PCI_DEVICE_ID_PROMISE_20270), PDC_UDMA_100 },
+-	{ PCI_VDEVICE(PROMISE, PCI_DEVICE_ID_PROMISE_20271), PDC_UDMA_133 },
+ 	{ PCI_VDEVICE(PROMISE, PCI_DEVICE_ID_PROMISE_20275), PDC_UDMA_133 },
+-	{ PCI_VDEVICE(PROMISE, PCI_DEVICE_ID_PROMISE_20276), PDC_UDMA_133 },
+-	{ PCI_VDEVICE(PROMISE, PCI_DEVICE_ID_PROMISE_20277), PDC_UDMA_133 },
+ 
+ 	{ }	/* terminate list */
+ };
+@@ -794,6 +788,14 @@
+ 	if (!printed_version++)
+ 		dev_printk(KERN_DEBUG, &pdev->dev, "version " DRV_VERSION "\n");
+ 
++	/* load only on IBM p5 machines */
++	if (!(pdev->bus->self &&
++	    pdev->bus->self->vendor == PCI_VENDOR_ID_IBM &&
++	    pdev->bus->self->device == 0x0188)) {
++		printk(KERN_INFO "device ignored. only supported on IBM p5 machines");
++		return -ENODEV;
++	}
++
+ 	/* alloc host */
+ 	host = ata_host_alloc_pinfo(&pdev->dev, ppi, 2);
+ 	if (!host)
+

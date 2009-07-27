@@ -1,0 +1,76 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5.1 PATCH][XEN] guest using blktap tries to access beyond end 	of disk
+Date: Wed, 08 Aug 2007 12:06:14 -0400
+Bugzilla: 247696
+Message-Id: <46B9E9F6.6070400@redhat.com>
+Changelog: [XEN] blktap tries to access beyond end of disk
+
+
+bz247696
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=247696
+
+Attached patch removed unnecessary debug code, which was to check
+the access range to a disk image.  Actually, the check code was
+wrong and caused the following spew on dom0's console when configured
+to use a disk image accessed via blktap for its storage.
+
+Example console spew:
+
+blk_tap: BLKTAP: READ request sector[8192002,16000], Total [8192000]
+blk_tap: BLKTAP: Sector request greaterthan size
+blk_tap: BLKTAP: READ request sector[8192034,16000], Total [8192000]
+blk_tap: BLKTAP: Sector request greaterthan size
+blk_tap: BLKTAP: READ request sector[8192066,16000], Total [8192000]
+blk_tap: BLKTAP: Sector request greaterthan size
+blk_tap: BLKTAP: READ request sector[8192098,16000], Total [8192000]
+blk_tap: BLKTAP: Sector request greaterthan size
+blk_tap: BLKTAP: READ request sector[8192013,16000], Total [8192000]
+blk_tap: BLKTAP: Sector request greaterthan size
+
+The fix-patch is upstream:
+  http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/1372bc676080
+
+Attached patch applies to -38.  We have verified that it worked on -37.
+
+Thanks,
+Kei
+
+---
+
+ linux-2.6.18.ia64-kei/drivers/xen/blktap/blktapmain.c |   14 --------------
+ 1 file changed, 14 deletions(-)
+
+diff -puN drivers/xen/blktap/blktapmain.c~bz247696 drivers/xen/blktap/blktapmain.c
+--- linux-2.6.18.ia64/drivers/xen/blktap/blktapmain.c~bz247696	2007-08-08 10:42:51.000000000 -0400
++++ linux-2.6.18.ia64-kei/drivers/xen/blktap/blktapmain.c	2007-08-08 10:43:08.000000000 -0400
+@@ -1153,7 +1153,6 @@ static void dispatch_rw_block_io(blkif_t
+ 	unsigned int nseg;
+ 	int ret, i;
+ 	tap_blkif_t *info = tapfds[blkif->dev_num];
+-	uint64_t sector;
+ 	
+ 	blkif_request_t *target;
+ 	int pending_idx = RTN_PEND_IDX(pending_req,pending_req->mem_idx);
+@@ -1201,19 +1200,6 @@ static void dispatch_rw_block_io(blkif_t
+ 		uvaddr = MMAP_VADDR(info->user_vstart, usr_idx, i);
+ 		kvaddr = idx_to_kaddr(mmap_idx, pending_idx, i);
+ 
+-		sector = req->sector_number + ((PAGE_SIZE / 512) * i);
+-		if( (blkif->sectors > 0) && (sector >= blkif->sectors) ) {
+-			WPRINTK("BLKTAP: Sector request greater" 
+-			       "than size\n");
+-			WPRINTK("BLKTAP: %s request sector" 
+-			       "[%llu,%llu], Total [%llu]\n",
+-			       (req->operation == 
+-				BLKIF_OP_WRITE ? "WRITE" : "READ"),
+-				(long long unsigned) sector,
+-				(long long unsigned) sector>>9,
+-				(long long unsigned) blkif->sectors);
+-		}
+-
+ 		flags = GNTMAP_host_map;
+ 		if (operation == WRITE)
+ 			flags |= GNTMAP_readonly;
+
+_
+

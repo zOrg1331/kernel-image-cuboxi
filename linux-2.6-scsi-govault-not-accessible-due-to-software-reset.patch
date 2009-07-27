@@ -1,0 +1,67 @@
+From: Konrad Rzeszutek <konradr@redhat.com>
+Subject: [RHEL5 PATCH] RHBZ#215567: GoVault not accessible due to software reset.
+Date: Fri, 15 Dec 2006 09:26:24 -0500
+Bugzilla: 215567
+Message-Id: <20061215142624.GA4300@localhost.localdomain>
+Changelog: scsi: GoVault not accessible due to software reset.
+
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=215567
+
+Description:
+------------
+The Qunatum GoVault removable HDD drive is not working properly
+with RHEL5 on a specific controller: 8086:2652. Through lots of 
+testing, changing order or modules, changing SATA cables, lots
+of discussion, Gary Hade from IBM found that adding a  delay in 
+the libata.c fixes the problem. 
+
+RHEL Version Found:
+------------------
+RHEL5 Beta2. 
+
+Upstream Status:
+----------------
+It is so new that it hasn't hit the LKML yet.
+
+Test Status:
+------------
+Tested on Intellistation M30 Pro w/8086:2652 SATA controller
+in Beaverton.
+
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-1.2789 kernel.
+
+--- linux-2.6.18.x86_64/drivers/scsi/libata-core.c.orig	2006-12-13 13:48:57.000000000 -0800
++++ linux-2.6.18.x86_64/drivers/scsi/libata-core.c	2006-12-13 13:49:36.000000000 -0800
+@@ -2386,7 +2386,7 @@ static unsigned int ata_bus_softreset(st
+ 	 *
+ 	 * Old drivers/ide uses the 2mS rule and then waits for ready
+ 	 */
+-	msleep(150);
++	msleep(1000);
+ 
+ 	/* Before we perform post reset processing we want to see if
+ 	 * the bus shows 0xFF because the odd clown forgets the D7
+
+--- linux-2.6.18.i386/drivers/scsi/ahci.c.orig	2006-12-21 11:01:49.000000000 -0800
++++ linux-2.6.18.i386/drivers/scsi/ahci.c	2006-12-21 11:10:44.000000000 -0800
+@@ -788,7 +788,7 @@ static int ahci_softreset(struct ata_por
+ 
+ 	writel(1, port_mmio + PORT_CMD_ISSUE);
+ 
+-	tmp = ata_wait_register(port_mmio + PORT_CMD_ISSUE, 0x1, 0x1, 1, 500);
++	tmp = ata_wait_register(port_mmio + PORT_CMD_ISSUE, 0x1, 0x1, 1, 2500);
+ 	if (tmp & 0x1) {
+ 		rc = -EIO;
+ 		reason = "1st FIS failed";
+
+
+-- 
+Konrad Rzeszutek 1-(978)-392-3903 or 1-(617)-693-1718
+IBM on-site partner.
+

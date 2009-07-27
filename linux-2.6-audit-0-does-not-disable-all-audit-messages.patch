@@ -1,0 +1,317 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: Re: [RHEL5 PATCH] BZ 231371 audit=0 does not disable all audit	messages
+Date: Fri, 15 Jun 2007 17:04:41 -0400
+Bugzilla: 231371
+Message-Id: <1181941481.3469.7.camel@dhcp231-215.rdu.redhat.com>
+Changelog: [audit] audit=0 does not disable all audit messages
+
+
+On Fri, 2007-06-15 at 16:02 -0400, Eric Paris wrote:
+> On Thu, 2007-06-14 at 16:04 -0400, Don Zickus wrote:
+> > On Mon, Jun 04, 2007 at 04:50:15PM -0400, Eric Paris wrote:
+> > > BZ 231371
+> > > 
+> > > Currently the audit subsystem can still print some audit information
+> > > even if auditing is disabled.  This patch should cause the audit=0
+> > > option to not only disable audit, but suppress the rest of the audit
+> > > messages which could slip through previously.
+> > > 
+> > > http://www.mail-archive.com/linux-audit@redhat.com/msg01075.html
+> > > 
+> > > It has been in the LSPP kernel and works fine there.  Hopeully it will
+> > > get picked up into the audit tree and passed onto linus in the very near
+> > > future.
+> > 
+
+--- linux-2.6.18.audit.zero/kernel/auditfilter.c.pre.audit.zero	2007-06-15 14:18:43.000000000 -0400
++++ linux-2.6.18.audit.zero/kernel/auditfilter.c	2007-06-15 14:20:35.000000000 -0400
+@@ -95,6 +95,8 @@ extern struct inotify_handle *audit_ih;
+ /* Inotify events we care about. */
+ #define AUDIT_IN_WATCH IN_MOVE|IN_CREATE|IN_DELETE|IN_DELETE_SELF|IN_MOVE_SELF
+ 
++extern int audit_enabled;
++
+ void audit_free_parent(struct inotify_watch *i_watch)
+ {
+ 	struct audit_parent *parent;
+@@ -966,7 +968,6 @@ static void audit_update_watch(struct au
+ 	struct audit_watch *owatch, *nwatch, *nextw;
+ 	struct audit_krule *r, *nextr;
+ 	struct audit_entry *oentry, *nentry;
+-	struct audit_buffer *ab;
+ 
+ 	mutex_lock(&audit_filter_mutex);
+ 	list_for_each_entry_safe(owatch, nextw, &parent->watches, wlist) {
+@@ -1006,13 +1007,18 @@ static void audit_update_watch(struct au
+ 			call_rcu(&oentry->rcu, audit_free_rule_rcu);
+ 		}
+ 
+-		ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE);
+-		audit_log_format(ab, "op=updated rules specifying path=");
+-		audit_log_untrustedstring(ab, owatch->path);
+-		audit_log_format(ab, " with dev=%u ino=%lu\n", dev, ino);
+-		audit_log_format(ab, " list=%d res=1", r->listnr);
+-		audit_log_end(ab);
+-
++		if (audit_enabled) {
++			struct audit_buffer *ab;
++			ab = audit_log_start(NULL, GFP_KERNEL,
++				AUDIT_CONFIG_CHANGE);
++			audit_log_format(ab,
++				"op=updated rules specifying path=");
++			audit_log_untrustedstring(ab, owatch->path);
++			audit_log_format(ab, " with dev=%u ino=%lu\n",
++				 dev, ino);
++			audit_log_format(ab, " list=%d res=1", r->listnr);
++			audit_log_end(ab);
++		}
+ 		audit_remove_watch(owatch);
+ 		goto add_watch_to_parent; /* event applies to a single watch */
+ 	}
+@@ -1031,25 +1037,28 @@ static void audit_remove_parent_watches(
+ 	struct audit_watch *w, *nextw;
+ 	struct audit_krule *r, *nextr;
+ 	struct audit_entry *e;
+-	struct audit_buffer *ab;
+ 
+ 	mutex_lock(&audit_filter_mutex);
+ 	parent->flags |= AUDIT_PARENT_INVALID;
+ 	list_for_each_entry_safe(w, nextw, &parent->watches, wlist) {
+ 		list_for_each_entry_safe(r, nextr, &w->rules, rlist) {
+ 			e = container_of(r, struct audit_entry, rule);
+-
+-			ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE);
+-			audit_log_format(ab, "op=remove rule path=");
+-			audit_log_untrustedstring(ab, w->path);
+-			if (r->filterkey) {
+-				audit_log_format(ab, " key=");
+-				audit_log_untrustedstring(ab, r->filterkey);
+-			} else
+-				audit_log_format(ab, " key=(null)");
+-			audit_log_format(ab, " list=%d res=1", r->listnr);
+-			audit_log_end(ab);
+-
++			if (audit_enabled) {
++				struct audit_buffer *ab;
++				ab = audit_log_start(NULL, GFP_KERNEL,
++					AUDIT_CONFIG_CHANGE);
++				audit_log_format(ab, "op=remove rule path=");
++				audit_log_untrustedstring(ab, w->path);
++				if (r->filterkey) {
++					audit_log_format(ab, " key=");
++					audit_log_untrustedstring(ab,
++							r->filterkey);
++				} else
++					audit_log_format(ab, " key=(null)");
++				audit_log_format(ab, " list=%d res=1",
++					r->listnr);
++				audit_log_end(ab);
++			}
+ 			list_del(&r->rlist);
+ 			list_del_rcu(&e->list);
+ 			call_rcu(&e->rcu, audit_free_rule_rcu);
+@@ -1477,6 +1486,9 @@ static void audit_log_rule_change(uid_t 
+ {
+ 	struct audit_buffer *ab;
+ 
++	if (!audit_enabled)
++		return;
++
+ 	ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE);
+ 	if (!ab)
+ 		return;
+--- linux-2.6.18.audit.zero/kernel/audit.c.pre.audit.zero	2007-06-15 14:18:43.000000000 -0400
++++ linux-2.6.18.audit.zero/kernel/audit.c	2007-06-15 14:32:23.000000000 -0400
+@@ -248,21 +248,23 @@ static int audit_set_rate_limit(int limi
+ 	else
+ 		res = 1;
+ 
+-	if (sid) {
+-		char *ctx = NULL;
+-		u32 len;
+-		if ((rc = selinux_ctxid_to_string(sid, &ctx, &len)) == 0) {
+-			audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
+-				"audit_rate_limit=%d old=%d by auid=%u"
+-				" subj=%s res=%d",
+-				limit, old, loginuid, ctx, res);
+-			kfree(ctx);
+-		} else
+-			res = 0; /* Something weird, deny request */
++	if (audit_enabled) {
++		if (sid) {
++			char *ctx = NULL;
++			u32 len;
++			if ((rc = selinux_ctxid_to_string(sid, &ctx, &len)) == 0) {
++				audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
++					"audit_rate_limit=%d old=%d by auid=%u"
++					" subj=%s res=%d",
++					limit, old, loginuid, ctx, res);
++				kfree(ctx);
++			} else
++				res = 0; /* Something weird, deny request */
++		}
++		audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
++			"audit_rate_limit=%d old=%d by auid=%u res=%d",
++			limit, old, loginuid, res);
+ 	}
+-	audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
+-		"audit_rate_limit=%d old=%d by auid=%u res=%d",
+-		limit, old, loginuid, res);
+ 
+ 	/* If we are allowed, make the change */
+ 	if (res == 1)
+@@ -283,21 +285,23 @@ static int audit_set_backlog_limit(int l
+ 	else
+ 		res = 1;
+ 
+-	if (sid) {
+-		char *ctx = NULL;
+-		u32 len;
+-		if ((rc = selinux_ctxid_to_string(sid, &ctx, &len)) == 0) {
+-			audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
+-				"audit_backlog_limit=%d old=%d by auid=%u"
+-				" subj=%s res=%d",
+-				limit, old, loginuid, ctx, res);
+-			kfree(ctx);
+-		} else
+-			res = 0; /* Something weird, deny request */
++	if (audit_enabled) {
++		if (sid) {
++			char *ctx = NULL;
++			u32 len;
++			if ((rc = selinux_ctxid_to_string(sid, &ctx, &len)) == 0) {
++				audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
++					"audit_backlog_limit=%d old=%d by auid=%u"
++					" subj=%s res=%d",
++					limit, old, loginuid, ctx, res);
++				kfree(ctx);
++			} else
++				res = 0; /* Something weird, deny request */
++		}
++		audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
++			"audit_backlog_limit=%d old=%d by auid=%u res=%d",
++			limit, old, loginuid, res);
+ 	}
+-	audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
+-		"audit_backlog_limit=%d old=%d by auid=%u res=%d",
+-		limit, old, loginuid, res);
+ 
+ 	/* If we are allowed, make the change */
+ 	if (res == 1)
+@@ -321,21 +325,23 @@ static int audit_set_enabled(int state, 
+ 	else
+ 		res = 1;
+ 
+-	if (sid) {
+-		char *ctx = NULL;
+-		u32 len;
+-		if ((rc = selinux_ctxid_to_string(sid, &ctx, &len)) == 0) {
+-			audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
+-				"audit_enabled=%d old=%d by auid=%u"
+-				" subj=%s res=%d",
+-				state, old, loginuid, ctx, res);
+-			kfree(ctx);
+-		} else
+-			res = 0; /* Something weird, deny request */
++	if (audit_enabled || state) {
++		if (sid) {
++			char *ctx = NULL;
++			u32 len;
++			if ((rc = selinux_ctxid_to_string(sid, &ctx, &len)) == 0) {
++				audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
++					"audit_enabled=%d old=%d by auid=%u"
++					" subj=%s res=%d",
++					state, old, loginuid, ctx, res);
++				kfree(ctx);
++			} else
++				res = 0; /* Something weird, deny request */
++		}
++		audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
++			"audit_enabled=%d old=%d by auid=%u res=%d",
++			state, old, loginuid, res);
+ 	}
+-	audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
+-		"audit_enabled=%d old=%d by auid=%u res=%d",
+-		state, old, loginuid, res);
+ 
+ 	/* If we are allowed, make the change */
+ 	if (res == 1)
+@@ -361,21 +367,23 @@ static int audit_set_failure(int state, 
+ 	else
+ 		res = 1;
+ 
+-	if (sid) {
+-		char *ctx = NULL;
+-		u32 len;
+-		if ((rc = selinux_ctxid_to_string(sid, &ctx, &len)) == 0) {
+-			audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
+-				"audit_failure=%d old=%d by auid=%u"
+-				" subj=%s res=%d",
+-				state, old, loginuid, ctx, res);
+-			kfree(ctx);
+-		} else
+-			res = 0; /* Something weird, deny request */
++	if (audit_enabled) {
++		if (sid) {
++			char *ctx = NULL;
++			u32 len;
++			if ((rc = selinux_ctxid_to_string(sid, &ctx, &len)) == 0) {
++				audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
++					"audit_failure=%d old=%d by auid=%u"
++					" subj=%s res=%d",
++					state, old, loginuid, ctx, res);
++				kfree(ctx);
++			} else
++				res = 0; /* Something weird, deny request */
++		}
++		audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
++			"audit_failure=%d old=%d by auid=%u res=%d",
++			state, old, loginuid, res);
+ 	}
+-	audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
+-		"audit_failure=%d old=%d by auid=%u res=%d",
+-		state, old, loginuid, res);
+ 
+ 	/* If we are allowed, make the change */
+ 	if (res == 1)
+@@ -599,22 +607,26 @@ static int audit_receive_msg(struct sk_b
+ 			if (err < 0) return err;
+ 		}
+ 		if (status_get->mask & AUDIT_STATUS_PID) {
+-			int old   = audit_pid;
+-			if (sid) {
+-				if ((err = selinux_ctxid_to_string(
+-						sid, &ctx, &len)))
+-					return err;
+-				else
++			if (audit_enabled) {
++				int old   = audit_pid;
++				if (sid) {
++					if ((err = selinux_ctxid_to_string(
++							sid, &ctx, &len)))
++						return err;
++					else
++						audit_log(NULL, GFP_KERNEL,
++							AUDIT_CONFIG_CHANGE,
++				"audit_pid=%d old=%d by auid=%u subj=%s",
++							status_get->pid, old,
++							loginuid, ctx);
++					kfree(ctx);
++				} else
+ 					audit_log(NULL, GFP_KERNEL,
+ 						AUDIT_CONFIG_CHANGE,
+-						"audit_pid=%d old=%d by auid=%u subj=%s",
+-						status_get->pid, old,
+-						loginuid, ctx);
+-				kfree(ctx);
+-			} else
+-				audit_log(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE,
+ 					"audit_pid=%d old=%d by auid=%u",
+-					  status_get->pid, old, loginuid);
++						status_get->pid, old,
++						loginuid);
++			}
+ 			audit_pid = status_get->pid;
+ 		}
+ 		if (status_get->mask & AUDIT_STATUS_RATE_LIMIT)
+

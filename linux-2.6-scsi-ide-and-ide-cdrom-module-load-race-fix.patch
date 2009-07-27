@@ -1,0 +1,64 @@
+From: Alan Cox <alan@redhat.com>
+Subject: [PATCH RHEL5]: enabler for Dell ide-scsi blocker
+Date: Thu, 7 Dec 2006 06:26:37 -0500
+Bugzilla: 207248
+Message-Id: <20061207112636.GD25121@devserv.devel.redhat.com>
+Changelog: ide-scsi/ide-cdrom module load race fix
+
+
+Our friends at Dell need ide-scsi autoloading for tape drives. This gets fun
+if it beats the ide-cd module to your disks so add support for an option to
+leave the CD devices untouched. In -mm, pushed by Andrew to Linus today.
+
+Alan
+
+---
+
+Some people want to use ide_cd for CD-ROM but still dynamically load
+ide-scsi for things like tape drives.  If you compile in the CD driver
+this works out but if you want them modular you need an option to ensure
+that whoever loads first the right things happen.
+
+This replaces the original draft patch which leaked a scsi host reference
+
+[akpm@osdl.org: add MODULE_PARM_DESC]
+Signed-off-by: Alan Cox <alan@redhat.com>
+Cc: Bartlomiej Zolnierkiewicz <B.Zolnierkiewicz@elka.pw.edu.pl>
+Cc: Jens Axboe <jens.axboe@oracle.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ drivers/scsi/ide-scsi.c |    6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff -puN drivers/scsi/ide-scsi.c~ide_scsi-allow-it-to-be-used-for-non-cd-only drivers/scsi/ide-scsi.c
+--- a/drivers/scsi/ide-scsi.c~ide_scsi-allow-it-to-be-used-for-non-cd-only
++++ a/drivers/scsi/ide-scsi.c
+@@ -110,6 +110,7 @@ typedef struct ide_scsi_obj {
+ } idescsi_scsi_t; 
+
+ static DEFINE_MUTEX(idescsi_ref_mutex);
++static int idescsi_nocd;			/* Set by module param to skip cd */
+
+ #define ide_scsi_g(disk) \
+ 	container_of((disk)->private_data, struct ide_scsi_obj, driver)
+@@ -1127,6 +1128,9 @@ static int ide_scsi_probe(ide_drive_t *d
+ 		warned = 1;
+ 	}
+ 
++	if (idescsi_nocd && drive->media == ide_cdrom)
++		return -ENODEV;
++
+ 	if (!strstr("ide-scsi", drive->driver_req) ||
+ 	    !drive->present ||
+ 	    drive->media == ide_disk ||
+@@ -1187,6 +1191,8 @@ static void __exit exit_idescsi_module(v
+ 	driver_unregister(&idescsi_driver.gen_driver);
+ }
+ 
++module_param(idescsi_nocd, int, 0600);
++MODULE_PARM_DESC(idescsi_nocd, "Disable handling of CD-ROMs so they may be driven by ide-cd");
+ module_init(init_idescsi_module);
+ module_exit(exit_idescsi_module);
+ MODULE_LICENSE("GPL");
+

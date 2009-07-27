@@ -1,0 +1,58 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Subject: RHEL5.1 [PATCH]: Fixes cpuinfo_cur_freq and adds per processor Greyhound  frequency print in powernow-k8 driver
+Date: Fri, 23 Mar 2007 13:32:04 -0400
+Bugzilla: 222124
+Message-Id: <46040F14.4020304@redhat.com>
+Changelog: [x86] Greyhound cpuinfo output cleanups
+
+
+BZ 222124
+
+This patch fixes any Power Now! issues found while testing on Greyhound 
+hardware.
+
+1) /proc/cpuinfo listed the right frequency as did
+/sys/...../cpu0/cpufreq/scaling_cur_freq but /sys/..../cpuinfo_cur_freq
+was wrong. Patch corrects the cpuinfo_cur_freq frequency for Greyhound.
+
+2) The driver prints out the ACPI frequency table once per cpufreq
+initialization attempt, which is governed by the cpu_core_map for RevF and
+earlier processors, and occurs one time per core for Greyhound.  As a result 
+on GH processor systems, same information gets printed once per core.  The 
+patch corrects that and prints once per node.
+
+Dependencies: BZ 229716 change the same file though the changes don't 
+overlap. In any case please apply BZ 229716 first and BZ 222124 second.
+
+Testing results in bugzilla.
+
+Please ACK.
+
+
+
+--- linux-2.6.18.x86_64/arch/i386/kernel/cpu/cpufreq/powernow-k8.c.orig	2007-03-22 16:13:04.630175768 -0500
++++ linux-2.6.18.x86_64/arch/i386/kernel/cpu/cpufreq/powernow-k8.c	2007-03-22 16:19:40.153047152 -0500
+@@ -840,7 +840,8 @@ static int powernow_k8_cpu_init_acpi(str
+ 
+ 	/* fill in data */
+ 	data->numps = data->acpi_data.state_count;
+-	print_basics(data);
++	if (first_cpu(cpu_core_map[data->cpu]) == data->cpu)
++		print_basics(data);
+ 	powernow_k8_acpi_pst_values(data, 0);
+ 
+ 	/* notify BIOS that we exist */
+@@ -1379,7 +1380,10 @@ static unsigned int powernowk8_get (unsi
+ 	if (query_current_values_with_pending_wait(data))
+ 		goto out;
+ 
+-	khz = find_khz_freq_from_fid(data->currfid);
++	if (cpu_family == CPU_HW_PSTATE)
++		khz = find_khz_freq_from_fiddid(data->currfid, data->currdid);
++	else
++		khz = find_khz_freq_from_fid(data->currfid);
+ 
+ out:
+ 	set_cpus_allowed(current, oldmask);
+
+

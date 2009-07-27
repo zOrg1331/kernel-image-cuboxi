@@ -1,0 +1,398 @@
+From: Doug Ledford <dledford@redhat.com>
+Subject: [Patch RHEL5.1] Repost: kernel backports for OFED 1.2 update
+Date: Wed, 20 Jun 2007 02:40:48 -0400
+Bugzilla: 225581
+Message-Id: <1182321648.5625.93.camel@firewall.xsintricity.com>
+Changelog: [openib] kernel backports for OFED 1.2 update
+
+
+I separated all the kernel backports from the revert code and put it
+into one patch.  It's actually all fairly useful for future backport
+duty, so it's all applied to the core code.  As it adds new symbols
+versus changing previous symbols, it should all be ABI clean.  This is
+just basic infrastructure needed to support the OFED 1.2 update patch
+that's part of bugzilla 225581.  It also addresses the ppc64 compile
+issue Konrad found.
+
+-- 
+Doug Ledford <dledford@redhat.com>
+              GPG KeyID: CFBFF194
+              http://people.redhat.com/dledford
+
+Infiniband specific RPMs available at
+              http://people.redhat.com/dledford/Infiniband
+
+--- linux-2.6.18.noarch/drivers/net/ehea/backlevel_kernel.h
++++ linux-2.6.18.noarch.ofed/drivers/net/ehea/backlevel_kernel.h
+@@ -391,8 +391,7 @@ inline static long plpar_hcall_9arg_9ret
+ 
+ #endif	/* LINUX_VERSION_CODE < KERNEL_VERSION(2,6,17) */
+ 
+-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19)
+-
++#ifndef PLPAR_HCALL9_BUFSIZE
+ #define PLPAR_HCALL9_BUFSIZE 10
+ 
+ static inline long plpar_hcall9(u64 opcode, u64 *outs, u64 arg1, u64 arg2, u64 arg3, u64 arg4,
+--- linux-2.6.18.noarch/include/asm-powerpc/hvcall.h
++++ linux-2.6.18.noarch.ofed/include/asm-powerpc/hvcall.h
+@@ -293,6 +293,27 @@ long plpar_hcall_9arg_9ret(unsigned long
+ 			   unsigned long *out8,
+ 			   unsigned long *out9);
+ 
++#define PLPAR_HCALL9_BUFSIZE 9
++inline static long plpar_hcall9(unsigned long opcode,
++				unsigned long *retbuf,
++				unsigned long arg1,
++				unsigned long arg2,
++				unsigned long arg3,
++				unsigned long arg4,
++				unsigned long arg5,
++				unsigned long arg6,
++				unsigned long arg7,
++				unsigned long arg8,
++				unsigned long arg9)
++{
++	return plpar_hcall_9arg_9ret(opcode,
++				     arg1, arg2, arg3, arg4, arg5,
++				     arg6, arg7, arg8, arg9,
++				     retbuf,
++				     retbuf+1, retbuf+2, retbuf+3, retbuf+4,
++				     retbuf+5, retbuf+6, retbuf+7, retbuf+8);
++}
++
+ #endif /* __ASSEMBLY__ */
+ #endif /* __KERNEL__ */
+ #endif /* _ASM_POWERPC_HVCALL_H */
+--- linux-2.6.18.noarch/include/asm-x86_64/dma-mapping.h
++++ linux-2.6.18.noarch.ofed/include/asm-x86_64/dma-mapping.h
+@@ -55,13 +55,6 @@ extern dma_addr_t bad_dma_address;
+ extern struct dma_mapping_ops* dma_ops;
+ extern int iommu_merge;
+ 
+-static inline int valid_dma_direction(int dma_direction)
+-{
+-	return ((dma_direction == DMA_BIDIRECTIONAL) ||
+-		(dma_direction == DMA_TO_DEVICE) ||
+-		(dma_direction == DMA_FROM_DEVICE));
+-}
+-
+ static inline int dma_mapping_error(dma_addr_t dma_addr)
+ {
+ 	if (dma_ops->mapping_error)
+--- linux-2.6.18.noarch/include/linux/dma-mapping.h
++++ linux-2.6.18.noarch.ofed/include/linux/dma-mapping.h
+@@ -24,6 +24,13 @@ enum dma_data_direction {
+ #define DMA_28BIT_MASK	0x000000000fffffffULL
+ #define DMA_24BIT_MASK	0x0000000000ffffffULL
+ 
++static inline int valid_dma_direction(int dma_direction)
++{
++	return ((dma_direction == DMA_BIDIRECTIONAL) ||
++		(dma_direction == DMA_TO_DEVICE) ||
++		(dma_direction == DMA_FROM_DEVICE));
++}
++
+ #include <asm/dma-mapping.h>
+ 
+ /* Backwards compat, remove in 2.7.x */
+--- linux-2.6.18.noarch/include/linux/fs.h
++++ linux-2.6.18.noarch.ofed/include/linux/fs.h
+@@ -1199,9 +1199,14 @@ static inline void mark_inode_dirty_sync
+ 	__mark_inode_dirty(inode, I_DIRTY_SYNC);
+ }
+ 
+-static inline void inode_inc_link_count(struct inode *inode)
++static inline void inc_nlink(struct inode *inode)
+ {
+ 	inode->i_nlink++;
++}
++
++static inline void inode_inc_link_count(struct inode *inode)
++{
++	inc_nlink(inode);
+ 	mark_inode_dirty(inode);
+ }
+ 
+--- linux-2.6.18.noarch/include/linux/genalloc.h
++++ linux-2.6.18.noarch.ofed/include/linux/genalloc.h
+@@ -31,5 +31,6 @@ struct gen_pool_chunk {
+ 
+ extern struct gen_pool *gen_pool_create(int, int);
+ extern int gen_pool_add(struct gen_pool *, unsigned long, size_t, int);
++extern void gen_pool_destroy(struct gen_pool *);
+ extern unsigned long gen_pool_alloc(struct gen_pool *, size_t);
+ extern void gen_pool_free(struct gen_pool *, unsigned long, size_t);
+--- linux-2.6.18.noarch/include/linux/kernel.h
++++ linux-2.6.18.noarch.ofed/include/linux/kernel.h
+@@ -13,6 +13,7 @@
+ #include <linux/types.h>
+ #include <linux/compiler.h>
+ #include <linux/bitops.h>
++#include <linux/log2.h>
+ #include <asm/byteorder.h>
+ #include <asm/bug.h>
+ 
+@@ -163,12 +164,6 @@ static inline int __attribute_pure__ lon
+ 	return r;
+ }
+ 
+-static inline unsigned long
+-__attribute_const__ roundup_pow_of_two(unsigned long x)
+-{
+-	return 1UL << fls_long(x - 1);
+-}
+-
+ extern int printk_ratelimit(void);
+ extern int __printk_ratelimit(int ratelimit_jiffies, int ratelimit_burst);
+ 
+--- linux-2.6.18.noarch/include/linux/log2.h
++++ linux-2.6.18.noarch.ofed/include/linux/log2.h
+@@ -0,0 +1,157 @@
++/* Integer base 2 logarithm calculation
++ *
++ * Copyright (C) 2006 Red Hat, Inc. All Rights Reserved.
++ * Written by David Howells (dhowells@redhat.com)
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#ifndef _LINUX_LOG2_H
++#define _LINUX_LOG2_H
++
++#include <linux/types.h>
++#include <linux/bitops.h>
++
++/*
++ * deal with unrepresentable constant logarithms
++ */
++extern __attribute__((const, noreturn))
++int ____ilog2_NaN(void);
++
++/*
++ * non-constant log of base 2 calculators
++ * - the arch may override these in asm/bitops.h if they can be implemented
++ *   more efficiently than using fls() and fls64()
++ * - the arch is not required to handle n==0 if implementing the fallback
++ */
++#ifndef CONFIG_ARCH_HAS_ILOG2_U32
++static inline __attribute__((const))
++int __ilog2_u32(u32 n)
++{
++	return fls(n) - 1;
++}
++#endif
++
++#ifndef CONFIG_ARCH_HAS_ILOG2_U64
++static inline __attribute__((const))
++int __ilog2_u64(u64 n)
++{
++	return fls64(n) - 1;
++}
++#endif
++
++/*
++ * round up to nearest power of two
++ */
++static inline __attribute__((const))
++unsigned long __roundup_pow_of_two(unsigned long n)
++{
++	return 1UL << fls_long(n - 1);
++}
++
++/**
++ * ilog2 - log of base 2 of 32-bit or a 64-bit unsigned value
++ * @n - parameter
++ *
++ * constant-capable log of base 2 calculation
++ * - this can be used to initialise global variables from constant data, hence
++ *   the massive ternary operator construction
++ *
++ * selects the appropriately-sized optimised version depending on sizeof(n)
++ */
++#define ilog2(n)				\
++(						\
++	__builtin_constant_p(n) ? (		\
++		(n) < 1 ? ____ilog2_NaN() :	\
++		(n) & (1ULL << 63) ? 63 :	\
++		(n) & (1ULL << 62) ? 62 :	\
++		(n) & (1ULL << 61) ? 61 :	\
++		(n) & (1ULL << 60) ? 60 :	\
++		(n) & (1ULL << 59) ? 59 :	\
++		(n) & (1ULL << 58) ? 58 :	\
++		(n) & (1ULL << 57) ? 57 :	\
++		(n) & (1ULL << 56) ? 56 :	\
++		(n) & (1ULL << 55) ? 55 :	\
++		(n) & (1ULL << 54) ? 54 :	\
++		(n) & (1ULL << 53) ? 53 :	\
++		(n) & (1ULL << 52) ? 52 :	\
++		(n) & (1ULL << 51) ? 51 :	\
++		(n) & (1ULL << 50) ? 50 :	\
++		(n) & (1ULL << 49) ? 49 :	\
++		(n) & (1ULL << 48) ? 48 :	\
++		(n) & (1ULL << 47) ? 47 :	\
++		(n) & (1ULL << 46) ? 46 :	\
++		(n) & (1ULL << 45) ? 45 :	\
++		(n) & (1ULL << 44) ? 44 :	\
++		(n) & (1ULL << 43) ? 43 :	\
++		(n) & (1ULL << 42) ? 42 :	\
++		(n) & (1ULL << 41) ? 41 :	\
++		(n) & (1ULL << 40) ? 40 :	\
++		(n) & (1ULL << 39) ? 39 :	\
++		(n) & (1ULL << 38) ? 38 :	\
++		(n) & (1ULL << 37) ? 37 :	\
++		(n) & (1ULL << 36) ? 36 :	\
++		(n) & (1ULL << 35) ? 35 :	\
++		(n) & (1ULL << 34) ? 34 :	\
++		(n) & (1ULL << 33) ? 33 :	\
++		(n) & (1ULL << 32) ? 32 :	\
++		(n) & (1ULL << 31) ? 31 :	\
++		(n) & (1ULL << 30) ? 30 :	\
++		(n) & (1ULL << 29) ? 29 :	\
++		(n) & (1ULL << 28) ? 28 :	\
++		(n) & (1ULL << 27) ? 27 :	\
++		(n) & (1ULL << 26) ? 26 :	\
++		(n) & (1ULL << 25) ? 25 :	\
++		(n) & (1ULL << 24) ? 24 :	\
++		(n) & (1ULL << 23) ? 23 :	\
++		(n) & (1ULL << 22) ? 22 :	\
++		(n) & (1ULL << 21) ? 21 :	\
++		(n) & (1ULL << 20) ? 20 :	\
++		(n) & (1ULL << 19) ? 19 :	\
++		(n) & (1ULL << 18) ? 18 :	\
++		(n) & (1ULL << 17) ? 17 :	\
++		(n) & (1ULL << 16) ? 16 :	\
++		(n) & (1ULL << 15) ? 15 :	\
++		(n) & (1ULL << 14) ? 14 :	\
++		(n) & (1ULL << 13) ? 13 :	\
++		(n) & (1ULL << 12) ? 12 :	\
++		(n) & (1ULL << 11) ? 11 :	\
++		(n) & (1ULL << 10) ? 10 :	\
++		(n) & (1ULL <<  9) ?  9 :	\
++		(n) & (1ULL <<  8) ?  8 :	\
++		(n) & (1ULL <<  7) ?  7 :	\
++		(n) & (1ULL <<  6) ?  6 :	\
++		(n) & (1ULL <<  5) ?  5 :	\
++		(n) & (1ULL <<  4) ?  4 :	\
++		(n) & (1ULL <<  3) ?  3 :	\
++		(n) & (1ULL <<  2) ?  2 :	\
++		(n) & (1ULL <<  1) ?  1 :	\
++		(n) & (1ULL <<  0) ?  0 :	\
++		____ilog2_NaN()			\
++				   ) :		\
++	(sizeof(n) <= 4) ?			\
++	__ilog2_u32(n) :			\
++	__ilog2_u64(n)				\
++ )
++
++/**
++ * roundup_pow_of_two - round the given value up to nearest power of two
++ * @n - parameter
++ *
++ * round the given balue up to the nearest power of two
++ * - the result is undefined when n == 0
++ * - this can be used to initialise global variables from constant data
++ */
++#define roundup_pow_of_two(n)			\
++(						\
++	__builtin_constant_p(n) ? (		\
++		(n == 1) ? 0 :			\
++		(1UL << (ilog2((n) - 1) + 1))	\
++				   ) :		\
++	__roundup_pow_of_two(n)			\
++ )
++
++#endif /* _LINUX_LOG2_H */
+--- linux-2.6.18.noarch/include/linux/skbuff.h
++++ linux-2.6.18.noarch.ofed/include/linux/skbuff.h
+@@ -36,6 +36,8 @@
+ #define CHECKSUM_NONE 0
+ #define CHECKSUM_HW 1
+ #define CHECKSUM_UNNECESSARY 2
++#define CHECKSUM_PARTIAL CHECKSUM_HW
++#define CHECKSUM_COMPLETE CHECKSUM_HW
+ 
+ #define SKB_DATA_ALIGN(X)	(((X) + (SMP_CACHE_BYTES - 1)) & \
+ 				 ~(SMP_CACHE_BYTES - 1))
+--- linux-2.6.18.noarch/include/linux/slab.h
++++ linux-2.6.18.noarch.ofed/include/linux/slab.h
+@@ -197,6 +197,23 @@ static inline void *kcalloc(size_t n, si
+ 	return kzalloc(n * size, flags);
+ }
+ 
++/**
++ * kmemdup - duplicates region of memory
++ *
++ * @src: memory region to duplicate
++ * @len: memory region length
++ * @gfp: GFP mask to use
++ */
++static inline void *kmemdup(const void *src, size_t len, gfp_t gfp)
++{
++	void *p;
++
++	p = kmalloc(len, gfp);
++	if (p)
++		memcpy(p, src, len);
++	return p;
++}
++
+ extern void kfree(const void *);
+ extern unsigned int ksize(const void *);
+ extern int slab_is_available(void);
+--- linux-2.6.18.noarch/include/linux/utsname.h
++++ linux-2.6.18.noarch.ofed/include/linux/utsname.h
+@@ -33,4 +33,10 @@ struct new_utsname {
+ extern struct new_utsname system_utsname;
+ 
+ extern struct rw_semaphore uts_sem;
++
++static inline struct new_utsname *init_utsname(void)
++{
++	return &system_utsname;
++}
++
+ #endif
+--- linux-2.6.18.noarch/lib/genalloc.c
++++ linux-2.6.18.noarch.ofed/lib/genalloc.c
+@@ -69,6 +69,37 @@ int gen_pool_add(struct gen_pool *pool, 
+ }
+ EXPORT_SYMBOL(gen_pool_add);
+ 
++/**
++ * gen_pool_destroy - destroy a special memory pool
++ * @pool: pool to destroy
++ *
++ * Destroy the specified special memory pool. Verifies that there are no
++ * outstanding allocations.
++ */
++void gen_pool_destroy(struct gen_pool *pool)
++{
++	struct list_head *_chunk, *_next_chunk;
++	struct gen_pool_chunk *chunk;
++	int order = pool->min_alloc_order;
++	int bit, end_bit;
++
++
++	write_lock(&pool->lock);
++	list_for_each_safe(_chunk, _next_chunk, &pool->chunks) {
++		chunk = list_entry(_chunk, struct gen_pool_chunk, next_chunk);
++		list_del(&chunk->next_chunk);
++
++		end_bit = (chunk->end_addr - chunk->start_addr) >> order;
++		bit = find_next_bit(chunk->bits, end_bit, 0);
++		BUG_ON(bit < end_bit);
++
++		kfree(chunk);
++	}
++	kfree(pool);
++	return;
++}
++EXPORT_SYMBOL(gen_pool_destroy);
++
+ 
+ /*
+  * Allocate the requested number of bytes from the specified pool.

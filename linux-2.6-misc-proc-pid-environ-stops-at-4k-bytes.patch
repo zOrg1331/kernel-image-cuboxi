@@ -1,0 +1,145 @@
+From: Anton Arapov <aarapov@redhat.com>
+Date: Thu, 27 Sep 2007 19:13:16 +0200
+Subject: [misc] /proc/<pid>/environ stops at 4k bytes
+Message-id: h8odfo3uc3.fsf@pepelac.englab.brq.redhat.com
+O-Subject: [RHEL5.2 PATCH] BZ308391: /proc/<pid>/environ stops at 4k bytes
+Bugzilla: 308391
+
+BZ#308391:
+  https://bugzilla.redhat.com/show_bug.cgi?id=308391
+
+Description:
+  On the current kernels, when a process has more than 4k of data in
+its environment, /proc/<pid>/environ shows only the first 4k.
+
+Upstream status:
+  Patch has been added to the -mm tree.
+  http://marc.info/?l=linux-mm-commits&m=119084591013320&w=2
+
+Test status:
+  Patch has been tested for compilation and boot. Issue has been
+reproduced. Patch fixes it.
+
+Notice:
+  BZ#254037 - RHEL4 clone of this bug.
+
+==
+
+Acked-by: Larry Woodman <lwoodman@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Acked-by: Jon Masters <jcm@redhat.com>
+
+diff --git a/fs/proc/base.c b/fs/proc/base.c
+index e05b338..f051e75 100644
+--- a/fs/proc/base.c
++++ b/fs/proc/base.c
+@@ -466,22 +466,6 @@ out:
+ 	return NULL;
+ }
+ 
+-static int proc_pid_environ(struct task_struct *task, char * buffer)
+-{
+-	int res = 0;
+-	struct mm_struct *mm = get_task_mm(task);
+-	if (mm) {
+-		unsigned int len = mm->env_end - mm->env_start;
+-		if (len > PAGE_SIZE)
+-			len = PAGE_SIZE;
+-		res = access_process_vm(task, mm->env_start, buffer, len, 0);
+-		if (!ptrace_may_attach(task))
+-			res = -ESRCH;
+-		mmput(mm);
+-	}
+-	return res;
+-}
+-
+ static int proc_pid_cmdline(struct task_struct *task, char * buffer)
+ {
+ 	int res = 0;
+@@ -922,6 +906,75 @@ static struct file_operations proc_mem_operations = {
+ 	.open		= mem_open,
+ };
+ 
++static ssize_t environ_read(struct file *file, char __user *buf, 
++			    size_t count, loff_t *ppos)
++{
++	struct task_struct *task = get_proc_task(file->f_dentry->d_inode);
++	char *page;
++	unsigned long src = *ppos;
++	int ret = -ESRCH;
++	struct mm_struct *mm;
++
++	if (!task)
++		goto out_no_task;
++
++	if (!ptrace_may_attach(task))
++		goto out;
++
++	ret = -ENOMEM;
++	page = (char *)__get_free_page(GFP_USER);
++	if (!page)
++		goto out;
++
++	ret = 0;
++
++	mm = get_task_mm(task);
++	if (!mm)
++		goto out_free;
++
++	while (count > 0) {
++		int this_len, retval, max_len;
++
++		this_len = mm->env_end - (mm->env_start + src);
++
++		if (this_len <= 0)
++			break;
++
++		max_len = (count > PAGE_SIZE) ? PAGE_SIZE : count;
++		this_len = (this_len > max_len) ? max_len : this_len;
++
++		retval = access_process_vm(task, (mm->env_start + src),
++					    page, this_len, 0);
++
++		if (retval <= 0) {
++			ret = retval;
++			break;
++		}
++
++		if (copy_to_user(buf, page, retval)) {
++			ret = -EFAULT;
++			break;
++		}
++
++		ret += retval;
++		src += retval;
++		buf += retval;
++		count -= retval;
++	}
++	*ppos = src;
++	mmput(mm);
++out_free:
++	free_page((unsigned long) page);
++out:
++	put_task_struct(task);
++out_no_task:
++	return ret;
++}
++
++static const struct file_operations proc_environ_operations = {
++	.read           = environ_read,
++};
++
+ static ssize_t oom_adjust_read(struct file *file, char __user *buf,
+ 				size_t count, loff_t *ppos)
+ {
+@@ -1765,8 +1818,7 @@ static struct dentry *proc_pident_lookup(struct inode *dir,
+ 			break;
+ 		case PROC_TID_ENVIRON:
+ 		case PROC_TGID_ENVIRON:
+-			inode->i_fop = &proc_info_file_operations;
+-			ei->op.proc_read = proc_pid_environ;
++			inode->i_fop = &proc_environ_operations;
+ 			break;
+ 		case PROC_TID_AUXV:
+ 		case PROC_TGID_AUXV:

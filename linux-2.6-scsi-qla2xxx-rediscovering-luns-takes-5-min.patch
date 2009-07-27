@@ -1,0 +1,71 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Wed, 19 Dec 2007 15:19:56 -0500
+Subject: [scsi] qla2xxx: rediscovering luns takes 5 min
+Message-id: 20071219201956.28804.62900.sendpatchset@shell.boston.redhat.com
+O-Subject: [Bug 413211][QLogic][RHEL 5.2 Patch]qla2xxx - rediscovering LUNS takes 5 min.
+Bugzilla: 413211
+
+BZ 413211 - rediscovering LUNS takes 5 minutes.
+
+This is a regression from rhel4.
+
+It has been tested by LSI, IBM and QLogic and provides a very
+simple fix to this problem. Low risk.
+
+qla2xxx: Don't schedule the DPC routine to perform an issue-lip request.
+
+As the driver depends on the DPC routine to handle bottom-half
+loop resynchronization in order to recover from the issue-lip
+request.  The issue_lip call is sleeping context capable, so just
+issue the reset function there.
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+Acked-by: Mike Christie <mchristi@redhat.com>
+
+diff --git a/drivers/scsi/qla2xxx/qla_attr.c b/drivers/scsi/qla2xxx/qla_attr.c
+index f24e71f..9852604 100644
+--- a/drivers/scsi/qla2xxx/qla_attr.c
++++ b/drivers/scsi/qla2xxx/qla_attr.c
+@@ -1350,7 +1350,7 @@ qla2x00_issue_lip(struct Scsi_Host *shost)
+ {
+ 	scsi_qla_host_t *ha = to_qla_host(shost);
+ 
+-	set_bit(LOOP_RESET_NEEDED, &ha->dpc_flags);
++	qla2x00_loop_reset(ha);
+ 	return 0;
+ }
+ 
+diff --git a/drivers/scsi/qla2xxx/qla_gbl.h b/drivers/scsi/qla2xxx/qla_gbl.h
+index 7ebd20f..65625ac 100644
+--- a/drivers/scsi/qla2xxx/qla_gbl.h
++++ b/drivers/scsi/qla2xxx/qla_gbl.h
+@@ -66,6 +66,8 @@ extern int ql2xqfullrampup;
+ extern int ql2xenablemsix;
+ extern int num_hosts;
+ 
++extern int qla2x00_loop_reset(scsi_qla_host_t *);
++
+ /*
+  * Global Functions in qla_mid.c source file.
+  */
+diff --git a/drivers/scsi/qla2xxx/qla_os.c b/drivers/scsi/qla2xxx/qla_os.c
+index 8b7797a..157177c 100644
+--- a/drivers/scsi/qla2xxx/qla_os.c
++++ b/drivers/scsi/qla2xxx/qla_os.c
+@@ -112,7 +112,6 @@ static int qla2xxx_eh_abort(struct scsi_cmnd *);
+ static int qla2xxx_eh_device_reset(struct scsi_cmnd *);
+ static int qla2xxx_eh_bus_reset(struct scsi_cmnd *);
+ static int qla2xxx_eh_host_reset(struct scsi_cmnd *);
+-static int qla2x00_loop_reset(scsi_qla_host_t *ha);
+ static int qla2x00_device_reset(scsi_qla_host_t *, fc_port_t *);
+ 
+ static int qla2x00_change_queue_depth(struct scsi_device *, int);
+@@ -1084,7 +1083,7 @@ eh_host_reset_lock:
+ * Returns:
+ *      0 = success
+ */
+-static int
++int
+ qla2x00_loop_reset(scsi_qla_host_t *ha)
+ {
+ 	int ret;

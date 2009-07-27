@@ -1,0 +1,75 @@
+From: Konrad Rzeszutek <konradr@redhat.com>
+Date: Wed, 3 Oct 2007 14:49:27 -0400
+Subject: [hotplug] acpiphp: System error during PCI hotplug
+Message-id: 20071003184927.GA16783@mars.boston.redhat.com
+O-Subject: [RHEL5 U2 PATCH] BZ#243003 - LTC35259-System error during PCI hotplug
+Bugzilla: 243003
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=243003
+
+Description:
+------------
+The ACPI PCI hotplug driver 'acpiphp' triggers an SERR during
+a PCI hotplug operation on the IBM x3850.
+
+We have determined that this is happening because 'acpiphp'
+is incorrectly writing hot plug parameters to the PCI host
+bridge.
+
+RHEL Version Found:
+------------------
+RHEL5
+
+kABI Status:
+------------
+No broken symbols.
+
+Brew:
+-----
+Built on all platforms.
+
+Upstream Status:
+----------------
+git commit 9ef2241b18266d75319e7d66156243bd9010be44
+
+Test Status:
+------------
+Tested on the affective machines with a stock kernel and with the patched
+kernel. Tests worked with the patched kernel. Also I tested for regression
+the kernel on other machines  (Dell, HP, and other IBM boxes) without
+any fault.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-51.el5
+
+acpiphp is writing hot plug parameters to the PCI host bridge
+PCI config space.  This patch removes the incorrect operation.
+
+Signed-off-by: Gary Hade <garyhade@us.ibm.com>
+
+Acked-by: Alan Cox <alan@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+---
+ drivers/pci/hotplug/acpiphp_glue.c |    3 +++
+ 1 files changed, 3 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/pci/hotplug/acpiphp_glue.c b/drivers/pci/hotplug/acpiphp_glue.c
+index a67702f..7e2867c 100644
+--- a/drivers/pci/hotplug/acpiphp_glue.c
++++ b/drivers/pci/hotplug/acpiphp_glue.c
+@@ -1369,6 +1369,9 @@ static void program_hpp(struct pci_dev *dev, struct acpiphp_bridge *bridge)
+ 			(dev->class >> 8) == PCI_CLASS_BRIDGE_PCI)))
+ 		return;
+ 
++	if ((dev->class >> 8) == PCI_CLASS_BRIDGE_HOST)
++		return;
++
+ 	pci_write_config_byte(dev, PCI_CACHE_LINE_SIZE,
+ 			bridge->hpp.t0->cache_line_size);
+ 	pci_write_config_byte(dev, PCI_LATENCY_TIMER,
+-- 
+1.5.3.5.645.gbb47
+

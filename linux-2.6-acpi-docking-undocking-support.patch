@@ -1,0 +1,92 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Mon, 17 Dec 2007 15:53:18 -0500
+Subject: [acpi] docking/undocking support
+Message-id: 4766E1BE.8040202@redhat.com
+O-Subject: [RHEL-5.2 PATCH 1/5] Docking/undocking support
+Bugzilla: 252214
+
+bz252214 FEAT: RHEL 5.2 hot dock / undock support for mobile
+w/docking station
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=252214
+
+Problem:
+  ACPI: dock: use mutex instead of spinlock
+
+Solution:
+  Use a mutex instead of a spinlock for locking the
+  hotplug list because we need to call into the ACPI
+  subsystem which might sleep.
+
+Upstream Status:
+commit from stable b0dc866dd9b8d10a53cb3537385a51b7ee54b62
+
+Testing:
+The patches in this series were successfully tested by me on
+a T60p, Dell Converse, and Dell Fila mobiles.
+
+As always, acks would be appreciated.
+
+diff --git a/drivers/acpi/dock.c b/drivers/acpi/dock.c
+index 578b99b..c7df2a1 100644
+--- a/drivers/acpi/dock.c
++++ b/drivers/acpi/dock.c
+@@ -44,7 +44,7 @@ struct dock_station {
+ 	unsigned long last_dock_time;
+ 	u32 flags;
+ 	spinlock_t dd_lock;
+-	spinlock_t hp_lock;
++	struct mutex hp_lock;
+ 	struct list_head dependent_devices;
+ 	struct list_head hotplug_devices;
+ };
+@@ -114,9 +114,9 @@ static void
+ dock_add_hotplug_device(struct dock_station *ds,
+ 			struct dock_dependent_device *dd)
+ {
+-	spin_lock(&ds->hp_lock);
++	mutex_lock(&ds->hp_lock);
+ 	list_add_tail(&dd->hotplug_list, &ds->hotplug_devices);
+-	spin_unlock(&ds->hp_lock);
++	mutex_unlock(&ds->hp_lock);
+ }
+ 
+ /**
+@@ -130,9 +130,9 @@ static void
+ dock_del_hotplug_device(struct dock_station *ds,
+ 			struct dock_dependent_device *dd)
+ {
+-	spin_lock(&ds->hp_lock);
++	mutex_lock(&ds->hp_lock);
+ 	list_del(&dd->hotplug_list);
+-	spin_unlock(&ds->hp_lock);
++	mutex_unlock(&ds->hp_lock);
+ }
+ 
+ /**
+@@ -295,7 +295,7 @@ static void hotplug_dock_devices(struct dock_station *ds, u32 event)
+ {
+ 	struct dock_dependent_device *dd;
+ 
+-	spin_lock(&ds->hp_lock);
++	mutex_lock(&ds->hp_lock);
+ 
+ 	/*
+ 	 * First call driver specific hotplug functions
+@@ -317,7 +317,7 @@ static void hotplug_dock_devices(struct dock_station *ds, u32 event)
+ 		else
+ 			dock_create_acpi_device(dd->handle);
+ 	}
+-	spin_unlock(&ds->hp_lock);
++	mutex_unlock(&ds->hp_lock);
+ }
+ 
+ static void dock_event(struct dock_station *ds, u32 event, int num)
+@@ -625,7 +625,7 @@ static int dock_add(acpi_handle handle)
+ 	INIT_LIST_HEAD(&dock_station->dependent_devices);
+ 	INIT_LIST_HEAD(&dock_station->hotplug_devices);
+ 	spin_lock_init(&dock_station->dd_lock);
+-	spin_lock_init(&dock_station->hp_lock);
++	mutex_init(&dock_station->hp_lock);
+ 	ATOMIC_INIT_NOTIFIER_HEAD(&dock_notifier_list);
+ 
+ 	/* Find dependent devices */

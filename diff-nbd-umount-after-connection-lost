@@ -1,0 +1,20 @@
+Signed-off-by: Konstantin Ozerkov <kozerkov@parallels.com>
+diff --git a/drivers/block/nbd.c b/drivers/block/nbd.c
+index 599c06d..4837d6c 100644
+--- a/drivers/block/nbd.c
++++ b/drivers/block/nbd.c
+@@ -562,6 +562,14 @@ static void do_nbd_request(struct request_queue * q)
+ 
+ 		BUG_ON(lo->magic != LO_MAGIC);
+ 
++		if (unlikely(!lo->sock)) {
++			req->errors++;
++			nbd_end_request(req);
++
++			spin_lock_irq(q->queue_lock);
++			continue;
++		}
++
+ 		spin_lock_irq(&lo->queue_lock);
+ 		list_add_tail(&req->queuelist, &lo->waiting_queue);
+ 		spin_unlock_irq(&lo->queue_lock);

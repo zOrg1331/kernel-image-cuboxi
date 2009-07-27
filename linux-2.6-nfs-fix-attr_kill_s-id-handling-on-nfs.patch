@@ -1,0 +1,152 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 11 Dec 2007 15:40:12 -0500
+Subject: [nfs] fix ATTR_KILL_S*ID handling on NFS
+Message-id: 20071211154012.488b4a19@tleilax.poochiereds.net
+O-Subject: Re: [RHEL5.2 PATCH] BZ#222330: fix ATTR_KILL_S*ID handling on NFS
+Bugzilla: 222330
+
+When an unprivileged process attempts to modify a file that has the
+setuid or setgid bits set, the VFS will attempt to clear these bits. The
+VFS will set the ATTR_KILL_SUID or ATTR_KILL_SGID bits in the ia_valid
+mask, and then call notify_change to clear these bits and set the mode
+accordingly.
+
+With a networked filesystem (NFS in particular but likely others), the
+client machine or process may not have credentials that allow for
+setting the mode. In some situations, this can lead to file corruption,
+an operation failing outright because the setattr fails, or to races
+that lead to a mode change being reverted.
+
+For NFS we'd like to just leave the handling of this to the server and
+ignore these bits. The problem is that by the time the setattr op is
+called, the VFS has already reinterpreted the ATTR_KILL_* bits into a
+mode change. The setattr operation has no way to know its intent.
+
+There is now a patch in -mm that's slated for 2.6.24 to fix this. It
+simply stops notify_change from clearing the ATTR_KILL_S*ID bits when it
+does the conversion to a mode change so that setattr can reinterpret it.
+This however implies that no one calls notify_change with both ATTR_MODE
+and either ATTR_KILL_S*ID bit set. The patchset adds a BUG() if that
+occurs.
+
+This approach isn't workable for current RHEL releases. It's possible
+that there are 3rd party modules that call notify_change with that
+ia_valid flag combination, and breaking them isn't acceptable. It's
+also possible that some setattr ops won't respond well to seeing
+ATTR_KILL_S*ID set in ia_valid.
+
+For RHEL5, I'm proposing the patch below. This adds a new inode flag. If
+it's set then ATTR_KILL_S*ID are not automatically converted into a mode
+change. The ATTR_KILL_S*ID flags are passed in the ia_valid and the
+lower filesystem can reinterpret them as needed. For NFS it sets the flag
+on new inodes and just ignores ATTR_KILL_S*ID.
+
+This patch fixes the provided reproducer. It was also successfully
+tested by the customer who reported it.
+
+Acked-by: Steve Dickson <SteveD@redhat.com>
+
+diff --git a/fs/attr.c b/fs/attr.c
+index 97de946..1fb8e92 100644
+--- a/fs/attr.c
++++ b/fs/attr.c
+@@ -104,12 +104,11 @@ EXPORT_SYMBOL(inode_setattr);
+ int notify_change(struct dentry * dentry, struct iattr * attr)
+ {
+ 	struct inode *inode = dentry->d_inode;
+-	mode_t mode;
+ 	int error;
+ 	struct timespec now;
+ 	unsigned int ia_valid = attr->ia_valid;
++	mode_t ia_mode = attr->ia_mode;
+ 
+-	mode = inode->i_mode;
+ 	now = current_fs_time(inode->i_sb);
+ 
+ 	attr->ia_ctime = now;
+@@ -118,28 +117,47 @@ int notify_change(struct dentry * dentry, struct iattr * attr)
+ 	if (!(ia_valid & ATTR_MTIME_SET))
+ 		attr->ia_mtime = now;
+ 	if (ia_valid & ATTR_KILL_SUID) {
+-		attr->ia_valid &= ~ATTR_KILL_SUID;
+-		if (mode & S_ISUID) {
++		ia_valid &= ~ATTR_KILL_SUID;
++		if (inode->i_mode & S_ISUID) {
+ 			if (!(ia_valid & ATTR_MODE)) {
+-				ia_valid = attr->ia_valid |= ATTR_MODE;
+-				attr->ia_mode = inode->i_mode;
++				ia_valid |= ATTR_MODE;
++				ia_mode = inode->i_mode;
+ 			}
+-			attr->ia_mode &= ~S_ISUID;
++			ia_mode &= ~S_ISUID;
+ 		}
+ 	}
+ 	if (ia_valid & ATTR_KILL_SGID) {
+-		attr->ia_valid &= ~ ATTR_KILL_SGID;
+-		if ((mode & (S_ISGID | S_IXGRP)) == (S_ISGID | S_IXGRP)) {
++		ia_valid &= ~ATTR_KILL_SGID;
++		if ((inode->i_mode & (S_ISGID | S_IXGRP)) ==
++		    (S_ISGID | S_IXGRP)) {
+ 			if (!(ia_valid & ATTR_MODE)) {
+-				ia_valid = attr->ia_valid |= ATTR_MODE;
+-				attr->ia_mode = inode->i_mode;
++				ia_valid |= ATTR_MODE;
++				ia_mode = inode->i_mode;
+ 			}
+-			attr->ia_mode &= ~S_ISGID;
++			ia_mode &= ~S_ISGID;
+ 		}
+ 	}
+-	if (!attr->ia_valid)
++
++	if (!ia_valid)
+ 		return 0;
+ 
++	/*
++	 * For RHEL, we've added the S_NOATTRKILL flag to allow filesystems
++	 * to opt-out of ATTR_KILL_S*ID processing. The ATTR_KILL_S*ID bits
++	 * are now handled in two stages. First, we calculate what the
++	 * ia_valid and the ia_mode would look like if we were to allow the
++	 * ATTR_KILL_S*ID bits to modify them. We then make the decision of
++	 * whether to allow the modification to occur. We could just skip
++	 * all of the ATTR_KILL_S*ID processing altogether, but we need it
++	 * for inotify. If a process is watching for mode changes, we want
++	 * it to be notified if we suspect that the server will be doing the
++	 * mode change for us.
++	 */
++	if ((ia_valid & ATTR_MODE) && !(inode->i_flags & S_NOATTRKILL)) {
++		attr->ia_valid = ia_valid;
++		attr->ia_mode = ia_mode;
++	}
++
+ 	if (ia_valid & ATTR_SIZE)
+ 		down_write(&dentry->d_inode->i_alloc_sem);
+ 
+diff --git a/fs/nfs/inode.c b/fs/nfs/inode.c
+index 869b5b7..ecde9a6 100644
+--- a/fs/nfs/inode.c
++++ b/fs/nfs/inode.c
+@@ -257,7 +257,7 @@ nfs_fhget(struct super_block *sb, struct nfs_fh *fh, struct nfs_fattr *fattr)
+ 		inode->i_ino = fattr->fileid;
+ 
+ 		/* We can't support update_atime(), since the server will reset it */
+-		inode->i_flags |= S_NOATIME|S_NOCMTIME;
++		inode->i_flags |= S_NOATIME|S_NOCMTIME|S_NOATTRKILL;
+ 		inode->i_mode = fattr->mode;
+ 		/* Why so? Because we want revalidate for devices/FIFOs, and
+ 		 * that's precisely what we have in nfs_file_inode_operations.
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index 158fed3..0a92925 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -147,6 +147,9 @@ extern int dir_notify_enable;
+ #define S_SWAPFILE	256	/* Do not truncate: swapon got its bmaps */
+ #define S_PRIVATE	512	/* Inode is fs-internal */
+ 
++/* RHEL only flags -- These are not upstream! */
++#define S_NOATTRKILL	65536	/* don't convert ATTR_KILL_* to mode change */
++
+ /*
+  * Note that nosuid etc flags are inode-specific: setting some file-system
+  * flags just means all the inodes inherit those flags by default. It might be

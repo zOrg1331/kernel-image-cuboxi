@@ -1,0 +1,53 @@
+From: Janice M. Girouard<jgirouar@redhat.com>
+Subject: [RHEL 5.0 PPC PATCH] RHBZ# 211694 RIT104528- e1000: Reset all functions after a PCI error
+Date: Tue, 24 Oct 2006 18:23:19
+Bugzilla: 211694
+Changelog: e1000: Reset all functions after a PCI error
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=211694
+
+Description:
+------------
+During the handling of the PCI error recovery sequence, the current e1000 driver erroneously blocks a device reset for any but the first PCI function. It shouldn't -- this is a cut-n-paste error from a different driver (which tolerated only one hardware reset per hardware card).  The result is that after a PCI error, other functions on a multi-function card are not properly reset.
+
+A 2 line coding change corrects this problem.
+
+RHEL Version Found:
+-------------------
+RHEL 5.0
+
+Upstream Status:
+----------------
+Accepted by the maintainer 10/17/06
+http://www.ussg.iu.edu/hypermail/linux/kernel/0610.2/0641.html
+
+Test Status:
+------------
+This was tested by IBM using an errinject test application. ie.
+errinjct ioa-bus-error -f 17 -s net/eth3
+
+This patch assumes a kernel base of 2.6.18-2733.  Note: this patch is for the ppc64 kernel only.
+
+Proposed Patch:
+---------------
+
+__
+Presented for your consideration and ACK for RHEL 5.0
+
+Index: latest/drivers/net/e1000/e1000_main.c
+===================================================================
+--- latest.orig/drivers/net/e1000/e1000_main.c
++++ latest/drivers/net/e1000/e1000_main.c
+@@ -4849,10 +4849,6 @@ static pci_ers_result_t e1000_io_slot_re
+ 	pci_enable_wake(pdev, 3, 0);
+ 	pci_enable_wake(pdev, 4, 0); /* 4 == D3 cold */
+ 
+-	/* Perform card reset only on one instance of the card */
+-	if (PCI_FUNC (pdev->devfn) != 0)
+-		return PCI_ERS_RESULT_RECOVERED;
+-
+ 	e1000_reset(adapter);
+ 	E1000_WRITE_REG(&adapter->hw, WUS, ~0);
+ 

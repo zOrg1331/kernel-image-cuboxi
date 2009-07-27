@@ -1,0 +1,45 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Subject: Re: RHEL5.1 [PATCH]: Fixes system panic during boot up with no memory 	in Node 0
+Date: Wed, 20 Jun 2007 15:57:43 -0400
+Bugzilla: 218641
+Message-Id: <467986B7.1030603@redhat.com>
+Changelog: [x86_64] Fixes system panic during boot up with no memory in Node 0
+
+
+>>Linux always tries to allocate the GART/IOMMU aperture from the boot 
+>>node memory, i.e node 0. 
+>>However, it is legal to boot with no memory attached to the boot node, 
+>>in which case the system
+>>crashes with invalid memory assignments.  The attached patch generalize 
+>>the memory allocation
+>>to support any node in the system with memory.  
+>>   
+>>
+>
+
+--- linux-2.6.18.x86_64/arch/x86_64/kernel/aperture.c.fixnode0	2007-04-02 15:26:51.000000000 -0400
++++ linux-2.6.18.x86_64/arch/x86_64/kernel/aperture.c	2007-04-02 15:27:48.000000000 -0400
+@@ -38,7 +38,6 @@ int fix_aperture __initdata = 1;
+ 
+ static u32 __init allocate_aperture(void) 
+ {
+-	pg_data_t *nd0 = NODE_DATA(0);
+ 	u32 aper_size;
+ 	void *p; 
+ 
+@@ -52,12 +51,12 @@ static u32 __init allocate_aperture(void
+ 	 * Unfortunately we cannot move it up because that would make the
+ 	 * IOMMU useless.
+ 	 */
+-	p = __alloc_bootmem_node(nd0, aper_size, aper_size, 0); 
++	p = __alloc_bootmem_nopanic(aper_size, aper_size, 0);
+ 	if (!p || __pa(p)+aper_size > 0xffffffff) {
+ 		printk("Cannot allocate aperture memory hole (%p,%uK)\n",
+ 		       p, aper_size>>10);
+ 		if (p)
+-			free_bootmem_node(nd0, __pa(p), aper_size); 
++			free_bootmem(__pa(p), aper_size);
+ 		return 0;
+ 	}
+ 	printk("Mapping aperture over %d KB of RAM @ %lx\n",
+

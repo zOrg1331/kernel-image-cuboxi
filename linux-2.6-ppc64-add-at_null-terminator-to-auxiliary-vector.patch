@@ -1,0 +1,70 @@
+From: Vitaly Mayatskikh <vmayatsk@redhat.com>
+Date: Tue, 16 Oct 2007 14:21:57 +0200
+Subject: [ppc64] add AT_NULL terminator to auxiliary vector
+Message-id: m3fy0bdzbu.fsf@dhcp-lab-143.englab.brq.redhat.com
+O-Subject: [RHEL-5.2 patch] BZ231442 kernel fails to add AT_NULL terminator to auxiliary vector
+Bugzilla: 231442
+
+BZ#231442
+
+https://bugzilla.redhat.com/show_bug.cgi?id=231442
+
+Description:
+============
+Size of saved_auxv table in mm_struct structure is not enough to
+stores all entries on PowerPC architectures. This table is of size
+44 (AT_VECTOR_SIZE defined at include/vector/auxvec.h:29), for 21
+entries max + 1 entry for end terminator. In case of ppc and binary
+running with flags 'P' (preserve-argv[0), 'O' (open-binary) and 'C'
+(credentials) there are 22 entries in table, without end
+termination. So glibc continues to parse stack after auxv table until
+reaches zero. This often leads to segmentaion faults.
+
+There are 2 ways to solve the problem:
+1. Increase AT_VECTOR_SIZE to 46
+2. Remove some entries from auxv table
+
+1st way breaks kABI. 2nd way is problematic in case of very old glibc and
+ancient hardware (read
+http://www.nabble.com/really-old-glibc-on-8xx-or-403-with-bleeding-edge-kernel---anyone-care--tf4525669.html#a12912431
+for more information).
+
+Discussion of this problem in lkml and other lists is very slow and
+I'm not sure if they will not decide just to increase AT_VECTOR_SIZE,
+so I decided to discuss problem here :) There are two entries
+AT_IGNOREPPC (for ppc builds only) which can be removed without any
+side effects, because RHEL-4/5 doesn't support such old hardware. I've
+examined glibc-2.3 sources and didn't found any work with
+AT_IGNOREPPC except just skipping it. I tried to build ppc-kernel
+without this entries and it runs ok on IBM OpenPower 720.
+
+Upstream status:
+================
+Not in upstream
+
+Test status of the patch:
+=========================
+Kernel runs ok on IBM OpenPower 720, issue resolved.
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/include/asm-powerpc/elf.h b/include/asm-powerpc/elf.h
+index 922a403..4895c22 100644
+--- a/include/asm-powerpc/elf.h
++++ b/include/asm-powerpc/elf.h
+@@ -281,15 +281,11 @@ extern int arch_setup_additional_pages(struct linux_binprm *bprm,
+  * - keep the final alignment of sp (sp & 0xf)
+  * - make sure the 32-bit value at the first 16 byte aligned position of
+  *   AUXV is greater than 16 for glibc compatibility.
+- *   AT_IGNOREPPC is used for that.
+  * - for compatibility with glibc ARCH_DLINFO must always be defined on PPC,
+  *   even if DLINFO_ARCH_ITEMS goes to zero or is undefined.
+  */
+ #define ARCH_DLINFO							\
+ do {									\
+-	/* Handle glibc compatibility. */				\
+-	NEW_AUX_ENT(AT_IGNOREPPC, AT_IGNOREPPC);			\
+-	NEW_AUX_ENT(AT_IGNOREPPC, AT_IGNOREPPC);			\
+ 	/* Cache size items */						\
+ 	NEW_AUX_ENT(AT_DCACHEBSIZE, dcache_bsize);			\
+ 	NEW_AUX_ENT(AT_ICACHEBSIZE, icache_bsize);			\

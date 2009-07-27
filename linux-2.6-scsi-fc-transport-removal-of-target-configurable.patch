@@ -1,0 +1,98 @@
+From: Mike Christie <mchristi@redhat.com>
+Subject: [PATCH RHEL5] make fc transport removal of target configurable
+Date: Wed, 29 Nov 2006 12:36:57 -0600
+Bugzilla: 215797
+Message-Id: <456DD349.2020809@redhat.com>
+Changelog: scsi: make fc transport removal of target configurable
+
+
+This is for BZ 215797.
+
+In RHEL5, if you pull a Fibre Channel cable and the dev_loss_tmo expires
+the fc transport class will remove the attached scsi devices (/dev/sdX
+is deleted). The problem with this is that if there is something layered
+on top of the scsi device like software RAID or multipath, those apps
+must be made hotplug aware so that when the cable is plugged back in the
+new devices are added back to that app. Currently, only dm-multipath
+partially handles this. With the dm queueing patches merged last month,
+dm-multipath can better handle this situation, however if userspace
+cannot handle the hotplug events quick enough we get the oops in the
+bugzilla above.
+
+The attached patch will make the device removal optional with the
+default to not remove the devices when the dev_loss_tmo fires. This
+patch will never be merged upstream. See here for reference:
+http://marc.theaimsgroup.com/?l=linux-scsi&m=115015423722568&w=2
+
+linux-scsi would prefer that apps be converted and like the userspace
+firmware issue is using this as a chance to motivate us. Unfortunately,
+SUSE added the same patch, so vendors working on testing and
+qualification for SLES10 did not have any motivation to change their own
+apps and we were only able to partially fix a couple of our apps in time.
+
+I have tested the patch with lpfc and qla2xxx using multipath and
+without multipath, by pulling cables and stopping the target. I was not
+able to test zfcp or mpt_fc.
+
+diff -aurp linux-2.6.18.noarch/drivers/scsi/scsi_transport_fc.c linux-2.6.18.noarch.work/drivers/scsi/scsi_transport_fc.c
+--- linux-2.6.18.noarch/drivers/scsi/scsi_transport_fc.c	2006-11-27 14:10:59.000000000 -0600
++++ linux-2.6.18.noarch.work/drivers/scsi/scsi_transport_fc.c	2006-11-28 18:54:12.000000000 -0600
+@@ -401,9 +401,29 @@ module_param_named(dev_loss_tmo, fc_dev_
+ MODULE_PARM_DESC(dev_loss_tmo,
+ 		 "Maximum number of seconds that the FC transport should"
+ 		 " insulate the loss of a remote port. Once this value is"
+-		 " exceeded, the scsi target is removed. Value should be"
++		 " exceeded, the scsi target may be removed. Reference the"
++		 " remove_on_dev_loss module parameter.  Value should be"
+ 		 " between 1 and SCSI_DEVICE_BLOCK_MAX_TIMEOUT.");
+ 
++/*
++ * remove_on_dev_loss: controls whether the transport will
++ *   remove a scsi target after the device loss timer expires.
++ *   Removal on disconnect is modeled after the USB subsystem
++ *   and expects subsystems layered on SCSI to be aware of
++ *   potential device loss and handle it appropriately. However,
++ *   many subsystems do not support device removal, leaving situations
++ *   where structure references may remain, causing new device
++ *   name assignments, etc., if the target returns.
++*/
++static unsigned int fc_remove_on_dev_loss = 0;
++module_param_named(remove_on_dev_loss, fc_remove_on_dev_loss,
++		   int, S_IRUGO|S_IWUSR);
++MODULE_PARM_DESC(remove_on_dev_loss,
++		 "Boolean.  When the device loss timer fires, this variable"
++		 " controls whether the scsi infrastructure for the target"
++		 " device is removed.  Values: zero means do not remove,"
++		 " non-zero means remove.  Default is zero.");
++
+ /**
+  * Netlink Infrastructure
+  **/
+@@ -1742,7 +1762,8 @@ fc_starget_delete(void *data)
+ 	}
+ 	spin_unlock_irqrestore(shost->host_lock, flags);
+ 
+-	scsi_remove_target(&rport->dev);
++	if (fc_remove_on_dev_loss)
++		scsi_remove_target(&rport->dev);
+ }
+ 
+ 
+@@ -2311,9 +2332,13 @@ fc_timeout_deleted_rport(void  *data)
+ 		return;
+ 	}
+ 
+-	dev_printk(KERN_ERR, &rport->dev,
+-		"blocked FC remote port time out: removing target and "
+-		"saving binding\n");
++	if (fc_remove_on_dev_loss)
++		dev_printk(KERN_ERR, &rport->dev,
++			"blocked FC remote port time out: removing target and "
++			"saving binding\n");
++	else
++		dev_printk(KERN_ERR, &rport->dev,
++			"blocked FC remote port time out: saving binding\n");
+ 
+ 	list_move_tail(&rport->peers, &fc_host->rport_bindings);
+ 
+

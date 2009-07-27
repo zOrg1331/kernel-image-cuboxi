@@ -1,0 +1,101 @@
+From: Oleg Nesterov <oleg@redhat.com>
+Date: Thu, 27 Nov 2008 18:18:29 +0100
+Subject: [misc] utrace: make ptrace_state refcountable
+Message-id: 20081127171829.GA18441@redhat.com
+O-Subject: [RHEL5 PATCH v2 2/3] BZ#469754 utrace: make ptrace_state refcountable
+Bugzilla: 469754
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: Jerome Marchand <jmarchan@redhat.com>
+RH-Acked-by: Roland McGrath <roland@redhat.com>
+
+Many thanks to Jerome Marchand who spotted the bug in v1.
+
+See https://bugzilla.redhat.com/show_bug.cgi?id=469754
+
+ptrace_start(&state) populates state and drops rcu_read_lock(). This
+means that sys_ptrace() is broken, it and its callees use this pointer
+but nothing protect *state from beeing freed by SIGKILL'ed tracee.
+
+Add the stupid ptrace_state->refcnt to fix the symptom^Wproblem for
+now. Perhaps we can change the code to use get_ptrace_state(engine)
+instead, but this needs more changes in the code which I can hardly
+understand.
+
+Signed-off-by: Oleg Nesterov <oleg@redhat.com>
+
+diff --git a/kernel/ptrace.c b/kernel/ptrace.c
+index 056da58..46a8828 100644
+--- a/kernel/ptrace.c
++++ b/kernel/ptrace.c
+@@ -106,6 +106,7 @@ EXPORT_SYMBOL_GPL(access_process_vm);
+ struct ptrace_state
+ {
+ 	struct rcu_head rcu;
++	atomic_t refcnt;
+ #ifdef PTRACE_DEBUG
+ 	atomic_t check_dead;
+ #endif
+@@ -165,6 +166,7 @@ ptrace_setup(struct task_struct *target, struct utrace_attached_engine *engine,
+ 		return ERR_PTR(-ENOMEM);
+ 
+ 	INIT_RCU_HEAD(&state->rcu);
++	atomic_set(&state->refcnt, 1);
+ 	CHECK_INIT(state);
+ 	state->task = target;
+ 	state->engine = engine;
+@@ -199,12 +201,18 @@ ptrace_setup(struct task_struct *target, struct utrace_attached_engine *engine,
+ 	return state;
+ }
+ 
++static void __ptrace_state_free(struct ptrace_state *state)
++{
++	if (atomic_dec_and_test(&state->refcnt))
++		kfree(state);
++}
++
+ static void
+ ptrace_state_free(struct rcu_head *rhead)
+ {
+ 	struct ptrace_state *state = container_of(rhead,
+ 						  struct ptrace_state, rcu);
+-	kfree(state);
++	__ptrace_state_free(state);
+ }
+ 
+ static void
+@@ -906,6 +914,7 @@ ptrace_start(long pid, long request,
+ 		ret = -ESRCH;  /* Return value for exit_state bail-out.  */
+ 	}
+ 
++	atomic_inc(&state->refcnt);
+ 	rcu_read_unlock();
+ 
+ 	NO_LOCKS;
+@@ -924,8 +933,10 @@ ptrace_start(long pid, long request,
+ 	 */
+ 	wait_task_inactive(child);
+ 	while (child->state != TASK_TRACED && child->state != TASK_STOPPED) {
+-		if (child->exit_state)
++		if (child->exit_state) {
++			__ptrace_state_free(state);
+ 			goto out_tsk;
++		}
+ 		/*
+ 		 * This is a dismal kludge, but it only comes up on ia64.
+ 		 * It might be blocked inside regset->writeback() called
+@@ -1156,6 +1167,7 @@ asmlinkage long sys_ptrace(long request, long pid, long addr, long data)
+ out_tsk:
+ 	NO_LOCKS;
+ 	put_task_struct(child);
++	__ptrace_state_free(state);
+ out:
+ 	pr_debug("%d ptrace -> %lx\n", current->pid, ret);
+ 	return ret;
+@@ -1240,6 +1252,7 @@ asmlinkage long compat_sys_ptrace(compat_long_t request, compat_long_t pid,
+ 
+ out_tsk:
+ 	put_task_struct(child);
++	__ptrace_state_free(state);
+ out:
+ 	pr_debug("%d ptrace -> %lx\n", current->pid, (long)ret);
+ 	return ret;

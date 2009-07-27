@@ -1,0 +1,45 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Subject: [RHEL5 patch] Prevent OOM-kill of unkillable children or siblings
+Date: Thu, 31 May 2007 14:17:50 -0400
+Bugzilla: 222492
+Message-Id: <465F114E.60706@redhat.com>
+Changelog: [mm] Prevent OOM-kill of unkillable children or siblings
+
+
+Abort the kill of a process if any of the threads have OOM_DISABLE set. 
+Having this test here also prevents any OOM_DISABLE child of the "selected"
+process from being killed.
+
+The attached upstream patch fixes this problem and BZ 222492.
+
+
+
+--- linux-2.6.18.noarch/mm/oom_kill.c.orig
++++ linux-2.6.18.noarch/mm/oom_kill.c
+@@ -310,15 +310,23 @@ static int oom_kill_task(struct task_str
+ 	if (mm == NULL || mm == &init_mm)
+ 		return 1;
+ 
++	/*
++	 * Don't kill the process if any threads are set to OOM_DISABLE
++	 */
++	do_each_thread(g, q) {
++		if (q->mm == mm && p->oomkilladj == OOM_DISABLE)
++			return 1;
++	} while_each_thread(g, q);
++
+ 	__oom_kill_task(p, message);
+ 	/*
+ 	 * kill all processes that share the ->mm (i.e. all threads),
+ 	 * but are in a different thread group
+ 	 */
+-	do_each_thread(g, q)
++	do_each_thread(g, q) {
+ 		if (q->mm == mm && q->tgid != p->tgid)
+ 			__oom_kill_task(q, message);
+-	while_each_thread(g, q);
++	} while_each_thread(g, q);
+ 
+ 	return 0;
+ }
+

@@ -1,0 +1,25 @@
+From: Mike Christie <mchristi@redhat.com>
+Subject: Re: [rhel5] borked kmalloc in iscsi
+Date: Mon, 27 Aug 2007 01:14:42 -0500
+Bugzilla: 255841
+Message-Id: <1188195282.12432.2.camel@max>
+Changelog: [scsi] iscsi: borked kmalloc 
+
+
+Thanks. I was going to try and sneak that in with another bug fix patch
+but forgot. I will make a new bugzilla for it. Here is the patch against
+the RHEL5 kernel. I ran some quick logins to verify it.
+
+
+--- linux-2.6.18.noarch/drivers/scsi/iscsi_tcp.c.orig	2007-08-27 00:43:49.000000000 -0500
++++ linux-2.6.18.noarch/drivers/scsi/iscsi_tcp.c	2007-08-27 00:44:11.000000000 -0500
+@@ -1909,7 +1909,7 @@ static int iscsi_tcp_get_addr(struct isc
+ 	struct sockaddr_in *sin;
+ 	int rc = 0, len;
+ 
+-	addr = kmalloc(GFP_KERNEL, sizeof(*addr));
++	addr = kmalloc(sizeof(*addr), GFP_KERNEL);
+ 	if (!addr)
+ 		return -ENOMEM;
+ 
+

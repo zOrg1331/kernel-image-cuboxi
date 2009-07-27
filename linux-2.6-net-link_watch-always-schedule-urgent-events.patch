@@ -1,0 +1,225 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Thu, 24 Jan 2008 07:45:02 +1100
+Subject: [net] link_watch: always schedule urgent events
+Message-id: 20080123204502.GA8462@gondor.apana.org.au
+O-Subject: [RHEL5.2 PATCH] [NET] link_watch: Always schedule urgent events
+Bugzilla: 251527
+
+Hi:
+
+RHEL5.2 BZ 251527
+
+Xen uses a technique called live migration to move guests between
+physical hosts.  One of the technologies needed for that is to move
+the virtual NIC across.  Currently an artificial delay exists because
+of a bug in the network link watch system.  This patch fixes that.
+
+This corresponds to upstream changesets
+
+	d9568ba91b1fdd1ea4fdbf9fcc76b867cca6c1d5
+
+and
+
+	db0ccffed91e234cad99a35f07d5a322f410baa2
+
+[NET] link_watch: Always schedule urgent events
+
+Urgent events may be delayed if we already have a non-urgent event
+queued for that device.  This patch changes this by making sure that
+an urgent event is always looked at immediately.
+
+I've replaced the LW_RUNNING flag by LW_URGENT since whether work
+is scheduled is already kept track by the work queue system.
+
+The only complication is that we have to provide some exclusion for
+the setting linkwatch_nextevent which is available in the actual
+work function.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Cheers,
+--
+Visit Openswan at http://www.openswan.org/
+Email: Herbert Xu ~{PmV>HI~} <herbert@gondor.apana.org.au>
+Home Page: http://gondor.apana.org.au/~herbert/
+PGP Key: http://gondor.apana.org.au/~herbert/pubkey.txt
+--
+
+Acked-by: Bill Burns <bburns@redhat.com>
+
+diff --git a/net/core/link_watch.c b/net/core/link_watch.c
+index 4b36114..6895ef2 100644
+--- a/net/core/link_watch.c
++++ b/net/core/link_watch.c
+@@ -27,7 +27,7 @@
+ 
+ 
+ enum lw_bits {
+-	LW_RUNNING = 0,
++	LW_URGENT = 0,
+ 	LW_SE_USED
+ };
+ 
+@@ -87,11 +87,80 @@ static void rfc2863_policy(struct net_device *dev)
+ }
+ 
+ 
+-/* Must be called with the rtnl semaphore held */
+-void linkwatch_run_queue(void)
++static int linkwatch_urgent_event(struct net_device *dev)
++{
++	return netif_running(dev) && netif_carrier_ok(dev) &&
++	       dev->qdisc != dev->qdisc_sleeping;
++}
++
++
++static void linkwatch_add_event(struct lw_event *event)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&lweventlist_lock, flags);
++	list_add_tail(&event->list, &lweventlist);
++	spin_unlock_irqrestore(&lweventlist_lock, flags);
++}
++
++
++static void linkwatch_schedule_work(int urgent)
++{
++	unsigned long delay = linkwatch_nextevent - jiffies;
++
++	if (test_bit(LW_URGENT, &linkwatch_flags))
++		return;
++
++	/* Minimise down-time: drop delay for up event. */
++	if (urgent) {
++		if (test_and_set_bit(LW_URGENT, &linkwatch_flags))
++			return;
++		delay = 0;
++	}
++
++	/* If we wrap around we'll delay it by at most HZ. */
++	if (delay > HZ)
++		delay = 0;
++
++	/*
++	 * This is true if we've scheduled it immeditately or if we don't
++	 * need an immediate execution and it's already pending.
++	 */
++	if (schedule_delayed_work(&linkwatch_work, delay) == !delay)
++		return;
++
++	/* Don't bother if there is nothing urgent. */
++	if (!test_bit(LW_URGENT, &linkwatch_flags))
++		return;
++
++	/* It's already running which is good enough. */
++	if (!cancel_delayed_work(&linkwatch_work))
++		return;
++
++	/* Otherwise we reschedule it again for immediate exection. */
++	schedule_delayed_work(&linkwatch_work, 0);
++}
++
++
++static void __linkwatch_run_queue(int urgent_only)
+ {
+ 	struct list_head head, *n, *next;
+ 
++	/*
++	 * Limit the number of linkwatch events to one
++	 * per second so that a runaway driver does not
++	 * cause a storm of messages on the netlink
++	 * socket.  This limit does not apply to up events
++	 * while the device qdisc is down.
++	 */
++	if (!urgent_only)
++		linkwatch_nextevent = jiffies + HZ;
++	/* Limit wrap-around effect on delay. */
++	else if (time_after(linkwatch_nextevent, jiffies + HZ))
++		linkwatch_nextevent = jiffies;
++
++	clear_bit(LW_URGENT, &linkwatch_flags);
++
+ 	spin_lock_irq(&lweventlist_lock);
+ 	list_replace_init(&lweventlist, &head);
+ 	spin_unlock_irq(&lweventlist_lock);
+@@ -100,6 +169,11 @@ void linkwatch_run_queue(void)
+ 		struct lw_event *event = list_entry(n, struct lw_event, list);
+ 		struct net_device *dev = event->dev;
+ 
++		if (urgent_only && !linkwatch_urgent_event(dev)) {
++			linkwatch_add_event(event);
++			continue;
++		}
++
+ 		if (event == &singleevent) {
+ 			clear_bit(LW_SE_USED, &linkwatch_flags);
+ 		} else {
+@@ -124,29 +198,31 @@ void linkwatch_run_queue(void)
+ 
+ 		dev_put(dev);
+ 	}
+-}       
+ 
++	if (!list_empty(&lweventlist))
++		linkwatch_schedule_work(0);
++}
+ 
+-static void linkwatch_event(void *dummy)
++
++/* Must be called with the rtnl semaphore held */
++void linkwatch_run_queue(void)
+ {
+-	/* Limit the number of linkwatch events to one
+-	 * per second so that a runaway driver does not
+-	 * cause a storm of messages on the netlink
+-	 * socket
+-	 */	
+-	linkwatch_nextevent = jiffies + HZ;
+-	clear_bit(LW_RUNNING, &linkwatch_flags);
++	__linkwatch_run_queue(0);
++}
+ 
++static void linkwatch_event(void *dummy)
++{
+ 	rtnl_lock();
+-	linkwatch_run_queue();
++	__linkwatch_run_queue(time_after(linkwatch_nextevent, jiffies));
+ 	rtnl_unlock();
+ }
+ 
+ 
+ void linkwatch_fire_event(struct net_device *dev)
+ {
++	int urgent = linkwatch_urgent_event(dev);
++
+ 	if (!test_and_set_bit(__LINK_STATE_LINKWATCH_PENDING, &dev->state)) {
+-		unsigned long flags;
+ 		struct lw_event *event;
+ 
+ 		if (test_and_set_bit(LW_SE_USED, &linkwatch_flags)) {
+@@ -163,20 +239,11 @@ void linkwatch_fire_event(struct net_device *dev)
+ 		dev_hold(dev);
+ 		event->dev = dev;
+ 
+-		spin_lock_irqsave(&lweventlist_lock, flags);
+-		list_add_tail(&event->list, &lweventlist);
+-		spin_unlock_irqrestore(&lweventlist_lock, flags);
+-
+-		if (!test_and_set_bit(LW_RUNNING, &linkwatch_flags)) {
+-			unsigned long delay = linkwatch_nextevent - jiffies;
++		linkwatch_add_event(event);
++	} else if (!urgent)
++		return;
+ 
+-			/* If we wrap around we'll delay it by at most HZ. */
+-			if (!delay || delay > HZ)
+-				schedule_work(&linkwatch_work);
+-			else
+-				schedule_delayed_work(&linkwatch_work, delay);
+-		}
+-	}
++	linkwatch_schedule_work(urgent);
+ }
+ 
+ EXPORT_SYMBOL(linkwatch_fire_event);

@@ -1,0 +1,29 @@
+From: Scott Moser <smoser@redhat.com>
+Date: Tue, 20 Nov 2007 17:17:09 -0500
+Subject: [ppc64] typo with mmio_read_fixup
+Message-id: 1195597030764-do-send-email-smoser@redhat.com
+O-Subject: [PATCH RHEL5u2] bz253208 Cell/B.E. Kernel Maintenance [4/4]
+Bugzilla: 253208
+
+This is a simple and obvious build fix if CONFIG_PPC_CELL_NATIVE
+is not defined, this will not build
+
+--
+ include/asm-powerpc/eeh.h |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/include/asm-powerpc/eeh.h b/include/asm-powerpc/eeh.h
+index 00155e1..9c5099b 100644
+--- a/include/asm-powerpc/eeh.h
++++ b/include/asm-powerpc/eeh.h
+@@ -37,7 +37,7 @@ static inline void mmio_read_fixup(const volatile void __iomem *addr)
+ 		ppc_mmio_read_fixup(addr);
+ }
+ #else
+-define mmio_read_fixup(addr)	do { } while(0)
++#define mmio_read_fixup(addr)	do { } while(0)
+ #endif
+ 
+ #ifdef CONFIG_EEH

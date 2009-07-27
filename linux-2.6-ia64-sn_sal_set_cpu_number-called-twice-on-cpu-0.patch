@@ -1,0 +1,54 @@
+From: Erik Jacobson <ejacobso@redhat.com>
+Subject: [RHEL5 Patch] BZ 219722 Do not call SN_SAL_SET_CPU_NUMBER twice on cpu 0 on booting
+Date: Thu, 14 Dec 2006 18:00:29 -0500
+Bugzilla: 219722
+Message-Id: <20061214230029.GA29300@redhat.com>
+Changelog: ia64: Do not call SN_SAL_SET_CPU_NUMBER twice on cpu 0 on booting
+
+
+Hi.  This is a RHEL5 kernel patch for bugzilla 219722.
+
+Jay Lan has tested this patch with RHEL5 kernel-2.6.18-1.2767.el5.
+
+The bug affects kexec/kdump support on ia64 Altix (SN).
+
+This change is contained within SN-specific code.  So, as far as risk
+goes, we'd only be hurting ourselves (sgi).
+
+This patch has been discussed and accepted.
+
+http://lists.osdl.org/pipermail/fastboot/2006-December/005315.html
+http://marc.theaimsgroup.com/?l=linux-ia64&m=116597605326817&w=2
+
+Index: linux/arch/ia64/sn/kernel/setup.c
+===================================================================
+--- linux.orig/arch/ia64/sn/kernel/setup.c	2006-12-11 13:16:14.000000000 -0800
++++ linux/arch/ia64/sn/kernel/setup.c	2006-12-11 13:28:01.084639511 -0800
+@@ -574,7 +574,7 @@ void __cpuinit sn_cpu_init(void)
+ 	int slice;
+ 	int cnode;
+ 	int i;
+-	static int wars_have_been_checked;
++	static int wars_have_been_checked, set_cpu0_number;
+ 
+ 	cpuid = smp_processor_id();
+ 	if (cpuid == 0 && IS_MEDUSA()) {
+@@ -599,8 +599,16 @@ void __cpuinit sn_cpu_init(void)
+ 	/*
+ 	 * Don't check status. The SAL call is not supported on all PROMs
+ 	 * but a failure is harmless.
++	 * Architechtuallly, cpu_init is always called twice on cpu 0. We
++	 * should set cpu_number on cpu 0 once.
+ 	 */
+-	(void) ia64_sn_set_cpu_number(cpuid);
++	if (cpuid == 0) {
++		if (!set_cpu0_number) {
++			(void) ia64_sn_set_cpu_number(cpuid);
++			set_cpu0_number = 1;
++		}
++	} else
++		(void) ia64_sn_set_cpu_number(cpuid);
+ 
+ 	/*
+ 	 * The boot cpu makes this call again after platform initialization is
+

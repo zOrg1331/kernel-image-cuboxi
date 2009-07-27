@@ -1,0 +1,109 @@
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Subject: [PATCH RHEL-5] mm: optimize kill_bdev()
+Date: Wed, 25 Apr 2007 17:27:19 +0200
+Bugzilla: 232359
+Message-Id: <1177514839.2385.17.camel@taijtu>
+Changelog: [mm] optimize kill_bdev()
+
+
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=232359
+
+fold of patches in -mm
+
+discussion at:
+    http://lkml.org/lkml/2007/4/12/169
+
+---
+
+Remove duplicate work in kill_bdev().
+
+It currently invalidates and then truncates the bdev's mapping. 
+invalidate_mapping_pages() will opportunistically remove pages from the
+mapping.  And truncate_inode_pages() will forcefully remove all pages.
+
+The only thing truncate doesn't do is flush the bh lrus.  So do that
+explicitly.  This avoids (very unlikely) but possible invalid lookup
+results if the same bdev is quickly re-issued.
+
+It also will prevent extreme kernel latencies which are observed when
+blockdevs which have a large amount of pagecache are unmounted, by avoiding
+invalidate_mapping_pages() on that path.  invalidate_mapping_pages() has no
+cond_resched (it can be called under spinlock), whereas truncate_inode_pages()
+has one.
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+---
+
+ fs/block_dev.c              |    6 ++++--
+ fs/buffer.c                 |    3 +--
+ fs/partitions/acorn.c       |    2 +-
+ include/linux/buffer_head.h |    1 +
+ 4 files changed, 7 insertions(+), 5 deletions(-)
+
+Index: linux-2.6.18.noarch/fs/block_dev.c
+===================================================================
+--- linux-2.6.18.noarch.orig/fs/block_dev.c	2007-04-25 15:15:12.000000000 +0200
++++ linux-2.6.18.noarch/fs/block_dev.c	2007-04-25 15:36:12.000000000 +0200
+@@ -53,10 +53,12 @@ static sector_t max_block(struct block_d
+ 	return retval;
+ }
+ 
+-/* Kill _all_ buffers, dirty or not.. */
++/* Kill _all_ buffers and pagecache , dirty or not.. */
+ static void kill_bdev(struct block_device *bdev)
+ {
+-	invalidate_bdev(bdev, 1);
++	if (bdev->bd_inode->i_mapping->nrpages == 0)
++		return;
++	invalidate_bh_lrus();
+ 	truncate_inode_pages(bdev->bd_inode->i_mapping, 0);
+ }	
+ 
+Index: linux-2.6.18.noarch/fs/buffer.c
+===================================================================
+--- linux-2.6.18.noarch.orig/fs/buffer.c	2007-04-25 15:15:17.000000000 +0200
++++ linux-2.6.18.noarch/fs/buffer.c	2007-04-25 15:34:55.000000000 +0200
+@@ -43,7 +43,6 @@
+ #include <linux/bit_spinlock.h>
+ 
+ static int fsync_buffers_list(spinlock_t *lock, struct list_head *list);
+-static void invalidate_bh_lrus(void);
+ 
+ #define BH_ENTRY(list) list_entry((list), struct buffer_head, b_assoc_buffers)
+ 
+@@ -1538,7 +1537,7 @@ static void invalidate_bh_lru(void *arg)
+ 	put_cpu_var(bh_lrus);
+ }
+ 	
+-static void invalidate_bh_lrus(void)
++void invalidate_bh_lrus(void)
+ {
+ 	on_each_cpu(invalidate_bh_lru, NULL, 1, 1);
+ }
+Index: linux-2.6.18.noarch/include/linux/buffer_head.h
+===================================================================
+--- linux-2.6.18.noarch.orig/include/linux/buffer_head.h	2007-04-25 15:14:59.000000000 +0200
++++ linux-2.6.18.noarch/include/linux/buffer_head.h	2007-04-25 15:35:35.000000000 +0200
+@@ -174,6 +174,7 @@ void __brelse(struct buffer_head *);
+ void __bforget(struct buffer_head *);
+ void __breadahead(struct block_device *, sector_t block, int size);
+ struct buffer_head *__bread(struct block_device *, sector_t block, int size);
++void invalidate_bh_lrus(void);
+ struct buffer_head *alloc_buffer_head(gfp_t gfp_flags);
+ void free_buffer_head(struct buffer_head * bh);
+ void FASTCALL(unlock_buffer(struct buffer_head *bh));
+Index: linux-2.6.18.noarch/fs/partitions/acorn.c
+===================================================================
+--- linux-2.6.18.noarch.orig/fs/partitions/acorn.c	2007-04-25 15:36:03.000000000 +0200
++++ linux-2.6.18.noarch/fs/partitions/acorn.c	2007-04-25 15:36:16.000000000 +0200
+@@ -271,7 +271,7 @@ adfspart_check_ADFS(struct parsed_partit
+ 		extern void xd_set_geometry(struct block_device *,
+ 			unsigned char, unsigned char, unsigned int);
+ 		xd_set_geometry(bdev, dr->secspertrack, heads, 1);
+-		invalidate_bdev(bdev, 1);
++		invalidate_bh_lrus();
+ 		truncate_inode_pages(bdev->bd_inode->i_mapping, 0);
+ 	}
+ #endif
+

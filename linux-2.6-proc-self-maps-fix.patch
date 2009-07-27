@@ -1,0 +1,115 @@
+
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=165351
+
+diff --git a/fs/proc/base.c b/fs/proc/base.c
+index a3a3eec..3f262cd 100644
+--- a/fs/proc/base.c
++++ b/fs/proc/base.c
+@@ -408,6 +408,26 @@ static int proc_task_root_link(struct in
+ 	 (task->state == TASK_STOPPED || task->state == TASK_TRACED) && \
+ 	 security_ptrace(current,task) == 0))
+ 
++struct mm_struct *mm_for_maps(struct task_struct *task)
++{
++	struct mm_struct *mm = get_task_mm(task);
++	if (!mm)
++		return NULL;
++	down_read(&mm->mmap_sem);
++	task_lock(task);
++	if (task->mm != mm)
++		goto out;
++	if (task->mm != current->mm && tracehook_allow_access_process_vm(task))
++		goto out;
++	task_unlock(task);
++	return mm;
++out:
++	task_unlock(task);
++	up_read(&mm->mmap_sem);
++	mmput(mm);
++	return NULL;
++}
++
+ static int proc_pid_environ(struct task_struct *task, char * buffer)
+ {
+ 	int res = 0;
+diff --git a/fs/proc/internal.h b/fs/proc/internal.h
+index 0502f17..cd172ce 100644
+--- a/fs/proc/internal.h
++++ b/fs/proc/internal.h
+@@ -16,6 +16,8 @@ struct vmalloc_info {
+ 	unsigned long	largest_chunk;
+ };
+ 
++extern struct mm_struct *mm_for_maps(struct task_struct *);
++
+ #ifdef CONFIG_MMU
+ #define VMALLOC_TOTAL (VMALLOC_END - VMALLOC_START)
+ extern void get_vmalloc_info(struct vmalloc_info *vmi);
+--- linux-2.6.17.noarch/fs/proc/task_mmu.c~	2006-06-26 19:16:06.064089000 -0400
++++ linux-2.6.17.noarch/fs/proc/task_mmu.c	2006-06-26 19:19:02.178798000 -0400
+@@ -344,12 +344,11 @@ static void *m_start(struct seq_file *m,
+ 	if (!priv->task)
+ 		return NULL;
+ 
+-	mm = get_task_mm(priv->task);
++	mm = mm_for_maps(priv->task);
+ 	if (!mm)
+ 		return NULL;
+ 
+ 	priv->tail_vma = tail_vma = get_gate_vma(priv->task);
+-	down_read(&mm->mmap_sem);
+ 
+ 	/* Start with last addr hint */
+ 	if (last_addr && (vma = find_vma(mm, last_addr))) {
+Date: Mon, 2 Oct 2006 12:10:07 -0400
+From: Alexander Viro <aviro@redhat.com>
+Subject: [RHEL5 patch] bz #208589 fix
+
+	Patch fixing the breakage in /proc/*/smaps access control
+follows.
+
+diff -urN linux-2.6.18.x86_64/fs/proc/base.c foo/fs/proc/base.c
+--- linux-2.6.18.x86_64/fs/proc/base.c	2006-09-29 07:30:57.000000000 -0400
++++ foo/fs/proc/base.c	2006-09-29 08:06:52.000000000 -0400
+@@ -415,7 +415,7 @@
+ 	task_lock(task);
+ 	if (task->mm != mm)
+ 		goto out;
+-	if (task->mm != current->mm && tracehook_allow_access_process_vm(task))
++	if (task->mm != current->mm && __ptrace_may_attach(task) < 0)
+ 		goto out;
+ 	task_unlock(task);
+ 	return mm;
+diff -urN linux-2.6.18.x86_64/include/linux/ptrace.h foo/include/linux/ptrace.h
+--- linux-2.6.18.x86_64/include/linux/ptrace.h	2006-09-29 07:30:56.000000000 -0400
++++ foo/include/linux/ptrace.h	2006-09-29 08:05:09.000000000 -0400
+@@ -57,6 +57,7 @@
+ 
+ 
+ extern int ptrace_may_attach(struct task_struct *task);
++extern int __ptrace_may_attach(struct task_struct *task);
+ 
+ 
+ #ifdef CONFIG_PTRACE
+diff -urN linux-2.6.18.x86_64/kernel/ptrace.c foo/kernel/ptrace.c
+--- linux-2.6.18.x86_64/kernel/ptrace.c	2006-09-29 07:30:56.000000000 -0400
++++ foo/kernel/ptrace.c	2006-09-29 08:04:23.000000000 -0400
+@@ -32,7 +32,7 @@
+ 
+ //#define PTRACE_DEBUG
+ 
+-static int may_attach(struct task_struct *task)
++int __ptrace_may_attach(struct task_struct *task)
+ {
+ 	/* May we inspect the given task?
+ 	 * This check is used both for attaching with ptrace
+@@ -66,7 +66,7 @@
+ {
+ 	int err;
+ 	task_lock(task);
+-	err = may_attach(task);
++	err = __ptrace_may_attach(task);
+ 	task_unlock(task);
+ 	return !err;
+ }
+

@@ -1,0 +1,51 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 16 Nov 2007 13:58:29 +0100
+Subject: [s390] qdio: many interrupts on qdio-driven devices
+Message-id: 20071116125829.GT6053@redhat.com
+O-Subject: [RHEL5 U2 PATCH 12/14] s390 - qdio: Too many interrupts on qdio-driven devices.
+Bugzilla: 360821
+
+Description
+============
+
+qdio is getting more interrupts than needed. The appropriate data channel
+is used without QEBSM support. When receiving a bunch of SBALs on the
+input queue which are in state PRIMED, qdio is processing them sequentially
+and set their state from 0x82 to 0x80. Tt never sets the last one to 0x81
+which should be set to avoid further interrupts.
+
+On the last SBAL set its state to 0x81 to avoid further interrupts.
+
+Bugzilla
+=========
+
+BZ 360821
+https://bugzilla.redhat.com/show_bug.cgi?id=360821
+
+Upstream status of the patch:
+=============================
+Patch included in git as commit 8129ee164267dc030b8e1d541ee3643c0b9f2fa1
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/cio/qdio.c b/drivers/s390/cio/qdio.c
+index ad672ac..844e5f3 100644
+--- a/drivers/s390/cio/qdio.c
++++ b/drivers/s390/cio/qdio.c
+@@ -1145,7 +1145,7 @@ out:
+ 
+ #ifdef QDIO_USE_PROCESSING_STATE
+ 	if (last_position>=0)
+-		set_slsb(q, &last_position, SLSB_P_INPUT_NOT_INIT, &count);
++		set_slsb(q, &last_position, SLSB_P_INPUT_PROCESSING, &count);
+ #endif /* QDIO_USE_PROCESSING_STATE */
+ 
+ 	QDIO_DBF_HEX4(0,trace,&q->first_to_check,sizeof(int));

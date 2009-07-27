@@ -1,0 +1,321 @@
+From: jbaron@redhat.com <jbaron@redhat.com>
+Date: Fri, 22 Aug 2008 14:04:52 -0400
+Subject: [misc] markers and tracepoints: create Module.markers
+Message-id: 1219428298-7519-9-git-send-email-jbaron@redhat.com
+O-Subject: [rhel5.3 patch 08/14] markers and tracepoints - create Module.markers file
+Bugzilla: 329821
+
+bz# 329821
+
+diff --git a/include/linux/marker.h b/include/linux/marker.h
+index ea04250..c2e3d97 100644
+--- a/include/linux/marker.h
++++ b/include/linux/marker.h
+@@ -61,15 +61,12 @@ struct marker {
+  */
+ #define __trace_mark(name, call_private, format, args...)		\
+ 	do {								\
+-		static const char __mstrtab_name_##name[]		\
++		static const char __mstrtab_##name[]			\
+ 		__attribute__((section("__markers_strings")))		\
+-		= #name;						\
+-		static const char __mstrtab_format_##name[]		\
+-		__attribute__((section("__markers_strings")))		\
+-		= format;						\
++		= #name "\0" format;					\
+ 		static struct marker __mark_##name			\
+ 		__attribute__((section("__markers"), aligned(8))) =	\
+-		{ __mstrtab_name_##name, __mstrtab_format_##name,	\
++		{ __mstrtab_##name, &__mstrtab_##name[sizeof(#name)],   \
+ 		0, 0, marker_probe_cb,                                  \
+ 		{ __mark_empty_function, NULL}, NULL };                 \
+ 		__mark_check_format(format, ## args);			\
+diff --git a/scripts/Makefile.modpost b/scripts/Makefile.modpost
+index 0a64688..1932573 100644
+--- a/scripts/Makefile.modpost
++++ b/scripts/Makefile.modpost
+@@ -13,6 +13,7 @@
+ # 2) modpost is then used to
+ # 3)  create one <module>.mod.c file pr. module
+ # 4)  create one Module.symvers file with CRC for all exported symbols
++# 4a) [CONFIG_MARKERS] create one Module.markers file listing defined markers
+ # 5) compile all <module>.mod.c files
+ # 6) final link of the module to a <module.ko> file
+ 
+@@ -41,6 +42,10 @@ include scripts/Makefile.lib
+ 
+ kernelsymfile := $(objtree)/Module.symvers
+ modulesymfile := $(KBUILD_EXTMOD)/Module.symvers
++kernelmarkersfile := $(objtree)/Module.markers
++modulemarkersfile := $(KBUILD_EXTMOD)/Module.markers
++
++markersfile = $(if $(KBUILD_EXTMOD),$(modulemarkersfile),$(kernelmarkersfile))
+ 
+ # Step 1), find all modules listed in $(MODVERDIR)/
+ __modules := $(sort $(shell grep -h '\.ko' /dev/null $(wildcard $(MODVERDIR)/*.mod)))
+@@ -58,6 +63,8 @@ quiet_cmd_modpost = MODPOST
+ 	$(if $(KBUILD_EXTMOD),-i,-o) $(kernelsymfile) \
+ 	$(if $(KBUILD_EXTMOD),-I $(modulesymfile)) \
+ 	$(if $(KBUILD_EXTMOD),-o $(modulesymfile)) \
++	$(if $(CONFIG_MARKERS),-K $(kernelmarkersfile)) \
++	$(if $(CONFIG_MARKERS),-M $(markersfile)) \
+ 	$(filter-out FORCE,$^)
+ 
+ PHONY += __modpost
+@@ -68,6 +75,10 @@ __modpost: $(wildcard vmlinux) $(modules:.ko=.o) FORCE
+ $(symverfile):         __modpost ;
+ $(modules:.ko=.mod.c): __modpost ;
+ 
++ifdef CONFIG_MARKERS
++$(markersfile):	       __modpost ;
++endif
++
+ 
+ # Step 5), compile all *.mod.c files
+ 
+diff --git a/scripts/mod/modpost.c b/scripts/mod/modpost.c
+index 0ec3321..e6c3e55 100644
+--- a/scripts/mod/modpost.c
++++ b/scripts/mod/modpost.c
+@@ -11,6 +11,8 @@
+  * Usage: modpost vmlinux module1.o module2.o ...
+  */
+ 
++#define _GNU_SOURCE
++#include <stdio.h>
+ #include <ctype.h>
+ #include "modpost.h"
+ #include "../../include/linux/license.h"
+@@ -385,6 +387,8 @@ static void parse_elf(struct elf_info *info, const char *filename)
+ 			info->export_unused_gpl_sec = i;
+ 		else if (strcmp(secname, "__ksymtab_gpl_future") == 0)
+ 			info->export_gpl_future_sec = i;
++		else if (strcmp(secname, "__markers_strings") == 0)
++			info->markers_strings_sec = i;
+ 
+ 		if (sechdrs[i].sh_type != SHT_SYMTAB)
+ 			continue;
+@@ -1054,6 +1058,62 @@ static int exit_section_ref_ok(const char *name)
+ 	return 0;
+ }
+ 
++static void get_markers(struct elf_info *info, struct module *mod)
++{
++	const Elf_Shdr *sh = &info->sechdrs[info->markers_strings_sec];
++	const char *strings = (const char *) info->hdr + sh->sh_offset;
++	const Elf_Sym *sym, *first_sym, *last_sym;
++	size_t n;
++
++	if (!info->markers_strings_sec)
++		return;
++
++	/*
++	 * First count the strings.  We look for all the symbols defined
++	 * in the __markers_strings section named __mstrtab_*.  For
++	 * these local names, the compiler puts a random .NNN suffix on,
++	 * so the names don't correspond exactly.
++	 */
++	first_sym = last_sym = NULL;
++	n = 0;
++	for (sym = info->symtab_start; sym < info->symtab_stop; sym++)
++		if (ELF_ST_TYPE(sym->st_info) == STT_OBJECT &&
++		    sym->st_shndx == info->markers_strings_sec &&
++		    !strncmp(info->strtab + sym->st_name,
++			     "__mstrtab_", sizeof "__mstrtab_" - 1)) {
++			if (first_sym == NULL)
++				first_sym = sym;
++			last_sym = sym;
++			++n;
++		}
++
++	if (n == 0)
++		return;
++
++	/*
++	 * Now collect each name and format into a line for the output.
++	 * Lines look like:
++	 *	marker_name	vmlinux	marker %s format %d
++	 * The format string after the second \t can use whitespace.
++	 */
++	mod->markers = NOFAIL(malloc(sizeof mod->markers[0] * n));
++	mod->nmarkers = n;
++
++	n = 0;
++	for (sym = first_sym; sym <= last_sym; sym++)
++		if (ELF_ST_TYPE(sym->st_info) == STT_OBJECT &&
++		    sym->st_shndx == info->markers_strings_sec &&
++		    !strncmp(info->strtab + sym->st_name,
++			     "__mstrtab_", sizeof "__mstrtab_" - 1)) {
++			const char *name = strings + sym->st_value;
++			const char *fmt = strchr(name, '\0') + 1;
++			char *line = NULL;
++			asprintf(&line, "%s\t%s\t%s\n", name, mod->name, fmt);
++			NOFAIL(line);
++			mod->markers[n++] = line;
++		}
++}
++
+ static void read_symbols(char *modname)
+ {
+ 	const char *symname;
+@@ -1103,6 +1163,8 @@ static void read_symbols(char *modname)
+ 		get_src_version(modname, mod->srcversion,
+ 				sizeof(mod->srcversion)-1);
+ 
++	get_markers(&info, mod);
++
+ 	parse_elf_finish(&info);
+ 
+ 	/* Our trick to get versioning for struct_module - it's
+@@ -1436,6 +1498,92 @@ static void write_dump(const char *fname)
+ 	write_if_changed(&buf, fname);
+ }
+ 
++static void add_marker(struct module *mod, const char *name, const char *fmt)
++{
++	char *line = NULL;
++	asprintf(&line, "%s\t%s\t%s\n", name, mod->name, fmt);
++	NOFAIL(line);
++
++	mod->markers = NOFAIL(realloc(mod->markers, ((mod->nmarkers + 1) *
++						     sizeof mod->markers[0])));
++	mod->markers[mod->nmarkers++] = line;
++}
++
++static void read_markers(const char *fname)
++{
++	unsigned long size, pos = 0;
++	void *file = grab_file(fname, &size);
++	char *line;
++
++	if (!file)		/* No old markers, silently ignore */
++		return;
++
++	while ((line = get_next_line(&pos, file, size))) {
++		char *marker, *modname, *fmt;
++		struct module *mod;
++
++		marker = line;
++		modname = strchr(marker, '\t');
++		if (!modname)
++			goto fail;
++		*modname++ = '\0';
++		fmt = strchr(modname, '\t');
++		if (!fmt)
++			goto fail;
++		*fmt++ = '\0';
++		if (*marker == '\0' || *modname == '\0')
++			goto fail;
++
++		mod = find_module(modname);
++		if (!mod) {
++			if (is_vmlinux(modname))
++				have_vmlinux = 1;
++			mod = new_module(NOFAIL(strdup(modname)));
++			mod->skip = 1;
++		}
++
++		add_marker(mod, marker, fmt);
++	}
++	return;
++fail:
++	fatal("parse error in markers list file\n");
++}
++
++static int compare_strings(const void *a, const void *b)
++{
++	return strcmp(*(const char **) a, *(const char **) b);
++}
++
++static void write_markers(const char *fname)
++{
++	struct buffer buf = { };
++	struct module *mod;
++	size_t i;
++
++	for (mod = modules; mod; mod = mod->next)
++		if ((!external_module || !mod->skip) && mod->markers != NULL) {
++			/*
++			 * Sort the strings so we can skip duplicates when
++			 * we write them out.
++			 */
++			qsort(mod->markers, mod->nmarkers,
++			      sizeof mod->markers[0], &compare_strings);
++			for (i = 0; i < mod->nmarkers; ++i) {
++				char *line = mod->markers[i];
++				buf_write(&buf, line, strlen(line));
++				while (i + 1 < mod->nmarkers &&
++				       !strcmp(mod->markers[i],
++					       mod->markers[i + 1]))
++					free(mod->markers[i++]);
++				free(mod->markers[i]);
++			}
++			free(mod->markers);
++			mod->markers = NULL;
++		}
++
++	write_if_changed(&buf, fname);
++}
++
+ int main(int argc, char **argv)
+ {
+ 	struct module *mod;
+@@ -1443,9 +1591,11 @@ int main(int argc, char **argv)
+ 	char fname[SZ];
+ 	char *kernel_read = NULL, *module_read = NULL;
+ 	char *dump_write = NULL;
++	char *markers_read = NULL;
++	char *markers_write = NULL;
+ 	int opt;
+ 
+-	while ((opt = getopt(argc, argv, "i:I:mo:a")) != -1) {
++	while ((opt = getopt(argc, argv, "i:I:mo:aM:K:")) != -1) {
+ 		switch(opt) {
+ 			case 'i':
+ 				kernel_read = optarg;
+@@ -1463,6 +1613,12 @@ int main(int argc, char **argv)
+ 			case 'a':
+ 				all_versions = 1;
+ 				break;
++			case 'M':
++				markers_write = optarg;
++				break;
++			case 'K':
++				markers_read = optarg;
++				break;
+ 			default:
+ 				exit(1);
+ 		}
+@@ -1502,5 +1658,11 @@ int main(int argc, char **argv)
+ 	if (dump_write)
+ 		write_dump(dump_write);
+ 
++	if (markers_read)
++		read_markers(markers_read);
++
++	if (markers_write)
++		write_markers(markers_write);
++
+ 	return 0;
+ }
+diff --git a/scripts/mod/modpost.h b/scripts/mod/modpost.h
+index d398c61..b660f00 100644
+--- a/scripts/mod/modpost.h
++++ b/scripts/mod/modpost.h
+@@ -107,6 +107,8 @@ struct module {
+ 	int has_init;
+ 	int has_cleanup;
+ 	struct buffer dev_table_buf;
++	char **markers;
++	size_t nmarkers;
+ 	char	     srcversion[25];
+ };
+ 
+@@ -121,6 +123,7 @@ struct elf_info {
+ 	Elf_Section  export_gpl_sec;
+ 	Elf_Section  export_unused_gpl_sec;
+ 	Elf_Section  export_gpl_future_sec;
++	Elf_Section  markers_strings_sec;
+ 	const char   *strtab;
+ 	char	     *modinfo;
+ 	unsigned int modinfo_len;

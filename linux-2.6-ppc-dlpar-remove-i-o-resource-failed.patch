@@ -1,0 +1,119 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [PATCH RHEL5u1] bz249617 [ppc] DLPAR REMOVE I/O resource failed
+Date: Thu, 26 Jul 2007 14:13:33 -0400 (EDT)
+Bugzilla: 249617
+Message-Id: <Pine.LNX.4.64.0707261411410.30310@squad5-lp1.lab.boston.redhat.com>
+Changelog: [ppc] DLPAR REMOVE I/O resource failed
+
+
+RHBZ#: 249617
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=249617
+
+Description:
+------------
+Hotplug remove of the IDE CDROM in power5 systems fails.  This is because
+pci_iounmap does not do anything.  This results in IO memory used by the
+driver never being returned.  
+
+The bug stops the feature bug 184774 from working properly.
+
+The patch below is developed by Ben Herrenschmidt of IBM.  It simply calls
+iounmap appropriately if the address is an io port.
+
+RHEL Version Found:
+-------------------
+This is a bug found in RHEL5u1 kernel 2.6.18-36.el5
+
+Upstream Status:
+----------------
+These changes are not presently upstream.  Ben is working on a patch for
+upstream inclusion.
+
+Test Status:
+------------
+To ensure cross-platform build, this code has been built with brew
+--scratch against a 2.6.18-36.el5 kernel and is available at [1].
+
+I have booted this kernel and verified that the device can be added, removed,
+re-added, and re-removed via the hmc.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+-- 
+[1] http://brewweb.devel.redhat.com/brew/taskinfo?taskID=888478
+
+---
+ arch/powerpc/kernel/iomap.c      |    5 ++++-
+ arch/powerpc/kernel/pci_64.c     |   17 +++++++++++++++++
+ include/asm-powerpc/pci-bridge.h |    6 ++++++
+ 3 files changed, 27 insertions(+), 1 deletion(-)
+
+Index: b/arch/powerpc/kernel/iomap.c
+===================================================================
+--- a/arch/powerpc/kernel/iomap.c
++++ b/arch/powerpc/kernel/iomap.c
+@@ -136,7 +136,10 @@ void __iomem *pci_iomap(struct pci_dev *
+ 
+ void pci_iounmap(struct pci_dev *dev, void __iomem *addr)
+ {
+-	/* Nothing to do */
++#ifdef CONFIG_PPC64
++	if (!pcibios_vaddr_is_ioport(addr))
++		iounmap(addr);
++#endif
+ }
+ EXPORT_SYMBOL(pci_iomap);
+ EXPORT_SYMBOL(pci_iounmap);
+Index: b/arch/powerpc/kernel/pci_64.c
+===================================================================
+--- a/arch/powerpc/kernel/pci_64.c
++++ b/arch/powerpc/kernel/pci_64.c
+@@ -1439,3 +1439,20 @@ int pcibus_to_node(struct pci_bus *bus)
+ }
+ EXPORT_SYMBOL(pcibus_to_node);
+ #endif
++
++int pcibios_vaddr_is_ioport(void __iomem *address)
++{
++	int ret = 0;
++	struct pci_controller *hose;
++
++	spin_lock(&hose_spinlock);
++	list_for_each_entry(hose, &hose_list, list_node) {
++		if (address >= hose->io_base_virt &&
++		    address < (hose->io_base_virt + hose->pci_io_size)) {
++			ret = 1;
++			break;
++		}
++	}
++	spin_unlock(&hose_spinlock);
++	return ret;
++}
+Index: b/include/asm-powerpc/pci-bridge.h
+===================================================================
+--- a/include/asm-powerpc/pci-bridge.h
++++ b/include/asm-powerpc/pci-bridge.h
+@@ -157,13 +157,19 @@ extern void pcibios_free_controller(stru
+ 
+ #ifdef CONFIG_PCI
+ extern unsigned long pci_address_to_pio(phys_addr_t address);
++extern int pcibios_vaddr_is_ioport(void __iomem *address);
+ #else
+ static inline unsigned long pci_address_to_pio(phys_addr_t address)
+ {
+ 	return (unsigned long)-1;
+ }
++static inline int pcibios_vaddr_is_ioport(void __iomem *address)
++{
++	return 0;
++}
+ #endif
+ 
++
+ /* Return values for ppc_md.pci_probe_mode function */
+ #define PCI_PROBE_NONE		-1	/* Don't look at this bus at all */
+ #define PCI_PROBE_NORMAL	0	/* Do normal PCI probing */
+

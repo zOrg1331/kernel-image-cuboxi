@@ -1,0 +1,76 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Fri, 27 Jun 2008 11:39:07 -0500
+Subject: [fs] backport list_first_entry helper
+Message-id: 486517AB.3010205@redhat.com
+O-Subject: [PATCH RHEL5.3 1/3] backport list_first_entry helper
+Bugzilla: 449668
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+RH-Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+For BZ 449668: RHEL5.3: update ecryptfs kernelspace to 2.6.26 codebase
+
+Backport the list_first_entry helper which ecryptfs would like to use.
+
+Thanks,
+-Eric
+
+(list.h changes only)
+
+From: Pavel Emelianov <xemul@sw.ru>
+Date: Tue, 8 May 2007 07:30:19 +0000 (-0700)
+Subject: Introduce a handy list_first_entry macro
+X-Git-Tag: v2.6.22-rc1~643
+X-Git-Url: http://git.engineering.redhat.com/?p=linux-2.6.git;a=commitdiff_plain;h=b5e618181a927210f8be1d3d2249d31904ba358d
+
+Introduce a handy list_first_entry macro
+
+There are many places in the kernel where the construction like
+
+   foo = list_entry(head->next, struct foo_struct, list);
+
+are used.
+The code might look more descriptive and neat if using the macro
+
+   list_first_entry(head, type, member) \
+             list_entry((head)->next, type, member)
+
+Here is the macro itself and the examples of its usage in the generic code.
+ If it will turn out to be useful, I can prepare the set of patches to
+inject in into arch-specific code, drivers, networking, etc.
+
+Signed-off-by: Pavel Emelianov <xemul@openvz.org>
+Signed-off-by: Kirill Korotaev <dev@openvz.org>
+Cc: Randy Dunlap <randy.dunlap@oracle.com>
+Cc: Andi Kleen <andi@firstfloor.org>
+Cc: Zach Brown <zach.brown@oracle.com>
+Cc: Davide Libenzi <davidel@xmailserver.org>
+Cc: John McCutchan <ttb@tentacle.dhs.org>
+Cc: Thomas Gleixner <tglx@linutronix.de>
+Cc: Ingo Molnar <mingo@elte.hu>
+Cc: john stultz <johnstul@us.ibm.com>
+Cc: Ram Pai <linuxram@us.ibm.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/include/linux/list.h b/include/linux/list.h
+index 3e953c5..0d114ba 100644
+--- a/include/linux/list.h
++++ b/include/linux/list.h
+@@ -425,6 +425,17 @@ static inline void list_splice_init_rcu(struct list_head *list,
+ 	container_of(ptr, type, member)
+ 
+ /**
++ * list_first_entry - get the first element from a list
++ * @ptr:	the list head to take the element from.
++ * @type:	the type of the struct this is embedded in.
++ * @member:	the name of the list_struct within the struct.
++ *
++ * Note, that list is expected to be not empty.
++ */
++#define list_first_entry(ptr, type, member) \
++	list_entry((ptr)->next, type, member)
++
++/**
+  * list_for_each	-	iterate over a list
+  * @pos:	the &struct list_head to use as a loop cursor.
+  * @head:	the head for your list.

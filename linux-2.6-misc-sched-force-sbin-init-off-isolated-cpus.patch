@@ -1,0 +1,65 @@
+From: Jonathan Lim <jolim@redhat.com>
+Date: Thu, 11 Oct 2007 15:13:42 -0400
+Subject: [misc] sched: force /sbin/init off isolated cpus
+Message-id: 20071011191342.GD5008@sgi-desktop.boston.redhat.com
+O-Subject: [RHEL5.2 PATCH] BZ 328091: sched: force /sbin/init off isolated cpus
+Bugzilla: 328091
+
+Force /sbin/init off isolated cpus (unless every CPU is specified as an
+isolcpu).
+
+/sbin/init is spawned from the boot CPU's idle thread, and /sbin/init starts
+the rest of userspace.  So if the boot CPU is specified to be an isolcpu, then
+prior to this patch, all of userspace will be run there.
+
+The patch has been tested on x86_64 and is upstream:
+
+  http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=5c1e176781f43bc902a51e5832f789756bff911b
+
+Following is the diff against the 2.6.18-52.el5 kernel source:
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/kernel/sched.c b/kernel/sched.c
+index b266c27..66e4fe5 100644
+--- a/kernel/sched.c
++++ b/kernel/sched.c
+@@ -4817,7 +4817,7 @@ void show_state(void)
+  * NOTE: this function does not set the idle thread's NEED_RESCHED
+  * flag, to make booting more robust.
+  */
+-void __devinit init_idle(struct task_struct *idle, int cpu)
++void __cpuinit init_idle(struct task_struct *idle, int cpu)
+ {
+ 	struct rq *rq = cpu_rq(cpu);
+ 	unsigned long flags;
+@@ -5459,7 +5459,7 @@ static void cpu_attach_domain(struct sched_domain *sd, int cpu)
+ }
+ 
+ /* cpus with isolated domains */
+-static cpumask_t cpu_isolated_map = CPU_MASK_NONE;
++static cpumask_t __cpuinitdata cpu_isolated_map = CPU_MASK_NONE;
+ 
+ /* Setup the mask of cpus configured for isolated domains */
+ static int __init isolated_cpu_setup(char *str)
+@@ -6747,11 +6747,20 @@ static int update_sched_domains(struct notifier_block *nfb,
+ 
+ void __init sched_init_smp(void)
+ {
++	cpumask_t non_isolated_cpus;
++
+ 	lock_cpu_hotplug();
+ 	arch_init_sched_domains(&cpu_online_map);
++	cpus_andnot(non_isolated_cpus, cpu_online_map, cpu_isolated_map);
++	if (cpus_empty(non_isolated_cpus))
++		cpu_set(smp_processor_id(), non_isolated_cpus);
+ 	unlock_cpu_hotplug();
+ 	/* XXX: Theoretical race here - CPU may be hotplugged now */
+ 	hotcpu_notifier(update_sched_domains, 0);
++
++	/* Move init over to a non-isolated CPU */
++	if (set_cpus_allowed(current, non_isolated_cpus) < 0)
++		BUG();
+ }
+ #else
+ void __init sched_init_smp(void)

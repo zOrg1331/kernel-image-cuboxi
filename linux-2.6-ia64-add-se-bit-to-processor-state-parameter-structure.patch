@@ -1,0 +1,36 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Thu, 31 Jul 2008 15:33:09 -0400
+Subject: [IA64] Add se bit to Processor State Parameter structure
+Message-id: 20080731192714.4411.92047.sendpatchset@dhcp-100-2-194.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH 6/19] [IA64] Add se bit to Processor State Parameter structure
+Bugzilla: 455308
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+[patch] Add se bit to Processor State Parameter structure
+
+BZ#455308
+
+Upstream: http://git.kernel.org/?p=linux/kernel/git/aegl/linux-2.6.git;a=commit;h=6533bdedac9ae2049ae77ebd7c28c65af3619de0
+
+Rev 2.2 of Volume 2 of "Intel Itanium Architecture Software Developer's
+Manual" (January 2006) adds a se bit to the Processor State Parameter
+fields (pages 2:299).  This patch gets the structs back in sync
+with the spec.
+
+Signed-off-by: Russ Anderson (rja@sgi.com)
+
+diff --git a/include/asm-ia64/pal.h b/include/asm-ia64/pal.h
+index 4d7a6e4..a8eae01 100644
+--- a/include/asm-ia64/pal.h
++++ b/include/asm-ia64/pal.h
+@@ -462,7 +462,9 @@ typedef struct pal_process_state_info_s {
+ 						 * by the processor
+ 						 */
+ 
+-			reserved2	: 11,
++			se		: 1,	/* Shared error.  MCA in a
++						   shared structure */
++			reserved2	: 10,
+ 			cc		: 1,	/* Cache check */
+ 			tc		: 1,	/* TLB check */
+ 			bc		: 1,	/* Bus check */

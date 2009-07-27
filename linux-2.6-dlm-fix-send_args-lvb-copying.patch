@@ -1,0 +1,53 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5 PATCH] dlm: fix send_args lvb copying
+Date: Fri, 8 Dec 2006 11:03:28 -0600
+Bugzilla: 214595
+Message-Id: <20061208170328.GB9455@redhat.com>
+Changelog: dlm: fix send_args lvb copying
+
+
+bz 214595
+patch 1 of 2
+
+The send_args() function is used to copy parameters into a message for a
+number different message types.  Only some of those types are set up
+beforehand (in create_message) to include space for sending lvb data.
+send_args was wrongly copying the lvb for all message types as long as the
+lock had an lvb.  This means that the lvb data was being written past the
+end of the message into unknown space.
+
+
+Index: linux-2.6.19-quilt/fs/dlm/lock.c
+===================================================================
+--- linux-2.6.19-quilt.orig/fs/dlm/lock.c	2006-12-07 14:07:12.488207790 -0600
++++ linux-2.6.19-quilt/fs/dlm/lock.c	2006-12-07 15:13:11.167298599 -0600
+@@ -2144,12 +2144,24 @@
+ 	if (lkb->lkb_astaddr)
+ 		ms->m_asts |= AST_COMP;
+ 
+-	if (ms->m_type == DLM_MSG_REQUEST || ms->m_type == DLM_MSG_LOOKUP)
+-		memcpy(ms->m_extra, r->res_name, r->res_length);
++	/* compare with switch in create_message; send_remove() doesn't
++	   use send_args() */
+ 
+-	else if (lkb->lkb_lvbptr)
++	switch (ms->m_type) {
++	case DLM_MSG_REQUEST:
++	case DLM_MSG_LOOKUP:
++		memcpy(ms->m_extra, r->res_name, r->res_length);
++		break;
++	case DLM_MSG_CONVERT:
++	case DLM_MSG_UNLOCK:
++	case DLM_MSG_REQUEST_REPLY:
++	case DLM_MSG_CONVERT_REPLY:
++	case DLM_MSG_GRANT:
++		if (!lkb->lkb_lvbptr)
++			break;
+ 		memcpy(ms->m_extra, lkb->lkb_lvbptr, r->res_ls->ls_lvblen);
+-
++		break;
++	}
+ }
+ 
+ static int send_common(struct dlm_rsb *r, struct dlm_lkb *lkb, int mstype)
+

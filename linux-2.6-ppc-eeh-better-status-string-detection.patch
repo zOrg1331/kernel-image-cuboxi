@@ -1,0 +1,103 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [PATCH RHEL5u1] bz252405 EEH kernel crash on power6 blades
+Date: Fri, 17 Aug 2007 10:20:39 -0400 (EDT)
+Bugzilla: 252405
+Message-Id: <Pine.LNX.4.64.0708171018340.30310@squad5-lp1.lab.boston.redhat.com>
+Changelog: [ppc] EEH: better status string detection
+
+
+RHBZ#: 252405
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=252405
+
+Description:
+------------
+During verification of RHEL5u1 snapshots on power6 blades, a kernel crash
+was found. Any EEH hardware event (triggered by hardware error detection)
+will cause a system crash - and the possibility of the occurances is high.
+
+It seems that some versions of firmware will report a device node status
+as the string "okay". As we are not expecting this string, the device node
+will be ignored by the EEH subsystem.  Which means EEH will not be
+enabled.
+
+When EEH is not enabled, PCI errors will be converted into Machine Check
+exceptions, and we'll have a very unhappy system.
+
+Remove dead code, and a misleading comment about EEH checking for video
+devices.  The removed code is a left-over from the olden days where there
+was concern over how video devices worked in Linux. We are never going to
+go that way again, so kill this.
+
+RHEL Version Found:
+-------------------
+This is a bug found in RHEL5u1 kernel 2.6.18-39.el5.
+
+Upstream Status:
+----------------
+These patches have been posted for upstream review at [1,2]
+
+Test Status:
+------------
+To ensure cross platform build of this patch, a brew scratch build has
+been done against kernel-2.6.18-40 and is available at [3].
+
+Test of this patch has been done by Linas Vepstas of IBM.
+ - 'cat /proc/ppc64/eeh' shows that eeh has been enabled.
+ - with unpatched kernel, he following would have crashed with "machine check"
+   and entered xmon.  With patched kernel it does not.
+   To inject the EEH error:
+   errinjct eeh -f 5 -s usb_host/usb_host1
+
+   To trigger hte EEH error:
+   lspci -v -x -s 0001:00:01.1
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+--
+[1] http://patchwork.ozlabs.org/linuxppc/patch?id=12855
+[2] http://patchwork.ozlabs.org/linuxppc/patch?id=12856
+[3] http://brewweb.devel.redhat.com/brew/taskinfo?taskID=924761
+---
+ arch/powerpc/platforms/pseries/eeh.c |   19 +------------------
+ 1 file changed, 1 insertion(+), 18 deletions(-)
+Index: b/arch/powerpc/platforms/pseries/eeh.c
+===================================================================
+--- a/arch/powerpc/platforms/pseries/eeh.c
++++ b/arch/powerpc/platforms/pseries/eeh.c
+@@ -792,7 +792,7 @@ static void *early_enable_eeh(struct dev
+ 	pdn->eeh_check_count = 0;
+ 	pdn->eeh_freeze_count = 0;
+ 
+-	if (status && strcmp(status, "ok") != 0)
++	if (status && strncmp(status, "ok",2) != 0)
+ 		return NULL;	/* ignore devices with bad status */
+ 
+ 	/* Ignore bad nodes. */
+@@ -806,23 +806,6 @@ static void *early_enable_eeh(struct dev
+ 	}
+ 	pdn->class_code = *class_code;
+ 
+-	/*
+-	 * Now decide if we are going to "Disable" EEH checking
+-	 * for this device.  We still run with the EEH hardware active,
+-	 * but we won't be checking for ff's.  This means a driver
+-	 * could return bad data (very bad!), an interrupt handler could
+-	 * hang waiting on status bits that won't change, etc.
+-	 * But there are a few cases like display devices that make sense.
+-	 */
+-	enable = 1;	/* i.e. we will do checking */
+-#if 0
+-	if ((*class_code >> 16) == PCI_BASE_CLASS_DISPLAY)
+-		enable = 0;
+-#endif
+-
+-	if (!enable)
+-		pdn->eeh_mode |= EEH_MODE_NOCHECK;
+-
+ 	/* Ok... see if this device supports EEH.  Some do, some don't,
+ 	 * and the only way to find out is to check each and every one. */
+ 	regs = (u32 *)get_property(dn, "reg", NULL);
+

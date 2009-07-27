@@ -1,0 +1,158 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: Re: [RHEL 5.1] [GFS2] Fix bz #249406, locksmith/revolver deadlocks
+Date: Tue, 24 Jul 2007 15:36:53 +0100
+Bugzilla: 249406
+Message-Id: <1185287813.8765.446.camel@quoit>
+Changelog: [GFS2] locksmith/revolver deadlocks
+
+
+
+The following is the combination of four upstream patches and fixes the
+deadlock thats been reported relating to distributed I/O. The main
+problem was relating to callbacks requesting lock state demotion which
+arrive during an already running demote request. The following patch
+ensures that these requests are not missed and that demotion to the
+correct state is performed.
+
+There are also a couple of side issues which are also fixed, including a
+wrong return code and a NULL dereference which is only reachable in case
+an OOM occurs at a certain place during a write transaction.
+
+As a result of these patches, the locksmith test makes a lot more
+progress than they did before (see bz comment #14). I've run my postmark
+tests over this code to ensure that it doesn't break that test either.
+
+Steve.
+
+-----------------------------------------------------------------------
+diff -Nru linux-rhel-base/fs/gfs2/glock.c linux-2.6.18.noarch/fs/gfs2/glock.c
+--- linux-rhel-base/fs/gfs2/glock.c	2007-07-23 13:16:39.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/glock.c	2007-07-23 13:20:06.000000000 +0100
+@@ -544,12 +544,14 @@
+ 		return 0;
+ 	}
+ 	set_bit(GLF_LOCK, &gl->gl_flags);
+-	spin_unlock(&gl->gl_spin);
+ 	if (gl->gl_demote_state == LM_ST_UNLOCKED ||
+-	    gl->gl_state != LM_ST_EXCLUSIVE)
++	    gl->gl_state != LM_ST_EXCLUSIVE) {
++		spin_unlock(&gl->gl_spin);
+ 		gfs2_glock_drop_th(gl);
+-	else
++	} else {
++		spin_unlock(&gl->gl_spin);
+ 		gfs2_glock_xmote_th(gl, NULL);
++	}
+ 	spin_lock(&gl->gl_spin);
+ 
+ 	return 0;
+@@ -694,8 +696,9 @@
+ 			}
+ 			return;
+ 		}
+-	} else if (gl->gl_demote_state != LM_ST_UNLOCKED) {
+-		gl->gl_demote_state = state;
++	} else if (gl->gl_demote_state != LM_ST_UNLOCKED &&
++			gl->gl_demote_state != state) {
++		gl->gl_demote_state = LM_ST_UNLOCKED;
+ 	}
+ 	spin_unlock(&gl->gl_spin);
+ }
+@@ -759,10 +762,20 @@
+ 
+ 	if (!gh) {
+ 		gl->gl_stamp = jiffies;
+-		if (ret & LM_OUT_CANCELED)
++		if (ret & LM_OUT_CANCELED) {
+ 			op_done = 0;
+-		else
++		} else {
++			spin_lock(&gl->gl_spin);
++			if (gl->gl_state != gl->gl_demote_state) {
++				gl->gl_req_bh = NULL;
++				spin_unlock(&gl->gl_spin);
++				gfs2_glock_drop_th(gl);
++				gfs2_glock_put(gl);
++				return;
++			}
+ 			gfs2_demote_wake(gl);
++			spin_unlock(&gl->gl_spin);
++		}
+ 	} else {
+ 		spin_lock(&gl->gl_spin);
+ 		list_del_init(&gh->gh_list);
+@@ -816,7 +829,7 @@
+  *
+  */
+ 
+-void gfs2_glock_xmote_th(struct gfs2_glock *gl, struct gfs2_holder *gh)
++static void gfs2_glock_xmote_th(struct gfs2_glock *gl, struct gfs2_holder *gh)
+ {
+ 	struct gfs2_sbd *sdp = gl->gl_sbd;
+ 	int flags = gh ? gh->gh_flags : 0;
+diff -Nru linux-rhel-base/fs/gfs2/ops_address.c linux-2.6.18.noarch/fs/gfs2/ops_address.c
+--- linux-rhel-base/fs/gfs2/ops_address.c	2007-07-23 13:16:38.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/ops_address.c	2007-07-23 13:19:59.000000000 +0100
+@@ -431,7 +431,7 @@
+ 
+ 	error = gfs2_trans_begin(sdp, rblocks, 0);
+ 	if (error)
+-		goto out;
++		goto out_trans_fail;
+ 
+ 	if (gfs2_is_stuffed(ip)) {
+ 		if (end > sdp->sd_sb.sb_bsize - sizeof(struct gfs2_dinode)) {
+@@ -449,6 +449,7 @@
+ out:
+ 	if (error) {
+ 		gfs2_trans_end(sdp);
++out_trans_fail:
+ 		if (alloc_required) {
+ 			gfs2_inplace_release(ip);
+ out_qunlock:
+diff -Nru linux-rhel-base/fs/gfs2/rgrp.c linux-2.6.18.noarch/fs/gfs2/rgrp.c
+--- linux-rhel-base/fs/gfs2/rgrp.c	2007-07-23 13:16:42.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/rgrp.c	2007-07-23 13:19:56.000000000 +0100
+@@ -867,7 +867,7 @@
+ 			break;
+ 		goal = rgblk_search(rgd, goal, GFS2_BLKST_UNLINKED,
+ 				    GFS2_BLKST_UNLINKED);
+-		if (goal == 0)
++		if (goal == BFITNOENT)
+ 			break;
+ 		no_addr = goal + rgd->rd_data0;
+ 		goal++;
+@@ -1316,7 +1316,7 @@
+ 				    bi->bi_len, blk, new_state);
+ 	}
+ 
+-	return (blk == BFITNOENT) ? 0 : (bi->bi_start * GFS2_NBBY) + blk;
++	return (blk == BFITNOENT) ? blk : (bi->bi_start * GFS2_NBBY) + blk;
+ }
+ 
+ /**
+@@ -1396,6 +1396,7 @@
+ 		goal = rgd->rd_last_alloc_data;
+ 
+ 	blk = rgblk_search(rgd, goal, GFS2_BLKST_FREE, GFS2_BLKST_USED);
++	BUG_ON(blk == BFITNOENT);
+ 	rgd->rd_last_alloc_data = blk;
+ 
+ 	block = rgd->rd_data0 + blk;
+@@ -1440,6 +1441,7 @@
+ 		goal = rgd->rd_last_alloc_meta;
+ 
+ 	blk = rgblk_search(rgd, goal, GFS2_BLKST_FREE, GFS2_BLKST_USED);
++	BUG_ON(blk == BFITNOENT);
+ 	rgd->rd_last_alloc_meta = blk;
+ 
+ 	block = rgd->rd_data0 + blk;
+@@ -1481,6 +1483,7 @@
+ 
+ 	blk = rgblk_search(rgd, rgd->rd_last_alloc_meta,
+ 			   GFS2_BLKST_FREE, GFS2_BLKST_DINODE);
++	BUG_ON(blk == BFITNOENT);
+ 
+ 	rgd->rd_last_alloc_meta = blk;
+ 
+

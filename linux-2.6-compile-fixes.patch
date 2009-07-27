@@ -1,0 +1,25 @@
+
+--- linux-2.6.17.noarch/Makefile~	2006-06-29 17:20:17.000000000 -0400
++++ linux-2.6.17.noarch/Makefile	2006-06-29 17:20:38.000000000 -0400
+@@ -267,10 +267,6 @@ MAKEFLAGS += --include-dir=$(srctree)
+ # We need some generic definitions
+ include  $(srctree)/scripts/Kbuild.include
+ 
+-# Do not use make's built-in rules and variables
+-# This increases performance and avoid hard-to-debug behavour
+-MAKEFLAGS += -rR
+-
+ # Make variables (CC, etc...)
+ 
+ AS		= $(CROSS_COMPILE)as
+--- linux-2.6.17.noarch/arch/ia64/kernel/ia64_ksyms.c~	2006-07-27 13:21:51.000000000 -0400
++++ linux-2.6.17.noarch/arch/ia64/kernel/ia64_ksyms.c	2006-07-27 13:22:03.000000000 -0400
+@@ -42,6 +42,7 @@ EXPORT_SYMBOL(__do_clear_user);
+ EXPORT_SYMBOL(__strlen_user);
+ EXPORT_SYMBOL(__strncpy_from_user);
+ EXPORT_SYMBOL(__strnlen_user);
++EXPORT_SYMBOL(copy_page);
+ 
+ #define __KERNEL_SYSCALLS__
+ #include <asm/unistd.h>
+

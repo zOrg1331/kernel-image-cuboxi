@@ -1,0 +1,44 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL 5.1] [GFS2] Get super block a different way (bz #306621)
+Date: Wed, 26 Sep 2007 11:51:51 +0100
+Bugzilla: 306621
+Message-Id: <1190803911.3407.4.camel@menhir.chygwyn.com>
+Changelog: [GFS2] Get super block a different way
+
+
+Hi,
+
+The below is an upstream patch which fixes bz #306621 reported and fix tested by
+Wendy Cheng. 
+
+Steve.
+
+
+
+>From 24647918647d19bb02dfa3e7d92382921e4cbcd1 Mon Sep 17 00:00:00 2001
+
+The mapping may be NULL by the time the I/O has completed, so
+we now get the superblock by a different route (via the bd and glock)
+to avoid this problem.
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+Cc: Wendy Cheng <wcheng@redhat.com>
+
+diff --git a/fs/gfs2/log.c b/fs/gfs2/log.c
+index ee70467..7df7024 100644
+--- a/fs/gfs2/log.c
++++ b/fs/gfs2/log.c
+@@ -513,7 +513,8 @@ struct buffer_head *gfs2_log_get_buf(struct gfs2_sbd *sdp)
+ static void gfs2_fake_write_endio(struct buffer_head *bh, int uptodate)
+ {
+ 	struct buffer_head *real_bh = bh->b_private;
+-	struct gfs2_sbd *sdp = GFS2_SB(real_bh->b_page->mapping->host);
++	struct gfs2_bufdata *bd = real_bh->b_private;
++	struct gfs2_sbd *sdp = bd->bd_gl->gl_sbd;
+ 
+ 	end_buffer_write_sync(bh, uptodate);
+ 	free_buffer_head(bh);
+-- 
+1.5.1.2
+
+

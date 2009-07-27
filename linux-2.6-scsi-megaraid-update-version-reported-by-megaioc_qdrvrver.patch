@@ -1,0 +1,44 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: [RHEL-5.1 PATCH] bz237151: megaraid: update version reported by  MEGAIOC_QDRVRVER
+Date: Thu, 31 May 2007 14:09:42 -0400 (EDT)
+Bugzilla: 237151
+Message-Id: <Pine.LNX.4.64.0705311407300.27359@bogart.boston.redhat.com>
+Changelog: [scsi] megaraid: update version reported by  MEGAIOC_QDRVRVER
+
+
+Trivial backport of upstream, compile-tested
+
+commit 2a4aa2c4b206c77b7cf522300ae9b616b0a883a4
+Author: David Milburn <dmilburn@redhat.com>
+
+    [SCSI] megaraid: update version reported by MEGAIOC_QDRVRVER
+    
+    Update the driver version reported by MEGAIOC_QDRVRVER to
+    match LSI_COMMON_MOD_VERSION.
+    
+    Signed-off-by: David Milburn <dmilburn@redhat.com>
+    Acked-by: "Patro, Sumant" <Sumant.Patro@lsi.com>
+    Signed-off-by: James Bottomley <James.Bottomley@SteelEye.com>
+
+diff --git a/drivers/scsi/megaraid/megaraid_mm.c b/drivers/scsi/megaraid/megaraid_mm.c
+index f33a678..e075a52 100644
+--- a/drivers/scsi/megaraid/megaraid_mm.c
++++ b/drivers/scsi/megaraid/megaraid_mm.c
+@@ -60,7 +60,7 @@ EXPORT_SYMBOL(mraid_mm_unregister_adp);
+ EXPORT_SYMBOL(mraid_mm_adapter_app_handle);
+ 
+ static int majorno;
+-static uint32_t drvr_ver	= 0x02200206;
++static uint32_t drvr_ver	= 0x02200207;
+ 
+ static int adapters_count_g;
+ static struct list_head adapters_list_g;
+
+Chip
+
+-- 
+Charles M. "Chip" Coldwell
+Senior Software Engineer
+Red Hat, Inc
+978-392-2426
+

@@ -1,0 +1,57 @@
+diff --git a/net/bluetooth/bnep/sock.c b/net/bluetooth/bnep/sock.c
+index 28c5583..0ef2783 100644
+--- a/net/bluetooth/bnep/sock.c
++++ b/net/bluetooth/bnep/sock.c
+@@ -43,6 +43,7 @@ #include <linux/socket.h>
+ #include <linux/ioctl.h>
+ #include <linux/file.h>
+ #include <linux/init.h>
++#include <linux/compat.h>
+ #include <net/sock.h>
+ 
+ #include <asm/system.h>
+@@ -146,11 +147,44 @@ static int bnep_sock_ioctl(struct socket
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_COMPAT
++static int bnep_sock_compat_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
++{
++
++	if (cmd == BNEPGETCONNLIST) {
++		struct bnep_connlist_req cl;
++		uint32_t uci;
++		int err;
++
++		if (get_user(cl.cnum, (uint32_t __user *)arg) ||
++		    get_user(uci, (u32 __user *)(arg+4)))
++			return -EFAULT;
++
++		cl.ci = compat_ptr(uci);
++
++		if (cl.cnum <= 0)
++			return -EINVAL;
++	
++		err = bnep_get_connlist(&cl);
++
++		if (!err && put_user(cl.cnum, (uint32_t __user *)arg))
++			err = -EFAULT;
++
++		return err;
++	}
++
++	return bnep_sock_ioctl(sock, cmd, arg);
++}
++#endif
++
+ static const struct proto_ops bnep_sock_ops = {
+ 	.family     = PF_BLUETOOTH,
+ 	.owner      = THIS_MODULE,
+ 	.release    = bnep_sock_release,
+ 	.ioctl      = bnep_sock_ioctl,
++#ifdef CONFIG_COMPAT
++	.compat_ioctl = bnep_sock_compat_ioctl,
++#endif
+ 	.bind       = sock_no_bind,
+ 	.getname    = sock_no_getname,
+ 	.sendmsg    = sock_no_sendmsg,

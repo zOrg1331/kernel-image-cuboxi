@@ -1,0 +1,60 @@
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Subject: [RHEL5.1 PATCH] GFS2 - bz #253289: GFS2: panic after can't parse 	mount arguments 
+Date: Mon, 20 Aug 2007 10:26:50 -0500
+Bugzilla: 253289
+Message-Id: <20070820152650.GJ24772@ether.msp.redhat.com>
+Changelog: [gfs2] panic after can't parse mount arguments 
+
+
+BZ#253289
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=253289
+
+Description:
+During a negative test we try to mount a GFS2 file system with the mount option
+"garbage."  We check that the mount should fail.  In this case, the system
+paniced.
+
+GFS2 uses match_token() to parse the mount options. match_token() was returning
+garbage data instead of a fail value. This data happened to match a valid
+option id for an option that required an argument (in this case, lockproto=%s)
+For match_token() to work correctly if the option doesn't match any of the
+tokens, the match table must end with a NULL entry. The GFS2 mount option
+match table didn't. This patch adds the NULL entry.
+
+This patch is upstream:
+http://git.kernel.org/?p=linux/kernel/git/steve/gfs2-2.6-nmw.git;a=commit;h=9641dc5f26c61cca73b9c1e169628408d87f8ef1
+
+Signed-off-by: Benjamin E. Marzinski <bmarzins@redhat.com>
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+
+
+diff -urpN --exclude-from=gfs2-2.6-nmw/Documentation/dontdiff gfs2-2.6-nmw/fs/gfs2/mount.c gfs2-2.6-nmw-patched/fs/gfs2/mount.c
+--- gfs2-2.6-nmw/fs/gfs2/mount.c	2007-08-13 16:18:01.000000000 -0500
++++ gfs2-2.6-nmw-patched/fs/gfs2/mount.c	2007-08-17 12:04:36.000000000 -0500
+@@ -42,6 +42,7 @@ enum {
+ 	Opt_nosuiddir,
+ 	Opt_data_writeback,
+ 	Opt_data_ordered,
++	Opt_err,
+ };
+ 
+ static match_table_t tokens = {
+@@ -64,7 +65,8 @@ static match_table_t tokens = {
+ 	{Opt_suiddir, "suiddir"},
+ 	{Opt_nosuiddir, "nosuiddir"},
+ 	{Opt_data_writeback, "data=writeback"},
+-	{Opt_data_ordered, "data=ordered"}
++	{Opt_data_ordered, "data=ordered"},
++	{Opt_err, NULL}
+ };
+ 
+ /**
+@@ -237,6 +239,7 @@ int gfs2_mount_args(struct gfs2_sbd *sdp
+ 		case Opt_data_ordered:
+ 			args->ar_data = GFS2_DATA_ORDERED;
+ 			break;
++		case Opt_err:
+ 		default:
+ 			fs_info(sdp, "unknown option: %s\n", o);
+ 			error = -EINVAL;
+

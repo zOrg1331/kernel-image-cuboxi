@@ -1,0 +1,330 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Fri, 21 Dec 2007 18:18:51 -0500
+Subject: [xen] ia64: fix ssm_i emulation barrier and vdso pv
+Message-id: 476C49DB.5080000@redhat.com
+O-Subject: [RHEL5.2 PATCH] Dom0 panic while we run ftp test tool between HVM and Dom0.
+Bugzilla: 426015
+
+These patches fix BZ#426015.
+https://bugzilla.redhat.com/show_bug.cgi?id=426015
+
+Dom0 panic while FTP stress test is caused by wrong ssm_i emulation
+which is not barriered.  This means that interruption may not be
+delivered correctly and kernel hit BUG_ON like a BUG_ON(irqs_disabled()).
+
+To fix it, the following upstream patches are backported:
+- [IA64] Fix vdso paravirtualization.
+http://xenbits.xensource.com/ext/ia64/linux-2.6.18-xen.hg?rev/8257a66108c0
+- [IA64] Cleanup vdso paravirtualization.
+http://xenbits.xensource.com/ext/ia64/linux-2.6.18-xen.hg?rev/b64323b3a963
+- [IA64] Fix xen_ssm_i()
+http://xenbits.xensource.com/ext/ia64/linux-2.6.18-xen.hg?rev/0f9032c33df4
+- [IA64] barrier in xen_rsm_i
+http://xenbits.xensource.com/ext/ia64/linux-2.6.18-xen.hg?rev/76c09a3354a8
+
+I've tested these patches with kernel-2.6.18-58.el5, and confirmed that
+Dom0 hang does not occur on FTP stress test.
+
+Please review and ACK.
+
+Regards,
+
+Tetsu Yamamoto
+
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+diff --git a/arch/ia64/kernel/gate.S b/arch/ia64/kernel/gate.S
+index 29b2721..0651ddd 100644
+--- a/arch/ia64/kernel/gate.S
++++ b/arch/ia64/kernel/gate.S
+@@ -35,17 +35,6 @@
+ 	.xdata4 ".data.patch.brl_fsys_bubble_down", 1b-.
+ 
+ #ifdef CONFIG_XEN_IA64_VDSO_PARAVIRT
+-	// The page in which hyperprivop lives must be pinned by ITR.
+-	// However vDSO area isn't pinned. So issuing hyperprivop
+-	// from vDSO page causes trouble that Kevin pointed out.
+-	// After clearing vpsr.ic, the vcpu is pre-empted and the itlb
+-	// is flushed. Then vcpu get cpu again, tlb miss fault occures.
+-	// However it results in nested dtlb fault because vpsr.ic is off.
+-	// To avoid such a situation, we jump into the kernel text area
+-	// which is pinned, and then issue hyperprivop and return back
+-	// to vDSO page.
+-	// This is Dan Magenheimer's idea.
+-
+ 	// Currently is_running_on_xen() is defined as running_on_xen.
+ 	// If is_running_on_xen() is a real function, we must update
+ 	// according to it.
+@@ -55,18 +44,7 @@
+ [1:]	movl reg=0;					\
+ 	.xdata4 ".data.patch.running_on_xen", 1b-.
+ 
+-	.section ".data.patch.brl_xen_ssm_i_0", "a"
+-	.previous
+-#define BRL_COND_XEN_SSM_I_0(pr)			\
+-[1:](pr)brl.cond.sptk 0;				\
+-	.xdata4 ".data.patch.brl_xen_ssm_i_0", 1b-.
+-
+-	.section ".data.patch.brl_xen_ssm_i_1", "a"
+-	.previous
+-#define BRL_COND_XEN_SSM_I_1(pr)			\
+-[1:](pr)brl.cond.sptk 0;				\
+-	.xdata4 ".data.patch.brl_xen_ssm_i_1", 1b-.
+-#endif
++#endif /* CONFIG_XEN_IA64_VDSO_PARAVIRT */
+ 
+ GLOBAL_ENTRY(__kernel_syscall_via_break)
+ 	.prologue
+@@ -111,11 +89,9 @@ GLOBAL_ENTRY(__kernel_syscall_via_epc)
+ 	mov r10=0				// A    default to successful syscall execution
+ 	epc					// B	causes split-issue
+ }
+-	;;
+ #ifdef CONFIG_XEN_IA64_VDSO_PARAVIRT
+ 	// r20 = 1
+ 	// r22 = &vcpu->vcpu_info->evtchn_upcall_mask
+-	// r23 = &vpsr.ic
+ 	// r24 = &vcpu->vcpu_info->evtchn_upcall_pending
+ 	// r25 = tmp
+ 	// r28 = &running_on_xen
+@@ -130,22 +106,20 @@ GLOBAL_ENTRY(__kernel_syscall_via_epc)
+ #define isRaw	p13
+ 	LOAD_RUNNING_ON_XEN(r28)
+ 	movl r22=XSI_PSR_I_ADDR
+-	;;
+-	ld8 r22=[r22]
+-	;;
+-	movl r23=XSI_PSR_IC
+-	adds r24=-1,r22
+ 	mov r20=1
+ 	;;
+ 	ld4 r30=[r28]
+ 	;;
+ 	cmp.ne isXen,isRaw=r0,r30
+ 	;;
++(isXen)	ld8 r22=[r22]
++	;; 
+ (isRaw)	rsm psr.be | psr.i
++(isXen)	adds r24=-1,r22
+ (isXen)	st1 [r22]=r20
+ (isXen)	rum psr.be
+-	;;
+ #else
++	;;
+ 	rsm psr.be | psr.i			// M2 (5 cyc to srlz.d)
+ #endif
+ 	LOAD_FSYSCALL_TABLE(r14)		// X
+@@ -177,15 +151,26 @@ GLOBAL_ENTRY(__kernel_syscall_via_epc)
+ 	nop.m 0
+ (p6)	tbit.z.unc p8,p0=r18,0			// I0 (dual-issues with "mov b7=r18"!)
+ #ifdef CONFIG_XEN_IA64_VDSO_PARAVIRT
+-	;;
++	
++#define XEN_SET_PSR_I(pred)		\
++(pred)	ld1 r31=[r22];			\
++	;; ;				\
++(pred)	st1 [r22]=r0;			\
++(pred)	cmp.ne.unc p14,p0=r0,r31;	\
++	;; ;				\
++(p14)	ld1 r25=[r24];			\
++	;; ;				\
++(p14)	cmp.ne.unc p11,p0=r0,r25;	\
++	;; ;				\
++(p11)	XEN_HYPER_SSM_I;
++
++	;; 
+ 	// p14 = running_on_xen && p8
+ 	// p15 = !running_on_xen && p8
+ (p8)	cmp.ne.unc p14,p15=r0,r30
+ 	;;
+ (p15)	ssm psr.i
+-	BRL_COND_XEN_SSM_I_0(p14)
+-	.global .vdso_ssm_i_0_ret
+-.vdso_ssm_i_0_ret:
++	XEN_SET_PSR_I(p14)
+ #else
+ 	nop.i 0
+ 	;;
+@@ -213,19 +198,12 @@ GLOBAL_ENTRY(__kernel_syscall_via_epc)
+ #endif
+ #ifdef CONFIG_XEN_IA64_VDSO_PARAVIRT
+ (isRaw)	ssm psr.i
+-	BRL_COND_XEN_SSM_I_1(isXen)
+-	.global .vdso_ssm_i_1_ret
+-.vdso_ssm_i_1_ret:
++	XEN_SET_PSR_I(isXen)
+ #else
+ 	ssm psr.i
+ #endif
+ 	mov r10=-1
+ (p10)	mov r8=EINVAL
+-#ifdef CONFIG_XEN_IA64_VDSO_PARAVIRT
+-	dv_serialize_data // shut up gas warning.
+-		          // we know xen_hyper_ssm_i_0 or xen_hyper_ssm_i_1
+-		          // doesn't change p9 and p10
+-#endif
+ (p9)	mov r8=ENOSYS
+ 	FSYS_RETURN
+ END(__kernel_syscall_via_epc)
+diff --git a/arch/ia64/kernel/gate.lds.S b/arch/ia64/kernel/gate.lds.S
+index 58582cc..9772903 100644
+--- a/arch/ia64/kernel/gate.lds.S
++++ b/arch/ia64/kernel/gate.lds.S
+@@ -48,14 +48,6 @@ SECTIONS
+ 				    __start_gate_running_on_xen_patchlist = .;
+ 				    *(.data.patch.running_on_xen)
+ 				    __end_gate_running_on_xen_patchlist = .;
+-
+-				    __start_gate_brl_xen_ssm_i_0_patchlist = .;
+-				    *(.data.patch.brl_xen_ssm_i_0)
+-				    __end_gate_brl_xen_ssm_i_0_patchlist = .;
+-
+-				    __start_gate_brl_xen_ssm_i_1_patchlist = .;
+-				    *(.data.patch.brl_xen_ssm_i_1)
+-				    __end_gate_brl_xen_ssm_i_1_patchlist = .;
+ #endif
+   }									:readable
+   .IA_64.unwind_info		: { *(.IA_64.unwind_info*) }
+diff --git a/arch/ia64/kernel/patch.c b/arch/ia64/kernel/patch.c
+index bd26465..39d34e5 100644
+--- a/arch/ia64/kernel/patch.c
++++ b/arch/ia64/kernel/patch.c
+@@ -205,46 +205,8 @@ patch_running_on_xen(unsigned long start, unsigned long end)
+ 	ia64_srlz_i();
+ }
+ 
+-static void __init
+-patch_brl_symaddr(unsigned long start, unsigned long end,
+-                  unsigned long symaddr)
+-{
+-	s32 *offp = (s32 *)start;
+-	u64 ip;
+-
+-	while (offp < (s32 *)end) {
+-		ip = (u64)offp + *offp;
+-		ia64_patch_imm60((u64)ia64_imva((void *)ip),
+-				 (u64)(symaddr - (ip & -16)) / 16);
+-		ia64_fc((void *)ip);
+-		++offp;
+-	}
+-	ia64_sync_i();
+-	ia64_srlz_i();
+-}
+-
+-#define EXTERN_PATCHLIST(name)					\
+-	extern char __start_gate_brl_##name##_patchlist[];	\
+-	extern char __end_gate_brl_##name##_patchlist[];	\
+-	extern char name[]
+-
+-#define PATCH_BRL_SYMADDR(name)						\
+-	patch_brl_symaddr((unsigned long)__start_gate_brl_##name##_patchlist, \
+-	                  (unsigned long)__end_gate_brl_##name##_patchlist,   \
+-	                  (unsigned long)name)
+-
+-static void __init
+-patch_brl_in_vdso(void)
+-{
+-	EXTERN_PATCHLIST(xen_ssm_i_0);
+-	EXTERN_PATCHLIST(xen_ssm_i_1);
+-
+-	PATCH_BRL_SYMADDR(xen_ssm_i_0);
+-	PATCH_BRL_SYMADDR(xen_ssm_i_1);
+-}
+ #else
+ #define patch_running_on_xen(start, end)	do { } while (0)
+-#define patch_brl_in_vdso()			do { } while (0)
+ #endif
+ 
+ void __init
+@@ -257,7 +219,6 @@ ia64_patch_gate (void)
+ 	patch_brl_fsys_bubble_down(START(brl_fsys_bubble_down), END(brl_fsys_bubble_down));
+ #ifdef CONFIG_XEN
+ 	patch_running_on_xen(START(running_on_xen), END(running_on_xen));
+-	patch_brl_in_vdso();
+ #endif
+ 	ia64_patch_vtop(START(vtop), END(vtop));
+ 	ia64_patch_mckinley_e9(START(mckinley_e9), END(mckinley_e9));
+diff --git a/arch/ia64/xen/hypercall.S b/arch/ia64/xen/hypercall.S
+index 2584ea9..354b9d8 100644
+--- a/arch/ia64/xen/hypercall.S
++++ b/arch/ia64/xen/hypercall.S
+@@ -125,46 +125,9 @@ GLOBAL_ENTRY(xen_send_ipi)
+         ;;
+ END(xen_send_ipi)
+ 
+-#ifdef CONFIG_XEN_IA64_VDSO_PARAVIRT
+-// Those are vdso specialized.
+-// In fsys mode, call, ret can't be used.
+-
+-	// see xen_ssm_i() in privop.h
+-	// r22 = &vcpu->vcpu_info->evtchn_upcall_mask
+-	// r23 = &vpsr.ic
+-	// r24 = &vcpu->vcpu_info->evtchn_upcall_pending
+-	// r25 = tmp
+-	// r31 = tmp
+-	// p11 = tmp
+-	// p14 = tmp
+-#define XEN_SET_PSR_I			\
+-	ld1 r31=[r22];			\
+-	ld1 r25=[r24];			\
+-	;;				\
+-	st1 [r22]=r0;			\
+-	cmp.ne.unc p14,p0=r0,r31;	\
+-	;;				\
+-(p14)	cmp.ne.unc p11,p0=r0,r25;	\
+-	;;				\
+-(p11)	st1 [r22]=r20;			\
+-(p11)	XEN_HYPER_SSM_I;
+-		
+-GLOBAL_ENTRY(xen_ssm_i_0)
+-	XEN_SET_PSR_I
+-	brl.cond.sptk	.vdso_ssm_i_0_ret
+-	;; 
+-END(xen_ssm_i_0)
+-
+-GLOBAL_ENTRY(xen_ssm_i_1)
+-	XEN_SET_PSR_I
+-	brl.cond.sptk	.vdso_ssm_i_1_ret
+-	;; 
+-END(xen_ssm_i_1)
+-
+ GLOBAL_ENTRY(__hypercall)
+ 	mov r2=r37
+ 	break 0x1000
+ 	br.ret.sptk.many b0
+ 	;;
+ END(__hypercall)
+-#endif
+diff --git a/include/asm-ia64/xen/privop.h b/include/asm-ia64/xen/privop.h
+index 96f5f09..1bee5ef 100644
+--- a/include/asm-ia64/xen/privop.h
++++ b/include/asm-ia64/xen/privop.h
+@@ -127,7 +127,10 @@ extern void xen_set_eflag(unsigned long);	/* see xen_ia64_setreg */
+ 
+ /* turning off interrupts can be paravirtualized simply by writing
+  * to a memory-mapped virtual psr.i bit (implemented as a 16-bit bool) */
+-#define xen_rsm_i()	xen_set_virtual_psr_i(0)
++#define xen_rsm_i()							\
++{	xen_set_virtual_psr_i(0);					\
++	barrier();							\
++}
+ 
+ /* turning on interrupts is a bit more complicated.. write to the
+  * memory-mapped virtual psr.i bit first (to avoid race condition),
+@@ -136,12 +139,10 @@ extern void xen_set_eflag(unsigned long);	/* see xen_ia64_setreg */
+ #define xen_ssm_i()							\
+ ({									\
+ 	int old = xen_get_virtual_psr_i();				\
+-	if (!old) {							\
+-		if (xen_get_virtual_pend())				\
+-			xen_hyper_ssm_i();				\
+-		else							\
+-			xen_set_virtual_psr_i(1);			\
+-	}								\
++	xen_set_virtual_psr_i(1);					\
++	barrier();							\
++	if (!old && xen_get_virtual_pend())				\
++		xen_hyper_ssm_i();					\
+ })
+ 
+ #define xen_ia64_intrin_local_irq_restore(x)				\

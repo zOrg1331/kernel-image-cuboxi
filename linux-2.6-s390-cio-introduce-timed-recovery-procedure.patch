@@ -1,0 +1,210 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 31 Jan 2008 11:23:12 +0100
+Subject: [s390] cio: introduce timed recovery procedure
+Message-id: 20080131102312.GD16660@redhat.com
+O-Subject: [RHEL5 U2 PATCH 4/4] s390 - cio: introduce timed recovery procedure
+Bugzilla: 430593
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+In some cases, slow hardware response has been seen to interfer with
+Linux channel path verification, leading to inaccessible devices.
+To counter this problem, a timed path verification retry has been added.
+
+Initially the retry is done after 3s. If this fails again, there will be
+retries every 30s. If there is a verify event while the timer for the
+scheduled verification is running, the timer will be stopped and the
+verification is processed.
+
+Bugzilla
+=========
+
+BZ 430593
+https://bugzilla.redhat.com/show_bug.cgi?id=430593
+
+Upstream status of the patch:
+=============================
+Patch is upstream in git commit 90ab133603d066e850fc9ed297b6eb52f888dd25
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+ drivers/s390/cio/device.c     |    2 +
+ drivers/s390/cio/device.h     |    1 +
+ drivers/s390/cio/device_fsm.c |   73 +++++++++++++++++++++++++++++++++++------
+ 3 files changed, 66 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/s390/cio/device.c b/drivers/s390/cio/device.c
+index dd45ac7..287aa30 100644
+--- a/drivers/s390/cio/device.c
++++ b/drivers/s390/cio/device.c
+@@ -672,6 +672,8 @@ ccw_device_release(struct device *dev)
+ 	struct ccw_device *cdev;
+ 
+ 	cdev = to_ccwdev(dev);
++	/* Just to be sure this is not still running. */
++	ccw_device_schedule_verify(cdev, 0);
+ 	kfree(cdev->private);
+ 	kfree(cdev);
+ }
+diff --git a/drivers/s390/cio/device.h b/drivers/s390/cio/device.h
+index 00be9a5..4f936b2 100644
+--- a/drivers/s390/cio/device.h
++++ b/drivers/s390/cio/device.h
+@@ -82,6 +82,7 @@ int ccw_device_cancel_halt_clear(struct ccw_device *);
+ int ccw_device_register(struct ccw_device *);
+ void ccw_device_do_unreg_rereg(void *);
+ void ccw_device_call_sch_unregister(void *);
++void ccw_device_schedule_verify(struct ccw_device *cdev, unsigned long delay);
+ 
+ int ccw_device_recognition(struct ccw_device *);
+ int ccw_device_online(struct ccw_device *);
+diff --git a/drivers/s390/cio/device_fsm.c b/drivers/s390/cio/device_fsm.c
+index beb8f64..2cfe4e3 100644
+--- a/drivers/s390/cio/device_fsm.c
++++ b/drivers/s390/cio/device_fsm.c
+@@ -59,6 +59,12 @@ device_set_disconnected(struct subchannel *sch)
+ 	ccw_device_set_timeout(cdev, 0);
+ 	cdev->private->flags.fake_irb = 0;
+ 	cdev->private->state = DEV_STATE_DISCONNECTED;
++
++	/*
++	 * This is called when the device was not disconnected before. So
++	 * we use 3s as an initial re-validation delay.
++	 */
++	ccw_device_schedule_verify(cdev, 3*HZ);
+ }
+ 
+ void
+@@ -98,6 +104,24 @@ device_trigger_verify(struct subchannel *sch)
+ }
+ 
+ /*
++ * Helper function to set the CCW device timer.
++ * (Assumes the ccw device lock is being held)
++ */
++static void device_set_timer(struct ccw_device *cdev, unsigned long delay,
++		void (*callback)(unsigned long))
++{
++	struct timer_list *t = &cdev->private->timer;
++
++	del_timer(t);
++	if (delay != 0) {
++		t->function = callback;
++		t->data = (unsigned long) cdev;
++		t->expires = jiffies + delay;
++		add_timer(t);
++	}
++}
++
++/*
+  * Timeout function. It just triggers a DEV_EVENT_TIMEOUT.
+  */
+ static void
+@@ -117,19 +141,31 @@ ccw_device_timeout(unsigned long data)
+ void
+ ccw_device_set_timeout(struct ccw_device *cdev, int expires)
+ {
+-	if (expires == 0) {
+-		del_timer(&cdev->private->timer);
++	device_set_timer(cdev, expires, ccw_device_timeout);
++}
++
++void
++ccw_device_delayed_verify(unsigned long data)
++{
++	struct ccw_device *cdev = (struct ccw_device *) data;
++
++	spin_lock_irq(cdev->ccwlock);
++	if (cdev->private->state != DEV_STATE_DISCONNECTED) {
++		spin_unlock_irq(cdev->ccwlock);
+ 		return;
+ 	}
+-	if (timer_pending(&cdev->private->timer)) {
+-		if (mod_timer(&cdev->private->timer, jiffies + expires))
+-			return;
+-	}
+-	cdev->private->timer.function = ccw_device_timeout;
+-	cdev->private->timer.data = (unsigned long) cdev;
+-	cdev->private->timer.expires = jiffies + expires;
+-	add_timer(&cdev->private->timer);
++	CIO_MSG_EVENT(3, "Delayed revalidation called for device %s\n",
++		cdev->dev.bus_id);
++	device_trigger_reprobe(to_subchannel(cdev->dev.parent));
++	spin_unlock_irq(cdev->ccwlock);
++}
++
++void
++ccw_device_schedule_verify(struct ccw_device *cdev, unsigned long delay)
++{
++	device_set_timer(cdev, delay, ccw_device_delayed_verify);
+ }
++EXPORT_SYMBOL_GPL(ccw_device_schedule_verify);
+ 
+ /* Kill any pending timers after machine check. */
+ void
+@@ -277,6 +313,12 @@ ccw_device_recog_done(struct ccw_device *cdev, int state)
+ 		if (state == DEV_STATE_NOT_OPER) {
+ 			cdev->private->flags.recog_done = 1;
+ 			cdev->private->state = DEV_STATE_DISCONNECTED;
++			CIO_DEBUG(KERN_DEBUG, 4, "SenseID: "
++				"device %04x on subchannel 0.%x.%04x "
++				"disconnected after verify.\n",
++				cdev->private->devno, sch->schid.ssid,
++				sch->schid.sch_no);
++			ccw_device_schedule_verify(cdev, 30*HZ);
+ 			return;
+ 		}
+ 		/* Boxed devices don't need extra treatment. */
+@@ -550,6 +592,7 @@ ccw_device_recog_timeout(struct ccw_device *cdev, enum dev_event dev_event)
+ static void
+ ccw_device_nopath_notify(void *data)
+ {
++	unsigned long flags;
+ 	struct ccw_device *cdev;
+ 	struct subchannel *sch;
+ 	int ret;
+@@ -575,10 +618,13 @@ ccw_device_nopath_notify(void *data)
+ 				put_device(&sch->dev);
+ 		}
+ 	} else {
++		spin_lock_irqsave(cdev->ccwlock, flags);
+ 		cio_disable_subchannel(sch);
+ 		ccw_device_set_timeout(cdev, 0);
+ 		cdev->private->flags.fake_irb = 0;
+ 		cdev->private->state = DEV_STATE_DISCONNECTED;
++		ccw_device_schedule_verify(cdev, 3*HZ);
++		spin_unlock_irqrestore(cdev->ccwlock, flags);
+ 		wake_up(&cdev->private->wait_q);
+ 	}
+ }
+@@ -778,6 +824,7 @@ ccw_device_online_notoper(struct ccw_device *cdev, enum dev_event dev_event)
+ 			ccw_device_set_timeout(cdev, 0);
+ 			cdev->private->flags.fake_irb = 0;
+ 			cdev->private->state = DEV_STATE_DISCONNECTED;
++			ccw_device_schedule_verify(cdev, 3*HZ);
+ 			wake_up(&cdev->private->wait_q);
+ 			return;
+ 	}
+@@ -1170,6 +1217,12 @@ ccw_device_start_id(struct ccw_device *cdev, enum dev_event dev_event)
+ 		/* Couldn't enable the subchannel for i/o. Sick device. */
+ 		return;
+ 
++	/*
++	 * This should be the only way to get out of the disconnected state.
++	 * So stopping the delayed verification here hopefully is enough.
++	 */
++	ccw_device_schedule_verify(cdev, 0);
++
+ 	/* After 60s the device recognition is considered to have failed. */
+ 	ccw_device_set_timeout(cdev, 60*HZ);
+ 

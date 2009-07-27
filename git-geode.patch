@@ -1,0 +1,551 @@
+This patch aggregates changesets from Jordan Crouse's AMD Geode GIT tree.
+
+It contains the necessary changes to support the framebuffer driver (gxfb) on 
+OLPC's boards without VGA support.
+
+http://git.infradead.org/?p=users/jcrouse/geode.git;a=summary
+
+ arch/i386/Kconfig                |    9 +++
+ arch/i386/boot/setup.S           |    5 +
+ drivers/video/Kconfig            |    6 +-
+ drivers/video/console/Kconfig    |    4 -
+ drivers/video/geode/Kconfig      |   20 +++++++
+ drivers/video/geode/display_gx.c |   22 ++++++--
+ drivers/video/geode/display_gx.h |    7 ++
+ drivers/video/geode/gxfb_core.c  |   57 ++++++++++++++++++--
+ drivers/video/geode/video_gx.c   |  107 ++++++++++++++++++++++++++++++++++----- drivers/video/geode/video_gx.h   |   25 +++++++++
+ include/linux/pci_ids.h          |    5 -
+ 11 files changed, 237 insertions(+), 30 deletions(-)
+
+diff -Nur linux-2.6-linus/arch/i386/boot/setup.S linux-2.6-geode/arch/i386/boot/setup.S
+--- linux-2.6-linus/arch/i386/boot/setup.S	2006-07-23 21:03:05.000000000 +0100
++++ linux-2.6-geode/arch/i386/boot/setup.S	2006-08-08 16:48:27.000000000 +0100
+@@ -394,10 +394,13 @@
+ 	xorw	%bx, %bx
+ 	int	$0x16
+ 
++#ifndef CONFIG_VGA_NOPROBE
++
+ # Check for video adapter and its parameters and allow the
+ # user to browse video modes.
+ 	call	video				# NOTE: we need %ds pointing
+ 						# to bootsector
++#endif
+ 
+ # Get hd0 data...
+ 	xorw	%ax, %ax
+@@ -1006,9 +1009,11 @@
+ 	.word	gdt_end - gdt - 1		# gdt limit
+ 	.word	0, 0				# gdt base (filled in later)
+ 
++#ifndef CONFIG_VGA_NOPROBE
+ # Include video setup & detection code
+ 
+ #include "video.S"
++#endif
+ 
+ # Setup signature -- must be last
+ setup_sig1:	.word	SIG1
+diff -Nur linux-2.6-linus/arch/i386/Kconfig linux-2.6-geode/arch/i386/Kconfig
+--- linux-2.6-linus/arch/i386/Kconfig	2006-07-23 21:03:05.000000000 +0100
++++ linux-2.6-geode/arch/i386/Kconfig	2006-08-08 16:48:27.000000000 +0100
+@@ -735,6 +735,15 @@
+ 
+ 	  If unsure, say Y. Only embedded should say N here.
+ 
++config VGA_NOPROBE
++       bool "Don't probe VGA at boot" if EMBEDDED
++       default n
++       help
++         Saying Y here will cause the kernel to not probe VGA at boot time.
++         This will break everything that depends on the probed screen
++         data.  Say N here unless you are absolutely sure this is what you
++         want.
++
+ source kernel/Kconfig.hz
+ 
+ config KEXEC
+diff -Nur linux-2.6-linus/drivers/video/console/Kconfig linux-2.6-geode/drivers/video/console/Kconfig
+--- linux-2.6-linus/drivers/video/console/Kconfig	2006-07-23 21:03:05.000000000 +0100
++++ linux-2.6-geode/drivers/video/console/Kconfig	2006-08-08 16:48:27.000000000 +0100
+@@ -5,8 +5,8 @@
+ menu "Console display driver support"
+ 
+ config VGA_CONSOLE
+-	bool "VGA text console" if EMBEDDED || !X86
+-	depends on !ARCH_ACORN && !ARCH_EBSA110 && !4xx && !8xx && !SPARC && !M68K && !PARISC && !FRV && !ARCH_VERSATILE
++	bool "VGA text console" if (EMBEDDED || !X86)
++	depends on !ARCH_ACORN && !ARCH_EBSA110 && !4xx && !8xx && !SPARC && !M68K && !PARISC && !FRV && !ARCH_VERSATILE && !VGA_NOPROBE
+ 	default y
+ 	help
+ 	  Saying Y here will allow you to use Linux in text mode through a
+diff -Nur linux-2.6-linus/drivers/video/geode/display_gx.c linux-2.6-geode/drivers/video/geode/display_gx.c
+--- linux-2.6-linus/drivers/video/geode/display_gx.c	2006-07-23 21:03:05.000000000 +0100
++++ linux-2.6-geode/drivers/video/geode/display_gx.c	2006-08-08 16:48:27.000000000 +0100
+@@ -21,11 +21,26 @@
+ #include "geodefb.h"
+ #include "display_gx.h"
+ 
+-int gx_frame_buffer_size(void)
++#ifdef CONFIG_FB_GEODE_GX_SET_FBSIZE
++unsigned int gx_frame_buffer_size(void) {
++	return CONFIG_FB_GEODE_GX_FBSIZE;
++}
++#else
++unsigned int gx_frame_buffer_size(void)
+ {
+-	/* Assuming 16 MiB. */
+-	return 16*1024*1024;
++	unsigned int val;
++
++	/* FB size is reported by a virtual register */
++	/* Virtual register class = 0x02 */
++	/* VG_MEM_SIZE(512Kb units) = 0x00 */
++
++	outw(0xFC53, 0xAC1C);
++	outw(0x0200, 0xAC1C);
++
++	val = (unsigned int)(inw(0xAC1E)) & 0xFFl;
++	return (val << 19);
+ }
++#endif
+ 
+ int gx_line_delta(int xres, int bpp)
+ {
+@@ -81,6 +96,7 @@
+ 	writel(((info->var.xres * info->var.bits_per_pixel/8) >> 3) + 2,
+ 	       par->dc_regs + DC_LINE_SIZE);
+ 
++
+ 	/* Enable graphics and video data and unmask address lines. */
+ 	dcfg |= DC_DCFG_GDEN | DC_DCFG_VDEN | DC_DCFG_A20M | DC_DCFG_A18M;
+ 
+diff -Nur linux-2.6-linus/drivers/video/geode/display_gx.h linux-2.6-geode/drivers/video/geode/display_gx.h
+--- linux-2.6-linus/drivers/video/geode/display_gx.h	2006-07-23 21:03:05.000000000 +0100
++++ linux-2.6-geode/drivers/video/geode/display_gx.h	2006-08-08 16:48:27.000000000 +0100
+@@ -11,11 +11,15 @@
+ #ifndef __DISPLAY_GX_H__
+ #define __DISPLAY_GX_H__
+ 
+-int gx_frame_buffer_size(void);
++unsigned int gx_frame_buffer_size(void);
+ int gx_line_delta(int xres, int bpp);
+ 
+ extern struct geode_dc_ops gx_dc_ops;
+ 
++/* MSR that tells us if a TFT or CRT is attached */
++#define GLD_MSR_CONFIG   0xC0002001
++#define GLD_MSR_CONFIG_DM_FP 0x40
++
+ /* Display controller registers */
+ 
+ #define DC_UNLOCK 0x00
+@@ -93,4 +97,5 @@
+ #define DC_PAL_ADDRESS 0x70
+ #define DC_PAL_DATA    0x74
+ 
++#define DC_GLIU0_MEM_OFFSET 0x84
+ #endif /* !__DISPLAY_GX1_H__ */
+diff -Nur linux-2.6-linus/drivers/video/geode/gxfb_core.c linux-2.6-geode/drivers/video/geode/gxfb_core.c
+--- linux-2.6-linus/drivers/video/geode/gxfb_core.c	2006-07-23 21:03:05.000000000 +0100
++++ linux-2.6-geode/drivers/video/geode/gxfb_core.c	2006-08-08 16:48:27.000000000 +0100
+@@ -35,10 +35,10 @@
+ #include "display_gx.h"
+ #include "video_gx.h"
+ 
+-static char mode_option[32] = "640x480-16@60";
++static char *mode_option;
+ 
+ /* Modes relevant to the GX (taken from modedb.c) */
+-static const struct fb_videomode __initdata gx_modedb[] = {
++static const struct fb_videomode gx_modedb[] __initdata = {
+ 	/* 640x480-60 VESA */
+ 	{ NULL, 60, 640, 480, 39682,  48, 16, 33, 10, 96, 2,
+ 	  0, FB_VMODE_NONINTERLACED, FB_MODE_IS_VESA },
+@@ -103,6 +103,9 @@
+ 	{ NULL, 85, 1600, 1200, 4357, 304, 64, 46, 1, 192, 3,
+ 	  FB_SYNC_HOR_HIGH_ACT | FB_SYNC_VERT_HIGH_ACT,
+ 	  FB_VMODE_NONINTERLACED, FB_MODE_IS_VESA },
++	{ "OLPC-1", 50, 1200, 900, 17460, 24, 8, 4, 5, 8, 3,
++	  FB_SYNC_HOR_HIGH_ACT | FB_SYNC_VERT_HIGH_ACT,
++	  FB_VMODE_NONINTERLACED, 0 }
+ };
+ 
+ static int gxfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
+@@ -240,6 +243,12 @@
+ 	if (!info->screen_base)
+ 		return -ENOMEM;
+ 
++	/* Set the 16MB aligned base address of the graphics memory region
++	 * in the display controller */
++
++	writel(info->fix.smem_start & 0xFF000000,
++			par->dc_regs + DC_GLIU0_MEM_OFFSET);
++
+ 	dev_info(&dev->dev, "%d Kibyte of video memory at 0x%lx\n",
+ 		 info->fix.smem_len / 1024, info->fix.smem_start);
+ 
+@@ -302,6 +311,7 @@
+ 	struct geodefb_par *par;
+ 	struct fb_info *info;
+ 	int ret;
++	unsigned long val;
+ 
+ 	info = gxfb_init_fbinfo(&pdev->dev);
+ 	if (!info)
+@@ -317,6 +327,15 @@
+ 		goto err;
+ 	}
+ 
++	/* Figure out if this is a TFT or CRT part */
++
++	rdmsrl(GLD_MSR_CONFIG, val);
++
++	if ((val & GLD_MSR_CONFIG_DM_FP) == GLD_MSR_CONFIG_DM_FP)
++		par->enable_crt = 0;
++	else
++		par->enable_crt = 1;
++
+ 	ret = fb_find_mode(&info->var, info, mode_option,
+ 			   gx_modedb, ARRAY_SIZE(gx_modedb), NULL, 16);
+ 	if (ret == 0 || ret == 4) {
+@@ -325,7 +344,8 @@
+ 		goto err;
+ 	}
+ 
+-        /* Clear the frame buffer of garbage. */
++       
++	/* Clear the frame buffer of garbage. */
+         memset_io(info->screen_base, 0, info->fix.smem_len);
+ 
+ 	gxfb_check_var(&info->var, info);
+@@ -380,7 +400,7 @@
+ }
+ 
+ static struct pci_device_id gxfb_id_table[] = {
+-	{ PCI_VENDOR_ID_NS, PCI_DEVICE_ID_NS_CS5535_VIDEO,
++	{ PCI_VENDOR_ID_NS, PCI_DEVICE_ID_NS_GX_VIDEO,
+ 	  PCI_ANY_ID, PCI_ANY_ID, PCI_BASE_CLASS_DISPLAY << 16,
+ 	  0xff0000, 0 },
+ 	{ 0, }
+@@ -395,11 +415,34 @@
+ 	.remove		= gxfb_remove,
+ };
+ 
++#ifndef MODULE
++static int __init gxfb_setup(char *options) {
++
++	char *opt;
++
++	if (!options || !*options)
++		return 0;
++
++	while((opt = strsep(&options, ",")) != NULL) {
++		if (!*opt)
++			continue;
++
++		mode_option = opt;
++	}
++
++	return 0;
++}
++#endif
++
+ static int __init gxfb_init(void)
+ {
+ #ifndef MODULE
+-	if (fb_get_options("gxfb", NULL))
++	char *option = NULL;
++
++	if (fb_get_options("gxfb", &option))
+ 		return -ENODEV;
++
++	gxfb_setup(option);
+ #endif
+ 	return pci_register_driver(&gxfb_driver);
+ }
+@@ -412,8 +455,8 @@
+ module_init(gxfb_init);
+ module_exit(gxfb_cleanup);
+ 
+-module_param_string(mode, mode_option, sizeof(mode_option), 0444);
+-MODULE_PARM_DESC(mode, "video mode (<x>x<y>[-<bpp>][@<refr>])");
++module_param(mode_option, charp, 0);
++MODULE_PARM_DESC(mode_option, "video mode (<x>x<y>[-<bpp>][@<refr>])");
+ 
+ MODULE_DESCRIPTION("Framebuffer driver for the AMD Geode GX");
+ MODULE_LICENSE("GPL");
+diff -Nur linux-2.6-linus/drivers/video/geode/Kconfig linux-2.6-geode/drivers/video/geode/Kconfig
+--- linux-2.6-linus/drivers/video/geode/Kconfig	2006-07-23 21:03:05.000000000 +0100
++++ linux-2.6-geode/drivers/video/geode/Kconfig	2006-08-08 16:48:27.000000000 +0100
+@@ -23,6 +23,26 @@
+ 
+ 	  If unsure, say N.
+ 
++config FB_GEODE_GX_SET_FBSIZE
++	bool "Manually specify the Geode GX framebuffer size"
++	depends on FB_GEODE_GX
++	default n
++	---help---
++	  If you want to manually specify the size of your GX framebuffer,
++	  say Y here, otherwise say N to dynamically probe it.
++	  
++	  Say N unless you know what you are doing.
++
++config FB_GEODE_GX_FBSIZE
++	hex "Size of the GX framebuffer, in bytes"
++	depends on FB_GEODE_GX_SET_FBSIZE
++	default "0x1600000"
++	---help---
++	  Specify the size of the GX framebuffer.  Normally, you will
++	  want this to be MB aligned.  Common values are 0x80000 (8MB)
++	  and 0x1600000 (16MB).  Don't change this unless you know what
++	  you are doing
++
+ config FB_GEODE_GX1
+ 	tristate "AMD Geode GX1 framebuffer support (EXPERIMENTAL)"
+ 	depends on FB && FB_GEODE && EXPERIMENTAL
+diff -Nur linux-2.6-linus/drivers/video/geode/video_gx.c linux-2.6-geode/drivers/video/geode/video_gx.c
+--- linux-2.6-linus/drivers/video/geode/video_gx.c	2006-07-23 21:03:05.000000000 +0100
++++ linux-2.6-geode/drivers/video/geode/video_gx.c	2006-08-08 16:48:27.000000000 +0100
+@@ -175,13 +175,88 @@
+ 	} while (timeout-- && !(dotpll & MSR_GLCP_DOTPLL_LOCK));
+ }
+ 
++static void
++gx_configure_tft(struct fb_info *info) {
++
++	struct geodefb_par *par = info->par;
++	unsigned long val;
++	unsigned long fp;
++
++	/* Set up the DF pad select MSR */
++
++	rdmsrl(GX_VP_MSR_PAD_SELECT, val);
++	val &= ~GX_VP_PAD_SELECT_MASK;
++	val |= GX_VP_PAD_SELECT_TFT;
++	wrmsrl(GX_VP_MSR_PAD_SELECT, val);
++
++	/* Turn off the panel */
++
++	fp = readl(par->vid_regs + GX_FP_PM);
++	fp &= ~GX_FP_PM_P;
++	writel(fp, par->vid_regs + GX_FP_PM);
++
++	/* Set timing 1 */
++
++	fp = readl(par->vid_regs + GX_FP_PT1);
++	fp &= GX_FP_PT1_VSIZE_MASK;
++	fp |= info->var.yres << GX_FP_PT1_VSIZE_SHIFT;
++	writel(fp, par->vid_regs + GX_FP_PT1);
++
++	/* Timing 2 */
++	/* Set bits that are always on for TFT */
++
++	fp = 0x0F100000;
++
++	/* Add sync polarity */
++
++	if (!(info->var.sync & FB_SYNC_VERT_HIGH_ACT))
++		fp |= GX_FP_PT2_VSP;
++
++	if (!(info->var.sync & FB_SYNC_HOR_HIGH_ACT))
++		fp |= GX_FP_PT2_HSP;
++
++	writel(fp, par->vid_regs + GX_FP_PT2);
++
++	/*  Set the dither control */
++	writel(0x70, par->vid_regs + GX_FP_DFC);
++
++	/* Enable the FP data and power (in case the BIOS didn't) */
++
++	fp = readl(par->vid_regs + GX_DCFG);
++	fp |= GX_DCFG_FP_PWR_EN | GX_DCFG_FP_DATA_EN;
++	writel(fp, par->vid_regs + GX_DCFG);
++
++	/* Unblank the panel */
++
++	fp = readl(par->vid_regs + GX_FP_PM);
++	fp |= GX_FP_PM_P;
++	writel(fp, par->vid_regs + GX_FP_PM);
++}
++
+ static void gx_configure_display(struct fb_info *info)
+ {
+ 	struct geodefb_par *par = info->par;
+-	u32 dcfg, fp_pm;
++	u32 dcfg, misc;
++
++	/* Set up the MISC register */
++
++	misc = readl(par->vid_regs + GX_MISC);
++
++	/* Power up the DAC */
++	misc &= ~(GX_MISC_A_PWRDN | GX_MISC_DAC_PWRDN);
++
++	/* Disable gamma correction */
++	misc |= GX_MISC_GAM_EN;
++
++	writel(misc, par->vid_regs + GX_MISC);
+ 
++	/* Write the display configuration */
+ 	dcfg = readl(par->vid_regs + GX_DCFG);
+ 
++	/* Disable hsync and vsync */
++	dcfg &= ~(GX_DCFG_VSYNC_EN | GX_DCFG_HSYNC_EN);
++	writel(dcfg, par->vid_regs + GX_DCFG);
++
+ 	/* Clear bits from existing mode. */
+ 	dcfg &= ~(GX_DCFG_CRT_SYNC_SKW_MASK
+ 		  | GX_DCFG_CRT_HSYNC_POL   | GX_DCFG_CRT_VSYNC_POL
+@@ -199,12 +274,19 @@
+ 	if (info->var.sync & FB_SYNC_VERT_HIGH_ACT)
+ 		dcfg |= GX_DCFG_CRT_VSYNC_POL;
+ 
++	/* Enable the display logic */
++	/* Set up the DACS to blank normally */
++
++	dcfg |= GX_DCFG_CRT_EN | GX_DCFG_DAC_BL_EN;
++
++	/* Enable the external DAC VREF? */
++
+ 	writel(dcfg, par->vid_regs + GX_DCFG);
+ 
+-	/* Power on flat panel. */
+-	fp_pm = readl(par->vid_regs + GX_FP_PM);
+-	fp_pm |= GX_FP_PM_P;
+-	writel(fp_pm, par->vid_regs + GX_FP_PM);
++	/* Set up the flat panel (if it is enabled) */
++
++	if (par->enable_crt == 0)
++		gx_configure_tft(info);
+ }
+ 
+ static int gx_blank_display(struct fb_info *info, int blank_mode)
+@@ -245,12 +327,15 @@
+ 	writel(dcfg, par->vid_regs + GX_DCFG);
+ 
+ 	/* Power on/off flat panel. */
+-	fp_pm = readl(par->vid_regs + GX_FP_PM);
+-	if (blank_mode == FB_BLANK_POWERDOWN)
+-		fp_pm &= ~GX_FP_PM_P;
+-	else
+-		fp_pm |= GX_FP_PM_P;
+-	writel(fp_pm, par->vid_regs + GX_FP_PM);
++
++	if (par->enable_crt == 0) {
++		fp_pm = readl(par->vid_regs + GX_FP_PM);
++		if (blank_mode == FB_BLANK_POWERDOWN)
++			fp_pm &= ~GX_FP_PM_P;
++		else
++			fp_pm |= GX_FP_PM_P;
++		writel(fp_pm, par->vid_regs + GX_FP_PM);
++	}
+ 
+ 	return 0;
+ }
+diff -Nur linux-2.6-linus/drivers/video/geode/video_gx.h linux-2.6-geode/drivers/video/geode/video_gx.h
+--- linux-2.6-linus/drivers/video/geode/video_gx.h	2006-07-23 21:03:05.000000000 +0100
++++ linux-2.6-geode/drivers/video/geode/video_gx.h	2006-08-08 16:48:27.000000000 +0100
+@@ -13,6 +13,11 @@
+ 
+ extern struct geode_vid_ops gx_vid_ops;
+ 
++/* GX Flatpanel control MSR */
++#define GX_VP_MSR_PAD_SELECT           0xC0002011
++#define GX_VP_PAD_SELECT_MASK          0x3FFFFFFF
++#define GX_VP_PAD_SELECT_TFT           0x1FFFFFFF
++
+ /* Geode GX video processor registers */
+ 
+ #define GX_DCFG		0x0008
+@@ -20,6 +25,8 @@
+ #  define GX_DCFG_HSYNC_EN		0x00000002
+ #  define GX_DCFG_VSYNC_EN		0x00000004
+ #  define GX_DCFG_DAC_BL_EN		0x00000008
++#  define GX_DCFG_FP_PWR_EN		0x00000040
++#  define GX_DCFG_FP_DATA_EN		0x00000080
+ #  define GX_DCFG_CRT_HSYNC_POL		0x00000100
+ #  define GX_DCFG_CRT_VSYNC_POL		0x00000200
+ #  define GX_DCFG_CRT_SYNC_SKW_MASK	0x0001C000
+@@ -28,10 +35,28 @@
+ #  define GX_DCFG_GV_GAM		0x00200000
+ #  define GX_DCFG_DAC_VREF		0x04000000
+ 
++/* Geode GX MISC video configuration */
++
++#define GX_MISC 0x50
++#define GX_MISC_GAM_EN     0x00000001
++#define GX_MISC_DAC_PWRDN  0x00000400
++#define GX_MISC_A_PWRDN    0x00000800
++
+ /* Geode GX flat panel display control registers */
++
++#define GX_FP_PT1 0x0400
++#define GX_FP_PT1_VSIZE_MASK 0x7FF0000
++#define GX_FP_PT1_VSIZE_SHIFT 16
++
++#define GX_FP_PT2 0x408
++#define GX_FP_PT2_VSP (1 << 23)
++#define GX_FP_PT2_HSP (1 << 22)
++
+ #define GX_FP_PM 0x410
+ #  define GX_FP_PM_P 0x01000000
+ 
++#define GX_FP_DFC 0x418
++
+ /* Geode GX clock control MSRs */
+ 
+ #define MSR_GLCP_SYS_RSTPLL	0x4c000014
+diff -Nur linux-2.6-linus/drivers/video/Kconfig linux-2.6-geode/drivers/video/Kconfig
+--- linux-2.6-linus/drivers/video/Kconfig	2006-07-23 21:03:05.000000000 +0100
++++ linux-2.6-geode/drivers/video/Kconfig	2006-08-08 16:48:27.000000000 +0100
+@@ -540,7 +540,7 @@
+ 
+ config FB_VESA
+ 	bool "VESA VGA graphics support"
+-	depends on (FB = y) && X86
++	depends on (FB = y) && X86 && !VGA_NOPROBE
+ 	select FB_CFB_FILLRECT
+ 	select FB_CFB_COPYAREA
+ 	select FB_CFB_IMAGEBLIT
+@@ -828,7 +828,7 @@
+ 
+ config FB_INTEL
+ 	tristate "Intel 830M/845G/852GM/855GM/865G support (EXPERIMENTAL)"
+-	depends on FB && EXPERIMENTAL && PCI && X86
++	depends on FB && EXPERIMENTAL && PCI && X86 && !VGA_NOPROBE
+ 	select AGP
+ 	select AGP_INTEL
+ 	select FB_MODE_HELPERS
+@@ -1166,7 +1166,7 @@
+ 
+ config FB_SIS
+ 	tristate "SiS/XGI display support"
+-	depends on FB && PCI
++	depends on FB && PCI && !VGA_NOPROBE
+ 	select FB_CFB_FILLRECT
+ 	select FB_CFB_COPYAREA
+ 	select FB_CFB_IMAGEBLIT
+diff -Nur linux-2.6-linus/include/linux/pci_ids.h linux-2.6-geode/include/linux/pci_ids.h
+--- linux-2.6-linus/include/linux/pci_ids.h	2006-07-23 21:03:05.000000000 +0100
++++ linux-2.6-geode/include/linux/pci_ids.h	2006-08-08 16:48:27.000000000 +0100
+@@ -390,7 +390,7 @@
+ #define PCI_DEVICE_ID_NS_CS5535_IDE	0x002d
+ #define PCI_DEVICE_ID_NS_CS5535_AUDIO	0x002e
+ #define PCI_DEVICE_ID_NS_CS5535_USB	0x002f
+-#define PCI_DEVICE_ID_NS_CS5535_VIDEO	0x0030
++#define PCI_DEVICE_ID_NS_GX_VIDEO	0x0030
+ #define PCI_DEVICE_ID_NS_SATURN		0x0035
+ #define PCI_DEVICE_ID_NS_SCx200_BRIDGE	0x0500
+ #define PCI_DEVICE_ID_NS_SCx200_SMI	0x0501
+@@ -403,8 +403,7 @@
+ #define PCI_DEVICE_ID_NS_SC1100_XBUS	0x0515
+ #define PCI_DEVICE_ID_NS_87410		0xd001
+ 
+-#define PCI_DEVICE_ID_NS_CS5535_HOST_BRIDGE  0x0028
+-#define PCI_DEVICE_ID_NS_CS5535_ISA_BRIDGE   0x002b
++#define PCI_DEVICE_ID_NS_GX_HOST_BRIDGE  0x0028
+ 
+ #define PCI_VENDOR_ID_TSENG		0x100c
+ #define PCI_DEVICE_ID_TSENG_W32P_2	0x3202

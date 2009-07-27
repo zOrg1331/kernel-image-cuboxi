@@ -1,0 +1,3040 @@
+From: Jay Fenlason <fenlason@redhat.com>
+Date: Thu, 20 Dec 2007 11:44:21 -0500
+Subject: [misc] firewire: latest upstream
+Message-id: 20071220164421.GA29174@redhat.com
+O-Subject: Re: [PATCH] RHEL-5.2 bz#370421 Upgrade firewire stack to latest upstream
+Bugzilla: 370421
+
+Latest upstream stuff
+
+ include/linux/firewire-cdev.h                       |  312 ++++++-
+ linux-2.6.18.i686/drivers/firewire/fw-card.c        |    6
+ linux-2.6.18.i686/drivers/firewire/fw-cdev.c        |   84 +-
+ linux-2.6.18.i686/drivers/firewire/fw-device.c      |   42 -
+ linux-2.6.18.i686/drivers/firewire/fw-device.h      |    6
+ linux-2.6.18.i686/drivers/firewire/fw-ohci.c        |  264 +++++-
+ linux-2.6.18.i686/drivers/firewire/fw-ohci.h        |    2
+ linux-2.6.18.i686/drivers/firewire/fw-sbp2.c        |  834 ++++++++++++--------
+ linux-2.6.18.i686/drivers/firewire/fw-topology.c    |   38
+ linux-2.6.18.i686/drivers/firewire/fw-topology.h    |   18
+ linux-2.6.18.i686/drivers/firewire/fw-transaction.c |   30
+ linux-2.6.18.i686/drivers/firewire/fw-transaction.h |   24
+ 12 files changed, 1146 insertions(+), 514 deletions(-)
+
+diff --git a/drivers/firewire/fw-card.c b/drivers/firewire/fw-card.c
+index bed425f..23218b0 100644
+--- a/drivers/firewire/fw-card.c
++++ b/drivers/firewire/fw-card.c
+@@ -569,9 +569,11 @@ fw_core_remove_card(struct fw_card *card)
+ 	/* Set up the dummy driver. */
+ 	card->driver = &dummy_driver;
+ 
+-	fw_flush_transactions(card);
+-
+ 	fw_destroy_nodes(card);
++	flush_scheduled_work();
++
++	fw_flush_transactions(card);
++	del_timer_sync(&card->flush_timer);
+ 
+ 	fw_card_put(card);
+ }
+diff --git a/drivers/firewire/fw-cdev.c b/drivers/firewire/fw-cdev.c
+index df59949..bdbc2d5 100644
+--- a/drivers/firewire/fw-cdev.c
++++ b/drivers/firewire/fw-cdev.c
+@@ -23,20 +23,19 @@
+ #include <linux/device.h>
+ #include <linux/vmalloc.h>
+ #include <linux/poll.h>
++#include <linux/preempt.h>
++#include <linux/time.h>
+ #include <linux/delay.h>
+ #include <linux/mm.h>
+ #include <linux/idr.h>
+ #include <linux/compat.h>
+ #include <linux/firewire-cdev.h>
++#include <asm/system.h>
+ #include <asm/uaccess.h>
+ #include "fw-transaction.h"
+ #include "fw-topology.h"
+ #include "fw-device.h"
+ 
+-/*
+- * dequeue_event() just kfree()'s the event, so the event has to be
+- * the first field in the struct.
+- */
+ 
+ struct client;
+ struct client_resource {
+@@ -45,6 +44,11 @@ struct client_resource {
+ 	u32 handle;
+ };
+ 
++/*
++ * dequeue_event() just kfree()'s the event, so the event has to be
++ * the first field in the struct.
++ */
++
+ struct event {
+ 	struct { void *data; size_t size; } v[2];
+ 	struct list_head link;
+@@ -138,11 +142,10 @@ static void queue_event(struct client *client, struct event *event,
+ 	event->v[1].size = size1;
+ 
+ 	spin_lock_irqsave(&client->lock, flags);
+-
+ 	list_add_tail(&event->link, &client->event_list);
+-	wake_up_interruptible(&client->wait);
+-
+ 	spin_unlock_irqrestore(&client->lock, flags);
++
++	wake_up_interruptible(&client->wait);
+ }
+ 
+ static int
+@@ -363,7 +366,7 @@ complete_transaction(struct fw_card *card, int rcode,
+ 		    response->response.data, response->response.length);
+ }
+ 
+-static ssize_t ioctl_send_request(struct client *client, void *buffer)
++static int ioctl_send_request(struct client *client, void *buffer)
+ {
+ 	struct fw_device *device = client->device;
+ 	struct fw_cdev_send_request *request = buffer;
+@@ -395,7 +398,7 @@ static ssize_t ioctl_send_request(struct client *client, void *buffer)
+ 			request->tcode & 0x1f,
+ 			device->node->node_id,
+ 			request->generation,
+-			device->node->max_speed,
++			device->max_speed,
+ 			request->offset,
+ 			response->response.data, request->length,
+ 			complete_transaction, response);
+@@ -619,25 +622,25 @@ iso_callback(struct fw_iso_context *context, u32 cycle,
+ 	     size_t header_length, void *header, void *data)
+ {
+ 	struct client *client = data;
+-	struct iso_interrupt *interrupt;
++	struct iso_interrupt *irq;
+ 
+-	interrupt = kzalloc(sizeof(*interrupt) + header_length, GFP_ATOMIC);
+-	if (interrupt == NULL)
++	irq = kzalloc(sizeof(*irq) + header_length, GFP_ATOMIC);
++	if (irq == NULL)
+ 		return;
+ 
+-	interrupt->interrupt.type      = FW_CDEV_EVENT_ISO_INTERRUPT;
+-	interrupt->interrupt.closure   = client->iso_closure;
+-	interrupt->interrupt.cycle     = cycle;
+-	interrupt->interrupt.header_length = header_length;
+-	memcpy(interrupt->interrupt.header, header, header_length);
+-	queue_event(client, &interrupt->event,
+-		    &interrupt->interrupt,
+-		    sizeof(interrupt->interrupt) + header_length, NULL, 0);
++	irq->interrupt.type      = FW_CDEV_EVENT_ISO_INTERRUPT;
++	irq->interrupt.closure   = client->iso_closure;
++	irq->interrupt.cycle     = cycle;
++	irq->interrupt.header_length = header_length;
++	memcpy(irq->interrupt.header, header, header_length);
++	queue_event(client, &irq->event, &irq->interrupt,
++		    sizeof(irq->interrupt) + header_length, NULL, 0);
+ }
+ 
+ static int ioctl_create_iso_context(struct client *client, void *buffer)
+ {
+ 	struct fw_cdev_create_iso_context *request = buffer;
++	struct fw_iso_context *context;
+ 
+ 	if (request->channel > 63)
+ 		return -EINVAL;
+@@ -659,16 +662,17 @@ static int ioctl_create_iso_context(struct client *client, void *buffer)
+ 		return -EINVAL;
+ 	}
+ 
+-	client->iso_closure = request->closure;
+-	client->iso_context = fw_iso_context_create(client->device->card,
++	context = fw_iso_context_create(client->device->card,
+ 						    request->type,
+ 						    request->channel,
+ 						    request->speed,
+ 						    request->header_size,
+ 						    iso_callback, client);
+-	if (IS_ERR(client->iso_context))
+-		return PTR_ERR(client->iso_context);
++	if (IS_ERR(context))
++		return PTR_ERR(context);
+ 
++	client->iso_closure = request->closure;
++	client->iso_context = context;
+ 	/* We only support one context at this time. */
+ 	request->handle = 0;
+ 
+@@ -717,28 +721,29 @@ static int ioctl_queue_iso(struct client *client, void *buffer)
+ 		buffer_end = 0;
+ 	}
+ 
+-	if (!access_ok(VERIFY_READ, request->packets, request->size))
++	p = (struct fw_cdev_iso_packet __user *)u64_to_uptr(request->packets);
++
++	if (!access_ok(VERIFY_READ, p, request->size))
+ 		return -EFAULT;
+ 
+-	p = (struct fw_cdev_iso_packet __user *)u64_to_uptr(request->packets);
+ 	end = (void __user *)p + request->size;
+ 	count = 0;
+ 	while (p < end) {
+ 		if (get_user(control, &p->control))
+ 			return -EFAULT;
+-
+ 		u.packet.payload_length = GET_PAYLOAD_LENGTH(control);
+ 		u.packet.interrupt = GET_INTERRUPT(control);
+ 		u.packet.skip = GET_SKIP(control);
+ 		u.packet.tag = GET_TAG(control);
+ 		u.packet.sy = GET_SY(control);
+ 		u.packet.header_length = GET_HEADER_LENGTH(control);
++
+ 		if (ctx->type == FW_ISO_CONTEXT_TRANSMIT) {
+ 			header_length = u.packet.header_length;
+ 		} else {
+ 			/*
+ 			 * We require that header_length is a multiple of
+-			 * the fixed header size, ctx->header_size
++			 * the fixed header size, ctx->header_size.
+ 			 */
+ 			if (ctx->header_size == 0) {
+ 				if (u.packet.header_length > 0)
+@@ -806,6 +811,28 @@ static int ioctl_stop_iso(struct client *client, void *buffer)
+ 	return fw_iso_context_stop(client->iso_context);
+ }
+ 
++static int ioctl_get_cycle_timer(struct client *client, void *buffer)
++{
++	struct fw_cdev_get_cycle_timer *request = buffer;
++	struct fw_card *card = client->device->card;
++	unsigned long long bus_time;
++	struct timeval tv;
++	unsigned long flags;
++
++	preempt_disable();
++	local_irq_save(flags);
++
++	bus_time = card->driver->get_bus_time(card);
++	do_gettimeofday(&tv);
++
++	local_irq_restore(flags);
++	preempt_enable();
++
++	request->local_time = tv.tv_sec * 1000000ULL + tv.tv_usec;
++	request->cycle_timer = bus_time & 0xffffffff;
++	return 0;
++}
++
+ static int (* const ioctl_handlers[])(struct client *client, void *buffer) = {
+ 	ioctl_get_info,
+ 	ioctl_send_request,
+@@ -819,6 +846,7 @@ static int (* const ioctl_handlers[])(struct client *client, void *buffer) = {
+ 	ioctl_queue_iso,
+ 	ioctl_start_iso,
+ 	ioctl_stop_iso,
++	ioctl_get_cycle_timer,
+ };
+ 
+ static int
+diff --git a/drivers/firewire/fw-device.c b/drivers/firewire/fw-device.c
+index c385f47..0711c42 100644
+--- a/drivers/firewire/fw-device.c
++++ b/drivers/firewire/fw-device.c
+@@ -400,8 +400,7 @@ static int read_rom(struct fw_device *device, int index, u32 * data)
+ 
+ 	offset = 0xfffff0000400ULL + index * 4;
+ 	fw_send_request(device->card, &t, TCODE_READ_QUADLET_REQUEST,
+-			device->node_id,
+-			device->generation, SCODE_100,
++			device->node_id, device->generation, device->max_speed,
+ 			offset, NULL, 4, complete_transaction, &callback_data);
+ 
+ 	wait_for_completion(&callback_data.done);
+@@ -417,6 +416,8 @@ static int read_bus_info_block(struct fw_device *device)
+ 	u32 stack[16], sp, key;
+ 	int i, end, length;
+ 
++	device->max_speed = SCODE_100;
++
+ 	/* First read the bus info block. */
+ 	for (i = 0; i < 5; i++) {
+ 		if (read_rom(device, i, &rom[i]) != RCODE_COMPLETE)
+@@ -433,6 +434,33 @@ static int read_bus_info_block(struct fw_device *device)
+ 			return -1;
+ 	}
+ 
++	device->max_speed = device->node->max_speed;
++
++	/*
++	 * Determine the speed of
++	 *   - devices with link speed less than PHY speed,
++	 *   - devices with 1394b PHY (unless only connected to 1394a PHYs),
++	 *   - all devices if there are 1394b repeaters.
++	 * Note, we cannot use the bus info block's link_spd as starting point
++	 * because some buggy firmwares set it lower than necessary and because
++	 * 1394-1995 nodes do not have the field.
++	 */
++	if ((rom[2] & 0x7) < device->max_speed ||
++	    device->max_speed == SCODE_BETA ||
++	    device->card->beta_repeaters_present) {
++		u32 dummy;
++
++		/* for S1600 and S3200 */
++		if (device->max_speed == SCODE_BETA)
++			device->max_speed = device->card->link_speed;
++
++		while (device->max_speed > SCODE_100) {
++			if (read_rom(device, 0, &dummy) == RCODE_COMPLETE)
++				break;
++			device->max_speed--;
++		}
++	}
++
+ 	/*
+ 	 * Now parse the config rom.  The config rom is a recursive
+ 	 * directory structure so we parse it using a stack of
+@@ -672,8 +700,10 @@ static void fw_device_init(void *w)
+ 		    FW_DEVICE_RUNNING) == FW_DEVICE_SHUTDOWN)
+ 		fw_device_shutdown(&device->work);
+ 	else
+-		fw_notify("created new fw device %s (%d config rom retries)\n",
+-			  device->device.bus_id, device->config_rom_retries);
++		fw_notify("created new fw device %s "
++			  " (%d config rom retries, S%d00)\n",
++			  device->device.bus_id, device->config_rom_retries,
++			  1 << device->max_speed);
+ 
+ 	/*
+ 	 * Reschedule the IRM work if we just finished reading the
+diff --git a/drivers/firewire/fw-device.h b/drivers/firewire/fw-device.h
+index bd2604a..9f6da87 100644
+--- a/drivers/firewire/fw-device.h
++++ b/drivers/firewire/fw-device.h
+@@ -40,6 +40,7 @@ struct fw_device {
+ 	struct fw_node *node;
+ 	int node_id;
+ 	int generation;
++	unsigned max_speed;
+ 	struct fw_card *card;
+ 	struct device device;
+ 	struct list_head link;
+@@ -101,11 +102,6 @@ fw_unit(struct device *dev)
+ #define CSR_INSTANCE		0x18
+ #define CSR_DIRECTORY_ID	0x20
+ 
+-#define SBP2_COMMAND_SET_SPECIFIER	0x38
+-#define SBP2_COMMAND_SET		0x39
+-#define SBP2_COMMAND_SET_REVISION	0x3b
+-#define SBP2_FIRMWARE_REVISION		0x3c
+-
+ struct fw_csr_iterator {
+ 	u32 *p;
+ 	u32 *end;
+diff --git a/drivers/firewire/fw-ohci.c b/drivers/firewire/fw-ohci.c
+index 06eb859..129840b 100644
+--- a/drivers/firewire/fw-ohci.c
++++ b/drivers/firewire/fw-ohci.c
+@@ -17,21 +17,27 @@
+  * Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ 
+-#include <linux/kernel.h>
+-#include <linux/module.h>
+-#include <linux/init.h>
+-#include <linux/interrupt.h>
+-#include <linux/pci.h>
++
++
++
++
++#include <linux/compiler.h>
+ #include <linux/delay.h>
+-#include <linux/poll.h>
+ #include <linux/dma-mapping.h>
++#include <linux/gfp.h>
++#include <linux/init.h>
++#include <linux/interrupt.h>
++#include <linux/kernel.h>
+ #include <linux/mm.h>
++#include <linux/module.h>
++#include <linux/pci.h>
++#include <linux/spinlock.h>
+ 
+-#include <asm/uaccess.h>
+-#include <asm/semaphore.h>
++#include <asm/page.h>
++#include <asm/system.h>
+ 
+-#include "fw-transaction.h"
+ #include "fw-ohci.h"
++#include "fw-transaction.h"
+ 
+ #define DESCRIPTOR_OUTPUT_MORE		0
+ #define DESCRIPTOR_OUTPUT_LAST		(1 << 12)
+@@ -223,6 +229,7 @@ ohci_update_phy_reg(struct fw_card *card, int addr,
+ 	u32 val, old;
+ 
+ 	reg_write(ohci, OHCI1394_PhyControl, OHCI1394_PhyControl_Read(addr));
++	flush_writes(ohci);
+ 	msleep(2);
+ 	val = reg_read(ohci, OHCI1394_PhyControl);
+ 	if ((val & OHCI1394_PhyControl_ReadDone) == 0) {
+@@ -371,7 +378,7 @@ static void ar_context_tasklet(unsigned long data)
+ 
+ 		offset = offsetof(struct ar_buffer, data);
+ 		dma_unmap_single(ohci->card.device,
+-				 ab->descriptor.data_address - offset,
++			 le32_to_cpu(ab->descriptor.data_address) - offset,
+ 				 PAGE_SIZE, DMA_BIDIRECTIONAL);
+ 
+ 		buffer = ab;
+@@ -425,13 +432,28 @@ static void ar_context_run(struct ar_context *ctx)
+ 	size_t offset;
+ 
+ 	offset = offsetof(struct ar_buffer, data);
+-	ab_bus = ab->descriptor.data_address - offset;
++	ab_bus = le32_to_cpu(ab->descriptor.data_address) - offset;
+ 
+ 	reg_write(ctx->ohci, COMMAND_PTR(ctx->regs), ab_bus | 1);
+ 	reg_write(ctx->ohci, CONTROL_SET(ctx->regs), CONTEXT_RUN);
+ 	flush_writes(ctx->ohci);
+ }
+ 
++static struct descriptor *
++find_branch_descriptor(struct descriptor *d, int z)
++{
++	int b, key;
++
++	b   = (le16_to_cpu(d->control) & DESCRIPTOR_BRANCH_ALWAYS) >> 2;
++	key = (le16_to_cpu(d->control) & DESCRIPTOR_KEY_IMMEDIATE) >> 8;
++
++	/* figure out which descriptor the branch address goes in */
++	if (z == 2 && (b == 3 || key == 2))
++		return d;
++	else
++		return d + z - 1;
++}
++
+ static void context_tasklet(unsigned long data)
+ {
+ 	struct context *ctx = (struct context *) data;
+@@ -450,7 +472,7 @@ static void context_tasklet(unsigned long data)
+ 		address = le32_to_cpu(last->branch_address);
+ 		z = address & 0xf;
+ 		d = ctx->buffer + (address - ctx->buffer_bus) / sizeof(*d);
+-		last = (z == 2) ? d : d + z - 1;
++		last = find_branch_descriptor(d, z);
+ 
+ 		if (!ctx->callback(ctx, d, last))
+ 			break;
+@@ -561,7 +583,7 @@ static void context_append(struct context *ctx,
+ 
+ 	ctx->head_descriptor = d + z + extra;
+ 	ctx->prev_descriptor->branch_address = cpu_to_le32(d_bus | z);
+-	ctx->prev_descriptor = z == 2 ? d : d + z - 1;
++	ctx->prev_descriptor = find_branch_descriptor(d, z);
+ 
+ 	dma_sync_single_for_device(ctx->ohci->card.device, ctx->buffer_bus,
+ 				   ctx->buffer_size, DMA_TO_DEVICE);
+@@ -584,7 +606,7 @@ static void context_stop(struct context *ctx)
+ 			break;
+ 
+ 		fw_notify("context_stop: still active (0x%08x)\n", reg);
+-		msleep(1);
++		mdelay(1);
+ 	}
+ }
+ 
+@@ -617,10 +639,12 @@ at_context_queue_packet(struct context *ctx, struct fw_packet *packet)
+ 	d[0].control   = cpu_to_le16(DESCRIPTOR_KEY_IMMEDIATE);
+ 	d[0].res_count = cpu_to_le16(packet->timestamp);
+ 
+-	/* The DMA format for asyncronous link packets is different
++	/*
++	 * The DMA format for asyncronous link packets is different
+ 	 * from the IEEE1394 layout, so shift the fields around
+ 	 * accordingly.  If header_length is 8, it's a PHY packet, to
+-	 * which we need to prepend an extra quadlet. */
++	 * which we need to prepend an extra quadlet.
++	 */
+ 
+ 	header = (__le32 *) &d[1];
+ 	if (packet->header_length > 8) {
+@@ -648,7 +672,7 @@ at_context_queue_packet(struct context *ctx, struct fw_packet *packet)
+ 	driver_data = (struct driver_data *) &d[3];
+ 	driver_data->packet = packet;
+ 	packet->driver_data = driver_data;
+-	
++
+ 	if (packet->payload_length > 0) {
+ 		payload_bus =
+ 			dma_map_single(ohci->card.device, packet->payload,
+@@ -673,6 +697,9 @@ at_context_queue_packet(struct context *ctx, struct fw_packet *packet)
+ 
+ 	/* FIXME: Document how the locking works. */
+ 	if (ohci->generation != packet->generation) {
++		if (packet->payload_length > 0)
++			dma_unmap_single(ohci->card.device, payload_bus,
++					packet->payload_length, DMA_TO_DEVICE);
+ 		packet->ack = RCODE_GENERATION;
+ 		return -1;
+ 	}
+@@ -893,7 +920,7 @@ at_context_transmit(struct context *ctx, struct fw_packet *packet)
+ 
+ 	if (retval < 0)
+ 		packet->callback(packet, &ctx->ohci->card, packet->ack);
+-	
++
+ }
+ 
+ static void bus_reset_tasklet(unsigned long data)
+@@ -902,13 +929,20 @@ static void bus_reset_tasklet(unsigned long data)
+ 	int self_id_count, i, j, reg;
+ 	int generation, new_generation;
+ 	unsigned long flags;
++	void *free_rom = NULL;
++	dma_addr_t free_rom_bus = 0;
+ 
+ 	reg = reg_read(ohci, OHCI1394_NodeID);
+ 	if (!(reg & OHCI1394_NodeID_idValid)) {
+-		fw_error("node ID not valid, new bus reset in progress\n");
++		fw_notify("node ID not valid, new bus reset in progress\n");
+ 		return;
+ 	}
+-	ohci->node_id = reg & 0xffff;
++	if ((reg & OHCI1394_NodeID_nodeNumber) == 63) {
++		fw_notify("malconfigured bus\n");
++			return;
++	}
++	ohci->node_id = reg & (OHCI1394_NodeID_busNumber |
++			       OHCI1394_NodeID_nodeNumber);
+ 
+ 	/*
+ 	 * The count in the SelfIDCount register is the number of
+@@ -919,12 +953,14 @@ static void bus_reset_tasklet(unsigned long data)
+ 
+ 	self_id_count = (reg_read(ohci, OHCI1394_SelfIDCount) >> 3) & 0x3ff;
+ 	generation = (le32_to_cpu(ohci->self_id_cpu[0]) >> 16) & 0xff;
++	rmb();
+ 
+ 	for (i = 1, j = 0; j < self_id_count; i += 2, j++) {
+ 		if (ohci->self_id_cpu[i] != ~ohci->self_id_cpu[i + 1])
+ 			fw_error("inconsistent self IDs\n");
+ 		ohci->self_id_buffer[j] = le32_to_cpu(ohci->self_id_cpu[i]);
+ 	}
++	rmb();
+ 
+ 	/*
+ 	 * Check the consistency of the self IDs we just read.  The
+@@ -965,10 +1001,10 @@ static void bus_reset_tasklet(unsigned long data)
+ 	 */
+ 
+ 	if (ohci->next_config_rom != NULL) {
+-		if (ohci->next_config_rom != ohci->config_rom)
+-			dma_free_coherent(ohci->card.device, CONFIG_ROM_SIZE,
+-					  ohci->config_rom,
+-					  ohci->config_rom_bus);
++		if (ohci->next_config_rom != ohci->config_rom) {
++			free_rom      = ohci->config_rom;
++			free_rom_bus  = ohci->config_rom_bus;
++		}
+ 		ohci->config_rom      = ohci->next_config_rom;
+ 		ohci->config_rom_bus  = ohci->next_config_rom_bus;
+ 		ohci->next_config_rom = NULL;
+@@ -987,6 +1023,9 @@ static void bus_reset_tasklet(unsigned long data)
+ 
+ 	spin_unlock_irqrestore(&ohci->lock, flags);
+ 
++	if (free_rom)
++		dma_free_coherent(ohci->card.device, CONFIG_ROM_SIZE,
++				  free_rom, free_rom_bus);
+ 	fw_core_handle_bus_reset(&ohci->card, ohci->node_id, generation,
+ 				 self_id_count, ohci->self_id_buffer);
+ }
+@@ -1037,6 +1076,9 @@ static irqreturn_t irq_handler(int irq, void *data, struct pt_regs *unused)
+ 		iso_event &= ~(1 << i);
+ 	}
+ 
++	if (unlikely(event & OHCI1394_postedWriteErr))
++		fw_error("PCI posted write error\n");
++
+ 	if (event & OHCI1394_cycle64Seconds) {
+ 		cycle_time = reg_read(ohci, OHCI1394_IsochronousCycleTimer);
+ 		if ((cycle_time & 0x80000000) == 0)
+@@ -1110,8 +1152,8 @@ static int ohci_enable(struct fw_card *card, u32 *config_rom, size_t length)
+ 		  OHCI1394_RQPkt | OHCI1394_RSPkt |
+ 		  OHCI1394_reqTxComplete | OHCI1394_respTxComplete |
+ 		  OHCI1394_isochRx | OHCI1394_isochTx |
+-		  OHCI1394_masterIntEnable |
+-		  OHCI1394_cycle64Seconds);
++		  OHCI1394_postedWriteErr | OHCI1394_cycle64Seconds |
++		  OHCI1394_masterIntEnable);
+ 
+ 	/* Activate link_on bit and contender bit in our self ID packets.*/
+ 	if (ohci_update_phy_reg(card, 4, 0,
+@@ -1194,7 +1236,7 @@ ohci_set_config_rom(struct fw_card *card, u32 *config_rom, size_t length)
+ {
+ 	struct fw_ohci *ohci;
+ 	unsigned long flags;
+-	int retval = 0;
++	int retval = -EBUSY;
+ 	__be32 *next_config_rom;
+ 	dma_addr_t next_config_rom_bus;
+ 
+@@ -1248,10 +1290,7 @@ ohci_set_config_rom(struct fw_card *card, u32 *config_rom, size_t length)
+ 
+ 		reg_write(ohci, OHCI1394_ConfigROMmap,
+ 			  ohci->next_config_rom_bus);
+-	} else {
+-		dma_free_coherent(ohci->card.device, CONFIG_ROM_SIZE,
+-				  next_config_rom, next_config_rom_bus);
+-		retval = -EBUSY;
++		retval = 0;
+ 	}
+ 
+ 	spin_unlock_irqrestore(&ohci->lock, flags);
+@@ -1265,7 +1304,9 @@ ohci_set_config_rom(struct fw_card *card, u32 *config_rom, size_t length)
+ 	 */
+ 	if (retval == 0)
+ 		fw_core_initiate_bus_reset(&ohci->card, 1);
+-
++	else
++		dma_free_coherent(ohci->card.device, CONFIG_ROM_SIZE,
++				  next_config_rom, next_config_rom_bus);
+ 	return retval;
+ }
+ 
+@@ -1326,7 +1367,7 @@ ohci_enable_phys_dma(struct fw_card *card, int node_id, int generation)
+ 	}
+ 
+ 	/*
+-	 * NOTE, if the node ID contains a non-local bus ID, physical DMA is
++	 * Note, if the node ID contains a non-local bus ID, physical DMA is
+ 	 * enabled for _all_ nodes on remote buses.
+ 	 */
+ 
+@@ -1405,6 +1446,57 @@ static int handle_ir_dualbuffer_packet(struct context *context,
+ 	return 1;
+ }
+ 
++static int handle_ir_packet_per_buffer(struct context *context,
++				       struct descriptor *d,
++				       struct descriptor *last)
++{
++	struct iso_context *ctx =
++		container_of(context, struct iso_context, context);
++	struct descriptor *pd = d + 1;
++	__le32 *ir_header;
++	size_t header_length;
++	void *p, *end;
++	int i, z;
++
++	if (pd->res_count == pd->req_count)
++		/* Descriptor(s) not done yet, stop iteration */
++		return 0;
++
++	header_length = le16_to_cpu(d->req_count);
++
++	i   = ctx->header_length;
++	z   = le32_to_cpu(pd->branch_address) & 0xf;
++	p   = d + z;
++	end = p + header_length;
++
++	while (p < end && i + ctx->base.header_size <= PAGE_SIZE) {
++		/*
++		 * The iso header is byteswapped to little endian by
++		 * the controller, but the remaining header quadlets
++		 * are big endian.  We want to present all the headers
++		 * as big endian, so we have to swap the first quadlet.
++		 */
++		*(u32 *) (ctx->header + i) = __swab32(*(u32 *) (p + 4));
++		memcpy(ctx->header + i + 4, p + 8, ctx->base.header_size - 4);
++		i += ctx->base.header_size;
++		p += ctx->base.header_size + 4;
++	}
++
++	ctx->header_length = i;
++
++	if (le16_to_cpu(pd->control) & DESCRIPTOR_IRQ_ALWAYS) {
++		ir_header = (__le32 *) (d + z);
++		ctx->base.callback(&ctx->base,
++				   le32_to_cpu(ir_header[0]) & 0xffff,
++				   ctx->header_length, ctx->header,
++				   ctx->base.callback_data);
++		ctx->header_length = 0;
++	}
++
++
++	return 1;
++}
++
+ static int handle_it_packet(struct context *context,
+ 			    struct descriptor *d,
+ 			    struct descriptor *last)
+@@ -1440,14 +1532,12 @@ ohci_allocate_iso_context(struct fw_card *card, int type, size_t header_size)
+ 	} else {
+ 		mask = &ohci->ir_context_mask;
+ 		list = ohci->ir_context_list;
+-		callback = handle_ir_dualbuffer_packet;
++		if (ohci->version >= OHCI_VERSION_1_1)
++			callback = handle_ir_dualbuffer_packet;
++		else
++			callback = handle_ir_packet_per_buffer;
+ 	}
+ 
+-	/* FIXME: We need a fallback for pre 1.1 OHCI. */
+-	if (callback == handle_ir_dualbuffer_packet &&
+-	    ohci->version < OHCI_VERSION_1_1)
+-		return ERR_PTR(-EINVAL);
+-
+ 	spin_lock_irqsave(&ohci->lock, flags);
+ 	index = ffs(*mask) - 1;
+ 	if (index >= 0)
+@@ -1506,7 +1596,9 @@ static int ohci_start_iso(struct fw_iso_context *base,
+ 		context_run(&ctx->context, match);
+ 	} else {
+ 		index = ctx - ohci->ir_context_list;
+-		control = IR_CONTEXT_DUAL_BUFFER_MODE | IR_CONTEXT_ISOCH_HEADER;
++		control = IR_CONTEXT_ISOCH_HEADER;
++		if (ohci->version >= OHCI_VERSION_1_1)
++			control |= IR_CONTEXT_DUAL_BUFFER_MODE;
+ 		match = (tags << 28) | (sync << 8) | ctx->base.channel;
+ 		if (cycle >= 0) {
+ 			match |= (cycle & 0x07fff) << 12;
+@@ -1712,7 +1804,6 @@ ohci_queue_iso_receive_dualbuffer(struct fw_iso_context *base,
+ 	offset   = payload & ~PAGE_MASK;
+ 	rest     = p->payload_length;
+ 
+-	/* FIXME: OHCI 1.0 doesn't support dual buffer receive */
+ 	/* FIXME: make packet-per-buffer/dual-buffer a context option */
+ 	while (rest > 0) {
+ 		d = context_get_descriptors(&ctx->context,
+@@ -1751,6 +1842,81 @@ ohci_queue_iso_receive_dualbuffer(struct fw_iso_context *base,
+ }
+ 
+ static int
++ohci_queue_iso_receive_packet_per_buffer(struct fw_iso_context *base,
++					 struct fw_iso_packet *packet,
++					 struct fw_iso_buffer *buffer,
++					 unsigned long payload)
++{
++	struct iso_context *ctx = container_of(base, struct iso_context, base);
++	struct descriptor *d = NULL, *pd = NULL;
++	struct fw_iso_packet *p;
++	dma_addr_t d_bus, page_bus;
++	u32 z, header_z, rest;
++	int i, page, offset, packet_count, header_size;
++
++	if (packet->skip) {
++		d = context_get_descriptors(&ctx->context, 1, &d_bus);
++		if (d == NULL)
++			return -ENOMEM;
++
++		d->control = cpu_to_le16(DESCRIPTOR_STATUS |
++					 DESCRIPTOR_INPUT_LAST |
++					 DESCRIPTOR_BRANCH_ALWAYS |
++					 DESCRIPTOR_WAIT);
++		context_append(&ctx->context, d, 1, 0);
++	}
++
++	/* one descriptor for header, one for payload */
++	/* FIXME: handle cases where we need multiple desc. for payload */
++	z = 2;
++	p = packet;
++
++	/*
++	 * The OHCI controller puts the status word in the
++	 * buffer too, so we need 4 extra bytes per packet.
++	 */
++	packet_count = p->header_length / ctx->base.header_size;
++	header_size  = packet_count * (ctx->base.header_size + 4);
++
++	/* Get header size in number of descriptors. */
++	header_z = DIV_ROUND_UP(header_size, sizeof(*d));
++	page     = payload >> PAGE_SHIFT;
++	offset   = payload & ~PAGE_MASK;
++	rest     = p->payload_length;
++
++	for (i = 0; i < packet_count; i++) {
++		/* d points to the header descriptor */
++		d = context_get_descriptors(&ctx->context,
++					    z + header_z, &d_bus);
++		if (d == NULL)
++			return -ENOMEM;
++
++		d->control      = cpu_to_le16(DESCRIPTOR_INPUT_MORE);
++		d->req_count    = cpu_to_le16(header_size);
++		d->res_count    = d->req_count;
++		d->data_address = cpu_to_le32(d_bus + (z * sizeof(*d)));
++
++		/* pd points to the payload descriptor */
++		pd = d + 1;
++		pd->control = cpu_to_le16(DESCRIPTOR_STATUS |
++					  DESCRIPTOR_INPUT_LAST |
++					  DESCRIPTOR_BRANCH_ALWAYS);
++		if (p->interrupt)
++			pd->control |= cpu_to_le16(DESCRIPTOR_IRQ_ALWAYS);
++
++		pd->req_count = cpu_to_le16(rest);
++		pd->res_count = pd->req_count;
++
++		page_bus = page_private(buffer->pages[page]);
++		pd->data_address = cpu_to_le32(page_bus + offset);
++
++		context_append(&ctx->context, d, z, header_z);
++	}
++
++	return 0;
++}
++
++static int
+ ohci_queue_iso(struct fw_iso_context *base,
+ 	       struct fw_iso_packet *packet,
+ 	       struct fw_iso_buffer *buffer,
+@@ -1764,8 +1930,9 @@ ohci_queue_iso(struct fw_iso_context *base,
+ 		return ohci_queue_iso_receive_dualbuffer(base, packet,
+ 							 buffer, payload);
+ 	else
+-		/* FIXME: Implement fallback for OHCI 1.0 controllers. */
+-		return -EINVAL;
++		return ohci_queue_iso_receive_packet_per_buffer(base, packet,
++								buffer,
++								payload);
+ }
+ 
+ static const struct fw_card_driver ohci_driver = {
+@@ -1805,7 +1972,7 @@ pci_probe(struct pci_dev *dev, const struct pci_device_id *ent)
+ 	fw_card_initialize(&ohci->card, &ohci_driver, &dev->dev);
+ 
+ 	err = pci_enable_device(dev);
+-	if (err ) {
++	if (err) {
+ 		fw_error("Failed to enable OHCI hardware.\n");
+ 		goto fail_put_card;
+ 	}
+@@ -1886,7 +2053,6 @@ pci_probe(struct pci_dev *dev, const struct pci_device_id *ent)
+ 	ohci->version = reg_read(ohci, OHCI1394_Version) & 0x00ff00ff;
+ 	fw_notify("Added fw-ohci device %s, OHCI version %x.%x\n",
+ 		  dev->dev.bus_id, ohci->version >> 16, ohci->version & 0xff);
+-
+ 	return 0;
+ 
+  fail_self_id:
+@@ -1944,14 +2110,12 @@ static int pci_suspend(struct pci_dev *pdev, pm_message_t state)
+ 	free_irq(pdev->irq, ohci);
+ 	err = pci_save_state(pdev);
+ 	if (err) {
+-		fw_error("pci_save_state failed with %d\n", err);
++		fw_error("pci_save_state failed\n");
+ 		return err;
+ 	}
+ 	err = pci_set_power_state(pdev, pci_choose_state(pdev, state));
+-	if (err) {
++	if (err)
+ 		fw_error("pci_set_power_state failed with %d\n", err);
+-		return err;
+-	}
+ 
+ 	return 0;
+ }
+@@ -1965,7 +2129,7 @@ static int pci_resume(struct pci_dev *pdev)
+ 	pci_restore_state(pdev);
+ 	err = pci_enable_device(pdev);
+ 	if (err) {
+-		fw_error("pci_enable_device failed with %d\n", err);
++		fw_error("pci_enable_device failed\n");
+ 		return err;
+ 	}
+ 
+diff --git a/drivers/firewire/fw-ohci.h b/drivers/firewire/fw-ohci.h
+index fa15706..dec4f04 100644
+--- a/drivers/firewire/fw-ohci.h
++++ b/drivers/firewire/fw-ohci.h
+@@ -59,6 +59,8 @@
+ #define   OHCI1394_LinkControl_cycleSource	(1 << 22)
+ #define OHCI1394_NodeID                       0x0E8
+ #define   OHCI1394_NodeID_idValid             0x80000000
++#define   OHCI1394_NodeID_nodeNumber          0x0000003f
++#define   OHCI1394_NodeID_busNumber           0x0000ffc0
+ #define OHCI1394_PhyControl                   0x0EC
+ #define   OHCI1394_PhyControl_Read(addr)	(((addr) << 8) | 0x00008000)
+ #define   OHCI1394_PhyControl_ReadDone		0x80000000
+diff --git a/drivers/firewire/fw-sbp2.c b/drivers/firewire/fw-sbp2.c
+index f97ef20..2706846 100644
+--- a/drivers/firewire/fw-sbp2.c
++++ b/drivers/firewire/fw-sbp2.c
+@@ -18,7 +18,7 @@
+  */
+ 
+ /*
+- * The basic structure of this driver is based the old storage driver,
++ * The basic structure of this driver is based on the old storage driver,
+  * drivers/ieee1394/sbp2.c, originally written by
+  *     James Goodwin <jamesg@filanet.com>
+  * with later contributions and ongoing maintenance from
+@@ -27,7 +27,6 @@
+  * and many others.
+  */
+ 
+-#include <linux/err.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+ #include <linux/moduleparam.h>
+@@ -36,12 +35,13 @@
+ #include <linux/scatterlist.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/blkdev.h>
++#include <linux/string.h>
++#include <linux/stringify.h>
+ #include <linux/timer.h>
+-#include <linux/pci.h>
++#include <linux/workqueue.h>
+ 
+ #include <scsi/scsi.h>
+ #include <scsi/scsi_cmnd.h>
+-#include <scsi/scsi_dbg.h>
+ #include <scsi/scsi_device.h>
+ #include <scsi/scsi_host.h>
+ 
+@@ -61,41 +61,96 @@ module_param_named(exclusive_login, sbp2_param_exclusive_login, bool, 0644);
+ MODULE_PARM_DESC(exclusive_login, "Exclusive login to sbp2 device "
+ 		 "(default = Y, use N for concurrent initiators)");
+ 
++/*
++ * Flags for firmware oddities
++ *
++ * - 128kB max transfer
++ *   Limit transfer size. Necessary for some old bridges.
++ *
++ * - 36 byte inquiry
++ *   When scsi_mod probes the device, let the inquiry command look like that
++ *   from MS Windows.
++ *
++ * - skip mode page 8
++ *   Suppress sending of mode_sense for mode page 8 if the device pretends to
++ *   support the SCSI Primary Block commands instead of Reduced Block Commands.
++ *
++ * - fix capacity
++ *   Tell sd_mod to correct the last sector number reported by read_capacity.
++ *   Avoids access beyond actual disk limits on devices with an off-by-one bug.
++ *   Don't use this with devices which don't have this bug.
++ *
++ * - override internal blacklist
++ *   Instead of adding to the built-in blacklist, use only the workarounds
++ *   specified in the module load parameter.
++ *   Useful if a blacklist entry interfered with a non-broken device.
++ */
++#define SBP2_WORKAROUND_128K_MAX_TRANS	0x1
++#define SBP2_WORKAROUND_INQUIRY_36	0x2
++#define SBP2_WORKAROUND_MODE_SENSE_8	0x4
++#define SBP2_WORKAROUND_FIX_CAPACITY	0x8
++#define SBP2_WORKAROUND_OVERRIDE	0x100
++
++static int sbp2_param_workarounds;
++module_param_named(workarounds, sbp2_param_workarounds, int, 0644);
++MODULE_PARM_DESC(workarounds, "Work around device bugs (default = 0"
++	", 128kB max transfer = " __stringify(SBP2_WORKAROUND_128K_MAX_TRANS)
++	", 36 byte inquiry = "    __stringify(SBP2_WORKAROUND_INQUIRY_36)
++	", skip mode page 8 = "   __stringify(SBP2_WORKAROUND_MODE_SENSE_8)
++	", fix capacity = "       __stringify(SBP2_WORKAROUND_FIX_CAPACITY)
++	", override internal blacklist = " __stringify(SBP2_WORKAROUND_OVERRIDE)
++	", or a combination)");
++
+ /* I don't know why the SCSI stack doesn't define something like this... */
+ typedef void (*scsi_done_fn_t)(struct scsi_cmnd *);
+ 
+ static const char sbp2_driver_name[] = "sbp2";
+ 
+-struct sbp2_device {
+-	struct kref kref;
++/*
++ * We create one struct sbp2_logical_unit per SBP-2 Logical Unit Number Entry
++ * and one struct scsi_device per sbp2_logical_unit.
++ */
++struct sbp2_logical_unit {
++	struct sbp2_target *tgt;
++	struct list_head link;
+ 	struct scsi_device *sdev;
+-	struct fw_unit *unit;
+ 	struct fw_address_handler address_handler;
+ 	struct list_head orb_list;
+-	u64 management_agent_address;
++
+ 	u64 command_block_agent_address;
+-	u32 workarounds;
++	u16 lun;
+ 	int login_id;
+ 
+ 	/*
+-	 * We cache these addresses and only update them once we've
+-	 * logged in or reconnected to the sbp2 device.  That way, any
+-	 * IO to the device will automatically fail and get retried if
+-	 * it happens in a window where the device is not ready to
+-	 * handle it (e.g. after a bus reset but before we reconnect).
++	 * The generation is updated once we've logged in or reconnected
++	 * to the logical unit.  Thus, I/O to the device will automatically
++	 * fail and get retried if it happens in a window where the device
++	 * is not ready, e.g. after a bus reset but before we reconnect.
+ 	 */
+-	int node_id;
+-	int address_high;
+ 	int generation;
+-
+ 	int retries;
+ 	struct work_struct work;
+-	struct Scsi_Host *scsi_host;
++};
++
++/*
++ * We create one struct sbp2_target per IEEE 1212 Unit Directory
++ * and one struct Scsi_Host per sbp2_target.
++ */
++struct sbp2_target {
++	struct kref kref;
++	struct fw_unit *unit;
++
++	u64 management_agent_address;
++	int directory_id;
++	int node_id;
++	int address_high;
++	unsigned workarounds;
++	struct list_head lu_list;
+ };
+ 
+ #define SBP2_MAX_SG_ELEMENT_LENGTH	0xf000
+ #define SBP2_MAX_SECTORS		255	/* Max sectors supported */
+-#define SBP2_ORB_TIMEOUT		2000	/* Timeout in ms */
++#define SBP2_ORB_TIMEOUT		200000	/* Timeout in ms */
+ 
+ #define SBP2_ORB_NULL			0x80000000
+ 
+@@ -103,17 +158,9 @@ struct sbp2_device {
+ #define SBP2_DIRECTION_FROM_MEDIA	0x1
+ 
+ /* Unit directory keys */
+-#define SBP2_COMMAND_SET_SPECIFIER	0x38
+-#define SBP2_COMMAND_SET		0x39
+-#define SBP2_COMMAND_SET_REVISION	0x3b
+-#define SBP2_FIRMWARE_REVISION		0x3c
+-
+-/* Flags for detected oddities and brokeness */
+-#define SBP2_WORKAROUND_128K_MAX_TRANS	0x1
+-#define SBP2_WORKAROUND_INQUIRY_36	0x2
+-#define SBP2_WORKAROUND_MODE_SENSE_8	0x4
+-#define SBP2_WORKAROUND_FIX_CAPACITY	0x8
+-#define SBP2_WORKAROUND_OVERRIDE	0x100
++#define SBP2_CSR_FIRMWARE_REVISION	0x3c
++#define SBP2_CSR_LOGICAL_UNIT_NUMBER	0x14
++#define SBP2_CSR_LOGICAL_UNIT_DIRECTORY	0xd4
+ 
+ /* Management orb opcodes */
+ #define SBP2_LOGIN_REQUEST		0x0
+@@ -161,10 +208,11 @@ struct sbp2_pointer {
+ 
+ struct sbp2_orb {
+ 	struct fw_transaction t;
++	struct kref kref;
+ 	dma_addr_t request_bus;
+ 	int rcode;
+ 	struct sbp2_pointer pointer;
+-	void (*callback) (struct sbp2_orb * orb, struct sbp2_status * status);
++	void (*callback)(struct sbp2_orb * orb, struct sbp2_status * status);
+ 	struct list_head link;
+ };
+ 
+@@ -221,9 +269,9 @@ struct sbp2_command_orb {
+ 	} request;
+ 	struct scsi_cmnd *cmd;
+ 	scsi_done_fn_t done;
+-	struct fw_unit *unit;
++	struct sbp2_logical_unit *lu;
+ 
+-	struct sbp2_pointer page_table[SG_ALL];
++	struct sbp2_pointer page_table[SG_ALL] __attribute__((aligned(8)));
+ 	dma_addr_t page_table_bus;
+ };
+ 
+@@ -282,13 +330,21 @@ static const struct {
+ };
+ 
+ static void
++free_orb(struct kref *kref)
++{
++	struct sbp2_orb *orb = container_of(kref, struct sbp2_orb, kref);
++
++	kfree(orb);
++}
++
++static void
+ sbp2_status_write(struct fw_card *card, struct fw_request *request,
+ 		  int tcode, int destination, int source,
+ 		  int generation, int speed,
+ 		  unsigned long long offset,
+ 		  void *payload, size_t length, void *callback_data)
+ {
+-	struct sbp2_device *sd = callback_data;
++	struct sbp2_logical_unit *lu = callback_data;
+ 	struct sbp2_orb *orb;
+ 	struct sbp2_status status;
+ 	size_t header_size;
+@@ -312,21 +368,23 @@ sbp2_status_write(struct fw_card *card, struct fw_request *request,
+ 
+ 	/* Lookup the orb corresponding to this status write. */
+ 	spin_lock_irqsave(&card->lock, flags);
+-	list_for_each_entry(orb, &sd->orb_list, link) {
++	list_for_each_entry(orb, &lu->orb_list, link) {
+ 		if (STATUS_GET_ORB_HIGH(status) == 0 &&
+-		    STATUS_GET_ORB_LOW(status) == orb->request_bus &&
+-		    orb->rcode == RCODE_COMPLETE) {
++		    STATUS_GET_ORB_LOW(status) == orb->request_bus) {
++			orb->rcode = RCODE_COMPLETE;
+ 			list_del(&orb->link);
+ 			break;
+ 		}
+ 	}
+ 	spin_unlock_irqrestore(&card->lock, flags);
+ 
+-	if (&orb->link != &sd->orb_list)
++	if (&orb->link != &lu->orb_list)
+ 		orb->callback(orb, &status);
+ 	else
+ 		fw_error("status write for unknown orb\n");
+ 
++	kref_put(&orb->kref, free_orb);
++
+ 	fw_send_response(card, request, RCODE_COMPLETE);
+ }
+ 
+@@ -337,21 +395,34 @@ complete_transaction(struct fw_card *card, int rcode,
+ 	struct sbp2_orb *orb = data;
+ 	unsigned long flags;
+ 
+-	orb->rcode = rcode;
+-	if (rcode != RCODE_COMPLETE) {
++	/*
++	 * This is a little tricky.  We can get the status write for
++	 * the orb before we get this callback.  The status write
++	 * handler above will assume the orb pointer transaction was
++	 * successful and set the rcode to RCODE_COMPLETE for the orb.
++	 * So this callback only sets the rcode if it hasn't already
++	 * been set and only does the cleanup if the transaction
++	 * failed and we didn't already get a status write.
++	 */
+ 		spin_lock_irqsave(&card->lock, flags);
++	if (orb->rcode == -1)
++		orb->rcode = rcode;
++	if (orb->rcode != RCODE_COMPLETE) {
+ 		list_del(&orb->link);
+ 		spin_unlock_irqrestore(&card->lock, flags);
+ 		orb->callback(orb, NULL);
++	} else {
++		spin_unlock_irqrestore(&card->lock, flags);
+ 	}
++
++	kref_put(&orb->kref, free_orb);
+ }
+ 
+ static void
+-sbp2_send_orb(struct sbp2_orb *orb, struct fw_unit *unit,
++sbp2_send_orb(struct sbp2_orb *orb, struct sbp2_logical_unit *lu,
+ 	      int node_id, int generation, u64 offset)
+ {
+-	struct fw_device *device = fw_device(unit->device.parent);
+-	struct sbp2_device *sd = unit->device.driver_data;
++	struct fw_device *device = fw_device(lu->tgt->unit->device.parent);
+ 	unsigned long flags;
+ 
+ 	orb->pointer.high = 0;
+@@ -359,20 +430,22 @@ sbp2_send_orb(struct sbp2_orb *orb, struct fw_unit *unit,
+ 	fw_memcpy_to_be32(&orb->pointer, &orb->pointer, sizeof(orb->pointer));
+ 
+ 	spin_lock_irqsave(&device->card->lock, flags);
+-	list_add_tail(&orb->link, &sd->orb_list);
++	list_add_tail(&orb->link, &lu->orb_list);
+ 	spin_unlock_irqrestore(&device->card->lock, flags);
+ 
++	/* Take a ref for the orb list and for the transaction callback. */
++	kref_get(&orb->kref);
++	kref_get(&orb->kref);
++
+ 	fw_send_request(device->card, &orb->t, TCODE_WRITE_BLOCK_REQUEST,
+-			node_id, generation,
+-			device->node->max_speed, offset,
++			node_id, generation, device->max_speed, offset,
+ 			&orb->pointer, sizeof(orb->pointer),
+ 			complete_transaction, orb);
+ }
+ 
+-static int sbp2_cancel_orbs(struct fw_unit *unit)
++static int sbp2_cancel_orbs(struct sbp2_logical_unit *lu)
+ {
+-	struct fw_device *device = fw_device(unit->device.parent);
+-	struct sbp2_device *sd = unit->device.driver_data;
++	struct fw_device *device = fw_device(lu->tgt->unit->device.parent);
+ 	struct sbp2_orb *orb, *next;
+ 	struct list_head list;
+ 	unsigned long flags;
+@@ -380,7 +453,7 @@ static int sbp2_cancel_orbs(struct fw_unit *unit)
+ 
+ 	INIT_LIST_HEAD(&list);
+ 	spin_lock_irqsave(&device->card->lock, flags);
+-	list_splice_init(&sd->orb_list, &list);
++	list_splice_init(&lu->orb_list, &list);
+ 	spin_unlock_irqrestore(&device->card->lock, flags);
+ 
+ 	list_for_each_entry_safe(orb, next, &list, link) {
+@@ -399,7 +472,7 @@ static void
+ complete_management_orb(struct sbp2_orb *base_orb, struct sbp2_status *status)
+ {
+ 	struct sbp2_management_orb *orb =
+-	    (struct sbp2_management_orb *)base_orb;
++	    container_of(base_orb, struct sbp2_management_orb, base);
+ 
+ 	if (status)
+ 		memcpy(&orb->status, status, sizeof(*status));
+@@ -407,11 +480,11 @@ complete_management_orb(struct sbp2_orb *base_orb, struct sbp2_status *status)
+ }
+ 
+ static int
+-sbp2_send_management_orb(struct fw_unit *unit, int node_id, int generation,
+-			 int function, int lun, void *response)
++sbp2_send_management_orb(struct sbp2_logical_unit *lu, int node_id,
++			 int generation, int function, int lun_or_login_id,
++			 void *response)
+ {
+-	struct fw_device *device = fw_device(unit->device.parent);
+-	struct sbp2_device *sd = unit->device.driver_data;
++	struct fw_device *device = fw_device(lu->tgt->unit->device.parent);
+ 	struct sbp2_management_orb *orb;
+ 	int retval = -ENOMEM;
+ 
+@@ -419,22 +492,12 @@ sbp2_send_management_orb(struct fw_unit *unit, int node_id, int generation,
+ 	if (orb == NULL)
+ 		return -ENOMEM;
+ 
+-	/*
+-	 * The sbp2 device is going to send a block read request to
+-	 * read out the request from host memory, so map it for
+-	 * dma.
+-	 */
+-	orb->base.request_bus =
+-		dma_map_single(device->card->device, &orb->request,
+-			       sizeof(orb->request), DMA_TO_DEVICE);
+-	if (dma_mapping_error(orb->base.request_bus))
+-		goto out;
+-
++	kref_init(&orb->base.kref);
+ 	orb->response_bus =
+ 		dma_map_single(device->card->device, &orb->response,
+ 			       sizeof(orb->response), DMA_FROM_DEVICE);
+ 	if (dma_mapping_error(orb->response_bus))
+-		goto out;
++		goto fail_mapping_response;
+ 
+ 	orb->request.response.high    = 0;
+ 	orb->request.response.low     = orb->response_bus;
+@@ -442,18 +505,13 @@ sbp2_send_management_orb(struct fw_unit *unit, int node_id, int generation,
+ 	orb->request.misc =
+ 		MANAGEMENT_ORB_NOTIFY |
+ 		MANAGEMENT_ORB_FUNCTION(function) |
+-		MANAGEMENT_ORB_LUN(lun);
++		MANAGEMENT_ORB_LUN(lun_or_login_id);
+ 	orb->request.length =
+ 		MANAGEMENT_ORB_RESPONSE_LENGTH(sizeof(orb->response));
+ 
+-	orb->request.status_fifo.high = sd->address_handler.offset >> 32;
+-	orb->request.status_fifo.low  = sd->address_handler.offset;
++	orb->request.status_fifo.high = lu->address_handler.offset >> 32;
++	orb->request.status_fifo.low  = lu->address_handler.offset;
+ 
+-	/*
+-	 * FIXME: Yeah, ok this isn't elegant, we hardwire
+-	 * 1 second reconnect time.  The reconnect setting
+-	 * is probably fine
+-	 */
+ 	if (function == SBP2_LOGIN_REQUEST) {
+ 		orb->request.misc |=
+ 			MANAGEMENT_ORB_EXCLUSIVE(sbp2_param_exclusive_login) |
+@@ -465,16 +523,22 @@ sbp2_send_management_orb(struct fw_unit *unit, int node_id, int generation,
+ 	init_completion(&orb->done);
+ 	orb->base.callback = complete_management_orb;
+ 
+-	sbp2_send_orb(&orb->base, unit,
+-		      node_id, generation, sd->management_agent_address);
++	orb->base.request_bus =
++		dma_map_single(device->card->device, &orb->request,
++			       sizeof(orb->request), DMA_TO_DEVICE);
++	if (dma_mapping_error(orb->base.request_bus))
++		goto fail_mapping_request;
++ 
++	sbp2_send_orb(&orb->base, lu, node_id, generation,
++		      lu->tgt->management_agent_address);
+ 
+ 	wait_for_completion_timeout(&orb->done,
+ 				    msecs_to_jiffies(SBP2_ORB_TIMEOUT));
+ 
+ 	retval = -EIO;
+-	if (sbp2_cancel_orbs(unit) == 0) {
++	if (sbp2_cancel_orbs(lu) == 0) {
+ 		/*
+-		 * logout requests frequently get sent to devices that aren't
++		 * Logout requests frequently get sent to devices that aren't
+ 		 * there any more, resulting in extraneous error messages in
+ 		 * the logs.  Unfortunately, this means logout requests that
+ 		 * actually fail don't get logged.
+@@ -508,13 +572,14 @@ sbp2_send_management_orb(struct fw_unit *unit, int node_id, int generation,
+  out:
+ 	dma_unmap_single(device->card->device, orb->base.request_bus,
+ 			 sizeof(orb->request), DMA_TO_DEVICE);
++ fail_mapping_request:
+ 	dma_unmap_single(device->card->device, orb->response_bus,
+ 			 sizeof(orb->response), DMA_FROM_DEVICE);
+-
++ fail_mapping_response:
+ 	if (response)
+ 		fw_memcpy_from_be32(response,
+ 				    orb->response, sizeof(orb->response));
+-	kfree(orb);
++	kref_put(&orb->base.kref, free_orb);
+ 
+ 	return retval;
+ }
+@@ -528,10 +593,9 @@ complete_agent_reset_write(struct fw_card *card, int rcode,
+ 	kfree(t);
+ }
+ 
+-static int sbp2_agent_reset(struct fw_unit *unit)
++static int sbp2_agent_reset(struct sbp2_logical_unit *lu)
+ {
+-	struct fw_device *device = fw_device(unit->device.parent);
+-	struct sbp2_device *sd = unit->device.driver_data;
++	struct fw_device *device = fw_device(lu->tgt->unit->device.parent);
+ 	struct fw_transaction *t;
+ 	static u32 zero;
+ 
+@@ -540,212 +604,330 @@ static int sbp2_agent_reset(struct fw_unit *unit)
+ 		return -ENOMEM;
+ 
+ 	fw_send_request(device->card, t, TCODE_WRITE_QUADLET_REQUEST,
+-			sd->node_id, sd->generation, SCODE_400,
+-			sd->command_block_agent_address + SBP2_AGENT_RESET,
++			lu->tgt->node_id, lu->generation, device->max_speed,
++			lu->command_block_agent_address + SBP2_AGENT_RESET,
+ 			&zero, sizeof(zero), complete_agent_reset_write, t);
+ 
+ 	return 0;
+ }
+ 
++static void sbp2_release_target(struct kref *kref)
++{
++	struct sbp2_target *tgt = container_of(kref, struct sbp2_target, kref);
++	struct sbp2_logical_unit *lu, *next;
++	struct Scsi_Host *shost =
++		container_of((void *)tgt, struct Scsi_Host, hostdata[0]);
++
++	list_for_each_entry_safe(lu, next, &tgt->lu_list, link) {
++		if (lu->sdev)
++			scsi_remove_device(lu->sdev);
++
++		sbp2_send_management_orb(lu, tgt->node_id, lu->generation,
++				SBP2_LOGOUT_REQUEST, lu->login_id, NULL);
++		fw_core_remove_address_handler(&lu->address_handler);
++		list_del(&lu->link);
++		kfree(lu);
++	}
++	scsi_remove_host(shost);
++	fw_notify("released %s\n", tgt->unit->device.bus_id);
++
++	put_device(&tgt->unit->device);
++	scsi_host_put(shost);
++}
++
++static struct workqueue_struct *sbp2_wq;
++
++/*
++ * Always get the target's kref when scheduling work on one its units.
++ * Each workqueue job is responsible to call sbp2_target_put() upon return.
++ */
++static void sbp2_queue_work(struct sbp2_logical_unit *lu, unsigned long delay)
++{
++	if (queue_delayed_work(sbp2_wq, &lu->work, delay))
++		kref_get(&lu->tgt->kref);
++}
++
++static void sbp2_target_put(struct sbp2_target *tgt)
++{
++	kref_put(&tgt->kref, sbp2_release_target);
++}
++
+ static void sbp2_reconnect(void *w);
+-static struct scsi_host_template scsi_driver_template;
+ 
+-static void release_sbp2_device(struct kref *kref)
++/* not exported in 2.6.18, so local copy */
++static int scsilun_to_int(struct scsi_lun *scsilun)
+ {
+-	struct sbp2_device *sd = container_of(kref, struct sbp2_device, kref);
+-	struct Scsi_Host *host =
+-		container_of((void *)sd, struct Scsi_Host, hostdata[0]);
+-
+-	scsi_remove_host(host);
+-	sbp2_send_management_orb(sd->unit, sd->node_id, sd->generation,
+-				 SBP2_LOGOUT_REQUEST, sd->login_id, NULL);
+-	fw_core_remove_address_handler(&sd->address_handler);
+-	fw_notify("removed sbp2 unit %s\n", sd->unit->device.bus_id);
+-	put_device(&sd->unit->device);
+-	scsi_host_put(host);
++	int i;
++	unsigned int lun;
++
++	lun = 0;
++	for (i = 0; i < sizeof(lun); i += 2)
++		lun = lun | (((scsilun->scsi_lun[i] << 8) |
++			      scsilun->scsi_lun[i + 1]) << (i * 8));
++	return lun;
+ }
+ 
+ static void sbp2_login(void *w)
+ {
+ 	struct work_struct *work = w;
+-	struct sbp2_device *sd =
+-		container_of(work, struct sbp2_device, work);
+-	struct Scsi_Host *host =
+-		container_of((void *)sd, struct Scsi_Host, hostdata[0]);
+-	struct fw_unit *unit = sd->unit;
++	struct sbp2_logical_unit *lu =
++		container_of(work, struct sbp2_logical_unit, work);
++	struct Scsi_Host *shost =
++		container_of((void *)lu->tgt, struct Scsi_Host, hostdata[0]);
++	struct scsi_device *sdev;
++	struct scsi_lun eight_bytes_lun;
++	struct fw_unit *unit = lu->tgt->unit;
+ 	struct fw_device *device = fw_device(unit->device.parent);
+ 	struct sbp2_login_response response;
+-	int generation, node_id, local_node_id, lun, retval;
+-
+-	/* FIXME: Make this work for multi-lun devices. */
+-	lun = 0;
++	int generation, node_id, local_node_id;
+ 
+ 	generation    = device->card->generation;
+ 	node_id       = device->node->node_id;
+ 	local_node_id = device->card->local_node->node_id;
+ 
+-	if (sbp2_send_management_orb(unit, node_id, generation,
+-				     SBP2_LOGIN_REQUEST, lun, &response) < 0) {
+-		if (sd->retries++ < 5) {
+-			schedule_delayed_work(&sd->work, DIV_ROUND_UP(HZ, 5));
+-		} else {
+-			fw_error("failed to login to %s\n",
+-				 unit->device.bus_id);
+-			kref_put(&sd->kref, release_sbp2_device);
+-		}
+-		return;
++	if (sbp2_send_management_orb(lu, node_id, generation,
++				SBP2_LOGIN_REQUEST, lu->lun, &response) < 0) {
++		if (lu->retries++ < 5)
++			sbp2_queue_work(lu, DIV_ROUND_UP(HZ, 5));
++		else
++			fw_error("failed to login to %s LUN %04x\n",
++				 unit->device.bus_id, lu->lun);
++		goto out;
+ 	}
+-
+-	sd->generation   = generation;
+-	sd->node_id      = node_id;
+-	sd->address_high = local_node_id << 16;
++	lu->generation   = generation;
++	lu->tgt->node_id      = node_id;
++	lu->tgt->address_high = local_node_id << 16;
+ 
+ 	/* Get command block agent offset and login id. */
+-	sd->command_block_agent_address =
++	lu->command_block_agent_address =
+ 		((u64) (response.command_block_agent.high & 0xffff) << 32) |
+ 		response.command_block_agent.low;
+-	sd->login_id = LOGIN_RESPONSE_GET_LOGIN_ID(response);
++	lu->login_id = LOGIN_RESPONSE_GET_LOGIN_ID(response);
++
++	fw_notify("logged in to %s LUN %04x (%d retries)\n",
++		  unit->device.bus_id, lu->lun, lu->retries);
+ 
+-	fw_notify("logged in to sbp2 unit %s (%d retries)\n",
+-		  unit->device.bus_id, sd->retries);
+ #if 0
+ 	/* FIXME: The linux1394 sbp2 does this last step. */
+ 	sbp2_set_busy_timeout(scsi_id);
+ #endif
+ 
+-	PREPARE_WORK(&sd->work, sbp2_reconnect, &(sd->work));
+-	sbp2_agent_reset(unit);
++	PREPARE_WORK(&lu->work, sbp2_reconnect, &(lu->work));
++	sbp2_agent_reset(lu);
++
++	memset(&eight_bytes_lun, 0, sizeof(eight_bytes_lun));
++	eight_bytes_lun.scsi_lun[0] = (lu->lun >> 8) & 0xff;
++	eight_bytes_lun.scsi_lun[1] = lu->lun & 0xff;
+ 
+-	/* FIXME: Loop over luns here. */
+-	retval = scsi_add_device(host, 0, 0, lun);
+-	if (retval < 0) {
+-		sbp2_send_management_orb(unit, sd->node_id, sd->generation,
+-					 SBP2_LOGOUT_REQUEST, sd->login_id,
+-					 NULL);
++	sdev = __scsi_add_device(shost, 0, 0,
++				 scsilun_to_int(&eight_bytes_lun), lu);
++	if (IS_ERR(sdev)) {
++		sbp2_send_management_orb(lu, node_id, generation,
++				SBP2_LOGOUT_REQUEST, lu->login_id, NULL);
+ 		/*
+ 		 * Set this back to sbp2_login so we fall back and
+ 		 * retry login on bus reset.
+ 		 */
+-		PREPARE_WORK(&sd->work, sbp2_login, &(sd->work));
++		PREPARE_WORK(&lu->work, sbp2_login, &(lu->work));
++	} else {
++		lu->sdev = sdev;
++		scsi_device_put(sdev);
+ 	}
+-	kref_put(&sd->kref, release_sbp2_device);
++ out:
++	sbp2_target_put(lu->tgt);
+ }
+ 
+-static int sbp2_probe(struct device *dev)
++static int sbp2_add_logical_unit(struct sbp2_target *tgt, int lun_entry)
+ {
+-	struct fw_unit *unit = fw_unit(dev);
+-	struct fw_device *device = fw_device(unit->device.parent);
+-	struct sbp2_device *sd;
+-	struct fw_csr_iterator ci;
+-	struct Scsi_Host *host;
+-	int i, key, value, err;
+-	u32 model, firmware_revision;
++	struct sbp2_logical_unit *lu;
+ 
+-	err = -ENOMEM;
+-	host = scsi_host_alloc(&scsi_driver_template, sizeof(*sd));
+-	if (host == NULL)
+-		goto fail;
++	lu = kmalloc(sizeof(*lu), GFP_KERNEL);
++	if (!lu)
++		return -ENOMEM;
+ 
+-	sd = (struct sbp2_device *) host->hostdata;
+-	unit->device.driver_data = sd;
+-	sd->unit = unit;
+-	INIT_LIST_HEAD(&sd->orb_list);
+-	kref_init(&sd->kref);
++	lu->address_handler.length           = 0x100;
++	lu->address_handler.address_callback = sbp2_status_write;
++	lu->address_handler.callback_data    = lu;
+ 
+-	sd->address_handler.length = 0x100;
+-	sd->address_handler.address_callback = sbp2_status_write;
+-	sd->address_handler.callback_data = sd;
++	if (fw_core_add_address_handler(&lu->address_handler,
++					&fw_high_memory_region) < 0) {
++		kfree(lu);
++		return -ENOMEM;
++	}
+ 
+-	err = fw_core_add_address_handler(&sd->address_handler,
+-					&fw_high_memory_region);
+-	if (err < 0)
+-		goto fail_host;
++	lu->tgt  = tgt;
++	lu->sdev = NULL;
++	lu->lun  = lun_entry & 0xffff;
++	lu->retries = 0;
++	INIT_LIST_HEAD(&lu->orb_list);
++	INIT_WORK(&lu->work, sbp2_login, &(lu->work));
+ 
+-	err = fw_device_enable_phys_dma(device);
+-	if (err < 0)
+-		goto fail_address_handler;
++	list_add_tail(&lu->link, &tgt->lu_list);
++	return 0;
++}
+ 
+-	err = scsi_add_host(host, &unit->device);
+-	if (err < 0)
+-		goto fail_address_handler;
++static int sbp2_scan_logical_unit_dir(struct sbp2_target *tgt, u32 *directory)
++{
++	struct fw_csr_iterator ci;
++	int key, value;
+ 
+-	/*
+-	 * Scan unit directory to get management agent address,
+-	 * firmware revison and model.  Initialize firmware_revision
+-	 * and model to values that wont match anything in our table.
+-	 */
+-	firmware_revision = 0xff000000;
+-	model = 0xff000000;
+-	fw_csr_iterator_init(&ci, unit->directory);
++	fw_csr_iterator_init(&ci, directory);
++	while (fw_csr_iterator_next(&ci, &key, &value))
++		if (key == SBP2_CSR_LOGICAL_UNIT_NUMBER &&
++		    sbp2_add_logical_unit(tgt, value) < 0)
++			return -ENOMEM;
++	return 0;
++}
++
++static int sbp2_scan_unit_dir(struct sbp2_target *tgt, u32 *directory,
++			      u32 *model, u32 *firmware_revision)
++{
++	struct fw_csr_iterator ci;
++	int key, value;
++
++	fw_csr_iterator_init(&ci, directory);
+ 	while (fw_csr_iterator_next(&ci, &key, &value)) {
+ 		switch (key) {
++
+ 		case CSR_DEPENDENT_INFO | CSR_OFFSET:
+-			sd->management_agent_address =
++			tgt->management_agent_address =
+ 				0xfffff0000000ULL + 4 * value;
+ 			break;
+-		case SBP2_FIRMWARE_REVISION:
+-			firmware_revision = value;
++
++		case CSR_DIRECTORY_ID:
++			tgt->directory_id = value;
+ 			break;
++
+ 		case CSR_MODEL:
+-			model = value;
++			*model = value;
++			break;
++
++		case SBP2_CSR_FIRMWARE_REVISION:
++			*firmware_revision = value;
++			break;
++
++		case SBP2_CSR_LOGICAL_UNIT_NUMBER:
++			if (sbp2_add_logical_unit(tgt, value) < 0)
++				return -ENOMEM;
++			break;
++
++		case SBP2_CSR_LOGICAL_UNIT_DIRECTORY:
++			if (sbp2_scan_logical_unit_dir(tgt, ci.p + value) < 0)
++				return -ENOMEM;
+ 			break;
+ 		}
+ 	}
++	return 0;
++}
++
++static void sbp2_init_workarounds(struct sbp2_target *tgt, u32 model,
++				  u32 firmware_revision)
++{
++	int i;
++	unsigned w = sbp2_param_workarounds;
++
++	if (w)
++		fw_notify("Please notify linux1394-devel@lists.sourceforge.net "
++			  "if you need the workarounds parameter for %s\n",
++			  tgt->unit->device.bus_id);
++
++	if (w & SBP2_WORKAROUND_OVERRIDE)
++		goto out;
+ 
+ 	for (i = 0; i < ARRAY_SIZE(sbp2_workarounds_table); i++) {
++
+ 		if (sbp2_workarounds_table[i].firmware_revision !=
+ 		    (firmware_revision & 0xffffff00))
+ 			continue;
++
+ 		if (sbp2_workarounds_table[i].model != model &&
+ 		    sbp2_workarounds_table[i].model != ~0)
+ 			continue;
+-		sd->workarounds |= sbp2_workarounds_table[i].workarounds;
++		w |= sbp2_workarounds_table[i].workarounds;
+ 		break;
+ 	}
+ 
+-	if (sd->workarounds)
+-		fw_notify("Workarounds for node %s: 0x%x "
++ out:
++	if (w)
++		fw_notify("Workarounds for %s: 0x%x "
+ 			  "(firmware_revision 0x%06x, model_id 0x%06x)\n",
+-			  unit->device.bus_id,
+-			  sd->workarounds, firmware_revision, model);
++			  tgt->unit->device.bus_id,
++			  w, firmware_revision, model);
++	tgt->workarounds = w;
++}
+ 
+-	get_device(&unit->device);
++static struct scsi_host_template scsi_driver_template;
+ 
+-	/*
+-	 * We schedule work to do the login so we can easily
+-	 * reschedule retries. Always get the ref before scheduling
+-	 * work.
+-	 */
+-	INIT_WORK(&sd->work, sbp2_login,&(sd->work));
+-	if (schedule_delayed_work(&sd->work, 0))
+-		kref_get(&sd->kref);
++static int sbp2_probe(struct device *dev)
++{
++	struct fw_unit *unit = fw_unit(dev);
++	struct fw_device *device = fw_device(unit->device.parent);
++	struct sbp2_target *tgt;
++	struct sbp2_logical_unit *lu;
++	struct Scsi_Host *shost;
++	u32 model, firmware_revision;
++
++	shost = scsi_host_alloc(&scsi_driver_template, sizeof(*tgt));
++	if (shost == NULL)
++		return -ENOMEM;
++
++	tgt = (struct sbp2_target *)shost->hostdata;
++	unit->device.driver_data = tgt;
++	tgt->unit = unit;
++	kref_init(&tgt->kref);
++	INIT_LIST_HEAD(&tgt->lu_list);
++
++	if (fw_device_enable_phys_dma(device) < 0)
++		goto fail_shost_put;
++
++	if (scsi_add_host(shost, &unit->device) < 0)
++		goto fail_shost_put;
++
++	/* Initialize to values that won't match anything in our table. */
++	firmware_revision = 0xff000000;
++	model = 0xff000000;
++
++	/* implicit directory ID */
++	tgt->directory_id = ((unit->directory - device->config_rom) * 4
++			     + CSR_CONFIG_ROM) & 0xffffff;
++
++	if (sbp2_scan_unit_dir(tgt, unit->directory, &model,
++			       &firmware_revision) < 0)
++		goto fail_tgt_put;
++
++	sbp2_init_workarounds(tgt, model, firmware_revision);
++
++	get_device(&unit->device);
+ 
++	/* Do the login in a workqueue so we can easily reschedule retries. */
++	list_for_each_entry(lu, &tgt->lu_list, link)
++		sbp2_queue_work(lu, 0);
+ 	return 0;
+ 
+- fail_address_handler:
+-	fw_core_remove_address_handler(&sd->address_handler);
+- fail_host:
+-	scsi_host_put(host);
+- fail:
+-	return err;
++ fail_tgt_put:
++	sbp2_target_put(tgt);
++	return -ENOMEM;
++
++ fail_shost_put:
++	scsi_host_put(shost);
++	return -ENOMEM;
+ }
+ 
+ static int sbp2_remove(struct device *dev)
+ {
+ 	struct fw_unit *unit = fw_unit(dev);
+-	struct sbp2_device *sd = unit->device.driver_data;
+-
+-	kref_put(&sd->kref, release_sbp2_device);
++	struct sbp2_target *tgt = unit->device.driver_data;
+ 
++	sbp2_target_put(tgt);
+ 	return 0;
+ }
+ 
+ static void sbp2_reconnect(void *w)
+ {
+ 	struct work_struct *work = w;
+-	struct sbp2_device *sd =
+-		container_of(work, struct sbp2_device, work);
+-	struct fw_unit *unit = sd->unit;
++	struct sbp2_logical_unit *lu =
++	container_of(work, struct sbp2_logical_unit, work);
++	struct fw_unit *unit = lu->tgt->unit;
+ 	struct fw_device *device = fw_device(unit->device.parent);
+ 	int generation, node_id, local_node_id;
+ 
+@@ -753,40 +935,47 @@ static void sbp2_reconnect(void *w)
+ 	node_id       = device->node->node_id;
+ 	local_node_id = device->card->local_node->node_id;
+ 
+-	if (sbp2_send_management_orb(unit, node_id, generation,
++	if (sbp2_send_management_orb(lu, node_id, generation,
+ 				     SBP2_RECONNECT_REQUEST,
+-				     sd->login_id, NULL) < 0) {
+-		if (sd->retries++ >= 5) {
++				     lu->login_id, NULL) < 0) {
++		if (lu->retries++ >= 5) {
+ 			fw_error("failed to reconnect to %s\n",
+ 				 unit->device.bus_id);
+ 			/* Fall back and try to log in again. */
+-			sd->retries = 0;
+-			PREPARE_WORK(&sd->work, sbp2_login, &(sd->work));
++			lu->retries = 0;
++			PREPARE_WORK(&lu->work, sbp2_login, &(lu->work));
+ 		}
+-		schedule_delayed_work(&sd->work, DIV_ROUND_UP(HZ, 5));
+-		return;
++		sbp2_queue_work(lu, DIV_ROUND_UP(HZ, 5));
++		goto out;
+ 	}
+ 
+-	sd->generation   = generation;
+-	sd->node_id      = node_id;
+-	sd->address_high = local_node_id << 16;
++	lu->generation   = generation;
++	lu->tgt->node_id      = node_id;
++	lu->tgt->address_high = local_node_id << 16;
+ 
+-	fw_notify("reconnected to unit %s (%d retries)\n",
+-		  unit->device.bus_id, sd->retries);
+-	sbp2_agent_reset(unit);
+-	sbp2_cancel_orbs(unit);
+-	kref_put(&sd->kref, release_sbp2_device);
++	fw_notify("reconnected to %s LUN %04x (%d retries)\n",
++		  unit->device.bus_id, lu->lun, lu->retries);
++	sbp2_agent_reset(lu);
++	sbp2_cancel_orbs(lu);
++ out:
++	sbp2_target_put(lu->tgt);
+ }
+ 
+ static void sbp2_update(struct fw_unit *unit)
+ {
+-	struct fw_device *device = fw_device(unit->device.parent);
+-	struct sbp2_device *sd = unit->device.driver_data;
++	struct sbp2_target *tgt = unit->device.driver_data;
++	struct sbp2_logical_unit *lu;
+ 
+-	sd->retries = 0;
+-	fw_device_enable_phys_dma(device);
+-	if (schedule_delayed_work(&sd->work, 0))
+-		kref_get(&sd->kref);
++	fw_device_enable_phys_dma(fw_device(unit->device.parent));
++
++	/*
++	 * Fw-core serializes sbp2_update() against sbp2_remove().
++	 * Iteration over tgt->lu_list is therefore safe here.
++	 */
++	list_for_each_entry(lu, &tgt->lu_list, link) {
++		lu->retries = 0;
++		sbp2_queue_work(lu, 0);
++	}
+ }
+ 
+ #define SBP2_UNIT_SPEC_ID_ENTRY	0x0000609e
+@@ -854,15 +1043,14 @@ sbp2_status_to_sense_data(u8 *sbp2_status, u8 *sense_data)
+ static void
+ complete_command_orb(struct sbp2_orb *base_orb, struct sbp2_status *status)
+ {
+-	struct sbp2_command_orb *orb = (struct sbp2_command_orb *)base_orb;
+-	struct fw_unit *unit = orb->unit;
+-	struct fw_device *device = fw_device(unit->device.parent);
+-	struct scatterlist *sg;
++	struct sbp2_command_orb *orb =
++		container_of(base_orb, struct sbp2_command_orb, base);
++	struct fw_device *device = fw_device(orb->lu->tgt->unit->device.parent);
+ 	int result;
+ 
+ 	if (status != NULL) {
+ 		if (STATUS_GET_DEAD(*status))
+-			sbp2_agent_reset(unit);
++			sbp2_agent_reset(orb->lu);
+ 
+ 		switch (STATUS_GET_RESPONSE(*status)) {
+ 		case SBP2_STATUS_REQUEST_COMPLETE:
+@@ -893,30 +1081,26 @@ complete_command_orb(struct sbp2_orb *base_orb, struct sbp2_status *status)
+ 	dma_unmap_single(device->card->device, orb->base.request_bus,
+ 			 sizeof(orb->request), DMA_TO_DEVICE);
+ 
+-	if (orb->cmd->use_sg > 0) {
+-		sg = (struct scatterlist *)orb->cmd->request_buffer;
+-		dma_unmap_sg(device->card->device, sg, orb->cmd->use_sg,
+-			     orb->cmd->sc_data_direction);
+-	}
++	if (orb->cmd->use_sg > 0)
++		dma_unmap_sg(device->card->device,
++			     (struct scatterlist *)orb->cmd->request_buffer,
++			     orb->cmd->use_sg, orb->cmd->sc_data_direction);
++
+ 
+ 	if (orb->page_table_bus != 0)
+ 		dma_unmap_single(device->card->device, orb->page_table_bus,
+-				 sizeof(orb->page_table_bus), DMA_TO_DEVICE);
++				 sizeof(orb->page_table), DMA_TO_DEVICE);
+ 
+ 	orb->cmd->result = result;
+ 	orb->done(orb->cmd);
+-	kfree(orb);
+ }
+ 
+-static int sbp2_command_orb_map_scatterlist(struct sbp2_command_orb *orb)
++static int
++sbp2_map_scatterlist(struct sbp2_command_orb *orb, struct fw_device *device,
++		     struct sbp2_logical_unit *lu)
+ {
+-	struct sbp2_device *sd =
+-		(struct sbp2_device *)orb->cmd->device->host->hostdata;
+-	struct fw_unit *unit = sd->unit;
+-	struct fw_device *device = fw_device(unit->device.parent);
+ 	struct scatterlist *sg;
+ 	int sg_len, l, i, j, count;
+-	size_t size;
+ 	dma_addr_t sg_addr;
+ 
+ 	sg = (struct scatterlist *)orb->cmd->request_buffer;
+@@ -925,6 +1109,7 @@ static int sbp2_command_orb_map_scatterlist(struct sbp2_command_orb *orb)
+ 
+ 	if (count == 0)
+ 		goto fail;
++
+ 	/*
+ 	 * Handle the special case where there is only one element in
+ 	 * the scatter list by converting it to an immediate block
+@@ -933,21 +1118,28 @@ static int sbp2_command_orb_map_scatterlist(struct sbp2_command_orb *orb)
+ 	 * tables.
+ 	 */
+ 	if (count == 1 && sg_dma_len(sg) < SBP2_MAX_SG_ELEMENT_LENGTH) {
+-		orb->request.data_descriptor.high = sd->address_high;
++		orb->request.data_descriptor.high = lu->tgt->address_high;
+ 		orb->request.data_descriptor.low  = sg_dma_address(sg);
+-		orb->request.misc |=
+-			COMMAND_ORB_DATA_SIZE(sg_dma_len(sg));
++		orb->request.misc |= COMMAND_ORB_DATA_SIZE(sg_dma_len(sg));
+ 		return 0;
+ 	}
+ 
+ 	/*
+ 	 * Convert the scatterlist to an sbp2 page table.  If any
+-	 * scatterlist entries are too big for sbp2 we split the as we go.
++	 * scatterlist entries are too big for sbp2, we split them as we
++	 * go.  Even if we ask the block I/O layer to not give us sg
++	 * elements larger than 65535 bytes, some IOMMUs may merge sg elements
++	 * during DMA mapping, and Linux currently doesn't prevent this.
+ 	 */
+ 	for (i = 0, j = 0; i < count; i++) {
+-		sg_len = sg_dma_len(sg + i);
+-		sg_addr = sg_dma_address(sg + i);
++		sg_len = sg_dma_len(sg+i);
++		sg_addr = sg_dma_address(sg+i);
+ 		while (sg_len) {
++			/* FIXME: This won't get us out of the pinch. */
++			if (unlikely(j >= ARRAY_SIZE(orb->page_table))) {
++				fw_error("page table overflow\n");
++				goto fail_page_table;
++			}
+ 			l = min(sg_len, SBP2_MAX_SG_ELEMENT_LENGTH);
+ 			orb->page_table[j].low = sg_addr;
+ 			orb->page_table[j].high = (l << 16);
+@@ -957,8 +1149,13 @@ static int sbp2_command_orb_map_scatterlist(struct sbp2_command_orb *orb)
+ 		}
+ 	}
+ 
+-	size = sizeof(orb->page_table[0]) * j;
+-
++	fw_memcpy_to_be32(orb->page_table, orb->page_table,
++			  sizeof(orb->page_table[0]) * j);
++	orb->page_table_bus =
++		dma_map_single(device->card->device, orb->page_table,
++			       sizeof(orb->page_table), DMA_TO_DEVICE);
++	if (dma_mapping_error(orb->page_table_bus))
++		goto fail_page_table;
+ 	/*
+ 	 * The data_descriptor pointer is the one case where we need
+ 	 * to fill in the node ID part of the address.  All other
+@@ -967,18 +1164,12 @@ static int sbp2_command_orb_map_scatterlist(struct sbp2_command_orb *orb)
+ 	 * on other nodes so we need to put our ID in descriptor.high.
+ 	 */
+ 
+-	orb->page_table_bus =
+-		dma_map_single(device->card->device, orb->page_table,
+-			       size, DMA_TO_DEVICE);
+-	if (dma_mapping_error(orb->page_table_bus))
+-		goto fail_page_table;
+-	orb->request.data_descriptor.high = sd->address_high;
++	orb->request.data_descriptor.high = lu->tgt->address_high;
+ 	orb->request.data_descriptor.low  = orb->page_table_bus;
+ 	orb->request.misc |=
+ 		COMMAND_ORB_PAGE_TABLE_PRESENT |
+ 		COMMAND_ORB_DATA_SIZE(j);
+ 
+-	fw_memcpy_to_be32(orb->page_table, orb->page_table, size);
+ 	return 0;
+ 
+  fail_page_table:
+@@ -992,18 +1183,18 @@ static int sbp2_command_orb_map_scatterlist(struct sbp2_command_orb *orb)
+ 
+ static int sbp2_scsi_queuecommand(struct scsi_cmnd *cmd, scsi_done_fn_t done)
+ {
+-	struct sbp2_device *sd =
+-		(struct sbp2_device *)cmd->device->host->hostdata;
+-	struct fw_unit *unit = sd->unit;
+-	struct fw_device *device = fw_device(unit->device.parent);
++	struct sbp2_logical_unit *lu = cmd->device->hostdata;
++	struct fw_device *device = fw_device(lu->tgt->unit->device.parent);
+ 	struct sbp2_command_orb *orb;
++	unsigned max_payload;
++	int retval = SCSI_MLQUEUE_HOST_BUSY;
+ 
+ 	/*
+ 	 * Bidirectional commands are not yet implemented, and unknown
+ 	 * transfer direction not handled.
+ 	 */
+ 	if (cmd->sc_data_direction == DMA_BIDIRECTIONAL) {
+-		fw_error("Cannot handle DMA_BIDIRECTIONAL, rejecting command\n");
++		fw_error("Can't handle DMA_BIDIRECTIONAL, rejecting command\n");
+ 		cmd->result = DID_ERROR << 16;
+ 		done(cmd);
+ 		return 0;
+@@ -1011,18 +1202,15 @@ static int sbp2_scsi_queuecommand(struct scsi_cmnd *cmd, scsi_done_fn_t done)
+ 
+ 	orb = kzalloc(sizeof(*orb), GFP_ATOMIC);
+ 	if (orb == NULL) {
+-		goto fail_alloc;
++		fw_notify("failed to alloc orb\n");
++		return SCSI_MLQUEUE_HOST_BUSY;
+ 	}
+ 
+ 	/* Initialize rcode to something not RCODE_COMPLETE. */
+ 	orb->base.rcode = -1;
+-	orb->base.request_bus =
+-		dma_map_single(device->card->device, &orb->request,
+-			       sizeof(orb->request), DMA_TO_DEVICE);
+-	if (dma_mapping_error(orb->base.request_bus))
+-		goto fail_mapping;
+ 
+-	orb->unit = unit;
++	kref_init(&orb->base.kref);
++	orb->lu = lu;
+ 	orb->done = done;
+ 	orb->cmd  = cmd;
+ 
+@@ -1034,9 +1222,11 @@ static int sbp2_scsi_queuecommand(struct scsi_cmnd *cmd, scsi_done_fn_t done)
+ 	 * specifies the max payload size as 2 ^ (max_payload + 2), so
+ 	 * if we set this to max_speed + 7, we get the right value.
+ 	 */
++	max_payload = min(device->max_speed + 7,
++			  device->card->max_receive - 1);
+ 	orb->request.misc =
+-		COMMAND_ORB_MAX_PAYLOAD(device->node->max_speed + 7) |
+-		COMMAND_ORB_SPEED(device->node->max_speed) |
++		COMMAND_ORB_MAX_PAYLOAD(max_payload) |
++		COMMAND_ORB_SPEED(device->max_speed) |
+ 		COMMAND_ORB_NOTIFY;
+ 
+ 	if (cmd->sc_data_direction == DMA_FROM_DEVICE)
+@@ -1046,8 +1236,9 @@ static int sbp2_scsi_queuecommand(struct scsi_cmnd *cmd, scsi_done_fn_t done)
+ 		orb->request.misc |=
+ 			COMMAND_ORB_DIRECTION(SBP2_DIRECTION_TO_MEDIA);
+ 
+-	if (cmd->use_sg && sbp2_command_orb_map_scatterlist(orb) < 0)
+-		goto fail_map_payload;
++	if (cmd->use_sg && sbp2_map_scatterlist(orb, device, lu) < 0)
++		goto out;
++
+ 	fw_memcpy_to_be32(&orb->request, &orb->request, sizeof(orb->request));
+ 
+ 	memset(orb->request.command_block,
+@@ -1056,48 +1247,47 @@ static int sbp2_scsi_queuecommand(struct scsi_cmnd *cmd, scsi_done_fn_t done)
+ 
+ 	orb->base.callback = complete_command_orb;
+ 
+-	sbp2_send_orb(&orb->base, unit, sd->node_id, sd->generation,
+-		      sd->command_block_agent_address + SBP2_ORB_POINTER);
+-
+-	return 0;
+-
+- fail_map_payload:
+-	dma_unmap_single(device->card->device, orb->base.request_bus,
++	orb->base.request_bus =
++		dma_map_single(device->card->device, &orb->request,
+ 			 sizeof(orb->request), DMA_TO_DEVICE);
+- fail_mapping:
+-	kfree(orb);
+- fail_alloc:
+-	return SCSI_MLQUEUE_HOST_BUSY;
++	if (dma_mapping_error(orb->base.request_bus))
++		goto out;
++
++	sbp2_send_orb(&orb->base, lu, lu->tgt->node_id, lu->generation,
++		      lu->command_block_agent_address + SBP2_ORB_POINTER);
++	retval = 0;
++ out:
++	kref_put(&orb->base.kref, free_orb);
++	return retval;
+ }
+ 
+ static int sbp2_scsi_slave_alloc(struct scsi_device *sdev)
+ {
+-	struct sbp2_device *sd = (struct sbp2_device *)sdev->host->hostdata;
++	struct sbp2_logical_unit *lu = sdev->hostdata;
+ 
+ 	sdev->allow_restart = 1;
+ 
+-	if (sd->workarounds & SBP2_WORKAROUND_INQUIRY_36)
++	if (lu->tgt->workarounds & SBP2_WORKAROUND_INQUIRY_36)
+ 		sdev->inquiry_len = 36;
++
+ 	return 0;
+ }
+ 
+ static int sbp2_scsi_slave_configure(struct scsi_device *sdev)
+ {
+-	struct sbp2_device *sd = (struct sbp2_device *)sdev->host->hostdata;
+-	struct fw_unit *unit = sd->unit;
++	struct sbp2_logical_unit *lu = sdev->hostdata;
+ 
+ 	sdev->use_10_for_rw = 1;
+ 
+ 	if (sdev->type == TYPE_ROM)
+ 		sdev->use_10_for_ms = 1;
++
+ 	if (sdev->type == TYPE_DISK &&
+-	    sd->workarounds & SBP2_WORKAROUND_MODE_SENSE_8)
++	    lu->tgt->workarounds & SBP2_WORKAROUND_MODE_SENSE_8)
+ 		sdev->skip_ms_page_8 = 1;
+-	if (sd->workarounds & SBP2_WORKAROUND_FIX_CAPACITY) {
+-		fw_notify("setting fix_capacity for %s\n", unit->device.bus_id);
++	if (lu->tgt->workarounds & SBP2_WORKAROUND_FIX_CAPACITY)
+ 		sdev->fix_capacity = 1;
+-	}
+-	if (sd->workarounds & SBP2_WORKAROUND_128K_MAX_TRANS)
++	if (lu->tgt->workarounds & SBP2_WORKAROUND_128K_MAX_TRANS)
+ 		blk_queue_max_sectors(sdev->request_queue, 128 * 1024 / 512);
+ 
+ 	return 0;
+@@ -1109,13 +1299,11 @@ static int sbp2_scsi_slave_configure(struct scsi_device *sdev)
+  */
+ static int sbp2_scsi_abort(struct scsi_cmnd *cmd)
+ {
+-	struct sbp2_device *sd =
+-		(struct sbp2_device *)cmd->device->host->hostdata;
+-	struct fw_unit *unit = sd->unit;
+-
+-	sbp2_agent_reset(unit);
+-	sbp2_cancel_orbs(unit);
++	struct sbp2_logical_unit *lu = cmd->device->hostdata;
+ 
++	fw_notify("sbp2_scsi_abort\n");
++	sbp2_agent_reset(lu);
++	sbp2_cancel_orbs(lu);
+ 	return SUCCESS;
+ }
+ 
+@@ -1131,37 +1319,16 @@ sbp2_sysfs_ieee1394_id_show(struct device *dev, struct device_attribute *attr,
+ 			    char *buf)
+ {
+ 	struct scsi_device *sdev = to_scsi_device(dev);
+-	struct sbp2_device *sd;
+-	struct fw_unit *unit;
++	struct sbp2_logical_unit *lu;
+ 	struct fw_device *device;
+-	u32 directory_id;
+-	struct fw_csr_iterator ci;
+-	int key, value, lun;
+ 
+ 	if (!sdev)
+ 		return 0;
+-	sd = (struct sbp2_device *)sdev->host->hostdata;
+-	unit = sd->unit;
+-	device = fw_device(unit->device.parent);
+-
+-	/* implicit directory ID */
+-	directory_id = ((unit->directory - device->config_rom) * 4
+-			+ CSR_CONFIG_ROM) & 0xffffff;
+-
+-	/* explicit directory ID, overrides implicit ID if present */
+-	fw_csr_iterator_init(&ci, unit->directory);
+-	while (fw_csr_iterator_next(&ci, &key, &value))
+-		if (key == CSR_DIRECTORY_ID) {
+-			directory_id = value;
+-			break;
+-		}
+-
+-	/* FIXME: Make this work for multi-lun devices. */
+-	lun = 0;
+-
++	lu = sdev->hostdata;
++	device = fw_device(lu->tgt->unit->device.parent);
+ 	return sprintf(buf, "%08x%08x:%06x:%04x\n",
+ 		       device->config_rom[3], device->config_rom[4],
+-		       directory_id, lun);
++		       lu->tgt->directory_id, lu->lun);
+ }
+ 
+ static DEVICE_ATTR(ieee1394_id, S_IRUGO, sbp2_sysfs_ieee1394_id_show, NULL);
+@@ -1174,7 +1341,7 @@ static struct device_attribute *sbp2_scsi_sysfs_attrs[] = {
+ static struct scsi_host_template scsi_driver_template = {
+ 	.module			= THIS_MODULE,
+ 	.name			= "SBP-2 IEEE-1394",
+-	.proc_name		= (char *)sbp2_driver_name,
++	.proc_name		= sbp2_driver_name,
+ 	.queuecommand		= sbp2_scsi_queuecommand,
+ 	.slave_alloc		= sbp2_scsi_slave_alloc,
+ 	.slave_configure	= sbp2_scsi_slave_configure,
+@@ -1199,12 +1366,17 @@ MODULE_ALIAS("sbp2");
+ 
+ static int __init sbp2_init(void)
+ {
++	sbp2_wq = create_singlethread_workqueue(KBUILD_MODNAME);
++	if (!sbp2_wq)
++		return -ENOMEM;
++	
+ 	return driver_register(&sbp2_driver.driver);
+ }
+ 
+ static void __exit sbp2_cleanup(void)
+ {
+ 	driver_unregister(&sbp2_driver.driver);
++	destroy_workqueue(sbp2_wq);
+ }
+ 
+ module_init(sbp2_init);
+diff --git a/drivers/firewire/fw-topology.c b/drivers/firewire/fw-topology.c
+index cda9366..4a8531f 100644
+--- a/drivers/firewire/fw-topology.c
++++ b/drivers/firewire/fw-topology.c
+@@ -97,7 +97,7 @@ static struct fw_node *fw_node_create(u32 sid, int port_count, int color)
+ {
+ 	struct fw_node *node;
+ 
+-	node = kzalloc(sizeof *node + port_count * sizeof(node->ports[0]),
++	node = kzalloc(sizeof(*node) + port_count * sizeof(node->ports[0]),
+ 		       GFP_ATOMIC);
+ 	if (node == NULL)
+ 		return NULL;
+@@ -152,6 +152,10 @@ static void update_hop_count(struct fw_node *node)
+ 	node->max_hops = max(max_child_hops, depths[0] + depths[1] + 2);
+ }
+ 
++static inline struct fw_node *fw_node(struct list_head *l)
++{
++	return list_entry(l, struct fw_node, link);
++}
+ 
+ /**
+  * build_tree - Build the tree representation of the topology
+@@ -162,7 +166,7 @@ static void update_hop_count(struct fw_node *node)
+  * This function builds the tree representation of the topology given
+  * by the self IDs from the latest bus reset.  During the construction
+  * of the tree, the function checks that the self IDs are valid and
+- * internally consistent.  On succcess this funtions returns the
++ * internally consistent.  On succcess this function returns the
+  * fw_node corresponding to the local card otherwise NULL.
+  */
+ static struct fw_node *build_tree(struct fw_card *card,
+@@ -172,7 +176,8 @@ static struct fw_node *build_tree(struct fw_card *card,
+ 	struct list_head stack, *h;
+ 	u32 *next_sid, *end, q;
+ 	int i, port_count, child_port_count, phy_id, parent_count, stack_depth;
+-	unsigned gap_count;
++	int gap_count;
++	int beta_repeaters_present;
+ 
+ 	local_node = NULL;
+ 	node = NULL;
+@@ -182,7 +187,7 @@ static struct fw_node *build_tree(struct fw_card *card,
+ 	phy_id = 0;
+ 	irm_node = NULL;
+ 	gap_count = SELF_ID_GAP_COUNT(*sid);
+-	card->beta_repeaters_present = 0;
++	beta_repeaters_present = 0;
+ 
+ 	while (sid < end) {
+ 		next_sid = count_ports(sid, &port_count, &child_port_count);
+@@ -210,6 +215,10 @@ static struct fw_node *build_tree(struct fw_card *card,
+ 		 */
+ 		for (i = 0, h = &stack; i < child_port_count; i++)
+ 			h = h->prev;
++		/*
++		 * When the stack is empty, this yields an invalid value,
++		 * but that pointer will never be dereferenced.
++		 */
+ 		child = fw_node(h);
+ 
+ 		node = fw_node_create(q, port_count, card->color);
+@@ -275,16 +284,15 @@ static struct fw_node *build_tree(struct fw_card *card,
+ 
+ 	    if (node->phy_speed == SCODE_BETA &&
+ 		parent_count + child_port_count > 1)
+-		    card->beta_repeaters_present = 1;
++		    beta_repeaters_present = 1;
+ 
+ 		/*
+ 		 * If all PHYs does not report the same gap count
+ 		 * setting, we fall back to 63 which will force a gap
+ 		 * count reconfiguration and a reset.
+ 		 */
+-		if (SELF_ID_GAP_COUNT(q) != gap_count) {
++		if (SELF_ID_GAP_COUNT(q) != gap_count)
+ 			gap_count = 63;
+-		}
+ 
+ 		update_hop_count(node);
+ 
+@@ -295,6 +303,7 @@ static struct fw_node *build_tree(struct fw_card *card,
+ 	card->root_node = node;
+ 	card->irm_node = irm_node;
+ 	card->gap_count = gap_count;
++	card->beta_repeaters_present = beta_repeaters_present;
+ 
+ 	return local_node;
+ }
+@@ -427,7 +436,6 @@ update_tree(struct fw_card *card, struct fw_node *root)
+ 		node0->link_on = node1->link_on;
+ 		node0->initiated_reset = node1->initiated_reset;
+ 		node0->max_hops = node1->max_hops;
+-
+ 		node1->color = card->color;
+ 		fw_node_event(card, node0, event);
+ 
+@@ -445,10 +453,8 @@ update_tree(struct fw_card *card, struct fw_node *root)
+ 				 */
+ 				if (node0->ports[i]->color == card->color)
+ 					continue;
+-				list_add_tail(&node0->ports[i]->link,
+-					      &list0);
+-				list_add_tail(&node1->ports[i]->link,
+-					      &list1);
++				list_add_tail(&node0->ports[i]->link, &list0);
++				list_add_tail(&node1->ports[i]->link, &list1);
+ 			} else if (node0->ports[i]) {
+ 				/*
+ 				 * The nodes connected here were
+@@ -486,7 +492,7 @@ update_topology_map(struct fw_card *card, u32 *self_ids, int self_id_count)
+ 	card->topology_map[1]++;
+ 	node_count = (card->root_node->node_id & 0x3f) + 1;
+ 	card->topology_map[2] = (node_count << 16) | self_id_count;
+-	card->topology_map[0] = ((self_id_count + 2) << 16);
++	card->topology_map[0] = (self_id_count + 2) << 16;
+ 	memcpy(&card->topology_map[3], self_ids, self_id_count * 4);
+ 	fw_compute_block_crc(card->topology_map);
+ }
+@@ -500,19 +506,19 @@ fw_core_handle_bus_reset(struct fw_card *card,
+ 	unsigned long flags;
+ 
+ 	fw_flush_transactions(card);
++
+ 	spin_lock_irqsave(&card->lock, flags);
++
+ 	/*
+ 	 * If the new topology has a different self_id_count the topology
+ 	 * changed, either nodes were added or removed. In that case we
+ 	 * reset the IRM reset counter.
+ 	 */
+-	if (card->self_id_count && card->self_id_count != self_id_count) {
++	if (card->self_id_count != self_id_count)
+ 		card->bm_retries = 0;
+-	}
+ 
+ 	card->node_id = node_id;
+ 	card->generation = generation;
+-	card->self_id_count = self_id_count;
+ 	card->reset_jiffies = jiffies;
+ 	schedule_delayed_work(&card->work, 0);
+ 
+diff --git a/drivers/firewire/fw-topology.h b/drivers/firewire/fw-topology.h
+index fe1c253..5b8efd3 100644
+--- a/drivers/firewire/fw-topology.h
++++ b/drivers/firewire/fw-topology.h
+@@ -31,11 +31,11 @@ struct fw_node {
+ 	u16 node_id;
+ 	u8 color;
+ 	u8 port_count;
+-	unsigned link_on : 1;
+-	unsigned initiated_reset : 1;
+-	unsigned b_path : 1;
+-	u8 phy_speed : 3; /* As in the self ID packet. */
+-	u8 max_speed : 5; /* Minimum of all phy-speeds and port speeds on
++	u8 link_on : 1;
++	u8 initiated_reset : 1;
++	u8 b_path : 1;
++	u8 phy_speed : 2; /* As in the self ID packet. */
++	u8 max_speed : 2; /* Minimum of all phy-speeds and port speeds on
+ 			   * the path from the local node to this node. */
+ 	u8 max_depth : 4; /* Maximum depth to any leaf node */
+ 	u8 max_hops : 4;  /* Max hops in this sub tree */
+@@ -51,12 +51,6 @@ struct fw_node {
+ };
+ 
+ static inline struct fw_node *
+-fw_node(struct list_head *l)
+-{
+-	return list_entry(l, struct fw_node, link);
+-}
+-
+-static inline struct fw_node *
+ fw_node_get(struct fw_node *node)
+ {
+ 	atomic_inc(&node->ref_count);
+@@ -75,6 +69,6 @@ void
+ fw_destroy_nodes(struct fw_card *card);
+ 
+ int
+-fw_compute_block_crc(u32 *buffer);
++fw_compute_block_crc(u32 *block);
+ 
+ #endif /* __fw_topology_h */
+diff --git a/drivers/firewire/fw-transaction.c b/drivers/firewire/fw-transaction.c
+index 854a449..aa2d9ee 100644
+--- a/drivers/firewire/fw-transaction.c
++++ b/drivers/firewire/fw-transaction.c
+@@ -76,7 +76,6 @@ close_transaction(struct fw_transaction *transaction,
+ 	}
+ 	spin_unlock_irqrestore(&card->lock, flags);
+ 
+-	BUG_ON(!t);
+ 	if (&t->link != &card->transaction_list) {
+ 		t->callback(card, rcode, payload, length, t->callback_data);
+ 		return 0;
+@@ -229,7 +228,7 @@ fw_fill_request(struct fw_packet *packet, int tcode, int tlabel,
+  *
+  * @param card the card from which to send the request
+  * @param tcode the tcode for this transaction.  Do not use
+- *   TCODE_LOCK_REQUEST directly, insted use TCODE_LOCK_MASK_SWAP
++ *   TCODE_LOCK_REQUEST directly, instead use TCODE_LOCK_MASK_SWAP
+  *   etc. to specify tcode and ext_tcode.
+  * @param node_id the destination node ID (bus ID and PHY ID concatenated)
+  * @param generation the generation for which node_id is valid
+@@ -329,6 +328,7 @@ void fw_send_phy_config(struct fw_card *card,
+ 	q = PHY_IDENTIFIER(PHY_PACKET_CONFIG) |
+ 		PHY_CONFIG_ROOT_ID(node_id) |
+ 		PHY_CONFIG_GAP_COUNT(gap_count);
++
+ 	send_phy_packet(card, q, generation);
+ }
+ 
+@@ -410,7 +410,12 @@ EXPORT_SYMBOL(fw_unit_space_region);
+  * controller.  When a request is received that falls within the
+  * specified address range, the specified callback is invoked.  The
+  * parameters passed to the callback give the details of the
+- * particular request
++ * particular request.
++ *
++ * Return value:  0 on success, non-zero otherwise.
++ * The start offset of the handler's address region is determined by
++ * fw_core_add_address_handler() and is returned in handler->offset.
++ * The offset is quadlet-aligned.
+  */
+ int
+ fw_core_add_address_handler(struct fw_address_handler *handler,
+@@ -422,14 +427,15 @@ fw_core_add_address_handler(struct fw_address_handler *handler,
+ 
+ 	spin_lock_irqsave(&address_handler_lock, flags);
+ 
+-	handler->offset = region->start;
++	handler->offset = roundup(region->start, 4);
+ 	while (handler->offset + handler->length <= region->end) {
+ 		other =
+ 		    lookup_overlapping_address_handler(&address_handler_list,
+ 						       handler->offset,
+ 						       handler->length);
+ 		if (other != NULL) {
+-			handler->offset += other->length;
++			handler->offset +=
++			    roundup(other->offset + other->length, 4);
+ 		} else {
+ 			list_add_tail(&handler->link, &address_handler_list);
+ 			ret = 0;
+@@ -605,8 +611,10 @@ fw_send_response(struct fw_card *card, struct fw_request *request, int rcode)
+ 	 * check is sufficient to ensure we don't send response to
+ 	 * broadcast packets or posted writes.
+ 	 */
+-	if (request->ack != ACK_PENDING)
++	if (request->ack != ACK_PENDING) {
++		kfree ( request );
+ 		return;
++	}
+ 
+ 	if (rcode == RCODE_COMPLETE)
+ 		fw_fill_response(&request->response, request->request_header,
+@@ -628,12 +636,6 @@ fw_core_handle_request(struct fw_card *card, struct fw_packet *p)
+ 	unsigned long flags;
+ 	int tcode, destination, source;
+ 
+-	if (p->payload_length > 2048) {
+-		/* FIXME: send error response. */
+-		fw_error("fw_core_handle_request: too big\n");
+-		return;
+-	}
+-
+ 	if (p->ack != ACK_PENDING && p->ack != ACK_COMPLETE)
+ 		return;
+ 
+@@ -738,7 +740,7 @@ fw_core_handle_response(struct fw_card *card, struct fw_packet *p)
+ }
+ EXPORT_SYMBOL(fw_core_handle_response);
+ 
+-const struct fw_address_region topology_map_region =
++static const struct fw_address_region topology_map_region =
+ 	{ .start = 0xfffff0001000ull, .end = 0xfffff0001400ull, };
+ 
+ static void
+@@ -776,7 +778,7 @@ static struct fw_address_handler topology_map = {
+ 	.address_callback	= handle_topology_map,
+ };
+ 
+-const struct fw_address_region registers_region =
++static const struct fw_address_region registers_region =
+ 	{ .start = 0xfffff0000000ull, .end = 0xfffff0000400ull, };
+ 
+ static void
+diff --git a/drivers/firewire/fw-transaction.h b/drivers/firewire/fw-transaction.h
+index b461d67..e3e8a9f 100644
+--- a/drivers/firewire/fw-transaction.h
++++ b/drivers/firewire/fw-transaction.h
+@@ -81,7 +81,6 @@
+ 
+ #define fw_notify(s, args...) printk(KERN_NOTICE KBUILD_MODNAME ": " s, ## args)
+ #define fw_error(s, args...) printk(KERN_ERR KBUILD_MODNAME ": " s, ## args)
+-#define fw_debug(s, args...) printk(KERN_DEBUG KBUILD_MODNAME ": " s, ## args)
+ 
+ static inline void
+ fw_memcpy_from_be32(void *_dst, void *_src, size_t size)
+@@ -124,6 +123,10 @@ typedef void (*fw_transaction_callback_t)(struct fw_card *card, int rcode,
+ 					  size_t length,
+ 					  void *callback_data);
+ 
++/*
++ * Important note:  The callback must guarantee that either fw_send_response()
++ * or kfree() is called on the @request.
++ */
+ typedef void (*fw_address_callback_t)(struct fw_card *card,
+ 				      struct fw_request *request,
+ 				      int tcode, int destination, int source,
+@@ -228,7 +231,7 @@ struct fw_card {
+ 	unsigned long reset_jiffies;
+ 
+ 	unsigned long long guid;
+-	int max_receive;
++	unsigned max_receive;
+ 	int link_speed;
+ 	int config_rom_generation;
+ 
+@@ -245,20 +248,7 @@ struct fw_card {
+ 	struct fw_node *root_node;
+ 	struct fw_node *irm_node;
+ 	int color;
+-	/*
+-	 * May range from 1(?) to 63
+-	 * This is the gap-count for the bus attached to this card.
+-	 * All devices on a bus must use the same gap count.  Too small a
+-	 * gap count risks collision errors on the bus.  Too large a
+-	 * gap count wastes bus bandwidth.  See the standards docs for
+-	 * a discussion on gap count optimization.
+-	 */
+-	unsigned gap_count;
+-	/*
+-	 * May be zero or nonzero: nonzero means that there are 1394b
+-	 * repeaters on the bus, so the gap count cannot be easily(?)
+-	 * optimized.
+-	 */
++	int gap_count;
+ 	int beta_repeaters_present;
+ 
+ 	int index;
+@@ -441,7 +431,7 @@ void fw_send_phy_config(struct fw_card *card,
+ 
+ /*
+  * Called by the topology code to inform the device code of node
+- * activity; found, lost, or updated nodes
++ * activity; found, lost, or updated nodes.
+  */
+ void
+ fw_node_event(struct fw_card *card, struct fw_node *node, int event);
+diff --git a/include/asm-ia64/pci.h b/include/asm-ia64/pci.h
+index ef616fd..279869f 100644
+--- a/include/asm-ia64/pci.h
++++ b/include/asm-ia64/pci.h
+@@ -79,9 +79,6 @@ extern int pcibios_prep_mwi (struct pci_dev *);
+ #define pci_dac_dma_sync_single_for_cpu(dev,dma_addr,len,dir)	do { } while (0)
+ #define pci_dac_dma_sync_single_for_device(dev,dma_addr,len,dir)	do { mb(); } while (0)
+ 
+-#define sg_dma_len(sg)		((sg)->dma_length)
+-#define sg_dma_address(sg)	((sg)->dma_address)
+-
+ #ifdef CONFIG_PCI
+ static inline void pci_dma_burst_advice(struct pci_dev *pdev,
+ 					enum pci_dma_burst_strategy *strat,
+diff --git a/include/asm-ia64/scatterlist.h b/include/asm-ia64/scatterlist.h
+index 834a189..303cdb6 100644
+--- a/include/asm-ia64/scatterlist.h
++++ b/include/asm-ia64/scatterlist.h
+@@ -25,4 +25,7 @@ struct scatterlist {
+  */
+ #define ISA_DMA_THRESHOLD	0xffffffff
+ 
++#define sg_dma_len(sg)          ((sg)->dma_length)
++#define sg_dma_address(sg)      ((sg)->dma_address)
++
+ #endif /* _ASM_IA64_SCATTERLIST_H */
+diff --git a/include/linux/firewire-cdev.h b/include/linux/firewire-cdev.h
+index efbe1fd..0f0e271 100644
+--- a/include/linux/firewire-cdev.h
++++ b/include/linux/firewire-cdev.h
+@@ -30,16 +30,38 @@
+ #define FW_CDEV_EVENT_REQUEST		0x02
+ #define FW_CDEV_EVENT_ISO_INTERRUPT	0x03
+ 
+-/* The 'closure' fields are for user space to use.  Data passed in the
+- * 'closure' field for a request will be returned in the corresponding
+- * event.  It's a 64-bit type so that it's a fixed size type big
+- * enough to hold a pointer on all platforms. */
+-
++/**
++ * struct fw_cdev_event_common - Common part of all fw_cdev_event_ types
++ * @closure:	For arbitrary use by userspace
++ * @type:	Discriminates the fw_cdev_event_ types
++ *
++ * This struct may be used to access generic members of all fw_cdev_event_
++ * types regardless of the specific type.
++ *
++ * Data passed in the @closure field for a request will be returned in the
++ * corresponding event.  It is big enough to hold a pointer on all platforms.
++ * The ioctl used to set @closure depends on the @type of event.
++ */
+ struct fw_cdev_event_common {
+ 	__u64 closure;
+ 	__u32 type;
+ };
+ 
++/**
++ * struct fw_cdev_event_bus_reset - Sent when a bus reset occurred
++ * @closure:	See &fw_cdev_event_common; set by %FW_CDEV_IOC_GET_INFO ioctl
++ * @type:	See &fw_cdev_event_common; always %FW_CDEV_EVENT_BUS_RESET
++ * @node_id:       New node ID of this node
++ * @local_node_id: Node ID of the local node, i.e. of the controller
++ * @bm_node_id:    Node ID of the bus manager
++ * @irm_node_id:   Node ID of the iso resource manager
++ * @root_node_id:  Node ID of the root node
++ * @generation:    New bus generation
++ *
++ * This event is sent when the bus the device belongs to goes through a bus
++ * reset.  It provides information about the new bus configuration, such as
++ * new node ID for this device, new root ID, and others.
++ */
+ struct fw_cdev_event_bus_reset {
+ 	__u64 closure;
+ 	__u32 type;
+@@ -51,6 +73,20 @@ struct fw_cdev_event_bus_reset {
+ 	__u32 generation;
+ };
+ 
++/**
++ * struct fw_cdev_event_response - Sent when a response packet was received
++ * @closure:	See &fw_cdev_event_common;
++ *		set by %FW_CDEV_IOC_SEND_REQUEST ioctl
++ * @type:	See &fw_cdev_event_common; always %FW_CDEV_EVENT_RESPONSE
++ * @rcode:	Response code returned by the remote node
++ * @length:	Data length, i.e. the response's payload size in bytes
++ * @data:	Payload data, if any
++ *
++ * This event is sent when the stack receives a response to an outgoing request
++ * sent by %FW_CDEV_IOC_SEND_REQUEST ioctl.  The payload data for responses
++ * carrying data (read and lock responses) follows immediately and can be
++ * accessed through the @data field.
++ */
+ struct fw_cdev_event_response {
+ 	__u64 closure;
+ 	__u32 type;
+@@ -59,6 +95,25 @@ struct fw_cdev_event_response {
+ 	__u32 data[0];
+ };
+ 
++/**
++ * struct fw_cdev_event_request - Sent on incoming request to an address region
++ * @closure:	See &fw_cdev_event_common; set by %FW_CDEV_IOC_ALLOCATE ioctl
++ * @type:	See &fw_cdev_event_common; always %FW_CDEV_EVENT_REQUEST
++ * @tcode:	Transaction code of the incoming request
++ * @offset:	The offset into the 48-bit per-node address space
++ * @handle:	Reference to the kernel-side pending request
++ * @length:	Data length, i.e. the request's payload size in bytes
++ * @data:	Incoming data, if any
++ *
++ * This event is sent when the stack receives an incoming request to an address
++ * region registered using the %FW_CDEV_IOC_ALLOCATE ioctl.  The request is
++ * guaranteed to be completely contained in the specified region.  Userspace is
++ * responsible for sending the response by %FW_CDEV_IOC_SEND_RESPONSE ioctl,
++ * using the same @handle.
++ *
++ * The payload data for requests carrying data (write and lock requests)
++ * follows immediately and can be accessed through the @data field.
++ */
+ struct fw_cdev_event_request {
+ 	__u64 closure;
+ 	__u32 type;
+@@ -69,14 +124,39 @@ struct fw_cdev_event_request {
+ 	__u32 data[0];
+ };
+ 
++/**
++ * struct fw_cdev_event_iso_interrupt - Sent when an iso packet was completed
++ * @closure:	See &fw_cdev_event_common;
++ *		set by %FW_CDEV_CREATE_ISO_CONTEXT ioctl
++ * @type:	See &fw_cdev_event_common; always %FW_CDEV_EVENT_ISO_INTERRUPT
++ * @cycle:	Cycle counter of the interrupt packet
++ * @header_length: Total length of following headers, in bytes
++ * @header:	Stripped headers, if any
++ *
++ * This event is sent when the controller has completed an &fw_cdev_iso_packet
++ * with the %FW_CDEV_ISO_INTERRUPT bit set.  In the receive case, the headers
++ * stripped of all packets up until and including the interrupt packet are
++ * returned in the @header field.
++ */
+ struct fw_cdev_event_iso_interrupt {
+ 	__u64 closure;
+ 	__u32 type;
+ 	__u32 cycle;
+-	__u32 header_length;	/* Length in bytes of following headers. */
++	__u32 header_length;
+ 	__u32 header[0];
+ };
+ 
++/**
++ * union fw_cdev_event - Convenience union of fw_cdev_event_ types
++ * @common:        Valid for all types
++ * @bus_reset:     Valid if @common.type == %FW_CDEV_EVENT_BUS_RESET
++ * @response:      Valid if @common.type == %FW_CDEV_EVENT_RESPONSE
++ * @request:       Valid if @common.type == %FW_CDEV_EVENT_REQUEST
++ * @iso_interrupt: Valid if @common.type == %FW_CDEV_EVENT_ISO_INTERRUPT
++ *
++ * Convenience union for userspace use.  Events could be read(2) into a char
++ * buffer and then cast to this union for further processing.
++ */
+ union fw_cdev_event {
+ 	struct fw_cdev_event_common common;
+ 	struct fw_cdev_event_bus_reset bus_reset;
+@@ -98,6 +178,7 @@ union fw_cdev_event {
+ #define FW_CDEV_IOC_QUEUE_ISO		_IOWR('#', 0x09, struct fw_cdev_queue_iso)
+ #define FW_CDEV_IOC_START_ISO		_IOW('#', 0x0a, struct fw_cdev_start_iso)
+ #define FW_CDEV_IOC_STOP_ISO		_IOW('#', 0x0b, struct fw_cdev_stop_iso)
++#define FW_CDEV_IOC_GET_CYCLE_TIMER	_IOR('#', 0x0c, struct fw_cdev_get_cycle_timer)
+ 
+ /* FW_CDEV_VERSION History
+  *
+@@ -105,35 +186,47 @@ union fw_cdev_event {
+  */
+ #define FW_CDEV_VERSION		1
+ 
++/**
++ * struct fw_cdev_get_info - General purpose information ioctl
++ * @version:	The version field is just a running serial number.
++ *		We never break backwards compatibility, but may add more
++ *		structs and ioctls in later revisions.
++ * @rom_length:	If @rom is non-zero, at most rom_length bytes of configuration
++ *		ROM will be copied into that user space address.  In either
++ *		case, @rom_length is updated with the actual length of the
++ *		configuration ROM.
++ * @rom:	If non-zero, address of a buffer to be filled by a copy of the
++ *		local node's configuration ROM
++ * @bus_reset:	If non-zero, address of a buffer to be filled by a
++ *		&struct fw_cdev_event_bus_reset with the current state
++ *		of the bus.  This does not cause a bus reset to happen.
++ * @bus_reset_closure: Value of &closure in this and subsequent bus reset events
++ * @card:	The index of the card this device belongs to
++ */
+ struct fw_cdev_get_info {
+-	/* The version field is just a running serial number.  We
+-	 * never break backwards compatibility.  Userspace passes in
+-	 * the version it expects and the kernel passes back the
+-	 * highest version it can provide.  Even if the structs in
+-	 * this interface are extended in a later version, the kernel
+-	 * will not copy back more data than what was present in the
+-	 * interface version userspace expects. */
+ 	__u32 version;
+-
+-	/* If non-zero, at most rom_length bytes of config rom will be
+-	 * copied into that user space address.  In either case,
+-	 * rom_length is updated with the actual length of the config
+-	 * rom. */
+ 	__u32 rom_length;
+ 	__u64 rom;
+-
+-	/* If non-zero, a fw_cdev_event_bus_reset struct will be
+-	 * copied here with the current state of the bus.  This does
+-	 * not cause a bus reset to happen.  The value of closure in
+-	 * this and sub-sequent bus reset events is set to
+-	 * bus_reset_closure. */
+ 	__u64 bus_reset;
+ 	__u64 bus_reset_closure;
+-
+-	/* The index of the card this devices belongs to. */
+ 	__u32 card;
+ };
+ 
++/**
++ * struct fw_cdev_send_request - Send an asynchronous request packet
++ * @tcode:	Transaction code of the request
++ * @length:	Length of outgoing payload, in bytes
++ * @offset:	48-bit offset at destination node
++ * @closure:	Passed back to userspace in the response event
++ * @data:	Userspace pointer to payload
++ * @generation:	The bus generation where packet is valid
++ *
++ * Send a request to the device.  This ioctl implements all outgoing requests.
++ * Both quadlet and block request specify the payload as a pointer to the data
++ * in the @data field.  Once the transaction completes, the kernel writes an
++ * &fw_cdev_event_request event back.  The @closure field is passed back to
++ * user space in the response event.
++ */
+ struct fw_cdev_send_request {
+ 	__u32 tcode;
+ 	__u32 length;
+@@ -143,6 +236,19 @@ struct fw_cdev_send_request {
+ 	__u32 generation;
+ };
+ 
++/**
++ * struct fw_cdev_send_response - Send an asynchronous response packet
++ * @rcode:	Response code as determined by the userspace handler
++ * @length:	Length of outgoing payload, in bytes
++ * @data:	Userspace pointer to payload
++ * @handle:	The handle from the &fw_cdev_event_request
++ *
++ * Send a response to an incoming request.  By setting up an address range using
++ * the %FW_CDEV_IOC_ALLOCATE ioctl, userspace can listen for incoming requests.  An
++ * incoming request will generate an %FW_CDEV_EVENT_REQUEST, and userspace must
++ * send a reply using this ioctl.  The event has a handle to the kernel-side
++ * pending transaction, which should be used with this ioctl.
++ */
+ struct fw_cdev_send_response {
+ 	__u32 rcode;
+ 	__u32 length;
+@@ -150,6 +256,21 @@ struct fw_cdev_send_response {
+ 	__u32 handle;
+ };
+ 
++/**
++ * struct fw_cdev_allocate - Allocate a CSR address range
++ * @offset:	Start offset of the address range
++ * @closure:	To be passed back to userspace in request events
++ * @length:	Length of the address range, in bytes
++ * @handle:	Handle to the allocation, written by the kernel
++ *
++ * Allocate an address range in the 48-bit address space on the local node
++ * (the controller).  This allows userspace to listen for requests with an
++ * offset within that address range.  When the kernel receives a request
++ * within the range, an &fw_cdev_event_request event will be written back.
++ * The @closure field is passed back to userspace in the response event.
++ * The @handle field is an out parameter, returning a handle to the allocated
++ * range to be used for later deallocation of the range.
++ */
+ struct fw_cdev_allocate {
+ 	__u64 offset;
+ 	__u64 closure;
+@@ -157,6 +278,11 @@ struct fw_cdev_allocate {
+ 	__u32 handle;
+ };
+ 
++/**
++ * struct fw_cdev_deallocate - Free an address range allocation
++ * @handle:	Handle to the address range, as returned by the kernel when the
++ *		range was allocated
++ */
+ struct fw_cdev_deallocate {
+ 	__u32 handle;
+ };
+@@ -164,10 +290,41 @@ struct fw_cdev_deallocate {
+ #define FW_CDEV_LONG_RESET	0
+ #define FW_CDEV_SHORT_RESET	1
+ 
++/**
++ * struct fw_cdev_initiate_bus_reset - Initiate a bus reset
++ * @type:	%FW_CDEV_SHORT_RESET or %FW_CDEV_LONG_RESET
++ *
++ * Initiate a bus reset for the bus this device is on.  The bus reset can be
++ * either the original (long) bus reset or the arbitrated (short) bus reset
++ * introduced in 1394a-2000.
++ */
+ struct fw_cdev_initiate_bus_reset {
+-	__u32 type;
++	__u32 type;	/* FW_CDEV_SHORT_RESET or FW_CDEV_LONG_RESET */
+ };
+ 
++/**
++ * struct fw_cdev_add_descriptor - Add contents to the local node's config ROM
++ * @immediate:	If non-zero, immediate key to insert before pointer
++ * @key:	Upper 8 bits of root directory pointer
++ * @data:	Userspace pointer to contents of descriptor block
++ * @length:	Length of descriptor block data, in bytes
++ * @handle:	Handle to the descriptor, written by the kernel
++ *
++ * Add a descriptor block and optionally a preceding immediate key to the local
++ * node's configuration ROM.
++ *
++ * The @key field specifies the upper 8 bits of the descriptor root directory
++ * pointer and the @data and @length fields specify the contents. The @key
++ * should be of the form 0xXX000000. The offset part of the root directory entry
++ * will be filled in by the kernel.
++ *
++ * If not 0, the @immediate field specifies an immediate key which will be
++ * inserted before the root directory pointer.
++ *
++ * If successful, the kernel adds the descriptor and writes back a handle to the
++ * kernel-side object to be used for later removal of the descriptor block and
++ * immediate key.
++ */
+ struct fw_cdev_add_descriptor {
+ 	__u32 immediate;
+ 	__u32 key;
+@@ -176,6 +333,14 @@ struct fw_cdev_add_descriptor {
+ 	__u32 handle;
+ };
+ 
++/**
++ * struct fw_cdev_remove_descriptor - Remove contents from the configuration ROM
++ * @handle:	Handle to the descriptor, as returned by the kernel when the
++ *		descriptor was added
++ *
++ * Remove a descriptor block and accompanying immediate key from the local
++ * node's configuration ROM.
++ */
+ struct fw_cdev_remove_descriptor {
+ 	__u32 handle;
+ };
+@@ -183,12 +348,24 @@ struct fw_cdev_remove_descriptor {
+ #define FW_CDEV_ISO_CONTEXT_TRANSMIT	0
+ #define FW_CDEV_ISO_CONTEXT_RECEIVE	1
+ 
+-#define FW_CDEV_ISO_CONTEXT_MATCH_TAG0		 1
+-#define FW_CDEV_ISO_CONTEXT_MATCH_TAG1		 2
+-#define FW_CDEV_ISO_CONTEXT_MATCH_TAG2		 4
+-#define FW_CDEV_ISO_CONTEXT_MATCH_TAG3		 8
+-#define FW_CDEV_ISO_CONTEXT_MATCH_ALL_TAGS	15
+-
++/**
++ * struct fw_cdev_create_iso_context - Create a context for isochronous IO
++ * @type:	%FW_CDEV_ISO_CONTEXT_TRANSMIT or %FW_CDEV_ISO_CONTEXT_RECEIVE
++ * @header_size: Header size to strip for receive contexts
++ * @channel:	Channel to bind to
++ * @speed:	Speed to transmit at
++ * @closure:	To be returned in &fw_cdev_event_iso_interrupt
++ * @handle:	Handle to context, written back by kernel
++ *
++ * Prior to sending or receiving isochronous I/O, a context must be created.
++ * The context records information about the transmit or receive configuration
++ * and typically maps to an underlying hardware resource.  A context is set up
++ * for either sending or receiving.  It is bound to a specific isochronous
++ * channel.
++ *
++ * If a context was successfully created, the kernel writes back a handle to the
++ * context, which must be passed in for subsequent operations on that context.
++ */
+ struct fw_cdev_create_iso_context {
+ 	__u32 type;
+ 	__u32 header_size;
+@@ -201,15 +378,49 @@ struct fw_cdev_create_iso_context {
+ #define FW_CDEV_ISO_PAYLOAD_LENGTH(v)	(v)
+ #define FW_CDEV_ISO_INTERRUPT		(1 << 16)
+ #define FW_CDEV_ISO_SKIP		(1 << 17)
++#define FW_CDEV_ISO_SYNC		(1 << 17)
+ #define FW_CDEV_ISO_TAG(v)		((v) << 18)
+ #define FW_CDEV_ISO_SY(v)		((v) << 20)
+ #define FW_CDEV_ISO_HEADER_LENGTH(v)	((v) << 24)
+ 
++/**
++ * struct fw_cdev_iso_packet - Isochronous packet
++ * @control:	Contains the header length (8 uppermost bits), the sy field
++ *		(4 bits), the tag field (2 bits), a sync flag (1 bit),
++ *		a skip flag (1 bit), an interrupt flag (1 bit), and the
++ *		payload length (16 lowermost bits)
++ * @header:	Header and payload
++ *
++ * &struct fw_cdev_iso_packet is used to describe isochronous packet queues.
++ *
++ * Use the FW_CDEV_ISO_ macros to fill in @control.  The sy and tag fields are
++ * specified by IEEE 1394a and IEC 61883.
++ *
++ * FIXME - finish this documentation
++ */
+ struct fw_cdev_iso_packet {
+ 	__u32 control;
+ 	__u32 header[0];
+ };
+ 
++/**
++ * struct fw_cdev_queue_iso - Queue isochronous packets for I/O
++ * @packets:	Userspace pointer to packet data
++ * @data:	Pointer into mmap()'ed payload buffer
++ * @size:	Size of packet data in bytes
++ * @handle:	Isochronous context handle
++ *
++ * Queue a number of isochronous packets for reception or transmission.
++ * This ioctl takes a pointer to an array of &fw_cdev_iso_packet structs,
++ * which describe how to transmit from or receive into a contiguous region
++ * of a mmap()'ed payload buffer.  As part of the packet descriptors,
++ * a series of headers can be supplied, which will be prepended to the
++ * payload during DMA.
++ *
++ * The kernel may or may not queue all packets, but will write back updated
++ * values of the @packets, @data and @size fields, so the ioctl can be
++ * resubmitted easily.
++ */
+ struct fw_cdev_queue_iso {
+ 	__u64 packets;
+ 	__u64 data;
+@@ -217,6 +428,23 @@ struct fw_cdev_queue_iso {
+ 	__u32 handle;
+ };
+ 
++#define FW_CDEV_ISO_CONTEXT_MATCH_TAG0		 1
++#define FW_CDEV_ISO_CONTEXT_MATCH_TAG1		 2
++#define FW_CDEV_ISO_CONTEXT_MATCH_TAG2		 4
++#define FW_CDEV_ISO_CONTEXT_MATCH_TAG3		 8
++#define FW_CDEV_ISO_CONTEXT_MATCH_ALL_TAGS	15
++
++/**
++ * struct fw_cdev_start_iso - Start an isochronous transmission or reception
++ * @cycle:	Cycle in which to start I/O.  If @cycle is greater than or
++ *		equal to 0, the I/O will start on that cycle.
++ * @sync:	Determines the value to wait for for receive packets that have
++ *		the %FW_CDEV_ISO_SYNC bit set
++ * @tags:	Tag filter bit mask.  Only valid for isochronous reception.
++ *		Determines the tag values for which packets will be accepted.
++ *		Use FW_CDEV_ISO_CONTEXT_MATCH_ macros to set @tags.
++ * @handle:	Isochronous context handle within which to transmit or receive
++ */
+ struct fw_cdev_start_iso {
+ 	__s32 cycle;
+ 	__u32 sync;
+@@ -224,8 +452,26 @@ struct fw_cdev_start_iso {
+ 	__u32 handle;
+ };
+ 
++/**
++ * struct fw_cdev_stop_iso - Stop an isochronous transmission or reception
++ * @handle:	Handle of isochronous context to stop
++ */
+ struct fw_cdev_stop_iso {
+ 	__u32 handle;
+ };
+ 
++/**
++ * struct fw_cdev_get_cycle_timer - read cycle timer register
++ * @local_time:   system time, in microseconds since the Epoch
++ * @cycle_timer:  isochronous cycle timer, as per OHCI 1.1 clause 5.13
++ *
++ * The %FW_CDEV_IOC_GET_CYCLE_TIMER ioctl reads the isochronous cycle timer
++ * and also the system clock.  This allows to express the receive time of an
++ * isochronous packet as a system time with microsecond accuracy.
++ */
++struct fw_cdev_get_cycle_timer {
++	__u64 local_time;
++	__u32 cycle_timer;
++};
++
+ #endif /* _LINUX_FIREWIRE_CDEV_H */

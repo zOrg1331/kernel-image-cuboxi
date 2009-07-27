@@ -1,0 +1,300 @@
+From: Aristeu Rozanski <aris@redhat.com>
+Date: Tue, 2 Sep 2008 15:37:17 -0400
+Subject: [serial] 8250: support for DTR/DSR hardware flow control
+Message-id: 20080902193717.GG10700@redhat.com
+O-Subject: [RHEL5.3 PATCH 2/2] 8250: add support for DTR/DSR hardware flow control v3
+Bugzilla: 445215
+RH-Acked-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=445215
+
+8250: add support for DTR/DSR hardware flow control
+
+This patch adds support for DTR/DSR hardware flow control to 8250
+driver. The upstream version will differ from this one, since it'll
+take a bigger rework.
+
+Tested with success by the customer and by me on a serial P.O.S. printer.
+
+diff --git a/drivers/serial/8250.c b/drivers/serial/8250.c
+index ce6dede..c5e7cfb 100644
+--- a/drivers/serial/8250.c
++++ b/drivers/serial/8250.c
+@@ -1320,7 +1320,7 @@ static unsigned int check_modem_status(struct uart_8250_port *up)
+ 		if (status & UART_MSR_TERI)
+ 			up->port.icount.rng++;
+ 		if (status & UART_MSR_DDSR)
+-			up->port.icount.dsr++;
++			uart_handle_dsr_change(&up->port, status & UART_MSR_DSR);
+ 		if (status & UART_MSR_DDCD)
+ 			uart_handle_dcd_change(&up->port, status & UART_MSR_DCD);
+ 		if (status & UART_MSR_DCTS)
+@@ -1629,8 +1629,20 @@ static inline void wait_for_xmitr(struct uart_8250_port *up, int bits)
+ 
+ 	/* Wait up to 1s for flow control if necessary */
+ 	if (up->port.flags & UPF_CONS_FLOW) {
++		struct uart_info *info = up->port.info;
++		unsigned int msr;
++
+ 		tmout = 1000000;
+-		while (!(serial_in(up, UART_MSR) & UART_MSR_CTS) && --tmout) {
++		while (--tmout) {
++			msr = serial_in(up, UART_MSR);
++
++			if ((info->flags & UIF_CTS_FLOW) &&
++			    (msr & UART_MSR_CTS))
++				break;
++			else if ((info->flags & UIF_DSR_FLOW) &&
++				 (msr & UART_MSR_DSR))
++ 				break;
++
+ 			udelay(1);
+ 			touch_nmi_watchdog();
+ 		}
+diff --git a/drivers/serial/serial_core.c b/drivers/serial/serial_core.c
+index fef5991..5dc8fce 100644
+--- a/drivers/serial/serial_core.c
++++ b/drivers/serial/serial_core.c
+@@ -199,6 +199,13 @@ static int uart_startup(struct uart_state *state, int init_hw)
+ 			spin_unlock_irq(&port->lock);
+ 		}
+ 
++		if (info->flags & UIF_DSR_FLOW) {
++			spin_lock_irq(&port->lock);
++			if (!(port->ops->get_mctrl(port) & TIOCM_DSR))
++				info->tty->hw_stopped = 1;
++			spin_unlock_irq(&port->lock);
++		}
++
+ 		info->flags |= UIF_INITIALIZED;
+ 
+ 		clear_bit(TTY_IO_ERROR, &info->tty->flags);
+@@ -591,6 +598,8 @@ static void uart_throttle(struct tty_struct *tty)
+ 
+ 	if (tty->termios->c_cflag & CRTSCTS)
+ 		uart_clear_mctrl(state->port, TIOCM_RTS);
++	if (state->info->flags & UIF_DSR_FLOW)
++		uart_clear_mctrl(state->port, TIOCM_DTR);
+ }
+ 
+ static void uart_unthrottle(struct tty_struct *tty)
+@@ -607,6 +616,8 @@ static void uart_unthrottle(struct tty_struct *tty)
+ 
+ 	if (tty->termios->c_cflag & CRTSCTS)
+ 		uart_set_mctrl(port, TIOCM_RTS);
++	if (state->info->flags & UIF_DSR_FLOW)
++		uart_set_mctrl(port, TIOCM_DTR);
+ }
+ 
+ static int uart_get_info(struct uart_state *state,
+@@ -1168,7 +1179,10 @@ static void uart_set_termios(struct tty_struct *tty, struct termios *old_termios
+ 		if (!(cflag & CRTSCTS) ||
+ 		    !test_bit(TTY_THROTTLED, &tty->flags))
+ 			mask |= TIOCM_RTS;
+-		uart_set_mctrl(state->port, mask);
++		if (state->info->flags & UIF_DSR_FLOW)
++			mask &= ~TIOCM_DTR;
++		if (mask)
++			uart_set_mctrl(state->port, mask);
+ 	}
+ 
+ 	/* Handle turning off CRTSCTS */
+@@ -1182,6 +1196,7 @@ static void uart_set_termios(struct tty_struct *tty, struct termios *old_termios
+ 	/* Handle turning on CRTSCTS */
+ 	if (!(old_termios->c_cflag & CRTSCTS) && (cflag & CRTSCTS)) {
+ 		spin_lock_irqsave(&state->port->lock, flags);
++		state->port->info->flags &= ~UIF_DSR_FLOW;
+ 		if (!(state->port->ops->get_mctrl(state->port) & TIOCM_CTS)) {
+ 			tty->hw_stopped = 1;
+ 			state->port->ops->stop_tx(state->port);
+@@ -1202,6 +1217,81 @@ static void uart_set_termios(struct tty_struct *tty, struct termios *old_termios
+ #endif
+ }
+ 
++static void uart_set_termiox(struct tty_struct *tty, struct termiox *tnew)
++{
++	struct uart_state *state = tty->driver_data;
++	long flags;
++
++	if ((tnew->x_cflag & (CTSXON | RTSXOFF)) == (CTSXON | RTSXOFF)) {
++		/* Handle turning on CRTSCTS */
++		spin_lock_irqsave(&state->port->lock, flags);
++		tty->termios->c_cflag |= CRTSCTS;
++		state->port->info->flags &= ~UIF_DSR_FLOW;
++		state->port->info->flags |= UIF_CTS_FLOW;
++
++		if (!(state->port->ops->get_mctrl(state->port) & TIOCM_CTS)) {
++			tty->hw_stopped = 1;
++			state->port->ops->stop_tx(state->port);
++		} else if (tty->hw_stopped) {
++			tty->hw_stopped = 0;
++			__uart_start(tty);
++		}
++		spin_unlock_irqrestore(&state->port->lock, flags);
++
++		uart_clear_mctrl(state->port, TIOCM_RTS | TIOCM_DTR);
++
++		if (tty->termios->c_cflag & CBAUD) {
++			unsigned int mask = TIOCM_DTR;
++
++			if (!test_bit(TTY_THROTTLED, &tty->flags))
++				mask |= TIOCM_RTS;
++			uart_set_mctrl(state->port, mask);
++		}
++	} else if ((tnew->x_cflag & (DSRXON | DTRXOFF)) == (DSRXON | DTRXOFF)) {
++		spin_lock_irqsave(&state->port->lock, flags);
++		tty->termios->c_cflag &= ~CRTSCTS;
++		state->port->info->flags &= ~UIF_CTS_FLOW;
++		state->port->info->flags |= UIF_DSR_FLOW;
++
++		if (!(state->port->ops->get_mctrl(state->port) & TIOCM_DSR)) {
++			tty->hw_stopped = 1;
++			state->port->ops->stop_tx(state->port);
++		} else if (tty->hw_stopped) {
++			tty->hw_stopped = 0;
++			__uart_start(tty);
++		}
++		spin_unlock_irqrestore(&state->port->lock, flags);
++
++		uart_clear_mctrl(state->port, TIOCM_RTS | TIOCM_DTR);
++
++		if (tty->termios->c_cflag & CBAUD)
++			uart_set_mctrl(state->port, TIOCM_DTR);
++	} else if (!(tnew->x_cflag & (CTSXON | RTSXOFF | DSRXON | DTRXOFF))) {
++		/* disabling flow control */
++		spin_lock_irqsave(&state->port->lock, flags);
++		tty->termios->c_cflag &= ~CRTSCTS;
++		state->port->info->flags &= ~UIF_CTS_FLOW;
++		state->port->info->flags &= ~UIF_DSR_FLOW;
++
++		tty->hw_stopped = 0;
++		__uart_start(tty);
++		spin_unlock_irqrestore(&state->port->lock, flags);
++
++		uart_clear_mctrl(state->port, TIOCM_RTS);
++		uart_set_mctrl(state->port, TIOCM_DTR);
++	}
++}
++
++static void uart_get_termiox(struct tty_struct *tty, struct termiox *t)
++{
++	struct uart_state *state = tty->driver_data;
++
++	if (state->info->flags & UIF_CTS_FLOW)
++		t->x_cflag = CTSXON | RTSXOFF;
++	else if (state->info->flags & UIF_DSR_FLOW)
++		t->x_cflag = DSRXON | DTRXOFF;
++}
++
+ /*
+  * In 2.4.5, calls to this will be serialized via the BKL in
+  *  linux/drivers/char/tty_io.c:tty_release()
+@@ -1468,7 +1558,8 @@ uart_block_til_ready(struct file *filp, struct uart_state *state)
+ 		 * not set RTS here - we want to make sure we catch
+ 		 * the data from the modem.
+ 		 */
+-		if (info->tty->termios->c_cflag & CBAUD)
++		if (info->tty->termios->c_cflag & CBAUD &&
++		    !(info->flags & UIF_DSR_FLOW))
+ 			uart_set_mctrl(port, TIOCM_DTR);
+ 
+ 		/*
+@@ -2180,9 +2271,11 @@ int uart_register_driver(struct uart_driver *drv)
+ 	normal->subtype		= SERIAL_TYPE_NORMAL;
+ 	normal->init_termios	= tty_std_termios;
+ 	normal->init_termios.c_cflag = B9600 | CS8 | CREAD | HUPCL | CLOCAL;
+-	normal->flags		= TTY_DRIVER_REAL_RAW | TTY_DRIVER_DYNAMIC_DEV;
++	normal->flags		= TTY_DRIVER_REAL_RAW | TTY_DRIVER_DYNAMIC_DEV | TTY_DRIVER_HAS_TERMIOX;
+ 	normal->driver_state    = drv;
+ 	tty_set_operations(normal, &uart_ops);
++	normal->set_termiox = uart_set_termiox;
++	normal->get_termiox = uart_get_termiox;
+ 
+ 	/*
+ 	 * Initialise the UART state(s).
+diff --git a/include/linux/serial_core.h b/include/linux/serial_core.h
+index f9fdf97..3fad04f 100644
+--- a/include/linux/serial_core.h
++++ b/include/linux/serial_core.h
+@@ -315,6 +315,7 @@ struct uart_info {
+  * Definitions for info->flags.  These are _private_ to serial_core, and
+  * are specific to this structure.  They may be queried by low level drivers.
+  */
++#define UIF_DSR_FLOW		((__force uif_t) (1 << 24))
+ #define UIF_CHECK_CD		((__force uif_t) (1 << 25))
+ #define UIF_CTS_FLOW		((__force uif_t) (1 << 26))
+ #define UIF_NORMAL_ACTIVE	((__force uif_t) (1 << 29))
+@@ -474,34 +475,48 @@ uart_handle_dcd_change(struct uart_port *port, unsigned int status)
+ }
+ 
+ /**
+- *	uart_handle_cts_change - handle a change of clear-to-send state
++ *	uart_handle_flow_control_change - handle a change of CTS or DSR
+  *	@port: uart_port structure for the open port
+- *	@status: new clear to send status, nonzero if active
++ *	@status: new CTS/DTR status, nonzero if active
+  */
+ static inline void
+-uart_handle_cts_change(struct uart_port *port, unsigned int status)
++uart_handle_flow_control_change(struct uart_port *port, unsigned int status)
+ {
+ 	struct uart_info *info = port->info;
+ 	struct tty_struct *tty = info->tty;
+ 
+-	port->icount.cts++;
+-
+-	if (info->flags & UIF_CTS_FLOW) {
+-		if (tty->hw_stopped) {
+-			if (status) {
+-				tty->hw_stopped = 0;
+-				port->ops->start_tx(port);
+-				uart_write_wakeup(port);
+-			}
+-		} else {
+-			if (!status) {
+-				tty->hw_stopped = 1;
+-				port->ops->stop_tx(port);
+-			}
++	if (tty->hw_stopped) {
++		if (status) {
++			tty->hw_stopped = 0;
++			port->ops->start_tx(port);
++			uart_write_wakeup(port);
++		}
++	} else {
++		if (!status) {
++			tty->hw_stopped = 1;
++			port->ops->stop_tx(port);
+ 		}
+ 	}
+ }
+ 
++static inline void
++uart_handle_cts_change(struct uart_port *port, unsigned int status)
++{
++	struct uart_info *info = port->info;
++	port->icount.cts++;
++	if (info->flags & UIF_CTS_FLOW)
++		uart_handle_flow_control_change(port, status);
++}
++
++static inline void
++uart_handle_dsr_change(struct uart_port *port, unsigned int status)
++{
++	struct uart_info *info = port->info;
++	port->icount.dsr++;
++	if (info->flags & UIF_DSR_FLOW)
++		uart_handle_flow_control_change(port, status);
++}
++
+ #include <linux/tty_flip.h>
+ 
+ static inline void
+@@ -526,6 +541,7 @@ uart_insert_char(struct uart_port *port, unsigned int status,
+  */
+ #define UART_ENABLE_MS(port,cflag)	((port)->flags & UPF_HARDPPS_CD || \
+ 					 (cflag) & CRTSCTS || \
++					 ((port)->info && ((port)->info->flags & UIF_DSR_FLOW)) || \
+ 					 !((cflag) & CLOCAL))
+ 
+ #endif

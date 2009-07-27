@@ -1,0 +1,42 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5.1] [GFS2] Fix bz 235346 GFS2's rgrp flags unused
+Date: Thu, 05 Apr 2007 11:34:28 +0100
+Bugzilla: 235346
+Message-Id: <1175769268.1636.241.camel@quoit.chygwyn.com>
+Changelog: [GFS2] honor the noalloc flag during block allocation
+
+
+Hi,
+
+This fix has already gone upstream to the -nmw git tree. It fixes a
+problem where we were not ignoring rgrps with the noalloc flag set
+during block allocation,
+
+
+Steve.
+
+
+diff --git a/fs/gfs2/rgrp.c b/fs/gfs2/rgrp.c
+index 2ce48d4..1727f50 100644
+--- a/fs/gfs2/rgrp.c
++++ b/fs/gfs2/rgrp.c
+@@ -698,8 +698,6 @@ struct gfs2_alloc *gfs2_alloc_get(struct gfs2_inode *ip)
+  * @al: the struct gfs2_alloc structure describing the reservation
+  *
+  * If there's room for the requested blocks to be allocated from the RG:
+- *   Sets the $al_reserved_data field in @al.
+- *   Sets the $al_reserved_meta field in @al.
+  *   Sets the $al_rgd field in @al.
+  *
+  * Returns: 1 on success (it fits), 0 on failure (it doesn't fit)
+@@ -710,6 +708,9 @@ static int try_rgrp_fit(struct gfs2_rgrpd *rgd, struct gfs2_alloc *al)
+ 	struct gfs2_sbd *sdp = rgd->rd_sbd;
+ 	int ret = 0;
+ 
++	if (rgd->rd_rg.rg_flags & GFS2_RGF_NOALLOC)
++		return 0;
++
+ 	spin_lock(&sdp->sd_rindex_spin);
+ 	if (rgd->rd_free_clone >= al->al_requested) {
+ 		al->al_rgd = rgd;
+

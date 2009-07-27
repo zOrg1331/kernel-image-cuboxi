@@ -1,0 +1,62 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] dlm: change lkid format
+Date: Thu, 19 Apr 2007 11:46:10 -0500
+Bugzilla: 237126
+Message-Id: <20070419164610.GF23079@redhat.com>
+Changelog: [dlm] change lkid format
+
+
+bz 237126
+
+A lock id is a uint32 and is used as an opaque reference to the lock.  For
+userland apps, the lkid is passed up, through libdlm, as the return value
+from a write() on the dlm device.  This created a problem when the high
+bit was 1, making the lkid look like an error.  This is fixed by changing
+how the lkid is composed.  The low 16 bits identified the hash bucket for
+the lock and the high 16 bits were a per-bucket counter (which eventually
+hit 0x8000 causing the problem).  These are simply swapped around; the
+number of hash table buckets is far below 0x8000, making all lkid's
+positive when viewed as signed.
+
+Index: linux-2.6.21-rc5-quilt/fs/dlm/lock.c
+===================================================================
+--- linux-2.6.21-rc5-quilt.orig/fs/dlm/lock.c	2007-04-02 11:01:12.000000000 -0500
++++ linux-2.6.21-rc5-quilt/fs/dlm/lock.c	2007-04-02 11:10:32.000000000 -0500
+@@ -580,7 +580,7 @@
+ 	/* counter can roll over so we must verify lkid is not in use */
+ 
+ 	while (lkid == 0) {
+-		lkid = bucket | (ls->ls_lkbtbl[bucket].counter++ << 16);
++		lkid = (bucket << 16) | ls->ls_lkbtbl[bucket].counter++;
+ 
+ 		list_for_each_entry(tmp, &ls->ls_lkbtbl[bucket].list,
+ 				    lkb_idtbl_list) {
+@@ -601,8 +601,8 @@
+ 
+ static struct dlm_lkb *__find_lkb(struct dlm_ls *ls, uint32_t lkid)
+ {
+-	uint16_t bucket = lkid & 0xFFFF;
+ 	struct dlm_lkb *lkb;
++	uint16_t bucket = (lkid >> 16);
+ 
+ 	list_for_each_entry(lkb, &ls->ls_lkbtbl[bucket].list, lkb_idtbl_list) {
+ 		if (lkb->lkb_id == lkid)
+@@ -614,7 +614,7 @@
+ static int find_lkb(struct dlm_ls *ls, uint32_t lkid, struct dlm_lkb **lkb_ret)
+ {
+ 	struct dlm_lkb *lkb;
+-	uint16_t bucket = lkid & 0xFFFF;
++	uint16_t bucket = (lkid >> 16);
+ 
+ 	if (bucket >= ls->ls_lkbtbl_size)
+ 		return -EBADSLT;
+@@ -644,7 +644,7 @@
+ 
+ static int __put_lkb(struct dlm_ls *ls, struct dlm_lkb *lkb)
+ {
+-	uint16_t bucket = lkb->lkb_id & 0xFFFF;
++	uint16_t bucket = (lkb->lkb_id >> 16);
+ 
+ 	write_lock(&ls->ls_lkbtbl[bucket].lock);
+ 	if (kref_put(&lkb->lkb_ref, kill_lkb)) {
+

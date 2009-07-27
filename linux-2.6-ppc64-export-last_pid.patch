@@ -1,0 +1,34 @@
+From: Scott Moser <smoser@redhat.com>
+Date: Tue, 20 Nov 2007 17:17:07 -0500
+Subject: [ppc64] export last_pid
+Message-id: 11955970291160-do-send-email-smoser@redhat.com
+O-Subject: [PATCH RHEL5u2] bz253208 Cell/B.E. Kernel Maintenance [2/4]
+Bugzilla: 253208
+
+Export last_pid for use in /proc/spu-loadavg
+
+The /proc/spu-loadavg file, provided by the spufs module, requires the
+last_pid variable to be exported.
+
+This change adds an EXPORT_SYMBOL_GPL for this.
+
+Signed-off-by: Jeremy Kerr <jk@ozlabs.org>
+
+--
+ kernel/pid.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/kernel/pid.c b/kernel/pid.c
+index 42b22b4..4611f42 100644
+--- a/kernel/pid.c
++++ b/kernel/pid.c
+@@ -34,6 +34,7 @@ static kmem_cache_t *pid_cachep;
+ 
+ int pid_max = PID_MAX_DEFAULT;
+ int last_pid;
++EXPORT_SYMBOL_GPL(last_pid);
+ 
+ #define RESERVED_PIDS		300
+ 

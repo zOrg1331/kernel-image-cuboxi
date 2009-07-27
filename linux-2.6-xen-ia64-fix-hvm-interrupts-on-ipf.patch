@@ -1,0 +1,58 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5.1 PATCH 2/21] Fix HVM interrupts on IPF
+Date: Thu, 07 Jun 2007 03:31:33 -0400
+Bugzilla: 242124
+Message-Id: <4667B455.5000608@redhat.com>
+Changelog: [xen] ia64: Fix HVM interrupts on IPF
+
+
+bz242124
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=242124
+
+Backport of cset#12441.
+
+Xen has changed to set-irq-level hypercall from shared-memory
+PIC stat.  This patch makes ia64 kernel accommodate this change.
+Without this, HVM domain does not work because any interruption
+are not risen.
+
+Thanks,
+Kei
+
+
+rh bug 242124
+
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1163440957 25200
+# Node ID 169687dab774a442b51a2175cbbdbe2a13b433d4
+# Parent  2b0596c8a031fb61cd79809fab5d5420df6d610a
+[IA64] Fix HVM interrupts on IPF
+
+Xen has changed to set-irq-level hypercall from shared-memory PIC stat.
+This patch makes IPF accomodate this change
+
+Signed-off-by: Anthony Xu <anthony.xu@intel.com>
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/xcom_privcmd.c |    3 +++
+ 1 file changed, 3 insertions(+)
+
+diff -puN arch/ia64/xen/xcom_privcmd.c~12441-IA64_Fix_HVM_interrupts_on_IPF arch/ia64/xen/xcom_privcmd.c
+--- linux-2.6.18-21.el5-gerd-order/arch/ia64/xen/xcom_privcmd.c~12441-IA64_Fix_HVM_interrupts_on_IPF	2007-06-06 21:00:01.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/xcom_privcmd.c	2007-06-06 21:00:01.000000000 -0400
+@@ -550,6 +550,9 @@ xencomm_privcmd_hvm_op(privcmd_hypercall
+ 	case HVMOP_set_param:
+ 		argsize = sizeof(xen_hvm_param_t);
+ 		break;
++	case HVMOP_set_irq_level:
++		argsize = sizeof(xen_hvm_set_irq_level_t);
++		break;
+ 	default:
+ 		printk("%s: unknown HVMOP %d\n", __func__, cmd);
+ 		return -EINVAL;
+
+_
+

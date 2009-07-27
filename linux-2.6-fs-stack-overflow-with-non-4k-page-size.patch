@@ -1,0 +1,89 @@
+From: Dave Anderson <anderson@redhat.com>
+Subject: [RHEL5-1 PATCH] BZ #231312: reproducible stack overflow with trivial   test program
+Date: Fri, 04 May 2007 14:02:11 -0400
+Bugzilla: 231312
+Message-Id: <463B7523.C727CEE3@redhat.com>
+Changelog: [fs] stack overflow with non-4k page size
+
+
+
+Description:
+
+  The randomize_stack_top() function is meant to randomize the high
+  virtual address of user stack space to within 8MB of the architecture's
+  STACK_TOP.  It does this by masking a random integer with STK_RND_MASK,
+  shifting it left by PAGE_SHIFT, and subtracting the result from the maximum
+  stack top address.  But the architecture-neutral #define of STK_RND_MASK
+  is 0x7ff, which presumes a page size of 4K, and so with the RHEL5 introduction
+  of 64K pages for ppc64, the stack top can be inadvertently dropped down by
+  128MB.  This in turn may invade library virtual address space in a 32-bit ppc
+  task, causing corruption and/or a segmentation violation.  The fix is simply
+  to make the STK_RND_MASK definition account for non-4K page sizes.
+
+Bugzilla:
+
+  BZ #231312: reproducible stack overflow with trivial test program
+
+Testing:
+
+  The supplied test program recursively calls a function with a 500k
+  stack buffer 10 times, touching the first and last byte of the buffer
+  each time.  The test program itself is trivial, but it needs to be
+  compiled with gcc 3.2.3, -m32, and -lstdc++ in order to ensure that
+  libraries would be located near the stack base.  When run in a loop,
+  and depending upon the how far down the stack top gets assigned, it
+  eventually causes a segmentation violation when accessing a non-writable
+  libc virtual address.  With the patch, the test runs OK because the
+  stack is prevented from overflowing into lower virtual address regions.
+
+Upstream status:
+
+  commit d1cabd63262707ad5d6bb730f25b7a2852734595
+  Author: James Bottomley <James.Bottomley@SteelEye.com>
+  Date:   Fri Mar 16 13:38:35 2007 -0800
+
+  [PATCH] fix process crash caused by randomisation and 64k pages
+
+  This bug was seen on ppc64, but it could have occurred on any
+  architecture with a page size of 64k or above.  The problem is that in
+  fs/binfmt_elf.c:randomize_stack_top() randomizes the stack to within
+  0x7ff pages.  On 4k page machines, this is 8MB; on 64k page boxes, this
+  is 128MB.
+
+  The problem is that the new binary layout (selected in
+  arch_pick_mmap_layout) places the mapping segment 128MB or the stack
+  rlimit away from the top of the process memory, whichever is larger.  If
+  you chose an rlimit of less than 128MB (most defaults are in the 8Mb
+  range) then you can end up having your entire stack randomized away.
+
+  The fix is to make randomize_stack_top() only steal at most 8MB, which this
+  patch does.  However, I have to point out that even with this, your stack
+  rlimit might not be exactly what you get if it's > 128MB, because you're
+  still losing the random offset of up to 8MB.
+
+  The true fix should be to leave an explicit gap for the randomization plus
+  a buffer when determining mmap_base, but that would involve fixing all the
+  architectures.
+
+  Cc: Arjan van de Ven <arjan@infradead.org>
+  Cc: Ingo Molnar <mingo@elte.hu>
+  Cc: Andi Kleen <ak@suse.de>
+  Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+  Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+RHEL-5 Patch:
+
+
+
+--- linux-2.6.18.noarch/fs/binfmt_elf.c.orig
++++ linux-2.6.18.noarch/fs/binfmt_elf.c
+@@ -555,7 +555,7 @@ out:
+ #define INTERPRETER_ELF 2
+ 
+ #ifndef STACK_RND_MASK
+-#define STACK_RND_MASK 0x7ff		/* with 4K pages 8MB of VA */
++#define STACK_RND_MASK (0x7ff >> (PAGE_SHIFT - 12))	/* 8MB of VA */
+ #endif
+ 
+ static unsigned long randomize_stack_top(unsigned long stack_top)
+

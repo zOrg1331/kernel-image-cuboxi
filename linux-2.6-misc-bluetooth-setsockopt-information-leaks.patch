@@ -1,0 +1,95 @@
+From: Don Howard <dhoward@redhat.com>
+Subject: [rhel5 security patch] CVE-2007-1353 Bluetooth setsockopt() information  leaks (234292)
+Date: Wed, 30 May 2007 17:31:18 -0700 (PDT)
+Bugzilla: 234292
+Message-Id: <Pine.LNX.4.64.0705301528430.5999@sugarmagnolia.remotee.org>
+Changelog: [misc] Bluetooth setsockopt() information leaks
+
+
+
+Uninitalized variables in bluetooth l2cap and hci_sock setsockopt code can 
+lead to small information leaks. Calling setsockopt() with a 0 optlen will 
+effectivly store stack data. getsockopt() can then be used to retrieve 
+this stack info. 
+
+The solution is to initalize stack variables, rather than depending calls 
+to copy_from_user().
+
+Patch from Marcel Holtmann.  
+
+Patch has been accepted upstream: 0878b6667f28772aa7d6b735abff53efc7bf6d91
+Fixes Bz 234292
+Scratch built in brew.
+Not tested/no bluetooth hardware.
+
+-- 
+-Don
+dhoward@redhat.com
+[Bluetooth] Fix L2CAP and HCI setsockopt() information leaks
+
+The L2CAP and HCI setsockopt() implementations have a small information
+leak that makes it possible to leak kernel stack memory to userspace.
+
+If the optlen parameter is 0, no data will be copied by copy_from_user(),
+but the uninitialized stack buffer will be read and stored later. A call
+to getsockopt() can now retrieve the leaked information.
+
+To fix this problem the stack buffer given to copy_from_user() must be
+initialized with the current settings.
+
+Signed-off-by: Marcel Holtmann <marcel@holtmann.org>
+
+---
+commit 85d8a7cda30a511b340f91e2d8ab597689324f84
+tree 44700efaac2e640a060dc28229f96dbcf17b6cc5
+parent 28defbea64622f69d65a6079bf800cedb9915a5f
+author Marcel Holtmann <marcel@holtmann.org> Wed, 28 Mar 2007 11:42:16 +0200
+committer Marcel Holtmann <marcel@holtmann.org> Wed, 28 Mar 2007 11:42:16 +0200
+
+ net/bluetooth/hci_sock.c |    9 +++++++++
+ net/bluetooth/l2cap.c    |    6 ++++++
+ 2 files changed, 15 insertions(+), 0 deletions(-)
+
+diff --git a/net/bluetooth/hci_sock.c b/net/bluetooth/hci_sock.c
+index 71f5cfb..db9eb49 100644
+--- a/net/bluetooth/hci_sock.c
++++ b/net/bluetooth/hci_sock.c
+@@ -499,6 +499,15 @@ static int hci_sock_setsockopt(struct socket *sock, int level, int optname, char
+ 		break;
+ 
+ 	case HCI_FILTER:
++		{
++			struct hci_filter *f = &hci_pi(sk)->filter;
++
++			uf.type_mask = f->type_mask;
++			uf.opcode    = f->opcode;
++			uf.event_mask[0] = *((u32 *) f->event_mask + 0);
++			uf.event_mask[1] = *((u32 *) f->event_mask + 1);
++		}
++
+ 		len = min_t(unsigned int, len, sizeof(uf));
+ 		if (copy_from_user(&uf, optval, len)) {
+ 			err = -EFAULT;
+diff --git a/net/bluetooth/l2cap.c b/net/bluetooth/l2cap.c
+index e83ee82..767a0d3 100644
+--- a/net/bluetooth/l2cap.c
++++ b/net/bluetooth/l2cap.c
+@@ -954,11 +954,17 @@ static int l2cap_sock_setsockopt(struct socket *sock, int level, int optname, ch
+ 
+ 	switch (optname) {
+ 	case L2CAP_OPTIONS:
++		opts.imtu     = l2cap_pi(sk)->imtu;
++		opts.omtu     = l2cap_pi(sk)->omtu;
++		opts.flush_to = l2cap_pi(sk)->flush_to;
++		opts.mode     = 0x00;
++
+ 		len = min_t(unsigned int, sizeof(opts), optlen);
+ 		if (copy_from_user((char *) &opts, optval, len)) {
+ 			err = -EFAULT;
+ 			break;
+ 		}
++
+ 		l2cap_pi(sk)->imtu  = opts.imtu;
+ 		l2cap_pi(sk)->omtu  = opts.omtu;
+ 		break;
+

@@ -1,0 +1,108 @@
+From: Nigel Cunningham <ncunning@redhat.com>
+Subject: [RHEL5 PATCH] BZ 215954 Fix x86_64/relocatable kernel/swsusp 	breakage.
+Date: Tue, 20 Feb 2007 15:40:09 +1100
+Bugzilla: 215954
+Message-Id: <1171946409.9627.15.camel@nigel.suspend2.net>
+Changelog: [suspend] Fix x86_64/relocatable kernel/swsusp breakage.
+
+
+Hi all.
+
+This patch the three issues that cause swsusp to fail on x86_64 with
+relocatable kernels:
+
+1) __pa -> __pa_symbol equivalent modification needed in the assembly
+for switching back to the resumed kernel's page tables. Without this,
+the kernel reboots after copying the original data back
+2) __pa -> __pa_symbol needed for nosave_begin_pfn and nosave_end_pfn.
+With (1) but without this, __nosave data is included in the saved image,
+so after restoring the original kernel context, the computer thinks it's
+suspending, writes an empty image and powers down again.
+3) swap header address fixes, needed because the page used for reading
+and writing the header isn't allocated as needed, and therefore also
+needs the __pa -> __pa_symbol conversion.
+
+Many thanks to Vivek for his help - relocatable kernels were a mystery
+to me. The Signed-off-by for Vivek is for the asm modifications; blame
+me for the rest.
+
+Signed-off-by: Vivek Goyal <vgoyal@in.ibm.com>
+Signed-off-by: Nigel Cunningham <ncunning@redhat.com>
+
+diff -ruN linux-2.6.18.noarch/arch/x86_64/kernel/suspend_asm.S working-linux-2.6.18.x86_64-clean/arch/x86_64/kernel/suspend_asm.S
+--- linux-2.6.18.noarch/arch/x86_64/kernel/suspend_asm.S	2006-09-19 23:42:06.000000000 -0400
++++ working-linux-2.6.18.x86_64-clean/arch/x86_64/kernel/suspend_asm.S	2007-02-19 22:00:37.000000000 -0500
+@@ -71,8 +71,8 @@
+ 	jmp	loop
+ done:
+ 	/* go back to the original page tables */
+-	leaq	init_level4_pgt(%rip), %rax
+-	subq	$__START_KERNEL_map, %rax
++	movq	$(init_level4_pgt - __START_KERNEL_map), %rax
++	addq	phys_base(%rip), %rax
+ 	movq	%rax, %cr3
+ 	/* Flush TLB, including "global" things (vmalloc) */
+ 	movq	mmu_cr4_features(%rip), %rax
+diff -ruN linux-2.6.18.noarch/kernel/power/snapshot.c working-linux-2.6.18.x86_64-clean/kernel/power/snapshot.c
+--- linux-2.6.18.noarch/kernel/power/snapshot.c	2007-02-19 22:50:24.000000000 -0500
++++ working-linux-2.6.18.x86_64-clean/kernel/power/snapshot.c	2007-02-19 22:41:58.000000000 -0500
+@@ -158,8 +158,8 @@
+ 
+ static inline int pfn_is_nosave(unsigned long pfn)
+ {
+-	unsigned long nosave_begin_pfn = __pa(&__nosave_begin) >> PAGE_SHIFT;
+-	unsigned long nosave_end_pfn = PAGE_ALIGN(__pa(&__nosave_end)) >> PAGE_SHIFT;
++	unsigned long nosave_begin_pfn = __pa_symbol(&__nosave_begin) >> PAGE_SHIFT;
++	unsigned long nosave_end_pfn = PAGE_ALIGN(__pa_symbol(&__nosave_end)) >> PAGE_SHIFT;
+ 	return (pfn >= nosave_begin_pfn) && (pfn < nosave_end_pfn);
+ }
+ 
+diff -ruN linux-2.6.18.noarch/kernel/power/swap.c working-linux-2.6.18.x86_64-clean/kernel/power/swap.c
+--- linux-2.6.18.noarch/kernel/power/swap.c	2007-02-19 22:50:24.000000000 -0500
++++ working-linux-2.6.18.x86_64-clean/kernel/power/swap.c	2007-02-19 22:16:04.000000000 -0500
+@@ -40,6 +40,12 @@
+ 	char	sig[10];
+ } __attribute__((packed, aligned(PAGE_SIZE))) swsusp_header;
+ 
++#if defined(__pa_symbol)
++#define SWSUSP_HEADER_VIRT (__va(__pa_symbol(&swsusp_header)))
++#else
++#define SWSUSP_HEADER_VIRT (&swsusp_header)
++#endif
++
+ /*
+  * Saving part...
+  */
+@@ -51,14 +57,14 @@
+ 	int error;
+ 
+ 	rw_swap_page_sync(READ, swp_entry(root_swap, 0),
+-			  virt_to_page((unsigned long)&swsusp_header), NULL);
++			  virt_to_page(SWSUSP_HEADER_VIRT), NULL);
+ 	if (!memcmp("SWAP-SPACE",swsusp_header.sig, 10) ||
+ 	    !memcmp("SWAPSPACE2",swsusp_header.sig, 10)) {
+ 		memcpy(swsusp_header.orig_sig,swsusp_header.sig, 10);
+ 		memcpy(swsusp_header.sig,SWSUSP_SIG, 10);
+ 		swsusp_header.image = start;
+ 		error = rw_swap_page_sync(WRITE, swp_entry(root_swap, 0),
+-				virt_to_page((unsigned long)&swsusp_header),
++				virt_to_page(SWSUSP_HEADER_VIRT),
+ 				NULL);
+ 	} else {
+ 		pr_debug("swsusp: Partition is not swap space.\n");
+@@ -599,12 +605,12 @@
+ 	if (!IS_ERR(resume_bdev)) {
+ 		set_blocksize(resume_bdev, PAGE_SIZE);
+ 		memset(&swsusp_header, 0, sizeof(swsusp_header));
+-		if ((error = bio_read_page(0, &swsusp_header, NULL)))
++		if ((error = bio_read_page(0, SWSUSP_HEADER_VIRT, NULL)))
+ 			return error;
+ 		if (!memcmp(SWSUSP_SIG, swsusp_header.sig, 10)) {
+ 			memcpy(swsusp_header.sig, swsusp_header.orig_sig, 10);
+ 			/* Reset swap signature now */
+-			error = bio_write_page(0, &swsusp_header);
++			error = bio_write_page(0, SWSUSP_HEADER_VIRT);
+ 		} else {
+ 			return -EINVAL;
+ 		}
+

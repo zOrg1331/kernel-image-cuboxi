@@ -1,0 +1,79 @@
+Date: Thu, 02 Nov 2006 12:20:22 -0500
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5 PATCH] ACPI based CPU hotplug doesn't work after trying to
+ BSP offline
+
+BZ213324
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=213324
+
+Offline operation of any cpus hangups once an offline
+operation of BSP is run.
+
+The offline operation of BSP fails, which is a expected
+behavior today.  The operation acquires workqueue_mutex,
+but never releases it, which causes the hangups.
+
+The correct sequence of _cpu_down() is like follow from
+the operation of workqueue_mutex point of view.
+
+  1) _cpu_down() calls workqueue_cpu_callback() via
+     blocking_notifier_call_chain(CPU_DOWN_PREPARE) and
+     acquires workqueue_mutex in the function.
+
+  2) If the operation completes successfully, _cpu_down()
+     calls workqueue_cpu_callback() via 
+     blocking_notifier_call_chain(CPU_DEAD)
+     and releases the workqueue_mutex.
+
+     If the operation fails, _cpu_down() calls workqueue_cpu_callback()
+     via blocking_notifier_call_chain(CPU_DOWN_FAILED) and
+     releases the workqueue_mutex.
+
+The failure case, however, doesn't work that way.  _cpu_down()
+doesn't call blocking_notifier_call_chain() today, that
+is the workqueue_mutex is never released.  The patch fixes that.
+
+I verified that the patch works all right on -2.6.18-1.2740.el5
+on my box.
+
+The patch in upstream from 2.6.19-rc4.
+
+Thanks,
+Kei
+
+---
+
+ linux-2.6.18-1.2740.el5-kei/kernel/cpu.c |   12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff -puN kernel/cpu.c~bz213324-fix-cpuhp kernel/cpu.c
+--- linux-2.6.18-1.2740.el5/kernel/cpu.c~bz213324-fix-cpuhp	2006-11-02 11:40:10.000000000 -0500
++++ linux-2.6.18-1.2740.el5-kei/kernel/cpu.c	2006-11-02 11:40:10.000000000 -0500
+@@ -144,18 +144,18 @@ static int _cpu_down(unsigned int cpu)
+ 	p = __stop_machine_run(take_cpu_down, NULL, cpu);
+ 	mutex_unlock(&cpu_bitmask_lock);
+ 
+-	if (IS_ERR(p)) {
++	if (IS_ERR(p) || cpu_online(cpu)) {
+ 		/* CPU didn't die: tell everyone.  Can't complain. */
+ 		if (blocking_notifier_call_chain(&cpu_chain, CPU_DOWN_FAILED,
+ 				(void *)(long)cpu) == NOTIFY_BAD)
+ 			BUG();
+ 
+-		err = PTR_ERR(p);
+-		goto out_allowed;
+-	}
+-
+-	if (cpu_online(cpu))
++		if (IS_ERR(p)) {
++			err = PTR_ERR(p);
++			goto out_allowed;
++		}
+ 		goto out_thread;
++	}
+ 
+ 	/* Wait for it to sleep (leaving idle task). */
+ 	while (!idle_cpu(cpu))
+
+_
+

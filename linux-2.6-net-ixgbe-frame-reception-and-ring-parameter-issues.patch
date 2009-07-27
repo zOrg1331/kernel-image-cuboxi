@@ -1,0 +1,563 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Fri, 23 Jan 2009 16:57:24 -0500
+Subject: [net] ixgbe: frame reception and ring parameter issues
+Message-id: 20090123215724.GT22333@gospo.rdu.redhat.com
+O-Subject: [RHEL5.4 PATCH] ixgbe: fixup frame reception and ring parameter issues
+Bugzilla: 475625
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+
+With the current RHEL5 code, we noticed there were times when some of
+the frames just didn't quite make it into the box when ixgbe-based
+devices were receiving interrupts via MSI-X.  It was difficult to
+reproduce, but it turned out Intel has seen this issue and already fixed
+it upstream.  So this is basically the following 2 upstream commits
+recommended by Intel:
+
+    commit f08482766b7e3c0b2aaac4b68b30f33a91703aa3
+    Author: Jesse Brandeburg <jesse.brandeburg@intel.com>
+    Date:   Thu Sep 11 19:59:42 2008 -0700
+
+        ixgbe: add clean rx many routine
+
+        in some configurations there can be more than one rx queue per vector
+        in msi-x mode.  Add functionality to be able to clean this without
+        changing the performance path single-rx-queue cleanup.
+
+    commit ff819cfb5d95c4945811f5e33aa57274885c7527
+    Author: Jesse Brandeburg <jesse.brandeburg@intel.com>
+    Date:   Thu Sep 11 19:58:29 2008 -0700
+
+        ixgbe: fix bug with lots of tx queues
+
+        when using more than 8 tx queues you can overrun the 8 bit v_idx
+        field, so change it to 16 bits to represent the maximum number
+        of queues (one for each bit)
+
+It was also noticed during testing that setting the size of the rx rings
+wasn't working well, so the following 2 upstream commits were used as a
+basis for the fixes to resolve those problems:
+
+    commit c431f97ef96026e6da7032a871a0789cf5a2eaea
+    Author: Jesse Brandeburg <jesse.brandeburg@intel.com>
+    Date:   Thu Sep 11 19:59:16 2008 -0700
+
+        ixgbe: fix ring reallocation in ethtool
+
+        changing ring sizes in ethtool needs to be robust.  If an allocation fails the
+        driver must continue operation, with the previous settings.
+
+    commit d3fa4721456226d77475181a4bfbe5b3d899d65c
+    Author: Peter P Waskiewicz Jr <peter.p.waskiewicz.jr@intel.com>
+    Date:   Fri Dec 26 01:36:33 2008 -0800
+
+        ixgbe: Fix set_ringparam in ixgbe to use the same memory pools.
+
+        The adapter rings are kcalloc()'d, but in set_ringparam() in ixgbe_ethtool,
+        we replace that memory from the vmalloc() pool.  This can result in a NULL
+        pointer reference when trying to modify the rings at a later time, or on
+        device removal.
+
+This has been tested by Intel and will resolve RHBZ 475625.
+
+diff --git a/drivers/net/ixgbe/ixgbe.h b/drivers/net/ixgbe/ixgbe.h
+index 7ff9bb3..d4068b4 100644
+--- a/drivers/net/ixgbe/ixgbe.h
++++ b/drivers/net/ixgbe/ixgbe.h
+@@ -144,9 +144,9 @@ struct ixgbe_ring {
+ 		      * offset associated with this ring, which is different
+ 		      * for DCE and RSS modes */
+ 	struct ixgbe_queue_stats stats;
+-	u8 v_idx; /* maps directly to the index for this ring in the hardware
+-		   * vector array, can also be used for finding the bit in EICR
+-		   * and friends that represents the vector for this ring */
++	u16 v_idx; /* maps directly to the index for this ring in the hardware
++	           * vector array, can also be used for finding the bit in EICR
++	           * and friends that represents the vector for this ring */
+ 
+ 	u32 eims_value;
+ 	u16 itr_register;
+@@ -280,6 +280,9 @@ struct ixgbe_adapter {
+ 
+ 	unsigned long state;
+ 	u64 tx_busy;
++
++	unsigned int tx_ring_count;
++	unsigned int rx_ring_count;
+ };
+ 
+ enum ixbge_state_t {
+@@ -307,5 +310,16 @@ extern int ixgbe_setup_rx_resources(struct ixgbe_adapter *adapter,
+ 				    struct ixgbe_ring *rxdr);
+ extern int ixgbe_setup_tx_resources(struct ixgbe_adapter *adapter,
+ 				    struct ixgbe_ring *txdr);
++extern void ixgbe_free_rx_resources(struct ixgbe_adapter *adapter,
++                                    struct ixgbe_ring *rxdr);
++extern void ixgbe_free_tx_resources(struct ixgbe_adapter *adapter,
++                                    struct ixgbe_ring *txdr);
++extern int ixgbe_open(struct net_device *netdev);
++extern int ixgbe_close(struct net_device *netdev);
++extern void ixgbe_reset_interrupt_capability(struct ixgbe_adapter *adapter);
++extern void ixgbe_napi_disable_all(struct ixgbe_adapter *adapter);
++extern int __devinit ixgbe_init_interrupt_scheme(struct ixgbe_adapter *adapter);
++extern int ixgbe_napi_add_all(struct ixgbe_adapter *adapter);
++extern void ixgbe_napi_del_all(struct ixgbe_adapter *adapter);
+ 
+ #endif /* _IXGBE_H_ */
+diff --git a/drivers/net/ixgbe/ixgbe_ethtool.c b/drivers/net/ixgbe/ixgbe_ethtool.c
+index 35688bd..c85a9cf 100644
+--- a/drivers/net/ixgbe/ixgbe_ethtool.c
++++ b/drivers/net/ixgbe/ixgbe_ethtool.c
+@@ -678,16 +678,14 @@ static void ixgbe_get_ringparam(struct net_device *netdev,
+ 	ring->rx_jumbo_pending = 0;
+ }
+ 
++
+ static int ixgbe_set_ringparam(struct net_device *netdev,
+ 			       struct ethtool_ringparam *ring)
+ {
+ 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
+-	struct ixgbe_tx_buffer *old_buf;
+-	struct ixgbe_rx_buffer *old_rx_buf;
+-	void *old_desc;
++	struct ixgbe_ring *temp_ring;
+ 	int i, err;
+-	u32 new_rx_count, new_tx_count, old_size;
+-	dma_addr_t old_dma;
++	u32 new_rx_count, new_tx_count;
+ 
+ 	if ((ring->rx_mini_pending) || (ring->rx_jumbo_pending))
+ 		return -EINVAL;
+@@ -706,79 +704,75 @@ static int ixgbe_set_ringparam(struct net_device *netdev,
+ 		return 0;
+ 	}
+ 
++	temp_ring = kcalloc(adapter->num_tx_queues,
++	                    sizeof(struct ixgbe_ring), GFP_KERNEL);
++	if (!temp_ring)
++		return -ENOMEM;
++
+ 	while (test_and_set_bit(__IXGBE_RESETTING, &adapter->state))
+ 		msleep(1);
+ 
+-	if (netif_running(netdev))
+-		ixgbe_down(adapter);
+-
+-	/*
+-	 * We can't just free everything and then setup again,
+-	 * because the ISRs in MSI-X mode get passed pointers
+-	 * to the tx and rx ring structs.
+-	 */
+ 	if (new_tx_count != adapter->tx_ring->count) {
+ 		for (i = 0; i < adapter->num_tx_queues; i++) {
+-			/* Save existing descriptor ring */
+-			old_buf = adapter->tx_ring[i].tx_buffer_info;
+-			old_desc = adapter->tx_ring[i].desc;
+-			old_size = adapter->tx_ring[i].size;
+-			old_dma = adapter->tx_ring[i].dma;
+-			/* Try to allocate a new one */
+-			adapter->tx_ring[i].tx_buffer_info = NULL;
+-			adapter->tx_ring[i].desc = NULL;
+-			adapter->tx_ring[i].count = new_tx_count;
+-			err = ixgbe_setup_tx_resources(adapter,
+-						       &adapter->tx_ring[i]);
++			temp_ring[i].count = new_tx_count;
++			err = ixgbe_setup_tx_resources(adapter, &temp_ring[i]);
+ 			if (err) {
+-				/* Restore the old one so at least
+-				   the adapter still works, even if
+-				   we failed the request */
+-				adapter->tx_ring[i].tx_buffer_info = old_buf;
+-				adapter->tx_ring[i].desc = old_desc;
+-				adapter->tx_ring[i].size = old_size;
+-				adapter->tx_ring[i].dma = old_dma;
++				while (i) {
++					i--;
++					ixgbe_free_tx_resources(adapter, &temp_ring[i]);
++				}
+ 				goto err_setup;
+ 			}
+-			/* Free the old buffer manually */
+-			vfree(old_buf);
+-			pci_free_consistent(adapter->pdev, old_size,
+-					    old_desc, old_dma);
++			temp_ring[i].v_idx = adapter->tx_ring[i].v_idx;
+ 		}
++		if (netif_running(netdev))
++			ixgbe_close(netdev);
++		ixgbe_reset_interrupt_capability(adapter);
++		ixgbe_napi_del_all(adapter);
++		kfree(adapter->tx_ring);
++		adapter->tx_ring = temp_ring;
++		temp_ring = NULL;
++		adapter->tx_ring_count = new_tx_count;
++	}
++
++	temp_ring = kcalloc(adapter->num_rx_queues,
++	                    sizeof(struct ixgbe_ring), GFP_KERNEL);
++	if (!temp_ring) {
++		if (netif_running(netdev))
++			ixgbe_open(netdev);
++		return -ENOMEM;
+ 	}
+ 
+ 	if (new_rx_count != adapter->rx_ring->count) {
+ 		for (i = 0; i < adapter->num_rx_queues; i++) {
+-
+-			old_rx_buf = adapter->rx_ring[i].rx_buffer_info;
+-			old_desc = adapter->rx_ring[i].desc;
+-			old_size = adapter->rx_ring[i].size;
+-			old_dma = adapter->rx_ring[i].dma;
+-
+-			adapter->rx_ring[i].rx_buffer_info = NULL;
+-			adapter->rx_ring[i].desc = NULL;
+-			adapter->rx_ring[i].dma = 0;
+-			adapter->rx_ring[i].count = new_rx_count;
+-			err = ixgbe_setup_rx_resources(adapter,
+-						       &adapter->rx_ring[i]);
++			temp_ring[i].count = new_rx_count;
++			err = ixgbe_setup_rx_resources(adapter, &temp_ring[i]);
+ 			if (err) {
+-				adapter->rx_ring[i].rx_buffer_info = old_rx_buf;
+-				adapter->rx_ring[i].desc = old_desc;
+-				adapter->rx_ring[i].size = old_size;
+-				adapter->rx_ring[i].dma = old_dma;
++				while (i) {
++					i--;
++					ixgbe_free_rx_resources(adapter, &temp_ring[i]);
++				}
+ 				goto err_setup;
+ 			}
+-
+-			vfree(old_rx_buf);
+-			pci_free_consistent(adapter->pdev, old_size, old_desc,
+-					    old_dma);
++			temp_ring[i].v_idx = adapter->rx_ring[i].v_idx;
+ 		}
++		if (netif_running(netdev))
++			ixgbe_close(netdev);
++		ixgbe_reset_interrupt_capability(adapter);
++		ixgbe_napi_del_all(adapter);
++		kfree(adapter->rx_ring);
++		adapter->rx_ring = temp_ring;
++		temp_ring = NULL;
++		adapter->rx_ring_count = new_rx_count;
+ 	}
+ 
++	/* success! */
+ 	err = 0;
+ err_setup:
+-	if (netif_running(adapter->netdev))
+-		ixgbe_up(adapter);
++	ixgbe_init_interrupt_scheme(adapter);
++
++	if (netif_running(netdev))
++		ixgbe_open(netdev);
+ 
+ 	clear_bit(__IXGBE_RESETTING, &adapter->state);
+ 	return err;
+diff --git a/drivers/net/ixgbe/ixgbe_main.c b/drivers/net/ixgbe/ixgbe_main.c
+index 30939da..8198e53 100644
+--- a/drivers/net/ixgbe/ixgbe_main.c
++++ b/drivers/net/ixgbe/ixgbe_main.c
+@@ -847,6 +847,7 @@ static irqreturn_t ixgbe_msix_clean_rx(int irq, void *data, struct pt_regs *regs
+ 	IXGBE_WRITE_REG(&adapter->hw, IXGBE_EIMC, rxr->v_idx);
+ 	rxr->total_bytes = 0;
+ 	rxr->total_packets = 0;
++
+ 	netif_rx_schedule(q_vector->dummy_netdev);
+ 
+ 	return IRQ_HANDLED;
+@@ -865,12 +866,14 @@ static irqreturn_t ixgbe_msix_clean_many(int irq, void *data, struct pt_regs *re
+  * @netdev: net_device struct with our devices info in it
+  * @budget: amount of work driver is allowed to do this pass, in packets
+  *
++ * This function is optimized for cleaning one queue only on a single
++ * q_vector!!!
+  **/
+ static int ixgbe_clean_rxonly(struct net_device *netdev, int *budget)
+ {
+ 	struct ixgbe_q_vector *q_vector = netdev->priv;
+ 	struct ixgbe_adapter *adapter = q_vector->adapter;
+-	struct ixgbe_ring *rxr;
++	struct ixgbe_ring *rxr = NULL;
+ 	int work_to_do = min(*budget, netdev->quota);
+ 	int work_done = 0;
+ 	long r_idx;
+@@ -898,6 +901,57 @@ quit_polling:
+ 	return 1;
+ }
+ 
++/**
++ * ixgbe_clean_rxonly_many - msix (aka one shot) rx clean routine
++ * @napi: napi struct with our devices info in it
++ * @budget: amount of work driver is allowed to do this pass, in packets
++ *
++ * This function will clean more than one rx queue associated with a
++ * q_vector.
++ **/
++static int ixgbe_clean_rxonly_many(struct net_device *netdev, int *budget)
++{
++	struct ixgbe_q_vector *q_vector = netdev->priv;
++	struct ixgbe_adapter *adapter = q_vector->adapter;
++	struct ixgbe_ring *rx_ring = NULL;
++	int work_to_do = min(*budget, netdev->quota);
++	int work_done = 0, i;
++	long r_idx;
++	u16 enable_mask = 0;
++
++	/* attempt to distribute budget to each queue fairly, but don't allow
++	 * the budget to go below 1 because we'll exit polling */
++	work_to_do /= (q_vector->rxr_count ?: 1);
++	work_to_do = max(*budget, 1);
++	r_idx = find_first_bit(q_vector->rxr_idx, adapter->num_rx_queues);
++
++	/* Keep link state information with original netdev */
++	if (!netif_carrier_ok(adapter->netdev))
++		goto quit_polling;
++
++	for (i = 0; i < q_vector->rxr_count; i++) {
++		rx_ring = &(adapter->rx_ring[r_idx]);
++		ixgbe_clean_rx_irq(adapter, rx_ring, &work_done, work_to_do);
++		enable_mask |= rx_ring->v_idx;
++		r_idx = find_next_bit(q_vector->rxr_idx, adapter->num_rx_queues,
++		                      r_idx + 1);
++	}
++
++	r_idx = find_first_bit(q_vector->rxr_idx, adapter->num_rx_queues);
++	rx_ring = &(adapter->rx_ring[r_idx]);
++	/* If all Rx work done, exit the polling mode */
++	if ((work_done < work_to_do) || !netif_running(adapter->netdev)) {
++quit_polling:
++		netif_rx_complete(netdev);
++		if (adapter->rx_eitr < IXGBE_MIN_ITR_USECS)
++			ixgbe_set_itr_msix(q_vector);
++		if (!test_bit(__IXGBE_DOWN, &adapter->state))
++			IXGBE_WRITE_REG(&adapter->hw, IXGBE_EIMS, enable_mask);
++		return 0;
++	}
++
++	return 1;
++}
+ static inline void map_vector_to_rxq(struct ixgbe_adapter *a, int v_idx,
+ 				     int r_idx)
+ {
+@@ -1567,14 +1621,21 @@ static void ixgbe_napi_enable_all(struct ixgbe_adapter *adapter)
+ 		q_vectors = 1;
+ 
+ 	for (q_idx = 0; q_idx < q_vectors; q_idx++) {
++		struct net_device *netdev;
+ 		q_vector = &adapter->q_vector[q_idx];
+ 		if (!q_vector->rxr_count)
+ 			continue;
++
++		netdev = q_vector->dummy_netdev;
++		if ((adapter->flags & IXGBE_FLAG_MSIX_ENABLED) &&
++		    (q_vector->rxr_count > 1))
++			netdev->poll = &ixgbe_clean_rxonly_many;
++
+ 		netif_poll_enable(q_vector->dummy_netdev);
+ 	}
+ }
+ 
+-static void ixgbe_napi_disable_all(struct ixgbe_adapter *adapter)
++void ixgbe_napi_disable_all(struct ixgbe_adapter *adapter)
+ {
+ 	int q_idx;
+ 	struct ixgbe_q_vector *q_vector;
+@@ -1681,8 +1742,8 @@ static int ixgbe_up_complete(struct ixgbe_adapter *adapter)
+ 	else
+ 		ixgbe_configure_msi_and_legacy(adapter);
+ 
++	ixgbe_napi_add_all(adapter);
+ 	clear_bit(__IXGBE_DOWN, &adapter->state);
+-
+ 	ixgbe_napi_enable_all(adapter);
+ 
+ 	/* clear any pending interrupts, may auto mask */
+@@ -1750,6 +1811,7 @@ static int ixgbe_resume(struct pci_dev *pdev)
+ 			return err;
+ 	}
+ 
++	ixgbe_napi_add_all(adapter);
+ 	ixgbe_reset(adapter);
+ 
+ 	if (netif_running(netdev))
+@@ -1919,6 +1981,10 @@ static int ixgbe_suspend(struct pci_dev *pdev, pm_message_t state)
+ 		ixgbe_free_irq(adapter);
+ 	}
+ 
++	ixgbe_napi_del_all(adapter);
++	kfree(adapter->rx_ring);
++	kfree(adapter->tx_ring);
++
+ #ifdef CONFIG_PM
+ 	retval = pci_save_state(pdev);
+ 	if (retval)
+@@ -2151,11 +2217,11 @@ static int __devinit ixgbe_alloc_queues(struct ixgbe_adapter *adapter)
+ 		goto err_rx_ring_allocation;
+ 
+ 	for (i = 0; i < adapter->num_tx_queues; i++) {
+-		adapter->tx_ring[i].count = IXGBE_DEFAULT_TXD;
++		adapter->tx_ring[i].count = adapter->tx_ring_count;
+ 		adapter->tx_ring[i].queue_index = i;
+ 	}
+ 	for (i = 0; i < adapter->num_rx_queues; i++) {
+-		adapter->rx_ring[i].count = IXGBE_DEFAULT_RXD;
++		adapter->rx_ring[i].count = adapter->rx_ring_count;
+ 		adapter->rx_ring[i].queue_index = i;
+ 	}
+ 
+@@ -2249,7 +2315,7 @@ out:
+ 	return err;
+ }
+ 
+-static void ixgbe_reset_interrupt_capability(struct ixgbe_adapter *adapter)
++void ixgbe_reset_interrupt_capability(struct ixgbe_adapter *adapter)
+ {
+ 	if (adapter->flags & IXGBE_FLAG_MSIX_ENABLED) {
+ 		adapter->flags &= ~IXGBE_FLAG_MSIX_ENABLED;
+@@ -2273,7 +2339,7 @@ static void ixgbe_reset_interrupt_capability(struct ixgbe_adapter *adapter)
+  * - Hardware queue count (num_*_queues)
+  *   - defined by miscellaneous hardware support/features (RSS, etc.)
+  **/
+-static int __devinit ixgbe_init_interrupt_scheme(struct ixgbe_adapter *adapter)
++int __devinit ixgbe_init_interrupt_scheme(struct ixgbe_adapter *adapter)
+ {
+ 	int err;
+ 
+@@ -2350,6 +2416,10 @@ static int __devinit ixgbe_sw_init(struct ixgbe_adapter *adapter)
+ 		return -EIO;
+ 	}
+ 
++	/* set default ring sizes */
++	adapter->tx_ring_count = IXGBE_DEFAULT_TXD;
++	adapter->rx_ring_count = IXGBE_DEFAULT_RXD;
++
+ 	/* initialize eeprom parameters */
+ 	if (ixgbe_init_eeprom(hw)) {
+ 		dev_err(&pdev->dev, "EEPROM initialization failed\n");
+@@ -2453,7 +2523,7 @@ int ixgbe_setup_rx_resources(struct ixgbe_adapter *adapter,
+  *
+  * Free all transmit software resources
+  **/
+-static void ixgbe_free_tx_resources(struct ixgbe_adapter *adapter,
++void ixgbe_free_tx_resources(struct ixgbe_adapter *adapter,
+ 				    struct ixgbe_ring *tx_ring)
+ {
+ 	struct pci_dev *pdev = adapter->pdev;
+@@ -2483,14 +2553,14 @@ static void ixgbe_free_all_tx_resources(struct ixgbe_adapter *adapter)
+ }
+ 
+ /**
+- * ixgbe_free_rx_resources - Free Rx Resources
++ * ixgbe_ree_rx_resources - Free Rx Resources
+  * @adapter: board private structure
+  * @rx_ring: ring to clean the resources from
+  *
+  * Free all receive software resources
+  **/
+-static void ixgbe_free_rx_resources(struct ixgbe_adapter *adapter,
+-				    struct ixgbe_ring *rx_ring)
++void ixgbe_free_rx_resources(struct ixgbe_adapter *adapter,
++                             struct ixgbe_ring *rx_ring)
+ {
+ 	struct pci_dev *pdev = adapter->pdev;
+ 
+@@ -2610,7 +2680,7 @@ static int ixgbe_change_mtu(struct net_device *netdev, int new_mtu)
+  * handler is registered with the OS, the watchdog timer is started,
+  * and the stack is notified that the interface is ready.
+  **/
+-static int ixgbe_open(struct net_device *netdev)
++int ixgbe_open(struct net_device *netdev)
+ {
+ 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
+ 	int err;
+@@ -2665,7 +2735,7 @@ err_setup_tx:
+  * needs to be disabled.  A global MAC reset is issued to stop the
+  * hardware, and all transmit and receive resources are freed.
+  **/
+-static int ixgbe_close(struct net_device *netdev)
++int ixgbe_close(struct net_device *netdev)
+ {
+ 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
+ 
+@@ -3292,7 +3362,7 @@ static int ixgbe_link_config(struct ixgbe_hw *hw)
+  * @adapter: private struct
+  * helper function to napi_add each possible q_vector->napi
+  */
+-static int ixgbe_napi_add_all(struct ixgbe_adapter *adapter)
++int ixgbe_napi_add_all(struct ixgbe_adapter *adapter)
+ {
+ 	int i, q_vectors = adapter->num_msix_vectors - NON_Q_VECTORS;
+ 	int (*poll)(struct net_device *, int *);
+@@ -3308,9 +3378,11 @@ static int ixgbe_napi_add_all(struct ixgbe_adapter *adapter)
+ 	for (i = 0; i < q_vectors; i++) {
+ 		struct ixgbe_q_vector *q_vector = &adapter->q_vector[i];
+ 
+-		q_vector->dummy_netdev = alloc_netdev(0, "", ether_setup);
+-                if (!q_vector->dummy_netdev)
+-                        return -ENOMEM;
++		if (!q_vector->dummy_netdev) {
++			q_vector->dummy_netdev = alloc_netdev(0, "", ether_setup);
++			if (!q_vector->dummy_netdev)
++				return -ENOMEM;
++		}
+ 		q_vector->dummy_netdev->priv = q_vector;
+ 		q_vector->dummy_netdev->poll = poll;
+ 		q_vector->dummy_netdev->weight = 64;
+@@ -3321,11 +3393,11 @@ static int ixgbe_napi_add_all(struct ixgbe_adapter *adapter)
+ 
+ 
+ /**
+- * ixgbe_napi_remove_all - prep napi structs for use
++ * ixgbe_napi_del_all - prep napi structs for use
+  * @adapter: private struct
+  * helper function to napi_add each possible q_vector->napi
+  */
+-static void ixgbe_napi_remove_all(struct ixgbe_adapter *adapter)
++void ixgbe_napi_del_all(struct ixgbe_adapter *adapter)
+ {
+ 	int i, q_vectors = adapter->num_msix_vectors - NON_Q_VECTORS;
+ 
+@@ -3431,8 +3503,6 @@ static int __devinit ixgbe_probe(struct pci_dev *pdev,
+ 	ixgbe_set_ethtool_ops(netdev);
+ 	netdev->tx_timeout = &ixgbe_tx_timeout;
+ 	netdev->watchdog_timeo = 5 * HZ;
+-	netdev->poll = &ixgbe_poll;
+-	netdev->weight = 64;
+ 
+ 	netdev->vlan_rx_register = ixgbe_vlan_rx_register;
+ 	netdev->vlan_rx_add_vid = ixgbe_vlan_rx_add_vid;
+@@ -3568,7 +3638,7 @@ static int __devinit ixgbe_probe(struct pci_dev *pdev,
+ 	return 0;
+ 
+ err_register:
+-	ixgbe_napi_remove_all(adapter);
++	ixgbe_napi_del_all(adapter);
+ err_napi_add:
+ 	ixgbe_release_hw_control(adapter);
+ err_hw_init:
+@@ -3607,9 +3677,10 @@ static void __devexit ixgbe_remove(struct pci_dev *pdev)
+ 
+ 	unregister_netdev(netdev);
+ 
+-	ixgbe_napi_remove_all(adapter);
+-
+ 	ixgbe_reset_interrupt_capability(adapter);
++	ixgbe_napi_del_all(adapter);
++	kfree(adapter->tx_ring);
++	kfree(adapter->rx_ring);
+ 
+ 	ixgbe_release_hw_control(adapter);
+ 
+@@ -3617,8 +3688,6 @@ static void __devexit ixgbe_remove(struct pci_dev *pdev)
+ 	pci_release_regions(pdev);
+ 
+ 	DPRINTK(PROBE, INFO, "complete\n");
+-	kfree(adapter->tx_ring);
+-	kfree(adapter->rx_ring);
+ 
+ 	free_netdev(netdev);
+ 

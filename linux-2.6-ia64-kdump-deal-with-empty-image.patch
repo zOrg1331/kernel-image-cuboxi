@@ -1,0 +1,73 @@
+From: Doug Chapman <dchapman@redhat.com>
+Date: Tue, 20 Nov 2007 15:12:48 -0500
+Subject: [ia64] kdump: deal with empty image
+Message-id: 1195589568.6359.19.camel@dchapman.boston.redhat.com
+O-Subject: Re: [RHEL5.2 patch] [ia64] fix NULL-pointer dereference in ia64_machine_kexec()
+Bugzilla: 249724
+
+On Mon, 2007-11-19 at 22:07 -0500, Don Zickus wrote:
+> On Mon, Jul 30, 2007 at 01:28:38PM -0400, Doug Chapman wrote:
+> >
+> > Fix for BZ 249724
+> >
+> > If a user thinks the machine is hung and performs an
+> > INIT (non-maskable interrupt) to collect debugging
+> > information, the kernel INIT handler attempts to perform
+> > a kdump.  If the user has not previously loaded a kdump
+> > image, this causes a kernel panic due to a null pointer
+> > dereference.
+> >
+> > The upstream commit for this patch is:
+> > c2c77fe8df3e0322a613ba1540910632ad14d96d
+>
+> I just noticed commit
+> 2010d7fe787b39afd31daba5d5284dd432de4e8f
+>
+Does the same check as my previous patch, just in a more appropriate
+place.  Here is the updated patch.
+
+Tested on 2 different HP ia64 systems both with kdump and without kdump.
+
+thanks,
+
+- Doug
+
+diff --git a/arch/ia64/kernel/crash.c b/arch/ia64/kernel/crash.c
+index 8b276ae..6aa564b 100644
+--- a/arch/ia64/kernel/crash.c
++++ b/arch/ia64/kernel/crash.c
+@@ -173,6 +173,14 @@ kdump_init_notifier(struct notifier_block *self, unsigned long val, void *data)
+ 	if (!kdump_on_init)
+ 		return NOTIFY_DONE;
+ 
++	if (!ia64_kimage) {
++		if (val == DIE_INIT_MONARCH_LEAVE)
++			printk(KERN_NOTICE
++				"%s: kdump not configured\n",
++				__FUNCTION__);
++		return NOTIFY_DONE;
++	}
++
+ 	if (val != DIE_INIT_MONARCH_ENTER &&
+ 	    val != DIE_INIT_SLAVE_ENTER &&
+ 	    val != DIE_MCA_RENDZVOUS_LEAVE &&
+diff --git a/arch/ia64/kernel/machine_kexec.c b/arch/ia64/kernel/machine_kexec.c
+index daf5ab0..7e676bf 100644
+--- a/arch/ia64/kernel/machine_kexec.c
++++ b/arch/ia64/kernel/machine_kexec.c
+@@ -99,6 +99,7 @@ static void ia64_machine_kexec(struct unw_frame_info *info, void *arg)
+ 	unsigned long vector;
+ 	int ii;
+ 
++	BUG_ON(!image);
+ 	if (image->type == KEXEC_TYPE_CRASH) {
+ 		crash_save_this_cpu();
+ 		current->thread.ksp = (__u64)info->sw - 16;
+@@ -137,6 +138,7 @@ static void ia64_machine_kexec(struct unw_frame_info *info, void *arg)
+ 
+ void machine_kexec(struct kimage *image)
+ {
++	BUG_ON(!image);
+ 	unw_init_running(ia64_machine_kexec, image);
+ 	for(;;);
+ }

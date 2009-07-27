@@ -1,0 +1,49 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Subject: [RHEL5 patch] : RHEL5B2 does not support legacy IDE mode of SB600  SATA
+Date: Mon, 15 Jan 2007 12:02:06 -0500
+Bugzilla: 221636
+Message-Id: <45ABB38E.8080200@redhat.com>
+Changelog: sata: support legacy IDE mode of SB600 SATA
+
+
+This is a patch from AMD-GPG that fixes the RHEL5 codebase and allows it 
+to support legacy.
+IDE mode of SB600 SATA.   AMD/ATI SB600 SATA controller supports 4 modes:
+  legacy IDE, native IDE, AHCI, RAID
+
+The ahci driver in RHEL5 (beta 2) tries to claim all 4 modes of SB600 
+SATA, but fails in
+legacy IDE mode.
+
+
+--- linux-2.6.18.x86_64/drivers/pci/quirks.c.orig	2007-01-15 11:45:42.000000000 -0500
++++ linux-2.6.18.x86_64/drivers/pci/quirks.c	2007-01-15 11:47:22.000000000 -0500
+@@ -1230,6 +1230,27 @@ static void __devinit quirk_jmicron_dual
+ 
+ DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_JMICRON, PCI_ANY_ID, quirk_jmicron_dualfn);
+ 
++
++/*
++ *  Some BIOS set AMD/ATI SB600 SATA as IDE mode for backward compatibility, 
++ *  but Linux should set it back to AHCI mode since ahci is supported now.
++ */
++static void __devinit quirk_sb600_sata(struct pci_dev *pdev)
++{
++	if ((pdev->class >> 8) == PCI_CLASS_STORAGE_IDE) {
++		u8 tmp;
++
++		pci_read_config_byte(pdev, 0x40, &tmp);
++		pci_write_config_byte(pdev, 0x40, tmp|1);
++		pci_write_config_byte(pdev, PCI_CLASS_PROG, 1);
++		pci_write_config_byte(pdev, PCI_CLASS_DEVICE, 6);
++		pci_write_config_byte(pdev, 0x40, tmp);
++
++		pdev->class = 0x010601;
++	}
++}
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP600_SATA, quirk_sb600_sata);
++
+ #endif
+ 
+ #ifdef CONFIG_X86_IO_APIC
+

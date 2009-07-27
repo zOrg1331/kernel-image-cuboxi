@@ -1,0 +1,462 @@
+diff -uNr linux-2.6.17.i386.orig/arch/ia64/mm/numa.c linux-2.6.17.i386/arch/ia64/mm/numa.c
+--- linux-2.6.17.i386.orig/arch/ia64/mm/numa.c	2006-09-19 16:55:05.000000000 -0400
++++ linux-2.6.17.i386/arch/ia64/mm/numa.c	2006-09-19 17:05:09.000000000 -0400
+@@ -16,6 +16,7 @@
+ #include <linux/node.h>
+ #include <linux/init.h>
+ #include <linux/bootmem.h>
++#include <linux/module.h>
+ #include <asm/mmzone.h>
+ #include <asm/numa.h>
+ 
+@@ -69,4 +70,21 @@
+ 
+ 	return 0;
+ }
++
++#ifdef CONFIG_MEMORY_HOTPLUG
++/*
++ *  SRAT information is stored in node_memblk[], then we can use SRAT
++ *  information at memory-hot-add if necessary.
++ */
++
++int memory_add_physaddr_to_nid(u64 addr)
++{
++	int nid = paddr_to_nid(addr);
++	if (nid < 0)
++		return 0;
++	return nid;
++}
++
++EXPORT_SYMBOL_GPL(memory_add_physaddr_to_nid);
++#endif
+ #endif
+diff -uNr linux-2.6.17.i386.orig/arch/x86_64/Kconfig linux-2.6.17.i386/arch/x86_64/Kconfig
+--- linux-2.6.17.i386.orig/arch/x86_64/Kconfig	2006-09-19 16:55:15.000000000 -0400
++++ linux-2.6.17.i386/arch/x86_64/Kconfig	2006-09-19 16:55:43.000000000 -0400
+@@ -379,6 +379,10 @@
+ 
+ source "mm/Kconfig"
+ 
++config MEMORY_HOTPLUG_RESERVE
++	def_bool y
++	depends on (MEMORY_HOTPLUG && DISCONTIGMEM)
++
+ config HAVE_ARCH_EARLY_PFN_TO_NID
+ 	def_bool y
+ 	depends on NUMA
+diff -uNr linux-2.6.17.i386.orig/arch/x86_64/mm/init.c linux-2.6.17.i386/arch/x86_64/mm/init.c
+--- linux-2.6.17.i386.orig/arch/x86_64/mm/init.c	2006-09-19 16:55:15.000000000 -0400
++++ linux-2.6.17.i386/arch/x86_64/mm/init.c	2006-09-19 16:55:43.000000000 -0400
+@@ -251,12 +251,13 @@
+ }
+ 
+ static void __meminit
+-phys_pmd_init(pmd_t *pmd, unsigned long address, unsigned long end)
++phys_pmd_init(pmd_t *pmd_page, unsigned long address, unsigned long end)
+ {
+-	int i;
++	int i = pmd_index(address);
+ 
+-	for (i = 0; i < PTRS_PER_PMD; pmd++, i++, address += PMD_SIZE) {
++	for (; i < PTRS_PER_PMD; i++, address += PMD_SIZE) {
+ 		unsigned long entry;
++		pmd_t *pmd = pmd_page + pmd_index(address);
+ 
+ 		if (address >= end) {
+ 			if (!after_bootmem)
+@@ -264,6 +265,11 @@
+ 					set_pmd(pmd, __pmd(0));
+ 			break;
+ 		}
++		
++		if (pmd_val(*pmd)) {
++			printk (KERN_ERR "%s trying to trample pte entry \
++				%lx@%lx\n",__func__,pmd_val(*pmd),address);
++		}
+ 		entry = _PAGE_NX|_PAGE_PSE|_KERNPG_TABLE|_PAGE_GLOBAL|address;
+ 		entry &= __supported_pte_mask;
+ 		set_pmd(pmd, __pmd(entry));
+@@ -273,45 +279,41 @@
+ static void __meminit
+ phys_pmd_update(pud_t *pud, unsigned long address, unsigned long end)
+ {
+-	pmd_t *pmd = pmd_offset(pud, (unsigned long)__va(address));
+-
+-	if (pmd_none(*pmd)) {
+-		spin_lock(&init_mm.page_table_lock);
+-		phys_pmd_init(pmd, address, end);
+-		spin_unlock(&init_mm.page_table_lock);
+-		__flush_tlb_all();
+-	}
++	pmd_t *pmd = pmd_offset(pud,0);
++	spin_lock(&init_mm.page_table_lock);
++	phys_pmd_init(pmd, address, end);
++	spin_unlock(&init_mm.page_table_lock);
++	__flush_tlb_all();
+ }
+ 
+-static void __meminit phys_pud_init(pud_t *pud, unsigned long address, unsigned long end)
++static void __meminit phys_pud_init(pud_t *pud_page, unsigned long addr, unsigned long end)
+ { 
+-	long i = pud_index(address);
++	int i = pud_index(addr);
+ 
+-	pud = pud + i;
+ 
+-	if (after_bootmem && pud_val(*pud)) {
+-		phys_pmd_update(pud, address, end);
+-		return;
+-	}
+-
+-	for (; i < PTRS_PER_PUD; pud++, i++) {
++	for (; i < PTRS_PER_PUD; i++, addr = (addr & PUD_MASK) + PUD_SIZE ) {
+ 		int map; 
+-		unsigned long paddr, pmd_phys;
++		unsigned long pmd_phys;
++		pud_t *pud = pud_page + pud_index(addr);
+ 		pmd_t *pmd;
+ 
+-		paddr = (address & PGDIR_MASK) + i*PUD_SIZE;
+-		if (paddr >= end)
++		if (addr >= end)
+ 			break;
+ 
+-		if (!after_bootmem && !e820_any_mapped(paddr, paddr+PUD_SIZE, 0)) {
++		if (!after_bootmem && !e820_any_mapped(addr,addr+PUD_SIZE,0)) {
+ 			set_pud(pud, __pud(0)); 
+ 			continue;
+ 		} 
+ 
++		if (pud_val(*pud)) {
++			phys_pmd_update(pud, addr, end);
++			continue;
++		}
++
+ 		pmd = alloc_low_page(&map, &pmd_phys);
+ 		spin_lock(&init_mm.page_table_lock);
+ 		set_pud(pud, __pud(pmd_phys | _KERNPG_TABLE));
+-		phys_pmd_init(pmd, paddr, end);
++		phys_pmd_init(pmd, addr, end);
+ 		spin_unlock(&init_mm.page_table_lock);
+ 		unmap_low_page(map);
+ 	}
+@@ -540,19 +542,6 @@
+ 
+ #ifdef CONFIG_MEMORY_HOTPLUG
+ /*
+- * XXX: memory_add_physaddr_to_nid() is to find node id from physical address
+- *	via probe interface of sysfs. If acpi notifies hot-add event, then it
+- *	can tell node id by searching dsdt. But, probe interface doesn't have
+- *	node id. So, return 0 as node id at this time.
+- */
+-#ifdef CONFIG_NUMA
+-int memory_add_physaddr_to_nid(u64 start)
+-{
+-	return 0;
+-}
+-#endif
+-
+-/*
+  * Memory is added always to NORMAL zone. This means you will never get
+  * additional DMA/DMA32 memory.
+  */
+@@ -583,6 +572,14 @@
+ }
+ EXPORT_SYMBOL_GPL(remove_memory);
+ 
++#ifdef CONFIG_NUMA 
++#ifndef CONFIG_ACPI_NUMA
++int memory_add_physaddr_to_nid(u64 start)
++{
++	return 0;
++}
++#endif 
++#endif
+ #else /* CONFIG_MEMORY_HOTPLUG */
+ /*
+  * Memory Hotadd without sparsemem. The mem_maps have been allocated in advance,
+diff -uNr linux-2.6.17.i386.orig/arch/x86_64/mm/srat.c linux-2.6.17.i386/arch/x86_64/mm/srat.c
+--- linux-2.6.17.i386.orig/arch/x86_64/mm/srat.c	2006-09-19 16:55:15.000000000 -0400
++++ linux-2.6.17.i386/arch/x86_64/mm/srat.c	2006-09-19 16:55:43.000000000 -0400
+@@ -21,22 +21,13 @@
+ #include <asm/numa.h>
+ #include <asm/e820.h>
+ 
+-#if (defined(CONFIG_ACPI_HOTPLUG_MEMORY) || \
+-	defined(CONFIG_ACPI_HOTPLUG_MEMORY_MODULE)) \
+-		&& !defined(CONFIG_MEMORY_HOTPLUG)
+-#define RESERVE_HOTADD 1
+-#endif
+-
+ static struct acpi_table_slit *acpi_slit;
+ 
+ static nodemask_t nodes_parsed __initdata;
+ static struct bootnode nodes[MAX_NUMNODES] __initdata;
+-static struct bootnode nodes_add[MAX_NUMNODES] __initdata;
++static struct bootnode nodes_add[MAX_NUMNODES];
+ static int found_add_area __initdata;
+ int hotadd_percent __initdata = 0;
+-#ifndef RESERVE_HOTADD
+-#define hotadd_percent 0	/* Ignore all settings */
+-#endif
+ 
+ /* Too small nodes confuse the VM badly. Usually they result
+    from BIOS bugs. */
+@@ -157,7 +148,7 @@
+ 	       pxm, pa->apic_id, node);
+ }
+ 
+-#ifdef RESERVE_HOTADD
++#ifdef CONFIG_HOTPLUG_MEMORY_RESERVE
+ /*
+  * Protect against too large hotadd areas that would fill up memory.
+  */
+@@ -200,15 +191,37 @@
+ 	return 1;
+ }
+ 
++static int update_end_of_memory(unsigned long end)
++{
++	found_add_area = 1;
++	if ((end >> PAGE_SHIFT) > end_pfn)
++		end_pfn = end >> PAGE_SHIFT;
++	return 1;
++}
++
++static inline int save_add_info(void)
++{
++	return hotadd_percent > 0;
++}
++#else
++int update_end_of_memory(unsigned long end) {return 0;}
++static int hotadd_enough_memory(struct bootnode *nd) {return 1;}
++#ifdef CONFIG_MEMORY_HOTPLUG_SPARSE
++static inline int save_add_info(void) {return 1;}
++#else
++static inline int save_add_info(void) {return 0;}
++#endif 
++#endif 
+ /*
+- * It is fine to add this area to the nodes data it will be used later
++ * Update nodes_add and decide if to include add are in the zone.  
++ * Both SPARSE and RESERVE need nodes_add infomation.
+  * This code supports one contigious hot add area per node.
+  */
+ static int reserve_hotadd(int node, unsigned long start, unsigned long end)
+ {
+ 	unsigned long s_pfn = start >> PAGE_SHIFT;
+ 	unsigned long e_pfn = end >> PAGE_SHIFT;
+-	int changed = 0;
++	int ret = 0, changed = 0;
+ 	struct bootnode *nd = &nodes_add[node];
+ 
+ 	/* I had some trouble with strange memory hotadd regions breaking
+@@ -235,7 +248,6 @@
+ 
+ 	/* Looks good */
+ 
+- 	found_add_area = 1;
+ 	if (nd->start == nd->end) {
+  		nd->start = start;
+  		nd->end = end;
+@@ -253,14 +265,12 @@
+ 			printk(KERN_ERR "SRAT: Hotplug zone not continuous. Partly ignored\n");
+  	}
+ 
+- 	if ((nd->end >> PAGE_SHIFT) > end_pfn)
+- 		end_pfn = nd->end >> PAGE_SHIFT;
++	ret = update_end_of_memory(nd->end);
+ 
+ 	if (changed)
+ 	 	printk(KERN_INFO "SRAT: hot plug zone found %Lx - %Lx\n", nd->start, nd->end);
+ 	return 0;
+ }
+-#endif
+ 
+ /* Callback for parsing of the Proximity Domain <-> Memory Area mappings */
+ void __init
+@@ -279,7 +289,7 @@
+ 	}
+ 	if (ma->flags.enabled == 0)
+ 		return;
+- 	if (ma->flags.hot_pluggable && hotadd_percent == 0)
++ 	if (ma->flags.hot_pluggable && !save_add_info())
+ 		return;
+ 	start = ma->base_addr_lo | ((u64)ma->base_addr_hi << 32);
+ 	end = start + (ma->length_lo | ((u64)ma->length_hi << 32));
+@@ -318,15 +328,13 @@
+ 	printk(KERN_INFO "SRAT: Node %u PXM %u %Lx-%Lx\n", node, pxm,
+ 	       nd->start, nd->end);
+ 
+-#ifdef RESERVE_HOTADD
+- 	if (ma->flags.hot_pluggable && reserve_hotadd(node, start, end) < 0) {
++ 	if (ma->flags.hot_pluggable && !reserve_hotadd(node, start, end) < 0) {
+ 		/* Ignore hotadd region. Undo damage */
+ 		printk(KERN_NOTICE "SRAT: Hotplug region ignored\n");
+ 		*nd = oldnode;
+ 		if ((nd->start | nd->end) == 0)
+ 			node_clear(node, nodes_parsed);
+ 	}
+-#endif
+ }
+ 
+ /* Sanity check to catch more bad SRATs (they are amazingly common).
+@@ -342,7 +350,6 @@
+ 		unsigned long e = nodes[i].end >> PAGE_SHIFT;
+ 		pxmram += e - s;
+ 		pxmram -= e820_hole_size(s, e);
+-		pxmram -= nodes_add[i].end - nodes_add[i].start;
+ 		if ((long)pxmram < 0)
+ 			pxmram = 0;
+ 	}
+@@ -450,3 +457,16 @@
+ }
+ 
+ EXPORT_SYMBOL(__node_distance);
++
++int memory_add_physaddr_to_nid(u64 start)
++{
++	int i, ret = 0;
++	
++	for_each_node(i) 
++		if (nodes_add[i].start <= start && nodes_add[i].end > start)
++			ret = i;
++
++	return ret;
++}
++
++EXPORT_SYMBOL(memory_add_physaddr_to_nid);
+diff -uNr linux-2.6.17.i386.orig/drivers/acpi/acpi_memhotplug.c linux-2.6.17.i386/drivers/acpi/acpi_memhotplug.c
+--- linux-2.6.17.i386.orig/drivers/acpi/acpi_memhotplug.c	2006-09-19 16:54:47.000000000 -0400
++++ linux-2.6.17.i386/drivers/acpi/acpi_memhotplug.c	2006-09-19 17:05:22.000000000 -0400
+@@ -238,6 +238,8 @@
+ 			num_enabled++;
+ 			continue;
+ 		}
++		if (node < 0)
++			node =  memory_add_physaddr_to_nid(info->start_addr);
+ 		result = add_memory(node, info->start_addr, info->length);
+ 		if (result)
+ 			continue;
+diff -uNr linux-2.6.17.i386.orig/drivers/acpi/motherboard.c linux-2.6.17.i386/drivers/acpi/motherboard.c
+--- linux-2.6.17.i386.orig/drivers/acpi/motherboard.c	2006-09-19 16:54:47.000000000 -0400
++++ linux-2.6.17.i386/drivers/acpi/motherboard.c	2006-09-19 16:55:43.000000000 -0400
+@@ -87,6 +87,7 @@
+ 		}
+ 	} else {
+ 		/* Memory mapped IO? */
++		 return -EINVAL;
+ 	}
+ 
+ 	if (requested_res)
+@@ -96,11 +97,16 @@
+ 
+ static int acpi_motherboard_add(struct acpi_device *device)
+ {
++	acpi_status status;
+ 	if (!device)
+ 		return -EINVAL;
+-	acpi_walk_resources(device->handle, METHOD_NAME__CRS,
++
++	status = acpi_walk_resources(device->handle, METHOD_NAME__CRS,
+ 			    acpi_reserve_io_ranges, NULL);
+ 
++	if (ACPI_FAILURE(status)) 
++		return -ENODEV;
++	
+ 	return 0;
+ }
+ 
+--- linux-2.6.18.noarch.orig/mm/Kconfig	2006-09-26 10:37:54.000000000 -0400
++++ linux-2.6.18.noarch/mm/Kconfig	2006-09-26 11:02:31.000000000 -0400
+@@ -115,12 +115,15 @@
+ # eventually, we can have this option just 'select SPARSEMEM'
+ config MEMORY_HOTPLUG
+ 	bool "Allow for memory hot-add"
+-	depends on SPARSEMEM && HOTPLUG && !SOFTWARE_SUSPEND && ARCH_ENABLE_MEMORY_HOTPLUG
++	depends on SPARSEMEM && HOTPLUG && ARCH_ENABLE_MEMORY_HOTPLUG
+	depends on (IA64 || X86 || PPC64)
+ 
+-comment "Memory hotplug is currently incompatible with Software Suspend"
++comment "Memory hotplug is not guaranteed to work with Software Suspend"
+ 	depends on SPARSEMEM && HOTPLUG && SOFTWARE_SUSPEND
+ 
++config MEMORY_HOTPLUG_SPARSE
++ 	def_bool y
++ 	depends on SPARSEMEM && MEMORY_HOTPLUG
+ # Heavily threaded applications may benefit from splitting the mm-wide
+ # page_table_lock, so that faults on different parts of the user address
+ # space can be handled with less contention: split it at this NR_CPUS.
+Date: Fri, 29 Sep 2006 22:24:13 -0400
+From: Konrad Rzeszutek <konradr@redhat.com>
+Subject: [RHEL5 PATCH] RHBZ 208445 - NetLabel hot-add memory confict pre-beta2 kenrel x86_64
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=208445
+
+Description:
+------------
+
+Extra checking of the pre-Beta2 kernel with hot-add memory has
+demonstrated some major bugs in main-line and RHEL5 kernel. Just
+two lines and the box crashes after hot-add memory is done. 
+
+Not sure how to classify this as bug-after-feature-follow-on.
+Please provide ACKs - only two lines are changed, but it is
+in common code line patchs.
+
+RHEL Version Found:
+------------------
+RHEL5 pre Beta2 (2.6.18-1-2702)
+
+Upstream Status:
+----------------
+This is fresh from the bakery. Being posted on LKML soon.
+
+Test Status:
+------------
+Tested on IBM xSeries 2-node x460 in Beaverton. Testing of this
+will be done in Westford on Monday with various memory 
+configurations.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18 (RHEL5 pre-Beta2) kernel.
+
+diff -urN linux-2.6.18.x86_64/arch/x86_64/mm/srat.c linux-2.6.18.x86_64-works/arch/x86_64/mm/srat.c
+--- linux-2.6.18.x86_64/arch/x86_64/mm/srat.c	2006-09-27 12:48:42.000000000 -0700
++++ linux-2.6.18.x86_64-works/arch/x86_64/mm/srat.c	2006-09-29 16:54:09.000000000 -0700
+@@ -204,7 +204,7 @@
+ 	return hotadd_percent > 0;
+ }
+ #else
+-int update_end_of_memory(unsigned long end) {return 0;}
++int update_end_of_memory(unsigned long end) {return -1;}
+ static int hotadd_enough_memory(struct bootnode *nd) {return 1;}
+ #ifdef CONFIG_MEMORY_HOTPLUG_SPARSE
+ static inline int save_add_info(void) {return 1;}
+@@ -269,7 +269,7 @@
+ 
+ 	if (changed)
+ 	 	printk(KERN_INFO "SRAT: hot plug zone found %Lx - %Lx\n", nd->start, nd->end);
+-	return 0;
++	return ret;
+ }
+ 
+ /* Callback for parsing of the Proximity Domain <-> Memory Area mappings */
+@@ -328,7 +328,7 @@
+ 	printk(KERN_INFO "SRAT: Node %u PXM %u %Lx-%Lx\n", node, pxm,
+ 	       nd->start, nd->end);
+ 
+- 	if (ma->flags.hot_pluggable && !reserve_hotadd(node, start, end) < 0) {
++ 	if (ma->flags.hot_pluggable && (reserve_hotadd(node, start, end) < 0)) {
+ 		/* Ignore hotadd region. Undo damage */
+ 		printk(KERN_NOTICE "SRAT: Hotplug region ignored\n");
+ 		*nd = oldnode;
+
+-- 
+Konrad Rzeszutek 1-(978)-392-3903 or 1-(617)-693-1718
+IBM on-site partner.
+

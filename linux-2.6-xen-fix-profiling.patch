@@ -1,0 +1,32 @@
+From: Rik van Riel <riel@redhat.com>
+Subject: [PATCH][RHEL5 Xen] fix profiling
+Date: Thu, 16 Nov 2006 17:27:45 -0500
+Bugzilla: 214886
+Message-Id: <455CE5E1.1030300@redhat.com>
+Changelog: Xen: fix profiling
+
+
+The timer interrupt code did not call profile_tick(), which means
+that things like systemtap were not working at all under the Xen
+kernel.
+
+Simply adding a call to profile_tick() to the timer_interrupt()
+code seems to make things work again in my simple tests.
+
+Bug #214886
+
+-- 
+All Rights Reversed
+
+Index: latest/arch/i386/kernel/time-xen.c
+===================================================================
+--- latest.orig/arch/i386/kernel/time-xen.c
++++ latest/arch/i386/kernel/time-xen.c
+@@ -715,6 +715,7 @@ irqreturn_t timer_interrupt(int irq, voi
+ 		rcu_check_callbacks(cpu, user_mode(regs));
+ 	scheduler_tick();
+ 	run_posix_cpu_timers(current);
++	profile_tick(CPU_PROFILING, regs);
+ 
+ 	return IRQ_HANDLED;
+ }

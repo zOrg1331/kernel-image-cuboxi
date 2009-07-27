@@ -1,0 +1,160 @@
+From: Geoff Gustafson <grgustaf@redhat.com>
+Subject: [RHEL 5.1 PATCH] ICH9 device IDs (bz 223097)
+Date: Wed, 04 Apr 2007 11:52:29 -0400
+Bugzilla: 223097
+Message-Id: <4613C9BD.7050102@redhat.com>
+Changelog: [x86] ICH9 device IDs 
+
+
+Patch to support Intel ICH9 southbridge.
+
+I was able to test locally based on 2.6.18-12. Already in RHEL4.5.
+
+- Geoff
+
+
+
+--- linux-2.6.18.i386/arch/i386/pci/irq.c.orig	2007-03-02 12:09:45.000000000 -0800
++++ linux-2.6.18.i386/arch/i386/pci/irq.c	2007-03-02 12:12:15.000000000 -0800
+@@ -543,6 +543,12 @@
+ 		case PCI_DEVICE_ID_INTEL_ICH8_2:
+ 		case PCI_DEVICE_ID_INTEL_ICH8_3:
+ 		case PCI_DEVICE_ID_INTEL_ICH8_4:
++		case PCI_DEVICE_ID_INTEL_ICH9_0:
++		case PCI_DEVICE_ID_INTEL_ICH9_1:
++		case PCI_DEVICE_ID_INTEL_ICH9_2:
++		case PCI_DEVICE_ID_INTEL_ICH9_3:
++		case PCI_DEVICE_ID_INTEL_ICH9_4:
++		case PCI_DEVICE_ID_INTEL_ICH9_5:
+ 			r->name = "PIIX/ICH";
+ 			r->get = pirq_piix_get;
+ 			r->set = pirq_piix_set;
+--- linux-2.6.18.i386/drivers/scsi/ahci.c.orig	2007-03-02 12:09:53.000000000 -0800
++++ linux-2.6.18.i386/drivers/scsi/ahci.c	2007-03-05 12:08:12.000000000 -0800
+@@ -329,6 +329,30 @@
+ 	  board_ahci }, /* ICH8M */
+ 	{ PCI_VENDOR_ID_INTEL, 0x282a, PCI_ANY_ID, PCI_ANY_ID, 0, 0,
+ 	  board_ahci }, /* ICH8M */
++	{ PCI_VENDOR_ID_INTEL, 0x2922, PCI_ANY_ID, PCI_ANY_ID, 0, 0,
++	  board_ahci }, /* ICH9 */
++	{ PCI_VENDOR_ID_INTEL, 0x2923, PCI_ANY_ID, PCI_ANY_ID, 0, 0,
++	  board_ahci }, /* ICH9 */	
++	{ PCI_VENDOR_ID_INTEL, 0x2924, PCI_ANY_ID, PCI_ANY_ID, 0, 0,
++	  board_ahci }, /* ICH9 */	
++	{ PCI_VENDOR_ID_INTEL, 0x2925, PCI_ANY_ID, PCI_ANY_ID, 0, 0,
++	  board_ahci }, /* ICH9 */	
++	{ PCI_VENDOR_ID_INTEL, 0x2927, PCI_ANY_ID, PCI_ANY_ID, 0, 0,
++	  board_ahci }, /* ICH9 */	
++	{ PCI_VENDOR_ID_INTEL, 0x2929, PCI_ANY_ID, PCI_ANY_ID, 0, 0,
++	  board_ahci }, /* ICH9M */	
++	{ PCI_VENDOR_ID_INTEL, 0x292a, PCI_ANY_ID, PCI_ANY_ID, 0, 0,
++	  board_ahci }, /* ICH9M */	
++	{ PCI_VENDOR_ID_INTEL, 0x292b, PCI_ANY_ID, PCI_ANY_ID, 0, 0,
++	  board_ahci }, /* ICH9M */	
++	{ PCI_VENDOR_ID_INTEL, 0x292c, PCI_ANY_ID, PCI_ANY_ID, 0, 0,
++	  board_ahci }, /* ICH9M */	
++	{ PCI_VENDOR_ID_INTEL, 0x292f, PCI_ANY_ID, PCI_ANY_ID, 0, 0,
++	  board_ahci }, /* ICH9M */	
++	{ PCI_VENDOR_ID_INTEL, 0x294d, PCI_ANY_ID, PCI_ANY_ID, 0, 0,
++	  board_ahci }, /* ICH9 */	
++	{ PCI_VENDOR_ID_INTEL, 0x294e, PCI_ANY_ID, PCI_ANY_ID, 0, 0,
++	  board_ahci }, /* ICH9M */
+ 
+ 	/* JMicron */
+ 	{ 0x197b, 0x2360, PCI_ANY_ID, PCI_ANY_ID, 0, 0,
+--- linux-2.6.18.i386/drivers/scsi/ata_piix.c.orig	2007-03-02 12:09:49.000000000 -0800
++++ linux-2.6.18.i386/drivers/scsi/ata_piix.c	2007-03-02 12:12:15.000000000 -0800
+@@ -190,14 +190,26 @@
+ 	{ 0x8086, 0x27c0, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich6_sata_ahci },
+ 	/* 2801GBM/GHM (ICH7M, identical to ICH6M) */
+ 	{ 0x8086, 0x27c4, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich7m_sata_ahci },
+-	/* Enterprise Southbridge 2 (where's the datasheet?) */
++	/* 631x/632xESB (ESB2) */
+ 	{ 0x8086, 0x2680, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich6_sata_ahci },
+-	/* SATA Controller 1 IDE (ICH8, no datasheet yet) */
++	/* SATA Controller 1 IDE (ICH8) */
+ 	{ 0x8086, 0x2820, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_sata_ahci },
+-	/* SATA Controller 2 IDE (ICH8, ditto) */
++	/* SATA Controller 2 IDE (ICH8) */
+ 	{ 0x8086, 0x2825, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_sata_ahci },
+ 	/* Mobile SATA Controller IDE (ICH8M, ditto) */
+ 	{ 0x8086, 0x2828, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_sata_ahci },
++ 	/* SATA Controller IDE (ICH9) */
++ 	{ 0x8086, 0x2920, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_sata_ahci },
++ 	/* SATA Controller IDE (ICH9) */
++ 	{ 0x8086, 0x2921, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_sata_ahci },
++ 	/* SATA Controller IDE (ICH9) */
++ 	{ 0x8086, 0x2926, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_sata_ahci },
++ 	/* SATA Controller IDE (ICH9M) */
++ 	{ 0x8086, 0x2928, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_sata_ahci },
++ 	/* SATA Controller IDE (ICH9M) */
++ 	{ 0x8086, 0x292d, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_sata_ahci },
++ 	/* SATA Controller IDE (ICH9M) */
++ 	{ 0x8086, 0x292e, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_sata_ahci },
+ 
+ 	{ }	/* terminate list */
+ };
+--- linux-2.6.18.i386/drivers/i2c/busses/Kconfig.orig	2006-09-19 20:42:06.000000000 -0700
++++ linux-2.6.18.i386/drivers/i2c/busses/Kconfig	2007-03-02 12:12:15.000000000 -0800
+@@ -125,6 +125,7 @@
+ 	    ICH7
+ 	    ESB2
+ 	    ICH8
++	    ICH9
+ 
+ 	  This driver can also be built as a module.  If so, the module
+ 	  will be called i2c-i801.
+--- linux-2.6.18.i386/drivers/i2c/busses/i2c-i801.c.orig	2006-09-19 20:42:06.000000000 -0700
++++ linux-2.6.18.i386/drivers/i2c/busses/i2c-i801.c	2007-03-02 12:12:15.000000000 -0800
+@@ -33,6 +33,7 @@
+     ICH7		27DA
+     ESB2		269B
+     ICH8		283E
++    ICH9		2930
+     This driver supports several versions of Intel's I/O Controller Hubs (ICH).
+     For SMBus support, they are similar to the PIIX4 and are part
+     of Intel's '810' and other chipsets.
+@@ -457,6 +458,7 @@
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICH7_17) },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ESB2_17) },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICH8_5) },
++	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICH9_6) },
+ 	{ 0, }
+ };
+ 
+--- linux-2.6.18.i386/include/linux/pci_ids.h.orig	2007-03-02 12:09:49.000000000 -0800
++++ linux-2.6.18.i386/include/linux/pci_ids.h	2007-03-02 12:12:15.000000000 -0800
+@@ -2189,6 +2189,13 @@
+ #define PCI_DEVICE_ID_INTEL_ICH8_4	0x2815
+ #define PCI_DEVICE_ID_INTEL_ICH8_5	0x283e
+ #define PCI_DEVICE_ID_INTEL_ICH8_6	0x2850
++#define PCI_DEVICE_ID_INTEL_ICH9_0	0x2910
++#define PCI_DEVICE_ID_INTEL_ICH9_1	0x2911
++#define PCI_DEVICE_ID_INTEL_ICH9_2	0x2912
++#define PCI_DEVICE_ID_INTEL_ICH9_3	0x2913
++#define PCI_DEVICE_ID_INTEL_ICH9_4	0x2914
++#define PCI_DEVICE_ID_INTEL_ICH9_5	0x2915
++#define PCI_DEVICE_ID_INTEL_ICH9_6	0x2930
+ #define PCI_DEVICE_ID_INTEL_82855PM_HB	0x3340
+ #define PCI_DEVICE_ID_INTEL_82830_HB	0x3575
+ #define PCI_DEVICE_ID_INTEL_82830_CGC	0x3577
+--- linux-2.6.18.i386/sound/pci/hda/hda_intel.c.orig	2006-09-19 20:42:06.000000000 -0700
++++ linux-2.6.18.i386/sound/pci/hda/hda_intel.c	2007-03-02 12:12:15.000000000 -0800
+@@ -80,6 +80,7 @@
+ 			 "{Intel, ICH7},"
+ 			 "{Intel, ESB2},"
+ 			 "{Intel, ICH8},"
++			 "{Intel, ICH9},"
+ 			 "{ATI, SB450},"
+ 			 "{ATI, SB600},"
+ 			 "{ATI, RS600},"
+@@ -1634,6 +1635,8 @@
+ 	{ 0x8086, 0x27d8, PCI_ANY_ID, PCI_ANY_ID, 0, 0, AZX_DRIVER_ICH }, /* ICH7 */
+ 	{ 0x8086, 0x269a, PCI_ANY_ID, PCI_ANY_ID, 0, 0, AZX_DRIVER_ICH }, /* ESB2 */
+ 	{ 0x8086, 0x284b, PCI_ANY_ID, PCI_ANY_ID, 0, 0, AZX_DRIVER_ICH }, /* ICH8 */
++	{ 0x8086, 0x293e, PCI_ANY_ID, PCI_ANY_ID, 0, 0, AZX_DRIVER_ICH }, /* ICH9 */
++	{ 0x8086, 0x293f, PCI_ANY_ID, PCI_ANY_ID, 0, 0, AZX_DRIVER_ICH }, /* ICH9 */
+ 	{ 0x1002, 0x437b, PCI_ANY_ID, PCI_ANY_ID, 0, 0, AZX_DRIVER_ATI }, /* ATI SB450 */
+ 	{ 0x1002, 0x4383, PCI_ANY_ID, PCI_ANY_ID, 0, 0, AZX_DRIVER_ATI }, /* ATI SB600 */
+ 	{ 0x1002, 0x793b, PCI_ANY_ID, PCI_ANY_ID, 0, 0, AZX_DRIVER_ATIHDMI }, /* ATI RS600 HDMI */
+

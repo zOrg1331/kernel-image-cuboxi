@@ -1,0 +1,96 @@
+From: Thomas Graf <tgraf@redhat.com>
+Subject: [RHEL5.0 BZ234287]: CVE-2007-1496 Various NULL pointer dereferences in netfilter code
+Date: Thu, 3 May 2007 14:01:23 +0200
+Bugzilla: 234287
+Message-Id: <20070503120123.GA4398@lsx.localdomain>
+Changelog: [net] Various NULL pointer dereferences in netfilter code
+
+
+Backport of 3 upstream patches fixing serious NULL pointer derefences
+in the nfnetlink_log module. All 3 patches have been merged into the
+stable tree. Please ACK.
+
+commit edc34643c2d2046163482f792dd1085dccf70780
+Author: Michal Miroslaw <mirq-linux@rere.qmqm.pl>
+
+    nfnetlink_log: fix possible NULL pointer dereference
+    
+    [NETFILTER]: nfnetlink_log: fix possible NULL pointer dereference
+    
+    Eliminate possible NULL pointer dereference in nfulnl_recv_config().
+    
+    Signed-off-by: Michal Miroslaw <mirq-linux@rere.qmqm.pl>
+    Signed-off-by: Patrick McHardy <kaber@trash.net>
+    Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+commit ce51319b9dea6eb93b7fc37fe52af9fb114e3f2e
+Author: Micha Mirosaw <mirq-linux@rere.qmqm.pl>
+
+    nfnetlink_log: fix NULL pointer dereference
+    
+    [NETFILTER]: nfnetlink_log: fix NULL pointer dereference
+    
+    Fix the nasty NULL dereference on multiple packets per netlink message.
+
+    [...]
+
+    Signed-off-by: Micha Mirosaw <mirq-linux@rere.qmqm.pl>
+    Signed-off-by: Patrick McHardy <kaber@trash.net>
+    Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+commit 7f5c005cb148fe91362e14a1f78517b8b37f9abd
+Author: Patrick McHardy <kaber@trash.net>
+
+    nfnetlink_log: fix crash on bridged packet
+    
+    [NETFILTER]: nfnetlink_log: fix crash on bridged packet
+    
+    physoutdev is only set on purely bridged packet, when nfnetlink_log is used
+    in the OUTPUT/FORWARD/POSTROUTING hooks on packets forwarded from or to a
+    bridge it crashes when trying to dereference skb->nf_bridge->physoutdev.
+    
+    Reported by Holger Eitzenberger <heitzenberger@astaro.com>
+    
+    Signed-off-by: Patrick McHardy <kaber@trash.net>
+    Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+Index: linux-2.6.18.noarch/net/netfilter/nfnetlink_log.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/netfilter/nfnetlink_log.c	2007-05-02 22:22:41.000000000 +0200
++++ linux-2.6.18.noarch/net/netfilter/nfnetlink_log.c	2007-05-02 22:23:35.000000000 +0200
+@@ -491,7 +491,7 @@ __build_packet_message(struct nfulnl_ins
+ 			 * for physical device (when called from ipv4) */
+ 			NFA_PUT(inst->skb, NFULA_IFINDEX_OUTDEV,
+ 				sizeof(tmp_uint), &tmp_uint);
+-			if (skb->nf_bridge) {
++			if (skb->nf_bridge && skb->nf_bridge->physoutdev) {
+ 				tmp_uint = 
+ 				    htonl(skb->nf_bridge->physoutdev->ifindex);
+ 				NFA_PUT(inst->skb, NFULA_IFINDEX_PHYSOUTDEV,
+@@ -566,6 +566,7 @@ __build_packet_message(struct nfulnl_ins
+ 	}
+ 		
+ 	nlh->nlmsg_len = inst->skb->tail - old_tail;
++	inst->lastnlh = nlh;
+ 	return 0;
+ 
+ nlmsg_failure:
+@@ -857,6 +858,9 @@ nfulnl_recv_config(struct sock *ctnl, st
+ 			ret = -EINVAL;
+ 			break;
+ 		}
++
++		if (!inst)
++			goto out;
+ 	} else {
+ 		if (!inst) {
+ 			UDEBUG("no config command, and no instance for "
+@@ -910,6 +914,7 @@ nfulnl_recv_config(struct sock *ctnl, st
+ 
+ out_put:
+ 	instance_put(inst);
++out:
+ 	return ret;
+ }
+ 
+

@@ -1,0 +1,85 @@
+From: Hideo AOKI <haoki@redhat.com>
+Date: Thu, 11 Sep 2008 22:16:36 -0400
+Subject: [fs] jbd: fix commit code to properly abort journal
+Message-id: 48C9D104.1000404@redhat.com
+O-Subject: [RHEL 5.3 PATCH 8/6] bz#439581: jbd: fix commit code to properly abort journal
+Bugzilla: 439581
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+
+BZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=439581
+
+kABI Status:
+------------
+This patch doesn't have kABI issue.
+
+Test Status:
+------------
+I re-tested the patch set of bz#439581 by using test cases I have.
+
+Brew:
+-----
+Built in brew.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1467974
+
+Detailed description from upstream commit:
+------------------------------------------
+From: Jan Kara <jack@suse.cz>
+Date: Fri, 19 Oct 2007 06:39:22 +0000 (-0700)
+Subject: jbd: fix commit code to properly abort journal
+X-Git-Tag: v2.6.24-rc1~268
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=7a266e75cf5a1efd20d084408a1b7f1a185496dd
+
+jbd: fix commit code to properly abort journal
+
+We should really call journal_abort() and not __journal_abort_hard() in
+case of errors.  The latter call does not record the error in the journal
+superblock and thus filesystem won't be marked as with errors later (and
+user could happily mount it without any warning).
+
+Signed-off-by: Jan Kara <jack@suse.cz>
+Cc: <linux-ext4@vger.kernel.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/fs/jbd/commit.c b/fs/jbd/commit.c
+index 9d60ce3..53c2a84 100644
+--- a/fs/jbd/commit.c
++++ b/fs/jbd/commit.c
+@@ -456,7 +456,7 @@ void journal_commit_transaction(journal_t *journal)
+ 	spin_unlock(&journal->j_list_lock);
+ 
+ 	if (err)
+-		__journal_abort_hard(journal);
++		journal_abort(journal, err);
+ 
+ 	journal_write_revoke_records(journal, commit_transaction);
+ 
+@@ -520,7 +520,7 @@ void journal_commit_transaction(journal_t *journal)
+ 
+ 			descriptor = journal_get_descriptor_buffer(journal);
+ 			if (!descriptor) {
+-				__journal_abort_hard(journal);
++				journal_abort(journal, -EIO);
+ 				continue;
+ 			}
+ 
+@@ -553,7 +553,7 @@ void journal_commit_transaction(journal_t *journal)
+ 		   and repeat this loop: we'll fall into the
+ 		   refile-on-abort condition above. */
+ 		if (err) {
+-			__journal_abort_hard(journal);
++			journal_abort(journal, err);
+ 			continue;
+ 		}
+ 
+@@ -747,7 +747,7 @@ wait_for_iobuf:
+ 		err = -EIO;
+ 
+ 	if (err)
+-		__journal_abort_hard(journal);
++		journal_abort(journal, err);
+ 
+ 	/* End of a transaction!  Finally, we can do checkpoint
+            processing: any buffers committed as a result of this

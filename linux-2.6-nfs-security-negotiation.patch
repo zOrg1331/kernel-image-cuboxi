@@ -1,0 +1,1596 @@
+From: Steve Dickson <SteveD@redhat.com>
+Date: Fri, 21 Dec 2007 09:49:39 -0500
+Subject: [nfs] Security Negotiation
+Message-id: 476BD283.1090508@RedHat.com
+O-Subject: [PATCH] [RHEL5.2] NFS Security Negotiation
+Bugzilla: 253019
+
+The attached patch enables the security negotiation feature on
+an NFSv4 server (SECINFO). This means a v4 client can now ask a
+v4 server which security favors are supported (currently RHEL
+support krb5, krb5i, krb5p) via the protocol.
+
+I tested this patch with a linux client, which does not have
+SECINFO support and with a Solaris 10 client which does have
+SECINFO support.
+
+Using wireshark, I was able to see the client's lookup
+fail with WRONGSEC which cause the client to send a
+SECINFO request. The server would return the correct
+information in the SECINFO reply, but for some reason
+Solaris would still fail the mount. I'm thinking its
+due to fact I'm clueless on how to correctly set up
+the Solaris box.. But the good news is IBM successfully tested
+with both Solaris and AIX with the same patch (although there is a
+second patch, which not in upstreamneed fro AIX to work).
+
+There is also an user level change that is need to enable
+this functionality. Unfortunately, the way upstream
+did this work is not backwards compatible with how
+current secure exports are done today (meaning people
+will have to edit their exports file to turn on the
+functionality which may not be good thing). I'm still
+looking into this, but the point being, testing is still
+on going...
+
+The bz is
+https://bugzilla.redhat.com/show_bug.cgi?id=253019
+
+steved.
+
+Acked-by: Jeff Layton <jlayton@redhat.com>
+Acked-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/nfsd/auth.c b/fs/nfsd/auth.c
+index 6e92b0f..cf61dc8 100644
+--- a/fs/nfsd/auth.c
++++ b/fs/nfsd/auth.c
+@@ -12,17 +12,31 @@
+ 
+ #define	CAP_NFSD_MASK (CAP_FS_MASK|CAP_TO_MASK(CAP_SYS_RESOURCE))
+ 
++static int nfsexp_flags(struct svc_rqst *rqstp, struct svc_export *exp)
++{
++	struct exp_flavor_info *f;
++	struct exp_flavor_info *end = exp->ex_flavors + exp->ex_nflavors;
++
++	for (f = exp->ex_flavors; f < end; f++) {
++		if (f->pseudoflavor == rqstp->rq_flavor)
++			return f->flags;
++	}
++	return exp->ex_flags;
++
++}
++
+ int nfsd_setuser(struct svc_rqst *rqstp, struct svc_export *exp)
+ {
+ 	struct svc_cred	cred = rqstp->rq_cred;
+ 	int i;
++	int flags = nfsexp_flags(rqstp, exp);
+ 	int ret;
+ 
+-	if (exp->ex_flags & NFSEXP_ALLSQUASH) {
++	if (flags & NFSEXP_ALLSQUASH) {
+ 		cred.cr_uid = exp->ex_anon_uid;
+ 		cred.cr_gid = exp->ex_anon_gid;
+ 		cred.cr_group_info = groups_alloc(0);
+-	} else if (exp->ex_flags & NFSEXP_ROOTSQUASH) {
++	} else if (flags & NFSEXP_ROOTSQUASH) {
+ 		struct group_info *gi;
+ 		if (!cred.cr_uid)
+ 			cred.cr_uid = exp->ex_anon_uid;
+diff --git a/fs/nfsd/export.c b/fs/nfsd/export.c
+index 9cb636a..b72402b 100644
+--- a/fs/nfsd/export.c
++++ b/fs/nfsd/export.c
+@@ -33,6 +33,8 @@
+ #include <linux/nfsd/nfsfh.h>
+ #include <linux/nfsd/syscall.h>
+ #include <linux/lockd/bind.h>
++#include <linux/sunrpc/msg_prot.h>
++#include <linux/sunrpc/gss_api.h>
+ 
+ #define NFSDDBG_FACILITY	NFSDDBG_EXPORT
+ #define NFSD_PARANOIA 1
+@@ -458,8 +460,48 @@ out_free_all:
+ 	return err;
+ }
+ 
++static int secinfo_parse(char **mesg, char *buf, struct svc_export *exp)
++{
++	int listsize, err;
++	struct exp_flavor_info *f;
++
++	err = get_int(mesg, &listsize);
++	if (err)
++		return err;
++	if (listsize < 0 || listsize > MAX_SECINFO_LIST)
++		return -EINVAL;
++
++	for (f = exp->ex_flavors; f < exp->ex_flavors + listsize; f++) {
++		err = get_int(mesg, &f->pseudoflavor);
++		if (err)
++			return err;
++		/*
++		 * Just a quick sanity check; we could also try to check
++		 * whether this pseudoflavor is supported, but at worst
++		 * an unsupported pseudoflavor on the export would just
++		 * be a pseudoflavor that won't match the flavor of any
++		 * authenticated request.  The administrator will
++		 * probably discover the problem when someone fails to
++		 * authenticate.
++		 */
++		if (f->pseudoflavor < 0)
++			return -EINVAL;
++		err = get_int(mesg, &f->flags);
++		if (err)
++			return err;
++		/* Only some flags are allowed to differ between flavors: */
++		if (~NFSEXP_SECINFO_FLAGS & (f->flags ^ exp->ex_flags))
++			return -EINVAL;
++	}
++	exp->ex_nflavors = listsize;
++	return 0;
++}
++
+ #else /* CONFIG_NFSD_V4 */
+-static inline int fsloc_parse(char **mesg, char *buf, struct nfsd4_fs_locations *fsloc) { return 0; }
++static inline int
++fsloc_parse(char **mesg, char *buf, struct nfsd4_fs_locations *fsloc){return 0;}
++static inline int
++secinfo_parse(char **mesg, char *buf, struct svc_export *exp) { return 0; }
+ #endif
+ 
+ static int svc_export_parse(struct cache_detail *cd, char *mesg, int mlen)
+@@ -481,6 +523,9 @@ static int svc_export_parse(struct cache_detail *cd, char *mesg, int mlen)
+ 	exp.ex_fslocs.locations_count = 0;
+ 	exp.ex_fslocs.migrated = 0;
+ 
++	/* secinfo */
++	exp.ex_nflavors = 0;
++
+ 	if (mesg[mlen-1] != '\n')
+ 		return -EINVAL;
+ 	mesg[mlen-1] = 0;
+@@ -544,12 +589,23 @@ static int svc_export_parse(struct cache_detail *cd, char *mesg, int mlen)
+ 		if (err) goto out;
+ 		exp.ex_fsid = an_int;
+ 
++		while ((len = qword_get(&mesg, buf, PAGE_SIZE)) > 0) {
++			if (strcmp(buf, "fsloc") == 0)
++				err = fsloc_parse(&mesg, buf, &exp.ex_fslocs);
++			else if (strcmp(buf, "secinfo") == 0)
++				err = secinfo_parse(&mesg, buf, &exp);
++			else
++				/* quietly ignore unknown words and anything
++				 * following. Newer user-space can try to set
++				 * new values, then see what the result was.
++				 */
++				break;
++			if (err)
++				goto out;
++		}
++
+ 		err = check_export(nd.dentry->d_inode, exp.ex_flags);
+ 		if (err) goto out;
+-
+-		err = fsloc_parse(&mesg, buf, &exp.ex_fslocs);
+-		if (err)
+-			goto out;
+ 	}
+ 
+ 	expp = svc_export_lookup(&exp);
+@@ -575,6 +631,7 @@ static int svc_export_parse(struct cache_detail *cd, char *mesg, int mlen)
+ 
+ static void exp_flags(struct seq_file *m, int flag, int fsid,
+ 		uid_t anonu, uid_t anong, struct nfsd4_fs_locations *fslocs);
++static void show_secinfo(struct seq_file *m, struct svc_export *exp);
+ 
+ static int svc_export_show(struct seq_file *m,
+ 			   struct cache_detail *cd,
+@@ -592,9 +649,11 @@ static int svc_export_show(struct seq_file *m,
+ 	seq_escape(m, exp->ex_client->name, " \t\n\\");
+ 	seq_putc(m, '(');
+ 	if (test_bit(CACHE_VALID, &h->flags) && 
+-	    !test_bit(CACHE_NEGATIVE, &h->flags))
++	    !test_bit(CACHE_NEGATIVE, &h->flags)) {
+ 		exp_flags(m, exp->ex_flags, exp->ex_fsid,
+ 			  exp->ex_anon_uid, exp->ex_anon_gid, &exp->ex_fslocs);
++		show_secinfo(m, exp);
++	}
+ 	seq_puts(m, ")\n");
+ 	return 0;
+ }
+@@ -626,6 +685,7 @@ static void export_update(struct cache_head *cnew, struct cache_head *citem)
+ {
+ 	struct svc_export *new = container_of(cnew, struct svc_export, h);
+ 	struct svc_export *item = container_of(citem, struct svc_export, h);
++	int i;
+ 
+ 	new->ex_flags = item->ex_flags;
+ 	new->ex_anon_uid = item->ex_anon_uid;
+@@ -639,6 +699,10 @@ static void export_update(struct cache_head *cnew, struct cache_head *citem)
+ 	item->ex_fslocs.locations_count = 0;
+ 	new->ex_fslocs.migrated = item->ex_fslocs.migrated;
+ 	item->ex_fslocs.migrated = 0;
++	new->ex_nflavors = item->ex_nflavors;
++	for (i = 0; i < MAX_SECINFO_LIST; i++) {
++		new->ex_flavors[i] = item->ex_flavors[i];
++	}
+ }
+ 
+ static struct cache_head *svc_export_alloc(void)
+@@ -708,16 +772,18 @@ exp_find_key(svc_client *clp, int fsid_type, u32 *fsidv, struct cache_req *reqp)
+ 	int err;
+ 	
+ 	if (!clp)
+-		return NULL;
++		return ERR_PTR(-ENOENT);
+ 
+ 	key.ek_client = clp;
+ 	key.ek_fsidtype = fsid_type;
+ 	memcpy(key.ek_fsid, fsidv, key_len(fsid_type));
+ 
+ 	ek = svc_expkey_lookup(&key);
+-	if (ek != NULL)
+-		if ((err = cache_check(&svc_expkey_cache, &ek->h, reqp)))
+-			ek = ERR_PTR(err);
++	if (ek == NULL)
++		return ERR_PTR(-ENOMEM);
++	err = cache_check(&svc_expkey_cache, &ek->h, reqp);
++	if (err)
++		return ERR_PTR(err);
+ 	return ek;
+ }
+ 
+@@ -778,24 +844,22 @@ exp_get_by_name(svc_client *clp, struct vfsmount *mnt, struct dentry *dentry,
+ 		struct cache_req *reqp)
+ {
+ 	struct svc_export *exp, key;
++	int err;
+ 	
+ 	if (!clp)
+-		return NULL;
++		return ERR_PTR(-ENOENT);
+ 
+ 	key.ex_client = clp;
+ 	key.ex_mnt = mnt;
+ 	key.ex_dentry = dentry;
++	key.ex_path = NULL;
+ 
+ 	exp = svc_export_lookup(&key);
+-	if (exp != NULL) 
+-		switch (cache_check(&svc_export_cache, &exp->h, reqp)) {
+-		case 0: break;
+-		case -EAGAIN:
+-			exp = ERR_PTR(-EAGAIN);
+-			break;
+-		default:
+-			exp = NULL;
+-		}
++	if (exp == NULL)
++		return ERR_PTR(-ENOMEM);
++	err = cache_check(&svc_export_cache, &exp->h, reqp);
++	if (err)
++		return ERR_PTR(err);
+ 
+ 	return exp;
+ }
+@@ -812,7 +876,7 @@ exp_parent(svc_client *clp, struct vfsmount *mnt, struct dentry *dentry,
+ 	dget(dentry);
+ 	exp = exp_get_by_name(clp, mnt, dentry, reqp);
+ 
+-	while (exp == NULL && !IS_ROOT(dentry)) {
++	while (PTR_ERR(exp) == -ENOENT && !IS_ROOT(dentry)) {
+ 		struct dentry *parent;
+ 
+ 		parent = dget_parent(dentry);
+@@ -865,7 +929,7 @@ static void exp_fsid_unhash(struct svc_export *exp)
+ 		return;
+ 
+ 	ek = exp_get_fsid_key(exp->ex_client, exp->ex_fsid);
+-	if (ek && !IS_ERR(ek)) {
++	if (!IS_ERR(ek)) {
+ 		ek->h.expiry_time = get_seconds()-1;
+ 		cache_put(&ek->h, &svc_expkey_cache);
+ 	}
+@@ -903,7 +967,7 @@ static void exp_unhash(struct svc_export *exp)
+ 	struct inode *inode = exp->ex_dentry->d_inode;
+ 
+ 	ek = exp_get_key(exp->ex_client, inode->i_sb->s_dev, inode->i_ino);
+-	if (ek && !IS_ERR(ek)) {
++	if (!IS_ERR(ek)) {
+ 		ek->h.expiry_time = get_seconds()-1;
+ 		cache_put(&ek->h, &svc_expkey_cache);
+ 	}
+@@ -954,13 +1018,12 @@ exp_export(struct nfsctl_export *nxp)
+ 
+ 	/* must make sure there won't be an ex_fsid clash */
+ 	if ((nxp->ex_flags & NFSEXP_FSID) &&
+-	    (fsid_key = exp_get_fsid_key(clp, nxp->ex_dev)) &&
+-	    !IS_ERR(fsid_key) &&
++	    (!IS_ERR(fsid_key = exp_get_fsid_key(clp, nxp->ex_dev))) &&
+ 	    fsid_key->ek_mnt &&
+ 	    (fsid_key->ek_mnt != nd.mnt || fsid_key->ek_dentry != nd.dentry) )
+ 		goto finish;
+ 
+-	if (exp) {
++	if (!IS_ERR(exp)) {
+ 		/* just a flags/id/fsid update */
+ 
+ 		exp_fsid_unhash(exp);
+@@ -1069,7 +1132,7 @@ exp_unexport(struct nfsctl_export *nxp)
+ 	err = -EINVAL;
+ 	exp = exp_get_by_name(dom, nd.mnt, nd.dentry, NULL);
+ 	path_release(&nd);
+-	if (!exp)
++	if (IS_ERR(exp))
+ 		goto out_domain;
+ 
+ 	exp_do_unexport(exp);
+@@ -1110,8 +1173,8 @@ exp_rootfh(svc_client *clp, char *path, struct knfsd_fh *f, int maxsize)
+ 		 path, nd.dentry, clp->name,
+ 		 inode->i_sb->s_id, inode->i_ino);
+ 	exp = exp_parent(clp, nd.mnt, nd.dentry, NULL);
+-	if (!exp) {
+-		dprintk("nfsd: exp_rootfh export not found.\n");
++	if (IS_ERR(exp)) {
++		err = PTR_ERR(exp);
+ 		goto out;
+ 	}
+ 
+@@ -1137,17 +1200,130 @@ exp_find(struct auth_domain *clp, int fsid_type, u32 *fsidv,
+ {
+ 	struct svc_export *exp;
+ 	struct svc_expkey *ek = exp_find_key(clp, fsid_type, fsidv, reqp);
+-	if (!ek || IS_ERR(ek))
++	if (IS_ERR(ek))
+ 		return ERR_PTR(PTR_ERR(ek));
+ 
+ 	exp = exp_get_by_name(clp, ek->ek_mnt, ek->ek_dentry, reqp);
+ 	cache_put(&ek->h, &svc_expkey_cache);
+ 
+-	if (!exp || IS_ERR(exp))
++	if (IS_ERR(exp))
+ 		return ERR_PTR(PTR_ERR(exp));
+ 	return exp;
+ }
+ 
++__be32 check_nfsd_access(struct svc_export *exp, struct svc_rqst *rqstp)
++{
++	struct exp_flavor_info *f;
++	struct exp_flavor_info *end = exp->ex_flavors + exp->ex_nflavors;
++
++	/* legacy gss-only clients are always OK: */
++	if (exp->ex_client == rqstp->rq_gssclient)
++		return 0;
++	/* ip-address based client; check sec= export option: */
++	for (f = exp->ex_flavors; f < end; f++) {
++		if (f->pseudoflavor == rqstp->rq_flavor)
++			return 0;
++	}
++	/* defaults in absence of sec= options: */
++	if (exp->ex_nflavors == 0) {
++		if (rqstp->rq_flavor == RPC_AUTH_NULL ||
++		    rqstp->rq_flavor == RPC_AUTH_UNIX)
++			return 0;
++	}
++	return nfserr_wrongsec;
++}
++
++/*
++ * Uses rq_client and rq_gssclient to find an export; uses rq_client (an
++ * auth_unix client) if it's available and has secinfo information;
++ * otherwise, will try to use rq_gssclient.
++ *
++ * Called from functions that handle requests; functions that do work on
++ * behalf of mountd are passed a single client name to use, and should
++ * use exp_get_by_name() or exp_find().
++ */
++struct svc_export *
++rqst_exp_get_by_name(struct svc_rqst *rqstp, struct vfsmount *mnt,
++		struct dentry *dentry)
++{
++	struct svc_export *gssexp, *exp = ERR_PTR(-ENOENT);
++
++	if (rqstp->rq_client == NULL)
++		goto gss;
++
++	/* First try the auth_unix client: */
++	exp = exp_get_by_name(rqstp->rq_client, mnt, dentry,
++						&rqstp->rq_chandle);
++	if (PTR_ERR(exp) == -ENOENT)
++		goto gss;
++	if (IS_ERR(exp))
++		return exp;
++	/* If it has secinfo, assume there are no gss/... clients */
++	if (exp->ex_nflavors > 0)
++		return exp;
++gss:
++	/* Otherwise, try falling back on gss client */
++	if (rqstp->rq_gssclient == NULL)
++		return exp;
++	gssexp = exp_get_by_name(rqstp->rq_gssclient, mnt, dentry,
++						&rqstp->rq_chandle);
++	if (PTR_ERR(gssexp) == -ENOENT)
++		return exp;
++	if (!IS_ERR(exp))
++		exp_put(exp);
++	return gssexp;
++}
++
++struct svc_export *
++rqst_exp_find(struct svc_rqst *rqstp, int fsid_type, u32 *fsidv)
++{
++	struct svc_export *gssexp, *exp = ERR_PTR(-ENOENT);
++
++	if (rqstp->rq_client == NULL)
++		goto gss;
++
++	/* First try the auth_unix client: */
++	exp = exp_find(rqstp->rq_client, fsid_type, fsidv, &rqstp->rq_chandle);
++	if (PTR_ERR(exp) == -ENOENT)
++		goto gss;
++	if (IS_ERR(exp))
++		return exp;
++	/* If it has secinfo, assume there are no gss/... clients */
++	if (exp->ex_nflavors > 0)
++		return exp;
++gss:
++	/* Otherwise, try falling back on gss client */
++	if (rqstp->rq_gssclient == NULL)
++		return exp;
++	gssexp = exp_find(rqstp->rq_gssclient, fsid_type, fsidv,
++						&rqstp->rq_chandle);
++	if (PTR_ERR(gssexp) == -ENOENT)
++		return exp;
++	if (!IS_ERR(exp))
++		exp_put(exp);
++	return gssexp;
++}
++
++struct svc_export *
++rqst_exp_parent(struct svc_rqst *rqstp, struct vfsmount *mnt,
++		struct dentry *dentry)
++{
++	struct svc_export *exp;
++
++	dget(dentry);
++	exp = rqst_exp_get_by_name(rqstp, mnt, dentry);
++
++	while (PTR_ERR(exp) == -ENOENT && !IS_ROOT(dentry)) {
++		struct dentry *parent;
++
++		parent = dget_parent(dentry);
++		dput(dentry);
++		dentry = parent;
++		exp = rqst_exp_get_by_name(rqstp, mnt, dentry);
++	}
++	dput(dentry);
++	return exp;
++}
+ 
+ /*
+  * Called when we need the filehandle for the root of the pseudofs,
+@@ -1155,33 +1331,25 @@ exp_find(struct auth_domain *clp, int fsid_type, u32 *fsidv,
+  * export point with fsid==0
+  */
+ int
+-exp_pseudoroot(struct auth_domain *clp, struct svc_fh *fhp,
+-	       struct cache_req *creq)
++exp_pseudoroot(struct svc_rqst *rqstp, struct svc_fh *fhp)
+ {
+-	struct svc_expkey *fsid_key;
+ 	struct svc_export *exp;
+ 	int rv;
+ 	u32 fsidv[2];
+ 
+ 	mk_fsid_v1(fsidv, 0);
+ 
+-	fsid_key = exp_find_key(clp, 1, fsidv, creq);
+-	if (IS_ERR(fsid_key) && PTR_ERR(fsid_key) == -EAGAIN)
+-		return nfserr_dropit;
+-	if (!fsid_key || IS_ERR(fsid_key))
++	exp = rqst_exp_find(rqstp, FSID_NUM, fsidv);
++	if (PTR_ERR(exp) == -ENOENT)
+ 		return nfserr_perm;
+-
+-	exp = exp_get_by_name(clp, fsid_key->ek_mnt, fsid_key->ek_dentry, creq);
+-	if (exp == NULL)
+-		rv = nfserr_perm;
+-	else if (IS_ERR(exp))
+-		rv = nfserrno(PTR_ERR(exp));
+-	else {
+-		rv = fh_compose(fhp, exp,
+-				fsid_key->ek_dentry, NULL);
+-		exp_put(exp);
+-	}
+-	cache_put(&fsid_key->h, &svc_expkey_cache);
++	if (IS_ERR(exp))
++		return nfserrno(PTR_ERR(exp));
++	rv = fh_compose(fhp, exp, exp->ex_dentry, NULL);
++	if (rv)
++		goto out;
++	rv = check_nfsd_access(exp, rqstp);
++out:
++	exp_put(exp);
+ 	return rv;
+ }
+ 
+@@ -1266,28 +1434,62 @@ static struct flags {
+ 	{ 0, {"", ""}}
+ };
+ 
+-static void exp_flags(struct seq_file *m, int flag, int fsid,
+-		uid_t anonu, uid_t anong, struct nfsd4_fs_locations *fsloc)
++static void show_expflags(struct seq_file *m, int flags, int mask)
+ {
+-	int first = 0;
+ 	struct flags *flg;
++	int state, first = 0;
+ 
+ 	for (flg = expflags; flg->flag; flg++) {
+-		int state = (flg->flag & flag)?0:1;
++		if (flg->flag & ~mask)
++			continue;
++		state = (flg->flag & flags) ? 0 : 1;
+ 		if (*flg->name[state])
+ 			seq_printf(m, "%s%s", first++?",":"", flg->name[state]);
+ 	}
++}
++
++static void show_secinfo_flags(struct seq_file *m, int flags)
++{
++	seq_printf(m, ",");
++	show_expflags(m, flags, NFSEXP_SECINFO_FLAGS);
++}
++
++static void show_secinfo(struct seq_file *m, struct svc_export *exp)
++{
++	struct exp_flavor_info *f;
++	struct exp_flavor_info *end = exp->ex_flavors + exp->ex_nflavors;
++	int lastflags = 0, first = 0;
++
++	if (exp->ex_nflavors == 0)
++		return;
++	for (f = exp->ex_flavors; f < end; f++) {
++		if (first || f->flags != lastflags) {
++			if (!first)
++				show_secinfo_flags(m, lastflags);
++			seq_printf(m, ",sec=%d", f->pseudoflavor);
++			lastflags = f->flags;
++		} else {
++			seq_printf(m, ":%d", f->pseudoflavor);
++		}
++	}
++	show_secinfo_flags(m, lastflags);
++}
++
++static void exp_flags(struct seq_file *m, int flag, int fsid,
++		uid_t anonu, uid_t anong, struct nfsd4_fs_locations *fsloc)
++{
++	show_expflags(m, flag, NFSEXP_ALLFLAGS);
+ 	if (flag & NFSEXP_FSID)
+-		seq_printf(m, "%sfsid=%d", first++?",":"", fsid);
++		seq_printf(m, ",fsid=%d", fsid);
+ 	if (anonu != (uid_t)-2 && anonu != (0x10000-2))
+-		seq_printf(m, "%sanonuid=%d", first++?",":"", anonu);
++		seq_printf(m, ",sanonuid=%d", anonu);
+ 	if (anong != (gid_t)-2 && anong != (0x10000-2))
+-		seq_printf(m, "%sanongid=%d", first++?",":"", anong);
++		seq_printf(m, ",sanongid=%d", anong);
+ 	if (fsloc && fsloc->locations_count > 0) {
+ 		char *loctype = (fsloc->migrated) ? "refer" : "replicas";
+ 		int i;
+ 
+-		seq_printf(m, "%s%s=", first++?",":"", loctype);
++		seq_printf(m, ",%s=", loctype);
+ 		seq_escape(m, fsloc->locations[0].path, ",;@ \t\n\\");
+ 		seq_putc(m, '@');
+ 		seq_escape(m, fsloc->locations[0].hosts, ",;@ \t\n\\");
+diff --git a/fs/nfsd/nfs4idmap.c b/fs/nfsd/nfs4idmap.c
+index bea6b94..7915039 100644
+--- a/fs/nfsd/nfs4idmap.c
++++ b/fs/nfsd/nfs4idmap.c
+@@ -590,6 +590,15 @@ idmap_lookup(struct svc_rqst *rqstp,
+ 	return ret;
+ }
+ 
++static char *
++rqst_authname(struct svc_rqst *rqstp)
++{
++	struct auth_domain *clp;
++
++	clp = rqstp->rq_gssclient ? rqstp->rq_gssclient : rqstp->rq_client;
++	return clp->name;
++}
++
+ static int
+ idmap_name_to_id(struct svc_rqst *rqstp, int type, const char *name, u32 namelen,
+ 		uid_t *id)
+@@ -603,7 +612,7 @@ idmap_name_to_id(struct svc_rqst *rqstp, int type, const char *name, u32 namelen
+ 		return -EINVAL;
+ 	memcpy(key.name, name, namelen);
+ 	key.name[namelen] = '\0';
+-	strlcpy(key.authname, rqstp->rq_client->name, sizeof(key.authname));
++	strlcpy(key.authname, rqst_authname(rqstp), sizeof(key.authname));
+ 	ret = idmap_lookup(rqstp, nametoid_lookup, &key, &nametoid_cache, &item);
+ 	if (ret == -ENOENT)
+ 		ret = -ESRCH; /* nfserr_badname */
+@@ -623,7 +632,7 @@ idmap_id_to_name(struct svc_rqst *rqstp, int type, uid_t id, char *name)
+ 	};
+ 	int ret;
+ 
+-	strlcpy(key.authname, rqstp->rq_client->name, sizeof(key.authname));
++	strlcpy(key.authname, rqst_authname(rqstp), sizeof(key.authname));
+ 	ret = idmap_lookup(rqstp, idtoname_lookup, &key, &idtoname_cache, &item);
+ 	if (ret == -ENOENT)
+ 		return sprintf(name, "%u", id);
+diff --git a/fs/nfsd/nfs4proc.c b/fs/nfsd/nfs4proc.c
+index cd85672..6a61d75 100644
+--- a/fs/nfsd/nfs4proc.c
++++ b/fs/nfsd/nfs4proc.c
+@@ -54,6 +54,7 @@
+ #include <linux/nfsd/state.h>
+ #include <linux/nfsd/xdr4.h>
+ #include <linux/nfs4_acl.h>
++#include <linux/sunrpc/gss_api.h>
+ 
+ #define NFSDDBG_FACILITY		NFSDDBG_PROC
+ 
+@@ -293,8 +294,7 @@ nfsd4_putrootfh(struct svc_rqst *rqstp, struct svc_fh *current_fh)
+ 	int status;
+ 
+ 	fh_put(current_fh);
+-	status = exp_pseudoroot(rqstp->rq_client, current_fh,
+-			      &rqstp->rq_chandle);
++	status = exp_pseudoroot(rqstp, current_fh);
+ 	return status;
+ }
+ 
+@@ -470,8 +470,8 @@ nfsd4_lookupp(struct svc_rqst *rqstp, struct svc_fh *current_fh)
+ 	int ret;
+ 
+ 	fh_init(&tmp_fh, NFS4_FHSIZE);
+-	if((ret = exp_pseudoroot(rqstp->rq_client, &tmp_fh,
+-			      &rqstp->rq_chandle)) != 0)
++	ret = exp_pseudoroot(rqstp, &tmp_fh);
++	if (ret)
+ 		return ret;
+ 	if (tmp_fh.fh_dentry == current_fh->fh_dentry) {
+ 		fh_put(&tmp_fh);
+@@ -596,6 +596,30 @@ nfsd4_rename(struct svc_rqst *rqstp, struct svc_fh *current_fh,
+ 	return status;
+ }
+ 
++static __be32
++nfsd4_secinfo(struct svc_rqst *rqstp, struct svc_fh *current_fh,
++	      struct nfsd4_secinfo *secinfo)
++{
++	struct svc_fh resfh;
++	struct svc_export *exp;
++	struct dentry *dentry;
++	__be32 err;
++
++	fh_init(&resfh, NFS4_FHSIZE);
++	err = nfsd_lookup_dentry(rqstp, current_fh,
++				    secinfo->si_name, secinfo->si_namelen,
++				    &exp, &dentry);
++	if (err)
++		return err;
++	if (dentry->d_inode == NULL) {
++		exp_put(exp);
++		err = nfserr_noent;
++	} else
++		secinfo->si_exp = exp;
++	dput(dentry);
++	return err;
++}
++
+ static inline int
+ nfsd4_setattr(struct svc_rqst *rqstp, struct svc_fh *current_fh, struct nfsd4_setattr *setattr)
+ {
+@@ -918,6 +942,9 @@ nfsd4_proc_compound(struct svc_rqst *rqstp,
+ 		case OP_SAVEFH:
+ 			op->status = nfsd4_savefh(current_fh, save_fh);
+ 			break;
++		case OP_SECINFO:
++			op->status = nfsd4_secinfo(rqstp, current_fh, &op->u.secinfo);
++			break;
+ 		case OP_SETATTR:
+ 			op->status = nfsd4_setattr(rqstp, current_fh, &op->u.setattr);
+ 			break;
+diff --git a/fs/nfsd/nfs4xdr.c b/fs/nfsd/nfs4xdr.c
+index 7295c3f..85af6cb 100644
+--- a/fs/nfsd/nfs4xdr.c
++++ b/fs/nfsd/nfs4xdr.c
+@@ -57,6 +57,8 @@
+ #include <linux/nfsd_idmap.h>
+ #include <linux/nfs4.h>
+ #include <linux/nfs4_acl.h>
++#include <linux/sunrpc/gss_api.h>
++#include <linux/sunrpc/svcauth_gss.h>
+ 
+ #define NFSDDBG_FACILITY		NFSDDBG_XDR
+ 
+@@ -814,6 +816,23 @@ nfsd4_decode_renew(struct nfsd4_compoundargs *argp, clientid_t *clientid)
+ }
+ 
+ static int
++nfsd4_decode_secinfo(struct nfsd4_compoundargs *argp,
++		     struct nfsd4_secinfo *secinfo)
++{
++	DECODE_HEAD;
++
++	READ_BUF(4);
++	READ32(secinfo->si_namelen);
++	READ_BUF(secinfo->si_namelen);
++	SAVEMEM(secinfo->si_name, secinfo->si_namelen);
++	status = check_filename(secinfo->si_name, secinfo->si_namelen,
++								nfserr_noent);
++	if (status)
++		return status;
++	DECODE_TAIL;
++}
++
++static int
+ nfsd4_decode_setattr(struct nfsd4_compoundargs *argp, struct nfsd4_setattr *setattr)
+ {
+ 	DECODE_HEAD;
+@@ -1126,6 +1145,9 @@ nfsd4_decode_compound(struct nfsd4_compoundargs *argp)
+ 		case OP_SAVEFH:
+ 			op->status = nfs_ok;
+ 			break;
++		case OP_SECINFO:
++			op->status = nfsd4_decode_secinfo(argp, &op->u.secinfo);
++			break;
+ 		case OP_SETATTR:
+ 			op->status = nfsd4_decode_setattr(argp, &op->u.setattr);
+ 			break;
+@@ -1291,7 +1313,7 @@ static char *nfsd4_path(struct svc_rqst *rqstp, struct svc_export *exp, u32 *sta
+ 	char *path, *rootpath;
+ 
+ 	fh_init(&tmp_fh, NFS4_FHSIZE);
+-	*stat = exp_pseudoroot(rqstp->rq_client, &tmp_fh, &rqstp->rq_chandle);
++	*stat = exp_pseudoroot(rqstp, &tmp_fh);
+ 	if (*stat)
+ 		return NULL;
+ 	rootpath = tmp_fh.fh_export->ex_path;
+@@ -1804,18 +1826,21 @@ nfsd4_encode_dirent_fattr(struct nfsd4_readdir *cd,
+ 
+ 	exp_get(exp);
+ 	if (d_mountpoint(dentry)) {
+-		if (nfsd_cross_mnt(cd->rd_rqstp, &dentry, &exp)) {
++  		int err;
++  
+ 		/*
+-		 * -EAGAIN is the only error returned from
+-		 * nfsd_cross_mnt() and it indicates that an
+-		 * up-call has  been initiated to fill in the export
+-		 * options on exp.  When the answer comes back,
+-		 * this call will be retried.
++		 * Why the heck aren't we just using nfsd_lookup??
++		 * Different "."/".." handling?  Something else?
++		 * At least, add a comment here to explain....
+ 		 */
+-			nfserr = nfserr_dropit;
++		err = nfsd_cross_mnt(cd->rd_rqstp, &dentry, &exp);
++		if (err) {
++			nfserr = nfserrno(err);
+ 			goto out_put;
+ 		}
+-
++		nfserr = check_nfsd_access(exp, cd->rd_rqstp);
++		if (nfserr)
++			goto out_put;
+ 	}
+ 	nfserr = nfsd4_encode_fattr(NULL, exp, dentry, p, buflen, cd->rd_bmval,
+ 					cd->rd_rqstp);
+@@ -2383,6 +2408,72 @@ nfsd4_encode_rename(struct nfsd4_compoundres *resp, int nfserr, struct nfsd4_ren
+ 	}
+ }
+ 
++static void
++nfsd4_encode_secinfo(struct nfsd4_compoundres *resp, int nfserr,
++		     struct nfsd4_secinfo *secinfo)
++{
++	int i = 0;
++	struct svc_export *exp = secinfo->si_exp;
++	u32 nflavs;
++	struct exp_flavor_info *flavs;
++	struct exp_flavor_info def_flavs[2];
++	ENCODE_HEAD;
++
++	if (nfserr)
++		goto out;
++	if (exp->ex_nflavors) {
++		flavs = exp->ex_flavors;
++		nflavs = exp->ex_nflavors;
++	} else { /* Handling of some defaults in absence of real secinfo: */
++		flavs = def_flavs;
++		if (exp->ex_client->flavour->flavour == RPC_AUTH_UNIX) {
++			nflavs = 2;
++			flavs[0].pseudoflavor = RPC_AUTH_UNIX;
++			flavs[1].pseudoflavor = RPC_AUTH_NULL;
++		} else if (exp->ex_client->flavour->flavour == RPC_AUTH_GSS) {
++			nflavs = 1;
++			flavs[0].pseudoflavor
++					= svcauth_gss_flavor(exp->ex_client);
++		} else {
++			nflavs = 1;
++			flavs[0].pseudoflavor
++					= exp->ex_client->flavour->flavour;
++		}
++	}
++
++	RESERVE_SPACE(4);
++	WRITE32(nflavs);
++	ADJUST_ARGS();
++	for (i = 0; i < nflavs; i++) {
++		u32 flav = flavs[i].pseudoflavor;
++		struct gss_api_mech *gm = gss_mech_get_by_pseudoflavor(flav);
++
++		if (gm) {
++			RESERVE_SPACE(4);
++			WRITE32(RPC_AUTH_GSS);
++			ADJUST_ARGS();
++			RESERVE_SPACE(4 + gm->gm_oid.len);
++			WRITE32(gm->gm_oid.len);
++			WRITEMEM(gm->gm_oid.data, gm->gm_oid.len);
++			ADJUST_ARGS();
++			RESERVE_SPACE(4);
++			WRITE32(0); /* qop */
++			ADJUST_ARGS();
++			RESERVE_SPACE(4);
++			WRITE32(gss_pseudoflavor_to_service(gm, flav));
++			ADJUST_ARGS();
++			gss_mech_put(gm);
++		} else {
++			RESERVE_SPACE(4);
++			WRITE32(flav);
++			ADJUST_ARGS();
++		}
++	}
++out:
++	if (exp)
++		exp_put(exp);
++}
++
+ /*
+  * The SETATTR encode routine is special -- it always encodes a bitmap,
+  * regardless of the error status.
+@@ -2523,6 +2614,9 @@ nfsd4_encode_operation(struct nfsd4_compoundres *resp, struct nfsd4_op *op)
+ 		break;
+ 	case OP_SAVEFH:
+ 		break;
++	case OP_SECINFO:
++		nfsd4_encode_secinfo(resp, op->status, &op->u.secinfo);
++		break;
+ 	case OP_SETATTR:
+ 		nfsd4_encode_setattr(resp, op->status, &op->u.setattr);
+ 		break;
+diff --git a/fs/nfsd/nfsfh.c b/fs/nfsd/nfsfh.c
+index 501d838..20a2b4c 100644
+--- a/fs/nfsd/nfsfh.c
++++ b/fs/nfsd/nfsfh.c
+@@ -21,6 +21,7 @@
+ #include <asm/pgtable.h>
+ 
+ #include <linux/sunrpc/svc.h>
++#include <linux/sunrpc/svcauth_gss.h>
+ #include <linux/nfsd/nfsd.h>
+ 
+ #define NFSDDBG_FACILITY		NFSDDBG_FH
+@@ -130,8 +131,6 @@ fh_verify(struct svc_rqst *rqstp, struct svc_fh *fhp, int type, int access)
+ 		int data_left = fh->fh_size/4;
+ 
+ 		error = nfserr_stale;
+-		if (rqstp->rq_client == NULL)
+-			goto out;
+ 		if (rqstp->rq_vers > 2)
+ 			error = nfserr_badhandle;
+ 		if (rqstp->rq_vers == 4 && fh->fh_size == 0)
+@@ -155,7 +154,7 @@ fh_verify(struct svc_rqst *rqstp, struct svc_fh *fhp, int type, int access)
+ 				fh->fh_fsid[1] = fh->fh_fsid[2];
+ 			}
+ 			if ((data_left -= len)<0) goto out;
+-			exp = exp_find(rqstp->rq_client, fh->fh_fsid_type, datap, &rqstp->rq_chandle);
++			exp = rqst_exp_find(rqstp, fh->fh_fsid_type, datap);
+ 			datap += len;
+ 		} else {
+ 			dev_t xdev;
+@@ -166,16 +165,17 @@ fh_verify(struct svc_rqst *rqstp, struct svc_fh *fhp, int type, int access)
+ 			xdev = old_decode_dev(fh->ofh_xdev);
+ 			xino = u32_to_ino_t(fh->ofh_xino);
+ 			mk_fsid_v0(tfh, xdev, xino);
+-			exp = exp_find(rqstp->rq_client, 0, tfh, &rqstp->rq_chandle);
++			exp = rqst_exp_find(rqstp, FSID_DEV, tfh);
+ 		}
+ 
+-		error = nfserr_dropit;
+-		if (IS_ERR(exp) && PTR_ERR(exp) == -EAGAIN)
++		error = nfserr_stale;
++		if (PTR_ERR(exp) == -ENOENT)
+ 			goto out;
+-
+-		error = nfserr_stale; 
+-		if (!exp || IS_ERR(exp))
++ 
++		if (IS_ERR(exp)) {
++			error = nfserrno(PTR_ERR(exp));
+ 			goto out;
++		}
+ 
+ 		/* Check if the request originated from a secure port. */
+ 		error = nfserr_perm;
+@@ -262,8 +262,19 @@ fh_verify(struct svc_rqst *rqstp, struct svc_fh *fhp, int type, int access)
+ 	if (error)
+ 		goto out;
+ 
++	if (!(access & MAY_LOCK)) {
++		/*
++		 * pseudoflavor restrictions are not enforced on NLM,
++		 * which clients virtually always use auth_sys for,
++		 * even while using RPCSEC_GSS for NFS.
++		 */
++		error = check_nfsd_access(exp, rqstp);
++		if (error)
++			goto out;
++	}
++
+ 	/* Finally, check access permissions. */
+-	error = nfsd_permission(exp, dentry, access);
++	error = nfsd_permission(rqstp, exp, dentry, access);
+ 
+ #ifdef NFSD_PARANOIA_EXTREME
+ 	if (error) {
+diff --git a/fs/nfsd/nfsproc.c b/fs/nfsd/nfsproc.c
+index 21f2ff7..d20eb9e 100644
+--- a/fs/nfsd/nfsproc.c
++++ b/fs/nfsd/nfsproc.c
+@@ -276,7 +276,8 @@ nfsd_proc_create(struct svc_rqst *rqstp, struct nfsd_createargs *argp,
+ 					 *   echo thing > device-special-file-or-pipe
+ 					 * by doing a CREATE with type==0
+ 					 */
+-					nfserr = nfsd_permission(newfhp->fh_export,
++					nfserr = nfsd_permission(rqstp,
++								 newfhp->fh_export,
+ 								 newfhp->fh_dentry,
+ 								 MAY_WRITE|MAY_LOCAL_ACCESS);
+ 					if (nfserr && nfserr != nfserr_rofs)
+diff --git a/fs/nfsd/nfssvc.c b/fs/nfsd/nfssvc.c
+index 7872bba..f908702 100644
+--- a/fs/nfsd/nfssvc.c
++++ b/fs/nfsd/nfssvc.c
+@@ -433,6 +433,15 @@ out:
+ 	module_put_and_exit(0);
+ }
+ 
++static __be32 map_new_errors(u32 vers, __be32 nfserr)
++{
++	if (nfserr == nfserr_jukebox && vers == 2)
++		return nfserr_dropit;
++	if (nfserr == nfserr_wrongsec && vers < 4)
++		return nfserr_acces;
++	return nfserr;
++}
++
+ int
+ nfsd_dispatch(struct svc_rqst *rqstp, u32 *statp)
+ {
+@@ -475,6 +484,7 @@ nfsd_dispatch(struct svc_rqst *rqstp, u32 *statp)
+ 
+ 	/* Now call the procedure handler, and encode NFS status. */
+ 	nfserr = proc->pc_func(rqstp, rqstp->rq_argp, rqstp->rq_resp);
++	nfserr = map_new_errors(rqstp->rq_vers, nfserr);
+ 	if (nfserr == nfserr_jukebox && rqstp->rq_vers == 2)
+ 		nfserr = nfserr_dropit;
+ 	if (nfserr == nfserr_dropit) {
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index 78388e1..31e2e7f 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -104,7 +104,7 @@ nfsd_cross_mnt(struct svc_rqst *rqstp, struct dentry **dpp,
+ 
+ 	while (follow_down(&mnt,&mounts)&&d_mountpoint(mounts));
+ 
+-	exp2 = exp_get_by_name(exp->ex_client, mnt, mounts, &rqstp->rq_chandle);
++	exp2 = rqst_exp_get_by_name(rqstp, mnt, mounts);
+ 	if (IS_ERR(exp2)) {
+ 		err = PTR_ERR(exp2);
+ 		dput(mounts);
+@@ -126,28 +126,17 @@ out:
+ 	return err;
+ }
+ 
+-/*
+- * Look up one component of a pathname.
+- * N.B. After this call _both_ fhp and resfh need an fh_put
+- *
+- * If the lookup would cross a mountpoint, and the mounted filesystem
+- * is exported to the client with NFSEXP_NOHIDE, then the lookup is
+- * accepted as it stands and the mounted directory is
+- * returned. Otherwise the covered directory is returned.
+- * NOTE: this mountpoint crossing is not supported properly by all
+- *   clients and is explicitly disallowed for NFSv3
+- *      NeilBrown <neilb@cse.unsw.edu.au>
+- */
+ int
+-nfsd_lookup(struct svc_rqst *rqstp, struct svc_fh *fhp, const char *name,
+-					int len, struct svc_fh *resfh)
++nfsd_lookup_dentry(struct svc_rqst *rqstp, struct svc_fh *fhp,
++		   const char *name, int len,
++		   struct svc_export **exp_ret, struct dentry **dentry_ret)
+ {
+ 	struct svc_export	*exp;
+ 	struct dentry		*dparent;
+ 	struct dentry		*dentry;
+ 	int			err;
+ 
+-	dprintk("nfsd: nfsd_lookup(fh %s, %.*s)\n", SVCFH_fmt(fhp), len,name);
++	dprintk("nfsd: nfsd_lookup_dentry(fh %s, %.*s)\n", SVCFH_fmt(fhp), len,name);
+ 
+ 	/* Obtain dentry and export. */
+ 	err = fh_verify(rqstp, fhp, S_IFDIR, MAY_EXEC);
+@@ -158,8 +147,6 @@ nfsd_lookup(struct svc_rqst *rqstp, struct svc_fh *fhp, const char *name,
+ 	exp  = fhp->fh_export;
+ 	exp_get(exp);
+ 
+-	err = nfserr_acces;
+-
+ 	/* Lookup the name, but don't follow links */
+ 	if (isdotent(name, len)) {
+ 		if (len==1)
+@@ -180,20 +167,18 @@ nfsd_lookup(struct svc_rqst *rqstp, struct svc_fh *fhp, const char *name,
+ 			dput(dentry);
+ 			dentry = dp;
+ 
+-			exp2 = exp_parent(exp->ex_client, mnt, dentry,
+-					  &rqstp->rq_chandle);
+-			if (IS_ERR(exp2)) {
+-				err = PTR_ERR(exp2);
+-				dput(dentry);
+-				mntput(mnt);
+-				goto out_nfserr;
+-			}
+-			if (!exp2) {
++			exp2 = rqst_exp_parent(rqstp, mnt, dentry);
++			if (PTR_ERR(exp2) == -ENOENT) {
+ 				dput(dentry);
+ 				dentry = dget(dparent);
+-			} else {
+-				exp_put(exp);
+-				exp = exp2;
++			} else if (IS_ERR(exp2)) {
++  				err = PTR_ERR(exp2);
++  				dput(dentry);
++  				mntput(mnt);
++  				goto out_nfserr;
++  			} else {
++  				exp_put(exp);
++  				exp = exp2;
+ 			}
+ 			mntput(mnt);
+ 		}
+@@ -213,6 +198,41 @@ nfsd_lookup(struct svc_rqst *rqstp, struct svc_fh *fhp, const char *name,
+ 			}
+ 		}
+ 	}
++	*dentry_ret = dentry;
++	*exp_ret = exp;
++	return 0;
++
++out_nfserr:
++	exp_put(exp);
++	return nfserrno(err);
++}
++
++/*
++ * Look up one component of a pathname.
++ * N.B. After this call _both_ fhp and resfh need an fh_put
++ *
++ * If the lookup would cross a mountpoint, and the mounted filesystem
++ * is exported to the client with NFSEXP_NOHIDE, then the lookup is
++ * accepted as it stands and the mounted directory is
++ * returned. Otherwise the covered directory is returned.
++ * NOTE: this mountpoint crossing is not supported properly by all
++ *   clients and is explicitly disallowed for NFSv3
++ *      NeilBrown <neilb@cse.unsw.edu.au>
++ */
++int
++nfsd_lookup(struct svc_rqst *rqstp, struct svc_fh *fhp, const char *name,
++					int len, struct svc_fh *resfh)
++{
++	struct svc_export	*exp;
++	struct dentry		*dentry;
++	int err;
++
++	err = nfsd_lookup_dentry(rqstp, fhp, name, len, &exp, &dentry);
++	if (err)
++		return err;
++	err = check_nfsd_access(exp, rqstp);
++	if (err)
++		goto out;
+ 	/*
+ 	 * Note: we compose the file handle now, but as the
+ 	 * dentry may be negative, it may need to be updated.
+@@ -220,14 +240,10 @@ nfsd_lookup(struct svc_rqst *rqstp, struct svc_fh *fhp, const char *name,
+ 	err = fh_compose(resfh, exp, dentry, fhp);
+ 	if (!err && !dentry->d_inode)
+ 		err = nfserr_noent;
+-	dput(dentry);
+ out:
++	dput(dentry);
+ 	exp_put(exp);
+ 	return err;
+-
+-out_nfserr:
+-	err = nfserrno(err);
+-	goto out;
+ }
+ 
+ /*
+@@ -300,7 +316,7 @@ nfsd_setattr(struct svc_rqst *rqstp, struct svc_fh *fhp, struct iattr *iap,
+ 	/* The size case is special. It changes the file as well as the attributes.  */
+ 	if (iap->ia_valid & ATTR_SIZE) {
+ 		if (iap->ia_size < inode->i_size) {
+-			err = nfsd_permission(fhp->fh_export, dentry, MAY_TRUNC|MAY_OWNER_OVERRIDE);
++			err = nfsd_permission(rqstp, fhp->fh_export, dentry, MAY_TRUNC|MAY_OWNER_OVERRIDE);
+ 			if (err)
+ 				goto out;
+ 		}
+@@ -594,7 +610,7 @@ nfsd_access(struct svc_rqst *rqstp, struct svc_fh *fhp, u32 *access, u32 *suppor
+ 
+ 			sresult |= map->access;
+ 
+-			err2 = nfsd_permission(export, dentry, map->how);
++			err2 = nfsd_permission(rqstp, export, dentry, map->how);
+ 			switch (err2) {
+ 			case nfs_ok:
+ 				result |= map->access;
+@@ -991,7 +1007,7 @@ nfsd_read(struct svc_rqst *rqstp, struct svc_fh *fhp, struct file *file,
+ 	int		err;
+ 
+ 	if (file) {
+-		err = nfsd_permission(fhp->fh_export, fhp->fh_dentry,
++		err = nfsd_permission(rqstp, fhp->fh_export, fhp->fh_dentry,
+ 				MAY_READ|MAY_OWNER_OVERRIDE);
+ 		if (err)
+ 			goto out;
+@@ -1020,7 +1036,7 @@ nfsd_write(struct svc_rqst *rqstp, struct svc_fh *fhp, struct file *file,
+ 	int			err = 0;
+ 
+ 	if (file) {
+-		err = nfsd_permission(fhp->fh_export, fhp->fh_dentry,
++		err = nfsd_permission(rqstp, fhp->fh_export, fhp->fh_dentry,
+ 				MAY_WRITE|MAY_OWNER_OVERRIDE);
+ 		if (err)
+ 			goto out;
+@@ -1741,7 +1757,8 @@ nfsd_statfs(struct svc_rqst *rqstp, struct svc_fh *fhp, struct kstatfs *stat)
+  * Check for a user's access permissions to this inode.
+  */
+ int
+-nfsd_permission(struct svc_export *exp, struct dentry *dentry, int acc)
++nfsd_permission(struct svc_rqst *rqstp, struct svc_export *exp,
++					struct dentry *dentry, int acc)
+ {
+ 	struct inode	*inode = dentry->d_inode;
+ 	int		err;
+@@ -1772,7 +1789,7 @@ nfsd_permission(struct svc_export *exp, struct dentry *dentry, int acc)
+ 	 */
+ 	if (!(acc & MAY_LOCAL_ACCESS))
+ 		if (acc & (MAY_WRITE | MAY_SATTR | MAY_TRUNC)) {
+-			if (EX_RDONLY(exp) || IS_RDONLY(inode))
++			if (EX_RDONLY(exp, rqstp) || IS_RDONLY(inode))
+ 				return nfserr_rofs;
+ 			if (/* (acc & MAY_WRITE) && */ IS_IMMUTABLE(inode))
+ 				return nfserr_perm;
+diff --git a/include/linux/nfsd/export.h b/include/linux/nfsd/export.h
+index 6e78ea9..605affa 100644
+--- a/include/linux/nfsd/export.h
++++ b/include/linux/nfsd/export.h
+@@ -42,6 +42,9 @@
+ #define	NFSEXP_NOACL		0x8000	/* reserved for possible ACL related use */
+ #define NFSEXP_ALLFLAGS		0xFE3F
+ 
++/* The flags that may vary depending on security flavor: */
++#define NFSEXP_SECINFO_FLAGS	(NFSEXP_READONLY | NFSEXP_ROOTSQUASH \
++					| NFSEXP_ALLSQUASH)
+ 
+ #ifdef __KERNEL__
+ 
+@@ -64,6 +67,19 @@ struct nfsd4_fs_locations {
+ 	int migrated;
+ };
+ 
++/*
++ * We keep an array of pseudoflavors with the export, in order from most
++ * to least preferred.  For the forseeable future, we don't expect more
++ * than the eight pseudoflavors null, unix, krb5, krb5i, krb5p, skpm3,
++ * spkm3i, and spkm3p (and using all 8 at once should be rare).
++ */
++#define MAX_SECINFO_LIST	8
++
++struct exp_flavor_info {
++	u32	pseudoflavor;
++	u32	flags;
++};
++
+ struct svc_export {
+ 	struct cache_head	h;
+ 	struct auth_domain *	ex_client;
+@@ -75,6 +91,8 @@ struct svc_export {
+ 	gid_t			ex_anon_gid;
+ 	int			ex_fsid;
+ 	struct nfsd4_fs_locations ex_fslocs;
++	int			ex_nflavors;
++	struct exp_flavor_info	ex_flavors[MAX_SECINFO_LIST];
+ };
+ 
+ /* an "export key" (expkey) maps a filehandlefragement to an
+@@ -94,10 +112,22 @@ struct svc_expkey {
+ 
+ #define EX_SECURE(exp)		(!((exp)->ex_flags & NFSEXP_INSECURE_PORT))
+ #define EX_ISSYNC(exp)		(!((exp)->ex_flags & NFSEXP_ASYNC))
+-#define EX_RDONLY(exp)		((exp)->ex_flags & NFSEXP_READONLY)
+ #define EX_NOHIDE(exp)		((exp)->ex_flags & NFSEXP_NOHIDE)
+ #define EX_WGATHER(exp)		((exp)->ex_flags & NFSEXP_GATHERED_WRITES)
+ 
++static inline int EX_RDONLY(struct svc_export *exp, struct svc_rqst *rqstp)
++{
++	struct exp_flavor_info *f;
++	struct exp_flavor_info *end = exp->ex_flavors + exp->ex_nflavors;
++
++	for (f = exp->ex_flavors; f < end; f++) {
++		if (f->pseudoflavor == rqstp->rq_flavor)
++			return f->flags & NFSEXP_READONLY;
++	}
++	return exp->ex_flags & NFSEXP_READONLY;
++}
++
++__be32 check_nfsd_access(struct svc_export *exp, struct svc_rqst *rqstp);
+ 
+ /*
+  * Function declarations
+@@ -111,13 +141,19 @@ struct svc_export *	exp_get_by_name(struct auth_domain *clp,
+ 					struct vfsmount *mnt,
+ 					struct dentry *dentry,
+ 					struct cache_req *reqp);
++struct svc_export *	rqst_exp_get_by_name(struct svc_rqst *,
++					     struct vfsmount *,
++					     struct dentry *);
+ struct svc_export *	exp_parent(struct auth_domain *clp,
+ 				   struct vfsmount *mnt,
+ 				   struct dentry *dentry,
+ 				   struct cache_req *reqp);
++struct svc_export *	rqst_exp_parent(struct svc_rqst *,
++					struct vfsmount *mnt,
++					struct dentry *dentry);
+ int			exp_rootfh(struct auth_domain *, 
+ 					char *path, struct knfsd_fh *, int maxsize);
+-int			exp_pseudoroot(struct auth_domain *, struct svc_fh *fhp, struct cache_req *creq);
++int			exp_pseudoroot(struct svc_rqst *, struct svc_fh *);
+ int			nfserrno(int errno);
+ 
+ extern struct cache_detail svc_export_cache;
+@@ -134,6 +170,7 @@ static inline void exp_get(struct svc_export *exp)
+ extern struct svc_export *
+ exp_find(struct auth_domain *clp, int fsid_type, u32 *fsidv,
+ 	 struct cache_req *reqp);
++struct svc_export * rqst_exp_find(struct svc_rqst *, int, u32 *);
+ 
+ #endif /* __KERNEL__ */
+ 
+diff --git a/include/linux/nfsd/nfsd.h b/include/linux/nfsd/nfsd.h
+index 7fb1fe6..fb65b20 100644
+--- a/include/linux/nfsd/nfsd.h
++++ b/include/linux/nfsd/nfsd.h
+@@ -74,6 +74,9 @@ int		nfsd_cross_mnt(struct svc_rqst *rqstp, struct dentry **dpp,
+ 		                struct svc_export **expp);
+ int		nfsd_lookup(struct svc_rqst *, struct svc_fh *,
+ 				const char *, int, struct svc_fh *);
++int		nfsd_lookup_dentry(struct svc_rqst *, struct svc_fh *,
++				const char *, int,
++				struct svc_export **, struct dentry **);
+ int		nfsd_setattr(struct svc_rqst *, struct svc_fh *,
+ 				struct iattr *, int, time_t);
+ #ifdef CONFIG_NFSD_V4
+@@ -122,7 +125,8 @@ int		nfsd_statfs(struct svc_rqst *, struct svc_fh *,
+ 				struct kstatfs *);
+ 
+ int		nfsd_notify_change(struct inode *, struct iattr *);
+-int		nfsd_permission(struct svc_export *, struct dentry *, int);
++int		nfsd_permission(struct svc_rqst *, struct svc_export *,
++				struct dentry *, int);
+ int		nfsd_sync_dir(struct dentry *dp);
+ 
+ #if defined(CONFIG_NFSD_V2_ACL) || defined(CONFIG_NFSD_V3_ACL)
+@@ -237,6 +241,7 @@ void		nfsd_lockd_shutdown(void);
+ #define	nfserr_badname		__constant_htonl(NFSERR_BADNAME)
+ #define	nfserr_cb_path_down	__constant_htonl(NFSERR_CB_PATH_DOWN)
+ #define	nfserr_locked		__constant_htonl(NFSERR_LOCKED)
++#define	nfserr_wrongsec		__constant_htonl(NFSERR_WRONGSEC)
+ 
+ /* error codes for internal use */
+ /* if a request fails due to kmalloc failure, it gets dropped.
+diff --git a/include/linux/nfsd/nfsfh.h b/include/linux/nfsd/nfsfh.h
+index 0d0dd6e..1f03c0f 100644
+--- a/include/linux/nfsd/nfsfh.h
++++ b/include/linux/nfsd/nfsfh.h
+@@ -155,6 +155,13 @@ typedef struct svc_fh {
+ 
+ } svc_fh;
+ 
++enum nfsd_fsid {
++	FSID_DEV = 0,
++	FSID_NUM,
++	FSID_MAJOR_MINOR,
++	FSID_ENCODE_DEV,
++};
++
+ static inline void mk_fsid_v0(u32 *fsidv, dev_t dev, ino_t ino)
+ {
+ 	fsidv[0] = htonl((MAJOR(dev)<<16) |
+diff --git a/include/linux/nfsd/xdr4.h b/include/linux/nfsd/xdr4.h
+index bbf761f..f6ea18f 100644
+--- a/include/linux/nfsd/xdr4.h
++++ b/include/linux/nfsd/xdr4.h
+@@ -288,6 +288,12 @@ struct nfsd4_rename {
+ 	struct nfsd4_change_info  rn_tinfo; /* response */
+ };
+ 
++struct nfsd4_secinfo {
++	u32 si_namelen;					/* request */
++	char *si_name;					/* request */
++	struct svc_export *si_exp;			/* response */
++};
++
+ struct nfsd4_setattr {
+ 	stateid_t	sa_stateid;         /* request */
+ 	u32		sa_bmval[2];        /* request */
+@@ -361,6 +367,7 @@ struct nfsd4_op {
+ 		struct nfsd4_remove		remove;
+ 		struct nfsd4_rename		rename;
+ 		clientid_t			renew;
++		struct nfsd4_secinfo		secinfo;
+ 		struct nfsd4_setattr		setattr;
+ 		struct nfsd4_setclientid	setclientid;
+ 		struct nfsd4_setclientid_confirm setclientid_confirm;
+diff --git a/include/linux/sunrpc/gss_api.h b/include/linux/sunrpc/gss_api.h
+index 6e112cc..33d5c21 100644
+--- a/include/linux/sunrpc/gss_api.h
++++ b/include/linux/sunrpc/gss_api.h
+@@ -58,6 +58,7 @@ u32 gss_unwrap(
+ u32 gss_delete_sec_context(
+ 		struct gss_ctx		**ctx_id);
+ 
++u32 gss_svc_to_pseudoflavor(struct gss_api_mech *, u32 service);
+ u32 gss_pseudoflavor_to_service(struct gss_api_mech *, u32 pseudoflavor);
+ char *gss_service_to_auth_domain_name(struct gss_api_mech *, u32 service);
+ 
+diff --git a/include/linux/sunrpc/svc.h b/include/linux/sunrpc/svc.h
+index 420e1fe..3ff4e6e 100644
+--- a/include/linux/sunrpc/svc.h
++++ b/include/linux/sunrpc/svc.h
+@@ -169,6 +169,10 @@ struct svc_rqst {
+ 						 * to prevent encrypting page
+ 						 * cache pages */
+ 	wait_queue_head_t	rq_wait;	/* synchronization */
++#ifndef __GENKSYMS__
++	u32			rq_flavor;	/* pseudoflavor */
++	struct auth_domain *	rq_gssclient;	/* "gss/"-style peer info */
++#endif
+ };
+ 
+ /*
+diff --git a/include/linux/sunrpc/svcauth.h b/include/linux/sunrpc/svcauth.h
+index 2fe2087..174fb4b 100644
+--- a/include/linux/sunrpc/svcauth.h
++++ b/include/linux/sunrpc/svcauth.h
+@@ -126,6 +126,7 @@ extern struct auth_domain *auth_domain_find(char *name);
+ extern struct auth_domain *auth_unix_lookup(struct in_addr addr);
+ extern int auth_unix_forget_old(struct auth_domain *dom);
+ extern void svcauth_unix_purge(void);
++extern int svcauth_unix_set_client(struct svc_rqst *rqstp);
+ 
+ static inline unsigned long hash_str(char *name, int bits)
+ {
+diff --git a/include/linux/sunrpc/svcauth_gss.h b/include/linux/sunrpc/svcauth_gss.h
+index 3a2206f..f1cc973 100644
+--- a/include/linux/sunrpc/svcauth_gss.h
++++ b/include/linux/sunrpc/svcauth_gss.h
+@@ -22,6 +22,7 @@
+ int gss_svc_init(void);
+ void gss_svc_shutdown(void);
+ int svcauth_gss_register_pseudoflavor(u32 pseudoflavor, char * name);
++u32 svcauth_gss_flavor(struct auth_domain *dom);
+ 
+ #endif /* __KERNEL__ */
+ #endif /* _LINUX_SUNRPC_SVCAUTH_GSS_H */
+diff --git a/net/sunrpc/auth_gss/gss_krb5_mech.c b/net/sunrpc/auth_gss/gss_krb5_mech.c
+index 70e1e53..b5f7050 100644
+--- a/net/sunrpc/auth_gss/gss_krb5_mech.c
++++ b/net/sunrpc/auth_gss/gss_krb5_mech.c
+@@ -223,6 +223,7 @@ static struct pf_desc gss_kerberos_pfs[] = {
+ static struct gss_api_mech gss_kerberos_mech = {
+ 	.gm_name	= "krb5",
+ 	.gm_owner	= THIS_MODULE,
++	.gm_oid		= {9, (void *)"\x2a\x86\x48\x86\xf7\x12\x01\x02\x02"},
+ 	.gm_ops		= &gss_kerberos_ops,
+ 	.gm_pf_num	= ARRAY_SIZE(gss_kerberos_pfs),
+ 	.gm_pfs		= gss_kerberos_pfs,
+diff --git a/net/sunrpc/auth_gss/gss_mech_switch.c b/net/sunrpc/auth_gss/gss_mech_switch.c
+index 3db7453..666856a 100644
+--- a/net/sunrpc/auth_gss/gss_mech_switch.c
++++ b/net/sunrpc/auth_gss/gss_mech_switch.c
+@@ -194,6 +194,20 @@ gss_mech_get_by_pseudoflavor(u32 pseudoflavor)
+ EXPORT_SYMBOL(gss_mech_get_by_pseudoflavor);
+ 
+ u32
++gss_svc_to_pseudoflavor(struct gss_api_mech *gm, u32 service)
++{
++	int i;
++
++	for (i = 0; i < gm->gm_pf_num; i++) {
++		if (gm->gm_pfs[i].service == service) {
++			return gm->gm_pfs[i].pseudoflavor;
++		}
++	}
++	return RPC_AUTH_MAXFLAVOR; /* illegal value */
++}
++EXPORT_SYMBOL(gss_svc_to_pseudoflavor);
++
++u32
+ gss_pseudoflavor_to_service(struct gss_api_mech *gm, u32 pseudoflavor)
+ {
+ 	int i;
+diff --git a/net/sunrpc/auth_gss/gss_spkm3_mech.c b/net/sunrpc/auth_gss/gss_spkm3_mech.c
+index 88dcb52..7107f6e 100644
+--- a/net/sunrpc/auth_gss/gss_spkm3_mech.c
++++ b/net/sunrpc/auth_gss/gss_spkm3_mech.c
+@@ -275,6 +275,7 @@ static struct pf_desc gss_spkm3_pfs[] = {
+ static struct gss_api_mech gss_spkm3_mech = {
+ 	.gm_name	= "spkm3",
+ 	.gm_owner	= THIS_MODULE,
++	.gm_oid		= {7, "\053\006\001\005\005\001\003"},
+ 	.gm_ops		= &gss_spkm3_ops,
+ 	.gm_pf_num	= ARRAY_SIZE(gss_spkm3_pfs),
+ 	.gm_pfs		= gss_spkm3_pfs,
+diff --git a/net/sunrpc/auth_gss/svcauth_gss.c b/net/sunrpc/auth_gss/svcauth_gss.c
+index 3405faf..1062090 100644
+--- a/net/sunrpc/auth_gss/svcauth_gss.c
++++ b/net/sunrpc/auth_gss/svcauth_gss.c
+@@ -745,6 +745,15 @@ find_gss_auth_domain(struct gss_ctx *ctx, u32 svc)
+ 
+ static struct auth_ops svcauthops_gss;
+ 
++u32 svcauth_gss_flavor(struct auth_domain *dom)
++{
++	struct gss_domain *gd = container_of(dom, struct gss_domain, h);
++
++	return gd->pseudoflavor;
++}
++
++EXPORT_SYMBOL(svcauth_gss_flavor);
++
+ int
+ svcauth_gss_register_pseudoflavor(u32 pseudoflavor, char * name)
+ {
+@@ -916,10 +925,23 @@ svcauth_gss_set_client(struct svc_rqst *rqstp)
+ 	struct gss_svc_data *svcdata = rqstp->rq_auth_data;
+ 	struct rsc *rsci = svcdata->rsci;
+ 	struct rpc_gss_wire_cred *gc = &svcdata->clcred;
++	int stat;
+ 
+-	rqstp->rq_client = find_gss_auth_domain(rsci->mechctx, gc->gc_svc);
+-	if (rqstp->rq_client == NULL)
++	/*
++	 * A gss export can be specified either by:
++	 * 	export	*(sec=krb5,rw)
++	 * or by
++	 * 	export gss/krb5(rw)
++	 * The latter is deprecated; but for backwards compatibility reasons
++	 * the nfsd code will still fall back on trying it if the former
++	 * doesn't work; so we try to make both available to nfsd, below.
++	 */
++	rqstp->rq_gssclient = find_gss_auth_domain(rsci->mechctx, gc->gc_svc);
++	if (rqstp->rq_gssclient == NULL)
+ 		return SVC_DENIED;
++	stat = svcauth_unix_set_client(rqstp);
++	if (stat == SVC_DROP)
++		return stat;
+ 	return SVC_OK;
+ }
+ 
+@@ -927,6 +949,7 @@ static inline int
+ gss_write_init_verf(struct svc_rqst *rqstp, struct rsi *rsip)
+ {
+ 	struct rsc *rsci;
++	int rc;
+ 
+ 	if (rsip->major_status != GSS_S_COMPLETE)
+ 		return gss_write_null_verf(rqstp);
+@@ -935,7 +958,9 @@ gss_write_init_verf(struct svc_rqst *rqstp, struct rsi *rsip)
+ 		rsip->major_status = GSS_S_NO_CONTEXT;
+ 		return gss_write_null_verf(rqstp);
+ 	}
+-	return gss_write_verf(rqstp, rsci->mechctx, GSS_SEQ_WIN);
++	rc = gss_write_verf(rqstp, rsci->mechctx, GSS_SEQ_WIN);
++	cache_put(&rsci->h, &rsc_cache);
++	return rc;
+ }
+ 
+ /*
+@@ -1087,7 +1112,6 @@ svcauth_gss_accept(struct svc_rqst *rqstp, u32 *authp)
+ 			svc_putu32(resv, htonl(GSS_SEQ_WIN));
+ 			if (svc_safe_putnetobj(resv, &rsip->out_token))
+ 				goto drop;
+-			rqstp->rq_client = NULL;
+ 		}
+ 		goto complete;
+ 	case RPC_GSS_PROC_DESTROY:
+@@ -1129,6 +1153,8 @@ svcauth_gss_accept(struct svc_rqst *rqstp, u32 *authp)
+ 		}
+ 		svcdata->rsci = rsci;
+ 		cache_get(&rsci->h);
++		rqstp->rq_flavor = gss_svc_to_pseudoflavor(
++					rsci->mechctx->mech_type, gc->gc_svc);
+ 		ret = SVC_OK;
+ 		goto out;
+ 	}
+@@ -1306,6 +1332,9 @@ out_err:
+ 	if (rqstp->rq_client)
+ 		auth_domain_put(rqstp->rq_client);
+ 	rqstp->rq_client = NULL;
++	if (rqstp->rq_gssclient)
++		auth_domain_put(rqstp->rq_gssclient);
++	rqstp->rq_gssclient = NULL;
+ 	if (rqstp->rq_cred.cr_group_info)
+ 		put_group_info(rqstp->rq_cred.cr_group_info);
+ 	rqstp->rq_cred.cr_group_info = NULL;
+diff --git a/net/sunrpc/svcauth_unix.c b/net/sunrpc/svcauth_unix.c
+index 7e5707e..e687093 100644
+--- a/net/sunrpc/svcauth_unix.c
++++ b/net/sunrpc/svcauth_unix.c
+@@ -5,6 +5,7 @@
+ #include <linux/sunrpc/xdr.h>
+ #include <linux/sunrpc/svcsock.h>
+ #include <linux/sunrpc/svcauth.h>
++#include <linux/sunrpc/gss_api.h>
+ #include <linux/err.h>
+ #include <linux/seq_file.h>
+ #include <linux/hash.h>
+@@ -378,7 +379,7 @@ void svcauth_unix_purge(void)
+ 	cache_purge(&ip_map_cache);
+ }
+ 
+-static int
++int
+ svcauth_unix_set_client(struct svc_rqst *rqstp)
+ {
+ 	struct ip_map *ipm;
+@@ -409,6 +410,8 @@ svcauth_unix_set_client(struct svc_rqst *rqstp)
+ 	return SVC_OK;
+ }
+ 
++EXPORT_SYMBOL(svcauth_unix_set_client);
++
+ static int
+ svcauth_null_accept(struct svc_rqst *rqstp, u32 *authp)
+ {
+@@ -444,6 +447,7 @@ svcauth_null_accept(struct svc_rqst *rqstp, u32 *authp)
+ 	svc_putu32(resv, RPC_AUTH_NULL);
+ 	svc_putu32(resv, 0);
+ 
++	rqstp->rq_flavor = RPC_AUTH_UNIX;
+ 	return SVC_OK;
+ }
+ 
+@@ -514,6 +518,7 @@ svcauth_unix_accept(struct svc_rqst *rqstp, u32 *authp)
+ 	svc_putu32(resv, RPC_AUTH_NULL);
+ 	svc_putu32(resv, 0);
+ 
++	rqstp->rq_flavor = RPC_AUTH_NULL;
+ 	return SVC_OK;
+ 
+ badcred:

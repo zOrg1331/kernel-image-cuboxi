@@ -1,0 +1,63 @@
+From: Doug Chapman <dchapman@redhat.com>
+Date: Wed, 5 Dec 2007 15:18:04 -0500
+Subject: [mm] soft lockups when allocing mem on large systems
+Message-id: 1196885884.526.15.camel@deimos.americas.hpqcorp.net
+O-Subject: [RHEL5.1 patch] updated patch - soft lockups when allocating mem on very large systems
+Bugzilla: 281381
+
+BZ 281381: soft lockups when allocating mem on very large systems
+
+This is the 2nd pass at this.  Special Thanks to Rik Van Riel for pointing
+out how terribly wrong my description was on the first pass!
+
+This gets rid of soft lockup warnings seen during the RHEL cert tests
+on very large HP ia64 systems when configured with all (or most) memory
+in a single large NUMA domain.  The "threaded_memtest" from the suite
+creates 2 threads per cpu, each allocates a large chunk of memory (so
+that 95% of the memory is used) and all threads touch pages to fault
+them into memory.
+
+On sytems with lots of cpus (on my test system 56cpus) and 1 really
+big zone (~600GB) we have a lot of lock contention for zone->lock
+in buffered_rmqueue().  Without queued spinlocks and so many cpus
+hitting this some cpus are getting starvation.
+
+Most victims of this are instances of buffered_rmqueue() however
+drain_node_pages also becomes a victim of this if cache_reap runs
+while the allocation storm is happening.
+
+Since interrupts are disabled (and softlockups can only be caught
+while interrupts are enabled) all that needs to be done is to
+touch the watchdog before we re-enable interrupts.
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index b03e362..ba19025 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -638,6 +638,7 @@ void drain_node_pages(int nodeid)
+ 				local_irq_save(flags);
+ 				free_pages_bulk(zone, pcp->count, &pcp->list, 0);
+ 				pcp->count = 0;
++				touch_softlockup_watchdog();
+ 				local_irq_restore(flags);
+ 			}
+ 		}
+@@ -808,6 +809,7 @@ again:
+ 
+ 	__count_zone_vm_events(PGALLOC, zone, 1 << order);
+ 	zone_statistics(zonelist, zone);
++	touch_softlockup_watchdog();
+ 	local_irq_restore(flags);
+ 	put_cpu();
+ 
+@@ -817,6 +819,7 @@ again:
+ 	return page;
+ 
+ failed:
++	touch_softlockup_watchdog();
+ 	local_irq_restore(flags);
+ 	put_cpu();
+ 	return NULL;

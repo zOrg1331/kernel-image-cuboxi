@@ -1,0 +1,48 @@
+From: Glauber de Oliveira Costa <gcosta@redhat.com>
+Subject: [RHEL5 PATCH] make netfront device permanent (#216249)
+Date: Fri, 24 Nov 2006 14:19:21 -0200
+Bugzilla: 216249
+Message-Id: <20061124161921.GH7171@redhat.com>
+Changelog: Xen: make netfront device permanent
+
+
+Currently, rmmod'ind the xennet driver in a guest leads to a memory
+leak, and a system BUG(). (#216249)
+
+I've a patch that is able to avoid the BUG() and "properly" unload the
+module. However, the memory leak is still there, and according to
+Herbert Xu, it will most probably be until we have support for asynch
+grant tables free.
+
+Even if we had such a changeset in time, it'd most probably be too much
+intrusive for RHEL GA. The best thing may then be preventing the module
+from being unloaded.
+
+Please ACK for inclusion
+
+
+-- 
+Glauber de Oliveira Costa
+Red Hat Inc.
+"Free as in Freedom"
+
+Index: latest/drivers/xen/netfront/netfront.c
+===================================================================
+--- latest.orig/drivers/xen/netfront/netfront.c
++++ latest/drivers/xen/netfront/netfront.c
+@@ -2127,6 +2127,8 @@ static int __init netif_init(void)
+ module_init(netif_init);
+ 
+ 
++/* it's currently not sane to remove this driver */
++#if 0
+ static void __exit netif_exit(void)
+ {
+ 	if (is_initial_xendomain())
+@@ -2137,5 +2139,6 @@ static void __exit netif_exit(void)
+ 	return xenbus_unregister_driver(&netfront);
+ }
+ module_exit(netif_exit);
++#endif
+ 
+ MODULE_LICENSE("Dual BSD/GPL");

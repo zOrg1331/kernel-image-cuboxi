@@ -1,0 +1,45 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Subject: Re: NMI watchdog timeout
+Date: Fri, 13 Apr 2007 15:20:22 -0400
+Bugzilla: 229563
+Message-Id: <461FD7F6.5000502@redhat.com>
+Changelog: [NMI] change watchdog timeout to 30 seconds
+
+
+I changed the timeout from 5 to 30 in RHEL4 for both x86 and x86_64.  
+This is the RHEL5 patch that I
+did test back in september of 2006:
+
+
+
+--- linux-2.6.18.noarch/arch/i386/kernel/nmi.c.orig
++++ linux-2.6.18.noarch/arch/i386/kernel/nmi.c
+@@ -594,10 +594,10 @@ void nmi_watchdog_tick (struct pt_regs *
+ 	if (last_irq_sums[cpu] == sum) {
+ 		/*
+ 		 * Ayiee, looks like this CPU is stuck ...
+-		 * wait a few IRQs (5 seconds) before doing the oops ...
++		 * wait a few IRQs (30 seconds) before doing the oops ...
+ 		 */
+ 		alert_counter[cpu]++;
+-		if (alert_counter[cpu] == 5*nmi_hz)
++		if (alert_counter[cpu] == 30*nmi_hz)
+ 			/*
+ 			 * die_nmi will return ONLY if NOTIFY_STOP happens..
+ 			 */
+--- linux-2.6.18.noarch/arch/x86_64/kernel/nmi.c.orig
++++ linux-2.6.18.noarch/arch/x86_64/kernel/nmi.c
+@@ -547,10 +547,10 @@ void __kprobes nmi_watchdog_tick(struct 
+ 	if (!touched && __get_cpu_var(last_irq_sum) == sum) {
+ 		/*
+ 		 * Ayiee, looks like this CPU is stuck ...
+-		 * wait a few IRQs (5 seconds) before doing the oops ...
++		 * wait a few IRQs (30 seconds) before doing the oops ...
+ 		 */
+ 		local_inc(&__get_cpu_var(alert_counter));
+-		if (local_read(&__get_cpu_var(alert_counter)) == 5*nmi_hz) {
++		if (local_read(&__get_cpu_var(alert_counter)) == 30*nmi_hz) {
+ 			if (notify_die(DIE_NMI, "nmi", regs, reason, 2, SIGINT)
+ 							== NOTIFY_STOP) {
+ 				local_set(&__get_cpu_var(alert_counter), 0);
+

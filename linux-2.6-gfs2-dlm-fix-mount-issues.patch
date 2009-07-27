@@ -1,0 +1,245 @@
+Date: Tue, 31 Oct 2006 11:55:56 -0600
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5 PATCH 1/3] dlm: fix requestqueue race
+
+BZ 211914 (beta blocker)
+
+There's a race between dlm_recoverd (1) enabling locking and (2) clearing
+out the requestqueue, and dlm_recvd (1) checking if locking is enabled and
+(2) adding a message to the requestqueue.  An order of recoverd(1),
+recvd(1), recvd(2), recoverd(2) will result in a message being left on the
+requestqueue.  The fix is to have dlm_recvd check if dlm_recoverd has
+enabled locking after taking the mutex for the requestqueue and if it has
+processing the message instead of queueing it.
+
+With this fix, QA's mount_stress test passes.
+
+
+Index: linux-2.6.19-rc1-rh/fs/dlm/lock.c
+===================================================================
+--- linux-2.6.19-rc1-rh.orig/fs/dlm/lock.c	2006-10-30 12:45:38.833044329 -0600
++++ linux-2.6.19-rc1-rh/fs/dlm/lock.c	2006-10-30 12:46:39.696744002 -0600
+@@ -3029,10 +3029,17 @@
+ 
+ 	while (1) {
+ 		if (dlm_locking_stopped(ls)) {
+-			if (!recovery)
+-				dlm_add_requestqueue(ls, nodeid, hd);
+-			error = -EINTR;
+-			goto out;
++			if (recovery) {
++				error = -EINTR;
++				goto out;
++			}
++			error = dlm_add_requestqueue(ls, nodeid, hd);
++			if (error == -EAGAIN)
++				continue;
++			else {
++				error = -EINTR;
++				goto out;
++			}
+ 		}
+ 
+ 		if (lock_recovery_try(ls))
+Index: linux-2.6.19-rc1-rh/fs/dlm/requestqueue.c
+===================================================================
+--- linux-2.6.19-rc1-rh.orig/fs/dlm/requestqueue.c	2006-10-05 11:45:35.000000000 -0500
++++ linux-2.6.19-rc1-rh/fs/dlm/requestqueue.c	2006-10-30 12:51:13.067971288 -0600
+@@ -30,26 +30,39 @@
+  * lockspace is enabled on some while still suspended on others.
+  */
+ 
+-void dlm_add_requestqueue(struct dlm_ls *ls, int nodeid, struct dlm_header *hd)
++int dlm_add_requestqueue(struct dlm_ls *ls, int nodeid, struct dlm_header *hd)
+ {
+ 	struct rq_entry *e;
+ 	int length = hd->h_length;
++	int rv = 0;
+ 
+ 	if (dlm_is_removed(ls, nodeid))
+-		return;
++		return 0;
+ 
+ 	e = kmalloc(sizeof(struct rq_entry) + length, GFP_KERNEL);
+ 	if (!e) {
+ 		log_print("dlm_add_requestqueue: out of memory\n");
+-		return;
++		return 0;
+ 	}
+ 
+ 	e->nodeid = nodeid;
+ 	memcpy(e->request, hd, length);
+ 
++	/* We need to check dlm_locking_stopped() after taking the mutex to
++	   avoid a race where dlm_recoverd enables locking and runs
++	   process_requestqueue between our earlier dlm_locking_stopped check
++	   and this addition to the requestqueue. */
++
+ 	mutex_lock(&ls->ls_requestqueue_mutex);
+-	list_add_tail(&e->list, &ls->ls_requestqueue);
++	if (dlm_locking_stopped(ls))
++		list_add_tail(&e->list, &ls->ls_requestqueue);
++	else {
++		log_debug(ls, "dlm_add_requestqueue skip from %d", nodeid);
++		kfree(e);
++		rv = -EAGAIN;
++	}
+ 	mutex_unlock(&ls->ls_requestqueue_mutex);
++	return rv;
+ }
+ 
+ int dlm_process_requestqueue(struct dlm_ls *ls)
+Index: linux-2.6.19-rc1-rh/fs/dlm/requestqueue.h
+===================================================================
+--- linux-2.6.19-rc1-rh.orig/fs/dlm/requestqueue.h	2006-10-05 11:45:35.000000000 -0500
++++ linux-2.6.19-rc1-rh/fs/dlm/requestqueue.h	2006-10-30 12:46:39.698743696 -0600
+@@ -13,7 +13,7 @@
+ #ifndef __REQUESTQUEUE_DOT_H__
+ #define __REQUESTQUEUE_DOT_H__
+ 
+-void dlm_add_requestqueue(struct dlm_ls *ls, int nodeid, struct dlm_header *hd);
++int dlm_add_requestqueue(struct dlm_ls *ls, int nodeid, struct dlm_header *hd);
+ int dlm_process_requestqueue(struct dlm_ls *ls);
+ void dlm_wait_requestqueue(struct dlm_ls *ls);
+ void dlm_purge_requestqueue(struct dlm_ls *ls);
+
+Date: Tue, 31 Oct 2006 11:56:01 -0600
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5 PATCH 2/3] dlm: fix aborted recovery during node removal
+
+BZ 211914 (beta blocker)
+
+With the new cluster infrastructure, dlm recovery for a node removal can
+be aborted and restarted for a node addition.  When this happens, the
+restarted recovery isn't aware that it's doing recovery for the earlier
+removal as well as the addition.  So, it then skips the recovery steps
+only required when nodes are removed.  This can result in locks not being
+purged for failed/removed nodes.  The fix is to check for removed nodes
+for which recovery has not been completed at the start of a new recovery
+sequence.
+
+With this fix, QA's mount_stress test passes.
+
+
+Index: linux-2.6.19-rc1-rh/fs/dlm/member.c
+===================================================================
+--- linux-2.6.19-rc1-rh.orig/fs/dlm/member.c	2006-10-30 16:32:50.218089404 -0600
++++ linux-2.6.19-rc1-rh/fs/dlm/member.c	2006-10-30 16:33:04.718873600 -0600
+@@ -186,6 +186,14 @@
+ 	struct dlm_member *memb, *safe;
+ 	int i, error, found, pos = 0, neg = 0, low = -1;
+ 
++	/* previously removed members that we've not finished removing need to
++	   count as a negative change so the "neg" recovery steps will happen */
++
++	list_for_each_entry(memb, &ls->ls_nodes_gone, list) {
++		log_debug(ls, "prev removed member %d", memb->nodeid);
++		neg++;
++	}
++
+ 	/* move departed members from ls_nodes to ls_nodes_gone */
+ 
+ 	list_for_each_entry_safe(memb, safe, &ls->ls_nodes, list) {
+Index: linux-2.6.19-rc1-rh/fs/dlm/recoverd.c
+===================================================================
+--- linux-2.6.19-rc1-rh.orig/fs/dlm/recoverd.c	2006-10-30 16:32:50.219089251 -0600
++++ linux-2.6.19-rc1-rh/fs/dlm/recoverd.c	2006-10-30 16:33:43.321974821 -0600
+@@ -164,6 +164,13 @@
+ 		 */
+ 
+ 		dlm_recover_rsbs(ls);
++	} else {
++		/*
++		 * Other lockspace members may be going through the "neg" steps
++		 * while also adding us to the lockspace, in which case they'll
++		 * be looking for this status bit during dlm_recover_locks().
++		 */
++		dlm_set_recover_status(ls, DLM_RS_LOCKS);
+ 	}
+ 
+ 	dlm_release_root_list(ls);
+
+Date: Wed, 1 Nov 2006 09:31:48 -0600
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5 PATCH] dlm: do full recover_locks barrier
+
+BZ 211914 (beta blocker)
+
+The previous patch "[RHEL5 PATCH 2/3] dlm: fix aborted recovery during
+node removal" was incomplete as discovered with further testing.  It set
+the bit for the RS_LOCKS barrier but did not then wait for the barrier.
+This is often ok, but sometimes it will cause yet another recovery hang.
+If it's a new node that also has the lowest nodeid that skips the barrier
+wait, then it misses the important step of collecting and reporting the
+barrier status from the other nodes (which is the job of the low nodeid in
+the barrier wait routine).
+
+
+Index: linux-2.6.19-rc1-quilt/fs/dlm/recoverd.c
+===================================================================
+--- linux-2.6.19-rc1-quilt.orig/fs/dlm/recoverd.c	2006-10-31 13:07:26.146856607 -0600
++++ linux-2.6.19-rc1-quilt/fs/dlm/recoverd.c	2006-10-31 13:37:44.099062935 -0600
+@@ -168,9 +168,15 @@
+ 		/*
+ 		 * Other lockspace members may be going through the "neg" steps
+ 		 * while also adding us to the lockspace, in which case they'll
+-		 * be looking for this status bit during dlm_recover_locks().
++		 * be doing the recover_locks (RS_LOCKS) barrier.
+ 		 */
+ 		dlm_set_recover_status(ls, DLM_RS_LOCKS);
++
++		error = dlm_recover_locks_wait(ls);
++		if (error) {
++			log_error(ls, "recover_locks_wait failed %d", error);
++			goto fail;
++		}
+ 	}
+ 
+ 	dlm_release_root_list(ls);
+
+Date: Tue, 31 Oct 2006 11:56:08 -0600
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5 PATCH 3/3] dlm: fix stopping unstarted recovery
+
+BZ 211914 (beta blocker)
+
+When many nodes are joining a lockspace simultaneously, the dlm gets a
+quick sequence of stop/start events, a pair for adding each node.
+dlm_controld in user space sends dlm_recoverd in the kernel each stop and
+start event.  dlm_controld will sometimes send the stop before
+dlm_recoverd has had a chance to take up the previously queued start.  The
+stop aborts the processing of the previous start by setting the
+RECOVERY_STOP flag.  dlm_recoverd is erroneously clearing this flag and
+ignoring the stop/abort if it happens to take up the start after the stop
+meant to abort it.  The fix is to check the sequence number that's
+incremented for each stop/start before clearing the flag.
+
+With this fix, QA's mount_stress test passes.
+
+
+Index: linux-2.6.19-rc1-rh/fs/dlm/recoverd.c
+===================================================================
+--- linux-2.6.19-rc1-rh.orig/fs/dlm/recoverd.c	2006-10-30 16:33:43.321974821 -0600
++++ linux-2.6.19-rc1-rh/fs/dlm/recoverd.c	2006-10-30 16:34:15.811010308 -0600
+@@ -219,6 +219,10 @@
+ 	return error;
+ }
+ 
++/* The dlm_ls_start() that created the rv we take here may already have been
++   stopped via dlm_ls_stop(); in that case we need to leave the RECOVERY_STOP
++   flag set. */
++
+ static void do_ls_recovery(struct dlm_ls *ls)
+ {
+ 	struct dlm_recover *rv = NULL;
+@@ -226,7 +230,8 @@
+ 	spin_lock(&ls->ls_recover_lock);
+ 	rv = ls->ls_recover_args;
+ 	ls->ls_recover_args = NULL;
+-	clear_bit(LSFL_RECOVERY_STOP, &ls->ls_flags);
++	if (rv && ls->ls_recover_seq == rv->seq)
++		clear_bit(LSFL_RECOVERY_STOP, &ls->ls_flags);
+ 	spin_unlock(&ls->ls_recover_lock);
+ 
+ 	if (rv) {
+

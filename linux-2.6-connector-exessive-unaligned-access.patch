@@ -1,0 +1,81 @@
+From: Erik Jacobson <ejacobso@redhat.com>
+Subject: Re: [RHEL5 Patch] BZ 218882 process connector exessive unaligned access
+Date: Wed, 13 Dec 2006 01:10:49 -0500
+Bugzilla: 218882
+Message-Id: <20061213061049.GA21503@redhat.com>
+Changelog: connector: exessive unaligned access
+
+
+Andrew took my change in to -mm, but asked a good question on something
+we hadn't considered.
+
+So I've made a new patch.  The version here is built and tested against
+rhel5 rc snapshot2.  It's virtually the same as the community, this time
+with one piece of fuzz being the only difference.
+
+This fixed ia64 just like my original patch.  I also verified x86_64
+again to be sure it didn't introduce trouble there.
+
+I suspect now that Andrew will take this patch and not my original.
+If anybody sees trouble with it (I've never used put_unaligned before),
+please let me know.
+
+
+Index: linux/drivers/connector/cn_proc.c
+===================================================================
+--- linux.orig/drivers/connector/cn_proc.c
++++ linux/drivers/connector/cn_proc.c
+@@ -28,6 +28,7 @@
+ #include <linux/init.h>
+ #include <linux/connector.h>
+ #include <asm/atomic.h>
++#include <asm/unaligned.h>
+ 
+ #include <linux/cn_proc.h>
+ 
+@@ -60,7 +61,7 @@ void proc_fork_connector(struct task_str
+ 	ev = (struct proc_event*)msg->data;
+ 	get_seq(&msg->seq, &ev->cpu);
+ 	ktime_get_ts(&ts); /* get high res monotonic timestamp */
+-	ev->timestamp_ns = timespec_to_ns(&ts);
++	put_unaligned(timespec_to_ns(&ts), (__u64 *) &ev->timestamp_ns);
+ 	ev->what = PROC_EVENT_FORK;
+ 	ev->event_data.fork.parent_pid = task->parent->pid;
+ 	ev->event_data.fork.parent_tgid = task->parent->tgid;
+@@ -88,7 +89,7 @@ void proc_exec_connector(struct task_str
+ 	ev = (struct proc_event*)msg->data;
+ 	get_seq(&msg->seq, &ev->cpu);
+ 	ktime_get_ts(&ts); /* get high res monotonic timestamp */
+-	ev->timestamp_ns = timespec_to_ns(&ts);
++	put_unaligned(timespec_to_ns(&ts), (__u64 *) &ev->timestamp_ns);
+ 	ev->what = PROC_EVENT_EXEC;
+ 	ev->event_data.exec.process_pid = task->pid;
+ 	ev->event_data.exec.process_tgid = task->tgid;
+@@ -124,7 +125,7 @@ void proc_id_connector(struct task_struc
+ 	     	return;
+ 	get_seq(&msg->seq, &ev->cpu);
+ 	ktime_get_ts(&ts); /* get high res monotonic timestamp */
+-	ev->timestamp_ns = timespec_to_ns(&ts);
++	put_unaligned(timespec_to_ns(&ts), (__u64 *) &ev->timestamp_ns);
+ 
+ 	memcpy(&msg->id, &cn_proc_event_id, sizeof(msg->id));
+ 	msg->ack = 0; /* not used */
+@@ -146,7 +147,7 @@ void proc_exit_connector(struct task_str
+ 	ev = (struct proc_event*)msg->data;
+ 	get_seq(&msg->seq, &ev->cpu);
+ 	ktime_get_ts(&ts); /* get high res monotonic timestamp */
+-	ev->timestamp_ns = timespec_to_ns(&ts);
++	put_unaligned(timespec_to_ns(&ts), (__u64 *) &ev->timestamp_ns);
+ 	ev->what = PROC_EVENT_EXIT;
+ 	ev->event_data.exit.process_pid = task->pid;
+ 	ev->event_data.exit.process_tgid = task->tgid;
+@@ -181,7 +182,7 @@ static void cn_proc_ack(int err, int rcv
+ 	ev = (struct proc_event*)msg->data;
+ 	msg->seq = rcvd_seq;
+ 	ktime_get_ts(&ts); /* get high res monotonic timestamp */
+-	ev->timestamp_ns = timespec_to_ns(&ts);
++	put_unaligned(timespec_to_ns(&ts), (__u64 *) &ev->timestamp_ns);
+ 	ev->cpu = -1;
+ 	ev->what = PROC_EVENT_NONE;
+ 	ev->event_data.ack.err = err;
+

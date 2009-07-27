@@ -1,0 +1,24 @@
+diff --git a/fs/gfs/bmap.c b/fs/gfs/bmap.c
+index 381f7f5..7cef2b8 100644
+--- a/fs/gfs/bmap.c
++++ b/fs/gfs/bmap.c
+@@ -1150,7 +1150,7 @@ gfs_shrink(struct gfs_inode *ip, uint64_t size, gfs_truncator_t truncator)
+ 		if (!rgd) {
+ 			gfs_consist_inode(ip);
+ 			error = -EIO;
+-			goto out_end_trans;
++			goto out_brelease;
+ 		}
+ 
+ 		ip->i_di.di_goal_rgrp = rgd->rd_ri.ri_addr;
+@@ -1169,8 +1169,9 @@ gfs_shrink(struct gfs_inode *ip, uint64_t size, gfs_truncator_t truncator)
+ 		gfs_buffer_clear_tail(dibh, sizeof(struct gfs_dinode) + size);
+ 
+ 	gfs_dinode_out(&ip->i_di, dibh->b_data);
++ 
++ out_brelease:
+ 	brelse(dibh);
+-
+  out_end_trans:
+ 	up_write(&ip->i_rw_mutex);
+ 

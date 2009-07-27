@@ -1,0 +1,51 @@
+Date: Mon, 02 Oct 2006 09:17:22 -0400
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [RHEL5/FC6] [PATCH] fsstress on nfs trigger xmon on rhel5 beta1
+
+The attached upstream patch stop a known regression
+in the direct I/O path in NFS. I have verified and
+IBM has also verified that this patch does indeed
+fix the oops..
+
+See bz:  https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=207040
+
+steved.
+
+If the RPC call tanked, we should not be checking the return value
+of data->res.verf->committed, since it is unlikely to even be
+initialised.
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+---
+ fs/nfs/direct.c |   12 +++++++-----
+ 1 files changed, 7 insertions(+), 5 deletions(-)
+
+--- linux-2.6.18.i686/fs/nfs/direct.c.dio	2006-09-28 14:08:30.816760000 -0400
++++ linux-2.6.18.i686/fs/nfs/direct.c	2006-10-02 08:53:06.772120000 -0400
+@@ -534,10 +534,12 @@
+ 
+ 	spin_lock(&dreq->lock);
+ 
+-	if (likely(status >= 0))
+-		dreq->count += data->res.count;
+-	else
+-		dreq->error = task->tk_status;
++	if (unlikely(status < 0)) {
++		dreq->error = status;
++		goto out_unlock;
++	}
++
++	dreq->count += data->res.count;
+ 
+ 	if (data->res.verf->committed != NFS_FILE_SYNC) {
+ 		switch (dreq->flags) {
+@@ -552,7 +554,7 @@
+ 				}
+ 		}
+ 	}
+-
++out_unlock:
+ 	spin_unlock(&dreq->lock);
+ }
+ 
+

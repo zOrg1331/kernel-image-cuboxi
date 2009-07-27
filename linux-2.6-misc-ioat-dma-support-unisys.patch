@@ -1,0 +1,54 @@
+From: Ivan Vecera <ivecera@redhat.com>
+Date: Fri, 14 Dec 2007 13:27:18 +0100
+Subject: [misc] ioat dma: support unisys
+Message-id: 476276A6.6090005@redhat.com
+O-Subject: [RHEL5.2 PATCH] IOAT DMA Driver update for RHEL 5.2
+Bugzilla: 248767
+
+BZ248767 (https://bugzilla.redhat.com/show_bug.cgi?id=248767)
+
+Description:
+Update request from Unisys for support of its IOAT DMA engine that is
+compatible with Intel's one. This update only adds new PCI ID into
+Intel's driver.
+
+Test results:
+No tested, Unisys has not the mentioned hardware for testing yet.
+
+Upstream status:
+The attached patch is covered by following commit from upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=3039f0735a280b54c7364fbfe6a9287f7f0b510a
+
+Please review the patch below.
+
+Ivan
+
+=====
+
+diff --git a/drivers/dma/ioatdma.c b/drivers/dma/ioatdma.c
+index dbd4d6c..dc29723 100644
+--- a/drivers/dma/ioatdma.c
++++ b/drivers/dma/ioatdma.c
+@@ -553,6 +553,8 @@ static enum dma_status ioat_dma_is_complete(struct dma_chan *chan,
+ 
+ static struct pci_device_id ioat_pci_tbl[] = {
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_IOAT) },
++	{ PCI_DEVICE(PCI_VENDOR_ID_UNISYS,
++		     PCI_DEVICE_ID_UNISYS_DMA_DIRECTOR) },
+ 	{ 0, }
+ };
+ 
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+index eba2b20..90e0a0d 100644
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -471,6 +471,9 @@
+ #define PCI_DEVICE_ID_IBM_ICOM_FOUR_PORT_MODEL	0x252
+ #define PCI_DEVICE_ID_IBM_ICOM_V2_ONE_PORT_RVX_ONE_PORT_MDM_PCIE	0x0361
+ 
++#define PCI_VENDOR_ID_UNISYS		0x1018
++#define PCI_DEVICE_ID_UNISYS_DMA_DIRECTOR 0x001C
++
+ #define PCI_VENDOR_ID_COMPEX2		0x101a /* pci.ids says "AT&T GIS (NCR)" */
+ #define PCI_DEVICE_ID_COMPEX2_100VG	0x0005
+ 

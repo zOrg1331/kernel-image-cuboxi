@@ -1,0 +1,83 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Wed, 22 Oct 2008 14:17:20 +0200
+Subject: [s390] cio: DASD device driver times out
+Message-id: 20081022121720.GB26181@redhat.com
+O-Subject: [RHEL5 U4 PATCH 2/5] s390 - cio: DASD device driver times out
+Bugzilla: 459803
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+The DASD device driver times out even if processing is completed.
+When the status of a device is changed intentionally, there is the
+option to first let the ongoing i/o processing come to an end
+rather then just to stop it. To do so, the device is set to state
+wait4io. But after completion of the i/o processing the device
+remains in that state, wrongly indicating that there are still
+outstanding interrupts.
+
+Solution: Trigger a path verification for the device in state wait4io after
+completion of the i/o processing so that the device is set to a
+proper state.
+
+Bugzilla
+=========
+
+BZ 459803
+https://bugzilla.redhat.com/show_bug.cgi?id=459803
+
+Upstream status of the patch:
+=============================
+
+The upstream codebase is not affected by this problem.
+Therefor the patch hasn't been posted upstream.
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	--Hans
+
+diff --git a/drivers/s390/cio/device_fsm.c b/drivers/s390/cio/device_fsm.c
+index b2f590e..162154f 100644
+--- a/drivers/s390/cio/device_fsm.c
++++ b/drivers/s390/cio/device_fsm.c
+@@ -1032,7 +1032,6 @@ static void
+ ccw_device_wait4io_irq(struct ccw_device *cdev, enum dev_event dev_event)
+ {
+ 	struct irb *irb;
+-	struct subchannel *sch;
+ 
+ 	irb = (struct irb *) __LC_IRB;
+ 	/*
+@@ -1046,18 +1045,12 @@ ccw_device_wait4io_irq(struct ccw_device *cdev, enum dev_event dev_event)
+ 		}
+ 		return;
+ 	}
+-
+-	/* Iff device is idle, reset timeout. */
+-	sch = to_subchannel(cdev->dev.parent);
+-	if (!stsch(sch->schid, &sch->schib)) {
+-		if (sch->schib.scsw.actl == 0) {
+-			ccw_device_set_timeout(cdev, 0);
+-			/* Start delayed path verification. */
+-			ccw_device_online_verify(cdev, 0);
+-		}
+-	}
+ 	/* Call the handler. */
+-	ccw_device_call_handler(cdev);
++	if (ccw_device_call_handler(cdev)) {
++		ccw_device_set_timeout(cdev, 0);
++		/* Start delayed path verification. */
++		ccw_device_online_verify(cdev, 0);
++	}
+ }
+ 
+ static void

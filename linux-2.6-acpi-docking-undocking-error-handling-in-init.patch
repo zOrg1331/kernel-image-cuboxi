@@ -1,0 +1,60 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Mon, 17 Dec 2007 15:54:15 -0500
+Subject: [acpi] docking/undocking: error handling in init
+Message-id: 4766E1F7.8010107@redhat.com
+O-Subject: RHEL-5.2 PATCH 3/5 Docking/undocking support
+Bugzilla: 252214
+
+bz252214 FEAT: RHEL 5.2 hot dock / undock support for mobile
+w/docking station
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=252214
+
+Problem:
+  ACPI: dock: Fix symbol conflict between acpiphp and dock
+
+Solution:
+  Fix bug which will cause acpiphp to not be able to load when dock.ko
+  cannot load.
+
+Upstream Status:
+commit: 2548c06b72396e28abdb5dd572ab589c3c22f4b9
+
+Testing:
+The patches in this series were successfully tested by me on
+a T60p, Dell Converse, and Dell Fila mobiles.
+
+As always, acks would be appreciated.
+
+diff --git a/drivers/acpi/dock.c b/drivers/acpi/dock.c
+index 2630f06..73a6721 100644
+--- a/drivers/acpi/dock.c
++++ b/drivers/acpi/dock.c
+@@ -444,6 +444,9 @@ static int dock_in_progress(struct dock_station *ds)
+  */
+ int register_dock_notifier(struct notifier_block *nb)
+ {
++	if (!dock_station)
++		return -ENODEV;
++
+ 	return atomic_notifier_chain_register(&dock_notifier_list, nb);
+ }
+ 
+@@ -455,6 +458,9 @@ EXPORT_SYMBOL_GPL(register_dock_notifier);
+  */
+ void unregister_dock_notifier(struct notifier_block *nb)
+ {
++	if (!dock_station)
++		return;
++
+ 	atomic_notifier_chain_unregister(&dock_notifier_list, nb);
+ }
+ 
+@@ -842,7 +848,7 @@ static int __init dock_init(void)
+ 			    ACPI_UINT32_MAX, find_dock, &num, NULL);
+ 
+ 	if (!num)
+-		return -ENODEV;
++		printk(KERN_INFO "No dock devices found.\n");
+ 
+ 	return 0;
+ }

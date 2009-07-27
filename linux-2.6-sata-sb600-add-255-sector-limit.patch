@@ -1,0 +1,109 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Date: Tue, 1 Apr 2008 10:57:04 -0400
+Subject: [sata] SB600: add 255-sector limit
+Message-id: 47F24D40.9090201@redhat.com
+O-Subject: Re: [RHEL5.2 PATCH] AMD SB700/SB800 SATA support 64bit DMA
+Bugzilla: 434741
+
+This is the commit list Jeff and I discussed:
+ > 1) a long time ago: disable 64-bit DMA on SB600, etc:
+c7a42156d99bcea7f8173ba7a6034bbaa2ecb77c
+This patch is already in R5.2 code base.    I sent Jeff a collection of
+7 submission with upstream commits
+so he knows what AMD requested, tested and submitted so far.
+
+ > 2) re-enable 64-bit DMA on SB700, SB800:
+e39fc8c9fd0bb6f4018186801e4a53a5eccaaf70
+This is the SB700/800 patch I originally submitted, call that patch 1.
+
+ > 3) add 255-sector limit to SB600, erroneously remove 32-bit limit for
+SB600: a878539ef994787c447a98c2e3ba0fe3dad984ec
+ > 4) restore 32-bit limit removed in step #3, and improve diagnostic
+output: 4cde32fc4b32e96a99063af3183acdfd54c563f0
+
+These two commits are necessary in R5.2:
+
+The attached patch addresses the AMD SB600 errata,  where the hardware does
+not like 256-length PRD entries during FPDMA (aka NCQ).
+It hurts performance
+on SB600, but it is more important to get a
+correct patch eliminating the data
+corruption/lockups, and then later on tune for performance.
+We simply limit each command to a maximum of 255 sectors, on SB600.
+
+At least one report claims that a878539ef994787c447a98c2e3ba0fe3dad984ec
+<http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=object;h=a878539ef994787c447a98c2e3ba0fe3dad984ec>
+failed to solve lockups, whereas the old limit-to-32-bit trick worked.
+Restore the 32-bit limit, but also leave the 255-sector limit in place,
+because we know that's needed as well.
+
+The attached patch is a back port of the two related upstream commits
+combined.  I'm submitting the additional patch for review to make snapshot4
+this week.  The brew build and RHEL RPM testing will be completed in the
+next couple of days.
+
+Thanks, if there are any issues let me know.
+
+Please ACK for R5.2.
+
+Bhavana
+
+Acked-by: Jeff Garzik <jgarzik@redhat.com>
+
+diff --git a/drivers/ata/ahci.c b/drivers/ata/ahci.c
+index f11bdbf..a267120 100644
+--- a/drivers/ata/ahci.c
++++ b/drivers/ata/ahci.c
+@@ -186,6 +186,7 @@ enum {
+ 	AHCI_HFLAG_NO_MSI		= (1 << 5), /* no PCI MSI */
+ 	AHCI_HFLAG_NO_PMP		= (1 << 6), /* no PMP */
+ 	AHCI_HFLAG_NO_HOTPLUG		= (1 << 7), /* ignore PxSERR.DIAG.N */
++	AHCI_HFLAG_SECT255              = (1 << 8), /* max 255 sectors */
+ 
+ 	/* ap->flags bits */
+ 
+@@ -255,6 +256,7 @@ static void ahci_vt8251_error_handler(struct ata_port *ap);
+ static void ahci_p5wdh_error_handler(struct ata_port *ap);
+ static void ahci_post_internal_cmd(struct ata_queued_cmd *qc);
+ static int ahci_port_resume(struct ata_port *ap);
++static void ahci_dev_config(struct ata_device *dev);
+ static unsigned int ahci_fill_sg(struct ata_queued_cmd *qc, void *cmd_tbl);
+ static void ahci_fill_cmd_slot(struct ahci_port_priv *pp, unsigned int tag,
+ 			       u32 opts);
+@@ -294,6 +296,8 @@ static const struct ata_port_operations ahci_ops = {
+ 	.check_altstatus	= ahci_check_status,
+ 	.dev_select		= ata_noop_dev_select,
+ 
++	.dev_config             = ahci_dev_config,
++
+ 	.tf_read		= ahci_tf_read,
+ 
+ 	.qc_defer		= sata_pmp_qc_defer_cmd_switch,
+@@ -425,7 +429,8 @@ static const struct ata_port_info ahci_port_info[] = {
+ 	/* board_ahci_sb600 */
+ 	{
+ 		AHCI_HFLAGS	(AHCI_HFLAG_IGN_SERR_INTERNAL |
+-				 AHCI_HFLAG_32BIT_ONLY | AHCI_HFLAG_NO_PMP),
++				 AHCI_HFLAG_32BIT_ONLY |
++				 AHCI_HFLAG_SECT255 | AHCI_HFLAG_NO_PMP), 
+ 		.flags		= AHCI_FLAG_COMMON,
+ 		.link_flags	= AHCI_LFLAG_COMMON,
+ 		.pio_mask	= 0x1f, /* pio0-4 */
+@@ -1164,6 +1169,17 @@ static void ahci_init_controller(struct ata_host *host)
+ 	VPRINTK("HOST_CTL 0x%x\n", tmp);
+ }
+ 
++static void ahci_dev_config(struct ata_device *dev)
++{
++	struct ahci_host_priv *hpriv = dev->link->ap->host->private_data;
++
++	if (hpriv->flags & AHCI_HFLAG_SECT255) {
++		dev->max_sectors = 255;
++		ata_dev_printk(dev, KERN_INFO,
++				"SB600 AHCI: limiting to 255 sectors per cmd\n");
++	}
++}
++
+ static unsigned int ahci_dev_classify(struct ata_port *ap)
+ {
+ 	void __iomem *port_mmio = ahci_port_base(ap);

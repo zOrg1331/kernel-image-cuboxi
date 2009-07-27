@@ -1,0 +1,75 @@
+From: Anton Arapov <aarapov@redhat.com>
+Date: Fri, 17 Aug 2007 13:19:08 +0200
+Subject: [net] lvs syncdaemon causes high avg load on system
+Message-id: h8tzqy1k9f.fsf@pepelac.englab.brq.redhat.com
+O-Subject: [RHEL5.2 PATCH] BZ245715: lvs syncdaemon causes 1.00 too high average load on system
+Bugzilla: 245715
+
+BZ#245715
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=245715
+
+Description
+  Adding lvs syncdaemon causes high average load on system without actual load present. Load is 1.00 too high for lvs master and for both master and slave it's 2.00 too high.
+  This patch replaces ssleep() in the main loop for both the master and backup threads, as well as some thread synchronisation code.
+
+Upstream Status
+  in upstream
+  commit# 89eaeb09ba01632511f69ce8e14c8d2abd2dbe9e
+  http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=89eaeb09ba01632511f69ce8e14c8d2abd2dbe9e
+
+Test Status
+  Tested for compilation and booting.
+  I have no problems with reproducing this issue. The patch is fixing the problem.
+
+==
+
+Acked-by: Neil Horman <nhorman@redhat.com>
+Acked-by: Thomas Graf <tgraf@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+---
+ net/ipv4/ipvs/ip_vs_sync.c |    8 ++++----
+ 1 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/net/ipv4/ipvs/ip_vs_sync.c b/net/ipv4/ipvs/ip_vs_sync.c
+index b050349..07da8e4 100644
+--- a/net/ipv4/ipvs/ip_vs_sync.c
++++ b/net/ipv4/ipvs/ip_vs_sync.c
+@@ -657,7 +657,7 @@ static void sync_master_loop(void)
+ 		if (stop_master_sync)
+ 			break;
+ 
+-		ssleep(1);
++		msleep_interruptible(1000);
+ 	}
+ 
+ 	/* clean up the sync_buff queue */
+@@ -714,7 +714,7 @@ static void sync_backup_loop(void)
+ 		if (stop_backup_sync)
+ 			break;
+ 
+-		ssleep(1);
++		msleep_interruptible(1000);
+ 	}
+ 
+ 	/* release the sending multicast socket */
+@@ -826,7 +826,7 @@ static int fork_sync_thread(void *startup)
+ 	if ((pid = kernel_thread(sync_thread, startup, 0)) < 0) {
+ 		IP_VS_ERR("could not create sync_thread due to %d... "
+ 			  "retrying.\n", pid);
+-		ssleep(1);
++		msleep_interruptible(1000);
+ 		goto repeat;
+ 	}
+ 
+@@ -860,7 +860,7 @@ int start_sync_thread(int state, char *mcast_ifn, __u8 syncid)
+ 	if ((pid = kernel_thread(fork_sync_thread, &startup, 0)) < 0) {
+ 		IP_VS_ERR("could not create fork_sync_thread due to %d... "
+ 			  "retrying.\n", pid);
+-		ssleep(1);
++		msleep_interruptible(1000);
+ 		goto repeat;
+ 	}
+ 
+-- 
+1.5.3.5.645.gbb47
+

@@ -1,0 +1,91 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5 PATCH] SHPCHP driver doesn't work if the system was under  heavy load
+Date: Mon, 20 Nov 2006 14:47:08 -0500
+Bugzilla: 215561
+Message-Id: <4562063C.6080603@redhat.com>
+Changelog: SHPCHP driver doesn't work if the system was under heavy load
+
+
+BZ215561
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=215561
+
+I'm sending this email in reply to email about BZ211679
+since BZ215561 depends on BZ211679.
+
+This patch is in upstream.
+http://www.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=blobdiff_plain;h=4826dd158deb66d74909199271726d14260a9bbd;hp=446e9beff046e01548c2b2c6de61c76fe0779199
+
+Powering on/off operation to hotplug slots using SHPC fails
+under heavy load and displays the following error message:
+
+   shpchp: Command not completed in 1000 msec
+   shpchp: hpc_slot_disable: Write command failed!
+   shpchp: remove_board: Issue of Slot Disable command failed
+
+This patch fixes the issue.
+
+This patch applies to -2.6.18-1.2747.el5 with BZ211679's
+patch applied.  It was tested on the previous RHEL5 release
+before beta2 was out.  So, we are doing some testing on beta2
+just in case.
+
+NOTE: As I stated, this bug depends on BZ211679, which I have
+already submitted a fix-patch to rhkernel-list.
+
+Thanks,
+Kei
+
+
+---
+
+ linux-2.6.18-1.2747.el5-kei/drivers/pci/hotplug/shpchp_hpc.c |   14 +++++++----
+ 1 file changed, 9 insertions(+), 5 deletions(-)
+
+diff -puN drivers/pci/hotplug/shpchp_hpc.c~bz215561-fix-SHPCHP-under_heavy_load drivers/pci/hotplug/shpchp_hpc.c
+--- linux-2.6.18-1.2747.el5/drivers/pci/hotplug/shpchp_hpc.c~bz215561-fix-SHPCHP-under_heavy_load	2006-11-17 15:40:56.000000000 -0500
++++ linux-2.6.18-1.2747.el5-kei/drivers/pci/hotplug/shpchp_hpc.c	2006-11-17 15:40:56.000000000 -0500
+@@ -302,6 +302,12 @@ static void start_int_poll_timer(struct 
+ 	add_timer(&php_ctlr->int_poll_timer);
+ }
+ 
++static inline int is_ctrl_busy(struct controller *ctrl)
++{
++	u16 cmd_status = shpc_readw(ctrl, CMD_STATUS);
++	return cmd_status & 0x1;
++}
++
+ /*
+  * Returns 1 if SHPC finishes executing a command within 1 sec,
+  * otherwise returns 0.
+@@ -309,16 +315,14 @@ static void start_int_poll_timer(struct 
+ static inline int shpc_poll_ctrl_busy(struct controller *ctrl)
+ {
+ 	int i;
+-	u16 cmd_status = shpc_readw(ctrl, CMD_STATUS);
+ 
+-	if (!(cmd_status & 0x1))
++	if (!is_ctrl_busy(ctrl))
+ 		return 1;
+ 
+ 	/* Check every 0.1 sec for a total of 1 sec */
+ 	for (i = 0; i < 10; i++) {
+ 		msleep(100);
+-		cmd_status = shpc_readw(ctrl, CMD_STATUS);
+-		if (!(cmd_status & 0x1))
++		if (!is_ctrl_busy(ctrl))
+ 			return 1;
+ 	}
+ 
+@@ -336,7 +340,7 @@ static inline int shpc_wait_cmd(struct c
+ 	else
+ 		rc = wait_event_interruptible_timeout(ctrl->queue,
+ 						!ctrl->cmd_busy, timeout);
+-	if (!rc) {
++	if (!rc && is_ctrl_busy(ctrl)) {
+ 		retval = -EIO;
+ 		err("Command not completed in 1000 msec\n");
+ 	} else if (rc < 0) {
+
+_
+
+

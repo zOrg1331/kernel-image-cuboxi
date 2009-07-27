@@ -1,0 +1,47 @@
+From: Gerd Hoffmann <kraxel@redhat.com>
+Subject: [RHEL5.1 patch] xen, bug 237434: fix microcode driver for new firmware
+Date: Fri, 11 May 2007 15:27:36 +0200
+Bugzilla: 237434
+Message-Id: <46446F48.80706@redhat.com>
+Changelog: [misc] xen: fix microcode driver for new firmware
+
+
+  Hi,
+
+bug 237434
+
+This patch makes the kernel-xen microcode driver _not_ barf on newer, 
+smaller firmware updates.
+
+Backported from 3.1, rediffed against RHEL5 kernel + previously posted 
+microcode patch.
+
+cheers,
+  Gerd
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1169045933 0
+# Node ID 9fa13c7ebf8a650d515a2ddbafb49cf0932d736b
+# Parent  e303a2f329ee6bdd935f3b80f322ce93efd1672b
+linux: Allow microcode updates of smaller than default size.
+Signed-off-by: Kurt Garloff <kurt@garloff.de>
+
+---
+ arch/i386/kernel/microcode-xen.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+Index: linux-2.6.18.noarch/arch/i386/kernel/microcode-xen.c
+===================================================================
+--- linux-2.6.18.noarch.orig/arch/i386/kernel/microcode-xen.c
++++ linux-2.6.18.noarch/arch/i386/kernel/microcode-xen.c
+@@ -87,7 +87,7 @@ static ssize_t microcode_write (struct f
+ {
+ 	ssize_t ret;
+ 
+-	if (len < DEFAULT_UCODE_TOTALSIZE) {
++	if (len < MC_HEADER_SIZE) {
+ 		printk(KERN_ERR "microcode: not enough data\n"); 
+ 		return -EINVAL;
+ 	}
+

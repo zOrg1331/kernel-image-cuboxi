@@ -1,0 +1,462 @@
+diff -r 095d53b0d1a6 arch/i386/kernel/cpu/common-xen.c
+--- a/arch/i386/kernel/cpu/common-xen.c	Tue Jul 25 21:53:33 2006 +0200
++++ b/arch/i386/kernel/cpu/common-xen.c	Tue Jul 25 23:02:25 2006 +0200
+@@ -431,6 +431,13 @@ void __cpuinit identify_cpu(struct cpuin
+ 	if (disable_pse)
+ 		clear_bit(X86_FEATURE_PSE, c->x86_capability);
+ 
++	if (exec_shield != 0) {
++#ifdef CONFIG_HIGHMEM64G   /* NX implies PAE */
++		if (!test_bit(X86_FEATURE_NX, c->x86_capability))
++#endif
++		clear_bit(X86_FEATURE_SEP, c->x86_capability);
++	}
++
+ 	/* If the model name is still unset, do table lookup. */
+ 	if ( !c->x86_model_id[0] ) {
+ 		char *p;
+diff -r 095d53b0d1a6 arch/i386/kernel/process-xen.c
+--- a/arch/i386/kernel/process-xen.c	Tue Jul 25 21:53:33 2006 +0200
++++ b/arch/i386/kernel/process-xen.c	Tue Jul 25 23:02:25 2006 +0200
+@@ -528,6 +528,9 @@ struct task_struct fastcall * __switch_t
+ 	else BUG_ON(!(read_cr0() & 8));
+ #endif
+ 
++	if (next_p->mm)
++		load_user_cs_desc(cpu, next_p->mm);
++
+ 	/*
+ 	 * Reload esp0.
+ 	 * This is load_esp0(tss, next) with a multicall.
+@@ -810,3 +813,60 @@ unsigned long arch_align_stack(unsigned 
+ 		sp -= get_random_int() % 8192;
+ 	return sp & ~0xf;
+ }
++
++void arch_add_exec_range(struct mm_struct *mm, unsigned long limit)
++{
++	if (limit > mm->context.exec_limit) {
++		mm->context.exec_limit = limit;
++		set_user_cs(&mm->context.user_cs, limit);
++		if (mm == current->mm) {
++			preempt_disable();
++			load_user_cs_desc(smp_processor_id(), mm);
++			preempt_enable();
++		}
++	}
++}
++
++void arch_remove_exec_range(struct mm_struct *mm, unsigned long old_end)
++{
++	struct vm_area_struct *vma;
++	unsigned long limit = PAGE_SIZE;
++
++	if (old_end == mm->context.exec_limit) {
++		for (vma = mm->mmap; vma; vma = vma->vm_next)
++			if ((vma->vm_flags & VM_EXEC) && (vma->vm_end > limit))
++				limit = vma->vm_end;
++
++		mm->context.exec_limit = limit;
++		set_user_cs(&mm->context.user_cs, limit);
++		if (mm == current->mm) {
++			preempt_disable();
++			load_user_cs_desc(smp_processor_id(), mm);
++			preempt_enable();
++		}
++	}
++}
++
++void arch_flush_exec_range(struct mm_struct *mm)
++{
++	mm->context.exec_limit = 0;
++	set_user_cs(&mm->context.user_cs, 0);
++}
++
++/*
++ * Generate random brk address between 128MB and 196MB. (if the layout
++ * allows it.)
++ */
++void randomize_brk(unsigned long old_brk)
++{
++	unsigned long new_brk, range_start, range_end;
++
++	range_start = 0x08000000;
++	if (current->mm->brk >= range_start)
++		range_start = current->mm->brk;
++	range_end = range_start + 0x02000000;
++	new_brk = randomize_range(range_start, range_end, 0);
++	if (new_brk)
++		current->mm->brk = new_brk;
++}
++
+diff -r 095d53b0d1a6 arch/i386/kernel/smp-xen.c
+--- a/arch/i386/kernel/smp-xen.c	Tue Jul 25 21:53:33 2006 +0200
++++ b/arch/i386/kernel/smp-xen.c	Tue Jul 25 23:02:25 2006 +0200
+@@ -23,6 +23,7 @@
+ 
+ #include <asm/mtrr.h>
+ #include <asm/tlbflush.h>
++#include <asm/desc.h>
+ #if 0
+ #include <mach_apic.h>
+ #endif
+@@ -285,6 +286,8 @@ irqreturn_t smp_invalidate_interrupt(int
+ 	unsigned long cpu;
+ 
+ 	cpu = get_cpu();
++	if (current->active_mm)
++		load_user_cs_desc(cpu, current->active_mm);
+ 
+ 	if (!cpu_isset(cpu, flush_cpumask))
+ 		goto out;
+diff -r 095d53b0d1a6 arch/i386/kernel/traps-xen.c
+--- a/arch/i386/kernel/traps-xen.c	Tue Jul 25 21:53:33 2006 +0200
++++ b/arch/i386/kernel/traps-xen.c	Tue Jul 25 23:02:25 2006 +0200
+@@ -558,11 +558,89 @@ DO_ERROR(11, SIGBUS,  "segment not prese
+ DO_ERROR(11, SIGBUS,  "segment not present", segment_not_present)
+ DO_ERROR(12, SIGBUS,  "stack segment", stack_segment)
+ DO_ERROR_INFO(17, SIGBUS, "alignment check", alignment_check, BUS_ADRALN, 0)
+-DO_ERROR_INFO(32, SIGSEGV, "iret exception", iret_error, ILL_BADSTK, 0)
++
++
++/*
++ * lazy-check for CS validity on exec-shield binaries:
++ *
++ * the original non-exec stack patch was written by
++ * Solar Designer <solar at openwall.com>. Thanks!
++ */
++static int
++check_lazy_exec_limit(int cpu, struct pt_regs *regs, long error_code)
++{
++	struct desc_struct *desc1, *desc2;
++	struct vm_area_struct *vma;
++	unsigned long limit;
++
++	if (current->mm == NULL)
++		return 0;
++
++	limit = -1UL;
++	if (current->mm->context.exec_limit != -1UL) {
++		limit = PAGE_SIZE;
++		spin_lock(&current->mm->page_table_lock);
++		for (vma = current->mm->mmap; vma; vma = vma->vm_next)
++			if ((vma->vm_flags & VM_EXEC) && (vma->vm_end > limit))
++				limit = vma->vm_end;
++		spin_unlock(&current->mm->page_table_lock);
++		if (limit >= TASK_SIZE)
++			limit = -1UL;
++		current->mm->context.exec_limit = limit;
++	}
++	set_user_cs(&current->mm->context.user_cs, limit);
++
++	desc1 = &current->mm->context.user_cs;
++	desc2 = get_cpu_gdt_table(cpu) + GDT_ENTRY_DEFAULT_USER_CS;
++
++	if (desc1->a != desc2->a || desc1->b != desc2->b) {
++		/*
++		 * The CS was not in sync - reload it and retry the
++		 * instruction. If the instruction still faults then
++		 * we won't hit this branch next time around.
++		 */
++		if (print_fatal_signals >= 2) {
++			printk("#GPF fixup (%ld[seg:%lx]) at %08lx, CPU#%d.\n", error_code, error_code/8, regs->eip, smp_processor_id());
++			printk(" exec_limit: %08lx, user_cs: %08lx/%08lx, CPU_cs: %08lx/%08lx.\n", current->mm->context.exec_limit, desc1->a, desc1->b, desc2->a, desc2->b);
++		}
++		load_user_cs_desc(cpu, current->mm);
++		return 1;
++	}
++
++	return 0;
++}
++
++/*
++ * The fixup code for errors in iret jumps to here (iret_exc).  It loses
++ * the original trap number and error code.  The bogus trap 32 and error
++ * code 0 are what the vanilla kernel delivers via:
++ * DO_ERROR_INFO(32, SIGSEGV, "iret exception", iret_error, ILL_BADSTK, 0)
++ *
++ * In case of a general protection fault in the iret instruction, we
++ * need to check for a lazy CS update for exec-shield.
++ */
++fastcall void do_iret_error(struct pt_regs *regs, long error_code)
++{
++	int ok = check_lazy_exec_limit(get_cpu(), regs, error_code);
++	put_cpu();
++	if (!ok && notify_die(DIE_TRAP, "iret exception", regs,
++			      error_code, 32, SIGSEGV) != NOTIFY_STOP) {
++		siginfo_t info;
++		info.si_signo = SIGSEGV;
++		info.si_errno = 0;
++		info.si_code = ILL_BADSTK;
++		info.si_addr = 0;
++		do_trap(32, SIGSEGV, "iret exception", 0, regs, error_code,
++			&info);
++	}
++}
+ 
+ fastcall void __kprobes do_general_protection(struct pt_regs * regs,
+ 					      long error_code)
+ {
++	int cpu = get_cpu();
++	int ok;
++
+ 	current->thread.error_code = error_code;
+ 	current->thread.trap_no = 13;
+ 
+@@ -572,17 +650,31 @@ fastcall void __kprobes do_general_prote
+ 	if (!user_mode(regs))
+ 		goto gp_in_kernel;
+ 
++	ok = check_lazy_exec_limit(cpu, regs, error_code);
++
++	put_cpu();
++
++	if (ok)
++		return;
++
++	if (print_fatal_signals) {
++		printk("#GPF(%ld[seg:%lx]) at %08lx, CPU#%d.\n", error_code, error_code/8, regs->eip, smp_processor_id());
++		printk(" exec_limit: %08lx, user_cs: %08lx/%08lx.\n", current->mm->context.exec_limit, current->mm->context.user_cs.a, current->mm->context.user_cs.b);
++	}
++
+ 	current->thread.error_code = error_code;
+ 	current->thread.trap_no = 13;
+ 	force_sig(SIGSEGV, current);
+ 	return;
+ 
+ gp_in_vm86:
++	put_cpu();
+ 	local_irq_enable();
+ 	handle_vm86_fault((struct kernel_vm86_regs *) regs, error_code);
+ 	return;
+ 
+ gp_in_kernel:
++	put_cpu();
+ 	if (!fixup_exception(regs)) {
+ 		if (notify_die(DIE_GPF, "general protection fault", regs,
+ 				error_code, 13, SIGSEGV) == NOTIFY_STOP)
+diff -r 095d53b0d1a6 arch/i386/mm/init-xen.c
+--- a/arch/i386/mm/init-xen.c	Tue Jul 25 21:53:33 2006 +0200
++++ b/arch/i386/mm/init-xen.c	Tue Jul 25 23:02:25 2006 +0200
+@@ -465,7 +465,7 @@ EXPORT_SYMBOL(__supported_pte_mask);
+  * Control non executable mappings.
+  *
+  * on      Enable
+- * off     Disable
++ * off     Disable (disables exec-shield too)
+  */
+ void __init noexec_setup(const char *str)
+ {
+@@ -475,6 +475,7 @@ void __init noexec_setup(const char *str
+ 	} else if (!strncmp(str,"off",3)) {
+ 		disable_nx = 1;
+ 		__supported_pte_mask &= ~_PAGE_NX;
++		exec_shield = 0;
+ 	}
+ }
+ 
+@@ -541,7 +542,10 @@ void __init paging_init(void)
+ 	set_nx();
+ 	if (nx_enabled)
+ 		printk("NX (Execute Disable) protection: active\n");
+-#endif
++	else
++#endif
++	if (exec_shield)
++		printk("Using x86 segment limits to approximate NX protection\n");
+ 
+ 	pagetable_init();
+ 
+diff -r 095d53b0d1a6 arch/x86_64/ia32/syscall32-xen.c
+--- a/arch/x86_64/ia32/syscall32-xen.c	Tue Jul 25 21:53:33 2006 +0200
++++ b/arch/x86_64/ia32/syscall32-xen.c	Tue Jul 25 23:02:25 2006 +0200
+@@ -47,7 +47,9 @@ struct linux_binprm;
+ struct linux_binprm;
+ 
+ /* Setup a VMA at program startup for the vsyscall page */
+-int syscall32_setup_pages(struct linux_binprm *bprm, int exstack)
++int syscall32_setup_pages(struct linux_binprm *bprm, int exstack,
++			  unsigned long start_code,
++			  unsigned long interp_map_address)
+ {
+ 	int npages = (VSYSCALL32_END - VSYSCALL32_BASE) >> PAGE_SHIFT;
+ 	struct vm_area_struct *vma;
+diff -r 095d53b0d1a6 arch/x86_64/kernel/process-xen.c
+--- a/arch/x86_64/kernel/process-xen.c	Tue Jul 25 21:53:33 2006 +0200
++++ b/arch/x86_64/kernel/process-xen.c	Tue Jul 25 23:02:25 2006 +0200
+@@ -590,12 +590,6 @@ void set_personality_64bit(void)
+ 
+ 	/* Make sure to be in 64bit mode */
+ 	clear_thread_flag(TIF_IA32); 
+-
+-	/* TBD: overwrites user setup. Should have two bits.
+-	   But 64bit processes have always behaved this way,
+-	   so it's not too bad. The main problem is just that
+-   	   32bit childs are affected again. */
+-	current->personality &= ~READ_IMPLIES_EXEC;
+ }
+ 
+ asmlinkage long sys_fork(struct pt_regs *regs)
+diff -r 095d53b0d1a6 arch/x86_64/kernel/setup64-xen.c
+--- a/arch/x86_64/kernel/setup64-xen.c	Tue Jul 25 21:53:33 2006 +0200
++++ b/arch/x86_64/kernel/setup64-xen.c	Tue Jul 25 23:02:25 2006 +0200
+@@ -55,7 +55,7 @@ on	Enable(default)
+ on	Enable(default)
+ off	Disable
+ */ 
+-int __init nonx_setup(char *str)
++void __init nonx_setup(char *str)
+ {
+ 	if (!strncmp(str, "on", 2)) {
+                 __supported_pte_mask |= _PAGE_NX; 
+@@ -64,28 +64,7 @@ int __init nonx_setup(char *str)
+ 		do_not_nx = 1;
+ 		__supported_pte_mask &= ~_PAGE_NX;
+         }
+-	return 1;
+-} 
+-__setup("noexec=", nonx_setup);	/* parsed early actually */
+-
+-int force_personality32 = 0; 
+-
+-/* noexec32=on|off
+-Control non executable heap for 32bit processes.
+-To control the stack too use noexec=off
+-
+-on	PROT_READ does not imply PROT_EXEC for 32bit processes
+-off	PROT_READ implies PROT_EXEC (default)
+-*/
+-static int __init nonx32_setup(char *str)
+-{
+-	if (!strcmp(str, "on"))
+-		force_personality32 &= ~READ_IMPLIES_EXEC;
+-	else if (!strcmp(str, "off"))
+-		force_personality32 |= READ_IMPLIES_EXEC;
+-	return 1;
+-}
+-__setup("noexec32=", nonx32_setup);
++}
+ 
+ /*
+  * Great future plan:
+diff -r 095d53b0d1a6 arch/x86_64/mm/fault-xen.c
+--- a/arch/x86_64/mm/fault-xen.c	Tue Jul 25 21:53:33 2006 +0200
++++ b/arch/x86_64/mm/fault-xen.c	Tue Jul 25 23:02:25 2006 +0200
+@@ -114,7 +114,7 @@ static noinline int is_prefetch(struct p
+ 	instr = (unsigned char *)convert_rip_to_linear(current, regs);
+ 	max_instr = instr + 15;
+ 
+-	if (user_mode(regs) && instr >= (unsigned char *)TASK_SIZE)
++	if (user_mode(regs) && instr >= (unsigned char *)TASK_SIZE64)
+ 		return 0;
+ 
+ 	while (scan_more && instr < max_instr) { 
+diff -r 095d53b0d1a6 include/asm-i386/mach-xen/asm/desc.h
+--- a/include/asm-i386/mach-xen/asm/desc.h	Tue Jul 25 21:53:33 2006 +0200
++++ b/include/asm-i386/mach-xen/asm/desc.h	Tue Jul 25 23:02:25 2006 +0200
+@@ -159,6 +159,20 @@ static inline unsigned long get_desc_bas
+ 	return base;
+ }
+ 
++static inline void set_user_cs(struct desc_struct *desc, unsigned long limit)
++{
++	limit = (limit - 1) / PAGE_SIZE;
++	desc->a = limit & 0xffff;
++	desc->b = (limit & 0xf0000) | 0x00c0fb00;
++}
++
++#define load_user_cs_desc(cpu, mm) \
++        HYPERVISOR_update_descriptor(virt_to_machine(&get_cpu_gdt_table(cpu)[GDT_ENTRY_DEFAULT_USER_CS]), (u64)(mm)->context.user_cs.a | ((u64)(mm)->context.user_cs.b) << 32);
++
++extern void arch_add_exec_range(struct mm_struct *mm, unsigned long limit);
++extern void arch_remove_exec_range(struct mm_struct *mm, unsigned long limit);
++extern void arch_flush_exec_range(struct mm_struct *mm);
++
+ #endif /* !__ASSEMBLY__ */
+ 
+ #endif
+diff -r 095d53b0d1a6 include/asm-i386/mach-xen/asm/mmu.h
+--- a/include/asm-i386/mach-xen/asm/mmu.h	Tue Jul 25 21:53:33 2006 +0200
++++ b/include/asm-i386/mach-xen/asm/mmu.h	Tue Jul 25 23:02:25 2006 +0200
+@@ -7,11 +7,15 @@
+  * we put the segment information here.
+  *
+  * cpu_vm_mask is used to optimize ldt flushing.
++ * exec_limit is used to track the range PROT_EXEC
++ * mappings span.
+  */
+ typedef struct { 
+ 	int size;
+ 	struct semaphore sem;
+ 	void *ldt;
++	struct desc_struct user_cs;
++	unsigned long exec_limit;
+ 	void *vdso;
+ } mm_context_t;
+ 
+diff -r 095d53b0d1a6 include/asm-i386/mach-xen/asm/pgalloc.h
+--- a/include/asm-i386/mach-xen/asm/pgalloc.h	Tue Jul 25 21:53:33 2006 +0200
++++ b/include/asm-i386/mach-xen/asm/pgalloc.h	Tue Jul 25 23:02:25 2006 +0200
+@@ -2,6 +2,7 @@
+ #define _I386_PGALLOC_H
+ 
+ #include <asm/fixmap.h>
++#include <asm/desc.h>
+ #include <linux/threads.h>
+ #include <linux/mm.h>		/* for struct page */
+ #include <asm/io.h>		/* for phys_to_virt and page_to_pseudophys */
+diff -r 095d53b0d1a6 include/asm-i386/mach-xen/asm/processor.h
+--- a/include/asm-i386/mach-xen/asm/processor.h	Tue Jul 25 21:53:33 2006 +0200
++++ b/include/asm-i386/mach-xen/asm/processor.h	Tue Jul 25 23:02:25 2006 +0200
+@@ -333,7 +333,10 @@ extern int bootloader_type;
+ /* This decides where the kernel will search for a free chunk of vm
+  * space during mmap's.
+  */
+-#define TASK_UNMAPPED_BASE	(PAGE_ALIGN(TASK_SIZE / 3))
++#define TASK_UNMAPPED_BASE	PAGE_ALIGN(TASK_SIZE/3)
++
++#define __HAVE_ARCH_ALIGN_STACK
++extern unsigned long arch_align_stack(unsigned long sp);
+ 
+ #define HAVE_ARCH_PICK_MMAP_LAYOUT
+ 
+@@ -526,6 +529,9 @@ static inline void __load_esp0(struct ts
+ 	regs->xcs = __USER_CS;					\
+ 	regs->eip = new_eip;					\
+ 	regs->esp = new_esp;					\
++	preempt_disable();					\
++	load_user_cs_desc(smp_processor_id(), current->mm);	\
++	preempt_enable();					\
+ } while (0)
+ 
+ /*
+diff -r 095d53b0d1a6 include/asm-x86_64/mach-xen/asm/pgalloc.h
+--- a/include/asm-x86_64/mach-xen/asm/pgalloc.h	Tue Jul 25 21:53:33 2006 +0200
++++ b/include/asm-x86_64/mach-xen/asm/pgalloc.h	Tue Jul 25 23:02:25 2006 +0200
+@@ -8,6 +8,14 @@
+ #include <asm/io.h>		/* for phys_to_virt and page_to_pseudophys */
+ 
+ #include <xen/features.h>
++
++#define arch_add_exec_range(mm, limit) \
++		do { (void)(mm), (void)(limit); } while (0)
++#define arch_flush_exec_range(mm) \
++		do { (void)(mm); } while (0)
++#define arch_remove_exec_range(mm, limit) \
++		do { (void)(mm), (void)(limit); } while (0)
++
+ void make_page_readonly(void *va, unsigned int feature);
+ void make_page_writable(void *va, unsigned int feature);
+ void make_pages_readonly(void *va, unsigned int nr, unsigned int feature);
+diff -r 095d53b0d1a6 include/asm-x86_64/mach-xen/asm/pgtable.h
+--- a/include/asm-x86_64/mach-xen/asm/pgtable.h	Tue Jul 25 21:53:33 2006 +0200
++++ b/include/asm-x86_64/mach-xen/asm/pgtable.h	Tue Jul 25 23:02:25 2006 +0200
+@@ -44,7 +44,7 @@ extern unsigned long __supported_pte_mas
+ 
+ #define swapper_pg_dir init_level4_pgt
+ 
+-extern int nonx_setup(char *str);
++extern void nonx_setup(char *str);
+ extern void paging_init(void);
+ extern void clear_kernel_mapping(unsigned long addr, unsigned long size);
+ 

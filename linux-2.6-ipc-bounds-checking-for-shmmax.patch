@@ -1,0 +1,51 @@
+From: Anton Arapov <aarapov@redhat.com>
+Subject: [RHEL5.1 PATCH] BZ231168: The compat version of sys_shmctl printing incorrect values 
+Date: Thu, 03 May 2007 13:46:54 +0200
+Bugzilla: 231168
+Message-Id: <m3y7k6xh75.fsf@rimmer.brq.redhat.com>
+Changelog: [ipc] bounds checking for shmmax
+
+
+
+BZ#231168
+  https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=231168
+
+Description
+  The compat version of sys_shmctl printing incorrect values on x86-64 and ppc64. sys_shmctl needs to indicate when the value of shmmax is too large for the 32bit structure.
+
+Upstream Status
+  The patch below is in -mm kernel upstream
+
+Test Status
+  It has been tested on x86-64/ppc64 platforms. The 'test program' by Guy Streeter was used for tests.
+
+Patch
+Index: linux-2.6.18.noarch/ipc/compat.c
+===================================================================
+--- linux-2.6.18.noarch.orig/ipc/compat.c
++++ linux-2.6.18.noarch/ipc/compat.c
+@@ -551,6 +551,8 @@ static inline int put_compat_shminfo64(s
+ 
+ 	if (!access_ok(VERIFY_WRITE, up64, sizeof(*up64)))
+ 		return -EFAULT;
++	if (smi->shmmax > INT_MAX)
++		smi->shmmax = INT_MAX;
+ 	err  = __put_user(smi->shmmax, &up64->shmmax);
+ 	err |= __put_user(smi->shmmin, &up64->shmmin);
+ 	err |= __put_user(smi->shmmni, &up64->shmmni);
+@@ -566,6 +568,8 @@ static inline int put_compat_shminfo(str
+ 
+ 	if (!access_ok(VERIFY_WRITE, up, sizeof(*up)))
+ 		return -EFAULT;
++	if (smi->shmmax > INT_MAX)
++		smi->shmmax = INT_MAX;
+ 	err  = __put_user(smi->shmmax, &up->shmmax);
+ 	err |= __put_user(smi->shmmin, &up->shmmin);
+ 	err |= __put_user(smi->shmmni, &up->shmmni);
+
+-- 
+Anton Arapov - Software Engineer
+Red Hat - Brno, Czech Republic
+GPG Key ID: 0x6FA8C812
+
+

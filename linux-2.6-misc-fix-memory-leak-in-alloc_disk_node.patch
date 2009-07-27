@@ -1,0 +1,39 @@
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Wed, 5 Mar 2008 10:45:17 +0100
+Subject: [misc] fix memory leak in alloc_disk_node
+Message-id: 47CE6BAD.8030802@redhat.com
+O-Subject: [RHEL5 PATCH] BZ395871: Fix memory leak in alloc_disk_node()
+Bugzilla: 395871
+
+BZ395871:
+https://bugzilla.redhat.com/show_bug.cgi?id=395871
+
+Description:
+There is a memory leak in alloc_disk_node().
+
+Solution:
+Don't forget to free 'dkstats' when the allocation of 'part' failed.
+
+upstream commit: c7674030e5eb83d9ba29318fb9b3ccedf84d583e
+
+Brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1196504
+
+Test status:
+Built on all arch, tested on i686 (it boots and block device are
+working).
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/block/genhd.c b/block/genhd.c
+index 25d1f42..1b7e6db 100644
+--- a/block/genhd.c
++++ b/block/genhd.c
+@@ -618,6 +618,7 @@ struct gendisk *alloc_disk_node(int minors, int node_id)
+ 			int size = (minors - 1) * sizeof(struct hd_struct *);
+ 			disk->part = kmalloc_node(size, GFP_KERNEL, node_id);
+ 			if (!disk->part) {
++				free_disk_stats(disk);
+ 				kfree(disk);
+ 				return NULL;
+ 			}

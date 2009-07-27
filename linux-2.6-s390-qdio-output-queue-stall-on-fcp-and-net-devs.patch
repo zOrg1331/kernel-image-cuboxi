@@ -1,0 +1,64 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 16 Nov 2007 13:58:57 +0100
+Subject: [s390] qdio: output queue stall on FCP and net devs
+Message-id: 20071116125857.GU6053@redhat.com
+O-Subject: [RHEL5 U2 PATCH 13/14] s390 - qdio: output queue stall on FCP and network devices
+Bugzilla: 354871
+
+Description
+============
+
+When running QIOASSIST enabled qdio devices in a z/VM
+environment, the output queue for such devices stalls in
+heavy workload situations. When SQBS and EQBS
+instructions return CCQ=96, qdio did not reissue the
+instruction again with the register settings done by
+millicode, but processed the returned qdio buffer.
+Solution: qdio now reissues the instruction once again on CCQ=96,
+as already done for CCQ=97.
+
+Bugzilla
+=========
+
+BZ 354871
+https://bugzilla.redhat.com/show_bug.cgi?id=354871
+
+Upstream status of the patch:
+=============================
+Patch included in git as commit 6cbed91ab78e750eef2dacb75bd51bd63792fd07
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/cio/qdio.c b/drivers/s390/cio/qdio.c
+index 844e5f3..fbb2b54 100644
+--- a/drivers/s390/cio/qdio.c
++++ b/drivers/s390/cio/qdio.c
+@@ -166,9 +166,9 @@ qdio_check_ccq(struct qdio_q *q, unsigned int ccq)
+ {
+ 	char dbf_text[15];
+ 
+-	if (ccq == 0 || ccq == 32 || ccq == 96)
++	if (ccq == 0 || ccq == 32)
+ 		return 0;
+-	if (ccq == 97)
++	if (ccq == 96 || ccq == 97)
+ 		return 1;
+ 	/*notify devices immediately*/
+ 	sprintf(dbf_text,"%d", ccq);
+@@ -194,6 +194,8 @@ qdio_do_eqbs(struct qdio_q *q, unsigned char *state,
+ again:
+ 	ccq = do_eqbs(irq->sch_token, state, q_no, start, cnt);
+ 	rc = qdio_check_ccq(q, ccq);
++	if ((ccq == 96) && (tmp_cnt != *cnt))
++		rc = 0;
+ 	if (rc == 1) {
+ 		QDIO_DBF_TEXT5(1,trace,"eqAGAIN");
+ 		goto again;

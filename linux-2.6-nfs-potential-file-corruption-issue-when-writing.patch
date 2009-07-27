@@ -1,0 +1,118 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Fri, 8 Feb 2008 15:23:22 -0500
+Subject: [nfs] potential file corruption issue when writing
+Message-id: 1202502202-6175-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.2 PATCH] BZ#429755: NFS: Fix a potential file corruption issue when writing
+Bugzilla: 429755
+
+This is a late-breaking patch to fix some rather nasty file corruption
+when a NFS client writes data to a file soon after it has been updated
+by another NFS client (or on the server).
+
+The reproducer here is pretty trivial:
+
+----------------[snip]--------------
+filename=/mnt/nfs/foo
+remote=nfsclient2.example.com
+
+rm -f ${filename}
+echo "fubar" >${filename}
+ssh ${remote} "echo foo >>${filename}"
+echo "bar" >>${filename}
+cat -v ${filename}
+----------------[snip]--------------
+
+On a broken kernel, there will be nulls in place of "foo\n" after this
+test. It fails reliably on every RHEL5 kernel I've tested.
+
+What's happening is that the client checks the page and if it's marked
+up to date, it flushes the entire page to the server rather than just
+the changed part. This is considered an optimization since it's possible
+that multiple parts of the same page will have been changed. If so, then
+doing it this way cuts down the number of on-the-wire operations.
+
+The problem is that simply checking the page uptodate bit is
+insufficient here. The client may have noticed that the file has changed
+on the server and flagged the mapping as invalid, but hasn't actually
+invalidated the page.
+
+I've tested it with the above reproducer, and have run the usual set
+of tests on it (connectathon, fsstress, etc). This patch is very new
+however, and hasn't seen any sort of extensive testing.
+
+Still I think this is worth taking sooner rather than later given
+how easy it is to reproduce this issue.
+
+Trond's description and the patch follows:
+
+---------------[snip]---------------
+
+If the inode is flagged as having an invalid mapping, then we can't rely on
+the PageUptodate() flag. Ensure that we don't use the "anti-fragmentation"
+write optimisation in nfs_updatepage(), since that will cause NFS to write
+out areas of the page that are no longer guaranteed to be up to date.
+
+A potential corruption could occur in the following scenario:
+
+client 1			client 2
+===============			===============
+				fd=open("f",O_CREAT|O_WRONLY,0644);
+				write(fd,"fubar\n",6);	// cache last page
+				close(fd);
+fd=open("f",O_WRONLY|O_APPEND);
+write(fd,"foo\n",4);
+close(fd);
+
+				fd=open("f",O_WRONLY|O_APPEND);
+				write(fd,"bar\n",4);
+				close(fd);
+-----
+The bug may lead to the file "f" reading 'fubar\n\0\0\0\nbar\n' because
+client 2 does not update the cached page after re-opening the file for
+write. Instead it keeps it marked as PageUptodate() until someone calls
+invaldate_inode_pages2() (typically by calling read()).
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+Acked-by: Peter Staubach <staubach@redhat.com>
+Acked-by: Steve Dickson <SteveD@redhat.com>
+
+diff --git a/fs/nfs/write.c b/fs/nfs/write.c
+index f8c8222..69db0fb 100644
+--- a/fs/nfs/write.c
++++ b/fs/nfs/write.c
+@@ -820,6 +820,17 @@ int nfs_flush_incompatible(struct file *file, struct page *page)
+ }
+ 
+ /*
++ * If the page cache is marked as unsafe or invalid, then we can't rely on
++ * the PageUptodate() flag. In this case, we will need to turn off
++ * write optimisations that depend on the page contents being correct.
++ */
++static int nfs_write_pageuptodate(struct page *page, struct inode *inode)
++{
++	return PageUptodate(page) &&
++		!(NFS_I(inode)->cache_validity & (NFS_INO_REVAL_PAGECACHE|NFS_INO_INVALID_DATA));
++}
++
++/*
+  * Update and possibly write a cached page of an NFS file.
+  *
+  * XXX: Keep an eye on generic_file_read to make sure it doesn't do bad
+@@ -851,10 +862,13 @@ int nfs_updatepage(struct file *file, struct page *page,
+ 	}
+ 
+ 	/* If we're not using byte range locks, and we know the page
+-	 * is entirely in cache, it may be more efficient to avoid
+-	 * fragmenting write requests.
++	 * is up to date, it may be more efficient to extend the write
++	 * to cover the entire page in order to avoid fragmentation
++	 * inefficiencies.
+ 	 */
+-	if (PageUptodate(page) && inode->i_flock == NULL && !(file->f_mode & O_SYNC)) {
++	if (nfs_write_pageuptodate(page, inode) &&
++			inode->i_flock == NULL &&
++			!(file->f_mode & O_SYNC)) {
+ 		loff_t end_offs = i_size_read(inode) - 1;
+ 		unsigned long end_index = end_offs >> PAGE_CACHE_SHIFT;
+ 

@@ -1,0 +1,225 @@
+From: Roland McGrath <roland@redhat.com>
+Subject: [RHEL5 PATCH] fix vdso in core dumps (RHBZ #211744)
+Date: Sat, 13 Jan 2007 21:49:44 -0800 (PST)
+Bugzilla: 211744
+Message-Id: <20070114054944.D52A61800E5@magilla.sf.frob.com>
+Changelog: fix vdso in core dumps
+
+
+The problems are inherited from upstream.  There used to be corrections for
+this incorporated into the exec-shield patch when it had a lot of change to
+the vdso setup; it no longer has to do anything to the vdso code because
+upstream took similar changes, but broke the core dump part.  Note that
+linux-2.6-execshield.patch has some related cruft from the past that should
+not be there, and I've excised it from the rawhide version.
+
+Thanks,
+Roland
+
+
+--- linux-2.6.18/arch/i386/kernel/sysenter.c
++++ linux-2.6.18/arch/i386/kernel/sysenter.c
+@@ -93,15 +93,6 @@
+ #ifdef CONFIG_COMPAT_VDSO
+ 	__set_fixmap(FIX_VDSO, __pa(syscall_page), PAGE_READONLY);
+ 	printk("Compat vDSO mapped to %08lx.\n", __fix_to_virt(FIX_VDSO));
+-#else
+-	/*
+-	 * In the non-compat case the ELF coredumping code needs the fixmap:
+-	 */
+-#ifdef CONFIG_XEN
+-	__set_fixmap(FIX_VDSO, virt_to_machine(syscall_page), PAGE_KERNEL_RO);
+-#else
+-	__set_fixmap(FIX_VDSO, __pa(syscall_page), PAGE_KERNEL_RO);
+-#endif
+ #endif
+ 
+ 	if (!boot_cpu_has(X86_FEATURE_SEP)) {
+@@ -165,6 +156,13 @@
+ 	vma->vm_end = addr + PAGE_SIZE;
+ 	/* MAYWRITE to allow gdb to COW and set breakpoints */
+ 	vma->vm_flags = VM_READ|VM_EXEC|VM_MAYREAD|VM_MAYEXEC|VM_MAYWRITE;
++	/*
++	 * Make sure the vDSO gets into every core dump.
++	 * Dumping its contents makes post-mortem fully interpretable later
++	 * without matching up the same kernel and hardware config to see
++	 * what PC values meant.
++	 */
++	vma->vm_flags |= VM_ALWAYSDUMP;
+ 	vma->vm_flags |= mm->def_flags;
+ 	vma->vm_page_prot = protection_map[vma->vm_flags & 7];
+ 	vma->vm_ops = &syscall_vm_ops;
+--- linux-2.6.18/arch/powerpc/kernel/vdso.c
++++ linux-2.6.18/arch/powerpc/kernel/vdso.c
+@@ -283,6 +283,13 @@
+ 	 * pages though
+ 	 */
+ 	vma->vm_flags = VM_READ|VM_EXEC|VM_MAYREAD|VM_MAYWRITE|VM_MAYEXEC;
++	/*
++	 * Make sure the vDSO gets into every core dump.
++	 * Dumping its contents makes post-mortem fully interpretable later
++	 * without matching up the same kernel and hardware config to see
++	 * what PC values meant.
++	 */
++	vma->vm_flags |= VM_ALWAYSDUMP;
+ 	vma->vm_flags |= mm->def_flags;
+ 	vma->vm_page_prot = protection_map[vma->vm_flags & 0x7];
+ 	vma->vm_ops = &vdso_vmops;
+--- linux-2.6.18/arch/x86_64/ia32/ia32_binfmt.c
++++ linux-2.6.18/arch/x86_64/ia32/ia32_binfmt.c
+@@ -64,55 +64,6 @@
+ #define ELF_NGREG (sizeof (struct user_regs_struct32) / sizeof(elf_greg_t))
+ typedef elf_greg_t elf_gregset_t[ELF_NGREG];
+ 
+-/*
+- * These macros parameterize elf_core_dump in fs/binfmt_elf.c to write out
+- * extra segments containing the vsyscall DSO contents.  Dumping its
+- * contents makes post-mortem fully interpretable later without matching up
+- * the same kernel and hardware config to see what PC values meant.
+- * Dumping its extra ELF program headers includes all the other information
+- * a debugger needs to easily find how the vsyscall DSO was being used.
+- */
+-#define ELF_CORE_EXTRA_PHDRS	(find_vma(current->mm, VSYSCALL32_BASE) ?     \
+-    (VSYSCALL32_EHDR->e_phnum) : 0)
+-#define ELF_CORE_WRITE_EXTRA_PHDRS					      \
+-do {									      \
+-	if (find_vma(current->mm, VSYSCALL32_BASE)) { 			      \
+-		const struct elf32_phdr *const vsyscall_phdrs =		      \
+-			(const struct elf32_phdr *) (VSYSCALL32_BASE	      \
+-						   + VSYSCALL32_EHDR->e_phoff);\
+-		int i;							      \
+-		Elf32_Off ofs = 0;					      \
+-		for (i = 0; i < VSYSCALL32_EHDR->e_phnum; ++i) {	      \
+-			struct elf32_phdr phdr = vsyscall_phdrs[i];	      \
+-			if (phdr.p_type == PT_LOAD) {			      \
+-				BUG_ON(ofs != 0);			      \
+-				ofs = phdr.p_offset = offset;		      \
+-				phdr.p_memsz = PAGE_ALIGN(phdr.p_memsz);      \
+-				phdr.p_filesz = phdr.p_memsz;		      \
+-				offset += phdr.p_filesz;		      \
+-			}						      \
+-			else						      \
+-				phdr.p_offset += ofs;			      \
+-			phdr.p_paddr = 0; /* match other core phdrs */	      \
+-			DUMP_WRITE(&phdr, sizeof(phdr));		      \
+-		}							      \
+-	}								      \
+-} while (0)
+-#define ELF_CORE_WRITE_EXTRA_DATA					      \
+-do {									      \
+-	if (find_vma(current->mm, VSYSCALL32_BASE)) { 			      \
+-		const struct elf32_phdr *const vsyscall_phdrs =		      \
+-			(const struct elf32_phdr *) (VSYSCALL32_BASE	      \
+-						   + VSYSCALL32_EHDR->e_phoff);      \
+-		int i;							      \
+-		for (i = 0; i < VSYSCALL32_EHDR->e_phnum; ++i) {	      \
+-			if (vsyscall_phdrs[i].p_type == PT_LOAD)	      \
+-				DUMP_WRITE((void *) (u64) vsyscall_phdrs[i].p_vaddr,\
+-				    PAGE_ALIGN(vsyscall_phdrs[i].p_memsz));   \
+-		}							      \
+-	}								      \
+-} while (0)
+-
+ struct elf_siginfo
+ {
+ 	int	si_signo;			/* signal number */
+--- linux-2.6.18/arch/x86_64/ia32/syscall32.c
++++ linux-2.6.18/arch/x86_64/ia32/syscall32.c
+@@ -61,6 +61,13 @@
+ 	vma->vm_end = VSYSCALL32_END;
+ 	/* MAYWRITE to allow gdb to COW and set breakpoints */
+ 	vma->vm_flags = VM_READ|VM_EXEC|VM_MAYREAD|VM_MAYEXEC|VM_MAYWRITE;
++	/*
++	 * Make sure the vDSO gets into every core dump.
++	 * Dumping its contents makes post-mortem fully interpretable later
++	 * without matching up the same kernel and hardware config to see
++	 * what PC values meant.
++	 */
++	vma->vm_flags |= VM_ALWAYSDUMP;
+ 	vma->vm_flags |= mm->def_flags;
+ 	vma->vm_page_prot = protection_map[vma->vm_flags & 7];
+ 	vma->vm_ops = &syscall32_vm_ops;
+--- linux-2.6.18/fs/binfmt_elf.c
++++ linux-2.6.18/fs/binfmt_elf.c
+@@ -1238,13 +1238,14 @@
+  */
+ static int maydump(struct vm_area_struct *vma)
+ {
++	/* The vma can be set up to tell us the answer directly.  */
++	if (vma->vm_flags & VM_ALWAYSDUMP)
++		return 1;
++
+ 	/* Do not dump I/O mapped devices or special mappings */
+ 	if (vma->vm_flags & (VM_IO | VM_RESERVED))
+ 		return 0;
+ 
+-	if (vma->vm_flags & VM_DONTEXPAND) /* Kludge for vDSO.  */
+-		return 1;
+-
+ 	/* Dump shared memory only if mapped from an anonymous file. */
+ 	if (vma->vm_flags & VM_SHARED)
+ 		return vma->vm_file->f_dentry->d_inode->i_nlink == 0;
+--- linux-2.6.18/include/asm-i386/elf.h
++++ linux-2.6.18/include/asm-i386/elf.h
+@@ -170,50 +170,6 @@
+ 		NEW_AUX_ENT(AT_SYSINFO_EHDR, VDSO_COMPAT_BASE);	\
+ } while (0)
+ 
+-/*
+- * These macros parameterize elf_core_dump in fs/binfmt_elf.c to write out
+- * extra segments containing the vsyscall DSO contents.  Dumping its
+- * contents makes post-mortem fully interpretable later without matching up
+- * the same kernel and hardware config to see what PC values meant.
+- * Dumping its extra ELF program headers includes all the other information
+- * a debugger needs to easily find how the vsyscall DSO was being used.
+- */
+-#define ELF_CORE_EXTRA_PHDRS		(VDSO_HIGH_EHDR->e_phnum)
+-#define ELF_CORE_WRITE_EXTRA_PHDRS					      \
+-do {									      \
+-	const struct elf_phdr *const vsyscall_phdrs =			      \
+-		(const struct elf_phdr *) (VDSO_HIGH_BASE		      \
+-					   + VDSO_HIGH_EHDR->e_phoff);    \
+-	int i;								      \
+-	Elf32_Off ofs = 0;						      \
+-	for (i = 0; i < VDSO_HIGH_EHDR->e_phnum; ++i) {		      \
+-		struct elf_phdr phdr = vsyscall_phdrs[i];		      \
+-		if (phdr.p_type == PT_LOAD) {				      \
+-			BUG_ON(ofs != 0);				      \
+-			ofs = phdr.p_offset = offset;			      \
+-			phdr.p_memsz = PAGE_ALIGN(phdr.p_memsz);	      \
+-			phdr.p_filesz = phdr.p_memsz;			      \
+-			offset += phdr.p_filesz;			      \
+-		}							      \
+-		else							      \
+-			phdr.p_offset += ofs;				      \
+-		phdr.p_paddr = 0; /* match other core phdrs */		      \
+-		DUMP_WRITE(&phdr, sizeof(phdr));			      \
+-	}								      \
+-} while (0)
+-#define ELF_CORE_WRITE_EXTRA_DATA					      \
+-do {									      \
+-	const struct elf_phdr *const vsyscall_phdrs =			      \
+-		(const struct elf_phdr *) (VDSO_HIGH_BASE		      \
+-					   + VDSO_HIGH_EHDR->e_phoff);    \
+-	int i;								      \
+-	for (i = 0; i < VDSO_HIGH_EHDR->e_phnum; ++i) {		      \
+-		if (vsyscall_phdrs[i].p_type == PT_LOAD)		      \
+-			DUMP_WRITE((void *) vsyscall_phdrs[i].p_vaddr,	      \
+-				   PAGE_ALIGN(vsyscall_phdrs[i].p_memsz));    \
+-	}								      \
+-} while (0)
+-
+ #endif
+ 
+ #define __HAVE_ARCH_RANDOMIZE_BRK
+--- linux-2.6.18/include/linux/mm.h
++++ linux-2.6.18/include/linux/mm.h
+@@ -168,6 +168,7 @@
+ #ifdef CONFIG_XEN
+ #define VM_FOREIGN	0x04000000	/* Has pages belonging to another VM */
+ #endif
++#define VM_ALWAYSDUMP	0x08000000	/* Always include in core dumps */
+ 
+ #ifndef VM_STACK_DEFAULT_FLAGS		/* arch can override this */
+ #define VM_STACK_DEFAULT_FLAGS VM_DATA_DEFAULT_FLAGS
+

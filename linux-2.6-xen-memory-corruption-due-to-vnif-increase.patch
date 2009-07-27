@@ -1,0 +1,176 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Mon, 7 Apr 2008 17:13:21 -0400
+Subject: [xen] memory corruption due to VNIF increase
+Message-id: 47FA8E71.3010403@redhat.com
+O-Subject: [RHEL5.2][PATCH] xen: Memory corruption due to VNIF increase
+Bugzilla: 441390
+
+This patch is for BZ#441390.
+https://bugzilla.redhat.com/show_bug.cgi?id=441390
+
+[Description]
+The extendable grant table to allow to increase VNIF number per guest
+has a problem.  It assumed that one of its data structure, free list,
+was the same size as the grant table.  But actually it's only half as
+large.  This may cause memory corruption.  This patch fix the free list
+allocation.
+
+[Upstream Status]
+Already committed:
+- fix grant table bug
+  http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/4018c0da3360
+
+[brew ID]
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1245014
+
+[Test Status]
+Tested on i386, x86_64, and ia64, with kernel -88.
+Using netperf (TCP, 16/131072 byte message size), Dom0 and PV guest with
+6 VNIFs can communicate simultaneously with no problem.
+
+I have no idea how to test the memory corruption directly, but I believe
+the netperf test shows at leaset there is no regression.
+
+Please review and ACK.
+
+Tetsu Yamamoto
+
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1206957787 -3600
+# Node ID 4018c0da336008e5dfb1163bddbdfbc328c8f5c4
+# Parent  5486a234923da1fbab13eef6165f25c54ab63bd9
+xen: fix grant table bug
+
+A PV OS has two grant table data structures: the grant table itself
+and a free list.  The free list is composed of an array of pages,
+which grow dynamically as the guest OS requires more grants.  While
+the grant table contains 8-byte entries, the free list contains 4-byte
+entries.  So we have half as many pages in the free list than in the
+grant table.
+
+There was a bug in the free list allocation code. The free list was
+indexed as if it was the same size as the grant table.  But it's only
+half as large.  So memory got corrupted, and I was seeing crashes in
+the slab allocator later on.
+
+Signed-off-by: Michael Abd-El-Malek <mabdelmalek@cmu.edu>
+
+Acked-by: Mark McLoughlin <markmc@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+Acked-by: Don Dutile <ddutile@redhat.com>
+
+diff --git a/drivers/xen/core/gnttab.c b/drivers/xen/core/gnttab.c
+index fe3228f..e6dd198 100644
+--- a/drivers/xen/core/gnttab.c
++++ b/drivers/xen/core/gnttab.c
+@@ -46,7 +46,7 @@
+ /* External tools reserve first few grant table entries. */
+ #define NR_RESERVED_ENTRIES 8
+ #define GNTTAB_LIST_END 0xffffffff
+-#define GREFS_PER_GRANT_FRAME (PAGE_SIZE / sizeof(grant_entry_t))
++#define ENTRIES_PER_GRANT_FRAME (PAGE_SIZE / sizeof(grant_entry_t))
+ 
+ static grant_ref_t **gnttab_list;
+ static unsigned int nr_grant_frames;
+@@ -67,6 +67,9 @@ static int gnttab_expand(unsigned int req_entries);
+ #define RPP (PAGE_SIZE / sizeof(grant_ref_t))
+ #define gnttab_entry(entry) (gnttab_list[(entry) / RPP][(entry) % RPP])
+ 
++#define nr_freelist_frames(grant_frames)				\
++	(((grant_frames) * ENTRIES_PER_GRANT_FRAME + RPP - 1) / RPP)
++
+ static int get_free_entries(int count)
+ {
+ 	unsigned long flags;
+@@ -368,24 +371,25 @@ EXPORT_SYMBOL_GPL(gnttab_cancel_free_callback);
+ static int grow_gnttab_list(unsigned int more_frames)
+ {
+ 	unsigned int new_nr_grant_frames, extra_entries, i;
++	unsigned int nr_glist_frames, new_nr_glist_frames;
+ 
+ 	new_nr_grant_frames = nr_grant_frames + more_frames;
+-	extra_entries       = more_frames * GREFS_PER_GRANT_FRAME;
++	extra_entries       = more_frames * ENTRIES_PER_GRANT_FRAME;
+ 
+-	for (i = nr_grant_frames; i < new_nr_grant_frames; i++)
+-	{
++	nr_glist_frames = nr_freelist_frames(nr_grant_frames);
++	new_nr_glist_frames = nr_freelist_frames(new_nr_grant_frames);
++	for (i = nr_glist_frames; i < new_nr_glist_frames; i++) {
+ 		gnttab_list[i] = (grant_ref_t *)__get_free_page(GFP_ATOMIC);
+ 		if (!gnttab_list[i])
+ 			goto grow_nomem;
+ 	}
+ 
+-
+-	for (i = GREFS_PER_GRANT_FRAME * nr_grant_frames;
+-	     i < GREFS_PER_GRANT_FRAME * new_nr_grant_frames - 1; i++)
++	for (i = ENTRIES_PER_GRANT_FRAME * nr_grant_frames;
++	     i < ENTRIES_PER_GRANT_FRAME * new_nr_grant_frames - 1; i++)
+ 		gnttab_entry(i) = i + 1;
+ 
+ 	gnttab_entry(i) = gnttab_free_head;
+-	gnttab_free_head = GREFS_PER_GRANT_FRAME * nr_grant_frames;
++	gnttab_free_head = ENTRIES_PER_GRANT_FRAME * nr_grant_frames;
+ 	gnttab_free_count += extra_entries;
+ 
+ 	nr_grant_frames = new_nr_grant_frames;
+@@ -395,7 +399,7 @@ static int grow_gnttab_list(unsigned int more_frames)
+ 	return 0;
+ 	
+ grow_nomem:
+-	for ( ; i >= nr_grant_frames; i--)
++	for ( ; i >= nr_glist_frames; i--)
+ 		free_page((unsigned long) gnttab_list[i]);
+ 	return -ENOMEM;
+ }
+@@ -566,8 +570,8 @@ static int gnttab_expand(unsigned int req_entries)
+ 	unsigned int cur, extra;
+ 
+ 	cur = nr_grant_frames;
+-	extra = ((req_entries + (GREFS_PER_GRANT_FRAME-1)) /
+-		 GREFS_PER_GRANT_FRAME);
++	extra = ((req_entries + (ENTRIES_PER_GRANT_FRAME-1)) /
++		 ENTRIES_PER_GRANT_FRAME);
+ 	if (cur + extra > max_nr_grant_frames())
+ 		return -ENOSPC;
+ 
+@@ -580,7 +584,7 @@ static int gnttab_expand(unsigned int req_entries)
+ int __init gnttab_init(void)
+ {
+ 	int i;
+- 	unsigned int max_nr_glist_frames;
++	unsigned int max_nr_glist_frames, nr_glist_frames;
+  	unsigned int nr_init_grefs;
+ 
+ 	if (!is_running_on_xen())
+@@ -592,16 +596,15 @@ int __init gnttab_init(void)
+  	/* Determine the maximum number of frames required for the
+  	 * grant reference free list on the current hypervisor.
+  	 */
+- 	max_nr_glist_frames = (boot_max_nr_grant_frames *
+- 			       GREFS_PER_GRANT_FRAME /
+- 			       (PAGE_SIZE / sizeof(grant_ref_t)));
++	max_nr_glist_frames = nr_freelist_frames(boot_max_nr_grant_frames);
+  
+  	gnttab_list = kmalloc(max_nr_glist_frames * sizeof(grant_ref_t *),
+  			      GFP_KERNEL);
+  	if (gnttab_list == NULL)
+  		return -ENOMEM;
+  
+- 	for (i = 0; i < nr_grant_frames; i++) {
++	nr_glist_frames = nr_freelist_frames(nr_grant_frames);
++	for (i = 0; i < nr_glist_frames; i++) {
+  		gnttab_list[i] = (grant_ref_t *)__get_free_page(GFP_KERNEL);
+  		if (gnttab_list[i] == NULL)
+  			goto ini_nomem;
+@@ -610,7 +613,7 @@ int __init gnttab_init(void)
+ 	if (gnttab_resume() < 0)
+ 		return -ENODEV;
+ 
+- 	nr_init_grefs = nr_grant_frames * GREFS_PER_GRANT_FRAME;
++	nr_init_grefs = nr_grant_frames * ENTRIES_PER_GRANT_FRAME;
+  
+  	for (i = NR_RESERVED_ENTRIES; i < nr_init_grefs - 1; i++)
+  		gnttab_entry(i) = i + 1;

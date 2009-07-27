@@ -1,0 +1,36 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Subject: [RHEL5.1 PATCH] : Fix misconfigured K8 north bridge
+Date: Fri, 20 Apr 2007 12:07:13 -0400
+Bugzilla: 236759
+Message-Id: <4628E531.5010200@redhat.com>
+Changelog: [x86_64] Fix misconfigured K8 north bridge
+
+
+BZ 236759
+
+cache_k8_northbridges() overflows beyond allocation.  
+cache_k8_northbridges() is storing config values to incorrect locations (in 
+flush_words) and also its overflowing beyond the allocation, causing slab 
+verification failures.
+
+Upstream commit 6f29e35e2d4cdbc3e8785982314e54ec5df4ad37
+
+Tested at AMD on several K8 platforms.
+
+
+
+
+--- linux-2.6.18.x86_64/arch/x86_64/kernel/k8.c.orig	2007-04-20 11:20:19.000000000 -0400
++++ linux-2.6.18.x86_64/arch/x86_64/kernel/k8.c	2007-04-20 11:21:08.000000000 -0400
+@@ -61,8 +61,8 @@ int cache_k8_northbridges(void)
+ 	dev = NULL;
+ 	i = 0;
+ 	while ((dev = next_k8_northbridge(dev)) != NULL) {
+-		k8_northbridges[i++] = dev;
+-		pci_read_config_dword(dev, 0x9c, &flush_words[i]);
++		k8_northbridges[i] = dev;
++		pci_read_config_dword(dev, 0x9c, &flush_words[i++]);
+ 	}
+ 	k8_northbridges[i] = NULL;
+ 	return 0;
+

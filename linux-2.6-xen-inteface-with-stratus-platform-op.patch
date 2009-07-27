@@ -1,0 +1,146 @@
+From: Kimball Murray <kmurray@redhat.com>
+Date: Thu, 12 Jul 2007 10:45:44 -0400
+Subject: [xen] inteface with stratus platform op
+Message-id: 20070712144158.18201.69748.sendpatchset@dhcp83-86.boston.redhat.com
+O-Subject: [RHEL5.1 Patch 3/3 ] (BZ-247841)
+Bugzilla: 247841
+
+This is the kernel side of the Stratus platform op provided in
+the patch for the hypervisor (BZ-247833).  This simply duplicates the structure definitions used by the Hypervisor platform op.
+
+While adding the structure to the union below doesn't change the size
+of the union (because of the pad[128]), I'm told that KABI could
+change because of the checksum. It was suggested that ifndef GENKSYSMS
+might do the trick.
+
+Please review this in conjunction with BZ-247833 to see how both sides
+of the platform call fit together.
+
+--------------------- snip ---------------------
+
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+
+diff --git a/include/xen/interface/dom0_ops.h b/include/xen/interface/dom0_ops.h
+index b03a7ce..4edf430 100644
+--- a/include/xen/interface/dom0_ops.h
++++ b/include/xen/interface/dom0_ops.h
+@@ -83,6 +83,9 @@ struct dom0_op {
+         struct dom0_microcode         microcode;
+         struct dom0_platform_quirk    platform_quirk;
+         struct dom0_memory_map_entry  physical_memory_map;
++#ifdef CONFIG_X86_64
++	struct xenpf_stratus_call     stratus_call;
++#endif
+         uint8_t                       pad[128];
+     } u;
+ };
+diff --git a/include/xen/interface/platform.h b/include/xen/interface/platform.h
+index 46e9160..79f82da 100644
+--- a/include/xen/interface/platform.h
++++ b/include/xen/interface/platform.h
+@@ -10,6 +10,9 @@
+ #define __XEN_PUBLIC_PLATFORM_H__
+ 
+ #include "xen.h"
++#ifdef CONFIG_X86_64
++#include "stratus.h"
++#endif
+ 
+ #define XENPF_INTERFACE_VERSION 0x03000001
+ 
+@@ -112,6 +115,12 @@ struct xen_platform_op {
+ typedef struct xen_platform_op xen_platform_op_t;
+ DEFINE_XEN_GUEST_HANDLE(xen_platform_op_t);
+ 
++#ifdef CONFIG_X86_64
++#define XENPF_stratus_call	0xffffffff
++typedef struct xenpf_stratus_call xenpf_stratus_call_t;
++DEFINE_XEN_GUEST_HANDLE(xenpf_stratus_call_t);
++#endif
++
+ #endif /* __XEN_PUBLIC_PLATFORM_H__ */
+ 
+ /*
+diff --git a/include/xen/interface/stratus.h b/include/xen/interface/stratus.h
+new file mode 100644
+index 0000000..a224444
+--- /dev/null
++++ b/include/xen/interface/stratus.h
+@@ -0,0 +1,76 @@
++#ifndef _CC_INTERFACE_H
++#define _CC_INTERFACE_H
++
++// Clear the entire Host BIOS vector
++#define CC_HBV_MEMSET 			1	
++// Read/Write from page 0 (HBV or DUMP)
++#define CC_RW_REGION			2
++// Trigger SMI through local apic
++#define CC_TRIGGER_SMI			3
++// Return local cpu apic id
++#define CC_LAPIC_ID			4
++// Get/Set CR4.
++#define CC_CR4				5
++// Get cpuid
++#define CC_CPUID			6
++// Read/Write MSRs
++#define CC_RW_MSR			7
++// Are we on a Stratus box?
++#define CC_VALIDATE_PLATFORM		8
++
++// Page 0 regions to read/write (host bios vector or dump vector signature).
++#define	RW_HBV		1
++#define	RW_DUMPVEC	2
++
++struct cr4_struct {
++	int rw;		// 0 = read, 1 = write.
++	unsigned long cr4;
++};
++
++struct cpuid_struct {
++	unsigned int op;
++	unsigned int eax, ebx, ecx, edx;	
++};
++
++struct msr_struct {
++	int rw;
++	unsigned int msr;
++	unsigned long val;
++};
++
++struct lapic_struct {
++	int id;
++};
++
++struct rw_struct {
++	int rw;			// 0 = read, 1 = write
++	int region;		// RW_HBV or RW_CONTIG
++	void *data;
++	unsigned long where;	// offset in region
++	int size;
++};
++
++struct smi_struct {
++	unsigned int dest;
++};
++
++struct hbv_memset_struct {
++	int val;
++	int size;
++};
++
++struct xenpf_stratus_call {
++	int cmd;
++	int ret;
++	union {
++		struct smi_struct smi;
++		struct hbv_memset_struct hbv_m;
++		struct rw_struct rw;
++		struct lapic_struct ls;
++		struct cr4_struct cr4;
++		struct cpuid_struct cpuid;
++		struct msr_struct msr;
++	} u;
++};
++
++#endif

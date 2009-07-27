@@ -1,0 +1,43 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Fri, 21 Sep 2007 14:52:32 -0400
+Subject: [scsi] always update request data_len with resid
+Message-id: 46F412F0.5070704@redhat.com
+O-Subject: [RHEL 5.2 Patch] scsi midlayer bug with tape drive EOV
+Bugzilla: 282781
+
+Some targets can return both valid data and sense information.
+Always update the request data_len from the SCSI command residual.
+Callers should interpret sense data to determine what parts of the
+data are valid in case of a CHECK CONDITION status.
+
+The upstream patch is:
+http://www.kernel.org/hg/linux-2.6/rev/f5f6f8a9c5c2
+
+Testing was done by engineers inside SGI as I don't yet have
+a tape drive locally.
+
+BZ 282781
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+---
+ drivers/scsi/scsi_lib.c |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/scsi/scsi_lib.c b/drivers/scsi/scsi_lib.c
+index d6743b9..c109051 100644
+--- a/drivers/scsi/scsi_lib.c
++++ b/drivers/scsi/scsi_lib.c
+@@ -844,8 +844,8 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
+ 				memcpy(req->sense, cmd->sense_buffer,  len);
+ 				req->sense_len = len;
+ 			}
+-		} else
+-			req->data_len = cmd->resid;
++		}
++		req->data_len = cmd->resid;
+ 	}
+ 
+ 	/*
+-- 
+1.5.3.5.645.gbb47
+

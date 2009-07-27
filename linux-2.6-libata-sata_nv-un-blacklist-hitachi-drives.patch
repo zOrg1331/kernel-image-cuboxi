@@ -1,0 +1,36 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Thu, 7 Feb 2008 16:27:47 -0600
+Subject: [libata] sata_nv: un-blacklist hitachi drives
+Message-id: 20080207222747.GA10330@dhcp-210.hsv.redhat.com
+O-Subject: [RHEL5.2 PATCH 2/2] libata: sata_nv may send commands with duplicate tags
+Bugzilla: 426044
+
+This patch un-blacklists HITACHI drives so that NCQ
+can be enabled, customer has verified on a
+2.6.18-77.el5 test kernel with the "sata_nv: fix for
+completion handling" patch.
+
+This resolves BZ 426044 (IT 137526), please review.
+
+Thanks,
+David
+
+commit 223f95f76d6e946de0cb7149d7738e8b73f1e564
+
+Acked-by: Alan Cox <alan@redhat.com>
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: Jeff Garzik <jgarzik@redhat.com>
+
+diff --git a/drivers/ata/libata-core.c b/drivers/ata/libata-core.c
+index f3cecc6..8a6d90e 100644
+--- a/drivers/ata/libata-core.c
++++ b/drivers/ata/libata-core.c
+@@ -4155,8 +4155,6 @@ static const struct ata_blacklist_entry ata_device_blacklist [] = {
+ 	/* NCQ is broken */
+ 	{ "Maxtor *",		"BANC*",	ATA_HORKAGE_NONCQ },
+ 	{ "Maxtor 7V300F0",	"VA111630",	ATA_HORKAGE_NONCQ },
+-	{ "HITACHI HDS7250SASUN500G*", NULL,    ATA_HORKAGE_NONCQ },
+-	{ "HITACHI HDS7225SBSUN250G*", NULL,    ATA_HORKAGE_NONCQ },
+ 	{ "ST380817AS",		"3.42",		ATA_HORKAGE_NONCQ },
+ 	{ "ST3160023AS",	"3.42",		ATA_HORKAGE_NONCQ },
+ 

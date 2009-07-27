@@ -1,0 +1,150 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] BZ 226826 226860: cpu hotplug/smpboot misc MODPOST  warning fixes
+Date: Fri, 02 Feb 2007 11:46:23 -0500
+Bugzilla: 226826
+Message-Id: <45C36ADF.2070203@redhat.com>
+Changelog: [x86] cpu hotplug/smpboot misc MODPOST warning fixes
+
+Backport of
+
+http://marc.theaimsgroup.com/?l=linux-kernel&m=116650543226535&w=2
+
+which resolves BZ 226826.
+
+Also resolves BZ 226860.
+
+Tested successfully by me.
+
+--- linux-2.6.18.i386.orig/arch/i386/kernel/mpparse.c	2007-02-01 16:08:21.000000000 -0500
++++ linux-2.6.18.i386/arch/i386/kernel/mpparse.c	2007-02-02 09:37:24.000000000 -0500
+@@ -35,7 +35,7 @@
+ 
+ /* Have we found an MP table */
+ int smp_found_config;
+-unsigned int __initdata maxcpus = NR_CPUS;
++unsigned int __cpuinitdata maxcpus = NR_CPUS;
+ 
+ /*
+  * Various Linux-internal data structures created from the
+@@ -101,9 +101,9 @@ static int __init mpf_checksum(unsigned 
+  */
+ 
+ static int mpc_record; 
+-static struct mpc_config_translation *translation_table[MAX_MPC_ENTRY] __initdata;
++static struct mpc_config_translation *translation_table[MAX_MPC_ENTRY] __cpuinitdata;
+ 
+-static void __devinit MP_processor_info (struct mpc_config_processor *m)
++static void __cpuinit MP_processor_info (struct mpc_config_processor *m)
+ {
+  	int ver, apicid;
+ 	physid_mask_t phys_cpu;
+@@ -836,7 +836,7 @@ void __init mp_register_lapic_address (
+ }
+ 
+ 
+-void __devinit mp_register_lapic (
++void __cpuinit mp_register_lapic (
+ 	u8			id, 
+ 	u8			enabled)
+ {
+--- linux-2.6.18.i386.orig/arch/i386/kernel/setup.c	2007-02-01 16:08:21.000000000 -0500
++++ linux-2.6.18.i386/arch/i386/kernel/setup.c	2007-02-02 09:36:20.000000000 -0500
+@@ -82,7 +82,7 @@ EXPORT_SYMBOL(efi_enabled);
+ #endif
+ 
+ /* cpu data as detected by the assembly code in head.S */
+-struct cpuinfo_x86 new_cpu_data __initdata = { 0, 0, 0, 0, -1, 1, 0, 0, -1 };
++struct cpuinfo_x86 new_cpu_data __cpuinitdata = { 0, 0, 0, 0, -1, 1, 0, 0, -1 };
+ /* common cpu data for all cpus */
+ struct cpuinfo_x86 boot_cpu_data __read_mostly = { 0, 0, 0, 0, -1, 1, 0, 0, -1 };
+ EXPORT_SYMBOL(boot_cpu_data);
+--- linux-2.6.18.i386.orig/arch/i386/kernel/smpboot.c	2007-02-01 16:08:21.000000000 -0500
++++ linux-2.6.18.i386/arch/i386/kernel/smpboot.c	2007-02-02 09:36:20.000000000 -0500
+@@ -152,7 +152,7 @@ void __init smp_alloc_memory(void)
+  * a given CPU
+  */
+ 
+-static void __devinit smp_store_cpu_info(int id)
++static void __cpuinit smp_store_cpu_info(int id)
+ {
+ 	struct cpuinfo_x86 *c = cpu_data + id;
+ 
+@@ -354,7 +354,7 @@ extern void calibrate_delay(void);
+ 
+ static atomic_t init_deasserted;
+ 
+-static void __devinit smp_callin(void)
++static void __cpuinit smp_callin(void)
+ {
+ 	int cpuid, phys_id;
+ 	unsigned long timeout;
+@@ -528,7 +528,7 @@ set_cpu_sibling_map(int cpu)
+ /*
+  * Activate a secondary processor.
+  */
+-static void __devinit start_secondary(void *unused)
++static void __cpuinit start_secondary(void *unused)
+ {
+ 	/*
+ 	 * Dont put anything before smp_callin(), SMP
+@@ -917,7 +917,7 @@ static inline struct task_struct * alloc
+ #define alloc_idle_task(cpu) fork_idle(cpu)
+ #endif
+ 
+-static int __devinit do_boot_cpu(int apicid, int cpu)
++static int __cpuinit do_boot_cpu(int apicid, int cpu)
+ /*
+  * NOTE - on most systems this is a PHYSICAL apic ID, but on multiquad
+  * (ie clustered apic addressing mode), this is a LOGICAL apic ID.
+@@ -1422,7 +1422,7 @@ void __cpu_die(unsigned int cpu)
+ }
+ #endif /* CONFIG_HOTPLUG_CPU */
+ 
+-int __devinit __cpu_up(unsigned int cpu)
++int __cpuinit __cpu_up(unsigned int cpu)
+ {
+ #ifdef CONFIG_HOTPLUG_CPU
+ 	int ret=0;
+--- linux-2.6.18.i386.orig/arch/i386/kernel/mpparse-xen.c	2007-02-01 16:08:21.000000000 -0500
++++ linux-2.6.18.i386/arch/i386/kernel/mpparse-xen.c	2007-02-02 11:07:49.000000000 -0500
+@@ -35,7 +35,7 @@
+ 
+ /* Have we found an MP table */
+ int smp_found_config;
+-unsigned int __initdata maxcpus = NR_CPUS;
++unsigned int __cpuinitdata maxcpus = NR_CPUS;
+ 
+ /*
+  * Various Linux-internal data structures created from the
+@@ -101,7 +101,7 @@ static int __init mpf_checksum(unsigned 
+  */
+ 
+ static int mpc_record; 
+-static struct mpc_config_translation *translation_table[MAX_MPC_ENTRY] __initdata;
++static struct mpc_config_translation *translation_table[MAX_MPC_ENTRY] __cpuinitdata;
+ 
+ #ifndef CONFIG_XEN
+ static void __devinit MP_processor_info (struct mpc_config_processor *m)
+--- linux-2.6.18.i386.orig/arch/i386/kernel/setup-xen.c	2007-02-01 16:08:21.000000000 -0500
++++ linux-2.6.18.i386/arch/i386/kernel/setup-xen.c	2007-02-02 11:08:12.000000000 -0500
+@@ -90,7 +90,7 @@ EXPORT_SYMBOL(efi_enabled);
+ #endif
+ 
+ /* cpu data as detected by the assembly code in head.S */
+-struct cpuinfo_x86 new_cpu_data __initdata = { 0, 0, 0, 0, -1, 1, 0, 0, -1 };
++struct cpuinfo_x86 new_cpu_data __cpuinitdata = { 0, 0, 0, 0, -1, 1, 0, 0, -1 };
+ /* common cpu data for all cpus */
+ struct cpuinfo_x86 boot_cpu_data __read_mostly = { 0, 0, 0, 0, -1, 1, 0, 0, -1 };
+ EXPORT_SYMBOL(boot_cpu_data);
+--- linux-2.6.18.i386.orig/drivers/xen/core/smpboot.c	2007-02-01 16:08:22.000000000 -0500
++++ linux-2.6.18.i386/drivers/xen/core/smpboot.c	2007-02-02 11:44:52.000000000 -0500
+@@ -393,7 +393,7 @@ void __cpu_die(unsigned int cpu)
+ 
+ #endif /* CONFIG_HOTPLUG_CPU */
+ 
+-int __devinit __cpu_up(unsigned int cpu)
++int __cpuinit __cpu_up(unsigned int cpu)
+ {
+ 	int rc;
+ 
+

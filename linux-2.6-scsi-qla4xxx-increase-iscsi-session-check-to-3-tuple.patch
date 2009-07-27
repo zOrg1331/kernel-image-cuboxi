@@ -1,0 +1,103 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Fri, 5 Dec 2008 14:17:05 -0500
+Subject: [scsi] qla4xxx: increase iscsi session check to 3-tuple
+Message-id: 20081205191705.8992.88249.sendpatchset@file.bos.redhat.com
+O-Subject: [rhel 5.3 bug] qla4xxx - Add checks for <TargetName, ISID, TargetPortGroupTag>
+Bugzilla: 474736
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: Rob Evers <revers@redhat.com>
+RH-Nacked-by: Mike Christie <mchristi@redhat.com>
+
+BZ 474736 - qla4xxx - Add checks for <TargetName, ISID, TargetPortGroupTag>
+
+This is an extremely important patch, fixing an issue reported by NetApp. It could potentially make a customer's data become un-available.
+
+Here is a description from the BZ, as I don't completely understand the iSCSI world:
+
+Add checks for <TargetName, ISID, TargetPortGroupTag>
+
+The enclosed patch fixes the problem.
+
+In iSCSI world a session encapsulates an Initiator-Target Nexus. The current
+inbox RHEL5.x driver uses the iSCSI TargetName (hence the <iSCSITargetName,
+iSCSIInitiatorName> tuple) to uniquely identify an iSCSI Session.
+
+This is however insufficient, when a Target Node (identified by an iSCSIName)
+can be accessed via multiple portals (identified by an IP Address or DNS
+assigned TargetHostName, tcp port#, portal group tag). This is the problem with
+the NetApp. Configuration.
+
+           || Port A (IP1/DNS Name) ||  Port B (IP2 or DNS Name)
+           ||                       ||
+      +---------------------------------------------+
+      |                                             |
+ |    +------------------------------------+   |
+ |    | NetApp.Target (unique iSCSIName)   |   |
+ |    +------------------------------------+   |
+ +---------------------------------------------+
+
+As per spec., each iSCSI Session is uniquely identified by the 4-tuple
+<initiator Name, TargetName, ISID, TargetPortGroupTag>. Since InitiatorName is
+a constant in our case this reduces to a 3-tuple <TargetName, ISID,
+TargetPortGroupTag>
+
+Remember that the ISID effectively encapsulates Target IP (or DNS assigned
+Target Host Name) and the TCP Port the target is listening on.
+
+The fix essentially checks for <TargetName, ISID, TargetPortGroupTag> instead
+of just the TargetName.
+
+Patches and builds cleanly on 2.6.18-123 cleanly. Tested at QLogic and NetApp...
+
+diff --git a/drivers/scsi/qla4xxx/ql4_def.h b/drivers/scsi/qla4xxx/ql4_def.h
+index a517ca2..97caead 100644
+--- a/drivers/scsi/qla4xxx/ql4_def.h
++++ b/drivers/scsi/qla4xxx/ql4_def.h
+@@ -234,6 +234,8 @@ struct ddb_entry {
+ 	uint8_t ip_addr[ISCSI_IPADDR_SIZE];
+ 	uint8_t iscsi_name[ISCSI_NAME_SIZE];	/* 72 x48 */
+ 	uint8_t iscsi_alias[0x20];
++	uint8_t isid[6];
++	uint8_t rsrvd[2];
+ };
+ 
+ /*
+diff --git a/drivers/scsi/qla4xxx/ql4_init.c b/drivers/scsi/qla4xxx/ql4_init.c
+index a61beed..f22a9ba 100644
+--- a/drivers/scsi/qla4xxx/ql4_init.c
++++ b/drivers/scsi/qla4xxx/ql4_init.c
+@@ -355,8 +355,12 @@ static struct ddb_entry* qla4xxx_get_ddb_entry(struct scsi_qla_host *ha,
+ 	DEBUG2(printk("scsi%ld: %s: Looking for ddb[%d]\n", ha->host_no,
+ 		      __func__, fw_ddb_index));
+ 	list_for_each_entry(ddb_entry, &ha->ddb_list, list) {
+-		if (memcmp(ddb_entry->iscsi_name, fw_ddb_entry->iscsi_name,
+-			   ISCSI_NAME_SIZE) == 0) {
++		if ((memcmp(ddb_entry->iscsi_name, fw_ddb_entry->iscsi_name,
++			   ISCSI_NAME_SIZE) == 0) &&
++			(ddb_entry->tpgt ==
++				le32_to_cpu(fw_ddb_entry->tgt_portal_grp)) &&
++			(memcmp(ddb_entry->isid, fw_ddb_entry->isid,
++				sizeof(ddb_entry->isid)) == 0)) {
+ 			found++;
+ 			break;
+ 		}
+@@ -443,6 +447,8 @@ int qla4xxx_update_ddb_entry(struct scsi_qla_host *ha,
+ 
+ 	ddb_entry->port = le16_to_cpu(fw_ddb_entry->port);
+ 	ddb_entry->tpgt = le32_to_cpu(fw_ddb_entry->tgt_portal_grp);
++	memcpy(ddb_entry->isid, fw_ddb_entry->isid, sizeof(ddb_entry->isid));
++
+ 	memcpy(&ddb_entry->iscsi_name[0], &fw_ddb_entry->iscsi_name[0],
+ 	       min(sizeof(ddb_entry->iscsi_name),
+ 		   sizeof(fw_ddb_entry->iscsi_name)));
+diff --git a/drivers/scsi/qla4xxx/ql4_version.h b/drivers/scsi/qla4xxx/ql4_version.h
+index 5c9041b..d186a18 100644
+--- a/drivers/scsi/qla4xxx/ql4_version.h
++++ b/drivers/scsi/qla4xxx/ql4_version.h
+@@ -5,5 +5,5 @@
+  * See LICENSE.qla4xxx for copyright and licensing details.
+  */
+ 
+-#define QLA4XXX_DRIVER_VERSION	"5.01.00.00.05.03-k8"
++#define QLA4XXX_DRIVER_VERSION	"5.01.00.01.05.03-k9"
+ 

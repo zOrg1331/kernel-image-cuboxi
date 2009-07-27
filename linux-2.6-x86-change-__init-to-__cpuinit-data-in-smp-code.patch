@@ -1,0 +1,35 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5.1 PATCH] BZ 226859 : Change __init to __cpuinit data in SMP code
+Date: Tue, 6 Feb 2007 09:56:19 -0500
+Bugzilla: 226859
+Message-Id: <20070206145619.8530.44682.sendpatchset@prarit.boston.redhat.com>
+Changelog: [x86] Change __init to __cpuinit data in SMP code
+
+
+Change __initdata to __cpuinitdata in smp code.
+
+Resolves BZ 226859.
+
+Successfully tested by me.
+
+--- linux-2.6.18.i386.orig/arch/i386/kernel/smpboot.c	2007-02-02 10:04:36.000000000 -0500
++++ linux-2.6.18.i386/arch/i386/kernel/smpboot.c	2007-02-06 09:50:51.000000000 -0500
+@@ -217,7 +217,7 @@ static struct {
+ 	atomic_t count_start;
+ 	atomic_t count_stop;
+ 	unsigned long long values[NR_CPUS];
+-} tsc __initdata = {
++} tsc __cpuinitdata = {
+ 	.start_flag = ATOMIC_INIT(0),
+ 	.count_start = ATOMIC_INIT(0),
+ 	.count_stop = ATOMIC_INIT(0),
+@@ -322,7 +322,7 @@ static void __init synchronize_tsc_bp(vo
+ 		printk("passed.\n");
+ }
+ 
+-static void __init synchronize_tsc_ap(void)
++static void __cpuinit synchronize_tsc_ap(void)
+ {
+ 	int i;
+ 
+

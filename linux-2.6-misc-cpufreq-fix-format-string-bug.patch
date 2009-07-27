@@ -1,0 +1,38 @@
+From: Vitaly Mayatskikh <vmayatsk@redhat.com>
+Date: Wed, 27 Aug 2008 11:30:02 +0200
+Subject: [misc] cpufreq: fix format string bug
+Message-id: m3ej4ah7h2.fsf@gravicappa.englab.brq.redhat.com
+O-Subject: [RHEL-5.3 PATCH] BZ459460 kernel: cpufreq: fix format string bug [rhel-5.3]
+Bugzilla: 459460
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Bugzilla: 459460
+
+https://bugzilla.redhat.com/show_bug.cgi?id=459460
+
+Description:
+============
+Format string is omitted in call to request_module(). Not exploitable,
+as this is only writable by root.
+
+Upstream status:
+================
+commit 326f6a5c9c9e1a62aec37bdc0c3f8d53adabe77b
+
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=1439291
+
+diff --git a/drivers/cpufreq/cpufreq.c b/drivers/cpufreq/cpufreq.c
+index 0451ce0..3c90283 100644
+--- a/drivers/cpufreq/cpufreq.c
++++ b/drivers/cpufreq/cpufreq.c
+@@ -387,7 +387,7 @@ static int cpufreq_parse_governor (char *str_governor, unsigned int *policy,
+ 				int ret;
+ 
+ 				mutex_unlock(&cpufreq_governor_mutex);
+-				ret = request_module(name);
++				ret = request_module("%s", name);
+ 				mutex_lock(&cpufreq_governor_mutex);
+ 
+ 				if (ret == 0)

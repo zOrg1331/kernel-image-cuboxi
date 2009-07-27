@@ -1,0 +1,62 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Subject: Re: [RHEL5 PATCH] ext3: handle orphan inodes vs. readonly snapshots
+Date: Fri, 13 Apr 2007 12:40:02 -0500
+Bugzilla: 231553
+Message-Id: <461FC072.8040608@redhat.com>
+Changelog: [ext3] handle orphan inodes vs. readonly snapshots
+
+[PATCH] ext3: refuse ro to rw remount of fs with orphan inodes
+
+In the rare case where we have skipped orphan inode processing due to a
+readonly block device, and the block device subsequently changes back to
+read-write, disallow a remount,rw transition of the filesystem when we have an
+unprocessed orphan inodes as this would corrupt the list.
+
+Ideally we should process the orphan inode list during the remount, but that's
+trickier, and this plugs the hole for now.
+
+Signed-off-by: Eric Sandeen <sandeen@redhat.com>
+Cc: "Stephen C. Tweedie" <sct@redhat.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+
+Index: linux-2.6.18-13.el5/fs/ext3/super.c
+===================================================================
+--- linux-2.6.18-13.el5.orig/fs/ext3/super.c
++++ linux-2.6.18-13.el5/fs/ext3/super.c
+@@ -1264,6 +1264,12 @@ static void ext3_orphan_cleanup (struct 
+ 		return;
+ 	}
+ 
++	if (bdev_read_only(sb->s_bdev)) {
++		printk(KERN_ERR "EXT3-fs: write access "
++			"unavailable, skipping orphan cleanup.\n");
++		return;
++	}
++
+ 	if (EXT3_SB(sb)->s_mount_state & EXT3_ERROR_FS) {
+ 		if (es->s_last_orphan)
+ 			jbd_debug(1, "Errors on filesystem, "
+@@ -2339,6 +2345,20 @@ static int ext3_remount (struct super_bl
+ 				err = -EROFS;
+ 				goto restore_opts;
+ 			}
++ 			/*
++			 * If we have an unprocessed orphan list hanging
++			 * around from a previously readonly bdev mount,
++			 * require a full umount/remount for now.
++			 */
++			if (es->s_last_orphan) {
++				printk(KERN_WARNING "EXT3-fs: %s: couldn't "
++				       "remount RDWR because of unprocessed "
++				       "orphan inode list.  Please "
++				       "umount/remount instead.\n",
++				       sb->s_id);
++				err = -EINVAL;
++				goto restore_opts;
++			}
+ 			/*
+ 			 * Mounting a RDONLY partition read-write, so reread
+ 			 * and store the current valid flag.  (It may have
+

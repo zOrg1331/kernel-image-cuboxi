@@ -1,0 +1,132 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Tue, 26 Feb 2008 11:30:54 -0500
+Subject: [mm] inconsistent get_user_pages and memory mapped
+Message-id: 47C43EBE.6000403@redhat.com
+O-Subject: [RHEL 5.2 PATCH] Inconsistent get_user_pages() and memory mapped
+Bugzilla: 408781
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=408781
+
+Description:
+------------
+This problem occurs while running an InfiniBand user space testcase that
+performs the following steps (high level desc):
+1. malloc two buffers each of size 100MB for send and recv
+2. register them as memory regions
+3. create a queue pair QP
+4. write certain data to send buffer
+5. send that data using QP to itself
+6. wait for recv completion
+7. compare both send and recv data
+
+This bug can result in data corruption in user space.
+
+The upstream git commit had the following summary:
+  When calling get_user_pages(), a write flag is passed in by the
+  caller to indicate if write access is required on the faulted-in pages.
+  Currently, follow_hugetlb_page() ignores this flag and always faults
+  pages for read-only access.  This can cause data corruption because a
+  device driver that calls get_user_pages() with write set will not expect
+  COW faults to occur on the returned pages.
+
+  This patch passes the write flag down to follow_hugetlb_page() and
+  makes sure hugetlb_fault() is called with the right write_access
+  parameter.
+
+RHEL Version Found:
+------------------
+5.0
+
+kABI Status:
+------------
+No symbols were harmed.
+
+Brew:
+-----
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1178724
+
+Tested Kernel binary rpm available at:
+-----
+http://people.redhat.com/bpeters/kernels/5.2/kernel-2.6.18-81.el5408781.81.el5.ppc64.rpm
+
+Upstream Status:
+----------------
+Upstream with git commit
+5b23dbe8173c212d6a326e35347b038705603d39
+
+Test Status:
+------------
+Tested on squad1-lp3.lab.boston.redhat.com
+
+---------------------------------------------------------------
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-81.el5
+Signed-off-by: Erez Zadok <ezk@cs.sunysb.edu>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+
+diff --git a/include/linux/hugetlb.h b/include/linux/hugetlb.h
+index a2b2bd3..e5de7fe 100644
+--- a/include/linux/hugetlb.h
++++ b/include/linux/hugetlb.h
+@@ -15,7 +15,7 @@ static inline int is_vm_hugetlb_page(struct vm_area_struct *vma)
+ 
+ int hugetlb_sysctl_handler(struct ctl_table *, int, struct file *, void __user *, size_t *, loff_t *);
+ int copy_hugetlb_page_range(struct mm_struct *, struct mm_struct *, struct vm_area_struct *);
+-int follow_hugetlb_page(struct mm_struct *, struct vm_area_struct *, struct page **, struct vm_area_struct **, unsigned long *, int *, int);
++int follow_hugetlb_page(struct mm_struct *, struct vm_area_struct *, struct page **, struct vm_area_struct **, unsigned long *, int *, int, int);
+ void unmap_hugepage_range(struct vm_area_struct *, unsigned long, unsigned long);
+ void __unmap_hugepage_range(struct vm_area_struct *, unsigned long, unsigned long);
+ int hugetlb_prefault(struct address_space *, struct vm_area_struct *);
+@@ -122,7 +122,7 @@ static inline unsigned long hugetlb_total_pages(void)
+ 	return 0;
+ }
+ 
+-#define follow_hugetlb_page(m,v,p,vs,a,b,i)	({ BUG(); 0; })
++#define follow_hugetlb_page(m,v,p,vs,a,b,i,w)	({ BUG(); 0; })
+ #define follow_huge_addr(mm, addr, write)	ERR_PTR(-EINVAL)
+ #define copy_hugetlb_page_range(src, dst, vma)	({ BUG(); 0; })
+ #define hugetlb_prefault(mapping, vma)		({ BUG(); 0; })
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index 56fd437..ebbffa0 100644
+--- a/mm/hugetlb.c
++++ b/mm/hugetlb.c
+@@ -609,7 +609,8 @@ int hugetlb_fault(struct mm_struct *mm, struct vm_area_struct *vma,
+ 
+ int follow_hugetlb_page(struct mm_struct *mm, struct vm_area_struct *vma,
+ 			struct page **pages, struct vm_area_struct **vmas,
+-			unsigned long *position, int *length, int i)
++			unsigned long *position, int *length, int i,
++			int write)
+ {
+ 	unsigned long pfn_offset;
+ 	unsigned long vaddr = *position;
+@@ -631,7 +632,7 @@ int follow_hugetlb_page(struct mm_struct *mm, struct vm_area_struct *vma,
+ 			int ret;
+ 
+ 			spin_unlock(&mm->page_table_lock);
+-			ret = hugetlb_fault(mm, vma, vaddr, 0);
++			ret = hugetlb_fault(mm, vma, vaddr, write);
+ 			spin_lock(&mm->page_table_lock);
+ 			if (ret == VM_FAULT_MINOR)
+ 				continue;
+diff --git a/mm/memory.c b/mm/memory.c
+index dfc5f21..67dcecb 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -1068,7 +1068,7 @@ int get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
+ 
+ 		if (is_vm_hugetlb_page(vma)) {
+ 			i = follow_hugetlb_page(mm, vma, pages, vmas,
+-						&start, &len, i);
++						&start, &len, i, write);
+ 			continue;
+ 		}
+ 

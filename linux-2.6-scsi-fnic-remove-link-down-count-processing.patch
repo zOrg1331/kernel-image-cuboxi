@@ -1,0 +1,185 @@
+From: mchristi@redhat.com <mchristi@redhat.com>
+Date: Thu, 11 Dec 2008 10:21:58 -0600
+Subject: [scsi] fnic: remove link down count processing
+Message-id: 12290125182607-git-send-email-mchristi@redhat.com
+O-Subject: [PATCH] RHEL 5.3 fnic: Remove link down count processing
+Bugzilla: 474935
+RH-Acked-by: Rob Evers <revers@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for BZ 474935.
+
+>From Cisco:
+
+This fixes a regression that was introduced in snapshot 6.
+
+This removes the link down count processing that was added in
+snap 6, and sets the lport retry count to a fixed value in fnic,
+instead of picking the value from fw config, since incoming Plogis
+from initiators are not supported in libFC. So, whenever there are
+more than 1 libFC based initiators on the fabric, they keep trying to Plogi
+to each other, but never succeed. So, set the retry count to a
+small value, so that they give up.
+..............
+
+The patch was made and tested by Cisco. The driver is new in 5.3
+and this patch only affects it. I do not have local access to test
+it here. We have been relying on Cisco for testing. I have only
+compile tested the patch.
+
+diff --git a/drivers/scsi/fnic/fnic.h b/drivers/scsi/fnic/fnic.h
+index ec6671e..b70ad06 100644
+--- a/drivers/scsi/fnic/fnic.h
++++ b/drivers/scsi/fnic/fnic.h
+@@ -126,11 +126,6 @@ enum fnic_state {
+ #define FNIC_RQ_MAX 1
+ #define FNIC_CQ_MAX (FNIC_WQ_COPY_MAX + FNIC_WQ_MAX + FNIC_RQ_MAX)
+ 
+-enum fnic_link_state {
+-	FNIC_LINK_DOWN = 0,
+-	FNIC_LINK_UP
+-};
+-
+ /* Per-instance private data structure */
+ struct fnic {
+ 	struct fc_lport *lport;
+@@ -161,8 +156,6 @@ struct fnic {
+ 
+ 	struct fc_frame *flogi;
+ 	struct fc_frame *flogi_resp;
+-	enum fnic_link_state link_state;
+-	u32  link_down_cnt;
+ 	u16 flogi_oxid;
+ 	unsigned long s_id;
+ 	enum fnic_state state;
+diff --git a/drivers/scsi/fnic/fnic_main.c b/drivers/scsi/fnic/fnic_main.c
+index 7d6b378..0f21883 100644
+--- a/drivers/scsi/fnic/fnic_main.c
++++ b/drivers/scsi/fnic/fnic_main.c
+@@ -250,89 +250,37 @@ void fnic_log_q_error(struct fnic *fnic)
+ static void fnic_handle_link_event(struct fnic *fnic)
+ {
+ 	int link_status = vnic_dev_link_status(fnic->vdev);
+-	u32 link_down_cnt = vnic_dev_link_down_cnt(fnic->vdev);
+ 	struct fnic_event *event;
+-	u8 list_was_empty = 0;
++	u8 list_was_empty;
+ 	unsigned long flags;
+-	u8 send_link_up = 0;
+-	u8 send_link_down = 0;
+ 
+ 	FNIC_DEBUG_MAIN(DFX "link %s\n", fnic->fnic_no,
+ 			(link_status ? "up" : "down"));
+ 
+-	spin_lock_irqsave(&fnic->fnic_lock, flags);
+-	if (fnic->in_remove) {
+-		fnic->link_down_cnt = link_down_cnt;
+-		spin_unlock_irqrestore(&fnic->fnic_lock, flags);
++	if (fnic->in_remove)
+ 		return;
+-	}
+ 
+-	/*
+-	 * If link was down, and down event, do nothing
+-	 * If link was down, and up event, send up event
+-	 * if link was up, and down event, send down event
+-	 * If link was up, and up event, and link down cnt matches, do nothing
+-	 * If link was up, and up event, and link down cnt does not match,
+-	 * send down followed by up
+-	 */
+-	if (fnic->link_state == FNIC_LINK_DOWN) {
+-		if (!link_status) {
+-			fnic->link_down_cnt = link_down_cnt;
+-			spin_unlock_irqrestore(&fnic->fnic_lock, flags);
+-			return;
+-		} else
+-			send_link_up = 1;
+-	} else {
+-		if (!link_status) {
+-			send_link_down = 1;
+-		} else if (link_down_cnt != fnic->link_down_cnt) {
+-			send_link_down = 1;
+-			send_link_up = 1;
+-		} else {
+-			fnic->link_down_cnt = link_down_cnt;
+-			spin_unlock_irqrestore(&fnic->fnic_lock, flags);
+-			return;
+-		}
++	event = kmem_cache_alloc(fnic_ev_cache, GFP_ATOMIC);
++	if (!event) {
++		FNIC_DEBUG_MAIN(DFX "Cannot allocate a event, "
++				"cannot indicate link event to FCS\n",
++				fnic->fnic_no);
++		return;
+ 	}
+-	fnic->link_down_cnt = link_down_cnt;
+-	spin_unlock_irqrestore(&fnic->fnic_lock, flags);
+ 
+-	if (send_link_down) {
+-		event = kmem_cache_alloc(fnic_ev_cache, GFP_ATOMIC);
+-		if (!event) {
+-			FNIC_DEBUG_MAIN(DFX "Cannot allocate a event, "
+-					"cannot indicate link down to FCS\n",
+-					fnic->fnic_no);
+-			return;
+-		}
+-		memset(event, 0, sizeof(struct fnic_event));
+-		event->fnic = fnic;
++	/* Pass the event to thread */
++	memset(event, 0, sizeof(struct fnic_event));
++	event->fnic = fnic;
++	event->ev_type = EV_TYPE_LINK_UP;
++	if (!link_status) {
+ 		event->ev_type = EV_TYPE_LINK_DOWN;
+ 		fnic->lport->host_stats.link_failure_count++;
+-
+-		spin_lock_irqsave(&fnic_eventlist_lock, flags);
+-		list_was_empty = list_empty(&fnic_eventlist);
+-		list_add_tail(&event->list, &fnic_eventlist);
+-		spin_unlock_irqrestore(&fnic_eventlist_lock, flags);
+ 	}
+ 
+-	if (send_link_up) {
+-		event = kmem_cache_alloc(fnic_ev_cache, GFP_ATOMIC);
+-		if (!event) {
+-			FNIC_DEBUG_MAIN(DFX "Cannot allocate a event, "
+-					"cannot indicate link up to FCS\n",
+-					fnic->fnic_no);
+-			return;
+-		}
+-		memset(event, 0, sizeof(struct fnic_event));
+-		event->fnic = fnic;
+-		event->ev_type = EV_TYPE_LINK_UP;
+-
+-		spin_lock_irqsave(&fnic_eventlist_lock, flags);
+-		list_was_empty |= list_empty(&fnic_eventlist);
+-		list_add_tail(&event->list, &fnic_eventlist);
+-		spin_unlock_irqrestore(&fnic_eventlist_lock, flags);
+-	}
++	spin_lock_irqsave(&fnic_eventlist_lock, flags);
++	list_was_empty = list_empty(&fnic_eventlist);
++	list_add_tail(&event->list, &fnic_eventlist);
++	spin_unlock_irqrestore(&fnic_eventlist_lock, flags);
+ 
+ 	if (list_was_empty)
+ 		wake_up_process(fnic_thread);
+@@ -732,8 +680,6 @@ static int __devinit fnic_probe(struct pci_dev *pdev,
+ 	fnic->flogi = NULL;
+ 	fnic->flogi_resp = NULL;
+ 	fnic->state = FNIC_IN_FC_MODE;
+-	fnic->link_state = FNIC_LINK_DOWN;
+-	fnic->link_down_cnt = 0;
+ 
+ 	/* Enable hardware stripping of vlan header on ingress */
+ 	fnic_set_nic_cfg(fnic, 0, 0, 0, 0, 0, 0, 1);
+@@ -786,7 +732,7 @@ static int __devinit fnic_probe(struct pci_dev *pdev,
+ 		goto err_out_remove_scsi_host;
+ 	}
+ 
+-	lp->max_retry_count = fnic->config.flogi_retries;
++	lp->max_retry_count = 3;
+ 	lp->service_params = (FCP_SPPF_INIT_FCN | FCP_SPPF_RD_XRDY_DIS |
+ 			      FCP_SPPF_CONF_COMPL);
+ 	if (fnic->config.flags & VFCF_FCP_SEQ_LVL_ERR)

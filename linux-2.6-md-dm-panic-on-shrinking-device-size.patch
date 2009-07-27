@@ -1,0 +1,161 @@
+From: Milan Broz <mbroz@redhat.com>
+Date: Mon, 12 Nov 2007 19:28:01 +0100
+Subject: [md] dm: panic on shrinking device size
+Message-id: 47389B31.5000403@redhat.com
+O-Subject: [RHEL 5.2 PATCH] dm: panic on shrinking device size
+Bugzilla: 360151
+
+RHEL5.2 device mapper: panic on shrinking device size
+Resolves: rhbz#360151
+Patch in -mm  prepared for 2.6.24 and stable.
+
+This patch fixes a panic on shrinking DM device, due to reference
+outside of the DM table.
+
+The problem occurs only if there is outstanding I/O to the removed
+part of the device.
+
+Kernel with fix compiled and tested (reproducer in bugzilla).
+
+Acked-by: Alasdair G Kergon <agk@redhat.com>
+
+diff --git a/drivers/md/dm-ioctl.c b/drivers/md/dm-ioctl.c
+index cd6a184..ff04338 100644
+--- a/drivers/md/dm-ioctl.c
++++ b/drivers/md/dm-ioctl.c
+@@ -1250,21 +1250,17 @@ static int target_message(struct dm_ioctl *param, size_t param_size)
+ 	if (!table)
+ 		goto out_argv;
+ 
+-	if (tmsg->sector >= dm_table_get_size(table)) {
++	ti = dm_table_find_target(table, tmsg->sector);
++	if (!dm_target_is_valid(ti)) {
+ 		DMWARN("Target message sector outside device.");
+ 		r = -EINVAL;
+-		goto out_table;
+-	}
+-
+-	ti = dm_table_find_target(table, tmsg->sector);
+-	if (ti->type->message)
++	} else if (ti->type->message)
+ 		r = ti->type->message(ti, argc, argv);
+ 	else {
+ 		DMWARN("Target type does not support messages");
+ 		r = -EINVAL;
+ 	}
+ 
+- out_table:
+ 	dm_table_put(table);
+  out_argv:
+ 	kfree(argv);
+diff --git a/drivers/md/dm-table.c b/drivers/md/dm-table.c
+index 0b662e9..86357a2 100644
+--- a/drivers/md/dm-table.c
++++ b/drivers/md/dm-table.c
+@@ -187,8 +187,10 @@ static int alloc_targets(struct dm_table *t, unsigned int num)
+ 
+ 	/*
+ 	 * Allocate both the target array and offset array at once.
++	 * Append an empty entry to catch sectors beyond the end of
++	 * the device.
+ 	 */
+-	n_highs = (sector_t *) dm_vcalloc(num, sizeof(struct dm_target) +
++	n_highs = (sector_t *) dm_vcalloc(num + 1, sizeof(struct dm_target) +
+ 					  sizeof(sector_t));
+ 	if (!n_highs)
+ 		return -ENOMEM;
+@@ -857,6 +859,9 @@ struct dm_target *dm_table_get_target(struct dm_table *t, unsigned int index)
+ 
+ /*
+  * Search the btree for the correct target.
++ *
++ * Caller should check returned pointer with dm_target_is_valid()
++ * to trap I/O beyond end of device.
+  */
+ struct dm_target *dm_table_find_target(struct dm_table *t, sector_t sector)
+ {
+diff --git a/drivers/md/dm.c b/drivers/md/dm.c
+index 0743bae..e346c45 100644
+--- a/drivers/md/dm.c
++++ b/drivers/md/dm.c
+@@ -667,13 +667,19 @@ static struct bio *clone_bio(struct bio *bio, sector_t sector,
+ 	return clone;
+ }
+ 
+-static void __clone_and_map(struct clone_info *ci)
++static int __clone_and_map(struct clone_info *ci)
+ {
+ 	struct bio *clone, *bio = ci->bio;
+-	struct dm_target *ti = dm_table_find_target(ci->map, ci->sector);
+-	sector_t len = 0, max = max_io_len(ci->md, ci->sector, ti);
++	struct dm_target *ti;
++	sector_t len = 0, max;
+ 	struct target_io *tio;
+ 
++	ti = dm_table_find_target(ci->map, ci->sector);
++	if (!dm_target_is_valid(ti))
++		return -EIO;
++
++	max = max_io_len(ci->md, ci->sector, ti);
++
+ 	/*
+ 	 * Allocate a target io object.
+ 	 */
+@@ -731,6 +737,9 @@ static void __clone_and_map(struct clone_info *ci)
+ 		do {
+ 			if (offset) {
+ 				ti = dm_table_find_target(ci->map, ci->sector);
++				if (!dm_target_is_valid(ti))
++					return -EIO;
++
+ 				max = max_io_len(ci->md, ci->sector, ti);
+ 
+ 				tio = alloc_tio(ci->md);
+@@ -754,6 +763,8 @@ static void __clone_and_map(struct clone_info *ci)
+ 
+ 		ci->idx++;
+ 	}
++
++	return 0;
+ }
+ 
+ /*
+@@ -762,6 +773,7 @@ static void __clone_and_map(struct clone_info *ci)
+ static void __split_bio(struct mapped_device *md, struct bio *bio)
+ {
+ 	struct clone_info ci;
++	int error = 0;
+ 
+ 	ci.map = dm_get_table(md);
+ 	if (!ci.map) {
+@@ -781,11 +793,11 @@ static void __split_bio(struct mapped_device *md, struct bio *bio)
+ 	ci.idx = bio->bi_idx;
+ 
+ 	start_io_acct(ci.io);
+-	while (ci.sector_count)
+-		__clone_and_map(&ci);
++	while (ci.sector_count && !error)
++		error = __clone_and_map(&ci);
+ 
+ 	/* drop the extra reference count */
+-	dec_pending(ci.io, 0);
++	dec_pending(ci.io, error);
+ 	dm_table_put(ci.map);
+ }
+ /*-----------------------------------------------------------------
+diff --git a/drivers/md/dm.h b/drivers/md/dm.h
+index 52eb2b9..f4251e6 100644
+--- a/drivers/md/dm.h
++++ b/drivers/md/dm.h
+@@ -86,6 +86,11 @@ void dm_put_target_type(struct target_type *t);
+ int dm_target_iterate(void (*iter_func)(struct target_type *tt,
+ 					void *param), void *param);
+ 
++/*
++ * To check the return value from dm_table_find_target().
++ */
++#define dm_target_is_valid(t) ((t)->table)
++
+ /*-----------------------------------------------------------------
+  * Useful inlines.
+  *---------------------------------------------------------------*/

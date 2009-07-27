@@ -1,0 +1,72 @@
+From: Aristeu Rozanski <arozansk@redhat.com>
+Date: Wed, 22 Aug 2007 16:19:55 -0400
+Subject: [char] tty: set pending_signal on return -ERESTARTSYS
+Message-id: 20070822201955.GC13379@redhat.com
+O-Subject: [RHEL5.2 PATCH] tty: set pending_signal() when returning -ERESTARTSYS
+Bugzilla: 253873
+
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=253873
+
+Everytime that ERESTARTSYS is returned pending_signal() must be set to
+avoid leaking it to userspace. This patch fixes job_control() and
+tty_check_change() to do that.
+
+This patch is a backport of 040b6362d58fe9a344e053546c12bf821f6fce99
+
+Tested by me.
+
+Acked-by: Roland McGrath <roland@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+---
+ drivers/char/n_tty.c  |    1 +
+ drivers/char/tty_io.c |    3 ++-
+ include/linux/errno.h |    7 ++++++-
+ 3 files changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/char/n_tty.c b/drivers/char/n_tty.c
+index 603b9ad..9f57353 100644
+--- a/drivers/char/n_tty.c
++++ b/drivers/char/n_tty.c
+@@ -1192,6 +1192,7 @@ static int job_control(struct tty_struct *tty, struct file *file)
+ 			    is_orphaned_pgrp(process_group(current)))
+ 				return -EIO;
+ 			kill_pg(process_group(current), SIGTTIN, 1);
++			set_thread_flag(TIF_SIGPENDING);
+ 			return -ERESTARTSYS;
+ 		}
+ 	}
+diff --git a/drivers/char/tty_io.c b/drivers/char/tty_io.c
+index e3bab3f..5d2ec17 100644
+--- a/drivers/char/tty_io.c
++++ b/drivers/char/tty_io.c
+@@ -1129,7 +1129,8 @@ int tty_check_change(struct tty_struct * tty)
+ 		return 0;
+ 	if (is_orphaned_pgrp(process_group(current)))
+ 		return -EIO;
+-	(void) kill_pg(process_group(current), SIGTTOU, 1);
++	kill_pg(process_group(current), SIGTTOU, 1);
++	set_thread_flag(TIF_SIGPENDING);
+ 	return -ERESTARTSYS;
+ }
+ 
+diff --git a/include/linux/errno.h b/include/linux/errno.h
+index 504cc19..c630b82 100644
+--- a/include/linux/errno.h
++++ b/include/linux/errno.h
+@@ -5,7 +5,12 @@
+ 
+ #ifdef __KERNEL__
+ 
+-/* Should never be seen by user programs */
++/*
++ * These should never be seen by user programs.  To return one of ERESTART*
++ * codes, signal_pending() MUST be set.  Note that ptrace can observe these
++ * at syscall exit tracing, but they will never be left for the debugged user
++ * process to see.
++ */
+ #define ERESTARTSYS	512
+ #define ERESTARTNOINTR	513
+ #define ERESTARTNOHAND	514	/* restart if no handler.. */
+-- 
+1.5.3.5.645.gbb47
+

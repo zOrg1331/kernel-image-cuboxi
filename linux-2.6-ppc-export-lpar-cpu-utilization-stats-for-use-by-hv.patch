@@ -1,0 +1,87 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Tue, 26 Aug 2008 14:41:06 -0400
+Subject: [ppc] export LPAR CPU utilization stats for use by hv
+Message-id: 20080826184106.12189.82753.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.3 439516] Export LPAR CPU utilization stats for use by hypervisor
+Bugzilla: 439516
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=439516
+
+Description:
+===========
+This patch adds OS support to exporting CPU utilization statistics, with
+the goal of permitting the hypervisor to adjust workloads and implement
+energy efficiency policies.
+
+The hypervisor can look at the value in the wait_state_cycles field of
+the VPA for an estimate of how busy dedicated processors are.
+Currently, as the kernel never touches this field, we appear to be
+100% busy.
+
+This patch records the time duration the kernel spends in powersave and
+passes that to the hypervisor to provide a reasonable indication of
+utilisation.
+
+RHEL Version Found:
+================
+RHEL 5.2
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1371092
+
+Upstream Status:
+================
+Committed:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=96366a8d3f17ee964802378d4a1f51fda86f070e
+
+Test Status:
+============
+Tony Breeds <IBM> confirmed the patch works on the test kernel
+
+===============================================================
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+
+Proposed Patch:
+===============
+This patch is based on 2.6.18-105.el5
+
+diff --git a/arch/powerpc/platforms/pseries/setup.c b/arch/powerpc/platforms/pseries/setup.c
+index 32d59c3..acef34e 100644
+--- a/arch/powerpc/platforms/pseries/setup.c
++++ b/arch/powerpc/platforms/pseries/setup.c
+@@ -473,6 +473,7 @@ static void pseries_dedicated_idle_sleep(void)
+ 	unsigned int cpu = smp_processor_id();
+ 	unsigned long start_snooze;
+ 	unsigned long *smt_snooze_delay = &__get_cpu_var(smt_snooze_delay);
++	unsigned long in_purr, out_purr;
+ 
+ 	/*
+ 	 * Indicate to the HV that we are idle. Now would be
+@@ -480,6 +481,7 @@ static void pseries_dedicated_idle_sleep(void)
+ 	 */
+ 	get_lppaca()->idle = 1;
+ 	get_lppaca()->cpuctls_task_attrs = 1;
++	in_purr = mfspr(SPRN_PURR);
+ 
+ 	/*
+ 	 * We come in with interrupts disabled, and need_resched()
+@@ -513,6 +515,8 @@ static void pseries_dedicated_idle_sleep(void)
+ out:
+ 	HMT_medium();
+ 	get_lppaca()->cpuctls_task_attrs = 0;
++	out_purr = mfspr(SPRN_PURR);
++	get_lppaca()->wait_state_cycles += out_purr - in_purr;
+ 	get_lppaca()->idle = 0;
+ }
+ 

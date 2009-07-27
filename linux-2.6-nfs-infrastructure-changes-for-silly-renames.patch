@@ -1,0 +1,219 @@
+From: Steve Dickson <SteveD@redhat.com>
+Date: Wed, 21 Nov 2007 11:30:50 -0500
+Subject: [nfs] infrastructure changes for silly renames
+Message-id: 47445D3A.5010808@RedHat.com
+O-Subject: [RHEL5.2/RHEL5.1-z] [2/5] NFS: silly rename races with umounts
+Bugzilla: 253663
+
+Again more infrastructure changes needed for the next two
+patches.
+
+commit 3062c532ad410fe0e8320566fe2879a396be6701
+Author: Trond Myklebust <Trond.Myklebust@netapp.com>
+Date:   Sat Jul 14 17:36:45 2007 -0400
+
+    NFS: Use dentry->d_time to store the parent directory verifier.
+
+    This will free up the d_fsdata field for other use.
+
+    Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+commit 77a55a1fe8f26f7d022986a599b68002e21d968a
+Author: Chuck Lever <chuck.lever@oracle.com>
+Date:   Mon Sep 24 15:40:11 2007 -0400
+
+    NFS: Eliminate nfs_renew_times()
+
+    The nfs_renew_times() function plants the current time in jiffies in
+    dentry->d_time.  But a call to nfs_renew_times() is always followed by
+    another call that overwrites dentry->d_time.  Get rid of the
+    nfs_renew_times() calls.
+
+    Signed-off-by: Chuck Lever <chuck.lever@oracle.com>
+    Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+commit d75340cc4de5c187fbf0bba234309ca86cf0a2fb
+Author: Trond Myklebust <Trond.Myklebust@netapp.com>
+Date:   Mon Oct 1 21:42:01 2007 -0400
+
+    NFSv4: Fix nfs_atomic_open() to set the verifier on negative dentries too
+
+    Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+diff --git a/fs/nfs/dir.c b/fs/nfs/dir.c
+index 0cf8e85..6d699ea 100644
+--- a/fs/nfs/dir.c
++++ b/fs/nfs/dir.c
+@@ -645,20 +645,6 @@ static inline int nfs_check_verifier(struct inode *dir, struct dentry *dentry)
+ 	return nfs_verify_change_attribute(dir, (unsigned long)dentry->d_fsdata);
+ }
+ 
+-static inline void nfs_set_verifier(struct dentry * dentry, unsigned long verf)
+-{
+-	dentry->d_fsdata = (void *)verf;
+-}
+-
+-/*
+- * Whenever an NFS operation succeeds, we know that the dentry
+- * is valid, so we update the revalidation timestamp.
+- */
+-static inline void nfs_renew_times(struct dentry * dentry)
+-{
+-	dentry->d_time = jiffies;
+-}
+-
+ /*
+  * Return the intent data that applies to this particular path component
+  *
+@@ -782,7 +768,6 @@ static int nfs_lookup_revalidate(struct dentry * dentry, struct nameidata *nd)
+ 	if ((error = nfs_refresh_inode(inode, &fattr)) != 0)
+ 		goto out_bad;
+ 
+-	nfs_renew_times(dentry);
+ 	nfs_set_verifier(dentry, verifier);
+  out_valid:
+ 	unlock_kernel();
+@@ -848,7 +833,6 @@ static void nfs_dentry_iput(struct dentry *dentry, struct inode *inode)
+ 		unlock_kernel();
+ 	}
+ 	/* When creating a negative dentry, we want to renew d_time */
+-	nfs_renew_times(dentry);
+ 	iput(inode);
+ }
+ 
+@@ -937,7 +921,6 @@ no_entry:
+ 			goto out_unlock;
+ 		dentry = res;
+ 	}
+-	nfs_renew_times(dentry);
+ 	nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
+ out_unlock:
+ 	unlock_kernel();
+@@ -1032,8 +1015,6 @@ static struct dentry *nfs_atomic_lookup(struct inode *dir, struct dentry *dentry
+ 		}
+ 	} else if (res != NULL)
+ 		dentry = res;
+-	nfs_renew_times(dentry);
+-	nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
+ out:
+ 	return res;
+ no_open:
+@@ -1075,8 +1056,6 @@ static int nfs_open_revalidate(struct dentry *dentry, struct nameidata *nd)
+ 	lock_kernel();
+ 	verifier = nfs_save_change_attribute(dir);
+ 	ret = nfs4_open_revalidate(dir, dentry, openflags, nd);
+-	if (!ret)
+-		nfs_set_verifier(dentry, verifier);
+ 	unlock_kernel();
+ out:
+ 	dput(parent);
+@@ -1151,7 +1130,6 @@ static struct dentry *nfs_readdir_lookup(nfs_readdir_descriptor_t *desc)
+ 	}
+ 
+ out_renew:
+-	nfs_renew_times(dentry);
+ 	nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
+ 	return dentry;
+ }
+@@ -1218,7 +1196,6 @@ static int nfs_create(struct inode *dir, struct dentry *dentry, int mode,
+ 	nfs_end_data_update(dir);
+ 	if (error != 0)
+ 		goto out_err;
+-	nfs_renew_times(dentry);
+ 	nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
+ 	unlock_kernel();
+ 	return 0;
+@@ -1252,7 +1229,6 @@ nfs_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t rdev)
+ 	nfs_end_data_update(dir);
+ 	if (status != 0)
+ 		goto out_err;
+-	nfs_renew_times(dentry);
+ 	nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
+ 	unlock_kernel();
+ 	return 0;
+@@ -1282,7 +1258,6 @@ static int nfs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
+ 	nfs_end_data_update(dir);
+ 	if (error != 0)
+ 		goto out_err;
+-	nfs_renew_times(dentry);
+ 	nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
+ 	unlock_kernel();
+ 	return 0;
+@@ -1380,7 +1355,6 @@ dentry->d_parent->d_name.name, dentry->d_name.name);
+ 				dir, &qsilly);
+ 	nfs_end_data_update(dir);
+ 	if (!error) {
+-		nfs_renew_times(dentry);
+ 		nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
+ 		d_move(dentry, sdentry);
+ 		error = nfs_async_unlink(dentry);
+@@ -1461,7 +1435,6 @@ static int nfs_unlink(struct inode *dir, struct dentry *dentry)
+ 	spin_unlock(&dcache_lock);
+ 	error = nfs_safe_remove(dentry);
+ 	if (!error) {
+-		nfs_renew_times(dentry);
+ 		nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
+ 	} else if (need_rehash)
+ 		d_rehash(dentry);
+@@ -1691,7 +1664,6 @@ out:
+ 	if (!error) {
+ 		if (!S_ISDIR(old_inode->i_mode))
+ 			d_move(old_dentry, new_dentry);
+-		nfs_renew_times(new_dentry);
+ 		nfs_set_verifier(new_dentry, nfs_save_change_attribute(new_dir));
+ 	}
+ 
+diff --git a/fs/nfs/nfs4proc.c b/fs/nfs/nfs4proc.c
+index 2972d5a..8bf2c61 100644
+--- a/fs/nfs/nfs4proc.c
++++ b/fs/nfs/nfs4proc.c
+@@ -1304,13 +1304,16 @@ nfs4_atomic_open(struct inode *dir, struct dentry *dentry, struct nameidata *nd)
+ 	state = nfs4_do_open(dir, &path, nd->intent.open.flags, &attr, cred);
+ 	put_rpccred(cred);
+ 	if (IS_ERR(state)) {
+-		if (PTR_ERR(state) == -ENOENT)
++		if (PTR_ERR(state) == -ENOENT) {
+ 			d_add(dentry, NULL);
++			nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
++		}
+ 		return (struct dentry *)state;
+ 	}
+ 	res = d_add_unique(dentry, igrab(state->inode));
+ 	if (res != NULL)
+ 		dentry = res;
++	nfs_set_verifier(path.dentry, nfs_save_change_attribute(dir));
+ 	nfs4_intent_set_file(nd, &path, state);
+ 	return res;
+ }
+@@ -1348,6 +1351,7 @@ nfs4_open_revalidate(struct inode *dir, struct dentry *dentry, int openflags, st
+ 		goto out_drop;
+ 	}
+ 	if (state->inode == dentry->d_inode) {
++		nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
+ 		nfs4_intent_set_file(nd, &path, state);
+ 		return 1;
+ 	}
+@@ -1926,6 +1930,7 @@ nfs4_proc_create(struct inode *dir, struct dentry *dentry, struct iattr *sattr,
+ 		goto out;
+ 	}
+ 	d_instantiate(dentry, igrab(state->inode));
++	nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
+ 	if (flags & O_EXCL) {
+ 		struct nfs_fattr fattr;
+ 		status = nfs4_do_setattr(state->inode, &fattr, sattr, state);
+diff --git a/include/linux/nfs_fs.h b/include/linux/nfs_fs.h
+index bca3a1f..90f59da 100644
+--- a/include/linux/nfs_fs.h
++++ b/include/linux/nfs_fs.h
+@@ -276,6 +276,11 @@ static inline int NFS_USE_READDIRPLUS(struct inode *inode)
+ 	return test_bit(NFS_INO_ADVISE_RDPLUS, &NFS_FLAGS(inode));
+ }
+ 
++static inline void nfs_set_verifier(struct dentry * dentry, unsigned long verf)
++{
++	dentry->d_time = verf;
++}
++
+ /**
+  * nfs_save_change_attribute - Returns the inode attribute change cookie
+  * @inode - pointer to inode

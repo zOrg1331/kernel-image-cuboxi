@@ -1,0 +1,113 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Mon, 10 Mar 2008 14:44:10 -0400
+Subject: [net] e1000e: wake on lan fixes
+Message-id: 20080310184410.GX24495@gospo.usersys.redhat.com
+O-Subject: [RHEL5.2 PATCH] e1000e: wake on lan fixes
+Bugzilla: 432343
+
+This patch adds two important features for e1000e from upstream that
+relate to wake on LAN.
+
+This upstream commit fixes WoL that was completely broken on the e1000e
+driver:
+
+commit 23b66e2bc2bcebacab7292d7731b7372065b3f98
+Author: Auke Kok <auke-jan.h.kok@intel.com>
+Date:   Mon Feb 11 09:25:51 2008 -0800
+
+    e1000e: Fix logic reversal keeping link active
+
+    A logic mishap caused the adapter to keep link while we can
+    disable it due to WoL not being active, and vice versa.
+
+While I was trolling through the changelogs I noticed this one too:
+
+commit efb90e43ffee4045efe76de90773c4a5963515a3
+Author: Mitch Williams <mitch.a.williams@intel.com>
+Date:   Tue Jan 29 12:43:02 2008 -0800
+
+    e1000e: add new wakeup cababilities
+
+    Ethtool supports wake-on-ARP and wake-on-link, and so does the hardware
+    supported by e1000e.  This patch just introduces the two.
+
+I can see that it's only a matter of time before someone starts
+complaining that wake on ARP and wake on link aren't supported, so we
+should add that before shipping 5.2.  Ethtool on rhel5 does know how to
+enable these features too, so we aren't wasting our time adding them.
+
+This will resolve BZ 432343.
+
+Acked-by: "John W. Linville" <linville@redhat.com>
+Acked-by: Neil Horman <nhorman@redhat.com>
+
+diff --git a/drivers/net/e1000e/defines.h b/drivers/net/e1000e/defines.h
+index f2175ea..6232c3e 100644
+--- a/drivers/net/e1000e/defines.h
++++ b/drivers/net/e1000e/defines.h
+@@ -63,6 +63,7 @@
+ #define E1000_WUFC_EX   0x00000004 /* Directed Exact Wakeup Enable */
+ #define E1000_WUFC_MC   0x00000008 /* Directed Multicast Wakeup Enable */
+ #define E1000_WUFC_BC   0x00000010 /* Broadcast Wakeup Enable */
++#define E1000_WUFC_ARP  0x00000020 /* ARP Request Packet Wakeup Enable */
+ 
+ /* Extended Device Control */
+ #define E1000_CTRL_EXT_SDP7_DATA 0x00000080 /* Value of SW Defineable Pin 7 */
+diff --git a/drivers/net/e1000e/ethtool.c b/drivers/net/e1000e/ethtool.c
+index fa6ff37..a975dd7 100644
+--- a/drivers/net/e1000e/ethtool.c
++++ b/drivers/net/e1000e/ethtool.c
+@@ -1625,7 +1625,8 @@ static void e1000_get_wol(struct net_device *netdev,
+ 		return;
+ 
+ 	wol->supported = WAKE_UCAST | WAKE_MCAST |
+-			 WAKE_BCAST | WAKE_MAGIC;
++	                 WAKE_BCAST | WAKE_MAGIC |
++	                 WAKE_PHY | WAKE_ARP;
+ 
+ 	/* apply any specific unsupported masks here */
+ 	if (adapter->flags & FLAG_NO_WAKE_UCAST) {
+@@ -1644,6 +1645,10 @@ static void e1000_get_wol(struct net_device *netdev,
+ 		wol->wolopts |= WAKE_BCAST;
+ 	if (adapter->wol & E1000_WUFC_MAG)
+ 		wol->wolopts |= WAKE_MAGIC;
++	if (adapter->wol & E1000_WUFC_LNKC)
++		wol->wolopts |= WAKE_PHY;
++	if (adapter->wol & E1000_WUFC_ARP)
++		wol->wolopts |= WAKE_ARP;
+ }
+ 
+ static int e1000_set_wol(struct net_device *netdev,
+@@ -1651,7 +1656,7 @@ static int e1000_set_wol(struct net_device *netdev,
+ {
+ 	struct e1000_adapter *adapter = netdev_priv(netdev);
+ 
+-	if (wol->wolopts & (WAKE_PHY | WAKE_ARP | WAKE_MAGICSECURE))
++	if (wol->wolopts & WAKE_MAGICSECURE)
+ 		return -EOPNOTSUPP;
+ 
+ 	if (!(adapter->flags & FLAG_HAS_WOL))
+@@ -1668,6 +1673,10 @@ static int e1000_set_wol(struct net_device *netdev,
+ 		adapter->wol |= E1000_WUFC_BC;
+ 	if (wol->wolopts & WAKE_MAGIC)
+ 		adapter->wol |= E1000_WUFC_MAG;
++	if (wol->wolopts & WAKE_PHY)
++		adapter->wol |= E1000_WUFC_LNKC;
++	if (wol->wolopts & WAKE_ARP)
++		adapter->wol |= E1000_WUFC_ARP;
+ 
+ 	return 0;
+ }
+diff --git a/drivers/net/e1000e/netdev.c b/drivers/net/e1000e/netdev.c
+index 94f3a31..f15b1ef 100644
+--- a/drivers/net/e1000e/netdev.c
++++ b/drivers/net/e1000e/netdev.c
+@@ -2024,7 +2024,7 @@ static void e1000_power_down_phy(struct e1000_adapter *adapter)
+ 	u16 mii_reg;
+ 
+ 	/* WoL is enabled */
+-	if (!adapter->wol)
++	if (adapter->wol)
+ 		return;
+ 
+ 	/* non-copper PHY? */

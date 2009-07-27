@@ -1,0 +1,56 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Thu, 11 Oct 2007 14:28:02 -0400
+Subject: [ia64] discontig: show_mem cleanup output
+Message-id: 20071011182051.10308.69407.sendpatchset@sgi-desktop.boston.redhat.com
+O-Subject: [RHEL5.2 PATCH 2/4] ia64 discontig.c:show_mem() cleanup output
+Bugzilla: 221612
+
+# HG changeset patch
+# User Jes Sorensen <jes@sgi.com>
+# Date 1159305416 -25200
+# Node ID ddb47ed6879d5df26dfa39f951ddbe797f4cb726
+# Parent 3be2ec83740492f00bb30e1c33dc56015096a5e2
+[IA64] trim output of show_mem()
+
+Cut the number of lines of memory info output per node from five
+to one line.
+
+Signed-off-by: Jes Sorensen <jes@sgi.com>
+Signed-off-by: Tony Luck <tony.luck@intel.com>
+
+committer: Tony Luck <tony.luck@intel.com> 1159305416 -0700
+
+Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+diff --git a/arch/ia64/mm/discontig.c b/arch/ia64/mm/discontig.c
+index bb0094e..2e958e6 100644
+--- a/arch/ia64/mm/discontig.c
++++ b/arch/ia64/mm/discontig.c
+@@ -551,12 +551,12 @@ void show_mem(void)
+ 	show_free_areas();
+ 	printk(KERN_INFO "Free swap:       %6ldkB\n",
+ 	       nr_swap_pages<<(PAGE_SHIFT-10));
++	printk(KERN_INFO "Node memory in pages:\n");
+ 	for_each_online_pgdat(pgdat) {
+ 		unsigned long present;
+ 		unsigned long flags;
+ 		int shared = 0, cached = 0, reserved = 0;
+ 
+-		printk(KERN_INFO "Node ID: %d\n", pgdat->node_id);
+ 		pgdat_resize_lock(pgdat, &flags);
+ 		present = pgdat->node_present_pages;
+ 		for(i = 0; i < pgdat->node_spanned_pages; i++) {
+@@ -580,10 +580,9 @@ void show_mem(void)
+ 		total_reserved += reserved;
+ 		total_cached += cached;
+ 		total_shared += shared;
+-		printk(KERN_INFO "\t%ld pages of RAM\n", present);
+-		printk(KERN_INFO "\t%d reserved pages\n", reserved);
+-		printk(KERN_INFO "\t%d pages shared\n", shared);
+-		printk(KERN_INFO "\t%d pages swap cached\n", cached);
++		printk(KERN_INFO "Node %4d:  RAM: %11ld, rsvd: %8d, "
++		       "shrd: %10d, swpd: %10d\n", pgdat->node_id,
++		       present, reserved, shared, cached);
+ 	}
+ 	printk(KERN_INFO "%ld pages of RAM\n", total_present);
+ 	printk(KERN_INFO "%d reserved pages\n", total_reserved);

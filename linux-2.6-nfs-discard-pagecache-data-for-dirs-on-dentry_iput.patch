@@ -1,0 +1,106 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 13 Nov 2007 15:54:11 -0500
+Subject: [nfs] discard pagecache data for dirs on dentry_iput
+Message-id: 200711132054.lADKsB8O015525@dantu.usersys.redhat.com
+O-Subject: [PATCH] BZ#364351: NFS: discard pagecache data for dirs on dentry_iput
+Bugzilla: 364351
+
+We've had some people report a spurious problem where cached directory
+contents aren't getting invalidated properly at times on RHEL4. While
+investigating that, I ran across this patch that went upstream a few
+months ago. While I've not gotten to the bottom of the reported problem
+on RHEL4, the reproducer in the following patch description reliably
+fails on both RHEL4 and RHEL5, and the patch fixes it.
+
+Upstream commit is 83672d392f7bcf556f7920d6715e4174d9373ee0. It went
+into Linus' tree this past February. Neil Brown's description and
+patch follows:
+
+-----------------------[snip]------------------------
+
+Try running this script in an NFS mounted directory (Client relatively
+recent - 2.6.18 has the problem as does 2.6.20).
+
+------------------------------------------------------
+
+rm -rf nfstest
+mkdir -p nfstest/dir/innerdir
+
+echo "Hello World!" >nfstest/dir/file
+echo "Hello World!" >nfstest/dir/innerdir/innerfile
+
+sleep 1
+
+chmod -R a+r nfstest
+
+mv nfstest/dir nfstest/newdir
+
+tar -cf nfstest/nfstest.tar -C nfstest newdir
+
+mv nfstest/newdir nfstest/dir
+--------------------------------------------------------
+
+What happens:
+
+The 'chmod -R' does a readdir_plus in each directory and the results
+get cached in the page cache.  It then updates the ctime on each file
+by one second.  When this happens, the post-op attributes are used to
+update the ctime stored on the client to match the value in the kernel.
+
+The 'mv' calls shrink_dcache_parent on the directory tree which
+flushes all the dentries (so a new lookup will be required) but
+doesn't flush the inodes or pagecache.
+
+The 'tar' does a readdir on each directory, but (in the case of
+'innerdir' at least) satisfies it from the pagecache and uses the
+READDIRPLUS data to update all the inodes.  In the case of
+'innerdir/innerfile', the ctime is out of date.
+
+'tar' then calls 'lstat' on innerdir/innerfile getting an old ctime.
+It then opens the file (triggering a GETATTR), reads the content, and
+then calls fstat to see if anything has changed.  It finds that ctime
+has changed and so complains.
+
+The problem seems to be that the cache readdirplus info is kept around
+for too long.
+
+My patch below discards pagecache data for directories when
+dentry_iput is called on them.  This effectively removes the symptom
+which convinces me that I correctly understand the problem.  However
+I'm not convinced that is a proper solution, as there could easily be
+other races that trigger the same problem without being affected by
+this 'fix'.
+
+One possibility would be to require that readdirplus pagecache data be
+only used *once* to instantiate an inode.  Somehow it should then be
+invalidated so that if the dentry subsequently disappears, it will
+cause a new request to the server to fill in the stat data.
+
+Another possibility is to compare the cache_change_attribute on the
+inode with something similar for the readdirplus info and reject the
+info from readdirplus if it is too old.
+
+I haven't tried to implement these and would value other opinions
+before I do.
+
+Thanks,
+NeilBrown
+
+Signed-off-by: Neil Brown <neilb@suse.de>
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+diff --git a/fs/nfs/dir.c b/fs/nfs/dir.c
+index 48452eb..7f254fc 100644
+--- a/fs/nfs/dir.c
++++ b/fs/nfs/dir.c
+@@ -828,6 +828,10 @@ static int nfs_dentry_delete(struct dentry *dentry)
+ static void nfs_dentry_iput(struct dentry *dentry, struct inode *inode)
+ {
+ 	nfs_inode_return_delegation(inode);
++	if (S_ISDIR(inode->i_mode))
++		/* drop any readdir cache as it could easily be old */
++		NFS_I(inode)->cache_validity |= NFS_INO_INVALID_DATA;
++
+ 	if (dentry->d_flags & DCACHE_NFSFS_RENAMED) {
+ 		lock_kernel();
+ 		inode->i_nlink--;

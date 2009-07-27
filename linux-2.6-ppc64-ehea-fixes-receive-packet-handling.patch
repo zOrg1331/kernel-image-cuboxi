@@ -1,0 +1,143 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Thu, 10 Apr 2008 16:45:34 -0400
+Subject: [ppc64] eHEA: fixes receive packet handling
+Message-id: 47FE7C6E.6070806@redhat.com
+O-Subject: Re: [RHEL 5.2 patch] [Regression] eHEA driver fixes receive packet handling and cleanup during unrecoverable error
+Bugzilla: 441364
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=441364
+
+Description:
+===========
+The ehea driver may crash during DLPAR Memory Add operations causing a
+kernel
+panic. The reason is a bug in the driver's receive packet handling.
+Additionally a driver weakness on the send side can cause an interface to
+drop in an unrecoverable error state.
+
+RHEL Version Found:
+================
+RHEL 5.2
+
+kABI Status:
+============
+No symbols were harmed.
+
+Upstream Status:
+================
+Upstream in :
+http://lkml.org/lkml/2008/4/4/170
+
+Test Status:
+============
+Tested using script which does a mem add dlpar on RHEL5.2 snapshot2 on P6
+IH with a HEA. The test is to add mem, sleep for a few minutes, add mem
+again, and so forth.
+The script is run repeatedly (5+ times). Each time, the system drops into
+xmon in
+less than 1 hour(the sleep time between each dlpar is 6m, so it's about 10
+mem
+add dlpar in 1 hour).
+
+Test passed with patch.
+
+===============================================================
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+---------------
+
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/drivers/net/ehea/ehea.h b/drivers/net/ehea/ehea.h
+index 985d6e8..1ff9023 100644
+--- a/drivers/net/ehea/ehea.h
++++ b/drivers/net/ehea/ehea.h
+@@ -41,7 +41,7 @@
+ #include "inet_lro.h"
+ 
+ #define DRV_NAME	"ehea"
+-#define DRV_VERSION	"EHEA_0076-03"
++#define DRV_VERSION	"EHEA_0076-05"
+ 
+ /* eHEA capability flags */
+ #define DLPAR_PORT_ADD_REM 1
+@@ -372,6 +372,7 @@ struct ehea_port_res {
+ 	struct ehea_q_skb_arr rq2_skba;
+ 	struct ehea_q_skb_arr rq3_skba;
+ 	struct ehea_q_skb_arr sq_skba;
++	int sq_skba_size;
+ 	spinlock_t netif_queue;
+ 	int queue_stopped;
+ 	int swqe_refill_th;
+diff --git a/drivers/net/ehea/ehea_main.c b/drivers/net/ehea/ehea_main.c
+index 59cd37c..eeba0ef 100644
+--- a/drivers/net/ehea/ehea_main.c
++++ b/drivers/net/ehea/ehea_main.c
+@@ -184,7 +184,12 @@ static void ehea_refill_rq1(struct ehea_port_res *pr, int index, int nr_of_wqes)
+ 	pr->rq1_skba.os_skbs = 0;
+ 
+ 	if (unlikely(test_bit(__EHEA_STOP_XFER, &ehea_driver_flags))) {
+-		pr->rq1_skba.index = index;
++/*
++ * The parameter "index" is not valid in case ehea_refill_rq1() is
++ * called with (nr_of_wqes=0). Thus "rq1_skba.index" must not be updated.
++ */
++		if (nr_of_wqes > 0)
++			pr->rq1_skba.index = index;
+ 		pr->rq1_skba.os_skbs = fill_wqes;
+ 		return;
+ 	}
+@@ -1305,7 +1310,9 @@ static int ehea_init_port_res(struct ehea_port *port, struct ehea_port_res *pr,
+ 			  init_attr->act_nr_rwqes_rq2,
+ 			  init_attr->act_nr_rwqes_rq3);
+ 
+-	ret = ehea_init_q_skba(&pr->sq_skba, init_attr->act_nr_send_wqes + 1);
++	pr->sq_skba_size = init_attr->act_nr_send_wqes + 1;
++
++	ret = ehea_init_q_skba(&pr->sq_skba, pr->sq_skba_size);
+ 	ret |= ehea_init_q_skba(&pr->rq1_skba, init_attr->act_nr_rwqes_rq1 + 1);
+ 	ret |= ehea_init_q_skba(&pr->rq2_skba, init_attr->act_nr_rwqes_rq2 + 1);
+ 	ret |= ehea_init_q_skba(&pr->rq3_skba, init_attr->act_nr_rwqes_rq3 + 1);
+@@ -2419,6 +2426,31 @@ void ehea_purge_sq(struct ehea_qp *orig_qp)
+ 	}
+ }
+ 
++/*
++ * ehea_flush_sq() ensures that all elements on the send queues
++ * have been processed by the HW before the HW queues are stopped.
++ * After about 100ms the function will return control to the caller
++ * function in any case.
++ */
++
++void ehea_flush_sq(struct ehea_port *port)
++{
++	int i;
++
++	for (i = 0; i < port->num_def_qps + port->num_add_tx_qps; i++) {
++		struct ehea_port_res *pr = &port->port_res[i];
++		int swqe_max = pr->sq_skba_size - 2 - pr->swqe_ll_count;
++		int k = 0;
++		while (atomic_read(&pr->swqe_avail) < swqe_max) {
++			msleep(5);
++			if (++k == 20) {
++				WARN_ON(1);
++				break;
++			}
++		}
++	}
++}
++
+ int ehea_stop_qps(struct net_device *dev)
+ {
+ 	struct ehea_port *port = netdev_priv(dev);
+@@ -2657,6 +2689,7 @@ static void ehea_rereg_mrs(void *data)
+ 					if (dev->flags & IFF_UP) {
+ 						down(&port->port_lock);
+ 						netif_stop_queue(dev);
++						ehea_flush_sq(port);
+ 						ret = ehea_stop_qps(dev);
+ 						if (ret) {
+ 							up(&port->port_lock);

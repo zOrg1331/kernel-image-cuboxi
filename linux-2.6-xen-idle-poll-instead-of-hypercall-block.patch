@@ -1,0 +1,191 @@
+From: Markus Armbruster <armbru@redhat.com>
+Date: Wed, 2 Jan 2008 16:34:43 +0100
+Subject: [xen] idle=poll instead of hypercall block
+Message-id: 87wsqsutpo.fsf@pike.pond.sub.org
+O-Subject: [PATCH RHEL-5.2] 416141: idle=poll
+Bugzilla: 416141
+
+This patch adds a idle=poll kernel parameter, which makes the kernel
+use a polling loop rather than a hypercall to block.  This is useful
+to profile the amount of sleep cycles when using xenoprof.
+
+This is actually an attempt to salvage a possibly useful part from the
+shipwrecked bug 241982.
+
+The patch has been tested as part of various incarnations of bug
+241982's patch.  It hasn't changed along the way.  It's been upstream
+for a year.
+
+In my personal opinion, RHEL-5's xenoprof is a lost cause, and adding
+features to it feels like putting lipstick on a pig.  But the lipstick
+is fully acked, so why not stick to the proper protocol: please ACK or
+NACK.
+
+xen-unstable.hg changesets trivially rediffed:
+13213:bf25488db8eb
+13217:338ceb7b1f09
+
+Acked-by: Bill Burns <bburns@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+
+diff --git a/arch/i386/kernel/process-xen.c b/arch/i386/kernel/process-xen.c
+index 6cad288..11522ba 100644
+--- a/arch/i386/kernel/process-xen.c
++++ b/arch/i386/kernel/process-xen.c
+@@ -96,8 +96,24 @@ void enable_hlt(void)
+ 
+ EXPORT_SYMBOL(enable_hlt);
+ 
+-/* XXX XEN doesn't use default_idle(), poll_idle(). Use xen_idle() instead. */
+-void xen_idle(void)
++/*
++ * On SMP it's slightly faster (but much more power-consuming!)
++ * to poll the ->work.need_resched flag instead of waiting for the
++ * cross-CPU IPI to arrive. Use this option with caution.
++ */
++static void poll_idle(void)
++{
++	local_irq_enable();
++
++	asm volatile(
++		"2:"
++		"testl %0, %1;"
++		"rep; nop;"
++		"je 2b;"
++		: : "i"(_TIF_NEED_RESCHED), "m" (current_thread_info()->flags));
++}
++
++static void xen_idle(void)
+ {
+ 	local_irq_disable();
+ 
+@@ -148,17 +164,22 @@ void cpu_idle(void)
+ 	/* endless idle loop with no priority at all */
+ 	while (1) {
+ 		while (!need_resched()) {
++			void (*idle)(void);
+ 
+ 			if (__get_cpu_var(cpu_idle_state))
+ 				__get_cpu_var(cpu_idle_state) = 0;
+ 
+ 			rmb();
++			idle = pm_idle;
++
++			if (!idle)
++				idle = xen_idle;
+ 
+ 			if (cpu_is_offline(cpu))
+ 				play_dead();
+ 
+ 			__get_cpu_var(irq_stat).idle_timestamp = jiffies;
+-			xen_idle();
++			idle();
+ 		}
+ 		preempt_enable_no_resched();
+ 		schedule();
+@@ -194,9 +215,22 @@ void cpu_idle_wait(void)
+ }
+ EXPORT_SYMBOL_GPL(cpu_idle_wait);
+ 
+-/* XXX XEN doesn't use mwait_idle(), select_idle_routine(), idle_setup(). */
+-/* Always use xen_idle() instead. */
+-void __devinit select_idle_routine(const struct cpuinfo_x86 *c) {}
++void __devinit select_idle_routine(const struct cpuinfo_x86 *c)
++{
++}
++
++static int __init idle_setup (char *str)
++{
++	if (!strncmp(str, "poll", 4)) {
++		printk("using polling idle threads.\n");
++		pm_idle = poll_idle;
++	}
++
++	boot_option_idle_override = 1;
++	return 1;
++}
++
++__setup("idle=", idle_setup);
+ 
+ void show_regs(struct pt_regs * regs)
+ {
+diff --git a/arch/x86_64/kernel/process-xen.c b/arch/x86_64/kernel/process-xen.c
+index fc34b29..4d40a58 100644
+--- a/arch/x86_64/kernel/process-xen.c
++++ b/arch/x86_64/kernel/process-xen.c
+@@ -111,8 +111,26 @@ void exit_idle(void)
+ 	__exit_idle();
+ }
+ 
+-/* XXX XEN doesn't use default_idle(), poll_idle(). Use xen_idle() instead. */
+-void xen_idle(void)
++/*
++ * On SMP it's slightly faster (but much more power-consuming!)
++ * to poll the ->need_resched flag instead of waiting for the
++ * cross-CPU IPI to arrive. Use this option with caution.
++ */
++static void poll_idle(void)
++{
++	local_irq_enable();
++
++	asm volatile(
++		"2:"
++		"testl %0,%1;"
++		"rep; nop;"
++		"je 2b;"
++		: :
++		"i" (_TIF_NEED_RESCHED),
++		"m" (current_thread_info()->flags));
++}
++
++static void xen_idle(void)
+ {
+ 	local_irq_disable();
+ 
+@@ -155,14 +173,18 @@ void cpu_idle (void)
+ 	/* endless idle loop with no priority at all */
+ 	while (1) {
+ 		while (!need_resched()) {
++			void (*idle)(void);
++
+ 			if (__get_cpu_var(cpu_idle_state))
+ 				__get_cpu_var(cpu_idle_state) = 0;
+ 			rmb();
+-			
++			idle = pm_idle;
++			if (!idle)
++				idle = xen_idle;
+ 			if (cpu_is_offline(smp_processor_id()))
+ 				play_dead();
+ 			enter_idle();
+-			xen_idle();
++			idle();
+ 			__exit_idle();
+ 		}
+ 
+@@ -201,9 +223,22 @@ void cpu_idle_wait(void)
+ }
+ EXPORT_SYMBOL_GPL(cpu_idle_wait);
+ 
+-/* XXX XEN doesn't use mwait_idle(), select_idle_routine(), idle_setup(). */
+-/* Always use xen_idle() instead. */
+-void __cpuinit select_idle_routine(const struct cpuinfo_x86 *c) {}
++void __cpuinit select_idle_routine(const struct cpuinfo_x86 *c) 
++{
++}
++
++static int __init idle_setup (char *str)
++{
++	if (!strncmp(str, "poll", 4)) {
++		printk("using polling idle threads.\n");
++		pm_idle = poll_idle;
++	}
++
++	boot_option_idle_override = 1;
++	return 1;
++}
++
++__setup("idle=", idle_setup);
+ 
+ /* Prints also some state that isn't saved in the pt_regs */ 
+ void __show_regs(struct pt_regs * regs)

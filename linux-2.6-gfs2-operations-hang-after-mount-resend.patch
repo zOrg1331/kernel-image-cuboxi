@@ -1,0 +1,83 @@
+From: Bob Peterson <rpeterso@redhat.com>
+Subject: [PATCH][RHEL5.1][GFS2][bz276631] GFS2: operations hang after 	mount--RESEND
+Date: Mon, 17 Sep 2007 08:47:31 -0500
+Bugzilla: 276631
+Message-Id: <1190036851.5632.34.camel@technetium.msp.redhat.com>
+Changelog: [gfs2] operations hang after mount--RESEND
+
+
+The problem boiled down to a race between the gdlm_init_threads()
+function initializing thread1 and its setting of blist = 1.
+Essentially, "if (current == ls->thread1)" was checked by the thread
+before the thread creator set ls->thread1.
+
+Since thread 1 is the only lock_dlm thread allowed to work on the
+blocking queue, and since neither thread thought it was thread 1, no one
+was working on the queue.  So blocking locks were never satisfied.
+
+This patch fixes the race by starting the lock_dlm threads with
+wrapper functions that select the correct blist value.
+I've done more than 2000 iterations of the loop that was recreating
+the failure and the problem does not occur with the patch.
+--
+Signed-off-by: Bob Peterson <rpeterso@redhat.com> 
+--
+diff -pur a/fs/gfs2/locking/dlm/thread.c b/fs/gfs2/locking/dlm/thread.c
+--- a/fs/gfs2/locking/dlm/thread.c	2007-09-13 17:33:58.000000000 -0500
++++ b/fs/gfs2/locking/dlm/thread.c	2007-09-14 09:16:07.000000000 -0500
+@@ -268,20 +268,16 @@ static inline int check_drop(struct gdlm
+ 	return 0;
+ }
+ 
+-static int gdlm_thread(void *data)
++static int gdlm_thread(void *data, int blist)
+ {
+ 	struct gdlm_ls *ls = (struct gdlm_ls *) data;
+ 	struct gdlm_lock *lp = NULL;
+-	int blist = 0;
+ 	uint8_t complete, blocking, submit, drop;
+ 	DECLARE_WAITQUEUE(wait, current);
+ 
+ 	/* Only thread1 is allowed to do blocking callbacks since gfs
+ 	   may wait for a completion callback within a blocking cb. */
+ 
+-	if (current == ls->thread1)
+-		blist = 1;
+-
+ 	while (!kthread_should_stop()) {
+ 		set_current_state(TASK_INTERRUPTIBLE);
+ 		add_wait_queue(&ls->thread_wait, &wait);
+@@ -333,12 +329,22 @@ static int gdlm_thread(void *data)
+ 	return 0;
+ }
+ 
++static int gdlm_thread1(void *data)
++{
++	return gdlm_thread(data, 1);
++}
++
++static int gdlm_thread2(void *data)
++{
++	return gdlm_thread(data, 0);
++}
++
+ int gdlm_init_threads(struct gdlm_ls *ls)
+ {
+ 	struct task_struct *p;
+ 	int error;
+ 
+-	p = kthread_run(gdlm_thread, ls, "lock_dlm1");
++	p = kthread_run(gdlm_thread1, ls, "lock_dlm1");
+ 	error = IS_ERR(p);
+ 	if (error) {
+ 		log_error("can't start lock_dlm1 thread %d", error);
+@@ -346,7 +352,7 @@ int gdlm_init_threads(struct gdlm_ls *ls
+ 	}
+ 	ls->thread1 = p;
+ 
+-	p = kthread_run(gdlm_thread, ls, "lock_dlm2");
++	p = kthread_run(gdlm_thread2, ls, "lock_dlm2");
+ 	error = IS_ERR(p);
+ 	if (error) {
+ 		log_error("can't start lock_dlm2 thread %d", error);
+

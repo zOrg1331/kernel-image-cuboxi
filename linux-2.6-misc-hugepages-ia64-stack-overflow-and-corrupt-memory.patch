@@ -1,0 +1,104 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Mon, 24 Nov 2008 18:50:01 -0500
+Subject: [misc] hugepages: ia64 stack overflow and corrupt memory
+Message-id: 1227570601.22152.185.camel@dhcp-100-19-198.bos.redhat.com
+O-Subject: [RHEL5-U3 patch] prevent kernel stack overflow and memory corruption when allocating hugepages on IA64.
+Bugzilla: 472802
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+RH-Acked-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Back in RHEL5-U2 we took patches from IBM to resolve problems allocating
+hugepages from memoryless nodes and nodes with unequal amounts of
+memory.
+
+-----------------------------------------------------------------------
+* Mon Jan 07 2008 Don Zickus <dzickus@redhat.com> [2.6.18-63.el5]
+ - [ppc64] unequal allocation of hugepages (Scott Moser ) [239790]
+ - [mm] fix hugepage allocation with memoryless nodes (Scott Moser
+       [239790]
+ - [mm] make compound page destructor handling explicit (Scott Moser )
+           [239790].
+------------------------------------------------------------------------
+
+One of these patches added function alloc_pages_thisnode() to gfp.h so
+that we could restrict hugepages allocation from the specified node.
+The alloc_pages_thisnode() routine adds a "struct zonelist" on the
+kernel stack.  Since the IA64 kernel is built with CONFIG_NODES_SHIFT=10
+the size of the "struct zone" is 32KB while the size of the kernel stack
+is only 2 pages or 32KB.  The first thing alloc_pages_thisnode() is
+subtract 32KB from the KSP which overflow the kernel stack and corrupts
+whatever lies at the lower address.
+
+-------------------------------------------------------------------------
+static inline struct page *alloc_pages_thisnode(int nid, gfp_t gfp_mask,
+                                                unsigned int order)
+{
+        struct zonelist *zl;
+        struct zonelist thisnode_zl;
+        int i, j;
+-------------------------------------------------------------------------
+
+All you have to do is "echo xxx > /proc/sys/vm/nr_hugepages" on an IA64
+system running RHEL5-U2 or later and the system eventually panics when
+the memory below the KSP gets corrupted and that memory matters to
+someone.  Other architectures are not affected because they are not
+built with such large zonelists.
+
+The attached patch fixes the problem by kmalloc()'ng the "struct
+zonelist" and kfree()'ng it when its done rather than allocating it on
+the kernel stack.
+
+Fixes BZ472802, tested on IA64 and x86_64.
+
+diff --git a/include/linux/gfp.h b/include/linux/gfp.h
+index f35b414..58a8607 100644
+--- a/include/linux/gfp.h
++++ b/include/linux/gfp.h
+@@ -6,6 +6,8 @@
+ #include <linux/linkage.h>
+ 
+ struct vm_area_struct;
++static inline void *kmalloc(size_t size, gfp_t flags);
++extern void kfree(const void *);
+ 
+ /*
+  * GFP bitmasks..
+@@ -113,8 +115,9 @@ static inline struct page *alloc_pages_thisnode(int nid, gfp_t gfp_mask,
+ 						unsigned int order)
+ {
+ 	struct zonelist *zl;
+-	struct zonelist thisnode_zl;
++	struct zonelist *thisnode_zl;
+ 	int i, j;
++	struct page *hugepage = NULL;
+ 
+ 	if (unlikely(order >= MAX_ORDER))
+ 		return NULL;
+@@ -131,14 +134,22 @@ static inline struct page *alloc_pages_thisnode(int nid, gfp_t gfp_mask,
+ 	if (zl->zones[0]->zone_pgdat->node_id != nid)
+ 		return NULL;
+ 
++	thisnode_zl = (struct zonelist *)kmalloc(sizeof(struct zonelist), GFP_ATOMIC);
++	if (!thisnode_zl)
++		return NULL;
++
+ 	/* make zonelist with every zone on this node and null terminate */
+ 	for (i = 0, j = 0; zl->zones[i] != NULL; i++) {
+ 		if (zl->zones[i]->zone_pgdat->node_id == nid)
+-			thisnode_zl.zones[j++] = zl->zones[i];
++			thisnode_zl->zones[j++] = zl->zones[i];
+ 	}
+-	thisnode_zl.zones[j] = NULL;
++	thisnode_zl->zones[j] = NULL;
++
++	hugepage = __alloc_pages(gfp_mask, order, thisnode_zl);
++	kfree(thisnode_zl);
++
+ 
+-	return __alloc_pages(gfp_mask, order, &thisnode_zl);
++	return hugepage;
+ }
+ 
+ static inline struct page *alloc_pages_node(int nid, gfp_t gfp_mask,

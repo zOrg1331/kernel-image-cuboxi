@@ -1,0 +1,81 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [PATCH RHEL5.1] bz232004 [ppc] Disable PCI-e completion timeouts on 	I/O Adapters
+Date: Tue, 31 Jul 2007 12:40:24 -0400 (EDT)
+Bugzilla: 232004
+Message-Id: <Pine.LNX.4.64.0707311238590.30310@squad5-lp1.lab.boston.redhat.com>
+Changelog: [ppc] Disable PCI-e completion timeouts on I/O Adapters
+
+
+RHBZ#: 232004
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=232004
+
+Description:
+------------
+This fix is needed for supporting Intel-based 10/100Mb/1Gb Ethernet
+PCI-Express adapters on p6 systems.  This fixes an issue regarding the
+PCIe IO completion timing on power systems. The direct impact of the issue
+is DMA error and data corruption. The problem exists today and will
+surface much more seriously when the adapter is to be operating in the
+PCIe IO drawers by end of 2007.
+
+This patch is a workaround of this problem. It is proven by both Intel and
+IBM  that by disabling the completion timeout the problem is avoided and
+there is no data corruption any more.
+
+RHEL Version Found:
+-------------------
+This is a bug found in RHEL5u1 kernel 2.6.18-36.el5
+
+Upstream Status:
+----------------
+This patch has been submitted to netdev mailing list at [1]. It represents
+a workaround for the issue.  A more comprehensive patch will likely be
+applied upstream [2], but this will workaround will be fine for RHEL.
+
+Test Status:
+------------
+To ensure cross-platform build, this code has been built with brew
+--scratch against a 2.6.18-36.el5 kernel and is available at [3].
+
+Both Intel and IBM have verirfied that this patch fixes the problem.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+--
+[1] http://lists.openwall.net/netdev/2007/05/16/51
+[2] http://article.gmane.org/gmane.linux.network/67432
+
+Index: b/drivers/net/e1000/e1000_hw.c
+===================================================================
+--- a/drivers/net/e1000/e1000_hw.c
++++ b/drivers/net/e1000/e1000_hw.c
+@@ -1018,6 +1018,13 @@ e1000_init_hw(struct e1000_hw *hw)
+         break;
+     }
+ 
++#if defined(CONFIG_PPC64) || defined(CONFIG_PPC)
++    if (hw->mac_type == e1000_82571) {
++        uint32_t gcr = E1000_READ_REG(hw, GCR);
++        gcr |= E1000_GCR_DISABLE_TIMEOUT_MECHANISM;
++        E1000_WRITE_REG(hw, GCR, gcr);
++    }
++#endif
+ 
+     if (hw->mac_type == e1000_82573) {
+         uint32_t gcr = E1000_READ_REG(hw, GCR);
+Index: b/drivers/net/e1000/e1000_hw.h
+===================================================================
+--- a/drivers/net/e1000/e1000_hw.h
++++ b/drivers/net/e1000/e1000_hw.h
+@@ -2207,6 +2207,7 @@ struct e1000_host_command_info {
+ #define PCI_EX_82566_SNOOP_ALL PCI_EX_NO_SNOOP_ALL
+ 
+ #define E1000_GCR_L1_ACT_WITHOUT_L0S_RX 0x08000000
++#define E1000_GCR_DISABLE_TIMEOUT_MECHANISM 0x80000000
+ /* Function Active and Power State to MNG */
+ #define E1000_FACTPS_FUNC0_POWER_STATE_MASK         0x00000003
+ #define E1000_FACTPS_LAN0_VALID                     0x00000004
+

@@ -1,0 +1,116 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Thu, 11 Oct 2007 14:27:57 -0400
+Subject: [ia64] show_mem printk cleanup
+Message-id: 20071011182046.10308.89062.sendpatchset@sgi-desktop.boston.redhat.com
+O-Subject: [RHEL5.2 PATCH 1/4] ia64 show_mem() printk cleanup
+Bugzilla: 221612
+
+# HG changeset patch
+# User Jes Sorensen <jes@sgi.com>
+# Date 1159305354 -25200
+# Node ID 3be2ec83740492f00bb30e1c33dc56015096a5e2
+# Parent 9147b614299e3feef2a370f10c31ab3b28bd114e
+[IA64] show_mem() printk levels
+
+Use the default sysrq printk level for printing show_mem() output both
+for disconfig and contig versions. This is consistent with the printk
+level used on other architectures (well ia32 at least).
+
+Signed-off-by: Jes Sorensen <jes@sgi.com>
+Signed-off-by: Tony Luck <tony.luck@intel.com>
+
+committer: Tony Luck <tony.luck@intel.com> 1159305354 -0700
+
+Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+diff --git a/arch/ia64/mm/contig.c b/arch/ia64/mm/contig.c
+index e004143..537c2f3 100644
+--- a/arch/ia64/mm/contig.c
++++ b/arch/ia64/mm/contig.c
+@@ -41,10 +41,11 @@ show_mem (void)
+ 	int i, total = 0, reserved = 0;
+ 	int shared = 0, cached = 0;
+ 
+-	printk("Mem-info:\n");
++	printk(KERN_INFO "Mem-info:\n");
+ 	show_free_areas();
+ 
+-	printk("Free swap:       %6ldkB\n", nr_swap_pages<<(PAGE_SHIFT-10));
++	printk(KERN_INFO "Free swap:       %6ldkB\n",
++	       nr_swap_pages<<(PAGE_SHIFT-10));
+ 	i = max_mapnr;
+ 	for (i = 0; i < max_mapnr; i++) {
+ 		if (!pfn_valid(i)) {
+@@ -63,12 +64,12 @@ show_mem (void)
+ 		else if (page_count(mem_map + i))
+ 			shared += page_count(mem_map + i) - 1;
+ 	}
+-	printk("%d pages of RAM\n", total);
+-	printk("%d reserved pages\n", reserved);
+-	printk("%d pages shared\n", shared);
+-	printk("%d pages swap cached\n", cached);
+-	printk("%ld pages in page table cache\n",
+-		pgtable_quicklist_total_size());
++	printk(KERN_INFO "%d pages of RAM\n", total);
++	printk(KERN_INFO "%d reserved pages\n", reserved);
++	printk(KERN_INFO "%d pages shared\n", shared);
++	printk(KERN_INFO "%d pages swap cached\n", cached);
++	printk(KERN_INFO "%ld pages in page table cache\n",
++	       pgtable_quicklist_total_size());
+ }
+ 
+ /* physical address where the bootmem map is located */
+diff --git a/arch/ia64/mm/discontig.c b/arch/ia64/mm/discontig.c
+index a8de559..bb0094e 100644
+--- a/arch/ia64/mm/discontig.c
++++ b/arch/ia64/mm/discontig.c
+@@ -547,15 +547,16 @@ void show_mem(void)
+ 	unsigned long total_present = 0;
+ 	pg_data_t *pgdat;
+ 
+-	printk("Mem-info:\n");
++	printk(KERN_INFO "Mem-info:\n");
+ 	show_free_areas();
+-	printk("Free swap:       %6ldkB\n", nr_swap_pages<<(PAGE_SHIFT-10));
++	printk(KERN_INFO "Free swap:       %6ldkB\n",
++	       nr_swap_pages<<(PAGE_SHIFT-10));
+ 	for_each_online_pgdat(pgdat) {
+ 		unsigned long present;
+ 		unsigned long flags;
+ 		int shared = 0, cached = 0, reserved = 0;
+ 
+-		printk("Node ID: %d\n", pgdat->node_id);
++		printk(KERN_INFO "Node ID: %d\n", pgdat->node_id);
+ 		pgdat_resize_lock(pgdat, &flags);
+ 		present = pgdat->node_present_pages;
+ 		for(i = 0; i < pgdat->node_spanned_pages; i++) {
+@@ -579,18 +580,18 @@ void show_mem(void)
+ 		total_reserved += reserved;
+ 		total_cached += cached;
+ 		total_shared += shared;
+-		printk("\t%ld pages of RAM\n", present);
+-		printk("\t%d reserved pages\n", reserved);
+-		printk("\t%d pages shared\n", shared);
+-		printk("\t%d pages swap cached\n", cached);
++		printk(KERN_INFO "\t%ld pages of RAM\n", present);
++		printk(KERN_INFO "\t%d reserved pages\n", reserved);
++		printk(KERN_INFO "\t%d pages shared\n", shared);
++		printk(KERN_INFO "\t%d pages swap cached\n", cached);
+ 	}
+-	printk("%ld pages of RAM\n", total_present);
+-	printk("%d reserved pages\n", total_reserved);
+-	printk("%d pages shared\n", total_shared);
+-	printk("%d pages swap cached\n", total_cached);
+-	printk("Total of %ld pages in page table cache\n",
+-		pgtable_quicklist_total_size());
+-	printk("%d free buffer pages\n", nr_free_buffer_pages());
++	printk(KERN_INFO "%ld pages of RAM\n", total_present);
++	printk(KERN_INFO "%d reserved pages\n", total_reserved);
++	printk(KERN_INFO "%d pages shared\n", total_shared);
++	printk(KERN_INFO "%d pages swap cached\n", total_cached);
++	printk(KERN_INFO "Total of %ld pages in page table cache\n",
++	       pgtable_quicklist_total_size());
++	printk(KERN_INFO "%d free buffer pages\n", nr_free_buffer_pages());
+ }
+ 
+ /**

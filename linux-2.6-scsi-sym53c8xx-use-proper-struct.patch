@@ -1,0 +1,76 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Wed, 27 Feb 2008 13:43:16 -0500
+Subject: [scsi] sym53c8xx: use proper struct
+Message-id: 47C5AF44.2080100@redhat.com
+O-Subject: Re: [RHEL 5.2 PATCH 2/2] Corrects sym53c8xx driver to use proper struct.
+Bugzilla: 434857
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=434857
+
+Overview:
+
+Corrects the issue with sym2 driver using shost_data when it should have
+been using hostdata.
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+  <meta content="text/html;charset=ISO-8859-1" http-equiv="Content-Type">
+</head>
+<body bgcolor="#ffffff" text="#000000">
+RHBZ#:<br>
+------<br>
+<a class="moz-txt-link-freetext"
+ href="https://bugzilla.redhat.com/show_bug.cgi?id=434857">https://bugzilla.redhat.com/show_bug.cgi?id=434857</a>
+<br>
+<br>
+Overview:<br>
+<meta http-equiv="CONTENT-TYPE" content="text/html; charset=utf-8">
+<title></title>
+<meta name="GENERATOR" content="OpenOffice.org 2.3  (Linux)">
+<style type="text/css">
+	<!--
+		@page { size: 8.5in 11in; margin: 0.79in }
+		P { margin-bottom: 0.08in }
+	-->
+	</style><br>
+Corrects the issue with sym2 driver using shost_data when it should
+have been
+using hostdata.<br>
+<br>
+</body>
+</html>
+
+Subject: rhel5.2: sym2 driver use correct hostdata pointer
+
+From: Mike Anderson <andmike@linux.vnet.ibm.com>
+
+Correct issue with sym2 driver using shost_data when it should have been
+using hostdata.
+
+Signed-off-by: Mike Anderson <andmike@linux.vnet.ibm.com>
+
+diff --git a/drivers/scsi/sym53c8xx_2/sym_glue.c b/drivers/scsi/sym53c8xx_2/sym_glue.c
+index 8a3abc9..cba2060 100644
+--- a/drivers/scsi/sym53c8xx_2/sym_glue.c
++++ b/drivers/scsi/sym53c8xx_2/sym_glue.c
+@@ -740,7 +740,7 @@ static int sym_eh_handler(int op, char *opname, struct scsi_cmnd *cmd)
+  	 */
+ #define WAIT_FOR_PCI_RECOVERY  35
+ 	if (pdev->error_state != pci_channel_io_normal) {
+-		struct host_data *hostdata = host->shost_data;
++		struct host_data *hostdata = shost_priv(host);
+ 		int finished_reset = 0;
+ 		init_completion(&eh_done);
+ 		spin_lock_irq(host->host_lock);
+@@ -2106,7 +2106,7 @@ static void sym2_io_resume(struct pci_dev *pdev)
+ {
+ 	struct sym_hcb *np = pci_get_drvdata(pdev);
+ 	struct Scsi_Host *shost = np->s.host;
+-	struct host_data *hostdata = shost->shost_data;
++	struct host_data *hostdata = shost_priv(shost);
+ 
+ 	spin_lock_irq(shost->host_lock);
+ 	if (hostdata->io_reset)

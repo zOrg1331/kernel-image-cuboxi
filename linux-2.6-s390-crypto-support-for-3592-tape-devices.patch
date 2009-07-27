@@ -1,0 +1,1101 @@
+From: Jan Glauber <jglauber@redhat.com>
+Subject: [RHEL5.1 PATCH] s390: crypto support for 3592 tape devices
+Date: Fri, 02 Mar 2007 10:12:05 +0100
+Bugzilla: 228035
+Message-Id: <1172826725.5527.4.camel@localhost.localdomain>
+Changelog: [s390] crypto support for 3592 tape devices
+
+
+BZ 228035
+
+Add crypto support for 3592 tape devices.
+
+3592 tape devices are able to write data encrypted on tape mediums.
+This z/Linux device driver support includes the following functions:
+ * ioctl to switch on/off encryption
+ * ioctl to query encryption status of drive
+ * ioctls to set and query key encrypting keys (kekls)
+ * long busy interrupt handling
+
+Jan
+
+jglauber@redhat.com
+jang@de.ibm.com
+
+--
+
+ drivers/s390/char/tape.h      |   22 +
+ drivers/s390/char/tape_3590.c |  501 ++++++++++++++++++++++++++++++++++++++++--
+ drivers/s390/char/tape_3590.h |   53 ++++
+ drivers/s390/char/tape_core.c |   53 ++++
+ drivers/s390/char/tape_std.c  |    5 
+ include/asm-s390/tape390.h    |   72 +++++-
+ 6 files changed, 670 insertions(+), 36 deletions(-)
+
+diff -purN --exclude=.pc --exclude=CVS linux-rhel5/drivers/s390/char/tape_3590.c linux-rhel5.tape/drivers/s390/char/tape_3590.c
+--- linux-rhel5/drivers/s390/char/tape_3590.c	2007-03-15 17:11:55.000000000 +0100
++++ linux-rhel5.tape/drivers/s390/char/tape_3590.c	2007-05-21 12:45:19.000000000 +0200
+@@ -2,7 +2,7 @@
+  *  drivers/s390/char/tape_3590.c
+  *    tape device discipline for 3590 tapes.
+  *
+- *    Copyright (C) IBM Corp. 2001,2006
++ *    Copyright IBM Corp. 2001,2006
+  *    Author(s): Stefan Bader <shbader@de.ibm.com>
+  *		 Michael Holzheu <holzheu@de.ibm.com>
+  *		 Martin Schwidefsky <schwidefsky@de.ibm.com>
+@@ -11,6 +11,8 @@
+ #include <linux/module.h>
+ #include <linux/init.h>
+ #include <linux/bio.h>
++#include <linux/ctype.h>
++#include <asm/ebcdic.h>
+ 
+ #define TAPE_DBF_AREA	tape_3590_dbf
+ 
+@@ -30,7 +32,7 @@ EXPORT_SYMBOL(TAPE_DBF_AREA);
+  * - Read Device (buffered) log: BRA
+  * - Read Library log:		 BRA
+  * - Swap Devices:		 BRA
+- * - Long Busy:			 BRA
++ * - Long Busy:			 implemented
+  * - Special Intercept:		 BRA
+  * - Read Alternate:		 implemented
+  *******************************************************************/
+@@ -94,6 +96,353 @@ static const char *tape_3590_msg[TAPE_35
+ 	[0xae] = "Subsystem environmental alert",
+ };
+ 
++static int crypt_supported(struct tape_device *device)
++{
++	return TAPE390_CRYPT_SUPPORTED(TAPE_3590_CRYPT_INFO(device));
++}
++
++static int crypt_enabled(struct tape_device *device)
++{
++	return TAPE390_CRYPT_ON(TAPE_3590_CRYPT_INFO(device));
++}
++
++static void ext_to_int_kekl(struct tape390_kekl *in,
++			    struct tape3592_kekl *out)
++{
++	int i;
++
++	memset(out, 0, sizeof(*out));
++	if (in->type == TAPE390_KEKL_TYPE_HASH)
++		out->flags |= 0x40;
++	if (in->type_on_tape == TAPE390_KEKL_TYPE_HASH)
++		out->flags |= 0x80;
++	strncpy(out->label, in->label, 64);
++	for (i = strlen(in->label); i < sizeof(out->label); i++)
++		out->label[i] = ' ';
++	ASCEBC(out->label, sizeof(out->label));
++}
++
++static char *s390_strstrip(char *s)
++{
++	size_t size;
++	char *end;
++
++	size = strlen(s);
++
++	if (!size)
++		return s;
++
++	end = s + size - 1;
++	while (end >= s && isspace(*end))
++	end--;
++	*(end + 1) = '\0';
++
++	while (*s && isspace(*s))
++		s++;
++
++	return s;
++}
++
++static void int_to_ext_kekl(struct tape3592_kekl *in,
++			    struct tape390_kekl *out)
++{
++	memset(out, 0, sizeof(*out));
++	if(in->flags & 0x40)
++		out->type = TAPE390_KEKL_TYPE_HASH;
++	else
++		out->type = TAPE390_KEKL_TYPE_LABEL;
++	if(in->flags & 0x80)
++		out->type_on_tape = TAPE390_KEKL_TYPE_HASH;
++	else
++		out->type_on_tape = TAPE390_KEKL_TYPE_LABEL;
++	memcpy(out->label, in->label, sizeof(in->label));
++	EBCASC(out->label, sizeof(in->label));
++	s390_strstrip(out->label);
++}
++
++static void int_to_ext_kekl_pair(struct tape3592_kekl_pair *in,
++				 struct tape390_kekl_pair *out)
++{
++	if (in->count == 0) {
++		out->kekl[0].type = TAPE390_KEKL_TYPE_NONE;
++		out->kekl[0].type_on_tape = TAPE390_KEKL_TYPE_NONE;
++		out->kekl[1].type = TAPE390_KEKL_TYPE_NONE;
++		out->kekl[1].type_on_tape = TAPE390_KEKL_TYPE_NONE;
++	} else if (in->count == 1) {
++		int_to_ext_kekl(&in->kekl[0], &out->kekl[0]);
++		out->kekl[1].type = TAPE390_KEKL_TYPE_NONE;
++		out->kekl[1].type_on_tape = TAPE390_KEKL_TYPE_NONE;
++	} else if (in->count == 2) {
++		int_to_ext_kekl(&in->kekl[0], &out->kekl[0]);
++		int_to_ext_kekl(&in->kekl[1], &out->kekl[1]);
++	} else {
++		printk("Invalid KEKL number: %d\n", in->count);
++		BUG();
++	}
++}
++
++static int check_ext_kekl(struct tape390_kekl *kekl)
++{
++	if (kekl->type == TAPE390_KEKL_TYPE_NONE)
++		goto invalid;
++	if (kekl->type > TAPE390_KEKL_TYPE_HASH)
++		goto invalid;
++	if (kekl->type_on_tape == TAPE390_KEKL_TYPE_NONE)
++		goto invalid;
++	if (kekl->type_on_tape > TAPE390_KEKL_TYPE_HASH)
++		goto invalid;
++	if ((kekl->type == TAPE390_KEKL_TYPE_HASH) &&
++	    (kekl->type_on_tape == TAPE390_KEKL_TYPE_LABEL))
++		goto invalid;
++
++	return 0;
++invalid:
++	return -EINVAL;
++}
++
++static int check_ext_kekl_pair(struct tape390_kekl_pair *kekls)
++{
++	if (check_ext_kekl(&kekls->kekl[0]))
++		goto invalid;
++	if (check_ext_kekl(&kekls->kekl[1]))
++		goto invalid;
++
++	return 0;
++invalid:
++	return -EINVAL;
++}
++
++/*
++ * Query KEKLs
++ */
++static int tape_3592_kekl_query(struct tape_device *device,
++				struct tape390_kekl_pair *ext_kekls)
++{
++	struct tape_request *request;
++	struct tape3592_kekl_query_order *order;
++	struct tape3592_kekl_query_data *int_kekls;
++	int rc;
++
++	DBF_EVENT(6, "tape3592_kekl_query\n");
++	int_kekls = kmalloc(sizeof(*int_kekls), GFP_KERNEL|GFP_DMA);
++	if (!int_kekls)
++		return -ENOMEM;
++	request = tape_alloc_request(2, sizeof(*order));
++	if (IS_ERR(request)) {
++		rc = PTR_ERR(request);
++		goto fail_malloc;
++	}
++	order = request->cpdata;
++	memset(order,0,sizeof(*order));
++	order->code = 0xe2;
++	order->max_count = 2;
++	request->op = TO_KEKL_QUERY;
++	tape_ccw_cc(request->cpaddr, PERF_SUBSYS_FUNC, sizeof(*order), order);
++	tape_ccw_end(request->cpaddr + 1, READ_SS_DATA, sizeof(*int_kekls),
++		     int_kekls);
++	rc = tape_do_io(device, request);
++	if (rc)
++		goto fail_request;
++	int_to_ext_kekl_pair(&int_kekls->kekls, ext_kekls);
++
++	rc = 0;
++fail_request:
++	tape_free_request(request);
++fail_malloc:
++	kfree(int_kekls);
++	return rc;
++}
++
++/*
++ * IOCTL: Query KEKLs
++ */
++static int tape_3592_ioctl_kekl_query(struct tape_device *device,
++				      unsigned long arg)
++{
++	int rc;
++	struct tape390_kekl_pair *ext_kekls;
++
++	DBF_EVENT(6, "tape_3592_ioctl_kekl_query\n");
++	if (!crypt_supported(device))
++		return -ENOSYS;
++	if (!crypt_enabled(device))
++		return -EUNATCH;
++	ext_kekls = kmalloc(sizeof(*ext_kekls), GFP_KERNEL);
++	if (!ext_kekls)
++		return -ENOMEM;
++	rc = tape_3592_kekl_query(device, ext_kekls);
++	if (rc != 0)
++		goto fail;
++	if (copy_to_user((char __user *) arg, ext_kekls, sizeof(*ext_kekls))) {
++		rc = -EFAULT;
++		goto fail;
++	}
++	rc = 0;
++fail:
++	kfree(ext_kekls);
++	return rc;
++}
++
++static int tape_3590_mttell(struct tape_device *device, int mt_count);
++
++/*
++ * Set KEKLs
++ */
++static int tape_3592_kekl_set(struct tape_device *device,
++			      struct tape390_kekl_pair *ext_kekls)
++{
++	struct tape_request *request;
++	struct tape3592_kekl_set_order *order;
++
++	DBF_EVENT(6, "tape3592_kekl_set\n");
++	if (check_ext_kekl_pair(ext_kekls)) {
++		DBF_EVENT(6, "invalid kekls\n");
++		return -EINVAL;
++	}
++	if (tape_3590_mttell(device, 0) != 0)
++		return -EBADSLT;
++	request = tape_alloc_request(1, sizeof(*order));
++	if (IS_ERR(request))
++		return PTR_ERR(request);
++	order = request->cpdata;
++	memset(order, 0, sizeof(*order));
++	order->code = 0xe3;
++	order->kekls.count = 2;
++	ext_to_int_kekl(&ext_kekls->kekl[0], &order->kekls.kekl[0]);
++	ext_to_int_kekl(&ext_kekls->kekl[1], &order->kekls.kekl[1]);
++	request->op = TO_KEKL_SET;
++	tape_ccw_end(request->cpaddr, PERF_SUBSYS_FUNC, sizeof(*order), order);
++
++	return tape_do_io_free(device, request);
++}
++
++/*
++ * IOCTL: Set KEKLs
++ */
++static int tape_3592_ioctl_kekl_set(struct tape_device *device,
++				    unsigned long arg)
++{
++	int rc;
++	struct tape390_kekl_pair *ext_kekls;
++
++	DBF_EVENT(6, "tape_3592_ioctl_kekl_set\n");
++	if (!crypt_supported(device))
++		return -ENOSYS;
++	if (!crypt_enabled(device))
++		return -EUNATCH;
++	ext_kekls = kmalloc(sizeof(*ext_kekls), GFP_KERNEL);
++	if (!ext_kekls)
++		return -ENOMEM;
++	if (copy_from_user(ext_kekls, (char __user *)arg, sizeof(*ext_kekls))) {
++		rc = -EFAULT;
++		goto out;
++	}
++	rc = tape_3592_kekl_set(device, ext_kekls);
++out:
++	kfree(ext_kekls);
++	return rc;
++}
++
++/*
++ * Enable encryption
++ */
++static int tape_3592_enable_crypt(struct tape_device *device)
++{
++	struct tape_request *request;
++	char *data;
++
++	DBF_EVENT(6, "tape_3592_enable_crypt\n");
++	if (!crypt_supported(device))
++		return -ENOSYS;
++	request = tape_alloc_request(2, 72);
++	if (IS_ERR(request))
++		return PTR_ERR(request);
++	data = request->cpdata;
++	memset(data,0,72);
++
++	data[0]       = 0x05;
++	data[36 + 0]  = 0x03;
++	data[36 + 1]  = 0x03;
++	data[36 + 4]  = 0x40;
++	data[36 + 6]  = 0x01;
++	data[36 + 14] = 0x2f;
++	data[36 + 18] = 0xc3;
++	data[36 + 35] = 0x72;
++	request->op = TO_CRYPT_ON;
++	tape_ccw_cc(request->cpaddr, MODE_SET_CB, 36, data);
++	tape_ccw_end(request->cpaddr + 1, MODE_SET_CB, 36, data + 36);
++	return tape_do_io_free(device, request);
++}
++
++/*
++ * Disable encryption
++ */
++static int tape_3592_disable_crypt(struct tape_device *device)
++{
++	struct tape_request *request;
++	char *data;
++
++	DBF_EVENT(6, "tape_3592_disable_crypt\n");
++	if (!crypt_supported(device))
++		return -ENOSYS;
++	request = tape_alloc_request(2, 72);
++	if (IS_ERR(request))
++		return PTR_ERR(request);
++	data = request->cpdata;
++	memset(data,0,72);
++
++	data[0]       = 0x05;
++	data[36 + 0]  = 0x03;
++	data[36 + 1]  = 0x03;
++	data[36 + 35] = 0x32;
++
++	request->op = TO_CRYPT_OFF;
++	tape_ccw_cc(request->cpaddr, MODE_SET_CB, 36, data);
++	tape_ccw_end(request->cpaddr + 1, MODE_SET_CB, 36, data + 36);
++
++	return tape_do_io_free(device, request);
++}
++
++/*
++ * IOCTL: Set encryption status
++ */
++static int tape_3592_ioctl_crypt_set(struct tape_device *device,
++				     unsigned long arg)
++{
++	struct tape390_crypt_info info;
++
++	DBF_EVENT(6, "tape_3592_ioctl_crypt_set\n");
++	if (!crypt_supported(device))
++		return -ENOSYS;
++	if (copy_from_user(&info, (char __user *)arg, sizeof(info)))
++		return -EFAULT;
++	if (info.status & ~TAPE390_CRYPT_ON_MASK)
++		return -EINVAL;
++	if (info.status & TAPE390_CRYPT_ON_MASK)
++		return tape_3592_enable_crypt(device);
++	else
++		return tape_3592_disable_crypt(device);
++}
++
++static int tape_3590_sense_medium(struct tape_device *device);
++
++/*
++ * IOCTL: Query enryption status
++ */
++static int tape_3592_ioctl_crypt_query(struct tape_device *device,
++				       unsigned long arg)
++{
++	DBF_EVENT(6, "tape_3592_ioctl_crypt_query\n");
++	if (!crypt_supported(device))
++		return -ENOSYS;
++	tape_3590_sense_medium(device);
++	if (copy_to_user((char __user *) arg, &TAPE_3590_CRYPT_INFO(device),
++		sizeof(TAPE_3590_CRYPT_INFO(device))))
++		return -EFAULT;
++	else
++		return 0;
++}
++
+ /*
+  * 3590 IOCTL Overload
+  */
+@@ -109,6 +458,14 @@ tape_3590_ioctl(struct tape_device *devi
+ 
+ 		return tape_std_display(device, &disp);
+ 	}
++	case TAPE390_KEKL_SET:
++		return tape_3592_ioctl_kekl_set(device, arg);
++	case TAPE390_KEKL_QUERY:
++		return tape_3592_ioctl_kekl_query(device, arg);
++	case TAPE390_CRYPT_SET:
++		return tape_3592_ioctl_crypt_set(device, arg);
++	case TAPE390_CRYPT_QUERY:
++		return tape_3592_ioctl_crypt_query(device, arg);
+ 	default:
+ 		return -EINVAL;	/* no additional ioctls */
+ 	}
+@@ -247,6 +604,12 @@ tape_3590_work_handler(void *data)
+ 	case TO_READ_ATTMSG:
+ 		tape_3590_read_attmsg(p->device);
+ 		break;
++	case TO_CRYPT_ON:
++		tape_3592_enable_crypt(p->device);
++		break;
++	case TO_CRYPT_OFF:
++		tape_3592_disable_crypt(p->device);
++		break;
+ 	default:
+ 		DBF_EVENT(3, "T3590: work handler undefined for "
+ 			  "operation 0x%02x\n", p->op);
+@@ -364,6 +727,33 @@ tape_3590_check_locate(struct tape_devic
+ }
+ #endif
+ 
++static void tape_3590_med_state_set(struct tape_device *device,
++				    struct tape_3590_med_sense *sense)
++{
++	struct tape390_crypt_info *c_info;
++
++	c_info = &TAPE_3590_CRYPT_INFO(device);
++
++	if (sense->masst == MSENSE_UNASSOCIATED) {
++		tape_med_state_set(device, MS_UNLOADED);
++		TAPE_3590_CRYPT_INFO(device).medium_status = 0;
++		return;
++	}
++	if (sense->masst != MSENSE_ASSOCIATED_MOUNT) {
++		PRINT_ERR("Unknown medium state: %x\n", sense->masst);
++		return;
++	}
++	tape_med_state_set(device, MS_LOADED);
++	c_info->medium_status |= TAPE390_MEDIUM_LOADED_MASK;
++	if (sense->flags & MSENSE_CRYPT_MASK) {
++		PRINT_INFO("Medium is encrypted (%04x)\n", sense->flags);
++		c_info->medium_status |= TAPE390_MEDIUM_ENCRYPTED_MASK;
++	} else	{
++		DBF_EVENT(6, "Medium is not encrypted %04x\n", sense->flags);
++		c_info->medium_status &= ~TAPE390_MEDIUM_ENCRYPTED_MASK;
++	}
++}
++
+ /*
+  * The done handler is called at device/channel end and wakes up the sleeping
+  * process
+@@ -371,9 +761,10 @@ tape_3590_check_locate(struct tape_devic
+ static int
+ tape_3590_done(struct tape_device *device, struct tape_request *request)
+ {
+-	struct tape_3590_med_sense *sense;
++	struct tape_3590_disc_data *disc_data;
+ 
+ 	DBF_EVENT(6, "%s done\n", tape_op_verbose[request->op]);
++	disc_data = device->discdata;
+ 
+ 	switch (request->op) {
+ 	case TO_BSB:
+@@ -393,13 +784,20 @@ tape_3590_done(struct tape_device *devic
+ 		break;
+ 	case TO_RUN:
+ 		tape_med_state_set(device, MS_UNLOADED);
++		tape_3590_schedule_work(device, TO_CRYPT_OFF);
+ 		break;
+ 	case TO_MSEN:
+-		sense = (struct tape_3590_med_sense *) request->cpdata;
+-		if (sense->masst == MSENSE_UNASSOCIATED)
+-			tape_med_state_set(device, MS_UNLOADED);
+-		if (sense->masst == MSENSE_ASSOCIATED_MOUNT)
+-			tape_med_state_set(device, MS_LOADED);
++		tape_3590_med_state_set(device, request->cpdata);
++		break;
++	case TO_CRYPT_ON:
++		TAPE_3590_CRYPT_INFO(device).status
++			|= TAPE390_CRYPT_ON_MASK;
++		*(device->modeset_byte) |= 0x03;
++		break;
++	case TO_CRYPT_OFF:
++		TAPE_3590_CRYPT_INFO(device).status
++			&= ~TAPE390_CRYPT_ON_MASK;
++		*(device->modeset_byte) &= ~0x03;
+ 		break;
+ 	case TO_RBI:	/* RBI seems to succeed even without medium loaded. */
+ 	case TO_NOP:	/* Same to NOP. */
+@@ -408,8 +806,9 @@ tape_3590_done(struct tape_device *devic
+ 	case TO_DIS:
+ 	case TO_ASSIGN:
+ 	case TO_UNASSIGN:
+-		break;
+ 	case TO_SIZE:
++	case TO_KEKL_SET:
++	case TO_KEKL_QUERY:
+ 		break;
+ 	}
+ 	return TAPE_IO_SUCCESS;
+@@ -539,10 +938,8 @@ static int
+ tape_3590_erp_long_busy(struct tape_device *device,
+ 			struct tape_request *request, struct irb *irb)
+ {
+-	/* FIXME: how about WAITING for a minute ? */
+-	PRINT_WARN("(%s): Device is busy! Please wait a minute!\n",
+-		   device->cdev->dev.bus_id);
+-	return tape_3590_erp_basic(device, request, irb, -EBUSY);
++	DBF_EVENT(6, "Device is busy\n");
++	return TAPE_IO_LONG_BUSY;
+ }
+ 
+ /*
+@@ -950,6 +1347,34 @@ tape_3590_print_era_msg(struct tape_devi
+ 		   device->cdev->dev.bus_id, sense->mc);
+ }
+ 
++static int tape_3590_crypt_error(struct tape_device *device,
++				 struct tape_request *request, struct irb *irb)
++{
++	u8 cu_rc, ekm_rc1;
++	u16 ekm_rc2;
++	u32 drv_rc;
++	char *bus_id, *sense;
++
++	sense = ((struct tape_3590_sense *) irb->ecw)->fmt.data;
++	bus_id = device->cdev->dev.bus_id;
++	cu_rc = sense[0];
++	drv_rc = *((u32*) &sense[5]) & 0xffffff;
++	ekm_rc1 = sense[9];
++	ekm_rc2 = *((u16*) &sense[10]);
++	if ((cu_rc == 0) && (ekm_rc2 == 0xee31))
++		/* key not defined on EKM */
++		return tape_3590_erp_basic(device, request, irb, -EKEYREJECTED);
++	if ((cu_rc == 1) || (cu_rc == 2))
++		/* No connection to EKM */
++		return tape_3590_erp_basic(device, request, irb, -ENOTCONN);
++
++	PRINT_ERR("(%s): Unable to get encryption key from EKM\n", bus_id);
++	PRINT_ERR("(%s): CU=%02X DRIVE=%06X EKM=%02X:%04X\n", bus_id, cu_rc,
++		drv_rc, ekm_rc1, ekm_rc2);
++
++	return tape_3590_erp_basic(device, request, irb, -ENOKEY);
++}
++
+ /*
+  *  3590 error Recovery routine:
+  *  If possible, it tries to recover from the error. If this is not possible,
+@@ -978,6 +1403,8 @@ tape_3590_unit_check(struct tape_device 
+ 
+ 	sense = (struct tape_3590_sense *) irb->ecw;
+ 
++	DBF_EVENT(6, "Unit Check: RQC = %x\n", sense->rc_rqc);
++
+ 	/*
+ 	 * First check all RC-QRCs where we want to do something special
+ 	 *   - "break":     basic error recovery is done
+@@ -998,6 +1425,8 @@ tape_3590_unit_check(struct tape_device 
+ 	case 0x2231:
+ 		tape_3590_print_era_msg(device, irb);
+ 		return tape_3590_erp_special_interrupt(device, request, irb);
++	case 0x2240:
++		return tape_3590_crypt_error(device, request, irb);
+ 
+ 	case 0x3010:
+ 		DBF_EVENT(2, "(%08x): Backward at Beginning of Partition\n",
+@@ -1019,6 +1448,7 @@ tape_3590_unit_check(struct tape_device 
+ 		DBF_EVENT(2, "(%08x): Rewind Unload complete\n",
+ 			  device->cdev_id);
+ 		tape_med_state_set(device, MS_UNLOADED);
++		tape_3590_schedule_work(device, TO_CRYPT_OFF);
+ 		return tape_3590_erp_basic(device, request, irb, 0);
+ 
+ 	case 0x4010:
+@@ -1029,9 +1459,15 @@ tape_3590_unit_check(struct tape_device 
+ 		PRINT_WARN("(%s): Tape operation when medium not loaded\n",
+ 			   device->cdev->dev.bus_id);
+ 		tape_med_state_set(device, MS_UNLOADED);
++		tape_3590_schedule_work(device, TO_CRYPT_OFF);
+ 		return tape_3590_erp_basic(device, request, irb, -ENOMEDIUM);
+ 	case 0x4012:		/* Device Long Busy */
++		/* XXX: Also use long busy handling here? */
++		DBF_EVENT(6, "(%08x): LONG BUSY\n", device->cdev_id);
+ 		tape_3590_print_era_msg(device, irb);
++		return tape_3590_erp_basic(device, request, irb, -EBUSY);
++	case 0x4014:
++		DBF_EVENT(6, "(%08x): Crypto LONG BUSY\n", device->cdev_id);
+ 		return tape_3590_erp_long_busy(device, request, irb);
+ 
+ 	case 0x5010:
+@@ -1063,6 +1499,7 @@ tape_3590_unit_check(struct tape_device 
+ 	case 0x5120:
+ 	case 0x1120:
+ 		tape_med_state_set(device, MS_UNLOADED);
++		tape_3590_schedule_work(device, TO_CRYPT_OFF);
+ 		return tape_3590_erp_basic(device, request, irb, -ENOMEDIUM);
+ 
+ 	case 0x6020:
+@@ -1141,21 +1578,47 @@ tape_3590_setup_device(struct tape_devic
+ {
+ 	int rc;
+ 	struct tape_3590_disc_data *data;
++	char *rdc_data;
+ 
+ 	DBF_EVENT(6, "3590 device setup\n");
+-	data = kmalloc(sizeof(struct tape_3590_disc_data),
+-		       GFP_KERNEL | GFP_DMA);
++	data = kzalloc(sizeof(struct tape_3590_disc_data), GFP_KERNEL | GFP_DMA);
+ 	if (data == NULL)
+ 		return -ENOMEM;
+ 	data->read_back_op = READ_PREVIOUS;
+ 	device->discdata = data;
+ 
+-	if ((rc = tape_std_assign(device)) == 0) {
+-		/* Try to find out if medium is loaded */
+-		if ((rc = tape_3590_sense_medium(device)) != 0)
+-			DBF_LH(3, "3590 medium sense returned %d\n", rc);
++	rdc_data = kmalloc(64, GFP_KERNEL | GFP_DMA);
++	if (!rdc_data) {
++		rc = -ENOMEM;
++		goto fail_kmalloc;
++	}
++	rc = read_dev_chars(device->cdev, (void**)&rdc_data, 64);
++	if (rc) {
++		DBF_LH(3, "Read device characteristics failed!\n");
++		goto fail_kmalloc;
++	}
++	rc = tape_std_assign(device);
++	if (rc)
++		goto fail_rdc_data;
++	if (rdc_data[31] == 0x13) {
++		PRINT_INFO("Device has crypto support\n");
++		data->crypt_info.capability |= TAPE390_CRYPT_SUPPORTED_MASK;
++		tape_3592_disable_crypt(device);
++	} else {
++		DBF_EVENT(6, "Device has NO crypto support\n");
+ 	}
++	/* Try to find out if medium is loaded */
++	rc = tape_3590_sense_medium(device);
++	if (rc) {
++		DBF_LH(3, "3590 medium sense returned %d\n", rc);
++		goto fail_rdc_data;
++	}
++	return 0;
+ 
++fail_rdc_data:
++	kfree(rdc_data);
++fail_kmalloc:
++	kfree(data);
+ 	return rc;
+ }
+ 
+diff -purN --exclude=.pc --exclude=CVS linux-rhel5/drivers/s390/char/tape_3590.h linux-rhel5.tape/drivers/s390/char/tape_3590.h
+--- linux-rhel5/drivers/s390/char/tape_3590.h	2007-03-15 17:11:55.000000000 +0100
++++ linux-rhel5.tape/drivers/s390/char/tape_3590.h	2007-05-21 12:45:19.000000000 +0200
+@@ -2,7 +2,7 @@
+  *  drivers/s390/char/tape_3590.h
+  *    tape device discipline for 3590 tapes.
+  *
+- *    Copyright (C) IBM Corp. 2001,2006
++ *    Copyright IBM Corp. 2001,2006
+  *    Author(s): Stefan Bader <shbader@de.ibm.com>
+  *		 Michael Holzheu <holzheu@de.ibm.com>
+  *		 Martin Schwidefsky <schwidefsky@de.ibm.com>
+@@ -38,16 +38,22 @@
+ #define MSENSE_UNASSOCIATED	 0x00
+ #define MSENSE_ASSOCIATED_MOUNT	 0x01
+ #define MSENSE_ASSOCIATED_UMOUNT 0x02
++#define MSENSE_CRYPT_MASK	 0x00000010
+ 
+ #define TAPE_3590_MAX_MSG	 0xb0
+ 
+ /* Datatypes */
+ 
+ struct tape_3590_disc_data {
+-	unsigned char modeset_byte;
++	struct tape390_crypt_info crypt_info;
+ 	int read_back_op;
+ };
+ 
++#define TAPE_3590_CRYPT_INFO(device) \
++	((struct tape_3590_disc_data*)(device->discdata))->crypt_info
++#define TAPE_3590_READ_BACK_OP(device) \
++	((struct tape_3590_disc_data*)(device->discdata))->read_back_op
++
+ struct tape_3590_sense {
+ 
+ 	unsigned int command_rej:1;
+@@ -118,7 +124,48 @@ struct tape_3590_sense {
+ struct tape_3590_med_sense {
+ 	unsigned int macst:4;
+ 	unsigned int masst:4;
+-	char pad[127];
++	char pad1[7];
++	unsigned int flags;
++	char pad2[116];
++} __attribute__ ((packed));
++
++/* Datastructures for 3592 encryption support */
++
++struct tape3592_kekl {
++	__u8 flags;
++	char label[64];
++} __attribute__ ((packed));
++
++struct tape3592_kekl_pair {
++	__u8 count;
++	struct tape3592_kekl kekl[2];
++} __attribute__ ((packed));
++
++struct tape3592_kekl_query_data {
++	__u16 len;
++	__u8  fmt;
++	__u8  mc;
++	__u32 id;
++	__u8  flags;
++	struct tape3592_kekl_pair kekls;
++	char reserved[116];
++} __attribute__ ((packed));
++
++struct tape3592_kekl_query_order {
++	__u8 code;
++	__u8 flags;
++	char reserved1[2];
++	__u8 max_count;
++	char reserved2[35];
++} __attribute__ ((packed));
++
++struct tape3592_kekl_set_order {
++	__u8 code;
++	__u8 flags;
++	char reserved1[2];
++	__u8 op;
++	struct tape3592_kekl_pair kekls;
++	char reserved2[120];
+ } __attribute__ ((packed));
+ 
+ #endif /* _TAPE_3590_H */
+diff -purN --exclude=.pc --exclude=CVS linux-rhel5/drivers/s390/char/tape_core.c linux-rhel5.tape/drivers/s390/char/tape_core.c
+--- linux-rhel5/drivers/s390/char/tape_core.c	2007-03-15 17:11:55.000000000 +0100
++++ linux-rhel5.tape/drivers/s390/char/tape_core.c	2007-05-21 15:26:11.000000000 +0200
+@@ -3,7 +3,7 @@
+  *    basic function of the tape device driver
+  *
+  *  S390 and zSeries version
+- *    Copyright (C) 2001,2005 IBM Deutschland Entwicklung GmbH, IBM Corporation
++ *    Copyright IBM Corp. 2001,2006
+  *    Author(s): Carsten Otte <cotte@de.ibm.com>
+  *		 Michael Holzheu <holzheu@de.ibm.com>
+  *		 Tuan Ngo-Anh <ngoanh@de.ibm.com>
+@@ -26,9 +26,11 @@
+ #include "tape_std.h"
+ 
+ #define PRINTK_HEADER "TAPE_CORE: "
++#define LONG_BUSY_TIMEOUT 180 /* seconds */
+ 
+ static void __tape_do_irq (struct ccw_device *, unsigned long, struct irb *);
+ static void tape_delayed_next_request(void * data);
++static void tape_long_busy_timeout(unsigned long data);
+ 
+ /*
+  * One list to contain all tape devices of all disciplines, so
+@@ -36,6 +38,8 @@ static void tape_delayed_next_request(vo
+  * The list is protected by the rwlock
+  */
+ static struct list_head tape_device_list = LIST_HEAD_INIT(tape_device_list);
++static struct list_head tape_device_list_kabi_hack =
++	LIST_HEAD_INIT(tape_device_list_kabi_hack);
+ static DEFINE_RWLOCK(tape_device_lock);
+ 
+ /*
+@@ -69,7 +73,9 @@ const char *tape_op_verbose[TO_SIZE] =
+ 	[TO_LOAD] = "LOA",	[TO_READ_CONFIG] = "RCF",
+ 	[TO_READ_ATTMSG] = "RAT",
+ 	[TO_DIS] = "DIS",	[TO_ASSIGN] = "ASS",
+-	[TO_UNASSIGN] = "UAS"
++	[TO_UNASSIGN] = "UAS",  [TO_CRYPT_ON] = "CON",
++	[TO_CRYPT_OFF] = "COF",	[TO_KEKL_SET] = "KLS",
++	[TO_KEKL_QUERY] = "KLQ",
+ };
+ 
+ static inline int
+@@ -447,6 +453,7 @@ static struct tape_device *
+ tape_alloc_device(void)
+ {
+ 	struct tape_device *device;
++	struct tape_device_kabi_hack *device_kabi_hack;
+ 
+ 	device = kzalloc(sizeof(struct tape_device), GFP_KERNEL);
+ 	if (device == NULL) {
+@@ -462,6 +469,14 @@ tape_alloc_device(void)
+ 		kfree(device);
+ 		return ERR_PTR(-ENOMEM);
+ 	}
++	device_kabi_hack = kmalloc(sizeof(struct tape_device_kabi_hack),
++				   GFP_KERNEL);
++	if (device_kabi_hack == NULL) {
++                DBF_EXCEPTION(2, "ti:no mem\n");
++                PRINT_INFO ("can't allocate memory for "
++                            "tape timer structure\n");
++                return ERR_PTR(-ENOMEM);
++        }
+ 	INIT_LIST_HEAD(&device->req_queue);
+ 	INIT_LIST_HEAD(&device->node);
+ 	init_waitqueue_head(&device->state_change_wq);
+@@ -472,6 +487,12 @@ tape_alloc_device(void)
+ 	atomic_set(&device->ref_count, 1);
+ 	INIT_WORK(&device->tape_dnr, tape_delayed_next_request, device);
+ 
++	/* save reference to device we belong to */
++	device_kabi_hack->ref = device;
++	init_timer(&device_kabi_hack->lb_timeout);
++	device_kabi_hack->lb_timeout.function = tape_long_busy_timeout;
++	list_add_tail(&device_kabi_hack->timer_queue, &tape_device_list_kabi_hack);
++
+ 	return device;
+ }
+ 
+@@ -801,6 +822,36 @@ tape_delayed_next_request(void *data)
+ 	spin_unlock_irq(get_ccwdev_lock(device->cdev));
+ }
+ 
++static struct timer_list *get_device_timer(struct tape_device *device)
++{
++	struct tape_device_kabi_hack *tmp;
++
++	list_for_each_entry(tmp, &tape_device_list_kabi_hack, timer_queue) {
++		if (tmp->ref == device)
++			return &tmp->lb_timeout;
++	}
++	return NULL;
++}
++
++static void tape_long_busy_timeout(unsigned long data)
++{
++	struct tape_request *request;
++	struct tape_device *device;
++	struct timer_list *timer;
++
++	device = (struct tape_device *) data;
++	spin_lock_irq(get_ccwdev_lock(device->cdev));
++	request = list_entry(device->req_queue.next, struct tape_request, list);
++	if (request->status != TAPE_REQUEST_LONG_BUSY)
++		BUG();
++	DBF_LH(6, "%08x: Long busy timeout.\n", device->cdev_id);
++	__tape_start_next_request(device);
++
++	timer = get_device_timer(device);
++	timer->data = (unsigned long) tape_put_device(device);
++	spin_unlock_irq(get_ccwdev_lock(device->cdev));
++}
++
+ static inline void
+ __tape_end_request(
+ 	struct tape_device *	device,
+@@ -1045,6 +1096,7 @@ __tape_do_irq (struct ccw_device *cdev, 
+ {
+ 	struct tape_device *device;
+ 	struct tape_request *request;
++	struct timer_list *timer;
+ 	int rc;
+ 
+ 	device = (struct tape_device *) cdev->dev.driver_data;
+@@ -1094,7 +1146,23 @@ __tape_do_irq (struct ccw_device *cdev, 
+ 	/* May be an unsolicited irq */
+ 	if(request != NULL)
+ 		request->rescnt = irb->scsw.count;
+-
++	else if ((irb->scsw.dstat == 0x85 || irb->scsw.dstat == 0x80) &&
++		 !list_empty(&device->req_queue)) {
++		/* Not Ready to Ready after long busy ? */
++		struct tape_request *req;
++		req = list_entry(device->req_queue.next,
++				 struct tape_request, list);
++		if (req->status == TAPE_REQUEST_LONG_BUSY) {
++			DBF_EVENT(3, "(%08x): del timer\n", device->cdev_id);
++			timer = get_device_timer(device);
++			if (del_timer(timer)) {
++				timer->data = (unsigned long)
++					tape_put_device(device);
++				__tape_start_next_request(device);
++			}
++			return;
++		}
++	}
+ 	if (irb->scsw.dstat != 0x0c) {
+ 		/* Set the 'ONLINE' flag depending on sense byte 1 */
+ 		if(*(((__u8 *) irb->ecw) + 1) & SENSE_DRIVE_ONLINE)
+@@ -1142,6 +1210,15 @@ __tape_do_irq (struct ccw_device *cdev, 
+ 			break;
+ 		case TAPE_IO_PENDING:
+ 			break;
++		case TAPE_IO_LONG_BUSY:
++			timer = get_device_timer(device);
++			timer->data =
++				(unsigned long)tape_get_device_reference(device);
++			timer->expires = jiffies + LONG_BUSY_TIMEOUT * HZ;
++			DBF_EVENT(3, "(%08x): add timer\n", device->cdev_id);
++			add_timer(timer);
++			request->status = TAPE_REQUEST_LONG_BUSY;
++			break;
+ 		case TAPE_IO_RETRY:
+ 			rc = __tape_start_io(device, request);
+ 			if (rc)
+diff -purN --exclude=.pc --exclude=CVS linux-rhel5/drivers/s390/char/tape.h linux-rhel5.tape/drivers/s390/char/tape.h
+--- linux-rhel5/drivers/s390/char/tape.h	2007-03-15 17:11:55.000000000 +0100
++++ linux-rhel5.tape/drivers/s390/char/tape.h	2007-05-21 14:53:30.000000000 +0200
+@@ -3,7 +3,7 @@
+  *    tape device driver for 3480/3490E/3590 tapes.
+  *
+  *  S390 and zSeries version
+- *    Copyright (C) 2001,2005 IBM Deutschland Entwicklung GmbH, IBM Corporation
++ *    Copyright IBM Corp. 2001,2006
+  *    Author(s): Carsten Otte <cotte@de.ibm.com>
+  *		 Tuan Ngo-Anh <ngoanh@de.ibm.com>
+  *		 Martin Schwidefsky <schwidefsky@de.ibm.com>
+@@ -99,7 +99,11 @@ enum tape_op {
+ 	TO_DIS,		/* Tape display */
+ 	TO_ASSIGN,	/* Assign tape to channel path */
+ 	TO_UNASSIGN,	/* Unassign tape from channel path */
+-	TO_SIZE		/* #entries in tape_op_t */
++	TO_CRYPT_ON,	/* Enable encrpytion */
++	TO_CRYPT_OFF,	/* Disable encrpytion */
++	TO_KEKL_SET,	/* Set KEK label */
++	TO_KEKL_QUERY,	/* Query KEK label */
++	TO_SIZE,	/* #entries in tape_op_t */
+ };
+ 
+ /* Forward declaration */
+@@ -112,6 +116,7 @@ enum tape_request_status {
+ 	TAPE_REQUEST_IN_IO,	/* request is currently in IO */
+ 	TAPE_REQUEST_DONE,	/* request is completed. */
+ 	TAPE_REQUEST_CANCEL,	/* request should be canceled. */
++	TAPE_REQUEST_LONG_BUSY, /* request has to be restarted after long busy */
+ };
+ 
+ /* Tape CCW request */
+@@ -164,10 +169,11 @@ struct tape_discipline {
+  * The discipline irq function either returns an error code (<0) which
+  * means that the request has failed with an error or one of the following:
+  */
+-#define TAPE_IO_SUCCESS 0	/* request successful */
+-#define TAPE_IO_PENDING 1	/* request still running */
+-#define TAPE_IO_RETRY	2	/* retry to current request */
+-#define TAPE_IO_STOP	3	/* stop the running request */
++#define TAPE_IO_SUCCESS		0	/* request successful */
++#define TAPE_IO_PENDING		1	/* request still running */
++#define TAPE_IO_RETRY		2	/* retry to current request */
++#define TAPE_IO_STOP		3	/* stop the running request */
++#define TAPE_IO_LONG_BUSY	4	/* delay the running request */
+ 
+ /* Char Frontend Data */
+ struct tape_char_data {
+@@ -243,6 +249,14 @@ struct tape_device {
+ 	struct work_struct		tape_dnr;
+ };
+ 
++struct tape_device_kabi_hack {
++	struct list_head                timer_queue;
++	struct tape_device		*ref;
++
++	/* Timer for long busy */
++	struct timer_list               lb_timeout;
++};
++
+ /* Externals from tape_core.c */
+ extern struct tape_request *tape_alloc_request(int cplength, int datasize);
+ extern void tape_free_request(struct tape_request *);
+diff -purN --exclude=.pc --exclude=CVS linux-rhel5/drivers/s390/char/tape_std.c linux-rhel5.tape/drivers/s390/char/tape_std.c
+--- linux-rhel5/drivers/s390/char/tape_std.c	2007-03-15 17:11:55.000000000 +0100
++++ linux-rhel5.tape/drivers/s390/char/tape_std.c	2007-05-21 12:45:19.000000000 +0200
+@@ -647,7 +647,10 @@ tape_std_mtcompression(struct tape_devic
+ 		return PTR_ERR(request);
+ 	request->op = TO_NOP;
+ 	/* setup ccws */
+-	*device->modeset_byte = (mt_count == 0) ? 0x00 : 0x08;
++	if (mt_count == 0)
++		*device->modeset_byte &= ~0x08;
++	else
++		*device->modeset_byte |= 0x08;
+ 	tape_ccw_cc(request->cpaddr, MODE_SET_DB, 1, device->modeset_byte);
+ 	tape_ccw_end(request->cpaddr + 1, NOP, 0, NULL);
+ 	/* execute it */
+diff -purN --exclude=.pc --exclude=CVS linux-rhel5/include/asm-s390/tape390.h linux-rhel5.tape/include/asm-s390/tape390.h
+--- linux-rhel5/include/asm-s390/tape390.h	2007-03-15 17:12:00.000000000 +0100
++++ linux-rhel5.tape/include/asm-s390/tape390.h	2007-05-21 12:45:19.000000000 +0200
+@@ -1,11 +1,11 @@
+ /*************************************************************************
+  *
+  * tape390.h
+- *         enables user programs to display messages on the tape device
++ *	   enables user programs to display messages and control encryption
++ *	   on s390 tape devices
+  *
+- *  S390 and zSeries version
+- *         Copyright (C) 2001 IBM Corporation
+- *         Author(s): Despina Papadopoulou <despina_p@de.ibm.com>
++ *	   Copyright IBM Corp. 2001,2006
++ *	   Author(s): Michael Holzheu <holzheu@de.ibm.com>
+  *
+  *************************************************************************/
+ 
+@@ -36,4 +36,68 @@ typedef struct display_struct {
+         char message2[8];
+ } display_struct;
+ 
++/*
++ * Tape encryption support
++ */
++
++struct tape390_crypt_info {
++	char capability;
++	char status;
++	char medium_status;
++} __attribute__ ((packed));
++
++
++/* Macros for "capable" field */
++#define TAPE390_CRYPT_SUPPORTED_MASK 0x01
++#define TAPE390_CRYPT_SUPPORTED(x) \
++	((x.capability & TAPE390_CRYPT_SUPPORTED_MASK))
++
++/* Macros for "status" field */
++#define TAPE390_CRYPT_ON_MASK 0x01
++#define TAPE390_CRYPT_ON(x) (((x.status) & TAPE390_CRYPT_ON_MASK))
++
++/* Macros for "medium status" field */
++#define TAPE390_MEDIUM_LOADED_MASK 0x01
++#define TAPE390_MEDIUM_ENCRYPTED_MASK 0x02
++#define TAPE390_MEDIUM_ENCRYPTED(x) \
++	(((x.medium_status) & TAPE390_MEDIUM_ENCRYPTED_MASK))
++#define TAPE390_MEDIUM_LOADED(x) \
++	(((x.medium_status) & TAPE390_MEDIUM_LOADED_MASK))
++
++/*
++ * The TAPE390_CRYPT_SET ioctl is used to switch on/off encryption.
++ * The "encryption_capable" and "tape_status" fields are ignored for this ioctl!
++ */
++#define TAPE390_CRYPT_SET _IOW('d', 2, struct tape390_crypt_info)
++
++/*
++ * The TAPE390_CRYPT_QUERY ioctl is used to query the encryption state.
++ */
++#define TAPE390_CRYPT_QUERY _IOR('d', 3, struct tape390_crypt_info)
++
++/* Values for "kekl1/2_type" and "kekl1/2_type_on_tape" fields */
++#define TAPE390_KEKL_TYPE_NONE 0
++#define TAPE390_KEKL_TYPE_LABEL 1
++#define TAPE390_KEKL_TYPE_HASH 2
++
++struct tape390_kekl {
++	unsigned char type;
++	unsigned char type_on_tape;
++	char label[65];
++} __attribute__ ((packed));
++
++struct tape390_kekl_pair {
++	struct tape390_kekl kekl[2];
++} __attribute__ ((packed));
++
++/*
++ * The TAPE390_KEKL_SET ioctl is used to set Key Encrypting Key labels.
++ */
++#define TAPE390_KEKL_SET _IOW('d', 4, struct tape390_kekl_pair)
++
++/*
++ * The TAPE390_KEKL_QUERY ioctl is used to query Key Encrypting Key labels.
++ */
++#define TAPE390_KEKL_QUERY _IOR('d', 5, struct tape390_kekl_pair)
++
+ #endif 
+

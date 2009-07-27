@@ -1,0 +1,51 @@
+Date: Tue, 31 Oct 2006 11:00:35 +0100
+From: Thomas Graf <tgraf@redhat.com>
+Subject: [RHEL5 BZ209313]: IPv6 MRT: 'lockdep' annotation is missing?
+
+    [IPv6] fib: initialize tb6_lock in common place to give lockdep a key
+    
+    Signed-off-by: Thomas Graf <tgraf@suug.ch>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Index: linux-2.6.18.noarch/net/ipv6/ip6_fib.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/ipv6/ip6_fib.c	2006-10-30 16:19:59.000000000 +0100
++++ linux-2.6.18.noarch/net/ipv6/ip6_fib.c	2006-10-30 16:26:14.000000000 +0100
+@@ -149,7 +149,6 @@
+ 
+ static struct fib6_table fib6_main_tbl = {
+ 	.tb6_id		= RT6_TABLE_MAIN,
+-	.tb6_lock	= RW_LOCK_UNLOCKED,
+ 	.tb6_root	= {
+ 		.leaf		= &ip6_null_entry,
+ 		.fn_flags	= RTN_ROOT | RTN_TL_ROOT | RTN_RTINFO,
+@@ -167,6 +166,12 @@
+ {
+ 	unsigned int h;
+ 
++	/*
++	 * Initialize table lock at a single place to give lockdep a key,
++	 * tables aren't visible prior to being linked to the list.
++	 */
++	rwlock_init(&tb->tb6_lock);
++
+ 	h = tb->tb6_id & (FIB_TABLE_HASHSZ - 1);
+ 
+ 	/*
+@@ -179,7 +184,6 @@
+ #ifdef CONFIG_IPV6_MULTIPLE_TABLES
+ static struct fib6_table fib6_local_tbl = {
+ 	.tb6_id		= RT6_TABLE_LOCAL,
+-	.tb6_lock	= RW_LOCK_UNLOCKED,
+ 	.tb6_root 	= {
+ 		.leaf		= &ip6_null_entry,
+ 		.fn_flags	= RTN_ROOT | RTN_TL_ROOT | RTN_RTINFO,
+@@ -193,7 +197,6 @@
+ 	table = kzalloc(sizeof(*table), GFP_ATOMIC);
+ 	if (table != NULL) {
+ 		table->tb6_id = id;
+-		table->tb6_lock = RW_LOCK_UNLOCKED;
+ 		table->tb6_root.leaf = &ip6_null_entry;
+ 		table->tb6_root.fn_flags = RTN_ROOT | RTN_TL_ROOT | RTN_RTINFO;
+ 	}
+

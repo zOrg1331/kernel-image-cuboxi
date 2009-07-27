@@ -1,0 +1,80 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Mon, 20 Aug 2007 13:17:44 -0400
+Subject: [fs] aio: account for I/O wait properly
+Message-id: x49odh2rupz.fsf@segfault.boston.devel.redhat.com
+O-Subject: [rhel5 patch] aio: account for I/O wait properly
+Bugzilla: 253337
+
+Hi,
+
+Currently, Asynchronous I/O does not show up as io_wait in tools such
+as vmstat.  The problem is that the AIO code doesn't call
+io_schedule().  The attached patch fixes this problem.  I tested it by
+running aio-stress to raw disk and to a file system to ensure that the
+i/o wait time was properly accounted for.
+
+This addresses Bugzilla Bug 253337: AIO not shown by iostat, top, etc.
+
+The patch was posted for inclusion upstream last week, and was
+accepted into -mm.  Below is a copy of the email I sent to linux-aio
+and Andrew.
+
+Cheers,
+
+Jeff
+
+Some months back I proposed changing the schedule() call in
+read_events to an io_schedule():
+	http://osdir.com/ml/linux.kernel.aio.general/2006-10/msg00024.html
+This was rejected as there are AIO operations that do not initiate
+disk I/O.  I've had another look at the problem, and the only AIO
+operation that will not initiate disk I/O is IOCB_CMD_NOOP.  However,
+this command isn't even wired up!
+
+Given that it doesn't work, and hasn't for *years*, I'm going to
+suggest again that we do proper I/O accounting when using AIO.  Please
+consider the attached patch.
+
+Thanks!
+
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: Peter Staubach <staubach@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+---
+ fs/aio.c |    6 +++---
+ 1 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/fs/aio.c b/fs/aio.c
+index a140041..a590865 100644
+--- a/fs/aio.c
++++ b/fs/aio.c
+@@ -305,7 +305,7 @@ static void wait_for_all_aios(struct kioctx *ctx)
+ 	set_task_state(tsk, TASK_UNINTERRUPTIBLE);
+ 	while (ctx->reqs_active) {
+ 		spin_unlock_irq(&ctx->ctx_lock);
+-		schedule();
++		io_schedule();
+ 		set_task_state(tsk, TASK_UNINTERRUPTIBLE);
+ 		spin_lock_irq(&ctx->ctx_lock);
+ 	}
+@@ -325,7 +325,7 @@ ssize_t fastcall wait_on_sync_kiocb(struct kiocb *iocb)
+ 		set_current_state(TASK_UNINTERRUPTIBLE);
+ 		if (!iocb->ki_users)
+ 			break;
+-		schedule();
++		io_schedule();
+ 	}
+ 	__set_current_state(TASK_RUNNING);
+ 	return iocb->ki_user_data;
+@@ -1176,7 +1176,7 @@ retry:
+ 			ret = 0;
+ 			if (to.timed_out)	/* Only check after read evt */
+ 				break;
+-			schedule();
++			io_schedule();
+ 			if (signal_pending(tsk)) {
+ 				ret = -EINTR;
+ 				break;
+-- 
+1.5.3.5.645.gbb47
+

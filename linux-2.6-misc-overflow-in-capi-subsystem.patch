@@ -1,0 +1,52 @@
+From: Anton Arapov <aarapov@redhat.com>
+Subject: [RHEL5.1 PATCH] BZ232260: CVE-2007-1217 Overflow in CAPI subsystem
+Date: Thu, 28 Jun 2007 11:15:59 +0200
+Bugzilla: 231072
+Message-Id: <h87ipophgw.fsf@pepelac.englab.brq.redhat.com>
+Changelog: [misc] Overflow in CAPI subsystem
+
+
+BZ232260:
+  https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=232260
+
+Description:
+  The bufprint routine used by capi_cmsg2str does an unbounded vsprintf into a 8192 byte buffer, perhaps hoping it's big enough.
+
+  If the content of that vsprintf can be controlled by remote peers, this may lead to a remote security hole for daemons using CAPI (pppd-capi-plugin, asterisk-chan-capi, capi4hylafax, ...). Or a DoS.
+
+  If the content of that vsprintf can be controlled by local users making use of a system service (such as sending a fax, making a phone call, ...) that uses CAPI, this is a privilege escalation or remote authenticated user security hole, or a DoS.
+
+Upstream status:
+  The patch by Don Howard:
+  The upstream 2.6 patch has been nacked as it breaks kabi.  The following patch changes bufprint() to do bounds checking when printing to it's buffer.
+
+Test status:
+  Tested only for compilation on all supported platforms.
+  Not really tested/no isdn hardware.
+
+-------------------------------------------------------
+
+diff -urpN linux-2.6.18.noarch.orig/drivers/isdn/capi/capiutil.c linux-2.6.18.noarch/drivers/isdn/capi/capiutil.c
+--- linux-2.6.18.noarch.orig/drivers/isdn/capi/capiutil.c	2007-06-28 09:27:24.000000000 +0200
++++ linux-2.6.18.noarch/drivers/isdn/capi/capiutil.c	2007-06-28 09:28:38.000000000 +0200
+@@ -712,8 +712,12 @@ static char *p = NULL;
+ static void bufprint(char *fmt,...)
+ {
+ 	va_list f;
++	size_t remain = (p >= buf && p < buf+sizeof(buf)) 
++		        ? buf+sizeof(buf)-p 
++		        : 0;
++
+ 	va_start(f, fmt);
+-	vsprintf(p, fmt, f);
++	vsnprintf(p, remain, fmt, f);
+ 	va_end(f);
+ 	p += strlen(p);
+ }
+
+-- 
+Anton Arapov, <aarapov@redhat.com>
+Kernel Development, Red Hat
+GPG Key ID: 0x6FA8C812
+
+

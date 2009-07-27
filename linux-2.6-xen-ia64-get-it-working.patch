@@ -1,0 +1,3953 @@
+From: Aron Griffis<aron@hp.com>
+Subject: [RHEL-5] BZ 210637 patches from xen-ia64-unstable (kernel part)
+Date: Tue, 05 Dec 2006 13:31:44
+Bugzilla: 210637
+Message-Id: <20061205183144.GA19265@fc.hp.com>
+Changelog: Xen: getting ia64 working; kernel part
+
+
+Patch Count: 1
+Comment Count: 
+-----HISTORY------------------------------------
+-----COMMENT-0-----------------------------------
+
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1159722594 21600
+# Node ID ac065f8d864503871c3070f69c4537dde087af7e
+# Parent  1e680fd7ceb5db94f8a8c28b6c96aa4913f9e719
+[IA64] do not export XSI_BASE, use set_shared_info_va
+
+Until now, the set_shared_info_va hypercall was never used.
+This patch remove XSI_BASE and use this hypercall to set the xsi address.
+Because xsi is now in the top 1MB (before percpu space), linux code should be
+slightly more compact (addl instead of movl).
+
+Signed-off-by: Tristan Gingold <tristan.gingold@bull.net>
+
+original changeset: 11638 (xen-ia64-unstable)
+
+original changeset: 11786 (xen-3.0.3-ia64)
+
+-----PATCH-0-----------------------------------
+
+diff -r 1e680fd7ceb5 -r ac065f8d8645 arch/ia64/xen/xensetup.S
+--- a/arch/ia64/xen/xensetup.S	Fri Dec 01 17:10:18 2006 -0500
++++ b/arch/ia64/xen/xensetup.S	Sun Oct 01 11:09:54 2006 -0600
+@@ -22,12 +22,11 @@ GLOBAL_ENTRY(early_xen_setup)
+ 	
+ 	mov cr.iva=r10
+ 
+-#if XSI_BASE != 0xf100000000000000UL
+-	/* Backward compatibility.  */
+-(isBP)	mov r2=0x600
++	/* Set xsi base.  */
++#define FW_HYPERCALL_SET_SHARED_INFO_VA			0x600
++(isBP)	mov r2=FW_HYPERCALL_SET_SHARED_INFO_VA
+ (isBP)	movl r28=XSI_BASE;;
+ (isBP)	break 0x1000;;
+-#endif
+ 
+ 	br.ret.sptk.many rp
+ 	;;
+diff -r 1e680fd7ceb5 -r ac065f8d8645 include/asm-ia64/xen/privop.h
+--- a/include/asm-ia64/xen/privop.h	Fri Dec 01 17:10:18 2006 -0500
++++ b/include/asm-ia64/xen/privop.h	Sun Oct 01 11:09:54 2006 -0600
+@@ -14,12 +14,9 @@
+ 
+ #define IA64_PARAVIRTUALIZED
+ 
+-#if 0
+-#undef XSI_BASE
+ /* At 1 MB, before per-cpu space but still addressable using addl instead
+    of movl. */
+ #define XSI_BASE				0xfffffffffff00000
+-#endif
+ 
+ /* Address of mapped regs.  */
+ #define XMAPPEDREGS_BASE		(XSI_BASE + XSI_SIZE)
+diff -r 1e680fd7ceb5 -r ac065f8d8645 include/xen/interface/arch-ia64.h
+--- a/include/xen/interface/arch-ia64.h	Fri Dec 01 17:10:18 2006 -0500
++++ b/include/xen/interface/arch-ia64.h	Sun Oct 01 11:09:54 2006 -0600
+@@ -395,10 +395,6 @@ struct xen_ia64_boot_param {
+ 
+ #endif /* !__ASSEMBLY__ */
+ 
+-/* Address of shared_info in domain virtual space.
+-   This is the default address, for compatibility only.  */
+-#define XSI_BASE			0xf100000000000000
+-
+ /* Size of the shared_info area (this is not related to page size).  */
+ #define XSI_SHIFT			14
+ #define XSI_SIZE			(1 << XSI_SHIFT)
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1159819422 21600
+# Node ID 7e54eee8c68ccf26933e89e5cf937c74ab8c1435
+# Parent  ac065f8d864503871c3070f69c4537dde087af7e
+[IA64] Use xencomm for hypercalls.
+
+With xencomm metaphysical addresses are passed to the hypervisor instead
+of virtual addresses.
+This patch breaks compatibility.
+
+Signed-off-by: Tristan Gingold <tristan.gingold@bull.net>
+
+original changeset: 11702 (xen-ia64-unstable)
+
+original changeset: 11790 (xen-3.0.3-ia64)
+
+diff -r ac065f8d8645 -r 7e54eee8c68c arch/ia64/kernel/setup.c
+--- a/arch/ia64/kernel/setup.c	Sun Oct 01 11:09:54 2006 -0600
++++ b/arch/ia64/kernel/setup.c	Mon Oct 02 14:03:42 2006 -0600
+@@ -77,6 +77,8 @@ EXPORT_SYMBOL(__per_cpu_offset);
+ #endif
+ 
+ #ifdef CONFIG_XEN
++unsigned long kernel_start_pa;
++
+ static int
+ xen_panic_event(struct notifier_block *this, unsigned long event, void *ptr)
+ {
+@@ -529,6 +531,7 @@ setup_arch (char **cmdline_p)
+ 
+ #ifdef CONFIG_XEN
+ 	if (is_running_on_xen()) {
++		kernel_start_pa = KERNEL_START - ia64_tpa(KERNEL_START);
+ 		setup_xen_features();
+ 		/* Register a call for panic conditions. */
+ 		atomic_notifier_chain_register(&panic_notifier_list, &xen_panic_block);
+diff -r ac065f8d8645 -r 7e54eee8c68c arch/ia64/xen/Makefile
+--- a/arch/ia64/xen/Makefile	Sun Oct 01 11:09:54 2006 -0600
++++ b/arch/ia64/xen/Makefile	Mon Oct 02 14:03:42 2006 -0600
+@@ -3,6 +3,7 @@
+ #
+ 
+ obj-y := hypercall.o xenivt.o xenentry.o xensetup.o xenpal.o xenhpski.o \
+-	 hypervisor.o pci-dma-xen.o util.o
++	 hypervisor.o pci-dma-xen.o util.o xencomm.o xcom_hcall.o \
++	 xcom_privcmd.o
+ 
+ pci-dma-xen-y := ../../i386/kernel/pci-dma-xen.o
+diff -r ac065f8d8645 -r 7e54eee8c68c arch/ia64/xen/hypervisor.c
+--- a/arch/ia64/xen/hypervisor.c	Sun Oct 01 11:09:54 2006 -0600
++++ b/arch/ia64/xen/hypervisor.c	Mon Oct 02 14:03:42 2006 -0600
+@@ -39,60 +39,6 @@ EXPORT_SYMBOL(xen_start_info);
+ 
+ int running_on_xen;
+ EXPORT_SYMBOL(running_on_xen);
+-
+-//XXX xen/ia64 copy_from_guest() is broken.
+-//    This is a temporal work around until it is fixed.
+-//    used by balloon.c netfront.c
+-
+-// get_xen_guest_handle is defined only when __XEN_TOOLS__ is defined
+-// if the definition in arch-ia64.h is changed, this must be updated.
+-#define get_xen_guest_handle(val, hnd)  do { val = (hnd).p; } while (0)
+-
+-int
+-ia64_xenmem_reservation_op(unsigned long op,
+-			   struct xen_memory_reservation* reservation__)
+-{
+-	struct xen_memory_reservation reservation = *reservation__;
+-	unsigned long* frame_list;
+-	unsigned long nr_extents = reservation__->nr_extents;
+-	int ret = 0;
+-	get_xen_guest_handle(frame_list, reservation__->extent_start);
+-
+-	BUG_ON(op != XENMEM_increase_reservation &&
+-	       op != XENMEM_decrease_reservation &&
+-	       op != XENMEM_populate_physmap);
+-
+-	while (nr_extents > 0) {
+-		int tmp_ret;
+-		volatile unsigned long dummy;
+-
+-		set_xen_guest_handle(reservation.extent_start, frame_list);
+-		reservation.nr_extents = nr_extents;
+-
+-		dummy = frame_list[0];// re-install tlb entry before hypercall
+-		tmp_ret = ____HYPERVISOR_memory_op(op, &reservation);
+-		if (tmp_ret < 0) {
+-			if (ret == 0) {
+-				ret = tmp_ret;
+-			}
+-			break;
+-		}
+-		if (tmp_ret == 0) {
+-			//XXX dirty work around for skbuff_ctor()
+-			//    of a non-privileged domain, 
+-			if ((op == XENMEM_increase_reservation ||
+-			     op == XENMEM_populate_physmap) &&
+-			    !is_initial_xendomain() &&
+-			    reservation.extent_order > 0)
+-				return ret;
+-		}
+-		frame_list += tmp_ret;
+-		nr_extents -= tmp_ret;
+-		ret += tmp_ret;
+-	}
+-	return ret;
+-}
+-EXPORT_SYMBOL(ia64_xenmem_reservation_op);
+ 
+ //XXX same as i386, x86_64 contiguous_bitmap_set(), contiguous_bitmap_clear()
+ // move those to lib/contiguous_bitmap?
+@@ -371,8 +317,6 @@ int
+ int
+ HYPERVISOR_grant_table_op(unsigned int cmd, void *uop, unsigned int count)
+ {
+-	__u64 va1, va2, pa1, pa2;
+-
+ 	if (cmd == GNTTABOP_map_grant_ref) {
+ 		unsigned int i;
+ 		for (i = 0; i < count; i++) {
+@@ -380,29 +324,7 @@ HYPERVISOR_grant_table_op(unsigned int c
+ 				(struct gnttab_map_grant_ref*)uop + i);
+ 		}
+ 	}
+-	va1 = (__u64)uop & PAGE_MASK;
+-	pa1 = pa2 = 0;
+-	if ((REGION_NUMBER(va1) == 5) &&
+-	    ((va1 - KERNEL_START) >= KERNEL_TR_PAGE_SIZE)) {
+-		pa1 = ia64_tpa(va1);
+-		if (cmd <= GNTTABOP_transfer) {
+-			static uint32_t uop_size[GNTTABOP_transfer + 1] = {
+-				sizeof(struct gnttab_map_grant_ref),
+-				sizeof(struct gnttab_unmap_grant_ref),
+-				sizeof(struct gnttab_setup_table),
+-				sizeof(struct gnttab_dump_table),
+-				sizeof(struct gnttab_transfer),
+-			};
+-			va2 = (__u64)uop + (uop_size[cmd] * count) - 1;
+-			va2 &= PAGE_MASK;
+-			if (va1 != va2) {
+-				/* maximum size of uop is 2pages */
+-				BUG_ON(va2 > va1 + PAGE_SIZE);
+-				pa2 = ia64_tpa(va2);
+-			}
+-		}
+-	}
+-	return ____HYPERVISOR_grant_table_op(cmd, uop, count, pa1, pa2);
++	return xencomm_mini_hypercall_grant_table_op(cmd, uop, count);
+ }
+ EXPORT_SYMBOL(HYPERVISOR_grant_table_op);
+ 
+diff -r ac065f8d8645 -r 7e54eee8c68c arch/ia64/xen/util.c
+--- a/arch/ia64/xen/util.c	Sun Oct 01 11:09:54 2006 -0600
++++ b/arch/ia64/xen/util.c	Mon Oct 02 14:03:42 2006 -0600
+@@ -27,6 +27,8 @@
+ #include <linux/vmalloc.h>
+ #include <asm/uaccess.h>
+ #include <xen/driver_util.h>
++#include <xen/interface/memory.h>
++#include <asm/hypercall.h>
+ 
+ struct vm_struct *alloc_vm_area(unsigned long size)
+ {
+diff -r ac065f8d8645 -r 7e54eee8c68c arch/ia64/xen/xensetup.S
+--- a/arch/ia64/xen/xensetup.S	Sun Oct 01 11:09:54 2006 -0600
++++ b/arch/ia64/xen/xensetup.S	Mon Oct 02 14:03:42 2006 -0600
+@@ -36,18 +36,18 @@ END(early_xen_setup)
+ 
+ /* Stub for suspend.
+    Just force the stacked registers to be written in memory.  */	
+-GLOBAL_ENTRY(HYPERVISOR_suspend)
++GLOBAL_ENTRY(xencomm_arch_hypercall_suspend)
++	mov r15=r32
++	;; 
+ 	alloc r20=ar.pfs,0,0,0,0
+-	mov r14=2
+-	mov r15=r12
+-	;;
++	mov r2=__HYPERVISOR_sched_op
++	;; 
+ 	/* We don't want to deal with RSE.  */
+ 	flushrs
+-	mov r2=__HYPERVISOR_sched_op
+-	st4 [r12]=r14
++	mov r14=2 // SCHEDOP_shutdown
+ 	;;
+ 	break 0x1000
+ 	;; 
+ 	mov ar.pfs=r20
+ 	br.ret.sptk.many b0
+-END(HYPERVISOR_suspend)
++END(xencomm_arch_hypercall_suspend)
+diff -r ac065f8d8645 -r 7e54eee8c68c drivers/xen/privcmd/privcmd.c
+--- a/drivers/xen/privcmd/privcmd.c	Sun Oct 01 11:09:54 2006 -0600
++++ b/drivers/xen/privcmd/privcmd.c	Mon Oct 02 14:03:42 2006 -0600
+@@ -86,18 +86,7 @@ static int privcmd_ioctl(struct inode *i
+ 				: "r8", "r10", "memory" );
+ 		}
+ #elif defined (__ia64__)
+-		__asm__ __volatile__ (
+-			";; mov r14=%2; mov r15=%3; "
+-			"mov r16=%4; mov r17=%5; mov r18=%6;"
+-			"mov r2=%1; break 0x1000;; mov %0=r8 ;;"
+-			: "=r" (ret)
+-			: "r" (hypercall.op),
+-			"r" (hypercall.arg[0]),
+-			"r" (hypercall.arg[1]),
+-			"r" (hypercall.arg[2]),
+-			"r" (hypercall.arg[3]),
+-			"r" (hypercall.arg[4])
+-			: "r14","r15","r16","r17","r18","r2","r8","memory");
++		ret = privcmd_hypercall(&hypercall);
+ #endif
+ 	}
+ 	break;
+diff -r ac065f8d8645 -r 7e54eee8c68c include/asm-ia64/hypercall.h
+--- a/include/asm-ia64/hypercall.h	Sun Oct 01 11:09:54 2006 -0600
++++ b/include/asm-ia64/hypercall.h	Mon Oct 02 14:03:42 2006 -0600
+@@ -33,11 +33,12 @@
+ #ifndef __HYPERCALL_H__
+ #define __HYPERCALL_H__
+ 
+-#include <linux/string.h> /* memcpy() */
+-
+ #ifndef __HYPERVISOR_H__
+ # error "please don't include this file directly"
+ #endif
++
++#include <asm/xen/xcom_hcall.h>
++struct xencomm_handle;
+ 
+ /*
+  * Assembler stubs for hyper-calls.
+@@ -157,157 +158,105 @@
+ 	(type)__res;                                            \
+ })
+ 
+-static inline int
+-HYPERVISOR_sched_op_compat(
+-    int cmd, unsigned long arg)
+-{
+-	return _hypercall2(int, sched_op_compat, cmd, arg);
+-}
+-
+-static inline int
+-HYPERVISOR_sched_op(
+-	int cmd, void *arg)
++
++static inline int
++xencomm_arch_hypercall_sched_op(int cmd, struct xencomm_handle *arg)
+ {
+ 	return _hypercall2(int, sched_op, cmd, arg);
+ }
+ 
+ static inline long
+-HYPERVISOR_set_timer_op(
+-    u64 timeout)
+-{
+-    unsigned long timeout_hi = (unsigned long)(timeout>>32);
+-    unsigned long timeout_lo = (unsigned long)timeout;
+-    return _hypercall2(long, set_timer_op, timeout_lo, timeout_hi);
+-}
+-
+-static inline int
+-HYPERVISOR_dom0_op(
+-    dom0_op_t *dom0_op)
+-{
+-    dom0_op->interface_version = DOM0_INTERFACE_VERSION;
+-    return _hypercall1(int, dom0_op, dom0_op);
+-}
+-
+-static inline int
+-HYPERVISOR_multicall(
+-    void *call_list, int nr_calls)
+-{
+-    return _hypercall2(int, multicall, call_list, nr_calls);
+-}
+-
+-//XXX xen/ia64 copy_from_guest() is broken.
+-//    This is a temporal work around until it is fixed.
+-static inline int
+-____HYPERVISOR_memory_op(
+-    unsigned int cmd, void *arg)
+-{
+-    return _hypercall2(int, memory_op, cmd, arg);
+-}
+-
+-#include <xen/interface/memory.h>
+-#ifdef CONFIG_VMX_GUEST
+-# define ia64_xenmem_reservation_op(op, xmr) (0)
+-#else
+-int ia64_xenmem_reservation_op(unsigned long op,
+-		   struct xen_memory_reservation* reservation__);
+-#endif
+-static inline int
+-HYPERVISOR_memory_op(
+-    unsigned int cmd, void *arg)
+-{
+-    switch (cmd) {
+-    case XENMEM_increase_reservation:
+-    case XENMEM_decrease_reservation:
+-    case XENMEM_populate_physmap:
+-        return ia64_xenmem_reservation_op(cmd, 
+-                                          (struct xen_memory_reservation*)arg);
+-    default:
+-        return ____HYPERVISOR_memory_op(cmd, arg);
+-    }
+-    /* NOTREACHED */
+-}
+-
+-static inline int
+-HYPERVISOR_event_channel_op(
+-    int cmd, void *arg)
+-{
+-    int rc = _hypercall2(int, event_channel_op, cmd, arg);
+-    if (unlikely(rc == -ENOSYS)) {
+-        struct evtchn_op op;
+-        op.cmd = cmd;
+-        memcpy(&op.u, arg, sizeof(op.u));
+-        rc = _hypercall1(int, event_channel_op_compat, &op);
+-    }
+-    return rc;
+-}
+-
+-static inline int
+-HYPERVISOR_acm_op(
+-	unsigned int cmd, void *arg)
+-{
+-    return _hypercall2(int, acm_op, cmd, arg);
+-}
+-
+-static inline int
+-HYPERVISOR_xen_version(
+-    int cmd, void *arg)
+-{
+-    return _hypercall2(int, xen_version, cmd, arg);
+-}
+-
+-static inline int
+-HYPERVISOR_console_io(
+-    int cmd, int count, char *str)
+-{
+-    return _hypercall3(int, console_io, cmd, count, str);
+-}
+-
+-static inline int
+-HYPERVISOR_physdev_op(
+-    int cmd, void *arg)
+-{
+-    int rc = _hypercall2(int, physdev_op, cmd, arg);
+-    if (unlikely(rc == -ENOSYS)) {
+-        struct physdev_op op;
+-        op.cmd = cmd;
+-        memcpy(&op.u, arg, sizeof(op.u));
+-        rc = _hypercall1(int, physdev_op_compat, &op);
+-    }
+-    return rc;
+-}
+-
+-//XXX __HYPERVISOR_grant_table_op is used for this hypercall constant.
+-static inline int
+-____HYPERVISOR_grant_table_op(
+-    unsigned int cmd, void *uop, unsigned int count,
+-    unsigned long pa1, unsigned long pa2)
+-{
+-    return _hypercall5(int, grant_table_op, cmd, uop, count, pa1, pa2);
++HYPERVISOR_set_timer_op(u64 timeout)
++{
++	unsigned long timeout_hi = (unsigned long)(timeout >> 32);
++	unsigned long timeout_lo = (unsigned long)timeout;
++	return _hypercall2(long, set_timer_op, timeout_lo, timeout_hi);
++}
++
++static inline int
++xencomm_arch_hypercall_dom0_op(struct xencomm_handle *op)
++{
++	return _hypercall1(int, dom0_op, op);
++}
++
++static inline int
++xencomm_arch_hypercall_sysctl(struct xencomm_handle *op)
++{
++	return _hypercall1(int, sysctl, op);
++}
++
++static inline int
++xencomm_arch_hypercall_domctl(struct xencomm_handle *op)
++{
++	return _hypercall1(int, domctl, op);
++}
++
++static inline int
++xencomm_arch_hypercall_multicall(struct xencomm_handle *call_list,
++				 int nr_calls)
++{
++	return _hypercall2(int, multicall, call_list, nr_calls);
++}
++
++static inline int
++xencomm_arch_hypercall_memory_op(unsigned int cmd, struct xencomm_handle *arg)
++{
++	return _hypercall2(int, memory_op, cmd, arg);
++}
++
++static inline int
++xencomm_arch_hypercall_event_channel_op(int cmd, struct xencomm_handle *arg)
++{
++	return _hypercall2(int, event_channel_op, cmd, arg);
++}
++
++static inline int
++xencomm_arch_hypercall_acm_op(unsigned int cmd, struct xencomm_handle *arg)
++{
++	return _hypercall2(int, acm_op, cmd, arg);
++}
++
++static inline int
++xencomm_arch_hypercall_xen_version(int cmd, struct xencomm_handle *arg)
++{
++	return _hypercall2(int, xen_version, cmd, arg);
++}
++
++static inline int
++xencomm_arch_hypercall_console_io(int cmd, int count,
++                                  struct xencomm_handle *str)
++{
++	return _hypercall3(int, console_io, cmd, count, str);
++}
++
++static inline int
++xencomm_arch_hypercall_physdev_op(int cmd, struct xencomm_handle *arg)
++{
++	return _hypercall2(int, physdev_op, cmd, arg);
++}
++
++static inline int
++xencomm_arch_hypercall_grant_table_op(unsigned int cmd,
++                                      struct xencomm_handle *uop,
++                                      unsigned int count)
++{
++	return _hypercall3(int, grant_table_op, cmd, uop, count);
+ }
+ 
+ int HYPERVISOR_grant_table_op(unsigned int cmd, void *uop, unsigned int count);
+ 
+-static inline int
+-HYPERVISOR_vcpu_op(
+-	int cmd, int vcpuid, void *extra_args)
+-{
+-    return _hypercall3(int, vcpu_op, cmd, vcpuid, extra_args);
+-}
+-
+-extern int HYPERVISOR_suspend(unsigned long srec);
+-
+-static inline unsigned long
+-HYPERVISOR_hvm_op(
+-	int cmd, void *arg)
++extern int xencomm_arch_hypercall_suspend(struct xencomm_handle *arg);
++
++static inline int
++xencomm_arch_hypercall_callback_op(int cmd, struct xencomm_handle *arg)
++{
++	return _hypercall2(int, callback_op, cmd, arg);
++}
++
++static inline unsigned long
++xencomm_arch_hypercall_hvm_op(int cmd, void *arg)
+ {
+ 	return _hypercall2(unsigned long, hvm_op, cmd, arg);
+-}
+-
+-static inline int
+-HYPERVISOR_callback_op(
+-	int cmd, void *arg)
+-{
+-	return _hypercall2(int, callback_op, cmd, arg);
+ }
+ 
+ extern fastcall unsigned int __do_IRQ(unsigned int irq, struct pt_regs *regs);
+@@ -420,4 +369,33 @@ HYPERVISOR_add_physmap(unsigned long gpf
+ // for balloon driver
+ #define HYPERVISOR_update_va_mapping(va, new_val, flags) (0)
+ 
++/* Use xencomm to do hypercalls.  */
++#ifdef MODULE
++#define HYPERVISOR_sched_op xencomm_mini_hypercall_sched_op
++#define HYPERVISOR_event_channel_op xencomm_mini_hypercall_event_channel_op
++#define HYPERVISOR_callback_op xencomm_mini_hypercall_callback_op
++#define HYPERVISOR_multicall xencomm_mini_hypercall_multicall
++#define HYPERVISOR_xen_version xencomm_mini_hypercall_xen_version
++#define HYPERVISOR_console_io xencomm_mini_hypercall_console_io
++#define HYPERVISOR_physdev_op xencomm_mini_hypercall_physdev_op
++#define HYPERVISOR_hvm_op xencomm_mini_hypercall_hvm_op
++#ifdef CONFIG_VMX_GUEST
++#define HYPERVISOR_memory_op 0
++#else
++#define HYPERVISOR_memory_op xencomm_mini_hypercall_memory_op
++#endif
++#else
++#define HYPERVISOR_sched_op xencomm_hypercall_sched_op
++#define HYPERVISOR_event_channel_op xencomm_hypercall_event_channel_op
++#define HYPERVISOR_callback_op xencomm_hypercall_callback_op
++#define HYPERVISOR_multicall xencomm_hypercall_multicall
++#define HYPERVISOR_xen_version xencomm_hypercall_xen_version
++#define HYPERVISOR_console_io xencomm_hypercall_console_io
++#define HYPERVISOR_physdev_op xencomm_hypercall_physdev_op
++#define HYPERVISOR_hvm_op xencomm_hypercall_hvm_op
++#define HYPERVISOR_memory_op xencomm_hypercall_memory_op
++#endif
++
++#define HYPERVISOR_suspend xencomm_hypercall_suspend
++
+ #endif /* __HYPERCALL_H__ */
+diff -r ac065f8d8645 -r 7e54eee8c68c include/asm-ia64/hypervisor.h
+--- a/include/asm-ia64/hypervisor.h	Sun Oct 01 11:09:54 2006 -0600
++++ b/include/asm-ia64/hypervisor.h	Mon Oct 02 14:03:42 2006 -0600
+@@ -74,9 +74,6 @@ HYPERVISOR_yield(
+ {
+ 	int rc = HYPERVISOR_sched_op(SCHEDOP_yield, NULL);
+ 
+-	if (rc == -ENOSYS)
+-		rc = HYPERVISOR_sched_op_compat(SCHEDOP_yield, 0);
+-
+ 	return rc;
+ }
+ 
+@@ -85,9 +82,6 @@ HYPERVISOR_block(
+ 	void)
+ {
+ 	int rc = HYPERVISOR_sched_op(SCHEDOP_block, NULL);
+-
+-	if (rc == -ENOSYS)
+-		rc = HYPERVISOR_sched_op_compat(SCHEDOP_block, 0);
+ 
+ 	return rc;
+ }
+@@ -101,9 +95,6 @@ HYPERVISOR_shutdown(
+ 	};
+ 
+ 	int rc = HYPERVISOR_sched_op(SCHEDOP_shutdown, &sched_shutdown);
+-
+-	if (rc == -ENOSYS)
+-		rc = HYPERVISOR_sched_op_compat(SCHEDOP_shutdown, reason);
+ 
+ 	return rc;
+ }
+@@ -121,8 +112,6 @@ HYPERVISOR_poll(
+ 
+ 	set_xen_guest_handle(sched_poll.ports, ports);
+ 	rc = HYPERVISOR_sched_op(SCHEDOP_poll, &sched_poll);
+-	if (rc == -ENOSYS)
+-		rc = HYPERVISOR_sched_op_compat(SCHEDOP_yield, 0);
+ 
+ 	return rc;
+ }
+diff -r ac065f8d8645 -r 7e54eee8c68c include/xen/interface/arch-ia64.h
+--- a/include/xen/interface/arch-ia64.h	Sun Oct 01 11:09:54 2006 -0600
++++ b/include/xen/interface/arch-ia64.h	Mon Oct 02 14:03:42 2006 -0600
+@@ -431,6 +431,14 @@ struct xen_ia64_boot_param {
+ #define HYPERPRIVOP_GET_PSR		0x19
+ #define HYPERPRIVOP_MAX			0x19
+ 
++/* Xencomm macros.  */
++#define XENCOMM_INLINE_MASK 0xf800000000000000UL
++#define XENCOMM_INLINE_FLAG 0x8000000000000000UL
++
++#define XENCOMM_IS_INLINE(addr) \
++  (((unsigned long)(addr) & XENCOMM_INLINE_MASK) == XENCOMM_INLINE_FLAG)
++#define XENCOMM_INLINE_ADDR(addr) \
++  ((unsigned long)(addr) & ~XENCOMM_INLINE_MASK)
+ #endif /* __HYPERVISOR_IF_IA64_H__ */
+ 
+ /*
+diff -r ac065f8d8645 -r 7e54eee8c68c arch/ia64/xen/xcom_hcall.c
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/arch/ia64/xen/xcom_hcall.c	Mon Oct 02 14:03:42 2006 -0600
+@@ -0,0 +1,468 @@
++/*
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
++ *
++ *          Tristan Gingold <tristan.gingold@bull.net>
++ */
++#include <linux/types.h>
++#include <linux/errno.h>
++#include <linux/kernel.h>
++#include <linux/gfp.h>
++#include <linux/module.h>
++#include <xen/interface/xen.h>
++#include <xen/interface/dom0_ops.h>
++#include <xen/interface/memory.h>
++#include <xen/interface/xencomm.h>
++#include <xen/interface/version.h>
++#include <xen/interface/sched.h>
++#include <xen/interface/event_channel.h>
++#include <xen/interface/physdev.h>
++#include <xen/interface/grant_table.h>
++#include <xen/interface/callback.h>
++#include <xen/interface/acm_ops.h>
++#include <xen/interface/hvm/params.h>
++#include <xen/public/privcmd.h>
++#include <asm/hypercall.h>
++#include <asm/page.h>
++#include <asm/uaccess.h>
++#include <asm/xen/xencomm.h>
++
++/* Xencomm notes:
++ * This file defines hypercalls to be used by xencomm.  The hypercalls simply
++ * create inlines descriptors for pointers and then call the raw arch hypercall
++ * xencomm_arch_hypercall_XXX
++ *
++ * If the arch wants to directly use these hypercalls, simply define macros
++ * in asm/hypercall.h, eg:
++ *  #define HYPERVISOR_sched_op xencomm_hypercall_sched_op
++ * 
++ * The arch may also define HYPERVISOR_xxx as a function and do more operations
++ * before/after doing the hypercall.
++ *
++ * Note: because only inline descriptors are created these functions must only
++ * be called with in kernel memory parameters.
++ */
++
++int
++xencomm_hypercall_console_io(int cmd, int count, char *str)
++{
++	return xencomm_arch_hypercall_console_io
++		(cmd, count, xencomm_create_inline(str));
++}
++
++int
++xencomm_hypercall_event_channel_op(int cmd, void *op)
++{
++	return xencomm_arch_hypercall_event_channel_op
++		(cmd, xencomm_create_inline(op));
++}
++
++int
++xencomm_hypercall_xen_version(int cmd, void *arg)
++{
++	switch (cmd) {
++	case XENVER_version:
++	case XENVER_extraversion:
++	case XENVER_compile_info:
++	case XENVER_capabilities:
++	case XENVER_changeset:
++	case XENVER_platform_parameters:
++	case XENVER_pagesize:
++	case XENVER_get_features:
++		break;
++	default:
++		printk("%s: unknown version cmd %d\n", __func__, cmd);
++		return -ENOSYS;
++	}
++
++	return xencomm_arch_hypercall_xen_version
++		(cmd, xencomm_create_inline(arg));
++}
++
++int
++xencomm_hypercall_physdev_op(int cmd, void *op)
++{
++	return xencomm_arch_hypercall_physdev_op
++		(cmd, xencomm_create_inline(op));
++}
++
++static void *
++xencommize_grant_table_op(unsigned int cmd, void *op, unsigned int count)
++{
++	switch (cmd) {
++	case GNTTABOP_map_grant_ref:
++	case GNTTABOP_unmap_grant_ref:
++		break;
++	case GNTTABOP_setup_table:
++	{
++		struct gnttab_setup_table *setup = op;
++		struct xencomm_handle *frame_list;
++
++		frame_list = xencomm_create_inline
++			(xen_guest_handle(setup->frame_list));
++
++		set_xen_guest_handle(setup->frame_list, (void *)frame_list);
++		break;
++	}
++	case GNTTABOP_dump_table:
++	case GNTTABOP_transfer:
++		break;
++	default:
++		printk("%s: unknown grant table op %d\n", __func__, cmd);
++		BUG();
++	}
++
++	return  xencomm_create_inline(op);
++}
++
++int
++xencomm_hypercall_grant_table_op(unsigned int cmd, void *op, unsigned int count)
++{
++	void *desc = xencommize_grant_table_op (cmd, op, count);
++
++	return xencomm_arch_hypercall_grant_table_op(cmd, desc, count);
++}
++
++int
++xencomm_hypercall_sched_op(int cmd, void *arg)
++{
++	switch (cmd) {
++	case SCHEDOP_yield:
++	case SCHEDOP_block:
++	case SCHEDOP_shutdown:
++	case SCHEDOP_poll:
++	case SCHEDOP_remote_shutdown:
++		break;
++	default:
++		printk("%s: unknown sched op %d\n", __func__, cmd);
++		return -ENOSYS;
++	}
++	
++	return xencomm_arch_hypercall_sched_op(cmd, xencomm_create_inline(arg));
++}
++
++int
++xencomm_hypercall_multicall(void *call_list, int nr_calls)
++{
++	int i;
++	multicall_entry_t *mce;
++
++	for (i = 0; i < nr_calls; i++) {
++		mce = (multicall_entry_t *)call_list + i;
++
++		switch (mce->op) {
++		case __HYPERVISOR_update_va_mapping:
++		case __HYPERVISOR_mmu_update:
++			/* No-op on ia64.  */
++			break;
++		case __HYPERVISOR_grant_table_op:
++			mce->args[1] = (unsigned long)xencommize_grant_table_op
++				(mce->args[0], (void *)mce->args[1],
++				 mce->args[2]);
++			break;
++		case __HYPERVISOR_memory_op:
++		default:
++			printk("%s: unhandled multicall op entry op %lu\n",
++			       __func__, mce->op);
++			return -ENOSYS;
++		}
++	}
++
++	return xencomm_arch_hypercall_multicall
++		(xencomm_create_inline(call_list), nr_calls);
++}
++
++int
++xencomm_hypercall_callback_op(int cmd, void *arg)
++{
++	switch (cmd)
++	{
++	case CALLBACKOP_register:
++	case CALLBACKOP_unregister:
++		break;
++	default:
++		printk("%s: unknown callback op %d\n", __func__, cmd);
++		return -ENOSYS;
++	}
++
++	return xencomm_arch_hypercall_callback_op
++		(cmd, xencomm_create_inline(arg));
++}
++
++static void
++xencommize_memory_reservation (xen_memory_reservation_t *mop)
++{
++	struct xencomm_handle *desc;
++
++	desc = xencomm_create_inline(xen_guest_handle(mop->extent_start));
++	set_xen_guest_handle(mop->extent_start, (void *)desc);
++}
++
++int
++xencomm_hypercall_memory_op(unsigned int cmd, void *arg)
++{
++	switch (cmd) {
++	case XENMEM_increase_reservation:
++	case XENMEM_decrease_reservation:
++	case XENMEM_populate_physmap:
++		xencommize_memory_reservation((xen_memory_reservation_t *)arg);
++		break;
++		
++	case XENMEM_maximum_ram_page:
++		break;
++
++	case XENMEM_exchange:
++		xencommize_memory_reservation
++			(&((xen_memory_exchange_t *)arg)->in);
++		xencommize_memory_reservation
++			(&((xen_memory_exchange_t *)arg)->out);
++		break;
++
++	default:
++		printk("%s: unknown memory op %d\n", __func__, cmd);
++		return -ENOSYS;
++	}
++
++	return xencomm_arch_hypercall_memory_op
++		(cmd, xencomm_create_inline(arg));
++}
++
++unsigned long
++xencomm_hypercall_hvm_op(int cmd, void *arg)
++{
++	switch (cmd) {
++	case HVMOP_set_param:
++	case HVMOP_get_param:
++		break;
++	default:
++		printk("%s: unknown hvm op %d\n", __func__, cmd);
++		return -ENOSYS;
++	}
++
++	return xencomm_arch_hypercall_hvm_op(cmd, xencomm_create_inline(arg));
++}
++
++int
++xencomm_hypercall_suspend(unsigned long srec)
++{
++	struct sched_shutdown arg;
++
++	arg.reason = SHUTDOWN_suspend;
++
++	return xencomm_arch_hypercall_suspend(xencomm_create_inline(&arg));
++}
++
++int
++xencomm_mini_hypercall_event_channel_op(int cmd, void *op)
++{
++	struct xencomm_mini xc_area[2];
++	int nbr_area = 2;
++	struct xencomm_handle *desc;
++	int rc;
++
++	rc = xencomm_create_mini(xc_area, &nbr_area,
++	                         op, sizeof(evtchn_op_t), &desc);
++	if (rc)
++		return rc;
++
++	return xencomm_arch_hypercall_event_channel_op(cmd, desc);
++}
++EXPORT_SYMBOL(xencomm_mini_hypercall_event_channel_op);
++
++static int
++xencommize_mini_grant_table_op(struct xencomm_mini *xc_area, int *nbr_area,
++                               unsigned int cmd, void *op, unsigned int count,
++                               struct xencomm_handle **desc)
++{
++	struct xencomm_handle *desc1;
++	unsigned int argsize;
++	int rc;
++
++	switch (cmd) {
++	case GNTTABOP_map_grant_ref:
++		argsize = sizeof(struct gnttab_map_grant_ref);
++		break;
++	case GNTTABOP_unmap_grant_ref:
++		argsize = sizeof(struct gnttab_unmap_grant_ref);
++		break;
++	case GNTTABOP_setup_table:
++	{
++		struct gnttab_setup_table *setup = op;
++
++		argsize = sizeof(*setup);
++
++		if (count != 1)
++			return -EINVAL;
++		rc = xencomm_create_mini
++			(xc_area, nbr_area,
++			 xen_guest_handle(setup->frame_list),
++			 setup->nr_frames 
++			 * sizeof(*xen_guest_handle(setup->frame_list)),
++			 &desc1);
++		if (rc)
++			return rc;
++		set_xen_guest_handle(setup->frame_list, (void *)desc1);
++		break;
++	}
++	case GNTTABOP_dump_table:
++		argsize = sizeof(struct gnttab_dump_table);
++		break;
++	case GNTTABOP_transfer:
++		argsize = sizeof(struct gnttab_transfer);
++		break;
++	default:
++		printk("%s: unknown mini grant table op %d\n", __func__, cmd);
++		BUG();
++	}
++
++	rc = xencomm_create_mini(xc_area, nbr_area, op, count * argsize, desc);
++	if (rc)
++		return rc;
++
++	return 0;
++}
++
++int
++xencomm_mini_hypercall_grant_table_op(unsigned int cmd, void *op,
++                                      unsigned int count)
++{
++	int rc;
++	struct xencomm_handle *desc;
++	int nbr_area = 2;
++	struct xencomm_mini xc_area[2];
++
++	rc = xencommize_mini_grant_table_op(xc_area, &nbr_area,
++	                                    cmd, op, count, &desc);
++	if (rc)
++		return rc;
++
++	return xencomm_arch_hypercall_grant_table_op(cmd, desc, count);
++}
++EXPORT_SYMBOL(xencomm_mini_hypercall_grant_table_op);
++
++int
++xencomm_mini_hypercall_multicall(void *call_list, int nr_calls)
++{
++	int i;
++	multicall_entry_t *mce;
++	int nbr_area = 2 + nr_calls * 3;
++	struct xencomm_mini xc_area[nbr_area];
++	struct xencomm_handle *desc;
++	int rc;
++
++	for (i = 0; i < nr_calls; i++) {
++		mce = (multicall_entry_t *)call_list + i;
++
++		switch (mce->op) {
++		case __HYPERVISOR_update_va_mapping:
++		case __HYPERVISOR_mmu_update:
++			/* No-op on ia64.  */
++			break;
++		case __HYPERVISOR_grant_table_op:
++			rc = xencommize_mini_grant_table_op
++				(xc_area, &nbr_area,
++				 mce->args[0], (void *)mce->args[1],
++				 mce->args[2], &desc);
++			if (rc)
++				return rc;
++			mce->args[1] = (unsigned long)desc;
++			break;
++		case __HYPERVISOR_memory_op:
++		default:
++			printk("%s: unhandled multicall op entry op %lu\n",
++			       __func__, mce->op);
++			return -ENOSYS;
++		}
++	}
++
++	rc = xencomm_create_mini(xc_area, &nbr_area, call_list,
++	                         nr_calls * sizeof(multicall_entry_t), &desc);
++	if (rc)
++		return rc;
++
++	return xencomm_arch_hypercall_multicall(desc, nr_calls);
++}
++EXPORT_SYMBOL(xencomm_mini_hypercall_multicall);
++
++static int
++xencommize_mini_memory_reservation(struct xencomm_mini *area, int *nbr_area,
++                                   xen_memory_reservation_t *mop)
++{
++	struct xencomm_handle *desc;
++	int rc;
++
++	rc = xencomm_create_mini
++		(area, nbr_area,
++		 xen_guest_handle(mop->extent_start),
++		 mop->nr_extents 
++		 * sizeof(*xen_guest_handle(mop->extent_start)),
++		 &desc);
++	if (rc)
++		return rc;
++
++	set_xen_guest_handle(mop->extent_start, (void *)desc);
++
++	return 0;
++}
++
++int
++xencomm_mini_hypercall_memory_op(unsigned int cmd, void *arg)
++{
++	int nbr_area = 4;
++	struct xencomm_mini xc_area[4];
++	struct xencomm_handle *desc;
++	int rc;
++	unsigned int argsize;
++
++	switch (cmd) {
++	case XENMEM_increase_reservation:
++	case XENMEM_decrease_reservation:
++	case XENMEM_populate_physmap:
++		argsize = sizeof(xen_memory_reservation_t);
++		rc = xencommize_mini_memory_reservation
++			(xc_area, &nbr_area, (xen_memory_reservation_t *)arg);
++		if (rc)
++			return rc;
++		break;
++		
++	case XENMEM_maximum_ram_page:
++		argsize = 0;
++		break;
++
++	case XENMEM_exchange:
++		argsize = sizeof(xen_memory_exchange_t);
++		rc = xencommize_mini_memory_reservation
++			(xc_area, &nbr_area,
++			 &((xen_memory_exchange_t *)arg)->in);
++		if (rc)
++			return rc;
++		rc = xencommize_mini_memory_reservation
++			(xc_area, &nbr_area,
++			 &((xen_memory_exchange_t *)arg)->out);
++		if (rc)
++			return rc;
++		break;
++
++	default:
++		printk("%s: unknown mini memory op %d\n", __func__, cmd);
++		return -ENOSYS;
++	}
++
++	rc = xencomm_create_mini(xc_area, &nbr_area, arg, argsize, &desc);
++	if (rc)
++		return rc;
++
++	return xencomm_arch_hypercall_memory_op(cmd, desc);
++}
++EXPORT_SYMBOL(xencomm_mini_hypercall_memory_op);
+diff -r ac065f8d8645 -r 7e54eee8c68c arch/ia64/xen/xcom_privcmd.c
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/arch/ia64/xen/xcom_privcmd.c	Mon Oct 02 14:03:42 2006 -0600
+@@ -0,0 +1,573 @@
++/*
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
++ *
++ * Authors: Hollis Blanchard <hollisb@us.ibm.com>
++ *          Tristan Gingold <tristan.gingold@bull.net>
++ */
++#include <linux/types.h>
++#include <linux/errno.h>
++#include <linux/kernel.h>
++#include <linux/gfp.h>
++#include <linux/module.h>
++#include <xen/interface/xen.h>
++#include <xen/interface/dom0_ops.h>
++#define __XEN__
++#include <xen/interface/domctl.h>
++#include <xen/interface/sysctl.h>
++#include <xen/interface/memory.h>
++#include <xen/interface/version.h>
++#include <xen/interface/event_channel.h>
++#include <xen/interface/acm_ops.h>
++#include <xen/interface/hvm/params.h>
++#include <xen/public/privcmd.h>
++#include <asm/hypercall.h>
++#include <asm/page.h>
++#include <asm/uaccess.h>
++#include <asm/xen/xencomm.h>
++
++#define ROUND_DIV(v,s) (((v) + (s) - 1) / (s))
++
++static int
++xencomm_privcmd_dom0_op(privcmd_hypercall_t *hypercall)
++{
++	dom0_op_t kern_op;
++	dom0_op_t __user *user_op = (dom0_op_t __user *)hypercall->arg[0];
++	struct xencomm_handle *op_desc;
++	struct xencomm_handle *desc = NULL;
++	int ret = 0;
++
++	if (copy_from_user(&kern_op, user_op, sizeof(dom0_op_t)))
++		return -EFAULT;
++
++	if (kern_op.interface_version != DOM0_INTERFACE_VERSION)
++		return -EACCES;
++
++	op_desc = xencomm_create_inline(&kern_op);
++
++	switch (kern_op.cmd) {
++	default:
++		printk("%s: unknown dom0 cmd %d\n", __func__, kern_op.cmd);
++		return -ENOSYS;
++	}
++
++	if (ret) {
++		/* error mapping the nested pointer */
++		return ret;
++	}
++
++	ret = xencomm_arch_hypercall_dom0_op(op_desc);
++
++	/* FIXME: should we restore the handle?  */
++	if (copy_to_user(user_op, &kern_op, sizeof(dom0_op_t)))
++		ret = -EFAULT;
++
++	if (desc)
++		xencomm_free(desc);
++	return ret;
++}
++
++static int
++xencomm_privcmd_sysctl(privcmd_hypercall_t *hypercall)
++{
++	xen_sysctl_t kern_op;
++	xen_sysctl_t __user *user_op;
++	struct xencomm_handle *op_desc;
++	struct xencomm_handle *desc = NULL;
++	struct xencomm_handle *desc1 = NULL;
++	int ret = 0;
++
++	user_op = (xen_sysctl_t __user *)hypercall->arg[0];
++
++	if (copy_from_user(&kern_op, user_op, sizeof(xen_sysctl_t)))
++		return -EFAULT;
++
++	if (kern_op.interface_version != XEN_SYSCTL_INTERFACE_VERSION)
++		return -EACCES;
++
++	op_desc = xencomm_create_inline(&kern_op);
++
++	switch (kern_op.cmd) {
++	case XEN_SYSCTL_readconsole:
++		ret = xencomm_create(
++			xen_guest_handle(kern_op.u.readconsole.buffer),
++			kern_op.u.readconsole.count,
++			&desc, GFP_KERNEL);
++		set_xen_guest_handle(kern_op.u.readconsole.buffer,
++		                     (void *)desc);
++		break;
++	case XEN_SYSCTL_tbuf_op:
++	case XEN_SYSCTL_physinfo:
++	case XEN_SYSCTL_sched_id:
++		break;
++	case XEN_SYSCTL_perfc_op:
++		ret = xencomm_create(
++			xen_guest_handle(kern_op.u.perfc_op.desc),
++			kern_op.u.perfc_op.nr_counters *
++			sizeof(xen_sysctl_perfc_desc_t),
++			&desc, GFP_KERNEL);
++		if (ret)
++			return ret;
++		set_xen_guest_handle(kern_op.u.perfc_op.val,
++				     (void *)desc);
++		ret = xencomm_create(
++			xen_guest_handle(kern_op.u.perfc_op.val),
++			kern_op.u.perfc_op.nr_vals *
++			sizeof(xen_sysctl_perfc_desc_t),
++			&desc1, GFP_KERNEL);
++		if (ret)
++			xencomm_free(desc);
++		set_xen_guest_handle(kern_op.u.perfc_op.val,
++				     (void *)desc1);
++		break;
++	case XEN_SYSCTL_getdomaininfolist:
++		ret = xencomm_create(
++			xen_guest_handle(kern_op.u.getdomaininfolist.buffer),
++			kern_op.u.getdomaininfolist.max_domains *
++			sizeof(xen_domctl_getdomaininfo_t),
++			&desc, GFP_KERNEL);
++		set_xen_guest_handle(kern_op.u.getdomaininfolist.buffer,
++				     (void *)desc);
++		break;
++	default:
++		printk("%s: unknown sysctl cmd %d\n", __func__, kern_op.cmd);
++		return -ENOSYS;
++	}
++
++	if (ret) {
++		/* error mapping the nested pointer */
++		return ret;
++	}
++
++	ret = xencomm_arch_hypercall_sysctl(op_desc);
++
++	/* FIXME: should we restore the handle?  */
++	if (copy_to_user(user_op, &kern_op, sizeof(xen_sysctl_t)))
++		ret = -EFAULT;
++
++	if (desc)
++		xencomm_free(desc);
++	if (desc1)
++		xencomm_free(desc1);
++	return ret;
++}
++
++static int
++xencomm_privcmd_domctl(privcmd_hypercall_t *hypercall)
++{
++	xen_domctl_t kern_op;
++	xen_domctl_t __user *user_op;
++	struct xencomm_handle *op_desc;
++	struct xencomm_handle *desc = NULL;
++	int ret = 0;
++
++	user_op = (xen_domctl_t __user *)hypercall->arg[0];
++
++	if (copy_from_user(&kern_op, user_op, sizeof(xen_domctl_t)))
++		return -EFAULT;
++
++	if (kern_op.interface_version != XEN_DOMCTL_INTERFACE_VERSION)
++		return -EACCES;
++
++	op_desc = xencomm_create_inline(&kern_op);
++
++	switch (kern_op.cmd) {
++	case XEN_DOMCTL_createdomain:
++	case XEN_DOMCTL_destroydomain:
++	case XEN_DOMCTL_pausedomain:
++	case XEN_DOMCTL_unpausedomain:
++	case XEN_DOMCTL_getdomaininfo:
++		break;
++	case XEN_DOMCTL_getmemlist:
++	{
++		unsigned long nr_pages = kern_op.u.getmemlist.max_pfns;
++#ifdef __ia64__
++		/* FIXME: Xen/ia64 pass first_page and nr_pages in max_pfns! */
++		nr_pages &= 0xffffffff;
++#endif
++		ret = xencomm_create(
++			xen_guest_handle(kern_op.u.getmemlist.buffer),
++			nr_pages * sizeof(unsigned long),
++			&desc, GFP_KERNEL);
++		set_xen_guest_handle(kern_op.u.getmemlist.buffer,
++		                     (void *)desc);
++		break;
++	}
++	case XEN_DOMCTL_getpageframeinfo:
++		break;
++	case XEN_DOMCTL_getpageframeinfo2:
++		ret = xencomm_create(
++			xen_guest_handle(kern_op.u.getpageframeinfo2.array),
++			kern_op.u.getpageframeinfo2.num,
++			&desc, GFP_KERNEL);
++		set_xen_guest_handle(kern_op.u.getpageframeinfo2.array,
++		                     (void *)desc);
++		break;
++	case XEN_DOMCTL_shadow_op:
++		ret = xencomm_create(
++			xen_guest_handle(kern_op.u.shadow_op.dirty_bitmap),
++			ROUND_DIV(kern_op.u.shadow_op.pages, 8),
++			&desc, GFP_KERNEL);
++		set_xen_guest_handle(kern_op.u.shadow_op.dirty_bitmap,
++		                     (void *)desc);
++		break;
++	case XEN_DOMCTL_max_mem:
++		break;
++	case XEN_DOMCTL_setvcpucontext:
++	case XEN_DOMCTL_getvcpucontext:
++		ret = xencomm_create(
++			xen_guest_handle(kern_op.u.vcpucontext.ctxt),
++			sizeof(vcpu_guest_context_t),
++			&desc, GFP_KERNEL);
++		set_xen_guest_handle(kern_op.u.vcpucontext.ctxt, (void *)desc);
++		break;
++	case XEN_DOMCTL_getvcpuinfo:
++		break;
++	case XEN_DOMCTL_setvcpuaffinity:
++	case XEN_DOMCTL_getvcpuaffinity:
++		ret = xencomm_create(
++			xen_guest_handle(kern_op.u.vcpuaffinity.cpumap.bitmap),
++			ROUND_DIV(kern_op.u.vcpuaffinity.cpumap.nr_cpus, 8),
++			&desc, GFP_KERNEL);
++		set_xen_guest_handle(kern_op.u.vcpuaffinity.cpumap.bitmap,
++		                     (void *)desc);
++		break;
++	case XEN_DOMCTL_max_vcpus:
++	case XEN_DOMCTL_scheduler_op:
++	case XEN_DOMCTL_setdomainhandle:
++	case XEN_DOMCTL_setdebugging:
++	case XEN_DOMCTL_irq_permission:
++	case XEN_DOMCTL_iomem_permission:
++	case XEN_DOMCTL_ioport_permission:
++	case XEN_DOMCTL_hypercall_init:
++	case XEN_DOMCTL_arch_setup:
++	case XEN_DOMCTL_settimeoffset:
++		break;
++	default:
++		printk("%s: unknown domctl cmd %d\n", __func__, kern_op.cmd);
++		return -ENOSYS;
++	}
++
++	if (ret) {
++		/* error mapping the nested pointer */
++		return ret;
++	}
++
++	ret = xencomm_arch_hypercall_domctl (op_desc);
++
++	/* FIXME: should we restore the handle?  */
++	if (copy_to_user(user_op, &kern_op, sizeof(xen_domctl_t)))
++		ret = -EFAULT;
++
++	if (desc)
++		xencomm_free(desc);
++	return ret;
++}
++
++static int
++xencomm_privcmd_acm_op(privcmd_hypercall_t *hypercall)
++{
++	int cmd = hypercall->arg[0];
++	void __user *arg = (void __user *)hypercall->arg[1];
++	struct xencomm_handle *op_desc;
++	struct xencomm_handle *desc = NULL;
++	int ret;
++
++	switch (cmd) {
++	case ACMOP_getssid:
++	{
++		struct acm_getssid kern_arg;
++
++		if (copy_from_user(&kern_arg, arg, sizeof (kern_arg)))
++			return -EFAULT;
++
++		op_desc = xencomm_create_inline(&kern_arg);
++
++		ret = xencomm_create(xen_guest_handle(kern_arg.ssidbuf),
++		                     kern_arg.ssidbuf_size, &desc, GFP_KERNEL);
++		if (ret)
++			return ret;
++
++		set_xen_guest_handle(kern_arg.ssidbuf, (void *)desc);
++
++		ret = xencomm_arch_hypercall_acm_op(cmd, op_desc);
++
++		xencomm_free(desc);
++
++		if (copy_to_user(arg, &kern_arg, sizeof (kern_arg)))
++			return -EFAULT;
++
++		return ret;
++	}
++	default:
++		printk("%s: unknown acm_op cmd %d\n", __func__, cmd);
++		return -ENOSYS;
++	}
++
++	return ret;
++}
++
++static int
++xencomm_privcmd_memory_op(privcmd_hypercall_t *hypercall)
++{
++	const unsigned long cmd = hypercall->arg[0];
++	int ret = 0;
++
++	switch (cmd) {
++	case XENMEM_increase_reservation:
++	case XENMEM_decrease_reservation:
++	case XENMEM_populate_physmap:
++	{
++		xen_memory_reservation_t kern_op;
++		xen_memory_reservation_t __user *user_op;
++		struct xencomm_handle *desc = NULL;
++		struct xencomm_handle *desc_op;
++
++		user_op = (xen_memory_reservation_t __user *)hypercall->arg[1];
++		if (copy_from_user(&kern_op, user_op,
++		                   sizeof(xen_memory_reservation_t)))
++			return -EFAULT;
++		desc_op = xencomm_create_inline(&kern_op);
++
++		if (xen_guest_handle(kern_op.extent_start)) {
++			void * addr;
++
++			addr = xen_guest_handle(kern_op.extent_start);
++			ret = xencomm_create
++				(addr,
++				 kern_op.nr_extents *
++				 sizeof(*xen_guest_handle
++					(kern_op.extent_start)),
++				 &desc, GFP_KERNEL);
++			if (ret)
++				return ret;
++			set_xen_guest_handle(kern_op.extent_start,
++			                     (void *)desc);
++		}
++
++		ret = xencomm_arch_hypercall_memory_op(cmd, desc_op);
++
++		if (desc)
++			xencomm_free(desc);
++
++		if (ret != 0)
++			return ret;
++
++		if (copy_to_user(user_op, &kern_op,
++		                 sizeof(xen_memory_reservation_t)))
++			return -EFAULT;
++
++		return ret;
++	}
++	case XENMEM_translate_gpfn_list:
++	{
++		xen_translate_gpfn_list_t kern_op;
++		xen_translate_gpfn_list_t __user *user_op;
++		struct xencomm_handle *desc_gpfn = NULL;
++		struct xencomm_handle *desc_mfn = NULL;
++		struct xencomm_handle *desc_op;
++		void *addr;
++
++		user_op = (xen_translate_gpfn_list_t __user *)
++			hypercall->arg[1];
++		if (copy_from_user(&kern_op, user_op,
++		                   sizeof(xen_translate_gpfn_list_t)))
++			return -EFAULT;
++		desc_op = xencomm_create_inline(&kern_op);
++
++		if (kern_op.nr_gpfns) {
++			/* gpfn_list.  */
++			addr = xen_guest_handle(kern_op.gpfn_list);
++
++			ret = xencomm_create(addr, kern_op.nr_gpfns *
++			                     sizeof(*xen_guest_handle
++			                            (kern_op.gpfn_list)),
++			                     &desc_gpfn, GFP_KERNEL);
++			if (ret)
++				return ret;
++			set_xen_guest_handle(kern_op.gpfn_list,
++			                     (void *)desc_gpfn);
++
++			/* mfn_list.  */
++			addr = xen_guest_handle(kern_op.mfn_list);
++
++			ret = xencomm_create(addr, kern_op.nr_gpfns *
++			                     sizeof(*xen_guest_handle
++			                            (kern_op.mfn_list)),
++			                     &desc_mfn, GFP_KERNEL);
++			if (ret)
++				return ret;
++			set_xen_guest_handle(kern_op.mfn_list,
++			                     (void *)desc_mfn);
++		}
++
++		ret = xencomm_arch_hypercall_memory_op(cmd, desc_op);
++
++		if (desc_gpfn)
++			xencomm_free(desc_gpfn);
++
++		if (desc_mfn)
++			xencomm_free(desc_mfn);
++
++		if (ret != 0)
++			return ret;
++
++		return ret;
++	}
++	default:
++		printk("%s: unknown memory op %lu\n", __func__, cmd);
++		ret = -ENOSYS;
++	}
++	return ret;
++}
++
++static int
++xencomm_privcmd_xen_version(privcmd_hypercall_t *hypercall)
++{
++	int cmd = hypercall->arg[0];
++	void __user *arg = (void __user *)hypercall->arg[1];
++	struct xencomm_handle *desc;
++	size_t argsize;
++	int rc;
++
++	switch (cmd) {
++	case XENVER_version:
++		/* do not actually pass an argument */
++		return xencomm_arch_hypercall_xen_version(cmd, 0);
++	case XENVER_extraversion:
++		argsize = sizeof(xen_extraversion_t);
++		break;
++	case XENVER_compile_info:
++		argsize = sizeof(xen_compile_info_t);
++		break;
++	case XENVER_capabilities:
++		argsize = sizeof(xen_capabilities_info_t);
++		break;
++	case XENVER_changeset:
++		argsize = sizeof(xen_changeset_info_t);
++		break;
++	case XENVER_platform_parameters:
++		argsize = sizeof(xen_platform_parameters_t);
++		break;
++	case XENVER_pagesize:
++		argsize = (arg == NULL) ? 0 : sizeof(void *);
++		break;
++	case XENVER_get_features:
++		argsize = (arg == NULL) ? 0 : sizeof(xen_feature_info_t);
++		break;
++
++	default:
++		printk("%s: unknown version op %d\n", __func__, cmd);
++		return -ENOSYS;
++	}
++
++	rc = xencomm_create(arg, argsize, &desc, GFP_KERNEL);
++	if (rc)
++		return rc;
++
++	rc = xencomm_arch_hypercall_xen_version(cmd, desc);
++
++	xencomm_free(desc);
++
++	return rc;
++}
++
++static int
++xencomm_privcmd_event_channel_op(privcmd_hypercall_t *hypercall)
++{
++	int cmd = hypercall->arg[0];
++	struct xencomm_handle *desc;
++	unsigned int argsize;
++	int ret;
++
++	switch (cmd) {
++	case EVTCHNOP_alloc_unbound:
++		argsize = sizeof(evtchn_alloc_unbound_t);
++		break;
++
++	case EVTCHNOP_status:
++		argsize = sizeof(evtchn_status_t);
++		break;
++
++	default:
++		printk("%s: unknown EVTCHNOP %d\n", __func__, cmd);
++		return -EINVAL;
++	}
++
++	ret = xencomm_create((void *)hypercall->arg[1], argsize,
++	                     &desc, GFP_KERNEL);
++	if (ret)
++		return ret;
++
++	ret = xencomm_arch_hypercall_event_channel_op(cmd, desc);
++
++	xencomm_free(desc);
++	return ret;
++}
++
++static int
++xencomm_privcmd_hvm_op(privcmd_hypercall_t *hypercall)
++{
++	int cmd = hypercall->arg[0];
++	struct xencomm_handle *desc;
++	unsigned int argsize;
++	int ret;
++
++	switch (cmd) {
++	case HVMOP_get_param:
++	case HVMOP_set_param:
++		argsize = sizeof(xen_hvm_param_t);
++		break;
++	default:
++		printk("%s: unknown HVMOP %d\n", __func__, cmd);
++		return -EINVAL;
++	}
++
++	ret = xencomm_create((void *)hypercall->arg[1], argsize,
++	                     &desc, GFP_KERNEL);
++	if (ret)
++		return ret;
++
++	ret = xencomm_arch_hypercall_hvm_op(cmd, desc);
++
++	xencomm_free(desc);
++	return ret;
++}
++
++int
++privcmd_hypercall(privcmd_hypercall_t *hypercall)
++{
++	switch (hypercall->op) {
++	case __HYPERVISOR_dom0_op:
++		return xencomm_privcmd_dom0_op(hypercall);
++	case __HYPERVISOR_domctl:
++		return xencomm_privcmd_domctl(hypercall);
++	case __HYPERVISOR_sysctl:
++		return xencomm_privcmd_sysctl(hypercall);
++        case __HYPERVISOR_acm_op:
++		return xencomm_privcmd_acm_op(hypercall);
++	case __HYPERVISOR_xen_version:
++		return xencomm_privcmd_xen_version(hypercall);
++	case __HYPERVISOR_memory_op:
++		return xencomm_privcmd_memory_op(hypercall);
++	case __HYPERVISOR_event_channel_op:
++		return xencomm_privcmd_event_channel_op(hypercall);
++	case __HYPERVISOR_hvm_op:
++		return xencomm_privcmd_hvm_op(hypercall);
++	default:
++		printk("%s: unknown hcall (%ld)\n", __func__, hypercall->op);
++		return -ENOSYS;
++	}
++}
++
+diff -r ac065f8d8645 -r 7e54eee8c68c arch/ia64/xen/xencomm.c
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/arch/ia64/xen/xencomm.c	Mon Oct 02 14:03:42 2006 -0600
+@@ -0,0 +1,244 @@
++/*
++ * Copyright (C) 2006 Hollis Blanchard <hollisb@us.ibm.com>, IBM Corporation
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ * 
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ * 
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
++ */
++
++#include <linux/gfp.h>
++#include <linux/mm.h>
++#include <asm/page.h>
++#include <asm/xen/xencomm.h>
++#include <xen/interface/xen.h>
++
++static int xencomm_debug = 0;
++
++/* Translate virtual address to physical address.  */
++unsigned long
++xencomm_vaddr_to_paddr(unsigned long vaddr)
++{
++	struct page *page;
++	struct vm_area_struct *vma;
++
++	if (vaddr == 0)
++		return 0;
++
++#ifdef __ia64__
++	if (REGION_NUMBER(vaddr) == 5) {
++		pgd_t *pgd;
++		pud_t *pud;
++		pmd_t *pmd;
++		pte_t *ptep;
++
++		/* On ia64, TASK_SIZE refers to current.  It is not initialized
++		   during boot.
++		   Furthermore the kernel is relocatable and __pa() doesn't
++		   work on  addresses.  */
++		if (vaddr >= KERNEL_START
++		    && vaddr < (KERNEL_START + KERNEL_TR_PAGE_SIZE)) {
++			extern unsigned long kernel_start_pa;
++			
++			return vaddr - kernel_start_pa;
++		}
++
++		/* In kernel area -- virtually mapped.  */
++		pgd = pgd_offset_k(vaddr);
++		if (pgd_none(*pgd) || pgd_bad(*pgd))
++			return ~0UL;
++
++		pud = pud_offset(pgd, vaddr);
++		if (pud_none(*pud) || pud_bad(*pud))
++			return ~0UL;
++
++		pmd = pmd_offset(pud, vaddr);
++		if (pmd_none(*pmd) || pmd_bad(*pmd))
++			return ~0UL;
++
++		ptep = pte_offset_kernel(pmd, vaddr);
++		if (!ptep)
++			return ~0UL;
++
++		return (pte_val(*ptep) & _PFN_MASK) | (vaddr & ~PAGE_MASK);
++	}
++#endif
++
++	if (vaddr > TASK_SIZE) {
++		/* kernel address */
++		return __pa(vaddr);
++	}
++
++	/* XXX double-check (lack of) locking */
++	vma = find_extend_vma(current->mm, vaddr);
++	if (!vma)
++		return ~0UL;
++
++	/* We assume the page is modified.  */
++	page = follow_page(vma, vaddr, FOLL_WRITE | FOLL_TOUCH);
++	if (!page)
++		return ~0UL;
++
++	return (page_to_pfn(page) << PAGE_SHIFT) | (vaddr & ~PAGE_MASK);
++}
++
++static int
++xencomm_init(struct xencomm_desc *desc, void *buffer, unsigned long bytes)
++{
++	unsigned long recorded = 0;
++	int i = 0;
++
++	BUG_ON((buffer == NULL) && (bytes > 0));
++
++	/* record the physical pages used */
++	if (buffer == NULL)
++		desc->nr_addrs = 0;
++
++	while ((recorded < bytes) && (i < desc->nr_addrs)) {
++		unsigned long vaddr = (unsigned long)buffer + recorded;
++		unsigned long paddr;
++		int offset;
++		int chunksz;
++
++		offset = vaddr % PAGE_SIZE; /* handle partial pages */
++		chunksz = min(PAGE_SIZE - offset, bytes - recorded);
++
++		paddr = xencomm_vaddr_to_paddr(vaddr);
++		if (paddr == ~0UL) {
++			printk("%s: couldn't translate vaddr %lx\n",
++			       __func__, vaddr);
++			return -EINVAL;
++		}
++
++		desc->address[i++] = paddr;
++		recorded += chunksz;
++	}
++
++	if (recorded < bytes) {
++		printk("%s: could only translate %ld of %ld bytes\n",
++		       __func__, recorded, bytes);
++		return -ENOSPC;
++	}
++
++	/* mark remaining addresses invalid (just for safety) */
++	while (i < desc->nr_addrs)
++		desc->address[i++] = XENCOMM_INVALID;
++
++	desc->magic = XENCOMM_MAGIC;
++
++	return 0;
++}
++
++static struct xencomm_desc *
++xencomm_alloc(gfp_t gfp_mask)
++{
++	struct xencomm_desc *desc;
++
++	desc = (struct xencomm_desc *)__get_free_page(gfp_mask);
++	if (desc == NULL)
++		panic("%s: page allocation failed\n", __func__);
++
++	desc->nr_addrs = (PAGE_SIZE - sizeof(struct xencomm_desc)) /
++	                 sizeof(*desc->address);
++
++	return desc;
++}
++
++void
++xencomm_free(struct xencomm_handle *desc)
++{
++	if (desc)
++		free_page((unsigned long)__va(desc));
++}
++
++int
++xencomm_create(void *buffer, unsigned long bytes,
++               struct xencomm_handle **ret, gfp_t gfp_mask)
++{
++	struct xencomm_desc *desc;
++	struct xencomm_handle *handle;
++	int rc;
++
++	if (xencomm_debug)
++		printk("%s: %p[%ld]\n", __func__, buffer, bytes);
++
++	if (buffer == NULL || bytes == 0) {
++		*ret = (struct xencomm_handle *)NULL;
++		return 0;
++	}
++
++	desc = xencomm_alloc(gfp_mask);
++	if (!desc) {
++		printk("%s failure\n", "xencomm_alloc");
++		return -ENOMEM;
++	}
++	handle = (struct xencomm_handle *)__pa(desc);
++
++	rc = xencomm_init(desc, buffer, bytes);
++	if (rc) {
++		printk("%s failure: %d\n", "xencomm_init", rc);
++		xencomm_free(handle);
++		return rc;
++	}
++
++	*ret = handle;
++	return 0;
++}
++
++/* "mini" routines, for stack-based communications: */
++
++static void *
++xencomm_alloc_mini(struct xencomm_mini *area, int *nbr_area)
++{
++	unsigned long base;
++	unsigned int pageoffset;
++
++	while (*nbr_area >= 0) {
++		/* Allocate an area.  */
++		(*nbr_area)--;
++
++		base = (unsigned long)(area + *nbr_area);
++		pageoffset = base % PAGE_SIZE;
++
++		/* If the area does not cross a page, use it.  */
++		if ((PAGE_SIZE - pageoffset) >= sizeof(struct xencomm_mini))
++			return &area[*nbr_area];
++	}
++	/* No more area.  */
++	return NULL;
++}
++
++int
++xencomm_create_mini(struct xencomm_mini *area, int *nbr_area,
++                    void *buffer, unsigned long bytes,
++                    struct xencomm_handle **ret)
++{
++	struct xencomm_desc *desc;
++	int rc;
++	unsigned long res;
++
++	desc = xencomm_alloc_mini(area, nbr_area);
++	if (!desc)
++		return -ENOMEM;
++	desc->nr_addrs = XENCOMM_MINI_ADDRS;
++
++	rc = xencomm_init(desc, buffer, bytes);
++	if (rc)
++		return rc;
++
++	res = xencomm_vaddr_to_paddr((unsigned long)desc);
++	if (res == ~0UL)
++		return -EINVAL;
++
++	*ret = (struct xencomm_handle*)res;
++	return 0;
++}
+diff -r ac065f8d8645 -r 7e54eee8c68c include/asm-ia64/xen/xcom_hcall.h
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/include/asm-ia64/xen/xcom_hcall.h	Mon Oct 02 14:03:42 2006 -0600
+@@ -0,0 +1,74 @@
++/*
++ * Copyright (C) 2006 Tristan Gingold <tristan.gingold@bull.net>, Bull SAS
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ * 
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ * 
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
++ */
++
++#ifndef _LINUX_XENCOMM_HCALL_H_
++#define _LINUX_XENCOMM_HCALL_H_
++
++/* These function creates inline descriptor for the parameters and
++   calls the corresponding xencomm_arch_hypercall_X.
++   Architectures should defines HYPERVISOR_xxx as xencomm_hypercall_xxx unless
++   they want to use their own wrapper.  */
++extern int xencomm_hypercall_console_io(int cmd, int count, char *str);
++
++extern int xencomm_hypercall_event_channel_op(int cmd, void *op);
++
++extern int xencomm_hypercall_xen_version(int cmd, void *arg);
++
++extern int xencomm_hypercall_physdev_op(int cmd, void *op);
++
++extern int xencomm_hypercall_grant_table_op(unsigned int cmd, void *op,
++                                            unsigned int count);
++
++extern int xencomm_hypercall_sched_op(int cmd, void *arg);
++
++extern int xencomm_hypercall_multicall(void *call_list, int nr_calls);
++
++extern int xencomm_hypercall_callback_op(int cmd, void *arg);
++
++extern int xencomm_hypercall_memory_op(unsigned int cmd, void *arg);
++
++extern unsigned long xencomm_hypercall_hvm_op(int cmd, void *arg);
++
++extern int xencomm_hypercall_suspend(unsigned long srec);
++
++/* Using mini xencomm.  */
++extern int xencomm_mini_hypercall_console_io(int cmd, int count, char *str);
++
++extern int xencomm_mini_hypercall_event_channel_op(int cmd, void *op);
++
++extern int xencomm_mini_hypercall_xen_version(int cmd, void *arg);
++
++extern int xencomm_mini_hypercall_physdev_op(int cmd, void *op);
++
++extern int xencomm_mini_hypercall_grant_table_op(unsigned int cmd, void *op,
++                                                 unsigned int count);
++
++extern int xencomm_mini_hypercall_sched_op(int cmd, void *arg);
++
++extern int xencomm_mini_hypercall_multicall(void *call_list, int nr_calls);
++
++extern int xencomm_mini_hypercall_callback_op(int cmd, void *arg);
++
++extern int xencomm_mini_hypercall_memory_op(unsigned int cmd, void *arg);
++
++/* For privcmd.  Locally declare argument type to avoid include storm.
++   Type coherency will be checked within privcmd.c  */
++struct privcmd_hypercall;
++extern int privcmd_hypercall(struct privcmd_hypercall *hypercall);
++
++#endif /* _LINUX_XENCOMM_HCALL_H_ */
+diff -r ac065f8d8645 -r 7e54eee8c68c include/asm-ia64/xen/xencomm.h
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/include/asm-ia64/xen/xencomm.h	Mon Oct 02 14:03:42 2006 -0600
+@@ -0,0 +1,57 @@
++/*
++ * Copyright (C) 2006 Hollis Blanchard <hollisb@us.ibm.com>, IBM Corporation
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ * 
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ * 
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
++ */
++
++#ifndef _LINUX_XENCOMM_H_
++#define _LINUX_XENCOMM_H_
++
++#include <xen/interface/xencomm.h>
++
++#define XENCOMM_MINI_ADDRS 3
++struct xencomm_mini {
++	struct xencomm_desc _desc;
++	uint64_t address[XENCOMM_MINI_ADDRS];
++};
++
++/* To avoid additionnal virt to phys conversion, an opaque structure is
++   presented.  */
++struct xencomm_handle;
++
++extern int xencomm_create(void *buffer, unsigned long bytes,
++                          struct xencomm_handle **desc, gfp_t type);
++extern void xencomm_free(struct xencomm_handle *desc);
++
++extern int xencomm_create_mini(struct xencomm_mini *area, int *nbr_area,
++                               void *buffer, unsigned long bytes,
++                               struct xencomm_handle **ret);
++
++/* Translate virtual address to physical address.  */
++extern unsigned long xencomm_vaddr_to_paddr(unsigned long vaddr);
++
++/* Inline version.  To be used only on linear space (kernel space).  */
++static inline struct xencomm_handle *
++xencomm_create_inline(void *buffer)
++{
++	unsigned long paddr;
++
++	paddr = xencomm_vaddr_to_paddr((unsigned long)buffer);
++	return (struct xencomm_handle *)(paddr | XENCOMM_INLINE_FLAG);
++}
++
++#define xen_guest_handle(hnd)  ((hnd).p)
++
++#endif /* _LINUX_XENCOMM_H_ */
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1159819479 21600
+# Node ID 3ce50798cf95e5e33a7a96704bb9f64ba2914afc
+# Parent  7e54eee8c68ccf26933e89e5cf937c74ab8c1435
+[IA64] Renumber dom0vp hypercalls and reformat comments.
+
+(Adding a perfc will be easier with a compact numbering).
+
+Signed-off-by: Tristan Gingold <tristan.gingold@bull.net>
+
+original changeset: 11703 (xen-ia64-unstable)
+
+original changeset: 11791 (xen-3.0.3-ia64)
+
+diff -r 7e54eee8c68c -r 3ce50798cf95 include/xen/interface/arch-ia64.h
+--- a/include/xen/interface/arch-ia64.h	Mon Oct 02 14:03:42 2006 -0600
++++ b/include/xen/interface/arch-ia64.h	Mon Oct 02 14:04:39 2006 -0600
+@@ -336,33 +336,30 @@ typedef struct vcpu_guest_context vcpu_g
+ typedef struct vcpu_guest_context vcpu_guest_context_t;
+ DEFINE_XEN_GUEST_HANDLE(vcpu_guest_context_t);
+ 
+-// dom0 vp op
++/* dom0 vp op */
+ #define __HYPERVISOR_ia64_dom0vp_op     __HYPERVISOR_arch_0
+-#define IA64_DOM0VP_ioremap             0       // map io space in machine
+-                                                // address to dom0 physical
+-                                                // address space.
+-                                                // currently physical
+-                                                // assignedg address equals to
+-                                                // machine address
+-#define IA64_DOM0VP_phystomach          1       // convert a pseudo physical
+-                                                // page frame number
+-                                                // to the corresponding
+-                                                // machine page frame number.
+-                                                // if no page is assigned,
+-                                                // INVALID_MFN or GPFN_INV_MASK
+-                                                // is returned depending on
+-                                                // domain's non-vti/vti mode.
+-#define IA64_DOM0VP_machtophys          3       // convert a machine page
+-                                                // frame number
+-                                                // to the corresponding
+-                                                // pseudo physical page frame
+-                                                // number of the caller domain
+-#define IA64_DOM0VP_zap_physmap         17      // unmap and free pages
+-                                                // contained in the specified
+-                                                // pseudo physical region
+-#define IA64_DOM0VP_add_physmap         18      // assigne machine page frane
+-                                                // to dom0's pseudo physical
+-                                                // address space.
++/*  Map io space in machine address to dom0 physical address space.
++    Currently physical assigned address equals to machine address.  */
++#define IA64_DOM0VP_ioremap             0
++
++/* Convert a pseudo physical page frame number to the corresponding
++   machine page frame number. If no page is assigned, INVALID_MFN or
++   GPFN_INV_MASK is returned depending on domain's non-vti/vti mode.  */
++#define IA64_DOM0VP_phystomach          1
++
++/* Convert a machine page frame number to the corresponding pseudo physical
++   page frame number of the caller domain.  */
++#define IA64_DOM0VP_machtophys          3
++
++/* Reserved for future use.  */
++#define IA64_DOM0VP_iounmap             4
++
++/* Unmap and free pages contained in the specified pseudo physical region.  */
++#define IA64_DOM0VP_zap_physmap         5
++
++/* Assign machine page frame to dom0's pseudo physical address space.  */
++#define IA64_DOM0VP_add_physmap         6
++
+ // flags for page assignement to pseudo physical address space
+ #define _ASSIGN_readonly                0
+ #define ASSIGN_readonly                 (1UL << _ASSIGN_readonly)
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1159819789 21600
+# Node ID ac5b14ff6add9308765b31ab011262c74679cbed
+# Parent  3ce50798cf95e5e33a7a96704bb9f64ba2914afc
+[IA64] Implement fast hypercall for physdevop eoi.
+
+Eoi is a very frequent hypercall which has only one argument passed through
+a structure.  To avoid the xencomm overhead, a new hypercall is created
+and the argument is passed by value.
+
+Signed-off-by: Tristan Gingold <tristan.gingold@bull.net>
+
+original changeset: 11704 (xen-ia64-unstable)
+
+original changeset: 11792 (xen-3.0.3-ia64)
+
+diff -r 3ce50798cf95 -r ac5b14ff6add include/asm-ia64/hypercall.h
+--- a/include/asm-ia64/hypercall.h	Mon Oct 02 14:04:39 2006 -0600
++++ b/include/asm-ia64/hypercall.h	Mon Oct 02 14:09:49 2006 -0600
+@@ -259,6 +259,18 @@ xencomm_arch_hypercall_hvm_op(int cmd, v
+ 	return _hypercall2(unsigned long, hvm_op, cmd, arg);
+ }
+ 
++static inline int
++HYPERVISOR_physdev_op(int cmd, void *arg)
++{
++	switch (cmd) {
++	case PHYSDEVOP_eoi:
++		return _hypercall1(int, ia64_fast_eoi,
++		                   ((struct physdev_eoi *)arg)->irq);
++	default:
++		return xencomm_hypercall_physdev_op(cmd, arg);
++	}
++}
++
+ extern fastcall unsigned int __do_IRQ(unsigned int irq, struct pt_regs *regs);
+ static inline void exit_idle(void) {}
+ #define do_IRQ(irq, regs) ({			\
+@@ -377,7 +389,6 @@ HYPERVISOR_add_physmap(unsigned long gpf
+ #define HYPERVISOR_multicall xencomm_mini_hypercall_multicall
+ #define HYPERVISOR_xen_version xencomm_mini_hypercall_xen_version
+ #define HYPERVISOR_console_io xencomm_mini_hypercall_console_io
+-#define HYPERVISOR_physdev_op xencomm_mini_hypercall_physdev_op
+ #define HYPERVISOR_hvm_op xencomm_mini_hypercall_hvm_op
+ #ifdef CONFIG_VMX_GUEST
+ #define HYPERVISOR_memory_op 0
+@@ -391,7 +402,6 @@ HYPERVISOR_add_physmap(unsigned long gpf
+ #define HYPERVISOR_multicall xencomm_hypercall_multicall
+ #define HYPERVISOR_xen_version xencomm_hypercall_xen_version
+ #define HYPERVISOR_console_io xencomm_hypercall_console_io
+-#define HYPERVISOR_physdev_op xencomm_hypercall_physdev_op
+ #define HYPERVISOR_hvm_op xencomm_hypercall_hvm_op
+ #define HYPERVISOR_memory_op xencomm_hypercall_memory_op
+ #endif
+diff -r 3ce50798cf95 -r ac5b14ff6add include/xen/interface/arch-ia64.h
+--- a/include/xen/interface/arch-ia64.h	Mon Oct 02 14:04:39 2006 -0600
++++ b/include/xen/interface/arch-ia64.h	Mon Oct 02 14:09:49 2006 -0600
+@@ -428,6 +428,9 @@ struct xen_ia64_boot_param {
+ #define HYPERPRIVOP_GET_PSR		0x19
+ #define HYPERPRIVOP_MAX			0x19
+ 
++/* Fast and light hypercalls.  */
++#define __HYPERVISOR_ia64_fast_eoi	0x0200
++
+ /* Xencomm macros.  */
+ #define XENCOMM_INLINE_MASK 0xf800000000000000UL
+ #define XENCOMM_INLINE_FLAG 0x8000000000000000UL
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1159846251 21600
+# Node ID 3d83f707b33d39e30d6399972069034ae65e9c03
+# Parent  ac5b14ff6add9308765b31ab011262c74679cbed
+[IA64] Prevent domains to itc/ptd in shared_info_va.
+
+Signed-off-by: Tristan Gingold <tristan.gingold@bull.net>
+
+original changeset: 11706 (xen-ia64-unstable)
+
+original changeset: 11794 (xen-3.0.3-ia64)
+
+diff -r ac5b14ff6add -r 3d83f707b33d include/xen/interface/arch-ia64.h
+--- a/include/xen/interface/arch-ia64.h	Mon Oct 02 14:09:49 2006 -0600
++++ b/include/xen/interface/arch-ia64.h	Mon Oct 02 21:30:51 2006 -0600
+@@ -397,6 +397,7 @@ struct xen_ia64_boot_param {
+ #define XSI_SIZE			(1 << XSI_SHIFT)
+ /* Log size of mapped_regs area (64 KB - only 4KB is used).  */
+ #define XMAPPEDREGS_SHIFT		12
++#define XMAPPEDREGS_SIZE		(1 << XMAPPEDREGS_SHIFT)
+ /* Offset of XASI (Xen arch shared info) wrt XSI_BASE.  */
+ #define XMAPPEDREGS_OFS			XSI_SIZE
+ 
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1159846979 21600
+# Node ID 9bad788cd80068cab2903da1ce401fa5d0bfbfd2
+# Parent  3d83f707b33d39e30d6399972069034ae65e9c03
+[IA64] don't export GPFN_xxx flags.
+
+GPFN_INV_MASK takes 4 bits, but 1 bit is sufficient.
+
+Signed-off-by: Isaku Yamahata <yamahata@valinux.co.jp>
+
+original changeset: 11711 (xen-ia64-unstable)
+
+original changeset: 11799 (xen-3.0.3-ia64)
+
+diff -r 3d83f707b33d -r 9bad788cd800 include/xen/interface/arch-ia64.h
+--- a/include/xen/interface/arch-ia64.h	Mon Oct 02 21:30:51 2006 -0600
++++ b/include/xen/interface/arch-ia64.h	Mon Oct 02 21:42:59 2006 -0600
+@@ -47,18 +47,6 @@ DEFINE_XEN_GUEST_HANDLE(xen_pfn_t);
+ #ifndef __ASSEMBLY__
+ 
+ typedef unsigned long xen_ulong_t;
+-
+-#define GPFN_MEM          (0UL << 56) /* Guest pfn is normal mem */
+-#define GPFN_FRAME_BUFFER (1UL << 56) /* VGA framebuffer */
+-#define GPFN_LOW_MMIO     (2UL << 56) /* Low MMIO range */
+-#define GPFN_PIB          (3UL << 56) /* PIB base */
+-#define GPFN_IOSAPIC      (4UL << 56) /* IOSAPIC base */
+-#define GPFN_LEGACY_IO    (5UL << 56) /* Legacy I/O base */
+-#define GPFN_GFW          (6UL << 56) /* Guest Firmware */
+-#define GPFN_HIGH_MMIO    (7UL << 56) /* High MMIO range */
+-
+-#define GPFN_IO_MASK     (7UL << 56)  /* Guest pfn is I/O type */
+-#define GPFN_INV_MASK    (31UL << 59) /* Guest pfn is invalid */
+ 
+ #define INVALID_MFN       (~0UL)
+ 
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1159908370 21600
+# Node ID f62514be730738954371d41cc3bad641344ee581
+# Parent  9bad788cd80068cab2903da1ce401fa5d0bfbfd2
+[IA64] add GNTTABOP_copy to xencommize_grant_table_op
+
+This is used w/ xennet.rx_copy
+
+Signed-off-by: Alex Williamson <alex.williamson@hp.com>
+
+original changeset: 11721 (xen-ia64-unstable)
+
+original changeset: 11801 (xen-3.0.3-ia64)
+
+diff -r 9bad788cd800 -r f62514be7307 arch/ia64/xen/xcom_hcall.c
+--- a/arch/ia64/xen/xcom_hcall.c	Mon Oct 02 21:42:59 2006 -0600
++++ b/arch/ia64/xen/xcom_hcall.c	Tue Oct 03 14:46:10 2006 -0600
+@@ -117,6 +117,7 @@ xencommize_grant_table_op(unsigned int c
+ 	}
+ 	case GNTTABOP_dump_table:
+ 	case GNTTABOP_transfer:
++	case GNTTABOP_copy:
+ 		break;
+ 	default:
+ 		printk("%s: unknown grant table op %d\n", __func__, cmd);
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1160021510 21600
+# Node ID 48e20f23a16d4175e17c36b564467ea00aa1a0c1
+# Parent  f62514be730738954371d41cc3bad641344ee581
+[IA64] xencomm_privcmd_sched_op
+
+Necessary for reboot on VTi domains.
+
+Signed-off-by: Kouya Shimura <kouya@jp.fujitsu.com>
+
+original changeset: 11723 (xen-ia64-unstable)
+
+original changeset: 11803 (xen-3.0.3-ia64)
+
+diff -r f62514be7307 -r 48e20f23a16d arch/ia64/xen/xcom_privcmd.c
+--- a/arch/ia64/xen/xcom_privcmd.c	Tue Oct 03 14:46:10 2006 -0600
++++ b/arch/ia64/xen/xcom_privcmd.c	Wed Oct 04 22:11:50 2006 -0600
+@@ -545,6 +545,34 @@ xencomm_privcmd_hvm_op(privcmd_hypercall
+ 	return ret;
+ }
+ 
++static int
++xencomm_privcmd_sched_op(privcmd_hypercall_t *hypercall)
++{
++	int cmd = hypercall->arg[0];
++	struct xencomm_handle *desc;
++	unsigned int argsize;
++	int ret;
++
++	switch (cmd) {
++	case SCHEDOP_remote_shutdown:
++		argsize = sizeof(sched_remote_shutdown_t);
++		break;
++	default:
++		printk("%s: unknown SCHEDOP %d\n", __func__, cmd);
++		return -EINVAL;
++	}
++
++	ret = xencomm_create((void *)hypercall->arg[1], argsize,
++	                     &desc, GFP_KERNEL);
++	if (ret)
++		return ret;
++
++	ret = xencomm_arch_hypercall_sched_op(cmd, desc);
++
++	xencomm_free(desc);
++	return ret;
++}
++
+ int
+ privcmd_hypercall(privcmd_hypercall_t *hypercall)
+ {
+@@ -565,6 +593,8 @@ privcmd_hypercall(privcmd_hypercall_t *h
+ 		return xencomm_privcmd_event_channel_op(hypercall);
+ 	case __HYPERVISOR_hvm_op:
+ 		return xencomm_privcmd_hvm_op(hypercall);
++	case __HYPERVISOR_sched_op:
++		return xencomm_privcmd_sched_op(hypercall);
+ 	default:
+ 		printk("%s: unknown hcall (%ld)\n", __func__, hypercall->op);
+ 		return -ENOSYS;
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1160021521 21600
+# Node ID 4c25bc4a2f4ed0c1589baf6beb0e69e851deb240
+# Parent  48e20f23a16d4175e17c36b564467ea00aa1a0c1
+[IA64] remove getmeminfo.nr_pages trick from xencomm
+
+getmeminfo nr_page trick is not anymore necessary.
+
+Signed-off-by: Tristan Gingold <tristan.gingold@bull.net>
+
+original changeset: 11724 (xen-ia64-unstable)
+
+original changeset: 11804 (xen-3.0.3-ia64)
+
+diff -r 48e20f23a16d -r 4c25bc4a2f4e arch/ia64/xen/xcom_privcmd.c
+--- a/arch/ia64/xen/xcom_privcmd.c	Wed Oct 04 22:11:50 2006 -0600
++++ b/arch/ia64/xen/xcom_privcmd.c	Wed Oct 04 22:12:01 2006 -0600
+@@ -192,10 +192,7 @@ xencomm_privcmd_domctl(privcmd_hypercall
+ 	case XEN_DOMCTL_getmemlist:
+ 	{
+ 		unsigned long nr_pages = kern_op.u.getmemlist.max_pfns;
+-#ifdef __ia64__
+-		/* FIXME: Xen/ia64 pass first_page and nr_pages in max_pfns! */
+-		nr_pages &= 0xffffffff;
+-#endif
++
+ 		ret = xencomm_create(
+ 			xen_guest_handle(kern_op.u.getmemlist.buffer),
+ 			nr_pages * sizeof(unsigned long),
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1160021545 21600
+# Node ID 7806fd2b8834742991d92529c912a3c0e4a7f312
+# Parent  4c25bc4a2f4ed0c1589baf6beb0e69e851deb240
+[IA64] expose p2m table. xen side part.
+
+This patch introduces xen compile time option, xen_ia64_expose_p2m=y.
+default is enabled.
+
+Signed-off-by: Isaku Yamahata <yamahata@valinux.co.jp>
+
+original changeset: 11726 (xen-ia64-unstable)
+
+original changeset: 11806 (xen-3.0.3-ia64)
+
+diff -r 4c25bc4a2f4e -r 7806fd2b8834 include/xen/interface/arch-ia64.h
+--- a/include/xen/interface/arch-ia64.h	Wed Oct 04 22:12:01 2006 -0600
++++ b/include/xen/interface/arch-ia64.h	Wed Oct 04 22:12:25 2006 -0600
+@@ -348,6 +348,9 @@ DEFINE_XEN_GUEST_HANDLE(vcpu_guest_conte
+ /* Assign machine page frame to dom0's pseudo physical address space.  */
+ #define IA64_DOM0VP_add_physmap         6
+ 
++/* expose the p2m table into domain */
++#define IA64_DOM0VP_expose_p2m          7
++
+ // flags for page assignement to pseudo physical address space
+ #define _ASSIGN_readonly                0
+ #define ASSIGN_readonly                 (1UL << _ASSIGN_readonly)
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1160021549 21600
+# Node ID a3b0e9b58a285c14a39125c6568fe5c5630607d9
+# Parent  7806fd2b8834742991d92529c912a3c0e4a7f312
+[IA64] p2m exposure. linux side part.
+
+This patch introduce compile time option XEN_IA64_EXPOSE_P2M
+to enable this feature and boot option xen_ia64_p2m_expose to
+disable the functionality.
+This patch also introduce XEN_IA64_EXPOSE_P2M_USE_DTR to map p2m table
+with dtr and boot option xen_ia64_p2m_expose_use_dtr to disable it.
+
+Signed-off-by: Isaku Yamahata <yamahata@valinux.co.jp>
+
+original changeset: 11727 (xen-ia64-unstable)
+
+original changeset: 11807 (xen-3.0.3-ia64)
+
+diff -r 7806fd2b8834 -r a3b0e9b58a28 arch/ia64/Kconfig
+--- a/arch/ia64/Kconfig	Wed Oct 04 22:12:25 2006 -0600
++++ b/arch/ia64/Kconfig	Wed Oct 04 22:12:29 2006 -0600
+@@ -71,6 +71,20 @@ config XEN_IA64_VDSO_PARAVIRT
+ 	default y
+ 	help
+ 	  vDSO paravirtualization
++
++config XEN_IA64_EXPOSE_P2M
++	bool "Xen/IA64 exposure p2m table"
++	depends on XEN
++	default y
++	help
++	  expose p2m from xen
++
++config XEN_IA64_EXPOSE_P2M_USE_DTR
++	bool "Xen/IA64 map p2m table with dtr"
++	depends on XEN_IA64_EXPOSE_P2M
++	default y
++	help
++	  use dtr to map the exposed p2m table
+ 
+ config SCHED_NO_NO_OMIT_FRAME_POINTER
+ 	bool
+diff -r 7806fd2b8834 -r a3b0e9b58a28 arch/ia64/xen/hypervisor.c
+--- a/arch/ia64/xen/hypervisor.c	Wed Oct 04 22:12:25 2006 -0600
++++ b/arch/ia64/xen/hypervisor.c	Wed Oct 04 22:12:29 2006 -0600
+@@ -39,6 +39,8 @@ EXPORT_SYMBOL(xen_start_info);
+ 
+ int running_on_xen;
+ EXPORT_SYMBOL(running_on_xen);
++
++static int p2m_expose_init(void);
+ 
+ //XXX same as i386, x86_64 contiguous_bitmap_set(), contiguous_bitmap_clear()
+ // move those to lib/contiguous_bitmap?
+@@ -448,6 +450,10 @@ out:
+ 	       privcmd_resource_min, privcmd_resource_max, 
+ 	       (privcmd_resource_max - privcmd_resource_min) >> 20);
+ 	BUG_ON(privcmd_resource_min >= privcmd_resource_max);
++
++	// XXX this should be somewhere appropriate
++	(void)p2m_expose_init();
++
+ 	return 0;
+ }
+ late_initcall(xen_ia64_privcmd_init);
+@@ -767,3 +773,276 @@ time_resume(void)
+ 	/* Just trigger a tick.  */
+ 	ia64_cpu_local_tick();
+ }
++
++///////////////////////////////////////////////////////////////////////////
++// expose p2m table
++#ifdef CONFIG_XEN_IA64_EXPOSE_P2M
++#include <linux/cpu.h>
++#include <asm/uaccess.h>
++
++int p2m_initialized __read_mostly = 0;
++
++unsigned long p2m_min_low_pfn __read_mostly;
++unsigned long p2m_max_low_pfn __read_mostly;
++unsigned long p2m_convert_min_pfn __read_mostly;
++unsigned long p2m_convert_max_pfn __read_mostly;
++
++static struct resource p2m_resource = {
++	.name    = "Xen p2m table",
++	.flags   = IORESOURCE_MEM,
++};
++static unsigned long p2m_assign_start_pfn __read_mostly;
++static unsigned long p2m_assign_end_pfn __read_mostly;
++volatile const pte_t* p2m_pte __read_mostly;
++
++#define GRNULE_PFN	PTRS_PER_PTE
++static unsigned long p2m_granule_pfn __read_mostly = GRNULE_PFN;
++
++#define ROUNDDOWN(x, y)  ((x) & ~((y) - 1))
++#define ROUNDUP(x, y)    (((x) + (y) - 1) & ~((y) - 1))
++
++#define P2M_PREFIX	"Xen p2m: "
++
++static int xen_ia64_p2m_expose __read_mostly = 1;
++module_param(xen_ia64_p2m_expose, int, 0);
++MODULE_PARM_DESC(xen_ia64_p2m_expose,
++                 "enable/disable xen/ia64 p2m exposure optimization\n");
++
++#ifdef CONFIG_XEN_IA64_EXPOSE_P2M_USE_DTR
++static int xen_ia64_p2m_expose_use_dtr __read_mostly = 1;
++module_param(xen_ia64_p2m_expose_use_dtr, int, 0);
++MODULE_PARM_DESC(xen_ia64_p2m_expose_use_dtr,
++                 "use/unuse dtr to map exposed p2m table\n");
++
++static const int p2m_page_shifts[] = {
++	_PAGE_SIZE_4K,
++	_PAGE_SIZE_8K,
++	_PAGE_SIZE_16K,
++	_PAGE_SIZE_64K,
++	_PAGE_SIZE_256K,
++	_PAGE_SIZE_1M,
++	_PAGE_SIZE_4M,
++	_PAGE_SIZE_16M,
++	_PAGE_SIZE_64M,
++	_PAGE_SIZE_256M,
++};
++
++struct p2m_itr_arg {
++	unsigned long vaddr;
++	unsigned long pteval;
++	unsigned long log_page_size;
++};
++static struct p2m_itr_arg p2m_itr_arg __read_mostly;
++
++// This should be in asm-ia64/kregs.h
++#define IA64_TR_P2M_TABLE	3
++
++static void
++p2m_itr(void* info)
++{
++	struct p2m_itr_arg* arg = (struct p2m_itr_arg*)info;
++	ia64_itr(0x2, IA64_TR_P2M_TABLE,
++	         arg->vaddr, arg->pteval, arg->log_page_size);
++	ia64_srlz_d();
++}
++
++static int
++p2m_expose_dtr_call(struct notifier_block *self,
++                    unsigned long event, void* ptr)
++{
++	unsigned int cpu = (unsigned int)(long)ptr;
++	if (event != CPU_ONLINE)
++		return 0;
++	if (!(p2m_initialized && xen_ia64_p2m_expose_use_dtr))
++		smp_call_function_single(cpu, &p2m_itr, &p2m_itr_arg, 1, 1);
++	return 0;
++}
++
++static struct notifier_block p2m_expose_dtr_hotplug_notifier = {
++	.notifier_call = p2m_expose_dtr_call,
++	.next          = NULL,
++	.priority      = 0
++};
++#endif
++
++static int
++p2m_expose_init(void)
++{
++	unsigned long num_pfn;
++	unsigned long size = 0;
++	unsigned long p2m_size = 0;
++	unsigned long align = ~0UL;
++	int error = 0;
++#ifdef CONFIG_XEN_IA64_EXPOSE_P2M_USE_DTR
++	int i;
++	unsigned long page_size;
++	unsigned long log_page_size = 0;
++#endif
++
++	if (!xen_ia64_p2m_expose)
++		return -ENOSYS;
++	if (p2m_initialized)
++		return 0;
++
++#ifdef CONFIG_XEN_IA64_EXPOSE_P2M_USE_DTR
++	error = register_cpu_notifier(&p2m_expose_dtr_hotplug_notifier);
++	if (error < 0)
++		return error;
++#endif
++
++	lock_cpu_hotplug();
++	if (p2m_initialized)
++		goto out;
++
++#ifdef CONFIG_DISCONTIGMEM
++	p2m_min_low_pfn = min_low_pfn;
++	p2m_max_low_pfn = max_low_pfn;
++#else
++	p2m_min_low_pfn = 0;
++	p2m_max_low_pfn = max_pfn;
++#endif
++
++#ifdef CONFIG_XEN_IA64_EXPOSE_P2M_USE_DTR
++	if (xen_ia64_p2m_expose_use_dtr) {
++		unsigned long granule_pfn = 0;
++		p2m_size = p2m_max_low_pfn - p2m_min_low_pfn;
++		for (i = 0;
++		     i < sizeof(p2m_page_shifts)/sizeof(p2m_page_shifts[0]);
++		     i++) {
++			log_page_size = p2m_page_shifts[i];
++			page_size = 1UL << log_page_size;
++			if (page_size < p2m_size)
++				continue;
++
++			granule_pfn = max(page_size >> PAGE_SHIFT,
++			                  p2m_granule_pfn);
++			p2m_convert_min_pfn = ROUNDDOWN(p2m_min_low_pfn,
++			                                granule_pfn);
++			p2m_convert_max_pfn = ROUNDUP(p2m_max_low_pfn,
++			                              granule_pfn);
++			num_pfn = p2m_convert_max_pfn - p2m_convert_min_pfn;
++			size = num_pfn << PAGE_SHIFT;
++			p2m_size = num_pfn / PTRS_PER_PTE;
++			p2m_size = ROUNDUP(p2m_size, granule_pfn << PAGE_SHIFT);
++			if (p2m_size == page_size)
++				break;
++		}
++		if (p2m_size != page_size) {
++			printk(KERN_ERR "p2m_size != page_size\n");
++			error = -EINVAL;
++			goto out;
++		}
++		align = max(privcmd_resource_align, granule_pfn << PAGE_SHIFT);
++	} else
++#endif
++	{
++		BUG_ON(p2m_granule_pfn & (p2m_granule_pfn - 1));
++		p2m_convert_min_pfn = ROUNDDOWN(p2m_min_low_pfn,
++		                                p2m_granule_pfn);
++		p2m_convert_max_pfn = ROUNDUP(p2m_max_low_pfn, p2m_granule_pfn);
++		num_pfn = p2m_convert_max_pfn - p2m_convert_min_pfn;
++		size = num_pfn << PAGE_SHIFT;
++		p2m_size = num_pfn / PTRS_PER_PTE;
++		p2m_size = ROUNDUP(p2m_size, p2m_granule_pfn << PAGE_SHIFT);
++		align = max(privcmd_resource_align,
++		            p2m_granule_pfn << PAGE_SHIFT);
++	}
++	
++	// use privcmd region
++	error = allocate_resource(&iomem_resource, &p2m_resource, p2m_size,
++	                          privcmd_resource_min, privcmd_resource_max,
++	                          align, NULL, NULL);
++	if (error) {
++		printk(KERN_ERR P2M_PREFIX
++		       "can't allocate region for p2m exposure "
++		       "[0x%016lx, 0x%016lx) 0x%016lx\n",
++		       p2m_convert_min_pfn, p2m_convert_max_pfn, p2m_size);
++		goto out;
++	}
++
++	p2m_assign_start_pfn = p2m_resource.start >> PAGE_SHIFT;
++	p2m_assign_end_pfn = p2m_resource.end >> PAGE_SHIFT;
++	
++	error = HYPERVISOR_expose_p2m(p2m_convert_min_pfn,
++	                              p2m_assign_start_pfn,
++	                              size, p2m_granule_pfn);
++	if (error) {
++		printk(KERN_ERR P2M_PREFIX "failed expose p2m hypercall %d\n",
++		       error);
++		printk(KERN_ERR P2M_PREFIX "conv 0x%016lx assign 0x%016lx "
++		       "size 0x%016lx granule 0x%016lx\n",
++		       p2m_convert_min_pfn, p2m_assign_start_pfn,
++		       size, p2m_granule_pfn);;
++		release_resource(&p2m_resource);
++		goto out;
++	}
++	p2m_pte = (volatile const pte_t*)pfn_to_kaddr(p2m_assign_start_pfn);
++#ifdef CONFIG_XEN_IA64_EXPOSE_P2M_USE_DTR
++	if (xen_ia64_p2m_expose_use_dtr) {
++		p2m_itr_arg.vaddr = (unsigned long)__va(p2m_assign_start_pfn
++		                                        << PAGE_SHIFT);
++		p2m_itr_arg.pteval = pte_val(pfn_pte(p2m_assign_start_pfn,
++		                                     PAGE_KERNEL));
++		p2m_itr_arg.log_page_size = log_page_size;
++		smp_mb();
++		smp_call_function(&p2m_itr, &p2m_itr_arg, 1, 1);
++		p2m_itr(&p2m_itr_arg);
++	}
++#endif	
++	smp_mb();
++	p2m_initialized = 1;
++	printk(P2M_PREFIX "assign p2m table of [0x%016lx, 0x%016lx)\n",
++	       p2m_convert_min_pfn << PAGE_SHIFT,
++	       p2m_convert_max_pfn << PAGE_SHIFT);
++	printk(P2M_PREFIX "to [0x%016lx, 0x%016lx) (%ld KBytes)\n",
++	       p2m_assign_start_pfn << PAGE_SHIFT,
++	       p2m_assign_end_pfn << PAGE_SHIFT,
++	       p2m_size / 1024);
++out:
++	unlock_cpu_hotplug();
++	return error;
++}
++
++#ifdef notyet
++void
++p2m_expose_cleanup(void)
++{
++	BUG_ON(!p2m_initialized);
++#ifdef CONFIG_XEN_IA64_EXPOSE_P2M_USE_DTR
++	unregister_cpu_notifier(&p2m_expose_dtr_hotplug_notifier);
++#endif
++	release_resource(&p2m_resource);
++}
++#endif
++
++//XXX inlinize?
++unsigned long
++p2m_phystomach(unsigned long gpfn)
++{
++	volatile const pte_t* pte;
++	unsigned long mfn;
++	unsigned long pteval;
++	
++	if (!p2m_initialized ||
++	    gpfn < p2m_min_low_pfn || gpfn > p2m_max_low_pfn
++	    /* || !pfn_valid(gpfn) */)
++		return INVALID_MFN;
++	pte = p2m_pte + (gpfn - p2m_convert_min_pfn);
++
++	mfn = INVALID_MFN;
++	if (likely(__get_user(pteval, (unsigned long __user *)pte) == 0 &&
++	           pte_present(__pte(pteval)) &&
++	           pte_pfn(__pte(pteval)) != (INVALID_MFN >> PAGE_SHIFT)))
++		mfn = (pteval & _PFN_MASK) >> PAGE_SHIFT;
++
++	return mfn;
++}
++
++EXPORT_SYMBOL_GPL(p2m_initialized);
++EXPORT_SYMBOL_GPL(p2m_min_low_pfn);
++EXPORT_SYMBOL_GPL(p2m_max_low_pfn);
++EXPORT_SYMBOL_GPL(p2m_convert_min_pfn);
++EXPORT_SYMBOL_GPL(p2m_convert_max_pfn);
++EXPORT_SYMBOL_GPL(p2m_pte);
++EXPORT_SYMBOL_GPL(p2m_phystomach);
++#endif
+diff -r 7806fd2b8834 -r a3b0e9b58a28 include/asm-ia64/hypercall.h
+--- a/include/asm-ia64/hypercall.h	Wed Oct 04 22:12:25 2006 -0600
++++ b/include/asm-ia64/hypercall.h	Wed Oct 04 22:12:29 2006 -0600
+@@ -377,6 +377,18 @@ HYPERVISOR_add_physmap(unsigned long gpf
+ 	}
+ 	return ret;
+ }
++
++#ifdef CONFIG_XEN_IA64_EXPOSE_P2M
++static inline unsigned long
++HYPERVISOR_expose_p2m(unsigned long conv_start_gpfn,
++                      unsigned long assign_start_gpfn,
++                      unsigned long expose_size, unsigned long granule_pfn)
++{
++	return _hypercall5(unsigned long, ia64_dom0vp_op,
++	                   IA64_DOM0VP_expose_p2m, conv_start_gpfn,
++	                   assign_start_gpfn, expose_size, granule_pfn);
++}
++#endif
+ 
+ // for balloon driver
+ #define HYPERVISOR_update_va_mapping(va, new_val, flags) (0)
+diff -r 7806fd2b8834 -r a3b0e9b58a28 include/asm-ia64/maddr.h
+--- a/include/asm-ia64/maddr.h	Wed Oct 04 22:12:25 2006 -0600
++++ b/include/asm-ia64/maddr.h	Wed Oct 04 22:12:29 2006 -0600
+@@ -10,11 +10,26 @@
+ 
+ #define INVALID_P2M_ENTRY       (~0UL)
+ 
++#ifdef CONFIG_XEN_IA64_EXPOSE_P2M
++extern int p2m_initialized;
++extern unsigned long p2m_min_low_pfn;
++extern unsigned long p2m_max_low_pfn;
++extern unsigned long p2m_convert_min_pfn;
++extern unsigned long p2m_convert_max_pfn;
++extern volatile const pte_t* p2m_pte;
++unsigned long p2m_phystomach(unsigned long gpfn);
++#else
++#define p2m_initialized		(0)
++#define p2m_phystomach(gpfn)	INVALID_MFN
++#endif
++
+ /* XXX xen page size != page size */
+ static inline unsigned long
+ pfn_to_mfn_for_dma(unsigned long pfn)
+ {
+ 	unsigned long mfn;
++	if (p2m_initialized)
++		return p2m_phystomach(pfn);
+ 	mfn = HYPERVISOR_phystomach(pfn);
+ 	BUG_ON(mfn == 0); // XXX
+ 	BUG_ON(mfn == INVALID_P2M_ENTRY); // XXX
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1160021586 21600
+# Node ID c1655ce07d500928f64c007469425ea08c3bdbf8
+# Parent  a3b0e9b58a285c14a39125c6568fe5c5630607d9
+[IA64] fix sparse tree build with p2m exposure disabled
+
+Signed-off-by: Alex Williamson <alex.williamson@hp.com>
+
+original changeset: 11729 (xen-ia64-unstable)
+
+original changeset: 11809 (xen-3.0.3-ia64)
+
+diff -r a3b0e9b58a28 -r c1655ce07d50 arch/ia64/xen/hypervisor.c
+--- a/arch/ia64/xen/hypervisor.c	Wed Oct 04 22:12:29 2006 -0600
++++ b/arch/ia64/xen/hypervisor.c	Wed Oct 04 22:13:06 2006 -0600
+@@ -40,7 +40,11 @@ int running_on_xen;
+ int running_on_xen;
+ EXPORT_SYMBOL(running_on_xen);
+ 
++#ifdef CONFIG_XEN_IA64_EXPOSE_P2M
+ static int p2m_expose_init(void);
++#else
++#define p2m_expose_init() (-ENOSYS)
++#endif
+ 
+ //XXX same as i386, x86_64 contiguous_bitmap_set(), contiguous_bitmap_clear()
+ // move those to lib/contiguous_bitmap?
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1160354117 21600
+# Node ID 6fc69e6434208c627cf89f0b0a7a4521b0435763
+# Parent  c1655ce07d500928f64c007469425ea08c3bdbf8
+[IA64] Remove test of dead CONFIG_XEN_IA64_DOM0_NON_VP
+
+Signed-off-by: Aron Griffis <aron@hp.com>
+
+original changeset: 11744 (xen-ia64-unstable)
+
+original changeset: 11815 (xen-3.0.3-ia64)
+
+diff -r c1655ce07d50 -r 6fc69e643420 lib/Makefile
+--- a/lib/Makefile	Wed Oct 04 22:13:06 2006 -0600
++++ b/lib/Makefile	Sun Oct 08 18:35:17 2006 -0600
+@@ -53,9 +53,7 @@ obj-$(CONFIG_AUDIT_GENERIC) += audit.o
+ obj-$(CONFIG_AUDIT_GENERIC) += audit.o
+ 
+ obj-$(CONFIG_SWIOTLB) += swiotlb.o
+-ifneq ($(CONFIG_XEN_IA64_DOM0_NON_VP),y)
+ swiotlb-$(CONFIG_XEN) := ../arch/i386/kernel/swiotlb.o
+-endif
+ 
+ hostprogs-y	:= gen_crc32table
+ clean-files	:= crc32table.h
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1160864787 21600
+# Node ID f90a4d12f6e3d035f17a3b6be0c81ea06334cc01
+# Parent  6fc69e6434208c627cf89f0b0a7a4521b0435763
+[IA64] Xencomm fixes for HVM PV-drivers and driver domain.
+
+Create xcom_mini.c from xcom_hcall.c
+
+Signed-off-by: Tristan Gingold <tristan.gingold@bull.net>
+
+original changeset: 11804 (xen-ia64-unstable)
+
+original changeset: 11817 (xen-3.0.3-ia64)
+
+diff -r 6fc69e643420 -r f90a4d12f6e3 arch/ia64/kernel/setup.c
+--- a/arch/ia64/kernel/setup.c	Sun Oct 08 18:35:17 2006 -0600
++++ b/arch/ia64/kernel/setup.c	Sat Oct 14 16:26:27 2006 -0600
+@@ -64,6 +64,7 @@
+ #include <asm/system.h>
+ #ifdef CONFIG_XEN
+ #include <asm/hypervisor.h>
++#include <asm/xen/xencomm.h>
+ #endif
+ #include <linux/dma-mapping.h>
+ 
+@@ -77,8 +78,6 @@ EXPORT_SYMBOL(__per_cpu_offset);
+ #endif
+ 
+ #ifdef CONFIG_XEN
+-unsigned long kernel_start_pa;
+-
+ static int
+ xen_panic_event(struct notifier_block *this, unsigned long event, void *ptr)
+ {
+@@ -531,7 +530,9 @@ setup_arch (char **cmdline_p)
+ 
+ #ifdef CONFIG_XEN
+ 	if (is_running_on_xen()) {
+-		kernel_start_pa = KERNEL_START - ia64_tpa(KERNEL_START);
++		/* Must be done before any hypercall.  */
++		xencomm_init();
++
+ 		setup_xen_features();
+ 		/* Register a call for panic conditions. */
+ 		atomic_notifier_chain_register(&panic_notifier_list, &xen_panic_block);
+diff -r 6fc69e643420 -r f90a4d12f6e3 arch/ia64/xen/Makefile
+--- a/arch/ia64/xen/Makefile	Sun Oct 08 18:35:17 2006 -0600
++++ b/arch/ia64/xen/Makefile	Sat Oct 14 16:26:27 2006 -0600
+@@ -4,6 +4,6 @@
+ 
+ obj-y := hypercall.o xenivt.o xenentry.o xensetup.o xenpal.o xenhpski.o \
+ 	 hypervisor.o pci-dma-xen.o util.o xencomm.o xcom_hcall.o \
+-	 xcom_privcmd.o
++	 xcom_mini.o xcom_privcmd.o
+ 
+ pci-dma-xen-y := ../../i386/kernel/pci-dma-xen.o
+diff -r 6fc69e643420 -r f90a4d12f6e3 arch/ia64/xen/xcom_hcall.c
+--- a/arch/ia64/xen/xcom_hcall.c	Sun Oct 08 18:35:17 2006 -0600
++++ b/arch/ia64/xen/xcom_hcall.c	Sat Oct 14 16:26:27 2006 -0600
+@@ -32,7 +32,6 @@
+ #include <xen/interface/callback.h>
+ #include <xen/interface/acm_ops.h>
+ #include <xen/interface/hvm/params.h>
+-#include <xen/public/privcmd.h>
+ #include <asm/hypercall.h>
+ #include <asm/page.h>
+ #include <asm/uaccess.h>
+@@ -142,9 +141,18 @@ xencomm_hypercall_sched_op(int cmd, void
+ 	case SCHEDOP_yield:
+ 	case SCHEDOP_block:
+ 	case SCHEDOP_shutdown:
++	case SCHEDOP_remote_shutdown:
++		break;
+ 	case SCHEDOP_poll:
+-	case SCHEDOP_remote_shutdown:
+-		break;
++	{
++		sched_poll_t *poll = arg;
++		struct xencomm_handle *ports;
++
++		ports = xencomm_create_inline(xen_guest_handle(poll->ports));
++
++		set_xen_guest_handle(poll->ports, (void *)ports);
++		break;
++	}
+ 	default:
+ 		printk("%s: unknown sched op %d\n", __func__, cmd);
+ 		return -ENOSYS;
+@@ -263,207 +271,3 @@ xencomm_hypercall_suspend(unsigned long 
+ 
+ 	return xencomm_arch_hypercall_suspend(xencomm_create_inline(&arg));
+ }
+-
+-int
+-xencomm_mini_hypercall_event_channel_op(int cmd, void *op)
+-{
+-	struct xencomm_mini xc_area[2];
+-	int nbr_area = 2;
+-	struct xencomm_handle *desc;
+-	int rc;
+-
+-	rc = xencomm_create_mini(xc_area, &nbr_area,
+-	                         op, sizeof(evtchn_op_t), &desc);
+-	if (rc)
+-		return rc;
+-
+-	return xencomm_arch_hypercall_event_channel_op(cmd, desc);
+-}
+-EXPORT_SYMBOL(xencomm_mini_hypercall_event_channel_op);
+-
+-static int
+-xencommize_mini_grant_table_op(struct xencomm_mini *xc_area, int *nbr_area,
+-                               unsigned int cmd, void *op, unsigned int count,
+-                               struct xencomm_handle **desc)
+-{
+-	struct xencomm_handle *desc1;
+-	unsigned int argsize;
+-	int rc;
+-
+-	switch (cmd) {
+-	case GNTTABOP_map_grant_ref:
+-		argsize = sizeof(struct gnttab_map_grant_ref);
+-		break;
+-	case GNTTABOP_unmap_grant_ref:
+-		argsize = sizeof(struct gnttab_unmap_grant_ref);
+-		break;
+-	case GNTTABOP_setup_table:
+-	{
+-		struct gnttab_setup_table *setup = op;
+-
+-		argsize = sizeof(*setup);
+-
+-		if (count != 1)
+-			return -EINVAL;
+-		rc = xencomm_create_mini
+-			(xc_area, nbr_area,
+-			 xen_guest_handle(setup->frame_list),
+-			 setup->nr_frames 
+-			 * sizeof(*xen_guest_handle(setup->frame_list)),
+-			 &desc1);
+-		if (rc)
+-			return rc;
+-		set_xen_guest_handle(setup->frame_list, (void *)desc1);
+-		break;
+-	}
+-	case GNTTABOP_dump_table:
+-		argsize = sizeof(struct gnttab_dump_table);
+-		break;
+-	case GNTTABOP_transfer:
+-		argsize = sizeof(struct gnttab_transfer);
+-		break;
+-	default:
+-		printk("%s: unknown mini grant table op %d\n", __func__, cmd);
+-		BUG();
+-	}
+-
+-	rc = xencomm_create_mini(xc_area, nbr_area, op, count * argsize, desc);
+-	if (rc)
+-		return rc;
+-
+-	return 0;
+-}
+-
+-int
+-xencomm_mini_hypercall_grant_table_op(unsigned int cmd, void *op,
+-                                      unsigned int count)
+-{
+-	int rc;
+-	struct xencomm_handle *desc;
+-	int nbr_area = 2;
+-	struct xencomm_mini xc_area[2];
+-
+-	rc = xencommize_mini_grant_table_op(xc_area, &nbr_area,
+-	                                    cmd, op, count, &desc);
+-	if (rc)
+-		return rc;
+-
+-	return xencomm_arch_hypercall_grant_table_op(cmd, desc, count);
+-}
+-EXPORT_SYMBOL(xencomm_mini_hypercall_grant_table_op);
+-
+-int
+-xencomm_mini_hypercall_multicall(void *call_list, int nr_calls)
+-{
+-	int i;
+-	multicall_entry_t *mce;
+-	int nbr_area = 2 + nr_calls * 3;
+-	struct xencomm_mini xc_area[nbr_area];
+-	struct xencomm_handle *desc;
+-	int rc;
+-
+-	for (i = 0; i < nr_calls; i++) {
+-		mce = (multicall_entry_t *)call_list + i;
+-
+-		switch (mce->op) {
+-		case __HYPERVISOR_update_va_mapping:
+-		case __HYPERVISOR_mmu_update:
+-			/* No-op on ia64.  */
+-			break;
+-		case __HYPERVISOR_grant_table_op:
+-			rc = xencommize_mini_grant_table_op
+-				(xc_area, &nbr_area,
+-				 mce->args[0], (void *)mce->args[1],
+-				 mce->args[2], &desc);
+-			if (rc)
+-				return rc;
+-			mce->args[1] = (unsigned long)desc;
+-			break;
+-		case __HYPERVISOR_memory_op:
+-		default:
+-			printk("%s: unhandled multicall op entry op %lu\n",
+-			       __func__, mce->op);
+-			return -ENOSYS;
+-		}
+-	}
+-
+-	rc = xencomm_create_mini(xc_area, &nbr_area, call_list,
+-	                         nr_calls * sizeof(multicall_entry_t), &desc);
+-	if (rc)
+-		return rc;
+-
+-	return xencomm_arch_hypercall_multicall(desc, nr_calls);
+-}
+-EXPORT_SYMBOL(xencomm_mini_hypercall_multicall);
+-
+-static int
+-xencommize_mini_memory_reservation(struct xencomm_mini *area, int *nbr_area,
+-                                   xen_memory_reservation_t *mop)
+-{
+-	struct xencomm_handle *desc;
+-	int rc;
+-
+-	rc = xencomm_create_mini
+-		(area, nbr_area,
+-		 xen_guest_handle(mop->extent_start),
+-		 mop->nr_extents 
+-		 * sizeof(*xen_guest_handle(mop->extent_start)),
+-		 &desc);
+-	if (rc)
+-		return rc;
+-
+-	set_xen_guest_handle(mop->extent_start, (void *)desc);
+-
+-	return 0;
+-}
+-
+-int
+-xencomm_mini_hypercall_memory_op(unsigned int cmd, void *arg)
+-{
+-	int nbr_area = 4;
+-	struct xencomm_mini xc_area[4];
+-	struct xencomm_handle *desc;
+-	int rc;
+-	unsigned int argsize;
+-
+-	switch (cmd) {
+-	case XENMEM_increase_reservation:
+-	case XENMEM_decrease_reservation:
+-	case XENMEM_populate_physmap:
+-		argsize = sizeof(xen_memory_reservation_t);
+-		rc = xencommize_mini_memory_reservation
+-			(xc_area, &nbr_area, (xen_memory_reservation_t *)arg);
+-		if (rc)
+-			return rc;
+-		break;
+-		
+-	case XENMEM_maximum_ram_page:
+-		argsize = 0;
+-		break;
+-
+-	case XENMEM_exchange:
+-		argsize = sizeof(xen_memory_exchange_t);
+-		rc = xencommize_mini_memory_reservation
+-			(xc_area, &nbr_area,
+-			 &((xen_memory_exchange_t *)arg)->in);
+-		if (rc)
+-			return rc;
+-		rc = xencommize_mini_memory_reservation
+-			(xc_area, &nbr_area,
+-			 &((xen_memory_exchange_t *)arg)->out);
+-		if (rc)
+-			return rc;
+-		break;
+-
+-	default:
+-		printk("%s: unknown mini memory op %d\n", __func__, cmd);
+-		return -ENOSYS;
+-	}
+-
+-	rc = xencomm_create_mini(xc_area, &nbr_area, arg, argsize, &desc);
+-	if (rc)
+-		return rc;
+-
+-	return xencomm_arch_hypercall_memory_op(cmd, desc);
+-}
+-EXPORT_SYMBOL(xencomm_mini_hypercall_memory_op);
+diff -r 6fc69e643420 -r f90a4d12f6e3 arch/ia64/xen/xencomm.c
+--- a/arch/ia64/xen/xencomm.c	Sun Oct 08 18:35:17 2006 -0600
++++ b/arch/ia64/xen/xencomm.c	Sat Oct 14 16:26:27 2006 -0600
+@@ -18,11 +18,19 @@
+ 
+ #include <linux/gfp.h>
+ #include <linux/mm.h>
++#include <xen/interface/xen.h>
+ #include <asm/page.h>
+ #include <asm/xen/xencomm.h>
+-#include <xen/interface/xen.h>
+ 
+ static int xencomm_debug = 0;
++
++static unsigned long kernel_start_pa;
++
++void
++xencomm_init (void)
++{
++	kernel_start_pa = KERNEL_START - ia64_tpa(KERNEL_START);
++}
+ 
+ /* Translate virtual address to physical address.  */
+ unsigned long
+@@ -47,8 +55,6 @@ xencomm_vaddr_to_paddr(unsigned long vad
+ 		   work on  addresses.  */
+ 		if (vaddr >= KERNEL_START
+ 		    && vaddr < (KERNEL_START + KERNEL_TR_PAGE_SIZE)) {
+-			extern unsigned long kernel_start_pa;
+-			
+ 			return vaddr - kernel_start_pa;
+ 		}
+ 
+@@ -78,6 +84,11 @@ xencomm_vaddr_to_paddr(unsigned long vad
+ 		return __pa(vaddr);
+ 	}
+ 
++
++#ifdef CONFIG_VMX_GUEST
++	/* No privcmd within vmx guest.  */
++	return ~0UL;
++#else
+ 	/* XXX double-check (lack of) locking */
+ 	vma = find_extend_vma(current->mm, vaddr);
+ 	if (!vma)
+@@ -89,10 +100,11 @@ xencomm_vaddr_to_paddr(unsigned long vad
+ 		return ~0UL;
+ 
+ 	return (page_to_pfn(page) << PAGE_SHIFT) | (vaddr & ~PAGE_MASK);
++#endif
+ }
+ 
+ static int
+-xencomm_init(struct xencomm_desc *desc, void *buffer, unsigned long bytes)
++xencomm_init_desc(struct xencomm_desc *desc, void *buffer, unsigned long bytes)
+ {
+ 	unsigned long recorded = 0;
+ 	int i = 0;
+@@ -183,9 +195,9 @@ xencomm_create(void *buffer, unsigned lo
+ 	}
+ 	handle = (struct xencomm_handle *)__pa(desc);
+ 
+-	rc = xencomm_init(desc, buffer, bytes);
++	rc = xencomm_init_desc(desc, buffer, bytes);
+ 	if (rc) {
+-		printk("%s failure: %d\n", "xencomm_init", rc);
++		printk("%s failure: %d\n", "xencomm_init_desc", rc);
+ 		xencomm_free(handle);
+ 		return rc;
+ 	}
+@@ -231,7 +243,7 @@ xencomm_create_mini(struct xencomm_mini 
+ 		return -ENOMEM;
+ 	desc->nr_addrs = XENCOMM_MINI_ADDRS;
+ 
+-	rc = xencomm_init(desc, buffer, bytes);
++	rc = xencomm_init_desc(desc, buffer, bytes);
+ 	if (rc)
+ 		return rc;
+ 
+diff -r 6fc69e643420 -r f90a4d12f6e3 include/asm-ia64/hypercall.h
+--- a/include/asm-ia64/hypercall.h	Sun Oct 08 18:35:17 2006 -0600
++++ b/include/asm-ia64/hypercall.h	Sat Oct 14 16:26:27 2006 -0600
+@@ -402,11 +402,7 @@ HYPERVISOR_expose_p2m(unsigned long conv
+ #define HYPERVISOR_xen_version xencomm_mini_hypercall_xen_version
+ #define HYPERVISOR_console_io xencomm_mini_hypercall_console_io
+ #define HYPERVISOR_hvm_op xencomm_mini_hypercall_hvm_op
+-#ifdef CONFIG_VMX_GUEST
+-#define HYPERVISOR_memory_op 0
+-#else
+ #define HYPERVISOR_memory_op xencomm_mini_hypercall_memory_op
+-#endif
+ #else
+ #define HYPERVISOR_sched_op xencomm_hypercall_sched_op
+ #define HYPERVISOR_event_channel_op xencomm_hypercall_event_channel_op
+diff -r 6fc69e643420 -r f90a4d12f6e3 include/asm-ia64/xen/xcom_hcall.h
+--- a/include/asm-ia64/xen/xcom_hcall.h	Sun Oct 08 18:35:17 2006 -0600
++++ b/include/asm-ia64/xen/xcom_hcall.h	Sat Oct 14 16:26:27 2006 -0600
+@@ -66,6 +66,8 @@ extern int xencomm_mini_hypercall_callba
+ 
+ extern int xencomm_mini_hypercall_memory_op(unsigned int cmd, void *arg);
+ 
++extern unsigned long xencomm_mini_hypercall_hvm_op(int cmd, void *arg);
++
+ /* For privcmd.  Locally declare argument type to avoid include storm.
+    Type coherency will be checked within privcmd.c  */
+ struct privcmd_hypercall;
+diff -r 6fc69e643420 -r f90a4d12f6e3 include/asm-ia64/xen/xencomm.h
+--- a/include/asm-ia64/xen/xencomm.h	Sun Oct 08 18:35:17 2006 -0600
++++ b/include/asm-ia64/xen/xencomm.h	Sat Oct 14 16:26:27 2006 -0600
+@@ -27,6 +27,9 @@ struct xencomm_mini {
+ 	uint64_t address[XENCOMM_MINI_ADDRS];
+ };
+ 
++/* Must be called before any hypercall.  */
++extern void xencomm_init (void);
++
+ /* To avoid additionnal virt to phys conversion, an opaque structure is
+    presented.  */
+ struct xencomm_handle;
+diff -r 6fc69e643420 -r f90a4d12f6e3 arch/ia64/xen/xcom_mini.c
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/arch/ia64/xen/xcom_mini.c	Sat Oct 14 16:26:27 2006 -0600
+@@ -0,0 +1,319 @@
++/*
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
++ *
++ *          Tristan Gingold <tristan.gingold@bull.net>
++ */
++#include <linux/types.h>
++#include <linux/errno.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <xen/interface/xen.h>
++#include <xen/interface/dom0_ops.h>
++#include <xen/interface/memory.h>
++#include <xen/interface/xencomm.h>
++#include <xen/interface/version.h>
++#include <xen/interface/event_channel.h>
++#include <xen/interface/physdev.h>
++#include <xen/interface/grant_table.h>
++#include <xen/interface/hvm/params.h>
++#ifdef CONFIG_VMX_GUEST
++#include <asm/hypervisor.h>
++#else
++#include <asm/hypercall.h>
++#endif
++#include <asm/xen/xencomm.h>
++
++int
++xencomm_mini_hypercall_event_channel_op(int cmd, void *op)
++{
++	struct xencomm_mini xc_area[2];
++	int nbr_area = 2;
++	struct xencomm_handle *desc;
++	int rc;
++
++	rc = xencomm_create_mini(xc_area, &nbr_area,
++	                         op, sizeof(evtchn_op_t), &desc);
++	if (rc)
++		return rc;
++
++	return xencomm_arch_hypercall_event_channel_op(cmd, desc);
++}
++EXPORT_SYMBOL(xencomm_mini_hypercall_event_channel_op);
++
++static int
++xencommize_mini_grant_table_op(struct xencomm_mini *xc_area, int *nbr_area,
++                               unsigned int cmd, void *op, unsigned int count,
++                               struct xencomm_handle **desc)
++{
++	struct xencomm_handle *desc1;
++	unsigned int argsize;
++	int rc;
++
++	switch (cmd) {
++	case GNTTABOP_map_grant_ref:
++		argsize = sizeof(struct gnttab_map_grant_ref);
++		break;
++	case GNTTABOP_unmap_grant_ref:
++		argsize = sizeof(struct gnttab_unmap_grant_ref);
++		break;
++	case GNTTABOP_setup_table:
++	{
++		struct gnttab_setup_table *setup = op;
++
++		argsize = sizeof(*setup);
++
++		if (count != 1)
++			return -EINVAL;
++		rc = xencomm_create_mini
++			(xc_area, nbr_area,
++			 xen_guest_handle(setup->frame_list),
++			 setup->nr_frames 
++			 * sizeof(*xen_guest_handle(setup->frame_list)),
++			 &desc1);
++		if (rc)
++			return rc;
++		set_xen_guest_handle(setup->frame_list, (void *)desc1);
++		break;
++	}
++	case GNTTABOP_dump_table:
++		argsize = sizeof(struct gnttab_dump_table);
++		break;
++	case GNTTABOP_transfer:
++		argsize = sizeof(struct gnttab_transfer);
++		break;
++	default:
++		printk("%s: unknown mini grant table op %d\n", __func__, cmd);
++		BUG();
++	}
++
++	rc = xencomm_create_mini(xc_area, nbr_area, op, count * argsize, desc);
++	if (rc)
++		return rc;
++
++	return 0;
++}
++
++int
++xencomm_mini_hypercall_grant_table_op(unsigned int cmd, void *op,
++                                      unsigned int count)
++{
++	int rc;
++	struct xencomm_handle *desc;
++	int nbr_area = 2;
++	struct xencomm_mini xc_area[2];
++
++	rc = xencommize_mini_grant_table_op(xc_area, &nbr_area,
++	                                    cmd, op, count, &desc);
++	if (rc)
++		return rc;
++
++	return xencomm_arch_hypercall_grant_table_op(cmd, desc, count);
++}
++EXPORT_SYMBOL(xencomm_mini_hypercall_grant_table_op);
++
++int
++xencomm_mini_hypercall_multicall(void *call_list, int nr_calls)
++{
++	int i;
++	multicall_entry_t *mce;
++	int nbr_area = 2 + nr_calls * 3;
++	struct xencomm_mini xc_area[nbr_area];
++	struct xencomm_handle *desc;
++	int rc;
++
++	for (i = 0; i < nr_calls; i++) {
++		mce = (multicall_entry_t *)call_list + i;
++
++		switch (mce->op) {
++		case __HYPERVISOR_update_va_mapping:
++		case __HYPERVISOR_mmu_update:
++			/* No-op on ia64.  */
++			break;
++		case __HYPERVISOR_grant_table_op:
++			rc = xencommize_mini_grant_table_op
++				(xc_area, &nbr_area,
++				 mce->args[0], (void *)mce->args[1],
++				 mce->args[2], &desc);
++			if (rc)
++				return rc;
++			mce->args[1] = (unsigned long)desc;
++			break;
++		case __HYPERVISOR_memory_op:
++		default:
++			printk("%s: unhandled multicall op entry op %lu\n",
++			       __func__, mce->op);
++			return -ENOSYS;
++		}
++	}
++
++	rc = xencomm_create_mini(xc_area, &nbr_area, call_list,
++	                         nr_calls * sizeof(multicall_entry_t), &desc);
++	if (rc)
++		return rc;
++
++	return xencomm_arch_hypercall_multicall(desc, nr_calls);
++}
++EXPORT_SYMBOL(xencomm_mini_hypercall_multicall);
++
++static int
++xencommize_mini_memory_reservation(struct xencomm_mini *area, int *nbr_area,
++                                   xen_memory_reservation_t *mop)
++{
++	struct xencomm_handle *desc;
++	int rc;
++
++	rc = xencomm_create_mini
++		(area, nbr_area,
++		 xen_guest_handle(mop->extent_start),
++		 mop->nr_extents 
++		 * sizeof(*xen_guest_handle(mop->extent_start)),
++		 &desc);
++	if (rc)
++		return rc;
++
++	set_xen_guest_handle(mop->extent_start, (void *)desc);
++
++	return 0;
++}
++
++int
++xencomm_mini_hypercall_memory_op(unsigned int cmd, void *arg)
++{
++	int nbr_area = 4;
++	struct xencomm_mini xc_area[4];
++	struct xencomm_handle *desc;
++	int rc;
++	unsigned int argsize;
++
++	switch (cmd) {
++	case XENMEM_increase_reservation:
++	case XENMEM_decrease_reservation:
++	case XENMEM_populate_physmap:
++		argsize = sizeof(xen_memory_reservation_t);
++		rc = xencommize_mini_memory_reservation
++			(xc_area, &nbr_area, (xen_memory_reservation_t *)arg);
++		if (rc)
++			return rc;
++		break;
++		
++	case XENMEM_maximum_ram_page:
++		argsize = 0;
++		break;
++
++	case XENMEM_exchange:
++		argsize = sizeof(xen_memory_exchange_t);
++		rc = xencommize_mini_memory_reservation
++			(xc_area, &nbr_area,
++			 &((xen_memory_exchange_t *)arg)->in);
++		if (rc)
++			return rc;
++		rc = xencommize_mini_memory_reservation
++			(xc_area, &nbr_area,
++			 &((xen_memory_exchange_t *)arg)->out);
++		if (rc)
++			return rc;
++		break;
++
++	case XENMEM_add_to_physmap:
++		argsize = sizeof (xen_add_to_physmap_t);
++		break;
++
++	default:
++		printk("%s: unknown mini memory op %d\n", __func__, cmd);
++		return -ENOSYS;
++	}
++
++	rc = xencomm_create_mini(xc_area, &nbr_area, arg, argsize, &desc);
++	if (rc)
++		return rc;
++
++	return xencomm_arch_hypercall_memory_op(cmd, desc);
++}
++EXPORT_SYMBOL(xencomm_mini_hypercall_memory_op);
++
++unsigned long
++xencomm_mini_hypercall_hvm_op(int cmd, void *arg)
++{
++	struct xencomm_handle *desc;
++	int nbr_area = 2;
++	struct xencomm_mini xc_area[2];
++	unsigned int argsize;
++	int rc;
++
++	switch (cmd) {
++	case HVMOP_get_param:
++	case HVMOP_set_param:
++		argsize = sizeof(xen_hvm_param_t);
++		break;
++	default:
++		printk("%s: unknown HVMOP %d\n", __func__, cmd);
++		return -EINVAL;
++	}
++
++	rc = xencomm_create_mini(xc_area, &nbr_area, arg, argsize, &desc);
++	if (rc)
++		return rc;
++
++	return xencomm_arch_hypercall_hvm_op(cmd, desc);
++}
++EXPORT_SYMBOL(xencomm_mini_hypercall_hvm_op);
++
++int
++xencomm_mini_hypercall_xen_version(int cmd, void *arg)
++{
++	struct xencomm_handle *desc;
++	int nbr_area = 2;
++	struct xencomm_mini xc_area[2];
++	unsigned int argsize;
++	int rc;
++
++	switch (cmd) {
++	case XENVER_version:
++		/* do not actually pass an argument */
++		return xencomm_arch_hypercall_xen_version(cmd, 0);
++	case XENVER_extraversion:
++		argsize = sizeof(xen_extraversion_t);
++		break;
++	case XENVER_compile_info:
++		argsize = sizeof(xen_compile_info_t);
++		break;
++	case XENVER_capabilities:
++		argsize = sizeof(xen_capabilities_info_t);
++		break;
++	case XENVER_changeset:
++		argsize = sizeof(xen_changeset_info_t);
++		break;
++	case XENVER_platform_parameters:
++		argsize = sizeof(xen_platform_parameters_t);
++		break;
++	case XENVER_pagesize:
++		argsize = (arg == NULL) ? 0 : sizeof(void *);
++		break;
++	case XENVER_get_features:
++		argsize = (arg == NULL) ? 0 : sizeof(xen_feature_info_t);
++		break;
++
++	default:
++		printk("%s: unknown version op %d\n", __func__, cmd);
++		return -ENOSYS;
++	}
++
++	rc = xencomm_create_mini(xc_area, &nbr_area, arg, argsize, &desc);
++	if (rc)
++		return rc;
++
++	return xencomm_arch_hypercall_xen_version(cmd, desc);
++}
++EXPORT_SYMBOL(xencomm_mini_hypercall_xen_version);
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1160869320 21600
+# Node ID 274145e2196df1231b80659c65d2d5bed3e70c9a
+# Parent  f90a4d12f6e3d035f17a3b6be0c81ea06334cc01
+[IA64] TLB tracking
+
+Add tlb insert tracking to flush finer grained virtual address
+range when a page is unmapped from a domain.
+This functionality is enabled with a compile time option,
+xen_ia64_tlb_track(default is y) and xen_ia64_tlb_track_cnt(default is n).
+
+This patch forcuses on grant table mapping.
+When page is unmapped, full vTLB flush is necessary.
+By tracking tlb insert on grant mapped page, full vTLB flush
+can be avoided.
+Especially when vbd backend does only DMA, so dom0 doesn't insert tlb entry
+on the grant mapped page. In such case any vTLB flush isn't needed.
+
+Signed-off-by: Isaku Yamahata <yamahata@valinux.co.jp>
+
+original changeset: 11808 (xen-ia64-unstable)
+
+original changeset: 11821 (xen-3.0.3-ia64)
+
+diff -r f90a4d12f6e3 -r 274145e2196d include/xen/interface/arch-ia64.h
+--- a/include/xen/interface/arch-ia64.h	Sat Oct 14 16:26:27 2006 -0600
++++ b/include/xen/interface/arch-ia64.h	Sat Oct 14 17:42:00 2006 -0600
+@@ -358,6 +358,9 @@ DEFINE_XEN_GUEST_HANDLE(vcpu_guest_conte
+ /* Internal only: memory attribute must be WC/UC/UCE.  */
+ #define _ASSIGN_nocache                 1
+ #define ASSIGN_nocache                  (1UL << _ASSIGN_nocache)
++// tlb tracking
++#define _ASSIGN_tlb_track               2
++#define ASSIGN_tlb_track                (1UL << _ASSIGN_tlb_track)
+ 
+ /* This structure has the same layout of struct ia64_boot_param, defined in
+    <asm/system.h>.  It is redefined here to ease use.  */
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1161116973 21600
+# Node ID b13a26e8cd8c703776eb9b0acf0ed919767d21df
+# Parent  274145e2196df1231b80659c65d2d5bed3e70c9a
+[IA64] warning fix for HVM PV driver
+
+Signed-off-by: Tsunehisa Doi <Doi.Tsunehisa@jp.fujitsu.com>
+
+original changeset: 11815 (xen-ia64-unstable)
+
+original changeset: 11828 (xen-3.0.3-ia64)
+
+diff -r 274145e2196d -r b13a26e8cd8c arch/ia64/xen/xencomm.c
+--- a/arch/ia64/xen/xencomm.c	Sat Oct 14 17:42:00 2006 -0600
++++ b/arch/ia64/xen/xencomm.c	Tue Oct 17 14:29:33 2006 -0600
+@@ -36,8 +36,10 @@ unsigned long
+ unsigned long
+ xencomm_vaddr_to_paddr(unsigned long vaddr)
+ {
++#ifndef CONFIG_VMX_GUEST
+ 	struct page *page;
+ 	struct vm_area_struct *vma;
++#endif
+ 
+ 	if (vaddr == 0)
+ 		return 0;
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1161786548 -3600
+# Node ID c5ce1da31db2914724e74673995a3d37d4c98d57
+# Parent  b13a26e8cd8c703776eb9b0acf0ed919767d21df
+[IA64][HVM] Add buffer IO mechanism for Xen/VTi domain. Current
+implementation can accelerate Windows guest's dense IO operations
+at boot time.
+
+Signed-off-by: Zhang xiantao <xiantao.zhang@intel.com>
+
+original changeset: 12000 (xen-ia64-unstable)
+
+original changeset: 11843 (xen-3.0.3-ia64)
+
+diff -r b13a26e8cd8c -r c5ce1da31db2 include/xen/interface/arch-ia64.h
+--- a/include/xen/interface/arch-ia64.h	Tue Oct 17 14:29:33 2006 -0600
++++ b/include/xen/interface/arch-ia64.h	Wed Oct 25 15:29:08 2006 +0100
+@@ -67,6 +67,9 @@ typedef unsigned long xen_ulong_t;
+ 
+ #define STORE_PAGE_START (IO_PAGE_START + IO_PAGE_SIZE)
+ #define STORE_PAGE_SIZE	 PAGE_SIZE
++
++#define BUFFER_IO_PAGE_START (STORE_PAGE_START+PAGE_SIZE)
++#define BUFFER_IO_PAGE_SIZE PAGE_SIZE
+ 
+ #define IO_SAPIC_START   0xfec00000UL
+ #define IO_SAPIC_SIZE    0x100000
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1162145610 25200
+# Node ID 85e9da06f81cb7e2f7a55a3cc73a8fbcc64a29dd
+# Parent  c5ce1da31db2914724e74673995a3d37d4c98d57
+[IA64] fix xenperf
+
+xenperf became not to work due to xencomm.
+
+Signed-off-by: Kouya Shimura <kouya@jp.fujitsu.com>
+
+original changeset: 12006 (xen-ia64-unstable)
+
+original changeset: 11847 (xen-3.0.3-ia64)
+
+diff -r c5ce1da31db2 -r 85e9da06f81c arch/ia64/xen/xcom_privcmd.c
+--- a/arch/ia64/xen/xcom_privcmd.c	Wed Oct 25 15:29:08 2006 +0100
++++ b/arch/ia64/xen/xcom_privcmd.c	Sun Oct 29 11:13:30 2006 -0700
+@@ -112,25 +112,49 @@ xencomm_privcmd_sysctl(privcmd_hypercall
+ 	case XEN_SYSCTL_sched_id:
+ 		break;
+ 	case XEN_SYSCTL_perfc_op:
+-		ret = xencomm_create(
+-			xen_guest_handle(kern_op.u.perfc_op.desc),
+-			kern_op.u.perfc_op.nr_counters *
+-			sizeof(xen_sysctl_perfc_desc_t),
+-			&desc, GFP_KERNEL);
++	{
++		struct xencomm_handle *tmp_desc;
++		xen_sysctl_t tmp_op = {
++			.cmd = XEN_SYSCTL_perfc_op,
++			.interface_version = XEN_SYSCTL_INTERFACE_VERSION,
++			.u.perfc_op = {
++				.cmd = XEN_SYSCTL_PERFCOP_query,
++				// .desc.p = NULL,
++				// .val.p = NULL,
++			},
++		};
++
++		if (xen_guest_handle(kern_op.u.perfc_op.desc) == NULL) {
++			if (xen_guest_handle(kern_op.u.perfc_op.val) != NULL)
++				return -EINVAL;
++			break;
++		}
++
++		/* query the buffer size for xencomm */
++		tmp_desc = xencomm_create_inline(&tmp_op);
++		ret = xencomm_arch_hypercall_sysctl(tmp_desc);
+ 		if (ret)
+ 			return ret;
+-		set_xen_guest_handle(kern_op.u.perfc_op.val,
+-				     (void *)desc);
+-		ret = xencomm_create(
+-			xen_guest_handle(kern_op.u.perfc_op.val),
+-			kern_op.u.perfc_op.nr_vals *
+-			sizeof(xen_sysctl_perfc_desc_t),
+-			&desc1, GFP_KERNEL);
++
++		ret = xencomm_create(xen_guest_handle(kern_op.u.perfc_op.desc),
++		                     tmp_op.u.perfc_op.nr_counters *
++		                     sizeof(xen_sysctl_perfc_desc_t),
++		                     &desc, GFP_KERNEL);
++		if (ret)
++			return ret;
++
++		set_xen_guest_handle(kern_op.u.perfc_op.desc, (void *)desc);
++
++		ret = xencomm_create(xen_guest_handle(kern_op.u.perfc_op.val),
++		                     tmp_op.u.perfc_op.nr_vals *
++		                     sizeof(xen_sysctl_perfc_val_t),
++		                     &desc1, GFP_KERNEL);
+ 		if (ret)
+ 			xencomm_free(desc);
+-		set_xen_guest_handle(kern_op.u.perfc_op.val,
+-				     (void *)desc1);
+-		break;
++
++		set_xen_guest_handle(kern_op.u.perfc_op.val, (void *)desc1);
++		break;
++	}
+ 	case XEN_SYSCTL_getdomaininfolist:
+ 		ret = xencomm_create(
+ 			xen_guest_handle(kern_op.u.getdomaininfolist.buffer),
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1164042628 25200
+# Node ID fcde5ea229f752969a818fadfb98078a7567b913
+# Parent  70fcaf434a2bed9c26cadc7003e842a73b6c0e40
+[IA64] Grantcopy added to xcom_mini for netback module
+
+This patch adds grantcopy to xcom_mini allowing netback to
+work as a module.
+
+Signed-off-by: Tsunehisa Doi <Doi.Tsunehisa@jp.fujitsu.com>
+Signed-off-by: Naoki Takayama <takayama.naoki@jp.fujitsu.com>
+Signed-off-by: Tomonari Horikoshi <t.horikoshi@jp.fujitsu.com>
+
+original changeset: 12467 (xen-ia64-unstable)
+
+original changeset: 11860 (xen-3.0.3-ia64)
+
+diff -r 70fcaf434a2b -r fcde5ea229f7 arch/ia64/xen/xcom_mini.c
+--- a/arch/ia64/xen/xcom_mini.c	Tue Nov 07 11:17:39 2006 +0000
++++ b/arch/ia64/xen/xcom_mini.c	Mon Nov 20 10:10:28 2006 -0700
+@@ -93,6 +93,9 @@ xencommize_mini_grant_table_op(struct xe
+ 	case GNTTABOP_transfer:
+ 		argsize = sizeof(struct gnttab_transfer);
+ 		break;
++	case GNTTABOP_copy:
++		argsize = sizeof(struct gnttab_copy);
++		break;
+ 	default:
+ 		printk("%s: unknown mini grant table op %d\n", __func__, cmd);
+ 		BUG();
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1164215438 25200
+# Node ID d312d88fdf6e54cac151e90a59e5c3f42ffc7be1
+# Parent  fcde5ea229f752969a818fadfb98078a7567b913
+[IA64] fix paravirtualization of clone2() system call.
+
+If audit is enabled or the child process is ptraced,
+non-paravirtualized code path is executed.
+Thus paravirtualized ifs is left unmodifed so that the child process
+crashes after clone2().
+paravirtualize ia64_ret_from_clone() to fix it.
+
+Signed-off-by: Isaku Yamahata <yamahata@valinux.co.jp>
+
+original changeset: 12522 (xen-ia64-unstable)
+
+original changeset: 11861 (xen-3.0.3-ia64)
+
+diff -r fcde5ea229f7 -r d312d88fdf6e arch/ia64/kernel/entry.S
+--- a/arch/ia64/kernel/entry.S	Mon Nov 20 10:10:28 2006 -0700
++++ b/arch/ia64/kernel/entry.S	Wed Nov 22 10:10:38 2006 -0700
+@@ -601,7 +601,7 @@ GLOBAL_ENTRY(ia64_strace_leave_kernel)
+ .ret4:	br.cond.sptk ia64_leave_kernel
+ END(ia64_strace_leave_kernel)
+ 
+-GLOBAL_ENTRY(ia64_ret_from_clone)
++GLOBAL_ENTRY(__ia64_ret_from_clone)
+ 	PT_REGS_UNWIND_INFO(0)
+ {	/*
+ 	 * Some versions of gas generate bad unwind info if the first instruction of a
+@@ -627,7 +627,7 @@ GLOBAL_ENTRY(ia64_ret_from_clone)
+ 	cmp.ne p6,p0=r2,r0
+ (p6)	br.cond.spnt .strace_check_retval
+ 	;;					// added stop bits to prevent r8 dependency
+-END(ia64_ret_from_clone)
++END(__ia64_ret_from_clone)
+ 	// fall through
+ GLOBAL_ENTRY(ia64_ret_from_syscall)
+ 	PT_REGS_UNWIND_INFO(0)
+diff -r fcde5ea229f7 -r d312d88fdf6e arch/ia64/xen/xenentry.S
+--- a/arch/ia64/xen/xenentry.S	Mon Nov 20 10:10:28 2006 -0700
++++ b/arch/ia64/xen/xenentry.S	Wed Nov 22 10:10:38 2006 -0700
+@@ -235,6 +235,47 @@ END(ia64_trace_syscall)
+ END(ia64_trace_syscall)
+ #endif
+ 
++#ifdef CONFIG_XEN
++GLOBAL_ENTRY(xen_ret_from_clone)
++	PT_REGS_UNWIND_INFO(0)
++	movl r16=running_on_xen;;
++	ld4 r16=[r16];;
++	cmp.eq p7,p0=r16,r0
++(p7)	br.cond.sptk.many __ia64_ret_from_clone;;
++#else	
++GLOBAL_ENTRY(ia64_ret_from_clone)
++	PT_REGS_UNWIND_INFO(0)
++#endif	
++{	/*
++	 * Some versions of gas generate bad unwind info if the first instruction of a
++	 * procedure doesn't go into the first slot of a bundle.  This is a workaround.
++	 */
++	nop.m 0
++	nop.i 0
++	/*
++	 * We need to call schedule_tail() to complete the scheduling process.
++	 * Called by ia64_switch_to() after do_fork()->copy_thread().  r8 contains the
++	 * address of the previously executing task.
++	 */
++	br.call.sptk.many rp=ia64_invoke_schedule_tail
++}
++.ret8:
++	adds r2=TI_FLAGS+IA64_TASK_SIZE,r13
++	;;
++	ld4 r2=[r2]
++	;;
++	mov r8=0
++	and r2=_TIF_SYSCALL_TRACEAUDIT,r2
++	;;
++	cmp.ne p6,p0=r2,r0
++(p6)	br.cond.spnt .strace_check_retval
++	;;					// added stop bits to prevent r8 dependency
++#ifdef CONFIG_XEN
++	br.cond.sptk ia64_ret_from_syscall
++END(xen_ret_from_clone)
++#else
++END(ia64_ret_from_clone)
++#endif		
+ /*
+  * ia64_leave_syscall(): Same as ia64_leave_kernel, except that it doesn't
+  *	need to switch to bank 0 and doesn't restore the scratch registers.
+diff -r fcde5ea229f7 -r d312d88fdf6e include/asm-ia64/privop.h
+--- a/include/asm-ia64/privop.h	Mon Nov 20 10:10:28 2006 -0700
++++ b/include/asm-ia64/privop.h	Wed Nov 22 10:10:38 2006 -0700
+@@ -49,6 +49,7 @@
+ #define ia64_leave_kernel		__ia64_leave_kernel
+ #define ia64_leave_syscall		__ia64_leave_syscall
+ #define ia64_trace_syscall		__ia64_trace_syscall
++#define ia64_ret_from_clone		__ia64_ret_from_clone
+ #define ia64_switch_to			__ia64_switch_to
+ #define ia64_pal_call_static		__ia64_pal_call_static
+ 
+diff -r fcde5ea229f7 -r d312d88fdf6e include/asm-ia64/xen/privop.h
+--- a/include/asm-ia64/xen/privop.h	Mon Nov 20 10:10:28 2006 -0700
++++ b/include/asm-ia64/xen/privop.h	Wed Nov 22 10:10:38 2006 -0700
+@@ -295,6 +295,7 @@ extern void xen_ptcga(unsigned long addr
+ #define	ia64_leave_kernel		xen_leave_kernel
+ #define	ia64_leave_syscall		xen_leave_syscall
+ #define	ia64_trace_syscall		xen_trace_syscall
++#define	ia64_ret_from_clone		xen_ret_from_clone
+ #define	ia64_switch_to			xen_switch_to
+ #define	ia64_pal_call_static		xen_pal_call_static
+ 
+

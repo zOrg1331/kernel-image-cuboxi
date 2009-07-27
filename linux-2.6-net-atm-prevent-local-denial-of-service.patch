@@ -1,0 +1,54 @@
+From: Eugene Teo <eteo@redhat.com>
+Date: Fri, 5 Dec 2008 14:11:50 +0800
+Subject: [net] atm: prevent local denial of service
+Message-id: 4938C626.2060102@redhat.com
+O-Subject: [RHEL5.3 patch] BZ#473701 CVE-2008-5079 Linux Kernel 'atm module' Local Denial of Service
+Bugzilla: 473701
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+CVE: CVE-2008-5079
+RH-Acked-by: David Miller <davem@redhat.com>
+
+This is for bz#473701.
+
+As reported by Hugo Dias that it is possible to cause a local denial of
+service attack by calling the svc_listen function twice on the same
+socket and reading /proc/net/atm/*vc.
+
+Backport of:
+http://marc.info/?l=linux-netdev&m=122841256115780&w=2
+http://marc.info/?l=linux-netdev&m=122843162615569&w=2
+
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1598155
+
+Test status:
+Booted on i686. Tested with reproducer.
+
+Signed-off-by: Eugene Teo <eteo@redhat.com>
+CC: Anton Arapov <aarapov@redhat.com>
+
+diff --git a/net/atm/svc.c b/net/atm/svc.c
+index 3a180cf..d77cfa1 100644
+--- a/net/atm/svc.c
++++ b/net/atm/svc.c
+@@ -302,7 +302,10 @@ static int svc_listen(struct socket *sock,int backlog)
+ 		error = -EINVAL;
+ 		goto out;
+ 	}
+-	vcc_insert_socket(sk);
++	if (test_bit(ATM_VF_LISTEN, &vcc->flags)) {
++		error = -EADDRINUSE;
++		goto out;
++	}
+ 	set_bit(ATM_VF_WAITING, &vcc->flags);
+ 	prepare_to_wait(sk->sk_sleep, &wait, TASK_UNINTERRUPTIBLE);
+ 	sigd_enq(vcc,as_listen,NULL,NULL,&vcc->local);
+@@ -316,6 +319,7 @@ static int svc_listen(struct socket *sock,int backlog)
+ 		goto out;
+ 	}
+ 	set_bit(ATM_VF_LISTEN,&vcc->flags);
++	vcc_insert_socket(sk);
+ 	sk->sk_max_ack_backlog = backlog > 0 ? backlog : ATM_BACKLOG_DEFAULT;
+ 	error = -sk->sk_err;
+ out:

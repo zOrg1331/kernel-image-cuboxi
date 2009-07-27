@@ -1,0 +1,25 @@
+Date: Thu, 21 Sep 2006 17:50:22 +0100
+From: Alasdair G Kergon <agk@redhat.com>
+Subject: [REPLACEMENT] Re: [RHEL5 PATCH 17/30] dm mirror: remove trailing space from table
+
+[replacement patch: my RHEL backport acquired an extra space]
+
+Remove trailing space from 'dmsetup table' output.
+
+Index: linux-2.6.18.noarch/drivers/md/dm-raid1.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/dm-raid1.c
++++ linux-2.6.18.noarch/drivers/md/dm-raid1.c
+@@ -1712,9 +1712,9 @@ static int mirror_status(struct dm_targe
+ 
+ 	case STATUSTYPE_TABLE:
+ 		sz = ms->rh.log->type->status(ms->rh.log, type, result, maxlen);
+-		DMEMIT("%d ", ms->nr_mirrors);
++		DMEMIT("%d", ms->nr_mirrors);
+ 		for (m = 0; m < ms->nr_mirrors; m++)
+-			DMEMIT("%s %llu ", ms->mirror[m].dev->name,
++			DMEMIT(" %s %llu", ms->mirror[m].dev->name,
+ 				(unsigned long long)ms->mirror[m].offset);
+ 	}
+ 
+

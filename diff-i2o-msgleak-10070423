@@ -1,0 +1,14 @@
+--- ./drivers/message/i2o/exec-osm.c.msglk1	2007-03-28 12:53:32.000000000 +0400
++++ ./drivers/message/i2o/exec-osm.c	2007-04-23 13:52:16.000000000 +0400
+@@ -132,8 +132,10 @@ int i2o_msg_post_wait_mem(struct i2o_con
+ 	int rc = 0;
+ 
+ 	wait = i2o_exec_wait_alloc();
+-	if (!wait)
++	if (!wait) {
++		i2o_msg_nop(c, msg);
+ 		return -ENOMEM;
++	}
+ 
+ 	if (tcntxt == 0xffffffff)
+ 		tcntxt = 0x80000000;

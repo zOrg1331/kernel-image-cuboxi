@@ -1,0 +1,305 @@
+Date: Fri, 13 Oct 2006 11:42:31 -0700
+From: Anil S Keshavamurthy <akeshava@redhat.com>
+Subject: [PATCH RHEL5] BZ 21055- Kprobes - fixes some dead lock issues
+
+BZ 210555
+
+The attached patch fixes some serious Kprobe deadlock issues.
+Back ported directly from 2.6.19-rc1.
+
+Here is the link to the mainline acceptance.
+1)  [PATCH] kretprobe spinlock deadlock patch
+http://kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=99219a3fbc2dcf2eaa954f7b2ac27299fd7894cd
+2)  [PATCH] disallow kprobes on notifier_call_chain
+http://kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=f2aa85a0ccd90110e76c6375535adc3ae358f971
+
+Please apply.
+
+
+
+ Function kprobe_flush_task possibly calls kfree function during holding \
+kretprobe_lock spinlock, if kfree function is probed by kretprobe that will incur \
+spinlock deadlock. This patch moves kfree function out scope of kretprobe_lock.
+
+Signed-off-by: bibo, mao <bibo.mao@intel.com>
+Signed-off-by: Ananth N Mavinakayanahalli <ananth@in.ibm.com> 
+
+thanks
+bibo,mao
+
+ arch/i386/kernel/kprobes.c    |    9 +++++++--
+ arch/ia64/kernel/kprobes.c    |    9 +++++++--
+ arch/powerpc/kernel/kprobes.c |    9 +++++++--
+ arch/s390/kernel/kprobes.c    |    9 +++++++--
+ arch/x86_64/kernel/kprobes.c  |    9 +++++++--
+ include/linux/kprobes.h       |    2 +-
+ kernel/kprobes.c              |   15 +++++++++++----
+ kernel/sys.c                  |    2 +-
+ 8 files changed, 48 insertions(+), 16 deletions(-)
+Index: linux-2.6.18.ia64/arch/i386/kernel/kprobes.c
+===================================================================
+--- linux-2.6.18.ia64.orig/arch/i386/kernel/kprobes.c	2006-10-11 11:21:27.000000000 -0700
++++ linux-2.6.18.ia64/arch/i386/kernel/kprobes.c	2006-10-11 11:25:49.000000000 -0700
+@@ -396,11 +396,12 @@
+ fastcall void *__kprobes trampoline_handler(struct pt_regs *regs)
+ {
+         struct kretprobe_instance *ri = NULL;
+-        struct hlist_head *head;
++ 	struct hlist_head *head, empty_rp;
+         struct hlist_node *node, *tmp;
+ 	unsigned long flags, orig_ret_address = 0;
+ 	unsigned long trampoline_address =(unsigned long)&kretprobe_trampoline;
+ 
++	INIT_HLIST_HEAD(&empty_rp);
+ 	spin_lock_irqsave(&kretprobe_lock, flags);
+         head = kretprobe_inst_table_head(current);
+ 
+@@ -429,7 +430,7 @@
+ 		}
+ 
+ 		orig_ret_address = (unsigned long)ri->ret_addr;
+-		recycle_rp_inst(ri);
++		recycle_rp_inst(ri, &empty_rp);
+ 
+ 		if (orig_ret_address != trampoline_address)
+ 			/*
+@@ -444,6 +445,10 @@
+ 
+ 	spin_unlock_irqrestore(&kretprobe_lock, flags);
+ 
++	hlist_for_each_entry_safe(ri, node, tmp, &empty_rp, hlist) {
++		hlist_del(&ri->hlist);
++		kfree(ri);
++	}
+ 	return (void*)orig_ret_address;
+ }
+ 
+Index: linux-2.6.18.ia64/arch/ia64/kernel/kprobes.c
+===================================================================
+--- linux-2.6.18.ia64.orig/arch/ia64/kernel/kprobes.c	2006-10-11 11:21:27.000000000 -0700
++++ linux-2.6.18.ia64/arch/ia64/kernel/kprobes.c	2006-10-11 11:25:49.000000000 -0700
+@@ -338,12 +338,13 @@
+ int __kprobes trampoline_probe_handler(struct kprobe *p, struct pt_regs *regs)
+ {
+ 	struct kretprobe_instance *ri = NULL;
+-	struct hlist_head *head;
++	struct hlist_head *head, empty_rp;
+ 	struct hlist_node *node, *tmp;
+ 	unsigned long flags, orig_ret_address = 0;
+ 	unsigned long trampoline_address =
+ 		((struct fnptr *)kretprobe_trampoline)->ip;
+ 
++	INIT_HLIST_HEAD(&empty_rp);
+ 	spin_lock_irqsave(&kretprobe_lock, flags);
+ 	head = kretprobe_inst_table_head(current);
+ 
+@@ -369,7 +370,7 @@
+ 			ri->rp->handler(ri, regs);
+ 
+ 		orig_ret_address = (unsigned long)ri->ret_addr;
+-		recycle_rp_inst(ri);
++		recycle_rp_inst(ri, &empty_rp);
+ 
+ 		if (orig_ret_address != trampoline_address)
+ 			/*
+@@ -387,6 +388,10 @@
+ 	spin_unlock_irqrestore(&kretprobe_lock, flags);
+ 	preempt_enable_no_resched();
+ 
++	hlist_for_each_entry_safe(ri, node, tmp, &empty_rp, hlist) {
++		hlist_del(&ri->hlist);
++		kfree(ri);
++	}
+ 	/*
+ 	 * By returning a non-zero value, we are telling
+ 	 * kprobe_handler() that we don't want the post_handler
+Index: linux-2.6.18.ia64/arch/powerpc/kernel/kprobes.c
+===================================================================
+--- linux-2.6.18.ia64.orig/arch/powerpc/kernel/kprobes.c	2006-10-11 11:21:27.000000000 -0700
++++ linux-2.6.18.ia64/arch/powerpc/kernel/kprobes.c	2006-10-11 11:25:49.000000000 -0700
+@@ -260,11 +260,12 @@
+ int __kprobes trampoline_probe_handler(struct kprobe *p, struct pt_regs *regs)
+ {
+         struct kretprobe_instance *ri = NULL;
+-        struct hlist_head *head;
++	struct hlist_head *head, empty_rp;
+         struct hlist_node *node, *tmp;
+ 	unsigned long flags, orig_ret_address = 0;
+ 	unsigned long trampoline_address =(unsigned long)&kretprobe_trampoline;
+ 
++ 	INIT_HLIST_HEAD(&empty_rp);
+ 	spin_lock_irqsave(&kretprobe_lock, flags);
+         head = kretprobe_inst_table_head(current);
+ 
+@@ -290,7 +291,7 @@
+ 			ri->rp->handler(ri, regs);
+ 
+ 		orig_ret_address = (unsigned long)ri->ret_addr;
+-		recycle_rp_inst(ri);
++		recycle_rp_inst(ri, &empty_rp);
+ 
+ 		if (orig_ret_address != trampoline_address)
+ 			/*
+@@ -360,6 +361,10 @@
+ out:
+ 	preempt_enable_no_resched();
+ 
++	hlist_for_each_entry_safe(ri, node, tmp, &empty_rp, hlist) {
++		hlist_del(&ri->hlist);
++		kfree(ri);
++	}
+ 	/*
+ 	 * if somebody else is singlestepping across a probe point, msr
+ 	 * will have SE set, in which case, continue the remaining processing
+Index: linux-2.6.18.ia64/arch/s390/kernel/kprobes.c
+===================================================================
+--- linux-2.6.18.ia64.orig/arch/s390/kernel/kprobes.c	2006-10-11 11:21:27.000000000 -0700
++++ linux-2.6.18.ia64/arch/s390/kernel/kprobes.c	2006-10-11 11:25:49.000000000 -0700
+@@ -394,11 +394,12 @@
+ int __kprobes trampoline_probe_handler(struct kprobe *p, struct pt_regs *regs)
+ {
+ 	struct kretprobe_instance *ri = NULL;
+-	struct hlist_head *head;
++	struct hlist_head *head, empty_rp;
+ 	struct hlist_node *node, *tmp;
+ 	unsigned long flags, orig_ret_address = 0;
+ 	unsigned long trampoline_address = (unsigned long)&kretprobe_trampoline;
+ 
++	INIT_HLIST_HEAD(&empty_rp);
+ 	spin_lock_irqsave(&kretprobe_lock, flags);
+ 	head = kretprobe_inst_table_head(current);
+ 
+@@ -424,7 +425,7 @@
+ 			ri->rp->handler(ri, regs);
+ 
+ 		orig_ret_address = (unsigned long)ri->ret_addr;
+-		recycle_rp_inst(ri);
++		recycle_rp_inst(ri, &empty_rp);
+ 
+ 		if (orig_ret_address != trampoline_address) {
+ 			/*
+@@ -442,6 +443,10 @@
+ 	spin_unlock_irqrestore(&kretprobe_lock, flags);
+ 	preempt_enable_no_resched();
+ 
++	hlist_for_each_entry_safe(ri, node, tmp, &empty_rp, hlist) {
++		hlist_del(&ri->hlist);
++		kfree(ri);
++	}
+ 	/*
+ 	 * By returning a non-zero value, we are telling
+ 	 * kprobe_handler() that we don't want the post_handler
+Index: linux-2.6.18.ia64/arch/x86_64/kernel/kprobes.c
+===================================================================
+--- linux-2.6.18.ia64.orig/arch/x86_64/kernel/kprobes.c	2006-10-11 11:21:27.000000000 -0700
++++ linux-2.6.18.ia64/arch/x86_64/kernel/kprobes.c	2006-10-11 11:25:49.000000000 -0700
+@@ -406,11 +406,12 @@
+ int __kprobes trampoline_probe_handler(struct kprobe *p, struct pt_regs *regs)
+ {
+         struct kretprobe_instance *ri = NULL;
+-        struct hlist_head *head;
++ 	struct hlist_head *head, empty_rp;
+         struct hlist_node *node, *tmp;
+ 	unsigned long flags, orig_ret_address = 0;
+ 	unsigned long trampoline_address =(unsigned long)&kretprobe_trampoline;
+ 
++ 	INIT_HLIST_HEAD(&empty_rp);
+ 	spin_lock_irqsave(&kretprobe_lock, flags);
+         head = kretprobe_inst_table_head(current);
+ 
+@@ -436,7 +437,7 @@
+ 			ri->rp->handler(ri, regs);
+ 
+ 		orig_ret_address = (unsigned long)ri->ret_addr;
+-		recycle_rp_inst(ri);
++		recycle_rp_inst(ri, &empty_rp);
+ 
+ 		if (orig_ret_address != trampoline_address)
+ 			/*
+@@ -564,6 +565,10 @@
+ out:
+ 	preempt_enable_no_resched();
+ 
++	hlist_for_each_entry_safe(ri, node, tmp, &empty_rp, hlist) {
++		hlist_del(&ri->hlist);
++		kfree(ri);
++	}
+ 	/*
+ 	 * if somebody else is singlestepping across a probe point, eflags
+ 	 * will have TF set, in which case, continue the remaining processing
+Index: linux-2.6.18.ia64/include/linux/kprobes.h
+===================================================================
+--- linux-2.6.18.ia64.orig/include/linux/kprobes.h	2006-10-11 11:21:27.000000000 -0700
++++ linux-2.6.18.ia64/include/linux/kprobes.h	2006-10-11 11:25:49.000000000 -0700
+@@ -202,7 +202,7 @@
+ struct kretprobe_instance *get_free_rp_inst(struct kretprobe *rp);
+ void add_rp_inst(struct kretprobe_instance *ri);
+ void kprobe_flush_task(struct task_struct *tk);
+-void recycle_rp_inst(struct kretprobe_instance *ri);
++void recycle_rp_inst(struct kretprobe_instance *ri, struct hlist_head *head);
+ #else /* CONFIG_KPROBES */
+ 
+ #define __kprobes	/**/
+Index: linux-2.6.18.ia64/kernel/kprobes.c
+===================================================================
+--- linux-2.6.18.ia64.orig/kernel/kprobes.c	2006-10-11 11:21:27.000000000 -0700
++++ linux-2.6.18.ia64/kernel/kprobes.c	2006-10-11 11:25:49.000000000 -0700
+@@ -319,7 +319,8 @@
+ }
+ 
+ /* Called with kretprobe_lock held */
+-void __kprobes recycle_rp_inst(struct kretprobe_instance *ri)
++void __kprobes recycle_rp_inst(struct kretprobe_instance *ri,
++				struct hlist_head *head)
+ {
+ 	/* remove rp inst off the rprobe_inst_table */
+ 	hlist_del(&ri->hlist);
+@@ -331,7 +332,7 @@
+ 		hlist_add_head(&ri->uflist, &ri->rp->free_instances);
+ 	} else
+ 		/* Unregistering */
+-		kfree(ri);
++		hlist_add_head(&ri->hlist, head);
+ }
+ 
+ struct hlist_head __kprobes *kretprobe_inst_table_head(struct task_struct *tsk)
+@@ -348,17 +349,23 @@
+ void __kprobes kprobe_flush_task(struct task_struct *tk)
+ {
+         struct kretprobe_instance *ri;
+-        struct hlist_head *head;
++ 	struct hlist_head *head, empty_rp;
+ 	struct hlist_node *node, *tmp;
+ 	unsigned long flags = 0;
+ 
++ 	INIT_HLIST_HEAD(&empty_rp);
+ 	spin_lock_irqsave(&kretprobe_lock, flags);
+         head = kretprobe_inst_table_head(tk);
+         hlist_for_each_entry_safe(ri, node, tmp, head, hlist) {
+                 if (ri->task == tk)
+-                        recycle_rp_inst(ri);
++ 			recycle_rp_inst(ri, &empty_rp);
+         }
+ 	spin_unlock_irqrestore(&kretprobe_lock, flags);
++
++ 	hlist_for_each_entry_safe(ri, node, tmp, &empty_rp, hlist) {
++ 		hlist_del(&ri->hlist);
++ 		kfree(ri);
++ 	}
+ }
+ 
+ static inline void free_rp_inst(struct kretprobe *rp)
+Index: linux-2.6.18.ia64/kernel/sys.c
+===================================================================
+--- linux-2.6.18.ia64.orig/kernel/sys.c	2006-10-11 16:03:57.000000000 -0700
++++ linux-2.6.18.ia64/kernel/sys.c	2006-10-11 11:26:26.000000000 -0700
+@@ -220,7 +220,7 @@
+  *	of the last notifier function called.
+  */
+  
+-int atomic_notifier_call_chain(struct atomic_notifier_head *nh,
++int __kprobes atomic_notifier_call_chain(struct atomic_notifier_head *nh,
+ 		unsigned long val, void *v)
+ {
+ 	int ret;
+

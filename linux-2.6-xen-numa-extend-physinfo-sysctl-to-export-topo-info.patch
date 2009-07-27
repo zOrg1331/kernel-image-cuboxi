@@ -1,0 +1,55 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Tue, 2 Sep 2008 16:06:11 -0400
+Subject: [xen] NUMA: extend physinfo sysctl to export topo info
+Message-id: 20080902200611.7876.9459.sendpatchset@pq0-1.lab.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH 5/5] xen: Extended the physinfo sysctl to export NUMA cpu_to_node topology info
+Bugzilla: 454711
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+
+bz454711
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1183734727 -3600
+# Node ID 89d2192942befb0daf56e730be61d3a3c06926dd
+# Parent  538c3d8aa4b14833174423ec506284279d5a33ab
+Extended the physinfo sysctl to export NUMA cpu_to_node topology info.
+Print this in 'xm info'.
+Signed-off-by: Ryan Harper <ryanh@us.ibm.com>
+Signed-off-by: Keir Fraser <keir@xensource.com>
+
+diff --git a/include/xen/interface/sysctl.h b/include/xen/interface/sysctl.h
+index be3aba1..c2badcd 100644
+--- a/include/xen/interface/sysctl.h
++++ b/include/xen/interface/sysctl.h
+@@ -58,6 +58,7 @@ DEFINE_XEN_GUEST_HANDLE(xen_sysctl_tbuf_op_t);
+  */
+ #define XEN_SYSCTL_physinfo          3
+ struct xen_sysctl_physinfo {
++    /* IN variables. */
+     uint32_t threads_per_core;
+     uint32_t cores_per_socket;
+     uint32_t sockets_per_node;
+@@ -67,6 +68,23 @@ struct xen_sysctl_physinfo {
+     uint64_t free_pages;
+     uint64_t scrub_pages;
+     uint32_t hw_cap[8];
++
++    /* IN/OUT variables. */
++    /*
++     * IN: maximum addressable entry in the caller-provided cpu_to_node array.
++     * OUT: largest cpu identifier in the system.
++     * If OUT is greater than IN then the cpu_to_node array is truncated!
++     */
++    uint32_t max_cpu_id;
++    /*
++     * If not NULL, this array is filled with node identifier for each cpu.
++     * If a cpu has no node information (e.g., cpu not present) then the
++     * sentinel value ~0u is written.
++     * The size of this array is specified by the caller in @max_cpu_id.
++     * If the actual @max_cpu_id is smaller than the array then the trailing
++     * elements of the array will not be written by the sysctl.
++     */
++    XEN_GUEST_HANDLE_64(uint32_t) cpu_to_node;
+ };
+ typedef struct xen_sysctl_physinfo xen_sysctl_physinfo_t;
+ DEFINE_XEN_GUEST_HANDLE(xen_sysctl_physinfo_t);

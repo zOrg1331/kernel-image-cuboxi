@@ -1,0 +1,83 @@
+From: tcamuso@redhat.com <tcamuso@redhat.com>
+Date: Mon, 7 Jan 2008 22:15:26 -0500
+Subject: [x86] mmconfig: introduce PCI_USING_MMCONF flag
+Message-id: 20080108031526.15008.9414.sendpatchset@dhcp83-188.boston.redhat.com
+O-Subject: [PATCH 2/6][Version-2]PCI: x86 MMCONFIG: introduce PCI_USING_MMCONF flag
+Bugzilla: 408551
+
+diff --git a/arch/i386/pci/mmconfig.c b/arch/i386/pci/mmconfig.c
+index 37bd283..3759775 100644
+--- a/arch/i386/pci/mmconfig.c
++++ b/arch/i386/pci/mmconfig.c
+@@ -20,9 +20,6 @@
+ #define MMCONFIG_APER_MIN	(2 * 1024*1024)
+ #define MMCONFIG_APER_MAX	(256 * 1024*1024)
+ 
+-/* Assume systems with more busses have correct MCFG */
+-#define MAX_CHECK_BUS 16
+-
+ #define mmcfg_virt_addr ((void __iomem *) fix_to_virt(FIX_PCIE_MCFG))
+ 
+ /* The base address of the last MMCONFIG device accessed */
+@@ -237,7 +234,7 @@ void __init pci_mmcfg_init(void)
+ 
+ 	printk(KERN_INFO "PCI: Using MMCONFIG\n");
+ 	raw_pci_ops = &pci_mmcfg;
+-	pci_probe = (pci_probe & ~PCI_PROBE_MASK) | PCI_PROBE_MMCONF;
+-
++	pci_probe = pci_probe & ~PCI_PROBE_MASK;
++	pci_probe = pci_probe | PCI_PROBE_MMCONF | PCI_USING_MMCONF;
+ 	unreachable_devices();
+ }
+diff --git a/arch/i386/pci/pci.h b/arch/i386/pci/pci.h
+index 09ea717..fd1a9a3 100644
+--- a/arch/i386/pci/pci.h
++++ b/arch/i386/pci/pci.h
+@@ -27,6 +27,15 @@
+ #define PCI_ASSIGN_ALL_BUSSES	0x4000
+ #define PCI_CAN_SKIP_ISA_ALIGN	0x8000
+ #define PCI_USE__CRS		0x10000
++#define PCI_USING_MMCONF	0x20000
++
++/*
++ * The first 16 buses are checked for MMCONF compliance. A bitmap is
++ * created and checked on every pci config access to these buses in
++ * systems having MMCONF as the system-wide default pci config access
++ * mechanism.
++ */
++#define MAX_CHECK_BUS 16
+ 
+ extern unsigned int pci_probe;
+ extern unsigned long pirq_table_addr;
+@@ -38,6 +47,8 @@ enum pci_bf_sort_state {
+        pci_dmi_bf,
+ };
+ 
++extern struct pci_ops pci_legacy_ops; 	/* direct.c */
++
+ /* pci-i386.c */
+ 
+ extern unsigned int pcibios_max_latency;
+diff --git a/arch/x86_64/pci/mmconfig.c b/arch/x86_64/pci/mmconfig.c
+index 375f565..8ec4728 100644
+--- a/arch/x86_64/pci/mmconfig.c
++++ b/arch/x86_64/pci/mmconfig.c
+@@ -18,10 +18,6 @@
+ #define MMCONFIG_APER_MIN	(2 * 1024*1024)
+ #define MMCONFIG_APER_MAX	(256 * 1024*1024)
+ 
+-/* Verify the first 16 busses. We assume that systems with more busses
+-   get MCFG right. */
+-#define MAX_CHECK_BUS 16
+-
+ static DECLARE_BITMAP(fallback_slots, 32*MAX_CHECK_BUS);
+ 
+ /* Static virtual mapping of the MMCONFIG aperture */
+@@ -235,5 +231,6 @@ void __init pci_mmcfg_init(void)
+ 	unreachable_devices();
+ 
+ 	raw_pci_ops = &pci_mmcfg;
+-	pci_probe = (pci_probe & ~PCI_PROBE_MASK) | PCI_PROBE_MMCONF;
++	pci_probe = pci_probe & ~PCI_PROBE_MASK;
++	pci_probe = pci_probe | PCI_PROBE_MMCONF | PCI_USING_MMCONF;
+ }

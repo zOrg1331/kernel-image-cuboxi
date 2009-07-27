@@ -1,0 +1,66 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Wed, 19 Dec 2007 12:53:06 -0600
+Subject: [fs] ext3: error in ext3_lookup if corruption found
+Message-id: 47696892.3020001@redhat.com
+O-Subject: [RHEL 5.2 PATCH, updated] - error in ext3_lookup if corruption is found
+Bugzilla: 181662
+
+Bugzilla Bug 181662: Filesystem errors should be logged and not silently ignored
+
+I have a hand-crafted bad filesystem image which has corruption replicating
+that reported by the customer:
+
+[root@inode ~]# ls mnt/dir
+file1  file2  file3  file4  file5
+[root@inode ~]# ls mnt/dir/file4
+ls: cannot access mnt/dir/file4: No such file or directory
+[root@inode ~]# ls -l mnt/dir
+ls: cannot access mnt/dir/file4: No such file or directory
+total 8
+drwxr-xr-x 2 root root 1024 2007-09-04 13:36 file1
+drwxr-xr-x 2 root root 1024 2007-09-04 13:36 file2
+drwxr-xr-x 2 root root 1024 2007-09-04 13:36 file3
+d????????? ? ?    ?       ?                ? file4
+drwxr-xr-x 2 root root 1024 2007-09-04 13:36 file5
+
+e2fsck also knows it's corrupted:
+Pass 2: Checking directory structure
+Entry 'file4' in /dir (2049) has deleted/unused inode 13.  Clear? no
+
+Entry 'file4' in /dir (2049) has an incorrect filetype (was 2, should be 1).
+Fix? no
+
+Pass 3: Checking directory connectivity
+Unconnected directory inode 2053 (/dir/???)
+
+BUT there are no kernel messages logged anywhere because ext3_read_inode
+silently makes a bad_inode in this case, so that stale NFS filehandles
+aren't noisy.  However, when we encounter such a problem after a by-name
+lookup, I think an ext3_error is appropriate, as it indicates filesystem
+corruption.
+
+I discussed the patch w/ Andreas Dilger, who though it looked reasonable,
+and I've sent it upstream to -mm, where Andrew says
+"It's in my backlog somewhere - I'll get to it."
+
+Signed-off-by: Eric Sandeen <sandeen@redhat.com>
+
+Acked-by: Peter Staubach <staubach@redhat.com>
+Acked-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/ext3/namei.c b/fs/ext3/namei.c
+index e97619c..35590db 100644
+--- a/fs/ext3/namei.c
++++ b/fs/ext3/namei.c
+@@ -1027,6 +1027,11 @@ static struct dentry *ext3_lookup(struct inode * dir, struct dentry *dentry, str
+ 			return ERR_PTR(-EACCES);
+ 
+ 		if (is_bad_inode(inode)) {
++			/* if bad because unlinked, something has gone wrong */
++			if (!inode->i_nlink && printk_ratelimit())
++				ext3_error(inode->i_sb, __FUNCTION__,
++					    "unlinked inode %lu in dir #%lu",
++					     inode->i_ino, dir->i_ino);
+ 			iput(inode);
+ 			return ERR_PTR(-ENOENT);
+ 		}

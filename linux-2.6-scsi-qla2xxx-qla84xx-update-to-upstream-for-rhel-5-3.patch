@@ -1,0 +1,338 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Mon, 8 Sep 2008 18:06:12 -0400
+Subject: [scsi] qla2xxx/qla84xx: update to upstream for RHEL-5.3
+Message-id: 20080908220607.15720.90111.sendpatchset@file.bos.redhat.com
+O-Subject: [rhel 5.3 patch] qla2xxx/qla84xx: Sync to upstream, Fix 128Kb limit in netlink
+Bugzilla: 461414
+
+BZ 461414 - qla2xxx/qla84xx: Fix 128Kb limitation in netlink messages.
+
+This patch aligns our previous netlink patch with what was eventually
+accepted upstream. It also includes an upstream fix for netlink messages
+greater then 128 KB.
+
+It applies and builds cleanly on kernel-2.6.18-101.
+
+diff --git a/drivers/scsi/qla2xxx/qla_def.h b/drivers/scsi/qla2xxx/qla_def.h
+index e446f0f..fcb2be1 100644
+--- a/drivers/scsi/qla2xxx/qla_def.h
++++ b/drivers/scsi/qla2xxx/qla_def.h
+@@ -2234,6 +2234,12 @@ struct qla_statistics {
+ };
+ 
+ #include "qla_nlnk.h"
++/* place holder for fw buffer parameters for netlink */
++struct qlfc_fw {
++        void *fw_buf;
++        dma_addr_t fw_dma;
++        uint32_t len;
++};
+ 
+ /*
+  * Linux Host Adapter structure
+@@ -2673,6 +2679,7 @@ typedef struct scsi_qla_host {
+ 	struct qla_chip_state_84xx *cs84xx;
+ 	struct qlfc_aen_log aen_log;
+ 	struct qla_statistics qla_stats;
++	struct qlfc_fw fw_buf;
+ } scsi_qla_host_t;
+ 
+ 
+diff --git a/drivers/scsi/qla2xxx/qla_gbl.h b/drivers/scsi/qla2xxx/qla_gbl.h
+index 1da372d..3ec88b0 100644
+--- a/drivers/scsi/qla2xxx/qla_gbl.h
++++ b/drivers/scsi/qla2xxx/qla_gbl.h
+@@ -384,5 +384,6 @@ extern void qla2x00_free_sysfs_attr(scsi_qla_host_t *);
+  */
+ extern int ql_nl_register(void);
+ extern void ql_nl_unregister(void);
++extern void qla_free_nlnk_dmabuf(scsi_qla_host_t *);
+ 
+ #endif /* _QLA_GBL_H */
+diff --git a/drivers/scsi/qla2xxx/qla_nlnk.c b/drivers/scsi/qla2xxx/qla_nlnk.c
+index f65a7f0..be37370 100644
+--- a/drivers/scsi/qla2xxx/qla_nlnk.c
++++ b/drivers/scsi/qla2xxx/qla_nlnk.c
+@@ -29,40 +29,71 @@ static int ql_fc_proc_nl_rcv_msg(struct sk_buff *skb,
+ static int ql_fc_nl_rsp(uint32_t pid, uint32_t seq, uint32_t type,
+ 		void *hdr, int hdr_len, void *payload, int size);
+ 
+-static int qla84xx_update_fw(struct scsi_qla_host *ha,
+-		uint32_t diag_fw, uint32_t len, uint8_t *fw_bytes)
++static int qla84xx_update_fw(struct scsi_qla_host *ha, int rlen,
++		struct msg_update_fw *upd_fw)
+ {
+-	void *fw_buffer;
++	struct qlfc_fw *qlfw;
+ 	struct verify_chip_entry_84xx *mn;
+-	dma_addr_t fw_dma, mn_dma;
++	dma_addr_t mn_dma;
+ 	int ret = 0;
+ 	uint32_t fw_ver;
+ 	uint16_t options;
+ 
+-	fw_ver = le32_to_cpu(*((uint32_t *)fw_bytes));
+-	if (!fw_ver) {
+-		printk(KERN_ERR "%s(%lu): invalid fw revision 0x%x\n",
+-			__FUNCTION__, ha->host_no, fw_ver);
+-		return (-EINVAL);
++	if (rlen < (sizeof(struct msg_update_fw) + upd_fw->len +
++		offsetof(struct qla_fc_msg, u))){
++		printk(KERN_ERR "%s(%lu): invalid len\n",
++			__func__, ha->host_no);
++		return -EINVAL;
+ 	}
+ 
+-	fw_buffer = dma_alloc_coherent(&ha->pdev->dev, len, &fw_dma, GFP_KERNEL);
+-	if (fw_buffer == NULL) {
+-		printk(KERN_ERR "%s: dma alloc for fw buffer failed%lu\n",
+-			__FUNCTION__, ha->host_no);
+-		return (-ENOMEM);
++	qlfw = &ha->fw_buf;
++	if (!upd_fw->offset) {
++		if (qlfw->fw_buf || !upd_fw->fw_len ||
++			upd_fw->len > upd_fw->fw_len) {
++			printk(KERN_ERR "%s(%lu): invalid offset or fw_len\n",
++				__func__, ha->host_no);
++			return -EINVAL;
++		} else {
++			qlfw->fw_buf = dma_alloc_coherent(&ha->pdev->dev,
++						upd_fw->fw_len, &qlfw->fw_dma,
++						GFP_KERNEL);
++			if (qlfw->fw_buf == NULL) {
++				printk(KERN_ERR "%s: dma alloc failed%lu\n",
++					__func__, ha->host_no);
++				return (-ENOMEM);
++			}
++			qlfw->len = upd_fw->fw_len;
++		}
++		fw_ver = le32_to_cpu(*((uint32_t *)upd_fw->fw_bytes));
++		if (!fw_ver) {
++			printk(KERN_ERR "%s(%lu): invalid fw revision 0x%x\n",
++				__func__, ha->host_no, fw_ver);
++			return -EINVAL;
++		}
++	} else {
++		/* make sure we have a buffer allocated */
++		if (!qlfw->fw_buf || upd_fw->fw_len != qlfw->len ||
++			((upd_fw->offset + upd_fw->len) > upd_fw->fw_len)){
++			printk(KERN_ERR "%s(%lu): invalid size of offset=0"
++				" expected\n", __func__, ha->host_no);
++			return -EINVAL;
++		}
+ 	}
+-
++	/* Copy the firmware into DMA Buffer */
++	memcpy(((uint8_t *)qlfw->fw_buf + upd_fw->offset),
++		upd_fw->fw_bytes, upd_fw->len);
++	
++	if ((upd_fw->offset+upd_fw->len) != qlfw->len)
++		return 0;
++	
+ 	mn = dma_pool_alloc(ha->s_dma_pool, GFP_KERNEL, &mn_dma);
+ 	if (mn == NULL) {
+ 		printk(KERN_ERR "%s: dma alloc for fw buffer failed%lu\n",
+-			__FUNCTION__, ha->host_no);
+-		ret = -ENOMEM;
+-		goto exit_updfw;
++			__func__, ha->host_no);
++		return -ENOMEM;
+ 	}
+ 
+-	/* Copy the firmware into DMA Buffer */
+-	memcpy(fw_buffer, fw_bytes, len);
++	fw_ver = le32_to_cpu(*((uint32_t *)qlfw->fw_buf));
+ 
+ 	/* Create iocb and issue it */
+ 	memset(mn, 0, sizeof(*mn));
+@@ -71,16 +102,16 @@ static int qla84xx_update_fw(struct scsi_qla_host *ha,
+ 	mn->entry_count = 1;
+ 
+ 	options = VCO_FORCE_UPDATE | VCO_END_OF_DATA;
+-	if (diag_fw)
++	if (upd_fw->diag_fw)
+ 		options |= VCO_DIAG_FW;
+ 	mn->options = cpu_to_le16(options);
+  
+ 	mn->fw_ver = cpu_to_le32(fw_ver);
+-	mn->fw_size = cpu_to_le32(len);
+-	mn->fw_seq_size = cpu_to_le32(len);
++	mn->fw_size = cpu_to_le32(qlfw->len);
++	mn->fw_seq_size = cpu_to_le32(qlfw->len);
+ 
+-	mn->dseg_address[0] = cpu_to_le32(LSD(fw_dma));
+-	mn->dseg_address[1] = cpu_to_le32(MSD(fw_dma));
++	mn->dseg_address[0] = cpu_to_le32(LSD(qlfw->fw_dma));
++	mn->dseg_address[1] = cpu_to_le32(MSD(qlfw->fw_dma));
+ 	mn->dseg_length = cpu_to_le16(1);
+ 	
+ 	ret = qla2x00_issue_iocb(ha, mn, mn_dma, 0);
+@@ -89,14 +120,12 @@ static int qla84xx_update_fw(struct scsi_qla_host *ha,
+ 		printk(KERN_ERR "%s(%lu): failed\n", __func__, ha->host_no);
+ 	}
+ 
+-	dma_pool_free(ha->s_dma_pool, mn, mn_dma);
+-exit_updfw:
+-	dma_free_coherent(&ha->pdev->dev, len, fw_buffer, fw_dma);
++	qla_free_nlnk_dmabuf(ha);
+ 	return ret;
+ }
+ 
+ static int
+-qla84xx_mgmt_cmd(scsi_qla_host_t *ha, struct qla_fc_msg *cmd,
++qla84xx_mgmt_cmd(scsi_qla_host_t *ha, struct qla_fc_msg *cmd, int rlen,
+ 	uint32_t pid, uint32_t seq, uint32_t type)
+ {
+ 	struct access_chip_84xx *mn;
+@@ -117,7 +146,7 @@ qla84xx_mgmt_cmd(scsi_qla_host_t *ha, struct qla_fc_msg *cmd,
+ 		return (-ENOMEM);
+ 	}
+ 
+-	memset(mn, 0, sizeof (*mn));
++	memset(mn, 0, sizeof (struct access_chip_84xx));
+ 
+ 	mn->entry_type = ACCESS_CHIP_IOCB_TYPE;
+ 	mn->entry_count = 1;
+@@ -128,6 +157,11 @@ qla84xx_mgmt_cmd(scsi_qla_host_t *ha, struct qla_fc_msg *cmd,
+ 		mn->parameter1 = cpu_to_le32(ql84_mgmt->mgmtp.u.mem.start_addr);
+ 		break;
+ 	case QLA84_MGMT_WRITE_MEM:
++		if (rlen < (sizeof(struct qla84_msg_mgmt) + ql84_mgmt->len +
++			offsetof(struct qla_fc_msg, u))){
++			ret = -EINVAL;
++			goto exit_mgmt0;
++		}
+ 		mn->options = cpu_to_le16(ACO_LOAD_MEMORY);
+ 		mn->parameter1 = cpu_to_le32(ql84_mgmt->mgmtp.u.mem.start_addr);
+ 		break;
+@@ -170,8 +204,8 @@ qla84xx_mgmt_cmd(scsi_qla_host_t *ha, struct qla_fc_msg *cmd,
+ 	ret = qla2x00_issue_iocb(ha, mn, mn_dma, 0);
+ 	cmd->error = ret;
+ 
+-	if (ret != QLA_SUCCESS) {
+-		printk(KERN_ERR "%s(%lu): failed\n", __func__, ha->host_no);
++	if ((ret != QLA_SUCCESS)||(ql84_mgmt->cmd == QLA84_MGMT_WRITE_MEM)||(ql84_mgmt->cmd == QLA84_MGMT_CHNG_CONFIG)) {
++		if (ret != QLA_SUCCESS) printk(KERN_ERR "%s(%lu): failed\n", __func__, ha->host_no);
+ 		ret = ql_fc_nl_rsp(pid, seq, type, cmd, rsp_hdr_len, NULL, 0);
+ 	} else if ((ql84_mgmt->cmd == QLA84_MGMT_READ_MEM)||
+ 			(ql84_mgmt->cmd == QLA84_MGMT_GET_INFO)) {
+@@ -318,10 +352,8 @@ ql_fc_proc_nl_rcv_msg(struct sk_buff *skb, struct nlmsghdr *nlh, int rcvlen)
+ 
+ 	case QLA84_UPDATE_FW:
+ 		rsp_hdr_len = offsetof(struct qla_fc_msg, u);
+-		err = qla84xx_update_fw(ha,
+-			ql_cmd->u.utok.qla84_update_fw.diag_fw,
+-			ql_cmd->u.utok.qla84_update_fw.len,
+-			ql_cmd->u.utok.qla84_update_fw.fw_bytes);
++		err = qla84xx_update_fw(ha, (rcvlen - sizeof(struct scsi_nl_hdr)),
++				&ql_cmd->u.utok.qla84_update_fw);
+ 		ql_cmd->error = err;
+ 
+ 		err = ql_fc_nl_rsp(NETLINK_CREDS(skb)->pid, nlh->nlmsg_seq,
+@@ -329,7 +361,9 @@ ql_fc_proc_nl_rcv_msg(struct sk_buff *skb, struct nlmsghdr *nlh, int rcvlen)
+ 		break;
+ 
+ 	case QLA84_MGMT_CMD:
+-		err = qla84xx_mgmt_cmd(ha, ql_cmd, NETLINK_CREDS(skb)->pid,
++		err = qla84xx_mgmt_cmd(ha, ql_cmd,
++				(rcvlen - sizeof(struct scsi_nl_hdr)),
++				NETLINK_CREDS(skb)->pid,
+ 				nlh->nlmsg_seq, (uint32_t)nlh->nlmsg_type);
+ 		break;
+ 
+@@ -385,6 +419,19 @@ ql_fc_nl_rsp(uint32_t pid, uint32_t seq, uint32_t type, void *hdr, int hdr_len,
+ 	return 0;
+ }
+ 
++void qla_free_nlnk_dmabuf(scsi_qla_host_t *ha)
++{
++	struct qlfc_fw *qlfw;
++
++	qlfw = &ha->fw_buf;
++
++	if (qlfw->fw_buf) {
++		dma_free_coherent(&ha->pdev->dev, qlfw->len, qlfw->fw_buf,
++			qlfw->fw_dma);
++		memset(qlfw, 0, sizeof(struct qlfc_fw));
++	}
++}
++
+ int
+ ql_nl_register(void)
+ {
+diff --git a/drivers/scsi/qla2xxx/qla_nlnk.h b/drivers/scsi/qla2xxx/qla_nlnk.h
+index 930ab14..0a1ea3a 100644
+--- a/drivers/scsi/qla2xxx/qla_nlnk.h
++++ b/drivers/scsi/qla2xxx/qla_nlnk.h
+@@ -111,10 +111,30 @@ struct qla84_msg_mgmt {
+ 	uint8_t payload[0]; /* payload for cmd */
+ };
+ 
++struct msg_update_fw {
++	/*
++	 * diag_fw = 0  operational fw 
++	 *	otherwise diagnostic fw 
++	 * offset, len, fw_len are present to overcome the current limitation
++	 * of 128Kb xfer size. The fw is sent in smaller chunks. Each chunk
++	 * specifies the byte "offset" where it fits in the fw buffer. The
++	 * number of bytes in each chunk is specified in "len". "fw_len" 
++	 * is the total size of fw. The first chunk should start at offset = 0.
++	 * When offset+len == fw_len, the fw is written to the HBA.
++	 */
++	uint32_t diag_fw; 
++	uint32_t offset;/* start offset */
++	uint32_t len;	/* num bytes in cur xfer */
++	uint32_t fw_len; /* size of fw in bytes */
++	uint8_t fw_bytes[0];
++};
++
+ struct qla_fc_msg {
+ 
+-	uint32_t magic;
+-#define QL_FC_NL_MAGIC	0xFCAB1FC1
++	uint64_t magic;
++#define QL_FC_NL_MAGIC	0x107784DDFCAB1FC1
++	uint16_t host_no;
++	uint16_t vmsg_datalen;
+ 
+ 	uint32_t cmd;
+ #define QLA84_RESET	0x01
+@@ -123,7 +143,6 @@ struct qla_fc_msg {
+ #define QLFC_GET_AEN	0x04
+ 
+ 	uint32_t error; /* interface or resource error holder*/
+-	uint32_t host_no;
+ 
+ 	union {
+ 		union {
+@@ -135,16 +154,7 @@ struct qla_fc_msg {
+ 				uint32_t diag_fw; 
+ 			} qla84_reset;
+ 
+-			struct msg_update_fw {
+-				/*
+-				 * diag_fw = 0  for operational fw 
+-				 * otherwise diagnostic fw 
+-				 */
+-				uint32_t diag_fw; 
+-				uint32_t len; /* size of fw in bytes */
+-				uint8_t fw_bytes[0];
+-			} qla84_update_fw;
+-
++			struct msg_update_fw qla84_update_fw;
+ 			struct qla84_msg_mgmt mgmt;
+ 		} utok;
+ 	
+diff --git a/drivers/scsi/qla2xxx/qla_os.c b/drivers/scsi/qla2xxx/qla_os.c
+index 807b80e..eeb93fc 100644
+--- a/drivers/scsi/qla2xxx/qla_os.c
++++ b/drivers/scsi/qla2xxx/qla_os.c
+@@ -1894,6 +1894,8 @@ qla2x00_remove_one(struct pci_dev *pdev)
+ 	qla84xx_put_chip(ha);
+ 
+ 	qla2x00_free_sysfs_attr(ha);
++	
++	qla_free_nlnk_dmabuf(ha);
+ 
+ 	fc_remove_host(ha->host);
+ 

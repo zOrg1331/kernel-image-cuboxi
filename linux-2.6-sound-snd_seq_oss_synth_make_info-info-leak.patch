@@ -1,0 +1,39 @@
+From: Eugene Teo <eteo@redhat.com>
+Date: Wed, 6 Aug 2008 15:17:58 +0800
+Subject: [sound] snd_seq_oss_synth_make_info info leak
+Message-id: 20080806071758.GA27839@kernel.sg
+O-Subject: [RHEL5.3 PATCH] BZ#458001 kernel snd_seq_oss_synth_make_info leak
+Bugzilla: 458001
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: Vitaly Mayatskikh <vmayatsk@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+CVE: CVE-2008-3272
+RH-Acked-by: Jaroslav Kysela <jkysela@redhat.com>
+
+This is for bz#458001 (CVE-2008-3272).
+
+Backport of commit 82e68f7ffec3800425f2391c8c86277606860442
+
+snd_seq_oss_synth_make_info() incorrectly reports information
+to userspace without first checking for the validity of the
+device number, leading to possible information leak.
+
+Brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1422420
+
+Signed-off-by: Eugene Teo <eteo@redhat.com>
+
+diff --git a/sound/core/seq/oss/seq_oss_synth.c b/sound/core/seq/oss/seq_oss_synth.c
+index ab570a0..2490259 100644
+--- a/sound/core/seq/oss/seq_oss_synth.c
++++ b/sound/core/seq/oss/seq_oss_synth.c
+@@ -599,6 +599,9 @@ snd_seq_oss_synth_make_info(struct seq_oss_devinfo *dp, int dev, struct synth_in
+ {
+ 	struct seq_oss_synth *rec;
+ 
++	if (dev < 0 || dev >= dp->max_synthdev)
++		return -ENXIO;
++
+ 	if (dp->synths[dev].is_midi) {
+ 		struct midi_info minf;
+ 		snd_seq_oss_midi_make_info(dp, dp->synths[dev].midi_mapped, &minf);

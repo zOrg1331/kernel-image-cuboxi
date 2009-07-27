@@ -1,0 +1,123 @@
+From: Mikulas Patocka <mpatocka@redhat.com>
+Date: Tue, 19 Aug 2008 14:13:45 -0400
+Subject: [md] LVM raid-1 performance fixes
+Message-id: Pine.LNX.4.64.0808191410001.12962@hs20-bc2-1.build.redhat.com
+O-Subject: [PATCH 2/2 RHEL 5.3] bz438153 LVM raid-1 performance fixes
+Bugzilla: 438153
+RH-Acked-by: Alasdair G Kergon <agk@redhat.com>
+RH-Acked-by: Jonathan Brassow <jbrassow@redhat.com>
+
+This is the second patch for the same bug, to improve performance even
+more.
+
+There is missing queue unplug in dm-raid and it caused severe slowdown
+(dm-raid1 was 10 times slower than dm-linear) at two customers.
+
+The patch is upstream and is considered to be included in RHEL 4.7.z
+
+Testing: compiled in on my workstation, run test program from the
+bugzilla, saw twice performance improvement when doing synchronous writes
+with the size 8192 bytes.
+
+Upstream commit: 7ff14a36159d947872870e7a3e9dcaebc46b23eb (2.6.26-rc1)
+
+Avoid 3ms delay in dm-raid and kcopyd.
+
+It is specified that any submitted bio without BIO_RW_SYNC flag may plug the
+queue (i.e. block the requests from being dispatched to the physical device).
+
+The queue is unplugged when the caller calls blk_unplug() function. Usually, thesequence is that someone calls submit_bh to submit IO on a buffer. The IO plugs the queue and waits (to be possibly joined with other adjacent bios). Then, whenthe caller calls wait_on_buffer(), it unplugs the queue and submits the IOs to
+the disk.
+
+This was happenning:
+
+When doing O_SYNC writes, function fsync_buffers_list() submits a list of
+bios to dm_raid1, the bios are added to dm_raid1 write queue and kmirrord is
+woken up.
+
+fsync_buffers_list() calls wait_on_buffer() --- that unplugs the queue, but
+there are no bios on the device queue (they are still in dm_raid1 queue)
+
+wait_on_buffer() starts waiting until the IO is finished.
+
+kmirrord is scheduled, kmirrord takes bios and submits them to the devices.
+
+the submitted bio plugs the harddisk queue, there is no one to unplug it
+(the process that called wait_on_buffer() is already sleeping)
+
+So there is 3ms timeout, after which the queues on the harddisks are
+unplugged, and requests are processed.
+
+This 3ms timeout caused that in certain workloads (O_SYNC, 8kb writes), dm-raid1is 10 times slower than md-raid1.
+
+Every time we submit something asynchronously via dm_io, we must unplug the
+queue to actually put the request to the device.
+
+This patch adds unplug call to kmirrord --- while processing requests, it keeps the queue plugged (so that adjacent bios can be merged), when it finishes
+processing all bios, it unplugs the queue to submit the bios.
+
+It also fixes kcopyd, that has the same potential problem. All kcopyd requests
+are submitted with BIO_RW_SYNC.
+
+Signed-off-by: Mikulas Patocka <mpatocka@redhat.com>
+
+diff --git a/drivers/md/dm-io.c b/drivers/md/dm-io.c
+index 894c33b..2306ec9 100644
+--- a/drivers/md/dm-io.c
++++ b/drivers/md/dm-io.c
+@@ -422,7 +422,7 @@ static int sync_io(struct dm_io_client *client, unsigned int num_regions,
+ {
+ 	struct io io;
+ 
+-	if (num_regions > 1 && rw != WRITE) {
++	if (num_regions > 1 && (rw & RW_MASK) != WRITE) {
+ 		WARN_ON(1);
+ 		return -EIO;
+ 	}
+@@ -459,7 +459,7 @@ static int async_io(struct dm_io_client *client, unsigned int num_regions,
+ {
+ 	struct io *io;
+ 
+-	if (num_regions > 1 && rw != WRITE) {
++	if (num_regions > 1 && (rw & RW_MASK) != WRITE) {
+ 		WARN_ON(1);
+ 		fn(1, context);
+ 		return -EIO;
+@@ -556,6 +556,11 @@ static int dp_init(struct dm_io_request *io_req, struct dpages *dp)
+ 
+ /*
+  * New collapsed (a)synchronous interface
++ *
++ * If the IO is asynchronous (i.e. it has notify.fn), you must either unplug the
++ * queue with blk_unplug() some time later or you must set the BIO_RW_SYNC bit in
++ * io_req->bi_rw. If you fail to do one of these, the IO will be submitted to
++ * the disk after q->unplug_delay, which defaults to 3ms in blk-settings.c.
+  */
+ int dm_io(struct dm_io_request *io_req, unsigned num_regions,
+ 	  struct io_region *where, unsigned long *sync_error_bits)
+diff --git a/drivers/md/dm-raid1.c b/drivers/md/dm-raid1.c
+index 92625f7..759f4ef 100644
+--- a/drivers/md/dm-raid1.c
++++ b/drivers/md/dm-raid1.c
+@@ -1314,6 +1314,8 @@ static void do_mirror(void *data)
+ 	do_reads(ms, &reads);
+ 	do_writes(ms, &writes);
+ 	do_failures(ms, &failures);
++
++	dm_table_unplug_all(ms->ti->table);
+ }
+ 
+ /*-----------------------------------------------------------------
+diff --git a/drivers/md/kcopyd.c b/drivers/md/kcopyd.c
+index edcc9b1..cdcc34b 100644
+--- a/drivers/md/kcopyd.c
++++ b/drivers/md/kcopyd.c
+@@ -338,7 +338,7 @@ static int run_io_job(struct kcopyd_job *job)
+ {
+ 	int r;
+ 	struct dm_io_request io_req = {
+-		.bi_rw = job->rw,
++		.bi_rw = job->rw | (1 << BIO_RW_SYNC),
+ 		.mem.type = DM_IO_PAGE_LIST,
+ 		.mem.ptr.pl = job->pages,
+ 		.mem.offset = job->offset,

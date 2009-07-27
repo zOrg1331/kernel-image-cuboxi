@@ -1,0 +1,32 @@
+From: heinzm@redhat.com <heinzm@redhat.com>
+Date: Wed, 27 Aug 2008 14:16:46 +0200
+Subject: [md] add config option for dm RAID4/5 target
+Message-id: 20080827121638.480662139@redhat.com
+O-Subject: [PATCH RHEL5.3 437180 10/11] Kconfig.patch
+Bugzilla: 437180
+
+This patch adds the config option for the device-mapper RAID4/5 target.
+
+Heinz
+
+Signed-off-by: Heinz Mauelshagen <heinzm@redhat.com>
+
+diff --git a/drivers/md/Kconfig b/drivers/md/Kconfig
+index 864f9e8..6ba7d1a 100644
+--- a/drivers/md/Kconfig
++++ b/drivers/md/Kconfig
+@@ -266,7 +266,13 @@ config DM_MULTIPATH_HP
+         ---help---
+           Multipath support for HP MSA (Active/Passive) series hardware.
+ 
+- config DM_UEVENT
++config DM_RAID45
++        tristate "RAID 4/5 target (EXPERIMENTAL)"
++        depends on BLK_DEV_DM && EXPERIMENTAL
++        ---help---
++          A target that supports RAID4 and RAID5 mappings.
++
++config DM_UEVENT
+  	bool "DM uevents (EXPERIMENTAL)"
+  	depends on BLK_DEV_DM && EXPERIMENTAL
+  	---help---

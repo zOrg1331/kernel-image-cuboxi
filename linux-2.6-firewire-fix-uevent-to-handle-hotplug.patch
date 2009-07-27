@@ -1,0 +1,59 @@
+From: Jay Fenlason <fenlason@redhat.com>
+Date: Fri, 14 Dec 2007 16:40:22 -0500
+Subject: [firewire] fix uevent to handle hotplug
+Message-id: 20071214214022.GA8357@redhat.com
+O-Subject: [patch RHEL 5.2] try 2 bz#302981 Manual `modprobe firewire_sbp2` required to read plugged in firewire device
+Bugzilla: 302981
+
+On Thu, Dec 13, 2007 at 03:37:06PM -0800, Pete Zaitcev wrote:
+> On Wed, 14 Nov 2007 11:58:17 -0500, Jay Fenlason <fenlason@redhat.com> wrote:
+>
+> > When I did the initial backport, I mesed up the uevent part.  This
+> > patch makes it work.  I tested it on my x86_64 and i386 boxes.
+>
+> The patch looks ok but there was no repost to address Jarod's
+> and Prarit's comments.
+
+Here's the updated patch.
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: Jon Masters <jcm@redhat.com>
+Acked-by: Kristian Høgsberg <krh@redhat.com>
+
+diff --git a/drivers/firewire/fw-device.c b/drivers/firewire/fw-device.c
+index bd76c35..c385f47 100644
+--- a/drivers/firewire/fw-device.c
++++ b/drivers/firewire/fw-device.c
+@@ -127,9 +127,32 @@ static int get_modalias(struct fw_unit *unit, char *buffer, size_t buffer_size)
+ 			vendor, model, specifier_id, version);
+ }
+ 
++static int
++fw_unit_uevent(struct device *dev, char **envp, int num_envp,
++	       char *buffer, int buffer_size )
++{
++	struct fw_unit *unit;
++	char modalias[64];
++	int i = 0;
++	int length = 0;
++
++	if (is_fw_unit(dev)) {
++		unit = fw_unit(dev);
++		get_modalias(unit, modalias, sizeof(modalias));
++
++		if (add_uevent_var(envp, num_envp,
++				   &i, buffer, buffer_size, &length,
++				   "MODALIAS=%s", modalias))
++			return -ENOMEM;
++	}
++
++	return 0;
++}
++
+ struct bus_type fw_bus_type = {
+ 	.name = "firewire",
+ 	.match = fw_unit_match,
++	.uevent = fw_unit_uevent,
+ };
+ EXPORT_SYMBOL(fw_bus_type);
+ 

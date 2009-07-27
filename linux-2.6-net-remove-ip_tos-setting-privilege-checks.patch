@@ -1,0 +1,75 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Thu, 14 Feb 2008 14:47:08 +0100
+Subject: [net] remove IP_TOS setting privilege checks
+Message-id: 20080214134708.GA5886@deb
+O-Subject: [PATCH RHEL5.2] BZ431074: Remove IP_TOS setting privilege checks.
+Bugzilla: 431074
+
+Nortel requested to use CS5 DSCP values for non privileged
+processes. This is the patch by Dave Miller which removes
+the privilege check altogether which is what is going in
+upstream. Please ACK.
+
+commit b46c4b3cfcc898e0a2a94ecc1784c4c48df43764
+Author: David S. Miller <davem@davemloft.net>
+Date:   Mon Feb 11 17:50:30 2008 -0800
+
+    [IPV4]: Remove IP_TOS setting privilege checks.
+
+    Various RFCs have all sorts of things to say about the CS field of the
+    DSCP value.  In particular they try to make the distinction between
+    values that should be used by "user applications" and things like
+    routing daemons.
+
+    This seems to have influenced the CAP_NET_ADMIN check which exists for
+    IP_TOS socket option settings, but in fact it has an off-by-one error
+    so it wasn't allowing CS5 which is meant for "user applications" as
+    well.
+
+    Further adding to the inconsistency and brokenness here, IPV6 does not
+    validate the DSCP values specified for the IPV6_TCLASS socket option.
+
+    The real actual uses of these TOS values are system specific in the
+    final analysis, and these RFC recommendations are just that, "a
+    recommendation".  In fact the standards very purposefully use
+    "SHOULD" and "SHOULD NOT" when describing how these values can be
+    used.
+
+    In the final analysis the only clean way to provide consistency here
+    is to remove the CAP_NET_ADMIN check.  The alternatives just don't
+    work out:
+
+    1) If we add the CAP_NET_ADMIN check to ipv6, this can break existing
+       setups.
+
+    2) If we just fix the off-by-one error in the class comparison in
+       IPV4, certain DSCP values can be used in IPV6 but not IPV4 by
+       default.  So people will just ask for a sysctl asking to
+       override that.
+
+    I checked several other freely available kernel trees and they
+    do not make any privilege checks in this area like we do.  For
+    the BSD stacks, this goes back all the way to Stevens Volume 2
+    and beyond.
+
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Neil Horman <nhorman@redhat.com>
+
+diff --git a/net/ipv4/ip_sockglue.c b/net/ipv4/ip_sockglue.c
+index cba4c6e..4173a2a 100644
+--- a/net/ipv4/ip_sockglue.c
++++ b/net/ipv4/ip_sockglue.c
+@@ -511,11 +511,6 @@ static int do_ip_setsockopt(struct sock *sk, int level,
+ 				val &= ~3;
+ 				val |= inet->tos & 3;
+ 			}
+-			if (IPTOS_PREC(val) >= IPTOS_PREC_CRITIC_ECP && 
+-			    !capable(CAP_NET_ADMIN)) {
+-				err = -EPERM;
+-				break;
+-			}
+ 			if (inet->tos != val) {
+ 				inet->tos = val;
+ 				sk->sk_priority = rt_tos2priority(val);

@@ -1,0 +1,47 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH] BZ 230620  xfrm_add_sa_expire return code error
+Date: Sun, 03 Jun 2007 18:48:33 -0400
+Bugzilla: 230620
+Message-Id: <1180910913.31147.39.camel@localhost.localdomain>
+Changelog: [audit] xfrm_add_sa_expire return code error
+
+
+As noted by Kent Yoder, this function will always return an
+error.  Make sure it returns zero on success.
+
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=3a765aa528401c7aec2208f7ed1276b232b24c57
+
+In LSPP kernel and tested fine
+
+-Eric
+
+--- linux-2.6.18.i686/net/xfrm/xfrm_user.c.pre.230620	2007-03-09 15:42:28.000000000 -0500
++++ linux-2.6.18.i686/net/xfrm/xfrm_user.c	2007-03-12 16:42:52.000000000 -0400
+@@ -1328,14 +1328,13 @@ static int xfrm_add_sa_expire(struct sk_
+ 	struct xfrm_usersa_info *p = &ue->state;
+ 
+ 	x = xfrm_state_lookup(&p->id.daddr, p->id.spi, p->id.proto, p->family);
+-		err = -ENOENT;
+ 
++	err = -ENOENT;
+ 	if (x == NULL)
+ 		return err;
+ 
+-	err = -EINVAL;
+-
+ 	spin_lock_bh(&x->lock);
++	err = -EINVAL;
+ 	if (x->km.state != XFRM_STATE_VALID)
+ 		goto out;
+ 	km_state_expired(x, ue->hard, current->pid);
+@@ -1345,6 +1344,7 @@ static int xfrm_add_sa_expire(struct sk_
+ 		xfrm_audit_log(NETLINK_CB(skb).loginuid, NETLINK_CB(skb).sid,
+ 			       AUDIT_MAC_IPSEC_DELSA, 1, NULL, x);
+ 	}
++	err = 0;
+ out:
+ 	spin_unlock_bh(&x->lock);
+ 	xfrm_state_put(x);
+

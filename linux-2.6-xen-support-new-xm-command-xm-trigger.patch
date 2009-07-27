@@ -1,0 +1,86 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5.1 PATCH 14/21] Support new xm command: xm trigger <Domain>  <nmi|reset|init> [<VCPU>]
+Date: Thu, 07 Jun 2007 03:43:42 -0400
+Bugzilla: 242140
+Message-Id: <4667B72E.4020104@redhat.com>
+Changelog: [xen] Support new xm command: xm trigger
+
+
+bz242140
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=242140
+
+Backport of cset#14098.
+
+Dump cannot be taken on Windows guest on ia64.  This
+add a new xm command "xm trigger" so that user can
+use it to get dump.
+
+Thanks,
+Kei
+
+
+rh bug 242140
+
+# HG changeset patch
+# User Keir Fraser <keir@xensource.com>
+# Date 1172326227 0
+# Node ID 6c938630de54277aebdbb73f88fcbc71643c319e
+# Parent  1e5a83fb928b772eb4c4f4ad6168da5f5f78b987
+Support new xm command: xm trigger <Domain> <nmi|reset|init> [<VCPU>]
+Signed-off-by: Masaki Kanno <kanno.masaki@jp.fujitsu.com>
+Signed-off-by: Akio Takebe <takebe_akio@jp.fujitsu.com>
+Signed-off-by: Zhang Xin <xing.z.zhang@intel.com>
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/xcom_privcmd.c   |    1 
+ linux-2.6.18-21.el5-gerd-order-kei/include/xen/interface/domctl.h |   15 ++++++++++
+ 2 files changed, 16 insertions(+)
+
+diff -puN arch/ia64/xen/xcom_privcmd.c~14098-Support_new_xm_command_xm_trigger_Domain_nmiresetinit_VCPU arch/ia64/xen/xcom_privcmd.c
+--- linux-2.6.18-21.el5-gerd-order/arch/ia64/xen/xcom_privcmd.c~14098-Support_new_xm_command_xm_trigger_Domain_nmiresetinit_VCPU	2007-06-07 02:44:32.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/xcom_privcmd.c	2007-06-07 02:44:32.000000000 -0400
+@@ -274,6 +274,7 @@ xencomm_privcmd_domctl(privcmd_hypercall
+ 	case XEN_DOMCTL_hypercall_init:
+ 	case XEN_DOMCTL_arch_setup:
+ 	case XEN_DOMCTL_settimeoffset:
++	case XEN_DOMCTL_sendtrigger:
+ 		break;
+ 	default:
+ 		printk("%s: unknown domctl cmd %d\n", __func__, kern_op.cmd);
+diff -puN include/xen/interface/domctl.h~14098-Support_new_xm_command_xm_trigger_Domain_nmiresetinit_VCPU include/xen/interface/domctl.h
+--- linux-2.6.18-21.el5-gerd-order/include/xen/interface/domctl.h~14098-Support_new_xm_command_xm_trigger_Domain_nmiresetinit_VCPU	2007-06-07 02:44:32.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/include/xen/interface/domctl.h	2007-06-07 02:44:32.000000000 -0400
+@@ -348,6 +348,20 @@ struct xen_domctl_settimeoffset {
+ typedef struct xen_domctl_settimeoffset xen_domctl_settimeoffset_t;
+ DEFINE_XEN_GUEST_HANDLE(xen_domctl_settimeoffset_t);
+ 
++#define XEN_DOMCTL_gethvmcontext     33
++#define XEN_DOMCTL_sethvmcontext     34
++
++#define XEN_DOMCTL_sendtrigger       28
++#define XEN_DOMCTL_SENDTRIGGER_NMI    0
++#define XEN_DOMCTL_SENDTRIGGER_RESET  1
++#define XEN_DOMCTL_SENDTRIGGER_INIT   2
++struct xen_domctl_sendtrigger {
++    uint32_t  trigger;  /* IN */
++    uint32_t  vcpu;     /* IN */
++};
++typedef struct xen_domctl_sendtrigger xen_domctl_sendtrigger_t;
++DEFINE_XEN_GUEST_HANDLE(xen_domctl_sendtrigger_t);
++
+ struct xen_domctl {
+     uint32_t cmd;
+     uint32_t interface_version; /* XEN_DOMCTL_INTERFACE_VERSION */
+@@ -373,6 +387,7 @@ struct xen_domctl {
+         struct xen_domctl_hypercall_init    hypercall_init;
+         struct xen_domctl_arch_setup        arch_setup;
+         struct xen_domctl_settimeoffset     settimeoffset;
++        struct xen_domctl_sendtrigger       sendtrigger;
+         uint8_t                             pad[128];
+     } u;
+ };
+
+_
+

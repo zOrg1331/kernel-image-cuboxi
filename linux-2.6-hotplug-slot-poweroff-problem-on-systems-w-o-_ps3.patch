@@ -1,0 +1,72 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Tue, 3 Jul 2007 13:21:49 -0400
+Subject: [hotplug] slot poweroff problem on systems w/o _PS3
+Message-id: 20070703172149.5990.34478.sendpatchset@prarit.boston.redhat.com
+O-Subject: [RHEL 5.2 PATCH]: fix slot poweroff problem on systems without _PS3
+Bugzilla: 410611
+
+Backport of
+
+http://sourceforge.net/mailarchive/forum.php?thread_name=20070604232736.GA3239%40us.ibm.com&forum=pcihpd-discuss
+
+On systems where the optional _PS3 ACPI object is not implemented
+acpiphp fails to power off the slot.  This is happening because
+the current code does not attempt to remove power using the
+_EJ0 ACPI object.  This patch restores the _EJ0 evaluation attempt
+which was apparently inadvertently removed from the power-off
+sequence when the _EJ0 evaluation code was relocated from
+power_off_slot() to acpiphp_eject_slot().
+
+Kristen Accardi (the hotplug maintainer) has accepted this and will include
+it in the next kernel release.
+
+Tested successfully on ibm-zeus-01 by Konrad & myself.
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/drivers/pci/hotplug/acpiphp.h b/drivers/pci/hotplug/acpiphp.h
+index 7fff07e..36000a1 100644
+--- a/drivers/pci/hotplug/acpiphp.h
++++ b/drivers/pci/hotplug/acpiphp.h
+@@ -211,6 +211,7 @@ typedef int (*acpiphp_callback)(struct acpiphp_slot *slot, void *data);
+ 
+ extern int acpiphp_enable_slot (struct acpiphp_slot *slot);
+ extern int acpiphp_disable_slot (struct acpiphp_slot *slot);
++extern int acpiphp_eject_slot (struct acpiphp_slot *slot);
+ extern u8 acpiphp_get_power_status (struct acpiphp_slot *slot);
+ extern u8 acpiphp_get_attention_status (struct acpiphp_slot *slot);
+ extern u8 acpiphp_get_latch_status (struct acpiphp_slot *slot);
+diff --git a/drivers/pci/hotplug/acpiphp_core.c b/drivers/pci/hotplug/acpiphp_core.c
+index e2fef60..98f5854 100644
+--- a/drivers/pci/hotplug/acpiphp_core.c
++++ b/drivers/pci/hotplug/acpiphp_core.c
+@@ -157,11 +157,15 @@ static int enable_slot(struct hotplug_slot *hotplug_slot)
+ static int disable_slot(struct hotplug_slot *hotplug_slot)
+ {
+ 	struct slot *slot = hotplug_slot->private;
++	int retval;
+ 
+ 	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
+ 
+ 	/* disable the specified slot */
+-	return acpiphp_disable_slot(slot->acpi_slot);
++	retval = acpiphp_disable_slot(slot->acpi_slot);
++	if (!retval)
++		retval = acpiphp_eject_slot(slot->acpi_slot);
++	return retval;
+ }
+ 
+ 
+diff --git a/drivers/pci/hotplug/acpiphp_glue.c b/drivers/pci/hotplug/acpiphp_glue.c
+index 7e2867c..4a6c510 100644
+--- a/drivers/pci/hotplug/acpiphp_glue.c
++++ b/drivers/pci/hotplug/acpiphp_glue.c
+@@ -1283,7 +1283,7 @@ static unsigned int get_slot_status(struct acpiphp_slot *slot)
+ /**
+  * acpiphp_eject_slot - physically eject the slot
+  */
+-static int acpiphp_eject_slot(struct acpiphp_slot *slot)
++int acpiphp_eject_slot(struct acpiphp_slot *slot)
+ {
+ 	acpi_status status;
+ 	struct acpiphp_func *func;

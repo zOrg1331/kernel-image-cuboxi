@@ -1,0 +1,106 @@
+From: Scott Moser <smoser@redhat.com>
+Date: Fri, 16 Nov 2007 15:45:04 -0500
+Subject: [mm] make compound page destructor handling explicit
+Message-id: 11952459063433-do-send-email-smoser@redhat.com
+O-Subject: [PATCH RHEL5u2] bz239790 Unequal allocation of hugepages on pseries [2/3]
+Bugzilla: 239790
+
+commit 33f2ef89f8e181486b63fdbdc97c6afa6ca9f34b
+Author: Andy Whitcroft <apw@shadowen.org>
+Date:   Wed Dec 6 20:33:32 2006 -0800
+
+    [PATCH] mm: make compound page destructor handling explicit
+
+    Currently we we use the lru head link of the second page of a compound page
+    to hold its destructor.  This was ok when it was purely an internal
+    implmentation detail.  However, hugetlbfs overrides this destructor
+    violating the layering.  Abstract this out as explicit calls, also
+    introduce a type for the callback function allowing them to be type
+    checked.  For each callback we pre-declare the function, causing a type
+    error on definition rather than on use elsewhere.
+
+    [akpm@osdl.org: cleanups]
+    Signed-off-by: Andy Whitcroft <apw@shadowen.org>
+    Signed-off-by: Andrew Morton <akpm@osdl.org>
+    Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+
+--
+ include/linux/mm.h |   18 ++++++++++++++++++
+ mm/hugetlb.c       |    2 +-
+ mm/page_alloc.c    |    2 +-
+ mm/swap.c          |    4 ++--
+ 4 files changed, 22 insertions(+), 4 deletions(-)
+
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/include/linux/mm.h b/include/linux/mm.h
+index 5e87729..d531eff 100644
+--- a/include/linux/mm.h
++++ b/include/linux/mm.h
+@@ -347,6 +347,24 @@ void put_pages_list(struct list_head *pages);
+ void split_page(struct page *page, unsigned int order);
+ 
+ /*
++ * Compound pages have a destructor function.  Provide a
++ * prototype for that function and accessor functions.
++ * These are _only_ valid on the head of a PG_compound page.
++ */
++typedef void compound_page_dtor(struct page *);
++
++static inline void set_compound_page_dtor(struct page *page,
++						compound_page_dtor *dtor)
++{
++	page[1].lru.next = (void *)dtor;
++}
++
++static inline compound_page_dtor *get_compound_page_dtor(struct page *page)
++{
++	return (compound_page_dtor *)page[1].lru.next;
++}
++
++/*
+  * Multiple processes may "see" the same page. E.g. for untouched
+  * mappings of /dev/null, all processes see the same page full of
+  * zeroes, and text pages of executables and shared libraries have
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index e340fe7..ec17cc5 100644
+--- a/mm/hugetlb.c
++++ b/mm/hugetlb.c
+@@ -109,7 +109,7 @@ static int alloc_fresh_huge_page(void)
+ 	if (nid == MAX_NUMNODES)
+ 		nid = first_node(node_online_map);
+ 	if (page) {
+-		page[1].lru.next = (void *)free_huge_page;	/* dtor */
++		set_compound_page_dtor(page, free_huge_page);
+ 		spin_lock(&hugetlb_lock);
+ 		nr_huge_pages++;
+ 		nr_huge_pages_node[page_to_nid(page)]++;
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index ba19025..d7d44c3 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -186,7 +186,7 @@ static void prep_compound_page(struct page *page, unsigned long order)
+ 	int i;
+ 	int nr_pages = 1 << order;
+ 
+-	page[1].lru.next = (void *)free_compound_page;	/* set dtor */
++	set_compound_page_dtor(page, free_compound_page);
+ 	page[1].lru.prev = (void *)order;
+ 	for (i = 0; i < nr_pages; i++) {
+ 		struct page *p = page + i;
+diff --git a/mm/swap.c b/mm/swap.c
+index 0823957..3f42431 100644
+--- a/mm/swap.c
++++ b/mm/swap.c
+@@ -47,9 +47,9 @@ static void put_compound_page(struct page *page)
+ {
+ 	page = (struct page *)page_private(page);
+ 	if (put_page_testzero(page)) {
+-		void (*dtor)(struct page *page);
++		compound_page_dtor *dtor;
+ 
+-		dtor = (void (*)(struct page *))page[1].lru.next;
++		dtor = get_compound_page_dtor(page);
+ 		(*dtor)(page);
+ 	}
+ }

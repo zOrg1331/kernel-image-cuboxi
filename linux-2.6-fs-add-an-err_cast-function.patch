@@ -1,0 +1,55 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 8 Jul 2008 15:19:52 -0500
+Subject: [fs] add an ERR_CAST function
+Message-id: 4873CBE8.5020108@redhat.com
+O-Subject: [PATCH RHEL5 5/9] ERR_CAST
+Bugzilla: 443896
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: Alexander Viro <aviro@redhat.com>
+
+This is for:
+
+Bugzilla Bug 443896: RFE: [Ext4 enabler] backport vfs
+helpers to facilitate ext4 backport and testing
+
+From: David Howells <dhowells@redhat.com>
+Date: Thu, 7 Feb 2008 08:15:26 +0000 (-0800)
+Subject: Add an ERR_CAST() function to complement ERR_PTR and co.
+X-Git-Tag: v2.6.25-rc1~388
+X-Git-Url: http://git.engineering.redhat.com/?p=linux-2.6.git;a=commitdiff_plain;h=d1bc8e95445224276d7896b8b08cbb0b28a0ca80
+
+Add an ERR_CAST() function to complement ERR_PTR and co.
+
+Add an ERR_CAST() function to complement ERR_PTR and co.  for the purposes
+of casting an error entyped as one pointer type to an error of another
+pointer type whilst making it explicit as to what is going on.
+
+This provides a replacement for the ERR_PTR(PTR_ERR(p)) construct.
+
+Signed-off-by: David Howells <dhowells@redhat.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/include/linux/err.h b/include/linux/err.h
+index cd3b367..03639cb 100644
+--- a/include/linux/err.h
++++ b/include/linux/err.h
+@@ -32,4 +32,17 @@ static inline long IS_ERR(const void *ptr)
+ 	return IS_ERR_VALUE((unsigned long)ptr);
+ }
+ 
++/**
++ * ERR_CAST - Explicitly cast an error-valued pointer to another pointer type
++ * @ptr: The pointer to cast.
++ *
++ * Explicitly cast an error-valued pointer to another pointer type in such a
++ * way as to make it clear that's what's going on.
++ */
++static inline void *ERR_CAST(const void *ptr)
++{
++	/* cast away the const */
++	return (void *) ptr;
++}
++
+ #endif /* _LINUX_ERR_H */

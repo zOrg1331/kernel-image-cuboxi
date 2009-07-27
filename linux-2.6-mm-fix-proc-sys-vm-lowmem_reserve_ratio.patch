@@ -1,0 +1,35 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Mon, 18 Feb 2008 15:18:16 -0500
+Subject: [mm] fix /proc/sys/vm/lowmem_reserve_ratio
+Message-id: 1203365896.8054.16.camel@dhcp83-56.boston.redhat.com
+O-Subject: [RHEL5-U3 patch] Problem with /proc/sys/vm/lowmem_reserve_ratio
+Bugzilla: 457471
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+
+balance_pgdat() calls zone_watermark_ok() three times, the first call
+passes a zero(0) in as the 4th argument.  This 4th argument is the
+classzone_idx which is used as the index into the
+zone->lowmem_reserve[] array.  Since setup_per_zone_lowmem_reserve()
+always sets the zone->lowmem_reserve[0] = 0(because there is nothing
+below the DMA zone), zone_watermark_ok() will not consider the
+lowmem_reserve pages when zero is passed as the 4th arg.  This prevents
+kswaps from running when it should because the lowmem_reserve is not
+included in the test.  The fix is to pass the current index "i" as the
+4th argument to zone_watermark_ok() instead of zero(0).
+
+ mm/vmscan.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index bdd76ee..ea3b83d 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -1151,7 +1151,7 @@ loop_again:
+ 				continue;
+ 
+ 			if (!zone_watermark_ok(zone, order, zone->pages_high,
+-					       0, 0)) {
++					       i, 0)) {
+ 				end_zone = i;
+ 				goto scan;
+ 			}

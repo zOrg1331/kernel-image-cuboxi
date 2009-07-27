@@ -1,0 +1,77 @@
+From: Alexander Viro <aviro@redhat.com>
+Date: Fri, 12 Sep 2008 14:09:16 -0400
+Subject: [audit] audit-fork patch
+Message-id: alpine.LRH.1.10.0809121406010.25024@file.rdu.redhat.com
+O-Subject: [rhel5] bz#461831 audit-fork patch
+Bugzilla: 461831
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Eric Paris <eparis@redhat.com>
+
+Make sure that we don't lose fork() record for child; copy ->auditable and
+friends into child's context before making it runnable (if child does
+have an audit context, obviously).
+
+That's against -111.el5, should take care of bz#461831 parts 1 and 2.
+
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+
+diff --git a/include/linux/audit.h b/include/linux/audit.h
+index 6c2d390..ec974c0 100644
+--- a/include/linux/audit.h
++++ b/include/linux/audit.h
+@@ -362,6 +362,7 @@ extern int audit_classify_arch(int arch);
+ #ifdef CONFIG_AUDITSYSCALL
+ /* These are defined in auditsc.c */
+ 				/* Public API */
++extern void audit_finish_fork(struct task_struct *child);
+ extern int  audit_alloc(struct task_struct *task);
+ extern void audit_free(struct task_struct *task);
+ extern void audit_syscall_entry(int arch,
+@@ -468,6 +469,7 @@ static inline int audit_mq_getsetattr(mqd_t mqdes, struct mq_attr *mqstat)
+ extern int audit_n_rules;
+ extern int audit_signals;
+ #else
++#define audit_finish_fork(t)
+ #define audit_alloc(t) ({ 0; })
+ #define audit_free(t) do { ; } while (0)
+ #define audit_syscall_entry(ta,a,b,c,d,e) do { ; } while (0)
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index 45a8eee..1320dc5 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -1545,6 +1545,23 @@ void audit_syscall_entry(int arch, int major,
+ 	context->ppid       = 0;
+ }
+ 
++void audit_finish_fork(struct task_struct *child)
++{
++	struct audit_context *ctx = current->audit_context;
++	struct audit_context *p = child->audit_context;
++	if (!p || !ctx || !ctx->auditable)
++		return;
++	p->arch = ctx->arch;
++	p->major = ctx->major;
++	memcpy(p->argv, ctx->argv, sizeof(ctx->argv));
++	p->ctime = ctx->ctime;
++	p->dummy = ctx->dummy;
++	p->auditable = ctx->auditable;
++	p->in_syscall = ctx->in_syscall;
++	p->filterkey = kstrdup(ctx->filterkey, GFP_KERNEL);
++	p->ppid = current->pid;
++}
++
+ /**
+  * audit_syscall_exit - deallocate audit context after a system call
+  * @tsk: task being audited
+diff --git a/kernel/fork.c b/kernel/fork.c
+index 9e14ef0..4a33b29 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -1472,6 +1472,7 @@ long do_fork(unsigned long clone_flags,
+ 			init_completion(&vfork);
+ 		}
+ 
++		audit_finish_fork(p);
+ 		if (likely(is_user))
+ 			tracehook_report_clone(clone_flags, p);
+ 

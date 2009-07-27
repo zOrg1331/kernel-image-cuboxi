@@ -1,0 +1,108 @@
+From: Hideo AOKI <haoki@redhat.com>
+Date: Mon, 14 Jan 2008 22:38:01 -0500
+Subject: [net] udp: update infiniband driver
+Message-id: 478C2A99.40205@redhat.com
+O-Subject: Re: [RHEL 5.2 PATCH] bz#223593: [3/3] update infiniband driver
+Bugzilla: 223593
+
+Doug Ledford wrote:
+> On Fri, 2008-01-11 at 19:34 -0500, Hideo AOKI wrote:
+>> Doug Ledford wrote:
+>>> On Sat, 2008-01-05 at 17:53 -0500, Rik van Riel wrote:
+>>>> On Fri, 04 Jan 2008 18:49:36 -0500
+>>>> Hideo AOKI <haoki@redhat.com> wrote:
+>>>>
+>>>>> BZ#:
+>>>>> ------
+>>>>> https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=223593
+>>>>>
+>>>>> Description:
+>>>>> ------------
+>>>>>
+>>>>> This patch is related to the UDP memory limitation feature.
+>>>>>
+>>>>> The infiniband driver of RHEL 5 uses functions that I replaced with
+>>>>> new functions in upstream patch. Then, I also developed a patch which
+>>>>> could update the driver to use new function.
+>>>>>
+>>>>> As I explained in the first patch of this patch set, I kept old
+>>>>> functions. The infiniband driver of RHEL 5 can work without this patch.
+>>>>> If someone doesn't like this patch, we can drop this patch.
+
+Many thanks,
+Hideo
+
+Acked-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/drivers/infiniband/ulp/sdp/sdp_bcopy.c b/drivers/infiniband/ulp/sdp/sdp_bcopy.c
+index 1aeb264..5a1ff8d 100644
+--- a/drivers/infiniband/ulp/sdp/sdp_bcopy.c
++++ b/drivers/infiniband/ulp/sdp/sdp_bcopy.c
+@@ -105,7 +105,7 @@ static void sdp_fin(struct sock *sk)
+ 	sock_set_flag(sk, SOCK_DONE);
+ 
+ 
+-	sk_stream_mem_reclaim(sk);
++	sk_mem_reclaim(sk);
+ 
+ 	if (!sock_flag(sk, SOCK_DEAD)) {
+ 		sk->sk_state_change(sk);
+@@ -684,7 +684,7 @@ static void sdp_handle_wc(struct sdp_sock *ssk, struct ib_wc *wc)
+ 		skb = sdp_send_completion(ssk, wc->wr_id);
+ 		if (unlikely(!skb))
+ 			return;
+-		sk_stream_free_skb(&ssk->isk.sk, skb);
++		sk_wmem_free_skb(&ssk->isk.sk, skb);
+ 		if (unlikely(wc->status)) {
+ 			if (wc->status != IB_WC_WR_FLUSH_ERR) {
+ 				sdp_dbg(&ssk->isk.sk,
+@@ -774,7 +774,7 @@ void sdp_work(struct work_struct *work)
+ 
+ 	sdp_poll_cq(ssk, cq);
+ 	release_sock(sk);
+-	sk_stream_mem_reclaim(sk);
++	sk_mem_reclaim(sk);
+ 	lock_sock(sk);
+ 	cq = ssk->cq;
+ 	if (unlikely(!cq))
+diff --git a/drivers/infiniband/ulp/sdp/sdp_main.c b/drivers/infiniband/ulp/sdp/sdp_main.c
+index 8e5c1be..9616598 100644
+--- a/drivers/infiniband/ulp/sdp/sdp_main.c
++++ b/drivers/infiniband/ulp/sdp/sdp_main.c
+@@ -489,7 +489,7 @@ static void sdp_close(struct sock *sk, long timeout)
+ 		__kfree_skb(skb);
+ 	}
+ 
+-	sk_stream_mem_reclaim(sk);
++	sk_mem_reclaim(sk);
+ 
+ 	/* As outlined in draft-ietf-tcpimpl-prob-03.txt, section
+ 	 * 3.10, we send a RST here because data was lost.  To
+@@ -1193,7 +1193,8 @@ static inline void skb_entail(struct sock *sk, struct sdp_sock *ssk,
+ {
+         skb_header_release(skb);
+         __skb_queue_tail(&sk->sk_write_queue, skb);
+-        sk_charge_skb(sk, skb);
++        sk->sk_wmem_queued += skb->truesize;
++        sk_mem_charge(sk, skb->truesize);
+         if (!sk->sk_send_head)
+                 sk->sk_send_head = skb;
+         if (ssk->nonagle & TCP_NAGLE_PUSH)
+@@ -1357,7 +1358,7 @@ static inline int sdp_bcopy_get(struct sock *sk, struct sk_buff *skb,
+ 		if (copy > PAGE_SIZE - off)
+ 			copy = PAGE_SIZE - off;
+ 
+-		if (!sk_stream_wmem_schedule(sk, copy))
++		if (!sk_wmem_schedule(sk, copy))
+ 			return SDP_DO_WAIT_MEM;
+ 
+ 		if (!page) {
+@@ -1738,7 +1739,7 @@ do_fault:
+ 		if (sk->sk_send_head == skb)
+ 			sk->sk_send_head = NULL;
+ 		__skb_unlink(skb, &sk->sk_write_queue);
+-		sk_stream_free_skb(sk, skb);
++		sk_wmem_free_skb(sk, skb);
+ 	}
+ 
+ do_error:

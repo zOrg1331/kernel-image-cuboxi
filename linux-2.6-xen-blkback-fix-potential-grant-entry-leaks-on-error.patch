@@ -1,0 +1,69 @@
+From: Rik van Riel <riel@redhat.com>
+Subject: [PATCH][RHEL5 Xen] blkback: Fix potential grant entry leaks on error
+Date: Fri, 01 Dec 2006 20:09:57 -0500
+Bugzilla: 218355
+Message-Id: <4570D265.7080901@redhat.com>
+Changelog: Xen: blkback: Fix potential grant entry leaks on error
+
+
+Upstream patch from Herbert.  Upstream Xen changeset 11888.
+
+[BLOCK] blkback: Fix potential grant entry leaks on error
+
+As it stands grant entries for the actual data are mapped in bulk.
+If one of the earlier entries fail to be mapped, it can cause all
+subsequent entries to be leaked if they were successfully mapped.
+
+This patch changes it so that we will continue to reap grant entries
+even when an error is detected.
+
+-- 
+Politics is the struggle between those who want to make their country
+the best in the world, and those who believe it already is.  Each group
+calls the other unpatriotic.
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Node ID ffbd9e4668a6cfd3c936c7344c194afe368f2642
+# Parent  4be49a3be040f0951a9be971e9b4cf0a399589ec
+[BLOCK] blkback: Fix potential grant entry leaks on error
+
+As it stands grant entries for the actual data are mapped in bulk.
+If one of the earlier entries fail to be mapped, it can cause all
+subsequent entries to be leaked if they were successfully mapped.
+
+This patch changes it so that we will continue to reap grant entries
+even when an error is detected.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+diff -r 4be49a3be040 -r ffbd9e4668a6 linux-2.6-xen-sparse/drivers/xen/blkback/blkback.c
+--- linux-2.6-xen-sparse/drivers/xen/blkback/blkback.c	Wed Oct 25 10:56:50 2006 +0100
++++ linux-2.6-xen-sparse/drivers/xen/blkback/blkback.c	Wed Oct 25 10:59:00 2006 +0100
+@@ -392,16 +392,24 @@ static void dispatch_rw_block_io(blkif_t
+ 	for (i = 0; i < nseg; i++) {
+ 		if (unlikely(map[i].status != 0)) {
+ 			DPRINTK("invalid buffer -- could not remap it\n");
+-			goto fail_flush;
++			map[i].handle = BLKBACK_INVALID_HANDLE;
++			ret |= 1;
+ 		}
+ 
+ 		pending_handle(pending_req, i) = map[i].handle;
++
++		if (ret)
++			continue;
++
+ 		set_phys_to_machine(__pa(vaddr(
+ 			pending_req, i)) >> PAGE_SHIFT,
+ 			FOREIGN_FRAME(map[i].dev_bus_addr >> PAGE_SHIFT));
+ 		seg[i].buf  = map[i].dev_bus_addr | 
+ 			(req->seg[i].first_sect << 9);
+ 	}
++
++	if (ret)
++		goto fail_flush;
+ 
+ 	if (vbd_translate(&preq, blkif, operation) != 0) {
+ 		DPRINTK("access denied: %s of [%llu,%llu] on dev=%04x\n", 
+

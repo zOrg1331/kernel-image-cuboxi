@@ -1,0 +1,378 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Date: Mon, 28 Apr 2008 16:32:09 -0400
+Subject: [misc] add CPU hotplug support for relay functions
+Message-id: 48163449.8070009@redhat.com
+O-Subject: [RHEL5.3][PATCH] add CPU hotplug support for relay functions
+Bugzilla: 441523
+
+bz441523
+https://bugzilla.redhat.com/show_bug.cgi?id=441523
+
+Description
+===========
+  The message buffers for relay function are only allocated for online CPUs
+  at the time when relay_open() is called.  So, if any offline CPUs become
+  online using hotplug after relay_open() gets called, relay function starts
+  trying to access to the message buffers of newly onlined CPUs and the kernel
+  panics.
+
+kABI status
+===========
+  There are some additions to structure rchan, which cause kABI changes.  So
+  they are wrapped with #ifndef __GENKSYMS__.
+
+Brew status
+===========
+  Built on all platforms.
+  http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1295273
+
+Upstream status
+===============
+  Upstream has a different way of this as it has added one more argument to
+  relay_open().  Since that breaks kABI, I removed the change from the backported
+  patch for RHEL.
+
+  http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=23c887522e912ca494950796a95df8dd210f4b01
+  http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=c9b3febc5b9c55a76b838c977b078195ec8bb95e
+
+Test status
+===========
+  Confirmed this issue doesn't occur on 2.6.18-90.el5 with the patch applied on
+  Fujitsu PRIMEQUEST.  What I did is to offline all CPUs, except one, to start
+  running relay function using blktrace/blkparse commands, and to online the
+  offlined CPUs.
+
+Thanks,
+Kei
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/include/linux/relay.h b/include/linux/relay.h
+index 24accb4..05bf63b 100644
+--- a/include/linux/relay.h
++++ b/include/linux/relay.h
+@@ -64,6 +64,12 @@ struct rchan
+ 	void *private_data;		/* for user-defined data */
+ 	size_t last_toobig;		/* tried to log event > subbuf size */
+ 	struct rchan_buf *buf[NR_CPUS]; /* per-cpu channel buffers */
++#ifndef __GENKSYMS__
++	int is_global;			/* One global buffer ? */
++	struct list_head list;		/* for channel list */
++	struct dentry *parent;		/* parent dentry passed to open */
++	char base_filename[NAME_MAX];	/* saved base filename */
++#endif
+ };
+ 
+ /*
+diff --git a/kernel/relay.c b/kernel/relay.c
+index 0ad4ec3..d82d6da 100644
+--- a/kernel/relay.c
++++ b/kernel/relay.c
+@@ -1,12 +1,14 @@
+ /*
+  * Public API and common code for kernel->userspace relay file support.
+  *
+- * See Documentation/filesystems/relayfs.txt for an overview of relayfs.
++ * See Documentation/filesystems/relay.txt for an overview.
+  *
+  * Copyright (C) 2002-2005 - Tom Zanussi (zanussi@us.ibm.com), IBM Corp
+  * Copyright (C) 1999-2005 - Karim Yaghmour (karim@opersys.com)
+  *
+  * Moved to kernel/relay.c by Paul Mundt, 2006.
++ * November 2006 - CPU hotplug support by Mathieu Desnoyers
++ * 	(mathieu.desnoyers@polymtl.ca)
+  *
+  * This file is released under the GPL.
+  */
+@@ -18,6 +20,11 @@
+ #include <linux/relay.h>
+ #include <linux/vmalloc.h>
+ #include <linux/mm.h>
++#include <linux/cpu.h>
++
++/* list of open channels, for cpu hotplug */
++static DEFINE_MUTEX(relay_channels_mutex);
++static LIST_HEAD(relay_channels);
+ 
+ /*
+  * close() vm_op implementation for relay file mapping.
+@@ -188,6 +195,7 @@ void relay_destroy_buf(struct rchan_buf *buf)
+ 			__free_page(buf->page_array[i]);
+ 		kfree(buf->page_array);
+ 	}
++	chan->buf[buf->cpu] = NULL;
+ 	kfree(buf->padding);
+ 	kfree(buf);
+ 	kref_put(&chan->kref, relay_destroy_channel);
+@@ -361,51 +369,70 @@ static inline void __relay_reset(struct rchan_buf *buf, unsigned int init)
+ void relay_reset(struct rchan *chan)
+ {
+ 	unsigned int i;
+-	struct rchan_buf *prev = NULL;
+ 
+ 	if (!chan)
+ 		return;
+ 
+-	for (i = 0; i < NR_CPUS; i++) {
+-		if (!chan->buf[i] || chan->buf[i] == prev)
+-			break;
+-		__relay_reset(chan->buf[i], 0);
+-		prev = chan->buf[i];
++	if (chan->is_global && chan->buf[0]) {
++		__relay_reset(chan->buf[0], 0);
++		return;
+ 	}
++
++	mutex_lock(&relay_channels_mutex);
++	for_each_online_cpu(i)
++		if (chan->buf[i])
++			__relay_reset(chan->buf[i], 0);
++	mutex_unlock(&relay_channels_mutex);
+ }
+ EXPORT_SYMBOL_GPL(relay_reset);
+ 
+-/**
++/*
+  *	relay_open_buf - create a new relay channel buffer
+  *
+- *	Internal - used by relay_open().
++ *	used by relay_open() and CPU hotplug.
+  */
+-static struct rchan_buf *relay_open_buf(struct rchan *chan,
+-					const char *filename,
+-					struct dentry *parent,
+-					int *is_global)
++static struct rchan_buf *relay_open_buf(struct rchan *chan, unsigned int cpu)
+ {
+-	struct rchan_buf *buf;
++ 	struct rchan_buf *buf = NULL;
+ 	struct dentry *dentry;
++	char *tmpname;
+ 
+-	if (*is_global)
++	if (chan->is_global)
+ 		return chan->buf[0];
+ 
++	tmpname = kzalloc(NAME_MAX + 1, GFP_KERNEL);
++	if (!tmpname)
++		goto end;
++	snprintf(tmpname, NAME_MAX, "%s%d", chan->base_filename, cpu);
++
+ 	buf = relay_create_buf(chan);
+ 	if (!buf)
+-		return NULL;
++		goto free_name;
++
++	buf->cpu = cpu;
++	__relay_reset(buf, 1);
+ 
+ 	/* Create file in fs */
+-	dentry = chan->cb->create_buf_file(filename, parent, S_IRUSR,
+-					   buf, is_global);
+-	if (!dentry) {
+-		relay_destroy_buf(buf);
+-		return NULL;
+-	}
++	dentry = chan->cb->create_buf_file(tmpname, chan->parent, S_IRUSR,
++					   buf, &chan->is_global);
++	if (!dentry)
++		goto free_buf;
+ 
+ 	buf->dentry = dentry;
+-	__relay_reset(buf, 1);
+ 
++	if(chan->is_global) {
++		chan->buf[0] = buf;
++		buf->cpu = 0;
++	}
++
++	goto free_name;
++
++free_buf:
++	relay_destroy_buf(buf);
++	buf = NULL;
++free_name:
++	kfree(tmpname);
++end:
+ 	return buf;
+ }
+ 
+@@ -447,6 +474,47 @@ static inline void setup_callbacks(struct rchan *chan,
+ }
+ 
+ /**
++ *
++ * 	relay_hotcpu_callback - CPU hotplug callback
++ * 	@nb: notifier block
++ * 	@action: hotplug action to take
++ * 	@hcpu: CPU number
++ *
++ * 	Returns the success/failure of the operation. (NOTIFY_OK, NOTIFY_BAD)
++ */
++static int __cpuinit relay_hotcpu_callback(struct notifier_block *nb,
++				unsigned long action,
++				void *hcpu)
++{
++	unsigned int hotcpu = (unsigned long)hcpu;
++	struct rchan *chan;
++
++	switch(action) {
++	case CPU_UP_PREPARE:
++		mutex_lock(&relay_channels_mutex);
++		list_for_each_entry(chan, &relay_channels, list) {
++			if (chan->buf[hotcpu])
++				continue;
++			chan->buf[hotcpu] = relay_open_buf(chan, hotcpu);
++			if(!chan->buf[hotcpu]) {
++				printk(KERN_ERR
++					"relay_hotcpu_callback: cpu %d buffer "
++					"creation failed\n", hotcpu);
++				mutex_unlock(&relay_channels_mutex);
++				return NOTIFY_BAD;
++			}
++		}
++		mutex_unlock(&relay_channels_mutex);
++		break;
++	case CPU_DEAD:
++		/* No need to flush the cpu : will be flushed upon
++		 * final relay_flush() call. */
++		break;
++	}
++	return NOTIFY_OK;
++}
++
++/**
+  *	relay_open - create a new relay channel
+  *	@base_filename: base name of files to create
+  *	@parent: dentry of parent directory, NULL for root directory
+@@ -469,9 +537,6 @@ struct rchan *relay_open(const char *base_filename,
+ {
+ 	unsigned int i;
+ 	struct rchan *chan;
+-	char *tmpname;
+-	int is_global = 0;
+-
+ 	if (!base_filename)
+ 		return NULL;
+ 
+@@ -486,38 +551,31 @@ struct rchan *relay_open(const char *base_filename,
+ 	chan->n_subbufs = n_subbufs;
+ 	chan->subbuf_size = subbuf_size;
+ 	chan->alloc_size = FIX_SIZE(subbuf_size * n_subbufs);
++	chan->parent = parent;
++	strlcpy(chan->base_filename, base_filename, NAME_MAX);
+ 	setup_callbacks(chan, cb);
+ 	kref_init(&chan->kref);
+ 
+-	tmpname = kmalloc(NAME_MAX + 1, GFP_KERNEL);
+-	if (!tmpname)
+-		goto free_chan;
+-
++	mutex_lock(&relay_channels_mutex);
+ 	for_each_online_cpu(i) {
+-		sprintf(tmpname, "%s%d", base_filename, i);
+-		chan->buf[i] = relay_open_buf(chan, tmpname, parent,
+-					      &is_global);
++		chan->buf[i] = relay_open_buf(chan, i);
+ 		if (!chan->buf[i])
+ 			goto free_bufs;
+-
+-		chan->buf[i]->cpu = i;
+ 	}
++	list_add(&chan->list, &relay_channels);
++	mutex_unlock(&relay_channels_mutex);
+ 
+-	kfree(tmpname);
+ 	return chan;
+ 
+ free_bufs:
+-	for (i = 0; i < NR_CPUS; i++) {
++	for_each_online_cpu(i) {
+ 		if (!chan->buf[i])
+ 			break;
+ 		relay_close_buf(chan->buf[i]);
+-		if (is_global)
+-			break;
+ 	}
+-	kfree(tmpname);
+ 
+-free_chan:
+ 	kref_put(&chan->kref, relay_destroy_channel);
++	mutex_unlock(&relay_channels_mutex);
+ 	return NULL;
+ }
+ EXPORT_SYMBOL_GPL(relay_open);
+@@ -617,24 +675,26 @@ EXPORT_SYMBOL_GPL(relay_subbufs_consumed);
+ void relay_close(struct rchan *chan)
+ {
+ 	unsigned int i;
+-	struct rchan_buf *prev = NULL;
+ 
+ 	if (!chan)
+ 		return;
+ 
+-	for (i = 0; i < NR_CPUS; i++) {
+-		if (!chan->buf[i] || chan->buf[i] == prev)
+-			break;
+-		relay_close_buf(chan->buf[i]);
+-		prev = chan->buf[i];
+-	}
++	mutex_lock(&relay_channels_mutex);
++	if (chan->is_global && chan->buf[0])
++		relay_close_buf(chan->buf[0]);
++	else
++		for_each_possible_cpu(i)
++			if (chan->buf[i])
++				relay_close_buf(chan->buf[i]);
+ 
+ 	if (chan->last_toobig)
+ 		printk(KERN_WARNING "relay: one or more items not logged "
+ 		       "[item size (%Zd) > sub-buffer size (%Zd)]\n",
+ 		       chan->last_toobig, chan->subbuf_size);
+ 
++	list_del(&chan->list);
+ 	kref_put(&chan->kref, relay_destroy_channel);
++	mutex_unlock(&relay_channels_mutex);
+ }
+ EXPORT_SYMBOL_GPL(relay_close);
+ 
+@@ -647,17 +707,20 @@ EXPORT_SYMBOL_GPL(relay_close);
+ void relay_flush(struct rchan *chan)
+ {
+ 	unsigned int i;
+-	struct rchan_buf *prev = NULL;
+ 
+ 	if (!chan)
+ 		return;
+ 
+-	for (i = 0; i < NR_CPUS; i++) {
+-		if (!chan->buf[i] || chan->buf[i] == prev)
+-			break;
+-		relay_switch_subbuf(chan->buf[i], 0);
+-		prev = chan->buf[i];
++	if (chan->is_global && chan->buf[0]) {
++		relay_switch_subbuf(chan->buf[0], 0);
++		return;
+ 	}
++
++	mutex_lock(&relay_channels_mutex);
++	for_each_possible_cpu(i)
++		if (chan->buf[i])
++			relay_switch_subbuf(chan->buf[i], 0);
++	mutex_unlock(&relay_channels_mutex);
+ }
+ EXPORT_SYMBOL_GPL(relay_flush);
+ 
+@@ -1018,3 +1081,12 @@ struct file_operations relay_file_operations = {
+ 	.sendfile       = relay_file_sendfile,
+ };
+ EXPORT_SYMBOL_GPL(relay_file_operations);
++
++static __init int relay_init(void)
++{
++
++	hotcpu_notifier(relay_hotcpu_callback, 0);
++	return 0;
++}
++
++module_init(relay_init);

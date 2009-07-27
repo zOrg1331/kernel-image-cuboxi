@@ -1,0 +1,87 @@
+From: Kimball Murray <kmurray@redhat.com>
+Subject: [RHEL5 U1 Patch 1/1] irqbalance causes oops during PCI removal (BZ-242517)
+Date: Wed, 6 Jun 2007 10:05:24 -0400
+Bugzilla: 242517
+Message-Id: <20070606140017.27243.13168.sendpatchset@dhcp83-86.boston.redhat.com>
+Changelog: [pci] irqbalance causes oops during PCI removal
+
+
+The following patch addresses BZ-242517.
+
+This is the RHEL5 version of BZ-229584 (RHEL4).  The problem
+and description are identical.  The patch is nearly identical.
+
+Description from RHEL4:
+----------------------
+
+It's race on hotplug systems that occurs when a user process
+(like irq_balance) writes to /proc/irq/N/smi_affinity while
+at the nearly the same time a pci device or bus is being
+removed.
+
+set_msi_affinity tries to derefence a pci_dev struct when it
+calls pci_find_capability which in turn calls pci_read_config_word
+which marches down the dev->bus->ops->... chain.  But it's possible
+that either dev or bus is being torn down at the time.
+
+This patch adds the msi_lock (why wasn't it there before?) and
+also tests to see if the msi vector is active using the state flag.
+If it's not active then it may mean the device has given up the irq,
+or is in the process of "going away" in a hotplog operation.  So the
+state flag can be used to avoid the race condition.
+
+Testing: Without the patch, I had a near 100% failure rate with a simple
+         test of looping "echo 1 > /proc/irq/N/smp_affinity" and then
+         bringdown a PCI bus containing the device using that irq N.
+
+         With the patch I have never seen the problem.
+
+Upsteam: Looks like the MSI code has been moved around and reorganized. The
+         attached patch won't apply, but it looks like upstream kernels may
+         suffer the same problem, but the set_msi_irq_affinity routine there
+         is quite different, at least cosmetically.
+
+Note: Patch built and tested against 2.6.18-21
+
+--------------- snip ----------------------------------------------------
+diff -Naur linux-2.6.18.x86_64.orig/drivers/pci/msi.c linux-2.6.18.x86_64/drivers/pci/msi.c
+--- linux-2.6.18.x86_64.orig/drivers/pci/msi.c	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/pci/msi.c	2007-06-04 12:10:24.000000000 -0400
+@@ -100,10 +100,16 @@
+ 	u32 address_hi, address_lo;
+ 	unsigned int irq = vector;
+ 	unsigned int dest_cpu = first_cpu(cpu_mask);
++	unsigned long flags;
++
++	spin_lock_irqsave(&msi_lock, flags);
+ 
+ 	entry = (struct msi_desc *)msi_desc[vector];
+ 	if (!entry || !entry->dev)
+-		return;
++		goto out_unlock;
++
++	if (entry->msi_attrib.state == 0)
++		goto out_unlock;
+ 
+ 	switch (entry->msi_attrib.type) {
+ 	case PCI_CAP_ID_MSI:
+@@ -111,7 +117,7 @@
+ 		int pos = pci_find_capability(entry->dev, PCI_CAP_ID_MSI);
+ 
+ 		if (!pos)
+-			return;
++			goto out_unlock;
+ 
+ 		pci_read_config_dword(entry->dev, msi_upper_address_reg(pos),
+ 			&address_hi);
+@@ -149,6 +155,9 @@
+ 	default:
+ 		break;
+ 	}
++
++out_unlock:
++	spin_unlock_irqrestore(&msi_lock, flags);
+ }
+ #else
+ #define set_msi_affinity NULL
+

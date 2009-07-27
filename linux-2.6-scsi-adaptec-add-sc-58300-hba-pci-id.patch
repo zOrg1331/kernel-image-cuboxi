@@ -1,0 +1,72 @@
+From: Konrad Rzeszutek <konradr@redhat.com>
+Subject: [RHEL5 U1 PATCH] RHBZ249275: [Adaptec 5.1] Add SC-58300 HBA PCI ID to 	the aic94xx driver
+Date: Thu, 2 Aug 2007 14:09:21 -0400
+Bugzilla: 249275
+Message-Id: <20070802180921.GA23232@mars.boston.redhat.com>
+Changelog: [scsi] Adaptec: Add SC-58300 HBA PCI ID
+
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=249275
+
+Description:
+------------
+Adaptec would like to add new ASC-58300 HBA PCI device id 0416 for aic94xx 
+driver.  The ASC-58300 is eight port SAS and SATA PCI-X 133MHz low profile 
+host bus adapter with a SFF-8470 4x external connector.
+
+RHEL Version Found:
+------------------
+RHEL5.1
+
+kABI Status:
+------------
+No kABI breakage.
+
+Brew:
+-----
+Built on all platforms. Build ID 895053.
+
+Upstream Status:
+----------------
+Not yet posted by Adaptec.
+
+Test Status:
+------------
+I've done: boot, shutdown, kdump, disk hot plugging, I/O stress tests.
+I am doing 24hr I/O test runs overnight right now and will reply tomorrow
+if there are any complications.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-36.el5
+
+diff -Naur linux-2.6.18.i686.org/drivers/scsi/aic94xx/aic94xx_hwi.h linux-2.6.18.i686.new/drivers/scsi/aic94xx/aic94xx_hwi.h
+--- linux-2.6.18.i686.org/drivers/scsi/aic94xx/aic94xx_hwi.h	2007-07-19 11:01:42.000000000 -0700
++++ linux-2.6.18.i686.new/drivers/scsi/aic94xx/aic94xx_hwi.h	2007-07-19 11:03:19.000000000 -0700
+@@ -45,6 +45,7 @@
+  */
+ #define PCI_DEVICE_ID_ADAPTEC2_RAZOR10 0x410
+ #define PCI_DEVICE_ID_ADAPTEC2_RAZOR12 0x412
++#define PCI_DEVICE_ID_ADAPTEC2_RAZOR16 0x416
+ #define PCI_DEVICE_ID_ADAPTEC2_RAZOR1E 0x41E
+ #define PCI_DEVICE_ID_ADAPTEC2_RAZOR1F 0x41F
+ #define PCI_DEVICE_ID_ADAPTEC2_RAZOR30 0x430
+diff -Naur linux-2.6.18.i686.org/drivers/scsi/aic94xx/aic94xx_init.c linux-2.6.18.i686.new/drivers/scsi/aic94xx/aic94xx_init.c
+--- linux-2.6.18.i686.org/drivers/scsi/aic94xx/aic94xx_init.c	2007-07-19 11:01:47.000000000 -0700
++++ linux-2.6.18.i686.new/drivers/scsi/aic94xx/aic94xx_init.c	2007-07-19 11:04:29.000000000 -0700
+@@ -849,6 +849,8 @@
+ 	 0, 0, 1},
+ 	{PCI_DEVICE(PCI_VENDOR_ID_ADAPTEC2, PCI_DEVICE_ID_ADAPTEC2_RAZOR12),
+ 	 0, 0, 1},
++	{PCI_DEVICE(PCI_VENDOR_ID_ADAPTEC2, PCI_DEVICE_ID_ADAPTEC2_RAZOR16),
++	 0, 0, 1},
+ 	{PCI_DEVICE(PCI_VENDOR_ID_ADAPTEC2, PCI_DEVICE_ID_ADAPTEC2_RAZOR1E),
+ 	 0, 0, 1},
+ 	{PCI_DEVICE(PCI_VENDOR_ID_ADAPTEC2, PCI_DEVICE_ID_ADAPTEC2_RAZOR1F),
+
+-- 
+Konrad Rzeszutek 1-(978)-392-3903 or 1-(617)-693-1718
+IBM on-site partner.  
+

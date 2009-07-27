@@ -1,0 +1,281 @@
+From: Bob Peterson <rpeterso@redhat.com>
+Subject: [RHEL 5.1] [GFS2] bz #248176: GFS2: invalid metadata block, gfs2_meta_indirect_buffer
+Date: Thu, 09 Aug 2007 10:46:53 -0500
+Bugzilla: 248176
+Message-Id: <1186674413.25269.92.camel@technetium.msp.redhat.com>
+Changelog: [GFS2] invalid metadata block
+
+
+Hi,
+
+This patch is for bug #248176: GFS2: invalid metadata block.
+There are several places where gfs2 file system buffer
+corruption and block corruption were possible.  For more
+details, see:
+
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=248176
+
+This patch is now in the upstream git tree for gfs2, and it 
+has been tested thoroughly using the "revolver" QE test,
+which does a wide variety of strenuous file system I/O
+combined with node recovery and journal replay.
+
+Regards,
+
+Bob Peterson
+--
+Signed-off-by: Bob Peterson <rpeterso@redhat.com> 
+--
+diff -pur a/fs/gfs2/log.c b/fs/gfs2/log.c
+--- a/fs/gfs2/log.c	2007-08-09 08:43:02.000000000 -0500
++++ b/fs/gfs2/log.c	2007-08-08 08:05:32.000000000 -0500
+@@ -83,11 +83,6 @@ static void gfs2_ail1_start_one(struct g
+ 
+ 			gfs2_assert(sdp, bd->bd_ail == ai);
+ 
+-			if (!bh){
+-				list_move(&bd->bd_ail_st_list, &ai->ai_ail2_list);
+-                                continue;
+-                        }
+-
+ 			if (!buffer_busy(bh)) {
+ 				if (!buffer_uptodate(bh)) {
+ 					gfs2_log_unlock(sdp);
+@@ -130,11 +125,6 @@ static int gfs2_ail1_empty_one(struct gf
+ 					 bd_ail_st_list) {
+ 		bh = bd->bd_bh;
+ 
+-		if (!bh){
+-			list_move(&bd->bd_ail_st_list, &ai->ai_ail2_list);
+-			continue;
+-		}
+-
+ 		gfs2_assert(sdp, bd->bd_ail == ai);
+ 
+ 		if (buffer_busy(bh)) {
+@@ -155,13 +145,14 @@ static int gfs2_ail1_empty_one(struct gf
+ 
+ static void gfs2_ail1_start(struct gfs2_sbd *sdp, int flags)
+ {
+-	struct list_head *head = &sdp->sd_ail1_list;
++	struct list_head *head;
+ 	u64 sync_gen;
+ 	struct list_head *first;
+ 	struct gfs2_ail *first_ai, *ai, *tmp;
+ 	int done = 0;
+ 
+ 	gfs2_log_lock(sdp);
++	head = &sdp->sd_ail1_list;
+ 	if (list_empty(head)) {
+ 		gfs2_log_unlock(sdp);
+ 		return;
+diff -pur a/fs/gfs2/lops.c b/fs/gfs2/lops.c
+--- a/fs/gfs2/lops.c	2007-08-09 08:43:02.000000000 -0500
++++ b/fs/gfs2/lops.c	2007-08-08 08:05:08.000000000 -0500
+@@ -117,7 +117,7 @@ static void buf_lo_before_commit(struct 
+ 	struct buffer_head *bh;
+ 	struct gfs2_log_descriptor *ld;
+ 	struct gfs2_bufdata *bd1 = NULL, *bd2;
+-	unsigned int total = sdp->sd_log_num_buf;
++	unsigned int total;
+ 	unsigned int offset = BUF_OFFSET;
+ 	unsigned int limit;
+ 	unsigned int num;
+@@ -127,12 +127,16 @@ static void buf_lo_before_commit(struct 
+ 	limit = buf_limit(sdp);
+ 	/* for 4k blocks, limit = 503 */
+ 
++	gfs2_log_lock(sdp);
++	total = sdp->sd_log_num_buf;
+ 	bd1 = bd2 = list_prepare_entry(bd1, &sdp->sd_log_le_buf, bd_le.le_list);
+ 	while(total) {
+ 		num = total;
+ 		if (total > limit)
+ 			num = limit;
++		gfs2_log_unlock(sdp);
+ 		bh = gfs2_log_get_buf(sdp);
++		gfs2_log_lock(sdp);
+ 		ld = (struct gfs2_log_descriptor *)bh->b_data;
+ 		ptr = (__be64 *)(bh->b_data + offset);
+ 		ld->ld_header.mh_magic = cpu_to_be32(GFS2_MAGIC);
+@@ -152,21 +156,27 @@ static void buf_lo_before_commit(struct 
+ 				break;
+ 		}
+ 
++		gfs2_log_unlock(sdp);
+ 		set_buffer_dirty(bh);
+ 		ll_rw_block(WRITE, 1, &bh);
++		gfs2_log_lock(sdp);
+ 
+ 		n = 0;
+ 		list_for_each_entry_continue(bd2, &sdp->sd_log_le_buf,
+ 					     bd_le.le_list) {
++			gfs2_log_unlock(sdp);
+ 			bh = gfs2_log_fake_buf(sdp, bd2->bd_bh);
+ 			set_buffer_dirty(bh);
+ 			ll_rw_block(WRITE, 1, &bh);
++			gfs2_log_lock(sdp);
+ 			if (++n >= num)
+ 				break;
+ 		}
+ 
++		BUG_ON(total < num);
+ 		total -= num;
+ 	}
++	gfs2_log_unlock(sdp);
+ }
+ 
+ static void buf_lo_after_commit(struct gfs2_sbd *sdp, struct gfs2_ail *ai)
+@@ -524,7 +534,7 @@ static void databuf_lo_before_commit(str
+ 	struct gfs2_log_descriptor *ld;
+ 	unsigned int limit;
+ 	unsigned int total_dbuf;
+-	unsigned int total_jdata = sdp->sd_log_num_jdata;
++	unsigned int total_jdata;
+ 	unsigned int num, n;
+ 	__be64 *ptr = NULL;
+ 
+@@ -536,6 +546,7 @@ static void databuf_lo_before_commit(str
+ 	 */
+ 	gfs2_log_lock(sdp);
+ 	total_dbuf = sdp->sd_log_num_databuf;
++	total_jdata = sdp->sd_log_num_jdata;
+ 	bd2 = bd1 = list_prepare_entry(bd1, &sdp->sd_log_le_databuf,
+ 				       bd_le.le_list);
+ 	while(total_dbuf) {
+@@ -621,10 +632,10 @@ static void databuf_lo_before_commit(str
+ 		}
+ 		gfs2_log_unlock(sdp);
+ 		if (bh) {
+-			set_buffer_mapped(bh);
+ 			set_buffer_dirty(bh);
+ 			ll_rw_block(WRITE, 1, &bh);
+ 			bh = NULL;
++			ptr = NULL;
+ 		}
+ 		n = 0;
+ 		gfs2_log_lock(sdp);
+diff -pur a/fs/gfs2/ops_fstype.c b/fs/gfs2/ops_fstype.c
+--- a/fs/gfs2/ops_fstype.c	2007-08-09 08:43:03.000000000 -0500
++++ b/fs/gfs2/ops_fstype.c	2007-08-09 09:17:51.000000000 -0500
+@@ -359,7 +359,7 @@ static int init_journal(struct gfs2_sbd 
+ 
+ 		ip = GFS2_I(sdp->sd_jdesc->jd_inode);
+ 		error = gfs2_glock_nq_init(ip->i_gl, LM_ST_SHARED,
+-					   LM_FLAG_NOEXP | GL_EXACT,
++					   LM_FLAG_NOEXP | GL_EXACT | GL_NOCACHE,
+ 					   &sdp->sd_jinode_gh);
+ 		if (error) {
+ 			fs_err(sdp, "can't acquire journal inode glock: %d\n",
+Only in b/fs/gfs2: ops_fstype.c.~1~
+diff -pur a/fs/gfs2/recovery.c b/fs/gfs2/recovery.c
+--- a/fs/gfs2/recovery.c	2007-08-09 08:42:51.000000000 -0500
++++ b/fs/gfs2/recovery.c	2007-08-08 08:07:03.000000000 -0500
+@@ -469,7 +469,7 @@ int gfs2_recover_journal(struct gfs2_jde
+ 		};
+ 
+ 		error = gfs2_glock_nq_init(ip->i_gl, LM_ST_SHARED,
+-					   LM_FLAG_NOEXP, &ji_gh);
++					   LM_FLAG_NOEXP | GL_NOCACHE, &ji_gh);
+ 		if (error)
+ 			goto fail_gunlock_j;
+ 	} else {
+diff -pur a/fs/gfs2/rgrp.c b/fs/gfs2/rgrp.c
+--- a/fs/gfs2/rgrp.c	2007-08-09 08:43:03.000000000 -0500
++++ b/fs/gfs2/rgrp.c	2007-08-08 08:06:37.000000000 -0500
+@@ -31,6 +31,7 @@
+ #include "inode.h"
+ 
+ #define BFITNOENT ((u32)~0)
++#define NO_BLOCK ((u64)~0)
+ 
+ /*
+  * These routines are used by the resource group routines (rgrp.c)
+@@ -116,8 +117,7 @@ static unsigned char gfs2_testbit(struct
+  * @buffer: the buffer that holds the bitmaps
+  * @buflen: the length (in bytes) of the buffer
+  * @goal: start search at this block's bit-pair (within @buffer)
+- * @old_state: GFS2_BLKST_XXX the state of the block we're looking for;
+- *       bit 0 = alloc(1)/free(0), bit 1 = meta(1)/data(0)
++ * @old_state: GFS2_BLKST_XXX the state of the block we're looking for.
+  *
+  * Scope of @goal and returned block number is only within this bitmap buffer,
+  * not entire rgrp or filesystem.  @buffer will be offset from the actual
+@@ -137,9 +137,13 @@ static u32 gfs2_bitfit(struct gfs2_rgrpd
+ 	byte = buffer + (goal / GFS2_NBBY);
+ 	bit = (goal % GFS2_NBBY) * GFS2_BIT_SIZE;
+ 	end = buffer + buflen;
+-	alloc = (old_state & 1) ? 0 : 0x55;
++	alloc = (old_state == GFS2_BLKST_FREE) ? 0x55 : 0;
+ 
+ 	while (byte < end) {
++		/* If we're looking for a free block we can eliminate all
++		   bitmap settings with 0x55, which represents four data
++		   blocks in a row.  If we're looking for a data block, we can
++		   eliminate 0x00 which corresponds to four free blocks. */
+ 		if ((*byte & 0x55) == alloc) {
+ 			blk += (8 - bit) >> 1;
+ 
+@@ -859,19 +863,24 @@ static int try_rgrp_fit(struct gfs2_rgrp
+ static struct inode *try_rgrp_unlink(struct gfs2_rgrpd *rgd, u64 *last_unlinked)
+ {
+ 	struct inode *inode;
+-	u32 goal = 0;
++	u32 goal = 0, block;
+ 	u64 no_addr;
++	struct gfs2_sbd *sdp = rgd->rd_sbd;
+ 
+ 	for(;;) {
+ 		if (goal >= rgd->rd_data)
+ 			break;
+-		goal = rgblk_search(rgd, goal, GFS2_BLKST_UNLINKED,
+-				    GFS2_BLKST_UNLINKED);
+-		if (goal == BFITNOENT)
++		down_write(&sdp->sd_log_flush_lock);
++		block = rgblk_search(rgd, goal, GFS2_BLKST_UNLINKED,
++				     GFS2_BLKST_UNLINKED);
++		up_write(&sdp->sd_log_flush_lock);
++		if (block == BFITNOENT)
+ 			break;
+-		no_addr = goal + rgd->rd_data0;
++		/* rgblk_search can return a block < goal, so we need to
++		   keep it marching forward. */
++		no_addr = block + rgd->rd_data0;
+ 		goal++;
+-		if (no_addr < *last_unlinked)
++		if (*last_unlinked != NO_BLOCK && no_addr <= *last_unlinked)
+ 			continue;
+ 		*last_unlinked = no_addr;
+ 		inode = gfs2_inode_lookup(rgd->rd_sbd->sd_vfs, DT_UNKNOWN,
+@@ -1152,7 +1161,7 @@ int gfs2_inplace_reserve_i(struct gfs2_i
+ 	struct gfs2_alloc *al = &ip->i_alloc;
+ 	struct inode *inode;
+ 	int error = 0;
+-	u64 last_unlinked = 0;
++	u64 last_unlinked = NO_BLOCK;
+ 
+ 	if (gfs2_assert_warn(sdp, al->al_requested))
+ 		return -EINVAL;
+@@ -1289,7 +1298,9 @@ static u32 rgblk_search(struct gfs2_rgrp
+ 	   allocatable block anywhere else, we want to be able wrap around and
+ 	   search in the first part of our first-searched bit block.  */
+ 	for (x = 0; x <= length; x++) {
+-		if (bi->bi_clone)
++		/* The GFS2_BLKST_UNLINKED state doesn't apply to the clone
++		   bitmaps, so we must search the originals for that. */
++		if (old_state != GFS2_BLKST_UNLINKED && bi->bi_clone)
+ 			blk = gfs2_bitfit(rgd, bi->bi_clone + bi->bi_offset,
+ 					  bi->bi_len, goal, old_state);
+ 		else
+@@ -1305,9 +1316,7 @@ static u32 rgblk_search(struct gfs2_rgrp
+ 		goal = 0;
+ 	}
+ 
+-	if (old_state != new_state) {
+-		gfs2_assert_withdraw(rgd->rd_sbd, blk != BFITNOENT);
+-
++	if (blk != BFITNOENT && old_state != new_state) {
+ 		gfs2_trans_add_bh(rgd->rd_gl, bi->bi_bh, 1);
+ 		gfs2_setbit(rgd, bi->bi_bh->b_data + bi->bi_offset,
+ 			    bi->bi_len, blk, new_state);
+

@@ -1,0 +1,183 @@
+From: Michael Tokarev <mjt@tls.msk.ru>
+Date: Fri, 27 Oct 2006 12:02:37 +0000 (+0400)
+Subject: [SCSI] modalias for scsi devices
+X-Git-Tag: v2.6.22-rc1~1015^2~2
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=d7b8bcb0a0819315a51cae620ff7ae0c1704c069;hp=44ec95425c1d9dce6e4638c29e4362cfb44814e7
+
+[SCSI] modalias for scsi devices
+
+The following patch adds support for sysfs/uevent modalias
+attribute for scsi devices (like disks, tapes, cdroms etc),
+based on whatever current sd.c, sr.c, st.c and osst.c drivers
+supports.
+
+The modalias format is like this:
+
+ scsi:type-0x04
+
+(for TYPE_WORM, handled by sr.c now).
+
+Several comments.
+
+o This hexadecimal type value is because all TYPE_XXX constants
+  in include/scsi/scsi.h are given in hex, but __stringify() will
+  not convert them to decimal (so it will NOT be scsi:type-4).
+  Since it does not really matter in which format it is, while
+  both modalias in module and modalias attribute match each other,
+  I descided to go for that 0x%02x format (and added a comment in
+  include/scsi/scsi.h to keep them that way), instead of changing
+  them all to decimal.
+
+o There was no .uevent routine for SCSI bus.  It might be a good
+  idea to add some more ueven environment variables in there.
+
+o osst.c driver handles tapes too, like st.c, but only SOME tapes.
+  With this setup, hotplug scripts (or whatever is used by the
+  user) will try to load both st and osst modules for all SCSI
+  tapes found, because both modules have scsi:type-0x01 alias).
+  It is not harmful, but one extra module is no good either.
+  It is possible to solve this, by exporting more info in
+  modalias attribute, including vendor and device identification
+  strings, so that modalias becomes something like
+    scsi:type-0x12:vendor-Adaptec LTD:device-OnStream Tape Drive
+  and having that, match for all 3 attributes, not only device
+  type.  But oh well, vendor and device strings may be large,
+  and they do contain spaces and whatnot.
+  So I left them for now, awaiting for comments first.
+
+Signed-off-by: Michael Tokarev <mjt@tls.msk.ru>
+Signed-off-by: James Bottomley <James.Bottomley@SteelEye.com>
+---
+
+diff --git a/drivers/scsi/osst.c b/drivers/scsi/osst.c
+index a967fad..08060fb 100644
+--- a/drivers/scsi/osst.c
++++ b/drivers/scsi/osst.c
+@@ -87,6 +87,7 @@ MODULE_AUTHOR("Willem Riede");
+ MODULE_DESCRIPTION("OnStream {DI-|FW-|SC-|USB}{30|50} Tape Driver");
+ MODULE_LICENSE("GPL");
+ MODULE_ALIAS_CHARDEV_MAJOR(OSST_MAJOR);
++MODULE_ALIAS_SCSI_DEVICE(TYPE_TAPE);
+ 
+ module_param(max_dev, int, 0444);
+ MODULE_PARM_DESC(max_dev, "Maximum number of OnStream Tape Drives to attach (4)");
+diff --git a/drivers/scsi/scsi_sysfs.c b/drivers/scsi/scsi_sysfs.c
+index 96db51c..5326f5c 100644
+--- a/drivers/scsi/scsi_sysfs.c
++++ b/drivers/scsi/scsi_sysfs.c
+@@ -276,6 +276,19 @@ static int scsi_bus_match(struct device *dev, struct device_driver *gendrv)
+ 	return (sdp->inq_periph_qual == SCSI_INQ_PQ_CON)? 1: 0;
+ }
+ 
++static int scsi_bus_uevent(struct device *dev, char **envp, int num_envp,
++		           char *buffer, int buffer_size)
++{
++	struct scsi_device *sdev = to_scsi_device(dev);
++	int i = 0;
++	int length = 0;
++
++	add_uevent_var(envp, num_envp, &i, buffer, buffer_size, &length,
++		       "MODALIAS=" SCSI_DEVICE_MODALIAS_FMT, sdev->type);
++	envp[i] = NULL;
++	return 0;
++}
++
+ static int scsi_bus_suspend(struct device * dev, pm_message_t state)
+ {
+ 	struct device_driver *drv = dev->driver;
+@@ -331,6 +344,7 @@ static int scsi_bus_resume(struct device * dev)
+ struct bus_type scsi_bus_type = {
+         .name		= "scsi",
+         .match		= scsi_bus_match,
++	.uevent		= scsi_bus_uevent,
+ 	.suspend	= scsi_bus_suspend,
+ 	.resume		= scsi_bus_resume,
+ };
+@@ -558,6 +572,14 @@ show_sdev_iostat(iorequest_cnt);
+ show_sdev_iostat(iodone_cnt);
+ show_sdev_iostat(ioerr_cnt);
+ 
++static ssize_t
++sdev_show_modalias(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct scsi_device *sdev;
++	sdev = to_scsi_device(dev);
++	return snprintf (buf, 20, SCSI_DEVICE_MODALIAS_FMT "\n", sdev->type);
++}
++static DEVICE_ATTR(modalias, S_IRUGO, sdev_show_modalias, NULL);
+ 
+ /* Default template for device attributes.  May NOT be modified */
+ static struct device_attribute *scsi_sysfs_sdev_attrs[] = {
+@@ -577,6 +599,7 @@ static struct device_attribute *scsi_sysfs_sdev_attrs[] = {
+ 	&dev_attr_iorequest_cnt,
+ 	&dev_attr_iodone_cnt,
+ 	&dev_attr_ioerr_cnt,
++	&dev_attr_modalias,
+ 	NULL
+ };
+ 
+diff --git a/drivers/scsi/sd.c b/drivers/scsi/sd.c
+index b044dcf..00e4666 100644
+--- a/drivers/scsi/sd.c
++++ b/drivers/scsi/sd.c
+@@ -82,6 +82,9 @@ MODULE_ALIAS_BLOCKDEV_MAJOR(SCSI_DISK12_MAJOR);
+ MODULE_ALIAS_BLOCKDEV_MAJOR(SCSI_DISK13_MAJOR);
+ MODULE_ALIAS_BLOCKDEV_MAJOR(SCSI_DISK14_MAJOR);
+ MODULE_ALIAS_BLOCKDEV_MAJOR(SCSI_DISK15_MAJOR);
++MODULE_ALIAS_SCSI_DEVICE(TYPE_DISK);
++MODULE_ALIAS_SCSI_DEVICE(TYPE_MOD);
++MODULE_ALIAS_SCSI_DEVICE(TYPE_RBC);
+ 
+ static DEFINE_IDR(sd_index_idr);
+ static DEFINE_SPINLOCK(sd_index_lock);
+diff --git a/drivers/scsi/sr.c b/drivers/scsi/sr.c
+index 1857d68..f9a52af 100644
+--- a/drivers/scsi/sr.c
++++ b/drivers/scsi/sr.c
+@@ -62,6 +62,8 @@
+ MODULE_DESCRIPTION("SCSI cdrom (sr) driver");
+ MODULE_LICENSE("GPL");
+ MODULE_ALIAS_BLOCKDEV_MAJOR(SCSI_CDROM_MAJOR);
++MODULE_ALIAS_SCSI_DEVICE(TYPE_ROM);
++MODULE_ALIAS_SCSI_DEVICE(TYPE_WORM);
+ 
+ #define SR_DISKS	256
+ 
+diff --git a/drivers/scsi/st.c b/drivers/scsi/st.c
+index 98d8411..55bfecc 100644
+--- a/drivers/scsi/st.c
++++ b/drivers/scsi/st.c
+@@ -89,6 +89,7 @@ MODULE_AUTHOR("Kai Makisara");
+ MODULE_DESCRIPTION("SCSI tape (st) driver");
+ MODULE_LICENSE("GPL");
+ MODULE_ALIAS_CHARDEV_MAJOR(SCSI_TAPE_MAJOR);
++MODULE_ALIAS_SCSI_DEVICE(TYPE_TAPE);
+ 
+ /* Set 'perm' (4th argument) to 0 to disable module_param's definition
+  * of sysfs parameters (which module_param doesn't yet support).
+diff --git a/include/scsi/scsi.h b/include/scsi/scsi.h
+index 5c0e979..9f8f80a 100644
+--- a/include/scsi/scsi.h
++++ b/include/scsi/scsi.h
+@@ -203,6 +203,7 @@ static inline int scsi_status_is_good(int status)
+ 
+ /*
+  *  DEVICE TYPES
++ *  Please keep them in 0x%02x format for $MODALIAS to work
+  */
+ 
+ #define TYPE_DISK           0x00
+diff --git a/include/scsi/scsi_device.h b/include/scsi/scsi_device.h
+index b05cd3b..2f3c5b8 100644
+--- a/include/scsi/scsi_device.h
++++ b/include/scsi/scsi_device.h
+@@ -358,4 +358,9 @@ static inline int scsi_device_qas(struct scsi_device *sdev)
+ 		return 0;
+ 	return sdev->inquiry[56] & 0x02;
+ }
++
++#define MODULE_ALIAS_SCSI_DEVICE(type) \
++	MODULE_ALIAS("scsi:t-" __stringify(type) "*")
++#define SCSI_DEVICE_MODALIAS_FMT "scsi:t-0x%02x"
++
+ #endif /* _SCSI_SCSI_DEVICE_H */

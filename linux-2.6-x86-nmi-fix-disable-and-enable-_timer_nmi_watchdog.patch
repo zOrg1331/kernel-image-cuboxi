@@ -1,0 +1,55 @@
+From: Aristeu Rozanski <aris@redhat.com>
+Date: Wed, 20 Aug 2008 13:17:10 -0400
+Subject: [x86] nmi: fix disable and enable _timer_nmi_watchdog
+Message-id: 20080820171652.199458000@redhat.com
+O-Subject: [RHEL5.3 PATCH 24/25] nmi: fix disable and enable _timer_nmi_watchdog()
+Bugzilla: 447618
+
+https://bugzilla.redhat.com/show_bug.cgi?id=447618
+
+{disable_enable}_timer_nmi_watchdog() is used to provide oprofile a periodic
+timer. These functions disable/enable the NMI watchdog (but not the periodic
+NMIs) in the case IO_APIC is being used.
+
+fix {disable,enable}_timer_nmi_watchdog() so nmi_watchdog variable won't be
+changed.
+
+upstream: not relevant upstream, both functions aren't used since
+          2fbe7b25c8edaf2d10e6c1a4cc9f8afe714c4764
+
+diff --git a/arch/i386/kernel/nmi.c b/arch/i386/kernel/nmi.c
+index 956ffb5..8a17646 100644
+--- a/arch/i386/kernel/nmi.c
++++ b/arch/i386/kernel/nmi.c
+@@ -179,21 +179,16 @@ void release_lapic_nmi(void)
+ static int old_ioapic_count;
+ void disable_timer_nmi_watchdog(void)
+ {
+-	if ((nmi_watchdog != NMI_IO_APIC) ||
+-	    (atomic_read(&nmi_watchdog_active) <= 0))
+-		return;
+-
+ 	unset_nmi_callback();
+ 	old_ioapic_count = atomic_read(&nmi_watchdog_active);
+ 	atomic_set(&nmi_watchdog_active, -1);
+ 	nmi_active = -1;
+-	nmi_watchdog = NMI_NONE;
+ }
+ 
+ void enable_timer_nmi_watchdog(void)
+ {
+-	if (atomic_read(&nmi_watchdog_active) < 0) {
+-		nmi_watchdog = NMI_IO_APIC;
++	if (nmi_watchdog == NMI_IO_APIC &&
++	    atomic_read(&nmi_watchdog_active) < 0) {
+ 		atomic_set(&nmi_watchdog_active, old_ioapic_count);
+ 		touch_nmi_watchdog();
+ 		nmi_active = 1;
+@@ -366,7 +361,6 @@ extern void die_nmi(struct pt_regs *, const char *msg);
+ 
+ int nmi_watchdog_tick (struct pt_regs * regs)
+ {
+-
+ 	/*
+ 	 * Since current_thread_info()-> is always on the stack, and we
+ 	 * always switch the stack NMI-atomically, it's safe to use

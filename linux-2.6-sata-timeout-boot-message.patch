@@ -1,0 +1,35 @@
+From: Peter Martuccelli <peterm@redhat.com>
+Subject: [RHEL5 PATCH] SATA timeout boot message - BZ #222108
+Date: Thu, 11 Jan 2007 16:19:15 -0500
+Bugzilla: 222108
+Message-Id: <200701112119.l0BLJFTN005005@redrum.boston.redhat.com>
+Changelog: SATA timeout boot message 
+
+Hello,
+
+The message will change from:
+
+Jan  5 15:34:30 dhcp83-128 kernel: ata2: port is slow to respond, please be patient
+
+to the following:
+
+Jan 11 14:12:17 dhcp83-189 kernel: ata2: port is slow to respond, this delay is known to occur on vacant SATA ports
+
+Regards,
+
+Peter
+
+--- linux-2.6.18.i386/drivers/scsi/libata-core.c.orig	2007-01-11 12:34:29.000000000 -0500
++++ linux-2.6.18.i386/drivers/scsi/libata-core.c	2007-01-11 13:33:17.000000000 -0500
+@@ -2290,7 +2290,8 @@ unsigned int ata_busy_sleep (struct ata_
+ 
+ 	if (status & ATA_BUSY)
+ 		ata_port_printk(ap, KERN_WARNING,
+-				"port is slow to respond, please be patient\n");
++				"port is slow to respond, this delay is known to "
++				"occur on vacant SATA ports\n");
+ 
+ 	timeout = timer_start + tmout;
+ 	while ((status & ATA_BUSY) && (time_before(jiffies, timeout))) {
+
+

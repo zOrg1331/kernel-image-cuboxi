@@ -1,0 +1,46 @@
+From: David Milburn <dmilburn@redhat.com>
+Subject: [RHEL-5 PATCH] scsi_tranport_fc: check portstates before invoking 	target scan
+Date: Wed, 27 Jun 2007 18:22:33 -0500
+Bugzilla: 246023
+Message-Id: <20070627232233.GA9461@dhcp-210.hsv.redhat.com>
+Changelog: [scsi] scsi_tranport_fc: check portstates before invoking target scan
+
+
+Before calling scsi_scan_target(), fc_user_scan() needs to check
+the portstate, if the rport has already been removed this will
+cause scsi_scan_target() to oops. If a device has been removed 
+fc_remote_port_delete() changes the portstate to FC_PORTSTATE_BLOCKED
+and sets up the devloss timeout handler. If devloss timeout expires,
+fc_timeout_deleted_rport() runs and the target is removed, this may
+cause fc_user_scan() to scan the already removed target.
+
+Customer was able to consistently reproduce this by pulling fc cable, 
+and rescanning the host through sysfs before the devloss timeout 
+had expired. They have verified the problem is no longer reproducible
+with a 2.6.18-8.el5 kernel built with this patch. 
+
+This fix is currently in James Bottomley's scsi-misc-2.6.git tree:
+ 
+ http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;a=commitdiff;h=0d2fcd9f9858a34f7056b3b1cb60ce0f883d06b6
+
+ BZ 246023 / IT 118144
+
+Please ack or comment.
+
+Thanks,
+David
+
+--- linux-2.6.18.i686/drivers/scsi/scsi_transport_fc.c.scan
++++ linux-2.6.18.i686/drivers/scsi/scsi_transport_fc.c
+@@ -1452,6 +1452,9 @@ static int fc_user_scan(struct Scsi_Host
+ 		if (rport->scsi_target_id == -1)
+ 			continue;
+ 
++		if (rport->port_state != FC_PORTSTATE_ONLINE)
++			continue;
++
+ 		if ((channel == SCAN_WILD_CARD || channel == rport->channel) &&
+ 		    (id == SCAN_WILD_CARD || id == rport->scsi_target_id)) {
+ 			scsi_scan_target(&rport->dev, rport->channel,
+
+

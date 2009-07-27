@@ -1,0 +1,34 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Wed, 17 Sep 2008 17:14:19 +0200
+Subject: [docs] update kernel-parameters with tick-divider
+Message-id: 48D11ECB.1060100@redhat.com
+O-Subject: [RHEL5.3 PATCH v2]: Update kernel-parameters with tick-divider
+Bugzilla: 454792
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Alan Cox <alan@redhat.com>
+RH-Nacked-by: Alan Cox <alan@redhat.com>
+
+We have a request to better document the tick divider patch that went into 5.1.
+ Towards this end, I came up with the following patch to
+Documentation/kernel-parameters.txt.  Not sure if it needs ACKs or anything, but
+I wanted to make sure dzickus saw it.  This will resolve BZ 454792.  This
+version doesn't tell the user to divide by zero (thanks Alan).
+
+--
+Chris Lalancette
+
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index b5bbd11..20ab2a9 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -470,6 +470,10 @@ running once the system is up.
+ 			See drivers/char/README.epca and
+ 			Documentation/digiepca.txt.
+ 
++	divider=	[IA-32,X86-64]
++			divide kernel HZ rate by given value.
++			Format: <num>, where <num> is between 1 and 25
++
+ 	dmascc=		[HW,AX25,SERIAL] AX.25 Z80SCC driver with DMA
+ 			support available.
+ 			Format: <io_dev0>[,<io_dev1>[,..<io_dev32>]]

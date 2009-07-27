@@ -1,0 +1,52 @@
+From: Bob Peterson <rpeterso@redhat.com>
+Subject: [RHEL 5.1] [GFS2] bz #246114: GFS2: soft lockup in rgblk_search
+Date: Thu, 12 Jul 2007 17:03:42 -0500
+Bugzilla: 246114
+Message-Id: <1184277822.517.18.camel@technetium.msp.redhat.com>
+Changelog: [GFS2] soft lockup in rgblk_search
+
+
+This patch fixes the problem described in bugzilla bug 246114.
+
+The code was looping in the relatively new section of code designed to
+search for and reuse unlinked inodes.  In cases where it was finding an
+appropriate inode to reuse, it was looping around and finding the same
+block over and over because a "<=" check should have been a "<" when
+comparing the goal block to the last unlinked block found.
+
+It was tested on the roth cluster using the revolver QE test.
+
+Regards,
+
+Bob Peterson
+Red Hat Cluster Suite
+
+Signed-off-by: Bob Peterson <rpeterso@redhat.com>
+--
+diff -pur a/fs/gfs2/rgrp.c b/fs/gfs2/rgrp.c
+--- a/fs/gfs2/rgrp.c	2007-07-10 12:28:02.000000000 -0500
++++ b/fs/gfs2/rgrp.c	2007-07-12 16:02:08.000000000 -0500
+@@ -863,16 +863,19 @@ static struct inode *try_rgrp_unlink(str
+ 	u64 no_addr;
+ 
+ 	for(;;) {
++		if (goal >= rgd->rd_data)
++			break;
+ 		goal = rgblk_search(rgd, goal, GFS2_BLKST_UNLINKED,
+ 				    GFS2_BLKST_UNLINKED);
+ 		if (goal == 0)
+-			return 0;
++			break;
+ 		no_addr = goal + rgd->rd_data0;
+-		if (no_addr <= *last_unlinked)
++		goal++;
++		if (no_addr < *last_unlinked)
+ 			continue;
+ 		*last_unlinked = no_addr;
+ 		inode = gfs2_inode_lookup(rgd->rd_sbd->sd_vfs, DT_UNKNOWN,
+-					no_addr, -1);
++					  no_addr, -1);
+ 		if (!IS_ERR(inode))
+ 			return inode;
+ 	}
+

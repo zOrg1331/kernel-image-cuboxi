@@ -1,0 +1,429 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] 1/2 : PCI-X/PCI-Express read control interface
+Date: Thu, 21 Jun 2007 09:41:38 -0400
+Bugzilla: 234335
+Message-Id: <467A8012.8020005@redhat.com>
+Changelog: [pci] PCI-X/PCI-Express read control interface
+
+>This patch set introduces a PCI-X / PCI-Express read byte count 
+>control interface. Instead of letting every driver to directly 
+>read/write to PCI config space for that, an interface is provided. The 
+>interface functions then can be used for quirks since some PCI bridges 
+>require that read byte count values are set by the BIOS and left 
+>unchanged by device drivers.
+
+--- linux-2.6.18.x86_64/include/linux/pci.h.orig	2007-06-19 14:59:21.000000000 -0400
++++ linux-2.6.18.x86_64/include/linux/pci.h	2007-06-21 09:26:34.000000000 -0400
+@@ -109,7 +109,8 @@
+ 
+ typedef unsigned short __bitwise pci_bus_flags_t;
+ enum pci_bus_flags {
+-	PCI_BUS_FLAGS_NO_MSI = (__force pci_bus_flags_t) 1,
++	PCI_BUS_FLAGS_NO_MSI   = (__force pci_bus_flags_t) 1,
++	PCI_BUS_FLAGS_NO_MMRBC = (__force pci_bus_flags_t) 2,
+ };
+ 
+ struct pci_cap_saved_state {
+@@ -543,6 +544,10 @@
+ void pci_intx(struct pci_dev *dev, int enable);
+ int pci_set_dma_mask(struct pci_dev *dev, u64 mask);
+ int pci_set_consistent_dma_mask(struct pci_dev *dev, u64 mask);
++int pcix_get_max_mmrbc(struct pci_dev *dev);
++int pcix_get_mmrbc(struct pci_dev *dev);
++int pcix_set_mmrbc(struct pci_dev *dev, int mmrbc);
++int pcie_set_readrq(struct pci_dev *dev, int rq);
+ void pci_update_resource(struct pci_dev *dev, struct resource *res, int resno);
+ int pci_assign_resource(struct pci_dev *dev, int i);
+ int pci_assign_resource_fixed(struct pci_dev *dev, int i);
+--- linux-2.6.18.x86_64/drivers/pci/quirks.c.orig	2007-06-19 14:59:22.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/pci/quirks.c	2007-06-21 09:26:34.000000000 -0400
+@@ -612,6 +612,23 @@
+ 
+ #endif /* CONFIG_X86_IO_APIC */
+ 
++/*
++ * Some settings of MMRBC can lead to data corruption so block changes.
++ * See AMD 8131 HyperTransport PCI-X Tunnel Revision Guide
++ */
++static void __init quirk_amd_8131_mmrbc(struct pci_dev *dev)
++{
++	unsigned char revid;
++
++	pci_read_config_byte(dev, PCI_REVISION_ID, &revid);
++	if (dev->subordinate && revid <= 0x12) {
++		printk(KERN_INFO "AMD8131 rev %x detected, disabling PCI-X MMRBC\n",
++			revid);
++		dev->subordinate->bus_flags |= PCI_BUS_FLAGS_NO_MMRBC;
++	}
++}
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_8131_BRIDGE, 
++quirk_amd_8131_mmrbc);
+ 
+ /*
+  * FIXME: it is questionable that quirk_via_acpi
+--- linux-2.6.18.x86_64/drivers/pci/pci.c.orig	2007-06-19 14:59:21.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/pci/pci.c	2007-06-21 09:26:34.000000000 -0400
+@@ -1167,7 +1167,171 @@
+ 	return 0;
+ }
+ #endif
+-     
++
++/**
++ * pcix_get_max_mmrbc - get PCI-X maximum designed memory read byte count
++ * @dev: PCI device to query
++ *
++ * Returns mmrbc: maximum designed memory read count in bytes
++ *    or appropriate error value.
++ */
++int
++pcix_get_max_mmrbc(struct pci_dev *dev)
++{
++	int ret, err, cap;
++	u32 stat;
++	
++	cap = pci_find_capability(dev, PCI_CAP_ID_PCIX);
++	if (!cap)
++		return -EINVAL;
++
++	err = pci_read_config_dword(dev, cap + PCI_X_STATUS, &stat);
++	if (err)
++		return -EINVAL;
++
++	ret = (stat & PCI_X_STATUS_MAX_READ) >> 12;
++
++	return ret;
++}
++EXPORT_SYMBOL(pcix_get_max_mmrbc);
++
++/**
++ * pcix_get_mmrbc - get PCI-X maximum memory read byte count
++ * @dev: PCI device to query
++ *
++ * Returns mmrbc: maximum memory read count in bytes
++ *    or appropriate error value.
++ */
++int
++pcix_get_mmrbc(struct pci_dev *dev)
++{
++	int ret, cap;
++	u32 cmd;
++	
++	cap = pci_find_capability(dev, PCI_CAP_ID_PCIX);
++	if (!cap)
++		return -EINVAL;
++	
++	ret = pci_read_config_dword(dev, cap + PCI_X_CMD, &cmd);
++	if (!ret)
++		ret = 512 << ((cmd & PCI_X_CMD_MAX_READ) >> 2);
++	
++	return ret;
++}
++EXPORT_SYMBOL(pcix_get_mmrbc);
++
++/**
++ * pcix_set_mmrbc - set PCI-X maximum memory read byte count
++ * @dev: PCI device to query
++ * @mmrbc: maximum memory read count in bytes
++ *    valid values are 512, 1024, 2048, 4096
++ *
++ * If possible sets maximum memory read byte count, some bridges have erratas
++ * that prevent this.
++ */
++int
++pcix_set_mmrbc(struct pci_dev *dev, int mmrbc)
++{
++	int cap, err = -EINVAL;
++	u32 stat, cmd, v, o;
++		
++	if (mmrbc < 512 || mmrbc > 4096 || (mmrbc & (mmrbc-1)))
++		goto out;
++	
++	v = ffs(mmrbc) - 10;
++	
++	cap = pci_find_capability(dev, PCI_CAP_ID_PCIX);
++	if (!cap)
++		goto out;
++	
++	err = pci_read_config_dword(dev, cap + PCI_X_STATUS, &stat);
++	if (err)
++		goto out;
++	
++	if (v > (stat & PCI_X_STATUS_MAX_READ) >> 21)
++		return -E2BIG;
++	
++	err = pci_read_config_dword(dev, cap + PCI_X_CMD, &cmd);
++	if (err)
++		goto out;
++	
++	o = (cmd & PCI_X_CMD_MAX_READ) >> 2;
++	if (o != v) {
++		if (v > o && dev->bus && 
++		   (dev->bus->bus_flags & PCI_BUS_FLAGS_NO_MMRBC))
++			return -EIO;
++		
++		cmd &= ~PCI_X_CMD_MAX_READ;
++		cmd |= v << 2;
++		err = pci_write_config_dword(dev, cap + PCI_X_CMD, cmd);
++	}
++out:
++	return err;
++}
++EXPORT_SYMBOL(pcix_set_mmrbc);
++
++/**
++ * pcie_get_readrq - get PCI Express read request size
++ * @dev: PCI device to query
++ *
++ * Returns maximum memory read request in bytes
++ *    or appropriate error value.
++ */
++int pcie_get_readrq(struct pci_dev *dev)
++{
++	int ret, cap;
++	u16 ctl;
++
++	cap = pci_find_capability(dev, PCI_CAP_ID_EXP);
++	if (!cap)
++		return -EINVAL;
++
++	ret = pci_read_config_word(dev, cap + PCI_EXP_DEVCTL, &ctl);
++	if (!ret)
++	ret = 128 << ((ctl & PCI_EXP_DEVCTL_READRQ) >> 12);
++
++	return ret;
++}
++EXPORT_SYMBOL(pcie_get_readrq);
++
++/**
++ * pcie_set_readrq - set PCI Express maximum memory read request
++ * @dev: PCI device to query
++ * @count: maximum memory read count in bytes
++ *    valid values are 128, 256, 512, 1024, 2048, 4096
++ *
++ * If possible sets maximum read byte count
++ */
++int
++pcie_set_readrq(struct pci_dev *dev, int rq)
++{
++	int cap, err = -EINVAL;
++	u16 ctl, v;
++	
++	if (rq < 128 || rq > 4096 || (rq & (rq-1)))
++		goto out;
++	
++	v = (ffs(rq) - 8) << 12;
++	
++	cap = pci_find_capability(dev, PCI_CAP_ID_EXP);
++	if (!cap)
++		goto out;
++
++	err = pci_read_config_word(dev, cap + PCI_EXP_DEVCTL, &ctl);
++	if (err)
++		goto out;
++	
++	if ((ctl & PCI_EXP_DEVCTL_READRQ) != v) {
++		ctl &= ~PCI_EXP_DEVCTL_READRQ;
++		ctl |= v;
++		err = pci_write_config_dword(dev, cap + PCI_EXP_DEVCTL, ctl);
++	}
++	
++out:
++	return err;
++}
++EXPORT_SYMBOL(pcie_set_readrq);
++
+ static int __devinit pci_init(void)
+ {
+ 	struct pci_dev *dev = NULL;
+
+>>These driver changes incorporate the proposed PCI-X / PCI-Express 
+>>read byte count interface. Reading and setting those valuse doesn't 
+>>take place "manually", instead wrapping functions are called to allow 
+>>quirks for some PCI bridges.
+>>
+>
+
+
+--- linux-2.6.18.x86_64/drivers/scsi/qla2xxx/qla_init.c.dorig	2007-06-21 09:29:59.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/scsi/qla2xxx/qla_init.c	2007-06-21 09:30:18.000000000 -0400
+@@ -273,27 +273,15 @@
+ 
+ 	/* PCI-X -- adjust Maximum Memory Read Byte Count (2048). */
+ 	pcix_cmd_reg = pci_find_capability(ha->pdev, PCI_CAP_ID_PCIX);
+-	if (pcix_cmd_reg) {
+-		uint16_t pcix_cmd;
+-
+-		pcix_cmd_reg += PCI_X_CMD;
+-		pci_read_config_word(ha->pdev, pcix_cmd_reg, &pcix_cmd);
+-		pcix_cmd &= ~PCI_X_CMD_MAX_READ;
+-		pcix_cmd |= 0x0008;
+-		pci_write_config_word(ha->pdev, pcix_cmd_reg, pcix_cmd);
+-	}
++       if (pcix_cmd_reg)
++               if (pcix_set_mmrbc(ha->pdev, 2048))
++                       DEBUG2(printk("Couldn't write PCI-X read request\n"));
+ 
+ 	/* PCIe -- adjust Maximum Read Request Size (2048). */
+ 	pcie_dctl_reg = pci_find_capability(ha->pdev, PCI_CAP_ID_EXP);
+-	if (pcie_dctl_reg) {
+-		uint16_t pcie_dctl;
+-
+-		pcie_dctl_reg += PCI_EXP_DEVCTL;
+-		pci_read_config_word(ha->pdev, pcie_dctl_reg, &pcie_dctl);
+-		pcie_dctl &= ~PCI_EXP_DEVCTL_READRQ;
+-		pcie_dctl |= 0x4000;
+-		pci_write_config_word(ha->pdev, pcie_dctl_reg, pcie_dctl);
+-	}
++	if (pcie_dctl_reg)
++		if (pcie_set_readrq(ha->pdev, 2048))
++			DEBUG2(printk("Couldn't write PCI Express read request\n"));
+ 
+ 	/* Reset expansion ROM address decode enable */
+ 	pci_read_config_dword(ha->pdev, PCI_ROM_ADDRESS, &d);
+--- linux-2.6.18.x86_64/drivers/infiniband/hw/mthca/mthca_main.c.dorig	2007-06-21 09:29:19.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/infiniband/hw/mthca/mthca_main.c	2007-06-21 09:30:18.000000000 -0400
+@@ -100,45 +100,27 @@
+ 
+ static int __devinit mthca_tune_pci(struct mthca_dev *mdev)
+ {
+-	int cap;
+-	u16 val;
+-
+ 	if (!tune_pci)
+ 		return 0;
+ 
+ 	/* First try to max out Read Byte Count */
+-	cap = pci_find_capability(mdev->pdev, PCI_CAP_ID_PCIX);
+-	if (cap) {
+-		if (pci_read_config_word(mdev->pdev, cap + PCI_X_CMD, &val)) {
+-			mthca_err(mdev, "Couldn't read PCI-X command register, "
+-				  "aborting.\n");
+-			return -ENODEV;
+-		}
+-		val = (val & ~PCI_X_CMD_MAX_READ) | (3 << 2);
+-		if (pci_write_config_word(mdev->pdev, cap + PCI_X_CMD, val)) {
+-			mthca_err(mdev, "Couldn't write PCI-X command register, "
+-				  "aborting.\n");
++	if (pci_find_capability(mdev->pdev, PCI_CAP_ID_PCIX)) {
++		if (pcix_set_mmrbc(mdev->pdev, pcix_get_max_mmrbc(mdev->pdev))) {
++			mthca_err(mdev, "Couldn't set PCI-X max read count, "
++				"aborting.\n");
+ 			return -ENODEV;
+ 		}
+ 	} else if (!(mdev->mthca_flags & MTHCA_FLAG_PCIE))
+ 		mthca_info(mdev, "No PCI-X capability, not setting RBC.\n");
+ 
+-	cap = pci_find_capability(mdev->pdev, PCI_CAP_ID_EXP);
+-	if (cap) {
+-		if (pci_read_config_word(mdev->pdev, cap + PCI_EXP_DEVCTL, &val)) {
+-			mthca_err(mdev, "Couldn't read PCI Express device control "
+-				  "register, aborting.\n");
+-			return -ENODEV;
+-		}
+-		val = (val & ~PCI_EXP_DEVCTL_READRQ) | (5 << 12);
+-		if (pci_write_config_word(mdev->pdev, cap + PCI_EXP_DEVCTL, val)) {
+-			mthca_err(mdev, "Couldn't write PCI Express device control "
+-				  "register, aborting.\n");
++	if (pci_find_capability(mdev->pdev, PCI_CAP_ID_EXP)) {
++		if (pcie_set_readrq(mdev->pdev, 4096)) {
++			mthca_err(mdev, "Couldn't write PCI Express read request, "
++				"aborting.\n");
+ 			return -ENODEV;
+ 		}
+-	} else if (mdev->mthca_flags & MTHCA_FLAG_PCIE)
+-		mthca_info(mdev, "No PCI Express capability, "
+-			   "not setting Max Read Request Size.\n");
++	} else if (!(mdev->mthca_flags & MTHCA_FLAG_PCIE))
++		mthca_info(mdev, "No PCI-X capability, not setting RBC.\n");
+ 
+ 	return 0;
+ }
+--- linux-2.6.18.x86_64/drivers/net/myri10ge/myri10ge.c.dorig	2007-06-21 09:29:46.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/net/myri10ge/myri10ge.c	2007-06-21 09:30:18.000000000 -0400
+@@ -2607,8 +2607,7 @@
+ 			status);
+ 		goto abort_with_netdev;
+ 	}
+-	val = (val & ~PCI_EXP_DEVCTL_READRQ) | (5 << 12);
+-	status = pci_write_config_word(pdev, cap + PCI_EXP_DEVCTL, val);
++	status = pcie_set_readrq(pdev, 4096);
+ 	if (status != 0) {
+ 		dev_err(&pdev->dev, "Error %d writing PCI_EXP_DEVCTL\n",
+ 			status);
+--- linux-2.6.18.x86_64/drivers/net/e1000/e1000_hw.c.dorig	2007-06-21 09:29:24.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/net/e1000/e1000_hw.c	2007-06-21 09:30:18.000000000 -0400
+@@ -872,10 +872,6 @@
+     uint32_t ctrl;
+     uint32_t i;
+     int32_t ret_val;
+-    uint16_t pcix_cmd_word;
+-    uint16_t pcix_stat_hi_word;
+-    uint16_t cmd_mmrbc;
+-    uint16_t stat_mmrbc;
+     uint32_t mta_size;
+     uint32_t reg_data;
+     uint32_t ctrl_ext;
+@@ -965,24 +961,9 @@
+         break;
+     default:
+         /* Workaround for PCI-X problem when BIOS sets MMRBC incorrectly. */
+-        if (hw->bus_type == e1000_bus_type_pcix) {
+-            e1000_read_pci_cfg(hw, PCIX_COMMAND_REGISTER, &pcix_cmd_word);
+-            e1000_read_pci_cfg(hw, PCIX_STATUS_REGISTER_HI,
+-                &pcix_stat_hi_word);
+-            cmd_mmrbc = (pcix_cmd_word & PCIX_COMMAND_MMRBC_MASK) >>
+-                PCIX_COMMAND_MMRBC_SHIFT;
+-            stat_mmrbc = (pcix_stat_hi_word & PCIX_STATUS_HI_MMRBC_MASK) >>
+-                PCIX_STATUS_HI_MMRBC_SHIFT;
+-            if (stat_mmrbc == PCIX_STATUS_HI_MMRBC_4K)
+-                stat_mmrbc = PCIX_STATUS_HI_MMRBC_2K;
+-            if (cmd_mmrbc > stat_mmrbc) {
+-                pcix_cmd_word &= ~PCIX_COMMAND_MMRBC_MASK;
+-                pcix_cmd_word |= stat_mmrbc << PCIX_COMMAND_MMRBC_SHIFT;
+-                e1000_write_pci_cfg(hw, PCIX_COMMAND_REGISTER,
+-                    &pcix_cmd_word);
+-            }
+-        }
+-        break;
++	if (hw->bus_type == e1000_bus_type_pcix && e1000_pcix_get_mmrbc(hw) > 2048)
++		e1000_pcix_set_mmrbc(hw, 2048);
++	break;
+     }
+ 
+     /* More time needed for PHY to initialize */
+--- linux-2.6.18.x86_64/drivers/net/e1000/e1000_hw.h.dorig	2007-06-21 09:29:32.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/net/e1000/e1000_hw.h	2007-06-21 09:32:32.000000000 -0400
+@@ -419,6 +419,8 @@
+ void e1000_read_pci_cfg(struct e1000_hw *hw, uint32_t reg, uint16_t * value);
+ void e1000_write_pci_cfg(struct e1000_hw *hw, uint32_t reg, uint16_t * value);
+ int32_t e1000_read_pcie_cap_reg(struct e1000_hw *hw, uint32_t reg, uint16_t *value);
++void e1000_pcix_set_mmrbc(struct e1000_hw *hw, int mmrbc);
++int e1000_pcix_get_mmrbc(struct e1000_hw *hw);
+ /* Port I/O is only supported on 82544 and newer */
+ void e1000_io_write(struct e1000_hw *hw, unsigned long port, uint32_t value);
+ int32_t e1000_disable_pciex_master(struct e1000_hw *hw);
+--- linux-2.6.18.x86_64/drivers/net/e1000/e1000_main.c.dorig	2007-06-21 09:29:40.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/net/e1000/e1000_main.c	2007-06-21 09:33:28.000000000 -0400
+@@ -4954,6 +4954,20 @@
+     return E1000_SUCCESS;
+ }
+ 
++int
++e1000_pcix_get_mmrbc(struct e1000_hw *hw)
++{
++       struct e1000_adapter *adapter = hw->back; 
++       return pcix_get_mmrbc(adapter->pdev);
++}
++
++void 
++e1000_pcix_set_mmrbc(struct e1000_hw *hw, int mmrbc)
++{
++       struct e1000_adapter *adapter = hw->back;
++       pcix_set_mmrbc(adapter->pdev, mmrbc);
++}
++
+ void
+ e1000_io_write(struct e1000_hw *hw, unsigned long port, uint32_t value)
+ {
+

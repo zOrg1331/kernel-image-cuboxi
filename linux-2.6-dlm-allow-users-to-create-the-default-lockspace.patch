@@ -1,0 +1,35 @@
+From: Patrick Caulfield <pcaulfie@redhat.com>
+Subject: [RHEL 5.1] dlm: Allow unprivileged users to create the default lockspace  (bz#241902)
+Date: Tue, 05 Jun 2007 16:50:09 +0100
+Bugzilla: 241902
+Message-Id: <46658631.20201@redhat.com>
+Changelog: [dlm] Allow unprivileged users to create the default lockspace
+
+
+This is a quick patch to fix a regression on RHEL4, it's not going to go
+upstream because we'll look at a more sophisticated version for the longer term.
+
+Signed-Off-By: Patrick Caulfield <pcaulfie@redhat.com>
+
+Index: linux-rhel51-quilt/fs/dlm/user.c
+===================================================================
+--- linux-rhel51-quilt.orig/fs/dlm/user.c	2007-06-08 10:21:21.000000000 -0500
++++ linux-rhel51-quilt/fs/dlm/user.c	2007-06-08 10:24:56.000000000 -0500
+@@ -24,6 +24,7 @@
+ #include "lvb_table.h"
+ #include "user.h"
+ 
++#define DEFAULT_LOCKSPACE "default"
+ static const char *name_prefix="dlm";
+ static struct miscdevice ctl_device;
+ static const struct file_operations device_fops;
+@@ -382,7 +383,7 @@
+ 	struct dlm_ls *ls;
+ 	int error;
+ 
+-	if (!capable(CAP_SYS_ADMIN))
++	if (!capable(CAP_SYS_ADMIN) && strcmp(params->name, DEFAULT_LOCKSPACE))
+ 		return -EPERM;
+ 
+ 	error = dlm_new_lockspace(params->name, strlen(params->name),
+

@@ -1,0 +1,45 @@
+From: Aristeu Rozanski <arozansk@redhat.com>
+Subject: [RHEL5.1 PATCH] v4l: use __GFP_DMA32 in videobuf_vm_nopage
+Date: Tue, 8 May 2007 14:47:00 -0400
+Bugzilla: 221478
+Message-Id: <20070508184700.GA4215@redhat.com>
+Changelog: [v4l] use __GFP_DMA32 in videobuf_vm_nopage
+
+
+Using v4l applications in 64bit machines with gigs of memory currently
+fails in RHEL5 because when the kernel allocates buffers to be visible
+to the application by mmap() those pages may be located in addresses not
+reachable by the capture cards. This patch ensures the allocated pages
+will be visible by those cards using __GFP_DMA32 flag.
+
+Upstream commit: 10329b962be782fa4fbebea9358063a4507d0c4d
+
+Related BZ#s: BZ#221478
+
+---
+
+Fix bttv and friends on 64bit machines with lots of memory.
+
+We have a DMA32 zone now, lets use it to make sure the card
+can reach the memory we have allocated for the video frame
+buffers.
+
+Signed-off-by: Gerds Hoffmann <kraxel@suse.de>
+---
+ drivers/media/video/video-buf.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+Index: linux-2.6.18/drivers/media/video/video-buf.c
+===================================================================
+--- linux-2.6.18.orig/drivers/media/video/video-buf.c
++++ linux-2.6.18/drivers/media/video/video-buf.c
+@@ -1224,7 +1224,7 @@ videobuf_vm_nopage(struct vm_area_struct
+ 		vaddr,vma->vm_start,vma->vm_end);
+ 	if (vaddr > vma->vm_end)
+ 		return NOPAGE_SIGBUS;
+-	page = alloc_page(GFP_USER);
++	page = alloc_page(GFP_USER | __GFP_DMA32);
+ 	if (!page)
+ 		return NOPAGE_OOM;
+ 	clear_user_page(page_address(page), vaddr, page);
+

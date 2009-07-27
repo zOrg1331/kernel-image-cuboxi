@@ -1,0 +1,631 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Sun, 6 Jan 2008 16:09:39 +1100
+Subject: [ipsec] allow async algorithms
+Message-id: E1JBNlT-0001CY-00@gondolin.me.apana.org.au
+O-Subject: [PATCH 24/32] [IPSEC]: Allow async algorithms
+Bugzilla: 253051
+
+[IPSEC]: Allow async algorithms
+
+Now that ESP uses authenc we can turn on the support for async algorithms
+in IPsec.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/net/ipv4/xfrm4_input.c b/net/ipv4/xfrm4_input.c
+index 817ed84..17dce43 100644
+--- a/net/ipv4/xfrm4_input.c
++++ b/net/ipv4/xfrm4_input.c
+@@ -56,24 +56,35 @@ int xfrm4_rcv_encap(struct sk_buff *skb, __u16 encap_type)
+ {
+ 	int err;
+ 	u32 spi, seq;
+-	struct xfrm_state *xfrm_vec[XFRM_MAX_DEPTH];
+ 	struct xfrm_state *x;
+-	int xfrm_nr = 0;
+ 	int decaps = 0;
+ 
++	/* Allocate new secpath or COW existing one. */
++	if (!skb->sp || atomic_read(&skb->sp->refcnt) != 1) {
++		struct sec_path *sp;
++		sp = secpath_dup(skb->sp);
++		if (!sp)
++			goto drop;
++		if (skb->sp)
++			secpath_put(skb->sp);
++		skb->sp = sp;
++	}
++
+ 	if ((err = xfrm4_parse_spi(skb, skb->nh.iph->protocol, &spi, &seq)) != 0)
+ 		goto drop;
+ 
+ 	do {
+ 		struct iphdr *iph = skb->nh.iph;
+ 
+-		if (xfrm_nr == XFRM_MAX_DEPTH)
++		if (skb->sp->len == XFRM_MAX_DEPTH)
+ 			goto drop;
+ 
+ 		x = xfrm_state_lookup((xfrm_address_t *)&iph->daddr, spi, iph->protocol, AF_INET);
+ 		if (x == NULL)
+ 			goto drop;
+ 
++		skb->sp->xvec[skb->sp->len++] = x;
++
+ 		spin_lock(&x->lock);
+ 		if (unlikely(x->km.state != XFRM_STATE_VALID))
+ 			goto drop_unlock;
+@@ -87,7 +98,10 @@ int xfrm4_rcv_encap(struct sk_buff *skb, __u16 encap_type)
+ 		if (xfrm_state_check_expire(x))
+ 			goto drop_unlock;
+ 
+-		if (x->type->input(x, skb))
++		XFRM_SKB_CB(skb)->seq = seq;
++
++		err = x->type->input(x, skb);
++		if (err)
+ 			goto drop_unlock;
+ 
+ 		/* only the first xfrm gets the encap type */
+@@ -101,8 +115,6 @@ int xfrm4_rcv_encap(struct sk_buff *skb, __u16 encap_type)
+ 
+ 		spin_unlock(&x->lock);
+ 
+-		xfrm_vec[xfrm_nr++] = x;
+-
+ 		if (x->mode->input(x, skb))
+ 			goto drop;
+ 
+@@ -115,24 +127,6 @@ int xfrm4_rcv_encap(struct sk_buff *skb, __u16 encap_type)
+ 			goto drop;
+ 	} while (!err);
+ 
+-	/* Allocate new secpath or COW existing one. */
+-
+-	if (!skb->sp || atomic_read(&skb->sp->refcnt) != 1) {
+-		struct sec_path *sp;
+-		sp = secpath_dup(skb->sp);
+-		if (!sp)
+-			goto drop;
+-		if (skb->sp)
+-			secpath_put(skb->sp);
+-		skb->sp = sp;
+-	}
+-	if (xfrm_nr + skb->sp->len > XFRM_MAX_DEPTH)
+-		goto drop;
+-
+-	memcpy(skb->sp->xvec + skb->sp->len, xfrm_vec,
+-	       xfrm_nr * sizeof(xfrm_vec[0]));
+-	skb->sp->len += xfrm_nr;
+-
+ 	nf_reset(skb);
+ 
+ 	if (decaps) {
+@@ -158,11 +152,9 @@ int xfrm4_rcv_encap(struct sk_buff *skb, __u16 encap_type)
+ 
+ drop_unlock:
+ 	spin_unlock(&x->lock);
+-	xfrm_state_put(x);
++	if (err == -EINPROGRESS)
++		return 0;
+ drop:
+-	while (--xfrm_nr >= 0)
+-		xfrm_state_put(xfrm_vec[xfrm_nr]);
+-
+ 	kfree_skb(skb);
+ 	return 0;
+ }
+diff --git a/net/ipv4/xfrm4_output.c b/net/ipv4/xfrm4_output.c
+index dda359f..6328bcf 100644
+--- a/net/ipv4/xfrm4_output.c
++++ b/net/ipv4/xfrm4_output.c
+@@ -100,6 +100,8 @@ out_exit:
+ 	return err;
+ error:
+ 	spin_unlock_bh(&x->lock);
++	if (err == -EINPROGRESS)
++		goto out_exit;
+ error_nolock:
+ 	kfree_skb(skb);
+ 	goto out_exit;
+@@ -115,7 +117,7 @@ static int xfrm4_output_finish2(struct sk_buff *skb)
+ 		err = nf_hook(PF_INET, NF_IP_LOCAL_OUT, &skb, NULL,
+ 			      skb->dst->dev, dst_output);
+ 		if (unlikely(err != 1))
+-			break;
++			goto out;
+ 
+ 		if (!skb->dst->xfrm)
+ 			return dst_output(skb);
+@@ -123,9 +125,13 @@ static int xfrm4_output_finish2(struct sk_buff *skb)
+ 		err = nf_hook(PF_INET, NF_IP_POST_ROUTING, &skb, NULL,
+ 			      skb->dst->dev, xfrm4_output_finish2);
+ 		if (unlikely(err != 1))
+-			break;
++			goto out;
+ 	}
+ 
++	if (err == -EINPROGRESS)
++		err = 0;
++
++out:
+ 	return err;
+ }
+ 
+diff --git a/net/ipv6/xfrm6_input.c b/net/ipv6/xfrm6_input.c
+index 0405d74..a9b0514 100644
+--- a/net/ipv6/xfrm6_input.c
++++ b/net/ipv6/xfrm6_input.c
+@@ -20,13 +20,22 @@ int xfrm6_rcv_spi(struct sk_buff *skb, u32 spi)
+ {
+ 	int err;
+ 	u32 seq;
+-	struct xfrm_state *xfrm_vec[XFRM_MAX_DEPTH];
+ 	struct xfrm_state *x;
+-	int xfrm_nr = 0;
+ 	int decaps = 0;
+ 	int nexthdr;
+ 	unsigned int nhoff;
+ 
++	/* Allocate new secpath or COW existing one. */
++	if (!skb->sp || atomic_read(&skb->sp->refcnt) != 1) {
++		struct sec_path *sp;
++		sp = secpath_dup(skb->sp);
++		if (!sp)
++			goto drop;
++		if (skb->sp)
++			secpath_put(skb->sp);
++		skb->sp = sp;
++	}
++
+ 	nhoff = IP6CB(skb)->nhoff;
+ 	nexthdr = skb->nh.raw[nhoff];
+ 
+@@ -37,12 +46,15 @@ int xfrm6_rcv_spi(struct sk_buff *skb, u32 spi)
+ 	do {
+ 		struct ipv6hdr *iph = skb->nh.ipv6h;
+ 
+-		if (xfrm_nr == XFRM_MAX_DEPTH)
++		if (skb->sp->len == XFRM_MAX_DEPTH)
+ 			goto drop;
+ 
+ 		x = xfrm_state_lookup((xfrm_address_t *)&iph->daddr, spi, nexthdr, AF_INET6);
+ 		if (x == NULL)
+ 			goto drop;
++
++		skb->sp->xvec[skb->sp->len++] = x;
++
+ 		spin_lock(&x->lock);
+ 		if (unlikely(x->km.state != XFRM_STATE_VALID))
+ 			goto drop_unlock;
+@@ -53,6 +65,8 @@ int xfrm6_rcv_spi(struct sk_buff *skb, u32 spi)
+ 		if (xfrm_state_check_expire(x))
+ 			goto drop_unlock;
+ 
++		XFRM_SKB_CB(skb)->seq = seq;
++
+ 		nexthdr = x->type->input(x, skb);
+ 		if (nexthdr <= 0)
+ 			goto drop_unlock;
+@@ -67,8 +81,6 @@ int xfrm6_rcv_spi(struct sk_buff *skb, u32 spi)
+ 
+ 		spin_unlock(&x->lock);
+ 
+-		xfrm_vec[xfrm_nr++] = x;
+-
+ 		if (x->mode->input(x, skb))
+ 			goto drop;
+ 
+@@ -81,23 +93,6 @@ int xfrm6_rcv_spi(struct sk_buff *skb, u32 spi)
+ 			goto drop;
+ 	} while (!err);
+ 
+-	/* Allocate new secpath or COW existing one. */
+-	if (!skb->sp || atomic_read(&skb->sp->refcnt) != 1) {
+-		struct sec_path *sp;
+-		sp = secpath_dup(skb->sp);
+-		if (!sp)
+-			goto drop;
+-		if (skb->sp)
+-			secpath_put(skb->sp);
+-		skb->sp = sp;
+-	}
+-
+-	if (xfrm_nr + skb->sp->len > XFRM_MAX_DEPTH)
+-		goto drop;
+-
+-	memcpy(skb->sp->xvec + skb->sp->len, xfrm_vec,
+-	       xfrm_nr * sizeof(xfrm_vec[0]));
+-	skb->sp->len += xfrm_nr;
+ 	skb->ip_summed = CHECKSUM_NONE;
+ 
+ 	nf_reset(skb);
+@@ -124,10 +119,9 @@ int xfrm6_rcv_spi(struct sk_buff *skb, u32 spi)
+ 
+ drop_unlock:
+ 	spin_unlock(&x->lock);
+-	xfrm_state_put(x);
++	if (nexthdr == -EINPROGRESS)
++		return -1;
+ drop:
+-	while (--xfrm_nr >= 0)
+-		xfrm_state_put(xfrm_vec[xfrm_nr]);
+ 	kfree_skb(skb);
+ 	return -1;
+ }
+diff --git a/net/ipv6/xfrm6_output.c b/net/ipv6/xfrm6_output.c
+index c8c8b44..70c3888 100644
+--- a/net/ipv6/xfrm6_output.c
++++ b/net/ipv6/xfrm6_output.c
+@@ -89,6 +89,8 @@ out_exit:
+ 	return err;
+ error:
+ 	spin_unlock_bh(&x->lock);
++	if (err == -EINPROGRESS)
++		goto out_exit;
+ error_nolock:
+ 	kfree_skb(skb);
+ 	goto out_exit;
+@@ -104,7 +106,7 @@ static int xfrm6_output_finish2(struct sk_buff *skb)
+ 		err = nf_hook(PF_INET6, NF_IP6_LOCAL_OUT, &skb, NULL,
+ 			      skb->dst->dev, dst_output);
+ 		if (unlikely(err != 1))
+-			break;
++			goto out;
+ 
+ 		if (!skb->dst->xfrm)
+ 			return dst_output(skb);
+@@ -112,9 +114,13 @@ static int xfrm6_output_finish2(struct sk_buff *skb)
+ 		err = nf_hook(PF_INET6, NF_IP6_POST_ROUTING, &skb, NULL,
+ 			      skb->dst->dev, xfrm6_output_finish2);
+ 		if (unlikely(err != 1))
+-			break;
++			goto out;
+ 	}
+ 
++	if (err == -EINPROGRESS)
++		err = 0;
++
++out:
+ 	return err;
+ }
+ 
+diff --git a/net/xfrm/xfrm_algo.c b/net/xfrm/xfrm_algo.c
+index 04e1aea..f279617 100644
+--- a/net/xfrm/xfrm_algo.c
++++ b/net/xfrm/xfrm_algo.c
+@@ -12,7 +12,7 @@
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+ #include <linux/pfkeyv2.h>
+-#include <linux/crypto.h>
++#include <linux/ncrypto.h>
+ #include <net/xfrm.h>
+ #if defined(CONFIG_INET_AH) || defined(CONFIG_INET_AH_MODULE) || defined(CONFIG_INET6_AH) || defined(CONFIG_INET6_AH_MODULE)
+ #include <net/ah.h>
+@@ -28,9 +28,10 @@
+  * that instantiated crypto transforms have correct parameters for IPsec
+  * purposes.
+  */
+-static struct xfrm_algo_desc aalg_list[] = {
++static struct xfrm_nalgo_desc aalg_list[] = {
+ {
+-	.name = "digest_null",
++	.name = "hmac(digest_null)",
++	.compat = "digest_null",
+ 	
+ 	.uinfo = {
+ 		.auth = {
+@@ -47,7 +48,8 @@ static struct xfrm_algo_desc aalg_list[] = {
+ 	}
+ },
+ {
+-	.name = "md5",
++	.name = "hmac(md5)",
++	.compat = "md5",
+ 
+ 	.uinfo = {
+ 		.auth = {
+@@ -64,7 +66,8 @@ static struct xfrm_algo_desc aalg_list[] = {
+ 	}
+ },
+ {
+-	.name = "sha1",
++	.name = "hmac(sha1)",
++	.compat = "sha1",
+ 
+ 	.uinfo = {
+ 		.auth = {
+@@ -81,7 +84,8 @@ static struct xfrm_algo_desc aalg_list[] = {
+ 	}
+ },
+ {
+-	.name = "sha256",
++	.name = "hmac(sha256)",
++	.compat = "sha256",
+ 
+ 	.uinfo = {
+ 		.auth = {
+@@ -98,7 +102,8 @@ static struct xfrm_algo_desc aalg_list[] = {
+ 	}
+ },
+ {
+-	.name = "ripemd160",
++	.name = "hmac(ripemd160)",
++	.compat = "ripemd160",
+ 
+ 	.uinfo = {
+ 		.auth = {
+@@ -114,11 +119,29 @@ static struct xfrm_algo_desc aalg_list[] = {
+ 		.sadb_alg_maxbits = 160
+ 	}
+ },
++{
++	.name = "xcbc(aes)",
++
++	.uinfo = {
++		.auth = {
++			.icv_truncbits = 96,
++			.icv_fullbits = 128,
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_X_AALG_AES_XCBC_MAC,
++		.sadb_alg_ivlen = 0,
++		.sadb_alg_minbits = 128,
++		.sadb_alg_maxbits = 128
++	}
++},
+ };
+ 
+-static struct xfrm_algo_desc ealg_list[] = {
++static struct xfrm_nalgo_desc ealg_list[] = {
+ {
+-	.name = "cipher_null",
++	.name = "ecb(cipher_null)",
++	.compat = "cipher_null",
+ 	
+ 	.uinfo = {
+ 		.encr = {
+@@ -135,7 +158,8 @@ static struct xfrm_algo_desc ealg_list[] = {
+ 	}
+ },
+ {
+-	.name = "des",
++	.name = "cbc(des)",
++	.compat = "des",
+ 
+ 	.uinfo = {
+ 		.encr = {
+@@ -152,7 +176,8 @@ static struct xfrm_algo_desc ealg_list[] = {
+ 	}
+ },
+ {
+-	.name = "des3_ede",
++	.name = "cbc(des3_ede)",
++	.compat = "des3_ede",
+ 
+ 	.uinfo = {
+ 		.encr = {
+@@ -169,7 +194,8 @@ static struct xfrm_algo_desc ealg_list[] = {
+ 	}
+ },
+ {
+-	.name = "cast128",
++	.name = "cbc(cast128)",
++	.compat = "cast128",
+ 
+ 	.uinfo = {
+ 		.encr = {
+@@ -186,7 +212,8 @@ static struct xfrm_algo_desc ealg_list[] = {
+ 	}
+ },
+ {
+-	.name = "blowfish",
++	.name = "cbc(blowfish)",
++	.compat = "blowfish",
+ 
+ 	.uinfo = {
+ 		.encr = {
+@@ -203,7 +230,8 @@ static struct xfrm_algo_desc ealg_list[] = {
+ 	}
+ },
+ {
+-	.name = "aes",
++	.name = "cbc(aes)",
++	.compat = "aes",
+ 
+ 	.uinfo = {
+ 		.encr = {
+@@ -220,7 +248,8 @@ static struct xfrm_algo_desc ealg_list[] = {
+ 	}
+ },
+ {
+-        .name = "serpent",
++	.name = "cbc(serpent)",
++	.compat = "serpent",
+ 
+         .uinfo = {
+                 .encr = {
+@@ -237,7 +266,8 @@ static struct xfrm_algo_desc ealg_list[] = {
+         }
+ },
+ {
+-        .name = "twofish",
++	.name = "cbc(twofish)",
++	.compat = "twofish",
+                  
+         .uinfo = {
+                 .encr = {
+@@ -255,7 +285,7 @@ static struct xfrm_algo_desc ealg_list[] = {
+ },
+ };
+ 
+-static struct xfrm_algo_desc calg_list[] = {
++static struct xfrm_nalgo_desc calg_list[] = {
+ {
+ 	.name = "deflate",
+ 	.uinfo = {
+@@ -308,7 +338,7 @@ struct xfrm_algo_desc *xfrm_aalg_get_byid(int alg_id)
+ 	for (i = 0; i < aalg_entries(); i++) {
+ 		if (aalg_list[i].desc.sadb_alg_id == alg_id) {
+ 			if (aalg_list[i].available)
+-				return &aalg_list[i];
++				return (struct xfrm_algo_desc *)&aalg_list[i];
+ 			else
+ 				break;
+ 		}
+@@ -324,7 +354,7 @@ struct xfrm_algo_desc *xfrm_ealg_get_byid(int alg_id)
+ 	for (i = 0; i < ealg_entries(); i++) {
+ 		if (ealg_list[i].desc.sadb_alg_id == alg_id) {
+ 			if (ealg_list[i].available)
+-				return &ealg_list[i];
++				return (struct xfrm_algo_desc *)&ealg_list[i];
+ 			else
+ 				break;
+ 		}
+@@ -340,7 +370,7 @@ struct xfrm_algo_desc *xfrm_calg_get_byid(int alg_id)
+ 	for (i = 0; i < calg_entries(); i++) {
+ 		if (calg_list[i].desc.sadb_alg_id == alg_id) {
+ 			if (calg_list[i].available)
+-				return &calg_list[i];
++				return (struct xfrm_algo_desc *)&calg_list[i];
+ 			else
+ 				break;
+ 		}
+@@ -349,8 +379,9 @@ struct xfrm_algo_desc *xfrm_calg_get_byid(int alg_id)
+ }
+ EXPORT_SYMBOL_GPL(xfrm_calg_get_byid);
+ 
+-static struct xfrm_algo_desc *xfrm_get_byname(struct xfrm_algo_desc *list,
++static struct xfrm_algo_desc *xfrm_get_byname(struct xfrm_nalgo_desc *list,
+ 					      int entries, char *name,
++					      u32 type, u32 mask,
+ 					      int probe)
+ {
+ 	int i, status;
+@@ -359,40 +390,45 @@ static struct xfrm_algo_desc *xfrm_get_byname(struct xfrm_algo_desc *list,
+ 		return NULL;
+ 
+ 	for (i = 0; i < entries; i++) {
+-		if (strcmp(name, list[i].name))
++		if (strcmp(name, list[i].name) &&
++		    list[i].compat && strcmp(name, list[i].compat))
+ 			continue;
+ 
+ 		if (list[i].available)
+-			return &list[i];
++			return (struct xfrm_algo_desc *)&list[i];
+ 
+ 		if (!probe)
+ 			break;
+ 
+-		status = crypto_alg_available(name, 0);
++		status = type ? 1 : crypto_alg_available(name, 0);
+ 		if (!status)
+ 			break;
+ 
+ 		list[i].available = status;
+-		return &list[i];
++		return (struct xfrm_algo_desc *)&list[i];
+ 	}
+ 	return NULL;
+ }
+ 
+ struct xfrm_algo_desc *xfrm_aalg_get_byname(char *name, int probe)
+ {
+-	return xfrm_get_byname(aalg_list, aalg_entries(), name, probe);
++	return xfrm_get_byname(aalg_list, aalg_entries(), name,
++			       NCRYPTO_ALG_TYPE_HASH,
++			       NCRYPTO_ALG_TYPE_HASH_MASK, probe);
+ }
+ EXPORT_SYMBOL_GPL(xfrm_aalg_get_byname);
+ 
+ struct xfrm_algo_desc *xfrm_ealg_get_byname(char *name, int probe)
+ {
+-	return xfrm_get_byname(ealg_list, ealg_entries(), name, probe);
++	return xfrm_get_byname(ealg_list, ealg_entries(), name,
++			       NCRYPTO_ALG_TYPE_BLKCIPHER,
++			       NCRYPTO_ALG_TYPE_MASK, probe);
+ }
+ EXPORT_SYMBOL_GPL(xfrm_ealg_get_byname);
+ 
+ struct xfrm_algo_desc *xfrm_calg_get_byname(char *name, int probe)
+ {
+-	return xfrm_get_byname(calg_list, calg_entries(), name, probe);
++	return xfrm_get_byname(calg_list, calg_entries(), name, 0, 0, probe);
+ }
+ EXPORT_SYMBOL_GPL(xfrm_calg_get_byname);
+ 
+@@ -401,7 +437,7 @@ struct xfrm_algo_desc *xfrm_aalg_get_byidx(unsigned int idx)
+ 	if (idx >= aalg_entries())
+ 		return NULL;
+ 
+-	return &aalg_list[idx];
++	return (struct xfrm_algo_desc *)&aalg_list[idx];
+ }
+ EXPORT_SYMBOL_GPL(xfrm_aalg_get_byidx);
+ 
+@@ -410,7 +446,7 @@ struct xfrm_algo_desc *xfrm_ealg_get_byidx(unsigned int idx)
+ 	if (idx >= ealg_entries())
+ 		return NULL;
+ 
+-	return &ealg_list[idx];
++	return (struct xfrm_algo_desc *)&ealg_list[idx];
+ }
+ EXPORT_SYMBOL_GPL(xfrm_ealg_get_byidx);
+ 
+@@ -427,15 +463,11 @@ void xfrm_probe_algs(void)
+ 	BUG_ON(in_softirq());
+ 
+ 	for (i = 0; i < aalg_entries(); i++) {
+-		status = crypto_alg_available(aalg_list[i].name, 0);
+-		if (aalg_list[i].available != status)
+-			aalg_list[i].available = status;
++		aalg_list[i].available = 1;
+ 	}
+ 	
+ 	for (i = 0; i < ealg_entries(); i++) {
+-		status = crypto_alg_available(ealg_list[i].name, 0);
+-		if (ealg_list[i].available != status)
+-			ealg_list[i].available = status;
++		ealg_list[i].available = 1;
+ 	}
+ 	
+ 	for (i = 0; i < calg_entries(); i++) {
+diff --git a/net/xfrm/xfrm_nalgo.c b/net/xfrm/xfrm_nalgo.c
+index 902167c..a951d99 100644
+--- a/net/xfrm/xfrm_nalgo.c
++++ b/net/xfrm/xfrm_nalgo.c
+@@ -335,14 +335,14 @@ static const struct xfrm_algo_list xfrm_aalg_list = {
+ 	.algs = aalg_list,
+ 	.entries = ARRAY_SIZE(aalg_list),
+ 	.type = NCRYPTO_ALG_TYPE_HASH,
+-	.mask = NCRYPTO_ALG_TYPE_HASH_MASK | NCRYPTO_ALG_ASYNC,
++	.mask = NCRYPTO_ALG_TYPE_HASH_MASK,
+ };
+ 
+ static const struct xfrm_algo_list xfrm_ealg_list = {
+ 	.algs = ealg_list,
+ 	.entries = ARRAY_SIZE(ealg_list),
+ 	.type = NCRYPTO_ALG_TYPE_BLKCIPHER,
+-	.mask = NCRYPTO_ALG_TYPE_MASK | NCRYPTO_ALG_ASYNC,
++	.mask = NCRYPTO_ALG_TYPE_MASK,
+ };
+ 
+ static struct xfrm_nalgo_desc *xfrm_find_algo(
+diff --git a/net/xfrm/xfrm_user.c b/net/xfrm/xfrm_user.c
+index 99e74f3..a7d47e1 100644
+--- a/net/xfrm/xfrm_user.c
++++ b/net/xfrm/xfrm_user.c
+@@ -213,6 +213,7 @@ static int attach_one_algo(struct xfrm_algo **algpp, u8 *props,
+ 		return -ENOMEM;
+ 
+ 	memcpy(p, ualg, len);
++	strcpy(p->alg_name, algo->name);
+ 	*algpp = p;
+ 	return 0;
+ }

@@ -1,0 +1,88 @@
+From: Jarod Wilson <jwilson@redhat.com>
+Date: Wed, 3 Oct 2007 11:01:12 -0400
+Subject: [misc] softirq: remove spurious BUG_ON's
+Message-id: 4703AEB8.4090201@redhat.com
+O-Subject: [RHEL5.2 PATCH] softirq: remove spurious BUG_ON's
+Bugzilla: 221554
+
+Bugzilla #221554: Spurious BUG_ON causes kernel to not boot
+https://bugzilla.redhat.com/show_bug.cgi?id=221554
+
+Description
+-----------
+Under RHEL5, with a large enough initrd, the right combination of
+hardware and/or drivers, its possible to incorrectly trigger a BUG_ON in
+the softirq code that will prevent a host from booting. These BUG_ON's
+have since been removed from the upstream kernel (as well as being
+pulled in 2.6.18.6).
+
+Test status
+-----------
+Of course, I've been unable to reproduce the problem myself with either
+a kvm or vmware guest and a ~50MB initrd... But I may need to go bigger
+on the initrd and/or use slower hardware with less memory, and/or who
+knows what to trigger the right timing to reproduce... I think the fix
+still makes sense and appears worth taking, if only based on the
+possibility of hitting the bug and upstream acceptance. I can have
+another go a reproducing it on another (slower) box if it'll help make
+the case...
+
+Please review and ACK/NAK/comment/etc.
+
+--
+Jarod Wilson
+jwilson@redhat.com
+
+From: Zachary Amsden <zach@vmware.com>
+Date: Thu, 7 Dec 2006 04:39:39 +0000 (-0800)
+Subject: [PATCH] softirq: remove BUG_ONs which can incorrectly trigger
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Fstable%2Flinux-2.6.18.y.git;a=commitdiff_plain;h=da9aa2f4fdc179d71961b6f1562a2375998ce9d5
+
+[PATCH] softirq: remove BUG_ONs which can incorrectly trigger
+
+It is possible to have tasklets get scheduled before softirqd has had a chance
+to spawn on all CPUs.  This is totally harmless; after success during action
+CPU_UP_PREPARE, action CPU_ONLINE will be called, which immediately wakes
+softirqd on the appropriate CPU to process the already pending tasklets.  So
+there is no danger of having a missed wakeup for any tasklets that were
+already pending.
+
+In particular, i386 is affected by this during startup, and is visible when
+using a very large initrd; during the time it takes for the initrd to be
+decompressed, a timer IRQ can come in and schedule RCU callbacks.  It is also
+possible that resending of a hardware IRQ via a softirq triggers the same bug.
+
+Because of different timing conditions, this shows up in all emulators and
+virtual machines tested, including Xen, VMware, Virtual PC, and Qemu.  It is
+also possible to trigger on native hardware with a large enough initrd,
+although I don't have a reliable case demonstrating that.
+
+Signed-off-by: Zachary Amsden <zach@vmware.com>
+Cc: <caglar@pardus.org.tr>
+Cc: Ingo Molnar <mingo@elte.hu>
+Cc: <stable@kernel.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Signed-off-by: Chris Wright <chrisw@sous-sol.org>
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+---
+ kernel/softirq.c |    2 --
+ 1 files changed, 0 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/softirq.c b/kernel/softirq.c
+index 3789ca9..aee8b98 100644
+--- a/kernel/softirq.c
++++ b/kernel/softirq.c
+@@ -574,8 +574,6 @@ static int __cpuinit cpu_callback(struct notifier_block *nfb,
+ 
+ 	switch (action) {
+ 	case CPU_UP_PREPARE:
+-		BUG_ON(per_cpu(tasklet_vec, hotcpu).list);
+-		BUG_ON(per_cpu(tasklet_hi_vec, hotcpu).list);
+ 		p = kthread_create(ksoftirqd, hcpu, "ksoftirqd/%d", hotcpu);
+ 		if (IS_ERR(p)) {
+ 			printk("ksoftirqd for %i failed\n", hotcpu);
+-- 
+1.5.3.5.645.gbb47
+

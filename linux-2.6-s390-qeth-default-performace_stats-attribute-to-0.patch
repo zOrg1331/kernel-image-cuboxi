@@ -1,0 +1,47 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 30 Oct 2007 17:10:02 +0100
+Subject: [s390] qeth: default performace_stats attribute to 0
+Message-id: 20071030161002.GI6604@redhat.com
+O-Subject: [RHEL5.2 PATCH 4/5] s390 qeth: performace_stats attribute should be 0 by default
+Bugzilla: 248897
+
+Problem:
+=========
+
+The content of /sys/bus/ccwgroup/drivers/qeth/performance_stats is 1 after
+the qeth devices  are online , but  by  default it should be 0
+
+Bugzilla
+=========
+
+BZ 248897
+https://bugzilla.redhat.com/show_bug.cgi?id=248897
+
+Upstream status of the patch:
+=============================
+
+Fix included in git as commit  95c78c8bfe8d0b49a43f392b9a74e2f9e89765ab
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index 855699c..1a9f8c2 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -1034,7 +1034,7 @@ qeth_set_intial_options(struct qeth_card *card)
+ 		card->options.layer2 = 1;
+ 	else
+ 		card->options.layer2 = 0;
+-	card->options.performance_stats = 1;
++	card->options.performance_stats = 0;
+ }
+ 
+ /**

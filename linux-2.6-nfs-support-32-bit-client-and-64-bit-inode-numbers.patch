@@ -1,0 +1,164 @@
+From: Peter Staubach <staubach@redhat.com>
+Date: Fri, 2 Nov 2007 16:09:29 -0400
+Subject: [nfs] support 32-bit client and 64-bit inode numbers
+Message-id: 472B83F9.6000900@redhat.com
+O-Subject: [PATCH RHEL-5.2] 32 bit nfs client does not handle 64 bit ino numbers correctly [1/2]
+Bugzilla: 253589
+
+Hi.
+
+The client side changes.
+
+       ps
+
+Acked-by: Steve Dickson <SteveD@redhat.com>
+
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index 5c9ad06..c262188 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -1030,6 +1030,13 @@ running once the system is up.
+ 			[NFS] set the maximum lifetime for idmapper cache
+ 			entries.
+ 
++	nfs.enable_ino64=
++			[NFS] enable 64-bit inode numbers.
++			If zero, the NFS client will fake up a 32-bit inode
++			number for the readdir() and stat() syscalls instead
++			of returning the full 64-bit number.
++			The default is to return 64-bit inode numbers.
++
+ 	nmi_watchdog=	[KNL,BUGS=IA-32] Debugging features for SMP kernels
+ 
+ 	no387		[BUGS=IA-32] Tells the kernel to use the 387 maths
+diff --git a/fs/nfs/dir.c b/fs/nfs/dir.c
+index 3783bd5..0cf8e85 100644
+--- a/fs/nfs/dir.c
++++ b/fs/nfs/dir.c
+@@ -422,7 +422,8 @@ int nfs_do_filldir(nfs_readdir_descriptor_t *desc, void *dirent,
+ 		}
+ 
+ 		res = filldir(dirent, entry->name, entry->len, 
+-			      file->f_pos, fileid, d_type);
++			      file->f_pos, nfs_compat_user_ino64(fileid),
++			      d_type);
+ 		if (res < 0)
+ 			break;
+ 		file->f_pos++;
+@@ -1313,9 +1314,9 @@ static int nfs_rmdir(struct inode *dir, struct dentry *dentry)
+ static int nfs_sillyrename(struct inode *dir, struct dentry *dentry)
+ {
+ 	static unsigned int sillycounter;
+-	const int      i_inosize  = sizeof(dir->i_ino)*2;
++	const int      fileidsize  = sizeof(NFS_FILEID(dir))*2;
+ 	const int      countersize = sizeof(sillycounter)*2;
+-	const int      slen       = sizeof(".nfs") + i_inosize + countersize - 1;
++	const int      slen        = sizeof(".nfs")+fileidsize+countersize-1;
+ 	char           silly[slen+1];
+ 	struct qstr    qsilly;
+ 	struct dentry *sdentry;
+@@ -1338,8 +1339,9 @@ dentry->d_parent->d_name.name, dentry->d_name.name);
+ 	if (dentry->d_flags & DCACHE_NFSFS_RENAMED)
+ 		goto out;
+ 
+-	sprintf(silly, ".nfs%*.*lx",
+-		i_inosize, i_inosize, dentry->d_inode->i_ino);
++	sprintf(silly, ".nfs%*.*Lx",
++		fileidsize, fileidsize,
++		(unsigned long long)NFS_FILEID(dentry->d_inode));
+ 
+ 	/* Return delegation in anticipation of the rename */
+ 	nfs_inode_return_delegation(dentry->d_inode);
+diff --git a/fs/nfs/inode.c b/fs/nfs/inode.c
+index b598d31..869b5b7 100644
+--- a/fs/nfs/inode.c
++++ b/fs/nfs/inode.c
+@@ -50,6 +50,11 @@
+ #define NFSDBG_FACILITY		NFSDBG_VFS
+ #define NFS_PARANOIA 1
+ 
++#define NFS_64_BIT_INODE_NUMBERS_ENABLED       1
++
++/* Default is to see 64-bit inode numbers */
++static int enable_ino64 = NFS_64_BIT_INODE_NUMBERS_ENABLED;
++
+ static void nfs_invalidate_inode(struct inode *);
+ static int nfs_update_inode(struct inode *, struct nfs_fattr *);
+ 
+@@ -57,6 +62,25 @@ static void nfs_zap_acl_cache(struct inode *);
+ 
+ static kmem_cache_t * nfs_inode_cachep;
+ 
++/**
++ * nfs_compat_user_ino64 - returns the user-visible inode number
++ * @fileid: 64-bit fileid
++ *
++ * This function returns a 32-bit inode number if the boot parameter
++ * nfs.enable_ino64 is zero.
++ */
++u64 nfs_compat_user_ino64(u64 fileid)
++{
++	int ino;
++
++	if (enable_ino64)
++		return fileid;
++	ino = fileid;
++	if (sizeof(ino) < sizeof(fileid))
++		ino ^= fileid >> (sizeof(fileid)-sizeof(ino)) * 8;
++	return ino;
++}
++
+ int nfs_write_inode(struct inode *inode, int sync)
+ {
+ 	int flags = sync ? FLUSH_SYNC : 0;
+@@ -438,7 +462,7 @@ int nfs_getattr(struct vfsmount *mnt, struct dentry *dentry, struct kstat *stat)
+ 		err = nfs_revalidate_inode(NFS_SERVER(inode), inode);
+ 	if (!err) {
+ 		generic_fillattr(inode, stat);
+-		stat->ino = NFS_FILEID(inode);
++		stat->ino = nfs_compat_user_ino64(NFS_FILEID(inode));
+ 	}
+ 	return err;
+ }
+@@ -1207,6 +1231,7 @@ static void __exit exit_nfs_fs(void)
+ /* Not quite true; I just maintain it */
+ MODULE_AUTHOR("Olaf Kirch <okir@monad.swb.de>");
+ MODULE_LICENSE("GPL");
++module_param(enable_ino64, bool, 0644);
+ 
+ module_init(init_nfs_fs)
+ module_exit(exit_nfs_fs)
+diff --git a/fs/nfs/nfs4proc.c b/fs/nfs/nfs4proc.c
+index b7250ab..97f49e0 100644
+--- a/fs/nfs/nfs4proc.c
++++ b/fs/nfs/nfs4proc.c
+@@ -174,7 +174,7 @@ static void nfs4_setup_readdir(u64 cookie, u32 *verifier, struct dentry *dentry,
+ 		*p++ = xdr_one;                         /* bitmap length */
+ 		*p++ = htonl(FATTR4_WORD0_FILEID);             /* bitmap */
+ 		*p++ = htonl(8);              /* attribute buffer length */
+-		p = xdr_encode_hyper(p, dentry->d_inode->i_ino);
++		p = xdr_encode_hyper(p, NFS_FILEID(dentry->d_inode));
+ 	}
+ 	
+ 	*p++ = xdr_one;                                  /* next */
+@@ -186,7 +186,7 @@ static void nfs4_setup_readdir(u64 cookie, u32 *verifier, struct dentry *dentry,
+ 	*p++ = xdr_one;                         /* bitmap length */
+ 	*p++ = htonl(FATTR4_WORD0_FILEID);             /* bitmap */
+ 	*p++ = htonl(8);              /* attribute buffer length */
+-	p = xdr_encode_hyper(p, dentry->d_parent->d_inode->i_ino);
++	p = xdr_encode_hyper(p, NFS_FILEID(dentry->d_parent->d_inode));
+ 
+ 	readdir->pgbase = (char *)p - (char *)start;
+ 	readdir->count -= readdir->pgbase;
+diff --git a/include/linux/nfs_fs.h b/include/linux/nfs_fs.h
+index 1c50f60..bca3a1f 100644
+--- a/include/linux/nfs_fs.h
++++ b/include/linux/nfs_fs.h
+@@ -333,6 +333,7 @@ extern struct vfsmount *nfs_do_submount(const struct vfsmount *mnt_parent,
+ 					const struct dentry *dentry,
+ 					struct nfs_fh *fh,
+ 					struct nfs_fattr *fattr);
++extern u64 nfs_compat_user_ino64(u64 fileid);
+ 
+ /* linux/net/ipv4/ipconfig.c: trims ip addr off front of name, too. */
+ extern u32 root_nfs_parse_addr(char *name); /*__init*/

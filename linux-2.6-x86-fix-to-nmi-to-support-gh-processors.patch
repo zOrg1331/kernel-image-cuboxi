@@ -1,0 +1,84 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] 3/3: Fix CPUID calls to support GH processors
+Date: Mon, 23 Apr 2007 08:54:34 -0400
+Bugzilla: 222123
+Message-Id: <462CAC8A.3040202@redhat.com>
+Changelog: [x86] Fix to nmi to support GH processors
+
+
+>
+>>BZ 222123
+>>
+>>This patch enables NMI watchdog for AMD Family 0x10 CPUs.  This patch is
+>>in Linus tree with commit 0a4599c894d880763eec6cb93f6c246dac6c3269.
+>>
+
+Bhavana
+
+
+--- linux-2.6.18.x86_64/arch/x86_64/kernel/nmi.c.nmiorig	2007-04-20 13:21:52.000000000 -0400
++++ linux-2.6.18.x86_64/arch/x86_64/kernel/nmi.c	2007-04-23 08:51:29.000000000 -0400
+@@ -100,7 +100,7 @@ static __cpuinit inline int nmi_known_cp
+ {
+ 	switch (boot_cpu_data.x86_vendor) {
+ 	case X86_VENDOR_AMD:
+-		return boot_cpu_data.x86 == 15;
++		return boot_cpu_data.x86 == 15 || boot_cpu_data.x86 == 16;
+ 	case X86_VENDOR_INTEL:
+ 		if (cpu_has(&boot_cpu_data, X86_FEATURE_ARCH_PERFMON))
+ 			return 1;
+@@ -161,7 +161,7 @@ int __init check_nmi_watchdog (void)
+ 	for (cpu = 0; cpu < NR_CPUS; cpu++)
+ 		counts[cpu] = cpu_pda(cpu)->__nmi_count;
+ 	local_irq_enable();
+-	mdelay((10*1000)/nmi_hz); // wait 10 ticks
++	mdelay((20*1000)/nmi_hz); // wait 20 ticks
+ 
+ 	for_each_online_cpu(cpu) {
+ 		if (cpu_pda(cpu)->__nmi_count - counts[cpu] <= 5) {
+@@ -472,7 +472,7 @@ void setup_apic_nmi_watchdog(void)
+ {
+ 	switch (boot_cpu_data.x86_vendor) {
+ 	case X86_VENDOR_AMD:
+-		if (boot_cpu_data.x86 != 15)
++		if ((boot_cpu_data.x86 != 15) || (boot_cpu_data.x86 != 16))
+ 			return;
+ 		if (strstr(boot_cpu_data.x86_model_id, "Screwdriver"))
+ 			return;
+--- linux-2.6.18.x86_64/arch/i386/kernel/nmi.c.nmiorig	2007-04-20 13:22:04.000000000 -0400
++++ linux-2.6.18.x86_64/arch/i386/kernel/nmi.c	2007-04-23 08:51:50.000000000 -0400
+@@ -139,7 +139,7 @@ static int __init check_nmi_watchdog(voi
+ 	for_each_possible_cpu(cpu)
+ 		prev_nmi_count[cpu] = per_cpu(irq_stat, cpu).__nmi_count;
+ 	local_irq_enable();
+-	mdelay((10*1000)/nmi_hz); // wait 10 ticks
++	mdelay((20*1000)/nmi_hz); // wait 20 ticks
+ 
+ 	for_each_possible_cpu(cpu) {
+ #ifdef CONFIG_SMP
+@@ -191,11 +191,13 @@ static int __init setup_nmi_watchdog(cha
+ 	 */
+ 	if ((nmi == NMI_LOCAL_APIC) &&
+ 			(boot_cpu_data.x86_vendor == X86_VENDOR_INTEL) &&
+-			(boot_cpu_data.x86 == 6 || boot_cpu_data.x86 == 15))
++			(boot_cpu_data.x86 == 6 || boot_cpu_data.x86 == 15 
++			|| boot_cpu_data.x86 == 16))
+ 		nmi_watchdog = nmi;
+ 	if ((nmi == NMI_LOCAL_APIC) &&
+ 			(boot_cpu_data.x86_vendor == X86_VENDOR_AMD) &&
+-	  		(boot_cpu_data.x86 == 6 || boot_cpu_data.x86 == 15))
++	  		(boot_cpu_data.x86 == 6 || boot_cpu_data.x86 == 15
++			|| boot_cpu_data.x86 == 16))
+ 		nmi_watchdog = nmi;
+ 	/*
+ 	 * We can enable the IO-APIC watchdog
+@@ -504,7 +506,7 @@ void setup_apic_nmi_watchdog (void)
+ {
+ 	switch (boot_cpu_data.x86_vendor) {
+ 	case X86_VENDOR_AMD:
+-		if (boot_cpu_data.x86 != 6 && boot_cpu_data.x86 != 15)
++		if (boot_cpu_data.x86 != 6 && boot_cpu_data.x86 != 15 && boot_cpu_data.x86 != 16)
+ 			return;
+ 		setup_k7_watchdog();
+ 		break;
+

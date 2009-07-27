@@ -1,0 +1,474 @@
+From: Rik van Riel <riel@redhat.com>
+Date: Thu, 13 Dec 2007 14:18:37 -0500
+Subject: [xen] hv: cpu frequency scaling
+Message-id: 20071213141837.6b1f09f0@cuia.boston.redhat.com
+O-Subject: [RHEL 5.2 PATCH 1/3] cpu frequency scaling for Xen BZ#251969
+Bugzilla: 251969
+
+Xen CPU frequency change support patch for RHEL 5.2, based
+on the following upstream changesets:
+
+continue_hypercall_on_cpu (only, did not get rest of changeset)
+	15616:858b9bc8d0e6
+	15624:bb5c23bbc7b7
+
+cpufreq: Support cpufreq updates on AMD hardware by dom0 kernel.
+	15924:2477e94450aa
+
+x86: Fix time going backwards on CPU frequency change.
+	b3814860d170b29daa8ee79eec3a6de603c68b9d
+
+Add XENPF_getidletime.
+	16000:50edcaff5520
+
+Allow dom0 kernel to govern cpufreq via Intel Enhanced Speedstop MSR
+	16202:c05ec22a9106
+
+x86, dom0: Allow get idle time stats by mask.
+	16203:4393255607be
+
+Fix xenctl_cpumap_to_cpumask.
+	16519:62451388f630
+
+Acked-by: Bill Burns <bburns@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+
+diff --git a/arch/x86/domain.c b/arch/x86/domain.c
+index dbaf67b..9a0ba98 100644
+--- a/arch/x86/domain.c
++++ b/arch/x86/domain.c
+@@ -1346,6 +1346,65 @@ void sync_vcpu_execstate(struct vcpu *v)
+     flush_tlb_mask(v->vcpu_dirty_cpumask);
+ }
+ 
++struct migrate_info {
++    long (*func)(void *data);
++    void *data;
++    void (*saved_schedule_tail)(struct vcpu *);
++    cpumask_t saved_affinity;
++};
++
++static void continue_hypercall_on_cpu_helper(struct vcpu *v)
++{
++    struct cpu_user_regs *regs = guest_cpu_user_regs();
++    struct migrate_info *info = v->arch.continue_info;
++
++    regs->eax = info->func(info->data);
++
++    v->arch.schedule_tail = info->saved_schedule_tail;
++    v->arch.continue_info = NULL;
++
++    xfree(info);
++
++    vcpu_set_affinity(v, &v->cpu_affinity);
++    schedule_tail(v);
++}
++
++int continue_hypercall_on_cpu(int cpu, long (*func)(void *data), void *data)
++{
++    struct vcpu *v = current;
++    struct migrate_info *info;
++    cpumask_t mask = cpumask_of_cpu(cpu);
++    int rc;
++
++    if ( cpu == smp_processor_id() )
++        return func(data);
++
++    info = xmalloc(struct migrate_info);
++    if ( info == NULL )
++        return -ENOMEM;
++
++    info->func = func;
++    info->data = data;
++    info->saved_schedule_tail = v->arch.schedule_tail;
++    info->saved_affinity = v->cpu_affinity;
++
++    v->arch.schedule_tail = continue_hypercall_on_cpu_helper;
++    v->arch.continue_info = info;
++
++    rc = vcpu_set_affinity(v, &mask);
++    if ( rc )
++    {
++        v->arch.schedule_tail = info->saved_schedule_tail;
++        v->arch.continue_info = NULL;
++        xfree(info);
++        return rc;
++    }
++
++    /* Dummy return value will be overwritten by new schedule_tail. */
++    BUG_ON(!test_bit(SCHEDULE_SOFTIRQ, &softirq_pending(smp_processor_id())));
++    return 0;
++}
++
+ #define next_arg(fmt, args) ({                                              \
+     unsigned long __arg;                                                    \
+     switch ( *(fmt)++ )                                                     \
+diff --git a/arch/x86/platform_hypercall.c b/arch/x86/platform_hypercall.c
+index 110fc70..eef717c 100644
+--- a/arch/x86/platform_hypercall.c
++++ b/arch/x86/platform_hypercall.c
+@@ -34,10 +34,17 @@ DEFINE_SPINLOCK(xenpf_lock);
+ # define copy_from_compat copy_from_guest
+ # undef copy_to_compat
+ # define copy_to_compat copy_to_guest
++# undef guest_from_compat_handle
++# define guest_from_compat_handle(x,y) ((x)=(y))
+ #else
+ extern spinlock_t xenpf_lock;
+ #endif
+ 
++static long cpu_frequency_change_helper(void *data)
++{
++    return cpu_frequency_change(*(uint64_t *)data);
++}
++
+ ret_t do_platform_op(XEN_GUEST_HANDLE(xen_platform_op_t) u_xenpf_op)
+ {
+     ret_t ret = 0;
+@@ -258,11 +265,70 @@ ret_t do_platform_op(XEN_GUEST_HANDLE(xen_platform_op_t) u_xenpf_op)
+     break;
+ #endif
+ 
++    case XENPF_change_freq:
++        ret = -ENOSYS;
++        if ( cpufreq_controller != FREQCTL_dom0_kernel )
++            break;
++        ret = -EINVAL;
++        if ( op->u.change_freq.flags != 0 )
++            break;
++        ret = continue_hypercall_on_cpu(op->u.change_freq.cpu,
++                                        cpu_frequency_change_helper,
++                                        &op->u.change_freq.freq);
++        break;
++
++    case XENPF_getidletime:
++    {
++        uint32_t cpu;
++        uint64_t idletime, now = NOW();
++        struct vcpu *v;
++        struct xenctl_cpumap ctlmap;
++        cpumask_t cpumap;
++        XEN_GUEST_HANDLE(uint8_t) cpumap_bitmap;
++        XEN_GUEST_HANDLE(uint64_t) idletimes;
++
++        ret = -ENOSYS;
++        if ( cpufreq_controller != FREQCTL_dom0_kernel )
++            break;
++
++        ctlmap.nr_cpus  = op->u.getidletime.cpumap_nr_cpus;
++        guest_from_compat_handle(cpumap_bitmap,
++                                 op->u.getidletime.cpumap_bitmap);
++        ctlmap.bitmap.p = cpumap_bitmap.p; /* handle -> handle_64 conversion */
++        xenctl_cpumap_to_cpumask(&cpumap, &ctlmap);
++        guest_from_compat_handle(idletimes, op->u.getidletime.idletime);
++
++        for_each_cpu_mask ( cpu, cpumap )
++        {
++            if ( (v = idle_vcpu[cpu]) != NULL )
++            {
++                idletime = v->runstate.time[RUNSTATE_running];
++                if ( v->is_running )
++                    idletime += now - v->runstate.state_entry_time;
++            }
++            else
++            {
++                idletime = 0;
++                cpu_clear(cpu, cpumap);
++            }
++
++            ret = -EFAULT;
++            if ( copy_to_guest_offset(idletimes, cpu, &idletime, 1) )
++                goto out;
++        }
++
++        op->u.getidletime.now = now;
++        cpumask_to_xenctl_cpumap(&ctlmap, &cpumap);
++        ret = copy_to_guest(u_xenpf_op, op, 1) ? -EFAULT : 0;
++    }
++    break;
++
+     default:
+         ret = -ENOSYS;
+         break;
+     }
+ 
++ out:
+     spin_unlock(&xenpf_lock);
+ 
+     return ret;
+diff --git a/arch/x86/time.c b/arch/x86/time.c
+index 62df2bc..5587683 100644
+--- a/arch/x86/time.c
++++ b/arch/x86/time.c
+@@ -725,6 +725,27 @@ void update_domain_wallclock_time(struct domain *d)
+     spin_unlock(&wc_lock);
+ }
+ 
++int cpu_frequency_change(u64 freq)
++{
++    struct cpu_time *t = &this_cpu(cpu_time);
++    u64 curr_tsc;
++
++    local_irq_disable();
++    rdtscll(curr_tsc);
++    t->local_tsc_stamp = curr_tsc;
++    t->stime_local_stamp = get_s_time();
++    t->stime_master_stamp = read_platform_stime();
++    set_time_scale(&t->tsc_scale, freq);
++    local_irq_enable();
++
++    /* A full epoch should pass before we check for deviation. */
++    set_timer(&t->calibration_timer, NOW() + EPOCH);
++    if ( smp_processor_id() == 0 )
++        platform_time_calibration();
++
++    return 0;
++}
++
+ /* Set clock to <secs,usecs> after 00:00:00 UTC, 1 January, 1970. */
+ void do_settime(unsigned long secs, unsigned long nsecs, u64 system_time_base)
+ {
+@@ -869,12 +890,14 @@ static void local_time_calibration(void *unused)
+            error_factor, calibration_mul_frac, tsc_shift);
+ #endif
+ 
+-    /* Record new timestamp information. */
++    /* Record new timestamp information, atomically w.r.t. interrupts. */
++    local_irq_disable();
+     t->tsc_scale.mul_frac = calibration_mul_frac;
+     t->tsc_scale.shift    = tsc_shift;
+     t->local_tsc_stamp    = curr_tsc;
+     t->stime_local_stamp  = curr_local_stime;
+     t->stime_master_stamp = curr_master_stime;
++    local_irq_enable();
+ 
+     update_vcpu_system_time(current);
+ 
+diff --git a/arch/x86/traps.c b/arch/x86/traps.c
+index 36d5b94..a85dff8 100644
+--- a/arch/x86/traps.c
++++ b/arch/x86/traps.c
+@@ -1723,10 +1723,22 @@ static int emulate_privileged_op(struct cpu_user_regs *regs)
+             v->arch.guest_context.gs_base_user = res;
+             break;
+ #endif
++        case MSR_K8_FIDVID_STATUS:
++        case MSR_K8_FIDVID_CTL:
++            if ( (cpufreq_controller != FREQCTL_dom0_kernel) ||
++                 (boot_cpu_data.x86_vendor != X86_VENDOR_AMD) ||
++                 wrmsr_safe(regs->ecx, eax, edx) )
++                eax = 0;
++            break;
++        case MSR_IA32_PERF_CTL:
++            if ( (cpufreq_controller != FREQCTL_dom0_kernel) ||
++                 (boot_cpu_data.x86_vendor != X86_VENDOR_INTEL) ||
++                 wrmsr_safe(regs->ecx, eax, edx) )
++                goto fail;
++            break;
+         default:
+             if ( wrmsr_hypervisor_regs(regs->ecx, eax, edx) )
+                 break;
+-
+             if ( (rdmsr_safe(regs->ecx, l, h) != 0) ||
+                  (eax != l) || (edx != h) )
+                 gdprintk(XENLOG_WARNING, "Domain attempted WRMSR %p from "
+@@ -1759,6 +1771,13 @@ static int emulate_privileged_op(struct cpu_user_regs *regs)
+             regs->edx = v->arch.guest_context.gs_base_user >> 32;
+             break;
+ #endif
++        case MSR_K8_FIDVID_CTL:
++        case MSR_K8_FIDVID_STATUS:
++            if ( (cpufreq_controller != FREQCTL_dom0_kernel) ||
++                 (boot_cpu_data.x86_vendor != X86_VENDOR_AMD) ||
++                 rdmsr_safe(regs->ecx, regs->eax, regs->edx) )
++                regs->eax = regs->edx = 0;
++            break;
+         case MSR_EFER:
+             if ( rdmsr_safe(regs->ecx, regs->eax, regs->edx) )
+                 goto fail;
+diff --git a/common/domctl.c b/common/domctl.c
+index 5d29667..dfd54dd 100644
+--- a/common/domctl.c
++++ b/common/domctl.c
+@@ -43,7 +43,8 @@ void cpumask_to_xenctl_cpumap(
+ 
+     bitmap_long_to_byte(bytemap, cpus_addr(*cpumask), NR_CPUS);
+ 
+-    copy_to_guest(xenctl_cpumap->bitmap, bytemap, copy_bytes);
++    if ( copy_bytes != 0 )
++        copy_to_guest(xenctl_cpumap->bitmap, bytemap, copy_bytes);
+ 
+     for ( i = copy_bytes; i < guest_bytes; i++ )
+         copy_to_guest_offset(xenctl_cpumap->bitmap, i, &zero, 1);
+@@ -55,15 +56,20 @@ void xenctl_cpumap_to_cpumask(
+     unsigned int guest_bytes, copy_bytes;
+     uint8_t bytemap[(NR_CPUS + 7) / 8];
+ 
++    if ( guest_handle_is_null(xenctl_cpumap->bitmap) )
++        return;
++
+     guest_bytes = (xenctl_cpumap->nr_cpus + 7) / 8;
+     copy_bytes  = min_t(unsigned int, guest_bytes, sizeof(bytemap));
+ 
+-    cpus_clear(*cpumask);
+-
+-    if ( guest_handle_is_null(xenctl_cpumap->bitmap) )
+-        return;
++    memset(bytemap, 0, sizeof(bytemap));
+ 
+-    copy_from_guest(bytemap, xenctl_cpumap->bitmap, copy_bytes);
++    if ( copy_bytes != 0 )
++    {
++        copy_from_guest(bytemap, xenctl_cpumap->bitmap, copy_bytes);
++        if ( (xenctl_cpumap->nr_cpus & 7) && (guest_bytes <= sizeof(bytemap)) )
++            bytemap[guest_bytes-1] &= ~(0xff << (xenctl_cpumap->nr_cpus & 7));
++    }
+ 
+     bitmap_byte_to_long(cpus_addr(*cpumask), bytemap, NR_CPUS);
+ }
+diff --git a/common/schedule.c b/common/schedule.c
+index 7911f5f..70d04ee 100644
+--- a/common/schedule.c
++++ b/common/schedule.c
+@@ -41,6 +41,17 @@ string_param("sched", opt_sched);
+ static unsigned int opt_dom0_vcpus_pin;
+ boolean_param("dom0_vcpus_pin", opt_dom0_vcpus_pin);
+ 
++enum cpufreq_controller cpufreq_controller;
++static void __init setup_cpufreq_option(char *str)
++{
++    if ( !strcmp(str, "dom0-kernel") )
++    {
++        cpufreq_controller = FREQCTL_dom0_kernel;
++        opt_dom0_vcpus_pin = 1;
++    }
++}
++custom_param("cpufreq", setup_cpufreq_option);
++
+ #define TIME_SLOP      (s32)MICROSECS(50)     /* allow time to slip a bit */
+ 
+ /* Various timer handlers. */
+diff --git a/include/asm-x86/domain.h b/include/asm-x86/domain.h
+index c60c1f0..6e00e4d 100644
+--- a/include/asm-x86/domain.h
++++ b/include/asm-x86/domain.h
+@@ -268,6 +268,9 @@ struct arch_vcpu
+     void (*ctxt_switch_from) (struct vcpu *);
+     void (*ctxt_switch_to) (struct vcpu *);
+ 
++    /* Record information required to continue execution after migration */
++    void *continue_info;
++
+     /* Bounce information for propagating an exception to guest OS. */
+     struct trap_bounce trap_bounce;
+ 
+@@ -311,10 +314,13 @@ struct arch_vcpu
+     unsigned long vcpu_info_mfn;
+ } __cacheline_aligned;
+ 
+-/* shorthands to improve code legibility */
++/* Shorthands to improve code legibility. */
+ #define hvm_vmx         hvm_vcpu.u.vmx
+ #define hvm_svm         hvm_vcpu.u.svm
+ 
++/* Continue the current hypercall via func(data) on specified cpu. */
++int continue_hypercall_on_cpu(int cpu, long (*func)(void *data), void *data);
++
+ #endif /* __ASM_DOMAIN_H__ */
+ 
+ /*
+diff --git a/include/asm-x86/msr.h b/include/asm-x86/msr.h
+index b821173..bb224b1 100644
+--- a/include/asm-x86/msr.h
++++ b/include/asm-x86/msr.h
+@@ -357,6 +357,9 @@ static inline void write_efer(__u64 val)
+ #define MSR_K8_VM_CR			0xC0010114
+ #define MSR_K8_VM_HSAVE_PA		0xC0010117
+ 
++#define MSR_K8_FIDVID_CTL		0xC0010041
++#define MSR_K8_FIDVID_STATUS		0xC0010042
++
+ /* MSR_K8_VM_CR bits: */
+ #define _K8_VMCR_SVME_DISABLE		4
+ #define K8_VMCR_SVME_DISABLE		(1 << _K8_VMCR_SVME_DISABLE)
+diff --git a/include/asm-x86/time.h b/include/asm-x86/time.h
+index 85bc78b..464d5dd 100644
+--- a/include/asm-x86/time.h
++++ b/include/asm-x86/time.h
+@@ -26,4 +26,6 @@ extern int time_resume(void);
+ 
+ extern void init_percpu_time(void);
+ 
++int cpu_frequency_change(u64 freq);
++
+ #endif /* __X86_TIME_H__ */
+diff --git a/include/public/platform.h b/include/public/platform.h
+index 139375c..0659b03 100644
+--- a/include/public/platform.h
++++ b/include/public/platform.h
+@@ -158,6 +158,41 @@ DEFINE_XEN_GUEST_HANDLE(xenpf_firmware_info_t);
+ typedef struct xenpf_stratus_call xenpf_stratus_call_t;
+ DEFINE_XEN_GUEST_HANDLE(xenpf_stratus_call_t);
+ 
++#define XENPF_change_freq         52
++struct xenpf_change_freq {
++    /* IN variables */
++    uint32_t flags; /* Must be zero. */
++    uint32_t cpu;   /* Physical cpu. */
++    uint64_t freq;  /* New frequency (Hz). */
++};
++typedef struct xenpf_change_freq xenpf_change_freq_t;
++DEFINE_XEN_GUEST_HANDLE(xenpf_change_freq_t);
++
++/*
++ * Get idle times (nanoseconds since boot) for physical CPUs specified in the
++ * @cpumap_bitmap with range [0..@cpumap_nr_cpus-1]. The @idletime array is
++ * indexed by CPU number; only entries with the corresponding @cpumap_bitmap
++ * bit set are written to. On return, @cpumap_bitmap is modified so that any
++ * non-existent CPUs are cleared. Such CPUs have their @idletime array entry
++ * cleared.
++ */
++#define XENPF_getidletime         53
++struct xenpf_getidletime {
++    /* IN/OUT variables */
++    /* IN: CPUs to interrogate; OUT: subset of IN which are present */
++    XEN_GUEST_HANDLE(uint8_t) cpumap_bitmap;
++    /* IN variables */
++    /* Size of cpumap bitmap. */
++    uint32_t cpumap_nr_cpus;
++    /* Must be indexable for every cpu in cpumap_bitmap. */
++    XEN_GUEST_HANDLE(uint64_t) idletime;
++    /* OUT variables */
++    /* System time when the idletime snapshots were taken. */
++    uint64_t now;
++};
++typedef struct xenpf_getidletime xenpf_getidletime_t;
++DEFINE_XEN_GUEST_HANDLE(xenpf_getidletime_t);
++
+ struct xen_platform_op {
+     uint32_t cmd;
+     uint32_t interface_version; /* XENPF_INTERFACE_VERSION */
+@@ -169,6 +204,8 @@ struct xen_platform_op {
+         struct xenpf_microcode_update  microcode;
+         struct xenpf_platform_quirk    platform_quirk;
+         struct xenpf_firmware_info     firmware_info;
++	struct xenpf_change_freq       change_freq;
++	struct xenpf_getidletime       getidletime;
+ 	struct xenpf_stratus_call      stratus_call;
+         uint8_t                        pad[128];
+     } u;
+diff --git a/include/xen/sched.h b/include/xen/sched.h
+index 703b339..1840c13 100644
+--- a/include/xen/sched.h
++++ b/include/xen/sched.h
+@@ -496,6 +496,10 @@ static inline void vcpu_unblock(struct vcpu *v)
+ #define is_hvm_domain(d) ((d)->is_hvm)
+ #define is_hvm_vcpu(v)   (is_hvm_domain(v->domain))
+ 
++extern enum cpufreq_controller {
++    FREQCTL_none, FREQCTL_dom0_kernel
++} cpufreq_controller;
++
+ #endif /* __SCHED_H__ */
+ 
+ /*

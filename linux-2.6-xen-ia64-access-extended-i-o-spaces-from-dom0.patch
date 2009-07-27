@@ -1,0 +1,111 @@
+From: Jarod Wilson <jwilson@redhat.com>
+Date: Tue, 8 Jan 2008 12:27:09 -0500
+Subject: [xen] ia64: access extended I/O spaces from dom0
+Message-id: 4783B26D.8030005@redhat.com
+O-Subject: [RHEL5.2 PATCH][XEN] ia64: access extended I/O spaces from dom0
+Bugzilla: 249629
+
+Jarod Wilson wrote:
+> Don Zickus wrote:
+>> On Thu, Aug 09, 2007 at 04:54:30PM -0400, Aron Griffis wrote:
+>>> Bugzilla Bug 249629: dom0 can't access extended I/O spaces
+>>> https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=249629
+>>>
+>>> Summary
+>>> -------
+>>> These two patches were added to xen-unstable after 3.1 was released.
+>>> Without these, extended I/O port spaces will not be registered with
+>>> Xen. It they're not registered, then Xen is not able to grant dom0
+>>> access to poke at them.  If dom0 can't poke at them, then I/O port
+>>> spaces effectively don't work.
+>>>
+>>> See the first changeset below for a longer description.
+>>>
+>>> http://xenbits.xensource.com/xen-unstable.hg?rev/601509daabfc
+>>> http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/a62cfa35d3b5
+>>>
+>>> Testing
+>>> -------
+>>> 2.6.18-36.el5xen boots with these patches on rx6600.  I haven't yet
+>>> understood how to demonstrate it's actually accomplishing the goal, so
+>>> I'm still working on that.  I'll follow up with that info ASAP but
+>>> wanted to post this for review immediately considering where we are in
+>>> the 5.1 schedule.
+>>
+>> Is this patch still needed?  If so, can it be reposted into chunks, one
+>> for the linux kernel, the other for the hypervisor.
+>
+> I believe the hypervisor chunk is included via the xen 3.1.2 rebase, but
+> we do still need the kernel portion for this.
+
+This is a repost on Aron's behalf of the kernel-only portions of this
+patch, as the hypervisor parts are unnecessary with the xen 3.1.2
+rebase. I don't have access to any hardware with extended I/O spaces to
+verify full functionality of this patch, but I've been running my
+private branch ia64 xen kernels carrying this patch for several months
+now, never had an issue with it, and its been in upstream xen for quite
+some time now.
+
+Please ACK
+
+--
+Jarod Wilson
+jwilson@redhat.com
+
+http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/a62cfa35d3b5
+ported to kernel-2.6.18-36.el5
+
+Acked-by: Bill Burns <bburns@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/arch/ia64/pci/pci.c b/arch/ia64/pci/pci.c
+index bdb3bfa..d65c412 100644
+--- a/arch/ia64/pci/pci.c
++++ b/arch/ia64/pci/pci.c
+@@ -165,6 +165,11 @@ new_space (u64 phys_base, int sparse)
+ 	io_space[i].mmio_base = mmio_base;
+ 	io_space[i].sparse = sparse;
+ 
++#ifdef CONFIG_XEN
++	if (is_initial_xendomain())
++		HYPERVISOR_add_io_space(phys_base, sparse, i);
++#endif
++
+ 	return i;
+ }
+ 
+diff --git a/include/asm-ia64/hypercall.h b/include/asm-ia64/hypercall.h
+index 77716a7..2c4ef37 100644
+--- a/include/asm-ia64/hypercall.h
++++ b/include/asm-ia64/hypercall.h
+@@ -364,6 +364,15 @@ HYPERVISOR_expose_p2m(unsigned long conv_start_gpfn,
+ }
+ #endif
+ 
++static inline int
++HYPERVISOR_add_io_space(unsigned long phys_base,
++			unsigned long sparse,
++			unsigned long space_number)
++{
++	return _hypercall4(int, ia64_dom0vp_op, IA64_DOM0VP_add_io_space,
++			   phys_base, sparse, space_number);
++}
++
+ // for balloon driver
+ #define HYPERVISOR_update_va_mapping(va, new_val, flags) (0)
+ 
+diff --git a/include/xen/interface/arch-ia64.h b/include/xen/interface/arch-ia64.h
+index fdb45a7..a15ba1f 100644
+--- a/include/xen/interface/arch-ia64.h
++++ b/include/xen/interface/arch-ia64.h
+@@ -358,6 +358,9 @@ DEFINE_XEN_GUEST_HANDLE(vcpu_guest_context_t);
+ /* gmfn version of IA64_DOM0VP_add_physmap */
+ #define IA64_DOM0VP_add_physmap_with_gmfn       9
+ 
++/* Add an I/O port space range */
++#define IA64_DOM0VP_add_io_space        11
++
+ // flags for page assignement to pseudo physical address space
+ #define _ASSIGN_readonly                0
+ #define ASSIGN_readonly                 (1UL << _ASSIGN_readonly)

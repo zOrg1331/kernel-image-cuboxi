@@ -1,0 +1,97 @@
+From: Jeff Burke <jburke@redhat.com>
+Date: Mon, 20 Aug 2007 09:33:34 -0400
+Subject: [x86_64] Switching to vsyscall64 causes oops
+Message-id: 46C9982E.6020401@redhat.com
+O-Subject: [RHEL5.2 PATCH] Bugzilla Bug 224541: oops in vsyscall_sysctl_change()
+Bugzilla: 224541
+
+Red Hat BZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=224541
+
+Description:
+------------
+Attempt to switch vsyscall64 leads to oops in vsyscall_sysctl_change.
+This patch touches two files:
+ /arch/x86_64/kernel/vsyscall.c
+ /arch/x86_64/kernel/vsyscall-xen.c
+
+RHEL Version Found:
+------------------
+RHEL5 Beta, x86_64
+2.6.23 RC3, x86_64
+
+Upstream Status:
+----------------
+Original patch created by Vasily Averin <vvs@sw.ru> for RHEL5 RC1. it
+was attached to the BZ. The issue _is_ in 2.6.23 RC3 and the latest
+Fedora kernel also.
+
+Test Status:
+------------
+This patch has been built into the RHEL5.1 2.6.18-38.el5 kernel. Tested
+by me. It has also been built into the latest Fedora kernel and tested
+by Jarod Wilson.
+
+Test Case:
+----------
+Boot an x86_64 system with any RHEL5 kernel. Use the following commands:
+ # cat /proc/sys/kernel/vsyscall64
+ 0
+ # echo 1 > /proc/sys/kernel/vsyscall64
+
+Actual results:
+----------
+Unable to handle kernel paging request at ffffc20000076c13 RIP:
+ [<ffffffff80074226>] vsyscall_sysctl_change+0x9f/0xc1
+PGD dfe9b067 PUD dfe9c067 PMD dfe9d067 PTE fffffffffff88163
+Oops: 000b [1] SMP
+last sysfs file: /class/vc/vcsa6/dev
+
+Expected results:
+----------
+When switching vsyscall64 via proc or sysctl, system should _not_ oops
+
+BREW scratch build:
+-------------------
+Local build, 2.6.18-38.el5.vsyscall.1
+
+Thanks,
+Jeff
+
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: Steven Rostedt <srostedt@redhat.com>
+---
+ arch/x86_64/kernel/vsyscall-xen.c |    2 +-
+ arch/x86_64/kernel/vsyscall.c     |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/x86_64/kernel/vsyscall-xen.c b/arch/x86_64/kernel/vsyscall-xen.c
+index 18a5da0..0e422a2 100644
+--- a/arch/x86_64/kernel/vsyscall-xen.c
++++ b/arch/x86_64/kernel/vsyscall-xen.c
+@@ -45,7 +45,7 @@ seqlock_t __xtime_lock __section_xtime_lock = SEQLOCK_UNLOCKED;
+ 	({unsigned long v;  		\
+ 	extern char __vsyscall_0; 	\
+ 	  asm("" : "=r" (v) : "0" (x)); \
+-	  ((v - VSYSCALL_FIRST_PAGE) + __pa_symbol(&__vsyscall_0)); })
++	  ((v - fix_to_virt(VSYSCALL_FIRST_PAGE)) + __pa_symbol(&__vsyscall_0)); })
+ 
+ static __always_inline void timeval_normalize(struct timeval * tv)
+ {
+diff --git a/arch/x86_64/kernel/vsyscall.c b/arch/x86_64/kernel/vsyscall.c
+index 32decb0..cf6c5d1 100644
+--- a/arch/x86_64/kernel/vsyscall.c
++++ b/arch/x86_64/kernel/vsyscall.c
+@@ -50,7 +50,7 @@ int __vgetcpu_mode __section_vgetcpu_mode;
+ 	({unsigned long v;  		\
+ 	extern char __vsyscall_0; 	\
+ 	  asm("" : "=r" (v) : "0" (x)); \
+-	  ((v - VSYSCALL_FIRST_PAGE) + __pa_symbol(&__vsyscall_0)); })
++	  ((v - fix_to_virt(VSYSCALL_FIRST_PAGE)) + __pa_symbol(&__vsyscall_0)); })
+ 
+ static __always_inline void timeval_normalize(struct timeval * tv)
+ {
+-- 
+1.5.3.5.645.gbb47
+

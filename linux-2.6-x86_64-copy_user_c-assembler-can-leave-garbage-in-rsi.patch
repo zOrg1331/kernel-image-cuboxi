@@ -1,0 +1,41 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Thu, 11 Dec 2008 14:32:02 -0500
+Subject: [x86_64] copy_user_c assembler can leave garbage in rsi
+Message-id: 1229023922.17691.28.camel@localhost.localdomain
+O-Subject: [RHEL5-U4 patch] x86_64 copy_user_c assembler code can leave garbage in rsi on failure case.
+Bugzilla: 456682
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: Vitaly Mayatskikh <vmayatsk@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+When copy_user_c terminates prematurely due to reading beyond the end of
+the user buffer and the kernel jumps to the exception table entry the
+rsi register is not cleared.  This results in exiting back to user code
+with garbage in the rsi register.
+
+The attached upstream fixes this problem.
+
+Fixes BZ456682.  The BZ states that this is a regression but I have
+never been able to reproduce the problem in RHEL5.
+
+diff --git a/arch/x86_64/lib/copy_user.S b/arch/x86_64/lib/copy_user.S
+index 15815d0..43223ef 100644
+--- a/arch/x86_64/lib/copy_user.S
++++ b/arch/x86_64/lib/copy_user.S
+@@ -339,11 +339,14 @@ copy_user_generic_c:
+ .Lc1e:	movq %rcx,%rsi
+ .Lc3:	rep
+ 	stosq
+-.Lc2e:	movl %edx,%ecx
++.Lc2ec:	movl %edx,%ecx
+ .Lc4:	rep
+ 	stosb
+ .Lc3e:	leaq (%rdx,%rsi,8),%rax
+ 	ret
++	/* %rsi contains source address - clear it */
++.Lc2e:  xorq %rsi,%rsi
++	jmp .Lc2ec
+ 	CFI_ENDPROC
+ END(copy_user_generic_c)
+ 

@@ -1,0 +1,61 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Subject: [RHEL 5.1 PATCH] 2 bugs in the cciss reference driver code
+Date: Wed, 15 Aug 2007 13:48:12 +0200
+Bugzilla: 251167
+Message-Id: <46C2E7FC.3080105@redhat.com>
+Changelog: [scsi] cciss: set max command queue depth
+
+
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=251167
+
+Comment from Mike Miller : 
+The nr_cmds patch fixes an oversight on my part. In this version of the
+driver we set the max number of outstanding commands allowed on a per
+controller basis. (It should be in all drivers.) We started doing this
+with the E200 series. The E200 can only handle a queue depth of 128 due
+to memory limitations in the silicon. Read, cheap. So it's possible to
+see annoying FIFO FULL messages under any moderate to heavy io load.
+Since we are setting it per controller we could possibly blow something
+up. Maybe NULL pointers. 
+
+The above part is upstream.
+
+I also added as a bonus a few lines, they remove the string which was pointing 
+to www.hp.com. The same thing was done before for RHEL4.6.
+
+I compiled and installed the patch without errors.
+
+Please review and ack. 
+
+Tomas
+
+ 
+
+
+
+diff -puN drivers/block/cciss.c~cciss_ref_drvr_fix_rhel5u1b1 drivers/block/cciss.c
+--- linux-2.6.18.x86_64/drivers/block/cciss.c~cciss_ref_drvr_fix_rhel5u1b1	2007-08-02 15:01:03.000000000 -0500
++++ linux-2.6.18.x86_64-root/drivers/block/cciss.c	2007-08-02 15:04:03.000000000 -0500
+@@ -117,7 +117,7 @@ static struct board_type products[] = {
+ 	{0x3215103C, "Smart Array E200i", &SA5_access, 120},
+ 	{0x3237103C, "Smart Array E500", &SA5_access, 512},
+ 	{0x323D103C, "Smart Array P700m", &SA5_access, 512},
+-	{0xFFFF103C, "Unknown Smart Array", &SA5_access},
++	{0xFFFF103C, "Unknown Smart Array", &SA5_access, 120},
+ };
+ 
+ /* How long to wait (in milliseconds) for board to go into simple mode */
+@@ -2944,10 +2944,9 @@ static int cciss_pci_init(ctlr_info_t *c
+ 		if (subsystem_vendor_id == PCI_VENDOR_ID_HP) {
+ 			c->product_name = products[i-1].product_name;
+ 			c->access = *(products[i-1].access);
++			c->nr_cmds = products[i-1].nr_cmds;
+ 			printk(KERN_WARNING "cciss: This is an unknown "
+-				"Smart Array controller.\n"
+-				"cciss: Please update to the latest driver "
+-				"available from www.hp.com.\n");
++				"Smart Array controller.\n");
+ 		} else {
+ 			printk(KERN_WARNING "cciss: Sorry, I don't know how"
+ 				" to access the Smart Array controller %08lx\n"
+

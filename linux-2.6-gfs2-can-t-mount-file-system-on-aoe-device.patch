@@ -1,0 +1,40 @@
+From: Robert Peterson <rpeterso@redhat.com>
+Subject: [RHEL5.1 PATCH][GFS2] bz 243131: Can't mount GFS2 file system on  AoE device [REPOST]
+Date: Thu, 14 Jun 2007 12:17:22 -0500
+Bugzilla: 243131
+Message-Id: <46717822.2010205@redhat.com>
+Changelog: [GFS2] Can't mount GFS2 file system on AoE device
+
+
+This patch fixes bug 243131: Can't mount GFS2 file system on AoE device.
+When using AoE devices with lock_nolock, there is no locking table, so
+gfs2 (and gfs1) uses the superblock s_id.  This turns out to be the device
+name in some cases.  In the case of AoE, the device contains a slash,
+(e.g. "etherd/e1.1p2") which is an invalid character when we try to
+register the table in sysfs.  This patch replaces the "/" with underscore.
+Rather than add a new variable to the stack, I'm just reusing a (char *)
+variable that's no longer used: table.
+
+This code has been tested on the failing system using a RHEL5 patch
+and it appears in the upstream git tree.
+The upstream code was tested by using gfs2_tool sb to interject a "/" into
+the table name of a clustered gfs2 file system.
+
+This patch is against 2.6.18-25.EL5
+
+Signed-off-by: Bob Peterson <rpeterso@redhat.com>
+-- 
+diff -pur linux-2.6.18.i686/fs/gfs2/ops_fstype.c linux-2.6.18.i686.patched/fs/gfs2/ops_fstype.c
+--- linux-2.6.18.i686/fs/gfs2/ops_fstype.c	2007-06-14 11:23:43.000000000 -0500
++++ linux-2.6.18.i686.patched/fs/gfs2/ops_fstype.c	2007-06-14 11:27:25.000000000 -0500
+@@ -151,6 +151,9 @@ static int init_names(struct gfs2_sbd *s
+ 	snprintf(sdp->sd_proto_name, GFS2_FSNAME_LEN, "%s", proto);
+ 	snprintf(sdp->sd_table_name, GFS2_FSNAME_LEN, "%s", table);
+ 
++	while ((table = strchr(sdp->sd_table_name, '/')))
++		*table = '_';
++
+ out:
+ 	return error;
+ }
+

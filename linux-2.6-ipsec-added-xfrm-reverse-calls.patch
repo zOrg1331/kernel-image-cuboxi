@@ -1,0 +1,271 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Sun, 6 Jan 2008 16:09:45 +1100
+Subject: [ipsec] added xfrm reverse calls
+Message-id: E1JBNlZ-0001DE-00@gondolin.me.apana.org.au
+O-Subject: [PATCH 29/32] [IPSEC]: Added xfrm_decode_session_reverse and xfrmX_policy_check_reverse
+Bugzilla: 427876
+
+[IPSEC]: Added xfrm_decode_session_reverse and xfrmX_policy_check_reverse
+
+RFC 4301 requires us to relookup ICMP traffic that does not match any
+policies using the reverse of its payload.  This patch adds the functions
+xfrm_decode_session_reverse and xfrmX_policy_check_reverse so we can get
+the reverse flow to perform such a lookup.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/include/linux/xfrm.h b/include/linux/xfrm.h
+index bd49a97..388176b 100644
+--- a/include/linux/xfrm.h
++++ b/include/linux/xfrm.h
+@@ -114,6 +114,7 @@ enum
+ 	XFRM_POLICY_IN	= 0,
+ 	XFRM_POLICY_OUT	= 1,
+ 	XFRM_POLICY_FWD	= 2,
++	XFRM_POLICY_MASK = 3,
+ 	XFRM_POLICY_MAX	= 3
+ };
+ 
+diff --git a/include/net/xfrm.h b/include/net/xfrm.h
+index 0219b17..fba6872 100644
+--- a/include/net/xfrm.h
++++ b/include/net/xfrm.h
+@@ -719,14 +719,23 @@ xfrm_state_addr_cmp(struct xfrm_tmpl *tmpl, struct xfrm_state *x, unsigned short
+ 
+ extern int __xfrm_policy_check(struct sock *, int dir, struct sk_buff *skb, unsigned short family);
+ 
+-static inline int xfrm_policy_check(struct sock *sk, int dir, struct sk_buff *skb, unsigned short family)
++static inline int __xfrm_policy_check2(struct sock *sk, int dir,
++				       struct sk_buff *skb,
++				       unsigned int family, int reverse)
+ {
++	int ndir = dir | (reverse ? XFRM_POLICY_MASK + 1 : 0);
++
+ 	if (sk && sk->sk_policy[XFRM_POLICY_IN])
+-		return __xfrm_policy_check(sk, dir, skb, family);
++		return __xfrm_policy_check(sk, ndir, skb, family);
+ 		
+ 	return	(!xfrm_policy_list[dir] && !skb->sp) ||
+ 		(skb->dst->flags & DST_NOPOLICY) ||
+-		__xfrm_policy_check(sk, dir, skb, family);
++		__xfrm_policy_check(sk, ndir, skb, family);
++}
++
++static inline int xfrm_policy_check(struct sock *sk, int dir, struct sk_buff *skb, unsigned int family)
++{
++	return __xfrm_policy_check2(sk, dir, skb, family, 0);
+ }
+ 
+ static inline int xfrm4_policy_check(struct sock *sk, int dir, struct sk_buff *skb)
+@@ -739,7 +748,22 @@ static inline int xfrm6_policy_check(struct sock *sk, int dir, struct sk_buff *s
+ 	return xfrm_policy_check(sk, dir, skb, AF_INET6);
+ }
+ 
++static inline int xfrm4_policy_check_reverse(struct sock *sk, int dir,
++					     struct sk_buff *skb)
++{
++	return __xfrm_policy_check2(sk, dir, skb, AF_INET, 1);
++}
++
++static inline int xfrm6_policy_check_reverse(struct sock *sk, int dir,
++					     struct sk_buff *skb)
++{
++	return __xfrm_policy_check2(sk, dir, skb, AF_INET6, 1);
++}
++
+ extern int xfrm_decode_session(struct sk_buff *skb, struct flowi *fl, unsigned short family);
++extern void xfrm4_decode_session_reverse(struct sk_buff *skb, struct flowi *fl);
++extern void xfrm6_decode_session_reverse(struct sk_buff *skb, struct flowi *fl);
++
+ extern int __xfrm_route_forward(struct sk_buff *skb, unsigned short family);
+ 
+ static inline int xfrm_route_forward(struct sk_buff *skb, unsigned short family)
+@@ -800,6 +824,26 @@ static inline int xfrm_policy_check(struct sock *sk, int dir, struct sk_buff *sk
+ {
+ 	return 1;
+ }
++static inline int xfrm4_decode_session_reverse(struct sk_buff *skb,
++					       struct flowi *fl)
++{
++	return -ENOSYS;
++}
++static inline int xfrm6_decode_session_reverse(struct sk_buff *skb,
++					       struct flowi *fl)
++{
++	return -ENOSYS;
++}
++static inline int xfrm4_policy_check_reverse(struct sock *sk, int dir,
++					     struct sk_buff *skb)
++{
++	return 1;
++}
++static inline int xfrm6_policy_check_reverse(struct sock *sk, int dir,
++					     struct sk_buff *skb)
++{
++	return 1;
++}
+ #endif
+ 
+ static __inline__
+diff --git a/net/ipv4/xfrm4_policy.c b/net/ipv4/xfrm4_policy.c
+index ab6dd67..24bbfcb 100644
+--- a/net/ipv4/xfrm4_policy.c
++++ b/net/ipv4/xfrm4_policy.c
+@@ -169,7 +169,7 @@ error:
+ }
+ 
+ static void
+-_decode_session4(struct sk_buff *skb, struct flowi *fl)
++__decode_session4(struct sk_buff *skb, struct flowi *fl, int reverse)
+ {
+ 	struct iphdr *iph = skb->nh.iph;
+ 	u8 *xprth = skb->nh.raw + iph->ihl*4;
+@@ -184,8 +184,8 @@ _decode_session4(struct sk_buff *skb, struct flowi *fl)
+ 			if (pskb_may_pull(skb, xprth + 4 - skb->data)) {
+ 				u16 *ports = (u16 *)xprth;
+ 
+-				fl->fl_ip_sport = ports[0];
+-				fl->fl_ip_dport = ports[1];
++				fl->fl_ip_sport = ports[!!reverse];
++				fl->fl_ip_dport = ports[!reverse];
+ 			}
+ 			break;
+ 
+@@ -227,11 +227,21 @@ _decode_session4(struct sk_buff *skb, struct flowi *fl)
+ 		};
+ 	}
+ 	fl->proto = iph->protocol;
+-	fl->fl4_dst = iph->daddr;
+-	fl->fl4_src = iph->saddr;
++	fl->fl4_dst = reverse ? iph->saddr : iph->daddr;
++	fl->fl4_src = reverse ? iph->daddr : iph->saddr;
+ 	fl->fl4_tos = iph->tos;
+ }
+ 
++static void _decode_session4(struct sk_buff *skb, struct flowi *fl)
++{
++	__decode_session4(skb, fl, 0);
++}
++
++void xfrm4_decode_session_reverse(struct sk_buff *skb, struct flowi *fl)
++{
++	__decode_session4(skb, fl, 1);
++}
++
+ static inline int xfrm4_garbage_collect(void)
+ {
+ 	xfrm4_policy_afinfo.garbage_collect();
+diff --git a/net/ipv6/xfrm6_policy.c b/net/ipv6/xfrm6_policy.c
+index 6cbb06c..f7aff44 100644
+--- a/net/ipv6/xfrm6_policy.c
++++ b/net/ipv6/xfrm6_policy.c
+@@ -186,7 +186,7 @@ error:
+ }
+ 
+ static inline void
+-_decode_session6(struct sk_buff *skb, struct flowi *fl)
++__decode_session6(struct sk_buff *skb, struct flowi *fl, int reverse)
+ {
+ 	u16 offset = skb->h.raw - skb->nh.raw;
+ 	struct ipv6hdr *hdr = skb->nh.ipv6h;
+@@ -194,8 +194,8 @@ _decode_session6(struct sk_buff *skb, struct flowi *fl)
+ 	u8 nexthdr = skb->nh.raw[IP6CB(skb)->nhoff];
+ 
+ 	memset(fl, 0, sizeof(struct flowi));
+-	ipv6_addr_copy(&fl->fl6_dst, &hdr->daddr);
+-	ipv6_addr_copy(&fl->fl6_src, &hdr->saddr);
++	ipv6_addr_copy(&fl->fl6_dst, reverse ? &hdr->saddr : &hdr->daddr);
++	ipv6_addr_copy(&fl->fl6_src, reverse ? &hdr->daddr : &hdr->saddr);
+ 
+ 	while (pskb_may_pull(skb, skb->nh.raw + offset + 1 - skb->data)) {
+ 		exthdr = (struct ipv6_opt_hdr*)(skb->nh.raw + offset);
+@@ -216,8 +216,8 @@ _decode_session6(struct sk_buff *skb, struct flowi *fl)
+ 			if (pskb_may_pull(skb, skb->nh.raw + offset + 4 - skb->data)) {
+ 				u16 *ports = (u16 *)exthdr;
+ 
+-				fl->fl_ip_sport = ports[0];
+-				fl->fl_ip_dport = ports[1];
++				fl->fl_ip_sport = ports[!!reverse];
++				fl->fl_ip_dport = ports[!reverse];
+ 			}
+ 			fl->proto = nexthdr;
+ 			return;
+@@ -244,6 +244,16 @@ _decode_session6(struct sk_buff *skb, struct flowi *fl)
+ 	}
+ }
+ 
++static inline void _decode_session6(struct sk_buff *skb, struct flowi *fl)
++{
++	return __decode_session6(skb, fl, 0);
++}
++
++void xfrm6_decode_session_reverse(struct sk_buff *skb, struct flowi *fl)
++{
++	__decode_session6(skb, fl, 1);
++}
++
+ static inline int xfrm6_garbage_collect(void)
+ {
+ 	xfrm6_policy_afinfo.garbage_collect();
+diff --git a/net/xfrm/xfrm_policy.c b/net/xfrm/xfrm_policy.c
+index 5437bf5..65522db 100644
+--- a/net/xfrm/xfrm_policy.c
++++ b/net/xfrm/xfrm_policy.c
+@@ -1152,15 +1152,54 @@ static inline int secpath_has_tunnel(struct sec_path *sp, int k)
+ 	return 0;
+ }
+ 
++static inline void xfrm_reverse_flow(struct flowi *fl, int family)
++{
++	struct in6_addr tmp6;
++	u32 tmp4;
++	int port;
++
++	switch (family) {
++	case AF_INET:
++		tmp4 = fl->fl4_src;
++		fl->fl4_src = fl->fl4_dst;
++		fl->fl4_dst = tmp4;
++		break;
++
++	case AF_INET6:
++		ipv6_addr_copy(&tmp6, &fl->fl6_src);
++		ipv6_addr_copy(&fl->fl6_src, &fl->fl6_dst);
++		ipv6_addr_copy(&fl->fl6_dst, &tmp6);
++		break;
++	}
++
++	switch (fl->proto) {
++	case IPPROTO_UDP:
++	case IPPROTO_TCP:
++	case IPPROTO_SCTP:
++	case IPPROTO_DCCP:
++		port = fl->fl_ip_sport;
++		fl->fl_ip_sport = fl->fl_ip_dport;
++		fl->fl_ip_dport = port;
++		break;
++	}
++}
++
+ int __xfrm_policy_check(struct sock *sk, int dir, struct sk_buff *skb, 
+ 			unsigned short family)
+ {
+ 	struct xfrm_policy *pol;
++	int reverse;
+ 	struct flowi fl;
+-	u8 fl_dir = policy_to_flow_dir(dir);
++	u8 fl_dir;
++
++	reverse = dir & ~XFRM_POLICY_MASK;
++	dir &= XFRM_POLICY_MASK;
++	fl_dir = policy_to_flow_dir(dir);
+ 
+ 	if (xfrm_decode_session(skb, &fl, family) < 0)
+ 		return 0;
++	if (reverse)
++		xfrm_reverse_flow(&fl, family);
+ 	nf_nat_decode_session(skb, &fl, family);
+ 
+ 	/* First, check used SA against their selectors. */

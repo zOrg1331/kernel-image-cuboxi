@@ -1,0 +1,43 @@
+diff --git a/fs/ocfs2/cluster/endian.h b/fs/ocfs2/cluster/endian.h
+index 2df9082..2e3b895 100644
+--- a/fs/ocfs2/cluster/endian.h
++++ b/fs/ocfs2/cluster/endian.h
+@@ -22,9 +22,4 @@
+ #ifndef OCFS2_CLUSTER_ENDIAN_H
+ #define OCFS2_CLUSTER_ENDIAN_H
+ 
+-static inline void be32_add_cpu(__be32 *var, u32 val)
+-{
+-	*var = cpu_to_be32(be32_to_cpu(*var) + val);
+-}
+-
+ #endif /* OCFS2_CLUSTER_ENDIAN_H */
+diff --git a/fs/ocfs2/endian.h b/fs/ocfs2/endian.h
+index f226b22..8750dc4 100644
+--- a/fs/ocfs2/endian.h
++++ b/fs/ocfs2/endian.h
+@@ -22,24 +22,9 @@
+ #ifndef OCFS2_ENDIAN_H
+ #define OCFS2_ENDIAN_H
+ 
+-static inline void le16_add_cpu(__le16 *var, u16 val)
+-{
+-	*var = cpu_to_le16(le16_to_cpu(*var) + val);
+-}
+-
+-static inline void le32_add_cpu(__le32 *var, u32 val)
+-{
+-	*var = cpu_to_le32(le32_to_cpu(*var) + val);
+-}
+-
+ static inline void le32_and_cpu(__le32 *var, u32 val)
+ {
+ 	*var = cpu_to_le32(le32_to_cpu(*var) & val);
+ }
+ 
+-static inline void be32_add_cpu(__be32 *var, u32 val)
+-{
+-	*var = cpu_to_be32(be32_to_cpu(*var) + val);
+-}
+-
+ #endif /* OCFS2_ENDIAN_H */

@@ -1,0 +1,123 @@
+From: Vitaly Mayatskikh <vmayatsk@redhat.com>
+Date: Sat, 8 Sep 2007 23:57:48 +0200
+Subject: [fs] Fix unserialized task->files changing
+Message-id: m3sl5o7rc3.fsf@dhcp-lab-156.englab.brq.redhat.com
+O-Subject: [RHEL 5.2 patch] BZ253866 Fix unserialized task->files changing
+Bugzilla: 253866
+
+bz253866
+https://bugzilla.redhat.com/show_bug.cgi?id=253866
+
+Description:
+===========
+This is a race condition between tasks that are creating/removing tasks.
+While one task is traversing through '/proc/<pid>/fd/'
+directory and trying to access the symbolic links, simultaneously tasks on
+other cpus are trying to close the open files or are exec'ing into a new task.
+
+Upstream status of the patch:
+=============================
+Patch is in upstream
+http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=3b9b8ab65d8eed784b9164d03807cb2bda7b5cd6;hp=fc09561d6392771a392dea55c287de7e849b6b63
+
+Test status:
+============
+Patch has been stress-tested by reporter on internal build of RHEL4.6.
+Patch has been backported, built and tested on RHEL-5/x86 box.
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+---
+ fs/binfmt_elf.c      |    6 ++----
+ fs/binfmt_misc.c     |    6 ++----
+ fs/exec.c            |    3 +--
+ include/linux/file.h |    1 +
+ kernel/exit.c        |   13 +++++++++++++
+ 5 files changed, 19 insertions(+), 10 deletions(-)
+
+diff --git a/fs/binfmt_elf.c b/fs/binfmt_elf.c
+index 3c2bcba..d70697e 100644
+--- a/fs/binfmt_elf.c
++++ b/fs/binfmt_elf.c
+@@ -1110,10 +1110,8 @@ out_free_interp:
+ out_free_file:
+ 	sys_close(elf_exec_fileno);
+ out_free_fh:
+-	if (files) {
+-		put_files_struct(current->files);
+-		current->files = files;
+-	}
++	if (files)
++		reset_files_struct(current, files);
+ out_free_ph:
+ 	kfree(elf_phdata);
+ 	goto out;
+diff --git a/fs/binfmt_misc.c b/fs/binfmt_misc.c
+index 66ba137..1713c48 100644
+--- a/fs/binfmt_misc.c
++++ b/fs/binfmt_misc.c
+@@ -215,10 +215,8 @@ _error:
+ 	bprm->interp_flags = 0;
+ 	bprm->interp_data = 0;
+ _unshare:
+-	if (files) {
+-		put_files_struct(current->files);
+-		current->files = files;
+-	}
++	if (files)
++		reset_files_struct(current, files);
+ 	goto _ret;
+ }
+ 
+diff --git a/fs/exec.c b/fs/exec.c
+index cfbd035..a06b4fe 100644
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -904,8 +904,7 @@ int flush_old_exec(struct linux_binprm * bprm)
+ 	return 0;
+ 
+ mmap_failed:
+-	put_files_struct(current->files);
+-	current->files = files;
++	reset_files_struct(current, files);
+ out:
+ 	return retval;
+ }
+diff --git a/include/linux/file.h b/include/linux/file.h
+index 19a856f..433bc1c 100644
+--- a/include/linux/file.h
++++ b/include/linux/file.h
+@@ -112,6 +112,7 @@ struct task_struct;
+ 
+ struct files_struct *get_files_struct(struct task_struct *);
+ void FASTCALL(put_files_struct(struct files_struct *fs));
++void reset_files_struct(struct task_struct *, struct files_struct *);
+ 
+ extern int dupfd(struct file *file, unsigned int start);
+ 
+diff --git a/kernel/exit.c b/kernel/exit.c
+index d1750a6..d779f4f 100644
+--- a/kernel/exit.c
++++ b/kernel/exit.c
+@@ -496,6 +496,19 @@ void fastcall put_files_struct(struct files_struct *files)
+ 
+ EXPORT_SYMBOL(put_files_struct);
+ 
++void reset_files_struct(struct task_struct *tsk, struct files_struct *files)
++{
++	struct files_struct *old;
++
++	old = tsk->files;
++	task_lock(tsk);
++	tsk->files = files;
++	task_unlock(tsk);
++	put_files_struct(old);
++}
++
++EXPORT_SYMBOL(reset_files_struct);
++
+ static inline void __exit_files(struct task_struct *tsk)
+ {
+ 	struct files_struct * files = tsk->files;
+-- 
+1.5.3.5.645.gbb47
+

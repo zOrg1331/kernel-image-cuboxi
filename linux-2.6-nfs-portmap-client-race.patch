@@ -1,0 +1,51 @@
+From: Steve Dickson <SteveD@redhat.com>
+Date: Thu, 18 Sep 2008 15:51:35 -0400
+Subject: [nfs] portmap client race
+Message-id: 48D2B147.7030708@RedHat.com
+O-Subject: [RHEL5.3][PATCH] NFS: portmap client race in the kernel
+Bugzilla: 462332
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+The bz is: https://bugzilla.redhat.com/show_bug.cgi?id=462332
+
+The problem was fond during the testing of NFS over RDMA
+in RHEL5.2 by Tom Talpey at Netapps. In his own words:
+
+Author: Tom Talpey <tmt@netapp.com>
+Date:   Wed Sep 10 18:55:29 2008 -0400
+
+    Close a portmapper race in kernel RPC clients <= 2.6.18.
+
+    RPC fails to check in call_bind() for a fully resolved peer
+    connection, and the call_connect()/call_transmit() attempt may
+    fail. This causes EIO to be returned with parallel workloads
+    at startup, especially affecting NLM lock requests.
+
+    Fix to check the pm_binding bit as well as remote server cl_port,
+    and not exit the call_bind() state until pm_binding is clear.
+    A harmless additional pmap_getport may be executed in certain
+    race conditions.
+
+    This issue is present in all 2.1, 2.2, 2.4 and 2.6 NFS kernels
+    through 2.6.18. This patch applies to 2.6.18.y (stable), and to
+    older kernels through 2.6.3. The issue was fixed in 2.6.19 as
+    a side effect of a restructuring change.
+
+    Earlier kernels (2.1.32 <= x <= 2.6.2) require the same, but should
+    test their similar clnt->cl_binding flag instead of pm_binding.
+
+    Signed-off-by: Tom Talpey <tmt@netapp.com>
+
+diff --git a/net/sunrpc/clnt.c b/net/sunrpc/clnt.c
+index 63a7a20..4e9f543 100644
+--- a/net/sunrpc/clnt.c
++++ b/net/sunrpc/clnt.c
+@@ -820,7 +820,7 @@ call_bind(struct rpc_task *task)
+ 				task->tk_pid, task->tk_status);
+ 
+ 	task->tk_action = call_connect;
+-	if (!clnt->cl_port) {
++	if (!clnt->cl_port || clnt->cl_pmap->pm_binding) {
+ 		task->tk_action = call_bind_status;
+ 		task->tk_timeout = task->tk_xprt->bind_timeout;
+ 		rpc_getport(task, clnt);

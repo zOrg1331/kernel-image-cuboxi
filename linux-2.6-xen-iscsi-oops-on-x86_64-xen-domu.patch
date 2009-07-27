@@ -1,0 +1,73 @@
+From: Rik van Riel <riel@redhat.com>
+Subject: [PATCH][RHEL5] fix iSCSI root oops on x86_64 xen domU
+Date: Tue, 14 Nov 2006 15:46:28 -0500
+Bugzilla: 215581
+Message-Id: <455A2B24.1090002@redhat.com>
+Changelog: Xen: fix iSCSI root oops on x86_64 xen domU
+
+
+With iSCSI root on x86-64 domU, the kernel oopses in
+scsi_calculate_bounce_limit() because dma_ops is NULL.
+
+The attached patch (from upstream) initializes the iommu
+operations pointer.  Even though the patch is to arch/i386/
+it is x86-64 only, because this is inside the big x86-64
+#ifdef in arch/i386/kernel/pci-dma-xen.c.
+
+Thanks to Mark McLoughlin for noticing the issue and finding
+the fix in the upstream tree.
+
+Fixes bug #215581
+
+-- 
+Who do you trust?
+The people with all the right answers?
+Or the people with the right questions?
+
+# HG changeset patch
+# User chrisw@sous-sol.org
+# Date Tue Oct 03 13:44:38 2006 -0400
+# Node ID e5a7f30e1db3f1084f6789d21ea2a6fdaafdb96d
+# parent: 6cd0fae5d84c4a4b15546ceaade74b7d7f044404
+Make sure no_iommu_init is called when needed on x86_64.  Thanks
+to Mark McLoughlin <markmc@redhat.com> for spotting the issue and
+proposing a fix.
+
+Index: latest/arch/i386/kernel/pci-dma-xen.c
+===================================================================
+--- latest.orig/arch/i386/kernel/pci-dma-xen.c
++++ latest/arch/i386/kernel/pci-dma-xen.c
+@@ -20,6 +20,9 @@
+ #include <asm/bug.h>
+ 
+ #ifdef __x86_64__
++#include <asm/proto.h>
++#include <asm/calgary.h>
++
+ int iommu_merge __read_mostly = 0;
+ EXPORT_SYMBOL(iommu_merge);
+ 
+@@ -70,6 +73,23 @@ __init int iommu_setup(char *p)
+ {
+     return 1;
+ }
++
++static int __init pci_iommu_init(void)
++{
++#ifdef CONFIG_CALGARY_IOMMU
++	calgary_iommu_init();
++#endif
++
++#ifdef CONFIG_IOMMU
++	gart_iommu_init();
++#endif
++
++	no_iommu_init();
++	return 0;
++}
++
++/* Must execute after PCI subsystem */
++fs_initcall(pci_iommu_init);
+ #endif
+ 
+ struct dma_coherent_mem {

@@ -1,0 +1,89 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Thu, 7 Feb 2008 16:16:50 -0600
+Subject: [libata] sata_nv: may send cmds with duplicate tags
+Message-id: 20080207221650.GA10193@dhcp-210.hsv.redhat.com
+O-Subject: [RHEL5.2 PATCH 1/2] libata: sata_nv may send commands with duplicate tags
+Bugzilla: 426044
+
+This patch prevents the sata_nv driver from sending
+commands with duplicate tags leading to device errors.
+Originally, customer's system would not boot successfully
+unless particular drives were blacklisted or adma was
+disabled. Customer has verified a 2.6.18-77.el5 kernel
+with this patch and the one to follow which un-blacklists
+the HITACHI drives.
+
+This resolves BZ 426044 (IT 137526), please review.
+
+commit a1fe782414b7122d4c0501d3a0988b7302fa586f
+Author: Robert Hancock <hancockr@shaw.ca>
+Date:   Tue Jan 29 19:53:19 2008 -0600
+
+    sata_nv: fix for completion handling
+
+    This patch is based on an original patch from Kuan Luo of NVIDIA,
+    posted under subject "fixed a bug of adma in rhel4u5 with HDS7250SASUN500G".    His description follows. I've reworked it a bit to avoid some unnecessary
+    repeated checks but it should be functionally identical.
+
+    "The patch is to solve the error message "ata1: CPB flags CMD err,
+    flags=0x11" when testing HDS7250SASUN500G in rhel4u5.
+    I tested this hd in 2.6.24-rc7 which needed to remove the mask in
+    blacklist to run the ncq and the same error also showed up.
+
+    I traced the  bug and found that the interrupt finished a command (for
+    example, tag=0) when the driver got that adma status is
+    NV_ADMA_STAT_DONE  and  cpb->resp_flags is NV_CPB_RESP_DONE.
+    However, For this hd, the drive maybe didn't clear bit 0 at this moment.
+    It meaned the hardware  had not completely finished the command.
+    If at the same time  the driver freed the command(tag 0) and sended
+    another command (tag 0), the error happened.
+
+    The notifier register is 32-bit register containing notifier value.
+    Value is bit vector containing one bit per tag number (0-31) in
+    corresponding bit positions (bit 0 is for tag 0, etc). When bit is set
+    then ADMA indicates that command with corresponding tag number completed
+    execution.
+
+    So i added the check notifier code. Sometimes i saw that the notifier
+    reg set some bits  , but the adma status set NV_ADMA_STAT_CMD_COMPLETE
+    ,not NV_ADMA_STAT_DONE. So i added the NV_ADMA_STAT_CMD_COMPLETE check
+    code."
+
+    Signed-off-by: Robert Hancock <hancockr@shaw.ca>
+    Signed-off-by: Jeff Garzik <jeff@garzik.org>
+
+Acked-by: Alan Cox <alan@redhat.com>
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: Jeff Garzik <jgarzik@redhat.com>
+
+diff --git a/drivers/ata/sata_nv.c b/drivers/ata/sata_nv.c
+index df96f9a..ae341a2 100644
+--- a/drivers/ata/sata_nv.c
++++ b/drivers/ata/sata_nv.c
+@@ -1013,14 +1013,20 @@ static irqreturn_t nv_adma_interrupt(int irq, void *dev_instance, struct pt_regs
+ 			}
+ 
+ 			if (status & (NV_ADMA_STAT_DONE |
+-				      NV_ADMA_STAT_CPBERR)) {
+-				u32 check_commands;
++				      NV_ADMA_STAT_CPBERR |
++				      NV_ADMA_STAT_CMD_COMPLETE)) {
++				u32 check_commands = notifier_clears[i];
+ 				int pos, error = 0;
+ 
+-				if (ata_tag_valid(ap->link.active_tag))
+-					check_commands = 1 << ap->link.active_tag;
+-				else
+-					check_commands = ap->link.sactive;
++				if (status & NV_ADMA_STAT_CPBERR) {
++                                        /* Check all active commands */
++					if (ata_tag_valid(ap->link.active_tag))
++						check_commands = 1 <<
++							ap->link.active_tag;
++					else
++						check_commands = ap->
++							link.sactive;
++				}
+ 
+ 				/** Check CPBs for completed commands */
+ 				while ((pos = ffs(check_commands)) && !error) {

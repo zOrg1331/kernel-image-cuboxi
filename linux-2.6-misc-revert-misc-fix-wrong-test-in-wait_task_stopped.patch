@@ -1,0 +1,76 @@
+From: Anton Arapov <aarapov@redhat.com>
+Date: Tue, 9 Sep 2008 09:47:19 +0200
+Subject: Revert [misc] fix wrong test in wait_task_stopped
+Message-id: 20080909074719.GC3417@redhat.com
+O-Subject: Re: [RHEL5.3 Patch] BZ382161: fix wrong test in wait_task_stopped()
+Bugzilla: 382211
+
+* correct bugzilla 382211
+
+  rhel5 is not vulnerable by 382211 and patch is address a wrong test.
+  Don, please drop/revert the patch.
+
+  The concern is to not commit needless patches to the kernel.
+
+-- Anton
+
+Jerome Marchand wrote:
+> Bugzilla:
+> https://bugzilla.redhat.com/show_bug.cgi?id=382161
+>
+> Description:
+> There is a wrong test in wait_task_stopped().
+> There was an old (p->state > TASK_STOPPED) test which used to mean not
+> dead (that was before TASK_TRACED and exit_state existed). Then, it
+> has been misunderstood as a wrong check of TASK_TRACED bit (commit
+> 14bf01bb0599c89fc7f426d20353b76e12555308).
+> I'm not sure there is an actual bug on rhel5, but that test is very
+> wrong.
+>
+> Upstream status:
+> commit a3474224e6a01924be40a8255636ea5522c1023a
+>
+> Brew build:
+> http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1413558
+>
+> Test status:
+> Build on all archs, booted on i686.
+>
+> Regards,
+> Jerome Marchand
+>
+> ---
+>  kernel/exit.c |    3 +--
+>  1 files changed, 1 insertions(+), 2 deletions(-)
+>
+> diff --git a/kernel/exit.c b/kernel/exit.c
+> index 45a1562..0b93d68 100644
+> --- a/kernel/exit.c
+> +++ b/kernel/exit.c
+> @@ -1225,8 +1225,7 @@ static int wait_task_stopped(struct task_struct
+> *p, int delayed_group_leader,
+>       uid_t uid = p->uid;
+>
+>       exit_code = p->exit_code;
+> -     if (unlikely(!exit_code) ||
+> -         unlikely(p->state & TASK_TRACED))
+> +     if (unlikely(!exit_code) || unlikely(p->exit_state))
+>           goto bail_ref;
+>       return wait_noreap_copyout(p, pid, uid, CLD_STOPPED,
+>                      (exit_code << 8) | 0x7f,
+>
+
+diff --git a/kernel/exit.c b/kernel/exit.c
+index f8a00ec..db61e3f 100644
+--- a/kernel/exit.c
++++ b/kernel/exit.c
+@@ -1253,7 +1253,8 @@ static int wait_task_stopped(struct task_struct *p, int delayed_group_leader,
+ 		uid_t uid = p->uid;
+ 
+ 		exit_code = p->exit_code;
+-		if (unlikely(!exit_code) || unlikely(p->exit_state))
++		if (unlikely(!exit_code) ||
++		    unlikely(p->state & TASK_TRACED))
+ 			goto bail_ref;
+ 		return wait_noreap_copyout(p, pid, uid, CLD_STOPPED,
+ 					   (exit_code << 8) | 0x7f,

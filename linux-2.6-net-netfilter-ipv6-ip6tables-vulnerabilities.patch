@@ -1,0 +1,230 @@
+From: Thomas Graf <tgraf@redhat.com>
+Subject: [RHEL5 BZ220483 1/2] netfilter: CVE-2006-4572 IPv6/IP6Tables Vulnerabilities
+Date: Tue, 2 Jan 2007 21:45:24 +0100
+Bugzilla: 220483
+Message-Id: <20070102204524.GB6541@lsx.localdomain>
+Changelog: netfilter: IPv6/IP6Tables Vulnerabilities
+
+
+commit 51d8b1a65291a6956b79374b6adbbadc2263bcf6
+Author: Patrick McHardy <kaber@trash.net>
+
+    [NETFILTER]: Fix ip6_tables protocol bypass bug
+    
+    As reported by Mark Dowd <Mark_Dowd@McAfee.com>, ip6_tables is susceptible
+    to a fragmentation attack causing false negatives on protocol matches.
+    
+    When the protocol header doesn't follow the fragment header immediately,
+    the fragment header contains the protocol number of the next extension
+    header. When the extension header and the protocol header are sent in
+    a second fragment a rule like "ip6tables .. -p udp -j DROP" will never
+    match.
+    
+    Drop fragments that are at offset 0 and don't contain the final protocol
+    header regardless of the ruleset, since this should not happen normally.
+    
+    With help from Yasuyuki KOZAKAI <yasuyuki.kozakai@toshiba.co.jp>.
+    
+    Signed-off-by: Patrick McHardy <kaber@trash.net>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Index: linux-2.6.18.noarch/net/ipv6/netfilter/ip6_tables.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/ipv6/netfilter/ip6_tables.c	2007-01-02 21:35:04.000000000 +0100
++++ linux-2.6.18.noarch/net/ipv6/netfilter/ip6_tables.c	2007-01-02 21:41:30.000000000 +0100
+@@ -114,7 +114,7 @@ ip6_packet_match(const struct sk_buff *s
+ 		 const char *outdev,
+ 		 const struct ip6t_ip6 *ip6info,
+ 		 unsigned int *protoff,
+-		 int *fragoff)
++		 int *fragoff, int *hotdrop)
+ {
+ 	size_t i;
+ 	unsigned long ret;
+@@ -172,9 +172,11 @@ ip6_packet_match(const struct sk_buff *s
+ 		unsigned short _frag_off;
+ 
+ 		protohdr = ipv6_find_hdr(skb, protoff, -1, &_frag_off);
+-		if (protohdr < 0)
++		if (protohdr < 0) {
++			if (_frag_off == 0)
++				*hotdrop = 1;
+ 			return 0;
+-
++		}
+ 		*fragoff = _frag_off;
+ 
+ 		dprintf("Packet protocol %hi ?= %s%hi.\n",
+@@ -295,7 +297,7 @@ ip6t_do_table(struct sk_buff **pskb,
+ 		IP_NF_ASSERT(e);
+ 		IP_NF_ASSERT(back);
+ 		if (ip6_packet_match(*pskb, indev, outdev, &e->ipv6,
+-			&protoff, &offset)) {
++			&protoff, &offset, &hotdrop)) {
+ 			struct ip6t_entry_target *t;
+ 
+ 			if (IP6T_MATCH_ITERATE(e, do_match,
+
+From: Thomas Graf <tgraf@redhat.com>
+Subject: [RHEL5 BZ220483 2/2] netfilter: CVE-2006-4572 IPv6/IP6Tables Vulnerabilities
+Date: Tue, 2 Jan 2007 21:46:48 +0100
+Bugzilla: 220483
+Message-Id: <20070102204648.GC6541@lsx.localdomain>
+
+
+commit 6d381634d213580d40d431e7664dfb45f641b884
+Author: Patrick McHardy <kaber@trash.net>
+
+    [NETFILTER]: Fix ip6_tables extension header bypass bug
+    
+    As reported by Mark Dowd <Mark_Dowd@McAfee.com>, ip6_tables is susceptible
+    to a fragmentation attack causing false negatives on extension header matche
+    
+    When extension headers occur in the non-first fragment after the fragment
+    header (possibly with an incorrect nexthdr value in the fragment header)
+    a rule looking for this extension header will never match.
+    
+    Drop fragments that are at offset 0 and don't contain the final protocol
+    header regardless of the ruleset, since this should not happen normally.
+    Since all extension headers are before the protocol header this makes sure
+    an extension header is either not present or in the first fragment, where
+    we can properly parse it.
+    
+    With help from Yasuyuki KOZAKAI <yasuyuki.kozakai@toshiba.co.jp>.
+    
+    Signed-off-by: Patrick McHardy <kaber@trash.net>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Index: linux-2.6.18.noarch/net/ipv6/netfilter/ip6_tables.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/ipv6/netfilter/ip6_tables.c	2007-01-02 21:41:30.000000000 +0100
++++ linux-2.6.18.noarch/net/ipv6/netfilter/ip6_tables.c	2007-01-02 21:42:31.000000000 +0100
+@@ -1452,6 +1452,9 @@ static void __exit ip6_tables_fini(void)
+  * If target header is found, its offset is set in *offset and return protocol
+  * number. Otherwise, return -1.
+  *
++ * If the first fragment doesn't contain the final protocol header or
++ * NEXTHDR_NONE it is considered invalid.
++ *
+  * Note that non-1st fragment is special case that "the protocol number
+  * of last header" is "next header" field in Fragment header. In this case,
+  * *offset is meaningless and fragment offset is stored in *fragoff if fragoff
+@@ -1475,12 +1478,12 @@ int ipv6_find_hdr(const struct sk_buff *
+ 		if ((!ipv6_ext_hdr(nexthdr)) || nexthdr == NEXTHDR_NONE) {
+ 			if (target < 0)
+ 				break;
+-			return -1;
++			return -ENOENT;
+ 		}
+ 
+ 		hp = skb_header_pointer(skb, start, sizeof(_hdr), &_hdr);
+ 		if (hp == NULL)
+-			return -1;
++			return -EBADMSG;
+ 		if (nexthdr == NEXTHDR_FRAGMENT) {
+ 			unsigned short _frag_off, *fp;
+ 			fp = skb_header_pointer(skb,
+@@ -1489,7 +1492,7 @@ int ipv6_find_hdr(const struct sk_buff *
+ 						sizeof(_frag_off),
+ 						&_frag_off);
+ 			if (fp == NULL)
+-				return -1;
++				return -EBADMSG;
+ 
+ 			_frag_off = ntohs(*fp) & ~0x7;
+ 			if (_frag_off) {
+@@ -1500,7 +1503,7 @@ int ipv6_find_hdr(const struct sk_buff *
+ 						*fragoff = _frag_off;
+ 					return hp->nexthdr;
+ 				}
+-				return -1;
++				return -ENOENT;
+ 			}
+ 			hdrlen = 8;
+ 		} else if (nexthdr == NEXTHDR_AUTH)
+Index: linux-2.6.18.noarch/net/ipv6/netfilter/ip6t_ah.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/ipv6/netfilter/ip6t_ah.c	2007-01-02 21:41:30.000000000 +0100
++++ linux-2.6.18.noarch/net/ipv6/netfilter/ip6t_ah.c	2007-01-02 21:42:31.000000000 +0100
+@@ -54,9 +54,14 @@ match(const struct sk_buff *skb,
+ 	const struct ip6t_ah *ahinfo = matchinfo;
+ 	unsigned int ptr;
+ 	unsigned int hdrlen = 0;
++	int err;
+ 
+-	if (ipv6_find_hdr(skb, &ptr, NEXTHDR_AUTH, NULL) < 0)
++	err = ipv6_find_hdr(skb, &ptr, NEXTHDR_AUTH, NULL);
++	if (err < 0) {
++		if (err != -ENOENT)
++			*hotdrop = 1;
+ 		return 0;
++	}
+ 
+ 	ah = skb_header_pointer(skb, ptr, sizeof(_ah), &_ah);
+ 	if (ah == NULL) {
+Index: linux-2.6.18.noarch/net/ipv6/netfilter/ip6t_frag.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/ipv6/netfilter/ip6t_frag.c	2007-01-02 21:41:30.000000000 +0100
++++ linux-2.6.18.noarch/net/ipv6/netfilter/ip6t_frag.c	2007-01-02 21:42:31.000000000 +0100
+@@ -52,9 +52,14 @@ match(const struct sk_buff *skb,
+ 	struct frag_hdr _frag, *fh;
+ 	const struct ip6t_frag *fraginfo = matchinfo;
+ 	unsigned int ptr;
++	int err;
+ 
+-	if (ipv6_find_hdr(skb, &ptr, NEXTHDR_FRAGMENT, NULL) < 0)
++	err = ipv6_find_hdr(skb, &ptr, NEXTHDR_FRAGMENT, NULL);
++	if (err < 0) {
++		if (err != -ENOENT)
++			*hotdrop = 1;
+ 		return 0;
++	}
+ 
+ 	fh = skb_header_pointer(skb, ptr, sizeof(_frag), &_frag);
+ 	if (fh == NULL) {
+Index: linux-2.6.18.noarch/net/ipv6/netfilter/ip6t_rt.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/ipv6/netfilter/ip6t_rt.c	2007-01-02 21:41:30.000000000 +0100
++++ linux-2.6.18.noarch/net/ipv6/netfilter/ip6t_rt.c	2007-01-02 21:42:31.000000000 +0100
+@@ -58,9 +58,14 @@ match(const struct sk_buff *skb,
+ 	unsigned int hdrlen = 0;
+ 	unsigned int ret = 0;
+ 	struct in6_addr *ap, _addr;
++	int err;
+ 
+-	if (ipv6_find_hdr(skb, &ptr, NEXTHDR_ROUTING, NULL) < 0)
++	err = ipv6_find_hdr(skb, &ptr, NEXTHDR_ROUTING, NULL);
++	if (err < 0) {
++		if (err != -ENOENT)
++			*hotdrop = 1;
+ 		return 0;
++	}
+ 
+ 	rh = skb_header_pointer(skb, ptr, sizeof(_route), &_route);
+ 	if (rh == NULL) {
+Index: linux-2.6.18.noarch/net/ipv6/netfilter/ip6t_hbh.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/ipv6/netfilter/ip6t_hbh.c	2007-01-02 21:41:30.000000000 +0100
++++ linux-2.6.18.noarch/net/ipv6/netfilter/ip6t_hbh.c	2007-01-02 21:42:31.000000000 +0100
+@@ -70,13 +70,18 @@ match(const struct sk_buff *skb,
+ 	u8 _opttype, *tp = NULL;
+ 	u8 _optlen, *lp = NULL;
+ 	unsigned int optlen;
++	int err;
+ 
+ #if HOPBYHOP
+-	if (ipv6_find_hdr(skb, &ptr, NEXTHDR_HOP, NULL) < 0)
++	err = ipv6_find_hdr(skb, &ptr, NEXTHDR_HOP, NULL);
+ #else
+-	if (ipv6_find_hdr(skb, &ptr, NEXTHDR_DEST, NULL) < 0)
++	err = ipv6_find_hdr(skb, &ptr, NEXTHDR_DEST, NULL);
+ #endif
++	if (err < 0) {
++		if (err != -ENOENT)
++			*hotdrop = 1;
+ 		return 0;
++	}
+ 
+ 	oh = skb_header_pointer(skb, ptr, sizeof(_optsh), &_optsh);
+ 	if (oh == NULL) {
+

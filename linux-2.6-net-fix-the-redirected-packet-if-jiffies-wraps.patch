@@ -1,0 +1,33 @@
+From: Ivan Vecera <ivecera@redhat.com>
+Date: Tue, 3 Jun 2008 21:37:53 +0200
+Subject: [net] fix the redirected packet if jiffies wraps
+Message-id: 48459D91.9050204@redhat.com
+O-Subject: [RHEL5 PATCH] Router can not send the redirect packet if the jiffies has been wraparound
+Bugzilla: 445536
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=445536
+
+Description:
+The same patch as for RHEL-4 (BZ428934).
+
+Upstream status:
+http://git.kernel.org/?p=linux/kernel/git/davem/net-2.6.git;a=commitdiff;h=14fb8a764786e37ac26a2175638115f21980e5a3;hp=a9fc00cca8327dba3ec2a6c727f4b5b1c449f2a2
+
+diff --git a/net/ipv4/route.c b/net/ipv4/route.c
+index 5fd3ed0..fb12ab9 100644
+--- a/net/ipv4/route.c
++++ b/net/ipv4/route.c
+@@ -1319,7 +1319,8 @@ void ip_rt_send_redirect(struct sk_buff *skb)
+ 	/* Check for load limit; set rate_last to the latest sent
+ 	 * redirect.
+ 	 */
+-	if (time_after(jiffies,
++	if (rt->u.dst.rate_tokens == 0 ||
++	    time_after(jiffies,
+ 		       (rt->u.dst.rate_last +
+ 			(ip_rt_redirect_load << rt->u.dst.rate_tokens)))) {
+ 		icmp_send(skb, ICMP_REDIRECT, ICMP_REDIR_HOST, rt->rt_gateway);

@@ -1,0 +1,2390 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Fri, 15 May 2009 09:39:30 -0400
+Subject: [fs] cifs: buffer overruns when converting strings
+Message-id: 1242394771-23125-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.3.z PATCH 1/2] BZ#496576: cifs: fix potential buffer overruns when converting strings
+Bugzilla: 496576
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+CVE: CVE-2009-1633
+
+This patch is a backport of the first patch for BZ#496577 to 5.3.z.
+It depends on the patch for BZ#494279.
+
+The cifs code regularly has to convert strings from ucs2_le (a double
+byte encoding scheme used on windows) to the local NLS charset. The
+routines that do this have a very poor scheme for handling buffer
+lengths.
+
+The string conversion routines accept only a single length parameter
+specified in units of the number of wide characters that it should try
+to convert. It's assumed therefore that the destination buffer will be
+big enough. Some measures are in place now to try to ensure this, but
+they really aren't sufficient. What's needed is a new set of conversion
+routines that take both the source and destination buffer lengths into
+account.
+
+This patchset adds these routines and converts the appropriate callers
+to use them. In addition, it removes a very large piece of
+"experimental" NTLMSSP code that I found to be completely unreachable.
+That code was using the old routines and it's simpler (and better) to
+just remove that code rather than convert it.
+
+There's a CVE for this problem, but the initial patches were posted
+upstream without one. To my knowledge, this isn't embargoed but it is
+something we have to fix.
+
+This patchset is a rollup of 18 patches from upstream. I can provide the
+broken-out set on request. The upstream commits are:
+
+341060273232a2df0d1a7fa53abc661fcf22747c
+afe48c31ea5c74eaac58621ce1c85ae8187c4383
+18295796a30cada84e933d805072dc2248d54f98
+9e39b0ae8af46c83b85dae7ff5251911a80fce5a
+d185cda7712fd1d9e349174639d76eadc66679be
+2edd6c5b0517b9131ede9e74cb121898ccd73042
+20418acd6874792359b42c12d159f42f17593f34
+f58841666bc22e827ca0dcef7b71c7bc2758ce82
+460b96960d1946914e50316ffeefe7b41dddce91
+59140797c5817363087b0ffb46e6bb81a11fe0dc
+cc20c031bb067eb3280a1c4b5c42295093e24863
+066ce6899484d9026acd6ba3a8dbbedb33d7ae1b
+69f801fcaa03be83d58c564f00913b7c172808e4
+7fabf0c9479fef9fdb9528a5fbdb1cb744a744a4
+66345f50f070ae7412a28543ee197cb5eff73598
+d37dc42ab6f040b8f0f2962ab219c5b2accf748d
+7b0c8fcff47a885743125dd843db64af41af5a61
+968460ebd8006d55661dec0fb86712b40d71c413
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+---
+ fs/cifs/cifs_unicode.c |  198 ++++++++-
+ fs/cifs/cifs_unicode.h |   23 +-
+ fs/cifs/cifsproto.h    |    5 +-
+ fs/cifs/cifssmb.c      |  174 +++-----
+ fs/cifs/connect.c      | 1205 +-----------------------------------------------
+ fs/cifs/link.c         |   46 +--
+ fs/cifs/misc.c         |   71 ---
+ fs/cifs/netmisc.c      |    2 +
+ fs/cifs/nterr.h        |    9 +-
+ fs/cifs/readdir.c      |   35 +-
+ fs/cifs/sess.c         |   82 +---
+ fs/cifs/smberr.h       |    1 +
+ include/linux/nls.h    |   19 +
+ 13 files changed, 365 insertions(+), 1505 deletions(-)
+
+diff --git a/fs/cifs/cifs_unicode.c b/fs/cifs/cifs_unicode.c
+index 7d75272..60e3c42 100644
+--- a/fs/cifs/cifs_unicode.c
++++ b/fs/cifs/cifs_unicode.c
+@@ -1,7 +1,7 @@
+ /*
+  *   fs/cifs/cifs_unicode.c
+  *
+- *   Copyright (c) International Business Machines  Corp., 2000,2005
++ *   Copyright (c) International Business Machines  Corp., 2000,2009
+  *   Modified by Steve French (sfrench@us.ibm.com)
+  *
+  *   This program is free software;  you can redistribute it and/or modify
+@@ -26,31 +26,157 @@
+ #include "cifs_debug.h"
+ 
+ /*
+- * NAME:	cifs_strfromUCS()
+- *
+- * FUNCTION:	Convert little-endian unicode string to character string
++ * cifs_ucs2_bytes - how long will a string be after conversion?
++ * @ucs - pointer to input string
++ * @maxbytes - don't go past this many bytes of input string
++ * @codepage - destination codepage
+  *
++ * Walk a ucs2le string and return the number of bytes that the string will
++ * be after being converted to the given charset, not including any null
++ * termination required. Don't walk past maxbytes in the source buffer.
+  */
+ int
+-cifs_strfromUCS_le(char *to, const __le16 *from,
+-		   int len, const struct nls_table *codepage)
++cifs_ucs2_bytes(const __le16 *from, int maxbytes,
++		const struct nls_table *codepage)
+ {
+ 	int i;
+-	int outlen = 0;
++	int charlen, outlen = 0;
++	int maxwords = maxbytes / 2;
++	char tmp[NLS_MAX_CHARSET_SIZE];
+ 
+-	for (i = 0; (i < len) && from[i]; i++) {
+-		int charlen;
+-		/* 2.4.0 kernel or greater */
+-		charlen =
+-		    codepage->uni2char(le16_to_cpu(from[i]), &to[outlen],
+-				       NLS_MAX_CHARSET_SIZE);
+-		if (charlen > 0) {
++	for (i = 0; from[i] && i < maxwords; i++) {
++		charlen = codepage->uni2char(le16_to_cpu(from[i]), tmp,
++					     NLS_MAX_CHARSET_SIZE);
++		if (charlen > 0)
+ 			outlen += charlen;
+-		} else {
+-			to[outlen++] = '?';
++		else
++			outlen++;
++	}
++
++	return outlen;
++}
++
++/*
++ * cifs_mapchar - convert a little-endian char to proper char in codepage
++ * @target - where converted character should be copied
++ * @src_char - 2 byte little-endian source character
++ * @cp - codepage to which character should be converted
++ * @mapchar - should character be mapped according to mapchars mount option?
++ *
++ * This function handles the conversion of a single character. It is the
++ * responsibility of the caller to ensure that the target buffer is large
++ * enough to hold the result of the conversion (at least NLS_MAX_CHARSET_SIZE).
++ */
++static int
++cifs_mapchar(char *target, const __le16 src_char, const struct nls_table *cp,
++	     bool mapchar)
++{
++	int len = 1;
++
++	if (!mapchar)
++		goto cp_convert;
++
++	/*
++	 * BB: Cannot handle remapping UNI_SLASH until all the calls to
++	 *     build_path_from_dentry are modified, as they use slash as
++	 *     separator.
++	 */
++	switch (le16_to_cpu(src_char)) {
++	case UNI_COLON:
++		*target = ':';
++		break;
++	case UNI_ASTERIK:
++		*target = '*';
++		break;
++	case UNI_QUESTION:
++		*target = '?';
++		break;
++	case UNI_PIPE:
++		*target = '|';
++		break;
++	case UNI_GRTRTHAN:
++		*target = '>';
++		break;
++	case UNI_LESSTHAN:
++		*target = '<';
++		break;
++	default:
++		goto cp_convert;
++	}
++
++out:
++	return len;
++
++cp_convert:
++	len = cp->uni2char(le16_to_cpu(src_char), target,
++			   NLS_MAX_CHARSET_SIZE);
++	if (len <= 0) {
++		*target = '?';
++		len = 1;
++	}
++	goto out;
++}
++
++/*
++ * cifs_from_ucs2 - convert utf16le string to local charset
++ * @to - destination buffer
++ * @from - source buffer
++ * @tolen - destination buffer size (in bytes)
++ * @fromlen - source buffer size (in bytes)
++ * @codepage - codepage to which characters should be converted
++ * @mapchar - should characters be remapped according to the mapchars option?
++ *
++ * Convert a little-endian ucs2le string (as sent by the server) to a string
++ * in the provided codepage. The tolen and fromlen parameters are to ensure
++ * that the code doesn't walk off of the end of the buffer (which is always
++ * a danger if the alignment of the source buffer is off). The destination
++ * string is always properly null terminated and fits in the destination
++ * buffer. Returns the length of the destination string in bytes (including
++ * null terminator).
++ *
++ * Note that some windows versions actually send multiword UTF-16 characters
++ * instead of straight UCS-2. The linux nls routines however aren't able to
++ * deal with those characters properly. In the event that we get some of
++ * those characters, they won't be translated properly.
++ */
++int
++cifs_from_ucs2(char *to, const __le16 *from, int tolen, int fromlen,
++		 const struct nls_table *codepage, bool mapchar)
++{
++	int i, charlen, safelen;
++	int outlen = 0;
++	int nullsize = nls_nullsize(codepage);
++	int fromwords = fromlen / 2;
++	char tmp[NLS_MAX_CHARSET_SIZE];
++
++	/*
++	 * because the chars can be of varying widths, we need to take care
++	 * not to overflow the destination buffer when we get close to the
++	 * end of it. Until we get to this offset, we don't need to check
++	 * for overflow however.
++	 */
++	safelen = tolen - (NLS_MAX_CHARSET_SIZE + nullsize);
++
++	for (i = 0; i < fromwords && from[i]; i++) {
++		/*
++		 * check to see if converting this character might make the
++		 * conversion bleed into the null terminator
++		 */
++		if (outlen >= safelen) {
++			charlen = cifs_mapchar(tmp, from[i], codepage, mapchar);
++			if ((outlen + charlen) > (tolen - nullsize))
++				break;
+ 		}
++
++		/* put converted char into 'to' buffer */
++		charlen = cifs_mapchar(&to[outlen], from[i], codepage, mapchar);
++		outlen += charlen;
+ 	}
+-	to[outlen] = 0;
++
++	/* properly null-terminate string */
++	for (i = 0; i < nullsize; i++)
++		to[outlen++] = 0;
++
+ 	return outlen;
+ }
+ 
+@@ -88,3 +214,41 @@ cifs_strtoUCS(__le16 *to, const char *from, int len,
+ 	return i;
+ }
+ 
++/*
++ * cifs_strndup_from_ucs - copy a string from wire format to the local codepage
++ * @src - source string
++ * @maxlen - don't walk past this many bytes in the source string
++ * @is_unicode - is this a unicode string?
++ * @codepage - destination codepage
++ *
++ * Take a string given by the server, convert it to the local codepage and
++ * put it in a new buffer. Returns a pointer to the new string or NULL on
++ * error.
++ */
++char *
++cifs_strndup_from_ucs(const char *src, const int maxlen, const bool is_unicode,
++	     const struct nls_table *codepage)
++{
++	int len;
++	char *dst;
++
++	if (is_unicode) {
++		len = cifs_ucs2_bytes((__le16 *) src, maxlen, codepage);
++		len += nls_nullsize(codepage);
++		dst = kmalloc(len, GFP_KERNEL);
++		if (!dst)
++			return NULL;
++		cifs_from_ucs2(dst, (__le16 *) src, len, maxlen, codepage,
++			       false);
++	} else {
++		len = strnlen(src, maxlen);
++		len++;
++		dst = kmalloc(len, GFP_KERNEL);
++		if (!dst)
++			return NULL;
++		strlcpy(dst, src, len);
++	}
++
++	return dst;
++}
++
+diff --git a/fs/cifs/cifs_unicode.h b/fs/cifs/cifs_unicode.h
+index 92bb88d..3089639 100644
+--- a/fs/cifs/cifs_unicode.h
++++ b/fs/cifs/cifs_unicode.h
+@@ -5,7 +5,7 @@
+  *     Convert a unicode character to upper or lower case using
+  *     compressed tables.
+  *
+- *   Copyright (c) International Business Machines  Corp., 2000,2007
++ *   Copyright (c) International Business Machines  Corp., 2000,2009
+  *
+  *   This program is free software;  you can redistribute it and/or modify
+  *   it under the terms of the GNU General Public License as published by
+@@ -37,6 +37,19 @@
+ 
+ #define  UNIUPR_NOLOWER		/* Example to not expand lower case tables */
+ 
++/*
++ * Windows maps these to the user defined 16 bit Unicode range since they are
++ * reserved symbols (along with \ and /), otherwise illegal to store
++ * in filenames in NTFS
++ */
++#define UNI_ASTERIK     (__u16) ('*' + 0xF000)
++#define UNI_QUESTION    (__u16) ('?' + 0xF000)
++#define UNI_COLON       (__u16) (':' + 0xF000)
++#define UNI_GRTRTHAN    (__u16) ('>' + 0xF000)
++#define UNI_LESSTHAN    (__u16) ('<' + 0xF000)
++#define UNI_PIPE        (__u16) ('|' + 0xF000)
++#define UNI_SLASH       (__u16) ('\\' + 0xF000)
++
+ /* Just define what we want from uniupr.h.  We don't want to define the tables
+  * in each source file.
+  */
+@@ -68,8 +81,14 @@ extern struct UniCaseRange UniLowerRange[];
+ #endif
+ 
+ #ifdef __KERNEL__
+-int cifs_strfromUCS_le(char *, const __le16 *, int, const struct nls_table *);
++int cifs_from_ucs2(char *to, const __le16 *from, int tolen, int fromlen,
++		   const struct nls_table *codepage, bool mapchar);
++int cifs_ucs2_bytes(const __le16 *from, int maxbytes,
++		    const struct nls_table *codepage);
+ int cifs_strtoUCS(__le16 *, const char *, int, const struct nls_table *);
++char *cifs_strndup_from_ucs(const char *src, const int maxlen,
++			    const bool is_unicode,
++			    const struct nls_table *codepage);
+ #endif
+ 
+ /*
+diff --git a/fs/cifs/cifsproto.h b/fs/cifs/cifsproto.h
+index 5cfb30f..624e849 100644
+--- a/fs/cifs/cifsproto.h
++++ b/fs/cifs/cifsproto.h
+@@ -285,8 +285,7 @@ extern int CIFSUnixCreateSymLink(const int xid,
+ 			const struct nls_table *nls_codepage);
+ extern int CIFSSMBUnixQuerySymLink(const int xid,
+ 			struct cifsTconInfo *tcon,
+-			const unsigned char *searchName,
+-			char *syminfo, const int buflen,
++			const unsigned char *searchName, char **syminfo,
+ 			const struct nls_table *nls_codepage);
+ extern int CIFSSMBQueryReparseLinkInfo(const int xid,
+ 			struct cifsTconInfo *tcon,
+@@ -329,8 +328,6 @@ extern int CIFSGetSrvInodeNumber(const int xid, struct cifsTconInfo *tcon,
+ 			const unsigned char *searchName, __u64 *inode_number,
+ 			const struct nls_table *nls_codepage,
+ 			int remap_special_chars);
+-extern int cifs_convertUCSpath(char *target, const __le16 *source, int maxlen,
+-			const struct nls_table *codepage);
+ extern int cifsConvertToUCS(__le16 *target, const char *source, int maxlen,
+ 			const struct nls_table *cp, int mapChars);
+ 
+diff --git a/fs/cifs/cifssmb.c b/fs/cifs/cifssmb.c
+index 2095f5b..e5db411 100644
+--- a/fs/cifs/cifssmb.c
++++ b/fs/cifs/cifssmb.c
+@@ -1,7 +1,7 @@
+ /*
+  *   fs/cifs/cifssmb.c
+  *
+- *   Copyright (C) International Business Machines  Corp., 2002,2008
++ *   Copyright (C) International Business Machines  Corp., 2002,2009
+  *   Author(s): Steve French (sfrench@us.ibm.com)
+  *
+  *   Contains the routines for constructing the SMB PDUs themselves
+@@ -84,41 +84,6 @@ static struct {
+ #endif /* CONFIG_CIFS_WEAK_PW_HASH */
+ #endif /* CIFS_POSIX */
+ 
+-/* Allocates buffer into dst and copies smb string from src to it.
+- * caller is responsible for freeing dst if function returned 0.
+- * returns:
+- * 	on success - 0
+- *	on failure - errno
+- */
+-static int
+-cifs_strncpy_to_host(char **dst, const char *src, const int maxlen,
+-		 const bool is_unicode, const struct nls_table *nls_codepage)
+-{
+-	int plen;
+-
+-	if (is_unicode) {
+-		plen = UniStrnlen((wchar_t *)src, maxlen);
+-		*dst = kmalloc(plen + 2, GFP_KERNEL);
+-		if (!*dst)
+-			goto cifs_strncpy_to_host_ErrExit;
+-		cifs_strfromUCS_le(*dst, (__le16 *)src, plen, nls_codepage);
+-	} else {
+-		plen = strnlen(src, maxlen);
+-		*dst = kmalloc(plen + 2, GFP_KERNEL);
+-		if (!*dst)
+-			goto cifs_strncpy_to_host_ErrExit;
+-		strncpy(*dst, src, plen);
+-	}
+-	(*dst)[plen] = 0;
+-	(*dst)[plen+1] = 0; /* harmless for ASCII case, needed for Unicode */
+-	return 0;
+-
+-cifs_strncpy_to_host_ErrExit:
+-	cERROR(1, ("Failed to allocate buffer for string\n"));
+-	return -ENOMEM;
+-}
+-
+-
+ /* Mark as invalid, all open files on tree connections since they
+    were closed when session to server was lost */
+ static void mark_open_files_invalid(struct cifsTconInfo *pTcon)
+@@ -2427,8 +2392,7 @@ winCreateHardLinkRetry:
+ 
+ int
+ CIFSSMBUnixQuerySymLink(const int xid, struct cifsTconInfo *tcon,
+-			const unsigned char *searchName,
+-			char *symlinkinfo, const int buflen,
++			const unsigned char *searchName, char **symlinkinfo,
+ 			const struct nls_table *nls_codepage)
+ {
+ /* SMB_QUERY_FILE_UNIX_LINK */
+@@ -2438,6 +2402,7 @@ CIFSSMBUnixQuerySymLink(const int xid, struct cifsTconInfo *tcon,
+ 	int bytes_returned;
+ 	int name_len;
+ 	__u16 params, byte_count;
++	char *data_start;
+ 
+ 	cFYI(1, ("In QPathSymLinkInfo (Unix) for path %s", searchName));
+ 
+@@ -2492,30 +2457,22 @@ querySymLinkRetry:
+ 		/* decode response */
+ 
+ 		rc = validate_t2((struct smb_t2_rsp *)pSMBr);
+-		if (rc || (pSMBr->ByteCount < 2))
+ 		/* BB also check enough total bytes returned */
+-			rc = -EIO;	/* bad smb */
++		if (rc || (pSMBr->ByteCount < 2))
++			rc = -EIO;
+ 		else {
+-			__u16 data_offset = le16_to_cpu(pSMBr->t2.DataOffset);
+-			__u16 count = le16_to_cpu(pSMBr->t2.DataCount);
++			u16 count = le16_to_cpu(pSMBr->t2.DataCount);
++
++			data_start = ((char *) &pSMBr->hdr.Protocol) +
++					   le16_to_cpu(pSMBr->t2.DataOffset);
+ 
+-			if (pSMBr->hdr.Flags2 & SMBFLG2_UNICODE) {
+-				name_len = UniStrnlen((wchar_t *) ((char *)
+-					&pSMBr->hdr.Protocol + data_offset),
+-					min_t(const int, buflen, count) / 2);
+ 			/* BB FIXME investigate remapping reserved chars here */
+-				cifs_strfromUCS_le(symlinkinfo,
+-					(__le16 *) ((char *)&pSMBr->hdr.Protocol
+-							+ data_offset),
+-					name_len, nls_codepage);
+-			} else {
+-				strncpy(symlinkinfo,
+-					(char *) &pSMBr->hdr.Protocol +
+-						data_offset,
+-					min_t(const int, buflen, count));
+-			}
+-			symlinkinfo[buflen] = 0;
+-	/* just in case so calling code does not go off the end of buffer */
++			*symlinkinfo = cifs_strndup_from_ucs(data_start, count,
++						    pSMBr->hdr.Flags2 &
++							SMBFLG2_UNICODE,
++						    nls_codepage);
++			if (!symlinkinfo)
++				rc = -ENOMEM;
+ 		}
+ 	}
+ 	cifs_buf_release(pSMB);
+@@ -2613,7 +2570,6 @@ validate_ntransact(char *buf, char **ppparm, char **ppdata,
+ 	*pparmlen = parm_count;
+ 	return 0;
+ }
+-#endif /* CIFS_EXPERIMENTAL */
+ 
+ int
+ CIFSSMBQueryReparseLinkInfo(const int xid, struct cifsTconInfo *tcon,
+@@ -2623,7 +2579,6 @@ CIFSSMBQueryReparseLinkInfo(const int xid, struct cifsTconInfo *tcon,
+ {
+ 	int rc = 0;
+ 	int bytes_returned;
+-	int name_len;
+ 	struct smb_com_transaction_ioctl_req *pSMB;
+ 	struct smb_com_transaction_ioctl_rsp *pSMBr;
+ 
+@@ -2660,59 +2615,55 @@ CIFSSMBQueryReparseLinkInfo(const int xid, struct cifsTconInfo *tcon,
+ 	} else {		/* decode response */
+ 		__u32 data_offset = le32_to_cpu(pSMBr->DataOffset);
+ 		__u32 data_count = le32_to_cpu(pSMBr->DataCount);
+-		if ((pSMBr->ByteCount < 2) || (data_offset > 512))
++		if ((pSMBr->ByteCount < 2) || (data_offset > 512)) {
+ 		/* BB also check enough total bytes returned */
+ 			rc = -EIO;	/* bad smb */
+-		else {
+-			if (data_count && (data_count < 2048)) {
+-				char *end_of_smb = 2 /* sizeof byte count */ +
+-						pSMBr->ByteCount +
+-						(char *)&pSMBr->ByteCount;
++			goto qreparse_out;
++		}
++		if (data_count && (data_count < 2048)) {
++			char *end_of_smb = 2 /* sizeof byte count */ +
++				pSMBr->ByteCount + (char *)&pSMBr->ByteCount;
+ 
+-				struct reparse_data *reparse_buf =
++			struct reparse_data *reparse_buf =
+ 						(struct reparse_data *)
+ 						((char *)&pSMBr->hdr.Protocol
+ 								 + data_offset);
+-				if ((char *)reparse_buf >= end_of_smb) {
+-					rc = -EIO;
+-					goto qreparse_out;
+-				}
+-				if ((reparse_buf->LinkNamesBuf +
+-					reparse_buf->TargetNameOffset +
+-					reparse_buf->TargetNameLen) >
+-						end_of_smb) {
+-					cFYI(1, ("reparse buf beyond SMB"));
+-					rc = -EIO;
+-					goto qreparse_out;
+-				}
++			if ((char *)reparse_buf >= end_of_smb) {
++				rc = -EIO;
++				goto qreparse_out;
++			}
++			if ((reparse_buf->LinkNamesBuf +
++				reparse_buf->TargetNameOffset +
++				reparse_buf->TargetNameLen) > end_of_smb) {
++				cFYI(1, ("reparse buf beyond SMB"));
++				rc = -EIO;
++				goto qreparse_out;
++			}
+ 
+-				if (pSMBr->hdr.Flags2 & SMBFLG2_UNICODE) {
+-					name_len = UniStrnlen((wchar_t *)
++			if (pSMBr->hdr.Flags2 & SMBFLG2_UNICODE) {
++				cifs_from_ucs2(symlinkinfo, (__le16 *)
+ 						(reparse_buf->LinkNamesBuf +
+ 						reparse_buf->TargetNameOffset),
+-						min(buflen/2,
+-						reparse_buf->TargetNameLen / 2));
+-					cifs_strfromUCS_le(symlinkinfo,
+-						(__le16 *) (reparse_buf->LinkNamesBuf +
+-						reparse_buf->TargetNameOffset),
+-						name_len, nls_codepage);
+-				} else { /* ASCII names */
+-					strncpy(symlinkinfo,
+-						reparse_buf->LinkNamesBuf +
+-						reparse_buf->TargetNameOffset,
+-						min_t(const int, buflen,
+-						   reparse_buf->TargetNameLen));
+-				}
+-			} else {
+-				rc = -EIO;
+-				cFYI(1, ("Invalid return data count on "
+-					 "get reparse info ioctl"));
++						buflen,
++						reparse_buf->TargetNameLen,
++						nls_codepage, 0);
++			} else { /* ASCII names */
++				strncpy(symlinkinfo,
++					reparse_buf->LinkNamesBuf +
++					reparse_buf->TargetNameOffset,
++					min_t(const int, buflen,
++					   reparse_buf->TargetNameLen));
+ 			}
+-			symlinkinfo[buflen] = 0; /* just in case so the caller
+-					does not go off the end of the buffer */
+-			cFYI(1, ("readlink result - %s", symlinkinfo));
++		} else {
++			rc = -EIO;
++			cFYI(1, ("Invalid return data count on "
++				 "get reparse info ioctl"));
+ 		}
++		symlinkinfo[buflen] = 0; /* just in case so the caller
++					does not go off the end of the buffer */
++		cFYI(1, ("readlink result - %s", symlinkinfo));
+ 	}
++
+ qreparse_out:
+ 	cifs_buf_release(pSMB);
+ 
+@@ -2721,6 +2672,7 @@ qreparse_out:
+ 
+ 	return rc;
+ }
++#endif /* CIFS_EXPERIMENTAL */
+ 
+ #if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ #ifdef CONFIG_CIFS_POSIX
+@@ -3987,20 +3939,24 @@ parse_DFS_referrals(TRANSACTION2_GET_DFS_REFER_RSP *pSMBr,
+ 		/* copy DfsPath */
+ 		temp = (char *)ref + le16_to_cpu(ref->DfsPathOffset);
+ 		max_len = data_end - temp;
+-		rc = cifs_strncpy_to_host(&(node->path_name), temp,
+-					max_len, is_unicode, nls_codepage);
+-		if (rc)
++		node->path_name = cifs_strndup_from_ucs(temp, max_len,
++						      is_unicode, nls_codepage);
++		if (IS_ERR(node->path_name)) {
++			rc = PTR_ERR(node->path_name);
++			node->path_name = NULL;
+ 			goto parse_DFS_referrals_exit;
++		}
+ 
+ 		/* copy link target UNC */
+ 		temp = (char *)ref + le16_to_cpu(ref->NetworkAddressOffset);
+ 		max_len = data_end - temp;
+-		rc = cifs_strncpy_to_host(&(node->node_name), temp,
+-					max_len, is_unicode, nls_codepage);
+-		if (rc)
++		node->node_name = cifs_strndup_from_ucs(temp, max_len,
++						      is_unicode, nls_codepage);
++		if (IS_ERR(node->node_name)) {
++			rc = PTR_ERR(node->node_name);
++			node->node_name = NULL;
+ 			goto parse_DFS_referrals_exit;
+-
+-		ref += le16_to_cpu(ref->Size);
++		}
+ 	}
+ 
+ parse_DFS_referrals_exit:
+diff --git a/fs/cifs/connect.c b/fs/cifs/connect.c
+index 6ddb3a9..2e263f9 100644
+--- a/fs/cifs/connect.c
++++ b/fs/cifs/connect.c
+@@ -1,7 +1,7 @@
+ /*
+  *   fs/cifs/connect.c
+  *
+- *   Copyright (C) International Business Machines  Corp., 2002,2008
++ *   Copyright (C) International Business Machines  Corp., 2002,2009
+  *   Author(s): Steve French (sfrench@us.ibm.com)
+  *
+  *   This library is free software; you can redistribute it and/or modify
+@@ -2421,1087 +2421,6 @@ out:
+ 	return rc;
+ }
+ 
+-static int
+-CIFSSessSetup(unsigned int xid, struct cifsSesInfo *ses,
+-	      char session_key[CIFS_SESS_KEY_SIZE],
+-	      const struct nls_table *nls_codepage)
+-{
+-	struct smb_hdr *smb_buffer;
+-	struct smb_hdr *smb_buffer_response;
+-	SESSION_SETUP_ANDX *pSMB;
+-	SESSION_SETUP_ANDX *pSMBr;
+-	char *bcc_ptr;
+-	char *user;
+-	char *domain;
+-	int rc = 0;
+-	int remaining_words = 0;
+-	int bytes_returned = 0;
+-	int len;
+-	__u32 capabilities;
+-	__u16 count;
+-
+-	cFYI(1, ("In sesssetup"));
+-	if (ses == NULL)
+-		return -EINVAL;
+-	user = ses->userName;
+-	domain = ses->domainName;
+-	smb_buffer = cifs_buf_get();
+-
+-	if (smb_buffer == NULL)
+-		return -ENOMEM;
+-
+-	smb_buffer_response = smb_buffer;
+-	pSMBr = pSMB = (SESSION_SETUP_ANDX *) smb_buffer;
+-
+-	/* send SMBsessionSetup here */
+-	header_assemble(smb_buffer, SMB_COM_SESSION_SETUP_ANDX,
+-			NULL /* no tCon exists yet */ , 13 /* wct */ );
+-
+-	smb_buffer->Mid = GetNextMid(ses->server);
+-	pSMB->req_no_secext.AndXCommand = 0xFF;
+-	pSMB->req_no_secext.MaxBufferSize = cpu_to_le16(ses->server->maxBuf);
+-	pSMB->req_no_secext.MaxMpxCount = cpu_to_le16(ses->server->maxReq);
+-
+-	if (ses->server->secMode &
+-			(SECMODE_SIGN_REQUIRED | SECMODE_SIGN_ENABLED))
+-		smb_buffer->Flags2 |= SMBFLG2_SECURITY_SIGNATURE;
+-
+-	capabilities = CAP_LARGE_FILES | CAP_NT_SMBS | CAP_LEVEL_II_OPLOCKS |
+-		CAP_LARGE_WRITE_X | CAP_LARGE_READ_X;
+-	if (ses->capabilities & CAP_UNICODE) {
+-		smb_buffer->Flags2 |= SMBFLG2_UNICODE;
+-		capabilities |= CAP_UNICODE;
+-	}
+-	if (ses->capabilities & CAP_STATUS32) {
+-		smb_buffer->Flags2 |= SMBFLG2_ERR_STATUS;
+-		capabilities |= CAP_STATUS32;
+-	}
+-	if (ses->capabilities & CAP_DFS) {
+-		smb_buffer->Flags2 |= SMBFLG2_DFS;
+-		capabilities |= CAP_DFS;
+-	}
+-	pSMB->req_no_secext.Capabilities = cpu_to_le32(capabilities);
+-
+-	pSMB->req_no_secext.CaseInsensitivePasswordLength =
+-		cpu_to_le16(CIFS_SESS_KEY_SIZE);
+-
+-	pSMB->req_no_secext.CaseSensitivePasswordLength =
+-	    cpu_to_le16(CIFS_SESS_KEY_SIZE);
+-	bcc_ptr = pByteArea(smb_buffer);
+-	memcpy(bcc_ptr, (char *) session_key, CIFS_SESS_KEY_SIZE);
+-	bcc_ptr += CIFS_SESS_KEY_SIZE;
+-	memcpy(bcc_ptr, (char *) session_key, CIFS_SESS_KEY_SIZE);
+-	bcc_ptr += CIFS_SESS_KEY_SIZE;
+-
+-	if (ses->capabilities & CAP_UNICODE) {
+-		if ((long) bcc_ptr % 2) { /* must be word aligned for Unicode */
+-			*bcc_ptr = 0;
+-			bcc_ptr++;
+-		}
+-		if (user == NULL)
+-			bytes_returned = 0; /* skip null user */
+-		else
+-			bytes_returned =
+-				cifs_strtoUCS((__le16 *) bcc_ptr, user, 100,
+-					nls_codepage);
+-		/* convert number of 16 bit words to bytes */
+-		bcc_ptr += 2 * bytes_returned;
+-		bcc_ptr += 2;	/* trailing null */
+-		if (domain == NULL)
+-			bytes_returned =
+-			    cifs_strtoUCS((__le16 *) bcc_ptr,
+-					  "CIFS_LINUX_DOM", 32, nls_codepage);
+-		else
+-			bytes_returned =
+-			    cifs_strtoUCS((__le16 *) bcc_ptr, domain, 64,
+-					  nls_codepage);
+-		bcc_ptr += 2 * bytes_returned;
+-		bcc_ptr += 2;
+-		bytes_returned =
+-		    cifs_strtoUCS((__le16 *) bcc_ptr, "Linux version ",
+-				  32, nls_codepage);
+-		bcc_ptr += 2 * bytes_returned;
+-		bytes_returned =
+-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 18)
+-			cifs_strtoUCS((__le16 *) bcc_ptr, utsname()->release,
+-					32, nls_codepage);
+-#else
+-			cifs_strtoUCS((__le16 *)bcc_ptr, system_utsname.release,
+-					32, nls_codepage);
+-#endif
+-		bcc_ptr += 2 * bytes_returned;
+-		bcc_ptr += 2;
+-		bytes_returned =
+-		    cifs_strtoUCS((__le16 *) bcc_ptr, CIFS_NETWORK_OPSYS,
+-				  64, nls_codepage);
+-		bcc_ptr += 2 * bytes_returned;
+-		bcc_ptr += 2;
+-	} else {
+-		if (user != NULL) {
+-		    strncpy(bcc_ptr, user, 200);
+-		    bcc_ptr += strnlen(user, 200);
+-		}
+-		*bcc_ptr = 0;
+-		bcc_ptr++;
+-		if (domain == NULL) {
+-			strcpy(bcc_ptr, "CIFS_LINUX_DOM");
+-			bcc_ptr += strlen("CIFS_LINUX_DOM") + 1;
+-		} else {
+-			strncpy(bcc_ptr, domain, 64);
+-			bcc_ptr += strnlen(domain, 64);
+-			*bcc_ptr = 0;
+-			bcc_ptr++;
+-		}
+-		strcpy(bcc_ptr, "Linux version ");
+-		bcc_ptr += strlen("Linux version ");
+-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 18)
+-		strcpy(bcc_ptr, utsname()->release);
+-		bcc_ptr += strlen(utsname()->release) + 1;
+-#else
+-		strcpy(bcc_ptr, system_utsname.release);
+-		bcc_ptr += strlen(system_utsname.release) + 1;
+-#endif
+-		strcpy(bcc_ptr, CIFS_NETWORK_OPSYS);
+-		bcc_ptr += strlen(CIFS_NETWORK_OPSYS) + 1;
+-	}
+-	count = (long) bcc_ptr - (long) pByteArea(smb_buffer);
+-	smb_buffer->smb_buf_length += count;
+-	pSMB->req_no_secext.ByteCount = cpu_to_le16(count);
+-
+-	rc = SendReceive(xid, ses, smb_buffer, smb_buffer_response,
+-			 &bytes_returned, CIFS_LONG_OP);
+-	if (rc) {
+-/* rc = map_smb_to_linux_error(smb_buffer_response); now done in SendReceive */
+-	} else if ((smb_buffer_response->WordCount == 3)
+-		   || (smb_buffer_response->WordCount == 4)) {
+-		__u16 action = le16_to_cpu(pSMBr->resp.Action);
+-		__u16 blob_len = le16_to_cpu(pSMBr->resp.SecurityBlobLength);
+-		if (action & GUEST_LOGIN)
+-			cFYI(1, (" Guest login")); /* BB mark SesInfo struct? */
+-		ses->Suid = smb_buffer_response->Uid; /* UID left in wire format
+-							 (little endian) */
+-		cFYI(1, ("UID = %d ", ses->Suid));
+-	/* response can have either 3 or 4 word count - Samba sends 3 */
+-		bcc_ptr = pByteArea(smb_buffer_response);
+-		if ((pSMBr->resp.hdr.WordCount == 3)
+-		    || ((pSMBr->resp.hdr.WordCount == 4)
+-			&& (blob_len < pSMBr->resp.ByteCount))) {
+-			if (pSMBr->resp.hdr.WordCount == 4)
+-				bcc_ptr += blob_len;
+-
+-			if (smb_buffer->Flags2 & SMBFLG2_UNICODE) {
+-				if ((long) (bcc_ptr) % 2) {
+-					remaining_words =
+-					    (BCC(smb_buffer_response) - 1) / 2;
+-					/* Unicode strings must be word
+-					   aligned */
+-					bcc_ptr++;
+-				} else {
+-					remaining_words =
+-						BCC(smb_buffer_response) / 2;
+-				}
+-				len =
+-				    UniStrnlen((wchar_t *) bcc_ptr,
+-					       remaining_words - 1);
+-/* We look for obvious messed up bcc or strings in response so we do not go off
+-   the end since (at least) WIN2K and Windows XP have a major bug in not null
+-   terminating last Unicode string in response  */
+-				if (ses->serverOS)
+-					kfree(ses->serverOS);
+-				ses->serverOS = kzalloc(2 * (len + 1),
+-							GFP_KERNEL);
+-				if (ses->serverOS == NULL)
+-					goto sesssetup_nomem;
+-				cifs_strfromUCS_le(ses->serverOS,
+-						   (__le16 *)bcc_ptr,
+-						   len, nls_codepage);
+-				bcc_ptr += 2 * (len + 1);
+-				remaining_words -= len + 1;
+-				ses->serverOS[2 * len] = 0;
+-				ses->serverOS[1 + (2 * len)] = 0;
+-				if (remaining_words > 0) {
+-					len = UniStrnlen((wchar_t *)bcc_ptr,
+-							 remaining_words-1);
+-					kfree(ses->serverNOS);
+-					ses->serverNOS = kzalloc(2 * (len + 1),
+-								 GFP_KERNEL);
+-					if (ses->serverNOS == NULL)
+-						goto sesssetup_nomem;
+-					cifs_strfromUCS_le(ses->serverNOS,
+-							   (__le16 *)bcc_ptr,
+-							   len, nls_codepage);
+-					bcc_ptr += 2 * (len + 1);
+-					ses->serverNOS[2 * len] = 0;
+-					ses->serverNOS[1 + (2 * len)] = 0;
+-					if (strncmp(ses->serverNOS,
+-						"NT LAN Manager 4", 16) == 0) {
+-						cFYI(1, ("NT4 server"));
+-						ses->flags |= CIFS_SES_NT4;
+-					}
+-					remaining_words -= len + 1;
+-					if (remaining_words > 0) {
+-						len = UniStrnlen((wchar_t *) bcc_ptr, remaining_words);
+-				/* last string is not always null terminated
+-				   (for e.g. for Windows XP & 2000) */
+-						if (ses->serverDomain)
+-							kfree(ses->serverDomain);
+-						ses->serverDomain =
+-						    kzalloc(2*(len+1),
+-							    GFP_KERNEL);
+-						if (ses->serverDomain == NULL)
+-							goto sesssetup_nomem;
+-						cifs_strfromUCS_le(ses->serverDomain,
+-							(__le16 *)bcc_ptr,
+-							len, nls_codepage);
+-						bcc_ptr += 2 * (len + 1);
+-						ses->serverDomain[2*len] = 0;
+-						ses->serverDomain[1+(2*len)] = 0;
+-					} else { /* else no more room so create
+-						  dummy domain string */
+-						if (ses->serverDomain)
+-							kfree(ses->serverDomain);
+-						ses->serverDomain =
+-							kzalloc(2, GFP_KERNEL);
+-					}
+-				} else { /* no room so create dummy domain
+-					    and NOS string */
+-
+-					/* if these kcallocs fail not much we
+-					   can do, but better to not fail the
+-					   sesssetup itself */
+-					kfree(ses->serverDomain);
+-					ses->serverDomain =
+-					    kzalloc(2, GFP_KERNEL);
+-					kfree(ses->serverNOS);
+-					ses->serverNOS =
+-					    kzalloc(2, GFP_KERNEL);
+-				}
+-			} else {	/* ASCII */
+-				len = strnlen(bcc_ptr, 1024);
+-				if (((long) bcc_ptr + len) - (long)
+-				    pByteArea(smb_buffer_response)
+-					    <= BCC(smb_buffer_response)) {
+-					kfree(ses->serverOS);
+-					ses->serverOS = kzalloc(len + 1,
+-								GFP_KERNEL);
+-					if (ses->serverOS == NULL)
+-						goto sesssetup_nomem;
+-					strncpy(ses->serverOS, bcc_ptr, len);
+-
+-					bcc_ptr += len;
+-					/* null terminate the string */
+-					bcc_ptr[0] = 0;
+-					bcc_ptr++;
+-
+-					len = strnlen(bcc_ptr, 1024);
+-					kfree(ses->serverNOS);
+-					ses->serverNOS = kzalloc(len + 1,
+-								 GFP_KERNEL);
+-					if (ses->serverNOS == NULL)
+-						goto sesssetup_nomem;
+-					strncpy(ses->serverNOS, bcc_ptr, len);
+-					bcc_ptr += len;
+-					bcc_ptr[0] = 0;
+-					bcc_ptr++;
+-
+-					len = strnlen(bcc_ptr, 1024);
+-					if (ses->serverDomain)
+-						kfree(ses->serverDomain);
+-					ses->serverDomain = kzalloc(len + 1,
+-								    GFP_KERNEL);
+-					if (ses->serverDomain == NULL)
+-						goto sesssetup_nomem;
+-					strncpy(ses->serverDomain, bcc_ptr,
+-						len);
+-					bcc_ptr += len;
+-					bcc_ptr[0] = 0;
+-					bcc_ptr++;
+-				} else
+-					cFYI(1,
+-					     ("Variable field of length %d "
+-						"extends beyond end of smb ",
+-					      len));
+-			}
+-		} else {
+-			cERROR(1,
+-			       (" Security Blob Length extends beyond "
+-				"end of SMB"));
+-		}
+-	} else {
+-		cERROR(1,
+-		       (" Invalid Word count %d: ",
+-			smb_buffer_response->WordCount));
+-		rc = -EIO;
+-	}
+-sesssetup_nomem:	/* do not return an error on nomem for the info strings,
+-			   since that could make reconnection harder, and
+-			   reconnection might be needed to free memory */
+-	cifs_buf_release(smb_buffer);
+-
+-	return rc;
+-}
+-
+-static int
+-CIFSNTLMSSPNegotiateSessSetup(unsigned int xid,
+-			      struct cifsSesInfo *ses, bool *pNTLMv2_flag,
+-			      const struct nls_table *nls_codepage)
+-{
+-	struct smb_hdr *smb_buffer;
+-	struct smb_hdr *smb_buffer_response;
+-	SESSION_SETUP_ANDX *pSMB;
+-	SESSION_SETUP_ANDX *pSMBr;
+-	char *bcc_ptr;
+-	char *domain;
+-	int rc = 0;
+-	int remaining_words = 0;
+-	int bytes_returned = 0;
+-	int len;
+-	int SecurityBlobLength = sizeof(NEGOTIATE_MESSAGE);
+-	PNEGOTIATE_MESSAGE SecurityBlob;
+-	PCHALLENGE_MESSAGE SecurityBlob2;
+-	__u32 negotiate_flags, capabilities;
+-	__u16 count;
+-
+-	cFYI(1, ("In NTLMSSP sesssetup (negotiate)"));
+-	if (ses == NULL)
+-		return -EINVAL;
+-	domain = ses->domainName;
+-	*pNTLMv2_flag = false;
+-	smb_buffer = cifs_buf_get();
+-	if (smb_buffer == NULL) {
+-		return -ENOMEM;
+-	}
+-	smb_buffer_response = smb_buffer;
+-	pSMB = (SESSION_SETUP_ANDX *) smb_buffer;
+-	pSMBr = (SESSION_SETUP_ANDX *) smb_buffer_response;
+-
+-	/* send SMBsessionSetup here */
+-	header_assemble(smb_buffer, SMB_COM_SESSION_SETUP_ANDX,
+-			NULL /* no tCon exists yet */ , 12 /* wct */ );
+-
+-	smb_buffer->Mid = GetNextMid(ses->server);
+-	pSMB->req.hdr.Flags2 |= SMBFLG2_EXT_SEC;
+-	pSMB->req.hdr.Flags |= (SMBFLG_CASELESS | SMBFLG_CANONICAL_PATH_FORMAT);
+-
+-	pSMB->req.AndXCommand = 0xFF;
+-	pSMB->req.MaxBufferSize = cpu_to_le16(ses->server->maxBuf);
+-	pSMB->req.MaxMpxCount = cpu_to_le16(ses->server->maxReq);
+-
+-	if (ses->server->secMode & (SECMODE_SIGN_REQUIRED | SECMODE_SIGN_ENABLED))
+-		smb_buffer->Flags2 |= SMBFLG2_SECURITY_SIGNATURE;
+-
+-	capabilities = CAP_LARGE_FILES | CAP_NT_SMBS | CAP_LEVEL_II_OPLOCKS |
+-	    CAP_EXTENDED_SECURITY;
+-	if (ses->capabilities & CAP_UNICODE) {
+-		smb_buffer->Flags2 |= SMBFLG2_UNICODE;
+-		capabilities |= CAP_UNICODE;
+-	}
+-	if (ses->capabilities & CAP_STATUS32) {
+-		smb_buffer->Flags2 |= SMBFLG2_ERR_STATUS;
+-		capabilities |= CAP_STATUS32;
+-	}
+-	if (ses->capabilities & CAP_DFS) {
+-		smb_buffer->Flags2 |= SMBFLG2_DFS;
+-		capabilities |= CAP_DFS;
+-	}
+-	pSMB->req.Capabilities = cpu_to_le32(capabilities);
+-
+-	bcc_ptr = (char *) &pSMB->req.SecurityBlob;
+-	SecurityBlob = (PNEGOTIATE_MESSAGE) bcc_ptr;
+-	strncpy(SecurityBlob->Signature, NTLMSSP_SIGNATURE, 8);
+-	SecurityBlob->MessageType = NtLmNegotiate;
+-	negotiate_flags =
+-	    NTLMSSP_NEGOTIATE_UNICODE | NTLMSSP_NEGOTIATE_OEM |
+-	    NTLMSSP_REQUEST_TARGET | NTLMSSP_NEGOTIATE_NTLM |
+-	    NTLMSSP_NEGOTIATE_56 |
+-	    /* NTLMSSP_NEGOTIATE_ALWAYS_SIGN | */ NTLMSSP_NEGOTIATE_128;
+-	if (sign_CIFS_PDUs)
+-		negotiate_flags |= NTLMSSP_NEGOTIATE_SIGN;
+-/*	if (ntlmv2_support)
+-		negotiate_flags |= NTLMSSP_NEGOTIATE_NTLMV2;*/
+-	/* setup pointers to domain name and workstation name */
+-	bcc_ptr += SecurityBlobLength;
+-
+-	SecurityBlob->WorkstationName.Buffer = 0;
+-	SecurityBlob->WorkstationName.Length = 0;
+-	SecurityBlob->WorkstationName.MaximumLength = 0;
+-
+-	/* Domain not sent on first Sesssetup in NTLMSSP, instead it is sent
+-	along with username on auth request (ie the response to challenge) */
+-	SecurityBlob->DomainName.Buffer = 0;
+-	SecurityBlob->DomainName.Length = 0;
+-	SecurityBlob->DomainName.MaximumLength = 0;
+-	if (ses->capabilities & CAP_UNICODE) {
+-		if ((long) bcc_ptr % 2) {
+-			*bcc_ptr = 0;
+-			bcc_ptr++;
+-		}
+-
+-		bytes_returned =
+-		    cifs_strtoUCS((__le16 *) bcc_ptr, "Linux version ",
+-				  32, nls_codepage);
+-		bcc_ptr += 2 * bytes_returned;
+-		bytes_returned =
+-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 18)
+-		    cifs_strtoUCS((__le16 *) bcc_ptr, utsname()->release, 32,
+-				  nls_codepage);
+-#else
+-		    cifs_strtoUCS((__le16 *)bcc_ptr, system_utsname.release, 32,
+-				  nls_codepage);
+-#endif
+-		bcc_ptr += 2 * bytes_returned;
+-		bcc_ptr += 2;	/* null terminate Linux version */
+-		bytes_returned =
+-		    cifs_strtoUCS((__le16 *) bcc_ptr, CIFS_NETWORK_OPSYS,
+-				  64, nls_codepage);
+-		bcc_ptr += 2 * bytes_returned;
+-		*(bcc_ptr + 1) = 0;
+-		*(bcc_ptr + 2) = 0;
+-		bcc_ptr += 2;	/* null terminate network opsys string */
+-		*(bcc_ptr + 1) = 0;
+-		*(bcc_ptr + 2) = 0;
+-		bcc_ptr += 2;	/* null domain */
+-	} else {		/* ASCII */
+-		strcpy(bcc_ptr, "Linux version ");
+-		bcc_ptr += strlen("Linux version ");
+-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 18)
+-		strcpy(bcc_ptr, utsname()->release);
+-		bcc_ptr += strlen(utsname()->release) + 1;
+-#else
+-		strcpy(bcc_ptr, system_utsname.release);
+-		bcc_ptr += strlen(system_utsname.release) + 1;
+-#endif
+-		strcpy(bcc_ptr, CIFS_NETWORK_OPSYS);
+-		bcc_ptr += strlen(CIFS_NETWORK_OPSYS) + 1;
+-		bcc_ptr++;	/* empty domain field */
+-		*bcc_ptr = 0;
+-	}
+-	SecurityBlob->NegotiateFlags = cpu_to_le32(negotiate_flags);
+-	pSMB->req.SecurityBlobLength = cpu_to_le16(SecurityBlobLength);
+-	count = (long) bcc_ptr - (long) pByteArea(smb_buffer);
+-	smb_buffer->smb_buf_length += count;
+-	pSMB->req.ByteCount = cpu_to_le16(count);
+-
+-	rc = SendReceive(xid, ses, smb_buffer, smb_buffer_response,
+-			 &bytes_returned, CIFS_LONG_OP);
+-
+-	if (smb_buffer_response->Status.CifsError ==
+-	    cpu_to_le32(NT_STATUS_MORE_PROCESSING_REQUIRED))
+-		rc = 0;
+-
+-	if (rc) {
+-/*    rc = map_smb_to_linux_error(smb_buffer_response);  *//* done in SendReceive now */
+-	} else if ((smb_buffer_response->WordCount == 3)
+-		   || (smb_buffer_response->WordCount == 4)) {
+-		__u16 action = le16_to_cpu(pSMBr->resp.Action);
+-		__u16 blob_len = le16_to_cpu(pSMBr->resp.SecurityBlobLength);
+-
+-		if (action & GUEST_LOGIN)
+-			cFYI(1, (" Guest login"));
+-	/* Do we want to set anything in SesInfo struct when guest login? */
+-
+-		bcc_ptr = pByteArea(smb_buffer_response);
+-	/* response can have either 3 or 4 word count - Samba sends 3 */
+-
+-		SecurityBlob2 = (PCHALLENGE_MESSAGE) bcc_ptr;
+-		if (SecurityBlob2->MessageType != NtLmChallenge) {
+-			cFYI(1,
+-			     ("Unexpected NTLMSSP message type received %d",
+-			      SecurityBlob2->MessageType));
+-		} else if (ses) {
+-			ses->Suid = smb_buffer_response->Uid; /* UID left in le format */
+-			cFYI(1, ("UID = %d", ses->Suid));
+-			if ((pSMBr->resp.hdr.WordCount == 3)
+-			    || ((pSMBr->resp.hdr.WordCount == 4)
+-				&& (blob_len <
+-				    pSMBr->resp.ByteCount))) {
+-
+-				if (pSMBr->resp.hdr.WordCount == 4) {
+-					bcc_ptr += blob_len;
+-					cFYI(1, ("Security Blob Length %d",
+-					      blob_len));
+-				}
+-
+-				cFYI(1, ("NTLMSSP Challenge rcvd"));
+-
+-				memcpy(ses->server->cryptKey,
+-				       SecurityBlob2->Challenge,
+-				       CIFS_CRYPTO_KEY_SIZE);
+-				if (SecurityBlob2->NegotiateFlags &
+-					cpu_to_le32(NTLMSSP_NEGOTIATE_NTLMV2))
+-					*pNTLMv2_flag = true;
+-
+-				if ((SecurityBlob2->NegotiateFlags &
+-					cpu_to_le32(NTLMSSP_NEGOTIATE_ALWAYS_SIGN))
+-					|| (sign_CIFS_PDUs > 1))
+-						ses->server->secMode |=
+-							SECMODE_SIGN_REQUIRED;
+-				if ((SecurityBlob2->NegotiateFlags &
+-					cpu_to_le32(NTLMSSP_NEGOTIATE_SIGN)) && (sign_CIFS_PDUs))
+-						ses->server->secMode |=
+-							SECMODE_SIGN_ENABLED;
+-
+-				if (smb_buffer->Flags2 & SMBFLG2_UNICODE) {
+-					if ((long) (bcc_ptr) % 2) {
+-						remaining_words =
+-						    (BCC(smb_buffer_response)
+-						     - 1) / 2;
+-					 /* Must word align unicode strings */
+-						bcc_ptr++;
+-					} else {
+-						remaining_words =
+-						    BCC
+-						    (smb_buffer_response) / 2;
+-					}
+-					len =
+-					    UniStrnlen((wchar_t *) bcc_ptr,
+-						       remaining_words - 1);
+-/* We look for obvious messed up bcc or strings in response so we do not go off
+-   the end since (at least) WIN2K and Windows XP have a major bug in not null
+-   terminating last Unicode string in response  */
+-					if (ses->serverOS)
+-						kfree(ses->serverOS);
+-					ses->serverOS =
+-					    kzalloc(2 * (len + 1), GFP_KERNEL);
+-					cifs_strfromUCS_le(ses->serverOS,
+-							   (__le16 *)
+-							   bcc_ptr, len,
+-							   nls_codepage);
+-					bcc_ptr += 2 * (len + 1);
+-					remaining_words -= len + 1;
+-					ses->serverOS[2 * len] = 0;
+-					ses->serverOS[1 + (2 * len)] = 0;
+-					if (remaining_words > 0) {
+-						len = UniStrnlen((wchar_t *)
+-								 bcc_ptr,
+-								 remaining_words
+-								 - 1);
+-						kfree(ses->serverNOS);
+-						ses->serverNOS =
+-						    kzalloc(2 * (len + 1),
+-							    GFP_KERNEL);
+-						cifs_strfromUCS_le(ses->
+-								   serverNOS,
+-								   (__le16 *)
+-								   bcc_ptr,
+-								   len,
+-								   nls_codepage);
+-						bcc_ptr += 2 * (len + 1);
+-						ses->serverNOS[2 * len] = 0;
+-						ses->serverNOS[1 +
+-							       (2 * len)] = 0;
+-						remaining_words -= len + 1;
+-						if (remaining_words > 0) {
+-							len = UniStrnlen((wchar_t *) bcc_ptr, remaining_words);
+-				/* last string not always null terminated
+-				   (for e.g. for Windows XP & 2000) */
+-							kfree(ses->serverDomain);
+-							ses->serverDomain =
+-							    kzalloc(2 *
+-								    (len +
+-								     1),
+-								    GFP_KERNEL);
+-							cifs_strfromUCS_le
+-							    (ses->serverDomain,
+-							     (__le16 *)bcc_ptr,
+-							     len, nls_codepage);
+-							bcc_ptr +=
+-							    2 * (len + 1);
+-							ses->serverDomain[2*len]
+-							    = 0;
+-							ses->serverDomain
+-								[1 + (2 * len)]
+-							    = 0;
+-						} /* else no more room so create dummy domain string */
+-						else {
+-							kfree(ses->serverDomain);
+-							ses->serverDomain =
+-							    kzalloc(2,
+-								    GFP_KERNEL);
+-						}
+-					} else {	/* no room so create dummy domain and NOS string */
+-						kfree(ses->serverDomain);
+-						ses->serverDomain =
+-						    kzalloc(2, GFP_KERNEL);
+-						kfree(ses->serverNOS);
+-						ses->serverNOS =
+-						    kzalloc(2, GFP_KERNEL);
+-					}
+-				} else {	/* ASCII */
+-					len = strnlen(bcc_ptr, 1024);
+-					if (((long) bcc_ptr + len) - (long)
+-					    pByteArea(smb_buffer_response)
+-					    <= BCC(smb_buffer_response)) {
+-						if (ses->serverOS)
+-							kfree(ses->serverOS);
+-						ses->serverOS =
+-						    kzalloc(len + 1,
+-							    GFP_KERNEL);
+-						strncpy(ses->serverOS,
+-							bcc_ptr, len);
+-
+-						bcc_ptr += len;
+-						bcc_ptr[0] = 0;	/* null terminate string */
+-						bcc_ptr++;
+-
+-						len = strnlen(bcc_ptr, 1024);
+-						kfree(ses->serverNOS);
+-						ses->serverNOS =
+-						    kzalloc(len + 1,
+-							    GFP_KERNEL);
+-						strncpy(ses->serverNOS, bcc_ptr, len);
+-						bcc_ptr += len;
+-						bcc_ptr[0] = 0;
+-						bcc_ptr++;
+-
+-						len = strnlen(bcc_ptr, 1024);
+-						kfree(ses->serverDomain);
+-						ses->serverDomain =
+-						    kzalloc(len + 1,
+-							    GFP_KERNEL);
+-						strncpy(ses->serverDomain,
+-							bcc_ptr, len);
+-						bcc_ptr += len;
+-						bcc_ptr[0] = 0;
+-						bcc_ptr++;
+-					} else
+-						cFYI(1,
+-						     ("field of length %d "
+-						    "extends beyond end of smb",
+-						      len));
+-				}
+-			} else {
+-				cERROR(1, ("Security Blob Length extends beyond"
+-					   " end of SMB"));
+-			}
+-		} else {
+-			cERROR(1, ("No session structure passed in."));
+-		}
+-	} else {
+-		cERROR(1,
+-		       (" Invalid Word count %d:",
+-			smb_buffer_response->WordCount));
+-		rc = -EIO;
+-	}
+-
+-	cifs_buf_release(smb_buffer);
+-
+-	return rc;
+-}
+-static int
+-CIFSNTLMSSPAuthSessSetup(unsigned int xid, struct cifsSesInfo *ses,
+-			char *ntlm_session_key, bool ntlmv2_flag,
+-			const struct nls_table *nls_codepage)
+-{
+-	struct smb_hdr *smb_buffer;
+-	struct smb_hdr *smb_buffer_response;
+-	SESSION_SETUP_ANDX *pSMB;
+-	SESSION_SETUP_ANDX *pSMBr;
+-	char *bcc_ptr;
+-	char *user;
+-	char *domain;
+-	int rc = 0;
+-	int remaining_words = 0;
+-	int bytes_returned = 0;
+-	int len;
+-	int SecurityBlobLength = sizeof(AUTHENTICATE_MESSAGE);
+-	PAUTHENTICATE_MESSAGE SecurityBlob;
+-	__u32 negotiate_flags, capabilities;
+-	__u16 count;
+-
+-	cFYI(1, ("In NTLMSSPSessSetup (Authenticate)"));
+-	if (ses == NULL)
+-		return -EINVAL;
+-	user = ses->userName;
+-	domain = ses->domainName;
+-	smb_buffer = cifs_buf_get();
+-	if (smb_buffer == NULL) {
+-		return -ENOMEM;
+-	}
+-	smb_buffer_response = smb_buffer;
+-	pSMB = (SESSION_SETUP_ANDX *)smb_buffer;
+-	pSMBr = (SESSION_SETUP_ANDX *)smb_buffer_response;
+-
+-	/* send SMBsessionSetup here */
+-	header_assemble(smb_buffer, SMB_COM_SESSION_SETUP_ANDX,
+-			NULL /* no tCon exists yet */ , 12 /* wct */ );
+-
+-	smb_buffer->Mid = GetNextMid(ses->server);
+-	pSMB->req.hdr.Flags |= (SMBFLG_CASELESS | SMBFLG_CANONICAL_PATH_FORMAT);
+-	pSMB->req.hdr.Flags2 |= SMBFLG2_EXT_SEC;
+-	pSMB->req.AndXCommand = 0xFF;
+-	pSMB->req.MaxBufferSize = cpu_to_le16(ses->server->maxBuf);
+-	pSMB->req.MaxMpxCount = cpu_to_le16(ses->server->maxReq);
+-
+-	pSMB->req.hdr.Uid = ses->Suid;
+-
+-	if (ses->server->secMode & (SECMODE_SIGN_REQUIRED | SECMODE_SIGN_ENABLED))
+-		smb_buffer->Flags2 |= SMBFLG2_SECURITY_SIGNATURE;
+-
+-	capabilities = CAP_LARGE_FILES | CAP_NT_SMBS | CAP_LEVEL_II_OPLOCKS |
+-			CAP_EXTENDED_SECURITY;
+-	if (ses->capabilities & CAP_UNICODE) {
+-		smb_buffer->Flags2 |= SMBFLG2_UNICODE;
+-		capabilities |= CAP_UNICODE;
+-	}
+-	if (ses->capabilities & CAP_STATUS32) {
+-		smb_buffer->Flags2 |= SMBFLG2_ERR_STATUS;
+-		capabilities |= CAP_STATUS32;
+-	}
+-	if (ses->capabilities & CAP_DFS) {
+-		smb_buffer->Flags2 |= SMBFLG2_DFS;
+-		capabilities |= CAP_DFS;
+-	}
+-	pSMB->req.Capabilities = cpu_to_le32(capabilities);
+-
+-	bcc_ptr = (char *)&pSMB->req.SecurityBlob;
+-	SecurityBlob = (PAUTHENTICATE_MESSAGE)bcc_ptr;
+-	strncpy(SecurityBlob->Signature, NTLMSSP_SIGNATURE, 8);
+-	SecurityBlob->MessageType = NtLmAuthenticate;
+-	bcc_ptr += SecurityBlobLength;
+-	negotiate_flags = NTLMSSP_NEGOTIATE_UNICODE | NTLMSSP_REQUEST_TARGET |
+-			NTLMSSP_NEGOTIATE_NTLM | NTLMSSP_NEGOTIATE_TARGET_INFO |
+-			0x80000000 | NTLMSSP_NEGOTIATE_128;
+-	if (sign_CIFS_PDUs)
+-		negotiate_flags |= /* NTLMSSP_NEGOTIATE_ALWAYS_SIGN |*/ NTLMSSP_NEGOTIATE_SIGN;
+-	if (ntlmv2_flag)
+-		negotiate_flags |= NTLMSSP_NEGOTIATE_NTLMV2;
+-
+-/* setup pointers to domain name and workstation name */
+-
+-	SecurityBlob->WorkstationName.Buffer = 0;
+-	SecurityBlob->WorkstationName.Length = 0;
+-	SecurityBlob->WorkstationName.MaximumLength = 0;
+-	SecurityBlob->SessionKey.Length = 0;
+-	SecurityBlob->SessionKey.MaximumLength = 0;
+-	SecurityBlob->SessionKey.Buffer = 0;
+-
+-	SecurityBlob->LmChallengeResponse.Length = 0;
+-	SecurityBlob->LmChallengeResponse.MaximumLength = 0;
+-	SecurityBlob->LmChallengeResponse.Buffer = 0;
+-
+-	SecurityBlob->NtChallengeResponse.Length =
+-	    cpu_to_le16(CIFS_SESS_KEY_SIZE);
+-	SecurityBlob->NtChallengeResponse.MaximumLength =
+-	    cpu_to_le16(CIFS_SESS_KEY_SIZE);
+-	memcpy(bcc_ptr, ntlm_session_key, CIFS_SESS_KEY_SIZE);
+-	SecurityBlob->NtChallengeResponse.Buffer =
+-	    cpu_to_le32(SecurityBlobLength);
+-	SecurityBlobLength += CIFS_SESS_KEY_SIZE;
+-	bcc_ptr += CIFS_SESS_KEY_SIZE;
+-
+-	if (ses->capabilities & CAP_UNICODE) {
+-		if (domain == NULL) {
+-			SecurityBlob->DomainName.Buffer = 0;
+-			SecurityBlob->DomainName.Length = 0;
+-			SecurityBlob->DomainName.MaximumLength = 0;
+-		} else {
+-			__u16 ln = cifs_strtoUCS((__le16 *) bcc_ptr, domain, 64,
+-					  nls_codepage);
+-			ln *= 2;
+-			SecurityBlob->DomainName.MaximumLength =
+-			    cpu_to_le16(ln);
+-			SecurityBlob->DomainName.Buffer =
+-			    cpu_to_le32(SecurityBlobLength);
+-			bcc_ptr += ln;
+-			SecurityBlobLength += ln;
+-			SecurityBlob->DomainName.Length = cpu_to_le16(ln);
+-		}
+-		if (user == NULL) {
+-			SecurityBlob->UserName.Buffer = 0;
+-			SecurityBlob->UserName.Length = 0;
+-			SecurityBlob->UserName.MaximumLength = 0;
+-		} else {
+-			__u16 ln = cifs_strtoUCS((__le16 *) bcc_ptr, user, 64,
+-					  nls_codepage);
+-			ln *= 2;
+-			SecurityBlob->UserName.MaximumLength =
+-			    cpu_to_le16(ln);
+-			SecurityBlob->UserName.Buffer =
+-			    cpu_to_le32(SecurityBlobLength);
+-			bcc_ptr += ln;
+-			SecurityBlobLength += ln;
+-			SecurityBlob->UserName.Length = cpu_to_le16(ln);
+-		}
+-
+-		/* SecurityBlob->WorkstationName.Length =
+-		 cifs_strtoUCS((__le16 *) bcc_ptr, "AMACHINE",64, nls_codepage);
+-		   SecurityBlob->WorkstationName.Length *= 2;
+-		   SecurityBlob->WorkstationName.MaximumLength =
+-			cpu_to_le16(SecurityBlob->WorkstationName.Length);
+-		   SecurityBlob->WorkstationName.Buffer =
+-				 cpu_to_le32(SecurityBlobLength);
+-		   bcc_ptr += SecurityBlob->WorkstationName.Length;
+-		   SecurityBlobLength += SecurityBlob->WorkstationName.Length;
+-		   SecurityBlob->WorkstationName.Length =
+-			cpu_to_le16(SecurityBlob->WorkstationName.Length);  */
+-
+-		if ((long) bcc_ptr % 2) {
+-			*bcc_ptr = 0;
+-			bcc_ptr++;
+-		}
+-		bytes_returned =
+-		    cifs_strtoUCS((__le16 *) bcc_ptr, "Linux version ",
+-				  32, nls_codepage);
+-		bcc_ptr += 2 * bytes_returned;
+-		bytes_returned =
+-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 18)
+-		    cifs_strtoUCS((__le16 *) bcc_ptr, utsname()->release, 32,
+-				  nls_codepage);
+-#else
+-		    cifs_strtoUCS((__le16 *) bcc_ptr, system_utsname.release, 32,
+-				  nls_codepage);
+-#endif
+-		bcc_ptr += 2 * bytes_returned;
+-		bcc_ptr += 2;	/* null term version string */
+-		bytes_returned =
+-		    cifs_strtoUCS((__le16 *) bcc_ptr, CIFS_NETWORK_OPSYS,
+-				  64, nls_codepage);
+-		bcc_ptr += 2 * bytes_returned;
+-		*(bcc_ptr + 1) = 0;
+-		*(bcc_ptr + 2) = 0;
+-		bcc_ptr += 2;	/* null terminate network opsys string */
+-		*(bcc_ptr + 1) = 0;
+-		*(bcc_ptr + 2) = 0;
+-		bcc_ptr += 2;	/* null domain */
+-	} else {		/* ASCII */
+-		if (domain == NULL) {
+-			SecurityBlob->DomainName.Buffer = 0;
+-			SecurityBlob->DomainName.Length = 0;
+-			SecurityBlob->DomainName.MaximumLength = 0;
+-		} else {
+-			__u16 ln;
+-			negotiate_flags |= NTLMSSP_NEGOTIATE_DOMAIN_SUPPLIED;
+-			strncpy(bcc_ptr, domain, 63);
+-			ln = strnlen(domain, 64);
+-			SecurityBlob->DomainName.MaximumLength =
+-			    cpu_to_le16(ln);
+-			SecurityBlob->DomainName.Buffer =
+-			    cpu_to_le32(SecurityBlobLength);
+-			bcc_ptr += ln;
+-			SecurityBlobLength += ln;
+-			SecurityBlob->DomainName.Length = cpu_to_le16(ln);
+-		}
+-		if (user == NULL) {
+-			SecurityBlob->UserName.Buffer = 0;
+-			SecurityBlob->UserName.Length = 0;
+-			SecurityBlob->UserName.MaximumLength = 0;
+-		} else {
+-			__u16 ln;
+-			strncpy(bcc_ptr, user, 63);
+-			ln = strnlen(user, 64);
+-			SecurityBlob->UserName.MaximumLength = cpu_to_le16(ln);
+-			SecurityBlob->UserName.Buffer =
+-						cpu_to_le32(SecurityBlobLength);
+-			bcc_ptr += ln;
+-			SecurityBlobLength += ln;
+-			SecurityBlob->UserName.Length = cpu_to_le16(ln);
+-		}
+-		/* BB fill in our workstation name if known BB */
+-
+-		strcpy(bcc_ptr, "Linux version ");
+-		bcc_ptr += strlen("Linux version ");
+-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 18)
+-		strcpy(bcc_ptr, utsname()->release);
+-		bcc_ptr += strlen(utsname()->release) + 1;
+-#else
+-		strcpy(bcc_ptr, system_utsname.release);
+-		bcc_ptr += strlen(system_utsname.release) + 1;
+-#endif
+-		strcpy(bcc_ptr, CIFS_NETWORK_OPSYS);
+-		bcc_ptr += strlen(CIFS_NETWORK_OPSYS) + 1;
+-		bcc_ptr++;	/* null domain */
+-		*bcc_ptr = 0;
+-	}
+-	SecurityBlob->NegotiateFlags = cpu_to_le32(negotiate_flags);
+-	pSMB->req.SecurityBlobLength = cpu_to_le16(SecurityBlobLength);
+-	count = (long) bcc_ptr - (long) pByteArea(smb_buffer);
+-	smb_buffer->smb_buf_length += count;
+-	pSMB->req.ByteCount = cpu_to_le16(count);
+-
+-	rc = SendReceive(xid, ses, smb_buffer, smb_buffer_response,
+-			 &bytes_returned, CIFS_LONG_OP);
+-	if (rc) {
+-/*   rc = map_smb_to_linux_error(smb_buffer_response) done in SendReceive now */
+-	} else if ((smb_buffer_response->WordCount == 3) ||
+-		   (smb_buffer_response->WordCount == 4)) {
+-		__u16 action = le16_to_cpu(pSMBr->resp.Action);
+-		__u16 blob_len = le16_to_cpu(pSMBr->resp.SecurityBlobLength);
+-		if (action & GUEST_LOGIN)
+-			cFYI(1, (" Guest login")); /* BB Should we set anything
+-							 in SesInfo struct ? */
+-/*		if (SecurityBlob2->MessageType != NtLm??) {
+-			cFYI("Unexpected message type on auth response is %d"));
+-		} */
+-
+-		if (ses) {
+-			cFYI(1,
+-			     ("Check challenge UID %d vs auth response UID %d",
+-			      ses->Suid, smb_buffer_response->Uid));
+-			/* UID left in wire format */
+-			ses->Suid = smb_buffer_response->Uid;
+-			bcc_ptr = pByteArea(smb_buffer_response);
+-		/* response can have either 3 or 4 word count - Samba sends 3 */
+-			if ((pSMBr->resp.hdr.WordCount == 3)
+-			    || ((pSMBr->resp.hdr.WordCount == 4)
+-				&& (blob_len <
+-				    pSMBr->resp.ByteCount))) {
+-				if (pSMBr->resp.hdr.WordCount == 4) {
+-					bcc_ptr +=
+-					    blob_len;
+-					cFYI(1,
+-					     ("Security Blob Length %d ",
+-					      blob_len));
+-				}
+-
+-				cFYI(1,
+-				     ("NTLMSSP response to Authenticate "));
+-
+-				if (smb_buffer->Flags2 & SMBFLG2_UNICODE) {
+-					if ((long) (bcc_ptr) % 2) {
+-						remaining_words =
+-						    (BCC(smb_buffer_response)
+-						     - 1) / 2;
+-						bcc_ptr++;	/* Unicode strings must be word aligned */
+-					} else {
+-						remaining_words = BCC(smb_buffer_response) / 2;
+-					}
+-					len = UniStrnlen((wchar_t *) bcc_ptr,
+-							remaining_words - 1);
+-/* We look for obvious messed up bcc or strings in response so we do not go off
+-  the end since (at least) WIN2K and Windows XP have a major bug in not null
+-  terminating last Unicode string in response  */
+-					if (ses->serverOS)
+-						kfree(ses->serverOS);
+-					ses->serverOS =
+-					    kzalloc(2 * (len + 1), GFP_KERNEL);
+-					cifs_strfromUCS_le(ses->serverOS,
+-							   (__le16 *)
+-							   bcc_ptr, len,
+-							   nls_codepage);
+-					bcc_ptr += 2 * (len + 1);
+-					remaining_words -= len + 1;
+-					ses->serverOS[2 * len] = 0;
+-					ses->serverOS[1 + (2 * len)] = 0;
+-					if (remaining_words > 0) {
+-						len = UniStrnlen((wchar_t *)
+-								 bcc_ptr,
+-								 remaining_words
+-								 - 1);
+-						kfree(ses->serverNOS);
+-						ses->serverNOS =
+-						    kzalloc(2 * (len + 1),
+-							    GFP_KERNEL);
+-						cifs_strfromUCS_le(ses->
+-								   serverNOS,
+-								   (__le16 *)
+-								   bcc_ptr,
+-								   len,
+-								   nls_codepage);
+-						bcc_ptr += 2 * (len + 1);
+-						ses->serverNOS[2 * len] = 0;
+-						ses->serverNOS[1+(2*len)] = 0;
+-						remaining_words -= len + 1;
+-						if (remaining_words > 0) {
+-							len = UniStrnlen((wchar_t *) bcc_ptr, remaining_words);
+-     /* last string not always null terminated (e.g. for Windows XP & 2000) */
+-							if (ses->serverDomain)
+-								kfree(ses->serverDomain);
+-							ses->serverDomain =
+-							    kzalloc(2 *
+-								    (len +
+-								     1),
+-								    GFP_KERNEL);
+-							cifs_strfromUCS_le
+-							    (ses->
+-							     serverDomain,
+-							     (__le16 *)
+-							     bcc_ptr, len,
+-							     nls_codepage);
+-							bcc_ptr +=
+-							    2 * (len + 1);
+-							ses->
+-							    serverDomain[2
+-									 * len]
+-							    = 0;
+-							ses->
+-							    serverDomain[1
+-									 +
+-									 (2
+-									  *
+-									  len)]
+-							    = 0;
+-						} /* else no more room so create dummy domain string */
+-						else {
+-							if (ses->serverDomain)
+-								kfree(ses->serverDomain);
+-							ses->serverDomain = kzalloc(2,GFP_KERNEL);
+-						}
+-					} else {  /* no room so create dummy domain and NOS string */
+-						if (ses->serverDomain)
+-							kfree(ses->serverDomain);
+-						ses->serverDomain = kzalloc(2, GFP_KERNEL);
+-						kfree(ses->serverNOS);
+-						ses->serverNOS = kzalloc(2, GFP_KERNEL);
+-					}
+-				} else {	/* ASCII */
+-					len = strnlen(bcc_ptr, 1024);
+-					if (((long) bcc_ptr + len) -
+-					   (long) pByteArea(smb_buffer_response)
+-						<= BCC(smb_buffer_response)) {
+-						if (ses->serverOS)
+-							kfree(ses->serverOS);
+-						ses->serverOS = kzalloc(len + 1, GFP_KERNEL);
+-						strncpy(ses->serverOS,bcc_ptr, len);
+-
+-						bcc_ptr += len;
+-						bcc_ptr[0] = 0;	/* null terminate the string */
+-						bcc_ptr++;
+-
+-						len = strnlen(bcc_ptr, 1024);
+-						kfree(ses->serverNOS);
+-						ses->serverNOS = kzalloc(len+1,
+-								    GFP_KERNEL);
+-						strncpy(ses->serverNOS,
+-							bcc_ptr, len);
+-						bcc_ptr += len;
+-						bcc_ptr[0] = 0;
+-						bcc_ptr++;
+-
+-						len = strnlen(bcc_ptr, 1024);
+-						if (ses->serverDomain)
+-							kfree(ses->serverDomain);
+-						ses->serverDomain =
+-								kzalloc(len+1,
+-								    GFP_KERNEL);
+-						strncpy(ses->serverDomain,
+-							bcc_ptr, len);
+-						bcc_ptr += len;
+-						bcc_ptr[0] = 0;
+-						bcc_ptr++;
+-					} else
+-						cFYI(1, ("field of length %d "
+-						   "extends beyond end of smb ",
+-						      len));
+-				}
+-			} else {
+-				cERROR(1, ("Security Blob extends beyond end "
+-					"of SMB"));
+-			}
+-		} else {
+-			cERROR(1, ("No session structure passed in."));
+-		}
+-	} else {
+-		cERROR(1, ("Invalid Word count %d: ",
+-			smb_buffer_response->WordCount));
+-		rc = -EIO;
+-	}
+-
+-	cifs_buf_release(smb_buffer);
+-
+-	return rc;
+-}
+-
+ int
+ CIFSTCon(unsigned int xid, struct cifsSesInfo *ses,
+ 	 const char *tree, struct cifsTconInfo *tcon,
+@@ -3513,7 +2432,7 @@ CIFSTCon(unsigned int xid, struct cifsSesInfo *ses,
+ 	TCONX_RSP *pSMBr;
+ 	unsigned char *bcc_ptr;
+ 	int rc = 0;
+-	int length;
++	int length, bytes_left;
+ 	__u16 count;
+ 
+ 	if (ses == NULL)
+@@ -3599,13 +2518,14 @@ CIFSTCon(unsigned int xid, struct cifsSesInfo *ses,
+ 	rc = SendReceive(xid, ses, smb_buffer, smb_buffer_response, &length,
+ 			 CIFS_STD_OP);
+ 
+-	/* if (rc) rc = map_smb_to_linux_error(smb_buffer_response); */
+ 	/* above now done in SendReceive */
+ 	if ((rc == 0) && (tcon != NULL)) {
+ 		tcon->tidStatus = CifsGood;
+ 		tcon->tid = smb_buffer_response->Tid;
+ 		bcc_ptr = pByteArea(smb_buffer_response);
+-		length = strnlen(bcc_ptr, BCC(smb_buffer_response) - 2);
++		bytes_left = BCC(smb_buffer_response);
++		length = strnlen(bcc_ptr, bytes_left - 2);
++
+ 		/* skip service field (NB: this field is always ASCII) */
+ 		if (length == 3) {
+ 			if ((bcc_ptr[0] == 'I') && (bcc_ptr[1] == 'P') &&
+@@ -3620,39 +2540,18 @@ CIFSTCon(unsigned int xid, struct cifsSesInfo *ses,
+ 			}
+ 		}
+ 		bcc_ptr += length + 1;
++		bytes_left -= (length + 1);
+ 		strncpy(tcon->treeName, tree, MAX_TREE_SIZE);
+-		if (smb_buffer->Flags2 & SMBFLG2_UNICODE) {
+-			length = UniStrnlen((wchar_t *) bcc_ptr, 512);
+-			if ((bcc_ptr + (2 * length)) -
+-			     pByteArea(smb_buffer_response) <=
+-			    BCC(smb_buffer_response)) {
+-				kfree(tcon->nativeFileSystem);
+-				tcon->nativeFileSystem =
+-				    kzalloc((4 * length) + 2, GFP_KERNEL);
+-				if (tcon->nativeFileSystem) {
+-					cifs_strfromUCS_le(
+-						tcon->nativeFileSystem,
+-						(__le16 *) bcc_ptr,
+-						length, nls_codepage);
+-					cFYI(1, ("nativeFileSystem=%s",
+-						tcon->nativeFileSystem));
+-				}
+-			}
+-			/* else do not bother copying these information fields*/
+-		} else {
+-			length = strnlen(bcc_ptr, 1024);
+-			if ((bcc_ptr + length) -
+-			    pByteArea(smb_buffer_response) <=
+-			    BCC(smb_buffer_response)) {
+-				kfree(tcon->nativeFileSystem);
+-				tcon->nativeFileSystem =
+-				    kzalloc(length + 1, GFP_KERNEL);
+-				if (tcon->nativeFileSystem)
+-					strncpy(tcon->nativeFileSystem, bcc_ptr,
+-						length);
+-			}
+-			/* else do not bother copying these information fields*/
+-		}
++
++		/* mostly informational -- no need to fail on error here */
++		tcon->nativeFileSystem = cifs_strndup_from_ucs(bcc_ptr,
++						      bytes_left,
++						      smb_buffer->Flags2 &
++							 SMBFLG2_UNICODE,
++						      nls_codepage);
++
++		cFYI(1, ("nativeFileSystem=%s", tcon->nativeFileSystem));
++
+ 		if ((smb_buffer_response->WordCount == 3) ||
+ 			 (smb_buffer_response->WordCount == 7))
+ 			/* field is in same location */
+@@ -3726,8 +2625,6 @@ int cifs_setup_session(unsigned int xid, struct cifsSesInfo *pSesInfo,
+ 					   struct nls_table *nls_info)
+ {
+ 	int rc = 0;
+-	char ntlm_session_key[CIFS_SESS_KEY_SIZE];
+-	bool ntlmv2_flag = false;
+ 	int first_time = 0;
+ 	struct TCP_Server_Info *server = pSesInfo->server;
+ 
+@@ -3759,80 +2656,16 @@ int cifs_setup_session(unsigned int xid, struct cifsSesInfo *pSesInfo,
+ 	pSesInfo->capabilities = server->capabilities;
+ 	if (linuxExtEnabled == 0)
+ 		pSesInfo->capabilities &= (~CAP_UNIX);
+-	/*	pSesInfo->sequence_number = 0;*/
++
+ 	cFYI(1, ("Security Mode: 0x%x Capabilities: 0x%x TimeAdjust: %d",
+ 		 server->secMode, server->capabilities, server->timeAdj));
+ 
+-	if (experimEnabled < 2)
+-		rc = CIFS_SessSetup(xid, pSesInfo, first_time, nls_info);
+-	else if (extended_security
+-			&& (pSesInfo->capabilities & CAP_EXTENDED_SECURITY)
+-			&& (server->secType == NTLMSSP)) {
+-		rc = -EOPNOTSUPP;
+-	} else if (extended_security
+-			&& (pSesInfo->capabilities & CAP_EXTENDED_SECURITY)
+-			&& (server->secType == RawNTLMSSP)) {
+-		cFYI(1, ("NTLMSSP sesssetup"));
+-		rc = CIFSNTLMSSPNegotiateSessSetup(xid, pSesInfo, &ntlmv2_flag,
+-						   nls_info);
+-		if (!rc) {
+-			if (ntlmv2_flag) {
+-				char *v2_response;
+-				cFYI(1, ("more secure NTLM ver2 hash"));
+-				if (CalcNTLMv2_partial_mac_key(pSesInfo,
+-								nls_info)) {
+-					rc = -ENOMEM;
+-					goto ss_err_exit;
+-				} else
+-					v2_response = kmalloc(16 + 64 /* blob*/,
+-								GFP_KERNEL);
+-				if (v2_response) {
+-					CalcNTLMv2_response(pSesInfo,
+-								v2_response);
+-				/*	if (first_time)
+-						cifs_calculate_ntlmv2_mac_key */
+-					kfree(v2_response);
+-					/* BB Put dummy sig in SessSetup PDU? */
+-				} else {
+-					rc = -ENOMEM;
+-					goto ss_err_exit;
+-				}
+-
+-			} else {
+-				SMBNTencrypt(pSesInfo->password,
+-					     server->cryptKey,
+-					     ntlm_session_key);
+-
+-				if (first_time)
+-					cifs_calculate_mac_key(
+-					     &server->mac_signing_key,
+-					     ntlm_session_key,
+-					     pSesInfo->password);
+-			}
+-			/* for better security the weaker lanman hash not sent
+-			   in AuthSessSetup so we no longer calculate it */
+-
+-			rc = CIFSNTLMSSPAuthSessSetup(xid, pSesInfo,
+-						      ntlm_session_key,
+-						      ntlmv2_flag,
+-						      nls_info);
+-		}
+-	} else { /* old style NTLM 0.12 session setup */
+-		SMBNTencrypt(pSesInfo->password, server->cryptKey,
+-			     ntlm_session_key);
+-
+-		if (first_time)
+-			cifs_calculate_mac_key(&server->mac_signing_key,
+-						ntlm_session_key,
+-						pSesInfo->password);
+-
+-		rc = CIFSSessSetup(xid, pSesInfo, ntlm_session_key, nls_info);
+-	}
++	rc = CIFS_SessSetup(xid, pSesInfo, first_time, nls_info);
+ 	if (rc) {
+ 		cERROR(1, ("Send error in SessSetup = %d", rc));
+ 	} else {
+ 		cFYI(1, ("CIFS Session Established successfully"));
+-			pSesInfo->status = CifsGood;
++		pSesInfo->status = CifsGood;
+ 	}
+ 
+ ss_err_exit:
+diff --git a/fs/cifs/link.c b/fs/cifs/link.c
+index b554fce..75027f8 100644
+--- a/fs/cifs/link.c
++++ b/fs/cifs/link.c
+@@ -105,13 +105,9 @@ cifs_hl_exit:
+ 	FreeXid(xid);
+ 	return rc;
+ }
+-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,12)
++
+ void *
+ cifs_follow_link(struct dentry *direntry, struct nameidata *nd)
+-#else
+-int
+-cifs_follow_link(struct dentry *direntry, struct nameidata *nd)
+-#endif
+ {
+ 	struct inode *inode = direntry->d_inode;
+ 	int rc = -EACCES;
+@@ -126,16 +122,11 @@ cifs_follow_link(struct dentry *direntry, struct nameidata *nd)
+ 	full_path = build_path_from_dentry(direntry);
+ 
+ 	if (!full_path)
+-		goto out_no_free;
++		goto out;
+ 
+ 	cFYI(1, ("Full path: %s inode = 0x%p", full_path, inode));
+ 	cifs_sb = CIFS_SB(inode->i_sb);
+ 	pTcon = cifs_sb->tcon;
+-	target_path = kmalloc(PATH_MAX, GFP_KERNEL);
+-	if (!target_path) {
+-		target_path = ERR_PTR(-ENOMEM);
+-		goto out;
+-	}
+ 
+ 	/* We could change this to:
+ 		if (pTcon->unix_ext)
+@@ -145,8 +136,7 @@ cifs_follow_link(struct dentry *direntry, struct nameidata *nd)
+ 
+ 	if (pTcon->ses->capabilities & CAP_UNIX)
+ 		rc = CIFSSMBUnixQuerySymLink(xid, pTcon, full_path,
+-					     target_path,
+-					     PATH_MAX-1,
++					     &target_path,
+ 					     cifs_sb->local_nls);
+ 	else {
+ 		/* BB add read reparse point symlink code here */
+@@ -155,31 +145,16 @@ cifs_follow_link(struct dentry *direntry, struct nameidata *nd)
+ 		/* BB Add MAC style xsymlink check here if enabled */
+ 	}
+ 
+-	if (rc == 0) {
+-
+-/* BB Add special case check for Samba DFS symlinks */
+-
+-		target_path[PATH_MAX-1] = 0;
+-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,9) 
+-		rc = vfs_follow_link(nd, target_path);
+-#endif
+-	} else {
++	if (rc != 0) {
+ 		kfree(target_path);
+ 		target_path = ERR_PTR(rc);
+ 	}
+ 
+-out:
+ 	kfree(full_path);
+-out_no_free:
++out:
+ 	FreeXid(xid);
+-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,8) 
+ 	nd_set_link(nd, target_path);
+-#endif
+-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,12)
+-	return NULL;	/* No cookie */
+-#else
+-	return 0;
+-#endif
++	return NULL;
+ }
+ 
+ int
+@@ -285,13 +260,8 @@ cifs_readlink(struct dentry *direntry, char __user *pBuffer, int buflen)
+ 
+ /* BB add read reparse point symlink code and
+ 	Unix extensions symlink code here BB */
+-/* We could disable this based on pTcon->unix_ext flag instead ... but why? */
+-	if (cifs_sb->tcon->ses->capabilities & CAP_UNIX)
+-		rc = CIFSSMBUnixQuerySymLink(xid, pTcon, full_path,
+-				tmpbuffer,
+-				len - 1,
+-				cifs_sb->local_nls);
+-	else if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_UNX_EMUL) {
++
++	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_UNX_EMUL) {
+ 		cERROR(1, ("SFU style symlinks not implemented yet"));
+ 		/* add open and read as in fs/cifs/inode.c */
+ 	} else {
+diff --git a/fs/cifs/misc.c b/fs/cifs/misc.c
+index d72b6c8..b443c11 100644
+--- a/fs/cifs/misc.c
++++ b/fs/cifs/misc.c
+@@ -662,77 +662,6 @@ dump_smb(struct smb_hdr *smb_buf, int smb_buf_length)
+ 	return;
+ }
+ 
+-/* Windows maps these to the user defined 16 bit Unicode range since they are
+-   reserved symbols (along with \ and /), otherwise illegal to store
+-   in filenames in NTFS */
+-#define UNI_ASTERIK     (__u16) ('*' + 0xF000)
+-#define UNI_QUESTION    (__u16) ('?' + 0xF000)
+-#define UNI_COLON       (__u16) (':' + 0xF000)
+-#define UNI_GRTRTHAN    (__u16) ('>' + 0xF000)
+-#define UNI_LESSTHAN    (__u16) ('<' + 0xF000)
+-#define UNI_PIPE        (__u16) ('|' + 0xF000)
+-#define UNI_SLASH       (__u16) ('\\' + 0xF000)
+-
+-/* Convert 16 bit Unicode pathname from wire format to string in current code
+-   page.  Conversion may involve remapping up the seven characters that are
+-   only legal in POSIX-like OS (if they are present in the string). Path
+-   names are little endian 16 bit Unicode on the wire */
+-int
+-cifs_convertUCSpath(char *target, const __le16 *source, int maxlen,
+-		    const struct nls_table *cp)
+-{
+-	int i, j, len;
+-	__u16 src_char;
+-
+-	for (i = 0, j = 0; i < maxlen; i++) {
+-		src_char = le16_to_cpu(source[i]);
+-		switch (src_char) {
+-			case 0:
+-				goto cUCS_out; /* BB check this BB */
+-			case UNI_COLON:
+-				target[j] = ':';
+-				break;
+-			case UNI_ASTERIK:
+-				target[j] = '*';
+-				break;
+-			case UNI_QUESTION:
+-				target[j] = '?';
+-				break;
+-			/* BB We can not handle remapping slash until
+-			   all the calls to build_path_from_dentry
+-			   are modified, as they use slash as separator BB */
+-			/* case UNI_SLASH:
+-				target[j] = '\\';
+-				break;*/
+-			case UNI_PIPE:
+-				target[j] = '|';
+-				break;
+-			case UNI_GRTRTHAN:
+-				target[j] = '>';
+-				break;
+-			case UNI_LESSTHAN:
+-				target[j] = '<';
+-				break;
+-			default:
+-				len = cp->uni2char(src_char, &target[j],
+-						NLS_MAX_CHARSET_SIZE);
+-				if (len > 0) {
+-					j += len;
+-					continue;
+-				} else {
+-					target[j] = '?';
+-				}
+-		}
+-		j++;
+-		/* make sure we do not overrun callers allocated temp buffer */
+-		if (j >= (2 * NAME_MAX))
+-			break;
+-	}
+-cUCS_out:
+-	target[j] = 0;
+-	return j;
+-}
+-
+ /* Convert 16 bit Unicode pathname to wire format from string in current code
+    page.  Conversion may involve remapping up the seven characters that are
+    only legal in POSIX-like OS (if they are present in the string). Path
+diff --git a/fs/cifs/netmisc.c b/fs/cifs/netmisc.c
+index 808dff2..f9dc26c 100644
+--- a/fs/cifs/netmisc.c
++++ b/fs/cifs/netmisc.c
+@@ -79,6 +79,7 @@ static const struct smb_to_posix_error mapping_table_ERRDOS[] = {
+ 	{ErrQuota, -EDQUOT},
+ 	{ErrNotALink, -ENOLINK},
+ 	{ERRnetlogonNotStarted, -ENOPROTOOPT},
++	{ERRsymlink, -EOPNOTSUPP},
+ 	{ErrTooManyLinks, -EMLINK},
+ 	{0, 0}
+ };
+@@ -773,6 +774,7 @@ static const struct {
+ 	ERRDOS, ERRnoaccess, 0xc000028f}, {
+ 	ERRDOS, ERRnoaccess, 0xc0000290}, {
+ 	ERRDOS, ERRbadfunc, 0xc000029c}, {
++	ERRDOS, ERRsymlink, NT_STATUS_STOPPED_ON_SYMLINK}, {
+ 	ERRDOS, ERRinvlevel, 0x007c0001}, };
+ 
+ /*****************************************************************************
+diff --git a/fs/cifs/nterr.h b/fs/cifs/nterr.h
+index 588abbb..2572673 100644
+--- a/fs/cifs/nterr.h
++++ b/fs/cifs/nterr.h
+@@ -35,8 +35,6 @@ struct nt_err_code_struct {
+ extern const struct nt_err_code_struct nt_errs[];
+ 
+ /* Win32 Status codes. */
+-
+-#define STATUS_BUFFER_OVERFLOW            0x80000005
+ #define STATUS_MORE_ENTRIES               0x0105
+ #define ERROR_INVALID_PARAMETER		  0x0057
+ #define ERROR_INSUFFICIENT_BUFFER	  0x007a
+@@ -50,6 +48,13 @@ extern const struct nt_err_code_struct nt_errs[];
+ #define STATUS_SOME_UNMAPPED       0x0107
+ #define STATUS_BUFFER_OVERFLOW     0x80000005
+ #define NT_STATUS_NO_MORE_ENTRIES  0x8000001a
++#define NT_STATUS_MEDIA_CHANGED    0x8000001c
++#define NT_STATUS_END_OF_MEDIA     0x8000001e
++#define NT_STATUS_MEDIA_CHECK      0x80000020
++#define NT_STATUS_NO_DATA_DETECTED 0x8000001c
++#define NT_STATUS_STOPPED_ON_SYMLINK 0x8000002d
++#define NT_STATUS_DEVICE_REQUIRES_CLEANING 0x80000288
++#define NT_STATUS_DEVICE_DOOR_OPEN 0x80000288
+ #define NT_STATUS_UNSUCCESSFUL 0xC0000000 | 0x0001
+ #define NT_STATUS_NOT_IMPLEMENTED 0xC0000000 | 0x0002
+ #define NT_STATUS_INVALID_INFO_CLASS 0xC0000000 | 0x0003
+diff --git a/fs/cifs/readdir.c b/fs/cifs/readdir.c
+index e57475d..2528cc0 100644
+--- a/fs/cifs/readdir.c
++++ b/fs/cifs/readdir.c
+@@ -32,6 +32,13 @@
+ #include "cifs_fs_sb.h"
+ #include "cifsfs.h"
+ 
++/*
++ * To be safe - for UCS to UTF-8 with strings loaded with the rare long
++ * characters alloc more to account for such multibyte target UTF-8
++ * characters.
++ */
++#define UNICODE_NAME_MAX ((4 * NAME_MAX) + 2)
++
+ #ifdef CONFIG_CIFS_DEBUG2
+ static void dump_cifs_file_struct(struct file *file, char *label)
+ {
+@@ -815,7 +822,7 @@ static int find_cifs_entry(const int xid, struct cifsTconInfo *pTcon,
+ /* inode num, inode type and filename returned */
+ static int cifs_get_name_from_search_buf(struct qstr *pqst,
+ 	char *current_entry, __u16 level, unsigned int unicode,
+-	struct cifs_sb_info *cifs_sb, int max_len, ino_t *pinum)
++	struct cifs_sb_info *cifs_sb, unsigned int max_len, ino_t *pinum)
+ {
+ 	int rc = 0;
+ 	unsigned int len = 0;
+@@ -876,14 +883,12 @@ static int cifs_get_name_from_search_buf(struct qstr *pqst,
+ 	}
+ 
+ 	if (unicode) {
+-		/* BB fixme - test with long names */
+-		/* Note converted filename can be longer than in unicode */
+-		if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_MAP_SPECIAL_CHR)
+-			pqst->len = cifs_convertUCSpath((char *)pqst->name,
+-					(__le16 *)filename, len/2, nlt);
+-		else
+-			pqst->len = cifs_strfromUCS_le((char *)pqst->name,
+-					(__le16 *)filename, len/2, nlt);
++		pqst->len = cifs_from_ucs2((char *) pqst->name,
++					   (__le16 *) filename,
++					   UNICODE_NAME_MAX,
++					   min(len, max_len), nlt,
++					   cifs_sb->mnt_cifs_flags &
++						CIFS_MOUNT_MAP_SPECIAL_CHR);
+ 	} else {
+ 		pqst->name = filename;
+ 		pqst->len = len;
+@@ -893,8 +898,8 @@ static int cifs_get_name_from_search_buf(struct qstr *pqst,
+ 	return rc;
+ }
+ 
+-static int cifs_filldir(char *pfindEntry, struct file *file,
+-	filldir_t filldir, void *direntry, char *scratch_buf, int max_len)
++static int cifs_filldir(char *pfindEntry, struct file *file, filldir_t filldir,
++			void *direntry, char *scratch_buf, unsigned int max_len)
+ {
+ 	int rc = 0;
+ 	struct qstr qstring;
+@@ -1060,7 +1065,7 @@ int cifs_readdir(struct file *file, void *direntry, filldir_t filldir)
+ 	int num_to_fill = 0;
+ 	char *tmp_buf = NULL;
+ 	char *end_of_smb;
+-	int max_len;
++	unsigned int max_len;
+ 
+ 	xid = GetXid();
+ 
+@@ -1154,11 +1159,7 @@ int cifs_readdir(struct file *file, void *direntry, filldir_t filldir)
+ 				cifsFile->srch_inf.ntwrk_buf_start);
+ 		end_of_smb = cifsFile->srch_inf.ntwrk_buf_start + max_len;
+ 
+-		/* To be safe - for UCS to UTF-8 with strings loaded
+-		with the rare long characters alloc more to account for
+-		such multibyte target UTF-8 characters. cifs_unicode.c,
+-		which actually does the conversion, has the same limit */
+-		tmp_buf = kmalloc((2 * NAME_MAX) + 4, GFP_KERNEL);
++		tmp_buf = kmalloc(UNICODE_NAME_MAX, GFP_KERNEL);
+ 		for (i = 0; (i < num_to_fill) && (rc == 0); i++) {
+ 			if (current_entry == NULL) {
+ 				/* evaluate whether this case is an error */
+diff --git a/fs/cifs/sess.c b/fs/cifs/sess.c
+index 752ead9..fc1cd9a 100644
+--- a/fs/cifs/sess.c
++++ b/fs/cifs/sess.c
+@@ -3,7 +3,7 @@
+  *
+  *   SMB/CIFS session setup handling routines
+  *
+- *   Copyright (c) International Business Machines  Corp., 2006, 2007
++ *   Copyright (c) International Business Machines  Corp., 2006, 2009
+  *   Author(s): Steve French (sfrench@us.ibm.com)
+  *
+  *   This library is free software; you can redistribute it and/or modify
+@@ -203,12 +203,11 @@ static void ascii_ssetup_strings(char **pbcc_area, struct cifsSesInfo *ses,
+ 	*pbcc_area = bcc_ptr;
+ }
+ 
+-static int decode_unicode_ssetup(char **pbcc_area, int bleft,
+-				 struct cifsSesInfo *ses,
+-				 const struct nls_table *nls_cp)
++static void
++decode_unicode_ssetup(char **pbcc_area, int bleft, struct cifsSesInfo *ses,
++		      const struct nls_table *nls_cp)
+ {
+-	int rc = 0;
+-	int words_left, len;
++	int len;
+ 	char *data = *pbcc_area;
+ 
+ 	cFYI(1, ("bleft %d", bleft));
+@@ -226,63 +225,29 @@ static int decode_unicode_ssetup(char **pbcc_area, int bleft,
+ 		++bleft;
+ 	}
+ 
+-	words_left = bleft / 2;
+-
+-	/* save off server operating system */
+-	len = UniStrnlen((wchar_t *) data, words_left);
+-
+-	if (len >= words_left)
+-		return rc;
+-
+ 	kfree(ses->serverOS);
+-	/* UTF-8 string will not grow more than four times as big as UCS-16 */
+-	ses->serverOS = kzalloc((4 * len) + 2 /* trailing null */, GFP_KERNEL);
+-	if (ses->serverOS != NULL) {
+-		cifs_strfromUCS_le(ses->serverOS, (__le16 *)data, len, nls_cp);
+-		cFYI(1, ("serverOS=%s", ses->serverOS));
+-	}
+-	data += 2 * (len + 1);
+-	words_left -= len + 1;
+-
+-	/* save off server network operating system */
+-	len = UniStrnlen((wchar_t *) data, words_left);
+-
+-	if (len >= words_left)
+-		return rc;
++	ses->serverOS = cifs_strndup_from_ucs(data, bleft, true, nls_cp);
++	cFYI(1, ("serverOS=%s", ses->serverOS));
++	len = (UniStrnlen((wchar_t *) data, bleft / 2) * 2) + 2;
++	data += len;
++	bleft -= len;
++	if (bleft <= 0)
++		return;
+ 
+ 	kfree(ses->serverNOS);
+-	ses->serverNOS = kzalloc(4 * len, GFP_KERNEL); /* BB this is wrong length FIXME BB */
+-	if (ses->serverNOS != NULL) {
+-		cifs_strfromUCS_le(ses->serverNOS, (__le16 *)data, len,
+-				   nls_cp);
+-		cFYI(1, ("serverNOS=%s", ses->serverNOS));
+-		if (strncmp(ses->serverNOS, "NT LAN Manager 4", 16) == 0) {
+-			cFYI(1, ("NT4 server"));
+-			ses->flags |= CIFS_SES_NT4;
+-		}
+-	}
+-	data += 2 * (len + 1);
+-	words_left -= len + 1;
+-
+-	/* save off server domain */
+-	len = UniStrnlen((wchar_t *) data, words_left);
+-
+-	if (len > words_left)
+-		return rc;
++	ses->serverNOS = cifs_strndup_from_ucs(data, bleft, true, nls_cp);
++	cFYI(1, ("serverNOS=%s", ses->serverNOS));
++	len = (UniStrnlen((wchar_t *) data, bleft / 2) * 2) + 2;
++	data += len;
++	bleft -= len;
++	if (bleft <= 0)
++		return;
+ 
+ 	kfree(ses->serverDomain);
+-	ses->serverDomain = kzalloc((4 * len) + 2, GFP_KERNEL);
+-	if (ses->serverDomain != NULL) {
+-		cifs_strfromUCS_le(ses->serverDomain, (__le16 *)data, len,
+-				   nls_cp);
+-		cFYI(1, ("serverDomain=%s", ses->serverDomain));
+-	}
+-	data += 2 * (len + 1);
+-	words_left -= len + 1;
++	ses->serverDomain = cifs_strndup_from_ucs(data, bleft, true, nls_cp);
++	cFYI(1, ("serverDomain=%s", ses->serverDomain));
+ 
+-	cFYI(1, ("words left: %d", words_left));
+-
+-	return rc;
++	return;
+ }
+ 
+ static int decode_ascii_ssetup(char **pbcc_area, int bleft,
+@@ -630,8 +595,7 @@ CIFS_SessSetup(unsigned int xid, struct cifsSesInfo *ses, int first_time,
+ 			++bcc_ptr;
+ 			--bytes_remaining;
+ 		}
+-		rc = decode_unicode_ssetup(&bcc_ptr, bytes_remaining,
+-					   ses, nls_cp);
++		decode_unicode_ssetup(&bcc_ptr, bytes_remaining, ses, nls_cp);
+ 	} else {
+ 		rc = decode_ascii_ssetup(&bcc_ptr, bytes_remaining,
+ 					 ses, nls_cp);
+diff --git a/fs/cifs/smberr.h b/fs/cifs/smberr.h
+index 7f50e85..c5084d2 100644
+--- a/fs/cifs/smberr.h
++++ b/fs/cifs/smberr.h
+@@ -110,6 +110,7 @@
+ 
+ /* Below errors are used internally (do not come over the wire) for passthrough
+    from STATUS codes to POSIX only  */
++#define ERRsymlink              0xFFFD
+ #define ErrTooManyLinks         0xFFFE
+ 
+ /* Following error codes may be generated with the ERRSRV error class.*/
+diff --git a/include/linux/nls.h b/include/linux/nls.h
+index 816c04a..cbb1697 100644
+--- a/include/linux/nls.h
++++ b/include/linux/nls.h
+@@ -58,6 +58,25 @@ static inline int nls_strnicmp(struct nls_table *t, const unsigned char *s1,
+ 	return 0;
+ }
+ 
++/*
++ * nls_nullsize - return length of null character for codepage
++ * @codepage - codepage for which to return length of NULL terminator
++ *
++ * Since we can't guarantee that the null terminator will be a particular
++ * length, we have to check against the codepage. If there's a problem
++ * determining it, assume a single-byte NULL terminator.
++ */
++static inline int
++nls_nullsize(const struct nls_table *codepage)
++{
++	int charlen;
++	char tmp[NLS_MAX_CHARSET_SIZE];
++
++	charlen = codepage->uni2char(0, tmp, NLS_MAX_CHARSET_SIZE);
++
++	return charlen > 0 ? charlen : 1;
++}
++
+ #define MODULE_ALIAS_NLS(name)	MODULE_ALIAS("nls_" __stringify(name))
+ 
+ #endif /* _LINUX_NLS_H */
+-- 
+1.5.5.6
+

@@ -1,0 +1,57 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 3 Apr 2008 15:41:25 +0200
+Subject: [s390] zcrypt: disable ap polling thread per default
+Message-id: 20080403134125.GI10542@redhat.com
+O-Subject: [RHEL5 U3 PATCH 7/7] s390 - zcrypt: Disable ap polling thread per default
+Bugzilla: 435161
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+The AP polling thread which is enabled by default will cause a high cpu cost with z/VM.
+z/VMs polling rate is much lower then the ap poll thread in Linux for System z.
+
+This patch disables the ap polling thread per default.
+
+Bugzilla
+=========
+
+BZ 435161
+https://bugzilla.redhat.com/show_bug.cgi?id=435161
+
+Upstream status of the patch:
+=============================
+
+Patch included in linux-2.6 as git commit
+b90b34c6802865d07f482650eff82a4b38df6d79
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+ drivers/s390/crypto/ap_bus.c |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/s390/crypto/ap_bus.c b/drivers/s390/crypto/ap_bus.c
+index 2f9c250..73efe9e 100644
+--- a/drivers/s390/crypto/ap_bus.c
++++ b/drivers/s390/crypto/ap_bus.c
+@@ -59,9 +59,9 @@ module_param_named(domain, ap_domain_index, int, 0000);
+ MODULE_PARM_DESC(domain, "domain index for ap devices");
+ EXPORT_SYMBOL(ap_domain_index);
+ 
+-static int ap_thread_flag = 1;
++static int ap_thread_flag = 0;
+ module_param_named(poll_thread, ap_thread_flag, int, 0000);
+-MODULE_PARM_DESC(poll_thread, "Turn on/off poll thread, default is 1 (on).");
++MODULE_PARM_DESC(poll_thread, "Turn on/off poll thread, default is 0 (off).");
+ 
+ static struct device *ap_root_device = NULL;
+ 

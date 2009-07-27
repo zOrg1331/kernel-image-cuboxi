@@ -1,0 +1,128 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL 5.1] Shrink size of struct gdlm_lock (bz #240013)
+Date: Thu, 31 May 2007 09:54:25 +0100
+Bugzilla: 240013
+Message-Id: <1180601665.25918.73.camel@quoit>
+Changelog: [gfs2] Shrink size of struct gdlm_lock
+
+
+Hi,
+
+This patch is taken from the upstream GFS2 git tree where it has been
+for a little while. It shrinks the size of struct gdlm_lock by 32 bytes
+(on x86_64) which is well worth doing when there can be potentially
+millions of these structures in use at one time. Its been tested as part
+of the upstream kernel code and fixes bz #240013.
+
+Steve.
+
+------------------------------------------------------------------------------------
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Fsteve%2Fgfs2-2.6-nmw.git;a=commitdiff_plain;h=43abbfe7597ad85c9096859fc85190bb73938fe6
+
+[GFS2] Reduce size of struct gdlm_lock
+
+This patch removes the completion (which is rather large) from struct
+gdlm_lock in favour of using the wait_on_bit() functions. We don't need
+to add any extra fields to the structure to do this, so we save 32 bytes
+(on x86_64) per structure. This adds up to quite a lot when we may
+potentially have millions of these lock structures,
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+Acked-by: David Teigland <teigland@redhat.com>
+---
+
+diff --git a/fs/gfs2/locking/dlm/lock.c b/fs/gfs2/locking/dlm/lock.c
+index c305255..542a797 100644
+--- a/fs/gfs2/locking/dlm/lock.c
++++ b/fs/gfs2/locking/dlm/lock.c
+@@ -174,7 +174,6 @@ static int gdlm_create_lp(struct gdlm_ls *ls, struct lm_lockname *name,
+ 	lp->cur = DLM_LOCK_IV;
+ 	lp->lvb = NULL;
+ 	lp->hold_null = NULL;
+-	init_completion(&lp->ast_wait);
+ 	INIT_LIST_HEAD(&lp->clist);
+ 	INIT_LIST_HEAD(&lp->blist);
+ 	INIT_LIST_HEAD(&lp->delay_list);
+@@ -399,6 +398,12 @@ static void gdlm_del_lvb(struct gdlm_lock *lp)
+ 	lp->lksb.sb_lvbptr = NULL;
+ }
+ 
++static int gdlm_ast_wait(void *word)
++{
++	schedule();
++	return 0;
++}
++
+ /* This can do a synchronous dlm request (requiring a lock_dlm thread to get
+    the completion) because gfs won't call hold_lvb() during a callback (from
+    the context of a lock_dlm thread). */
+@@ -424,10 +429,10 @@ static int hold_null_lock(struct gdlm_lock *lp)
+ 	lpn->lkf = DLM_LKF_VALBLK | DLM_LKF_EXPEDITE;
+ 	set_bit(LFL_NOBAST, &lpn->flags);
+ 	set_bit(LFL_INLOCK, &lpn->flags);
++	set_bit(LFL_AST_WAIT, &lpn->flags);
+ 
+-	init_completion(&lpn->ast_wait);
+ 	gdlm_do_lock(lpn);
+-	wait_for_completion(&lpn->ast_wait);
++	wait_on_bit(&lpn->flags, LFL_AST_WAIT, gdlm_ast_wait, TASK_UNINTERRUPTIBLE);
+ 	error = lpn->lksb.sb_status;
+ 	if (error) {
+ 		printk(KERN_INFO "lock_dlm: hold_null_lock dlm error %d\n",
+diff --git a/fs/gfs2/locking/dlm/lock_dlm.h b/fs/gfs2/locking/dlm/lock_dlm.h
+index d074c6e..24d70f7 100644
+--- a/fs/gfs2/locking/dlm/lock_dlm.h
++++ b/fs/gfs2/locking/dlm/lock_dlm.h
+@@ -101,6 +101,7 @@ enum {
+ 	LFL_NOBAST		= 10,
+ 	LFL_HEADQUE		= 11,
+ 	LFL_UNLOCK_DELETE	= 12,
++	LFL_AST_WAIT		= 13,
+ };
+ 
+ struct gdlm_lock {
+@@ -117,7 +118,6 @@ struct gdlm_lock {
+ 	unsigned long		flags;		/* lock_dlm flags LFL_ */
+ 
+ 	int			bast_mode;	/* protected by async_lock */
+-	struct completion	ast_wait;
+ 
+ 	struct list_head	clist;		/* complete */
+ 	struct list_head	blist;		/* blocking */
+diff --git a/fs/gfs2/locking/dlm/thread.c b/fs/gfs2/locking/dlm/thread.c
+index 9cf1f16..1aca51e 100644
+--- a/fs/gfs2/locking/dlm/thread.c
++++ b/fs/gfs2/locking/dlm/thread.c
+@@ -44,6 +44,13 @@ static void process_blocking(struct gdlm_lock *lp, int bast_mode)
+ 	ls->fscb(ls->sdp, cb, &lp->lockname);
+ }
+ 
++static void wake_up_ast(struct gdlm_lock *lp)
++{
++	clear_bit(LFL_AST_WAIT, &lp->flags);
++	smp_mb__after_clear_bit();
++	wake_up_bit(&lp->flags, LFL_AST_WAIT);
++}
++
+ static void process_complete(struct gdlm_lock *lp)
+ {
+ 	struct gdlm_ls *ls = lp->ls;
+@@ -136,7 +143,7 @@ static void process_complete(struct gdlm_lock *lp)
+ 	 */
+ 
+ 	if (test_and_clear_bit(LFL_SYNC_LVB, &lp->flags)) {
+-		complete(&lp->ast_wait);
++		wake_up_ast(lp);
+ 		return;
+ 	}
+ 
+@@ -214,7 +221,7 @@ out:
+ 	if (test_bit(LFL_INLOCK, &lp->flags)) {
+ 		clear_bit(LFL_NOBLOCK, &lp->flags);
+ 		lp->cur = lp->req;
+-		complete(&lp->ast_wait);
++		wake_up_ast(lp);
+ 		return;
+ 	}
+ 
+

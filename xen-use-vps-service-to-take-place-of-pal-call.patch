@@ -1,0 +1,89 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Wed, 2 Jul 2008 13:43:29 -0400
+Subject: [xen] use VPS service to take place of PAL call
+Message-id: 20080702174329.8165.10908.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.3 PATCH 2/3]
+Bugzilla: 437096
+RH-Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+Fixes bz 437096
+
+Problem description:
+This Intel feature patch adds support for VT-i2.
+VT-i2 supports the new hardware virtualization features of a new
+ia64 processor. This processor will be used on the upcoming Tukwila
+system.
+
+Patches were provided by Intel. They apply cleanly
+to our 3.1.2 based code base and brew build cleanly.
+
+Upstream in Xen Unstable:
+http://xenbits.xensource.com/xen-unstable.hg?rev/e5244d14486c
+http://xenbits.xensource.com/xen-unstable.hg?rev/6cf504b4de7d
+
+Brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1372513
+
+Testing:
+Partner testing ongoing.
+
+Please review and ACK.
+
+Thanks,
+ Bill
+
+diff --git a/arch/ia64/vmx/vmx_init.c b/arch/ia64/vmx/vmx_init.c
+index 35da3ca..b4bf62e 100644
+--- a/arch/ia64/vmx/vmx_init.c
++++ b/arch/ia64/vmx/vmx_init.c
+@@ -51,6 +51,7 @@
+ #include <asm/viosapic.h>
+ #include <xen/event.h>
+ #include <asm/vlsapic.h>
++#include <asm/vmx_pal_vsa.h>
+ #include "entry.h"
+ 
+ /* Global flag to identify whether Intel vmx feature is on */
+@@ -220,14 +221,7 @@ vmx_create_vp(struct vcpu *v)
+ void
+ vmx_save_state(struct vcpu *v)
+ {
+-	u64 status;
+-
+-	/* FIXME: about setting of pal_proc_vector... time consuming */
+-	status = ia64_pal_vp_save((u64 *)v->arch.privregs, 0);
+-	if (status != PAL_STATUS_SUCCESS){
+-		panic_domain(vcpu_regs(v),"Save vp status failed\n");
+-	}
+-
++	ia64_call_vsa(PAL_VPS_SAVE, (u64)v->arch.privregs, 0, 0, 0, 0, 0, 0);
+ 
+ 	/* Need to save KR when domain switch, though HV itself doesn;t
+ 	 * use them.
+@@ -246,12 +240,7 @@ vmx_save_state(struct vcpu *v)
+ void
+ vmx_load_state(struct vcpu *v)
+ {
+-	u64 status;
+-
+-	status = ia64_pal_vp_restore((u64 *)v->arch.privregs, 0);
+-	if (status != PAL_STATUS_SUCCESS){
+-		panic_domain(vcpu_regs(v),"Restore vp status failed\n");
+-	}
++	ia64_call_vsa(PAL_VPS_RESTORE, (u64)v->arch.privregs, 0, 0, 0, 0, 0, 0);
+ 
+ 	ia64_set_kr(0, v->arch.arch_vmx.vkr[0]);
+ 	ia64_set_kr(1, v->arch.arch_vmx.vkr[1]);
+diff --git a/include/asm-ia64/vmx_pal_vsa.h b/include/asm-ia64/vmx_pal_vsa.h
+index 7ce8069..612f5ab 100644
+--- a/include/asm-ia64/vmx_pal_vsa.h
++++ b/include/asm-ia64/vmx_pal_vsa.h
+@@ -38,6 +38,8 @@ extern u64 __vsa_base;
+ #define PAL_VPS_SET_PENDING_INTERRUPT       0x1000
+ #define PAL_VPS_THASH               0x1400
+ #define PAL_VPS_TTAG                0x1800
++#define PAL_VPS_RESTORE             0x1c00
++#define PAL_VPS_SAVE                0x2000
+ 
+ #endif /* _PAL_VSA_H_ */
+ 

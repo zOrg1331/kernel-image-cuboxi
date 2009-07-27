@@ -1,0 +1,155 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Mon, 15 Dec 2008 17:06:59 -0600
+Subject: [scsi] ibmvscsi: EH fails due to insufficient resources
+Message-id: 4946E313.8040205@REDHAT.COM
+O-Subject: Re: [PATCH RHEL5.3 BZ475618] ibmvscsi: Don't fail EH due to insufficient resources
+Bugzilla: 475618
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=475618
+
+Description:
+===========
+The ibmvscsi driver currently has a bug in it which can result in it using up
+all its event structs for commands. If something results in all those commands
+timing out, we won't have any resources left to send aborts or resets. This
+results in escalating to a host reset in order to recover, which is a bit
+heavy handed.
+
+The patch fixes this problem by reducing can_queue by two in order to have resources to do EH.
+It also changes the max_requests module parameter so that it is not writable at
+runtime, since the code really does not handle it changing at runtime.
+
+Here is an updated patch for rhel53 to address the concern that we were
+changing the user interface and allowing a previously valid tuning to cause
+issues now. This newest patch does not change max_requests. Instead it
+creates a max_events variable to hold max_requests plus 2 events for task
+management. The user interface will be unchanged with this patch.
+
+The change to the permissions for max_requests remains. We are removing the
+write bits for this variable in sysfs; the code does not support
+changing this
+value at run time and this change reflects that.
+
+RHEL Version Found:
+================
+RHEL 5.3 snapshot5
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+
+Upstream Status:
+================
+http://marc.info/?l=linux-scsi&m=122877739002693&w=2
+
+Test Status:
+============
+Test method:
+1 - Setup linux VIO server with code to silently drop CRQs to simulate
+failure
+2 - Boot client with ibmvscsic module option "max_requests=10"
+3 - Start bonnie++ on target disk for recreate
+4 - Silently drop CRQs on server for 9 seconds
+5 - Wait for recreate (client can not send cmd abort messages)
+
+Testing rationale:
+By setting the max_requests to 10 the value is now less than the queue_depth
+(16) for the virtual disk.  This allows us to exhaust the event pool by running
+disk stress on one disk.
+
+Test results:
+Without the patch the 10 commands that have been dropped can not be aborted
+because the event struct pool is full.  The system does manage to recover by
+resetting the host adapter in this case.
+
+With the patch, the 8 commands that have been dropped can be aborted by the
+error handler because event pool structs are being properly reserved for such
+an event.  The device is reset and io recovers.
+
+--
+Ameet M. Paranjape
+aparanja@redhat.com
+IBM/Red Hat POWER Liason
+IRC name: aparanja
+
+diff --git a/drivers/scsi/ibmvscsi/ibmvscsi.c b/drivers/scsi/ibmvscsi/ibmvscsi.c
+index 72274b0..a23e4e9 100644
+--- a/drivers/scsi/ibmvscsi/ibmvscsi.c
++++ b/drivers/scsi/ibmvscsi/ibmvscsi.c
+@@ -86,6 +86,7 @@ static int max_id = 64;
+ static int max_channel = 3;
+ static int init_timeout = 5;
+ static int max_requests = IBMVSCSI_MAX_REQUESTS_DEFAULT;
++static int max_events = IBMVSCSI_MAX_REQUESTS_DEFAULT + 2;
+ 
+ #define IBMVSCSI_VERSION "1.5.9"
+ 
+@@ -100,7 +101,7 @@ module_param_named(max_channel, max_channel, int, S_IRUGO | S_IWUSR);
+ MODULE_PARM_DESC(max_channel, "Largest channel value");
+ module_param_named(init_timeout, init_timeout, int, S_IRUGO | S_IWUSR);
+ MODULE_PARM_DESC(init_timeout, "Initialization timeout in seconds");
+-module_param_named(max_requests, max_requests, int, S_IRUGO | S_IWUSR);
++module_param_named(max_requests, max_requests, int, S_IRUGO);
+ MODULE_PARM_DESC(max_requests, "Maximum requests for this adapter");
+ 
+ /* ------------------------------------------------------------
+@@ -1652,7 +1653,6 @@ static int ibmvscsi_probe(struct vio_dev *vdev, const struct vio_device_id *id)
+ 
+ 	vdev->dev.driver_data = NULL;
+ 
+-	driver_template.can_queue = max_requests;
+ 	host = scsi_host_alloc(&driver_template, sizeof(*hostdata));
+ 	if (!host) {
+ 		dev_err(&vdev->dev, "couldn't allocate host data\n");
+@@ -1667,12 +1667,12 @@ static int ibmvscsi_probe(struct vio_dev *vdev, const struct vio_device_id *id)
+ 	atomic_set(&hostdata->request_limit, -1);
+ 	hostdata->host->max_sectors = 32 * 8; /* default max I/O 32 pages */
+ 
+-	rc = ibmvscsi_init_crq_queue(&hostdata->queue, hostdata, max_requests);
++	rc = ibmvscsi_init_crq_queue(&hostdata->queue, hostdata, max_events);
+ 	if (rc != 0 && rc != H_RESOURCE) {
+ 		dev_err(&vdev->dev, "couldn't initialize crq. rc=%d\n", rc);
+ 		goto init_crq_failed;
+ 	}
+-	if (initialize_event_pool(&hostdata->pool, max_requests, hostdata) != 0) {
++	if (initialize_event_pool(&hostdata->pool, max_events, hostdata) != 0) {
+ 		dev_err(&vdev->dev, "couldn't initialize event pool\n");
+ 		goto init_pool_failed;
+ 	}
+@@ -1714,7 +1714,7 @@ static int ibmvscsi_probe(struct vio_dev *vdev, const struct vio_device_id *id)
+       add_host_failed:
+ 	release_event_pool(&hostdata->pool, hostdata);
+       init_pool_failed:
+-	ibmvscsi_release_crq_queue(&hostdata->queue, hostdata, max_requests);
++	ibmvscsi_release_crq_queue(&hostdata->queue, hostdata, max_events);
+       init_crq_failed:
+ 	scsi_host_put(host);
+       scsi_host_alloc_failed:
+@@ -1726,7 +1726,7 @@ static int ibmvscsi_remove(struct vio_dev *vdev)
+ 	struct ibmvscsi_host_data *hostdata = vdev->dev.driver_data;
+ 	release_event_pool(&hostdata->pool, hostdata);
+ 	ibmvscsi_release_crq_queue(&hostdata->queue, hostdata,
+-				   max_requests);
++				   max_events);
+ 	
+ 	scsi_remove_host(hostdata->host);
+ 	scsi_host_put(hostdata->host);
+@@ -1756,6 +1756,10 @@ static struct vio_driver ibmvscsi_driver = {
+ 
+ int __init ibmvscsi_module_init(void)
+ {
++	/* Ensure we have two requests to do error recovery */
++	driver_template.can_queue = max_requests;
++	max_events = max_requests + 2;
++
+ 	return vio_register_driver(&ibmvscsi_driver);
+ }
+ 

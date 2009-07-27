@@ -1,0 +1,43 @@
+diff -up ./drivers/block/drbd/drbd_main.c.drbdc ./drivers/block/drbd/drbd_main.c
+--- ./drivers/block/drbd/drbd_main.c.drbdc	2009-05-22 16:42:19.000000000 +0400
++++ ./drivers/block/drbd/drbd_main.c	2009-05-22 16:45:51.000000000 +0400
+@@ -40,17 +40,12 @@
+ #include <linux/init.h>
+ #include <linux/mm.h>
+ #include <linux/drbd_config.h>
+-#include <linux/memcontrol.h>
+ #include <linux/mm_inline.h>
+ #include <linux/slab.h>
+ #include <linux/random.h>
+ #include <linux/reboot.h>
+ #include <linux/notifier.h>
+-#ifdef HAVE_LINUX_BYTEORDER_SWABB_H
+ #include <linux/byteorder/swabb.h>
+-#else
+-#include <linux/swab.h>
+-#endif
+ 
+ #define __KERNEL_SYSCALLS__
+ #include <linux/unistd.h>
+diff -up ./drivers/block/drbd/drbd_receiver.c.drbdc ./drivers/block/drbd/drbd_receiver.c
+--- ./drivers/block/drbd/drbd_receiver.c.drbdc	2009-05-22 16:42:19.000000000 +0400
++++ ./drivers/block/drbd/drbd_receiver.c	2009-05-22 16:44:18.000000000 +0400
+@@ -37,7 +37,6 @@
+ #include <linux/in.h>
+ #include <linux/mm.h>
+ #include <linux/drbd_config.h>
+-#include <linux/memcontrol.h>
+ #include <linux/mm_inline.h>
+ #include <linux/slab.h>
+ #include <linux/smp_lock.h>
+diff -up ./drivers/block/drbd/drbd_worker.c.drbdc ./drivers/block/drbd/drbd_worker.c
+--- ./drivers/block/drbd/drbd_worker.c.drbdc	2009-05-22 16:42:19.000000000 +0400
++++ ./drivers/block/drbd/drbd_worker.c	2009-05-22 16:43:56.000000000 +0400
+@@ -34,7 +34,6 @@
+ #include <linux/wait.h>
+ #include <linux/mm.h>
+ #include <linux/drbd_config.h>
+-#include <linux/memcontrol.h>
+ #include <linux/mm_inline.h>
+ #include <linux/slab.h>
+ #include <linux/random.h>

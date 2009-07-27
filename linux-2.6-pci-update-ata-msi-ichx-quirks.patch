@@ -1,0 +1,619 @@
+From: Jeff Garzik <jgarzik@redhat.com>
+Subject: [RHEL5 PATCH] Update ATA, MSI, ICHx quirks
+Date: Thu, 7 Jun 2007 15:18:50 -0400
+Bugzilla: 203781
+Message-Id: <20070607191850.GG29409@devserv.devel.redhat.com>
+Changelog: [pci] Update ATA, MSI, ICHx quirks
+
+
+
+This patch updates ATA, PCI MSI, and Intel ICHx LPC quirks to what
+is currently in 2.6.22-rc4 upstream.
+
+The main bit that needs review the jmicron ATA quirk (hello Alan).
+
+The rest should be pretty straightforward.  The PCI MSI stuff is
+definitely needed, since we turn on CONFIG_PCI_MSI in our kernels.
+
+Changes since version 1:
+* Re-add PCI_CLASS_STORAGE_SATA* to include/linux/pci_ids.h
+* Add mpic.c patchlet (Don Z)
+* Remove DECLARE_PCI_FIXUP_RESUME() calls
+
+ arch/powerpc/sysdev/mpic.c                |    2 
+ drivers/pci/msi.c                         |    7 
+ drivers/pci/pci.c                         |  114 +++++++++++++++
+ drivers/pci/pci.h                         |    5 
+ drivers/pci/quirks.c                      |  219 ++++++++++++++++++++++--------
+ include/linux/pci.h                       |    2 
+ include/linux/pci_ids.h                   |    6 
+ include/linux/pci_regs.h                  |   49 ++++++
+ 10 files changed, 334 insertions(+), 70 deletions(-)
+
+diff -urN linux-2.6.18.x86_64.orig/arch/powerpc/sysdev/mpic.c linux-2.6.18.x86_64/arch/powerpc/sysdev/mpic.c
+--- linux-2.6.18.x86_64.orig/arch/powerpc/sysdev/mpic.c	2007-06-12 12:18:22.000000000 -0400
++++ linux-2.6.18.x86_64/arch/powerpc/sysdev/mpic.c	2007-06-12 12:22:17.000000000 -0400
+@@ -388,7 +388,7 @@
+ 	for (pos = readb(devbase + PCI_CAPABILITY_LIST); pos != 0;
+ 	     pos = readb(devbase + pos + PCI_CAP_LIST_NEXT)) {
+ 		u8 id = readb(devbase + pos + PCI_CAP_LIST_ID);
+-		if (id == PCI_CAP_ID_HT_IRQCONF) {
++		if (id == PCI_CAP_ID_HT) {
+ 			id = readb(devbase + pos + 3);
+ 			if (id == 0x80)
+ 				break;
+diff -urN linux-2.6.18.x86_64.orig/drivers/pci/msi.c linux-2.6.18.x86_64/drivers/pci/msi.c
+--- linux-2.6.18.x86_64.orig/drivers/pci/msi.c	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/pci/msi.c	2007-06-12 12:22:17.000000000 -0400
+@@ -351,13 +351,6 @@
+ 	if (!status)
+ 		return status;
+ 
+-	if (pci_msi_quirk) {
+-		pci_msi_enable = 0;
+-		printk(KERN_WARNING "PCI: MSI quirk detected. MSI disabled.\n");
+-		status = -EINVAL;
+-		return status;
+-	}
+-
+ 	status = msi_arch_init();
+ 	if (status < 0) {
+ 		pci_msi_enable = 0;
+diff -urN linux-2.6.18.x86_64.orig/drivers/pci/pci.c linux-2.6.18.x86_64/drivers/pci/pci.c
+--- linux-2.6.18.x86_64.orig/drivers/pci/pci.c	2007-06-12 12:18:22.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/pci/pci.c	2007-06-12 12:22:17.000000000 -0400
+@@ -68,6 +68,29 @@
+ 
+ #endif  /*  0  */
+ 
++#define PCI_FIND_CAP_TTL	48
++
++static int __pci_find_next_cap_ttl(struct pci_bus *bus, unsigned int devfn,
++				   u8 pos, int cap, int *ttl)
++{
++	u8 id;
++
++	while ((*ttl)--) {
++		pci_bus_read_config_byte(bus, devfn, pos, &pos);
++		if (pos < 0x40)
++			break;
++		pos &= ~3;
++		pci_bus_read_config_byte(bus, devfn, pos + PCI_CAP_LIST_ID,
++					 &id);
++		if (id == 0xff)
++			break;
++		if (id == cap)
++			return pos;
++		pos += PCI_CAP_LIST_NEXT;
++	}
++	return 0;
++}
++
+ static int __pci_find_next_cap(struct pci_bus *bus, unsigned int devfn, u8 pos, int cap)
+ {
+ 	u8 id;
+@@ -119,6 +142,28 @@
+ 	return __pci_find_next_cap(bus, devfn, pos, cap);
+ }
+ 
++static int __pci_bus_find_cap_start(struct pci_bus *bus,
++				    unsigned int devfn, u8 hdr_type)
++{
++	u16 status;
++
++	pci_bus_read_config_word(bus, devfn, PCI_STATUS, &status);
++	if (!(status & PCI_STATUS_CAP_LIST))
++		return 0;
++
++	switch (hdr_type) {
++	case PCI_HEADER_TYPE_NORMAL:
++	case PCI_HEADER_TYPE_BRIDGE:
++		return PCI_CAPABILITY_LIST;
++	case PCI_HEADER_TYPE_CARDBUS:
++		return PCI_CB_CAPABILITY_LIST;
++	default:
++		return 0;
++	}
++
++	return 0;
++}
++
+ /**
+  * pci_find_capability - query for devices' capabilities 
+  * @dev: PCI device to query
+@@ -214,6 +259,75 @@
+ }
+ EXPORT_SYMBOL_GPL(pci_find_ext_capability);
+ 
++static int __pci_find_next_ht_cap(struct pci_dev *dev, int pos, int ht_cap)
++{
++	int rc, ttl = PCI_FIND_CAP_TTL;
++	u8 cap, mask;
++
++	if (ht_cap == HT_CAPTYPE_SLAVE || ht_cap == HT_CAPTYPE_HOST)
++		mask = HT_3BIT_CAP_MASK;
++	else
++		mask = HT_5BIT_CAP_MASK;
++
++	pos = __pci_find_next_cap_ttl(dev->bus, dev->devfn, pos,
++				      PCI_CAP_ID_HT, &ttl);
++	while (pos) {
++		rc = pci_read_config_byte(dev, pos + 3, &cap);
++		if (rc != PCIBIOS_SUCCESSFUL)
++			return 0;
++
++		if ((cap & mask) == ht_cap)
++			return pos;
++
++		pos = __pci_find_next_cap_ttl(dev->bus, dev->devfn,
++					      pos + PCI_CAP_LIST_NEXT,
++					      PCI_CAP_ID_HT, &ttl);
++	}
++
++	return 0;
++}
++/**
++ * pci_find_next_ht_capability - query a device's Hypertransport capabilities
++ * @dev: PCI device to query
++ * @pos: Position from which to continue searching
++ * @ht_cap: Hypertransport capability code
++ *
++ * To be used in conjunction with pci_find_ht_capability() to search for
++ * all capabilities matching @ht_cap. @pos should always be a value returned
++ * from pci_find_ht_capability().
++ *
++ * NB. To be 100% safe against broken PCI devices, the caller should take
++ * steps to avoid an infinite loop.
++ */
++int pci_find_next_ht_capability(struct pci_dev *dev, int pos, int ht_cap)
++{
++	return __pci_find_next_ht_cap(dev, pos + PCI_CAP_LIST_NEXT, ht_cap);
++}
++EXPORT_SYMBOL_GPL(pci_find_next_ht_capability);
++
++/**
++ * pci_find_ht_capability - query a device's Hypertransport capabilities
++ * @dev: PCI device to query
++ * @ht_cap: Hypertransport capability code
++ *
++ * Tell if a device supports a given Hypertransport capability.
++ * Returns an address within the device's PCI configuration space
++ * or 0 in case the device does not support the request capability.
++ * The address points to the PCI capability, of type PCI_CAP_ID_HT,
++ * which has a Hypertransport capability matching @ht_cap.
++ */
++int pci_find_ht_capability(struct pci_dev *dev, int ht_cap)
++{
++	int pos;
++
++	pos = __pci_bus_find_cap_start(dev->bus, dev->devfn, dev->hdr_type);
++	if (pos)
++		pos = __pci_find_next_ht_cap(dev, pos, ht_cap);
++
++	return pos;
++}
++EXPORT_SYMBOL_GPL(pci_find_ht_capability);
++
+ /**
+  * pci_find_parent_resource - return resource region of parent bus of given region
+  * @dev: PCI device structure contains resources to be searched
+diff -urN linux-2.6.18.x86_64.orig/drivers/pci/pci.h linux-2.6.18.x86_64/drivers/pci/pci.h
+--- linux-2.6.18.x86_64.orig/drivers/pci/pci.h	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/pci/pci.h	2007-06-12 12:22:17.000000000 -0400
+@@ -42,11 +42,6 @@
+ /* Lock for read/write access to pci device and bus lists */
+ extern struct rw_semaphore pci_bus_sem;
+ 
+-#ifdef CONFIG_X86_IO_APIC
+-extern int pci_msi_quirk;
+-#else
+-#define pci_msi_quirk 0
+-#endif
+ extern unsigned int pci_pm_d3_delay;
+ #ifdef CONFIG_PCI_MSI
+ void disable_msi_mode(struct pci_dev *dev, int pos, int type);
+diff -urN linux-2.6.18.x86_64.orig/drivers/pci/quirks.c linux-2.6.18.x86_64/drivers/pci/quirks.c
+--- linux-2.6.18.x86_64.orig/drivers/pci/quirks.c	2007-06-12 12:18:21.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/pci/quirks.c	2007-06-12 12:43:34.000000000 -0400
+@@ -440,6 +440,12 @@
+ }
+ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_ICH6_0, quirk_ich6_lpc_acpi );
+ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_ICH6_1, quirk_ich6_lpc_acpi );
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_ICH7_0, quirk_ich6_lpc_acpi );
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_ICH7_1, quirk_ich6_lpc_acpi );
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_ICH7_31, quirk_ich6_lpc_acpi );
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_ICH8_0, quirk_ich6_lpc_acpi );
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_ICH8_2, quirk_ich6_lpc_acpi );
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_ICH8_3, quirk_ich6_lpc_acpi );
+ 
+ /*
+  * VIA ACPI: One IO region pointed to by longword at
+@@ -577,8 +583,6 @@
+ }
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_SI,	PCI_ANY_ID,			quirk_ioapic_rmw );
+ 
+-int pci_msi_quirk;
+-
+ #define AMD8131_revA0        0x01
+ #define AMD8131_revB0        0x11
+ #define AMD8131_MISC         0x40
+@@ -606,12 +610,6 @@
+ } 
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_8131_BRIDGE, quirk_amd_8131_ioapic);
+ 
+-static void __init quirk_svw_msi(struct pci_dev *dev)
+-{
+-	pci_msi_quirk = 1;
+-	printk(KERN_WARNING "PCI: MSI quirk detected. pci_msi_quirk set.\n");
+-}
+-DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_SERVERWORKS, PCI_DEVICE_ID_SERVERWORKS_GCNB_LE, quirk_svw_msi );
+ #endif /* CONFIG_X86_IO_APIC */
+ 
+ 
+@@ -840,6 +838,24 @@
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82454NX,	quirk_disable_pxb );
+ 
+ 
++static void __devinit quirk_sb600_sata(struct pci_dev *pdev)
++{
++	/* set sb600 sata to ahci mode */
++	if ((pdev->class >> 8) == PCI_CLASS_STORAGE_IDE) {
++		u8 tmp;
++
++		pci_read_config_byte(pdev, 0x40, &tmp);
++		pci_write_config_byte(pdev, 0x40, tmp|1);
++		pci_write_config_byte(pdev, 0x9, 1);
++		pci_write_config_byte(pdev, 0xa, 6);
++		pci_write_config_byte(pdev, 0x40, tmp);
++
++		pdev->class = PCI_CLASS_STORAGE_SATA_AHCI;
++	}
++}
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP600_SATA, quirk_sb600_sata);
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP700_SATA, quirk_sb600_sata);
++
+ /*
+  *	Serverworks CSB5 IDE does not fully support native mode
+  */
+@@ -1183,73 +1199,69 @@
+ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_SI,	PCI_DEVICE_ID_SI_963,		quirk_sis_96x_smbus );
+ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_SI,	PCI_DEVICE_ID_SI_LPC,		quirk_sis_96x_smbus );
+ 
+-#if defined(CONFIG_SCSI_SATA) || defined(CONFIG_SCSI_SATA_MODULE)
++#if defined(CONFIG_ATA) || defined(CONFIG_ATA_MODULE)
+ 
+ /*
+  *	If we are using libata we can drive this chip properly but must
+  *	do this early on to make the additional device appear during
+  *	the PCI scanning.
+  */
+-
+-static void __devinit quirk_jmicron_dualfn(struct pci_dev *pdev)
++static void quirk_jmicron_ata(struct pci_dev *pdev)
+ {
+-	u32 conf;
++	u32 conf1, conf5, class;
+ 	u8 hdr;
+ 
+ 	/* Only poke fn 0 */
+ 	if (PCI_FUNC(pdev->devfn))
+ 		return;
+ 
+-	switch(pdev->device) {
+-		case PCI_DEVICE_ID_JMICRON_JMB365:
+-		case PCI_DEVICE_ID_JMICRON_JMB366:
+-			/* Redirect IDE second PATA port to the right spot */
+-			pci_read_config_dword(pdev, 0x80, &conf);
+-			conf |= (1 << 24);
+-			/* Fall through */
+-			pci_write_config_dword(pdev, 0x80, conf);
+-		case PCI_DEVICE_ID_JMICRON_JMB361:
+-		case PCI_DEVICE_ID_JMICRON_JMB363:
+-			pci_read_config_dword(pdev, 0x40, &conf);
+-			/* Enable dual function mode, AHCI on fn 0, IDE fn1 */
+-			/* Set the class codes correctly and then direct IDE 0 */
+-			conf &= ~0x000F0200;	/* Clear bit 9 and 16-19 */
+-			conf |=  0x00C20002;	/* Set bit 1, 17, 22, 23 */
+-			pci_write_config_dword(pdev, 0x40, conf);
++	pci_read_config_dword(pdev, 0x40, &conf1);
++	pci_read_config_dword(pdev, 0x80, &conf5);
+ 
+-			/* Reconfigure so that the PCI scanner discovers the
+-			   device is now multifunction */
++	conf1 &= ~0x00CFF302; /* Clear bit 1, 8, 9, 12-19, 22, 23 */
++	conf5 &= ~(1 << 24);  /* Clear bit 24 */
+ 
+-			pci_read_config_byte(pdev, PCI_HEADER_TYPE, &hdr);
+-			pdev->hdr_type = hdr & 0x7f;
+-			pdev->multifunction = !!(hdr & 0x80);
+-
+-			break;
+-	}
+-}
+-
+-DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_JMICRON, PCI_ANY_ID, quirk_jmicron_dualfn);
++	switch (pdev->device) {
++	case PCI_DEVICE_ID_JMICRON_JMB360:
++		/* The controller should be in single function ahci mode */
++		conf1 |= 0x0002A100; /* Set 8, 13, 15, 17 */
++		break;
+ 
++	case PCI_DEVICE_ID_JMICRON_JMB365:
++	case PCI_DEVICE_ID_JMICRON_JMB366:
++		/* Redirect IDE second PATA port to the right spot */
++		conf5 |= (1 << 24);
++		/* Fall through */
++	case PCI_DEVICE_ID_JMICRON_JMB361:
++	case PCI_DEVICE_ID_JMICRON_JMB363:
++		/* Enable dual function mode, AHCI on fn 0, IDE fn1 */
++		/* Set the class codes correctly and then direct IDE 0 */
++		conf1 |= 0x00C2A102; /* Set 1, 8, 13, 15, 17, 22, 23 */
++		break;
+ 
+-/*
+- *  Some BIOS set AMD/ATI SB600 SATA as IDE mode for backward compatibility, 
+- *  but Linux should set it back to AHCI mode since ahci is supported now.
+- */
+-static void __devinit quirk_sb600_sata(struct pci_dev *pdev)
+-{
+-	if ((pdev->class >> 8) == PCI_CLASS_STORAGE_IDE) {
+-		u8 tmp;
++	case PCI_DEVICE_ID_JMICRON_JMB368:
++		/* The controller should be in single function IDE mode */
++		conf1 |= 0x00C00000; /* Set 22, 23 */
++		break;
++	}
+ 
+-		pci_read_config_byte(pdev, 0x40, &tmp);
+-		pci_write_config_byte(pdev, 0x40, tmp|1);
+-		pci_write_config_byte(pdev, PCI_CLASS_PROG, 1);
+-		pci_write_config_byte(pdev, PCI_CLASS_DEVICE, 6);
+-		pci_write_config_byte(pdev, 0x40, tmp);
++	pci_write_config_dword(pdev, 0x40, conf1);
++	pci_write_config_dword(pdev, 0x80, conf5);
+ 
+-		pdev->class = 0x010601;
+-	}
+-}
+-DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP600_SATA, quirk_sb600_sata);
++	/* Update pdev accordingly */
++	pci_read_config_byte(pdev, PCI_HEADER_TYPE, &hdr);
++	pdev->hdr_type = hdr & 0x7f;
++	pdev->multifunction = !!(hdr & 0x80);
++
++	pci_read_config_dword(pdev, PCI_CLASS_REVISION, &class);
++	pdev->class = class >> 8;
++}
++DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB360, quirk_jmicron_ata);
++DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB361, quirk_jmicron_ata);
++DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB363, quirk_jmicron_ata);
++DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB365, quirk_jmicron_ata);
++DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB366, quirk_jmicron_ata);
++DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_JMICRON, PCI_DEVICE_ID_JMICRON_JMB368, quirk_jmicron_ata);
+ 
+ #endif
+ 
+@@ -1688,3 +1700,98 @@
+ #ifdef CONFIG_HOTPLUG
+ EXPORT_SYMBOL(pci_fixup_device);
+ #endif
++#ifdef CONFIG_PCI_MSI
++/* Some chipsets do not support MSI. We cannot easily rely on setting
++ * PCI_BUS_FLAGS_NO_MSI in its bus flags because there are actually
++ * some other busses controlled by the chipset even if Linux is not
++ * aware of it.  Instead of setting the flag on all busses in the
++ * machine, simply disable MSI globally.
++ */
++static void __init quirk_disable_all_msi(struct pci_dev *dev)
++{
++	pci_no_msi();
++	printk(KERN_WARNING "PCI: MSI quirk detected. MSI deactivated.\n");
++}
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_SERVERWORKS, PCI_DEVICE_ID_SERVERWORKS_GCNB_LE, quirk_disable_all_msi);
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_SERVERWORKS, PCI_DEVICE_ID_SERVERWORKS_HT1000_PCIX, quirk_disable_all_msi);
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_RS400_200, quirk_disable_all_msi);
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_RS480, quirk_disable_all_msi);
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_VT3351, quirk_disable_all_msi);
++
++/* Disable MSI on chipsets that are known to not support it */
++static void __devinit quirk_disable_msi(struct pci_dev *dev)
++{
++	if (dev->subordinate) {
++		printk(KERN_WARNING "PCI: MSI quirk detected. "
++		       "PCI_BUS_FLAGS_NO_MSI set for %s subordinate bus.\n",
++		       pci_name(dev));
++		dev->subordinate->bus_flags |= PCI_BUS_FLAGS_NO_MSI;
++	}
++}
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_8131_BRIDGE, quirk_disable_msi);
++
++/* Go through the list of Hypertransport capabilities and
++ * return 1 if a HT MSI capability is found and enabled */
++static int __devinit msi_ht_cap_enabled(struct pci_dev *dev)
++{
++	int pos, ttl = 48;
++
++	pos = pci_find_ht_capability(dev, HT_CAPTYPE_MSI_MAPPING);
++	while (pos && ttl--) {
++		u8 flags;
++
++		if (pci_read_config_byte(dev, pos + HT_MSI_FLAGS,
++					 &flags) == 0)
++		{
++			printk(KERN_INFO "PCI: Found %s HT MSI Mapping on %s\n",
++				flags & HT_MSI_FLAGS_ENABLE ?
++				"enabled" : "disabled", pci_name(dev));
++			return (flags & HT_MSI_FLAGS_ENABLE) != 0;
++		}
++
++		pos = pci_find_next_ht_capability(dev, pos,
++						  HT_CAPTYPE_MSI_MAPPING);
++	}
++	return 0;
++}
++
++/* Check the hypertransport MSI mapping to know whether MSI is enabled or not */
++static void __devinit quirk_msi_ht_cap(struct pci_dev *dev)
++{
++	if (dev->subordinate && !msi_ht_cap_enabled(dev)) {
++		printk(KERN_WARNING "PCI: MSI quirk detected. "
++		       "MSI disabled on chipset %s.\n",
++		       pci_name(dev));
++		dev->subordinate->bus_flags |= PCI_BUS_FLAGS_NO_MSI;
++	}
++}
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_SERVERWORKS, PCI_DEVICE_ID_SERVERWORKS_HT2000_PCIE,
++			quirk_msi_ht_cap);
++
++/* The nVidia CK804 chipset may have 2 HT MSI mappings.
++ * MSI are supported if the MSI capability set in any of these mappings.
++ */
++static void __devinit quirk_nvidia_ck804_msi_ht_cap(struct pci_dev *dev)
++{
++	struct pci_dev *pdev;
++
++	if (!dev->subordinate)
++		return;
++
++	/* check HT MSI cap on this chipset and the root one.
++	 * a single one having MSI is enough to be sure that MSI are supported.
++	 */
++	pdev = pci_get_slot(dev->bus, 0);
++	if (!pdev)
++		return;
++	if (!msi_ht_cap_enabled(dev) && !msi_ht_cap_enabled(pdev)) {
++		printk(KERN_WARNING "PCI: MSI quirk detected. "
++		       "MSI disabled on chipset %s.\n",
++		       pci_name(dev));
++		dev->subordinate->bus_flags |= PCI_BUS_FLAGS_NO_MSI;
++	}
++	pci_dev_put(pdev);
++}
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_NVIDIA, PCI_DEVICE_ID_NVIDIA_CK804_PCIE,
++			quirk_nvidia_ck804_msi_ht_cap);
++#endif /* CONFIG_PCI_MSI */
+diff -urN linux-2.6.18.x86_64.orig/include/linux/pci.h linux-2.6.18.x86_64/include/linux/pci.h
+--- linux-2.6.18.x86_64.orig/include/linux/pci.h	2007-06-12 12:18:22.000000000 -0400
++++ linux-2.6.18.x86_64/include/linux/pci.h	2007-06-12 12:22:17.000000000 -0400
+@@ -461,6 +461,8 @@
+ int pci_find_capability (struct pci_dev *dev, int cap);
+ int pci_find_next_capability (struct pci_dev *dev, u8 pos, int cap);
+ int pci_find_ext_capability (struct pci_dev *dev, int cap);
++int pci_find_ht_capability (struct pci_dev *dev, int ht_cap);
++int pci_find_next_ht_capability (struct pci_dev *dev, int pos, int ht_cap);
+ struct pci_bus * pci_find_next_bus(const struct pci_bus *from);
+ 
+ struct pci_dev *pci_get_device (unsigned int vendor, unsigned int device, struct pci_dev *from);
+diff -urN linux-2.6.18.x86_64.orig/include/linux/pci_ids.h linux-2.6.18.x86_64/include/linux/pci_ids.h
+--- linux-2.6.18.x86_64.orig/include/linux/pci_ids.h	2007-06-12 12:18:22.000000000 -0400
++++ linux-2.6.18.x86_64/include/linux/pci_ids.h	2007-06-12 12:34:07.000000000 -0400
+@@ -364,6 +366,7 @@
+ #define PCI_DEVICE_ID_ATI_IXP600_SRAID	0x4381
+ #define PCI_DEVICE_ID_ATI_IXP600_SMBUS	0x4385
+ #define PCI_DEVICE_ID_ATI_IXP600_IDE	0x438c
++#define PCI_DEVICE_ID_ATI_IXP700_SATA	0x4390
+ 
+ #define PCI_VENDOR_ID_VLSI		0x1004
+ #define PCI_DEVICE_ID_VLSI_82C592	0x0005
+@@ -1268,6 +1271,7 @@
+ #define PCI_DEVICE_ID_VIA_3296_0	0x0296
+ #define PCI_DEVICE_ID_VIA_8363_0	0x0305
+ #define PCI_DEVICE_ID_VIA_P4M800CE	0x0314
++#define PCI_DEVICE_ID_VIA_VT3351	0x0351
+ #define PCI_DEVICE_ID_VIA_8371_0	0x0391
+ #define PCI_DEVICE_ID_VIA_8501_0	0x0501
+ #define PCI_DEVICE_ID_VIA_82C561	0x0561
+@@ -1412,6 +1416,8 @@
+ #define PCI_DEVICE_ID_SERVERWORKS_LE	  0x0009
+ #define PCI_DEVICE_ID_SERVERWORKS_GCNB_LE 0x0017
+ #define PCI_DEVICE_ID_SERVERWORKS_EPB	  0x0103
++#define PCI_DEVICE_ID_SERVERWORKS_HT1000_PCIX	0x0104
++#define PCI_DEVICE_ID_SERVERWORKS_HT2000_PCIE	0x0132
+ #define PCI_DEVICE_ID_SERVERWORKS_OSB4	  0x0200
+ #define PCI_DEVICE_ID_SERVERWORKS_CSB5	  0x0201
+ #define PCI_DEVICE_ID_SERVERWORKS_CSB6    0x0203
+diff -urN linux-2.6.18.x86_64.orig/include/linux/pci_regs.h linux-2.6.18.x86_64/include/linux/pci_regs.h
+--- linux-2.6.18.x86_64.orig/include/linux/pci_regs.h	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.x86_64/include/linux/pci_regs.h	2007-06-12 12:22:17.000000000 -0400
+@@ -12,6 +12,11 @@
+  *	PCI Local Bus Specification
+  *	PCI to PCI Bridge Specification
+  *	PCI System Design Guide
++ *
++ * 	For hypertransport information, please consult the following manuals
++ * 	from http://www.hypertransport.org
++ *
++ *	The Hypertransport I/O Link Specification
+  */
+ 
+ #ifndef LINUX_PCI_REGS_H
+@@ -196,7 +201,7 @@
+ #define  PCI_CAP_ID_MSI		0x05	/* Message Signalled Interrupts */
+ #define  PCI_CAP_ID_CHSWP	0x06	/* CompactPCI HotSwap */
+ #define  PCI_CAP_ID_PCIX	0x07	/* PCI-X */
+-#define  PCI_CAP_ID_HT_IRQCONF	0x08	/* HyperTransport IRQ Configuration */
++#define  PCI_CAP_ID_HT		0x08	/* HyperTransport */
+ #define  PCI_CAP_ID_VNDR	0x09	/* Vendor specific capability */
+ #define  PCI_CAP_ID_SHPC 	0x0C	/* PCI Standard Hot-Plug Controller */
+ #define  PCI_CAP_ID_EXP 	0x10	/* PCI Express */
+@@ -287,6 +292,14 @@
+ #define PCI_MSI_DATA_64		12	/* 16 bits of data for 64-bit devices */
+ #define PCI_MSI_MASK_BIT	16	/* Mask bits register */
+ 
++/* MSI-X registers (these are at offset PCI_MSIX_FLAGS) */
++#define PCI_MSIX_FLAGS		2
++#define  PCI_MSIX_FLAGS_QSIZE	0x7FF
++#define  PCI_MSIX_FLAGS_ENABLE	(1 << 15)
++#define  PCI_MSIX_FLAGS_MASKALL	(1 << 14)
++#define PCI_MSIX_FLAGS_BIRMASK	(7 << 0)
++#define PCI_MSIX_FLAGS_BITMASK	(1 << 0)
++
+ /* CompactPCI Hotswap Register */
+ 
+ #define PCI_CHSWP_CSR		2	/* Control and Status Register */
+@@ -366,6 +379,7 @@
+ #define  PCI_EXP_DEVSTA_TRPND	0x20	/* Transactions Pending */
+ #define PCI_EXP_LNKCAP		12	/* Link Capabilities */
+ #define PCI_EXP_LNKCTL		16	/* Link Control */
++#define  PCI_EXP_LNKCTL_CLKREQ_EN 0x100	/* Enable clkreq */
+ #define PCI_EXP_LNKSTA		18	/* Link Status */
+ #define PCI_EXP_SLTCAP		20	/* Slot Capabilities */
+ #define PCI_EXP_SLTCTL		24	/* Slot Control */
+@@ -463,4 +477,37 @@
+ #define PCI_PWR_CAP		12	/* Capability */
+ #define  PCI_PWR_CAP_BUDGET(x)	((x) & 1)	/* Included in system budget */
+ 
++/*
++ * Hypertransport sub capability types
++ *
++ * Unfortunately there are both 3 bit and 5 bit capability types defined
++ * in the HT spec, catering for that is a little messy. You probably don't
++ * want to use these directly, just use pci_find_ht_capability() and it
++ * will do the right thing for you.
++ */
++#define HT_3BIT_CAP_MASK	0xE0
++#define HT_CAPTYPE_SLAVE	0x00	/* Slave/Primary link configuration */
++#define HT_CAPTYPE_HOST		0x20	/* Host/Secondary link configuration */
++
++#define HT_5BIT_CAP_MASK	0xF8
++#define HT_CAPTYPE_IRQ		0x80	/* IRQ Configuration */
++#define HT_CAPTYPE_REMAPPING_40	0xA0	/* 40 bit address remapping */
++#define HT_CAPTYPE_REMAPPING_64 0xA2	/* 64 bit address remapping */
++#define HT_CAPTYPE_UNITID_CLUMP	0x90	/* Unit ID clumping */
++#define HT_CAPTYPE_EXTCONF	0x98	/* Extended Configuration Space Access */
++#define HT_CAPTYPE_MSI_MAPPING	0xA8	/* MSI Mapping Capability */
++#define  HT_MSI_FLAGS		0x02		/* Offset to flags */
++#define  HT_MSI_FLAGS_ENABLE	0x1		/* Mapping enable */
++#define  HT_MSI_FLAGS_FIXED	0x2		/* Fixed mapping only */
++#define  HT_MSI_FIXED_ADDR	0x00000000FEE00000ULL	/* Fixed addr */
++#define  HT_MSI_ADDR_LO		0x04		/* Offset to low addr bits */
++#define  HT_MSI_ADDR_LO_MASK	0xFFF00000	/* Low address bit mask */
++#define  HT_MSI_ADDR_HI		0x08		/* Offset to high addr bits */
++#define HT_CAPTYPE_DIRECT_ROUTE	0xB0	/* Direct routing configuration */
++#define HT_CAPTYPE_VCSET	0xB8	/* Virtual Channel configuration */
++#define HT_CAPTYPE_ERROR_RETRY	0xC0	/* Retry on error configuration */
++#define HT_CAPTYPE_GEN3		0xD0	/* Generation 3 hypertransport configuration */
++#define HT_CAPTYPE_PM		0xE0	/* Hypertransport powermanagement configuration */
++
++
+ #endif /* LINUX_PCI_REGS_H */

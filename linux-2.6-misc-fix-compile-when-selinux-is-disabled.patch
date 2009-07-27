@@ -1,0 +1,28 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 7 Jul 2008 10:00:01 -0400
+Subject: [misc] fix compile when selinux is disabled
+Message-id: 20080707135857.2042.34428.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5 PATCH]: Fix compile when SELINUX is disabled [v2]
+Bugzilla: 452535
+RH-Acked-by: Eric Paris <eparis@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Kyle McMartin <kmcmartin@redhat.com>
+
+Fix compile when selinux is disabled.
+
+Succesfully tested by me.
+
+Resolves BZ 452535.
+
+diff --git a/include/linux/selinux.h b/include/linux/selinux.h
+index 5939133..17530c6 100644
+--- a/include/linux/selinux.h
++++ b/include/linux/selinux.h
+@@ -178,6 +178,7 @@ static inline int selinux_ctxid_to_string(u32 ctxid, char **ctx, u32 *ctxlen)
+        *ctxlen = 0;
+        return 0;
+ }
++#define selinux_sid_to_string(sid,ctx,ctxlen) selinux_ctxid_to_string((sid),(ctx),(ctxlen))
+ 
+ static inline void selinux_get_inode_sid(const struct inode *inode, u32 *sid)
+ {

@@ -1,0 +1,31 @@
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Subject: [PATCH RHEL5] Buglet in vmscan.c
+Date: Mon, 08 Jan 2007 16:46:07 +0100
+Bugzilla: 222030
+Message-Id: <1168271167.2618.21.camel@taijtu>
+Changelog: mm: fix statistics in vmscan.c
+
+Fix a rather obvious buglet.  Noticed while instrumenting the VM using
+/proc/vmstat.
+
+Cc: Christoph Lameter <clameter@engr.sgi.com>
+Cc: <stable@kernel.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+---
+ mm/vmscan.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+Index: latest/mm/vmscan.c
+===================================================================
+--- latest.orig/mm/vmscan.c
++++ latest/mm/vmscan.c
+@@ -665,7 +665,7 @@ static unsigned long shrink_inactive_lis
+ 			__count_vm_events(KSWAPD_STEAL, nr_freed);
+ 		} else
+ 			__count_zone_vm_events(PGSCAN_DIRECT, zone, nr_scan);
+-		__count_vm_events(PGACTIVATE, nr_freed);
++		__count_zone_vm_events(PGSTEAL, zone, nr_freed);
+ 
+ 		if (nr_taken == 0)
+ 			goto done;

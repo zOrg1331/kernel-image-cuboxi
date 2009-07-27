@@ -1,0 +1,1222 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Sun, 6 Jan 2008 16:09:16 +1100
+Subject: [crypto] api: add new bottom-level crypto_api
+Message-id: E1JBNl6-00019z-00@gondolin.me.apana.org.au
+O-Subject: [PATCH 2/32] [CRYPTO] api: Add new bottom-level crypto_api
+Bugzilla: 253051
+
+[CRYPTO] api: Add new bottom-level crypto_api
+
+This changeset backports the new bottom-level crypto API structure to 2.6.18.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/crypto/Kconfig b/crypto/Kconfig
+index 1f2ebe0..e1c3ff8 100644
+--- a/crypto/Kconfig
++++ b/crypto/Kconfig
+@@ -15,6 +15,13 @@ config CRYPTO_API
+ 	help
+ 	  This option provides the (backported) core Cryptographic API.
+ 
++config CRYPTO_ALGAPI
++	tristate
++	depends on CRYPTO
++	select CRYPTO_API
++	help
++	  This option provides the API for cryptographic algorithms.
++
+ config CRYPTO_HMAC
+ 	bool "HMAC support"
+ 	depends on CRYPTO
+diff --git a/crypto/Makefile b/crypto/Makefile
+index 59c93e8..35430d1 100644
+--- a/crypto/Makefile
++++ b/crypto/Makefile
+@@ -7,6 +7,9 @@ proc-crypto-$(CONFIG_PROC_FS) = proc.o
+ obj-$(CONFIG_CRYPTO) += api.o scatterwalk.o cipher.o digest.o compress.o \
+ 			$(proc-crypto-y)
+ 
++crypto_algapi-objs := algapi.o nscatterwalk.o
++obj-$(CONFIG_CRYPTO_ALGAPI) += crypto_algapi.o
++
+ obj-$(CONFIG_CRYPTO_API) += crypto_api.o
+ obj-$(CONFIG_CRYPTO_HMAC) += hmac.o
+ obj-$(CONFIG_CRYPTO_NULL) += crypto_null.o
+diff --git a/crypto/algapi.c b/crypto/algapi.c
+new file mode 100644
+index 0000000..f600431
+--- /dev/null
++++ b/crypto/algapi.c
+@@ -0,0 +1,730 @@
++/*
++ * Cryptographic API for algorithms (i.e., low-level API).
++ *
++ * Copyright (c) 2006 Herbert Xu <herbert@gondor.apana.org.au>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the Free
++ * Software Foundation; either version 2 of the License, or (at your option)
++ * any later version.
++ *
++ */
++
++#include <linux/err.h>
++#include <linux/errno.h>
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/list.h>
++#include <linux/module.h>
++#include <linux/rtnetlink.h>
++#include <linux/string.h>
++
++#include "ninternal.h"
++
++static LIST_HEAD(crypto_template_list);
++
++void crypto_larval_error(const char *name, u32 type, u32 mask)
++{
++	struct ncrypto_alg *alg;
++
++	down_read(&ncrypto_alg_sem);
++	alg = __crypto_alg_lookup(name, type, mask);
++	up_read(&ncrypto_alg_sem);
++
++	if (alg) {
++		if (crypto_is_larval(alg)) {
++			struct crypto_larval *larval = (void *)alg;
++			complete_all(&larval->completion);
++		}
++		crypto_mod_put(alg);
++	}
++}
++EXPORT_SYMBOL_GPL(crypto_larval_error);
++
++static inline int crypto_set_driver_name(struct ncrypto_alg *alg)
++{
++	static const char suffix[] = "-generic";
++	char *driver_name = alg->cra_driver_name;
++	int len;
++
++	if (*driver_name)
++		return 0;
++
++	len = strlcpy(driver_name, alg->cra_name, CRYPTO_MAX_ALG_NAME);
++	if (len + sizeof(suffix) > CRYPTO_MAX_ALG_NAME)
++		return -ENAMETOOLONG;
++
++	memcpy(driver_name + len, suffix, sizeof(suffix));
++	return 0;
++}
++
++static int crypto_check_alg(struct ncrypto_alg *alg)
++{
++	if (alg->cra_alignmask & (alg->cra_alignmask + 1))
++		return -EINVAL;
++
++	if (alg->cra_blocksize > PAGE_SIZE / 8)
++		return -EINVAL;
++
++	if (alg->cra_priority < 0)
++		return -EINVAL;
++
++	return crypto_set_driver_name(alg);
++}
++
++static void crypto_destroy_instance(struct ncrypto_alg *alg)
++{
++	struct crypto_instance *inst = (void *)alg;
++	struct crypto_template *tmpl = inst->tmpl;
++
++	tmpl->free(inst);
++	crypto_tmpl_put(tmpl);
++}
++
++static void crypto_remove_spawn(struct crypto_spawn *spawn,
++				struct list_head *list,
++				struct list_head *secondary_spawns)
++{
++	struct crypto_instance *inst = spawn->inst;
++	struct crypto_template *tmpl = inst->tmpl;
++
++	list_del_init(&spawn->list);
++	spawn->alg = NULL;
++
++	if (crypto_is_dead(&inst->alg))
++		return;
++
++	inst->alg.cra_flags |= NCRYPTO_ALG_DEAD;
++	if (hlist_unhashed(&inst->list))
++		return;
++
++	if (!tmpl || !crypto_tmpl_get(tmpl))
++		return;
++
++	crypto_notify(CRYPTO_MSG_ALG_UNREGISTER, &inst->alg);
++	list_move(&inst->alg.cra_list, list);
++	hlist_del(&inst->list);
++	inst->alg.cra_destroy = crypto_destroy_instance;
++
++	list_splice(&inst->alg.cra_users, secondary_spawns);
++}
++
++static void crypto_remove_spawns(struct list_head *spawns,
++				 struct list_head *list, u32 new_type)
++{
++	struct crypto_spawn *spawn, *n;
++	LIST_HEAD(secondary_spawns);
++
++	list_for_each_entry_safe(spawn, n, spawns, list) {
++		if ((spawn->alg->cra_flags ^ new_type) & spawn->mask)
++			continue;
++
++		crypto_remove_spawn(spawn, list, &secondary_spawns);
++	}
++
++	while (!list_empty(&secondary_spawns)) {
++		list_for_each_entry_safe(spawn, n, &secondary_spawns, list)
++			crypto_remove_spawn(spawn, list, &secondary_spawns);
++	}
++}
++
++static int __crypto_register_alg(struct ncrypto_alg *alg,
++				 struct list_head *list)
++{
++	struct ncrypto_alg *q;
++	int ret = -EAGAIN;
++
++	if (crypto_is_dead(alg))
++		goto out;
++
++	INIT_LIST_HEAD(&alg->cra_users);
++
++	ret = -EEXIST;
++
++	atomic_set(&alg->cra_refcnt, 1);
++	list_for_each_entry(q, &ncrypto_alg_list, cra_list) {
++		if (q == alg)
++			goto out;
++
++		if (crypto_is_moribund(q))
++			continue;
++
++		if (crypto_is_larval(q)) {
++			struct crypto_larval *larval = (void *)q;
++
++			/*
++			 * Check to see if either our generic name or
++			 * specific name can satisfy the name requested
++			 * by the larval entry q.
++			 */
++			if (strcmp(alg->cra_name, q->cra_name) &&
++			    strcmp(alg->cra_driver_name, q->cra_name))
++				continue;
++
++			if (larval->adult)
++				continue;
++			if ((q->cra_flags ^ alg->cra_flags) & larval->mask)
++				continue;
++			if (!crypto_mod_get(alg))
++				continue;
++
++			larval->adult = alg;
++			complete_all(&larval->completion);
++			continue;
++		}
++
++		if (strcmp(alg->cra_name, q->cra_name))
++			continue;
++
++		if (strcmp(alg->cra_driver_name, q->cra_driver_name) &&
++		    q->cra_priority > alg->cra_priority)
++			continue;
++
++		crypto_remove_spawns(&q->cra_users, list, alg->cra_flags);
++	}
++	
++	list_add(&alg->cra_list, &ncrypto_alg_list);
++
++	crypto_notify(CRYPTO_MSG_ALG_REGISTER, alg);
++	ret = 0;
++
++out:	
++	return ret;
++}
++
++static void crypto_remove_final(struct list_head *list)
++{
++	struct ncrypto_alg *alg;
++	struct ncrypto_alg *n;
++
++	list_for_each_entry_safe(alg, n, list, cra_list) {
++		list_del_init(&alg->cra_list);
++		ncrypto_alg_put(alg);
++	}
++}
++
++int ncrypto_register_alg(struct ncrypto_alg *alg)
++{
++	LIST_HEAD(list);
++	int err;
++
++	err = crypto_check_alg(alg);
++	if (err)
++		return err;
++
++	down_write(&ncrypto_alg_sem);
++	err = __crypto_register_alg(alg, &list);
++	up_write(&ncrypto_alg_sem);
++
++	crypto_remove_final(&list);
++	return err;
++}
++EXPORT_SYMBOL_GPL(ncrypto_register_alg);
++
++static int crypto_remove_alg(struct ncrypto_alg *alg, struct list_head *list)
++{
++	if (unlikely(list_empty(&alg->cra_list)))
++		return -ENOENT;
++
++	alg->cra_flags |= NCRYPTO_ALG_DEAD;
++
++	crypto_notify(CRYPTO_MSG_ALG_UNREGISTER, alg);
++	list_del_init(&alg->cra_list);
++	crypto_remove_spawns(&alg->cra_users, list, alg->cra_flags);
++
++	return 0;
++}
++
++int ncrypto_unregister_alg(struct ncrypto_alg *alg)
++{
++	int ret;
++	LIST_HEAD(list);
++	
++	down_write(&ncrypto_alg_sem);
++	ret = crypto_remove_alg(alg, &list);
++	up_write(&ncrypto_alg_sem);
++
++	if (ret)
++		return ret;
++
++	BUG_ON(atomic_read(&alg->cra_refcnt) != 1);
++	if (alg->cra_destroy)
++		alg->cra_destroy(alg);
++
++	crypto_remove_final(&list);
++	return 0;
++}
++EXPORT_SYMBOL_GPL(ncrypto_unregister_alg);
++
++int crypto_register_template(struct crypto_template *tmpl)
++{
++	struct crypto_template *q;
++	int err = -EEXIST;
++
++	down_write(&ncrypto_alg_sem);
++
++	list_for_each_entry(q, &crypto_template_list, list) {
++		if (q == tmpl)
++			goto out;
++	}
++
++	list_add(&tmpl->list, &crypto_template_list);
++	crypto_notify(CRYPTO_MSG_TMPL_REGISTER, tmpl);
++	err = 0;
++out:
++	up_write(&ncrypto_alg_sem);
++	return err;
++}
++EXPORT_SYMBOL_GPL(crypto_register_template);
++
++void crypto_unregister_template(struct crypto_template *tmpl)
++{
++	struct crypto_instance *inst;
++	struct hlist_node *p, *n;
++	struct hlist_head *list;
++	LIST_HEAD(users);
++
++	down_write(&ncrypto_alg_sem);
++
++	BUG_ON(list_empty(&tmpl->list));
++	list_del_init(&tmpl->list);
++
++	list = &tmpl->instances;
++	hlist_for_each_entry(inst, p, list, list) {
++		int err = crypto_remove_alg(&inst->alg, &users);
++		BUG_ON(err);
++	}
++
++	crypto_notify(CRYPTO_MSG_TMPL_UNREGISTER, tmpl);
++
++	up_write(&ncrypto_alg_sem);
++
++	hlist_for_each_entry_safe(inst, p, n, list, list) {
++		BUG_ON(atomic_read(&inst->alg.cra_refcnt) != 1);
++		tmpl->free(inst);
++	}
++	crypto_remove_final(&users);
++}
++EXPORT_SYMBOL_GPL(crypto_unregister_template);
++
++static struct crypto_template *__crypto_lookup_template(const char *name)
++{
++	struct crypto_template *q, *tmpl = NULL;
++
++	down_read(&ncrypto_alg_sem);
++	list_for_each_entry(q, &crypto_template_list, list) {
++		if (strcmp(q->name, name))
++			continue;
++		if (unlikely(!crypto_tmpl_get(q)))
++			continue;
++
++		tmpl = q;
++		break;
++	}
++	up_read(&ncrypto_alg_sem);
++
++	return tmpl;
++}
++
++struct crypto_template *crypto_lookup_template(const char *name)
++{
++	return try_then_request_module(__crypto_lookup_template(name), name);
++}
++EXPORT_SYMBOL_GPL(crypto_lookup_template);
++
++int crypto_register_instance(struct crypto_template *tmpl,
++			     struct crypto_instance *inst)
++{
++	LIST_HEAD(list);
++	int err = -EINVAL;
++
++	err = crypto_check_alg(&inst->alg);
++	if (err)
++		goto err;
++
++	inst->alg.cra_module = tmpl->module;
++
++	down_write(&ncrypto_alg_sem);
++
++	err = __crypto_register_alg(&inst->alg, &list);
++	if (err)
++		goto unlock;
++
++	hlist_add_head(&inst->list, &tmpl->instances);
++	inst->tmpl = tmpl;
++
++unlock:
++	up_write(&ncrypto_alg_sem);
++
++	crypto_remove_final(&list);
++
++err:
++	return err;
++}
++EXPORT_SYMBOL_GPL(crypto_register_instance);
++
++int crypto_init_spawn(struct crypto_spawn *spawn, struct ncrypto_alg *alg,
++		      struct crypto_instance *inst, u32 mask)
++{
++	int err = -EAGAIN;
++
++	spawn->inst = inst;
++	spawn->mask = mask;
++
++	down_write(&ncrypto_alg_sem);
++	if (!crypto_is_moribund(alg)) {
++		list_add(&spawn->list, &alg->cra_users);
++		spawn->alg = alg;
++		err = 0;
++	}
++	up_write(&ncrypto_alg_sem);
++
++	return err;
++}
++EXPORT_SYMBOL_GPL(crypto_init_spawn);
++
++void crypto_drop_spawn(struct crypto_spawn *spawn)
++{
++	down_write(&ncrypto_alg_sem);
++	list_del(&spawn->list);
++	up_write(&ncrypto_alg_sem);
++}
++EXPORT_SYMBOL_GPL(crypto_drop_spawn);
++
++struct ncrypto_tfm *crypto_spawn_tfm(struct crypto_spawn *spawn, u32 type,
++				     u32 mask)
++{
++	struct ncrypto_alg *alg;
++	struct ncrypto_alg *alg2;
++	struct ncrypto_tfm *tfm;
++
++	down_read(&ncrypto_alg_sem);
++	alg = spawn->alg;
++	alg2 = alg;
++	if (alg2)
++		alg2 = crypto_mod_get(alg2);
++	up_read(&ncrypto_alg_sem);
++
++	if (!alg2) {
++		if (alg)
++			crypto_shoot_alg(alg);
++		return ERR_PTR(-EAGAIN);
++	}
++
++	tfm = ERR_PTR(-EINVAL);
++	if (unlikely((alg->cra_flags ^ type) & mask))
++		goto out_put_alg;
++
++	tfm = __crypto_alloc_tfm(alg, type, mask);
++	if (IS_ERR(tfm))
++		goto out_put_alg;
++
++	return tfm;
++
++out_put_alg:
++	crypto_mod_put(alg);
++	return tfm;
++}
++EXPORT_SYMBOL_GPL(crypto_spawn_tfm);
++
++struct crypto_tfm *ocrypto_spawn_tfm(const char *name, u32 type)
++{
++	struct crypto_tfm *tfm;
++
++	tfm = crypto_alloc_tfm(name, 0);
++	if (!tfm)
++		return ERR_PTR(-ENOENT);
++
++	if (crypto_tfm_alg_type(tfm) != type) {
++		crypto_free_tfm(tfm);
++		return ERR_PTR(-EINVAL);
++	}
++
++	return tfm;
++}
++EXPORT_SYMBOL_GPL(ocrypto_spawn_tfm);
++
++int crypto_register_notifier(struct notifier_block *nb)
++{
++	return blocking_notifier_chain_register(&crypto_chain, nb);
++}
++EXPORT_SYMBOL_GPL(crypto_register_notifier);
++
++int crypto_unregister_notifier(struct notifier_block *nb)
++{
++	return blocking_notifier_chain_unregister(&crypto_chain, nb);
++}
++EXPORT_SYMBOL_GPL(crypto_unregister_notifier);
++
++struct crypto_attr_type *crypto_get_attr_type(struct rtattr **tb)
++{
++	struct rtattr *rta = tb[0];
++	struct crypto_attr_type *algt;
++
++	if (!rta)
++		return ERR_PTR(-ENOENT);
++	if (RTA_PAYLOAD(rta) < sizeof(*algt))
++		return ERR_PTR(-EINVAL);
++	if (rta->rta_type != CRYPTOA_TYPE)
++		return ERR_PTR(-EINVAL);
++
++	algt = RTA_DATA(rta);
++
++	return algt;
++}
++EXPORT_SYMBOL_GPL(crypto_get_attr_type);
++
++int crypto_check_attr_type(struct rtattr **tb, u32 type)
++{
++	struct crypto_attr_type *algt;
++
++	algt = crypto_get_attr_type(tb);
++	if (IS_ERR(algt))
++		return PTR_ERR(algt);
++
++	if ((algt->type ^ type) & algt->mask)
++		return -EINVAL;
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(crypto_check_attr_type);
++
++const char *crypto_attr_alg_name(struct rtattr *rta)
++{
++	struct crypto_attr_alg *alga;
++
++	if (!rta)
++		return ERR_PTR(-ENOENT);
++	if (RTA_PAYLOAD(rta) < sizeof(*alga))
++		return ERR_PTR(-EINVAL);
++	if (rta->rta_type != CRYPTOA_ALG)
++		return ERR_PTR(-EINVAL);
++
++	alga = RTA_DATA(rta);
++	alga->name[CRYPTO_MAX_ALG_NAME - 1] = 0;
++
++	return alga->name;
++}
++EXPORT_SYMBOL_GPL(crypto_attr_alg_name);
++
++struct ncrypto_alg *crypto_attr_alg(struct rtattr *rta, u32 type, u32 mask)
++{
++	const char *name;
++	int err;
++
++	name = crypto_attr_alg_name(rta);
++	err = PTR_ERR(name);
++	if (IS_ERR(name))
++		return ERR_PTR(err);
++
++	return ncrypto_alg_mod_lookup(name, type, mask);
++}
++EXPORT_SYMBOL_GPL(crypto_attr_alg);
++
++int crypto_attr_u32(struct rtattr *rta, u32 *num)
++{
++	struct crypto_attr_u32 *nu32;
++
++	if (!rta)
++		return -ENOENT;
++	if (RTA_PAYLOAD(rta) < sizeof(*nu32))
++		return -EINVAL;
++	if (rta->rta_type != CRYPTOA_U32)
++		return -EINVAL;
++
++	nu32 = RTA_DATA(rta);
++	*num = nu32->num;
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(crypto_attr_u32);
++
++struct crypto_instance *crypto_alloc_instance(const char *name,
++					      struct ncrypto_alg *alg)
++{
++	struct crypto_instance *inst;
++	struct crypto_spawn *spawn;
++	int err;
++
++	inst = kzalloc(sizeof(*inst) + sizeof(*spawn), GFP_KERNEL);
++	if (!inst)
++		return ERR_PTR(-ENOMEM);
++
++	err = -ENAMETOOLONG;
++	if (snprintf(inst->alg.cra_name, CRYPTO_MAX_ALG_NAME, "%s(%s)", name,
++		     alg->cra_name) >= CRYPTO_MAX_ALG_NAME)
++		goto err_free_inst;
++
++	if (snprintf(inst->alg.cra_driver_name, CRYPTO_MAX_ALG_NAME, "%s(%s)",
++		     name, alg->cra_driver_name) >= CRYPTO_MAX_ALG_NAME)
++		goto err_free_inst;
++
++	spawn = crypto_instance_ctx(inst);
++	err = crypto_init_spawn(spawn, alg, inst,
++				NCRYPTO_ALG_TYPE_MASK | NCRYPTO_ALG_ASYNC);
++
++	if (err)
++		goto err_free_inst;
++
++	return inst;
++
++err_free_inst:
++	kfree(inst);
++	return ERR_PTR(err);
++}
++EXPORT_SYMBOL_GPL(crypto_alloc_instance);
++
++struct crypto_instance *ocrypto_alloc_instance(const char *name,
++					       struct crypto_alg *alg)
++{
++	struct crypto_instance *inst;
++	char *driver_name;
++	int err;
++
++	inst = kzalloc(sizeof(*inst) + CRYPTO_MAX_ALG_NAME, GFP_KERNEL);
++	if (!inst)
++		return ERR_PTR(-ENOMEM);
++
++	err = -ENAMETOOLONG;
++	if (snprintf(inst->alg.cra_name, CRYPTO_MAX_ALG_NAME, "%s(%s)", name,
++		     alg->cra_name) >= CRYPTO_MAX_ALG_NAME)
++		goto err_free_inst;
++
++	if (snprintf(inst->alg.cra_driver_name, CRYPTO_MAX_ALG_NAME, "%s(%s)",
++		     name, alg->cra_driver_name) >= CRYPTO_MAX_ALG_NAME)
++		goto err_free_inst;
++
++	driver_name = crypto_instance_ctx(inst);
++	memcpy(driver_name, alg->cra_driver_name, CRYPTO_MAX_ALG_NAME);
++
++	return inst;
++
++err_free_inst:
++	kfree(inst);
++	return ERR_PTR(err);
++}
++EXPORT_SYMBOL_GPL(ocrypto_alloc_instance);
++
++void crypto_init_queue(struct crypto_queue *queue, unsigned int max_qlen)
++{
++	INIT_LIST_HEAD(&queue->list);
++	queue->backlog = &queue->list;
++	queue->qlen = 0;
++	queue->max_qlen = max_qlen;
++}
++EXPORT_SYMBOL_GPL(crypto_init_queue);
++
++int crypto_enqueue_request(struct crypto_queue *queue,
++			   struct crypto_async_request *request)
++{
++	int err = -EINPROGRESS;
++
++	if (unlikely(queue->qlen >= queue->max_qlen)) {
++		err = -EBUSY;
++		if (!(request->flags & CRYPTO_TFM_REQ_MAY_BACKLOG))
++			goto out;
++		if (queue->backlog == &queue->list)
++			queue->backlog = &request->list;
++	}
++
++	queue->qlen++;
++	list_add_tail(&request->list, &queue->list);
++
++out:
++	return err;
++}
++EXPORT_SYMBOL_GPL(crypto_enqueue_request);
++
++struct crypto_async_request *crypto_dequeue_request(struct crypto_queue *queue)
++{
++	struct list_head *request;
++
++	if (unlikely(!queue->qlen))
++		return NULL;
++
++	queue->qlen--;
++
++	if (queue->backlog != &queue->list)
++		queue->backlog = queue->backlog->next;
++
++	request = queue->list.next;
++	list_del(request);
++
++	return list_entry(request, struct crypto_async_request, list);
++}
++EXPORT_SYMBOL_GPL(crypto_dequeue_request);
++
++int crypto_tfm_in_queue(struct crypto_queue *queue, struct ncrypto_tfm *tfm)
++{
++	struct crypto_async_request *req;
++
++	list_for_each_entry(req, &queue->list, list) {
++		if (req->tfm == tfm)
++			return 1;
++	}
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(crypto_tfm_in_queue);
++
++static inline void crypto_inc_byte(u8 *a, unsigned int size)
++{
++	u8 *b = (a + size);
++	u8 c;
++
++	for (; size; size--) {
++		c = *--b + 1;
++		*b = c;
++		if (c)
++			break;
++	}
++}
++
++void crypto_inc(u8 *a, unsigned int size)
++{
++	__be32 *b = (__be32 *)(a + size);
++	u32 c;
++
++	for (; size >= 4; size -= 4) {
++		c = be32_to_cpu(*--b) + 1;
++		*b = cpu_to_be32(c);
++		if (c)
++			return;
++	}
++
++	crypto_inc_byte(a, size);
++}
++EXPORT_SYMBOL_GPL(crypto_inc);
++
++static inline void crypto_xor_byte(u8 *a, const u8 *b, unsigned int size)
++{
++	for (; size; size--)
++		*a++ ^= *b++;
++}
++
++void crypto_xor(u8 *dst, const u8 *src, unsigned int size)
++{
++	u32 *a = (u32 *)dst;
++	u32 *b = (u32 *)src;
++
++	for (; size >= 4; size -= 4)
++		*a++ ^= *b++;
++
++	crypto_xor_byte((u8 *)a, (u8 *)b, size);
++}
++EXPORT_SYMBOL_GPL(crypto_xor);
++
++static int __init crypto_algapi_init(void)
++{
++	return 0;
++}
++
++static void __exit crypto_algapi_exit(void)
++{
++}
++
++module_init(crypto_algapi_init);
++module_exit(crypto_algapi_exit);
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("Cryptographic algorithms API");
+diff --git a/crypto/ninternal.h b/crypto/ninternal.h
+index 981ea36..cb47aff 100644
+--- a/crypto/ninternal.h
++++ b/crypto/ninternal.h
+@@ -51,12 +51,28 @@ void crypto_shoot_alg(struct ncrypto_alg *alg);
+ struct ncrypto_tfm *__crypto_alloc_tfm(struct ncrypto_alg *alg, u32 type,
+ 				       u32 mask);
+ 
++int crypto_register_instance(struct crypto_template *tmpl,
++			     struct crypto_instance *inst);
++
++int crypto_register_notifier(struct notifier_block *nb);
++int crypto_unregister_notifier(struct notifier_block *nb);
++
+ static inline void ncrypto_alg_put(struct ncrypto_alg *alg)
+ {
+ 	if (atomic_dec_and_test(&alg->cra_refcnt) && alg->cra_destroy)
+ 		alg->cra_destroy(alg);
+ }
+ 
++static inline int crypto_tmpl_get(struct crypto_template *tmpl)
++{
++	return try_module_get(tmpl->module);
++}
++
++static inline void crypto_tmpl_put(struct crypto_template *tmpl)
++{
++	module_put(tmpl->module);
++}
++
+ static inline int crypto_is_larval(struct ncrypto_alg *alg)
+ {
+ 	return alg->cra_flags & NCRYPTO_ALG_LARVAL;
+diff --git a/crypto/nscatterwalk.c b/crypto/nscatterwalk.c
+new file mode 100644
+index 0000000..958174c
+--- /dev/null
++++ b/crypto/nscatterwalk.c
+@@ -0,0 +1,125 @@
++/*
++ * Cryptographic API.
++ *
++ * Cipher operations.
++ *
++ * Copyright (c) 2002 James Morris <jmorris@intercode.com.au>
++ *               2002 Adam J. Richter <adam@yggdrasil.com>
++ *               2004 Jean-Luc Cooke <jlcooke@certainkey.com>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the Free
++ * Software Foundation; either version 2 of the License, or (at your option)
++ * any later version.
++ *
++ */
++
++#include <crypto/nscatterwalk.h>
++#include <linux/kernel.h>
++#include <linux/mm.h>
++#include <linux/module.h>
++#include <linux/pagemap.h>
++#include <linux/highmem.h>
++#include <linux/scatterlist.h>
++
++static inline void memcpy_dir(void *buf, void *sgdata, size_t nbytes, int out)
++{
++	void *src = out ? buf : sgdata;
++	void *dst = out ? sgdata : buf;
++
++	memcpy(dst, src, nbytes);
++}
++
++void nscatterwalk_start(struct nscatter_walk *walk, struct scatterlist *sg)
++{
++	walk->sg = sg;
++
++	BUG_ON(!sg->length);
++
++	walk->offset = sg->offset;
++}
++EXPORT_SYMBOL_GPL(nscatterwalk_start);
++
++void *nscatterwalk_map(struct nscatter_walk *walk, int out)
++{
++	return ncrypto_kmap(nscatterwalk_page(walk), out) +
++	       offset_in_page(walk->offset);
++}
++EXPORT_SYMBOL_GPL(nscatterwalk_map);
++
++static void nscatterwalk_pagedone(struct nscatter_walk *walk, int out,
++				  unsigned int more)
++{
++	if (out) {
++		struct page *page;
++
++		page = sg_page(walk->sg) + ((walk->offset - 1) >> PAGE_SHIFT);
++		flush_dcache_page(page);
++	}
++
++	if (more) {
++		walk->offset += PAGE_SIZE - 1;
++		walk->offset &= PAGE_MASK;
++		if (walk->offset >= walk->sg->offset + walk->sg->length)
++			nscatterwalk_start(walk, scatterwalk_sg_next(walk->sg));
++	}
++}
++
++void nscatterwalk_done(struct nscatter_walk *walk, int out, int more)
++{
++	if (!offset_in_page(walk->offset) || !more)
++		nscatterwalk_pagedone(walk, out, more);
++}
++EXPORT_SYMBOL_GPL(nscatterwalk_done);
++
++void nscatterwalk_copychunks(void *buf, struct nscatter_walk *walk,
++			     size_t nbytes, int out)
++{
++	for (;;) {
++		unsigned int len_this_page = nscatterwalk_pagelen(walk);
++		u8 *vaddr;
++
++		if (len_this_page > nbytes)
++			len_this_page = nbytes;
++
++		vaddr = nscatterwalk_map(walk, out);
++		memcpy_dir(buf, vaddr, len_this_page, out);
++		nscatterwalk_unmap(vaddr, out);
++
++		nscatterwalk_advance(walk, len_this_page);
++
++		if (nbytes == len_this_page)
++			break;
++
++		buf += len_this_page;
++		nbytes -= len_this_page;
++
++		nscatterwalk_pagedone(walk, out, 1);
++	}
++}
++EXPORT_SYMBOL_GPL(nscatterwalk_copychunks);
++
++void nscatterwalk_map_and_copy(void *buf, struct scatterlist *sg,
++			       unsigned int start, unsigned int nbytes, int out)
++{
++	struct nscatter_walk walk;
++	unsigned int offset = 0;
++
++	if (!nbytes)
++		return;
++
++	for (;;) {
++		nscatterwalk_start(&walk, sg);
++
++		if (start < offset + sg->length)
++			break;
++
++		offset += sg->length;
++		sg = scatterwalk_sg_next(sg);
++	}
++
++	nscatterwalk_advance(&walk, start - offset);
++	nscatterwalk_copychunks(buf, &walk, nbytes, out);
++	nscatterwalk_done(&walk, out, 0);
++}
++EXPORT_SYMBOL_GPL(nscatterwalk_map_and_copy);
+diff --git a/include/crypto/algapi.h b/include/crypto/algapi.h
+index 28c0284..e9b4c43 100644
+--- a/include/crypto/algapi.h
++++ b/include/crypto/algapi.h
+@@ -13,8 +13,11 @@
+ #define _CRYPTO_ALGAPI_H
+ 
+ #include <linux/ncrypto.h>
++#include <linux/list.h>
+ #include <linux/kernel.h>
+ 
++struct module;
++struct rtattr;
+ struct seq_file;
+ 
+ struct crypto_type {
+@@ -24,7 +27,132 @@ struct crypto_type {
+ 	void (*show)(struct seq_file *m, struct ncrypto_alg *alg);
+ };
+ 
++struct crypto_instance {
++	struct ncrypto_alg alg;
++
++	struct crypto_template *tmpl;
++	struct hlist_node list;
++
++	void *__ctx[] CRYPTO_MINALIGN_ATTR;
++};
++
++struct crypto_template {
++	struct list_head list;
++	struct hlist_head instances;
++	struct module *module;
++
++	struct crypto_instance *(*alloc)(struct rtattr **tb);
++	void (*free)(struct crypto_instance *inst);
++
++	char name[CRYPTO_MAX_ALG_NAME];
++};
++
++struct crypto_spawn {
++	struct list_head list;
++	struct ncrypto_alg *alg;
++	struct crypto_instance *inst;
++	u32 mask;
++};
++
++struct crypto_queue {
++	struct list_head list;
++	struct list_head *backlog;
++
++	unsigned int qlen;
++	unsigned int max_qlen;
++};
++
++struct nscatter_walk {
++	struct scatterlist *sg;
++	unsigned int offset;
++};
++
+ void crypto_mod_put(struct ncrypto_alg *alg);
+ 
++int crypto_register_template(struct crypto_template *tmpl);
++void crypto_unregister_template(struct crypto_template *tmpl);
++struct crypto_template *crypto_lookup_template(const char *name);
++
++int crypto_init_spawn(struct crypto_spawn *spawn, struct ncrypto_alg *alg,
++		      struct crypto_instance *inst, u32 mask);
++void crypto_drop_spawn(struct crypto_spawn *spawn);
++struct ncrypto_tfm *crypto_spawn_tfm(struct crypto_spawn *spawn, u32 type,
++				     u32 mask);
++struct crypto_tfm *ocrypto_spawn_tfm(const char *name, u32 type);
++
++static inline void crypto_set_spawn(struct crypto_spawn *spawn,
++				    struct crypto_instance *inst)
++{
++	spawn->inst = inst;
++}
++
++struct crypto_attr_type *crypto_get_attr_type(struct rtattr **tb);
++int crypto_check_attr_type(struct rtattr **tb, u32 type);
++const char *crypto_attr_alg_name(struct rtattr *rta);
++struct ncrypto_alg *crypto_attr_alg(struct rtattr *rta, u32 type, u32 mask);
++int crypto_attr_u32(struct rtattr *rta, u32 *num);
++struct crypto_instance *crypto_alloc_instance(const char *name,
++					      struct ncrypto_alg *alg);
++struct crypto_instance *ocrypto_alloc_instance(const char *name,
++					       struct crypto_alg *alg);
++
++void crypto_init_queue(struct crypto_queue *queue, unsigned int max_qlen);
++int crypto_enqueue_request(struct crypto_queue *queue,
++			   struct crypto_async_request *request);
++struct crypto_async_request *crypto_dequeue_request(struct crypto_queue *queue);
++int crypto_tfm_in_queue(struct crypto_queue *queue, struct ncrypto_tfm *tfm);
++
++/* These functions require the input/output to be aligned as u32. */
++void crypto_inc(u8 *a, unsigned int size);
++void crypto_xor(u8 *dst, const u8 *src, unsigned int size);
++
++static inline void *crypto_tfm_ctx_aligned(struct ncrypto_tfm *tfm)
++{
++	unsigned long addr = (unsigned long)ncrypto_tfm_ctx(tfm);
++	unsigned long align = ncrypto_tfm_alg_alignmask(tfm);
++
++	if (align <= ncrypto_tfm_ctx_alignment())
++		align = 1;
++	return (void *)ALIGN(addr, align);
++}
++
++static inline struct crypto_instance *crypto_tfm_alg_instance(
++	struct ncrypto_tfm *tfm)
++{
++	return container_of(tfm->__crt_alg, struct crypto_instance, alg);
++}
++
++static inline void *crypto_instance_ctx(struct crypto_instance *inst)
++{
++	return inst->__ctx;
++}
++
++static inline struct crypto_tfm *crypto_spawn_cipher(const char *name)
++{
++	return ocrypto_spawn_tfm(name, CRYPTO_ALG_TYPE_CIPHER);
++}
++
++static inline struct crypto_async_request *crypto_get_backlog(
++	struct crypto_queue *queue)
++{
++	return queue->backlog == &queue->list ? NULL :
++	       container_of(queue->backlog, struct crypto_async_request, list);
++}
++
++static inline struct ncrypto_alg *crypto_get_attr_alg(struct rtattr **tb,
++						      u32 type, u32 mask)
++{
++	return crypto_attr_alg(tb[1], type, mask);
++}
++
++/*
++ * Returns NCRYPTO_ALG_ASYNC if type/mask requires the use of sync algorithms.
++ * Otherwise returns zero.
++ */
++static inline int crypto_requires_sync(u32 type, u32 mask)
++{
++	return (type ^ NCRYPTO_ALG_ASYNC) & mask & NCRYPTO_ALG_ASYNC;
++}
++
+ #endif	/* _CRYPTO_ALGAPI_H */
+ 
+diff --git a/include/crypto/nscatterwalk.h b/include/crypto/nscatterwalk.h
+new file mode 100644
+index 0000000..e91eca2
+--- /dev/null
++++ b/include/crypto/nscatterwalk.h
+@@ -0,0 +1,120 @@
++/*
++ * Cryptographic scatter and gather helpers.
++ *
++ * Copyright (c) 2002 James Morris <jmorris@intercode.com.au>
++ * Copyright (c) 2002 Adam J. Richter <adam@yggdrasil.com>
++ * Copyright (c) 2004 Jean-Luc Cooke <jlcooke@certainkey.com>
++ * Copyright (c) 2007 Herbert Xu <herbert@gondor.apana.org.au>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the Free
++ * Software Foundation; either version 2 of the License, or (at your option)
++ * any later version.
++ *
++ */
++
++#ifndef _CRYPTO_NSCATTERWALK_H
++#define _CRYPTO_NSCATTERWALK_H
++
++#include <asm/kmap_types.h>
++#include <crypto/algapi.h>
++#include <linux/hardirq.h>
++#include <linux/highmem.h>
++#include <linux/kernel.h>
++#include <linux/mm.h>
++#include <linux/scatterlist.h>
++#include <linux/sched.h>
++
++static inline enum km_type ncrypto_kmap_type(int out)
++{
++	enum km_type type;
++
++	if (in_softirq())
++		type = out * (KM_SOFTIRQ1 - KM_SOFTIRQ0) + KM_SOFTIRQ0;
++	else
++		type = out * (KM_USER1 - KM_USER0) + KM_USER0;
++
++	return type;
++}
++
++static inline void *ncrypto_kmap(struct page *page, int out)
++{
++	return kmap_atomic(page, ncrypto_kmap_type(out));
++}
++
++static inline void ncrypto_kunmap(void *vaddr, int out)
++{
++	kunmap_atomic(vaddr, ncrypto_kmap_type(out));
++}
++
++static inline void ncrypto_yield(u32 flags)
++{
++	if (flags & CRYPTO_TFM_REQ_MAY_SLEEP)
++		cond_resched();
++}
++
++static inline void scatterwalk_sg_chain(struct scatterlist *sg1, int num,
++					struct scatterlist *sg2)
++{
++	sg_set_page(&sg1[num - 1], (void *)sg2, 0, 0);
++}
++
++static inline struct scatterlist *scatterwalk_sg_next(struct scatterlist *sg)
++{
++	return (++sg)->length ? sg : (void *)sg_page(sg);
++}
++
++static inline unsigned long nscatterwalk_samebuf(struct nscatter_walk *walk_in,
++						 struct nscatter_walk *walk_out)
++{
++	return !(((sg_page(walk_in->sg) - sg_page(walk_out->sg)) << PAGE_SHIFT) +
++		 (int)(walk_in->offset - walk_out->offset));
++}
++
++static inline unsigned int nscatterwalk_pagelen(struct nscatter_walk *walk)
++{
++	unsigned int len = walk->sg->offset + walk->sg->length - walk->offset;
++	unsigned int len_this_page = offset_in_page(~walk->offset) + 1;
++	return len_this_page > len ? len : len_this_page;
++}
++
++static inline unsigned int nscatterwalk_clamp(struct nscatter_walk *walk,
++					      unsigned int nbytes)
++{
++	unsigned int len_this_page = nscatterwalk_pagelen(walk);
++	return nbytes > len_this_page ? len_this_page : nbytes;
++}
++
++static inline void nscatterwalk_advance(struct nscatter_walk *walk,
++					unsigned int nbytes)
++{
++	walk->offset += nbytes;
++}
++
++static inline unsigned int nscatterwalk_aligned(struct nscatter_walk *walk,
++						unsigned int alignmask)
++{
++	return !(walk->offset & alignmask);
++}
++
++static inline struct page *nscatterwalk_page(struct nscatter_walk *walk)
++{
++	return sg_page(walk->sg) + (walk->offset >> PAGE_SHIFT);
++}
++
++static inline void nscatterwalk_unmap(void *vaddr, int out)
++{
++	ncrypto_kunmap(vaddr, out);
++}
++
++void nscatterwalk_start(struct nscatter_walk *walk, struct scatterlist *sg);
++void nscatterwalk_copychunks(void *buf, struct nscatter_walk *walk,
++			     size_t nbytes, int out);
++void *nscatterwalk_map(struct nscatter_walk *walk, int out);
++void nscatterwalk_done(struct nscatter_walk *walk, int out, int more);
++
++void nscatterwalk_map_and_copy(void *buf, struct scatterlist *sg,
++			       unsigned int start, unsigned int nbytes,
++			       int out);
++
++#endif  /* _CRYPTO_NSCATTERWALK_H */

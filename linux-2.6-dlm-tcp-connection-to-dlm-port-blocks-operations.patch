@@ -1,0 +1,43 @@
+From: Patrick Caulfield <pcaulfie@redhat.com>
+Subject: [RHEL5.1 PATCH] BZ245892: CVE 2007-3380 A TCP connection to DLM port 	blocks DLM operations
+Date: Wed, 27 Jun 2007 14:44:56 +0100
+Bugzilla: 245892
+Message-Id: <468269D8.9020504@redhat.com>
+Changelog: [dlm] A TCP connection to DLM port blocks DLM operations
+
+
+Opening a tcp connection from a cluster member to another cluster member
+targeting the dlm port it is enough to stop every dlm operation in the cluster.
+This patch closes any spurious connections received.
+
+Signed-Off-By: Patrick Caulfield <pcaulfie@redhat.com>
+
+
+Patrick
+
+
+--- linux-2.6.18.rhel5.11jun/fs/dlm/lowcomms.c.orig	2007-06-10 22:55:26.000000000 -0500
++++ linux-2.6.18.rhel5.11jun/fs/dlm/lowcomms.c	2007-06-26 22:14:22.000000000 -0500
+@@ -720,11 +720,17 @@ static int tcp_accept_from_sock(struct c
+ 			INIT_WORK(&othercon->rwork, process_recv_sockets, othercon);
+ 			set_bit(CF_IS_OTHERCON, &othercon->flags);
+ 			newcon->othercon = othercon;
++			othercon->sock = newsock;
++			newsock->sk->sk_user_data = othercon;
++			add_sock(newsock, othercon);
++			addcon = othercon;
++		}
++		else {
++			printk("Extra connection from node %d attempted\n", nodeid);
++			result = -EAGAIN;
++			mutex_unlock(&newcon->sock_mutex);
++			goto accept_err;
+ 		}
+-		othercon->sock = newsock;
+-		newsock->sk->sk_user_data = othercon;
+-		add_sock(newsock, othercon);
+-		addcon = othercon;
+ 	}
+ 	else {
+ 		newsock->sk->sk_user_data = newcon;
+

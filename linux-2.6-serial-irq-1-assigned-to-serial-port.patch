@@ -1,0 +1,51 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Fri, 9 Nov 2007 12:14:22 +0800
+Subject: [serial] irq -1 assigned to serial port
+Message-id: 4733DE9E.5050106@redhat.com
+O-Subject: [RHEL 5.2 PATCH] bz227728: IRQ -1 assigned to serial port
+Bugzilla: 227728
+
+bz 227728
+
+Description of problem:
+
+ There is a "ttyS1 irq is -1" problem observed on tiger4 which cause the
+  serial port broken.
+
+  It is because that there is __no__ ACPI IRQ resource assigned for the
+  serial port.  So the value of the IRQ for the port is never changed since it
+  got initialized to -1.
+
+Upstream status:
+The patch has been in -mm tree for a while. I'm pretty sure it will go
+upstream.
+http://www.mail-archive.com/mm-commits@vger.kernel.org/msg28291.html
+
+The following back port is tested by me , and it fixes the problem.
+
+Management status:
+The pm_ack, devel_ack, and qa_ack are __not__ set on the bugzilla.
+
+Please review, test and AC.
+
+Thanks,
+Luming
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+Acked-by: Alan Cox <alan@redhat.com>
+
+diff --git a/drivers/serial/8250_pnp.c b/drivers/serial/8250_pnp.c
+index 632f62d..da3f91d 100644
+--- a/drivers/serial/8250_pnp.c
++++ b/drivers/serial/8250_pnp.c
+@@ -414,7 +414,8 @@ serial_pnp_probe(struct pnp_dev *dev, const struct pnp_device_id *dev_id)
+ 	}
+ 
+ 	memset(&port, 0, sizeof(struct uart_port));
+-	port.irq = pnp_irq(dev, 0);
++	if (pnp_irq_valid(dev, 0))
++		port.irq = pnp_irq(dev, 0);
+ 	if (pnp_port_valid(dev, 0)) {
+ 		port.iobase = pnp_port_start(dev, 0);
+ 		port.iotype = UPIO_PORT;

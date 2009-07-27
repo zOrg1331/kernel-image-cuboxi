@@ -1,0 +1,40 @@
+From: jbaron@redhat.com <jbaron@redhat.com>
+Date: Fri, 22 Aug 2008 14:04:45 -0400
+Subject: [misc] markers and tracepoints: rcu-read patch
+Message-id: 1219428298-7519-2-git-send-email-jbaron@redhat.com
+O-Subject: [rhel5.3 patch 01/14] markers and tracepoints - rcu-read patch
+Bugzilla: 329821
+
+bz# 329821
+
+diff --git a/include/linux/rcupdate.h b/include/linux/rcupdate.h
+index b4ca73d..47eaef1 100644
+--- a/include/linux/rcupdate.h
++++ b/include/linux/rcupdate.h
+@@ -219,6 +219,26 @@ extern int rcu_needs_cpu(int cpu);
+ 	} while(0)
+ 
+ /**
++ * rcu_read_lock_sched - mark the beginning of a RCU-classic critical section
++ *
++ * Should be used with either
++ * - synchronize_sched()
++ * or
++ * - call_rcu_sched() and rcu_barrier_sched()
++ * on the write-side to insure proper synchronization.
++ */
++#define rcu_read_lock_sched() preempt_disable()
++
++/*
++ * rcu_read_unlock_sched - marks the end of a RCU-classic critical section
++ *
++ * See rcu_read_lock_sched for more information.
++ */
++#define rcu_read_unlock_sched() preempt_enable()
++
++
++
++/**
+  * rcu_dereference - fetch an RCU-protected pointer in an
+  * RCU read-side critical section.  This pointer may later
+  * be safely dereferenced.

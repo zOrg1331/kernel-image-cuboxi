@@ -1,0 +1,66 @@
+From: Jarod Wilson <jwilson@redhat.com>
+Date: Mon, 8 Oct 2007 11:49:27 -0400
+Subject: [x86_64] Add NX mask for PTE entry
+Message-id: 470A5187.3000709@redhat.com
+O-Subject: [RHEL5.2 PATCH] x86_64: Add NX mask for PTE entry
+Bugzilla: 232748
+
+Bugzilla #232748: X crashes during logout on x86_64 system with i945
+graphics and XD disabled
+https://bugzilla.redhat.com/show_bug.cgi?id=232748
+
+Description
+-----------
+X crashes on logout/restart when running on x86_64 arch, with i945
+graphics and XD bit capability is disabled.
+
+Same as upstream freedesktop.org bug:
+https://bugs.freedesktop.org/show_bug.cgi?id=5085
+
+Patch posted upstream to lkml:
+http://lkml.org/lkml/2006/10/18/68
+
+Summary on lkml posting:
+--
+If function change_page_attr_addr calls revert_page to revert
+to original pte value, mk_pte_phys does not mask NX bit. If NX bit
+is set on no NX hardware supported x86_64 machine, there is will
+be RSVD type page fault and system will crash. This patch adds NX
+mask bit for PTE entry.
+--
+
+Test status
+-----------
+I have no reproducing hardware myself, but the original bug reporter
+applied the upstream 1-line patch atop a RHEL5 kernel, and no longer
+experiences crashes on X logout.
+
+Please ACK.
+
+--
+Jarod Wilson
+jwilson@redhat.com
+
+Acked-by: Larry Woodman <lwoodman@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: Chris Lalancette <clalance@redhat.com>
+---
+ include/asm-x86_64/pgtable.h |    1 +
+ 1 files changed, 1 insertions(+), 0 deletions(-)
+
+diff --git a/include/asm-x86_64/pgtable.h b/include/asm-x86_64/pgtable.h
+index c63ecb7..20cf067 100644
+--- a/include/asm-x86_64/pgtable.h
++++ b/include/asm-x86_64/pgtable.h
+@@ -390,6 +390,7 @@ static inline pte_t mk_pte_phys(unsigned long physpage, pgprot_t pgprot)
+ { 
+ 	pte_t pte;
+ 	pte_val(pte) = physpage | pgprot_val(pgprot); 
++	pte_val(pte) &= __supported_pte_mask;
+ 	return pte; 
+ }
+  
+-- 
+1.5.3.5.645.gbb47
+

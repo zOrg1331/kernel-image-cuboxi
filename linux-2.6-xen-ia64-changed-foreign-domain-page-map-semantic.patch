@@ -1,0 +1,153 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5.1 PATCH 7/21] changed foreign domain page mapping semantic
+Date: Thu, 07 Jun 2007 03:37:09 -0400
+Bugzilla: 242779
+Message-Id: <4667B5A5.9090705@redhat.com>
+Changelog: [xen] ia64: changed foreign domain page mapping semantic
+
+
+bz242779
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=242779
+
+Backport of cset#12877.
+
+x86 foreign HVM domain page mapping semantic was changed
+to use gmfn instead  mfn.  It applies to domains with
+auto_translated_mode enabled, and all ia64 domains enable
+auto_translated_mode.  ia64 foreign domain page mapping
+should also be changed to use gmfn and to fix ia64 domU
+builder.
+
+Thanks,
+Kei
+
+
+
+
+# HG changeset patch
+# User awilliam@xenbuild.aw
+# Date 1165341572 25200
+# Node ID 9787cb7262e89178ed77af75084c328d75d210cc
+# Parent  918ea03857b9bc5e1878507539f721b859d29996
+[IA64] changed foreign domain page mapping semantic.
+
+x86 foreign HVM domain page mapping semantic was changed to use gmfn
+instead mfn.  It applies to domains with auto_translated_mode enabled,
+and all ia64 domains enable auto_translated_mode.  This patch changes
+ia64 foreign domain page mapping to use gmfn and fixes ia64 domU buidler.
+However this patch breaks domain save/restore/dump-core.
+They should also be fixed-up
+
+Signed-off-by: Isaku Yamahata <yamahata@valinux.co.jp>
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/hypervisor.c        |   12 ++---
+ linux-2.6.18-21.el5-gerd-order-kei/include/asm-ia64/hypercall.h      |   22 ++++++++++
+ linux-2.6.18-21.el5-gerd-order-kei/include/xen/interface/arch-ia64.h |    3 +
+ 3 files changed, 31 insertions(+), 6 deletions(-)
+
+diff -puN arch/ia64/xen/hypervisor.c~12877-IA64_changed_foreign_domain_page_mapping_semantic. arch/ia64/xen/hypervisor.c
+--- linux-2.6.18-21.el5-gerd-order/arch/ia64/xen/hypervisor.c~12877-IA64_changed_foreign_domain_page_mapping_semantic.	2007-06-07 02:44:28.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/hypervisor.c	2007-06-07 02:44:28.000000000 -0400
+@@ -497,7 +497,7 @@ xen_ia64_privcmd_entry_mmap(struct vm_ar
+ 			    unsigned long addr,
+ 			    struct xen_ia64_privcmd_range* privcmd_range,
+ 			    int i,
+-			    unsigned long mfn,
++			    unsigned long gmfn,
+ 			    pgprot_t prot,
+ 			    domid_t domid)
+ {
+@@ -506,7 +506,7 @@ xen_ia64_privcmd_entry_mmap(struct vm_ar
+ 	unsigned long gpfn;
+ 	unsigned long flags;
+ 
+-	if ((addr & ~PAGE_MASK) != 0 || mfn == INVALID_MFN) {
++	if ((addr & ~PAGE_MASK) != 0 || gmfn == INVALID_MFN) {
+ 		error = -EINVAL;
+ 		goto out;
+ 	}
+@@ -521,7 +521,7 @@ xen_ia64_privcmd_entry_mmap(struct vm_ar
+ 	if (pgprot_val(prot) == PROT_READ) {
+ 		flags = ASSIGN_readonly;
+ 	}
+-	error = HYPERVISOR_add_physmap(gpfn, mfn, flags, domid);
++	error = HYPERVISOR_add_physmap_with_gmfn(gpfn, gmfn, flags, domid);
+ 	if (error != 0) {
+ 		goto out;
+ 	}
+@@ -732,7 +732,7 @@ out_enomem0:
+ int
+ direct_remap_pfn_range(struct vm_area_struct *vma,
+ 		       unsigned long address,	// process virtual address
+-		       unsigned long mfn,	// mfn, mfn + 1, ... mfn + size/PAGE_SIZE
++		       unsigned long gmfn,	// gmfn, gmfn + 1, ... gmfn + size/PAGE_SIZE
+ 		       unsigned long size,
+ 		       pgprot_t prot,
+ 		       domid_t  domid)		// target domain
+@@ -755,13 +755,13 @@ direct_remap_pfn_range(struct vm_area_st
+ 
+ 	i = (address - vma->vm_start) >> PAGE_SHIFT;
+ 	for (offset = 0; offset < size; offset += PAGE_SIZE) {
+-		error = xen_ia64_privcmd_entry_mmap(vma, (address + offset) & PAGE_MASK, privcmd_range, entry_offset + i, mfn, prot, domid);
++		error = xen_ia64_privcmd_entry_mmap(vma, (address + offset) & PAGE_MASK, privcmd_range, entry_offset + i, gmfn, prot, domid);
+ 		if (error != 0) {
+ 			break;
+ 		}
+ 
+ 		i++;
+-		mfn++;
++		gmfn++;
+         }
+ 
+ 	return error;
+diff -puN include/asm-ia64/hypercall.h~12877-IA64_changed_foreign_domain_page_mapping_semantic. include/asm-ia64/hypercall.h
+--- linux-2.6.18-21.el5-gerd-order/include/asm-ia64/hypercall.h~12877-IA64_changed_foreign_domain_page_mapping_semantic.	2007-06-07 02:44:28.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/include/asm-ia64/hypercall.h	2007-06-07 02:44:28.000000000 -0400
+@@ -378,6 +378,28 @@ HYPERVISOR_add_physmap(unsigned long gpf
+ 	return ret;
+ }
+ 
++static inline unsigned long
++__HYPERVISOR_add_physmap_with_gmfn(unsigned long gpfn, unsigned long gmfn,
++                                   unsigned long flags, domid_t domid)
++{
++	return _hypercall5(unsigned long, ia64_dom0vp_op,
++	                   IA64_DOM0VP_add_physmap_with_gmfn,
++	                   gpfn, gmfn, flags, domid);
++}
++
++static inline unsigned long
++HYPERVISOR_add_physmap_with_gmfn(unsigned long gpfn, unsigned long gmfn,
++				 unsigned long flags, domid_t domid)
++{
++	unsigned long ret = 0;
++	BUG_ON(!is_running_on_xen());//XXX
++	if (is_running_on_xen()) {
++		ret = __HYPERVISOR_add_physmap_with_gmfn(gpfn, gmfn,
++		                                         flags, domid);
++	}
++	return ret;
++}
++
+ #ifdef CONFIG_XEN_IA64_EXPOSE_P2M
+ static inline unsigned long
+ HYPERVISOR_expose_p2m(unsigned long conv_start_gpfn,
+diff -puN include/xen/interface/arch-ia64.h~12877-IA64_changed_foreign_domain_page_mapping_semantic. include/xen/interface/arch-ia64.h
+--- linux-2.6.18-21.el5-gerd-order/include/xen/interface/arch-ia64.h~12877-IA64_changed_foreign_domain_page_mapping_semantic.	2007-06-07 02:44:28.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/include/xen/interface/arch-ia64.h	2007-06-07 02:44:28.000000000 -0400
+@@ -356,6 +356,9 @@ DEFINE_XEN_GUEST_HANDLE(vcpu_guest_conte
+ /* expose the p2m table into domain */
+ #define IA64_DOM0VP_expose_p2m          7
+ 
++/* gmfn version of IA64_DOM0VP_add_physmap */
++#define IA64_DOM0VP_add_physmap_with_gmfn       9
++
+ // flags for page assignement to pseudo physical address space
+ #define _ASSIGN_readonly                0
+ #define ASSIGN_readonly                 (1UL << _ASSIGN_readonly)
+
+_
+

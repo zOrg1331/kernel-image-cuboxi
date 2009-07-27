@@ -1,0 +1,71 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Thu, 30 Oct 2008 18:26:30 -0400
+Subject: [xen] live migration of PV guest fails
+Message-id: 490A3496.8010305@redhat.com
+O-Subject: [RHEL5.3 PATCH] Live migration of xen PV guest fails
+Bugzilla: 469230
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+
+BZ 469230
+
+When the performance team (specifically, Sanjay) tried to do
+live migration of a rhel5.1, 5.2 or 5.3 pv guest
+between an AMD Barcelona-based system and (brandy-new, soon-to-be-on-the-streets)
+AMD Shanghai-based system, the guest just hangs on the destination host/dom0.
+
+Non-live migrations work.
+
+Backported this upstream patch:
+http://xenbits.xensource.com/xen-unstable.hg?rev/f4dab783b58b
+cset 18660 in xen-unstable.hg
+  >> x86: Add TLB flushing to HAP p2m changes
+  >> Removing an MFN from the p2m requires it to be flushed from the
+  >> guest's TLBs on HAP, like we do when we're using shadows.
+
+Basically, some critical TLB flushes are missing for these
+larger, faster AMD NPT CPUs.  Shadow page tables are used during live migration,
+which (empirically) shares the NPT code during migration on AMD machines.
+
+Brew-built:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1538434
+
+Testing:
+Non-live (Shanghai) migrations work on the existing -120, and
+continuted to work with the attached patch.
+a dom0/kernel-xen -120 kernel with the attached patched
+succeeded in doing a half-dozen live migrations, where it
+didn't before
+
+NOTE: Migration of FV guests to/from a Shanghai is broken as well;
+      (bz 469069, which this patch was hoping to fix, but didn't fix FV);
+      other upstream patches are being applied to a kernel-xen-120 & being tested tonight.
+      ... keeping fingers crossed ....
+
+Please review and ACK.
+
+- Don
+
+diff --git a/arch/x86/mm/hap/hap.c b/arch/x86/mm/hap/hap.c
+index a540a6e..32e7e79 100644
+--- a/arch/x86/mm/hap/hap.c
++++ b/arch/x86/mm/hap/hap.c
+@@ -678,9 +678,16 @@ void
+ hap_write_p2m_entry(struct vcpu *v, unsigned long gfn, l1_pgentry_t *p,
+                     mfn_t table_mfn, l1_pgentry_t new, unsigned int level)
+ {
++    uint32_t old_flags;
++
+     hap_lock(v->domain);
+ 
++    old_flags = l1e_get_flags(*p);
+     safe_write_pte(p, new);
++    if ( (old_flags & _PAGE_PRESENT)
++         && (level == 1 || (level == 2 && (old_flags & _PAGE_PSE))) )
++             flush_tlb_mask(v->domain->domain_dirty_cpumask);
++
+ #if CONFIG_PAGING_LEVELS == 3
+     /* install P2M in monitor table for PAE Xen */
+     if ( level == 3 ) 

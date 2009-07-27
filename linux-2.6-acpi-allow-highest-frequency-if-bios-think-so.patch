@@ -1,0 +1,80 @@
+From: Dave Jones <davej@redhat.com>
+Subject: [RHEL5] Fwd: Re: [PATCH] allow the highest frequency if bios think so.
+Date: Tue, 21 Nov 2006 20:19:12 -0500
+Bugzilla: 218106
+Message-Id: <20061122011912.GC533@redhat.com>
+Changelog: allow the highest frequency if bios think so.
+
+
+This is a pretty fundamental 'must have' for RHEL5.
+
+It's amazing this went unnoticed for so long, as it means that
+certain systems won't be able to scale their CPU speed to
+the maximum frequency.
+
+This has been queued for 2.6.19 (and will likely turn up in
+a future 2.6.18.x too)
+
+processor_perflib.c::acpi_processor_ppc_notifier() checks if the value
+returned by the processor's _PPC method is 0 and return failed if so.
+This is wrong since 0 indicate that the bios think the processor can go
+to the highest frequency.  This patch for example fix the HP NX 6125 to
+allow its highest frequency to be available.
+
+		Dave
+
+-- 
+http://www.codemonkey.org.uk
+
+User-Agent: Mutt/1.5.9i
+To: "Pallipadi, Venkatesh" <venkatesh.pallipadi@intel.com>
+Cc: davej@redhat.com, cpufreq@lists.linux.org.uk, linux-acpi@vger.kernel.org
+Message-ID: <20061121163514.GM4945@poupinou.org>
+
+On Tue, Nov 21, 2006 at 07:08:57AM -0800, Pallipadi, Venkatesh wrote:
+> Hmmm Great find.....
+> A perfect example of the bug that was quietly hiding
+> under our noses all these years....
+
+Indeed.  I'm actually still surprised why I haven't found it in the
+past.
+
+> 
+> >>  	if (ppc > pr->performance->state_count)
+> >
+> >BTW I'm wondering if this check should be :
+> >	if (ppc >= pr->performance->state_count)
+> >>  		goto out;
+> >
+> 
+> Yes. I think this should change to >= as well.
+> Otherwise indexing states with this ppc can go out of bounds.
+> 
+
+Updated.
+
+Correct bound checking from the value returned from _PPC method.
+
+Signed-off-by: Bruno Ducrot <ducrot@poupinou.org>
+
+--- linux-2.6.19-rc6/drivers/acpi/processor_perflib.c	2006/11/21 10:18:39	1.1
++++ linux-2.6.19-rc6/drivers/acpi/processor_perflib.c	2006/11/21 16:28:04
+@@ -83,10 +83,8 @@ static int acpi_processor_ppc_notifier(s
+ 		goto out;
+ 
+ 	ppc = (unsigned int)pr->performance_platform_limit;
+-	if (!ppc)
+-		goto out;
+ 
+-	if (ppc > pr->performance->state_count)
++	if (ppc >= pr->performance->state_count)
+ 		goto out;
+ 
+ 	cpufreq_verify_within_limits(policy, 0,
+
+-- 
+Bruno Ducrot
+
+--  Which is worse:  ignorance or apathy?
+--  Don't know.  Don't care.
+

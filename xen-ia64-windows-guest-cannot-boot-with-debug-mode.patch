@@ -1,0 +1,358 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5.1 PATCH 10/10][XEN] Windows guest cannot boot with debug mode
+Date: Tue, 26 Jun 2007 00:43:53 -0400
+Bugzilla: 245668
+Message-Id: <46809989.80106@redhat.com>
+Changelog: [XEN] ia64: Windows guest cannot boot with debug mode
+
+
+bz245668
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=245668
+
+Backport of cset#15341 (xen-ia64-unstable).
+
+cset14552 took PM1a_EVT_BLK registers from Qemu into Xen.
+Also support ACPI PM timer function.
+
+Thanks,
+Kei
+
+
+# HG changeset patch
+# User KUWAMURA Shin'ya <kuwa@jp.fujitsu.com>
+# Date 1182495503 -32400
+# Node ID b326981eafb120087a6c09ee380881e907721a57
+# Parent  a22649f8a49d7f46fdc368b1db99699132e328a6
+15341 [IA64] Revive ACPI power management for IA64.
+
+c/s 14552 took PM1a_EVT_BLK registers from Qemu into Xen.
+Also support ACPI PM timer function.
+
+Signed-off-by: Kouya Shimura <kouya@jp.fujitsu.com>
+
+
+
+---
+
+ xen-kei/arch/ia64/vmx/Makefile          |    1 
+ xen-kei/arch/ia64/vmx/mmio.c            |    4 
+ xen-kei/arch/ia64/vmx/vacpi.c           |  179 ++++++++++++++++++++++++++++++++
+ xen-kei/arch/ia64/vmx/vmx_init.c        |    4 
+ xen-kei/include/asm-ia64/hvm/vacpi.h    |   55 +++++++++
+ xen-kei/include/asm-ia64/vmx_platform.h |    2 
+ 6 files changed, 245 insertions(+)
+
+diff -puN arch/ia64/vmx/Makefile~ia64-15341-my arch/ia64/vmx/Makefile
+--- xen/arch/ia64/vmx/Makefile~ia64-15341-my	2007-06-25 22:48:49.000000000 -0400
++++ xen-kei/arch/ia64/vmx/Makefile	2007-06-25 22:48:49.000000000 -0400
+@@ -18,3 +18,4 @@ obj-y += vmx_virt.o
+ obj-y += vmx_vsa.o
+ obj-y += vtlb.o
+ obj-y += optvfault.o
++obj-y += vacpi.o
+diff -puN arch/ia64/vmx/mmio.c~ia64-15341-my arch/ia64/vmx/mmio.c
+--- xen/arch/ia64/vmx/mmio.c~ia64-15341-my	2007-06-25 22:48:49.000000000 -0400
++++ xen-kei/arch/ia64/vmx/mmio.c	2007-06-25 22:48:49.000000000 -0400
+@@ -37,6 +37,7 @@
+ #include <xen/domain.h>
+ #include <asm/viosapic.h>
+ #include <asm/vlsapic.h>
++#include <asm/hvm/vacpi.h>
+ 
+ #define HVM_BUFFERED_IO_RANGE_NR 1
+ 
+@@ -214,6 +215,9 @@ static void legacy_io_access(VCPU *vcpu,
+     if (vmx_ide_pio_intercept(p, val))
+         return;
+ 
++    if (IS_ACPI_ADDR(p->addr) && vacpi_intercept(p, val))
++	return;
++
+     vmx_send_assist_req(v);
+     if(dir==IOREQ_READ){ //read
+         *val=p->data;
+diff -puN /dev/null arch/ia64/vmx/vacpi.c
+--- /dev/null	2007-06-25 18:48:16.520000000 -0400
++++ xen-kei/arch/ia64/vmx/vacpi.c	2007-06-25 22:48:49.000000000 -0400
+@@ -0,0 +1,179 @@
++/*
++ * vacpi.c: emulation of the ACPI
++ * based on x86 hvm/pmtimer.c
++ *
++ * Copyright (c) 2007, FUJITSU LIMITED
++ *      Kouya Shimura <kouya at jp fujitsu com>
++ *
++ * Copyright (c) 2007, XenSource inc.
++ * Copyright (c) 2006, Intel Corporation.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms and conditions of the GNU General Public License,
++ * version 2, as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program; if not, write to the Free Software Foundation, Inc., 59 Temple
++ * Place - Suite 330, Boston, MA 02111-1307 USA.
++ */
++
++#include <asm/vmx_vcpu.h>
++#include <asm/vmx.h>
++#include <asm/hvm/vacpi.h>
++
++/* The interesting bits of the PM1a_STS register */
++#define TMR_STS    (1 << 0)
++#define PWRBTN_STS (1 << 5)
++#define GBL_STS    (1 << 8)
++
++/* The same in PM1a_EN */
++#define TMR_EN     (1 << 0)
++#define PWRBTN_EN  (1 << 5)
++#define GBL_EN     (1 << 8)
++
++/* Mask of bits in PM1a_STS that can generate an SCI.  Although the ACPI
++ * spec lists other bits, the PIIX4, which we are emulating, only
++ * supports these three.  For now, we only use TMR_STS; in future we
++ * will let qemu set the other bits */
++#define SCI_MASK (TMR_STS|PWRBTN_STS|GBL_STS)
++
++/* SCI IRQ number (must match SCI_INT number in ACPI FADT in hvmloader) */
++#define SCI_IRQ 9
++
++/* We provide a 32-bit counter (must match the TMR_VAL_EXT bit in the FADT) */
++#define TMR_VAL_MASK  (0xffffffff)
++#define TMR_VAL_MSB   (0x80000000)
++
++/* Dispatch SCIs based on the PM1a_STS and PM1a_EN registers */
++static void pmt_update_sci(struct domain *d, struct vacpi *s)
++{
++	if (s->regs.pm1a_en & s->regs.pm1a_sts & SCI_MASK)
++		viosapic_set_irq(d, SCI_IRQ, 1);  /* Assert */
++	else
++		viosapic_set_irq(d, SCI_IRQ, 0);
++}
++
++/* Set the correct value in the timer, accounting for time elapsed
++ * since the last time we did that. */
++static void pmt_update_time(struct domain *d)
++{
++	struct vacpi *s = &d->arch.hvm_domain.vacpi;
++	s_time_t curr_gtime;
++	unsigned long delta;
++	uint32_t msb = s->regs.tmr_val & TMR_VAL_MSB;
++
++	/* Update the timer */
++	curr_gtime = NOW();
++	delta = curr_gtime - s->last_gtime;
++	delta = ((delta >> 8) * ((FREQUENCE_PMTIMER << 32) / SECONDS(1))) >> 24;
++	s->regs.tmr_val += delta;
++	s->regs.tmr_val &= TMR_VAL_MASK;
++	s->last_gtime = curr_gtime;
++
++	/* If the counter's MSB has changed, set the status bit */
++	if ((s->regs.tmr_val & TMR_VAL_MSB) != msb) {
++		s->regs.pm1a_sts |= TMR_STS;
++		pmt_update_sci(d, s);
++	}
++}
++
++/* This function should be called soon after each time the MSB of the
++ * pmtimer register rolls over, to make sure we update the status
++ * registers and SCI at least once per rollover */
++static void pmt_timer_callback(void *opaque)
++{
++	struct domain *d = opaque;
++	struct vacpi *s = &d->arch.hvm_domain.vacpi;
++	uint64_t cycles, time_flip;
++
++	/* Recalculate the timer and make sure we get an SCI if we need one */
++	pmt_update_time(d);
++
++	/* How close are we to the next MSB flip? */
++	cycles = TMR_VAL_MSB - (s->regs.tmr_val & (TMR_VAL_MSB - 1));
++
++	/* Overall time between MSB flips */
++	time_flip = (((SECONDS(1) << 23) / FREQUENCE_PMTIMER) * cycles) >> 23;
++
++	/* Wake up again near the next bit-flip */
++	set_timer(&s->timer, NOW() + time_flip + MILLISECS(1));
++}
++
++int vacpi_intercept(ioreq_t * iop, u64 * val)
++{
++	struct domain *d = current->domain;
++	struct vacpi *s = &d->arch.hvm_domain.vacpi;
++	uint64_t addr_off = iop->addr - ACPI_PM1A_EVT_BLK_ADDRESS;
++
++	if (addr_off < 4) {	/* Access to PM1a_STS and PM1a_EN registers */
++		void *p = (void *)&s->regs.evt_blk + addr_off;
++
++		if (iop->dir == 1) {	/* Read */
++			if (iop->size == 1)
++				*val = *(uint8_t *) p;
++			else if (iop->size == 2)
++				*val = *(uint16_t *) p;
++			else if (iop->size == 4)
++				*val = *(uint32_t *) p;
++			else
++				panic_domain(NULL, "wrong ACPI "
++					     "PM1A_EVT_BLK access\n");
++		} else {	/* Write */
++			uint8_t *sp = (uint8_t *) & iop->data;
++			int i;
++
++			for (i = 0; i < iop->size; i++, addr_off++, p++, sp++) {
++				if (addr_off < 2) /* PM1a_STS */
++					/* write-to-clear */
++					*(uint8_t *) p &= ~*sp;
++				else /* PM1a_EN */
++					*(uint8_t *) p = *sp;
++			}
++			/* Fix the SCI state to match the new register state */
++			pmt_update_sci(d, s);
++		}
++
++		iop->state = STATE_IORESP_READY;
++		vmx_io_assist(current);
++		return 1;
++	}
++
++	if (iop->addr == ACPI_PM_TMR_BLK_ADDRESS) {
++		if (iop->size != 4)
++			panic_domain(NULL, "wrong ACPI PM timer access\n");
++		if (iop->dir == 1) {	/* Read */
++			pmt_update_time(d);
++			*val = s->regs.tmr_val;
++		}
++		/* PM_TMR_BLK is read-only */
++		iop->state = STATE_IORESP_READY;
++		vmx_io_assist(current);
++		return 1;
++	}
++
++	return 0;
++}
++
++void vacpi_init(struct domain *d)
++{
++	struct vacpi *s = &d->arch.hvm_domain.vacpi;
++
++	s->regs.tmr_val = 0;
++	s->regs.evt_blk = 0;
++	s->last_gtime = NOW();
++
++	/* Set up callback to fire SCIs when the MSB of TMR_VAL changes */
++	init_timer(&s->timer, pmt_timer_callback, d, first_cpu(cpu_online_map));
++	pmt_timer_callback(d);
++}
++
++void vacpi_relinquish_resources(struct domain *d)
++{
++	struct vacpi *s = &d->arch.hvm_domain.vacpi;
++	kill_timer(&s->timer);
++}
+diff -puN arch/ia64/vmx/vmx_init.c~ia64-15341-my arch/ia64/vmx/vmx_init.c
+--- xen/arch/ia64/vmx/vmx_init.c~ia64-15341-my	2007-06-25 22:48:49.000000000 -0400
++++ xen-kei/arch/ia64/vmx/vmx_init.c	2007-06-25 22:48:49.000000000 -0400
+@@ -346,6 +346,8 @@ vmx_relinquish_guest_resources(struct do
+ 
+ 	for_each_vcpu(d, v)
+ 		vmx_release_assist_channel(v);
++
++	vacpi_relinquish_resources(d);
+ }
+ 
+ void
+@@ -414,6 +416,8 @@ void vmx_setup_platform(struct domain *d
+ 
+ 	/* Initialize iosapic model within hypervisor */
+ 	viosapic_init(d);
++
++	vacpi_init(d);
+ }
+ 
+ void vmx_do_launch(struct vcpu *v)
+diff -puN /dev/null include/asm-ia64/hvm/vacpi.h
+--- /dev/null	2007-06-25 18:48:16.520000000 -0400
++++ xen-kei/include/asm-ia64/hvm/vacpi.h	2007-06-25 22:48:49.000000000 -0400
+@@ -0,0 +1,55 @@
++/*
++ * vacpi.h: Virtual ACPI definitions
++ *
++ * Copyright (c) 2007, FUJITSU LIMITED
++ *      Kouya Shimura <kouya at jp fujitsu com>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms and conditions of the GNU General Public License,
++ * version 2, as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program; if not, write to the Free Software Foundation, Inc., 59 Temple
++ * Place - Suite 330, Boston, MA 02111-1307 USA.
++ */
++
++#ifndef __ASM_IA64_HVM_VACPI_H__
++#define __ASM_IA64_HVM_VACPI_H__
++
++#include <public/hvm/ioreq.h>
++
++#define ACPI_PM1A_EVT_BLK_ADDRESS 0x0000000000001f40
++#define ACPI_PM1A_CNT_BLK_ADDRESS (ACPI_PM1A_EVT_BLK_ADDRESS + 0x04)
++#define ACPI_PM_TMR_BLK_ADDRESS   (ACPI_PM1A_EVT_BLK_ADDRESS + 0x08)
++
++#define IS_ACPI_ADDR(X)  ((unsigned long)((X)-ACPI_PM1A_EVT_BLK_ADDRESS)<12)
++
++#define FREQUENCE_PMTIMER  3579545UL	/* Timer should run at 3.579545 MHz */
++
++struct vacpi_regs {
++	union {
++		struct {
++			uint32_t pm1a_sts:16;
++			uint32_t pm1a_en:16;
++		};
++		uint32_t evt_blk;
++	};
++	uint32_t tmr_val;
++};
++
++struct vacpi {
++	struct vacpi_regs regs;
++	s_time_t last_gtime;
++	struct timer timer;
++};
++
++int vacpi_intercept(ioreq_t * p, u64 * val);
++void vacpi_init(struct domain *d);
++void vacpi_relinquish_resources(struct domain *d);
++
++#endif	/* __ASM_IA64_HVM_VACPI_H__ */
+diff -puN include/asm-ia64/vmx_platform.h~ia64-15341-my include/asm-ia64/vmx_platform.h
+--- xen/include/asm-ia64/vmx_platform.h~ia64-15341-my	2007-06-25 22:48:49.000000000 -0400
++++ xen-kei/include/asm-ia64/vmx_platform.h	2007-06-25 22:48:49.000000000 -0400
+@@ -22,6 +22,7 @@
+ #include <public/xen.h>
+ #include <public/hvm/params.h>
+ #include <asm/viosapic.h>
++#include <asm/hvm/vacpi.h>
+ struct mmio_list;
+ typedef struct virtual_platform_def {
+     unsigned long       buffered_io_va;
+@@ -33,6 +34,7 @@ typedef struct virtual_platform_def {
+     struct mmio_list    *mmio;
+     /* One IOSAPIC now... */
+     struct viosapic     viosapic;
++    struct vacpi        vacpi;
+ } vir_plat_t;
+ 
+ static inline int __fls(uint32_t word)
+
+_
+

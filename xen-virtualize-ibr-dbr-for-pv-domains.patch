@@ -1,0 +1,188 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Mon, 14 Jan 2008 12:12:21 -0500
+Subject: [xen] virtualize ibr/dbr for PV domains
+Message-id: 20080114171221.17245.50369.sendpatchset@dhcp78-13.lab.boston.redhat.com
+O-Subject: [RHEL5.2 PATCH 1/2][Xen][Take2] domU HVM application cannot debug via gdb
+Bugzilla: 426362
+
+# HG changeset patch
+# User Kouya Shimura <kouya@jp.fujitsu.com>
+# Date 1200028121 -32400
+# Node ID 0aaefec6775aeedcbbb5193d3bf8ccc00c6a6bf7
+# Parent  227b6138b15f9f7bd2ad2d6ea3f81d2c6a5c3c16
+ia64 cset 15414
+[IA64] Virtualize ibr/dbr for PV domains.
+
+Signed-off-by: Tristan Gingold <tgingold@free.fr>
+
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+diff --git a/arch/ia64/xen/domain.c b/arch/ia64/xen/domain.c
+index 02968c9..57f528a 100644
+--- a/arch/ia64/xen/domain.c
++++ b/arch/ia64/xen/domain.c
+@@ -238,6 +238,14 @@ void context_switch(struct vcpu *prev, struct vcpu *next)
+     ia64_disable_vhpt_walker();
+     lazy_fp_switch(prev, current);
+ 
++    if (prev->arch.dbg_used || next->arch.dbg_used) {
++        /*
++         * Load debug registers either because they are valid or to clear
++         * the previous one.
++         */
++        ia64_load_debug_regs(next->arch.dbr);
++    }
++    
+     prev = ia64_switch_to(next);
+ 
+     /* Note: ia64_switch_to does not return here at vcpu initialization.  */
+diff --git a/arch/ia64/xen/ivt.S b/arch/ia64/xen/ivt.S
+index ac55769..5bee6d6 100644
+--- a/arch/ia64/xen/ivt.S
++++ b/arch/ia64/xen/ivt.S
+@@ -2103,11 +2103,7 @@ END(speculation_vector)
+ // 0x5900 Entry 29 (size 16 bundles) Debug (16,28,56)
+ ENTRY(debug_vector)
+ 	DBG_FAULT(29)
+-#ifdef XEN
+ 	FAULT_OR_REFLECT(29)
+-#else
+-	FAULT(29)
+-#endif
+ END(debug_vector)
+ 
+ 	.org ia64_ivt+0x5a00
+diff --git a/arch/ia64/xen/vcpu.c b/arch/ia64/xen/vcpu.c
+index fae2520..3f0263d 100644
+--- a/arch/ia64/xen/vcpu.c
++++ b/arch/ia64/xen/vcpu.c
+@@ -1749,33 +1749,61 @@ IA64FAULT vcpu_tak(VCPU * vcpu, u64 vadr, u64 * key)
+ 
+ IA64FAULT vcpu_set_dbr(VCPU * vcpu, u64 reg, u64 val)
+ {
+-	// TODO: unimplemented DBRs return a reserved register fault
+-	// TODO: Should set Logical CPU state, not just physical
+-	ia64_set_dbr(reg, val);
++	if (reg >= IA64_NUM_DBG_REGS)
++		return IA64_RSVDREG_FAULT;
++	if ((reg & 1) == 0) {
++		/* Validate address. */
++		if (val >= HYPERVISOR_VIRT_START && val <= HYPERVISOR_VIRT_END)
++			return IA64_ILLOP_FAULT;
++	} else {
++		/* Mask PL0.  */
++		val &= ~(1UL << 56);
++	}
++	if (val != 0)
++		vcpu->arch.dbg_used |= (1 << reg);
++	else
++		vcpu->arch.dbg_used &= ~(1 << reg);
++	vcpu->arch.dbr[reg] = val;
++	if (vcpu == current)
++		ia64_set_dbr(reg, val);
+ 	return IA64_NO_FAULT;
+ }
+ 
+ IA64FAULT vcpu_set_ibr(VCPU * vcpu, u64 reg, u64 val)
+ {
+-	// TODO: unimplemented IBRs return a reserved register fault
+-	// TODO: Should set Logical CPU state, not just physical
+-	ia64_set_ibr(reg, val);
++	if (reg >= IA64_NUM_DBG_REGS)
++		return IA64_RSVDREG_FAULT;
++	if ((reg & 1) == 0) {
++		/* Validate address. */
++		if (val >= HYPERVISOR_VIRT_START && val <= HYPERVISOR_VIRT_END)
++			return IA64_ILLOP_FAULT;
++	} else {
++		/* Mask PL0.  */
++		val &= ~(1UL << 56);
++	}
++	if (val != 0)
++		vcpu->arch.dbg_used |= (1 << (reg + IA64_NUM_DBG_REGS));
++	else
++		vcpu->arch.dbg_used &= ~(1 << (reg + IA64_NUM_DBG_REGS));
++	vcpu->arch.ibr[reg] = val;
++	if (vcpu == current)
++		ia64_set_ibr(reg, val);
+ 	return IA64_NO_FAULT;
+ }
+ 
+ IA64FAULT vcpu_get_dbr(VCPU * vcpu, u64 reg, u64 * pval)
+ {
+-	// TODO: unimplemented DBRs return a reserved register fault
+-	u64 val = ia64_get_dbr(reg);
+-	*pval = val;
++	if (reg >= IA64_NUM_DBG_REGS)
++		return IA64_RSVDREG_FAULT;
++	*pval = vcpu->arch.dbr[reg];
+ 	return IA64_NO_FAULT;
+ }
+ 
+ IA64FAULT vcpu_get_ibr(VCPU * vcpu, u64 reg, u64 * pval)
+ {
+-	// TODO: unimplemented IBRs return a reserved register fault
+-	u64 val = ia64_get_ibr(reg);
+-	*pval = val;
++	if (reg >= IA64_NUM_DBG_REGS)
++		return IA64_RSVDREG_FAULT;
++	*pval = vcpu->arch.ibr[reg];
+ 	return IA64_NO_FAULT;
+ }
+ 
+@@ -1978,8 +2006,8 @@ unsigned long vcpu_get_rr_ve(VCPU * vcpu, u64 vadr)
+ IA64FAULT vcpu_set_rr(VCPU * vcpu, u64 reg, u64 val)
+ {
+ 	PSCB(vcpu, rrs)[reg >> 61] = val;
+-	// warning: set_one_rr() does it "live"
+-	set_one_rr(reg, val);
++	if (vcpu == current)
++		set_one_rr(reg, val);
+ 	return IA64_NO_FAULT;
+ }
+ 
+diff --git a/include/asm-ia64/domain.h b/include/asm-ia64/domain.h
+index 80af70c..ba414d8 100644
+--- a/include/asm-ia64/domain.h
++++ b/include/asm-ia64/domain.h
+@@ -180,6 +180,11 @@ struct arch_vcpu {
+     int starting_rid;		/* first RID assigned to domain */
+     int ending_rid;		/* one beyond highest RID assigned to domain */
+ 
++    /* Bitset for debug register use.  */
++    unsigned int dbg_used;
++    u64 dbr[IA64_NUM_DBG_REGS];
++    u64 ibr[IA64_NUM_DBG_REGS];
++
+     struct thread_struct _thread;	// this must be last
+ 
+     thash_cb_t vtlb;
+diff --git a/include/asm-ia64/linux-xen/asm/processor.h b/include/asm-ia64/linux-xen/asm/processor.h
+index fb753e0..4a1e070 100644
+--- a/include/asm-ia64/linux-xen/asm/processor.h
++++ b/include/asm-ia64/linux-xen/asm/processor.h
+@@ -292,11 +292,14 @@ struct thread_struct {
+ #else
+ # define INIT_THREAD_PM
+ #endif
++#ifndef XEN
+ 	__u64 dbr[IA64_NUM_DBG_REGS];
+ 	__u64 ibr[IA64_NUM_DBG_REGS];
++#endif
+ 	struct ia64_fpreg fph[96];	/* saved/loaded on demand */
+ };
+ 
++#ifndef XEN
+ #define INIT_THREAD {						\
+ 	.flags =	0,					\
+ 	.on_ustack =	0,					\
+@@ -333,6 +336,7 @@ struct thread_struct {
+ 		regs->r1 = 0; regs->r9  = 0; regs->r11 = 0; regs->r13 = 0; regs->r15 = 0;	\
+ 	}											\
+ } while (0)
++#endif
+ 
+ /* Forward declarations, a strange C thing... */
+ struct mm_struct;

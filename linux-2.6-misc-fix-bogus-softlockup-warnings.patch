@@ -1,0 +1,50 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 7 Nov 2007 11:50:17 -0500
+Subject: [misc] fix bogus softlockup warnings
+Message-id: 20071107165017.18571.94215.sendpatchset@prarit.boston.redhat.com
+O-Subject: [RHEL 5 PATCH 1/4]: Fix bogus softlockup warnings
+Bugzilla: 252360
+
+- specific backport of Backport commit 99a19cf1c0eb22bad83fff060f08330ee9e029e2
+
+(When dumping memory via sysrq-m it is possible to take a bogus NMI watchdog
+or softlockup watchdog because the dump can take a long time on big memory
+systems.
+
+Occasionally tickle the watchdog when doing the dump. )
+
+- the lockdep change was sent upstream several times but died on the vine.
+It is not upstream, but AFAICT, is correct.
+
+Acked-by: Alan Cox <alan@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+diff --git a/arch/ia64/mm/discontig.c b/arch/ia64/mm/discontig.c
+index 2e958e6..97641ee 100644
+--- a/arch/ia64/mm/discontig.c
++++ b/arch/ia64/mm/discontig.c
+@@ -561,6 +561,8 @@ void show_mem(void)
+ 		present = pgdat->node_present_pages;
+ 		for(i = 0; i < pgdat->node_spanned_pages; i++) {
+ 			struct page *page;
++			if (unlikely(i % MAX_ORDER_NR_PAGES == 0))
++				touch_softlockup_watchdog();
+ 			if (pfn_valid(pgdat->node_start_pfn + i))
+ 				page = pfn_to_page(pgdat->node_start_pfn + i);
+ 			else {
+diff --git a/kernel/lockdep.c b/kernel/lockdep.c
+index 7644fa2..003dab5 100644
+--- a/kernel/lockdep.c
++++ b/kernel/lockdep.c
+@@ -2714,8 +2714,10 @@ retry:
+ 	printk("\n");
+ 	printk("=============================================\n\n");
+ 
+-	if (unlock)
++	if (unlock) {
++		touch_all_softlockup_watchdogs();
+ 		read_unlock(&tasklist_lock);
++	}
+ }
+ 
+ EXPORT_SYMBOL_GPL(debug_show_all_locks);

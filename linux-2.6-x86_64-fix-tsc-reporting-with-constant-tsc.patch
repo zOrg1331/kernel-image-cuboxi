@@ -1,0 +1,211 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] : Fix TSC reporting for processors with constant  TSC
+Date: Thu, 07 Jun 2007 15:02:51 -0400
+Bugzilla: 236821
+Message-Id: <4668565B.3050600@redhat.com>
+Changelog: [x86_64] Fix TSC reporting for processors with constant TSC
+
+BZ 236821
+
+TSC has moved to the NB in AMD's GH processors and so the code that thinks
+TSC
+is the same as CPU frequency needs to be modified appropriately. This
+bugzilla
+will fix the reporting of cpu_mhz in /proc/cpuinfo on CPUs with a constant
+TSC rate and a kernel with disabled cpufreq, ie Power Now is disabled.
+
+The backport to RHEL5.1 has been tested extensively on GH architectures.
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commi
+tdiff_plain;h=6b37f5a20c0e5c334c010a587058354215433e92
+
+RHEL5 code base does not include perfcrt_nmi changes from upstream and
+tsc.c, tsc_sync.c files.  The backport is the minimum changes necessary
+without bringing in additional subsystem changes to RHEL5.1.   Please keep
+this in mind as you review the patch.
+
+Please review and ACK.
+
+There is an additional change that AMD is working on getting finalized with
+Andi Kleen.
+http://lkml.org/lkml/2007/6/4/362
+
+The CONSTANT_TSC bit needs to be set earlier in early_identify_cpu() rather
+than setup.c so that time_init() has the value set.   Andi thinks this
+change will go into 2.6.22 as well. I will submit this snippet of code soon
+as it's accepted.
+
+--- linux-2.6.18.x86_64/arch/x86_64/kernel/setup.c.tscorig	2007-06-07 14:58:17.000000000 -0400
++++ linux-2.6.18.x86_64/arch/x86_64/kernel/setup.c	2007-06-07 08:41:57.000000000 -0400
+@@ -1084,6 +1084,7 @@ void __cpuinit early_identify_cpu(struct
+ 			c->x86_model += ((tfms >> 16) & 0xF) << 4;
+ 		if (c->x86_capability[0] & (1<<19)) 
+ 			c->x86_clflush_size = ((misc >> 8) & 0xff) * 8;
++		c->extended_cpuid_level = cpuid_eax(0x80000000);
+ 	} else {
+ 		/* Have CPUID level 0 only - unheard of */
+ 		c->x86 = 4;
+@@ -1092,6 +1093,12 @@ void __cpuinit early_identify_cpu(struct
+ #ifdef CONFIG_SMP
+ 	c->phys_proc_id = (cpuid_ebx(1) >> 24) & 0xff;
+ #endif
++
++	/* power flags are 8000_0007 edx. Bit 8 is constant TSC */
++	if ((c->x86_vendor == X86_VENDOR_AMD) &&
++	    (c->extended_cpuid_level >= 0x80000007) &&
++	    (cpuid_edx(0x80000007) & (1<<8)))
++		set_bit(X86_FEATURE_CONSTANT_TSC, &c->x86_capability);
+ }
+ 
+ /*
+--- linux-2.6.18.x86_64/arch/x86_64/kernel/apic.c.tscorig	2007-05-24 15:54:38.000000000 -0400
++++ linux-2.6.18.x86_64/arch/x86_64/kernel/apic.c	2007-05-30 14:25:46.000000000 -0400
+@@ -802,7 +802,7 @@ static int __init calibrate_APIC_clock(v
+ 		} while ((tsc - tsc_start) < TICK_COUNT &&
+ 				(apic - apic_start) < TICK_COUNT);
+ 
+-		result = (apic_start - apic) * 1000L * cpu_khz /
++		result = (apic_start - apic) * 1000L * tsc_khz /
+ 					(tsc - tsc_start);
+ 	}
+ 	printk("result %d\n", result);
+--- linux-2.6.18.x86_64/arch/x86_64/kernel/time.c.tscorig	2007-05-24 15:54:50.000000000 -0400
++++ linux-2.6.18.x86_64/arch/x86_64/kernel/time.c	2007-06-07 15:00:03.000000000 -0400
+@@ -39,6 +39,7 @@
+ #include <asm/proto.h>
+ #include <asm/hpet.h>
+ #include <asm/sections.h>
++#include <asm/nmi.h>
+ #include <linux/cpufreq.h>
+ #include <linux/hpet.h>
+ #ifdef CONFIG_X86_LOCAL_APIC
+@@ -69,6 +70,8 @@ static int notsc __initdata = 0;
+ 
+ unsigned int cpu_khz;					/* TSC clocks / usec, not used here */
+ EXPORT_SYMBOL(cpu_khz);
++unsigned int tsc_khz;
++EXPORT_SYMBOL(tsc_khz);
+ static unsigned long hpet_period;			/* fsecs / HPET clock */
+ unsigned long hpet_tick;				/* HPET clocks / HZ */
+ unsigned long hpet_tick_real;				/* HPET clocks / interrupt */
+@@ -576,6 +579,37 @@ static unsigned long get_cmos_time(void)
+ 	return mktime(year, mon, day, hour, min, sec);
+ }
+ 
++/* calibrate_cpu is used on systems with fixed rate TSCs to determine
++ * processor frequency */
++#define TICK_COUNT 100000000
++static unsigned int __init tsc_calibrate_cpu_khz(void)
++{
++       int tsc_start, tsc_now;
++       int no_ctr_free;
++       unsigned long evntsel3 = 0, pmc3 = 0, pmc_now = 0;
++       unsigned long flags;
++
++       rdmsrl(MSR_K7_EVNTSEL3, evntsel3);
++       wrmsrl(MSR_K7_EVNTSEL3, 0);
++       rdmsrl(MSR_K7_PERFCTR3, pmc3);
++       local_irq_save(flags);
++       /* start meauring cycles, incrementing from 0 */
++       wrmsrl(MSR_K7_PERFCTR3, 0);
++       wrmsrl(MSR_K7_EVNTSEL3, 1 << 22 | 3 << 16 | 0x76);
++       rdtscl(tsc_start);
++       do {
++               rdmsrl(MSR_K7_PERFCTR3, pmc_now);
++               tsc_now = get_cycles_sync();
++       } while ((tsc_now - tsc_start) < TICK_COUNT);
++
++       local_irq_restore(flags);
++       wrmsrl(MSR_K7_EVNTSEL3, 0);
++       wrmsrl(MSR_K7_PERFCTR3, pmc3);
++       wrmsrl(MSR_K7_EVNTSEL3, evntsel3);
++
++       return pmc_now * tsc_khz / (tsc_now - tsc_start);
++}
++
+ #ifdef CONFIG_CPU_FREQ
+ 
+ /* Frequency scaling support. Adjust the TSC based timer when the cpu frequency
+@@ -624,7 +658,7 @@ static void cpufreq_delayed_get(void)
+ static unsigned int  ref_freq = 0;
+ static unsigned long loops_per_jiffy_ref = 0;
+ 
+-static unsigned long cpu_khz_ref = 0;
++static unsigned long tsc_khz_ref = 0;
+ 
+ static int time_cpufreq_notifier(struct notifier_block *nb, unsigned long val,
+ 				 void *data)
+@@ -646,7 +680,7 @@ static int time_cpufreq_notifier(struct 
+ 	if (!ref_freq) {
+ 		ref_freq = freq->old;
+ 		loops_per_jiffy_ref = *lpj;
+-		cpu_khz_ref = cpu_khz;
++		tsc_khz_ref = tsc_khz;
+ 	}
+         if ((val == CPUFREQ_PRECHANGE  && freq->old < freq->new) ||
+             (val == CPUFREQ_POSTCHANGE && freq->old > freq->new) ||
+@@ -654,12 +688,12 @@ static int time_cpufreq_notifier(struct 
+                 *lpj =
+ 		cpufreq_scale(loops_per_jiffy_ref, ref_freq, freq->new);
+ 
+-		cpu_khz = cpufreq_scale(cpu_khz_ref, ref_freq, freq->new);
++		tsc_khz = cpufreq_scale(tsc_khz_ref, ref_freq, freq->new);
+ 		if (!(freq->flags & CPUFREQ_CONST_LOOPS))
+ 			vxtime.tsc_quot = (USEC_PER_MSEC << US_SCALE) / cpu_khz;
+ 	}
+ 	
+-	set_cyc2ns_scale(cpu_khz_ref);
++	set_cyc2ns_scale(tsc_khz_ref);
+ 
+ 	return 0;
+ }
+@@ -939,28 +973,34 @@ void __init time_init(void)
+ 	if (hpet_use_timer) {
+ 		/* set tick_nsec to use the proper rate for HPET */
+ 	  	tick_nsec = TICK_NSEC_HPET;
+-		cpu_khz = hpet_calibrate_tsc();
++		tsc_khz = hpet_calibrate_tsc();
+ 		timename = "HPET";
+ #ifdef CONFIG_X86_PM_TIMER
+ 	} else if (pmtmr_ioport && !vxtime.hpet_address) {
+ 		vxtime_hz = PM_TIMER_FREQUENCY;
+ 		timename = "PM";
+ 		pit_init();
+-		cpu_khz = pit_calibrate_tsc();
++		tsc_khz = pit_calibrate_tsc();
+ #endif
+ 	} else {
+ 		pit_init();
+-		cpu_khz = pit_calibrate_tsc();
++		tsc_khz = pit_calibrate_tsc();
+ 		timename = "PIT";
+ 	}
+ 
++	cpu_khz = tsc_khz;
++	if (cpu_has(&boot_cpu_data, X86_FEATURE_CONSTANT_TSC) &&
++		boot_cpu_data.x86_vendor == X86_VENDOR_AMD &&
++		boot_cpu_data.x86 == 16)
++		cpu_khz = tsc_calibrate_cpu_khz();
++
+ 	vxtime.mode = VXTIME_TSC;
+ 	vxtime.quot = (USEC_PER_SEC << US_SCALE) / vxtime_hz;
+ 	vxtime.tsc_quot = (USEC_PER_MSEC << US_SCALE) / cpu_khz;
+ 	vxtime.last_tsc = get_cycles_sync();
+ 	setup_irq(0, &irq0);
+ 
+-	set_cyc2ns_scale(cpu_khz);
++	set_cyc2ns_scale(tsc_khz);
+ 
+ 	hotcpu_notifier(time_cpu_notifier, 0);
+ 	time_cpu_notifier(NULL, CPU_ONLINE, (void *)(long)smp_processor_id());
+--- linux-2.6.18.x86_64/include/asm-x86_64/proto.h.tscorig	2007-05-24 15:56:07.000000000 -0400
++++ linux-2.6.18.x86_64/include/asm-x86_64/proto.h	2007-05-30 14:25:46.000000000 -0400
+@@ -105,6 +105,7 @@ extern int exception_trace;
+ extern int using_apic_timer;
+ extern int disable_apic;
+ extern unsigned cpu_khz;
++extern unsigned tsc_khz;
+ extern int ioapic_force;
+ extern int skip_ioapic_setup;
+ extern int acpi_ht;
+

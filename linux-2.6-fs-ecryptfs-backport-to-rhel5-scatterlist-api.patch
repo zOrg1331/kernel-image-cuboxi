@@ -1,0 +1,86 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 18 Dec 2007 12:15:59 -0600
+Subject: [fs] ecryptfs: backport to rhel5 scatterlist api
+Message-id: 47680E5F.8070903@redhat.com
+O-Subject: [RHEL 5.2 PATCH] 12/15: eCryptfs: backport to RHEL5 scatterlist API
+Bugzilla: 228341
+
+Backport ecryptfs to the RHEL5 scatterlist API
+
+ crypto.c   |   31 ++++++++++++++++---------------
+ keystore.c |    3 ---
+ 2 files changed, 16 insertions(+), 18 deletions(-)
+
+diff --git a/fs/ecryptfs/crypto.c b/fs/ecryptfs/crypto.c
+index 2a4a317..bfc45b5 100644
+--- a/fs/ecryptfs/crypto.c
++++ b/fs/ecryptfs/crypto.c
+@@ -252,13 +252,13 @@ int virt_to_scatterlist(const void *addr, int size, struct scatterlist *sg,
+ 	int offset;
+ 	int remainder_of_page;
+ 
+-	sg_init_table(sg, sg_size);
+-
+ 	while (size > 0 && i < sg_size) {
+ 		pg = virt_to_page(addr);
+ 		offset = offset_in_page(addr);
+-		if (sg)
+-			sg_set_page(&sg[i], pg, 0, offset);
++		if (sg) {
++			sg[i].page = pg;
++			sg[i].offset = offset;
++		}
+ 		remainder_of_page = PAGE_CACHE_SIZE - offset;
+ 		if (size >= remainder_of_page) {
+ 			if (sg)
+@@ -675,11 +675,12 @@ ecryptfs_encrypt_page_offset(struct ecryptfs_crypt_stat *crypt_stat,
+ {
+ 	struct scatterlist src_sg, dst_sg;
+ 
+-	sg_init_table(&src_sg, 1);
+-	sg_init_table(&dst_sg, 1);
+-
+-	sg_set_page(&src_sg, src_page, size, src_offset);
+-	sg_set_page(&dst_sg, dst_page, size, dst_offset);
++	src_sg.page = src_page;
++	src_sg.offset = src_offset;
++	src_sg.length = size;
++	dst_sg.page = dst_page;
++	dst_sg.offset = dst_offset;
++	dst_sg.length = size;
+ 	return encrypt_scatterlist(crypt_stat, &dst_sg, &src_sg, size, iv);
+ }
+ 
+@@ -703,12 +704,12 @@ ecryptfs_decrypt_page_offset(struct ecryptfs_crypt_stat *crypt_stat,
+ {
+ 	struct scatterlist src_sg, dst_sg;
+ 
+-	sg_init_table(&src_sg, 1);
+-	sg_set_page(&src_sg, src_page, size, src_offset);
+-
+-	sg_init_table(&dst_sg, 1);
+-	sg_set_page(&dst_sg, dst_page, size, dst_offset);
+-
++	src_sg.page = src_page;
++	src_sg.offset = src_offset;
++	src_sg.length = size;
++	dst_sg.page = dst_page;
++	dst_sg.offset = dst_offset;
++	dst_sg.length = size;
+ 	return decrypt_scatterlist(crypt_stat, &dst_sg, &src_sg, size, iv);
+ }
+ 
+diff --git a/fs/ecryptfs/keystore.c b/fs/ecryptfs/keystore.c
+index e68783c..6ebbc26 100644
+--- a/fs/ecryptfs/keystore.c
++++ b/fs/ecryptfs/keystore.c
+@@ -1038,9 +1038,6 @@ decrypt_passphrase_encrypted_session_key(struct ecryptfs_auth_tok *auth_tok,
+ 	struct crypto_tfm *tfm = NULL;
+ 	int rc = 0;
+ 
+-	sg_init_table(&dst_sg, 1);
+-	sg_init_table(&src_sg, 1);
+-
+ 	if (unlikely(ecryptfs_verbosity > 0)) {
+ 		ecryptfs_printk(
+ 			KERN_DEBUG, "Session key encryption key (size [%d]):\n",

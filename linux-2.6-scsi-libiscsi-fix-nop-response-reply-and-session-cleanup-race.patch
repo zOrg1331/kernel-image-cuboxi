@@ -1,0 +1,84 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Fri, 29 May 2009 08:57:01 +0200
+Subject: [scsi] libiscsi: fix nop response/reply and session cleanup race
+Message-id: 20090529065700.GB3492@psychotron.englab.brq.redhat.com
+O-Subject: [RHEL5.3.z patch] BZ502916 scsi: libiscsi: fix nop response/reply and session cleanup race
+Bugzilla: 502916
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+[RHEL5.3.z patch] BZ502916 scsi: libiscsi: fix nop response/reply and session cleanup race
+
+
+BZ502916
+https://bugzilla.redhat.com/show_bug.cgi?id=502916
+
+Description (taken from upstream):
+If we are responding to a nop from the target by sending our nop,
+and the session is getting torn down, then iscsi_start_session_recovery
+could set the conn stop bits while the recv path is sending the nop
+response and we will hit the bug ons in __iscsi_conn_send_pdu.
+
+This has us check the state in __iscsi_conn_send_pdu and fail all
+incoming mgmt IO if we are  not logged in and if the pdu is not login
+related. It also changes the ordering of the setting of conn stop state
+bits so they are set after the session state is set (both are set under
+the session lock).
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;a=commitdiff;h=26013ad4c43f49a038a6489c35e9b901491339fe
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1818602
+
+Test:
+Compile tested only
+
+Jirka
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+
+diff --git a/drivers/scsi/libiscsi.c b/drivers/scsi/libiscsi.c
+index c8f3f82..526218a 100644
+--- a/drivers/scsi/libiscsi.c
++++ b/drivers/scsi/libiscsi.c
+@@ -297,6 +297,9 @@ __iscsi_conn_send_pdu(struct iscsi_conn *conn, struct iscsi_hdr *hdr,
+ 		 */
+ 		mtask = conn->login_mtask;
+ 	else {
++		if (session->state != ISCSI_STATE_LOGGED_IN)
++			return NULL;
++
+ 		BUG_ON(conn->c_stage == ISCSI_CONN_INITIAL_STAGE);
+ 		BUG_ON(conn->c_stage == ISCSI_CONN_STOPPED);
+ 
+@@ -2028,8 +2031,6 @@ static void iscsi_start_session_recovery(struct iscsi_session *session,
+ {
+ 	int old_stop_stage;
+ 
+-	del_timer_sync(&conn->transport_timer);
+-
+ 	mutex_lock(&session->eh_mutex);
+ 	spin_lock_bh(&session->lock);
+ 	if (conn->stop_stage == STOP_CONN_TERM) {
+@@ -2058,14 +2059,17 @@ static void iscsi_start_session_recovery(struct iscsi_session *session,
+ 		session->state = ISCSI_STATE_TERMINATE;
+ 	else if (conn->stop_stage != STOP_CONN_RECOVER)
+ 		session->state = ISCSI_STATE_IN_RECOVERY;
++	spin_unlock_bh(&session->lock);
+ 
++	del_timer_sync(&conn->transport_timer);
++	iscsi_suspend_tx(conn);
++
++	spin_lock_bh(&session->lock);
+ 	old_stop_stage = conn->stop_stage;
+ 	conn->stop_stage = flag;
+ 	conn->c_stage = ISCSI_CONN_STOPPED;
+ 	spin_unlock_bh(&session->lock);
+ 
+-	iscsi_suspend_tx(conn);
+-
+ 	write_lock_bh(conn->recv_lock);
+ 	set_bit(ISCSI_SUSPEND_BIT, &conn->suspend_rx);
+ 	write_unlock_bh(conn->recv_lock);
+

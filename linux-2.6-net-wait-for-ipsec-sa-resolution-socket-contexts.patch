@@ -1,0 +1,174 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL 5.1 PATCH] BZ 225328 Always wait for IPSEC SA resolution in socket contexts.
+Date: Wed, 28 Mar 2007 15:04:51 -0400
+Bugzilla: 225328
+Message-Id: <1175108691.16700.12.camel@localhost.localdomain>
+Changelog: [net] wait for IPSEC SA resolution in socket contexts.
+
+
+BZ 225328
+
+The first packet sent for which an ipsec SA needed to be negotiated is
+being dropped and -EAGAIN is being returned to the application.  This
+causes problems for many applications which don't expect that error
+code.  With the usage of labeled IPSec where every single network
+connection is going to have an IPSec SA this becomes many packets
+dropped for a machine and every application needs to be able to
+handle/retry.  Thanks to David Miller the upstream solution was to just
+block until the SA was ready even for non-blocking sockets in some
+cases.
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=8eb9086f21c73b38b5ca27558db4c91d62d0e70b
+
+Testing in the LSPP for quite some time has shown little trouble.  It is
+noted in the BZ that this patch brought to the front issues where
+multiple SAs were being created instead of just one.  These are not a
+large issue and will mainly be just a memory hog until they time out.
+However, further patches will be coming to solve these problems (aka
+that's a different problem and so a different BZ(s))
+
+-Eric
+
+--- linux-2.6.18.i686/net/ipv6/datagram.c.pre.225328	2007-02-15 17:30:38.000000000 -0500
++++ linux-2.6.18.i686/net/ipv6/datagram.c	2007-02-16 13:39:47.000000000 -0500
+@@ -178,7 +178,7 @@ ipv4_connected:
+ 	if (final_p)
+ 		ipv6_addr_copy(&fl.fl6_dst, final_p);
+ 
+-	if ((err = xfrm_lookup(&dst, &fl, sk, 0)) < 0)
++	if ((err = xfrm_lookup(&dst, &fl, sk, 1)) < 0)
+ 		goto out;
+ 
+ 	/* source address lookup done in ip6_dst_lookup */
+--- linux-2.6.18.i686/net/ipv6/tcp_ipv6.c.pre.225328	2007-02-15 17:30:38.000000000 -0500
++++ linux-2.6.18.i686/net/ipv6/tcp_ipv6.c	2007-02-16 13:39:47.000000000 -0500
+@@ -259,7 +259,7 @@ static int tcp_v6_connect(struct sock *s
+ 	if (final_p)
+ 		ipv6_addr_copy(&fl.fl6_dst, final_p);
+ 
+-	if ((err = xfrm_lookup(&dst, &fl, sk, 0)) < 0)
++	if ((err = xfrm_lookup(&dst, &fl, sk, 1)) < 0)
+ 		goto failure;
+ 
+ 	if (saddr == NULL) {
+--- linux-2.6.18.i686/net/ipv6/raw.c.pre.225328	2007-02-15 17:30:34.000000000 -0500
++++ linux-2.6.18.i686/net/ipv6/raw.c	2007-02-16 13:39:47.000000000 -0500
+@@ -767,7 +767,7 @@ static int rawv6_sendmsg(struct kiocb *i
+ 	if (final_p)
+ 		ipv6_addr_copy(&fl.fl6_dst, final_p);
+ 
+-	if ((err = xfrm_lookup(&dst, &fl, sk, 0)) < 0)
++	if ((err = xfrm_lookup(&dst, &fl, sk, 1)) < 0)
+ 		goto out;
+ 
+ 	if (hlimit < 0) {
+--- linux-2.6.18.i686/net/ipv6/udp.c.pre.225328	2007-02-15 17:30:42.000000000 -0500
++++ linux-2.6.18.i686/net/ipv6/udp.c	2007-02-16 13:43:51.000000000 -0500
+@@ -790,7 +790,7 @@ do_udp_sendmsg:
+ 	if (final_p)
+ 		ipv6_addr_copy(&fl.fl6_dst, final_p);
+ 
+-	if ((err = xfrm_lookup(&dst, &fl, sk, 0)) < 0)
++	if ((err = xfrm_lookup(&dst, &fl, sk, 1)) < 0)
+ 		goto out;
+ 
+ 	if (hlimit < 0) {
+--- linux-2.6.18.i686/net/ipv4/tcp_ipv4.c.pre.225328	2007-02-15 17:30:34.000000000 -0500
++++ linux-2.6.18.i686/net/ipv4/tcp_ipv4.c	2007-02-16 13:39:47.000000000 -0500
+@@ -179,7 +179,7 @@ int tcp_v4_connect(struct sock *sk, stru
+ 	tmp = ip_route_connect(&rt, nexthop, inet->saddr,
+ 			       RT_CONN_FLAGS(sk), sk->sk_bound_dev_if,
+ 			       IPPROTO_TCP,
+-			       inet->sport, usin->sin_port, sk);
++			       inet->sport, usin->sin_port, sk, 1);
+ 	if (tmp < 0)
+ 		return tmp;
+ 
+--- linux-2.6.18.i686/net/ipv4/datagram.c.pre.225328	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.i686/net/ipv4/datagram.c	2007-02-16 13:39:47.000000000 -0500
+@@ -49,7 +49,7 @@ int ip4_datagram_connect(struct sock *sk
+ 	err = ip_route_connect(&rt, usin->sin_addr.s_addr, saddr,
+ 			       RT_CONN_FLAGS(sk), oif,
+ 			       sk->sk_protocol,
+-			       inet->sport, usin->sin_port, sk);
++			       inet->sport, usin->sin_port, sk, 1);
+ 	if (err)
+ 		return err;
+ 	if ((rt->rt_flags & RTCF_BROADCAST) && !sock_flag(sk, SOCK_BROADCAST)) {
+--- linux-2.6.18.i686/net/ipv4/af_inet.c.pre.225328	2007-02-15 17:30:46.000000000 -0500
++++ linux-2.6.18.i686/net/ipv4/af_inet.c	2007-02-16 13:39:47.000000000 -0500
+@@ -1006,7 +1006,7 @@ static int inet_sk_reselect_saddr(struct
+ 			       RT_CONN_FLAGS(sk),
+ 			       sk->sk_bound_dev_if,
+ 			       sk->sk_protocol,
+-			       inet->sport, inet->dport, sk);
++			       inet->sport, inet->dport, sk, 0);
+ 	if (err)
+ 		return err;
+ 
+--- linux-2.6.18.i686/net/ipv4/raw.c.pre.225328	2007-02-15 17:30:34.000000000 -0500
++++ linux-2.6.18.i686/net/ipv4/raw.c	2007-02-16 13:39:47.000000000 -0500
+@@ -484,7 +484,7 @@ static int raw_sendmsg(struct kiocb *ioc
+ 			raw_probe_proto_opt(&fl, msg);
+ 
+ 		security_sk_classify_flow(sk, &fl);
+-		err = ip_route_output_flow(&rt, &fl, sk, !(msg->msg_flags&MSG_DONTWAIT));
++		err = ip_route_output_flow(&rt, &fl, sk, 1);
+ 	}
+ 	if (err)
+ 		goto done;
+--- linux-2.6.18.i686/net/ipv4/udp.c.pre.225328	2007-02-15 17:30:34.000000000 -0500
++++ linux-2.6.18.i686/net/ipv4/udp.c	2007-02-16 13:39:47.000000000 -0500
+@@ -604,7 +604,7 @@ int udp_sendmsg(struct kiocb *iocb, stru
+ 					       { .sport = inet->sport,
+ 						 .dport = dport } } };
+ 		security_sk_classify_flow(sk, &fl);
+-		err = ip_route_output_flow(&rt, &fl, sk, !(msg->msg_flags&MSG_DONTWAIT));
++		err = ip_route_output_flow(&rt, &fl, sk, 1);
+ 		if (err)
+ 			goto out;
+ 
+--- linux-2.6.18.i686/net/dccp/ipv4.c.pre.225328	2007-02-15 17:30:34.000000000 -0500
++++ linux-2.6.18.i686/net/dccp/ipv4.c	2007-02-16 13:39:47.000000000 -0500
+@@ -75,7 +75,7 @@ int dccp_v4_connect(struct sock *sk, str
+ 	tmp = ip_route_connect(&rt, nexthop, inet->saddr,
+ 			       RT_CONN_FLAGS(sk), sk->sk_bound_dev_if,
+ 			       IPPROTO_DCCP,
+-			       inet->sport, usin->sin_port, sk);
++			       inet->sport, usin->sin_port, sk, 1);
+ 	if (tmp < 0)
+ 		return tmp;
+ 
+--- linux-2.6.18.i686/net/dccp/ipv6.c.pre.225328	2007-02-15 17:30:38.000000000 -0500
++++ linux-2.6.18.i686/net/dccp/ipv6.c	2007-02-16 13:39:47.000000000 -0500
+@@ -218,7 +218,7 @@ static int dccp_v6_connect(struct sock *
+ 	if (final_p)
+ 		ipv6_addr_copy(&fl.fl6_dst, final_p);
+ 
+-	err = xfrm_lookup(&dst, &fl, sk, 0);
++	err = xfrm_lookup(&dst, &fl, sk, 1);
+ 	if (err < 0)
+ 		goto failure;
+ 
+--- linux-2.6.18.i686/include/net/route.h.pre.225328	2007-02-15 17:30:33.000000000 -0500
++++ linux-2.6.18.i686/include/net/route.h	2007-02-16 13:41:37.000000000 -0500
+@@ -146,7 +146,8 @@ static inline char rt_tos2priority(u8 to
+ 
+ static inline int ip_route_connect(struct rtable **rp, u32 dst,
+ 				   u32 src, u32 tos, int oif, u8 protocol,
+-				   u16 sport, u16 dport, struct sock *sk)
++				   u16 sport, u16 dport, struct sock *sk,
++				   int flags)
+ {
+ 	struct flowi fl = { .oif = oif,
+ 			    .nl_u = { .ip4_u = { .daddr = dst,
+@@ -168,7 +169,7 @@ static inline int ip_route_connect(struc
+ 		*rp = NULL;
+ 	}
+ 	security_sk_classify_flow(sk, &fl);
+-	return ip_route_output_flow(rp, &fl, sk, 0);
++	return ip_route_output_flow(rp, &fl, sk, flags);
+ }
+ 
+ static inline int ip_route_newports(struct rtable **rp, u8 protocol,
+

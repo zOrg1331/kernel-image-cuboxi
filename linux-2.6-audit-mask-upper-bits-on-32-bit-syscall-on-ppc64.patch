@@ -1,0 +1,64 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH] Audit: 213276 Mask upper bits on 32 bit syscall 	auditing on ppc64
+Date: Mon, 15 Jan 2007 13:41:56 -0500
+Bugzilla: 213276
+Message-Id: <1168886516.11822.31.camel@localhost.localdomain>
+Changelog: Audit: Mask upper bits on 32 bit syscall auditing on ppc64
+
+
+BZ 213276
+
+[AUDIT] Mask 32-bit system call arguments to 32 bits on PPC64
+
+When auditing system calls on ppc64 from a 32 bit userspace application
+it was found that the first time certain syscalls were made (our working
+example was faccesssat) the first argument to that syscall was properly
+reported.  However, all subsequent calls had random information in the
+upper 32 bits of the register and thus were audited as if the call was
+made with a 64 bit address.  After some discussion with dwmw2 he agreed
+that the correct way to fix this is to simply mask out the random
+information in the upper bits of the register. Thus the system call
+entry code will clear the high bits of argument registers before
+invoking the system call; don't report whatever noise happens to be in
+the high bits of the register before that happens.
+
+The known test case is shown to work properly with this fix.  It has not
+been submitted upstream but I will be doing that in the next day or two.
+
+-Eric
+
+--- linux-2.6.18.ppc64/arch/powerpc/kernel/ptrace.c.pre.audit.masking	2007-01-14 18:25:28.000000000 -0500
++++ linux-2.6.18.ppc64/arch/powerpc/kernel/ptrace.c	2007-01-14 18:26:09.000000000 -0500
+@@ -714,16 +714,22 @@ void do_syscall_trace_enter(struct pt_re
+ 	if (test_thread_flag(TIF_SYSCALL_TRACE))
+ 		tracehook_report_syscall(regs, 0);
+ 
+-	if (unlikely(current->audit_context))
+-		audit_syscall_entry(
+-#ifdef CONFIG_PPC32
+-				    AUDIT_ARCH_PPC,
+-#else
+-				    test_thread_flag(TIF_32BIT)?AUDIT_ARCH_PPC:AUDIT_ARCH_PPC64,
++	if (unlikely(current->audit_context)) {
++#ifdef CONFIG_PPC64
++		if (!test_thread_flag(TIF_32BIT))
++			audit_syscall_entry(AUDIT_ARCH_PPC64,
++					    regs->gpr[0],
++					    regs->gpr[3], regs->gpr[4],
++					    regs->gpr[5], regs->gpr[6]);
++		else
+ #endif
+-				    regs->gpr[0],
+-				    regs->gpr[3], regs->gpr[4],
+-				    regs->gpr[5], regs->gpr[6]);
++			audit_syscall_entry(AUDIT_ARCH_PPC,
++					    regs->gpr[0],
++					    regs->gpr[3] & 0xffffffff,
++					    regs->gpr[4] & 0xffffffff,
++					    regs->gpr[5] & 0xffffffff,
++					    regs->gpr[6] & 0xffffffff);
++	}
+ }
+ 
+ void do_syscall_trace_leave(struct pt_regs *regs)
+

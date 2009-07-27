@@ -1,0 +1,143 @@
+From: Roland McGrath <roland@redhat.com>
+Date: Tue, 13 Nov 2007 00:33:33 -0800
+Subject: [ppc64] fixes PTRACE_SET_DEBUGREG request
+Message-id: 20071114073249.A80EB26F8DE@magilla.localdomain
+O-Subject: [RHEL5.2 PATCH] RHBZ#253117: powerpc PTRACE_SET_DEBUGREG
+Bugzilla: 253117
+
+This fixes the PTRACE_SET_DEBUGREG request on powerpc.
+It never worked right in RHEL5, a regression from upstream and RHEL4.
+
+Thanks,
+Roland
+
+diff --git a/arch/i386/kernel/ptrace.c b/arch/i386/kernel/ptrace.c
+index 5dc92cb..24c1999 100644
+--- a/arch/i386/kernel/ptrace.c
++++ b/arch/i386/kernel/ptrace.c
+@@ -787,7 +787,7 @@ int arch_ptrace(long *req, struct task_struct *child,
+ 	case PTRACE_SET_THREAD_AREA:
+ 		return ptrace_onereg_access(child, engine,
+ 					    utrace_native_view(current), 3,
+-					    addr, (void __user *)data,
++					    addr, (void __user *)data, NULL,
+ 					    *req == PTRACE_SET_THREAD_AREA);
+ 	}
+ 	return -ENOSYS;
+diff --git a/arch/powerpc/kernel/ptrace.c b/arch/powerpc/kernel/ptrace.c
+index 4056dd1..3f8536e 100644
+--- a/arch/powerpc/kernel/ptrace.c
++++ b/arch/powerpc/kernel/ptrace.c
+@@ -501,11 +501,14 @@ int arch_ptrace(long *request, struct task_struct *child,
+ 					    *request == PPC_PTRACE_SETFPREGS);
+ #ifdef CONFIG_PPC64
+ 	case PTRACE_GET_DEBUGREG:
+-	case PTRACE_SET_DEBUGREG:
+ 		return ptrace_onereg_access(child, engine,
+ 					    utrace_native_view(current), 3,
+ 					    addr, (unsigned long __user *)data,
+-					    *request == PTRACE_SET_DEBUGREG);
++					    NULL, 0);
++	case PTRACE_SET_DEBUGREG:
++		return ptrace_onereg_access(child, engine,
++					    utrace_native_view(current), 3,
++					    addr, NULL, &data, 1);
+ #endif /* CONFIG_PPC64 */
+ #ifdef CONFIG_ALTIVEC
+ 	case PTRACE_GETVRREGS:
+@@ -576,13 +579,15 @@ int arch_compat_ptrace(compat_long_t *request,
+ 		return ptrace_whole_regset(child, engine, data, 2, 1);
+ #endif
+ 	case PTRACE_GET_DEBUGREG:
+-	case PTRACE_SET_DEBUGREG:
+ 		return ptrace_onereg_access(child, engine,
+ 					    utrace_native_view(current), 3,
+ 					    addr,
+-					    (unsigned long __user *)
+-					    (unsigned long) data,
+-					    *request == PTRACE_SET_DEBUGREG);
++					    (u32 __user *) (unsigned long) data,
++					    NULL, 0);
++	case PTRACE_SET_DEBUGREG:
++		return ptrace_onereg_access(child, engine,
++					    utrace_native_view(current), 3,
++					    addr, NULL, &data, 1);
+ 
+ 	/*
+ 	 * Read 4 bytes of the other process' storage
+diff --git a/arch/x86_64/ia32/ptrace32.c b/arch/x86_64/ia32/ptrace32.c
+index 85eef8f..cdd4aaa 100644
+--- a/arch/x86_64/ia32/ptrace32.c
++++ b/arch/x86_64/ia32/ptrace32.c
+@@ -641,6 +641,7 @@ int arch_compat_ptrace(compat_long_t *req, struct task_struct *child,
+ 					    &utrace_ia32_view, 3,
+ 					    addr,
+ 					    (void __user *)(unsigned long)data,
++					    NULL,
+ 					    *req == PTRACE_SET_THREAD_AREA);
+ 	}
+ 	return -ENOSYS;
+diff --git a/arch/x86_64/kernel/ptrace.c b/arch/x86_64/kernel/ptrace.c
+index 68706ad..f0e3e05 100644
+--- a/arch/x86_64/kernel/ptrace.c
++++ b/arch/x86_64/kernel/ptrace.c
+@@ -746,7 +746,7 @@ int arch_ptrace(long *req, struct task_struct *child,
+ 	case PTRACE_SET_THREAD_AREA:
+ 		return ptrace_onereg_access(child, engine,
+ 					    &utrace_ia32_view, 3,
+-					    addr, (void __user *)data,
++					    addr, (void __user *)data, NULL,
+ 					    *req == PTRACE_SET_THREAD_AREA);
+ #endif
+ 		/* normal 64bit interface to access TLS data.
+diff --git a/include/linux/ptrace.h b/include/linux/ptrace.h
+index a11b3df..664f2d9 100644
+--- a/include/linux/ptrace.h
++++ b/include/linux/ptrace.h
+@@ -117,7 +117,7 @@ extern int ptrace_onereg_access(struct task_struct *child,
+ 				struct utrace_attached_engine *engine,
+ 				const struct utrace_regset_view *view,
+ 				int setno, unsigned long regno,
+-				void __user *data, int write);
++				void __user *udata, void *kdata, int write);
+ 
+ 
+ /*
+diff --git a/kernel/ptrace.c b/kernel/ptrace.c
+index aa69d64..136fd85 100644
+--- a/kernel/ptrace.c
++++ b/kernel/ptrace.c
+@@ -721,7 +721,7 @@ ptrace_onereg_access(struct task_struct *target,
+ 		     struct utrace_attached_engine *engine,
+ 		     const struct utrace_regset_view *view,
+ 		     int setno, unsigned long regno,
+-		     void __user *data, int write)
++		     void __user *udata, void *kdata, int write)
+ {
+ 	const struct utrace_regset *regset = utrace_regset(target, engine,
+ 							   view, setno);
+@@ -737,18 +737,20 @@ ptrace_onereg_access(struct task_struct *target,
+ 	pos = (regno - regset->bias) * regset->size;
+ 
+ 	if (write) {
+-		if (!access_ok(VERIFY_READ, data, regset->size))
++		if (kdata == NULL &&
++		    !access_ok(VERIFY_READ, udata, regset->size))
+ 			ret = -EIO;
+ 		else
+ 			ret = (*regset->set)(target, regset, pos, regset->size,
+-					     NULL, data);
++					     kdata, udata);
+ 	}
+ 	else {
+-		if (!access_ok(VERIFY_WRITE, data, regset->size))
++		if (kdata == NULL &&
++		    !access_ok(VERIFY_WRITE, udata, regset->size))
+ 			ret = -EIO;
+ 		else
+ 			ret = (*regset->get)(target, regset, pos, regset->size,
+-					     NULL, data);
++					     kdata, udata);
+ 	}
+ 
+ 	return ret;

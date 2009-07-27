@@ -1,0 +1,29 @@
+From: "Theodore Ts'o" <tytso@mit.edu>
+
+Move the i_pipe pointer into a union that will be shared with i_bdev and
+i_cdev.
+
+Signed-off-by: "Theodore Ts'o" <tytso@mit.edu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ include/linux/fs.h |    5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff -puN include/linux/fs.h~inode-diet-move-i_pipe-into-a-union include/linux/fs.h
+--- a/include/linux/fs.h~inode-diet-move-i_pipe-into-a-union
++++ a/include/linux/fs.h
+@@ -523,9 +523,10 @@ struct inode {
+ #ifdef CONFIG_QUOTA
+ 	struct dquot		*i_dquot[MAXQUOTAS];
+ #endif
+-	/* These three should probably be a union */
+ 	struct list_head	i_devices;
+-	struct pipe_inode_info	*i_pipe;
++	union {
++		struct pipe_inode_info	*i_pipe;
++	};
+ 	struct block_device	*i_bdev;
+ 	struct cdev		*i_cdev;
+ 	int			i_cindex;
+_

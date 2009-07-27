@@ -1,0 +1,85 @@
+This patch is a bit weird and is a temporaral workaround.
+Clearer way is to do correct bind() or use routing.
+
+Signed-off-by: Denis V. Lunev <den@parallels.com>
+--- ./include/linux/sunrpc/debug.h.nfs1	2008-01-28 18:56:49.000000000 +0300
++++ ./include/linux/sunrpc/debug.h	2008-03-06 13:46:41.000000000 +0300
+@@ -93,6 +93,7 @@ enum {
+ 	CTL_NLMDEBUG,
+ 	CTL_SLOTTABLE_UDP,
+ 	CTL_SLOTTABLE_TCP,
++	CTL_RPC_SRC_ADDR,
+ 	CTL_MIN_RESVPORT,
+ 	CTL_MAX_RESVPORT,
+ 	CTL_ABORT_TIMEOUT,
+--- ./include/linux/sunrpc/xprt.h.nfs1	2008-01-28 18:56:49.000000000 +0300
++++ ./include/linux/sunrpc/xprt.h	2008-03-06 13:46:41.000000000 +0300
+@@ -19,6 +19,8 @@
+ extern unsigned int xprt_udp_slot_table_entries;
+ extern unsigned int xprt_tcp_slot_table_entries;
+ 
++extern __u32 xprt_rpc_src_addr;
++
+ #define RPC_MIN_SLOT_TABLE	(2U)
+ #define RPC_DEF_SLOT_TABLE	(16U)
+ #define RPC_MAX_SLOT_TABLE	(128U)
+--- ./net/sunrpc/sunrpc_syms.c.nfs1	2008-01-28 18:56:37.000000000 +0300
++++ ./net/sunrpc/sunrpc_syms.c	2008-03-06 13:46:41.000000000 +0300
+@@ -59,6 +59,9 @@ EXPORT_SYMBOL(rpc_mkpipe);
+ EXPORT_SYMBOL(xprt_create_proto);
+ EXPORT_SYMBOL(xprt_set_timeout);
+ 
++/* user specified src IP addr for RPC traffic */
++EXPORT_SYMBOL(xprt_rpc_src_addr);
++
+ /* Client credential cache */
+ EXPORT_SYMBOL(rpcauth_register);
+ EXPORT_SYMBOL(rpcauth_unregister);
+--- ./net/sunrpc/sysctl.c.nfs1	2008-01-28 18:56:51.000000000 +0300
++++ ./net/sunrpc/sysctl.c	2008-03-06 13:46:41.000000000 +0300
+@@ -214,6 +214,15 @@ static ctl_table debug_table[] = {
+ 		.extra1		= &xprt_min_abort_timeout,
+ 		.extra2		= &xprt_max_abort_timeout
+ 	},
++	{
++		.ctl_name	= CTL_RPC_SRC_ADDR,
++		.procname	= "rpc_src_addr",
++		.data		= &xprt_rpc_src_addr,
++		.maxlen		= sizeof(__u32),
++		.mode		= 0644,
++		/* should this be &proc_dointvec_minmax? its a __u32. */
++		.proc_handler	= &proc_dointvec_minmax,
++	},
+ 	{ .ctl_name = 0 }
+ };
+ 
+--- ./net/sunrpc/xprt.c.nfs1	2008-01-28 18:56:51.000000000 +0300
++++ ./net/sunrpc/xprt.c	2008-03-06 13:46:41.000000000 +0300
+@@ -407,6 +407,8 @@ void xprt_set_retrans_timeout_def(struct
+ 	task->tk_timeout = task->tk_rqstp->rq_timeout;
+ }
+ 
++__u32 xprt_rpc_src_addr = 0;
++
+ /*
+  * xprt_set_retrans_timeout_rtt - set a request's retransmit timeout
+  * @task: task whose timeout is to be set
+--- ./net/sunrpc/xprtsock.c.nfs1	2008-01-28 18:56:51.000000000 +0300
++++ ./net/sunrpc/xprtsock.c	2008-03-06 15:49:44.000000000 +0300
+@@ -1198,6 +1198,16 @@ static void xs_tcp_connect_worker(void *
+ 		write_unlock_bh(&sk->sk_callback_lock);
+ 	}
+ 
++	/* wait, before we connect, if there's a user specified src
++	   addr, honour it */
++	if (xprt_rpc_src_addr != 0 && ve_is_super(xprt->owner_env)) {
++		struct sock *sk = sock->sk;
++		struct inet_sock *inet = inet_sk(sk);
++		lock_sock(sk);
++		inet->rcv_saddr = inet->saddr = xprt_rpc_src_addr;
++		release_sock(sk);
++	}
++
+ 	/* Tell the socket layer to start connecting... */
+ 	xprt->stat.connect_count++;
+ 	xprt->stat.connect_start = jiffies;

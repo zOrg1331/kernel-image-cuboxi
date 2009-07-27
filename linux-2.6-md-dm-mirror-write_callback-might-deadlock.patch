@@ -1,0 +1,43 @@
+From: Jonathan Brassow <jbrassow@redhat.com>
+Date: Mon, 17 Dec 2007 16:17:29 -0600
+Subject: [md] dm-mirror: write_callback might deadlock
+Message-id: 1197929849.28090.16.camel@hydrogen
+O-Subject: [RHEL 5.2 PATCH] dm-mirror: spinlock in write_callback has the potential for deadlock
+Bugzilla: 247877
+
+Bug #247877:
+
+write_callback is in dm-raid1.c is called when an I/O completes.  It
+calls spin_lock(&ms->lock).  Since write_callback could be called from
+either process or interrupt context, we need to use spin_lock_irqsave().
+
+ brassow
+
+Acked-by: Alasdair G Kergon <agk@redhat.com>
+
+diff --git a/drivers/md/dm-raid1.c b/drivers/md/dm-raid1.c
+index b22ab8f..9810fe3 100644
+--- a/drivers/md/dm-raid1.c
++++ b/drivers/md/dm-raid1.c
+@@ -1063,6 +1063,7 @@ static void write_callback(unsigned long error, void *context)
+ 	struct mirror_set *ms;
+ 	int uptodate = 0;
+ 	int should_wake = 0;
++	unsigned long flags;
+ 
+ 	ms = (bio_get_m(bio))->ms;
+ 	bio_set_m(bio, NULL);
+@@ -1087,11 +1088,11 @@ static void write_callback(unsigned long error, void *context)
+ 			 * events can block, we need to do it in
+ 			 * the main thread.
+ 			 */
+-			spin_lock(&ms->lock);
++			spin_lock_irqsave(&ms->lock, flags);
+ 			if (!ms->failures.head)
+ 				should_wake = 1;
+ 			bio_list_add(&ms->failures, bio);
+-			spin_unlock(&ms->lock);
++			spin_unlock_irqrestore(&ms->lock, flags);
+ 			if (should_wake)
+ 				wake(ms);
+ 			return;

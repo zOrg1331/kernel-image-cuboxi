@@ -1,0 +1,1051 @@
+Date: Thu, 21 Sep 2006 12:19:53 -0400
+From: Tom Coughlan <coughlan@redhat.com>
+Subject: [RHEL 5 patch 2/3] Update FC transport and Emulex lpfc Fibre
+	Channel Driver
+
+Update the lpfc driver to  8.1.10
+
+- Add support to post events via new FC event interfaces 
+ - Add support to return adapter symbolic name (now that attribute is dynamic)
+ - Add support for new dev_loss_tmo callback 
+ - Add support for the new fast_io_fail callback
+ - Add support for a new lpfc soft_wwpn sysfs attribute
+ - Change version number to 8.1.10
+
+diff -up linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_attr.c linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_attr.c
+--- linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_attr.c
++++ linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_attr.c
+@@ -39,6 +39,9 @@
+ #include "lpfc_compat.h"
+ #include "lpfc_crtn.h"
+ 
++#define LPFC_DEF_DEVLOSS_TMO 30
++#define LPFC_MIN_DEVLOSS_TMO 1
++#define LPFC_MAX_DEVLOSS_TMO 255
+ 
+ static void
+ lpfc_jedec_to_ascii(int incr, char hdw[])
+@@ -548,6 +551,119 @@ static CLASS_DEVICE_ATTR(board_mode, S_I
+ 			 lpfc_board_mode_show, lpfc_board_mode_store);
+ static CLASS_DEVICE_ATTR(issue_reset, S_IWUSR, NULL, lpfc_issue_reset);
+ 
++
++static char *lpfc_soft_wwpn_key = "C99G71SL8032A";
++
++static ssize_t
++lpfc_soft_wwpn_enable_store(struct class_device *cdev, const char *buf,
++				size_t count)
++{
++	struct Scsi_Host *host = class_to_shost(cdev);
++	struct lpfc_hba *phba = (struct lpfc_hba*)host->hostdata;
++	unsigned int cnt = count;
++
++	/*
++	 * We're doing a simple sanity check for soft_wwpn setting.
++	 * We require that the user write a specific key to enable
++	 * the soft_wwpn attribute to be settable. Once the attribute
++	 * is written, the enable key resets. If further updates are
++	 * desired, the key must be written again to re-enable the
++	 * attribute.
++	 *
++	 * The "key" is not secret - it is a hardcoded string shown
++	 * here. The intent is to protect against the random user or
++	 * application that is just writing attributes.
++	 */
++
++	/* count may include a LF at end of string */
++	if (buf[cnt-1] == '\n')
++		cnt--;
++
++	if ((cnt != strlen(lpfc_soft_wwpn_key)) ||
++	    (strncmp(buf, lpfc_soft_wwpn_key, strlen(lpfc_soft_wwpn_key)) != 0))
++		return -EINVAL;
++
++	phba->soft_wwpn_enable = 1;
++	return count;
++}
++static CLASS_DEVICE_ATTR(lpfc_soft_wwpn_enable, S_IWUSR, NULL,
++				lpfc_soft_wwpn_enable_store);
++
++static ssize_t
++lpfc_soft_wwpn_show(struct class_device *cdev, char *buf)
++{
++	struct Scsi_Host *host = class_to_shost(cdev);
++	struct lpfc_hba *phba = (struct lpfc_hba*)host->hostdata;
++	return snprintf(buf, PAGE_SIZE, "0x%llx\n", phba->cfg_soft_wwpn);
++}
++
++
++static ssize_t
++lpfc_soft_wwpn_store(struct class_device *cdev, const char *buf, size_t count)
++{
++	struct Scsi_Host *host = class_to_shost(cdev);
++	struct lpfc_hba *phba = (struct lpfc_hba*)host->hostdata;
++	struct completion online_compl;
++	int stat1=0, stat2=0;
++	unsigned int i, j, cnt=count;
++	u8 wwpn[8];
++
++	/* count may include a LF at end of string */
++	if (buf[cnt-1] == '\n')
++		cnt--;
++
++	if (!phba->soft_wwpn_enable || (cnt < 16) || (cnt > 18) ||
++	    ((cnt == 17) && (*buf++ != 'x')) ||
++	    ((cnt == 18) && ((*buf++ != '0') || (*buf++ != 'x'))))
++		return -EINVAL;
++
++	phba->soft_wwpn_enable = 0;
++
++	memset(wwpn, 0, sizeof(wwpn));
++
++	/* Validate and store the new name */
++	for (i=0, j=0; i < 16; i++) {
++		if ((*buf >= 'a') && (*buf <= 'f'))
++			j = ((j << 4) | ((*buf++ -'a') + 10));
++		else if ((*buf >= 'A') && (*buf <= 'F'))
++			j = ((j << 4) | ((*buf++ -'A') + 10));
++		else if ((*buf >= '0') && (*buf <= '9'))
++			j = ((j << 4) | (*buf++ -'0'));
++		else
++			return -EINVAL;
++		if (i % 2) {
++			wwpn[i/2] = j & 0xff;
++			j = 0;
++		}
++	}
++	phba->cfg_soft_wwpn = wwn_to_u64(wwpn);
++	fc_host_port_name(host) = phba->cfg_soft_wwpn;
++
++	dev_printk(KERN_NOTICE, &phba->pcidev->dev,
++		   "lpfc%d: Reinitializing to use soft_wwpn\n", phba->brd_no);
++
++	init_completion(&online_compl);
++	lpfc_workq_post_event(phba, &stat1, &online_compl, LPFC_EVT_OFFLINE);
++	wait_for_completion(&online_compl);
++	if (stat1)
++		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
++			"%d:0463 lpfc_soft_wwpn attribute set failed to reinit "
++			"adapter - %d\n", phba->brd_no, stat1);
++
++	init_completion(&online_compl);
++	lpfc_workq_post_event(phba, &stat2, &online_compl, LPFC_EVT_ONLINE);
++	wait_for_completion(&online_compl);
++	if (stat2)
++		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
++			"%d:0464 lpfc_soft_wwpn attribute set failed to reinit "
++			"adapter - %d\n", phba->brd_no, stat2);
++
++	return (stat1 || stat2) ? -EIO : count;
++}
++static CLASS_DEVICE_ATTR(lpfc_soft_wwpn, S_IRUGO | S_IWUSR,\
++			 lpfc_soft_wwpn_show, lpfc_soft_wwpn_store);
++
++
+ static int lpfc_poll = 0;
+ module_param(lpfc_poll, int, 0);
+ MODULE_PARM_DESC(lpfc_poll, "FCP ring polling mode control:"
+@@ -559,6 +675,123 @@ static CLASS_DEVICE_ATTR(lpfc_poll, S_IR
+ 			 lpfc_poll_show, lpfc_poll_store);
+ 
+ /*
++# lpfc_nodev_tmo: If set, it will hold all I/O errors on devices that disappear
++# until the timer expires. Value range is [0,255]. Default value is 30.
++*/
++static int lpfc_nodev_tmo = LPFC_DEF_DEVLOSS_TMO;
++static int lpfc_devloss_tmo = LPFC_DEF_DEVLOSS_TMO;
++module_param(lpfc_nodev_tmo, int, 0);
++MODULE_PARM_DESC(lpfc_nodev_tmo,
++		 "Seconds driver will hold I/O waiting "
++		 "for a device to come back");
++static ssize_t
++lpfc_nodev_tmo_show(struct class_device *cdev, char *buf)
++{
++	struct Scsi_Host *host = class_to_shost(cdev);
++	struct lpfc_hba *phba = (struct lpfc_hba*)host->hostdata;
++	int val = 0;
++	val = phba->cfg_devloss_tmo;
++	return snprintf(buf, PAGE_SIZE, "%d\n",
++			phba->cfg_devloss_tmo);
++}
++
++static int
++lpfc_nodev_tmo_init(struct lpfc_hba *phba, int val)
++{
++	static int warned;
++	if (phba->cfg_devloss_tmo !=  LPFC_DEF_DEVLOSS_TMO) {
++		phba->cfg_nodev_tmo = phba->cfg_devloss_tmo;
++		if (!warned && val != LPFC_DEF_DEVLOSS_TMO) {
++			warned = 1;
++			lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
++					"%d:0402 Ignoring nodev_tmo module "
++					"parameter because devloss_tmo is"
++					" set.\n",
++					phba->brd_no);
++		}
++		return 0;
++	}
++
++	if (val >= LPFC_MIN_DEVLOSS_TMO && val <= LPFC_MAX_DEVLOSS_TMO) {
++		phba->cfg_nodev_tmo = val;
++		phba->cfg_devloss_tmo = val;
++		return 0;
++	}
++	lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
++			"%d:0400 lpfc_nodev_tmo attribute cannot be set to %d, "
++			"allowed range is [%d, %d]\n",
++			phba->brd_no, val,
++			LPFC_MIN_DEVLOSS_TMO, LPFC_MAX_DEVLOSS_TMO);
++	phba->cfg_nodev_tmo = LPFC_DEF_DEVLOSS_TMO;
++	return -EINVAL;
++}
++
++static int
++lpfc_nodev_tmo_set(struct lpfc_hba *phba, int val)
++{
++	if (phba->dev_loss_tmo_changed ||
++		(lpfc_devloss_tmo != LPFC_DEF_DEVLOSS_TMO)) {
++		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
++				"%d:0401 Ignoring change to nodev_tmo "
++				"because devloss_tmo is set.\n",
++				phba->brd_no);
++		return 0;
++	}
++
++	if (val >= LPFC_MIN_DEVLOSS_TMO && val <= LPFC_MAX_DEVLOSS_TMO) {
++		phba->cfg_nodev_tmo = val;
++		phba->cfg_devloss_tmo = val;
++		return 0;
++	}
++
++	lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
++			"%d:0403 lpfc_nodev_tmo attribute cannot be set to %d, "
++			"allowed range is [%d, %d]\n",
++			phba->brd_no, val, LPFC_MIN_DEVLOSS_TMO,
++			LPFC_MAX_DEVLOSS_TMO);
++	return -EINVAL;
++}
++
++lpfc_param_store(nodev_tmo)
++
++static CLASS_DEVICE_ATTR(lpfc_nodev_tmo, S_IRUGO | S_IWUSR,
++			 lpfc_nodev_tmo_show, lpfc_nodev_tmo_store);
++
++/*
++# lpfc_devloss_tmo: If set, it will hold all I/O errors on devices that
++# disappear until the timer expires. Value range is [0,255]. Default
++# value is 30.
++*/
++module_param(lpfc_devloss_tmo, int, 0);
++MODULE_PARM_DESC(lpfc_devloss_tmo,
++		 "Seconds driver will hold I/O waiting "
++		 "for a device to come back");
++lpfc_param_init(devloss_tmo, LPFC_DEF_DEVLOSS_TMO,
++		LPFC_MIN_DEVLOSS_TMO, LPFC_MAX_DEVLOSS_TMO)
++lpfc_param_show(devloss_tmo)
++static int
++lpfc_devloss_tmo_set(struct lpfc_hba *phba, int val)
++{
++	if (val >= LPFC_MIN_DEVLOSS_TMO && val <= LPFC_MAX_DEVLOSS_TMO) {
++		phba->cfg_nodev_tmo = val;
++		phba->cfg_devloss_tmo = val;
++		phba->dev_loss_tmo_changed = 1;
++		return 0;
++	}
++
++	lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
++			"%d:0404 lpfc_devloss_tmo attribute cannot be set to"
++			" %d, allowed range is [%d, %d]\n",
++			phba->brd_no, val, LPFC_MIN_DEVLOSS_TMO,
++			LPFC_MAX_DEVLOSS_TMO);
++	return -EINVAL;
++}
++
++lpfc_param_store(devloss_tmo)
++static CLASS_DEVICE_ATTR(lpfc_devloss_tmo, S_IRUGO | S_IWUSR,
++	lpfc_devloss_tmo_show, lpfc_devloss_tmo_store);
++
++/*
+ # lpfc_log_verbose: Only turn this flag on if you are willing to risk being
+ # deluged with LOTS of information.
+ # You can set a bit mask to record specific types of verbose messages:
+@@ -617,14 +850,6 @@ LPFC_ATTR_R(scan_down, 1, 0, 1,
+ 	     "Start scanning for devices from highest ALPA to lowest");
+ 
+ /*
+-# lpfc_nodev_tmo: If set, it will hold all I/O errors on devices that disappear
+-# until the timer expires. Value range is [0,255]. Default value is 30.
+-# NOTE: this MUST be less then the SCSI Layer command timeout - 1.
+-*/
+-LPFC_ATTR_RW(nodev_tmo, 30, 0, 255,
+-	     "Seconds driver will hold I/O waiting for a device to come back");
+-
+-/*
+ # lpfc_topology:  link topology for init link
+ #            0x0  = attempt loop mode then point-to-point
+ #            0x01 = internal loopback mode
+@@ -720,6 +945,7 @@ LPFC_ATTR_R(max_luns, 255, 0, 65535,
+ LPFC_ATTR_RW(poll_tmo, 10, 1, 255,
+ 	     "Milliseconds driver will wait between polling FCP ring");
+ 
++
+ struct class_device_attribute *lpfc_host_attrs[] = {
+ 	&class_device_attr_info,
+ 	&class_device_attr_serialnum,
+@@ -737,6 +963,7 @@ struct class_device_attribute *lpfc_host
+ 	&class_device_attr_lpfc_lun_queue_depth,
+ 	&class_device_attr_lpfc_hba_queue_depth,
+ 	&class_device_attr_lpfc_nodev_tmo,
++	&class_device_attr_lpfc_devloss_tmo,
+ 	&class_device_attr_lpfc_fcp_class,
+ 	&class_device_attr_lpfc_use_adisc,
+ 	&class_device_attr_lpfc_ack0,
+@@ -754,6 +981,8 @@ struct class_device_attribute *lpfc_host
+ 	&class_device_attr_issue_reset,
+ 	&class_device_attr_lpfc_poll,
+ 	&class_device_attr_lpfc_poll_tmo,
++	&class_device_attr_lpfc_soft_wwpn,
++	&class_device_attr_lpfc_soft_wwpn_enable,
+ 	NULL,
+ };
+ 
+@@ -1204,6 +1433,15 @@ lpfc_get_host_fabric_name (struct Scsi_H
+ 	fc_host_fabric_name(shost) = node_name;
+ }
+ 
++static void
++lpfc_get_host_symbolic_name (struct Scsi_Host *shost)
++{
++	struct lpfc_hba *phba = (struct lpfc_hba*)shost->hostdata;
++
++	spin_lock_irq(shost->host_lock);
++	lpfc_get_hba_sym_node_name(phba, fc_host_symbolic_name(shost));
++	spin_unlock_irq(shost->host_lock);
++}
+ 
+ static struct fc_host_statistics *
+ lpfc_get_stats(struct Scsi_Host *shost)
+@@ -1441,27 +1679,12 @@ lpfc_get_starget_port_name(struct scsi_t
+ }
+ 
+ static void
+-lpfc_get_rport_loss_tmo(struct fc_rport *rport)
+-{
+-	/*
+-	 * Return the driver's global value for device loss timeout plus
+-	 * five seconds to allow the driver's nodev timer to run.
+-	 */
+-	rport->dev_loss_tmo = lpfc_nodev_tmo + 5;
+-}
+-
+-static void
+ lpfc_set_rport_loss_tmo(struct fc_rport *rport, uint32_t timeout)
+ {
+-	/*
+-	 * The driver doesn't have a per-target timeout setting.  Set
+-	 * this value globally. lpfc_nodev_tmo should be greater then 0.
+-	 */
+ 	if (timeout)
+-		lpfc_nodev_tmo = timeout;
++		rport->dev_loss_tmo = timeout;
+ 	else
+-		lpfc_nodev_tmo = 1;
+-	rport->dev_loss_tmo = lpfc_nodev_tmo + 5;
++		rport->dev_loss_tmo = 1;
+ }
+ 
+ 
+@@ -1486,7 +1709,6 @@ struct fc_function_template lpfc_transpo
+ 	.show_host_port_name = 1,
+ 	.show_host_supported_classes = 1,
+ 	.show_host_supported_fc4s = 1,
+-	.show_host_symbolic_name = 1,
+ 	.show_host_supported_speeds = 1,
+ 	.show_host_maxframe_size = 1,
+ 
+@@ -1509,6 +1731,9 @@ struct fc_function_template lpfc_transpo
+ 	.get_host_fabric_name = lpfc_get_host_fabric_name,
+ 	.show_host_fabric_name = 1,
+ 
++	.get_host_symbolic_name = lpfc_get_host_symbolic_name,
++	.show_host_symbolic_name = 1,
++
+ 	/*
+ 	 * The LPFC driver treats linkdown handling as target loss events
+ 	 * so there are no sysfs handlers for link_down_tmo.
+@@ -1521,7 +1746,6 @@ struct fc_function_template lpfc_transpo
+ 	.show_rport_maxframe_size = 1,
+ 	.show_rport_supported_classes = 1,
+ 
+-	.get_rport_dev_loss_tmo = lpfc_get_rport_loss_tmo,
+ 	.set_rport_dev_loss_tmo = lpfc_set_rport_loss_tmo,
+ 	.show_rport_dev_loss_tmo = 1,
+ 
+@@ -1535,6 +1759,8 @@ struct fc_function_template lpfc_transpo
+ 	.show_starget_port_name = 1,
+ 
+ 	.issue_fc_host_lip = lpfc_issue_lip,
++	.dev_loss_tmo_callbk = lpfc_dev_loss_tmo_callbk,
++	.terminate_rport_io = lpfc_terminate_rport_io,
+ };
+ 
+ void
+@@ -1550,14 +1776,15 @@ lpfc_get_cfgparam(struct lpfc_hba *phba)
+ 	lpfc_ack0_init(phba, lpfc_ack0);
+ 	lpfc_topology_init(phba, lpfc_topology);
+ 	lpfc_scan_down_init(phba, lpfc_scan_down);
+-	lpfc_nodev_tmo_init(phba, lpfc_nodev_tmo);
+ 	lpfc_link_speed_init(phba, lpfc_link_speed);
+ 	lpfc_fdmi_on_init(phba, lpfc_fdmi_on);
+ 	lpfc_discovery_threads_init(phba, lpfc_discovery_threads);
+ 	lpfc_max_luns_init(phba, lpfc_max_luns);
+ 	lpfc_poll_tmo_init(phba, lpfc_poll_tmo);
+-
++	lpfc_devloss_tmo_init(phba, lpfc_devloss_tmo);
++	lpfc_nodev_tmo_init(phba, lpfc_nodev_tmo);
+ 	phba->cfg_poll = lpfc_poll;
++	phba->cfg_soft_wwpn = 0L;
+ 
+ 	/*
+ 	 * The total number of segments is the configuration value plus 2
+diff -up linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_crtn.h linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_crtn.h
+--- linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_crtn.h
++++ linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_crtn.h
+@@ -18,6 +18,7 @@
+  * included with this package.                                     *
+  *******************************************************************/
+ 
++struct fc_rport;
+ void lpfc_dump_mem(struct lpfc_hba *, LPFC_MBOXQ_t *, uint16_t);
+ void lpfc_read_nv(struct lpfc_hba *, LPFC_MBOXQ_t *);
+ int lpfc_read_la(struct lpfc_hba * phba, LPFC_MBOXQ_t * pmb,
+@@ -200,6 +201,8 @@ extern struct scsi_host_template lpfc_te
+ extern struct fc_function_template lpfc_transport_functions;
+ 
+ void lpfc_get_hba_sym_node_name(struct lpfc_hba * phba, uint8_t * symbp);
++void lpfc_terminate_rport_io(struct fc_rport *);
++void lpfc_dev_loss_tmo_callbk(struct fc_rport *rport);
+ 
+ #define ScsiResult(host_code, scsi_code) (((host_code) << 16) | scsi_code)
+ #define HBA_EVENT_RSCN                   5
+diff -up linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_ct.c linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_ct.c
+--- linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_ct.c
++++ linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_ct.c
+@@ -324,7 +324,6 @@ lpfc_ns_rsp(struct lpfc_hba * phba, stru
+ 	struct lpfc_sli_ct_request *Response =
+ 		(struct lpfc_sli_ct_request *) mp->virt;
+ 	struct lpfc_nodelist *ndlp = NULL;
+-	struct lpfc_nodelist *next_ndlp;
+ 	struct lpfc_dmabuf *mlast, *next_mp;
+ 	uint32_t *ctptr = (uint32_t *) & Response->un.gid.PortType;
+ 	uint32_t Did;
+@@ -399,30 +398,6 @@ nsout1:
+  	 * current driver state.
+  	 */
+ 	if (phba->hba_state == LPFC_HBA_READY) {
+-
+-		/*
+-		 * Switch ports that connect a loop of multiple targets need
+-		 * special consideration.  The driver wants to unregister the
+-		 * rpi only on the target that was pulled from the loop.  On
+-		 * RSCN, the driver wants to rediscover an NPort only if the
+-		 * driver flagged it as NLP_NPR_2B_DISC.  Provided adisc is
+-		 * not enabled and the NPort is not capable of retransmissions
+-		 * (FC Tape) prevent timing races with the scsi error handler by
+-		 * unregistering the Nport's RPI.  This action causes all
+-		 * outstanding IO to flush back to the midlayer.
+-		 */
+-		list_for_each_entry_safe(ndlp, next_ndlp, &phba->fc_npr_list,
+-					 nlp_listp) {
+-			if (!(ndlp->nlp_flag & NLP_NPR_2B_DISC) &&
+-			    (lpfc_rscn_payload_check(phba, ndlp->nlp_DID))) {
+-				if ((phba->cfg_use_adisc == 0) &&
+-				    !(ndlp->nlp_fcp_info &
+-				      NLP_FCP_2_DEVICE)) {
+-					lpfc_unreg_rpi(phba, ndlp);
+-					ndlp->nlp_flag &= ~NLP_NPR_ADISC;
+-				}
+-			}
+-		}
+ 		lpfc_els_flush_rscn(phba);
+ 		spin_lock_irq(phba->host->host_lock);
+ 		phba->fc_flag |= FC_RSCN_MODE; /* we are still in RSCN mode */
+diff -up linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_disc.h linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_disc.h
+--- linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_disc.h
++++ linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_disc.h
+@@ -30,7 +30,6 @@
+ 
+ /* worker thread events */
+ enum lpfc_work_type {
+-	LPFC_EVT_NODEV_TMO,
+ 	LPFC_EVT_ONLINE,
+ 	LPFC_EVT_OFFLINE,
+ 	LPFC_EVT_WARM_START,
+@@ -74,11 +73,9 @@ struct lpfc_nodelist {
+ #define NLP_FCP_2_DEVICE   0x10			/* FCP-2 device */
+ 
+ 	struct timer_list   nlp_delayfunc;	/* Used for delayed ELS cmds */
+-	struct timer_list   nlp_tmofunc;	/* Used for nodev tmo */
+ 	struct fc_rport *rport;			/* Corresponding FC transport
+ 						   port structure */
+ 	struct lpfc_hba      *nlp_phba;
+-	struct lpfc_work_evt nodev_timeout_evt;
+ 	struct lpfc_work_evt els_retry_evt;
+ 	unsigned long last_ramp_up_time;        /* jiffy of last ramp up */
+ 	unsigned long last_q_full_time;		/* jiffy of last queue full */
+@@ -102,7 +99,6 @@ struct lpfc_nodelist {
+ #define NLP_LOGO_SND       0x100	/* sent LOGO request for this entry */
+ #define NLP_RNID_SND       0x400	/* sent RNID request for this entry */
+ #define NLP_ELS_SND_MASK   0x7e0	/* sent ELS request for this entry */
+-#define NLP_NODEV_TMO      0x10000	/* nodev timeout is running for node */
+ #define NLP_DELAY_TMO      0x20000	/* delay timeout is running for node */
+ #define NLP_NPR_2B_DISC    0x40000	/* node is included in num_disc_nodes */
+ #define NLP_RCV_PLOGI      0x80000	/* Rcv'ed PLOGI from remote system */
+@@ -169,7 +165,7 @@ struct lpfc_nodelist {
+  */
+ /*
+  * For a Link Down, all nodes on the ADISC, PLOGI, unmapped or mapped
+- * lists will receive a DEVICE_RECOVERY event. If the linkdown or nodev timers
++ * lists will receive a DEVICE_RECOVERY event. If the linkdown or devloss timers
+  * expire, all effected nodes will receive a DEVICE_RM event.
+  */
+ /*
+diff -up linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_els.c linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_els.c
+--- linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_els.c
++++ linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_els.c
+@@ -2506,6 +2506,7 @@ lpfc_els_rcv_rscn(struct lpfc_hba * phba
+ 	uint32_t *lp;
+ 	IOCB_t *icmd;
+ 	uint32_t payload_len, cmd;
++	int i;
+ 
+ 	icmd = &cmdiocb->iocb;
+ 	pcmd = (struct lpfc_dmabuf *) cmdiocb->context2;
+@@ -2524,6 +2525,10 @@ lpfc_els_rcv_rscn(struct lpfc_hba * phba
+ 			phba->brd_no,
+ 			phba->fc_flag, payload_len, *lp, phba->fc_rscn_id_cnt);
+ 
++	for (i = 0; i < payload_len/sizeof(uint32_t); i++)
++		fc_host_post_event(phba->host, fc_get_event_number(),
++			FCH_EVT_RSCN, lp[i]);
++
+ 	/* If we are about to begin discovery, just ACC the RSCN.
+ 	 * Discovery processing will satisfy it.
+ 	 */
+diff -up linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc.h linux-2.6.17.i386/drivers/scsi/lpfc/lpfc.h
+--- linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc.h
++++ linux-2.6.17.i386/drivers/scsi/lpfc/lpfc.h
+@@ -285,6 +285,7 @@ struct lpfc_hba {
+ 	uint32_t cfg_log_verbose;
+ 	uint32_t cfg_lun_queue_depth;
+ 	uint32_t cfg_nodev_tmo;
++	uint32_t cfg_devloss_tmo;
+ 	uint32_t cfg_hba_queue_depth;
+ 	uint32_t cfg_fcp_class;
+ 	uint32_t cfg_use_adisc;
+@@ -302,6 +303,9 @@ struct lpfc_hba {
+ 	uint32_t cfg_poll_tmo;
+ 	uint32_t cfg_sg_seg_cnt;
+ 	uint32_t cfg_sg_dma_buf_size;
++	uint64_t cfg_soft_wwpn;
++
++	uint32_t dev_loss_tmo_changed;
+ 
+ 	lpfc_vpd_t vpd;		/* vital product data */
+ 
+@@ -351,6 +355,8 @@ struct lpfc_hba {
+ #define VPD_PORT            0x8         /* valid vpd port data */
+ #define VPD_MASK            0xf         /* mask for any vpd data */
+ 
++	uint8_t soft_wwpn_enable;
++
+ 	struct timer_list fcp_poll_timer;
+ 	struct timer_list els_tmofunc;
+ 
+@@ -391,3 +397,5 @@ struct rnidrsp {
+ 	struct list_head list;
+ 	uint32_t data;
+ };
++
++#define FC_REG_DUMP_EVENT	0x10	/* Register for Dump events */
+diff -up linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_hbadisc.c linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_hbadisc.c
+--- linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_hbadisc.c
++++ linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -56,28 +56,63 @@ static uint8_t lpfcAlpaArray[] = {
+ 
+ static void lpfc_disc_timeout_handler(struct lpfc_hba *);
+ 
+-static void
+-lpfc_process_nodev_timeout(struct lpfc_hba *phba, struct lpfc_nodelist *ndlp)
++void
++lpfc_terminate_rport_io(struct fc_rport *rport)
+ {
+-	uint8_t *name = (uint8_t *)&ndlp->nlp_portname;
+-	int warn_on = 0;
++	struct lpfc_rport_data *rdata;
++	struct lpfc_nodelist * ndlp;
++	struct lpfc_hba *phba;
+ 
+-	spin_lock_irq(phba->host->host_lock);
+-	if (!(ndlp->nlp_flag & NLP_NODEV_TMO)) {
+-		spin_unlock_irq(phba->host->host_lock);
++	rdata = rport->dd_data;
++	ndlp = rdata->pnode;
++
++	if (!ndlp) {
++		if (rport->roles & FC_RPORT_ROLE_FCP_TARGET)
++			printk(KERN_ERR "Cannot find remote node"
++			" to terminate I/O Data x%x\n",
++			rport->port_id);
+ 		return;
+ 	}
+ 
+-	/*
+-	 * If a discovery event readded nodev_timer after timer
+-	 * firing and before processing the timer, cancel the
+-	 * nlp_tmofunc.
+-	 */
+-	spin_unlock_irq(phba->host->host_lock);
+-	del_timer_sync(&ndlp->nlp_tmofunc);
++	phba = ndlp->nlp_phba;
++
+ 	spin_lock_irq(phba->host->host_lock);
++	if (ndlp->nlp_sid != NLP_NO_SID) {
++		lpfc_sli_abort_iocb(phba, &phba->sli.ring[phba->sli.fcp_ring],
++			ndlp->nlp_sid, 0, 0, LPFC_CTX_TGT);
++	}
++	spin_unlock_irq(phba->host->host_lock);
+ 
+-	ndlp->nlp_flag &= ~NLP_NODEV_TMO;
++	return;
++}
++
++/*
++ * This function will be called when dev_loss_tmo fire.
++ */
++void
++lpfc_dev_loss_tmo_callbk(struct fc_rport *rport)
++{
++	struct lpfc_rport_data *rdata;
++	struct lpfc_nodelist * ndlp;
++	uint8_t *name;
++	int warn_on = 0;
++	struct lpfc_hba *phba;
++
++	rdata = rport->dd_data;
++	ndlp = rdata->pnode;
++
++	if (!ndlp) {
++		if (rport->roles & FC_RPORT_ROLE_FCP_TARGET)
++			printk(KERN_ERR "Cannot find remote node"
++			" for rport in dev_loss_tmo_callbk x%x\n",
++			rport->port_id);
++		return;
++	}
++
++	name = (uint8_t *)&ndlp->nlp_portname;
++	phba = ndlp->nlp_phba;
++
++	spin_lock_irq(phba->host->host_lock);
+ 
+ 	if (ndlp->nlp_sid != NLP_NO_SID) {
+ 		warn_on = 1;
+@@ -85,11 +120,14 @@ lpfc_process_nodev_timeout(struct lpfc_h
+ 		lpfc_sli_abort_iocb(phba, &phba->sli.ring[phba->sli.fcp_ring],
+ 			ndlp->nlp_sid, 0, 0, LPFC_CTX_TGT);
+ 	}
++	if (phba->fc_flag & FC_UNLOADING)
++		warn_on = 0;
++
+ 	spin_unlock_irq(phba->host->host_lock);
+ 
+ 	if (warn_on) {
+ 		lpfc_printf_log(phba, KERN_ERR, LOG_DISCOVERY,
+-				"%d:0203 Nodev timeout on "
++				"%d:0203 Devloss timeout on "
+ 				"WWPN %x:%x:%x:%x:%x:%x:%x:%x "
+ 				"NPort x%x Data: x%x x%x x%x\n",
+ 				phba->brd_no,
+@@ -99,7 +137,7 @@ lpfc_process_nodev_timeout(struct lpfc_h
+ 				ndlp->nlp_state, ndlp->nlp_rpi);
+ 	} else {
+ 		lpfc_printf_log(phba, KERN_INFO, LOG_DISCOVERY,
+-				"%d:0204 Nodev timeout on "
++				"%d:0204 Devloss timeout on "
+ 				"WWPN %x:%x:%x:%x:%x:%x:%x:%x "
+ 				"NPort x%x Data: x%x x%x x%x\n",
+ 				phba->brd_no,
+@@ -109,7 +147,12 @@ lpfc_process_nodev_timeout(struct lpfc_h
+ 				ndlp->nlp_state, ndlp->nlp_rpi);
+ 	}
+ 
+-	lpfc_disc_state_machine(phba, ndlp, NULL, NLP_EVT_DEVICE_RM);
++	ndlp->rport = NULL;
++	rdata->pnode = NULL;
++
++	if (!(phba->fc_flag & FC_UNLOADING))
++		lpfc_disc_state_machine(phba, ndlp, NULL, NLP_EVT_DEVICE_RM);
++
+ 	return;
+ }
+ 
+@@ -127,11 +170,6 @@ lpfc_work_list_done(struct lpfc_hba * ph
+ 		spin_unlock_irq(phba->host->host_lock);
+ 		free_evt = 1;
+ 		switch (evtp->evt) {
+-		case LPFC_EVT_NODEV_TMO:
+-			ndlp = (struct lpfc_nodelist *)(evtp->evt_arg1);
+-			lpfc_process_nodev_timeout(phba, ndlp);
+-			free_evt = 0;
+-			break;
+ 		case LPFC_EVT_ELS_RETRY:
+ 			ndlp = (struct lpfc_nodelist *)(evtp->evt_arg1);
+ 			lpfc_els_retry_delay_handler(ndlp);
+@@ -340,6 +378,9 @@ lpfc_linkdown(struct lpfc_hba * phba)
+ 		spin_unlock_irq(phba->host->host_lock);
+ 	}
+ 
++	fc_host_post_event(phba->host, fc_get_event_number(),
++			FCH_EVT_LINKDOWN, 0);
++
+ 	/* Clean up any firmware default rpi's */
+ 	if ((mb = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL))) {
+ 		lpfc_unreg_did(phba, 0xffffffff, mb);
+@@ -374,16 +415,6 @@ lpfc_linkdown(struct lpfc_hba * phba)
+ 			rc = lpfc_disc_state_machine(phba, ndlp, NULL,
+ 					     NLP_EVT_DEVICE_RECOVERY);
+ 
+-			/* Check config parameter use-adisc or FCP-2 */
+-			if ((rc != NLP_STE_FREED_NODE) &&
+-				(phba->cfg_use_adisc == 0) &&
+-				!(ndlp->nlp_fcp_info & NLP_FCP_2_DEVICE)) {
+-				/* We know we will have to relogin, so
+-				 * unreglogin the rpi right now to fail
+-				 * any outstanding I/Os quickly.
+-				 */
+-				lpfc_unreg_rpi(phba, ndlp);
+-			}
+ 		}
+ 	}
+ 
+@@ -427,6 +458,9 @@ lpfc_linkup(struct lpfc_hba * phba)
+ 	struct list_head *listp, *node_list[7];
+ 	int i;
+ 
++	fc_host_post_event(phba->host, fc_get_event_number(),
++			FCH_EVT_LINKUP, 0);
++
+ 	spin_lock_irq(phba->host->host_lock);
+ 	phba->hba_state = LPFC_LINK_UP;
+ 	phba->fc_flag &= ~(FC_PT2PT | FC_PT2PT_PLOGI | FC_ABORT_DISCOVERY |
+@@ -638,6 +672,8 @@ lpfc_mbx_cmpl_read_sparam(struct lpfc_hb
+ 
+ 	memcpy((uint8_t *) & phba->fc_sparam, (uint8_t *) mp->virt,
+ 	       sizeof (struct serv_parm));
++	if (phba->cfg_soft_wwpn)
++		u64_to_wwn(phba->cfg_soft_wwpn, phba->fc_sparam.portName.u.wwn);
+ 	memcpy((uint8_t *) & phba->fc_nodename,
+ 	       (uint8_t *) & phba->fc_sparam.nodeName,
+ 	       sizeof (struct lpfc_name));
+@@ -1098,8 +1134,11 @@ lpfc_unregister_remote_port(struct lpfc_
+ 	struct fc_rport *rport = ndlp->rport;
+ 	struct lpfc_rport_data *rdata = rport->dd_data;
+ 
+-	ndlp->rport = NULL;
+-	rdata->pnode = NULL;
++	if (rport->scsi_target_id == -1) {
++		ndlp->rport = NULL;
++		rdata->pnode = NULL;
++	}
++
+ 	fc_remote_port_delete(rport);
+ 
+ 	return;
+@@ -1227,17 +1266,6 @@ lpfc_nlp_list(struct lpfc_hba * phba, st
+ 		list_add_tail(&nlp->nlp_listp, &phba->fc_nlpunmap_list);
+ 		phba->fc_unmap_cnt++;
+ 		phba->nport_event_cnt++;
+-		/* stop nodev tmo if running */
+-		if (nlp->nlp_flag & NLP_NODEV_TMO) {
+-			nlp->nlp_flag &= ~NLP_NODEV_TMO;
+-			spin_unlock_irq(phba->host->host_lock);
+-			del_timer_sync(&nlp->nlp_tmofunc);
+-			spin_lock_irq(phba->host->host_lock);
+-			if (!list_empty(&nlp->nodev_timeout_evt.evt_listp))
+-				list_del_init(&nlp->nodev_timeout_evt.
+-						evt_listp);
+-
+-		}
+ 		nlp->nlp_flag &= ~NLP_NODEV_REMOVE;
+ 		nlp->nlp_type |= NLP_FC_NODE;
+ 		break;
+@@ -1248,17 +1276,6 @@ lpfc_nlp_list(struct lpfc_hba * phba, st
+ 		list_add_tail(&nlp->nlp_listp, &phba->fc_nlpmap_list);
+ 		phba->fc_map_cnt++;
+ 		phba->nport_event_cnt++;
+-		/* stop nodev tmo if running */
+-		if (nlp->nlp_flag & NLP_NODEV_TMO) {
+-			nlp->nlp_flag &= ~NLP_NODEV_TMO;
+-			spin_unlock_irq(phba->host->host_lock);
+-			del_timer_sync(&nlp->nlp_tmofunc);
+-			spin_lock_irq(phba->host->host_lock);
+-			if (!list_empty(&nlp->nodev_timeout_evt.evt_listp))
+-				list_del_init(&nlp->nodev_timeout_evt.
+-						evt_listp);
+-
+-		}
+ 		nlp->nlp_flag &= ~NLP_NODEV_REMOVE;
+ 		break;
+ 	case NLP_NPR_LIST:
+@@ -1267,11 +1284,6 @@ lpfc_nlp_list(struct lpfc_hba * phba, st
+ 		list_add_tail(&nlp->nlp_listp, &phba->fc_npr_list);
+ 		phba->fc_npr_cnt++;
+ 
+-		if (!(nlp->nlp_flag & NLP_NODEV_TMO))
+-			mod_timer(&nlp->nlp_tmofunc,
+-		 			jiffies + HZ * phba->cfg_nodev_tmo);
+-
+-		nlp->nlp_flag |= NLP_NODEV_TMO;
+ 		nlp->nlp_flag &= ~NLP_RCV_PLOGI;
+ 		break;
+ 	case NLP_JUST_DQ:
+@@ -1301,7 +1313,8 @@ lpfc_nlp_list(struct lpfc_hba * phba, st
+ 			 * already. If we have, and it's a scsi entity, be
+ 			 * sure to unblock any attached scsi devices
+ 			 */
+-			if (!nlp->rport)
++			if ((!nlp->rport) || (nlp->rport->port_state ==
++					FC_PORTSTATE_BLOCKED))
+ 				lpfc_register_remote_port(phba, nlp);
+ 
+ 			/*
+@@ -1575,15 +1588,12 @@ lpfc_freenode(struct lpfc_hba * phba, st
+ 
+ 	lpfc_els_abort(phba,ndlp,0);
+ 	spin_lock_irq(phba->host->host_lock);
+-	ndlp->nlp_flag &= ~(NLP_NODEV_TMO|NLP_DELAY_TMO);
++	ndlp->nlp_flag &= ~NLP_DELAY_TMO;
+ 	spin_unlock_irq(phba->host->host_lock);
+-	del_timer_sync(&ndlp->nlp_tmofunc);
+ 
+ 	ndlp->nlp_last_elscmd = 0;
+ 	del_timer_sync(&ndlp->nlp_delayfunc);
+ 
+-	if (!list_empty(&ndlp->nodev_timeout_evt.evt_listp))
+-		list_del_init(&ndlp->nodev_timeout_evt.evt_listp);
+ 	if (!list_empty(&ndlp->els_retry_evt.evt_listp))
+ 		list_del_init(&ndlp->els_retry_evt.evt_listp);
+ 
+@@ -1600,16 +1610,6 @@ lpfc_freenode(struct lpfc_hba * phba, st
+ int
+ lpfc_nlp_remove(struct lpfc_hba * phba, struct lpfc_nodelist * ndlp)
+ {
+-	if (ndlp->nlp_flag & NLP_NODEV_TMO) {
+-		spin_lock_irq(phba->host->host_lock);
+-		ndlp->nlp_flag &= ~NLP_NODEV_TMO;
+-		spin_unlock_irq(phba->host->host_lock);
+-		del_timer_sync(&ndlp->nlp_tmofunc);
+-		if (!list_empty(&ndlp->nodev_timeout_evt.evt_listp))
+-			list_del_init(&ndlp->nodev_timeout_evt.evt_listp);
+-
+-	}
+-
+ 
+ 	if (ndlp->nlp_flag & NLP_DELAY_TMO) {
+ 		lpfc_cancel_retry_delay_tmo(phba, ndlp);
+@@ -2424,34 +2424,6 @@ lpfc_disc_timeout_handler(struct lpfc_hb
+ 	return;
+ }
+ 
+-static void
+-lpfc_nodev_timeout(unsigned long ptr)
+-{
+-	struct lpfc_hba *phba;
+-	struct lpfc_nodelist *ndlp;
+-	unsigned long iflag;
+-	struct lpfc_work_evt  *evtp;
+-
+-	ndlp = (struct lpfc_nodelist *)ptr;
+-	phba = ndlp->nlp_phba;
+-	evtp = &ndlp->nodev_timeout_evt;
+-	spin_lock_irqsave(phba->host->host_lock, iflag);
+-
+-	if (!list_empty(&evtp->evt_listp)) {
+-		spin_unlock_irqrestore(phba->host->host_lock, iflag);
+-		return;
+-	}
+-	evtp->evt_arg1  = ndlp;
+-	evtp->evt       = LPFC_EVT_NODEV_TMO;
+-	list_add_tail(&evtp->evt_listp, &phba->work_list);
+-	if (phba->work_wait)
+-		wake_up(phba->work_wait);
+-
+-	spin_unlock_irqrestore(phba->host->host_lock, iflag);
+-	return;
+-}
+-
+-
+ /*
+  * This routine handles processing a NameServer REG_LOGIN mailbox
+  * command upon completion. It is setup in the LPFC_MBOXQ
+@@ -2575,11 +2547,7 @@ lpfc_nlp_init(struct lpfc_hba * phba, st
+ 		 uint32_t did)
+ {
+ 	memset(ndlp, 0, sizeof (struct lpfc_nodelist));
+-	INIT_LIST_HEAD(&ndlp->nodev_timeout_evt.evt_listp);
+ 	INIT_LIST_HEAD(&ndlp->els_retry_evt.evt_listp);
+-	init_timer(&ndlp->nlp_tmofunc);
+-	ndlp->nlp_tmofunc.function = lpfc_nodev_timeout;
+-	ndlp->nlp_tmofunc.data = (unsigned long)ndlp;
+ 	init_timer(&ndlp->nlp_delayfunc);
+ 	ndlp->nlp_delayfunc.function = lpfc_els_retry_delay;
+ 	ndlp->nlp_delayfunc.data = (unsigned long)ndlp;
+diff -up linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_init.c linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_init.c
+--- linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_init.c
++++ linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_init.c
+@@ -268,6 +268,8 @@ lpfc_config_port_post(struct lpfc_hba * 
+ 	kfree(mp);
+ 	pmb->context1 = NULL;
+ 
++	if (phba->cfg_soft_wwpn)
++		u64_to_wwn(phba->cfg_soft_wwpn, phba->fc_sparam.portName.u.wwn);
+ 	memcpy(&phba->fc_nodename, &phba->fc_sparam.nodeName,
+ 	       sizeof (struct lpfc_name));
+ 	memcpy(&phba->fc_portname, &phba->fc_sparam.portName,
+@@ -511,6 +513,7 @@ lpfc_handle_eratt(struct lpfc_hba * phba
+ {
+ 	struct lpfc_sli *psli = &phba->sli;
+ 	struct lpfc_sli_ring  *pring;
++	uint32_t event_data;
+ 
+ 	if (phba->work_hs & HS_FFER6) {
+ 		/* Re-establishing Link */
+@@ -555,6 +558,11 @@ lpfc_handle_eratt(struct lpfc_hba * phba
+ 				phba->brd_no, phba->work_hs,
+ 				phba->work_status[0], phba->work_status[1]);
+ 
++		event_data = FC_REG_DUMP_EVENT;
++		fc_host_post_vendor_event(phba->host, fc_get_event_number(),
++				sizeof(event_data), (char *) &event_data,
++				SCSI_NL_VID_TYPE_PCI | PCI_VENDOR_ID_EMULEX);
++
+ 		psli->sli_flag &= ~LPFC_SLI2_ACTIVE;
+ 		lpfc_offline(phba);
+ 		phba->hba_state = LPFC_HBA_ERROR;
+diff -up linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_nportdisc.c linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_nportdisc.c
+--- linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_nportdisc.c
++++ linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_nportdisc.c
+@@ -1813,7 +1813,7 @@ lpfc_device_recov_npr_node(struct lpfc_h
+  */
+ /*
+  * For a Link Down, all nodes on the ADISC, PLOGI, unmapped or mapped
+- * lists will receive a DEVICE_RECOVERY event. If the linkdown or nodev timers
++ * lists will receive a DEVICE_RECOVERY event. If the linkdown or devloss timers
+  * expire, all effected nodes will receive a DEVICE_RM event.
+  */
+ /*
+diff -up linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_scsi.c linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_scsi.c
+--- linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_scsi.c
++++ linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_scsi.c
+@@ -935,7 +935,7 @@ lpfc_abort_handler(struct scsi_cmnd *cmn
+ 			schedule_timeout_uninterruptible(LPFC_ABORT_WAIT*HZ);
+ 		spin_lock_irq(phba->host->host_lock);
+ 		if (++loop_count
+-		    > (2 * phba->cfg_nodev_tmo)/LPFC_ABORT_WAIT)
++		    > (2 * phba->cfg_devloss_tmo)/LPFC_ABORT_WAIT)
+ 			break;
+ 	}
+ 
+@@ -978,7 +978,7 @@ lpfc_reset_lun_handler(struct scsi_cmnd 
+ 	spin_lock_irq(shost->host_lock);
+ 	/*
+ 	 * If target is not in a MAPPED state, delay the reset until
+-	 * target is rediscovered or nodev timeout expires.
++	 * target is rediscovered or devloss timeout expires.
+ 	 */
+ 	while ( 1 ) {
+ 		if (!pnode)
+@@ -1050,7 +1050,7 @@ lpfc_reset_lun_handler(struct scsi_cmnd 
+ 		spin_lock_irq(phba->host->host_lock);
+ 
+ 		if (++loopcnt
+-		    > (2 * phba->cfg_nodev_tmo)/LPFC_RESET_WAIT)
++		    > (2 * phba->cfg_devloss_tmo)/LPFC_RESET_WAIT)
+ 			break;
+ 
+ 		cnt = lpfc_sli_sum_iocb(phba,
+@@ -1151,7 +1151,7 @@ lpfc_reset_bus_handler(struct scsi_cmnd 
+ 		spin_lock_irq(phba->host->host_lock);
+ 
+ 		if (++loopcnt
+-		    > (2 * phba->cfg_nodev_tmo)/LPFC_RESET_WAIT)
++		    > (2 * phba->cfg_devloss_tmo)/LPFC_RESET_WAIT)
+ 			break;
+ 
+ 		cnt = lpfc_sli_sum_iocb(phba,
+@@ -1249,7 +1249,7 @@ lpfc_slave_configure(struct scsi_device 
+ 	 * target pointer is stored in the starget_data for the
+ 	 * driver's sysfs entry point functions.
+ 	 */
+-	rport->dev_loss_tmo = phba->cfg_nodev_tmo + 5;
++	rport->dev_loss_tmo = phba->cfg_devloss_tmo;
+ 
+ 	if (phba->cfg_poll & ENABLE_FCP_RING_POLLING) {
+ 		lpfc_sli_poll_fcp_ring(phba);
+diff -up linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_version.h linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_version.h
+--- linux-2.6.17.i386/drivers/scsi/lpfc-stock/lpfc_version.h
++++ linux-2.6.17.i386/drivers/scsi/lpfc/lpfc_version.h
+@@ -18,7 +18,7 @@
+  * included with this package.                                     *
+  *******************************************************************/
+ 
+-#define LPFC_DRIVER_VERSION "8.1.9"
++#define LPFC_DRIVER_VERSION "8.1.10"
+ 
+ #define LPFC_DRIVER_NAME "lpfc"
+ 
+
+Date: Mon, 02 Oct 2006 17:12:09 -0400
+From: Tom Coughlan <coughlan@redhat.com>
+Subject: Re: [RHEL 5 patch 2/3] Update FC transport and Emulex lpfc Fibre
+	Channel Driver
+
+On Thu, 2006-09-21 at 12:19 -0400, Tom Coughlan wrote:
+> Update the lpfc driver to  8.1.10
+> 
+> - Add support to post events via new FC event interfaces 
+>  - Add support to return adapter symbolic name (now that attribute is dynamic)
+>  - Add support for new dev_loss_tmo callback 
+>  - Add support for the new fast_io_fail callback
+>  - Add support for a new lpfc soft_wwpn sysfs attribute
+>  - Change version number to 8.1.10
+
+There was an error when the Emulex version of this patch went in
+upstream. Their patch touched the same file (lpfc_init.c) twice.
+Whatever tool was used to apply it only took the second part and not the
+first. The attached patch fixes this, and is now upstream as well. 
+
+
+--- a/drivers/scsi/lpfc/lpfc_init.c
++++ b/drivers/scsi/lpfc/lpfc_init.c
+@@ -387,7 +387,8 @@ lpfc_config_port_post(struct lpfc_hba * 
+ 
+ 	lpfc_init_link(phba, pmb, phba->cfg_topology, phba->cfg_link_speed);
+ 	pmb->mbox_cmpl = lpfc_sli_def_mbox_cmpl;
+-	if (lpfc_sli_issue_mbox(phba, pmb, MBX_NOWAIT) != MBX_SUCCESS) {
++	rc = lpfc_sli_issue_mbox(phba, pmb, MBX_NOWAIT);
++	if (rc != MBX_SUCCESS) {
+ 		lpfc_printf_log(phba,
+ 				KERN_ERR,
+ 				LOG_INIT,
+@@ -404,7 +405,8 @@ lpfc_config_port_post(struct lpfc_hba * 
+ 		readl(phba->HAregaddr); /* flush */
+ 
+ 		phba->hba_state = LPFC_HBA_ERROR;
+-		mempool_free(pmb, phba->mbox_mem_pool);
++		if (rc != MBX_BUSY)
++			mempool_free(pmb, phba->mbox_mem_pool);
+ 		return -EIO;
+ 	}
+ 	/* MBOX buffer will be freed in mbox compl */
+

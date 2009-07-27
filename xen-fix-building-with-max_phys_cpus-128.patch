@@ -1,0 +1,51 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Thu, 21 Aug 2008 13:09:10 -0400
+Subject: [xen] fix building with max_phys_cpus=128
+Message-id: 20080821170910.9528.18187.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.3 PATCH 1/3] Xen fix building with max_phys_cpus=128
+Bugzilla: 447958
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1218632057 -3600
+# Node ID c6402709acc8122e3f8f92a885750afb4061ac61
+# Parent  0638a5c2cc9f2053f6025edf3ddc5ff12300924d
+shadow: Fix BUILD_BUG_ON().
+Signed-off-by: Keir Fraser <keir.fraser@citrix.com>
+
+Fixes bz 447958
+
+There were two issues with this. First was a build
+failure due to the size of the page_info structure
+growing to be larger than the shadow_page_info structure.
+Thus was due to the larger cpu mask field needed in
+the page_info structure. A "build bug" macro needed
+to be changed to allow this. This change has been
+made upstream.
+
+diff --git a/arch/x86/mm/shadow/private.h b/arch/x86/mm/shadow/private.h
+index 962d096..3ca5b58 100644
+--- a/arch/x86/mm/shadow/private.h
++++ b/arch/x86/mm/shadow/private.h
+@@ -245,15 +245,14 @@ struct shadow_page_info
+     };
+ };
+ 
+-/* The structure above *must* be the same size as a struct page_info
++/* The structure above *must* be no larger than a struct page_info
+  * from mm.h, since we'll be using the same space in the frametable. 
+  * Also, the mbz field must line up with the owner field of normal 
+  * pages, so they look properly like anonymous/xen pages. */
+ static inline void shadow_check_page_struct_offsets(void) {
+-    BUILD_BUG_ON(sizeof (struct shadow_page_info) 
+-                 != sizeof (struct page_info));
+-    BUILD_BUG_ON(offsetof(struct shadow_page_info, mbz) 
+-                 != offsetof(struct page_info, u.inuse._domain));
++    BUILD_BUG_ON(sizeof (struct shadow_page_info) > sizeof (struct page_info));
++    BUILD_BUG_ON(offsetof(struct shadow_page_info, mbz) !=
++                 offsetof(struct page_info, u.inuse._domain));
+ };
+ 
+ /* Shadow type codes */

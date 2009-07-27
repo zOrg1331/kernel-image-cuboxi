@@ -1,0 +1,692 @@
+From: Roland McGrath <roland@redhat.com>
+Date: Wed, 19 Dec 2007 03:09:11 -0800
+Subject: [misc] utrace: update for 5.2
+Message-id: 20071219110911.765A826F8C2@magilla.localdomain
+O-Subject: [RHEL5.2 PATCH] 5.2 utrace update BZ#299941,309461,309551,309761
+Bugzilla: 299941 309461 309551 309761
+
+This brings the utrace/ptrace code in line with the "upstream" utrace code,
+which is already in Fedora kernels.  Bugs 299941, 309461, 309551, and 309761
+are fixed by the update.
+
+diff --git a/arch/i386/kernel/ptrace.c b/arch/i386/kernel/ptrace.c
+index 24c1999..a01c4cb 100644
+--- a/arch/i386/kernel/ptrace.c
++++ b/arch/i386/kernel/ptrace.c
+@@ -19,6 +19,7 @@
+ #include <linux/seccomp.h>
+ #include <linux/signal.h>
+ #include <linux/module.h>
++#include <linux/elf.h>
+ 
+ #include <asm/tracehook.h>
+ #include <asm/uaccess.h>
+@@ -148,6 +149,10 @@ static unsigned long getreg(struct task_struct *child,
+ 		if (child == current)
+ 			savesegment(gs, retval);
+ 		break;
++	case EFL:
++		if (test_tsk_thread_flag(child, TIF_FORCED_TF))
++			retval &= ~X86_EFLAGS_TF;
++		goto fetch;
+ 	case DS:
+ 	case ES:
+ 	case SS:
+@@ -155,6 +160,7 @@ static unsigned long getreg(struct task_struct *child,
+ 		retval = 0xffff;
+ 		/* fall through */
+ 	default:
++	fetch:
+ 		if (regno > GS*4)
+ 			regno -= 2*4;
+ 		regno = regno - sizeof(struct pt_regs);
+@@ -713,16 +719,19 @@ tls_active(struct task_struct *target, const struct utrace_regset *regset)
+  */
+ static const struct utrace_regset native_regsets[] = {
+ 	{
++		.core_note_type = NT_PRSTATUS,
+ 		.n = FRAME_SIZE, .size = sizeof(long), .align = sizeof(long),
+ 		.get = genregs_get, .set = genregs_set
+ 	},
+ 	{
++		.core_note_type = NT_PRFPREG,
+ 		.n = sizeof(struct user_i387_struct) / sizeof(long),
+ 		.size = sizeof(long), .align = sizeof(long),
+ 		.active = fpregs_active,
+ 		.get = fpregs_get, .set = fpregs_set
+ 	},
+ 	{
++		.core_note_type = NT_PRXFPREG,
+ 		.n = sizeof(struct user_fxsr_struct) / sizeof(long),
+ 		.size = sizeof(long), .align = sizeof(long),
+ 		.active = fpxregs_active,
+diff --git a/arch/ia64/ia32/sys_ia32.c b/arch/ia64/ia32/sys_ia32.c
+index 658ab85..77e0e61 100644
+--- a/arch/ia64/ia32/sys_ia32.c
++++ b/arch/ia64/ia32/sys_ia32.c
+@@ -52,6 +52,7 @@
+ #include <linux/vfs.h>
+ #include <linux/mman.h>
+ #include <linux/mutex.h>
++#include <linux/elf.h>
+ 
+ #include <asm/intrinsics.h>
+ #include <asm/types.h>
+@@ -2314,16 +2315,19 @@ static int ia32_genregs_set(struct task_struct *target,
+  */
+ static const struct utrace_regset ia32_regsets[] = {
+ 	{
++		.core_note_type = NT_PRSTATUS,
+ 		.n = sizeof(struct user_regs_struct32)/4,
+ 		.size = 4, .align = 4,
+ 		.get = ia32_genregs_get, .set = ia32_genregs_set
+ 	},
+ 	{
++		.core_note_type = NT_PRFPREG,
+ 		.n = sizeof(struct ia32_user_i387_struct) / 4,
+ 		.size = 4, .align = 4,
+ 		.get = ia32_fpregs_get, .set = ia32_fpregs_set
+ 	},
+ 	{
++		.core_note_type = NT_PRXFPREG,
+ 		.n = sizeof(struct ia32_user_fxsr_struct) / 4,
+ 		.size = 4, .align = 4,
+ 		.get = ia32_fpxregs_get, .set = ia32_fpxregs_set
+diff --git a/arch/powerpc/kernel/ptrace.c b/arch/powerpc/kernel/ptrace.c
+index 3d2df91..7bb6c9f 100644
+--- a/arch/powerpc/kernel/ptrace.c
++++ b/arch/powerpc/kernel/ptrace.c
+@@ -339,10 +339,12 @@ evrregs_set(struct task_struct *target,
+  */
+ static const struct utrace_regset native_regsets[] = {
+ 	{
++		.core_note_type = NT_PRSTATUS,
+ 		.n = ELF_NGREG, .size = sizeof(long), .align = sizeof(long),
+ 		.get = genregs_get, .set = genregs_set
+ 	},
+ 	{
++		.core_note_type = NT_PRFPREG,
+ 		.n = ELF_NFPREG,
+ 		.size = sizeof(double), .align = sizeof(double),
+ 		.get = fpregs_get, .set = fpregs_set
+@@ -457,11 +459,13 @@ ppc32_gpr_set(struct task_struct *target,
+  */
+ static const struct utrace_regset ppc32_regsets[] = {
+ 	{
++		.core_note_type = NT_PRSTATUS,
+ 		.n = ELF_NGREG,
+ 		.size = sizeof(compat_long_t), .align = sizeof(compat_long_t),
+ 		.get = ppc32_gpr_get, .set = ppc32_gpr_set
+ 	},
+ 	{
++		.core_note_type = NT_PRFPREG,
+ 		.n = ELF_NFPREG,
+ 		.size = sizeof(double), .align = sizeof(double),
+ 		.get = fpregs_get, .set = fpregs_set
+@@ -608,7 +612,8 @@ int arch_compat_ptrace(compat_long_t *request,
+ 		return ptrace_onereg_access(child, engine,
+ 					    utrace_native_view(current), 3,
+ 					    addr,
+-					    (u32 __user *) (unsigned long) data,
++					    (unsigned long __user *)
++					    (unsigned long) data,
+ 					    NULL, 0);
+ 	case PTRACE_SET_DEBUGREG:
+ 		return ptrace_onereg_access(child, engine,
+diff --git a/arch/s390/kernel/ptrace.c b/arch/s390/kernel/ptrace.c
+index 2fa708c..c0b749b 100644
+--- a/arch/s390/kernel/ptrace.c
++++ b/arch/s390/kernel/ptrace.c
+@@ -35,6 +35,7 @@
+ #include <linux/security.h>
+ #include <linux/audit.h>
+ #include <linux/signal.h>
++#include <linux/elf.h>
+ 
+ #include <asm/segment.h>
+ #include <asm/page.h>
+@@ -43,7 +44,6 @@
+ #include <asm/system.h>
+ #include <asm/uaccess.h>
+ #include <asm/unistd.h>
+-#include <asm/elf.h>
+ 
+ #ifdef CONFIG_COMPAT
+ #include "compat_ptrace.h"
+@@ -299,11 +299,13 @@ per_info_set(struct task_struct *target,
+  */
+ static const struct utrace_regset native_regsets[] = {
+ 	{
++		.core_note_type = NT_PRSTATUS,
+ 		.size = sizeof(long), .align = sizeof(long),
+ 		.n = sizeof(s390_regs) / sizeof(long),
+ 		.get = genregs_get, .set = genregs_set
+ 	},
+ 	{
++		.core_note_type = NT_PRFPREG,
+ 		.size = sizeof(long), .align = sizeof(long),
+ 		.n = sizeof(s390_fp_regs) / sizeof(long),
+ 		.get = fpregs_get, .set = fpregs_set
+@@ -558,11 +560,13 @@ s390_per_info_set(struct task_struct *target,
+ 
+ static const struct utrace_regset s390_compat_regsets[] = {
+ 	{
++		.core_note_type = NT_PRSTATUS,
+ 		.size = sizeof(u32), .align = sizeof(u32),
+ 		.n = offsetof(struct user_regs_struct32, fp_regs) / sizeof(u32),
+ 		.get = s390_genregs_get, .set = s390_genregs_set
+ 	},
+ 	{
++		.core_note_type = NT_PRFPREG,
+ 		.size = sizeof(u32), .align = sizeof(u32),
+ 		.n = sizeof(s390_fp_regs) / sizeof(u32),
+ 		.get = fpregs_get, .set = fpregs_set
+diff --git a/arch/sparc64/kernel/ptrace.c b/arch/sparc64/kernel/ptrace.c
+index b97e3fb..f6d853c 100644
+--- a/arch/sparc64/kernel/ptrace.c
++++ b/arch/sparc64/kernel/ptrace.c
+@@ -243,11 +243,13 @@ static int fpregs_set(struct task_struct *target,
+ 
+ static const struct utrace_regset native_regsets[] = {
+ 	{
++		.core_note_type = NT_PRSTATUS,
+ 		.n = SPARC64_NGREGS,
+ 		.size = sizeof(long), .align = sizeof(long),
+ 		.get = genregs_get, .set = genregs_set
+ 	},
+ 	{
++		.core_note_type = NT_PRFPREG,
+ 		.n = SPARC64_NFPREGS,
+ 		.size = sizeof(long), .align = sizeof(long),
+ 		.get = fpregs_get, .set = fpregs_set
+@@ -580,11 +582,13 @@ static int fpregs32_set(struct task_struct *target,
+ 
+ static const struct utrace_regset sparc32_regsets[] = {
+ 	{
++		.core_note_type = NT_PRSTATUS,
+ 		.n = SPARC32_NGREGS,
+ 		.size = sizeof(u32), .align = sizeof(u32),
+ 		.get = genregs32_get, .set = genregs32_set
+ 	},
+ 	{
++		.core_note_type = NT_PRFPREG,
+ 		.n = SPARC32_NFPREGS,
+ 		.size = sizeof(u32), .align = sizeof(u32),
+ 		.get = fpregs32_get, .set = fpregs32_set
+diff --git a/arch/x86_64/ia32/ptrace32.c b/arch/x86_64/ia32/ptrace32.c
+index cdd4aaa..2de8d7b 100644
+--- a/arch/x86_64/ia32/ptrace32.c
++++ b/arch/x86_64/ia32/ptrace32.c
+@@ -57,7 +57,7 @@ static int putreg32(struct task_struct *child, unsigned regno, u32 val)
+ 		if (val && (val & 3) != 3) return -EIO; 
+ 		child->thread.gsindex = val &= 0xffff;
+ 		if (child == current)
+-			loadsegment(gs, val);
++			load_gs_index(val);
+ 		break;
+ 	case offsetof(struct user_regs_struct32, ds):
+ 		if (val && (val & 3) != 3) return -EIO; 
+@@ -560,17 +560,20 @@ ia32_tls_active(struct task_struct *target, const struct utrace_regset *regset)
+  */
+ static const struct utrace_regset ia32_regsets[] = {
+ 	{
++		.core_note_type = NT_PRSTATUS,
+ 		.n = sizeof(struct user_regs_struct32)/4,
+ 		.size = 4, .align = 4,
+ 		.get = ia32_genregs_get, .set = ia32_genregs_set
+ 	},
+ 	{
++		.core_note_type = NT_PRFPREG,
+ 		.n = sizeof(struct user_i387_ia32_struct) / 4,
+ 		.size = 4, .align = 4,
+ 		.active = ia32_fpregs_active,
+ 		.get = ia32_fpregs_get, .set = ia32_fpregs_set
+ 	},
+ 	{
++		.core_note_type = NT_PRXFPREG,
+ 		.n = sizeof(struct user32_fxsr_struct) / 4,
+ 		.size = 4, .align = 4,
+ 		.active = ia32_fpxregs_active,
+diff --git a/arch/x86_64/kernel/ptrace.c b/arch/x86_64/kernel/ptrace.c
+index f0e3e05..2ad504e 100644
+--- a/arch/x86_64/kernel/ptrace.c
++++ b/arch/x86_64/kernel/ptrace.c
+@@ -21,6 +21,7 @@
+ #include <linux/seccomp.h>
+ #include <linux/signal.h>
+ #include <linux/module.h>
++#include <linux/elf.h>
+ 
+ #include <asm/tracehook.h>
+ #include <asm/uaccess.h>
+@@ -247,7 +248,7 @@ static int putreg(struct task_struct *child,
+ 			return -EIO;
+ 		child->thread.gsindex = value &= 0xffff;
+ 		if (child == current)
+-			loadsegment(gs, value);
++			load_gs_index(value);
+ 		return 0;
+ 	case offsetof(struct user_regs_struct,ds):
+ 		if (value && (value & 3) != 3)
+@@ -678,10 +679,12 @@ fsgs_set(struct task_struct *target,
+  */
+ static const struct utrace_regset native_regsets[] = {
+ 	{
++		.core_note_type = NT_PRSTATUS,
+ 		.n = sizeof(struct user_regs_struct)/8, .size = 8, .align = 8,
+ 		.get = genregs_get, .set = genregs_set
+ 	},
+ 	{
++		.core_note_type = NT_PRFPREG,
+ 		.n = sizeof(struct user_i387_struct) / sizeof(long),
+ 		.size = sizeof(long), .align = sizeof(long),
+ 		.active = fpregs_active,
+diff --git a/include/linux/tracehook.h b/include/linux/tracehook.h
+index e8f8661..4c014cc 100644
+--- a/include/linux/tracehook.h
++++ b/include/linux/tracehook.h
+@@ -130,6 +130,17 @@ struct utrace_regset {
+ 	unsigned int bias;	/* Bias from natural indexing.  */
+ 
+ 	/*
++	 * If nonzero, this gives the n_type field (NT_* value) of the
++	 * core file note in which this regset's data appears.
++	 * NT_PRSTATUS is a special case in that the regset data starts
++	 * at offsetof(struct elf_prstatus, pr_reg) into the note data;
++	 * that is part of the per-machine ELF formats userland knows
++	 * about.  In other cases, the core file note contains exactly
++	 * the whole regset (n*size) and nothing else.
++	 */
++	unsigned int core_note_type;
++
++	/*
+ 	 * Return -%ENODEV if not available on the hardware found.
+ 	 * Return %0 if no interesting state in this thread.
+ 	 * Return >%0 number of @size units of interesting state.
+diff --git a/kernel/ptrace.c b/kernel/ptrace.c
+index 136fd85..aed2c5c 100644
+--- a/kernel/ptrace.c
++++ b/kernel/ptrace.c
+@@ -136,6 +136,14 @@ struct ptrace_state
+ 
+ static const struct utrace_engine_ops ptrace_utrace_ops; /* Initialized below. */
+ 
++/*
++ * We use this bit in task_struct.exit_code of a ptrace'd task to indicate
++ * a ptrace stop.  It must not overlap with any bits used in real exit_code's.
++ * Those are (PTRACE_EVENT_* << 8) | 0xff.
++ */
++#define PTRACE_TRAPPED_MASK	0x10000
++
++
+ static void
+ ptrace_state_unlink(struct ptrace_state *state)
+ {
+@@ -432,8 +440,6 @@ static int ptrace_attach(struct task_struct *task)
+ 	if (retval)
+ 		(void) utrace_detach(task, engine);
+ 	else {
+-		int stopped = 0;
+-
+ 		NO_LOCKS;
+ 
+ 		/*
+@@ -443,48 +449,14 @@ static int ptrace_attach(struct task_struct *task)
+ 		 * We cannot call into the signal code if it's dead.
+ 		 */
+ 		read_lock(&tasklist_lock);
+-		if (likely(!task->exit_state)) {
++		if (likely(!task->exit_state))
+ 			force_sig_specific(SIGSTOP, task);
+-
+-			spin_lock_irq(&task->sighand->siglock);
+-			stopped = (task->state == TASK_STOPPED);
+-			spin_unlock_irq(&task->sighand->siglock);
+-		}
+ 		read_unlock(&tasklist_lock);
+ 
+-		if (stopped) {
+-			const struct utrace_regset *regset;
+-
+-			/*
+-			 * Set QUIESCE immediately, so we can allow
+-			 * ptrace requests while he's in TASK_STOPPED.
+-			 */
+-			retval = ptrace_update(task, state, /* XXX child death+other thread waits race could have freed state already */
+-					       UTRACE_ACTION_QUIESCE, 0);
+-			if (retval)
+-				/*
+-				 * Anything is possible here.  It might not
+-				 * really have been quiescent yet.  It
+-				 * might have just woken up and died.
+-				 */
+-				BUG_ON(retval != -ESRCH && retval != -EALREADY);
+-			retval = 0;
+-
+-			/*
+-			 * Do now the regset 0 writeback that we do on every
+-			 * stop, since it's never been done.  On register
+-			 * window machines, this makes sure the user memory
+-			 * backing the register data is up to date.
+-			 */
+-			regset = utrace_regset(task, engine,
+-					       utrace_native_view(task), 0);
+-			if (regset->writeback)
+-				(*regset->writeback)(task, regset, 1);
+-		}
+-
+ 		pr_debug("%d ptrace_attach %d complete (%sstopped)"
+ 			 " state %lu code %x",
+-			 current->pid, task->pid, stopped ? "" : "not ",
++			 current->pid, task->pid,
++			 task->state == TASK_STOPPED ? "" : "not ",
+ 			 task->state, task->exit_code);
+ 	}
+ 
+@@ -585,7 +557,6 @@ ptrace_exit(struct task_struct *tsk)
+ 	}
+ 	task_unlock(tsk);
+ 
+-	restart = 0;
+ 	do {
+ 		struct ptrace_state *state;
+ 		int error;
+@@ -594,6 +565,7 @@ ptrace_exit(struct task_struct *tsk)
+ 
+ 		rcu_read_lock();
+ 
++		restart = 0;
+ 		list_for_each_safe_rcu(pos, n, &tsk->ptracees) {
+ 			state = list_entry(pos, struct ptrace_state, entry);
+ 			error = utrace_detach(state->task, state->engine);
+@@ -615,7 +587,7 @@ ptrace_exit(struct task_struct *tsk)
+ 				wait_task_inactive(p);
+ 				put_task_struct(p);
+ 				restart = 1;
+-				break;
++				goto loop_unlocked;
+ 			}
+ 			else {
+ 				BUG_ON(error != -ESRCH);
+@@ -625,10 +597,11 @@ ptrace_exit(struct task_struct *tsk)
+ 
+ 		rcu_read_unlock();
+ 
++	loop_unlocked:
+ 		END_CHECK;
+ 
+ 		cond_resched();
+-	} while (restart > 0);
++	} while (unlikely(restart > 0));
+ 
+ 	if (likely(restart == 0))
+ 		/*
+@@ -1387,7 +1360,29 @@ ptrace_do_wait(struct task_struct *tsk,
+ 		 * check fails we are sure to get a wakeup if it stops.
+ 		 */
+ 		exit_code = xchg(&p->exit_code, 0);
+-		if (exit_code)
++		if (exit_code & PTRACE_TRAPPED_MASK)
++			goto found;
++
++		/*
++		 * If p was in job-control stop (TASK_STOPPED) rather than
++		 * ptrace stop (TASK_TRACED), then SIGCONT can asynchronously
++		 * clear it back to TASK_RUNNING.  Until it gets scheduled
++		 * and clears its own ->exit_code, our xchg below will see
++		 * its stop signal.  But, we must not report it if it's no
++		 * longer in TASK_STOPPED, as vanilla wait would not--the
++		 * caller can tell if it sent the SIGCONT before calling
++		 * wait.  We must somehow distinguish this from the case
++		 * where p is in TASK_RUNNING with p->exit_code set because
++		 * it is on its way to entering TASK_TRACED (QUIESCE) for our
++		 * stop.  So, ptrace_report sets the PTRACE_TRAPPED_MASK bit
++		 * in exit_code when it's setting QUIESCE.  For a job control
++		 * control stop, that bit will never have been set.  Since
++		 * the bit's not set now, we should only report right now if
++		 * p is still stopped.  For this case we are protected by
++		 * races the same wait that vanilla do_wait (exit.c) is:
++		 * wait_chldexit is woken after p->state is set to TASK_STOPPED.
++		 */
++		if (p->state == TASK_STOPPED)
+ 			goto found;
+ 
+ 		// XXX should handle WCONTINUED
+@@ -1438,6 +1433,7 @@ found:
+ 	}
+ 	else {
+ 		why = CLD_TRAPPED;
++		exit_code &= ~PTRACE_TRAPPED_MASK;
+ 		status = exit_code;
+ 		exit_code = (status << 8) | 0x7f;
+ 	}
+@@ -1605,8 +1601,14 @@ ptrace_report(struct utrace_attached_engine *engine,
+ 	 */
+ 	utrace_set_flags(tsk, engine, engine->flags | UTRACE_ACTION_QUIESCE);
+ 
++	/*
++	 * The PTRACE_TRAPPED_MASK bit distinguishes to ptrace_do_wait that
++	 * this is a ptrace report, so we expect to enter TASK_TRACED but
++	 * might not be there yet when examined.
++	 */
+ 	BUG_ON(code == 0);
+-	tsk->exit_code = code;
++	WARN_ON(code &~ 0x7ff);
++	tsk->exit_code = code | PTRACE_TRAPPED_MASK;
+ 	do_notify(tsk, state->parent, CLD_TRAPPED);
+ 
+ 	pr_debug("%d ptrace_report quiescing exit_code %x\n",
+diff --git a/kernel/utrace.c b/kernel/utrace.c
+index 9143bf7..adece3a 100644
+--- a/kernel/utrace.c
++++ b/kernel/utrace.c
+@@ -488,6 +488,8 @@ restart:
+ 		 * Check this first; a race with reaping may lead to restart.
+ 		 */
+ 		rcu_read_unlock();
++		if (!(flags & UTRACE_ATTACH_CREATE))
++			return ERR_PTR(-ENOENT);
+ 		return ERR_PTR(-ESRCH);
+ 	}
+ 
+@@ -573,10 +575,13 @@ finish:
+ EXPORT_SYMBOL_GPL(utrace_attach);
+ 
+ /*
+- * When an engine is detached, the target thread may still see it and make
+- * callbacks until it quiesces.  We reset its event flags to just QUIESCE
+- * and install a special ops vector whose callback is dead_engine_delete.
+- * When the target thread quiesces, it can safely free the engine itself.
++ * When an engine is detached, the target thread may still see it
++ * and make callbacks until it quiesces.  We install a special ops
++ * vector whose callbacks are all dead_engine_delete.  When the
++ * target thread quiesces, it can safely free the engine itself.
++ * We must cover all callbacks in case of races between checking
++ * engine->flags and utrace_detach changing engine->ops.
++ * Only report_reap is never called due to a special case in utrace_reap.
+  */
+ static u32
+ dead_engine_delete(struct utrace_attached_engine *engine,
+@@ -585,9 +590,38 @@ dead_engine_delete(struct utrace_attached_engine *engine,
+ 	return UTRACE_ACTION_DETACH;
+ }
+ 
++/*
++ * Don't use .report_xxx = ... style here because this way makes it easier
++ * to be sure we're forced to have an initializer here for every member.
++ */
+ static const struct utrace_engine_ops dead_engine_ops =
+ {
+-	.report_quiesce = &dead_engine_delete
++	(u32 (*)(struct utrace_attached_engine *, struct task_struct *,
++		 unsigned long, struct task_struct *)) &dead_engine_delete,
++	(u32 (*)(struct utrace_attached_engine *, struct task_struct *,
++		 pid_t)) &dead_engine_delete,
++	&dead_engine_delete,
++	(u32 (*)(struct utrace_attached_engine *, struct task_struct *,
++		 struct pt_regs *, u32, siginfo_t *,
++		 const struct k_sigaction *, struct k_sigaction *))
++	&dead_engine_delete,
++	(u32 (*)(struct utrace_attached_engine *, struct task_struct *,
++		 int)) &dead_engine_delete,
++	(u32 (*)(struct utrace_attached_engine *, struct task_struct *,
++		 const struct linux_binprm *, struct pt_regs *))
++	&dead_engine_delete,
++	(u32 (*)(struct utrace_attached_engine *, struct task_struct *,
++		 struct pt_regs *)) &dead_engine_delete,
++	(u32 (*)(struct utrace_attached_engine *, struct task_struct *,
++		 struct pt_regs *)) &dead_engine_delete,
++	(u32 (*)(struct utrace_attached_engine *, struct task_struct *,
++		 long, long *)) &dead_engine_delete,
++	(u32 (*)(struct utrace_attached_engine *, struct task_struct *))
++	&dead_engine_delete,
++	NULL,			/* report_reap */
++	NULL,			/* allow_access_process_vm */
++	NULL,			/* unsafe_exec */
++	NULL,			/* tracer_task */
+ };
+ 
+ 
+@@ -793,9 +827,32 @@ utrace_detach(struct task_struct *target,
+ 		return ret;
+ 	}
+ 
+-	flags = engine->flags;
+-	engine->flags = UTRACE_EVENT(QUIESCE) | UTRACE_ACTION_QUIESCE;
++	/*
++	 * This must work while the target thread races with us doing:
++	 *	if (engine->flags & UTRACE_EVENT(x)) REPORT(x, ...);
++	 * The REPORT macro uses smp_rmb() between checking engine->flags
++	 * and using engine->ops.  Here we change engine->ops first, then
++	 * use smp_wmb() before changing engine->flags.  This ensures it
++	 * can check the old flags before using the old ops, or check the
++	 * old flags before using the new ops, or check the new flags
++	 * before using the new ops, but can never check the new flags
++	 * before using the old ops.  Hence, dead_engine_ops might be used
++	 * with any old flags in place.  So, it has report_* callback
++	 * pointers for every event type.  Since it has to have those
++	 * anyway, we enable (for after any potential race) all the events
++	 * that have no overhead to enable.  We want it to get into that
++	 * callback and complete the detach ASAP.
++	 */
+ 	rcu_assign_pointer(engine->ops, &dead_engine_ops);
++	smp_wmb();
++	flags = engine->flags;
++	engine->flags = (UTRACE_EVENT(QUIESCE)
++			 | UTRACE_EVENT(CLONE)
++			 | UTRACE_EVENT(VFORK_DONE)
++			 | UTRACE_EVENT(EXEC)
++			 | UTRACE_EVENT(EXIT)
++			 | UTRACE_EVENT(JCTL)
++			 | UTRACE_ACTION_QUIESCE);
+ 
+ 	if (quiesce(target, 1)) {
+ 		remove_engine(engine, target, utrace);
+@@ -920,7 +977,7 @@ utrace_set_flags(struct task_struct *target,
+ {
+ 	struct utrace *utrace;
+ 	int report;
+-	unsigned long old_flags, old_utrace_flags;
++	unsigned long old_flags, old_utrace_flags, set_utrace_flags;
+ 	int ret = -EALREADY;
+ 
+ #ifdef ARCH_HAS_SINGLE_STEP
+@@ -954,6 +1011,22 @@ restart:			/* See below. */
+ 	}
+ 
+ 	/*
++	 * When it's in TASK_STOPPED state, do not set UTRACE_EVENT(JCTL).
++	 * That bit indicates utrace_report_jctl has not run yet and so the
++	 * target cannot be considered quiescent.  But if the bit wasn't
++	 * already set, it can't be in running in there and really is
++	 * quiescent now in its existing job control stop.  We set
++	 * UTRACE_ACTION_QUIESCE to be sure that once it resumes it will
++	 * recompute its flags in utrace_quiescent.
++	 */
++	set_utrace_flags = flags;
++	if (((set_utrace_flags &~ old_utrace_flags) & UTRACE_EVENT(JCTL))
++	    && target->state == TASK_STOPPED) {
++		set_utrace_flags &= ~UTRACE_EVENT(JCTL);
++		set_utrace_flags |= UTRACE_ACTION_QUIESCE;
++	}
++
++	/*
+ 	 * When setting these flags, it's essential that we really
+ 	 * synchronize with exit_notify.  They cannot be set after
+ 	 * exit_notify takes the tasklist_lock.  By holding the read
+@@ -963,7 +1036,7 @@ restart:			/* See below. */
+ 	 * knows positively that utrace_report_death will be called or
+ 	 * that it won't.
+ 	 */
+-	if ((flags &~ old_utrace_flags) & (UTRACE_ACTION_NOREAP
++	if ((set_utrace_flags &~ old_utrace_flags) & (UTRACE_ACTION_NOREAP
+ 					   | DEATH_EVENTS)) {
+ 		read_lock(&tasklist_lock);
+ 		if (unlikely(target->exit_state)) {
+@@ -971,12 +1044,12 @@ restart:			/* See below. */
+ 			spin_unlock(&utrace->lock);
+ 			return ret;
+ 		}
+-		target->utrace_flags |= flags;
++		target->utrace_flags |= set_utrace_flags;
+ 		read_unlock(&tasklist_lock);
+ 	}
+ 
+ 	engine->flags = flags;
+-	target->utrace_flags |= flags;
++	target->utrace_flags |= set_utrace_flags;
+ 	ret = 0;
+ 
+ 	report = 0;
+@@ -1098,8 +1171,18 @@ update_action(struct task_struct *tsk, struct utrace *utrace,
+ 	return ret;
+ }
+ 
+-#define REPORT(callback, ...) do { \
+-	u32 ret = (*rcu_dereference(engine->ops)->callback) \
++/*
++ * This macro is always used after checking engine->flags.
++ * The smp_rmb() here pairs with smp_wmb() in utrace_detach.
++ * engine->ops changes before engine->flags, so the flags we
++ * just tested properly enabled this report for the real ops,
++ * or harmlessly enabled it for dead_engine_ops.
++ */
++#define REPORT(callback, ...)						\
++	do {								\
++		u32 ret;						\
++		smp_rmb();						\
++		ret = (*rcu_dereference(engine->ops)->callback)		\
+ 		(engine, tsk, ##__VA_ARGS__); \
+ 	action = update_action(tsk, utrace, engine, ret); \
+ 	} while (0)
+@@ -1872,13 +1955,28 @@ utrace_get_signal(struct task_struct *tsk, struct pt_regs *regs,
+ 	 */
+ 	if (signal.signr != 0) {
+ 		if (signal.return_ka == NULL) {
+-			ka = &tsk->sighand->action[signal.signr - 1];
++			/*
++			 * utrace_inject_signal recorded this to have us
++			 * use the injected signal's normal sigaction.  We
++			 * have to perform the SA_ONESHOT work now because
++			 * our caller will never touch the real sigaction.
++			 */
++			ka = &tsk->sighand->action[info->si_signo - 1];
++			*return_ka = *ka;
+ 			if (ka->sa.sa_flags & SA_ONESHOT)
+ 				ka->sa.sa_handler = SIG_DFL;
+-			*return_ka = *ka;
+ 		}
+ 		else
+ 			BUG_ON(signal.return_ka != return_ka);
++
++		/*
++		 * We already processed the SA_ONESHOT work ahead of time.
++		 * Once we return nonzero, our caller will only refer to
++		 * return_ka.  So we must clear the flag to be sure it
++		 * doesn't clear return_ka->sa.sa_handler.
++		 */
++		return_ka->sa.sa_flags &= ~SA_ONESHOT;
++
+ 		return signal.signr;
+ 	}
+ 

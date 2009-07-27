@@ -1,0 +1,81 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Subject: [Bug 243724] [RHEL 5.1 bug] Fix tx_checksum flag bug in qla3xxx driver (bump to v2.03.00-k4)
+Date: Thu, 14 Jun 2007 15:40:07 -0400
+Bugzilla: 243724
+Message-Id: <3900E914-80DB-4C9D-AB87-470217B57577@redhat.com>
+Changelog: [net] Fix tx_checksum flag bug in qla3xxx driver
+
+
+
+
+BZ 243724
+
+Fixes bug for Tx checksum and bumps the version.
+
+This work is upstream.
+
+Built on brew.
+
+Tested with netperf, multiple send sizes, UDP, TCP.
+
+Apologies for the attachment...
+
+
+>From e959df98be50f787b206d1fc03fb10081eded501 Mon Sep 17 00:00:00 2001
+
+
+Signed-off-by: Ron Mercer <ron.mercer@qlogic.com>
+---
+ drivers/net/qla3xxx.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/net/qla3xxx.c b/drivers/net/qla3xxx.c
+index a828890..4c4e7e0 100644
+--- a/drivers/net/qla3xxx.c
++++ b/drivers/net/qla3xxx.c
+@@ -4051,7 +4051,7 @@ static int __devinit ql3xxx_probe(struct pci_dev *pdev,
+ 	if (pci_using_dac)
+ 		ndev->features |= NETIF_F_HIGHDMA;
+ 	if (qdev->device_id == QL3032_DEVICE_ID)
+-		ndev->features |= (NETIF_F_HW_CSUM | NETIF_F_SG);
++		ndev->features |= (NETIF_F_IP_CSUM | NETIF_F_SG);
+ 
+ 	qdev->mem_map_registers =
+ 	    ioremap_nocache(pci_resource_start(pdev, 1),
+-- 
+1.5.2
+
+>From 29d7cdd6ba95f8744a4e201097bd0d74ee910013 Mon Sep 17 00:00:00 2001
+
+This driver is backported from kernel 2.6.22-rc4 with a few
+non-functional omissions.
+
+Signed-off-by: Ron Mercer <ron.mercer@qlogic.com>
+---
+ drivers/net/qla3xxx.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/net/qla3xxx.c b/drivers/net/qla3xxx.c
+index 4c4e7e0..f6a971a 100644
+--- a/drivers/net/qla3xxx.c
++++ b/drivers/net/qla3xxx.c
+@@ -39,7 +39,7 @@
+ 
+ #define DRV_NAME  	"qla3xxx"
+ #define DRV_STRING 	"QLogic ISP3XXX Network Driver"
+-#define DRV_VERSION	"v2.03.00-k4"
++#define DRV_VERSION	"v2.03.00-k4-RHEL5U1"
+ #define PFX		DRV_NAME " "
+ 
+ static const char ql3xxx_driver_name[] = DRV_NAME;
+-- 
+1.5.2
+
+
+
+
+Regards,
+Marcus Barrow
+
+
+

@@ -1,0 +1,62 @@
+From: Rik van Riel <riel@redhat.com>
+Subject: [PATCH][RHEL5 Xen] blkback: Fix first_sect check.
+Date: Fri, 01 Dec 2006 20:19:56 -0500
+Bugzilla: 217995
+Message-Id: <4570D4BC.5090901@redhat.com>
+Changelog: Xen blkback: Fix first_sect check.
+
+
+[BLOCK] blkback: Fix first_sect check.
+
+The blkback code checks first_sect by computing last_sect - first_sect
++ 1. If this is not positive then the request is
+rejected. Unfortunately, the calculation is stored in an unsigned
+integer before the check is made so negative values will not be
+rejected.
+
+This patch fixes this by explicitly comparing first_sect with
+last_sect.
+
+The blktap code is similar but it stores the difference in a signed
+integer so it's okay.
+
+Fixes bug 217995
+
+-- 
+Politics is the struggle between those who want to make their country
+the best in the world, and those who believe it already is.  Each group
+calls the other unpatriotic.
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Node ID d2ba4ac3616895f7260f108b9d5c3c487be8d482
+# Parent  f326ec66e5149c0140a671fe47e4a75437897d7a
+[BLOCK] blkback: Fix first_sect check.
+
+The blkback code checks first_sect by computing last_sect - first_sect
++ 1. If this is not positive then the request is
+rejected. Unfortunately, the calculation is stored in an unsigned
+integer before the check is made so negative values will not be
+rejected.
+
+This patch fixes this by explicitly comparing first_sect with
+last_sect.
+
+The blktap code is similar but it stores the difference in a signed
+integer so it's okay.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Index: latest/drivers/xen/blkback/blkback.c
+===================================================================
+--- latest.orig/drivers/xen/blkback/blkback.c
++++ latest/drivers/xen/blkback/blkback.c
+@@ -376,7 +376,7 @@ static void dispatch_rw_block_io(blkif_t
+ 			req->seg[i].first_sect + 1;
+ 
+ 		if ((req->seg[i].last_sect >= (PAGE_SIZE >> 9)) ||
+-		    (seg[i].nsec <= 0))
++		    (req->seg[i].last_sect < req->seg[i].first_sect))
+ 			goto fail_response;
+ 		preq.nr_sects += seg[i].nsec;
+ 

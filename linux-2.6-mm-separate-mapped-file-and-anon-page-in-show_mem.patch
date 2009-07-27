@@ -1,0 +1,45 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Subject: [RHEL5 patch] separate mapped file and mapped anonymous pages in 	show_mem() output.
+Date: Mon, 30 Jul 2007 16:50:51 -0400
+Bugzilla: 252033
+Message-Id: <46AE4F2B.1010003@redhat.com>
+Changelog: [mm] separate mapped file and anonymous pages in show_mem() output.
+
+
+The attached patch separates the "mapped" pages count into "mapped-file" 
+and "mapped-anon"
+page counts in the show_mem()  output.  Without this change it is 
+difficult to debug memory
+consumption problems with AltSysrq-M outputs:
+
+Active:2719956 inactive:27752 dirty:36 writeback:73 unstable:0 free:20360 
+slab:165960 mapped:176196 pagetables:929638
+
+Active:2719956 inactive:27752 dirty:36 writeback:73 unstable:0 free:20360 
+slab:165960 mapped-file:57234 mapped-file:118962 pagetables:929638
+
+
+
+
+
+
+--- linux-2.6.18.noarch/mm/page_alloc.c.orig
++++ linux-2.6.18.noarch/mm/page_alloc.c
+@@ -1289,7 +1289,7 @@ void show_free_areas(void)
+ 		K(nr_free_highpages()));
+ 
+ 	printk("Active:%lu inactive:%lu dirty:%lu writeback:%lu "
+-		"unstable:%lu free:%u slab:%lu mapped:%lu pagetables:%lu\n",
++		"unstable:%lu free:%u slab:%lu mapped-file:%lu mapped-anon:%lu pagetables:%lu\n",
+ 		active,
+ 		inactive,
+ 		global_page_state(NR_FILE_DIRTY),
+@@ -1298,6 +1298,7 @@ void show_free_areas(void)
+ 		nr_free_pages(),
+ 		global_page_state(NR_SLAB),
+ 		global_page_state(NR_FILE_MAPPED),
++		global_page_state(NR_ANON_PAGES),
+ 		global_page_state(NR_PAGETABLE));
+ 
+ 	for_each_zone(zone) {
+

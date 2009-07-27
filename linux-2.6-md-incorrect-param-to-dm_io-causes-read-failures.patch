@@ -1,0 +1,31 @@
+From: Jonathan Brassow <jbrassow@redhat.com>
+Subject: [PATCH rhel 5.1] bz 241006 incorrect parameter to dm_io causes 	read failures
+Date: Wed, 23 May 2007 11:58:43 -0500
+Bugzilla: 241006
+Message-Id: <1179939523.25041.8.camel@hydrogen.msp.redhat.com>
+Changelog: [md] incorrect parameter to dm_io causes read failures
+
+
+Writes to mirrors go to all devices, but reads only come from one.
+However, the dm_io call from read_async_bio specifies m->ms->nr_mirrors
+as the number of requests... causing an error to be returned.
+
+This happens when reads are requested from mirror regions which are not
+in-sync.
+
+ brassow
+
+Index: linux-rhel5/drivers/md/dm-raid1.c
+===================================================================
+--- linux-rhel5.orig/drivers/md/dm-raid1.c
++++ linux-rhel5/drivers/md/dm-raid1.c
+@@ -964,7 +964,7 @@ static void read_async_bio(struct mirror
+ 
+ 	map_region(&io, m, bio);
+ 	bio_set_m(bio, m);
+-	(void) dm_io(&io_req, m->ms->nr_mirrors, &io, NULL);
++	(void) dm_io(&io_req, 1, &io, NULL);
+ }
+ 
+ static void do_reads(struct mirror_set *ms, struct bio_list *reads)
+

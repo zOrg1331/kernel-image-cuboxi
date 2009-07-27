@@ -1,0 +1,75 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Subject: [RHEL5.2 PATCH] tg3: Fix performance regression on 5705
+Date: Tue, 30 Oct 2007 17:47:57 -0400
+Bugzilla: 330181
+Message-Id: <20071030214757.GW11209@gospo.rdu.redhat.com>
+Changelog: [net] tg3: Fix performance regression on 5705
+
+
+
+This patch fixes a performance regression found with the upstream patch
+we needed to resolve a kexec/kdump issue.  The performance of 5705
+hardware was terrible without this fix.
+
+commit 114342f2d38439cb1a54f1f724fa38729b093c48
+Author: Michael Chan <mchan@broadcom.com>
+
+    [TG3]: Fix performance regression on 5705.
+
+    A performance regression was introduced by the following commit:
+
+        commit ee6a99b539a50b4e9398938a0a6d37f8bf911550
+        Author: Michael Chan <mchan@broadcom.com>
+        Date:   Wed Jul 18 21:49:10 2007 -0700
+
+        [TG3]: Fix msi issue with kexec/kdump.
+
+    In making that change, the PCI latency timer and cache line size
+    registers were not restored after chip reset.  On the 5705, the
+    latency timer gets reset to 0 during chip reset and this causes
+    very poor performance.
+
+
+---
+
+ tg3.c |   14 ++++++++++++--
+ 1 files changed, 12 insertions(+), 2 deletions(-)
+
+--- linux-2.6.18.x86_64/drivers/net/tg3.c.gospo
++++ linux-2.6.18.x86_64/drivers/net/tg3.c
+@@ -63,7 +63,7 @@
+ 
+ #define DRV_MODULE_NAME		"tg3"
+ #define PFX DRV_MODULE_NAME	": "
+-#define DRV_MODULE_VERSION	"3.80"
++#define DRV_MODULE_VERSION	"3.80-rh"
+ #define DRV_MODULE_RELDATE	"August 2, 2007"
+ 
+ #define TG3_DEF_MAC_MODE	0
+@@ -135,7 +135,11 @@ static char version[] __devinitdata =
+ 	DRV_MODULE_NAME ".c:v" DRV_MODULE_VERSION " (" DRV_MODULE_RELDATE ")\n";
+ 
+ MODULE_AUTHOR("David S. Miller (davem@redhat.com) and Jeff Garzik (jgarzik@pobox.com)");
+-MODULE_DESCRIPTION("Broadcom Tigon3 ethernet driver");
++MODULE_DESCRIPTION("Broadcom Tigon3 ethernet driver\n"
++"\nRHEL driver based on upstream driver version " DRV_MODULE_VERSION "\n"
++"Also includes additional upstream commits:\n"
++"114342f2d38439cb1a54f1f724fa38729b093c48	fix performance regression on 5705"
++);
+ MODULE_LICENSE("GPL");
+ MODULE_VERSION(DRV_MODULE_VERSION);
+ 
+@@ -4934,6 +4938,12 @@ static void tg3_restore_pci_state(struct
+ 
+ 	pci_write_config_dword(tp->pdev, TG3PCI_COMMAND, tp->pci_cmd);
+ 
++	if (!(tp->tg3_flags2 & TG3_FLG2_PCI_EXPRESS)) {
++		pci_write_config_byte(tp->pdev, PCI_CACHE_LINE_SIZE,
++				      tp->pci_cacheline_sz);
++		pci_write_config_byte(tp->pdev, PCI_LATENCY_TIMER,
++				      tp->pci_lat_timer);
++	}
+ 	/* Make sure PCI-X relaxed ordering bit is clear. */
+ 	pci_read_config_dword(tp->pdev, TG3PCI_X_CAPS, &val);
+ 	val &= ~PCIX_CAPS_RELAXED_ORDERING;
+

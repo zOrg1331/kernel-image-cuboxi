@@ -1,0 +1,96 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 8 Jul 2008 15:32:19 -0500
+Subject: [fs] add buffer_submit_read and bh_uptodate_or_lock
+Message-id: 4873CED3.4050902@redhat.com
+O-Subject: [PATCH RHEL5 8/9] buffer_submit_read and bh_uptodate_or_lock
+Bugzilla: 443896
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: Alexander Viro <aviro@redhat.com>
+
+This is for:
+
+Bugzilla Bug 443896: RFE: [Ext4 enabler] backport vfs
+helpers to facilitate ext4 backport and testing
+
+From: Aneesh Kumar K.V <aneesh.kumar@linux.vnet.ibm.com>
+Date: Tue, 29 Jan 2008 04:58:26 +0000 (-0500)
+Subject: Add buffer head related helper functions
+X-Git-Tag: v2.6.25-rc1~11662~27
+X-Git-Url: http://git.engineering.redhat.com/?p=linux-2.6.git;a=commitdiff_plain;h=389d1b083c767a360ec84b27a95da06244becec8
+
+Add buffer head related helper functions
+
+Add buffer head related helper function bh_uptodate_or_lock and
+bh_submit_read which can be used by file system
+
+Signed-off-by: Aneesh Kumar K.V <aneesh.kumar@linux.vnet.ibm.com>
+
+diff --git a/fs/buffer.c b/fs/buffer.c
+index a70fa87..17ebeab 100644
+--- a/fs/buffer.c
++++ b/fs/buffer.c
+@@ -3175,6 +3175,50 @@ static int buffer_cpu_notify(struct notifier_block *self,
+ }
+ #endif /* CONFIG_HOTPLUG_CPU */
+ 
++/**
++ * bh_uptodate_or_lock - Test whether the buffer is uptodate
++ * @bh: struct buffer_head
++ *
++ * Return true if the buffer is up-to-date and false,
++ * with the buffer locked, if not.
++ */
++int bh_uptodate_or_lock(struct buffer_head *bh)
++{
++	if (!buffer_uptodate(bh)) {
++		lock_buffer(bh);
++		if (!buffer_uptodate(bh))
++			return 0;
++		unlock_buffer(bh);
++	}
++	return 1;
++}
++EXPORT_SYMBOL(bh_uptodate_or_lock);
++
++/**
++ * bh_submit_read - Submit a locked buffer for reading
++ * @bh: struct buffer_head
++ *
++ * Returns zero on success and -EIO on error.
++ */
++int bh_submit_read(struct buffer_head *bh)
++{
++	BUG_ON(!buffer_locked(bh));
++
++	if (buffer_uptodate(bh)) {
++		unlock_buffer(bh);
++		return 0;
++	}
++
++	get_bh(bh);
++	bh->b_end_io = end_buffer_read_sync;
++	submit_bh(READ, bh);
++	wait_on_buffer(bh);
++	if (buffer_uptodate(bh))
++		return 0;
++	return -EIO;
++}
++EXPORT_SYMBOL(bh_submit_read);
++
+ void __init buffer_init(void)
+ {
+ 	int nrpages;
+diff --git a/include/linux/buffer_head.h b/include/linux/buffer_head.h
+index bc916a0..41c7fed 100644
+--- a/include/linux/buffer_head.h
++++ b/include/linux/buffer_head.h
+@@ -184,6 +184,8 @@ int sync_dirty_buffer(struct buffer_head *bh);
+ int submit_bh(int, struct buffer_head *);
+ void write_boundary_block(struct block_device *bdev,
+ 			sector_t bblock, unsigned blocksize);
++int bh_uptodate_or_lock(struct buffer_head *bh);
++int bh_submit_read(struct buffer_head *bh);
+ 
+ extern int buffer_heads_over_limit;
+ 

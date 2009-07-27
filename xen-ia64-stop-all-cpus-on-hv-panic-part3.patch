@@ -1,0 +1,102 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Tue, 5 Feb 2008 18:04:14 -0500
+Subject: [Xen] ia64: stop all CPUs on HV panic part3
+Message-id: 47A8EB6E.2080507@redhat.com
+O-Subject: Re: [RHEL5.2 PATCH] [Xen] Dom0/DomU may continue to work after hypervisor panic
+Bugzilla: 426129
+
+Attached is an additional patch for BZ#426129.
+
+https://bugzilla.redhat.com/show_bug.cgi?id=426129
+
+The patch previously posted and committed in kernel -75 was not enough
+to fix this problem, because it is still possible to enter the infinite
+loop in debugger trap before all cpus are stopped.
+
+This problem has been fixed in the upstream:
+- [IA64] Fix infinite loop in fault handler if debugger is not connected
+http://xenbits.xensource.com/ext/ia64/xen-unstable.hg?rev/33d0cf9474f9
+
+However, to backport it to RHEL5, more patches to modify vmx_faults are
+required, and it would be large.
+
+Instead of that, the attached patch is minimized to avoid the debugger
+trap, though it is different from the fix in the upstream.
+
+I've tested this with kernel -77 and confirmed that Dom0 is stopped on
+hypervisor panic.
+
+Please review and ACK.
+
+Regards,
+
+Tetsu Yamamoto
+
+Tetsu Yamamoto wrote::
+> This patch fixes BZ#426129.
+> https://bugzilla.redhat.com/show_bug.cgi?id=426129
+>
+> This is backported from the upstream to stop all CPUs on hypervisor panic.
+> http://xenbits.xensource.com/ext/xen-ia64-unstable.hg?rev/124f7a7f5f84
+>
+> I've tested these patches with kernel-2.6.18-58.el5, and confirmed that
+> Dom0 is stopped on hypervisor panic.
+>
+> Please review and ACK.
+>
+> Regards,
+>
+> Tetsu Yamamoto
+>
+>
+>
+
+diff --git a/common/gdbstub.c b/common/gdbstub.c
+index 51a2d6c..70528e1 100644
+--- a/common/gdbstub.c
++++ b/common/gdbstub.c
+@@ -478,13 +478,13 @@ process_command(struct cpu_user_regs *regs, struct gdb_context *ctx)
+     return resume;
+ }
+ 
+-static struct gdb_context
++struct gdb_context
+ __gdb_ctx = {
+     .serhnd  = -1,
+     .running = ATOMIC_INIT(1),
+     .signum  = 1
+ };
+-static struct gdb_context *gdb_ctx = &__gdb_ctx;
++struct gdb_context *gdb_ctx = &__gdb_ctx;
+ 
+ static void
+ gdbstub_console_puts(const char *str)
+diff --git a/include/asm-ia64/debugger.h b/include/asm-ia64/debugger.h
+index 747e5a7..4e5652f 100644
+--- a/include/asm-ia64/debugger.h
++++ b/include/asm-ia64/debugger.h
+@@ -66,7 +66,11 @@ static inline int debugger_trap_fatal(
+ 
+ #define ____debugger_trap_immediate(b) __asm__ __volatile__ ("break.m "#b"\n")
+ #define __debugger_trap_immediate(b) ____debugger_trap_immediate(b)
+-#define debugger_trap_immediate() __debugger_trap_immediate(CDB_BREAK_NUM)
++#define debugger_trap_immediate()					\
++do {									\
++    if ( gdb_ctx->serhnd >= 0 )						\
++        __debugger_trap_immediate(CDB_BREAK_NUM);			\
++} while (0)
+ 
+ //XXX temporal work around
+ #ifndef CONFIG_SMP
+diff --git a/include/xen/gdbstub.h b/include/xen/gdbstub.h
+index 46e4815..2009a42 100644
+--- a/include/xen/gdbstub.h
++++ b/include/xen/gdbstub.h
+@@ -47,6 +47,7 @@ struct gdb_context {
+     unsigned long       out_offset;
+     u8                  out_csum;
+ };
++extern struct gdb_context *gdb_ctx;
+ 
+ /* interface to arch specific routines */
+ void gdb_write_to_packet(

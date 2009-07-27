@@ -1,0 +1,96 @@
+diff --git a/fs/buffer.c b/fs/buffer.c
+index 9297793..45322bb 100644
+--- a/fs/buffer.c
++++ b/fs/buffer.c
+@@ -290,7 +290,9 @@ asmlinkage long sys_sync(void)
+ 	ub = get_exec_ub();
+ 	ub_percpu_inc(ub, sync);
+ 
+-	do_sync(1);
++	if (sysctl_fsync_enable || ve_is_super(get_exec_env())) {
++		do_sync(1);
++	}
+ 
+ 	ub_percpu_inc(ub, sync_done);
+ 	return 0;
+@@ -378,10 +380,19 @@ static long __do_fsync(unsigned int fd, int datasync)
+ 	int ret = -EBADF;
+ 
+ 	file = fget(fd);
+-	if (file) {
+-		ret = do_fsync(file, datasync);
+-		fput(file);
++
++	if (!file) {
++		return ret;
+ 	}
++
++	if (!sysctl_fsync_enable && !ve_is_super(get_exec_env())) {
++		ret = 0;
++		goto out;
++	}
++
++	ret = do_fsync(file, datasync);
++out:
++	fput(file);
+ 	return ret;
+ }
+ 
+diff --git a/fs/sync.c b/fs/sync.c
+index cf2e279..0ffafaf 100644
+--- a/fs/sync.c
++++ b/fs/sync.c
+@@ -117,6 +117,11 @@ asmlinkage long sys_sync_file_range(int fd, loff_t offset, loff_t nbytes,
+ 			!S_ISLNK(i_mode))
+ 		goto out_put;
+ 
++	if (!sysctl_fsync_enable && !ve_is_super(get_exec_env())) {
++		ret = 0;
++		goto out_put;
++	}
++
+ 	ret = do_sync_file_range(file, offset, endbyte, flags);
+ out_put:
+ 	fput_light(file, fput_needed);
+diff --git a/include/linux/ve.h b/include/linux/ve.h
+index 1548d8a..4f77378 100644
+--- a/include/linux/ve.h
++++ b/include/linux/ve.h
+@@ -378,6 +378,8 @@ extern struct task_struct *ve_cleanup_thread;
+ 
+ extern unsigned long long ve_relative_clock(struct timespec * ts);
+ 
++extern int sysctl_fsync_enable;
++
+ #ifdef CONFIG_FAIRSCHED
+ #define ve_cpu_online_map(ve, mask) fairsched_cpu_online_map(ve->veid, mask)
+ #else
+diff --git a/kernel/ve/veowner.c b/kernel/ve/veowner.c
+index 5f3669e..06f0549 100644
+--- a/kernel/ve/veowner.c
++++ b/kernel/ve/veowner.c
+@@ -165,6 +165,9 @@ void prepare_ve0_proc_root(void)
+  * ------------------------------------------------------------------------
+  */
+ extern int ve_area_access_check;
++
++int sysctl_fsync_enable = 1;
++
+ #ifdef CONFIG_INET
+ static ctl_table vz_ipv4_route_table[] = {
+ 	{
+@@ -195,6 +198,14 @@ static ctl_table vz_fs_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= &proc_dointvec,
+ 	},
++	{
++		.ctl_name	= 227,
++		.procname	= "fsync-enable",
++		.data		= &sysctl_fsync_enable,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
+ 	{ 0 }
+ };
+ static ctl_table root_table2[] = {

@@ -1,0 +1,31 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Thu, 31 Jan 2008 09:17:23 -0500
+Subject: [scsi] qla2xxx: update RH version number
+Message-id: 20080131141723.17370.51226.sendpatchset@shell.boston.redhat.com
+O-Subject: [Bug 431052] [QLogic] [RHEL5.2 bug] qla2xxx - update version number to reflect 8 Gb/S changes
+Bugzilla: 431052
+
+BZ 431052 Update version number to reflect 8 Gb/S changes.
+
+In the recent 8 Gb/S changes for correct firmware loading and new firmware,
+I forgot to update the version number.
+
+We already have partners requesting what the correct version number
+is for kernels they have downloaded from the "peoples" pages, so I
+would like to bump the version to reflect the recent significant change..
+
+Very low risk and  tested.
+
+diff --git a/drivers/scsi/qla2xxx/qla_version.h b/drivers/scsi/qla2xxx/qla_version.h
+index dcb156b..2f7d561 100644
+--- a/drivers/scsi/qla2xxx/qla_version.h
++++ b/drivers/scsi/qla2xxx/qla_version.h
+@@ -7,7 +7,7 @@
+ /*
+  * Driver version
+  */
+-#define QLA2XXX_VERSION      "8.02.00-k5-rhel5.2-01"
++#define QLA2XXX_VERSION      "8.02.00-k5-rhel5.2-02"
+ 
+ #define QLA_DRIVER_MAJOR_VER	8
+ #define QLA_DRIVER_MINOR_VER	1

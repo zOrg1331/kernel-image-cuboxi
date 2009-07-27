@@ -1,0 +1,60 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Sat, 29 Mar 2008 15:41:16 +0800
+Subject: [ipsec] use hmac instead of digest_null
+Message-id: 20080329074116.GA31093@gondor.apana.org.au
+O-Subject: [RHEL5.2 PATCH] [IPSEC]: Use hmac(digest_null) instead of digest_null
+Bugzilla: 436267
+
+Hi:
+
+HEL5.2 BZ 436267
+
+[IPSEC]: Use hmac(digest_null) instead of digest_null
+
+As the backport of the crypto layer in RHEL5.2 uses different
+types for digest_null and hmac we can't use digest_null directly
+from ESP.  Instead it needs to be wrapped around in hmac.
+
+This patch does exactly that and has been successfully tested by
+IBM.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Thanks,
+--
+Visit Openswan at http://www.openswan.org/
+Email: Herbert Xu ~{PmV>HI~} <herbert@gondor.apana.org.au>
+Home Page: http://gondor.apana.org.au/~herbert/
+PGP Key: http://gondor.apana.org.au/~herbert/pubkey.txt
+--
+
+Acked-by: Thomas Graf <tgraf@redhat.com>
+Acked-by: James Morris <jmorris@redhat.com>
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/net/ipv4/esp4.c b/net/ipv4/esp4.c
+index 7f457e3..f0dba29 100644
+--- a/net/ipv4/esp4.c
++++ b/net/ipv4/esp4.c
+@@ -468,7 +468,7 @@ static int esp_init_authenc(struct xfrm_state *x)
+ 
+ 	err = -ENAMETOOLONG;
+ 	if (snprintf(authenc_name, CRYPTO_MAX_ALG_NAME, "authenc(%s,%s)",
+-		     aalg_desc ? aalg_desc->name : "digest_null",
++		     aalg_desc ? aalg_desc->name : "hmac(digest_null)",
+ 		     ealg_desc->name) >= CRYPTO_MAX_ALG_NAME)
+ 		goto error;
+ 
+diff --git a/net/ipv6/esp6.c b/net/ipv6/esp6.c
+index 8434b56..68e3099 100644
+--- a/net/ipv6/esp6.c
++++ b/net/ipv6/esp6.c
+@@ -433,7 +433,7 @@ static int esp_init_authenc(struct xfrm_state *x)
+ 
+ 	err = -ENAMETOOLONG;
+ 	if (snprintf(authenc_name, CRYPTO_MAX_ALG_NAME, "authenc(%s,%s)",
+-		     x->aalg ? x->aalg->alg_name : "digest_null",
++		     x->aalg ? x->aalg->alg_name : "hmac(digest_null)",
+ 		     x->ealg->alg_name) >= CRYPTO_MAX_ALG_NAME)
+ 		goto error;
+ 

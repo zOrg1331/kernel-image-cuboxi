@@ -1,0 +1,178 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Fri, 15 May 2009 09:38:28 -0400
+Subject: [fs] cifs: unicode alignment and buffer sizing problems
+Message-id: 1242394708-23097-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.3.z PATCH] BZ#494279: cifs: fix unicode alignment and buffer sizing problems
+Bugzilla: 494279
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+CVE: CVE-2009-1439
+
+This is a backport of the patch for BZ#494280 to RHEL 5.3.z.
+
+At session setup and tree connect, CIFS will save off some strings that
+it gets from the server during the session setup and tree connect.
+
+There are several places in this code that size the buffers for these
+strings too small. The server will send strings in UTF-16 format (all
+chars are 2 bytes), and these can translate to being up to 4 bytes in
+UTF-8. Part of the patch just ensures that we size the buffer
+appropriately for this -- 4 times the number of wide chars, plus 2 bytes
+for the NULL terminator.
+
+The string area of these responses is also word-aligned. The current
+scheme that CIFS uses to compensate for the buffer alignment assumes
+that the buffer will always be preceded by a 1 byte pad, but that's not
+always the case. This patch fixes this by changing this to properly
+check for the alignment by making sure that we start on a word boundary.
+It also fixes a workaround for buggy windows servers that don't properly
+NULL terminate the last string in the packet, and cleans up some
+unneeded NULL termination.
+
+Finally, it adds some "cFYI" debug printks that that show these strings
+when a debug switch is set. This may help detect problems in this area
+in the future.
+
+The patch is a rollup of 5 patches from upstream. Some of these are not
+yet in Linus' tree but are in Steve French's tree and should make their
+way to Linus in the near future.
+
+This patch was tested by mounting and unmounting different servers with
+the cFYI switch enabled, and making sure that the resulting strings
+looked correct.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+---
+ fs/cifs/connect.c |   11 +++++------
+ fs/cifs/sess.c    |   49 ++++++++++++++++++++++++++++---------------------
+ 2 files changed, 33 insertions(+), 27 deletions(-)
+
+diff --git a/fs/cifs/connect.c b/fs/cifs/connect.c
+index 7122c35..6ddb3a9 100644
+--- a/fs/cifs/connect.c
++++ b/fs/cifs/connect.c
+@@ -3628,16 +3628,15 @@ CIFSTCon(unsigned int xid, struct cifsSesInfo *ses,
+ 			    BCC(smb_buffer_response)) {
+ 				kfree(tcon->nativeFileSystem);
+ 				tcon->nativeFileSystem =
+-				    kzalloc(length + 2, GFP_KERNEL);
+-				if (tcon->nativeFileSystem)
++				    kzalloc((4 * length) + 2, GFP_KERNEL);
++				if (tcon->nativeFileSystem) {
+ 					cifs_strfromUCS_le(
+ 						tcon->nativeFileSystem,
+ 						(__le16 *) bcc_ptr,
+ 						length, nls_codepage);
+-				bcc_ptr += 2 * length;
+-				bcc_ptr[0] = 0;	/* null terminate the string */
+-				bcc_ptr[1] = 0;
+-				bcc_ptr += 2;
++					cFYI(1, ("nativeFileSystem=%s",
++						tcon->nativeFileSystem));
++				}
+ 			}
+ 			/* else do not bother copying these information fields*/
+ 		} else {
+diff --git a/fs/cifs/sess.c b/fs/cifs/sess.c
+index 7606bb4..752ead9 100644
+--- a/fs/cifs/sess.c
++++ b/fs/cifs/sess.c
+@@ -211,35 +211,36 @@ static int decode_unicode_ssetup(char **pbcc_area, int bleft,
+ 	int words_left, len;
+ 	char *data = *pbcc_area;
+ 
+-
+-
+ 	cFYI(1, ("bleft %d", bleft));
+ 
+-
+-	/* SMB header is unaligned, so cifs servers word align start of
+-	   Unicode strings */
+-	data++;
+-	bleft--; /* Windows servers do not always double null terminate
+-		    their final Unicode string - in which case we
+-		    now will not attempt to decode the byte of junk
+-		    which follows it */
++	/*
++	 * Windows servers do not always double null terminate their final
++	 * Unicode string. Check to see if there are an uneven number of bytes
++	 * left. If so, then add an extra NULL pad byte to the end of the
++	 * response.
++	 *
++	 * See section 2.7.2 in "Implementing CIFS" for details
++	 */
++	if (bleft % 2) {
++		data[bleft] = 0;
++		++bleft;
++	}
+ 
+ 	words_left = bleft / 2;
+ 
+ 	/* save off server operating system */
+ 	len = UniStrnlen((wchar_t *) data, words_left);
+ 
+-/* We look for obvious messed up bcc or strings in response so we do not go off
+-   the end since (at least) WIN2K and Windows XP have a major bug in not null
+-   terminating last Unicode string in response  */
+ 	if (len >= words_left)
+ 		return rc;
+ 
+ 	kfree(ses->serverOS);
+ 	/* UTF-8 string will not grow more than four times as big as UCS-16 */
+-	ses->serverOS = kzalloc(4 * len, GFP_KERNEL);
+-	if (ses->serverOS != NULL)
++	ses->serverOS = kzalloc((4 * len) + 2 /* trailing null */, GFP_KERNEL);
++	if (ses->serverOS != NULL) {
+ 		cifs_strfromUCS_le(ses->serverOS, (__le16 *)data, len, nls_cp);
++		cFYI(1, ("serverOS=%s", ses->serverOS));
++	}
+ 	data += 2 * (len + 1);
+ 	words_left -= len + 1;
+ 
+@@ -254,6 +255,7 @@ static int decode_unicode_ssetup(char **pbcc_area, int bleft,
+ 	if (ses->serverNOS != NULL) {
+ 		cifs_strfromUCS_le(ses->serverNOS, (__le16 *)data, len,
+ 				   nls_cp);
++		cFYI(1, ("serverNOS=%s", ses->serverNOS));
+ 		if (strncmp(ses->serverNOS, "NT LAN Manager 4", 16) == 0) {
+ 			cFYI(1, ("NT4 server"));
+ 			ses->flags |= CIFS_SES_NT4;
+@@ -269,12 +271,11 @@ static int decode_unicode_ssetup(char **pbcc_area, int bleft,
+ 		return rc;
+ 
+ 	kfree(ses->serverDomain);
+-	ses->serverDomain = kzalloc(2 * (len + 1), GFP_KERNEL); /* BB FIXME wrong length */
++	ses->serverDomain = kzalloc((4 * len) + 2, GFP_KERNEL);
+ 	if (ses->serverDomain != NULL) {
+ 		cifs_strfromUCS_le(ses->serverDomain, (__le16 *)data, len,
+ 				   nls_cp);
+-		ses->serverDomain[2*len] = 0;
+-		ses->serverDomain[(2*len) + 1] = 0;
++		cFYI(1, ("serverDomain=%s", ses->serverDomain));
+ 	}
+ 	data += 2 * (len + 1);
+ 	words_left -= len + 1;
+@@ -623,12 +624,18 @@ CIFS_SessSetup(unsigned int xid, struct cifsSesInfo *ses, int first_time,
+ 	}
+ 
+ 	/* BB check if Unicode and decode strings */
+-	if (smb_buf->Flags2 & SMBFLG2_UNICODE)
++	if (smb_buf->Flags2 & SMBFLG2_UNICODE) {
++		/* unicode string area must be word-aligned */
++		if (((unsigned long) bcc_ptr - (unsigned long) smb_buf) % 2) {
++			++bcc_ptr;
++			--bytes_remaining;
++		}
+ 		rc = decode_unicode_ssetup(&bcc_ptr, bytes_remaining,
+-						   ses, nls_cp);
+-	else
++					   ses, nls_cp);
++	} else {
+ 		rc = decode_ascii_ssetup(&bcc_ptr, bytes_remaining,
+ 					 ses, nls_cp);
++	}
+ 
+ ssetup_exit:
+ 	if (spnego_key) {
+-- 
+1.5.5.6
+

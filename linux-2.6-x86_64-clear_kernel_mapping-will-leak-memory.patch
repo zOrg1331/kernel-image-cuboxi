@@ -1,0 +1,99 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Subject: Re: [RHEL5 patch] x86_64: clear_kernel_mapping: mapping has been  split. will leak memory.
+Date: Wed, 13 Dec 2006 15:01:27 -0500
+Bugzilla: 218543
+Message-Id: <45805C17.5090100@redhat.com>
+Changelog: x86_64: clear_kernel_mapping: mapping has been split. will leak memory.
+
+
+Konrad Rzeszutek wrote:
+
+>I will NACK it based on testing. Please see attached dmesg.
+>
+>
+>Bad page state in process 'swapper'
+>page:ffff810001c3ff28 flags:0x0030080000000800 mapping:0000000000000000 
+>mapcount:0 count:0 (Not tainted)
+>Trying to fix it up, but a reboot is needed
+>Backtrace:
+>
+> 
+>
+OK, the problem here is that split_large_page() sets the PG_private flag and
+sets page->private = 0 for accounting purposes.
+
+--------------------------------------------------------------------
+split_large_page(...)
+      ...
+       /*
+        * page_private is used to track the number of entries in
+        * the page table page have non standard attributes.
+        */
+       SetPagePrivate(base);
+       page_private(base) = 0;
+      ...
+--------------------------------------------------------------------
+
+clear_kernel_mapping() simply needs to call ClearPagePrivate() before
+freeing the page table page.
+
+
+
+
+--- linux-2.6.18.noarch/arch/x86_64/mm/init.c.orig
++++ linux-2.6.18.noarch/arch/x86_64/mm/init.c
+@@ -413,7 +413,9 @@ void __init clear_kernel_mapping(unsigne
+ 	for (; address < end; address += LARGE_PAGE_SIZE) { 
+ 		pgd_t *pgd = pgd_offset_k(address);
+ 		pud_t *pud;
+-		pmd_t *pmd;
++		pmd_t *pmd, local_pmd;
++		struct page *page;
++
+ 		if (pgd_none(*pgd))
+ 			continue;
+ 		pud = pud_offset(pgd, address);
+@@ -423,10 +425,10 @@ void __init clear_kernel_mapping(unsigne
+ 		if (!pmd || pmd_none(*pmd))
+ 			continue; 
+ 		if (0 == (pmd_val(*pmd) & _PAGE_PSE)) { 
+-			/* Could handle this, but it should not happen currently. */
+-			printk(KERN_ERR 
+-	       "clear_kernel_mapping: mapping has been split. will leak memory\n"); 
+-			pmd_ERROR(*pmd); 
++			local_pmd = __pmd(pmd_val(*pmd) & ~_PAGE_NX);
++			page = pmd_page(local_pmd);
++			ClearPagePrivate(page);
++			pte_free(pmd_page(local_pmd));
+ 		}
+ 		set_pmd(pmd, __pmd(0)); 		
+ 	}
+--- linux-2.6.18.noarch/arch/x86_64/mm/init-xen.c.orig
++++ linux-2.6.18.noarch/arch/x86_64/mm/init-xen.c
+@@ -811,7 +811,9 @@ void __init clear_kernel_mapping(unsigne
+ 	for (; address < end; address += LARGE_PAGE_SIZE) { 
+ 		pgd_t *pgd = pgd_offset_k(address);
+ 		pud_t *pud;
+-		pmd_t *pmd;
++		pmd_t *pmd, local_pmd;
++		struct page *page;
++
+ 		if (pgd_none(*pgd))
+ 			continue;
+ 		pud = pud_offset(pgd, address);
+@@ -821,10 +823,10 @@ void __init clear_kernel_mapping(unsigne
+ 		if (!pmd || pmd_none(*pmd))
+ 			continue; 
+ 		if (0 == (pmd_val(*pmd) & _PAGE_PSE)) { 
+-			/* Could handle this, but it should not happen currently. */
+-			printk(KERN_ERR 
+-	       "clear_kernel_mapping: mapping has been split. will leak memory\n"); 
+-			pmd_ERROR(*pmd); 
++			local_pmd = __pmd(pmd_val(*pmd) & ~_PAGE_NX);
++			page = pmd_page(local_pmd);
++			ClearPagePrivate(page);
++			pte_free(pmd_page(local_pmd));
+ 		}
+ 		set_pmd(pmd, __pmd(0)); 		
+ 	}
+

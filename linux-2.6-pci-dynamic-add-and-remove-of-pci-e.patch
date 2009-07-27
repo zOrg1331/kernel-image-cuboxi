@@ -1,0 +1,73 @@
+From: Konrad Rzeszutek <konradr@redhat.com>
+Subject: [RHEL5 U1 PATCH] RHBZ# 227727: Dynamic Add and Remove of PCI-E
+Date: Thu, 10 May 2007 18:08:00 -0400
+Bugzilla: 227727
+Message-Id: <20070510220800.GA8177@mars.boston.redhat.com>
+Changelog: [pci] Dynamic Add and Remove of PCI-E
+
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=227727
+
+Description:
+------------
+ 
+[PATCH] powerpc: enable all PCI/PCIE nodes for rpa[php,dlpar]
+
+Change the criterion that RPA PCI Hotplug and RPA DLPAR use when
+determining the hotplug capabilities of a given device node.  This 
+allows all PCI and PCIE nodes to be properly identified for use in 
+PCI Hotplug and DLPAR. 
+
+RHEL Version Found:
+------------------
+RHEL5  
+
+Upstream Status:
+----------------
+This has been accepted into mainline as of 12/01/2006.
+
+Test Status:
+------------
+Tested by John Rose in IBM extensivly on the affected machines.
+
+Proposed Patch:
+---------------
+This patch applies cleanly to 2.6.18-18.el5
+
+ rhel5_pcie-johnrose/drivers/pci/hotplug/rpadlpar_core.c |    2 +-
+ rhel5_pcie-johnrose/drivers/pci/hotplug/rpaphp_core.c   |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff -puN drivers/pci/hotplug/rpadlpar_core.c~pcie drivers/pci/hotplug/rpadlpar_core.c
+--- rhel5_pcie/drivers/pci/hotplug/rpadlpar_core.c~pcie	2007-01-29 15:46:10.000000000 -0600
++++ rhel5_pcie-johnrose/drivers/pci/hotplug/rpadlpar_core.c	2007-01-29 15:46:11.000000000 -0600
+@@ -63,7 +63,7 @@ static struct device_node *find_php_slot
+ 	char *type;
+ 	int rc;
+ 
+-	while ((np = of_find_node_by_type(np, "pci"))) {
++	while ((np = of_find_node_by_name(np, "pci"))) {
+ 		rc = rpaphp_get_drc_props(np, NULL, &name, &type, NULL);
+ 		if (rc == 0)
+ 			if (!strcmp(drc_name, name) && !strcmp(drc_type, type))
+diff -puN drivers/pci/hotplug/rpaphp_core.c~pcie drivers/pci/hotplug/rpaphp_core.c
+--- rhel5_pcie/drivers/pci/hotplug/rpaphp_core.c~pcie	2007-01-29 15:46:11.000000000 -0600
++++ rhel5_pcie-johnrose/drivers/pci/hotplug/rpaphp_core.c	2007-01-29 15:46:10.000000000 -0600
+@@ -356,7 +356,7 @@ static int __init rpaphp_init(void)
+ 	info(DRIVER_DESC " version: " DRIVER_VERSION "\n");
+ 	init_MUTEX(&rpaphp_sem);
+ 
+-	while ((dn = of_find_node_by_type(dn, "pci")))
++	while ((dn = of_find_node_by_name(dn, "pci")))
+ 		rpaphp_add_slot(dn);
+ 
+ 	return 0;
+
+
+
+-- 
+Konrad Rzeszutek 1-(978)-392-3903 or 1-(617)-693-1718
+IBM on-site partner.  
+

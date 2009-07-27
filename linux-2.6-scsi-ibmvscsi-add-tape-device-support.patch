@@ -1,0 +1,105 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Tue, 22 Jul 2008 14:45:38 -0400
+Subject: [scsi] ibmvscsi: add tape device support
+Message-id: 20080722184538.10495.20545.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.3] Update ibmvscsi driver with upstream fixes and enhancements
+Bugzilla: 439488
+RH-Acked-by: Jeff Garzik <jgarzik@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=439488
+
+Description:
+===========
+New Feature / ppc only
+
+Adds support for tape devices to vSCSI driver.
+
+Similar to the current emulated vSCSI disk and optical device supported by the VIOS, the VIOS will virtualize a physical tape device and present it to client LPARs as a generic tape device. All required Linux client device driver support already exists, so this feature is only to verify the function once it becomes available.
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1370297
+
+Kernel binary rpm available at:
+===============================
+http://people.redhat.com/bpeters/kernels/kernel-2.6.18-94.el5.94.el5.439488.ppc64.rpm
+
+Upstream Status:
+================
+Already upstream:
+http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=c3a3b55ae80a0d595445064159c69f8e80911e85
+
+Test Status:
+============
+Verified that new tape device support does not negatively affect normal vSCSI operation using 'stress'
+
+7/22/08 <bpeters@redhat.com>
+
+===============================================================
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+
+Proposed Patch:
+===============
+This patch is based on 2.6.18-94.el5
+
+diff --git a/drivers/scsi/ibmvscsi/ibmvscsi.c b/drivers/scsi/ibmvscsi/ibmvscsi.c
+index d554719..72274b0 100644
+--- a/drivers/scsi/ibmvscsi/ibmvscsi.c
++++ b/drivers/scsi/ibmvscsi/ibmvscsi.c
+@@ -720,7 +720,7 @@ static void handle_cmd_rsp(struct srp_event_struct *evt_struct)
+ 	}
+ 	
+ 	if (cmnd) {
+-		cmnd->result = rsp->status;
++		cmnd->result |= rsp->status;
+ 		if (((cmnd->result >> 1) & 0x1f) == CHECK_CONDITION)
+ 			memcpy(cmnd->sense_buffer,
+ 			       rsp->data,
+@@ -764,6 +764,7 @@ static int ibmvscsi_queuecommand(struct scsi_cmnd *cmnd,
+ 	u16 lun = lun_from_dev(cmnd->device);
+ 	u8 out_fmt, in_fmt;
+ 
++	cmnd->result = (DID_OK << 16);
+ 	evt_struct = get_event_struct(&hostdata->pool);
+ 	if (!evt_struct)
+ 		return SCSI_MLQUEUE_HOST_BUSY;
+@@ -1380,6 +1381,8 @@ void ibmvscsi_handle_crq(struct viosrp_crq *crq,
+ 
+ 	del_timer(&evt_struct->timer);
+ 
++	if ((crq->status != VIOSRP_OK && crq->status != VIOSRP_OK2) && evt_struct->cmnd)
++		evt_struct->cmnd->result = DID_ERROR << 16;
+ 	if (evt_struct->done)
+ 		evt_struct->done(evt_struct);
+ 	else
+diff --git a/drivers/scsi/ibmvscsi/viosrp.h b/drivers/scsi/ibmvscsi/viosrp.h
+index 90f1a61..d199389 100644
+--- a/drivers/scsi/ibmvscsi/viosrp.h
++++ b/drivers/scsi/ibmvscsi/viosrp.h
+@@ -59,6 +59,16 @@ enum viosrp_crq_formats {
+ 	VIOSRP_INLINE_FORMAT = 0x07
+ };
+ 
++enum viosrp_crq_status {
++	VIOSRP_OK = 0x0,
++	VIOSRP_NONRECOVERABLE_ERR = 0x1,
++	VIOSRP_VIOLATES_MAX_XFER = 0x2,
++	VIOSRP_PARTNER_PANIC = 0x3,
++	VIOSRP_DEVICE_BUSY = 0x4,
++	VIOSRP_ADAPTER_FAIL = 0x10,
++	VIOSRP_OK2 = 0x99,
++};
++
+ struct viosrp_crq {
+ 	u8 valid;		/* used by RPA */
+ 	u8 format;		/* SCSI vs out-of-band */

@@ -1,0 +1,39 @@
+From: David Teigland <teigland@redhat.com>
+Date: Thu, 5 Jun 2008 14:10:54 -0500
+Subject: [dlm] check for null in device_write
+Message-id: 20080605191054.GP18635@redhat.com
+O-Subject: [RHEL5.3 PATCH 16/18] dlm: check for null in device_write
+Bugzilla: 450136
+RH-Acked-by: Bob Peterson <rpeterso@redhat.com>
+
+bz 450136  dlm: check for null in device_write
+
+brew build including this patch
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1344633
+
+upstream commit in linux-next, merge pending for 2.6.27:
+
+>From: Masatake YAMATO <yamato@redhat.com>
+>Date: Wed, 28 May 2008 14:45:10 +0900
+>Subject: [PATCH] dlm: check for null in device_write
+
+If `device_write' method is called via "dlm-control",
+file->private_data is NULL. (See ctl_device_open() in
+user.c. ) Through proc->flags is read.
+
+Signed-off-by: Masatake YAMATO <yamato@redhat.com>
+Signed-off-by: David Teigland <teigland@redhat.com>
+
+diff --git a/fs/dlm/user.c b/fs/dlm/user.c
+index 4390df2..72f4286 100644
+--- a/fs/dlm/user.c
++++ b/fs/dlm/user.c
+@@ -541,7 +541,7 @@ static ssize_t device_write(struct file *file, const char __user *buf,
+ 
+ 	/* do we really need this? can a write happen after a close? */
+ 	if ((kbuf->cmd == DLM_USER_LOCK || kbuf->cmd == DLM_USER_UNLOCK) &&
+-	    test_bit(DLM_PROC_FLAGS_CLOSING, &proc->flags))
++	    (proc && test_bit(DLM_PROC_FLAGS_CLOSING, &proc->flags)))
+ 		return -EINVAL;
+ 
+ 	sigfillset(&allsigs);

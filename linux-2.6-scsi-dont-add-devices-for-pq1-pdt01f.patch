@@ -1,0 +1,57 @@
+Date: Fri, 15 Sep 2006 17:03:21 -0500
+From: Mike Christie <mchristi@redhat.com>
+Subject: [PATCH RHEL5] don't create scsi_device at lun0 for pq=1
+
+This is for BZ 205802.
+
+Targets like Netapp, return PQ=1 for LUN 0 if the LUN is not mapped.
+PQ=1 means:
+
+The device server is capable of supporting the specified peripheral
+device type on this logical unit. However, the physical device is not
+currently connected to this logical unit.
+
+Currently scsi-ml will create a sort of dummy scsi_device when PQ=1 is
+returned. Later if the usr maps a device to LUN0 and wants to rescan,
+scsi-ml will just detect the dummy device (but not that it is a dummy
+device) and skip rescanning it.
+
+The attached patch modifies scsi-ml so that devices are not created when
+PQ=1. It is upstream in the scsi maintainer's tree for 2.6.19. I have
+only done some basic testing by connecting devices and making sure they
+are scanned and that this fixes the problem on netapp targets.
+
+--- a/drivers/scsi/scsi_scan.c	2006-07-15 17:53:08.000000000 -0400
++++ b/drivers/scsi/scsi_scan.c	2006-08-09 14:01:20.000000000 -0400
+@@ -943,11 +943,26 @@ static int scsi_probe_and_add_lun(struct
+ 	}
+ 
+ 	/*
+-	 * Non-standard SCSI targets may set the PDT to 0x1f (unknown or
+-	 * no device type) instead of using the Peripheral Qualifier to
+-	 * indicate that no LUN is present.  For example, USB UFI does this.
++	 * Some targets may set slight variations of PQ and PDT to signal
++	 * that no LUN is present, so don't add sdev in these cases.
++	 * Two specific examples are:
++	 * 1) NetApp targets: return PQ=1, PDT=0x1f
++	 * 2) USB UFI: returns PDT=0x1f, with the PQ bits being "reserved"
++	 *    in the UFI 1.0 spec (we cannot rely on reserved bits).
++	 *
++	 * References:
++	 * 1) SCSI SPC-3, pp. 145-146
++	 * PQ=1: "A peripheral device having the specified peripheral
++	 * device type is not connected to this logical unit. However, the 
++	 * device server is capable of supporting the specified peripheral
++	 * device type on this logical unit."
++	 * PDT=0x1f: "Unknown or no device type"
++	 * 2) USB UFI 1.0, p. 20
++	 * PDT=00h Direct-access device (floppy)
++	 * PDT=1Fh none (no FDD connected to the requested logical unit)
+ 	 */
+-	if (starget->pdt_1f_for_no_lun && (result[0] & 0x1f) == 0x1f) {
++	if (((result[0] >> 5) == 1 || starget->pdt_1f_for_no_lun) &&
++	     (result[0] & 0x1f) == 0x1f) {
+ 		SCSI_LOG_SCAN_BUS(3, printk(KERN_INFO
+ 					"scsi scan: peripheral device type"
+ 					" of 31, no device added\n"));
+

@@ -1,0 +1,65 @@
+From: Josef Whiter <jwhiter@redhat.com>
+Subject: [RHEL5.1] GFS2: Fix bz 229080, fix softlockups
+Date: Thu, 8 Mar 2007 08:47:07 -0500
+Bugzilla: 229080
+Message-Id: <20070308134707.GC22561@korben.rdu.redhat.com>
+Changelog: [gfs2] fix softlockups
+
+
+Hello,
+
+This patch depends on Steve's patch for bz 224686.  It has been submitted and
+accepted upstream.  Thank you,
+
+Josef
+
+
+diff-tree fb5e727f62045204b376ad9ccde4fa40aa190946 (from 47443fa53289a841ff2b6aa6356df1f7e7b4f24b)
+Author: Josef Whiter <jwhiter@redhat.com>
+
+    [GFS2] fix hangup when multiple processes are trying to write to the same file
+    
+    This fixes a problem I encountered while running bonnie++.  When you have one
+    thread that opens a file and starts to write to it, and then another thread that
+    tries to open and write to the same file, the second thread will loop forever
+    trying to grab the inode lock for that inode.  Basically we come in through
+    generic_buffered_file_write, which calls gfs2_prepare_write, which then attempts
+    to grab the glock.  Because we don't own the lock, gfs2_prepare_write gets
+    GLR_TRYFAILED, which returns AOP_TRUNCATED_PAGE to generic_buffered_file_write.
+    At this point generic_buffered_file_write loops around again and immediately
+    retries the prepare_write.  This means that the second process never gets off of
+    the processor in order to allow the process that holds the lock to finish its
+    work and let go of the lock.  This patch makes gfs2_glock_nq schedule() if it
+    gets back a GLR_TRYFAILED, which resolves this problem.
+    
+    Signed-off-by: Josef Whiter <jwhiter@redhat.com>
+    Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+    
+
+diff --git a/fs/gfs2/ops_address.c b/fs/gfs2/ops_address.c
+index 56e3359..b3b7e84 100644
+--- a/fs/gfs2/ops_address.c
++++ b/fs/gfs2/ops_address.c
+@@ -266,9 +266,11 @@ skip_lock:
+ out:
+ 	return error;
+ out_unlock:
+-	if (error == GLR_TRYFAILED)
+-		error = AOP_TRUNCATED_PAGE;
+ 	unlock_page(page);
++	if (error == GLR_TRYFAILED) {
++		error = AOP_TRUNCATED_PAGE;
++		yield();
++	}
+ 	if (do_unlock)
+ 		gfs2_holder_uninit(&gh);
+ 	goto out;
+@@ -364,6 +366,7 @@ static int gfs2_prepare_write(struct fil
+ 		if (error == GLR_TRYFAILED) {
+ 			unlock_page(page);
+ 			error = AOP_TRUNCATED_PAGE;
++			yield();
+ 		}
+ 		goto out_uninit;
+ 	}
+

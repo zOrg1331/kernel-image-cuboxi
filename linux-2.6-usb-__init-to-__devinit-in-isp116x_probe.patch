@@ -1,0 +1,32 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5.1 PATCH]: __init to __devinit in isp116x_probe
+Date: Fri, 9 Feb 2007 09:59:09 -0500
+Bugzilla: 227836
+Message-Id: <20070209145909.22276.81438.sendpatchset@prarit.boston.redhat.com>
+Changelog: [usb] __init to __devinit in isp116x_probe
+
+
+Change __init to __devinit for isp116x_probe.
+
+Resolves MODPOST warning:
+
+WARNING: drivers/usb/host/isp116x-hcd.o - Section mismatch: reference to
+.init.text:isp116x_probe from .data.rel.local between 'isp116x_driver' (at
+offset 0x0) and 'isp116x_hc_driver'
+
+Now in -mm tree.
+
+Resolves BZ 227836.  Successfully tested by me.
+
+--- linux-2.6.19.ia64.orig/drivers/usb/host/isp116x-hcd.c	2007-02-07 09:56:37.000000000 -0500
++++ linux-2.6.19.ia64/drivers/usb/host/isp116x-hcd.c	2007-02-08 10:37:28.000000000 -0500
+@@ -1577,7 +1577,7 @@ static int isp116x_remove(struct platfor
+ 
+ #define resource_len(r) (((r)->end - (r)->start) + 1)
+ 
+-static int __init isp116x_probe(struct platform_device *pdev)
++static int __devinit isp116x_probe(struct platform_device *pdev)
+ {
+ 	struct usb_hcd *hcd;
+ 	struct isp116x *isp116x;
+

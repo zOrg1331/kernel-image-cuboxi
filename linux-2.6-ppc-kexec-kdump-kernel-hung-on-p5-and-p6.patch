@@ -1,0 +1,98 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [PATCH RHEL5u2] bz245346 kexec/kdump kernel hung on Power5+ and 	Power6 based systems
+Date: Tue, 30 Oct 2007 16:36:26 -0400 (EDT)
+Bugzilla: 245346
+Message-Id: <Pine.LNX.4.64.0710301635230.30676@squad5-lp1.lab.boston.redhat.com>
+Changelog: [ppc] kexec/kdump kernel hung on Power5+ and Power6
+
+
+Bug 245346 [1]
+---------------
+
+Description:
+-----------
+Configuring kdump and triggering a kdump on a power5+ and power6 machine
+hangs the system.  This occurs on systems that have "POWER5+" or POWER6
+in /proc/cpuinfo.  kdump works on systems with "POWER5".
+
+$ echo c > /proc/sysrq-trigger
+SysRq : Trigger a crashdump
+Sending IPI to other cpus...  <--- it stops here
+
+Kernel Version:
+--------------
+Patch built against 2.6.18-54
+
+Upstream Status:
+---------------
+This change is present upstream as git commit
+b7abc5c53e3c65b8e931bd96db2d08ba670e111a
+
+Test Status:
+----
+
+I've booted the 2.6.18-54.el5.rhel5u2.sm4 kernel listed above and verified
+that the dump is correctly taken on a POWER6 system where 2.6.18-53.el5
+hung.  I also verified kdump works with the patched kernel on POWER5
+system where it was previously working.  The "crashkernel" parameter was
+set to "crashkernel=256M@16M"
+
+$ chkconfig kdump on
+$ service kdump start
+$ echo c > /proc/sysrq-trigger
+
+Then, after reboot, verified readable by crash.
+
+Please review patch below for RHEL5u2
+--
+[1]:https://bugzilla.redhat.com/show_bug.cgi?id=245346
+--
+ arch/powerpc/platforms/pseries/lpar.c |   17 ++++++++++++++---
+ include/asm-powerpc/mmu.h             |    3 +++
+ 2 files changed, 17 insertions(+), 3 deletions(-)
+Index: b/arch/powerpc/platforms/pseries/lpar.c
+===================================================================
+--- a/arch/powerpc/platforms/pseries/lpar.c
++++ b/arch/powerpc/platforms/pseries/lpar.c
+@@ -377,12 +377,23 @@ static void pSeries_lpar_hptab_clear(voi
+ {
+ 	unsigned long size_bytes = 1UL << ppc64_pft_size;
+ 	unsigned long hpte_count = size_bytes >> 4;
+-	unsigned long dummy1, dummy2;
++	unsigned long dummy1, dummy2, dword0;
++	long lpar_rc;
+ 	int i;
+ 
+ 	/* TODO: Use bulk call */
+-	for (i = 0; i < hpte_count; i++)
+-		plpar_pte_remove(0, i, 0, &dummy1, &dummy2);
++	for (i = 0; i < hpte_count; i++) {
++		/* dont remove HPTEs with VRMA mappings */
++		lpar_rc = plpar_pte_remove(H_ANDCOND, i, HPTE_V_1TB_SEG,
++						&dummy1, &dummy2);
++		if (lpar_rc == H_NOT_FOUND) {
++			lpar_rc = plpar_pte_read(0, i, &dword0, &dummy1);
++			if (!lpar_rc && ((dword0 & HPTE_V_VRMA_MASK)
++				!= HPTE_V_VRMA_MASK))
++				/* Can be hpte for 1TB Seg. So remove it */
++				plpar_pte_remove(0, i, 0, &dummy1, &dummy2);
++		}
++	}
+ }
+ 
+ /*
+Index: b/include/asm-powerpc/mmu.h
+===================================================================
+--- a/include/asm-powerpc/mmu.h
++++ b/include/asm-powerpc/mmu.h
+@@ -100,6 +100,9 @@ extern char initial_stab[];
+ #define HPTE_R_C		ASM_CONST(0x0000000000000080)
+ #define HPTE_R_R		ASM_CONST(0x0000000000000100)
+ 
++#define HPTE_V_1TB_SEG		ASM_CONST(0x4000000000000000)
++#define HPTE_V_VRMA_MASK	ASM_CONST(0x4001ffffff000000)
++
+ /* Values for PP (assumes Ks=0, Kp=1) */
+ /* pp0 will always be 0 for linux     */
+ #define PP_RWXX	0	/* Supervisor read/write, User none */
+
