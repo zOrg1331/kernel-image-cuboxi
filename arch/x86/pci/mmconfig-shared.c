@@ -18,6 +18,7 @@
 #include <linux/sort.h>
 #include <asm/e820.h>
 #include <asm/pci_x86.h>
+#include <asm/acpi.h>
 
 #define PREFIX "PCI: "
 
@@ -494,7 +495,7 @@ static void __init pci_mmcfg_reject_broken(int early)
 		       (unsigned int)cfg->start_bus_number,
 		       (unsigned int)cfg->end_bus_number);
 
-		if (!early)
+		if (!early && !acpi_disabled)
 			valid = is_mmconf_reserved(is_acpi_reserved, addr, size, i, cfg, 0);
 
 		if (valid)
