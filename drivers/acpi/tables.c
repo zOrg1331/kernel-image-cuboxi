@@ -213,6 +213,9 @@ acpi_table_parse_entries(char *id,
 	unsigned long table_end;
 	acpi_size tbl_size;
 
+	if (acpi_disabled)
+		return -ENODEV;
+
 	if (!handler)
 		return -EINVAL;
 
