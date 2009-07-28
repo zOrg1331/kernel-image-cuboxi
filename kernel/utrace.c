@@ -807,17 +807,16 @@ static bool utrace_do_stop(struct task_struct *target, struct utrace *utrace)
  */
 static void utrace_wakeup(struct task_struct *target, struct utrace *utrace)
 {
-	struct sighand_struct *sighand;
 	unsigned long irqflags;
 
 	utrace->stopped = 0;
 
-	sighand = lock_task_sighand(target, &irqflags);
-	if (unlikely(!sighand))
+	if (!lock_task_sighand(target, &irqflags))
 		return;
 
 	if (likely(task_is_stopped_or_traced(target))) {
-		if (target->signal->flags & SIGNAL_STOP_STOPPED)
+		if (target->signal->flags & SIGNAL_STOP_STOPPED ||
+		    target->signal->group_stop_count)
 			target->state = TASK_STOPPED;
 		else
 			wake_up_state(target, __TASK_STOPPED | __TASK_TRACED);
