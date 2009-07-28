@@ -416,8 +416,9 @@ static bool utrace_stop(struct task_struct *task, struct utrace *utrace,
 	 * If there is a group stop in progress,
 	 * we must participate in the bookkeeping.
 	 */
-	if (task->signal->group_stop_count > 0)
-		--task->signal->group_stop_count;
+	if (unlikely(task->signal->group_stop_count) &&
+			!--task->signal->group_stop_count)
+		task->signal->flags = SIGNAL_STOP_STOPPED;
 
 	spin_unlock_irq(&task->sighand->siglock);
 	spin_unlock(&utrace->lock);
