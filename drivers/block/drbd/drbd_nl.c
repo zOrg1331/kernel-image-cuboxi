@@ -704,7 +704,7 @@ void drbd_setup_queue_param(struct drbd_conf *mdev, unsigned int max_seg_s) __mu
 	blk_queue_max_segment_size(q, max_seg_s);
 	blk_queue_logical_block_size(q, 512);
 	blk_queue_segment_boundary(q, PAGE_SIZE-1);
-	blk_queue_stack_limits(q, b);
+	blk_stack_limits(&q->limits, &b->limits, 0);
 
 	if (b->merge_bvec_fn)
 		dev_warn(DEV, "Backing device's merge_bvec_fn() = %p\n",
