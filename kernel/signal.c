@@ -1735,12 +1735,12 @@ static int do_signal_stop(int signr)
 		read_unlock(&tasklist_lock);
 	}
 
+	/* Now we don't run again until woken by SIGCONT or SIGKILL */
 	do {
 		schedule();
 	} while (try_to_freeze());
-	/*
-	 * Now we don't run again until continued.
-	 */
+
+	tracehook_finish_jctl();
 	current->exit_code = 0;
 
 	return 1;

@@ -488,6 +488,15 @@ static inline int tracehook_notify_jctl(int notify, int why)
 	return notify ?: (current->ptrace & PT_PTRACED) ? why : 0;
 }
 
+/**
+ * tracehook_finish_jctl - report about return from job control stop
+ *
+ * This is called by do_signal_stop() after wakeup.
+ */
+static inline void tracehook_finish_jctl(void)
+{
+}
+
 #define DEATH_REAP			-1
 #define DEATH_DELAYED_GROUP_LEADER	-2
 
