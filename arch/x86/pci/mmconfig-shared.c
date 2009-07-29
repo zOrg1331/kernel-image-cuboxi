@@ -609,7 +609,7 @@ static void __init __pci_mmcfg_init(int early)
 	}
 
 	if (!known_bridge)
-		x86_table_parse(ACPI_SIG_MCFG, pci_parse_mcfg);
+		acpi_sfi_table_parse(ACPI_SIG_MCFG, pci_parse_mcfg);
 
 	pci_mmcfg_reject_broken(early);
 
