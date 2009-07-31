@@ -1,3 +1,68 @@
+commit c4f1e5306e94a4148fd06a0691b6be6d067e4833
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Jul 30 02:54:26 2009 +0900
+
+    aufs: bugfix, memory leak in a recent commit
+    
+    commit 221cf7294ea8045ff043e26e6864708f001dc3ee
+    "aufs: tiny, reduce the stack usage"
+    introduced a memory leak bug.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit a37e477b0f3cf6390c636c09bdb177ad51977c20
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Jul 29 14:22:39 2009 +0900
+
+    aufs: tiny, modify a message
+    
+    Since IMA in linux-2.6.31-rcN is still buggy, remove "try 2.6.31".
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 1fe27fb98d4cca89a3b62541ec11a76cf5c48996
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Jul 29 00:13:17 2009 +0900
+
+    Revert "aufs: stop supporting IMA"
+    
+    This reverts commit d71b0d1d039a7373d923cd20104d6893049859c7.
+    Since the bug of IMA is fixed in linux-2.6.31-rc2, aufs can support IMA.
+
+commit d71b0d1d039a7373d923cd20104d6893049859c7
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Jul 29 00:11:53 2009 +0900
+
+    aufs: stop supporting IMA
+    
+    Since the bugfix of IMA is not backported into linux-2.6.30, stop
+    entirely supporting IMA.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 609da5a3567747160234144db60122612d1304e7
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Jul 29 00:03:03 2009 +0900
+
+    aufs: linux-2.6.31-rcN, support IMA
+    
+    Since IMA was fixed in linux-2.6.31-rc2, support it in aufs too.
+    - stop calling ima_path_check(), instead call the new function
+      ima_counts_get() after internal dentry_open() call.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit b3292dba861baff5d7f5e8e0f30ddca724f9cb7c
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Tue Jul 28 23:40:26 2009 +0900
+
+    aufs: make it an error when IMA is enabled
+    
+    IMA in linux-2.6.30 is broken and fixed in linux-2.6.31-rc2.
+    Until the fix is backported to 2.6.30, make it an error at compile time.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit ec38dd1c7fd6fb7c368be98835be5a80a890a155
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Sat Jul 25 02:03:11 2009 +0900
