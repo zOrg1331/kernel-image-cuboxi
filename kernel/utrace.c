@@ -353,8 +353,8 @@ static inline bool finish_utrace_stop(struct task_struct *task,
 	 * utrace_wakeup() clears @utrace->stopped before waking us up.
 	 * We're officially awake if it's clear.
 	 */
-	spin_lock(&utrace->lock);
 	if (unlikely(utrace->stopped)) {
+		spin_lock(&utrace->lock);
 		/*
 		 * If we're here with it still set, it must have been
 		 * signal_wake_up() instead, waking us up for a SIGKILL.
@@ -364,8 +364,8 @@ static inline bool finish_utrace_stop(struct task_struct *task,
 		spin_unlock_irq(&task->sighand->siglock);
 		utrace->stopped = 0;
 		killed = true;
+		spin_unlock(&utrace->lock);
 	}
-	spin_unlock(&utrace->lock);
 
 	return killed;
 }
