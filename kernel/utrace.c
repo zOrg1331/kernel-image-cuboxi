@@ -788,8 +788,9 @@ static bool utrace_do_stop(struct task_struct *target, struct utrace *utrace)
 	} else if (task_is_stopped(target)) {
 		/*
 		 * Stopped is considered quiescent; when it wakes up, it will
-		 * go through utrace_get_signal() before doing anything else.
+		 * go through utrace_finish_jctl() before doing anything else.
 		 */
+		__set_task_state(target, TASK_TRACED);
 		utrace->stopped = stopped = true;
 	} else if (!utrace->report && !utrace->interrupt) {
 		utrace->report = 1;
@@ -1646,9 +1647,8 @@ void utrace_finish_jctl(void)
 {
 	struct utrace *utrace = task_utrace_struct(current);
 	/*
-	 * While in TASK_STOPPED, we can be considered safely
-	 * stopped by utrace_do_stop(). Clear ->stopped if we
-	 * were woken by signal.
+	 * While in TASK_STOPPED, we can be considered safely stopped by
+	 * utrace_do_stop(). Clear ->stopped if we were woken by SIGKILL.
 	 */
 	if (utrace->stopped) {
 		spin_lock(&utrace->lock);
