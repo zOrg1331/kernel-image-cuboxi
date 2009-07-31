@@ -1611,29 +1611,6 @@ void utrace_report_jctl(int notify, int what)
 
 	spin_unlock_irq(&task->sighand->siglock);
 
-	/*
-	 * We get here with CLD_STOPPED when we've just entered
-	 * TASK_STOPPED, or with CLD_CONTINUED when we've just come
-	 * out but not yet been through utrace_get_signal() again.
-	 *
-	 * While in TASK_STOPPED, we can be considered safely
-	 * stopped by utrace_do_stop() and detached asynchronously.
-	 * If we woke up and checked task->utrace_flags before that
-	 * was finished, we might be here with utrace already
-	 * removed or in the middle of being removed.
-	 *
-	 * If we are indeed attached, then make sure we are no
-	 * longer considered stopped while we run callbacks.
-	 */
-	spin_lock(&utrace->lock);
-	utrace->stopped = 0;
-	/*
-	 * Do start_report()'s work too since we already have the lock anyway.
-	 */
-	utrace->report = 0;
-	splice_attaching(utrace);
-	spin_unlock(&utrace->lock);
-
 	REPORT(task, utrace, &report, UTRACE_EVENT(JCTL),
 	       report_jctl, what, notify);
 
@@ -1925,8 +1902,6 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 		 * interrupt path, so clear the flags asking for those.
 		 */
 		utrace->interrupt = utrace->report = utrace->signal_handler = 0;
-		utrace->stopped = 0;
-
 		/*
 		 * Make sure signal_pending() only returns true
 		 * if there are real signals pending.
@@ -1954,22 +1929,13 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 		event = 0;
 		ka = NULL;
 		memset(return_ka, 0, sizeof *return_ka);
-	} else if ((task->utrace_flags & UTRACE_EVENT_SIGNAL_ALL) == 0 &&
-		   !utrace->stopped) {
+	} else if ((task->utrace_flags & UTRACE_EVENT_SIGNAL_ALL) == 0) {
 		/*
 		 * If no engine is interested in intercepting signals,
 		 * let the caller just dequeue them normally.
 		 */
 		return 0;
 	} else {
-		if (unlikely(utrace->stopped)) {
-			spin_unlock_irq(&task->sighand->siglock);
-			spin_lock(&utrace->lock);
-			utrace->stopped = 0;
-			spin_unlock(&utrace->lock);
-			spin_lock_irq(&task->sighand->siglock);
-		}
-
 		/*
 		 * Steal the next signal so we can let tracing engines
 		 * examine it.  From the signal number and sigaction,
