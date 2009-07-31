@@ -1640,6 +1640,24 @@ void utrace_report_jctl(int notify, int what)
 }
 
 /*
+ * Called without locks.
+ */
+void utrace_finish_jctl(void)
+{
+	struct utrace *utrace = task_utrace_struct(current);
+	/*
+	 * While in TASK_STOPPED, we can be considered safely
+	 * stopped by utrace_do_stop(). Clear ->stopped if we
+	 * were woken by signal.
+	 */
+	if (utrace->stopped) {
+		spin_lock(&utrace->lock);
+		utrace->stopped = false;
+		spin_unlock(&utrace->lock);
+	}
+}
+
+/*
  * Called iff UTRACE_EVENT(EXIT) flag is set.
  */
 void utrace_report_exit(long *exit_code)

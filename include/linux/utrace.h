@@ -109,6 +109,8 @@ void utrace_report_death(struct task_struct *, struct utrace *, bool, int)
 	__attribute__((weak));
 void utrace_report_jctl(int notify, int type)
 	__attribute__((weak));
+void utrace_finish_jctl(void)
+	__attribute__((weak));
 void utrace_report_exec(struct linux_binfmt *, struct linux_binprm *,
 			struct pt_regs *regs)
 	__attribute__((weak));
