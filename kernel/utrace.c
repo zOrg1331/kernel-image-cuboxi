@@ -1607,18 +1607,7 @@ void utrace_report_jctl(int notify, int what)
 	struct task_struct *task = current;
 	struct utrace *utrace = task_utrace_struct(task);
 	INIT_REPORT(report);
-	bool stop = task_is_stopped(task);
 
-	/*
-	 * We have to come out of TASK_STOPPED in case the event report
-	 * hooks might block.  Since we held the siglock throughout, it's
-	 * as if we were never in TASK_STOPPED yet at all.
-	 */
-	if (stop) {
-		__set_current_state(TASK_RUNNING);
-		task->signal->flags &= ~SIGNAL_STOP_STOPPED;
-		++task->signal->group_stop_count;
-	}
 	spin_unlock_irq(&task->sighand->siglock);
 
 	/*
@@ -1647,16 +1636,7 @@ void utrace_report_jctl(int notify, int what)
 	REPORT(task, utrace, &report, UTRACE_EVENT(JCTL),
 	       report_jctl, what, notify);
 
-	/*
-	 * Retake the lock, and go back into TASK_STOPPED
-	 * unless the stop was just cleared.
-	 */
 	spin_lock_irq(&task->sighand->siglock);
-	if (stop && task->signal->group_stop_count > 0) {
-		__set_current_state(TASK_STOPPED);
-		if (--task->signal->group_stop_count == 0)
-			task->signal->flags |= SIGNAL_STOP_STOPPED;
-	}
 }
 
 /*
