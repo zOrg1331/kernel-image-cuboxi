@@ -1129,6 +1129,28 @@ void console_start(struct console *console)
 }
 EXPORT_SYMBOL(console_start);
 
+static int disable_boot_consoles(void)
+{
+	struct console *bootconsole = console_drivers;
+	struct console *nextcon;
+	if (!bootconsole)
+		return 0;
+	while (bootconsole) {
+		nextcon = bootconsole->next;
+		if (bootconsole->flags & CON_BOOT) {
+			printk(KERN_INFO "turn off boot console %s%d\n",
+			       console_drivers->name, console_drivers->index);
+			if (unregister_console(bootconsole) != 0)
+				printk(KERN_ERR "ERROR unregistering %s%d\n",
+				       console_drivers->name,
+				       console_drivers->index);
+		}
+		bootconsole = nextcon;
+	}
+	return 0;
+}
+late_initcall(disable_boot_consoles);
+
 /*
  * The console driver calls this routine during kernel initialization
  * to register the console printing procedure with printk() and to
@@ -1142,8 +1164,7 @@ void register_console(struct console *console)
 	struct console *bootconsole = NULL;
 
 	if (console_drivers) {
-		if (console->flags & CON_BOOT)
-			return;
+
 		if (console_drivers->flags & CON_BOOT)
 			bootconsole = console_drivers;
 	}
@@ -1216,6 +1237,7 @@ void register_console(struct console *console)
 		       console->name, console->index);
 		unregister_console(bootconsole);
 		console->flags &= ~CON_PRINTBUFFER;
+		disable_boot_consoles();
 	} else {
 		printk(KERN_INFO "console [%s%d] enabled\n",
 		       console->name, console->index);
@@ -1280,23 +1302,12 @@ int unregister_console(struct console *console)
 	if (console_drivers != NULL && console->flags & CON_CONSDEV)
 		console_drivers->flags |= CON_CONSDEV;
 
+	if (!res)
+		console->index = -1;
 	release_console_sem();
 	return res;
 }
 EXPORT_SYMBOL(unregister_console);
-
-static int __init disable_boot_consoles(void)
-{
-	if (console_drivers != NULL) {
-		if (console_drivers->flags & CON_BOOT) {
-			printk(KERN_INFO "turn off boot console %s%d\n",
-				console_drivers->name, console_drivers->index);
-			return unregister_console(console_drivers);
-		}
-	}
-	return 0;
-}
-late_initcall(disable_boot_consoles);
 
 #if defined CONFIG_PRINTK
 
