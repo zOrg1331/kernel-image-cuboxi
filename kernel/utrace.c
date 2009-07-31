@@ -493,27 +493,17 @@ static struct utrace *get_utrace_lock(struct task_struct *target,
 	}
 
 	utrace = &target->utrace;
-	if (unlikely(target->exit_state == EXIT_DEAD)) {
+	spin_lock(&utrace->lock);
+	if (unlikely(!engine->ops) ||
+	    unlikely(engine->ops == &utrace_detached_ops)) {
 		/*
-		 * If all engines detached already, utrace is clear.
-		 * Otherwise, we're called after utrace_release_task might
-		 * have started.  A call to this engine's report_reap
-		 * callback might already be in progress.
+		 * By the time we got the utrace lock,
+		 * it had been reaped or detached already.
 		 */
+		spin_unlock(&utrace->lock);
 		utrace = ERR_PTR(-ESRCH);
-	} else {
-		spin_lock(&utrace->lock);
-		if (unlikely(!engine->ops) ||
-		    unlikely(engine->ops == &utrace_detached_ops)) {
-			/*
-			 * By the time we got the utrace lock,
-			 * it had been reaped or detached already.
-			 */
-			spin_unlock(&utrace->lock);
-			utrace = ERR_PTR(-ESRCH);
-			if (!attached && engine->ops == &utrace_detached_ops)
-				utrace = ERR_PTR(-ERESTARTSYS);
-		}
+		if (!attached && engine->ops == &utrace_detached_ops)
+			utrace = ERR_PTR(-ERESTARTSYS);
 	}
 	rcu_read_unlock();
 
