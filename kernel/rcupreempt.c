@@ -1467,15 +1467,6 @@ void __init __rcu_init(void)
 		rdp->waitschedtail = &rdp->waitschedlist;
 		rdp->rcu_sched_sleeping = 0;
 	}
-
-	/*
-	 * We don't need protection against CPU-hotplug here because
-	 * this is called early in boot, before either interrupts
-	 * or the scheduler are operational.
-	 */
-	for_each_online_cpu(cpu)
-		rcu_cpu_notify(NULL, CPU_UP_PREPARE, (void *)(long) cpu);
-
 	open_softirq(RCU_SOFTIRQ, rcu_process_callbacks);
 }
 
