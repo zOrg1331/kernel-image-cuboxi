@@ -2234,6 +2234,10 @@ static void kmem_cache_dyn_array_free(void *array)
 }
 #endif
 
+/*
+ * Except in early boot, this should be called with slqb_lock held for write
+ * to lock out hotplug, and protect list modifications.
+ */
 static int kmem_cache_open(struct kmem_cache *s,
 			const char *name, size_t size, size_t align,
 			unsigned long flags, void (*ctor)(void *), int alloc)
@@ -2259,16 +2263,10 @@ static int kmem_cache_open(struct kmem_cache *s,
 		s->colour_range = 0;
 	}
 
-	/*
-	 * Protect all alloc_kmem_cache_cpus/nodes allocations with slqb_lock
-	 * to lock out hotplug, just in case (probably not strictly needed
-	 * here).
-	 */
-	down_write(&slqb_lock);
 #ifdef CONFIG_SMP
 	s->cpu_slab = kmem_cache_dyn_array_alloc(nr_cpu_ids);
 	if (!s->cpu_slab)
-		goto error_lock;
+		goto error;
 # ifdef CONFIG_NUMA
 	s->node_slab = kmem_cache_dyn_array_alloc(nr_node_ids);
 	if (!s->node_slab)
@@ -2286,7 +2284,6 @@ static int kmem_cache_open(struct kmem_cache *s,
 
 	sysfs_slab_add(s);
 	list_add(&s->list, &slab_caches);
-	up_write(&slqb_lock);
 
 	return 1;
 
@@ -2299,9 +2296,7 @@ error_cpu_array:
 #endif
 #ifdef CONFIG_SMP
 	kmem_cache_dyn_array_free(s->cpu_slab);
-error_lock:
 #endif
-	up_write(&slqb_lock);
 error:
 	if (flags & SLAB_PANIC)
 		panic("%s: failed to create slab `%s'\n", __func__, name);
@@ -2870,6 +2865,12 @@ void __init kmem_cache_init(void)
 	 * All the ifdefs are rather ugly here, but it's just the setup code,
 	 * so it doesn't have to be too readable :)
 	 */
+
+	/*
+	 * No need to take slqb_lock here: there should be no concurrency
+	 * anyway, and spin_unlock_irq in rwsem code could enable interrupts
+	 * too early.
+	 */
 	kmem_cache_open(&kmem_cache_cache, "kmem_cache",
 			sizeof(struct kmem_cache), 0, flags, NULL, 0);
 #ifdef CONFIG_SMP
@@ -3011,8 +3012,6 @@ static int kmem_cache_create_ok(const char *name, size_t size,
 		return 0;
 	}
 
-	down_read(&slqb_lock);
-
 	list_for_each_entry(tmp, &slab_caches, list) {
 		char x;
 		int res;
@@ -3034,13 +3033,10 @@ static int kmem_cache_create_ok(const char *name, size_t size,
 			printk(KERN_ERR
 			       "SLAB: duplicate cache %s\n", name);
 			dump_stack();
-			up_read(&slqb_lock);
 
 			return 0;
 		}
 	}
-
-	up_read(&slqb_lock);
 
 	WARN_ON(strchr(name, ' '));	/* It confuses parsers */
 	if (flags & SLAB_DESTROY_BY_RCU)
@@ -3054,6 +3050,7 @@ struct kmem_cache *kmem_cache_create(const char *name, size_t size,
 {
 	struct kmem_cache *s;
 
+	down_write(&slqb_lock);
 	if (!kmem_cache_create_ok(name, size, align, flags))
 		goto err;
 
@@ -3061,12 +3058,15 @@ struct kmem_cache *kmem_cache_create(const char *name, size_t size,
 	if (!s)
 		goto err;
 
-	if (kmem_cache_open(s, name, size, align, flags, ctor, 1))
+	if (kmem_cache_open(s, name, size, align, flags, ctor, 1)) {
+		up_write(&slqb_lock);
 		return s;
+	}
 
 	kmem_cache_free(&kmem_cache_cache, s);
 
 err:
+	up_write(&slqb_lock);
 	if (flags & SLAB_PANIC)
 		panic("%s: failed to create slab `%s'\n", __func__, name);
 
