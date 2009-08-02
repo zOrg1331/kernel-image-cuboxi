@@ -8,6 +8,9 @@ extern void free_early(u64 start, u64 end);
 void free_early_partial(u64 start, u64 end);
 extern void early_res_to_bootmem(u64 start, u64 end);
 
+extern u64 early_res_next_free(u64 start);
+extern u64 early_res_next_reserved(u64 addr, u64 max);
+
 void reserve_early_without_check(u64 start, u64 end, char *name);
 u64 find_early_area(u64 ei_start, u64 ei_last, u64 start, u64 end,
 			 u64 size, u64 align);
