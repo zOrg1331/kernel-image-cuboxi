@@ -286,8 +286,8 @@ struct ebt_table
 
 #define EBT_ALIGN(s) (((s) + (__alignof__(struct ebt_replace)-1)) & \
 		     ~(__alignof__(struct ebt_replace)-1))
-extern int ebt_register_table(struct ebt_table *table);
-extern void ebt_unregister_table(struct ebt_table *table);
+extern struct ebt_table *ebt_register_table(struct net *net, struct ebt_table *table);
+extern void ebt_unregister_table(struct net *net, struct ebt_table *table);
 extern int ebt_register_match(struct ebt_match *match);
 extern void ebt_unregister_match(struct ebt_match *match);
 extern int ebt_register_watcher(struct ebt_watcher *watcher);
