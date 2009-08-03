@@ -452,6 +452,26 @@ EXPORT_SYMBOL(blk_queue_io_opt);
 #define min_not_zero(l, r) (l == 0) ? r : ((r == 0) ? l : min(l, r))
 
 /**
+ * blk_queue_stack_limits - inherit underlying queue limits for stacked drivers
+ * @t:	the stacking driver (top)
+ * @b:  the underlying device (bottom)
+ **/
+void blk_queue_stack_limits(struct request_queue *t, struct request_queue *b)
+{
+	blk_stack_limits(&t->limits, &b->limits, 0);
+
+	if (!t->queue_lock)
+		WARN_ON_ONCE(1);
+	else if (!test_bit(QUEUE_FLAG_CLUSTER, &b->queue_flags)) {
+		unsigned long flags;
+		spin_lock_irqsave(t->queue_lock, flags);
+		queue_flag_clear(QUEUE_FLAG_CLUSTER, t);
+		spin_unlock_irqrestore(t->queue_lock, flags);
+	}
+}
+EXPORT_SYMBOL(blk_queue_stack_limits);
+
+/**
  * blk_stack_limits - adjust queue_limits for stacked devices
  * @t:	the stacking driver limits (top)
  * @b:  the underlying queue limits (bottom)
