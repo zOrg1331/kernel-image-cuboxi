@@ -269,4 +269,15 @@ config INPUT_DM355EVM
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called dm355evm_keys.
+
+config INPUT_WM831X_ON
+	tristate "WM831X ON pin"
+	depends on MFD_WM831X
+	help
+	  Support the ON pin of WM831X PMICs as an input device
+	  reporting power button status.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called wm831x_on.
+
 endif
