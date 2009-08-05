@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.30
-Release: alt7
+Release: alt7.1
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -340,6 +340,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Wed Aug 05 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.30-alt7.1
+- ALSA: Tell user that stream to be rewound is suspended
+
 * Fri Jul 31 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.30-alt7
 - 2.6.30.4
 
