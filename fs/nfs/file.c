@@ -480,6 +480,7 @@ const struct address_space_operations nfs_file_aops = {
 	.releasepage = nfs_release_page,
 	.direct_IO = nfs_direct_IO,
 	.launder_page = nfs_launder_page,
+	.error_remove_page = generic_error_remove_page,
 };
 
 /*
