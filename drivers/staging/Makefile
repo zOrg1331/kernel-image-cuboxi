@@ -49,3 +49,4 @@ obj-$(CONFIG_USB_CPC)		+= cpc-usb/
 obj-$(CONFIG_FB_UDL)		+= udlfb/
 obj-$(CONFIG_HYPERV)		+= hv/
 obj-$(CONFIG_VME)		+= vme/
+obj-$(CONFIG_DX_SEP)		+= sep/
