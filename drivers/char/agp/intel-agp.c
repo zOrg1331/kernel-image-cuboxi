@@ -288,7 +288,7 @@ static void intel_agp_insert_sg_entries(struct agp_memory *mem,
 
 	for (i = 0, j = pg_start; i < mem->page_count; i++, j++) {
 		writel(agp_bridge->driver->mask_memory(agp_bridge,
-				page_to_phys(mem->pages[i]), mask_type),
+			       phys_to_gart(page_to_phys(mem->pages[i])), mask_type),
 		       intel_private.gtt+j);
 	}
 
@@ -470,7 +470,8 @@ static int intel_i810_insert_entries(struct agp_memory *mem, off_t pg_start,
 			global_cache_flush();
 		for (i = 0, j = pg_start; i < mem->page_count; i++, j++) {
 			writel(agp_bridge->driver->mask_memory(agp_bridge,
-					page_to_phys(mem->pages[i]), mask_type),
+							       phys_to_gart(page_to_phys(mem->pages[i])),
+							       mask_type),
 			       intel_private.registers+I810_PTE_BASE+(j*4));
 		}
 		readl(intel_private.registers+I810_PTE_BASE+((j-1)*4));
@@ -976,7 +977,7 @@ static int intel_i830_insert_entries(struct agp_memory *mem, off_t pg_start,
 
 	for (i = 0, j = pg_start; i < mem->page_count; i++, j++) {
 		writel(agp_bridge->driver->mask_memory(agp_bridge,
-				page_to_phys(mem->pages[i]), mask_type),
+			       phys_to_gart(page_to_phys(mem->pages[i])), mask_type),
 		       intel_private.registers+I810_PTE_BASE+(j*4));
 	}
 	readl(intel_private.registers+I810_PTE_BASE+((j-1)*4));
