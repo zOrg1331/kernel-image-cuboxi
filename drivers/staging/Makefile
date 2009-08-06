@@ -51,4 +51,5 @@ obj-$(CONFIG_MSM_ADSP)		+= dream/qdsp5/ dream/smd/
 obj-$(CONFIG_MSM_CAMERA)	+= dream/camera/
 obj-$(CONFIG_HYPERV)		+= hv/
 obj-$(CONFIG_VME)		+= vme/
+obj-$(CONFIG_RAR_REGISTER)	+= rar/
 obj-$(CONFIG_DX_SEP)		+= sep/
