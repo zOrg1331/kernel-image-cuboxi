@@ -538,5 +538,8 @@ extern void console_print(const char *);
 extern int vt_ioctl(struct tty_struct *tty, struct file *file,
 		    unsigned int cmd, unsigned long arg);
 
+extern long vt_compat_ioctl(struct tty_struct *tty, struct file * file,
+		     unsigned int cmd, unsigned long arg);
+
 #endif /* __KERNEL__ */
 #endif
