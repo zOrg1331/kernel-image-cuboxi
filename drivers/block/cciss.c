@@ -751,7 +751,7 @@ static int cciss_open(struct block_device *bdev, fmode_t mode)
 	printk(KERN_DEBUG "cciss_open %s\n", bdev->bd_disk->disk_name);
 #endif				/* CCISS_DEBUG */
 
-	if (host->busy_initializing || drv->busy_configuring)
+	if (mutex_is_locked(&host->busy_initializing) || drv->busy_configuring)
 		return -EBUSY;
 	/*
 	 * Root is allowed to open raw volume zero even if it's not configured
@@ -3915,7 +3915,8 @@ static int __devinit cciss_init_one(struct pci_dev *pdev,
 	if (i < 0)
 		return -1;
 
-	hba[i]->busy_initializing = 1;
+	mutex_init(&hba[i]->busy_initializing);
+	mutex_lock(&hba[i]->busy_initializing);
 	INIT_HLIST_HEAD(&hba[i]->cmpQ);
 	INIT_HLIST_HEAD(&hba[i]->reqQ);
 
@@ -4034,7 +4035,7 @@ static int __devinit cciss_init_one(struct pci_dev *pdev,
 
 	hba[i]->cciss_max_sectors = 2048;
 
-	hba[i]->busy_initializing = 0;
+	mutex_unlock(&hba[i]->busy_initializing);
 
 	rebuild_lun_table(hba[i], 1);
 	hba[i]->cciss_scan_thread = kthread_run(scan_thread, hba[i],
@@ -4062,7 +4063,7 @@ clean2:
 clean1:
 	cciss_destroy_hba_sysfs_entry(hba[i]);
 clean0:
-	hba[i]->busy_initializing = 0;
+	mutex_unlock(&hba[i]->busy_initializing);
 	/* cleanup any queues that may have been initialized */
 	for (j=0; j <= hba[i]->highest_lun; j++){
 		drive_info_struct *drv = &(hba[i]->drv[j]);
