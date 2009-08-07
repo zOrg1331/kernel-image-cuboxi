@@ -2846,7 +2846,10 @@ static int slab_memory_callback(struct notifier_block *self,
 		break;
 	}
 
-	ret = notifier_from_errno(ret);
+	if (ret)
+		ret = notifier_from_errno(ret);
+	else
+		ret = NOTIFY_OK;
 	return ret;
 }
 
