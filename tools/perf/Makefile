@@ -310,6 +310,7 @@ LIB_H += util/sigchain.h
 LIB_H += util/symbol.h
 LIB_H += util/module.h
 LIB_H += util/color.h
+LIB_H += util/values.h
 
 LIB_OBJS += util/abspath.o
 LIB_OBJS += util/alias.o
@@ -337,6 +338,7 @@ LIB_OBJS += util/color.o
 LIB_OBJS += util/pager.o
 LIB_OBJS += util/header.o
 LIB_OBJS += util/callchain.o
+LIB_OBJS += util/values.o
 
 BUILTIN_OBJS += builtin-annotate.o
 BUILTIN_OBJS += builtin-help.o
@@ -387,10 +389,14 @@ else
 
 	has_bfd_iberty := $(shell sh -c "(echo '\#include <bfd.h>'; echo 'int main(void) { bfd_demangle(0, 0, 0); return 0; }') | $(CC) -x c - $(ALL_CFLAGS) -o /dev/null $(ALL_LDFLAGS) -lbfd -liberty > /dev/null 2>&1 && echo y")
 
+	has_bfd_iberty_z := $(shell sh -c "(echo '\#include <bfd.h>'; echo 'int main(void) { bfd_demangle(0, 0, 0); return 0; }') | $(CC) -x c - $(ALL_CFLAGS) -o /dev/null $(ALL_LDFLAGS) -lbfd -liberty -lz > /dev/null 2>&1 && echo y")
+
 	ifeq ($(has_bfd),y)
 		EXTLIBS += -lbfd
 	else ifeq ($(has_bfd_iberty),y)
 		EXTLIBS += -lbfd -liberty
+	else ifeq ($(has_bfd_iberty_z),y)
+		EXTLIBS += -lbfd -liberty -lz
 	else
 		msg := $(warning No bfd.h/libbfd found, install binutils-dev[el] to gain symbol demangling)
 		BASIC_CFLAGS += -DNO_DEMANGLE
