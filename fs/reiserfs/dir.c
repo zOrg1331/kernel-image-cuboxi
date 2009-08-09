@@ -195,12 +195,6 @@ int reiserfs_readdir_dentry(struct dentry *dentry, void *dirent,
 				*pos = d_off;
 				d_ino = deh_objectid(deh);
 
-				/*
-				 * next entry should be looked for with such
-				 * offset
-				 */
-				next_pos = deh_offset(deh) + 1;
-
 				if (first_entry) {
 					int fillret;
 
@@ -221,11 +215,18 @@ int reiserfs_readdir_dentry(struct dentry *dentry, void *dirent,
 
 					if (item_moved(&tmp_ih, &path_to_entry))
 						goto research;
-					continue;
-				}
-				if (filldir(dirent, d_name, d_reclen, d_off,
-					    d_ino, DT_UNKNOWN) < 0)
+				} else {
+					if (filldir(dirent, d_name, d_reclen,
+						  d_off, d_ino, DT_UNKNOWN) < 0)
 						goto end;
+				}
+
+				/*
+				 * next entry should be looked for with such
+				 * offset
+				 */
+				next_pos = deh_offset(deh) + 1;
+
 			}	/* for */
 		}
 
