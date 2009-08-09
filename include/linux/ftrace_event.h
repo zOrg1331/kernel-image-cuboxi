@@ -89,7 +89,9 @@ enum print_line_t {
 	TRACE_TYPE_NO_CONSUME	= 3	/* Handled but ask to not consume */
 };
 
-
+void tracing_generic_entry_update(struct trace_entry *entry,
+				  unsigned long flags,
+				  int pc);
 struct ring_buffer_event *
 trace_current_buffer_lock_reserve(int type, unsigned long len,
 				  unsigned long flags, int pc);
@@ -100,6 +102,8 @@ void trace_nowake_buffer_unlock_commit(struct ring_buffer_event *event,
 void trace_current_buffer_discard_commit(struct ring_buffer_event *event);
 
 void tracing_record_cmdline(struct task_struct *tsk);
+
+struct event_filter;
 
 struct ftrace_event_call {
 	struct list_head	list;
@@ -116,7 +120,7 @@ struct ftrace_event_call {
 	int			(*define_fields)(void);
 	struct list_head	fields;
 	int			filter_active;
-	void			*filter;
+	struct event_filter	*filter;
 	void			*mod;
 
 	atomic_t		profile_count;
