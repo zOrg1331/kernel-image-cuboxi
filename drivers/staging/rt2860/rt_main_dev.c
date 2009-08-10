@@ -74,11 +74,9 @@ static void CfgInitHook(PRTMP_ADAPTER pAd);
 
 extern	const struct iw_handler_def rt28xx_iw_handler_def;
 
-#if WIRELESS_EXT >= 12
 // This function will be called when query /proc
 struct iw_statistics *rt28xx_get_wireless_stats(
     IN struct net_device *net_dev);
-#endif
 
 struct net_device_stats *RT28xx_get_ether_stats(
     IN  struct net_device *net_dev);
@@ -190,7 +188,7 @@ int rt28xx_close(IN PNET_DEV dev)
 	BOOLEAN 		Cancelled = FALSE;
 	UINT32			i = 0;
 #ifdef RT2870
-	DECLARE_WAIT_QUEUE_HEAD(unlink_wakeup);
+	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(unlink_wakeup);
 	DECLARE_WAITQUEUE(wait, current);
 
 	//RTMP_SET_FLAG(pAd, fRTMP_ADAPTER_REMOVE_IN_PROGRESS);
@@ -695,22 +693,17 @@ static NDIS_STATUS rt_ieee80211_if_setup(struct net_device *dev, PRTMP_ADAPTER p
 	CHAR    slot_name[IFNAMSIZ];
 	struct net_device   *device;
 
-#if WIRELESS_EXT >= 12
 	if (pAd->OpMode == OPMODE_STA)
 	{
 		dev->wireless_handlers = &rt28xx_iw_handler_def;
 	}
-#endif //WIRELESS_EXT >= 12
 
-#if WIRELESS_EXT < 21
-		dev->get_wireless_stats = rt28xx_get_wireless_stats;
-#endif
 	dev->priv_flags = INT_MAIN;
 	dev->netdev_ops = &rt2860_netdev_ops;
 	// find available device name
 	for (i = 0; i < 8; i++)
 	{
-		sprintf(slot_name, "ra%d", i);
+		sprintf(slot_name, "wlan%d", i);
 
 		device = dev_get_by_name(dev_net(dev), slot_name);
 		if (device != NULL)
@@ -727,7 +720,7 @@ static NDIS_STATUS rt_ieee80211_if_setup(struct net_device *dev, PRTMP_ADAPTER p
 	}
 	else
 	{
-		sprintf(dev->name, "ra%d", i);
+		sprintf(dev->name, "wlan%d", i);
 		Status = NDIS_STATUS_SUCCESS;
 	}
 
@@ -942,7 +935,6 @@ void CfgInitHook(PRTMP_ADAPTER pAd)
 } /* End of CfgInitHook */
 
 
-#if WIRELESS_EXT >= 12
 // This function will be called when query /proc
 struct iw_statistics *rt28xx_get_wireless_stats(
     IN struct net_device *net_dev)
@@ -976,7 +968,6 @@ struct iw_statistics *rt28xx_get_wireless_stats(
 	DBGPRINT(RT_DEBUG_TRACE, ("<--- rt28xx_get_wireless_stats\n"));
 	return &pAd->iw_stats;
 } /* End of rt28xx_get_wireless_stats */
-#endif // WIRELESS_EXT //
 
 
 
