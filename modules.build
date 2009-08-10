@@ -1,4 +1,3 @@
-cronyx
 drbd8
 fglrx
 kqemu
@@ -9,3 +8,4 @@ subfs
 svgalib_helper
 tp_smapi
 zaptel
+cronyx
