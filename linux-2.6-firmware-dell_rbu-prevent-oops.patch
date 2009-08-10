@@ -1,0 +1,41 @@
+From: Don Howard <dhoward@redhat.com>
+Date: Mon, 9 Feb 2009 17:22:50 -0800
+Subject: [firmware] dell_rbu: prevent oops
+Message-id: alpine.LRH.2.00.0902061447480.4646@notfadeaway.remotee.org
+O-Subject: [rhel5.4 security patch] dell_rbu local oops CVE-2009-0322
+Bugzilla: 482942
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+
+Backport from upstream: 81156928f8fe31621e467490b9d441c0285998c3
+
+Patch a buffer overflow vulnerablity in the del_rbu driver(Remote Bios
+Update). I was never able to trigger the reported oops, but the error (and
+fix) seems obvious.
+
+Fixes bz 482941, CVE-2009-0322.
+Built/tested on x86_64.
+
+diff --git a/drivers/firmware/dell_rbu.c b/drivers/firmware/dell_rbu.c
+index 23b0866..2c6b29d 100644
+--- a/drivers/firmware/dell_rbu.c
++++ b/drivers/firmware/dell_rbu.c
+@@ -596,7 +596,7 @@ static ssize_t read_rbu_image_type(struct kobject *kobj, char *buffer,
+ {
+ 	int size = 0;
+ 	if (!pos)
+-		size = sprintf(buffer, "%s\n", image_type);
++		size = scnprintf(buffer, count, "%s\n", image_type);
+ 	return size;
+ }
+ 
+@@ -666,7 +666,7 @@ static ssize_t read_rbu_packet_size(struct kobject *kobj, char *buffer,
+ 	int size = 0;
+ 	if (!pos) {
+ 		spin_lock(&rbu_data.lock);
+-		size = sprintf(buffer, "%lu\n", rbu_data.packetsize);
++		size = scnprintf(buffer, count, "%lu\n", rbu_data.packetsize);
+ 		spin_unlock(&rbu_data.lock);
+ 	}
+ 	return size;

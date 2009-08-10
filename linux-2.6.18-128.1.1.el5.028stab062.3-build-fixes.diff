@@ -1,0 +1,160 @@
+diff -urpX nopatch linux-2.6.18-128.1.1.el5.028stab062.3/drivers/pci/pci.h linux/drivers/pci/pci.h
+--- linux-2.6.18-128.1.1.el5.028stab062.3/drivers/pci/pci.h	2009-05-10 17:51:03 +0000
++++ linux/drivers/pci/pci.h	2009-07-12 19:38:01 +0000
+@@ -46,14 +46,19 @@ extern unsigned int pci_pm_d3_delay;
+ #ifdef CONFIG_PCI_MSI
+ void disable_msi_mode(struct pci_dev *dev, int pos, int type);
+ void pci_no_msi(void);
++#else
++static inline void disable_msi_mode(struct pci_dev *dev, int pos, int type) { }
++static inline void pci_no_msi(void) { }
++#endif
++#if defined(CONFIG_PCI_MSI) && defined(CONFIG_PM)
+ int pci_save_msi_state(struct pci_dev *dev);
+ int pci_save_msix_state(struct pci_dev *dev);
++void pci_restore_msi_state(struct pci_dev *dev);
+ void pci_restore_msix_state(struct pci_dev *dev);
+ #else
+-static inline void disable_msi_mode(struct pci_dev *dev, int pos, int type) { }
+-static inline void pci_no_msi(void) { }
+ static inline int pci_save_msi_state(struct pci_dev *dev) { return 0; }
+ static inline int pci_save_msix_state(struct pci_dev *dev) { return 0; }
++static inline void pci_restore_msi_state(struct pci_dev *dev) {}
+ static inline void pci_restore_msix_state(struct pci_dev *dev) {}
+ #endif
+ 
+diff -urpX nopatch linux-2.6.18-128.1.1.el5.028stab062.3/drivers/scsi/scsi_dh_export.c linux/drivers/scsi/scsi_dh_export.c
+--- linux-2.6.18-128.1.1.el5.028stab062.3/drivers/scsi/scsi_dh_export.c	2009-05-10 17:51:01 +0000
++++ linux/drivers/scsi/scsi_dh_export.c	2009-07-12 17:30:55 +0000
+@@ -22,6 +22,7 @@
+ 
+ #include <scsi/scsi_dh.h>
+ 
++#if defined(CONFIG_SCSI_DH) || defined(CONFIG_SCSI_DH_MODULE)
+ void store_scsi_dh_data(struct scsi_device *sdev, struct scsi_dh_data *data)
+ {
+ 	struct scsi_device_dh_data *s = container_of(sdev,
+@@ -37,4 +38,4 @@ struct scsi_dh_data *retrieve_scsi_dh_da
+ 	return s->scsi_dh_data;
+ }
+ EXPORT_SYMBOL_GPL(retrieve_scsi_dh_data);
+-
++#endif
+diff -urpX nopatch linux-2.6.18-128.1.1.el5.028stab062.3/include/linux/inotify.h linux/include/linux/inotify.h
+--- linux-2.6.18-128.1.1.el5.028stab062.3/include/linux/inotify.h	2009-05-10 17:51:04 +0000
++++ linux/include/linux/inotify.h	2009-07-12 17:23:28 +0000
+@@ -231,7 +231,7 @@ static inline void inotify_unmount_inode
+ {
+ }
+ 
+-static inline void inotify_unmount_mnt(struct vfsmount *)
++static inline void inotify_unmount_mnt(struct vfsmount *mnt)
+ {
+ }
+ 
+diff -urpX nopatch linux-2.6.18-128.1.1.el5.028stab062.3/include/linux/pci.h linux/include/linux/pci.h
+--- linux-2.6.18-128.1.1.el5.028stab062.3/include/linux/pci.h	2009-05-10 17:51:03 +0000
++++ linux/include/linux/pci.h	2009-07-12 19:41:22 +0000
+@@ -657,7 +657,6 @@ static inline int pci_enable_msix(struct
+ 	struct msix_entry *entries, int nvec) {return -1;}
+ static inline void pci_disable_msix(struct pci_dev *dev) {}
+ static inline void msi_remove_pci_irq_vectors(struct pci_dev *dev) {}
+-static inline void pci_restore_msi_state(struct pci_dev *dev) {}
+ #else
+ extern void pci_scan_msi_device(struct pci_dev *dev);
+ extern int pci_enable_msi(struct pci_dev *dev);
+@@ -666,7 +665,6 @@ extern int pci_enable_msix(struct pci_de
+ 	struct msix_entry *entries, int nvec);
+ extern void pci_disable_msix(struct pci_dev *dev);
+ extern void msi_remove_pci_irq_vectors(struct pci_dev *dev);
+-extern void pci_restore_msi_state(struct pci_dev *dev);
+ #endif
+ 
+ #ifndef CONFIG_EEH
+diff -urpX nopatch linux-2.6.18-128.1.1.el5.028stab062.3/include/linux/topology.h linux/include/linux/topology.h
+--- linux-2.6.18-128.1.1.el5.028stab062.3/include/linux/topology.h	2009-05-10 17:50:57 +0000
++++ linux/include/linux/topology.h	2009-07-12 17:42:25 +0000
+@@ -50,7 +50,9 @@
+ 	for_each_online_node(node)						\
+ 		if (nr_cpus_node(node))
+ 
+-void arch_update_cpu_topology(void);
++#ifdef CONFIG_S390
++extern void arch_update_cpu_topology(void);
++#endif
+ 
+ /* Conform to ACPI 2.0 SLIT distance definitions */
+ #define LOCAL_DISTANCE		10
+diff -urpX nopatch linux-2.6.18-128.1.1.el5.028stab062.3/kernel/sched.c linux/kernel/sched.c
+--- linux-2.6.18-128.1.1.el5.028stab062.3/kernel/sched.c	2009-05-10 17:51:05 +0000
++++ linux/kernel/sched.c	2009-07-12 19:25:59 +0000
+@@ -2354,8 +2354,14 @@ nextlevel:
+ 	return cpu;
+ }
+ 
+-static inline int task_hot(struct task_struct *p, unsigned long long now,
+-			   struct sched_domain *sd);
++/*
++ * Is this task likely cache-hot:
++ */
++static inline int
++task_hot(struct task_struct *p, unsigned long long now, struct sched_domain *sd)
++{
++	return (long long)(now - p->last_ran) < (long long)sd->cache_hot_time;
++}
+ 
+ #endif /* CONFIG_SMP */
+ 
+@@ -2418,6 +2424,7 @@ static inline vcpu_t wake_idle(vcpu_t cp
+ }
+ #endif
+ 
++#ifdef CONFIG_SMP
+ /*
+  * Change a given task's CPU affinity. Migrate the thread to a
+  * proper CPU and schedule it away if the CPU it's executing on
+@@ -2462,6 +2469,7 @@ out:
+ 
+ 	return ret;
+ }
++#endif
+ 
+ /***
+  * try_to_wake_up - wake up a thread
+@@ -3429,15 +3437,6 @@ out:
+ #ifdef CONFIG_SMP
+ 
+ /*
+- * Is this task likely cache-hot:
+- */
+-static inline int
+-task_hot(struct task_struct *p, unsigned long long now, struct sched_domain *sd)
+-{
+-	return (long long)(now - p->last_ran) < (long long)sd->cache_hot_time;
+-}
+-
+-/*
+  * double_lock_balance - lock the busiest runqueue, this_rq is locked already.
+  */
+ static void double_lock_balance(struct rq *this_rq, struct rq *busiest)
+@@ -8426,10 +8425,6 @@ static void detach_destroy_domains(const
+ 	arch_destroy_sched_domains(cpu_map);
+ }
+ 
+-void __attribute__((weak)) arch_update_cpu_topology(void)
+-{
+-}
+-
+ /*
+  * Partition sched domains as specified by the cpumasks below.
+  * This attaches all cpus from the cpumasks to the NULL domain,
+@@ -9126,7 +9121,9 @@ void __init sched_init(void)
+ 
+ 	init_preempt_notifiers();
+ 
++#ifdef CONFIG_S390
+ 	arch_update_cpu_topology();
++#endif
+ 	/*
+ 	 * The boot idle thread does lazy MMU switching as well:
+ 	 */

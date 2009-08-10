@@ -1,0 +1,55 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Wed, 4 Feb 2009 10:02:14 -0600
+Subject: [fs] ecryptfs: readlink flaw
+Message-id: 4989BC06.9060709@redhat.com
+O-Subject: [RHEL5 PATCH] - CVE-2009-0269 kernel: ecryptfs readlink flaw
+Bugzilla: 481607
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Jon Masters <jcm@redhat.com>
+CVE: CVE-2009-0269
+
+This is for:
+
+Bug 481606 - CVE-2009-0269 kernel: ecryptfs readlink flaw [rhel-5.3.z]
+Bug 481607 - CVE-2009-0269 kernel: ecryptfs readlink flaw [rhel-5.4]
+
+Pretty straightforward error and fix, see below:
+
+From: Duane Griffin <duaneg@dghda.com>
+Date: Fri, 19 Dec 2008 20:47:10 +0000 (+0000)
+Subject: eCryptfs: check readlink result was not an error before using it
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Fstable%2Flinux-2.6.27.y.git;a=commitdiff_plain;h=a17d5232de7b53d34229de79ec22f4bb04adb7e4
+
+eCryptfs: check readlink result was not an error before using it
+
+The result from readlink is being used to index into the link name
+buffer without checking whether it is a valid length. If readlink
+returns an error this will fault or cause memory corruption.
+
+Cc: Tyler Hicks <tyhicks@linux.vnet.ibm.com>
+Cc: Dustin Kirkland <kirkland@canonical.com>
+Cc: ecryptfs-devel@lists.launchpad.net
+Signed-off-by: Duane Griffin <duaneg@dghda.com>
+Acked-by: Michael Halcrow <mhalcrow@us.ibm.com>
+Acked-by: Tyler Hicks <tyhicks@linux.vnet.ibm.com>
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+
+diff --git a/fs/ecryptfs/inode.c b/fs/ecryptfs/inode.c
+index de9becd..cf600a1 100644
+--- a/fs/ecryptfs/inode.c
++++ b/fs/ecryptfs/inode.c
+@@ -675,10 +675,11 @@ static void *ecryptfs_follow_link(struct dentry *dentry, struct nameidata *nd)
+ 	ecryptfs_printk(KERN_DEBUG, "Calling readlink w/ "
+ 			"dentry->d_name.name = [%s]\n", dentry->d_name.name);
+ 	rc = dentry->d_inode->i_op->readlink(dentry, (char __user *)buf, len);
+-	buf[rc] = '\0';
+ 	set_fs(old_fs);
+ 	if (rc < 0)
+ 		goto out_free;
++	else
++		buf[rc] = '\0';
+ 	rc = 0;
+ 	nd_set_link(nd, buf);
+ 	goto out;

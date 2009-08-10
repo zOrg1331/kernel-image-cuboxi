@@ -1,0 +1,261 @@
+From: John W. Linville <linville@redhat.com>
+Date: Wed, 11 Mar 2009 10:22:48 -0400
+Subject: [wireless] iwlwifi: booting with RF-kill switch enabled
+Message-id: 20090311142247.GA9315@redhat.com
+O-Subject: [RHEL5.4 patch] iwlwifi: fix crash(es) when booting w/ physical RF-kill switch enabled
+Bugzilla: 482990
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+So the iwlwifi driver in RHEL5.3 has serious problems if you boot-up
+with a physical RF-kill switch in the enabled (i.e. wireless disabled)
+position.  This resulted in a NULL pointer dereference when a scan is
+requested.  Back-porting "mac80211: fix scan vs. interface removal race"
+from upstream avoided this issue, but allowed another NULL pointer
+dereference when the iwlagn module was removed (as in when using
+NetworkManager to disable wireless networking).  Back-porting "iwlwifi:
+fix resume while txpower off" resolves this issue as well.
+
+BZ482990
+
+Back-ports of the following upstream commits...
+
+commit 5bc75728fd43bb15b46f16ef465bcf9d487393cf
+Author: Johannes Berg <johannes@sipsolutions.net>
+Date:   Thu Sep 11 00:01:51 2008 +0200
+
+    mac80211: fix scan vs. interface removal race
+
+    When we remove an interface, we can currently end up having
+    a pointer to it left in local->scan_sdata after it has been
+    set down, and then with a hardware scan the scan completion
+    can try to access it which is a bug. Alternatively, a scan
+    that started as a hardware scan may terminate as though it
+    was a software scan, if the timing is just right.
+
+    On SMP systems, software scan also has a similar problem,
+    just canceling the delayed work and setting a flag isn't
+    enough since it may be running concurrently; in this case
+    we would also never restore state of other interfaces.
+
+    This patch hopefully fixes the problems by always invoking
+    ieee80211_scan_completed or requiring it to be invoked by
+    the driver, I suspect the drivers that have ->hw_scan() are
+    buggy. The bug will not manifest itself unless you remove
+    the interface while hw-scanning which will also turn off
+    the hw, and then add a new interface which will be unusable
+    until you scan once.
+
+    Signed-off-by: Johannes Berg <johannes@sipsolutions.net>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit edb342286e18c5bec6d3ac325851a9cba28061b9
+Author: Mohamed Abbas <mohamed.abbas@intel.com>
+Date:   Thu Dec 11 10:33:37 2008 -0800
+
+    iwlwifi: fix resume while txpower off
+
+    This patch take care of coming out rfkill when the driver is up while
+    rfkill is on by restarting interface.
+
+    Signed-off-by: Mohamed Abbas <mohamed.abbas@intel.com>
+    Signed-off-by: Reinette Chatre <reinette.chatre@intel.com>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+Tested by me, Huzaifa S. Sidhpurwala <huzaifas@redhat.com>, Jay Turner
+<jturner@redhat.com>, and customers, with positive results.
+
+diff --git a/drivers/net/wireless/iwlwifi/iwl-agn.c b/drivers/net/wireless/iwlwifi/iwl-agn.c
+index b85b1cd..116afca 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-agn.c
++++ b/drivers/net/wireless/iwlwifi/iwl-agn.c
+@@ -1658,8 +1658,11 @@ static void iwl4965_irq_tasklet(struct iwl_priv *priv)
+ 		 * the driver as well won't allow loading if RFKILL is set
+ 		 * therefore no need to restart the driver from this handler
+ 		 */
+-		if (!hw_rf_kill && !test_bit(STATUS_ALIVE, &priv->status))
++		if (!hw_rf_kill && !test_bit(STATUS_ALIVE, &priv->status)) {
+ 			clear_bit(STATUS_RF_KILL_HW, &priv->status);
++			if (priv->is_open && !iwl_is_rfkill(priv))
++				queue_work(priv->workqueue, &priv->up);
++		}
+ 
+ 		handled |= CSR_INT_BIT_RF_KILL;
+ 	}
+diff --git a/drivers/net/wireless/iwlwifi/iwl-core.c b/drivers/net/wireless/iwlwifi/iwl-core.c
+index 8c6e46a..aac3299 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-core.c
++++ b/drivers/net/wireless/iwlwifi/iwl-core.c
+@@ -1441,6 +1441,16 @@ int iwl_radio_kill_sw_enable_radio(struct iwl_priv *priv)
+ 		return 0;
+ 	}
+ 
++	/* when driver is up while rfkill is on, it wont receive
++	 * any CARD_STATE_NOTIFICATION notifications so we have to
++	 * restart it in here
++	 */
++	if (priv->is_open && !test_bit(STATUS_ALIVE, &priv->status)) {
++		clear_bit(STATUS_RF_KILL_SW, &priv->status);
++		if (!iwl_is_rfkill(priv))
++			queue_work(priv->workqueue, &priv->up);
++	}
++
+ 	/* If the driver is already loaded, it will receive
+ 	 * CARD_STATE_NOTIFICATION notifications and the handler will
+ 	 * call restart to reload the driver.
+diff --git a/include/net/mac80211.h b/include/net/mac80211.h
+index 437f314..e60ee40 100644
+--- a/include/net/mac80211.h
++++ b/include/net/mac80211.h
+@@ -1055,7 +1055,9 @@ enum ieee80211_ampdu_mlme_action {
+  * @hw_scan: Ask the hardware to service the scan request, no need to start
+  *	the scan state machine in stack. The scan must honour the channel
+  *	configuration done by the regulatory agent in the wiphy's registered
+- *	bands.
++ *	bands. When the scan finishes, ieee80211_scan_completed() must be
++ *	called; note that it also must be called when the scan cannot finish
++ *	because the hardware is turned off! Anything else is a bug!
+  *
+  * @get_stats: return low-level statistics
+  *
+diff --git a/net/mac80211/main.c b/net/mac80211/main.c
+index 4e3cd34..719c331 100644
+--- a/net/mac80211/main.c
++++ b/net/mac80211/main.c
+@@ -526,20 +526,37 @@ static int ieee80211_stop(struct net_device *dev)
+ 		synchronize_rcu();
+ 		skb_queue_purge(&sdata->u.sta.skb_queue);
+ 
+-		if (local->scan_dev == sdata->dev) {
+-			if (!local->ops->hw_scan) {
+-				local->sta_sw_scanning = 0;
+-				cancel_delayed_work(&local->scan_work);
+-			} else
+-				local->sta_hw_scanning = 0;
+-		}
+-
+ 		sdata->u.sta.flags &= ~IEEE80211_STA_PRIVACY_INVOKED;
+ 		kfree(sdata->u.sta.extra_ie);
+ 		sdata->u.sta.extra_ie = NULL;
+ 		sdata->u.sta.extra_ie_len = 0;
+ 		/* fall through */
+ 	default:
++		if (local->scan_dev == sdata->dev) {
++			if (!local->ops->hw_scan)
++				cancel_rearming_delayed_work(&local->scan_work);
++			/*
++			 * The software scan can no longer run now, so we can
++			 * clear out the scan_dev reference. However, the
++			 * hardware scan may still be running. The complete
++			 * function must be prepared to handle a NULL value.
++			 */
++			local->scan_dev = NULL;
++			/*
++			 * The memory barrier guarantees that another CPU
++			 * that is hardware-scanning will now see the fact
++			 * that this interface is gone.
++			 */
++			smp_mb();
++			/*
++			 * If software scanning, complete the scan but since
++			 * the scan_dev is NULL already don't send out a
++			 * scan event to userspace -- the scan is incomplete.
++			 */
++			if (local->sta_sw_scanning)
++				ieee80211_scan_completed(&local->hw);
++		}
++
+ 		conf.vif = &sdata->vif;
+ 		conf.type = sdata->vif.type;
+ 		conf.mac_addr = dev->dev_addr;
+diff --git a/net/mac80211/mlme.c b/net/mac80211/mlme.c
+index 5a83cce..538f34c 100644
+--- a/net/mac80211/mlme.c
++++ b/net/mac80211/mlme.c
+@@ -3317,16 +3317,10 @@ void ieee80211_sta_work(void *ptr)
+ 	if (ifsta->state != IEEE80211_AUTHENTICATE &&
+ 	    ifsta->state != IEEE80211_ASSOCIATE &&
+ 	    test_and_clear_bit(IEEE80211_STA_REQ_SCAN, &ifsta->request)) {
+-		int rc;
+-
+ 		if (ifsta->scan_ssid_len)
+-			rc = ieee80211_sta_start_scan(dev, ifsta->scan_ssid, ifsta->scan_ssid_len);
++			ieee80211_sta_start_scan(dev, ifsta->scan_ssid, ifsta->scan_ssid_len);
+ 		else
+-			rc = ieee80211_sta_start_scan(dev, NULL, 0);
+-
+-		if (rc)
+-			ieee80211_scan_completed(local_to_hw(local));
+-
++			ieee80211_sta_start_scan(dev, NULL, 0);
+ 		return;
+ 	}
+ 
+@@ -3810,9 +3804,20 @@ void ieee80211_scan_completed(struct ieee80211_hw *hw)
+ 	struct ieee80211_sub_if_data *sdata;
+ 	union iwreq_data wrqu;
+ 
++	WARN_ON(!local->sta_hw_scanning && !local->sta_sw_scanning);
++	if (!local->sta_hw_scanning && !local->sta_sw_scanning)
++		return;
++
+ 	local->last_scan_completed = jiffies;
+ 	memset(&wrqu, 0, sizeof(wrqu));
+-	wireless_send_event(dev, SIOCGIWSCAN, &wrqu, NULL);
++
++	/*
++	 * local->scan_dev could have been NULLed by the interface
++	 * down code in case we were scanning on an interface that is
++	 * being taken down.
++	 */
++	if (dev)
++		wireless_send_event(dev, SIOCGIWSCAN, &wrqu, NULL);
+ 
+ 	if (local->sta_hw_scanning) {
+ 		local->sta_hw_scanning = 0;
+@@ -3884,7 +3889,10 @@ void ieee80211_sta_scan_work(void *l)
+ 	int skip;
+ 	unsigned long next_delay = 0;
+ 
+-	if (!local->sta_sw_scanning)
++	/*
++	 * Avoid re-scheduling when the sdata is going away.
++	 */
++	if (!netif_running(sdata->dev))
+ 		return;
+ 
+ 	switch (local->scan_state) {
+@@ -3963,9 +3971,8 @@ void ieee80211_sta_scan_work(void *l)
+ 		break;
+ 	}
+ 
+-	if (local->sta_sw_scanning)
+-		queue_delayed_work(local->hw.workqueue, &local->scan_work,
+-				   next_delay);
++	queue_delayed_work(local->hw.workqueue, &local->scan_work,
++			   next_delay);
+ }
+ 
+ 
+@@ -4002,13 +4009,16 @@ static int ieee80211_sta_start_scan(struct net_device *dev,
+ 	}
+ 
+ 	if (local->ops->hw_scan) {
+-		int rc = local->ops->hw_scan(local_to_hw(local),
+-					     ssid, ssid_len);
+-		if (!rc) {
+-			local->sta_hw_scanning = 1;
+-			local->scan_dev = dev;
++		int rc;
++
++		local->sta_hw_scanning = 1;
++		rc = local->ops->hw_scan(local_to_hw(local), ssid, ssid_len);
++		if (rc) {
++			local->sta_hw_scanning = 0;
++			return rc;
+ 		}
+-		return rc;
++		local->scan_dev = dev;
++		return 0;
+ 	}
+ 
+ 	local->sta_sw_scanning = 1;

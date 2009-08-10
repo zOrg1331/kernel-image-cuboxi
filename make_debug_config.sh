@@ -15,3 +15,5 @@ echo "CONFIG_DEBUG_PI_LIST=y" >> .config
 echo "CONFIG_DEBUG_LOCKDEP=n" >> .config
 echo "CONFIG_TRACE_IRQFLAGS=y" >> .config
 echo "CONFIG_STACKTRACE=y" >> .config
+echo "CONFIG_KALLSYMS_ALL=y" >> .config
+echo "CONFIG_STACKTRACE=y" >> .config

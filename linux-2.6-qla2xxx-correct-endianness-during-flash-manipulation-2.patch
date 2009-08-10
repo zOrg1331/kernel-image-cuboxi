@@ -1,0 +1,52 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Wed, 28 Jan 2009 11:13:42 -0500
+Subject: [qla2xxx] correct endianness during flash manipulation
+Message-id: 20090128161342.3430.19731.sendpatchset@file.bos.redhat.com
+O-Subject: [rhel 5.4 bug] qla2xxx - Correct endianness issue during flash manipulation.
+Bugzilla: 481691
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+BZ 481691
+
+qla2xxx - Correct endianness issue during flash manipulation.
+
+The flash data was incorrectly being converted (cpu_to_le32())
+when using the bulk-flash-write mailbox command (ISP25xx and
+above).
+
+This patch is also being requested as a back port for z-stream by
+IBM for their blade servers.
+
+This patch applies and builds cleanly against 2.6.18-128 Tested
+at QLogic.
+
+diff --git a/drivers/scsi/qla2xxx/qla_sup.c b/drivers/scsi/qla2xxx/qla_sup.c
+index d5e7f5c..335f813 100644
+--- a/drivers/scsi/qla2xxx/qla_sup.c
++++ b/drivers/scsi/qla2xxx/qla_sup.c
+@@ -903,13 +903,12 @@ qla24xx_write_flash_data(scsi_qla_host_t *ha, uint32_t *dwptr, uint32_t faddr,
+     uint32_t dwords)
+ {
+ 	int ret;
+-	uint32_t liter, miter;
++	uint32_t liter;
+ 	uint32_t sec_mask, rest_addr;
+ 	uint32_t fdata, findex, cnt;
+ 	struct device_reg_24xx __iomem *reg = &ha->iobase->isp24;
+ 	dma_addr_t optrom_dma;
+ 	void *optrom = NULL;
+-	uint32_t *s, *d;
+ 
+ 	ret = QLA_SUCCESS;
+ 
+@@ -971,9 +970,7 @@ qla24xx_write_flash_data(scsi_qla_host_t *ha, uint32_t *dwptr, uint32_t faddr,
+ 		/* Go with burst-write. */
+ 		if (optrom && (liter + OPTROM_BURST_DWORDS) <= dwords) {
+ 			/* Copy data to DMA'ble buffer. */
+-			for (miter = 0, s = optrom, d = dwptr;
+-			    miter < OPTROM_BURST_DWORDS; miter++, s++, d++)
+-				*s = cpu_to_le32(*d);
++			memcpy(optrom, dwptr, OPTROM_BURST_SIZE);
+ 
+ 			ret = qla2x00_load_ram(ha, optrom_dma,
+ 			    flash_data_to_access_addr(faddr),

@@ -1,0 +1,68 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Mon, 4 May 2009 17:38:21 -0400
+Subject: [misc] add some long-missing capabilities to CAP_FS_MASK
+Message-id: 1241473102.16650.261.camel@dhcp231-142.rdu.redhat.com
+O-Subject: [RHEL5 PATCH] add some long-missing capabilities to CAP_FS_MASK
+Bugzilla: 499076 497272
+RH-Acked-by: James Morris <jmorris@redhat.com>
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+CVE: CVE-2009-1072
+
+Since the 2.1 kernel when capabilities were added to the upstream and
+fsuid wasn't used for everything we've instead used a capabilities mask
+called CAP_FS_MASK to define what operations require extra permissions
+and which do not.  This mask was never well defined and it turns out
+that it didn't include the bits for CAP_MKNOD and CAP_LINUX_IMMUTABLE.
+This means we didn't have good controls over which tasks should be
+allowed CAP_MKNOD CAP_LINUX_IMMUTABLE.  This is not quite as interesting
+for local filesystems since it's rare one would have fsuid==0 and not
+actually have the ability to do these things, but it's a pretty big deal
+for nfs.  The mknod on the server is actually done by a root kernel
+thread which does have the ability to perform the task in question.
+Thus a client with a writable mount point, even with root_squash can
+create arbitrary nodes on that machine owned by whatever user the client
+so chooses.  I'll leave it as an exercise to the reader to realize just
+how easy this means it is to take over a machine where you can log in
+and that machine mounted something rw without nodev.
+
+This patch fixes 497272 and 491572 which I don't think has been broken
+out into a RHEL5 bug (same patch for both)
+
+This is a sorta mash up of upstream commits
+76a67ec6fb79ff3570dcb5342142c16098299911
+0ad30b8fd5fe798aae80df6344b415d8309342cc
+
+Signed-off-by: Eric Paris <eparis@redhat.com>
+
+diff --git a/include/linux/capability.h b/include/linux/capability.h
+index 6548b35..9fce78a 100644
+--- a/include/linux/capability.h
++++ b/include/linux/capability.h
+@@ -102,10 +102,6 @@ typedef __u32 kernel_cap_t;
+ 
+ #define CAP_FSETID           4
+ 
+-/* Used to decide between falling back on the old suser() or fsuser(). */
+-
+-#define CAP_FS_MASK          0x1f
+-
+ /* Overrides the restriction that the real or effective user ID of a
+    process sending a signal must match the real or effective user ID
+    of the process receiving the signal. */
+@@ -310,6 +306,16 @@ extern kernel_cap_t cap_bset;
+ 
+ #endif
+ 
++/* Used to decide between falling back on the old suser() or fsuser(). */
++
++#define CAP_FS_MASK	(CAP_TO_MASK(CAP_CHOWN) |		\
++			 CAP_TO_MASK(CAP_DAC_OVERRIDE) |	\
++			 CAP_TO_MASK(CAP_DAC_READ_SEARCH) |	\
++			 CAP_TO_MASK(CAP_FOWNER) |		\
++			 CAP_TO_MASK(CAP_FSETID) |		\
++			 CAP_TO_MASK(CAP_LINUX_IMMUTABLE) |	\
++			 CAP_TO_MASK(CAP_MKNOD))
++
+ #define CAP_EMPTY_SET       to_cap_t(0)
+ #define CAP_FULL_SET        to_cap_t(~0)
+ #define CAP_INIT_EFF_SET    to_cap_t(~0 & ~CAP_TO_MASK(CAP_SETPCAP))

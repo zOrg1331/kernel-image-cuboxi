@@ -1,0 +1,70 @@
+From: Josef Bacik <jbacik@redhat.com>
+Date: Mon, 20 Apr 2009 15:52:31 -0400
+Subject: [fs] fix softlockup in posix_locks_deadlock
+Message-id: 1240257151-32296-1-git-send-email-jbacik@redhat.com
+O-Subject: [PATCH] [RHEL5.4] fix softlockup in posix_locks_deadlock
+Bugzilla: 476659
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+
+This is in reference to bz 476659, and is a backport of
+
+commit 97855b49b6bac0bd25f16b017883634d13591d00
+Author: J. Bruce Fields <bfields@citi.umich.edu>
+Date:   Tue Oct 30 11:20:02 2007 -0400
+
+    locks: fix possible infinite loop in posix deadlock detection
+
+    It's currently possible to send posix_locks_deadlock() into an infinite
+    loop (under the BKL).
+
+    For now, fix this just by bailing out after a few iterations.  We may
+    want to fix this in a way that better clarifies the semantics of
+    deadlock detection.  But that will take more time, and this minimal fix
+    is probably adequate for any realistic scenario, and is simple enough to
+    be appropriate for applying to stable kernels now.
+
+    Thanks to George Davis for reporting the problem.
+
+    Cc: "George G. Davis" <gdavis@mvista.com>
+    Signed-off-by: J. Bruce Fields <bfields@citi.umich.edu>
+    Acked-by: Alan Cox <alan@redhat.com>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+This has been tested by the customer.
+Signed-off-by: Josef Bacik <jbacik@redhat.com>
+
+diff --git a/fs/locks.c b/fs/locks.c
+index 6aa1018..1f2d6ef 100644
+--- a/fs/locks.c
++++ b/fs/locks.c
+@@ -713,11 +713,20 @@ EXPORT_SYMBOL(posix_test_lock);
+  * Note: the above assumption may not be true when handling lock requests
+  * from a broken NFS client. But broken NFS clients have a lot more to
+  * worry about than proper deadlock detection anyway... --okir
++ *
++ * However, the failure of this assumption (also possible in the case of
++ * multiple tasks sharing the same open file table) also means there's no
++ * guarantee that the loop below will terminate.  As a hack, we give up
++ * after a few iterations.
+  */
++
++#define MAX_DEADLK_ITERATIONS 10
++
+ static int posix_locks_deadlock(struct file_lock *caller_fl,
+ 				struct file_lock *block_fl)
+ {
+ 	struct list_head *tmp;
++	int i = 0;
+ 
+ next_task:
+ 	if (posix_same_owner(caller_fl, block_fl))
+@@ -725,6 +734,8 @@ next_task:
+ 	list_for_each(tmp, &blocked_list) {
+ 		struct file_lock *fl = list_entry(tmp, struct file_lock, fl_link);
+ 		if (posix_same_owner(fl, block_fl)) {
++			if (i++ > MAX_DEADLK_ITERATIONS)
++				return 0;
+ 			fl = fl->fl_next;
+ 			block_fl = fl;
+ 			goto next_task;

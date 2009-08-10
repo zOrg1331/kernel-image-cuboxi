@@ -1,0 +1,54 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Mon, 30 Mar 2009 12:59:38 +0800
+Subject: [x86] NONSTOP_TSC in tsc clocksource
+Message-id: 49D051BA.5060503@redhat.com
+O-Subject: [RHEL 5.4 PATCH] bz 474091 use NONSTOP_TSC in i386 tsc clocksource
+Bugzilla: 474091
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Peter Martuccelli <peterm@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+
+Description of problem:
+
+RH QA captured the problem when testing the NONSTOP_TSC feature with
+32-bit kernel. She found the clock source under sys fs is still HPET on
+hp-xw8800-01.rhts.bos.redhat.com.
+
+Part of code got neglected from my original back port, because it
+doesn't appear in the corresponding Upstream commit.
+
+And upstream still use this:
+    if (boot_cpu_has(X86_FEATURE_CONSTANT_TSC))
+        return 0;
+
+The attached patch fixes the problem.
+
+Testing status:
+Successfully tested the patch with 32-bit kernel on
+hp-xw8800-01.rhts.bos.redhat.com.
+
+Brew:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1743217
+
+Please review and Ack
+
+Thanks,
+Luming
+
+diff --git a/arch/i386/kernel/tsc.c b/arch/i386/kernel/tsc.c
+index 839aba6..87c757c 100644
+--- a/arch/i386/kernel/tsc.c
++++ b/arch/i386/kernel/tsc.c
+@@ -451,9 +451,8 @@ out:
+  */
+ static __init int unsynchronized_tsc(void)
+ {
+-	/* AMD systems with constant TSCs have synchronized clocks */
+-	if ((boot_cpu_data.x86_vendor == X86_VENDOR_AMD) &&
+-	    (boot_cpu_has(X86_FEATURE_CONSTANT_TSC)))
++	/* AMD and Intel systems with constant TSCs have synchronized clocks */
++	if (boot_cpu_has(X86_FEATURE_NONSTOP_TSC))
+ 		return 0;
+ 
+ 	/* Most intel systems have synchronized TSCs except for

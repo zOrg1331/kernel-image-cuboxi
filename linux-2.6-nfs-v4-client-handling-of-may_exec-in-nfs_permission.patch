@@ -1,0 +1,40 @@
+From: Peter Staubach <staubach@redhat.com>
+Date: Tue, 26 May 2009 17:02:42 -0400
+Subject: [nfs] v4: client handling of MAY_EXEC in nfs_permission
+Message-id: 4A1C58F2.5070907@redhat.com
+O-Subject: [PATCH RHEL-5.4] BZ500302 CVE-2009-1630 kernel: nfs: fix NFS v4 client handling of MAY_EXEC in nfs_permission [rhel-5.4]
+Bugzilla: 500302
+CVE: CVE-2009-1630
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+Hi.
+
+Attached is a patch to address bz500302, "CVE-2009-1630 kernel:
+nfs: fix NFS v4 client handling of MAY_EXEC in nfs_permission
+[rhel-5.4]".  This bz describes a situation where the NFSv4
+client does not do correct mode permissions checking when
+checking to see whether a file is executable or not.
+
+This patch corrects the conditions that the NFSv4 client uses
+when deciding whether to avoid an over the wire ACCESS call or
+not.
+
+    Thanx...
+
+       ps
+
+diff --git a/fs/nfs/dir.c b/fs/nfs/dir.c
+index f509fd6..a514521 100644
+--- a/fs/nfs/dir.c
++++ b/fs/nfs/dir.c
+@@ -1912,7 +1912,8 @@ int nfs_permission(struct inode *inode, int mask, struct nameidata *nd)
+ 			/* NFSv4 has atomic_open... */
+ 			if (nfs_server_capable(inode, NFS_CAP_ATOMIC_OPEN)
+ 					&& nd != NULL
+-					&& (nd->flags & LOOKUP_OPEN))
++					&& (nd->flags & LOOKUP_OPEN)
++					&& !(mask & MAY_EXEC))
+ 				goto out;
+ 			break;
+ 		case S_IFDIR:

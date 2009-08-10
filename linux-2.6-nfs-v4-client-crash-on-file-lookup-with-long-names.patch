@@ -1,0 +1,119 @@
+From: Sachin S. Prabhu <sprabhu@redhat.com>
+Date: Mon, 6 Apr 2009 14:04:57 +0100
+Subject: [nfs] v4: client crash on file lookup with long names
+Message-id: 49D9FDF9.1070907@redhat.com
+O-Subject: [RHEL 5.4 PATCH] nfsv4 client crashes when doing a lookup on files with long names
+Bugzilla: 493942
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=493942
+
+When mounting nfs4 shares on RHEL 5, the nfs_server->namelen for that share is
+not initialised correctly. This can be used to crash the system by looking up a
+long file name.
+
+Upstream patch:
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=54af3bb543c071769141387a42deaaab5074da55
+
+A reproducer is provided in the bugzilla. The attached patch was tested
+successfully against the reproducer.
+
+Sachin Prabhu
+
+diff --git a/fs/nfs/client.c b/fs/nfs/client.c
+index dfb5351..f44f1d8 100644
+--- a/fs/nfs/client.c
++++ b/fs/nfs/client.c
+@@ -613,16 +613,6 @@ static int nfs_init_server(struct nfs_server *server, const struct nfs_mount_dat
+ 	server->namelen  = data->namlen;
+ 	/* Create a client RPC handle for the NFSv3 ACL management interface */
+ 	nfs_init_server_aclclient(server);
+-	if (clp->cl_nfsversion == 3) {
+-		if (server->namelen == 0 || server->namelen > NFS3_MAXNAMLEN)
+-			server->namelen = NFS3_MAXNAMLEN;
+-		if (!(data->flags & NFS_MOUNT_NORDIRPLUS))
+-			server->caps |= NFS_CAP_READDIRPLUS;
+-	} else {
+-		if (server->namelen == 0 || server->namelen > NFS2_MAXNAMLEN)
+-			server->namelen = NFS2_MAXNAMLEN;
+-	}
+-
+ 	dprintk("<-- nfs_init_server() = 0 [new %p]\n", clp);
+ 	return 0;
+ 
+@@ -822,6 +812,16 @@ struct nfs_server *nfs_create_server(const struct nfs_mount_data *data,
+ 	error = nfs_probe_fsinfo(server, mntfh, &fattr);
+ 	if (error < 0)
+ 		goto error;
++	if (server->nfs_client->rpc_ops->version == 3) {
++		if (server->namelen == 0 || server->namelen > NFS3_MAXNAMLEN)
++			server->namelen = NFS3_MAXNAMLEN;
++		if (!(data->flags & NFS_MOUNT_NORDIRPLUS))
++			server->caps |= NFS_CAP_READDIRPLUS;
++	} else {
++		if (server->namelen == 0 || server->namelen > NFS2_MAXNAMLEN)
++			server->namelen = NFS2_MAXNAMLEN;
++	}
++
+ 	if (!(fattr.valid & NFS_ATTR_FATTR)) {
+ 		error = server->nfs_client->rpc_ops->getattr(server, mntfh, &fattr);
+ 		if (error < 0) {
+@@ -994,6 +994,9 @@ struct nfs_server *nfs4_create_server(const struct nfs4_mount_data *data,
+ 	if (error < 0)
+ 		goto error;
+ 
++	if (server->namelen == 0 || server->namelen > NFS4_MAXNAMLEN)
++		server->namelen = NFS4_MAXNAMLEN;
++
+ 	BUG_ON(!server->nfs_client);
+ 	BUG_ON(!server->nfs_client->rpc_ops);
+ 	BUG_ON(!server->nfs_client->rpc_ops->file_inode_ops);
+@@ -1080,6 +1083,9 @@ struct nfs_server *nfs4_create_referral_server(struct nfs_clone_mount *data,
+ 	if (error < 0)
+ 		goto error;
+ 
++	if (server->namelen == 0 || server->namelen > NFS4_MAXNAMLEN)
++		server->namelen = NFS4_MAXNAMLEN;
++
+ 	dprintk("Referral FSID: %llx:%llx\n",
+ 		server->fsid.major, server->fsid.minor);
+ 
+@@ -1137,6 +1143,9 @@ struct nfs_server *nfs_clone_server(struct nfs_server *source,
+ 	if (error < 0)
+ 		goto out_free_server;
+ 
++	if (server->namelen == 0 || server->namelen > NFS4_MAXNAMLEN)
++		server->namelen = NFS4_MAXNAMLEN;
++
+ 	dprintk("Cloned FSID: %llx:%llx\n",
+ 		server->fsid.major, server->fsid.minor);
+ 
+diff --git a/fs/nfs/dir.c b/fs/nfs/dir.c
+index cdf2116..f509fd6 100644
+--- a/fs/nfs/dir.c
++++ b/fs/nfs/dir.c
+@@ -1111,6 +1111,8 @@ static struct dentry *nfs_readdir_lookup(nfs_readdir_descriptor_t *desc)
+ 	}
+ 	if (!desc->plus || !(entry->fattr->valid & NFS_ATTR_FATTR))
+ 		return NULL;
++	if (name.len > NFS_SERVER(dir)->namelen)
++		return NULL;
+ 	/* Note: caller is already holding the dir->i_mutex! */
+ 	dentry = d_alloc(parent, &name);
+ 	if (dentry == NULL)
+diff --git a/fs/nfs/getroot.c b/fs/nfs/getroot.c
+index 2bc4648..4288ced 100644
+--- a/fs/nfs/getroot.c
++++ b/fs/nfs/getroot.c
+@@ -177,6 +177,9 @@ next_component:
+ 		path++;
+ 	name.len = path - (const char *) name.name;
+ 
++	if (name.len > NFS4_MAXNAMLEN)
++		return -ENAMETOOLONG;
++
+ eat_dot_dir:
+ 	while (*path == '/')
+ 		path++;

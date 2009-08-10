@@ -1,0 +1,43 @@
+From: Josef Bacik <jbacik@redhat.com>
+Date: Mon, 20 Apr 2009 16:06:30 -0400
+Subject: [fs] keep eventpoll from locking up the box
+Message-id: 1240257990-1823-1-git-send-email-jbacik@redhat.com
+O-Subject: [PATCH] [RHEL5.4] keep eventpoll from locking up the box
+Bugzilla: 487585
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+
+This is in reference to bz 487585.  This was fixed the same way in RHEL4, in bz
+446409, I just forgot to do it for RHEL5.  The reason this problem goes away
+upstream is because there have been several locking changes, but I'd rather go
+with this tried and true method instead of pulling back these potentially
+disruptive changes.  If we'd rather go with the locking reworking patches I can
+pull those back instead, but I think this will be safer and less disruptive.
+Thank you,
+
+Josef
+
+Signed-off-by: Josef Bacik <jbacik@redhat.com>
+
+diff --git a/fs/eventpoll.c b/fs/eventpoll.c
+index 8d54433..be06bf1 100644
+--- a/fs/eventpoll.c
++++ b/fs/eventpoll.c
+@@ -1475,7 +1475,7 @@ static int ep_events_transfer(struct eventpoll *ep,
+ 	 * We need to lock this because we could be hit by
+ 	 * eventpoll_release_file() and epoll_ctl(EPOLL_CTL_DEL).
+ 	 */
+-	down_read(&ep->sem);
++	down_write(&ep->sem);
+ 
+ 	/* Collect/extract ready items */
+ 	if (ep_collect_ready_items(ep, &txlist, maxevents) > 0) {
+@@ -1486,7 +1486,7 @@ static int ep_events_transfer(struct eventpoll *ep,
+ 		ep_reinject_items(ep, &txlist);
+ 	}
+ 
+-	up_read(&ep->sem);
++	up_write(&ep->sem);
+ 
+ 	return eventcnt;
+ }

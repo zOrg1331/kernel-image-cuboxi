@@ -1,0 +1,56 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Wed, 25 Feb 2009 12:53:57 +0100
+Subject: [net] bonding: fix arp_validate=3 slaves behaviour
+Message-id: 20090225115356.GB3401@psychotron.englab.brq.redhat.com
+O-Subject: [RHEL5.4 patch] BZ484304 net: bonding: fix arp_validate=3 slaves behaviour
+Bugzilla: 484304
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+BZ484304
+https://bugzilla.redhat.com/show_bug.cgi?id=484304
+
+Description:
+During the backport of bonding driver upgrade we missed 2 hunks in file
+include/linux/netdevice.h. That caused that if we have bonding setup using
+arp_validate=3 slaves were in state down and if a failover happened it could
+bounce slaves.
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=blobdiff;f=include/linux/netdevice.h;h=afd80eff27259a20e3b021b0901b5acbe53dd0f6;hp=43289127b458345334a961caa6bd269799f00aad;hb=f5b2b966f032f22d3a289045a5afd4afa09f09c6;hpb=70298705bb29fb7982b85089adf17cd37b94baa7
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1702135
+
+Test:
+Booted on my testing i686 machine. Tested with 2 NICs against other machine
+with 2 NICs with switch in between. Works fine.
+
+Jirka
+
+diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
+index 8d93f17..c5ce762 100644
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -1053,7 +1053,8 @@ static inline int netif_needs_gso(struct net_device *dev, struct sk_buff *skb)
+ }
+ 
+ /* On bonding slaves other than the currently active slave, suppress
+- * duplicates except for 802.3ad ETH_P_SLOW and alb non-mcast/bcast.
++ * duplicates except for 802.3ad ETH_P_SLOW, alb non-mcast/bcast, and
++ * ARP on active-backup slaves with arp_validate enabled.
+  */
+ static inline int skb_bond_should_drop(struct sk_buff *skb)
+ {
+@@ -1062,6 +1063,10 @@ static inline int skb_bond_should_drop(struct sk_buff *skb)
+ 
+ 	if (master &&
+ 	    (dev->priv_flags & IFF_SLAVE_INACTIVE)) {
++		if ((dev->priv_flags & IFF_SLAVE_NEEDARP) &&
++		    skb->protocol == __constant_htons(ETH_P_ARP))
++			return 0;
++
+ 		if (master->priv_flags & IFF_MASTER_ALB) {
+ 			if (skb->pkt_type != PACKET_BROADCAST &&
+ 			    skb->pkt_type != PACKET_MULTICAST)

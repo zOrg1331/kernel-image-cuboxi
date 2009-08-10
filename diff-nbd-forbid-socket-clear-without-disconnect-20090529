@@ -1,0 +1,21 @@
+diff --git a/drivers/block/nbd.c b/drivers/block/nbd.c
+index 5163d54..c47eb2f 100644
+--- a/drivers/block/nbd.c
++++ b/drivers/block/nbd.c
+@@ -450,6 +450,7 @@ static int nbd_do_it(struct nbd_device *lo)
+ 		nbd_end_request(req);
+ 
+ 	sysfs_remove_file(&lo->disk->kobj, &pid_attr.attr);
++	lo->pid = 0;
+ 	return 0;
+ }
+ 
+@@ -645,6 +646,8 @@ static int nbd_ioctl(struct inode *inode, struct file *file,
+                 return 0;
+  
+ 	case NBD_CLEAR_SOCK:
++		if (lo->pid)
++			return -EBUSY;
+ 		error = 0;
+ 		mutex_lock(&lo->tx_lock);
+ 		lo->sock = NULL;

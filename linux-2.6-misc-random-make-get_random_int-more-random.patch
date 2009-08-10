@@ -1,0 +1,109 @@
+From: Amerigo Wang <amwang@redhat.com>
+Date: Thu, 14 May 2009 06:51:06 -0400
+Subject: [misc] random: make get_random_int more random
+Message-id: 20090514105209.9601.55676.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5 PATCH] BZ499776: kernel: random: make get_random_int() more random
+Bugzilla: 499776
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Eugene Teo <eteo@redhat.com>
+
+BZ499776:
+https://bugzilla.redhat.com/show_bug.cgi?id=499776
+
+Description of problem:
+"It's a really simple patch that basically just open-codes the current
+"secure_ip_id()" call, but when open-coding it we now use a _static_ hashing
+area, so that it gets updated every time.
+
+And to make sure somebody can't just start from the same original seed of
+all-zeroes, and then do the "half_md4_transform()" over and over until they get
+the same sequence as the kernel has, each iteration also mixes in the same old
+"current->pid + jiffies" we used - so we should now have a regular strong
+pseudo-number generator, but we also have one that doesn't have a single seed.
+
+Note: the "pid + jiffies" is just meant to be a tiny tiny bit of noise. It has
+no real meaning. It could be anything. I just picked the previous seed, it's
+just that now we keep the state in between calls and that will feed into the
+next result, and that should make all the difference.
+
+I made that hash be a per-cpu data just to avoid cache-line ping-pong: having
+multiple CPU's write to the same data would be fine for randomness, and add yet
+another layer of chaos to it, but since get_random_int() is supposed to be a
+fast interface I did it that way instead. I considered using
+"__raw_get_cpu_var()" to avoid any preemption overhead while still getting the
+hash be _mostly_ ping-pong free, but in the end good taste won out."
+
+Upstream commit:
+http://git.kernel.org/linus/8a0a9bd4db63bc45e3017bedeafbd88d0eb84d02
+
+Test status:
+I used systemtap to observe the results, it is very obvious. See below:
+
+==before this patch==
+get_random_int returns: f3f71569
+get_random_int returns: f3f71569
+get_random_int returns: f3f71569
+get_random_int returns: f3f71569
+get_random_int returns: f3f71569
+get_random_int returns: f3f71569
+get_random_int returns: c3e650c8
+get_random_int returns: c3e650c8
+get_random_int returns: c3e650c8
+get_random_int returns: c3e650c8
+get_random_int returns: c3e650c8
+get_random_int returns: c3e650c8
+
+==after this patch==
+get_random_int returns: b7566a5b
+get_random_int returns: f4b86171
+get_random_int returns: 25dd8fd8
+get_random_int returns: 58ab81ce
+get_random_int returns: f39dbcb2
+get_random_int returns: cbf308f9
+get_random_int returns: 32d9c09e
+get_random_int returns: 4eedfcad
+get_random_int returns: fe87cb99
+get_random_int returns: 1bd42857
+get_random_int returns: 837cf921
+get_random_int returns: d9a39d80
+
+Please ACK.
+
+diff --git a/drivers/char/random.c b/drivers/char/random.c
+index f9578f3..b40d73d 100644
+--- a/drivers/char/random.c
++++ b/drivers/char/random.c
+@@ -1643,20 +1643,20 @@ EXPORT_SYMBOL(secure_dccp_sequence_number);
+  * value is not cryptographically secure but for several uses the cost of
+  * depleting entropy is too high
+  */
++DEFINE_PER_CPU(__u32 [4], get_random_int_hash);
+ unsigned int get_random_int(void)
+ {
+-	unsigned int val = 0;
++	struct keydata *keyptr;
++	__u32 *hash = get_cpu_var(get_random_int_hash);
++	int ret;
+ 
+-#ifdef CONFIG_X86_HAS_TSC
+-	rdtscl(val);
+-#endif
+-	/*
+-	 * Use IP's RNG. It suits our purpose perfectly: it re-keys itself
+-	 * every second, from the entropy pool (and thus creates a limited
+-	 * drain on it), and uses halfMD4Transform within the second. We
+-	 * also mix it with jiffies and the PID:
+-	 */
+-	return secure_ip_id(current->pid + jiffies + (int)val);
++	keyptr = get_keyptr();
++	hash[0] += current->pid + jiffies + get_cycles() + (int)(long)&ret;
++
++	ret = half_md4_transform(hash, keyptr->secret);
++	put_cpu_var(get_random_int_hash);
++
++	return ret;
+ }
+ 
+ /*
