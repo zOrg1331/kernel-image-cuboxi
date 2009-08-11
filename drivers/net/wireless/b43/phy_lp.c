@@ -59,9 +59,43 @@ static void b43_lpphy_op_free(struct b43_wldev *dev)
 	dev->phy.lp = NULL;
 }
 
+static void lpphy_adjust_gain_table(struct b43_wldev *dev)
+{
+	struct b43_phy_lp *lpphy = dev->phy.lp;
+	u32 freq = dev->wl->hw->conf.channel->center_freq;
+	u16 temp[3];
+	u16 isolation;
+
+	B43_WARN_ON(dev->phy.rev >= 2);
+
+	if (b43_current_band(dev->wl) == IEEE80211_BAND_2GHZ)
+		isolation = lpphy->tx_isolation_med_band;
+	else if (freq <= 5320)
+		isolation = lpphy->tx_isolation_low_band;
+	else if (freq <= 5700)
+		isolation = lpphy->tx_isolation_med_band;
+	else
+		isolation = lpphy->tx_isolation_hi_band;
+
+	temp[0] = ((isolation - 26) / 12) << 12;
+	temp[1] = temp[0] + 0x1000;
+	temp[2] = temp[0] + 0x2000;
+
+	b43_lptab_write_bulk(dev, B43_LPTAB16(12, 0), 3, temp);
+	b43_lptab_write_bulk(dev, B43_LPTAB16(13, 0), 3, temp);
+}
+
 static void lpphy_table_init(struct b43_wldev *dev)
 {
-	//TODO
+	if (dev->phy.rev < 2)
+		lpphy_rev0_1_table_init(dev);
+	else
+		lpphy_rev2plus_table_init(dev);
+
+	lpphy_init_tx_gain_table(dev);
+
+	if (dev->phy.rev < 2)
+		lpphy_adjust_gain_table(dev);
 }
 
 static void lpphy_baseband_rev0_1_init(struct b43_wldev *dev)
@@ -130,7 +164,7 @@ static void lpphy_baseband_rev0_1_init(struct b43_wldev *dev)
 		b43_phy_set(dev, B43_LPPHY_CRSGAIN_CTL, 0x0006);
 		b43_phy_write(dev, B43_LPPHY_GPIO_SELECT, 0x0005);
 		b43_phy_write(dev, B43_LPPHY_GPIO_OUTEN, 0xFFFF);
-		b43_hf_write(dev, b43_hf_read(dev) | 0x0800ULL << 32);
+		b43_hf_write(dev, b43_hf_read(dev) | B43_HF_PR45960W);
 	}
 	if (b43_current_band(dev->wl) == IEEE80211_BAND_2GHZ) {
 		b43_phy_set(dev, B43_LPPHY_LP_PHY_CTL, 0x8000);
@@ -333,12 +367,73 @@ static void lpphy_2062_init(struct b43_wldev *dev)
 /* Initialize the 2063 radio. */
 static void lpphy_2063_init(struct b43_wldev *dev)
 {
-	//TODO
+	b2063_upload_init_table(dev);
+	b43_radio_write(dev, B2063_LOGEN_SP5, 0);
+	b43_radio_set(dev, B2063_COMM8, 0x38);
+	b43_radio_write(dev, B2063_REG_SP1, 0x56);
+	b43_radio_mask(dev, B2063_RX_BB_CTL2, ~0x2);
+	b43_radio_write(dev, B2063_PA_SP7, 0);
+	b43_radio_write(dev, B2063_TX_RF_SP6, 0x20);
+	b43_radio_write(dev, B2063_TX_RF_SP9, 0x40);
+	b43_radio_write(dev, B2063_PA_SP3, 0xa0);
+	b43_radio_write(dev, B2063_PA_SP4, 0xa0);
+	b43_radio_write(dev, B2063_PA_SP2, 0x18);
 }
+
+struct lpphy_stx_table_entry {
+	u16 phy_offset;
+	u16 phy_shift;
+	u16 rf_addr;
+	u16 rf_shift;
+	u16 mask;
+};
+
+static const struct lpphy_stx_table_entry lpphy_stx_table[] = {
+	{ .phy_offset = 2, .phy_shift = 6, .rf_addr = 0x3d, .rf_shift = 3, .mask = 0x01, },
+	{ .phy_offset = 1, .phy_shift = 12, .rf_addr = 0x4c, .rf_shift = 1, .mask = 0x01, },
+	{ .phy_offset = 1, .phy_shift = 8, .rf_addr = 0x50, .rf_shift = 0, .mask = 0x7f, },
+	{ .phy_offset = 0, .phy_shift = 8, .rf_addr = 0x44, .rf_shift = 0, .mask = 0xff, },
+	{ .phy_offset = 1, .phy_shift = 0, .rf_addr = 0x4a, .rf_shift = 0, .mask = 0xff, },
+	{ .phy_offset = 0, .phy_shift = 4, .rf_addr = 0x4d, .rf_shift = 0, .mask = 0xff, },
+	{ .phy_offset = 1, .phy_shift = 4, .rf_addr = 0x4e, .rf_shift = 0, .mask = 0xff, },
+	{ .phy_offset = 0, .phy_shift = 12, .rf_addr = 0x4f, .rf_shift = 0, .mask = 0x0f, },
+	{ .phy_offset = 1, .phy_shift = 0, .rf_addr = 0x4f, .rf_shift = 4, .mask = 0x0f, },
+	{ .phy_offset = 3, .phy_shift = 0, .rf_addr = 0x49, .rf_shift = 0, .mask = 0x0f, },
+	{ .phy_offset = 4, .phy_shift = 3, .rf_addr = 0x46, .rf_shift = 4, .mask = 0x07, },
+	{ .phy_offset = 3, .phy_shift = 15, .rf_addr = 0x46, .rf_shift = 0, .mask = 0x01, },
+	{ .phy_offset = 4, .phy_shift = 0, .rf_addr = 0x46, .rf_shift = 1, .mask = 0x07, },
+	{ .phy_offset = 3, .phy_shift = 8, .rf_addr = 0x48, .rf_shift = 4, .mask = 0x07, },
+	{ .phy_offset = 3, .phy_shift = 11, .rf_addr = 0x48, .rf_shift = 0, .mask = 0x0f, },
+	{ .phy_offset = 3, .phy_shift = 4, .rf_addr = 0x49, .rf_shift = 4, .mask = 0x0f, },
+	{ .phy_offset = 2, .phy_shift = 15, .rf_addr = 0x45, .rf_shift = 0, .mask = 0x01, },
+	{ .phy_offset = 5, .phy_shift = 13, .rf_addr = 0x52, .rf_shift = 4, .mask = 0x07, },
+	{ .phy_offset = 6, .phy_shift = 0, .rf_addr = 0x52, .rf_shift = 7, .mask = 0x01, },
+	{ .phy_offset = 5, .phy_shift = 3, .rf_addr = 0x41, .rf_shift = 5, .mask = 0x07, },
+	{ .phy_offset = 5, .phy_shift = 6, .rf_addr = 0x41, .rf_shift = 0, .mask = 0x0f, },
+	{ .phy_offset = 5, .phy_shift = 10, .rf_addr = 0x42, .rf_shift = 5, .mask = 0x07, },
+	{ .phy_offset = 4, .phy_shift = 15, .rf_addr = 0x42, .rf_shift = 0, .mask = 0x01, },
+	{ .phy_offset = 5, .phy_shift = 0, .rf_addr = 0x42, .rf_shift = 1, .mask = 0x07, },
+	{ .phy_offset = 4, .phy_shift = 11, .rf_addr = 0x43, .rf_shift = 4, .mask = 0x0f, },
+	{ .phy_offset = 4, .phy_shift = 7, .rf_addr = 0x43, .rf_shift = 0, .mask = 0x0f, },
+	{ .phy_offset = 4, .phy_shift = 6, .rf_addr = 0x45, .rf_shift = 1, .mask = 0x01, },
+	{ .phy_offset = 2, .phy_shift = 7, .rf_addr = 0x40, .rf_shift = 4, .mask = 0x0f, },
+	{ .phy_offset = 2, .phy_shift = 11, .rf_addr = 0x40, .rf_shift = 0, .mask = 0x0f, },
+};
 
 static void lpphy_sync_stx(struct b43_wldev *dev)
 {
-	//TODO
+	const struct lpphy_stx_table_entry *e;
+	unsigned int i;
+	u16 tmp;
+
+	for (i = 0; i < ARRAY_SIZE(lpphy_stx_table); i++) {
+		e = &lpphy_stx_table[i];
+		tmp = b43_radio_read(dev, e->rf_addr);
+		tmp >>= e->rf_shift;
+		tmp <<= e->phy_shift;
+		b43_phy_maskset(dev, B43_PHY_OFDM(0xF2 + e->phy_offset),
+				e->mask << e->phy_shift, tmp);
+	}
 }
 
 static void lpphy_radio_init(struct b43_wldev *dev)
@@ -356,7 +451,9 @@ static void lpphy_radio_init(struct b43_wldev *dev)
 		lpphy_sync_stx(dev);
 		b43_phy_write(dev, B43_PHY_OFDM(0xF0), 0x5F80);
 		b43_phy_write(dev, B43_PHY_OFDM(0xF1), 0);
-		//TODO Do something on the backplane
+		if (dev->dev->bus->chip_id == 0x4325) {
+			// TODO SSB PMU recalibration
+		}
 	}
 }
 
@@ -538,7 +635,8 @@ static int b43_lpphy_op_init(struct b43_wldev *dev)
 	//TODO calibrate RC
 	//TODO set channel
 	lpphy_tx_pctl_init(dev);
-	//TODO full calib
+	lpphy_calibration(dev);
+	//TODO ACI init
 
 	return 0;
 }
@@ -615,7 +713,6 @@ static enum b43_txpwr_result b43_lpphy_op_recalc_txpower(struct b43_wldev *dev,
 	//TODO
 	return B43_TXPWR_RES_DONE;
 }
-
 
 const struct b43_phy_operations b43_phyops_lp = {
 	.allocate		= b43_lpphy_op_allocate,
