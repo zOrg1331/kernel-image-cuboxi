@@ -210,6 +210,7 @@ struct mlx4_eq_table {
 	dma_addr_t		icm_dma;
 	struct mlx4_icm_table	cmpt_table;
 	int			have_irq;
+	int			order;
 	u8			inta_pin;
 };
 
