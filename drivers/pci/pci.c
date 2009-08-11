@@ -846,6 +846,8 @@ pci_restore_state(struct pci_dev *dev)
 	int i;
 	u32 val;
 
+	if (!dev->state_saved)
+		return 0;
 	/* PCI Express register must be restored first */
 	pci_restore_pcie_state(dev);
 
@@ -2258,6 +2260,22 @@ int __pci_reset_function(struct pci_dev *dev)
 	return pci_dev_reset(dev, 0);
 }
 EXPORT_SYMBOL_GPL(__pci_reset_function);
+
+/**
+ * pci_probe_reset_function - check whether the device can be safely reset
+ * @dev: PCI device to reset
+ *
+ * Some devices allow an individual function to be reset without affecting
+ * other functions in the same device.  The PCI device must be responsive
+ * to PCI config space in order to use this function.
+ *
+ * Returns 0 if the device function can be reset or negative if the
+ * device doesn't support resetting a single function.
+ */
+int pci_probe_reset_function(struct pci_dev *dev)
+{
+	return pci_dev_reset(dev, 1);
+}
 
 /**
  * pci_reset_function - quiesce and reset a PCI device function
