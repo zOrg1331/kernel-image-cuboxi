@@ -185,6 +185,9 @@ bool ath9k_hw_init_rf(struct ath_hw *ah,
 #define AR_PHY_PLL_CTL_44_2133  0xeb
 #define AR_PHY_PLL_CTL_40_2133  0xea
 
+#define AR_PHY_SPECTRAL_SCAN		0x9912
+#define AR_PHY_SPECTRAL_SCAN_ENABLE	0x1
+
 #define AR_PHY_RX_DELAY           0x9914
 #define AR_PHY_SEARCH_START_DELAY 0x9918
 #define AR_PHY_RX_DELAY_DELAY     0x00003FFF
@@ -375,6 +378,7 @@ bool ath9k_hw_init_rf(struct ath_hw *ah,
 #define AR_PHY_CHAN_INFO_GAIN          0x9CFC
 
 #define AR_PHY_MODE         0xA200
+#define AR_PHY_MODE_ASYNCFIFO 0x80
 #define AR_PHY_MODE_AR2133  0x08
 #define AR_PHY_MODE_AR5111  0x00
 #define AR_PHY_MODE_AR5112  0x08
