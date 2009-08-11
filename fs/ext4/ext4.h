@@ -67,27 +67,29 @@ typedef unsigned int ext4_group_t;
 
 
 /* prefer goal again. length */
-#define EXT4_MB_HINT_MERGE		1
+#define EXT4_MB_HINT_MERGE		0x0001
 /* blocks already reserved */
-#define EXT4_MB_HINT_RESERVED		2
+#define EXT4_MB_HINT_RESERVED		0x0002
 /* metadata is being allocated */
-#define EXT4_MB_HINT_METADATA		4
+#define EXT4_MB_HINT_METADATA		0x0004
 /* first blocks in the file */
-#define EXT4_MB_HINT_FIRST		8
+#define EXT4_MB_HINT_FIRST		0x0008
 /* search for the best chunk */
-#define EXT4_MB_HINT_BEST		16
+#define EXT4_MB_HINT_BEST		0x0010
 /* data is being allocated */
-#define EXT4_MB_HINT_DATA		32
+#define EXT4_MB_HINT_DATA		0x0020
 /* don't preallocate (for tails) */
-#define EXT4_MB_HINT_NOPREALLOC		64
+#define EXT4_MB_HINT_NOPREALLOC		0x0040
 /* allocate for locality group */
-#define EXT4_MB_HINT_GROUP_ALLOC	128
+#define EXT4_MB_HINT_GROUP_ALLOC	0x0080
 /* allocate goal blocks or none */
-#define EXT4_MB_HINT_GOAL_ONLY		256
+#define EXT4_MB_HINT_GOAL_ONLY		0x0100
 /* goal is meaningful */
-#define EXT4_MB_HINT_TRY_GOAL		512
+#define EXT4_MB_HINT_TRY_GOAL		0x0200
 /* blocks already pre-reserved by delayed allocation */
-#define EXT4_MB_DELALLOC_RESERVED      1024
+#define EXT4_MB_DELALLOC_RESERVED	0x0400
+/* We are doing stream allocation */
+#define EXT4_MB_STREAM_ALLOC		0x0800
 
 
 struct ext4_allocation_request {
@@ -950,6 +952,7 @@ struct ext4_sb_info {
 	atomic_t s_mb_lost_chunks;
 	atomic_t s_mb_preallocated;
 	atomic_t s_mb_discarded;
+	atomic_t s_lock_busy;
 
 	/* locality groups */
 	struct ext4_locality_group *s_locality_groups;
@@ -1591,15 +1594,34 @@ struct ext4_group_info {
 #define EXT4_MB_GRP_NEED_INIT(grp)	\
 	(test_bit(EXT4_GROUP_INFO_NEED_INIT_BIT, &((grp)->bb_state)))
 
+#define EXT4_MAX_CONTENTION		8
+#define EXT4_CONTENTION_THRESHOLD	2
+
 static inline spinlock_t *ext4_group_lock_ptr(struct super_block *sb,
 					      ext4_group_t group)
 {
 	return bgl_lock_ptr(EXT4_SB(sb)->s_blockgroup_lock, group);
 }
 
+/*
+ * Returns true if the filesystem is busy enough that attempts to
+ * access the block group locks has run into contention.
+ */
+static inline int ext4_fs_is_busy(struct ext4_sb_info *sbi)
+{
+	return (atomic_read(&sbi->s_lock_busy) > EXT4_CONTENTION_THRESHOLD);
+}
+
 static inline void ext4_lock_group(struct super_block *sb, ext4_group_t group)
 {
-	spin_lock(ext4_group_lock_ptr(sb, group));
+	spinlock_t *lock = ext4_group_lock_ptr(sb, group);
+	if (spin_trylock(lock))
+		atomic_add_unless(&EXT4_SB(sb)->s_lock_busy, 1,
+				  EXT4_MAX_CONTENTION);
+	else {
+		atomic_add_unless(&EXT4_SB(sb)->s_lock_busy, -1, 0);
+		spin_lock(lock);
+	}
 }
 
 static inline void ext4_unlock_group(struct super_block *sb,
