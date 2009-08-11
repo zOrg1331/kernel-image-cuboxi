@@ -483,9 +483,6 @@ int platform_driver_register(struct platform_driver *drv)
 		drv->driver.remove = platform_drv_remove;
 	if (drv->shutdown)
 		drv->driver.shutdown = platform_drv_shutdown;
-	if (drv->suspend || drv->resume)
-		pr_warning("Platform driver '%s' needs updating - please use "
-			"dev_pm_ops\n", drv->driver.name);
 
 	return driver_register(&drv->driver);
 }
@@ -628,30 +625,6 @@ static int platform_legacy_suspend(struct device *dev, pm_message_t mesg)
 	return ret;
 }
 
-static int platform_legacy_suspend_late(struct device *dev, pm_message_t mesg)
-{
-	struct platform_driver *pdrv = to_platform_driver(dev->driver);
-	struct platform_device *pdev = to_platform_device(dev);
-	int ret = 0;
-
-	if (dev->driver && pdrv->suspend_late)
-		ret = pdrv->suspend_late(pdev, mesg);
-
-	return ret;
-}
-
-static int platform_legacy_resume_early(struct device *dev)
-{
-	struct platform_driver *pdrv = to_platform_driver(dev->driver);
-	struct platform_device *pdev = to_platform_device(dev);
-	int ret = 0;
-
-	if (dev->driver && pdrv->resume_early)
-		ret = pdrv->resume_early(pdev);
-
-	return ret;
-}
-
 static int platform_legacy_resume(struct device *dev)
 {
 	struct platform_driver *pdrv = to_platform_driver(dev->driver);
@@ -714,8 +687,6 @@ static int platform_pm_suspend_noirq(struct device *dev)
 	if (drv->pm) {
 		if (drv->pm->suspend_noirq)
 			ret = drv->pm->suspend_noirq(dev);
-	} else {
-		ret = platform_legacy_suspend_late(dev, PMSG_SUSPEND);
 	}
 
 	return ret;
@@ -750,8 +721,6 @@ static int platform_pm_resume_noirq(struct device *dev)
 	if (drv->pm) {
 		if (drv->pm->resume_noirq)
 			ret = drv->pm->resume_noirq(dev);
-	} else {
-		ret = platform_legacy_resume_early(dev);
 	}
 
 	return ret;
@@ -797,8 +766,6 @@ static int platform_pm_freeze_noirq(struct device *dev)
 	if (drv->pm) {
 		if (drv->pm->freeze_noirq)
 			ret = drv->pm->freeze_noirq(dev);
-	} else {
-		ret = platform_legacy_suspend_late(dev, PMSG_FREEZE);
 	}
 
 	return ret;
@@ -833,8 +800,6 @@ static int platform_pm_thaw_noirq(struct device *dev)
 	if (drv->pm) {
 		if (drv->pm->thaw_noirq)
 			ret = drv->pm->thaw_noirq(dev);
-	} else {
-		ret = platform_legacy_resume_early(dev);
 	}
 
 	return ret;
@@ -869,8 +834,6 @@ static int platform_pm_poweroff_noirq(struct device *dev)
 	if (drv->pm) {
 		if (drv->pm->poweroff_noirq)
 			ret = drv->pm->poweroff_noirq(dev);
-	} else {
-		ret = platform_legacy_suspend_late(dev, PMSG_HIBERNATE);
 	}
 
 	return ret;
@@ -905,8 +868,6 @@ static int platform_pm_restore_noirq(struct device *dev)
 	if (drv->pm) {
 		if (drv->pm->restore_noirq)
 			ret = drv->pm->restore_noirq(dev);
-	} else {
-		ret = platform_legacy_resume_early(dev);
 	}
 
 	return ret;
