@@ -955,6 +955,16 @@ static struct ctl_table kern_table[] = {
 		.child		= slow_work_sysctls,
 	},
 #endif
+#ifdef CONFIG_PROFILE_ALL_BRANCHES
+	{
+		.ctl_name       = CTL_UNNUMBERED,
+		.procname       = "branch_profiling_enabled",
+		.data           = &sysctl_branch_profiling_enabled,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = &proc_dointvec,
+	},
+#endif
 #ifdef CONFIG_PERF_COUNTERS
 	{
 		.ctl_name	= CTL_UNNUMBERED,
