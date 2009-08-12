@@ -367,7 +367,7 @@ static void bm_set_surplus(struct drbd_bitmap *b)
 	bm_unmap(p_addr);
 }
 
-static unsigned long __bm_count_bits(struct drbd_bitmap *b, const int swap_endian, const enum km_type km)
+static unsigned long __bm_count_bits(struct drbd_bitmap *b, const int swap_endian)
 {
 	unsigned long *p_addr, *bm, offset = 0;
 	unsigned long bits = 0;
@@ -375,7 +375,7 @@ static unsigned long __bm_count_bits(struct drbd_bitmap *b, const int swap_endia
 
 	while (offset < b->bm_words) {
 		i = do_now = min_t(size_t, b->bm_words-offset, LWPP);
-		p_addr = __bm_map_paddr(b, offset, km);
+		p_addr = __bm_map_paddr(b, offset, KM_USER0);
 		bm = p_addr + MLPP(offset);
 		while (i--) {
 #ifndef __LITTLE_ENDIAN
@@ -384,8 +384,9 @@ static unsigned long __bm_count_bits(struct drbd_bitmap *b, const int swap_endia
 #endif
 			bits += hweight_long(*bm++);
 		}
-		__bm_unmap(p_addr, km);
+		__bm_unmap(p_addr, KM_USER0);
 		offset += do_now;
+		cond_resched();
 	}
 
 	return bits;
@@ -393,12 +394,12 @@ static unsigned long __bm_count_bits(struct drbd_bitmap *b, const int swap_endia
 
 static unsigned long bm_count_bits(struct drbd_bitmap *b)
 {
-	return __bm_count_bits(b, 0, KM_IRQ1);
+	return __bm_count_bits(b, 0);
 }
 
 static unsigned long bm_count_bits_swap_endian(struct drbd_bitmap *b)
 {
-	return __bm_count_bits(b, 1, KM_USER0);
+	return __bm_count_bits(b, 1);
 }
 
 /* offset and len in long words.*/
@@ -539,12 +540,12 @@ int drbd_bm_resize(struct drbd_conf *mdev, sector_t capacity)
 	bm_unmap(p_addr);
 
 	(void)bm_clear_surplus(b);
-	if (!growing)
-		b->bm_set = bm_count_bits(b);
 
 	spin_unlock_irq(&b->bm_lock);
 	if (opages != npages)
 		bm_vk_free(opages, opages_vmalloced);
+	if (!growing)
+		b->bm_set = bm_count_bits(b);
 	dev_info(DEV, "resync bitmap: bits=%lu words=%lu\n", bits, words);
 
  out:
