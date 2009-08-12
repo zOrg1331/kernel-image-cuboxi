@@ -1649,6 +1649,8 @@ struct usb_device_id em28xx_id_table[] = {
 			.driver_info = EM2861_BOARD_PLEXTOR_PX_TV100U },
 	{ USB_DEVICE(0x04bb, 0x0515),
 			.driver_info = EM2820_BOARD_IODATA_GVMVP_SZ },
+	{ USB_DEVICE(0xeb1a, 0x50a6),
+			.driver_info = EM2860_BOARD_GADMEI_UTV330 },
 	{ },
 };
 MODULE_DEVICE_TABLE(usb, em28xx_id_table);
@@ -1661,7 +1663,7 @@ static struct em28xx_hash_table em28xx_eeprom_hash[] = {
 	{0x6ce05a8f, EM2820_BOARD_PROLINK_PLAYTV_USB2, TUNER_YMEC_TVF_5533MF},
 	{0x72cc5a8b, EM2820_BOARD_PROLINK_PLAYTV_BOX4_USB2, TUNER_YMEC_TVF_5533MF},
 	{0x966a0441, EM2880_BOARD_KWORLD_DVB_310U, TUNER_XC2028},
-	{0x9567eb1a, EM2880_BOARD_EMPIRE_DUAL_TV, TUNER_XC2028},
+	{0x166a0441, EM2880_BOARD_EMPIRE_DUAL_TV, TUNER_XC2028},
 	{0xcee44a99, EM2882_BOARD_EVGA_INDTUBE, TUNER_XC2028},
 	{0xb8846b20, EM2881_BOARD_PINNACLE_HYBRID_PRO, TUNER_XC2028},
 };
@@ -1838,6 +1840,60 @@ static int em28xx_hint_sensor(struct em28xx *dev)
  */
 void em28xx_pre_card_setup(struct em28xx *dev)
 {
+	int rc;
+
+	em28xx_set_model(dev);
+
+	em28xx_info("Identified as %s (card=%d)\n",
+		    dev->board.name, dev->model);
+
+	/* Set the default GPO/GPIO for legacy devices */
+	dev->reg_gpo_num = EM2880_R04_GPO;
+	dev->reg_gpio_num = EM28XX_R08_GPIO;
+
+	dev->wait_after_write = 5;
+
+	/* Based on the Chip ID, set the device configuration */
+	rc = em28xx_read_reg(dev, EM28XX_R0A_CHIPID);
+	if (rc > 0) {
+		dev->chip_id = rc;
+
+		switch (dev->chip_id) {
+		case CHIP_ID_EM2750:
+			em28xx_info("chip ID is em2750\n");
+			break;
+		case CHIP_ID_EM2820:
+			em28xx_info("chip ID is em2710 or em2820\n");
+			break;
+		case CHIP_ID_EM2840:
+			em28xx_info("chip ID is em2840\n");
+			break;
+		case CHIP_ID_EM2860:
+			em28xx_info("chip ID is em2860\n");
+			break;
+		case CHIP_ID_EM2870:
+			em28xx_info("chip ID is em2870\n");
+			dev->wait_after_write = 0;
+			break;
+		case CHIP_ID_EM2874:
+			em28xx_info("chip ID is em2874\n");
+			dev->reg_gpio_num = EM2874_R80_GPIO;
+			dev->wait_after_write = 0;
+			break;
+		case CHIP_ID_EM2883:
+			em28xx_info("chip ID is em2882/em2883\n");
+			dev->wait_after_write = 0;
+			break;
+		default:
+			em28xx_info("em28xx chip ID = %d\n", dev->chip_id);
+		}
+	}
+
+	/* Prepopulate cached GPO register content */
+	rc = em28xx_read_reg(dev, dev->reg_gpo_num);
+	if (rc >= 0)
+		dev->reg_gpo = rc;
+
 	/* Set the initial XCLK and I2C clock values based on the board
 	   definition */
 	em28xx_write_reg(dev, EM28XX_R0F_XCLK, dev->board.xclk & 0x7f);
@@ -2514,6 +2570,14 @@ static int em28xx_init_dev(struct em28xx **devhandle, struct usb_device *udev,
 	 */
 	dev->vinmode = 0x10;
 	dev->vinctl  = 0x11;
+
+	/*
+	 * If the device can be a webcam, seek for a sensor.
+	 * If sensor is not found, then it isn't a webcam.
+	 */
+	if (dev->board.is_webcam)
+		if (em28xx_hint_sensor(dev) < 0)
+			dev->board.is_webcam = 0;
 
 	/* Do board specific init and eeprom reading */
 	em28xx_card_setup(dev);
