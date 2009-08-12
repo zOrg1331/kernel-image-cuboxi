@@ -1693,9 +1693,6 @@ static int receive_Data(struct drbd_conf *mdev, struct p_header *h)
 		return FALSE;
 
 	if (!get_ldev(mdev)) {
-		/* data is submitted to disk at the end of this function.
-		 * corresponding put_ldev done either below (on error),
-		 * or in drbd_endio_write_sec. */
 		if (__ratelimit(&drbd_ratelimit_state))
 			dev_err(DEV, "Can not write mirrored data block "
 			    "to local disk.\n");
@@ -1708,6 +1705,11 @@ static int receive_Data(struct drbd_conf *mdev, struct p_header *h)
 		atomic_inc(&mdev->current_epoch->epoch_size);
 		return drbd_drain_block(mdev, data_size);
 	}
+
+	/* get_ldev(mdev) successful.
+	 * Corresponding put_ldev done either below (on various errors),
+	 * or in drbd_endio_write_sec, if we successfully submit the data at
+	 * the end of this function. */
 
 	sector = be64_to_cpu(p->sector);
 	e = read_in_block(mdev, p->block_id, sector, data_size);
