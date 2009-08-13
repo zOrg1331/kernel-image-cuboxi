@@ -17,6 +17,7 @@
 #include "util/string.h"
 #include "util/callchain.h"
 #include "util/strlist.h"
+#include "util/values.h"
 
 #include "perf.h"
 #include "util/header.h"
@@ -29,7 +30,6 @@
 #define SHOW_HV		4
 
 static char		const *input_name = "perf.data";
-static char		*vmlinux = NULL;
 
 static char		default_sort_order[] = "comm,dso,symbol";
 static char		*sort_order = default_sort_order;
@@ -45,13 +45,14 @@ static int		dump_trace = 0;
 #define dprintf(x...)	do { if (dump_trace) printf(x); } while (0)
 #define cdprintf(x...)	do { if (dump_trace) color_fprintf(stdout, color, x); } while (0)
 
-static int		verbose;
-#define eprintf(x...)	do { if (verbose) fprintf(stderr, x); } while (0)
-
-static int		modules;
-
 static int		full_paths;
 static int		show_nr_samples;
+
+static int		show_threads;
+static struct perf_read_values	show_threads_values;
+
+static char		default_pretty_printing_style[] = "normal";
+static char		*pretty_printing_style = default_pretty_printing_style;
 
 static unsigned long	page_size;
 static unsigned long	mmap_window = 32;
@@ -66,6 +67,10 @@ static char		callchain_default_opt[] = "fractal,0.5";
 
 static int		callchain;
 
+static char		__cwd[PATH_MAX];
+static char		*cwd = __cwd;
+static int		cwdlen;
+
 static
 struct callchain_param	callchain_param = {
 	.mode	= CHAIN_GRAPH_REL,
@@ -73,59 +78,6 @@ struct callchain_param	callchain_param = {
 };
 
 static u64		sample_type;
-
-struct ip_event {
-	struct perf_event_header header;
-	u64 ip;
-	u32 pid, tid;
-	unsigned char __more_data[];
-};
-
-struct mmap_event {
-	struct perf_event_header header;
-	u32 pid, tid;
-	u64 start;
-	u64 len;
-	u64 pgoff;
-	char filename[PATH_MAX];
-};
-
-struct comm_event {
-	struct perf_event_header header;
-	u32 pid, tid;
-	char comm[16];
-};
-
-struct fork_event {
-	struct perf_event_header header;
-	u32 pid, ppid;
-	u32 tid, ptid;
-};
-
-struct lost_event {
-	struct perf_event_header header;
-	u64 id;
-	u64 lost;
-};
-
-struct read_event {
-	struct perf_event_header header;
-	u32 pid,tid;
-	u64 value;
-	u64 time_enabled;
-	u64 time_running;
-	u64 id;
-};
-
-typedef union event_union {
-	struct perf_event_header	header;
-	struct ip_event			ip;
-	struct mmap_event		mmap;
-	struct comm_event		comm;
-	struct fork_event		fork;
-	struct lost_event		lost;
-	struct read_event		read;
-} event_t;
 
 static int repsep_fprintf(FILE *fp, const char *fmt, ...)
 {
@@ -153,215 +105,6 @@ static int repsep_fprintf(FILE *fp, const char *fmt, ...)
 	va_end(ap);
 	return n;
 }
-
-static LIST_HEAD(dsos);
-static struct dso *kernel_dso;
-static struct dso *vdso;
-static struct dso *hypervisor_dso;
-
-static void dsos__add(struct dso *dso)
-{
-	list_add_tail(&dso->node, &dsos);
-}
-
-static struct dso *dsos__find(const char *name)
-{
-	struct dso *pos;
-
-	list_for_each_entry(pos, &dsos, node)
-		if (strcmp(pos->name, name) == 0)
-			return pos;
-	return NULL;
-}
-
-static struct dso *dsos__findnew(const char *name)
-{
-	struct dso *dso = dsos__find(name);
-	int nr;
-
-	if (dso)
-		return dso;
-
-	dso = dso__new(name, 0);
-	if (!dso)
-		goto out_delete_dso;
-
-	nr = dso__load(dso, NULL, verbose);
-	if (nr < 0) {
-		eprintf("Failed to open: %s\n", name);
-		goto out_delete_dso;
-	}
-	if (!nr)
-		eprintf("No symbols found in: %s, maybe install a debug package?\n", name);
-
-	dsos__add(dso);
-
-	return dso;
-
-out_delete_dso:
-	dso__delete(dso);
-	return NULL;
-}
-
-static void dsos__fprintf(FILE *fp)
-{
-	struct dso *pos;
-
-	list_for_each_entry(pos, &dsos, node)
-		dso__fprintf(pos, fp);
-}
-
-static struct symbol *vdso__find_symbol(struct dso *dso, u64 ip)
-{
-	return dso__find_symbol(dso, ip);
-}
-
-static int load_kernel(void)
-{
-	int err;
-
-	kernel_dso = dso__new("[kernel]", 0);
-	if (!kernel_dso)
-		return -1;
-
-	err = dso__load_kernel(kernel_dso, vmlinux, NULL, verbose, modules);
-	if (err <= 0) {
-		dso__delete(kernel_dso);
-		kernel_dso = NULL;
-	} else
-		dsos__add(kernel_dso);
-
-	vdso = dso__new("[vdso]", 0);
-	if (!vdso)
-		return -1;
-
-	vdso->find_symbol = vdso__find_symbol;
-
-	dsos__add(vdso);
-
-	hypervisor_dso = dso__new("[hypervisor]", 0);
-	if (!hypervisor_dso)
-		return -1;
-	dsos__add(hypervisor_dso);
-
-	return err;
-}
-
-static char __cwd[PATH_MAX];
-static char *cwd = __cwd;
-static int cwdlen;
-
-static int strcommon(const char *pathname)
-{
-	int n = 0;
-
-	while (n < cwdlen && pathname[n] == cwd[n])
-		++n;
-
-	return n;
-}
-
-struct map {
-	struct list_head node;
-	u64	 start;
-	u64	 end;
-	u64	 pgoff;
-	u64	 (*map_ip)(struct map *, u64);
-	struct dso	 *dso;
-};
-
-static u64 map__map_ip(struct map *map, u64 ip)
-{
-	return ip - map->start + map->pgoff;
-}
-
-static u64 vdso__map_ip(struct map *map __used, u64 ip)
-{
-	return ip;
-}
-
-static inline int is_anon_memory(const char *filename)
-{
-	return strcmp(filename, "//anon") == 0;
-}
-
-static struct map *map__new(struct mmap_event *event)
-{
-	struct map *self = malloc(sizeof(*self));
-
-	if (self != NULL) {
-		const char *filename = event->filename;
-		char newfilename[PATH_MAX];
-		int anon;
-
-		if (cwd) {
-			int n = strcommon(filename);
-
-			if (n == cwdlen) {
-				snprintf(newfilename, sizeof(newfilename),
-					 ".%s", filename + n);
-				filename = newfilename;
-			}
-		}
-
-		anon = is_anon_memory(filename);
-
-		if (anon) {
-			snprintf(newfilename, sizeof(newfilename), "/tmp/perf-%d.map", event->pid);
-			filename = newfilename;
-		}
-
-		self->start = event->start;
-		self->end   = event->start + event->len;
-		self->pgoff = event->pgoff;
-
-		self->dso = dsos__findnew(filename);
-		if (self->dso == NULL)
-			goto out_delete;
-
-		if (self->dso == vdso || anon)
-			self->map_ip = vdso__map_ip;
-		else
-			self->map_ip = map__map_ip;
-	}
-	return self;
-out_delete:
-	free(self);
-	return NULL;
-}
-
-static struct map *map__clone(struct map *self)
-{
-	struct map *map = malloc(sizeof(*self));
-
-	if (!map)
-		return NULL;
-
-	memcpy(map, self, sizeof(*self));
-
-	return map;
-}
-
-static int map__overlap(struct map *l, struct map *r)
-{
-	if (l->start > r->start) {
-		struct map *t = l;
-		l = r;
-		r = t;
-	}
-
-	if (l->end > r->start)
-		return 1;
-
-	return 0;
-}
-
-static size_t map__fprintf(struct map *self, FILE *fp)
-{
-	return fprintf(fp, " %Lx-%Lx %Lx %s\n",
-		       self->start, self->end, self->pgoff, self->dso->name);
-}
-
 
 struct thread {
 	struct rb_node	 rb_node;
@@ -1397,6 +1140,9 @@ static size_t output__fprintf(FILE *fp, u64 total_samples)
 	size_t ret = 0;
 	unsigned int width;
 	char *col_width = col_width_list_str;
+	int raw_printing_style;
+
+	raw_printing_style = !strcmp(pretty_printing_style, "raw");
 
 	init_rem_hits();
 
@@ -1472,6 +1218,10 @@ print_entries:
 	fprintf(fp, "\n");
 
 	free(rem_sq_bracket);
+
+	if (show_threads)
+		perf_read_values_display(fp, &show_threads_values,
+					 raw_printing_style);
 
 	return ret;
 }
@@ -1611,7 +1361,7 @@ static int
 process_mmap_event(event_t *event, unsigned long offset, unsigned long head)
 {
 	struct thread *thread = threads__findnew(event->mmap.pid);
-	struct map *map = map__new(&event->mmap);
+	struct map *map = map__new(&event->mmap, cwd, cwdlen);
 
 	dprintf("%p [%p]: PERF_EVENT_MMAP %d/%d: [%p(%p) @ %p]: %s\n",
 		(void *)(offset + head),
@@ -1760,6 +1510,16 @@ process_read_event(event_t *event, unsigned long offset, unsigned long head)
 {
 	struct perf_counter_attr *attr = perf_header__find_attr(event->read.id);
 
+	if (show_threads) {
+		char *name = attr ? __event_name(attr->type, attr->config)
+				   : "unknown";
+		perf_read_values_add_value(&show_threads_values,
+					   event->read.pid, event->read.tid,
+					   event->read.id,
+					   name,
+					   event->read.value);
+	}
+
 	dprintf("%p [%p]: PERF_EVENT_READ: %d %d %s %Lu\n",
 			(void *)(offset + head),
 			(void *)(long)(event->header.size),
@@ -1840,6 +1600,9 @@ static int __cmd_report(void)
 	char *buf;
 
 	register_idle_thread();
+
+	if (show_threads)
+		perf_read_values_init(&show_threads_values);
 
 	input = open(input_name, O_RDONLY);
 	if (input < 0) {
@@ -1995,6 +1758,9 @@ done:
 	output__resort(total);
 	output__fprintf(stdout, total);
 
+	if (show_threads)
+		perf_read_values_destroy(&show_threads_values);
+
 	return rc;
 }
 
@@ -2068,6 +1834,10 @@ static const struct option options[] = {
 		    "load module symbols - WARNING: use only with -k and LIVE kernel"),
 	OPT_BOOLEAN('n', "show-nr-samples", &show_nr_samples,
 		    "Show a column with the number of samples"),
+	OPT_BOOLEAN('T', "threads", &show_threads,
+		    "Show per-thread event counters"),
+	OPT_STRING(0, "pretty", &pretty_printing_style, "key",
+		   "pretty printing style key: normal raw"),
 	OPT_STRING('s', "sort", &sort_order, "key[,key2...]",
 		   "sort by key(s): pid, comm, dso, symbol, parent"),
 	OPT_BOOLEAN('P', "full-paths", &full_paths,
