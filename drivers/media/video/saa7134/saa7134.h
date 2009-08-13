@@ -278,8 +278,8 @@ struct saa7134_format {
 #define SAA7134_BOARD_ASUSTeK_TIGER         152
 #define SAA7134_BOARD_KWORLD_PLUS_TV_ANALOG 153
 #define SAA7134_BOARD_AVERMEDIA_GO_007_FM_PLUS 154
-#define SAA7134_BOARD_HAUPPAUGE_HVR1120     155
-#define SAA7134_BOARD_HAUPPAUGE_HVR1110R3   156
+#define SAA7134_BOARD_HAUPPAUGE_HVR1150     155
+#define SAA7134_BOARD_HAUPPAUGE_HVR1120   156
 #define SAA7134_BOARD_AVERMEDIA_STUDIO_507UA 157
 #define SAA7134_BOARD_AVERMEDIA_CARDBUS_501 158
 #define SAA7134_BOARD_BEHOLD_505RDS         159
@@ -539,6 +539,7 @@ struct saa7134_dev {
 	struct i2c_adapter         i2c_adap;
 	struct i2c_client          i2c_client;
 	unsigned char              eedata[256];
+	int 			   has_rds;
 
 	/* video overlay */
 	struct v4l2_framebuffer    ovbuf;
