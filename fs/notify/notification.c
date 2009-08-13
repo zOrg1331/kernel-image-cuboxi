@@ -173,7 +173,8 @@ int fsnotify_add_notify_event(struct fsnotify_group *group, struct fsnotify_even
 	struct fsnotify_event *last_event;
 
 	/* easy to tell if priv was attached to the event */
-	INIT_LIST_HEAD(&priv->event_list);
+	if (priv)
+		INIT_LIST_HEAD(&priv->event_list);
 
 	/*
 	 * There is one fsnotify_event_holder embedded inside each fsnotify_event.
