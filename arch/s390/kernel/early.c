@@ -35,8 +35,6 @@
 
 char kernel_nss_name[NSS_NAME_SIZE + 1];
 
-static unsigned long machine_flags;
-
 static void __init setup_boot_command_line(void);
 
 /*
@@ -52,7 +50,7 @@ static void __init reset_tod_clock(void)
 	if (set_clock(TOD_UNIX_EPOCH) != 0 || store_clock(&time) != 0)
 		disabled_wait(0);
 
-	sched_clock_base_cc = TOD_UNIX_EPOCH;
+	sched_clock_base = TOD_UNIX_EPOCH;
 }
 
 #ifdef CONFIG_SHARED_KERNEL
@@ -81,6 +79,8 @@ asm(
 	"	br	14\n"
 	"	.size	savesys_ipl_nss, .-savesys_ipl_nss\n");
 
+static __initdata char upper_command_line[COMMAND_LINE_SIZE];
+
 static noinline __init void create_kernel_nss(void)
 {
 	unsigned int i, stext_pfn, eshared_pfn, end_pfn, min_size;
@@ -90,7 +90,6 @@ static noinline __init void create_kernel_nss(void)
 	int response;
 	size_t len;
 	char *savesys_ptr;
-	char upper_command_line[COMMAND_LINE_SIZE];
 	char defsys_cmd[DEFSYS_CMD_SIZE];
 	char savesys_cmd[SAVESYS_CMD_SIZE];
 
@@ -205,12 +204,9 @@ static noinline __init void detect_machine_type(void)
 
 	/* Running under KVM? If not we assume z/VM */
 	if (!memcmp(vmms.vm[0].cpi, "\xd2\xe5\xd4", 3))
-		machine_flags |= MACHINE_FLAG_KVM;
+		S390_lowcore.machine_flags |= MACHINE_FLAG_KVM;
 	else
-		machine_flags |= MACHINE_FLAG_VM;
-
-	/* Store machine flags for setting up lowcore early */
-	S390_lowcore.machine_flags = machine_flags;
+		S390_lowcore.machine_flags |= MACHINE_FLAG_VM;
 }
 
 static __init void early_pgm_check_handler(void)
@@ -245,7 +241,7 @@ static noinline __init void setup_hpage(void)
 	facilities = stfl();
 	if (!(facilities & (1UL << 23)) || !(facilities & (1UL << 29)))
 		return;
-	machine_flags |= MACHINE_FLAG_HPAGE;
+	S390_lowcore.machine_flags |= MACHINE_FLAG_HPAGE;
 	__ctl_set_bit(0, 23);
 #endif
 }
@@ -263,7 +259,7 @@ static __init void detect_mvpg(void)
 		EX_TABLE(0b,1b)
 		: "=d" (rc) : "0" (-EOPNOTSUPP), "a" (0) : "memory", "cc", "0");
 	if (!rc)
-		machine_flags |= MACHINE_FLAG_MVPG;
+		S390_lowcore.machine_flags |= MACHINE_FLAG_MVPG;
 #endif
 }
 
@@ -279,7 +275,7 @@ static __init void detect_ieee(void)
 		EX_TABLE(0b,1b)
 		: "=d" (rc), "=d" (tmp): "0" (-EOPNOTSUPP) : "cc");
 	if (!rc)
-		machine_flags |= MACHINE_FLAG_IEEE;
+		S390_lowcore.machine_flags |= MACHINE_FLAG_IEEE;
 #endif
 }
 
@@ -298,7 +294,7 @@ static __init void detect_csp(void)
 		EX_TABLE(0b,1b)
 		: "=d" (rc) : "0" (-EOPNOTSUPP) : "cc", "0", "1", "2");
 	if (!rc)
-		machine_flags |= MACHINE_FLAG_CSP;
+		S390_lowcore.machine_flags |= MACHINE_FLAG_CSP;
 #endif
 }
 
@@ -315,7 +311,7 @@ static __init void detect_diag9c(void)
 		EX_TABLE(0b,1b)
 		: "=d" (rc) : "0" (-EOPNOTSUPP), "d" (cpu_address) : "cc");
 	if (!rc)
-		machine_flags |= MACHINE_FLAG_DIAG9C;
+		S390_lowcore.machine_flags |= MACHINE_FLAG_DIAG9C;
 }
 
 static __init void detect_diag44(void)
@@ -330,7 +326,7 @@ static __init void detect_diag44(void)
 		EX_TABLE(0b,1b)
 		: "=d" (rc) : "0" (-EOPNOTSUPP) : "cc");
 	if (!rc)
-		machine_flags |= MACHINE_FLAG_DIAG44;
+		S390_lowcore.machine_flags |= MACHINE_FLAG_DIAG44;
 #endif
 }
 
@@ -341,11 +337,11 @@ static __init void detect_machine_facilities(void)
 
 	facilities = stfl();
 	if (facilities & (1 << 28))
-		machine_flags |= MACHINE_FLAG_IDTE;
+		S390_lowcore.machine_flags |= MACHINE_FLAG_IDTE;
 	if (facilities & (1 << 23))
-		machine_flags |= MACHINE_FLAG_PFMF;
+		S390_lowcore.machine_flags |= MACHINE_FLAG_PFMF;
 	if (facilities & (1 << 4))
-		machine_flags |= MACHINE_FLAG_MVCOS;
+		S390_lowcore.machine_flags |= MACHINE_FLAG_MVCOS;
 #endif
 }
 
@@ -367,21 +363,35 @@ static __init void rescue_initrd(void)
 }
 
 /* Set up boot command line */
+static void __init append_to_cmdline(size_t (*ipl_data)(char *, size_t))
+{
+	char *parm, *delim;
+	size_t rc, len;
+
+	len = strlen(boot_command_line);
+
+	delim = boot_command_line + len;	/* '\0' character position */
+	parm  = boot_command_line + len + 1;	/* append right after '\0' */
+
+	rc = ipl_data(parm, COMMAND_LINE_SIZE - len - 1);
+	if (rc) {
+		if (*parm == '=')
+			memmove(boot_command_line, parm + 1, rc);
+		else
+			*delim = ' ';		/* replace '\0' with space */
+	}
+}
+
 static void __init setup_boot_command_line(void)
 {
-	char *parm = NULL;
-
 	/* copy arch command line */
 	strlcpy(boot_command_line, COMMAND_LINE, ARCH_COMMAND_LINE_SIZE);
 
 	/* append IPL PARM data to the boot command line */
-	if (MACHINE_IS_VM) {
-		parm = boot_command_line + strlen(boot_command_line);
-		*parm++ = ' ';
-		get_ipl_vmparm(parm);
-		if (parm[0] == '=')
-			memmove(boot_command_line, parm + 1, strlen(parm));
-	}
+	if (MACHINE_IS_VM)
+		append_to_cmdline(append_ipl_vmparm);
+
+	append_to_cmdline(append_ipl_scpdata);
 }
 
 
@@ -413,7 +423,6 @@ void __init startup_init(void)
 	setup_hpage();
 	sclp_facilities_detect();
 	detect_memory_layout(memory_chunk);
-	S390_lowcore.machine_flags = machine_flags;
 #ifdef CONFIG_DYNAMIC_FTRACE
 	S390_lowcore.ftrace_func = (unsigned long)ftrace_caller;
 #endif
