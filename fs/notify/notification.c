@@ -104,7 +104,8 @@ struct fsnotify_event_holder *fsnotify_alloc_event_holder(void)
 
 void fsnotify_destroy_event_holder(struct fsnotify_event_holder *holder)
 {
-	kmem_cache_free(fsnotify_event_holder_cachep, holder);
+	if (holder)
+		kmem_cache_free(fsnotify_event_holder_cachep, holder);
 }
 
 /*
@@ -129,48 +130,16 @@ struct fsnotify_event_private_data *fsnotify_remove_priv_from_event(struct fsnot
 }
 
 /*
- * Check if 2 events contain the same information.  We do not compare private data
- * but at this moment that isn't a problem for any know fsnotify listeners.
- */
-static bool event_compare(struct fsnotify_event *old, struct fsnotify_event *new)
-{
-	if ((old->mask == new->mask) &&
-	    (old->to_tell == new->to_tell) &&
-	    (old->data_type == new->data_type) &&
-	    (old->name_len == new->name_len)) {
-		switch (old->data_type) {
-		case (FSNOTIFY_EVENT_INODE):
-			/* remember, after old was put on the wait_q we aren't
-			 * allowed to look at the inode any more, only thing
-			 * left to check was if the file_name is the same */
-			if (old->name_len &&
-			    !strcmp(old->file_name, new->file_name))
-				return true;
-			break;
-		case (FSNOTIFY_EVENT_PATH):
-			if ((old->path.mnt == new->path.mnt) &&
-			    (old->path.dentry == new->path.dentry))
-				return true;
-			break;
-		case (FSNOTIFY_EVENT_NONE):
-			return false;
-		};
-	}
-	return false;
-}
-
-/*
  * Add an event to the group notification queue.  The group can later pull this
  * event off the queue to deal with.  If the event is successfully added to the
  * group's notification queue, a reference is taken on event.
  */
 int fsnotify_add_notify_event(struct fsnotify_group *group, struct fsnotify_event *event,
-			      struct fsnotify_event_private_data *priv)
+			      struct fsnotify_event_private_data *priv,
+			      int (*merge)(struct list_head *, struct fsnotify_event *))
 {
 	struct fsnotify_event_holder *holder = NULL;
 	struct list_head *list = &group->notification_list;
-	struct fsnotify_event_holder *last_holder;
-	struct fsnotify_event *last_event;
 
 	/* easy to tell if priv was attached to the event */
 	if (priv)
@@ -199,6 +168,18 @@ alloc_holder:
 		priv = NULL;
 	}
 
+	if (!list_empty(list) && merge) {
+		int ret;
+
+		ret = merge(list, event);
+		if (ret) {
+			mutex_unlock(&group->notification_mutex);
+			if (holder != &event->holder)
+				fsnotify_destroy_event_holder(holder);
+			return ret;
+		}
+	}
+
 	spin_lock(&event->lock);
 
 	if (list_empty(&event->holder.event_list)) {
@@ -211,18 +192,6 @@ alloc_holder:
 		spin_unlock(&event->lock);
 		mutex_unlock(&group->notification_mutex);
 		goto alloc_holder;
-	}
-
-	if (!list_empty(list)) {
-		last_holder = list_entry(list->prev, struct fsnotify_event_holder, event_list);
-		last_event = last_holder->event;
-		if (event_compare(last_event, event)) {
-			spin_unlock(&event->lock);
-			mutex_unlock(&group->notification_mutex);
-			if (holder != &event->holder)
-				fsnotify_destroy_event_holder(holder);
-			return -EEXIST;
-		}
 	}
 
 	group->q_len++;
