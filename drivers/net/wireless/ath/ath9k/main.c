@@ -17,8 +17,6 @@
 #include <linux/nl80211.h>
 #include "ath9k.h"
 
-#define ATH_PCI_VERSION "0.1"
-
 static char *dev_info = "ath9k";
 
 MODULE_AUTHOR("Atheros Communications");
@@ -342,6 +340,7 @@ static void ath_ani_calibrate(unsigned long data)
 	* don't calibrate when we're scanning.
 	* we are most likely not on our home channel.
 	*/
+	spin_lock(&sc->ani_lock);
 	if (sc->sc_flags & SC_OP_SCANNING)
 		goto set_timer;
 
@@ -405,6 +404,7 @@ static void ath_ani_calibrate(unsigned long data)
 	ath9k_ps_restore(sc);
 
 set_timer:
+	spin_unlock(&sc->ani_lock);
 	/*
 	* Set timer interval based on previous results.
 	* The interval must be the shortest necessary to satisfy ANI,
@@ -460,9 +460,10 @@ static void ath_node_attach(struct ath_softc *sc, struct ieee80211_sta *sta)
 
 	if (sc->sc_flags & SC_OP_TXAGGR) {
 		ath_tx_node_init(sc, an);
-		an->maxampdu = 1 << (IEEE80211_HTCAP_MAXRXAMPDU_FACTOR +
+		an->maxampdu = 1 << (IEEE80211_HT_MAX_AMPDU_FACTOR +
 				     sta->ht_cap.ampdu_factor);
 		an->mpdudensity = parse_mpdudensity(sta->ht_cap.ampdu_density);
+		an->last_rssi = ATH_RSSI_DUMMY_MARKER;
 	}
 }
 
@@ -496,8 +497,7 @@ static void ath9k_tasklet(unsigned long data)
 	if (status & ATH9K_INT_TX)
 		ath_tx_tasklet(sc);
 
-	if ((status & ATH9K_INT_TSFOOR) &&
-	    (sc->hw->conf.flags & IEEE80211_CONF_PS)) {
+	if ((status & ATH9K_INT_TSFOOR) && sc->ps_enabled) {
 		/*
 		 * TSF sync does not look correct; remain awake to sync with
 		 * the next Beacon.
@@ -885,8 +885,7 @@ static void ath_key_delete(struct ath_softc *sc, struct ieee80211_key_conf *key)
 static void setup_ht_cap(struct ath_softc *sc,
 			 struct ieee80211_sta_ht_cap *ht_info)
 {
-#define	ATH9K_HT_CAP_MAXRXAMPDU_65536 0x3	/* 2 ^ 16 */
-#define	ATH9K_HT_CAP_MPDUDENSITY_8 0x6		/* 8 usec */
+	u8 tx_streams, rx_streams;
 
 	ht_info->ht_supported = true;
 	ht_info->cap = IEEE80211_HT_CAP_SUP_WIDTH_20_40 |
@@ -894,50 +893,48 @@ static void setup_ht_cap(struct ath_softc *sc,
 		       IEEE80211_HT_CAP_SGI_40 |
 		       IEEE80211_HT_CAP_DSSSCCK40;
 
-	ht_info->ampdu_factor = ATH9K_HT_CAP_MAXRXAMPDU_65536;
-	ht_info->ampdu_density = ATH9K_HT_CAP_MPDUDENSITY_8;
+	ht_info->ampdu_factor = IEEE80211_HT_MAX_AMPDU_64K;
+	ht_info->ampdu_density = IEEE80211_HT_MPDU_DENSITY_8;
 
 	/* set up supported mcs set */
 	memset(&ht_info->mcs, 0, sizeof(ht_info->mcs));
+	tx_streams = !(sc->tx_chainmask & (sc->tx_chainmask - 1)) ? 1 : 2;
+	rx_streams = !(sc->rx_chainmask & (sc->rx_chainmask - 1)) ? 1 : 2;
 
-	switch(sc->rx_chainmask) {
-	case 1:
-		ht_info->mcs.rx_mask[0] = 0xff;
-		break;
-	case 3:
-	case 5:
-	case 7:
-	default:
-		ht_info->mcs.rx_mask[0] = 0xff;
-		ht_info->mcs.rx_mask[1] = 0xff;
-		break;
+	if (tx_streams != rx_streams) {
+		DPRINTF(sc, ATH_DBG_CONFIG, "TX streams %d, RX streams: %d\n",
+			tx_streams, rx_streams);
+		ht_info->mcs.tx_params |= IEEE80211_HT_MCS_TX_RX_DIFF;
+		ht_info->mcs.tx_params |= ((tx_streams - 1) <<
+				IEEE80211_HT_MCS_TX_MAX_STREAMS_SHIFT);
 	}
 
-	ht_info->mcs.tx_params = IEEE80211_HT_MCS_TX_DEFINED;
+	ht_info->mcs.rx_mask[0] = 0xff;
+	if (rx_streams >= 2)
+		ht_info->mcs.rx_mask[1] = 0xff;
+
+	ht_info->mcs.tx_params |= IEEE80211_HT_MCS_TX_DEFINED;
 }
 
 static void ath9k_bss_assoc_info(struct ath_softc *sc,
 				 struct ieee80211_vif *vif,
 				 struct ieee80211_bss_conf *bss_conf)
 {
-	struct ath_vif *avp = (void *)vif->drv_priv;
 
 	if (bss_conf->assoc) {
 		DPRINTF(sc, ATH_DBG_CONFIG, "Bss Info ASSOC %d, bssid: %pM\n",
 			bss_conf->aid, sc->curbssid);
 
 		/* New association, store aid */
-		if (avp->av_opmode == NL80211_IFTYPE_STATION) {
-			sc->curaid = bss_conf->aid;
-			ath9k_hw_write_associd(sc);
+		sc->curaid = bss_conf->aid;
+		ath9k_hw_write_associd(sc);
 
-			/*
-			 * Request a re-configuration of Beacon related timers
-			 * on the receipt of the first Beacon frame (i.e.,
-			 * after time sync with the AP).
-			 */
-			sc->sc_flags |= SC_OP_BEACON_SYNC;
-		}
+		/*
+		 * Request a re-configuration of Beacon related timers
+		 * on the receipt of the first Beacon frame (i.e.,
+		 * after time sync with the AP).
+		 */
+		sc->sc_flags |= SC_OP_BEACON_SYNC;
 
 		/* Configure the beacon */
 		ath_beacon_config(sc, vif);
@@ -952,6 +949,8 @@ static void ath9k_bss_assoc_info(struct ath_softc *sc,
 	} else {
 		DPRINTF(sc, ATH_DBG_CONFIG, "Bss Info DISASSOC\n");
 		sc->curaid = 0;
+		/* Stop ANI */
+		del_timer_sync(&sc->ani.timer);
 	}
 }
 
@@ -974,10 +973,11 @@ static void ath_led_blink_work(struct work_struct *work)
 		ath9k_hw_set_gpio(sc->sc_ah, ATH_LED_PIN,
 				  (sc->sc_flags & SC_OP_LED_ON) ? 1 : 0);
 
-	queue_delayed_work(sc->hw->workqueue, &sc->ath_led_blink_work,
-			   (sc->sc_flags & SC_OP_LED_ON) ?
-			   msecs_to_jiffies(sc->led_off_duration) :
-			   msecs_to_jiffies(sc->led_on_duration));
+	ieee80211_queue_delayed_work(sc->hw,
+				     &sc->ath_led_blink_work,
+				     (sc->sc_flags & SC_OP_LED_ON) ?
+					msecs_to_jiffies(sc->led_off_duration) :
+					msecs_to_jiffies(sc->led_on_duration));
 
 	sc->led_on_duration = sc->led_on_cnt ?
 			max((ATH_LED_ON_DURATION_IDLE - sc->led_on_cnt), 25) :
@@ -1014,8 +1014,8 @@ static void ath_led_brightness(struct led_classdev *led_cdev,
 	case LED_FULL:
 		if (led->led_type == ATH_LED_ASSOC) {
 			sc->sc_flags |= SC_OP_LED_ASSOCIATED;
-			queue_delayed_work(sc->hw->workqueue,
-					   &sc->ath_led_blink_work, 0);
+			ieee80211_queue_delayed_work(sc->hw,
+						     &sc->ath_led_blink_work, 0);
 		} else if (led->led_type == ATH_LED_RADIO) {
 			ath9k_hw_set_gpio(sc->sc_ah, ATH_LED_PIN, 0);
 			sc->sc_flags |= SC_OP_LED_ON;
@@ -1057,7 +1057,6 @@ static void ath_unregister_led(struct ath_led *led)
 
 static void ath_deinit_leds(struct ath_softc *sc)
 {
-	cancel_delayed_work_sync(&sc->ath_led_blink_work);
 	ath_unregister_led(&sc->assoc_led);
 	sc->sc_flags &= ~SC_OP_LED_ASSOCIATED;
 	ath_unregister_led(&sc->tx_led);
@@ -1114,6 +1113,7 @@ static void ath_init_leds(struct ath_softc *sc)
 	return;
 
 fail:
+	cancel_delayed_work_sync(&sc->ath_led_blink_work);
 	ath_deinit_leds(sc);
 }
 
@@ -1253,8 +1253,6 @@ void ath_detach(struct ath_softc *sc)
 	DPRINTF(sc, ATH_DBG_CONFIG, "Detach ATH hw\n");
 
 	ath_deinit_leds(sc);
-	cancel_work_sync(&sc->chan_work);
-	cancel_delayed_work_sync(&sc->wiphy_work);
 
 	for (i = 0; i < sc->num_sec_wiphy; i++) {
 		struct ath_wiphy *aphy = sc->sec_wiphy[i];
@@ -1280,8 +1278,8 @@ void ath_detach(struct ath_softc *sc)
 			ath_tx_cleanupq(sc, &sc->tx.txq[i]);
 
 	ath9k_hw_detach(sc->sc_ah);
+	sc->sc_ah = NULL;
 	ath9k_exit_debug(sc);
-	ath9k_ps_restore(sc);
 }
 
 static int ath9k_reg_notifier(struct wiphy *wiphy,
@@ -1295,11 +1293,16 @@ static int ath9k_reg_notifier(struct wiphy *wiphy,
 	return ath_reg_notifier_apply(wiphy, request, reg);
 }
 
-static int ath_init(u16 devid, struct ath_softc *sc)
+/*
+ * Initialize and fill ath_softc, ath_sofct is the
+ * "Software Carrier" struct. Historically it has existed
+ * to allow the separation between hardware specific
+ * variables (now in ath_hw) and driver specific variables.
+ */
+static int ath_init_softc(u16 devid, struct ath_softc *sc)
 {
 	struct ath_hw *ah = NULL;
-	int status;
-	int error = 0, i;
+	int r = 0, i;
 	int csz = 0;
 
 	/* XXX: hardware will not be ready until ath_open() being called */
@@ -1311,6 +1314,8 @@ static int ath_init(u16 devid, struct ath_softc *sc)
 	spin_lock_init(&sc->wiphy_lock);
 	spin_lock_init(&sc->sc_resetlock);
 	spin_lock_init(&sc->sc_serial_rw);
+	spin_lock_init(&sc->ani_lock);
+	spin_lock_init(&sc->sc_pm_lock);
 	mutex_init(&sc->mutex);
 	tasklet_init(&sc->intr_tq, ath9k_tasklet, (unsigned long)sc);
 	tasklet_init(&sc->bcon_tasklet, ath_beacon_tasklet,
@@ -1324,14 +1329,23 @@ static int ath_init(u16 devid, struct ath_softc *sc)
 	/* XXX assert csz is non-zero */
 	sc->cachelsz = csz << 2;	/* convert to bytes */
 
-	ah = ath9k_hw_attach(devid, sc, &status);
-	if (ah == NULL) {
+	ah = kzalloc(sizeof(struct ath_hw), GFP_KERNEL);
+	if (!ah) {
+		r = -ENOMEM;
+		goto bad_no_ah;
+	}
+
+	ah->ah_sc = sc;
+	ah->hw_version.devid = devid;
+	sc->sc_ah = ah;
+
+	r = ath9k_hw_init(ah);
+	if (r) {
 		DPRINTF(sc, ATH_DBG_FATAL,
-			"Unable to attach hardware; HAL status %d\n", status);
-		error = -ENXIO;
+			"Unable to initialize hardware; "
+			"initialization status: %d\n", r);
 		goto bad;
 	}
-	sc->sc_ah = ah;
 
 	/* Get the hardware key cache size. */
 	sc->keymax = ah->caps.keycache_size;
@@ -1348,9 +1362,6 @@ static int ath_init(u16 devid, struct ath_softc *sc)
 	 */
 	for (i = 0; i < sc->keymax; i++)
 		ath9k_hw_keyreset(ah, (u16) i);
-
-	if (error)
-		goto bad;
 
 	/* default to MONITOR mode */
 	sc->sc_ah->opmode = NL80211_IFTYPE_MONITOR;
@@ -1371,14 +1382,14 @@ static int ath_init(u16 devid, struct ath_softc *sc)
 	if (sc->beacon.beaconq == -1) {
 		DPRINTF(sc, ATH_DBG_FATAL,
 			"Unable to setup a beacon xmit queue\n");
-		error = -EIO;
+		r = -EIO;
 		goto bad2;
 	}
 	sc->beacon.cabq = ath_txq_setup(sc, ATH9K_TX_QUEUE_CAB, 0);
 	if (sc->beacon.cabq == NULL) {
 		DPRINTF(sc, ATH_DBG_FATAL,
 			"Unable to setup CAB xmit queue\n");
-		error = -EIO;
+		r = -EIO;
 		goto bad2;
 	}
 
@@ -1393,26 +1404,26 @@ static int ath_init(u16 devid, struct ath_softc *sc)
 	if (!ath_tx_setup(sc, ATH9K_WME_AC_BK)) {
 		DPRINTF(sc, ATH_DBG_FATAL,
 			"Unable to setup xmit queue for BK traffic\n");
-		error = -EIO;
+		r = -EIO;
 		goto bad2;
 	}
 
 	if (!ath_tx_setup(sc, ATH9K_WME_AC_BE)) {
 		DPRINTF(sc, ATH_DBG_FATAL,
 			"Unable to setup xmit queue for BE traffic\n");
-		error = -EIO;
+		r = -EIO;
 		goto bad2;
 	}
 	if (!ath_tx_setup(sc, ATH9K_WME_AC_VI)) {
 		DPRINTF(sc, ATH_DBG_FATAL,
 			"Unable to setup xmit queue for VI traffic\n");
-		error = -EIO;
+		r = -EIO;
 		goto bad2;
 	}
 	if (!ath_tx_setup(sc, ATH9K_WME_AC_VO)) {
 		DPRINTF(sc, ATH_DBG_FATAL,
 			"Unable to setup xmit queue for VO traffic\n");
-		error = -EIO;
+		r = -EIO;
 		goto bad2;
 	}
 
@@ -1506,11 +1517,12 @@ bad2:
 		if (ATH_TXQ_SETUP(sc, i))
 			ath_tx_cleanupq(sc, &sc->tx.txq[i]);
 bad:
-	if (ah)
-		ath9k_hw_detach(ah);
+	ath9k_hw_detach(ah);
+	sc->sc_ah = NULL;
+bad_no_ah:
 	ath9k_exit_debug(sc);
 
-	return error;
+	return r;
 }
 
 void ath_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
@@ -1536,7 +1548,8 @@ void ath_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
 	hw->max_rates = 4;
 	hw->channel_change_time = 5000;
 	hw->max_listen_interval = 10;
-	hw->max_rate_tries = ATH_11N_TXMAXTRY;
+	/* Hardware supports 10 but we use 4 */
+	hw->max_rate_tries = 4;
 	hw->sta_data_size = sizeof(struct ath_node);
 	hw->vif_data_size = sizeof(struct ath_vif);
 
@@ -1549,7 +1562,8 @@ void ath_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
 			&sc->sbands[IEEE80211_BAND_5GHZ];
 }
 
-int ath_attach(u16 devid, struct ath_softc *sc)
+/* Device driver core initialization */
+int ath_init_device(u16 devid, struct ath_softc *sc)
 {
 	struct ieee80211_hw *hw = sc->hw;
 	int error = 0, i;
@@ -1557,7 +1571,7 @@ int ath_attach(u16 devid, struct ath_softc *sc)
 
 	DPRINTF(sc, ATH_DBG_CONFIG, "Attach ATH hw\n");
 
-	error = ath_init(devid, sc);
+	error = ath_init_softc(devid, sc);
 	if (error != 0)
 		return error;
 
@@ -1615,6 +1629,7 @@ error_attach:
 			ath_tx_cleanupq(sc, &sc->tx.txq[i]);
 
 	ath9k_hw_detach(sc->sc_ah);
+	sc->sc_ah = NULL;
 	ath9k_exit_debug(sc);
 
 	return error;
@@ -1973,6 +1988,8 @@ static int ath9k_start(struct ieee80211_hw *hw)
 
 	ieee80211_wake_queues(hw);
 
+	ieee80211_queue_delayed_work(sc->hw, &sc->tx_complete_work, 0);
+
 mutex_unlock:
 	mutex_unlock(&sc->mutex);
 
@@ -1994,7 +2011,7 @@ static int ath9k_tx(struct ieee80211_hw *hw,
 		goto exit;
 	}
 
-	if (sc->hw->conf.flags & IEEE80211_CONF_PS) {
+	if (sc->ps_enabled) {
 		struct ieee80211_hdr *hdr = (struct ieee80211_hdr *) skb->data;
 		/*
 		 * mac80211 does not set PM field for normal data frames, so we
@@ -2085,6 +2102,14 @@ static void ath9k_stop(struct ieee80211_hw *hw)
 
 	aphy->state = ATH_WIPHY_INACTIVE;
 
+	cancel_delayed_work_sync(&sc->ath_led_blink_work);
+	cancel_delayed_work_sync(&sc->tx_complete_work);
+
+	if (!sc->num_sec_wiphy) {
+		cancel_delayed_work_sync(&sc->wiphy_work);
+		cancel_work_sync(&sc->chan_work);
+	}
+
 	if (sc->sc_flags & SC_OP_INVALID) {
 		DPRINTF(sc, ATH_DBG_ANY, "Device not present\n");
 		return;
@@ -2092,7 +2117,7 @@ static void ath9k_stop(struct ieee80211_hw *hw)
 
 	mutex_lock(&sc->mutex);
 
-	ieee80211_stop_queues(hw);
+	cancel_delayed_work_sync(&sc->tx_complete_work);
 
 	if (ath9k_wiphy_started(sc)) {
 		mutex_unlock(&sc->mutex);
@@ -2196,7 +2221,9 @@ static int ath9k_add_interface(struct ieee80211_hw *hw,
 
 	ath9k_hw_set_interrupts(sc->sc_ah, sc->imask);
 
-	if (conf->type == NL80211_IFTYPE_AP)
+	if (conf->type == NL80211_IFTYPE_AP    ||
+	    conf->type == NL80211_IFTYPE_ADHOC ||
+	    conf->type == NL80211_IFTYPE_MONITOR)
 		ath_start_ani(sc);
 
 out:
@@ -2249,8 +2276,27 @@ static int ath9k_config(struct ieee80211_hw *hw, u32 changed)
 	struct ath_softc *sc = aphy->sc;
 	struct ieee80211_conf *conf = &hw->conf;
 	struct ath_hw *ah = sc->sc_ah;
+	bool all_wiphys_idle = false, disable_radio = false;
 
 	mutex_lock(&sc->mutex);
+
+	/* Leave this as the first check */
+	if (changed & IEEE80211_CONF_CHANGE_IDLE) {
+
+		spin_lock_bh(&sc->wiphy_lock);
+		all_wiphys_idle =  ath9k_all_wiphys_idle(sc);
+		spin_unlock_bh(&sc->wiphy_lock);
+
+		if (conf->flags & IEEE80211_CONF_IDLE){
+			if (all_wiphys_idle)
+				disable_radio = true;
+		}
+		else if (all_wiphys_idle) {
+			ath_radio_enable(sc);
+			DPRINTF(sc, ATH_DBG_CONFIG,
+				"not-idle: enabling radio\n");
+		}
+	}
 
 	if (changed & IEEE80211_CONF_CHANGE_PS) {
 		if (conf->flags & IEEE80211_CONF_PS) {
@@ -2263,8 +2309,9 @@ static int ath9k_config(struct ieee80211_hw *hw, u32 changed)
 				}
 				ath9k_hw_setrxabort(sc->sc_ah, 1);
 			}
-			ath9k_hw_setpower(sc->sc_ah, ATH9K_PM_NETWORK_SLEEP);
+			sc->ps_enabled = true;
 		} else {
+			sc->ps_enabled = false;
 			ath9k_hw_setpower(sc->sc_ah, ATH9K_PM_AWAKE);
 			if (!(ah->caps.hw_caps &
 			      ATH9K_HW_CAP_AUTOSLEEP)) {
@@ -2318,6 +2365,11 @@ static int ath9k_config(struct ieee80211_hw *hw, u32 changed)
 skip_chan_change:
 	if (changed & IEEE80211_CONF_CHANGE_POWER)
 		sc->config.txpowlimit = 2 * conf->power_level;
+
+	if (disable_radio) {
+		DPRINTF(sc, ATH_DBG_CONFIG, "idle: disabling radio\n");
+		ath_radio_disable(sc);
+	}
 
 	mutex_unlock(&sc->mutex);
 
@@ -2638,19 +2690,11 @@ static int ath9k_ampdu_action(struct ieee80211_hw *hw,
 	case IEEE80211_AMPDU_RX_STOP:
 		break;
 	case IEEE80211_AMPDU_TX_START:
-		ret = ath_tx_aggr_start(sc, sta, tid, ssn);
-		if (ret < 0)
-			DPRINTF(sc, ATH_DBG_FATAL,
-				"Unable to start TX aggregation\n");
-		else
-			ieee80211_start_tx_ba_cb_irqsafe(hw, sta->addr, tid);
+		ath_tx_aggr_start(sc, sta, tid, ssn);
+		ieee80211_start_tx_ba_cb_irqsafe(hw, sta->addr, tid);
 		break;
 	case IEEE80211_AMPDU_TX_STOP:
-		ret = ath_tx_aggr_stop(sc, sta, tid);
-		if (ret < 0)
-			DPRINTF(sc, ATH_DBG_FATAL,
-				"Unable to stop TX aggregation\n");
-
+		ath_tx_aggr_stop(sc, sta, tid);
 		ieee80211_stop_tx_ba_cb_irqsafe(hw, sta->addr, tid);
 		break;
 	case IEEE80211_AMPDU_TX_OPERATIONAL:
@@ -2681,9 +2725,9 @@ static void ath9k_sw_scan_start(struct ieee80211_hw *hw)
 	aphy->state = ATH_WIPHY_SCAN;
 	ath9k_wiphy_pause_all_forced(sc, aphy);
 
-	mutex_lock(&sc->mutex);
+	spin_lock_bh(&sc->ani_lock);
 	sc->sc_flags |= SC_OP_SCANNING;
-	mutex_unlock(&sc->mutex);
+	spin_unlock_bh(&sc->ani_lock);
 }
 
 static void ath9k_sw_scan_complete(struct ieee80211_hw *hw)
@@ -2691,11 +2735,11 @@ static void ath9k_sw_scan_complete(struct ieee80211_hw *hw)
 	struct ath_wiphy *aphy = hw->priv;
 	struct ath_softc *sc = aphy->sc;
 
-	mutex_lock(&sc->mutex);
+	spin_lock_bh(&sc->ani_lock);
 	aphy->state = ATH_WIPHY_ACTIVE;
 	sc->sc_flags &= ~SC_OP_SCANNING;
 	sc->sc_flags |= SC_OP_FULL_RESET;
-	mutex_unlock(&sc->mutex);
+	spin_unlock_bh(&sc->ani_lock);
 }
 
 struct ieee80211_ops ath9k_ops = {
@@ -2728,7 +2772,8 @@ static struct {
 	{ AR_SREV_VERSION_9100,		"9100" },
 	{ AR_SREV_VERSION_9160,		"9160" },
 	{ AR_SREV_VERSION_9280,		"9280" },
-	{ AR_SREV_VERSION_9285,		"9285" }
+	{ AR_SREV_VERSION_9285,		"9285" },
+	{ AR_SREV_VERSION_9287,         "9287" }
 };
 
 static struct {
