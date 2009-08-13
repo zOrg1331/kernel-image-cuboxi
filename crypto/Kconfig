@@ -23,6 +23,7 @@ comment "Crypto core or helper"
 
 config CRYPTO_FIPS
 	bool "FIPS 200 compliance"
+	select CRYPTO_ANSI_CPRNG
 	help
 	  This options enables the fips boot option which is
 	  required if you want to system to operate in a FIPS 200
@@ -156,7 +157,7 @@ config CRYPTO_GCM
 	tristate "GCM/GMAC support"
 	select CRYPTO_CTR
 	select CRYPTO_AEAD
-	select CRYPTO_GF128MUL
+	select CRYPTO_GHASH
 	help
 	  Support for Galois/Counter Mode (GCM) and Galois Message
 	  Authentication Code (GMAC). Required for IPSec.
@@ -288,6 +289,13 @@ config CRYPTO_CRC32C_INTEL
 	  which will enable any routine to use the CRC32 instruction to
 	  gain performance compared with software implementation.
 	  Module will be crc32c-intel.
+
+config CRYPTO_GHASH
+	tristate "GHASH digest algorithm"
+	select CRYPTO_SHASH
+	select CRYPTO_GF128MUL
+	help
+	  GHASH is message digest algorithm for GCM (Galois/Counter Mode).
 
 config CRYPTO_MD4
 	tristate "MD4 digest algorithm"
@@ -782,7 +790,6 @@ config CRYPTO_ANSI_CPRNG
 	tristate "Pseudo Random Number Generation for Cryptographic modules"
 	select CRYPTO_AES
 	select CRYPTO_RNG
-	select CRYPTO_FIPS
 	help
 	  This option enables the generic pseudo random number generator
 	  for cryptographic modules.  Uses the Algorithm specified in
