@@ -68,8 +68,6 @@ static int			group				=  0;
 static unsigned int		page_size;
 static unsigned int		mmap_pages			= 16;
 static int			freq				=  0;
-static int			verbose				=  0;
-static char			*vmlinux			=  NULL;
 
 static int			delay_secs			=  2;
 static int			zero;
@@ -337,8 +335,6 @@ static void show_details(struct sym_entry *syme)
 	if (more)
 		printf("%d lines not displayed, maybe increase display entries [e]\n", more);
 }
-
-struct dso			*kernel_dso;
 
 /*
  * Symbols will be added here in record_ip and will get out
@@ -937,26 +933,6 @@ static void mmap_read_counter(struct mmap_data *md)
 	last_read = this_read;
 
 	for (; old != head;) {
-		struct ip_event {
-			struct perf_event_header header;
-			u64 ip;
-			u32 pid, target_pid;
-		};
-		struct mmap_event {
-			struct perf_event_header header;
-			u32 pid, target_pid;
-			u64 start;
-			u64 len;
-			u64 pgoff;
-			char filename[PATH_MAX];
-		};
-
-		typedef union event_union {
-			struct perf_event_header header;
-			struct ip_event ip;
-			struct mmap_event mmap;
-		} event_t;
-
 		event_t *event = (event_t *)&data[old & md->mask];
 
 		event_t event_copy;
