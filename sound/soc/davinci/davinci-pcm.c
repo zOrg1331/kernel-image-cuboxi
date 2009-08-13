@@ -206,6 +206,7 @@ static int davinci_pcm_prepare(struct snd_pcm_substream *substream)
 	/* Copy self-linked parameter RAM entry into master channel */
 	edma_read_slot(prtd->slave_lch, &temp);
 	edma_write_slot(prtd->master_lch, &temp);
+	davinci_pcm_enqueue_dma(substream);
 
 	return 0;
 }
@@ -243,6 +244,11 @@ static int davinci_pcm_open(struct snd_pcm_substream *substream)
 	int ret = 0;
 
 	snd_soc_set_runtime_hwparams(substream, &davinci_pcm_hardware);
+	/* ensure that buffer size is a multiple of period size */
+	ret = snd_pcm_hw_constraint_integer(runtime,
+						SNDRV_PCM_HW_PARAM_PERIODS);
+	if (ret < 0)
+		return ret;
 
 	prtd = kzalloc(sizeof(struct davinci_runtime_data), GFP_KERNEL);
 	if (prtd == NULL)
