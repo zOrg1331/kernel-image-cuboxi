@@ -25,7 +25,7 @@
 #define __array(type, item, len)	type	item[len];
 
 #undef __dynamic_array
-#define __dynamic_array(type, item, len) unsigned short __data_loc_##item;
+#define __dynamic_array(type, item, len) u32 __data_loc_##item;
 
 #undef __string
 #define __string(item, src) __dynamic_array(char, item, -1)
@@ -51,13 +51,14 @@
  * Include the following:
  *
  * struct ftrace_data_offsets_<call> {
- *	int				<item1>;
- *	int				<item2>;
+ *	u32				<item1>;
+ *	u32				<item2>;
  *	[...]
  * };
  *
- * The __dynamic_array() macro will create each int <item>, this is
+ * The __dynamic_array() macro will create each u32 <item>, this is
  * to keep the offset of each array from the beginning of the event.
+ * The size of an array is also encoded, in the higher 16 bits of <item>.
  */
 
 #undef __field
@@ -67,7 +68,7 @@
 #define __array(type, item, len)
 
 #undef __dynamic_array
-#define __dynamic_array(type, item, len)	int item;
+#define __dynamic_array(type, item, len)	u32 item;
 
 #undef __string
 #define __string(item, src) __dynamic_array(char, item, -1)
@@ -120,7 +121,7 @@
 
 #undef __dynamic_array
 #define __dynamic_array(type, item, len)				       \
-	ret = trace_seq_printf(s, "\tfield:__data_loc " #item ";\t"	       \
+	ret = trace_seq_printf(s, "\tfield:__data_loc " #type "[] " #item ";\t"\
 			       "offset:%u;\tsize:%u;\n",		       \
 			       (unsigned int)offsetof(typeof(field),	       \
 					__data_loc_##item),		       \
@@ -210,7 +211,7 @@ ftrace_format_##call(struct trace_seq *s)				\
 
 #undef __get_dynamic_array
 #define __get_dynamic_array(field)	\
-		((void *)__entry + __entry->__data_loc_##field)
+		((void *)__entry + (__entry->__data_loc_##field & 0xffff))
 
 #undef __get_str
 #define __get_str(field) (char *)__get_dynamic_array(field)
@@ -282,7 +283,7 @@ ftrace_raw_output_##call(struct trace_iterator *iter, int flags)	\
 
 #undef __dynamic_array
 #define __dynamic_array(type, item, len)				       \
-	ret = trace_define_field(event_call, "__data_loc" "[" #type "]", #item,\
+	ret = trace_define_field(event_call, "__data_loc " #type "[]", #item,  \
 				offsetof(typeof(field), __data_loc_##item),    \
 				 sizeof(field.__data_loc_##item), 0);
 
@@ -328,6 +329,7 @@ ftrace_define_fields_##call(void)					\
 #define __dynamic_array(type, item, len)				\
 	__data_offsets->item = __data_size +				\
 			       offsetof(typeof(*entry), __data);	\
+	__data_offsets->item |= (len * sizeof(type)) << 16;		\
 	__data_size += (len) * sizeof(type);
 
 #undef __string

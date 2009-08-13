@@ -15,6 +15,10 @@
 #include <linux/trace_seq.h>
 #include <linux/ftrace_event.h>
 
+#ifdef CONFIG_KSYM_TRACER
+#include <asm/hw_breakpoint.h>
+#endif
+
 enum trace_type {
 	__TRACE_FIRST_TYPE = 0,
 
@@ -40,6 +44,7 @@ enum trace_type {
 	TRACE_KMEM_FREE,
 	TRACE_POWER,
 	TRACE_BLK,
+	TRACE_KSYM,
 
 	__TRACE_LAST_TYPE,
 };
@@ -207,6 +212,16 @@ struct syscall_trace_exit {
 	unsigned long		ret;
 };
 
+#define KSYM_SELFTEST_ENTRY "ksym_selftest_dummy"
+extern int process_new_ksym_entry(char *ksymname, int op, unsigned long addr);
+
+struct ksym_trace_entry {
+	struct trace_entry	ent;
+	unsigned long		ip;
+	unsigned char		type;
+	char			ksym_name[KSYM_NAME_LEN];
+	char			cmd[TASK_COMM_LEN];
+};
 
 /*
  * trace_flag_type is an enumeration that holds different
@@ -323,6 +338,7 @@ extern void __ftrace_bad_type(void);
 			  TRACE_SYSCALL_ENTER);				\
 		IF_ASSIGN(var, ent, struct syscall_trace_exit,		\
 			  TRACE_SYSCALL_EXIT);				\
+		IF_ASSIGN(var, ent, struct ksym_trace_entry, TRACE_KSYM);\
 		__ftrace_bad_type();					\
 	} while (0)
 
@@ -467,6 +483,7 @@ void trace_function(struct trace_array *tr,
 
 void trace_graph_return(struct ftrace_graph_ret *trace);
 int trace_graph_entry(struct ftrace_graph_ent *trace);
+void set_graph_array(struct trace_array *tr);
 
 void tracing_start_cmdline_record(void);
 void tracing_stop_cmdline_record(void);
@@ -485,9 +502,31 @@ void update_max_tr(struct trace_array *tr, struct task_struct *tsk, int cpu);
 void update_max_tr_single(struct trace_array *tr,
 			  struct task_struct *tsk, int cpu);
 
-void __trace_stack(struct trace_array *tr,
-		   unsigned long flags,
-		   int skip, int pc);
+#ifdef CONFIG_STACKTRACE
+void ftrace_trace_stack(struct trace_array *tr, unsigned long flags,
+			int skip, int pc);
+
+void ftrace_trace_userstack(struct trace_array *tr, unsigned long flags,
+			    int pc);
+
+void __trace_stack(struct trace_array *tr, unsigned long flags, int skip,
+		   int pc);
+#else
+static inline void ftrace_trace_stack(struct trace_array *tr,
+				      unsigned long flags, int skip, int pc)
+{
+}
+
+static inline void ftrace_trace_userstack(struct trace_array *tr,
+					  unsigned long flags, int pc)
+{
+}
+
+static inline void __trace_stack(struct trace_array *tr, unsigned long flags,
+				 int skip, int pc)
+{
+}
+#endif /* CONFIG_STACKTRACE */
 
 extern cycle_t ftrace_now(int cpu);
 
@@ -513,6 +552,10 @@ extern unsigned long ftrace_update_tot_cnt;
 extern int DYN_FTRACE_TEST_NAME(void);
 #endif
 
+extern int ring_buffer_expanded;
+extern bool tracing_selftest_disabled;
+DECLARE_PER_CPU(local_t, ftrace_cpu_disabled);
+
 #ifdef CONFIG_FTRACE_STARTUP_TEST
 extern int trace_selftest_startup_function(struct tracer *trace,
 					   struct trace_array *tr);
@@ -536,6 +579,8 @@ extern int trace_selftest_startup_branch(struct tracer *trace,
 					 struct trace_array *tr);
 extern int trace_selftest_startup_hw_branches(struct tracer *trace,
 					      struct trace_array *tr);
+extern int trace_selftest_startup_ksym(struct tracer *trace,
+					 struct trace_array *tr);
 #endif /* CONFIG_FTRACE_STARTUP_TEST */
 
 extern void *head_page(struct trace_array_cpu *data);
@@ -743,13 +788,15 @@ struct event_filter {
 	int			n_preds;
 	struct filter_pred	**preds;
 	char			*filter_string;
+	bool			no_reset;
 };
 
 struct event_subsystem {
 	struct list_head	list;
 	const char		*name;
 	struct dentry		*entry;
-	void			*filter;
+	struct event_filter	*filter;
+	int			nr_events;
 };
 
 struct filter_pred;
