@@ -47,9 +47,6 @@
 
 static struct vfsmount *inotify_mnt __read_mostly;
 
-/* this just sits here and wastes global memory.  used to just pad userspace messages with zeros */
-static struct inotify_event nul_inotify_event;
-
 /* these are configurable via /proc/sys/fs/inotify/ */
 static int inotify_max_user_instances __read_mostly;
 static int inotify_max_queued_events __read_mostly;
@@ -215,7 +212,7 @@ static ssize_t copy_event_to_user(struct fsnotify_group *group,
 	/*
 	 * fsnotify only stores the pathname, so here we have to send the pathname
 	 * and then pad that pathname out to a multiple of sizeof(inotify_event)
-	 * with zeros.  I get my zeros from the nul_inotify_event.
+	 * with zeros.
 	 */
 	if (name_len) {
 		unsigned int len_to_zero = name_len - event->name_len;
@@ -224,8 +221,8 @@ static ssize_t copy_event_to_user(struct fsnotify_group *group,
 			return -EFAULT;
 		buf += event->name_len;
 
-		/* fill userspace with 0's from nul_inotify_event */
-		if (copy_to_user(buf, &nul_inotify_event, len_to_zero))
+		/* fill userspace with 0's */
+		if (clear_user(buf, len_to_zero))
 			return -EFAULT;
 		buf += len_to_zero;
 		event_size += name_len;
