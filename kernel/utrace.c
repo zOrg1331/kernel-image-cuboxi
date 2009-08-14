@@ -354,17 +354,15 @@ static inline bool finish_utrace_stop(struct task_struct *task,
 	 * We're officially awake if it's clear.
 	 */
 	if (unlikely(utrace->stopped)) {
-		spin_lock(&utrace->lock);
 		/*
 		 * If we're here with it still set, it must have been
 		 * signal_wake_up() instead, waking us up for a SIGKILL.
 		 */
-		spin_lock_irq(&task->sighand->siglock);
-		WARN_ON(!sigismember(&task->pending.signal, SIGKILL));
-		spin_unlock_irq(&task->sighand->siglock);
+		WARN_ON(!__fatal_signal_pending(task));
+		spin_lock(&utrace->lock);
 		utrace->stopped = 0;
-		killed = true;
 		spin_unlock(&utrace->lock);
+		killed = true;
 	}
 
 	return killed;
