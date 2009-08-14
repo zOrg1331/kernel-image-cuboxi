@@ -1303,26 +1303,23 @@ static void start_report(struct utrace *utrace)
 static void finish_report(struct utrace_report *report,
 			  struct task_struct *task, struct utrace *utrace)
 {
-	bool clean = (report->takers && !report->detaches);
-
-	if (report->action == UTRACE_INTERRUPT && !utrace->interrupt) {
+	if (report->action <= UTRACE_REPORT && !utrace->interrupt &&
+	    (report->action == UTRACE_INTERRUPT || !utrace->report)) {
 		spin_lock(&utrace->lock);
-		utrace->interrupt = 1;
-		set_tsk_thread_flag(task, TIF_SIGPENDING);
-	} else if (report->action <= UTRACE_REPORT && !utrace->report) {
-		spin_lock(&utrace->lock);
-		utrace->report = 1;
-		set_tsk_thread_flag(task, TIF_NOTIFY_RESUME);
-	} else if (clean) {
-		return;
-	} else {
-		spin_lock(&utrace->lock);
+		if (report->action == UTRACE_INTERRUPT) {
+			utrace->interrupt = 1;
+			set_tsk_thread_flag(task, TIF_SIGPENDING);
+		} else {
+			utrace->report = 1;
+			set_tsk_thread_flag(task, TIF_NOTIFY_RESUME);
+		}
+		spin_unlock(&utrace->lock);
 	}
 
-	if (clean)
-		spin_unlock(&utrace->lock);
-	else
+	if (unlikely(!report->takers || report->detaches)) {
+		spin_lock(&utrace->lock);
 		utrace_reset(task, utrace, &report->action);
+	}
 }
 
 /*
