@@ -292,54 +292,56 @@ static int do_output_char(unsigned char c, struct tty_struct *tty, int space)
 	if (!space)
 		return -1;
 
-	switch (c) {
-	case '\n':
-		if (O_ONLRET(tty))
-			tty->column = 0;
-		if (O_ONLCR(tty)) {
-			if (space < 2)
-				return -1;
-			tty->canon_column = tty->column = 0;
-			tty_put_char(tty, '\r');
-			tty_put_char(tty, c);
-			return 2;
-		}
-		tty->canon_column = tty->column;
-		break;
-	case '\r':
-		if (O_ONOCR(tty) && tty->column == 0)
-			return 0;
-		if (O_OCRNL(tty)) {
-			c = '\n';
+	if (O_OPOST(tty)) {
+		switch (c) {
+		case '\n':
 			if (O_ONLRET(tty))
+				tty->column = 0;
+			if (O_ONLCR(tty)) {
+				if (space < 2)
+					return -1;
 				tty->canon_column = tty->column = 0;
+				tty_put_char(tty, '\r');
+				tty_put_char(tty, c);
+				return 2;
+			}
+			tty->canon_column = tty->column;
+			break;
+		case '\r':
+			if (O_ONOCR(tty) && tty->column == 0)
+				return 0;
+			if (O_OCRNL(tty)) {
+				c = '\n';
+				if (O_ONLRET(tty))
+					tty->canon_column = tty->column = 0;
+				break;
+			}
+			tty->canon_column = tty->column = 0;
+			break;
+		case '\t':
+			spaces = 8 - (tty->column & 7);
+			if (O_TABDLY(tty) == XTABS) {
+				if (space < spaces)
+					return -1;
+				tty->column += spaces;
+				tty->ops->write(tty, "        ", spaces);
+				return spaces;
+			}
+			tty->column += spaces;
+			break;
+		case '\b':
+			if (tty->column > 0)
+				tty->column--;
+			break;
+		default:
+			if (!iscntrl(c)) {
+				if (O_OLCUC(tty))
+					c = toupper(c);
+				if (!is_continuation(c, tty))
+					tty->column++;
+			}
 			break;
 		}
-		tty->canon_column = tty->column = 0;
-		break;
-	case '\t':
-		spaces = 8 - (tty->column & 7);
-		if (O_TABDLY(tty) == XTABS) {
-			if (space < spaces)
-				return -1;
-			tty->column += spaces;
-			tty->ops->write(tty, "        ", spaces);
-			return spaces;
-		}
-		tty->column += spaces;
-		break;
-	case '\b':
-		if (tty->column > 0)
-			tty->column--;
-		break;
-	default:
-		if (!iscntrl(c)) {
-			if (O_OLCUC(tty))
-				c = toupper(c);
-			if (!is_continuation(c, tty))
-				tty->column++;
-		}
-		break;
 	}
 
 	tty_put_char(tty, c);
@@ -351,8 +353,9 @@ static int do_output_char(unsigned char c, struct tty_struct *tty, int space)
  *	@c: character (or partial unicode symbol)
  *	@tty: terminal device
  *
- *	Perform OPOST processing.  Returns -1 when the output device is
- *	full and the character must be retried.
+ *	Output a character (with OPOST processing if enabled).
+ *	Returns -1 if the output device is full and the character
+ *	must be retried.
  *
  *	Locking: output_lock to protect column state and space left
  *		 (also, this is called from n_tty_write under the
@@ -378,8 +381,11 @@ static int process_output(unsigned char c, struct tty_struct *tty)
 /**
  *	process_output_block		-	block post processor
  *	@tty: terminal device
- *	@inbuf: user buffer
- *	@nr: number of bytes
+ *	@buf: character buffer
+ *	@nr: number of bytes to output
+ *
+ *	Output a block of characters (with OPOST processing - assumed enabled).
+ *	Returns the number of characters output.
  *
  *	This path is used to speed up block console writes, among other
  *	things when processing blocks of output data. It handles only
@@ -572,33 +578,23 @@ static void process_echoes(struct tty_struct *tty)
 				break;
 
 			default:
-				if (iscntrl(op)) {
-					if (L_ECHOCTL(tty)) {
-						/*
-						 * Ensure there is enough space
-						 * for the whole ctrl pair.
-						 */
-						if (space < 2) {
-							no_space_left = 1;
-							break;
-						}
-						tty_put_char(tty, '^');
-						tty_put_char(tty, op ^ 0100);
-						tty->column += 2;
-						space -= 2;
-					} else {
-						if (!space) {
-							no_space_left = 1;
-							break;
-						}
-						tty_put_char(tty, op);
-						space--;
-					}
-				}
 				/*
-				 * If above falls through, this was an
-				 * undefined op.
+				 * If the op is not a special byte code,
+				 * it is a ctrl char tagged to be echoed
+				 * as "^X" (where X is the letter
+				 * representing the control char).
+				 * Note that we must ensure there is
+				 * enough space for the whole ctrl pair.
+				 *
 				 */
+				if (space < 2) {
+					no_space_left = 1;
+					break;
+				}
+				tty_put_char(tty, '^');
+				tty_put_char(tty, op ^ 0100);
+				tty->column += 2;
+				space -= 2;
 				cp += 2;
 				nr -= 2;
 			}
@@ -799,8 +795,8 @@ static void echo_char_raw(unsigned char c, struct tty_struct *tty)
  *	Echo user input back onto the screen. This must be called only when
  *	L_ECHO(tty) is true. Called from the driver receive_buf path.
  *
- *	This variant tags control characters to be possibly echoed as
- *	as "^X" (where X is the letter representing the control char).
+ *	This variant tags control characters to be echoed as "^X"
+ *	(where X is the letter representing the control char).
  *
  *	Locking: echo_lock to protect the echo buffer
  */
@@ -813,7 +809,7 @@ static void echo_char(unsigned char c, struct tty_struct *tty)
 		add_echo_byte(ECHO_OP_START, tty);
 		add_echo_byte(ECHO_OP_START, tty);
 	} else {
-		if (iscntrl(c) && c != '\t')
+		if (L_ECHOCTL(tty) && iscntrl(c) && c != '\t')
 			add_echo_byte(ECHO_OP_START, tty);
 		add_echo_byte(c, tty);
 	}
