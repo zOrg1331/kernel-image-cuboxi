@@ -341,44 +341,14 @@ static const struct utrace_engine_ops utrace_detached_ops = {
 };
 
 /*
- * After waking up from TASK_TRACED, clear bookkeeping in @utrace.
- * Returns true if we were woken up prematurely by SIGKILL.
- */
-static inline bool finish_utrace_stop(struct task_struct *task,
-				      struct utrace *utrace)
-{
-	bool killed = false;
-
-	/*
-	 * utrace_wakeup() clears @utrace->stopped before waking us up.
-	 * We're officially awake if it's clear.
-	 */
-	if (unlikely(utrace->stopped)) {
-		/*
-		 * If we're here with it still set, it must have been
-		 * signal_wake_up() instead, waking us up for a SIGKILL.
-		 */
-		WARN_ON(!__fatal_signal_pending(task));
-		spin_lock(&utrace->lock);
-		utrace->stopped = 0;
-		spin_unlock(&utrace->lock);
-		killed = true;
-	}
-
-	return killed;
-}
-
-/*
  * Perform %UTRACE_STOP, i.e. block in TASK_TRACED until woken up.
  * @task == current, @utrace == current->utrace, which is not locked.
  * Return true if we were woken up by SIGKILL even though some utrace
  * engine may still want us to stay stopped.
  */
-static bool utrace_stop(struct task_struct *task, struct utrace *utrace,
+static void utrace_stop(struct task_struct *task, struct utrace *utrace,
 			enum utrace_resume_action action)
 {
-	bool killed;
-
 	/*
 	 * @utrace->stopped is the flag that says we are safely
 	 * inside this function.  It should never be set on entry.
@@ -393,10 +363,10 @@ static bool utrace_stop(struct task_struct *task, struct utrace *utrace,
 	spin_lock(&utrace->lock);
 	spin_lock_irq(&task->sighand->siglock);
 
-	if (unlikely(sigismember(&task->pending.signal, SIGKILL))) {
+	if (unlikely(__fatal_signal_pending(task))) {
 		spin_unlock_irq(&task->sighand->siglock);
 		spin_unlock(&utrace->lock);
-		return true;
+		return;
 	}
 
 	if (action == UTRACE_INTERRUPT) {
@@ -437,7 +407,20 @@ static bool utrace_stop(struct task_struct *task, struct utrace *utrace,
 	 */
 	try_to_freeze();
 
-	killed = finish_utrace_stop(task, utrace);
+	/*
+	 * utrace_wakeup() clears @utrace->stopped before waking us up.
+	 * We're officially awake if it's clear.
+	 */
+	if (unlikely(utrace->stopped)) {
+		/*
+		 * If we're here with it still set, it must have been
+		 * signal_wake_up() instead, waking us up for a SIGKILL.
+		 */
+		WARN_ON(!__fatal_signal_pending(task));
+		spin_lock(&utrace->lock);
+		utrace->stopped = 0;
+		spin_unlock(&utrace->lock);
+	}
 
 	/*
 	 * While we were in TASK_TRACED, complete_signal() considered
@@ -447,8 +430,6 @@ static bool utrace_stop(struct task_struct *task, struct utrace *utrace,
 	spin_lock_irq(&task->sighand->siglock);
 	recalc_sigpending();
 	spin_unlock_irq(&task->sighand->siglock);
-
-	return killed;
 }
 
 /*
