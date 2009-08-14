@@ -1269,12 +1269,13 @@ struct utrace_report {
 	enum utrace_resume_action resume_action;
 	bool detaches;
 	bool takers;
-	bool killed;
 };
 
-#define INIT_REPORT(var) \
-	struct utrace_report var = { 0, UTRACE_RESUME, UTRACE_RESUME, \
-				     false, false, false }
+#define INIT_REPORT(var)			\
+	struct utrace_report var = {		\
+		.action = UTRACE_RESUME,	\
+		.resume_action = UTRACE_RESUME	\
+	}
 
 /*
  * We are now making the report, so clear the flag saying we need one.
@@ -1506,13 +1507,15 @@ bool utrace_report_syscall_entry(struct pt_regs *regs)
 			 report.result | report.action, engine, current, regs);
 	finish_report(&report, task, utrace);
 
-	if (report.action == UTRACE_STOP &&
-	    unlikely(utrace_stop(task, utrace, report.resume_action)))
-		/*
-		 * We are continuing despite UTRACE_STOP because of a
-		 * SIGKILL.  Don't let the system call actually proceed.
-		 */
-		return true;
+	if (report.action == UTRACE_STOP) {
+		utrace_stop(task, utrace, report.resume_action);
+		if (fatal_signal_pending(task))
+			/*
+			 * We are continuing despite UTRACE_STOP because of a
+			 * SIGKILL.  Don't let the system call actually proceed.
+			 */
+			return true;
+	}
 
 	return report.result == UTRACE_SYSCALL_ABORT;
 }
@@ -1711,8 +1714,7 @@ static void finish_resume_report(struct utrace_report *report,
 
 	switch (report->action) {
 	case UTRACE_STOP:
-		report->killed = utrace_stop(task, utrace,
-					     report->resume_action);
+		utrace_stop(task, utrace, report->resume_action);
 		break;
 
 	case UTRACE_INTERRUPT:
@@ -2114,7 +2116,7 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 		 */
 		finish_resume_report(&report, task, utrace);
 
-		if (unlikely(report.killed)) {
+		if (unlikely(fatal_signal_pending(task))) {
 			/*
 			 * The only reason we woke up now was because of a
 			 * SIGKILL.  Don't do normal dequeuing in case it
