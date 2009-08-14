@@ -183,8 +183,8 @@ void task_utrace_proc_status(struct seq_file *m, struct task_struct *p);
 /**
  * enum utrace_resume_action - engine's choice of action for a traced task
  * @UTRACE_STOP:		Stay quiescent after callbacks.
- * @UTRACE_REPORT:		Make some callback soon.
  * @UTRACE_INTERRUPT:		Make @report_signal() callback soon.
+ * @UTRACE_REPORT:		Make some callback soon.
  * @UTRACE_SINGLESTEP:		Resume in user mode for one instruction.
  * @UTRACE_BLOCKSTEP:		Resume in user mode until next branch.
  * @UTRACE_RESUME:		Resume normally in user mode.
@@ -199,8 +199,8 @@ void task_utrace_proc_status(struct seq_file *m, struct task_struct *p);
  */
 enum utrace_resume_action {
 	UTRACE_STOP,
-	UTRACE_REPORT,
 	UTRACE_INTERRUPT,
+	UTRACE_REPORT,
 	UTRACE_SINGLESTEP,
 	UTRACE_BLOCKSTEP,
 	UTRACE_RESUME,
