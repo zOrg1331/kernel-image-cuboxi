@@ -35,6 +35,7 @@
 #include <linux/serial.h>
 #include <linux/usb.h>
 #include <linux/usb/serial.h>
+#include <linux/kfifo.h>
 #include "pl2303.h"
 
 /*
@@ -984,6 +985,11 @@ int usb_serial_probe(struct usb_interface *interface,
 			dev_err(&interface->dev, "No free urbs available\n");
 			goto probe_error;
 		}
+		port->write_fifo = kfifo_alloc(PAGE_SIZE, GFP_KERNEL,
+			&port->write_fifo_lock);
+		if (!port->write_fifo)
+			goto probe_error;
+		spin_lock_init(&port->write_fifo_lock);
 		buffer_size = le16_to_cpu(endpoint->wMaxPacketSize);
 		port->bulk_out_size = buffer_size;
 		port->bulk_out_endpointAddress = endpoint->bEndpointAddress;
@@ -1128,6 +1134,8 @@ probe_error:
 		port = serial->port[i];
 		if (!port)
 			continue;
+		if (port->write_fifo)
+			kfifo_free(port->write_fifo);
 		usb_free_urb(port->write_urb);
 		kfree(port->bulk_out_buffer);
 	}
