@@ -1774,7 +1774,7 @@ config SC92031
 
 config CPMAC
 	tristate "TI AR7 CPMAC Ethernet support (EXPERIMENTAL)"
-	depends on NET_ETHERNET && EXPERIMENTAL && AR7 && BROKEN
+	depends on NET_ETHERNET && EXPERIMENTAL && AR7
 	select PHYLIB
 	help
 	  TI AR7 CPMAC Ethernet support
@@ -2722,6 +2722,7 @@ config BNX2X
 	select FW_LOADER
 	select ZLIB_INFLATE
 	select LIBCRC32C
+	select MDIO
 	help
 	  This driver supports Broadcom NetXtremeII 10 gigabit Ethernet cards.
 	  To compile this driver as a module, choose M here: the module

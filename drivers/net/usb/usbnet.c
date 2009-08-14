@@ -575,7 +575,9 @@ EXPORT_SYMBOL_GPL(usbnet_unlink_rx_urbs);
 int usbnet_stop (struct net_device *net)
 {
 	struct usbnet		*dev = netdev_priv(net);
+	struct driver_info	*info = dev->driver_info;
 	int			temp;
+	int			retval;
 	DECLARE_WAIT_QUEUE_HEAD_ONSTACK (unlink_wakeup);
 	DECLARE_WAITQUEUE (wait, current);
 
@@ -587,21 +589,37 @@ int usbnet_stop (struct net_device *net)
 			net->stats.rx_errors, net->stats.tx_errors
 			);
 
-	// ensure there are no more active urbs
-	add_wait_queue (&unlink_wakeup, &wait);
-	dev->wait = &unlink_wakeup;
-	temp = unlink_urbs (dev, &dev->txq) + unlink_urbs (dev, &dev->rxq);
-
-	// maybe wait for deletions to finish.
-	while (!skb_queue_empty(&dev->rxq)
-			&& !skb_queue_empty(&dev->txq)
-			&& !skb_queue_empty(&dev->done)) {
-		msleep(UNLINK_TIMEOUT_MS);
-		if (netif_msg_ifdown (dev))
-			devdbg (dev, "waited for %d urb completions", temp);
+	/* allow minidriver to stop correctly (wireless devices to turn off
+	 * radio etc) */
+	if (info->stop) {
+		retval = info->stop(dev);
+		if (retval < 0 && netif_msg_ifdown(dev))
+			devinfo(dev,
+				"stop fail (%d) usbnet usb-%s-%s, %s",
+				retval,
+				dev->udev->bus->bus_name, dev->udev->devpath,
+				info->description);
 	}
-	dev->wait = NULL;
-	remove_wait_queue (&unlink_wakeup, &wait);
+
+	if (!(info->flags & FLAG_AVOID_UNLINK_URBS)) {
+		/* ensure there are no more active urbs */
+		add_wait_queue(&unlink_wakeup, &wait);
+		dev->wait = &unlink_wakeup;
+		temp = unlink_urbs(dev, &dev->txq) +
+			unlink_urbs(dev, &dev->rxq);
+
+		/* maybe wait for deletions to finish. */
+		while (!skb_queue_empty(&dev->rxq)
+				&& !skb_queue_empty(&dev->txq)
+				&& !skb_queue_empty(&dev->done)) {
+			msleep(UNLINK_TIMEOUT_MS);
+			if (netif_msg_ifdown(dev))
+				devdbg(dev, "waited for %d urb completions",
+					temp);
+		}
+		dev->wait = NULL;
+		remove_wait_queue(&unlink_wakeup, &wait);
+	}
 
 	usb_kill_urb(dev->interrupt);
 
