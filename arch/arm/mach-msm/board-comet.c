@@ -114,6 +114,10 @@
 #define COMET_CPLD_PER_ENABLE_WXGA       0x0040
 #define COMET_CPLD_EXT_PER_ENABLE_WXGA   0x0080
 
+static unsigned long        vreg_sts, gpio_sts;
+static struct vreg         *vreg_mmc;
+static int                  gp6_enabled;
+
 static int                  cpld_version;
 static bool                 wvga_present;
 static bool                 wxga_present;
@@ -398,6 +402,20 @@ static struct mddi_platform_data mddi_pdata = {
 
 static void __init msm_fb_add_devices(void)
 {
+	int rc;
+
+	if (wvga_present) {
+		vreg_mmc = vreg_get(NULL, "gp6");
+		rc = vreg_set_level(vreg_mmc, 2850);
+		if (!rc)
+			rc = vreg_enable(vreg_mmc);
+		if (rc)
+			printk(KERN_ERR "%s: gp6 vreg error: %d\n",
+			       __func__, rc);
+		else
+			gp6_enabled = 1;
+	}
+
 	msm_fb_register_device("mdp", 0);
 	msm_fb_register_device("pmdh", &mddi_pdata);
 	msm_fb_register_device("emdh", &mddi_pdata);
@@ -876,9 +894,6 @@ static unsigned sdcc_cfg_data[][6] = {
 	},
 };
 
-static unsigned long vreg_sts, gpio_sts;
-static struct vreg *vreg_mmc;
-
 static void msm_sdcc_setup_gpio(int dev_id, unsigned int enable)
 {
 	int i, rc;
@@ -914,7 +929,7 @@ static uint32_t msm_sdcc_setup_power(struct device *dv, unsigned int vdd)
 
 		clear_bit(pdev->id, &vreg_sts);
 
-		if (!vreg_sts) {
+		if (!vreg_sts && !gp6_enabled) {
 			rc = vreg_disable(vreg_mmc);
 			if (rc)
 				printk(KERN_ERR "%s: return val: %d \n",
@@ -923,7 +938,7 @@ static uint32_t msm_sdcc_setup_power(struct device *dv, unsigned int vdd)
 		return 0;
 	}
 
-	if (!vreg_sts) {
+	if (!vreg_sts && !gp6_enabled) {
 		rc = vreg_set_level(vreg_mmc, 2850);
 		if (!rc)
 			rc = vreg_enable(vreg_mmc);
