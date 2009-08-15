@@ -1682,16 +1682,9 @@ void ptrace_notify(int exit_code)
 static int do_signal_stop(int signr)
 {
 	struct signal_struct *sig = current->signal;
-	int stop_count;
 	int notify;
 
-	if (sig->group_stop_count > 0) {
-		/*
-		 * There is a group stop in progress.  We don't need to
-		 * start another one.
-		 */
-		stop_count = --sig->group_stop_count;
-	} else {
+	if (!sig->group_stop_count) {
 		struct task_struct *t;
 
 		if (!likely(sig->flags & SIGNAL_STOP_DEQUEUED) ||
@@ -1703,7 +1696,7 @@ static int do_signal_stop(int signr)
 		 */
 		sig->group_exit_code = signr;
 
-		stop_count = 0;
+		sig->group_stop_count = 1;
 		for (t = next_thread(current); t != current; t = next_thread(t))
 			/*
 			 * Setting state to TASK_STOPPED for a group
@@ -1712,25 +1705,28 @@ static int do_signal_stop(int signr)
 			 */
 			if (!(t->flags & PF_EXITING) &&
 			    !task_is_stopped_or_traced(t)) {
-				stop_count++;
+				sig->group_stop_count++;
 				signal_wake_up(t, 0);
 			}
-		sig->group_stop_count = stop_count;
 	}
-
-	if (stop_count == 0)
-		sig->flags = SIGNAL_STOP_STOPPED;
-	current->exit_code = sig->group_exit_code;
-	__set_current_state(TASK_STOPPED);
-
 	/*
 	 * If there are no other threads in the group, or if there is
-	 * a group stop in progress and we are the last to stop,
-	 * report to the parent.  When ptraced, every thread reports itself.
+	 * a group stop in progress and we are the last to stop, report
+	 * to the parent.  When ptraced, every thread reports itself.
 	 */
-	notify = tracehook_notify_jctl(stop_count == 0 ? CLD_STOPPED : 0,
-				       CLD_STOPPED);
-
+	notify = sig->group_stop_count == 1 ? CLD_STOPPED : 0;
+	notify = tracehook_notify_jctl(notify, CLD_STOPPED);
+	/*
+	 * tracehook_notify_jctl() can drop and reacquire siglock, so
+	 * we keep ->group_stop_count != 0 before the call. If SIGCONT
+	 * or SIGKILL comes in between ->group_stop_count == 0.
+	 */
+	if (sig->group_stop_count) {
+		if (!--sig->group_stop_count)
+			sig->flags = SIGNAL_STOP_STOPPED;
+		current->exit_code = sig->group_exit_code;
+		__set_current_state(TASK_STOPPED);
+	}
 	spin_unlock_irq(&current->sighand->siglock);
 
 	if (notify) {
@@ -1739,12 +1735,12 @@ static int do_signal_stop(int signr)
 		read_unlock(&tasklist_lock);
 	}
 
+	/* Now we don't run again until woken by SIGCONT or SIGKILL */
 	do {
 		schedule();
 	} while (try_to_freeze());
-	/*
-	 * Now we don't run again until continued.
-	 */
+
+	tracehook_finish_jctl();
 	current->exit_code = 0;
 
 	return 1;
@@ -2455,11 +2451,9 @@ do_sigaltstack (const stack_t __user *uss, stack_t __user *uoss, unsigned long s
 	stack_t oss;
 	int error;
 
-	if (uoss) {
-		oss.ss_sp = (void __user *) current->sas_ss_sp;
-		oss.ss_size = current->sas_ss_size;
-		oss.ss_flags = sas_ss_flags(sp);
-	}
+	oss.ss_sp = (void __user *) current->sas_ss_sp;
+	oss.ss_size = current->sas_ss_size;
+	oss.ss_flags = sas_ss_flags(sp);
 
 	if (uss) {
 		void __user *ss_sp;
@@ -2467,10 +2461,12 @@ do_sigaltstack (const stack_t __user *uss, stack_t __user *uoss, unsigned long s
 		int ss_flags;
 
 		error = -EFAULT;
-		if (!access_ok(VERIFY_READ, uss, sizeof(*uss))
-		    || __get_user(ss_sp, &uss->ss_sp)
-		    || __get_user(ss_flags, &uss->ss_flags)
-		    || __get_user(ss_size, &uss->ss_size))
+		if (!access_ok(VERIFY_READ, uss, sizeof(*uss)))
+			goto out;
+		error = __get_user(ss_sp, &uss->ss_sp) |
+			__get_user(ss_flags, &uss->ss_flags) |
+			__get_user(ss_size, &uss->ss_size);
+		if (error)
 			goto out;
 
 		error = -EPERM;
@@ -2502,13 +2498,16 @@ do_sigaltstack (const stack_t __user *uss, stack_t __user *uoss, unsigned long s
 		current->sas_ss_size = ss_size;
 	}
 
+	error = 0;
 	if (uoss) {
 		error = -EFAULT;
-		if (copy_to_user(uoss, &oss, sizeof(oss)))
+		if (!access_ok(VERIFY_WRITE, uoss, sizeof(*uoss)))
 			goto out;
+		error = __put_user(oss.ss_sp, &uoss->ss_sp) |
+			__put_user(oss.ss_size, &uoss->ss_size) |
+			__put_user(oss.ss_flags, &uoss->ss_flags);
 	}
 
-	error = 0;
 out:
 	return error;
 }

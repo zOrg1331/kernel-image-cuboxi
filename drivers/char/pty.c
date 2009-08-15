@@ -22,6 +22,7 @@
 #include <linux/major.h>
 #include <linux/mm.h>
 #include <linux/init.h>
+#include <linux/smp_lock.h>
 #include <linux/sysctl.h>
 #include <linux/device.h>
 #include <linux/uaccess.h>
@@ -143,6 +144,8 @@ static int pty_write(struct tty_struct *tty, const unsigned char *buf,
 
 static int pty_write_room(struct tty_struct *tty)
 {
+	if (tty->stopped)
+		return 0;
 	return pty_space(tty->link);
 }
 
