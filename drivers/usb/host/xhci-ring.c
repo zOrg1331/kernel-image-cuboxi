@@ -172,8 +172,9 @@ static void inc_deq(struct xhci_hcd *xhci, struct xhci_ring *ring, bool consumer
  * have their chain bit cleared (so that each Link TRB is a separate TD).
  *
  * Section 6.4.4.1 of the 0.95 spec says link TRBs cannot have the chain bit
- * set, but other sections talk about dealing with the chain bit set.
- * Assume section 6.4.4.1 is wrong, and the chain bit can be set in a Link TRB.
+ * set, but other sections talk about dealing with the chain bit set.  This was
+ * fixed in the 0.96 specification errata, but we have to assume that all 0.95
+ * xHCI hardware can't handle the chain bit being cleared on a link TRB.
  */
 static void inc_enq(struct xhci_hcd *xhci, struct xhci_ring *ring, bool consumer)
 {
@@ -191,8 +192,14 @@ static void inc_enq(struct xhci_hcd *xhci, struct xhci_ring *ring, bool consumer
 	while (last_trb(xhci, ring, ring->enq_seg, next)) {
 		if (!consumer) {
 			if (ring != xhci->event_ring) {
-				next->link.control &= ~TRB_CHAIN;
-				next->link.control |= chain;
+				/* If we're not dealing with 0.95 hardware,
+				 * carry over the chain bit of the previous TRB
+				 * (which may mean the chain bit is cleared).
+				 */
+				if (!xhci_link_trb_quirk(xhci)) {
+					next->link.control &= ~TRB_CHAIN;
+					next->link.control |= chain;
+				}
 				/* Give this link TRB to the hardware */
 				wmb();
 				if (next->link.control & TRB_CYCLE)
@@ -462,7 +469,6 @@ void xhci_queue_new_dequeue_state(struct xhci_hcd *xhci,
 	 * ring running.
 	 */
 	ep_ring->state |= SET_DEQ_PENDING;
-	xhci_ring_cmd_db(xhci);
 }
 
 /*
@@ -531,6 +537,7 @@ static void handle_stopped_endpoint(struct xhci_hcd *xhci,
 	if (deq_state.new_deq_ptr && deq_state.new_deq_seg) {
 		xhci_queue_new_dequeue_state(xhci, ep_ring,
 				slot_id, ep_index, &deq_state);
+		xhci_ring_cmd_db(xhci);
 	} else {
 		/* Otherwise just ring the doorbell to restart the ring */
 		ring_ep_doorbell(xhci, slot_id, ep_index);
@@ -644,18 +651,31 @@ static void handle_reset_ep_completion(struct xhci_hcd *xhci,
 {
 	int slot_id;
 	unsigned int ep_index;
+	struct xhci_ring *ep_ring;
 
 	slot_id = TRB_TO_SLOT_ID(trb->generic.field[3]);
 	ep_index = TRB_TO_EP_INDEX(trb->generic.field[3]);
+	ep_ring = xhci->devs[slot_id]->ep_rings[ep_index];
 	/* This command will only fail if the endpoint wasn't halted,
 	 * but we don't care.
 	 */
 	xhci_dbg(xhci, "Ignoring reset ep completion code of %u\n",
 			(unsigned int) GET_COMP_CODE(event->status));
 
-	/* Clear our internal halted state and restart the ring */
-	xhci->devs[slot_id]->ep_rings[ep_index]->state &= ~EP_HALTED;
-	ring_ep_doorbell(xhci, slot_id, ep_index);
+	/* HW with the reset endpoint quirk needs to have a configure endpoint
+	 * command complete before the endpoint can be used.  Queue that here
+	 * because the HW can't handle two commands being queued in a row.
+	 */
+	if (xhci->quirks & XHCI_RESET_EP_QUIRK) {
+		xhci_dbg(xhci, "Queueing configure endpoint command\n");
+		xhci_queue_configure_endpoint(xhci,
+				xhci->devs[slot_id]->in_ctx->dma, slot_id);
+		xhci_ring_cmd_db(xhci);
+	} else {
+		/* Clear our internal halted state and restart the ring */
+		ep_ring->state &= ~EP_HALTED;
+		ring_ep_doorbell(xhci, slot_id, ep_index);
+	}
 }
 
 static void handle_cmd_completion(struct xhci_hcd *xhci,
@@ -664,6 +684,10 @@ static void handle_cmd_completion(struct xhci_hcd *xhci,
 	int slot_id = TRB_TO_SLOT_ID(event->flags);
 	u64 cmd_dma;
 	dma_addr_t cmd_dequeue_dma;
+	struct xhci_input_control_ctx *ctrl_ctx;
+	unsigned int ep_index;
+	struct xhci_ring *ep_ring;
+	unsigned int ep_state;
 
 	cmd_dma = event->cmd_trb;
 	cmd_dequeue_dma = xhci_trb_virt_to_dma(xhci->cmd_ring->deq_seg,
@@ -691,6 +715,41 @@ static void handle_cmd_completion(struct xhci_hcd *xhci,
 			xhci_free_virt_device(xhci, slot_id);
 		break;
 	case TRB_TYPE(TRB_CONFIG_EP):
+		/*
+		 * Configure endpoint commands can come from the USB core
+		 * configuration or alt setting changes, or because the HW
+		 * needed an extra configure endpoint command after a reset
+		 * endpoint command.  In the latter case, the xHCI driver is
+		 * not waiting on the configure endpoint command.
+		 */
+		ctrl_ctx = xhci_get_input_control_ctx(xhci,
+				xhci->devs[slot_id]->in_ctx);
+		/* Input ctx add_flags are the endpoint index plus one */
+		ep_index = xhci_last_valid_endpoint(ctrl_ctx->add_flags) - 1;
+		ep_ring = xhci->devs[slot_id]->ep_rings[ep_index];
+		if (!ep_ring) {
+			/* This must have been an initial configure endpoint */
+			xhci->devs[slot_id]->cmd_status =
+				GET_COMP_CODE(event->status);
+			complete(&xhci->devs[slot_id]->cmd_completion);
+			break;
+		}
+		ep_state = ep_ring->state;
+		xhci_dbg(xhci, "Completed config ep cmd - last ep index = %d, "
+				"state = %d\n", ep_index, ep_state);
+		if (xhci->quirks & XHCI_RESET_EP_QUIRK &&
+				ep_state & EP_HALTED) {
+			/* Clear our internal halted state and restart ring */
+			xhci->devs[slot_id]->ep_rings[ep_index]->state &=
+				~EP_HALTED;
+			ring_ep_doorbell(xhci, slot_id, ep_index);
+		} else {
+			xhci->devs[slot_id]->cmd_status =
+				GET_COMP_CODE(event->status);
+			complete(&xhci->devs[slot_id]->cmd_completion);
+		}
+		break;
+	case TRB_TYPE(TRB_EVAL_CONTEXT):
 		xhci->devs[slot_id]->cmd_status = GET_COMP_CODE(event->status);
 		complete(&xhci->devs[slot_id]->cmd_completion);
 		break;
@@ -806,6 +865,7 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 {
 	struct xhci_virt_device *xdev;
 	struct xhci_ring *ep_ring;
+	unsigned int slot_id;
 	int ep_index;
 	struct xhci_td *td = 0;
 	dma_addr_t event_dma;
@@ -816,7 +876,8 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 	struct xhci_ep_ctx *ep_ctx;
 
 	xhci_dbg(xhci, "In %s\n", __func__);
-	xdev = xhci->devs[TRB_TO_SLOT_ID(event->flags)];
+	slot_id = TRB_TO_SLOT_ID(event->flags);
+	xdev = xhci->devs[slot_id];
 	if (!xdev) {
 		xhci_err(xhci, "ERROR Transfer event pointed to bad slot\n");
 		return -ENODEV;
@@ -930,6 +991,24 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 			xhci_warn(xhci, "WARN: short transfer on control ep\n");
 			status = -EREMOTEIO;
 			break;
+		case COMP_STALL:
+			/* Did we transfer part of the data (middle) phase? */
+			if (event_trb != ep_ring->dequeue &&
+					event_trb != td->last_trb)
+				td->urb->actual_length =
+					td->urb->transfer_buffer_length
+					- TRB_LEN(event->transfer_len);
+			else
+				td->urb->actual_length = 0;
+
+			ep_ring->stopped_td = td;
+			ep_ring->stopped_trb = event_trb;
+			xhci_queue_reset_ep(xhci, slot_id, ep_index);
+			xhci_cleanup_stalled_ring(xhci,
+					td->urb->dev,
+					ep_index, ep_ring);
+			xhci_ring_cmd_db(xhci);
+			goto td_cleanup;
 		default:
 			/* Others already handled above */
 			break;
@@ -1072,6 +1151,7 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 			inc_deq(xhci, ep_ring, false);
 		}
 
+td_cleanup:
 		/* Clean up the endpoint's TD list */
 		urb = td->urb;
 		list_del(&td->td_list);
@@ -1080,8 +1160,13 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 			list_del(&td->cancelled_td_list);
 			ep_ring->cancels_pending--;
 		}
-		/* Leave the TD around for the reset endpoint function to use */
-		if (GET_COMP_CODE(event->transfer_len) != COMP_STALL) {
+		/* Leave the TD around for the reset endpoint function to use
+		 * (but only if it's not a control endpoint, since we already
+		 * queued the Set TR dequeue pointer command for stalled
+		 * control endpoints).
+		 */
+		if (usb_endpoint_xfer_control(&urb->ep->desc) ||
+			GET_COMP_CODE(event->transfer_len) != COMP_STALL) {
 			kfree(td);
 		}
 		urb->hcpriv = NULL;
@@ -1731,6 +1816,15 @@ int xhci_queue_configure_endpoint(struct xhci_hcd *xhci, dma_addr_t in_ctx_ptr,
 	return queue_command(xhci, lower_32_bits(in_ctx_ptr),
 			upper_32_bits(in_ctx_ptr), 0,
 			TRB_TYPE(TRB_CONFIG_EP) | SLOT_ID_FOR_TRB(slot_id));
+}
+
+/* Queue an evaluate context command TRB */
+int xhci_queue_evaluate_context(struct xhci_hcd *xhci, dma_addr_t in_ctx_ptr,
+		u32 slot_id)
+{
+	return queue_command(xhci, lower_32_bits(in_ctx_ptr),
+			upper_32_bits(in_ctx_ptr), 0,
+			TRB_TYPE(TRB_EVAL_CONTEXT) | SLOT_ID_FOR_TRB(slot_id));
 }
 
 int xhci_queue_stop_endpoint(struct xhci_hcd *xhci, int slot_id,
