@@ -1964,7 +1964,7 @@ static int receive_DataRequest(struct drbd_conf *mdev, struct p_header *h)
 	sector_t sector;
 	const sector_t capacity = drbd_get_capacity(mdev->this_bdev);
 	struct drbd_epoch_entry *e;
-	struct digest_info *di;
+	struct digest_info *di = NULL;
 	int size, digest_size;
 	unsigned int fault_type;
 	struct p_block_req *p =
@@ -2026,9 +2026,7 @@ static int receive_DataRequest(struct drbd_conf *mdev, struct p_header *h)
 			/* we have been interrupted,
 			 * probably connection lost! */
 			D_ASSERT(signal_pending(current));
-			put_ldev(mdev);
-			drbd_free_ee(mdev, e);
-			return 0;
+			goto out_free_e;
 		}
 		break;
 
@@ -2037,21 +2035,14 @@ static int receive_DataRequest(struct drbd_conf *mdev, struct p_header *h)
 		fault_type = DRBD_FAULT_RS_RD;
 		digest_size = h->length - brps ;
 		di = kmalloc(sizeof(*di) + digest_size, GFP_NOIO);
-		if (!di) {
-			put_ldev(mdev);
-			drbd_free_ee(mdev, e);
-			return 0;
-		}
+		if (!di)
+			goto out_free_e;
 
 		di->digest_size = digest_size;
 		di->digest = (((char *)di)+sizeof(struct digest_info));
 
-		if (drbd_recv(mdev, di->digest, digest_size) != digest_size) {
-			put_ldev(mdev);
-			drbd_free_ee(mdev, e);
-			kfree(di);
-			return FALSE;
-		}
+		if (drbd_recv(mdev, di->digest, digest_size) != digest_size)
+			goto out_free_e;
 
 		e->block_id = (u64)(unsigned long)di;
 		if (h->command == P_CSUM_RS_REQUEST) {
@@ -2066,10 +2057,7 @@ static int receive_DataRequest(struct drbd_conf *mdev, struct p_header *h)
 		if (!drbd_rs_begin_io(mdev, sector)) {
 			/* we have been interrupted, probably connection lost! */
 			D_ASSERT(signal_pending(current));
-			drbd_free_ee(mdev, e);
-			kfree(di);
-			put_ldev(mdev);
-			return FALSE;
+			goto out_free_e;
 		}
 		break;
 
@@ -2097,9 +2085,7 @@ static int receive_DataRequest(struct drbd_conf *mdev, struct p_header *h)
 			/* we have been interrupted,
 			 * probably connection lost! */
 			D_ASSERT(signal_pending(current));
-			put_ldev(mdev);
-			drbd_free_ee(mdev, e);
-			return 0;
+			goto out_free_e;
 		}
 		break;
 
@@ -2122,6 +2108,12 @@ static int receive_DataRequest(struct drbd_conf *mdev, struct p_header *h)
 	maybe_kick_lo(mdev);
 
 	return TRUE;
+
+out_free_e:
+	kfree(di);
+	put_ldev(mdev);
+	drbd_free_ee(mdev, e);
+	return FALSE;
 }
 
 static int drbd_asb_recover_0p(struct drbd_conf *mdev) __must_hold(local)
