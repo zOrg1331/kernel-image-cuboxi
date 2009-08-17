@@ -486,6 +486,10 @@ rm -rf %buildroot%kbuild_dir/include/media
 # - <Y> compcache
 # - <M> subfs
 
+# NB: I've accidentally trashed git repo with wrong rebase,
+#     and the last backup was corresponding to 2.6.27-alt2;
+#     if anyone would need -alt3, please fix yourself, sorry
+
 %changelog
 * Fri Jul 24 2009 Michael Shigorin <mike@altlinux.org> 2.6.27-alt3
 - 2.6.27.27
