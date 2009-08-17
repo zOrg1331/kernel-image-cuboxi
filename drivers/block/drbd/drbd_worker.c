@@ -256,7 +256,7 @@ void drbd_endio_pri(struct bio *bio, int error)
 
 int w_io_error(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 {
-	struct drbd_request *req = (struct drbd_request *)w;
+	struct drbd_request *req = container_of(w, struct drbd_request, w);
 	int ok;
 
 	/* NOTE: mdev->ldev can be NULL by the time we get here! */
@@ -274,7 +274,7 @@ int w_io_error(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 
 int w_read_retry_remote(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 {
-	struct drbd_request *req = (struct drbd_request *)w;
+	struct drbd_request *req = container_of(w, struct drbd_request, w);
 
 	/* We should not detach for read io-error,
 	 * but try to WRITE the P_DATA_REPLY to the failed location,
@@ -324,7 +324,7 @@ void drbd_csum(struct drbd_conf *mdev, struct crypto_hash *tfm, struct bio *bio,
 
 static int w_e_send_csum(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 {
-	struct drbd_epoch_entry *e = (struct drbd_epoch_entry *)w;
+	struct drbd_epoch_entry *e = container_of(w, struct drbd_epoch_entry, w);
 	int digest_size;
 	void *digest;
 	int ok;
@@ -832,7 +832,7 @@ static void move_to_net_ee_or_free(struct drbd_conf *mdev, struct drbd_epoch_ent
  */
 int w_e_end_data_req(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 {
-	struct drbd_epoch_entry *e = (struct drbd_epoch_entry *)w;
+	struct drbd_epoch_entry *e = container_of(w, struct drbd_epoch_entry, w);
 	int ok;
 
 	if (unlikely(cancel)) {
@@ -870,7 +870,7 @@ int w_e_end_data_req(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
  */
 int w_e_end_rsdata_req(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 {
-	struct drbd_epoch_entry *e = (struct drbd_epoch_entry *)w;
+	struct drbd_epoch_entry *e = container_of(w, struct drbd_epoch_entry, w);
 	int ok;
 
 	if (unlikely(cancel)) {
@@ -918,7 +918,7 @@ int w_e_end_rsdata_req(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 
 int w_e_end_csum_rs_req(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 {
-	struct drbd_epoch_entry *e = (struct drbd_epoch_entry *)w;
+	struct drbd_epoch_entry *e = container_of(w, struct drbd_epoch_entry, w);
 	struct digest_info *di;
 	int digest_size;
 	void *digest = NULL;
@@ -978,7 +978,7 @@ int w_e_end_csum_rs_req(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 
 int w_e_end_ov_req(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 {
-	struct drbd_epoch_entry *e = (struct drbd_epoch_entry *)w;
+	struct drbd_epoch_entry *e = container_of(w, struct drbd_epoch_entry, w);
 	int digest_size;
 	void *digest;
 	int ok = 1;
@@ -1024,7 +1024,7 @@ void drbd_ov_oos_found(struct drbd_conf *mdev, sector_t sector, int size)
 
 int w_e_end_ov_reply(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 {
-	struct drbd_epoch_entry *e = (struct drbd_epoch_entry *)w;
+	struct drbd_epoch_entry *e = container_of(w, struct drbd_epoch_entry, w);
 	struct digest_info *di;
 	int digest_size;
 	void *digest;
@@ -1090,7 +1090,7 @@ int w_prev_work_done(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 
 int w_send_barrier(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 {
-	struct drbd_tl_epoch *b = (struct drbd_tl_epoch *)w;
+	struct drbd_tl_epoch *b = container_of(w, struct drbd_tl_epoch, w);
 	struct p_barrier *p = &mdev->data.sbuf.barrier;
 	int ok = 1;
 
@@ -1134,7 +1134,7 @@ int w_send_write_hint(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
  */
 int w_send_dblock(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 {
-	struct drbd_request *req = (struct drbd_request *)w;
+	struct drbd_request *req = container_of(w, struct drbd_request, w);
 	int ok;
 
 	if (unlikely(cancel)) {
@@ -1156,7 +1156,7 @@ int w_send_dblock(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
  */
 int w_send_read_req(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 {
-	struct drbd_request *req = (struct drbd_request *)w;
+	struct drbd_request *req = container_of(w, struct drbd_request, w);
 	int ok;
 
 	if (unlikely(cancel)) {
