@@ -1,0 +1,40 @@
+diff -urp linux-2.6.18-128.4.1.el5.028stab062.3/mm/shmem.c linux-2.6.18-128.4.1.el5.028stab062.3-ow0/mm/shmem.c
+--- linux-2.6.18-128.4.1.el5.028stab062.3/mm/shmem.c	2009-05-10 17:51:05 +0000
++++ linux-2.6.18-128.4.1.el5.028stab062.3-ow0/mm/shmem.c	2009-08-05 19:41:07 +0000
+@@ -2040,6 +2040,18 @@ static struct inode_operations shmem_sym
+ 	.put_link	= shmem_put_link,
+ };
+ 
++static unsigned long shmem_assumed_ram_size(void)
++{
++	if (current->mm) {
++		struct user_beancounter *ub;
++		ub = top_beancounter(current->mm->mm_ub);
++		return min(totalram_pages,
++		    max(ub->ub_parms[UB_PRIVVMPAGES].barrier, 1024UL));
++	}
++
++	return totalram_pages;
++}
++
+ static int shmem_parse_options(char *options, int *mode, uid_t *uid,
+ 	gid_t *gid, unsigned long *blocks, unsigned long *inodes,
+ 	int *policy, nodemask_t *policy_nodes)
+@@ -2079,7 +2091,7 @@ static int shmem_parse_options(char *opt
+ 			size = memparse(value,&rest);
+ 			if (*rest == '%') {
+ 				size <<= PAGE_SHIFT;
+-				size *= totalram_pages;
++				size *= shmem_assumed_ram_size();
+ 				do_div(size, 100);
+ 				rest++;
+ 			}
+@@ -2204,7 +2216,7 @@ static int shmem_fill_super(struct super
+ 	 * but the internal instance is left unlimited.
+ 	 */
+ 	if (!(sb->s_flags & MS_NOUSER)) {
+-		blocks = totalram_pages / 2;
++		blocks = shmem_assumed_ram_size() / 2;
+ 		inodes = totalram_pages - totalhigh_pages;
+ 		if (inodes > blocks)
+ 			inodes = blocks;

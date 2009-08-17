@@ -1,0 +1,23 @@
+--- linux-2.6.18-92.1.18.el5.028stab060.2/scripts/mkcompile_h	2006-09-19 20:42:06 -0700
++++ linux-2.6.18-92.1.18.el5.028stab060.2-ow0-build/scripts/mkcompile_h	2009-02-28 21:35:12 -0800
+@@ -47,17 +47,9 @@
+   echo \#define UTS_VERSION \"`echo $UTS_VERSION | $UTS_TRUNCATE`\"
+ 
+   echo \#define LINUX_COMPILE_TIME \"`LC_ALL=C LANG=C date +%T`\"
+-  echo \#define LINUX_COMPILE_BY \"`whoami`\"
+-  echo \#define LINUX_COMPILE_HOST \"`hostname | $UTS_TRUNCATE`\"
+-
+-  if [ -x /bin/dnsdomainname ]; then
+-    echo \#define LINUX_COMPILE_DOMAIN \"`dnsdomainname | $UTS_TRUNCATE`\"
+-  elif [ -x /bin/domainname ]; then
+-    echo \#define LINUX_COMPILE_DOMAIN \"`domainname | $UTS_TRUNCATE`\"
+-  else
+-    echo \#define LINUX_COMPILE_DOMAIN
+-  fi
+-
++  echo \#define LINUX_COMPILE_BY \"sources\"
++  echo \#define LINUX_COMPILE_HOST \"${ARCH}.example.org\"
++  echo \#define LINUX_COMPILE_DOMAIN \"\"
+   echo \#define LINUX_COMPILER \"`$CC -v 2>&1 | tail -n 1`\"
+ ) > .tmpcompile
+ 
