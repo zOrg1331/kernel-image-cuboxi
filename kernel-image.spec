@@ -1,8 +1,8 @@
 Name: kernel-image-tmc-tc
 Version: 2.6.27
-Release: alt2
+Release: alt3
 
-%define kernel_stable_version 26
+%define kernel_stable_version 27
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -487,6 +487,10 @@ rm -rf %buildroot%kbuild_dir/include/media
 # - <M> subfs
 
 %changelog
+* Fri Jul 24 2009 Michael Shigorin <mike@altlinux.org> 2.6.27-alt3
+- 2.6.27.27
+  + includes CVE-2009-1895 fix
+
 * Mon Jul 20 2009 Michael Shigorin <mike@altlinux.org> 2.6.27-alt2
 - 2.6.27.26
 - patches:
