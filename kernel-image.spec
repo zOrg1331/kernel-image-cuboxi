@@ -1,8 +1,8 @@
 Name: kernel-image-tmc-tc
 Version: 2.6.27
-Release: alt3
+Release: alt4
 
-%define kernel_stable_version 27
+%define kernel_stable_version 30
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -491,6 +491,11 @@ rm -rf %buildroot%kbuild_dir/include/media
 #     if anyone would need -alt3, please fix yourself, sorry
 
 %changelog
+* Mon Aug 17 2009 Michael Shigorin <mike@altlinux.org> 2.6.27-alt4
+- 2.6.27.30
+- config: enabled CONFIG_KALLSYMS to reenable module autoloading
+  (huge thanks to led@ who found this out, kernel help gave no hint)
+
 * Fri Jul 24 2009 Michael Shigorin <mike@altlinux.org> 2.6.27-alt3
 - 2.6.27.27
   + includes CVE-2009-1895 fix
