@@ -333,15 +333,15 @@ ccw_device_remove_disconnected(struct ccw_device *cdev)
 	 * Forced offline in disconnected state means
 	 * 'throw away device'.
 	 */
-	/* Get cdev reference for workqueue processing. */
-	if (!get_device(&cdev->dev))
-		return;
 	if (ccw_device_is_orphan(cdev)) {
 		/*
 		 * Deregister ccw device.
 		 * Unfortunately, we cannot do this directly from the
 		 * attribute method.
 		 */
+		/* Get cdev reference for workqueue processing. */
+		if (!get_device(&cdev->dev))
+			return;
 		spin_lock_irqsave(cdev->ccwlock, flags);
 		cdev->private->state = DEV_STATE_NOT_OPER;
 		spin_unlock_irqrestore(cdev->ccwlock, flags);
@@ -772,10 +772,8 @@ static struct ccw_device * io_subchannel_create_ccwdev(struct subchannel *sch)
 	cdev = io_subchannel_allocate_dev(sch);
 	if (!IS_ERR(cdev)) {
 		ret = io_subchannel_initialize_dev(sch, cdev);
-		if (ret) {
-			kfree(cdev);
+		if (ret)
 			cdev = ERR_PTR(ret);
-		}
 	}
 	return cdev;
 }
@@ -1026,9 +1024,6 @@ static void ccw_device_call_sch_unregister(struct work_struct *work)
 		return;
 	sch = to_subchannel(cdev->dev.parent);
 	css_sch_device_unregister(sch);
-	/* Reset intparm to zeroes. */
-	sch->config.intparm = 0;
-	cio_commit_config(sch);
 	/* Release cdev reference for workqueue processing.*/
 	put_device(&cdev->dev);
 	/* Release subchannel reference for local processing. */
@@ -1037,6 +1032,9 @@ static void ccw_device_call_sch_unregister(struct work_struct *work)
 
 void ccw_device_schedule_sch_unregister(struct ccw_device *cdev)
 {
+	/* Get cdev reference for workqueue processing. */
+	if (!get_device(&cdev->dev))
+		return;
 	PREPARE_WORK(&cdev->private->kick_work,
 		     ccw_device_call_sch_unregister);
 	queue_work(slow_path_wq, &cdev->private->kick_work);
@@ -1057,9 +1055,6 @@ io_subchannel_recog_done(struct ccw_device *cdev)
 		/* Device did not respond in time. */
 	case DEV_STATE_NOT_OPER:
 		cdev->private->flags.recog_done = 1;
-		/* Remove device found not operational. */
-		if (!get_device(&cdev->dev))
-			break;
 		ccw_device_schedule_sch_unregister(cdev);
 		if (atomic_dec_and_test(&ccw_device_init_count))
 			wake_up(&ccw_device_init_wq);
@@ -1212,9 +1207,6 @@ static void io_subchannel_do_unreg(struct work_struct *work)
 
 	sch = container_of(work, struct subchannel, work);
 	css_sch_device_unregister(sch);
-	/* Reset intparm to zeroes. */
-	sch->config.intparm = 0;
-	cio_commit_config(sch);
 	put_device(&sch->dev);
 }
 
@@ -1573,8 +1565,6 @@ static int purge_fn(struct device *dev, void *data)
 	spin_unlock_irq(cdev->ccwlock);
 	if (!unreg)
 		goto out;
-	if (!get_device(&cdev->dev))
-		goto out;
 	CIO_MSG_EVENT(3, "ccw: purging 0.%x.%04x\n", priv->dev_id.ssid,
 		      priv->dev_id.devno);
 	ccw_device_schedule_sch_unregister(cdev);
@@ -1690,10 +1680,6 @@ static int io_subchannel_sch_event(struct subchannel *sch, int slow)
 		spin_unlock_irqrestore(sch->lock, flags);
 		css_sch_device_unregister(sch);
 		spin_lock_irqsave(sch->lock, flags);
-
-		/* Reset intparm to zeroes. */
-		sch->config.intparm = 0;
-		cio_commit_config(sch);
 		break;
 	case REPROBE:
 		ccw_device_trigger_reprobe(cdev);
