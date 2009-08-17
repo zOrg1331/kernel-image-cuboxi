@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.30
-Release: alt8
+Release: alt9
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -340,6 +340,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Mon Aug 17 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.30-alt9
+- 2.6.30.5
+
 * Sat Aug 15 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.30-alt8
 - SA36278: Linux Kernel Incorrect proto_ops Initialisation NULL Pointer Dereference
 
