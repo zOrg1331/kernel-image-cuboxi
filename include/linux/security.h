@@ -28,6 +28,7 @@
 #include <linux/resource.h>
 #include <linux/sem.h>
 #include <linux/shm.h>
+#include <linux/mm.h> /* PAGE_ALIGN */
 #include <linux/msg.h>
 #include <linux/sched.h>
 #include <linux/key.h>
@@ -52,7 +53,7 @@ struct audit_krule;
 extern int cap_capable(struct task_struct *tsk, const struct cred *cred,
 		       int cap, int audit);
 extern int cap_settime(struct timespec *ts, struct timezone *tz);
-extern int cap_ptrace_may_access(struct task_struct *child, unsigned int mode);
+extern int cap_ptrace_access_check(struct task_struct *child, unsigned int mode);
 extern int cap_ptrace_traceme(struct task_struct *parent);
 extern int cap_capget(struct task_struct *target, kernel_cap_t *effective, kernel_cap_t *inheritable, kernel_cap_t *permitted);
 extern int cap_capset(struct cred *new, const struct cred *old,
@@ -66,6 +67,9 @@ extern int cap_inode_setxattr(struct dentry *dentry, const char *name,
 extern int cap_inode_removexattr(struct dentry *dentry, const char *name);
 extern int cap_inode_need_killpriv(struct dentry *dentry);
 extern int cap_inode_killpriv(struct dentry *dentry);
+extern int cap_file_mmap(struct file *file, unsigned long reqprot,
+			 unsigned long prot, unsigned long flags,
+			 unsigned long addr, unsigned long addr_only);
 extern int cap_task_fix_setuid(struct cred *new, const struct cred *old, int flags);
 extern int cap_task_prctl(int option, unsigned long arg2, unsigned long arg3,
 			  unsigned long arg4, unsigned long arg5);
@@ -92,6 +96,7 @@ extern int cap_netlink_send(struct sock *sk, struct sk_buff *skb);
 extern int cap_netlink_recv(struct sk_buff *skb, int cap);
 
 extern unsigned long mmap_min_addr;
+extern unsigned long dac_mmap_min_addr;
 /*
  * Values used in the task_security_ops calls
  */
@@ -115,6 +120,21 @@ struct request_sock;
 #define LSM_UNSAFE_SHARE	1
 #define LSM_UNSAFE_PTRACE	2
 #define LSM_UNSAFE_PTRACE_CAP	4
+
+/*
+ * If a hint addr is less than mmap_min_addr change hint to be as
+ * low as possible but still greater than mmap_min_addr
+ */
+static inline unsigned long round_hint_to_min(unsigned long hint)
+{
+	hint &= PAGE_MASK;
+	if (((void *)hint != NULL) &&
+	    (hint < mmap_min_addr))
+		return PAGE_ALIGN(mmap_min_addr);
+	return hint;
+}
+extern int mmap_min_addr_handler(struct ctl_table *table, int write, struct file *filp,
+				 void __user *buffer, size_t *lenp, loff_t *ppos);
 
 #ifdef CONFIG_SECURITY
 
@@ -657,6 +677,10 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	@new points to the credentials to be modified.
  *	@inode points to the inode to use as a reference.
  *	The current task must be the one that nominated @inode.
+ *	Return 0 if successful.
+ * @kernel_module_request:
+ *	Ability to trigger the kernel to automatically upcall to userspace for
+ *	userspace to load a kernel module with the given name.
  *	Return 0 if successful.
  * @task_setuid:
  *	Check permission before setting one or more of the user identity
@@ -1209,7 +1233,7 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	@alter contains the flag indicating whether changes are to be made.
  *	Return 0 if permission is granted.
  *
- * @ptrace_may_access:
+ * @ptrace_access_check:
  *	Check permission before allowing the current process to trace the
  *	@child process.
  *	Security modules may also want to perform a process tracing check
@@ -1224,7 +1248,7 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	Check that the @parent process has sufficient permission to trace the
  *	current process before allowing the current process to present itself
  *	to the @parent process for tracing.
- *	The parent process will still have to undergo the ptrace_may_access
+ *	The parent process will still have to undergo the ptrace_access_check
  *	checks before it is allowed to trace this one.
  *	@parent contains the task_struct structure for debugger process.
  *	Return 0 if permission is granted.
@@ -1336,7 +1360,7 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
 struct security_operations {
 	char name[SECURITY_NAME_MAX + 1];
 
-	int (*ptrace_may_access) (struct task_struct *child, unsigned int mode);
+	int (*ptrace_access_check) (struct task_struct *child, unsigned int mode);
 	int (*ptrace_traceme) (struct task_struct *parent);
 	int (*capget) (struct task_struct *target,
 		       kernel_cap_t *effective,
@@ -1469,6 +1493,7 @@ struct security_operations {
 	void (*cred_commit)(struct cred *new, const struct cred *old);
 	int (*kernel_act_as)(struct cred *new, u32 secid);
 	int (*kernel_create_files_as)(struct cred *new, struct inode *inode);
+	int (*kernel_module_request)(void);
 	int (*task_setuid) (uid_t id0, uid_t id1, uid_t id2, int flags);
 	int (*task_fix_setuid) (struct cred *new, const struct cred *old,
 				int flags);
@@ -1617,7 +1642,7 @@ extern int security_module_enable(struct security_operations *ops);
 extern int register_security(struct security_operations *ops);
 
 /* Security operations */
-int security_ptrace_may_access(struct task_struct *child, unsigned int mode);
+int security_ptrace_access_check(struct task_struct *child, unsigned int mode);
 int security_ptrace_traceme(struct task_struct *parent);
 int security_capget(struct task_struct *target,
 		    kernel_cap_t *effective,
@@ -1721,6 +1746,7 @@ int security_prepare_creds(struct cred *new, const struct cred *old, gfp_t gfp);
 void security_commit_creds(struct cred *new, const struct cred *old);
 int security_kernel_act_as(struct cred *new, u32 secid);
 int security_kernel_create_files_as(struct cred *new, struct inode *inode);
+int security_kernel_module_request(void);
 int security_task_setuid(uid_t id0, uid_t id1, uid_t id2, int flags);
 int security_task_fix_setuid(struct cred *new, const struct cred *old,
 			     int flags);
@@ -1798,10 +1824,10 @@ static inline int security_init(void)
 	return 0;
 }
 
-static inline int security_ptrace_may_access(struct task_struct *child,
+static inline int security_ptrace_access_check(struct task_struct *child,
 					     unsigned int mode)
 {
-	return cap_ptrace_may_access(child, mode);
+	return cap_ptrace_access_check(child, mode);
 }
 
 static inline int security_ptrace_traceme(struct task_struct *parent)
@@ -2197,9 +2223,7 @@ static inline int security_file_mmap(struct file *file, unsigned long reqprot,
 				     unsigned long addr,
 				     unsigned long addr_only)
 {
-	if ((addr < mmap_min_addr) && !capable(CAP_SYS_RAWIO))
-		return -EACCES;
-	return 0;
+	return cap_file_mmap(file, reqprot, prot, flags, addr, addr_only);
 }
 
 static inline int security_file_mprotect(struct vm_area_struct *vma,
@@ -2270,6 +2294,11 @@ static inline int security_kernel_act_as(struct cred *cred, u32 secid)
 
 static inline int security_kernel_create_files_as(struct cred *cred,
 						  struct inode *inode)
+{
+	return 0;
+}
+
+static inline int security_kernel_module_request(void)
 {
 	return 0;
 }
