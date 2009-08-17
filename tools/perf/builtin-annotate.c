@@ -26,7 +26,6 @@
 #define SHOW_HV		4
 
 static char		const *input_name = "perf.data";
-static char		*vmlinux = "vmlinux";
 
 static char		default_sort_order[] = "comm,symbol";
 static char		*sort_order = default_sort_order;
@@ -37,9 +36,6 @@ static int		show_mask = SHOW_KERNEL | SHOW_USER | SHOW_HV;
 static int		dump_trace = 0;
 #define dprintf(x...)	do { if (dump_trace) printf(x); } while (0)
 
-static int		verbose;
-
-static int		modules;
 
 static int		full_paths;
 
@@ -48,215 +44,12 @@ static int		print_line;
 static unsigned long	page_size;
 static unsigned long	mmap_window = 32;
 
-struct ip_event {
-	struct perf_event_header header;
-	u64 ip;
-	u32 pid, tid;
-};
-
-struct mmap_event {
-	struct perf_event_header header;
-	u32 pid, tid;
-	u64 start;
-	u64 len;
-	u64 pgoff;
-	char filename[PATH_MAX];
-};
-
-struct comm_event {
-	struct perf_event_header header;
-	u32 pid, tid;
-	char comm[16];
-};
-
-struct fork_event {
-	struct perf_event_header header;
-	u32 pid, ppid;
-};
-
-typedef union event_union {
-	struct perf_event_header	header;
-	struct ip_event			ip;
-	struct mmap_event		mmap;
-	struct comm_event		comm;
-	struct fork_event		fork;
-} event_t;
-
 
 struct sym_ext {
 	struct rb_node	node;
 	double		percent;
 	char		*path;
 };
-
-static LIST_HEAD(dsos);
-static struct dso *kernel_dso;
-static struct dso *vdso;
-
-
-static void dsos__add(struct dso *dso)
-{
-	list_add_tail(&dso->node, &dsos);
-}
-
-static struct dso *dsos__find(const char *name)
-{
-	struct dso *pos;
-
-	list_for_each_entry(pos, &dsos, node)
-		if (strcmp(pos->name, name) == 0)
-			return pos;
-	return NULL;
-}
-
-static struct dso *dsos__findnew(const char *name)
-{
-	struct dso *dso = dsos__find(name);
-	int nr;
-
-	if (dso)
-		return dso;
-
-	dso = dso__new(name, 0);
-	if (!dso)
-		goto out_delete_dso;
-
-	nr = dso__load(dso, NULL, verbose);
-	if (nr < 0) {
-		if (verbose)
-			fprintf(stderr, "Failed to open: %s\n", name);
-		goto out_delete_dso;
-	}
-	if (!nr && verbose) {
-		fprintf(stderr,
-		"No symbols found in: %s, maybe install a debug package?\n",
-				name);
-	}
-
-	dsos__add(dso);
-
-	return dso;
-
-out_delete_dso:
-	dso__delete(dso);
-	return NULL;
-}
-
-static void dsos__fprintf(FILE *fp)
-{
-	struct dso *pos;
-
-	list_for_each_entry(pos, &dsos, node)
-		dso__fprintf(pos, fp);
-}
-
-static struct symbol *vdso__find_symbol(struct dso *dso, u64 ip)
-{
-	return dso__find_symbol(dso, ip);
-}
-
-static int load_kernel(void)
-{
-	int err;
-
-	kernel_dso = dso__new("[kernel]", 0);
-	if (!kernel_dso)
-		return -1;
-
-	err = dso__load_kernel(kernel_dso, vmlinux, NULL, verbose, modules);
-	if (err <= 0) {
-		dso__delete(kernel_dso);
-		kernel_dso = NULL;
-	} else
-		dsos__add(kernel_dso);
-
-	vdso = dso__new("[vdso]", 0);
-	if (!vdso)
-		return -1;
-
-	vdso->find_symbol = vdso__find_symbol;
-
-	dsos__add(vdso);
-
-	return err;
-}
-
-struct map {
-	struct list_head node;
-	u64	 start;
-	u64	 end;
-	u64	 pgoff;
-	u64	 (*map_ip)(struct map *, u64);
-	struct dso	 *dso;
-};
-
-static u64 map__map_ip(struct map *map, u64 ip)
-{
-	return ip - map->start + map->pgoff;
-}
-
-static u64 vdso__map_ip(struct map *map __used, u64 ip)
-{
-	return ip;
-}
-
-static struct map *map__new(struct mmap_event *event)
-{
-	struct map *self = malloc(sizeof(*self));
-
-	if (self != NULL) {
-		const char *filename = event->filename;
-
-		self->start = event->start;
-		self->end   = event->start + event->len;
-		self->pgoff = event->pgoff;
-
-		self->dso = dsos__findnew(filename);
-		if (self->dso == NULL)
-			goto out_delete;
-
-		if (self->dso == vdso)
-			self->map_ip = vdso__map_ip;
-		else
-			self->map_ip = map__map_ip;
-	}
-	return self;
-out_delete:
-	free(self);
-	return NULL;
-}
-
-static struct map *map__clone(struct map *self)
-{
-	struct map *map = malloc(sizeof(*self));
-
-	if (!map)
-		return NULL;
-
-	memcpy(map, self, sizeof(*self));
-
-	return map;
-}
-
-static int map__overlap(struct map *l, struct map *r)
-{
-	if (l->start > r->start) {
-		struct map *t = l;
-		l = r;
-		r = t;
-	}
-
-	if (l->end > r->start)
-		return 1;
-
-	return 0;
-}
-
-static size_t map__fprintf(struct map *self, FILE *fp)
-{
-	return fprintf(fp, " %Lx-%Lx %Lx %s\n",
-		       self->start, self->end, self->pgoff, self->dso->name);
-}
 
 
 struct thread {
@@ -927,7 +720,7 @@ static int
 process_mmap_event(event_t *event, unsigned long offset, unsigned long head)
 {
 	struct thread *thread = threads__findnew(event->mmap.pid);
-	struct map *map = map__new(&event->mmap);
+	struct map *map = map__new(&event->mmap, NULL, 0);
 
 	dprintf("%p [%p]: PERF_EVENT_MMAP %d: [%p(%p) @ %p]: %s\n",
 		(void *)(offset + head),
