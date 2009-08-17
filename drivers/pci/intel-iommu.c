@@ -251,7 +251,8 @@ static inline int first_pte_in_page(struct dma_pte *pte)
  * 	2. It maps to each iommu if successful.
  *	3. Each iommu mapps to this domain if successful.
  */
-struct dmar_domain *si_domain;
+static struct dmar_domain *si_domain;
+static int hw_pass_through = 1;
 
 /* devices under the same p2p bridge are owned in one domain */
 #define DOMAIN_FLAG_P2P_MULTIPLE_DEVICES (1 << 0)
@@ -1309,7 +1310,6 @@ static void iommu_detach_domain(struct dmar_domain *domain,
 }
 
 static struct iova_domain reserved_iova_list;
-static struct lock_class_key reserved_alloc_key;
 static struct lock_class_key reserved_rbtree_key;
 
 static void dmar_init_reserved_ranges(void)
@@ -1320,8 +1320,6 @@ static void dmar_init_reserved_ranges(void)
 
 	init_iova_domain(&reserved_iova_list, DMA_32BIT_PFN);
 
-	lockdep_set_class(&reserved_iova_list.iova_alloc_lock,
-		&reserved_alloc_key);
 	lockdep_set_class(&reserved_iova_list.iova_rbtree_lock,
 		&reserved_rbtree_key);
 
@@ -1958,13 +1956,23 @@ static int iommu_prepare_identity_map(struct pci_dev *pdev,
 	struct dmar_domain *domain;
 	int ret;
 
-	printk(KERN_INFO
-	       "IOMMU: Setting identity map for device %s [0x%Lx - 0x%Lx]\n",
-	       pci_name(pdev), start, end);
-
 	domain = get_domain_for_dev(pdev, DEFAULT_DOMAIN_ADDRESS_WIDTH);
 	if (!domain)
 		return -ENOMEM;
+
+	/* For _hardware_ passthrough, don't bother. But for software
+	   passthrough, we do it anyway -- it may indicate a memory
+	   range which is reserved in E820, so which didn't get set
+	   up to start with in si_domain */
+	if (domain == si_domain && hw_pass_through) {
+		printk("Ignoring identity map for HW passthrough device %s [0x%Lx - 0x%Lx]\n",
+		       pci_name(pdev), start, end);
+		return 0;
+	}
+
+	printk(KERN_INFO
+	       "IOMMU: Setting identity map for device %s [0x%Lx - 0x%Lx]\n",
+	       pci_name(pdev), start, end);
 
 	ret = iommu_domain_identity_map(domain, start, end);
 	if (ret)
@@ -2016,23 +2024,6 @@ static inline void iommu_prepare_isa(void)
 }
 #endif /* !CONFIG_DMAR_FLPY_WA */
 
-/* Initialize each context entry as pass through.*/
-static int __init init_context_pass_through(void)
-{
-	struct pci_dev *pdev = NULL;
-	struct dmar_domain *domain;
-	int ret;
-
-	for_each_pci_dev(pdev) {
-		domain = get_domain_for_dev(pdev, DEFAULT_DOMAIN_ADDRESS_WIDTH);
-		ret = domain_context_mapping(domain, pdev,
-					     CONTEXT_TT_PASS_THROUGH);
-		if (ret)
-			return ret;
-	}
-	return 0;
-}
-
 static int md_domain_init(struct dmar_domain *domain, int guest_width);
 
 static int __init si_domain_work_fn(unsigned long start_pfn,
@@ -2047,7 +2038,7 @@ static int __init si_domain_work_fn(unsigned long start_pfn,
 
 }
 
-static int si_domain_init(void)
+static int si_domain_init(int hw)
 {
 	struct dmar_drhd_unit *drhd;
 	struct intel_iommu *iommu;
@@ -2073,6 +2064,9 @@ static int si_domain_init(void)
 	}
 
 	si_domain->flags = DOMAIN_FLAG_STATIC_IDENTITY;
+
+	if (hw)
+		return 0;
 
 	for_each_online_node(nid) {
 		work_with_active_regions(nid, si_domain_work_fn, &ret);
@@ -2100,14 +2094,22 @@ static int identity_mapping(struct pci_dev *pdev)
 }
 
 static int domain_add_dev_info(struct dmar_domain *domain,
-				  struct pci_dev *pdev)
+			       struct pci_dev *pdev,
+			       int translation)
 {
 	struct device_domain_info *info;
 	unsigned long flags;
+	int ret;
 
 	info = alloc_devinfo_mem();
 	if (!info)
 		return -ENOMEM;
+
+	ret = domain_context_mapping(domain, pdev, translation);
+	if (ret) {
+		free_devinfo_mem(info);
+		return ret;
+	}
 
 	info->segment = pci_domain_nr(pdev->bus);
 	info->bus = pdev->bus->number;
@@ -2165,25 +2167,23 @@ static int iommu_should_identity_map(struct pci_dev *pdev, int startup)
 	return 1;
 }
 
-static int iommu_prepare_static_identity_mapping(void)
+static int iommu_prepare_static_identity_mapping(int hw)
 {
 	struct pci_dev *pdev = NULL;
 	int ret;
 
-	ret = si_domain_init();
+	ret = si_domain_init(hw);
 	if (ret)
 		return -EFAULT;
 
 	for_each_pci_dev(pdev) {
 		if (iommu_should_identity_map(pdev, 1)) {
-			printk(KERN_INFO "IOMMU: identity mapping for device %s\n",
-			       pci_name(pdev));
+			printk(KERN_INFO "IOMMU: %s identity mapping for device %s\n",
+			       hw ? "hardware" : "software", pci_name(pdev));
 
-			ret = domain_context_mapping(si_domain, pdev,
+			ret = domain_add_dev_info(si_domain, pdev,
+						     hw ? CONTEXT_TT_PASS_THROUGH :
 						     CONTEXT_TT_MULTI_LEVEL);
-			if (ret)
-				return ret;
-			ret = domain_add_dev_info(si_domain, pdev);
 			if (ret)
 				return ret;
 		}
@@ -2199,14 +2199,6 @@ int __init init_dmars(void)
 	struct pci_dev *pdev;
 	struct intel_iommu *iommu;
 	int i, ret;
-	int pass_through = 1;
-
-	/*
-	 * In case pass through can not be enabled, iommu tries to use identity
-	 * mapping.
-	 */
-	if (iommu_pass_through)
-		iommu_identity_mapping = 1;
 
 	/*
 	 * for each drhd
@@ -2234,7 +2226,6 @@ int __init init_dmars(void)
 	deferred_flush = kzalloc(g_num_of_iommus *
 		sizeof(struct deferred_flush_tables), GFP_KERNEL);
 	if (!deferred_flush) {
-		kfree(g_iommus);
 		ret = -ENOMEM;
 		goto error;
 	}
@@ -2261,14 +2252,8 @@ int __init init_dmars(void)
 			goto error;
 		}
 		if (!ecap_pass_through(iommu->ecap))
-			pass_through = 0;
+			hw_pass_through = 0;
 	}
-	if (iommu_pass_through)
-		if (!pass_through) {
-			printk(KERN_INFO
-			       "Pass Through is not supported by hardware.\n");
-			iommu_pass_through = 0;
-		}
 
 	/*
 	 * Start from the sane iommu hardware state.
@@ -2323,63 +2308,56 @@ int __init init_dmars(void)
 		}
 	}
 
-	/*
-	 * If pass through is set and enabled, context entries of all pci
-	 * devices are intialized by pass through translation type.
-	 */
-	if (iommu_pass_through) {
-		ret = init_context_pass_through();
-		if (ret) {
-			printk(KERN_ERR "IOMMU: Pass through init failed.\n");
-			iommu_pass_through = 0;
-		}
-	}
-
+	if (iommu_pass_through)
+		iommu_identity_mapping = 1;
+#ifdef CONFIG_DMAR_BROKEN_GFX_WA
+	else
+		iommu_identity_mapping = 2;
+#endif
 	/*
 	 * If pass through is not set or not enabled, setup context entries for
 	 * identity mappings for rmrr, gfx, and isa and may fall back to static
 	 * identity mapping if iommu_identity_mapping is set.
 	 */
-	if (!iommu_pass_through) {
-#ifdef CONFIG_DMAR_BROKEN_GFX_WA
-		if (!iommu_identity_mapping)
-			iommu_identity_mapping = 2;
-#endif
-		if (iommu_identity_mapping)
-			iommu_prepare_static_identity_mapping();
-		/*
-		 * For each rmrr
-		 *   for each dev attached to rmrr
-		 *   do
-		 *     locate drhd for dev, alloc domain for dev
-		 *     allocate free domain
-		 *     allocate page table entries for rmrr
-		 *     if context not allocated for bus
-		 *           allocate and init context
-		 *           set present in root table for this bus
-		 *     init context with domain, translation etc
-		 *    endfor
-		 * endfor
-		 */
-		printk(KERN_INFO "IOMMU: Setting RMRR:\n");
-		for_each_rmrr_units(rmrr) {
-			for (i = 0; i < rmrr->devices_cnt; i++) {
-				pdev = rmrr->devices[i];
-				/*
-				 * some BIOS lists non-exist devices in DMAR
-				 * table.
-				 */
-				if (!pdev)
-					continue;
-				ret = iommu_prepare_rmrr_dev(rmrr, pdev);
-				if (ret)
-					printk(KERN_ERR
-				 "IOMMU: mapping reserved region failed\n");
-			}
+	if (iommu_identity_mapping) {
+		ret = iommu_prepare_static_identity_mapping(hw_pass_through);
+		if (ret) {
+			printk(KERN_CRIT "Failed to setup IOMMU pass-through\n");
+			goto error;
 		}
-
-		iommu_prepare_isa();
 	}
+	/*
+	 * For each rmrr
+	 *   for each dev attached to rmrr
+	 *   do
+	 *     locate drhd for dev, alloc domain for dev
+	 *     allocate free domain
+	 *     allocate page table entries for rmrr
+	 *     if context not allocated for bus
+	 *           allocate and init context
+	 *           set present in root table for this bus
+	 *     init context with domain, translation etc
+	 *    endfor
+	 * endfor
+	 */
+	printk(KERN_INFO "IOMMU: Setting RMRR:\n");
+	for_each_rmrr_units(rmrr) {
+		for (i = 0; i < rmrr->devices_cnt; i++) {
+			pdev = rmrr->devices[i];
+			/*
+			 * some BIOS lists non-exist devices in DMAR
+			 * table.
+			 */
+			if (!pdev)
+				continue;
+			ret = iommu_prepare_rmrr_dev(rmrr, pdev);
+			if (ret)
+				printk(KERN_ERR
+				       "IOMMU: mapping reserved region failed\n");
+		}
+	}
+
+	iommu_prepare_isa();
 
 	/*
 	 * for each drhd
@@ -2454,8 +2432,7 @@ static struct iova *intel_alloc_iova(struct device *dev,
 	return iova;
 }
 
-static struct dmar_domain *
-get_valid_domain_for_dev(struct pci_dev *pdev)
+static struct dmar_domain *__get_valid_domain_for_dev(struct pci_dev *pdev)
 {
 	struct dmar_domain *domain;
 	int ret;
@@ -2481,6 +2458,18 @@ get_valid_domain_for_dev(struct pci_dev *pdev)
 	}
 
 	return domain;
+}
+
+static inline struct dmar_domain *get_valid_domain_for_dev(struct pci_dev *dev)
+{
+	struct device_domain_info *info;
+
+	/* No lock here, assumes no domain exit in normal case */
+	info = dev->dev.archdata.iommu;
+	if (likely(info))
+		return info->domain;
+
+	return __get_valid_domain_for_dev(dev);
 }
 
 static int iommu_dummy(struct pci_dev *pdev)
@@ -2525,10 +2514,10 @@ static int iommu_no_mapping(struct device *dev)
 		 */
 		if (iommu_should_identity_map(pdev, 0)) {
 			int ret;
-			ret = domain_add_dev_info(si_domain, pdev);
-			if (ret)
-				return 0;
-			ret = domain_context_mapping(si_domain, pdev, CONTEXT_TT_MULTI_LEVEL);
+			ret = domain_add_dev_info(si_domain, pdev,
+						  hw_pass_through ?
+						  CONTEXT_TT_PASS_THROUGH :
+						  CONTEXT_TT_MULTI_LEVEL);
 			if (!ret) {
 				printk(KERN_INFO "64bit %s uses identity mapping\n",
 				       pci_name(pdev));
@@ -2733,12 +2722,6 @@ static void intel_unmap_page(struct device *dev, dma_addr_t dev_addr,
 	}
 }
 
-static void intel_unmap_single(struct device *dev, dma_addr_t dev_addr, size_t size,
-			       int dir)
-{
-	intel_unmap_page(dev, dev_addr, size, dir, NULL);
-}
-
 static void *intel_alloc_coherent(struct device *hwdev, size_t size,
 				  dma_addr_t *dma_handle, gfp_t flags)
 {
@@ -2771,7 +2754,7 @@ static void intel_free_coherent(struct device *hwdev, size_t size, void *vaddr,
 	size = PAGE_ALIGN(size);
 	order = get_order(size);
 
-	intel_unmap_single(hwdev, dma_handle, size, DMA_BIDIRECTIONAL);
+	intel_unmap_page(hwdev, dma_handle, size, DMA_BIDIRECTIONAL, NULL);
 	free_pages((unsigned long)vaddr, order);
 }
 
@@ -2807,11 +2790,18 @@ static void intel_unmap_sg(struct device *hwdev, struct scatterlist *sglist,
 	/* free page tables */
 	dma_pte_free_pagetable(domain, start_pfn, last_pfn);
 
-	iommu_flush_iotlb_psi(iommu, domain->id, start_pfn,
-			      (last_pfn - start_pfn + 1));
-
-	/* free iova */
-	__free_iova(&domain->iovad, iova);
+	if (intel_iommu_strict) {
+		iommu_flush_iotlb_psi(iommu, domain->id, start_pfn,
+				      last_pfn - start_pfn + 1);
+		/* free iova */
+		__free_iova(&domain->iovad, iova);
+	} else {
+		add_unmap(domain, iova);
+		/*
+		 * queue up the release of the unmap to save the 1/6th of the
+		 * cpu used up by the iotlb flush operation...
+		 */
+	}
 }
 
 static int intel_nontranslate_map_sg(struct device *hddev,
@@ -3194,7 +3184,7 @@ int __init intel_iommu_init(void)
 	 * Check the need for DMA-remapping initialization now.
 	 * Above initialization will also be used by Interrupt-remapping.
 	 */
-	if (no_iommu || (swiotlb && !iommu_pass_through) || dmar_disabled)
+	if (no_iommu || swiotlb || dmar_disabled)
 		return -ENODEV;
 
 	iommu_init_mempool();
@@ -3214,14 +3204,7 @@ int __init intel_iommu_init(void)
 
 	init_timer(&unmap_timer);
 	force_iommu = 1;
-
-	if (!iommu_pass_through) {
-		printk(KERN_INFO
-		       "Multi-level page-table translation for DMAR.\n");
-		dma_ops = &intel_dma_ops;
-	} else
-		printk(KERN_INFO
-		       "DMAR: Pass through translation for DMAR.\n");
+	dma_ops = &intel_dma_ops;
 
 	init_iommu_sysfs();
 
@@ -3504,7 +3487,6 @@ static int intel_iommu_attach_device(struct iommu_domain *domain,
 	struct intel_iommu *iommu;
 	int addr_width;
 	u64 end;
-	int ret;
 
 	/* normally pdev is not mapped */
 	if (unlikely(domain_context_mapped(pdev))) {
@@ -3536,12 +3518,7 @@ static int intel_iommu_attach_device(struct iommu_domain *domain,
 		return -EFAULT;
 	}
 
-	ret = domain_add_dev_info(dmar_domain, pdev);
-	if (ret)
-		return ret;
-
-	ret = domain_context_mapping(dmar_domain, pdev, CONTEXT_TT_MULTI_LEVEL);
-	return ret;
+	return domain_add_dev_info(dmar_domain, pdev, CONTEXT_TT_MULTI_LEVEL);
 }
 
 static void intel_iommu_detach_device(struct iommu_domain *domain,
