@@ -945,7 +945,7 @@ void __pm_runtime_disable(struct device *dev, bool check_resume)
  out:
 	spin_unlock_irq(&dev->power.lock);
 }
-EXPORT_SYMBOL_GPL(pm_runtime_disable);
+EXPORT_SYMBOL_GPL(__pm_runtime_disable);
 
 /**
  * pm_runtime_enable - Enable run-time PM of a device.
