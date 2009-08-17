@@ -47,9 +47,6 @@
 
 static struct vfsmount *inotify_mnt __read_mostly;
 
-/* this just sits here and wastes global memory.  used to just pad userspace messages with zeros */
-static struct inotify_event nul_inotify_event;
-
 /* these are configurable via /proc/sys/fs/inotify/ */
 static int inotify_max_user_instances __read_mostly;
 static int inotify_max_queued_events __read_mostly;
@@ -215,7 +212,7 @@ static ssize_t copy_event_to_user(struct fsnotify_group *group,
 	/*
 	 * fsnotify only stores the pathname, so here we have to send the pathname
 	 * and then pad that pathname out to a multiple of sizeof(inotify_event)
-	 * with zeros.  I get my zeros from the nul_inotify_event.
+	 * with zeros.
 	 */
 	if (name_len) {
 		unsigned int len_to_zero = name_len - event->name_len;
@@ -224,8 +221,8 @@ static ssize_t copy_event_to_user(struct fsnotify_group *group,
 			return -EFAULT;
 		buf += event->name_len;
 
-		/* fill userspace with 0's from nul_inotify_event */
-		if (copy_to_user(buf, &nul_inotify_event, len_to_zero))
+		/* fill userspace with 0's */
+		if (clear_user(buf, len_to_zero))
 			return -EFAULT;
 		buf += len_to_zero;
 		event_size += name_len;
@@ -404,7 +401,7 @@ void inotify_ignored_and_remove_idr(struct fsnotify_mark_entry *entry,
 	fsn_event_priv->group = group;
 	event_priv->wd = ientry->wd;
 
-	fsnotify_add_notify_event(group, ignored_event, fsn_event_priv);
+	fsnotify_add_notify_event(group, ignored_event, fsn_event_priv, NULL);
 
 	/* did the private data get added? */
 	if (list_empty(&fsn_event_priv->event_list))
@@ -427,7 +424,9 @@ skip_send_ignore:
 /* ding dong the mark is dead */
 static void inotify_free_mark(struct fsnotify_mark_entry *entry)
 {
-	struct inotify_inode_mark_entry *ientry = (struct inotify_inode_mark_entry *)entry;
+	struct inotify_inode_mark_entry *ientry;
+
+	ientry = container_of(entry, struct inotify_inode_mark_entry, fsn_entry);
 
 	kmem_cache_free(inotify_inode_mark_cachep, ientry);
 }
@@ -480,7 +479,7 @@ retry:
 			goto out_err;
 		}
 
-		ret = fsnotify_add_mark(&tmp_ientry->fsn_entry, group, inode);
+		ret = fsnotify_add_mark(&tmp_ientry->fsn_entry, group, inode, 0);
 		if (ret) {
 			inotify_remove_from_idr(group, tmp_ientry);
 			if (ret == -EEXIST)
