@@ -1,6 +1,6 @@
 Name: kernel-image-std-pae
 Version: 2.6.25
-Release: alt8.M41.4
+Release: alt8.M41.5
 epoch: 1
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -470,6 +470,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Mon Aug 17 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.25-alt8.M41.5
+- [SECURITY] fix CVE-2009-2692
+
 * Wed Nov 26 2008 Michail Yakushin <silicium@altlinux.ru> 1:2.6.25-alt8.M41.4
 - export symbol usb_kill_urb
 - exclude DRM from kernel-image package
