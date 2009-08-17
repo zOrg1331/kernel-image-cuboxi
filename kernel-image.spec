@@ -467,7 +467,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %changelog
 * Mon Aug 17 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.25-alt8.M41.5
-- 
+- [SECURITY] fix CVE-2009-2692
 
 * Wed Nov 26 2008 Michail Yakushin <silicium@altlinux.ru> 1:2.6.25-alt8.M41.4
 - export symbol usb_kill_urb
