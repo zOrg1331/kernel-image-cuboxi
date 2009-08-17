@@ -83,6 +83,7 @@
 #include <inttypes.h>
 #include "../../../include/linux/magic.h"
 
+
 #ifndef NO_ICONV
 #include <iconv.h>
 #endif
@@ -310,6 +311,7 @@ static inline int has_extension(const char *filename, const char *ext)
 #undef isspace
 #undef isdigit
 #undef isalpha
+#undef isprint
 #undef isalnum
 #undef tolower
 #undef toupper
