@@ -600,7 +600,7 @@ next_sector:
 	return 1;
 }
 
-int w_make_ov_request(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
+static int w_make_ov_request(struct drbd_conf *mdev, struct drbd_work *w, int cancel)
 {
 	int number, i, size;
 	sector_t sector;

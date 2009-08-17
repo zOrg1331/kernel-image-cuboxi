@@ -3809,7 +3809,7 @@ static int drbd_send_handshake(struct drbd_conf *mdev)
  *  -1 peer talks different language,
  *     no point in trying again, please go standalone.
  */
-int drbd_do_handshake(struct drbd_conf *mdev)
+static int drbd_do_handshake(struct drbd_conf *mdev)
 {
 	/* ASSERT current == mdev->receiver ... */
 	struct p_handshake *p = &mdev->data.rbuf.handshake;
@@ -3872,7 +3872,7 @@ int drbd_do_handshake(struct drbd_conf *mdev)
 }
 
 #if !defined(CONFIG_CRYPTO_HMAC) && !defined(CONFIG_CRYPTO_HMAC_MODULE)
-int drbd_do_auth(struct drbd_conf *mdev)
+static int drbd_do_auth(struct drbd_conf *mdev)
 {
 	dev_err(DEV, "This kernel was build without CONFIG_CRYPTO_HMAC.\n");
 	dev_err(DEV, "You need to disable 'cram-hmac-alg' in drbd.conf.\n");
@@ -3880,7 +3880,7 @@ int drbd_do_auth(struct drbd_conf *mdev)
 }
 #else
 #define CHALLENGE_LEN 64
-int drbd_do_auth(struct drbd_conf *mdev)
+static int drbd_do_auth(struct drbd_conf *mdev)
 {
 	char my_challenge[CHALLENGE_LEN];  /* 64 Bytes... */
 	struct scatterlist sg;
