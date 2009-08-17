@@ -15,6 +15,8 @@
 #include "util/string.h"
 
 #include "util/header.h"
+#include "util/event.h"
+#include "util/debug.h"
 
 #include <unistd.h>
 #include <sched.h>
@@ -42,7 +44,6 @@ static int			inherit				= 1;
 static int			force				= 0;
 static int			append_file			= 0;
 static int			call_graph			= 0;
-static int			verbose				= 0;
 static int			inherit_stat			= 0;
 static int			no_samples			= 0;
 static int			sample_address			= 0;
@@ -61,24 +62,6 @@ static int			nr_cpu;
 static int			file_new = 1;
 
 struct perf_header		*header;
-
-struct mmap_event {
-	struct perf_event_header	header;
-	u32				pid;
-	u32				tid;
-	u64				start;
-	u64				len;
-	u64				pgoff;
-	char				filename[PATH_MAX];
-};
-
-struct comm_event {
-	struct perf_event_header	header;
-	u32				pid;
-	u32				tid;
-	char				comm[16];
-};
-
 
 struct mmap_data {
 	int			counter;
@@ -219,7 +202,7 @@ static pid_t pid_synthesize_comm_event(pid_t pid, int full)
 	snprintf(filename, sizeof(filename), "/proc/%d/status", pid);
 
 	fp = fopen(filename, "r");
-	if (fd == NULL) {
+	if (fp == NULL) {
 		/*
 		 * We raced with a task exiting - just return:
 		 */
