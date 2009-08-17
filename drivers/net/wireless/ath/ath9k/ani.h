@@ -124,7 +124,6 @@ void ath9k_ani_reset(struct ath_hw *ah);
 void ath9k_hw_ani_monitor(struct ath_hw *ah,
 			  const struct ath9k_node_stats *stats,
 			  struct ath9k_channel *chan);
-bool ath9k_hw_phycounters(struct ath_hw *ah);
 void ath9k_enable_mib_counters(struct ath_hw *ah);
 void ath9k_hw_disable_mib_counters(struct ath_hw *ah);
 u32 ath9k_hw_GetMibCycleCountsPct(struct ath_hw *ah, u32 *rxc_pcnt,
@@ -132,7 +131,7 @@ u32 ath9k_hw_GetMibCycleCountsPct(struct ath_hw *ah, u32 *rxc_pcnt,
 void ath9k_hw_procmibevent(struct ath_hw *ah,
 			   const struct ath9k_node_stats *stats);
 void ath9k_hw_ani_setup(struct ath_hw *ah);
-void ath9k_hw_ani_attach(struct ath_hw *ah);
-void ath9k_hw_ani_detach(struct ath_hw *ah);
+void ath9k_hw_ani_init(struct ath_hw *ah);
+void ath9k_hw_ani_disable(struct ath_hw *ah);
 
 #endif /* ANI_H */

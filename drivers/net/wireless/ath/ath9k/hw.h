@@ -42,6 +42,9 @@
 #define AR_SUBVENDOR_ID_NEW_A	0x7065
 #define AR5416_MAGIC		0x19641014
 
+#define AR5416_DEVID_AR9287_PCI  0x002D
+#define AR5416_DEVID_AR9287_PCIE 0x002E
+
 /* Register read/write primitives */
 #define REG_WRITE(_ah, _reg, _val) ath9k_iowrite32((_ah), (_reg), (_val))
 #define REG_READ(_ah, _reg) ath9k_ioread32((_ah), (_reg))
@@ -95,6 +98,7 @@
 
 #define MAX_RATE_POWER              63
 #define AH_WAIT_TIMEOUT             100000 /* (us) */
+#define AH_TSF_WRITE_TIMEOUT        100    /* (us) */
 #define AH_TIME_QUANTUM             10
 #define AR_KEYTABLE_SIZE            128
 #define POWER_UP_TIME               200000
@@ -113,15 +117,20 @@
 
 enum wireless_mode {
 	ATH9K_MODE_11A = 0,
-	ATH9K_MODE_11B = 2,
-	ATH9K_MODE_11G = 3,
-	ATH9K_MODE_11NA_HT20 = 6,
-	ATH9K_MODE_11NG_HT20 = 7,
-	ATH9K_MODE_11NA_HT40PLUS = 8,
-	ATH9K_MODE_11NA_HT40MINUS = 9,
-	ATH9K_MODE_11NG_HT40PLUS = 10,
-	ATH9K_MODE_11NG_HT40MINUS = 11,
-	ATH9K_MODE_MAX
+	ATH9K_MODE_11G,
+	ATH9K_MODE_11NA_HT20,
+	ATH9K_MODE_11NG_HT20,
+	ATH9K_MODE_11NA_HT40PLUS,
+	ATH9K_MODE_11NA_HT40MINUS,
+	ATH9K_MODE_11NG_HT40PLUS,
+	ATH9K_MODE_11NG_HT40MINUS,
+	ATH9K_MODE_MAX,
+};
+
+enum ath9k_ant_setting {
+	ATH9K_ANT_VARIABLE = 0,
+	ATH9K_ANT_FIXED_A,
+	ATH9K_ANT_FIXED_B
 };
 
 enum ath9k_hw_caps {
@@ -188,7 +197,7 @@ struct ath9k_ops_config {
 	u32 cck_trig_high;
 	u32 cck_trig_low;
 	u32 enable_ani;
-	u16 diversity_control;
+	enum ath9k_ant_setting diversity_control;
 	u16 antenna_switch_swap;
 	int serialize_regmode;
 	bool intr_mitigation;
@@ -327,12 +336,6 @@ enum ath9k_power_mode {
 	ATH9K_PM_UNDEFINED
 };
 
-enum ath9k_ant_setting {
-	ATH9K_ANT_VARIABLE = 0,
-	ATH9K_ANT_FIXED_A,
-	ATH9K_ANT_FIXED_B
-};
-
 enum ath9k_tp_scale {
 	ATH9K_TP_SCALE_MAX = 0,
 	ATH9K_TP_SCALE_50,
@@ -400,6 +403,7 @@ struct ath_hw {
 	union {
 		struct ar5416_eeprom_def def;
 		struct ar5416_eeprom_4k map4k;
+		struct ar9287_eeprom map9287;
 	} eeprom;
 	const struct eeprom_ops *eep_ops;
 	enum ath9k_eep_map eep_map;
@@ -415,9 +419,10 @@ struct ath_hw {
 	u32 wlanactive_gpio;
 	u32 ah_flags;
 
+	bool htc_reset_init;
+
 	enum nl80211_iftype opmode;
 	enum ath9k_power_mode power_mode;
-	enum ath9k_power_mode restore_mode;
 
 	struct ath9k_nfcal_hist nfCalHist[NUM_NF_READINGS];
 	struct ar5416Stats stats;
@@ -432,8 +437,6 @@ struct ath_hw {
 	u32 txurn_interrupt_mask;
 	bool chip_fullsleep;
 	u32 atim_window;
-	u16 antenna_switch_swap;
-	enum ath9k_ant_setting diversity_control;
 
 	/* Calibration */
 	enum ath9k_cal_types supp_cals;
@@ -502,7 +505,6 @@ struct ath_hw {
 
 	/* ANI */
 	u32 proc_phyerr;
-	bool has_hw_phycounters;
 	u32 aniperiod;
 	struct ar5416AniState *curani;
 	struct ar5416AniState ani[255];
@@ -538,11 +540,11 @@ struct ath_hw {
 	struct ar5416IniArray iniModesTxGain;
 };
 
-/* Attach, Detach, Reset */
+/* Initialization, Detach, Reset */
 const char *ath9k_hw_probe(u16 vendorid, u16 devid);
 void ath9k_hw_detach(struct ath_hw *ah);
-struct ath_hw *ath9k_hw_attach(u16 devid, struct ath_softc *sc, int *error);
-void ath9k_hw_rfdetach(struct ath_hw *ah);
+int ath9k_hw_init(struct ath_hw *ah);
+void ath9k_hw_rf_free(struct ath_hw *ah);
 int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 		   bool bChannelChange);
 void ath9k_hw_fill_cap_info(struct ath_hw *ah);
@@ -596,7 +598,7 @@ void ath9k_hw_write_associd(struct ath_softc *sc);
 u64 ath9k_hw_gettsf64(struct ath_hw *ah);
 void ath9k_hw_settsf64(struct ath_hw *ah, u64 tsf64);
 void ath9k_hw_reset_tsf(struct ath_hw *ah);
-bool ath9k_hw_set_tsfadjust(struct ath_hw *ah, u32 setting);
+void ath9k_hw_set_tsfadjust(struct ath_hw *ah, u32 setting);
 bool ath9k_hw_setslottime(struct ath_hw *ah, u32 us);
 void ath9k_hw_set11nmac2040(struct ath_hw *ah, enum ath9k_ht_macmode mode);
 void ath9k_hw_beaconinit(struct ath_hw *ah, u32 next_beacon, u32 beacon_period);
@@ -609,7 +611,6 @@ void ath9k_hw_configpcipowersave(struct ath_hw *ah, int restore);
 /* Interrupt Handling */
 bool ath9k_hw_intrpend(struct ath_hw *ah);
 bool ath9k_hw_getisr(struct ath_hw *ah, enum ath9k_int *masked);
-enum ath9k_int ath9k_hw_intrget(struct ath_hw *ah);
 enum ath9k_int ath9k_hw_set_interrupts(struct ath_hw *ah, enum ath9k_int ints);
 
 void ath9k_hw_btcoex_enable(struct ath_hw *ah);
