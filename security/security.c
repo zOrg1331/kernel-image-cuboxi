@@ -124,9 +124,9 @@ int register_security(struct security_operations *ops)
 
 /* Security operations */
 
-int security_ptrace_may_access(struct task_struct *child, unsigned int mode)
+int security_ptrace_access_check(struct task_struct *child, unsigned int mode)
 {
-	return security_ops->ptrace_may_access(child, mode);
+	return security_ops->ptrace_access_check(child, mode);
 }
 
 int security_ptrace_traceme(struct task_struct *parent)
@@ -707,6 +707,11 @@ int security_kernel_act_as(struct cred *new, u32 secid)
 int security_kernel_create_files_as(struct cred *new, struct inode *inode)
 {
 	return security_ops->kernel_create_files_as(new, inode);
+}
+
+int security_kernel_module_request(void)
+{
+	return security_ops->kernel_module_request();
 }
 
 int security_task_setuid(uid_t id0, uid_t id1, uid_t id2, int flags)
