@@ -1,6 +1,6 @@
 # storage related
 compcache
-subfs
+#subfs
 
 # video
 fglrx
