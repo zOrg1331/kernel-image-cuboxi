@@ -1,0 +1,11 @@
+--- a/net/socket.c	2009-08-17 12:32:54 +0000
++++ b/net/socket.c	2009-08-17 12:33:24 +0000
+@@ -702,7 +702,7 @@
+ 	if (more)
+ 		flags |= MSG_MORE;
+ 
+-	return sock->ops->sendpage(sock, page, offset, size, flags);
++	return kernel_sendpage(sock, page, offset, size, flags);
+ }
+ 
+ static struct sock_iocb *alloc_sock_iocb(struct kiocb *iocb,

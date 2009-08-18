@@ -3254,6 +3254,7 @@ Patch99999: linux-kernel-test.patch
 # ALT-specific patches
 Patch200000: our_kernel.patch
 Patch200001: fix_getcpu_call.patch
+Patch200002: make-sock_sendpage-use-kernel_sendpage.patch
 
 # Patches from Solar Designer
 Patch210000: linux-2.6.18-128.2.1.el5.028stab064.4-128.4.1-qnd1.diff
@@ -6462,6 +6463,7 @@ perl -p -i -e "s/^RHEL_MINOR.*/RHEL_MINOR = %rh_release_minor/" Makefile
 # ALT-specific patch
 %patch200000 -p1
 %patch200001 -p1
+%patch200002 -p1
 
 %patch210000 -p1
 %patch210001 -p1
