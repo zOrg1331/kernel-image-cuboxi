@@ -271,7 +271,7 @@ static void __init overo_flash_init(void)
 			printk(KERN_ERR "Unable to register NAND device\n");
 	}
 }
-static struct omap_uart_config overo_uart_config __initdata = {
+static struct omap_uart_platform_data overo_uart_config __initdata = {
 	.enabled_uarts	= ((1 << 0) | (1 << 1) | (1 << 2)),
 };
 
@@ -378,7 +378,6 @@ static struct omap_lcd_config overo_lcd_config __initdata = {
 };
 
 static struct omap_board_config_kernel overo_config[] __initdata = {
-	{ OMAP_TAG_UART,	&overo_uart_config },
 	{ OMAP_TAG_LCD,		&overo_lcd_config },
 };
 
@@ -392,7 +391,7 @@ static void __init overo_init(void)
 	platform_add_devices(overo_devices, ARRAY_SIZE(overo_devices));
 	omap_board_config = overo_config;
 	omap_board_config_size = ARRAY_SIZE(overo_config);
-	omap_serial_init();
+	omap_serial_init(&overo_uart_config);
 	overo_flash_init();
 	usb_musb_init();
 	overo_ads7846_init();
