@@ -23,7 +23,6 @@
 #include <linux/kthread.h>
 #include <linux/wait.h>
 #include <linux/async.h>
-#include <linux/pm_runtime.h>
 
 #include "base.h"
 #include "power/power.h"
@@ -203,10 +202,7 @@ int driver_probe_device(struct device_driver *drv, struct device *dev)
 	pr_debug("bus: '%s': %s: matched device %s with driver %s\n",
 		 drv->bus->name, __func__, dev_name(dev), drv->name);
 
-	pm_runtime_get_noresume(dev);
-	pm_runtime_barrier(dev);
 	ret = really_probe(dev, drv);
-	pm_runtime_put_sync(dev);
 
 	return ret;
 }
@@ -249,9 +245,7 @@ int device_attach(struct device *dev)
 			ret = 0;
 		}
 	} else {
-		pm_runtime_get_noresume(dev);
 		ret = bus_for_each_drv(dev->bus, NULL, dev, __device_attach);
-		pm_runtime_put_sync(dev);
 	}
 	up(&dev->sem);
 	return ret;
@@ -312,9 +306,6 @@ static void __device_release_driver(struct device *dev)
 
 	drv = dev->driver;
 	if (drv) {
-		pm_runtime_get_noresume(dev);
-		pm_runtime_barrier(dev);
-
 		driver_sysfs_remove(dev);
 
 		if (dev->bus)
@@ -333,8 +324,6 @@ static void __device_release_driver(struct device *dev)
 			blocking_notifier_call_chain(&dev->bus->p->bus_notifier,
 						     BUS_NOTIFY_UNBOUND_DRIVER,
 						     dev);
-
-		pm_runtime_put_sync(dev);
 	}
 }
 
