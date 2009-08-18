@@ -1,8 +1,8 @@
 Name: kernel-image-tmc-tc
 Version: 2.6.27
-Release: alt4
+Release: alt5
 
-%define kernel_stable_version 30
+%define kernel_stable_version 31
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -482,15 +482,17 @@ rm -rf %buildroot%kbuild_dir/include/media
 %modules_dir/kernel/drivers/media/
 %endif
 
-# TODO:
-# - <Y> compcache
-# - <M> subfs
-
 # NB: I've accidentally trashed git repo with wrong rebase,
 #     and the last backup was corresponding to 2.6.27-alt2;
 #     if anyone would need -alt3, please fix yourself, sorry
 
 %changelog
+* Tue Aug 18 2009 Michael Shigorin <mike@altlinux.org> 2.6.27-alt5
+- 2.6.27.31
+  + there was no real need to rebuild kernel but as module packages
+    had to include proper ExclusiveArch:, why not? :)
+  + TODO shink: compcache packaged separately, subfs later
+
 * Mon Aug 17 2009 Michael Shigorin <mike@altlinux.org> 2.6.27-alt4
 - 2.6.27.30
 - config: enabled CONFIG_KALLSYMS to reenable module autoloading
