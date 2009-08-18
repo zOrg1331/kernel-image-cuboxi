@@ -1332,11 +1332,21 @@ static void ath9k_olc_init(struct ath_hw *ah)
 {
 	u32 i;
 
-	for (i = 0; i < AR9280_TX_GAIN_TABLE_SIZE; i++)
-		ah->originalGain[i] =
-			MS(REG_READ(ah, AR_PHY_TX_GAIN_TBL1 + i * 4),
-					AR_PHY_TX_GAIN);
-	ah->PDADCdelta = 0;
+	if (OLC_FOR_AR9287_10_LATER) {
+		REG_SET_BIT(ah, AR_PHY_TX_PWRCTRL9,
+				AR_PHY_TX_PWRCTRL9_RES_DC_REMOVAL);
+		ath9k_hw_analog_shift_rmw(ah, AR9287_AN_TXPC0,
+				AR9287_AN_TXPC0_TXPCMODE,
+				AR9287_AN_TXPC0_TXPCMODE_S,
+				AR9287_AN_TXPC0_TXPCMODE_TEMPSENSE);
+		udelay(100);
+	} else {
+		for (i = 0; i < AR9280_TX_GAIN_TABLE_SIZE; i++)
+			ah->originalGain[i] =
+				MS(REG_READ(ah, AR_PHY_TX_GAIN_TBL1 + i * 4),
+						AR_PHY_TX_GAIN);
+		ah->PDADCdelta = 0;
+	}
 }
 
 static u32 ath9k_regd_get_ctl(struct ath_regulatory *reg,
@@ -2382,7 +2392,7 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 	if (AR_SREV_9280_10_OR_LATER(ah))
 		REG_SET_BIT(ah, AR_GPIO_INPUT_EN_VAL, AR_GPIO_JTAG_DISABLE);
 
-	if (AR_SREV_9287_10_OR_LATER(ah)) {
+	if (AR_SREV_9287_12_OR_LATER(ah)) {
 		/* Enable ASYNC FIFO */
 		REG_SET_BIT(ah, AR_MAC_PCU_ASYNC_FIFO_REG3,
 				AR_MAC_PCU_ASYNC_FIFO_REG3_DATAPATH_SEL);
@@ -2468,7 +2478,7 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 
 	ath9k_hw_init_user_settings(ah);
 
-	if (AR_SREV_9287_10_OR_LATER(ah)) {
+	if (AR_SREV_9287_12_OR_LATER(ah)) {
 		REG_WRITE(ah, AR_D_GBL_IFS_SIFS,
 			  AR_D_GBL_IFS_SIFS_ASYNC_FIFO_DUR);
 		REG_WRITE(ah, AR_D_GBL_IFS_SLOT,
@@ -2484,7 +2494,7 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 		REG_RMW_FIELD(ah, AR_AHB_MODE, AR_AHB_CUSTOM_BURST_EN,
 			      AR_AHB_CUSTOM_BURST_ASYNC_FIFO_VAL);
 	}
-	if (AR_SREV_9287_10_OR_LATER(ah)) {
+	if (AR_SREV_9287_12_OR_LATER(ah)) {
 		REG_SET_BIT(ah, AR_PCU_MISC_MODE2,
 				AR_PCU_MISC_MODE2_ENABLE_AGGWEP);
 	}
@@ -3063,7 +3073,7 @@ void ath9k_hw_configpcipowersave(struct ath_hw *ah, int restore)
 	if (ah->config.pcie_waen) {
 		REG_WRITE(ah, AR_WA, ah->config.pcie_waen);
 	} else {
-		if (AR_SREV_9285(ah) || AR_SREV_9271(ah))
+		if (AR_SREV_9285(ah) || AR_SREV_9271(ah) || AR_SREV_9287(ah))
 			REG_WRITE(ah, AR_WA, AR9285_WA_DEFAULT);
 		/*
 		 * On AR9280 chips bit 22 of 0x4004 needs to be set to
