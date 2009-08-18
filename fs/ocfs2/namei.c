@@ -63,6 +63,7 @@
 #include "uptodate.h"
 #include "xattr.h"
 #include "acl.h"
+#include "refcounttree.h"
 
 #include "buffer_head_io.h"
 
@@ -2326,4 +2327,5 @@ const struct inode_operations ocfs2_dir_iops = {
 	.getxattr	= generic_getxattr,
 	.listxattr	= ocfs2_listxattr,
 	.removexattr	= generic_removexattr,
+	.reflink	= ocfs2_reflink,
 };
