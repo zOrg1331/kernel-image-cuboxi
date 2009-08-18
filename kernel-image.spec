@@ -1,6 +1,6 @@
 Name: kernel-image-sec-def
 Version: 2.6.27
-Release: alt1
+Release: alt2
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -464,6 +464,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Tue Aug 18 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt2
+- 2.6.27.31 
+
 * Thu May 28 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt1
 - add grsecurity patch
 
