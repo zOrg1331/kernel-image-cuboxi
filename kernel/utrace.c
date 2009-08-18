@@ -985,6 +985,9 @@ static inline int utrace_control_dead(struct task_struct *target,
  * stopped, then there might be no callbacks until all engines let
  * it resume.
  *
+ * Since this is meaningless unless @report_quiesce callbacks will
+ * be made, it returns -%EINVAL if @engine lacks %UTRACE_EVENT(%QUIESCE).
+ *
  * UTRACE_INTERRUPT:
  *
  * This is like %UTRACE_REPORT, but ensures that @target will make a
@@ -1013,11 +1016,17 @@ static inline int utrace_control_dead(struct task_struct *target,
  * @report_quiesce callback with a zero event mask, or the
  * @report_signal callback with %UTRACE_SIGNAL_REPORT.
  *
+ * Since this is not robust unless @report_quiesce callbacks will
+ * be made, it returns -%EINVAL if @engine lacks %UTRACE_EVENT(%QUIESCE).
+ *
  * UTRACE_BLOCKSTEP:
  *
  * It's invalid to use this unless arch_has_block_step() returned true.
  * This is like %UTRACE_SINGLESTEP, but resumes for one whole basic
  * block of user instructions.
+ *
+ * Since this is not robust unless @report_quiesce callbacks will
+ * be made, it returns -%EINVAL if @engine lacks %UTRACE_EVENT(%QUIESCE).
  *
  * %UTRACE_BLOCKSTEP devolves to %UTRACE_SINGLESTEP when another
  * tracing engine is using %UTRACE_SINGLESTEP at the same time.
@@ -1031,6 +1040,18 @@ int utrace_control(struct task_struct *target,
 	int ret;
 
 	if (unlikely(action > UTRACE_DETACH))
+		return -EINVAL;
+
+	/*
+	 * This is a sanity check for a programming error in the caller.
+	 * Their request can only work properly in all cases by relying on
+	 * a follow-up callback, but they didn't set one up!  This check
+	 * doesn't do locking, but it shouldn't matter.  The caller has to
+	 * be synchronously sure the callback is set up to be operating the
+	 * interface properly.
+	 */
+	if (action >= UTRACE_REPORT && action < UTRACE_RESUME &&
+	    unlikely(!(engine->flags & UTRACE_EVENT(QUIESCE))))
 		return -EINVAL;
 
 	utrace = get_utrace_lock(target, engine, true);
