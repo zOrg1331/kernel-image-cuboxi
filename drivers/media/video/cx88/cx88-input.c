@@ -143,7 +143,6 @@ static void cx88_ir_handle_key(struct cx88_IR *ir)
 	}
 }
 
-<<<<<<< HEAD:drivers/media/video/cx88/cx88-input.c
 static void ir_timer(unsigned long data)
 {
 	struct cx88_IR *ir = (struct cx88_IR *)data;
