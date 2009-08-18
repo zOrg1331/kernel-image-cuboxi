@@ -99,4 +99,6 @@ int ocfs2_increase_refcount(handle_t *handle,
 			    u64 cpos, u32 len,
 			    struct ocfs2_alloc_context *meta_ac,
 			    struct ocfs2_cached_dealloc_ctxt *dealloc);
+int ocfs2_reflink(struct dentry *old_dentry, struct inode *dir,
+		  struct dentry *new_dentry, bool preserve);
 #endif /* OCFS2_REFCOUNTTREE_H */
