@@ -393,6 +393,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %post
 %post_kernel_image %kversion-%flavour-%krelease
+[ -f /boot/initrd.img ]||rm -f /boot/initrd.img
+#delete broken link  /boot/initrd.img if it broken
 
 %preun
 %preun_kernel_image %kversion-%flavour-%krelease
