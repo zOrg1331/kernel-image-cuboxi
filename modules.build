@@ -1,0 +1,7 @@
+# storage related
+compcache
+subfs
+
+# video
+fglrx
+nvidia
