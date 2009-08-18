@@ -42,6 +42,11 @@
 #include <linux/writeback.h>
 #include <linux/pagevec.h>
 #include <linux/swap.h>
+#include <linux/security.h>
+#include <linux/fsnotify.h>
+#include <linux/quotaops.h>
+#include <linux/namei.h>
+#include <linux/mount.h>
 
 struct ocfs2_cow_context {
 	struct inode *inode;
@@ -4142,6 +4147,103 @@ out:
 		if (error)
 			iput(new_orphan_inode);
 	}
+
+	return error;
+}
+
+/*
+ * Below here are the bits used by OCFS2_IOC_REFLINK() to fake
+ * sys_reflink().  This will go away when vfs_reflink() exists in
+ * fs/namei.c.
+ */
+
+/* copied from may_create in VFS. */
+static inline int ocfs2_may_create(struct inode *dir, struct dentry *child)
+{
+	if (child->d_inode)
+		return -EEXIST;
+	if (IS_DEADDIR(dir))
+		return -ENOENT;
+	return inode_permission(dir, MAY_WRITE | MAY_EXEC);
+}
+
+/* copied from user_path_parent. */
+static int ocfs2_user_path_parent(const char __user *path,
+				  struct nameidata *nd, char **name)
+{
+	char *s = getname(path);
+	int error;
+
+	if (IS_ERR(s))
+		return PTR_ERR(s);
+
+	error = path_lookup(s, LOOKUP_PARENT, nd);
+	if (error)
+		putname(s);
+	else
+		*name = s;
+
+	return error;
+}
+
+/*
+ * Most codes are copied from sys_linkat.
+ */
+int ocfs2_reflink_ioctl(struct inode *inode,
+			const char __user *oldname,
+			const char __user *newname,
+			bool preserve)
+{
+	struct dentry *new_dentry;
+	struct nameidata nd;
+	struct path old_path;
+	int error;
+	char *to = NULL;
+
+	if (!ocfs2_refcount_tree(OCFS2_SB(inode->i_sb)))
+		return -EOPNOTSUPP;
+
+	error = user_path_at(AT_FDCWD, oldname, 0, &old_path);
+	if (error) {
+		mlog_errno(error);
+		return error;
+	}
+
+	error = ocfs2_user_path_parent(newname, &nd, &to);
+	if (error) {
+		mlog_errno(error);
+		goto out;
+	}
+
+	error = -EXDEV;
+	if (old_path.mnt != nd.path.mnt)
+		goto out_release;
+	new_dentry = lookup_create(&nd, 0);
+	error = PTR_ERR(new_dentry);
+	if (IS_ERR(new_dentry)) {
+		mlog_errno(error);
+		goto out_unlock;
+	}
+
+	error = mnt_want_write(nd.path.mnt);
+	if (error) {
+		mlog_errno(error);
+		goto out_dput;
+	}
+
+	error = vfs_reflink(old_path.dentry,
+			    nd.path.dentry->d_inode,
+			    new_dentry, preserve);
+	mnt_drop_write(nd.path.mnt);
+out_dput:
+	dput(new_dentry);
+out_unlock:
+	mutex_unlock(&nd.path.dentry->d_inode->i_mutex);
+out_release:
+	path_put(&nd.path);
+	putname(to);
+out:
+	path_put(&old_path);
 
 	return error;
 }
