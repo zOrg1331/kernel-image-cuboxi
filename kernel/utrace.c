@@ -1620,10 +1620,8 @@ void utrace_finish_vfork(struct task_struct *task)
 {
 	struct utrace *utrace = task_utrace_struct(task);
 
-	spin_lock(&utrace->lock);
-	if (!utrace->vfork_stop)
-		spin_unlock(&utrace->lock);
-	else {
+	if (utrace->vfork_stop) {
+		spin_lock(&utrace->lock);
 		utrace->vfork_stop = 0;
 		spin_unlock(&utrace->lock);
 		utrace_stop(task, utrace, UTRACE_RESUME); /* XXX */
