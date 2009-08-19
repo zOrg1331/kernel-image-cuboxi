@@ -132,6 +132,19 @@ struct ehci_regs {
 #define USBMODE_CM_HC	(3<<0)		/* host controller mode */
 #define USBMODE_CM_IDLE	(0<<0)		/* idle state */
 
+/* Moorestown has some non-standard registers, partially due to the fact that
+ * its EHCI controller has both TT and LPM support. HOSTPCx are extentions to
+ * PORTSCx
+ */
+#define HOSTPC0		0x84		/* HOSTPC extension */
+#define HOSTPC_PHCD	(1<<22)		/* Phy clock disable */
+#define HOSTPC_PSPD	(3<<25)		/* Port speed detection */
+#define USBMODE_EX	0xc8		/* USB Device mode extension */
+#define USBMODE_EX_VBPS	(1<<5)		/* VBus Power Select On */
+#define USBMODE_EX_HC	(3<<0)		/* host controller mode */
+#define TXFILLTUNING	0x24		/* TX FIFO Tuning register */
+#define TXFIFO_DEFAULT	(8<<16)		/* FIFO burst threshold 8 */
+
 /* Appendix C, Debug port ... intended for use with special "debug devices"
  * that can help if there's no serial console.  (nonstandard enumeration.)
  */
@@ -156,5 +169,16 @@ struct ehci_dbg_port {
 	u32	address;
 #define DBGP_EPADDR(dev, ep)	(((dev)<<8)|(ep))
 } __attribute__ ((packed));
+
+#ifdef CONFIG_EARLY_PRINTK_DBGP
+#include <linux/init.h>
+extern int __init early_dbgp_init(char *s);
+extern struct console early_dbgp_console;
+#endif /* CONFIG_EARLY_PRINTK_DBGP */
+
+#ifdef CONFIG_EARLY_PRINTK_DBGP
+/* Call backs from ehci host driver to ehci debug driver */
+extern int dbgp_external_startup(void);
+#endif
 
 #endif /* __LINUX_USB_EHCI_DEF_H */
