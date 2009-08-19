@@ -51,6 +51,9 @@
 #include "compat_ptrace.h"
 #endif
 
+DEFINE_TRACE(syscall_enter);
+DEFINE_TRACE(syscall_exit);
+
 enum s390_regset {
 	REGSET_GENERAL,
 	REGSET_FP,
