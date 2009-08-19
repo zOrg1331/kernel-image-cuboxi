@@ -40,6 +40,14 @@
                                            unlinking file.  */
 #define AT_SYMLINK_FOLLOW	0x400   /* Follow symbolic links.  */
 
+/*
+ * A reflink call may preserve the file's attributes in toto or not at
+ * all.
+ */
+#define REFLINK_ATTR_PRESERVE	0x00000001
+#define REFLINK_ATTR_NONE	0
+
+
 #ifdef __KERNEL__
 
 #ifndef force_o_largefile

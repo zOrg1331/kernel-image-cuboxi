@@ -1259,7 +1259,8 @@ static int ocfs2_write_cluster(struct address_space *mapping,
 			goto out;
 		}
 	} else if (unwritten) {
-		ocfs2_init_dinode_extent_tree(&et, inode, wc->w_di_bh);
+		ocfs2_init_dinode_extent_tree(&et, INODE_CACHE(inode),
+					      wc->w_di_bh);
 		ret = ocfs2_mark_extent_written(inode, &et,
 						wc->w_handle, cpos, 1, phys,
 						meta_ac, &wc->w_dealloc);
@@ -1528,7 +1529,7 @@ static int ocfs2_write_begin_inline(struct address_space *mapping,
 		goto out;
 	}
 
-	ret = ocfs2_journal_access_di(handle, inode, wc->w_di_bh,
+	ret = ocfs2_journal_access_di(handle, INODE_CACHE(inode), wc->w_di_bh,
 				      OCFS2_JOURNAL_ACCESS_WRITE);
 	if (ret) {
 		ocfs2_commit_trans(osb, handle);
@@ -1726,7 +1727,8 @@ int ocfs2_write_begin_nolock(struct address_space *mapping,
 		     (long long)i_size_read(inode), le32_to_cpu(di->i_clusters),
 		     clusters_to_alloc, extents_to_split);
 
-		ocfs2_init_dinode_extent_tree(&et, inode, wc->w_di_bh);
+		ocfs2_init_dinode_extent_tree(&et, INODE_CACHE(inode),
+					      wc->w_di_bh);
 		ret = ocfs2_lock_allocators(inode, &et,
 					    clusters_to_alloc, extents_to_split,
 					    &data_ac, &meta_ac);
@@ -1773,7 +1775,7 @@ int ocfs2_write_begin_nolock(struct address_space *mapping,
 	 * We don't want this to fail in ocfs2_write_end(), so do it
 	 * here.
 	 */
-	ret = ocfs2_journal_access_di(handle, inode, wc->w_di_bh,
+	ret = ocfs2_journal_access_di(handle, INODE_CACHE(inode), wc->w_di_bh,
 				      OCFS2_JOURNAL_ACCESS_WRITE);
 	if (ret) {
 		mlog_errno(ret);

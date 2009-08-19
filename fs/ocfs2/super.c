@@ -1218,13 +1218,17 @@ static void ocfs2_kill_sb(struct super_block *sb)
 {
 	struct ocfs2_super *osb = OCFS2_SB(sb);
 
+	/* Failed mount? */
+	if (!osb || atomic_read(&osb->vol_state) == VOLUME_DISABLED)
+		goto out;
+
 	/* Prevent further queueing of inode drop events */
 	spin_lock(&dentry_list_lock);
 	ocfs2_set_osb_flag(osb, OCFS2_OSB_DROP_DENTRY_LOCK_IMMED);
 	spin_unlock(&dentry_list_lock);
 	/* Wait for work to finish and/or remove it */
 	cancel_work_sync(&osb->dentry_lock_work);
-
+out:
 	kill_block_super(sb);
 }
 
@@ -1664,8 +1668,6 @@ static void ocfs2_inode_init_once(void *data)
 	spin_lock_init(&oi->ip_lock);
 	ocfs2_extent_map_init(&oi->vfs_inode);
 	INIT_LIST_HEAD(&oi->ip_io_markers);
-	oi->ip_created_trans = 0;
-	oi->ip_last_trans = 0;
 	oi->ip_dir_start_lookup = 0;
 
 	init_rwsem(&oi->ip_alloc_sem);
@@ -1679,7 +1681,8 @@ static void ocfs2_inode_init_once(void *data)
 	ocfs2_lock_res_init_once(&oi->ip_inode_lockres);
 	ocfs2_lock_res_init_once(&oi->ip_open_lockres);
 
-	ocfs2_metadata_cache_init(&oi->vfs_inode);
+	ocfs2_metadata_cache_init(INODE_CACHE(&oi->vfs_inode),
+				  &ocfs2_inode_caching_ops);
 
 	inode_init_once(&oi->vfs_inode);
 }

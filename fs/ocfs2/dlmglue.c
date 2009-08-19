@@ -2127,7 +2127,7 @@ static int ocfs2_inode_lock_update(struct inode *inode,
 
 	/* This will discard any caching information we might have had
 	 * for the inode metadata. */
-	ocfs2_metadata_cache_purge(inode);
+	ocfs2_metadata_cache_purge(INODE_CACHE(inode));
 
 	ocfs2_extent_map_trunc(inode, 0);
 
@@ -3499,7 +3499,7 @@ static int ocfs2_check_meta_downconvert(struct ocfs2_lock_res *lockres,
 					int new_level)
 {
 	struct inode *inode = ocfs2_lock_res_inode(lockres);
-	int checkpointed = ocfs2_inode_fully_checkpointed(inode);
+	int checkpointed = ocfs2_ci_fully_checkpointed(INODE_CACHE(inode));
 
 	BUG_ON(new_level != DLM_LOCK_NL && new_level != DLM_LOCK_PR);
 	BUG_ON(lockres->l_level != DLM_LOCK_EX && !checkpointed);
