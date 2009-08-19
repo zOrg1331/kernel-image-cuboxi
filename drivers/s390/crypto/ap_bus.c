@@ -629,9 +629,12 @@ static int ap_uevent (struct device *dev, struct kobj_uevent_env *env)
 
 static int ap_bus_suspend(struct device *dev, pm_message_t state)
 {
-	struct ap_device *ap_dev = to_ap_dev(dev);
+	struct ap_device *ap_dev;
 	unsigned long flags;
 
+	if (IS_ERR(dev))
+		return 0;
+	ap_dev = to_ap_dev(dev);
 	if (!ap_suspend_flag) {
 		ap_suspend_flag = 1;
 
@@ -648,7 +651,9 @@ static int ap_bus_suspend(struct device *dev, pm_message_t state)
 	/* Poll on the device until all requests are finished. */
 	do {
 		flags = 0;
+		spin_lock_bh(&ap_dev->lock);
 		__ap_poll_device(ap_dev, &flags);
+		spin_unlock_bh(&ap_dev->lock);
 	} while ((flags & 1) || (flags & 2));
 
 	ap_device_remove(dev);
@@ -658,7 +663,12 @@ static int ap_bus_suspend(struct device *dev, pm_message_t state)
 static int ap_bus_resume(struct device *dev)
 {
 	int rc = 0;
-	struct ap_device *ap_dev = to_ap_dev(dev);
+	struct ap_device *ap_dev;
+
+	if (IS_ERR(dev))
+		return 0;
+
+	ap_dev = to_ap_dev(dev);
 
 	if (ap_suspend_flag) {
 		ap_suspend_flag = 0;
@@ -668,7 +678,6 @@ static int ap_bus_resume(struct device *dev)
 		ap_reset(ap_dev);
 		setup_timer(&ap_dev->timeout, ap_request_timeout,
 			    (unsigned long) ap_dev);
-		ap_scan_bus(NULL);
 		init_timer(&ap_config_timer);
 		ap_config_timer.function = ap_config_timeout;
 		ap_config_timer.data = 0;
@@ -1114,7 +1123,7 @@ static void ap_scan_bus(struct work_struct *unused)
 		ap_dev->device.release = ap_device_release;
 		rc = device_register(&ap_dev->device);
 		if (rc) {
-			kfree(ap_dev);
+			put_device(&ap_dev->device);
 			continue;
 		}
 		/* Add device attributes. */
@@ -1407,14 +1416,12 @@ static void ap_reset(struct ap_device *ap_dev)
 
 static int __ap_poll_device(struct ap_device *ap_dev, unsigned long *flags)
 {
-	spin_lock(&ap_dev->lock);
 	if (!ap_dev->unregistered) {
 		if (ap_poll_queue(ap_dev, flags))
 			ap_dev->unregistered = 1;
 		if (ap_dev->reset == AP_RESET_DO)
 			ap_reset(ap_dev);
 	}
-	spin_unlock(&ap_dev->lock);
 	return 0;
 }
 
@@ -1441,7 +1448,9 @@ static void ap_poll_all(unsigned long dummy)
 		flags = 0;
 		spin_lock(&ap_device_list_lock);
 		list_for_each_entry(ap_dev, &ap_device_list, list) {
+			spin_lock(&ap_dev->lock);
 			__ap_poll_device(ap_dev, &flags);
+			spin_unlock(&ap_dev->lock);
 		}
 		spin_unlock(&ap_device_list_lock);
 	} while (flags & 1);
@@ -1487,7 +1496,9 @@ static int ap_poll_thread(void *data)
 		flags = 0;
 		spin_lock_bh(&ap_device_list_lock);
 		list_for_each_entry(ap_dev, &ap_device_list, list) {
+			spin_lock(&ap_dev->lock);
 			__ap_poll_device(ap_dev, &flags);
+			spin_unlock(&ap_dev->lock);
 		}
 		spin_unlock_bh(&ap_device_list_lock);
 	}
