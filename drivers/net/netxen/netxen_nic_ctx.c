@@ -203,6 +203,8 @@ nx_fw_cmd_create_rx_ctx(struct netxen_adapter *adapter)
 
 	cap = (NX_CAP0_LEGACY_CONTEXT | NX_CAP0_LEGACY_MN);
 	cap |= (NX_CAP0_JUMBO_CONTIGUOUS | NX_CAP0_LRO_CONTIGUOUS);
+	if (adapter->capabilities & NX_FW_CAPABILITY_HW_LRO)
+		cap |= NX_CAP0_HW_LRO;
 
 	prq->capabilities[0] = cpu_to_le32(cap);
 	prq->host_int_crb_mode =
@@ -647,7 +649,7 @@ int netxen_alloc_hw_resources(struct netxen_adapter *adapter)
 		}
 		rds_ring->desc_head = (struct rcv_desc *)addr;
 
-		if (adapter->fw_major < 4)
+		if (NX_IS_REVISION_P2(adapter->ahw.revision_id))
 			rds_ring->crb_rcv_producer =
 				recv_crb_registers[port].crb_rcv_producer[ring];
 	}
@@ -675,7 +677,7 @@ int netxen_alloc_hw_resources(struct netxen_adapter *adapter)
 	}
 
 
-	if (adapter->fw_major >= 4) {
+	if (!NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
 		err = nx_fw_cmd_create_rx_ctx(adapter);
 		if (err)
 			goto err_out_free;
@@ -705,7 +707,7 @@ void netxen_free_hw_resources(struct netxen_adapter *adapter)
 
 	int port = adapter->portnum;
 
-	if (adapter->fw_major >= 4) {
+	if (!NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
 		nx_fw_cmd_destroy_rx_ctx(adapter);
 		nx_fw_cmd_destroy_tx_ctx(adapter);
 	} else {
