@@ -37,7 +37,7 @@
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define krelease alt9
+%define krelease alt10
 %define xen_hv_cset 15502
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
@@ -6936,6 +6936,9 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Thu Aug 20 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt10
+- CVE-2009-2698: fix MSG_PROBE crash
+
 * Mon Aug 17 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt9
 - CVE-2009-2692: uninit op in SOCKOPS_WRAP() leads to privesc
 - Add patches from Solar Designer
