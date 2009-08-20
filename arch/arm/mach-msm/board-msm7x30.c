@@ -78,7 +78,7 @@
 static struct resource smc91x_resources[] = {
 	[0] = {
 		.start = 0x8A000300,
-		.end = 0x8A000400,
+		.end = 0x8A0003ff,
 		.flags  = IORESOURCE_MEM,
 	},
 	[1] = {
