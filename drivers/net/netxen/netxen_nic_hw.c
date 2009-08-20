@@ -706,6 +706,30 @@ int netxen_config_rss(struct netxen_adapter *adapter, int enable)
 	return rv;
 }
 
+int netxen_config_ipaddr(struct netxen_adapter *adapter, u32 ip, int cmd)
+{
+	nx_nic_req_t req;
+	u64 word;
+	int rv;
+
+	memset(&req, 0, sizeof(nx_nic_req_t));
+	req.qhdr = cpu_to_le64(NX_HOST_REQUEST << 23);
+
+	word = NX_NIC_H2C_OPCODE_CONFIG_IPADDR | ((u64)adapter->portnum << 16);
+	req.req_hdr = cpu_to_le64(word);
+
+	req.words[0] = cpu_to_le64(cmd);
+	req.words[1] = cpu_to_le64(ip);
+
+	rv = netxen_send_cmd_descs(adapter, (struct cmd_desc_type0 *)&req, 1);
+	if (rv != 0) {
+		printk(KERN_ERR "%s: could not notify %s IP 0x%x reuqest\n",
+				adapter->netdev->name,
+				(cmd == NX_IP_UP) ? "Add" : "Remove", ip);
+	}
+	return rv;
+}
+
 int netxen_linkevent_request(struct netxen_adapter *adapter, int enable)
 {
 	nx_nic_req_t req;
@@ -792,18 +816,15 @@ int netxen_get_flash_mac_addr(struct netxen_adapter *adapter, __le64 *mac)
 	__le32 *pmac = (__le32 *) mac;
 	u32 offset;
 
-	offset = NETXEN_USER_START +
-		offsetof(struct netxen_new_user_info, mac_addr) +
-		adapter->portnum * sizeof(u64);
+	offset = NX_FW_MAC_ADDR_OFFSET + (adapter->portnum * sizeof(u64));
 
 	if (netxen_get_flash_block(adapter, offset, sizeof(u64), pmac) == -1)
 		return -1;
 
 	if (*mac == cpu_to_le64(~0ULL)) {
 
-		offset = NETXEN_USER_START_OLD +
-			offsetof(struct netxen_user_old_info, mac_addr) +
-			adapter->portnum * sizeof(u64);
+		offset = NX_OLD_MAC_ADDR_OFFSET +
+			(adapter->portnum * sizeof(u64));
 
 		if (netxen_get_flash_block(adapter,
 					offset, sizeof(u64), pmac) == -1)
@@ -1833,13 +1854,11 @@ int netxen_nic_get_board_info(struct netxen_adapter *adapter)
 	int offset, board_type, magic, header_version;
 	struct pci_dev *pdev = adapter->pdev;
 
-	offset = NETXEN_BRDCFG_START +
-		offsetof(struct netxen_board_info, magic);
+	offset = NX_FW_MAGIC_OFFSET;
 	if (netxen_rom_fast_read(adapter, offset, &magic))
 		return -EIO;
 
-	offset = NETXEN_BRDCFG_START +
-		offsetof(struct netxen_board_info, header_version);
+	offset = NX_HDR_VERSION_OFFSET;
 	if (netxen_rom_fast_read(adapter, offset, &header_version))
 		return -EIO;
 
@@ -1851,8 +1870,7 @@ int netxen_nic_get_board_info(struct netxen_adapter *adapter)
 		return -EIO;
 	}
 
-	offset = NETXEN_BRDCFG_START +
-		offsetof(struct netxen_board_info, board_type);
+	offset = NX_BRDTYPE_OFFSET;
 	if (netxen_rom_fast_read(adapter, offset, &board_type))
 		return -EIO;
 
@@ -1998,30 +2016,28 @@ void netxen_nic_get_firmware_info(struct netxen_adapter *adapter)
 	u32 fw_major, fw_minor, fw_build;
 	char brd_name[NETXEN_MAX_SHORT_NAME];
 	char serial_num[32];
-	int i, addr, val;
+	int i, offset, val;
 	int *ptr32;
 	struct pci_dev *pdev = adapter->pdev;
 
 	adapter->driver_mismatch = 0;
 
 	ptr32 = (int *)&serial_num;
-	addr = NETXEN_USER_START +
-	       offsetof(struct netxen_new_user_info, serial_num);
+	offset = NX_FW_SERIAL_NUM_OFFSET;
 	for (i = 0; i < 8; i++) {
-		if (netxen_rom_fast_read(adapter, addr, &val) == -1) {
+		if (netxen_rom_fast_read(adapter, offset, &val) == -1) {
 			dev_err(&pdev->dev, "error reading board info\n");
 			adapter->driver_mismatch = 1;
 			return;
 		}
 		ptr32[i] = cpu_to_le32(val);
-		addr += sizeof(u32);
+		offset += sizeof(u32);
 	}
 
 	fw_major = NXRD32(adapter, NETXEN_FW_VERSION_MAJOR);
 	fw_minor = NXRD32(adapter, NETXEN_FW_VERSION_MINOR);
 	fw_build = NXRD32(adapter, NETXEN_FW_VERSION_SUB);
 
-	adapter->fw_major = fw_major;
 	adapter->fw_version = NETXEN_VERSION_CODE(fw_major, fw_minor, fw_build);
 
 	if (adapter->portnum == 0) {
@@ -2047,6 +2063,9 @@ void netxen_nic_get_firmware_info(struct netxen_adapter *adapter)
 		dev_info(&pdev->dev, "firmware running in %s mode\n",
 		adapter->ahw.cut_through ? "cut-through" : "legacy");
 	}
+
+	if (adapter->fw_version >= NETXEN_VERSION_CODE(4, 0, 222))
+		adapter->capabilities = NXRD32(adapter, CRB_FW_CAPABILITIES_1);
 }
 
 int
