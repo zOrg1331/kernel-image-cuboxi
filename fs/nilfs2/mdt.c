@@ -139,7 +139,7 @@ nilfs_mdt_submit_block(struct inode *inode, unsigned long blkoff,
 		       int mode, struct buffer_head **out_bh)
 {
 	struct buffer_head *bh;
-	unsigned long blknum = 0;
+	__u64 blknum = 0;
 	int ret = -ENOMEM;
 
 	bh = nilfs_grab_buffer(inode, inode->i_mapping, blkoff, 0);
@@ -170,7 +170,7 @@ nilfs_mdt_submit_block(struct inode *inode, unsigned long blkoff,
 			goto failed_bh;
 		}
 		bh->b_bdev = NILFS_MDT(inode)->mi_nilfs->ns_bdev;
-		bh->b_blocknr = blknum;
+		bh->b_blocknr = (sector_t)blknum;
 		set_buffer_mapped(bh);
 	}
 
@@ -402,6 +402,7 @@ nilfs_mdt_write_page(struct page *page, struct writeback_control *wbc)
 	struct inode *inode = container_of(page->mapping,
 					   struct inode, i_data);
 	struct super_block *sb = inode->i_sb;
+	struct the_nilfs *nilfs = NILFS_MDT(inode)->mi_nilfs;
 	struct nilfs_sb_info *writer = NULL;
 	int err = 0;
 
@@ -411,9 +412,10 @@ nilfs_mdt_write_page(struct page *page, struct writeback_control *wbc)
 	if (page->mapping->assoc_mapping)
 		return 0; /* Do not request flush for shadow page cache */
 	if (!sb) {
-		writer = nilfs_get_writer(NILFS_MDT(inode)->mi_nilfs);
+		down_read(&nilfs->ns_writer_sem);
+		writer = nilfs->ns_writer;
 		if (!writer) {
-			nilfs_put_writer(NILFS_MDT(inode)->mi_nilfs);
+			up_read(&nilfs->ns_writer_sem);
 			return -EROFS;
 		}
 		sb = writer->s_super;
@@ -425,7 +427,7 @@ nilfs_mdt_write_page(struct page *page, struct writeback_control *wbc)
 		nilfs_flush_segment(sb, inode->i_ino);
 
 	if (writer)
-		nilfs_put_writer(NILFS_MDT(inode)->mi_nilfs);
+		up_read(&nilfs->ns_writer_sem);
 	return err;
 }
 
@@ -516,9 +518,10 @@ nilfs_mdt_new_common(struct the_nilfs *nilfs, struct super_block *sb,
 }
 
 struct inode *nilfs_mdt_new(struct the_nilfs *nilfs, struct super_block *sb,
-			    ino_t ino, gfp_t gfp_mask)
+			    ino_t ino)
 {
-	struct inode *inode = nilfs_mdt_new_common(nilfs, sb, ino, gfp_mask);
+	struct inode *inode = nilfs_mdt_new_common(nilfs, sb, ino,
+						   NILFS_MDT_GFP);
 
 	if (!inode)
 		return NULL;
