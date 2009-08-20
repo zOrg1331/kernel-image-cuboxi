@@ -337,9 +337,16 @@ static int __devinit virtblk_probe(struct virtio_device *vdev)
 	vblk->disk->driverfs_dev = &vdev->dev;
 	index++;
 
-	/* If barriers are supported, tell block layer that queue is ordered */
+	/*
+	 * If barriers are supported, tell block layer that queue is ordered.
+	 *
+	 * If no barriers are supported assume the host uses synchronous
+	 * writes and just drain the the queue before and after the barrier.
+	 */
 	if (virtio_has_feature(vdev, VIRTIO_BLK_F_BARRIER))
 		blk_queue_ordered(vblk->disk->queue, QUEUE_ORDERED_TAG, NULL);
+	else
+		blk_queue_ordered(vblk->disk->queue, QUEUE_ORDERED_DRAIN, NULL);
 
 	/* If disk is read-only in the host, the guest should obey */
 	if (virtio_has_feature(vdev, VIRTIO_BLK_F_RO))
