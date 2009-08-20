@@ -175,6 +175,15 @@ int ib_response_mad(struct ib_mad *mad)
 }
 EXPORT_SYMBOL(ib_response_mad);
 
+static void timeout_callback(unsigned long data)
+{
+	struct ib_mad_agent_private *mad_agent_priv =
+		(struct ib_mad_agent_private *) data;
+
+	queue_work(mad_agent_priv->qp_info->port_priv->wq,
+		   &mad_agent_priv->timeout_work);
+}
+
 /*
  * ib_register_mad_agent - Register to send/receive MADs
  */
@@ -306,7 +315,9 @@ struct ib_mad_agent *ib_register_mad_agent(struct ib_device *device,
 	INIT_LIST_HEAD(&mad_agent_priv->wait_list);
 	INIT_LIST_HEAD(&mad_agent_priv->done_list);
 	INIT_LIST_HEAD(&mad_agent_priv->rmpp_list);
-	INIT_DELAYED_WORK(&mad_agent_priv->timed_work, timeout_sends);
+	INIT_WORK(&mad_agent_priv->timeout_work, timeout_sends);
+	setup_timer(&mad_agent_priv->timeout_timer, timeout_callback,
+		    (unsigned long) mad_agent_priv);
 	INIT_LIST_HEAD(&mad_agent_priv->local_list);
 	INIT_WORK(&mad_agent_priv->local_work, local_completions);
 	atomic_set(&mad_agent_priv->refcount, 1);
@@ -513,7 +524,8 @@ static void unregister_mad_agent(struct ib_mad_agent_private *mad_agent_priv)
 	 */
 	cancel_mads(mad_agent_priv);
 	port_priv = mad_agent_priv->qp_info->port_priv;
-	cancel_delayed_work(&mad_agent_priv->timed_work);
+	del_timer_sync(&mad_agent_priv->timeout_timer);
+	cancel_work_sync(&mad_agent_priv->timeout_work);
 
 	spin_lock_irqsave(&port_priv->reg_lock, flags);
 	remove_mad_reg_req(mad_agent_priv);
@@ -1971,10 +1983,9 @@ out:
 static void adjust_timeout(struct ib_mad_agent_private *mad_agent_priv)
 {
 	struct ib_mad_send_wr_private *mad_send_wr;
-	unsigned long delay;
 
 	if (list_empty(&mad_agent_priv->wait_list)) {
-		cancel_delayed_work(&mad_agent_priv->timed_work);
+		del_timer(&mad_agent_priv->timeout_timer);
 	} else {
 		mad_send_wr = list_entry(mad_agent_priv->wait_list.next,
 					 struct ib_mad_send_wr_private,
@@ -1983,13 +1994,8 @@ static void adjust_timeout(struct ib_mad_agent_private *mad_agent_priv)
 		if (time_after(mad_agent_priv->timeout,
 			       mad_send_wr->timeout)) {
 			mad_agent_priv->timeout = mad_send_wr->timeout;
-			cancel_delayed_work(&mad_agent_priv->timed_work);
-			delay = mad_send_wr->timeout - jiffies;
-			if ((long)delay <= 0)
-				delay = 1;
-			queue_delayed_work(mad_agent_priv->qp_info->
-					   port_priv->wq,
-					   &mad_agent_priv->timed_work, delay);
+			mod_timer(&mad_agent_priv->timeout_timer,
+				  mad_send_wr->timeout);
 		}
 	}
 }
@@ -2016,17 +2022,14 @@ static void wait_for_response(struct ib_mad_send_wr_private *mad_send_wr)
 				       temp_mad_send_wr->timeout))
 				break;
 		}
-	}
-	else
+	} else
 		list_item = &mad_agent_priv->wait_list;
 	list_add(&mad_send_wr->agent_list, list_item);
 
 	/* Reschedule a work item if we have a shorter timeout */
-	if (mad_agent_priv->wait_list.next == &mad_send_wr->agent_list) {
-		cancel_delayed_work(&mad_agent_priv->timed_work);
-		queue_delayed_work(mad_agent_priv->qp_info->port_priv->wq,
-				   &mad_agent_priv->timed_work, delay);
-	}
+	if (mad_agent_priv->wait_list.next == &mad_send_wr->agent_list)
+		mod_timer(&mad_agent_priv->timeout_timer,
+			  mad_send_wr->timeout);
 }
 
 void ib_reset_mad_timeout(struct ib_mad_send_wr_private *mad_send_wr,
@@ -2470,10 +2473,10 @@ static void timeout_sends(struct work_struct *work)
 	struct ib_mad_agent_private *mad_agent_priv;
 	struct ib_mad_send_wr_private *mad_send_wr;
 	struct ib_mad_send_wc mad_send_wc;
-	unsigned long flags, delay;
+	unsigned long flags;
 
 	mad_agent_priv = container_of(work, struct ib_mad_agent_private,
-				      timed_work.work);
+				      timeout_work);
 	mad_send_wc.vendor_err = 0;
 
 	spin_lock_irqsave(&mad_agent_priv->lock, flags);
@@ -2483,12 +2486,8 @@ static void timeout_sends(struct work_struct *work)
 					 agent_list);
 
 		if (time_after(mad_send_wr->timeout, jiffies)) {
-			delay = mad_send_wr->timeout - jiffies;
-			if ((long)delay <= 0)
-				delay = 1;
-			queue_delayed_work(mad_agent_priv->qp_info->
-					   port_priv->wq,
-					   &mad_agent_priv->timed_work, delay);
+			mod_timer(&mad_agent_priv->timeout_timer,
+				  mad_send_wr->timeout);
 			break;
 		}
 
