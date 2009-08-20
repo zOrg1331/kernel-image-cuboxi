@@ -1,3 +1,47 @@
+commit 63ccc00cea68737ae1df5d88002793e6fec383f0
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sat May 9 13:40:13 2009 +0900
+
+    aufs: tiny, Stop supporting ecryptfs
+    
+    Since no aufs user uses it as a branch.
+    
+    (Forgot to merge)
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit eb0cb778795e2e00862c8bcc7197f13df2ae6c28
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Aug 21 02:44:37 2009 +0900
+
+    aufs: tip, insert a space
+    
+    less imporant changes to make checkpatch.pl quiet.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 126b39201ddbe8f97ff3a13f72a8602f6885b202
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Aug 21 02:27:23 2009 +0900
+
+    aufs: RDU, new ioctl for rdu
+    
+    - convert all the types of aufs_bindex_t to be available for ioctl.
+    - new ioctl interfaces and structures for RDU.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit a64dffc62c4abcd92973eaefa924b4c76f57ea3d
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Aug 21 02:24:49 2009 +0900
+
+    aufs: RDU, make au_ino() and au_wh_ino() global
+    
+    - move au_ino() from vdir.c to inode.c.
+    - move au_wh_ino() from vdir.c to inode.h.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit d6e2b11100f9876901389784654206401d59c73b
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Sat Aug 1 17:11:00 2009 +0900
