@@ -293,7 +293,7 @@ static int ocfs2_last_eb_is_empty(struct inode *inode,
 	struct ocfs2_extent_block *eb;
 	struct ocfs2_extent_list *el;
 
-	ret = ocfs2_read_extent_block(inode, last_eb_blk, &eb_bh);
+	ret = ocfs2_read_extent_block(INODE_CACHE(inode), last_eb_blk, &eb_bh);
 	if (ret) {
 		mlog_errno(ret);
 		goto out;
@@ -375,7 +375,7 @@ static int ocfs2_figure_hole_clusters(struct inode *inode,
 		if (le64_to_cpu(eb->h_next_leaf_blk) == 0ULL)
 			goto no_more_extents;
 
-		ret = ocfs2_read_extent_block(inode,
+		ret = ocfs2_read_extent_block(INODE_CACHE(inode),
 					      le64_to_cpu(eb->h_next_leaf_blk),
 					      &next_eb_bh);
 		if (ret) {
@@ -428,7 +428,8 @@ static int ocfs2_get_clusters_nocache(struct inode *inode,
 	tree_height = le16_to_cpu(el->l_tree_depth);
 
 	if (tree_height > 0) {
-		ret = ocfs2_find_leaf(inode, el, v_cluster, &eb_bh);
+		ret = ocfs2_find_leaf(INODE_CACHE(inode), el, v_cluster,
+				      &eb_bh);
 		if (ret) {
 			mlog_errno(ret);
 			goto out;
@@ -548,7 +549,8 @@ int ocfs2_xattr_get_clusters(struct inode *inode, u32 v_cluster,
 	u32 coff;
 
 	if (el->l_tree_depth) {
-		ret = ocfs2_find_leaf(inode, el, v_cluster, &eb_bh);
+		ret = ocfs2_find_leaf(INODE_CACHE(inode), el, v_cluster,
+				      &eb_bh);
 		if (ret) {
 			mlog_errno(ret);
 			goto out;
@@ -862,8 +864,8 @@ int ocfs2_read_virt_blocks(struct inode *inode, u64 v_block, int nr,
 			BUG_ON(bhs[done + i]->b_blocknr != (p_block + i));
 		}
 
-		rc = ocfs2_read_blocks(inode, p_block, count, bhs + done,
-				       flags, validate);
+		rc = ocfs2_read_blocks(INODE_CACHE(inode), p_block, count,
+				       bhs + done, flags, validate);
 		if (rc) {
 			mlog_errno(rc);
 			break;
