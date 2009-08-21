@@ -118,7 +118,7 @@ struct ftrace_event_call {
 	int			(*raw_init)(void);
 	int			(*show_format)(struct ftrace_event_call *call,
 					       struct trace_seq *s);
-	int			(*define_fields)(void);
+	int			(*define_fields)(struct ftrace_event_call *);
 	struct list_head	fields;
 	int			filter_active;
 	struct event_filter	*filter;
@@ -140,8 +140,10 @@ extern int filter_current_check_discard(struct ftrace_event_call *call,
 					void *rec,
 					struct ring_buffer_event *event);
 
-extern int trace_define_field(struct ftrace_event_call *call, char *type,
-			      char *name, int offset, int size, int is_signed);
+extern int trace_define_field(struct ftrace_event_call *call,
+			      const char *type, const char *name,
+			      int offset, int size, int is_signed);
+extern int trace_define_common_fields(struct ftrace_event_call *call);
 
 #define is_signed_type(type)	(((type)(-1)) < 0)
 
@@ -165,12 +167,5 @@ do {									\
 	} else								\
 		__trace_printk(ip, fmt, ##args);			\
 } while (0)
-
-#define __common_field(type, item, is_signed)				\
-	ret = trace_define_field(event_call, #type, "common_" #item,	\
-				 offsetof(typeof(field.ent), item),	\
-				 sizeof(field.ent.item), is_signed);	\
-	if (ret)							\
-		return ret;
 
 #endif /* _LINUX_FTRACE_EVENT_H */

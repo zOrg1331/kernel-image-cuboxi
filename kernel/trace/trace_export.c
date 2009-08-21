@@ -119,7 +119,7 @@ ftrace_format_##call(struct ftrace_event_call *unused,			\
 
 #undef TRACE_EVENT_FORMAT
 #define TRACE_EVENT_FORMAT(call, proto, args, fmt, tstruct, tpfmt)	\
-int ftrace_define_fields_##call(void);					\
+int ftrace_define_fields_##call(struct ftrace_event_call *event_call);	\
 static int ftrace_raw_init_event_##call(void);				\
 									\
 struct ftrace_event_call __used						\
@@ -184,17 +184,14 @@ __attribute__((section("_ftrace_events"))) event_##call = {		\
 #undef TRACE_EVENT_FORMAT
 #define TRACE_EVENT_FORMAT(call, proto, args, fmt, tstruct, tpfmt)	\
 int									\
-ftrace_define_fields_##call(void)					\
+ftrace_define_fields_##call(struct ftrace_event_call *event_call)	\
 {									\
-	struct ftrace_event_call *event_call = &event_##call;		\
 	struct args field;						\
 	int ret;							\
 									\
-	__common_field(unsigned char, type, 0);				\
-	__common_field(unsigned char, flags, 0);			\
-	__common_field(unsigned char, preempt_count, 0);		\
-	__common_field(int, pid, 1);					\
-	__common_field(int, tgid, 1);					\
+	ret = trace_define_common_fields(event_call);			\
+	if (ret)							\
+		return ret;						\
 									\
 	tstruct;							\
 									\
