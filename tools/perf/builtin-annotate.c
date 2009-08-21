@@ -28,6 +28,7 @@ static char		const *input_name = "perf.data";
 static char		default_sort_order[] = "comm,symbol";
 static char		*sort_order = default_sort_order;
 
+static int		force;
 static int		input;
 static int		show_mask = SHOW_KERNEL | SHOW_USER | SHOW_HV;
 
@@ -983,6 +984,11 @@ static int __cmd_annotate(void)
 		exit(-1);
 	}
 
+	if (!force && (input_stat.st_uid != geteuid())) {
+		fprintf(stderr, "file: %s not owned by current user\n", input_name);
+		exit(-1);
+	}
+
 	if (!input_stat.st_size) {
 		fprintf(stderr, "zero-sized file, nothing to do!\n");
 		exit(0);
@@ -1088,6 +1094,7 @@ static const struct option options[] = {
 		    "input file name"),
 	OPT_STRING('s', "symbol", &sym_hist_filter, "symbol",
 		    "symbol to annotate"),
+	OPT_BOOLEAN('f', "force", &force, "don't complain, do it"),
 	OPT_BOOLEAN('v', "verbose", &verbose,
 		    "be more verbose (show symbol address, etc)"),
 	OPT_BOOLEAN('D', "dump-raw-trace", &dump_trace,

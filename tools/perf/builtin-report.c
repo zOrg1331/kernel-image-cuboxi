@@ -37,6 +37,7 @@ static char		*dso_list_str, *comm_list_str, *sym_list_str,
 static struct strlist	*dso_list, *comm_list, *sym_list;
 static char		*field_sep;
 
+static int		force;
 static int		input;
 static int		show_mask = SHOW_KERNEL | SHOW_USER | SHOW_HV;
 
@@ -665,6 +666,27 @@ static void dso__calc_col_width(struct dso *self)
 	self->slen_calculated = 1;
 }
 
+static int thread__set_comm_adjust(struct thread *self, const char *comm)
+{
+	int ret = thread__set_comm(self, comm);
+
+	if (ret)
+		return ret;
+
+	if (!col_width_list_str && !field_sep &&
+	    (!comm_list || strlist__has_entry(comm_list, comm))) {
+		unsigned int slen = strlen(comm);
+
+		if (slen > comms__col_width) {
+			comms__col_width = slen;
+			threads__col_width = slen + 6;
+		}
+	}
+
+	return 0;
+}
+
+
 static struct symbol *
 resolve_symbol(struct thread *thread, struct map **mapp,
 	       struct dso **dsop, u64 *ipp)
@@ -1056,7 +1078,7 @@ static void register_idle_thread(void)
 	struct thread *thread = threads__findnew(0, &threads, &last_match);
 
 	if (thread == NULL ||
-			thread__set_comm(thread, "[idle]")) {
+			thread__set_comm_adjust(thread, "[idle]")) {
 		fprintf(stderr, "problem inserting idle task.\n");
 		exit(-1);
 	}
@@ -1226,7 +1248,7 @@ process_comm_event(event_t *event, unsigned long offset, unsigned long head)
 		event->comm.comm, event->comm.pid);
 
 	if (thread == NULL ||
-	    thread__set_comm(thread, event->comm.comm)) {
+	    thread__set_comm_adjust(thread, event->comm.comm)) {
 		dump_printf("problem processing PERF_EVENT_COMM, skipping event.\n");
 		return -1;
 	}
@@ -1380,6 +1402,11 @@ static int __cmd_report(void)
 	ret = fstat(input, &input_stat);
 	if (ret < 0) {
 		perror("failed to stat file");
+		exit(-1);
+	}
+
+	if (!force && (input_stat.st_uid != geteuid())) {
+		fprintf(stderr, "file: %s not owned by current user\n", input_name);
 		exit(-1);
 	}
 
@@ -1594,6 +1621,7 @@ static const struct option options[] = {
 	OPT_BOOLEAN('D', "dump-raw-trace", &dump_trace,
 		    "dump raw trace in ASCII"),
 	OPT_STRING('k', "vmlinux", &vmlinux_name, "file", "vmlinux pathname"),
+	OPT_BOOLEAN('f', "force", &force, "don't complain, do it"),
 	OPT_BOOLEAN('m', "modules", &modules,
 		    "load module symbols - WARNING: use only with -k and LIVE kernel"),
 	OPT_BOOLEAN('n', "show-nr-samples", &show_nr_samples,
