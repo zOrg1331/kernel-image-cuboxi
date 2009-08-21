@@ -57,8 +57,8 @@
 
 #define _NETXEN_NIC_LINUX_MAJOR 4
 #define _NETXEN_NIC_LINUX_MINOR 0
-#define _NETXEN_NIC_LINUX_SUBVERSION 30
-#define NETXEN_NIC_LINUX_VERSIONID  "4.0.30"
+#define _NETXEN_NIC_LINUX_SUBVERSION 41
+#define NETXEN_NIC_LINUX_VERSIONID  "4.0.41"
 
 #define NETXEN_VERSION_CODE(a, b, c)	(((a) << 24) + ((b) << 16) + (c))
 #define _major(v)	(((v) >> 24) & 0xff)
@@ -143,18 +143,13 @@
 #define NX_ETHERMTU                    1500
 #define NX_MAX_ETHERHDR                32 /* This contains some padding */
 
-#define NX_RX_NORMAL_BUF_MAX_LEN       (NX_MAX_ETHERHDR + NX_ETHERMTU)
+#define NX_P2_RX_BUF_MAX_LEN           1760
+#define NX_P3_RX_BUF_MAX_LEN           (NX_MAX_ETHERHDR + NX_ETHERMTU)
 #define NX_P2_RX_JUMBO_BUF_MAX_LEN     (NX_MAX_ETHERHDR + P2_MAX_MTU)
 #define NX_P3_RX_JUMBO_BUF_MAX_LEN     (NX_MAX_ETHERHDR + P3_MAX_MTU)
 #define NX_CT_DEFAULT_RX_BUF_LEN	2048
 
-#define MAX_RX_BUFFER_LENGTH		1760
-#define MAX_RX_JUMBO_BUFFER_LENGTH 	8062
-#define MAX_RX_LRO_BUFFER_LENGTH	(8062)
-#define RX_DMA_MAP_LEN			(MAX_RX_BUFFER_LENGTH - 2)
-#define RX_JUMBO_DMA_MAP_LEN	\
-	(MAX_RX_JUMBO_BUFFER_LENGTH - 2)
-#define RX_LRO_DMA_MAP_LEN		(MAX_RX_LRO_BUFFER_LENGTH - 2)
+#define NX_RX_LRO_BUFFER_LENGTH		(8060)
 
 /*
  * Maximum number of ring contexts
@@ -200,13 +195,20 @@
 #define RCV_RING_JUMBO	1
 #define RCV_RING_LRO	2
 
-#define MAX_CMD_DESCRIPTORS		4096
-#define MAX_RCV_DESCRIPTORS		16384
-#define MAX_CMD_DESCRIPTORS_HOST	1024
-#define MAX_RCV_DESCRIPTORS_1G		2048
-#define MAX_RCV_DESCRIPTORS_10G		4096
-#define MAX_JUMBO_RCV_DESCRIPTORS	1024
+#define MIN_CMD_DESCRIPTORS		64
+#define MIN_RCV_DESCRIPTORS		64
+#define MIN_JUMBO_DESCRIPTORS		32
+
+#define MAX_CMD_DESCRIPTORS		1024
+#define MAX_RCV_DESCRIPTORS_1G		4096
+#define MAX_RCV_DESCRIPTORS_10G		8192
+#define MAX_JUMBO_RCV_DESCRIPTORS_1G	512
+#define MAX_JUMBO_RCV_DESCRIPTORS_10G	1024
 #define MAX_LRO_RCV_DESCRIPTORS		8
+
+#define DEFAULT_RCV_DESCRIPTORS_1G	2048
+#define DEFAULT_RCV_DESCRIPTORS_10G	4096
+
 #define NETXEN_CTX_SIGNATURE	0xdee0
 #define NETXEN_CTX_SIGNATURE_V2	0x0002dee0
 #define NETXEN_CTX_RESET	0xbad0
@@ -302,6 +304,10 @@ struct netxen_ring_ctx {
 #define FLAGS_IPSEC_SA_ADD	0x04
 #define FLAGS_IPSEC_SA_DELETE	0x08
 #define FLAGS_VLAN_TAGGED	0x10
+#define FLAGS_VLAN_OOB		0x40
+
+#define netxen_set_tx_vlan_tci(cmd_desc, v)	\
+	(cmd_desc)->vlan_TCI = cpu_to_le16(v);
 
 #define netxen_set_cmd_desc_port(cmd_desc, var)	\
 	((cmd_desc)->port_ctxid |= ((var) & 0x0F))
@@ -316,58 +322,33 @@ struct netxen_ring_ctx {
 	cpu_to_le16(((_flags) & 0x7f) | (((_opcode) & 0x3f) << 7))
 
 #define netxen_set_tx_frags_len(_desc, _frags, _len) \
-	(_desc)->num_of_buffers_total_length = \
+	(_desc)->nfrags__length = \
 	cpu_to_le32(((_frags) & 0xff) | (((_len) & 0xffffff) << 8))
 
 struct cmd_desc_type0 {
 	u8 tcp_hdr_offset;	/* For LSO only */
 	u8 ip_hdr_offset;	/* For LSO only */
-	/* Bit pattern: 0-6 flags, 7-12 opcode, 13-15 unused */
-	__le16 flags_opcode;
-	/* Bit pattern: 0-7 total number of segments,
-	   8-31 Total size of the packet */
-	__le32 num_of_buffers_total_length;
-	union {
-		struct {
-			__le32 addr_low_part2;
-			__le32 addr_high_part2;
-		};
-		__le64 addr_buffer2;
-	};
+	__le16 flags_opcode;	/* 15:13 unused, 12:7 opcode, 6:0 flags */
+	__le32 nfrags__length;	/* 31:8 total len, 7:0 frag count */
 
-	__le16 reference_handle;	/* changed to u16 to add mss */
-	__le16 mss;		/* passed by NDIS_PACKET for LSO */
-	/* Bit pattern 0-3 port, 0-3 ctx id */
-	u8 port_ctxid;
+	__le64 addr_buffer2;
+
+	__le16 reference_handle;
+	__le16 mss;
+	u8 port_ctxid;		/* 7:4 ctxid 3:0 port */
 	u8 total_hdr_length;	/* LSO only : MAC+IP+TCP Hdr size */
 	__le16 conn_id;		/* IPSec offoad only */
 
-	union {
-		struct {
-			__le32 addr_low_part3;
-			__le32 addr_high_part3;
-		};
-		__le64 addr_buffer3;
-	};
-	union {
-		struct {
-			__le32 addr_low_part1;
-			__le32 addr_high_part1;
-		};
-		__le64 addr_buffer1;
-	};
+	__le64 addr_buffer3;
+	__le64 addr_buffer1;
 
 	__le16 buffer_length[4];
 
-	union {
-		struct {
-			__le32 addr_low_part4;
-			__le32 addr_high_part4;
-		};
-		__le64 addr_buffer4;
-	};
+	__le64 addr_buffer4;
 
-	__le64 unused;
+	__le16 vlan_TCI;
+	__le16 reserved;
+	__le32 reserved2;
 
 } __attribute__ ((aligned(64)));
 
@@ -380,9 +361,11 @@ struct rcv_desc {
 };
 
 /* opcode field in status_desc */
+#define NETXEN_NIC_SYN_OFFLOAD  0x03
 #define NETXEN_NIC_RXPKT_DESC  0x04
 #define NETXEN_OLD_RXPKT_DESC  0x3f
 #define NETXEN_NIC_RESPONSE_DESC 0x05
+#define NETXEN_NIC_LRO_DESC  	0x12
 
 /* for status field in status_desc */
 #define STATUS_NEED_CKSUM	(1)
@@ -415,6 +398,24 @@ struct rcv_desc {
 	(((sts_data) >> 53) & 0x7)
 #define netxen_get_sts_opcode(sts_data)	\
 	(((sts_data) >> 58) & 0x03F)
+
+#define netxen_get_lro_sts_refhandle(sts_data) 	\
+	((sts_data) & 0x0FFFF)
+#define netxen_get_lro_sts_length(sts_data)	\
+	(((sts_data) >> 16) & 0x0FFFF)
+#define netxen_get_lro_sts_l2_hdr_offset(sts_data)	\
+	(((sts_data) >> 32) & 0x0FF)
+#define netxen_get_lro_sts_l4_hdr_offset(sts_data)	\
+	(((sts_data) >> 40) & 0x0FF)
+#define netxen_get_lro_sts_timestamp(sts_data)	\
+	(((sts_data) >> 48) & 0x1)
+#define netxen_get_lro_sts_type(sts_data)	\
+	(((sts_data) >> 49) & 0x7)
+#define netxen_get_lro_sts_push_flag(sts_data)		\
+	(((sts_data) >> 52) & 0x1)
+#define netxen_get_lro_sts_seq_number(sts_data)		\
+	((sts_data) & 0x0FFFFFFFF)
+
 
 struct status_desc {
 	__le64 status_desc_data[2];
@@ -459,154 +460,6 @@ struct status_desc {
 #define NETXEN_BRDTYPE_P3_10G_XFP	0x0032
 #define NETXEN_BRDTYPE_P3_10G_TP	0x0080
 
-struct netxen_board_info {
-	u32 header_version;
-
-	u32 board_mfg;
-	u32 board_type;
-	u32 board_num;
-	u32 chip_id;
-	u32 chip_minor;
-	u32 chip_major;
-	u32 chip_pkg;
-	u32 chip_lot;
-
-	u32 port_mask;		/* available niu ports */
-	u32 peg_mask;		/* available pegs */
-	u32 icache_ok;		/* can we run with icache? */
-	u32 dcache_ok;		/* can we run with dcache? */
-	u32 casper_ok;
-
-	u32 mac_addr_lo_0;
-	u32 mac_addr_lo_1;
-	u32 mac_addr_lo_2;
-	u32 mac_addr_lo_3;
-
-	/* MN-related config */
-	u32 mn_sync_mode;	/* enable/ sync shift cclk/ sync shift mclk */
-	u32 mn_sync_shift_cclk;
-	u32 mn_sync_shift_mclk;
-	u32 mn_wb_en;
-	u32 mn_crystal_freq;	/* in MHz */
-	u32 mn_speed;		/* in MHz */
-	u32 mn_org;
-	u32 mn_depth;
-	u32 mn_ranks_0;		/* ranks per slot */
-	u32 mn_ranks_1;		/* ranks per slot */
-	u32 mn_rd_latency_0;
-	u32 mn_rd_latency_1;
-	u32 mn_rd_latency_2;
-	u32 mn_rd_latency_3;
-	u32 mn_rd_latency_4;
-	u32 mn_rd_latency_5;
-	u32 mn_rd_latency_6;
-	u32 mn_rd_latency_7;
-	u32 mn_rd_latency_8;
-	u32 mn_dll_val[18];
-	u32 mn_mode_reg;	/* MIU DDR Mode Register */
-	u32 mn_ext_mode_reg;	/* MIU DDR Extended Mode Register */
-	u32 mn_timing_0;	/* MIU Memory Control Timing Rgister */
-	u32 mn_timing_1;	/* MIU Extended Memory Ctrl Timing Register */
-	u32 mn_timing_2;	/* MIU Extended Memory Ctrl Timing2 Register */
-
-	/* SN-related config */
-	u32 sn_sync_mode;	/* enable/ sync shift cclk / sync shift mclk */
-	u32 sn_pt_mode;		/* pass through mode */
-	u32 sn_ecc_en;
-	u32 sn_wb_en;
-	u32 sn_crystal_freq;
-	u32 sn_speed;
-	u32 sn_org;
-	u32 sn_depth;
-	u32 sn_dll_tap;
-	u32 sn_rd_latency;
-
-	u32 mac_addr_hi_0;
-	u32 mac_addr_hi_1;
-	u32 mac_addr_hi_2;
-	u32 mac_addr_hi_3;
-
-	u32 magic;		/* indicates flash has been initialized */
-
-	u32 mn_rdimm;
-	u32 mn_dll_override;
-
-};
-
-#define FLASH_NUM_PORTS		(4)
-
-struct netxen_flash_mac_addr {
-	u32 flash_addr[32];
-};
-
-struct netxen_user_old_info {
-	u8 flash_md5[16];
-	u8 crbinit_md5[16];
-	u8 brdcfg_md5[16];
-	/* bootloader */
-	u32 bootld_version;
-	u32 bootld_size;
-	u8 bootld_md5[16];
-	/* image */
-	u32 image_version;
-	u32 image_size;
-	u8 image_md5[16];
-	/* primary image status */
-	u32 primary_status;
-	u32 secondary_present;
-
-	/* MAC address , 4 ports */
-	struct netxen_flash_mac_addr mac_addr[FLASH_NUM_PORTS];
-};
-#define FLASH_NUM_MAC_PER_PORT	32
-struct netxen_user_info {
-	u8 flash_md5[16 * 64];
-	/* bootloader */
-	u32 bootld_version;
-	u32 bootld_size;
-	/* image */
-	u32 image_version;
-	u32 image_size;
-	/* primary image status */
-	u32 primary_status;
-	u32 secondary_present;
-
-	/* MAC address , 4 ports, 32 address per port */
-	u64 mac_addr[FLASH_NUM_PORTS * FLASH_NUM_MAC_PER_PORT];
-	u32 sub_sys_id;
-	u8 serial_num[32];
-
-	/* Any user defined data */
-};
-
-/*
- * Flash Layout - new format.
- */
-struct netxen_new_user_info {
-	u8 flash_md5[16 * 64];
-	/* bootloader */
-	u32 bootld_version;
-	u32 bootld_size;
-	/* image */
-	u32 image_version;
-	u32 image_size;
-	/* primary image status */
-	u32 primary_status;
-	u32 secondary_present;
-
-	/* MAC address , 4 ports, 32 address per port */
-	u64 mac_addr[FLASH_NUM_PORTS * FLASH_NUM_MAC_PER_PORT];
-	u32 sub_sys_id;
-	u8 serial_num[32];
-
-	/* Any user defined data */
-};
-
-#define SECONDARY_IMAGE_PRESENT 0xb3b4b5b6
-#define SECONDARY_IMAGE_ABSENT	0xffffffff
-#define PRIMARY_IMAGE_GOOD	0x5a5a5a5a
-#define PRIMARY_IMAGE_BAD	0xffffffff
-
 /* Flash memory map */
 #define NETXEN_CRBINIT_START	0	/* crbinit section */
 #define NETXEN_BRDCFG_START	0x4000	/* board config */
@@ -617,28 +470,25 @@ struct netxen_new_user_info {
 #define NETXEN_PXE_START	0x3E0000	/* PXE boot rom */
 #define NETXEN_USER_START	0x3E8000	/* Firmare info */
 #define NETXEN_FIXED_START	0x3F0000	/* backup of crbinit */
+#define NETXEN_USER_START_OLD	NETXEN_PXE_START /* very old flash */
 
+#define NX_OLD_MAC_ADDR_OFFSET	(NETXEN_USER_START)
 #define NX_FW_VERSION_OFFSET	(NETXEN_USER_START+0x408)
 #define NX_FW_SIZE_OFFSET	(NETXEN_USER_START+0x40c)
+#define NX_FW_MAC_ADDR_OFFSET	(NETXEN_USER_START+0x418)
+#define NX_FW_SERIAL_NUM_OFFSET	(NETXEN_USER_START+0x81c)
 #define NX_BIOS_VERSION_OFFSET	(NETXEN_USER_START+0x83c)
+
+#define NX_HDR_VERSION_OFFSET	(NETXEN_BRDCFG_START)
+#define NX_BRDTYPE_OFFSET	(NETXEN_BRDCFG_START+0x8)
 #define NX_FW_MAGIC_OFFSET	(NETXEN_BRDCFG_START+0x128)
+
 #define NX_FW_MIN_SIZE		(0x3fffff)
 #define NX_P2_MN_ROMIMAGE	0
 #define NX_P3_CT_ROMIMAGE	1
 #define NX_P3_MN_ROMIMAGE	2
 #define NX_FLASH_ROMIMAGE	3
 
-#define NETXEN_USER_START_OLD NETXEN_PXE_START	/* for backward compatibility */
-
-#define NETXEN_FLASH_START		(NETXEN_CRBINIT_START)
-#define NETXEN_INIT_SECTOR		(0)
-#define NETXEN_PRIMARY_START 		(NETXEN_BOOTLD_START)
-#define NETXEN_FLASH_CRBINIT_SIZE 	(0x4000)
-#define NETXEN_FLASH_BRDCFG_SIZE 	(sizeof(struct netxen_board_info))
-#define NETXEN_FLASH_USER_SIZE		(sizeof(struct netxen_user_info)/sizeof(u32))
-#define NETXEN_FLASH_SECONDARY_SIZE 	(NETXEN_USER_START-NETXEN_SECONDARY_START)
-#define NETXEN_NUM_PRIMARY_SECTORS	(0x20)
-#define NETXEN_NUM_CONFIG_SECTORS 	(1)
 extern char netxen_nic_driver_name[];
 
 /* Number of status descriptors to handle per interrupt */
@@ -881,6 +731,7 @@ struct netxen_recv_context {
 #define NX_CAP0_LSO			NX_CAP_BIT(0, 6)
 #define NX_CAP0_JUMBO_CONTIGUOUS	NX_CAP_BIT(0, 7)
 #define NX_CAP0_LRO_CONTIGUOUS		NX_CAP_BIT(0, 8)
+#define NX_CAP0_HW_LRO			NX_CAP_BIT(0, 10)
 
 /*
  * Context state
@@ -1078,6 +929,9 @@ typedef struct {
 
 #define NX_MAC_EVENT		0x1
 
+#define NX_IP_UP		2
+#define NX_IP_DOWN		3
+
 /*
  * Driver --> Firmware
  */
@@ -1132,6 +986,10 @@ typedef struct {
 
 #define NX_FW_CAPABILITY_LINK_NOTIFICATION	(1 << 5)
 #define NX_FW_CAPABILITY_SWITCHING		(1 << 6)
+#define NX_FW_CAPABILITY_PEXQ			(1 << 7)
+#define NX_FW_CAPABILITY_BDG			(1 << 8)
+#define NX_FW_CAPABILITY_FVLANTX		(1 << 9)
+#define NX_FW_CAPABILITY_HW_LRO			(1 << 10)
 
 /* module types */
 #define LINKEVENT_MODULE_NOT_PRESENT			1
@@ -1315,28 +1173,10 @@ struct netxen_adapter {
 
 	nx_nic_intr_coalesce_t coal;
 
-	u32 fw_major;
+	u32 resv5;
 	u32 fw_version;
 	const struct firmware *fw;
 };
-
-/*
- * NetXen dma watchdog control structure
- *
- *	Bit 0		: enabled => R/O: 1 watchdog active, 0 inactive
- *	Bit 1		: disable_request => 1 req disable dma watchdog
- *	Bit 2		: enable_request =>  1 req enable dma watchdog
- *	Bit 3-31	: unused
- */
-
-#define netxen_set_dma_watchdog_disable_req(config_word) \
-	_netxen_set_bits(config_word, 1, 1, 1)
-#define netxen_set_dma_watchdog_enable_req(config_word) \
-	_netxen_set_bits(config_word, 2, 1, 1)
-#define netxen_get_dma_watchdog_enabled(config_word) \
-	((config_word) & 0x1)
-#define netxen_get_dma_watchdog_disabled(config_word) \
-	(((config_word) >> 1) & 0x1)
 
 int netxen_niu_xgbe_enable_phy_interrupts(struct netxen_adapter *adapter);
 int netxen_niu_gbe_enable_phy_interrupts(struct netxen_adapter *adapter);
@@ -1398,8 +1238,9 @@ unsigned long netxen_nic_pci_set_window_2M(struct netxen_adapter *adapter,
 		unsigned long long addr);
 
 /* Functions from netxen_nic_init.c */
-void netxen_free_adapter_offload(struct netxen_adapter *adapter);
-int netxen_initialize_adapter_offload(struct netxen_adapter *adapter);
+int netxen_init_dummy_dma(struct netxen_adapter *adapter);
+void netxen_free_dummy_dma(struct netxen_adapter *adapter);
+
 int netxen_phantom_init(struct netxen_adapter *adapter, int pegtune_val);
 int netxen_load_firmware(struct netxen_adapter *adapter);
 int netxen_need_fw_reset(struct netxen_adapter *adapter);
@@ -1443,6 +1284,7 @@ void netxen_p3_free_mac_list(struct netxen_adapter *adapter);
 int netxen_p3_nic_set_promisc(struct netxen_adapter *adapter, u32);
 int netxen_config_intr_coalesce(struct netxen_adapter *adapter);
 int netxen_config_rss(struct netxen_adapter *adapter, int enable);
+int netxen_config_ipaddr(struct netxen_adapter *adapter, u32 ip, int cmd);
 int netxen_linkevent_request(struct netxen_adapter *adapter, int enable);
 void netxen_advert_link_change(struct netxen_adapter *adapter, int linkup);
 
@@ -1454,6 +1296,9 @@ struct net_device_stats *netxen_nic_get_stats(struct net_device *netdev);
 
 void netxen_nic_update_cmd_producer(struct netxen_adapter *adapter,
 		struct nx_host_tx_ring *tx_ring);
+
+/* Functions from netxen_nic_main.c */
+int netxen_nic_reset_context(struct netxen_adapter *);
 
 /*
  * NetXen Board information
@@ -1504,56 +1349,6 @@ static inline void get_brd_name_by_type(u32 type, char *name)
 	if (!found)
 		name = "Unknown";
 }
-
-static inline int
-dma_watchdog_shutdown_request(struct netxen_adapter *adapter)
-{
-	u32 ctrl;
-
-	/* check if already inactive */
-	ctrl = adapter->hw_read_wx(adapter,
-			NETXEN_CAM_RAM(NETXEN_CAM_RAM_DMA_WATCHDOG_CTRL));
-
-	if (netxen_get_dma_watchdog_enabled(ctrl) == 0)
-		return 1;
-
-	/* Send the disable request */
-	netxen_set_dma_watchdog_disable_req(ctrl);
-	NXWR32(adapter, NETXEN_CAM_RAM(NETXEN_CAM_RAM_DMA_WATCHDOG_CTRL), ctrl);
-
-	return 0;
-}
-
-static inline int
-dma_watchdog_shutdown_poll_result(struct netxen_adapter *adapter)
-{
-	u32 ctrl;
-
-	ctrl = adapter->hw_read_wx(adapter,
-			NETXEN_CAM_RAM(NETXEN_CAM_RAM_DMA_WATCHDOG_CTRL));
-
-	return (netxen_get_dma_watchdog_enabled(ctrl) == 0);
-}
-
-static inline int
-dma_watchdog_wakeup(struct netxen_adapter *adapter)
-{
-	u32 ctrl;
-
-	ctrl = adapter->hw_read_wx(adapter,
-			NETXEN_CAM_RAM(NETXEN_CAM_RAM_DMA_WATCHDOG_CTRL));
-
-	if (netxen_get_dma_watchdog_enabled(ctrl))
-		return 1;
-
-	/* send the wakeup request */
-	netxen_set_dma_watchdog_enable_req(ctrl);
-
-	NXWR32(adapter, NETXEN_CAM_RAM(NETXEN_CAM_RAM_DMA_WATCHDOG_CTRL), ctrl);
-
-	return 0;
-}
-
 
 static inline u32 netxen_tx_avail(struct nx_host_tx_ring *tx_ring)
 {
