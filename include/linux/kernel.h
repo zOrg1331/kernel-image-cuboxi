@@ -20,6 +20,98 @@
 #include <asm/byteorder.h>
 #include <asm/bug.h>
 
+
+struct ftrace_branch_data {
+	const char *func;
+	const char *file;
+	unsigned line;
+	union {
+		struct {
+			unsigned long correct;
+			unsigned long incorrect;
+		};
+		struct {
+			unsigned long miss;
+			unsigned long hit;
+		};
+		unsigned long miss_hit[2];
+	};
+};
+
+/*
+ * Note: DISABLE_BRANCH_PROFILING can be used by special lowlevel code
+ * to disable branch tracing on a per file basis.
+ *  We currently do not profile modules.
+ */
+#if defined(CONFIG_TRACE_BRANCH_PROFILING)				\
+	&& !defined(DISABLE_BRANCH_PROFILING) && !defined(__CHECKER__)	\
+	&& !defined(MODULE)
+void ftrace_likely_update(struct ftrace_branch_data *f, int val, int expect);
+
+#define likely_notrace(x)	__builtin_expect(!!(x), 1)
+#define unlikely_notrace(x)	__builtin_expect(!!(x), 0)
+
+#define __branch_check__(x, expect) ({					\
+			int ______r;					\
+			static struct ftrace_branch_data		\
+				__attribute__((__aligned__(4)))		\
+				__attribute__((section("_ftrace_annotated_branch"))) \
+				______f = {				\
+				.func = __func__,			\
+				.file = __FILE__,			\
+				.line = __LINE__,			\
+			};						\
+			______r = likely_notrace(x);			\
+			ftrace_likely_update(&______f, ______r, expect); \
+			______r;					\
+		})
+
+/*
+ * Using __builtin_constant_p(x) to ignore cases where the return
+ * value is always the same.  This idea is taken from a similar patch
+ * written by Daniel Walker.
+ */
+#undef likely
+#define likely(x)	(__builtin_constant_p(x) ? !!(x) : __branch_check__(x, 1))
+#undef unlikely
+#define unlikely(x)	(__builtin_constant_p(x) ? !!(x) : __branch_check__(x, 0))
+
+#ifdef CONFIG_PROFILE_ALL_BRANCHES
+extern int sysctl_branch_profiling_enabled;
+#ifdef CONFIG_PROFILE_BRANCHES_PER_CPU
+extern void branch_profiler(struct ftrace_branch_data *data, int cond);
+#else
+static inline void branch_profiler(struct ftrace_branch_data *data, int cond)
+{
+	data->miss_hit[cond]++;
+}
+#endif
+
+/*
+ * "Define 'is'", Bill Clinton
+ * "Define 'if'", Steven Rostedt
+ */
+#define if(cond, ...) __trace_if( (cond , ## __VA_ARGS__) )
+#define __trace_if(cond) \
+	if ((!sysctl_branch_profiling_enabled ||			\
+	     __builtin_constant_p((cond))) ? !!(cond) :			\
+	({								\
+		int ______r;						\
+		static struct ftrace_branch_data			\
+			__attribute__((__aligned__(4)))			\
+			__attribute__((section("_ftrace_branch")))	\
+			______f = {					\
+				.func = __func__,			\
+				.file = __FILE__,			\
+				.line = __LINE__,			\
+			};						\
+		______r = !!(cond);					\
+		branch_profiler(&______f, ______r);			\
+		______r;						\
+	}))
+#endif /* CONFIG_PROFILE_ALL_BRANCHES */
+#endif
+
 extern const char linux_banner[];
 extern const char linux_proc_banner[];
 
