@@ -103,6 +103,8 @@ void trace_current_buffer_discard_commit(struct ring_buffer_event *event);
 
 void tracing_record_cmdline(struct task_struct *tsk);
 
+struct event_filter;
+
 struct ftrace_event_call {
 	struct list_head	list;
 	char			*name;
@@ -110,16 +112,18 @@ struct ftrace_event_call {
 	struct dentry		*dir;
 	struct trace_event	*event;
 	int			enabled;
-	int			(*regfunc)(void);
-	void			(*unregfunc)(void);
+	int			(*regfunc)(void *);
+	void			(*unregfunc)(void *);
 	int			id;
 	int			(*raw_init)(void);
-	int			(*show_format)(struct trace_seq *s);
+	int			(*show_format)(struct ftrace_event_call *call,
+					       struct trace_seq *s);
 	int			(*define_fields)(void);
 	struct list_head	fields;
 	int			filter_active;
-	void			*filter;
+	struct event_filter	*filter;
 	void			*mod;
+	void			*data;
 
 	atomic_t		profile_count;
 	int			(*profile_enable)(struct ftrace_event_call *);
