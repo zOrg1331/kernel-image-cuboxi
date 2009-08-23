@@ -1,3 +1,14 @@
+commit 198d023ff00317c63c5c8e37bec9cee5d8cdd382
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Aug 23 18:50:53 2009 +0900
+
+    aufs: bugfix, aufs_permission() checks the lower inode
+    
+    aufs_permission() returns EBUSY or ESTALE when the lower inode is
+    modified unexpectedly. It may happen on busy nfs branch.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit bf04dc9cdbb7a2787d8f9307debe36b02b6892d0
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Sun Aug 23 03:11:12 2009 +0900
