@@ -1,3 +1,117 @@
+commit bf04dc9cdbb7a2787d8f9307debe36b02b6892d0
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Aug 23 03:11:12 2009 +0900
+
+    aufs: bugfix, how to build aufs
+    
+    A new patch 'aufs2-base.patch' in aufs2-standalone GIT tree.
+    
+    Reported-by: Ed W <lists@wildgooses.com>
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 49a069bce44fb1d2a64b4cf45bb1cfc10a778145
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Aug 23 03:33:18 2009 +0900
+
+    aufs: bugfix, support rdhash=0 in au_whtmp_rmdir_alloc()
+    
+    When the new value rdhash=0 is specified, au_whtmp_rmdir_alloc() handles
+    it as a default value.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 05a0e17ffb5692622c6a43b8947b8ce66a2247f8
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Aug 23 02:56:59 2009 +0900
+
+    aufs: RDU, initialize 'tail' and 'full' member
+    
+    To be safe, initialize 'tail' and 'full' member in au_rdu().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit e057b11fbbe9c5b0d8072536ab03fe84c5e69c82
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Aug 23 02:55:39 2009 +0900
+
+    aufs: bugfix, re-initialize br_wbr in an error path
+    
+    After au_br_mod_files_ro() failed, au_br_mod() restores the freed
+    br->wbr. In this error path, au_br_mod() forgot re-initialize the
+    re-allocated br->wbr.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 17e6c1461972185095a1cafc91c423852bac6fe0
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sat Aug 22 03:53:02 2009 +0900
+
+    aufs: bugfix, stop checking a lock in au_test_mmapped()
+    
+    Dumping informations by MagicSysRq hanlder calls au_test_mmapped()
+    without the file-lock.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 6d49f202fb8b79cb868f954be159effe64a430e8
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Aug 21 21:10:40 2009 +0900
+
+    aufs: tiny, type-cast in a debug-print
+    
+    To support both of 32/64 bit system.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 7597201983d32a22fbc3daaaa2a0b7c729dbe3ae
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Aug 21 18:06:44 2009 +0900
+
+    aufs: tiny, truncate a line over 80 characters
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 565fa410b4be7201d783842b52ef2ab411ff4d19
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Aug 21 17:43:05 2009 +0900
+
+    aufs: RDU, implemnt the kernel part
+    
+    Implement readdir(3) in userspace.
+    See the aufs manual in detail.
+    - new configuration CONFIG_AUFS_RDU.
+    - new file rdu.c.
+    - new function au_rdu_ioctl().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit ed5c2631baf48ff27eecb5d055a3f423d696185f
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Aug 21 16:21:51 2009 +0900
+
+    aufs: extract the body of aufs_ioctl_dir()
+    
+    Since aufs_ioctl_dir() will grow in the future, extract the current
+    contents of aufs_ioctl_dir() and create a new function au_plink_ioctl().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit d50836b56c9fa6d79fd0e278a73db26291de91be
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Aug 21 15:54:52 2009 +0900
+
+    aufs: estimate the value of rdblk and rdhash
+    
+    When zero is specified to rdblk and rdhash, aufs automatically estimate
+    the appropriate value for them individually based upon the size of all
+    lower directories. It may not be the best value, but it is useful in
+    several cases.
+    - new functions au_dir_size() and au_rdhash_est().
+    - allow zero for them at parsing options.
+    - the rdhash value is always default one when removing whtmp dir.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 63ccc00cea68737ae1df5d88002793e6fec383f0
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Sat May 9 13:40:13 2009 +0900
