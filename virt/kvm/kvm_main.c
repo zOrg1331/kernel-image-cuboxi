@@ -1675,9 +1675,7 @@ void kvm_vcpu_block(struct kvm_vcpu *vcpu)
 		if (signal_pending(current))
 			break;
 
-		vcpu_put(vcpu);
 		schedule();
-		vcpu_load(vcpu);
 	}
 
 	finish_wait(&vcpu->wq, &wait);
