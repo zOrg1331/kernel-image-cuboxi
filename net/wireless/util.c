@@ -141,9 +141,12 @@ void ieee80211_set_bitrate_flags(struct wiphy *wiphy)
 			set_mandatory_flags_band(wiphy->bands[band], band);
 }
 
-int cfg80211_validate_key_settings(struct key_params *params, int key_idx,
+int cfg80211_validate_key_settings(struct cfg80211_registered_device *rdev,
+				   struct key_params *params, int key_idx,
 				   const u8 *mac_addr)
 {
+	int i;
+
 	if (key_idx > 5)
 		return -EINVAL;
 
@@ -196,6 +199,12 @@ int cfg80211_validate_key_settings(struct key_params *params, int key_idx,
 			break;
 		}
 	}
+
+	for (i = 0; i < rdev->wiphy.n_cipher_suites; i++)
+		if (params->cipher == rdev->wiphy.cipher_suites[i])
+			break;
+	if (i == rdev->wiphy.n_cipher_suites)
+		return -EINVAL;
 
 	return 0;
 }
@@ -265,11 +274,11 @@ static int ieee80211_get_mesh_hdrlen(struct ieee80211s_hdr *meshhdr)
 	switch (ae) {
 	case 0:
 		return 6;
-	case 1:
+	case MESH_FLAGS_AE_A4:
 		return 12;
-	case 2:
+	case MESH_FLAGS_AE_A5_A6:
 		return 18;
-	case 3:
+	case (MESH_FLAGS_AE_A4 | MESH_FLAGS_AE_A5_A6):
 		return 24;
 	default:
 		return 6;
@@ -324,10 +333,18 @@ int ieee80211_data_to_8023(struct sk_buff *skb, u8 *addr,
 		}
 		break;
 	case cpu_to_le16(IEEE80211_FCTL_FROMDS):
-		if (iftype != NL80211_IFTYPE_STATION ||
+		if ((iftype != NL80211_IFTYPE_STATION &&
+		    iftype != NL80211_IFTYPE_MESH_POINT) ||
 		    (is_multicast_ether_addr(dst) &&
 		     !compare_ether_addr(src, addr)))
 			return -1;
+		if (iftype == NL80211_IFTYPE_MESH_POINT) {
+			struct ieee80211s_hdr *meshdr =
+				(struct ieee80211s_hdr *) (skb->data + hdrlen);
+			hdrlen += ieee80211_get_mesh_hdrlen(meshdr);
+			if (meshdr->flags & MESH_FLAGS_AE_A4)
+				memcpy(src, meshdr->eaddr1, ETH_ALEN);
+		}
 		break;
 	case cpu_to_le16(0):
 		if (iftype != NL80211_IFTYPE_ADHOC)
@@ -502,3 +519,58 @@ unsigned int cfg80211_classify8021d(struct sk_buff *skb)
 	return dscp >> 5;
 }
 EXPORT_SYMBOL(cfg80211_classify8021d);
+
+const u8 *ieee80211_bss_get_ie(struct cfg80211_bss *bss, u8 ie)
+{
+	u8 *end, *pos;
+
+	pos = bss->information_elements;
+	if (pos == NULL)
+		return NULL;
+	end = pos + bss->len_information_elements;
+
+	while (pos + 1 < end) {
+		if (pos + 2 + pos[1] > end)
+			break;
+		if (pos[0] == ie)
+			return pos;
+		pos += 2 + pos[1];
+	}
+
+	return NULL;
+}
+EXPORT_SYMBOL(ieee80211_bss_get_ie);
+
+void cfg80211_upload_connect_keys(struct wireless_dev *wdev)
+{
+	struct cfg80211_registered_device *rdev = wiphy_to_dev(wdev->wiphy);
+	struct net_device *dev = wdev->netdev;
+	int i;
+
+	if (!wdev->connect_keys)
+		return;
+
+	for (i = 0; i < 6; i++) {
+		if (!wdev->connect_keys->params[i].cipher)
+			continue;
+		if (rdev->ops->add_key(wdev->wiphy, dev, i, NULL,
+					&wdev->connect_keys->params[i])) {
+			printk(KERN_ERR "%s: failed to set key %d\n",
+				dev->name, i);
+			continue;
+		}
+		if (wdev->connect_keys->def == i)
+			if (rdev->ops->set_default_key(wdev->wiphy, dev, i)) {
+				printk(KERN_ERR "%s: failed to set defkey %d\n",
+					dev->name, i);
+				continue;
+			}
+		if (wdev->connect_keys->defmgmt == i)
+			if (rdev->ops->set_default_mgmt_key(wdev->wiphy, dev, i))
+				printk(KERN_ERR "%s: failed to set mgtdef %d\n",
+					dev->name, i);
+	}
+
+	kfree(wdev->connect_keys);
+	wdev->connect_keys = NULL;
+}

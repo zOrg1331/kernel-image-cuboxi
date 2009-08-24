@@ -72,10 +72,6 @@ struct wireless_dev;
 /* Backlog congestion levels */
 #define NET_RX_SUCCESS		0   /* keep 'em coming, baby */
 #define NET_RX_DROP		1  /* packet dropped */
-#define NET_RX_CN_LOW		2   /* storm alert, just in case */
-#define NET_RX_CN_MOD		3   /* Storm on its way! */
-#define NET_RX_CN_HIGH		4   /* The storm is here */
-#define NET_RX_BAD		5  /* packet dropped due to kernel error */
 
 /* NET_XMIT_CN is special. It does not guarantee that this packet is lost. It
  * indicates that the device will soon be dropping packets, or already drops
@@ -705,6 +701,7 @@ struct net_device
 /* the GSO_MASK reserves bits 16 through 23 */
 #define NETIF_F_FCOE_CRC	(1 << 24) /* FCoE CRC32 */
 #define NETIF_F_SCTP_CSUM	(1 << 25) /* SCTP checksum offload */
+#define NETIF_F_FCOE_MTU	(1 << 26) /* Supports max FCoE MTU, 2158 bytes*/
 
 	/* Segmentation offload features */
 #define NETIF_F_GSO_SHIFT	16

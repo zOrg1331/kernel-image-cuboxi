@@ -4285,7 +4285,7 @@ out:
 		dev_kfree_skb(skb);
 	}
 	read_unlock(&bond->lock);
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 
@@ -4316,7 +4316,7 @@ out:
 
 	read_unlock(&bond->curr_slave_lock);
 	read_unlock(&bond->lock);
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 /*
@@ -4362,7 +4362,7 @@ out:
 		dev_kfree_skb(skb);
 	}
 	read_unlock(&bond->lock);
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 /*
@@ -4422,7 +4422,7 @@ out:
 
 	/* frame sent to all suitable interfaces */
 	read_unlock(&bond->lock);
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 /*------------------------- Device initialization ---------------------------*/
@@ -4837,7 +4837,7 @@ static int bond_check_params(struct bond_params *params)
 	}
 
 	if (bond_mode == BOND_MODE_ALB) {
-		printk(KERN_NOTICE DRV_NAME
+		pr_notice(DRV_NAME
 		       ": In ALB mode you might experience client "
 		       "disconnections upon reconnection of a link if the "
 		       "bonding module updelay parameter (%d msec) is "
@@ -4961,9 +4961,9 @@ static int bond_check_params(struct bond_params *params)
 		       arp_ip_count);
 
 		for (i = 0; i < arp_ip_count; i++)
-			printk(" %s", arp_ip_target[i]);
+			pr_info(" %s", arp_ip_target[i]);
 
-		printk("\n");
+		pr_info("\n");
 
 	} else if (max_bonds) {
 		/* miimon and arp_interval not set, we need one so things
