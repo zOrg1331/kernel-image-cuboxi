@@ -1293,6 +1293,16 @@ static void start_report(struct utrace *utrace)
 	}
 }
 
+static inline void finish_report_reset(struct task_struct *task,
+				       struct utrace *utrace,
+				       struct utrace_report *report)
+{
+	if (unlikely(!report->takers || report->detaches)) {
+		spin_lock(&utrace->lock);
+		utrace_reset(task, utrace, &report->action);
+	}
+}
+
 /*
  * Complete a normal reporting pass, pairing with a start_report() call.
  * This handles any UTRACE_DETACH or UTRACE_REPORT or UTRACE_INTERRUPT
@@ -1317,10 +1327,7 @@ static void finish_report(struct utrace_report *report,
 		spin_unlock(&utrace->lock);
 	}
 
-	if (unlikely(!report->takers || report->detaches)) {
-		spin_lock(&utrace->lock);
-		utrace_reset(task, utrace, &report->action);
-	}
+	finish_report_reset(task, utrace, report);
 }
 
 /*
@@ -1709,10 +1716,7 @@ static void finish_resume_report(struct utrace_report *report,
 				 struct task_struct *task,
 				 struct utrace *utrace)
 {
-	if (report->detaches || !report->takers) {
-		spin_lock(&utrace->lock);
-		utrace_reset(task, utrace, &report->action);
-	}
+	finish_report_reset(task, utrace, report);
 
 	switch (report->action) {
 	case UTRACE_STOP:
