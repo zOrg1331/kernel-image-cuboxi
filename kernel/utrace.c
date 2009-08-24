@@ -341,98 +341,6 @@ static const struct utrace_engine_ops utrace_detached_ops = {
 };
 
 /*
- * Perform %UTRACE_STOP, i.e. block in TASK_TRACED until woken up.
- * @task == current, @utrace == current->utrace, which is not locked.
- * Return true if we were woken up by SIGKILL even though some utrace
- * engine may still want us to stay stopped.
- */
-static void utrace_stop(struct task_struct *task, struct utrace *utrace,
-			enum utrace_resume_action action)
-{
-	/*
-	 * @utrace->stopped is the flag that says we are safely
-	 * inside this function.  It should never be set on entry.
-	 */
-	BUG_ON(utrace->stopped);
-
-	/*
-	 * The siglock protects us against signals.  As well as SIGKILL
-	 * waking us up, we must synchronize with the signal bookkeeping
-	 * for stop signals and SIGCONT.
-	 */
-	spin_lock(&utrace->lock);
-	spin_lock_irq(&task->sighand->siglock);
-
-	if (unlikely(__fatal_signal_pending(task))) {
-		spin_unlock_irq(&task->sighand->siglock);
-		spin_unlock(&utrace->lock);
-		return;
-	}
-
-	if (action == UTRACE_INTERRUPT) {
-		/*
-		 * Ensure a %UTRACE_SIGNAL_REPORT reporting pass when we're
-		 * resumed.  The recalc_sigpending() call below will see
-		 * this flag and set TIF_SIGPENDING.
-		 */
-		utrace->interrupt = 1;
-	} else if (action < UTRACE_RESUME) {
-		/*
-		 * Ensure a reporting pass when we're resumed.
-		 */
-		utrace->report = 1;
-		set_thread_flag(TIF_NOTIFY_RESUME);
-	}
-
-	utrace->stopped = 1;
-	__set_current_state(TASK_TRACED);
-
-	/*
-	 * If there is a group stop in progress,
-	 * we must participate in the bookkeeping.
-	 */
-	if (unlikely(task->signal->group_stop_count) &&
-			!--task->signal->group_stop_count)
-		task->signal->flags = SIGNAL_STOP_STOPPED;
-
-	spin_unlock_irq(&task->sighand->siglock);
-	spin_unlock(&utrace->lock);
-
-	schedule();
-
-	/*
-	 * While in TASK_TRACED, we were considered "frozen enough".
-	 * Now that we woke up, it's crucial if we're supposed to be
-	 * frozen that we freeze now before running anything substantial.
-	 */
-	try_to_freeze();
-
-	/*
-	 * utrace_wakeup() clears @utrace->stopped before waking us up.
-	 * We're officially awake if it's clear.
-	 */
-	if (unlikely(utrace->stopped)) {
-		/*
-		 * If we're here with it still set, it must have been
-		 * signal_wake_up() instead, waking us up for a SIGKILL.
-		 */
-		WARN_ON(!__fatal_signal_pending(task));
-		spin_lock(&utrace->lock);
-		utrace->stopped = 0;
-		spin_unlock(&utrace->lock);
-	}
-
-	/*
-	 * While we were in TASK_TRACED, complete_signal() considered
-	 * us "uninterested" in signal wakeups.  Now make sure our
-	 * TIF_SIGPENDING state is correct for normal running.
-	 */
-	spin_lock_irq(&task->sighand->siglock);
-	recalc_sigpending();
-	spin_unlock_irq(&task->sighand->siglock);
-}
-
-/*
  * The caller has to hold a ref on the engine.  If the attached flag is
  * true (all but utrace_barrier() calls), the engine is supposed to be
  * attached.  If the attached flag is false (utrace_barrier() only),
@@ -878,6 +786,98 @@ static void utrace_reset(struct task_struct *task, struct utrace *utrace,
 	}
 
 	put_detached_list(&detached);
+}
+
+/*
+ * Perform %UTRACE_STOP, i.e. block in TASK_TRACED until woken up.
+ * @task == current, @utrace == current->utrace, which is not locked.
+ * Return true if we were woken up by SIGKILL even though some utrace
+ * engine may still want us to stay stopped.
+ */
+static void utrace_stop(struct task_struct *task, struct utrace *utrace,
+			enum utrace_resume_action action)
+{
+	/*
+	 * @utrace->stopped is the flag that says we are safely
+	 * inside this function.  It should never be set on entry.
+	 */
+	BUG_ON(utrace->stopped);
+
+	/*
+	 * The siglock protects us against signals.  As well as SIGKILL
+	 * waking us up, we must synchronize with the signal bookkeeping
+	 * for stop signals and SIGCONT.
+	 */
+	spin_lock(&utrace->lock);
+	spin_lock_irq(&task->sighand->siglock);
+
+	if (unlikely(__fatal_signal_pending(task))) {
+		spin_unlock_irq(&task->sighand->siglock);
+		spin_unlock(&utrace->lock);
+		return;
+	}
+
+	if (action == UTRACE_INTERRUPT) {
+		/*
+		 * Ensure a %UTRACE_SIGNAL_REPORT reporting pass when we're
+		 * resumed.  The recalc_sigpending() call below will see
+		 * this flag and set TIF_SIGPENDING.
+		 */
+		utrace->interrupt = 1;
+	} else if (action < UTRACE_RESUME) {
+		/*
+		 * Ensure a reporting pass when we're resumed.
+		 */
+		utrace->report = 1;
+		set_thread_flag(TIF_NOTIFY_RESUME);
+	}
+
+	utrace->stopped = 1;
+	__set_current_state(TASK_TRACED);
+
+	/*
+	 * If there is a group stop in progress,
+	 * we must participate in the bookkeeping.
+	 */
+	if (unlikely(task->signal->group_stop_count) &&
+			!--task->signal->group_stop_count)
+		task->signal->flags = SIGNAL_STOP_STOPPED;
+
+	spin_unlock_irq(&task->sighand->siglock);
+	spin_unlock(&utrace->lock);
+
+	schedule();
+
+	/*
+	 * While in TASK_TRACED, we were considered "frozen enough".
+	 * Now that we woke up, it's crucial if we're supposed to be
+	 * frozen that we freeze now before running anything substantial.
+	 */
+	try_to_freeze();
+
+	/*
+	 * utrace_wakeup() clears @utrace->stopped before waking us up.
+	 * We're officially awake if it's clear.
+	 */
+	if (unlikely(utrace->stopped)) {
+		/*
+		 * If we're here with it still set, it must have been
+		 * signal_wake_up() instead, waking us up for a SIGKILL.
+		 */
+		WARN_ON(!__fatal_signal_pending(task));
+		spin_lock(&utrace->lock);
+		utrace->stopped = 0;
+		spin_unlock(&utrace->lock);
+	}
+
+	/*
+	 * While we were in TASK_TRACED, complete_signal() considered
+	 * us "uninterested" in signal wakeups.  Now make sure our
+	 * TIF_SIGPENDING state is correct for normal running.
+	 */
+	spin_lock_irq(&task->sighand->siglock);
+	recalc_sigpending();
+	spin_unlock_irq(&task->sighand->siglock);
 }
 
 /*
