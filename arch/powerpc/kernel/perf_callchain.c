@@ -70,6 +70,11 @@ static void perf_callchain_kernel(struct pt_regs *regs,
 	lr = regs->link;
 	sp = regs->gpr[1];
 	callchain_store(entry, PERF_CONTEXT_KERNEL);
+	next_ip = perf_paranoid_anon_ip();
+	if (next_ip) {
+		callchain_store(entry, next_ip);
+		return;
+	}
 	callchain_store(entry, regs->nip);
 
 	if (!validate_sp(sp, current, STACK_FRAME_OVERHEAD))
