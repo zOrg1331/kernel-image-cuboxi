@@ -808,7 +808,25 @@ static void utrace_stop(struct task_struct *task, struct utrace *utrace,
 	 * waking us up, we must synchronize with the signal bookkeeping
 	 * for stop signals and SIGCONT.
 	 */
+relock:
 	spin_lock(&utrace->lock);
+
+	if (unlikely(!(task->utrace_flags & ENGINE_STOP))) {
+		/*
+		 * UTRACE_DETACH was used in some utrace_control()
+		 * call since the last time we ran utrace_reset().
+		 * It's possible that all the engines that wanted us
+		 * stopped are now detached.  If we stopped now, there
+		 * would be nobody to resume us.  So we must check over
+		 * still-attached engines and recompute the flags.
+		 */
+		enum utrace_resume_action stop = UTRACE_STOP;
+		utrace_reset(task, utrace, &stop);
+		if (stop != UTRACE_STOP)
+			return;
+		goto relock;
+	}
+
 	spin_lock_irq(&task->sighand->siglock);
 
 	if (unlikely(__fatal_signal_pending(task))) {
@@ -1082,6 +1100,16 @@ int utrace_control(struct task_struct *target,
 		mark_engine_detached(engine);
 		resume = resume || utrace_do_stop(target, utrace);
 		if (!resume) {
+			/*
+			 * This is a marker in case utrace_stop() gets
+			 * utrace->lock before utrace_reset() does,
+			 * meaning UTRACE_STOP was just returned from a
+			 * callback before our UTRACE_DETACH is seen.
+			 * It must double-check that our now-detached
+			 * engine was not the only reason to stop.
+			 */
+			target->utrace_flags &= ~ENGINE_STOP;
+
 			/*
 			 * As in utrace_set_events(), this barrier ensures
 			 * that our engine->flags changes have hit before we
