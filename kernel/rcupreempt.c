@@ -548,7 +548,7 @@ void rcu_irq_enter(void)
  * rcu_irq_exit - Called from exiting Hard irq context.
  *
  * If the CPU was idle with dynamic ticks active, update the
- * rcu_dyntick_sched.dynticks to put let the RCU handling be
+ * rcu_dyntick_sched.dynticks to let the RCU handling be
  * aware that the CPU is going back to idle with no ticks.
  */
 void rcu_irq_exit(void)
@@ -849,7 +849,7 @@ rcu_try_flip_waitzero(void)
 	/* Check to see if the sum of the "last" counters is zero. */
 
 	RCU_TRACE_ME(rcupreempt_trace_try_flip_z1);
-	for_each_cpu(cpu, to_cpumask(rcu_cpu_online_map))
+	for_each_possible_cpu(cpu)
 		sum += RCU_DATA_CPU(cpu)->rcu_flipctr[lastidx];
 	if (sum != 0) {
 		RCU_TRACE_ME(rcupreempt_trace_try_flip_ze1);
@@ -1066,12 +1066,6 @@ void rcu_offline_cpu(int cpu)
 		smp_mb();  /* Subsequent RCU read-side critical sections */
 			   /*  seen -after- acknowledgement. */
 	}
-
-	RCU_DATA_ME()->rcu_flipctr[0] += RCU_DATA_CPU(cpu)->rcu_flipctr[0];
-	RCU_DATA_ME()->rcu_flipctr[1] += RCU_DATA_CPU(cpu)->rcu_flipctr[1];
-
-	RCU_DATA_CPU(cpu)->rcu_flipctr[0] = 0;
-	RCU_DATA_CPU(cpu)->rcu_flipctr[1] = 0;
 
 	cpumask_clear_cpu(cpu, to_cpumask(rcu_cpu_online_map));
 
@@ -1417,8 +1411,8 @@ int rcu_pending(int cpu)
 	return 0;
 }
 
-static int __cpuinit rcu_cpu_notify(struct notifier_block *self,
-				unsigned long action, void *hcpu)
+int __cpuinit rcu_cpu_notify(struct notifier_block *self,
+			     unsigned long action, void *hcpu)
 {
 	long cpu = (long)hcpu;
 
@@ -1438,10 +1432,6 @@ static int __cpuinit rcu_cpu_notify(struct notifier_block *self,
 	}
 	return NOTIFY_OK;
 }
-
-static struct notifier_block __cpuinitdata rcu_nb = {
-	.notifier_call = rcu_cpu_notify,
-};
 
 void __init __rcu_init(void)
 {
@@ -1471,23 +1461,6 @@ void __init __rcu_init(void)
 		rdp->waitschedtail = &rdp->waitschedlist;
 		rdp->rcu_sched_sleeping = 0;
 	}
-	register_cpu_notifier(&rcu_nb);
-
-	/*
-	 * We don't need protection against CPU-Hotplug here
-	 * since
-	 * a) If a CPU comes online while we are iterating over the
-	 *    cpu_online_mask below, we would only end up making a
-	 *    duplicate call to rcu_online_cpu() which sets the corresponding
-	 *    CPU's mask in the rcu_cpu_online_map.
-	 *
-	 * b) A CPU cannot go offline at this point in time since the user
-	 *    does not have access to the sysfs interface, nor do we
-	 *    suspend the system.
-	 */
-	for_each_online_cpu(cpu)
-		rcu_cpu_notify(&rcu_nb, CPU_UP_PREPARE,	(void *)(long) cpu);
-
 	open_softirq(RCU_SOFTIRQ, rcu_process_callbacks);
 }
 
