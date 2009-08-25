@@ -670,19 +670,6 @@ static int soc_camera_g_ctrl(struct file *file, void *priv,
 
 	WARN_ON(priv != file->private_data);
 
-	switch (ctrl->id) {
-	case V4L2_CID_GAIN:
-		if (icd->gain == (unsigned short)~0)
-			return -EINVAL;
-		ctrl->value = icd->gain;
-		return 0;
-	case V4L2_CID_EXPOSURE:
-		if (icd->exposure == (unsigned short)~0)
-			return -EINVAL;
-		ctrl->value = icd->exposure;
-		return 0;
-	}
-
 	if (ici->ops->get_ctrl) {
 		ret = ici->ops->get_ctrl(icd, ctrl);
 		if (ret != -ENOIOCTLCMD)
@@ -1279,7 +1266,6 @@ static int video_dev_create(struct soc_camera_device *icd)
  */
 static int soc_camera_video_start(struct soc_camera_device *icd)
 {
-	const struct v4l2_queryctrl *qctrl;
 	int ret;
 
 	if (!icd->dev.parent)
@@ -1296,11 +1282,6 @@ static int soc_camera_video_start(struct soc_camera_device *icd)
 		dev_err(&icd->dev, "video_register_device failed: %d\n", ret);
 		return ret;
 	}
-
-	qctrl = soc_camera_find_qctrl(icd->ops, V4L2_CID_GAIN);
-	icd->gain = qctrl ? qctrl->default_value : (unsigned short)~0;
-	qctrl = soc_camera_find_qctrl(icd->ops, V4L2_CID_EXPOSURE);
-	icd->exposure = qctrl ? qctrl->default_value : (unsigned short)~0;
 
 	return 0;
 }

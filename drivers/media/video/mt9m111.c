@@ -153,6 +153,7 @@ struct mt9m111 {
 	enum mt9m111_context context;
 	struct v4l2_rect rect;
 	u32 pixfmt;
+	unsigned int gain;
 	unsigned char autoexposure;
 	unsigned char datawidth;
 	unsigned int powered:1;
@@ -672,8 +673,10 @@ static const struct v4l2_queryctrl mt9m111_controls[] = {
 };
 
 static int mt9m111_resume(struct soc_camera_device *icd);
+static int mt9m111_suspend(struct soc_camera_device *icd, pm_message_t state);
 
 static struct soc_camera_ops mt9m111_ops = {
+	.suspend		= mt9m111_suspend,
 	.resume			= mt9m111_resume,
 	.query_bus_param	= mt9m111_query_bus_param,
 	.set_bus_param		= mt9m111_set_bus_param,
@@ -714,13 +717,13 @@ static int mt9m111_get_global_gain(struct i2c_client *client)
 
 static int mt9m111_set_global_gain(struct i2c_client *client, int gain)
 {
-	struct soc_camera_device *icd = client->dev.platform_data;
+	struct mt9m111 *mt9m111 = to_mt9m111(client);
 	u16 val;
 
 	if (gain > 63 * 2 * 2)
 		return -EINVAL;
 
-	icd->gain = gain;
+	mt9m111->gain = gain;
 	if ((gain >= 64 * 2) && (gain < 63 * 2 * 2))
 		val = (1 << 10) | (1 << 9) | (gain / 4);
 	else if ((gain >= 64) && (gain < 64 * 2))
@@ -844,17 +847,26 @@ static int mt9m111_s_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 	return ret;
 }
 
+static int mt9m111_suspend(struct soc_camera_device *icd, pm_message_t state)
+{
+	struct i2c_client *client = to_i2c_client(to_soc_camera_control(icd));
+	struct mt9m111 *mt9m111 = to_mt9m111(client);
+
+	mt9m111->gain = mt9m111_get_global_gain(client);
+
+	return 0;
+}
+
 static int mt9m111_restore_state(struct i2c_client *client)
 {
 	struct mt9m111 *mt9m111 = to_mt9m111(client);
-	struct soc_camera_device *icd = client->dev.platform_data;
 
 	mt9m111_set_context(client, mt9m111->context);
 	mt9m111_set_pixfmt(client, mt9m111->pixfmt);
 	mt9m111_setup_rect(client, &mt9m111->rect);
 	mt9m111_set_flip(client, mt9m111->hflip, MT9M111_RMB_MIRROR_COLS);
 	mt9m111_set_flip(client, mt9m111->vflip, MT9M111_RMB_MIRROR_ROWS);
-	mt9m111_set_global_gain(client, icd->gain);
+	mt9m111_set_global_gain(client, mt9m111->gain);
 	mt9m111_set_autoexposure(client, mt9m111->autoexposure);
 	mt9m111_set_autowhitebalance(client, mt9m111->autowhitebalance);
 	return 0;
