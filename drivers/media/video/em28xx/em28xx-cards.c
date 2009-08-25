@@ -870,6 +870,8 @@ struct em28xx_board em28xx_boards[] = {
 		.decoder        = EM28XX_TVP5150,
 		.has_dvb        = 1,
 		.dvb_gpio       = default_digital,
+		.ir_codes       = ir_codes_terratec_cinergy_xs,
+		.xclk           = EM28XX_XCLK_FREQUENCY_12MHZ, /* NEC IR */
 		.input          = { {
 			.type     = EM28XX_VMUX_TELEVISION,
 			.vmux     = TVP5150_COMPOSITE0,
@@ -1649,6 +1651,8 @@ struct usb_device_id em28xx_id_table[] = {
 			.driver_info = EM2861_BOARD_PLEXTOR_PX_TV100U },
 	{ USB_DEVICE(0x04bb, 0x0515),
 			.driver_info = EM2820_BOARD_IODATA_GVMVP_SZ },
+	{ USB_DEVICE(0xeb1a, 0x50a6),
+			.driver_info = EM2860_BOARD_GADMEI_UTV330 },
 	{ },
 };
 MODULE_DEVICE_TABLE(usb, em28xx_id_table);
@@ -1661,7 +1665,7 @@ static struct em28xx_hash_table em28xx_eeprom_hash[] = {
 	{0x6ce05a8f, EM2820_BOARD_PROLINK_PLAYTV_USB2, TUNER_YMEC_TVF_5533MF},
 	{0x72cc5a8b, EM2820_BOARD_PROLINK_PLAYTV_BOX4_USB2, TUNER_YMEC_TVF_5533MF},
 	{0x966a0441, EM2880_BOARD_KWORLD_DVB_310U, TUNER_XC2028},
-	{0x9567eb1a, EM2880_BOARD_EMPIRE_DUAL_TV, TUNER_XC2028},
+	{0x166a0441, EM2880_BOARD_EMPIRE_DUAL_TV, TUNER_XC2028},
 	{0xcee44a99, EM2882_BOARD_EVGA_INDTUBE, TUNER_XC2028},
 	{0xb8846b20, EM2881_BOARD_PINNACLE_HYBRID_PRO, TUNER_XC2028},
 };
@@ -1730,6 +1734,25 @@ static inline void em28xx_set_model(struct em28xx *dev)
 				       EM28XX_I2C_FREQ_100_KHZ;
 }
 
+
+/* FIXME: Should be replaced by a proper mt9m111 driver */
+static int em28xx_initialize_mt9m111(struct em28xx *dev)
+{
+	int i;
+	unsigned char regs[][3] = {
+		{ 0x0d, 0x00, 0x01, },  /* reset and use defaults */
+		{ 0x0d, 0x00, 0x00, },
+		{ 0x0a, 0x00, 0x21, },
+		{ 0x21, 0x04, 0x00, },  /* full readout speed, no row/col skipping */
+	};
+
+	for (i = 0; i < ARRAY_SIZE(regs); i++)
+		i2c_master_send(&dev->i2c_client, &regs[i][0], 3);
+
+	return 0;
+}
+
+
 /* FIXME: Should be replaced by a proper mt9m001 driver */
 static int em28xx_initialize_mt9m001(struct em28xx *dev)
 {
@@ -1758,7 +1781,7 @@ static int em28xx_initialize_mt9m001(struct em28xx *dev)
 
 /* HINT method: webcam I2C chips
  *
- * This method work for webcams with Micron sensors
+ * This method works for webcams with Micron sensors
  */
 static int em28xx_hint_sensor(struct em28xx *dev)
 {
@@ -1804,6 +1827,23 @@ static int em28xx_hint_sensor(struct em28xx *dev)
 		dev->vinctl = 0x00;
 
 		break;
+
+	case 0x143a:    /* MT9M111 as found in the ECS G200 */
+		dev->model = EM2750_BOARD_UNKNOWN;
+		em28xx_set_model(dev);
+
+		sensor_name = "mt9m111";
+		dev->board.xclk = EM28XX_XCLK_FREQUENCY_48MHZ;
+		dev->em28xx_sensor = EM28XX_MT9M111;
+		em28xx_initialize_mt9m111(dev);
+		dev->sensor_xres = 640;
+		dev->sensor_yres = 512;
+
+		dev->vinmode = 0x0a;
+		dev->vinctl = 0x00;
+
+		break;
+
 	case 0x8431:
 		dev->model = EM2750_BOARD_UNKNOWN;
 		em28xx_set_model(dev);
@@ -1820,7 +1860,7 @@ static int em28xx_hint_sensor(struct em28xx *dev)
 
 		break;
 	default:
-		printk("Unknown Micron Sensor 0x%04x\n", be16_to_cpu(version));
+		printk("Unknown Micron Sensor 0x%04x\n", version);
 		return -EINVAL;
 	}
 
