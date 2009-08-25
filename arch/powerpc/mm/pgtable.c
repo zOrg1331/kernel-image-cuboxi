@@ -30,6 +30,16 @@
 #include <asm/tlbflush.h>
 #include <asm/tlb.h>
 
+DEFINE_PER_CPU(struct mmu_gather, mmu_gathers);
+
+#ifdef CONFIG_SMP
+
+/*
+ * Handle batching of page table freeing on SMP. Page tables are
+ * queued up and send to be freed later by RCU in order to avoid
+ * freeing a page table page that is being walked without locks
+ */
+
 static DEFINE_PER_CPU(struct pte_freelist_batch *, pte_freelist_cur);
 static unsigned long pte_freelist_forced_free;
 
@@ -115,6 +125,8 @@ void pte_free_finish(void)
 	pte_free_submit(*batchp);
 	*batchp = NULL;
 }
+
+#endif /* CONFIG_SMP */
 
 /*
  * Handle i/d cache flushing, called from set_pte_at() or ptep_set_access_flags()
@@ -242,7 +254,7 @@ void assert_pte_locked(struct mm_struct *mm, unsigned long addr)
 	BUG_ON(pud_none(*pud));
 	pmd = pmd_offset(pud, addr);
 	BUG_ON(!pmd_present(*pmd));
-	BUG_ON(!spin_is_locked(pte_lockptr(mm, pmd)));
+	assert_spin_locked(pte_lockptr(mm, pmd));
 }
 #endif /* CONFIG_DEBUG_VM */
 
