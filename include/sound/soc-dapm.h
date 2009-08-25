@@ -279,9 +279,11 @@ int snd_soc_dapm_add_routes(struct snd_soc_codec *codec,
 /* dapm events */
 int snd_soc_dapm_stream_event(struct snd_soc_codec *codec, char *stream,
 	int event);
+void snd_soc_dapm_shutdown(struct snd_soc_device *socdev);
 
 /* dapm sys fs - used by the core */
 int snd_soc_dapm_sys_add(struct device *dev);
+void snd_soc_dapm_debugfs_init(struct snd_soc_codec *codec);
 
 /* dapm audio pin control and status */
 int snd_soc_dapm_enable_pin(struct snd_soc_codec *codec, const char *pin);
