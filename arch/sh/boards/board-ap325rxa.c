@@ -359,7 +359,8 @@ static void ap325rxa_camera_del(struct soc_camera_link *icl)
 		return;
 
 	platform_device_unregister(&camera_device);
-	memset(&migor_camera_device.dev.kobj, 0, sizeof(migor_camera_device.dev.kobj));
+	memset(&migor_camera_device.dev.kobj, 0,
+	       sizeof(migor_camera_device.dev.kobj));
 }
 #endif /* CONFIG_I2C */
 

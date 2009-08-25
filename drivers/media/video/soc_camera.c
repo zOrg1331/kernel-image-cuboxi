@@ -327,7 +327,9 @@ static int soc_camera_set_fmt(struct soc_camera_file *icf,
 static int soc_camera_open(struct file *file)
 {
 	struct video_device *vdev = video_devdata(file);
-	struct soc_camera_device *icd = container_of(vdev->parent, struct soc_camera_device, dev);
+	struct soc_camera_device *icd = container_of(vdev->parent,
+						     struct soc_camera_device,
+						     dev);
 	struct soc_camera_link *icl = to_soc_camera_link(icd);
 	struct soc_camera_host *ici;
 	struct soc_camera_file *icf;
@@ -349,7 +351,10 @@ static int soc_camera_open(struct file *file)
 		goto emgi;
 	}
 
-	/* Protect against icd->ops->remove() until we module_get() both drivers. */
+	/*
+	 * Protect against icd->ops->remove() until we module_get() both
+	 * drivers.
+	 */
 	mutex_lock(&icd->video_lock);
 
 	icf->icd = icd;
@@ -931,7 +936,10 @@ static int soc_camera_probe(struct device *dev)
 		if (ret < 0)
 			goto eadddev;
 
-		/* FIXME: this is racy, have to use driver-binding notification */
+		/*
+		 * FIXME: this is racy, have to use driver-binding notification,
+		 * when it is available
+		 */
 		control = to_soc_camera_control(icd);
 		if (!control || !control->driver || !dev_get_drvdata(control) ||
 		    !try_module_get(control->driver->owner)) {

@@ -847,7 +847,10 @@ static int mt9v022_probe(struct i2c_client *client,
 	mt9v022->chip_control = MT9V022_CHIP_CONTROL_DEFAULT;
 
 	icd->ops		= &mt9v022_ops;
-	/* MT9V022 _really_ corrupts the first read out line. TODO: verify on i.MX31 */
+	/*
+	 * MT9V022 _really_ corrupts the first read out line.
+	 * TODO: verify on i.MX31
+	 */
 	icd->y_skip_top		= 1;
 
 	mt9v022->rect.left	= MT9V022_COLUMN_SKIP;

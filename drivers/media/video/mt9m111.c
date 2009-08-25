@@ -514,7 +514,8 @@ static int mt9m111_set_pixfmt(struct i2c_client *client, u32 pixfmt)
 		ret = mt9m111_setfmt_yuv(client);
 		break;
 	default:
-		dev_err(&client->dev, "Pixel format not handled : %x\n", pixfmt);
+		dev_err(&client->dev, "Pixel format not handled : %x\n",
+			pixfmt);
 		ret = -EINVAL;
 	}
 
@@ -537,9 +538,9 @@ static int mt9m111_s_fmt(struct v4l2_subdev *sd, struct v4l2_format *f)
 	};
 	int ret;
 
-	dev_dbg(&client->dev, "%s fmt=%x left=%d, top=%d, width=%d, height=%d\n",
-		__func__, pix->pixelformat, rect.left, rect.top, rect.width,
-		rect.height);
+	dev_dbg(&client->dev,
+		"%s fmt=%x left=%d, top=%d, width=%d, height=%d\n", __func__,
+		pix->pixelformat, rect.left, rect.top, rect.width, rect.height);
 
 	ret = mt9m111_make_rect(client, &rect);
 	if (!ret)
