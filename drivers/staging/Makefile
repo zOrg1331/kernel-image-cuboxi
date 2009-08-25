@@ -53,3 +53,4 @@ obj-$(CONFIG_VME)		+= vme/
 obj-$(CONFIG_RAR_REGISTER)	+= rar/
 obj-$(CONFIG_DX_SEP)		+= sep/
 obj-$(CONFIG_IIO)		+= iio/
+obj-$(CONFIG_COWLOOP)		+= cowloop/
