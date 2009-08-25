@@ -1,0 +1,109 @@
+From: Aristeu Rozanski <arozansk@redhat.com>
+Date: Tue, 26 Feb 2008 09:43:51 -0500
+Subject: [edac] k8_edac: add option to report GART errors
+Message-id: 20080226144344.GH8479@redhat.com
+O-Subject: [RHEL5.3 PATCH] k8_edac: add option to report GART errors
+Bugzilla: 390601
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=390601
+
+k8_edac by default reports GART errors and in some cases, it can be
+wrongly triggered. Also, these error reports are only useful (they're
+harmless) for display card developers. This patch disables by default
+the GART error reporting and add an option to enable it if desired.
+
+The patch is upstream on EDAC repository (k8_edac is not on Linus' tree)
+Tested by me on ibm-wildhorse-01.rhts.boston.redhat.com (only machine to
+report these errors using 'byte' rhts test)
+
+----
+
+After spending the last days trying to understand why a pre-GA machine
+using k8_edac is generating so much GART table walk errors in a
+completely unrelated stress test (filesystem), I've discovered that in
+some cases those errors can be triggered by other reasons. In AMD
+documentation they make clear that the error reporting for GART table walk
+errors should be disabled by default and the MCE exceptions are disabled
+in mce_64.c:
+	/* Add per CPU specific workarounds here */
+	static void __cpuinit mce_cpu_quirks(struct cpuinfo_x86 *c)
+	{
+		/* This should be disabled by the BIOS, but isn't always */
+		if (c->x86_vendor == X86_VENDOR_AMD && c->x86 == 15) {
+			/* disable GART TBL walk error reporting, which trips off
+			   incorrectly with the IOMMU & 3ware & Cerberus. */
+			clear_bit(10, &bank[4]);
+			/* Lots of broken BIOS around that don't clear them
+			   by default and leave crap in there. Don't log. */
+			mce_bootlog = 0;
+		}
+	}
+
+But, as EDAC polls for errors, the GART table walk "errors" are detected and
+reported anyway.
+
+These GART table walk errors are:
+	- harmless
+	- intended to be used to help graphics driver developers
+	- can be triggered incorretly
+		- and in this case, there's nothing you can do
+
+This patch adds an option to k8_edac to show these errors, being
+disabled by default.
+
+Signed-off-by: Aristeu Rozanski <arozansk@redhat.com>
+
+diff --git a/drivers/edac/k8_edac.c b/drivers/edac/k8_edac.c
+index 60140a2..286d8ee 100644
+--- a/drivers/edac/k8_edac.c
++++ b/drivers/edac/k8_edac.c
+@@ -555,6 +555,9 @@ static void do_rdmsr(int cpu, u32 reg, u32 *eax, u32 *edx)
+ 	*edx = cmd.data[1];
+ }
+ 
++static int report_gart_errors;
++module_param(report_gart_errors, int, 0644);
++
+ /*
+  * FIXME - This is a large chunk of memory to suck up just to decode the
+  * syndrome.  It would be nice to discover a pattern in the syndromes that
+@@ -1719,8 +1722,22 @@ static int k8_process_error_info(struct mem_ctl_info *mci,
+ 		regs->nbeal, regs->nbsh, regs->nbsl);
+ 
+ 	if ((err_code & 0xfff0UL) == 0x0010UL) {
+-		debugf1("GART TLB error\n");
++		/*
++		 * GART errors are intended to help graphics driver
++		 * developers to detect bad GART PTEs. It is recommended by
++		 * AMD to disable GART error reporting by default[1] (currently
++		 * being disabled in mce_cpu_quirks()) and according to the
++		 * comment in mce_cpu_quirks(), such GART errors can be
++		 * incorrectly triggered. We may see these errors anyway and
++		 * unless requested by the user, they won't be reported.
++		 *
++		 * [1] section 13.10.1 on BIOS and Kernel Developers Guide for
++		 *     AMD NPT family 0Fh processors
++		 */
++		if (report_gart_errors == 0)
++			return 1;
+ 		gart_tlb_error = 1;
++		debugf1("GART TLB error\n");
+ 		decode_gart_tlb_error(mci, info);
+ 	} else if ((err_code & 0xff00UL) == 0x0100UL) {
+ 		debugf1("Cache error\n");
+@@ -1743,10 +1760,11 @@ static int k8_process_error_info(struct mem_ctl_info *mci,
+ 		    "Error on hypertransport link: %s\n",
+ 		    htlink_msgs[(info->error_info.nbsh >> 4) & 0x07UL]);
+ 
+-	/* GART errors are benign as per AMD, do not panic on them */
+-	if (!gart_tlb_error && (regs->nbsh & BIT(29))) {
++	if (regs->nbsh & BIT(29)) {
+ 		k8_mc_printk(mci, KERN_CRIT, "uncorrected error\n");
+-		edac_mc_handle_ue_no_info(mci, "UE bit is set\n");
++		/* don't panic in a GART TLB error */
++		if (!gart_tlb_error)
++			edac_mc_handle_ue_no_info(mci, "UE bit is set\n");
+ 	}
+ 
+ 	if (regs->nbsh & BIT(25)) {

@@ -1,0 +1,48 @@
+From: heinzm@redhat.com <heinzm@redhat.com>
+Date: Wed, 27 Aug 2008 14:16:44 +0200
+Subject: [md] add device-mapper RAID4/5 stripe locking interface
+Message-id: 20080827121638.202163539@redhat.com
+O-Subject: [PATCH RHEL5.3 437180 08/11] dm-raid45.h.patch
+Bugzilla: 437180
+
+This patch introduces the device-mapper RAID4/5 stripe
+locking abstraction interface, which allows for different
+locking instances in order to leverage for clustering.
+
+Heinz
+
+Signed-off-by: Heinz Mauelshagen <heinzm@redhat.com>
+
+diff --git a/drivers/md/dm-raid45.h b/drivers/md/dm-raid45.h
+new file mode 100644
+index 0000000..1eca469
+--- /dev/null
++++ b/drivers/md/dm-raid45.h
+@@ -0,0 +1,27 @@
++/*
++ * Copyright (C) 2006-2008 Red Hat, Inc. All rights reserved.
++ *
++ * Module Author: Heinz Mauelshagen (Mauelshagen@RedHat.com)
++ *
++ * This file is released under the GPL.
++ *
++ */
++
++#ifndef _DM_RAID45_H
++#define _DM_RAID45_H
++
++/* Factor out to dm.h! */
++#define	STR_LEN(ptr, str) ptr, str, strlen(ptr)
++
++enum lock_type { RAID45_EX, RAID45_SHARED };
++
++struct dmraid45_locking_type {
++        /* Request a lock on a stripe. */
++        void* (*lock)(sector_t key, enum lock_type type);
++
++        /* Release a lock on a stripe. */
++        void (*unlock)(void *lock_handle);
++
++};
++
++#endif

@@ -1,0 +1,36 @@
+http://www.openwall.com/lists/oss-security/2009/08/04/2
+http://article.gmane.org/gmane.linux.kernel/871942
+https://bugzilla.redhat.com/show_bug.cgi?id=515423
+
+diff -urp linux-2.6.18-128.4.1.el5.028stab062.3/kernel/fork.c linux-2.6.18-128.4.1.el5.028stab062.3-ow0/kernel/fork.c
+--- linux-2.6.18-128.4.1.el5.028stab062.3/kernel/fork.c	2009-08-05 16:13:33 +0000
++++ linux-2.6.18-128.4.1.el5.028stab062.3-ow0/kernel/fork.c	2009-08-05 18:44:55 +0000
+@@ -604,16 +604,19 @@ void mm_release(struct task_struct *tsk,
+ 		task_aux(tsk)->vfork_done = NULL;
+ 		complete(vfork_done);
+ 	}
+-	if (tsk->clear_child_tid && atomic_read(&mm->mm_users) > 1) {
+-		u32 __user * tidptr = tsk->clear_child_tid;
+-		tsk->clear_child_tid = NULL;
++	if (tsk->clear_child_tid) {
++		if (atomic_read(&mm->mm_users) > 1) {
++			u32 __user * tidptr = tsk->clear_child_tid;
++			tsk->clear_child_tid = NULL;
+ 
+-		/*
+-		 * We don't check the error code - if userspace has
+-		 * not set up a proper pointer then tough luck.
+-		 */
+-		put_user(0, tidptr);
+-		sys_futex(tidptr, FUTEX_WAKE, 1, NULL, NULL, 0);
++			/*
++			 * We don't check the error code - if userspace has
++			 * not set up a proper pointer then tough luck.
++			 */
++			put_user(0, tidptr);
++			sys_futex(tidptr, FUTEX_WAKE, 1, NULL, NULL, 0);
++		}
++		tsk->clear_child_tid = NULL;
+ 	}
+ }
+ 

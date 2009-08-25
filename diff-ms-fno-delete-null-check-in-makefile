@@ -1,0 +1,58 @@
+From: Eugene Teo <eteo@redhat.com>
+Date: Wed, 15 Jul 2009 06:59:10 +0000 (+0800)
+Subject: Add '-fno-delete-null-pointer-checks' to gcc CFLAGS
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=a3ca86aea507904148870946d599e07a340b39bf
+
+Add '-fno-delete-null-pointer-checks' to gcc CFLAGS
+
+Turning on this flag could prevent the compiler from optimising away
+some "useless" checks for null pointers.  Such bugs can sometimes become
+exploitable at compile time because of the -O2 optimisation.
+
+See http://gcc.gnu.org/onlinedocs/gcc-4.1.2/gcc/Optimize-Options.html
+
+An example that clearly shows this 'problem' is commit 6bf67672.
+
+ static void __devexit agnx_pci_remove(struct pci_dev *pdev)
+ {
+     struct ieee80211_hw *dev = pci_get_drvdata(pdev);
+-    struct agnx_priv *priv = dev->priv;
++    struct agnx_priv *priv;
+     AGNX_TRACE;
+
+     if (!dev)
+         return;
++    priv = dev->priv;
+
+By reverting this patch, and compile it with and without
+-fno-delete-null-pointer-checks flag, we can see that the check for dev
+is compiled away.
+
+    call    printk  #
+-   testq   %r12, %r12  # dev
+-   je  .L94    #,
+    movq    %r12, %rdi  # dev,
+
+Clearly the 'fix' is to stop using dev before it is tested, but building
+with -fno-delete-null-pointer-checks flag at least makes it harder to
+abuse.
+
+Signed-off-by: Eugene Teo <eugeneteo@kernel.sg>
+Acked-by: Eric Paris <eparis@redhat.com>
+Acked-by: Wang Cong <amwang@redhat.com>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+
+diff --git a/Makefile b/Makefile
+index be0abac..79957b3 100644
+--- a/Makefile
++++ b/Makefile
+@@ -343,7 +343,7 @@ KBUILD_CPPFLAGS := -D__KERNEL__
+ CPPFLAGS        := -D__KERNEL__ $(LINUXINCLUDE)
+ 
+ CFLAGS          := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
+-                   -fno-strict-aliasing -fno-common -Wstrict-prototypes -Wundef -Werror-implicit-function-declaration
++                   -fno-strict-aliasing -fno-common -Wstrict-prototypes -Wundef -Werror-implicit-function-declaration -fno-delete-null-pointer-checks
+ CFLAGS		+= $(call cc-option,-fwrapv)
+ AFLAGS          := -D__ASSEMBLY__
+ 

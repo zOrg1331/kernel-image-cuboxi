@@ -1,0 +1,40 @@
+From: Joachim Deguara <jdeguara@redhat.com>
+Date: Thu, 6 Nov 2008 16:44:28 -0800
+Subject: [xen] limit node poking to available nodes
+Message-id: 49138F6C.7040001@redhat.com
+O-Subject: [PATCH RHEL5.3 BZ449803] limit node poking to available nodes
+Bugzilla: 449803
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=449803
+
+This is a very simple backport of Xen upstream change set 17712, located
+here:
+http://xenbits.xensource.com/xen-unstable.hg?rev/5cc5b9c37c6d
+
+disable_c1_ramping() in xen/arch/x86/cpu/amd.c was using NR_CPUS as
+means to iterate over all node.  This however can be wrong as NR_CPUS is
+not the same as the number of nodes a system may have _and_ NR_CPUS is
+too large so the code starting poking PCI devices that can't exist due
+to too high of a device number.
+
+diff --git a/arch/x86/cpu/amd.c b/arch/x86/cpu/amd.c
+index a742053..42947f0 100644
+--- a/arch/x86/cpu/amd.c
++++ b/arch/x86/cpu/amd.c
+@@ -86,9 +86,11 @@ static void pci_write_byte(u32 bus, u32 dev, u32 fn, u32 reg, u8 val)
+ static void disable_c1_ramping(void) 
+ {
+ 	u8 pmm7;
+-	int node;
++	int node, nr_nodes;
+ 
+-	for (node=0; node < NR_CPUS; node++) {
++	/* Read the number of nodes from the first Northbridge. */
++	nr_nodes = ((pci_read_byte(0, 0x18, 0x0, 0x60)>>4)&0x07)+1;
++	for (node = 0; node < nr_nodes; node++) {
+ 		/* PMM7: bus=0, dev=0x18+node, function=0x3, register=0x87. */
+ 		pmm7 = pci_read_byte(0, 0x18+node, 0x3, 0x87);
+ 		/* Invalid read means we've updated every Northbridge. */

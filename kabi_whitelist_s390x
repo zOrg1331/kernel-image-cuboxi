@@ -141,6 +141,11 @@
 	dlm_new_lockspace
 	dlm_release_lockspace
 	dlm_unlock
+[rhel5_dlm_u3]
+	dlm_posix_get
+	dlm_posix_lock
+	dlm_posix_set_fsid
+	dlm_posix_unlock
 [rhel5_drivers_base_ga]
 	anon_transport_class_register
 	anon_transport_class_unregister
@@ -1352,6 +1357,8 @@
 [rhel5_lib_u1]
 	__bitmap_equal
 	__bitmap_intersects
+[rhel5_lib_u3]
+	vscnprintf
 [rhel5_lib_zlib_deflate_ga]
 	zlib_deflate
 	zlib_deflateEnd

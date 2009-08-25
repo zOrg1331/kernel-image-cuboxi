@@ -1,0 +1,51 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Thu, 31 Jul 2008 15:33:24 -0400
+Subject: [IA64] BTE error timer fix
+Message-id: 20080731192729.4411.35164.sendpatchset@dhcp-100-2-194.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH 9/19] [IA64] BTE error timer fix
+Bugzilla: 455308
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+[patch] BTE error timer fix
+
+BZ#455308
+
+Upstream: http://git.kernel.org/?p=linux/kernel/git/aegl/linux-2.6.git;a=commitdiff;h=fbff71e1ec1c4695d51d496a53228ecdcb6361eb
+
+The bte recovery_timer was not being set correctly.
+
+Signed-off-by: Russ Anderson <rja@sgi.com>
+Signed-off-by: Tony Luck <tony.luck@intel.com>
+
+diff --git a/arch/ia64/sn/kernel/bte_error.c b/arch/ia64/sn/kernel/bte_error.c
+index f1ec137..b6fcf81 100644
+--- a/arch/ia64/sn/kernel/bte_error.c
++++ b/arch/ia64/sn/kernel/bte_error.c
+@@ -78,7 +78,7 @@ int shub1_bte_error_handler(unsigned long _nodepda)
+ 		 * There are errors which still need to be cleaned up by
+ 		 * hubiio_crb_error_handler
+ 		 */
+-		mod_timer(recovery_timer, HZ * 5);
++		mod_timer(recovery_timer, jiffies + (HZ * 5));
+ 		BTE_PRINTK(("eh:%p:%d Marked Giving up\n", err_nodepda,
+ 			    smp_processor_id()));
+ 		return 1;
+@@ -95,7 +95,7 @@ int shub1_bte_error_handler(unsigned long _nodepda)
+ 			icrbd.ii_icrb0_d_regval =
+ 			    REMOTE_HUB_L(nasid, IIO_ICRB_D(i));
+ 			if (icrbd.d_bteop) {
+-				mod_timer(recovery_timer, HZ * 5);
++				mod_timer(recovery_timer, jiffies + (HZ * 5));
+ 				BTE_PRINTK(("eh:%p:%d Valid %d, Giving up\n",
+ 					    err_nodepda, smp_processor_id(),
+ 					    i));
+@@ -150,7 +150,7 @@ int shub2_bte_error_handler(unsigned long _nodepda)
+ 		status = BTE_LNSTAT_LOAD(bte);
+ 		if ((status & IBLS_ERROR) || !(status & IBLS_BUSY))
+ 			continue;
+-		mod_timer(recovery_timer, HZ * 5);
++		mod_timer(recovery_timer, jiffies + (HZ * 5));
+ 		BTE_PRINTK(("eh:%p:%d Marked Giving up\n", err_nodepda,
+ 			    smp_processor_id()));
+ 		return 1;

@@ -1,0 +1,60 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Thu, 17 Jul 2008 17:29:01 +0200
+Subject: [xen] blktap: modify sysfs entries to match blkback
+Message-id: 487F653D.90705@redhat.com
+O-Subject: [RHEL5.3 PATCH 5/7]: Modify blktap sysfs entries to match blkback v2
+Bugzilla: 250104
+RH-Acked-by: Stephen Tweedie <sct@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+Now that we have added blktap sysfs entries, modify them so that they follow the
+same form as the blkback sysfs entries.  That is, use sysfs paths rd_req,
+wr_req, etc., instead of tap_rd_req, tap_wr_req, etc.  From xen-3.1-testing.hg
+c/s 15389
+
+diff --git a/drivers/xen/blktap/xenbus.c b/drivers/xen/blktap/xenbus.c
+index 38dbcb3..3ace069 100644
+--- a/drivers/xen/blktap/xenbus.c
++++ b/drivers/xen/blktap/xenbus.c
+@@ -114,7 +114,7 @@ static int blktap_name(blkif_t *blkif, char *buf)
+ }
+ 
+ /****************************************************************
+- *  sysfs interface for VBD I/O requests
++ *  sysfs interface for I/O requests of blktap device
+  */
+ 
+ #define VBD_SHOW(name, format, args...)					\
+@@ -127,20 +127,20 @@ static int blktap_name(blkif_t *blkif, char *buf)
+ 									\
+ 		return sprintf(buf, format, ##args);			\
+ 	}								\
+-	DEVICE_ATTR(name, S_IRUGO, show_##name, NULL)
++	static DEVICE_ATTR(name, S_IRUGO, show_##name, NULL)
+ 
+-VBD_SHOW(tap_oo_req,  "%d\n", be->blkif->st_oo_req);
+-VBD_SHOW(tap_rd_req,  "%d\n", be->blkif->st_rd_req);
+-VBD_SHOW(tap_wr_req,  "%d\n", be->blkif->st_wr_req);
+-VBD_SHOW(tap_rd_sect, "%d\n", be->blkif->st_rd_sect);
+-VBD_SHOW(tap_wr_sect, "%d\n", be->blkif->st_wr_sect);
++VBD_SHOW(oo_req,  "%d\n", be->blkif->st_oo_req);
++VBD_SHOW(rd_req,  "%d\n", be->blkif->st_rd_req);
++VBD_SHOW(wr_req,  "%d\n", be->blkif->st_wr_req);
++VBD_SHOW(rd_sect, "%d\n", be->blkif->st_rd_sect);
++VBD_SHOW(wr_sect, "%d\n", be->blkif->st_wr_sect);
+ 
+ static struct attribute *tapstat_attrs[] = {
+-	&dev_attr_tap_oo_req.attr,
+-	&dev_attr_tap_rd_req.attr,
+-	&dev_attr_tap_wr_req.attr,
+-	&dev_attr_tap_rd_sect.attr,
+-	&dev_attr_tap_wr_sect.attr,
++	&dev_attr_oo_req.attr,
++	&dev_attr_rd_req.attr,
++	&dev_attr_wr_req.attr,
++	&dev_attr_rd_sect.attr,
++	&dev_attr_wr_sect.attr,
+ 	NULL
+ };
+ 

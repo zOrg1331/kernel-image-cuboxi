@@ -1,0 +1,54 @@
+diff --git a/mm/memory.c b/mm/memory.c
+index bf3028d..f5fd6d1 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -1862,6 +1862,7 @@ static int fork_pre_cow(struct mm_struct *dst_mm,
+ {
+ 	pte_t _src_pte, _dst_pte;
+ 	struct page *old_page, *new_page;
++	struct page_beancounter *pbc;
+ 
+ 	_src_pte = **src_ptep;
+ 	_dst_pte = **dst_ptep;
+@@ -1872,6 +1873,8 @@ static int fork_pre_cow(struct mm_struct *dst_mm,
+ 	pte_unmap_nested(*src_ptep);
+ 	pte_unmap_unlock(*dst_ptep, *dst_ptlp);
+ 
++	if (pb_alloc(&pbc))
++		return -ENOMEM;
+ 	new_page = alloc_page_vma(GFP_HIGHUSER, dst_vma, address);
+ 	if (unlikely(!new_page)) {
+ 		*dst_ptep = pte_offset_map_lock(dst_mm, dst_pmd, address,
+@@ -1879,6 +1882,7 @@ static int fork_pre_cow(struct mm_struct *dst_mm,
+ 		*src_ptep = pte_offset_map_nested(src_pmd, address);
+ 		*src_ptlp = pte_lockptr(src_mm, src_pmd);
+ 		spin_lock_nested(*src_ptlp, SINGLE_DEPTH_NESTING);
++		pb_free(&pbc);
+ 		return -ENOMEM;
+ 	}
+ 	cow_user_page(new_page, old_page, address);
+@@ -1899,6 +1903,7 @@ static int fork_pre_cow(struct mm_struct *dst_mm,
+ 		goto eagain;
+ 
+ 	page_remove_rmap(old_page);
++	pb_remove_ref(old_page, dst_mm);
+ 	page_cache_release(old_page);
+ 	page_cache_release(old_page);
+ 
+@@ -1906,6 +1911,7 @@ static int fork_pre_cow(struct mm_struct *dst_mm,
+ 	_dst_pte = mk_pte(new_page, dst_vma->vm_page_prot);
+ 	_dst_pte = maybe_mkwrite(pte_mkdirty(_dst_pte), dst_vma);
+ 	page_add_new_anon_rmap(new_page, dst_vma, address);
++	pb_add_ref(new_page, dst_mm, &pbc);
+ 	lru_cache_add_active(new_page);
+ 	set_pte_at(dst_mm, address, *dst_ptep, _dst_pte);
+ 	update_mmu_cache(dst_vma, address, _dst_pte);
+@@ -1920,6 +1926,8 @@ eagain:
+ 	 * undo the mapcount and page count taken in copy_one_pte.
+ 	 */
+ 	page_remove_rmap(old_page);
++	pb_remove_ref(old_page, dst_mm);
++	pb_free(&pbc);
+ 	page_cache_release(old_page);
+ 	return -EAGAIN;
+ }

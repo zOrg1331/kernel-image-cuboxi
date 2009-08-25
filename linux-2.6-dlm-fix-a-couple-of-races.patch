@@ -1,0 +1,82 @@
+From: David Teigland <teigland@redhat.com>
+Date: Fri, 1 Aug 2008 11:10:14 -0500
+Subject: [dlm] fix a couple of races
+Message-id: 20080801161013.GB26413@redhat.com
+O-Subject: [RHEL5.3 PATCH] dlm: fix a couple of races
+Bugzilla: 457569
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: Bob Peterson <rpeterso@redhat.com>
+
+bz 457569 dlm get_comm() uses NULL pointer
+
+brew build including this patch
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1418645
+
+upstream commit:
+
+commit 3168b0780d06ace875696f8a648d04d6089654e5
+Author: Satyam Sharma <ssatyam@cse.iitk.ac.in>
+Date:   Tue May 8 09:18:58 2007 +0100
+
+    [DLM] fix a couple of races
+
+    Fix two races in fs/dlm/config.c:
+
+    (1) Grab the configfs subsystem semaphore before calling
+    config_group_find_obj() in get_space(). This solves a potential race
+    between get_space() and concurrent mkdir(2) or rmdir(2).
+
+    (2) Grab a reference on the found config_item _while_ holding the configfs
+    subsystem semaphore in get_comm(), and not after it. This solves a
+    potential race between get_comm() and concurrent rmdir(2).
+
+    Signed-off-by: Satyam Sharma <ssatyam@cse.iitk.ac.in>
+    Signed-off-by: David Teigland <teigland@redhat.com>
+    Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+
+diff --git a/fs/dlm/config.c b/fs/dlm/config.c
+index 3711548..5069b2c 100644
+--- a/fs/dlm/config.c
++++ b/fs/dlm/config.c
+@@ -754,9 +754,16 @@ static ssize_t node_weight_write(struct node *nd, const char *buf, size_t len)
+ 
+ static struct space *get_space(char *name)
+ {
++	struct config_item *i;
++
+ 	if (!space_list)
+ 		return NULL;
+-	return to_space(config_group_find_obj(space_list, name));
++
++	down(&space_list->cg_subsys->su_sem);
++	i = config_group_find_obj(space_list, name);
++	up(&space_list->cg_subsys->su_sem);
++
++	return to_space(i);
+ }
+ 
+ static void put_space(struct space *sp)
+@@ -782,20 +789,20 @@ static struct comm *get_comm(int nodeid, struct sockaddr_storage *addr)
+ 			if (cm->nodeid != nodeid)
+ 				continue;
+ 			found = 1;
++			config_item_get(i);
+ 			break;
+ 		} else {
+ 			if (!cm->addr_count ||
+ 			    memcmp(cm->addr[0], addr, sizeof(*addr)))
+ 				continue;
+ 			found = 1;
++			config_item_get(i);
+ 			break;
+ 		}
+ 	}
+ 	up(&clusters_root.subsys.su_sem);
+ 
+-	if (found)
+-		config_item_get(i);
+-	else
++	if (!found)
+ 		cm = NULL;
+ 	return cm;
+ }

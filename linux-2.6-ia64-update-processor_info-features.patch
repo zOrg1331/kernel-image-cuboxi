@@ -1,0 +1,113 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Thu, 31 Jul 2008 15:33:19 -0400
+Subject: [IA64] Update processor_info features
+Message-id: 20080731192724.4411.83721.sendpatchset@dhcp-100-2-194.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH 8/19] [IA64] Update processor_info features
+Bugzilla: 455308
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+[patch] Update processor_info features
+
+BZ#455308
+
+Upstream: http://git.kernel.org/?p=linux/kernel/git/aegl/linux-2.6.git;a=commitdiff;h=895309ff6f22a9d107e007521e44aac4400b365d
+
+Add the printing of additional processor features to proc_features.
+
+Based on Rev 2.2 of Volume 2 of "Intel Itanium Architecture Software
+Developer's Manual" (January 2006) fields (pages 2:430-2:432).
+This patch gets the features back in sync with the spec.
+
+Sample output before:
+
+--------------------------------------------------------------
+cobra:~ # cat /proc/pal/cpu0/processor_info
+XIP,XPSR,XFS implemented                 : On NoCtrl
+XR1-XR3 implemented                      : On NoCtrl
+Disable dynamic predicate prediction     : NotImpl
+Disable processor physical number        : NotImpl
+Disable dynamic data cache prefetch      : NotImpl
+Disable dynamic inst cache prefetch      : NotImpl
+Disable dynamic branch prediction        : NotImpl
+Disable BINIT on processor time-out      : On Ctrl
+Disable dynamic power management (DPM)   : NotImpl
+Disable coherency                        : NotImpl
+Disable cache                            : NotImpl
+Enable CMCI promotion                    : Off Ctrl
+Enable MCA to BINIT promotion            : Off Ctrl
+Enable MCA promotion                     : NotImpl
+Enable BERR promotion                    : NotImpl
+cobra:~ #
+--------------------------------------------------------------
+
+Sample output after:
+--------------------------------------------------------------
+cobra:~ # cat /proc/pal/cpu0/processor_info
+Unimplemented instruction address fault  : NotImpl
+INIT, PMI, and LINT pins                 : NotImpl
+Simple unimplimented instr addresses     : On NoCtrl
+Variable P-state performance             : NotImpl
+Virtual machine features implemeted      : On NoCtrl
+XIP,XPSR,XFS implemented                 : On NoCtrl
+XR1-XR3 implemented                      : On NoCtrl
+Disable dynamic predicate prediction     : NotImpl
+Disable processor physical number        : NotImpl
+Disable dynamic data cache prefetch      : NotImpl
+Disable dynamic inst cache prefetch      : NotImpl
+Disable dynamic branch prediction        : NotImpl
+Disable P-states                         : Off Ctrl
+Enable MCA on Data Poisoning             : Off Ctrl
+Enable vmsw instruction                  : On Ctrl
+Enable extern environmental notification : NotImpl
+Disable BINIT on processor time-out      : On Ctrl
+Disable dynamic power management (DPM)   : NotImpl
+Disable coherency                        : NotImpl
+Disable cache                            : NotImpl
+Enable CMCI promotion                    : Off Ctrl
+Enable MCA to BINIT promotion            : Off Ctrl
+Enable MCA promotion                     : NotImpl
+Enable BERR promotion                    : NotImpl
+cobra:~ #
+--------------------------------------------------------------
+
+Signed-off-by: Russ Anderson (rja@sgi.com)
+Signed-off-by: Tony Luck <tony.luck@intel.com>
+
+diff --git a/arch/ia64/kernel/palinfo.c b/arch/ia64/kernel/palinfo.c
+index 604cf01..2aa5913 100644
+--- a/arch/ia64/kernel/palinfo.c
++++ b/arch/ia64/kernel/palinfo.c
+@@ -16,6 +16,7 @@
+  * 02/05/2001   S.Eranian	fixed module support
+  * 10/23/2001	S.Eranian	updated pal_perf_mon_info bug fixes
+  * 03/24/2004	Ashok Raj	updated to work with CPU Hotplug
++ * 10/26/2006   Russ Anderson	updated processor features to rev 2.2 spec
+  */
+ #include <linux/types.h>
+ #include <linux/errno.h>
+@@ -470,7 +471,11 @@ static const char *proc_features[]={
+ 	NULL,NULL,NULL,NULL,NULL,NULL,NULL, NULL,NULL,
+ 	NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+ 	NULL,NULL,NULL,NULL,NULL, NULL,NULL,NULL,NULL,
+-	NULL,NULL,NULL,NULL,NULL,
++	"Unimplemented instruction address fault",
++	"INIT, PMI, and LINT pins",
++	"Simple unimplimented instr addresses",
++	"Variable P-state performance",
++	"Virtual machine features implemeted",
+ 	"XIP,XPSR,XFS implemented",
+ 	"XR1-XR3 implemented",
+ 	"Disable dynamic predicate prediction",
+@@ -478,7 +483,11 @@ static const char *proc_features[]={
+ 	"Disable dynamic data cache prefetch",
+ 	"Disable dynamic inst cache prefetch",
+ 	"Disable dynamic branch prediction",
+-	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
++	NULL, NULL, NULL, NULL,
++	"Disable P-states",
++	"Enable MCA on Data Poisoning",
++	"Enable vmsw instruction",
++	"Enable extern environmental notification",
+ 	"Disable BINIT on processor time-out",
+ 	"Disable dynamic power management (DPM)",
+ 	"Disable coherency",

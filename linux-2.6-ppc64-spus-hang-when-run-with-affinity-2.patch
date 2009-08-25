@@ -1,0 +1,96 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Mon, 27 Oct 2008 09:55:25 -0500
+Subject: [ppc64] SPUs hang when run with affinity-2
+Message-id: 4905D65D.6040300@REDHAT.COM
+O-Subject: Re: [PATCH RHEL5.3 BZ464686 2/2] Fix SPUs hangs when run with affinity
+Bugzilla: 464686
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=464686
+
+Description:
+===========
+The fix for this problem requires two patches the second of these patches is
+described here:
+
+This patch adjusts the placement of a reference context from a spu affinity
+chain. The reference context can now be placed only on nodes that have
+enough
+spus not intended to be used by another gang (already running on the node).
+
+RHEL Version Found:
+================
+RHEL 5.2
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1508838
+
+Upstream Status:
+================
+The patches were accepted upstream in kernel 2.6.27-rc1 (see
+http://kernel.org/pub/linux/kernel/v2.6/testing/ChangeLog-2.6.27-rc1)
+
+Test Status:
+============
+A testcase is provided in the Red Hat Bugzilla and without the patches the
+dmabench stress test hangs and a reboot is required to run another
+application on the Cell Synergistic Processing Elements (SPEs).
+
+With these patches dmabench runs successfully and running other SPE programs
+afterwards is possible again.
+===============================================================
+
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/arch/powerpc/platforms/cell/spufs/sched.c b/arch/powerpc/platforms/cell/spufs/sched.c
+index 9df2068..53ca21b 100644
+--- a/arch/powerpc/platforms/cell/spufs/sched.c
++++ b/arch/powerpc/platforms/cell/spufs/sched.c
+@@ -305,11 +305,35 @@ static struct spu *aff_ref_location(struct spu_context *ctx, int mem_aff,
+ 	 */
+ 	node = cpu_to_node(raw_smp_processor_id());
+ 	for (n = 0; n < MAX_NUMNODES; n++, node++) {
++		/*
++		 * "available_spus" counts how many spus are not potentially
++		 * going to be used by other affinity gangs whose reference
++		 * context is already in place. Although this code seeks to
++		 * avoid having affinity gangs with a summed amount of
++		 * contexts bigger than the amount of spus in the node,
++		 * this may happen sporadically. In this case, available_spus
++		 * becomes negative, which is harmless.
++		 */
++		int available_spus;
++
+ 		node = (node < MAX_NUMNODES) ? node : 0;
+ 		if (!node_allowed(ctx, node))
+ 			continue;
++
++		available_spus = 0;
+ 		mutex_lock(&cbe_spu_info[node].list_mutex);
+ 		list_for_each_entry(spu, &cbe_spu_info[node].spus, cbe_list) {
++			if (spu->ctx && spu->ctx->gang && !spu->ctx->aff_offset
++					&& spu->ctx->gang->aff_ref_spu)
++				available_spus -= spu->ctx->gang->contexts - 1;
++			available_spus++;
++		}
++		if (available_spus < ctx->gang->contexts) {
++			mutex_unlock(&cbe_spu_info[node].list_mutex);
++			continue;
++		}
++
++		list_for_each_entry(spu, &cbe_spu_info[node].spus, cbe_list) {
+ 			if ((!mem_aff || spu->has_mem_affinity) &&
+ 							sched_spu(spu)) {
+ 				mutex_unlock(&cbe_spu_info[node].list_mutex);

@@ -1,0 +1,75 @@
+From: Matthew Garrett <mjg@redhat.com>
+Date: Thu, 10 Jul 2008 13:27:11 +0100
+Subject: [acpi] enable deep C states for idle efficiency
+Message-id: 20080710122711.GA7691@srcf.ucam.org
+O-Subject: Re: [RHEL 5.3 PATCH] BZ#443516: FEAT: RHEL5.3: enable deep C states on Nehalem for idle efficiency
+Bugzilla: 443516
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+
+This time with a patch...
+
+The ACPI spec includes (but does not require) a field for the OS to
+handshake with the firmware when entering deep C states. Older versions
+of the kernel would only enable these deep C states when this field was
+present. The check is unnecessary - if the hardware provides deep C
+states and does not provide the field, it's because it doesn't require
+the OS handshaking. Recent hardware no longer provides this field, so
+we're losing power efficiency on them.
+
+This is simply a backport of the relevant code from current upstream
+Linux and has been tested on Nehalem hardware.
+
+diff --git a/drivers/acpi/processor_idle.c b/drivers/acpi/processor_idle.c
+index 7106606..90a2aaf 100644
+--- a/drivers/acpi/processor_idle.c
++++ b/drivers/acpi/processor_idle.c
+@@ -382,7 +382,17 @@ static void acpi_processor_idle(void)
+ 
+ 	case ACPI_STATE_C3:
+ 
+-		if (pr->flags.bm_check) {
++		/*
++		 * disable bus master
++		 * bm_check implies we need ARB_DIS
++		 * !bm_check implies we need cache flush
++		 * bm_control implies whether we can do ARB_DIS
++		 *
++		 * That leaves a case where bm_check is set and bm_control is
++		 * not set. In that case we cannot do much, we enter C3
++		 * without doing anything.
++		 */
++		if (pr->flags.bm_check && pr->flags.bm_control) {
+ 			if (atomic_inc_return(&c3_cpu_count) ==
+ 			    num_online_cpus()) {
+ 				/*
+@@ -392,7 +402,7 @@ static void acpi_processor_idle(void)
+ 				acpi_set_register(ACPI_BITREG_ARB_DISABLE, 1,
+ 						  ACPI_MTX_DO_NOT_LOCK);
+ 			}
+-		} else {
++		} else if (!pr->flags.bm_check) {
+ 			/* SMP with no shared cache... Invalidate cache  */
+ 			ACPI_FLUSH_CPU_CACHE();
+ 		}
+@@ -405,7 +415,7 @@ static void acpi_processor_idle(void)
+ 		t2 = inl(acpi_fadt.xpm_tmr_blk.address);
+ 		/* Get end time (ticks) */
+ 		t2 = inl(acpi_fadt.xpm_tmr_blk.address);
+-		if (pr->flags.bm_check) {
++		if (pr->flags.bm_check && pr->flags.bm_control) {
+ 			/* Enable bus master arbitration */
+ 			atomic_dec(&c3_cpu_count);
+ 			acpi_set_register(ACPI_BITREG_ARB_DISABLE, 0,
+@@ -843,9 +853,9 @@ static void acpi_processor_power_verify_c3(struct acpi_processor *pr,
+ 	if (pr->flags.bm_check) {
+ 		/* bus mastering control is necessary */
+ 		if (!pr->flags.bm_control) {
++			/* In this case we enter C3 without bus mastering */
+ 			ACPI_DEBUG_PRINT((ACPI_DB_INFO,
+-					  "C3 support requires bus mastering control\n"));
+-			return;
++				"C3 support without bus mastering control\n"));
+ 		}
+ 	} else {
+ 		/*

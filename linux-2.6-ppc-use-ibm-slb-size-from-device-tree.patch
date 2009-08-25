@@ -1,0 +1,178 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Mon, 7 Jul 2008 20:08:15 -0400
+Subject: [ppc] use ibm,slb-size from device tree
+Message-id: 20080708000815.4658.89058.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.3 1/1] Use ibm,slb-size from device tree
+Bugzilla: 432127
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=432127
+
+Description:
+===========
+Kernels before 2.6.25 assume that the number of SLB (segment lookaside buffer) entries is 64, but in future systems this number may be different. This will
+
+cause cause the system to crash.
+
+This patch modifies the definition of number of SLB's from a fixed 64, to a number exported via /proc/device-tree.
+
+RHEL Version Found:
+================
+Patch to support future architectures
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1370205
+
+Kernel binary rpm available at:
+===============================
+http://people.redhat.com/bpeters/kernels/kernel-2.6.18-94.el5.94.el5.432127.ppc64.rpm
+
+Upstream Status:
+================
+This is done in mainline in:
+584f8b71a2e8abdaeb4b6f4fddaf542b61392453 ([POWERPC] Use SLB size from
+the device tree)
+
+Test Status:
+============
+Confirmed that patch does not effect slb-size on current arch's.  Future arch's
+will export this device tree property and put this feature to use.
+
+===============================================================
+
+Proposed Patch:
+===============
+This patch is based on 2.6.18-94
+
+diff --git a/arch/powerpc/kernel/prom.c b/arch/powerpc/kernel/prom.c
+index 2e01f2f..a50de7a 100644
+--- a/arch/powerpc/kernel/prom.c
++++ b/arch/powerpc/kernel/prom.c
+@@ -585,6 +585,19 @@ static void __init check_cpu_pa_features(unsigned long node)
+ 	scan_features(node, pa_ftrs, tablelen,
+ 		      ibm_pa_features, ARRAY_SIZE(ibm_pa_features));
+ }
++#ifdef CONFIG_PPC64
++static void __init check_cpu_slb_size(unsigned long node)
++{
++		 u32 *slb_size_ptr;
++
++		 slb_size_ptr = of_get_flat_dt_prop(node, "ibm,slb-size", NULL);
++		 if (slb_size_ptr != NULL) {
++		 		 mmu_slb_size = *slb_size_ptr;
++		 }
++}
++#else
++#define check_cpu_slb_size(node) do { } while(0)
++#endif
+ 
+ static struct feature_property {
+ 	const char *name;
+@@ -704,6 +717,7 @@ static int __init early_init_dt_scan_cpus(unsigned long node,
+ 
+ 	check_cpu_feature_properties(node);
+ 	check_cpu_pa_features(node);
++	check_cpu_slb_size(node);
+ 
+ #ifdef CONFIG_PPC_PSERIES
+ 	if (nthreads > 1)
+diff --git a/arch/powerpc/mm/hash_utils_64.c b/arch/powerpc/mm/hash_utils_64.c
+index c439de7..c541388 100644
+--- a/arch/powerpc/mm/hash_utils_64.c
++++ b/arch/powerpc/mm/hash_utils_64.c
+@@ -94,6 +94,7 @@ int mmu_linear_psize = MMU_PAGE_4K;
+ int mmu_virtual_psize = MMU_PAGE_4K;
+ int mmu_vmalloc_psize = MMU_PAGE_4K;
+ int mmu_io_psize = MMU_PAGE_4K;
++u16 mmu_slb_size = 64;
+ #ifdef CONFIG_HUGETLB_PAGE
+ int mmu_huge_psize = MMU_PAGE_16M;
+ unsigned int HPAGE_SHIFT;
+diff --git a/arch/powerpc/mm/slb.c b/arch/powerpc/mm/slb.c
+index 4deeafe..046fc7a 100644
+--- a/arch/powerpc/mm/slb.c
++++ b/arch/powerpc/mm/slb.c
+@@ -209,6 +209,7 @@ void slb_initialize(void)
+ 	static int slb_encoding_inited;
+ 	extern unsigned int *slb_miss_kernel_load_linear;
+ 	extern unsigned int *slb_miss_kernel_load_io;
++	extern unsigned int *slb_compare_rr_to_size;
+ #ifdef CONFIG_HUGETLB_PAGE
+ 	extern unsigned int *slb_miss_user_load_huge;
+ 	unsigned long huge_llp;
+@@ -228,6 +229,8 @@ void slb_initialize(void)
+ 				   SLB_VSID_KERNEL | linear_llp);
+ 		patch_slb_encoding(slb_miss_kernel_load_io,
+ 				   SLB_VSID_KERNEL | io_llp);
++		patch_slb_encoding(slb_compare_rr_to_size,
++				   mmu_slb_size);
+ 
+ 		DBG("SLB: linear  LLP = %04x\n", linear_llp);
+ 		DBG("SLB: io      LLP = %04x\n", io_llp);
+diff --git a/arch/powerpc/mm/slb_low.S b/arch/powerpc/mm/slb_low.S
+index dbc1abb..af0e584 100644
+--- a/arch/powerpc/mm/slb_low.S
++++ b/arch/powerpc/mm/slb_low.S
+@@ -198,8 +198,9 @@ slb_finish_load:
+ 
+ 	ld	r10,PACASTABRR(r13)
+ 	addi	r10,r10,1
+-	/* use a cpu feature mask if we ever change our slb size */
+-	cmpldi	r10,SLB_NUM_ENTRIES
++	/* This gets soft patched on boot. */
++	_GLOBAL(slb_compare_rr_to_size)
++		cmpldi	r10,0
+ 
+ 	blt+	4f
+ 	li	r10,SLB_NUM_BOLTED
+diff --git a/arch/powerpc/xmon/xmon.c b/arch/powerpc/xmon/xmon.c
+index db6df0f..7a9e520 100644
+--- a/arch/powerpc/xmon/xmon.c
++++ b/arch/powerpc/xmon/xmon.c
+@@ -2496,7 +2496,7 @@ static void dump_slb(void)
+ 
+ 	printf("SLB contents of cpu %x\n", smp_processor_id());
+ 
+-	for (i = 0; i < SLB_NUM_ENTRIES; i++) {
++	for (i = 0; i < mmu_slb_size; i++) {
+ 		asm volatile("slbmfee  %0,%1" : "=r" (tmp) : "r" (i));
+ 		printf("%02d %016lx ", i, tmp);
+ 
+diff --git a/include/asm-powerpc/mmu.h b/include/asm-powerpc/mmu.h
+index 2b19f8c..4b7746d 100644
+--- a/include/asm-powerpc/mmu.h
++++ b/include/asm-powerpc/mmu.h
+@@ -73,6 +73,9 @@ extern char initial_stab[];
+ 
+ #define SLBIE_C			(0x08000000)
+ 
++#ifndef __ASSEMBLY__
++extern u16 mmu_slb_size;
++#endif /* ! __ASSEMBLY */
+ /*
+  * Hash table
+  */
+diff --git a/include/asm-powerpc/reg.h b/include/asm-powerpc/reg.h
+index a1694be..bf86471 100644
+--- a/include/asm-powerpc/reg.h
++++ b/include/asm-powerpc/reg.h
+@@ -597,11 +597,6 @@
+ #define PV_970MP	0x0044
+ #define PV_BE		0x0070
+ 
+-/*
+- * Number of entries in the SLB. If this ever changes we should handle
+- * it with a use a cpu feature fixup.
+- */
+-#define SLB_NUM_ENTRIES 64
+ 
+ /* Macros for setting and retrieving special purpose registers */
+ #ifndef __ASSEMBLY__

@@ -1,0 +1,113 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Sat, 7 Mar 2009 15:12:52 -0600
+Subject: [misc] signal: modify locking to handle large loads
+Message-id: 49B2E354.4010109@REDHAT.COM
+O-Subject: Re: [PATCH RHEL5.4 BZ487376] Lapi takes too long to run
+Bugzilla: 487376
+RH-Acked-by: Oleg Nesterov <oleg@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=487376
+
+Description:
+===========
+IBM's HPC Infiniband  Solution supports MPI and LAPI applications running on
+multiple Power6 32-way CECs interconnected via an IB Switch. The customer's
+scaling expectation is that they should be able to run 64 tasks (SMT mode) or
+32-tasks (ST Mode) per CEC. When we tested our solution on RHEL5.3 we found
+that many of our tests were often taking significantly longer to complete than
+they should have. For example, a job that should complete in 5  minutes might
+instead take 20 minutes, or in the worst case 1 hour. In short our HPC solution
+did not scale when run on RHEL5.3. We can not GA our IB solution without these
+scaling problems being resolved. The patch referenced in this bugzilla has
+resolved these scaling problems.
+
+RHEL Version Found:
+================
+RHEL 5.4
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1704010
+
+Upstream Status:
+================
+GIT commit ID 3547ff3aefbe092ca35506c60c02e2d17a4f2199
+
+Test Status:
+============
+A PPC system was setup with 2 test cases, mpi_collective and mpi_lapi, that
+were slower before applying the kernel patch and faster with the kernel
+patch
+applied.  The comparison results are given below.
+
+Execution times without the patch applied:
+mpi_collective          1104 seconds
+mpi_lapi                628 seconds
+
+Execution times with patch applied:
+mpi_collective          953 seconds
+mpi_lapi                269 seconds
+
+The collective communication test case is still slow, but I think that
+can be attributed to running with cpu affinity.
+
+===============================================================
+
+diff --git a/kernel/signal.c b/kernel/signal.c
+index 44391c7..493b8d2 100644
+--- a/kernel/signal.c
++++ b/kernel/signal.c
+@@ -2020,6 +2020,8 @@ static int do_tkill(int tgid, int pid, int sig)
+ 	int error;
+ 	struct siginfo info;
+ 	struct task_struct *p;
++	unsigned long flags;
++	int acquired_tasklist_lock = 0;
+ 
+ 	error = -ESRCH;
+ 	info.si_signo = sig;
+@@ -2028,22 +2030,31 @@ static int do_tkill(int tgid, int pid, int sig)
+ 	info.si_pid = current->tgid;
+ 	info.si_uid = current->uid;
+ 
+-	read_lock(&tasklist_lock);
++	rcu_read_lock();
++	if (unlikely(sig_needs_tasklist(sig))) {
++		read_lock(&tasklist_lock);
++		acquired_tasklist_lock = 1;
++	}
+ 	p = find_task_by_pid(pid);
+ 	if (p && (tgid <= 0 || p->tgid == tgid)) {
+ 		error = check_kill_permission(sig, &info, p);
+ 		/*
+ 		 * The null signal is a permissions and process existence
+ 		 * probe.  No signal is actually delivered.
++	 	 *
++		 * If lock_task_sighand() fails we pretend the task dies
++		 * after receiving the signal. The window is tiny, and the
++		 * signal is private anyway.
+ 		 */
+-		if (!error && sig && p->sighand) {
+-			spin_lock_irq(&p->sighand->siglock);
++		if (!error && sig && lock_task_sighand(p, &flags)) {
+ 			handle_stop_signal(sig, p);
+ 			error = specific_send_sig_info(sig, &info, p);
+-			spin_unlock_irq(&p->sighand->siglock);
++			unlock_task_sighand(p, &flags);
+ 		}
+ 	}
+-	read_unlock(&tasklist_lock);
++	if (unlikely(acquired_tasklist_lock))
++		read_unlock(&tasklist_lock);
++	rcu_read_unlock();
+ 
+ 	return error;
+ }

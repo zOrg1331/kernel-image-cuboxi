@@ -1,29 +1,31 @@
-Message-ID: <483FBFFC.4070206@redhat.com>
-Date: Fri, 30 May 2008 10:51:08 +0200
 From: Anton Arapov <aarapov@redhat.com>
-O-Subject: [PATCH RHEL5] BZ#447396: EMBARGOED, dccp: sanity check feature length {CVE-2008-2358}
-Subject: [net] dccp sanity check feature length
+Date: Fri, 30 May 2008 10:51:08 +0200
+Subject:  [net] dccp: sanity check feature length
+Message-id: 483FBFFC.4070206@redhat.com
+O-Subject: [kernel team] [PATCH RHEL5] BZ#447396: dccp: sanity check feature length {CVE-2008-2358}
+Bugzilla: 447396
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+RH-Acked-by: Arnaldo Carvalho de Melo <acme@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
 Bugzilla: 447396
 
 Details:
-The issue is an integer overflow in DCCP options handling. This may
+      The issue is an integer overflow in DCCP options handling. This may
 result in code execution allowing an attacker to execute code in a
 kernel context.  At the lowest severity, it will crash the kernel
 environment.
 
 Upstream status:
-in upstream, embargoed
+      not in upstream, embargoed
 
 Test status:
-has been tested for build and boot.
-http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1338875
+      has been tested for build and boot.
+      http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1338875
 
 Notice:
-CVE-2008-2358
+      CVE-2008-2358
 
-Acked-by: Neil Horman <nhorman@redhat.com>
-Acked-by: Chris Wright <chrisw@redhat.com>
-Acked-by: Arnaldo Carvalho de Melo <acme@redhat.com>
 ==
 
  net/dccp/feat.c |    5 +++++

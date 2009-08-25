@@ -1,0 +1,117 @@
+x86: use syscall for vDSO to get proper active cpu
+
+If a task has been migrated to a different cpu via
+user request vDSO has a cache coherency problem
+by returning previously cached value. It's done
+by design in a sake of speed but we need really
+precise results on which cpu we're running. So
+we implement syscall here (slowing down this call actually).
+
+Moreover having CONFIG_SCHED_VCPU on getcpu we
+should return vcpu_id.
+
+Bug http://bugzilla.openvz.org/show_bug.cgi?id=1149
+Signed-off-by: Cyrill Gorcunov <gorcunov@openvz.org>
+---
+ arch/x86_64/kernel/vsyscall.c |   40 ++++++++++++----------------------------
+ include/asm-x86_64/unistd.h   |    5 ++++-
+ kernel/sys.c                  |    4 ++++
+ 3 files changed, 20 insertions(+), 29 deletions(-)
+
+Index: linux-2.6.18-openvz/arch/x86_64/kernel/vsyscall.c
+=====================================================================
+--- linux-2.6.18-openvz.orig/arch/x86_64/kernel/vsyscall.c
++++ linux-2.6.18-openvz/arch/x86_64/kernel/vsyscall.c
+@@ -37,6 +37,7 @@
+ #include <asm/segment.h>
+ #include <asm/desc.h>
+ #include <asm/topology.h>
++#include <asm/unistd.h>
+ 
+ #define __vsyscall(nr) __attribute__ ((unused,__section__(".vsyscall_" #nr)))
+ 
+@@ -153,38 +154,21 @@ time_t __vsyscall(1) vtime(time_t *t)
+ 
+    tcache must point to a two element sized long array.
+    All arguments can be NULL. */
++
+ long __vsyscall(2)
+ vgetcpu(unsigned *cpu, unsigned *node, struct getcpu_cache *tcache)
+ {
+-	unsigned int dummy, p;
+-	unsigned long j = 0;
++	long ret;
++	/*
++	 * arguments already in proper order due
++	 * to x86-64 ABI convention
++	 */
++	asm volatile ("syscall"
++		: "=a" (ret)
++		: "0" (__NR_getcpu), "D" (cpu), "S" (node), "d" (tcache)
++		: "r11","rcx","memory");
+ 
+-	/* Fast cache - only recompute value once per jiffies and avoid
+-	   relatively costly rdtscp/cpuid otherwise.
+-	   This works because the scheduler usually keeps the process
+-	   on the same CPU and this syscall doesn't guarantee its
+-	   results anyways.
+-	   We do this here because otherwise user space would do it on
+-	   its own in a likely inferior way (no access to jiffies).
+-	   If you don't like it pass NULL. */
+-	if (tcache && tcache->blob[0] == (j = __jiffies)) {
+-		p = tcache->blob[1];
+-	} else if (__vgetcpu_mode == VGETCPU_RDTSCP) {
+-		/* Load per CPU data from RDTSCP */
+-		rdtscp(dummy, dummy, p);
+-	} else {
+-		/* Load per CPU data from GDT */
+-		asm("lsl %1,%0" : "=r" (p) : "r" (__PER_CPU_SEG));
+-	}
+-	if (tcache) {
+-		tcache->blob[0] = j;
+-		tcache->blob[1] = p;
+-	}
+-	if (cpu)
+-		*cpu = p & 0xfff;
+-	if (node)
+-		*node = p >> 12;
+-	return 0;
++	return ret;
+ }
+ 
+ long __vsyscall(3) venosys_1(void)
+Index: linux-2.6.18-openvz/include/asm-x86_64/unistd.h
+=====================================================================
+--- linux-2.6.18-openvz.orig/include/asm-x86_64/unistd.h
++++ linux-2.6.18-openvz/include/asm-x86_64/unistd.h
+@@ -673,10 +673,13 @@ __SYSCALL(__NR_fairsched_rate, sys_fairs
+ __SYSCALL(__NR_lchmod, sys_lchmod)
+ #define __NR_lutime		510
+ __SYSCALL(__NR_lutime, sys_lutime)
++#define __NR_getcpu		511
++__SYSCALL(__NR_getcpu, sys_getcpu)
++
+ 
+ #ifdef __KERNEL__
+ 
+-#define __NR_syscall_max __NR_lutime
++#define __NR_syscall_max __NR_getcpu
+ 
+ #ifndef __NO_STUBS
+ 
+Index: linux-2.6.18-openvz/kernel/sys.c
+=====================================================================
+--- linux-2.6.18-openvz.orig/kernel/sys.c
++++ linux-2.6.18-openvz/kernel/sys.c
+@@ -2227,7 +2227,11 @@ asmlinkage long sys_getcpu(unsigned __us
+ 	   		   struct getcpu_cache __user *cache)
+ {
+ 	int err = 0;
++#ifdef CONFIG_SCHED_VCPU
++	int cpu = task_cpu(current);
++#else
+ 	int cpu = raw_smp_processor_id();
++#endif
+ 	if (cpup)
+ 		err |= put_user(cpu, cpup);
+ 	if (nodep)

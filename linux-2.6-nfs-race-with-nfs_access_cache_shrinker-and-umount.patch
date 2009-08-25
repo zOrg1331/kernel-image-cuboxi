@@ -1,0 +1,57 @@
+From: Peter Staubach <staubach@redhat.com>
+Date: Thu, 4 Dec 2008 11:24:41 -0500
+Subject: [nfs] race with nfs_access_cache_shrinker() and umount
+Message-id: 49380449.7040504@redhat.com
+O-Subject: [RHEL-5.4 PATCH] fault in iget() - suspected race between nfs_access_cache_shrinker() and umount
+Bugzilla: 469225
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+Hi.
+
+Attached is a patch to address bz469225, "fault in iget() -
+suspected race between nfs_access_cache_shrinker() and
+umount - Ref.: Bug #433249".  This bugzilla describes a race
+where the NFS client can race between destroying cached
+access rights for a file and attempting to umount the file
+system which contains that file.
+
+This situation was previously addressed in RHEL-4.7 and now
+needs to be addressed in RHEL-5.
+
+   Thanx...
+
+      ps
+
+diff --git a/fs/nfs/dir.c b/fs/nfs/dir.c
+index 52b83d6..9630198 100644
+--- a/fs/nfs/dir.c
++++ b/fs/nfs/dir.c
+@@ -1670,13 +1670,19 @@ int nfs_access_cache_shrinker(int nr_to_scan, gfp_t gfp_mask)
+ 	spin_lock(&nfs_access_lru_lock);
+ restart:
+ 	list_for_each_entry(nfsi, &nfs_access_lru_list, access_cache_inode_lru) {
++		struct rw_semaphore *s_umount;
+ 		struct inode *inode;
+ 
+ 		if (nr_to_scan-- == 0)
+ 			break;
++		s_umount = &nfsi->vfs_inode.i_sb->s_umount;
++		if (!down_read_trylock(s_umount))
++			continue;
+ 		inode = igrab(&nfsi->vfs_inode);
+-		if (inode == NULL)
++		if (inode == NULL) {
++			up_read(s_umount);
+ 			continue;
++		}
+ 		spin_lock(&inode->i_lock);
+ 		if (list_empty(&nfsi->access_cache_entry_lru))
+ 			goto remove_lru_entry;
+@@ -1694,6 +1700,7 @@ remove_lru_entry:
+ 		}
+ 		spin_unlock(&inode->i_lock);
+ 		iput(inode);
++		up_read(s_umount);
+ 		goto restart;
+ 	}
+ 	spin_unlock(&nfs_access_lru_lock);

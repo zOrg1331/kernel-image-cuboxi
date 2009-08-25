@@ -1,0 +1,61 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Thu, 26 Jun 2008 16:31:15 +0800
+Subject: [ia64] fix boot failure on ia64/sn2
+Message-id: 486353D3.6070904@redhat.com
+O-Subject: [RHEL 5.3 PATCH 1/1] bz 451745: Fix boot failure on ia64/sn2
+Bugzilla: 451745
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+BZ 451745
+
+Description of problem:
+1. Without this patch applied,  the kernel with back port patches  of bz
+451745 (for 3463a93def55c309f3c0d0a8aaf216be3be42d64  and
+fa1d19e5d9a94120f31e5783ab44758f46892d94 ) would fail to boot on ia64/sn2.
+2.   Call check_sal_cache_flush() after platform_setup() as
+check_sal_cache_flush() now relies on being able to call platform
+    vector code.    Problem was introduced by:
+3463a93def55c309f3c0d0a8aaf216be3be42d64
+    "Update check_sal_cache_flush to use platform_send_ipi()"
+
+Note:
+Please apply  patches for bz 451745 in this order:
+1.[RHEL 5.3 PATCH 1/2]  bz 451745:  Update check_sal_cache_flush to use
+platform_send_ipi
+2.[RHEL 5.3 PATCH 2/2]  bz 451745:  move SAL_CACHE_FLUSH check later in boot
+3.[RHEL 5.3 PATCH 1/1]  bz 451745: Fix boot failure on ia64/sn2
+
+Upstream status:
+
+2826f8c0f4c97b7db33e2a680f184d828eb7a785
+
+Testing status:
+
+Boot fine on tiger4 and Cold fusion, and nothing unusual found.
+
+Please review,  test and ACK.
+
+Thanks,
+Luming
+
+diff --git a/arch/ia64/kernel/setup.c b/arch/ia64/kernel/setup.c
+index 223ca9d..3ff12e9 100644
+--- a/arch/ia64/kernel/setup.c
++++ b/arch/ia64/kernel/setup.c
+@@ -616,8 +616,6 @@ setup_arch (char **cmdline_p)
+ 	cpu_init();	/* initialize the bootstrap CPU */
+ 	mmu_context_init();	/* initialize context_id bitmap */
+ 
+-	check_sal_cache_flush();
+-
+ #ifdef CONFIG_ACPI
+ 	acpi_boot_init();
+ #endif
+@@ -668,6 +666,7 @@ setup_arch (char **cmdline_p)
+ 		ia64_mca_init();
+ 
+ 	platform_setup(cmdline_p);
++	check_sal_cache_flush();
+ 	paging_init();
+ #ifdef CONFIG_XEN
+ 	xen_contiguous_bitmap_init(max_pfn);

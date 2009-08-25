@@ -1,0 +1,625 @@
+From: Andrea Arcangeli <aarcange@redhat.com>
+Date: Fri, 20 Feb 2009 18:17:24 +0100
+Subject: [mm] fork vs gup race fix
+Message-id: 20090220171724.GU15606@random.random
+O-Subject: [RHEL5.4] fork vs gup race fix (#3 update for 32bit highmem)
+Bugzilla: 471613
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+
+Think a thread writing constantly to the last 512bytes of a page, while another
+thread read and writes to/from the first 512bytes of the page. We can lose
+O_DIRECT reads (or any other get_user_pages write=1 I/O not just bio/O_DIRECT),
+the very moment we mark any pte wrprotected because a third unrelated thread
+forks off a child.
+
+This fixes it by never wprotecting anon ptes if there can be any direct I/O in
+flight to the page, and by instantiating a readonly pte and triggering a COW in
+the child. The only trouble here are O_DIRECT reads (writes to memory, read
+from disk). Checking the page_count under the PT lock guarantees no
+get_user_pages could be running under us because if somebody wants to write to
+the page, it has to break any cow first and that requires taking the PT lock in
+follow_page before increasing the page count. We are guaranteed mapcount is 1 if
+fork is writeprotecting the pte so the PT lock is enough to serialize against
+get_user_pages->get_page.
+
+The COW triggered inside fork will run while the parent pte is readonly to
+provide as usual the per-page atomic copy from parent to child during fork.
+However timings will be altered by having to copy the pages that might be under
+O_DIRECT.
+
+The pagevec code calls get_page while the page is sitting in the pagevec
+(before it becomes PageLRU) and doing so it can generate false positives, so to
+avoid slowing down fork all the time even for pages that could never possibly
+be under O_DIRECT write=1, the PG_gup bitflag is added, this eliminates
+most overhead of the fix in fork.
+
+Patch doesn't break kABI despite introducing a new page flag.
+
+Fixed version of original patch from Nick Piggin.
+
+Signed-off-by: Andrea Arcangeli <aarcange@redhat.com>
+
+diff --git a/include/linux/hugetlb.h b/include/linux/hugetlb.h
+index e5de7fe..fc7470b 100644
+--- a/include/linux/hugetlb.h
++++ b/include/linux/hugetlb.h
+@@ -14,7 +14,7 @@ static inline int is_vm_hugetlb_page(struct vm_area_struct *vma)
+ }
+ 
+ int hugetlb_sysctl_handler(struct ctl_table *, int, struct file *, void __user *, size_t *, loff_t *);
+-int copy_hugetlb_page_range(struct mm_struct *, struct mm_struct *, struct vm_area_struct *);
++int copy_hugetlb_page_range(struct mm_struct *, struct mm_struct *, struct vm_area_struct *, struct vm_area_struct *);
+ int follow_hugetlb_page(struct mm_struct *, struct vm_area_struct *, struct page **, struct vm_area_struct **, unsigned long *, int *, int, int);
+ void unmap_hugepage_range(struct vm_area_struct *, unsigned long, unsigned long);
+ void __unmap_hugepage_range(struct vm_area_struct *, unsigned long, unsigned long);
+@@ -124,7 +124,7 @@ static inline unsigned long hugetlb_total_pages(void)
+ 
+ #define follow_hugetlb_page(m,v,p,vs,a,b,i,w)	({ BUG(); 0; })
+ #define follow_huge_addr(mm, addr, write)	ERR_PTR(-EINVAL)
+-#define copy_hugetlb_page_range(src, dst, vma)	({ BUG(); 0; })
++#define copy_hugetlb_page_range(src, dst, dst_vma, src_vma)	({ BUG(); 0; })
+ #define hugetlb_prefault(mapping, vma)		({ BUG(); 0; })
+ #define unmap_hugepage_range(vma, start, end)	BUG()
+ #define hugetlb_report_meminfo(buf)		0
+diff --git a/include/linux/mm.h b/include/linux/mm.h
+index bff0f3d..43cd2e9 100644
+--- a/include/linux/mm.h
++++ b/include/linux/mm.h
+@@ -791,7 +791,8 @@ void free_pgd_range(struct mmu_gather **tlb, unsigned long addr,
+ void free_pgtables(struct mmu_gather **tlb, struct vm_area_struct *start_vma,
+ 		unsigned long floor, unsigned long ceiling);
+ int copy_page_range(struct mm_struct *dst, struct mm_struct *src,
+-			struct vm_area_struct *vma);
++		    struct vm_area_struct *dst_vma,
++		    struct vm_area_struct *src_vma);
+ int zeromap_page_range(struct vm_area_struct *vma, unsigned long from,
+ 			unsigned long size, pgprot_t prot);
+ void unmap_mapping_range(struct address_space *mapping,
+diff --git a/include/linux/page-flags.h b/include/linux/page-flags.h
+index 63c8e4c..6105cad 100644
+--- a/include/linux/page-flags.h
++++ b/include/linux/page-flags.h
+@@ -86,6 +86,7 @@
+ #define PG_reclaim		17	/* To be reclaimed asap */
+ #define PG_nosave_free		18	/* Free, should not be written */
+ #define PG_buddy		19	/* Page is free, on buddy lists */
++#define PG_gup			20	/* Page pin may be because of gup */
+ #define PG_xpmem		27	/* Testing for xpmem. */
+ 
+ /* PG_owner_priv_1 users should have descriptive aliases */
+@@ -239,6 +240,10 @@
+ #define __SetPageCompound(page)	__set_bit(PG_compound, &(page)->flags)
+ #define __ClearPageCompound(page) __clear_bit(PG_compound, &(page)->flags)
+ 
++#define SetPageGUP(page)	set_bit(PG_gup, &(page)->flags)
++#define PageGUP(page)		test_bit(PG_gup, &(page)->flags)
++#define __ClearPageGUP(page)	__clear_bit(PG_gup, &(page)->flags)
++
+ /*
+  * PG_reclaim is used in combination with PG_compound to mark the
+  * head and tail of a compound page
+diff --git a/kernel/fork.c b/kernel/fork.c
+index 0e99e60..6a953e9 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -384,7 +384,7 @@ static inline int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
+ 		rb_parent = &tmp->vm_rb;
+ 
+ 		mm->map_count++;
+-		retval = copy_page_range(mm, oldmm, mpnt);
++		retval = copy_page_range(mm, oldmm, tmp, mpnt);
+ 
+ 		if (tmp->vm_ops && tmp->vm_ops->open)
+ 			tmp->vm_ops->open(tmp);
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index e80a916..56794fd 100644
+--- a/mm/hugetlb.c
++++ b/mm/hugetlb.c
+@@ -357,17 +357,23 @@ static void set_huge_ptep_writable(struct vm_area_struct *vma,
+ }
+ 
+ 
++static int hugetlb_cow(struct mm_struct *mm, struct vm_area_struct *vma,
++		       unsigned long address, pte_t *ptep, pte_t pte,
++		       int cannot_race);
++
+ int copy_hugetlb_page_range(struct mm_struct *dst, struct mm_struct *src,
+-			    struct vm_area_struct *vma)
++			    struct vm_area_struct *dst_vma,
++			    struct vm_area_struct *src_vma)
+ {
+-	pte_t *src_pte, *dst_pte, entry;
++	pte_t *src_pte, *dst_pte, entry, orig_entry;
+ 	struct page *ptepage;
+ 	unsigned long addr;
+-	int cow;
++	int cow, forcecow, oom;
+ 
+-	cow = (vma->vm_flags & (VM_SHARED | VM_MAYWRITE)) == VM_MAYWRITE;
++	cow = (src_vma->vm_flags & (VM_SHARED | VM_MAYWRITE)) == VM_MAYWRITE;
+ 
+-	for (addr = vma->vm_start; addr < vma->vm_end; addr += HPAGE_SIZE) {
++	for (addr = src_vma->vm_start; addr < src_vma->vm_end;
++	     addr += HPAGE_SIZE) {
+ 		src_pte = huge_pte_offset(src, addr);
+ 		if (!src_pte)
+ 			continue;
+@@ -377,18 +383,48 @@ int copy_hugetlb_page_range(struct mm_struct *dst, struct mm_struct *src,
+ 		/* if the page table is shared dont copy or take references */
+ 		if (dst_pte == src_pte)
+ 			continue;
++		oom = 0;
+ 		spin_lock(&dst->page_table_lock);
+ 		spin_lock(&src->page_table_lock);
+-		if (!huge_pte_none(huge_ptep_get(src_pte))) {
+-			if (cow)
+-				huge_ptep_set_wrprotect(src, addr, src_pte);
+-			entry = huge_ptep_get(src_pte);
++		orig_entry = entry = huge_ptep_get(src_pte);
++		if (!huge_pte_none(entry)) {
++			forcecow = 0;
+ 			ptepage = pte_page(entry);
+ 			get_page(ptepage);
++			if (cow && pte_write(entry)) {
++				if (PageGUP(ptepage))
++					forcecow = 1;
++				huge_ptep_set_wrprotect(src, addr,
++							src_pte);
++				entry = huge_ptep_get(src_pte);
++			}
+ 			set_huge_pte_at(dst, addr, dst_pte, entry);
++			if (forcecow) {
++				int cow_ret;
++				/* force atomic copy from parent to child */
++				flush_tlb_range(src_vma, addr, addr+HPAGE_SIZE);
++				/*
++				 * We hold mmap_sem in write mode and
++				 * the VM doesn't know about hugepages
++				 * so the src_pte/dst_pte can't change
++				 * from under us even if hugetlb_cow
++				 * will release the lock.
++				 */
++				cow_ret = hugetlb_cow(dst, dst_vma, addr,
++						      dst_pte, entry, 1);
++				BUG_ON(!pte_same(huge_ptep_get(src_pte),
++						 entry));
++				set_huge_pte_at(src, addr,
++						src_pte,
++						orig_entry);
++				if (cow_ret != VM_FAULT_MINOR)
++					oom = 1;
++			}
+ 		}
+ 		spin_unlock(&src->page_table_lock);
+ 		spin_unlock(&dst->page_table_lock);
++		if (oom)
++			goto nomem;
+ 	}
+ 	return 0;
+ 
+@@ -448,7 +484,8 @@ void unmap_hugepage_range(struct vm_area_struct *vma, unsigned long start,
+ }
+ 
+ static int hugetlb_cow(struct mm_struct *mm, struct vm_area_struct *vma,
+-			unsigned long address, pte_t *ptep, pte_t pte)
++		       unsigned long address, pte_t *ptep, pte_t pte,
++		       int cannot_race)
+ {
+ 	struct page *old_page, *new_page;
+ 	int avoidcopy;
+@@ -483,7 +520,8 @@ static int hugetlb_cow(struct mm_struct *mm, struct vm_area_struct *vma,
+ 				make_huge_pte(vma, new_page, 1));
+ 		/* Make the old page be freed below */
+ 		new_page = old_page;
+-	}
++	} else
++		BUG_ON(cannot_race);
+ 	page_cache_release(new_page);
+ 	page_cache_release(old_page);
+ 	return VM_FAULT_MINOR;
+@@ -553,7 +591,7 @@ retry:
+ 
+ 	if (write_access && !(vma->vm_flags & VM_SHARED)) {
+ 		/* Optimization, do the COW without a second fault */
+-		ret = hugetlb_cow(mm, vma, address, ptep, new_pte);
++		ret = hugetlb_cow(mm, vma, address, ptep, new_pte, 0);
+ 	}
+ 
+ 	spin_unlock(&mm->page_table_lock);
+@@ -600,7 +638,7 @@ int hugetlb_fault(struct mm_struct *mm, struct vm_area_struct *vma,
+ 	/* Check for a racing update before calling hugetlb_cow */
+ 	if (likely(pte_same(entry, huge_ptep_get(ptep))))
+ 		if (write_access && !pte_write(entry))
+-			ret = hugetlb_cow(mm, vma, address, ptep, entry);
++			ret = hugetlb_cow(mm, vma, address, ptep, entry, 0);
+ 	spin_unlock(&mm->page_table_lock);
+ 	mutex_unlock(&hugetlb_instantiation_mutex);
+ 
+@@ -649,6 +687,8 @@ int follow_hugetlb_page(struct mm_struct *mm, struct vm_area_struct *vma,
+ same_page:
+ 		if (pages) {
+ 			get_page(page);
++			if (write && !PageGUP(page))
++				SetPageGUP(page);
+ 			pages[i] = page + pfn_offset;
+ 		}
+ 
+diff --git a/mm/memory.c b/mm/memory.c
+index 12c2d9f..8565f89 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -426,14 +426,16 @@ struct page *vm_normal_page(struct vm_area_struct *vma, unsigned long addr, pte_
+  * covered by this vma.
+  */
+ 
+-static inline void
++static inline int
+ copy_one_pte(struct mm_struct *dst_mm, struct mm_struct *src_mm,
+-		pte_t *dst_pte, pte_t *src_pte, struct vm_area_struct *vma,
++		pte_t *dst_pte, pte_t *src_pte,
++		struct vm_area_struct *dst_vma, struct vm_area_struct *src_vma,
+ 		unsigned long addr, int *rss)
+ {
+-	unsigned long vm_flags = vma->vm_flags;
++	unsigned long vm_flags = src_vma->vm_flags;
+ 	pte_t pte = *src_pte;
+ 	struct page *page;
++	int forcecow = 0;
+ 
+ 	/* pte contains position in swap or file, so copy. */
+ 	if (unlikely(!pte_present(pte))) {
+@@ -464,15 +466,6 @@ copy_one_pte(struct mm_struct *dst_mm, struct mm_struct *src_mm,
+ 	}
+ 
+ 	/*
+-	 * If it's a COW mapping, write protect it both
+-	 * in the parent and the child
+-	 */
+-	if (is_cow_mapping(vm_flags)) {
+-		ptep_set_wrprotect(src_mm, addr, src_pte);
+-		pte = *src_pte;
+-	}
+-
+-	/*
+ 	 * If it's a shared mapping, mark it clean in
+ 	 * the child
+ 	 */
+@@ -480,27 +473,75 @@ copy_one_pte(struct mm_struct *dst_mm, struct mm_struct *src_mm,
+ 		pte = pte_mkclean(pte);
+ 	pte = pte_mkold(pte);
+ 
+-	page = vm_normal_page(vma, addr, pte);
++	page = vm_normal_page(src_vma, addr, pte);
+ 	if (page) {
+ 		get_page(page);
+ 		page_dup_rmap(page);
++		if (is_cow_mapping(vm_flags) && pte_write(pte) &&
++		    PageAnon(page) && PageGUP(page)) {
++			if (unlikely(TestSetPageLocked(page)))
++				forcecow = 1;
++			else {
++				BUG_ON(page_mapcount(page) != 2);
++				if (unlikely(page_count(page) !=
++					     page_mapcount(page)
++					     + !!PageSwapCache(page)))
++					forcecow = 1;
++				unlock_page(page);
++			}
++		}
+ 		rss[!!PageAnon(page)]++;
+ 	}
+ 
++	/*
++	 * If it's a COW mapping, write protect it both
++	 * in the parent and the child.
++	 */
++	if (is_cow_mapping(vm_flags)) {
++		if (pte_write(pte)) {
++			ptep_set_wrprotect(src_mm, addr, src_pte);
++			pte = pte_wrprotect(pte);
++			if (forcecow) {
++				/* force atomic copy from parent to child */
++				flush_tlb_page(src_vma, addr);
++				/*
++				 * Don't set the dst_pte here to be
++				 * safer, as fork_pre_cow might return
++				 * -EAGAIN and restart.
++				 */
++				goto out;
++			}
++		}
++	}
++
+ out_set_pte:
+ 	set_pte_at(dst_mm, addr, dst_pte, pte);
++out:
++	return forcecow;
+ }
+ 
++static int fork_pre_cow(struct mm_struct *dst_mm,
++			struct mm_struct *src_mm,
++			struct vm_area_struct *dst_vma,
++			struct vm_area_struct *src_vma,
++			unsigned long address,
++			pte_t **dst_ptep, pte_t **src_ptep,
++			spinlock_t **dst_ptlp, spinlock_t **src_ptlp,
++			pmd_t *dst_pmd, pmd_t *src_pmd);
++
+ static int copy_pte_range(struct mm_struct *dst_mm, struct mm_struct *src_mm,
+-		pmd_t *dst_pmd, pmd_t *src_pmd, struct vm_area_struct *vma,
++		pmd_t *dst_pmd, pmd_t *src_pmd,
++		struct vm_area_struct *dst_vma, struct vm_area_struct *src_vma,
+ 		unsigned long addr, unsigned long end)
+ {
+ 	pte_t *src_pte, *dst_pte;
+ 	spinlock_t *src_ptl, *dst_ptl;
+ 	int progress = 0;
+ 	int rss[2];
++	int forcecow;
+ 
+ again:
++	forcecow = 0;
+ 	rss[1] = rss[0] = 0;
+ 	dst_pte = pte_alloc_map_lock(dst_mm, dst_pmd, addr, &dst_ptl);
+ 	if (!dst_pte)
+@@ -510,6 +551,9 @@ again:
+ 	spin_lock_nested(src_ptl, SINGLE_DEPTH_NESTING);
+ 
+ 	do {
++		if (forcecow)
++			break;
++
+ 		/*
+ 		 * We are holding two locks at this point - either of them
+ 		 * could generate latencies in another task on another CPU.
+@@ -525,22 +569,54 @@ again:
+ 			progress++;
+ 			continue;
+ 		}
+-		copy_one_pte(dst_mm, src_mm, dst_pte, src_pte, vma, addr, rss);
++		forcecow = copy_one_pte(dst_mm, src_mm, dst_pte, src_pte,
++					dst_vma, src_vma, addr, rss);
+ 		progress += 8;
+ 	} while (dst_pte++, src_pte++, addr += PAGE_SIZE, addr != end);
+ 
++	if (unlikely(forcecow)) {
++		pte_t *_src_pte = src_pte-1, *_dst_pte = dst_pte-1;
++		/*
++		 * Try to COW the child page as direct I/O is working
++		 * on the parent page, and so we've to mark the parent
++		 * pte read-write before dropping the PT lock and
++		 * mmap_sem to avoid the page to be cowed in the
++		 * parent and any direct I/O to get lost.
++		 */
++		forcecow = fork_pre_cow(dst_mm, src_mm,
++					dst_vma, src_vma,
++					addr-PAGE_SIZE,
++					&_dst_pte, &_src_pte,
++					&dst_ptl, &src_ptl,
++					dst_pmd, src_pmd);
++		src_pte = _src_pte + 1;
++		dst_pte = _dst_pte + 1;
++		/* after the page copy set the parent pte writeable again */
++		set_pte_at(src_mm, addr-PAGE_SIZE, src_pte-1,
++			   pte_mkwrite(*(src_pte-1)));
++		if (unlikely(forcecow == -EAGAIN)) {
++			dst_pte--;
++			src_pte--;
++			addr -= PAGE_SIZE;
++			rss[1]--;
++		}
++	}
++
+ 	spin_unlock(src_ptl);
+ 	pte_unmap_nested(src_pte - 1);
+ 	add_mm_rss(dst_mm, rss[0], rss[1]);
+ 	pte_unmap_unlock(dst_pte - 1, dst_ptl);
+ 	cond_resched();
++	if (unlikely(forcecow == -ENOMEM))
++		return -ENOMEM;
+ 	if (addr != end)
+ 		goto again;
+ 	return 0;
+ }
+ 
+ static inline int copy_pmd_range(struct mm_struct *dst_mm, struct mm_struct *src_mm,
+-		pud_t *dst_pud, pud_t *src_pud, struct vm_area_struct *vma,
++		pud_t *dst_pud, pud_t *src_pud,
++		struct vm_area_struct *dst_vma, struct vm_area_struct *src_vma,
+ 		unsigned long addr, unsigned long end)
+ {
+ 	pmd_t *src_pmd, *dst_pmd;
+@@ -555,14 +631,15 @@ static inline int copy_pmd_range(struct mm_struct *dst_mm, struct mm_struct *src
+ 		if (pmd_none_or_clear_bad(src_pmd))
+ 			continue;
+ 		if (copy_pte_range(dst_mm, src_mm, dst_pmd, src_pmd,
+-						vma, addr, next))
++				   dst_vma, src_vma, addr, next))
+ 			return -ENOMEM;
+ 	} while (dst_pmd++, src_pmd++, addr = next, addr != end);
+ 	return 0;
+ }
+ 
+ static inline int copy_pud_range(struct mm_struct *dst_mm, struct mm_struct *src_mm,
+-		pgd_t *dst_pgd, pgd_t *src_pgd, struct vm_area_struct *vma,
++		pgd_t *dst_pgd, pgd_t *src_pgd,
++		struct vm_area_struct *dst_vma, struct vm_area_struct *src_vma,
+ 		unsigned long addr, unsigned long end)
+ {
+ 	pud_t *src_pud, *dst_pud;
+@@ -577,19 +654,20 @@ static inline int copy_pud_range(struct mm_struct *dst_mm, struct mm_struct *src
+ 		if (pud_none_or_clear_bad(src_pud))
+ 			continue;
+ 		if (copy_pmd_range(dst_mm, src_mm, dst_pud, src_pud,
+-						vma, addr, next))
++				   dst_vma, src_vma, addr, next))
+ 			return -ENOMEM;
+ 	} while (dst_pud++, src_pud++, addr = next, addr != end);
+ 	return 0;
+ }
+ 
+ int copy_page_range(struct mm_struct *dst_mm, struct mm_struct *src_mm,
+-		struct vm_area_struct *vma)
++		    struct vm_area_struct *dst_vma,
++		    struct vm_area_struct *src_vma)
+ {
+ 	pgd_t *src_pgd, *dst_pgd;
+ 	unsigned long next;
+-	unsigned long addr = vma->vm_start;
+-	unsigned long end = vma->vm_end;
++	unsigned long addr = src_vma->vm_start;
++	unsigned long end = src_vma->vm_end;
+ 
+ 	/*
+ 	 * Don't copy ptes where a page fault will fill them correctly.
+@@ -597,13 +675,14 @@ int copy_page_range(struct mm_struct *dst_mm, struct mm_struct *src_mm,
+ 	 * readonly mappings. The tradeoff is that copy_page_range is more
+ 	 * efficient than faulting.
+ 	 */
+-	if (!(vma->vm_flags & (VM_HUGETLB|VM_NONLINEAR|VM_PFNMAP|VM_INSERTPAGE))) {
+-		if (!vma->anon_vma)
++	if (!(src_vma->vm_flags & (VM_HUGETLB|VM_NONLINEAR|VM_PFNMAP|VM_INSERTPAGE))) {
++		if (!src_vma->anon_vma)
+ 			return 0;
+ 	}
+ 
+-	if (is_vm_hugetlb_page(vma))
+-		return copy_hugetlb_page_range(dst_mm, src_mm, vma);
++	if (is_vm_hugetlb_page(src_vma))
++		return copy_hugetlb_page_range(dst_mm, src_mm,
++					       dst_vma, src_vma);
+ 
+ 	dst_pgd = pgd_offset(dst_mm, addr);
+ 	src_pgd = pgd_offset(src_mm, addr);
+@@ -612,7 +691,7 @@ int copy_page_range(struct mm_struct *dst_mm, struct mm_struct *src_mm,
+ 		if (pgd_none_or_clear_bad(src_pgd))
+ 			continue;
+ 		if (copy_pud_range(dst_mm, src_mm, dst_pgd, src_pgd,
+-						vma, addr, next))
++				   dst_vma, src_vma, addr, next))
+ 			return -ENOMEM;
+ 	} while (dst_pgd++, src_pgd++, addr = next, addr != end);
+ 	return 0;
+@@ -957,8 +1036,11 @@ struct page *follow_page(struct vm_area_struct *vma, unsigned long address,
+ 	if (unlikely(!page))
+ 		goto bad_page;
+ 
+-	if (flags & FOLL_GET)
++	if (flags & FOLL_GET) {
+ 		get_page(page);
++		if (PageAnon(page) && !PageGUP(page))
++			SetPageGUP(page);
++	}
+ 	if (flags & FOLL_TOUCH) {
+ 		if ((flags & FOLL_WRITE) &&
+ 		    !pte_dirty(pte) && !PageDirty(page))
+@@ -1638,6 +1720,79 @@ static inline void cow_user_page(struct page *dst, struct page *src, unsigned lo
+ 	copy_user_highpage(dst, src, va);
+ }
+ 
++static int fork_pre_cow(struct mm_struct *dst_mm,
++			struct mm_struct *src_mm,
++			struct vm_area_struct *dst_vma,
++			struct vm_area_struct *src_vma,
++			unsigned long address,
++			pte_t **dst_ptep, pte_t **src_ptep,
++			spinlock_t **dst_ptlp, spinlock_t **src_ptlp,
++			pmd_t *dst_pmd, pmd_t *src_pmd)
++{
++	pte_t _src_pte, _dst_pte;
++	struct page *old_page, *new_page;
++
++	_src_pte = **src_ptep;
++	_dst_pte = **dst_ptep;
++	old_page = vm_normal_page(src_vma, address, **src_ptep);
++	BUG_ON(!old_page);
++	get_page(old_page);
++	spin_unlock(*src_ptlp);
++	pte_unmap_nested(*src_ptep);
++	pte_unmap_unlock(*dst_ptep, *dst_ptlp);
++
++	new_page = alloc_page_vma(GFP_HIGHUSER, dst_vma, address);
++	if (unlikely(!new_page)) {
++		*dst_ptep = pte_offset_map_lock(dst_mm, dst_pmd, address,
++						dst_ptlp);
++		*src_ptep = pte_offset_map_nested(src_pmd, address);
++		*src_ptlp = pte_lockptr(src_mm, src_pmd);
++		spin_lock_nested(*src_ptlp, SINGLE_DEPTH_NESTING);
++		return -ENOMEM;
++	}
++	cow_user_page(new_page, old_page, address);
++
++	*dst_ptep = pte_offset_map_lock(dst_mm, dst_pmd, address, dst_ptlp);
++	*src_ptep = pte_offset_map_nested(src_pmd, address);
++	*src_ptlp = pte_lockptr(src_mm, src_pmd);
++	spin_lock_nested(*src_ptlp, SINGLE_DEPTH_NESTING);
++
++	/*
++	 * src pte can unmapped by the VM from under us after dropping
++	 * the src_ptlp but it can't be cowed from under us as fork
++	 * holds the mmap_sem in write mode.
++	 */
++	if (!pte_same(**src_ptep, _src_pte))
++		goto eagain;
++	if (!pte_same(**dst_ptep, _dst_pte))
++		goto eagain;
++
++	page_remove_rmap(old_page);
++	page_cache_release(old_page);
++	page_cache_release(old_page);
++
++	flush_cache_page(src_vma, address, pte_pfn(**src_ptep));
++	_dst_pte = mk_pte(new_page, dst_vma->vm_page_prot);
++	_dst_pte = maybe_mkwrite(pte_mkdirty(_dst_pte), dst_vma);
++	page_add_new_anon_rmap(new_page, dst_vma, address);
++	lru_cache_add_active(new_page);
++	set_pte_at(dst_mm, address, *dst_ptep, _dst_pte);
++	update_mmu_cache(dst_vma, address, _dst_pte);
++	lazy_mmu_prot_update(_dst_pte);
++	return 0;
++
++eagain:
++	page_cache_release(old_page);
++	page_cache_release(new_page);
++	/*
++	 * Later we'll repeat the copy of this pte, so here we've to
++	 * undo the mapcount and page count taken in copy_one_pte.
++	 */
++	page_remove_rmap(old_page);
++	page_cache_release(old_page);
++	return -EAGAIN;
++}
++
+ /*
+  * This routine handles present pages, when users try to write
+  * to a shared page. It is done by copying the page to a new address
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 3eed821..5bd4b7f 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -154,6 +154,7 @@ static void bad_page(struct page *page)
+ 			1 << PG_slab    |
+ 			1 << PG_swapcache |
+ 			1 << PG_writeback |
++			1 << PG_gup |
+ 			1 << PG_buddy );
+ 	set_page_count(page, 0);
+ 	reset_page_mapcount(page);
+@@ -400,6 +401,8 @@ static inline int free_pages_check(struct page *page)
+ 		bad_page(page);
+ 	if (PageDirty(page))
+ 		__ClearPageDirty(page);
++	if (PageGUP(page))
++		__ClearPageGUP(page);
+ 	/*
+ 	 * For now, we report if PG_reserved was found set, but do not
+ 	 * clear it, and do not free the page.  But we shall soon need
+@@ -546,6 +549,7 @@ static int prep_new_page(struct page *page, int order, gfp_t gfp_flags)
+ 			1 << PG_swapcache |
+ 			1 << PG_writeback |
+ 			1 << PG_reserved |
++			1 << PG_gup |
+ 			1 << PG_buddy ))))
+ 		bad_page(page);
+ 

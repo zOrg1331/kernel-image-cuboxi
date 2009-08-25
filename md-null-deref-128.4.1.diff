@@ -1,0 +1,27 @@
+http://www.openwall.com/lists/oss-security/2009/07/24/1
+http://xorl.wordpress.com/2009/07/21/linux-kernel-md-driver-null-pointer-dereference/
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=b8d966efd9a46a9a35beac50cbff6e30565125ef
+
+diff -urp linux-2.6.18-128.4.1.el5.028stab062.3/drivers/md/md.c linux-2.6.18-128.4.1.el5.028stab062.3-ow0/drivers/md/md.c
+--- linux-2.6.18-128.4.1.el5.028stab062.3/drivers/md/md.c	2009-05-10 17:50:59 +0000
++++ linux-2.6.18-128.4.1.el5.028stab062.3-ow0/drivers/md/md.c	2009-08-05 18:30:41 +0000
+@@ -2800,7 +2800,8 @@ suspend_lo_store(mddev_t *mddev, const c
+ 	char *e;
+ 	unsigned long long new = simple_strtoull(buf, &e, 10);
+ 
+-	if (mddev->pers->quiesce == NULL)
++	if (mddev->pers == NULL ||
++	    mddev->pers->quiesce == NULL)
+ 		return -EINVAL;
+ 	if (buf == e || (*e && *e != '\n'))
+ 		return -EINVAL;
+@@ -2828,7 +2829,8 @@ suspend_hi_store(mddev_t *mddev, const c
+ 	char *e;
+ 	unsigned long long new = simple_strtoull(buf, &e, 10);
+ 
+-	if (mddev->pers->quiesce == NULL)
++	if (mddev->pers == NULL || 
++	    mddev->pers->quiesce == NULL)
+ 		return -EINVAL;
+ 	if (buf == e || (*e && *e != '\n'))
+ 		return -EINVAL;

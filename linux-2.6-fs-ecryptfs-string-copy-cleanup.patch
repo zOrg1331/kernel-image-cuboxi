@@ -1,0 +1,66 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 29 Jul 2008 16:47:30 -0500
+Subject: [fs] ecryptfs: string copy cleanup
+Message-id: 488F8FF2.7010302@redhat.com
+O-Subject: [RHEL5.3 PATCH 3/5] ecryptfs: string copy cleanup
+Bugzilla: 457143
+RH-Acked-by: Jarod Wilson <jwilson@redhat.com>
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+
+Addresses [Bug 457143] RHEL5.3: misc ecryptfs fixes from 2.6.27
+
+From: Miklos Szeredi <mszeredi@suse.cz>
+Date: Thu, 24 Jul 2008 04:30:05 +0000 (-0700)
+Subject: ecryptfs: string copy cleanup
+X-Git-Tag: v2.6.27-rc1~647
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=8f2368095e25018838e1bf145041f58270ccd32e
+
+ecryptfs: string copy cleanup
+
+Clean up overcomplicated string copy, which also gets rid of this
+bogus warning:
+
+fs/ecryptfs/main.c: In function 'ecryptfs_parse_options':
+include/asm/arch/string_32.h:75: warning: array subscript is above array bounds
+
+Signed-off-by: Miklos Szeredi <mszeredi@suse.cz>
+Cc: Michael Halcrow <mhalcrow@us.ibm.com>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/fs/ecryptfs/main.c b/fs/ecryptfs/main.c
+index 754aaca..84ed493 100644
+--- a/fs/ecryptfs/main.c
++++ b/fs/ecryptfs/main.c
+@@ -301,7 +301,6 @@ static int ecryptfs_parse_options(struct super_block *sb, char *options)
+ 	char *cipher_name_dst;
+ 	char *cipher_name_src;
+ 	char *cipher_key_bytes_src;
+-	int cipher_name_len;
+ 
+ 	if (!options) {
+ 		rc = -EINVAL;
+@@ -382,17 +381,12 @@ static int ecryptfs_parse_options(struct super_block *sb, char *options)
+ 		goto out;
+ 	}
+ 	if (!cipher_name_set) {
+-		cipher_name_len = strlen(ECRYPTFS_DEFAULT_CIPHER);
+-		if (unlikely(cipher_name_len
+-			     >= ECRYPTFS_MAX_CIPHER_NAME_SIZE)) {
+-			rc = -EINVAL;
+-			BUG();
+-			goto out;
+-		}
+-		memcpy(mount_crypt_stat->global_default_cipher_name,
+-		       ECRYPTFS_DEFAULT_CIPHER, cipher_name_len);
+-		mount_crypt_stat->global_default_cipher_name[cipher_name_len]
+-		    = '\0';
++		int cipher_name_len = strlen(ECRYPTFS_DEFAULT_CIPHER);
++
++		BUG_ON(cipher_name_len >= ECRYPTFS_MAX_CIPHER_NAME_SIZE);
++
++		strcpy(mount_crypt_stat->global_default_cipher_name,
++		       ECRYPTFS_DEFAULT_CIPHER);
+ 	}
+ 	if (!cipher_key_bytes_set) {
+ 		mount_crypt_stat->global_default_cipher_key_size = 0;

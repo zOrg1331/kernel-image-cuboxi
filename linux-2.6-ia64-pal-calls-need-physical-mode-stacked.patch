@@ -1,0 +1,48 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Thu, 31 Jul 2008 15:32:58 -0400
+Subject: [IA64] PAL calls need physical mode, stacked
+Message-id: 20080731192703.4411.10849.sendpatchset@dhcp-100-2-194.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH 4/19] [IA64] PAL calls need physical mode, stacked
+Bugzilla: 455308
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+[patch] PAL calls need physical mode, stacked
+
+BZ#455308
+
+Upstream: http://git.kernel.org/?p=linux/kernel/git/aegl/linux-2.6.git;a=commit;h=b29e7132b5a9f2496beed37beef7ba4d010afb2c
+
+PAL_CACHE_READ and PAL_CACHE_WRITE need to be called in physical
+mode with stacked registers.
+
+Signed-off-by: Russ Anderson (rja@sgi.com)
+
+diff --git a/include/asm-ia64/pal.h b/include/asm-ia64/pal.h
+index 74f089e..62ec52a 100644
+--- a/include/asm-ia64/pal.h
++++ b/include/asm-ia64/pal.h
+@@ -970,11 +970,12 @@ static inline s64
+ ia64_pal_cache_read (pal_cache_line_id_u_t line_id, u64 physical_addr)
+ {
+ 	struct ia64_pal_retval iprv;
+-	PAL_CALL(iprv, PAL_CACHE_READ, line_id.pclid_data, physical_addr, 0);
++	PAL_CALL_PHYS_STK(iprv, PAL_CACHE_READ, line_id.pclid_data,
++				physical_addr, 0);
+ 	return iprv.status;
+ }
+ 
+-/* Return summary information about the heirarchy of caches controlled by the processor */
++/* Return summary information about the hierarchy of caches controlled by the processor */
+ static inline s64
+ ia64_pal_cache_summary (u64 *cache_levels, u64 *unique_caches)
+ {
+@@ -992,7 +993,8 @@ static inline s64
+ ia64_pal_cache_write (pal_cache_line_id_u_t line_id, u64 physical_addr, u64 data)
+ {
+ 	struct ia64_pal_retval iprv;
+-	PAL_CALL(iprv, PAL_CACHE_WRITE, line_id.pclid_data, physical_addr, data);
++	PAL_CALL_PHYS_STK(iprv, PAL_CACHE_WRITE, line_id.pclid_data,
++				physical_addr, data);
+ 	return iprv.status;
+ }
+ 

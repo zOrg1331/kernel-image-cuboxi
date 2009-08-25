@@ -1,0 +1,65 @@
+From: John W. Linville <linville@redhat.com>
+Date: Thu, 4 Sep 2008 15:03:23 -0400
+Subject: [wireless] ath5k: fixup Kconfig mess from update
+Message-id: 20080904190323.GJ20038@redhat.com
+O-Subject: [RHEL5 cleanup patch] ath5k: fixup Kconfig mess resulting from update
+Bugzilla: 445578
+
+The ath5k patch I posted had some screwy Kconfig bits.  This patch
+corrects them to match the upstream source.  There is no functional
+change so long as ATH5K_DEBUG remains unselected.
+
+BZ445578
+
+Sorry for the confusion!
+
+John
+
+diff --git a/drivers/net/wireless/Kconfig b/drivers/net/wireless/Kconfig
+index 72b5e9a..2967d9e 100644
+--- a/drivers/net/wireless/Kconfig
++++ b/drivers/net/wireless/Kconfig
+@@ -549,24 +549,6 @@ config USB_ZD1201
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called zd1201.
+ 
+-config ATH5K
+-	tristate "Atheros 5xxx wireless cards support"
+-	depends on PCI && MAC80211 && NET_RADIO && EXPERIMENTAL
+-	default m
+-	---help---
+-	  This module adds support for wireless adapters based on
+-	  Atheros 5xxx chipset.
+-
+-	  Currently the following chip versions are supported:
+-
+-	  MAC: AR5211 AR5212
+-	  PHY: RF5111/2111 RF5112/2112 RF5413/2413
+-
+-	  This driver uses the kernel's mac80211 subsystem.
+-
+-	  If you choose to build a module, it'll be called ath5k. Say M if
+-	  unsure.
+-
+ config RTL8180
+ 	tristate "Realtek 8185 PCI support"
+ 	depends on MAC80211 && PCI && NET_RADIO && EXPERIMENTAL
+@@ -596,5 +578,6 @@ config NET_WIRELESS
+ 
+ endmenu
+ 
++source "drivers/net/wireless/ath5k/Kconfig"
+ source "drivers/net/wireless/iwlwifi/Kconfig"
+ source "drivers/net/wireless/rt2x00/Kconfig"
+diff --git a/drivers/net/wireless/ath5k/Kconfig b/drivers/net/wireless/ath5k/Kconfig
+index f1f2aea..f959291 100644
+--- a/drivers/net/wireless/ath5k/Kconfig
++++ b/drivers/net/wireless/ath5k/Kconfig
+@@ -1,6 +1,6 @@
+ config ATH5K
+ 	tristate "Atheros 5xxx wireless cards support"
+-	depends on PCI && MAC80211 && WLAN_80211 && EXPERIMENTAL
++	depends on PCI && MAC80211 && NET_RADIO && EXPERIMENTAL
+ 	---help---
+ 	  This module adds support for wireless adapters based on
+ 	  Atheros 5xxx chipset.

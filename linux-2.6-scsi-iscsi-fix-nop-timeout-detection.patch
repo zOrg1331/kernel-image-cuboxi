@@ -1,0 +1,97 @@
+From: mchristi@redhat.com <mchristi@redhat.com>
+Date: Mon, 25 Aug 2008 19:15:54 -0500
+Subject: [scsi] iscsi: fix nop timeout detection
+Message-id: 1219709754-10592-1-git-send-email-mchristi@redhat.com
+O-Subject: [RHEL 5.3 PATCH] fix iscsi nop timeout detection
+Bugzilla: 453969
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for BZ: 453969
+
+The following patch fixes two bugs in the iscsi nop processing.
+The target sends iscsi nops to ping the initiator and the
+initiator has to send nops to reply and can send nops to
+ping the target.
+
+The first bug was that whenever the timer woke up we checked
+if a ping timedout when most of the time we want to check
+if we wanted to send a ping.
+
+The second bug was that when we got a ping response we did not
+reset the timer so if the ping timeout was long and the
+recv timeout was short we might have missed a chance to check
+the transport. This delays error detection which delays
+dm-multipath failovers.
+
+This patch checks if a iscsi ping is outstanding and if the ping has
+timed out, to determine if we need to signal a connection problem.
+And it resets the timer when getting a response to one of our nops.
+
+The upstream commit is here
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=c8611f975403dd20e6503aff8aded5dcb718f75b
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=4cf1043593db6a337f10e006c23c69e5fc93e722
+
+diff --git a/drivers/scsi/libiscsi.c b/drivers/scsi/libiscsi.c
+index 6af7606..603fc50 100644
+--- a/drivers/scsi/libiscsi.c
++++ b/drivers/scsi/libiscsi.c
+@@ -584,7 +584,9 @@ int __iscsi_complete_pdu(struct iscsi_conn *conn, struct iscsi_hdr *hdr,
+ 				if (iscsi_recv_pdu(conn->cls_conn, hdr, data,
+ 						   datalen))
+ 					rc = ISCSI_ERR_CONN_FAILED;
+-			}
++			} else
++				mod_timer(&conn->transport_timer,
++					  jiffies + conn->recv_timeout);
+ 			iscsi_free_mgmt_task(conn, mtask);
+ 			break;
+ 		default:
+@@ -1306,19 +1308,20 @@ static void iscsi_check_transport_timeouts(unsigned long data)
+ {
+ 	struct iscsi_conn *conn = (struct iscsi_conn *)data;	
+ 	struct iscsi_session *session = conn->session;
+-	unsigned long timeout, next_timeout = 0, last_recv;
++	unsigned long recv_timeout, next_timeout = 0, last_recv;
+ 
+ 	spin_lock(&session->lock);
+ 	if (session->state != ISCSI_STATE_LOGGED_IN)
+ 		goto done;
+ 
+-	timeout = conn->recv_timeout;
+-	if (!timeout)
++	recv_timeout = conn->recv_timeout;
++	if (!recv_timeout)
+ 		goto done;
+ 
+-	timeout *= HZ;
++	recv_timeout *= HZ;
+ 	last_recv = conn->last_recv;
+-	if (time_before_eq(last_recv + timeout + (conn->ping_timeout * HZ),
++	if (conn->ping_mtask &&
++	    time_before_eq(conn->last_ping + (conn->ping_timeout * HZ),
+ 			   jiffies)) {
+ 		printk(KERN_ERR "ping timeout of %d secs expired, "
+ 		       "last rx %lu, last ping %lu, now %lu\n",
+@@ -1329,15 +1332,13 @@ static void iscsi_check_transport_timeouts(unsigned long data)
+ 		return;
+ 	}
+ 
+-	if (time_before_eq(last_recv + timeout, jiffies)) {
+-		if (time_before_eq(conn->last_ping, last_recv)) {
+-			/* send a ping to try to provoke some traffic */
+-			debug_scsi("Sending nopout as ping on conn %p\n", conn);
+-			iscsi_send_nopout(conn, NULL);
+-		}
+-		next_timeout = last_recv + timeout + (conn->ping_timeout * HZ);
++	if (time_before_eq(last_recv + recv_timeout, jiffies)) {
++		/* send a ping to try to provoke some traffic */
++		debug_scsi("Sending nopout as ping on conn %p\n", conn);
++		iscsi_send_nopout(conn, NULL);
++		next_timeout = conn->last_ping + (conn->ping_timeout * HZ);
+ 	} else
+-		next_timeout = last_recv + timeout;
++		next_timeout = last_recv + recv_timeout;
+ 
+ 	debug_scsi("Setting next tmo %lu\n", next_timeout);
+ 	mod_timer(&conn->transport_timer, next_timeout);

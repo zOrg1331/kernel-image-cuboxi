@@ -1,0 +1,116 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Wed, 9 Apr 2008 12:46:09 +0200
+Subject: [s390] dasd: add support for system information messages
+Message-id: 20080409104609.GB11855@redhat.com
+O-Subject: [RHEL5 U3 PATCH 2/3] FEAT: s390 - dasd: add support for system information messages
+Bugzilla: 439441
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+The system now reports the System reference Code (SRC)
+when SIM sense data is given from the storage server.
+The customer can lookup the SRC in the documentation
+of the storage server.
+
+Bugzilla
+=========
+
+BZ 439441
+https://bugzilla.redhat.com/show_bug.cgi?id=439441
+
+Upstream status of the patch:
+=============================
+
+This patch will be posted upstream in the next merge window.
+I'll reply to this message as soon as we have a git commit id
+
+Test status:
+============
+
+The patch has been tested.
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/block/dasd_3990_erp.c b/drivers/s390/block/dasd_3990_erp.c
+index 98f7311..9fcc827 100644
+--- a/drivers/s390/block/dasd_3990_erp.c
++++ b/drivers/s390/block/dasd_3990_erp.c
+@@ -49,7 +49,7 @@ struct DCTL_data {
+  *   dasd_era_recover	for all others.
+  */
+ static dasd_era_t
+-dasd_3990_erp_examine_24(struct dasd_ccw_req * cqr, char *sense)
++dasd_3990_erp_examine_24(struct dasd_ccw_req *cqr, char *sense)
+ {
+ 
+ 	struct dasd_device *device = cqr->device;
+@@ -2110,6 +2110,36 @@ dasd_3990_erp_compound(struct dasd_ccw_req * erp, char *sense)
+ }				/* end dasd_3990_erp_compound */
+ 
+ /*
++ *DASD_3990_ERP_HANDLE_SIM
++ *
++ *DESCRIPTION
++ *  inspects the SIM SENSE data and starts an appropriate action
++ *
++ * PARAMETER
++ *   sense         sense data of the actual error
++ *
++ * RETURN VALUES
++ *   none
++ */
++void
++dasd_3990_erp_handle_sim(struct dasd_device *device, char *sense)
++{
++	/* print message according to log or message to operator mode */
++	if ((sense[24] & DASD_SIM_MSG_TO_OP) || (sense[1] & 0x10)) {
++
++		/* print SIM SRC from RefCode */
++		DEV_MESSAGE(KERN_ERR, device, "SIM - SRC: "
++			    "%02x%02x%02x%02x", sense[22],
++			    sense[23], sense[11], sense[12]);
++	} else if (sense[24] & DASD_SIM_LOG) {
++		/* print SIM SRC Refcode */
++		DEV_MESSAGE(KERN_WARNING, device, "SIM - SRC: "
++			    "%02x%02x%02x%02x", sense[22],
++			    sense[23], sense[11], sense[12]);
++	}
++}
++
++/*
+  * DASD_3990_ERP_INSPECT_32
+  *
+  * DESCRIPTION
+@@ -2132,6 +2162,10 @@ dasd_3990_erp_inspect_32(struct dasd_ccw_req * erp, char *sense)
+ 
+ 	erp->function = dasd_3990_erp_inspect_32;
+ 
++	/* check for SIM sense data */
++	if ((sense[6] & DASD_SIM_SENSE) == DASD_SIM_SENSE)
++		dasd_3990_erp_handle_sim(device, sense);
++
+ 	if (sense[25] & DASD_SENSE_BIT_0) {
+ 
+ 		/* compound program action codes (byte25 bit 0 == '1') */
+diff --git a/drivers/s390/block/dasd_int.h b/drivers/s390/block/dasd_int.h
+index 3ade79d..8be1e9f 100644
+--- a/drivers/s390/block/dasd_int.h
++++ b/drivers/s390/block/dasd_int.h
+@@ -77,6 +77,11 @@ typedef enum {
+ #define DASD_SENSE_BIT_2 0x20
+ #define DASD_SENSE_BIT_3 0x10
+ 
++/* BIT DEFINITIONS FOR SIM SENSE */
++#define DASD_SIM_SENSE 0x0F
++#define DASD_SIM_MSG_TO_OP 0x03
++#define DASD_SIM_LOG 0x0C
++
+ /*
+  * SECTION: MACROs for klogd and s390 debug feature (dbf)
+  */

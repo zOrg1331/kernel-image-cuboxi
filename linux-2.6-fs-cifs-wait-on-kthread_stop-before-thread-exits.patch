@@ -1,0 +1,122 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Thu, 12 Jun 2008 09:08:11 -0400
+Subject: [fs] cifs: wait on kthread_stop before thread exits
+Message-id: 20080612090811.339c89f9@barsoom.rdu.redhat.com
+O-Subject: Re: [RHEL5.3 PATCH] BZ#444865: [CIFS] don't allow demultiplex thread to exit until kthread_stop is called
+Bugzilla: 444865
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+cifs_demultiplex_thread can exit under several conditions:
+
+1) if it's signaled
+2) if there's a problem with session setup
+3) if kthread_stop is called on it
+
+The first two are problems. If kthread_stop is called on the thread,
+there is no guarantee that it will still be up. We need to have the
+thread stay up until kthread_stop is called on it.
+
+One option would be to not even try to tear things down until after
+kthread_stop is called. However, in the case where there is a problem
+setting up the session, there's no real reason to try continuing the
+loop.
+
+This patch allows the thread to continue to exit its main loop under all
+three conditions, but it has the thread go to sleep until kthread_stop
+is called. This allows us to simplify the shutdown code somewhat since
+we can be reasonably sure that the thread won't exit after being
+signaled but before kthread_stop is called.
+
+It also removes the places where the thread itself set the tsk variable
+since it appeared that it could have a potential race where the thread
+might never be shut down.
+
+This patch differs slightly from the one originally proposed. If the
+server simply closes the connection in the middle of session setup,
+then the mount process and cifsd can deadlock, both of them sleeping
+and waiting for the other to wake them. To fix this, the wake_up_all()
+call was added to wake up the mount process before cifsd goes to sleep.
+
+diff --git a/fs/cifs/connect.c b/fs/cifs/connect.c
+index 1396f37..b0b4ce0 100644
+--- a/fs/cifs/connect.c
++++ b/fs/cifs/connect.c
+@@ -375,7 +375,6 @@ cifs_demultiplex_thread(struct TCP_Server_Info *server)
+ #endif
+ 
+ 	current->flags |= PF_MEMALLOC;
+-	server->tsk = current;	/* save process info to wake at shutdown */
+ 	cFYI(1, ("Demultiplex PID: %d", current->pid));
+ 	write_lock(&GlobalSMBSeslock);
+ 	atomic_inc(&tcpSesAllocCount);
+@@ -701,14 +700,25 @@ multi_t2_fnd:
+ #endif /* CIFS_DEBUG2 */
+ 
+ 		}
+-	} /* end while !EXITING */
++	} /* end while !kthread_should_stop() */
+ 
+ 	spin_lock(&GlobalMid_Lock);
+ 	server->tcpStatus = CifsExiting;
+-	server->tsk = NULL;
++	spin_unlock(&GlobalMid_Lock);
++	wake_up_all(&server->response_q);
++
++	/* don't exit until kthread_stop is called */
++	set_current_state(TASK_UNINTERRUPTIBLE);
++	while (!kthread_should_stop()) {
++		schedule();
++		set_current_state(TASK_UNINTERRUPTIBLE);
++	}
++	set_current_state(TASK_RUNNING);
++
+ 	/* check if we have blocked requests that need to free */
+ 	/* Note that cifs_max_pending is normally 50, but
+ 	can be set at module install time to as little as two */
++	spin_lock(&GlobalMid_Lock);
+ 	if (atomic_read(&server->inFlight) >= cifs_max_pending)
+ 		atomic_set(&server->inFlight, cifs_max_pending - 1);
+ 	/* We do not want to set the max_pending too low or we
+@@ -2237,15 +2247,12 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 			srvTcp->tcpStatus = CifsExiting;
+ 			spin_unlock(&GlobalMid_Lock);
+ 			if (srvTcp->tsk) {
+-				struct task_struct *tsk;
+ 				/* If we could verify that kthread_stop would
+ 				   always wake up processes blocked in
+ 				   tcp in recv_mesg then we could remove the
+ 				   send_sig call */
+ 				force_sig(SIGKILL, srvTcp->tsk);
+-				tsk = srvTcp->tsk;
+-				if (tsk)
+-					kthread_stop(tsk);
++				kthread_stop(srvTcp->tsk);
+ 			}
+ 		}
+ 		 /* If find_unc succeeded then rc == 0 so we can not end */
+@@ -2261,23 +2268,17 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 					if ((temp_rc == -ESHUTDOWN) &&
+ 					    (pSesInfo->server) &&
+ 					    (pSesInfo->server->tsk)) {
+-						struct task_struct *tsk;
+ 						force_sig(SIGKILL,
+ 							pSesInfo->server->tsk);
+-						tsk = pSesInfo->server->tsk;
+-						if (tsk)
+-							kthread_stop(tsk);
++						kthread_stop(pSesInfo->server->tsk);
+ 					}
+ 				} else {
+ 					cFYI(1, ("No session or bad tcon"));
+ 					if ((pSesInfo->server) &&
+ 					    (pSesInfo->server->tsk)) {
+-						struct task_struct *tsk;
+ 						force_sig(SIGKILL,
+ 							pSesInfo->server->tsk);
+-						tsk = pSesInfo->server->tsk;
+-						if (tsk)
+-							kthread_stop(tsk);
++						kthread_stop(pSesInfo->server->tsk);
+ 					}
+ 				}
+ 				sesInfoFree(pSesInfo);

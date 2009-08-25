@@ -1,0 +1,11 @@
+diff -urp linux-2.6.18-128.4.1.el5.028stab062.3/arch/x86_64/Kconfig linux-2.6.18-128.4.1.el5.028stab062.3-ow0/arch/x86_64/Kconfig
+--- linux-2.6.18-128.4.1.el5.028stab062.3/arch/x86_64/Kconfig	2009-05-10 17:51:04 +0000
++++ linux-2.6.18-128.4.1.el5.028stab062.3-ow0/arch/x86_64/Kconfig	2009-08-05 20:34:21 +0000
+@@ -472,6 +472,7 @@ config IOMMU
+ 	default y
+ 	select SWIOTLB
+ 	select AGP
++	select IOMMU_HELPER
+ 	depends on PCI && !X86_64_XEN
+ 	help
+ 	  Support for full DMA access of devices with 32bit memory access only

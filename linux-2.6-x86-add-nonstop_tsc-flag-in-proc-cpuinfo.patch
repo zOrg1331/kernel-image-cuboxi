@@ -1,0 +1,60 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Fri, 20 Mar 2009 11:22:01 +0800
+Subject: [x86] add nonstop_tsc flag in /proc/cpuinfo
+Message-id: 49C30BD9.90903@redhat.com
+O-Subject: [RHEL 5.4 PATCH] bz 474091 add nonstop_tsc flag in /proc/cpuinfo
+Bugzilla: 474091
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Peter Martuccelli <peterm@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+
+Description of problem:
+
+/proc/cpuinfo did not have the the nonstop_tsc CPU flag, but it *does*
+have a value in the
+"power management" field.
+
+Upstream is much smarter than 2.6.18.
+Upstream automatically generates x86_cap_flags,
+2.6.18 does that manually.
+This could be the reason why the back port doesn't capture this in the
+first place.
+
+Testing status:
+It works for me, after applying this patch.
+https://bugzilla.redhat.com/show_bug.cgi?id=474091#c39
+
+Brew
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1732792
+
+Please review and Ack.
+
+Thanks,
+Luming
+
+diff --git a/arch/i386/kernel/cpu/proc.c b/arch/i386/kernel/cpu/proc.c
+index fa4ad05..31cbaee 100644
+--- a/arch/i386/kernel/cpu/proc.c
++++ b/arch/i386/kernel/cpu/proc.c
+@@ -42,7 +42,7 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+ 		NULL, NULL, NULL, NULL,
+ 		"constant_tsc", "up", NULL, NULL, NULL, NULL, NULL, NULL,
+ 		"ida", NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+-		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
++		"nonstop_tsc", NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ 
+ 		/* Intel-defined (#2) */
+ 		"pni", NULL, NULL, "monitor", "ds_cpl", "vmx", "smx", "est",
+diff --git a/arch/x86_64/kernel/setup.c b/arch/x86_64/kernel/setup.c
+index 7026c5e..f1c873d 100644
+--- a/arch/x86_64/kernel/setup.c
++++ b/arch/x86_64/kernel/setup.c
+@@ -1258,7 +1258,7 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+ 		"constant_tsc", NULL, NULL,
+ 		"up", NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ 		"ida", NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+-		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
++		"nonstop_tsc", NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ 
+ 		/* Intel-defined (#2) */
+ 		"pni", NULL, NULL, "monitor", "ds_cpl", "vmx", "smx", "est",

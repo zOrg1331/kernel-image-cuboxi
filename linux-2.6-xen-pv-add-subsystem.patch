@@ -1,0 +1,1452 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Thu, 17 Jul 2008 19:19:45 -0400
+Subject: [xen] PV: add subsystem
+Message-id: 487FD391.9080004@redhat.com
+O-Subject: [RHEL5.3 PATCH 3/5]: Xen PV-on-HVM subsystem for bare metal/FV kernel
+Bugzilla: 442991
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+
+BZ 442991 -- Include xenpv-driver in bare metal kernel rpm.
+BZ 438479 -- [Feature RHEL5.3] Para-virtualized driver to signal xendump when HVM guest panics (*)
+
+The following files are the core xen pv-on-hvm support
+for RHEL5.
+
+Effectively, these are the xen-3.0.1 files that use
+the h-files under include/xen, include/<arch>/mach-xen, etc.,
+instead of the private ones that were included under
+unmodified_drivers/linux-2.6/compat-include.
+
+Additionally, platform-pci/panic-handler.c was
+added to xen-3.0.1 in order to satisfy BZ 438479.
+This enables the guest to notify dom0 that a panic has occurred
+on a guest (if platform-pci-init() has completed setup),
+and if setup on dom0, will take a crash dump of a FV guest.
+Effectively, it's the same panic support as in the -xen kernel,
+but the -xen kernel wires it in the kernel's boot-up much earlier.
+
+See 0/5 for test details.
+
+Please review & ACK.
+
+- Don
+
+diff --git a/drivers/xenpv_hvm/Kconfig b/drivers/xenpv_hvm/Kconfig
+new file mode 100644
+index 0000000..37de098
+--- /dev/null
++++ b/drivers/xenpv_hvm/Kconfig
+@@ -0,0 +1,45 @@
++#
++# This Kconfig describe xen options
++#
++
++# add other arch's if needed in depends below ...
++
++menu "Xen PV-ON-HVM Configuration"
++
++config XEN_PV_ON_HVM
++# when/if ia64 xen-hfiles added to rhel4 sources
++#	depends on !XEN && (X86_64 || X86 || IA64)
++	bool "XEN_PV_ON_HVM Support"
++	default y if (!X86_XEN && (X86 || X86_64))
++	help
++	  Support for Xen paravirtualized drivers on fully-virtualized guest
++
++config XEN_BLKDEV_FRONTEND
++	tristate "Block-device frontend driver"
++	depends on XEN_PV_ON_HVM
++	default y
++	help
++	  The block-device frontend driver allows the kernel to access block
++	  devices mounted within another guest OS. Unless you are building a
++	  dedicated device-driver domain, or your master control domain
++	  (domain 0), then you almost certainly want to say Y here.
++
++config XEN_NETDEV_FRONTEND
++	tristate "Network-device frontend driver"
++	depends on XEN_PV_ON_HVM
++	default y
++	help
++	  The network-device frontend driver allows the kernel to access
++	  network interfaces within another guest OS. Unless you are building a
++	  dedicated device-driver domain, or your master control domain
++	  (domain 0), then you almost certainly want to say Y here.
++
++endmenu
++
++#config HAVE_ARCH_ALLOC_SKB
++#	bool
++#	default y
++
++#config HAVE_ARCH_DEV_ALLOC_SKB
++#	bool
++#	default y
+diff --git a/drivers/xenpv_hvm/Makefile b/drivers/xenpv_hvm/Makefile
+new file mode 100644
+index 0000000..e4c5e02
+--- /dev/null
++++ b/drivers/xenpv_hvm/Makefile
+@@ -0,0 +1,10 @@
++# include $(src)/overrides.mk
++
++obj-y += platform-pci/
++
++ifneq ($(ARCH),ia64)
++obj-y += balloon/
++endif
++
++obj-$(CONFIG_XEN_BLKDEV_FRONTEND) += blkfront/
++obj-$(CONFIG_XEN_NETDEV_FRONTEND) += netfront/
+diff --git a/drivers/xenpv_hvm/balloon/Makefile b/drivers/xenpv_hvm/balloon/Makefile
+new file mode 100644
+index 0000000..a80677f
+--- /dev/null
++++ b/drivers/xenpv_hvm/balloon/Makefile
+@@ -0,0 +1,7 @@
++include $(src)/../overrides.mk
++
++obj-y  = xen-balloon.o
++
++EXTRA_CFLAGS += -I$(src)/../platform-pci
++
++xen-balloon-objs := ../../xen/balloon/balloon.o
+diff --git a/drivers/xenpv_hvm/blkfront/Makefile b/drivers/xenpv_hvm/blkfront/Makefile
+new file mode 100644
+index 0000000..1acf24e
+--- /dev/null
++++ b/drivers/xenpv_hvm/blkfront/Makefile
+@@ -0,0 +1,9 @@
++include $(src)/../overrides.mk
++
++obj-$(CONFIG_XEN_BLKDEV_FRONTEND) := xen-vbd.o
++
++EXTRA_CFLAGS += -I$(src)/../platform-pci
++
++xen-vbd-objs := ../../xen/blkfront/blkfront.o
++xen-vbd-objs += ../../xen/blkfront/vbd.o
++
+diff --git a/drivers/xenpv_hvm/compat-include/xen/platform-compat.h b/drivers/xenpv_hvm/compat-include/xen/platform-compat.h
+new file mode 100644
+index 0000000..5ef254c
+--- /dev/null
++++ b/drivers/xenpv_hvm/compat-include/xen/platform-compat.h
+@@ -0,0 +1,112 @@
++#ifndef COMPAT_INCLUDE_XEN_PLATFORM_COMPAT_H
++#define COMPAT_INCLUDE_XEN_PLATFORM_COMPAT_H
++
++#include <linux/version.h>
++#include <linux/spinlock.h>
++#include <asm/maddr.h>
++
++#if defined(__LINUX_COMPILER_H) && !defined(__always_inline)
++#define __always_inline inline
++#endif
++
++#if defined(__LINUX_SPINLOCK_H) && !defined(DEFINE_SPINLOCK)
++#define DEFINE_SPINLOCK(x) spinlock_t x = SPIN_LOCK_UNLOCKED
++#endif
++
++#if defined(__LINUX_SPINLOCK_H) && !defined(DEFINE_RWLOCK)
++#define DEFINE_RWLOCK(x) rwlock_t x = RW_LOCK_UNLOCKED
++#endif
++
++#if defined(_LINUX_INIT_H) && !defined(__init)
++#define __init
++#endif
++
++#if defined(__LINUX_CACHE_H) && !defined(__read_mostly)
++#define __read_mostly
++#endif
++
++#if defined(_LINUX_SKBUFF_H) && !defined(NET_IP_ALIGN)
++#define NET_IP_ALIGN 0
++#endif
++
++#if defined(_LINUX_SKBUFF_H) && !defined(CHECKSUM_HW)
++#define CHECKSUM_HW CHECKSUM_PARTIAL
++#endif
++
++#if defined(_LINUX_ERR_H) && !defined(IS_ERR_VALUE)
++#define IS_ERR_VALUE(x) unlikely((x) > (unsigned long)-1000L)
++#endif
++
++#if defined(_ASM_IA64_PGTABLE_H) && !defined(_PGTABLE_NOPUD_H)
++#include <asm-generic/pgtable-nopud.h>
++#endif
++
++/* Some kernels have this typedef backported so we cannot reliably
++ * detect based on version number, hence we forcibly #define it.
++ */
++#if defined(__LINUX_TYPES_H) || defined(__LINUX_GFP_H) || defined(_LINUX_KERNEL_H)
++#define gfp_t unsigned
++#endif
++
++#if defined (_LINUX_NOTIFIER_H) && !defined ATOMIC_NOTIFIER_HEAD
++#define ATOMIC_NOTIFIER_HEAD(name) struct notifier_block *name
++#define atomic_notifier_chain_register(chain,nb) notifier_chain_register(chain,nb)
++#define atomic_notifier_chain_unregister(chain,nb) notifier_chain_unregister(chain,nb)
++#define atomic_notifier_call_chain(chain,val,v) notifier_call_chain(chain,val,v)
++#endif
++
++#if defined(_LINUX_MM_H) && defined set_page_count
++#define init_page_count(page) set_page_count(page, 1)
++#endif
++
++#if defined(__LINUX_GFP_H) && !defined __GFP_NOMEMALLOC
++#define __GFP_NOMEMALLOC 0
++#endif
++
++#if defined(_LINUX_FS_H) && LINUX_VERSION_CODE < KERNEL_VERSION(2,6,9)
++#define nonseekable_open(inode, filp) /* Nothing to do */
++#endif
++
++#if defined(_LINUX_MM_H) && LINUX_VERSION_CODE < KERNEL_VERSION(2,6,10)
++unsigned long vmalloc_to_pfn(void *addr);
++#endif
++
++#if defined(__LINUX_COMPLETION_H) && LINUX_VERSION_CODE < KERNEL_VERSION(2,6,11)
++unsigned long wait_for_completion_timeout(struct completion *x, unsigned long timeout);
++#endif
++
++#if defined(_LINUX_SCHED_H) && LINUX_VERSION_CODE < KERNEL_VERSION(2,6,14)
++signed long schedule_timeout_interruptible(signed long timeout);
++#endif
++
++#if defined(_LINUX_SLAB_H) && LINUX_VERSION_CODE < KERNEL_VERSION(2,6,14)
++void *kzalloc(size_t size, int flags);
++#endif
++
++#if defined(_LINUX_CAPABILITY_H) && LINUX_VERSION_CODE < KERNEL_VERSION(2,6,16)
++#define capable(cap) (1)
++#endif
++
++#if defined(_LINUX_KERNEL_H) && LINUX_VERSION_CODE < KERNEL_VERSION(2,6,18)
++extern char *kasprintf(gfp_t gfp, const char *fmt, ...)
++       __attribute__ ((format (printf, 2, 3)));
++#endif
++
++#if defined(_LINUX_SYSRQ_H) && LINUX_VERSION_CODE > KERNEL_VERSION(2,6,18)
++#define handle_sysrq(x,y,z) handle_sysrq(x,y)
++#endif
++
++#if defined(_PAGE_PRESENT) && !defined(_PAGE_NX)
++#define _PAGE_NX 0
++/*
++ * This variable at present is referenced by netfront, but only in code that
++ * is dead when running in hvm guests. To detect potential active uses of it
++ * in the future, don't try to supply a 'valid' value here, so that any
++ * mappings created with it will fault when accessed.
++ */
++#define __supported_pte_mask ((maddr_t)0)
++#endif
++
++
++#endif /* COMPAT_INCLUDE_XEN_PLATFORM_COMPAT_H */
++
+diff --git a/drivers/xenpv_hvm/netfront/Makefile b/drivers/xenpv_hvm/netfront/Makefile
+new file mode 100644
+index 0000000..1a4e457
+--- /dev/null
++++ b/drivers/xenpv_hvm/netfront/Makefile
+@@ -0,0 +1,7 @@
++include $(src)/../overrides.mk
++
++obj-$(CONFIG_XEN_NETDEV_FRONTEND) := xen-vnif.o
++
++EXTRA_CFLAGS += -I$(src)/../platform-pci
++
++xen-vnif-objs := ../../xen/netfront/netfront.o
+diff --git a/drivers/xenpv_hvm/overrides.mk b/drivers/xenpv_hvm/overrides.mk
+new file mode 100644
+index 0000000..80fd4df
+--- /dev/null
++++ b/drivers/xenpv_hvm/overrides.mk
+@@ -0,0 +1,23 @@
++# Hack: we need to use the config which was used to build the kernel,
++# except that that won't have the right headers etc., so duplicate
++# some of the mach-xen infrastructure in here.
++#
++# (i.e. we need the native config for things like -mregparm, but
++# a Xen kernel to find the right headers)
++# EXTRA_CFLAGS += -D__XEN_INTERFACE_VERSION__=0x00030205
++EXTRA_CFLAGS += -D__XEN_INTERFACE_VERSION__=0x00030203
++EXTRA_CFLAGS += -DCONFIG_XEN_COMPAT=0xffffff -Iinclude$(if $(KBUILD_SRC),2)/asm/mach-xen 
++# EXTRA_CFLAGS += -I$(M)/include -I$(M)/compat-include -DHAVE_XEN_PLATFORM_COMPAT_H
++#
++# ddd: removed next line & moved compat-include in front of kernel includes
++#
++# EXTRA_CFLAGS += -I$(src)/compat-include -DHAVE_XEN_PLATFORM_COMPAT_H
++ifeq ($(ARCH),ia64)
++  EXTRA_CFLAGS += -DCONFIG_VMX_GUEST
++endif
++
++#CPPFLAGS := -Iinclude$(if $(KBUILD_SRC),2)/asm/mach-xen $(CPPFLAGS)
++CPPFLAGS := -I$(srctree)/drivers/xenpv_hvm/compat-include $(CPPFLAGS)
++EXTRA_CFLAGS += -DHAVE_XEN_PLATFORM_COMPAT_H
++
++# EXTRA_CFLAGS += -include $(srctree)/include/linux/autoconf.h
+diff --git a/drivers/xenpv_hvm/platform-pci/Makefile b/drivers/xenpv_hvm/platform-pci/Makefile
+new file mode 100644
+index 0000000..3aac3f6
+--- /dev/null
++++ b/drivers/xenpv_hvm/platform-pci/Makefile
+@@ -0,0 +1,25 @@
++include $(src)/../overrides.mk
++
++EXTRA_CFLAGS += -I$(src)/../platform-pci
++
++obj-y += xen-platform-pci.o
++
++xen-platform-pci-objs := evtchn.o platform-compat.o platform-pci.o xen_support.o
++xen-platform-pci-objs += ../../xen/core/gnttab.o
++xen-platform-pci-objs += ../../xen/core/features.o 
++xen-platform-pci-objs += ../../xen/core/reboot.o 
++xen-platform-pci-objs += machine_reboot.o
++xen-platform-pci-objs += panic-handler.o
++
++xen-platform-pci-objs += ../../xen/xenbus/xenbus_comms.o
++xen-platform-pci-objs += ../../xen/xenbus/xenbus_xs.o
++xen-platform-pci-objs += ../../xen/xenbus/xenbus_probe.o 
++xen-platform-pci-objs += ../../xen/xenbus/xenbus_dev.o 
++xen-platform-pci-objs += ../../xen/xenbus/xenbus_client.o 
++xen-platform-pci-objs += ../../xen/core/xen_proc.o
++
++# Can we do better ?
++ifeq ($(ARCH),ia64)
++  xen-platform-pci-objs += $(srctree)/arch/ia64/xen/xcom_mini.o 
++  xen-platform-pci-objs += $(srctree)/arch/ia64/xen/xencomm.o
++endif
+diff --git a/drivers/xenpv_hvm/platform-pci/evtchn.c b/drivers/xenpv_hvm/platform-pci/evtchn.c
+new file mode 100644
+index 0000000..aa876d5
+--- /dev/null
++++ b/drivers/xenpv_hvm/platform-pci/evtchn.c
+@@ -0,0 +1,335 @@
++/******************************************************************************
++ * evtchn.c
++ *
++ * A simplified event channel for para-drivers in unmodified linux
++ *
++ * Copyright (c) 2002-2005, K A Fraser
++ * Copyright (c) 2005, Intel Corporation <xiaofeng.ling@intel.com>
++ *
++ * This file may be distributed separately from the Linux kernel, or
++ * incorporated into other software packages, subject to the following license:
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a copy
++ * of this source file (the "Software"), to deal in the Software without
++ * restriction, including without limitation the rights to use, copy, modify,
++ * merge, publish, distribute, sublicense, and/or sell copies of the Software,
++ * and to permit persons to whom the Software is furnished to do so, subject to
++ * the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included in
++ * all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
++ * IN THE SOFTWARE.
++ */
++
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/spinlock.h>
++#include <xen/evtchn.h>
++#include <xen/interface/hvm/ioreq.h>
++#include <xen/features.h>
++#include "platform-pci.h"
++
++#ifdef HAVE_XEN_PLATFORM_COMPAT_H
++#include <xen/platform-compat.h>
++#endif
++
++void *shared_info_area;
++
++#define is_valid_evtchn(x)	((x) != 0)
++#define evtchn_from_irq(x)	(irq_evtchn[irq].evtchn)
++
++static struct {
++	spinlock_t lock;
++	irqreturn_t(*handler) (int, void *, struct pt_regs *);
++	void *dev_id;
++	int evtchn;
++	int close:1; /* close on unbind_from_irqhandler()? */
++	int inuse:1;
++	int in_handler:1;
++} irq_evtchn[256];
++static int evtchn_to_irq[NR_EVENT_CHANNELS] = {
++	[0 ...  NR_EVENT_CHANNELS-1] = -1 };
++
++static DEFINE_SPINLOCK(irq_alloc_lock);
++
++static int alloc_xen_irq(void)
++{
++	static int warned;
++	int irq;
++
++	spin_lock(&irq_alloc_lock);
++
++	for (irq = 1; irq < ARRAY_SIZE(irq_evtchn); irq++) {
++		if (irq_evtchn[irq].inuse) 
++			continue;
++		irq_evtchn[irq].inuse = 1;
++		spin_unlock(&irq_alloc_lock);
++		return irq;
++	}
++
++	if (!warned) {
++		warned = 1;
++		printk(KERN_WARNING "No available IRQ to bind to: "
++		       "increase irq_evtchn[] size in evtchn.c.\n");
++	}
++
++	spin_unlock(&irq_alloc_lock);
++
++	return -ENOSPC;
++}
++
++static void free_xen_irq(int irq)
++{
++	spin_lock(&irq_alloc_lock);
++	irq_evtchn[irq].inuse = 0;
++	spin_unlock(&irq_alloc_lock);
++}
++
++int irq_to_evtchn_port(int irq)
++{
++	return irq_evtchn[irq].evtchn;
++}
++EXPORT_SYMBOL(irq_to_evtchn_port);
++
++void mask_evtchn(int port)
++{
++	shared_info_t *s = shared_info_area;
++	synch_set_bit(port, &s->evtchn_mask[0]);
++}
++EXPORT_SYMBOL(mask_evtchn);
++
++void unmask_evtchn(int port)
++{
++	unsigned int cpu;
++	shared_info_t *s = shared_info_area;
++	vcpu_info_t *vcpu_info;
++
++	cpu = get_cpu();
++	vcpu_info = &s->vcpu_info[cpu];
++
++	/* Slow path (hypercall) if this is a non-local port.  We only
++	   ever bind event channels to vcpu 0 in HVM guests. */
++	if (unlikely(cpu != 0)) {
++		evtchn_unmask_t op = { .port = port };
++		(void)HYPERVISOR_event_channel_op(EVTCHNOP_unmask,
++						  &op);
++		put_cpu();
++		return;
++	}
++
++	synch_clear_bit(port, &s->evtchn_mask[0]);
++
++	/*
++	 * The following is basically the equivalent of
++	 * 'hw_resend_irq'. Just like a real IO-APIC we 'lose the
++	 * interrupt edge' if the channel is masked.
++	 */
++	if (synch_test_bit(port, &s->evtchn_pending[0]) &&
++	    !synch_test_and_set_bit(port / BITS_PER_LONG,
++				    &vcpu_info->evtchn_pending_sel)) {
++		vcpu_info->evtchn_upcall_pending = 1;
++		if (!vcpu_info->evtchn_upcall_mask)
++			force_evtchn_callback();
++	}
++
++	put_cpu();
++}
++EXPORT_SYMBOL(unmask_evtchn);
++
++int bind_listening_port_to_irqhandler(
++	unsigned int remote_domain,
++	irqreturn_t (*handler)(int, void *, struct pt_regs *),
++	unsigned long irqflags,
++	const char *devname,
++	void *dev_id)
++{
++	struct evtchn_alloc_unbound alloc_unbound;
++	int err, irq;
++
++	irq = alloc_xen_irq();
++	if (irq < 0)
++		return irq;
++
++	spin_lock_irq(&irq_evtchn[irq].lock);
++
++	alloc_unbound.dom        = DOMID_SELF;
++	alloc_unbound.remote_dom = remote_domain;
++	err = HYPERVISOR_event_channel_op(EVTCHNOP_alloc_unbound,
++					  &alloc_unbound);
++	if (err) {
++		spin_unlock_irq(&irq_evtchn[irq].lock);
++		free_xen_irq(irq);
++		return err;
++	}
++
++	irq_evtchn[irq].handler = handler;
++	irq_evtchn[irq].dev_id  = dev_id;
++	irq_evtchn[irq].evtchn  = alloc_unbound.port;
++	irq_evtchn[irq].close   = 1;
++
++	evtchn_to_irq[alloc_unbound.port] = irq;
++
++	unmask_evtchn(alloc_unbound.port);
++
++	spin_unlock_irq(&irq_evtchn[irq].lock);
++
++	return irq;
++}
++EXPORT_SYMBOL(bind_listening_port_to_irqhandler);
++
++int bind_caller_port_to_irqhandler(
++	unsigned int caller_port,
++	irqreturn_t (*handler)(int, void *, struct pt_regs *),
++	unsigned long irqflags,
++	const char *devname,
++	void *dev_id)
++{
++	int irq;
++
++	irq = alloc_xen_irq();
++	if (irq < 0)
++		return irq;
++
++	spin_lock_irq(&irq_evtchn[irq].lock);
++
++	irq_evtchn[irq].handler = handler;
++	irq_evtchn[irq].dev_id  = dev_id;
++	irq_evtchn[irq].evtchn  = caller_port;
++	irq_evtchn[irq].close   = 0;
++
++	evtchn_to_irq[caller_port] = irq;
++
++	unmask_evtchn(caller_port);
++
++	spin_unlock_irq(&irq_evtchn[irq].lock);
++
++	return irq;
++}
++EXPORT_SYMBOL(bind_caller_port_to_irqhandler);
++
++void unbind_from_irqhandler(unsigned int irq, void *dev_id)
++{
++	int evtchn;
++
++	spin_lock_irq(&irq_evtchn[irq].lock);
++
++	evtchn = evtchn_from_irq(irq);
++
++	if (is_valid_evtchn(evtchn)) {
++		evtchn_to_irq[evtchn] = -1;
++		mask_evtchn(evtchn);
++		if (irq_evtchn[irq].close) {
++			struct evtchn_close close = { .port = evtchn };
++			HYPERVISOR_event_channel_op(EVTCHNOP_close, &close);
++		}
++	}
++
++	irq_evtchn[irq].handler = NULL;
++	irq_evtchn[irq].evtchn  = 0;
++
++	spin_unlock_irq(&irq_evtchn[irq].lock);
++
++	while (irq_evtchn[irq].in_handler)
++		cpu_relax();
++
++	free_xen_irq(irq);
++}
++EXPORT_SYMBOL(unbind_from_irqhandler);
++
++void notify_remote_via_irq(int irq)
++{
++	int evtchn;
++
++	evtchn = evtchn_from_irq(irq);
++	if (is_valid_evtchn(evtchn))
++		notify_remote_via_evtchn(evtchn);
++}
++EXPORT_SYMBOL(notify_remote_via_irq);
++
++static irqreturn_t evtchn_interrupt(int irq, void *dev_id,
++				    struct pt_regs *regs)
++{
++	unsigned int l1i, port;
++	/* XXX: All events are bound to vcpu0 but irq may be redirected. */
++	int cpu = 0; /*smp_processor_id();*/
++	irqreturn_t(*handler) (int, void *, struct pt_regs *);
++	shared_info_t *s = shared_info_area;
++	vcpu_info_t *v = &s->vcpu_info[cpu];
++	unsigned long l1, l2;
++
++	v->evtchn_upcall_pending = 0;
++	/* NB. No need for a barrier here -- XCHG is a barrier on x86. */
++	l1 = xchg(&v->evtchn_pending_sel, 0);
++	while (l1 != 0) {
++		l1i = __ffs(l1);
++		l1 &= ~(1 << l1i);
++		while ((l2 = s->evtchn_pending[l1i] & ~s->evtchn_mask[l1i])) {
++			port = (l1i * BITS_PER_LONG) + __ffs(l2);
++			synch_clear_bit(port, &s->evtchn_pending[0]);
++
++			irq = evtchn_to_irq[port];
++			if (irq < 0)
++				continue;
++
++			spin_lock(&irq_evtchn[irq].lock);
++			handler = irq_evtchn[irq].handler;
++			dev_id  = irq_evtchn[irq].dev_id;
++			if (unlikely(handler == NULL)) {
++				printk("Xen IRQ%d (port %d) has no handler!\n",
++				       irq, port);
++				spin_unlock(&irq_evtchn[irq].lock);
++				continue;
++			}
++			irq_evtchn[irq].in_handler = 1;
++			spin_unlock(&irq_evtchn[irq].lock);
++
++			local_irq_enable();
++			handler(irq, irq_evtchn[irq].dev_id, regs);
++			local_irq_disable();
++
++			spin_lock(&irq_evtchn[irq].lock);
++			irq_evtchn[irq].in_handler = 0;
++			spin_unlock(&irq_evtchn[irq].lock);
++		}
++	}
++
++	return IRQ_HANDLED;
++}
++
++void force_evtchn_callback(void)
++{
++	(void)HYPERVISOR_xen_version(0, NULL);
++}
++EXPORT_SYMBOL(force_evtchn_callback);
++
++void irq_resume(void)
++{
++	int evtchn, irq;
++
++	for (evtchn = 0; evtchn < NR_EVENT_CHANNELS; evtchn++) {
++		mask_evtchn(evtchn);
++		evtchn_to_irq[evtchn] = -1;
++	}
++
++	for (irq = 0; irq < ARRAY_SIZE(irq_evtchn); irq++)
++		irq_evtchn[irq].evtchn = 0;
++}
++
++int xen_irq_init(struct pci_dev *pdev)
++{
++	int irq;
++
++	for (irq = 0; irq < ARRAY_SIZE(irq_evtchn); irq++)
++		spin_lock_init(&irq_evtchn[irq].lock);
++
++	return request_irq(pdev->irq, evtchn_interrupt,
++			   SA_SHIRQ | SA_SAMPLE_RANDOM | SA_INTERRUPT,
++			   "xen-platform-pci", pdev);
++}
+diff --git a/drivers/xenpv_hvm/platform-pci/machine_reboot.c b/drivers/xenpv_hvm/platform-pci/machine_reboot.c
+new file mode 100644
+index 0000000..34cb488
+--- /dev/null
++++ b/drivers/xenpv_hvm/platform-pci/machine_reboot.c
+@@ -0,0 +1,112 @@
++#include <linux/stop_machine.h>
++#include <xen/evtchn.h>
++#include <xen/gnttab.h>
++#include <xen/xenbus.h>
++#include "platform-pci.h"
++#include <asm/hypervisor.h>
++
++struct ap_suspend_info {
++	int      do_spin;
++	atomic_t nr_spinning;
++};
++
++/*
++ * Use a rwlock to protect the hypercall page from being executed in AP context
++ * while the BSP is re-initializing it after restore.
++ */
++static DEFINE_RWLOCK(suspend_lock);
++
++#ifdef CONFIG_SMP
++/*
++ * Spinning prevents, for example, APs touching grant table entries while
++ * the shared grant table is not mapped into the address space imemdiately
++ * after resume.
++ */
++static void ap_suspend(void *_info)
++{
++	struct ap_suspend_info *info = _info;
++
++	BUG_ON(!irqs_disabled());
++
++	atomic_inc(&info->nr_spinning);
++	mb();
++
++	while (info->do_spin) {
++		cpu_relax();
++		read_lock(&suspend_lock);
++		HYPERVISOR_yield();
++		read_unlock(&suspend_lock);
++	}
++
++	mb();
++	atomic_dec(&info->nr_spinning);
++}
++#endif
++
++static int bp_suspend(void)
++{
++	int suspend_cancelled;
++
++	BUG_ON(!irqs_disabled());
++
++	suspend_cancelled = HYPERVISOR_shutdown(SHUTDOWN_suspend);
++
++	if (!suspend_cancelled) {
++		write_lock(&suspend_lock);
++		platform_pci_resume();
++		write_unlock(&suspend_lock);
++		gnttab_resume();
++		irq_resume();
++	}
++
++	return suspend_cancelled;
++}
++
++int __xen_suspend(int fast_suspend)
++{
++	int err, suspend_cancelled, nr_cpus;
++	struct ap_suspend_info info;
++
++	xenbus_suspend();
++
++	preempt_disable();
++
++	/* Prevent any races with evtchn_interrupt() handler. */
++	disable_irq(xen_platform_pdev->irq);
++
++	info.do_spin = 1;
++	atomic_set(&info.nr_spinning, 0);
++	smp_mb();
++
++	nr_cpus = num_online_cpus() - 1;
++
++	err = smp_call_function(ap_suspend, &info, 0, 0);
++	if (err < 0) {
++		preempt_enable();
++		xenbus_suspend_cancel();
++		return err;
++	}
++
++	while (atomic_read(&info.nr_spinning) != nr_cpus)
++		cpu_relax();
++
++	local_irq_disable();
++	suspend_cancelled = bp_suspend();
++	local_irq_enable();
++
++	smp_mb();
++	info.do_spin = 0;
++	while (atomic_read(&info.nr_spinning) != 0)
++		cpu_relax();
++
++	enable_irq(xen_platform_pdev->irq);
++
++	preempt_enable();
++
++	if (!suspend_cancelled)
++		xenbus_resume();
++	else
++		xenbus_suspend_cancel();
++
++	return 0;
++}
+diff --git a/drivers/xenpv_hvm/platform-pci/panic-handler.c b/drivers/xenpv_hvm/platform-pci/panic-handler.c
+new file mode 100644
+index 0000000..91bc035
+--- /dev/null
++++ b/drivers/xenpv_hvm/platform-pci/panic-handler.c
+@@ -0,0 +1,54 @@
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/notifier.h>
++#include <asm/hypervisor.h>
++
++MODULE_LICENSE("GPL");
++
++#ifdef __ia64__
++static void
++xen_panic_hypercall(struct unw_frame_info *info, void *arg)
++{
++	current->thread.ksp = (__u64)info->sw - 16;
++	HYPERVISOR_shutdown(SHUTDOWN_crash);
++	/* we're never actually going to get here... */
++}
++#endif
++
++static int
++xen_panic_event(struct notifier_block *this, unsigned long event, void *ptr)
++{
++#ifdef __ia64__
++	unw_init_running(xen_panic_hypercall, NULL);
++#else /* !__ia64__ */
++	HYPERVISOR_shutdown(SHUTDOWN_crash);
++#endif
++	/* we're never actually going to get here... */
++	return NOTIFY_DONE;
++}
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,18)
++static struct notifier_block xen_panic_block = {
++	xen_panic_event, NULL, 0 /* try to go last */
++};
++#else
++static struct notifier_block xen_panic_block = {
++	.notifier_call= xen_panic_event,
++	.next= NULL,
++	.priority= 0/* try to go last */
++};
++#endif /*LINUX_VERSION_CODE < KERNEL_VERSION(2,6,18)*/
++
++static int __init setup_panic_event(void)
++{
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,18)
++	notifier_chain_register(&panic_notifier_list, &xen_panic_block);
++#else
++	atomic_notifier_chain_register(&panic_notifier_list, &xen_panic_block);
++#endif /*LINUX_VERSION_CODE < KERNEL_VERSION(2,6,18)*/
++	return 0;
++}
++
++int xen_panic_handler_init(void)
++{
++	return setup_panic_event();
++}
+diff --git a/drivers/xenpv_hvm/platform-pci/platform-compat.c b/drivers/xenpv_hvm/platform-pci/platform-compat.c
+new file mode 100644
+index 0000000..2e77cec
+--- /dev/null
++++ b/drivers/xenpv_hvm/platform-pci/platform-compat.c
+@@ -0,0 +1,145 @@
++#include <linux/version.h>
++
++#include <linux/mm.h>
++#include <linux/module.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++
++#include <xen/platform-compat.h>
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,7)
++static int system_state = 1;
++EXPORT_SYMBOL(system_state);
++#endif
++
++#if 0
++void ctrl_alt_del(void)
++{
++	kill_proc(1, SIGINT, 1); /* interrupt init */
++}
++#endif
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,8)
++size_t strcspn(const char *s, const char *reject)
++{
++        const char *p;
++        const char *r;
++        size_t count = 0;
++
++        for (p = s; *p != '\0'; ++p) {
++                for (r = reject; *r != '\0'; ++r) {
++                        if (*p == *r)
++                                return count;
++                }
++                ++count;
++        }
++
++        return count;
++}
++EXPORT_SYMBOL(strcspn);
++#endif
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,10)
++/*
++ * Map a vmalloc()-space virtual address to the physical page frame number.
++ */
++unsigned long vmalloc_to_pfn(void * vmalloc_addr)
++{
++        return page_to_pfn(vmalloc_to_page(vmalloc_addr));
++}
++EXPORT_SYMBOL(vmalloc_to_pfn);
++#endif
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,11)
++unsigned long wait_for_completion_timeout(struct completion *x, unsigned long timeout)
++{
++        might_sleep();
++
++        spin_lock_irq(&x->wait.lock);
++        if (!x->done) {
++                DECLARE_WAITQUEUE(wait, current);
++
++                wait.flags |= WQ_FLAG_EXCLUSIVE;
++                __add_wait_queue_tail(&x->wait, &wait);
++                do {
++                        __set_current_state(TASK_UNINTERRUPTIBLE);
++                        spin_unlock_irq(&x->wait.lock);
++                        timeout = schedule_timeout(timeout);
++                        spin_lock_irq(&x->wait.lock);
++                        if (!timeout) {
++                                __remove_wait_queue(&x->wait, &wait);
++                                goto out;
++                        }
++                } while (!x->done);
++                __remove_wait_queue(&x->wait, &wait);
++        }
++        x->done--;
++out:
++        spin_unlock_irq(&x->wait.lock);
++        return timeout;
++}
++EXPORT_SYMBOL(wait_for_completion_timeout);
++#endif
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,12)
++/*
++    fake do_exit using complete_and_exit
++ */
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,10)
++asmlinkage NORET_TYPE void do_exit(long code)
++#else
++fastcall NORET_TYPE void do_exit(long code)
++#endif
++{
++    complete_and_exit(NULL, code);
++}
++EXPORT_SYMBOL_GPL(do_exit);
++#endif
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,14)
++signed long schedule_timeout_interruptible(signed long timeout)
++{
++	__set_current_state(TASK_INTERRUPTIBLE);
++	return schedule_timeout(timeout);
++}
++EXPORT_SYMBOL(schedule_timeout_interruptible);
++#endif
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,14)
++/**
++ * kzalloc - allocate memory. The memory is set to zero.
++ * @size: how many bytes of memory are required.
++ * @flags: the type of memory to allocate.
++ */
++void *kzalloc(size_t size, int flags)
++{
++	void *ret = kmalloc(size, flags);
++	if (ret)
++		memset(ret, 0, size);
++	return ret;
++}
++EXPORT_SYMBOL(kzalloc);
++#endif
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,18)
++/* Simplified asprintf. */
++char *kasprintf(gfp_t gfp, const char *fmt, ...)
++{
++	va_list ap;
++	unsigned int len;
++	char *p, dummy[1];
++
++	va_start(ap, fmt);
++	len = vsnprintf(dummy, 0, fmt, ap);
++	va_end(ap);
++
++	p = kmalloc(len + 1, gfp);
++	if (!p)
++		return NULL;
++	va_start(ap, fmt);
++	vsprintf(p, fmt, ap);
++	va_end(ap);
++	return p;
++}
++EXPORT_SYMBOL(kasprintf);
++#endif
+diff --git a/drivers/xenpv_hvm/platform-pci/platform-pci.c b/drivers/xenpv_hvm/platform-pci/platform-pci.c
+new file mode 100644
+index 0000000..dc4f40d
+--- /dev/null
++++ b/drivers/xenpv_hvm/platform-pci/platform-pci.c
+@@ -0,0 +1,337 @@
++/******************************************************************************
++ * platform-pci.c
++ * 
++ * Xen platform PCI device driver
++ * Copyright (c) 2005, Intel Corporation.
++ * Copyright (c) 2007, XenSource Inc.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms and conditions of the GNU General Public License,
++ * version 2, as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program; if not, write to the Free Software Foundation, Inc., 59 Temple
++ * Place - Suite 330, Boston, MA 02111-1307 USA.
++ *
++ */
++
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/sched.h>
++#include <linux/errno.h>
++#include <linux/pci.h>
++#include <linux/init.h>
++#include <linux/version.h>
++#include <linux/interrupt.h>
++#include <linux/vmalloc.h>
++#include <linux/mm.h>
++#include <asm/system.h>
++#include <asm/io.h>
++#include <asm/irq.h>
++#include <asm/uaccess.h>
++#include <asm/hypervisor.h>
++#include <asm/pgtable.h>
++#include <xen/interface/memory.h>
++#include <xen/interface/hvm/params.h>
++#include <xen/features.h>
++#include <xen/evtchn.h>
++#ifdef __ia64__
++#include <asm/xen/xencomm.h>
++#endif
++
++#include "platform-pci.h"
++
++#ifdef HAVE_XEN_PLATFORM_COMPAT_H
++#include <xen/platform-compat.h>
++#endif
++
++#define DRV_NAME    "xen-platform-pci"
++#define DRV_VERSION "0.10"
++#define DRV_RELDATE "03/03/2005"
++
++char *hypercall_stubs;
++EXPORT_SYMBOL(hypercall_stubs);
++
++MODULE_AUTHOR("ssmith@xensource.com");
++MODULE_DESCRIPTION("Xen platform PCI device");
++MODULE_LICENSE("GPL");
++
++struct pci_dev *xen_platform_pdev;
++
++static unsigned long shared_info_frame;
++static uint64_t callback_via;
++
++static int __devinit init_xen_info(void)
++{
++	struct xen_add_to_physmap xatp;
++	extern void *shared_info_area;
++
++#ifdef __ia64__
++	xencomm_init();
++#endif
++
++	setup_xen_features();
++
++	shared_info_frame = alloc_xen_mmio(PAGE_SIZE) >> PAGE_SHIFT;
++	xatp.domid = DOMID_SELF;
++	xatp.idx = 0;
++	xatp.space = XENMAPSPACE_shared_info;
++	xatp.gpfn = shared_info_frame;
++	if (HYPERVISOR_memory_op(XENMEM_add_to_physmap, &xatp))
++		BUG();
++
++	shared_info_area =
++		ioremap(shared_info_frame << PAGE_SHIFT, PAGE_SIZE);
++	if (shared_info_area == NULL)
++		panic("can't map shared info\n");
++
++	return 0;
++}
++
++static unsigned long platform_mmio;
++static unsigned long platform_mmio_alloc;
++static unsigned long platform_mmiolen;
++
++unsigned long alloc_xen_mmio(unsigned long len)
++{
++	unsigned long addr;
++
++	addr = platform_mmio + platform_mmio_alloc;
++	platform_mmio_alloc += len;
++	BUG_ON(platform_mmio_alloc > platform_mmiolen);
++
++	return addr;
++}
++
++#ifndef __ia64__
++/* Lifted from hvmloader.c */
++static int get_hypercall_stubs(void)
++{
++	uint32_t eax, ebx, ecx, edx, pages, msr, i;
++	char signature[13];
++
++	cpuid(0x40000000, &eax, &ebx, &ecx, &edx);
++	*(uint32_t*)(signature + 0) = ebx;
++	*(uint32_t*)(signature + 4) = ecx;
++	*(uint32_t*)(signature + 8) = edx;
++	signature[12] = 0;
++
++	if (strcmp("XenVMMXenVMM", signature) || (eax < 0x40000002)) {
++		printk(KERN_WARNING
++		       "Detected Xen platform device but not Xen VMM?"
++		       " (sig %s, eax %x)\n",
++		       signature, eax);
++		return -EINVAL;
++	}
++
++	cpuid(0x40000001, &eax, &ebx, &ecx, &edx);
++
++	printk(KERN_INFO "Xen version %d.%d.\n", eax >> 16, eax & 0xffff);
++
++	cpuid(0x40000002, &pages, &msr, &ecx, &edx);
++
++	printk(KERN_INFO "Hypercall area is %u pages.\n", pages);
++
++	/* Use __vmalloc() because vmalloc_exec() is not an exported symbol. */
++	/* PAGE_KERNEL_EXEC also is not exported, hence we use PAGE_KERNEL. */
++	/* hypercall_stubs = vmalloc_exec(pages * PAGE_SIZE); */
++	hypercall_stubs = __vmalloc(pages * PAGE_SIZE,
++				    GFP_KERNEL | __GFP_HIGHMEM,
++				    __pgprot(__PAGE_KERNEL & ~_PAGE_NX));
++	if (hypercall_stubs == NULL)
++		return -ENOMEM;
++
++	for (i = 0; i < pages; i++) {
++		unsigned long pfn;
++		pfn = vmalloc_to_pfn((char *)hypercall_stubs + i*PAGE_SIZE);
++		wrmsrl(msr, ((u64)pfn << PAGE_SHIFT) + i);
++	}
++
++	return 0;
++}
++#else /* __ia64__ */
++#define get_hypercall_stubs()	(0)
++#endif
++
++static uint64_t get_callback_via(struct pci_dev *pdev)
++{
++#ifdef __ia64__
++	static const int isa_irq_low = 0x20, isa_irq_high = 0x2f;
++#else
++	static const int isa_irq_low = 0x00, isa_irq_high = 0x0f;
++#endif
++	u8 pin;
++	int irq;
++
++	irq = pdev->irq;
++	if (irq >= isa_irq_low && irq <= isa_irq_high)
++		return irq; /* ISA IRQ */
++
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,16)
++	pin = pdev->pin;
++#else
++	pci_read_config_byte(pdev, PCI_INTERRUPT_PIN, &pin);
++#endif
++
++	/* We don't know the GSI. Specify the PCI INTx line instead. */
++	return (((uint64_t)0x01 << 56) | /* PCI INTx identifier */
++		((uint64_t)pci_domain_nr(pdev->bus) << 32) |
++		((uint64_t)pdev->bus->number << 16) |
++		((uint64_t)(pdev->devfn & 0xff) << 8) |
++		((uint64_t)(pin - 1) & 3));
++}
++
++static int set_callback_via(uint64_t via)
++{
++	struct xen_hvm_param a;
++
++	a.domid = DOMID_SELF;
++	a.index = HVM_PARAM_CALLBACK_IRQ;
++	a.value = via;
++	return HYPERVISOR_hvm_op(HVMOP_set_param, &a);
++}
++
++int xen_irq_init(struct pci_dev *pdev);
++int xenbus_init(void);
++int xen_reboot_init(void);
++int xen_panic_handler_init(void);
++int gnttab_init(void);
++
++static int __devinit platform_pci_init(struct pci_dev *pdev,
++				       const struct pci_device_id *ent)
++{
++	int i, ret;
++	long ioaddr, iolen;
++	long mmio_addr, mmio_len;
++
++	if (xen_platform_pdev)
++		return -EBUSY;
++	xen_platform_pdev = pdev;
++
++	i = pci_enable_device(pdev);
++	if (i)
++		return i;
++
++	ioaddr = pci_resource_start(pdev, 0);
++	iolen = pci_resource_len(pdev, 0);
++
++	mmio_addr = pci_resource_start(pdev, 1);
++	mmio_len = pci_resource_len(pdev, 1);
++
++	callback_via = get_callback_via(pdev);
++
++	if (mmio_addr == 0 || ioaddr == 0 || callback_via == 0) {
++		printk(KERN_WARNING DRV_NAME ":no resources found\n");
++		return -ENOENT;
++	}
++
++	if (request_mem_region(mmio_addr, mmio_len, DRV_NAME) == NULL) {
++		printk(KERN_ERR ":MEM I/O resource 0x%lx @ 0x%lx busy\n",
++		       mmio_addr, mmio_len);
++		return -EBUSY;
++	}
++
++	if (request_region(ioaddr, iolen, DRV_NAME) == NULL) {
++		printk(KERN_ERR DRV_NAME ":I/O resource 0x%lx @ 0x%lx busy\n",
++		       iolen, ioaddr);
++		release_mem_region(mmio_addr, mmio_len);
++		return -EBUSY;
++	}
++
++	platform_mmio = mmio_addr;
++	platform_mmiolen = mmio_len;
++
++	ret = get_hypercall_stubs();
++	if (ret < 0)
++		goto out;
++
++	if ((ret = init_xen_info()))
++		goto out;
++
++	if ((ret = gnttab_init()))
++		goto out;
++
++	if ((ret = xen_irq_init(pdev)))
++		goto out;
++
++	if ((ret = set_callback_via(callback_via)))
++		goto out;
++
++	if ((ret = xenbus_init()))
++		goto out;
++
++	if ((ret = xen_reboot_init()))
++		goto out;
++
++	if ((ret = xen_panic_handler_init()))
++		goto out;
++
++ out:
++	if (ret) {
++		release_mem_region(mmio_addr, mmio_len);
++		release_region(ioaddr, iolen);
++	}
++
++	return ret;
++}
++
++#define XEN_PLATFORM_VENDOR_ID 0x5853
++#define XEN_PLATFORM_DEVICE_ID 0x0001
++static struct pci_device_id platform_pci_tbl[] __devinitdata = {
++	{XEN_PLATFORM_VENDOR_ID, XEN_PLATFORM_DEVICE_ID,
++	 PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
++	/* Continue to recognise the old ID for now */
++	{0xfffd, 0x0101, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
++	{0,}
++};
++
++MODULE_DEVICE_TABLE(pci, platform_pci_tbl);
++
++static struct pci_driver platform_driver = {
++	name:     DRV_NAME,
++	probe:    platform_pci_init,
++	id_table: platform_pci_tbl,
++};
++
++static int pci_device_registered;
++
++void platform_pci_resume(void)
++{
++	struct xen_add_to_physmap xatp;
++
++	/* do 2 things for PV driver restore on HVM
++	 * 1: rebuild share info
++	 * 2: set callback irq again
++	 */
++	xatp.domid = DOMID_SELF;
++	xatp.idx = 0;
++	xatp.space = XENMAPSPACE_shared_info;
++	xatp.gpfn = shared_info_frame;
++	if (HYPERVISOR_memory_op(XENMEM_add_to_physmap, &xatp))
++		BUG();
++
++	if (set_callback_via(callback_via))
++		printk("platform_pci_resume failure!\n");
++}
++
++static int __init platform_pci_module_init(void)
++{
++	int rc;
++
++	rc = pci_module_init(&platform_driver);
++	if (rc) {
++		printk(KERN_INFO DRV_NAME
++		       ": No platform pci device model found\n");
++		return rc;
++	}
++
++	pci_device_registered = 1;
++	return 0;
++}
++
++module_init(platform_pci_module_init);
+diff --git a/drivers/xenpv_hvm/platform-pci/platform-pci.h b/drivers/xenpv_hvm/platform-pci/platform-pci.h
+new file mode 100644
+index 0000000..2537213
+--- /dev/null
++++ b/drivers/xenpv_hvm/platform-pci/platform-pci.h
+@@ -0,0 +1,32 @@
++/******************************************************************************
++ * platform-pci.h
++ * 
++ * Xen platform PCI device driver
++ * Copyright (c) 2004, Intel Corporation. <xiaofeng.ling@intel.com>
++ * Copyright (c) 2007, XenSource Inc.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms and conditions of the GNU General Public License,
++ * version 2, as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program; if not, write to the Free Software Foundation, Inc., 59 Temple
++ * Place - Suite 330, Boston, MA 02111-1307 USA.
++ */
++
++#ifndef _XEN_PLATFORM_PCI_H
++#define _XEN_PLATFORM_PCI_H
++
++#include <linux/pci.h>
++
++unsigned long alloc_xen_mmio(unsigned long len);
++void platform_pci_resume(void);
++
++extern struct pci_dev *xen_platform_pdev;
++
++#endif /* _XEN_PLATFORM_PCI_H */
+diff --git a/drivers/xenpv_hvm/platform-pci/xen_support.c b/drivers/xenpv_hvm/platform-pci/xen_support.c
+new file mode 100644
+index 0000000..09eb11e
+--- /dev/null
++++ b/drivers/xenpv_hvm/platform-pci/xen_support.c
+@@ -0,0 +1,74 @@
++/******************************************************************************
++ * support.c
++ * Xen module support functions.
++ * Copyright (C) 2004, Intel Corporation.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms and conditions of the GNU General Public License,
++ * version 2, as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program; if not, write to the Free Software Foundation, Inc., 59 Temple
++ * Place - Suite 330, Boston, MA 02111-1307 USA.
++ *
++ */
++
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/mm.h>
++#include <xen/evtchn.h>
++#include <xen/interface/xen.h>
++#include <asm/hypervisor.h>
++#include "platform-pci.h"
++
++#ifdef HAVE_XEN_PLATFORM_COMPAT_H
++#include <xen/platform-compat.h>
++#endif
++
++#if defined (__ia64__)
++unsigned long __hypercall(unsigned long a1, unsigned long a2,
++			  unsigned long a3, unsigned long a4,
++			  unsigned long a5, unsigned long cmd)
++{
++	unsigned long __res;
++	__asm__ __volatile__ (";;\n"
++		"mov r2=%1\n"
++		"break 0x1000 ;;\n"
++		"mov %0=r8 ;;\n"
++		: "=r"(__res) : "r"(cmd) : "r2", "r8", "memory");
++
++	return __res;
++}
++EXPORT_SYMBOL(__hypercall);
++
++int HYPERVISOR_grant_table_op(unsigned int cmd, void *uop, unsigned int count)
++{
++	return xencomm_mini_hypercall_grant_table_op(cmd, uop, count);
++}
++EXPORT_SYMBOL(HYPERVISOR_grant_table_op);
++
++/* without using balloon driver on PV-on-HVM for ia64 */
++void balloon_update_driver_allowance(long delta)
++{
++	/* nothing */
++}
++EXPORT_SYMBOL_GPL(balloon_update_driver_allowance);
++
++void balloon_release_driver_page(struct page *page)
++{
++	/* nothing */
++}
++EXPORT_SYMBOL_GPL(balloon_release_driver_page);
++#endif /* __ia64__ */
++
++void xen_machphys_update(unsigned long mfn, unsigned long pfn)
++{
++	BUG();
++}
++EXPORT_SYMBOL(xen_machphys_update);
++

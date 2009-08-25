@@ -1,0 +1,43 @@
+From: Aristeu Rozanski <aris@redhat.com>
+Date: Wed, 11 Mar 2009 15:18:32 -0400
+Subject: [x86_64] mce: do not clear an unrecoverable error status
+Message-id: 20090311191831.GK2706@redhat.com
+O-Subject: [RHEL5.4 PATCH] mce: do not clear the status if the error is unrecoverable
+Bugzilla: 489692
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=489692
+
+Currently in all cases do_machine_check() clears all the MCE status registers.
+This is a problem for Fujitsu because in case of unrecoverable error events,
+the kernel will panic and the BIOS won't be able to use those registers to
+determine the cause.
+
+Upstream: part of bd78432c8f209a1028f4e5bada8b1da1d8e4da09
+Tested by Fujitsu.
+Patch by Martin Wilck.
+
+diff --git a/arch/x86_64/kernel/mce.c b/arch/x86_64/kernel/mce.c
+index 8c76505..7bc24a1 100644
+--- a/arch/x86_64/kernel/mce.c
++++ b/arch/x86_64/kernel/mce.c
+@@ -218,7 +218,6 @@ void do_machine_check(struct pt_regs * regs, long error_code)
+ 		mce_get_rip(&m, regs);
+ 		if (error_code >= 0)
+ 			rdtscll(m.tsc);
+-		wrmsrl(MSR_IA32_MC0_STATUS + i*4, 0);
+ 		if (error_code != -2)
+ 			mce_log(&m);
+ 
+@@ -270,6 +269,9 @@ void do_machine_check(struct pt_regs * regs, long error_code)
+  out:
+ 	/* Last thing done in the machine check exception to clear state. */
+ 	wrmsrl(MSR_IA32_MCG_STATUS, 0);
++	for (i = 0; i < banks; i++)
++		wrmsrl(MSR_IA32_MC0_STATUS + i*4, 0);
++
+  out2:
+ 	atomic_dec(&mce_entry);
+ }

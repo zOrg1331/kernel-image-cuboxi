@@ -1,0 +1,51 @@
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Tue, 20 Jan 2009 23:26:08 -0600
+Subject: [misc] fix memory leak during pipe failure
+Message-id: 20090121052608.GJ1585@ether.msp.redhat.com
+O-Subject: [PATCH][RHEL5.4] bz 478643 - fix memory leak during pipe(2) failure.
+Bugzilla: 478643
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Jerome Marchand <jmarchan@redhat.com>
+
+BZ #478643
+https://bugzilla.redhat.com/show_bug.cgi?id=478643
+
+When the pipe(2) system call fails because there are no file descriptors
+available to the calling process, do_pipe() does not clean up all of the
+resources that were claimed by create_write_pipe() and
+create_read_pipe().  This bug has already been fixed upstream:
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=5ccac88eeb5659c716af8e695e2943509c80d172
+
+The attached patch is a simple backport of that fix. This patch was
+tested by Emulex, who was experiencing out-of-memory system hangs with
+multipathd, due to this issue.
+
+-Ben
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+
+diff --git a/fs/pipe.c b/fs/pipe.c
+index b8c3090..c354412 100644
+--- a/fs/pipe.c
++++ b/fs/pipe.c
+@@ -938,8 +938,9 @@ struct file *create_write_pipe(void)
+ 
+ void free_write_pipe(struct file *f)
+ {
+-	mntput(f->f_vfsmnt);
++	free_pipe_info(f->f_dentry->d_inode);
+ 	dput(f->f_dentry);
++	mntput(f->f_vfsmnt);
+ 	put_filp(f);
+ }
+ 
+@@ -997,6 +998,8 @@ int do_pipe(int *fd)
+  err_fdr:
+ 	put_unused_fd(fdr);
+  err_read_pipe:
++	dput(fr->f_dentry);
++	mntput(fr->f_vfsmnt);
+ 	put_filp(fr);
+  err_write_pipe:
+ 	free_write_pipe(fw);

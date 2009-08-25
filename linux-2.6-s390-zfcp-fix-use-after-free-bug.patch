@@ -1,0 +1,83 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Mon, 10 Dec 2007 14:06:25 +0100
+Subject: [s390] zfcp: fix use after free bug
+Message-id: 20071210130625.GH29540@redhat.com
+O-Subject: [RHEL5 U2 PATCH 8/8] s390 - zfcp: fix use after free bug.
+Bugzilla: 412881
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+zfcp_erp_strategy_check_fsfreq() checks if it is safe to access the
+fsf_req associated with the erp_action that gets passed. To test if
+it is safe it accesses the fsf_req in order to get its index into
+the hash list.
+
+This is broken since the fsf_req might be freed already
+and the read index has no meaning. It could lead to memory corruption.
+Fix this by introducing a new zfcp_reqlist_find_safe() method which
+just checks if addresses are equal. This is slower, but only gets
+called in case of error recovery.
+
+Bugzilla
+=========
+
+BZ 412881
+https://bugzilla.redhat.com/show_bug.cgi?id=412881
+
+Upstream status of the patch:
+=============================
+Posted on linux-scsi
+http://www.mail-archive.com/linux-scsi@vger.kernel.org/msg11927.html
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/scsi/zfcp_def.h b/drivers/s390/scsi/zfcp_def.h
+index 92be569..9ae4907 100644
+--- a/drivers/s390/scsi/zfcp_def.h
++++ b/drivers/s390/scsi/zfcp_def.h
+@@ -1085,6 +1085,20 @@ extern void _zfcp_hex_dump(char *, int);
+ #define zfcp_get_busid_by_port(port) (zfcp_get_busid_by_adapter(port->adapter))
+ #define zfcp_get_busid_by_unit(unit) (zfcp_get_busid_by_port(unit->port))
+ 
++static inline struct zfcp_fsf_req *
++zfcp_reqlist_find_safe(struct zfcp_adapter *adapter, struct zfcp_fsf_req *req)
++{
++	struct zfcp_fsf_req *request;
++	unsigned int idx;
++
++	for (idx = 0; idx < REQUEST_LIST_SIZE; idx++) {
++		list_for_each_entry(request, &adapter->req_list[idx], list)
++			if (request == req)
++				return request;
++	}
++	return NULL;
++}
++
+ /*
+  *  functions needed for reference/usage counting
+  */
+diff --git a/drivers/s390/scsi/zfcp_erp.c b/drivers/s390/scsi/zfcp_erp.c
+index a3e292f..3a3f30b 100644
+--- a/drivers/s390/scsi/zfcp_erp.c
++++ b/drivers/s390/scsi/zfcp_erp.c
+@@ -849,8 +849,8 @@ zfcp_erp_strategy_check_fsfreq(struct zfcp_erp_action *erp_action)
+ 	if (erp_action->fsf_req) {
+ 		/* take lock to ensure that request is not deleted meanwhile */
+ 		spin_lock(&adapter->req_list_lock);
+-		if (zfcp_reqlist_ismember(adapter,
+-					    erp_action->fsf_req->req_id)) {
++		if (zfcp_reqlist_find_safe(adapter, erp_action->fsf_req) &&
++		    erp_action->fsf_req->erp_action == erp_action) {
+ 			/* fsf_req still exists */
+ 			debug_text_event(adapter->erp_dbf, 3, "a_ca_req");
+ 			debug_event(adapter->erp_dbf, 3, &erp_action->fsf_req,

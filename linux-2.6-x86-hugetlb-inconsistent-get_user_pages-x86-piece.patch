@@ -1,0 +1,71 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Tue, 5 Aug 2008 11:22:48 -0400
+Subject: [x86] hugetlb: inconsistent get_user_pages (x86 piece)
+Message-id: 48987048.1080703@redhat.com
+O-Subject: Re: [PATCH RHEL5.3] inconsistent get_user_pages() and memory mapped - missing piece
+Bugzilla: 456449
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=456449
+
+Description:
+===========
+Bug Fix / All archs
+
+This is a backport piece that was missed from RHBZ 408781, which made
+RHEL5.2.  While very unlikely to be hit under normal
+usage, it is possible, and could result in a data integrity issue.  Hitting
+this fault would involve a situation where either
+a device driver is working with user space huge pages, or (theoretically),
+with huge page direct IO.
+
+RHEL Version Found:
+================
+RHEL 5.2
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1407248
+
+Upstream Status:
+================
+Already upstream at:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=72fad7139b6829f71d7f41f39eb30da5760d90a8
+
+Test Status:
+============
+One line simple fix - will test on beta unless required before
+
+===============================================================
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+
+Proposed Patch:
+===============
+This patch is based on 2.6.18-99.el5
+-----------------
+
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index ebbffa0..e80a916 100644
+--- a/mm/hugetlb.c
++++ b/mm/hugetlb.c
+@@ -628,7 +628,8 @@ int follow_hugetlb_page(struct mm_struct *mm, struct vm_area_struct *vma,
+ 		 */
+ 		pte = huge_pte_offset(mm, vaddr & HPAGE_MASK);
+ 
+-		if (!pte || huge_pte_none(huge_ptep_get(pte))) {
++		if (!pte || huge_pte_none(huge_ptep_get(pte)) ||
++		    (write && !pte_write(huge_ptep_get(pte)))) {
+ 			int ret;
+ 
+ 			spin_unlock(&mm->page_table_lock);

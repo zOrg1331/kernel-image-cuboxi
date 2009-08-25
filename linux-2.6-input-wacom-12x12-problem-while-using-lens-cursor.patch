@@ -1,0 +1,37 @@
+From: Aristeu Rozanski <aris@redhat.com>
+Date: Mon, 16 Feb 2009 13:43:09 -0500
+Subject: [input] wacom: 12x12 problem while using lens cursor
+Message-id: 20090216184309.GA29282@redhat.com
+O-Subject: [RHEL5 PATCH] wacom: fix Intuos 12x12 problem while using lens cursor
+Bugzilla: 484959
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=484959
+
+Currently the usage of Lens cursor device on Intuos 3 12x12 is not possible due
+to a bug in wacom_intuos_inout(). The problem was first introduced in
+7d3fe085f9cdd3d3eea0154ea02e2f6b4a8f3974 then fixed during the split of wacom.c
+file in two (3bea733ab21247290bd552dd6a2cd3049af9adef). wacom_intuos_inout() is
+called to handle in proximity and out of proximity events, which are not
+generated for the Lens cursor device. The result is that all the events are
+lost for this device.
+
+Patch by Olivier Fourdan. Tested by the customer.
+
+diff --git a/drivers/usb/input/wacom.c b/drivers/usb/input/wacom.c
+index 1756e4d..0141b2e 100644
+--- a/drivers/usb/input/wacom.c
++++ b/drivers/usb/input/wacom.c
+@@ -547,11 +547,7 @@ static int wacom_intuos_inout(struct urb *urb)
+ 		return 1;
+ 	}
+ 
+-	if((wacom->tool[idx] == BTN_TOOL_LENS) && ((wacom->features->type == INTUOS312)
+-			|| (wacom->features->type == INTUOS319)))
+-		return 1;
+-	else
+-		return 0;
++	return 0;
+ }
+ 
+ static void wacom_intuos_general(struct urb *urb)

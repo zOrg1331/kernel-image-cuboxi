@@ -1,0 +1,67 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Tue, 18 Nov 2008 12:17:31 +0100
+Subject: [xen] x86: fix highmem-xen.c BUG()
+Message-id: 4922A44B.8020200@redhat.com
+O-Subject: [RHEL5.3 PATCH]: Fix i686 highmem-xen.c bug
+Bugzilla: 452175
+RH-Acked-by: Mark McLoughlin <markmc@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+All,
+    Attached is a patch to fix BZ 452175.  What's happening is that we are
+hitting a BUG in arch/i386/mm/highmem-xen.c when doing a kmap_atomic, here:
+
+if (!pte_none(*(kmap_pte-idx)))
+    BUG();
+
+Since this is a kmap_atomic, we don't expect this kmap slot, on this processor,
+to be in use when we get here.  However, we can run into situations where this
+is occuring, so we BUG.  It happens because this kmap slot isn't being properly
+protected from pre-emption.  In this particular case, what happened was that we
+started writing to disk on CPU 0 via a sys_write, which went through the swiotlb
+code path and took the KM_SWIOTLB kmap entry.  However, midway through that
+operation, we were pre-empted by an interrupt for the IDE controller, which also
+went through the swiotlb path and then hit the above BUG, since the kmap slot
+was already in use on this CPU by the sys_write path.
+     The fix is simple; make sure to disable interrupts right before doing the
+kmap_atomic, and re-enable interrupts after we do the kunmap_atomic.  This patch
+is a simple backport of upstream xen-3.1-testing.hg c/s 13346, and fixes the
+issue for the customer.  Note that c/s 13346 goes further and changes the name
+of the kmap slot from KM_SWIOTLB to KM_BOUNCE_READ in order to get rid of the
+custom include/asm-i386/mach-xen/asm/kmap_types.h header file, but we can't do
+this since it breaks kABI.
+     Initial testing by the customer indicates this fix works for them; I'm
+still waiting on feedback from the more extensive testing they were going to run
+overnight.  I've tested it locally on both i386 and x86_64, in dom0, PV guests,
+and FV guests, and I didn't notice any regressions in my basic smoke testing.
+    Please review and ACK.
+
+--
+Chris Lalancette
+
+diff --git a/arch/i386/kernel/swiotlb.c b/arch/i386/kernel/swiotlb.c
+index ae9e3b7..0d1e72c 100644
+--- a/arch/i386/kernel/swiotlb.c
++++ b/arch/i386/kernel/swiotlb.c
+@@ -225,8 +225,11 @@ __sync_single(struct phys_addr buffer, char *dma_addr, size_t size, int dir)
+ 		char *dev, *host, *kmp;
+ 		len = size;
+ 		while (len != 0) {
++			unsigned long flags;
++
+ 			if (((bytes = len) + buffer.offset) > PAGE_SIZE)
+ 				bytes = PAGE_SIZE - buffer.offset;
++			local_irq_save(flags); /* protects KM_SWIOTLB */
+ 			kmp  = kmap_atomic(buffer.page, KM_SWIOTLB);
+ 			dev  = dma_addr + size - len;
+ 			host = kmp + buffer.offset;
+@@ -236,6 +239,7 @@ __sync_single(struct phys_addr buffer, char *dma_addr, size_t size, int dir)
+ 			} else
+ 				memcpy(dev, host, bytes);
+ 			kunmap_atomic(kmp, KM_SWIOTLB);
++			local_irq_restore(flags);
+ 			len -= bytes;
+ 			buffer.page++;
+ 			buffer.offset = 0;

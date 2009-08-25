@@ -147,7 +147,7 @@ static struct fb_var_screeninfo	sstfb_default =
     0, 0, -1, -1, 0,
     39721 ,  38, 26 ,  25 ,18  , 96 ,2,
     0, FB_VMODE_NONINTERLACED };
-#elif
+#else
     #error "Invalid DEFAULT_MODE value !"
 #endif
 

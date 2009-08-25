@@ -1,0 +1,146 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Thu, 4 Dec 2008 22:26:50 -0500
+Subject: [scsi] qla2xx/qla84xx: occasional panic on loading
+Message-id: 20081205032650.23688.8119.sendpatchset@file.bos.redhat.com
+O-Subject: [rhel 5.3 bug] qla2xx/qla84xx - occasional panic on loading.
+Bugzilla: 472382
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+BZ 472382 - qla2xx/qla84xx - Failure to establish link.
+
+This patch fixes a problem found at NetApp where the system can panic
+occasionally when reloading the driver. This happens when an interrupt
+comes in before a data structure is allocated.
+
+This patch allocates the data structure before the chip initialization
+starts and also modifies the interrupt service routine not to attempt
+to use the contents of the data structure before it's allocated.
+
+We also bump the version number.
+
+The driver has now been unloaded/loaded many times without failure,
+in addition to repeating earlier testing with I/O.
+
+Correct initialization order for 84xx. ->8.02.00.06.05.03-k
+
+init_rings was being called before 84xx structure was
+allocated and setup. Also disable some interrupt processing
+before 84xx chip data structures allocated.
+
+diff --git a/drivers/scsi/qla2xxx/qla_init.c b/drivers/scsi/qla2xxx/qla_init.c
+index db09548..8f68284 100644
+--- a/drivers/scsi/qla2xxx/qla_init.c
++++ b/drivers/scsi/qla2xxx/qla_init.c
+@@ -128,16 +128,18 @@ qla2x00_initialize_adapter(scsi_qla_host_t *ha)
+ 			return (rval);
+ 	}
+ 
+-	rval = qla2x00_init_rings(ha);
+-
+-	if (rval == QLA_SUCCESS && IS_QLA84XX(ha)) {
++	if (IS_QLA84XX(ha)) {
+ 		ha->cs84xx = qla84xx_get_chip(ha);
+ 		if (!ha->cs84xx) {
+ 			qla_printk(KERN_ERR, ha,
+ 				"Unable to configure ISP84XX.\n");
+ 			return QLA_FUNCTION_FAILED;
+ 		}
++	}
+ 
++	rval = qla2x00_init_rings(ha);
++
++	if (rval == QLA_SUCCESS && IS_QLA84XX(ha)) {
+ 		/* Issue verify 84xx FW IOCB to complete 84xx initialization */
+ 		rval = qla84xx_init_chip(ha);
+ 		if (rval != QLA_SUCCESS) {
+diff --git a/drivers/scsi/qla2xxx/qla_isr.c b/drivers/scsi/qla2xxx/qla_isr.c
+index 5840c2f..473548e 100644
+--- a/drivers/scsi/qla2xxx/qla_isr.c
++++ b/drivers/scsi/qla2xxx/qla_isr.c
+@@ -661,36 +661,39 @@ qla2x00_async_event(scsi_qla_host_t *ha, uint16_t *mb)
+ 		DEBUG2(printk("scsi(%ld): ISP84XX Alert Notification -- "
+ 		    "%04x %04x %04x\n", ha->host_no, mb[1], mb[2], mb[3]));
+ 
+-		spin_lock_irqsave(&ha->cs84xx->access_lock, flags);
+-		switch (mb[1]) {
+-		case A84_PANIC_RECOVERY:
+-			qla_printk(KERN_INFO, ha, "Alert 84XX: panic recovery "
+-			    "%04x %04x\n", mb[2], mb[3]);
+-			break;
+-		case A84_OP_LOGIN_COMPLETE:
+-			ha->cs84xx->op_fw_version = mb[3] << 16 | mb[2];
+-			DEBUG2(qla_printk(KERN_INFO, ha, "Alert 84XX:"
+-			    "firmware version %x\n", ha->cs84xx->op_fw_version));
+-			break;
+-		case A84_DIAG_LOGIN_COMPLETE:
+-			ha->cs84xx->diag_fw_version = mb[3] << 16 | mb[2];
+-			DEBUG2(qla_printk(KERN_INFO, ha, "Alert 84XX:"
+-			    "diagnostic firmware version %x\n",
+-			    ha->cs84xx->diag_fw_version));
+-			break;
+-		case A84_GOLD_LOGIN_COMPLETE:
+-			ha->cs84xx->diag_fw_version = mb[3] << 16 | mb[2];
+-			ha->cs84xx->fw_update = 1;
+-			DEBUG2(qla_printk(KERN_INFO, ha, "Alert 84XX: gold "
+-			    "firmware version %x\n",
+-			    ha->cs84xx->gold_fw_version));
+-			break;
+-		default:
+-			qla_printk(KERN_ERR, ha,
+-			    "Alert 84xx: Invalid Alert %04x %04x %04x\n",
+-			    mb[1], mb[2], mb[3]);
++		/* not initialized, so don't use it. */
++		if (ha->cs84xx) {
++			spin_lock_irqsave(&ha->cs84xx->access_lock, flags);
++			switch (mb[1]) {
++			case A84_PANIC_RECOVERY:
++				qla_printk(KERN_INFO, ha, "Alert 84XX: panic recovery "
++			    	"%04x %04x\n", mb[2], mb[3]);
++				break;
++			case A84_OP_LOGIN_COMPLETE:
++				ha->cs84xx->op_fw_version = mb[3] << 16 | mb[2];
++				DEBUG2(qla_printk(KERN_INFO, ha, "Alert 84XX:"
++			    	"firmware version %x\n", ha->cs84xx->op_fw_version));
++				break;
++			case A84_DIAG_LOGIN_COMPLETE:
++				ha->cs84xx->diag_fw_version = mb[3] << 16 | mb[2];
++				DEBUG2(qla_printk(KERN_INFO, ha, "Alert 84XX:"
++			    	"diagnostic firmware version %x\n",
++			    	ha->cs84xx->diag_fw_version));
++				break;
++			case A84_GOLD_LOGIN_COMPLETE:
++				ha->cs84xx->diag_fw_version = mb[3] << 16 | mb[2];
++				ha->cs84xx->fw_update = 1;
++				DEBUG2(qla_printk(KERN_INFO, ha, "Alert 84XX: gold "
++			    	"firmware version %x\n",
++			    	ha->cs84xx->gold_fw_version));
++				break;
++			default:
++				qla_printk(KERN_ERR, ha,
++			    	"Alert 84xx: Invalid Alert %04x %04x %04x\n",
++			    	mb[1], mb[2], mb[3]);
++			}
++			spin_unlock_irqrestore(&ha->cs84xx->access_lock, flags);
+ 		}
+-		spin_unlock_irqrestore(&ha->cs84xx->access_lock, flags);
+ 		break;
+ 	}
+ }
+diff --git a/drivers/scsi/qla2xxx/qla_version.h b/drivers/scsi/qla2xxx/qla_version.h
+index 8df91ff..16d51ef 100644
+--- a/drivers/scsi/qla2xxx/qla_version.h
++++ b/drivers/scsi/qla2xxx/qla_version.h
+@@ -7,7 +7,7 @@
+ /*
+  * Driver version
+  */
+-#define QLA2XXX_VERSION      "8.02.00.05.05.03-k"
++#define QLA2XXX_VERSION      "8.02.00.06.05.03-k"
+ 
+ #define QLA_DRIVER_MAJOR_VER	8
+ #define QLA_DRIVER_MINOR_VER	1

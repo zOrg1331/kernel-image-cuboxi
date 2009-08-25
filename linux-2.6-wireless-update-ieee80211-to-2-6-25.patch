@@ -1,0 +1,2232 @@
+From: John W. Linville <linville@redhat.com>
+Date: Wed, 13 Aug 2008 12:33:53 -0400
+Subject: [wireless] update ieee80211 to 2.6.25
+Message-id: 20080813163353.GC18695@redhat.com
+O-Subject: [RHEL5 patch 1/3] Update ieee80211 component to match version from 2.6.25
+Bugzilla: 448762
+
+This patch updates ieee80211 and its accompanying softmac component
+to match what was current in 2.6.25.
+
+BZ448762
+
+Tested against the related drivers by me with good results.
+
+diff --git a/include/net/ieee80211.h b/include/net/ieee80211.h
+index aa007f4..23a6be0 100644
+--- a/include/net/ieee80211.h
++++ b/include/net/ieee80211.h
+@@ -6,8 +6,8 @@
+  * LAN access point) driver for Intersil Prism2/2.5/3.
+  *
+  * Copyright (c) 2001-2002, SSH Communications Security Corp and Jouni Malinen
+- * <jkmaline@cc.hut.fi>
+- * Copyright (c) 2002-2003, Jouni Malinen <jkmaline@cc.hut.fi>
++ * <j@w1.fi>
++ * Copyright (c) 2002-2003, Jouni Malinen <j@w1.fi>
+  *
+  * Adaption to a generic IEEE 802.11 stack by James Ketrenos
+  * <jketreno@linux.intel.com>
+@@ -115,12 +115,18 @@ extern u32 ieee80211_debug_level;
+ do { if (ieee80211_debug_level & (level)) \
+   printk(KERN_DEBUG "ieee80211: %c %s " fmt, \
+          in_interrupt() ? 'I' : 'U', __FUNCTION__ , ## args); } while (0)
++static inline bool ieee80211_ratelimit_debug(u32 level)
++{
++	return (ieee80211_debug_level & level) && net_ratelimit();
++}
+ #else
+ #define IEEE80211_DEBUG(level, fmt, args...) do {} while (0)
++static inline bool ieee80211_ratelimit_debug(u32 level)
++{
++	return false;
++}
+ #endif				/* CONFIG_IEEE80211_DEBUG */
+ 
+-/* debug macros not dependent on CONFIG_IEEE80211_DEBUG */
+-
+ #define MAC_FMT "%02x:%02x:%02x:%02x:%02x:%02x"
+ #define MAC_ARG(x) ((u8*)(x))[0],((u8*)(x))[1],((u8*)(x))[2],((u8*)(x))[3],((u8*)(x))[4],((u8*)(x))[5]
+ 
+@@ -218,7 +224,7 @@ struct ieee80211_snap_hdr {
+ #define WLAN_FC_GET_STYPE(fc) ((fc) & IEEE80211_FCTL_STYPE)
+ 
+ #define WLAN_GET_SEQ_FRAG(seq) ((seq) & IEEE80211_SCTL_FRAG)
+-#define WLAN_GET_SEQ_SEQ(seq)  ((seq) & IEEE80211_SCTL_SEQ)
++#define WLAN_GET_SEQ_SEQ(seq)  (((seq) & IEEE80211_SCTL_SEQ) >> 4)
+ 
+ /* Authentication algorithms */
+ #define WLAN_AUTH_OPEN 0
+@@ -674,7 +680,11 @@ struct ieee80211_probe_request {
+ 
+ struct ieee80211_probe_response {
+ 	struct ieee80211_hdr_3addr header;
++#ifndef __GENKSYMS__
++	__le32 time_stamp[2];
++#else
+ 	u32 time_stamp[2];
++#endif
+ 	__le16 beacon_interval;
+ 	__le16 capability;
+ 	/* SSID, supported rates, FH params, DS params,
+@@ -715,8 +725,13 @@ struct ieee80211_txb {
+ 	u8 encrypted;
+ 	u8 rts_included;
+ 	u8 reserved;
++#ifndef __GENKSYMS__
++	u16 frag_size;
++	u16 payload_size;
++#else
+ 	__le16 frag_size;
+ 	__le16 payload_size;
++#endif
+ 	struct sk_buff *fragments[0];
+ };
+ 
+@@ -1259,6 +1274,8 @@ extern int ieee80211_tx_frame(struct ieee80211_device *ieee,
+ 			      int total_len, int encrypt_mpdu);
+ 
+ /* ieee80211_rx.c */
++extern void ieee80211_rx_any(struct ieee80211_device *ieee,
++		     struct sk_buff *skb, struct ieee80211_rx_stats *stats);
+ extern int ieee80211_rx(struct ieee80211_device *ieee, struct sk_buff *skb,
+ 			struct ieee80211_rx_stats *rx_stats);
+ /* make sure to set stats->len */
+@@ -1283,6 +1300,8 @@ extern u8 ieee80211_get_channel_flags(struct ieee80211_device *ieee,
+ extern const struct ieee80211_channel *ieee80211_get_channel(struct
+ 							     ieee80211_device
+ 							     *ieee, u8 channel);
++extern u32 ieee80211_channel_to_freq(struct ieee80211_device * ieee,
++				      u8 channel);
+ 
+ /* ieee80211_wx.c */
+ extern int ieee80211_wx_get_scan(struct ieee80211_device *ieee,
+diff --git a/include/net/ieee80211_crypt.h b/include/net/ieee80211_crypt.h
+index eb47641..b3d65e0 100644
+--- a/include/net/ieee80211_crypt.h
++++ b/include/net/ieee80211_crypt.h
+@@ -3,8 +3,8 @@
+  * for Intersil Prism2/2.5/3.
+  *
+  * Copyright (c) 2001-2002, SSH Communications Security Corp and Jouni Malinen
+- * <jkmaline@cc.hut.fi>
+- * Copyright (c) 2002-2003, Jouni Malinen <jkmaline@cc.hut.fi>
++ * <j@w1.fi>
++ * Copyright (c) 2002-2003, Jouni Malinen <j@w1.fi>
+  *
+  * Adaption to a generic IEEE 802.11 stack by James Ketrenos
+  * <jketreno@linux.intel.com>
+diff --git a/include/net/ieee80211softmac.h b/include/net/ieee80211softmac.h
+index 00ad810..e75a707 100644
+--- a/include/net/ieee80211softmac.h
++++ b/include/net/ieee80211softmac.h
+@@ -257,6 +257,14 @@ extern void ieee80211softmac_fragment_lost(struct net_device *dev,
+  * Note that the rates need to be sorted. */
+ extern void ieee80211softmac_set_rates(struct net_device *dev, u8 count, u8 *rates);
+ 
++/* Finds the highest rate which is:
++ *  1. Present in ri (optionally a basic rate)
++ *  2. Supported by the device
++ *  3. Less than or equal to the user-defined rate
++ */
++extern u8 ieee80211softmac_highest_supported_rate(struct ieee80211softmac_device *mac,
++	struct ieee80211softmac_ratesinfo *ri, int basic_only);
++
+ /* Helper function which advises you the rate at which a frame should be
+  * transmitted at. */
+ static inline u8 ieee80211softmac_suggest_txrate(struct ieee80211softmac_device *mac,
+diff --git a/net/ieee80211/Kconfig b/net/ieee80211/Kconfig
+index f7e84e9..bd50104 100644
+--- a/net/ieee80211/Kconfig
++++ b/net/ieee80211/Kconfig
+@@ -1,8 +1,9 @@
+ config IEEE80211
+-	tristate "Generic IEEE 802.11 Networking Stack"
++	tristate "Generic IEEE 802.11 Networking Stack (DEPRECATED)"
+ 	---help---
+ 	This option enables the hardware independent IEEE 802.11
+-	networking stack.
++	networking stack.  This component is deprecated in favor of the
++	mac80211 component.
+ 
+ config IEEE80211_DEBUG
+ 	bool "Enable full debugging output"
+@@ -32,12 +33,13 @@ config IEEE80211_CRYPT_WEP
+ 	depends on IEEE80211
+ 	select CRYPTO
+ 	select CRYPTO_ARC4
++	select CRYPTO_ECB
+ 	select CRC32
+ 	---help---
+ 	Include software based cipher suites in support of IEEE
+ 	802.11's WEP.  This is needed for WEP as well as 802.1x.
+ 
+-	This can be compiled as a modules and it will be called
++	This can be compiled as a module and it will be called
+ 	"ieee80211_crypt_wep".
+ 
+ config IEEE80211_CRYPT_CCMP
+@@ -50,21 +52,23 @@ config IEEE80211_CRYPT_CCMP
+ 	(aka TGi, WPA, WPA2, WPA-PSK, etc.) for use with CCMP enabled
+ 	networks.
+ 
+-	This can be compiled as a modules and it will be called
++	This can be compiled as a module and it will be called
+ 	"ieee80211_crypt_ccmp".
+ 
+ config IEEE80211_CRYPT_TKIP
+ 	tristate "IEEE 802.11i TKIP encryption"
+-	depends on IEEE80211 && NET_RADIO
++	depends on IEEE80211
++	select WIRELESS_EXT
+ 	select CRYPTO
+ 	select CRYPTO_MICHAEL_MIC
++	select CRYPTO_ECB
+ 	select CRC32
+ 	---help---
+ 	Include software based cipher suites in support of IEEE 802.11i
+ 	(aka TGi, WPA, WPA2, WPA-PSK, etc.) for use with TKIP enabled
+ 	networks.
+ 
+-	This can be compiled as a modules and it will be called
++	This can be compiled as a module and it will be called
+ 	"ieee80211_crypt_tkip".
+ 
+ source "net/ieee80211/softmac/Kconfig"
+diff --git a/net/ieee80211/ieee80211_crypt.c b/net/ieee80211/ieee80211_crypt.c
+index 5ed0a98..df5592c 100644
+--- a/net/ieee80211/ieee80211_crypt.c
++++ b/net/ieee80211/ieee80211_crypt.c
+@@ -1,7 +1,7 @@
+ /*
+  * Host AP crypto routines
+  *
+- * Copyright (c) 2002-2003, Jouni Malinen <jkmaline@cc.hut.fi>
++ * Copyright (c) 2002-2003, Jouni Malinen <j@w1.fi>
+  * Portions Copyright (C) 2004, Intel Corporation <jketreno@linux.intel.com>
+  *
+  * This program is free software; you can redistribute it and/or modify
+diff --git a/net/ieee80211/ieee80211_crypt_ccmp.c b/net/ieee80211/ieee80211_crypt_ccmp.c
+index 098c668..d572a94 100644
+--- a/net/ieee80211/ieee80211_crypt_ccmp.c
++++ b/net/ieee80211/ieee80211_crypt_ccmp.c
+@@ -345,7 +345,7 @@ static int ieee80211_ccmp_decrypt(struct sk_buff *skb, int hdr_len, void *priv)
+ 	pos += 8;
+ 
+ 	if (ccmp_replay_check(pn, key->rx_pn)) {
+-		if (net_ratelimit()) {
++		if (ieee80211_ratelimit_debug(IEEE80211_DL_DROP)) {
+ 			printk(KERN_DEBUG "CCMP: replay detected: STA=" MAC_FMT
+ 			       " previous PN %02x%02x%02x%02x%02x%02x "
+ 			       "received PN %02x%02x%02x%02x%02x%02x\n",
+diff --git a/net/ieee80211/ieee80211_crypt_tkip.c b/net/ieee80211/ieee80211_crypt_tkip.c
+index f2df2f5..29a568c 100644
+--- a/net/ieee80211/ieee80211_crypt_tkip.c
++++ b/net/ieee80211/ieee80211_crypt_tkip.c
+@@ -179,7 +179,7 @@ static inline u16 Mk16(u8 hi, u8 lo)
+ 	return lo | (((u16) hi) << 8);
+ }
+ 
+-static inline u16 Mk16_le(u16 * v)
++static inline u16 Mk16_le(__le16 * v)
+ {
+ 	return le16_to_cpu(*v);
+ }
+@@ -265,15 +265,15 @@ static void tkip_mixing_phase2(u8 * WEPSeed, const u8 * TK, const u16 * TTAK,
+ 	PPK[5] = TTAK[4] + IV16;
+ 
+ 	/* Step 2 - 96-bit bijective mixing using S-box */
+-	PPK[0] += _S_(PPK[5] ^ Mk16_le((u16 *) & TK[0]));
+-	PPK[1] += _S_(PPK[0] ^ Mk16_le((u16 *) & TK[2]));
+-	PPK[2] += _S_(PPK[1] ^ Mk16_le((u16 *) & TK[4]));
+-	PPK[3] += _S_(PPK[2] ^ Mk16_le((u16 *) & TK[6]));
+-	PPK[4] += _S_(PPK[3] ^ Mk16_le((u16 *) & TK[8]));
+-	PPK[5] += _S_(PPK[4] ^ Mk16_le((u16 *) & TK[10]));
+-
+-	PPK[0] += RotR1(PPK[5] ^ Mk16_le((u16 *) & TK[12]));
+-	PPK[1] += RotR1(PPK[0] ^ Mk16_le((u16 *) & TK[14]));
++	PPK[0] += _S_(PPK[5] ^ Mk16_le((__le16 *) & TK[0]));
++	PPK[1] += _S_(PPK[0] ^ Mk16_le((__le16 *) & TK[2]));
++	PPK[2] += _S_(PPK[1] ^ Mk16_le((__le16 *) & TK[4]));
++	PPK[3] += _S_(PPK[2] ^ Mk16_le((__le16 *) & TK[6]));
++	PPK[4] += _S_(PPK[3] ^ Mk16_le((__le16 *) & TK[8]));
++	PPK[5] += _S_(PPK[4] ^ Mk16_le((__le16 *) & TK[10]));
++
++	PPK[0] += RotR1(PPK[5] ^ Mk16_le((__le16 *) & TK[12]));
++	PPK[1] += RotR1(PPK[0] ^ Mk16_le((__le16 *) & TK[14]));
+ 	PPK[2] += RotR1(PPK[1]);
+ 	PPK[3] += RotR1(PPK[2]);
+ 	PPK[4] += RotR1(PPK[3]);
+@@ -284,7 +284,7 @@ static void tkip_mixing_phase2(u8 * WEPSeed, const u8 * TK, const u16 * TTAK,
+ 	WEPSeed[0] = Hi8(IV16);
+ 	WEPSeed[1] = (Hi8(IV16) | 0x20) & 0x7F;
+ 	WEPSeed[2] = Lo8(IV16);
+-	WEPSeed[3] = Lo8((PPK[5] ^ Mk16_le((u16 *) & TK[0])) >> 1);
++	WEPSeed[3] = Lo8((PPK[5] ^ Mk16_le((__le16 *) & TK[0])) >> 1);
+ 
+ #ifdef __BIG_ENDIAN
+ 	{
+@@ -454,8 +454,8 @@ static int ieee80211_tkip_decrypt(struct sk_buff *skb, int hdr_len, void *priv)
+ 	pos += 8;
+ 
+ 	if (tkip_replay_check(iv32, iv16, tkey->rx_iv32, tkey->rx_iv16)) {
+-		if (net_ratelimit()) {
+-			printk(KERN_DEBUG "TKIP: replay detected: STA=" MAC_FMT
++		if (ieee80211_ratelimit_debug(IEEE80211_DL_DROP)) {
++			IEEE80211_DEBUG_DROP("TKIP: replay detected: STA=" MAC_FMT
+ 			       " previous TSC %08x%04x received TSC "
+ 			       "%08x%04x\n", MAC_ARG(hdr->addr2),
+ 			       tkey->rx_iv32, tkey->rx_iv16, iv32, iv16);
+@@ -489,8 +489,8 @@ static int ieee80211_tkip_decrypt(struct sk_buff *skb, int hdr_len, void *priv)
+ 			 * it needs to be recalculated for the next packet. */
+ 			tkey->rx_phase1_done = 0;
+ 		}
+-		if (net_ratelimit()) {
+-			printk(KERN_DEBUG "TKIP: ICV error detected: STA="
++		if (ieee80211_ratelimit_debug(IEEE80211_DL_DROP)) {
++			IEEE80211_DEBUG_DROP("TKIP: ICV error detected: STA="
+ 			       MAC_FMT "\n", MAC_ARG(hdr->addr2));
+ 		}
+ 		tkey->dot11RSNAStatsTKIPICVErrors++;
+@@ -566,7 +566,7 @@ static void michael_mic_hdr(struct sk_buff *skb, u8 * hdr)
+ 	if (stype & IEEE80211_STYPE_QOS_DATA) {
+ 		const struct ieee80211_hdr_3addrqos *qoshdr =
+ 			(struct ieee80211_hdr_3addrqos *)skb->data;
+-		hdr[12] = qoshdr->qos_ctl & cpu_to_le16(IEEE80211_QCTL_TID);
++		hdr[12] = le16_to_cpu(qoshdr->qos_ctl) & IEEE80211_QCTL_TID;
+ 	} else
+ 		hdr[12] = 0;		/* priority */
+ 
+diff --git a/net/ieee80211/ieee80211_crypt_wep.c b/net/ieee80211/ieee80211_crypt_wep.c
+index b435b28..3a30a54 100644
+--- a/net/ieee80211/ieee80211_crypt_wep.c
++++ b/net/ieee80211/ieee80211_crypt_wep.c
+@@ -147,7 +147,7 @@ static int prism2_wep_encrypt(struct sk_buff *skb, int hdr_len, void *priv)
+ 		return -1;
+ 	
+ 	/* Copy the IV into the first 3 bytes of the key */
+-	memcpy(key, skb->data + hdr_len, 3);
++	skb_copy_from_linear_data_offset(skb, hdr_len, key, 3);
+ 
+ 	/* Copy rest of the WEP key (the secret part) */
+ 	memcpy(key + 3, wep->key, wep->key_len);
+diff --git a/net/ieee80211/ieee80211_geo.c b/net/ieee80211/ieee80211_geo.c
+index 305a09d..960ad13 100644
+--- a/net/ieee80211/ieee80211_geo.c
++++ b/net/ieee80211/ieee80211_geo.c
+@@ -94,6 +94,21 @@ int ieee80211_channel_to_index(struct ieee80211_device *ieee, u8 channel)
+ 	return -1;
+ }
+ 
++u32 ieee80211_channel_to_freq(struct ieee80211_device * ieee, u8 channel)
++{
++	const struct ieee80211_channel * ch;
++
++	/* Driver needs to initialize the geography map before using
++	 * these helper functions */
++	if (ieee->geo.bg_channels == 0 && ieee->geo.a_channels == 0)
++		return 0;
++
++	ch = ieee80211_get_channel(ieee, channel);
++	if (!ch->channel)
++		return 0;
++	return ch->freq;
++}
++
+ u8 ieee80211_freq_to_channel(struct ieee80211_device * ieee, u32 freq)
+ {
+ 	int i;
+@@ -174,6 +189,7 @@ EXPORT_SYMBOL(ieee80211_get_channel);
+ EXPORT_SYMBOL(ieee80211_get_channel_flags);
+ EXPORT_SYMBOL(ieee80211_is_valid_channel);
+ EXPORT_SYMBOL(ieee80211_freq_to_channel);
++EXPORT_SYMBOL(ieee80211_channel_to_freq);
+ EXPORT_SYMBOL(ieee80211_channel_to_index);
+ EXPORT_SYMBOL(ieee80211_set_geo);
+ EXPORT_SYMBOL(ieee80211_get_geo);
+diff --git a/net/ieee80211/ieee80211_module.c b/net/ieee80211/ieee80211_module.c
+index b1c6d1f..25b718d 100644
+--- a/net/ieee80211/ieee80211_module.c
++++ b/net/ieee80211/ieee80211_module.c
+@@ -5,8 +5,8 @@
+   Portions of this file are based on the WEP enablement code provided by the
+   Host AP project hostap-drivers v0.1.3
+   Copyright (c) 2001-2002, SSH Communications Security Corp and Jouni Malinen
+-  <jkmaline@cc.hut.fi>
+-  Copyright (c) 2002-2003, Jouni Malinen <jkmaline@cc.hut.fi>
++  <j@w1.fi>
++  Copyright (c) 2002-2003, Jouni Malinen <j@w1.fi>
+ 
+   This program is free software; you can redistribute it and/or modify it
+   under the terms of version 2 of the GNU General Public License as
+@@ -47,6 +47,9 @@
+ #include <linux/wireless.h>
+ #include <linux/etherdevice.h>
+ #include <asm/uaccess.h>
++#if 0 /* Not in RHEL5... */
++#include <net/net_namespace.h>
++#endif
+ #include <net/arp.h>
+ 
+ #include <net/ieee80211.h>
+@@ -140,7 +143,7 @@ struct net_device *alloc_ieee80211(int sizeof_priv)
+ 
+ 	dev = alloc_etherdev(sizeof(struct ieee80211_device) + sizeof_priv);
+ 	if (!dev) {
+-		IEEE80211_ERROR("Unable to network device.\n");
++		IEEE80211_ERROR("Unable to allocate network device.\n");
+ 		goto failed;
+ 	}
+ 	ieee = netdev_priv(dev);
+@@ -180,9 +183,8 @@ struct net_device *alloc_ieee80211(int sizeof_priv)
+ 	ieee->ieee802_1x = 1;	/* Default to supporting 802.1x */
+ 
+ 	INIT_LIST_HEAD(&ieee->crypt_deinit_list);
+-	init_timer(&ieee->crypt_deinit_timer);
+-	ieee->crypt_deinit_timer.data = (unsigned long)ieee;
+-	ieee->crypt_deinit_timer.function = ieee80211_crypt_deinit_handler;
++	setup_timer(&ieee->crypt_deinit_timer, ieee80211_crypt_deinit_handler,
++			(unsigned long)ieee);
+ 	ieee->crypt_quiesced = 0;
+ 
+ 	spin_lock_init(&ieee->lock);
+@@ -229,6 +231,7 @@ void free_ieee80211(struct net_device *dev)
+ 
+ static int debug = 0;
+ u32 ieee80211_debug_level = 0;
++EXPORT_SYMBOL_GPL(ieee80211_debug_level);
+ static struct proc_dir_entry *ieee80211_proc = NULL;
+ 
+ static int show_debug_level(char *page, char **start, off_t offset,
+diff --git a/net/ieee80211/ieee80211_rx.c b/net/ieee80211/ieee80211_rx.c
+index e93837d..cdad11a 100644
+--- a/net/ieee80211/ieee80211_rx.c
++++ b/net/ieee80211/ieee80211_rx.c
+@@ -3,8 +3,8 @@
+  * for Intersil Prism2/2.5/3 - hostap.o module, common routines
+  *
+  * Copyright (c) 2001-2002, SSH Communications Security Corp and Jouni Malinen
+- * <jkmaline@cc.hut.fi>
+- * Copyright (c) 2002-2003, Jouni Malinen <jkmaline@cc.hut.fi>
++ * <j@w1.fi>
++ * Copyright (c) 2002-2003, Jouni Malinen <j@w1.fi>
+  * Copyright (c) 2004-2005, Intel Corporation
+  *
+  * This program is free software; you can redistribute it and/or modify
+@@ -42,10 +42,10 @@ static void ieee80211_monitor_rx(struct ieee80211_device *ieee,
+ 	u16 fc = le16_to_cpu(hdr->frame_ctl);
+ 
+ 	skb->dev = ieee->dev;
+-	skb->mac.raw = skb->data;
++	skb_reset_mac_header(skb);
+ 	skb_pull(skb, ieee80211_get_hdrlen(fc));
+ 	skb->pkt_type = PACKET_OTHERHOST;
+-	skb->protocol = __constant_htons(ETH_P_80211_RAW);
++	skb->protocol = htons(ETH_P_80211_RAW);
+ 	memset(skb->cb, 0, sizeof(skb->cb));
+ 	netif_rx(skb);
+ }
+@@ -283,7 +283,11 @@ ieee80211_rx_frame_decrypt(struct ieee80211_device *ieee, struct sk_buff *skb,
+ 	atomic_dec(&crypt->refcnt);
+ 	if (res < 0) {
+ 		IEEE80211_DEBUG_DROP("decryption failed (SA=" MAC_FMT
+-				     ") res=%d\n", MAC_ARG(hdr->addr2), res);
++				     ") res=%d\n",
++				     hdr->addr2[0], hdr->addr2[1],
++				     hdr->addr2[2], hdr->addr2[3],
++				     hdr->addr2[4], hdr->addr2[5],
++				     res);
+ 		if (res == -2)
+ 			IEEE80211_DEBUG_DROP("Decryption failed ICV "
+ 					     "mismatch (key %d)\n",
+@@ -316,7 +320,11 @@ ieee80211_rx_frame_decrypt_msdu(struct ieee80211_device *ieee,
+ 	if (res < 0) {
+ 		printk(KERN_DEBUG "%s: MSDU decryption/MIC verification failed"
+ 		       " (SA=" MAC_FMT " keyidx=%d)\n",
+-		       ieee->dev->name, MAC_ARG(hdr->addr2), keyidx);
++		       ieee->dev->name,
++		       hdr->addr2[0], hdr->addr2[1],
++		       hdr->addr2[2], hdr->addr2[3],
++		       hdr->addr2[4], hdr->addr2[5],
++		       keyidx);
+ 		return -1;
+ 	}
+ 
+@@ -461,7 +469,9 @@ int ieee80211_rx(struct ieee80211_device *ieee, struct sk_buff *skb,
+ 			 * these reports. */
+ 			IEEE80211_DEBUG_DROP("Decryption failed (not set)"
+ 					     " (SA=" MAC_FMT ")\n",
+-					     MAC_ARG(hdr->addr2));
++					     hdr->addr2[0], hdr->addr2[1],
++					     hdr->addr2[2], hdr->addr2[3],
++					     hdr->addr2[4], hdr->addr2[5]);
+ 			ieee->ieee_stats.rx_discards_undecryptable++;
+ 			goto rx_dropped;
+ 		}
+@@ -473,7 +483,9 @@ int ieee80211_rx(struct ieee80211_device *ieee, struct sk_buff *skb,
+ 		    (keyidx = hostap_rx_frame_decrypt(ieee, skb, crypt)) < 0) {
+ 			printk(KERN_DEBUG "%s: failed to decrypt mgmt::auth "
+ 			       "from " MAC_FMT "\n", dev->name,
+-			       MAC_ARG(hdr->addr2));
++			       hdr->addr2[0], hdr->addr2[1],
++			       hdr->addr2[2], hdr->addr2[3],
++			       hdr->addr2[4], hdr->addr2[5]);
+ 			/* TODO: could inform hostapd about this so that it
+ 			 * could send auth failure report */
+ 			goto rx_dropped;
+@@ -608,12 +620,12 @@ int ieee80211_rx(struct ieee80211_device *ieee, struct sk_buff *skb,
+ 		if (frag == 0) {
+ 			/* copy first fragment (including full headers) into
+ 			 * beginning of the fragment cache skb */
+-			memcpy(skb_put(frag_skb, flen), skb->data, flen);
++			skb_copy_from_linear_data(skb, skb_put(frag_skb, flen), flen);
+ 		} else {
+ 			/* append frame payload to the end of the fragment
+ 			 * cache skb */
+-			memcpy(skb_put(frag_skb, flen), skb->data + hdrlen,
+-			       flen);
++			skb_copy_from_linear_data_offset(skb, hdrlen,
++				      skb_put(frag_skb, flen), flen);
+ 		}
+ 		dev_kfree_skb_any(skb);
+ 		skb = NULL;
+@@ -646,8 +658,11 @@ int ieee80211_rx(struct ieee80211_device *ieee, struct sk_buff *skb,
+ 			 * configured */
+ 		} else {
+ 			IEEE80211_DEBUG_DROP("encryption configured, but RX "
+-					     "frame not encrypted (SA=" MAC_FMT
+-					     ")\n", MAC_ARG(hdr->addr2));
++					     "frame not encrypted (SA="
++					     MAC_FMT ")\n",
++					     hdr->addr2[0], hdr->addr2[1],
++					     hdr->addr2[2], hdr->addr2[3],
++					     hdr->addr2[4], hdr->addr2[5]);
+ 			goto rx_dropped;
+ 		}
+ 	}
+@@ -657,7 +672,9 @@ int ieee80211_rx(struct ieee80211_device *ieee, struct sk_buff *skb,
+ 		IEEE80211_DEBUG_DROP("dropped unencrypted RX data "
+ 				     "frame from " MAC_FMT
+ 				     " (drop_unencrypted=1)\n",
+-				     MAC_ARG(hdr->addr2));
++				     hdr->addr2[0], hdr->addr2[1],
++				     hdr->addr2[2], hdr->addr2[3],
++				     hdr->addr2[4], hdr->addr2[5]);
+ 		goto rx_dropped;
+ 	}
+ 
+@@ -702,7 +719,7 @@ int ieee80211_rx(struct ieee80211_device *ieee, struct sk_buff *skb,
+ 		memcpy(skb_push(skb, ETH_ALEN), src, ETH_ALEN);
+ 		memcpy(skb_push(skb, ETH_ALEN), dst, ETH_ALEN);
+ 	} else {
+-		u16 len;
++		__be16 len;
+ 		/* Leave Ethernet header part of hdr and full payload */
+ 		skb_pull(skb, hdrlen);
+ 		len = htons(skb->len);
+@@ -716,8 +733,9 @@ int ieee80211_rx(struct ieee80211_device *ieee, struct sk_buff *skb,
+ 		    IEEE80211_FCTL_TODS) && skb->len >= ETH_HLEN + ETH_ALEN) {
+ 		/* Non-standard frame: get addr4 from its bogus location after
+ 		 * the payload */
+-		memcpy(skb->data + ETH_ALEN,
+-		       skb->data + skb->len - ETH_ALEN, ETH_ALEN);
++		skb_copy_to_linear_data_offset(skb, ETH_ALEN,
++					       skb->data + skb->len - ETH_ALEN,
++					       ETH_ALEN);
+ 		skb_trim(skb, skb->len - ETH_ALEN);
+ 	}
+ #endif
+@@ -746,10 +764,11 @@ int ieee80211_rx(struct ieee80211_device *ieee, struct sk_buff *skb,
+ 
+ 	if (skb2 != NULL) {
+ 		/* send to wireless media */
+-		skb2->protocol = __constant_htons(ETH_P_802_3);
+-		skb2->mac.raw = skb2->nh.raw = skb2->data;
+-		/* skb2->nh.raw = skb2->data + ETH_HLEN; */
+ 		skb2->dev = dev;
++		skb2->protocol = htons(ETH_P_802_3);
++		skb_reset_mac_header(skb2);
++		skb_reset_network_header(skb2);
++		/* skb2->network_header += ETH_HLEN; */
+ 		dev_queue_xmit(skb2);
+ 	}
+ #endif
+@@ -785,33 +804,44 @@ int ieee80211_rx(struct ieee80211_device *ieee, struct sk_buff *skb,
+ 	return 0;
+ }
+ 
+-/* Filter out unrelated packets, call ieee80211_rx[_mgt] */
+-int ieee80211_rx_any(struct ieee80211_device *ieee,
++/* Filter out unrelated packets, call ieee80211_rx[_mgt]
++ * This function takes over the skb, it should not be used again after calling
++ * this function. */
++void ieee80211_rx_any(struct ieee80211_device *ieee,
+ 		     struct sk_buff *skb, struct ieee80211_rx_stats *stats)
+ {
+ 	struct ieee80211_hdr_4addr *hdr;
+ 	int is_packet_for_us;
+ 	u16 fc;
+ 
+-	if (ieee->iw_mode == IW_MODE_MONITOR)
+-		return ieee80211_rx(ieee, skb, stats) ? 0 : -EINVAL;
++	if (ieee->iw_mode == IW_MODE_MONITOR) {
++		if (!ieee80211_rx(ieee, skb, stats))
++			dev_kfree_skb_irq(skb);
++		return;
++	}
++
++	if (skb->len < sizeof(struct ieee80211_hdr))
++		goto drop_free;
+ 
+ 	hdr = (struct ieee80211_hdr_4addr *)skb->data;
+ 	fc = le16_to_cpu(hdr->frame_ctl);
+ 
+ 	if ((fc & IEEE80211_FCTL_VERS) != 0)
+-		return -EINVAL;
+-		
++		goto drop_free;
++
+ 	switch (fc & IEEE80211_FCTL_FTYPE) {
+ 	case IEEE80211_FTYPE_MGMT:
++		if (skb->len < sizeof(struct ieee80211_hdr_3addr))
++			goto drop_free;
+ 		ieee80211_rx_mgt(ieee, hdr, stats);
+-		return 0;
++		dev_kfree_skb_irq(skb);
++		return;
+ 	case IEEE80211_FTYPE_DATA:
+ 		break;
+ 	case IEEE80211_FTYPE_CTL:
+-		return 0;
++		return;
+ 	default:
+-		return -EINVAL;
++		return;
+ 	}
+ 
+ 	is_packet_for_us = 0;
+@@ -855,8 +885,14 @@ int ieee80211_rx_any(struct ieee80211_device *ieee,
+ 	}
+ 
+ 	if (is_packet_for_us)
+-		return (ieee80211_rx(ieee, skb, stats) ? 0 : -EINVAL);
+-	return 0;
++		if (!ieee80211_rx(ieee, skb, stats))
++			dev_kfree_skb_irq(skb);
++	return;
++
++drop_free:
++	dev_kfree_skb_irq(skb);
++	ieee->stats.rx_dropped++;
++	return;
+ }
+ 
+ #define MGMT_FRAME_FIXED_PART_LENGTH		0x24
+@@ -962,16 +998,16 @@ static int ieee80211_qos_convert_ac_to_parameters(struct
+ 		qos_param->aifs[i] -= (qos_param->aifs[i] < 2) ? 0 : 2;
+ 
+ 		cw_min = ac_params->ecw_min_max & 0x0F;
+-		qos_param->cw_min[i] = (u16) ((1 << cw_min) - 1);
++		qos_param->cw_min[i] = cpu_to_le16((1 << cw_min) - 1);
+ 
+ 		cw_max = (ac_params->ecw_min_max & 0xF0) >> 4;
+-		qos_param->cw_max[i] = (u16) ((1 << cw_max) - 1);
++		qos_param->cw_max[i] = cpu_to_le16((1 << cw_max) - 1);
+ 
+ 		qos_param->flag[i] =
+ 		    (ac_params->aci_aifsn & 0x10) ? 0x01 : 0x00;
+ 
+ 		txop = le16_to_cpu(ac_params->tx_op_limit) * 32;
+-		qos_param->tx_op_limit[i] = (u16) txop;
++		qos_param->tx_op_limit[i] = cpu_to_le16(txop);
+ 	}
+ 	return rc;
+ }
+@@ -1244,10 +1280,9 @@ static int ieee80211_parse_info_param(struct ieee80211_info_element
+ 		case MFIE_TYPE_IBSS_DFS:
+ 			if (network->ibss_dfs)
+ 				break;
+-			network->ibss_dfs = kmalloc(info_element->len,
++			network->ibss_dfs = kmemdup(info_element->data,
++						    info_element->len,
+ 						    GFP_ATOMIC);
+-			memcpy(network->ibss_dfs, info_element->data,
+-			       info_element->len);
+ 			if (!network->ibss_dfs)
+ 				return 1;
+ 			network->flags |= NETWORK_HAS_IBSS_DFS;
+@@ -1430,7 +1465,7 @@ static void update_network(struct ieee80211_network *dst,
+ 
+ 	/* We only update the statistics if they were created by receiving
+ 	 * the network information on the actual channel the network is on.
+-	 * 
++	 *
+ 	 * This keeps beacons received on neighbor channels from bringing
+ 	 * down the signal level of an AP. */
+ 	if (dst->channel == src->stats.received_channel)
+@@ -1512,26 +1547,25 @@ static void ieee80211_process_probe_response(struct ieee80211_device
+ 	unsigned long flags;
+ 
+ 	IEEE80211_DEBUG_SCAN("'%s' (" MAC_FMT
+-			     "): %c%c%c%c %c%c%c%c-%c%c%c%c %c%c%c%c\n",
+-			     escape_essid(info_element->data,
+-					  info_element->len),
+-			     MAC_ARG(beacon->header.addr3),
+-			     (beacon->capability & (1 << 0xf)) ? '1' : '0',
+-			     (beacon->capability & (1 << 0xe)) ? '1' : '0',
+-			     (beacon->capability & (1 << 0xd)) ? '1' : '0',
+-			     (beacon->capability & (1 << 0xc)) ? '1' : '0',
+-			     (beacon->capability & (1 << 0xb)) ? '1' : '0',
+-			     (beacon->capability & (1 << 0xa)) ? '1' : '0',
+-			     (beacon->capability & (1 << 0x9)) ? '1' : '0',
+-			     (beacon->capability & (1 << 0x8)) ? '1' : '0',
+-			     (beacon->capability & (1 << 0x7)) ? '1' : '0',
+-			     (beacon->capability & (1 << 0x6)) ? '1' : '0',
+-			     (beacon->capability & (1 << 0x5)) ? '1' : '0',
+-			     (beacon->capability & (1 << 0x4)) ? '1' : '0',
+-			     (beacon->capability & (1 << 0x3)) ? '1' : '0',
+-			     (beacon->capability & (1 << 0x2)) ? '1' : '0',
+-			     (beacon->capability & (1 << 0x1)) ? '1' : '0',
+-			     (beacon->capability & (1 << 0x0)) ? '1' : '0');
++		     "): %c%c%c%c %c%c%c%c-%c%c%c%c %c%c%c%c\n",
++		     escape_essid(info_element->data, info_element->len),
++		     MAC_ARG(beacon->header.addr3),
++		     (beacon->capability & cpu_to_le16(1 << 0xf)) ? '1' : '0',
++		     (beacon->capability & cpu_to_le16(1 << 0xe)) ? '1' : '0',
++		     (beacon->capability & cpu_to_le16(1 << 0xd)) ? '1' : '0',
++		     (beacon->capability & cpu_to_le16(1 << 0xc)) ? '1' : '0',
++		     (beacon->capability & cpu_to_le16(1 << 0xb)) ? '1' : '0',
++		     (beacon->capability & cpu_to_le16(1 << 0xa)) ? '1' : '0',
++		     (beacon->capability & cpu_to_le16(1 << 0x9)) ? '1' : '0',
++		     (beacon->capability & cpu_to_le16(1 << 0x8)) ? '1' : '0',
++		     (beacon->capability & cpu_to_le16(1 << 0x7)) ? '1' : '0',
++		     (beacon->capability & cpu_to_le16(1 << 0x6)) ? '1' : '0',
++		     (beacon->capability & cpu_to_le16(1 << 0x5)) ? '1' : '0',
++		     (beacon->capability & cpu_to_le16(1 << 0x4)) ? '1' : '0',
++		     (beacon->capability & cpu_to_le16(1 << 0x3)) ? '1' : '0',
++		     (beacon->capability & cpu_to_le16(1 << 0x2)) ? '1' : '0',
++		     (beacon->capability & cpu_to_le16(1 << 0x1)) ? '1' : '0',
++		     (beacon->capability & cpu_to_le16(1 << 0x0)) ? '1' : '0');
+ 
+ 	if (ieee80211_network_init(ieee, beacon, &network, stats)) {
+ 		IEEE80211_DEBUG_SCAN("Dropped '%s' (" MAC_FMT ") via %s.\n",
+@@ -1739,5 +1773,6 @@ void ieee80211_rx_mgt(struct ieee80211_device *ieee,
+ 	}
+ }
+ 
++EXPORT_SYMBOL_GPL(ieee80211_rx_any);
+ EXPORT_SYMBOL(ieee80211_rx_mgt);
+ EXPORT_SYMBOL(ieee80211_rx);
+diff --git a/net/ieee80211/ieee80211_tx.c b/net/ieee80211/ieee80211_tx.c
+index 54e0116..d8b0260 100644
+--- a/net/ieee80211/ieee80211_tx.c
++++ b/net/ieee80211/ieee80211_tx.c
+@@ -54,7 +54,7 @@ Desc. | ctrl | dura |  DA/RA  |   TA    |    SA   | Sequ |  Frame  |  fcs |
+       |      | tion | (BSSID) |         |         | ence |  data   |      |
+       `--------------------------------------------------|         |------'
+ Total: 28 non-data bytes                                 `----.----'
+-                                                              |
++							      |
+        .- 'Frame data' expands, if WEP enabled, to <----------'
+        |
+        V
+@@ -64,8 +64,8 @@ Bytes |  4  |   0-2296  |  4  |
+ Desc. | IV  | Encrypted | ICV |
+       |     | Packet    |     |
+       `-----|           |-----'
+-            `-----.-----'
+-                  |
++	    `-----.-----'
++		  |
+        .- 'Encrypted Packet' expands to
+        |
+        V
+@@ -126,7 +126,7 @@ payload of each frame is reduced to 492 bytes.
+ static u8 P802_1H_OUI[P80211_OUI_LEN] = { 0x00, 0x00, 0xf8 };
+ static u8 RFC1042_OUI[P80211_OUI_LEN] = { 0x00, 0x00, 0x00 };
+ 
+-static int ieee80211_copy_snap(u8 * data, u16 h_proto)
++static int ieee80211_copy_snap(u8 * data, __be16 h_proto)
+ {
+ 	struct ieee80211_snap_hdr *snap;
+ 	u8 *oui;
+@@ -136,7 +136,7 @@ static int ieee80211_copy_snap(u8 * data, u16 h_proto)
+ 	snap->ssap = 0xaa;
+ 	snap->ctrl = 0x03;
+ 
+-	if (h_proto == 0x8137 || h_proto == 0x80f3)
++	if (h_proto == htons(ETH_P_AARP) || h_proto == htons(ETH_P_IPX))
+ 		oui = P802_1H_OUI;
+ 	else
+ 		oui = RFC1042_OUI;
+@@ -144,7 +144,7 @@ static int ieee80211_copy_snap(u8 * data, u16 h_proto)
+ 	snap->oui[1] = oui[1];
+ 	snap->oui[2] = oui[2];
+ 
+-	*(u16 *) (data + SNAP_SIZE) = htons(h_proto);
++	memcpy(data + SNAP_SIZE, &h_proto, sizeof(u16));
+ 
+ 	return SNAP_SIZE + sizeof(u16);
+ }
+@@ -225,10 +225,10 @@ static int ieee80211_classify(struct sk_buff *skb)
+ 	struct iphdr *ip;
+ 
+ 	eth = (struct ethhdr *)skb->data;
+-	if (eth->h_proto != __constant_htons(ETH_P_IP))
++	if (eth->h_proto != htons(ETH_P_IP))
+ 		return 0;
+ 
+-	ip = skb->nh.iph;
++	ip = ip_hdr(skb);
+ 	switch (ip->tos & 0xfc) {
+ 	case 0x20:
+ 		return 2;
+@@ -260,7 +260,8 @@ int ieee80211_xmit(struct sk_buff *skb, struct net_device *dev)
+ 	    rts_required;
+ 	unsigned long flags;
+ 	struct net_device_stats *stats = &ieee->stats;
+-	int ether_type, encrypt, host_encrypt, host_encrypt_msdu, host_build_iv;
++	int encrypt, host_encrypt, host_encrypt_msdu, host_build_iv;
++	__be16 ether_type;
+ 	int bytes, fc, hdr_len;
+ 	struct sk_buff *skb_frag;
+ 	struct ieee80211_hdr_3addrqos header = {/* Ensure zero initialized */
+@@ -291,11 +292,11 @@ int ieee80211_xmit(struct sk_buff *skb, struct net_device *dev)
+ 		goto success;
+ 	}
+ 
+-	ether_type = ntohs(((struct ethhdr *)skb->data)->h_proto);
++	ether_type = ((struct ethhdr *)skb->data)->h_proto;
+ 
+ 	crypt = ieee->crypt[ieee->tx_keyidx];
+ 
+-	encrypt = !(ether_type == ETH_P_PAE && ieee->ieee802_1x) &&
++	encrypt = !(ether_type == htons(ETH_P_PAE) && ieee->ieee802_1x) &&
+ 	    ieee->sec.encrypt;
+ 
+ 	host_encrypt = ieee->host_encrypt && encrypt && crypt;
+@@ -303,14 +304,14 @@ int ieee80211_xmit(struct sk_buff *skb, struct net_device *dev)
+ 	host_build_iv = ieee->host_build_iv && encrypt && crypt;
+ 
+ 	if (!encrypt && ieee->ieee802_1x &&
+-	    ieee->drop_unencrypted && ether_type != ETH_P_PAE) {
++	    ieee->drop_unencrypted && ether_type != htons(ETH_P_PAE)) {
+ 		stats->tx_dropped++;
+ 		goto success;
+ 	}
+ 
+ 	/* Save source and destination addresses */
+-	memcpy(dest, skb->data, ETH_ALEN);
+-	memcpy(src, skb->data + ETH_ALEN, ETH_ALEN);
++	skb_copy_from_linear_data(skb, dest, ETH_ALEN);
++	skb_copy_from_linear_data_offset(skb, ETH_ALEN, src, ETH_ALEN);
+ 
+ 	if (host_encrypt || host_build_iv)
+ 		fc = IEEE80211_FTYPE_DATA | IEEE80211_STYPE_DATA |
+@@ -363,7 +364,7 @@ int ieee80211_xmit(struct sk_buff *skb, struct net_device *dev)
+ 		snapped = 1;
+ 		ieee80211_copy_snap(skb_put(skb_new, SNAP_SIZE + sizeof(u16)),
+ 				    ether_type);
+-		memcpy(skb_put(skb_new, skb->len), skb->data, skb->len);
++		skb_copy_from_linear_data(skb, skb_put(skb_new, skb->len), skb->len);
+ 		res = crypt->ops->encrypt_msdu(skb_new, hdr_len, crypt->priv);
+ 		if (res < 0) {
+ 			IEEE80211_ERROR("msdu encryption failed\n");
+@@ -492,7 +493,7 @@ int ieee80211_xmit(struct sk_buff *skb, struct net_device *dev)
+ 			bytes -= SNAP_SIZE + sizeof(u16);
+ 		}
+ 
+-		memcpy(skb_put(skb_frag, bytes), skb->data, bytes);
++		skb_copy_from_linear_data(skb, skb_put(skb_frag, bytes), bytes);
+ 
+ 		/* Advance the SKB... */
+ 		skb_pull(skb, bytes);
+diff --git a/net/ieee80211/ieee80211_wx.c b/net/ieee80211/ieee80211_wx.c
+index 5cb9cfd..c3a11e2 100644
+--- a/net/ieee80211/ieee80211_wx.c
++++ b/net/ieee80211/ieee80211_wx.c
+@@ -5,8 +5,8 @@
+   Portions of this file are based on the WEP enablement code provided by the
+   Host AP project hostap-drivers v0.1.3
+   Copyright (c) 2001-2002, SSH Communications Security Corp and Jouni Malinen
+-  <jkmaline@cc.hut.fi>
+-  Copyright (c) 2002-2003, Jouni Malinen <jkmaline@cc.hut.fi>
++  <j@w1.fi>
++  Copyright (c) 2002-2003, Jouni Malinen <j@w1.fi>
+ 
+   This program is free software; you can redistribute it and/or modify it
+   under the terms of version 2 of the GNU General Public License as
+@@ -89,12 +89,11 @@ static char *ieee80211_translate_scan(struct ieee80211_device *ieee,
+ 		start = iwe_stream_add_event(start, stop, &iwe, IW_EV_UINT_LEN);
+ 	}
+ 
+-	/* Add frequency/channel */
++	/* Add channel and frequency */
++	/* Note : userspace automatically computes channel using iwrange */
+ 	iwe.cmd = SIOCGIWFREQ;
+-/*	iwe.u.freq.m = ieee80211_frequency(network->channel, network->mode);
+-	iwe.u.freq.e = 3; */
+-	iwe.u.freq.m = network->channel;
+-	iwe.u.freq.e = 0;
++	iwe.u.freq.m = ieee80211_channel_to_freq(ieee, network->channel);
++	iwe.u.freq.e = 6;
+ 	iwe.u.freq.i = 0;
+ 	start = iwe_stream_add_event(start, stop, &iwe, IW_EV_FREQ_LEN);
+ 
+@@ -409,7 +408,7 @@ int ieee80211_wx_set_encode(struct ieee80211_device *ieee,
+ 					       (*crypt)->priv);
+ 		sec.flags |= (1 << key);
+ 		/* This ensures a key will be activated if no key is
+-		 * explicitely set */
++		 * explicitly set */
+ 		if (key == sec.active_key)
+ 			sec.flags |= SEC_ACTIVE_KEY;
+ 
+@@ -709,7 +708,7 @@ int ieee80211_wx_get_encodeext(struct ieee80211_device *ieee,
+ 	} else
+ 		idx = ieee->tx_keyidx;
+ 
+-	if (!ext->ext_flags & IW_ENCODE_EXT_GROUP_KEY &&
++	if (!(ext->ext_flags & IW_ENCODE_EXT_GROUP_KEY) &&
+ 	    ext->alg != IW_ENCODE_ALG_WEP)
+ 		if (idx != 0 || ieee->iw_mode != IW_MODE_INFRA)
+ 			return -EINVAL;
+@@ -754,7 +753,7 @@ int ieee80211_wx_set_auth(struct net_device *dev,
+ 	int err = 0;
+ 
+ 	spin_lock_irqsave(&ieee->lock, flags);
+-	
++
+ 	switch (wrqu->param.flags & IW_AUTH_INDEX) {
+ 	case IW_AUTH_WPA_VERSION:
+ 	case IW_AUTH_CIPHER_PAIRWISE:
+@@ -799,7 +798,7 @@ int ieee80211_wx_get_auth(struct net_device *dev,
+ 	int err = 0;
+ 
+ 	spin_lock_irqsave(&ieee->lock, flags);
+-	
++
+ 	switch (wrqu->param.flags & IW_AUTH_INDEX) {
+ 	case IW_AUTH_WPA_VERSION:
+ 	case IW_AUTH_CIPHER_PAIRWISE:
+diff --git a/net/ieee80211/softmac/ieee80211softmac_assoc.c b/net/ieee80211/softmac/ieee80211softmac_assoc.c
+index afbd2d5..6d14858 100644
+--- a/net/ieee80211/softmac/ieee80211softmac_assoc.c
++++ b/net/ieee80211/softmac/ieee80211softmac_assoc.c
+@@ -30,7 +30,7 @@
+  * Overview
+  *
+  * Before you can associate, you have to authenticate.
+- * 
++ *
+  */
+ 
+ /* Sends out an association request to the desired AP */
+@@ -41,10 +41,10 @@ ieee80211softmac_assoc(struct ieee80211softmac_device *mac, struct ieee80211soft
+ 
+ 	/* Switch to correct channel for this network */
+ 	mac->set_channel(mac->dev, net->channel);
+-	
++
+ 	/* Send association request */
+ 	ieee80211softmac_send_mgt_frame(mac, net, IEEE80211_STYPE_ASSOC_REQ, 0);
+-	
++
+ 	dprintk(KERN_INFO PFX "sent association request!\n");
+ 
+ 	spin_lock_irqsave(&mac->lock, flags);
+@@ -153,7 +153,7 @@ network_matches_request(struct ieee80211softmac_device *mac, struct ieee80211_ne
+ 	}
+ 
+ 	/* if 'ANY' network requested, take any that doesn't have privacy enabled */
+-	if (mac->associnfo.req_essid.len == 0 
++	if (mac->associnfo.req_essid.len == 0
+ 	    && !(net->capability & WLAN_CAPABILITY_PRIVACY))
+ 		return 1;
+ 	if (net->ssid_len != mac->associnfo.req_essid.len)
+@@ -209,8 +209,8 @@ ieee80211softmac_assoc_work(void *d)
+ 
+ 	/* try to find the requested network in our list, if we found one already */
+ 	if (bssvalid || mac->associnfo.bssfixed)
+-		found = ieee80211softmac_get_network_by_bssid(mac, mac->associnfo.bssid);	
+-	
++		found = ieee80211softmac_get_network_by_bssid(mac, mac->associnfo.bssid);
++
+ 	/* Search the ieee80211 networks for this network if we didn't find it by bssid,
+ 	 * but only if we've scanned at least once (to get a better list of networks to
+ 	 * select from). If we have not scanned before, the !found logic below will be
+@@ -263,15 +263,16 @@ ieee80211softmac_assoc_work(void *d)
+ 			spin_lock_irqsave(&mac->lock, flags);
+ 			mac->associnfo.scan_retry--;
+ 			spin_unlock_irqrestore(&mac->lock, flags);
+-		
+-			/* We know of no such network. Let's scan. 
++
++			/* We know of no such network. Let's scan.
+ 			 * NB: this also happens if we had no memory to copy the network info...
+ 			 * Maybe we can hope to have more memory after scanning finishes ;)
+ 			 */
+ 			dprintk(KERN_INFO PFX "Associate: Scanning for networks first.\n");
+ 			ieee80211softmac_notify(mac->dev, IEEE80211SOFTMAC_EVENT_SCAN_FINISHED, ieee80211softmac_assoc_notify_scan, NULL);
+-			if (ieee80211softmac_start_scan(mac))
++			if (ieee80211softmac_start_scan(mac)) {
+ 				dprintk(KERN_INFO PFX "Associate: failed to initiate scan. Is device up?\n");
++			}
+ 			return;
+ 		} else {
+ 			spin_lock_irqsave(&mac->lock, flags);
+@@ -343,7 +344,7 @@ ieee80211softmac_associated(struct ieee80211softmac_device *mac,
+ 		mac->set_bssid_filter(mac->dev, net->bssid);
+ 	memcpy(mac->ieee->bssid, net->bssid, ETH_ALEN);
+ 	netif_carrier_on(mac->dev);
+-	
++
+ 	mac->association_id = le16_to_cpup(&resp->aid);
+ }
+ 
+@@ -364,7 +365,7 @@ ieee80211softmac_handle_assoc_response(struct net_device * dev,
+ 
+ 	if (unlikely(!mac->running))
+ 		return -ENODEV;
+-	
++
+ 	spin_lock_irqsave(&mac->lock, flags);
+ 
+ 	if (!mac->associnfo.associating) {
+@@ -377,7 +378,8 @@ ieee80211softmac_handle_assoc_response(struct net_device * dev,
+ 
+ 	/* someone sending us things without us knowing him? Ignore. */
+ 	if (!network) {
+-		dprintk(KERN_INFO PFX "Received unrequested assocation response from " MAC_FMT "\n", MAC_ARG(resp->header.addr3));
++		dprintk(KERN_INFO PFX "Received unrequested assocation response from " MAC_FMT "\n",
++			MAC_ARG(resp->header.addr3));
+ 		spin_unlock_irqrestore(&mac->lock, flags);
+ 		return 0;
+ 	}
+@@ -401,7 +403,7 @@ ieee80211softmac_handle_assoc_response(struct net_device * dev,
+ 				network->authenticated = 0;
+ 				/* we don't want to do this more than once ... */
+ 				network->auth_desynced_once = 1;
+-				schedule_work(&mac->associnfo.work);
++				schedule_delayed_work(&mac->associnfo.work, 0);
+ 				break;
+ 			}
+ 		default:
+@@ -411,7 +413,7 @@ ieee80211softmac_handle_assoc_response(struct net_device * dev,
+ 			mac->associated = 0;
+ 			ieee80211softmac_call_events_locked(mac, IEEE80211SOFTMAC_EVENT_ASSOCIATE_FAILED, network);
+ 	}
+-	
++
+ 	spin_unlock_irqrestore(&mac->lock, flags);
+ 	return 0;
+ }
+@@ -423,7 +425,7 @@ ieee80211softmac_try_reassoc(struct ieee80211softmac_device *mac)
+ 
+ 	spin_lock_irqsave(&mac->lock, flags);
+ 	mac->associnfo.associating = 1;
+-	schedule_work(&mac->associnfo.work);
++	schedule_delayed_work(&mac->associnfo.work, 0);
+ 	spin_unlock_irqrestore(&mac->lock, flags);
+ }
+ 
+@@ -465,7 +467,7 @@ ieee80211softmac_handle_reassoc_req(struct net_device * dev,
+ 		dprintkl(KERN_INFO PFX "reassoc request from unknown network\n");
+ 		return 0;
+ 	}
+-	schedule_work(&mac->associnfo.work);
++	schedule_delayed_work(&mac->associnfo.work, 0);
+ 
+ 	return 0;
+ }
+diff --git a/net/ieee80211/softmac/ieee80211softmac_auth.c b/net/ieee80211/softmac/ieee80211softmac_auth.c
+index 593f512..37d620d 100644
+--- a/net/ieee80211/softmac/ieee80211softmac_auth.c
++++ b/net/ieee80211/softmac/ieee80211softmac_auth.c
+@@ -30,12 +30,12 @@ static void ieee80211softmac_auth_queue(void *data);
+ 
+ /* Queues an auth request to the desired AP */
+ int
+-ieee80211softmac_auth_req(struct ieee80211softmac_device *mac, 
++ieee80211softmac_auth_req(struct ieee80211softmac_device *mac,
+ 	struct ieee80211softmac_network *net)
+ {
+ 	struct ieee80211softmac_auth_queue_item *auth;
+ 	unsigned long flags;
+-	
++
+ 	if (net->authenticating || net->authenticated)
+ 		return 0;
+ 	net->authenticating = 1;
+@@ -43,7 +43,8 @@ ieee80211softmac_auth_req(struct ieee80211softmac_device *mac,
+ 	/* Add the network if it's not already added */
+ 	ieee80211softmac_add_network(mac, net);
+ 
+-	dprintk(KERN_NOTICE PFX "Queueing Authentication Request to "MAC_FMT"\n", MAC_ARG(net->bssid));
++	dprintk(KERN_NOTICE PFX "Queueing Authentication Request to "
++		MAC_FMT "\n", MAC_ARG(net->bssid));
+ 	/* Queue the auth request */
+ 	auth = (struct ieee80211softmac_auth_queue_item *)
+ 		kmalloc(sizeof(struct ieee80211softmac_auth_queue_item), GFP_KERNEL);
+@@ -55,15 +56,15 @@ ieee80211softmac_auth_req(struct ieee80211softmac_device *mac,
+ 	auth->retry = IEEE80211SOFTMAC_AUTH_RETRY_LIMIT;
+ 	auth->state = IEEE80211SOFTMAC_AUTH_OPEN_REQUEST;
+ 	INIT_WORK(&auth->work, &ieee80211softmac_auth_queue, (void *)auth);
+-	
++
+ 	/* Lock (for list) */
+ 	spin_lock_irqsave(&mac->lock, flags);
+ 
+ 	/* add to list */
+ 	list_add_tail(&auth->list, &mac->auth_queue);
+-	schedule_work(&auth->work);
++	schedule_delayed_work(&auth->work, 0);
+ 	spin_unlock_irqrestore(&mac->lock, flags);
+-	
++
+ 	return 0;
+ }
+ 
+@@ -84,7 +85,7 @@ ieee80211softmac_auth_queue(void *data)
+ 	if(auth->retry > 0) {
+ 		/* Switch to correct channel for this network */
+ 		mac->set_channel(mac->dev, net->channel);
+-		
++
+ 		/* Lock and set flags */
+ 		spin_lock_irqsave(&mac->lock, flags);
+ 		if (unlikely(!mac->running)) {
+@@ -98,13 +99,14 @@ ieee80211softmac_auth_queue(void *data)
+ 		auth->retry--;
+ 		spin_unlock_irqrestore(&mac->lock, flags);
+ 		if (ieee80211softmac_send_mgt_frame(mac, auth->net, IEEE80211_STYPE_AUTH, auth->state))
+-			dprintk(KERN_NOTICE PFX "Sending Authentication Request to "MAC_FMT" failed (this shouldn't happen, wait for the timeout).\n", MAC_ARG(net->bssid));
++			dprintk(KERN_NOTICE PFX "Sending Authentication Request to " MAC_FMT " failed (this shouldn't happen, wait for the timeout).\n",
++				MAC_ARG(net->bssid));
+ 		else
+-			dprintk(KERN_NOTICE PFX "Sent Authentication Request to "MAC_FMT".\n", MAC_ARG(net->bssid));
++			dprintk(KERN_NOTICE PFX "Sent Authentication Request to " MAC_FMT ".\n", MAC_ARG(net->bssid));
+ 		return;
+ 	}
+ 
+-	printkl(KERN_WARNING PFX "Authentication timed out with "MAC_FMT"\n", MAC_ARG(net->bssid));
++	printkl(KERN_WARNING PFX "Authentication timed out with " MAC_FMT "\n", MAC_ARG(net->bssid));
+ 	/* Remove this item from the queue */
+ 	spin_lock_irqsave(&mac->lock, flags);
+ 	net->authenticating = 0;
+@@ -127,11 +129,11 @@ ieee80211softmac_auth_challenge_response(void *_aq)
+ }
+ 
+ /* Handle the auth response from the AP
+- * This should be registered with ieee80211 as handle_auth 
++ * This should be registered with ieee80211 as handle_auth
+  */
+-int 
++int
+ ieee80211softmac_auth_resp(struct net_device *dev, struct ieee80211_auth *auth)
+-{	
++{
+ 
+ 	struct list_head *list_ptr;
+ 	struct ieee80211softmac_device *mac = ieee80211_priv(dev);
+@@ -139,7 +141,7 @@ ieee80211softmac_auth_resp(struct net_device *dev, struct ieee80211_auth *auth)
+ 	struct ieee80211softmac_network *net = NULL;
+ 	unsigned long flags;
+ 	u8 * data;
+-	
++
+ 	if (unlikely(!mac->running))
+ 		return -ENODEV;
+ 
+@@ -154,37 +156,37 @@ ieee80211softmac_auth_resp(struct net_device *dev, struct ieee80211_auth *auth)
+ 			aq = NULL;
+ 	}
+ 	spin_unlock_irqrestore(&mac->lock, flags);
+-	
++
+ 	/* Make sure that we've got an auth queue item for this request */
+ 	if(aq == NULL)
+ 	{
+-		dprintkl(KERN_DEBUG PFX "Authentication response received from "MAC_FMT" but no queue item exists.\n", MAC_ARG(auth->header.addr2));
++		dprintkl(KERN_DEBUG PFX "Authentication response received from " MAC_FMT " but no queue item exists.\n", MAC_ARG(auth->header.addr2));
+ 		/* Error #? */
+ 		return -1;
+-	}			
+-	
++	}
++
+ 	/* Check for out of order authentication */
+ 	if(!net->authenticating)
+ 	{
+-		dprintkl(KERN_DEBUG PFX "Authentication response received from "MAC_FMT" but did not request authentication.\n",MAC_ARG(auth->header.addr2));
++		dprintkl(KERN_DEBUG PFX "Authentication response received from " MAC_FMT " but did not request authentication.\n", MAC_ARG(auth->header.addr2));
+ 		return -1;
+ 	}
+ 
+ 	/* Parse the auth packet */
+-	switch(auth->algorithm) {
++	switch(le16_to_cpu(auth->algorithm)) {
+ 	case WLAN_AUTH_OPEN:
+ 		/* Check the status code of the response */
+ 
+-		switch(auth->status) {
++		switch(le16_to_cpu(auth->status)) {
+ 		case WLAN_STATUS_SUCCESS:
+ 			/* Update the status to Authenticated */
+ 			spin_lock_irqsave(&mac->lock, flags);
+-		        net->authenticating = 0;
++			net->authenticating = 0;
+ 			net->authenticated = 1;
+ 			spin_unlock_irqrestore(&mac->lock, flags);
+-			
++
+ 			/* Send event */
+-			printkl(KERN_NOTICE PFX "Open Authentication completed with "MAC_FMT"\n", MAC_ARG(net->bssid));
++			printkl(KERN_NOTICE PFX "Open Authentication completed with " MAC_FMT "\n", MAC_ARG(net->bssid));
+ 			ieee80211softmac_call_events(mac, IEEE80211SOFTMAC_EVENT_AUTHENTICATED, net);
+ 			break;
+ 		default:
+@@ -193,8 +195,8 @@ ieee80211softmac_auth_resp(struct net_device *dev, struct ieee80211_auth *auth)
+ 			net->authenticated = 0;
+ 			net->authenticating = 0;
+ 			spin_unlock_irqrestore(&mac->lock, flags);
+-			
+-			printkl(KERN_NOTICE PFX "Open Authentication with "MAC_FMT" failed, error code: %i\n", 
++
++			printkl(KERN_NOTICE PFX "Open Authentication with " MAC_FMT " failed, error code: %i\n",
+ 				MAC_ARG(net->bssid), le16_to_cpup(&auth->status));
+ 			/* Count the error? */
+ 			break;
+@@ -203,23 +205,22 @@ ieee80211softmac_auth_resp(struct net_device *dev, struct ieee80211_auth *auth)
+ 		break;
+ 	case WLAN_AUTH_SHARED_KEY:
+ 		/* Figure out where we are in the process */
+-		switch(auth->transaction) {
++		switch(le16_to_cpu(auth->transaction)) {
+ 		case IEEE80211SOFTMAC_AUTH_SHARED_CHALLENGE:
+ 			/* Check to make sure we have a challenge IE */
+ 			data = (u8 *)auth->info_element;
+ 			if (*data++ != MFIE_TYPE_CHALLENGE) {
+ 				printkl(KERN_NOTICE PFX "Shared Key Authentication failed due to a missing challenge.\n");
+-				break;	
++				break;
+ 			}
+ 			/* Save the challenge */
+ 			spin_lock_irqsave(&mac->lock, flags);
+-			net->challenge_len = *data++; 	
++			net->challenge_len = *data++;
+ 			if (net->challenge_len > WLAN_AUTH_CHALLENGE_LEN)
+ 				net->challenge_len = WLAN_AUTH_CHALLENGE_LEN;
+ 			kfree(net->challenge);
+-			net->challenge = kmalloc(net->challenge_len,
++			net->challenge = kmemdup(data, net->challenge_len,
+ 						 GFP_ATOMIC);
+-			memcpy(net->challenge, data, net->challenge_len);
+ 			if (net->challenge == NULL) {
+ 				printkl(KERN_NOTICE PFX "Shared Key "
+ 					"Authentication failed due to "
+@@ -227,7 +228,7 @@ ieee80211softmac_auth_resp(struct net_device *dev, struct ieee80211_auth *auth)
+ 				spin_unlock_irqrestore(&mac->lock, flags);
+ 				break;
+ 			}
+-			aq->state = IEEE80211SOFTMAC_AUTH_SHARED_RESPONSE; 
++			aq->state = IEEE80211SOFTMAC_AUTH_SHARED_RESPONSE;
+ 
+ 			/* We reuse the work struct from the auth request here.
+ 			 * It is safe to do so as each one is per-request, and
+@@ -236,7 +237,7 @@ ieee80211softmac_auth_resp(struct net_device *dev, struct ieee80211_auth *auth)
+ 			 * request. */
+ 			cancel_delayed_work(&aq->work);
+ 			INIT_WORK(&aq->work, &ieee80211softmac_auth_challenge_response, (void *)aq);
+-			schedule_work(&aq->work);
++			schedule_delayed_work(&aq->work, 0);
+ 			spin_unlock_irqrestore(&mac->lock, flags);
+ 			return 0;
+ 		case IEEE80211SOFTMAC_AUTH_SHARED_PASS:
+@@ -246,22 +247,22 @@ ieee80211softmac_auth_resp(struct net_device *dev, struct ieee80211_auth *auth)
+ 			/* Check the status code of the response */
+ 			switch(auth->status) {
+ 			case WLAN_STATUS_SUCCESS:
+-				/* Update the status to Authenticated */	
++				/* Update the status to Authenticated */
+ 				spin_lock_irqsave(&mac->lock, flags);
+ 				net->authenticating = 0;
+ 				net->authenticated = 1;
+ 				spin_unlock_irqrestore(&mac->lock, flags);
+-				printkl(KERN_NOTICE PFX "Shared Key Authentication completed with "MAC_FMT"\n", 
++				printkl(KERN_NOTICE PFX "Shared Key Authentication completed with " MAC_FMT "\n",
+ 					MAC_ARG(net->bssid));
+ 				ieee80211softmac_call_events(mac, IEEE80211SOFTMAC_EVENT_AUTHENTICATED, net);
+ 				break;
+ 			default:
+-				printkl(KERN_NOTICE PFX "Shared Key Authentication with "MAC_FMT" failed, error code: %i\n", 
++				printkl(KERN_NOTICE PFX "Shared Key Authentication with " MAC_FMT " failed, error code: %i\n",
+ 					MAC_ARG(net->bssid), le16_to_cpup(&auth->status));
+ 				/* Lock and reset flags */
+ 				spin_lock_irqsave(&mac->lock, flags);
+- 				net->authenticating = 0;
+- 				net->authenticated = 0;
++				net->authenticating = 0;
++				net->authenticated = 0;
+ 				spin_unlock_irqrestore(&mac->lock, flags);
+ 				/* Count the error? */
+ 				break;
+@@ -275,7 +276,7 @@ ieee80211softmac_auth_resp(struct net_device *dev, struct ieee80211_auth *auth)
+ 		goto free_aq;
+ 		break;
+ 	default:
+-		/* ERROR */	
++		/* ERROR */
+ 		goto free_aq;
+ 		break;
+ 	}
+@@ -311,7 +312,7 @@ ieee80211softmac_deauth_from_net(struct ieee80211softmac_device *mac,
+ 	spin_lock_irqsave(&mac->lock, flags);
+ 	net->authenticating = 0;
+ 	net->authenticated = 0;
+-	
++
+ 	/* Find correct auth queue item, if it exists */
+ 	list_for_each(list_ptr, &mac->auth_queue) {
+ 		aq = list_entry(list_ptr, struct ieee80211softmac_auth_queue_item, list);
+@@ -320,7 +321,7 @@ ieee80211softmac_deauth_from_net(struct ieee80211softmac_device *mac,
+ 		else
+ 			aq = NULL;
+ 	}
+-	
++
+ 	/* Cancel pending work */
+ 	if(aq != NULL)
+ 		/* Not entirely safe?  What about running work? */
+@@ -331,7 +332,7 @@ ieee80211softmac_deauth_from_net(struct ieee80211softmac_device *mac,
+ 	if(net->challenge != NULL)
+ 		kfree(net->challenge);
+ 	kfree(net);
+-	
++
+ 	/* can't transmit data right now... */
+ 	netif_carrier_off(mac->dev);
+ 	spin_unlock_irqrestore(&mac->lock, flags);
+@@ -339,15 +340,15 @@ ieee80211softmac_deauth_from_net(struct ieee80211softmac_device *mac,
+ 	ieee80211softmac_try_reassoc(mac);
+ }
+ 
+-/* 
++/*
+  * Sends a deauth request to the desired AP
+  */
+-int 
+-ieee80211softmac_deauth_req(struct ieee80211softmac_device *mac, 
++int
++ieee80211softmac_deauth_req(struct ieee80211softmac_device *mac,
+ 	struct ieee80211softmac_network *net, int reason)
+ {
+ 	int ret;
+-	
++
+ 	/* Make sure the network is authenticated */
+ 	if (!net->authenticated)
+ 	{
+@@ -355,25 +356,25 @@ ieee80211softmac_deauth_req(struct ieee80211softmac_device *mac,
+ 		/* Error okay? */
+ 		return -EPERM;
+ 	}
+-	
++
+ 	/* Send the de-auth packet */
+ 	if((ret = ieee80211softmac_send_mgt_frame(mac, net, IEEE80211_STYPE_DEAUTH, reason)))
+ 		return ret;
+-	
++
+ 	ieee80211softmac_deauth_from_net(mac, net);
+ 	return 0;
+ }
+- 
++
+ /*
+  * This should be registered with ieee80211 as handle_deauth
+  */
+-int 
++int
+ ieee80211softmac_deauth_resp(struct net_device *dev, struct ieee80211_deauth *deauth)
+ {
+-	
++
+ 	struct ieee80211softmac_network *net = NULL;
+ 	struct ieee80211softmac_device *mac = ieee80211_priv(dev);
+-	
++
+ 	if (unlikely(!mac->running))
+ 		return -ENODEV;
+ 
+@@ -383,9 +384,9 @@ ieee80211softmac_deauth_resp(struct net_device *dev, struct ieee80211_deauth *de
+ 	}
+ 
+ 	net = ieee80211softmac_get_network_by_bssid(mac, deauth->header.addr2);
+-	
++
+ 	if (net == NULL) {
+-		dprintkl(KERN_DEBUG PFX "Received deauthentication packet from "MAC_FMT", but that network is unknown.\n",
++		dprintkl(KERN_DEBUG PFX "Received deauthentication packet from " MAC_FMT ", but that network is unknown.\n",
+ 			MAC_ARG(deauth->header.addr2));
+ 		return 0;
+ 	}
+@@ -401,6 +402,6 @@ ieee80211softmac_deauth_resp(struct net_device *dev, struct ieee80211_deauth *de
+ 	ieee80211softmac_deauth_from_net(mac, net);
+ 
+ 	/* let's try to re-associate */
+-	schedule_work(&mac->associnfo.work);
++	schedule_delayed_work(&mac->associnfo.work, 0);
+ 	return 0;
+ }
+diff --git a/net/ieee80211/softmac/ieee80211softmac_event.c b/net/ieee80211/softmac/ieee80211softmac_event.c
+index f34fa2e..3c89593 100644
+--- a/net/ieee80211/softmac/ieee80211softmac_event.c
++++ b/net/ieee80211/softmac/ieee80211softmac_event.c
+@@ -77,7 +77,7 @@ ieee80211softmac_notify_callback(void *d)
+ {
+ 	struct ieee80211softmac_event event = *(struct ieee80211softmac_event*) d;
+ 	kfree(d);
+-	
++
+ 	event.fun(event.mac->dev, event.event_type, event.context);
+ }
+ 
+@@ -90,14 +90,14 @@ ieee80211softmac_notify_internal(struct ieee80211softmac_device *mac,
+ 
+ 	if (event < -1 || event > IEEE80211SOFTMAC_EVENT_LAST)
+ 		return -ENOSYS;
+-	
++
+ 	if (!fun)
+ 		return -EINVAL;
+-	
++
+ 	eventptr = kmalloc(sizeof(struct ieee80211softmac_event), gfp_mask);
+ 	if (!eventptr)
+ 		return -ENOMEM;
+-	
++
+ 	eventptr->event_type = event;
+ 	INIT_WORK(&eventptr->work, ieee80211softmac_notify_callback, eventptr);
+ 	eventptr->fun = fun;
+@@ -120,7 +120,7 @@ ieee80211softmac_notify_gfp(struct net_device *dev,
+ 
+ 	if (event < 0 || event > IEEE80211SOFTMAC_EVENT_LAST)
+ 		return -ENOSYS;
+-	
++
+ 	return ieee80211softmac_notify_internal(mac, event, NULL, fun, context, gfp_mask);
+ }
+ EXPORT_SYMBOL_GPL(ieee80211softmac_notify_gfp);
+@@ -131,7 +131,7 @@ ieee80211softmac_call_events_locked(struct ieee80211softmac_device *mac, int eve
+ {
+ 	struct ieee80211softmac_event *eventptr, *tmp;
+ 	struct ieee80211softmac_network *network;
+-	
++
+ 	if (event >= 0) {
+ 		union iwreq_data wrqu;
+ 		int we_event;
+@@ -170,7 +170,7 @@ ieee80211softmac_call_events_locked(struct ieee80211softmac_device *mac, int eve
+ 				/* User may have subscribed to ANY event, so
+ 				 * we tell them which event triggered it. */
+ 				eventptr->event_type = event;
+-				schedule_work(&eventptr->work);
++				schedule_delayed_work(&eventptr->work, 0);
+ 			}
+ 		}
+ }
+diff --git a/net/ieee80211/softmac/ieee80211softmac_io.c b/net/ieee80211/softmac/ieee80211softmac_io.c
+index 3b67d19..446d68a 100644
+--- a/net/ieee80211/softmac/ieee80211softmac_io.c
++++ b/net/ieee80211/softmac/ieee80211softmac_io.c
+@@ -1,4 +1,4 @@
+-/* 
++/*
+  * Some parts based on code from net80211
+  * Copyright (c) 2001 Atsushi Onoe
+  * Copyright (c) 2002-2005 Sam Leffler, Errno Consulting
+@@ -29,14 +29,14 @@
+  * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+- * 
++ *
+  */
+ 
+ #include "ieee80211softmac_priv.h"
+ 
+ /* Helper functions for inserting data into the frames */
+ 
+-/* 
++/*
+  * Adds an ESSID element to the frame
+  *
+  */
+@@ -53,7 +53,7 @@ ieee80211softmac_add_essid(u8 *dst, struct ieee80211softmac_essid *essid)
+ 		*dst++ = 0;
+ 		return dst;
+ 	}
+-}     
++}
+ 
+ /* Adds Supported Rates and if required Extended Rates Information Element
+  * to the frame, ASSUMES WE HAVE A SORTED LIST OF RATES */
+@@ -81,18 +81,18 @@ ieee80211softmac_frame_add_rates(u8 *dst, const struct ieee80211softmac_ratesinf
+ 			memcpy(dst, r->rates + cck_len, ofdm_len);
+ 			dst += ofdm_len;
+ 		}
+-	}	
++	}
+ 	return dst;
+ }
+ 
+ /* Allocate a management frame */
+-static u8 * 
++static u8 *
+ ieee80211softmac_alloc_mgt(u32 size)
+ {
+ 	u8 * data;
+-	
++
+ 	/* Add the header and FCS to the size */
+-	size = size + IEEE80211_3ADDR_LEN;	
++	size = size + IEEE80211_3ADDR_LEN;
+ 	if(size > IEEE80211_DATA_LEN)
+ 		return NULL;
+ 	/* Allocate the frame */
+@@ -103,13 +103,13 @@ ieee80211softmac_alloc_mgt(u32 size)
+ /*
+  * Add a 2 Address Header
+  */
+-static void 
++static void
+ ieee80211softmac_hdr_2addr(struct ieee80211softmac_device *mac,
+ 	struct ieee80211_hdr_2addr *header, u32 type, u8 *dest)
+ {
+ 	/* Fill in the frame control flags */
+ 	header->frame_ctl = cpu_to_le16(type);
+-	/* Control packets always have WEP turned off */	
++	/* Control packets always have WEP turned off */
+ 	if(type > IEEE80211_STYPE_CFENDACK && type < IEEE80211_STYPE_PSPOLL)
+ 		header->frame_ctl |= mac->ieee->sec.level ? cpu_to_le16(IEEE80211_FCTL_PROTECTED) : 0;
+ 
+@@ -130,13 +130,13 @@ ieee80211softmac_hdr_2addr(struct ieee80211softmac_device *mac,
+ 
+ 
+ /* Add a 3 Address Header */
+-static void 
++static void
+ ieee80211softmac_hdr_3addr(struct ieee80211softmac_device *mac,
+ 	struct ieee80211_hdr_3addr *header, u32 type, u8 *dest, u8 *bssid)
+ {
+ 	/* This is common with 2addr, so use that instead */
+-	ieee80211softmac_hdr_2addr(mac, (struct ieee80211_hdr_2addr *)header, type, dest);	
+-	
++	ieee80211softmac_hdr_2addr(mac, (struct ieee80211_hdr_2addr *)header, type, dest);
++
+ 	/* Fill in the BSS ID */
+ 	if(bssid == NULL)
+ 		memset(header->addr3, 0xFF, ETH_ALEN);
+@@ -148,11 +148,11 @@ ieee80211softmac_hdr_3addr(struct ieee80211softmac_device *mac,
+ 	 * shouldn't the sequence number be in ieee80211? */
+ }
+ 
+-static u16
++static __le16
+ ieee80211softmac_capabilities(struct ieee80211softmac_device *mac,
+ 	struct ieee80211softmac_network *net)
+ {
+-	u16 capability = 0;
++	__le16 capability = 0;
+ 
+ 	/* ESS and IBSS bits are set according to the current mode */
+ 	switch (mac->ieee->iw_mode) {
+@@ -163,8 +163,8 @@ ieee80211softmac_capabilities(struct ieee80211softmac_device *mac,
+ 		capability = cpu_to_le16(WLAN_CAPABILITY_IBSS);
+ 		break;
+ 	case IW_MODE_AUTO:
+-		capability = net->capabilities &
+-			(WLAN_CAPABILITY_ESS|WLAN_CAPABILITY_IBSS);
++		capability = cpu_to_le16(net->capabilities &
++			(WLAN_CAPABILITY_ESS|WLAN_CAPABILITY_IBSS));
+ 		break;
+ 	default:
+ 		/* bleh. we don't ever go to these modes */
+@@ -182,7 +182,7 @@ ieee80211softmac_capabilities(struct ieee80211softmac_device *mac,
+ 	/* Short Preamble */
+ 	/* Always supported: we probably won't ever be powering devices which
+ 	 * dont support this... */
+-	capability |= WLAN_CAPABILITY_SHORT_PREAMBLE;
++	capability |= cpu_to_le16(WLAN_CAPABILITY_SHORT_PREAMBLE);
+ 
+ 	/* PBCC */
+ 	/* Not widely used */
+@@ -201,11 +201,11 @@ ieee80211softmac_capabilities(struct ieee80211softmac_device *mac,
+ 
+ /*****************************************************************************
+  * Create Management packets
+- *****************************************************************************/ 
++ *****************************************************************************/
+ 
+ /* Creates an association request packet */
+ static u32
+-ieee80211softmac_assoc_req(struct ieee80211_assoc_request **pkt, 
++ieee80211softmac_assoc_req(struct ieee80211_assoc_request **pkt,
+ 	struct ieee80211softmac_device *mac, struct ieee80211softmac_network *net)
+ {
+ 	u8 *data;
+@@ -233,7 +233,7 @@ ieee80211softmac_assoc_req(struct ieee80211_assoc_request **pkt,
+ 
+ 	/* Fill in Listen Interval (?) */
+ 	(*pkt)->listen_interval = cpu_to_le16(10);
+-	
++
+ 	data = (u8 *)(*pkt)->info_element;
+ 	/* Add SSID */
+ 	data = ieee80211softmac_add_essid(data, &net->essid);
+@@ -250,7 +250,7 @@ ieee80211softmac_assoc_req(struct ieee80211_assoc_request **pkt,
+ 
+ /* Create a reassociation request packet */
+ static u32
+-ieee80211softmac_reassoc_req(struct ieee80211_reassoc_request **pkt, 
++ieee80211softmac_reassoc_req(struct ieee80211_reassoc_request **pkt,
+ 	struct ieee80211softmac_device *mac, struct ieee80211softmac_network *net)
+ {
+ 	u8 *data;
+@@ -263,9 +263,9 @@ ieee80211softmac_reassoc_req(struct ieee80211_reassoc_request **pkt,
+ 		/* Rates IE */
+ 		1 + 1 + IEEE80211SOFTMAC_MAX_RATES_LEN +
+ 		/* Extended Rates IE */
+-		1 + 1 + IEEE80211SOFTMAC_MAX_EX_RATES_LEN 
++		1 + 1 + IEEE80211SOFTMAC_MAX_EX_RATES_LEN
+ 		/* Other IE's? */
+-	);				
++	);
+ 	if (unlikely((*pkt) == NULL))
+ 		return 0;
+ 	ieee80211softmac_hdr_3addr(mac, &((*pkt)->header), IEEE80211_STYPE_REASSOC_REQ, net->bssid, net->bssid);
+@@ -277,10 +277,10 @@ ieee80211softmac_reassoc_req(struct ieee80211_reassoc_request **pkt,
+ 	(*pkt)->listen_interval = cpu_to_le16(10);
+ 	/* Fill in the current AP MAC */
+ 	memcpy((*pkt)->current_ap, mac->ieee->bssid, ETH_ALEN);
+-	
++
+ 	data = (u8 *)(*pkt)->info_element;
+ 	/* Add SSID */
+-	data = ieee80211softmac_add_essid(data, &net->essid); 
++	data = ieee80211softmac_add_essid(data, &net->essid);
+ 	/* Add Rates */
+ 	data = ieee80211softmac_frame_add_rates(data, &mac->ratesinfo);
+ 	/* Return packet size */
+@@ -289,7 +289,7 @@ ieee80211softmac_reassoc_req(struct ieee80211_reassoc_request **pkt,
+ 
+ /* Create an authentication packet */
+ static u32
+-ieee80211softmac_auth(struct ieee80211_auth **pkt, 
++ieee80211softmac_auth(struct ieee80211_auth **pkt,
+ 	struct ieee80211softmac_device *mac, struct ieee80211softmac_network *net,
+ 	u16 transaction, u16 status, int *encrypt_mpdu)
+ {
+@@ -309,20 +309,20 @@ ieee80211softmac_auth(struct ieee80211_auth **pkt,
+ 	if (unlikely((*pkt) == NULL))
+ 		return 0;
+ 	ieee80211softmac_hdr_3addr(mac, &((*pkt)->header), IEEE80211_STYPE_AUTH, net->bssid, net->bssid);
+-		
++
+ 	/* Algorithm */
+ 	(*pkt)->algorithm = cpu_to_le16(auth_mode);
+ 	/* Transaction */
+ 	(*pkt)->transaction = cpu_to_le16(transaction);
+ 	/* Status */
+ 	(*pkt)->status = cpu_to_le16(status);
+-	
++
+ 	data = (u8 *)(*pkt)->info_element;
+ 	/* Challenge Text */
+ 	if (is_shared_response) {
+ 		*data = MFIE_TYPE_CHALLENGE;
+ 		data++;
+-		
++
+ 		/* Copy the challenge in */
+ 		*data = net->challenge_len;
+ 		data++;
+@@ -360,7 +360,7 @@ static u32
+ ieee80211softmac_probe_req(struct ieee80211_probe_request **pkt,
+ 	struct ieee80211softmac_device *mac, struct ieee80211softmac_essid *essid)
+ {
+-	u8 *data;	
++	u8 *data;
+ 	/* Allocate Packet */
+ 	(*pkt) = (struct ieee80211_probe_request *)ieee80211softmac_alloc_mgt(
+ 		/* SSID of requested network */
+@@ -368,12 +368,12 @@ ieee80211softmac_probe_req(struct ieee80211_probe_request **pkt,
+ 		/* Rates IE */
+ 		1 + 1 + IEEE80211SOFTMAC_MAX_RATES_LEN +
+ 		/* Extended Rates IE */
+-		1 + 1 + IEEE80211SOFTMAC_MAX_EX_RATES_LEN 
++		1 + 1 + IEEE80211SOFTMAC_MAX_EX_RATES_LEN
+ 	);
+ 	if (unlikely((*pkt) == NULL))
+ 		return 0;
+ 	ieee80211softmac_hdr_3addr(mac, &((*pkt)->header), IEEE80211_STYPE_PROBE_REQ, NULL, NULL);
+-		
++
+ 	data = (u8 *)(*pkt)->info_element;
+ 	/* Add ESSID (can be NULL) */
+ 	data = ieee80211softmac_add_essid(data, essid);
+@@ -401,7 +401,7 @@ ieee80211softmac_probe_resp(struct ieee80211_probe_response **pkt,
+ 		2 +		/* DS Parameter Set */
+ 		8 +		/* CF Parameter Set */
+ 		4 		/* IBSS Parameter Set */
+-	);	
++	);
+ 	if (unlikely((*pkt) == NULL))
+ 		return 0;
+ 	ieee80211softmac_hdr_3addr(mac, &((*pkt)->header), IEEE80211_STYPE_PROBE_RESP, net->bssid, net->bssid);
+@@ -445,15 +445,15 @@ ieee80211softmac_send_mgt_frame(struct ieee80211softmac_device *mac,
+ 		pkt_size = ieee80211softmac_probe_resp((struct ieee80211_probe_response **)(&pkt), mac, (struct ieee80211softmac_network *)ptrarg);
+ 		break;
+ 	default:
+-                printkl(KERN_DEBUG PFX "Unsupported Management Frame type: %i\n", type);
+-                return -EINVAL;
++		printkl(KERN_DEBUG PFX "Unsupported Management Frame type: %i\n", type);
++		return -EINVAL;
+ 	};
+ 
+ 	if(pkt_size == 0 || pkt == NULL) {
+ 		printkl(KERN_DEBUG PFX "Error, packet is nonexistant or 0 length\n");
+ 		return -ENOMEM;
+ 	}
+-	
++
+ 	/* Send the packet to the ieee80211 layer for tx */
+ 	/* we defined softmac->mgmt_xmit for this. Should we keep it
+ 	 * as it is (that means we'd need to wrap this into a txb),
+diff --git a/net/ieee80211/softmac/ieee80211softmac_module.c b/net/ieee80211/softmac/ieee80211softmac_module.c
+index 6f2eb17..9295109 100644
+--- a/net/ieee80211/softmac/ieee80211softmac_module.c
++++ b/net/ieee80211/softmac/ieee80211softmac_module.c
+@@ -32,13 +32,16 @@ struct net_device *alloc_ieee80211softmac(int sizeof_priv)
+ {
+ 	struct ieee80211softmac_device *softmac;
+ 	struct net_device *dev;
+-	
+-	dev = alloc_ieee80211(sizeof(struct ieee80211softmac_device) + sizeof_priv);
++
++	dev = alloc_ieee80211(sizeof(*softmac) + sizeof_priv);
++	if (!dev)
++		return NULL;
+ 	softmac = ieee80211_priv(dev);
++
+ 	softmac->dev = dev;
+ 	softmac->ieee = netdev_priv(dev);
+ 	spin_lock_init(&softmac->lock);
+-	
++
+ 	softmac->ieee->handle_auth = ieee80211softmac_auth_resp;
+ 	softmac->ieee->handle_deauth = ieee80211softmac_deauth_resp;
+ 	softmac->ieee->handle_assoc_response = ieee80211softmac_handle_assoc_response;
+@@ -64,37 +67,37 @@ struct net_device *alloc_ieee80211softmac(int sizeof_priv)
+ 
+ 	/* to start with, we can't send anything ... */
+ 	netif_carrier_off(dev);
+-	
++
+ 	return dev;
+ }
+ EXPORT_SYMBOL_GPL(alloc_ieee80211softmac);
+ 
+ /* Clears the pending work queue items, stops all scans, etc. */
+-void 
++void
+ ieee80211softmac_clear_pending_work(struct ieee80211softmac_device *sm)
+ {
+ 	unsigned long flags;
+ 	struct ieee80211softmac_event *eventptr, *eventtmp;
+ 	struct ieee80211softmac_auth_queue_item *authptr, *authtmp;
+ 	struct ieee80211softmac_network *netptr, *nettmp;
+-	
++
+ 	ieee80211softmac_stop_scan(sm);
+ 	ieee80211softmac_wait_for_scan(sm);
+-	
++
+ 	spin_lock_irqsave(&sm->lock, flags);
+ 	sm->running = 0;
+ 
+ 	/* Free all pending assoc work items */
+ 	cancel_delayed_work(&sm->associnfo.work);
+-	
++
+ 	/* Free all pending scan work items */
+ 	if(sm->scaninfo != NULL)
+-		cancel_delayed_work(&sm->scaninfo->softmac_scan);	
+-	
++		cancel_delayed_work(&sm->scaninfo->softmac_scan);
++
+ 	/* Free all pending auth work items */
+ 	list_for_each_entry(authptr, &sm->auth_queue, list)
+ 		cancel_delayed_work(&authptr->work);
+-	
++
+ 	/* delete all pending event calls and work items */
+ 	list_for_each_entry_safe(eventptr, eventtmp, &sm->events, list)
+ 		cancel_delayed_work(&eventptr->work);
+@@ -109,13 +112,13 @@ ieee80211softmac_clear_pending_work(struct ieee80211softmac_device *sm)
+ 		list_del(&authptr->list);
+ 		kfree(authptr);
+ 	}
+-	
++
+ 	/* delete all pending event calls and work items */
+ 	list_for_each_entry_safe(eventptr, eventtmp, &sm->events, list) {
+ 		list_del(&eventptr->list);
+ 		kfree(eventptr);
+ 	}
+-		
++
+ 	/* Free all networks */
+ 	list_for_each_entry_safe(netptr, nettmp, &sm->network_list, list) {
+ 		ieee80211softmac_del_network_locked(sm, netptr);
+@@ -131,7 +134,7 @@ EXPORT_SYMBOL_GPL(ieee80211softmac_clear_pending_work);
+ void free_ieee80211softmac(struct net_device *dev)
+ {
+ 	struct ieee80211softmac_device *sm = ieee80211_priv(dev);
+-	ieee80211softmac_clear_pending_work(sm);	
++	ieee80211softmac_clear_pending_work(sm);
+ 	kfree(sm->scaninfo);
+ 	kfree(sm->wpa.IE);
+ 	free_ieee80211(dev);
+@@ -178,21 +181,14 @@ int ieee80211softmac_ratesinfo_rate_supported(struct ieee80211softmac_ratesinfo
+ 	return 0;
+ }
+ 
+-/* Finds the highest rate which is:
+- *  1. Present in ri (optionally a basic rate)
+- *  2. Supported by the device
+- *  3. Less than or equal to the user-defined rate
+- */
+-static u8 highest_supported_rate(struct ieee80211softmac_device *mac,
++u8 ieee80211softmac_highest_supported_rate(struct ieee80211softmac_device *mac,
+ 	struct ieee80211softmac_ratesinfo *ri, int basic_only)
+ {
+ 	u8 user_rate = mac->txrates.user_rate;
+ 	int i;
+ 
+-	if (ri->count == 0) {
+-		dprintk(KERN_ERR PFX "empty ratesinfo?\n");
++	if (ri->count == 0)
+ 		return IEEE80211_CCK_RATE_1MB;
+-	}
+ 
+ 	for (i = ri->count - 1; i >= 0; i--) {
+ 		u8 rate = ri->rates[i];
+@@ -208,6 +204,7 @@ static u8 highest_supported_rate(struct ieee80211softmac_device *mac,
+ 	/* If we haven't found a suitable rate by now, just trust the user */
+ 	return user_rate;
+ }
++EXPORT_SYMBOL_GPL(ieee80211softmac_highest_supported_rate);
+ 
+ void ieee80211softmac_recalc_txrates(struct ieee80211softmac_device *mac)
+ {
+@@ -219,13 +216,13 @@ void ieee80211softmac_recalc_txrates(struct ieee80211softmac_device *mac)
+ 		oldrates = mac->txrates;
+ 
+ 	change |= IEEE80211SOFTMAC_TXRATECHG_DEFAULT;
+-	txrates->default_rate = highest_supported_rate(mac, &mac->associnfo.supported_rates, 0);
++	txrates->default_rate = ieee80211softmac_highest_supported_rate(mac, &mac->associnfo.supported_rates, 0);
+ 
+ 	change |= IEEE80211SOFTMAC_TXRATECHG_DEFAULT_FBACK;
+ 	txrates->default_fallback = lower_rate(mac, txrates->default_rate);
+ 
+ 	change |= IEEE80211SOFTMAC_TXRATECHG_MCAST;
+-	txrates->mcast_rate = highest_supported_rate(mac, &mac->associnfo.supported_rates, 1);
++	txrates->mcast_rate = ieee80211softmac_highest_supported_rate(mac, &mac->associnfo.supported_rates, 1);
+ 
+ 	if (mac->txrates_change)
+ 		mac->txrates_change(mac->dev, change, &oldrates);
+@@ -245,6 +242,8 @@ void ieee80211softmac_init_txrates(struct ieee80211softmac_device *mac)
+ 	/* Change the default txrate to the highest possible value.
+ 	 * The txrate machine will lower it, if it is too high.
+ 	 */
++	if (mac->txrates_change)
++		oldrates = mac->txrates;
+ 	if (ieee->modulation & IEEE80211_OFDM_MODULATION)
+ 		txrates->user_rate = IEEE80211_OFDM_RATE_24MB;
+ 	else
+@@ -289,7 +288,7 @@ void ieee80211softmac_set_rates(struct net_device *dev, u8 count, u8 *rates)
+ {
+ 	struct ieee80211softmac_device *mac = ieee80211_priv(dev);
+ 	unsigned long flags;
+-	
++
+ 	spin_lock_irqsave(&mac->lock, flags);
+ 	memcpy(mac->ratesinfo.rates, rates, count);
+ 	mac->ratesinfo.count = count;
+@@ -301,7 +300,7 @@ static u8 raise_rate(struct ieee80211softmac_device *mac, u8 rate)
+ {
+ 	int i;
+ 	struct ieee80211softmac_ratesinfo *ri = &mac->ratesinfo;
+-	
++
+ 	for (i=0; i<ri->count-1; i++) {
+ 		if (ri->rates[i] == rate)
+ 			return ri->rates[i+1];
+@@ -314,7 +313,7 @@ u8 ieee80211softmac_lower_rate_delta(struct ieee80211softmac_device *mac, u8 rat
+ {
+ 	int i;
+ 	struct ieee80211softmac_ratesinfo *ri = &mac->ratesinfo;
+-	
++
+ 	for (i=delta; i<ri->count; i++) {
+ 		if (ri->rates[i] == rate)
+ 			return ri->rates[i-delta];
+@@ -400,7 +399,7 @@ ieee80211softmac_create_network(struct ieee80211softmac_device *mac,
+ 	softnet->channel = net->channel;
+ 	softnet->essid.len = net->ssid_len;
+ 	memcpy(softnet->essid.data, net->ssid, softnet->essid.len);
+-	
++
+ 	/* copy rates over */
+ 	softnet->supported_rates.count = net->rates_len;
+ 	memcpy(&softnet->supported_rates.rates[0], net->rates, net->rates_len);
+@@ -418,18 +417,13 @@ void
+ ieee80211softmac_add_network_locked(struct ieee80211softmac_device *mac,
+ 	struct ieee80211softmac_network *add_net)
+ {
+-	struct list_head *list_ptr;
+-	struct ieee80211softmac_network *softmac_net = NULL;
++	struct ieee80211softmac_network *softmac_net;
+ 
+-	list_for_each(list_ptr, &mac->network_list) {
+-		softmac_net = list_entry(list_ptr, struct ieee80211softmac_network, list);
++	list_for_each_entry(softmac_net, &mac->network_list, list) {
+ 		if(!memcmp(softmac_net->bssid, add_net->bssid, ETH_ALEN))
+-			break;
+-		else
+-			softmac_net = NULL;
++			return;
+ 	}
+-	if(softmac_net == NULL)
+-		list_add(&(add_net->list), &mac->network_list);
++	list_add(&(add_net->list), &mac->network_list);
+ }
+ 
+ /* Add a network to the list, with locking */
+@@ -468,16 +462,13 @@ struct ieee80211softmac_network *
+ ieee80211softmac_get_network_by_bssid_locked(struct ieee80211softmac_device *mac,
+ 	u8 *bssid)
+ {
+-	struct list_head *list_ptr;
+-	struct ieee80211softmac_network *softmac_net = NULL;
+-	list_for_each(list_ptr, &mac->network_list) {
+-		softmac_net = list_entry(list_ptr, struct ieee80211softmac_network, list);
++	struct ieee80211softmac_network *softmac_net;
++
++	list_for_each_entry(softmac_net, &mac->network_list, list) {
+ 		if(!memcmp(softmac_net->bssid, bssid, ETH_ALEN))
+-			break;
+-		else
+-			softmac_net = NULL;
++			return softmac_net;
+ 	}
+-	return softmac_net;
++	return NULL;
+ }
+ 
+ /* Get a network from the list by BSSID with locking */
+@@ -487,7 +478,7 @@ ieee80211softmac_get_network_by_bssid(struct ieee80211softmac_device *mac,
+ {
+ 	unsigned long flags;
+ 	struct ieee80211softmac_network *softmac_net;
+-	
++
+ 	spin_lock_irqsave(&mac->lock, flags);
+ 	softmac_net = ieee80211softmac_get_network_by_bssid_locked(mac, bssid);
+ 	spin_unlock_irqrestore(&mac->lock, flags);
+@@ -499,11 +490,9 @@ struct ieee80211softmac_network *
+ ieee80211softmac_get_network_by_essid_locked(struct ieee80211softmac_device *mac,
+ 	struct ieee80211softmac_essid *essid)
+ {
+-	struct list_head *list_ptr;
+-	struct ieee80211softmac_network *softmac_net = NULL;
++	struct ieee80211softmac_network *softmac_net;
+ 
+-	list_for_each(list_ptr, &mac->network_list) {
+-		softmac_net = list_entry(list_ptr, struct ieee80211softmac_network, list);
++	list_for_each_entry(softmac_net, &mac->network_list, list) {
+ 		if (softmac_net->essid.len == essid->len &&
+ 			!memcmp(softmac_net->essid.data, essid->data, essid->len))
+ 			return softmac_net;
+@@ -514,13 +503,13 @@ ieee80211softmac_get_network_by_essid_locked(struct ieee80211softmac_device *mac
+ /* Get a network from the list by ESSID with locking */
+ struct ieee80211softmac_network *
+ ieee80211softmac_get_network_by_essid(struct ieee80211softmac_device *mac,
+-	struct ieee80211softmac_essid *essid)	
++	struct ieee80211softmac_essid *essid)
+ {
+ 	unsigned long flags;
+ 	struct ieee80211softmac_network *softmac_net = NULL;
+ 
+ 	spin_lock_irqsave(&mac->lock, flags);
+-	softmac_net = ieee80211softmac_get_network_by_essid_locked(mac, essid);	
++	softmac_net = ieee80211softmac_get_network_by_essid_locked(mac, essid);
+ 	spin_unlock_irqrestore(&mac->lock, flags);
+ 	return softmac_net;
+ }
+diff --git a/net/ieee80211/softmac/ieee80211softmac_priv.h b/net/ieee80211/softmac/ieee80211softmac_priv.h
+index 9087129..7b5228a 100644
+--- a/net/ieee80211/softmac/ieee80211softmac_priv.h
++++ b/net/ieee80211/softmac/ieee80211softmac_priv.h
+@@ -128,7 +128,7 @@ static inline u8 get_fallback_rate(struct ieee80211softmac_device *mac, u8 rate)
+ {
+ 	return ieee80211softmac_lower_rate_delta(mac, rate, 2);
+ }
+-                
++
+ 
+ /*** prototypes from _io.c */
+ int ieee80211softmac_send_mgt_frame(struct ieee80211softmac_device *mac,
+@@ -151,7 +151,7 @@ int ieee80211softmac_handle_assoc_response(struct net_device * dev,
+ int ieee80211softmac_handle_disassoc(struct net_device * dev,
+ 				     struct ieee80211_disassoc * disassoc);
+ int ieee80211softmac_handle_reassoc_req(struct net_device * dev,
+-				        struct ieee80211_reassoc_request * reassoc);
++					struct ieee80211_reassoc_request * reassoc);
+ void ieee80211softmac_assoc_timeout(void *d);
+ void ieee80211softmac_send_disassoc_req(struct ieee80211softmac_device *mac, u16 reason);
+ void ieee80211softmac_disassoc(struct ieee80211softmac_device *mac);
+@@ -159,15 +159,15 @@ void ieee80211softmac_disassoc(struct ieee80211softmac_device *mac);
+ /* some helper functions */
+ static inline int ieee80211softmac_scan_handlers_check_self(struct ieee80211softmac_device *sm)
+ {
+-	return (sm->start_scan == ieee80211softmac_start_scan_implementation) && 
+-		(sm->stop_scan == ieee80211softmac_stop_scan_implementation) && 
++	return (sm->start_scan == ieee80211softmac_start_scan_implementation) &&
++		(sm->stop_scan == ieee80211softmac_stop_scan_implementation) &&
+ 		(sm->wait_for_scan == ieee80211softmac_wait_for_scan_implementation);
+ }
+ 
+ static inline int ieee80211softmac_scan_sanity_check(struct ieee80211softmac_device *sm)
+ {
+-	return ((sm->start_scan != ieee80211softmac_start_scan_implementation) && 
+-		(sm->stop_scan != ieee80211softmac_stop_scan_implementation) && 
++	return ((sm->start_scan != ieee80211softmac_start_scan_implementation) &&
++		(sm->stop_scan != ieee80211softmac_stop_scan_implementation) &&
+ 		(sm->wait_for_scan != ieee80211softmac_wait_for_scan_implementation)
+ 		) || ieee80211softmac_scan_handlers_check_self(sm);
+ }
+@@ -214,6 +214,7 @@ struct ieee80211softmac_scaninfo {
+ 	u8 skip_flags;
+ 	struct completion finished;
+ 	struct work_struct softmac_scan;
++	struct ieee80211softmac_device *mac;
+ };
+ 
+ /* private event struct */
+diff --git a/net/ieee80211/softmac/ieee80211softmac_scan.c b/net/ieee80211/softmac/ieee80211softmac_scan.c
+index 5507fea..80424ad 100644
+--- a/net/ieee80211/softmac/ieee80211softmac_scan.c
++++ b/net/ieee80211/softmac/ieee80211softmac_scan.c
+@@ -62,12 +62,12 @@ ieee80211softmac_stop_scan(struct ieee80211softmac_device *sm)
+ 	unsigned long flags;
+ 
+ 	spin_lock_irqsave(&sm->lock, flags);
+-	
++
+ 	if (!sm->scanning) {
+ 		spin_unlock_irqrestore(&sm->lock, flags);
+ 		return;
+ 	}
+-	
++
+ 	spin_unlock_irqrestore(&sm->lock, flags);
+ 	sm->stop_scan(sm->dev);
+ }
+@@ -78,12 +78,12 @@ ieee80211softmac_wait_for_scan(struct ieee80211softmac_device *sm)
+ 	unsigned long flags;
+ 
+ 	spin_lock_irqsave(&sm->lock, flags);
+-	
++
+ 	if (!sm->scanning) {
+ 		spin_unlock_irqrestore(&sm->lock, flags);
+ 		return;
+ 	}
+-	
++
+ 	spin_unlock_irqrestore(&sm->lock, flags);
+ 	sm->wait_for_scan(sm->dev);
+ }
+@@ -147,6 +147,7 @@ static inline struct ieee80211softmac_scaninfo *allocate_scaninfo(struct ieee802
+ 	if (unlikely(!info))
+ 		return NULL;
+ 	INIT_WORK(&info->softmac_scan, ieee80211softmac_scan, mac);
++	info->mac = mac;
+ 	init_completion(&info->finished);
+ 	return info;
+ }
+@@ -155,14 +156,14 @@ int ieee80211softmac_start_scan_implementation(struct net_device *dev)
+ {
+ 	struct ieee80211softmac_device *sm = ieee80211_priv(dev);
+ 	unsigned long flags;
+-	
++
+ 	if (!(dev->flags & IFF_UP))
+ 		return -ENODEV;
+ 
+ 	assert(ieee80211softmac_scan_handlers_check_self(sm));
+ 	if (!ieee80211softmac_scan_handlers_check_self(sm))
+ 		return -EINVAL;
+-		
++
+ 	spin_lock_irqsave(&sm->lock, flags);
+ 	/* it looks like we need to hold the lock here
+ 	 * to make sure we don't allocate two of these... */
+@@ -187,7 +188,7 @@ int ieee80211softmac_start_scan_implementation(struct net_device *dev)
+ 	sm->scaninfo->started = 1;
+ 	sm->scaninfo->stop = 0;
+ 	INIT_COMPLETION(sm->scaninfo->finished);
+-	schedule_work(&sm->scaninfo->softmac_scan);
++	schedule_delayed_work(&sm->scaninfo->softmac_scan, 0);
+ 	spin_unlock_irqrestore(&sm->lock, flags);
+ 	return 0;
+ }
+@@ -238,7 +239,7 @@ void ieee80211softmac_scan_finished(struct ieee80211softmac_device *sm)
+ 	spin_lock_irqsave(&sm->lock, flags);
+ 	sm->scanning = 0;
+ 	spin_unlock_irqrestore(&sm->lock, flags);
+-	
++
+ 	if (sm->associnfo.bssvalid) {
+ 		struct ieee80211softmac_network *net;
+ 
+diff --git a/net/ieee80211/softmac/ieee80211softmac_wx.c b/net/ieee80211/softmac/ieee80211softmac_wx.c
+index 83b5faf..e5b3bb2 100644
+--- a/net/ieee80211/softmac/ieee80211softmac_wx.c
++++ b/net/ieee80211/softmac/ieee80211softmac_wx.c
+@@ -98,12 +98,11 @@ ieee80211softmac_wx_set_essid(struct net_device *net_dev,
+ 				cancel_delayed_work(&authptr->work);
+ 			sm->associnfo.bssvalid = 0;
+ 			sm->associnfo.bssfixed = 0;
+-			spin_unlock_irqrestore(&sm->lock,flags);
++			spin_unlock_irqrestore(&sm->lock, flags);
+ 			flush_scheduled_work();
+ 		}
+ 	}
+ 
+-
+ 	spin_lock_irqsave(&sm->lock, flags);
+ 
+ 	sm->associnfo.static_essid = 0;
+@@ -122,7 +121,7 @@ ieee80211softmac_wx_set_essid(struct net_device *net_dev,
+ 	sm->associnfo.req_essid.len = length;
+ 
+ 	/* queue lower level code to do work (if necessary) */
+-	schedule_work(&sm->associnfo.work);
++	schedule_delayed_work(&sm->associnfo.work, 0);
+ 
+ 	spin_unlock_irqrestore(&sm->lock, flags);
+ 	return 0;
+@@ -143,21 +142,22 @@ ieee80211softmac_wx_get_essid(struct net_device *net_dev,
+ 	/* If all fails, return ANY (empty) */
+ 	data->essid.length = 0;
+ 	data->essid.flags = 0;  /* active */
+-	
++
+ 	/* If we have a statically configured ESSID then return it */
+ 	if (sm->associnfo.static_essid) {
+ 		data->essid.length = sm->associnfo.req_essid.len;
+ 		data->essid.flags = 1;  /* active */
+ 		memcpy(extra, sm->associnfo.req_essid.data, sm->associnfo.req_essid.len);
+-	}
+-	
++		dprintk(KERN_INFO PFX "Getting essid from req_essid\n");
++	} else if (sm->associated || sm->associnfo.associating) {
+ 	/* If we're associating/associated, return that */
+-	if (sm->associated || sm->associnfo.associating) {
+ 		data->essid.length = sm->associnfo.associate_essid.len;
+ 		data->essid.flags = 1;  /* active */
+ 		memcpy(extra, sm->associnfo.associate_essid.data, sm->associnfo.associate_essid.len);
++		dprintk(KERN_INFO PFX "Getting essid from associate_essid\n");
+ 	}
+ 	spin_unlock_irqrestore(&sm->lock, flags);
++
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(ieee80211softmac_wx_get_essid);
+@@ -242,7 +242,7 @@ ieee80211softmac_wx_set_rate(struct net_device *net_dev,
+ 	ieee80211softmac_recalc_txrates(mac);
+ 	err = 0;
+ 
+-out_unlock:	
++out_unlock:
+ 	spin_unlock_irqrestore(&mac->lock, flags);
+ out:
+ 	return err;
+@@ -358,11 +358,11 @@ ieee80211softmac_wx_set_wap(struct net_device *net_dev,
+ 		/* force reassociation */
+ 		mac->associnfo.bssvalid = 0;
+ 		if (mac->associated)
+-			schedule_work(&mac->associnfo.work);
++			schedule_delayed_work(&mac->associnfo.work, 0);
+ 	} else if (is_zero_ether_addr(data->ap_addr.sa_data)) {
+ 		/* the bssid we have is no longer fixed */
+ 		mac->associnfo.bssfixed = 0;
+-        } else {
++	} else {
+ 		if (!memcmp(mac->associnfo.bssid, data->ap_addr.sa_data, ETH_ALEN)) {
+ 			if (mac->associnfo.associating || mac->associated) {
+ 			/* bssid unchanged and associated or associating - just return */
+@@ -375,8 +375,8 @@ ieee80211softmac_wx_set_wap(struct net_device *net_dev,
+ 		/* tell the other code that this bssid should be used no matter what */
+ 		mac->associnfo.bssfixed = 1;
+ 		/* queue associate if new bssid or (old one again and not associated) */
+-		schedule_work(&mac->associnfo.work);
+-        }
++		schedule_delayed_work(&mac->associnfo.work, 0);
++	}
+ 
+  out:
+ 	spin_unlock_irqrestore(&mac->lock, flags);
+@@ -431,7 +431,7 @@ ieee80211softmac_wx_set_genie(struct net_device *dev,
+ 		mac->wpa.IEbuflen = 0;
+ 	}
+ 
+- out:	
++ out:
+ 	spin_unlock_irqrestore(&mac->lock, flags);
+ 	return err;
+ }
+@@ -449,9 +449,9 @@ ieee80211softmac_wx_get_genie(struct net_device *dev,
+ 	int space = wrqu->data.length;
+ 	
+ 	spin_lock_irqsave(&mac->lock, flags);
+-	
++
+ 	wrqu->data.length = 0;
+-	
++
+ 	if (mac->wpa.IE && mac->wpa.IElen) {
+ 		wrqu->data.length = mac->wpa.IElen;
+ 		if (mac->wpa.IElen <= space)
+@@ -460,6 +460,7 @@ ieee80211softmac_wx_get_genie(struct net_device *dev,
+ 			err = -E2BIG;
+ 	}
+ 	spin_unlock_irqrestore(&mac->lock, flags);
++
+ 	return err;
+ }
+ EXPORT_SYMBOL_GPL(ieee80211softmac_wx_get_genie);
+@@ -472,7 +473,7 @@ ieee80211softmac_wx_set_mlme(struct net_device *dev,
+ {
+ 	struct ieee80211softmac_device *mac = ieee80211_priv(dev);
+ 	struct iw_mlme *mlme = (struct iw_mlme *)extra;
+-	u16 reason = cpu_to_le16(mlme->reason_code);
++	u16 reason = mlme->reason_code;
+ 	struct ieee80211softmac_network *net;
+ 
+ 	if (memcmp(mac->associnfo.bssid, mlme->addr.sa_data, ETH_ALEN)) {

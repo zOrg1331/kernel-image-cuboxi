@@ -1,0 +1,87 @@
+diff -urpX nopatch linux-2.6.18-92.1.18.el5.028stab060.2/include/linux/mm.h linux-2.6.18-92.1.18.el5.028stab060.2-ow0/include/linux/mm.h
+--- linux-2.6.18-92.1.18.el5.028stab060.2/include/linux/mm.h	2009-01-22 13:22:22 +0000
++++ linux-2.6.18-92.1.18.el5.028stab060.2-ow0/include/linux/mm.h	2009-03-01 04:12:02 +0000
+@@ -39,9 +39,7 @@ extern int sysctl_legacy_va_layout;
+ #include <asm/pgtable.h>
+ #include <asm/processor.h>
+ 
+-#ifdef CONFIG_SECURITY
+ extern unsigned long mmap_min_addr;
+-#endif
+ 
+ #define nth_page(page,n) pfn_to_page(page_to_pfn((page)) + (n))
+ 
+@@ -560,12 +558,10 @@ static inline void set_page_links(struct
+  */
+ static inline unsigned long round_hint_to_min(unsigned long hint)
+ {
+-#ifdef CONFIG_SECURITY
+ 	hint &= PAGE_MASK;
+ 	if (((void *)hint != NULL) &&
+ 	    (hint < mmap_min_addr))
+ 		return PAGE_ALIGN(mmap_min_addr);
+-#endif
+ 	return hint;
+ }
+ 
+diff -urpX nopatch linux-2.6.18-92.1.18.el5.028stab060.2/include/linux/security.h linux-2.6.18-92.1.18.el5.028stab060.2-ow0/include/linux/security.h
+--- linux-2.6.18-92.1.18.el5.028stab060.2/include/linux/security.h	2009-01-22 13:22:20 +0000
++++ linux-2.6.18-92.1.18.el5.028stab060.2-ow0/include/linux/security.h	2009-03-01 04:42:30 +0000
+@@ -2517,6 +2517,8 @@ static inline int security_file_mmap_add
+ 					   unsigned long addr,
+ 					   unsigned long addr_only)
+ {
++	if ((addr < mmap_min_addr) && !capable(CAP_SYS_RAWIO))
++		return -EACCES;
+ 	return 0;
+ }
+ 
+diff -urpX nopatch linux-2.6.18-92.1.18.el5.028stab060.2/kernel/sysctl.c linux-2.6.18-92.1.18.el5.028stab060.2-ow0/kernel/sysctl.c
+--- linux-2.6.18-92.1.18.el5.028stab060.2/kernel/sysctl.c	2009-01-22 13:22:23 +0000
++++ linux-2.6.18-92.1.18.el5.028stab060.2-ow0/kernel/sysctl.c	2009-03-01 04:15:17 +0000
+@@ -1087,7 +1087,6 @@ static ctl_table vm_table[] = {
+ 		.extra1		= &zero,
+ 		.extra2		= &one_hundred,
+ 	},
+-#ifdef CONFIG_SECURITY
+ 	{
+ 		.ctl_name	= VM_MMAP_MIN_ADDR,
+ 		.procname	= "mmap_min_addr",
+@@ -1096,7 +1095,6 @@ static ctl_table vm_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= &proc_doulongvec_minmax,
+ 	},
+-#endif
+ 	{
+ 		.ctl_name	= VM_DIRTY_WB_CS,
+ 		.procname	= "dirty_writeback_centisecs",
+diff -urpX nopatch linux-2.6.18-92.1.18.el5.028stab060.2/mm/mmap.c linux-2.6.18-92.1.18.el5.028stab060.2-ow0/mm/mmap.c
+--- linux-2.6.18-92.1.18.el5.028stab060.2/mm/mmap.c	2009-01-22 13:22:23 +0000
++++ linux-2.6.18-92.1.18.el5.028stab060.2-ow0/mm/mmap.c	2009-03-01 03:57:23 +0000
+@@ -82,6 +82,9 @@ int sysctl_overcommit_ratio = 50;	/* def
+ int sysctl_max_map_count __read_mostly = DEFAULT_MAX_MAP_COUNT;
+ atomic_t vm_committed_space = ATOMIC_INIT(0);
+ 
++unsigned long mmap_min_addr = 65536;		/* 0 means no protection */
++EXPORT_SYMBOL_GPL(mmap_min_addr);
++
+ /*
+  * Check that a process has enough memory to allocate a new virtual
+  * mapping. 0 means there is enough memory for the allocation to
+diff -urpX nopatch linux-2.6.18-92.1.18.el5.028stab060.2/security/security.c linux-2.6.18-92.1.18.el5.028stab060.2-ow0/security/security.c
+--- linux-2.6.18-92.1.18.el5.028stab060.2/security/security.c	2009-01-22 13:22:20 +0000
++++ linux-2.6.18-92.1.18.el5.028stab060.2-ow0/security/security.c	2009-03-01 03:57:12 +0000
+@@ -25,7 +25,6 @@ extern struct security_operations dummy_
+ extern void security_fixup_ops(struct security_operations *ops);
+ 
+ struct security_operations *security_ops;	/* Initialized to NULL */
+-unsigned long mmap_min_addr = 65536;		/* 0 means no protection */
+ 
+ static inline int verify(struct security_operations *ops)
+ {
+@@ -178,5 +177,4 @@ EXPORT_SYMBOL_GPL(register_security);
+ EXPORT_SYMBOL_GPL(unregister_security);
+ EXPORT_SYMBOL_GPL(mod_reg_security);
+ EXPORT_SYMBOL_GPL(mod_unreg_security);
+-EXPORT_SYMBOL_GPL(mmap_min_addr);
+ EXPORT_SYMBOL(security_ops);

@@ -1,0 +1,89 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Wed, 27 Aug 2008 17:12:58 -0400
+Subject: [net] ibmveth: cluster membership problems
+Message-id: 20080827211258.2328.51933.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.3 bz460379] Cluster membership problem with RHEL 5.2
+Bugzilla: 460379
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=460379
+
+Description:
+===========
+A two node cluster was configured using two LPARs on a p520 System P machine
+using RHEL 5.1 and manual fencing. Both nodes were able to establish quorum and
+a cluster.
+
+Using a RHEl5.2 install and the same configuration, the nodes were unable to establish quarum.
+
+The patch fixes a ibmveth bug where bad UDP checksums are being transmitted
+when checksum offloading is enabled
+
+RHEL Version Found:
+================
+RHEL 5.2
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1442223
+
+Upstream Status:
+================
+Committed:
+http://marc.info/?l=linux-netdev&m=121982996130142&w=2
+
+Test Status:
+============
+This was tested on a -104 kernel, showing
+both nodes joined the cluster successfully:
+
+Cluster Status for test_01 @ Mon Aug 18 08:03:07 2008
+Member Status: Quorate
+
+ Member Name                             ID   Status
+ ------ ----                             ---- ------
+ idsc1.ltc.austin.ibm.com                    1 Online, Local
+ idsc2.ltc.austin.ibm.com                    2 Online
+
+wireshark trace shows the receipt of udp packets from the other node containing
+valid checksums.
+
+===============================================================
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+
+Proposed Patch:
+===============
+This patch is based on 2.6.18-104.el5
+
+diff --git a/drivers/net/ibmveth.c b/drivers/net/ibmveth.c
+index 25b59ae..3c40c46 100644
+--- a/drivers/net/ibmveth.c
++++ b/drivers/net/ibmveth.c
+@@ -846,8 +846,6 @@ static int ibmveth_start_xmit(struct sk_buff *skb, struct net_device *netdev)
+ 	unsigned int tx_map_failed = 0;
+ 
+ 	desc.fields.flags_len = IBMVETH_BUF_VALID | skb->len;
+-	desc.fields.address = dma_map_single(&adapter->vdev->dev, skb->data,
+-					     skb->len, DMA_TO_DEVICE);
+ 
+ 	if (skb->ip_summed == CHECKSUM_HW &&
+ 	    skb->nh.iph->protocol != IPPROTO_TCP && skb_checksum_help(skb, 0)) {
+@@ -866,6 +864,8 @@ static int ibmveth_start_xmit(struct sk_buff *skb, struct net_device *netdev)
+ 		buf[1] = 0;
+ 	}
+ 
++	desc.fields.address = dma_map_single(&adapter->vdev->dev, skb->data,
++					     skb->len, DMA_TO_DEVICE);
+ 	if (dma_mapping_error(desc.fields.address)) {
+ 		ibmveth_error_printk("tx: unable to map xmit buffer\n");
+ 		tx_map_failed++;

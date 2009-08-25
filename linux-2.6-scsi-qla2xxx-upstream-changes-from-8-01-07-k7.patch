@@ -1,0 +1,206 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Tue, 1 Jul 2008 18:10:58 -0400
+Subject: [scsi] qla2xxx: upstream changes from 8.01.07-k7
+Message-id: 20080701221058.9756.61228.sendpatchset@file.bos.redhat.com
+O-Subject: [rhel 5.3 patch] qla2xxx - upstream changes from 8.01.07-k7.
+Bugzilla: 453685
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+BZ 453685 [QLogic 5.3 feat] [1/n] qla2xxx- Upstream updates
+
+This set of patches ports upstream fixes from the 8.01.07-k7 driver version.
+Tested at QLogic and applies and builds cleanly with 2.6.18-94.el5
+
+commit cbedb601868821c9bfdcf1e9194be160deceeecb
+[SCSI] qla2xxx: Add MSI support.
+
+commit a157b1014f9eaf7f80f9105defed2117c5f6653c
+[SCSI] qla2xxx: Correct pci_set_msi() usage semantics.
+
+commit 75edf81d337ea84a291f0fdae2777cfd07045eca
+[SCSI] qla2xxx: Attempt to stop firmware only if it had been previously executed.
+
+commit a7b6184225d747e5ae0bee30a388e6ebb70d5b8e
+[SCSI] qla2xxx: Honor NVRAM port-down-retry-count settings.
+
+commit 665db93b8a5fc6a11e2ace6b20569420a353d037
+[SCSI] qla2xxx: Remove duplicate pci_disable_device() call
+
+commit 1196ae025ba4a36eb9e6baab57ba903d36139ff2
+[SCSI] qla2xxx: fix for byteswap in fc_host fabric_name
+
+diff --git a/drivers/scsi/qla2xxx/qla_init.c b/drivers/scsi/qla2xxx/qla_init.c
+index 4c870f5..1076d29 100644
+--- a/drivers/scsi/qla2xxx/qla_init.c
++++ b/drivers/scsi/qla2xxx/qla_init.c
+@@ -141,18 +141,17 @@ qla2x00_initialize_adapter(scsi_qla_host_t *ha)
+ int
+ qla2100_pci_config(scsi_qla_host_t *ha)
+ {
+-	uint16_t w, mwi;
++	int ret;
++	uint16_t w;
+ 	uint32_t d;
+ 	unsigned long flags;
+ 	struct device_reg_2xxx __iomem *reg = &ha->iobase->isp;
+ 
+ 	pci_set_master(ha->pdev);
+-	mwi = 0;
+-	if (pci_set_mwi(ha->pdev))
+-		mwi = PCI_COMMAND_INVALIDATE;
++	ret = pci_set_mwi(ha->pdev);
+ 
+ 	pci_read_config_word(ha->pdev, PCI_COMMAND, &w);
+-	w |= mwi | (PCI_COMMAND_PARITY | PCI_COMMAND_SERR);
++	w |= (PCI_COMMAND_PARITY | PCI_COMMAND_SERR);
+ 	pci_write_config_word(ha->pdev, PCI_COMMAND, w);
+ 
+ 	/* Reset expansion ROM address decode enable */
+@@ -177,22 +176,22 @@ qla2100_pci_config(scsi_qla_host_t *ha)
+ int
+ qla2300_pci_config(scsi_qla_host_t *ha)
+ {
+-	uint16_t	w, mwi;
++	int		ret;
++	uint16_t	w;
+ 	uint32_t	d;
+ 	unsigned long   flags = 0;
+ 	uint32_t	cnt;
+ 	struct device_reg_2xxx __iomem *reg = &ha->iobase->isp;
+ 
+ 	pci_set_master(ha->pdev);
+-	mwi = 0;
+-	if (pci_set_mwi(ha->pdev))
+-		mwi = PCI_COMMAND_INVALIDATE;
++	ret = pci_set_mwi(ha->pdev);
+ 
+ 	pci_read_config_word(ha->pdev, PCI_COMMAND, &w);
+-	w |= mwi | (PCI_COMMAND_PARITY | PCI_COMMAND_SERR);
++	w |= (PCI_COMMAND_PARITY | PCI_COMMAND_SERR);
+ 
+ 	if (IS_QLA2322(ha) || IS_QLA6322(ha))
+ 		w &= ~PCI_COMMAND_INTX_DISABLE;
++	pci_write_config_word(ha->pdev, PCI_COMMAND, w);
+ 
+ 	/*
+ 	 * If this is a 2300 card and not 2312, reset the
+@@ -221,7 +220,7 @@ qla2300_pci_config(scsi_qla_host_t *ha)
+ 		ha->fb_rev = RD_FB_CMD_REG(ha, reg);
+ 
+ 		if (ha->fb_rev == FPM_2300)
+-			w &= ~PCI_COMMAND_INVALIDATE;
++			pci_clear_mwi(ha->pdev);
+ 
+ 		/* Deselect FPM registers. */
+ 		WRT_REG_WORD(&reg->ctrl_status, 0x0);
+@@ -238,7 +237,6 @@ qla2300_pci_config(scsi_qla_host_t *ha)
+ 
+ 		spin_unlock_irqrestore(&ha->hardware_lock, flags);
+ 	}
+-	pci_write_config_word(ha->pdev, PCI_COMMAND, w);
+ 
+ 	pci_write_config_byte(ha->pdev, PCI_LATENCY_TIMER, 0x80);
+ 
+@@ -264,18 +262,17 @@ qla2300_pci_config(scsi_qla_host_t *ha)
+ int
+ qla24xx_pci_config(scsi_qla_host_t *ha)
+ {
+-	uint16_t w, mwi;
++	int ret;
++	uint16_t w;
+ 	uint32_t d;
+ 	unsigned long flags = 0;
+ 	struct device_reg_24xx __iomem *reg = &ha->iobase->isp24;
+ 
+ 	pci_set_master(ha->pdev);
+-	mwi = 0;
+-	if (pci_set_mwi(ha->pdev))
+-		mwi = PCI_COMMAND_INVALIDATE;
++	ret = pci_set_mwi(ha->pdev);
+ 
+ 	pci_read_config_word(ha->pdev, PCI_COMMAND, &w);
+-	w |= mwi | (PCI_COMMAND_PARITY | PCI_COMMAND_SERR);
++	w |= (PCI_COMMAND_PARITY | PCI_COMMAND_SERR);
+ 	w &= ~PCI_COMMAND_INTX_DISABLE;
+ 	pci_write_config_word(ha->pdev, PCI_COMMAND, w);
+ 
+@@ -3903,6 +3900,8 @@ qla2x00_try_to_stop_firmware(scsi_qla_host_t *ha)
+ 
+ 	if (!IS_FWI2_CAPABLE(ha))
+ 		return;
++	if (!ha->fw_major_version)
++		return;
+ 
+ 	ret = qla2x00_stop_firmware(ha);
+ 	for (retries = 5; ret != QLA_SUCCESS && retries ; retries--) {
+diff --git a/drivers/scsi/qla2xxx/qla_isr.c b/drivers/scsi/qla2xxx/qla_isr.c
+index 2c92985..efa4823 100644
+--- a/drivers/scsi/qla2xxx/qla_isr.c
++++ b/drivers/scsi/qla2xxx/qla_isr.c
+@@ -1932,6 +1932,8 @@ qla2x00_free_irqs(scsi_qla_host_t *ha)
+ 
+ 	if (ha->flags.msix_enabled)
+ 		qla24xx_disable_msix(ha);
+-	else if (ha->flags.inta_enabled)
++	else if (ha->flags.inta_enabled) {
+ 		free_irq(ha->host->irq, ha);
++		pci_disable_msi(ha->pdev);
++	}
+ }
+diff --git a/drivers/scsi/qla2xxx/qla_mbx.c b/drivers/scsi/qla2xxx/qla_mbx.c
+index 8fdccb9..5a45b56 100644
+--- a/drivers/scsi/qla2xxx/qla_mbx.c
++++ b/drivers/scsi/qla2xxx/qla_mbx.c
+@@ -1304,14 +1304,14 @@ qla2x00_get_port_name(scsi_qla_host_t *ha, uint16_t loop_id, uint8_t *name,
+ 	} else {
+ 		if (name != NULL) {
+ 			/* This function returns name in big endian. */
+-			name[0] = LSB(mcp->mb[2]);
+-			name[1] = MSB(mcp->mb[2]);
+-			name[2] = LSB(mcp->mb[3]);
+-			name[3] = MSB(mcp->mb[3]);
+-			name[4] = LSB(mcp->mb[6]);
+-			name[5] = MSB(mcp->mb[6]);
+-			name[6] = LSB(mcp->mb[7]);
+-			name[7] = MSB(mcp->mb[7]);
++			name[0] = MSB(mcp->mb[2]);
++			name[1] = LSB(mcp->mb[2]);
++			name[2] = MSB(mcp->mb[3]);
++			name[3] = LSB(mcp->mb[3]);
++			name[4] = MSB(mcp->mb[6]);
++			name[5] = LSB(mcp->mb[6]);
++			name[6] = MSB(mcp->mb[7]);
++			name[7] = LSB(mcp->mb[7]);
+ 		}
+ 
+ 		DEBUG11(printk("qla2x00_get_port_name(%ld): done.\n",
+diff --git a/drivers/scsi/qla2xxx/qla_os.c b/drivers/scsi/qla2xxx/qla_os.c
+index 82b3b7f..4836b23 100644
+--- a/drivers/scsi/qla2xxx/qla_os.c
++++ b/drivers/scsi/qla2xxx/qla_os.c
+@@ -36,7 +36,7 @@ module_param(ql2xlogintimeout, int, S_IRUGO|S_IRUSR);
+ MODULE_PARM_DESC(ql2xlogintimeout,
+ 		"Login timeout value in seconds.");
+ 
+-int qlport_down_retry = 30;
++int qlport_down_retry;
+ module_param(qlport_down_retry, int, S_IRUGO|S_IRUSR);
+ MODULE_PARM_DESC(qlport_down_retry,
+ 		"Maximum number of command retries to a port that returns "
+@@ -1901,6 +1901,7 @@ qla2x00_remove_one(struct pci_dev *pdev)
+ 
+ 	scsi_host_put(ha->host);
+ 
++	pci_disable_device(pdev);
+ 	pci_set_drvdata(pdev, NULL);
+ }
+ 
+@@ -1943,8 +1944,6 @@ qla2x00_free_device(scsi_qla_host_t *ha)
+ 	if (ha->iobase)
+ 		iounmap(ha->iobase);
+ 	pci_release_regions(ha->pdev);
+-
+-	pci_disable_device(ha->pdev);
+ }
+ 
+ static inline void

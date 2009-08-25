@@ -1,0 +1,123 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Tue, 9 Dec 2008 21:48:02 -0500
+Subject: Revert: [x86] disable hpet on machine_crash_shutdown
+Message-id: 20081210024802.GE26089@hmsendeavour.rdu.redhat.com
+O-Subject: Re: [RHEL5] patch: disable hpet on machine_crash_shutdown (bz 473038)
+Bugzilla: 475652
+
+On Fri, Dec 05, 2008 at 03:36:55PM -0500, Neil Horman wrote:
+> Hey all-
+> 	This is a backport of upstream commit
+> 0c1b2724069951b1902373e688042b2ec382f68f.  It disables the hpet timer on kdump
+> shutdown so as to prevent it from hanging the system during kdump reboot.
+> Verified to fix bz 473038 on at least some of the systems listed (there are
+> several).  Some of the listed systems still require the gart patch from bz
+> 473166 which dchapman is working on.
+>
+> Regards
+> Neil
+>
+>
+Don, I apologize for this.  Doug Chapman discovered a regression with this
+patch.  In my rush to get the HP XW systems up and running with kdump, I
+neglected to consider if x86_64 system existed which don't have hpet timers
+available.  As it happens, they do, and this patch makes them panic during kdump
+shutdown.  Doug already has a patch for it put together, but at this later hour,
+I think it would be better if we pulled this patch and deferred it for 5.4.
+
+Regards & Apologies
+Neil
+
+diff --git a/arch/i386/kernel/crash.c b/arch/i386/kernel/crash.c
+index 0af4062..615878f 100644
+--- a/arch/i386/kernel/crash.c
++++ b/arch/i386/kernel/crash.c
+@@ -22,7 +22,6 @@
+ #include <asm/nmi.h>
+ #include <asm/hw_irq.h>
+ #include <asm/apic.h>
+-#include <asm/hpet.h>
+ #include <mach_ipi.h>
+ 
+ 
+@@ -179,9 +178,6 @@ void machine_crash_shutdown(struct pt_regs *regs)
+ #if defined(CONFIG_X86_IO_APIC)
+ 	disable_IO_APIC();
+ #endif
+-#ifdef CONFIG_HPET_TIMER
+-	hpet_disable();
+-#endif
+ #endif /* CONFIG_XEN */
+ 	crash_save_self(regs);
+ }
+diff --git a/arch/i386/kernel/time_hpet.c b/arch/i386/kernel/time_hpet.c
+index 6f3989a..cf206c8 100644
+--- a/arch/i386/kernel/time_hpet.c
++++ b/arch/i386/kernel/time_hpet.c
+@@ -236,19 +236,6 @@ int is_hpet_capable(void)
+ 	return 0;
+ }
+ 
+-void hpet_disable(void)
+-{
+-        if (is_hpet_capable()) {
+-                unsigned long cfg = hpet_readl(HPET_CFG);
+-
+-                if (is_hpet_legacy_int_enabled()) {
+-                        cfg &= ~HPET_CFG_LEGACY;
+-                }
+-                cfg &= ~HPET_CFG_ENABLE;
+-                hpet_writel(cfg, HPET_CFG);
+-        }
+-}
+-
+ static int __init hpet_setup(char* str)
+ {
+ 	if (str) {
+diff --git a/arch/x86_64/kernel/crash.c b/arch/x86_64/kernel/crash.c
+index a66fc8e..178fb47 100644
+--- a/arch/x86_64/kernel/crash.c
++++ b/arch/x86_64/kernel/crash.c
+@@ -22,7 +22,6 @@
+ #include <asm/hardirq.h>
+ #include <asm/nmi.h>
+ #include <asm/hw_irq.h>
+-#include <asm/hpet.h>
+ #include <asm/mach_apic.h>
+ 
+ /* This keeps a track of which one is crashing cpu. */
+@@ -162,9 +161,6 @@ static void nmi_shootdown_cpus(void)
+ 
+ void machine_crash_shutdown(struct pt_regs *regs)
+ {
+-#ifdef CONFIG_HPET_TIMER
+-	unsigned long cfg;
+-#endif
+ 	/*
+ 	 * This function is only called after the system
+ 	 * has panicked or is otherwise in a critical state.
+@@ -189,12 +185,6 @@ void machine_crash_shutdown(struct pt_regs *regs)
+ #if defined(CONFIG_X86_IO_APIC)
+ 	disable_IO_APIC();
+ #endif
+-#ifdef CONFIG_HPET_TIMER
+-	cfg = hpet_readl(HPET_CFG);
+-	cfg &= ~HPET_CFG_LEGACY;
+-	cfg &= ~HPET_CFG_ENABLE;
+-	hpet_writel(cfg, HPET_CFG);
+-#endif
+ #endif /* CONFIG_XEN */
+ 	crash_save_self(regs);
+ }
+diff --git a/include/asm-i386/hpet.h b/include/asm-i386/hpet.h
+index 969e5df..c72ffa7 100644
+--- a/include/asm-i386/hpet.h
++++ b/include/asm-i386/hpet.h
+@@ -96,7 +96,6 @@ extern int hpet_use_timer;
+ 
+ extern int hpet_rtc_timer_init(void);
+ extern int hpet_enable(void);
+-extern void hpet_disable(void);
+ extern int hpet_reenable(void);
+ extern int is_hpet_enabled(void);
+ extern int is_hpet_legacy_int_enabled(void);

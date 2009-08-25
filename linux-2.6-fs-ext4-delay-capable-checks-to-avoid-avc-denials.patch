@@ -1,0 +1,64 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 28 Oct 2008 13:09:33 -0500
+Subject: [fs] ext4: delay capable checks to avoid avc denials
+Message-id: 4907555D.8050101@redhat.com
+O-Subject: [PATCH RHEL5.3] ext4: delay capable() checks to avoid avc denials
+Bugzilla: 467216
+RH-Acked-by: Josef Bacik <jbacik@redhat.com>
+RH-Acked-by: Eric Paris <eparis@redhat.com>
+
+This is for Bug 467216 - avc: denied { sys_resource } when using ext4dev partitions
+
+ext4_has_free_blocks() is called often, and it checks capable(CAP_SYS_RESOURCE)
+each time, which is leading to these denials.
+
+Per eparis' suggestion, we can just invert the logic so that capable()
+is the last thing checked, and for most users, this won't trigger the denial:
+
+> so selinux is only going to complain if you have the capability according
+> to capabilities (aka you are root) but selinux doesn't give you the perm
+> so non-root should silently fail the capable() check and root should pass
+> the fsuid check
+
+With the revised logic, we will first test (sbi->s_resuid == current->fsuid)
+so the root user will not wind up in the capable() check.
+
+A slightly different fix was sent upstream:
+http://marc.info/?l=linux-ext4&m=122488084212789&w=2 <http://marc.info/?l=linux-ext4&m=122488084212789&w=2>
+http://marc.info/?l=linux-ext4&m=122488090912882&w=2 <http://marc.info/?l=linux-ext4&m=122488090912882&w=2>
+
+but the below is a bit safer for a last-minute RHEL change.
+
+Note, "root blocks" indicates how many blocks should be factored in as
+reserved when calculating available space.  Setting root_blocks = 0 means
+that all space is available for use (i.e. when any of those tests are met).
+
+Thanks,
+-Eric
+
+diff --git a/fs/ext4/balloc.c b/fs/ext4/balloc.c
+index d158d13..1eeb5e0 100644
+--- a/fs/ext4/balloc.c
++++ b/fs/ext4/balloc.c
+@@ -1612,15 +1612,15 @@ out:
+ ext4_fsblk_t ext4_has_free_blocks(struct ext4_sb_info *sbi,
+ 						ext4_fsblk_t nblocks)
+ {
+-	ext4_fsblk_t free_blocks;
+-	ext4_fsblk_t root_blocks = 0;
++	ext4_fsblk_t free_blocks, root_blocks;
+ 
+ 	free_blocks = percpu_counter_read_positive(&sbi->s_freeblocks_counter);
++	root_blocks = ext4_r_blocks_count(sbi->s_es);
+ 
+-	if (!capable(CAP_SYS_RESOURCE) &&
+-		sbi->s_resuid != current->fsuid &&
+-		(sbi->s_resgid == 0 || !in_group_p(sbi->s_resgid)))
+-		root_blocks = ext4_r_blocks_count(sbi->s_es);
++	if (sbi->s_resuid == current->fsuid ||
++	    ((sbi->s_resgid != 0) && in_group_p(sbi->s_resgid)) ||
++	    capable(CAP_SYS_RESOURCE))
++		root_blocks = 0;
+ #ifdef CONFIG_SMP
+ 	if (free_blocks - root_blocks < FBC_BATCH)
+ 		free_blocks =

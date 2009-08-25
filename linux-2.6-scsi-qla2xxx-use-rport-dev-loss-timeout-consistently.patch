@@ -1,0 +1,287 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Thu, 18 Sep 2008 14:35:41 -0400
+Subject: [scsi] qla2xxx: use rport dev loss timeout consistently
+Message-id: 20080918183536.16450.78430.sendpatchset@file.bos.redhat.com
+O-Subject: [rhel 5.3 patch] qla2xxx: Support and use rport dev loss timeout consistently.
+Bugzilla: 462109
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+BZ 462109 - qla2xxx - Set rport dev loss timeout consistently.
+
+These two patches are backported from upstream. They provide support
+for rport device loss timeouts and ensure they are used consistently
+in the driver.
+
+Tested at QLogic and applies cleanly to kernel-2.6.18-110.
+
+qla2xxx: Set an rport's dev_loss_tmo value in a consistent manner.
+f62953891c64db2e83615ef15063539a23691c8b
+
+As there's no point in adding a fixed-fudge value (originally 5
+seconds), honor the user settings only.  We also remove the
+driver's dead-callback get_rport_dev_loss_tmo function
+(qla2x00_get_rport_loss_tmo()).
+
+qla2xxx: Add dev_loss_tmo_callbk/terminate_rport_io callback support.
+c003b7faf7f8b49582959f9cf03797f367bd39c2
+
+diff --git a/drivers/scsi/qla2xxx/qla_attr.c b/drivers/scsi/qla2xxx/qla_attr.c
+index 60c0cc6..f5eb432 100644
+--- a/drivers/scsi/qla2xxx/qla_attr.c
++++ b/drivers/scsi/qla2xxx/qla_attr.c
+@@ -1630,26 +1630,39 @@ qla2x00_get_starget_port_id(struct scsi_target *starget)
+ }
+ 
+ static void
+-qla2x00_get_rport_loss_tmo(struct fc_rport *rport)
++qla2x00_set_rport_loss_tmo(struct fc_rport *rport, uint32_t timeout)
+ {
+-	struct Scsi_Host *host = rport_to_shost(rport);
+-	scsi_qla_host_t *ha = to_qla_host(host);
+-
+-	rport->dev_loss_tmo = ha->port_down_retry_count + 5;
++	if (timeout)
++		rport->dev_loss_tmo = timeout;
++	else
++		rport->dev_loss_tmo = 1;
+ }
+ 
+ static void
+-qla2x00_set_rport_loss_tmo(struct fc_rport *rport, uint32_t timeout)
++qla2x00_dev_loss_tmo_callbk(struct fc_rport *rport)
+ {
+ 	struct Scsi_Host *host = rport_to_shost(rport);
+-	scsi_qla_host_t *ha = to_qla_host(host);
++	fc_port_t *fcport = *(fc_port_t **)rport->dd_data;
+ 
+-	if (timeout)
+-		ha->port_down_retry_count = timeout;
+-	else
+-		ha->port_down_retry_count = 1;
++	qla2x00_abort_fcport_cmds(fcport);
++
++	/*
++	 * Transport has effectively 'deleted' the rport, clear
++	 * all local references.
++	 */
++	spin_lock_irq(host->host_lock);
++	fcport->rport = NULL;
++	*((fc_port_t **)rport->dd_data) = NULL;
++	spin_unlock_irq(host->host_lock);
++}
++
++static void
++qla2x00_terminate_rport_io(struct fc_rport *rport)
++{
++	fc_port_t *fcport = *(fc_port_t **)rport->dd_data;
+ 
+-	rport->dev_loss_tmo = ha->port_down_retry_count + 5;
++	qla2x00_abort_fcport_cmds(fcport);
++	scsi_target_unblock(&rport->dev);
+ }
+ 
+ static int
+@@ -1790,11 +1803,14 @@ struct fc_function_template qla2xxx_transport_functions = {
+ 	.get_starget_port_id  = qla2x00_get_starget_port_id,
+ 	.show_starget_port_id = 1,
+ 
+-	.get_rport_dev_loss_tmo = qla2x00_get_rport_loss_tmo,
+ 	.set_rport_dev_loss_tmo = qla2x00_set_rport_loss_tmo,
+ 	.show_rport_dev_loss_tmo = 1,
+ 
+ 	.issue_fc_host_lip = qla2x00_issue_lip,
++	.dev_loss_tmo_callbk = qla2x00_dev_loss_tmo_callbk,
++	.terminate_rport_io = qla2x00_terminate_rport_io,
++	.dev_loss_tmo_callbk = qla2x00_dev_loss_tmo_callbk,
++	.terminate_rport_io = qla2x00_terminate_rport_io,
+ 	.get_fc_host_stats = qla2x00_get_fc_host_stats,
+ };
+ 
+diff --git a/drivers/scsi/qla2xxx/qla_def.h b/drivers/scsi/qla2xxx/qla_def.h
+index 1da3340..37ce268 100644
+--- a/drivers/scsi/qla2xxx/qla_def.h
++++ b/drivers/scsi/qla2xxx/qla_def.h
+@@ -1635,7 +1635,6 @@ typedef struct fc_port {
+ 	int login_retry;
+ 	atomic_t port_down_timer;
+ 
+-	spinlock_t rport_lock;
+ 	struct fc_rport *rport, *drport;
+ 	u32 supported_classes;
+ 
+diff --git a/drivers/scsi/qla2xxx/qla_gbl.h b/drivers/scsi/qla2xxx/qla_gbl.h
+index 2c58265..214b1e3 100644
+--- a/drivers/scsi/qla2xxx/qla_gbl.h
++++ b/drivers/scsi/qla2xxx/qla_gbl.h
+@@ -70,6 +70,8 @@ extern int num_hosts;
+ 
+ extern int qla2x00_loop_reset(scsi_qla_host_t *);
+ 
++extern void qla2x00_abort_fcport_cmds(fc_port_t *);
++
+ /*
+  * Global Functions in qla_mid.c source file.
+  */
+diff --git a/drivers/scsi/qla2xxx/qla_init.c b/drivers/scsi/qla2xxx/qla_init.c
+index ffc6bde..d74a4aa 100644
+--- a/drivers/scsi/qla2xxx/qla_init.c
++++ b/drivers/scsi/qla2xxx/qla_init.c
+@@ -1732,12 +1732,11 @@ qla2x00_rport_del(void *data)
+ {
+ 	fc_port_t *fcport = data;
+ 	struct fc_rport *rport;
+-	unsigned long flags;
+ 
+-	spin_lock_irqsave(&fcport->rport_lock, flags);
++	spin_lock_irq(fcport->ha->host->host_lock);
+ 	rport = fcport->drport;
+ 	fcport->drport = NULL;
+-	spin_unlock_irqrestore(&fcport->rport_lock, flags);
++	spin_unlock_irq(fcport->ha->host->host_lock);
+ 	if (rport)
+ 		fc_remote_port_delete(rport);
+ 
+@@ -1768,7 +1767,6 @@ qla2x00_alloc_fcport(scsi_qla_host_t *ha, gfp_t flags)
+ 	atomic_set(&fcport->state, FCS_UNCONFIGURED);
+ 	fcport->flags = FCF_RLC_SUPPORT;
+ 	fcport->supported_classes = FC_COS_UNSPECIFIED;
+-	spin_lock_init(&fcport->rport_lock);
+ 
+ 	return (fcport);
+ }
+@@ -2127,28 +2125,24 @@ qla2x00_reg_remote_port(scsi_qla_host_t *ha, fc_port_t *fcport)
+ {
+ 	struct fc_rport_identifiers rport_ids;
+ 	struct fc_rport *rport;
+-	unsigned long flags;
+ 
+ 	if (fcport->drport)
+ 		qla2x00_rport_del(fcport);
+-	if (fcport->rport)
+-		return;
+ 
+ 	rport_ids.node_name = wwn_to_u64(fcport->node_name);
+ 	rport_ids.port_name = wwn_to_u64(fcport->port_name);
+ 	rport_ids.port_id = fcport->d_id.b.domain << 16 |
+ 	    fcport->d_id.b.area << 8 | fcport->d_id.b.al_pa;
+ 	rport_ids.roles = FC_RPORT_ROLE_UNKNOWN;
+-	rport = fc_remote_port_add(ha->host, 0, &rport_ids);
++	fcport->rport = rport = fc_remote_port_add(ha->host, 0, &rport_ids);
+ 	if (!rport) {
+ 		qla_printk(KERN_WARNING, ha,
+ 		    "Unable to allocate fc remote port!\n");
+ 		return;
+ 	}
+-	spin_lock_irqsave(&fcport->rport_lock, flags);
+-	fcport->rport = rport;
++	spin_lock_irq(fcport->ha->host->host_lock);
+ 	*((fc_port_t **)rport->dd_data) = fcport;
+-	spin_unlock_irqrestore(&fcport->rport_lock, flags);
++	spin_unlock_irq(fcport->ha->host->host_lock);
+ 
+ 	rport->supported_classes = fcport->supported_classes;
+ 
+diff --git a/drivers/scsi/qla2xxx/qla_os.c b/drivers/scsi/qla2xxx/qla_os.c
+index ef4efb0..fbc3a55 100644
+--- a/drivers/scsi/qla2xxx/qla_os.c
++++ b/drivers/scsi/qla2xxx/qla_os.c
+@@ -421,7 +421,7 @@ qla2x00_queuecommand(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
+ 	}
+ 
+ 	/* Close window on fcport/rport state-transitioning. */
+-	if (!*(fc_port_t **)rport->dd_data) {
++	if (fcport->drport) {
+ 		cmd->result = DID_IMM_RETRY << 16;
+ 		goto qc_fail_command;
+ 	}
+@@ -488,7 +488,7 @@ qla24xx_queuecommand(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
+ 	}
+ 
+ 	/* Close window on fcport/rport state-transitioning. */
+-	if (!*(fc_port_t **)rport->dd_data) {
++	if (fcport->drport) {
+ 		cmd->result = DID_IMM_RETRY << 16;
+ 		goto qc24_fail_command;
+ 	}
+@@ -652,6 +652,40 @@ qla2x00_wait_for_loop_ready(scsi_qla_host_t *ha)
+ 	return (return_status);
+ }
+ 
++void
++qla2x00_abort_fcport_cmds(fc_port_t *fcport)
++{
++	int cnt;
++	unsigned long flags;
++	srb_t *sp;
++	scsi_qla_host_t *ha = fcport->ha;
++	scsi_qla_host_t *pha = to_qla_parent(ha);
++
++	spin_lock_irqsave(&pha->hardware_lock, flags);
++	for (cnt = 1; cnt < MAX_OUTSTANDING_COMMANDS; cnt++) {
++		sp = pha->outstanding_cmds[cnt];
++		if (!sp)
++			continue;
++		if (sp->fcport != fcport)
++			continue;
++
++		spin_unlock_irqrestore(&pha->hardware_lock, flags);
++		if (ha->isp_ops->abort_command(ha, sp)) {
++			DEBUG2(qla_printk(KERN_WARNING, ha,
++			    "Abort failed --  %lx\n", sp->cmd->serial_number));
++		} else {
++			if (qla2x00_eh_wait_on_command(ha, sp->cmd) !=
++			    QLA_SUCCESS)
++				DEBUG2(qla_printk(KERN_WARNING, ha,
++				    "Abort failed while waiting --  %lx\n",
++				    sp->cmd->serial_number));
++
++		}
++		spin_lock_irqsave(&pha->hardware_lock, flags);
++	}
++	spin_unlock_irqrestore(&pha->hardware_lock, flags);
++}
++
+ static void
+ qla2x00_block_error_handler(struct scsi_cmnd *cmnd)
+ {
+@@ -1179,7 +1213,7 @@ qla2xxx_slave_configure(struct scsi_device *sdev)
+ 	else
+ 		scsi_deactivate_tcq(sdev, ha->max_q_depth);
+ 
+-	rport->dev_loss_tmo = ha->port_down_retry_count + 5;
++	rport->dev_loss_tmo = ha->port_down_retry_count;
+ 
+ 	return 0;
+ }
+@@ -1967,7 +2001,6 @@ static inline void
+ qla2x00_schedule_rport_del(struct scsi_qla_host *ha, fc_port_t *fcport,
+     int defer)
+ {
+-	unsigned long flags;
+ 	struct fc_rport *rport;
+ 
+ 	if (!fcport->rport)
+@@ -1975,19 +2008,13 @@ qla2x00_schedule_rport_del(struct scsi_qla_host *ha, fc_port_t *fcport,
+ 
+ 	rport = fcport->rport;
+ 	if (defer) {
+-		spin_lock_irqsave(&fcport->rport_lock, flags);
++		spin_lock_irq(ha->host->host_lock);
+ 		fcport->drport = rport;
+-		fcport->rport = NULL;
+-		*(fc_port_t **)rport->dd_data = NULL;
+-		spin_unlock_irqrestore(&fcport->rport_lock, flags);
++		spin_unlock_irq(ha->host->host_lock);
+ 		set_bit(FCPORT_UPDATE_NEEDED, &ha->dpc_flags);
+-	} else {
+-		spin_lock_irqsave(&fcport->rport_lock, flags);
+-		fcport->rport = NULL;
+-		*(fc_port_t **)rport->dd_data = NULL;
+-		spin_unlock_irqrestore(&fcport->rport_lock, flags);
++		qla2xxx_wake_dpc(ha);
++	} else
+ 		fc_remote_port_delete(rport);
+-	}
+ }
+ 
+ /*

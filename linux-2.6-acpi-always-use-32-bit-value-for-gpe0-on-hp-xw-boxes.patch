@@ -1,0 +1,134 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Thu, 6 Nov 2008 14:48:12 -0500
+Subject: [acpi] always use 32 bit value for GPE0 on HP xw boxes
+Message-id: 20081106194812.24223.9983.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH] HP xw BIOS WAR -- always used 32 bit value for GPE0
+Bugzilla: 456638
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: Matthew Garrett <mjg@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Don,
+
+Sorry for the late-breaking patch.  jburke recently saw this occur on a bare-
+metal boot so I'm submitting the patch for inclusion to RHEL5.3.  I've had
+this "in-the-can" for a few weeks but was hoping that HP would get around to
+fixing the BIOS...
+
+P.
+------------------
+
+HP xw BIOSes contain a little bug which appears effect kdump although we
+have recently seen this on bare-metal.
+
+On boot the console log contains:
+
+ACPI Error (evgpe-0711): No handler or method for GPE[ 0], disabling event
+[20060707]
+ACPI Error (evgpe-0711): No handler or method for GPE[ 1], disabling event
+[20060707]
+ACPI Error (evgpe-0711): No handler or method for GPE[ 2], disabling event
+[20060707]
+ACPI Error (evgpe-0711): No handler or method for GPE[ 5], disabling event
+[20060707]
+ACPI Error (evgpe-0711): No handler or method for GPE[ 6], disabling event
+[20060707]
+ACPI Error (evgpe-0711): No handler or method for GPE[ 7], disabling event
+[20060707]
+ACPI Error (evgpe-0711): No handler or method for GPE[ A], disabling event
+[20060707]
+
+This is caused by a bug in the FADT table where the 64-bit address for GPE
+is incorrect.  However, the 32-bit value is correct.
+
+The ACPI specification indicates that the 64-bit value is to be used in
+favor of the 32-bit value.  On these HP xw systems, however, the opposite must
+be done.
+
+This patch is a WAR for the broken BIOS/ACPI tables in the HP xw systems.
+
+Sucessfully compiled and tested by me.
+
+Resolves BZ 456638.
+
+diff --git a/drivers/acpi/events/evgpeblk.c b/drivers/acpi/events/evgpeblk.c
+index 95ddeb4..a5093f3 100644
+--- a/drivers/acpi/events/evgpeblk.c
++++ b/drivers/acpi/events/evgpeblk.c
+@@ -41,6 +41,7 @@
+  * POSSIBILITY OF SUCH DAMAGES.
+  */
+ 
++#include <linux/dmi.h>
+ #include <acpi/acpi.h>
+ #include <acpi/acevents.h>
+ #include <acpi/acnamesp.h>
+@@ -1058,6 +1059,56 @@ acpi_ev_initialize_gpe_block(struct acpi_namespace_node *gpe_device,
+ 	return_ACPI_STATUS(status);
+ }
+ 
++static int hp_gpe_use_32_bit(struct dmi_system_id *d)
++{
++	if ((u64)acpi_gbl_FADT->V1_gpe0_blk !=
++	    acpi_gbl_FADT->xgpe0_blk.address) {
++		printk("HP xw System ... overriding gpe0_blk to "
++		       "32-bit value \n");
++		acpi_gbl_FADT->xgpe0_blk.address =
++						(u64)acpi_gbl_FADT->V1_gpe0_blk;
++	}
++
++	return 0;
++}
++
++/* HP xw series blacklist */
++static struct dmi_system_id acpi_hp_gpe_table[] = {
++	{
++	 .callback = hp_gpe_use_32_bit,
++	 .ident = "HP xw 4600",
++	 .matches = {
++		     DMI_MATCH(DMI_BOARD_VENDOR, "Hewlett-Packard"),
++		     DMI_MATCH(DMI_PRODUCT_NAME, "HP xw4600 Workstation"),
++	 	    },
++	},
++	{
++	 .callback = hp_gpe_use_32_bit,
++	 .ident = "HP xw 4800",
++	 .matches = {
++		     DMI_MATCH(DMI_BOARD_VENDOR, "Hewlett-Packard"),
++		     DMI_MATCH(DMI_PRODUCT_NAME, "HP xw4800 Workstation"),
++	 	    },
++	},
++	{
++	 .callback = hp_gpe_use_32_bit,
++	 .ident = "HP xw 8600",
++	 .matches = {
++		     DMI_MATCH(DMI_BOARD_VENDOR, "Hewlett-Packard"),
++		     DMI_MATCH(DMI_PRODUCT_NAME, "HP xw8600 Workstation"),
++	 	    },
++	},
++	{
++	 .callback = hp_gpe_use_32_bit,
++	 .ident = "HP xw 9400",
++	 .matches = {
++		     DMI_MATCH(DMI_BOARD_VENDOR, "Hewlett-Packard"),
++		     DMI_MATCH(DMI_PRODUCT_NAME, "HP xw9400 Workstation"),
++	 	    },
++	},
++	 {}
++};
++
+ /*******************************************************************************
+  *
+  * FUNCTION:    acpi_ev_gpe_initialize
+@@ -1100,6 +1151,11 @@ acpi_status acpi_ev_gpe_initialize(void)
+ 	 *  to be the same size."
+ 	 */
+ 
++	/* This is strictly against the ACPI spec.  We should always use the
++	   64-bit address.  However, on HP xw systems it appears that the
++	   64-bit address is incorrect so use the 32-bit address */
++	dmi_check_system(acpi_hp_gpe_table);
++
+ 	/*
+ 	 * Determine the maximum GPE number for this machine.
+ 	 *

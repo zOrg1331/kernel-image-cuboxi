@@ -1,0 +1,120 @@
+From: Rik van Riel <riel@redhat.com>
+Date: Fri, 21 Nov 2008 14:31:19 -0500
+Subject: [agp] use contiguous memory to support xen
+Message-id: 20081121143119.7fd9d2df@cuia.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH 2/3] linux-xen: use contiguous memory for AGP
+Bugzilla: 412691
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+
+X points the video card at chunks of physically contiguous memory.
+The problem is that, under Xen, there is no guarantee about physical
+memory layout and several "physically contiguous" kernel pages may
+in fact be backed by non-contiguous machine physical memory.
+
+The fix is to call xen_create_contiguous_region(), which makes the
+hypervisor rearrange physical memory so there is an actual contiguous
+range of pages backing kernel memory.
+
+This is a backport of the following patches, with RHEL5 kABI
+considerations thrown in:
+
+http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/02a46885bd90
+
+http://lkml.org/lkml/2007/4/2/186
+
+Fixes bug 412691
+
+Signed-off-by: Rik van Riel <riel@redhat.com>
+Signed-off-by: Jan Beulich <jbeulich@novell.com>
+
+diff --git a/drivers/char/agp/ali-agp.c b/drivers/char/agp/ali-agp.c
+index 5a31ec7..94b1a9f 100644
+--- a/drivers/char/agp/ali-agp.c
++++ b/drivers/char/agp/ali-agp.c
+@@ -145,6 +145,7 @@ static void *m1541_alloc_page(struct agp_bridge_data *bridge)
+ 	void *addr = agp_generic_alloc_page(agp_bridge);
+ 	u32 temp;
+ 
++	global_flush_tlb();
+ 	if (!addr)
+ 		return NULL;
+ 
+@@ -160,6 +161,7 @@ static void ali_destroy_page(void * addr)
+ 	if (addr) {
+ 		global_cache_flush();	/* is this really needed?  --hch */
+ 		agp_generic_destroy_page(addr);
++		global_flush_tlb();
+ 	}
+ }
+ 
+diff --git a/drivers/char/agp/generic.c b/drivers/char/agp/generic.c
+index 8824632..753de52 100644
+--- a/drivers/char/agp/generic.c
++++ b/drivers/char/agp/generic.c
+@@ -54,10 +54,13 @@ EXPORT_SYMBOL_GPL(agp_memory_reserved);
+ #if defined(CONFIG_X86)
+ int map_page_into_agp(struct page *page)
+ {
+-	int i;
+-	i = change_page_attr(page, 1, PAGE_KERNEL_NOCACHE);
+-	/* Caller's responsibility to call global_flush_tlb() for
+-	 * performance reasons */
++	int i = 0;
++#ifdef CONFIG_XEN
++	if (!xen_create_contiguous_region((unsigned long)page_address(page), 0, 32))
++#endif
++		i = change_page_attr(page, 1, PAGE_KERNEL_NOCACHE);
++		/* Caller's responsibility to call global_flush_tlb() for
++		 * performance reasons */
+ 	return i;
+ }
+ EXPORT_SYMBOL_GPL(map_page_into_agp);
+@@ -65,6 +68,9 @@ EXPORT_SYMBOL_GPL(map_page_into_agp);
+ int unmap_page_from_agp(struct page *page)
+ {
+ 	int i;
++#ifdef CONFIG_XEN
++	xen_destroy_contiguous_region((unsigned long)page_address(page), 0);
++#endif
+ 	i = change_page_attr(page, 1, PAGE_KERNEL);
+ 	/* Caller's responsibility to call global_flush_tlb() for
+ 	 * performance reasons */
+diff --git a/drivers/char/agp/intel-agp.c b/drivers/char/agp/intel-agp.c
+index f72fe60..8cbcea5 100644
+--- a/drivers/char/agp/intel-agp.c
++++ b/drivers/char/agp/intel-agp.c
+@@ -223,9 +223,17 @@ static void *i8xx_alloc_pages(void)
+ 	if (page == NULL)
+ 		return NULL;
+ 
++#ifdef CONFIG_XEN
++	if (xen_create_contiguous_region((unsigned long)page_address(page), 2, 32)) {
++		__free_pages(page, 2);
++		return NULL;
++	}
++#endif
++
+ 	if (change_page_attr(page, 4, PAGE_KERNEL_NOCACHE) < 0) {
++		change_page_attr(page, 4, PAGE_KERNEL);
+ 		global_flush_tlb();
+-		__free_page(page);
++		__free_pages(page, 2);
+ 		return NULL;
+ 	}
+ 	global_flush_tlb();
+@@ -245,9 +253,12 @@ static void i8xx_destroy_pages(void *addr)
+ 	page = virt_to_page(addr);
+ 	change_page_attr(page, 4, PAGE_KERNEL);
+ 	global_flush_tlb();
++#ifdef CONFIG_XEN
++	xen_destroy_contiguous_region((unsigned long)page_address(page), 2);
++#endif
+ 	put_page(page);
+ 	unlock_page(page);
+-	free_pages((unsigned long)addr, 2);
++	__free_pages(page, 2);
+ 	atomic_dec(&agp_bridge->current_memory_agp);
+ }
+ 

@@ -1,0 +1,114 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Fri, 27 Jun 2008 11:45:39 -0400
+Subject: [usb] add ids for WWAN cards
+Message-id: 48650B23.3040405@redhat.com
+O-Subject: [RHEL5.3 PATCH] add USB IDs for Dell WWAN cards
+Bugzilla: 253137
+RH-Acked-by: Jeff Garzik <jgarzik@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+bz253137
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=253137
+Support Dell branded WWAN cards
+
+Description of problem:
+The usb/serial/option.c code does not have the USB IDs
+for the WWAN cards required by Dell so they are not seen
+when inserted.
+
+Solution:
+The USB IDs will be added.
+
+Upstream status:
+Currently, there are six patches that add 11 USB IDs
+for Dell WWAN cards. Due to the similarity of these
+patches, I merged them into one patch. The upstream
+patches are as follows:
+
+1. Add Dell's 0x8114 - 0x8118 & 0x8128 IDs
+USB: fix support for Dell Wireless Broadband (aka WWAN)
+<http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=96443218be7f61027c23772d048a1bf549dfb2d7>
+
+Dell Wireless Broadband ExpressCards are rebrands of Novatel's cards.
+Add all of their known PCI IDs to date along with their mapping to the exact
+Novatel model to the Option driver which already claims to support them.
+Commit: 96443218be7f61027c23772d048a1bf549dfb2d7
+
+Note: RHEL5's airprime.c did not need editing nor did
+DELL's VENDOR ID or the 0x8118 ID need be moved.
+
+2. Add Dell's 0x8137 ID
+USB: option: Add Dell HSDPA 5520 to driver
+<http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=2c4cd1f13a658daacb4fe5ed88887675c31ae78f>
+
+This is based on information sent in by Christian Gothe.
+commit: 2c4cd1f13a658daacb4fe5ed88887675c31ae78f
+
+3. Add Dell's 0x8136 ID
+USB: Variant of the Dell Wireless 5520 driver
+<http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=ab91d346c82e794e9dce29cf4fda067b4961ca64>
+
+I've got a Dell wireless 5520 card with a different USB ID - specifically, 8136
+instead of 8137.
+commit: ab91d346c82e794e9dce29cf4fda067b4961ca64
+
+4. Add Dell's 0x8129 ID
+USB: usb: yet another Dell wireless CDMA/EVDO modem
+<http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=59036e94732edc2fb957465008c68bbcfc6736fa>
+
+Add native support of the Dell wireless CDMA/EVDO modem.
+commit: 59036e94732edc2fb957465008c68bbcfc6736fa
+
+5. Add 0x8133.
+USB: option: Added vendor id for Dell 5720 broadband modem
+<http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=aa59e053da08336e7def83e83c86369cd9fdaf8b>
+
+this is a small patch to add support for a rebranded Novatel modem
+commit: aa59e053da08336e7def83e83c86369cd9fdaf8b
+
+6. Add 0x8138.
+USB: option: add new Dell 5520 HSDPA variant
+<http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=96cb15cf977356d9d3117dd88f3fe187d6024f4b>
+
+New variant of the 5520 found by Luke Sheldrick.
+commit: 96cb15cf977356d9d3117dd88f3fe187d6024f4b
+
+Testing:
+The resulting patch was built with Brew (task 1367742).
+I installed the rpm on the Dell Converse and Fila laptops
+and usbserial registered the WWAN card (Dell Merlin XU870
+ExpressCard 0x413c:8118)as a "GSM Modem" when inserted.
+Card is seen as deleted when pulled out.
+
+Acks would be appreciated. Thanks.
+
+diff --git a/drivers/usb/serial/option.c b/drivers/usb/serial/option.c
+index c856e6f..804dddd 100644
+--- a/drivers/usb/serial/option.c
++++ b/drivers/usb/serial/option.c
+@@ -71,6 +71,7 @@ static int  option_send_setup(struct usb_serial_port *port);
+ #define HUAWEI_VENDOR_ID                0x12D1
+ #define AUDIOVOX_VENDOR_ID              0x0F3D
+ #define NOVATELWIRELESS_VENDOR_ID       0x1410
++#define DELL_VENDOR_ID                  0x413C
+ #define ANYDATA_VENDOR_ID               0x16d5
+ 
+ #define OPTION_PRODUCT_OLD              0x5000
+@@ -92,6 +93,17 @@ static struct usb_device_id option_ids[] = {
+ 	{ USB_DEVICE(HUAWEI_VENDOR_ID, HUAWEI_PRODUCT_E600) },
+ 	{ USB_DEVICE(AUDIOVOX_VENDOR_ID, AUDIOVOX_PRODUCT_AIRCARD) },
+ 	{ USB_DEVICE(NOVATELWIRELESS_VENDOR_ID,NOVATELWIRELESS_PRODUCT_U740) },
++	{ USB_DEVICE(DELL_VENDOR_ID, 0x8114) }, /* Dell Wireless 5700 Mobile Broadband CDMA/EVDO Mini-Card == Novatel Expedite EV620 CDMA/EV-DO */
++	{ USB_DEVICE(DELL_VENDOR_ID, 0x8115) }, /* Dell Wireless 5500 Mobile Broadband HSDPA Mini-Card == Novatel Expedite EU740 HSDPA/3G */
++	{ USB_DEVICE(DELL_VENDOR_ID, 0x8116) }, /* Dell Wireless 5505 Mobile Broadband HSDPA Mini-Card == Novatel Expedite EU740 HSDPA/3G */
++	{ USB_DEVICE(DELL_VENDOR_ID, 0x8117) }, /* Dell Wireless 5700 Mobile Broadband CDMA/EVDO ExpressCard == Novatel Merlin XV620 CDMA/EV-DO */
++	{ USB_DEVICE(DELL_VENDOR_ID, 0x8118) }, /* Dell Wireless 5510 Mobile Broadband HSDPA ExpressCard == Novatel Merlin XU870 HSDPA/3G */
++	{ USB_DEVICE(DELL_VENDOR_ID, 0x8128) }, /* Dell Wireless 5700 Mobile Broadband CDMA/EVDO Mini-Card == Novatel Expedite E720 CDMA/EV-DO */
++	{ USB_DEVICE(DELL_VENDOR_ID, 0x8129) }, /* Dell Wireless 5700 Mobile Broadband CDMA/EVDO Mini-Card == Novatel Expedite ET620 CDMA/EV-DO */
++	{ USB_DEVICE(DELL_VENDOR_ID, 0x8133) }, /* Dell Wireless 5720 == Novatel EV620 CDMA/EV-DO */
++	{ USB_DEVICE(DELL_VENDOR_ID, 0x8136) }, /* Dell Wireless HSDPA 5520 == Novatel Expedite EU860D */
++	{ USB_DEVICE(DELL_VENDOR_ID, 0x8137) }, /* Dell Wireless HSDPA 5520 */
++	{ USB_DEVICE(DELL_VENDOR_ID, 0x8138) }, /* Dell Wireless 5520 Voda I Mobile Broadband (3G HSDPA) Minicard */
+ 	{ USB_DEVICE(ANYDATA_VENDOR_ID, ANYDATA_PRODUCT_ID) },
+ 	{ } /* Terminating entry */
+ };

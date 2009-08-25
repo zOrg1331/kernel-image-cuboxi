@@ -53,6 +53,8 @@
 	ioremap_nocache
 	memory_add_physaddr_to_nid
 	remove_memory
+[rhel5_arch_ia64_mm_u3]
+	iounmap
 [rhel5_arch_ia64_pci_ga]
 	pcibios_resource_to_bus
 [rhel5_arch_ia64_sn_ga]
@@ -82,15 +84,6 @@
 	tiocx_irq_alloc
 	tiocx_irq_free
 	tiocx_swin_base
-[rhel5_arch_ia64_sn_kernel_ga]
-	xp_nofault_PIOR
-	xp_nofault_PIOR_target
-	xpc_clear_interface
-	xpc_connect
-	xpc_disconnect
-	xpc_interface
-	xpc_registrations
-	xpc_set_interface
 [rhel5_arch_ia64_sn_kernel_u2]
 	bte_unaligned_copy
 	sn_coherency_id
@@ -199,6 +192,11 @@
 	dlm_new_lockspace
 	dlm_release_lockspace
 	dlm_unlock
+[rhel5_dlm_u3]
+	dlm_posix_get
+	dlm_posix_lock
+	dlm_posix_set_fsid
+	dlm_posix_unlock
 [rhel5_drivers_atm_ga]
 	suni_init
 [rhel5_drivers_base_ga]
@@ -2152,6 +2150,8 @@
 	__bitmap_intersects
 [rhel5_lib_u2]
 	radix_tree_preload
+[rhel5_lib_u3]
+	vscnprintf
 [rhel5_lib_zlib_deflate_ga]
 	zlib_deflate
 	zlib_deflateEnd

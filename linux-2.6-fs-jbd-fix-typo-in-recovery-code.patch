@@ -1,0 +1,37 @@
+From: Josef Bacik <jbacik@redhat.com>
+Date: Wed, 21 May 2008 11:11:14 -0400
+Subject: [fs] jbd: fix typo in recovery code
+Message-id: 20080521151114.GC3162@unused.rdu.redhat.com
+O-Subject: [RHEL5.3 PATCH] JBD: fix typo in recovery code
+Bugzilla: 447742
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+Hello,
+
+This is in reference to bz 447742.  Same problem as RHEL4's, theres a typo in
+the recovery code that could result in fs corruption.  This patch is a backport
+of upstream commit
+
+439aeec639d7c57f3561054a6d315c40fd24bb74
+
+Thanks,
+
+Josef
+
+diff --git a/fs/jbd/recovery.c b/fs/jbd/recovery.c
+index de5bafb..af7da73 100644
+--- a/fs/jbd/recovery.c
++++ b/fs/jbd/recovery.c
+@@ -478,7 +478,7 @@ static int do_one_pass(journal_t *journal,
+ 					memcpy(nbh->b_data, obh->b_data,
+ 							journal->j_blocksize);
+ 					if (flags & JFS_FLAG_ESCAPE) {
+-						*((__be32 *)bh->b_data) =
++						*((__be32 *)nbh->b_data) =
+ 						cpu_to_be32(JFS_MAGIC_NUMBER);
+ 					}
+ 

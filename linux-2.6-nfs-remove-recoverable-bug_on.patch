@@ -1,0 +1,59 @@
+From: Steve Dickson <SteveD@redhat.com>
+Date: Sat, 18 Oct 2008 08:25:42 -0400
+Subject: [nfs] remove recoverable BUG_ON
+Message-id: 48F9D5C6.6010602@RedHat.com
+O-Subject: [PATCH] [RHEL5.3 exception] NFS: Remove recoverable BUG_ON()
+Bugzilla: 458774
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+The attached patch removes a BUG_ON() that can occurs when the client
+transfers a different mount points on the server. I've personally
+have tripped over this a number of times in the Fedora kernel
+in some recent server work. The point being, the BUG_ON() can
+pop fairly easily.
+
+The point of the patch is when the client transverse a mount
+point and the dirent is not a root, we don't need to bring
+down the machine. Returning ESTALE is much more appropriate.
+
+The patch will be (or has been) committed to 2.6.27.
+
+The bz is: https://bugzilla.redhat.com/show_bug.cgi?id=458774
+which was accepted as a exception for 5.3
+
+steved.
+
+commit 44d5759d3fdad660f000ef319f0ec33a6ac6ae28
+Author: Denis V. Lunev <den@openvz.org>
+Date:   Mon Aug 11 12:02:34 2008 +0400
+
+    nfs: BUG_ON in nfs_follow_mountpoint
+
+    Unfortunately, BUG_ON(IS_ROOT(dentry)) can happen inside
+    nfs_follow_mountpoint with NFS running Fedora 8 using a
+    specific setup.
+    https://bugzilla.redhat.com/show_bug.cgi?id=458622
+
+    So, the situation should be handled on NFS client gracefully.
+
+    Signed-off-by: Denis V. Lunev <den@openvz.org>
+    CC: Trond Myklebust <Trond.Myklebust@netapp.com>
+    CC: J. Bruce Fields <bfields@fieldses.org>
+    Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+diff --git a/fs/nfs/namespace.c b/fs/nfs/namespace.c
+index f4763c1..f69d82a 100644
+--- a/fs/nfs/namespace.c
++++ b/fs/nfs/namespace.c
+@@ -100,7 +100,10 @@ static void * nfs_follow_mountpoint(struct dentry *dentry, struct nameidata *nd)
+ 
+ 	dprintk("--> nfs_follow_mountpoint()\n");
+ 
+-	BUG_ON(IS_ROOT(dentry));
++	err = -ESTALE;
++	if (IS_ROOT(dentry))
++		goto out_err;
++
+ 	dprintk("%s: enter\n", __FUNCTION__);
+ 	dput(nd->dentry);
+ 	nd->dentry = dget(dentry);

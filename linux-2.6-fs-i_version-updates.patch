@@ -1,0 +1,101 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 8 Jul 2008 15:24:07 -0500
+Subject: [fs] i_version updates
+Message-id: 4873CCE7.6020001@redhat.com
+O-Subject: [PATCH RHEL5 6/9] i_version updatets
+Bugzilla: 443896
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+This is for:
+
+Bugzilla Bug 443896: RFE: [Ext4 enabler] backport vfs
+helpers to facilitate ext4 backport and testing
+
+this one is slightly screwy because it doesn't actually make
+i_version universally 64 bits due to KABI.
+
+If/when this matters to us (NFSV4?) I think it can be revisited...
+
+In the meantime it lets ext4 build w/o needing changes to
+the inode versioning code ...
+
+From: Jean Noel Cordenner <jean-noel.cordenner@bull.net>
+Date: Tue, 29 Jan 2008 04:58:27 +0000 (-0500)
+Subject: vfs: Add 64 bit i_version support
+X-Git-Tag: v2.6.25-rc1~11662~16
+X-Git-Url: http://git.engineering.redhat.com/?p=linux-2.6.git;a=commitdiff_plain;h=7a224228ed79d587ece2304869000aad1b8e97dd
+
+vfs: Add 64 bit i_version support
+
+The i_version field of the inode is changed to be a 64-bit counter that
+is set on every inode creation and that is incremented every time the
+inode data is modified (similarly to the "ctime" time-stamp).
+The aim is to fulfill a NFSv4 requirement for rfc3530.
+This first part concerns the vfs, it converts the 32-bit i_version in
+the generic inode to a 64-bit, a flag is added in the super block in
+order to check if the feature is enabled and the i_version is
+incremented in the vfs.
+
+Signed-off-by: Mingming Cao <cmm@us.ibm.com>
+Signed-off-by: Jean Noel Cordenner <jean-noel.cordenner@bull.net>
+Signed-off-by: Kalpak Shah <kalpak@clusterfs.com>
+
+diff --git a/fs/inode.c b/fs/inode.c
+index b3b28db..8875b3c 100644
+--- a/fs/inode.c
++++ b/fs/inode.c
+@@ -1242,6 +1242,11 @@ void file_update_time(struct file *file)
+ 		sync_it = 1;
+ 	inode->i_ctime = now;
+ 
++	if (IS_I_VERSION(inode)) {
++		inode_inc_iversion(inode);
++		sync_it = 1;
++	}
++
+ 	if (sync_it)
+ 		mark_inode_dirty_sync(inode);
+ }
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index fd80f94..18a1fa5 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -121,6 +121,7 @@ extern int dir_notify_enable;
+ #define MS_SLAVE	(1<<19)	/* change to slave */
+ #define MS_SHARED	(1<<20)	/* change to shared */
+ #define MS_NO_LEASES	(1<<21)	/* fs does not support leases */
++#define MS_I_VERSION	(1<<23)	/* Update inode I_version field */
+ #define MS_ACTIVE	(1<<30)
+ #define MS_NOUSER	(1<<31)
+ 
+@@ -172,6 +173,7 @@ extern int dir_notify_enable;
+ #define IS_DIRSYNC(inode)	(__IS_FLG(inode, MS_SYNCHRONOUS|MS_DIRSYNC) || \
+ 					((inode)->i_flags & (S_SYNC|S_DIRSYNC)))
+ #define IS_MANDLOCK(inode)	__IS_FLG(inode, MS_MANDLOCK)
++#define IS_I_VERSION(inode)	__IS_FLG(inode, MS_I_VERSION)
+ 
+ #define IS_NOQUOTA(inode)	((inode)->i_flags & S_NOQUOTA)
+ #define IS_APPEND(inode)	((inode)->i_flags & S_APPEND)
+@@ -1232,6 +1234,21 @@ static inline void inode_dec_link_count(struct inode *inode)
+ 	mark_inode_dirty(inode);
+ }
+ 
++/**
++ * inode_inc_iversion - increments i_version
++ * @inode: inode that need to be updated
++ *
++ * Every time the inode is modified, the i_version field will be incremented.
++ * The filesystem has to be mounted with i_version flag
++ */
++
++static inline void inode_inc_iversion(struct inode *inode)
++{
++	spin_lock(&inode->i_lock);
++	inode->i_version++;
++	spin_unlock(&inode->i_lock);
++}
++
+ extern void touch_atime(struct vfsmount *mnt, struct dentry *dentry);
+ static inline void file_accessed(struct file *file)
+ {

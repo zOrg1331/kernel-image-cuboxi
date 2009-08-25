@@ -1,0 +1,54 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Thu, 24 Apr 2008 14:11:00 -0400
+Subject: [mm] fix debug printks in page_remove_rmap()
+Message-id: 1209060660.13895.14.camel@dhcp83-220.boston.redhat.com
+O-Subject: [HEL5-U3 patch] Fix debug printk()s in page_remove_rmap()
+Bugzilla: 457458
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+
+We recently got a BZ for a BUG_ON() in page_remove_rmap(), the problem
+is the page->_mapcount went negative.  I dont know what happened yet but
+the code only prints out critical debug info if CONFIG_DEBUG_VM is yet
+it unconditionally does "BUG_ON(page_mapcount(page) < 0);" !!!
+
+-------------------------------------------------------------------
+        if (atomic_add_negative(-1, &page->_mapcount)) {
+#ifdef CONFIG_DEBUG_VM
+                if (unlikely(page_mapcount(page) < 0)) {
+                        printk (KERN_EMERG "Eeek! page_mapcount(page)
+                        printk (KERN_EMERG "  page->flags = %lx\n",
+                        printk (KERN_EMERG "  page->count = %x\n",
+                        printk (KERN_EMERG "  page->mapping = %p\n",
+                }
+#endif
+                BUG_ON(page_mapcount(page) < 0);
+--------------------------------------------------------------------
+
+This is ridiculous, the attached patch removes the
+"#ifdef CONFIG_DEBUG_VM" and prints out the debug info since we are
+going to BUG_ON() anyway.
+
+Doesnt fix but helps debug BZ 443651.
+
+diff --git a/mm/rmap.c b/mm/rmap.c
+index b44fbdb..887c3df 100644
+--- a/mm/rmap.c
++++ b/mm/rmap.c
+@@ -579,15 +579,13 @@ void page_add_file_rmap(struct page *page)
+ void page_remove_rmap(struct page *page)
+ {
+ 	if (atomic_add_negative(-1, &page->_mapcount)) {
+-#ifdef CONFIG_DEBUG_VM
+ 		if (unlikely(page_mapcount(page) < 0)) {
+ 			printk (KERN_EMERG "Eeek! page_mapcount(page) went negative! (%d)\n", page_mapcount(page));
+ 			printk (KERN_EMERG "  page->flags = %lx\n", page->flags);
+ 			printk (KERN_EMERG "  page->count = %x\n", page_count(page));
+ 			printk (KERN_EMERG "  page->mapping = %p\n", page->mapping);
++			BUG();
+ 		}
+-#endif
+-		BUG_ON(page_mapcount(page) < 0);
+ 		/*
+ 		 * It would be tidy to reset the PageAnon mapping here,
+ 		 * but that might overwrite a racing page_add_anon_rmap

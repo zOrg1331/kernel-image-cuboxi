@@ -1,0 +1,72 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Tue, 24 Feb 2009 14:59:00 -0500
+Subject: [ia64] use current_kernel_time/xtime in hrtimer_start()
+Message-id: 20090224195859.12415.45173.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5 PATCH]: ia64: Use current_kernel_time()/xtime in hrtimer_start()
+Bugzilla: 485323
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Fujitsu noticed an issue with leap seconds and ia64 using the following test:
+
+	usleep(100000); /* sleep for .1 seconds */
+	gettimeofday(&ts);
+	// output gettimeofday
+
+After inserting a leap second using adjtimex(), it was noticed that the test
+no longer slept .1 seconds and was now sleeping 1.1 seconds (an additional 1
+second every usleep).
+
+ie)
+
+gettimeofday: 1234051199.616500
+gettimeofday: 1234051199.717501
+gettimeofday: 1234051199.818504
+gettimeofday: 1234051199.919500
+gettimeofday: 1234051200.020499 << inserted a leap second
+gettimeofday: 1234051201.121438
+gettimeofday: 1234051202.222380
+gettimeofday: 1234051203.323316
+gettimeofday: 1234051204.424255
+
+I have verified that the leap second was inserted by examining the console and
+looking for "Clock: inserting leap second 23:59:60 UTC".
+
+A trivial patch was suggested by Fujitsu to fix this issue but I rejected it
+because I think it is likely a performance hit (the original patch would
+call gettimeofday() for *every* timer interrupt).
+
+This solution (also from Fujitsu) is better:  Use current_kernel_time(),
+ie) xtime only, in hrtimer_start().  IMO, this is a lightweight fix.
+
+Successfully compiled and tested on a few ia64 systems by me.
+
+Resolves BZ 485323.
+
+diff --git a/kernel/hrtimer.c b/kernel/hrtimer.c
+index 71ac1d3..8479e6f 100644
+--- a/kernel/hrtimer.c
++++ b/kernel/hrtimer.c
+@@ -63,7 +63,11 @@ static ktime_t ktime_get_real(void)
+ {
+ 	struct timespec now;
+ 
++#ifdef CONFIG_TIME_INTERPOLATION
++	now = current_kernel_time();
++#else
+ 	getnstimeofday(&now);
++#endif
+ 
+ 	return timespec_to_ktime(now);
+ }
+@@ -111,7 +115,11 @@ void ktime_get_ts(struct timespec *ts)
+ 
+ 	do {
+ 		seq = read_seqbegin(&xtime_lock);
++#ifdef CONFIG_TIME_INTERPOLATION
++		*ts = xtime;
++#else
+ 		getnstimeofday(ts);
++#endif
+ 		tomono = wall_to_monotonic;
+ 
+ 	} while (read_seqretry(&xtime_lock, seq));

@@ -1,0 +1,49 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Tue, 12 Aug 2008 16:07:27 -0400
+Subject: [xen] ia64: speed up hypercall for guest domain creation
+Message-id: 20080812200727.4832.75960.sendpatchset@pq0-1.lab.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH 5/7] xen-ia64: improve response time in dom 0 at creating a guest domain
+Bugzilla: 456171
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+
+bz456171
+# HG changeset patch
+# User Isaku Yamahata <yamahata@valinux.co.jp>
+# Date 1217906378 -32400
+# Node ID 678ad99920c897f247c37d3de14827c547e664c5
+# Parent  0deba952a6d3d2a58c404feefea2bccb3071089a
+[IA64] improve response time in dom 0 at creating a guest domain
+
+The hypercall takes several hundred mili seconds,
+and it takes around 5 mili seconds with my new patch.
+Time of one hypercall should be smaller than a vcpu time slice.
+
+Signed-off-by: Akio Takebe <takebe_akio@jp.fujitsu.com>
+
+diff --git a/arch/ia64/xen/xcom_privcmd.c b/arch/ia64/xen/xcom_privcmd.c
+index ec2e70d..a5b6b12 100644
+--- a/arch/ia64/xen/xcom_privcmd.c
++++ b/arch/ia64/xen/xcom_privcmd.c
+@@ -83,15 +83,18 @@ xencomm_privcmd_memory_reservation_op(privcmd_hypercall_t *hypercall)
+ 		 *   may cause the soft lockup warning.
+ 		 *   In order to avoid the warning, we limit
+ 		 *   the number of extents and repeat the hypercall.
+-		 *   The following value is determined by experimentation.
+-		 *   If the following limit causes soft lockup warning,
++		 *   The following value is determined by evaluation.
++		 *   Time of one hypercall should be smaller than
++		 *   a vcpu time slice. The time with current
++		 *   MEMORYOP_MAX_EXTENTS is around 5 msec.
++		 *   If the following limit causes some issues,
+ 		 *   we should decrease this value.
+ 		 *
+ 		 *   Another way would be that start with small value and
+ 		 *   increase adoptively measuring hypercall time.
+ 		 *   It might be over-kill.
+ 		 */
+-#define MEMORYOP_MAX_EXTENTS	(MEMORYOP_XENCOMM_LIMIT / 4)
++#define MEMORYOP_MAX_EXTENTS	(MEMORYOP_XENCOMM_LIMIT / 512)
+ 
+ 		while (nr_extents > 0) {
+ 			xen_ulong_t nr_tmp = nr_extents;

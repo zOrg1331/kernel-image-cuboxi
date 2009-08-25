@@ -1,0 +1,107 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Thu, 31 Jul 2008 15:33:40 -0400
+Subject: [IA64] CMC/CPE: Reverse fetching log and checking poll
+Message-id: 20080731192744.4411.42973.sendpatchset@dhcp-100-2-194.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH 12/19] [IA64] CMC/CPE: Reverse the order of fetching log and checking poll threshold
+Bugzilla: 455308
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+[patch] CMC/CPE: Reverse the order of fetching log and checking poll threshold
+
+BZ#455308
+
+Upstream: http://git.kernel.org/?p=linux/kernel/git/aegl/linux-2.6.git;a=commit;h=ddb4f0df0424d174567a011a176782ffa4202071
+
+This patch reverses the order of fetching log from SAL and
+checking poll threshold. This will fix following trivial issues:
+
+- If SAL_GET_SATE_INFO is unbelievably slow (due to huge system
+   or just its silly implementation) and if it takes more than
+   1/5 sec, CMCI/CPEI will never switch to CMCP/CPEP.
+- Assuming terrible flood of interrupt (continuous corrected
+   errors let all CPUs enter to handler at once and bind them
+   in it), CPUs will be serialized by IA64_LOG_LOCK(*).
+   Now we check the poll threshold after the lock and log fetch,
+   so we need to call SAL_GET_STATE_INFO (num_online_cpus() + 4)
+   times in the worst case.
+   if we can check the threshold before the lock, we can shut up
+   interrupts quickly without waiting preceding log fetches, and
+   the number of times will be reduced to (num_online_cpus()) in
+   the same situation.
+
+Signed-off-by: Hidetoshi Seto <seto.hidetoshi@jp.fujitsu.com>
+Signed-off-by: Tony Luck <tony.luck@intel.com>
+
+diff --git a/arch/ia64/kernel/mca.c b/arch/ia64/kernel/mca.c
+index 35392ad..7f09dd5 100644
+--- a/arch/ia64/kernel/mca.c
++++ b/arch/ia64/kernel/mca.c
+@@ -512,9 +512,6 @@ ia64_mca_cpe_int_handler (int cpe_irq, void *arg, struct pt_regs *ptregs)
+ 	/* SAL spec states this should run w/ interrupts enabled */
+ 	local_irq_enable();
+ 
+-	/* Get the CPE error record and log it */
+-	ia64_mca_log_sal_error_record(SAL_INFO_TYPE_CPE);
+-
+ 	spin_lock(&cpe_history_lock);
+ 	if (!cpe_poll_enabled && cpe_vector >= 0) {
+ 
+@@ -543,7 +540,7 @@ ia64_mca_cpe_int_handler (int cpe_irq, void *arg, struct pt_regs *ptregs)
+ 			mod_timer(&cpe_poll_timer, jiffies + MIN_CPE_POLL_INTERVAL);
+ 
+ 			/* lock already released, get out now */
+-			return IRQ_HANDLED;
++			goto out;
+ 		} else {
+ 			cpe_history[index++] = now;
+ 			if (index == CPE_HISTORY_LENGTH)
+@@ -551,6 +548,10 @@ ia64_mca_cpe_int_handler (int cpe_irq, void *arg, struct pt_regs *ptregs)
+ 		}
+ 	}
+ 	spin_unlock(&cpe_history_lock);
++out:
++	/* Get the CPE error record and log it */
++	ia64_mca_log_sal_error_record(SAL_INFO_TYPE_CPE);
++
+ 	return IRQ_HANDLED;
+ }
+ 
+@@ -568,7 +569,7 @@ ia64_mca_cpe_int_handler (int cpe_irq, void *arg, struct pt_regs *ptregs)
+  *  Outputs
+  *      None
+  */
+-static void __init
++static void
+ ia64_mca_register_cpev (int cpev)
+ {
+ 	/* Register the CPE interrupt vector with SAL */
+@@ -1283,9 +1284,6 @@ ia64_mca_cmc_int_handler(int cmc_irq, void *arg, struct pt_regs *ptregs)
+ 	/* SAL spec states this should run w/ interrupts enabled */
+ 	local_irq_enable();
+ 
+-	/* Get the CMC error record and log it */
+-	ia64_mca_log_sal_error_record(SAL_INFO_TYPE_CMC);
+-
+ 	spin_lock(&cmc_history_lock);
+ 	if (!cmc_polling_enabled) {
+ 		int i, count = 1; /* we know 1 happened now */
+@@ -1318,7 +1316,7 @@ ia64_mca_cmc_int_handler(int cmc_irq, void *arg, struct pt_regs *ptregs)
+ 			mod_timer(&cmc_poll_timer, jiffies + CMC_POLL_INTERVAL);
+ 
+ 			/* lock already released, get out now */
+-			return IRQ_HANDLED;
++			goto out;
+ 		} else {
+ 			cmc_history[index++] = now;
+ 			if (index == CMC_HISTORY_LENGTH)
+@@ -1326,6 +1324,10 @@ ia64_mca_cmc_int_handler(int cmc_irq, void *arg, struct pt_regs *ptregs)
+ 		}
+ 	}
+ 	spin_unlock(&cmc_history_lock);
++out:
++	/* Get the CMC error record and log it */
++	ia64_mca_log_sal_error_record(SAL_INFO_TYPE_CMC);
++
+ 	return IRQ_HANDLED;
+ }
+ 

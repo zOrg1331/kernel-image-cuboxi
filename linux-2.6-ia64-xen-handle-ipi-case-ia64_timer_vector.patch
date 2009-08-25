@@ -1,0 +1,75 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Fri, 25 Jul 2008 16:19:14 +0800
+Subject: [ia64] xen: handle ipi case IA64_TIMER_VECTOR
+Message-id: 48898C82.2040104@redhat.com
+O-Subject: [RHEL 5.3 PATCH 1/1] bz 451745: Fix boot failure on ia64-xen
+Bugzilla: 451745
+
+BZ 451745
+
+Description of problem:
+1.
+Without this patch applied,  the kernel with back port patches  of bz
+451745 (for 3463a93def55c309f3c0d0a8aaf216be3be42d64  and
+fa1d19e5d9a94120f31e5783ab44758f46892d94  and
+2826f8c0f4c97b7db33e2a680f184d828eb7a785 ) would  boot hang on ia64-xen.
+
+2.
+In function: ia64_send_ipi (arch/ia64/kernel/irq_64.c 2.6.18-94.el5),
+IA64_TIMER_VECTOR is actually NOT supported by current rhel 5 xen code.
+The patch "[RHEL 5.3 PATCH 1/2] bz 451745: Update check_sal_cache_flush
+to use platform_send_ipi" would cause ia64 xen kernel boot
+hang because this patch assumes platform_send_ipi   IA64_TIMER_VECTOR
+work, and has a loop waiting for the arrival of IA64_TIMER ipi to break it.
+
+Upstream status:
+
+http://xen.markmail.org/message/2xwp64qu3e7k4545
+
+Note:
+Please apply the patche series for bz 451745 in this order:
+1.[RHEL 5.3 PATCH 1/2]  bz 451745:  Update check_sal_cache_flush to use
+platform_send_ipi
+2.[RHEL 5.3 PATCH 2/2]  bz 451745:  move SAL_CACHE_FLUSH check later in
+boot
+3.[RHEL 5.3 PATCH 1/1]  bz 451745: Fix boot failure on ia64/sn2
+4.[RHEL 5.3 PATCH 1/1]  bz 451745: Fix boot failure on ia64-xen
+
+Testing status:
+Boot fine on tiger4 with ia64-xen kernel , and nothing unusual found.
+
+Please review and ACK.
+
+Thanks,
+Luming
+
+diff --git a/arch/ia64/kernel/irq_ia64.c b/arch/ia64/kernel/irq_ia64.c
+index 25a0e8f..4056dd6 100644
+--- a/arch/ia64/kernel/irq_ia64.c
++++ b/arch/ia64/kernel/irq_ia64.c
+@@ -586,6 +586,7 @@ ia64_send_ipi (int cpu, int vector, int delivery_mode, int redirect)
+ 	void __iomem *ipi_addr;
+ 	unsigned long ipi_data;
+ 	unsigned long phys_cpu_id;
++	extern void xen_send_ipi (int cpu, int vec);
+ 
+ #ifdef CONFIG_XEN
+         if (is_running_on_xen()) {
+@@ -594,7 +595,6 @@ ia64_send_ipi (int cpu, int vector, int delivery_mode, int redirect)
+ #ifdef CONFIG_SMP
+ 		/* TODO: we need to call vcpu_up here */
+ 		if (unlikely(vector == ap_wakeup_vector)) {
+-			extern void xen_send_ipi (int cpu, int vec);
+ 			xen_send_ipi (cpu, vector);
+ 			//vcpu_prepare_and_up(cpu);
+ 			return;
+@@ -614,6 +614,9 @@ ia64_send_ipi (int cpu, int vector, int delivery_mode, int redirect)
+ 		case IA64_CPEP_VECTOR:
+ 			irq = per_cpu(ipi_to_irq, cpu)[CPEP_VECTOR];
+ 			break;
++		case IA64_TIMER_VECTOR:
++			xen_send_ipi(cpu,vector);
++			return;
+ 		default:
+ 			printk(KERN_WARNING "Unsupported IPI type 0x%x\n",
+ 			       vector);

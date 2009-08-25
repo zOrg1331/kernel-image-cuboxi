@@ -1,0 +1,55 @@
+From: David Teigland <teigland@redhat.com>
+Date: Thu, 5 Jun 2008 14:10:37 -0500
+Subject: [dlm] reject normal unlock when lock waits on lookup
+Message-id: 20080605191037.GJ18635@redhat.com
+O-Subject: [RHEL5.3 PATCH 10/18] dlm: reject normal unlock when lock is waiting for lookup
+Bugzilla: 450132
+RH-Acked-by: Bob Peterson <rpeterso@redhat.com>
+
+bz 450132  dlm: fixes for recovery of user lockspace
+
+Fix bugs when userland apps using the dlm join/leave the lockspace,
+causing recovery.
+
+brew build including this patch
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1344633
+
+upstream commit:
+
+>From 42dc1601a9a31e8da767a4a9c37bad844b3698ab Mon Sep 17 00:00:00 2001
+>From: David Teigland <teigland@redhat.com>
+>Date: Wed, 9 Jan 2008 10:30:45 -0600
+>Subject: [PATCH] dlm: reject normal unlock when lock is waiting for lookup
+
+Non-forced unlocks should be rejected if the lock is waiting on the
+rsb_lookup list for another lock to establish the master node.
+
+Signed-off-by: David Teigland <teigland@redhat.com>
+
+diff --git a/fs/dlm/lock.c b/fs/dlm/lock.c
+index 40605a2..d515a49 100644
+--- a/fs/dlm/lock.c
++++ b/fs/dlm/lock.c
+@@ -2111,17 +2111,18 @@ static int validate_unlock_args(struct dlm_lkb *lkb, struct dlm_args *args)
+ 	/* an lkb may be waiting for an rsb lookup to complete where the
+ 	   lookup was initiated by another lock */
+ 
+-	if (args->flags & (DLM_LKF_CANCEL | DLM_LKF_FORCEUNLOCK)) {
+-		if (!list_empty(&lkb->lkb_rsb_lookup)) {
++	if (!list_empty(&lkb->lkb_rsb_lookup)) {
++		if (args->flags & (DLM_LKF_CANCEL | DLM_LKF_FORCEUNLOCK)) {
+ 			log_debug(ls, "unlock on rsb_lookup %x", lkb->lkb_id);
+ 			list_del_init(&lkb->lkb_rsb_lookup);
+ 			queue_cast(lkb->lkb_resource, lkb,
+ 				   args->flags & DLM_LKF_CANCEL ?
+ 				   -DLM_ECANCEL : -DLM_EUNLOCK);
+ 			unhold_lkb(lkb); /* undoes create_lkb() */
+-			rv = -EBUSY;
+-			goto out;
+ 		}
++		/* caller changes -EBUSY to 0 for CANCEL and FORCEUNLOCK */
++		rv = -EBUSY;
++		goto out;
+ 	}
+ 
+ 	/* cancel not allowed with another cancel/unlock in progress */

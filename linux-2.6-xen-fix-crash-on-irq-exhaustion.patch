@@ -1,0 +1,122 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Thu, 23 Oct 2008 16:08:44 -0400
+Subject: [xen] fix crash on IRQ exhaustion
+Message-id: 20081023200843.15142.41964.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.3 PATCH 1/1] Xen Really fix crash on IRQ exhaustion
+Bugzilla: 442736
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+Fixes bz 442736 for real this time
+
+The previous patch for this bug added the error
+path, except that the checking of returned values
+for irq allocations was broken.
+
+It stored the returned irq value in an unsigned and then
+checked it for < 0. Can't, as they say, happen. So negative
+irq values were stored and used as indicies and the usual
+chaos of a crash was the result. This incremental change is very
+minor and it fixes the case as was done upstream.
+Although the storage of irq values are unsigned in some
+data structures, the fix is to get the return value into
+an int, check it, then store it. Fix is made
+to one place in evtchn and one place in each of the
+netback, blkback and blktap drivers.
+
+Has passed testing locally, with an additional mod that
+allowed me to exhaust the IRQs on a small system.
+Matches upstream changes.
+
+Brew building now at
+https://brewweb.devel.redhat.com/taskinfo?taskID=1538543
+
+Please review and ack.
+
+diff --git a/drivers/xen/blkback/interface.c b/drivers/xen/blkback/interface.c
+index 3e7c50f..fdc75dd 100644
+--- a/drivers/xen/blkback/interface.c
++++ b/drivers/xen/blkback/interface.c
+@@ -150,17 +150,16 @@ int blkif_map(blkif_t *blkif, unsigned long shared_page, unsigned int evtchn)
+ 		BUG();
+ 	}
+ 
+-	blkif->irq = bind_evtchn_to_irqhandler(
++	err = bind_evtchn_to_irqhandler(
+ 		blkif->evtchn, blkif_be_int, 0, "blkif-backend", blkif);
+ 
+-        if (blkif->irq < 0) {
+-                err = blkif->irq;
+-                blkif->irq = 0;
++        if (err < 0) {
+  		unmap_frontend_page(blkif);
+ 		free_vm_area(blkif->blk_ring_area);
+ 		blkif->blk_rings.common.sring = NULL;
+ 		return err;
+-       }
++        }
++        blkif->irq = err;
+ 
+ 	return 0;
+ }
+diff --git a/drivers/xen/blktap/interface.c b/drivers/xen/blktap/interface.c
+index ac6ed6c..5a736e2 100644
+--- a/drivers/xen/blktap/interface.c
++++ b/drivers/xen/blktap/interface.c
+@@ -151,17 +151,16 @@ int tap_blkif_map(blkif_t *blkif, unsigned long shared_page,
+ 		BUG();
+ 	}
+ 
+-	blkif->irq = bind_evtchn_to_irqhandler(
++	err = bind_evtchn_to_irqhandler(
+ 		blkif->evtchn, tap_blkif_be_int, 0, "blkif-backend", blkif);
+ 
+-        if (blkif->irq < 0) {
+-                err = blkif->irq;
+-                blkif->irq = 0;
++        if (err < 0) {
+  		unmap_frontend_page(blkif);
+ 		free_vm_area(blkif->blk_ring_area);
+ 		blkif->blk_rings.common.sring = NULL;
+ 		return err;
+-       }
++        }
++        blkif->irq = err;
+ 
+ 	return 0;
+ }
+diff --git a/drivers/xen/core/evtchn.c b/drivers/xen/core/evtchn.c
+index 5217649..323b85f 100644
+--- a/drivers/xen/core/evtchn.c
++++ b/drivers/xen/core/evtchn.c
+@@ -441,7 +441,7 @@ int bind_evtchn_to_irqhandler(
+ 	const char *devname,
+ 	void *dev_id)
+ {
+-	unsigned int irq;
++	int irq;
+ 	int retval;
+ 
+ 	irq = bind_evtchn_to_irq(evtchn);
+diff --git a/drivers/xen/netback/interface.c b/drivers/xen/netback/interface.c
+index 4b85c54..092d29c 100644
+--- a/drivers/xen/netback/interface.c
++++ b/drivers/xen/netback/interface.c
+@@ -287,12 +287,12 @@ int netif_map(netif_t *netif, unsigned long tx_ring_ref,
+ 
+ 	netif->evtchn = bind_interdomain.local_port;
+ 
+-	netif->irq = bind_evtchn_to_irqhandler(
++	err = bind_evtchn_to_irqhandler(
+ 		netif->evtchn, netif_be_int, 0, netif->dev->name, netif);
+-        if (netif->irq < 0) {
+-                netif->irq = 0;
++        if (err < 0)
+                 goto err_hypervisor;
+-        }
++
++        netif->irq = err;
+ 
+ 	disable_irq(netif->irq);
+ 

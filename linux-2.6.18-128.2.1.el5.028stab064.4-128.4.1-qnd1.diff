@@ -1,0 +1,697 @@
+There are 20 patches added in RHEL 5 between -128.2.1 and -128.4.1.
+The following 14 are included in this cumulative patch:
+
+linux-2.6-audit-watch-fix-removal-of-audit_dir-rule-on-rmdir.patch
+linux-2.6-fs-vfs-skip-i_clear-state-inodes-in-drop_pagecache_sb.patch
+linux-2.6-misc-core-dump-wrong-thread-info-in-core-dump-file.patch
+linux-2.6-net-e1000-fix-skb_over_panic.patch
+linux-2.6-char-tpm-get_event_name-stack-corruption.patch
+linux-2.6-scsi-libsas-use-the-supplied-address-for-sata-devices.patch
+linux-2.6-net-r8169-fix-crash-when-large-packets-are-received.patch
+linux-2.6-misc-wacom-reset-state-when-tool-is-not-in-proximity.patch
+linux-2.6-net-bnx2-fix-problem-of-using-wrong-irq-handler.patch
+linux-2.6-misc-hrtimer-check-relative-timeouts-for-overflow.patch
+linux-2.6-misc-hrtimer-fix-a-soft-lockup.patch
+linux-2.6-pci-quirk-disable-msi-on-via-vt3364-chipsets.patch
+linux-2.6-fs-ecryptfs-check-tag-11-packet-literal-data-buffer.patch
+linux-2.6-fs-ecryptfs-check-tag-3-packet-encrypted-key-size.patch
+
+The following 3 are excluded from this patch, mostly because some of them
+would not apply cleanly without some effort, whereas others were related to
+those non-applying ones.
+
+xen-hv-remove-high-latency-spin_lock.patch
+linux-2.6-ia64-xen-switch-from-flipping-to-copying-interface.patch
+linux-2.6-xen-netback-change-back-to-a-flipping-interface.patch
+
+Finally, the following 3 were found to have been already included in
+OpenVZ kernels:
+
+linux-2.6-ptrace-fix-do_coredump-vs-ptrace_start-deadlock.patch
+linux-2.6-char-tty-prevent-an-o_ndelay-writer-from-blocking.patch
+linux-2.6-misc-personality-handling-fix-per_clear_on_setid.patch
+
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/drivers/char/tpm/tpm_bios.c linux-2.6.18-128.4.1.el5.028stab064.4/drivers/char/tpm/tpm_bios.c
+--- linux-2.6.18-128.2.1.el5.028stab064.4/drivers/char/tpm/tpm_bios.c	2009-08-09 12:15:58 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/drivers/char/tpm/tpm_bios.c	2009-08-10 06:19:08 +0000
+@@ -214,7 +214,8 @@ static int get_event_name(char *dest, st
+ 			unsigned char * event_entry)
+ {
+ 	const char *name = "";
+-	char data[40] = "";
++	/* 41 so there is room for 40 data and 1 nul */
++	char data[41] = "";
+ 	int i, n_len = 0, d_len = 0;
+ 	struct tcpa_pc_event *pc_event;
+ 
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/drivers/net/bnx2.c linux-2.6.18-128.4.1.el5.028stab064.4/drivers/net/bnx2.c
+--- linux-2.6.18-128.2.1.el5.028stab064.4/drivers/net/bnx2.c	2009-08-09 12:16:08 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/drivers/net/bnx2.c	2009-08-10 06:19:08 +0000
+@@ -55,7 +55,7 @@
+ #define FW_BUF_SIZE		0x10000
+ #define DRV_MODULE_NAME		"bnx2"
+ #define PFX DRV_MODULE_NAME	": "
+-#define DRV_MODULE_VERSION	"1.7.9-1"
++#define DRV_MODULE_VERSION	"1.7.9-2"
+ #define DRV_MODULE_RELDATE	"July 18, 2008"
+ 
+ #define RUN_AT(x) (jiffies + (x))
+@@ -5819,6 +5819,7 @@ bnx2_enable_msix(struct bnx2 *bp, int ms
+ {
+ 	int i, rc;
+ 	struct msix_entry msix_ent[BNX2_MAX_MSIX_VEC];
++	const int len = sizeof(bp->irq_tbl[0].name);
+ 
+ 	bnx2_setup_msix_tbl(bp);
+ 	REG_WR(bp, BNX2_PCI_MSIX_CONTROL, BNX2_MAX_MSIX_HW_VEC - 1);
+@@ -5828,9 +5829,6 @@ bnx2_enable_msix(struct bnx2 *bp, int ms
+ 	for (i = 0; i < BNX2_MAX_MSIX_VEC; i++) {
+ 		msix_ent[i].entry = i;
+ 		msix_ent[i].vector = 0;
+-
+-		strcpy(bp->irq_tbl[i].name, bp->dev->name);
+-		bp->irq_tbl[i].handler = bnx2_msi_1shot;
+ 	}
+ 
+ 	rc = pci_enable_msix(bp->pdev, msix_ent, BNX2_MAX_MSIX_VEC);
+@@ -5839,8 +5837,11 @@ bnx2_enable_msix(struct bnx2 *bp, int ms
+ 
+ 	bp->irq_nvecs = msix_vecs;
+ 	bp->flags |= BNX2_FLAG_USING_MSIX | BNX2_FLAG_ONE_SHOT_MSI;
+-	for (i = 0; i < BNX2_MAX_MSIX_VEC; i++)
++	for (i = 0; i < BNX2_MAX_MSIX_VEC; i++) {
+ 		bp->irq_tbl[i].vector = msix_ent[i].vector;
++		snprintf(bp->irq_tbl[i].name, len, "%s-%d", bp->dev->name, i);
++		bp->irq_tbl[i].handler = bnx2_msi_1shot;
++	}
+ }
+ 
+ static void
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/drivers/net/e1000/e1000_main.c linux-2.6.18-128.4.1.el5.028stab064.4/drivers/net/e1000/e1000_main.c
+--- linux-2.6.18-128.2.1.el5.028stab064.4/drivers/net/e1000/e1000_main.c	2009-08-09 12:16:10 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/drivers/net/e1000/e1000_main.c	2009-08-10 06:19:08 +0000
+@@ -4184,7 +4184,7 @@ e1000_clean_rx_irq(struct e1000_adapter 
+ 
+ 		length = le16_to_cpu(rx_desc->length);
+ 
+-		if (unlikely(!(status & E1000_RXD_STAT_EOP))) {
++		if (unlikely(!(status & E1000_RXD_STAT_EOP) || (length <= 4))) {
+ 			/* All receives must fit into a single buffer */
+ 			E1000_DBG("%s: Receive packet consumed multiple"
+ 				  " buffers\n", netdev->name);
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/drivers/net/r8169.c linux-2.6.18-128.4.1.el5.028stab064.4/drivers/net/r8169.c
+--- linux-2.6.18-128.2.1.el5.028stab064.4/drivers/net/r8169.c	2009-08-09 12:16:06 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/drivers/net/r8169.c	2009-08-10 06:19:08 +0000
+@@ -67,7 +67,6 @@ static const int multicast_filter_limit 
+ #define RX_DMA_BURST	6	/* Maximum PCI burst, '6' is 1024 */
+ #define TX_DMA_BURST	6	/* Maximum PCI burst, '6' is 1024 */
+ #define EarlyTxThld	0x3F	/* 0x3F means NO early transmit */
+-#define RxPacketMaxSize	0x3FE8	/* 16K - 1 - ETH_HLEN - VLAN - CRC... */
+ #define SafeMtu		0x1c20	/* ... actually life sucks beyond ~7k */
+ #define InterFrameGap	0x03	/* 3 means InterFrameGap = the shortest one */
+ 
+@@ -2318,10 +2317,10 @@ static u16 rtl_rw_cpluscmd(void __iomem 
+ 	return cmd;
+ }
+ 
+-static void rtl_set_rx_max_size(void __iomem *ioaddr)
++static void rtl_set_rx_max_size(void __iomem *ioaddr, unsigned int rx_buf_sz)
+ {
+ 	/* Low hurts. Let's disable the filtering. */
+-	RTL_W16(RxMaxSize, 16383);
++	RTL_W16(RxMaxSize, rx_buf_sz);
+ }
+ 
+ static void rtl8169_set_magic_reg(void __iomem *ioaddr, unsigned mac_version)
+@@ -2368,7 +2367,7 @@ static void rtl_hw_start_8169(struct net
+ 
+ 	RTL_W8(EarlyTxThres, EarlyTxThld);
+ 
+-	rtl_set_rx_max_size(ioaddr);
++	rtl_set_rx_max_size(ioaddr, tp->rx_buf_sz);
+ 
+ 	if ((tp->mac_version == RTL_GIGA_MAC_VER_01) ||
+ 	    (tp->mac_version == RTL_GIGA_MAC_VER_02) ||
+@@ -2629,7 +2628,7 @@ static void rtl_hw_start_8168(struct net
+ 
+ 	RTL_W8(EarlyTxThres, EarlyTxThld);
+ 
+-	rtl_set_rx_max_size(ioaddr);
++	rtl_set_rx_max_size(ioaddr, tp->rx_buf_sz);
+ 
+ 	tp->cp_cmd |= RTL_R16(CPlusCmd) | PktCntrDisable | INTT_1;
+ 
+@@ -2809,7 +2808,7 @@ static void rtl_hw_start_8101(struct net
+ 
+ 	RTL_W8(EarlyTxThres, EarlyTxThld);
+ 
+-	rtl_set_rx_max_size(ioaddr);
++	rtl_set_rx_max_size(ioaddr, tp->rx_buf_sz);
+ 
+ 	tp->cp_cmd |= rtl_rw_cpluscmd(ioaddr) | PCIMulRW;
+ 
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/drivers/pci/quirks.c linux-2.6.18-128.4.1.el5.028stab064.4/drivers/pci/quirks.c
+--- linux-2.6.18-128.2.1.el5.028stab064.4/drivers/pci/quirks.c	2009-08-09 12:16:01 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/drivers/pci/quirks.c	2009-08-10 06:19:08 +0000
+@@ -1762,6 +1762,7 @@ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_SE
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_RS400_200, quirk_disable_all_msi);
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_RS480, quirk_disable_all_msi);
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_VT3351, quirk_disable_all_msi);
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_VT3364, quirk_disable_all_msi);
+ 
+ /* Disable MSI on chipsets that are known to not support it */
+ static void __devinit quirk_disable_msi(struct pci_dev *dev)
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/drivers/scsi/libsas/sas_ata.c linux-2.6.18-128.4.1.el5.028stab064.4/drivers/scsi/libsas/sas_ata.c
+--- linux-2.6.18-128.2.1.el5.028stab064.4/drivers/scsi/libsas/sas_ata.c	2009-08-09 12:16:08 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/drivers/scsi/libsas/sas_ata.c	2009-08-10 06:19:08 +0000
+@@ -241,12 +241,12 @@ static void sas_ata_phy_reset(struct ata
+ 	struct domain_device *dev = ap->private_data;
+ 	struct sas_internal *i =
+ 		to_sas_internal(dev->port->ha->core.shost->transportt);
+-	int res = 0;
++	int res = TMF_RESP_FUNC_FAILED;
+ 
+ 	if (i->dft->lldd_I_T_nexus_reset)
+ 		res = i->dft->lldd_I_T_nexus_reset(dev);
+ 
+-	if (res)
++	if (res != TMF_RESP_FUNC_COMPLETE)
+ 		SAS_DPRINTK("%s: Unable to reset I T nexus?\n", __FUNCTION__);
+ 
+ 	switch (dev->sata_dev.command_set) {
+@@ -653,21 +653,6 @@ out:
+ 	return res;
+ }
+ 
+-static void sas_sata_propagate_sas_addr(struct domain_device *dev)
+-{
+-	unsigned long flags;
+-	struct asd_sas_port *port = dev->port;
+-	struct asd_sas_phy  *phy;
+-
+-	BUG_ON(dev->parent);
+-
+-	memcpy(port->attached_sas_addr, dev->sas_addr, SAS_ADDR_SIZE);
+-	spin_lock_irqsave(&port->phy_list_lock, flags);
+-	list_for_each_entry(phy, &port->phy_list, port_phy_el)
+-		memcpy(phy->attached_sas_addr, dev->sas_addr, SAS_ADDR_SIZE);
+-	spin_unlock_irqrestore(&port->phy_list_lock, flags);
+-}
+-
+ #define ATA_IDENTIFY_DEV         0xEC
+ #define ATA_IDENTIFY_PACKET_DEV  0xA1
+ #define ATA_SET_FEATURES         0xEF
+@@ -725,26 +710,6 @@ static int sas_discover_sata_dev(struct 
+ 			goto out_err;
+ 	}
+ cont1:
+-	/* Get WWN */
+-	if (dev->port->oob_mode != SATA_OOB_MODE) {
+-		memcpy(dev->sas_addr, dev->sata_dev.rps_resp.rps.stp_sas_addr,
+-		       SAS_ADDR_SIZE);
+-	} else if (dev->sata_dev.command_set == ATA_COMMAND_SET &&
+-		   (le16_to_cpu(dev->sata_dev.identify_device[108]) & 0xF000)
+-		   == 0x5000) {
+-		int i;
+-
+-		for (i = 0; i < 4; i++) {
+-			dev->sas_addr[2*i] =
+-	     (le16_to_cpu(dev->sata_dev.identify_device[108+i]) & 0xFF00) >> 8;
+-			dev->sas_addr[2*i+1] =
+-	      le16_to_cpu(dev->sata_dev.identify_device[108+i]) & 0x00FF;
+-		}
+-	}
+-	sas_hash_addr(dev->hashed_sas_addr, dev->sas_addr);
+-	if (!dev->parent)
+-		sas_sata_propagate_sas_addr(dev);
+-
+ 	/* XXX Hint: register this SATA device with SATL.
+ 	   When this returns, dev->sata_dev->lu is alive and
+ 	   present.
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/drivers/scsi/libsas/sas_port.c linux-2.6.18-128.4.1.el5.028stab064.4/drivers/scsi/libsas/sas_port.c
+--- linux-2.6.18-128.2.1.el5.028stab064.4/drivers/scsi/libsas/sas_port.c	2009-08-09 12:15:53 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/drivers/scsi/libsas/sas_port.c	2009-08-10 06:19:08 +0000
+@@ -92,9 +92,6 @@ static void sas_form_port(struct asd_sas
+ 	if (!port->phy)
+ 		port->phy = phy->phy;
+ 
+-	SAS_DPRINTK("phy%d added to port%d, phy_mask:0x%x\n", phy->id,
+-		    port->id, port->phy_mask);
+-
+ 	if (*(u64 *)port->attached_sas_addr == 0) {
+ 		port->class = phy->class;
+ 		memcpy(port->attached_sas_addr, phy->attached_sas_addr,
+@@ -115,6 +112,11 @@ static void sas_form_port(struct asd_sas
+ 	}
+ 	sas_port_add_phy(port->port, phy->phy);
+ 
++	SAS_DPRINTK("%s added to %s, phy_mask:0x%x (%16llx)\n",
++		    phy->phy->dev.bus_id, port->port->dev.bus_id,
++		    port->phy_mask,
++		    SAS_ADDR(port->attached_sas_addr));
++
+ 	if (port->port_dev)
+ 		port->port_dev->pathways = port->num_phys;
+ 
+@@ -245,12 +247,11 @@ void sas_porte_hard_reset(void *data)
+ static void sas_init_port(struct asd_sas_port *port,
+ 			  struct sas_ha_struct *sas_ha, int i)
+ {
++	memset(port, 0, sizeof(*port));
+ 	port->id = i;
+ 	INIT_LIST_HEAD(&port->dev_list);
+ 	spin_lock_init(&port->phy_list_lock);
+ 	INIT_LIST_HEAD(&port->phy_list);
+-	port->num_phys = 0;
+-	port->phy_mask = 0;
+ 	port->ha = sas_ha;
+ 
+ 	spin_lock_init(&port->dev_list_lock);
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/drivers/usb/input/wacom.c linux-2.6.18-128.4.1.el5.028stab064.4/drivers/usb/input/wacom.c
+--- linux-2.6.18-128.2.1.el5.028stab064.4/drivers/usb/input/wacom.c	2009-08-09 12:16:08 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/drivers/usb/input/wacom.c	2009-08-10 06:19:08 +0000
+@@ -9,7 +9,7 @@
+  *  Copyright (c) 2000 Daniel Egger		<egger@suse.de>
+  *  Copyright (c) 2001 Frederic Lepied		<flepied@mandrakesoft.com>
+  *  Copyright (c) 2004 Panagiotis Issaris	<panagiotis.issaris@mech.kuleuven.ac.be>
+- *  Copyright (c) 2002-2006 Ping Cheng		<pingc@wacom.com>
++ *  Copyright (c) 2002-2009 Ping Cheng		<pingc@wacom.com>
+  *
+  *  ChangeLog:
+  *      v0.1 (vp)  - Initial release
+@@ -540,6 +540,28 @@ static int wacom_intuos_inout(struct urb
+ 
+ 	/* Exit report */
+ 	if ((data[1] & 0xfe) == 0x80) {
++		input_report_abs(dev, ABS_X, 0);
++		input_report_abs(dev, ABS_Y, 0);
++		input_report_abs(dev, ABS_DISTANCE, 0);
++		input_report_abs(dev, ABS_TILT_X, 0);
++		input_report_abs(dev, ABS_TILT_Y, 0);
++		if (wacom->tool[idx] >= BTN_TOOL_MOUSE) {
++			input_report_key(dev, BTN_LEFT, 0);
++			input_report_key(dev, BTN_MIDDLE, 0);
++			input_report_key(dev, BTN_RIGHT, 0);
++			input_report_key(dev, BTN_SIDE, 0);
++			input_report_key(dev, BTN_EXTRA, 0);
++			input_report_abs(dev, ABS_THROTTLE, 0);
++			input_report_abs(dev, ABS_RZ, 0);
++		} else {
++			input_report_abs(dev, ABS_PRESSURE, 0);
++			input_report_key(dev, BTN_STYLUS, 0);
++			input_report_key(dev, BTN_STYLUS2, 0);
++			input_report_key(dev, BTN_TOUCH, 0);
++			input_report_abs(dev, ABS_WHEEL, 0);
++			if (wacom->features->type >= INTUOS3S)
++				input_report_abs(dev, ABS_Z, 0);
++		}
+ 		input_report_key(dev, wacom->tool[idx], 0);
+ 		input_report_abs(dev, ABS_MISC, 0); /* reset tool id */
+ 		input_event(dev, EV_MSC, MSC_SERIAL, wacom->serial[idx]);
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/fs/binfmt_elf.c linux-2.6.18-128.4.1.el5.028stab064.4/fs/binfmt_elf.c
+--- linux-2.6.18-128.2.1.el5.028stab064.4/fs/binfmt_elf.c	2009-08-09 12:16:09 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/fs/binfmt_elf.c	2009-08-10 06:19:08 +0000
+@@ -1412,7 +1412,7 @@ static void fill_elf_header(struct elfhd
+ 	return;
+ }
+ 
+-static void fill_elf_note_phdr(struct elf_phdr *phdr, int sz, off_t offset)
++static void fill_elf_note_phdr(struct elf_phdr *phdr, int sz, loff_t offset)
+ {
+ 	phdr->p_type = PT_NOTE;
+ 	phdr->p_offset = offset;
+@@ -1578,7 +1578,7 @@ static int elf_core_dump(long signr, str
+ 	int i;
+ 	struct vm_area_struct *vma;
+ 	struct elfhdr *elf = NULL;
+-	off_t offset = 0, dataoff, foffset;
++	loff_t offset = 0, dataoff, foffset;
+ 	unsigned long limit = current->signal->rlim[RLIMIT_CORE].rlim_cur;
+ 	int numnote;
+ 	struct memelfnote *notes = NULL;
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/fs/drop_caches.c linux-2.6.18-128.4.1.el5.028stab064.4/fs/drop_caches.c
+--- linux-2.6.18-128.2.1.el5.028stab064.4/fs/drop_caches.c	2009-08-09 12:16:03 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/fs/drop_caches.c	2009-08-10 06:19:08 +0000
+@@ -18,7 +18,7 @@ static void drop_pagecache_sb(struct sup
+ 
+ 	spin_lock(&inode_lock);
+ 	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+-		if (inode->i_state & (I_FREEING|I_WILL_FREE))
++		if (inode->i_state & (I_FREEING|I_CLEAR|I_WILL_FREE))
+ 			continue;
+ 		__iget(inode);
+ 		spin_unlock(&inode_lock);
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/fs/ecryptfs/keystore.c linux-2.6.18-128.4.1.el5.028stab064.4/fs/ecryptfs/keystore.c
+--- linux-2.6.18-128.2.1.el5.028stab064.4/fs/ecryptfs/keystore.c	2009-08-09 12:16:07 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/fs/ecryptfs/keystore.c	2009-08-10 06:19:08 +0000
+@@ -730,6 +730,13 @@ parse_tag_3_packet(struct ecryptfs_crypt
+ 	}
+ 	(*new_auth_tok)->session_key.encrypted_key_size =
+ 		(body_size - (ECRYPTFS_SALT_SIZE + 5));
++	if ((*new_auth_tok)->session_key.encrypted_key_size
++	    > ECRYPTFS_MAX_ENCRYPTED_KEY_BYTES) {
++		printk(KERN_WARNING "Tag 3 packet contains key larger "
++		       "than ECRYPTFS_MAX_ENCRYPTED_KEY_BYTES\n");
++		rc = -EINVAL;
++		goto out_free;
++	}
+ 	if (unlikely(data[(*packet_size)++] != 0x04)) {
+ 		printk(KERN_WARNING "Unknown version number [%d]\n",
+ 		       data[(*packet_size) - 1]);
+@@ -876,6 +883,12 @@ parse_tag_11_packet(unsigned char *data,
+ 		rc = -EINVAL;
+ 		goto out;
+ 	}
++	if (unlikely((*tag_11_contents_size) > max_contents_bytes)) {
++		printk(KERN_ERR "Literal data section in tag 11 packet exceeds "
++		       "expected size\n");
++		rc = -EINVAL;
++		goto out;
++	}
+ 	if (data[(*packet_size)++] != 0x62) {
+ 		printk(KERN_WARNING "Unrecognizable packet\n");
+ 		rc = -EINVAL;
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/include/linux/ktime.h linux-2.6.18-128.4.1.el5.028stab064.4/include/linux/ktime.h
+--- linux-2.6.18-128.2.1.el5.028stab064.4/include/linux/ktime.h	2006-09-20 03:42:06 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/include/linux/ktime.h	2009-08-10 06:19:08 +0000
+@@ -266,6 +266,7 @@ static inline u64 ktime_to_ns(const ktim
+ 
+ /* Get the monotonic time in timespec format: */
+ extern void ktime_get_ts(struct timespec *ts);
++extern ktime_t ktime_add_safe(const ktime_t lhs, const ktime_t rhs);
+ 
+ /* Get the real (wall-) time in timespec format: */
+ #define ktime_get_real_ts(ts)	getnstimeofday(ts)
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/include/linux/pci_ids.h linux-2.6.18-128.4.1.el5.028stab064.4/include/linux/pci_ids.h
+--- linux-2.6.18-128.2.1.el5.028stab064.4/include/linux/pci_ids.h	2009-08-09 12:16:08 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/include/linux/pci_ids.h	2009-08-10 06:19:08 +0000
+@@ -1287,6 +1287,7 @@
+ #define PCI_DEVICE_ID_VIA_8363_0	0x0305
+ #define PCI_DEVICE_ID_VIA_P4M800CE	0x0314
+ #define PCI_DEVICE_ID_VIA_VT3351	0x0351
++#define PCI_DEVICE_ID_VIA_VT3364	0x0364
+ #define PCI_DEVICE_ID_VIA_8371_0	0x0391
+ #define PCI_DEVICE_ID_VIA_8501_0	0x0501
+ #define PCI_DEVICE_ID_VIA_82C561	0x0561
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/kernel/audit.c linux-2.6.18-128.4.1.el5.028stab064.4/kernel/audit.c
+--- linux-2.6.18-128.2.1.el5.028stab064.4/kernel/audit.c	2009-08-09 12:16:09 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/kernel/audit.c	2009-08-10 06:19:08 +0000
+@@ -132,7 +132,7 @@ static DECLARE_WAIT_QUEUE_HEAD(kauditd_w
+ static DECLARE_WAIT_QUEUE_HEAD(audit_backlog_wait);
+ 
+ /* Serialize requests from userspace. */
+-static DEFINE_MUTEX(audit_cmd_mutex);
++DEFINE_MUTEX(audit_cmd_mutex);
+ 
+ /* AUDIT_BUFSIZ is the size of the temporary buffer used for formatting
+  * audit records.  Since printk uses a 1024 byte buffer, this buffer
+@@ -501,21 +501,6 @@ int audit_send_list(void *_dest)
+ 	return 0;
+ }
+ 
+-#ifdef CONFIG_AUDITSYSCALL
+-static int prune_tree_thread(void *unused)
+-{
+-	mutex_lock(&audit_cmd_mutex);
+-	audit_prune_trees();
+-	mutex_unlock(&audit_cmd_mutex);
+-	return 0;
+-}
+-
+-void audit_schedule_prune(void)
+-{
+-	kthread_run(prune_tree_thread, NULL, "audit_prune_tree");
+-}
+-#endif
+-
+ struct sk_buff *audit_make_reply(int pid, int seq, int type, int done,
+ 				 int multi, void *payload, int size)
+ {
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/kernel/audit.h linux-2.6.18-128.4.1.el5.028stab064.4/kernel/audit.h
+--- linux-2.6.18-128.2.1.el5.028stab064.4/kernel/audit.h	2009-08-09 12:16:06 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/kernel/audit.h	2009-08-10 06:19:08 +0000
+@@ -146,10 +146,9 @@ extern int audit_add_tree_rule(struct au
+ extern int audit_remove_tree_rule(struct audit_krule *);
+ extern void audit_trim_trees(void);
+ extern int audit_tag_tree(char *old, char *new);
+-extern void audit_schedule_prune(void);
+-extern void audit_prune_trees(void);
+ extern const char *audit_tree_path(struct audit_tree *);
+ extern void audit_put_tree(struct audit_tree *);
++extern void audit_kill_trees(struct list_head *);
+ #else
+ #define audit_remove_tree_rule(rule) BUG()
+ #define audit_add_tree_rule(rule) -EINVAL
+@@ -158,6 +157,7 @@ extern void audit_put_tree(struct audit_
+ #define audit_put_tree(tree) (void)0
+ #define audit_tag_tree(old, new) -EINVAL
+ #define audit_tree_path(rule) ""        /* never called */
++#define audit_kill_trees(list) BUG()
+ #endif
+ 
+ extern char *audit_unpack_string(void **, size_t *, size_t);
+@@ -174,8 +174,12 @@ static inline int audit_signal_info(int 
+ extern enum audit_state audit_filter_inodes(struct task_struct *,
+ 					    struct audit_context *);
+ extern void audit_set_auditable(struct audit_context *);
++extern struct list_head *audit_killed_trees(void);
+ #else
+ #define audit_signal_info(s,t) AUDIT_DISABLED
+ #define audit_filter_inodes(t,c) AUDIT_DISABLED
+ #define audit_set_auditable(c)
++extern struct list_head *audit_killed_trees(void);
+ #endif
++
++extern struct mutex audit_cmd_mutex;
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/kernel/audit_tree.c linux-2.6.18-128.4.1.el5.028stab064.4/kernel/audit_tree.c
+--- linux-2.6.18-128.2.1.el5.028stab064.4/kernel/audit_tree.c	2009-08-09 12:16:08 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/kernel/audit_tree.c	2009-08-10 06:19:08 +0000
+@@ -2,6 +2,7 @@
+ #include <linux/inotify.h>
+ #include <linux/namei.h>
+ #include <linux/mount.h>
++#include <linux/kthread.h>
+ 
+ struct audit_tree;
+ struct audit_chunk;
+@@ -517,6 +518,8 @@ static void trim_marked(struct audit_tre
+ 	}
+ }
+ 
++static void audit_schedule_prune(void);
++
+ /* called with audit_filter_mutex */
+ int audit_remove_tree_rule(struct audit_krule *rule)
+ {
+@@ -825,10 +828,11 @@ int audit_tag_tree(char *old, char *new)
+ 
+ /*
+  * That gets run when evict_chunk() ends up needing to kill audit_tree.
+- * Runs from a separate thread, with audit_cmd_mutex held.
++ * Runs from a separate thread.
+  */
+-void audit_prune_trees(void)
++static int prune_tree_thread(void *unused)
+ {
++	mutex_lock(&audit_cmd_mutex);
+ 	mutex_lock(&audit_filter_mutex);
+ 
+ 	while (!list_empty(&prune_list)) {
+@@ -845,6 +849,40 @@ void audit_prune_trees(void)
+ 	}
+ 
+ 	mutex_unlock(&audit_filter_mutex);
++	mutex_unlock(&audit_cmd_mutex);
++	return 0;
++}
++
++static void audit_schedule_prune(void)
++{
++	kthread_run(prune_tree_thread, NULL, "audit_prune_tree");
++}
++
++/*
++ * ... and that one is done if evict_chunk() decides to delay until the end
++ * of syscall.  Runs synchronously.
++ */
++void audit_kill_trees(struct list_head *list)
++{
++	mutex_lock(&audit_cmd_mutex);
++	mutex_lock(&audit_filter_mutex);
++
++	while (!list_empty(list)) {
++		struct audit_tree *victim;
++
++		victim = list_entry(list->next, struct audit_tree, list);
++		kill_rules(victim);
++		list_del_init(&victim->list);
++
++		mutex_unlock(&audit_filter_mutex);
++
++		prune_one(victim);
++
++		mutex_lock(&audit_filter_mutex);
++	}
++
++	mutex_unlock(&audit_filter_mutex);
++	mutex_unlock(&audit_cmd_mutex);
+ }
+ 
+ /*
+@@ -855,6 +893,8 @@ void audit_prune_trees(void)
+ static void evict_chunk(struct audit_chunk *chunk)
+ {
+ 	struct audit_tree *owner;
++	struct list_head *postponed = audit_killed_trees();
++	int need_prune = 0;
+ 	int n;
+ 
+ 	if (chunk->dead)
+@@ -870,15 +910,21 @@ static void evict_chunk(struct audit_chu
+ 		owner->root = NULL;
+ 		list_del_init(&owner->same_root);
+ 		spin_unlock(&hash_lock);
+-		kill_rules(owner);
+-		list_move(&owner->list, &prune_list);
+-		audit_schedule_prune();
++		if (!postponed) {
++			kill_rules(owner);
++			list_move(&owner->list, &prune_list);
++			need_prune = 1;
++		} else {
++			list_move(&owner->list, postponed);
++		}
+ 		spin_lock(&hash_lock);
+ 	}
+ 	list_del_rcu(&chunk->hash);
+ 	for (n = 0; n < chunk->count; n++)
+ 		list_del_init(&chunk->owners[n].list);
+ 	spin_unlock(&hash_lock);
++	if (need_prune)
++		audit_schedule_prune();
+ 	mutex_unlock(&audit_filter_mutex);
+ }
+ 
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/kernel/auditsc.c linux-2.6.18-128.4.1.el5.028stab064.4/kernel/auditsc.c
+--- linux-2.6.18-128.2.1.el5.028stab064.4/kernel/auditsc.c	2009-08-09 12:16:07 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/kernel/auditsc.c	2009-08-10 06:19:08 +0000
+@@ -229,6 +229,7 @@ struct audit_context {
+ 
+ 	struct audit_tree_refs *trees, *first_trees;
+ 	int tree_count;
++	struct list_head killed_trees;
+ 
+ 	unsigned int	    sessionid; /* each login gets a session id */
+ #endif
+@@ -829,6 +830,7 @@ static inline struct audit_context *audi
+ 	if (!(context = kmalloc(sizeof(*context), GFP_KERNEL)))
+ 		return NULL;
+ 	audit_zero_context(context, state);
++	INIT_LIST_HEAD(&context->killed_trees);
+ 	return context;
+ }
+ 
+@@ -1451,6 +1453,8 @@ void audit_free(struct task_struct *tsk)
+ 	/* that can happen only if we are called from do_exit() */
+ 	if (context->in_syscall && context->auditable)
+ 		audit_log_exit(context, tsk);
++	if (!list_empty(&context->killed_trees))
++		audit_kill_trees(&context->killed_trees);
+ 
+ 	audit_free_context(context);
+ }
+@@ -1590,6 +1594,9 @@ void audit_syscall_exit(int valid, long 
+ 	context->in_syscall = 0;
+ 	context->auditable  = 0;
+ 
++	if (!list_empty(&context->killed_trees))
++		audit_kill_trees(&context->killed_trees);
++
+ 	if (context->previous) {
+ 		struct audit_context *new_context = context->previous;
+ 		tsk->audit_context = new_context;
+@@ -2474,3 +2481,11 @@ void audit_core_dumps(long signr)
+ 	audit_log_format(ab, " sig=%ld", signr);
+ 	audit_log_end(ab);
+ }
++
++struct list_head *audit_killed_trees(void)
++{
++	struct audit_context *ctx = current->audit_context;
++	if (likely(!ctx || !ctx->in_syscall))
++		return NULL;
++	return &ctx->killed_trees;
++}
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/kernel/hrtimer.c linux-2.6.18-128.4.1.el5.028stab064.4/kernel/hrtimer.c
+--- linux-2.6.18-128.2.1.el5.028stab064.4/kernel/hrtimer.c	2009-08-09 12:16:09 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/kernel/hrtimer.c	2009-08-10 06:19:08 +0000
+@@ -298,6 +298,24 @@ static unsigned long ktime_divns(const k
+ #endif /* BITS_PER_LONG >= 64 */
+ 
+ /*
++ * Add two ktime values and do a safety check for overflow:
++ */
++ktime_t ktime_add_safe(const ktime_t lhs, const ktime_t rhs)
++{
++	ktime_t res = ktime_add(lhs, rhs);
++
++	/*    
++	* We use KTIME_SEC_MAX here, the maximum timeout which we can
++	* return to user space in a timespec:
++	*/  
++	if (res.tv64 < 0 || res.tv64 < lhs.tv64 || res.tv64 < rhs.tv64)
++		res = ktime_set(KTIME_SEC_MAX, 0);
++             
++	return res;
++}
++
++
++/*
+  * Counterpart to lock_timer_base above:
+  */
+ static inline
+@@ -342,13 +360,7 @@ hrtimer_forward(struct hrtimer *timer, k
+ 		 */
+ 		orun++;
+ 	}
+-	timer->expires = ktime_add(timer->expires, interval);
+-	/*
+-	 * Make sure, that the result did not wrap with a very large
+-	 * interval.
+-	 */
+-	if (timer->expires.tv64 < 0)
+-		timer->expires = ktime_set(KTIME_SEC_MAX, 0);
++	timer->expires = ktime_add_safe(timer->expires, interval);
+ 
+ 	return orun;
+ }
+@@ -450,7 +462,7 @@ hrtimer_start(struct hrtimer *timer, kti
+ 	new_base = switch_hrtimer_base(timer, base);
+ 
+ 	if (mode == HRTIMER_REL) {
+-		tim = ktime_add(tim, new_base->get_time());
++		tim = ktime_add_safe(tim, new_base->get_time());
+ 		/*
+ 		 * CONFIG_TIME_LOW_RES is a temporary way for architectures
+ 		 * to signal that they simply return xtime in
+@@ -459,7 +471,7 @@ hrtimer_start(struct hrtimer *timer, kti
+ 		 * timeouts. This will go away with the GTOD framework.
+ 		 */
+ #ifdef CONFIG_TIME_LOW_RES
+-		tim = ktime_add(tim, base->resolution);
++		tim = ktime_add_safe(tim, base->resolution);
+ #endif
+ 	}
+ 	timer->expires = tim;
+diff -urpN linux-2.6.18-128.2.1.el5.028stab064.4/kernel/posix-timers.c linux-2.6.18-128.4.1.el5.028stab064.4/kernel/posix-timers.c
+--- linux-2.6.18-128.2.1.el5.028stab064.4/kernel/posix-timers.c	2009-08-09 12:16:09 +0000
++++ linux-2.6.18-128.4.1.el5.028stab064.4/kernel/posix-timers.c	2009-08-10 06:19:08 +0000
+@@ -760,7 +760,7 @@ common_timer_set(struct k_itimer *timr, 
+ 	if (((timr->it_sigev_notify & ~SIGEV_THREAD_ID) == SIGEV_NONE)) {
+ 		/* Setup correct expiry time for relative timers */
+ 		if (mode == HRTIMER_REL)
+-			timer->expires = ktime_add(timer->expires,
++			timer->expires = ktime_add_safe(timer->expires,
+ 						   timer->base->get_time());
+ 		return 0;
+ 	}

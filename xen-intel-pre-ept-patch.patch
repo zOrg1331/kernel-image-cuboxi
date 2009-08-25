@@ -1,0 +1,58 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Thu, 28 Aug 2008 13:12:28 -0400
+Subject: [xen] Intel pre EPT Patch
+Message-id: 20080828171229.10349.2401.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.3 PATCH 1/4 v3] Xen Intel pre EPT Patch
+Bugzilla: 426679
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+
+Fixes bz 426679
+
+This patch preceeds the main EPT patch to adapt to
+the 2MB super page patch.
+
+Intel Extended Page Table (EPT) support.
+
+changeset: x86, vmx: Enable EPT (Extended PageTable) support on new Intel proces
+sors.
+changeset 17404:        9b635405ef90
+parent 17403:   e1962ac0fb1c
+child 17405:    32e3c81ada56
+author:         Keir Fraser <keir.fraser@citrix.com>
+date:   Wed Apr 09 11:30:32 2008 +0100 (4 months ago)
+files:  tools/libxc/xc_hvm_build.c xen/arch/x86/domain.c xen/arch/x86/hvm/hvm.c
+xen/arch/x86/hvm/vmx/vmcs.c xen/arch/x86/hvm/vmx/vmx.c xen/arch/x86/mm.c xen/arc
+h/x86/mm/hap/Makefile xen/arch/x86/mm/hap/p2m-ept.c xen/arch/x86/mm/p2m.c xen/ar
+ch/x86/mm/paging.c xen/common/domctl.c xen/drivers/passthrough/vtd/iommu.c xen/i
+nclude/asm-x86/domain.h xen/include/asm-x86/hvm/domain.h xen/include/asm-x86/hvm
+/svm/vmcb.h xen/include/asm-x86/hvm/vmx/vmcs.h xen/include/asm-x86/hvm/vmx/vmx.h
+ xen/include/asm-x86/p2m.h xen/include/asm-x86/paging.h xen/include/public/hvm/p
+arams.h xen/include/xen/hypercall.h
+description:    x86, vmx: Enable EPT (Extended PageTable) support on new Intel p
+rocessors.
+We use the EPT page table as P2M (guest physical to machine
+mapping), removing the linear page table when EPT is used for the
+domain (see the new file p2m-ept.c). We did this by adding three
+operations in the p2m_domain. If VT-d is enabled, the EPT page table
+will be used as the VT-d page table as well (i.e. shared).
+
+Signed-off-by: Xin Li <xin.b.li@intel.com>
+Signed-off-by: Jun Nakajima <jun.nakajima@intel.com>
+Signed-off-by: Xiaohui Xin <Xiaohui.xin@intel.com>
+Signed-off-by: Keir Fraser <keir.fraser@citrix.com>
+
+diff --git a/arch/x86/mm/p2m.c b/arch/x86/mm/p2m.c
+index 238fd68..ca7ff41 100644
+--- a/arch/x86/mm/p2m.c
++++ b/arch/x86/mm/p2m.c
+@@ -214,8 +214,7 @@ p2m_next_level(struct domain *d, mfn_t *table_mfn, void **table,
+ 
+ // Returns 0 on error (out of memory)
+ static int
+-set_p2m_entry(struct domain *d, unsigned long gfn, mfn_t mfn, int order, 
+-		u32 l1e_flags)
++set_p2m_entry(struct domain *d, unsigned long gfn, mfn_t mfn, u32 l1e_flags)
+ {
+     // XXX -- this might be able to be faster iff current->domain == d
+     mfn_t table_mfn = pagetable_get_mfn(d->arch.phys_table);

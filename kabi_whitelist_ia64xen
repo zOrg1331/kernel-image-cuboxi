@@ -41,6 +41,8 @@
 [rhel5_arch_ia64_mm_ga]
 	ioremap
 	ioremap_nocache
+[rhel5_arch_ia64_mm_u3]
+	iounmap
 [rhel5_arch_ia64_pci_ga]
 	pcibios_resource_to_bus
 [rhel5_arch_ia64_xen_ga]
@@ -158,6 +160,11 @@
 	dlm_new_lockspace
 	dlm_release_lockspace
 	dlm_unlock
+[rhel5_dlm_u3]
+	dlm_posix_get
+	dlm_posix_lock
+	dlm_posix_set_fsid
+	dlm_posix_unlock
 [rhel5_drivers_atm_ga]
 	suni_init
 [rhel5_drivers_base_ga]
@@ -1930,6 +1937,8 @@
 	__put_task_struct
 	round_jiffies
 	round_jiffies_relative
+[rhel5_kernel_u3]
+	down_write_trylock
 [rhel5_kernel_irq_ga]
 	disable_irq
 	disable_irq_nosync
@@ -2086,6 +2095,8 @@
 [rhel5_lib_u1]
 	__bitmap_equal
 	__bitmap_intersects
+[rhel5_lib_u3]
+	vscnprintf
 [rhel5_lib_zlib_deflate_ga]
 	zlib_deflate
 	zlib_deflateEnd

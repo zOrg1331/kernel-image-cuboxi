@@ -1,0 +1,47 @@
+From: David Teigland <teigland@redhat.com>
+Date: Thu, 5 Jun 2008 14:10:19 -0500
+Subject: [dlm] clear ast_type when removing from astqueue
+Message-id: 20080605191019.GE18635@redhat.com
+O-Subject: [RHEL5.3 PATCH 05/18] dlm: clear ast_type when removing from astqueue
+Bugzilla: 450132
+RH-Acked-by: Bob Peterson <rpeterso@redhat.com>
+
+bz 450132  dlm: fixes for recovery of user lockspace
+
+Fix bugs when userland apps using the dlm join/leave the lockspace,
+causing recovery.
+
+brew build including this patch
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1344633
+
+upstream commit:
+
+>From 8a358ca8e738b6226b004efea462ac28c0a2bbb1 Mon Sep 17 00:00:00 2001
+>From: David Teigland <teigland@redhat.com>
+>Date: Mon, 7 Jan 2008 15:55:18 -0600
+>Subject: [PATCH] dlm: clear ast_type when removing from astqueue
+
+The lkb_ast_type field indicates whether the lkb is on the astqueue list.
+When clearing locks for a process, lkb's were being removed from the astqueue
+list without clearing the field.  If release_lockspace then happened
+immediately afterward, it could try to remove the lkb from the list a second
+time.
+
+Appears when process calls libdlm dlm_release_lockspace() which first
+closes the ls dev triggering clear_proc_locks, and then removes the ls
+(a write to control dev) causing release_lockspace().
+
+Signed-off-by: David Teigland <teigland@redhat.com>
+
+diff --git a/fs/dlm/lock.c b/fs/dlm/lock.c
+index 269a32b..1720671 100644
+--- a/fs/dlm/lock.c
++++ b/fs/dlm/lock.c
+@@ -4680,6 +4680,7 @@ void dlm_clear_proc_locks(struct dlm_ls *ls, struct dlm_user_proc *proc)
+ 	}
+ 
+ 	list_for_each_entry_safe(lkb, safe, &proc->asts, lkb_astqueue) {
++		lkb->lkb_ast_type = 0;
+ 		list_del(&lkb->lkb_astqueue);
+ 		dlm_put_lkb(lkb);
+ 	}

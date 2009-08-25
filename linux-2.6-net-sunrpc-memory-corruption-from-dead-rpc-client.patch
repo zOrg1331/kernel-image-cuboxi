@@ -1,0 +1,181 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Fri, 6 Jun 2008 12:44:34 -0400
+Subject: [net] sunrpc: memory corruption from dead rpc client
+Message-id: 20080606124434.4b210a0e@tleilax.poochiereds.net
+O-Subject: Re: [RHEL5.3 PATCH] BZ#432867: SUNRPC: prevent memory corruption from successful portmap call with dead parent client
+Bugzilla: 432867
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+
+There is possible memory corruption when a RPC client is destroyed while
+it still has a portmap child task in flight. The portmap routines are
+set up to write the result directly to the cl_port field of the rpc_clnt.
+In the right situation, it's possible for this struct to have been freed.
+If the outstanding portmap call subsequently succeeds, it will write the
+result to freed memory.
+
+The following patch fixes this by changing the portmap routines to
+allocate a new "rpc_pmap_result" struct and to write the result there.
+The parent task then copies the result out of that struct and into its
+own when needed. The struct is managed via a kref, which prevents us
+from freeing the result container before all users have finished with
+it.
+
+diff --git a/include/linux/sunrpc/clnt.h b/include/linux/sunrpc/clnt.h
+index 36fc573..fab1ec4 100644
+--- a/include/linux/sunrpc/clnt.h
++++ b/include/linux/sunrpc/clnt.h
+@@ -31,6 +31,7 @@ struct rpc_portmap {
+ };
+ 
+ struct rpc_inode;
++struct rpc_pmap_result;
+ 
+ /*
+  * The high-level client handle
+@@ -67,6 +68,9 @@ struct rpc_clnt {
+ 	struct rpc_portmap	cl_pmap_default;
+ 	char			cl_inline_name[32];
+ 	struct rpc_program *	cl_program;
++#ifndef __GENKSYMS__
++	struct rpc_pmap_result	*cl_pmap_result;
++#endif /* !__GENKSYMS__ */
+ };
+ #define cl_timeout		cl_xprt->timeout
+ #define cl_prog			cl_pmap->pm_prog
+@@ -124,6 +128,7 @@ struct rpc_clnt *rpc_clone_client(struct rpc_clnt *);
+ int		rpc_shutdown_client(struct rpc_clnt *);
+ int		rpc_destroy_client(struct rpc_clnt *);
+ void		rpc_release_client(struct rpc_clnt *);
++void		pmap_result_put(struct rpc_pmap_result *pr);
+ void		rpc_getport(struct rpc_task *, struct rpc_clnt *);
+ int		rpc_register(u32, u32, int, unsigned short, int *);
+ 
+diff --git a/net/sunrpc/clnt.c b/net/sunrpc/clnt.c
+index e36cc5d..63a7a20 100644
+--- a/net/sunrpc/clnt.c
++++ b/net/sunrpc/clnt.c
+@@ -288,6 +288,7 @@ rpc_clone_client(struct rpc_clnt *clnt)
+ 	if (new->cl_auth)
+ 		atomic_inc(&new->cl_auth->au_count);
+ 	new->cl_pmap		= &new->cl_pmap_default;
++	new->cl_pmap_result	= NULL;
+ 	rpciod_up();
+ 	return new;
+ out_no_stats:
+@@ -343,6 +344,10 @@ rpc_destroy_client(struct rpc_clnt *clnt)
+ 
+ 	dprintk("RPC: destroying %s client for %s\n",
+ 			clnt->cl_protname, clnt->cl_server);
++	if (clnt->cl_pmap_result) {
++		pmap_result_put(clnt->cl_pmap_result);
++		clnt->cl_pmap_result = NULL;
++	}
+ 	if (clnt->cl_auth) {
+ 		rpcauth_destroy(clnt->cl_auth);
+ 		clnt->cl_auth = NULL;
+diff --git a/net/sunrpc/pmap_clnt.c b/net/sunrpc/pmap_clnt.c
+index fab1f97..847bd83 100644
+--- a/net/sunrpc/pmap_clnt.c
++++ b/net/sunrpc/pmap_clnt.c
+@@ -15,6 +15,7 @@
+ #include <linux/sunrpc/clnt.h>
+ #include <linux/sunrpc/xprt.h>
+ #include <linux/sunrpc/sched.h>
++#include <linux/kref.h>
+ 
+ #ifdef RPC_DEBUG
+ # define RPCDBG_FACILITY	RPCDBG_PMAP
+@@ -30,6 +31,25 @@ static void			pmap_getport_done(struct rpc_task *);
+ static struct rpc_program	pmap_program;
+ static DEFINE_SPINLOCK(pmap_lock);
+ 
++struct rpc_pmap_result {
++	__u16			pr_port;
++	struct kref		pr_refcount;
++};
++
++static void
++pmap_result_release(struct kref *ref)
++{
++	struct rpc_pmap_result *pr = container_of(ref, struct rpc_pmap_result,
++						  pr_refcount);
++	kfree(pr);
++}
++
++void
++pmap_result_put(struct rpc_pmap_result *pr)
++{
++	kref_put(&pr->pr_refcount, pmap_result_release);
++}
++
+ /*
+  * Obtain the port for a given RPC service on a given host. This one can
+  * be called for an ongoing RPC request.
+@@ -42,7 +62,6 @@ rpc_getport(struct rpc_task *task, struct rpc_clnt *clnt)
+ 	struct rpc_message msg = {
+ 		.rpc_proc	= &pmap_procedures[PMAP_GETPORT],
+ 		.rpc_argp	= map,
+-		.rpc_resp	= &clnt->cl_port,
+ 		.rpc_cred	= NULL
+ 	};
+ 	struct rpc_clnt	*pmap_clnt;
+@@ -64,6 +83,14 @@ rpc_getport(struct rpc_task *task, struct rpc_clnt *clnt)
+ 	map->pm_binding = 1;
+ 	spin_unlock(&pmap_lock);
+ 
++	clnt->cl_pmap_result = kzalloc(sizeof(*clnt->cl_pmap_result),
++					GFP_KERNEL);
++	if (clnt->cl_pmap_result == NULL)
++		goto bailout;
++
++	kref_init(&clnt->cl_pmap_result->pr_refcount);
++	msg.rpc_resp = clnt->cl_pmap_result;
++
+ 	pmap_clnt = pmap_create(clnt->cl_server, sap, map->pm_prot, 0);
+ 	if (IS_ERR(pmap_clnt)) {
+ 		task->tk_status = PTR_ERR(pmap_clnt);
+@@ -81,11 +108,17 @@ rpc_getport(struct rpc_task *task, struct rpc_clnt *clnt)
+ 	rpc_call_setup(child, &msg, 0);
+ 
+ 	/* ... and run the child task */
++	kref_get(&clnt->cl_pmap_result->pr_refcount);
++	pmap_clnt->cl_pmap_result = clnt->cl_pmap_result;
+ 	task->tk_xprt->stat.bind_count++;
+ 	rpc_run_child(task, child, pmap_getport_done);
+ 	return;
+ 
+ bailout:
++	if (clnt->cl_pmap_result) {
++		pmap_result_put(clnt->cl_pmap_result);
++		clnt->cl_pmap_result = NULL;
++	}
+ 	spin_lock(&pmap_lock);
+ 	map->pm_binding = 0;
+ 	rpc_wake_up(&map->pm_bindwait);
+@@ -142,6 +175,12 @@ pmap_getport_done(struct rpc_task *task)
+ 	dprintk("RPC: %4d pmap_getport_done(status %d, port %d)\n",
+ 			task->tk_pid, task->tk_status, clnt->cl_port);
+ 
++	if (clnt->cl_port == 0)
++		clnt->cl_port = clnt->cl_pmap_result->pr_port;
++
++	pmap_result_put(clnt->cl_pmap_result);
++	clnt->cl_pmap_result = NULL;
++
+ 	xprt->ops->set_port(xprt, 0);
+ 	if (task->tk_status < 0) {
+ 		clnt->cl_port = 0;
+@@ -248,9 +287,9 @@ xdr_encode_mapping(struct rpc_rqst *req, u32 *p, struct rpc_portmap *map)
+ }
+ 
+ static int
+-xdr_decode_port(struct rpc_rqst *req, u32 *p, unsigned short *portp)
++xdr_decode_port(struct rpc_rqst *req, u32 *p, struct rpc_pmap_result *pr)
+ {
+-	*portp = (unsigned short) ntohl(*p++);
++	pr->pr_port = (unsigned short) ntohl(*p++);
+ 	return 0;
+ }
+ 

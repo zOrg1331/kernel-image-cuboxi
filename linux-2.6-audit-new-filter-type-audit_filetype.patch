@@ -1,0 +1,94 @@
+From: Alexander Viro <aviro@redhat.com>
+Date: Sat, 2 Aug 2008 12:01:35 -0400
+Subject: [audit] new filter type, AUDIT_FILETYPE
+Message-id: 20080802160135.GJ25141@devserv.devel.redhat.com
+O-Subject: [rhel5] AUDIT_FILETYPE
+Bugzilla: 446707
+RH-Acked-by: Eric Paris <eparis@redhat.com>
+RH-Acked-by: James Morris <jmorris@redhat.com>
+RH-Acked-by: Josef Bacik <jbacik@redhat.com>
+
+As in mainline, with missing check for ctx == NULL folded in; applies to
+2.6.18-101.el5.
+
+Argument is S_IF... | <index>, where index is normally 0 or 1.
+Triggers if chosen element of ctx->names[] is present and the
+mode of object in question matches the upper bits of argument.
+I.e. for things like "is the argument of that chmod a directory",
+etc.
+
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+
+diff --git a/include/linux/audit.h b/include/linux/audit.h
+index e61a65c..9a739ad 100644
+--- a/include/linux/audit.h
++++ b/include/linux/audit.h
+@@ -203,6 +203,7 @@
+ #define AUDIT_WATCH	105
+ #define AUDIT_PERM	106
+ #define AUDIT_DIR	107
++#define AUDIT_FILETYPE	108
+ 
+ #define AUDIT_ARG0      200
+ #define AUDIT_ARG1      (AUDIT_ARG0+1)
+diff --git a/kernel/auditfilter.c b/kernel/auditfilter.c
+index 77c59b7..38ac5e3 100644
+--- a/kernel/auditfilter.c
++++ b/kernel/auditfilter.c
+@@ -481,6 +481,10 @@ static struct audit_entry *audit_rule_to_entry(struct audit_rule *rule)
+ 			if (f->val & ~15)
+ 				goto exit_free;
+ 			break;
++		case AUDIT_FILETYPE:
++			if ((f->val & ~S_IFMT) > S_IFMT)
++				goto exit_free;
++			break;
+ 		case AUDIT_INODE:
+ 			err = audit_to_inode(&entry->rule, f);
+ 			if (err)
+@@ -652,6 +656,10 @@ static struct audit_entry *audit_data_to_entry(struct audit_rule_data *data,
+ 			if (f->val & ~15)
+ 				goto exit_free;
+ 			break;
++		case AUDIT_FILETYPE:
++			if ((f->val & ~S_IFMT) > S_IFMT)
++				goto exit_free;
++			break;
+ 		default:
+ 			goto exit_free;
+ 		}
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index efc81cd..f91b7d6 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -290,6 +290,19 @@ static int audit_match_perm(struct audit_context *ctx, int mask)
+ 	}
+ }
+ 
++static int audit_match_filetype(struct audit_context *ctx, int which)
++{
++	unsigned index = which & ~S_IFMT;
++	mode_t mode = which & S_IFMT;
++	if (index >= ctx->name_count)
++		return 0;
++	if (ctx->names[index].ino == -1)
++		return 0;
++	if ((ctx->names[index].mode ^ mode) & S_IFMT)
++		return 0;
++	return 1;
++}
++
+ /*
+  * We keep a linked list of fixed-sized (31 pointer) arrays of audit_chunk *;
+  * ->first_trees points to its beginning, ->trees - to the current end of data.
+@@ -593,6 +606,10 @@ static int audit_filter_rules(struct task_struct *tsk,
+ 		case AUDIT_PERM:
+ 			result = audit_match_perm(ctx, f->val);
+ 			break;
++		case AUDIT_FILETYPE:
++			if (ctx)
++				result = audit_match_filetype(ctx, f->val);
++			break;
+ 		}
+ 
+ 		if (!result)

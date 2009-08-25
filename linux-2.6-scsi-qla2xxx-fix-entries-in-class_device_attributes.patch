@@ -1,0 +1,75 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Thu, 30 Oct 2008 00:09:06 -0400
+Subject: [scsi] qla2xxx: fix entries in class_device_attributes
+Message-id: 20081030040906.29964.76125.sendpatchset@file.bos.redhat.com
+O-Subject: [rhel 5.3 patch] qla2xxx - Fix entries in class_device_attributes. 8.02.00.03.05.04-k.
+Bugzilla: 468873
+RH-Acked-by: Tom Coughlan <coughlan@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+BZ 468873
+
+qla2xxx - Fix entries in class_device_attributes. 8.02.00.03.05.04-k
+
+This patch provides missing entries in the class_device_attributes tables.
+In the upstream driver there is just one table for the driver, but in RHEL
+we have seperate tables for the newer HBA's that support NPIV and their
+virtual ports. When upstream patches were applied they did not update these
+tables in the RHEL driver, so the intended support in these earlier patches
+was not provided.
+
+The missing entries provide version numbers of the contents of the Option Rom
+like BIOS, EFI, FCODE and firmware versions. Also a counter of the number of
+abort commands.
+
+This patch provides the intended functionality of the upstream code, most of
+which was applied in 5.2. It consists of adding 5 or 6 entries.
+
+It also updates the version number and appends the "-k" flag which indicates
+an inbox driver.
+
+It applies and builds cleanly to 2.6.18-120 and I verified the proper contents
+appear in SYSFS afterwards.
+
+diff --git a/drivers/scsi/qla2xxx/qla_attr.c b/drivers/scsi/qla2xxx/qla_attr.c
+index f7137f4..9f8d4e1 100644
+--- a/drivers/scsi/qla2xxx/qla_attr.c
++++ b/drivers/scsi/qla2xxx/qla_attr.c
+@@ -1529,6 +1529,11 @@ struct class_device_attribute *qla24xx_host_attrs[] = {
+ 	&class_device_attr_zio,
+ 	&class_device_attr_zio_timer,
+ 	&class_device_attr_beacon,
++	&class_device_attr_optrom_bios_version,
++	&class_device_attr_optrom_efi_version,
++	&class_device_attr_optrom_fcode_version,
++	&class_device_attr_optrom_fw_version,
++	&class_device_attr_total_isp_aborts,
+ 	&class_device_attr_84xx_fw_version,
+ 	&class_device_attr_vport_create,
+ 	&class_device_attr_vport_delete,
+@@ -1550,6 +1555,12 @@ struct class_device_attribute *qla24xx_host_vport_attrs[] = {
+ 	&class_device_attr_zio,
+ 	&class_device_attr_zio_timer,
+ 	&class_device_attr_beacon,
++	&class_device_attr_optrom_bios_version,
++	&class_device_attr_optrom_efi_version,
++	&class_device_attr_optrom_fcode_version,
++	&class_device_attr_optrom_fw_version,
++	&class_device_attr_total_isp_aborts,
++	&class_device_attr_84xx_fw_version,
+ 	&class_device_attr_node_name,
+ 	&class_device_attr_port_name,
+ 	&class_device_attr_vport_id,
+diff --git a/drivers/scsi/qla2xxx/qla_version.h b/drivers/scsi/qla2xxx/qla_version.h
+index 710e3b4..37956e0 100644
+--- a/drivers/scsi/qla2xxx/qla_version.h
++++ b/drivers/scsi/qla2xxx/qla_version.h
+@@ -7,7 +7,7 @@
+ /*
+  * Driver version
+  */
+-#define QLA2XXX_VERSION      "8.02.00.03.05.03"
++#define QLA2XXX_VERSION      "8.02.00.04.05.03-k"
+ 
+ #define QLA_DRIVER_MAJOR_VER	8
+ #define QLA_DRIVER_MINOR_VER	1

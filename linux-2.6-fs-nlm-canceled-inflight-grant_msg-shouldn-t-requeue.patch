@@ -1,0 +1,33 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Wed, 28 May 2008 11:07:09 -0400
+Subject: [fs] nlm: canceled inflight GRANT_MSG shouldn't requeue
+Message-id: 1211987231-9749-2-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.3 PATCH 1/3] BZ#254195: NLM: don't requeue block if it was invalidated while GRANT_MSG was in flight
+Bugzilla: 254195
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+It's possible for lockd to catch a SIGKILL while a GRANT_MSG callback
+is in flight. If this happens we don't want the callback to insert the
+block back into the nlm_blocked list.
+
+diff --git a/fs/lockd/svclock.c b/fs/lockd/svclock.c
+index 48acce0..52a84da 100644
+--- a/fs/lockd/svclock.c
++++ b/fs/lockd/svclock.c
+@@ -786,6 +786,15 @@ static void nlmsvc_grant_callback(struct rpc_task *task, void *data)
+ 
+ 	dprintk("lockd: GRANT_MSG RPC callback\n");
+ 
++	/* if the block is not queued at this point then it has
++	 * been invalidated. Don't try to requeue it.
++	 *
++	 * The BKL makes sure that lockd doesn't dequeue the block
++	 * after we check this.
++	 */
++	if (!block->b_queued)
++		return;
++
+ 	/* Technically, we should down the file semaphore here. Since we
+ 	 * move the block towards the head of the queue only, no harm
+ 	 * can be done, though. */

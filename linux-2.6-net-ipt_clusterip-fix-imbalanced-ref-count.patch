@@ -1,0 +1,37 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Wed, 23 Apr 2008 13:21:18 -0400
+Subject: [net] ipt_CLUSTERIP: fix imbalanced ref count
+Message-id: 20080423172118.GC32343@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL 5.3 patch] ipt_CLUSTERIP: fix imbalanced ref count (bz 382491)
+Bugzilla: 382491
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+Hey all-
+	ipt_CLUSTERIP has an imbalanced ref count.  A cipinfos reference count
+is already increased in clusterip_config_find_get, so there is no need to do it
+again in the chekentry callback.  Doing so causes the config to be freed before
+it is removed from the list which can result in a panic.  This patch is an
+upstream backport of commit 50c9cc2e540aeaab78ab548a8d42568977c6844f and
+resolves the problem as documented in bz 382491
+
+Regards
+Neil
+
+diff --git a/net/ipv4/netfilter/ipt_CLUSTERIP.c b/net/ipv4/netfilter/ipt_CLUSTERIP.c
+index d994c5f..5881e83 100644
+--- a/net/ipv4/netfilter/ipt_CLUSTERIP.c
++++ b/net/ipv4/netfilter/ipt_CLUSTERIP.c
+@@ -408,12 +408,10 @@ checkentry(const char *tablename,
+ 				       "has invalid config pointer!\n");
+ 				return 0;
+ 			}
+-			clusterip_config_entry_get(cipinfo->config);
+ 		} else {
+ 			/* Case B: This is a new rule referring to an existing
+ 			 * clusterip config. */
+ 			cipinfo->config = config;
+-			clusterip_config_entry_get(cipinfo->config);
+ 		}
+ 	} else {
+ 		/* Case C: This is a completely new clusterip config */

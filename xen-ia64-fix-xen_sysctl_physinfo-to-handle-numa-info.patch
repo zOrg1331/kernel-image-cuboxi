@@ -1,0 +1,61 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Tue, 2 Sep 2008 16:05:56 -0400
+Subject: [xen] ia64: fix XEN_SYSCTL_physinfo to handle NUMA info
+Message-id: 20080902200556.7876.85722.sendpatchset@pq0-1.lab.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH 2/5] xen-ia64: Fix XEN_SYSCTL_physinfo to handle NUMA info properly
+Bugzilla: 454711
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+
+bz454711
+The part for x86 which the upstream has is dropped because the problem
+has been found only on ia64.
+
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1210755145 -3600
+# Node ID 547d10d2d38473e84fb47e8bbcde96b1dfe793cc
+# Parent  fa8cb2a8ed52b164177583923c9c6a942d81b812
+Fix XEN_SYSCTL_physinfo to handle NUMA info properly.
+Signed-off-by: Andre Przywara <andre.przywara@amd.com>
+Signed-off-by: Keir Fraser <keir.fraser@citrix.com>
+
+diff --git a/arch/ia64/xen/dom0_ops.c b/arch/ia64/xen/dom0_ops.c
+index 343fdad..6079dc5 100644
+--- a/arch/ia64/xen/dom0_ops.c
++++ b/arch/ia64/xen/dom0_ops.c
+@@ -233,9 +233,14 @@ long arch_do_sysctl(xen_sysctl_t *op, XEN_GUEST_HANDLE(xen_sysctl_t) u_sysctl)
+     {
+         int i, node_cpus = 0;
+         uint32_t max_array_ent;
++        XEN_GUEST_HANDLE_64(uint32_t) cpu_to_node_arr;
+ 
+         xen_sysctl_physinfo_t *pi = &op->u.physinfo;
+ 
++        max_array_ent = pi->max_cpu_id;
++        cpu_to_node_arr = pi->cpu_to_node;
++
++        pi->cpu_to_node = cpu_to_node_arr;
+         pi->threads_per_core = cpus_weight(cpu_sibling_map[0]);
+         pi->cores_per_socket =
+             cpus_weight(cpu_core_map[0]) / pi->threads_per_core;
+@@ -266,7 +271,6 @@ long arch_do_sysctl(xen_sysctl_t *op, XEN_GUEST_HANDLE(xen_sysctl_t) u_sysctl)
+         pi->cpu_khz          = local_cpu_data->proc_freq / 1000;
+         memset(pi->hw_cap, 0, sizeof(pi->hw_cap));
+ 
+-        max_array_ent = pi->max_cpu_id;
+         pi->max_cpu_id = last_cpu(cpu_online_map);
+         max_array_ent = min_t(uint32_t, max_array_ent, pi->max_cpu_id);
+ 
+@@ -279,10 +283,10 @@ long arch_do_sysctl(xen_sysctl_t *op, XEN_GUEST_HANDLE(xen_sysctl_t) u_sysctl)
+          */
+         if (op->interface_version > XEN_SYSCTL_INTERFACE_VERSION)
+         {
+-            if (!guest_handle_is_null(pi->cpu_to_node)) {
++            if (!guest_handle_is_null(cpu_to_node_arr)) {
+                 for (i = 0; i <= max_array_ent; i++) {
+                     uint32_t node = cpu_online(i) ? cpu_to_node(i) : ~0u;
+-                    if (copy_to_guest_offset(pi->cpu_to_node, i, &node, 1)) {
++                    if (copy_to_guest_offset(cpu_to_node_arr, i, &node, 1)) {
+                         ret = -EFAULT;
+                         break;
+                     }

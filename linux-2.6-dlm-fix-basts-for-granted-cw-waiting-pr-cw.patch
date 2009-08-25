@@ -1,0 +1,43 @@
+From: David Teigland <teigland@redhat.com>
+Date: Thu, 5 Jun 2008 14:10:57 -0500
+Subject: [dlm] fix basts for granted CW waiting PR/CW
+Message-id: 20080605191057.GQ18635@redhat.com
+O-Subject: [RHEL5.3 PATCH 17/18] dlm: fix basts for granted CW waiting PR/CW
+Bugzilla: 450137
+RH-Acked-by: Bob Peterson <rpeterso@redhat.com>
+
+bz 450137  dlm: fix basts for granted CW waiting PR/CW
+
+brew build including this patch
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1344633
+
+upstream commit in linux-next, merge pending for 2.6.27:
+
+>From: David Teigland <teigland@redhat.com>
+>Date: Tue, 20 May 2008 12:18:10 -0500
+>Subject: [PATCH] dlm: fix basts for granted CW waiting PR/CW
+
+The fix in commit 3650925893469ccb03dbcc6a440c5d363350f591 was addressing
+the case of a granted PR lock with waiting PR and CW locks.  It's a
+special case that requires forcing a CW bast.  However, that forced CW
+bast was incorrectly applying to a second condition where the granted
+lock was CW.  So, the holder of a CW lock could receive an extraneous CW
+bast instead of a PR bast.  This fix narrows the original special case to
+what was intended.
+
+Signed-off-by: David Teigland <teigland@redhat.com>
+
+diff --git a/fs/dlm/lock.c b/fs/dlm/lock.c
+index ea6a136..cd2b2cf 100644
+--- a/fs/dlm/lock.c
++++ b/fs/dlm/lock.c
+@@ -1777,7 +1777,8 @@ static void grant_pending_locks(struct dlm_rsb *r)
+ 
+ 	list_for_each_entry_safe(lkb, s, &r->res_grantqueue, lkb_statequeue) {
+ 		if (lkb->lkb_bastaddr && lock_requires_bast(lkb, high, cw)) {
+-			if (cw && high == DLM_LOCK_PR)
++			if (cw && high == DLM_LOCK_PR &&
++			    lkb->lkb_grmode == DLM_LOCK_PR)
+ 				queue_bast(r, lkb, DLM_LOCK_CW);
+ 			else
+ 				queue_bast(r, lkb, high);

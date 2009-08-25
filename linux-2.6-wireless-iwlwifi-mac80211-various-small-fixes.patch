@@ -1,0 +1,223 @@
+From: John W. Linville <linville@redhat.com>
+Date: Thu, 4 Dec 2008 14:48:05 -0500
+Subject: [wireless] iwlwifi/mac80211: various small fixes
+Message-id: 20081204194804.GA1951@redhat.com
+O-Subject: [rhel5.3 patch] iwlwifi/mac80211: various small fixes
+Bugzilla: 468967
+
+This patch is an amalgamation of various small fixes that together
+address the kernel side of the issue in bug 468967.
+
+First, the mac80211 component is not notifying other stations when it leaves
+a managed or ad-hoc network.  Not only is this bad etiquette, it also
+can leave wpa_supplicant confused about the state of the network
+connection.  We correct this by adding a specific deauthentication
+request in ieee80211_stop.  I have sent an equivalent patch upstream.
+
+Next, due to the use of a work queue, the mac80211 scan request handler has
+no way to indicate that a scan has failed.  This is bad enough, but
+at present a failed scan will leave the requestor waiting forever for
+scan results.  This patch contains a fix to detect the scan failure
+and issues an SIOWSCAN event so that at least the userland requestor
+knows to stop waiting.  I (or Dan Williams, the original author)
+will send an equivalent patch upstream.
+
+Also, there is a simple fixup to fix a build problem when
+CONFIG_IWLWIFI_DEBUG is selected (which we do not do in RHEL5).
+It was discovered while investigating bug 468967 and is included
+for completeness.
+
+In addition this includes backported versions of the following fixes:
+
+commit 3b7ee69d0caefbdb85a606a98bff841b8c63b97e
+Author: Tomas Winkler <tomas.winkler@intel.com>
+Date:   Mon Sep 8 17:33:38 2008 +0200
+
+    mac80211: disassociate when moving to new BSS
+
+    This patch makes the MLME cleanly disassociate from the current BSS
+    when leaving it for a new one. This is not just nicer to the old AP
+    (we're leaving it, might as well tell it!) but also required for some
+    drivers that keep track of the station we're associated with, they'd
+    get confused because they'd think we are associated with two APs.
+
+    Signed-off-by: Ron Rindjunsky <ron.rindjunsky@intel.com>
+    Signed-off-by: Tomas Winkler <tomas.winkler@intel.com>
+    Signed-off-by: Johannes Berg <johannes@sipsolutions.net>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit ce546fd2eacdbd8dc15f3d2ffd9a95661d082919
+Author: Abhijeet Kolekar <abhijeet.kolekar@intel.com>
+Date:   Wed Nov 19 15:32:22 2008 -0800
+
+    iwl3945 : Fix ad-hoc mode for 3945
+
+    Patch fixes the ad-hoc mode by
+    1) Removing redundant clear_stations_table which prevented generation of
+    beacons.
+    2) Setting assoc_id to 1. It was never set so preventing tx flow
+    in iwl3945_tx_skb.
+
+    Signed-off-by: Abhijeet Kolekar <abhijeet.kolekar@intel.com>
+    Signed-off-by: Reinette Chatre <reinette.chatre@intel.com>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit 2420ebc104d38567ee977a3c15dc675a9dd3b07c
+Author: Mohamed Abbas <mohamed.abbas@intel.com>
+Date:   Tue Nov 4 12:21:34 2008 -0800
+
+    iwl3945: clear scanning bits upon failure
+
+    This patch ensures we clear any scan status bit when
+    an error occurs while sending the scan command. It is
+    the implementation of patch:
+    "iwlwifi: clear scanning bits upon failure"
+    for iwl3945.
+
+    Signed-off-by: Mohamed Abbas <mohamed.abbas@intel.com>
+    Signed-off-by: Reinette Chatre <reinette.chatre@intel.com>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+commit 502c12e1ef14967e08dabb04c674cf0f000e8f7e
+Author: Mohamed Abbas <mohamed.abbas@intel.com>
+Date:   Thu Oct 23 23:48:54 2008 -0700
+
+    iwlwifi: clear scanning bits upon failure
+
+    In iwl_bg_request_scan function, if we could not send a
+    scan command it will go to done.
+    In done it does the right thing to call mac80211 with
+    scan complete, but the problem is STATUS_SCAN_HW is still
+    set causing any future scan to fail. Fix by clearing the scanning status
+    bits if scan fails.
+
+    Signed-off-by: Mohamed Abbas <mohamed.abbas@intel.com>
+    Signed-off-by: Reinette Chatre <reinette.chatre@intel.com>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+Tested by Intel, Dan Williams, Zack Cerza and me with positive results.
+
+diff --git a/drivers/net/wireless/iwlwifi/iwl-debug.h b/drivers/net/wireless/iwlwifi/iwl-debug.h
+index d2daa17..a9a91f0 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-debug.h
++++ b/drivers/net/wireless/iwlwifi/iwl-debug.h
+@@ -32,12 +32,12 @@
+ #ifdef CONFIG_IWLWIFI_DEBUG
+ #define IWL_DEBUG(level, fmt, args...) \
+ do { if (priv->debug_level & (level)) \
+-  dev_printk(KERN_ERR, &(priv->hw->wiphy->dev), "%c %s " fmt, \
++  dev_printk(KERN_ERR, &(priv->pci_dev->dev), "%c %s " fmt, \
+ 	 in_interrupt() ? 'I' : 'U', __func__ , ## args); } while (0)
+ 
+ #define IWL_DEBUG_LIMIT(level, fmt, args...) \
+ do { if ((priv->debug_level & (level)) && net_ratelimit()) \
+-  dev_printk(KERN_ERR, &(priv->hw->wiphy->dev), "%c %s " fmt, \
++  dev_printk(KERN_ERR, &(priv->pci_dev->dev), "%c %s " fmt, \
+ 	 in_interrupt() ? 'I' : 'U', __func__ , ## args); } while (0)
+ 
+ #ifdef CONFIG_IWLWIFI_DEBUGFS
+diff --git a/drivers/net/wireless/iwlwifi/iwl-scan.c b/drivers/net/wireless/iwlwifi/iwl-scan.c
+index 4022bea..01a6faf 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-scan.c
++++ b/drivers/net/wireless/iwlwifi/iwl-scan.c
+@@ -900,6 +900,13 @@ static void iwl_bg_request_scan(void *p)
+ 	return;
+ 
+  done:
++	/* Cannot perform scan. Make sure we clear scanning
++	* bits from status so next scan request can be performed.
++	* If we don't clear scanning status bit here all next scan
++	* will fail
++	*/
++	clear_bit(STATUS_SCAN_HW, &priv->status);
++	clear_bit(STATUS_SCANNING, &priv->status);
+ 	/* inform mac80211 scan aborted */
+ 	queue_work(priv->workqueue, &priv->scan_completed);
+ 	mutex_unlock(&priv->mutex);
+diff --git a/drivers/net/wireless/iwlwifi/iwl3945-base.c b/drivers/net/wireless/iwlwifi/iwl3945-base.c
+index 11dc792..fe77d2f 100644
+--- a/drivers/net/wireless/iwlwifi/iwl3945-base.c
++++ b/drivers/net/wireless/iwlwifi/iwl3945-base.c
+@@ -6273,6 +6273,14 @@ static void iwl3945_bg_request_scan(void *p)
+ 	return;
+ 
+  done:
++	/* can not perform scan make sure we clear scanning
++	 * bits from status so next scan request can be performed.
++	 * if we dont clear scanning status bit here all next scan
++	 * will fail
++	*/
++	clear_bit(STATUS_SCAN_HW, &priv->status);
++	clear_bit(STATUS_SCANNING, &priv->status);
++
+ 	/* inform mac80211 scan aborted */
+ 	queue_work(priv->workqueue, &priv->scan_completed);
+ 	mutex_unlock(&priv->mutex);
+@@ -6390,10 +6398,7 @@ static void iwl3945_bg_post_associate(void *p)
+ 
+ 	case IEEE80211_IF_TYPE_IBSS:
+ 
+-		/* clear out the station table */
+-		iwl3945_clear_stations_table(priv);
+-
+-		iwl3945_add_station(priv, iwl3945_broadcast_addr, 0, 0);
++		priv->assoc_id = 1;
+ 		iwl3945_add_station(priv, priv->bssid, 0, 0);
+ 		iwl3945_sync_sta(priv, IWL_STA_ID,
+ 				 (priv->band == IEEE80211_BAND_5GHZ) ?
+diff --git a/net/mac80211/main.c b/net/mac80211/main.c
+index d075c95..4e3cd34 100644
+--- a/net/mac80211/main.c
++++ b/net/mac80211/main.c
+@@ -509,9 +509,11 @@ static int ieee80211_stop(struct net_device *dev)
+ 		ieee80211_configure_filter(local);
+ 		netif_tx_unlock_bh(local->mdev);
+ 		break;
+-	case IEEE80211_IF_TYPE_MESH_POINT:
+ 	case IEEE80211_IF_TYPE_STA:
+ 	case IEEE80211_IF_TYPE_IBSS:
++		/* Announce that we are leaving the network. */
++		ieee80211_sta_deauthenticate(dev, WLAN_REASON_DEAUTH_LEAVING);
++	case IEEE80211_IF_TYPE_MESH_POINT:
+ 		sdata->u.sta.state = IEEE80211_DISABLED;
+ 		memset(sdata->u.sta.bssid, 0, ETH_ALEN);
+ 		del_timer_sync(&sdata->u.sta.timer);
+diff --git a/net/mac80211/mlme.c b/net/mac80211/mlme.c
+index cb91e08..5a83cce 100644
+--- a/net/mac80211/mlme.c
++++ b/net/mac80211/mlme.c
+@@ -3317,10 +3317,16 @@ void ieee80211_sta_work(void *ptr)
+ 	if (ifsta->state != IEEE80211_AUTHENTICATE &&
+ 	    ifsta->state != IEEE80211_ASSOCIATE &&
+ 	    test_and_clear_bit(IEEE80211_STA_REQ_SCAN, &ifsta->request)) {
++		int rc;
++
+ 		if (ifsta->scan_ssid_len)
+-			ieee80211_sta_start_scan(dev, ifsta->scan_ssid, ifsta->scan_ssid_len);
++			rc = ieee80211_sta_start_scan(dev, ifsta->scan_ssid, ifsta->scan_ssid_len);
+ 		else
+-			ieee80211_sta_start_scan(dev, NULL, 0);
++			rc = ieee80211_sta_start_scan(dev, NULL, 0);
++
++		if (rc)
++			ieee80211_scan_completed(local_to_hw(local));
++
+ 		return;
+ 	}
+ 
+@@ -3410,9 +3416,13 @@ void ieee80211_sta_req_auth(struct net_device *dev,
+ 		return;
+ 
+ 	if ((ifsta->flags & (IEEE80211_STA_BSSID_SET |
+-				IEEE80211_STA_AUTO_BSSID_SEL)) &&
++			     IEEE80211_STA_AUTO_BSSID_SEL)) &&
+ 	    (ifsta->flags & (IEEE80211_STA_SSID_SET |
+-				IEEE80211_STA_AUTO_SSID_SEL))) {
++			     IEEE80211_STA_AUTO_SSID_SEL))) {
++
++		if (ifsta->state == IEEE80211_ASSOCIATED)
++			ieee80211_set_disassoc(dev, ifsta, 1);
++
+ 		set_bit(IEEE80211_STA_REQ_AUTH, &ifsta->request);
+ 		queue_work(local->hw.workqueue, &ifsta->work);
+ 	}

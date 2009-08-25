@@ -1,0 +1,35 @@
+From: Justin Payne <jpayne@redhat.com>
+Date: Thu, 26 Mar 2009 17:53:29 -0400
+Subject: [ppc] keyboard not recognized on bare metal
+Message-id: 861039803.3304291238104409891.JavaMail.root@zmail02.collab.prod.int.phx2.redhat.com
+O-Subject: [RHEL5.4 PATCH] BZ#455232: ppc: keyboard not recognized after linux-2.6-ipmi-legacy-ioport-setup-changes.patch applied
+Bugzilla: 455232
+RH-Acked-by: Aristeu Rozanski <aris@redhat.com>
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+
+A regression was introduced in 5.2 on ppc where the keyboard is not recognized on bare metal installs. The patch causes pSeries_check_legacy_ioport to return -ENODEV whether (np) returns null or not. I have modified linux-2.6-ipmi-legacy-ioport-setup-changes.patch so that it returns zero, and -ENODEV is returned if (np) is null.
+
+diff --git a/arch/powerpc/platforms/pseries/setup.c b/arch/powerpc/platforms/pseries/setup.c
+index acef34e..79c64f6 100644
+--- a/arch/powerpc/platforms/pseries/setup.c
++++ b/arch/powerpc/platforms/pseries/setup.c
+@@ -392,7 +392,6 @@ static void __init pSeries_init_early(void)
+ static int pSeries_check_legacy_ioport(unsigned int baseport)
+ {
+ 	struct device_node *np = NULL;
+-	int ret = -ENODEV;
+ 
+ #define I8042_DATA_REG	0x60
+ #define FDC_BASE	0x3f0
+@@ -409,9 +408,9 @@ static int pSeries_check_legacy_ioport(unsigned int baseport)
+ 		break;
+ 	}
+ 	if (!np)
+-		return ret;
++		return -ENODEV;
+ 	of_node_put(np);
+-	return ret;
++	return 0;
+ }
+ 
+ /*

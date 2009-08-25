@@ -1,0 +1,70 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Thu, 3 Jul 2008 17:19:07 +0200
+Subject: [x86_64] xen: fix syscall return when tracing
+Message-id: 486CEDEB.8060802@redhat.com
+O-Subject: [RHEL5 PATCH]: Fix syscall return when tracing
+Bugzilla: 453394
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+All,
+    Attached is a patch to fix BZ 453394, which was spun out of bz 442352.  The
+reported problem was that on 64-bit, system calls above valid system calls
+(specifically, NR_max_syscalls) were returning the number of the syscall, not
+-ENOSYS.  After looking at entry-xen.S for a couple of minutes, the problem was
+obvious; we were moving %rax (the syscall number) into the return area right
+before returning, so the -ENOSYS was getting lost.  The attached patch fixes
+this, and was committed in upstream linux-2.6.18-xen.hg today as c/s 583.
+
+Note that the upstream Linux kernel proper is not affected by this bug, and
+neither is the RHEL-4 Xen kernel, and neither is 32-bit RHEL-4, RHEL-5, or upstream.
+
+This patch was tested by me with the following test program:
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
+
+int main()
+{
+        int foo;
+
+        foo = syscall(289);
+
+        fprintf(stderr, "Error is %d\n",foo);
+
+        return 0;
+}
+
+Before this patch, compiling and running the above program would return 289;
+after the patch, compiling and running the above program returns the proper -1
+with an errno of ENOSYS.
+
+Brew build is here: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1370049
+
+Please review and ACK.
+
+Chris Lalancette
+
+ arch/x86_64/kernel/entry-xen.S |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/x86_64/kernel/entry-xen.S b/arch/x86_64/kernel/entry-xen.S
+index f177e65..c6f2a23 100644
+--- a/arch/x86_64/kernel/entry-xen.S
++++ b/arch/x86_64/kernel/entry-xen.S
+@@ -336,10 +336,10 @@ tracesys:
+ 	LOAD_ARGS ARGOFFSET  /* reload args from stack in case ptrace changed it */
+ 	RESTORE_REST
+ 	cmpq $__NR_syscall_max,%rax
+-	ja  1f
++	ja  int_ret_from_sys_call
+ 	movq %r10,%rcx	/* fixup for C */
+ 	call *sys_call_table(,%rax,8)
+-1:	movq %rax,RAX-ARGOFFSET(%rsp)
++	movq %rax,RAX-ARGOFFSET(%rsp)
+ 	/* Use IRET because user could have changed frame */
+ 	jmp int_ret_from_sys_call
+ 	CFI_ENDPROC

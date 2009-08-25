@@ -1,0 +1,62 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 1 Jul 2008 15:13:46 +0200
+Subject: [s390] cio: I/O error after cable pulls
+Message-id: 20080701131346.GF20922@redhat.com
+O-Subject: [RHEL5 U3 PATCH 6/6] s390 - cio: I/O error after cable pulls
+Bugzilla: 451281
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+After some cables to a dasd have been pulled, dasd unsuccessfully
+tries to submit I/O. After the retries for the error recovery
+have been exhausted, an I/O error is generated.
+
+When the common I/O layer tries to start delayed path
+verification, it detects a pending status and remembers to delay
+path verification further. However, the pending interrupt is an
+unsolicited interrupt, and no action is triggered.
+
+Solution:
+
+Restart path verification when an unsolicited interrupt occurs
+if the doverify bit is set.
+
+Bugzilla
+=========
+
+BZ 451281
+https://bugzilla.redhat.com/show_bug.cgi?id=451281
+
+Upstream status of the patch:
+=============================
+
+Patch is contained in linux-2.6 as git commit
+18374d376c7eb30b6359759e767cd99397b377d2
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	-Hans
+
+diff --git a/drivers/s390/cio/device_fsm.c b/drivers/s390/cio/device_fsm.c
+index c2c326b..ff267ea 100644
+--- a/drivers/s390/cio/device_fsm.c
++++ b/drivers/s390/cio/device_fsm.c
+@@ -828,6 +828,8 @@ ccw_device_irq(struct ccw_device *cdev, enum dev_event dev_event)
+ call_handler_unsol:
+ 		if (cdev->handler)
+ 			cdev->handler (cdev, 0, irb);
++		if (cdev->private->flags.doverify)
++			ccw_device_online_verify(cdev, 0);
+ 		return;
+ 	}
+ 	/* Accumulate status and find out if a basic sense is needed. */

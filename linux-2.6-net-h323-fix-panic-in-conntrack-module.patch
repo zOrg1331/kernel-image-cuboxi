@@ -1,0 +1,54 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Wed, 6 Aug 2008 01:04:01 +0200
+Subject: [net] h323: Fix panic in conntrack module
+Message-id: 20080805230401.GA1741@plip.localdomain
+O-Subject: [PATCH RHEL5.3] BZ#433661: Fix panic in h323 conntrack module
+Bugzilla: 433661
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+This patch includes several fixes to the h323 conntrack helper:
+ - Use of ip_ct_refresh() instead of ip_ct_refresh_acct() fixing
+   a NULL pointer deref.
+ - Correctly use write_lock_bh() for conntrack lock
+ - Give back conntrack expect entry. Fixes a memory leak.
+
+Please ACK
+
+diff --git a/net/ipv4/netfilter/ip_conntrack_helper_h323.c b/net/ipv4/netfilter/ip_conntrack_helper_h323.c
+index 9a39e29..0bc0d3f 100644
+--- a/net/ipv4/netfilter/ip_conntrack_helper_h323.c
++++ b/net/ipv4/netfilter/ip_conntrack_helper_h323.c
+@@ -1417,10 +1417,10 @@ static int process_rcf(struct sk_buff **pskb, struct ip_conntrack *ct,
+ 		DEBUGP
+ 		    ("ip_ct_ras: set RAS connection timeout to %u seconds\n",
+ 		     info->timeout);
+-		ip_ct_refresh_acct(ct, ctinfo, NULL, info->timeout * HZ);
++		ip_ct_refresh(ct, *pskb, info->timeout * HZ);
+ 
+ 		/* Set expect timeout */
+-		read_lock_bh(&ip_conntrack_lock);
++		write_lock_bh(&ip_conntrack_lock);
+ 		exp = find_expect(ct, ct->tuplehash[dir].tuple.dst.ip,
+ 				  info->sig_port[!dir]);
+ 		if (exp) {
+@@ -1433,8 +1433,9 @@ static int process_rcf(struct sk_buff **pskb, struct ip_conntrack *ct,
+ 			       ntohs(exp->tuple.dst.u.tcp.port),
+ 			       info->timeout);
+ 			set_expect_timeout(exp, info->timeout);
++			ip_conntrack_expect_put(exp);
+ 		}
+-		read_unlock_bh(&ip_conntrack_lock);
++		write_unlock_bh(&ip_conntrack_lock);
+ 	}
+ 
+ 	return 0;
+@@ -1465,7 +1466,7 @@ static int process_urq(struct sk_buff **pskb, struct ip_conntrack *ct,
+ 	info->sig_port[!dir] = 0;
+ 
+ 	/* Give it 30 seconds for UCF or URJ */
+-	ip_ct_refresh_acct(ct, ctinfo, NULL, 30 * HZ);
++	ip_ct_refresh(ct, *pskb, 30 * HZ);
+ 
+ 	return 0;
+ }

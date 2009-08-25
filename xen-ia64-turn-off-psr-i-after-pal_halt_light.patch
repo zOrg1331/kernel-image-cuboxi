@@ -1,0 +1,38 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Fri, 22 Aug 2008 11:19:30 -0400
+Subject: [xen] ia64: turn off psr.i after PAL_HALT_LIGHT
+Message-id: 20080822151930.13356.21105.sendpatchset@pq0-1.lab.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH 3/3] xen-ia64: hypervisor needs to turn off psr.i after PAL_HALT_LIGHT
+Bugzilla: 447453
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Jarod Wilson <jwilson@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+bz447453
+# HG changeset patch
+# User Isaku Yamahata <yamahata@valinux.co.jp>
+# Date 1213078086 -32400
+# Node ID 1feb98eb64eff4c97bf185047790f80e67501b3d
+# Parent  b844f87db11debd27bf464bf6aff7cc42456d486
+[IA64] hypervisor needs to turn off psr.i after PAL_HALT_LIGHT
+
+psr.i must be set to 0 on PAL entry and must be unchanged on PAL exit.
+But do_block() turns on psr.i.
+So we need to set it off at exit of PAL_HALT_LIGHT.
+
+Signed-off-by: Akio Takebe <takebe_akio@jp.fujitsu.com>
+
+diff --git a/arch/ia64/xen/hypercall.c b/arch/ia64/xen/hypercall.c
+index e43a9ed..9f8c7d0 100644
+--- a/arch/ia64/xen/hypercall.c
++++ b/arch/ia64/xen/hypercall.c
+@@ -177,6 +177,9 @@ ia64_hypercall(struct pt_regs *regs)
+ 				/* do_block only pends a softirq */
+ 				do_softirq();
+ 				stop_timer(&v->arch.hlt_timer);
++				/* do_block() call local_event_delivery_enable(),
++				   but PALL CALL is always called with psr.i =  */
++				local_event_delivery_disable();
+ 			}
+ 			regs->r8 = 0;
+ 			regs->r9 = 0;

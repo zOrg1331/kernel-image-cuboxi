@@ -1,0 +1,212 @@
+From: Tom Coughlan <coughlan@redhat.com>
+Date: Fri, 22 Aug 2008 14:44:10 -0400
+Subject: [x86] kdump: calgary iommu: use boot kernel's TCE tables
+Message-id: 1219430650.9040.73.camel@p670.boston.redhat.com
+O-Subject: [RHEL5.3 PATCH] calgary iommu: use the first kernel's TCE tables in kdump
+Bugzilla: 239272
+RH-Acked-by: Vivek Goyal <vgoyal@redhat.com>
+
+Fixes bz 239272
+
+Problem description:
+
+kdump kernel fails to boot with calgary iommu and aacraid driver on a
+x366 box. The ongoing dma's of aacraid from the first kernel continue to
+exist until the driver is loaded in the kdump kernel. Calgary is
+initialized prior to aacraid and creation of new tce tables causes wrong
+dma's to occur. Here we try to get the tce tables of the first kernel in
+kdump kernel and use them. While in the kdump kernel we do not allocate
+new tce tables but instead read the base address register contents of
+calgary iommu and use the tables that the registers point to. With these
+changes the kdump kernel and hence aacraid now boots normally.
+
+Upstream status:
+
+Posted and acked: http://lkml.org/lkml/2008/7/15/82
+It is in 2.6.27-rc4.
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=95b68dec0d52c7b8fea3698b3938cf3ab936436b
+
+In the upstream posting they indicate this is a stop-gap patch while
+they investigate alternate approaches. I suggest that we proceed on the
+assumption this patch is final, since a newer version may not
+materialize, or may not be ported back to RHEL 5.
+
+Build status:
+
+Built in Brew.
+https://brewweb.devel.redhat.com/taskinfo?taskID=1435089
+
+Testing:
+
+IBM developed and tested this. We will ensure they test it again during
+RHEL 5.3 beta.
+
+Please review and ACK.
+
+Tom
+
+Signed-off-by: Chandru Siddalingappa <chandru@in.ibm.com>
+
+diff --git a/arch/x86_64/kernel/pci-calgary.c b/arch/x86_64/kernel/pci-calgary.c
+index be41b84..59533ed 100644
+--- a/arch/x86_64/kernel/pci-calgary.c
++++ b/arch/x86_64/kernel/pci-calgary.c
+@@ -29,6 +29,7 @@
+ #include <linux/mm.h>
+ #include <linux/spinlock.h>
+ #include <linux/string.h>
++#include <linux/crash_dump.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/init.h>
+ #include <linux/bitops.h>
+@@ -166,6 +167,8 @@ static void calgary_dump_error_regs(struct iommu_table *tbl);
+ static void calioc2_handle_quirks(struct iommu_table *tbl, struct pci_dev *dev);
+ static void calioc2_tce_cache_blast(struct iommu_table *tbl);
+ static void calioc2_dump_error_regs(struct iommu_table *tbl);
++static void calgary_init_bitmap_from_tce_table(struct iommu_table *tbl);
++static void get_tce_space_from_tar(void);
+ 
+ static struct cal_chipset_ops calgary_chip_ops = {
+ 	.handle_quirks = calgary_handle_quirks,
+@@ -823,7 +826,11 @@ static int __init calgary_setup_tar(struct pci_dev *dev, void __iomem *bbar)
+ 
+ 	tbl = dev->sysdata;
+ 	tbl->it_base = (unsigned long)bus_info[dev->bus->number].tce_space;
+-	tce_free(tbl, 0, tbl->it_size);
++
++	if (is_kdump_kernel())
++		calgary_init_bitmap_from_tce_table(tbl);
++	else
++		tce_free(tbl, 0, tbl->it_size);
+ 
+ 	if (is_calgary(dev->device))
+ 		tbl->chip_ops = &calgary_chip_ops;
+@@ -1202,6 +1209,10 @@ static int __init calgary_init(void)
+ 	if (ret)
+ 		return ret;
+ 
++	/* Purely for kdump kernel case */
++	if (is_kdump_kernel())
++		get_tce_space_from_tar();
++
+ 	do {
+ 		dev = pci_get_device(PCI_VENDOR_ID_IBM, PCI_ANY_ID, dev);
+ 		if (!dev)
+@@ -1333,12 +1344,67 @@ static int __init calgary_bus_has_devices(int bus, unsigned short pci_dev)
+ 	return (val != 0xffffffff);
+ }
+ 
++/*
++ * calgary_init_bitmap_from_tce_table():
++ * Funtion for kdump case. In the second/kdump kernel initialize
++ * the bitmap based on the tce table entries obtained from first kernel
++ */
++static void calgary_init_bitmap_from_tce_table(struct iommu_table *tbl)
++{
++	u64 *tp;
++	unsigned int index;
++	tp = ((u64 *)tbl->it_base);
++	for (index = 0 ; index < tbl->it_size; index++) {
++		if (*tp != 0x0)
++			set_bit(index, tbl->it_map);
++		tp++;
++	}
++}
++
++/*
++ * get_tce_space_from_tar():
++ * Function for kdump case. Get the tce tables from first kernel
++ * by reading the contents of the base adress register of calgary iommu
++ */
++static void get_tce_space_from_tar()
++{
++	int bus;
++	void __iomem *target;
++	unsigned long tce_space;
++
++	for (bus = 0; bus < MAX_PHB_BUS_NUM; bus++) {
++		struct calgary_bus_info *info = &bus_info[bus];
++		unsigned short pci_device;
++		u32 val;
++
++		val = read_pci_config(bus, 0, 0, 0);
++		pci_device = (val & 0xFFFF0000) >> 16;
++
++		if (!is_cal_pci_dev(pci_device))
++			continue;
++		if (info->translation_disabled)
++			continue;
++
++		if (calgary_bus_has_devices(bus, pci_device) ||
++						translate_empty_slots) {
++			target = calgary_reg(bus_info[bus].bbar,
++						tar_offset(bus));
++			tce_space = be64_to_cpu(readq(target));
++			tce_space = tce_space & TAR_SW_BITS;
++
++			tce_space = tce_space & (~specified_table_size);
++			info->tce_space = (u64 *)__va(tce_space);
++		}
++	}
++	return;
++}
++
+ void __init detect_calgary(void)
+ {
+ 	int bus;
+ 	void *tbl;
+ 	int calgary_found = 0;
+-	unsigned long ptr;
++	unsigned long ptr, max_pfn;
+ 	unsigned int offset, prev_offset;
+ 	int ret;
+ 
+@@ -1385,7 +1451,8 @@ void __init detect_calgary(void)
+ 		return;
+ 	}
+ 
+-	specified_table_size = determine_tce_table_size(end_pfn * PAGE_SIZE);
++	max_pfn = is_kdump_kernel() ? saved_max_pfn : end_pfn;
++	specified_table_size = determine_tce_table_size(max_pfn * PAGE_SIZE);
+ 
+ 	for (bus = 0; bus < MAX_PHB_BUS_NUM; bus++) {
+ 		struct calgary_bus_info *info = &bus_info[bus];
+@@ -1403,10 +1470,16 @@ void __init detect_calgary(void)
+ 
+ 		if (calgary_bus_has_devices(bus, pci_device) ||
+ 		    translate_empty_slots) {
+-			tbl = alloc_tce_table();
+-			if (!tbl)
+-				goto cleanup;
+-			info->tce_space = tbl;
++			/*
++			 * If it is kdump kernel, find and use tce tables
++			 * from first kernel, else allocate tce tables here
++			 */
++                       if (!is_kdump_kernel()) {
++				tbl = alloc_tce_table();
++				if (!tbl)
++					goto cleanup;
++				info->tce_space = tbl;
++			}
+ 			calgary_found = 1;
+ 		}
+ 	}
+diff --git a/include/linux/crash_dump.h b/include/linux/crash_dump.h
+index 22c7ac5..6cd39a9 100644
+--- a/include/linux/crash_dump.h
++++ b/include/linux/crash_dump.h
+@@ -22,5 +22,13 @@ extern struct proc_dir_entry *proc_vmcore;
+ 
+ #define vmcore_elf_check_arch(x) (elf_check_arch(x) || vmcore_elf_check_arch_cross(x))
+ 
++static inline int is_kdump_kernel(void)
++{
++	return (elfcorehdr_addr != ELFCORE_ADDR_MAX) ? 1 : 0;
++}
++#else /* !CONFIG_CRASH_DUMP */
++static inline int is_kdump_kernel(void) { return 0; }
+ #endif /* CONFIG_CRASH_DUMP */
++
++extern unsigned long saved_max_pfn;
+ #endif /* LINUX_CRASHDUMP_H */
