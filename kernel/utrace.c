@@ -660,15 +660,7 @@ static bool utrace_do_stop(struct task_struct *target, struct utrace *utrace)
 {
 	bool stopped = false;
 
-	if (unlikely(target->exit_state)) {
-		/*
-		 * On the exit path, it's only truly quiescent
-		 * if it has already been through
-		 * utrace_report_death(), or never will.
-		 */
-		if (!(target->utrace_flags & _UTRACE_DEATH_EVENTS))
-			stopped = true;
-	} else if (task_is_stopped(target)) {
+	if (task_is_stopped(target)) {
 		/*
 		 * Stopped is considered quiescent; when it wakes up, it will
 		 * go through utrace_finish_jctl() before doing anything else.
@@ -1075,16 +1067,23 @@ int utrace_control(struct task_struct *target,
 	if (unlikely(IS_ERR(utrace)))
 		return PTR_ERR(utrace);
 
-	if (target->exit_state) {
+	resume = utrace->stopped;
+	ret = 0;
+
+	/*
+	 * ->exit_state can change under us, this doesn't matter.
+	 * We do not care about ->exit_state in fact, but we do
+	 * care about ->reap and ->death. If either flag is set,
+	 * we must also see ->exit_state != 0.
+	 */
+	if (unlikely(target->exit_state)) {
 		ret = utrace_control_dead(target, utrace, action);
 		if (ret) {
 			spin_unlock(&utrace->lock);
 			return ret;
 		}
+		resume = true;
 	}
-
-	resume = utrace->stopped;
-	ret = 0;
 
 	clear_engine_wants_stop(engine);
 	switch (action) {
