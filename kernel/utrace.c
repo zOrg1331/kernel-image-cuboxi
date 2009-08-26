@@ -667,7 +667,7 @@ static bool utrace_do_stop(struct task_struct *target, struct utrace *utrace)
 		 * utrace_report_death(), or never will.
 		 */
 		if (!(target->utrace_flags & _UTRACE_DEATH_EVENTS))
-			utrace->stopped = stopped = true;
+			stopped = true;
 	} else if (task_is_stopped(target)) {
 		/*
 		 * Stopped is considered quiescent; when it wakes up, it will
