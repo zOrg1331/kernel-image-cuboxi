@@ -93,7 +93,9 @@ static void ext4_idx_store_pblock(struct ext4_extent_idx *ix, ext4_fsblk_t pb)
 	ix->ei_leaf_hi = cpu_to_le16((unsigned long) ((pb >> 31) >> 1) & 0xffff);
 }
 
-static int ext4_ext_journal_restart(handle_t *handle, int needed)
+static int ext4_ext_truncate_extend_restart(handle_t *handle,
+					    struct inode *inode,
+					    int needed)
 {
 	int err;
 
@@ -104,7 +106,14 @@ static int ext4_ext_journal_restart(handle_t *handle, int needed)
 	err = ext4_journal_extend(handle, needed);
 	if (err <= 0)
 		return err;
-	return ext4_journal_restart(handle, needed);
+	err = ext4_truncate_restart_trans(handle, inode, needed);
+	/*
+	 * We have dropped i_data_sem so someone might have cached again
+	 * an extent we are going to truncate.
+	 */
+	ext4_ext_invalidate_cache(inode);
+
+	return err;
 }
 
 /*
@@ -437,8 +446,9 @@ static void ext4_ext_show_path(struct inode *inode, struct ext4_ext_path *path)
 		  ext_debug("  %d->%llu", le32_to_cpu(path->p_idx->ei_block),
 			    idx_pblock(path->p_idx));
 		} else if (path->p_ext) {
-			ext_debug("  %d:%d:%llu ",
+			ext_debug("  %d:[%d]%d:%llu ",
 				  le32_to_cpu(path->p_ext->ee_block),
+			  	  ext4_ext_is_uninitialized(path->p_ext),
 				  ext4_ext_get_actual_len(path->p_ext),
 				  ext_pblock(path->p_ext));
 		} else
@@ -460,8 +470,11 @@ static void ext4_ext_show_leaf(struct inode *inode, struct ext4_ext_path *path)
 	eh = path[depth].p_hdr;
 	ex = EXT_FIRST_EXTENT(eh);
 
+	ext_debug("Displaying leaf extents for inode %lu\n", inode->i_ino);
+
 	for (i = 0; i < le16_to_cpu(eh->eh_entries); i++, ex++) {
-		ext_debug("%d:%d:%llu ", le32_to_cpu(ex->ee_block),
+		ext_debug("%d:[%d]%d:%llu ", le32_to_cpu(ex->ee_block),
+			  ext4_ext_is_uninitialized(ex),
 			  ext4_ext_get_actual_len(ex), ext_pblock(ex));
 	}
 	ext_debug("\n");
@@ -580,9 +593,10 @@ ext4_ext_binsearch(struct inode *inode,
 	}
 
 	path->p_ext = l - 1;
-	ext_debug("  -> %d:%llu:%d ",
+	ext_debug("  -> %d:%llu:[%d]%d ",
 			le32_to_cpu(path->p_ext->ee_block),
 			ext_pblock(path->p_ext),
+			ext4_ext_is_uninitialized(path->p_ext),
 			ext4_ext_get_actual_len(path->p_ext));
 
 #ifdef CHECK_BINSEARCH
@@ -850,9 +864,10 @@ static int ext4_ext_split(handle_t *handle, struct inode *inode,
 	path[depth].p_ext++;
 	while (path[depth].p_ext <=
 			EXT_MAX_EXTENT(path[depth].p_hdr)) {
-		ext_debug("move %d:%llu:%d in new leaf %llu\n",
+		ext_debug("move %d:%llu:[%d]%d in new leaf %llu\n",
 				le32_to_cpu(path[depth].p_ext->ee_block),
 				ext_pblock(path[depth].p_ext),
+				ext4_ext_is_uninitialized(path[depth].p_ext),
 				ext4_ext_get_actual_len(path[depth].p_ext),
 				newblock);
 		/*memmove(ex++, path[depth].p_ext++,
@@ -1580,9 +1595,11 @@ int ext4_ext_insert_extent(handle_t *handle, struct inode *inode,
 
 	/* try to insert block into found extent and return */
 	if (ex && ext4_can_extents_be_merged(inode, ex, newext)) {
-		ext_debug("append %d block to %d:%d (from %llu)\n",
+		ext_debug("append [%d]%d block to %d:[%d]%d (from %llu)\n",
+				ext4_ext_is_uninitialized(newext),
 				ext4_ext_get_actual_len(newext),
 				le32_to_cpu(ex->ee_block),
+				ext4_ext_is_uninitialized(ex),
 				ext4_ext_get_actual_len(ex), ext_pblock(ex));
 		err = ext4_ext_get_access(handle, inode, path + depth);
 		if (err)
@@ -1651,9 +1668,10 @@ has_space:
 
 	if (!nearex) {
 		/* there is no extent in this leaf, create first one */
-		ext_debug("first extent in the leaf: %d:%llu:%d\n",
+		ext_debug("first extent in the leaf: %d:%llu:[%d]%d\n",
 				le32_to_cpu(newext->ee_block),
 				ext_pblock(newext),
+				ext4_ext_is_uninitialized(newext),
 				ext4_ext_get_actual_len(newext));
 		path[depth].p_ext = EXT_FIRST_EXTENT(eh);
 	} else if (le32_to_cpu(newext->ee_block)
@@ -1663,10 +1681,11 @@ has_space:
 			len = EXT_MAX_EXTENT(eh) - nearex;
 			len = (len - 1) * sizeof(struct ext4_extent);
 			len = len < 0 ? 0 : len;
-			ext_debug("insert %d:%llu:%d after: nearest 0x%p, "
+			ext_debug("insert %d:%llu:[%d]%d after: nearest 0x%p, "
 					"move %d from 0x%p to 0x%p\n",
 					le32_to_cpu(newext->ee_block),
 					ext_pblock(newext),
+					ext4_ext_is_uninitialized(newext),
 					ext4_ext_get_actual_len(newext),
 					nearex, len, nearex + 1, nearex + 2);
 			memmove(nearex + 2, nearex + 1, len);
@@ -1676,10 +1695,11 @@ has_space:
 		BUG_ON(newext->ee_block == nearex->ee_block);
 		len = (EXT_MAX_EXTENT(eh) - nearex) * sizeof(struct ext4_extent);
 		len = len < 0 ? 0 : len;
-		ext_debug("insert %d:%llu:%d before: nearest 0x%p, "
+		ext_debug("insert %d:%llu:[%d]%d before: nearest 0x%p, "
 				"move %d from 0x%p to 0x%p\n",
 				le32_to_cpu(newext->ee_block),
 				ext_pblock(newext),
+				ext4_ext_is_uninitialized(newext),
 				ext4_ext_get_actual_len(newext),
 				nearex, len, nearex + 1, nearex + 2);
 		memmove(nearex + 1, nearex, len);
@@ -2094,7 +2114,8 @@ ext4_ext_rm_leaf(handle_t *handle, struct inode *inode,
 		else
 			uninitialized = 0;
 
-		ext_debug("remove ext %lu:%u\n", ex_ee_block, ex_ee_len);
+		ext_debug("remove ext %u:[%d]%d\n", ex_ee_block,
+			 uninitialized, ex_ee_len);
 		path[depth].p_ext = ex;
 
 		a = ex_ee_block > start ? ex_ee_block : start;
@@ -2138,7 +2159,7 @@ ext4_ext_rm_leaf(handle_t *handle, struct inode *inode,
 		}
 		credits += 2 * EXT4_QUOTA_TRANS_BLOCKS(inode->i_sb);
 
-		err = ext4_ext_journal_restart(handle, credits);
+		err = ext4_ext_truncate_extend_restart(handle, inode, credits);
 		if (err)
 			goto out;
 
@@ -2743,6 +2764,7 @@ insert:
 	} else if (err)
 		goto fix_extent_len;
 out:
+	ext4_ext_show_leaf(inode, path);
 	return err ? err : allocated;
 
 fix_extent_len:
@@ -2786,7 +2808,7 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 	struct ext4_allocation_request ar;
 
 	__clear_bit(BH_New, &bh_result->b_state);
-	ext_debug("blocks %u/%u requested for inode %u\n",
+	ext_debug("blocks %u/%u requested for inode %lu\n",
 			iblock, max_blocks, inode->i_ino);
 
 	/* check in cache */
@@ -2849,7 +2871,7 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 			newblock = iblock - ee_block + ee_start;
 			/* number of remaining blocks in the extent */
 			allocated = ee_len - (iblock - ee_block);
-			ext_debug("%u fit into %lu:%d -> %llu\n", iblock,
+			ext_debug("%u fit into %u:%d -> %llu\n", iblock,
 					ee_block, ee_len, newblock);
 
 			/* Do not put uninitialized extent in the cache */
@@ -2950,7 +2972,7 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 	newblock = ext4_mb_new_blocks(handle, &ar, &err);
 	if (!newblock)
 		goto out2;
-	ext_debug("allocate new block: goal %llu, found %llu/%lu\n",
+	ext_debug("allocate new block: goal %llu, found %llu/%u\n",
 		  ar.goal, newblock, allocated);
 
 	/* try to insert new extent into found leaf and return */
