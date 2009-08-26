@@ -45,7 +45,8 @@
  *
  * ocfs2_extent_tree contains info for the root of the b-tree, it must have a
  * root ocfs2_extent_list and a root_bh so that they can be used in the b-tree
- * functions.  With metadata ecc, we now call different journal_access
+ * functions.  It needs the ocfs2_caching_info structure associated with
+ * I/O on the tree.  With metadata ecc, we now call different journal_access
  * functions for each type of metadata, so it must have the
  * root_journal_access function.
  * ocfs2_extent_tree_operations abstract the normal operations we do for
@@ -56,6 +57,7 @@ struct ocfs2_extent_tree {
 	struct ocfs2_extent_tree_operations	*et_ops;
 	struct buffer_head			*et_root_bh;
 	struct ocfs2_extent_list		*et_root_el;
+	struct ocfs2_caching_info		*et_ci;
 	ocfs2_journal_access_func		et_root_journal_access;
 	void					*et_object;
 	unsigned int				et_max_leaf_clusters;
@@ -66,17 +68,17 @@ struct ocfs2_extent_tree {
  * specified object buffer.
  */
 void ocfs2_init_dinode_extent_tree(struct ocfs2_extent_tree *et,
-				   struct inode *inode,
+				   struct ocfs2_caching_info *ci,
 				   struct buffer_head *bh);
 void ocfs2_init_xattr_tree_extent_tree(struct ocfs2_extent_tree *et,
-				       struct inode *inode,
+				       struct ocfs2_caching_info *ci,
 				       struct buffer_head *bh);
 struct ocfs2_xattr_value_buf;
 void ocfs2_init_xattr_value_extent_tree(struct ocfs2_extent_tree *et,
-					struct inode *inode,
+					struct ocfs2_caching_info *ci,
 					struct ocfs2_xattr_value_buf *vb);
 void ocfs2_init_dx_root_extent_tree(struct ocfs2_extent_tree *et,
-				    struct inode *inode,
+				    struct ocfs2_caching_info *ci,
 				    struct buffer_head *bh);
 
 /*
@@ -84,13 +86,11 @@ void ocfs2_init_dx_root_extent_tree(struct ocfs2_extent_tree *et,
  * allocated.  This is a cached read.  The extent block will be validated
  * with ocfs2_validate_extent_block().
  */
-int ocfs2_read_extent_block(struct inode *inode, u64 eb_blkno,
+int ocfs2_read_extent_block(struct ocfs2_caching_info *ci, u64 eb_blkno,
 			    struct buffer_head **bh);
 
 struct ocfs2_alloc_context;
-int ocfs2_insert_extent(struct ocfs2_super *osb,
-			handle_t *handle,
-			struct inode *inode,
+int ocfs2_insert_extent(handle_t *handle,
 			struct ocfs2_extent_tree *et,
 			u32 cpos,
 			u64 start_blk,
@@ -103,13 +103,11 @@ enum ocfs2_alloc_restarted {
 	RESTART_TRANS,
 	RESTART_META
 };
-int ocfs2_add_clusters_in_btree(struct ocfs2_super *osb,
-				struct inode *inode,
+int ocfs2_add_clusters_in_btree(handle_t *handle,
+				struct ocfs2_extent_tree *et,
 				u32 *logical_offset,
 				u32 clusters_to_add,
 				int mark_unwritten,
-				struct ocfs2_extent_tree *et,
-				handle_t *handle,
 				struct ocfs2_alloc_context *data_ac,
 				struct ocfs2_alloc_context *meta_ac,
 				enum ocfs2_alloc_restarted *reason_ret);
@@ -119,9 +117,8 @@ int ocfs2_mark_extent_written(struct inode *inode,
 			      handle_t *handle, u32 cpos, u32 len, u32 phys,
 			      struct ocfs2_alloc_context *meta_ac,
 			      struct ocfs2_cached_dealloc_ctxt *dealloc);
-int ocfs2_remove_extent(struct inode *inode,
-			struct ocfs2_extent_tree *et,
-			u32 cpos, u32 len, handle_t *handle,
+int ocfs2_remove_extent(handle_t *handle, struct ocfs2_extent_tree *et,
+			u32 cpos, u32 len,
 			struct ocfs2_alloc_context *meta_ac,
 			struct ocfs2_cached_dealloc_ctxt *dealloc);
 int ocfs2_remove_btree_range(struct inode *inode,
@@ -130,7 +127,6 @@ int ocfs2_remove_btree_range(struct inode *inode,
 			     struct ocfs2_cached_dealloc_ctxt *dealloc);
 
 int ocfs2_num_free_extents(struct ocfs2_super *osb,
-			   struct inode *inode,
 			   struct ocfs2_extent_tree *et);
 
 /*
@@ -222,8 +218,9 @@ int ocfs2_commit_truncate(struct ocfs2_super *osb,
 int ocfs2_truncate_inline(struct inode *inode, struct buffer_head *di_bh,
 			  unsigned int start, unsigned int end, int trunc);
 
-int ocfs2_find_leaf(struct inode *inode, struct ocfs2_extent_list *root_el,
-		    u32 cpos, struct buffer_head **leaf_bh);
+int ocfs2_find_leaf(struct ocfs2_caching_info *ci,
+		    struct ocfs2_extent_list *root_el, u32 cpos,
+		    struct buffer_head **leaf_bh);
 int ocfs2_search_extent_list(struct ocfs2_extent_list *el, u32 v_cluster);
 
 /*
