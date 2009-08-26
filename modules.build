@@ -10,7 +10,6 @@ gatos_km
 gspca
 ipw3945
 kqemu
-lirc
 madwifi
 matroxdriver
 ndiswrapper
@@ -23,5 +22,3 @@ svgalib_helper
 thinkpad
 tp_smapi
 truecrypt
-zaptel
-cronyx

@@ -37,7 +37,7 @@
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define krelease alt2.M40.4
+%define krelease alt2.M40.5
 %define xen_hv_cset 15502
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
@@ -6936,6 +6936,9 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Tue Aug 25 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt2.M40.5
+- Merge with Sisyphus
+
 * Thu Aug 20 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt10
 - CVE-2009-2698: fix MSG_PROBE crash
 
