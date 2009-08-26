@@ -100,6 +100,9 @@ static struct platform_device *devices[] __initdata = {
 	&msm_device_dmov,
 	&smc91x_device,
 	&msm_device_nand,
+#ifdef CONFIG_SERIAL_MSM_CONSOLE
+	&msm_device_uart2,
+#endif
 };
 
 static void __init msm7x30_init_irq(void)
@@ -134,6 +137,22 @@ static struct msm_pm_platform_data msm_pm_data[MSM_PM_SLEEP_MODE_NR] = {
 	[MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT].residency = 0,
 };
 
+#ifdef CONFIG_SERIAL_MSM_CONSOLE
+static struct msm_gpio uart2_config_data[] = {
+	{ GPIO_CFG(49, 2, GPIO_OUTPUT,  GPIO_PULL_DOWN, GPIO_2MA), "UART2_RFR"},
+	{ GPIO_CFG(50, 2, GPIO_INPUT,   GPIO_PULL_DOWN, GPIO_2MA), "UART2_CTS"},
+	{ GPIO_CFG(51, 2, GPIO_INPUT,   GPIO_PULL_DOWN, GPIO_2MA), "UART2_Rx"},
+	{ GPIO_CFG(52, 2, GPIO_OUTPUT,  GPIO_PULL_DOWN, GPIO_2MA), "UART2_Tx"},
+};
+
+static void msm7x30_init_uart2(void)
+{
+	msm_gpios_request_enable(uart2_config_data,
+			ARRAY_SIZE(uart2_config_data));
+
+}
+#endif
+
 static void __init msm7x30_init(void)
 {
 	if (socinfo_init() < 0)
@@ -141,6 +160,9 @@ static void __init msm7x30_init(void)
 		       __func__);
 	platform_add_devices(devices, ARRAY_SIZE(devices));
 	msm_pm_set_platform_data(msm_pm_data);
+#ifdef CONFIG_SERIAL_MSM_CONSOLE
+	msm7x30_init_uart2();
+#endif
 }
 
 static void __init msm7x30_map_io(void)
