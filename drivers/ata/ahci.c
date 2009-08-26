@@ -329,10 +329,24 @@ static ssize_t ahci_activity_store(struct ata_device *dev,
 				   enum sw_activity val);
 static void ahci_init_sw_activity(struct ata_link *link);
 
+static ssize_t ahci_show_host_caps(struct device *dev,
+				   struct device_attribute *attr, char *buf);
+static ssize_t ahci_show_host_version(struct device *dev,
+				      struct device_attribute *attr, char *buf);
+static ssize_t ahci_show_port_cmd(struct device *dev,
+				  struct device_attribute *attr, char *buf);
+
+DEVICE_ATTR(ahci_host_caps, S_IRUGO, ahci_show_host_caps, NULL);
+DEVICE_ATTR(ahci_host_version, S_IRUGO, ahci_show_host_version, NULL);
+DEVICE_ATTR(ahci_port_cmd, S_IRUGO, ahci_show_port_cmd, NULL);
+
 static struct device_attribute *ahci_shost_attrs[] = {
 	&dev_attr_link_power_management_policy,
 	&dev_attr_em_message_type,
 	&dev_attr_em_message,
+	&dev_attr_ahci_host_caps,
+	&dev_attr_ahci_host_version,
+	&dev_attr_ahci_port_cmd,
 	NULL
 };
 
@@ -700,6 +714,36 @@ static void ahci_enable_ahci(void __iomem *mmio)
 	}
 
 	WARN_ON(1);
+}
+
+static ssize_t ahci_show_host_caps(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct Scsi_Host *shost = class_to_shost(dev);
+	struct ata_port *ap = ata_shost_to_port(shost);
+	struct ahci_host_priv *hpriv = ap->host->private_data;
+
+	return sprintf(buf, "%x\n", hpriv->cap);
+}
+
+static ssize_t ahci_show_host_version(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct Scsi_Host *shost = class_to_shost(dev);
+	struct ata_port *ap = ata_shost_to_port(shost);
+	void __iomem *mmio = ap->host->iomap[AHCI_PCI_BAR];
+
+	return sprintf(buf, "%x\n", readl(mmio + HOST_VERSION));
+}
+
+static ssize_t ahci_show_port_cmd(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	struct Scsi_Host *shost = class_to_shost(dev);
+	struct ata_port *ap = ata_shost_to_port(shost);
+	void __iomem *port_mmio = ahci_port_base(ap);
+
+	return sprintf(buf, "%x\n", readl(port_mmio + PORT_CMD));
 }
 
 /**
@@ -2869,7 +2913,7 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	/* prepare host */
 	if (hpriv->cap & HOST_CAP_NCQ)
-		pi.flags |= ATA_FLAG_NCQ;
+		pi.flags |= ATA_FLAG_NCQ | ATA_FLAG_FPDMA_AA;
 
 	if (hpriv->cap & HOST_CAP_PMP)
 		pi.flags |= ATA_FLAG_PMP;
