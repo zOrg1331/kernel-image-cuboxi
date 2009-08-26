@@ -108,7 +108,7 @@ static int af9015_rw_udev(struct usb_device *udev, struct req_t *req)
 	}
 
 	/* write requested */
-	if (write) {
+	if (write && req->data_len) {
 		memcpy(&buf[8], req->data, req->data_len);
 		msg_len += req->data_len;
 	}
