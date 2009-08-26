@@ -213,7 +213,7 @@ static long madvise_remove(struct vm_area_struct *vma,
  */
 static int madvise_hwpoison(unsigned long start, unsigned long end)
 {
-	int ret = -EIO;
+	int ret = 0;
 	/*
 	 * RED-PEN
 	 * This allows to tie up arbitary amounts of memory.
