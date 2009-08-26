@@ -660,7 +660,6 @@ static bool utrace_do_stop(struct task_struct *target, struct utrace *utrace)
 {
 	bool stopped = false;
 
-	spin_lock_irq(&target->sighand->siglock);
 	if (unlikely(target->exit_state)) {
 		/*
 		 * On the exit path, it's only truly quiescent
@@ -674,13 +673,16 @@ static bool utrace_do_stop(struct task_struct *target, struct utrace *utrace)
 		 * Stopped is considered quiescent; when it wakes up, it will
 		 * go through utrace_finish_jctl() before doing anything else.
 		 */
-		__set_task_state(target, TASK_TRACED);
-		utrace->stopped = stopped = true;
+		spin_lock_irq(&target->sighand->siglock);
+		if (likely(task_is_stopped(target))) {
+			__set_task_state(target, TASK_TRACED);
+			utrace->stopped = stopped = true;
+		}
+		spin_unlock_irq(&target->sighand->siglock);
 	} else if (!utrace->report && !utrace->interrupt) {
 		utrace->report = 1;
 		set_notify_resume(target);
 	}
-	spin_unlock_irq(&target->sighand->siglock);
 
 	return stopped;
 }
