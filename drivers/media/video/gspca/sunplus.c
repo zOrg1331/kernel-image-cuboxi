@@ -52,6 +52,7 @@ struct sd {
 #define LogitechClickSmart420 2
 #define LogitechClickSmart820 3
 #define MegapixV4 4
+#define MegaImageVI 5
 
 	u8 *jpeg_hdr;
 };
@@ -840,15 +841,18 @@ static int sd_config(struct gspca_dev *gspca_dev,
 /*	case BRIDGE_SPCA504: */
 /*	case BRIDGE_SPCA536: */
 		cam->cam_mode = vga_mode;
-		cam->nmodes = sizeof vga_mode / sizeof vga_mode[0];
+		cam->nmodes =ARRAY_SIZE(vga_mode);
 		break;
 	case BRIDGE_SPCA533:
 		cam->cam_mode = custom_mode;
-		cam->nmodes = sizeof custom_mode / sizeof custom_mode[0];
+		if (sd->subtype == MegaImageVI)		/* 320x240 only */
+			cam->nmodes = ARRAY_SIZE(custom_mode) - 1;
+		else
+			cam->nmodes = ARRAY_SIZE(custom_mode);
 		break;
 	case BRIDGE_SPCA504C:
 		cam->cam_mode = vga_mode2;
-		cam->nmodes = sizeof vga_mode2 / sizeof vga_mode2[0];
+		cam->nmodes = ARRAY_SIZE(vga_mode2);
 		break;
 	}
 	sd->brightness = sd_ctrls[SD_BRIGHTNESS].qctrl.default_value;
@@ -988,7 +992,8 @@ static int sd_start(struct gspca_dev *gspca_dev)
 /*	case BRIDGE_SPCA533: */
 /*	case BRIDGE_SPCA536: */
 		if (sd->subtype == MegapixV4 ||
-		    sd->subtype == LogitechClickSmart820) {
+		    sd->subtype == LogitechClickSmart820 ||
+		    sd->subtype == MegaImageVI) {
 			reg_w(gspca_dev, 0xf0, 0, 0, 0);
 			spca504B_WaitCmdStatus(gspca_dev);
 			reg_r(gspca_dev, 0xf0, 4, 0);
@@ -1384,6 +1389,7 @@ static const __devinitdata struct usb_device_id device_table[] = {
 	{USB_DEVICE(0x04fc, 0x5360), BS(SPCA536, 0)},
 	{USB_DEVICE(0x04fc, 0xffff), BS(SPCA504B, 0)},
 	{USB_DEVICE(0x052b, 0x1513), BS(SPCA533, MegapixV4)},
+	{USB_DEVICE(0x052b, 0x1803), BS(SPCA533, MegaImageVI)},
 	{USB_DEVICE(0x0546, 0x3155), BS(SPCA533, 0)},
 	{USB_DEVICE(0x0546, 0x3191), BS(SPCA504B, 0)},
 	{USB_DEVICE(0x0546, 0x3273), BS(SPCA504B, 0)},
