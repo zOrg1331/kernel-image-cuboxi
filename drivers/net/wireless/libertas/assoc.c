@@ -45,8 +45,13 @@ static int get_common_rates(struct lbs_private *priv,
 	u8 *card_rates = lbs_bg_rates;
 	size_t num_card_rates = sizeof(lbs_bg_rates);
 	int ret = 0, i, j;
-	u8 tmp[30];
+	u8 *tmp;
 	size_t tmp_size = 0;
+
+	tmp = kzalloc((ARRAY_SIZE(lbs_bg_rates) - 1) * (*rates_size - 1),
+			GFP_KERNEL);
+	if (!tmp)
+		return -1;
 
 	/* For each rate in card_rates that exists in rate1, copy to tmp */
 	for (i = 0; card_rates[i] && (i < num_card_rates); i++) {
@@ -77,6 +82,7 @@ done:
 	memset(rates, 0, *rates_size);
 	*rates_size = min_t(int, tmp_size, *rates_size);
 	memcpy(rates, tmp, *rates_size);
+	kfree(tmp);
 	return ret;
 }
 
@@ -129,7 +135,6 @@ static int lbs_set_authentication(struct lbs_private *priv, u8 bssid[6], u8 auth
 {
 	struct cmd_ds_802_11_authenticate cmd;
 	int ret = -1;
-	DECLARE_MAC_BUF(mac);
 
 	lbs_deb_enter(LBS_DEB_JOIN);
 
@@ -138,8 +143,7 @@ static int lbs_set_authentication(struct lbs_private *priv, u8 bssid[6], u8 auth
 
 	cmd.authtype = iw_auth_to_ieee_auth(auth);
 
-	lbs_deb_join("AUTH_CMD: BSSID %s, auth 0x%x\n",
-		print_mac(mac, bssid), cmd.authtype);
+	lbs_deb_join("AUTH_CMD: BSSID %pM, auth 0x%x\n", bssid, cmd.authtype);
 
 	ret = lbs_cmd_with_response(priv, CMD_802_11_AUTHENTICATE, &cmd);
 
@@ -342,8 +346,6 @@ static int lbs_associate(struct lbs_private *priv,
 
 	/* Firmware v9+ indicate authentication suites as a TLV */
 	if (priv->fwrelease >= 0x09000000) {
-		DECLARE_MAC_BUF(mac);
-
 		auth = (struct mrvl_ie_auth_type *) pos;
 		auth->header.type = cpu_to_le16(TLV_TYPE_AUTH_TYPE);
 		auth->header.len = cpu_to_le16(2);
@@ -351,8 +353,8 @@ static int lbs_associate(struct lbs_private *priv,
 		auth->auth = cpu_to_le16(tmpauth);
 		pos += sizeof(auth->header) + 2;
 
-		lbs_deb_join("AUTH_CMD: BSSID %s, auth 0x%x\n",
-			print_mac(mac, bss->bssid), priv->secinfo.auth_mode);
+		lbs_deb_join("AUTH_CMD: BSSID %pM, auth 0x%x\n",
+			bss->bssid, priv->secinfo.auth_mode);
 	}
 
 	/* WPA/WPA2 IEs */
@@ -1368,11 +1370,17 @@ static int assoc_helper_wpa_keys(struct lbs_private *priv,
 	if (ret)
 		goto out;
 
+	memcpy(&priv->wpa_unicast_key, &assoc_req->wpa_unicast_key,
+			sizeof(struct enc_key));
+
 	if (test_bit(ASSOC_FLAG_WPA_MCAST_KEY, &assoc_req->flags)) {
 		clear_bit(ASSOC_FLAG_WPA_UCAST_KEY, &assoc_req->flags);
 
 		ret = lbs_cmd_802_11_key_material(priv, CMD_ACT_SET, assoc_req);
 		assoc_req->flags = flags;
+
+		memcpy(&priv->wpa_mcast_key, &assoc_req->wpa_mcast_key,
+				sizeof(struct enc_key));
 	}
 
 out:
