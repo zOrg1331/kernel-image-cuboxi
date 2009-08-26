@@ -536,8 +536,72 @@ static ssize_t limits_read(struct file *file, char __user *buf, size_t rcount,
 	return count;
 }
 
+static ssize_t limits_write(struct file *file, const char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	struct task_struct *task = get_proc_task(file->f_path.dentry->d_inode);
+	char str[32 + 1 + 16 + 1 + 16 + 1], *delim, *next;
+	struct rlimit new_rlimit;
+	unsigned int i;
+	int ret;
+
+	if (!task) {
+		count = -ESRCH;
+		goto out;
+	}
+	if (copy_from_user(str, buf, min(count, sizeof(str) - 1))) {
+		count = -EFAULT;
+		goto put_task;
+	}
+
+	str[min(count, sizeof(str) - 1)] = 0;
+
+	delim = strchr(str, '=');
+	if (!delim) {
+		count = -EINVAL;
+		goto put_task;
+	}
+	*delim++ = 0; /* for easy 'str' usage */
+	new_rlimit.rlim_cur = simple_strtoul(delim, &next, 0);
+	if (*next != ':') {
+		if (strncmp(delim, "unlimited:", 10)) {
+			count = -EINVAL;
+			goto put_task;
+		}
+		new_rlimit.rlim_cur = RLIM_INFINITY;
+		next = delim + 9; /* move to ':' */
+	}
+	delim = next + 1;
+	new_rlimit.rlim_max = simple_strtoul(delim, &next, 0);
+	if (*next != 0) {
+		if (strcmp(delim, "unlimited")) {
+			count = -EINVAL;
+			goto put_task;
+		}
+		new_rlimit.rlim_max = RLIM_INFINITY;
+	}
+
+	for (i = 0; i < RLIM_NLIMITS; i++)
+		if (!strcmp(str, lnames[i].name))
+			break;
+	if (i >= RLIM_NLIMITS) {
+		count = -EINVAL;
+		goto put_task;
+	}
+
+	ret = setrlimit(task, i, &new_rlimit);
+	if (ret)
+		count = ret;
+
+put_task:
+	put_task_struct(task);
+out:
+	return count;
+}
+
 static const struct file_operations proc_pid_limits_operations = {
 	.read	= limits_read,
+	.write	= limits_write,
 };
 
 #ifdef CONFIG_HAVE_ARCH_TRACEHOOK
@@ -2519,7 +2583,7 @@ static const struct pid_entry tgid_base_stuff[] = {
 	INF("auxv",       S_IRUSR, proc_pid_auxv),
 	ONE("status",     S_IRUGO, proc_pid_status),
 	ONE("personality", S_IRUSR, proc_pid_personality),
-	REG("limits",	  S_IRUSR, proc_pid_limits_operations),
+	REG("limits",	  S_IRUSR|S_IWUSR, proc_pid_limits_operations),
 #ifdef CONFIG_SCHED_DEBUG
 	REG("sched",      S_IRUGO|S_IWUSR, proc_pid_sched_operations),
 #endif
@@ -2853,7 +2917,7 @@ static const struct pid_entry tid_base_stuff[] = {
 	INF("auxv",      S_IRUSR, proc_pid_auxv),
 	ONE("status",    S_IRUGO, proc_pid_status),
 	ONE("personality", S_IRUSR, proc_pid_personality),
-	REG("limits",	  S_IRUSR, proc_pid_limits_operations),
+	REG("limits",	  S_IRUSR|S_IWUSR, proc_pid_limits_operations),
 #ifdef CONFIG_SCHED_DEBUG
 	REG("sched",     S_IRUGO|S_IWUSR, proc_pid_sched_operations),
 #endif
