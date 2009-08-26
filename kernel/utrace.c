@@ -768,22 +768,19 @@ static void utrace_reset(struct task_struct *task, struct utrace *utrace,
 	}
 
 	task->utrace_flags = flags;
-
-	if (wake)
-		utrace_wakeup(task, utrace);
-
-	/*
-	 * If any engines are left, we're done.
-	 */
-	spin_unlock(&utrace->lock);
 	if (!flags) {
 		/*
 		 * No more engines, cleared out the utrace.
 		 */
+		utrace->interrupt = utrace->report = utrace->signal_handler = 0;
 
 		if (action)
 			*action = UTRACE_RESUME;
 	}
+
+	if (wake)
+		utrace_wakeup(task, utrace);
+	spin_unlock(&utrace->lock);
 
 	put_detached_list(&detached);
 }
