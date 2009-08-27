@@ -292,7 +292,7 @@ void __init acpi_s4_no_nvs(void);
 extern acpi_status acpi_pci_osc_control_set(acpi_handle handle, u32 flags);
 extern void acpi_early_init(void);
 
-#else	/* CONFIG_ACPI */
+#else	/* !CONFIG_ACPI */
 
 #define acpi_disabled 1
 

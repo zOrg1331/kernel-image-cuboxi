@@ -281,7 +281,7 @@ int __init acpi_table_parse(char *id, acpi_table_handler handler)
 	acpi_size tbl_size;
 
 	if (acpi_disabled)
-		return 1;
+		return -ENODEV;
 
 	if (!handler)
 		return -EINVAL;
