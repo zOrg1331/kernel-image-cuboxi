@@ -374,7 +374,7 @@ static int device_area_is_invalid(struct dm_target *ti, struct dm_dev *dev,
 
 	if (start & (logical_block_size_sectors - 1)) {
 		DMWARN("%s: start=%llu not aligned to h/w "
-		       "logical block size %hu of %s",
+		       "logical block size %u of %s",
 		       dm_device_name(ti->table->md),
 		       (unsigned long long)start,
 		       limits->logical_block_size, bdevname(bdev, b));
@@ -383,7 +383,7 @@ static int device_area_is_invalid(struct dm_target *ti, struct dm_dev *dev,
 
 	if (len & (logical_block_size_sectors - 1)) {
 		DMWARN("%s: len=%llu not aligned to h/w "
-		       "logical block size %hu of %s",
+		       "logical block size %u of %s",
 		       dm_device_name(ti->table->md),
 		       (unsigned long long)len,
 		       limits->logical_block_size, bdevname(bdev, b));
@@ -709,7 +709,7 @@ static int validate_hardware_logical_block_alignment(struct dm_table *table,
 
 	if (remaining) {
 		DMWARN("%s: table line %u (start sect %llu len %llu) "
-		       "not aligned to h/w logical block size %hu",
+		       "not aligned to h/w logical block size %u",
 		       dm_device_name(table->md), i,
 		       (unsigned long long) ti->begin,
 		       (unsigned long long) ti->len,
