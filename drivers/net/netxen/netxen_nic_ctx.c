@@ -30,44 +30,8 @@
 
 #include "netxen_nic_hw.h"
 #include "netxen_nic.h"
-#include "netxen_nic_phan_reg.h"
 
 #define NXHAL_VERSION	1
-
-static int
-netxen_api_lock(struct netxen_adapter *adapter)
-{
-	u32 done = 0, timeout = 0;
-
-	for (;;) {
-		/* Acquire PCIE HW semaphore5 */
-		done = NXRD32(adapter, NETXEN_PCIE_REG(PCIE_SEM5_LOCK));
-
-		if (done == 1)
-			break;
-
-		if (++timeout >= NX_OS_CRB_RETRY_COUNT) {
-			printk(KERN_ERR "%s: lock timeout.\n", __func__);
-			return -1;
-		}
-
-		msleep(1);
-	}
-
-#if 0
-	NXWR32(adapter,
-		NETXEN_API_LOCK_ID, NX_OS_API_LOCK_DRIVER);
-#endif
-	return 0;
-}
-
-static int
-netxen_api_unlock(struct netxen_adapter *adapter)
-{
-	/* Release PCIE HW semaphore5 */
-	NXRD32(adapter, NETXEN_PCIE_REG(PCIE_SEM5_UNLOCK));
-	return 0;
-}
 
 static u32
 netxen_poll_rsp(struct netxen_adapter *adapter)
@@ -416,6 +380,44 @@ nx_fw_cmd_destroy_tx_ctx(struct netxen_adapter *adapter)
 	}
 }
 
+int
+nx_fw_cmd_query_phy(struct netxen_adapter *adapter, u32 reg, u32 *val)
+{
+	u32 rcode;
+
+	rcode = netxen_issue_cmd(adapter,
+			adapter->ahw.pci_func,
+			NXHAL_VERSION,
+			reg,
+			0,
+			0,
+			NX_CDRP_CMD_READ_PHY);
+
+	if (rcode != NX_RCODE_SUCCESS)
+		return -EIO;
+
+	return NXRD32(adapter, NX_ARG1_CRB_OFFSET);
+}
+
+int
+nx_fw_cmd_set_phy(struct netxen_adapter *adapter, u32 reg, u32 val)
+{
+	u32 rcode;
+
+	rcode = netxen_issue_cmd(adapter,
+			adapter->ahw.pci_func,
+			NXHAL_VERSION,
+			reg,
+			val,
+			0,
+			NX_CDRP_CMD_WRITE_PHY);
+
+	if (rcode != NX_RCODE_SUCCESS)
+		return -EIO;
+
+	return 0;
+}
+
 static u64 ctx_addr_sig_regs[][3] = {
 	{NETXEN_NIC_REG(0x188), NETXEN_NIC_REG(0x18c), NETXEN_NIC_REG(0x1c0)},
 	{NETXEN_NIC_REG(0x190), NETXEN_NIC_REG(0x194), NETXEN_NIC_REG(0x1c4)},
@@ -647,7 +649,7 @@ int netxen_alloc_hw_resources(struct netxen_adapter *adapter)
 		}
 		rds_ring->desc_head = (struct rcv_desc *)addr;
 
-		if (adapter->fw_major < 4)
+		if (NX_IS_REVISION_P2(adapter->ahw.revision_id))
 			rds_ring->crb_rcv_producer =
 				recv_crb_registers[port].crb_rcv_producer[ring];
 	}
@@ -675,7 +677,7 @@ int netxen_alloc_hw_resources(struct netxen_adapter *adapter)
 	}
 
 
-	if (adapter->fw_major >= 4) {
+	if (!NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
 		err = nx_fw_cmd_create_rx_ctx(adapter);
 		if (err)
 			goto err_out_free;
@@ -705,7 +707,7 @@ void netxen_free_hw_resources(struct netxen_adapter *adapter)
 
 	int port = adapter->portnum;
 
-	if (adapter->fw_major >= 4) {
+	if (!NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
 		nx_fw_cmd_destroy_rx_ctx(adapter);
 		nx_fw_cmd_destroy_tx_ctx(adapter);
 	} else {
