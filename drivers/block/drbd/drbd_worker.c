@@ -140,6 +140,7 @@ void drbd_endio_write_sec(struct bio *bio, int error) __releases(local)
 	int is_syncer_req;
 	int do_al_complete_io;
 	int uptodate = bio_flagged(bio, BIO_UPTODATE);
+	int is_barrier = bio_flagged(bio, BIO_RW_BARRIER);
 
 	e = bio->bi_private;
 	mdev = e->mdev;
@@ -154,12 +155,13 @@ void drbd_endio_write_sec(struct bio *bio, int error) __releases(local)
 
 	/* error == -ENOTSUPP would be a better test,
 	 * alas it is not reliable */
-	if (error && e->flags & EE_IS_BARRIER) {
+	if (error && is_barrier && e->flags & EE_IS_BARRIER) {
 		drbd_bump_write_ordering(mdev, WO_bdev_flush);
 		spin_lock_irqsave(&mdev->req_lock, flags);
 		list_del(&e->w.list);
 		e->w.cb = w_e_reissue;
-		__release(local); /* Actually happens in w_e_reissue. */
+		/* put_ldev actually happens below, once we come here again. */
+		__release(local);
 		spin_unlock_irqrestore(&mdev->req_lock, flags);
 		drbd_queue_work(&mdev->data.work, &e->w);
 		return;
