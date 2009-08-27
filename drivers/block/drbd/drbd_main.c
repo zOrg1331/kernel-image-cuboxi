@@ -416,7 +416,6 @@ void tl_clear(struct drbd_conf *mdev)
 	spin_unlock_irq(&mdev->req_lock);
 }
 
-
 /**
  * cl_wide_st_chg() - TRUE if the state change is a cluster wide one
  * @mdev:	DRBD device.
