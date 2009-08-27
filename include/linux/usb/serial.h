@@ -96,6 +96,8 @@ struct usb_serial_port {
 	unsigned char		*bulk_out_buffer;
 	int			bulk_out_size;
 	struct urb		*write_urb;
+	struct kfifo		*write_fifo;
+	spinlock_t		write_fifo_lock;
 	int			write_urb_busy;
 	__u8			bulk_out_endpointAddress;
 
