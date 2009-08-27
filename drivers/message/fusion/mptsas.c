@@ -72,6 +72,7 @@
  */
 #define MPTSAS_RAID_CHANNEL	1
 
+#define SAS_CONFIG_PAGE_TIMEOUT		30
 MODULE_AUTHOR(MODULEAUTHOR);
 MODULE_DESCRIPTION(my_NAME);
 MODULE_LICENSE("GPL");
@@ -661,7 +662,7 @@ mptsas_add_device_component_starget_ir(MPT_ADAPTER *ioc,
 	cfg.pageAddr = starget->id;
 	cfg.cfghdr.hdr = &hdr;
 	cfg.action = MPI_CONFIG_ACTION_PAGE_HEADER;
-	cfg.timeout = 10;
+	cfg.timeout = SAS_CONFIG_PAGE_TIMEOUT;
 
 	if (mpt_config(ioc, &cfg) != 0)
 		goto out;
@@ -1318,7 +1319,7 @@ mptsas_sas_enclosure_pg0(MPT_ADAPTER *ioc, struct mptsas_enclosure *enclosure,
 	cfg.pageAddr = form + form_specific;
 	cfg.action = MPI_CONFIG_ACTION_PAGE_HEADER;
 	cfg.dir = 0;	/* read */
-	cfg.timeout = 10;
+	cfg.timeout = SAS_CONFIG_PAGE_TIMEOUT;
 
 	error = mpt_config(ioc, &cfg);
 	if (error)
@@ -1891,7 +1892,7 @@ static struct scsi_host_template mptsas_driver_template = {
 	.eh_bus_reset_handler		= mptscsih_bus_reset,
 	.eh_host_reset_handler		= mptscsih_host_reset,
 	.bios_param			= mptscsih_bios_param,
-	.can_queue			= MPT_FC_CAN_QUEUE,
+	.can_queue			= MPT_SAS_CAN_QUEUE,
 	.this_id			= -1,
 	.sg_tablesize			= MPT_SCSI_SG_DEPTH,
 	.max_sectors			= 8192,
@@ -1926,7 +1927,7 @@ static int mptsas_get_linkerrors(struct sas_phy *phy)
 	cfg.pageAddr = phy->identify.phy_identifier;
 	cfg.action = MPI_CONFIG_ACTION_PAGE_HEADER;
 	cfg.dir = 0;    /* read */
-	cfg.timeout = 10;
+	cfg.timeout = SAS_CONFIG_PAGE_TIMEOUT;
 
 	error = mpt_config(ioc, &cfg);
 	if (error)
@@ -2278,7 +2279,7 @@ mptsas_sas_io_unit_pg0(MPT_ADAPTER *ioc, struct mptsas_portinfo *port_info)
 	cfg.pageAddr = 0;
 	cfg.action = MPI_CONFIG_ACTION_PAGE_HEADER;
 	cfg.dir = 0;	/* read */
-	cfg.timeout = 10;
+	cfg.timeout = SAS_CONFIG_PAGE_TIMEOUT;
 
 	error = mpt_config(ioc, &cfg);
 	if (error)
@@ -2349,7 +2350,7 @@ mptsas_sas_io_unit_pg1(MPT_ADAPTER *ioc)
 
 	cfg.cfghdr.ehdr = &hdr;
 	cfg.action = MPI_CONFIG_ACTION_PAGE_HEADER;
-	cfg.timeout = 10;
+	cfg.timeout = SAS_CONFIG_PAGE_TIMEOUT;
 	cfg.cfghdr.ehdr->PageType = MPI_CONFIG_PAGETYPE_EXTENDED;
 	cfg.cfghdr.ehdr->ExtPageType = MPI_CONFIG_EXTPAGETYPE_SAS_IO_UNIT;
 	cfg.cfghdr.ehdr->PageVersion = MPI_SASIOUNITPAGE1_PAGEVERSION;
@@ -2411,7 +2412,7 @@ mptsas_sas_phy_pg0(MPT_ADAPTER *ioc, struct mptsas_phyinfo *phy_info,
 
 	cfg.cfghdr.ehdr = &hdr;
 	cfg.dir = 0;	/* read */
-	cfg.timeout = 10;
+	cfg.timeout = SAS_CONFIG_PAGE_TIMEOUT;
 
 	/* Get Phy Pg 0 for each Phy. */
 	cfg.physAddr = -1;
@@ -2479,7 +2480,7 @@ mptsas_sas_device_pg0(MPT_ADAPTER *ioc, struct mptsas_devinfo *device_info,
 	cfg.physAddr = -1;
 	cfg.action = MPI_CONFIG_ACTION_PAGE_HEADER;
 	cfg.dir = 0;	/* read */
-	cfg.timeout = 10;
+	cfg.timeout = SAS_CONFIG_PAGE_TIMEOUT;
 
 	memset(device_info, 0, sizeof(struct mptsas_devinfo));
 	error = mpt_config(ioc, &cfg);
@@ -2554,7 +2555,7 @@ mptsas_sas_expander_pg0(MPT_ADAPTER *ioc, struct mptsas_portinfo *port_info,
 	cfg.pageAddr = form + form_specific;
 	cfg.action = MPI_CONFIG_ACTION_PAGE_HEADER;
 	cfg.dir = 0;	/* read */
-	cfg.timeout = 10;
+	cfg.timeout = SAS_CONFIG_PAGE_TIMEOUT;
 
 	memset(port_info, 0, sizeof(struct mptsas_portinfo));
 	error = mpt_config(ioc, &cfg);
@@ -2635,7 +2636,7 @@ mptsas_sas_expander_pg1(MPT_ADAPTER *ioc, struct mptsas_phyinfo *phy_info,
 	cfg.pageAddr = form + form_specific;
 	cfg.action = MPI_CONFIG_ACTION_PAGE_HEADER;
 	cfg.dir = 0;	/* read */
-	cfg.timeout = 10;
+	cfg.timeout = SAS_CONFIG_PAGE_TIMEOUT;
 
 	error = mpt_config(ioc, &cfg);
 	if (error)
@@ -4760,10 +4761,9 @@ mptsas_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	/* set 16 byte cdb's */
 	sh->max_cmd_len = 16;
-
-	sh->max_id = ioc->pfacts[0].PortSCSIID;
+	sh->can_queue = min_t(int, ioc->req_depth - 10, sh->can_queue);
+	sh->max_id = -1;
 	sh->max_lun = max_lun;
-
 	sh->transportt = mptsas_transport_template;
 
 	/* Required entry.
@@ -4820,25 +4820,6 @@ mptsas_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	dprintk(ioc, printk(MYIOC_s_DEBUG_FMT "ScsiLookup @ %p\n",
 		 ioc->name, ioc->ScsiLookup));
-
-	/* Clear the TM flags
-	 */
-	hd->abortSCpnt = NULL;
-
-	/* Clear the pointer used to store
-	 * single-threaded commands, i.e., those
-	 * issued during a bus scan, dv and
-	 * configuration pages.
-	 */
-	hd->cmdPtr = NULL;
-
-	/* Initialize this SCSI Hosts' timers
-	 * To use, set the timer expires field
-	 * and add_timer
-	 */
-	init_timer(&hd->timer);
-	hd->timer.data = (unsigned long) hd;
-	hd->timer.function = mptscsih_timer_expired;
 
 	ioc->sas_data.ptClear = mpt_pt_clear;
 
