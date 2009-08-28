@@ -148,7 +148,12 @@ static u8 ixgbe_dcbnl_set_state(struct net_device *netdev, u8 state)
 				IXGBE_FCRETA_SIZE;
 			netdev->features |= NETIF_F_FCOE_CRC;
 			netdev->features |= NETIF_F_FSO;
+			netdev->features |= NETIF_F_FCOE_MTU;
+			netdev->vlan_features |= NETIF_F_FCOE_CRC;
+			netdev->vlan_features |= NETIF_F_FSO;
+			netdev->vlan_features |= NETIF_F_FCOE_MTU;
 			netdev->fcoe_ddp_xid = IXGBE_FCOE_DDP_MAX - 1;
+			netdev_features_change(netdev);
 		}
 #endif /* IXGBE_FCOE */
 		ixgbe_init_interrupt_scheme(adapter);
@@ -177,7 +182,12 @@ static u8 ixgbe_dcbnl_set_state(struct net_device *netdev, u8 state)
 				adapter->ring_feature[RING_F_FCOE].indices = 0;
 				netdev->features &= ~NETIF_F_FCOE_CRC;
 				netdev->features &= ~NETIF_F_FSO;
+				netdev->features &= ~NETIF_F_FCOE_MTU;
+				netdev->vlan_features &= ~NETIF_F_FCOE_CRC;
+				netdev->vlan_features &= ~NETIF_F_FSO;
+				netdev->vlan_features &= ~NETIF_F_FCOE_MTU;
 				netdev->fcoe_ddp_xid = 0;
+				netdev_features_change(netdev);
 			}
 #endif /* IXGBE_FCOE */
 			ixgbe_init_interrupt_scheme(adapter);
