@@ -2,7 +2,7 @@
  * Agere Systems Inc.
  * 10/100/1000 Base-T Ethernet Driver for the ET1301 and ET131x series MACs
  *
- * Copyright © 2005 Agere Systems Inc.
+ * Copyright Â© 2005 Agere Systems Inc.
  * All rights reserved.
  *   http://www.agere.com
  *
@@ -20,7 +20,7 @@
  * software indicates your acceptance of these terms and conditions.  If you do
  * not agree with these terms and conditions, do not use the software.
  *
- * Copyright © 2005 Agere Systems Inc.
+ * Copyright Â© 2005 Agere Systems Inc.
  * All rights reserved.
  *
  * Redistribution and use in source or binary forms, with or without
@@ -41,7 +41,7 @@
  *
  * Disclaimer
  *
- * THIS SOFTWARE IS PROVIDED “AS IS” AND ANY EXPRESS OR IMPLIED WARRANTIES,
+ * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
  * INCLUDING, BUT NOT LIMITED TO, INFRINGEMENT AND THE IMPLIED WARRANTIES OF
  * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  ANY
  * USE, MODIFICATION OR DISTRIBUTION OF THIS SOFTWARE IS SOLELY AT THE USERS OWN
@@ -62,18 +62,9 @@
 #include "et1310_address_map.h"
 
 #define MAX_WOL_PACKET_SIZE    0x80
-#define MAX_WOL_MASK_SIZE      ( MAX_WOL_PACKET_SIZE / 8 )
+#define MAX_WOL_MASK_SIZE      (MAX_WOL_PACKET_SIZE / 8)
 #define NUM_WOL_PATTERNS       0x5
 #define CRC16_POLY             0x1021
-
-/* Definition of NDIS_DEVICE_POWER_STATE */
-typedef enum {
-	NdisDeviceStateUnspecified = 0,
-	NdisDeviceStateD0,
-	NdisDeviceStateD1,
-	NdisDeviceStateD2,
-	NdisDeviceStateD3
-} NDIS_DEVICE_POWER_STATE;
 
 typedef struct _MP_POWER_MGMT {
 	/* variable putting the phy into coma mode when boot up with no cable
@@ -97,7 +88,6 @@ typedef struct _MP_POWER_MGMT {
 	} IPAddress;
 
 	/* Current Power state of the adapter. */
-	NDIS_DEVICE_POWER_STATE PowerState;
 	bool WOLState;
 	bool WOLEnabled;
 	bool Failed10Half;

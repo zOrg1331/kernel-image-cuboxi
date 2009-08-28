@@ -2,7 +2,7 @@
  * Agere Systems Inc.
  * 10/100/1000 Base-T Ethernet Driver for the ET1301 and ET131x series MACs
  *
- * Copyright © 2005 Agere Systems Inc.
+ * Copyright Â© 2005 Agere Systems Inc.
  * All rights reserved.
  *   http://www.agere.com
  *
@@ -19,7 +19,7 @@
  * software indicates your acceptance of these terms and conditions.  If you do
  * not agree with these terms and conditions, do not use the software.
  *
- * Copyright © 2005 Agere Systems Inc.
+ * Copyright Â© 2005 Agere Systems Inc.
  * All rights reserved.
  *
  * Redistribution and use in source or binary forms, with or without
@@ -40,7 +40,7 @@
  *
  * Disclaimer
  *
- * THIS SOFTWARE IS PROVIDED “AS IS” AND ANY EXPRESS OR IMPLIED WARRANTIES,
+ * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
  * INCLUDING, BUT NOT LIMITED TO, INFRINGEMENT AND THE IMPLIED WARRANTIES OF
  * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  ANY
  * USE, MODIFICATION OR DISTRIBUTION OF THIS SOFTWARE IS SOLELY AT THE USERS OWN
@@ -76,9 +76,9 @@
 #include <linux/interrupt.h>
 #include <linux/in.h>
 #include <linux/delay.h>
-#include <asm/io.h>
+#include <linux/io.h>
+#include <linux/bitops.h>
 #include <asm/system.h>
-#include <asm/bitops.h>
 
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
@@ -106,11 +106,11 @@ extern dbg_info_t *et131x_dbginfo;
 
 /**
  * DumpTxQueueContents - Dump out the tx queue and the shadow pointers
- * @pAdapter: pointer to our adapter structure
+ * @etdev: pointer to our adapter structure
  */
-void DumpTxQueueContents(int dbgLvl, struct et131x_adapter *pAdapter)
+void DumpTxQueueContents(int dbgLvl, struct et131x_adapter *etdev)
 {
-	MMC_t __iomem *mmc = &pAdapter->CSRAddress->mmc;
+	MMC_t __iomem *mmc = &etdev->CSRAddress->mmc;
 	uint32_t TxQueueAddr;
 
 	if (DBG_FLAGS(et131x_dbginfo) & dbgLvl) {
@@ -134,24 +134,24 @@ void DumpTxQueueContents(int dbgLvl, struct et131x_adapter *pAdapter)
 		}
 
 		DBG_PRINT("Shadow Pointers 0x%08x\n",
-			  readl(&pAdapter->CSRAddress->txmac.shadow_ptr.value));
+			  readl(&etdev->CSRAddress->txmac.shadow_ptr.value));
 	}
 }
 
 /**
  * DumpDeviceBlock
- * @pAdapter: pointer to our adapter
+ * @etdev: pointer to our adapter
  *
  * Dumps the first 64 regs of each block of the et-1310 (each block is
  * mapped to a new page, each page is 4096 bytes).
  */
 #define NUM_BLOCKS 8
-void DumpDeviceBlock(int dbgLvl, struct et131x_adapter *pAdapter,
+void DumpDeviceBlock(int dbgLvl, struct et131x_adapter *etdev,
 		     uint32_t Block)
 {
 	uint32_t Address1, Address2;
 	uint32_t __iomem *BigDevicePointer =
-		(uint32_t __iomem *) pAdapter->CSRAddress;
+		(uint32_t __iomem *) etdev->CSRAddress;
 	const char *BlockNames[NUM_BLOCKS] = {
 		"Global", "Tx DMA", "Rx DMA", "Tx MAC",
 		"Rx MAC", "MAC", "MAC Stat", "MMC"
@@ -179,17 +179,17 @@ void DumpDeviceBlock(int dbgLvl, struct et131x_adapter *pAdapter,
 
 /**
  * DumpDeviceReg
- * @pAdapter: pointer to our adapter
+ * @etdev: pointer to our adapter
  *
  * Dumps the first 64 regs of each block of the et-1310 (each block is
  * mapped to a new page, each page is 4096 bytes).
  */
-void DumpDeviceReg(int dbgLvl, struct et131x_adapter *pAdapter)
+void DumpDeviceReg(int dbgLvl, struct et131x_adapter *etdev)
 {
 	uint32_t Address1, Address2;
 	uint32_t Block;
 	uint32_t __iomem *BigDevicePointer =
-		(uint32_t __iomem *) pAdapter->CSRAddress;
+		(uint32_t __iomem *) etdev->CSRAddress;
 	uint32_t __iomem *Pointer;
 	const char *BlockNames[NUM_BLOCKS] = {
 		"Global", "Tx DMA", "Rx DMA", "Tx MAC",
@@ -214,4 +214,4 @@ void DumpDeviceReg(int dbgLvl, struct et131x_adapter *pAdapter)
 	}
 }
 
-#endif // CONFIG_ET131X_DEBUG
+#endif /* CONFIG_ET131X_DEBUG */

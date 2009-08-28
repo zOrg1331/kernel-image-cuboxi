@@ -2,7 +2,7 @@
  * Agere Systems Inc.
  * 10/100/1000 Base-T Ethernet Driver for the ET1301 and ET131x series MACs
  *
- * Copyright © 2005 Agere Systems Inc.
+ * Copyright Â© 2005 Agere Systems Inc.
  * All rights reserved.
  *   http://www.agere.com
  *
@@ -19,7 +19,7 @@
  * software indicates your acceptance of these terms and conditions.  If you do
  * not agree with these terms and conditions, do not use the software.
  *
- * Copyright © 2005 Agere Systems Inc.
+ * Copyright Â© 2005 Agere Systems Inc.
  * All rights reserved.
  *
  * Redistribution and use in source or binary forms, with or without
@@ -40,7 +40,7 @@
  *
  * Disclaimer
  *
- * THIS SOFTWARE IS PROVIDED “AS IS” AND ANY EXPRESS OR IMPLIED WARRANTIES,
+ * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
  * INCLUDING, BUT NOT LIMITED TO, INFRINGEMENT AND THE IMPLIED WARRANTIES OF
  * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  ANY
  * USE, MODIFICATION OR DISTRIBUTION OF THIS SOFTWARE IS SOLELY AT THE USERS OWN
@@ -74,9 +74,9 @@
 #include <linux/interrupt.h>
 #include <linux/in.h>
 #include <linux/delay.h>
-#include <asm/io.h>
+#include <linux/bitops.h>
+#include <linux/io.h>
 #include <asm/system.h>
-#include <asm/bitops.h>
 
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
@@ -143,7 +143,7 @@
 
 /**
  * EepromWriteByte - Write a byte to the ET1310's EEPROM
- * @pAdapter: pointer to our private adapter structure
+ * @etdev: pointer to our private adapter structure
  * @unAddress: the address to write
  * @bData: the value to write
  * @unEepronId: the ID of the EEPROM
@@ -151,11 +151,11 @@
  *
  * Returns SUCCESS or FAILURE
  */
-int32_t EepromWriteByte(struct et131x_adapter *pAdapter, uint32_t unAddress,
+int32_t EepromWriteByte(struct et131x_adapter *etdev, uint32_t unAddress,
 			uint8_t bData, uint32_t unEepromId,
 			uint32_t unAddressingMode)
 {
-        struct pci_dev *pdev = pAdapter->pdev;
+	struct pci_dev *pdev = etdev->pdev;
 	int32_t nIndex;
 	int32_t nRetries;
 	int32_t nError = false;
@@ -226,23 +226,20 @@ int32_t EepromWriteByte(struct et131x_adapter *pAdapter, uint32_t unAddress,
 		bStatus = EXTRACT_STATUS_REGISTER(unDword1);
 
 		if (bStatus & LBCIF_STATUS_PHY_QUEUE_AVAIL &&
-		    bStatus & LBCIF_STATUS_I2C_IDLE) {
-		    	/* bits 1:0 are equal to 1 */
+			bStatus & LBCIF_STATUS_I2C_IDLE)
+			/* bits 1:0 are equal to 1 */
 			break;
-		}
 	}
 
-	if (nError || (nIndex >= MAX_NUM_REGISTER_POLLS)) {
+	if (nError || (nIndex >= MAX_NUM_REGISTER_POLLS))
 		return FAILURE;
-	}
 
 	/* Step 2: */
 	bControl = 0;
 	bControl |= LBCIF_CONTROL_LBCIF_ENABLE | LBCIF_CONTROL_I2C_WRITE;
 
-	if (unAddressingMode == DUAL_BYTE) {
+	if (unAddressingMode == DUAL_BYTE)
 		bControl |= LBCIF_CONTROL_TWO_BYTE_ADDR;
-	}
 
 	if (pci_write_config_byte(pdev, LBCIF_CONTROL_REGISTER_OFFSET,
 				  bControl)) {
@@ -281,22 +278,21 @@ int32_t EepromWriteByte(struct et131x_adapter *pAdapter, uint32_t unAddress,
 			bStatus = EXTRACT_STATUS_REGISTER(unDword1);
 
 			if (bStatus & LBCIF_STATUS_PHY_QUEUE_AVAIL &&
-			    bStatus & LBCIF_STATUS_I2C_IDLE) {
-			    	/* I2C write complete */
+				bStatus & LBCIF_STATUS_I2C_IDLE) {
+				/* I2C write complete */
 				break;
 			}
 		}
 
-		if (nError || (nIndex >= MAX_NUM_REGISTER_POLLS)) {
+		if (nError || (nIndex >= MAX_NUM_REGISTER_POLLS))
 			break;
-		}
 
 		/*
 		 * Step 6: Don't break here if we are revision 1, this is
 		 *	   so we do a blind write for load bug.
-	         */
+		 */
 		if (bStatus & LBCIF_STATUS_GENERAL_ERROR
-		    && pAdapter->RevisionID == 0) {
+		    && etdev->RevisionID == 0) {
 			break;
 		}
 
@@ -342,9 +338,8 @@ int32_t EepromWriteByte(struct et131x_adapter *pAdapter, uint32_t unAddress,
 
 		bControl = EXTRACT_CONTROL_REG(unData);
 
-		if (bControl != 0xC0 || nIndex == 10000) {
+		if (bControl != 0xC0 || nIndex == 10000)
 			break;
-		}
 
 		nIndex++;
 	}
@@ -354,7 +349,7 @@ int32_t EepromWriteByte(struct et131x_adapter *pAdapter, uint32_t unAddress,
 
 /**
  * EepromReadByte - Read a byte from the ET1310's EEPROM
- * @pAdapter: pointer to our private adapter structure
+ * @etdev: pointer to our private adapter structure
  * @unAddress: the address from which to read
  * @pbData: a pointer to a byte in which to store the value of the read
  * @unEepronId: the ID of the EEPROM
@@ -362,11 +357,11 @@ int32_t EepromWriteByte(struct et131x_adapter *pAdapter, uint32_t unAddress,
  *
  * Returns SUCCESS or FAILURE
  */
-int32_t EepromReadByte(struct et131x_adapter *pAdapter, uint32_t unAddress,
+int32_t EepromReadByte(struct et131x_adapter *etdev, uint32_t unAddress,
 		       uint8_t *pbData, uint32_t unEepromId,
 		       uint32_t unAddressingMode)
 {
-        struct pci_dev *pdev = pAdapter->pdev;
+	struct pci_dev *pdev = etdev->pdev;
 	int32_t nIndex;
 	int32_t nError = 0;
 	uint8_t bControl;
@@ -425,17 +420,15 @@ int32_t EepromReadByte(struct et131x_adapter *pAdapter, uint32_t unAddress,
 		}
 	}
 
-	if (nError || (nIndex >= MAX_NUM_REGISTER_POLLS)) {
+	if (nError || (nIndex >= MAX_NUM_REGISTER_POLLS))
 		return FAILURE;
-	}
 
 	/* Step 2: */
 	bControl = 0;
 	bControl |= LBCIF_CONTROL_LBCIF_ENABLE;
 
-	if (unAddressingMode == DUAL_BYTE) {
+	if (unAddressingMode == DUAL_BYTE)
 		bControl |= LBCIF_CONTROL_TWO_BYTE_ADDR;
-	}
 
 	if (pci_write_config_byte(pdev, LBCIF_CONTROL_REGISTER_OFFSET,
 				  bControl)) {
@@ -469,9 +462,8 @@ int32_t EepromReadByte(struct et131x_adapter *pAdapter, uint32_t unAddress,
 		}
 	}
 
-	if (nError || (nIndex >= MAX_NUM_REGISTER_POLLS)) {
+	if (nError || (nIndex >= MAX_NUM_REGISTER_POLLS))
 		return FAILURE;
-	}
 
 	/* Step 6: */
 	*pbData = EXTRACT_DATA_REGISTER(unDword1);

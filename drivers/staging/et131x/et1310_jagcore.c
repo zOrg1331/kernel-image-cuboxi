@@ -2,7 +2,7 @@
  * Agere Systems Inc.
  * 10/100/1000 Base-T Ethernet Driver for the ET1301 and ET131x series MACs
  *
- * Copyright © 2005 Agere Systems Inc.
+ * Copyright Â© 2005 Agere Systems Inc.
  * All rights reserved.
  *   http://www.agere.com
  *
@@ -19,7 +19,7 @@
  * software indicates your acceptance of these terms and conditions.  If you do
  * not agree with these terms and conditions, do not use the software.
  *
- * Copyright © 2005 Agere Systems Inc.
+ * Copyright Â© 2005 Agere Systems Inc.
  * All rights reserved.
  *
  * Redistribution and use in source or binary forms, with or without
@@ -40,7 +40,7 @@
  *
  * Disclaimer
  *
- * THIS SOFTWARE IS PROVIDED “AS IS” AND ANY EXPRESS OR IMPLIED WARRANTIES,
+ * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
  * INCLUDING, BUT NOT LIMITED TO, INFRINGEMENT AND THE IMPLIED WARRANTIES OF
  * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  ANY
  * USE, MODIFICATION OR DISTRIBUTION OF THIS SOFTWARE IS SOLELY AT THE USERS OWN
@@ -73,9 +73,9 @@
 #include <linux/interrupt.h>
 #include <linux/in.h>
 #include <linux/delay.h>
-#include <asm/io.h>
+#include <linux/io.h>
+#include <linux/bitops.h>
 #include <asm/system.h>
-#include <asm/bitops.h>
 
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
@@ -99,27 +99,27 @@ extern dbg_info_t *et131x_dbginfo;
  * ConfigGlobalRegs - Used to configure the global registers on the JAGCore
  * @pAdpater: pointer to our adapter structure
  */
-void ConfigGlobalRegs(struct et131x_adapter *pAdapter)
+void ConfigGlobalRegs(struct et131x_adapter *etdev)
 {
-	struct _GLOBAL_t __iomem *pGbl = &pAdapter->CSRAddress->global;
+	struct _GLOBAL_t __iomem *pGbl = &etdev->CSRAddress->global;
 
 	DBG_ENTER(et131x_dbginfo);
 
-	if (pAdapter->RegistryPhyLoopbk == false) {
-		if (pAdapter->RegistryJumboPacket < 2048) {
+	if (etdev->RegistryPhyLoopbk == false) {
+		if (etdev->RegistryJumboPacket < 2048) {
 			/* Tx / RxDMA and Tx/Rx MAC interfaces have a 1k word
 			 * block of RAM that the driver can split between Tx
 			 * and Rx as it desires.  Our default is to split it
 			 * 50/50:
 			 */
 			writel(0, &pGbl->rxq_start_addr.value);
-			writel(pAdapter->RegistryRxMemEnd,
+			writel(etdev->RegistryRxMemEnd,
 			       &pGbl->rxq_end_addr.value);
-			writel(pAdapter->RegistryRxMemEnd + 1,
+			writel(etdev->RegistryRxMemEnd + 1,
 			       &pGbl->txq_start_addr.value);
 			writel(INTERNAL_MEM_SIZE - 1,
 			       &pGbl->txq_end_addr.value);
-		} else if (pAdapter->RegistryJumboPacket < 8192) {
+		} else if (etdev->RegistryJumboPacket < 8192) {
 			/* For jumbo packets > 2k but < 8k, split 50-50. */
 			writel(0, &pGbl->rxq_start_addr.value);
 			writel(INTERNAL_MEM_RX_OFFSET,
@@ -171,9 +171,9 @@ void ConfigGlobalRegs(struct et131x_adapter *pAdapter)
 
 /**
  * ConfigMMCRegs - Used to configure the main memory registers in the JAGCore
- * @pAdapter: pointer to our adapter structure
+ * @etdev: pointer to our adapter structure
  */
-void ConfigMMCRegs(struct et131x_adapter *pAdapter)
+void ConfigMMCRegs(struct et131x_adapter *etdev)
 {
 	MMC_CTRL_t mmc_ctrl = { 0 };
 
@@ -188,7 +188,7 @@ void ConfigMMCRegs(struct et131x_adapter *pAdapter)
 	mmc_ctrl.bits.arb_disable = 0x0;
 	mmc_ctrl.bits.mmc_enable = 0x1;
 
-	writel(mmc_ctrl.value, &pAdapter->CSRAddress->mmc.mmc_ctrl.value);
+	writel(mmc_ctrl.value, &etdev->CSRAddress->mmc.mmc_ctrl.value);
 
 	DBG_LEAVE(et131x_dbginfo);
 }
@@ -198,21 +198,19 @@ void et131x_enable_interrupts(struct et131x_adapter *adapter)
 	uint32_t MaskValue;
 
 	/* Enable all global interrupts */
-	if ((adapter->FlowControl == TxOnly) || (adapter->FlowControl == Both)) {
+	if (adapter->FlowControl == TxOnly || adapter->FlowControl == Both)
 		MaskValue = INT_MASK_ENABLE;
-	} else {
+	else
 		MaskValue = INT_MASK_ENABLE_NO_FLOW;
-	}
 
-	if (adapter->DriverNoPhyAccess) {
+	if (adapter->DriverNoPhyAccess)
 		MaskValue |= 0x10000;
-	}
 
 	adapter->CachedMaskValue.value = MaskValue;
 	writel(MaskValue, &adapter->CSRAddress->global.int_mask.value);
 }
 
-void et131x_disable_interrupts(struct et131x_adapter * adapter)
+void et131x_disable_interrupts(struct et131x_adapter *adapter)
 {
 	/* Disable all global interrupts */
 	adapter->CachedMaskValue.value = INT_MASK_DISABLE;
