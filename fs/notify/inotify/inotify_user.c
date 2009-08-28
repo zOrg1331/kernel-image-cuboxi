@@ -437,7 +437,7 @@ void inotify_ignored_and_remove_idr(struct fsnotify_mark_entry *entry,
 	fsn_event_priv->group = group;
 	event_priv->wd = ientry->wd;
 
-	ret = fsnotify_add_notify_event(group, ignored_event, fsn_event_priv);
+	ret = fsnotify_add_notify_event(group, ignored_event, fsn_event_priv, NULL);
 	if (ret)
 		inotify_free_event_priv(fsn_event_priv);
 
@@ -455,7 +455,9 @@ skip_send_ignore:
 /* ding dong the mark is dead */
 static void inotify_free_mark(struct fsnotify_mark_entry *entry)
 {
-	struct inotify_inode_mark_entry *ientry = (struct inotify_inode_mark_entry *)entry;
+	struct inotify_inode_mark_entry *ientry;
+
+	ientry = container_of(entry, struct inotify_inode_mark_entry, fsn_entry);
 
 	kmem_cache_free(inotify_inode_mark_cachep, ientry);
 }
@@ -568,7 +570,7 @@ retry:
 	fsnotify_get_mark(&tmp_ientry->fsn_entry);
 
 	/* we are on the idr, now get on the inode */
-	ret = fsnotify_add_mark(&tmp_ientry->fsn_entry, group, inode);
+	ret = fsnotify_add_mark(&tmp_ientry->fsn_entry, group, inode, 0);
 	if (ret) {
 		/* we failed to get on the inode, get off the idr */
 		inotify_remove_from_idr(group, tmp_ientry);
