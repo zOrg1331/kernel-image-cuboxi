@@ -42,6 +42,8 @@
 #include "util/util.h"
 #include "util/parse-options.h"
 #include "util/parse-events.h"
+#include "util/event.h"
+#include "util/debug.h"
 
 #include <sys/prctl.h>
 #include <math.h>
@@ -63,7 +65,6 @@ static struct perf_counter_attr default_attrs[] = {
 #define MAX_RUN			100
 
 static int			system_wide			=  0;
-static int			verbose				=  0;
 static unsigned int		nr_cpus				=  0;
 static int			run_idx				=  0;
 
