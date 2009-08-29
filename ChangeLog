@@ -1,3 +1,142 @@
+commit a545ec8f7e59c95bfc43b2fcf7b9d9c66fc43f47
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sat Aug 29 03:30:43 2009 +0900
+
+    aufs: tiny, minor optimization
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit bed6c9a366ec537649f92be45eac47cab44932e6
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Aug 28 15:45:29 2009 +0900
+
+    aufs: tiny, debugging nhash functions
+    
+    - simplify au_nhash_test_longer_wh().
+    - insert debug macros in au_name_hash() and au_nhash_append_wh().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit bb3368b15358ca7d6755662f17600eb32b8b3402
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Aug 28 15:45:05 2009 +0900
+
+    aufs: simplify nhash for del_wh_children()
+    
+    Since del_wh_children() does not append the entries, pass the nhash
+    pointer simply without copying.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 55e5d8ee98d1d6b19bb1f20b5a7a29a578b5f47a
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Aug 28 15:44:26 2009 +0900
+
+    aufs: bugfix, copy pointer array and deblk in copy_vdir()
+    
+    Copy the deblk memory block correctly.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit cfec8790ef86fa88a7327790592250e2ccecee90
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Aug 28 15:43:34 2009 +0900
+
+    aufs: bugfix, stop freeing in au_nhash_do_free()
+    
+    When nhash->nh_num is zero, au_nhash_do_free() does not free anything.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 3d276a0adaa09c0782df9b010eabbdf037101d55
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Aug 28 15:43:06 2009 +0900
+
+    aufs: bugfix, allocate au_nhash for the existing dir only
+    
+    When the rename target is not a directory or does not exist, stop
+    allocating struct au_nhash.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit f8c4e6b52728156b4df2060132a2fc2515dfbbd6
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Aug 28 15:42:27 2009 +0900
+
+    aufs: bugfix, make struct au_nhash in struct test_empty_arg a pointer
+    
+    test_empty_cb() appends the whiteout-ed entires and they should be
+    handled by the caller.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 22a805a63e2cd6081c65f69a3ec24eee3718c258
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Aug 27 22:17:21 2009 +0900
+
+    aufs: tiny, simplify au_whtmp_rmdir_alloc()
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 0ae0a859dbfa3c105966c7de87ed8754c01a8bd6
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Aug 27 22:16:27 2009 +0900
+
+    aufs: bugfix, memory leak in an error path in aufs_rename()
+    
+    The au_nhash object was not freed when returning an error from
+    aufs_rename().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit cb6e0332023ecbc38e177ea890bdcb1556452916
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Aug 27 22:12:32 2009 +0900
+
+    aufs: local debug macros for rdblk=0
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 6f77d5108df2ab822a0409f7cd054023c3c75f84
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Aug 27 22:12:00 2009 +0900
+
+    aufs: tiny, a minor fix in README
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit aa58d620632b94e8bdf885eb0906c848a2942959
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Aug 26 16:55:10 2009 +0900
+
+    aufs: bugfix, initialize loop counter in au_dir_size()
+    
+    The loop counters in au_dir_size() was initialized by 0 accidently.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 60792c664527544d9653a9bf518550462da8a7af
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Aug 26 09:37:34 2009 +0900
+
+    aufs: possible bugfix, limit the minimum size of a dir
+    
+    Set limit the minimum size of a directory in au_dir_size().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit 3573a80198d01928adb01d0112046d919a369876
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Aug 24 22:32:25 2009 +0900
+
+    aufs: bugfix, support NFSD in aufs_getattr()
+    
+    Since NFSD may skip the dentry revalidation, the generation may be
+    oboleted in aufs_getattr(). To support such case, aufs_getattr() returns
+    ESTALE.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 198d023ff00317c63c5c8e37bec9cee5d8cdd382
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Sun Aug 23 18:50:53 2009 +0900
