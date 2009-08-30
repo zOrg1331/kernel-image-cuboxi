@@ -1939,7 +1939,8 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 
 		spin_unlock(&utrace->lock);
 
-		if (unlikely(report.result == UTRACE_SIGNAL_IGN))
+		if (!(task->utrace_flags & UTRACE_EVENT(QUIESCE)) ||
+		    unlikely(report.result == UTRACE_SIGNAL_IGN))
 			/*
 			 * We only got here to clear utrace->signal_handler.
 			 */
