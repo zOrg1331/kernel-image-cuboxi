@@ -1,3 +1,13 @@
+commit b8af5b600e309398c3db3a0896672c0a380d7b18
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Aug 30 00:58:56 2009 +0900
+
+    aufs: bugfix, set the end mark in copy_vdir()
+    
+    set the correct value of end mark of struct au_vdir in copy_vdir().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit a545ec8f7e59c95bfc43b2fcf7b9d9c66fc43f47
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Sat Aug 29 03:30:43 2009 +0900
