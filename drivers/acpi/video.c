@@ -605,6 +605,7 @@ acpi_video_device_lcd_get_level_current(struct acpi_video_device *device,
 					unsigned long long *level)
 {
 	acpi_status status = AE_OK;
+	int i;
 
 	if (device->cap._BQC || device->cap._BCQ) {
 		char *buf = device->cap._BQC ? "_BQC" : "_BCQ";
@@ -620,8 +621,15 @@ acpi_video_device_lcd_get_level_current(struct acpi_video_device *device,
 
 			}
 			*level += bqc_offset_aml_bug_workaround;
-			device->brightness->curr = *level;
-			return 0;
+			for (i = 2; i < device->brightness->count; i++)
+				if (device->brightness->levels[i] == *level) {
+					device->brightness->curr = *level;
+					return 0;
+			}
+			/* BQC returned an invalid level. Stop using it.  */
+			ACPI_WARNING((AE_INFO, "%s returned an invalid level",
+						buf));
+			device->cap._BQC = device->cap._BCQ = 0;
 		} else {
 			/* Fixme:
 			 * should we return an error or ignore this failure?
@@ -936,9 +944,6 @@ static void acpi_video_device_find_cap(struct acpi_video_device *device)
 {
 	acpi_handle h_dummy1;
 
-
-	memset(&device->cap, 0, sizeof(device->cap));
-
 	if (ACPI_SUCCESS(acpi_get_handle(device->dev->handle, "_ADR", &h_dummy1))) {
 		device->cap._ADR = 1;
 	}
@@ -1041,7 +1046,6 @@ static void acpi_video_bus_find_cap(struct acpi_video_bus *video)
 {
 	acpi_handle h_dummy1;
 
-	memset(&video->cap, 0, sizeof(video->cap));
 	if (ACPI_SUCCESS(acpi_get_handle(video->device->handle, "_DOS", &h_dummy1))) {
 		video->cap._DOS = 1;
 	}
