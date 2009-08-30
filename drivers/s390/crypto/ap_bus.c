@@ -632,8 +632,6 @@ static int ap_bus_suspend(struct device *dev, pm_message_t state)
 	struct ap_device *ap_dev;
 	unsigned long flags;
 
-	if (IS_ERR(dev))
-		return 0;
 	ap_dev = to_ap_dev(dev);
 	if (!ap_suspend_flag) {
 		ap_suspend_flag = 1;
@@ -664,20 +662,25 @@ static int ap_bus_resume(struct device *dev)
 {
 	int rc = 0;
 	struct ap_device *ap_dev;
-
-	if (IS_ERR(dev))
-		return 0;
-
+	int queue_depth, device_type;
 	ap_dev = to_ap_dev(dev);
 
 	if (ap_suspend_flag) {
 		ap_suspend_flag = 0;
 		if (!ap_interrupts_available())
 			ap_interrupt_indicator = NULL;
+		rc = ap_query_queue(ap_dev->qid, &queue_depth, &device_type);
+		if (rc) {
+			spin_lock_bh(&ap_dev->lock);
+			ap_dev->unregistered = 1;
+			spin_unlock_bh(&ap_dev->lock);
+		}
 		ap_device_probe(dev);
-		ap_reset(ap_dev);
-		setup_timer(&ap_dev->timeout, ap_request_timeout,
-			    (unsigned long) ap_dev);
+		if (!rc) {
+			ap_reset(ap_dev);
+			setup_timer(&ap_dev->timeout, ap_request_timeout,
+				    (unsigned long) ap_dev);
+		}
 		init_timer(&ap_config_timer);
 		ap_config_timer.function = ap_config_timeout;
 		ap_config_timer.data = 0;
@@ -694,12 +697,19 @@ static int ap_bus_resume(struct device *dev)
 		if (ap_thread_flag)
 			rc = ap_poll_thread_start();
 	} else {
+		rc = ap_query_queue(ap_dev->qid, &queue_depth, &device_type);
+		if (rc) {
+			spin_lock_bh(&ap_dev->lock);
+			ap_dev->unregistered = 1;
+			spin_unlock_bh(&ap_dev->lock);
+		}
 		ap_device_probe(dev);
-		ap_reset(ap_dev);
-		setup_timer(&ap_dev->timeout, ap_request_timeout,
-			    (unsigned long) ap_dev);
+		if (!rc) {
+			ap_reset(ap_dev);
+			setup_timer(&ap_dev->timeout, ap_request_timeout,
+				    (unsigned long) ap_dev);
+		}
 	}
-
 	return rc;
 }
 
