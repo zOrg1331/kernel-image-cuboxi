@@ -19,6 +19,7 @@
 #include <linux/ctype.h>
 #include <linux/kallsyms.h>
 #include <linux/memory.h>
+#include <linux/fault-inject.h>
 
 /*
  * TODO
@@ -1540,6 +1541,12 @@ static __always_inline void *slab_alloc(struct kmem_cache *s,
 	unsigned long flags;
 
 	gfpflags &= gfp_allowed_mask;
+
+	lockdep_trace_alloc(gfpflags);
+	might_sleep_if(gfpflags & __GFP_WAIT);
+
+	if (should_failslab(s->objsize, gfpflags))
+		return NULL;
 
 again:
 	local_irq_save(flags);
