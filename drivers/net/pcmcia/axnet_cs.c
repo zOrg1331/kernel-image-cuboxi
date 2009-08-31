@@ -893,8 +893,6 @@ static const char version_8390[] = KERN_INFO \
 #include <linux/in.h>
 #include <linux/interrupt.h>
 
-#include <linux/etherdevice.h>
-
 #define BUG_83C690
 
 /* These are the operational function interfaces to board-specific
@@ -1179,7 +1177,7 @@ static int axnet_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	dev_kfree_skb (skb);
 	dev->stats.tx_bytes += send_length;
     
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 /**

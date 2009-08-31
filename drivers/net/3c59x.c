@@ -2087,7 +2087,7 @@ vortex_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			iowrite8(0x00, ioaddr + TxStatus); /* Pop the status stack. */
 		}
 	}
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 static int
@@ -2177,7 +2177,7 @@ boomerang_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	iowrite16(DownUnstall, ioaddr + EL3_CMD);
 	spin_unlock_irqrestore(&vp->lock, flags);
 	dev->trans_start = jiffies;
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 /* The interrupt handler does all of the Rx thread work and cleans up
