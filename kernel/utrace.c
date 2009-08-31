@@ -713,24 +713,17 @@ static void utrace_wakeup(struct task_struct *target, struct utrace *utrace)
 /*
  * This is called when there might be some detached engines on the list or
  * some stale bits in @task->utrace_flags.  Clean them up and recompute the
- * flags.
- *
- * @action is NULL when @task is stopped and @utrace->stopped is set; wake
- * it up if it should not be.  @action is set when @task is current; if
- * we're fully detached, reset *@action to UTRACE_RESUME.
+ * flags.  Returns true if we're now fully detached.
  *
  * Called with @utrace->lock held, returns with it released.
  * After this returns, @utrace might be freed if everything detached.
  */
-static void utrace_reset(struct task_struct *task, struct utrace *utrace,
-			 enum utrace_resume_action *action)
+static bool utrace_reset(struct task_struct *task, struct utrace *utrace)
 	__releases(utrace->lock)
 {
 	struct utrace_engine *engine, *next;
 	unsigned long flags = 0;
 	LIST_HEAD(detached);
-	bool wake = !action;
-	BUG_ON(wake != (task != current));
 
 	splice_attaching(utrace);
 
@@ -746,7 +739,6 @@ static void utrace_reset(struct task_struct *task, struct utrace *utrace,
 			list_move(&engine->entry, &detached);
 		} else {
 			flags |= engine->flags | UTRACE_EVENT(REAP);
-			wake = wake && !engine_wants_stop(engine);
 		}
 	}
 
@@ -760,28 +752,30 @@ static void utrace_reset(struct task_struct *task, struct utrace *utrace,
 		 */
 		BUG_ON(utrace->death);
 		flags &= UTRACE_EVENT(REAP);
-		wake = false;
 	} else if (!(flags & UTRACE_EVENT_SYSCALL) &&
 		   test_tsk_thread_flag(task, TIF_SYSCALL_TRACE)) {
 		clear_tsk_thread_flag(task, TIF_SYSCALL_TRACE);
 	}
 
 	task->utrace_flags = flags;
-	if (!flags) {
+
+	if (!flags)
 		/*
 		 * No more engines, cleared out the utrace.
 		 */
 		utrace->interrupt = utrace->report = utrace->signal_handler = 0;
 
-		if (action)
-			*action = UTRACE_RESUME;
-	}
-
-	if (wake)
+	if (!(flags & ENGINE_STOP) && task != current)
+		/*
+		 * No more engines want it stopped.  Wake it up.
+		 */
 		utrace_wakeup(task, utrace);
+
 	spin_unlock(&utrace->lock);
 
 	put_detached_list(&detached);
+
+	return !flags;
 }
 
 /*
@@ -1221,7 +1215,7 @@ int utrace_control(struct task_struct *target,
 	 * there is nothing more we need to do.
 	 */
 	if (resume)
-		utrace_reset(target, utrace, NULL);
+		utrace_reset(target, utrace);
 	else
 		spin_unlock(&utrace->lock);
 
@@ -1327,7 +1321,8 @@ static inline void finish_report_reset(struct task_struct *task,
 {
 	if (unlikely(!report->takers || report->detaches)) {
 		spin_lock(&utrace->lock);
-		utrace_reset(task, utrace, &report->action);
+		if (utrace_reset(task, utrace))
+			report->action = UTRACE_RESUME;
 	}
 }
 
@@ -1749,7 +1744,7 @@ void utrace_report_death(struct task_struct *task, struct utrace *utrace,
 		 */
 		utrace_reap(task, utrace);
 	else
-		utrace_reset(task, utrace, &report.action);
+		utrace_reset(task, utrace);
 }
 
 /*
