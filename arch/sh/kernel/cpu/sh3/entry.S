@@ -137,6 +137,7 @@ ENTRY(tlb_protection_violation_store)
 	 mov	#1, r5
 
 call_dpf:
+	setup_frame_reg
 	mov.l	1f, r0
 	mov	r5, r8
 	mov.l	@r0, r6
@@ -256,7 +257,7 @@ restore_all:
 	!
 	! Calculate new SR value
 	mov	k3, k2			! original SR value
-	mov	#0xf0, k1
+	mov	#0xfffffff0, k1
 	extu.b	k1, k1
 	not	k1, k1
 	and	k1, k2			! Mask original SR value
@@ -506,6 +507,16 @@ ENTRY(handle_interrupt)
 	mov.l	1f, k4		! SR bits to clear in k4
 	bsr	save_regs	! needs original pr value in k3
 	 mov	#-1, k2		! default vector kept in k2
+
+	setup_frame_reg
+
+	stc	sr, r0	! get status register
+	shlr2	r0
+	and	#0x3c, r0
+	cmp/eq	#0x3c, r0
+	bf	9f
+	TRACE_IRQS_OFF
+9:
 
 	! Setup return address and jump to do_IRQ
 	mov.l	4f, r9		! fetch return address
