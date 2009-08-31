@@ -212,25 +212,31 @@ static int __init txx9wdt_probe(struct platform_device *dev)
 	}
 
 	res = platform_get_resource(dev, IORESOURCE_MEM, 0);
-	if (!res)
-		goto exit_busy;
+	if (!res) {
+		ret = -EBUSY;
+		goto exit;
+	}
 	if (!devm_request_mem_region(&dev->dev,
 				     res->start, res->end - res->start + 1,
-				     "txx9wdt"))
-		goto exit_busy;
+				     "txx9wdt")) {
+		ret = -EBUSY;
+		goto exit;
+	}
 	txx9wdt_reg = devm_ioremap(&dev->dev,
 				   res->start, res->end - res->start + 1);
-	if (!txx9wdt_reg)
-		goto exit_busy;
+	if (!txx9wdt_reg) {
+		ret = -EBUSY;
+		goto exit_release_mem;
+	}
 
 	ret = register_reboot_notifier(&txx9wdt_notifier);
 	if (ret)
-		goto exit;
+		goto exit_iounmap;
 
 	ret = misc_register(&txx9wdt_miscdev);
 	if (ret) {
 		unregister_reboot_notifier(&txx9wdt_notifier);
-		goto exit;
+		goto exit_iounmap;
 	}
 
 	printk(KERN_INFO "Hardware Watchdog Timer for TXx9: "
@@ -238,8 +244,11 @@ static int __init txx9wdt_probe(struct platform_device *dev)
 	       timeout, WD_MAX_TIMEOUT, nowayout);
 
 	return 0;
-exit_busy:
-	ret = -EBUSY;
+
+exit_iounmap:
+	devm_iounmap(&dev->dev, txx9wdt_reg);
+exit_release_mem:
+	devm_release_mem_region(&dev->dev, res->start, res->end - res->start + 1);
 exit:
 	if (txx9_imclk) {
 		clk_disable(txx9_imclk);
