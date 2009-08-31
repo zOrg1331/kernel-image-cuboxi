@@ -501,12 +501,17 @@ void utrace_release_task(struct task_struct *target)
 /*
  * We use an extra bit in utrace_engine.flags past the event bits,
  * to record whether the engine is keeping the target thread stopped.
+ *
+ * This bit is set in task_struct.utrace_flags whenever it is set in any
+ * engine's flags.  Only utrace_reset() resets it in utrace_flags.
  */
 #define ENGINE_STOP		(1UL << _UTRACE_NEVENTS)
 
-static void mark_engine_wants_stop(struct utrace_engine *engine)
+static void mark_engine_wants_stop(struct task_struct *task,
+				   struct utrace_engine *engine)
 {
 	engine->flags |= ENGINE_STOP;
+	task->utrace_flags |= ENGINE_STOP;
 }
 
 static void clear_engine_wants_stop(struct utrace_engine *engine)
@@ -794,19 +799,7 @@ static void utrace_stop(struct task_struct *task, struct utrace *utrace,
 	 */
 	BUG_ON(utrace->stopped);
 
-	/*
-	 * The siglock protects us against signals.  As well as SIGKILL
-	 * waking us up, we must synchronize with the signal bookkeeping
-	 * for stop signals and SIGCONT.
-	 */
 	spin_lock(&utrace->lock);
-	spin_lock_irq(&task->sighand->siglock);
-
-	if (unlikely(__fatal_signal_pending(task))) {
-		spin_unlock_irq(&task->sighand->siglock);
-		spin_unlock(&utrace->lock);
-		return;
-	}
 
 	if (action == UTRACE_INTERRUPT) {
 		/*
@@ -821,6 +814,32 @@ static void utrace_stop(struct task_struct *task, struct utrace *utrace,
 		 */
 		utrace->report = 1;
 		set_thread_flag(TIF_NOTIFY_RESUME);
+	}
+
+	/*
+	 * If the ENGINE_STOP bit is clear in utrace_flags, that means
+	 * utrace_reset() ran after we processed some UTRACE_STOP return
+	 * values from callbacks to get here.  If all engines have detached
+	 * or resumed us, we don't stop.  This check doesn't require
+	 * siglock, but it should follow the interrupt/report bookkeeping
+	 * steps (this can matter for UTRACE_RESUME but not UTRACE_DETACH).
+	 */
+	if (unlikely(!(task->utrace_flags & ENGINE_STOP))) {
+		spin_unlock(&utrace->lock);
+		return;
+	}
+
+	/*
+	 * The siglock protects us against signals.  As well as SIGKILL
+	 * waking us up, we must synchronize with the signal bookkeeping
+	 * for stop signals and SIGCONT.
+	 */
+	spin_lock_irq(&task->sighand->siglock);
+
+	if (unlikely(__fatal_signal_pending(task))) {
+		spin_unlock_irq(&task->sighand->siglock);
+		spin_unlock(&utrace->lock);
+		return;
 	}
 
 	utrace->stopped = 1;
@@ -1067,10 +1086,9 @@ int utrace_control(struct task_struct *target,
 		resume = true;
 	}
 
-	clear_engine_wants_stop(engine);
 	switch (action) {
 	case UTRACE_STOP:
-		mark_engine_wants_stop(engine);
+		mark_engine_wants_stop(target, engine);
 		if (!resume && !utrace_do_stop(target, utrace))
 			ret = -EINPROGRESS;
 		resume = false;
@@ -1091,9 +1109,16 @@ int utrace_control(struct task_struct *target,
 			smp_mb();
 			if (utrace->reporting == engine)
 				ret = -EINPROGRESS;
-			break;
 		}
-		/* Fall through.  */
+		if (engine_wants_stop(engine)) {
+			/*
+			 * We need utrace_reset() to check if anyone else
+			 * still wants this target to stay stopped.
+			 */
+			clear_engine_wants_stop(engine);
+			resume = true;
+		}
+		break;
 
 	case UTRACE_RESUME:
 		/*
@@ -1101,6 +1126,7 @@ int utrace_control(struct task_struct *target,
 		 * There might not be another report before it just
 		 * resumes, so make sure single-step is not left set.
 		 */
+		clear_engine_wants_stop(engine);
 		if (likely(resume))
 			user_disable_single_step(target);
 		break;
@@ -1111,6 +1137,7 @@ int utrace_control(struct task_struct *target,
 		 * But don't bother if it's already been interrupted.
 		 * In that case, utrace_get_signal() will be reporting soon.
 		 */
+		clear_engine_wants_stop(engine);
 		if (!utrace->report && !utrace->interrupt) {
 			utrace->report = 1;
 			set_notify_resume(target);
@@ -1121,6 +1148,7 @@ int utrace_control(struct task_struct *target,
 		/*
 		 * Make the thread call tracehook_get_signal() soon.
 		 */
+		clear_engine_wants_stop(engine);
 		if (utrace->interrupt)
 			break;
 		utrace->interrupt = 1;
@@ -1156,6 +1184,7 @@ int utrace_control(struct task_struct *target,
 		/*
 		 * Resume from stopped, step one block.
 		 */
+		clear_engine_wants_stop(engine);
 		if (unlikely(!arch_has_block_step())) {
 			WARN_ON(1);
 			/* Fall through to treat it as SINGLESTEP.  */
@@ -1168,6 +1197,7 @@ int utrace_control(struct task_struct *target,
 		/*
 		 * Resume from stopped, step one instruction.
 		 */
+		clear_engine_wants_stop(engine);
 		if (unlikely(!arch_has_single_step())) {
 			WARN_ON(1);
 			resume = false;
@@ -1328,46 +1358,63 @@ static void finish_report(struct utrace_report *report,
 	finish_report_reset(task, utrace, report);
 }
 
-/*
- * Apply the return value of one engine callback to @report.
- * Returns true if @engine detached and should not get any more callbacks.
- */
-static bool finish_callback(struct utrace *utrace,
-			    struct utrace_report *report,
-			    struct utrace_engine *engine,
-			    u32 ret)
+static inline void finish_callback_report(struct task_struct *task,
+					  struct utrace *utrace,
+					  struct utrace_report *report,
+					  struct utrace_engine *engine,
+					  enum utrace_resume_action action)
 {
-	enum utrace_resume_action action = utrace_resume_action(ret);
-
-	report->result = ret & ~UTRACE_RESUME_MASK;
-
 	/*
 	 * If utrace_control() was used, treat that like UTRACE_DETACH here.
 	 */
 	if (action == UTRACE_DETACH || engine->ops == &utrace_detached_ops) {
 		engine->ops = &utrace_detached_ops;
 		report->detaches = true;
-	} else {
-		if (action < report->action)
-			report->action = action;
-
-		if (action == UTRACE_STOP) {
-			if (!engine_wants_stop(engine)) {
-				spin_lock(&utrace->lock);
-				mark_engine_wants_stop(engine);
-				spin_unlock(&utrace->lock);
-			}
-		} else {
-			if (action < report->resume_action)
-				report->resume_action = action;
-
-			if (engine_wants_stop(engine)) {
-				spin_lock(&utrace->lock);
-				clear_engine_wants_stop(engine);
-				spin_unlock(&utrace->lock);
-			}
-		}
+		return;
 	}
+
+	if (action < report->action)
+		report->action = action;
+
+	if (action != UTRACE_STOP) {
+		if (action < report->resume_action)
+			report->resume_action = action;
+
+		if (engine_wants_stop(engine)) {
+			spin_lock(&utrace->lock);
+			clear_engine_wants_stop(engine);
+			spin_unlock(&utrace->lock);
+		}
+
+		return;
+	}
+
+	if (!engine_wants_stop(engine)) {
+		spin_lock(&utrace->lock);
+		/*
+		 * If utrace_control() came in and detached us
+		 * before we got the lock, we must not stop now.
+		 */
+		if (unlikely(engine->ops == &utrace_detached_ops))
+			report->detaches = true;
+		else
+			mark_engine_wants_stop(task, engine);
+		spin_unlock(&utrace->lock);
+	}
+}
+
+/*
+ * Apply the return value of one engine callback to @report.
+ * Returns true if @engine detached and should not get any more callbacks.
+ */
+static bool finish_callback(struct task_struct *task, struct utrace *utrace,
+			    struct utrace_report *report,
+			    struct utrace_engine *engine,
+			    u32 ret)
+{
+	report->result = ret & ~UTRACE_RESUME_MASK;
+	finish_callback_report(task, utrace, report, engine,
+			       utrace_resume_action(ret));
 
 	/*
 	 * Now that we have applied the effect of the return value,
@@ -1427,7 +1474,7 @@ static const struct utrace_engine_ops *start_callback(
 	ops = engine->ops;
 
 	if (want & UTRACE_EVENT(QUIESCE)) {
-		if (finish_callback(utrace, report, engine,
+		if (finish_callback(task, utrace, report, engine,
 				    (*ops->report_quiesce)(report->action,
 							   engine, task,
 							   event)))
@@ -1479,7 +1526,7 @@ static const struct utrace_engine_ops *start_callback(
 					     event);			      \
 			if (!ops)					      \
 				continue;				      \
-			finish_callback(utrace, report, engine,		      \
+			finish_callback(task, utrace, report, engine,	      \
 					(*ops->callback)(__VA_ARGS__));	      \
 		}							      \
 	} while (0)
@@ -2037,7 +2084,7 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 			break;
 		}
 
-		finish_callback(utrace, &report, engine, ret);
+		finish_callback(task, utrace, &report, engine, ret);
 	}
 
 	/*
