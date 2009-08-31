@@ -108,14 +108,6 @@ static struct utrace_engine *matching_engine(
 }
 
 /*
- * For experimental use, utrace attach is mutually exclusive with ptrace.
- */
-static inline bool exclude_utrace(struct task_struct *task)
-{
-	return unlikely(!!task->ptrace);
-}
-
-/*
  * Called without locks, when we might be the first utrace engine to attach.
  * If this is a newborn thread and we are not the creator, we have to wait
  * for it.  The creator gets the first chance to attach.  The PF_STARTING
