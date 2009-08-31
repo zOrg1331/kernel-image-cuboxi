@@ -19,7 +19,7 @@
 #include <linux/usb.h>
 #include <linux/usb/serial.h>
 #include <linux/uaccess.h>
-
+#include <linux/kfifo.h>
 
 static int debug;
 
@@ -272,12 +272,81 @@ error_no_buffer:
 	return bwrite;
 }
 
+/**
+ * usb_serial_generic_write_start - kick off an URB write
+ * @port:	Pointer to the &struct usb_serial_port data
+ * @status:	Value to return on success.
+ *
+ * Returns status on success, otherwise a negative errno value
+ */
+static int usb_serial_generic_write_start(struct usb_serial_port *port,
+	int status)
+{
+	struct usb_serial *serial = port->serial;
+	unsigned char *data;
+	int result;
+	int count;
+	unsigned long flags;
+	bool start_io;
+
+	/* Atomically determine whether we can and need to start a USB
+	 * operation. */
+	spin_lock_irqsave(&port->write_fifo_lock, flags);
+	if (port->write_urb_busy)
+		start_io = false;
+	else {
+		start_io = (__kfifo_len(port->write_fifo) != 0);
+		port->write_urb_busy = start_io;
+	}
+	spin_unlock_irqrestore(&port->write_fifo_lock, flags);
+
+	if (!start_io)
+		return status;
+
+	data = port->write_urb->transfer_buffer;
+	count = kfifo_get(port->write_fifo, data, port->bulk_out_size);
+	usb_serial_debug_data(debug, &port->dev, __func__, count, data);
+
+	/* set up our urb */
+	usb_fill_bulk_urb(port->write_urb, serial->dev,
+			   usb_sndbulkpipe(serial->dev,
+				port->bulk_out_endpointAddress),
+			   port->write_urb->transfer_buffer, count,
+			   ((serial->type->write_bulk_callback) ?
+			     serial->type->write_bulk_callback :
+			     usb_serial_generic_write_bulk_callback),
+			   port);
+
+	/* send the data out the bulk port */
+	result = usb_submit_urb(port->write_urb, GFP_ATOMIC);
+	if (result) {
+		dev_err(&port->dev,
+			"%s - failed submitting write urb, error %d\n",
+						__func__, result);
+		/* don't have to grab the lock here, as we will
+		   retry if != 0 */
+		port->write_urb_busy = 0;
+		status = result;
+	}
+
+	return status;
+}
+
+/**
+ * usb_serial_generic_write - generic write function for serial USB devices
+ * @tty:	Pointer to &struct tty_struct for the device
+ * @port:	Pointer to the &usb_serial_port structure for the device
+ * @buf:	Pointer to the data to write
+ * @count:	Number of bytes to write
+ *
+ * Returns the number of characters actually written, which may be anything
+ * from zero to @count. If an error occurs, it returns the negative errno
+ * value.
+ */
 int usb_serial_generic_write(struct tty_struct *tty,
 	struct usb_serial_port *port, const unsigned char *buf, int count)
 {
 	struct usb_serial *serial = port->serial;
-	int result;
-	unsigned char *data;
 
 	dbg("%s - port %d", __func__, port->number);
 
@@ -287,57 +356,20 @@ int usb_serial_generic_write(struct tty_struct *tty,
 	}
 
 	/* only do something if we have a bulk out endpoint */
-	if (serial->num_bulk_out) {
-		unsigned long flags;
+	if (!serial->num_bulk_out)
+		return 0;
 
-		if (serial->type->max_in_flight_urbs)
-			return usb_serial_multi_urb_write(tty, port,
-							  buf, count);
+	if (serial->type->max_in_flight_urbs)
+		return usb_serial_multi_urb_write(tty, port,
+						  buf, count);
 
-		spin_lock_irqsave(&port->lock, flags);
-		if (port->write_urb_busy) {
-			spin_unlock_irqrestore(&port->lock, flags);
-			dbg("%s - already writing", __func__);
-			return 0;
-		}
-		port->write_urb_busy = 1;
-		spin_unlock_irqrestore(&port->lock, flags);
+	/* TODO: Much of the time there won't be a write pending and won't be
+	 * any data ahead of the current chunk. In those cases, we could save
+	 * a copy by putting the data directly into the URB transfer buffer.
+	 * This adds some complexity, is it worth it for serial I/O? */
+	count = kfifo_put(port->write_fifo, buf, count);
 
-		count = (count > port->bulk_out_size) ?
-					port->bulk_out_size : count;
-
-		memcpy(port->write_urb->transfer_buffer, buf, count);
-		data = port->write_urb->transfer_buffer;
-		usb_serial_debug_data(debug, &port->dev, __func__, count, data);
-
-		/* set up our urb */
-		usb_fill_bulk_urb(port->write_urb, serial->dev,
-				   usb_sndbulkpipe(serial->dev,
-					port->bulk_out_endpointAddress),
-				   port->write_urb->transfer_buffer, count,
-				   ((serial->type->write_bulk_callback) ?
-				     serial->type->write_bulk_callback :
-				     usb_serial_generic_write_bulk_callback),
-				   port);
-
-		/* send the data out the bulk port */
-		port->write_urb_busy = 1;
-		result = usb_submit_urb(port->write_urb, GFP_ATOMIC);
-		if (result) {
-			dev_err(&port->dev,
-				"%s - failed submitting write urb, error %d\n",
-							__func__, result);
-			/* don't have to grab the lock here, as we will
-			   retry if != 0 */
-			port->write_urb_busy = 0;
-		} else
-			result = count;
-
-		return result;
-	}
-
-	/* no bulk out, so return 0 bytes written */
-	return 0;
+	return usb_serial_generic_write_start(port, count);
 }
 EXPORT_SYMBOL_GPL(usb_serial_generic_write);
 
@@ -355,9 +387,8 @@ int usb_serial_generic_write_room(struct tty_struct *tty)
 			room = port->bulk_out_size *
 				(serial->type->max_in_flight_urbs -
 				 port->urbs_in_flight);
-	} else if (serial->num_bulk_out && !(port->write_urb_busy)) {
-		room = port->bulk_out_size;
-	}
+	} else if (serial->num_bulk_out)
+		room = port->write_fifo->size - __kfifo_len(port->write_fifo);
 	spin_unlock_irqrestore(&port->lock, flags);
 
 	dbg("%s - returns %d", __func__, room);
@@ -378,9 +409,9 @@ int usb_serial_generic_chars_in_buffer(struct tty_struct *tty)
 		chars = port->tx_bytes_flight;
 		spin_unlock_irqrestore(&port->lock, flags);
 	} else if (serial->num_bulk_out) {
-		/* FIXME: Locking */
-		if (port->write_urb_busy)
-			chars = port->write_urb->transfer_buffer_length;
+		spin_lock_irqsave(&port->write_fifo_lock, flags);
+		chars = __kfifo_len(port->write_fifo);
+		spin_unlock_irqrestore(&port->write_fifo_lock, flags);
 	}
 
 	dbg("%s - returns %d", __func__, chars);
@@ -486,8 +517,8 @@ void usb_serial_generic_write_bulk_callback(struct urb *urb)
 			port->urbs_in_flight = 0;
 		spin_unlock_irqrestore(&port->lock, flags);
 	} else {
-		/* Handle the case for single urb mode */
 		port->write_urb_busy = 0;
+		usb_serial_generic_write_start(port, 0);
 	}
 
 	if (status) {
