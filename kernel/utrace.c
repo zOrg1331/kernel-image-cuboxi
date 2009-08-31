@@ -707,17 +707,22 @@ static void utrace_wakeup(struct task_struct *target, struct utrace *utrace)
  * some stale bits in @task->utrace_flags.  Clean them up and recompute the
  * flags.  Returns true if we're now fully detached.
  *
+ * @safe is true if this is a safe point to touch the engine list,
+ * i.e. @task is either current or known to be stopped.
+ *
  * Called with @utrace->lock held, returns with it released.
  * After this returns, @utrace might be freed if everything detached.
  */
-static bool utrace_reset(struct task_struct *task, struct utrace *utrace)
+static bool utrace_reset(struct task_struct *task, struct utrace *utrace,
+			 bool safe)
 	__releases(utrace->lock)
 {
 	struct utrace_engine *engine, *next;
 	unsigned long flags = 0;
 	LIST_HEAD(detached);
 
-	splice_attaching(utrace);
+	if (safe)
+		splice_attaching(utrace);
 
 	/*
 	 * Update the set of events of interest from the union
@@ -726,7 +731,7 @@ static bool utrace_reset(struct task_struct *task, struct utrace *utrace)
 	 * We'll collect them on the detached list.
 	 */
 	list_for_each_entry_safe(engine, next, &utrace->attached, entry) {
-		if (engine->ops == &utrace_detached_ops) {
+		if (safe && engine->ops == &utrace_detached_ops) {
 			engine->ops = NULL;
 			list_move(&engine->entry, &detached);
 		} else {
@@ -757,7 +762,7 @@ static bool utrace_reset(struct task_struct *task, struct utrace *utrace)
 		 */
 		utrace->interrupt = utrace->report = utrace->signal_handler = 0;
 
-	if (!(flags & ENGINE_STOP) && task != current)
+	if (!(flags & ENGINE_STOP) && utrace->stopped)
 		/*
 		 * No more engines want it stopped.  Wake it up.
 		 */
@@ -1032,7 +1037,7 @@ int utrace_control(struct task_struct *target,
 		   enum utrace_resume_action action)
 {
 	struct utrace *utrace;
-	bool resume;
+	bool reset;
 	int ret;
 
 	if (unlikely(action > UTRACE_DETACH))
@@ -1054,7 +1059,7 @@ int utrace_control(struct task_struct *target,
 	if (unlikely(IS_ERR(utrace)))
 		return PTR_ERR(utrace);
 
-	resume = utrace->stopped;
+	reset = utrace->stopped;
 	ret = 0;
 
 	/*
@@ -1069,21 +1074,21 @@ int utrace_control(struct task_struct *target,
 			spin_unlock(&utrace->lock);
 			return ret;
 		}
-		resume = true;
+		reset = true;
 	}
 
 	switch (action) {
 	case UTRACE_STOP:
 		mark_engine_wants_stop(target, engine);
-		if (!resume && !utrace_do_stop(target, utrace))
+		if (!reset && !utrace_do_stop(target, utrace))
 			ret = -EINPROGRESS;
-		resume = false;
+		reset = false;
 		break;
 
 	case UTRACE_DETACH:
 		mark_engine_detached(engine);
-		resume = resume || utrace_do_stop(target, utrace);
-		if (!resume) {
+		reset = reset || utrace_do_stop(target, utrace);
+		if (!reset) {
 			/*
 			 * As in utrace_set_events(), this barrier ensures
 			 * that our engine->flags changes have hit before we
@@ -1102,7 +1107,7 @@ int utrace_control(struct task_struct *target,
 			 * still wants this target to stay stopped.
 			 */
 			clear_engine_wants_stop(engine);
-			resume = true;
+			reset = true;
 		}
 		break;
 
@@ -1113,7 +1118,7 @@ int utrace_control(struct task_struct *target,
 		 * resumes, so make sure single-step is not left set.
 		 */
 		clear_engine_wants_stop(engine);
-		if (likely(resume))
+		if (likely(reset))
 			user_disable_single_step(target);
 		break;
 
@@ -1147,7 +1152,7 @@ int utrace_control(struct task_struct *target,
 		 * serialized any later recalc_sigpending() after
 		 * our setting of utrace->interrupt to force it on.
 		 */
-		if (resume) {
+		if (reset) {
 			/*
 			 * This is really just to keep the invariant
 			 * that TIF_SIGPENDING is set with utrace->interrupt.
@@ -1174,7 +1179,7 @@ int utrace_control(struct task_struct *target,
 		if (unlikely(!arch_has_block_step())) {
 			WARN_ON(1);
 			/* Fall through to treat it as SINGLESTEP.  */
-		} else if (likely(resume)) {
+		} else if (likely(reset)) {
 			user_enable_block_step(target);
 			break;
 		}
@@ -1186,12 +1191,12 @@ int utrace_control(struct task_struct *target,
 		clear_engine_wants_stop(engine);
 		if (unlikely(!arch_has_single_step())) {
 			WARN_ON(1);
-			resume = false;
+			reset = false;
 			ret = -EOPNOTSUPP;
 			break;
 		}
 
-		if (likely(resume))
+		if (likely(reset))
 			user_enable_single_step(target);
 		else
 			/*
@@ -1206,8 +1211,9 @@ int utrace_control(struct task_struct *target,
 	 * Let the thread resume running.  If it's not stopped now,
 	 * there is nothing more we need to do.
 	 */
-	if (resume)
-		utrace_reset(target, utrace);
+	if (reset)
+		utrace_reset(target, utrace,
+			     utrace->stopped || target == current);
 	else
 		spin_unlock(&utrace->lock);
 
@@ -1313,7 +1319,7 @@ static inline void finish_report_reset(struct task_struct *task,
 {
 	if (unlikely(!report->takers || report->detaches)) {
 		spin_lock(&utrace->lock);
-		if (utrace_reset(task, utrace))
+		if (utrace_reset(task, utrace, true))
 			report->action = UTRACE_RESUME;
 	}
 }
@@ -1736,7 +1742,7 @@ void utrace_report_death(struct task_struct *task, struct utrace *utrace,
 		 */
 		utrace_reap(task, utrace);
 	else
-		utrace_reset(task, utrace);
+		utrace_reset(task, utrace, true);
 }
 
 /*
