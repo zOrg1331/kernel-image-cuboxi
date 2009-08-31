@@ -611,7 +611,7 @@ int utrace_set_events(struct task_struct *target,
 		set_tsk_thread_flag(target, TIF_SYSCALL_TRACE);
 
 	ret = 0;
-	if (!utrace->stopped && target != current) {
+	if (!utrace->stopped && target != current && !target->exit_state) {
 		/*
 		 * This barrier ensures that our engine->flags changes
 		 * have hit before we examine utrace->reporting,
