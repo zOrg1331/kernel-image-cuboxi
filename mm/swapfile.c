@@ -697,7 +697,7 @@ int free_swap_and_cache(swp_entry_t entry)
 	struct swap_info_struct *p;
 	struct page *page = NULL;
 
-	if (is_migration_entry(entry))
+	if (non_swap_entry(entry))
 		return 1;
 
 	p = swap_info_get(entry);
@@ -2083,7 +2083,7 @@ static int __swap_duplicate(swp_entry_t entry, bool cache)
 	int count;
 	bool has_cache;
 
-	if (is_migration_entry(entry))
+	if (non_swap_entry(entry))
 		return -EINVAL;
 
 	type = swp_type(entry);
