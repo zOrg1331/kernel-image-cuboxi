@@ -108,6 +108,7 @@
 #define EM2882_BOARD_KWORLD_ATSC_315U		  69
 #define EM2882_BOARD_EVGA_INDTUBE		  70
 #define EM2820_BOARD_SILVERCREST_WEBCAM           71
+#define EM2861_BOARD_GADMEI_UTV330PLUS           72
 
 /* Limits minimum and default number of buffers */
 #define EM28XX_MIN_BUF 4
@@ -367,6 +368,7 @@ enum em28xx_sensor {
 	EM28XX_NOSENSOR = 0,
 	EM28XX_MT9V011,
 	EM28XX_MT9M001,
+	EM28XX_MT9M111,
 };
 
 enum em28xx_adecoder {
