@@ -1086,7 +1086,6 @@ int utrace_control(struct task_struct *target,
 		break;
 
 	case UTRACE_DETACH:
-		mark_engine_detached(engine);
 		reset = reset || utrace_do_stop(target, utrace);
 		if (!reset) {
 			/*
@@ -1106,9 +1105,9 @@ int utrace_control(struct task_struct *target,
 			 * We need utrace_reset() to check if anyone else
 			 * still wants this target to stay stopped.
 			 */
-			clear_engine_wants_stop(engine);
 			reset = true;
 		}
+		mark_engine_detached(engine);
 		break;
 
 	case UTRACE_RESUME:
