@@ -40,6 +40,8 @@ enum writeback_sync_modes {
 struct writeback_control {
 	struct backing_dev_info *bdi;	/* If !NULL, only write back this
 					   queue */
+	struct super_block *sb;		/* if !NULL, only write inodes from
+					   this super_block */
 	enum writeback_sync_modes sync_mode;
 	unsigned long *older_than_this;	/* If !NULL, only write back inodes
 					   older than this */

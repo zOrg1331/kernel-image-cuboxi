@@ -439,6 +439,7 @@ static int ubifs_sync_fs(struct super_block *sb, int wait)
 	int i, err;
 	struct ubifs_info *c = sb->s_fs_info;
 	struct writeback_control wbc = {
+		.sb	     = sb,
 		.sync_mode   = WB_SYNC_ALL,
 		.range_start = 0,
 		.range_end   = LLONG_MAX,
@@ -462,7 +463,7 @@ static int ubifs_sync_fs(struct super_block *sb, int wait)
 	 * the user be able to get more accurate results of 'statfs()' after
 	 * they synchronize the file system.
 	 */
-	generic_sync_sb_inodes(sb, &wbc);
+	generic_sync_sb_inodes(&wbc);
 
 	/*
 	 * Synchronize write buffers, because 'ubifs_run_commit()' does not

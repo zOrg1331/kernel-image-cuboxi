@@ -458,9 +458,9 @@ writeback_single_inode(struct inode *inode, struct writeback_control *wbc)
  * on the writer throttling path, and we get decent balancing between many
  * throttled threads: we don't want them all piling up on inode_sync_wait.
  */
-void generic_sync_sb_inodes(struct super_block *sb,
-				struct writeback_control *wbc)
+void generic_sync_sb_inodes(struct writeback_control *wbc)
 {
+	struct super_block *sb = wbc->sb;
 	const unsigned long start = jiffies;	/* livelock avoidance */
 	int sync = wbc->sync_mode == WB_SYNC_ALL;
 
@@ -595,10 +595,9 @@ void generic_sync_sb_inodes(struct super_block *sb,
 }
 EXPORT_SYMBOL_GPL(generic_sync_sb_inodes);
 
-static void sync_sb_inodes(struct super_block *sb,
-				struct writeback_control *wbc)
+static void sync_sb_inodes(struct writeback_control *wbc)
 {
-	generic_sync_sb_inodes(sb, wbc);
+	generic_sync_sb_inodes(wbc);
 }
 
 /*
@@ -640,7 +639,7 @@ restart:
 			 */
 			if (down_read_trylock(&sb->s_umount)) {
 				if (sb->s_root)
-					sync_sb_inodes(sb, wbc);
+					sync_sb_inodes(wbc);
 				up_read(&sb->s_umount);
 			}
 			spin_lock(&sb_lock);
@@ -666,6 +665,7 @@ restart:
 void sync_inodes_sb(struct super_block *sb, int wait)
 {
 	struct writeback_control wbc = {
+		.sb		= sb,
 		.sync_mode	= wait ? WB_SYNC_ALL : WB_SYNC_NONE,
 		.range_start	= 0,
 		.range_end	= LLONG_MAX,
@@ -680,7 +680,7 @@ void sync_inodes_sb(struct super_block *sb, int wait)
 	} else
 		wbc.nr_to_write = LONG_MAX; /* doesn't actually matter */
 
-	sync_sb_inodes(sb, &wbc);
+	sync_sb_inodes(&wbc);
 }
 
 /**
