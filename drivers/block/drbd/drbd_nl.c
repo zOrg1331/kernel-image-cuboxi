@@ -2159,7 +2159,7 @@ void drbd_bcast_state(struct drbd_conf *mdev, union drbd_state state)
 	reply->ret_code = NO_ERROR;
 
 	trace_drbd_netlink(cn_reply, 0);
-	cn_netlink_send(cn_reply, CN_IDX_DRBD, GFP_KERNEL);
+	cn_netlink_send(cn_reply, CN_IDX_DRBD, GFP_NOIO);
 }
 
 void drbd_bcast_ev_helper(struct drbd_conf *mdev, char *helper_name)
@@ -2192,7 +2192,7 @@ void drbd_bcast_ev_helper(struct drbd_conf *mdev, char *helper_name)
 	reply->ret_code = NO_ERROR;
 
 	trace_drbd_netlink(cn_reply, 0);
-	cn_netlink_send(cn_reply, CN_IDX_DRBD, GFP_KERNEL);
+	cn_netlink_send(cn_reply, CN_IDX_DRBD, GFP_NOIO);
 }
 
 void drbd_bcast_ee(struct drbd_conf *mdev,
@@ -2264,7 +2264,7 @@ void drbd_bcast_ee(struct drbd_conf *mdev,
 	reply->ret_code = NO_ERROR;
 
 	trace_drbd_netlink(cn_reply, 0);
-	cn_netlink_send(cn_reply, CN_IDX_DRBD, GFP_KERNEL);
+	cn_netlink_send(cn_reply, CN_IDX_DRBD, GFP_NOIO);
 	kfree(cn_reply);
 }
 
@@ -2304,7 +2304,7 @@ void drbd_bcast_sync_progress(struct drbd_conf *mdev)
 	reply->ret_code = NO_ERROR;
 
 	trace_drbd_netlink(cn_reply, 0);
-	cn_netlink_send(cn_reply, CN_IDX_DRBD, GFP_KERNEL);
+	cn_netlink_send(cn_reply, CN_IDX_DRBD, GFP_NOIO);
 }
 
 int __init drbd_nl_init(void)
@@ -2358,7 +2358,7 @@ void drbd_nl_send_reply(struct cn_msg *req, int ret_code)
 	reply->ret_code = ret_code;
 
 	trace_drbd_netlink(cn_reply, 0);
-	rr = cn_netlink_send(cn_reply, CN_IDX_DRBD, GFP_KERNEL);
+	rr = cn_netlink_send(cn_reply, CN_IDX_DRBD, GFP_NOIO);
 	if (rr && rr != -ESRCH)
 		printk(KERN_INFO "drbd: cn_netlink_send()=%d\n", rr);
 }
