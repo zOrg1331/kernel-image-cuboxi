@@ -1037,7 +1037,7 @@ int utrace_control(struct task_struct *target,
 		   enum utrace_resume_action action)
 {
 	struct utrace *utrace;
-	bool reset;
+	bool reset, safe = false;
 	int ret;
 
 	if (unlikely(action > UTRACE_DETACH))
@@ -1074,7 +1074,7 @@ int utrace_control(struct task_struct *target,
 			spin_unlock(&utrace->lock);
 			return ret;
 		}
-		reset = true;
+		reset = safe = true;
 	}
 
 	switch (action) {
@@ -1212,8 +1212,8 @@ int utrace_control(struct task_struct *target,
 	 * there is nothing more we need to do.
 	 */
 	if (reset)
-		utrace_reset(target, utrace,
-			     utrace->stopped || target == current);
+		utrace_reset(target, utrace, safe || utrace->stopped ||
+						target == current);
 	else
 		spin_unlock(&utrace->lock);
 
