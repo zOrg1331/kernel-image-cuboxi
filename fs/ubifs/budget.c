@@ -66,12 +66,13 @@ static int shrink_liability(struct ubifs_info *c, int nr_to_write)
 {
 	int nr_written;
 	struct writeback_control wbc = {
+		.sb	     = c->vfs_sb,
 		.sync_mode   = WB_SYNC_NONE,
 		.range_end   = LLONG_MAX,
 		.nr_to_write = nr_to_write,
 	};
 
-	generic_sync_sb_inodes(c->vfs_sb, &wbc);
+	generic_sync_sb_inodes(&wbc);
 	nr_written = nr_to_write - wbc.nr_to_write;
 
 	if (!nr_written) {
@@ -83,7 +84,7 @@ static int shrink_liability(struct ubifs_info *c, int nr_to_write)
 		wbc.sync_mode   = WB_SYNC_ALL;
 		wbc.range_end   = LLONG_MAX;
 		wbc.nr_to_write = nr_to_write;
-		generic_sync_sb_inodes(c->vfs_sb, &wbc);
+		generic_sync_sb_inodes(&wbc);
 		nr_written = nr_to_write - wbc.nr_to_write;
 	}
 
