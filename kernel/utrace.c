@@ -707,22 +707,17 @@ static void utrace_wakeup(struct task_struct *target, struct utrace *utrace)
  * some stale bits in @task->utrace_flags.  Clean them up and recompute the
  * flags.  Returns true if we're now fully detached.
  *
- * @safe is true if this is a safe point to touch the engine list,
- * i.e. @task is either current or known to be stopped.
- *
  * Called with @utrace->lock held, returns with it released.
  * After this returns, @utrace might be freed if everything detached.
  */
-static bool utrace_reset(struct task_struct *task, struct utrace *utrace,
-			 bool safe)
+static bool utrace_reset(struct task_struct *task, struct utrace *utrace)
 	__releases(utrace->lock)
 {
 	struct utrace_engine *engine, *next;
 	unsigned long flags = 0;
 	LIST_HEAD(detached);
 
-	if (safe)
-		splice_attaching(utrace);
+	splice_attaching(utrace);
 
 	/*
 	 * Update the set of events of interest from the union
@@ -731,7 +726,7 @@ static bool utrace_reset(struct task_struct *task, struct utrace *utrace,
 	 * We'll collect them on the detached list.
 	 */
 	list_for_each_entry_safe(engine, next, &utrace->attached, entry) {
-		if (safe && engine->ops == &utrace_detached_ops) {
+		if (engine->ops == &utrace_detached_ops) {
 			engine->ops = NULL;
 			list_move(&engine->entry, &detached);
 		} else {
@@ -789,7 +784,7 @@ static void utrace_stop(struct task_struct *task, struct utrace *utrace,
 	 * inside this function.  It should never be set on entry.
 	 */
 	BUG_ON(utrace->stopped);
-
+relock:
 	spin_lock(&utrace->lock);
 
 	if (action == UTRACE_INTERRUPT) {
@@ -816,7 +811,9 @@ static void utrace_stop(struct task_struct *task, struct utrace *utrace,
 	 * steps (this can matter for UTRACE_RESUME but not UTRACE_DETACH).
 	 */
 	if (unlikely(!(task->utrace_flags & ENGINE_STOP))) {
-		spin_unlock(&utrace->lock);
+		utrace_reset(task, utrace);
+		if (task->utrace_flags & ENGINE_STOP)
+			goto relock;
 		return;
 	}
 
@@ -1037,7 +1034,7 @@ int utrace_control(struct task_struct *target,
 		   enum utrace_resume_action action)
 {
 	struct utrace *utrace;
-	bool reset, safe = false;
+	bool reset;
 	int ret;
 
 	if (unlikely(action > UTRACE_DETACH))
@@ -1074,7 +1071,7 @@ int utrace_control(struct task_struct *target,
 			spin_unlock(&utrace->lock);
 			return ret;
 		}
-		reset = safe = true;
+		reset = true;
 	}
 
 	switch (action) {
@@ -1086,6 +1083,9 @@ int utrace_control(struct task_struct *target,
 		break;
 
 	case UTRACE_DETACH:
+		if (engine_wants_stop(engine))
+			target->utrace_flags &= ~ENGINE_STOP;
+		mark_engine_detached(engine);
 		reset = reset || utrace_do_stop(target, utrace);
 		if (!reset) {
 			/*
@@ -1100,14 +1100,6 @@ int utrace_control(struct task_struct *target,
 			if (utrace->reporting == engine)
 				ret = -EINPROGRESS;
 		}
-		if (engine_wants_stop(engine)) {
-			/*
-			 * We need utrace_reset() to check if anyone else
-			 * still wants this target to stay stopped.
-			 */
-			reset = true;
-		}
-		mark_engine_detached(engine);
 		break;
 
 	case UTRACE_RESUME:
@@ -1211,8 +1203,7 @@ int utrace_control(struct task_struct *target,
 	 * there is nothing more we need to do.
 	 */
 	if (reset)
-		utrace_reset(target, utrace, safe || utrace->stopped ||
-						target == current);
+		utrace_reset(target, utrace);
 	else
 		spin_unlock(&utrace->lock);
 
@@ -1318,7 +1309,7 @@ static inline void finish_report_reset(struct task_struct *task,
 {
 	if (unlikely(!report->takers || report->detaches)) {
 		spin_lock(&utrace->lock);
-		if (utrace_reset(task, utrace, true))
+		if (utrace_reset(task, utrace))
 			report->action = UTRACE_RESUME;
 	}
 }
@@ -1741,7 +1732,7 @@ void utrace_report_death(struct task_struct *task, struct utrace *utrace,
 		 */
 		utrace_reap(task, utrace);
 	else
-		utrace_reset(task, utrace, true);
+		utrace_reset(task, utrace);
 }
 
 /*
