@@ -337,11 +337,10 @@ static void tosa_irda_shutdown(struct device *dev)
 }
 
 static struct pxaficp_platform_data tosa_ficp_platform_data = {
-	.gpio_pwdown		= -1,
-	.transceiver_cap	= IR_SIRMODE | IR_OFF,
-	.transceiver_mode	= tosa_irda_transceiver_mode,
-	.startup		= tosa_irda_startup,
-	.shutdown		= tosa_irda_shutdown,
+	.transceiver_cap  = IR_SIRMODE | IR_OFF,
+	.transceiver_mode = tosa_irda_transceiver_mode,
+	.startup = tosa_irda_startup,
+	.shutdown = tosa_irda_shutdown,
 };
 
 /*

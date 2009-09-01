@@ -175,9 +175,14 @@ static int hx4700_gpio_request(struct gpio_ress *gpios, int size)
  * IRDA
  */
 
+static void irda_transceiver_mode(struct device *dev, int mode)
+{
+	gpio_set_value(GPIO105_HX4700_nIR_ON, mode & IR_OFF);
+}
+
 static struct pxaficp_platform_data ficp_info = {
-	.gpio_pwdown		= GPIO105_HX4700_nIR_ON,
-	.transceiver_cap	= IR_SIRMODE | IR_OFF,
+	.transceiver_cap  = IR_SIRMODE | IR_OFF,
+	.transceiver_mode = irda_transceiver_mode,
 };
 
 /*
