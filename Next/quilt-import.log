@@ -1,0 +1,65 @@
+Importing driver-core.current based on 2.6.31-rc8
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing i2c based on 2.6.31-rc8
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 326ba5010a5429a5a528b268b36a5900d4ab0eba
+HEAD is now at 326ba50 Linux 2.6.31-rc8
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+driver-model-constify-attribute-groups.patch
+driver-core-add-support-for-compatibility-classes.patch
+i2c-drop-i2c_driver-id.patch
+i2c-taos-evm-switch-echo-off.patch
+i2c-tsl2550-simpify-IO.patch
+i2c-core-01-client-as-device-type.patch
+i2c-core-02-adapters-as-bus-devices.patch
+i2c-core-03-i2c-adapter-compatibility-class-2.patch
+i2c-scx200_acb-provide-more-information-on-bus-errors.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 2ac5e4a...c0f5fb4 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.31-rc8
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.31-rc7
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.31-rc7-107-gf415c41
+Unchanged quilt series rr
+Importing device-mapper based on block/for-next
+$ cd ../quilt-tmp
+$ git reset --hard 608ebac433a1242e249c63f0e85b18c01b2da47a
+HEAD is now at 608ebac Merge branch 'writeback' into for-next
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-multipath-fix-oops-when-request-based-io-fails-when-no-paths.patch
+dm-snapshot-implement-iterate-devices.patch
+dm-table-fix-queue_limit-checking-device-iterator.patch
+dm-table-add-more-context-to-two-terse-warning-messages.patch
+dm-table-fix-logical_block_size-in-printf-format-strings.patch
+dm-stripe-expose-correct-io-hints.patch
+dm-log-fix-userspace-status-output.patch
+dm-log-reorder-userspace-ctr-args.patch
+dm-log-remove-incorrect-field-from-userspace-table-output.patch
+dm-raid1-do-not-allow-log_failure-variable-to-unset-after-being-set.patch
+dm-log-userspace-add-luid-to-distinguish-between-concurrent-log-instances.patch
+dm-snapshot-refactor-zero_disk_area-to-use-chunk_io.patch
+dm-snapshot-fix-header-corruption-race-on-invalidation.patch
+dm-exception-store-split-set_chunk_size.patch
+dm-snapshot-fix-on-disk-chunk-size-validation.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + c158391...7c45c98 master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc3
+Unchanged quilt series aoe
+Importing driver-core based on quilt/usb.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
