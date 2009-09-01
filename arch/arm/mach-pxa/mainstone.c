@@ -479,9 +479,8 @@ static void mainstone_irda_transceiver_mode(struct device *dev, int mode)
 }
 
 static struct pxaficp_platform_data mainstone_ficp_platform_data = {
-	.gpio_pwdown		= -1,
-	.transceiver_cap	= IR_SIRMODE | IR_FIRMODE | IR_OFF,
-	.transceiver_mode	= mainstone_irda_transceiver_mode,
+	.transceiver_cap  = IR_SIRMODE | IR_FIRMODE | IR_OFF,
+	.transceiver_mode = mainstone_irda_transceiver_mode,
 };
 
 static struct gpio_keys_button gpio_keys_button[] = {

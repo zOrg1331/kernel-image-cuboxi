@@ -507,9 +507,8 @@ static void lubbock_irda_transceiver_mode(struct device *dev, int mode)
 }
 
 static struct pxaficp_platform_data lubbock_ficp_platform_data = {
-	.gpio_pwdown		= -1,
-	.transceiver_cap	= IR_SIRMODE | IR_FIRMODE,
-	.transceiver_mode	= lubbock_irda_transceiver_mode,
+	.transceiver_cap  = IR_SIRMODE | IR_FIRMODE,
+	.transceiver_mode = lubbock_irda_transceiver_mode,
 };
 
 static void __init lubbock_init(void)
