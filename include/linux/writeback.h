@@ -78,9 +78,11 @@ struct writeback_control {
 /*
  * fs/fs-writeback.c
  */	
+struct bdi_writeback;
 void writeback_inodes(struct writeback_control *wbc);
 int inode_wait(void *);
 void sync_inodes_sb(struct super_block *, int wait);
+long wb_do_writeback(struct bdi_writeback *wb, int force_wait);
 
 /* writeback.h requires fs.h; it, too, is not included from here. */
 static inline void wait_on_inode(struct inode *inode)
@@ -100,7 +102,7 @@ static inline void inode_sync_wait(struct inode *inode)
 /*
  * mm/page-writeback.c
  */
-int wakeup_pdflush(long nr_pages);
+void wakeup_flusher_threads(long nr_pages);
 void laptop_io_completion(void);
 void laptop_sync_completion(void);
 void throttle_vm_writeout(gfp_t gfp_mask);
