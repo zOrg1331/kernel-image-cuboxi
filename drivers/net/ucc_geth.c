@@ -209,9 +209,10 @@ static struct sk_buff *get_new_skb(struct ucc_geth_private *ugeth,
 {
 	struct sk_buff *skb = NULL;
 
-	skb = dev_alloc_skb(ugeth->ug_info->uf_info.max_rx_buf_length +
-				  UCC_GETH_RX_DATA_BUF_ALIGNMENT);
-
+	skb = __skb_dequeue(&ugeth->rx_recycle);
+	if (!skb)
+		skb = dev_alloc_skb(ugeth->ug_info->uf_info.max_rx_buf_length +
+				    UCC_GETH_RX_DATA_BUF_ALIGNMENT);
 	if (skb == NULL)
 		return NULL;
 
@@ -436,38 +437,6 @@ static void hw_add_addr_in_hash(struct ucc_geth_private *ugeth,
 	qe_issue_cmd(QE_SET_GROUP_ADDRESS, cecr_subblock,
 		     QE_CR_PROTOCOL_ETHERNET, 0);
 }
-
-#ifdef CONFIG_UGETH_MAGIC_PACKET
-static void magic_packet_detection_enable(struct ucc_geth_private *ugeth)
-{
-	struct ucc_fast_private *uccf;
-	struct ucc_geth __iomem *ug_regs;
-
-	uccf = ugeth->uccf;
-	ug_regs = ugeth->ug_regs;
-
-	/* Enable interrupts for magic packet detection */
-	setbits32(uccf->p_uccm, UCC_GETH_UCCE_MPD);
-
-	/* Enable magic packet detection */
-	setbits32(&ug_regs->maccfg2, MACCFG2_MPE);
-}
-
-static void magic_packet_detection_disable(struct ucc_geth_private *ugeth)
-{
-	struct ucc_fast_private *uccf;
-	struct ucc_geth __iomem *ug_regs;
-
-	uccf = ugeth->uccf;
-	ug_regs = ugeth->ug_regs;
-
-	/* Disable interrupts for magic packet detection */
-	clrbits32(uccf->p_uccm, UCC_GETH_UCCE_MPD);
-
-	/* Disable magic packet detection */
-	clrbits32(&ug_regs->maccfg2, MACCFG2_MPE);
-}
-#endif /* MAGIC_PACKET */
 
 static inline int compare_addr(u8 **addr1, u8 **addr2)
 {
@@ -1986,6 +1955,8 @@ static void ucc_geth_memclean(struct ucc_geth_private *ugeth)
 		iounmap(ugeth->ug_regs);
 		ugeth->ug_regs = NULL;
 	}
+
+	skb_queue_purge(&ugeth->rx_recycle);
 }
 
 static void ucc_geth_set_multi(struct net_device *dev)
@@ -2201,6 +2172,8 @@ static int ucc_struct_init(struct ucc_geth_private *ugeth)
 			ugeth_err("%s: Failed to ioremap regs.", __func__);
 		return -ENOMEM;
 	}
+
+	skb_queue_head_init(&ugeth->rx_recycle);
 
 	return 0;
 }
@@ -3174,7 +3147,7 @@ static int ucc_geth_start_xmit(struct sk_buff *skb, struct net_device *dev)
 #endif
 	spin_unlock_irqrestore(&ugeth->lock, flags);
 
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 static int ucc_geth_rx(struct ucc_geth_private *ugeth, u8 rxQ, int rx_work_limit)
@@ -3209,8 +3182,10 @@ static int ucc_geth_rx(struct ucc_geth_private *ugeth, u8 rxQ, int rx_work_limit
 			if (netif_msg_rx_err(ugeth))
 				ugeth_err("%s, %d: ERROR!!! skb - 0x%08x",
 					   __func__, __LINE__, (u32) skb);
-			if (skb)
-				dev_kfree_skb_any(skb);
+			if (skb) {
+				skb->data = skb->head + NET_SKB_PAD;
+				__skb_queue_head(&ugeth->rx_recycle, skb);
+			}
 
 			ugeth->rx_skbuff[rxQ][ugeth->skb_currx[rxQ]] = NULL;
 			dev->stats.rx_dropped++;
@@ -3268,6 +3243,8 @@ static int ucc_geth_tx(struct net_device *dev, u8 txQ)
 
 	/* Normal processing. */
 	while ((bd_status & T_R) == 0) {
+		struct sk_buff *skb;
+
 		/* BD contains already transmitted buffer.   */
 		/* Handle the transmitted buffer and release */
 		/* the BD to be used with the current frame  */
@@ -3277,9 +3254,16 @@ static int ucc_geth_tx(struct net_device *dev, u8 txQ)
 
 		dev->stats.tx_packets++;
 
-		/* Free the sk buffer associated with this TxBD */
-		dev_kfree_skb(ugeth->
-				  tx_skbuff[txQ][ugeth->skb_dirtytx[txQ]]);
+		skb = ugeth->tx_skbuff[txQ][ugeth->skb_dirtytx[txQ]];
+
+		if (skb_queue_len(&ugeth->rx_recycle) < RX_BD_RING_LEN &&
+			     skb_recycle_check(skb,
+				    ugeth->ug_info->uf_info.max_rx_buf_length +
+				    UCC_GETH_RX_DATA_BUF_ALIGNMENT))
+			__skb_queue_head(&ugeth->rx_recycle, skb);
+		else
+			dev_kfree_skb(skb);
+
 		ugeth->tx_skbuff[txQ][ugeth->skb_dirtytx[txQ]] = NULL;
 		ugeth->skb_dirtytx[txQ] =
 		    (ugeth->skb_dirtytx[txQ] +
@@ -3308,15 +3292,15 @@ static int ucc_geth_poll(struct napi_struct *napi, int budget)
 
 	ug_info = ugeth->ug_info;
 
-	howmany = 0;
-	for (i = 0; i < ug_info->numQueuesRx; i++)
-		howmany += ucc_geth_rx(ugeth, i, budget - howmany);
-
 	/* Tx event processing */
 	spin_lock(&ugeth->lock);
 	for (i = 0; i < ug_info->numQueuesTx; i++)
 		ucc_geth_tx(ugeth->ndev, i);
 	spin_unlock(&ugeth->lock);
+
+	howmany = 0;
+	for (i = 0; i < ug_info->numQueuesRx; i++)
+		howmany += ucc_geth_rx(ugeth, i, budget - howmany);
 
 	if (howmany < budget) {
 		napi_complete(napi);
@@ -3414,46 +3398,25 @@ static int ucc_geth_set_mac_addr(struct net_device *dev, void *p)
 	return 0;
 }
 
-/* Called when something needs to use the ethernet device */
-/* Returns 0 for success. */
-static int ucc_geth_open(struct net_device *dev)
+static int ucc_geth_init_mac(struct ucc_geth_private *ugeth)
 {
-	struct ucc_geth_private *ugeth = netdev_priv(dev);
+	struct net_device *dev = ugeth->ndev;
 	int err;
-
-	ugeth_vdbg("%s: IN", __func__);
-
-	/* Test station address */
-	if (dev->dev_addr[0] & ENET_GROUP_ADDR) {
-		if (netif_msg_ifup(ugeth))
-			ugeth_err("%s: Multicast address used for station address"
-				  " - is this what you wanted?", __func__);
-		return -EINVAL;
-	}
-
-	err = init_phy(dev);
-	if (err) {
-		if (netif_msg_ifup(ugeth))
-			ugeth_err("%s: Cannot initialize PHY, aborting.",
-				  dev->name);
-		return err;
-	}
 
 	err = ucc_struct_init(ugeth);
 	if (err) {
 		if (netif_msg_ifup(ugeth))
-			ugeth_err("%s: Cannot configure internal struct, aborting.", dev->name);
-		goto out_err_stop;
+			ugeth_err("%s: Cannot configure internal struct, "
+				  "aborting.", dev->name);
+		goto err;
 	}
-
-	napi_enable(&ugeth->napi);
 
 	err = ucc_geth_startup(ugeth);
 	if (err) {
 		if (netif_msg_ifup(ugeth))
 			ugeth_err("%s: Cannot configure net device, aborting.",
 				  dev->name);
-		goto out_err;
+		goto err;
 	}
 
 	err = adjust_enet_interface(ugeth);
@@ -3461,7 +3424,7 @@ static int ucc_geth_open(struct net_device *dev)
 		if (netif_msg_ifup(ugeth))
 			ugeth_err("%s: Cannot configure net device, aborting.",
 				  dev->name);
-		goto out_err;
+		goto err;
 	}
 
 	/*       Set MACSTNADDR1, MACSTNADDR2                */
@@ -3475,13 +3438,51 @@ static int ucc_geth_open(struct net_device *dev)
 				   &ugeth->ug_regs->macstnaddr1,
 				   &ugeth->ug_regs->macstnaddr2);
 
-	phy_start(ugeth->phydev);
-
 	err = ugeth_enable(ugeth, COMM_DIR_RX_AND_TX);
 	if (err) {
 		if (netif_msg_ifup(ugeth))
 			ugeth_err("%s: Cannot enable net device, aborting.", dev->name);
-		goto out_err;
+		goto err;
+	}
+
+	return 0;
+err:
+	ucc_geth_stop(ugeth);
+	return err;
+}
+
+/* Called when something needs to use the ethernet device */
+/* Returns 0 for success. */
+static int ucc_geth_open(struct net_device *dev)
+{
+	struct ucc_geth_private *ugeth = netdev_priv(dev);
+	int err;
+
+	ugeth_vdbg("%s: IN", __func__);
+
+	/* Test station address */
+	if (dev->dev_addr[0] & ENET_GROUP_ADDR) {
+		if (netif_msg_ifup(ugeth))
+			ugeth_err("%s: Multicast address used for station "
+				  "address - is this what you wanted?",
+				  __func__);
+		return -EINVAL;
+	}
+
+	err = init_phy(dev);
+	if (err) {
+		if (netif_msg_ifup(ugeth))
+			ugeth_err("%s: Cannot initialize PHY, aborting.",
+				  dev->name);
+		return err;
+	}
+
+	err = ucc_geth_init_mac(ugeth);
+	if (err) {
+		if (netif_msg_ifup(ugeth))
+			ugeth_err("%s: Cannot initialize MAC, aborting.",
+				  dev->name);
+		goto err;
 	}
 
 	err = request_irq(ugeth->ug_info->uf_info.irq, ucc_geth_irq_handler,
@@ -3490,16 +3491,20 @@ static int ucc_geth_open(struct net_device *dev)
 		if (netif_msg_ifup(ugeth))
 			ugeth_err("%s: Cannot get IRQ for net device, aborting.",
 				  dev->name);
-		goto out_err;
+		goto err;
 	}
 
+	phy_start(ugeth->phydev);
+	napi_enable(&ugeth->napi);
 	netif_start_queue(dev);
+
+	device_set_wakeup_capable(&dev->dev,
+			qe_alive_during_sleep() || ugeth->phydev->irq);
+	device_set_wakeup_enable(&dev->dev, ugeth->wol_en);
 
 	return err;
 
-out_err:
-	napi_disable(&ugeth->napi);
-out_err_stop:
+err:
 	ucc_geth_stop(ugeth);
 	return err;
 }
@@ -3560,6 +3565,85 @@ static void ucc_geth_timeout(struct net_device *dev)
 	netif_carrier_off(dev);
 	schedule_work(&ugeth->timeout_work);
 }
+
+
+#ifdef CONFIG_PM
+
+static int ucc_geth_suspend(struct of_device *ofdev, pm_message_t state)
+{
+	struct net_device *ndev = dev_get_drvdata(&ofdev->dev);
+	struct ucc_geth_private *ugeth = netdev_priv(ndev);
+
+	if (!netif_running(ndev))
+		return 0;
+
+	napi_disable(&ugeth->napi);
+
+	/*
+	 * Disable the controller, otherwise we'll wakeup on any network
+	 * activity.
+	 */
+	ugeth_disable(ugeth, COMM_DIR_RX_AND_TX);
+
+	if (ugeth->wol_en & WAKE_MAGIC) {
+		setbits32(ugeth->uccf->p_uccm, UCC_GETH_UCCE_MPD);
+		setbits32(&ugeth->ug_regs->maccfg2, MACCFG2_MPE);
+		ucc_fast_enable(ugeth->uccf, COMM_DIR_RX_AND_TX);
+	} else if (!(ugeth->wol_en & WAKE_PHY)) {
+		phy_stop(ugeth->phydev);
+	}
+
+	return 0;
+}
+
+static int ucc_geth_resume(struct of_device *ofdev)
+{
+	struct net_device *ndev = dev_get_drvdata(&ofdev->dev);
+	struct ucc_geth_private *ugeth = netdev_priv(ndev);
+	int err;
+
+	if (!netif_running(ndev))
+		return 0;
+
+	if (qe_alive_during_sleep()) {
+		if (ugeth->wol_en & WAKE_MAGIC) {
+			ucc_fast_disable(ugeth->uccf, COMM_DIR_RX_AND_TX);
+			clrbits32(&ugeth->ug_regs->maccfg2, MACCFG2_MPE);
+			clrbits32(ugeth->uccf->p_uccm, UCC_GETH_UCCE_MPD);
+		}
+		ugeth_enable(ugeth, COMM_DIR_RX_AND_TX);
+	} else {
+		/*
+		 * Full reinitialization is required if QE shuts down
+		 * during sleep.
+		 */
+		ucc_geth_memclean(ugeth);
+
+		err = ucc_geth_init_mac(ugeth);
+		if (err) {
+			ugeth_err("%s: Cannot initialize MAC, aborting.",
+				  ndev->name);
+			return err;
+		}
+	}
+
+	ugeth->oldlink = 0;
+	ugeth->oldspeed = 0;
+	ugeth->oldduplex = -1;
+
+	phy_stop(ugeth->phydev);
+	phy_start(ugeth->phydev);
+
+	napi_enable(&ugeth->napi);
+	netif_start_queue(ndev);
+
+	return 0;
+}
+
+#else
+#define ucc_geth_suspend NULL
+#define ucc_geth_resume NULL
+#endif
 
 static phy_interface_t to_phy_interface(const char *phy_connection_type)
 {
@@ -3852,6 +3936,8 @@ static struct of_platform_driver ucc_geth_driver = {
 	.match_table	= ucc_geth_match,
 	.probe		= ucc_geth_probe,
 	.remove		= ucc_geth_remove,
+	.suspend	= ucc_geth_suspend,
+	.resume		= ucc_geth_resume,
 };
 
 static int __init ucc_geth_init(void)

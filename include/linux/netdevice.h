@@ -72,10 +72,6 @@ struct wireless_dev;
 /* Backlog congestion levels */
 #define NET_RX_SUCCESS		0   /* keep 'em coming, baby */
 #define NET_RX_DROP		1  /* packet dropped */
-#define NET_RX_CN_LOW		2   /* storm alert, just in case */
-#define NET_RX_CN_MOD		3   /* Storm on its way! */
-#define NET_RX_CN_HIGH		4   /* The storm is here */
-#define NET_RX_BAD		5  /* packet dropped due to kernel error */
 
 /* NET_XMIT_CN is special. It does not guarantee that this packet is lost. It
  * indicates that the device will soon be dropping packets, or already drops
@@ -705,6 +701,7 @@ struct net_device
 /* the GSO_MASK reserves bits 16 through 23 */
 #define NETIF_F_FCOE_CRC	(1 << 24) /* FCoE CRC32 */
 #define NETIF_F_SCTP_CSUM	(1 << 25) /* SCTP checksum offload */
+#define NETIF_F_FCOE_MTU	(1 << 26) /* Supports max FCoE MTU, 2158 bytes*/
 
 	/* Segmentation offload features */
 #define NETIF_F_GSO_SHIFT	16
@@ -1260,7 +1257,7 @@ static inline void netif_tx_wake_queue(struct netdev_queue *dev_queue)
 {
 #ifdef CONFIG_NETPOLL_TRAP
 	if (netpoll_trap()) {
-		clear_bit(__QUEUE_STATE_XOFF, &dev_queue->state);
+		netif_tx_start_queue(dev_queue);
 		return;
 	}
 #endif
@@ -1366,7 +1363,8 @@ static inline int netif_running(const struct net_device *dev)
 static inline void netif_start_subqueue(struct net_device *dev, u16 queue_index)
 {
 	struct netdev_queue *txq = netdev_get_tx_queue(dev, queue_index);
-	clear_bit(__QUEUE_STATE_XOFF, &txq->state);
+
+	netif_tx_start_queue(txq);
 }
 
 /**
@@ -1383,7 +1381,7 @@ static inline void netif_stop_subqueue(struct net_device *dev, u16 queue_index)
 	if (netpoll_trap())
 		return;
 #endif
-	set_bit(__QUEUE_STATE_XOFF, &txq->state);
+	netif_tx_stop_queue(txq);
 }
 
 /**
@@ -1397,7 +1395,8 @@ static inline int __netif_subqueue_stopped(const struct net_device *dev,
 					 u16 queue_index)
 {
 	struct netdev_queue *txq = netdev_get_tx_queue(dev, queue_index);
-	return test_bit(__QUEUE_STATE_XOFF, &txq->state);
+
+	return netif_tx_queue_stopped(txq);
 }
 
 static inline int netif_subqueue_stopped(const struct net_device *dev,
@@ -1749,8 +1748,7 @@ static inline void netif_tx_unlock(struct net_device *dev)
 		 * force a schedule.
 		 */
 		clear_bit(__QUEUE_STATE_FROZEN, &txq->state);
-		if (!test_bit(__QUEUE_STATE_XOFF, &txq->state))
-			__netif_schedule(txq->qdisc);
+		netif_schedule_queue(txq);
 	}
 	spin_unlock(&dev->tx_global_lock);
 }

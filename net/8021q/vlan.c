@@ -225,12 +225,6 @@ int vlan_check_real_dev(struct net_device *real_dev, u16 vlan_id)
 		return -EOPNOTSUPP;
 	}
 
-	/* The real device must be up and operating in order to
-	 * assosciate a VLAN device with it.
-	 */
-	if (!(real_dev->flags & IFF_UP))
-		return -ENETDOWN;
-
 	if (__find_vlan_dev(real_dev, vlan_id) != NULL)
 		return -EEXIST;
 
@@ -397,6 +391,9 @@ static void vlan_transfer_features(struct net_device *dev,
 	vlandev->features &= ~dev->vlan_features;
 	vlandev->features |= dev->features & dev->vlan_features;
 	vlandev->gso_max_size = dev->gso_max_size;
+#if defined(CONFIG_FCOE) || defined(CONFIG_FCOE_MODULE)
+	vlandev->fcoe_ddp_xid = dev->fcoe_ddp_xid;
+#endif
 
 	if (old_features != vlandev->features)
 		netdev_features_change(vlandev);
@@ -465,6 +462,19 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 				continue;
 
 			vlan_sync_address(dev, vlandev);
+		}
+		break;
+
+	case NETDEV_CHANGEMTU:
+		for (i = 0; i < VLAN_GROUP_ARRAY_LEN; i++) {
+			vlandev = vlan_group_get_device(grp, i);
+			if (!vlandev)
+				continue;
+
+			if (vlandev->mtu <= dev->mtu)
+				continue;
+
+			dev_set_mtu(vlandev, dev->mtu);
 		}
 		break;
 
