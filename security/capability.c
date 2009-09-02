@@ -402,6 +402,11 @@ static int cap_kernel_create_files_as(struct cred *new, struct inode *inode)
 	return 0;
 }
 
+static int cap_kernel_module_request(void)
+{
+	return 0;
+}
+
 static int cap_task_setuid(uid_t id0, uid_t id1, uid_t id2, int flags)
 {
 	return 0;
@@ -707,9 +712,25 @@ static void cap_inet_conn_established(struct sock *sk, struct sk_buff *skb)
 {
 }
 
+
+
 static void cap_req_classify_flow(const struct request_sock *req,
 				  struct flowi *fl)
 {
+}
+
+static int cap_tun_dev_create(void)
+{
+	return 0;
+}
+
+static void cap_tun_dev_post_create(struct sock *sk)
+{
+}
+
+static int cap_tun_dev_attach(struct sock *sk)
+{
+	return 0;
 }
 #endif	/* CONFIG_SECURITY_NETWORK */
 
@@ -860,7 +881,7 @@ struct security_operations default_security_ops = {
 
 void security_fixup_ops(struct security_operations *ops)
 {
-	set_to_cap_if_null(ops, ptrace_may_access);
+	set_to_cap_if_null(ops, ptrace_access_check);
 	set_to_cap_if_null(ops, ptrace_traceme);
 	set_to_cap_if_null(ops, capget);
 	set_to_cap_if_null(ops, capset);
@@ -952,6 +973,7 @@ void security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, cred_commit);
 	set_to_cap_if_null(ops, kernel_act_as);
 	set_to_cap_if_null(ops, kernel_create_files_as);
+	set_to_cap_if_null(ops, kernel_module_request);
 	set_to_cap_if_null(ops, task_setuid);
 	set_to_cap_if_null(ops, task_fix_setuid);
 	set_to_cap_if_null(ops, task_setgid);
@@ -1027,6 +1049,9 @@ void security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, inet_csk_clone);
 	set_to_cap_if_null(ops, inet_conn_established);
 	set_to_cap_if_null(ops, req_classify_flow);
+	set_to_cap_if_null(ops, tun_dev_create);
+	set_to_cap_if_null(ops, tun_dev_post_create);
+	set_to_cap_if_null(ops, tun_dev_attach);
 #endif	/* CONFIG_SECURITY_NETWORK */
 #ifdef CONFIG_SECURITY_NETWORK_XFRM
 	set_to_cap_if_null(ops, xfrm_policy_alloc_security);
