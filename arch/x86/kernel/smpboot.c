@@ -47,6 +47,7 @@
 #include <linux/bootmem.h>
 #include <linux/err.h>
 #include <linux/nmi.h>
+#include <linux/tboot.h>
 
 #include <asm/acpi.h>
 #include <asm/desc.h>
@@ -1331,6 +1332,7 @@ void play_dead_common(void)
 void native_play_dead(void)
 {
 	play_dead_common();
+	tboot_shutdown(TB_SHUTDOWN_WFS);
 	wbinvd_halt();
 }
 
