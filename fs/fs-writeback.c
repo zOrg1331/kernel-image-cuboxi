@@ -641,15 +641,6 @@ void writeback_inodes_wbc(struct writeback_control *wbc)
 	writeback_inodes_wb(&bdi->wb, wbc);
 }
 
-/*
- * The maximum number of pages to writeout in a single bdi flush/kupdate
- * operation.  We do this so we don't hold I_SYNC against an inode for
- * enormous amounts of time, which would block a userspace task which has
- * been forced to throttle against that inode.  Also, the code reevaluates
- * the dirty each time it has written this many pages.
- */
-#define MAX_WRITEBACK_PAGES     1024
-
 static inline bool over_bground_thresh(void)
 {
 	unsigned long background_thresh, dirty_thresh;
@@ -703,11 +694,11 @@ static long wb_writeback(struct bdi_writeback *wb, long nr_pages,
 
 		wbc.more_io = 0;
 		wbc.encountered_congestion = 0;
-		wbc.nr_to_write = MAX_WRITEBACK_PAGES;
+		wbc.nr_to_write = max_writeback_pages;
 		wbc.pages_skipped = 0;
 		writeback_inodes_wb(wb, &wbc);
-		nr_pages -= MAX_WRITEBACK_PAGES - wbc.nr_to_write;
-		wrote += MAX_WRITEBACK_PAGES - wbc.nr_to_write;
+		nr_pages -= max_writeback_pages - wbc.nr_to_write;
+		wrote += max_writeback_pages - wbc.nr_to_write;
 
 		/*
 		 * If we ran out of stuff to write, bail unless more_io got set
