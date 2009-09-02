@@ -111,10 +111,9 @@ static int build_constructor_string(struct dm_target *ti,
 		return -ENOMEM;
 	}
 
-	for (i = 0, str_size = 0; i < argc; i++)
-		str_size += sprintf(str + str_size, "%s ", argv[i]);
-	str_size += sprintf(str + str_size, "%llu",
-			    (unsigned long long)ti->len);
+	str_size = sprintf(str, "%llu", (unsigned long long)ti->len);
+	for (i = 0; i < argc; i++)
+		str_size += sprintf(str + str_size, " %s", argv[i]);
 
 	*ctr_str = str;
 	return str_size;
