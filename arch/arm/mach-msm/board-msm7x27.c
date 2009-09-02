@@ -52,6 +52,7 @@
 
 #include "devices.h"
 #include "socinfo.h"
+#include "clock.h"
 #include "msm-keypad-devices.h"
 #include "pm.h"
 
