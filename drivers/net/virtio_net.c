@@ -315,7 +315,7 @@ static bool try_fill_recv_maxbufs(struct virtnet_info *vi, gfp_t gfp)
 		skb_queue_head(&vi->recv, skb);
 
 		err = vi->rvq->vq_ops->add_buf(vi->rvq, sg, 0, num, skb);
-		if (err) {
+		if (err < 0) {
 			skb_unlink(skb, &vi->recv);
 			trim_pages(vi, skb);
 			kfree_skb(skb);
@@ -368,7 +368,7 @@ static bool try_fill_recv(struct virtnet_info *vi, gfp_t gfp)
 		skb_queue_head(&vi->recv, skb);
 
 		err = vi->rvq->vq_ops->add_buf(vi->rvq, sg, 0, 1, skb);
-		if (err) {
+		if (err < 0) {
 			skb_unlink(skb, &vi->recv);
 			kfree_skb(skb);
 			break;
@@ -516,7 +516,7 @@ again:
 
 	/* Put new one in send queue and do transmit */
 	__skb_queue_head(&vi->send, skb);
-	if (likely(xmit_skb(vi, skb) == 0)) {
+	if (likely(xmit_skb(vi, skb) >= 0)) {
 		vi->svq->vq_ops->kick(vi->svq);
 		/* Don't wait up for transmitted skbs to be freed. */
 		skb_orphan(skb);
@@ -613,7 +613,7 @@ static bool virtnet_send_command(struct virtnet_info *vi, u8 class, u8 cmd,
 		sg_set_buf(&sg[i + 1], sg_virt(s), s->length);
 	sg_set_buf(&sg[out + in - 1], &status, sizeof(status));
 
-	BUG_ON(vi->cvq->vq_ops->add_buf(vi->cvq, sg, out, in, vi));
+	BUG_ON(vi->cvq->vq_ops->add_buf(vi->cvq, sg, out, in, vi) < 0);
 
 	vi->cvq->vq_ops->kick(vi->cvq);
 
