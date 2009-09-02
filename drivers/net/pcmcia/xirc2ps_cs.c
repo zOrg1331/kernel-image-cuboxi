@@ -352,7 +352,8 @@ typedef struct local_info_t {
 /****************
  * Some more prototypes
  */
-static int do_start_xmit(struct sk_buff *skb, struct net_device *dev);
+static netdev_tx_t do_start_xmit(struct sk_buff *skb,
+				       struct net_device *dev);
 static void xirc_tx_timeout(struct net_device *dev);
 static void xirc2ps_tx_timeout_task(struct work_struct *work);
 static void set_addresses(struct net_device *dev);
@@ -1361,7 +1362,7 @@ xirc_tx_timeout(struct net_device *dev)
     schedule_work(&lp->tx_timeout_task);
 }
 
-static int
+static netdev_tx_t
 do_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
     local_info_t *lp = netdev_priv(dev);
@@ -1384,7 +1385,7 @@ do_start_xmit(struct sk_buff *skb, struct net_device *dev)
     if (pktlen < ETH_ZLEN)
     {
         if (skb_padto(skb, ETH_ZLEN))
-        	return 0;
+        	return NETDEV_TX_OK;
 	pktlen = ETH_ZLEN;
     }
 
@@ -1414,7 +1415,7 @@ do_start_xmit(struct sk_buff *skb, struct net_device *dev)
     dev->trans_start = jiffies;
     dev->stats.tx_bytes += pktlen;
     netif_start_queue(dev);
-    return 0;
+    return NETDEV_TX_OK;
 }
 
 /****************

@@ -802,7 +802,7 @@ static struct net_device_stats *ethoc_stats(struct net_device *dev)
 	return &priv->stats;
 }
 
-static int ethoc_start_xmit(struct sk_buff *skb, struct net_device *dev)
+static netdev_tx_t ethoc_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct ethoc *priv = netdev_priv(dev);
 	struct ethoc_bd bd;
@@ -894,7 +894,7 @@ static int ethoc_probe(struct platform_device *pdev)
 
 	mmio = devm_request_mem_region(&pdev->dev, res->start,
 			res->end - res->start + 1, res->name);
-	if (!res) {
+	if (!mmio) {
 		dev_err(&pdev->dev, "cannot request I/O memory space\n");
 		ret = -ENXIO;
 		goto free;

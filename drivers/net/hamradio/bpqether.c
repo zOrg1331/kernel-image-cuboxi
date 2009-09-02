@@ -247,7 +247,7 @@ drop:
 /*
  * 	Send an AX.25 frame via an ethernet interface
  */
-static int bpq_xmit(struct sk_buff *skb, struct net_device *dev)
+static netdev_tx_t bpq_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct sk_buff *newskb;
 	unsigned char *ptr;
@@ -305,7 +305,7 @@ static int bpq_xmit(struct sk_buff *skb, struct net_device *dev)
   
 	dev_queue_xmit(skb);
 	netif_wake_queue(dev);
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 /*
