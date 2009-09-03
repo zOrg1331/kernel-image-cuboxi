@@ -360,8 +360,12 @@ static int device_area_is_invalid(struct dm_target *ti, struct dm_dev *dev,
 		return 0;
 
 	if ((start >= dev_size) || (start + len > dev_size)) {
-		DMWARN("%s: %s too small for target",
-		       dm_device_name(ti->table->md), bdevname(bdev, b));
+		DMWARN("%s: %s too small for target: "
+		       "start=%llu, len=%llu, dev_size=%llu",
+		       dm_device_name(ti->table->md), bdevname(bdev, b),
+		       (unsigned long long)start,
+		       (unsigned long long)len,
+		       (unsigned long long)dev_size);
 		return 1;
 	}
 
@@ -496,8 +500,15 @@ int dm_set_device_limits(struct dm_target *ti, struct dm_dev *dev,
 	}
 
 	if (blk_stack_limits(limits, &q->limits, start << 9) < 0)
-		DMWARN("%s: target device %s is misaligned",
-		       dm_device_name(ti->table->md), bdevname(bdev, b));
+		DMWARN("%s: target device %s is misaligned: "
+		       "physical_block_size=%u, logical_block_size=%u, "
+		       "alignment_offset=%u, start=%llu",
+		       dm_device_name(ti->table->md), bdevname(bdev, b),
+		       q->limits.physical_block_size,
+		       q->limits.logical_block_size,
+		       q->limits.alignment_offset,
+		       (unsigned long long) start << 9);
+
 
 	/*
 	 * Check if merge fn is supported.
