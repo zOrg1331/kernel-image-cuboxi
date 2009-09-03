@@ -174,16 +174,11 @@ static void __init omap_3430sdp_init_irq(void)
 	omap_gpio_init();
 }
 
-static struct omap_uart_config sdp3430_uart_config __initdata = {
-	.enabled_uarts	= ((1 << 0) | (1 << 1) | (1 << 2)),
-};
-
 static struct omap_lcd_config sdp3430_lcd_config __initdata = {
 	.ctrl_name	= "internal",
 };
 
 static struct omap_board_config_kernel sdp3430_config[] __initdata = {
-	{ OMAP_TAG_UART,	&sdp3430_uart_config },
 	{ OMAP_TAG_LCD,		&sdp3430_lcd_config },
 };
 
@@ -478,6 +473,11 @@ static inline void board_smc91x_init(void)
 
 #endif
 
+static void enable_board_wakeup_source(void)
+{
+	omap_cfg_reg(AF26_34XX_SYS_NIRQ); /* T2 interrupt line (keypad) */
+}
+
 static void __init omap_3430sdp_init(void)
 {
 	omap3430_i2c_init();
@@ -495,6 +495,7 @@ static void __init omap_3430sdp_init(void)
 	omap_serial_init();
 	usb_musb_init();
 	board_smc91x_init();
+	enable_board_wakeup_source();
 }
 
 static void __init omap_3430sdp_map_io(void)
