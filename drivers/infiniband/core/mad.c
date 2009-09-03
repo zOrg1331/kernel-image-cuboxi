@@ -2,6 +2,7 @@
  * Copyright (c) 2004-2007 Voltaire, Inc. All rights reserved.
  * Copyright (c) 2005 Intel Corporation.  All rights reserved.
  * Copyright (c) 2005 Mellanox Technologies Ltd.  All rights reserved.
+ * Copyright (c) 2009 HNR Consulting. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -45,14 +46,21 @@ MODULE_DESCRIPTION("kernel IB MAD API");
 MODULE_AUTHOR("Hal Rosenstock");
 MODULE_AUTHOR("Sean Hefty");
 
+int mad_sendq_size = IB_MAD_QP_SEND_SIZE;
+int mad_recvq_size = IB_MAD_QP_RECV_SIZE;
+
+module_param_named(send_queue_size, mad_sendq_size, int, 0444);
+MODULE_PARM_DESC(send_queue_size, "Size of send queue in number of work requests");
+module_param_named(recv_queue_size, mad_recvq_size, int, 0444);
+MODULE_PARM_DESC(recv_queue_size, "Size of receive queue in number of work requests");
+
 static struct kmem_cache *ib_mad_cache;
 
 static struct list_head ib_mad_port_list;
 static u32 ib_mad_client_id = 0;
 
 /* Port list lock */
-static spinlock_t ib_mad_port_list_lock;
-
+static DEFINE_SPINLOCK(ib_mad_port_list_lock);
 
 /* Forward declarations */
 static int method_in_use(struct ib_mad_mgmt_method_table **method,
@@ -174,6 +182,15 @@ int ib_response_mad(struct ib_mad *mad)
 		 (mad->mad_hdr.attr_mod & IB_BM_ATTR_MOD_RESP)));
 }
 EXPORT_SYMBOL(ib_response_mad);
+
+static void timeout_callback(unsigned long data)
+{
+	struct ib_mad_agent_private *mad_agent_priv =
+		(struct ib_mad_agent_private *) data;
+
+	queue_work(mad_agent_priv->qp_info->port_priv->wq,
+		   &mad_agent_priv->timeout_work);
+}
 
 /*
  * ib_register_mad_agent - Register to send/receive MADs
@@ -306,7 +323,9 @@ struct ib_mad_agent *ib_register_mad_agent(struct ib_device *device,
 	INIT_LIST_HEAD(&mad_agent_priv->wait_list);
 	INIT_LIST_HEAD(&mad_agent_priv->done_list);
 	INIT_LIST_HEAD(&mad_agent_priv->rmpp_list);
-	INIT_DELAYED_WORK(&mad_agent_priv->timed_work, timeout_sends);
+	INIT_WORK(&mad_agent_priv->timeout_work, timeout_sends);
+	setup_timer(&mad_agent_priv->timeout_timer, timeout_callback,
+		    (unsigned long) mad_agent_priv);
 	INIT_LIST_HEAD(&mad_agent_priv->local_list);
 	INIT_WORK(&mad_agent_priv->local_work, local_completions);
 	atomic_set(&mad_agent_priv->refcount, 1);
@@ -513,7 +532,8 @@ static void unregister_mad_agent(struct ib_mad_agent_private *mad_agent_priv)
 	 */
 	cancel_mads(mad_agent_priv);
 	port_priv = mad_agent_priv->qp_info->port_priv;
-	cancel_delayed_work(&mad_agent_priv->timed_work);
+	del_timer_sync(&mad_agent_priv->timeout_timer);
+	cancel_work_sync(&mad_agent_priv->timeout_work);
 
 	spin_lock_irqsave(&port_priv->reg_lock, flags);
 	remove_mad_reg_req(mad_agent_priv);
@@ -1971,10 +1991,9 @@ out:
 static void adjust_timeout(struct ib_mad_agent_private *mad_agent_priv)
 {
 	struct ib_mad_send_wr_private *mad_send_wr;
-	unsigned long delay;
 
 	if (list_empty(&mad_agent_priv->wait_list)) {
-		cancel_delayed_work(&mad_agent_priv->timed_work);
+		del_timer(&mad_agent_priv->timeout_timer);
 	} else {
 		mad_send_wr = list_entry(mad_agent_priv->wait_list.next,
 					 struct ib_mad_send_wr_private,
@@ -1983,13 +2002,8 @@ static void adjust_timeout(struct ib_mad_agent_private *mad_agent_priv)
 		if (time_after(mad_agent_priv->timeout,
 			       mad_send_wr->timeout)) {
 			mad_agent_priv->timeout = mad_send_wr->timeout;
-			cancel_delayed_work(&mad_agent_priv->timed_work);
-			delay = mad_send_wr->timeout - jiffies;
-			if ((long)delay <= 0)
-				delay = 1;
-			queue_delayed_work(mad_agent_priv->qp_info->
-					   port_priv->wq,
-					   &mad_agent_priv->timed_work, delay);
+			mod_timer(&mad_agent_priv->timeout_timer,
+				  mad_send_wr->timeout);
 		}
 	}
 }
@@ -2016,17 +2030,14 @@ static void wait_for_response(struct ib_mad_send_wr_private *mad_send_wr)
 				       temp_mad_send_wr->timeout))
 				break;
 		}
-	}
-	else
+	} else
 		list_item = &mad_agent_priv->wait_list;
 	list_add(&mad_send_wr->agent_list, list_item);
 
 	/* Reschedule a work item if we have a shorter timeout */
-	if (mad_agent_priv->wait_list.next == &mad_send_wr->agent_list) {
-		cancel_delayed_work(&mad_agent_priv->timed_work);
-		queue_delayed_work(mad_agent_priv->qp_info->port_priv->wq,
-				   &mad_agent_priv->timed_work, delay);
-	}
+	if (mad_agent_priv->wait_list.next == &mad_send_wr->agent_list)
+		mod_timer(&mad_agent_priv->timeout_timer,
+			  mad_send_wr->timeout);
 }
 
 void ib_reset_mad_timeout(struct ib_mad_send_wr_private *mad_send_wr,
@@ -2470,10 +2481,10 @@ static void timeout_sends(struct work_struct *work)
 	struct ib_mad_agent_private *mad_agent_priv;
 	struct ib_mad_send_wr_private *mad_send_wr;
 	struct ib_mad_send_wc mad_send_wc;
-	unsigned long flags, delay;
+	unsigned long flags;
 
 	mad_agent_priv = container_of(work, struct ib_mad_agent_private,
-				      timed_work.work);
+				      timeout_work);
 	mad_send_wc.vendor_err = 0;
 
 	spin_lock_irqsave(&mad_agent_priv->lock, flags);
@@ -2483,12 +2494,8 @@ static void timeout_sends(struct work_struct *work)
 					 agent_list);
 
 		if (time_after(mad_send_wr->timeout, jiffies)) {
-			delay = mad_send_wr->timeout - jiffies;
-			if ((long)delay <= 0)
-				delay = 1;
-			queue_delayed_work(mad_agent_priv->qp_info->
-					   port_priv->wq,
-					   &mad_agent_priv->timed_work, delay);
+			mod_timer(&mad_agent_priv->timeout_timer,
+				  mad_send_wr->timeout);
 			break;
 		}
 
@@ -2736,8 +2743,8 @@ static int create_mad_qp(struct ib_mad_qp_info *qp_info,
 	qp_init_attr.send_cq = qp_info->port_priv->cq;
 	qp_init_attr.recv_cq = qp_info->port_priv->cq;
 	qp_init_attr.sq_sig_type = IB_SIGNAL_ALL_WR;
-	qp_init_attr.cap.max_send_wr = IB_MAD_QP_SEND_SIZE;
-	qp_init_attr.cap.max_recv_wr = IB_MAD_QP_RECV_SIZE;
+	qp_init_attr.cap.max_send_wr = mad_sendq_size;
+	qp_init_attr.cap.max_recv_wr = mad_recvq_size;
 	qp_init_attr.cap.max_send_sge = IB_MAD_SEND_REQ_MAX_SG;
 	qp_init_attr.cap.max_recv_sge = IB_MAD_RECV_REQ_MAX_SG;
 	qp_init_attr.qp_type = qp_type;
@@ -2752,8 +2759,8 @@ static int create_mad_qp(struct ib_mad_qp_info *qp_info,
 		goto error;
 	}
 	/* Use minimum queue sizes unless the CQ is resized */
-	qp_info->send_queue.max_active = IB_MAD_QP_SEND_SIZE;
-	qp_info->recv_queue.max_active = IB_MAD_QP_RECV_SIZE;
+	qp_info->send_queue.max_active = mad_sendq_size;
+	qp_info->recv_queue.max_active = mad_recvq_size;
 	return 0;
 
 error:
@@ -2792,7 +2799,7 @@ static int ib_mad_port_open(struct ib_device *device,
 	init_mad_qp(port_priv, &port_priv->qp_info[0]);
 	init_mad_qp(port_priv, &port_priv->qp_info[1]);
 
-	cq_size = (IB_MAD_QP_SEND_SIZE + IB_MAD_QP_RECV_SIZE) * 2;
+	cq_size = (mad_sendq_size + mad_recvq_size) * 2;
 	port_priv->cq = ib_create_cq(port_priv->device,
 				     ib_mad_thread_completion_handler,
 				     NULL, port_priv, cq_size, 0);
@@ -2984,7 +2991,11 @@ static int __init ib_mad_init_module(void)
 {
 	int ret;
 
-	spin_lock_init(&ib_mad_port_list_lock);
+	mad_recvq_size = min(mad_recvq_size, IB_MAD_QP_MAX_SIZE);
+	mad_recvq_size = max(mad_recvq_size, IB_MAD_QP_MIN_SIZE);
+
+	mad_sendq_size = min(mad_sendq_size, IB_MAD_QP_MAX_SIZE);
+	mad_sendq_size = max(mad_sendq_size, IB_MAD_QP_MIN_SIZE);
 
 	ib_mad_cache = kmem_cache_create("ib_mad",
 					 sizeof(struct ib_mad_private),
@@ -3021,4 +3032,3 @@ static void __exit ib_mad_cleanup_module(void)
 
 module_init(ib_mad_init_module);
 module_exit(ib_mad_cleanup_module);
-
