@@ -829,9 +829,6 @@ __cpuinit int unsynchronized_tsc(void)
 
 	if (boot_cpu_has(X86_FEATURE_CONSTANT_TSC))
 		return 0;
-
-	if (tsc_clocksource_reliable)
-		return 0;
 	/*
 	 * Intel systems are normally all synchronized.
 	 * Exceptions must mark TSC as unstable:
@@ -839,10 +836,10 @@ __cpuinit int unsynchronized_tsc(void)
 	if (boot_cpu_data.x86_vendor != X86_VENDOR_INTEL) {
 		/* assume multi socket systems are not synchronized: */
 		if (num_possible_cpus() > 1)
-			return 1;
+			tsc_unstable = 1;
 	}
 
-	return 0;
+	return tsc_unstable;
 }
 
 static void __init init_tsc_clocksource(void)
