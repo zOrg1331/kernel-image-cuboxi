@@ -124,9 +124,9 @@ int register_security(struct security_operations *ops)
 
 /* Security operations */
 
-int security_ptrace_may_access(struct task_struct *child, unsigned int mode)
+int security_ptrace_access_check(struct task_struct *child, unsigned int mode)
 {
-	return security_ops->ptrace_may_access(child, mode);
+	return security_ops->ptrace_access_check(child, mode);
 }
 
 int security_ptrace_traceme(struct task_struct *parent)
@@ -717,6 +717,11 @@ int security_kernel_create_files_as(struct cred *new, struct inode *inode)
 	return security_ops->kernel_create_files_as(new, inode);
 }
 
+int security_kernel_module_request(void)
+{
+	return security_ops->kernel_module_request();
+}
+
 int security_task_setuid(uid_t id0, uid_t id1, uid_t id2, int flags)
 {
 	return security_ops->task_setuid(id0, id1, id2, flags);
@@ -1119,6 +1124,24 @@ void security_inet_conn_established(struct sock *sk,
 {
 	security_ops->inet_conn_established(sk, skb);
 }
+
+int security_tun_dev_create(void)
+{
+	return security_ops->tun_dev_create();
+}
+EXPORT_SYMBOL(security_tun_dev_create);
+
+void security_tun_dev_post_create(struct sock *sk)
+{
+	return security_ops->tun_dev_post_create(sk);
+}
+EXPORT_SYMBOL(security_tun_dev_post_create);
+
+int security_tun_dev_attach(struct sock *sk)
+{
+	return security_ops->tun_dev_attach(sk);
+}
+EXPORT_SYMBOL(security_tun_dev_attach);
 
 #endif	/* CONFIG_SECURITY_NETWORK */
 
