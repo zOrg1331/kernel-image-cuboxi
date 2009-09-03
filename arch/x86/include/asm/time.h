@@ -54,10 +54,7 @@ extern void time_init(void);
 
 #define get_wallclock() native_get_wallclock()
 #define set_wallclock(x) native_set_wallclock(x)
-#define choose_time_init() hpet_time_init
 
 #endif /* CONFIG_PARAVIRT */
-
-extern unsigned long __init calibrate_cpu(void);
 
 #endif /* _ASM_X86_TIME_H */
