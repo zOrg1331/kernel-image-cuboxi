@@ -138,7 +138,7 @@ static int uninorth_configure(void)
 	if (is_u3) {
 		pci_write_config_dword(agp_bridge->dev,
 				       UNI_N_CFG_GART_DUMMY_PAGE,
-				       agp_bridge->scratch_page_real >> 12);
+				       page_to_phys(agp_bridge->scratch_page_page) >> 12);
 	}
 
 	return 0;
@@ -445,7 +445,7 @@ static int uninorth_create_gatt_table(struct agp_bridge_data *bridge)
 	if (bridge->gatt_table == NULL)
 		goto enomem;
 
-	bridge->gatt_bus_addr = virt_to_gart(table);
+	bridge->gatt_bus_addr = virt_to_phys(table);
 
 	for (i = 0; i < num_entries; i++)
 		bridge->gatt_table[i] = 0;
