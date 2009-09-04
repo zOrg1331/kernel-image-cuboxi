@@ -104,6 +104,7 @@ extern int vm_dirty_ratio;
 extern unsigned long vm_dirty_bytes;
 extern unsigned int dirty_writeback_interval;
 extern unsigned int dirty_expire_interval;
+extern unsigned int max_writeback_mb;
 extern int vm_highmem_is_dirtyable;
 extern int block_dump;
 extern int laptop_mode;
