@@ -598,9 +598,54 @@ skip_rio:
 		break;
 
 	case MBA_PORT_UPDATE:		/* Port database update */
-		/* Only handle SCNs for our Vport index. */
-		if (vha->vp_idx && vha->vp_idx != (mb[3] & 0xff))
+		/*
+		 * Handle only global and vn-port update events
+		 *
+		 * Relevant inputs:
+		 * mb[1] = N_Port handle of changed port
+		 * OR 0xffff for global event
+		 * mb[2] = New login state
+		 * 7 = Port logged out
+		 * mb[3] = LSB is vp_idx, 0xff = all vps
+		 *
+		 * Skip processing if:
+		 *       Event is global, vp_idx is NOT all vps,
+		 *           vp_idx does not match
+		 *       Event is not global, vp_idx does not match
+		 */
+		if ((mb[1] == 0xffff && (mb[3] & 0xff) != 0xff)
+			|| (mb[1] != 0xffff)) {
+			if (vha->vp_idx != (mb[3] & 0xff))
+				break;
+		}
+
+		/* Global event -- port logout or port unavailable. */
+		if (mb[1] == 0xffff && mb[2] == 0x7) {
+			DEBUG2(printk("scsi(%ld): Asynchronous PORT UPDATE.\n",
+			    vha->host_no));
+			DEBUG(printk(KERN_INFO
+			    "scsi(%ld): Port unavailable %04x %04x %04x.\n",
+			    vha->host_no, mb[1], mb[2], mb[3]));
+
+			if (atomic_read(&vha->loop_state) != LOOP_DOWN) {
+				atomic_set(&vha->loop_state, LOOP_DOWN);
+				atomic_set(&vha->loop_down_timer,
+				    LOOP_DOWN_TIME);
+				vha->device_flags |= DFLG_NO_CABLE;
+				qla2x00_mark_all_devices_lost(vha, 1);
+			}
+
+			if (vha->vp_idx) {
+				atomic_set(&vha->vp_state, VP_FAILED);
+				fc_vport_set_state(vha->fc_vport,
+				    FC_VPORT_FAILED);
+				qla2x00_mark_all_devices_lost(vha, 1);
+			}
+
+			vha->flags.management_server_logged_in = 0;
+			ha->link_data_rate = PORT_SPEED_UNKNOWN;
 			break;
+		}
 
 		/*
 		 * If PORT UPDATE is global (received LIP_OCCURRED/LIP_RESET
@@ -640,7 +685,7 @@ skip_rio:
 		if (vha->vp_idx && test_bit(VP_SCR_NEEDED, &vha->vp_flags))
 			break;
 		/* Only handle SCNs for our Vport index. */
-		if (vha->vp_idx && vha->vp_idx != (mb[3] & 0xff))
+		if (vha->vp_idx != (mb[3] & 0xff))
 			break;
 		DEBUG2(printk("scsi(%ld): Asynchronous RSCR UPDATE.\n",
 		    vha->host_no));
@@ -1223,6 +1268,7 @@ qla2x00_status_entry(scsi_qla_host_t *vha, struct rsp_que *rsp, void *pkt)
 					cp->device->id, cp->device->lun, resid,
 					scsi_bufflen(cp)));
 
+				scsi_set_resid(cp, resid);
 				cp->result = DID_ERROR << 16;
 				break;
 			}
@@ -1723,8 +1769,10 @@ qla24xx_msix_rsp_q(int irq, void *dev_id)
 
 	vha = qla25xx_get_host(rsp);
 	qla24xx_process_response_queue(vha, rsp);
-	WRT_REG_DWORD(&reg->hccr, HCCRX_CLR_RISC_INT);
-
+	if (!ha->mqenable) {
+		WRT_REG_DWORD(&reg->hccr, HCCRX_CLR_RISC_INT);
+		RD_REG_DWORD_RELAXED(&reg->hccr);
+	}
 	spin_unlock_irq(&ha->hardware_lock);
 
 	return IRQ_HANDLED;
