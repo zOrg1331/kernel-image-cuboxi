@@ -85,10 +85,10 @@ index b8186ba..42208d8 100644
  int devcgroup_inode_mknod(int mode, dev_t dev)
  {
 diff --git a/security/integrity/ima/ima_main.c b/security/integrity/ima/ima_main.c
-index 101c512..728d845 100644
+index 4732f5e..6fa13dd 100644
 --- a/security/integrity/ima/ima_main.c
 +++ b/security/integrity/ima/ima_main.c
-@@ -316,6 +316,7 @@ int ima_file_mmap(struct file *file, unsigned long prot)
+@@ -320,6 +320,7 @@ int ima_file_mmap(struct file *file, unsigned long prot)
  					 MAY_EXEC, FILE_MMAP);
  	return 0;
  }

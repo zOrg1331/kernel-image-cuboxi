@@ -1,3 +1,14 @@
+commit 7cf27c90e2456dda961db85054697586734efb6c
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Aug 31 15:23:58 2009 +0900
+
+    aufs: bugfix, test cookie->bindex
+    
+    compare cookie->bindex with au_fbstart() and stop accessing lower than
+    fi_bstart.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit b8af5b600e309398c3db3a0896672c0a380d7b18
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Sun Aug 30 00:58:56 2009 +0900
