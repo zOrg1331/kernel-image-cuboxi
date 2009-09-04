@@ -79,6 +79,8 @@ void __utrace_engine_release(struct kref *kref)
 	struct utrace_engine *engine = container_of(kref, struct utrace_engine,
 						    kref);
 	BUG_ON(!list_empty(&engine->entry));
+	if (engine->release)
+		(*engine->release)(engine->data);
 	kmem_cache_free(utrace_engine_cachep, engine);
 }
 EXPORT_SYMBOL_GPL(__utrace_engine_release);
@@ -263,6 +265,7 @@ struct utrace_engine *utrace_attach_task(
 	engine->flags = 0;
 	engine->ops = ops;
 	engine->data = data;
+	engine->release = ops->release;
 
 	ret = utrace_attach_delay(target);
 	if (likely(!ret))
