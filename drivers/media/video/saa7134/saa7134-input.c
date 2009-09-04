@@ -415,6 +415,7 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 	case SAA7134_BOARD_FLYVIDEO3000:
 	case SAA7134_BOARD_FLYTVPLATINUM_FM:
 	case SAA7134_BOARD_FLYTVPLATINUM_MINI2:
+	case SAA7134_BOARD_ROVERMEDIA_LINK_PRO_FM:
 		ir_codes     = ir_codes_flyvideo;
 		mask_keycode = 0xEC00000;
 		mask_keydown = 0x0040000;
@@ -445,6 +446,7 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 	case SAA7134_BOARD_AVERMEDIA_305:
 	case SAA7134_BOARD_AVERMEDIA_307:
 	case SAA7134_BOARD_AVERMEDIA_STUDIO_305:
+	case SAA7134_BOARD_AVERMEDIA_STUDIO_505:
 	case SAA7134_BOARD_AVERMEDIA_STUDIO_307:
 	case SAA7134_BOARD_AVERMEDIA_STUDIO_507:
 	case SAA7134_BOARD_AVERMEDIA_STUDIO_507UA:
@@ -564,7 +566,7 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 		break;
 	case SAA7134_BOARD_ASUSTeK_P7131_DUAL:
 	case SAA7134_BOARD_ASUSTeK_P7131_HYBRID_LNA:
-       case SAA7134_BOARD_ASUSTeK_P7131_ANALOG:
+	case SAA7134_BOARD_ASUSTeK_P7131_ANALOG:
 		ir_codes     = ir_codes_asus_pc39;
 		mask_keydown = 0x0040000;
 		rc5_gpio = 1;
@@ -604,6 +606,11 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 		ir_codes     = ir_codes_kworld_plus_tv_analog;
 		mask_keycode = 0x7f;
 		polling = 40; /* ms */
+		break;
+	case SAA7134_BOARD_VIDEOMATE_S350:
+		ir_codes     = ir_codes_videomate_s350;
+		mask_keycode = 0x003f00;
+		mask_keydown = 0x040000;
 		break;
 	}
 	if (NULL == ir_codes) {
@@ -716,9 +723,11 @@ void saa7134_probe_i2c_ir(struct saa7134_dev *dev)
 		if (pinnacle_remote == 0) {
 			init_data.get_key = get_key_pinnacle_color;
 			init_data.ir_codes = ir_codes_pinnacle_color;
+			info.addr = 0x47;
 		} else {
 			init_data.get_key = get_key_pinnacle_grey;
 			init_data.ir_codes = ir_codes_pinnacle_grey;
+			info.addr = 0x47;
 		}
 		break;
 	case SAA7134_BOARD_UPMOST_PURPLE_TV:
@@ -757,6 +766,7 @@ void saa7134_probe_i2c_ir(struct saa7134_dev *dev)
 	case SAA7134_BOARD_BEHOLD_M63:
 	case SAA7134_BOARD_BEHOLD_M6_EXTRA:
 	case SAA7134_BOARD_BEHOLD_H6:
+	case SAA7134_BOARD_BEHOLD_X7:
 		init_data.name = "BeholdTV";
 		init_data.get_key = get_key_beholdm6xx;
 		init_data.ir_codes = ir_codes_behold;
