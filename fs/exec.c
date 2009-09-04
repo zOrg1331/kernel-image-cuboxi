@@ -678,8 +678,8 @@ exit:
 }
 EXPORT_SYMBOL(open_exec);
 
-int kernel_read(struct file *file, unsigned long offset,
-	char *addr, unsigned long count)
+int kernel_read(struct file *file, loff_t offset,
+		char *addr, unsigned long count)
 {
 	mm_segment_t old_fs;
 	loff_t pos = offset;
@@ -1277,8 +1277,8 @@ int do_execve(char * filename,
 	if (!bprm)
 		goto out_files;
 
-	retval = mutex_lock_interruptible(&current->cred_guard_mutex);
-	if (retval < 0)
+	retval = -ERESTARTNOINTR;
+	if (mutex_lock_interruptible(&current->cred_guard_mutex))
 		goto out_free;
 	current->in_execve = 1;
 

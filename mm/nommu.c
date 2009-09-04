@@ -69,9 +69,6 @@ int sysctl_max_map_count = DEFAULT_MAX_MAP_COUNT;
 int sysctl_nr_trim_pages = CONFIG_NOMMU_INITIAL_TRIM_EXCESS;
 int heap_stack_gap = 0;
 
-/* amount of vm to protect from userspace access */
-unsigned long mmap_min_addr = CONFIG_DEFAULT_MMAP_MIN_ADDR;
-
 atomic_long_t mmap_pages_allocated;
 
 EXPORT_SYMBOL(mem_map);
@@ -237,6 +234,27 @@ int get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 	return __get_user_pages(tsk, mm, start, nr_pages, flags, pages, vmas);
 }
 EXPORT_SYMBOL(get_user_pages);
+
+/**
+ * follow_pfn - look up PFN at a user virtual address
+ * @vma: memory mapping
+ * @address: user virtual address
+ * @pfn: location to store found PFN
+ *
+ * Only IO mappings and raw PFN mappings are allowed.
+ *
+ * Returns zero and the pfn at @pfn on success, -ve otherwise.
+ */
+int follow_pfn(struct vm_area_struct *vma, unsigned long address,
+	unsigned long *pfn)
+{
+	if (!(vma->vm_flags & (VM_IO | VM_PFNMAP)))
+		return -EINVAL;
+
+	*pfn = address >> PAGE_SHIFT;
+	return 0;
+}
+EXPORT_SYMBOL(follow_pfn);
 
 DEFINE_RWLOCK(vmlist_lock);
 struct vm_struct *vmlist;
@@ -900,6 +918,10 @@ static int validate_mmap_request(struct file *file,
 			capabilities &= ~BDI_CAP_MAP_DIRECT;
 		if (!file->f_op->read)
 			capabilities &= ~BDI_CAP_MAP_COPY;
+
+		/* The file shall have been opened with read permission. */
+		if (!(file->f_mode & FMODE_READ))
+			return -EACCES;
 
 		if (flags & MAP_SHARED) {
 			/* do checks for writing, appending and locking */
