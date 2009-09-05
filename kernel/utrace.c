@@ -69,6 +69,7 @@ module_init(utrace_init);
 static void splice_attaching(struct utrace *utrace)
 {
 	list_splice_tail_init(&utrace->attaching, &utrace->attached);
+	utrace->slow_path = 0;
 }
 
 /*
@@ -153,32 +154,19 @@ static int utrace_add_engine(struct task_struct *target,
 	} else {
 		/*
 		 * Put the new engine on the pending ->attaching list.
-		 * Make sure it gets onto the ->attached list by the next
-		 * time it's examined.
+		 * Make sure it gets onto the ->attached list by the
+		 * next time it's examined.  Setting ->slow_path ensures
+		 * that start_report() takes the lock and splices the
+		 * lists before the next new reporting pass.
 		 *
 		 * When target == current, it would be safe just to call
 		 * splice_attaching() right here.  But if we're inside a
 		 * callback, that would mean the new engine also gets
 		 * notified about the event that precipitated its own
 		 * creation.  This is not what the user wants.
-		 *
-		 * Setting ->report ensures that start_report() takes the
-		 * lock and does it next time.  Whenever setting ->report,
-		 * we must maintain the invariant that TIF_NOTIFY_RESUME is
-		 * also set.  Otherwise utrace_control() or utrace_do_stop()
-		 * might skip setting TIF_NOTIFY_RESUME upon seeing ->report
-		 * already set, and we'd miss a necessary callback.
-		 *
-		 * In case we had no engines before, make sure that
-		 * utrace_flags is not zero when tracehook_notify_resume()
-		 * checks.  That would bypass utrace reporting clearing
-		 * TIF_NOTIFY_RESUME, and thus violate the same invariant.
 		 */
-		target->utrace_flags |= UTRACE_EVENT(REAP);
 		list_add_tail(&engine->entry, &utrace->attaching);
-		utrace->report = 1;
-		set_notify_resume(target);
-
+		utrace->slow_path = 1;
 		ret = 0;
 	}
 
@@ -672,7 +660,7 @@ static bool utrace_do_stop(struct task_struct *target, struct utrace *utrace)
 		}
 		spin_unlock_irq(&target->sighand->siglock);
 	} else if (!utrace->report && !utrace->interrupt) {
-		utrace->report = 1;
+		utrace->report = utrace->slow_path = 1;
 		set_notify_resume(target);
 	}
 
@@ -801,7 +789,7 @@ relock:
 		/*
 		 * Ensure a reporting pass when we're resumed.
 		 */
-		utrace->report = 1;
+		utrace->report = utrace->slow_path = 1;
 		set_thread_flag(TIF_NOTIFY_RESUME);
 	}
 
@@ -1124,7 +1112,7 @@ int utrace_control(struct task_struct *target,
 		 */
 		clear_engine_wants_stop(engine);
 		if (!utrace->report && !utrace->interrupt) {
-			utrace->report = 1;
+			utrace->report = utrace->slow_path = 1;
 			set_notify_resume(target);
 		}
 		break;
@@ -1294,14 +1282,17 @@ struct utrace_report {
 
 /*
  * We are now making the report, so clear the flag saying we need one.
+ * When ->report is set, ->slow_path is always set too.  When there is a
+ * new attach, ->slow_path is set even without ->report, just so we will
+ * know to do splice_attaching() here before the callback loop.
  */
 static void start_report(struct utrace *utrace)
 {
 	BUG_ON(utrace->stopped);
-	if (utrace->report) {
+	if (utrace->slow_path) {
 		spin_lock(&utrace->lock);
-		utrace->report = 0;
 		splice_attaching(utrace);
+		utrace->report = 0;
 		spin_unlock(&utrace->lock);
 	}
 }
@@ -1335,7 +1326,7 @@ static void finish_report(struct utrace_report *report,
 			utrace->interrupt = 1;
 			set_tsk_thread_flag(task, TIF_SIGPENDING);
 		} else {
-			utrace->report = 1;
+			utrace->report = utrace->slow_path = 1;
 			set_tsk_thread_flag(task, TIF_NOTIFY_RESUME);
 		}
 		spin_unlock(&utrace->lock);
@@ -1714,6 +1705,7 @@ void utrace_report_death(struct task_struct *task, struct utrace *utrace,
 	utrace->death = 1;
 	utrace->report = 0;
 	utrace->interrupt = 0;
+	splice_attaching(utrace);
 	spin_unlock(&utrace->lock);
 
 	REPORT_CALLBACKS(, task, utrace, &report, UTRACE_EVENT(DEATH),
@@ -1835,12 +1827,18 @@ void utrace_resume(struct task_struct *task, struct pt_regs *regs)
 	}
 
 	/*
-	 * Do a simple reporting pass, with no callback after report_quiesce.
+	 * Update our bookkeeping even if there are no callbacks made here.
 	 */
 	start_report(utrace);
 
-	list_for_each_entry(engine, &utrace->attached, entry)
-		start_callback(utrace, &report, engine, task, 0);
+	if (likely(task->utrace_flags & UTRACE_EVENT(QUIESCE))) {
+		/*
+		 * Do a simple reporting pass, with no specific
+		 * callback after report_quiesce.
+		 */
+		list_for_each_entry(engine, &utrace->attached, entry)
+			start_callback(utrace, &report, engine, task, 0);
+	}
 
 	/*
 	 * Finish the report and either stop or get ready to resume.
