@@ -223,8 +223,7 @@ static int serial_open (struct tty_struct *tty, struct file *filp)
 	tty->driver_data = port;
 	tty_port_tty_set(&port->port, tty);
 
-	/* If the console is attached, the device is already open */
-	if (port->port.count == 1 && !port->console) {
+	if (port->port.count == 1) {
 		first = 1;
 		/* lock this module before we call it
 		 * this may fail, which means we must bail out,
@@ -242,11 +241,15 @@ static int serial_open (struct tty_struct *tty, struct file *filp)
 		if (retval)
 			goto bailout_module_put;
 
-		/* only call the device specific open if this
-		 * is the first time the port is opened */
-		retval = serial->type->open(tty, port, filp);
-		if (retval)
-			goto bailout_interface_put;
+		/* only call the device specific open if this is the
+		 * first time the port is opened and it is not a
+		 * console port where the HW has already been
+		 * initialized */
+		if (!port->console) {
+			retval = serial->type->open(tty, port, filp);
+			if (retval)
+				goto bailout_interface_put;
+		}
 		mutex_unlock(&serial->disc_mutex);
 		set_bit(ASYNCB_INITIALIZED, &port->port.flags);
 	}
