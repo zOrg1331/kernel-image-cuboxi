@@ -33,8 +33,8 @@ TRACE_EVENT(ext4_free_inode,
 	),
 
 	TP_printk("dev %s ino %lu mode %d uid %u gid %u blocks %llu",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino, __entry->mode,
-		  __entry->uid, __entry->gid,
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->ino,
+		  __entry->mode, __entry->uid, __entry->gid,
 		  (unsigned long long) __entry->blocks)
 );
 
@@ -56,7 +56,8 @@ TRACE_EVENT(ext4_request_inode,
 	),
 
 	TP_printk("dev %s dir %lu mode %d",
-		  jbd2_dev_to_name(__entry->dev), __entry->dir, __entry->mode)
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->dir,
+		  __entry->mode)
 );
 
 TRACE_EVENT(ext4_allocate_inode,
@@ -79,7 +80,8 @@ TRACE_EVENT(ext4_allocate_inode,
 	),
 
 	TP_printk("dev %s ino %lu dir %lu mode %d",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino, __entry->dir, __entry->mode)
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->ino,
+		  (unsigned long) __entry->dir, __entry->mode)
 );
 
 TRACE_EVENT(ext4_write_begin,
@@ -106,8 +108,8 @@ TRACE_EVENT(ext4_write_begin,
 	),
 
 	TP_printk("dev %s ino %lu pos %llu len %u flags %u",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino, __entry->pos, __entry->len,
-		  __entry->flags)
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->ino,
+		  __entry->pos, __entry->len, __entry->flags)
 );
 
 TRACE_EVENT(ext4_ordered_write_end,
@@ -133,8 +135,8 @@ TRACE_EVENT(ext4_ordered_write_end,
 	),
 
 	TP_printk("dev %s ino %lu pos %llu len %u copied %u",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino, __entry->pos, __entry->len,
-		  __entry->copied)
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->ino,
+		  __entry->pos, __entry->len, __entry->copied)
 );
 
 TRACE_EVENT(ext4_writeback_write_end,
@@ -160,8 +162,8 @@ TRACE_EVENT(ext4_writeback_write_end,
 	),
 
 	TP_printk("dev %s ino %lu pos %llu len %u copied %u",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino, __entry->pos, __entry->len,
-		  __entry->copied)
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->ino,
+		  __entry->pos, __entry->len, __entry->copied)
 );
 
 TRACE_EVENT(ext4_journalled_write_end,
@@ -186,8 +188,8 @@ TRACE_EVENT(ext4_journalled_write_end,
 	),
 
 	TP_printk("dev %s ino %lu pos %llu len %u copied %u",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino, __entry->pos, __entry->len,
-		  __entry->copied)
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->ino,
+		  __entry->pos, __entry->len, __entry->copied)
 );
 
 TRACE_EVENT(ext4_writepage,
@@ -209,7 +211,8 @@ TRACE_EVENT(ext4_writepage,
 	),
 
 	TP_printk("dev %s ino %lu page_index %lu",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino, __entry->index)
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->ino,
+		  __entry->index)
 );
 
 TRACE_EVENT(ext4_da_writepages,
@@ -246,7 +249,8 @@ TRACE_EVENT(ext4_da_writepages,
 	),
 
 	TP_printk("dev %s ino %lu nr_to_write %ld pages_skipped %ld range_start %llu range_end %llu nonblocking %d for_kupdate %d for_reclaim %d for_writepages %d range_cyclic %d",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino, __entry->nr_to_write,
+		  jbd2_dev_to_name(__entry->dev),
+		  (unsigned long) __entry->ino, __entry->nr_to_write,
 		  __entry->pages_skipped, __entry->range_start,
 		  __entry->range_end, __entry->nonblocking,
 		  __entry->for_kupdate, __entry->for_reclaim,
@@ -281,7 +285,7 @@ TRACE_EVENT(ext4_da_write_pages,
 	),
 
 	TP_printk("dev %s ino %lu b_blocknr %llu b_size %u b_state 0x%04x first_page %lu io_done %d pages_written %d",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino,
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->ino,
 		  __entry->b_blocknr, __entry->b_size,
 		  __entry->b_state, __entry->first_page,
 		  __entry->io_done, __entry->pages_written)
@@ -316,7 +320,8 @@ TRACE_EVENT(ext4_da_writepages_result,
 	),
 
 	TP_printk("dev %s ino %lu ret %d pages_written %d pages_skipped %ld congestion %d more_io %d no_nrwrite_index_update %d",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino, __entry->ret,
+		  jbd2_dev_to_name(__entry->dev),
+		  (unsigned long) __entry->ino, __entry->ret,
 		  __entry->pages_written, __entry->pages_skipped,
 		  __entry->encountered_congestion, __entry->more_io,
 		  __entry->no_nrwrite_index_update)
@@ -345,8 +350,8 @@ TRACE_EVENT(ext4_da_write_begin,
 	),
 
 	TP_printk("dev %s ino %lu pos %llu len %u flags %u",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino, __entry->pos, __entry->len,
-		  __entry->flags)
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->ino,
+		  __entry->pos, __entry->len, __entry->flags)
 );
 
 TRACE_EVENT(ext4_da_write_end,
@@ -372,8 +377,8 @@ TRACE_EVENT(ext4_da_write_end,
 	),
 
 	TP_printk("dev %s ino %lu pos %llu len %u copied %u",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino, __entry->pos, __entry->len,
-		  __entry->copied)
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->ino,
+		  __entry->pos, __entry->len, __entry->copied)
 );
 
 TRACE_EVENT(ext4_discard_blocks,
@@ -423,8 +428,8 @@ TRACE_EVENT(ext4_mb_new_inode_pa,
 	),
 
 	TP_printk("dev %s ino %lu pstart %llu len %u lstart %llu",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino, __entry->pa_pstart,
-		  __entry->pa_len, __entry->pa_lstart)
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->ino,
+		  __entry->pa_pstart, __entry->pa_len, __entry->pa_lstart)
 );
 
 TRACE_EVENT(ext4_mb_new_group_pa,
@@ -451,8 +456,8 @@ TRACE_EVENT(ext4_mb_new_group_pa,
 	),
 
 	TP_printk("dev %s ino %lu pstart %llu len %u lstart %llu",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino, __entry->pa_pstart,
-		  __entry->pa_len, __entry->pa_lstart)
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->ino,
+		  __entry->pa_pstart, __entry->pa_len, __entry->pa_lstart)
 );
 
 TRACE_EVENT(ext4_mb_release_inode_pa,
@@ -478,8 +483,8 @@ TRACE_EVENT(ext4_mb_release_inode_pa,
 	),
 
 	TP_printk("dev %s ino %lu block %llu count %u",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino, __entry->block,
-		  __entry->count)
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->ino,
+		  __entry->block, __entry->count)
 );
 
 TRACE_EVENT(ext4_mb_release_group_pa,
@@ -524,7 +529,7 @@ TRACE_EVENT(ext4_discard_preallocations,
 	),
 
 	TP_printk("dev %s ino %lu",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino)
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->ino)
 );
 
 TRACE_EVENT(ext4_mb_discard_preallocations,
@@ -579,8 +584,8 @@ TRACE_EVENT(ext4_request_blocks,
 	),
 
 	TP_printk("dev %s ino %lu flags %u len %u lblk %llu goal %llu lleft %llu lright %llu pleft %llu pright %llu ",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino, __entry->flags,
-		  __entry->len,
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->ino,
+		  __entry->flags, __entry->len,
 		  (unsigned long long) __entry->logical,
 		  (unsigned long long) __entry->goal,
 		  (unsigned long long) __entry->lleft,
@@ -623,8 +628,8 @@ TRACE_EVENT(ext4_allocate_blocks,
 	),
 
 	TP_printk("dev %s ino %lu flags %u len %u block %llu lblk %llu goal %llu lleft %llu lright %llu pleft %llu pright %llu ",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino, __entry->flags,
-		  __entry->len, __entry->block,
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->ino,
+		  __entry->flags, __entry->len, __entry->block,
 		  (unsigned long long) __entry->logical,
 		  (unsigned long long) __entry->goal,
 		  (unsigned long long) __entry->lleft,
@@ -657,8 +662,8 @@ TRACE_EVENT(ext4_free_blocks,
 	),
 
 	TP_printk("dev %s ino %lu block %llu count %lu metadata %d",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino, __entry->block,
-		  __entry->count, __entry->metadata)
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->ino,
+		  __entry->block, __entry->count, __entry->metadata)
 );
 
 TRACE_EVENT(ext4_sync_file,
@@ -681,8 +686,8 @@ TRACE_EVENT(ext4_sync_file,
 	),
 
 	TP_printk("dev %s ino %ld parent %ld datasync %d ",
-		  jbd2_dev_to_name(__entry->dev), __entry->ino, __entry->parent,
-		  __entry->datasync)
+		  jbd2_dev_to_name(__entry->dev), (unsigned long) __entry->ino,
+		  (unsigned long) __entry->parent, __entry->datasync)
 );
 
 TRACE_EVENT(ext4_sync_fs,
