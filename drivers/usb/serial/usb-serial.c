@@ -245,7 +245,9 @@ static int serial_open (struct tty_struct *tty, struct file *filp)
 		 * first time the port is opened and it is not a
 		 * console port where the HW has already been
 		 * initialized */
-		if (!port->console) {
+		if (port->console) {
+			tty_encode_baud_rate(tty, port->console_init_baud, port->console_init_baud);
+		} else {
 			retval = serial->type->open(tty, port, filp);
 			if (retval)
 				goto bailout_interface_put;
