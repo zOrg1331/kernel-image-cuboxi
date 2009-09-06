@@ -164,7 +164,11 @@ static int utrace_add_engine(struct task_struct *target,
 		 * callback, that would mean the new engine also gets
 		 * notified about the event that precipitated its own
 		 * creation.  This is not what the user wants.
+		 *
+		 * In case we had no engines before, make sure that
+		 * utrace_flags is not zero.
 		 */
+		target->utrace_flags |= UTRACE_EVENT(REAP);
 		list_add_tail(&engine->entry, &utrace->attaching);
 		utrace->slow_path = 1;
 		ret = 0;
