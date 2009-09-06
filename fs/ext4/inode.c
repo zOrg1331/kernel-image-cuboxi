@@ -5250,11 +5250,6 @@ int ext4_change_inode_journal_flag(struct inode *inode, int val)
 	return err;
 }
 
-static int ext4_bh_unmapped(handle_t *handle, struct buffer_head *bh)
-{
-	return !buffer_mapped(bh);
-}
-
 int ext4_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
 	struct page *page = vmf->page;
@@ -5286,12 +5281,6 @@ int ext4_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 	else
 		len = PAGE_CACHE_SIZE;
 
-	if (page_has_buffers(page)) {
-		/* return if we have all the buffers mapped */
-		if (!walk_page_buffers(NULL, page_buffers(page), 0, len, NULL,
-				       ext4_bh_unmapped))
-			goto out_unlock;
-	}
 	/*
 	 * OK, we need to fill the hole... Do write_begin write_end
 	 * to do block allocation/reservation.We are not holding
