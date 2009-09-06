@@ -972,43 +972,52 @@ mext_check_arguments(struct inode *orig_inode,
 	}
 
 	if (orig_inode->i_size > donor_inode->i_size) {
-		if (orig_start >= donor_inode->i_size) {
+		if (orig_start << orig_inode->i_blkbits >=
+						donor_inode->i_size) {
 			ext4_debug("ext4 move extent: orig start offset "
 			"[%llu] should be less than donor file size "
 			"[%lld] [ino:orig %lu, donor_inode %lu]\n",
-			orig_start, donor_inode->i_size,
-			orig_inode->i_ino, donor_inode->i_ino);
+			orig_start << orig_inode->i_blkbits,
+			donor_inode->i_size, orig_inode->i_ino,
+			donor_inode->i_ino);
 			return -EINVAL;
 		}
-
-		if (orig_start + *len > donor_inode->i_size) {
+		if ((orig_start + *len) << orig_inode->i_blkbits >
+						donor_inode->i_size) {
 			ext4_debug("ext4 move extent: End offset [%llu] should "
 				"be less than donor file size [%lld]."
 				"So adjust length from %llu to %lld "
 				"[ino:orig %lu, donor %lu]\n",
-				orig_start + *len, donor_inode->i_size,
-				*len, donor_inode->i_size - orig_start,
+				(orig_start + *len) << orig_inode->i_blkbits,
+				donor_inode->i_size,
+				*len, (donor_inode->i_size >>
+				orig_inode->i_blkbits) - orig_start,
 				orig_inode->i_ino, donor_inode->i_ino);
-			*len = donor_inode->i_size - orig_start;
+			*len = (donor_inode->i_size >> orig_inode->i_blkbits) -
+				orig_start;
 		}
 	} else {
-		if (orig_start >= orig_inode->i_size) {
+		if (orig_start << orig_inode->i_blkbits >=
+						orig_inode->i_size) {
 			ext4_debug("ext4 move extent: start offset [%llu] "
 				"should be less than original file size "
 				"[%lld] [inode:orig %lu, donor %lu]\n",
-				 orig_start, orig_inode->i_size,
-				orig_inode->i_ino, donor_inode->i_ino);
+				orig_start << orig_inode->i_blkbits,
+				orig_inode->i_size, orig_inode->i_ino,
+				donor_inode->i_ino);
 			return -EINVAL;
 		}
-
-		if (orig_start + *len > orig_inode->i_size) {
+		if ((orig_start + *len) << orig_inode->i_blkbits >
+						orig_inode->i_size) {
 			ext4_debug("ext4 move extent: Adjust length "
 				"from %llu to %lld. Because it should be "
 				"less than original file size "
 				"[ino:orig %lu, donor %lu]\n",
-				*len, orig_inode->i_size - orig_start,
+				*len, (orig_inode->i_size >>
+				orig_inode->i_blkbits) - orig_start,
 				orig_inode->i_ino, donor_inode->i_ino);
-			*len = orig_inode->i_size - orig_start;
+			*len = (orig_inode->i_size >> orig_inode->i_blkbits) -
+				orig_start;
 		}
 	}
 
