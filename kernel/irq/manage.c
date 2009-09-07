@@ -89,7 +89,14 @@ int irq_set_affinity(unsigned int irq, cpumask_t cpumask)
 	set_balance_irq_affinity(irq, cpumask);
 
 #ifdef CONFIG_GENERIC_PENDING_IRQ
-	set_pending_irq(irq, cpumask);
+	if (desc->status & IRQ_MOVE_PCNTXT) {
+		unsigned long flags;
+
+		spin_lock_irqsave(&desc->lock, flags);
+		desc->chip->set_affinity(irq, cpumask);
+		spin_unlock_irqrestore(&desc->lock, flags);
+	} else
+		set_pending_irq(irq, cpumask);
 #else
 	desc->affinity = cpumask;
 	desc->chip->set_affinity(irq, cpumask);
@@ -109,6 +116,17 @@ int irq_select_affinity(unsigned int irq)
 		return 0;
 
 	cpus_and(mask, cpu_online_map, irq_default_affinity);
+
+	/*
+	 * Preserve the affinity that was previously set, but make
+	 * sure one of the targets is online.
+	 */
+	if (irq_desc[irq].status & IRQ_AFFINITY_SET) {
+		if (cpus_intersects(irq_desc[irq].affinity, cpu_online_map))
+			mask = irq_desc[irq].affinity;
+		else
+			irq_desc[irq].status &= ~IRQ_AFFINITY_SET;
+	}
 
 	irq_desc[irq].affinity = mask;
 	irq_desc[irq].chip->set_affinity(irq, mask);

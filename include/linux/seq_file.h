@@ -19,11 +19,13 @@ struct seq_file {
 	size_t from;
 	size_t count;
 	loff_t index;
-	loff_t read_pos;
 	u64 version;
 	struct mutex lock;
 	const struct seq_operations *op;
 	void *private;
+#ifndef __GENKSYMS__
+	loff_t read_pos;
+#endif
 };
 
 struct seq_operations {

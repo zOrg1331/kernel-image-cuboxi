@@ -67,6 +67,7 @@ static void __cpuinit srat_detect_node(void)
 
 static void __cpuinit init_intel(struct cpuinfo_x86 *c)
 {
+	detect_extended_topology(c);
 	init_intel_cacheinfo(c);
 	if (c->cpuid_level > 9) {
 		unsigned eax = cpuid_eax(10);
@@ -93,7 +94,9 @@ static void __cpuinit init_intel(struct cpuinfo_x86 *c)
 	if (c->x86 == 6)
 		set_cpu_cap(c, X86_FEATURE_REP_GOOD);
 	set_cpu_cap(c, X86_FEATURE_LFENCE_RDTSC);
-	c->x86_max_cores = intel_num_cpu_cores(c);
+
+	if (!cpu_has(c, X86_FEATURE_XTOPOLOGY))
+		c->x86_max_cores = intel_num_cpu_cores(c);
 
 	srat_detect_node();
 }

@@ -15,6 +15,7 @@
 #include <linux/random.h>
 #include <linux/interrupt.h>
 #include <linux/kernel_stat.h>
+#include <trace/irq.h>
 
 #include "internals.h"
 
@@ -130,6 +131,9 @@ irqreturn_t handle_IRQ_event(unsigned int irq, struct irqaction *action)
 {
 	irqreturn_t ret, retval = IRQ_NONE;
 	unsigned int status = 0;
+	struct pt_regs *regs = get_irq_regs();
+
+	trace_irq_entry(irq, regs);
 
 	handle_dynamic_tick(action);
 
@@ -147,6 +151,8 @@ irqreturn_t handle_IRQ_event(unsigned int irq, struct irqaction *action)
 	if (status & IRQF_SAMPLE_RANDOM)
 		add_interrupt_randomness(irq);
 	local_irq_disable();
+
+	trace_irq_exit(retval);
 
 	return retval;
 }
@@ -181,7 +187,7 @@ unsigned int __do_IRQ(unsigned int irq)
 		if (likely(!(desc->status & IRQ_DISABLED))) {
 			action_ret = handle_IRQ_event(irq, desc->action);
 			if (!noirqdebug)
-				note_interrupt(irq, desc, action_ret);
+				note_interrupt(irq, desc, action_ret, 1);
 		}
 		desc->chip->end(irq);
 		return 1;
@@ -235,7 +241,7 @@ unsigned int __do_IRQ(unsigned int irq)
 
 		action_ret = handle_IRQ_event(irq, action);
 		if (!noirqdebug)
-			note_interrupt(irq, desc, action_ret);
+			note_interrupt(irq, desc, action_ret, 0);
 
 		spin_lock(&desc->lock);
 		if (likely(!(desc->status & IRQ_PENDING)))

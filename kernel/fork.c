@@ -58,6 +58,7 @@
 #include <linux/tty.h>
 #include <linux/proc_fs.h>
 #include <linux/blkdev.h>
+#include <trace/sched.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -1363,6 +1364,8 @@ long do_fork(unsigned long clone_flags,
 	if (!IS_ERR(p)) {
 		struct completion vfork;
 
+		trace_sched_process_fork(current, p);
+
 		nr = task_pid_vnr(p);
 
 		if (clone_flags & CLONE_PARENT_SETTID)
@@ -1442,6 +1445,8 @@ void __init proc_caches_init(void)
 	mm_cachep = kmem_cache_create("mm_struct",
 			sizeof(struct mm_struct), ARCH_MIN_MMSTRUCT_ALIGN,
 			SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL);
+	if (percpu_counter_init(&vm_committed_as, 0))
+		panic("Failed to allocate vm_committed_as");
 }
 
 /*

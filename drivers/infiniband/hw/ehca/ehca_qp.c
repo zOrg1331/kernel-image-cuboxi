@@ -396,6 +396,50 @@ static void ehca_determine_small_queue(struct ehca_alloc_queue_parms *queue,
 	queue->is_small = (queue->page_size != 0);
 }
 
+/* needs to be called with cq->spinlock held */
+void ehca_add_to_err_list(struct ehca_qp *qp, int on_sq)
+{
+	struct list_head *list, *node;
+
+	/* TODO: support low latency QPs */
+	if (qp->ext_type == EQPT_LLQP)
+		return;
+
+	if (on_sq) {
+		list = &qp->send_cq->sqp_err_list;
+		node = &qp->sq_err_node;
+	} else {
+		list = &qp->recv_cq->rqp_err_list;
+		node = &qp->rq_err_node;
+	}
+
+	if (list_empty(node))
+		list_add_tail(node, list);
+
+	return;
+}
+
+static void del_from_err_list(struct ehca_cq *cq, struct list_head *node)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&cq->spinlock, flags);
+
+	if (!list_empty(node))
+		list_del_init(node);
+
+	spin_unlock_irqrestore(&cq->spinlock, flags);
+}
+
+static void reset_queue_map(struct ehca_queue_map *qmap)
+{
+	int i;
+
+	qmap->tail = 0;
+	for (i = 0; i < qmap->entries; i++)
+		qmap->map[i].reported = 1;
+}
+
 /*
  * Create an ib_qp struct that is either a QP or an SRQ, depending on
  * the value of the is_srq parameter. If init_attr and srq_init_attr share
@@ -407,14 +451,13 @@ static struct ehca_qp *internal_create_qp(
 	struct ib_srq_init_attr *srq_init_attr,
 	struct ib_udata *udata, int is_srq)
 {
-	struct ehca_qp *my_qp;
+	struct ehca_qp *my_qp, *my_srq = NULL;
 	struct ehca_pd *my_pd = container_of(pd, struct ehca_pd, ib_pd);
 	struct ehca_shca *shca = container_of(pd->device, struct ehca_shca,
 					      ib_device);
 	struct ib_ucontext *context = NULL;
-	u32 nr_qes;
 	u64 h_ret;
-	int is_llqp = 0, has_srq = 0;
+	int is_llqp = 0, has_srq = 0, is_user = 0;
 	int qp_type, max_send_sge, max_recv_sge, ret;
 
 	/* h_call's out parameters */
@@ -422,9 +465,9 @@ static struct ehca_qp *internal_create_qp(
 	u32 swqe_size = 0, rwqe_size = 0, ib_qp_num;
 	unsigned long flags;
 
-	if (!atomic_add_unless(&shca->num_qps, 1, ehca_max_qp)) {
+	if (!atomic_add_unless(&shca->num_qps, 1, shca->max_num_qps)) {
 		ehca_err(pd->device, "Unable to create QP, max number of %i "
-			 "QPs reached.", ehca_max_qp);
+			 "QPs reached.", shca->max_num_qps);
 		ehca_err(pd->device, "To increase the maximum number of QPs "
 			 "use the number_of_qps module parameter.\n");
 		return ERR_PTR(-ENOSPC);
@@ -457,8 +500,7 @@ static struct ehca_qp *internal_create_qp(
 
 	/* handle SRQ base QPs */
 	if (init_attr->srq) {
-		struct ehca_qp *my_srq =
-			container_of(init_attr->srq, struct ehca_qp, ib_srq);
+		my_srq = container_of(init_attr->srq, struct ehca_qp, ib_srq);
 
 		has_srq = 1;
 		parms.ext_type = EQPT_SRQBASE;
@@ -557,14 +599,16 @@ static struct ehca_qp *internal_create_qp(
 		}
 	}
 
-	if (pd->uobject && udata)
-		context = pd->uobject->context;
-
 	my_qp = kmem_cache_zalloc(qp_cache, GFP_KERNEL);
 	if (!my_qp) {
 		ehca_err(pd->device, "pd=%p not enough memory to alloc qp", pd);
 		atomic_dec(&shca->num_qps);
 		return ERR_PTR(-ENOMEM);
+	}
+
+	if (pd->uobject && udata) {
+		is_user = 1;
+		context = pd->uobject->context;
 	}
 
 	atomic_set(&my_qp->nr_events, 0);
@@ -655,7 +699,7 @@ static struct ehca_qp *internal_create_qp(
 			(parms.squeue.is_small || parms.rqueue.is_small);
 	}
 
-	h_ret = hipz_h_alloc_resource_qp(shca->ipz_hca_handle, &parms);
+	h_ret = hipz_h_alloc_resource_qp(shca->ipz_hca_handle, &parms, is_user);
 	if (h_ret != H_SUCCESS) {
 		ehca_err(pd->device, "h_alloc_resource_qp() failed h_ret=%li",
 			 h_ret);
@@ -716,14 +760,20 @@ static struct ehca_qp *internal_create_qp(
 				 "and pages ret=%i", ret);
 			goto create_qp_exit2;
 		}
-		nr_qes = my_qp->ipz_squeue.queue_length /
-			 my_qp->ipz_squeue.qe_size;
-		my_qp->sq_map = vmalloc(nr_qes *
-					sizeof(struct ehca_qmap_entry));
-		if (!my_qp->sq_map) {
-			ehca_err(pd->device, "Couldn't allocate squeue "
-				 "map ret=%i", ret);
-			goto create_qp_exit3;
+
+		if (!is_user) {
+			my_qp->sq_map.entries = my_qp->ipz_squeue.queue_length /
+				my_qp->ipz_squeue.qe_size;
+			my_qp->sq_map.map = vmalloc(my_qp->sq_map.entries *
+						    sizeof(struct ehca_qmap_entry));
+			if (!my_qp->sq_map.map) {
+				ehca_err(pd->device, "Couldn't allocate squeue "
+					 "map ret=%i", ret);
+				goto create_qp_exit3;
+			}
+			INIT_LIST_HEAD(&my_qp->sq_err_node);
+			/* to avoid the generation of bogus flush CQEs */
+			reset_queue_map(&my_qp->sq_map);
 		}
 	}
 
@@ -736,6 +786,26 @@ static struct ehca_qp *internal_create_qp(
 				 "and pages ret=%i", ret);
 			goto create_qp_exit4;
 		}
+		if (!is_user) {
+			my_qp->rq_map.entries = my_qp->ipz_rqueue.queue_length /
+				my_qp->ipz_rqueue.qe_size;
+			my_qp->rq_map.map = vmalloc(my_qp->rq_map.entries *
+						    sizeof(struct ehca_qmap_entry));
+			if (!my_qp->rq_map.map) {
+				ehca_err(pd->device, "Couldn't allocate squeue "
+					 "map ret=%i", ret);
+				goto create_qp_exit5;
+			}
+			INIT_LIST_HEAD(&my_qp->rq_err_node);
+			/* to avoid the generation of bogus flush CQEs */
+			reset_queue_map(&my_qp->rq_map);
+		}
+	} else if (init_attr->srq && !is_user) {
+		/* this is a base QP, use the queue map of the SRQ */
+		my_qp->rq_map = my_srq->rq_map;
+		INIT_LIST_HEAD(&my_qp->rq_err_node);
+
+		my_qp->ipz_rqueue = my_srq->ipz_rqueue;
 	}
 
 	if (is_srq) {
@@ -789,6 +859,11 @@ static struct ehca_qp *internal_create_qp(
 	if (qp_type == IB_QPT_GSI) {
 		h_ret = ehca_define_sqp(shca, my_qp, init_attr);
 		if (h_ret != H_SUCCESS) {
+			kfree(my_qp->mod_qp_parm);
+			my_qp->mod_qp_parm = NULL;
+			/* the QP pointer is no longer valid */
+			shca->sport[init_attr->port_num - 1].ibqp_sqp[qp_type] =
+				NULL;
 			ret = ehca2ib_return_code(h_ret);
 			goto create_qp_exit6;
 		}
@@ -799,7 +874,7 @@ static struct ehca_qp *internal_create_qp(
 		if (ret) {
 			ehca_err(pd->device,
 				 "Couldn't assign qp to send_cq ret=%i", ret);
-			goto create_qp_exit6;
+			goto create_qp_exit7;
 		}
 	}
 
@@ -825,25 +900,29 @@ static struct ehca_qp *internal_create_qp(
 		if (ib_copy_to_udata(udata, &resp, sizeof resp)) {
 			ehca_err(pd->device, "Copy to udata failed");
 			ret = -EINVAL;
-			goto create_qp_exit7;
+			goto create_qp_exit8;
 		}
 	}
 
 	return my_qp;
 
-create_qp_exit7:
+create_qp_exit8:
 	ehca_cq_unassign_qp(my_qp->send_cq, my_qp->real_qp_num);
 
-create_qp_exit6:
+create_qp_exit7:
 	kfree(my_qp->mod_qp_parm);
+
+create_qp_exit6:
+	if (HAS_RQ(my_qp) && !is_user)
+		vfree(my_qp->rq_map.map);
 
 create_qp_exit5:
 	if (HAS_RQ(my_qp))
 		ipz_queue_dtor(my_pd, &my_qp->ipz_rqueue);
 
 create_qp_exit4:
-	if (HAS_SQ(my_qp))
-		vfree(my_qp->sq_map);
+	if (HAS_SQ(my_qp) && !is_user)
+		vfree(my_qp->sq_map.map);
 
 create_qp_exit3:
 	if (HAS_SQ(my_qp))
@@ -1035,6 +1114,101 @@ static int prepare_sqe_rts(struct ehca_qp *my_qp, struct ehca_shca *shca,
 	return 0;
 }
 
+static int calc_left_cqes(u64 wqe_p, struct ipz_queue *ipz_queue,
+			  struct ehca_queue_map *qmap)
+{
+	void *wqe_v;
+	u64 q_ofs;
+	u32 wqe_idx;
+
+	/* convert real to abs address */
+	wqe_p = wqe_p & (~(1UL << 63));
+
+	wqe_v = abs_to_virt(wqe_p);
+
+	if (ipz_queue_abs_to_offset(ipz_queue, wqe_p, &q_ofs)) {
+		ehca_gen_err("Invalid offset for calculating left cqes "
+				"wqe_p=%#lx wqe_v=%p\n", wqe_p, wqe_v);
+		return -EFAULT;
+	}
+
+	wqe_idx = q_ofs / ipz_queue->qe_size;
+	if (wqe_idx < qmap->tail)
+		qmap->left_to_poll = (qmap->entries - qmap->tail) + wqe_idx;
+	else
+		qmap->left_to_poll = wqe_idx - qmap->tail;
+
+	return 0;
+}
+
+static int check_for_left_cqes(struct ehca_qp *my_qp, struct ehca_shca *shca)
+{
+	u64 h_ret;
+	void *send_wqe_p, *recv_wqe_p;
+	int ret;
+	unsigned long flags;
+	int qp_num = my_qp->ib_qp.qp_num;
+
+	/* this hcall is not supported on base QPs */
+	if (my_qp->ext_type != EQPT_SRQBASE) {
+		/* get send and receive wqe pointer */
+		h_ret = hipz_h_disable_and_get_wqe(shca->ipz_hca_handle,
+				my_qp->ipz_qp_handle, &my_qp->pf,
+				&send_wqe_p, &recv_wqe_p, 4);
+		if (h_ret != H_SUCCESS) {
+			ehca_err(&shca->ib_device, "disable_and_get_wqe() "
+				 "failed ehca_qp=%p qp_num=%x h_ret=%li",
+				 my_qp, qp_num, h_ret);
+			return ehca2ib_return_code(h_ret);
+		}
+
+		/*
+		 * acquire lock to ensure that nobody is polling the cq which
+		 * could mean that the qmap->tail pointer is in an
+		 * inconsistent state.
+		 */
+		spin_lock_irqsave(&my_qp->send_cq->spinlock, flags);
+		ret = calc_left_cqes((u64)send_wqe_p, &my_qp->ipz_squeue,
+				&my_qp->sq_map);
+		spin_unlock_irqrestore(&my_qp->send_cq->spinlock, flags);
+		if (ret)
+			return ret;
+
+
+		spin_lock_irqsave(&my_qp->recv_cq->spinlock, flags);
+		ret = calc_left_cqes((u64)recv_wqe_p, &my_qp->ipz_rqueue,
+				&my_qp->rq_map);
+		spin_unlock_irqrestore(&my_qp->recv_cq->spinlock, flags);
+		if (ret)
+			return ret;
+	} else {
+		spin_lock_irqsave(&my_qp->send_cq->spinlock, flags);
+		my_qp->sq_map.left_to_poll = 0;
+		spin_unlock_irqrestore(&my_qp->send_cq->spinlock, flags);
+
+		spin_lock_irqsave(&my_qp->recv_cq->spinlock, flags);
+		my_qp->rq_map.left_to_poll = 0;
+		spin_unlock_irqrestore(&my_qp->recv_cq->spinlock, flags);
+	}
+
+	/* this assures flush cqes being generated only for pending wqes */
+	if ((my_qp->sq_map.left_to_poll == 0) &&
+				(my_qp->rq_map.left_to_poll == 0)) {
+		spin_lock_irqsave(&my_qp->send_cq->spinlock, flags);
+		ehca_add_to_err_list(my_qp, 1);
+		spin_unlock_irqrestore(&my_qp->send_cq->spinlock, flags);
+
+		if (HAS_RQ(my_qp)) {
+			spin_lock_irqsave(&my_qp->recv_cq->spinlock, flags);
+			ehca_add_to_err_list(my_qp, 0);
+			spin_unlock_irqrestore(&my_qp->recv_cq->spinlock,
+					flags);
+		}
+	}
+
+	return 0;
+}
+
 /*
  * internal_modify_qp with circumvention to handle aqp0 properly
  * smi_reset2init indicates if this is an internal reset-to-init-call for
@@ -1055,6 +1229,7 @@ static int internal_modify_qp(struct ib_qp *ibqp,
 	u64 update_mask;
 	u64 h_ret;
 	int bad_wqe_cnt = 0;
+	int is_user = 0;
 	int squeue_locked = 0;
 	unsigned long flags = 0;
 
@@ -1077,6 +1252,8 @@ static int internal_modify_qp(struct ib_qp *ibqp,
 		ret = ehca2ib_return_code(h_ret);
 		goto modify_qp_exit1;
 	}
+	if (ibqp->uobject)
+		is_user = 1;
 
 	qp_cur_state = ehca2ib_qp_state(mqpcb->qp_state);
 
@@ -1539,10 +1716,29 @@ static int internal_modify_qp(struct ib_qp *ibqp,
 			goto modify_qp_exit2;
 		}
 	}
+	if ((qp_new_state == IB_QPS_ERR) && (qp_cur_state != IB_QPS_ERR)
+	    && !is_user) {
+		ret = check_for_left_cqes(my_qp, shca);
+		if (ret)
+			goto modify_qp_exit2;
+	}
 
 	if (statetrans == IB_QPST_ANY2RESET) {
 		ipz_qeit_reset(&my_qp->ipz_rqueue);
 		ipz_qeit_reset(&my_qp->ipz_squeue);
+
+		if (qp_cur_state == IB_QPS_ERR && !is_user) {
+			del_from_err_list(my_qp->send_cq, &my_qp->sq_err_node);
+
+			if (HAS_RQ(my_qp))
+				del_from_err_list(my_qp->recv_cq,
+						  &my_qp->rq_err_node);
+		}
+		if (!is_user)
+			reset_queue_map(&my_qp->sq_map);
+
+		if (HAS_RQ(my_qp) && !is_user)
+			reset_queue_map(&my_qp->rq_map);
 	}
 
 	if (attr_mask & IB_QP_QKEY)
@@ -1932,10 +2128,12 @@ static int internal_destroy_qp(struct ib_device *dev, struct ehca_qp *my_qp,
 	int ret;
 	u64 h_ret;
 	u8 port_num;
+	int is_user = 0;
 	enum ib_qp_type	qp_type;
 	unsigned long flags;
 
 	if (uobject) {
+		is_user = 1;
 		if (my_qp->mm_count_galpa ||
 		    my_qp->mm_count_rqueue || my_qp->mm_count_squeue) {
 			ehca_err(dev, "Resources still referenced in "
@@ -1957,6 +2155,16 @@ static int internal_destroy_qp(struct ib_device *dev, struct ehca_qp *my_qp,
 	write_lock_irqsave(&ehca_qp_idr_lock, flags);
 	idr_remove(&ehca_qp_idr, my_qp->token);
 	write_unlock_irqrestore(&ehca_qp_idr_lock, flags);
+
+	/*
+	 * SRQs will never get into an error list and do not have a recv_cq,
+	 * so we need to skip them here.
+	 */
+	if (HAS_RQ(my_qp) && !IS_SRQ(my_qp) && !is_user)
+		del_from_err_list(my_qp->recv_cq, &my_qp->rq_err_node);
+
+	if (HAS_SQ(my_qp) && !is_user)
+		del_from_err_list(my_qp->send_cq, &my_qp->sq_err_node);
 
 	/* now wait until all pending events have completed */
 	wait_event(my_qp->wait_completion, !atomic_read(&my_qp->nr_events));
@@ -1983,7 +2191,7 @@ static int internal_destroy_qp(struct ib_device *dev, struct ehca_qp *my_qp,
 	if (qp_type == IB_QPT_GSI) {
 		struct ib_event event;
 		ehca_info(dev, "device %s: port %x is inactive.",
-			  shca->ib_device.name, port_num);
+				shca->ib_device.name, port_num);
 		event.device = &shca->ib_device;
 		event.event = IB_EVENT_PORT_ERR;
 		event.element.port_num = port_num;
@@ -1991,11 +2199,15 @@ static int internal_destroy_qp(struct ib_device *dev, struct ehca_qp *my_qp,
 		ib_dispatch_event(&event);
 	}
 
-	if (HAS_RQ(my_qp))
+	if (HAS_RQ(my_qp)) {
 		ipz_queue_dtor(my_pd, &my_qp->ipz_rqueue);
+		if (!is_user)
+			vfree(my_qp->rq_map.map);
+	}
 	if (HAS_SQ(my_qp)) {
 		ipz_queue_dtor(my_pd, &my_qp->ipz_squeue);
-		vfree(my_qp->sq_map);
+		if (!is_user)
+			vfree(my_qp->sq_map.map);
 	}
 	kmem_cache_free(qp_cache, my_qp);
 	atomic_dec(&shca->num_qps);

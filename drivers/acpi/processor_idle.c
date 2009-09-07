@@ -127,57 +127,6 @@ static int set_max_cstate(const struct dmi_system_id *id)
 /* Actually this shouldn't be __cpuinitdata, would be better to fix the
    callers to only run once -AK */
 static struct dmi_system_id __cpuinitdata processor_power_dmi_table[] = {
-	{ set_max_cstate, "IBM ThinkPad R40e", {
-	  DMI_MATCH(DMI_BIOS_VENDOR,"IBM"),
-	  DMI_MATCH(DMI_BIOS_VERSION,"1SET70WW")}, (void *)1},
-	{ set_max_cstate, "IBM ThinkPad R40e", {
-	  DMI_MATCH(DMI_BIOS_VENDOR,"IBM"),
-	  DMI_MATCH(DMI_BIOS_VERSION,"1SET60WW")}, (void *)1},
-	{ set_max_cstate, "IBM ThinkPad R40e", {
-	  DMI_MATCH(DMI_BIOS_VENDOR,"IBM"),
-	  DMI_MATCH(DMI_BIOS_VERSION,"1SET43WW") }, (void*)1},
-	{ set_max_cstate, "IBM ThinkPad R40e", {
-	  DMI_MATCH(DMI_BIOS_VENDOR,"IBM"),
-	  DMI_MATCH(DMI_BIOS_VERSION,"1SET45WW") }, (void*)1},
-	{ set_max_cstate, "IBM ThinkPad R40e", {
-	  DMI_MATCH(DMI_BIOS_VENDOR,"IBM"),
-	  DMI_MATCH(DMI_BIOS_VERSION,"1SET47WW") }, (void*)1},
-	{ set_max_cstate, "IBM ThinkPad R40e", {
-	  DMI_MATCH(DMI_BIOS_VENDOR,"IBM"),
-	  DMI_MATCH(DMI_BIOS_VERSION,"1SET50WW") }, (void*)1},
-	{ set_max_cstate, "IBM ThinkPad R40e", {
-	  DMI_MATCH(DMI_BIOS_VENDOR,"IBM"),
-	  DMI_MATCH(DMI_BIOS_VERSION,"1SET52WW") }, (void*)1},
-	{ set_max_cstate, "IBM ThinkPad R40e", {
-	  DMI_MATCH(DMI_BIOS_VENDOR,"IBM"),
-	  DMI_MATCH(DMI_BIOS_VERSION,"1SET55WW") }, (void*)1},
-	{ set_max_cstate, "IBM ThinkPad R40e", {
-	  DMI_MATCH(DMI_BIOS_VENDOR,"IBM"),
-	  DMI_MATCH(DMI_BIOS_VERSION,"1SET56WW") }, (void*)1},
-	{ set_max_cstate, "IBM ThinkPad R40e", {
-	  DMI_MATCH(DMI_BIOS_VENDOR,"IBM"),
-	  DMI_MATCH(DMI_BIOS_VERSION,"1SET59WW") }, (void*)1},
-	{ set_max_cstate, "IBM ThinkPad R40e", {
-	  DMI_MATCH(DMI_BIOS_VENDOR,"IBM"),
-	  DMI_MATCH(DMI_BIOS_VERSION,"1SET60WW") }, (void*)1},
-	{ set_max_cstate, "IBM ThinkPad R40e", {
-	  DMI_MATCH(DMI_BIOS_VENDOR,"IBM"),
-	  DMI_MATCH(DMI_BIOS_VERSION,"1SET61WW") }, (void*)1},
-	{ set_max_cstate, "IBM ThinkPad R40e", {
-	  DMI_MATCH(DMI_BIOS_VENDOR,"IBM"),
-	  DMI_MATCH(DMI_BIOS_VERSION,"1SET62WW") }, (void*)1},
-	{ set_max_cstate, "IBM ThinkPad R40e", {
-	  DMI_MATCH(DMI_BIOS_VENDOR,"IBM"),
-	  DMI_MATCH(DMI_BIOS_VERSION,"1SET64WW") }, (void*)1},
-	{ set_max_cstate, "IBM ThinkPad R40e", {
-	  DMI_MATCH(DMI_BIOS_VENDOR,"IBM"),
-	  DMI_MATCH(DMI_BIOS_VERSION,"1SET65WW") }, (void*)1},
-	{ set_max_cstate, "IBM ThinkPad R40e", {
-	  DMI_MATCH(DMI_BIOS_VENDOR,"IBM"),
-	  DMI_MATCH(DMI_BIOS_VERSION,"1SET68WW") }, (void*)1},
-	{ set_max_cstate, "Medion 41700", {
-	  DMI_MATCH(DMI_BIOS_VENDOR,"Phoenix Technologies LTD"),
-	  DMI_MATCH(DMI_BIOS_VERSION,"R01-A1J")}, (void *)1},
 	{ set_max_cstate, "Clevo 5600D", {
 	  DMI_MATCH(DMI_BIOS_VENDOR,"Phoenix Technologies LTD"),
 	  DMI_MATCH(DMI_BIOS_VERSION,"SHE845M0.86C.0013.D.0302131307")},
@@ -956,7 +905,8 @@ static int acpi_processor_get_power_info_cst(struct acpi_processor *pr)
 				 */
 				cx.entry_method = ACPI_CSTATE_HALT;
 				snprintf(cx.desc, ACPI_CX_DESC_LEN, "ACPI HLT");
-			} else {
+			/* This doesn't apply to external control case */
+			} else if (!processor_pm_external()) {
 				continue;
 			}
 			if (cx.type == ACPI_STATE_C1 &&
@@ -994,6 +944,12 @@ static int acpi_processor_get_power_info_cst(struct acpi_processor *pr)
 			continue;
 
 		cx.power = obj->integer.value;
+
+#ifdef CONFIG_PROCESSOR_EXTERNAL_CONTROL
+		/* cache control methods to notify external logic */
+		if (processor_pm_external())
+			memcpy(&cx.reg, reg, sizeof(*reg));
+#endif
 
 		current_count++;
 		memcpy(&(pr->power.states[current_count]), &cx, sizeof(cx));
@@ -1336,14 +1292,18 @@ int acpi_processor_cst_has_changed(struct acpi_processor *pr)
 	 * been initialized.
 	 */
 	if (pm_idle_save) {
-		pm_idle = pm_idle_save;
+		if (!processor_pm_external())
+			pm_idle = pm_idle_save;
 		/* Relies on interrupts forcing exit from idle. */
 		synchronize_sched();
 	}
 
 	pr->flags.power = 0;
 	result = acpi_processor_get_power_info(pr);
-	if ((pr->flags.power == 1) && (pr->flags.power_setup_done))
+	if (processor_pm_external())
+		processor_notify_external(pr,
+			PROCESSOR_PM_CHANGE, PM_TYPE_IDLE);
+	else if ((pr->flags.power == 1) && (pr->flags.power_setup_done))
 		pm_idle = acpi_processor_idle;
 
 	return result;
@@ -1783,6 +1743,13 @@ int acpi_processor_cst_has_changed(struct acpi_processor *pr)
 	if (!pr->flags.power_setup_done)
 		return -ENODEV;
 
+	if (processor_pm_external()) {
+		acpi_processor_get_power_info(pr);
+		processor_notify_external(pr,
+			PROCESSOR_PM_CHANGE, PM_TYPE_IDLE);
+		return ret;
+	}
+
 	cpuidle_pause_and_lock();
 	cpuidle_disable_device(&pr->power.dev);
 	acpi_processor_get_power_info(pr);
@@ -1866,7 +1833,7 @@ int __cpuinit acpi_processor_power_init(struct acpi_processor *pr,
 		printk(")\n");
 
 #ifndef CONFIG_CPU_IDLE
-		if (pr->id == 0) {
+		if (!processor_pm_external() && (pr->id == 0)) {
 			pm_idle_save = pm_idle;
 			pm_idle = acpi_processor_idle;
 		}
@@ -1880,6 +1847,11 @@ int __cpuinit acpi_processor_power_init(struct acpi_processor *pr,
 				 acpi_driver_data(device));
 	if (!entry)
 		return -EIO;
+
+	if (processor_pm_external())
+		processor_notify_external(pr,
+			PROCESSOR_PM_INIT, PM_TYPE_IDLE);
+
 	return 0;
 }
 

@@ -82,6 +82,14 @@ config BLK_DEV_SD
 	  In this case, do not compile the driver for your SCSI host adapter
 	  (below) as a module either.
 
+config SD_IOSTATS
+   bool "Enable SCSI disk I/O stats"
+   depends on BLK_DEV_SD
+   default y
+   ---help---
+     This enables SCSI disk I/O stats collection.  You must also enable
+     /proc file system support if you want this feature.
+
 config CHR_DEV_ST
 	tristate "SCSI tape support"
 	depends on SCSI
@@ -352,6 +360,8 @@ config ISCSI_TCP
 
 	 http://open-iscsi.org
 
+source "drivers/scsi/cxgb3i/Kconfig"
+
 config SGIWD93_SCSI
 	tristate "SGI WD93C93 SCSI Driver"
 	depends on SGI_HAS_WD93 && SCSI
@@ -602,6 +612,20 @@ config SCSI_FLASHPOINT
 	  BusLogic SCSI driver. The FlashPoint SCCB Manager code is
 	  substantial, so users of MultiMaster Host Adapters may not
 	  wish to include it.
+
+config LIBFC
+	tristate "LibFC module"
+	depends on SCSI && SCSI_FC_ATTRS
+	---help---
+	  Fibre Channel library module
+
+config FCOE
+	tristate "FCoE module"
+	depends on SCSI
+	select LIBFC
+	---help---
+	  Fibre Channel over Ethernet module
+
 
 config SCSI_DMX3191D
 	tristate "DMX3191D SCSI support"

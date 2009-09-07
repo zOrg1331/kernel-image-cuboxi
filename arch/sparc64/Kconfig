@@ -85,6 +85,7 @@ config GENERIC_HARDIRQS_NO__DO_IRQ
 	def_bool y
 
 source "init/Kconfig"
+source "kernel/Kconfig.freezer"
 
 menu "Processor type and features"
 
@@ -401,6 +402,8 @@ source "drivers/Kconfig"
 source "drivers/sbus/char/Kconfig"
 
 source "fs/Kconfig"
+
+source "arch/sparc64/perfmon/Kconfig"
 
 source "arch/sparc64/Kconfig.debug"
 

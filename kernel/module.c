@@ -46,6 +46,8 @@
 #include <asm/cacheflush.h>
 #include <linux/license.h>
 #include <asm/sections.h>
+#include <linux/tracepoint.h>
+#include <trace/kernel.h>
 
 #if 0
 #define DEBUGP printk
@@ -59,6 +61,20 @@
 
 /* If this is set, the section belongs in the init part of the module */
 #define INIT_OFFSET_MASK (1UL << (BITS_PER_LONG-1))
+
+/* Allow unsupported modules switch. */
+#ifdef UNSUPPORTED_MODULES
+int unsupported = UNSUPPORTED_MODULES;
+#else
+int unsupported = 2;  /* don't warn when loading unsupported modules. */
+#endif
+
+static int __init unsupported_setup(char *str)
+{
+	get_option(&str, &unsupported);
+	return 1;
+}
+__setup("unsupported=", unsupported_setup);
 
 /* List of modules, protected by module_mutex or preempt_disable
  * (add/delete uses stop_machine). */
@@ -543,17 +559,28 @@ static char last_unloaded_module[MODULE_NAME_LEN+1];
 
 #ifdef CONFIG_MODULE_UNLOAD
 /* Init the unload section of the module. */
-static void module_unload_init(struct module *mod)
+static int module_unload_init(struct module *mod)
 {
 	unsigned int i;
+	size_t refsize = nr_cpu_ids * sizeof(*mod->ref);
 
 	INIT_LIST_HEAD(&mod->modules_which_use_me);
-	for (i = 0; i < NR_CPUS; i++)
+
+	mod->ref = kzalloc(refsize, GFP_KERNEL);
+	if (!mod->ref) {
+		mod->ref = vmalloc(refsize);
+		if (!mod->ref)
+			return -ENOMEM;
+		memset(mod->ref, 0, refsize);
+	}
+	for (i = 0; i < nr_cpu_ids; i++)
 		local_set(&mod->ref[i].count, 0);
 	/* Hold reference count during initialization. */
 	local_set(&mod->ref[raw_smp_processor_id()].count, 1);
 	/* Backwards compatibility macros put refcount during init. */
 	mod->waiter = current;
+
+	return 0;
 }
 
 /* modules using other modules */
@@ -633,6 +660,10 @@ static void module_unload_free(struct module *mod)
 			}
 		}
 	}
+	if (is_vmalloc_addr(mod->ref))
+		vfree(mod->ref);
+	else
+		kfree(mod->ref);
 }
 
 #ifdef CONFIG_MODULE_FORCE_UNLOAD
@@ -691,7 +722,7 @@ unsigned int module_refcount(struct module *mod)
 {
 	unsigned int i, total = 0;
 
-	for (i = 0; i < NR_CPUS; i++)
+	for (i = 0; i < nr_cpu_ids; i++)
 		total += local_read(&mod->ref[i].count);
 	return total;
 }
@@ -784,6 +815,7 @@ SYSCALL_DEFINE2(delete_module, const char __user *, name_user,
 	mutex_lock(&module_mutex);
 	/* Store the name of the last unloaded module for diagnostic purposes */
 	strlcpy(last_unloaded_module, mod->name, sizeof(last_unloaded_module));
+	unregister_dynamic_debug_module(mod->name);
 	free_module(mod);
 
  out:
@@ -879,8 +911,9 @@ static inline int use_module(struct module *a, struct module *b)
 	return strong_try_module_get(b) == 0;
 }
 
-static inline void module_unload_init(struct module *mod)
+static inline int module_unload_init(struct module *mod)
 {
+	return 0;
 }
 #endif /* CONFIG_MODULE_UNLOAD */
 
@@ -908,10 +941,36 @@ static struct module_attribute initstate = {
 	.show = show_initstate,
 };
 
+static void setup_modinfo_supported(struct module *mod, const char *s)
+{
+	if (!s) {
+		mod->taints |= TAINT_NO_SUPPORT;
+		return;
+	}
+
+	if (strcmp(s, "external") == 0)
+		mod->taints |= TAINT_EXTERNAL_SUPPORT;
+	else if (strcmp(s, "yes"))
+		mod->taints |= TAINT_NO_SUPPORT;
+}
+
+static ssize_t show_modinfo_supported(struct module_attribute *mattr,
+	                struct module *mod, char *buffer)
+{
+	return sprintf(buffer, "%s\n", supported_printable(mod->taints));
+}
+
+static struct module_attribute modinfo_supported = {
+	.attr = { .name = "supported", .mode = 0444 },
+	.show = show_modinfo_supported,
+	.setup = setup_modinfo_supported,
+};
+
 static struct module_attribute *modinfo_attrs[] = {
 	&modinfo_version,
 	&modinfo_srcversion,
 	&initstate,
+	&modinfo_supported,
 #ifdef CONFIG_MODULE_UNLOAD
 	&refcnt,
 #endif
@@ -1415,6 +1474,8 @@ static int __unlink_module(void *_mod)
 /* Free a module, remove from lists, etc (must hold module_mutex). */
 static void free_module(struct module *mod)
 {
+	trace_kernel_module_free(mod);
+
 	/* Delete from various lists */
 	stop_machine(__unlink_module, mod, NULL);
 	remove_notes_attrs(mod);
@@ -1783,6 +1844,33 @@ static inline void add_kallsyms(struct module *mod,
 }
 #endif /* CONFIG_KALLSYMS */
 
+#ifdef CONFIG_DYNAMIC_PRINTK_DEBUG
+static void dynamic_printk_setup(Elf_Shdr *sechdrs, unsigned int verboseindex)
+{
+	struct mod_debug *debug_info;
+	unsigned long pos, end;
+	unsigned int num_verbose;
+
+	pos = sechdrs[verboseindex].sh_addr;
+	num_verbose = sechdrs[verboseindex].sh_size /
+				sizeof(struct mod_debug);
+	end = pos + (num_verbose * sizeof(struct mod_debug));
+
+	for (; pos < end; pos += sizeof(struct mod_debug)) {
+		debug_info = (struct mod_debug *)pos;
+		register_dynamic_debug_module(debug_info->modname,
+			debug_info->type, debug_info->logical_modname,
+			debug_info->flag_names, debug_info->hash,
+			debug_info->hash2);
+	}
+}
+#else
+static inline void dynamic_printk_setup(Elf_Shdr *sechdrs,
+					unsigned int verboseindex)
+{
+}
+#endif /* CONFIG_DYNAMIC_PRINTK_DEBUG */
+
 static void *module_alloc_update_bounds(unsigned long size)
 {
 	void *ret = module_alloc(size);
@@ -1806,6 +1894,7 @@ static noinline struct module *load_module(void __user *umod,
 	Elf_Ehdr *hdr;
 	Elf_Shdr *sechdrs;
 	char *secstrings, *args, *modmagic, *strtab = NULL;
+	char *staging;
 	unsigned int i;
 	unsigned int symindex = 0;
 	unsigned int strindex = 0;
@@ -1831,6 +1920,9 @@ static noinline struct module *load_module(void __user *umod,
 #endif
 	unsigned int markersindex;
 	unsigned int markersstringsindex;
+	unsigned int tracepointsindex;
+	unsigned int tracepointsstringsindex;
+	unsigned int verboseindex;
 	struct module *mod;
 	long err = 0;
 	void *percpu = NULL, *ptr = NULL; /* Stops spurious gcc warning */
@@ -1960,6 +2052,14 @@ static noinline struct module *load_module(void __user *umod,
 		goto free_hdr;
 	}
 
+	staging = get_modinfo(sechdrs, infoindex, "staging");
+	if (staging) {
+		add_taint_module(mod, TAINT_CRAP);
+		printk(KERN_WARNING "%s: module is from the staging directory,"
+		       " the quality is unknown, you have been warned.\n",
+		       mod->name);
+	}
+
 	/* Now copy in args */
 	args = strndup_user(uargs, ~0UL >> 1);
 	if (IS_ERR(args)) {
@@ -2039,7 +2139,9 @@ static noinline struct module *load_module(void __user *umod,
 	mod = (void *)sechdrs[modindex].sh_addr;
 
 	/* Now we've moved module, initialize linked lists, etc. */
-	module_unload_init(mod);
+	err = module_unload_init(mod);
+	if (err)
+		goto free_unload;
 
 	/* add kobject, so we can reference it. */
 	err = mod_sysfs_init(mod);
@@ -2117,6 +2219,11 @@ static noinline struct module *load_module(void __user *umod,
 	markersindex = find_sec(hdr, sechdrs, secstrings, "__markers");
  	markersstringsindex = find_sec(hdr, sechdrs, secstrings,
 					"__markers_strings");
+	verboseindex = find_sec(hdr, sechdrs, secstrings, "__verbose");
+
+	tracepointsindex = find_sec(hdr, sechdrs, secstrings, "__tracepoints");
+	tracepointsstringsindex = find_sec(hdr, sechdrs, secstrings,
+					"__tracepoints_strings");
 
 	/* Now do relocations. */
 	for (i = 1; i < hdr->e_shnum; i++) {
@@ -2144,6 +2251,12 @@ static noinline struct module *load_module(void __user *umod,
 	mod->num_markers =
 		sechdrs[markersindex].sh_size / sizeof(*mod->markers);
 #endif
+#ifdef CONFIG_TRACEPOINTS
+	mod->tracepoints = (void *)sechdrs[tracepointsindex].sh_addr;
+	mod->num_tracepoints =
+		sechdrs[tracepointsindex].sh_size / sizeof(*mod->tracepoints);
+#endif
+
 
         /* Find duplicate symbols */
 	err = verify_export_symbols(mod);
@@ -2162,11 +2275,17 @@ static noinline struct module *load_module(void __user *umod,
 
 	add_kallsyms(mod, sechdrs, symindex, strindex, secstrings);
 
+	if (!mod->taints) {
 #ifdef CONFIG_MARKERS
-	if (!mod->taints)
 		marker_update_probe_range(mod->markers,
 			mod->markers + mod->num_markers);
 #endif
+#ifdef CONFIG_TRACEPOINTS
+		tracepoint_update_probe_range(mod->tracepoints,
+			mod->tracepoints + mod->num_tracepoints);
+#endif
+	}
+	dynamic_printk_setup(sechdrs, verboseindex);
 	err = module_finalize(hdr, sechdrs, mod);
 	if (err < 0)
 		goto cleanup;
@@ -2219,6 +2338,26 @@ static noinline struct module *load_module(void __user *umod,
 	add_sect_attrs(mod, hdr->e_shnum, secstrings, sechdrs);
 	add_notes_attrs(mod, hdr->e_shnum, secstrings, sechdrs);
 
+	/* We don't use add_taint() here because it also disables lockdep. */
+	if (mod->taints & TAINT_EXTERNAL_SUPPORT)
+		tainted |= TAINT_EXTERNAL_SUPPORT;
+	else if (mod->taints == TAINT_NO_SUPPORT) {
+		if (unsupported == 0) {
+			printk(KERN_WARNING "%s: module not supported by "
+			       "Novell, refusing to load. To override, echo "
+			       "1 > /proc/sys/kernel/unsupported\n", mod->name);
+			err = -ENOEXEC;
+			goto free_hdr;
+		}
+		tainted |= TAINT_NO_SUPPORT;
+		if (unsupported == 1) {
+			printk(KERN_WARNING "%s: module is not supported by "
+			       "Novell. Novell Technical Services may decline "
+			       "your support request if it involves a kernel "
+			       "fault.\n", mod->name);
+		}
+	}
+
 	/* Size of section 0 is 0, so this works well if no unwind info. */
 	mod->unwind_info = unwind_add_table(mod,
 					    (void *)sechdrs[unwindex].sh_addr,
@@ -2226,6 +2365,8 @@ static noinline struct module *load_module(void __user *umod,
 
 	/* Get rid of temporary copy */
 	vfree(hdr);
+
+	trace_kernel_module_load(mod);
 
 	/* Done! */
 	return mod;
@@ -2467,12 +2608,23 @@ out:
 	return -ERANGE;
 }
 
+#ifdef CONFIG_KDB
+#include <linux/kdb.h>
+struct list_head *kdb_modules = &modules;	/* kdb needs the list of modules */
+#endif /* CONFIG_KDB */
+
 int module_get_kallsym(unsigned int symnum, unsigned long *value, char *type,
 			char *name, char *module_name, int *exported)
 {
 	struct module *mod;
+#ifdef CONFIG_KDB
+	int get_lock = !KDB_IS_RUNNING();
+#else
+#define	get_lock 1
+#endif
 
-	preempt_disable();
+	if (get_lock)
+		preempt_disable();
 	list_for_each_entry(mod, &modules, list) {
 		if (symnum < mod->num_symtab) {
 			*value = mod->symtab[symnum].st_value;
@@ -2481,12 +2633,14 @@ int module_get_kallsym(unsigned int symnum, unsigned long *value, char *type,
 				KSYM_NAME_LEN);
 			strlcpy(module_name, mod->name, MODULE_NAME_LEN);
 			*exported = is_exported(name, mod);
-			preempt_enable();
+			if (get_lock)
+				preempt_enable();
 			return 0;
 		}
 		symnum -= mod->num_symtab;
 	}
-	preempt_enable();
+	if (get_lock)
+		preempt_enable();
 	return -ERANGE;
 }
 
@@ -2554,6 +2708,12 @@ static char *module_flags(struct module *mod, char *buf)
 			buf[bx++] = 'P';
 		if (mod->taints & TAINT_FORCED_MODULE)
 			buf[bx++] = 'F';
+		if (mod->taints & TAINT_CRAP)
+			buf[bx++] = 'C';
+		if (mod->taints & TAINT_NO_SUPPORT)
+			buf[bx++] = 'N';
+		if (mod->taints & TAINT_EXTERNAL_SUPPORT)
+			buf[bx++] = 'X';
 		/*
 		 * TAINT_FORCED_RMMOD: could be added.
 		 * TAINT_UNSAFE_SMP, TAINT_MACHINE_CHECK, TAINT_BAD_PAGE don't
@@ -2694,6 +2854,7 @@ void print_modules(void)
 	if (last_unloaded_module[0])
 		printk(" [last unloaded: %s]", last_unloaded_module);
 	printk("\n");
+	printk("Supported: %s\n", supported_printable(tainted));
 }
 
 #ifdef CONFIG_MODVERSIONS
@@ -2713,5 +2874,52 @@ void module_update_markers(void)
 			marker_update_probe_range(mod->markers,
 				mod->markers + mod->num_markers);
 	mutex_unlock(&module_mutex);
+}
+#endif
+
+#ifdef CONFIG_TRACEPOINTS
+void module_update_tracepoints(void)
+{
+	struct module *mod;
+
+	mutex_lock(&module_mutex);
+	list_for_each_entry(mod, &modules, list)
+		if (!mod->taints)
+			tracepoint_update_probe_range(mod->tracepoints,
+				mod->tracepoints + mod->num_tracepoints);
+	mutex_unlock(&module_mutex);
+}
+
+/*
+ * Returns 0 if current not found.
+ * Returns 1 if current found.
+ */
+int module_get_iter_tracepoints(struct tracepoint_iter *iter)
+{
+	struct module *iter_mod;
+	int found = 0;
+
+	mutex_lock(&module_mutex);
+	list_for_each_entry(iter_mod, &modules, list) {
+		if (!iter_mod->taints) {
+			/*
+			 * Sorted module list
+			 */
+			if (iter_mod < iter->module)
+				continue;
+			else if (iter_mod > iter->module)
+				iter->tracepoint = NULL;
+			found = tracepoint_get_iter_range(&iter->tracepoint,
+				iter_mod->tracepoints,
+				iter_mod->tracepoints
+					+ iter_mod->num_tracepoints);
+			if (found) {
+				iter->module = iter_mod;
+				break;
+			}
+		}
+	}
+	mutex_unlock(&module_mutex);
+	return found;
 }
 #endif

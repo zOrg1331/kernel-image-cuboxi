@@ -355,7 +355,10 @@ static int ext2_rename (struct inode * old_dir, struct dentry * old_dentry,
 	inode_dec_link_count(old_inode);
 
 	if (dir_de) {
-		ext2_set_link(old_inode, dir_de, dir_page, new_dir);
+		/* Set link only if parent has changed and thus avoid setting
+		 * of mtime of the moved directory on a pure rename. */
+		if (old_dir != new_dir)
+			ext2_set_link(old_inode, dir_de, dir_page, new_dir);
 		inode_dec_link_count(old_dir);
 	}
 	return 0;

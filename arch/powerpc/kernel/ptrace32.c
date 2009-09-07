@@ -29,11 +29,14 @@
 #include <linux/security.h>
 #include <linux/signal.h>
 #include <linux/compat.h>
+#include <linux/elf.h>
 
 #include <asm/uaccess.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
 #include <asm/system.h>
+
+#include "ppc32.h"
 
 /*
  * does not yet catch signals sent when the child dies.
@@ -67,7 +70,29 @@ static long compat_ptrace_old(struct task_struct *child, long request,
 /* Macros to workout the correct index for the FPR in the thread struct */
 #define FPRNUMBER(i) (((i) - PT_FPR0) >> 1)
 #define FPRHALF(i) (((i) - PT_FPR0) & 1)
-#define FPRINDEX(i) TS_FPRWIDTH * FPRNUMBER(i) + FPRHALF(i)
+#define FPRINDEX(i) TS_FPRWIDTH * FPRNUMBER(i) * 2 + FPRHALF(i)
+#define FPRINDEX_3264(i) (TS_FPRWIDTH * ((i) - PT_FPR0))
+
+static int compat_ptrace_getsiginfo(struct task_struct *child, compat_siginfo_t __user *data)
+{
+	siginfo_t lastinfo;
+	int error = -ESRCH;
+
+	read_lock(&tasklist_lock);
+	if (likely(child->sighand != NULL)) {
+		error = -EINVAL;
+		spin_lock_irq(&child->sighand->siglock);
+		if (likely(child->last_siginfo != NULL)) {
+			lastinfo = *child->last_siginfo;
+			error = 0;
+		}
+		spin_unlock_irq(&child->sighand->siglock);
+	}
+	read_unlock(&tasklist_lock);
+	if (!error)
+		return copy_siginfo_to_user32(data, &lastinfo);
+	return error;
+}
 
 long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 			compat_ulong_t caddr, compat_ulong_t cdata)
@@ -168,8 +193,9 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 		CHECK_FULL_REGS(child->thread.regs);
 		if (numReg >= PT_FPR0) {
 			flush_fp_to_thread(child);
-			tmp = ((unsigned long int *)child->thread.fpr)
-				[FPRINDEX(numReg)];
+			/* get 64 bit FPR */
+			tmp = ((u64 *)child->thread.fpr)
+				[FPRINDEX_3264(numReg)];
 		} else { /* register within PT_REGS struct */
 			tmp = ptrace_get_reg(child, numReg);
 		} 
@@ -262,8 +288,13 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 				freg = (freg & 0xfffffffful) | (data << 32);
 			ret = ptrace_put_reg(child, numReg, freg);
 		} else {
+			u64 *tmp;
 			flush_fp_to_thread(child);
-			((unsigned int *)child->thread.regs)[index] = data;
+			/* get 64 bit FPR ... */
+			tmp = &(((u64 *)child->thread.fpr)
+				[FPRINDEX_3264(numReg)]);
+			/* ... write the 32 bit part we want */
+			((u32 *)tmp)[index % 2] = data;
 			ret = 0;
 		}
 		break;
@@ -289,6 +320,9 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 			child, task_user_regset_view(current), 0,
 			0, PT_REGS_COUNT * sizeof(compat_long_t),
 			compat_ptr(data));
+
+	case PTRACE_GETSIGINFO:
+		return compat_ptrace_getsiginfo(child, compat_ptr(data));
 
 	case PTRACE_GETFPREGS:
 	case PTRACE_SETFPREGS:

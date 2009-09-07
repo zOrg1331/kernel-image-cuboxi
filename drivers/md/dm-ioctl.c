@@ -233,7 +233,7 @@ static void __hash_remove(struct hash_cell *hc)
 	}
 
 	if (hc->new_map)
-		dm_table_put(hc->new_map);
+		dm_table_destroy(hc->new_map);
 	dm_put(hc->md);
 	free_cell(hc);
 }
@@ -828,8 +828,8 @@ static int do_resume(struct dm_ioctl *param)
 
 		r = dm_swap_table(md, new_map);
 		if (r) {
+			dm_table_destroy(new_map);
 			dm_put(md);
-			dm_table_put(new_map);
 			return r;
 		}
 
@@ -837,8 +837,6 @@ static int do_resume(struct dm_ioctl *param)
 			set_disk_ro(dm_disk(md), 0);
 		else
 			set_disk_ro(dm_disk(md), 1);
-
-		dm_table_put(new_map);
 	}
 
 	if (dm_suspended(md))
@@ -1046,6 +1044,12 @@ static int populate_table(struct dm_table *table,
 		next = spec->next;
 	}
 
+	r = dm_table_set_type(table);
+	if (r) {
+		DMWARN("unable to set table type");
+		return r;
+	}
+
 	return dm_table_complete(table);
 }
 
@@ -1070,6 +1074,13 @@ static int table_load(struct dm_ioctl *param, size_t param_size)
 		goto out;
 	}
 
+	r = dm_init_md_mempool(md, dm_table_get_type(t));
+	if (r) {
+		DMWARN("unable to initialize the md mempools for this table");
+		dm_table_put(t);
+		goto out;
+	}
+
 	down_write(&_hash_lock);
 	hc = dm_get_mdptr(md);
 	if (!hc || hc->md != md) {
@@ -1081,7 +1092,7 @@ static int table_load(struct dm_ioctl *param, size_t param_size)
 	}
 
 	if (hc->new_map)
-		dm_table_put(hc->new_map);
+		dm_table_destroy(hc->new_map);
 	hc->new_map = t;
 	up_write(&_hash_lock);
 
@@ -1110,7 +1121,7 @@ static int table_clear(struct dm_ioctl *param, size_t param_size)
 	}
 
 	if (hc->new_map) {
-		dm_table_put(hc->new_map);
+		dm_table_destroy(hc->new_map);
 		hc->new_map = NULL;
 	}
 

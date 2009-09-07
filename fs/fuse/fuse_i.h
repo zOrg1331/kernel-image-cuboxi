@@ -551,6 +551,10 @@ void fuse_truncate(struct address_space *mapping, loff_t offset);
  */
 int fuse_dev_init(void);
 
+
+int fuse_do_setattr(struct dentry *entry, struct iattr *attr,
+		    struct file *file);
+
 /**
  * Cleanup the client device
  */

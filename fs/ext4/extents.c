@@ -190,7 +190,7 @@ ext4_ext_new_meta_block(handle_t *handle, struct inode *inode,
 	ext4_fsblk_t goal, newblock;
 
 	goal = ext4_ext_find_goal(inode, path, le32_to_cpu(ex->ee_block));
-	newblock = ext4_new_meta_block(handle, inode, goal, err);
+	newblock = ext4_new_meta_blocks(handle, inode, goal, NULL, err);
 	return newblock;
 }
 
@@ -383,8 +383,8 @@ static void ext4_ext_show_leaf(struct inode *inode, struct ext4_ext_path *path)
 	ext_debug("\n");
 }
 #else
-#define ext4_ext_show_path(inode,path)
-#define ext4_ext_show_leaf(inode,path)
+#define ext4_ext_show_path(inode, path)
+#define ext4_ext_show_leaf(inode, path)
 #endif
 
 void ext4_ext_drop_refs(struct ext4_ext_path *path)
@@ -440,9 +440,10 @@ ext4_ext_binsearch_idx(struct inode *inode,
 		for (k = 0; k < le16_to_cpu(eh->eh_entries); k++, ix++) {
 		  if (k != 0 &&
 		      le32_to_cpu(ix->ei_block) <= le32_to_cpu(ix[-1].ei_block)) {
-				printk("k=%d, ix=0x%p, first=0x%p\n", k,
-					ix, EXT_FIRST_INDEX(eh));
-				printk("%u <= %u\n",
+				printk(KERN_DEBUG "k=%d, ix=0x%p, "
+				       "first=0x%p\n", k,
+				       ix, EXT_FIRST_INDEX(eh));
+				printk(KERN_DEBUG "%u <= %u\n",
 				       le32_to_cpu(ix->ei_block),
 				       le32_to_cpu(ix[-1].ei_block));
 			}
@@ -1158,15 +1159,13 @@ ext4_ext_search_right(struct inode *inode, struct ext4_ext_path *path,
 	while (--depth >= 0) {
 		ix = path[depth].p_idx;
 		if (ix != EXT_LAST_INDEX(path[depth].p_hdr))
-			break;
+			goto got_index;
 	}
 
-	if (depth < 0) {
-		/* we've gone up to the root and
-		 * found no index to the right */
-		return 0;
-	}
+	/* we've gone up to the root and found no index to the right */
+	return 0;
 
+got_index:
 	/* we've found index to the right, let's
 	 * follow it and find the closest allocated
 	 * block to the right */
@@ -1199,7 +1198,6 @@ ext4_ext_search_right(struct inode *inode, struct ext4_ext_path *path,
 	*phys = ext_pblock(ex);
 	put_bh(bh);
 	return 0;
-
 }
 
 /*
@@ -1475,7 +1473,7 @@ int ext4_ext_insert_extent(handle_t *handle, struct inode *inode,
 				struct ext4_ext_path *path,
 				struct ext4_extent *newext)
 {
-	struct ext4_extent_header * eh;
+	struct ext4_extent_header *eh;
 	struct ext4_extent *ex, *fex;
 	struct ext4_extent *nearex; /* nearest extent */
 	struct ext4_ext_path *npath = NULL;
@@ -1620,7 +1618,6 @@ cleanup:
 		ext4_ext_drop_refs(npath);
 		kfree(npath);
 	}
-	ext4_ext_tree_changed(inode);
 	ext4_ext_invalidate_cache(inode);
 	return err;
 }
@@ -2124,7 +2121,6 @@ static int ext4_ext_remove_space(struct inode *inode, ext4_lblk_t start)
 		}
 	}
 out:
-	ext4_ext_tree_changed(inode);
 	ext4_ext_drop_refs(path);
 	kfree(path);
 	ext4_journal_stop(handle);
@@ -2142,7 +2138,7 @@ void ext4_ext_init(struct super_block *sb)
 	 */
 
 	if (test_opt(sb, EXTENTS)) {
-		printk("EXT4-fs: file extents enabled");
+		printk(KERN_INFO "EXT4-fs: file extents enabled");
 #ifdef AGGRESSIVE_TEST
 		printk(", aggressive tests");
 #endif
@@ -2271,7 +2267,7 @@ static int ext4_ext_convert_to_initialized(handle_t *handle,
 						struct inode *inode,
 						struct ext4_ext_path *path,
 						ext4_lblk_t iblock,
-						unsigned long max_blocks)
+						unsigned int max_blocks)
 {
 	struct ext4_extent *ex, newex, orig_ex;
 	struct ext4_extent *ex1 = NULL;
@@ -2569,26 +2565,26 @@ fix_extent_len:
  */
 int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 			ext4_lblk_t iblock,
-			unsigned long max_blocks, struct buffer_head *bh_result,
+			unsigned int max_blocks, struct buffer_head *bh_result,
 			int create, int extend_disksize)
 {
 	struct ext4_ext_path *path = NULL;
 	struct ext4_extent_header *eh;
 	struct ext4_extent newex, *ex;
-	ext4_fsblk_t goal, newblock;
-	int err = 0, depth, ret;
-	unsigned long allocated = 0;
+	ext4_fsblk_t newblock;
+	int err = 0, depth, ret, cache_type;
+	unsigned int allocated = 0;
 	struct ext4_allocation_request ar;
 	loff_t disksize;
 
 	__clear_bit(BH_New, &bh_result->b_state);
-	ext_debug("blocks %u/%lu requested for inode %u\n",
+	ext_debug("blocks %u/%u requested for inode %u\n",
 			iblock, max_blocks, inode->i_ino);
 
 	/* check in cache */
-	goal = ext4_ext_in_cache(inode, iblock, &newex);
-	if (goal) {
-		if (goal == EXT4_EXT_CACHE_GAP) {
+	cache_type = ext4_ext_in_cache(inode, iblock, &newex);
+	if (cache_type) {
+		if (cache_type == EXT4_EXT_CACHE_GAP) {
 			if (!create) {
 				/*
 				 * block isn't allocated yet and
@@ -2597,7 +2593,7 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 				goto out2;
 			}
 			/* we should allocate requested block */
-		} else if (goal == EXT4_EXT_CACHE_EXTENT) {
+		} else if (cache_type == EXT4_EXT_CACHE_EXTENT) {
 			/* block is already allocated */
 			newblock = iblock
 				   - le32_to_cpu(newex.ee_block)
@@ -2668,6 +2664,8 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 				if (allocated > max_blocks)
 					allocated = max_blocks;
 				set_buffer_unwritten(bh_result);
+				bh_result->b_bdev = inode->i_sb->s_bdev;
+				bh_result->b_blocknr = newblock;
 				goto out2;
 			}
 
@@ -2696,11 +2694,8 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 		goto out2;
 	}
 	/*
-	 * Okay, we need to do block allocation.  Lazily initialize the block
-	 * allocation info here if necessary.
+	 * Okay, we need to do block allocation.
 	 */
-	if (S_ISREG(inode->i_mode) && (!EXT4_I(inode)->i_block_alloc_info))
-		ext4_init_block_alloc_info(inode);
 
 	/* find neighbour allocated blocks */
 	ar.lleft = iblock;
@@ -2748,7 +2743,7 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 	if (!newblock)
 		goto out2;
 	ext_debug("allocate new block: goal %llu, found %llu/%lu\n",
-			goal, newblock, allocated);
+		  ar.goal, newblock, allocated);
 
 	/* try to insert new extent into found leaf and return */
 	ext4_ext_store_pblock(&newex, newblock);
@@ -2760,7 +2755,7 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 		/* free data blocks we just allocated */
 		/* not a good idea to call discard here directly,
 		 * but otherwise we'd need to call it every free() */
-		ext4_mb_discard_inode_preallocations(inode);
+		ext4_discard_preallocations(inode);
 		ext4_free_blocks(handle, inode, ext_pblock(&newex),
 					ext4_ext_get_actual_len(&newex), 0);
 		goto out2;
@@ -2824,7 +2819,7 @@ void ext4_ext_truncate(struct inode *inode)
 	down_write(&EXT4_I(inode)->i_data_sem);
 	ext4_ext_invalidate_cache(inode);
 
-	ext4_discard_reservation(inode);
+	ext4_discard_preallocations(inode);
 
 	/*
 	 * TODO: optimization is possible here.
@@ -2877,10 +2872,11 @@ static void ext4_falloc_update_inode(struct inode *inode,
 	 * Update only when preallocation was requested beyond
 	 * the file size.
 	 */
-	if (!(mode & FALLOC_FL_KEEP_SIZE) &&
-				new_size > i_size_read(inode)) {
-		i_size_write(inode, new_size);
-		EXT4_I(inode)->i_disksize = new_size;
+	if (!(mode & FALLOC_FL_KEEP_SIZE)) {
+		if (new_size > i_size_read(inode))
+			i_size_write(inode, new_size);
+		if (new_size > EXT4_I(inode)->i_disksize)
+			ext4_update_i_disksize(inode, new_size);
 	}
 
 }
@@ -2897,7 +2893,7 @@ long ext4_fallocate(struct inode *inode, int mode, loff_t offset, loff_t len)
 	handle_t *handle;
 	ext4_lblk_t block;
 	loff_t new_size;
-	unsigned long max_blocks;
+	unsigned int max_blocks;
 	int ret = 0;
 	int ret2 = 0;
 	int retries = 0;

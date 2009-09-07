@@ -71,6 +71,7 @@
  */
 enum pageflags {
 	PG_locked,		/* Page is locked. Don't touch. */
+	PG_waiters,		/* Page has PG_locked waiters. */
 	PG_error,
 	PG_referenced,
 	PG_uptodate,
@@ -84,6 +85,7 @@ enum pageflags {
 	PG_private,		/* If pagecache, has fs-private data */
 	PG_writeback,		/* Page is under writeback */
 #ifdef CONFIG_PAGEFLAGS_EXTENDED
+	PG_memerror,		/* Page has a physical memory error */
 	PG_head,		/* A head page */
 	PG_tail,		/* A tail page */
 #else
@@ -96,14 +98,23 @@ enum pageflags {
 #ifdef CONFIG_IA64_UNCACHED_ALLOCATOR
 	PG_uncached,		/* Page has been mapped as uncached */
 #endif
+#ifdef CONFIG_XEN
+	PG_foreign,		/* Page is owned by foreign allocator. */
+	PG_pinned,		/* Cannot alias with PG_owner_priv_1 since
+				 * bad_page() checks include this bit.
+				 * Should not use PG_arch_1 as that may have
+				 * a different purpose elsewhere. */
+#endif
 	__NR_PAGEFLAGS,
 
 	/* Filesystems */
 	PG_checked = PG_owner_priv_1,
 
+#ifdef CONFIG_PARAVIRT_XEN
 	/* XEN */
 	PG_pinned = PG_owner_priv_1,
 	PG_savepinned = PG_dirty,
+#endif
 
 	/* SLOB */
 	PG_slob_page = PG_active,
@@ -147,15 +158,21 @@ static inline int TestSetPage##uname(struct page *page)			\
 static inline int TestClearPage##uname(struct page *page)		\
 		{ return test_and_clear_bit(PG_##lname, &page->flags); }
 
+#define PAGEFLAGMASK(uname, lname)					\
+static inline int PAGEMASK_##uname(void)				\
+		{ return (1 << PG_##lname); }
 
 #define PAGEFLAG(uname, lname) TESTPAGEFLAG(uname, lname)		\
-	SETPAGEFLAG(uname, lname) CLEARPAGEFLAG(uname, lname)
+	SETPAGEFLAG(uname, lname) CLEARPAGEFLAG(uname, lname)		\
+	PAGEFLAGMASK(uname, lname)
 
 #define __PAGEFLAG(uname, lname) TESTPAGEFLAG(uname, lname)		\
 	__SETPAGEFLAG(uname, lname)  __CLEARPAGEFLAG(uname, lname)
 
 #define PAGEFLAG_FALSE(uname) 						\
 static inline int Page##uname(struct page *page) 			\
+			{ return 0; }					\
+static inline int PAGEMASK_##uname(void)				\
 			{ return 0; }
 
 #define TESTSCFLAG(uname, lname)					\
@@ -164,6 +181,7 @@ static inline int Page##uname(struct page *page) 			\
 struct page;	/* forward declaration */
 
 TESTPAGEFLAG(Locked, locked)
+PAGEFLAG(Waiters, waiters)
 PAGEFLAG(Error, error)
 PAGEFLAG(Referenced, referenced) TESTCLEARFLAG(Referenced, referenced)
 PAGEFLAG(Dirty, dirty) TESTSCFLAG(Dirty, dirty) __CLEARPAGEFLAG(Dirty, dirty)
@@ -171,8 +189,12 @@ PAGEFLAG(LRU, lru) __CLEARPAGEFLAG(LRU, lru)
 PAGEFLAG(Active, active) __CLEARPAGEFLAG(Active, active)
 __PAGEFLAG(Slab, slab)
 PAGEFLAG(Checked, checked)		/* Used by some filesystems */
+#if defined(CONFIG_XEN) || defined(CONFIG_PARAVIRT_XEN)
 PAGEFLAG(Pinned, pinned) TESTSCFLAG(Pinned, pinned)	/* Xen */
+#endif
+#ifdef CONFIG_PARAVIRT_XEN
 PAGEFLAG(SavePinned, savepinned);			/* Xen */
+#endif
 PAGEFLAG(Reserved, reserved) __CLEARPAGEFLAG(Reserved, reserved)
 PAGEFLAG(Private, private) __CLEARPAGEFLAG(Private, private)
 	__SETPAGEFLAG(Private, private)
@@ -262,6 +284,26 @@ static inline void SetPageUptodate(struct page *page)
 
 CLEARPAGEFLAG(Uptodate, uptodate)
 
+#ifdef CONFIG_XEN
+TESTPAGEFLAG(Foreign, foreign)
+static inline void SetPageForeign(struct page *page,
+				  void (*dtor)(struct page *, unsigned int))
+{
+	BUG_ON(!dtor);
+	set_bit(PG_foreign, &page->flags);
+	page->index = (long)dtor;
+}
+static inline void ClearPageForeign(struct page *page)
+{
+	clear_bit(PG_foreign, &page->flags);
+	page->index = 0;
+}
+static inline void PageForeignDestructor(struct page *page, unsigned int order)
+{
+	((void (*)(struct page *, unsigned int))page->index)(page, order);
+}
+#endif
+
 extern void cancel_dirty_page(struct page *page, unsigned int account_size);
 
 int test_clear_page_writeback(struct page *page);
@@ -326,9 +368,24 @@ static inline void __ClearPageTail(struct page *page)
 
 #endif /* !PAGEFLAGS_EXTENDED */
 
+#ifdef CONFIG_PAGEFLAGS_EXTENDED
+PAGEFLAG(MemError, memerror)
+#else
+PAGEFLAG_FALSE(MemError)
+#endif
+
+#if !defined(CONFIG_XEN)
+# define PAGE_FLAGS_XEN 0
+#elif defined(CONFIG_X86)
+# define PAGE_FLAGS_XEN ((1 << PG_pinned) | (1 << PG_foreign))
+#else
+# define PAGE_FLAGS_XEN (1 << PG_foreign)
+#endif
+
 #define PAGE_FLAGS	(1 << PG_lru   | 1 << PG_private   | 1 << PG_locked | \
-			 1 << PG_buddy | 1 << PG_writeback | \
-			 1 << PG_slab  | 1 << PG_swapcache | 1 << PG_active)
+			 1 << PG_buddy | 1 << PG_writeback | 1 << PG_waiters | \
+			 1 << PG_slab  | 1 << PG_swapcache | 1 << PG_active | \
+			 PAGE_FLAGS_XEN)
 
 /*
  * Flags checked in bad_page().  Pages on the free list should not have

@@ -24,7 +24,6 @@
 #include <linux/crc32.h>
 #include <linux/writeback.h>
 #include <linux/backing-dev.h>
-#include <linux/bio.h>
 
 /*
  * Default IO end handler for temporary BJ_IO buffer_heads.
@@ -171,34 +170,12 @@ static int journal_submit_commit_record(journal_t *journal,
  * This function along with journal_submit_commit_record
  * allows to write the commit record asynchronously.
  */
-static int journal_wait_on_commit_record(journal_t *journal,
-					 struct buffer_head *bh)
+static int journal_wait_on_commit_record(struct buffer_head *bh)
 {
 	int ret = 0;
 
-retry:
 	clear_buffer_dirty(bh);
 	wait_on_buffer(bh);
-	if (buffer_eopnotsupp(bh) && (journal->j_flags & JBD2_BARRIER)) {
-		printk(KERN_WARNING
-		       "JBD2: wait_on_commit_record: sync failed on %s - "
-		       "disabling barriers\n", journal->j_devname);
-		spin_lock(&journal->j_state_lock);
-		journal->j_flags &= ~JBD2_BARRIER;
-		spin_unlock(&journal->j_state_lock);
-
-		lock_buffer(bh);
-		clear_buffer_dirty(bh);
-		set_buffer_uptodate(bh);
-		bh->b_end_io = journal_end_buffer_io_sync;
-
-		ret = submit_bh(WRITE_SYNC, bh);
-		if (ret) {
-			unlock_buffer(bh);
-			return ret;
-		}
-		goto retry;
-	}
 
 	if (unlikely(!buffer_uptodate(bh)))
 		ret = -EIO;
@@ -818,7 +795,7 @@ wait_for_iobuf:
 			__jbd2_journal_abort_hard(journal);
 	}
 	if (!err && !is_journal_aborted(journal))
-		err = journal_wait_on_commit_record(journal, cbh);
+		err = journal_wait_on_commit_record(cbh);
 
 	if (err)
 		jbd2_journal_abort(journal, err);
@@ -827,6 +804,30 @@ wait_for_iobuf:
            processing: any buffers committed as a result of this
            transaction can be removed from any checkpoint list it was on
            before. */
+
+	/*
+	 * Call any callbacks that had been registered for handles in this
+	 * transaction.  It is up to the callback to free any allocated
+	 * memory.
+	 *
+	 * The spinlocking (t_jcb_lock) here is surely unnecessary...
+	 */
+	spin_lock(&commit_transaction->t_jcb_lock);
+	if (!list_empty(&commit_transaction->t_jcb)) {
+		struct list_head *p, *n;
+		int error = is_journal_aborted(journal);
+
+		list_for_each_safe(p, n, &commit_transaction->t_jcb) {
+			struct journal_callback *jcb;
+
+			jcb = list_entry(p, struct journal_callback, jcb_list);
+			list_del(p);
+			spin_unlock(&commit_transaction->t_jcb_lock);
+			jcb->jcb_func(jcb, error);
+			spin_lock(&commit_transaction->t_jcb_lock);
+		}
+	}
+	spin_unlock(&commit_transaction->t_jcb_lock);
 
 	jbd_debug(3, "JBD: commit phase 6\n");
 

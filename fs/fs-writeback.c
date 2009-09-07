@@ -575,7 +575,10 @@ EXPORT_SYMBOL_GPL(generic_sync_sb_inodes);
 static void sync_sb_inodes(struct super_block *sb,
 				struct writeback_control *wbc)
 {
-	generic_sync_sb_inodes(sb, wbc);
+	if (sb->s_op->sync_inodes)
+		sb->s_op->sync_inodes(sb, wbc);
+	else
+		generic_sync_sb_inodes(sb, wbc);
 }
 
 /*

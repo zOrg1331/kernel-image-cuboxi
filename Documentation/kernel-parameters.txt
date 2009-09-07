@@ -179,6 +179,9 @@ and is between 256 and 4096 characters. It is defined in the file
 
 	acpi_no_auto_ssdt	[HW,ACPI] Disable automatic loading of SSDT
 
+	acpi_no_initrd_override	[KNL,ACPI]
+			Disable loading custom ACPI tables from the initramfs
+
 	acpi_os_name=	[HW,ACPI] Tell ACPI BIOS the name of the OS
 			Format: To spoof as Windows 98: ="Microsoft Windows"
 
@@ -196,6 +199,19 @@ and is between 256 and 4096 characters. It is defined in the file
 			Use timer override. For some broken Nvidia NF5 boards
 			that require a timer override, but don't have
 			HPET
+
+	acpi_backlight=	[HW,ACPI]
+			acpi_backlight=vendor
+			acpi_backlight=video
+			If set to vendor, it enforces the use of a
+			vendor specific ACPI driver for backlight switching
+			(e.g. thinkpad_acpi, sony_acpi, etc.) instead
+			of the video.ko driver.
+
+	acpi_display_output=	[HW,ACPI]
+			acpi_display_output=vendor
+			acpi_display_output=video
+			See above.
 
 	acpi.debug_layer=	[HW,ACPI]
 			Format: <int>
@@ -236,6 +252,11 @@ and is between 256 and 4096 characters. It is defined in the file
 			Override the pmtimer bug detection: force the kernel
 			to assume that this machine's pmtimer latches its value
 			and always returns good values.
+
+	acpi_root_table= [X86,ACPI]
+			{ rsdt }
+			rsdt: Take RSDT address for fetching
+			ACPI tables (instead of XSDT)
 
 	agp=		[AGP]
 			{ off | try_unsupported }
@@ -402,8 +423,11 @@ and is between 256 and 4096 characters. It is defined in the file
 			See Documentation/s390/CommonIO for details.
 
 	cgroup_disable= [KNL] Disable a particular controller
+	cgroup_enable=  [KNL] Enable a particular controller
+			For both cgroup_enable and cgroup_enable
 			Format: {name of the controller(s) to disable}
 				{Currently supported controllers - "memory"}
+				{Memory controller is disabled by default}
 
 	checkreqprot	[SELINUX] Set initial checkreqprot flag value.
 			Format: { "0" | "1" }
@@ -474,6 +498,8 @@ and is between 256 and 4096 characters. It is defined in the file
 			disable: disable HPET and use PIT instead
 			force: allow force enabled of undocumented chips (ICH4,
 			VIA, nVidia)
+
+	hpet64		[X86-64,HPET] enable 64-bit mode of the HPET timer (bnc#456700)
 
 	com20020=	[HW,NET] ARCnet - COM20020 chipset
 			Format:
@@ -659,11 +685,12 @@ and is between 256 and 4096 characters. It is defined in the file
 	earlyprintk=	[X86-32,X86-64,SH,BLACKFIN]
 			earlyprintk=vga
 			earlyprintk=serial[,ttySn[,baudrate]]
+			earlyprintk=dbgp
 
 			Append ",keep" to not disable it when the real console
 			takes over.
 
-			Only vga or serial at a time, not both.
+			Only vga or serial or usb debug port at a time.
 
 			Currently only ttyS0 and ttyS1 are supported.
 
@@ -674,6 +701,11 @@ and is between 256 and 4096 characters. It is defined in the file
 			console.
 
 	eata=		[HW,SCSI]
+
+	ec_intr=	[HW,ACPI] ACPI Embedded Controller interrupt mode
+			Format: <int>
+			0: polling mode
+			non-0: interrupt mode (default)
 
 	edd=		[EDD]
 			Format: {"off" | "on" | "skip[mbr]"}
@@ -1393,6 +1425,15 @@ and is between 256 and 4096 characters. It is defined in the file
 			instruction doesn't work correctly and not to
 			use it.
 
+	file_caps=	Tells the kernel whether to honor file capabilities.
+			When disabled, the only way then for a file to be
+			executed with privilege is to be setuid root or executed
+			by root.
+			Format: {"0" | "1"}
+			0 -- ignore file capabilities.
+			1 -- honor file capabilities.
+			Default value is 0.
+
 	nohalt		[IA-64] Tells the kernel not to use the power saving
 			function PAL_HALT_LIGHT when idle. This increases
 			power-consumption. On the positive side, it reduces
@@ -1424,6 +1465,12 @@ and is between 256 and 4096 characters. It is defined in the file
 	nolapic		[X86-32,APIC] Do not enable or use the local APIC.
 
 	nolapic_timer	[X86-32,APIC] Do not use the local APIC timer.
+
+	nox2apic	[X86-64,APIC] Do not enable x2APIC mode.
+
+	x2apic_phys	[X86-64,APIC] Use x2apic physical mode instead of
+			default x2apic cluster mode on platforms
+			supporting x2apic.
 
 	noltlbs		[PPC] Do not use large page/tlb entries for kernel
 			lowmem mapping on PPC40x.
@@ -1566,6 +1613,17 @@ and is between 256 and 4096 characters. It is defined in the file
 		nomsi		[MSI] If the PCI_MSI kernel config parameter is
 				enabled, this kernel boot option can be used to
 				disable the use of MSI interrupts system-wide.
+		noioapicquirk	[APIC] Disable all boot interrupt quirks.
+				Safety option to keep boot IRQs enabled. This
+				should never be necessary.
+		ioapicreroute	[APIC] Enable rerouting of boot IRQs to the
+				primary IO-APIC for bridges that cannot disable
+				boot IRQs. This fixes a source of spurious IRQs
+				when the system masks IRQs.
+		noioapicreroute	[APIC] Disable workaround that uses the
+				boot IRQ equivalent of an IRQ that connects to
+				a chipset where boot IRQs cannot be disabled.
+				The opposite of ioapicreroute.
 		biosirq		[X86-32] Use PCI BIOS calls to get the interrupt
 				routing table. These calls are known to be buggy
 				on several machines and they hang the machine
@@ -1643,6 +1701,9 @@ and is between 256 and 4096 characters. It is defined in the file
 			Format: { 0 | 1 }
 			See arch/parisc/kernel/pdc_chassis.c
 
+	perfmon_debug	[PERFMON] Enables Perfmon debug messages. Needed
+			to see traces of the early startup startup phase.
+
 	pf.		[PARIDE]
 			See Documentation/paride.txt.
 
@@ -1679,6 +1740,11 @@ and is between 256 and 4096 characters. It is defined in the file
 			[ISAPNP] Exclude memory regions for the
 			autoconfiguration.
 			Ranges are in pairs (memory base and size).
+
+	dynamic_printk
+			Enables pr_debug()/dev_dbg() calls if
+			CONFIG_DYNAMIC_PRINTK_DEBUG has been enabled. These can also
+			be switched on/off via <debugfs>/dynamic_printk/modules
 
 	print-fatal-signals=
 			[KNL] debug: print fatal signals
@@ -2113,6 +2179,12 @@ and is between 256 and 4096 characters. It is defined in the file
 			pernode	    one pool for each NUMA node (equivalent
 				    to global on non-NUMA machines)
 
+	unsupported	Allow loading of unsupported kernel modules:
+			0 = only allow supported modules,
+			1 = warn when loading unsupported modules,
+			2 = don't warn.
+
+
 	swiotlb=	[IA-64] Number of I/O TLB slabs
 
 	switches=	[HW,M68k]
@@ -2168,11 +2240,26 @@ and is between 256 and 4096 characters. It is defined in the file
 			See comment before function dc390_setup() in
 			drivers/scsi/tmscsim.c.
 
+	topology=	[S390]
+			Format: {off | on}
+			Specify if the kernel should make use of the cpu
+			topology informations if the hardware supports these.
+			The scheduler will make use of these informations and
+			e.g. base its process migration decisions on it.
+			Default is off.
+
 	tp720=		[HW,PS2]
 
 	trix=		[HW,OSS] MediaTrix AudioTrix Pro
 			Format:
 			<io>,<irq>,<dma>,<dma2>,<sb_io>,<sb_irq>,<sb_dma>,<mpu_io>,<mpu_irq>
+
+	tsc=		Disable clocksource-must-verify flag for TSC.
+			Format: <string>
+			[x86] reliable: mark tsc clocksource as reliable, this
+			disables clocksource verification at runtime.
+			Used to enable high-resolution timer mode on older
+			hardware, and in virtualized environment.
 
 	turbografx.map[2|3]=	[HW,JOY]
 			TurboGraFX parallel port interface

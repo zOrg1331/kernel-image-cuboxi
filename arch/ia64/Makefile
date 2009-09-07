@@ -57,9 +57,11 @@ core-$(CONFIG_IA64_GENERIC) 	+= arch/ia64/dig/
 core-$(CONFIG_IA64_HP_ZX1)	+= arch/ia64/dig/
 core-$(CONFIG_IA64_HP_ZX1_SWIOTLB) += arch/ia64/dig/
 core-$(CONFIG_IA64_SGI_SN2)	+= arch/ia64/sn/
+core-$(CONFIG_PERFMON)		+= arch/ia64/perfmon/
 core-$(CONFIG_IA64_SGI_UV)	+= arch/ia64/uv/
 core-$(CONFIG_KVM) 		+= arch/ia64/kvm/
 
+drivers-$(CONFIG_KDB)		+= arch/$(ARCH)/kdb/
 drivers-$(CONFIG_PCI)		+= arch/ia64/pci/
 drivers-$(CONFIG_IA64_HP_SIM)	+= arch/ia64/hp/sim/
 drivers-$(CONFIG_IA64_HP_ZX1)	+= arch/ia64/hp/common/ arch/ia64/hp/zx1/
@@ -105,4 +107,4 @@ archprepare: make_nr_irqs_h FORCE
 PHONY += make_nr_irqs_h FORCE
 
 make_nr_irqs_h: FORCE
-	$(Q)$(MAKE) $(build)=arch/ia64/kernel include/asm-ia64/nr-irqs.h
+	$(Q)$(MAKE) $(build)=arch/ia64/kernel arch/ia64/include/asm/nr-irqs.h

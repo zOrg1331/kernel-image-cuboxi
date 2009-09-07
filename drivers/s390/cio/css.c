@@ -6,6 +6,9 @@
  *    Author(s): Arnd Bergmann (arndb@de.ibm.com)
  *		 Cornelia Huck (cornelia.huck@de.ibm.com)
  */
+
+#define KMSG_COMPONENT "cio"
+
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/device.h>
@@ -506,6 +509,17 @@ static int reprobe_subchannel(struct subchannel_id schid, void *data)
 	return ret;
 }
 
+static void reprobe_after_idle(struct work_struct *unused)
+{
+	/* Make sure initial subchannel scan is done. */
+	wait_event(ccw_device_init_wq,
+		   atomic_read(&ccw_device_init_count) == 0);
+	if (need_reprobe)
+		css_schedule_reprobe();
+}
+
+static DECLARE_WORK(reprobe_idle_work, reprobe_after_idle);
+
 /* Work function used to reprobe all unregistered subchannels. */
 static void reprobe_all(struct work_struct *unused)
 {
@@ -513,10 +527,12 @@ static void reprobe_all(struct work_struct *unused)
 
 	CIO_MSG_EVENT(4, "reprobe start\n");
 
-	need_reprobe = 0;
 	/* Make sure initial subchannel scan is done. */
-	wait_event(ccw_device_init_wq,
-		   atomic_read(&ccw_device_init_count) == 0);
+	if (atomic_read(&ccw_device_init_count) != 0) {
+		queue_work(ccw_device_work, &reprobe_idle_work);
+		return;
+	}
+	need_reprobe = 0;
 	ret = for_each_subchannel_staged(NULL, reprobe_subchannel, NULL);
 
 	CIO_MSG_EVENT(4, "reprobe done (rc=%d, need_reprobe=%d)\n", ret,
@@ -844,8 +860,8 @@ out:
 	s390_unregister_crw_handler(CRW_RSC_CSS);
 	chsc_free_sei_area();
 	kfree(slow_subchannel_set);
-	printk(KERN_WARNING"cio: failed to initialize css driver (%d)!\n",
-	       ret);
+	pr_alert("The CSS device driver initialization failed with "
+		 "errno=%d\n", ret);
 	return ret;
 }
 

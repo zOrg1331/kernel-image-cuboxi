@@ -136,6 +136,8 @@ LIST_HEAD(tty_drivers);			/* linked list of tty drivers */
 DEFINE_MUTEX(tty_mutex);
 EXPORT_SYMBOL(tty_mutex);
 
+int console_use_vt = 1;
+
 #ifdef CONFIG_UNIX98_PTYS
 extern struct tty_driver *ptm_driver;	/* Unix98 pty masters; for /dev/ptmx */
 static int ptmx_open(struct inode *, struct file *);
@@ -2200,7 +2202,7 @@ retry_open:
 		goto got_driver;
 	}
 #ifdef CONFIG_VT
-	if (device == MKDEV(TTY_MAJOR, 0)) {
+	if (console_use_vt && device == MKDEV(TTY_MAJOR, 0)) {
 		extern struct tty_driver *console_driver;
 		driver = console_driver;
 		index = fg_console;
@@ -3031,6 +3033,21 @@ long tty_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		return tioclinux(tty, arg);
 #endif
 	/*
+	 * Without the real device to which /dev/console is connected,
+	 * blogd can not work.
+	 *	blogd spawns a pty/tty pair,
+	 *	set /dev/console to the tty of that pair (ioctl TIOCCONS),
+	 *	then reads in all input from the current /dev/console,
+	 *	buffer or write the readed data to /var/log/boot.msg
+	 *	_and_ to the original real device.
+	 */
+	case TIOCGDEV:
+	{
+		unsigned int ret = new_encode_dev(tty_devnum(real_tty));
+		return put_user(ret, (unsigned int __user *)p);
+	}
+
+	/*
 	 * Break handling
 	 */
 	case TIOCSBRK:	/* Turn break on, unconditionally */
@@ -3714,6 +3731,8 @@ static int __init tty_init(void)
 #endif
 
 #ifdef CONFIG_VT
+	if (!console_use_vt)
+		goto out_vt;
 	cdev_init(&vc0_cdev, &console_fops);
 	if (cdev_add(&vc0_cdev, MKDEV(TTY_MAJOR, 0), 1) ||
 	    register_chrdev_region(MKDEV(TTY_MAJOR, 0), 1, "/dev/vc/0") < 0)
@@ -3721,6 +3740,7 @@ static int __init tty_init(void)
 	device_create_drvdata(tty_class, NULL, MKDEV(TTY_MAJOR, 0), NULL, "tty0");
 
 	vty_init();
+ out_vt:
 #endif
 	return 0;
 }

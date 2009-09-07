@@ -1306,8 +1306,10 @@ xfs_file_last_byte(
 	 * necessary.
 	 */
 	if (ip->i_df.if_flags & XFS_IFEXTENTS) {
+		xfs_ilock(ip, XFS_ILOCK_SHARED);
 		error = xfs_bmap_last_offset(NULL, ip, &last_block,
 			XFS_DATA_FORK);
+		xfs_iunlock(ip, XFS_ILOCK_SHARED);
 		if (error) {
 			last_block = 0;
 		}
@@ -1414,7 +1416,7 @@ xfs_itruncate_start(
 	mp = ip->i_mount;
 
 	/* wait for the completion of any pending DIOs */
-	if (new_size < ip->i_size)
+	if (new_size == 0 || new_size < ip->i_size)
 		vn_iowait(ip);
 
 	/*

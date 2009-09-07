@@ -23,6 +23,13 @@
 #define DM_SUSPEND_NOFLUSH_FLAG		(1 << 1)
 
 /*
+ * Type of table and mapped_device's mempool
+ */
+#define DM_TYPE_NONE		0
+#define DM_TYPE_BIO_BASED	1
+#define DM_TYPE_REQUEST_BASED	2
+
+/*
  * List of devices that a metadevice uses and should open/close.
  */
 struct dm_dev {
@@ -39,22 +46,30 @@ struct dm_table;
 /*-----------------------------------------------------------------
  * Internal table functions.
  *---------------------------------------------------------------*/
+void dm_table_destroy(struct dm_table *t);
 void dm_table_event_callback(struct dm_table *t,
 			     void (*fn)(void *), void *context);
 struct dm_target *dm_table_get_target(struct dm_table *t, unsigned int index);
 struct dm_target *dm_table_find_target(struct dm_table *t, sector_t sector);
 void dm_table_set_restrictions(struct dm_table *t, struct request_queue *q);
+void dm_table_set_integrity(struct dm_table *t, struct mapped_device *md);
 struct list_head *dm_table_get_devices(struct dm_table *t);
 void dm_table_presuspend_targets(struct dm_table *t);
 void dm_table_postsuspend_targets(struct dm_table *t);
 int dm_table_resume_targets(struct dm_table *t);
 int dm_table_any_congested(struct dm_table *t, int bdi_bits);
+int dm_table_any_busy_target(struct dm_table *t);
+int dm_table_set_type(struct dm_table *t);
+int dm_table_get_type(struct dm_table *t);
+int dm_table_request_based(struct dm_table *t);
 void dm_table_unplug_all(struct dm_table *t);
 
 /*
  * To check the return value from dm_table_find_target().
  */
 #define dm_target_is_valid(t) ((t)->table)
+int dm_table_barrier_ok(struct dm_table *t);
+void dm_table_support_barrier(struct dm_table *t);
 
 /*-----------------------------------------------------------------
  * A registry of target types.
@@ -97,10 +112,16 @@ void *dm_vcalloc(unsigned long nmemb, unsigned long elem_size);
 union map_info *dm_get_mapinfo(struct bio *bio);
 int dm_open_count(struct mapped_device *md);
 int dm_lock_for_deletion(struct mapped_device *md);
+union map_info *dm_get_rq_mapinfo(struct request *rq);
 
 void dm_kobject_uevent(struct mapped_device *md);
 
 int dm_kcopyd_init(void);
 void dm_kcopyd_exit(void);
+
+/*
+ * Mempool initializer for a mapped_device
+ */
+int dm_init_md_mempool(struct mapped_device *md, int type);
 
 #endif

@@ -624,7 +624,7 @@ config HVC_BEAT
 
 config HVC_XEN
 	bool "Xen Hypervisor Console support"
-	depends on XEN
+	depends on PARAVIRT_XEN
 	select HVC_DRIVER
 	select HVC_IRQ
 	default y
@@ -1026,7 +1026,7 @@ config RAW_DRIVER
           with the O_DIRECT flag.
 
 config MAX_RAW_DEVS
-	int "Maximum number of RAW devices to support (1-8192)"
+	int "Maximum number of RAW devices to support (1-65536)"
 	depends on RAW_DRIVER
 	default "256"
 	help
@@ -1037,7 +1037,7 @@ config MAX_RAW_DEVS
 config HPET
 	bool "HPET - High Precision Event Timer" if (X86 || IA64)
 	default n
-	depends on ACPI
+	depends on ACPI && !XEN
 	help
 	  If you say Y here, you will have a miscdevice named "/dev/hpet/".  Each
 	  open selects one of the timers supported by the HPET.  The timers are
@@ -1103,6 +1103,11 @@ config DEVPORT
 	default y
 
 source "drivers/s390/char/Kconfig"
+
+config CRASHER
+	tristate "Crasher Module"
+	help
+	  Slab cache memory tester.  Only use this as a module
 
 endmenu
 

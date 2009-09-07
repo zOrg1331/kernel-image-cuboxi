@@ -85,6 +85,7 @@
 
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <trace/ipv6.h>
 
 /* Set to 3 to get tracing... */
 #define ACONF_DEBUG 2
@@ -652,6 +653,8 @@ ipv6_add_addr(struct inet6_dev *idev, const struct in6_addr *addr, int pfxlen,
 	in6_dev_hold(idev);
 	/* For caller */
 	in6_ifa_hold(ifa);
+
+	trace_ipv6_addr_add(ifa);
 
 	/* Add to big hash table */
 	hash = ipv6_addr_hash(addr);
@@ -2167,6 +2170,7 @@ static int inet6_addr_del(struct net *net, int ifindex, struct in6_addr *pfx,
 			in6_ifa_hold(ifp);
 			read_unlock_bh(&idev->lock);
 
+			trace_ipv6_addr_del(ifp);
 			ipv6_del_addr(ifp);
 
 			/* If the last address is deleted administratively,
@@ -2777,6 +2781,7 @@ static void addrconf_dad_start(struct inet6_ifaddr *ifp, u32 flags)
 	spin_lock_bh(&ifp->lock);
 
 	if (dev->flags&(IFF_NOARP|IFF_LOOPBACK) ||
+	    !(dev->flags&IFF_MULTICAST) ||
 	    idev->cnf.accept_dad < 1 ||
 	    !(ifp->flags&IFA_F_TENTATIVE) ||
 	    ifp->flags & IFA_F_NODAD) {
@@ -2874,6 +2879,7 @@ static void addrconf_dad_completed(struct inet6_ifaddr *ifp)
 	if (ifp->idev->cnf.forwarding == 0 &&
 	    ifp->idev->cnf.rtr_solicits > 0 &&
 	    (dev->flags&IFF_LOOPBACK) == 0 &&
+	    (dev->flags & IFF_MULTICAST) &&
 	    (ipv6_addr_type(&ifp->addr) & IPV6_ADDR_LINKLOCAL)) {
 		/*
 		 *	If a host as already performed a random delay

@@ -308,8 +308,7 @@ void buffer_assertion_failure(struct buffer_head *bh);
 		int val = (expr);					     \
 		if (!val) {						     \
 			printk(KERN_ERR					     \
-			       "JBD2 unexpected failure: %s: %s;\n",	     \
-			       __func__, #expr);			     \
+				"EXT3-fs unexpected failure: %s;\n",# expr); \
 			printk(KERN_ERR why "\n");			     \
 		}							     \
 		val;							     \
@@ -330,7 +329,6 @@ enum jbd_state_bits {
 	BH_State,		/* Pins most journal_head state */
 	BH_JournalHead,		/* Pins bh->b_private and jh->b_bh */
 	BH_Unshadow,		/* Dummy bit, for BJ_Shadow wakeup filtering */
-	BH_JBDPrivateStart,	/* First bit available for private use by FS */
 };
 
 BUFFER_FNS(JBD, jbd)
@@ -415,6 +413,27 @@ struct jbd2_inode {
 	unsigned int i_flags;
 };
 
+#define HAVE_JOURNAL_CALLBACK_STATUS
+/**
+ *   struct journal_callback - Base structure for callback information.
+ *   @jcb_list: list information for other callbacks attached to the same handle.
+ *   @jcb_func: Function to call with this callback structure.
+ *
+ *   This struct is a 'seed' structure for a using with your own callback
+ *   structs. If you are using callbacks you must allocate one of these
+ *   or another struct of your own definition which has this struct
+ *   as it's first element and pass it to journal_callback_set().
+ *
+ *   This is used internally by jbd2 to maintain callback information.
+ *
+ *   See journal_callback_set for more information.
+ **/
+struct journal_callback {
+	struct list_head jcb_list;		/* t_jcb_lock */
+	void (*jcb_func)(struct journal_callback *jcb, int error);
+	/* user data goes here */
+};
+
 struct jbd2_revoke_table_s;
 
 /**
@@ -423,6 +442,7 @@ struct jbd2_revoke_table_s;
  * @h_transaction: Which compound transaction is this update a part of?
  * @h_buffer_credits: Number of remaining buffers we are allowed to dirty.
  * @h_ref: Reference count on this handle
+ * @h_jcb: List of application registered callbacks for this handle.
  * @h_err: Field for caller's use to track errors through large fs operations
  * @h_sync: flag for sync-on-close
  * @h_jdata: flag to force data journaling
@@ -447,6 +467,13 @@ struct handle_s
 	/* Field for caller's use to track errors through large fs */
 	/* operations */
 	int			h_err;
+
+	/*
+	 * List of application registered callbacks for this handle. The
+	 * function(s) will be called after the transaction that this handle is
+	 * part of has been committed to disk. [t_jcb_lock]
+	 */
+	struct list_head	h_jcb;
 
 	/* Flags [no locking] */
 	unsigned int	h_sync:		1;	/* sync-on-close */
@@ -503,6 +530,8 @@ struct transaction_chp_stats_s {
  *    j_state_lock
  *    ->j_list_lock			(journal_unmap_buffer)
  *
+ *    t_handle_lock
+ *    ->t_jcb_lock
  */
 
 struct transaction_s
@@ -643,6 +672,15 @@ struct transaction_s
 	 */
 	int t_handle_count;
 
+	/*
+	 * Protects the callback list
+	 */
+	spinlock_t		t_jcb_lock;
+	/*
+	 * List of registered callback functions for this transaction.
+	 * Called when the transaction is committed. [t_jcb_lock]
+	 */
+	struct list_head	t_jcb;
 };
 
 struct transaction_run_stats_s {
@@ -1046,6 +1084,9 @@ extern int	 jbd2_journal_stop(handle_t *);
 extern int	 jbd2_journal_flush (journal_t *);
 extern void	 jbd2_journal_lock_updates (journal_t *);
 extern void	 jbd2_journal_unlock_updates (journal_t *);
+extern void	 jbd2_journal_callback_set(handle_t *handle,
+                                      void (*fn)(struct journal_callback *,int),
+                                      struct journal_callback *jcb);
 
 extern journal_t * jbd2_journal_init_dev(struct block_device *bdev,
 				struct block_device *fs_dev,
@@ -1075,8 +1116,7 @@ extern int	   jbd2_journal_clear_err  (journal_t *);
 extern int	   jbd2_journal_bmap(journal_t *, unsigned long, unsigned long long *);
 extern int	   jbd2_journal_force_commit(journal_t *);
 extern int	   jbd2_journal_file_inode(handle_t *handle, struct jbd2_inode *inode);
-extern int	   jbd2_journal_begin_ordered_truncate(journal_t *journal,
-				struct jbd2_inode *inode, loff_t new_size);
+extern int	   jbd2_journal_begin_ordered_truncate(struct jbd2_inode *inode, loff_t new_size);
 extern void	   jbd2_journal_init_jbd_inode(struct jbd2_inode *jinode, struct inode *inode);
 extern void	   jbd2_journal_release_jbd_inode(journal_t *journal, struct jbd2_inode *jinode);
 

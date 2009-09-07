@@ -1840,6 +1840,17 @@ config NE_H8300
 	  Say Y here if you want to use the NE2000 compatible
 	  controller on the Renesas H8/300 processor.
 
+config ATL2
+	tristate "Atheros L2 Fast Ethernet support"
+	depends on PCI
+	select CRC32
+	select MII
+	help
+	  This driver supports the Atheros L2 fast ethernet adapter.
+
+	  To compile this driver as a module, choose M here.  The module
+	  will be called atl2.
+
 source "drivers/net/fs_enet/Kconfig"
 
 endif # NET_ETHERNET
@@ -2381,7 +2392,6 @@ config EHEA
 config IXGBE
 	tristate "Intel(R) 10GbE PCI Express adapters support"
 	depends on PCI && INET
-	select INET_LRO
 	---help---
 	  This driver supports Intel(R) 10GbE PCI Express family of
 	  adapters.  For more information on how to identify your adapter, go
@@ -2396,6 +2406,26 @@ config IXGBE
 
 	  To compile this driver as a module, choose M here. The module
 	  will be called ixgbe.
+
+config IXGBE_LRO
+	bool "Use software LRO"
+	depends on IXGBE && INET
+	select INET_LRO
+	default y
+	---help---
+	  Say Y here if you want to use large receive offload.
+
+	  If in doubt, say N.
+
+config IXGBE_DCB
+	bool "Data Center Bridging (DCB) Support"
+	default n
+	depends on IXGBE && DCB
+	---help---
+	 Say Y here if you want to use Data Center Bridging (DCB) in the
+	 driver.
+
+	 If unsure, say N.
 
 config IXGB
 	tristate "Intel(R) PRO/10GbE support"
@@ -2515,9 +2545,9 @@ source "drivers/atm/Kconfig"
 
 source "drivers/s390/net/Kconfig"
 
-config XEN_NETDEV_FRONTEND
+config XEN_NETFRONT
 	tristate "Xen network device frontend driver"
-	depends on XEN
+	depends on PARAVIRT_XEN
 	default y
 	help
 	  The network device frontend driver allows the kernel to

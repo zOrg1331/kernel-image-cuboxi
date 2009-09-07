@@ -13,7 +13,7 @@ if MACINTOSH_DRIVERS
 
 config ADB
 	bool "Apple Desktop Bus (ADB) support"
-	depends on MAC || (PPC_PMAC && PPC32)
+	depends on MAC || PPC_PMAC
 	help
 	  Apple Desktop Bus (ADB) support is for support of devices which
 	  are connected to an ADB port.  ADB devices tend to have 4 pins.
@@ -252,5 +252,11 @@ config PMAC_RACKMETER
 	help
 	  This driver provides some support to control the front panel
           blue LEDs "vu-meter" of the XServer macs.
+
+config MACONLINUX
+	tristate "Mac on Linux kernel module"
+	depends on PPC32 && PPC_PMAC && MODULES && NET
+	help
+	  call helpdesk
 
 endif # MACINTOSH_DRIVERS

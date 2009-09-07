@@ -46,6 +46,8 @@ typedef void (*dm_dtr_fn) (struct dm_target *ti);
  */
 typedef int (*dm_map_fn) (struct dm_target *ti, struct bio *bio,
 			  union map_info *map_context);
+typedef int (*dm_map_request_fn) (struct dm_target *ti, struct request *clone,
+				  union map_info *map_context);
 
 /*
  * Returns:
@@ -58,6 +60,9 @@ typedef int (*dm_map_fn) (struct dm_target *ti, struct bio *bio,
 typedef int (*dm_endio_fn) (struct dm_target *ti,
 			    struct bio *bio, int error,
 			    union map_info *map_context);
+typedef int (*dm_request_endio_fn) (struct dm_target *ti,
+				    struct request *clone, int error,
+				    union map_info *map_context);
 
 typedef void (*dm_flush_fn) (struct dm_target *ti);
 typedef void (*dm_presuspend_fn) (struct dm_target *ti);
@@ -76,6 +81,13 @@ typedef int (*dm_ioctl_fn) (struct dm_target *ti, struct inode *inode,
 
 typedef int (*dm_merge_fn) (struct dm_target *ti, struct bvec_merge_data *bvm,
 			    struct bio_vec *biovec, int max_size);
+
+/*
+ * Returns:
+ *    0: The target can handle the next I/O immediately.
+ *    1: The target can't handle the next I/O immediately.
+ */
+typedef int (*dm_busy_fn) (struct dm_target *ti);
 
 void dm_error(const char *message);
 
@@ -103,7 +115,9 @@ struct target_type {
 	dm_ctr_fn ctr;
 	dm_dtr_fn dtr;
 	dm_map_fn map;
+	dm_map_request_fn map_rq;
 	dm_endio_fn end_io;
+	dm_request_endio_fn rq_end_io;
 	dm_flush_fn flush;
 	dm_presuspend_fn presuspend;
 	dm_postsuspend_fn postsuspend;
@@ -113,6 +127,7 @@ struct target_type {
 	dm_message_fn message;
 	dm_ioctl_fn ioctl;
 	dm_merge_fn merge;
+	dm_busy_fn busy;
 };
 
 struct io_restrictions {
@@ -125,6 +140,7 @@ struct io_restrictions {
 	unsigned short max_hw_segments;
 	unsigned short max_phys_segments;
 	unsigned char no_cluster; /* inverted so that 0 is default */
+	unsigned char no_request_stacking;
 };
 
 struct dm_target {
@@ -347,5 +363,13 @@ static inline unsigned long to_bytes(sector_t n)
 {
 	return (n << SECTOR_SHIFT);
 }
+
+/*-----------------------------------------------------------------
+ * Helper for block layer and dm core operations
+ *---------------------------------------------------------------*/
+void dm_dispatch_request(struct request *rq);
+void dm_requeue_request(struct request *rq);
+void dm_kill_request(struct request *rq, int error);
+int dm_underlying_device_busy(struct request_queue *q);
 
 #endif	/* _LINUX_DEVICE_MAPPER_H */

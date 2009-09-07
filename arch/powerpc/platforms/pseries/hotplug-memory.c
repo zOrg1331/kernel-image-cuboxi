@@ -21,7 +21,19 @@ static int pseries_remove_lmb(unsigned long base, unsigned int lmb_size)
 	struct zone *zone;
 	int ret;
 
-	start_pfn = base >> PFN_SECTION_SHIFT;
+	start_pfn = base >> PAGE_SHIFT;
+
+	if (!pfn_valid(start_pfn)) {
+		/*
+		 * Failing hotplug memory add will end up calling
+		 * remove device node to clean up. Since its already
+		 * added to lmbs, we need to remove it and pretend
+	 	 * success.
+		 */
+		lmb_remove(base, lmb_size);
+		return 0;
+	}
+
 	zone = page_zone(pfn_to_page(start_pfn));
 
 	/*

@@ -190,6 +190,8 @@ static void cpa_flush_range(unsigned long start, int numpages, int cache)
 	}
 }
 
+static int static_protections_allow_rodata __read_mostly;
+
 /*
  * Certain areas of memory on x86 require very specific protection flags,
  * for example the BIOS area or kernel text. Callers don't always get this
@@ -221,8 +223,10 @@ static inline pgprot_t static_protections(pgprot_t prot, unsigned long address,
 	 * catches all aliases.
 	 */
 	if (within(pfn, __pa((unsigned long)__start_rodata) >> PAGE_SHIFT,
-		   __pa((unsigned long)__end_rodata) >> PAGE_SHIFT))
-		pgprot_val(forbidden) |= _PAGE_RW;
+		   __pa((unsigned long)__end_rodata) >> PAGE_SHIFT)) {
+		if (!static_protections_allow_rodata)
+			pgprot_val(forbidden) |= _PAGE_RW;
+	}
 
 	prot = __pgprot(pgprot_val(prot) & ~pgprot_val(forbidden));
 
@@ -553,18 +557,13 @@ static int split_large_page(pte_t *kpte, unsigned long address)
 #endif
 
 	/*
-	 * Install the new, split up pagetable. Important details here:
+	 * Install the new, split up pagetable.
 	 *
-	 * On Intel the NX bit of all levels must be cleared to make a
-	 * page executable. See section 4.13.2 of Intel 64 and IA-32
-	 * Architectures Software Developer's Manual).
-	 *
-	 * Mark the entry present. The current mapping might be
-	 * set to not present, which we preserved above.
+	 * We use the standard kernel pagetable protections for the new
+	 * pagetable protections, the actual ptes set above control the
+	 * primary protection behavior:
 	 */
-	ref_prot = pte_pgprot(pte_mkexec(pte_clrhuge(*kpte)));
-	pgprot_val(ref_prot) |= _PAGE_PRESENT;
-	__set_pmd_pte(kpte, address, mk_pte(base, ref_prot));
+	__set_pmd_pte(kpte, address, mk_pte(base, __pgprot(_KERNPG_TABLE)));
 	base = NULL;
 
 out_unlock:
@@ -939,10 +938,27 @@ int set_memory_ro(unsigned long addr, int numpages)
 {
 	return change_page_attr_clear(addr, numpages, __pgprot(_PAGE_RW));
 }
+EXPORT_SYMBOL(set_memory_ro);
 
 int set_memory_rw(unsigned long addr, int numpages)
 {
 	return change_page_attr_set(addr, numpages, __pgprot(_PAGE_RW));
+}
+EXPORT_SYMBOL(set_memory_rw);
+
+/* hack: bypass kernel rodata section static_protections check. */
+int set_memory_rw_force(unsigned long addr, int numpages)
+{
+	static DEFINE_MUTEX(lock);
+	int ret;
+
+	mutex_lock(&lock);
+	static_protections_allow_rodata = 1;
+	ret = change_page_attr_set(addr, numpages, __pgprot(_PAGE_RW));
+	static_protections_allow_rodata = 0;
+	mutex_unlock(&lock);
+
+	return ret;
 }
 
 int set_memory_np(unsigned long addr, int numpages)
@@ -1000,6 +1016,13 @@ int set_pages_rw(struct page *page, int numpages)
 	unsigned long addr = (unsigned long)page_address(page);
 
 	return set_memory_rw(addr, numpages);
+}
+
+int set_pages_rw_force(struct page *page, int numpages)
+{
+	unsigned long addr = (unsigned long)page_address(page);
+
+	return set_memory_rw_force(addr, numpages);
 }
 
 #ifdef CONFIG_DEBUG_PAGEALLOC

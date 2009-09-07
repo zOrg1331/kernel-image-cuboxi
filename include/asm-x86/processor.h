@@ -109,6 +109,7 @@ struct cpuinfo_x86 {
 	/* Index into per_cpu list: */
 	u16			cpu_index;
 #endif
+	unsigned int		x86_hyper_vendor;
 } __attribute__((__aligned__(SMP_CACHE_BYTES)));
 
 #define X86_VENDOR_INTEL	0
@@ -121,6 +122,9 @@ struct cpuinfo_x86 {
 #define X86_VENDOR_NUM		9
 
 #define X86_VENDOR_UNKNOWN	0xff
+
+#define X86_HYPER_VENDOR_NONE  0
+#define X86_HYPER_VENDOR_VMWARE 1
 
 /*
  * capabilities of CPUs
@@ -161,6 +165,7 @@ extern void init_scattered_cpuid_features(struct cpuinfo_x86 *c);
 extern unsigned int init_intel_cacheinfo(struct cpuinfo_x86 *c);
 extern unsigned short num_cache_leaves;
 
+extern void detect_extended_topology(struct cpuinfo_x86 *c);
 #if defined(CONFIG_X86_HT) || defined(CONFIG_X86_64)
 extern void detect_ht(struct cpuinfo_x86 *c);
 #else

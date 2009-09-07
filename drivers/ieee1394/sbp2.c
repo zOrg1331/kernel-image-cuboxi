@@ -225,7 +225,7 @@ MODULE_PARM_DESC(workarounds, "Work around device bugs (default = 0"
  * independent of the implementation of the ieee1394 nodemgr, the longer format
  * is recommended for future use.
  */
-static int sbp2_long_sysfs_ieee1394_id;
+static int sbp2_long_sysfs_ieee1394_id = 1;
 module_param_named(long_ieee1394_id, sbp2_long_sysfs_ieee1394_id, bool, 0644);
 MODULE_PARM_DESC(long_ieee1394_id, "8+3+2 bytes format of ieee1394_id in sysfs "
 		 "(default = backwards-compatible = N, SAM-conforming = Y)");

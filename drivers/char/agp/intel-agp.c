@@ -250,6 +250,13 @@ static void *i8xx_alloc_pages(void)
 	if (page == NULL)
 		return NULL;
 
+#ifdef CONFIG_XEN
+	if (xen_create_contiguous_region((unsigned long)page_address(page), 2, 32)) {
+		__free_pages(page, 2);
+		return NULL;
+	}
+#endif
+
 	if (set_pages_uc(page, 4) < 0) {
 		set_pages_wb(page, 4);
 		__free_pages(page, 2);
@@ -269,6 +276,9 @@ static void i8xx_destroy_pages(void *addr)
 
 	page = virt_to_page(addr);
 	set_pages_wb(page, 4);
+#ifdef CONFIG_XEN
+	xen_destroy_contiguous_region((unsigned long)page_address(page), 2);
+#endif
 	put_page(page);
 	__free_pages(page, 2);
 	atomic_dec(&agp_bridge->current_memory_agp);
@@ -564,6 +574,13 @@ static void intel_i830_init_gtt_entries(void)
 	} else {
 		switch (gmch_ctrl & I855_GMCH_GMS_MASK) {
 		case I855_GMCH_GMS_STOLEN_1M:
+			if (IS_G33) {
+				size = 0;
+				printk(KERN_WARNING PFX
+				       "Warning: G33 chipset with 1MB"
+					" allocated. Older X.org Intel drivers"
+					" will not work.\n");
+			}
 			gtt_entries = MB(1) - KB(size);
 			break;
 		case I855_GMCH_GMS_STOLEN_4M:

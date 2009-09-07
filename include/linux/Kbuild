@@ -163,6 +163,8 @@ header-y += video_decoder.h
 header-y += video_encoder.h
 header-y += videotext.h
 header-y += x25.h
+header-y += perfmon.h
+header-y += perfmon_dfl_smpl.h
 
 unifdef-y += acct.h
 unifdef-y += adb.h
@@ -181,6 +183,7 @@ unifdef-y += audit.h
 unifdef-y += auto_fs.h
 unifdef-y += auxvec.h
 unifdef-y += binfmts.h
+unifdef-y += blktrace_api.h
 unifdef-y += capability.h
 unifdef-y += capi.h
 unifdef-y += cciss_ioctl.h

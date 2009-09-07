@@ -16,6 +16,7 @@
 #include <linux/log2.h>
 #include <linux/typecheck.h>
 #include <linux/ratelimit.h>
+#include <linux/dynamic_printk.h>
 #include <asm/byteorder.h>
 #include <asm/bug.h>
 
@@ -235,7 +236,9 @@ extern int oops_in_progress;		/* If set, an oops, panic(), BUG() or die() is in 
 extern int panic_timeout;
 extern int panic_on_oops;
 extern int panic_on_unrecovered_nmi;
+extern int panic_on_io_nmi;
 extern int tainted;
+extern int unsupported;
 extern const char *print_tainted(void);
 extern void add_taint(unsigned);
 extern int root_mountflags;
@@ -260,6 +263,14 @@ extern enum system_states {
 #define TAINT_DIE			(1<<7)
 #define TAINT_OVERRIDDEN_ACPI_TABLE	(1<<8)
 #define TAINT_WARN			(1<<9)
+#define TAINT_CRAP			(1<<10)
+
+/*
+ * Take the upper bits to hopefully allow them
+ * to stay the same for more than one release.
+ */
+#define TAINT_NO_SUPPORT		(1<<30)
+#define TAINT_EXTERNAL_SUPPORT		(1<<31)
 
 extern void dump_stack(void) __cold;
 
@@ -288,28 +299,52 @@ static inline char *pack_hex_byte(char *buf, u8 byte)
 	return buf;
 }
 
-#define pr_emerg(fmt, arg...) \
-	printk(KERN_EMERG fmt, ##arg)
-#define pr_alert(fmt, arg...) \
-	printk(KERN_ALERT fmt, ##arg)
-#define pr_crit(fmt, arg...) \
-	printk(KERN_CRIT fmt, ##arg)
-#define pr_err(fmt, arg...) \
-	printk(KERN_ERR fmt, ##arg)
-#define pr_warning(fmt, arg...) \
-	printk(KERN_WARNING fmt, ##arg)
-#define pr_notice(fmt, arg...) \
-	printk(KERN_NOTICE fmt, ##arg)
-#define pr_info(fmt, arg...) \
-	printk(KERN_INFO fmt, ##arg)
+#ifdef KMSG_COMPONENT
+#define pr_printk(level, format, ...) \
+	printk(level KMSG_COMPONENT  ": " format, ##__VA_ARGS__)
+#else
+#define pr_printk(level, format, ...) \
+	printk(level format, ##__VA_ARGS__)
+#endif
 
-#ifdef DEBUG
+#if defined(__KMSG_CHECKER) && defined(KMSG_COMPONENT)
+/* generate magic string for scripts/kmsg-doc to parse */
+#define pr_printk_hash(level, format, ...) \
+	__KMSG_PRINT(level _FMT_ format _ARGS_ ##__VA_ARGS__ _END_)
+#elif defined(CONFIG_KMSG_IDS) && defined(KMSG_COMPONENT)
+int printk_hash(const char *, const char *, ...);
+#define pr_printk_hash(level, format, ...) \
+	printk_hash(level KMSG_COMPONENT ".%06x" ": ", format, ##__VA_ARGS__)
+#else /* !defined(CONFIG_KMSG_IDS) */
+#define pr_printk_hash pr_printk
+#endif
+
+#define pr_emerg(fmt, arg...) \
+	pr_printk_hash(KERN_EMERG, fmt, ##arg)
+#define pr_alert(fmt, arg...) \
+	pr_printk_hash(KERN_ALERT, fmt, ##arg)
+#define pr_crit(fmt, arg...) \
+	pr_printk_hash(KERN_CRIT, fmt, ##arg)
+#define pr_err(fmt, arg...) \
+	pr_printk_hash(KERN_ERR, fmt, ##arg)
+#define pr_warning(fmt, arg...) \
+	pr_printk_hash(KERN_WARNING, fmt, ##arg)
+#define pr_notice(fmt, arg...) \
+	pr_printk_hash(KERN_NOTICE, fmt, ##arg)
+#define pr_info(fmt, arg...) \
+	pr_printk_hash(KERN_INFO, fmt, ##arg)
+
 /* If you are writing a driver, please use dev_dbg instead */
+#if defined(CONFIG_DYNAMIC_PRINTK_DEBUG)
+#define pr_debug(fmt, ...) do { \
+	dynamic_pr_debug(fmt, ##__VA_ARGS__); \
+	} while (0)
+#elif defined(DEBUG)
 #define pr_debug(fmt, arg...) \
-	printk(KERN_DEBUG fmt, ##arg)
+	pr_printk(KERN_DEBUG, fmt, ##arg)
 #else
 #define pr_debug(fmt, arg...) \
-	({ if (0) printk(KERN_DEBUG fmt, ##arg); 0; })
+	({ if (0) pr_printk(KERN_DEBUG, fmt, ##arg); 0; })
 #endif
 
 /*

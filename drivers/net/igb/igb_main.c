@@ -75,8 +75,6 @@ static int igb_setup_all_tx_resources(struct igb_adapter *);
 static int igb_setup_all_rx_resources(struct igb_adapter *);
 static void igb_free_all_tx_resources(struct igb_adapter *);
 static void igb_free_all_rx_resources(struct igb_adapter *);
-static void igb_free_tx_resources(struct igb_ring *);
-static void igb_free_rx_resources(struct igb_ring *);
 void igb_update_stats(struct igb_adapter *);
 static int igb_probe(struct pci_dev *, const struct pci_device_id *);
 static void __devexit igb_remove(struct pci_dev *pdev);
@@ -258,11 +256,13 @@ static int igb_alloc_queues(struct igb_adapter *adapter)
 
 	for (i = 0; i < adapter->num_tx_queues; i++) {
 		struct igb_ring *ring = &(adapter->tx_ring[i]);
+		ring->count = adapter->tx_ring_count;
 		ring->adapter = adapter;
 		ring->queue_index = i;
 	}
 	for (i = 0; i < adapter->num_rx_queues; i++) {
 		struct igb_ring *ring = &(adapter->rx_ring[i]);
+		ring->count = adapter->rx_ring_count;
 		ring->adapter = adapter;
 		ring->queue_index = i;
 		ring->itr_register = E1000_ITR;
@@ -1374,6 +1374,8 @@ static int __devinit igb_sw_init(struct igb_adapter *adapter)
 
 	pci_read_config_word(pdev, PCI_COMMAND, &hw->bus.pci_cmd_word);
 
+	adapter->tx_ring_count = IGB_DEFAULT_TXD;
+	adapter->rx_ring_count = IGB_DEFAULT_RXD;
 	adapter->rx_buffer_len = MAXIMUM_ETHERNET_VLAN_SIZE;
 	adapter->rx_ps_hdr_size = 0; /* disable packet split */
 	adapter->max_frame_size = netdev->mtu + ETH_HLEN + ETH_FCS_LEN;
@@ -1962,7 +1964,7 @@ static void igb_configure_rx(struct igb_adapter *adapter)
  *
  * Free all transmit software resources
  **/
-static void igb_free_tx_resources(struct igb_ring *tx_ring)
+void igb_free_tx_resources(struct igb_ring *tx_ring)
 {
 	struct pci_dev *pdev = tx_ring->adapter->pdev;
 
@@ -2062,7 +2064,7 @@ static void igb_clean_all_tx_rings(struct igb_adapter *adapter)
  *
  * Free all receive software resources
  **/
-static void igb_free_rx_resources(struct igb_ring *rx_ring)
+void igb_free_rx_resources(struct igb_ring *rx_ring)
 {
 	struct pci_dev *pdev = rx_ring->adapter->pdev;
 
@@ -3883,7 +3885,7 @@ static bool igb_clean_rx_irq_adv(struct igb_ring *rx_ring,
 				       PAGE_SIZE / 2, PCI_DMA_FROMDEVICE);
 			buffer_info->page_dma = 0;
 
-			skb_fill_page_desc(skb, skb_shinfo(skb)->nr_frags++,
+			skb_add_rx_frag(skb, skb_shinfo(skb)->nr_frags++,
 						buffer_info->page,
 						buffer_info->page_offset,
 						length);
@@ -3893,11 +3895,6 @@ static bool igb_clean_rx_irq_adv(struct igb_ring *rx_ring,
 				buffer_info->page = NULL;
 			else
 				get_page(buffer_info->page);
-
-			skb->len += length;
-			skb->data_len += length;
-
-			skb->truesize += length;
 		}
 send_up:
 		i++;
@@ -3991,7 +3988,7 @@ static void igb_alloc_rx_buffers_adv(struct igb_ring *rx_ring,
 
 		if (adapter->rx_ps_hdr_size && !buffer_info->page_dma) {
 			if (!buffer_info->page) {
-				buffer_info->page = alloc_page(GFP_ATOMIC);
+				buffer_info->page = netdev_alloc_page(netdev);
 				if (!buffer_info->page) {
 					adapter->alloc_rx_buff_failed++;
 					goto no_buffers;

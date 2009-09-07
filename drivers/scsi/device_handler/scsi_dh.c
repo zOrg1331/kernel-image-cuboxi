@@ -28,6 +28,7 @@ struct scsi_dh_devinfo_list {
 	struct list_head node;
 	char vendor[9];
 	char model[17];
+	char tgps;
 	struct scsi_device_handler *handler;
 };
 
@@ -60,7 +61,8 @@ scsi_dh_cache_lookup(struct scsi_device *sdev)
 	spin_lock(&list_lock);
 	list_for_each_entry(tmp, &scsi_dh_dev_list, node) {
 		if (!strncmp(sdev->vendor, tmp->vendor, strlen(tmp->vendor)) &&
-		    !strncmp(sdev->model, tmp->model, strlen(tmp->model))) {
+		    !strncmp(sdev->model, tmp->model, strlen(tmp->model)) &&
+		    (!tmp->tgps || (sdev->tgps & tmp->tgps) != 0)) {
 			found_dh = tmp->handler;
 			break;
 		}
@@ -79,7 +81,9 @@ static int scsi_dh_handler_lookup(struct scsi_device_handler *scsi_dh,
 		if (!strncmp(sdev->vendor, scsi_dh->devlist[i].vendor,
 			     strlen(scsi_dh->devlist[i].vendor)) &&
 		    !strncmp(sdev->model, scsi_dh->devlist[i].model,
-			     strlen(scsi_dh->devlist[i].model))) {
+			     strlen(scsi_dh->devlist[i].model)) &&
+		    (!scsi_dh->devlist[i].tgps ||
+		     (sdev->tgps & scsi_dh->devlist[i].tgps) != 0)) {
 			found = 1;
 			break;
 		}
@@ -128,6 +132,7 @@ device_handler_match(struct scsi_device_handler *scsi_dh,
 			strncpy(tmp->model, sdev->model, 16);
 			tmp->vendor[8] = '\0';
 			tmp->model[16] = '\0';
+			tmp->tgps = sdev->tgps;
 			tmp->handler = found_dh;
 			spin_lock(&list_lock);
 			list_add(&tmp->node, &scsi_dh_dev_list);
@@ -422,7 +427,7 @@ int scsi_dh_activate(struct request_queue *q)
 	struct scsi_device_handler *scsi_dh = NULL;
 
 	spin_lock_irqsave(q->queue_lock, flags);
-	sdev = q->queuedata;
+	sdev = scsi_device_from_queue(q);
 	if (sdev && sdev->scsi_dh_data)
 		scsi_dh = sdev->scsi_dh_data->scsi_dh;
 	if (!scsi_dh || !get_device(&sdev->sdev_gendev))
@@ -451,7 +456,7 @@ int scsi_dh_handler_exist(const char *name)
 EXPORT_SYMBOL_GPL(scsi_dh_handler_exist);
 
 /*
- * scsi_dh_handler_attach - Attach device handler
+ * scsi_dh_attach - Attach device handler
  * @sdev - sdev the handler should be attached to
  * @name - name of the handler to attach
  */
@@ -467,7 +472,7 @@ int scsi_dh_attach(struct request_queue *q, const char *name)
 		return -EINVAL;
 
 	spin_lock_irqsave(q->queue_lock, flags);
-	sdev = q->queuedata;
+	sdev = scsi_device_from_queue(q);
 	if (!sdev || !get_device(&sdev->sdev_gendev))
 		err = -ENODEV;
 	spin_unlock_irqrestore(q->queue_lock, flags);
@@ -482,7 +487,7 @@ int scsi_dh_attach(struct request_queue *q, const char *name)
 EXPORT_SYMBOL_GPL(scsi_dh_attach);
 
 /*
- * scsi_dh_handler_detach - Detach device handler
+ * scsi_dh_detach - Detach device handler
  * @sdev - sdev the handler should be detached from
  *
  * This function will detach the device handler only
@@ -493,10 +498,9 @@ void scsi_dh_detach(struct request_queue *q)
 {
 	unsigned long flags;
 	struct scsi_device *sdev;
-	struct scsi_device_handler *scsi_dh = NULL;
 
 	spin_lock_irqsave(q->queue_lock, flags);
-	sdev = q->queuedata;
+	sdev = scsi_device_from_queue(q);
 	if (!sdev || !get_device(&sdev->sdev_gendev))
 		sdev = NULL;
 	spin_unlock_irqrestore(q->queue_lock, flags);
@@ -504,12 +508,9 @@ void scsi_dh_detach(struct request_queue *q)
 	if (!sdev)
 		return;
 
-	if (sdev->scsi_dh_data) {
-		/* if sdev is not on internal list, detach */
-		scsi_dh = sdev->scsi_dh_data->scsi_dh;
-		if (!device_handler_match(scsi_dh, sdev))
-			scsi_dh_handler_detach(sdev, scsi_dh);
-	}
+	if (sdev->scsi_dh_data)
+		scsi_dh_handler_detach(sdev, sdev->scsi_dh_data->scsi_dh);
+
 	put_device(&sdev->sdev_gendev);
 }
 EXPORT_SYMBOL_GPL(scsi_dh_detach);

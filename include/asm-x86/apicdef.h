@@ -1,6 +1,8 @@
 #ifndef _ASM_X86_APICDEF_H
 #define _ASM_X86_APICDEF_H
 
+#ifndef CONFIG_XEN
+
 /*
  * Constants for various Intel APICs. (local APIC, IOAPIC, etc.)
  *
@@ -105,6 +107,7 @@
 #define	APIC_TMICT	0x380
 #define	APIC_TMCCT	0x390
 #define	APIC_TDCR	0x3E0
+#define APIC_SELF_IPI	0x3F0
 #define		APIC_TDR_DIV_TMBASE	(1 << 2)
 #define		APIC_TDR_DIV_1		0xB
 #define		APIC_TDR_DIV_2		0x0
@@ -128,6 +131,18 @@
 #define	APIC_EILVT3     0x530
 
 #define APIC_BASE (fix_to_virt(FIX_APIC_BASE))
+#define APIC_BASE_MSR	0x800
+#define X2APIC_ENABLE	(1UL << 10)
+
+#else /* CONFIG_XEN */
+
+enum {
+	APIC_DEST_ALLBUT = 0x1,
+	APIC_DEST_SELF,
+	APIC_DEST_ALLINC
+};
+
+#endif /* CONFIG_XEN */
 
 #ifdef CONFIG_X86_32
 # define MAX_IO_APICS 64
@@ -135,6 +150,8 @@
 # define MAX_IO_APICS 128
 # define MAX_LOCAL_APIC 32768
 #endif
+
+#ifndef CONFIG_XEN
 
 /*
  * All x86-64 systems are xAPIC compatible.
@@ -405,6 +422,8 @@ struct local_apic {
 } __attribute__ ((packed));
 
 #undef u32
+
+#endif /* CONFIG_XEN */
 
 #ifdef CONFIG_X86_32
  #define BAD_APICID 0xFFu

@@ -8,6 +8,8 @@
  *		 Frank Blaschka <frank.blaschka@de.ibm.com>
  */
 
+#define KMSG_COMPONENT "qeth"
+
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/string.h>
@@ -386,7 +388,8 @@ static int qeth_l2_stop_card(struct qeth_card *card, int recovery_mode)
 			dev_close(card->dev);
 			rtnl_unlock();
 		}
-		if (!card->use_hard_stop) {
+		if (!card->use_hard_stop ||
+		    recovery_mode) {
 			__u8 *mac = &card->dev->dev_addr[0];
 			rc = qeth_l2_send_delmac(card, mac);
 			QETH_DBF_TEXT_(SETUP, 2, "Lerr%d", rc);
@@ -395,7 +398,9 @@ static int qeth_l2_stop_card(struct qeth_card *card, int recovery_mode)
 	}
 	if (card->state == CARD_STATE_SOFTSETUP) {
 		qeth_l2_process_vlans(card, 1);
-		qeth_l2_del_all_mc(card);
+		if (!card->use_hard_stop ||
+		    recovery_mode)
+			qeth_l2_del_all_mc(card);
 		qeth_clear_ipacmd_list(card);
 		card->state = CARD_STATE_HARDSETUP;
 	}
@@ -450,12 +455,15 @@ static void qeth_l2_process_inbound_buffer(struct qeth_card *card,
 			netif_rx(skb);
 			break;
 		case QETH_HEADER_TYPE_OSN:
-			skb_push(skb, sizeof(struct qeth_hdr));
-			skb_copy_to_linear_data(skb, hdr,
+			if (card->info.type == QETH_CARD_TYPE_OSN) {
+				skb_push(skb, sizeof(struct qeth_hdr));
+				skb_copy_to_linear_data(skb, hdr,
 						sizeof(struct qeth_hdr));
-			len = skb->len;
-			card->osn_info.data_cb(skb);
-			break;
+				len = skb->len;
+				card->osn_info.data_cb(skb);
+				break;
+			}
+			/* else unknown */
 		default:
 			dev_kfree_skb_any(skb);
 			QETH_DBF_TEXT(TRACE, 3, "inbunkno");
@@ -501,12 +509,13 @@ static int qeth_l2_send_setmac_cb(struct qeth_card *card,
 		card->info.mac_bits |= QETH_LAYER2_MAC_REGISTERED;
 		memcpy(card->dev->dev_addr, cmd->data.setdelmac.mac,
 		       OSA_ADDR_LEN);
-		PRINT_INFO("MAC address %2.2x:%2.2x:%2.2x:%2.2x:%2.2x:%2.2x "
-			   "successfully registered on device %s\n",
-			   card->dev->dev_addr[0], card->dev->dev_addr[1],
-			   card->dev->dev_addr[2], card->dev->dev_addr[3],
-			   card->dev->dev_addr[4], card->dev->dev_addr[5],
-			   card->dev->name);
+		dev_info(&card->gdev->dev,
+			"MAC address %2.2x:%2.2x:%2.2x:%2.2x:%2.2x:%2.2x "
+			"successfully registered on device %s\n",
+			card->dev->dev_addr[0], card->dev->dev_addr[1],
+			card->dev->dev_addr[2], card->dev->dev_addr[3],
+			card->dev->dev_addr[4], card->dev->dev_addr[5],
+			card->dev->name);
 	}
 	return 0;
 }
@@ -559,7 +568,8 @@ static int qeth_l2_request_initial_mac(struct qeth_card *card)
 			"device %s: x%x\n", CARD_BUS_ID(card), rc);
 	}
 
-	if (card->info.guestlan) {
+	if ((card->info.type == QETH_CARD_TYPE_IQD) ||
+	    (card->info.guestlan)) {
 		rc = qeth_setadpparms_change_macaddr(card);
 		if (rc) {
 			QETH_DBF_MESSAGE(2, "couldn't get MAC address on "
@@ -825,7 +835,6 @@ static int qeth_l2_open(struct net_device *dev)
 	}
 	card->data.state = CH_STATE_UP;
 	card->state = CARD_STATE_UP;
-	card->dev->flags |= IFF_UP;
 	netif_start_queue(dev);
 
 	if (!card->lan_online && netif_carrier_ok(dev))
@@ -840,7 +849,6 @@ static int qeth_l2_stop(struct net_device *dev)
 
 	QETH_DBF_TEXT(TRACE, 4, "qethstop");
 	netif_tx_disable(dev);
-	card->dev->flags &= ~IFF_UP;
 	if (card->state == CARD_STATE_UP)
 		card->state = CARD_STATE_SOFTSETUP;
 	return 0;
@@ -865,6 +873,7 @@ static void qeth_l2_remove_device(struct ccwgroup_device *cgdev)
 {
 	struct qeth_card *card = dev_get_drvdata(&cgdev->dev);
 
+	qeth_set_allowed_threads(card, 0, 1);
 	wait_event(card->wait_q, qeth_threads_running(card, 0xffffffff) == 0);
 
 	if (cgdev->state == CCWGROUP_ONLINE) {
@@ -976,8 +985,6 @@ static int __qeth_l2_set_online(struct ccwgroup_device *gdev, int recovery_mode)
 
 	qeth_set_allowed_threads(card, QETH_RECOVER_THREAD, 1);
 	if (qeth_wait_for_threads(card, ~QETH_RECOVER_THREAD)) {
-		PRINT_WARN("set_online of card %s interrupted by user!\n",
-			   CARD_BUS_ID(card));
 		return -ERESTARTSYS;
 	}
 
@@ -1020,12 +1027,12 @@ static int __qeth_l2_set_online(struct ccwgroup_device *gdev, int recovery_mode)
 	if (rc) {
 		QETH_DBF_TEXT_(SETUP, 2, "1err%d", rc);
 		if (rc == 0xe080) {
-			PRINT_WARN("LAN on card %s if offline! "
-				   "Waiting for STARTLAN from card.\n",
-				   CARD_BUS_ID(card));
+			dev_warn(&card->gdev->dev,
+				"The LAN is offline\n");
 			card->lan_online = 0;
+			return 0;
 		}
-		return rc;
+		goto out_remove;
 	} else
 		card->lan_online = 1;
 
@@ -1092,8 +1099,6 @@ static int __qeth_l2_set_offline(struct ccwgroup_device *cgdev,
 		netif_carrier_off(card->dev);
 	recover_flag = card->state;
 	if (qeth_l2_stop_card(card, recovery_mode) == -ERESTARTSYS) {
-		PRINT_WARN("Stopping card %s interrupted by user!\n",
-			   CARD_BUS_ID(card));
 		return -ERESTARTSYS;
 	}
 	rc  = ccw_device_set_offline(CARD_DDEV(card));
@@ -1126,8 +1131,8 @@ static int qeth_l2_recover(void *ptr)
 	if (!qeth_do_run_thread(card, QETH_RECOVER_THREAD))
 		return 0;
 	QETH_DBF_TEXT(TRACE, 2, "recover2");
-	PRINT_WARN("Recovery of device %s started ...\n",
-		   CARD_BUS_ID(card));
+	dev_warn(&card->gdev->dev,
+		"A recovery process has been started for the device\n");
 	card->use_hard_stop = 1;
 	__qeth_l2_set_offline(card->gdev, 1);
 	rc = __qeth_l2_set_online(card->gdev, 1);
@@ -1135,23 +1140,29 @@ static int qeth_l2_recover(void *ptr)
 	qeth_clear_thread_start_bit(card, QETH_RECOVER_THREAD);
 	qeth_clear_thread_running_bit(card, QETH_RECOVER_THREAD);
 	if (!rc)
-		PRINT_INFO("Device %s successfully recovered!\n",
-			   CARD_BUS_ID(card));
-	else
-		PRINT_INFO("Device %s could not be recovered!\n",
-			   CARD_BUS_ID(card));
+		dev_info(&card->gdev->dev,
+			"Device successfully recovered!\n");
+	else {
+		if (card->dev) {
+			rtnl_lock();
+			dev_close(card->dev);
+			rtnl_unlock();
+		}
+		dev_warn(&card->gdev->dev, "The qeth device driver "
+			"failed to recover an error on the device\n");
+	}
 	return 0;
 }
 
 static int __init qeth_l2_init(void)
 {
-	PRINT_INFO("register layer 2 discipline\n");
+	pr_info("register layer 2 discipline\n");
 	return 0;
 }
 
 static void __exit qeth_l2_exit(void)
 {
-	PRINT_INFO("unregister layer 2 discipline\n");
+	pr_info("unregister layer 2 discipline\n");
 }
 
 static void qeth_l2_shutdown(struct ccwgroup_device *gdev)

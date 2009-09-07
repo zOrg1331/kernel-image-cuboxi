@@ -33,6 +33,10 @@
 #include <linux/sysdev.h>
 #include <linux/pci.h>
 #include <linux/msi.h>
+
+#ifdef	CONFIG_KDB
+#include <linux/kdb.h>
+#endif	/* CONFIG_KDB */
 #include <linux/htirq.h>
 #include <linux/freezer.h>
 #include <linux/kthread.h>
@@ -344,11 +348,11 @@ static void set_ioapic_affinity_irq(unsigned int irq, cpumask_t cpumask)
 
 	cpus_and(tmp, cpumask, cpu_online_map);
 	if (cpus_empty(tmp))
-		tmp = TARGET_CPUS;
+		tmp = *TARGET_CPUS;
 
 	cpus_and(cpumask, tmp, CPU_MASK_ALL);
 
-	apicid_value = cpu_mask_to_apicid(cpumask);
+	apicid_value = cpu_mask_to_apicid(&cpumask);
 	/* Prepare to do the io_apic_write */
 	apicid_value = apicid_value << 24;
 	spin_lock_irqsave(&ioapic_lock, flags);
@@ -926,7 +930,7 @@ void __init setup_ioapic_dest(void)
 			if (irq_entry == -1)
 				continue;
 			irq = pin_2_irq(irq_entry, ioapic, pin);
-			set_ioapic_affinity_irq(irq, TARGET_CPUS);
+			set_ioapic_affinity_irq(irq, *TARGET_CPUS);
 		}
 
 	}
@@ -1189,6 +1193,10 @@ next:
 		return -ENOSPC;
 	if (test_and_set_bit(vector, used_vectors))
 		goto next;
+#ifdef CONFIG_KDB
+	if (vector == KDBENTER_VECTOR)
+		goto next;
+#endif
 
 	current_vector = vector;
 	current_offset = offset;
@@ -1490,7 +1498,7 @@ void /*__init*/ print_local_APIC(void *dummy)
 		smp_processor_id(), hard_smp_processor_id());
 	v = apic_read(APIC_ID);
 	printk(KERN_INFO "... APIC ID:      %08x (%01x)\n", v,
-			GET_APIC_ID(read_apic_id()));
+			GET_APIC_ID(v));
 	v = apic_read(APIC_LVR);
 	printk(KERN_INFO "... APIC VERSION: %08x\n", v);
 	ver = GET_APIC_VERSION(v);
@@ -1500,9 +1508,11 @@ void /*__init*/ print_local_APIC(void *dummy)
 	printk(KERN_DEBUG "... APIC TASKPRI: %08x (%02x)\n", v, v & APIC_TPRI_MASK);
 
 	if (APIC_INTEGRATED(ver)) {			/* !82489DX */
-		v = apic_read(APIC_ARBPRI);
-		printk(KERN_DEBUG "... APIC ARBPRI: %08x (%02x)\n", v,
-			v & APIC_ARBPRI_MASK);
+		if (!APIC_XAPIC(ver)) {
+			v = apic_read(APIC_ARBPRI);
+			printk(KERN_DEBUG "... APIC ARBPRI: %08x (%02x)\n", v,
+			       v & APIC_ARBPRI_MASK);
+		}
 		v = apic_read(APIC_PROCPRI);
 		printk(KERN_DEBUG "... APIC PROCPRI: %08x\n", v);
 	}
@@ -1698,8 +1708,7 @@ void disable_IO_APIC(void)
 		entry.dest_mode       = 0; /* Physical */
 		entry.delivery_mode   = dest_ExtINT; /* ExtInt */
 		entry.vector          = 0;
-		entry.dest.physical.physical_dest =
-					GET_APIC_ID(read_apic_id());
+		entry.dest.physical.physical_dest = read_apic_id();
 
 		/*
 		 * Add it to the IO-APIC irq-routing table:
@@ -2521,13 +2530,13 @@ static void set_msi_irq_affinity(unsigned int irq, cpumask_t mask)
 
 	cpus_and(tmp, mask, cpu_online_map);
 	if (cpus_empty(tmp))
-		tmp = TARGET_CPUS;
+		tmp = *TARGET_CPUS;
 
 	vector = assign_irq_vector(irq);
 	if (vector < 0)
 		return;
 
-	dest = cpu_mask_to_apicid(mask);
+	dest = cpu_mask_to_apicid(&mask);
 
 	read_msi_msg(irq, &msg);
 
@@ -2614,11 +2623,11 @@ static void set_ht_irq_affinity(unsigned int irq, cpumask_t mask)
 
 	cpus_and(tmp, mask, cpu_online_map);
 	if (cpus_empty(tmp))
-		tmp = TARGET_CPUS;
+		tmp = *TARGET_CPUS;
 
 	cpus_and(mask, tmp, CPU_MASK_ALL);
 
-	dest = cpu_mask_to_apicid(mask);
+	dest = cpu_mask_to_apicid(&mask);
 
 	target_ht_irq(irq, dest);
 	irq_desc[irq].affinity = mask;
@@ -2648,7 +2657,7 @@ int arch_setup_ht_irq(unsigned int irq, struct pci_dev *dev)
 
 		cpus_clear(tmp);
 		cpu_set(vector >> 8, tmp);
-		dest = cpu_mask_to_apicid(tmp);
+		dest = cpu_mask_to_apicid(&tmp);
 
 		msg.address_hi = HT_IRQ_HIGH_DEST_ID(dest);
 

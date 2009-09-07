@@ -86,6 +86,7 @@ int ccw_device_is_orphan(struct ccw_device *);
 int ccw_device_recognition(struct ccw_device *);
 int ccw_device_online(struct ccw_device *);
 int ccw_device_offline(struct ccw_device *);
+void ccw_device_schedule_sch_unregister(struct ccw_device *);
 
 /* Function prototypes for device status and basic sense stuff. */
 void ccw_device_accumulate_irb(struct ccw_device *, struct irb *);

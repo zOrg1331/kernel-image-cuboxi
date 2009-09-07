@@ -83,15 +83,17 @@ ifeq ($(GCC_BROKEN_VEC),y)
 	KBUILD_CFLAGS += $(call cc-option,-mcpu=970)
 else
 	KBUILD_CFLAGS += $(call cc-option,-mcpu=power4)
+# GCC_BROKEN_VEC
 endif
 else
 	KBUILD_CFLAGS += $(call cc-option,-mcpu=power4)
+# CONFIG_ALTIVEC
 endif
 else
 	KBUILD_CFLAGS += $(call cc-option,-mtune=power4)
+# CONFIG_POWER4_ONLY
 endif
-else
-LDFLAGS_MODULE	+= arch/powerpc/lib/crtsavres.o
+# CONFIG_PPC64
 endif
 
 ifeq ($(CONFIG_TUNE_CELL),y)
@@ -146,6 +148,7 @@ core-y				+= arch/powerpc/kernel/ \
 				   arch/powerpc/platforms/
 core-$(CONFIG_MATH_EMULATION)	+= arch/powerpc/math-emu/
 core-$(CONFIG_XMON)		+= arch/powerpc/xmon/
+core-$(CONFIG_PERFMON)		+= arch/powerpc/perfmon/
 core-$(CONFIG_KVM) 		+= arch/powerpc/kvm/
 
 drivers-$(CONFIG_OPROFILE)	+= arch/powerpc/oprofile/

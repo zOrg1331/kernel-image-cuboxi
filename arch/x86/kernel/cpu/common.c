@@ -5,6 +5,7 @@
 #include <linux/module.h>
 #include <linux/percpu.h>
 #include <linux/bootmem.h>
+#include <linux/perfmon_kern.h>
 #include <asm/processor.h>
 #include <asm/i387.h>
 #include <asm/msr.h>
@@ -14,6 +15,7 @@
 #include <asm/mce.h>
 #include <asm/pat.h>
 #include <asm/asm.h>
+#include <asm/hypervisor.h>
 #ifdef CONFIG_X86_LOCAL_APIC
 #include <asm/mpspec.h>
 #include <asm/apic.h>
@@ -505,6 +507,7 @@ static void __cpuinit identify_cpu(struct cpuinfo_x86 *c)
 				c->x86, c->x86_model);
 	}
 
+	init_hypervisor(c);
 	/*
 	 * On SMP, boot_cpu_data holds the common feature set between
 	 * all CPUs; so make sure that we indicate which features are
@@ -726,6 +729,8 @@ void __cpuinit cpu_init(void)
 	current_thread_info()->status = 0;
 	clear_used_math();
 	mxcsr_feature_mask_init();
+
+	pfm_init_percpu();
 }
 
 #ifdef CONFIG_HOTPLUG_CPU

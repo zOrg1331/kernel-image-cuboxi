@@ -100,7 +100,8 @@ int inode_setattr(struct inode * inode, struct iattr * attr)
 }
 EXPORT_SYMBOL(inode_setattr);
 
-int notify_change(struct dentry * dentry, struct iattr * attr)
+int fnotify_change(struct dentry *dentry, struct vfsmount *mnt,
+		   struct iattr *attr, struct file *file)
 {
 	struct inode *inode = dentry->d_inode;
 	mode_t mode = inode->i_mode;
@@ -163,13 +164,28 @@ int notify_change(struct dentry * dentry, struct iattr * attr)
 		down_write(&dentry->d_inode->i_alloc_sem);
 
 	if (inode->i_op && inode->i_op->setattr) {
-		error = security_inode_setattr(dentry, attr);
-		if (!error)
-			error = inode->i_op->setattr(dentry, attr);
+		error = security_inode_setattr(dentry, mnt, attr);
+		if (!error) {
+			if (file && file->f_op && file->f_op->fsetattr)
+				error = file->f_op->fsetattr(file, attr);
+			else {
+				/* External file system still expect to be
+				 * passed a file pointer via ia_file and
+				 * have it announced via ATTR_FILE. This
+				 * just makes it so they don't need to
+				 * change their API just for us. External
+				 * callers will have set these themselves. */
+				if (file) {
+					attr->ia_valid |= ATTR_FILE;
+					attr->ia_file = file;
+				}
+				error = inode->i_op->setattr(dentry, attr);
+			}
+		}
 	} else {
 		error = inode_change_ok(inode, attr);
 		if (!error)
-			error = security_inode_setattr(dentry, attr);
+			error = security_inode_setattr(dentry, mnt, attr);
 		if (!error) {
 			if ((ia_valid & ATTR_UID && attr->ia_uid != inode->i_uid) ||
 			    (ia_valid & ATTR_GID && attr->ia_gid != inode->i_gid))
@@ -186,6 +202,13 @@ int notify_change(struct dentry * dentry, struct iattr * attr)
 		fsnotify_change(dentry, ia_valid);
 
 	return error;
+}
+EXPORT_SYMBOL_GPL(fnotify_change);
+
+int notify_change(struct dentry *dentry, struct vfsmount *mnt,
+		  struct iattr *attr)
+{
+	return fnotify_change(dentry, mnt, attr, NULL);
 }
 
 EXPORT_SYMBOL(notify_change);

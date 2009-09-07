@@ -410,12 +410,12 @@ ipt_log_packet(unsigned int pf,
 		printk("MAC=");
 		if (skb->dev && skb->dev->hard_header_len
 		    && skb->mac_header != skb->network_header) {
-			int i;
+			int i, len;
 			const unsigned char *p = skb_mac_header(skb);
-			for (i = 0; i < skb->dev->hard_header_len; i++,p++)
-				printk("%02x%c", *p,
-				       i==skb->dev->hard_header_len - 1
-				       ? ' ':':');
+			len = (int)(skb_network_header(skb) - p);
+			len = min((int)skb->dev->hard_header_len, len);
+			for (i = 0; i < len; i++,p++)
+				printk("%02x%c", *p, i==len - 1 ? ' ':':');
 		} else
 			printk(" ");
 	}

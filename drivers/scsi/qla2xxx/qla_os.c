@@ -79,6 +79,14 @@ module_param(ql2xmaxqdepth, int, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(ql2xmaxqdepth,
 		"Maximum queue depth to report for target devices.");
 
+int ql2xqfulltracking = 1;
+module_param(ql2xqfulltracking, int, S_IRUGO|S_IWUSR);
+MODULE_PARM_DESC(ql2xqfulltracking,
+		"Controls whether the driver tracks queue full status "
+		"returns and dynamically adjusts a scsi device's queue "
+		"depth.  Default is 1, perform tracking.  Set to 0 to "
+		"disable dynamic tracking and adjustment of queue depth.");
+
 int ql2xqfullrampup = 120;
 module_param(ql2xqfullrampup, int, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(ql2xqfullrampup,
@@ -383,7 +391,10 @@ qla2x00_queuecommand(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
 	int rval;
 
 	if (unlikely(pci_channel_offline(ha->pdev))) {
-		cmd->result = DID_REQUEUE << 16;
+		if (ha->pdev->error_state == pci_channel_io_frozen)
+			cmd->result = DID_REQUEUE << 16;
+		else
+			cmd->result = DID_NO_CONNECT << 16;
 		goto qc_fail_command;
 	}
 
@@ -394,10 +405,8 @@ qla2x00_queuecommand(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
 	}
 
 	/* Close window on fcport/rport state-transitioning. */
-	if (fcport->drport) {
-		cmd->result = DID_IMM_RETRY << 16;
-		goto qc_fail_command;
-	}
+	if (fcport->drport)
+		goto qc_target_busy;
 
 	if (atomic_read(&fcport->state) != FCS_ONLINE) {
 		if (atomic_read(&fcport->state) == FCS_DEVICE_DEAD ||
@@ -405,7 +414,7 @@ qla2x00_queuecommand(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
 			cmd->result = DID_NO_CONNECT << 16;
 			goto qc_fail_command;
 		}
-		goto qc_host_busy;
+		goto qc_target_busy;
 	}
 
 	spin_unlock_irq(ha->host->host_lock);
@@ -428,9 +437,10 @@ qc_host_busy_free_sp:
 
 qc_host_busy_lock:
 	spin_lock_irq(ha->host->host_lock);
-
-qc_host_busy:
 	return SCSI_MLQUEUE_HOST_BUSY;
+
+qc_target_busy:
+	return SCSI_MLQUEUE_TARGET_BUSY;
 
 qc_fail_command:
 	done(cmd);
@@ -450,7 +460,10 @@ qla24xx_queuecommand(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
 	scsi_qla_host_t *pha = to_qla_parent(ha);
 
 	if (unlikely(pci_channel_offline(pha->pdev))) {
-		cmd->result = DID_REQUEUE << 16;
+		if (ha->pdev->error_state == pci_channel_io_frozen)
+			cmd->result = DID_REQUEUE << 16;
+		else
+			cmd->result = DID_NO_CONNECT << 16;
 		goto qc24_fail_command;
 	}
 
@@ -461,10 +474,8 @@ qla24xx_queuecommand(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
 	}
 
 	/* Close window on fcport/rport state-transitioning. */
-	if (fcport->drport) {
-		cmd->result = DID_IMM_RETRY << 16;
-		goto qc24_fail_command;
-	}
+	if (fcport->drport)
+		goto qc24_target_busy;
 
 	if (atomic_read(&fcport->state) != FCS_ONLINE) {
 		if (atomic_read(&fcport->state) == FCS_DEVICE_DEAD ||
@@ -472,7 +483,7 @@ qla24xx_queuecommand(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
 			cmd->result = DID_NO_CONNECT << 16;
 			goto qc24_fail_command;
 		}
-		goto qc24_host_busy;
+		goto qc24_target_busy;
 	}
 
 	spin_unlock_irq(ha->host->host_lock);
@@ -495,9 +506,10 @@ qc24_host_busy_free_sp:
 
 qc24_host_busy_lock:
 	spin_lock_irq(ha->host->host_lock);
-
-qc24_host_busy:
 	return SCSI_MLQUEUE_HOST_BUSY;
+
+qc24_target_busy:
+	return SCSI_MLQUEUE_TARGET_BUSY;
 
 qc24_fail_command:
 	done(cmd);
@@ -1518,6 +1530,7 @@ qla2xxx_scan_start(struct Scsi_Host *shost)
 	set_bit(LOOP_RESYNC_NEEDED, &ha->dpc_flags);
 	set_bit(LOCAL_LOOP_UPDATE, &ha->dpc_flags);
 	set_bit(RSCN_UPDATE, &ha->dpc_flags);
+	set_bit(NPIV_CONFIG_NEEDED, &ha->dpc_flags);
 }
 
 static int
@@ -1664,8 +1677,6 @@ qla2x00_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 		ha->gid_list_info_size = 8;
 		ha->optrom_size = OPTROM_SIZE_25XX;
 		ha->isp_ops = &qla25xx_isp_ops;
-		ha->hw_event_start = PCI_FUNC(pdev->devfn) ?
-		    FA_HW_EVENT1_ADDR: FA_HW_EVENT0_ADDR;
 	}
 	host->can_queue = ha->request_q_length + 128;
 
@@ -1673,6 +1684,7 @@ qla2x00_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	init_completion(&ha->mbx_cmd_comp);
 	complete(&ha->mbx_cmd_comp);
 	init_completion(&ha->mbx_intr_comp);
+	init_completion(&ha->pass_thru_intr_comp);
 
 	INIT_LIST_HEAD(&ha->list);
 	INIT_LIST_HEAD(&ha->fcports);
@@ -1792,6 +1804,8 @@ qla2x00_remove_one(struct pci_dev *pdev)
 	qla84xx_put_chip(ha);
 
 	qla2x00_free_sysfs_attr(ha);
+
+	qla_free_nlnk_dmabuf(ha);
 
 	fc_remove_host(ha->host);
 
@@ -2023,10 +2037,19 @@ qla2x00_mem_alloc(scsi_qla_host_t *ha)
 		    sizeof(struct ct_sns_pkt), &ha->ct_sns_dma, GFP_KERNEL);
 		if (!ha->ct_sns)
 			goto fail_free_ms_iocb;
+		/*Get consistent memory allocated for pass-thru commands */
+		ha->pass_thru = dma_alloc_coherent(&ha->pdev->dev,
+		    PAGE_SIZE, &ha->pass_thru_dma, GFP_KERNEL);
+		if (!ha->pass_thru)
+			goto fail_free_ct_sns;
 	}
 
 	return 0;
 
+fail_free_ct_sns:
+	dma_pool_free(ha->s_dma_pool, ha->ct_sns, ha->ct_sns_dma);
+	ha->ct_sns = NULL;
+	ha->ct_sns_dma = 0;
 fail_free_ms_iocb:
 	dma_pool_free(ha->s_dma_pool, ha->ms_iocb, ha->ms_iocb_dma);
 	ha->ms_iocb = NULL;
@@ -2095,6 +2118,10 @@ qla2x00_mem_free(scsi_qla_host_t *ha)
 		dma_free_coherent(&ha->pdev->dev, sizeof(struct sns_cmd_pkt),
 		    ha->sns_cmd, ha->sns_cmd_dma);
 
+	if (ha->pass_thru)
+		dma_free_coherent(&ha->pdev->dev, PAGE_SIZE,
+		    ha->pass_thru, ha->pass_thru_dma);
+
 	if (ha->ct_sns)
 		dma_free_coherent(&ha->pdev->dev, sizeof(struct ct_sns_pkt),
 		    ha->ct_sns, ha->ct_sns_dma);
@@ -2133,6 +2160,8 @@ qla2x00_mem_free(scsi_qla_host_t *ha)
 	ha->sns_cmd_dma = 0;
 	ha->ct_sns = NULL;
 	ha->ct_sns_dma = 0;
+	ha->pass_thru = NULL;
+	ha->pass_thru_dma = 0;
 	ha->ms_iocb = NULL;
 	ha->ms_iocb_dma = 0;
 	ha->init_cb = NULL;
@@ -2434,6 +2463,12 @@ qla2x00_do_dpc(void *data)
 			    ha->host_no));
 		}
 
+		if (test_bit(NPIV_CONFIG_NEEDED, &ha->dpc_flags) &&
+		    atomic_read(&ha->loop_state) == LOOP_READY) {
+			clear_bit(NPIV_CONFIG_NEEDED, &ha->dpc_flags);
+			qla2xxx_flash_npiv_conf(ha);
+		}
+
 		if (!ha->interrupts_on)
 			ha->isp_ops->enable_intrs(ha);
 
@@ -2733,6 +2768,8 @@ qla2x00_release_firmware(void)
 static pci_ers_result_t
 qla2xxx_pci_error_detected(struct pci_dev *pdev, pci_channel_state_t state)
 {
+	scsi_qla_host_t *ha = pci_get_drvdata(pdev);
+
 	switch (state) {
 	case pci_channel_io_normal:
 		return PCI_ERS_RESULT_CAN_RECOVER;
@@ -2740,7 +2777,7 @@ qla2xxx_pci_error_detected(struct pci_dev *pdev, pci_channel_state_t state)
 		pci_disable_device(pdev);
 		return PCI_ERS_RESULT_NEED_RESET;
 	case pci_channel_io_perm_failure:
-		qla2x00_remove_one(pdev);
+		qla2x00_abort_all_cmds(ha, DID_NO_CONNECT << 16);
 		return PCI_ERS_RESULT_DISCONNECT;
 	}
 	return PCI_ERS_RESULT_NEED_RESET;
@@ -2900,10 +2937,18 @@ qla2x00_module_init(void)
 		return -ENODEV;
 	}
 
+	if (ql_nl_register()) {
+		kmem_cache_destroy(srb_cachep);
+		fc_release_transport(qla2xxx_transport_template);
+		fc_release_transport(qla2xxx_transport_vport_template);
+		return -ENODEV;
+	}
+
 	printk(KERN_INFO "QLogic Fibre Channel HBA Driver: %s\n",
 	    qla2x00_version_str);
 	ret = pci_register_driver(&qla2xxx_pci_driver);
 	if (ret) {
+		ql_nl_unregister();
 		kmem_cache_destroy(srb_cachep);
 		fc_release_transport(qla2xxx_transport_template);
 		fc_release_transport(qla2xxx_transport_vport_template);
@@ -2919,6 +2964,7 @@ qla2x00_module_exit(void)
 {
 	pci_unregister_driver(&qla2xxx_pci_driver);
 	qla2x00_release_firmware();
+	ql_nl_unregister();
 	kmem_cache_destroy(srb_cachep);
 	fc_release_transport(qla2xxx_transport_template);
 	fc_release_transport(qla2xxx_transport_vport_template);

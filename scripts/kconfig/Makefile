@@ -61,6 +61,22 @@ allnoconfig: $(obj)/conf
 allmodconfig: $(obj)/conf
 	$< -m $(Kconfig)
 
+UNAME_RELEASE := $(shell uname -r)
+CLONECONFIG := $(firstword $(wildcard /proc/config.gz \
+				      /lib/modules/$(UNAME_RELEASE)/.config \
+				      /etc/kernel-config \
+				      /boot/config-$(UNAME_RELEASE)))
+cloneconfig: $(obj)/conf
+	$(Q)case "$(CLONECONFIG)" in				\
+	'')	echo -e "The configuration of the running"	\
+			"kernel could not be determined\n";	\
+		false ;;					\
+	*.gz)	gzip -cd $(CLONECONFIG) > .config.running ;;	\
+	*)	cat $(CLONECONFIG) > .config.running ;;		\
+	esac &&							\
+	echo -e "Cloning configuration file $(CLONECONFIG)\n"
+	$(Q)$< -D .config.running arch/$(SRCARCH)/Kconfig
+
 defconfig: $(obj)/conf
 ifeq ($(KBUILD_DEFCONFIG),)
 	$< -d $(Kconfig)

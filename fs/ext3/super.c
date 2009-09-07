@@ -36,12 +36,14 @@
 #include <linux/namei.h>
 #include <linux/quotaops.h>
 #include <linux/seq_file.h>
+#include <linux/nfs4acl.h>
 #include <linux/log2.h>
 
 #include <asm/uaccess.h>
 
 #include "xattr.h"
 #include "acl.h"
+#include "nfs4acl.h"
 #include "namei.h"
 
 static int ext3_load_journal(struct super_block *, struct ext3_super_block *,
@@ -454,6 +456,9 @@ static struct inode *ext3_alloc_inode(struct super_block *sb)
 	ei->i_acl = EXT3_ACL_NOT_CACHED;
 	ei->i_default_acl = EXT3_ACL_NOT_CACHED;
 #endif
+#ifdef CONFIG_EXT3_FS_NFS4ACL
+	ei->i_nfs4acl = EXT3_NFS4ACL_NOT_CACHED;
+#endif
 	ei->i_block_alloc_info = NULL;
 	ei->vfs_inode.i_version = 1;
 	return &ei->vfs_inode;
@@ -514,6 +519,13 @@ static void ext3_clear_inode(struct inode *inode)
 			EXT3_I(inode)->i_default_acl != EXT3_ACL_NOT_CACHED) {
 		posix_acl_release(EXT3_I(inode)->i_default_acl);
 		EXT3_I(inode)->i_default_acl = EXT3_ACL_NOT_CACHED;
+	}
+#endif
+#ifdef CONFIG_EXT3_FS_NFS4ACL
+	if (EXT3_I(inode)->i_nfs4acl &&
+			EXT3_I(inode)->i_nfs4acl != EXT3_NFS4ACL_NOT_CACHED) {
+		nfs4acl_put(EXT3_I(inode)->i_nfs4acl);
+		EXT3_I(inode)->i_nfs4acl = EXT3_NFS4ACL_NOT_CACHED;
 	}
 #endif
 	ext3_discard_reservation(inode);
@@ -750,7 +762,7 @@ enum {
 	Opt_bsd_df, Opt_minix_df, Opt_grpid, Opt_nogrpid,
 	Opt_resgid, Opt_resuid, Opt_sb, Opt_err_cont, Opt_err_panic, Opt_err_ro,
 	Opt_nouid32, Opt_nocheck, Opt_debug, Opt_oldalloc, Opt_orlov,
-	Opt_user_xattr, Opt_nouser_xattr, Opt_acl, Opt_noacl,
+	Opt_user_xattr, Opt_nouser_xattr, Opt_acl, Opt_acl_flavor, Opt_noacl,
 	Opt_reservation, Opt_noreservation, Opt_noload, Opt_nobh, Opt_bh,
 	Opt_commit, Opt_journal_update, Opt_journal_inum, Opt_journal_dev,
 	Opt_abort, Opt_data_journal, Opt_data_ordered, Opt_data_writeback,
@@ -782,6 +794,7 @@ static match_table_t tokens = {
 	{Opt_user_xattr, "user_xattr"},
 	{Opt_nouser_xattr, "nouser_xattr"},
 	{Opt_acl, "acl"},
+	{Opt_acl_flavor, "acl=%s"},
 	{Opt_noacl, "noacl"},
 	{Opt_reservation, "reservation"},
 	{Opt_noreservation, "noreservation"},
@@ -925,19 +938,33 @@ static int parse_options (char *options, struct super_block *sb,
 			printk("EXT3 (no)user_xattr options not supported\n");
 			break;
 #endif
-#ifdef CONFIG_EXT3_FS_POSIX_ACL
 		case Opt_acl:
-			set_opt(sbi->s_mount_opt, POSIX_ACL);
+			args[0].to = args[0].from;
+			/* fall through */
+		case Opt_acl_flavor:
+#ifdef CONFIG_EXT3_FS_POSIX_ACL
+			if (match_string(&args[0], "") ||
+			    match_string(&args[0], "posix")) {
+				set_opt(sbi->s_mount_opt, POSIX_ACL);
+				clear_opt(sbi->s_mount_opt, NFS4ACL);
+			} else
+#endif
+#ifdef CONFIG_EXT3_FS_NFS4ACL
+			if (match_string(&args[0], "nfs4")) {
+				clear_opt(sbi->s_mount_opt, POSIX_ACL);
+				set_opt(sbi->s_mount_opt, NFS4ACL);
+			} else
+#endif
+			{
+				printk(KERN_ERR "EXT3-fs: unsupported acl "
+				       "flavor\n");
+				return 0;
+			}
 			break;
 		case Opt_noacl:
 			clear_opt(sbi->s_mount_opt, POSIX_ACL);
+			clear_opt(sbi->s_mount_opt, NFS4ACL);
 			break;
-#else
-		case Opt_acl:
-		case Opt_noacl:
-			printk("EXT3 (no)acl options not supported\n");
-			break;
-#endif
 		case Opt_reservation:
 			set_opt(sbi->s_mount_opt, RESERVATION);
 			break;
@@ -1018,8 +1045,7 @@ static int parse_options (char *options, struct super_block *sb,
 		case Opt_grpjquota:
 			qtype = GRPQUOTA;
 set_qf_name:
-			if ((sb_any_quota_enabled(sb) ||
-			     sb_any_quota_suspended(sb)) &&
+			if (sb_any_quota_loaded(sb) &&
 			    !sbi->s_qf_names[qtype]) {
 				printk(KERN_ERR
 					"EXT3-fs: Cannot change journaled "
@@ -1058,8 +1084,7 @@ set_qf_name:
 		case Opt_offgrpjquota:
 			qtype = GRPQUOTA;
 clear_qf_name:
-			if ((sb_any_quota_enabled(sb) ||
-			     sb_any_quota_suspended(sb)) &&
+			if (sb_any_quota_loaded(sb) &&
 			    sbi->s_qf_names[qtype]) {
 				printk(KERN_ERR "EXT3-fs: Cannot change "
 					"journaled quota options when "
@@ -1078,8 +1103,7 @@ clear_qf_name:
 		case Opt_jqfmt_vfsv0:
 			qfmt = QFMT_VFS_V0;
 set_qf_format:
-			if ((sb_any_quota_enabled(sb) ||
-			     sb_any_quota_suspended(sb)) &&
+			if (sb_any_quota_loaded(sb) &&
 			    sbi->s_jquota_fmt != qfmt) {
 				printk(KERN_ERR "EXT3-fs: Cannot change "
 					"journaled quota options when "
@@ -1098,8 +1122,7 @@ set_qf_format:
 			set_opt(sbi->s_mount_opt, GRPQUOTA);
 			break;
 		case Opt_noquota:
-			if (sb_any_quota_enabled(sb) ||
-			    sb_any_quota_suspended(sb)) {
+			if (sb_any_quota_loaded(sb)) {
 				printk(KERN_ERR "EXT3-fs: Cannot change quota "
 					"options when quota turned on.\n");
 				return 0;
@@ -1603,14 +1626,19 @@ static int ext3_fill_super (struct super_block *sb, void *data, int silent)
 	sbi->s_resuid = le16_to_cpu(es->s_def_resuid);
 	sbi->s_resgid = le16_to_cpu(es->s_def_resgid);
 
+	/* enable barriers by default */
+	set_opt(sbi->s_mount_opt, BARRIER);
 	set_opt(sbi->s_mount_opt, RESERVATION);
 
 	if (!parse_options ((char *) data, sb, &journal_inum, &journal_devnum,
 			    NULL, 0))
 		goto failed_mount;
 
-	sb->s_flags = (sb->s_flags & ~MS_POSIXACL) |
-		((sbi->s_mount_opt & EXT3_MOUNT_POSIX_ACL) ? MS_POSIXACL : 0);
+	sb->s_flags = (sb->s_flags & ~MS_POSIXACL);
+	if (sbi->s_mount_opt & EXT3_MOUNT_POSIX_ACL)
+		sb->s_flags |= MS_POSIXACL;
+	if (sbi->s_mount_opt & EXT3_MOUNT_NFS4ACL)
+		sb->s_flags |= MS_POSIXACL | MS_WITHAPPEND;
 
 	if (le32_to_cpu(es->s_rev_level) == EXT3_GOOD_OLD_REV &&
 	    (EXT3_HAS_COMPAT_FEATURE(sb, ~0U) ||
@@ -2263,6 +2291,13 @@ static void ext3_commit_super (struct super_block * sb,
 	es->s_free_blocks_count = cpu_to_le32(ext3_count_free_blocks(sb));
 	es->s_free_inodes_count = cpu_to_le32(ext3_count_free_inodes(sb));
 	BUFFER_TRACE(sbh, "marking dirty");
+
+	/* We only read the superblock once. The in-memory version is
+	 * always the most recent. If ext3_error is called after a
+	 * superblock write failure, it will be !uptodate. This write
+	 * will likely fail also, but it avoids the WARN_ON in
+	 * mark_buffer_dirty. */
+	set_buffer_uptodate(sbh);
 	mark_buffer_dirty(sbh);
 	if (sync)
 		sync_dirty_buffer(sbh);
@@ -2446,8 +2481,12 @@ static int ext3_remount (struct super_block * sb, int * flags, char * data)
 	if (sbi->s_mount_opt & EXT3_MOUNT_ABORT)
 		ext3_abort(sb, __func__, "Abort forced by user");
 
-	sb->s_flags = (sb->s_flags & ~MS_POSIXACL) |
-		((sbi->s_mount_opt & EXT3_MOUNT_POSIX_ACL) ? MS_POSIXACL : 0);
+	sb->s_flags = (sb->s_flags & ~MS_POSIXACL);
+	if (sbi->s_mount_opt & EXT3_MOUNT_POSIX_ACL)
+		sb->s_flags |= MS_POSIXACL;
+	if (sbi->s_mount_opt & EXT3_MOUNT_NFS4ACL)
+		sb->s_flags |= MS_POSIXACL;
+
 
 	es = sbi->s_es;
 

@@ -33,6 +33,17 @@ EXPORT_SYMBOL(__cap_empty_set);
 EXPORT_SYMBOL(__cap_full_set);
 EXPORT_SYMBOL(__cap_init_eff_set);
 
+#ifdef CONFIG_SECURITY_FILE_CAPABILITIES
+int file_caps_enabled;
+
+static int __init setup_file_caps(char *str)
+{
+	get_option(&str, &file_caps_enabled);
+	return 1;
+}
+__setup("file_caps=", setup_file_caps);
+#endif
+
 /*
  * More recent versions of libcap are available from:
  *

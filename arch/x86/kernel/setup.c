@@ -98,6 +98,7 @@
 
 #include <mach_apic.h>
 #include <asm/paravirt.h>
+#include <asm/hypervisor.h>
 
 #include <asm/percpu.h>
 #include <asm/topology.h>
@@ -730,6 +731,9 @@ void __init setup_arch(char **cmdline_p)
 
 	finish_e820_parsing();
 
+	if (efi_enabled)
+		efi_init();
+
 	dmi_scan_machine();
 
 	dmi_check_system(bad_bios_dmi_table);
@@ -743,8 +747,6 @@ void __init setup_arch(char **cmdline_p)
 	insert_resource(&iomem_resource, &data_resource);
 	insert_resource(&iomem_resource, &bss_resource);
 
-	if (efi_enabled)
-		efi_init();
 
 #ifdef CONFIG_X86_32
 	if (ppro_with_ram_bug()) {
@@ -777,6 +779,8 @@ void __init setup_arch(char **cmdline_p)
 #else
 	num_physpages = max_pfn;
 
+ 	if (cpu_has_x2apic)
+ 		check_x2apic();
 
 	/* How many end-of-memory variables you have, grandma! */
 	/* need this before calling reserve_initrd */
@@ -822,6 +826,8 @@ void __init setup_arch(char **cmdline_p)
 	 * Parse the ACPI tables for possible boot-time SMP configuration.
 	 */
 	acpi_boot_table_init();
+
+	early_acpi_boot_init();
 
 #ifdef CONFIG_ACPI_NUMA
 	/*
@@ -901,6 +907,12 @@ void __init setup_arch(char **cmdline_p)
 
 	e820_reserve_resources();
 	e820_mark_nosave_regions(max_low_pfn);
+
+	/*
+	 * VMware detection requires dmi to be available, so this
+	 * needs to be done after dmi_scan_machine, for the BP.
+	 */
+	init_hypervisor(&boot_cpu_data);
 
 #ifdef CONFIG_X86_32
 	request_resource(&iomem_resource, &video_ram_resource);

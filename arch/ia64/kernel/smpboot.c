@@ -39,6 +39,7 @@
 #include <linux/efi.h>
 #include <linux/percpu.h>
 #include <linux/bitops.h>
+#include <linux/perfmon_kern.h>
 
 #include <asm/atomic.h>
 #include <asm/cache.h>
@@ -381,10 +382,6 @@ smp_callin (void)
 	extern void ia64_init_itm(void);
 	extern volatile int time_keeper_id;
 
-#ifdef CONFIG_PERFMON
-	extern void pfm_init_percpu(void);
-#endif
-
 	cpuid = smp_processor_id();
 	phys_id = hard_smp_processor_id();
 	itc_master = time_keeper_id;
@@ -409,10 +406,6 @@ smp_callin (void)
 	smp_setup_percpu_timer();
 
 	ia64_mca_cmc_vector_setup();	/* Setup vector on AP */
-
-#ifdef CONFIG_PERFMON
-	pfm_init_percpu();
-#endif
 
 	local_irq_enable();
 
@@ -741,16 +734,15 @@ int __cpu_disable(void)
 			return -EBUSY;
 	}
 
-	if (migrate_platform_irqs(cpu)) {
-		cpu_set(cpu, cpu_online_map);
-		return (-EBUSY);
-	}
+	if (migrate_platform_irqs(cpu))
+		return -EBUSY;
 
 	remove_siblinginfo(cpu);
-	fixup_irqs();
 	cpu_clear(cpu, cpu_online_map);
+	fixup_irqs();
 	local_flush_tlb_all();
 	cpu_clear(cpu, cpu_callin_map);
+	pfm_cpu_disable();
 	return 0;
 }
 

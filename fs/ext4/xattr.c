@@ -99,12 +99,12 @@ static struct mb_cache *ext4_xattr_cache;
 
 static struct xattr_handler *ext4_xattr_handler_map[] = {
 	[EXT4_XATTR_INDEX_USER]		     = &ext4_xattr_user_handler,
-#ifdef CONFIG_EXT4DEV_FS_POSIX_ACL
+#if defined(CONFIG_EXT4_FS_POSIX_ACL) || defined(CONFIG_EXT4DEV_FS_POSIX_ACL)
 	[EXT4_XATTR_INDEX_POSIX_ACL_ACCESS]  = &ext4_xattr_acl_access_handler,
 	[EXT4_XATTR_INDEX_POSIX_ACL_DEFAULT] = &ext4_xattr_acl_default_handler,
 #endif
 	[EXT4_XATTR_INDEX_TRUSTED]	     = &ext4_xattr_trusted_handler,
-#ifdef CONFIG_EXT4DEV_FS_SECURITY
+#if defined(CONFIG_EXT4_FS_SECURITY) || defined(CONFIG_EXT4DEV_FS_SECURITY)
 	[EXT4_XATTR_INDEX_SECURITY]	     = &ext4_xattr_security_handler,
 #endif
 };
@@ -112,11 +112,11 @@ static struct xattr_handler *ext4_xattr_handler_map[] = {
 struct xattr_handler *ext4_xattr_handlers[] = {
 	&ext4_xattr_user_handler,
 	&ext4_xattr_trusted_handler,
-#ifdef CONFIG_EXT4DEV_FS_POSIX_ACL
+#if defined(CONFIG_EXT4_FS_POSIX_ACL) || defined(CONFIG_EXT4DEV_FS_POSIX_ACL)
 	&ext4_xattr_acl_access_handler,
 	&ext4_xattr_acl_default_handler,
 #endif
-#ifdef CONFIG_EXT4DEV_FS_SECURITY
+#if defined(CONFIG_EXT4_FS_SECURITY) || defined(CONFIG_EXT4DEV_FS_SECURITY)
 	&ext4_xattr_security_handler,
 #endif
 	NULL
@@ -810,8 +810,8 @@ inserted:
 			/* We need to allocate a new block */
 			ext4_fsblk_t goal = ext4_group_first_block_no(sb,
 						EXT4_I(inode)->i_block_group);
-			ext4_fsblk_t block = ext4_new_meta_block(handle, inode,
-							goal, &error);
+			ext4_fsblk_t block = ext4_new_meta_blocks(handle, inode,
+						  goal, NULL, &error);
 			if (error)
 				goto cleanup;
 			ea_idebug(inode, "creating block %d", block);

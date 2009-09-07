@@ -52,7 +52,10 @@
 	. = ALIGN(8);							\
 	VMLINUX_SYMBOL(__start___markers) = .;				\
 	*(__markers)							\
-	VMLINUX_SYMBOL(__stop___markers) = .;
+	VMLINUX_SYMBOL(__stop___markers) = .;				\
+	VMLINUX_SYMBOL(__start___tracepoints) = .;			\
+	*(__tracepoints)						\
+	VMLINUX_SYMBOL(__stop___tracepoints) = .;
 
 #define RO_DATA(align)							\
 	. = ALIGN((align));						\
@@ -61,6 +64,7 @@
 		*(.rodata) *(.rodata.*)					\
 		*(__vermagic)		/* Kernel version magic */	\
 		*(__markers_strings)	/* Markers: strings */		\
+		*(__tracepoints_strings)/* Tracepoints: strings */	\
 	}								\
 									\
 	.rodata1          : AT(ADDR(.rodata1) - LOAD_OFFSET) {		\
@@ -196,6 +200,8 @@
 		MEM_KEEP(exit.rodata)					\
 	}								\
 									\
+	EH_FRAME							\
+									\
 	/* Built-in module parameters. */				\
 	__param : AT(ADDR(__param) - LOAD_OFFSET) {			\
 		VMLINUX_SYMBOL(__start___param) = .;			\
@@ -268,7 +274,15 @@
 	CPU_DISCARD(init.data)						\
 	CPU_DISCARD(init.rodata)					\
 	MEM_DISCARD(init.data)						\
-	MEM_DISCARD(init.rodata)
+	MEM_DISCARD(init.rodata)					\
+	/* implement dynamic printk debug */				\
+	VMLINUX_SYMBOL(__start___verbose_strings) = .;                  \
+	*(__verbose_strings)                                            \
+	VMLINUX_SYMBOL(__stop___verbose_strings) = .;                   \
+	. = ALIGN(8);							\
+	VMLINUX_SYMBOL(__start___verbose) = .;                          \
+	*(__verbose)                                                    \
+	VMLINUX_SYMBOL(__stop___verbose) = .;
 
 #define INIT_TEXT							\
 	*(.init.text)							\
@@ -290,6 +304,26 @@
 	DEV_DISCARD(exit.text)						\
 	CPU_DISCARD(exit.text)						\
 	MEM_DISCARD(exit.text)
+
+#ifdef CONFIG_STACK_UNWIND
+#define EH_FRAME							\
+		/* Unwind data binary search table */			\
+		. = ALIGN(8);						\
+        	.eh_frame_hdr : AT(ADDR(.eh_frame_hdr) - LOAD_OFFSET) {	\
+			VMLINUX_SYMBOL(__start_unwind_hdr) = .;		\
+			*(.eh_frame_hdr)				\
+			VMLINUX_SYMBOL(__end_unwind_hdr) = .;		\
+		}							\
+		/* Unwind data */					\
+		. = ALIGN(8);						\
+		.eh_frame : AT(ADDR(.eh_frame) - LOAD_OFFSET) {		\
+			VMLINUX_SYMBOL(__start_unwind) = .;		\
+		  	*(.eh_frame)					\
+			VMLINUX_SYMBOL(__end_unwind) = .;		\
+		}
+#else
+#define EH_FRAME
+#endif
 
 		/* DWARF debug sections.
 		Symbols in the DWARF debugging sections are relative to

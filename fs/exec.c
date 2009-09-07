@@ -50,6 +50,7 @@
 #include <linux/cn_proc.h>
 #include <linux/audit.h>
 #include <linux/tracehook.h>
+#include <trace/fs.h>
 
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>
@@ -689,6 +690,14 @@ struct file *open_exec(const char *name)
 	file = nameidata_to_filp(&nd, O_RDONLY|O_LARGEFILE);
 	if (IS_ERR(file))
 		return file;
+
+	if (file->f_op && file->f_op->open_exec) {
+		err = file->f_op->open_exec(nd.path.dentry->d_inode);
+		if (err) {
+			fput(file);
+			goto out;
+		}
+	}
 
 	err = deny_write_access(file);
 	if (err) {
@@ -1345,6 +1354,7 @@ int do_execve(char * filename,
 	current->flags &= ~PF_KTHREAD;
 	retval = search_binary_handler(bprm,regs);
 	if (retval >= 0) {
+		trace_fs_exec(filename);
 		/* execve success */
 		security_bprm_free(bprm);
 		acct_update_integrals(current);
@@ -1833,7 +1843,8 @@ int do_coredump(long signr, int exit_code, struct pt_regs * regs)
 		goto close_fail;
 	if (!file->f_op->write)
 		goto close_fail;
-	if (!ispipe && do_truncate(file->f_path.dentry, 0, 0, file) != 0)
+	if (!ispipe &&
+	    do_truncate(file->f_path.dentry, file->f_path.mnt, 0, 0, file) != 0)
 		goto close_fail;
 
 	retval = binfmt->core_dump(signr, regs, file, core_limit);

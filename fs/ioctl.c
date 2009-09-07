@@ -13,6 +13,7 @@
 #include <linux/security.h>
 #include <linux/module.h>
 #include <linux/uaccess.h>
+#include <trace/fs.h>
 
 #include <asm/ioctls.h>
 
@@ -204,6 +205,8 @@ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 	filp = fget_light(fd, &fput_needed);
 	if (!filp)
 		goto out;
+
+	trace_fs_ioctl(fd, cmd, arg);
 
 	error = security_file_ioctl(filp, cmd, arg);
 	if (error)

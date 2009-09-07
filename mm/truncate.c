@@ -92,7 +92,7 @@ EXPORT_SYMBOL(cancel_dirty_page);
  * its lock, b) when a concurrent invalidate_mapping_pages got there first and
  * c) when tmpfs swizzles a page between a tmpfs inode and swapper_space.
  */
-static void
+void
 truncate_complete_page(struct address_space *mapping, struct page *page)
 {
 	if (page->mapping != mapping)
@@ -107,7 +107,7 @@ truncate_complete_page(struct address_space *mapping, struct page *page)
 	ClearPageMappedToDisk(page);
 	page_cache_release(page);	/* pagecache ref */
 }
-
+EXPORT_SYMBOL_GPL(truncate_complete_page);
 /*
  * This is for invalidate_mapping_pages().  That function can be called at
  * any time, and is not supposed to throw away dirty pages.  But pages can

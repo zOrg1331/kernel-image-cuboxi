@@ -127,8 +127,15 @@
 #include <linux/in.h>
 #include <linux/jhash.h>
 #include <linux/random.h>
+#include <trace/net.h>
 
 #include "net-sysfs.h"
+
+#if defined(CONFIG_XEN) || defined(CONFIG_PARAVIRT_XEN)
+#include <net/ip.h>
+#include <linux/tcp.h>
+#include <linux/udp.h>
+#endif
 
 /*
  *	The list of packet types we will receive (as opposed to discard)
@@ -922,7 +929,11 @@ int dev_change_name(struct net_device *dev, char *newname)
 	else if (__dev_get_by_name(net, newname))
 		return -EEXIST;
 	else
+	{
+		if (strncmp(newname, dev->name, IFNAMSIZ))
+			printk(KERN_INFO "%s renamed to %s by %s [%u]\n", dev->name, newname, current->comm, current->pid);
 		strlcpy(dev->name, newname, IFNAMSIZ);
+	}
 
 rollback:
 	err = device_rename(&dev->dev, dev->name);
@@ -1729,6 +1740,58 @@ static struct netdev_queue *dev_pick_tx(struct net_device *dev,
 	return netdev_get_tx_queue(dev, queue_index);
 }
 
+#if defined(CONFIG_XEN) || defined(CONFIG_PARAVIRT_XEN)
+inline int skb_checksum_setup(struct sk_buff *skb)
+{
+	struct iphdr *iph;
+	unsigned char *th;
+	int err = -EPROTO;
+
+#ifdef CONFIG_XEN
+	if (!skb->proto_csum_blank)
+		return 0;
+#endif
+
+	if (skb->protocol != htons(ETH_P_IP))
+		goto out;
+
+	iph = ip_hdr(skb);
+	th = skb_network_header(skb) + 4 * iph->ihl;
+	if (th >= skb_tail_pointer(skb))
+		goto out;
+
+	skb->csum_start = th - skb->head;
+	switch (iph->protocol) {
+	case IPPROTO_TCP:
+		skb->csum_offset = offsetof(struct tcphdr, check);
+		break;
+	case IPPROTO_UDP:
+		skb->csum_offset = offsetof(struct udphdr, check);
+		break;
+	default:
+		if (net_ratelimit())
+			printk(KERN_ERR "Attempting to checksum a non-"
+			       "TCP/UDP packet, dropping a protocol"
+			       " %d packet", iph->protocol);
+		goto out;
+	}
+
+	if ((th + skb->csum_offset + 2) > skb_tail_pointer(skb))
+		goto out;
+
+#ifdef CONFIG_XEN
+	skb->ip_summed = CHECKSUM_PARTIAL;
+	skb->proto_csum_blank = 0;
+#endif
+
+	err = 0;
+
+out:
+	return err;
+}
+EXPORT_SYMBOL(skb_checksum_setup);
+#endif
+
 /**
  *	dev_queue_xmit - transmit a buffer
  *	@skb: buffer to transmit
@@ -1761,6 +1824,12 @@ int dev_queue_xmit(struct sk_buff *skb)
 	struct Qdisc *q;
 	int rc = -ENOMEM;
 
+ 	/* If a checksum-deferred packet is forwarded to a device that needs a
+ 	 * checksum, correct the pointers and force checksumming.
+ 	 */
+ 	if (skb_checksum_setup(skb))
+ 		goto out_kfree_skb;
+
 	/* GSO will handle the following emulations directly. */
 	if (netif_needs_gso(dev, skb))
 		goto gso;
@@ -1790,6 +1859,7 @@ int dev_queue_xmit(struct sk_buff *skb)
 	}
 
 gso:
+	trace_net_dev_xmit(skb);
 	/* Disable soft irqs for various locks below. Also
 	 * stops preemption for RCU.
 	 */
@@ -2164,6 +2234,30 @@ void netif_nit_deliver(struct sk_buff *skb)
 	rcu_read_unlock();
 }
 
+/*
+ * Filter the protocols for which the reserves are adequate.
+ *
+ * Before adding a protocol make sure that it is either covered by the existing
+ * reserves, or add reserves covering the memory need of the new protocol's
+ * packet processing.
+ */
+static int skb_emergency_protocol(struct sk_buff *skb)
+{
+	if (skb_emergency(skb))
+		switch (skb->protocol) {
+		case __constant_htons(ETH_P_ARP):
+		case __constant_htons(ETH_P_IP):
+		case __constant_htons(ETH_P_IPV6):
+		case __constant_htons(ETH_P_8021Q):
+			break;
+
+		default:
+			return 0;
+		}
+
+	return 1;
+}
+
 /**
  *	netif_receive_skb - process receive buffer from network
  *	@skb: buffer to process
@@ -2186,13 +2280,26 @@ int netif_receive_skb(struct sk_buff *skb)
 	struct net_device *null_or_orig;
 	int ret = NET_RX_DROP;
 	__be16 type;
+	unsigned long pflags = current->flags;
 
 	if (skb->vlan_tci && vlan_hwaccel_do_receive(skb))
 		return NET_RX_SUCCESS;
 
+	/* Emergency skb are special, they should
+	 *  - be delivered to SOCK_MEMALLOC sockets only
+	 *  - stay away from userspace
+	 *  - have bounded memory usage
+	 *
+	 * Use PF_MEMALLOC as a poor mans memory pool - the grouping kind.
+	 * This saves us from propagating the allocation context down to all
+	 * allocation sites.
+	 */
+	if (skb_emergency(skb))
+		current->flags |= PF_MEMALLOC;
+
 	/* if we've gotten here through NAPI, check netpoll */
 	if (netpoll_receive_skb(skb))
-		return NET_RX_DROP;
+		goto out;
 
 	if (!skb->tstamp.tv64)
 		net_timestamp(skb);
@@ -2211,6 +2318,7 @@ int netif_receive_skb(struct sk_buff *skb)
 
 	__get_cpu_var(netdev_rx_stat).total++;
 
+	trace_net_dev_receive(skb);
 	skb_reset_network_header(skb);
 	skb_reset_transport_header(skb);
 	skb->mac_len = skb->network_header - skb->mac_header;
@@ -2230,6 +2338,22 @@ int netif_receive_skb(struct sk_buff *skb)
 	}
 #endif
 
+#ifdef CONFIG_XEN
+	switch (skb->ip_summed) {
+	case CHECKSUM_UNNECESSARY:
+		skb->proto_data_valid = 1;
+		break;
+	case CHECKSUM_PARTIAL:
+		/* XXX Implement me. */
+	default:
+		skb->proto_data_valid = 0;
+		break;
+	}
+#endif
+
+	if (skb_emergency(skb))
+		goto skip_taps;
+
 	list_for_each_entry_rcu(ptype, &ptype_all, list) {
 		if (ptype->dev == null_or_orig || ptype->dev == skb->dev ||
 		    ptype->dev == orig_dev) {
@@ -2239,19 +2363,23 @@ int netif_receive_skb(struct sk_buff *skb)
 		}
 	}
 
+skip_taps:
 #ifdef CONFIG_NET_CLS_ACT
 	skb = handle_ing(skb, &pt_prev, &ret, orig_dev);
 	if (!skb)
-		goto out;
+		goto unlock;
 ncls:
 #endif
 
+	if (!skb_emergency_protocol(skb))
+		goto drop;
+
 	skb = handle_bridge(skb, &pt_prev, &ret, orig_dev);
 	if (!skb)
-		goto out;
+		goto unlock;
 	skb = handle_macvlan(skb, &pt_prev, &ret, orig_dev);
 	if (!skb)
-		goto out;
+		goto unlock;
 
 	type = skb->protocol;
 	list_for_each_entry_rcu(ptype,
@@ -2268,6 +2396,7 @@ ncls:
 	if (pt_prev) {
 		ret = pt_prev->func(skb, skb->dev, pt_prev, orig_dev);
 	} else {
+drop:
 		kfree_skb(skb);
 		/* Jamal, now you will not able to escape explaining
 		 * me how you were going to use this. :-)
@@ -2275,8 +2404,10 @@ ncls:
 		ret = NET_RX_DROP;
 	}
 
-out:
+unlock:
 	rcu_read_unlock();
+out:
+	tsk_restore_flags(current, pflags, PF_MEMALLOC);
 	return ret;
 }
 

@@ -44,6 +44,9 @@ qla2x00_mailbox_command(scsi_qla_host_t *pvha, mbx_cmd_t *mcp)
 	unsigned long	wait_time;
 	scsi_qla_host_t *ha = to_qla_parent(pvha);
 
+	if (ha->pdev->error_state == pci_channel_io_perm_failure)
+		return QLA_FUNCTION_TIMEOUT;
+
 	reg = ha->iobase;
 	io_lock_on = ha->flags.init_done;
 
@@ -233,7 +236,7 @@ qla2x00_mailbox_command(scsi_qla_host_t *pvha, mbx_cmd_t *mcp)
 			DEBUG2_3_11(printk("%s(%ld): timeout schedule "
 			    "isp_abort_needed.\n", __func__, ha->host_no));
 			qla_printk(KERN_WARNING, ha,
-			    "Mailbox command timeout occured. Scheduling ISP "
+			    "Mailbox command timeout occurred. Scheduling ISP "
 			    "abort.\n");
 			set_bit(ISP_ABORT_NEEDED, &ha->dpc_flags);
 			qla2xxx_wake_dpc(ha);
@@ -244,7 +247,7 @@ qla2x00_mailbox_command(scsi_qla_host_t *pvha, mbx_cmd_t *mcp)
 			DEBUG2_3_11(printk("%s(%ld): timeout calling "
 			    "abort_isp\n", __func__, ha->host_no));
 			qla_printk(KERN_WARNING, ha,
-			    "Mailbox command timeout occured. Issuing ISP "
+			    "Mailbox command timeout occurred. Issuing ISP "
 			    "abort.\n");
 
 			set_bit(ABORT_ISP_ACTIVE, &ha->dpc_flags);
@@ -681,7 +684,7 @@ qla2x00_verify_checksum(scsi_qla_host_t *ha, uint32_t risc_addr)
  * Context:
  *	Kernel context.
  */
-static int
+int
 qla2x00_issue_iocb_timeout(scsi_qla_host_t *ha, void *buffer,
     dma_addr_t phys_addr, size_t size, uint32_t tov)
 {
@@ -1995,7 +1998,7 @@ qla2x00_get_fcal_position_map(scsi_qla_host_t *ha, char *pos_map)
 	char *pmap;
 	dma_addr_t pmap_dma;
 
-	pmap = dma_pool_alloc(ha->s_dma_pool, GFP_ATOMIC, &pmap_dma);
+	pmap = dma_pool_alloc(ha->s_dma_pool, GFP_KERNEL, &pmap_dma);
 	if (pmap  == NULL) {
 		DEBUG2_3_11(printk("%s(%ld): **** Mem Alloc Failed ****",
 		    __func__, ha->host_no));
@@ -2945,6 +2948,33 @@ qla2x00_dump_ram(scsi_qla_host_t *ha, dma_addr_t req_dma, uint32_t addr,
 }
 
 /* 84XX Support **************************************************************/
+
+/*
+ * qla84xx_reset
+ *     Resets the QLA8432
+ */
+int
+qla84xx_reset(struct scsi_qla_host *ha, uint32_t diag_fw)
+{
+	int rval;
+	mbx_cmd_t mc;
+	mbx_cmd_t *mcp = &mc;
+
+	mcp->mb[0] = MBC_ISP84XX_RESET;
+	mcp->mb[1] = diag_fw;
+	mcp->out_mb = MBX_1 | MBX_0;
+	mcp->in_mb = MBX_1 | MBX_0;
+	mcp->tov = MBX_TOV_SECONDS;
+	mcp->flags = 0;
+
+	rval = qla2x00_mailbox_command(ha, mcp);
+
+	if (rval != QLA_SUCCESS)
+		DEBUG2_16(printk("%s(%ld): failed mb[0]=0x%x mb[1]=0x%x\n",
+		    __func__, ha->host_no, mcp->mb[0], mcp->mb[1]));
+
+	return (rval);
+}
 
 struct cs84xx_mgmt_cmd {
 	union {

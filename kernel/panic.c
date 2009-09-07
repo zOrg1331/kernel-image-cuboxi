@@ -21,6 +21,9 @@
 #include <linux/debug_locks.h>
 #include <linux/random.h>
 #include <linux/kallsyms.h>
+#ifdef CONFIG_KDB_KDUMP
+#include <linux/kdb.h>
+#endif
 
 int panic_on_oops;
 int tainted;
@@ -82,12 +85,18 @@ NORET_TYPE void panic(const char * fmt, ...)
 	printk(KERN_EMERG "Kernel panic - not syncing: %s\n",buf);
 	bust_spinlocks(0);
 
+#ifdef CONFIG_KDB_KDUMP
+	if (kdb_kdump_state == KDB_KDUMP_RESET) {
+		(void)kdb(KDB_REASON_OOPS, 999, get_irq_regs());
+	}
+#endif
 	/*
 	 * If we have crashed and we have a crash kernel loaded let it handle
 	 * everything else.
 	 * Do we want to call this before we try to display a message?
 	 */
-	crash_kexec(NULL);
+	if (!dump_after_notifier)
+		crash_kexec(NULL);
 
 #ifdef CONFIG_SMP
 	/*
@@ -100,6 +109,8 @@ NORET_TYPE void panic(const char * fmt, ...)
 
 	atomic_notifier_call_chain(&panic_notifier_list, 0, buf);
 
+	crash_kexec(NULL);
+
 	if (!panic_blink)
 		panic_blink = no_blink;
 
@@ -109,6 +120,12 @@ NORET_TYPE void panic(const char * fmt, ...)
 		 * We can't use the "normal" timers since we just panicked..
 	 	 */
 		printk(KERN_EMERG "Rebooting in %d seconds..",panic_timeout);
+#ifdef CONFIG_BOOTSPLASH
+		{
+			extern int splash_verbose(void);
+			(void)splash_verbose();
+		}
+#endif
 		for (i = 0; i < panic_timeout*1000; ) {
 			touch_nmi_watchdog();
 			i += panic_blink(i);
@@ -133,6 +150,12 @@ NORET_TYPE void panic(const char * fmt, ...)
 	disabled_wait(caller);
 #endif
 	local_irq_enable();
+#ifdef CONFIG_BOOTSPLASH
+	{
+		extern int splash_verbose(void);
+		(void)splash_verbose();
+	}
+#endif
 	for (i = 0;;) {
 		touch_softlockup_watchdog();
 		i += panic_blink(i);
@@ -155,6 +178,9 @@ EXPORT_SYMBOL(panic);
  *  'U' - Userspace-defined naughtiness.
  *  'A' - ACPI table overridden.
  *  'W' - Taint on warning.
+ *  'C' - modules from drivers/staging are loaded.
+ *  'N' - Unsuported modules loaded.
+ *  'X' - Modules with external support loaded.
  *
  *	The string is overwritten by the next call to print_taint().
  */
@@ -163,7 +189,7 @@ const char *print_tainted(void)
 {
 	static char buf[20];
 	if (tainted) {
-		snprintf(buf, sizeof(buf), "Tainted: %c%c%c%c%c%c%c%c%c%c",
+		snprintf(buf, sizeof(buf), "Tainted: %c%c%c%c%c%c%c%c%c%c%c%c%c",
 			tainted & TAINT_PROPRIETARY_MODULE ? 'P' : 'G',
 			tainted & TAINT_FORCED_MODULE ? 'F' : ' ',
 			tainted & TAINT_UNSAFE_SMP ? 'S' : ' ',
@@ -173,7 +199,10 @@ const char *print_tainted(void)
 			tainted & TAINT_USER ? 'U' : ' ',
 			tainted & TAINT_DIE ? 'D' : ' ',
 			tainted & TAINT_OVERRIDDEN_ACPI_TABLE ? 'A' : ' ',
-			tainted & TAINT_WARN ? 'W' : ' ');
+			tainted & TAINT_WARN ? 'W' : ' ',
+			tainted & TAINT_CRAP ? 'C' : ' ',
+			tainted & TAINT_NO_SUPPORT ? 'N' : ' ',
+			tainted & TAINT_EXTERNAL_SUPPORT ? 'X' : ' ');
 	}
 	else
 		snprintf(buf, sizeof(buf), "Not tainted");

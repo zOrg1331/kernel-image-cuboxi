@@ -109,48 +109,12 @@ static struct request *get_alua_req(struct scsi_device *sdev,
 	}
 
 	rq->cmd_type = REQ_TYPE_BLOCK_PC;
-	rq->cmd_flags |= REQ_FAILFAST | REQ_NOMERGE;
+	rq->cmd_flags |= REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT |
+			 REQ_FAILFAST_DRIVER | REQ_NOMERGE;
 	rq->retries = ALUA_FAILOVER_RETRIES;
 	rq->timeout = ALUA_FAILOVER_TIMEOUT;
 
 	return rq;
-}
-
-/*
- * submit_std_inquiry - Issue a standard INQUIRY command
- * @sdev: sdev the command should be send to
- */
-static int submit_std_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
-{
-	struct request *rq;
-	int err = SCSI_DH_RES_TEMP_UNAVAIL;
-
-	rq = get_alua_req(sdev, h->inq, ALUA_INQUIRY_SIZE, READ);
-	if (!rq)
-		goto done;
-
-	/* Prepare the command. */
-	rq->cmd[0] = INQUIRY;
-	rq->cmd[1] = 0;
-	rq->cmd[2] = 0;
-	rq->cmd[4] = ALUA_INQUIRY_SIZE;
-	rq->cmd_len = COMMAND_SIZE(INQUIRY);
-
-	rq->sense = h->sense;
-	memset(rq->sense, 0, SCSI_SENSE_BUFFERSIZE);
-	rq->sense_len = h->senselen = 0;
-
-	err = blk_execute_rq(rq->q, NULL, rq, 1);
-	if (err == -EIO) {
-		sdev_printk(KERN_INFO, sdev,
-			    "%s: std inquiry failed with %x\n",
-			    ALUA_DH_NAME, rq->errors);
-		h->senselen = rq->sense_len;
-		err = SCSI_DH_IO;
-	}
-	blk_put_request(rq);
-done:
-	return err;
 }
 
 /*
@@ -246,8 +210,8 @@ static unsigned submit_stpg(struct scsi_device *sdev, struct alua_dh_data *h)
 	/* Prepare the data buffer */
 	memset(h->buff, 0, stpg_len);
 	h->buff[4] = TPGS_STATE_OPTIMIZED & 0x0f;
-	h->buff[6] = (h->group_id >> 8) & 0x0f;
-	h->buff[7] = h->group_id & 0x0f;
+	h->buff[6] = (h->group_id >> 8) & 0xff;
+	h->buff[7] = h->group_id & 0xff;
 
 	rq = get_alua_req(sdev, h->buff, stpg_len, WRITE);
 	if (!rq)
@@ -280,23 +244,19 @@ done:
 }
 
 /*
- * alua_std_inquiry - Evaluate standard INQUIRY command
+ * alua_check_tgps - Evaluate TGPS setting
  * @sdev: device to be checked
  *
- * Just extract the TPGS setting to find out if ALUA
+ * Just examine the TPGS setting of the device to find out if ALUA
  * is supported.
  */
-static int alua_std_inquiry(struct scsi_device *sdev, struct alua_dh_data *h)
+static int alua_check_tgps(struct scsi_device *sdev, struct alua_dh_data *h)
 {
-	int err;
-
-	err = submit_std_inquiry(sdev, h);
-
-	if (err != SCSI_DH_OK)
-		return err;
+	int err = SCSI_DH_OK;
 
 	/* Check TPGS setting */
-	h->tpgs = (h->inq[5] >> 4) & 0x3;
+	h->tpgs = sdev->tgps;
+
 	switch (h->tpgs) {
 	case TPGS_MODE_EXPLICIT|TPGS_MODE_IMPLICIT:
 		sdev_printk(KERN_INFO, sdev,
@@ -443,24 +403,16 @@ static int alua_check_sense(struct scsi_device *sdev,
 			return SUCCESS;
 		break;
 	case UNIT_ATTENTION:
-		if (sense_hdr->asc == 0x29 && sense_hdr->ascq == 0x00)
+		if (sense_hdr->asc == 0x04 && sense_hdr->ascq == 0x02)
 			/*
-			 * Power On, Reset, or Bus Device Reset, just retry.
+			 * LUN not ready, initialization command required
 			 */
-			return ADD_TO_MLQUEUE;
-		if (sense_hdr->asc == 0x2a && sense_hdr->ascq == 0x06) {
-			/*
-			 * ALUA state changed
-			 */
-			return ADD_TO_MLQUEUE;
-		}
-		if (sense_hdr->asc == 0x2a && sense_hdr->ascq == 0x07) {
-			/*
-			 * Implicit ALUA state transition failed
-			 */
-			return ADD_TO_MLQUEUE;
-		}
-		break;
+			return SCSI_RETURN_NOT_HANDLED;
+
+		/*
+		 * Just retry for UNIT_ATTENTION
+		 */
+		return ADD_TO_MLQUEUE;
 	}
 
 	return SCSI_RETURN_NOT_HANDLED;
@@ -616,7 +568,7 @@ static int alua_initialize(struct scsi_device *sdev, struct alua_dh_data *h)
 {
 	int err;
 
-	err = alua_std_inquiry(sdev, h);
+	err = alua_check_tgps(sdev, h);
 	if (err != SCSI_DH_OK)
 		goto out;
 
@@ -647,13 +599,11 @@ static int alua_activate(struct scsi_device *sdev)
 	struct alua_dh_data *h = get_alua_data(sdev);
 	int err = SCSI_DH_OK;
 
-	if (h->group_id != -1) {
-		err = alua_rtpg(sdev, h);
-		if (err != SCSI_DH_OK)
-			goto out;
-	}
+	err = alua_rtpg(sdev, h);
+	if (err != SCSI_DH_OK)
+		goto out;
 
-	if (h->tpgs == TPGS_MODE_EXPLICIT && h->state != TPGS_STATE_OPTIMIZED)
+	if ((h->tpgs & TPGS_MODE_EXPLICIT) && h->state != TPGS_STATE_OPTIMIZED)
 		err = alua_stpg(sdev, TPGS_STATE_OPTIMIZED, h);
 
 out:
@@ -681,16 +631,8 @@ static int alua_prep_fn(struct scsi_device *sdev, struct request *req)
 }
 
 static const struct scsi_dh_devlist alua_dev_list[] = {
-	{"HP", "MSA VOLUME" },
-	{"HP", "HSV101" },
-	{"HP", "HSV111" },
-	{"HP", "HSV200" },
-	{"HP", "HSV210" },
-	{"HP", "HSV300" },
-	{"IBM", "2107900" },
-	{"IBM", "2145" },
-	{"Pillar", "Axiom" },
-	{NULL, NULL}
+	{"", "", 3 },
+	{NULL, NULL, 0}
 };
 
 static int alua_bus_attach(struct scsi_device *sdev);

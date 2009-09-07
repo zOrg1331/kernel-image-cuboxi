@@ -16,6 +16,7 @@
 #else
 # define IA32_SYSCALL_VECTOR	0x80
 #endif
+#define KDBENTER_VECTOR 	0x81
 
 /*
  * Reserve the lowest usable priority level 0x20 - 0x2f for triggering
@@ -85,11 +86,22 @@
 #endif
 
 /*
+ * KDB_VECTOR will take over vector 0xfe when it is needed, as in theory
+ * it should not be used anyway.
+ */
+#define KDB_VECTOR			0xfe
+
+/*
  * Local APIC timer IRQ vector is on a different priority level,
  * to work around the 'lost local interrupt if more than 2 IRQ
  * sources per level' errata.
  */
 #define LOCAL_TIMER_VECTOR	0xef
+
+/*
+ * Perfmon PMU interrupt vector
+ */
+#define LOCAL_PERFMON_VECTOR	0xee
 
 /*
  * First APIC vector available to drivers: (vectors 0x30-0xee) we

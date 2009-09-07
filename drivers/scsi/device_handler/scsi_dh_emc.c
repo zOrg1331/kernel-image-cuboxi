@@ -272,13 +272,12 @@ static struct request *get_req(struct scsi_device *sdev, int cmd,
 	int len = 0;
 
 	rq = blk_get_request(sdev->request_queue,
-			(cmd == MODE_SELECT) ? WRITE : READ, GFP_NOIO);
+			(cmd != INQUIRY) ? WRITE : READ, GFP_NOIO);
 	if (!rq) {
 		sdev_printk(KERN_INFO, sdev, "get_req: blk_get_request failed");
 		return NULL;
 	}
 
-	memset(rq->cmd, 0, BLK_MAX_CDB);
 	rq->cmd_len = COMMAND_SIZE(cmd);
 	rq->cmd[0] = cmd;
 
@@ -287,14 +286,17 @@ static struct request *get_req(struct scsi_device *sdev, int cmd,
 		len = sizeof(short_trespass);
 		rq->cmd_flags |= REQ_RW;
 		rq->cmd[1] = 0x10;
+		rq->cmd[4] = len;
 		break;
 	case MODE_SELECT_10:
 		len = sizeof(long_trespass);
 		rq->cmd_flags |= REQ_RW;
 		rq->cmd[1] = 0x10;
+		rq->cmd[8] = len;
 		break;
 	case INQUIRY:
 		len = CLARIION_BUFFER_SIZE;
+		rq->cmd[4] = len;
 		memset(buffer, 0, len);
 		break;
 	default:
@@ -302,9 +304,9 @@ static struct request *get_req(struct scsi_device *sdev, int cmd,
 		break;
 	}
 
-	rq->cmd[4] = len;
 	rq->cmd_type = REQ_TYPE_BLOCK_PC;
-	rq->cmd_flags |= REQ_FAILFAST;
+	rq->cmd_flags |= REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT |
+			 REQ_FAILFAST_DRIVER;
 	rq->timeout = CLARIION_TIMEOUT;
 	rq->retries = CLARIION_RETRIES;
 
@@ -563,10 +565,10 @@ done:
 }
 
 static const struct scsi_dh_devlist clariion_dev_list[] = {
-	{"DGC", "RAID"},
-	{"DGC", "DISK"},
-	{"DGC", "VRAID"},
-	{NULL, NULL},
+	{"DGC", "RAID", 0},
+	{"DGC", "DISK", 0},
+	{"DGC", "VRAID", 0},
+	{NULL, NULL, 0},
 };
 
 static int clariion_bus_attach(struct scsi_device *sdev);

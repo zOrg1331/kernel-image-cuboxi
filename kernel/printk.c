@@ -32,6 +32,8 @@
 #include <linux/security.h>
 #include <linux/bootmem.h>
 #include <linux/syscalls.h>
+#include <linux/jhash.h>
+#include <linux/device.h>
 
 #include <asm/uaccess.h>
 
@@ -425,6 +427,35 @@ SYSCALL_DEFINE3(syslog, int, type, char __user *, buf, int, len)
 {
 	return do_syslog(type, buf, len);
 }
+
+#ifdef CONFIG_DEBUG_KERNEL
+/* Its very handy to be able to view the syslog buffer during debug.
+ * But do_syslog() uses locks so it cannot be used during debugging.
+ * Instead, provide the start and end of the physical and logical logs.
+ * This is equivalent to do_syslog(3).
+ */
+void debugger_syslog_data(char *syslog_data[4])
+{
+	syslog_data[0] = log_buf;
+	syslog_data[1] = log_buf + log_buf_len;
+	syslog_data[2] = log_buf + log_end - (logged_chars < log_buf_len ? logged_chars : log_buf_len);
+	syslog_data[3] = log_buf + log_end;
+}
+#endif   /* CONFIG_DEBUG_KERNEL */
+
+#ifdef	CONFIG_KDB
+/* kdb dmesg command needs access to the syslog buffer.  do_syslog() uses locks
+ * so it cannot be used during debugging.  Just tell kdb where the start and
+ * end of the physical and logical logs are.  This is equivalent to do_syslog(3).
+ */
+void kdb_syslog_data(char *syslog_data[4])
+{
+	syslog_data[0] = log_buf;
+	syslog_data[1] = log_buf + log_buf_len;
+	syslog_data[2] = log_buf + log_end - (logged_chars < log_buf_len ? logged_chars : log_buf_len);
+	syslog_data[3] = log_buf + log_end;
+}
+#endif	/* CONFIG_KDB */
 
 /*
  * Call the console drivers on a range of log_buf
@@ -1337,4 +1368,47 @@ bool printk_timed_ratelimit(unsigned long *caller_jiffies,
 	return false;
 }
 EXPORT_SYMBOL(printk_timed_ratelimit);
+#endif
+
+#if defined CONFIG_PRINTK && defined CONFIG_KMSG_IDS
+
+/**
+ * printk_hash - print a kernel message include a hash over the message
+ * @prefix: message prefix including the ".%06x" for the hash
+ * @fmt: format string
+ */
+asmlinkage int printk_hash(const char *prefix, const char *fmt, ...)
+{
+	va_list args;
+	int r;
+
+	r = printk(prefix, jhash(fmt, strlen(fmt), 0) & 0xffffff);
+	va_start(args, fmt);
+	r += vprintk(fmt, args);
+	va_end(args);
+
+	return r;
+}
+EXPORT_SYMBOL(printk_hash);
+
+/**
+ * printk_dev_hash - print a kernel message include a hash over the message
+ * @prefix: message prefix including the ".%06x" for the hash
+ * @dev: device this printk is all about
+ * @fmt: format string
+ */
+asmlinkage int printk_dev_hash(const char *prefix, const char *driver_name,
+			       const char *fmt, ...)
+{
+	va_list args;
+	int r;
+
+	r = printk(prefix, driver_name, jhash(fmt, strlen(fmt), 0) & 0xffffff);
+	va_start(args, fmt);
+	r += vprintk(fmt, args);
+	va_end(args);
+
+	return r;
+}
+EXPORT_SYMBOL(printk_dev_hash);
 #endif

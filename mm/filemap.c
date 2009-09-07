@@ -34,6 +34,7 @@
 #include <linux/hardirq.h> /* for BUG_ON(!in_atomic()) only */
 #include <linux/memcontrol.h>
 #include "internal.h"
+#include <trace/filemap.h>
 
 /*
  * FIXME: remove all knowledge of the buffer layer from the core VM
@@ -134,6 +135,7 @@ void __remove_from_page_cache(struct page *page)
 		dec_bdi_stat(mapping->backing_dev_info, BDI_RECLAIMABLE);
 	}
 }
+EXPORT_SYMBOL_GPL(__remove_from_page_cache);
 
 void remove_from_page_cache(struct page *page)
 {
@@ -145,6 +147,7 @@ void remove_from_page_cache(struct page *page)
 	__remove_from_page_cache(page);
 	spin_unlock_irq(&mapping->tree_lock);
 }
+EXPORT_SYMBOL_GPL(remove_from_page_cache);
 
 static int sync_page(void *word)
 {
@@ -179,6 +182,7 @@ static int sync_page(void *word)
 	if (mapping && mapping->a_ops && mapping->a_ops->sync_page)
 		mapping->a_ops->sync_page(page);
 	io_schedule();
+
 	return 0;
 }
 
@@ -497,6 +501,7 @@ int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 		lru_cache_add(page);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(add_to_page_cache_lru);
 
 #ifdef CONFIG_NUMA
 struct page *__page_cache_alloc(gfp_t gfp)
@@ -509,12 +514,6 @@ struct page *__page_cache_alloc(gfp_t gfp)
 }
 EXPORT_SYMBOL(__page_cache_alloc);
 #endif
-
-static int __sleep_on_page_lock(void *word)
-{
-	io_schedule();
-	return 0;
-}
 
 /*
  * In order to wait for pages to become available there must be
@@ -542,11 +541,29 @@ void wait_on_page_bit(struct page *page, int bit_nr)
 {
 	DEFINE_WAIT_BIT(wait, &page->flags, bit_nr);
 
+	trace_wait_on_page_start(page, bit_nr);
 	if (test_bit(bit_nr, &page->flags))
 		__wait_on_bit(page_waitqueue(page), &wait, sync_page,
 							TASK_UNINTERRUPTIBLE);
+	trace_wait_on_page_end(page, bit_nr);
 }
 EXPORT_SYMBOL(wait_on_page_bit);
+
+/*
+ * If PageWaiters was found to be set at unlock time, __wake_page_waiters
+ * should be called to actually perform the wakeup of waiters.
+ */
+static void __wake_page_waiters(struct page *page)
+{
+	ClearPageWaiters(page);
+	/*
+	 * The smp_mb() is necessary to enforce ordering between the clear_bit
+	 * and the read of the waitqueue (to avoid SMP races with a parallel
+	 * __wait_on_page_locked()).
+	 */
+	smp_mb__after_clear_bit();
+	wake_up_page(page, PG_locked);
+}
 
 /**
  * unlock_page - unlock a locked page
@@ -564,11 +581,10 @@ EXPORT_SYMBOL(wait_on_page_bit);
  */
 void unlock_page(struct page *page)
 {
-	smp_mb__before_clear_bit();
-	if (!test_and_clear_bit(PG_locked, &page->flags))
-		BUG();
-	smp_mb__after_clear_bit(); 
-	wake_up_page(page, PG_locked);
+	VM_BUG_ON(!PageLocked(page));
+	clear_bit_unlock(PG_locked, &page->flags);
+	if (unlikely(PageWaiters(page)))
+		__wake_page_waiters(page);
 }
 EXPORT_SYMBOL(unlock_page);
 
@@ -598,22 +614,59 @@ EXPORT_SYMBOL(end_page_writeback);
  * chances are that on the second loop, the block layer's plug list is empty,
  * so sync_page() will then return in state TASK_UNINTERRUPTIBLE.
  */
-void __lock_page(struct page *page)
+void  __lock_page(struct page *page)
 {
+	wait_queue_head_t *wq = page_waitqueue(page);
 	DEFINE_WAIT_BIT(wait, &page->flags, PG_locked);
 
-	__wait_on_bit_lock(page_waitqueue(page), &wait, sync_page,
-							TASK_UNINTERRUPTIBLE);
+	do {
+		prepare_to_wait(wq, &wait.wait, TASK_UNINTERRUPTIBLE);
+		SetPageWaiters(page);
+		if (likely(PageLocked(page)))
+			sync_page(page);
+	} while (!trylock_page(page));
+	finish_wait(wq, &wait.wait);
 }
 EXPORT_SYMBOL(__lock_page);
 
-int __lock_page_killable(struct page *page)
+int  __lock_page_killable(struct page *page)
 {
+	wait_queue_head_t *wq = page_waitqueue(page);
+	DEFINE_WAIT_BIT(wait, &page->flags, PG_locked);
+	int err = 0;
+
+	do {
+		prepare_to_wait(wq, &wait.wait, TASK_KILLABLE);
+		SetPageWaiters(page);
+		if (likely(PageLocked(page))) {
+			err = sync_page_killable(page);
+			if (err)
+				break;
+		}
+	} while (!trylock_page(page));
+	finish_wait(wq, &wait.wait);
+
+	return err;
+}
+
+void  __wait_on_page_locked(struct page *page)
+{
+	wait_queue_head_t *wq = page_waitqueue(page);
 	DEFINE_WAIT_BIT(wait, &page->flags, PG_locked);
 
-	return __wait_on_bit_lock(page_waitqueue(page), &wait,
-					sync_page_killable, TASK_KILLABLE);
+	do {
+		prepare_to_wait(wq, &wait.wait, TASK_UNINTERRUPTIBLE);
+		SetPageWaiters(page);
+		if (likely(PageLocked(page)))
+			sync_page(page);
+	} while (PageLocked(page));
+	finish_wait(wq, &wait.wait);
+
+	/* Clean up a potentially dangling PG_waiters */
+	if (unlikely(PageWaiters(page)))
+		__wake_page_waiters(page);
 }
+EXPORT_SYMBOL(__wait_on_page_locked);
 
 /**
  * __lock_page_nosync - get a lock on the page, without calling sync_page()
@@ -622,11 +675,18 @@ int __lock_page_killable(struct page *page)
  * Variant of lock_page that does not require the caller to hold a reference
  * on the page's mapping.
  */
-void __lock_page_nosync(struct page *page)
+void  __lock_page_nosync(struct page *page)
 {
+	wait_queue_head_t *wq = page_waitqueue(page);
 	DEFINE_WAIT_BIT(wait, &page->flags, PG_locked);
-	__wait_on_bit_lock(page_waitqueue(page), &wait, __sleep_on_page_lock,
-							TASK_UNINTERRUPTIBLE);
+
+	do {
+		prepare_to_wait(wq, &wait.wait, TASK_UNINTERRUPTIBLE);
+		SetPageWaiters(page);
+		if (likely(PageLocked(page)))
+			io_schedule();
+	} while (!trylock_page(page));
+	finish_wait(wq, &wait.wait);
 }
 
 /**
@@ -796,6 +856,7 @@ repeat:
 	rcu_read_unlock();
 	return ret;
 }
+EXPORT_SYMBOL_GPL(find_get_pages);
 
 /**
  * find_get_pages_contig - gang contiguous pagecache lookup
@@ -1768,12 +1829,12 @@ int should_remove_suid(struct dentry *dentry)
 }
 EXPORT_SYMBOL(should_remove_suid);
 
-static int __remove_suid(struct dentry *dentry, int kill)
+static int __remove_suid(struct path *path, int kill)
 {
 	struct iattr newattrs;
 
 	newattrs.ia_valid = ATTR_FORCE | kill;
-	return notify_change(dentry, &newattrs);
+	return notify_change(path->dentry, path->mnt, &newattrs);
 }
 
 int file_remove_suid(struct file *file)
@@ -1788,7 +1849,7 @@ int file_remove_suid(struct file *file)
 	if (killpriv)
 		error = security_inode_killpriv(dentry);
 	if (!error && killsuid)
-		error = __remove_suid(dentry, killsuid);
+		error = __remove_suid(&file->f_path, killsuid);
 
 	return error;
 }
@@ -2493,7 +2554,7 @@ generic_file_buffered_write(struct kiocb *iocb, const struct iovec *iov,
 
 	if (likely(status >= 0)) {
 		written += status;
-		*ppos = pos + status;
+		pos += status;
 
 		/*
 		 * For now, when the user asks for O_SYNC, we'll actually give
@@ -2511,9 +2572,22 @@ generic_file_buffered_write(struct kiocb *iocb, const struct iovec *iov,
 	 * to buffered writes (block instantiation inside i_size).  So we sync
 	 * the file data here, to try to honour O_DIRECT expectations.
 	 */
-	if (unlikely(file->f_flags & O_DIRECT) && written)
+	if (unlikely(file->f_flags & O_DIRECT) && status >= 0 && written)
 		status = filemap_write_and_wait_range(mapping,
 					pos, pos + written - 1);
+
+	/*
+	 * We must let know userspace if something hasn't been written
+	 * correctly. If we got an I/O error it means we got an hardware
+	 * failure, anything can be happening to the on-disk data,
+	 * letting know userspace that a bit of data might have been
+	 * written correctly on disk is a very low priority, compared
+	 * to letting know userspace that some data has _not_ been
+	 * written at all.
+	 */
+	if (unlikely(status == -EIO))
+		return status;
+	*ppos = pos;
 
 	return written ? written : status;
 }

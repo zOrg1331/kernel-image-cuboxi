@@ -597,16 +597,10 @@ retry:
 	file_list_unlock();
 }
 
-/**
- *	do_remount_sb - asks filesystem to change mount options.
- *	@sb:	superblock in question
- *	@flags:	numeric part of options
- *	@data:	the rest of options
- *      @force: whether or not to force the change
- *
- *	Alters the mount options of a mounted file system.
- */
-int do_remount_sb(struct super_block *sb, int flags, void *data, int force)
+#define REMOUNT_FORCE		1
+#define REMOUNT_SHRINK_DCACHE	2
+
+static int __do_remount_sb(struct super_block *sb, int flags, void *data, int rflags)
 {
 	int retval;
 	int remount_rw;
@@ -617,13 +611,14 @@ int do_remount_sb(struct super_block *sb, int flags, void *data, int force)
 #endif
 	if (flags & MS_RDONLY)
 		acct_auto_close(sb);
-	shrink_dcache_sb(sb);
+	if (rflags & REMOUNT_SHRINK_DCACHE)
+		shrink_dcache_sb(sb);
 	fsync_super(sb);
 
 	/* If we are remounting RDONLY and current sb is read/write,
 	   make sure there are no rw files opened */
 	if ((flags & MS_RDONLY) && !(sb->s_flags & MS_RDONLY)) {
-		if (force)
+		if (rflags & REMOUNT_FORCE)
 			mark_files_ro(sb);
 		else if (!fs_may_remount_ro(sb))
 			return -EBUSY;
@@ -644,6 +639,21 @@ int do_remount_sb(struct super_block *sb, int flags, void *data, int force)
 	if (remount_rw)
 		DQUOT_ON_REMOUNT(sb);
 	return 0;
+}
+
+/**
+ *	do_remount_sb - asks filesystem to change mount options.
+ *	@sb:	superblock in question
+ *	@flags:	numeric part of options
+ *	@data:	the rest of options
+ *      @force: whether or not to force the change
+ *
+ *	Alters the mount options of a mounted file system.
+ */
+int do_remount_sb(struct super_block *sb, int flags, void *data, int force)
+{
+	return __do_remount_sb(sb, flags, data,
+			REMOUNT_SHRINK_DCACHE|(force? REMOUNT_FORCE : 0));
 }
 
 static void do_emergency_remount(unsigned long foo)
@@ -877,7 +887,7 @@ int get_sb_single(struct file_system_type *fs_type,
 		}
 		s->s_flags |= MS_ACTIVE;
 	}
-	do_remount_sb(s, flags, data, 0);
+	__do_remount_sb(s, flags, data, 0);
 	return simple_set_mnt(mnt, s);
 }
 

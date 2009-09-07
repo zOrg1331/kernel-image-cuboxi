@@ -171,8 +171,19 @@ static inline int try_misrouted_irq(unsigned int irq, struct irq_desc *desc, irq
 }
 
 void note_interrupt(unsigned int irq, struct irq_desc *desc,
-		    irqreturn_t action_ret)
+		    irqreturn_t action_ret, int only_fixup)
 {
+	/*
+	 * The parameter "only_fixup" means that the function should be only
+	 * executed if this parameter is set to 1 and the function should
+	 * not be executed if the parameter is 0.
+	 *
+	 * We need that because irqfixup is static to the function but
+	 * this function is called from kernel/irq/handle.c.
+	 */
+	if (only_fixup && irqfixup == 0)
+		return;
+
 	if (unlikely(action_ret != IRQ_HANDLED)) {
 		/*
 		 * If we are seeing only the odd spurious IRQ caused by
@@ -182,7 +193,7 @@ void note_interrupt(unsigned int irq, struct irq_desc *desc,
 		 */
 		if (time_after(jiffies, desc->last_unhandled + HZ/10))
 			desc->irqs_unhandled = 1;
-		else
+		else if (!irq_ignore_unhandled(irq))
 			desc->irqs_unhandled++;
 		desc->last_unhandled = jiffies;
 		if (unlikely(action_ret != IRQ_NONE))

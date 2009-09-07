@@ -137,7 +137,7 @@ int libata_fua = 0;
 module_param_named(fua, libata_fua, int, 0444);
 MODULE_PARM_DESC(fua, "FUA support (0=off, 1=on)");
 
-static int ata_ignore_hpa;
+static int ata_ignore_hpa = 1;
 module_param_named(ignore_hpa, ata_ignore_hpa, int, 0644);
 MODULE_PARM_DESC(ignore_hpa, "Ignore HPA limit (0=keep BIOS limits, 1=ignore limits, using full disk)");
 
@@ -162,6 +162,67 @@ MODULE_DESCRIPTION("Library module for ATA devices");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(DRV_VERSION);
 
+
+/*
+ * Iterator helpers.  Don't use directly.
+ *
+ * LOCKING:
+ * Host lock or EH context.
+ */
+struct ata_link *__ata_port_next_link(struct ata_port *ap,
+				      struct ata_link *link, bool dev_only)
+{
+	/* NULL link indicates start of iteration */
+	if (!link) {
+		if (dev_only && sata_pmp_attached(ap))
+			return ap->pmp_link;
+		return &ap->link;
+	}
+
+	/* we just iterated over the host master link, what's next? */
+	if (link == &ap->link) {
+		if (!sata_pmp_attached(ap)) {
+			if (unlikely(ap->slave_link) && !dev_only)
+				return ap->slave_link;
+			return NULL;
+		}
+		return ap->pmp_link;
+	}
+
+	/* slave_link excludes PMP */
+	if (unlikely(link == ap->slave_link))
+		return NULL;
+
+	/* iterate to the next PMP link */
+	if (++link < ap->pmp_link + ap->nr_pmp_links)
+		return link;
+	return NULL;
+}
+
+/**
+ *	ata_dev_phys_link - find physical link for a device
+ *	@dev: ATA device to look up physical link for
+ *
+ *	Look up physical link which @dev is attached to.  Note that
+ *	this is different from @dev->link only when @dev is on slave
+ *	link.  For all other cases, it's the same as @dev->link.
+ *
+ *	LOCKING:
+ *	Don't care.
+ *
+ *	RETURNS:
+ *	Pointer to the found physical link.
+ */
+struct ata_link *ata_dev_phys_link(struct ata_device *dev)
+{
+	struct ata_port *ap = dev->link->ap;
+
+	if (!ap->slave_link)
+		return dev->link;
+	if (!dev->devno)
+		return &ap->link;
+	return ap->slave_link;
+}
 
 /**
  *	ata_force_cbl - force cable type according to libata.force
@@ -206,7 +267,8 @@ void ata_force_cbl(struct ata_port *ap)
  *	the host link and all fan-out ports connected via PMP.  If the
  *	device part is specified as 0 (e.g. 1.00:), it specifies the
  *	first fan-out link not the host link.  Device number 15 always
- *	points to the host link whether PMP is attached or not.
+ *	points to the host link whether PMP is attached or not.  If the
+ *	controller has slave link, device number 16 points to it.
  *
  *	LOCKING:
  *	EH context.
@@ -214,12 +276,11 @@ void ata_force_cbl(struct ata_port *ap)
 static void ata_force_link_limits(struct ata_link *link)
 {
 	bool did_spd = false;
-	int linkno, i;
+	int linkno = link->pmp;
+	int i;
 
 	if (ata_is_host_link(link))
-		linkno = 15;
-	else
-		linkno = link->pmp;
+		linkno += 15;
 
 	for (i = ata_force_tbl_size - 1; i >= 0; i--) {
 		const struct ata_force_ent *fe = &ata_force_tbl[i];
@@ -266,9 +327,9 @@ static void ata_force_xfermask(struct ata_device *dev)
 	int alt_devno = devno;
 	int i;
 
-	/* allow n.15 for the first device attached to host port */
-	if (ata_is_host_link(dev->link) && devno == 0)
-		alt_devno = 15;
+	/* allow n.15/16 for devices attached to host port */
+	if (ata_is_host_link(dev->link))
+		alt_devno += 15;
 
 	for (i = ata_force_tbl_size - 1; i >= 0; i--) {
 		const struct ata_force_ent *fe = &ata_force_tbl[i];
@@ -320,9 +381,9 @@ static void ata_force_horkage(struct ata_device *dev)
 	int alt_devno = devno;
 	int i;
 
-	/* allow n.15 for the first device attached to host port */
-	if (ata_is_host_link(dev->link) && devno == 0)
-		alt_devno = 15;
+	/* allow n.15/16 for devices attached to host port */
+	if (ata_is_host_link(dev->link))
+		alt_devno += 15;
 
 	for (i = 0; i < ata_force_tbl_size; i++) {
 		const struct ata_force_ent *fe = &ata_force_tbl[i];
@@ -2102,6 +2163,10 @@ retry:
 static inline u8 ata_dev_knobble(struct ata_device *dev)
 {
 	struct ata_port *ap = dev->link->ap;
+
+	if (ata_dev_blacklisted(dev) & ATA_HORKAGE_BRIDGE_OK)
+		return 0;
+
 	return ((ap->cbl == ATA_CBL_SATA) && (!ata_id_is_sata(dev->id)));
 }
 
@@ -2690,7 +2755,7 @@ static void sata_print_link_status(struct ata_link *link)
 		return;
 	sata_scr_read(link, SCR_CONTROL, &scontrol);
 
-	if (ata_link_online(link)) {
+	if (ata_phys_link_online(link)) {
 		tmp = (sstatus >> 4) & 0xf;
 		ata_link_printk(link, KERN_INFO,
 				"SATA link up %s (SStatus %X SControl %X)\n",
@@ -3381,6 +3446,12 @@ int ata_wait_ready(struct ata_link *link, unsigned long deadline,
 	unsigned long nodev_deadline = ata_deadline(start, ATA_TMOUT_FF_WAIT);
 	int warned = 0;
 
+	/* Slave readiness can't be tested separately from master.  On
+	 * M/S emulation configuration, this function should be called
+	 * only on the master and it will handle both master and slave.
+	 */
+	WARN_ON(link == link->ap->slave_link);
+
 	if (time_after(nodev_deadline, deadline))
 		nodev_deadline = deadline;
 
@@ -3602,7 +3673,7 @@ int ata_std_prereset(struct ata_link *link, unsigned long deadline)
 	}
 
 	/* no point in trying softreset on offline link */
-	if (ata_link_offline(link))
+	if (ata_phys_link_offline(link))
 		ehc->i.action &= ~ATA_EH_SOFTRESET;
 
 	return 0;
@@ -3680,7 +3751,7 @@ int sata_link_hardreset(struct ata_link *link, const unsigned long *timing,
 	if (rc)
 		goto out;
 	/* if link is offline nothing more to do */
-	if (ata_link_offline(link))
+	if (ata_phys_link_offline(link))
 		goto out;
 
 	/* Link is online.  From this point, -ENODEV too is an error. */
@@ -3965,6 +4036,7 @@ static const struct ata_blacklist_entry ata_device_blacklist [] = {
 
 	/* Weird ATAPI devices */
 	{ "TORiSAN DVD-ROM DRD-N216", NULL,	ATA_HORKAGE_MAX_SEC_128 },
+	{ "QUANTUM DAT    DAT72-000", NULL,	ATA_HORKAGE_ATAPI_MOD16_DMA },
 
 	/* Devices we expect to fail diagnostics */
 
@@ -4073,6 +4145,9 @@ static const struct ata_blacklist_entry ata_device_blacklist [] = {
 	{ "TSSTcorp CDDVDW SH-S202J", "SB01",	  ATA_HORKAGE_IVB, },
 	{ "TSSTcorp CDDVDW SH-S202N", "SB00",	  ATA_HORKAGE_IVB, },
 	{ "TSSTcorp CDDVDW SH-S202N", "SB01",	  ATA_HORKAGE_IVB, },
+
+	/* Devices that do not need bridging limits applied */
+	{ "MTRON MSP-SATA*",		NULL,	ATA_HORKAGE_BRIDGE_OK, },
 
 	/* End Marker */
 	{ }
@@ -4445,7 +4520,8 @@ int atapi_check_dma(struct ata_queued_cmd *qc)
 	/* Don't allow DMA if it isn't multiple of 16 bytes.  Quite a
 	 * few ATAPI devices choke on such DMA requests.
 	 */
-	if (unlikely(qc->nbytes & 15))
+	if (!(qc->dev->horkage & ATA_HORKAGE_ATAPI_MOD16_DMA) &&
+	    unlikely(qc->nbytes & 15))
 		return 1;
 
 	if (ap->ops->check_atapi_dma)
@@ -4944,10 +5020,8 @@ int sata_scr_valid(struct ata_link *link)
 int sata_scr_read(struct ata_link *link, int reg, u32 *val)
 {
 	if (ata_is_host_link(link)) {
-		struct ata_port *ap = link->ap;
-
 		if (sata_scr_valid(link))
-			return ap->ops->scr_read(ap, reg, val);
+			return link->ap->ops->scr_read(link, reg, val);
 		return -EOPNOTSUPP;
 	}
 
@@ -4973,10 +5047,8 @@ int sata_scr_read(struct ata_link *link, int reg, u32 *val)
 int sata_scr_write(struct ata_link *link, int reg, u32 val)
 {
 	if (ata_is_host_link(link)) {
-		struct ata_port *ap = link->ap;
-
 		if (sata_scr_valid(link))
-			return ap->ops->scr_write(ap, reg, val);
+			return link->ap->ops->scr_write(link, reg, val);
 		return -EOPNOTSUPP;
 	}
 
@@ -5001,13 +5073,12 @@ int sata_scr_write(struct ata_link *link, int reg, u32 val)
 int sata_scr_write_flush(struct ata_link *link, int reg, u32 val)
 {
 	if (ata_is_host_link(link)) {
-		struct ata_port *ap = link->ap;
 		int rc;
 
 		if (sata_scr_valid(link)) {
-			rc = ap->ops->scr_write(ap, reg, val);
+			rc = link->ap->ops->scr_write(link, reg, val);
 			if (rc == 0)
-				rc = ap->ops->scr_read(ap, reg, &val);
+				rc = link->ap->ops->scr_read(link, reg, &val);
 			return rc;
 		}
 		return -EOPNOTSUPP;
@@ -5017,7 +5088,7 @@ int sata_scr_write_flush(struct ata_link *link, int reg, u32 val)
 }
 
 /**
- *	ata_link_online - test whether the given link is online
+ *	ata_phys_link_online - test whether the given link is online
  *	@link: ATA link to test
  *
  *	Test whether @link is online.  Note that this function returns
@@ -5028,20 +5099,20 @@ int sata_scr_write_flush(struct ata_link *link, int reg, u32 val)
  *	None.
  *
  *	RETURNS:
- *	1 if the port online status is available and online.
+ *	True if the port online status is available and online.
  */
-int ata_link_online(struct ata_link *link)
+bool ata_phys_link_online(struct ata_link *link)
 {
 	u32 sstatus;
 
 	if (sata_scr_read(link, SCR_STATUS, &sstatus) == 0 &&
 	    (sstatus & 0xf) == 0x3)
-		return 1;
-	return 0;
+		return true;
+	return false;
 }
 
 /**
- *	ata_link_offline - test whether the given link is offline
+ *	ata_phys_link_offline - test whether the given link is offline
  *	@link: ATA link to test
  *
  *	Test whether @link is offline.  Note that this function
@@ -5052,16 +5123,68 @@ int ata_link_online(struct ata_link *link)
  *	None.
  *
  *	RETURNS:
- *	1 if the port offline status is available and offline.
+ *	True if the port offline status is available and offline.
  */
-int ata_link_offline(struct ata_link *link)
+bool ata_phys_link_offline(struct ata_link *link)
 {
 	u32 sstatus;
 
 	if (sata_scr_read(link, SCR_STATUS, &sstatus) == 0 &&
 	    (sstatus & 0xf) != 0x3)
-		return 1;
-	return 0;
+		return true;
+	return false;
+}
+
+/**
+ *	ata_link_online - test whether the given link is online
+ *	@link: ATA link to test
+ *
+ *	Test whether @link is online.  This is identical to
+ *	ata_phys_link_online() when there's no slave link.  When
+ *	there's a slave link, this function should only be called on
+ *	the master link and will return true if any of M/S links is
+ *	online.
+ *
+ *	LOCKING:
+ *	None.
+ *
+ *	RETURNS:
+ *	True if the port online status is available and online.
+ */
+bool ata_link_online(struct ata_link *link)
+{
+	struct ata_link *slave = link->ap->slave_link;
+
+	WARN_ON(link == slave);	/* shouldn't be called on slave link */
+
+	return ata_phys_link_online(link) ||
+		(slave && ata_phys_link_online(slave));
+}
+
+/**
+ *	ata_link_offline - test whether the given link is offline
+ *	@link: ATA link to test
+ *
+ *	Test whether @link is offline.  This is identical to
+ *	ata_phys_link_offline() when there's no slave link.  When
+ *	there's a slave link, this function should only be called on
+ *	the master link and will return true if both M/S links are
+ *	offline.
+ *
+ *	LOCKING:
+ *	None.
+ *
+ *	RETURNS:
+ *	True if the port offline status is available and offline.
+ */
+bool ata_link_offline(struct ata_link *link)
+{
+	struct ata_link *slave = link->ap->slave_link;
+
+	WARN_ON(link == slave);	/* shouldn't be called on slave link */
+
+	return ata_phys_link_offline(link) &&
+		(!slave || ata_phys_link_offline(slave));
 }
 
 #ifdef CONFIG_PM
@@ -5203,11 +5326,11 @@ int ata_port_start(struct ata_port *ap)
  */
 void ata_dev_init(struct ata_device *dev)
 {
-	struct ata_link *link = dev->link;
+	struct ata_link *link = ata_dev_phys_link(dev);
 	struct ata_port *ap = link->ap;
 	unsigned long flags;
 
-	/* SATA spd limit is bound to the first device */
+	/* SATA spd limit is bound to the attached device, reset together */
 	link->sata_spd_limit = link->hw_sata_spd_limit;
 	link->sata_spd = 0;
 
@@ -5372,6 +5495,7 @@ static void ata_host_release(struct device *gendev, void *res)
 			scsi_host_put(ap->scsi_host);
 
 		kfree(ap->pmp_link);
+		kfree(ap->slave_link);
 		kfree(ap);
 		host->ports[i] = NULL;
 	}
@@ -5490,6 +5614,68 @@ struct ata_host *ata_host_alloc_pinfo(struct device *dev,
 	}
 
 	return host;
+}
+
+/**
+ *	ata_slave_link_init - initialize slave link
+ *	@ap: port to initialize slave link for
+ *
+ *	Create and initialize slave link for @ap.  This enables slave
+ *	link handling on the port.
+ *
+ *	In libata, a port contains links and a link contains devices.
+ *	There is single host link but if a PMP is attached to it,
+ *	there can be multiple fan-out links.  On SATA, there's usually
+ *	a single device connected to a link but PATA and SATA
+ *	controllers emulating TF based interface can have two - master
+ *	and slave.
+ *
+ *	However, there are a few controllers which don't fit into this
+ *	abstraction too well - SATA controllers which emulate TF
+ *	interface with both master and slave devices but also have
+ *	separate SCR register sets for each device.  These controllers
+ *	need separate links for physical link handling
+ *	(e.g. onlineness, link speed) but should be treated like a
+ *	traditional M/S controller for everything else (e.g. command
+ *	issue, softreset).
+ *
+ *	slave_link is libata's way of handling this class of
+ *	controllers without impacting core layer too much.  For
+ *	anything other than physical link handling, the default host
+ *	link is used for both master and slave.  For physical link
+ *	handling, separate @ap->slave_link is used.  All dirty details
+ *	are implemented inside libata core layer.  From LLD's POV, the
+ *	only difference is that prereset, hardreset and postreset are
+ *	called once more for the slave link, so the reset sequence
+ *	looks like the following.
+ *
+ *	prereset(M) -> prereset(S) -> hardreset(M) -> hardreset(S) ->
+ *	softreset(M) -> postreset(M) -> postreset(S)
+ *
+ *	Note that softreset is called only for the master.  Softreset
+ *	resets both M/S by definition, so SRST on master should handle
+ *	both (the standard method will work just fine).
+ *
+ *	LOCKING:
+ *	Should be called before host is registered.
+ *
+ *	RETURNS:
+ *	0 on success, -errno on failure.
+ */
+int ata_slave_link_init(struct ata_port *ap)
+{
+	struct ata_link *link;
+
+	WARN_ON(ap->slave_link);
+	WARN_ON(ap->flags & ATA_FLAG_PMP);
+
+	link = kzalloc(sizeof(*link), GFP_KERNEL);
+	if (!link)
+		return -ENOMEM;
+
+	ata_link_init(ap, link, 1);
+	ap->slave_link = link;
+	return 0;
 }
 
 static void ata_host_stop(struct device *gendev, void *res)
@@ -5718,6 +5904,8 @@ int ata_host_register(struct ata_host *host, struct scsi_host_template *sht)
 
 		/* init sata_spd_limit to the current value */
 		sata_link_init_spd(&ap->link);
+		if (ap->slave_link)
+			sata_link_init_spd(ap->slave_link);
 
 		/* print per-port info to dmesg */
 		xfer_mask = ata_pack_xfermask(ap->pio_mask, ap->mwdma_mask,
@@ -5874,7 +6062,7 @@ static void ata_port_detach(struct ata_port *ap)
 	 * to us.  Restore SControl and disable all existing devices.
 	 */
 	__ata_port_for_each_link(link, ap) {
-		sata_scr_write(link, SCR_CONTROL, link->saved_scontrol);
+		sata_scr_write(link, SCR_CONTROL, link->saved_scontrol & 0xff0);
 		ata_link_for_each_dev(dev, link)
 			ata_dev_disable(dev);
 	}
@@ -6338,10 +6526,12 @@ EXPORT_SYMBOL_GPL(ata_base_port_ops);
 EXPORT_SYMBOL_GPL(sata_port_ops);
 EXPORT_SYMBOL_GPL(ata_dummy_port_ops);
 EXPORT_SYMBOL_GPL(ata_dummy_port_info);
+EXPORT_SYMBOL_GPL(__ata_port_next_link);
 EXPORT_SYMBOL_GPL(ata_std_bios_param);
 EXPORT_SYMBOL_GPL(ata_host_init);
 EXPORT_SYMBOL_GPL(ata_host_alloc);
 EXPORT_SYMBOL_GPL(ata_host_alloc_pinfo);
+EXPORT_SYMBOL_GPL(ata_slave_link_init);
 EXPORT_SYMBOL_GPL(ata_host_start);
 EXPORT_SYMBOL_GPL(ata_host_register);
 EXPORT_SYMBOL_GPL(ata_host_activate);

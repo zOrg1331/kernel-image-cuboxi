@@ -111,6 +111,7 @@ void bio_init(struct bio *bio)
 {
 	memset(bio, 0, sizeof(*bio));
 	bio->bi_flags = 1 << BIO_UPTODATE;
+	bio->bi_comp_cpu = -1;
 	atomic_set(&bio->bi_cnt, 1);
 }
 
@@ -208,14 +209,6 @@ inline int bio_phys_segments(struct request_queue *q, struct bio *bio)
 	return bio->bi_phys_segments;
 }
 
-inline int bio_hw_segments(struct request_queue *q, struct bio *bio)
-{
-	if (unlikely(!bio_flagged(bio, BIO_SEG_VALID)))
-		blk_recount_segments(q, bio);
-
-	return bio->bi_hw_segments;
-}
-
 /**
  * 	__bio_clone	-	clone a bio
  * 	@bio: destination bio
@@ -263,7 +256,7 @@ struct bio *bio_clone(struct bio *bio, gfp_t gfp_mask)
 	if (bio_integrity(bio)) {
 		int ret;
 
-		ret = bio_integrity_clone(b, bio, fs_bio_set);
+		ret = bio_integrity_clone(b, bio, gfp_mask, fs_bio_set);
 
 		if (ret < 0)
 			return NULL;
@@ -350,8 +343,7 @@ static int __bio_add_page(struct request_queue *q, struct bio *bio, struct page
 	 */
 
 	while (bio->bi_phys_segments >= q->max_phys_segments
-	       || bio->bi_hw_segments >= q->max_hw_segments
-	       || BIOVEC_VIRT_OVERSIZE(bio->bi_size)) {
+	       || bio->bi_phys_segments >= q->max_hw_segments) {
 
 		if (retried_segments)
 			return 0;
@@ -395,13 +387,11 @@ static int __bio_add_page(struct request_queue *q, struct bio *bio, struct page
 	}
 
 	/* If we may be able to merge these biovecs, force a recount */
-	if (bio->bi_vcnt && (BIOVEC_PHYS_MERGEABLE(bvec-1, bvec) ||
-	    BIOVEC_VIRT_MERGEABLE(bvec-1, bvec)))
+	if (bio->bi_vcnt && (BIOVEC_PHYS_MERGEABLE(bvec-1, bvec)))
 		bio->bi_flags &= ~(1 << BIO_SEG_VALID);
 
 	bio->bi_vcnt++;
 	bio->bi_phys_segments++;
-	bio->bi_hw_segments++;
  done:
 	bio->bi_size += len;
 	return len;
@@ -1192,6 +1182,16 @@ void bio_endio(struct bio *bio, int error)
 	else if (!test_bit(BIO_UPTODATE, &bio->bi_flags))
 		error = -EIO;
 
+	if (bio_data_dir(bio) == READ)
+		/*
+		 * If the current cpu has written to the page by hand
+		 * without dma, we must enforce ordering to be sure
+		 * this written data will be visible before we expose
+		 * the page contents to other cpus (for example with
+		 * a set_pte).
+		 */
+		smp_wmb();
+
 	if (bio->bi_end_io)
 		bio->bi_end_io(bio, error);
 }
@@ -1274,6 +1274,42 @@ struct bio_pair *bio_split(struct bio *bi, mempool_t *pool, int first_sectors)
 	return bp;
 }
 
+/**
+ *      bio_sector_offset - Find hardware sector offset in bio
+ *      @bio:           bio to inspect
+ *      @index:         bio_vec index
+ *      @offset:        offset in bv_page
+ *
+ *      Return the number of hardware sectors between beginning of bio
+ *      and an end point indicated by a bio_vec index and an offset
+ *      within that vector's page.
+ */
+sector_t bio_sector_offset(struct bio *bio, unsigned short index,
+			   unsigned int offset)
+{
+	unsigned int sector_sz = queue_hardsect_size(bio->bi_bdev->bd_disk->queue);
+	struct bio_vec *bv;
+	sector_t sectors;
+	int i;
+
+	sectors = 0;
+
+	if (index >= bio->bi_idx)
+		index = bio->bi_vcnt - 1;
+
+	__bio_for_each_segment(bv, bio, i, 0) {
+		if (i == index) {
+			if (offset > bv->bv_offset)
+				sectors += (offset - bv->bv_offset) / sector_sz;
+			break;
+		}
+
+		sectors += bv->bv_len / sector_sz;
+	}
+
+	return sectors;
+}
+EXPORT_SYMBOL(bio_sector_offset);
 
 /*
  * create memory pools for biovec's in a bio_set.
@@ -1383,7 +1419,6 @@ EXPORT_SYMBOL(bio_init);
 EXPORT_SYMBOL(__bio_clone);
 EXPORT_SYMBOL(bio_clone);
 EXPORT_SYMBOL(bio_phys_segments);
-EXPORT_SYMBOL(bio_hw_segments);
 EXPORT_SYMBOL(bio_add_page);
 EXPORT_SYMBOL(bio_add_pc_page);
 EXPORT_SYMBOL(bio_get_nr_vecs);

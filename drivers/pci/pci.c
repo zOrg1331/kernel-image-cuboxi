@@ -353,7 +353,12 @@ pci_find_parent_resource(const struct pci_dev *dev, struct resource *res)
  * Restore the BAR values for a given device, so as to make it
  * accessible by its driver.
  */
+#ifndef CONFIG_XEN
 static void
+#else
+EXPORT_SYMBOL_GPL(pci_restore_bars);
+void
+#endif
 pci_restore_bars(struct pci_dev *dev)
 {
 	int i, numres;
@@ -1897,6 +1902,19 @@ static void __devinit pci_no_domains(void)
 #ifdef CONFIG_PCI_DOMAINS
 	pci_domains_supported = 0;
 #endif
+}
+
+/**
+ * pci_ext_cfg_enabled - can we access extended PCI config space?
+ * @dev: The PCI device of the root bridge.
+ *
+ * Returns 1 if we can access PCI extended config space (offsets
+ * greater than 0xff). This is the default implementation. Architecture
+ * implementations can override this.
+ */
+int __attribute__ ((weak)) pci_ext_cfg_avail(struct pci_dev *dev)
+{
+	return 1;
 }
 
 static int __devinit pci_init(void)

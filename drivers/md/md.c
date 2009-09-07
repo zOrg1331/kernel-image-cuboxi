@@ -1411,6 +1411,38 @@ static int match_mddev_units(mddev_t *mddev1, mddev_t *mddev2)
 
 static LIST_HEAD(pending_raid_disks);
 
+static void md_integrity_check(mdk_rdev_t *rdev, mddev_t *mddev)
+{
+	struct mdk_personality *pers = mddev->pers;
+	struct gendisk *disk = mddev->gendisk;
+	struct blk_integrity *bi_rdev = bdev_get_integrity(rdev->bdev);
+	struct blk_integrity *bi_mddev = blk_get_integrity(disk);
+
+	/* Data integrity passthrough not supported on RAID 4, 5 and 6 */
+	if (pers && pers->level >= 4 && pers->level <= 6)
+		return;
+
+	/* If rdev is integrity capable, register profile for mddev */
+	if (!bi_mddev && bi_rdev) {
+		if (blk_integrity_register(disk, bi_rdev))
+			printk(KERN_ERR "%s: %s Could not register integrity!\n",
+			       __func__, disk->disk_name);
+		else
+			printk(KERN_NOTICE "Enabling data integrity on %s\n",
+			       disk->disk_name);
+		return;
+	}
+
+	/* Check that mddev and rdev have matching profiles */
+	if (blk_integrity_compare(disk, rdev->bdev->bd_disk) < 0) {
+		printk(KERN_ERR "%s: %s/%s integrity mismatch!\n", __func__,
+		       disk->disk_name, rdev->bdev->bd_disk->disk_name);
+		printk(KERN_NOTICE "Disabling data integrity on %s\n",
+		       disk->disk_name);
+		blk_integrity_unregister(disk);
+	}
+}
+
 static int bind_rdev_to_array(mdk_rdev_t * rdev, mddev_t * mddev)
 {
 	char b[BDEVNAME_SIZE];
@@ -1479,6 +1511,7 @@ static int bind_rdev_to_array(mdk_rdev_t * rdev, mddev_t * mddev)
 	}
 	list_add_rcu(&rdev->same_set, &mddev->disks);
 	bd_claim_by_disk(rdev->bdev, rdev->bdev->bd_holder, mddev->gendisk);
+	md_integrity_check(rdev, mddev);
 	return 0;
 
  fail:
@@ -3041,7 +3074,7 @@ action_store(mddev_t *mddev, const char *page, size_t len)
 			set_bit(MD_RECOVERY_INTR, &mddev->recovery);
 			md_unregister_thread(mddev->sync_thread);
 			mddev->sync_thread = NULL;
-			mddev->recovery = 0;
+			mddev->recovery &= ~65535;
 		}
 	} else if (test_bit(MD_RECOVERY_RUNNING, &mddev->recovery) ||
 		   test_bit(MD_RECOVERY_NEEDED, &mddev->recovery))
@@ -3555,9 +3588,14 @@ static int do_md_run(mddev_t * mddev)
 			return -EINVAL;
 		}
 		if (chunk_size < PAGE_SIZE) {
+			if (mddev->level != 0 && mddev->level != 1) {
 			printk(KERN_ERR "too small chunk_size: %d < %ld\n",
 				chunk_size, PAGE_SIZE);
 			return -EINVAL;
+			} else {
+				printk(KERN_ERR "too small chunk_size: %d < %ld, but continuing anyway on raid%d. Good luck!\n",
+					chunk_size, PAGE_SIZE, mddev->level);
+			}
 		}
 
 		/* devices must have minimum size of one chunk */
@@ -3964,10 +4002,13 @@ static int do_md_stop(mddev_t * mddev, int mode, int is_open)
 		mddev->barriers_work = 0;
 		mddev->safemode = 0;
 
+		kobject_uevent(&mddev->gendisk->dev.kobj, KOBJ_CHANGE);
+
 	} else if (mddev->pers)
 		printk(KERN_INFO "md: %s switched to read-only mode.\n",
 			mdname(mddev));
 	err = 0;
+	blk_integrity_unregister(disk);
 	md_new_event(mddev);
 	sysfs_notify(&mddev->kobj, NULL, "array_state");
 out:
@@ -4495,7 +4536,7 @@ static int set_bitmap_file(mddev_t *mddev, int fd)
 	if (mddev->pers) {
 		if (!mddev->pers->quiesce)
 			return -EBUSY;
-		if (mddev->recovery || mddev->sync_thread)
+		if ((mddev->recovery & 65535) || mddev->sync_thread)
 			return -EBUSY;
 		/* we should be able to change the bitmap.. */
 	}
@@ -4750,7 +4791,7 @@ static int update_array_info(mddev_t *mddev, mdu_array_info_t *info)
 	if ((state ^ info->state) & (1<<MD_SB_BITMAP_PRESENT)) {
 		if (mddev->pers->quiesce == NULL)
 			return -EINVAL;
-		if (mddev->recovery || mddev->sync_thread)
+		if ((mddev->recovery & 65535) || mddev->sync_thread)
 			return -EBUSY;
 		if (info->state & (1<<MD_SB_BITMAP_PRESENT)) {
 			/* add the bitmap */
@@ -6015,7 +6056,8 @@ static int remove_and_add_spares(mddev_t *mddev)
 			}
 		}
 
-	if (mddev->degraded && ! mddev->ro) {
+	if (mddev->degraded && ! mddev->ro &&
+	    !test_bit(MD_RECOVERY_DISABLED, &mddev->recovery)) {
 		rdev_for_each(rdev, rtmp, mddev) {
 			if (rdev->raid_disk >= 0 &&
 			    !test_bit(In_sync, &rdev->flags) &&
@@ -6167,7 +6209,7 @@ void md_check_recovery(mddev_t *mddev)
 				rdev_for_each(rdev, rtmp, mddev)
 					rdev->saved_raid_disk = -1;
 
-			mddev->recovery = 0;
+			mddev->recovery &= ~65535;
 			/* flag recovery needed just to double check */
 			set_bit(MD_RECOVERY_NEEDED, &mddev->recovery);
 			sysfs_notify(&mddev->kobj, NULL, "sync_action");
@@ -6415,11 +6457,11 @@ static __exit void md_exit(void)
 subsys_initcall(md_init);
 module_exit(md_exit)
 
-static int get_ro(char *buffer, struct kernel_param *kp)
+int get_ro(char *buffer, struct kernel_param *kp)
 {
 	return sprintf(buffer, "%d", start_readonly);
 }
-static int set_ro(const char *val, struct kernel_param *kp)
+int set_ro(const char *val, struct kernel_param *kp)
 {
 	char *e;
 	int num = simple_strtoul(val, &e, 10);

@@ -89,7 +89,7 @@ int acpi_sci_override_gsi __initdata;
 int acpi_skip_timer_override __initdata;
 int acpi_use_timer_override __initdata;
 
-#ifdef CONFIG_X86_LOCAL_APIC
+#if defined(CONFIG_X86_LOCAL_APIC) && !defined(CONFIG_XEN)
 static u64 acpi_lapic_addr __initdata = APIC_DEFAULT_PHYS_BASE;
 #endif
 
@@ -130,8 +130,13 @@ char *__init __acpi_map_table(unsigned long phys, unsigned long size)
 	if (!phys || !size)
 		return NULL;
 
+#ifndef CONFIG_XEN
 	if (phys+size <= (max_low_pfn_mapped << PAGE_SHIFT))
 		return __va(phys);
+#else
+	if (phys + size <= (NR_FIX_ISAMAPS << PAGE_SHIFT))
+		return isa_bus_to_virt(phys);
+#endif
 
 	offset = phys & (PAGE_SIZE - 1);
 	mapped_size = PAGE_SIZE - offset;
@@ -232,12 +237,14 @@ static int __init acpi_parse_madt(struct acpi_table_header *table)
 		return -ENODEV;
 	}
 
+#ifndef CONFIG_XEN
 	if (madt->address) {
 		acpi_lapic_addr = (u64) madt->address;
 
 		printk(KERN_DEBUG PREFIX "Local APIC address 0x%08x\n",
 		       madt->address);
 	}
+#endif
 
 	acpi_madt_oem_check(madt->header.oem_id, madt->header.oem_table_id);
 
@@ -246,19 +253,23 @@ static int __init acpi_parse_madt(struct acpi_table_header *table)
 
 static void __cpuinit acpi_register_lapic(int id, u8 enabled)
 {
+#ifndef CONFIG_XEN
 	unsigned int ver = 0;
+#endif
 
 	if (!enabled) {
 		++disabled_cpus;
 		return;
 	}
 
+#ifndef CONFIG_XEN
 #ifdef CONFIG_X86_32
 	if (boot_cpu_physical_apicid != -1U)
 		ver = apic_version[boot_cpu_physical_apicid];
 #endif
 
 	generic_processor_info(id, ver);
+#endif
 }
 
 static int __init
@@ -308,6 +319,7 @@ static int __init
 acpi_parse_lapic_addr_ovr(struct acpi_subtable_header * header,
 			  const unsigned long end)
 {
+#ifndef CONFIG_XEN
 	struct acpi_madt_local_apic_override *lapic_addr_ovr = NULL;
 
 	lapic_addr_ovr = (struct acpi_madt_local_apic_override *)header;
@@ -316,6 +328,7 @@ acpi_parse_lapic_addr_ovr(struct acpi_subtable_header * header,
 		return -EINVAL;
 
 	acpi_lapic_addr = lapic_addr_ovr->address;
+#endif
 
 	return 0;
 }
@@ -769,19 +782,23 @@ static int __init acpi_parse_fadt(struct acpi_table_header *table)
  * returns 0 on success, < 0 on error
  */
 
+#ifndef CONFIG_XEN
 static void __init acpi_register_lapic_address(unsigned long address)
 {
 	mp_lapic_addr = address;
 
 	set_fixmap_nocache(FIX_APIC_BASE, address);
 	if (boot_cpu_physical_apicid == -1U) {
-		boot_cpu_physical_apicid  = GET_APIC_ID(read_apic_id());
+		boot_cpu_physical_apicid  = read_apic_id();
 #ifdef CONFIG_X86_32
 		apic_version[boot_cpu_physical_apicid] =
 			 GET_APIC_VERSION(apic_read(APIC_LVR));
 #endif
 	}
 }
+#else
+#define acpi_register_lapic_address(address)
+#endif
 
 static int __init early_acpi_parse_madt_lapic_addr_ovr(void)
 {
@@ -891,10 +908,12 @@ static int mp_find_ioapic(int gsi)
 static u8 __init uniq_ioapic_id(u8 id)
 {
 #ifdef CONFIG_X86_32
+#ifndef CONFIG_XEN
 	if ((boot_cpu_data.x86_vendor == X86_VENDOR_INTEL) &&
 	    !APIC_XAPIC(apic_version[boot_cpu_physical_apicid]))
 		return io_apic_get_unique_id(nr_ioapics, id);
 	else
+#endif
 		return id;
 #else
 	int i;
@@ -938,7 +957,9 @@ void __init mp_register_ioapic(int id, u32 address, u32 gsi_base)
 	mp_ioapics[idx].mp_flags = MPC_APIC_USABLE;
 	mp_ioapics[idx].mp_apicaddr = address;
 
+#ifndef CONFIG_XEN
 	set_fixmap_nocache(FIX_IO_APIC_BASE_0 + idx, address);
+#endif
 	mp_ioapics[idx].mp_apicid = uniq_ioapic_id(id);
 #ifdef CONFIG_X86_32
 	mp_ioapics[idx].mp_apicver = io_apic_get_version(idx);
@@ -1095,7 +1116,7 @@ int mp_register_gsi(u32 gsi, int triggering, int polarity)
 {
 	int ioapic;
 	int ioapic_pin;
-#ifdef CONFIG_X86_32
+#if defined(CONFIG_X86_32) && !defined(CONFIG_XEN)
 #define MAX_GSI_NUM	4096
 #define IRQ_COMPRESSION_START	64
 
@@ -1124,7 +1145,7 @@ int mp_register_gsi(u32 gsi, int triggering, int polarity)
 
 	ioapic_pin = gsi - mp_ioapic_routing[ioapic].gsi_base;
 
-#ifdef CONFIG_X86_32
+#if defined(CONFIG_X86_32) && !defined(CONFIG_XEN)
 	if (ioapic_renumber_irq)
 		gsi = ioapic_renumber_irq(ioapic, gsi);
 #endif
@@ -1143,7 +1164,7 @@ int mp_register_gsi(u32 gsi, int triggering, int polarity)
 	if (test_bit(ioapic_pin, mp_ioapic_routing[ioapic].pin_programmed)) {
 		pr_debug(KERN_DEBUG "Pin %d-%d already programmed\n",
 			 mp_ioapic_routing[ioapic].apic_id, ioapic_pin);
-#ifdef CONFIG_X86_32
+#if defined(CONFIG_X86_32) && !defined(CONFIG_XEN)
 		return (gsi < IRQ_COMPRESSION_START ? gsi : gsi_to_irq[gsi]);
 #else
 		return gsi;
@@ -1151,7 +1172,7 @@ int mp_register_gsi(u32 gsi, int triggering, int polarity)
 	}
 
 	set_bit(ioapic_pin, mp_ioapic_routing[ioapic].pin_programmed);
-#ifdef CONFIG_X86_32
+#if defined(CONFIG_X86_32) && !defined(CONFIG_XEN)
 	/*
 	 * For GSI >= 64, use IRQ compression
 	 */
@@ -1351,7 +1372,9 @@ static void __init acpi_process_madt(void)
 				acpi_ioapic = 1;
 
 				smp_found_config = 1;
+#ifdef CONFIG_X86_32
 				setup_apic_routing();
+#endif
 			}
 		}
 		if (error == -EINVAL) {

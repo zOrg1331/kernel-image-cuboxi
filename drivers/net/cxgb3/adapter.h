@@ -54,7 +54,6 @@ struct port_info {
 	struct adapter *adapter;
 	struct vlan_group *vlan_grp;
 	struct sge_qset *qs;
-	const struct port_type_info *port_type;
 	u8 port_id;
 	u8 rx_csum_offload;
 	u8 nqsets;
@@ -64,6 +63,7 @@ struct port_info {
 	struct link_config link_config;
 	struct net_device_stats netstats;
 	int activity;
+	__be32 iscsi_ipv4addr;
 };
 
 enum {				/* adapter flags */
@@ -241,6 +241,7 @@ struct adapter {
 	unsigned int check_task_cnt;
 	struct delayed_work adap_check_task;
 	struct work_struct ext_intr_handler_task;
+	struct work_struct fatal_error_handler_task;
 
 	struct dentry *debugfs_root;
 
@@ -282,6 +283,7 @@ int t3_offload_tx(struct t3cdev *tdev, struct sk_buff *skb);
 void t3_os_ext_intr_handler(struct adapter *adapter);
 void t3_os_link_changed(struct adapter *adapter, int port_id, int link_status,
 			int speed, int duplex, int fc);
+void t3_os_phymod_changed(struct adapter *adap, int port_id);
 
 void t3_sge_start(struct adapter *adap);
 void t3_sge_stop(struct adapter *adap);

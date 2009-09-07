@@ -4,6 +4,7 @@
 
 obj-y			:= intel_cacheinfo.o addon_cpuid_features.o
 obj-y			+= proc.o feature_names.o
+obj-y			+= vmware.o hypervisor.o
 
 obj-$(CONFIG_X86_32)	+= common.o bugs.o
 obj-$(CONFIG_X86_64)	+= common_64.o bugs_64.o
@@ -22,3 +23,5 @@ obj-$(CONFIG_MTRR)	+= mtrr/
 obj-$(CONFIG_CPU_FREQ)	+= cpufreq/
 
 obj-$(CONFIG_X86_LOCAL_APIC) += perfctr-watchdog.o
+
+disabled-obj-$(CONFIG_XEN) := hypervisor.o perfctr-watchdog.o vmware.o
