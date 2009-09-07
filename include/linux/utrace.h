@@ -323,6 +323,7 @@ static inline enum utrace_syscall_action utrace_syscall_action(u32 action)
 struct utrace_engine {
 /* private: */
 	struct kref kref;
+	void (*release)(void *);
 	struct list_head entry;
 
 /* public: */
@@ -551,6 +552,12 @@ static inline void utrace_engine_put(struct utrace_engine *engine)
  *	Unlike other callbacks, this can be called from the parent's context
  *	rather than from the traced thread itself--it must not delay the
  *	parent by blocking.
+ *
+ * @release:
+ *	If not %NULL, this is called after the last utrace_engine_put()
+ *	call for a &struct utrace_engine, which could be implicit after
+ *	a %UTRACE_DETACH return from another callback.  Its argument is
+ *	the engine's @data member.
  */
 struct utrace_engine_ops {
 	u32 (*report_quiesce)(enum utrace_resume_action action,
@@ -596,6 +603,7 @@ struct utrace_engine_ops {
 			    bool group_dead, int signal);
 	void (*report_reap)(struct utrace_engine *engine,
 			    struct task_struct *task);
+	void (*release)(void *data);
 };
 
 /**
