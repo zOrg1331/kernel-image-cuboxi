@@ -451,21 +451,19 @@ void utrace_release_task(struct task_struct *target)
 
 	utrace->reap = 1;
 
-	if (!(target->utrace_flags & _UTRACE_DEATH_EVENTS)) {
-		utrace_reap(target, utrace); /* Unlocks and frees.  */
-		return;
-	}
-
 	/*
-	 * The target will do some final callbacks but hasn't
-	 * finished them yet.  We know because it clears these
-	 * event bits after it's done.  Instead of cleaning up here
-	 * and requiring utrace_report_death to cope with it, we
-	 * delay the REAP report and the teardown until after the
-	 * target finishes its death reports.
+	 * If the target will do some final callbacks but hasn't
+	 * finished them yet, we know because it clears these event
+	 * bits after it's done.  Instead of cleaning up here and
+	 * requiring utrace_report_death() to cope with it, we delay
+	 * the REAP report and the teardown until after the target
+	 * finishes its death reports.
 	 */
 
-	spin_unlock(&utrace->lock);
+	if (target->utrace_flags & _UTRACE_DEATH_EVENTS)
+		spin_unlock(&utrace->lock);
+	else
+		utrace_reap(target, utrace); /* Unlocks.  */
 }
 
 /*
