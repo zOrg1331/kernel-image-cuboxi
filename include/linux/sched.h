@@ -38,6 +38,8 @@
 #define SCHED_BATCH		3
 /* SCHED_ISO: reserved but not implemented yet */
 #define SCHED_IDLE		5
+/* Can be ORed in to make sure the process is reverted back to SCHED_NORMAL on fork */
+#define SCHED_RESET_ON_FORK     0x40000000
 
 #ifdef __KERNEL__
 
@@ -474,6 +476,13 @@ struct pacct_struct {
 	unsigned long		ac_minflt, ac_majflt;
 };
 
+struct cpu_itimer {
+	cputime_t expires;
+	cputime_t incr;
+	u32 error;
+	u32 incr_error;
+};
+
 /**
  * struct task_cputime - collected CPU time counts
  * @utime:		time spent in user mode, in &cputime_t units
@@ -568,9 +577,12 @@ struct signal_struct {
 	struct pid *leader_pid;
 	ktime_t it_real_incr;
 
-	/* ITIMER_PROF and ITIMER_VIRTUAL timers for the process */
-	cputime_t it_prof_expires, it_virt_expires;
-	cputime_t it_prof_incr, it_virt_incr;
+	/*
+	 * ITIMER_PROF and ITIMER_VIRTUAL timers for the process, we use
+	 * CPUCLOCK_PROF and CPUCLOCK_VIRT for indexing array as these
+	 * values are defined to 0 and 1 respectively
+	 */
+	struct cpu_itimer it[2];
 
 	/*
 	 * Thread group totals for process CPU timers.
@@ -1049,7 +1061,6 @@ struct sched_class {
 			      struct rq *busiest, struct sched_domain *sd,
 			      enum cpu_idle_type idle);
 	void (*pre_schedule) (struct rq *this_rq, struct task_struct *task);
-	int (*needs_post_schedule) (struct rq *this_rq);
 	void (*post_schedule) (struct rq *this_rq);
 	void (*task_wake_up) (struct rq *this_rq, struct task_struct *task);
 
@@ -1114,6 +1125,8 @@ struct sched_entity {
 	u64			wait_max;
 	u64			wait_count;
 	u64			wait_sum;
+	u64			iowait_count;
+	u64			iowait_sum;
 
 	u64			sleep_start;
 	u64			sleep_max;
@@ -1167,6 +1180,8 @@ struct sched_rt_entity {
 #endif
 };
 
+struct rcu_node;
+
 struct task_struct {
 	volatile long state;	/* -1 unrunnable, 0 runnable, >0 stopped */
 	void *stack;
@@ -1210,10 +1225,12 @@ struct task_struct {
 	unsigned int policy;
 	cpumask_t cpus_allowed;
 
-#ifdef CONFIG_PREEMPT_RCU
+#ifdef CONFIG_TREE_PREEMPT_RCU
 	int rcu_read_lock_nesting;
-	int rcu_flipctr_idx;
-#endif /* #ifdef CONFIG_PREEMPT_RCU */
+	char rcu_read_unlock_special;
+	struct rcu_node *rcu_blocked_node;
+	struct list_head rcu_node_entry;
+#endif /* #ifdef CONFIG_TREE_PREEMPT_RCU */
 
 #if defined(CONFIG_SCHEDSTATS) || defined(CONFIG_TASK_DELAY_ACCT)
 	struct sched_info sched_info;
@@ -1234,11 +1251,19 @@ struct task_struct {
 	unsigned did_exec:1;
 	unsigned in_execve:1;	/* Tell the LSMs that the process is doing an
 				 * execve */
+	unsigned in_iowait:1;
+
+
+	/* Revert to default priority/policy when forking */
+	unsigned sched_reset_on_fork:1;
+
 	pid_t pid;
 	pid_t tgid;
 
+#ifdef CONFIG_CC_STACKPROTECTOR
 	/* Canary value for the -fstack-protector gcc feature */
 	unsigned long stack_canary;
+#endif
 
 	/* 
 	 * pointers to (original) parent process, youngest child, younger sibling,
@@ -1728,6 +1753,28 @@ extern cputime_t task_gtime(struct task_struct *p);
 /* NOTE: this will return 0 or PF_USED_MATH, it will never return 1 */
 #define tsk_used_math(p) ((p)->flags & PF_USED_MATH)
 #define used_math() tsk_used_math(current)
+
+#ifdef CONFIG_TREE_PREEMPT_RCU
+
+#define RCU_READ_UNLOCK_BLOCKED (1 << 0) /* blocked while in RCU read-side. */
+#define RCU_READ_UNLOCK_NEED_QS (1 << 1) /* RCU core needs CPU response. */
+#define RCU_READ_UNLOCK_GOT_QS  (1 << 2) /* CPU has responded to RCU core. */
+
+static inline void rcu_copy_process(struct task_struct *p)
+{
+	p->rcu_read_lock_nesting = 0;
+	p->rcu_read_unlock_special = 0;
+	p->rcu_blocked_node = NULL;
+	INIT_LIST_HEAD(&p->rcu_node_entry);
+}
+
+#else
+
+static inline void rcu_copy_process(struct task_struct *p)
+{
+}
+
+#endif
 
 #ifdef CONFIG_SMP
 extern int set_cpus_allowed_ptr(struct task_struct *p,
@@ -2289,23 +2336,31 @@ static inline int need_resched(void)
  * cond_resched_softirq() will enable bhs before scheduling.
  */
 extern int _cond_resched(void);
-#ifdef CONFIG_PREEMPT_BKL
-static inline int cond_resched(void)
-{
-	return 0;
-}
+
+#define cond_resched() ({			\
+	__might_sleep(__FILE__, __LINE__, 0);	\
+	_cond_resched();			\
+})
+
+extern int __cond_resched_lock(spinlock_t *lock);
+
+#ifdef CONFIG_PREEMPT
+#define PREEMPT_LOCK_OFFSET	PREEMPT_OFFSET
 #else
-static inline int cond_resched(void)
-{
-	return _cond_resched();
-}
+#define PREEMPT_LOCK_OFFSET	0
 #endif
-extern int cond_resched_lock(spinlock_t * lock);
-extern int cond_resched_softirq(void);
-static inline int cond_resched_bkl(void)
-{
-	return _cond_resched();
-}
+
+#define cond_resched_lock(lock) ({				\
+	__might_sleep(__FILE__, __LINE__, PREEMPT_LOCK_OFFSET);	\
+	__cond_resched_lock(lock);				\
+})
+
+extern int __cond_resched_softirq(void);
+
+#define cond_resched_softirq() ({				\
+	__might_sleep(__FILE__, __LINE__, SOFTIRQ_OFFSET);	\
+	__cond_resched_softirq();				\
+})
 
 /*
  * Does a critical section need to be broken due to another

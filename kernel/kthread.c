@@ -20,7 +20,9 @@
 
 static DEFINE_SPINLOCK(kthread_create_lock);
 static LIST_HEAD(kthread_create_list);
+
 struct task_struct *kthreadd_task;
+DECLARE_COMPLETION(kthreadd_task_init_done);
 
 struct kthread_create_info
 {
@@ -128,6 +130,9 @@ struct task_struct *kthread_create(int (*threadfn)(void *data),
 	spin_lock(&kthread_create_lock);
 	list_add_tail(&create.list, &kthread_create_list);
 	spin_unlock(&kthread_create_lock);
+
+	if (unlikely(!kthreadd_task))
+		wait_for_completion(&kthreadd_task_init_done);
 
 	wake_up_process(kthreadd_task);
 	wait_for_completion(&create.done);
