@@ -1,0 +1,41 @@
+Importing driver-core.current based on 2.6.31-rc8
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing i2c based on 2.6.31-rc8
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.31-rc8-git2
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 37d0892c5a94e208cf863e3b7bac014edee4346d
+HEAD is now at 37d0892 autofs4 - fix missed case when changing to use struct path
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-abituguru3-support-multiple-dmi-strings-per-chip-id-3.patch
+hwmon-vid-limit-AMD-0Fh-6-bit-VID.patch
+hwmon-driver-for-TI-TMP421-TMP422-TMP423-chips.patch
+hwmon-tmp421-add-documentation.patch
+hwmon-include-linux-io.h-instead-of-asm-io.h.patch
+hwmon-use-resource_size.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 4c33cf2...bed6606 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.31-rc7
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.31-rc7-107-gf415c41
+Unchanged quilt series rr
+Importing device-mapper based on block/for-next
+	quilt series is empty
+$ git update-ref refs/heads/quilt/device-mapper 40142ae2d95de7483b93ca8260b9325032386fe9
+Importing aoe based on v2.6.31-rc3
+Unchanged quilt series aoe
+Importing driver-core based on quilt/usb.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
