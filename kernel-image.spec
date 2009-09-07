@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
-Version: 2.6.30
-Release: alt9
+Version: 2.6.31
+Release: alt0.rc9
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -8,7 +8,7 @@ Release: alt9
 # 0.0.X -- preX
 # 0.X.0 -- rcX
 # 1.0.0 -- release
-%define kernel_extra_version_numeric 1.0.0
+%define kernel_extra_version_numeric 0.9.0
 
 %define krelease	%release
 
@@ -40,7 +40,7 @@ Packager: Kernel Maintainers Team <kernel@packages.altlinux.org>
 
 Patch0: %name-%version-%release.patch
 
-ExclusiveArch: i686 x86_64
+ExclusiveArch: i586 x86_64
 
 ExclusiveOS: Linux
 
@@ -340,6 +340,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Mon Sep 07 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.31-alt0.rc9
+- 2.6.31-rc9
+
 * Mon Aug 17 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.30-alt9
 - 2.6.30.5
 
