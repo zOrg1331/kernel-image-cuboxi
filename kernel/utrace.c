@@ -409,13 +409,14 @@ static void utrace_reap(struct task_struct *target, struct utrace *utrace)
 	__releases(utrace->lock)
 {
 	struct utrace_engine *engine, *next;
-	const struct utrace_engine_ops *ops;
 	LIST_HEAD(detached);
 
 restart:
 	splice_attaching(utrace);
 	list_for_each_entry_safe(engine, next, &utrace->attached, entry) {
-		ops = engine->ops;
+		const struct utrace_engine_ops *ops = engine->ops;
+		unsigned long flags = engine->flags;
+
 		engine->ops = NULL;
 		engine->flags = 0;
 		list_move(&engine->entry, &detached);
@@ -424,26 +425,25 @@ restart:
 		 * If it didn't need a callback, we don't need to drop
 		 * the lock.  Now nothing else refers to this engine.
 		 */
-		if (!(engine->flags & UTRACE_EVENT(REAP)))
-			continue;
+		if (flags & UTRACE_EVENT(REAP)) {
+			/*
+			 * This synchronizes with utrace_barrier().  Since
+			 * we need the utrace->lock here anyway (unlike the
+			 * other reporting loops), we don't need any memory
+			 * barrier as utrace_barrier() holds the lock.
+			 */
+			utrace->reporting = engine;
+			spin_unlock(&utrace->lock);
 
-		/*
-		 * This synchronizes with utrace_barrier().  Since we
-		 * need the utrace->lock here anyway (unlike the other
-		 * reporting loops), we don't need any memory barrier
-		 * as utrace_barrier() holds the lock.
-		 */
-		utrace->reporting = engine;
-		spin_unlock(&utrace->lock);
+			(*ops->report_reap)(engine, target);
 
-		(*ops->report_reap)(engine, target);
+			utrace->reporting = NULL;
 
-		utrace->reporting = NULL;
+			put_detached_list(&detached);
 
-		put_detached_list(&detached);
-
-		spin_lock(&utrace->lock);
-		goto restart;
+			spin_lock(&utrace->lock);
+			goto restart;
+		}
 	}
 
 	spin_unlock(&utrace->lock);
