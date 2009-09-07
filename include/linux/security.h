@@ -665,11 +665,6 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	manual page for definitions of the @clone_flags.
  *	@clone_flags contains the flags indicating what should be shared.
  *	Return 0 if permission is granted.
- * @cred_alloc_blank:
- *	@cred points to the credentials.
- *	@gfp indicates the atomicity of any memory allocations.
- *	Only allocate sufficient memory and attach to @cred such that
- *	cred_transfer() will not get ENOMEM.
  * @cred_free:
  *	@cred points to the credentials.
  *	Deallocate and clear the cred->security field in a set of credentials.
@@ -682,10 +677,6 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	@new points to the new credentials.
  *	@old points to the original credentials.
  *	Install a new set of credentials.
- * @cred_transfer:
- *	@new points to the new credentials.
- *	@old points to the original credentials.
- *	Transfer data from original creds to new creds
  * @kernel_act_as:
  *	Set the credentials for a kernel service to act as (subjective context).
  *	@new points to the credentials to be modified.
@@ -1124,13 +1115,6 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	Return the length of the string (including terminating NUL) or -ve if
  *      an error.
  *	May also return 0 (and a NULL buffer pointer) if there is no label.
- * @key_session_to_parent:
- *	Forcibly assign the session keyring from a process to its parent
- *	process.
- *	@cred: Pointer to process's credentials
- *	@parent_cred: Pointer to parent process's credentials
- *	@keyring: Proposed new session keyring
- *	Return 0 if permission is granted, -ve error otherwise.
  *
  * Security hooks affecting all System V IPC operations.
  *
@@ -1528,12 +1512,10 @@ struct security_operations {
 	int (*dentry_open) (struct file *file, const struct cred *cred);
 
 	int (*task_create) (unsigned long clone_flags);
-	int (*cred_alloc_blank) (struct cred *cred, gfp_t gfp);
 	void (*cred_free) (struct cred *cred);
 	int (*cred_prepare)(struct cred *new, const struct cred *old,
 			    gfp_t gfp);
 	void (*cred_commit)(struct cred *new, const struct cred *old);
-	void (*cred_transfer)(struct cred *new, const struct cred *old);
 	int (*kernel_act_as)(struct cred *new, u32 secid);
 	int (*kernel_create_files_as)(struct cred *new, struct inode *inode);
 	int (*kernel_module_request)(void);
@@ -1671,9 +1653,6 @@ struct security_operations {
 			       const struct cred *cred,
 			       key_perm_t perm);
 	int (*key_getsecurity)(struct key *key, char **_buffer);
-	int (*key_session_to_parent)(const struct cred *cred,
-				     const struct cred *parent_cred,
-				     struct key *key);
 #endif	/* CONFIG_KEYS */
 
 #ifdef CONFIG_AUDIT
@@ -1792,11 +1771,9 @@ int security_file_send_sigiotask(struct task_struct *tsk,
 int security_file_receive(struct file *file);
 int security_dentry_open(struct file *file, const struct cred *cred);
 int security_task_create(unsigned long clone_flags);
-int security_cred_alloc_blank(struct cred *cred, gfp_t gfp);
 void security_cred_free(struct cred *cred);
 int security_prepare_creds(struct cred *new, const struct cred *old, gfp_t gfp);
 void security_commit_creds(struct cred *new, const struct cred *old);
-void security_transfer_creds(struct cred *new, const struct cred *old);
 int security_kernel_act_as(struct cred *new, u32 secid);
 int security_kernel_create_files_as(struct cred *new, struct inode *inode);
 int security_kernel_module_request(void);
@@ -2332,9 +2309,6 @@ static inline int security_task_create(unsigned long clone_flags)
 	return 0;
 }
 
-static inline void security_cred_alloc_blank(struct cred *cred, gfp_t gfp)
-{ }
-
 static inline void security_cred_free(struct cred *cred)
 { }
 
@@ -2347,11 +2321,6 @@ static inline int security_prepare_creds(struct cred *new,
 
 static inline void security_commit_creds(struct cred *new,
 					 const struct cred *old)
-{
-}
-
-static inline void security_transfer_creds(struct cred *new,
-					   const struct cred *old)
 {
 }
 
@@ -2977,9 +2946,6 @@ void security_key_free(struct key *key);
 int security_key_permission(key_ref_t key_ref,
 			    const struct cred *cred, key_perm_t perm);
 int security_key_getsecurity(struct key *key, char **_buffer);
-int security_key_session_to_parent(const struct cred *cred,
-				   const struct cred *parent_cred,
-				   struct key *key);
 
 #else
 
@@ -3006,10 +2972,6 @@ static inline int security_key_getsecurity(struct key *key, char **_buffer)
 	*_buffer = NULL;
 	return 0;
 }
-
-static inline int security_key_session_to_parent(const struct cred *cred,
-						 const struct cred *parent_cred,
-						 struct key *key);
 
 #endif
 #endif /* CONFIG_KEYS */
