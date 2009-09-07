@@ -6,6 +6,7 @@
  */
 
 #include <linux/device.h>
+#include <linux/workqueue.h>
 
 #ifndef MFD_AB3100_H
 #define MFD_AB3100_H
@@ -86,11 +87,11 @@ struct ab3100 {
 	bool startup_events_read;
 };
 
-int ab3100_set_register(struct ab3100 *ab3100, u8 reg, u8 regval);
-int ab3100_get_register(struct ab3100 *ab3100, u8 reg, u8 *regval);
-int ab3100_get_register_page(struct ab3100 *ab3100,
+int ab3100_set_register_interruptible(struct ab3100 *ab3100, u8 reg, u8 regval);
+int ab3100_get_register_interruptible(struct ab3100 *ab3100, u8 reg, u8 *regval);
+int ab3100_get_register_page_interruptible(struct ab3100 *ab3100,
 			     u8 first_reg, u8 *regvals, u8 numregs);
-int ab3100_mask_and_set_register(struct ab3100 *ab3100,
+int ab3100_mask_and_set_register_interruptible(struct ab3100 *ab3100,
 				 u8 reg, u8 andmask, u8 ormask);
 u8 ab3100_get_chip_type(struct ab3100 *ab3100);
 int ab3100_event_register(struct ab3100 *ab3100,
