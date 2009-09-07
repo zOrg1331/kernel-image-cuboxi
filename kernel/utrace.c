@@ -69,7 +69,7 @@ module_init(utrace_init);
 static void splice_attaching(struct utrace *utrace)
 {
 	list_splice_tail_init(&utrace->attaching, &utrace->attached);
-	utrace->slow_path = 0;
+	utrace->pending_attach = 0;
 }
 
 /*
@@ -154,10 +154,10 @@ static int utrace_add_engine(struct task_struct *target,
 	} else {
 		/*
 		 * Put the new engine on the pending ->attaching list.
-		 * Make sure it gets onto the ->attached list by the
-		 * next time it's examined.  Setting ->slow_path ensures
-		 * that start_report() takes the lock and splices the
-		 * lists before the next new reporting pass.
+		 * Make sure it gets onto the ->attached list by the next
+		 * time it's examined.  Setting ->pending_attach ensures
+		 * that start_report() takes the lock and splices the lists
+		 * before the next new reporting pass.
 		 *
 		 * When target == current, it would be safe just to call
 		 * splice_attaching() right here.  But if we're inside a
@@ -170,7 +170,7 @@ static int utrace_add_engine(struct task_struct *target,
 		 */
 		target->utrace_flags |= UTRACE_EVENT(REAP);
 		list_add_tail(&engine->entry, &utrace->attaching);
-		utrace->slow_path = 1;
+		utrace->pending_attach = 1;
 		ret = 0;
 	}
 
@@ -664,7 +664,7 @@ static bool utrace_do_stop(struct task_struct *target, struct utrace *utrace)
 		}
 		spin_unlock_irq(&target->sighand->siglock);
 	} else if (!utrace->report && !utrace->interrupt) {
-		utrace->report = utrace->slow_path = 1;
+		utrace->report = 1;
 		set_notify_resume(target);
 	}
 
@@ -793,7 +793,7 @@ relock:
 		/*
 		 * Ensure a reporting pass when we're resumed.
 		 */
-		utrace->report = utrace->slow_path = 1;
+		utrace->report = 1;
 		set_thread_flag(TIF_NOTIFY_RESUME);
 	}
 
@@ -1116,7 +1116,7 @@ int utrace_control(struct task_struct *target,
 		 */
 		clear_engine_wants_stop(engine);
 		if (!utrace->report && !utrace->interrupt) {
-			utrace->report = utrace->slow_path = 1;
+			utrace->report = 1;
 			set_notify_resume(target);
 		}
 		break;
@@ -1286,14 +1286,13 @@ struct utrace_report {
 
 /*
  * We are now making the report, so clear the flag saying we need one.
- * When ->report is set, ->slow_path is always set too.  When there is a
- * new attach, ->slow_path is set even without ->report, just so we will
+ * When there is a new attach, ->pending_attach is set just so we will
  * know to do splice_attaching() here before the callback loop.
  */
 static void start_report(struct utrace *utrace)
 {
 	BUG_ON(utrace->stopped);
-	if (utrace->slow_path) {
+	if (utrace->report || utrace->pending_attach) {
 		spin_lock(&utrace->lock);
 		splice_attaching(utrace);
 		utrace->report = 0;
@@ -1330,7 +1329,7 @@ static void finish_report(struct utrace_report *report,
 			utrace->interrupt = 1;
 			set_tsk_thread_flag(task, TIF_SIGPENDING);
 		} else {
-			utrace->report = utrace->slow_path = 1;
+			utrace->report = 1;
 			set_tsk_thread_flag(task, TIF_NOTIFY_RESUME);
 		}
 		spin_unlock(&utrace->lock);
