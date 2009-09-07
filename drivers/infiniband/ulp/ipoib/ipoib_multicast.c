@@ -685,12 +685,7 @@ void ipoib_mcast_send(struct net_device *dev, void *mgid, struct sk_buff *skb)
 	}
 
 	if (!mcast->ah) {
-		if (skb_queue_len(&mcast->pkt_queue) < IPOIB_MAX_MCAST_QUEUE)
-			skb_queue_tail(&mcast->pkt_queue, skb);
-		else {
-			++dev->stats.tx_dropped;
-			dev_kfree_skb_any(skb);
-		}
+		skb_queue_tail(&mcast->pkt_queue, skb);
 
 		if (test_bit(IPOIB_MCAST_FLAG_BUSY, &mcast->flags))
 			ipoib_dbg_mcast(priv, "no address vector, "
@@ -720,7 +715,9 @@ out:
 			}
 		}
 
+		spin_unlock_irqrestore(&priv->lock, flags);
 		ipoib_send(dev, skb, mcast->ah, IB_MULTICAST_QPN);
+		return;
 	}
 
 unlock:
@@ -758,6 +755,20 @@ void ipoib_mcast_dev_flush(struct net_device *dev)
 	}
 }
 
+static int ipoib_mcast_addr_is_valid(const u8 *addr, unsigned int addrlen,
+				     const u8 *broadcast)
+{
+	if (addrlen != INFINIBAND_ALEN)
+		return 0;
+	/* reserved QPN, prefix, scope */
+	if (memcmp(addr, broadcast, 6))
+		return 0;
+	/* signature lower, pkey */
+	if (memcmp(addr + 7, broadcast + 7, 3))
+		return 0;
+	return 1;
+}
+
 void ipoib_mcast_restart_task(struct work_struct *work)
 {
 	struct ipoib_dev_priv *priv =
@@ -790,6 +801,11 @@ void ipoib_mcast_restart_task(struct work_struct *work)
 	/* Mark all of the entries that are found or don't exist */
 	for (mclist = dev->mc_list; mclist; mclist = mclist->next) {
 		union ib_gid mgid;
+
+		if (!ipoib_mcast_addr_is_valid(mclist->dmi_addr,
+					       mclist->dmi_addrlen,
+					       dev->broadcast))
+			continue;
 
 		memcpy(mgid.raw, mclist->dmi_addr + 4, sizeof mgid);
 
