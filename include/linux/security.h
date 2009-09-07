@@ -53,7 +53,7 @@ struct audit_krule;
 extern int cap_capable(struct task_struct *tsk, const struct cred *cred,
 		       int cap, int audit);
 extern int cap_settime(struct timespec *ts, struct timezone *tz);
-extern int cap_ptrace_may_access(struct task_struct *child, unsigned int mode);
+extern int cap_ptrace_access_check(struct task_struct *child, unsigned int mode);
 extern int cap_ptrace_traceme(struct task_struct *parent);
 extern int cap_capget(struct task_struct *target, kernel_cap_t *effective, kernel_cap_t *inheritable, kernel_cap_t *permitted);
 extern int cap_capset(struct cred *new, const struct cred *old,
@@ -665,6 +665,11 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	manual page for definitions of the @clone_flags.
  *	@clone_flags contains the flags indicating what should be shared.
  *	Return 0 if permission is granted.
+ * @cred_alloc_blank:
+ *	@cred points to the credentials.
+ *	@gfp indicates the atomicity of any memory allocations.
+ *	Only allocate sufficient memory and attach to @cred such that
+ *	cred_transfer() will not get ENOMEM.
  * @cred_free:
  *	@cred points to the credentials.
  *	Deallocate and clear the cred->security field in a set of credentials.
@@ -677,6 +682,10 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	@new points to the new credentials.
  *	@old points to the original credentials.
  *	Install a new set of credentials.
+ * @cred_transfer:
+ *	@new points to the new credentials.
+ *	@old points to the original credentials.
+ *	Transfer data from original creds to new creds
  * @kernel_act_as:
  *	Set the credentials for a kernel service to act as (subjective context).
  *	@new points to the credentials to be modified.
@@ -689,6 +698,10 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	@new points to the credentials to be modified.
  *	@inode points to the inode to use as a reference.
  *	The current task must be the one that nominated @inode.
+ *	Return 0 if successful.
+ * @kernel_module_request:
+ *	Ability to trigger the kernel to automatically upcall to userspace for
+ *	userspace to load a kernel module with the given name.
  *	Return 0 if successful.
  * @task_setuid:
  *	Check permission before setting one or more of the user identity
@@ -1006,6 +1019,17 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	Sets the connection's peersid to the secmark on skb.
  * @req_classify_flow:
  *	Sets the flow's sid to the openreq sid.
+ * @tun_dev_create:
+ *	Check permissions prior to creating a new TUN device.
+ * @tun_dev_post_create:
+ *	This hook allows a module to update or allocate a per-socket security
+ *	structure.
+ *	@sk contains the newly created sock structure.
+ * @tun_dev_attach:
+ *	Check permissions prior to attaching to a persistent TUN device.  This
+ *	hook can also be used by the module to update any security state
+ *	associated with the TUN device's sock structure.
+ *	@sk contains the existing sock structure.
  *
  * Security hooks for XFRM operations.
  *
@@ -1100,6 +1124,13 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	Return the length of the string (including terminating NUL) or -ve if
  *      an error.
  *	May also return 0 (and a NULL buffer pointer) if there is no label.
+ * @key_session_to_parent:
+ *	Forcibly assign the session keyring from a process to its parent
+ *	process.
+ *	@cred: Pointer to process's credentials
+ *	@parent_cred: Pointer to parent process's credentials
+ *	@keyring: Proposed new session keyring
+ *	Return 0 if permission is granted, -ve error otherwise.
  *
  * Security hooks affecting all System V IPC operations.
  *
@@ -1241,7 +1272,7 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	@alter contains the flag indicating whether changes are to be made.
  *	Return 0 if permission is granted.
  *
- * @ptrace_may_access:
+ * @ptrace_access_check:
  *	Check permission before allowing the current process to trace the
  *	@child process.
  *	Security modules may also want to perform a process tracing check
@@ -1256,7 +1287,7 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	Check that the @parent process has sufficient permission to trace the
  *	current process before allowing the current process to present itself
  *	to the @parent process for tracing.
- *	The parent process will still have to undergo the ptrace_may_access
+ *	The parent process will still have to undergo the ptrace_access_check
  *	checks before it is allowed to trace this one.
  *	@parent contains the task_struct structure for debugger process.
  *	Return 0 if permission is granted.
@@ -1368,7 +1399,7 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
 struct security_operations {
 	char name[SECURITY_NAME_MAX + 1];
 
-	int (*ptrace_may_access) (struct task_struct *child, unsigned int mode);
+	int (*ptrace_access_check) (struct task_struct *child, unsigned int mode);
 	int (*ptrace_traceme) (struct task_struct *parent);
 	int (*capget) (struct task_struct *target,
 		       kernel_cap_t *effective,
@@ -1497,12 +1528,15 @@ struct security_operations {
 	int (*dentry_open) (struct file *file, const struct cred *cred);
 
 	int (*task_create) (unsigned long clone_flags);
+	int (*cred_alloc_blank) (struct cred *cred, gfp_t gfp);
 	void (*cred_free) (struct cred *cred);
 	int (*cred_prepare)(struct cred *new, const struct cred *old,
 			    gfp_t gfp);
 	void (*cred_commit)(struct cred *new, const struct cred *old);
+	void (*cred_transfer)(struct cred *new, const struct cred *old);
 	int (*kernel_act_as)(struct cred *new, u32 secid);
 	int (*kernel_create_files_as)(struct cred *new, struct inode *inode);
+	int (*kernel_module_request)(void);
 	int (*task_setuid) (uid_t id0, uid_t id1, uid_t id2, int flags);
 	int (*task_fix_setuid) (struct cred *new, const struct cred *old,
 				int flags);
@@ -1606,6 +1640,9 @@ struct security_operations {
 	void (*inet_csk_clone) (struct sock *newsk, const struct request_sock *req);
 	void (*inet_conn_established) (struct sock *sk, struct sk_buff *skb);
 	void (*req_classify_flow) (const struct request_sock *req, struct flowi *fl);
+	int (*tun_dev_create)(void);
+	void (*tun_dev_post_create)(struct sock *sk);
+	int (*tun_dev_attach)(struct sock *sk);
 #endif	/* CONFIG_SECURITY_NETWORK */
 
 #ifdef CONFIG_SECURITY_NETWORK_XFRM
@@ -1634,6 +1671,9 @@ struct security_operations {
 			       const struct cred *cred,
 			       key_perm_t perm);
 	int (*key_getsecurity)(struct key *key, char **_buffer);
+	int (*key_session_to_parent)(const struct cred *cred,
+				     const struct cred *parent_cred,
+				     struct key *key);
 #endif	/* CONFIG_KEYS */
 
 #ifdef CONFIG_AUDIT
@@ -1651,7 +1691,7 @@ extern int security_module_enable(struct security_operations *ops);
 extern int register_security(struct security_operations *ops);
 
 /* Security operations */
-int security_ptrace_may_access(struct task_struct *child, unsigned int mode);
+int security_ptrace_access_check(struct task_struct *child, unsigned int mode);
 int security_ptrace_traceme(struct task_struct *parent);
 int security_capget(struct task_struct *target,
 		    kernel_cap_t *effective,
@@ -1752,11 +1792,14 @@ int security_file_send_sigiotask(struct task_struct *tsk,
 int security_file_receive(struct file *file);
 int security_dentry_open(struct file *file, const struct cred *cred);
 int security_task_create(unsigned long clone_flags);
+int security_cred_alloc_blank(struct cred *cred, gfp_t gfp);
 void security_cred_free(struct cred *cred);
 int security_prepare_creds(struct cred *new, const struct cred *old, gfp_t gfp);
 void security_commit_creds(struct cred *new, const struct cred *old);
+void security_transfer_creds(struct cred *new, const struct cred *old);
 int security_kernel_act_as(struct cred *new, u32 secid);
 int security_kernel_create_files_as(struct cred *new, struct inode *inode);
+int security_kernel_module_request(void);
 int security_task_setuid(uid_t id0, uid_t id1, uid_t id2, int flags);
 int security_task_fix_setuid(struct cred *new, const struct cred *old,
 			     int flags);
@@ -1834,10 +1877,10 @@ static inline int security_init(void)
 	return 0;
 }
 
-static inline int security_ptrace_may_access(struct task_struct *child,
+static inline int security_ptrace_access_check(struct task_struct *child,
 					     unsigned int mode)
 {
-	return cap_ptrace_may_access(child, mode);
+	return cap_ptrace_access_check(child, mode);
 }
 
 static inline int security_ptrace_traceme(struct task_struct *parent)
@@ -2289,6 +2332,11 @@ static inline int security_task_create(unsigned long clone_flags)
 	return 0;
 }
 
+static inline int security_cred_alloc_blank(struct cred *cred, gfp_t gfp)
+{
+	return 0;
+}
+
 static inline void security_cred_free(struct cred *cred)
 { }
 
@@ -2304,6 +2352,11 @@ static inline void security_commit_creds(struct cred *new,
 {
 }
 
+static inline void security_transfer_creds(struct cred *new,
+					   const struct cred *old)
+{
+}
+
 static inline int security_kernel_act_as(struct cred *cred, u32 secid)
 {
 	return 0;
@@ -2311,6 +2364,11 @@ static inline int security_kernel_act_as(struct cred *cred, u32 secid)
 
 static inline int security_kernel_create_files_as(struct cred *cred,
 						  struct inode *inode)
+{
+	return 0;
+}
+
+static inline int security_kernel_module_request(void)
 {
 	return 0;
 }
@@ -2598,6 +2656,9 @@ void security_inet_csk_clone(struct sock *newsk,
 			const struct request_sock *req);
 void security_inet_conn_established(struct sock *sk,
 			struct sk_buff *skb);
+int security_tun_dev_create(void);
+void security_tun_dev_post_create(struct sock *sk);
+int security_tun_dev_attach(struct sock *sk);
 
 #else	/* CONFIG_SECURITY_NETWORK */
 static inline int security_unix_stream_connect(struct socket *sock,
@@ -2747,6 +2808,20 @@ static inline void security_inet_csk_clone(struct sock *newsk,
 static inline void security_inet_conn_established(struct sock *sk,
 			struct sk_buff *skb)
 {
+}
+
+static inline int security_tun_dev_create(void)
+{
+	return 0;
+}
+
+static inline void security_tun_dev_post_create(struct sock *sk)
+{
+}
+
+static inline int security_tun_dev_attach(struct sock *sk)
+{
+	return 0;
 }
 #endif	/* CONFIG_SECURITY_NETWORK */
 
@@ -2904,6 +2979,9 @@ void security_key_free(struct key *key);
 int security_key_permission(key_ref_t key_ref,
 			    const struct cred *cred, key_perm_t perm);
 int security_key_getsecurity(struct key *key, char **_buffer);
+int security_key_session_to_parent(const struct cred *cred,
+				   const struct cred *parent_cred,
+				   struct key *key);
 
 #else
 
@@ -2930,6 +3008,10 @@ static inline int security_key_getsecurity(struct key *key, char **_buffer)
 	*_buffer = NULL;
 	return 0;
 }
+
+static inline int security_key_session_to_parent(const struct cred *cred,
+						 const struct cred *parent_cred,
+						 struct key *key);
 
 #endif
 #endif /* CONFIG_KEYS */
