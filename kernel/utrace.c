@@ -662,14 +662,13 @@ static void utrace_wakeup(struct task_struct *target, struct utrace *utrace)
 {
 	utrace->stopped = 0;
 
+	/* The task must be either TASK_TRACED or killed */
 	spin_lock_irq(&target->sighand->siglock);
-	if (likely(task_is_stopped_or_traced(target))) {
-		if (target->signal->flags & SIGNAL_STOP_STOPPED ||
-		    target->signal->group_stop_count)
-			target->state = TASK_STOPPED;
-		else
-			wake_up_state(target, __TASK_STOPPED | __TASK_TRACED);
-	}
+	if (target->signal->flags & SIGNAL_STOP_STOPPED ||
+	    target->signal->group_stop_count)
+		target->state = TASK_STOPPED;
+	else
+		wake_up_state(target, __TASK_TRACED);
 	spin_unlock_irq(&target->sighand->siglock);
 }
 
