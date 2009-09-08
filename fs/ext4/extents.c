@@ -1119,8 +1119,7 @@ ext4_ext_search_right(struct inode *inode, struct ext4_ext_path *path,
 	struct ext4_extent_idx *ix;
 	struct ext4_extent *ex;
 	ext4_fsblk_t block;
-	int depth;	/* Note, NOT eh_depth; depth from top of tree */
-	int ee_len;
+	int depth, ee_len;
 
 	BUG_ON(path == NULL);
 	depth = path->p_depth;
@@ -1177,8 +1176,7 @@ got_index:
 		if (bh == NULL)
 			return -EIO;
 		eh = ext_block_hdr(bh);
-		/* subtract from p_depth to get proper eh_depth */
-		if (ext4_ext_check_header(inode, eh, path->p_depth - depth)) {
+		if (ext4_ext_check_header(inode, eh, depth)) {
 			put_bh(bh);
 			return -EIO;
 		}
@@ -1630,13 +1628,11 @@ ext4_ext_put_in_cache(struct inode *inode, ext4_lblk_t block,
 {
 	struct ext4_ext_cache *cex;
 	BUG_ON(len == 0);
-	spin_lock(&EXT4_I(inode)->i_block_reservation_lock);
 	cex = &EXT4_I(inode)->i_cached_extent;
 	cex->ec_type = type;
 	cex->ec_block = block;
 	cex->ec_len = len;
 	cex->ec_start = start;
-	spin_unlock(&EXT4_I(inode)->i_block_reservation_lock);
 }
 
 /*
@@ -1693,17 +1689,12 @@ ext4_ext_in_cache(struct inode *inode, ext4_lblk_t block,
 			struct ext4_extent *ex)
 {
 	struct ext4_ext_cache *cex;
-	int ret = EXT4_EXT_CACHE_NO;
 
-	/*
-	 * We borrow i_block_reservation_lock to protect i_cached_extent
-	 */
-	spin_lock(&EXT4_I(inode)->i_block_reservation_lock);
 	cex = &EXT4_I(inode)->i_cached_extent;
 
 	/* has cache valid data? */
 	if (cex->ec_type == EXT4_EXT_CACHE_NO)
-		goto errout;
+		return EXT4_EXT_CACHE_NO;
 
 	BUG_ON(cex->ec_type != EXT4_EXT_CACHE_GAP &&
 			cex->ec_type != EXT4_EXT_CACHE_EXTENT);
@@ -1714,11 +1705,11 @@ ext4_ext_in_cache(struct inode *inode, ext4_lblk_t block,
 		ext_debug("%u cached by %u:%u:%llu\n",
 				block,
 				cex->ec_block, cex->ec_len, cex->ec_start);
-		ret = cex->ec_type;
+		return cex->ec_type;
 	}
-errout:
-	spin_unlock(&EXT4_I(inode)->i_block_reservation_lock);
-	return ret;
+
+	/* not in cache */
+	return EXT4_EXT_CACHE_NO;
 }
 
 /*

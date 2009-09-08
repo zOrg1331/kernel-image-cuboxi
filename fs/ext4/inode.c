@@ -1027,14 +1027,6 @@ static void ext4_da_update_reserve_space(struct inode *inode, int used)
 	EXT4_I(inode)->i_reserved_data_blocks -= used;
 
 	spin_unlock(&EXT4_I(inode)->i_block_reservation_lock);
-
-	/*
-	 * If we have done all the pending block allocations and if
-	 * there aren't any writers on the inode, we can discard the
-	 * inode's preallocations.
-	 */
-	if (!total && (atomic_read(&inode->i_writecount) == 0))
-		ext4_discard_reservation(inode);
 }
 
 /*
@@ -2766,48 +2758,6 @@ out:
 	return;
 }
 
-/*
- * Force all delayed allocation blocks to be allocated for a given inode.
- */
-int ext4_alloc_da_blocks(struct inode *inode)
-{
-	if (!EXT4_I(inode)->i_reserved_data_blocks &&
-	    !EXT4_I(inode)->i_reserved_meta_blocks)
-		return 0;
-
-	/*
-	 * We do something simple for now.  The filemap_flush() will
-	 * also start triggering a write of the data blocks, which is
-	 * not strictly speaking necessary (and for users of
-	 * laptop_mode, not even desirable).  However, to do otherwise
-	 * would require replicating code paths in:
-	 *
-	 * ext4_da_writepages() ->
-	 *    write_cache_pages() ---> (via passed in callback function)
-	 *        __mpage_da_writepage() -->
-	 *           mpage_add_bh_to_extent()
-	 *           mpage_da_map_blocks()
-	 *
-	 * The problem is that write_cache_pages(), located in
-	 * mm/page-writeback.c, marks pages clean in preparation for
-	 * doing I/O, which is not desirable if we're not planning on
-	 * doing I/O at all.
-	 *
-	 * We could call write_cache_pages(), and then redirty all of
-	 * the pages by calling redirty_page_for_writeback() but that
-	 * would be ugly in the extreme.  So instead we would need to
-	 * replicate parts of the code in the above functions,
-	 * simplifying them becuase we wouldn't actually intend to
-	 * write out the pages, but rather only collect contiguous
-	 * logical block extents, call the multi-block allocator, and
-	 * then update the buffer heads with the block allocations.
-	 *
-	 * For now, though, we'll cheat by calling filemap_flush(),
-	 * which will map the blocks, and start the I/O, but not
-	 * actually wait for the I/O to complete.
-	 */
-	return filemap_flush(inode->i_mapping);
-}
 
 /*
  * bmap() is special.  It gets used by applications such as lilo and by
@@ -3817,9 +3767,6 @@ void ext4_truncate(struct inode *inode)
 	if (!ext4_can_truncate(inode))
 		return;
 
-	if (inode->i_size == 0)
-		ei->i_state |= EXT4_STATE_DA_ALLOC_CLOSE;
-
 	if (EXT4_I(inode)->i_flags & EXT4_EXTENTS_FL) {
 		ext4_ext_truncate(inode);
 		return;
@@ -4230,9 +4177,11 @@ struct inode *ext4_iget(struct super_block *sb, unsigned long ino)
 	ei->i_flags = le32_to_cpu(raw_inode->i_flags);
 	inode->i_blocks = ext4_inode_blocks(raw_inode, ei);
 	ei->i_file_acl = le32_to_cpu(raw_inode->i_file_acl_lo);
-	if (EXT4_HAS_INCOMPAT_FEATURE(sb, EXT4_FEATURE_INCOMPAT_64BIT))
+	if (EXT4_SB(inode->i_sb)->s_es->s_creator_os !=
+	    cpu_to_le32(EXT4_OS_HURD)) {
 		ei->i_file_acl |=
 			((__u64)le16_to_cpu(raw_inode->i_file_acl_high)) << 32;
+	}
 	inode->i_size = ext4_isize(raw_inode);
 	ei->i_disksize = inode->i_size;
 	inode->i_generation = le32_to_cpu(raw_inode->i_generation);
@@ -4279,18 +4228,6 @@ struct inode *ext4_iget(struct super_block *sb, unsigned long ino)
 			(__u64)(le32_to_cpu(raw_inode->i_version_hi)) << 32;
 	}
 
-	if (ei->i_file_acl &&
-	    ((ei->i_file_acl <
-	      (le32_to_cpu(EXT4_SB(sb)->s_es->s_first_data_block) +
-	       EXT4_SB(sb)->s_gdb_count)) ||
-	     (ei->i_file_acl >= ext4_blocks_count(EXT4_SB(sb)->s_es)))) {
-		ext4_error(sb, __func__,
-			   "bad extended attribute block %llu in inode #%lu",
-			   ei->i_file_acl, inode->i_ino);
-		ret = -EIO;
-		goto bad_inode;
-	}
-
 	if (S_ISREG(inode->i_mode)) {
 		inode->i_op = &ext4_file_inode_operations;
 		inode->i_fop = &ext4_file_operations;
@@ -4305,8 +4242,7 @@ struct inode *ext4_iget(struct super_block *sb, unsigned long ino)
 			inode->i_op = &ext4_symlink_inode_operations;
 			ext4_set_aops(inode);
 		}
-	} else if (S_ISCHR(inode->i_mode) || S_ISBLK(inode->i_mode) ||
-	      S_ISFIFO(inode->i_mode) || S_ISSOCK(inode->i_mode)) {
+	} else {
 		inode->i_op = &ext4_special_inode_operations;
 		if (raw_inode->i_block[0])
 			init_special_inode(inode, inode->i_mode,
@@ -4314,13 +4250,6 @@ struct inode *ext4_iget(struct super_block *sb, unsigned long ino)
 		else
 			init_special_inode(inode, inode->i_mode,
 			   new_decode_dev(le32_to_cpu(raw_inode->i_block[1])));
-	} else {
-		brelse(bh);
-		ret = -EIO;
-		ext4_error(inode->i_sb, __func__,
-			   "bogus i_mode (%o) for inode=%lu",
-			   inode->i_mode, inode->i_ino);
-		goto bad_inode;
 	}
 	brelse(iloc.bh);
 	ext4_set_inode_flags(inode);
@@ -5088,9 +5017,8 @@ static int ext4_bh_unmapped(handle_t *handle, struct buffer_head *bh)
 	return !buffer_mapped(bh);
 }
 
-int ext4_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
+int ext4_page_mkwrite(struct vm_area_struct *vma, struct page *page)
 {
-	struct page *page = vmf->page;
 	loff_t size;
 	unsigned long len;
 	int ret = -EINVAL;
@@ -5142,8 +5070,6 @@ int ext4_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 		goto out_unlock;
 	ret = 0;
 out_unlock:
-	if (ret)
-		ret = VM_FAULT_SIGBUS;
 	up_read(&inode->i_alloc_sem);
 	return ret;
 }
