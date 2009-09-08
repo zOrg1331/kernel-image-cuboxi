@@ -812,6 +812,7 @@ static int w_update_odbm(struct drbd_conf *mdev, struct drbd_work *w, int unused
 	if (!get_ldev(mdev)) {
 		if (__ratelimit(&drbd_ratelimit_state))
 			dev_warn(DEV, "Can not update on disk bitmap, local IO disabled.\n");
+		kfree(udw);
 		return 1;
 	}
 
