@@ -720,8 +720,6 @@ static bool utrace_reset(struct task_struct *task, struct utrace *utrace)
 		clear_tsk_thread_flag(task, TIF_SYSCALL_TRACE);
 	}
 
-	task->utrace_flags = flags;
-
 	if (!flags)
 		/*
 		 * No more engines, cleared out the utrace.
@@ -734,7 +732,16 @@ static bool utrace_reset(struct task_struct *task, struct utrace *utrace)
 		 */
 		utrace_wakeup(task, utrace);
 
+	/*
+	 * In theory spin_lock() doesn't imply rcu_read_lock().
+	 * Once we clear ->utrace_flags this task_struct can go away
+	 * because tracehook_prepare_release_task() path does not take
+	 * utrace->lock when ->utrace_flags == 0.
+	 */
+	rcu_read_lock();
+	task->utrace_flags = flags;
 	spin_unlock(&utrace->lock);
+	rcu_read_unlock();
 
 	put_detached_list(&detached);
 
