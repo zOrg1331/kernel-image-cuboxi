@@ -266,7 +266,7 @@ static struct radeon_asic rs400_asic = {
 /*
  * rs600.
  */
-int rs600_init(struct radeon_device *dev);
+int rs600_init(struct radeon_device *rdev);
 void rs600_errata(struct radeon_device *rdev);
 void rs600_vram_info(struct radeon_device *rdev);
 int rs600_mc_init(struct radeon_device *rdev);
