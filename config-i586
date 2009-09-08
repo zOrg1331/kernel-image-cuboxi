@@ -1,5 +1,7 @@
 #
 # Automatically generated make config: don't edit
+# Linux kernel version: 2.6.27.31
+# Tue Sep  8 10:25:19 2009
 #
 # CONFIG_64BIT is not set
 CONFIG_X86_32=y
@@ -4480,7 +4482,7 @@ CONFIG_HAVE_KVM=y
 CONFIG_VIRTUALIZATION=y
 # CONFIG_KVM_KMP is not set
 # CONFIG_KVM is not set
-CONFIG_LGUEST=m
+# CONFIG_LGUEST is not set
 CONFIG_VIRTIO=m
 CONFIG_VIRTIO_RING=m
 CONFIG_VIRTIO_PCI=m
