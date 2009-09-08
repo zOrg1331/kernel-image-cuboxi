@@ -139,55 +139,54 @@ static int utrace_add_engine(struct task_struct *target,
 			     const struct utrace_engine_ops *ops,
 			     void *data)
 {
-	int ret = 0;
+	int ret;
 
 	spin_lock(&utrace->lock);
 
-	if (utrace->reap) {
-		/*
-		 * Already entered utrace_release_task(), cannot attach now.
-		 */
-		ret = -ESRCH;
-	} else if ((flags & UTRACE_ATTACH_EXCLUSIVE) &&
-		   unlikely(matching_engine(utrace, flags, ops, data))) {
-		ret = -EEXIST;
-	} else {
-		/*
-		 * Put the new engine on the pending ->attaching list.
-		 * Make sure it gets onto the ->attached list by the next
-		 * time it's examined.  Setting ->pending_attach ensures
-		 * that start_report() takes the lock and splices the lists
-		 * before the next new reporting pass.
-		 *
-		 * When target == current, it would be safe just to call
-		 * splice_attaching() right here.  But if we're inside a
-		 * callback, that would mean the new engine also gets
-		 * notified about the event that precipitated its own
-		 * creation.  This is not what the user wants.
-		 *
-		 * In case we had no engines before, make sure that
-		 * utrace_flags is not zero.
-		 */
-		if (!target->utrace_flags) {
-			target->utrace_flags = UTRACE_EVENT(REAP);
-			/*
-			 * If we race with tracehook_prepare_release_task()
-			 * make sure that either it sees utrace_flags != 0
-			 * or we see exit_state == EXIT_DEAD.
-			 */
-			smp_mb();
-			if (unlikely(target->exit_state == EXIT_DEAD)) {
-				target->utrace_flags = 0;
-				ret = -ESRCH;
-			}
-		}
+	ret = -EEXIST;
+	if ((flags & UTRACE_ATTACH_EXCLUSIVE) &&
+	     unlikely(matching_engine(utrace, flags, ops, data)))
+		goto unlock;
 
-		if (!ret) {
-			list_add_tail(&engine->entry, &utrace->attaching);
-			utrace->pending_attach = 1;
+	ret = -ESRCH;
+	/* can't attach after utrace_release_task() */
+	if (utrace->reap)
+		goto unlock;
+	/*
+	 * In case we had no engines before, make sure that
+	 * utrace_flags is not zero.
+	 */
+	if (!target->utrace_flags) {
+		target->utrace_flags = UTRACE_EVENT(REAP);
+		/*
+		 * If we race with tracehook_prepare_release_task()
+		 * make sure that either it sees utrace_flags != 0
+		 * or we see exit_state == EXIT_DEAD.
+		 */
+		smp_mb();
+		if (unlikely(target->exit_state == EXIT_DEAD)) {
+			target->utrace_flags = 0;
+			goto unlock;
 		}
 	}
 
+	/*
+	 * Put the new engine on the pending ->attaching list.
+	 * Make sure it gets onto the ->attached list by the next
+	 * time it's examined.  Setting ->pending_attach ensures
+	 * that start_report() takes the lock and splices the lists
+	 * before the next new reporting pass.
+	 *
+	 * When target == current, it would be safe just to call
+	 * splice_attaching() right here.  But if we're inside a
+	 * callback, that would mean the new engine also gets
+	 * notified about the event that precipitated its own
+	 * creation.  This is not what the user wants.
+	 */
+	list_add_tail(&engine->entry, &utrace->attaching);
+	utrace->pending_attach = 1;
+	ret = 0;
+unlock:
 	spin_unlock(&utrace->lock);
 
 	return ret;
