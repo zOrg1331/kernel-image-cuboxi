@@ -58,6 +58,7 @@ obj-$(CONFIG_MACH_E750)		+= e750.o
 obj-$(CONFIG_MACH_E400)		+= e400.o
 obj-$(CONFIG_MACH_E800)		+= e800.o
 obj-$(CONFIG_MACH_PALMTE2)	+= palmte2.o
+obj-$(CONFIG_MACH_PALMTC)	+= palmtc.o
 obj-$(CONFIG_MACH_PALMT5)	+= palmt5.o
 obj-$(CONFIG_MACH_PALMTX)	+= palmtx.o
 obj-$(CONFIG_MACH_PALMLD)	+= palmld.o
@@ -77,6 +78,8 @@ obj-$(CONFIG_MACH_SAAR)		+= saar.o
 obj-$(CONFIG_MACH_ARMCORE)      += cm-x2xx.o cm-x255.o cm-x270.o
 obj-$(CONFIG_MACH_CM_X300)      += cm-x300.o
 obj-$(CONFIG_PXA_EZX)           += ezx.o
+
+obj-$(CONFIG_MACH_XCEP)         += xcep.o
 
 obj-$(CONFIG_MACH_INTELMOTE2)   += imote2.o
 obj-$(CONFIG_MACH_STARGATE2)	+= stargate2.o
