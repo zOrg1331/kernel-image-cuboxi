@@ -210,22 +210,9 @@ struct utrace_engine *utrace_attach_task(
 	struct task_struct *target, int flags,
 	const struct utrace_engine_ops *ops, void *data)
 {
-	struct utrace *utrace;
+	struct utrace *utrace = task_utrace_struct(target);
 	struct utrace_engine *engine;
 	int ret;
-
-	utrace = &target->utrace;
-
-	if (unlikely(target->exit_state == EXIT_DEAD)) {
-		/*
-		 * The target has already been reaped.
-		 * Check this early, though it's not synchronized.
-		 * utrace_add_engine() will do the final check.
-		 */
-		if (!(flags & UTRACE_ATTACH_CREATE))
-			return ERR_PTR(-ENOENT);
-		return ERR_PTR(-ESRCH);
-	}
 
 	if (!(flags & UTRACE_ATTACH_CREATE)) {
 		spin_lock(&utrace->lock);
