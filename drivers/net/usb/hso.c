@@ -771,7 +771,8 @@ static void write_bulk_callback(struct urb *urb)
 }
 
 /* called by kernel when we need to transmit a packet */
-static int hso_net_start_xmit(struct sk_buff *skb, struct net_device *net)
+static netdev_tx_t hso_net_start_xmit(struct sk_buff *skb,
+					    struct net_device *net)
 {
 	struct hso_net *odev = netdev_priv(net);
 	int result;
@@ -780,7 +781,7 @@ static int hso_net_start_xmit(struct sk_buff *skb, struct net_device *net)
 	netif_stop_queue(net);
 	if (hso_get_activity(odev->parent) == -EAGAIN) {
 		odev->skb_tx_buf = skb;
-		return 0;
+		return NETDEV_TX_OK;
 	}
 
 	/* log if asked */
@@ -828,7 +829,7 @@ static void hso_get_drvinfo(struct net_device *net, struct ethtool_drvinfo *info
 	usb_make_path(odev->parent->usb, info->bus_info, sizeof info->bus_info);
 }
 
-static struct ethtool_ops ops = {
+static const struct ethtool_ops ops = {
 	.get_drvinfo = hso_get_drvinfo,
 	.get_link = ethtool_op_get_link
 };
