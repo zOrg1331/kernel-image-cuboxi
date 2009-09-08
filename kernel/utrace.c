@@ -139,7 +139,7 @@ static int utrace_add_engine(struct task_struct *target,
 			     const struct utrace_engine_ops *ops,
 			     void *data)
 {
-	int ret;
+	int ret = 0;
 
 	spin_lock(&utrace->lock);
 
@@ -149,7 +149,7 @@ static int utrace_add_engine(struct task_struct *target,
 		 */
 		ret = -ESRCH;
 	} else if ((flags & UTRACE_ATTACH_EXCLUSIVE) &&
-	    unlikely(matching_engine(utrace, flags, ops, data))) {
+		   unlikely(matching_engine(utrace, flags, ops, data))) {
 		ret = -EEXIST;
 	} else {
 		/*
@@ -168,10 +168,24 @@ static int utrace_add_engine(struct task_struct *target,
 		 * In case we had no engines before, make sure that
 		 * utrace_flags is not zero.
 		 */
-		target->utrace_flags |= UTRACE_EVENT(REAP);
-		list_add_tail(&engine->entry, &utrace->attaching);
-		utrace->pending_attach = 1;
-		ret = 0;
+		if (!target->utrace_flags) {
+			target->utrace_flags = UTRACE_EVENT(REAP);
+			/*
+			 * If we race with tracehook_prepare_release_task()
+			 * make sure that either it sees utrace_flags != 0
+			 * or we see exit_state == EXIT_DEAD.
+			 */
+			smp_mb();
+			if (unlikely(target->exit_state == EXIT_DEAD)) {
+				target->utrace_flags = 0;
+				ret = -ESRCH;
+			}
+		}
+
+		if (!ret) {
+			list_add_tail(&engine->entry, &utrace->attaching);
+			utrace->pending_attach = 1;
+		}
 	}
 
 	spin_unlock(&utrace->lock);
