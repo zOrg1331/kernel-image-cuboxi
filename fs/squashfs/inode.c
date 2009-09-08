@@ -33,6 +33,7 @@
 #include <linux/spinlock.h>
 #include <linux/smp_lock.h>
 #include <linux/exportfs.h>
+#include <linux/sched.h>
 
 #include "squashfs.h"
 
@@ -746,7 +747,6 @@ static int squashfs_read_inode(struct inode *i, squashfs_inode_t inode)
 			long long frag_blk;
 			struct squashfs_reg_inode_header *inodep = &id.reg;
 			struct squashfs_reg_inode_header *sinodep = &sid.reg;
-				
 			if (msblk->swap) {
 				if (!squashfs_get_cached_block(s, sinodep, block, offset,
 						sizeof(*sinodep), &next_block, &next_offset))
@@ -763,7 +763,6 @@ static int squashfs_read_inode(struct inode *i, squashfs_inode_t inode)
 					if(!get_fragment_location(s, inodep->fragment, &frag_blk,
 												&frag_size))
 						goto failed_read;
-				
 			i->i_nlink = 1;
 			i->i_size = inodep->file_size;
 			i->i_fop = &generic_ro_fops;
@@ -789,7 +788,6 @@ static int squashfs_read_inode(struct inode *i, squashfs_inode_t inode)
 			long long frag_blk;
 			struct squashfs_lreg_inode_header *inodep = &id.lreg;
 			struct squashfs_lreg_inode_header *sinodep = &sid.lreg;
-				
 			if (msblk->swap) {
 				if (!squashfs_get_cached_block(s, sinodep, block, offset,
 						sizeof(*sinodep), &next_block, &next_offset))
@@ -806,7 +804,6 @@ static int squashfs_read_inode(struct inode *i, squashfs_inode_t inode)
 				if (!get_fragment_location(s, inodep->fragment, &frag_blk,
 												 &frag_size))
 					goto failed_read;
-				
 			i->i_nlink = inodep->nlink;
 			i->i_size = inodep->file_size;
 			i->i_fop = &generic_ro_fops;
@@ -891,7 +888,6 @@ static int squashfs_read_inode(struct inode *i, squashfs_inode_t inode)
 		case SQUASHFS_SYMLINK_TYPE: {
 			struct squashfs_symlink_inode_header *inodep = &id.symlink;
 			struct squashfs_symlink_inode_header *sinodep = &sid.symlink;
-	
 			if (msblk->swap) {
 				if (!squashfs_get_cached_block(s, sinodep, block, offset,
 						sizeof(*sinodep), &next_block, &next_offset))

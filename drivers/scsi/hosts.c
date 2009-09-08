@@ -464,7 +464,7 @@ static int __scsi_host_match(struct device *dev, void *data)
 struct Scsi_Host *scsi_host_lookup(unsigned short hostnum)
 {
 	struct device *cdev;
-	struct Scsi_Host *shost = ERR_PTR(-ENXIO);
+	struct Scsi_Host *shost = NULL;
 
 	cdev = class_find_device(&shost_class, NULL, &hostnum,
 				 __scsi_host_match);
@@ -472,7 +472,7 @@ struct Scsi_Host *scsi_host_lookup(unsigned short hostnum)
 		shost = scsi_host_get(class_to_shost(cdev));
 		put_device(cdev);
 	}
-	return shost;
+	return shost ? shost : ERR_PTR(-ENXIO);
 }
 EXPORT_SYMBOL(scsi_host_lookup);
 

@@ -21,6 +21,9 @@ config PCI_MSI
 
 	   If you don't know what to do here, say N.
 
+config PCI_REASSIGN
+	bool
+
 config PCI_LEGACY
 	bool "Enable deprecated pci_find_* API"
 	depends on PCI
@@ -45,7 +48,7 @@ config PCI_DEBUG
 config HT_IRQ
 	bool "Interrupts on hypertransport devices"
 	default y
-	depends on PCI && X86_LOCAL_APIC && X86_IO_APIC
+	depends on PCI && X86_LOCAL_APIC && X86_IO_APIC && !XEN
 	help
 	   This allows native hypertransport devices to use interrupts.
 

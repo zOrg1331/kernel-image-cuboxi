@@ -39,7 +39,7 @@ struct page *mem_map;
 unsigned long max_mapnr;
 unsigned long num_physpages;
 unsigned long askedalloc, realalloc;
-atomic_long_t vm_committed_space = ATOMIC_LONG_INIT(0);
+struct percpu_counter vm_committed_as;
 int sysctl_overcommit_memory = OVERCOMMIT_GUESS; /* heuristic overcommit */
 int sysctl_overcommit_ratio = 50; /* default is 50% */
 int sysctl_max_map_count = DEFAULT_MAX_MAP_COUNT;
@@ -1434,12 +1434,9 @@ int __vm_enough_memory(struct mm_struct *mm, long pages, int cap_sys_admin)
 	   leave 3% of the size of this process for other processes */
 	allowed -= current->mm->total_vm / 32;
 
-	/*
-	 * cast `allowed' as a signed long because vm_committed_space
-	 * sometimes has a negative value
-	 */
-	if (atomic_long_read(&vm_committed_space) < (long)allowed)
+	if (percpu_counter_read_positive(&vm_committed_as) < allowed)
 		return 0;
+
 error:
 	vm_unacct_memory(pages);
 

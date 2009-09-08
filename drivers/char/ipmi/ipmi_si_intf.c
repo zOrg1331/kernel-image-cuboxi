@@ -1152,7 +1152,7 @@ static unsigned int num_slave_addrs;
 #define IPMI_MEM_ADDR_SPACE 1
 static char *addr_space_to_str[] = { "i/o", "mem" };
 
-static int hotmod_handler(const char *val, struct kernel_param *kp);
+int hotmod_handler(const char *val, struct kernel_param *kp);
 
 module_param_call(hotmod, hotmod_handler, NULL, NULL, 0200);
 MODULE_PARM_DESC(hotmod, "Add and remove interfaces.  See"
@@ -1574,7 +1574,7 @@ static int check_hotmod_int_op(const char *curr, const char *option,
 	return 0;
 }
 
-static int hotmod_handler(const char *val, struct kernel_param *kp)
+int hotmod_handler(const char *val, struct kernel_param *kp)
 {
 	char *str = kstrdup(val, GFP_KERNEL);
 	int  rv;
@@ -2400,6 +2400,7 @@ static struct of_device_id ipmi_match[] =
 };
 
 static struct of_platform_driver ipmi_of_platform_driver = {
+	.owner		= THIS_MODULE,
 	.name		= "ipmi",
 	.match_table	= ipmi_match,
 	.probe		= ipmi_of_probe,

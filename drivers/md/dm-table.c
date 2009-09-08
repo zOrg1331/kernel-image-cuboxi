@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2001 Sistina Software (UK) Limited.
- * Copyright (C) 2004 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2004-2008 Red Hat, Inc. All rights reserved.
  *
  * This file is released under the GPL.
  */
@@ -15,6 +15,7 @@
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/mutex.h>
+#include <linux/delay.h>
 #include <asm/atomic.h>
 
 #define DM_MSG_PREFIX "table"
@@ -23,6 +24,19 @@
 #define NODE_SIZE L1_CACHE_BYTES
 #define KEYS_PER_NODE (NODE_SIZE / sizeof(sector_t))
 #define CHILDREN_PER_NODE (KEYS_PER_NODE + 1)
+
+/*
+ * The table has always exactly one reference from either mapped_device->map
+ * or hash_cell->new_map. This reference is not counted in table->holders.
+ * A pair of dm_create_table/dm_destroy_table functions is used for table
+ * creation/destruction.
+ *
+ * Temporary references from the other code increase table->holders. A pair
+ * of dm_table_get/dm_table_put functions is used to manipulate it.
+ *
+ * When the table is about to be destroyed, we wait for table->holders to
+ * drop to zero.
+ */
 
 struct dm_table {
 	struct mapped_device *md;
@@ -37,6 +51,9 @@ struct dm_table {
 	unsigned int num_allocated;
 	sector_t *highs;
 	struct dm_target *targets;
+
+	unsigned single_device : 1;
+	unsigned barrier_supported : 1;
 
 	/*
 	 * Indicates the rw permissions for the new logical
@@ -108,6 +125,8 @@ static void combine_restrictions_low(struct io_restrictions *lhs,
 	lhs->bounce_pfn = min_not_zero(lhs->bounce_pfn, rhs->bounce_pfn);
 
 	lhs->no_cluster |= rhs->no_cluster;
+
+	lhs->no_request_stacking |= rhs->no_request_stacking;
 }
 
 /*
@@ -226,7 +245,7 @@ int dm_table_create(struct dm_table **result, int mode,
 		return -ENOMEM;
 
 	INIT_LIST_HEAD(&t->devices);
-	atomic_set(&t->holders, 1);
+	atomic_set(&t->holders, 0);
 
 	if (!num_targets)
 		num_targets = KEYS_PER_NODE;
@@ -255,9 +274,13 @@ static void free_devices(struct list_head *devices)
 	}
 }
 
-static void table_destroy(struct dm_table *t)
+void dm_table_destroy(struct dm_table *t)
 {
 	unsigned int i;
+
+	while (atomic_read(&t->holders))
+		msleep(1);
+	smp_mb();
 
 	/* free the indexes (see dm_table_complete) */
 	if (t->depth >= 2)
@@ -296,8 +319,8 @@ void dm_table_put(struct dm_table *t)
 	if (!t)
 		return;
 
-	if (atomic_dec_and_test(&t->holders))
-		table_destroy(t);
+	smp_mb__before_atomic_dec();
+	atomic_dec(&t->holders);
 }
 
 /*
@@ -401,27 +424,33 @@ static int check_device_area(struct dm_dev *dd, sector_t start, sector_t len)
 }
 
 /*
- * This upgrades the mode on an already open dm_dev.  Being
+ * This upgrades the mode on an already open dm_dev, being
  * careful to leave things as they were if we fail to reopen the
- * device.
+ * device and not to touch the existing bdev field in case
+ * it is accessed concurrently inside dm_table_any_congested().
  */
 static int upgrade_mode(struct dm_dev *dd, int new_mode, struct mapped_device *md)
 {
 	int r;
-	struct dm_dev dd_copy;
-	dev_t dev = dd->bdev->bd_dev;
+	struct dm_dev dd_new, dd_old;
 
-	dd_copy = *dd;
+	dd_new = dd_old = *dd;
+
+	dd_new.mode = new_mode;
+	dd_new.bdev = NULL;
+
+	r = open_dev(&dd_new, dd->bdev->bd_dev, md);
+	if (r == -EROFS) {
+		dd_new.mode &= ~FMODE_WRITE;
+		r = open_dev(&dd_new, dd->bdev->bd_dev, md);
+	}
+	if (r)
+		return r;
 
 	dd->mode |= new_mode;
-	dd->bdev = NULL;
-	r = open_dev(dd, dev, md);
-	if (!r)
-		close_dev(&dd_copy, md);
-	else
-		*dd = dd_copy;
+	close_dev(&dd_old, md);
 
-	return r;
+	return 0;
 }
 
 /*
@@ -459,17 +488,25 @@ static int __table_get_device(struct dm_table *t, struct dm_target *ti,
 		dd->mode = mode;
 		dd->bdev = NULL;
 
-		if ((r = open_dev(dd, dev, t->md))) {
+		r = open_dev(dd, dev, t->md);
+		if (r == -EROFS) {
+			dd->mode &= ~FMODE_WRITE;
+			r = open_dev(dd, dev, t->md);
+		}
+		if (r) {
 			kfree(dd);
 			return r;
 		}
+
+		if (dd->mode != mode)
+			t->mode = dd->mode;
 
 		format_dev_t(dd->name, dev);
 
 		atomic_set(&dd->count, 0);
 		list_add(&dd->list, &t->devices);
 
-	} else if (dd->mode != (mode | dd->mode)) {
+	} else if (dd->mode != mode) {
 		r = upgrade_mode(dd, mode, t->md);
 		if (r)
 			return r;
@@ -535,17 +572,28 @@ void dm_set_device_limits(struct dm_target *ti, struct block_device *bdev)
 	rs->bounce_pfn = min_not_zero(rs->bounce_pfn, q->bounce_pfn);
 
 	rs->no_cluster |= !test_bit(QUEUE_FLAG_CLUSTER, &q->queue_flags);
+
+	rs->no_request_stacking |= !blk_queue_stackable(q);
 }
 EXPORT_SYMBOL_GPL(dm_set_device_limits);
 
 int dm_get_device(struct dm_target *ti, const char *path, sector_t start,
 		  sector_t len, int mode, struct dm_dev **result)
 {
-	int r = __table_get_device(ti->table, ti, path,
+	struct dm_table *t = ti->table;
+	int r = __table_get_device(t, ti, path,
 				   start, len, mode, result);
 
 	if (!r)
 		dm_set_device_limits(ti, (*result)->bdev);
+
+	if (!r) {
+		/* Only got single device? */
+		if (t->devices.next->next == &t->devices)
+			t->single_device = 1;
+		else
+			t->single_device = 0;
+	}
 
 	return r;
 }
@@ -555,6 +603,9 @@ int dm_get_device(struct dm_target *ti, const char *path, sector_t start,
  */
 void dm_put_device(struct dm_target *ti, struct dm_dev *dd)
 {
+	if (!dd)
+		return;
+
 	if (atomic_dec_and_test(&dd->count)) {
 		close_dev(dd, ti->table->md);
 		list_del(&dd->list);
@@ -676,7 +727,7 @@ static void check_for_valid_limits(struct io_restrictions *rs)
 	if (!rs->max_segment_size)
 		rs->max_segment_size = MAX_SEGMENT_SIZE;
 	if (!rs->seg_boundary_mask)
-		rs->seg_boundary_mask = -1;
+		rs->seg_boundary_mask = BLK_SEG_BOUNDARY_MASK;
 	if (!rs->bounce_pfn)
 		rs->bounce_pfn = -1;
 }
@@ -742,6 +793,66 @@ int dm_table_add_target(struct dm_table *t, const char *type,
 	DMERR("%s: %s: %s", dm_device_name(t->md), type, tgt->error);
 	dm_put_target_type(tgt->type);
 	return r;
+}
+
+int dm_table_set_type(struct dm_table *t)
+{
+	int i;
+	int bio_based = 0, request_based = 0;
+	struct dm_target *tgt;
+
+	for (i = 0; i < t->num_targets; i++) {
+		tgt = t->targets + i;
+		if (tgt->type->map_rq)
+			request_based = 1;
+		else
+			bio_based = 1;
+
+		if (bio_based && request_based) {
+			DMWARN("Inconsistent table: different target types"
+			       " can't be mixed up");
+			return -EINVAL;
+		}
+	}
+
+	if (bio_based) {
+		/* We must use this table as bio-based */
+		t->limits.no_request_stacking = 1;
+		return 0;
+	}
+
+	BUG_ON(!request_based); /* No targets in this table */
+
+	/* Non-request-stackable devices can't be used for request-based dm */
+	if (t->limits.no_request_stacking) {
+		DMWARN("table load rejected: including non-request-stackable"
+		       " devices");
+		return -EINVAL;
+	}
+
+	/*
+	 * Request-based dm supports only tables that have a single target now.
+	 * To support multiple targets, request splitting support is needed,
+	 * and that needs lots of changes in the block-layer.
+	 * (e.g. request completion process for partial completion.)
+	 */
+	if (t->num_targets > 1) {
+		DMWARN("Request-based dm doesn't support multiple targets yet");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+int dm_table_get_type(struct dm_table *t)
+{
+	return t->limits.no_request_stacking ?
+		DM_TYPE_BIO_BASED : DM_TYPE_REQUEST_BASED;
+}
+
+int dm_table_request_based(struct dm_table *t)
+{
+	return dm_table_get_type(t) == DM_TYPE_REQUEST_BASED;
 }
 
 static int setup_indexes(struct dm_table *t)
@@ -874,6 +985,47 @@ void dm_table_set_restrictions(struct dm_table *t, struct request_queue *q)
 	else
 		queue_flag_set_unlocked(QUEUE_FLAG_CLUSTER, q);
 
+	if (t->limits.no_request_stacking)
+		queue_flag_clear_unlocked(QUEUE_FLAG_STACKABLE, q);
+	else
+		queue_flag_set_unlocked(QUEUE_FLAG_STACKABLE, q);
+}
+
+void dm_table_set_integrity(struct dm_table *t, struct mapped_device *md)
+{
+	struct list_head *devices = dm_table_get_devices(t);
+	struct dm_dev *prev, *cur;
+
+	/*
+	 * Run through all devices to ensure they have matching
+	 * integrity profile
+	 */
+	cur = prev = NULL;
+
+	list_for_each_entry(cur, devices, list) {
+
+		if (prev && blk_integrity_compare(prev->bdev->bd_disk,
+						  cur->bdev->bd_disk) < 0) {
+			printk(KERN_ERR "%s: %s %s Integrity mismatch!\n",
+			       __func__, prev->bdev->bd_disk->disk_name,
+			       cur->bdev->bd_disk->disk_name);
+			return;
+		}
+		prev = cur;
+	}
+
+	/* Register dm device as being integrity capable */
+	if (prev && bdev_get_integrity(prev->bdev)) {
+		struct gendisk *disk = dm_disk(md);
+
+		if (blk_integrity_register(dm_disk(md),
+					   bdev_get_integrity(prev->bdev)))
+			printk(KERN_ERR "%s: %s Could not register integrity!\n",
+			       __func__, disk->disk_name);
+		else
+			printk(KERN_INFO "Enabling data integrity on %s\n",
+			       disk->disk_name);
+	}
 }
 
 unsigned int dm_table_get_num_targets(struct dm_table *t)
@@ -962,6 +1114,20 @@ int dm_table_any_congested(struct dm_table *t, int bdi_bits)
 	return r;
 }
 
+int dm_table_any_busy_target(struct dm_table *t)
+{
+	int i;
+	struct dm_target *ti;
+
+	for (i = 0; i < t->num_targets; i++) {
+		ti = t->targets + i;
+		if (ti->type->busy && ti->type->busy(ti))
+			return 1;
+	}
+
+	return 0;
+}
+
 void dm_table_unplug_all(struct dm_table *t)
 {
 	struct dm_dev *dd;
@@ -981,6 +1147,16 @@ struct mapped_device *dm_table_get_md(struct dm_table *t)
 	return t->md;
 }
 
+int dm_table_barrier_ok(struct dm_table *t)
+{
+	return t->single_device && t->barrier_supported;
+}
+
+void dm_table_support_barrier(struct dm_table *t)
+{
+	t->barrier_supported = 1;
+}
+
 EXPORT_SYMBOL(dm_vcalloc);
 EXPORT_SYMBOL(dm_get_device);
 EXPORT_SYMBOL(dm_put_device);
@@ -991,3 +1167,5 @@ EXPORT_SYMBOL(dm_table_get_md);
 EXPORT_SYMBOL(dm_table_put);
 EXPORT_SYMBOL(dm_table_get);
 EXPORT_SYMBOL(dm_table_unplug_all);
+EXPORT_SYMBOL(dm_table_barrier_ok);
+EXPORT_SYMBOL(dm_table_support_barrier);

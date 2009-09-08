@@ -34,6 +34,7 @@
 #include <asm/sections.h>
 #include <asm/setup.h>
 #include <asm/genapic.h>
+#include <asm/hypervisor.h>
 
 #include "cpu.h"
 
@@ -127,6 +128,9 @@ void __cpuinit detect_ht(struct cpuinfo_x86 *c)
 #ifdef CONFIG_SMP
 	u32 eax, ebx, ecx, edx;
 	int index_msb, core_bits;
+
+	if (cpu_has(c, X86_FEATURE_XTOPOLOGY))
+		return;
 
 	cpuid(1, &eax, &ebx, &ecx, &edx);
 
@@ -384,6 +388,7 @@ static void __cpuinit identify_cpu(struct cpuinfo_x86 *c)
 
 	detect_ht(c);
 
+	init_hypervisor(c);
 	/*
 	 * On SMP, boot_cpu_data holds the common feature set between
 	 * all CPUs; so make sure that we indicate which features are
@@ -636,6 +641,8 @@ void __cpuinit cpu_init(void)
 	barrier();
 
 	check_efer();
+	if (cpu != 0 && x2apic)
+		enable_x2apic();
 
 	/*
 	 * set up and load the per-CPU TSS

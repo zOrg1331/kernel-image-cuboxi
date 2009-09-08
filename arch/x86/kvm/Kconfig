@@ -7,6 +7,7 @@ config HAVE_KVM
 menuconfig VIRTUALIZATION
 	bool "Virtualization"
 	depends on HAVE_KVM || X86
+	depends on !XEN
 	default y
 	---help---
 	  Say Y here to get to see options for using your Linux host to run other
@@ -16,6 +17,20 @@ menuconfig VIRTUALIZATION
 	  If you say N, all options in this submenu will be skipped and disabled.
 
 if VIRTUALIZATION
+
+config KVM_KMP
+	bool "Build Kernel-based Virtual Machine (KVM) as KMP"
+	depends on HAVE_KVM
+	select PREEMPT_NOTIFIERS
+	select MMU_NOTIFIER
+	select ANON_INODES
+	---help---
+	  Normally KVM has to be enabled in the kernel config to automatically
+	  select depending features. Because we are building KVM as a KMP, we
+	  need the chance to only select the dependencies, but not build KVM
+	  itself.
+
+	  Say Y here.
 
 config KVM
 	tristate "Kernel-based Virtual Machine (KVM) support"

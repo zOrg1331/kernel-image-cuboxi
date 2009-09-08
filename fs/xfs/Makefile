@@ -38,6 +38,8 @@ ifeq ($(CONFIG_XFS_QUOTA),y)
 xfs-$(CONFIG_PROC_FS)		+= quota/xfs_qm_stats.o
 endif
 
+obj-$(CONFIG_XFS_DMAPI)         += dmapi/
+
 xfs-$(CONFIG_XFS_RT)		+= xfs_rtalloc.o
 xfs-$(CONFIG_XFS_POSIX_ACL)	+= xfs_acl.o
 xfs-$(CONFIG_PROC_FS)		+= $(XFS_LINUX)/xfs_stats.o
@@ -107,7 +109,8 @@ xfs-y				+= $(addprefix $(XFS_LINUX)/, \
 				   xfs_lrw.o \
 				   xfs_super.o \
 				   xfs_vnode.o \
-				   xfs_xattr.o)
+				   xfs_xattr.o \
+				   xfs_ksyms.o)
 
 # Objects in support/
 xfs-y				+= $(addprefix support/, \

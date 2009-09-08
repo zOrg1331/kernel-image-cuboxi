@@ -31,7 +31,7 @@
  * from ext4_file_open: open gets called at every open, but release
  * gets called only when /all/ the files are closed.
  */
-static int ext4_release_file (struct inode * inode, struct file * filp)
+static int ext4_release_file(struct inode *inode, struct file *filp)
 {
 	if (EXT4_I(inode)->i_state & EXT4_STATE_DA_ALLOC_CLOSE) {
 		ext4_alloc_da_blocks(inode);
@@ -43,7 +43,7 @@ static int ext4_release_file (struct inode * inode, struct file * filp)
 		        !EXT4_I(inode)->i_reserved_data_blocks)
 	{
 		down_write(&EXT4_I(inode)->i_data_sem);
-		ext4_discard_reservation(inode);
+		ext4_discard_preallocations(inode);
 		up_write(&EXT4_I(inode)->i_data_sem);
 	}
 	if (is_dx(inode) && filp->private_data)
@@ -167,7 +167,7 @@ const struct inode_operations ext4_file_inode_operations = {
 	.truncate	= ext4_truncate,
 	.setattr	= ext4_setattr,
 	.getattr	= ext4_getattr,
-#ifdef CONFIG_EXT4DEV_FS_XATTR
+#if defined(CONFIG_EXT4_FS_XATTR) || defined(CONFIG_EXT4DEV_FS_XATTR)
 	.setxattr	= generic_setxattr,
 	.getxattr	= generic_getxattr,
 	.listxattr	= ext4_listxattr,

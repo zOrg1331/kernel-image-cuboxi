@@ -43,13 +43,6 @@ struct blk_queue_tags;
 #define DISABLE_CLUSTERING 0
 #define ENABLE_CLUSTERING 1
 
-enum scsi_eh_timer_return {
-	EH_NOT_HANDLED,
-	EH_HANDLED,
-	EH_RESET_TIMER,
-};
-
-
 struct scsi_host_template {
 	struct module *module;
 	const char *name;
@@ -347,7 +340,7 @@ struct scsi_host_template {
 	 *
 	 * Status: OPTIONAL
 	 */
-	enum scsi_eh_timer_return (* eh_timed_out)(struct scsi_cmnd *);
+	enum blk_eh_timer_return (*eh_timed_out)(struct scsi_cmnd *);
 
 	/*
 	 * Name of proc directory
@@ -696,6 +689,10 @@ static inline void *shost_priv(struct Scsi_Host *shost)
 
 int scsi_is_host_device(const struct device *);
 
+/*
+ * walks object list backward, to find the first shost object.
+ * Skips over transport objects that may not be stargets, etc
+ */
 static inline struct Scsi_Host *dev_to_shost(struct device *dev)
 {
 	while (!scsi_is_host_device(dev)) {
@@ -704,6 +701,26 @@ static inline struct Scsi_Host *dev_to_shost(struct device *dev)
 		dev = dev->parent;
 	}
 	return container_of(dev, struct Scsi_Host, shost_gendev);
+}
+
+/*
+ * walks object list backward, to find the first physical
+ * device object. If none is found return the original device.
+ */
+static inline struct device *dev_to_nonscsi_dev(struct device *dev)
+{
+	struct device *orig = dev;
+
+	while (dev && (dev->bus == NULL || scsi_is_host_device(dev))) {
+		if (dev->dma_parms) {
+			dev_printk(KERN_WARNING, dev,
+				   "dma_parms set, bus %p\n",
+				   dev->bus);
+			break;
+		}
+		dev = dev->parent;
+	}
+	return dev?dev:orig;
 }
 
 static inline int scsi_host_in_recovery(struct Scsi_Host *shost)

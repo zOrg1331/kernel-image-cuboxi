@@ -16,6 +16,9 @@
 #include <linux/types.h>
 #include <linux/spinlock.h>
 #include <asm/atomic.h>
+#ifdef CONFIG_XEN
+#include <xen/interface/xenoprof.h>
+#endif
  
 /* Each escaped entry is prefixed by ESCAPE_CODE
  * then one of the following codes, then the
@@ -28,7 +31,7 @@
 #define CPU_SWITCH_CODE			2
 #define COOKIE_SWITCH_CODE		3
 #define KERNEL_ENTER_SWITCH_CODE	4
-#define KERNEL_EXIT_SWITCH_CODE		5
+#define USER_ENTER_SWITCH_CODE		5
 #define MODULE_LOADED_CODE		6
 #define CTX_TGID_CODE			7
 #define TRACE_BEGIN_CODE		8
@@ -36,6 +39,7 @@
 #define XEN_ENTER_SWITCH_CODE		10
 #define SPU_PROFILING_CODE		11
 #define SPU_CTX_SWITCH_CODE		12
+#define DOMAIN_SWITCH_CODE		13
 
 struct super_block;
 struct dentry;
@@ -47,6 +51,12 @@ struct oprofile_operations {
 	/* create any necessary configuration files in the oprofile fs.
 	 * Optional. */
 	int (*create_files)(struct super_block * sb, struct dentry * root);
+#ifdef CONFIG_XEN
+	/* setup active domains with Xen */
+	int (*set_active)(int *active_domains, unsigned int adomains);
+        /* setup passive domains with Xen */
+        int (*set_passive)(int *passive_domains, unsigned int pdomains);
+#endif
 	/* Do any necessary interrupt setup. Optional. */
 	int (*setup)(void);
 	/* Do any necessary interrupt shutdown. Optional. */
@@ -84,13 +94,6 @@ int oprofile_arch_init(struct oprofile_operations * ops);
 void oprofile_arch_exit(void);
 
 /**
- * Add data to the event buffer.
- * The data passed is free-form, but typically consists of
- * file offsets, dcookies, context information, and ESCAPE codes.
- */
-void add_event_entry(unsigned long data);
-
-/**
  * Add a sample. This may be called from any context. Pass
  * smp_processor_id() as cpu.
  */
@@ -113,6 +116,10 @@ void oprofile_add_pc(unsigned long pc, int is_kernel, unsigned long event);
 /* add a backtrace entry, to be called from the ->backtrace callback */
 void oprofile_add_trace(unsigned long eip);
 
+void oprofile_add_mode(int cpu_mode);
+
+/* add a domain switch entry */
+int oprofile_add_domain_switch(int32_t domain_id);
 
 /**
  * Create a file of the given name as a child of the given root, with
@@ -160,5 +167,14 @@ int oprofilefs_ulong_from_user(unsigned long * val, char const __user * buf, siz
 
 /** lock for read/write safety */
 extern spinlock_t oprofilefs_lock;
+
+/**
+ * Add the contents of a circular buffer to the event buffer.
+ */
+void oprofile_put_buff(unsigned long *buf, unsigned int start,
+			unsigned int stop, unsigned int max);
+
+unsigned long oprofile_get_cpu_buffer_size(void);
+void oprofile_cpu_buffer_inc_smpl_lost(void);
  
 #endif /* OPROFILE_H */

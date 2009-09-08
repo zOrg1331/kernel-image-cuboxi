@@ -56,7 +56,7 @@ static int read_fragment_index_table_2(struct super_block *s)
 		ERROR("Failed to allocate uid/gid table\n");
 		return 0;
 	}
-   
+
 	if (SQUASHFS_FRAGMENT_INDEX_BYTES_2(sblk->fragments) &&
 					!squashfs_read_data(s, (char *)
 					msblk->fragment_index_2,

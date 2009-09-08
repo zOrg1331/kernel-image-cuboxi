@@ -7,6 +7,8 @@ mainmenu "IA-64 Linux Kernel Configuration"
 
 source "init/Kconfig"
 
+source "kernel/Kconfig.freezer"
+
 menu "Processor type and features"
 
 config IA64
@@ -470,13 +472,14 @@ config COMPAT_FOR_U64_ALIGNMENT
 config IA64_MCA_RECOVERY
 	tristate "MCA recovery from errors other than TLB."
 
-config PERFMON
-	bool "Performance monitor support"
+config IA64_CPE_MIGRATE
+	tristate "Migrate data off pages with correctable errors"
+	default m
 	help
-	  Selects whether support for the IA-64 performance monitor hardware
-	  is included in the kernel.  This makes some kernel data-structures a
-	  little bigger and slows down execution a bit, but it is generally
-	  a good idea to turn this on.  If you're unsure, say Y.
+	  Migrate data off pages with correctable memory errors.  Selecting
+	  Y will build this functionality into the kernel.  Selecting M will
+	  build this functionality as a kernel loadable module.  Installing
+	  the module will turn on the functionality.
 
 config IA64_PALINFO
 	tristate "/proc/pal support"
@@ -501,6 +504,7 @@ config IA64_MC_ERR_INJECT
 
 config SGI_SN
 	def_bool y if (IA64_SGI_SN2 || IA64_GENERIC)
+	select HAVE_UNSTABLE_SCHED_CLOCK
 
 config IA64_ESI
 	bool "ESI (Extensible SAL Interface) support"
@@ -548,6 +552,8 @@ config CRASH_DUMP
 source "drivers/firmware/Kconfig"
 
 source "fs/Kconfig.binfmt"
+
+source "arch/ia64/perfmon/Kconfig"
 
 endmenu
 

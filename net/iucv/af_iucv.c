@@ -8,6 +8,8 @@
  *  Author(s):	Jennifer Hunt <jenhunt@us.ibm.com>
  */
 
+#define KMSG_COMPONENT "af_iucv"
+
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/list.h>
@@ -616,6 +618,8 @@ static int iucv_sock_sendmsg(struct kiocb *iocb, struct socket *sock,
 	struct iucv_sock *iucv = iucv_sk(sk);
 	struct sk_buff *skb;
 	struct iucv_message txmsg;
+	char user_id[9];
+	char appl_id[9];
 	int err;
 
 	err = sock_error(sk);
@@ -651,8 +655,15 @@ static int iucv_sock_sendmsg(struct kiocb *iocb, struct socket *sock,
 		err = iucv_message_send(iucv->path, &txmsg, 0, 0,
 					(void *) skb->data, skb->len);
 		if (err) {
-			if (err == 3)
-				printk(KERN_ERR "AF_IUCV msg limit exceeded\n");
+			if (err == 3) {
+				user_id[8] = 0;
+				memcpy(user_id, iucv->dst_user_id, 8);
+				appl_id[8] = 0;
+				memcpy(appl_id, iucv->dst_name, 8);
+				pr_err("Application %s on z/VM guest %s"
+				       " exceeds message limit\n",
+				       user_id, appl_id);
+			}
 			skb_unlink(skb, &iucv->send_skb_q);
 			err = -EPIPE;
 			goto fail;
@@ -778,6 +789,8 @@ static int iucv_sock_recvmsg(struct kiocb *iocb, struct socket *sock,
 
 	target = sock_rcvlowat(sk, flags & MSG_WAITALL, len);
 
+	/* receive/dequeue next skb:
+	 * the function understands MSG_PEEK and, thus, does not dequeue skb */
 	skb = skb_recv_datagram(sk, flags, noblock, &err);
 	if (!skb) {
 		if (sk->sk_shutdown & RCV_SHUTDOWN)
@@ -825,9 +838,7 @@ static int iucv_sock_recvmsg(struct kiocb *iocb, struct socket *sock,
 				iucv_process_message_q(sk);
 			spin_unlock_bh(&iucv->message_q.lock);
 		}
-
-	} else
-		skb_queue_head(&sk->sk_receive_queue, skb);
+	}
 
 done:
 	return err ? : copied;
@@ -1078,6 +1089,8 @@ static void iucv_callback_rx(struct iucv_path *path, struct iucv_message *msg)
 	if (sk->sk_shutdown & RCV_SHUTDOWN)
 		return;
 
+	spin_lock(&iucv->message_q.lock);
+
 	if (!list_empty(&iucv->message_q.list) ||
 	    !skb_queue_empty(&iucv->backlog_skb_q))
 		goto save_message;
@@ -1091,11 +1104,8 @@ static void iucv_callback_rx(struct iucv_path *path, struct iucv_message *msg)
 	if (!skb)
 		goto save_message;
 
-	spin_lock(&iucv->message_q.lock);
 	iucv_process_message(sk, skb, path, msg);
-	spin_unlock(&iucv->message_q.lock);
-
-	return;
+	goto out_unlock;
 
 save_message:
 	save_msg = kzalloc(sizeof(struct sock_msg_q), GFP_ATOMIC | GFP_DMA);
@@ -1104,8 +1114,9 @@ save_message:
 	save_msg->path = path;
 	save_msg->msg = *msg;
 
-	spin_lock(&iucv->message_q.lock);
 	list_add_tail(&save_msg->list, &iucv->message_q.list);
+
+out_unlock:
 	spin_unlock(&iucv->message_q.lock);
 }
 
@@ -1190,7 +1201,8 @@ static int __init afiucv_init(void)
 	int err;
 
 	if (!MACHINE_IS_VM) {
-		printk(KERN_ERR "AF_IUCV connection needs VM as base\n");
+		pr_err("The af_iucv module cannot be loaded"
+		       " without z/VM\n");
 		err = -EPROTONOSUPPORT;
 		goto out;
 	}

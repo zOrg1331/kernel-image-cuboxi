@@ -409,6 +409,12 @@ config SUNVDC
 	  Support for virtual disk devices as a client under Sun
 	  Logical Domains.
 
+config CIPHER_TWOFISH
+	tristate "Twofish encryption for loop device for old S.u.S.E. crypto partitions"
+	depends on BLK_DEV_LOOP
+	help
+	  Say Y here if you want to support old S.u.S.E. crypto partitions.
+
 source "drivers/s390/block/Kconfig"
 
 config XILINX_SYSACE
@@ -417,9 +423,9 @@ config XILINX_SYSACE
 	help
 	  Include support for the Xilinx SystemACE CompactFlash interface
 
-config XEN_BLKDEV_FRONTEND
+config XEN_BLKFRONT
 	tristate "Xen virtual block device support"
-	depends on XEN
+	depends on PARAVIRT_XEN
 	default y
 	help
 	  This driver implements the front-end of the Xen virtual

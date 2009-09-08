@@ -308,7 +308,7 @@ SYSCALL_DEFINE4(readlinkat, int, dfd, const char __user *, pathname,
 
 		error = -EINVAL;
 		if (inode->i_op && inode->i_op->readlink) {
-			error = security_inode_readlink(path.dentry);
+			error = security_inode_readlink(path.dentry, path.mnt);
 			if (!error) {
 				touch_atime(path.mnt, path.dentry);
 				error = inode->i_op->readlink(path.dentry,

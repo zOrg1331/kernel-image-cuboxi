@@ -25,4 +25,5 @@ obj-$(CONFIG_DRM_SIS)   += sis/
 obj-$(CONFIG_DRM_SAVAGE)+= savage/
 obj-$(CONFIG_DRM_VIA)	+=via/
 obj-$(CONFIG_DRM_MACH64)+= mach64/
+obj-$(CONFIG_DRM_VIA_CHROME9)	+=via_chrome9/
 

@@ -46,6 +46,10 @@
 #include <linux/edac.h>
 #endif
 
+#ifdef CONFIG_KDB
+#include <linux/kdb.h>
+#endif /* CONFIG_KDB */
+
 #include <asm/arch_hooks.h>
 #include <asm/stacktrace.h>
 #include <asm/processor.h>
@@ -79,8 +83,14 @@ gate_desc idt_table[256]
 	__attribute__((__section__(".data.idt"))) = { { { { 0, 0 } } }, };
 
 int panic_on_unrecovered_nmi;
+int panic_on_io_nmi;
 int kstack_depth_to_print = 24;
 static unsigned int code_bytes = 64;
+#ifdef CONFIG_STACK_UNWIND
+static int call_trace = 1;
+#else
+#define call_trace (-1)
+#endif
 static int ignore_nmis;
 static int die_counter;
 
@@ -151,12 +161,73 @@ print_context_stack(struct thread_info *tinfo,
 	return bp;
 }
 
+struct ops_and_data {
+	const struct stacktrace_ops *ops;
+	void *data;
+};
+
+static asmlinkage int
+dump_trace_unwind(struct unwind_frame_info *info, void *data)
+{
+	struct ops_and_data *oad = (struct ops_and_data *)data;
+	int n = 0;
+	unsigned long sp = UNW_SP(info);
+
+	if (arch_unw_user_mode(info))
+		return -1;
+	while (unwind(info) == 0 && UNW_PC(info)) {
+		n++;
+		oad->ops->address(oad->data, UNW_PC(info), 1);
+		if (arch_unw_user_mode(info))
+			break;
+		if ((sp & ~(PAGE_SIZE - 1)) == (UNW_SP(info) & ~(PAGE_SIZE - 1))
+		    && sp > UNW_SP(info))
+			break;
+		sp = UNW_SP(info);
+	}
+	return n;
+}
+
 void dump_trace(struct task_struct *task, struct pt_regs *regs,
 		unsigned long *stack, unsigned long bp,
 		const struct stacktrace_ops *ops, void *data)
 {
 	if (!task)
 		task = current;
+
+	if (call_trace >= 0) {
+		int unw_ret = 0;
+		struct unwind_frame_info info;
+		struct ops_and_data oad = { .ops = ops, .data = data };
+
+		if (regs) {
+			if (unwind_init_frame_info(&info, task, regs) == 0)
+				unw_ret = dump_trace_unwind(&info, &oad);
+		} else if (task == current)
+			unw_ret = unwind_init_running(&info, dump_trace_unwind, &oad);
+		else {
+			if (unwind_init_blocked(&info, task) == 0)
+				unw_ret = dump_trace_unwind(&info, &oad);
+		}
+		if (unw_ret > 0) {
+			if (call_trace == 1 && !arch_unw_user_mode(&info)) {
+				ops->warning_symbol(data, "DWARF2 unwinder stuck at %s\n",
+					     UNW_PC(&info));
+				if (UNW_SP(&info) >= PAGE_OFFSET) {
+					ops->warning(data, "Leftover inexact backtrace:\n");
+					stack = (void *)UNW_SP(&info);
+					if (!stack)
+						return;
+					bp = UNW_FP(&info);
+				} else
+					ops->warning(data, "Full inexact backtrace again:\n");
+			} else if (call_trace >= 1)
+				return;
+			else
+				ops->warning(data, "Full inexact backtrace again:\n");
+		} else
+			ops->warning(data, "Inexact backtrace:\n");
+	}
 
 	if (!stack) {
 		unsigned long dummy;
@@ -395,6 +466,9 @@ void __kprobes oops_end(unsigned long flags, struct pt_regs *regs, int signr)
 	add_taint(TAINT_DIE);
 	__raw_spin_unlock(&die_lock);
 	raw_local_irq_restore(flags);
+#ifdef CONFIG_KDB
+	kdb(KDB_REASON_OOPS, signr, regs);
+#endif /* CONFIG_KDB */
 
 	if (!regs)
 		return;
@@ -428,6 +502,8 @@ int __kprobes __die(const char *str, struct pt_regs *regs, long err)
 	printk("DEBUG_PAGEALLOC");
 #endif
 	printk("\n");
+
+	sysfs_printk_last_file();
 	if (notify_die(DIE_OOPS, str, regs, err,
 			current->thread.trap_no, SIGSEGV) == NOTIFY_STOP)
 		return 1;
@@ -463,6 +539,9 @@ void die(const char *str, struct pt_regs *regs, long err)
 		printk(KERN_EMERG "Recursive die() failure, output suppressed\n");
 	}
 
+#ifdef CONFIG_KDB
+	kdb_diemsg = str;
+#endif /* CONFIG_KDB */
 	oops_end(flags, regs, SIGSEGV);
 }
 
@@ -573,7 +652,7 @@ void do_##name(struct pt_regs *regs, long error_code)			\
 }
 
 DO_VM86_ERROR_INFO(0, SIGFPE, "divide error", divide_error, FPE_INTDIV, regs->ip)
-#ifndef CONFIG_KPROBES
+#if !defined(CONFIG_KPROBES) && !defined(CONFIG_KDB)
 DO_VM86_ERROR(3, SIGTRAP, "int3", int3)
 #endif
 DO_VM86_ERROR(4, SIGSEGV, "overflow", overflow)
@@ -701,6 +780,9 @@ io_check_error(unsigned char reason, struct pt_regs *regs)
 	printk(KERN_EMERG "NMI: IOCK error (debug interrupt?)\n");
 	show_registers(regs);
 
+	if (panic_on_io_nmi)
+		panic("NMI IOCK error: Not continuing");
+
 	/* Re-enable the IOCK line, wait for a few seconds */
 	reason = (reason & 0xf) | 8;
 	outb(reason, 0x61);
@@ -716,6 +798,10 @@ io_check_error(unsigned char reason, struct pt_regs *regs)
 static notrace __kprobes void
 unknown_nmi_error(unsigned char reason, struct pt_regs *regs)
 {
+#ifdef CONFIG_KDB
+	(void)kdb(KDB_REASON_NMI, reason, regs);
+#endif /* CONFIG_KDB */
+
 	if (notify_die(DIE_NMIUNKNOWN, "nmi", regs, reason, 2, SIGINT) == NOTIFY_STOP)
 		return;
 #ifdef CONFIG_MCA
@@ -756,6 +842,9 @@ void notrace __kprobes die_nmi(char *str, struct pt_regs *regs, int do_panic)
 	printk(" on CPU%d, ip %08lx, registers:\n",
 		smp_processor_id(), regs->ip);
 	show_registers(regs);
+#ifdef CONFIG_KDB
+	kdb(KDB_REASON_NMI, 0, regs);
+#endif	/* CONFIG_KDB */
 	if (do_panic)
 		panic("Non maskable interrupt");
 	console_silent();
@@ -784,6 +873,16 @@ static notrace __kprobes void default_do_nmi(struct pt_regs *regs)
 	/* Only the BSP gets external NMIs from the system. */
 	if (!cpu)
 		reason = get_nmi_reason();
+
+#if defined(CONFIG_SMP) && defined(CONFIG_KDB)
+	/*
+	 * Call the kernel debugger to see if this NMI is due
+	 * to an KDB requested IPI.  If so, kdb will handle it.
+	 */
+	if (kdb_ipi(regs, NULL)) {
+		return;
+	}
+#endif /* defined(CONFIG_SMP) && defined(CONFIG_KDB) */
 
 	if (!(reason & 0xc0)) {
 		if (notify_die(DIE_NMI_IPI, "nmi_ipi", regs, reason, 2, SIGINT)
@@ -852,6 +951,10 @@ void __kprobes do_int3(struct pt_regs *regs, long error_code)
 {
 	trace_hardirqs_fixup();
 
+#ifdef  CONFIG_KDB
+	if (kdb(KDB_REASON_BREAK, error_code, regs))
+		return;
+#endif
 	if (notify_die(DIE_INT3, "int3", regs, error_code, 3, SIGTRAP)
 			== NOTIFY_STOP)
 		return;
@@ -901,6 +1004,11 @@ void __kprobes do_debug(struct pt_regs *regs, long error_code)
 	 */
 	clear_tsk_thread_flag(tsk, TIF_DEBUGCTLMSR);
 	tsk->thread.debugctlmsr = 0;
+
+#ifdef	CONFIG_KDB
+	if (kdb(KDB_REASON_DEBUG, error_code, regs))
+		return;
+#endif	/* CONFIG_KDB */
 
 	if (notify_die(DIE_DEBUG, "debug", regs, condition, error_code,
 						SIGTRAP) == NOTIFY_STOP)
@@ -955,6 +1063,16 @@ clear_TF_reenable:
 	regs->flags &= ~X86_EFLAGS_TF;
 	return;
 }
+
+#if	defined(CONFIG_KDB) && !defined(CONFIG_KPROBES)
+void do_int3(struct pt_regs * regs, long error_code)
+{
+	if (kdb(KDB_REASON_BREAK, error_code, regs))
+		return;
+	do_trap(3, SIGTRAP, "int3", 1, regs, error_code, NULL);
+}
+#endif	/* CONFIG_KDB && !CONFIG_KPROBES */
+
 
 /*
  * Note that we play around with the 'TS' bit in an attempt to get
@@ -1254,3 +1372,19 @@ static int __init code_bytes_setup(char *s)
 	return 1;
 }
 __setup("code_bytes=", code_bytes_setup);
+
+#ifdef CONFIG_STACK_UNWIND
+static int __init call_trace_setup(char *s)
+{
+	if (strcmp(s, "old") == 0)
+		call_trace = -1;
+	else if (strcmp(s, "both") == 0)
+		call_trace = 0;
+	else if (strcmp(s, "newfallback") == 0)
+		call_trace = 1;
+	else if (strcmp(s, "new") == 2)
+		call_trace = 2;
+	return 1;
+}
+__setup("call_trace=", call_trace_setup);
+#endif

@@ -37,6 +37,46 @@
  */
 #define SD_LAST_BUGGY_SECTORS	8
 
+#if (defined(CONFIG_SD_IOSTATS) && defined(CONFIG_PROC_FS))
+typedef struct {
+	unsigned long long iostat_size;
+	unsigned long long iostat_count;
+} iostat_counter_t;
+
+#define IOSTAT_NCOUNTERS 16
+typedef struct {
+	iostat_counter_t	iostat_read_histogram[IOSTAT_NCOUNTERS];
+	iostat_counter_t	iostat_write_histogram[IOSTAT_NCOUNTERS];
+	struct timeval		iostat_timeval;
+
+	/* queue depth: how well the pipe is filled up */
+	unsigned long long	iostat_queue_ticks[IOSTAT_NCOUNTERS];
+	unsigned long long	iostat_queue_ticks_sum;
+	unsigned long		iostat_queue_depth;
+	unsigned long		iostat_queue_stamp;
+
+	/* seeks: how linear the traffic is */
+	unsigned long long	iostat_next_sector;
+	unsigned long long	iostat_seek_sectors;
+	unsigned long long	iostat_seeks;
+	unsigned long long	iostat_sectors;
+	unsigned long long	iostat_reqs;
+	unsigned long		iostat_read_reqs;
+	unsigned long		iostat_write_reqs;
+
+	/* process time: how long it takes to process requests */
+	unsigned long		iostat_rtime[IOSTAT_NCOUNTERS];
+	unsigned long		iostat_wtime[IOSTAT_NCOUNTERS];
+
+	/* queue time: how long process spent in elevator's queue */
+	unsigned long		iostat_rtime_in_queue[IOSTAT_NCOUNTERS];
+	unsigned long		iostat_wtime_in_queue[IOSTAT_NCOUNTERS];
+
+	/* must be the last field, as it's used to know size to be memset'ed */
+	spinlock_t		iostat_lock;
+} ____cacheline_aligned_in_smp iostat_stats_t;
+#endif
+
 struct scsi_disk {
 	struct scsi_driver *driver;	/* always &sd_template */
 	struct scsi_device *device;
@@ -53,6 +93,9 @@ struct scsi_disk {
 	unsigned	WCE : 1;	/* state of disk WCE bit */
 	unsigned	RCD : 1;	/* state of disk RCD bit, unused */
 	unsigned	DPOFUA : 1;	/* state of disk DPOFUA bit */
+#if (defined(CONFIG_SD_IOSTATS) && defined(CONFIG_PROC_FS))
+	iostat_stats_t	*stats;		/* scsi disk statistics */
+#endif
 };
 #define to_scsi_disk(obj) container_of(obj,struct scsi_disk,dev)
 

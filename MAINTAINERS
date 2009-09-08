@@ -3147,6 +3147,11 @@ M:	olof@lixom.net
 L:	linux-i2c@vger.kernel.org
 S:	Maintained
 
+PANASONIC LAPTOP ACPI EXTRAS DRIVER
+P:	Harald Welte
+M:	laforge@gnumonks.org
+S:	Maintained
+
 PARALLEL PORT SUPPORT
 L:	linux-parport@lists.infradead.org (subscribers-only)
 S:	Orphan
@@ -3237,6 +3242,14 @@ PER-TASK DELAY ACCOUNTING
 P:	Balbir Singh
 M:	balbir@linux.vnet.ibm.com
 L:	linux-kernel@vger.kernel.org
+S:	Maintained
+
+PERFMON SUBSYSTEM
+P:	Stephane Eranian
+M:	eranian@gmail.com
+L:	perfmon2-devel@lists.sf.net
+W:	http://perfmon2.sf.net
+T:	git kernel.org:/pub/scm/linux/kernel/git/eranian/linux-2.6
 S:	Maintained
 
 PERSONALITY HANDLING
@@ -3352,6 +3365,12 @@ M:	geoffrey.levand@am.sony.com
 L:	linuxppc-dev@ozlabs.org
 L:	cbe-oss-dev@ozlabs.org
 S:	Supported
+
+PS3VRAM DRIVER
+P:	Jim Paris
+M:	jim@jtan.com
+L:	cbe-oss-dev@ozlabs.org
+S:	Maintained
 
 PVRUSB2 VIDEO4LINUX DRIVER
 P:	Mike Isely
@@ -3860,6 +3879,13 @@ M:	greg@kroah.com
 P:	Chris Wright
 M:	chrisw@sous-sol.org
 L:	stable@kernel.org
+S:	Maintained
+
+STAGING SUBSYSTEM:
+P:	Greg Kroah-Hartman
+M:	gregkh@suse.de
+L:	linux-kernel@vger.kernel.org
+T:	quilt kernel.org/pub/linux/kernel/people/gregkh/gregkh-2.6/
 S:	Maintained
 
 SHARP LH SUPPORT (LH7952X & LH7A40X)
@@ -4576,6 +4602,13 @@ M:	xfs-masters@oss.sgi.com
 L:	xfs@oss.sgi.com
 W:	http://oss.sgi.com/projects/xfs
 T:	git git://oss.sgi.com:8090/xfs/xfs-2.6.git
+S:	Supported
+
+DMAPI
+P:	Silicon Graphics Inc
+M:	xfs-masters@oss.sgi.com
+L:	xfs@oss.sgi.com
+W:	http://oss.sgi.com/projects/xfs
 S:	Supported
 
 XILINX SYSTEMACE DRIVER

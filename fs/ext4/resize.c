@@ -50,7 +50,7 @@ static int verify_group_input(struct super_block *sb,
 	ext4_get_group_no_and_offset(sb, start, NULL, &offset);
 	if (group != sbi->s_groups_count)
 		ext4_warning(sb, __func__,
-			     "Cannot add at group %u (only %lu groups)",
+			     "Cannot add at group %u (only %u groups)",
 			     input->group, sbi->s_groups_count);
 	else if (offset != 0)
 			ext4_warning(sb, __func__, "Last group not full");
@@ -414,8 +414,8 @@ static int add_new_gdb(handle_t *handle, struct inode *inode,
 		       "EXT4-fs: ext4_add_new_gdb: adding group block %lu\n",
 		       gdb_num);
 
-        /*
-         * If we are not using the primary superblock/GDT copy don't resize,
+	/*
+	 * If we are not using the primary superblock/GDT copy don't resize,
          * because the user tools have no way of handling this.  Probably a
          * bad time to do it anyways.
          */
@@ -713,7 +713,7 @@ static void update_backups(struct super_block *sb,
 exit_err:
 	if (err) {
 		ext4_warning(sb, __func__,
-			     "can't update backup for group %lu (err %d), "
+			     "can't update backup for group %u (err %d), "
 			     "forcing fsck on next reboot", group, err);
 		sbi->s_mount_state &= ~EXT4_VALID_FS;
 		sbi->s_es->s_state &= cpu_to_le16(~EXT4_VALID_FS);
@@ -860,26 +860,24 @@ int ext4_group_add(struct super_block *sb, struct ext4_new_group_data *input)
 	gdp = (struct ext4_group_desc *)((char *)primary->b_data +
 					 gdb_off * EXT4_DESC_SIZE(sb));
 
-	memset(gdp, 0, EXT4_DESC_SIZE(sb));
 	ext4_block_bitmap_set(sb, gdp, input->block_bitmap); /* LV FIXME */
 	ext4_inode_bitmap_set(sb, gdp, input->inode_bitmap); /* LV FIXME */
 	ext4_inode_table_set(sb, gdp, input->inode_table); /* LV FIXME */
-	gdp->bg_free_blocks_count = cpu_to_le16(input->free_blocks_count);
-	gdp->bg_free_inodes_count = cpu_to_le16(EXT4_INODES_PER_GROUP(sb));
-	gdp->bg_flags = cpu_to_le16(EXT4_BG_INODE_ZEROED);
+	ext4_free_blks_set(sb, gdp, input->free_blocks_count);
+	ext4_free_inodes_set(sb, gdp, EXT4_INODES_PER_GROUP(sb));
+	gdp->bg_flags |= cpu_to_le16(EXT4_BG_INODE_ZEROED);
 	gdp->bg_checksum = ext4_group_desc_csum(sbi, input->group, gdp);
 
 	/*
 	 * We can allocate memory for mb_alloc based on the new group
 	 * descriptor
 	 */
-	if (test_opt(sb, MBALLOC)) {
-		err = ext4_mb_add_groupinfo(sb, input->group, gdp);
-		if (err) {
-			ext4_mb_put_buddy_cache_lock(sb, input->group, num_grp_locked);
-			goto exit_journal;
-		}
+	err = ext4_mb_add_groupinfo(sb, input->group, gdp);
+	if (err) {
+		ext4_mb_put_buddy_cache_lock(sb, input->group, num_grp_locked);
+		goto exit_journal;
 	}
+
 	/*
 	 * Make the new blocks and inodes valid next.  We do this before
 	 * increasing the group count so that once the group is enabled,
@@ -979,7 +977,7 @@ int ext4_group_extend(struct super_block *sb, struct ext4_super_block *es,
 	ext4_group_t o_groups_count;
 	ext4_grpblk_t last;
 	ext4_grpblk_t add;
-	struct buffer_head * bh;
+	struct buffer_head *bh;
 	handle_t *handle;
 	int err;
 	ext4_group_t group;

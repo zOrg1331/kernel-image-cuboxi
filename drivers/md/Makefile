@@ -32,9 +32,13 @@ obj-$(CONFIG_BLK_DEV_MD)	+= md-mod.o
 obj-$(CONFIG_BLK_DEV_DM)	+= dm-mod.o
 obj-$(CONFIG_DM_CRYPT)		+= dm-crypt.o
 obj-$(CONFIG_DM_DELAY)		+= dm-delay.o
-obj-$(CONFIG_DM_MULTIPATH)	+= dm-multipath.o dm-round-robin.o
+obj-$(CONFIG_DM_MULTIPATH)	+= dm-multipath.o dm-round-robin.o \
+				   dm-least-pending.o dm-queue-length.o \
+				   dm-service-time.o
 obj-$(CONFIG_DM_SNAPSHOT)	+= dm-snapshot.o
-obj-$(CONFIG_DM_MIRROR)		+= dm-mirror.o dm-log.o
+obj-$(CONFIG_DM_MIRROR)		+= dm-mirror.o dm-regions.o dm-log.o
+obj-$(CONFIG_DM_RAID45)		+= dm-raid45.o dm-log.o dm-memcache.o \
+				   dm-regions.o dm-message.o
 obj-$(CONFIG_DM_ZERO)		+= dm-zero.o
 
 quiet_cmd_unroll = UNROLL  $@

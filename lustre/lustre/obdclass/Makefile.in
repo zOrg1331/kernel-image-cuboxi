@@ -1,0 +1,25 @@
+MODULES := obdclass llog_test
+
+obdclass-linux-objs := linux-module.o linux-obdo.o linux-sysctl.o
+obdclass-linux-objs := $(addprefix linux/,$(obdclass-linux-objs))
+
+default: all
+
+sources:
+
+obdclass-all-objs := llog.o llog_cat.o llog_lvfs.o llog_obd.o llog_swab.o
+obdclass-all-objs += class_obd.o class_hash.o target.o
+obdclass-all-objs += debug.o genops.o uuid.o llog_ioctl.o
+obdclass-all-objs += lprocfs_status.o lustre_handles.o lustre_peer.o
+obdclass-all-objs += statfs_pack.o obdo.o obd_config.o obd_mount.o
+
+obdclass-objs := $(obdclass-linux-objs) $(obdclass-all-objs)
+
+llog_test-objs := llog-test.o
+
+$(obj)/llog-test.c: $(obj)/llog_test.c
+	ln -sf $< $@
+
+EXTRA_DIST = $(filter-out llog-test.c,$(obdclass-all-objs:.o=.c)) $(llog-test-objs:.o=.c) llog_test.c llog_internal.h
+
+@INCLUDE_RULES@

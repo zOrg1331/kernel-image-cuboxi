@@ -110,6 +110,7 @@ void __attribute__((weak)) unxlate_dev_mem_ptr(unsigned long phys, void *addr)
 {
 }
 
+#ifndef ARCH_HAS_DEV_MEM
 /*
  * This funcion reads the *physical* memory. The f_pos points directly to the 
  * memory location. 
@@ -254,6 +255,7 @@ static ssize_t write_mem(struct file * file, const char __user * buf,
 	*ppos += written;
 	return written;
 }
+#endif
 
 int __attribute__((weak)) phys_mem_access_prot_allowed(struct file *file,
 	unsigned long pfn, unsigned long size, pgprot_t *vma_prot)
@@ -372,6 +374,9 @@ static int mmap_mem(struct file * file, struct vm_area_struct * vma)
 static int mmap_kmem(struct file * file, struct vm_area_struct * vma)
 {
 	unsigned long pfn;
+#ifdef CONFIG_XEN
+	unsigned long i, count;
+#endif
 
 	/* Turn a kernel-virtual address into a physical page frame */
 	pfn = __pa((u64)vma->vm_pgoff << PAGE_SHIFT) >> PAGE_SHIFT;
@@ -385,6 +390,13 @@ static int mmap_kmem(struct file * file, struct vm_area_struct * vma)
 	 */
 	if (!pfn_valid(pfn))
 		return -EIO;
+
+#ifdef CONFIG_XEN
+	count = (vma->vm_end - vma->vm_start) >> PAGE_SHIFT;
+	for (i = 0; i < count; i++)
+		if ((pfn + i) != mfn_to_local_pfn(pfn_to_mfn(pfn + i)))
+			return -EIO;
+#endif
 
 	vma->vm_pgoff = pfn;
 	return mmap_mem(file, vma);
@@ -702,6 +714,100 @@ static ssize_t splice_write_null(struct pipe_inode_info *pipe,struct file *out,
 	return splice_from_pipe(pipe, out, ppos, len, flags, pipe_to_null);
 }
 
+#if 1 //ndef CONFIG_XEN
+/*
+ * For fun, we are using the MMU for this.
+ */
+static inline size_t read_zero_pagealigned(char __user * buf, size_t size)
+{
+	struct mm_struct *mm;
+	struct vm_area_struct * vma;
+	unsigned long addr=(unsigned long)buf;
+
+	mm = current->mm;
+	/* Oops, this was forgotten before. -ben */
+	down_read(&mm->mmap_sem);
+
+	/* For private mappings, just map in zero pages. */
+	for (vma = find_vma(mm, addr); vma; vma = vma->vm_next) {
+		unsigned long count;
+
+		if (vma->vm_start > addr || (vma->vm_flags & VM_WRITE) == 0)
+			goto out_up;
+		if (vma->vm_flags & (VM_SHARED | VM_HUGETLB))
+			break;
+		count = vma->vm_end - addr;
+		if (count > size)
+			count = size;
+
+		zap_page_range(vma, addr, count, NULL);
+        	if (zeromap_page_range(vma, addr, count, PAGE_COPY))
+			break;
+
+		size -= count;
+		buf += count;
+		addr += count;
+		if (size == 0)
+			goto out_up;
+	}
+
+	up_read(&mm->mmap_sem);
+
+	/* The shared case is hard. Let's do the conventional zeroing. */
+	do {
+		unsigned long unwritten = clear_user(buf, PAGE_SIZE);
+		if (unwritten)
+			return size + unwritten - PAGE_SIZE;
+		cond_resched();
+		buf += PAGE_SIZE;
+		size -= PAGE_SIZE;
+	} while (size);
+
+	return size;
+out_up:
+	up_read(&mm->mmap_sem);
+	return size;
+}
+
+static ssize_t read_zero(struct file * file, char __user * buf,
+			 size_t count, loff_t *ppos)
+{
+	unsigned long left, unwritten, written = 0;
+
+	if (!count)
+		return 0;
+
+	if (!access_ok(VERIFY_WRITE, buf, count))
+		return -EFAULT;
+
+	left = count;
+
+	/* do we want to be clever? Arbitrary cut-off */
+	if (count >= PAGE_SIZE*4) {
+		unsigned long partial;
+
+		/* How much left of the page? */
+		partial = (PAGE_SIZE-1) & -(unsigned long) buf;
+		unwritten = clear_user(buf, partial);
+		written = partial - unwritten;
+		if (unwritten)
+			goto out;
+		left -= partial;
+		buf += partial;
+		unwritten = read_zero_pagealigned(buf, left & PAGE_MASK);
+		written += (left & PAGE_MASK) - unwritten;
+		if (unwritten)
+			goto out;
+		buf += left & PAGE_MASK;
+		left &= ~PAGE_MASK;
+	}
+	unwritten = clear_user(buf, left);
+	written += left - unwritten;
+out:
+	return written ? written : -EFAULT;
+}
+
+#else /* CONFIG_XEN */
 static ssize_t read_zero(struct file * file, char __user * buf, 
 			 size_t count, loff_t *ppos)
 {
@@ -730,15 +836,24 @@ static ssize_t read_zero(struct file * file, char __user * buf,
 	}
 	return written ? written : -EFAULT;
 }
+#endif /* CONFIG_XEN */
 
 static int mmap_zero(struct file * file, struct vm_area_struct * vma)
 {
+	int err = 0;
+
 #ifndef CONFIG_MMU
 	return -ENOSYS;
 #endif
+
 	if (vma->vm_flags & VM_SHARED)
 		return shmem_zero_setup(vma);
-	return 0;
+#if 1 //ndef CONFIG_XEN
+	err = zeromap_page_range(vma, vma->vm_start,
+			vma->vm_end - vma->vm_start, vma->vm_page_prot);
+	BUG_ON(err == -EEXIST);
+#endif
+	return err;
 }
 
 static ssize_t write_full(struct file * file, const char __user * buf,
@@ -802,6 +917,7 @@ static int open_port(struct inode * inode, struct file * filp)
 #define open_kmem	open_mem
 #define open_oldmem	open_mem
 
+#ifndef ARCH_HAS_DEV_MEM
 static const struct file_operations mem_fops = {
 	.llseek		= memory_lseek,
 	.read		= read_mem,
@@ -810,6 +926,9 @@ static const struct file_operations mem_fops = {
 	.open		= open_mem,
 	.get_unmapped_area = get_unmapped_area_mem,
 };
+#else
+extern const struct file_operations mem_fops;
+#endif
 
 #ifdef CONFIG_DEVKMEM
 static const struct file_operations kmem_fops = {

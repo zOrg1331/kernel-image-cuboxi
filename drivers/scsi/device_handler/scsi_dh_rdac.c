@@ -24,6 +24,7 @@
 #include <scsi/scsi_dh.h>
 
 #define RDAC_NAME "rdac"
+#define RDAC_RETRY_COUNT 5
 
 /*
  * LSI mode page stuff
@@ -225,10 +226,9 @@ static struct request *get_rdac_req(struct scsi_device *sdev,
 		return NULL;
 	}
 
-	memset(rq->cmd, 0, BLK_MAX_CDB);
-
 	rq->cmd_type = REQ_TYPE_BLOCK_PC;
-	rq->cmd_flags |= REQ_FAILFAST | REQ_NOMERGE;
+	rq->cmd_flags |= REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT |
+			 REQ_FAILFAST_DRIVER;
 	rq->retries = RDAC_RETRIES;
 	rq->timeout = RDAC_TIMEOUT;
 
@@ -387,6 +387,7 @@ static int check_ownership(struct scsi_device *sdev, struct rdac_dh_data *h)
 	struct c9_inquiry *inqp;
 
 	h->lun_state = RDAC_LUN_UNOWNED;
+	h->state = RDAC_STATE_ACTIVE;
 	err = submit_inquiry(sdev, 0xC9, sizeof(struct c9_inquiry), h);
 	if (err == SCSI_DH_OK) {
 		inqp = &h->inq.c9;
@@ -401,6 +402,9 @@ static int check_ownership(struct scsi_device *sdev, struct rdac_dh_data *h)
 			h->lun_state = RDAC_LUN_OWNED;
 		}
 	}
+
+	if (h->lun_state == RDAC_LUN_UNOWNED)
+		h->state = RDAC_STATE_PASSIVE;
 
 	return err;
 }
@@ -455,11 +459,10 @@ static int mode_select_handle_sense(struct scsi_device *sdev,
 	sense = (sense_hdr.sense_key << 16) | (sense_hdr.asc << 8) |
 			sense_hdr.ascq;
 	/* If it is retryable failure, submit the c9 inquiry again */
-	if (sense == 0x59136 || sense == 0x68b02 || sense == 0xb8b02 ||
-			    sense == 0x62900) {
+	if (sense_hdr.sense_key == 6 || sense == 0x59136 || sense == 0xb8b02) {
 		/* 0x59136    - Command lock contention
-		 * 0x[6b]8b02 - Quiesense in progress or achieved
-		 * 0x62900    - Power On, Reset, or Bus Device Reset
+		 * 0xb8b02    - Quiescense achieved
+		 * 0x6xxxx    - Unit Attention
 		 */
 		err = SCSI_DH_RETRY;
 	}
@@ -475,21 +478,27 @@ static int send_mode_select(struct scsi_device *sdev, struct rdac_dh_data *h)
 {
 	struct request *rq;
 	struct request_queue *q = sdev->request_queue;
-	int err = SCSI_DH_RES_TEMP_UNAVAIL;
+	int err, retry_cnt = RDAC_RETRY_COUNT;
 
+retry:
+	err = SCSI_DH_RES_TEMP_UNAVAIL;
 	rq = rdac_failover_get(sdev, h);
 	if (!rq)
 		goto done;
 
-	sdev_printk(KERN_INFO, sdev, "queueing MODE_SELECT command.\n");
+	sdev_printk(KERN_INFO, sdev, "%s MODE_SELECT command.\n",
+		(retry_cnt == RDAC_RETRY_COUNT) ? "queueing" : "retrying");
 
 	err = blk_execute_rq(q, NULL, rq, 1);
-	if (err != SCSI_DH_OK)
+	blk_put_request(rq);
+	if (err != SCSI_DH_OK) {
 		err = mode_select_handle_sense(sdev, h->sense);
+		if (err == SCSI_DH_RETRY && retry_cnt--)
+			goto retry;
+	}
 	if (err == SCSI_DH_OK)
 		h->state = RDAC_STATE_ACTIVE;
 
-	blk_put_request(rq);
 done:
 	return err;
 }
@@ -539,6 +548,11 @@ static int rdac_check_sense(struct scsi_device *sdev,
 	struct rdac_dh_data *h = get_rdac_data(sdev);
 	switch (sense_hdr->sense_key) {
 	case NOT_READY:
+		if (sense_hdr->asc == 0x04 && sense_hdr->ascq == 0x01)
+			/* LUN Not Ready - In process of becoming ready
+			 * Just retry.
+			 */
+			return ADD_TO_MLQUEUE;
 		if (sense_hdr->asc == 0x04 && sense_hdr->ascq == 0x81)
 			/* LUN Not Ready - Storage firmware incompatible
 			 * Manual code synchonisation required.
@@ -569,6 +583,11 @@ static int rdac_check_sense(struct scsi_device *sdev,
 			 * Power On, Reset, or Bus Device Reset, just retry.
 			 */
 			return ADD_TO_MLQUEUE;
+		if (sense_hdr->asc == 0x8b && sense_hdr->ascq == 0x02)
+			/*
+			 * Quiescence in Progress, just retry.
+			 */
+			return ADD_TO_MLQUEUE;
 		break;
 	}
 	/* success just means we do not care what scsi-ml does */
@@ -576,23 +595,25 @@ static int rdac_check_sense(struct scsi_device *sdev,
 }
 
 static const struct scsi_dh_devlist rdac_dev_list[] = {
-	{"IBM", "1722"},
-	{"IBM", "1724"},
-	{"IBM", "1726"},
-	{"IBM", "1742"},
-	{"IBM", "1814"},
-	{"IBM", "1815"},
-	{"IBM", "1818"},
-	{"IBM", "3526"},
-	{"SGI", "TP9400"},
-	{"SGI", "TP9500"},
-	{"SGI", "IS"},
-	{"STK", "OPENstorage D280"},
-	{"SUN", "CSM200_R"},
-	{"SUN", "LCSM100_F"},
-	{"DELL", "MD3000"},
-	{"DELL", "MD3000i"},
-	{NULL, NULL},
+	{"IBM", "1722", 0},
+	{"IBM", "1724", 0},
+	{"IBM", "1726", 0},
+	{"IBM", "1742", 0},
+	{"IBM", "1814", 0},
+	{"IBM", "1815", 0},
+	{"IBM", "1818", 0},
+	{"IBM", "3526", 0},
+	{"SGI", "TP9400", 0},
+	{"SGI", "TP9500", 0},
+	{"SGI", "IS", 0},
+	{"STK", "OPENstorage D280", 0},
+	{"SUN", "CSM200_R", 0},
+	{"SUN", "LCSM100_F", 0},
+	{"DELL", "MD3000", 0},
+	{"DELL", "MD3000i", 0},
+	{"LSI", "INF-01-00"},
+	{"ENGENIO", "INF-01-00"},
+	{NULL, NULL, 0},
 };
 
 static int rdac_bus_attach(struct scsi_device *sdev);

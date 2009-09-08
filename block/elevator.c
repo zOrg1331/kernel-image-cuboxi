@@ -34,8 +34,9 @@
 #include <linux/delay.h>
 #include <linux/blktrace_api.h>
 #include <linux/hash.h>
+#include <linux/uaccess.h>
 
-#include <asm/uaccess.h>
+#include "blk.h"
 
 static DEFINE_SPINLOCK(elv_list_lock);
 static LIST_HEAD(elv_list);
@@ -72,6 +73,12 @@ static int elv_iosched_allow_merge(struct request *rq, struct bio *bio)
 int elv_rq_merge_ok(struct request *rq, struct bio *bio)
 {
 	if (!rq_mergeable(rq))
+		return 0;
+
+	/*
+	 * Don't merge file system requests and discard requests
+	 */
+	if (bio_discard(bio) != bio_discard(rq->bio))
 		return 0;
 
 	/*
@@ -438,6 +445,8 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 	list_for_each_prev(entry, &q->queue_head) {
 		struct request *pos = list_entry_rq(entry);
 
+		if (blk_discard_rq(rq) != blk_discard_rq(pos))
+			break;
 		if (rq_data_dir(rq) != rq_data_dir(pos))
 			break;
 		if (pos->cmd_flags & stop_flags)
@@ -603,11 +612,11 @@ void elv_insert(struct request_queue *q, struct request *rq, int where)
 		 *   processing.
 		 */
 		blk_remove_plug(q);
-		q->request_fn(q);
+		blk_start_queueing(q);
 		break;
 
 	case ELEVATOR_INSERT_SORT:
-		BUG_ON(!blk_fs_request(rq));
+		BUG_ON(!blk_fs_request(rq) && !blk_discard_rq(rq));
 		rq->cmd_flags |= REQ_SORTED;
 		q->nr_sorted++;
 		if (rq_mergeable(rq)) {
@@ -692,7 +701,7 @@ void __elv_add_request(struct request_queue *q, struct request *rq, int where,
 		 * this request is scheduling boundary, update
 		 * end_sector
 		 */
-		if (blk_fs_request(rq)) {
+		if (blk_fs_request(rq) || blk_discard_rq(rq)) {
 			q->end_sector = rq_end_sector(rq);
 			q->boundary_rq = rq;
 		}
@@ -782,7 +791,6 @@ struct request *elv_next_request(struct request_queue *q)
 			 * device can handle
 			 */
 			rq->nr_phys_segments++;
-			rq->nr_hw_segments++;
 		}
 
 		if (!q->prep_rq_fn)
@@ -805,7 +813,6 @@ struct request *elv_next_request(struct request_queue *q)
 				 * so that we don't add it again
 				 */
 				--rq->nr_phys_segments;
-				--rq->nr_hw_segments;
 			}
 
 			rq = NULL;
@@ -838,7 +845,6 @@ void elv_dequeue_request(struct request_queue *q, struct request *rq)
 	if (blk_account_rq(rq))
 		q->in_flight++;
 }
-EXPORT_SYMBOL(elv_dequeue_request);
 
 int elv_queue_empty(struct request_queue *q)
 {
@@ -901,6 +907,19 @@ int elv_may_queue(struct request_queue *q, int rw)
 	return ELV_MQUEUE_MAY;
 }
 
+void elv_abort_queue(struct request_queue *q)
+{
+	struct request *rq;
+
+	while (!list_empty(&q->queue_head)) {
+		rq = list_entry_rq(q->queue_head.next);
+		rq->cmd_flags |= REQ_QUIET;
+		blk_add_trace_rq(q, rq, BLK_TA_ABORT);
+		end_queued_request(rq, 0);
+	}
+}
+EXPORT_SYMBOL(elv_abort_queue);
+
 void elv_completed_request(struct request_queue *q, struct request *rq)
 {
 	elevator_t *e = q->elevator;
@@ -924,7 +943,7 @@ void elv_completed_request(struct request_queue *q, struct request *rq)
 		    blk_ordered_cur_seq(q) == QUEUE_ORDSEQ_DRAIN &&
 		    blk_ordered_req_seq(first_rq) > QUEUE_ORDSEQ_DRAIN) {
 			blk_ordered_complete_seq(q, QUEUE_ORDSEQ_DRAIN, 0);
-			q->request_fn(q);
+			blk_start_queueing(q);
 		}
 	}
 }
@@ -1083,8 +1102,7 @@ static int elevator_switch(struct request_queue *q, struct elevator_type *new_e)
 	elv_drain_elevator(q);
 
 	while (q->rq.elvpriv) {
-		blk_remove_plug(q);
-		q->request_fn(q);
+		blk_start_queueing(q);
 		spin_unlock_irq(q->queue_lock);
 		msleep(10);
 		spin_lock_irq(q->queue_lock);

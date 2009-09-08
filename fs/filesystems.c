@@ -28,7 +28,9 @@
  */
 
 static struct file_system_type *file_systems;
-static DEFINE_RWLOCK(file_systems_lock);
+DEFINE_RWLOCK(file_systems_lock);
+
+EXPORT_SYMBOL(file_systems_lock);
 
 /* WARNING: This can be used only if we _already_ own a reference */
 void get_filesystem(struct file_system_type *fs)

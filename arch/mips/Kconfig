@@ -1858,6 +1858,8 @@ config SECCOMP
 
 	  If unsure, say Y. Only embedded should say N here.
 
+source "arch/mips/perfmon/Kconfig"
+
 endmenu
 
 config RWSEM_GENERIC_SPINLOCK
@@ -1882,6 +1884,8 @@ config PROBE_INITRD_HEADER
 	  Say Y here if you are using arch/mips/boot/addinitrd.c to
 	  add initrd or initramfs image to the kernel image.
 	  Otherwise, say N.
+
+source "kernel/Kconfig.freezer"
 
 menu "Bus options (PCI, PCMCIA, EISA, ISA, TC)"
 

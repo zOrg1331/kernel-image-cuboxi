@@ -63,6 +63,7 @@ extern const struct consw dummy_con;	/* dummy console buffer */
 extern const struct consw vga_con;	/* VGA text console */
 extern const struct consw newport_con;	/* SGI Newport console  */
 extern const struct consw prom_con;	/* SPARC PROM console */
+extern int console_use_vt;
 
 int con_is_bound(const struct consw *csw);
 int register_con_driver(const struct consw *csw, int first, int last);
@@ -142,7 +143,12 @@ void vcs_remove_sysfs(struct tty_struct *tty);
 
 /* Some debug stub to catch some of the obvious races in the VT code */
 #if 1
+#ifdef	CONFIG_KDB
+#include <linux/kdb.h>
+#define WARN_CONSOLE_UNLOCKED()	WARN_ON(!is_console_locked() && !oops_in_progress && !atomic_read(&kdb_event))
+#else	/* !CONFIG_KDB */
 #define WARN_CONSOLE_UNLOCKED()	WARN_ON(!is_console_locked() && !oops_in_progress)
+#endif	/* CONFIG_KDB */
 #else
 #define WARN_CONSOLE_UNLOCKED()
 #endif

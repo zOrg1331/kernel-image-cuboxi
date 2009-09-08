@@ -32,7 +32,7 @@
 #include <linux/hid.h>
 #include <linux/hid-debug.h>
 
-static int hid_apple_fnmode = 1;
+static int hid_apple_fnmode = 2;
 module_param_named(pb_fnmode, hid_apple_fnmode, int, 0644);
 MODULE_PARM_DESC(pb_fnmode,
 		"Mode of fn key on Apple keyboards (0 = disabled, 1 = fkeyslast, 2 = fkeysfirst)");

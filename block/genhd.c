@@ -173,6 +173,18 @@ static int exact_lock(dev_t devt, void *data)
 	return 0;
 }
 
+static int __read_mostly no_partition_scan;
+
+static int __init no_partition_scan_setup(char *str)
+{
+	no_partition_scan = 1;
+	printk(KERN_INFO "genhd: omit partition scan.\n");
+
+	return 1;
+}
+
+__setup("no_partition_scan", no_partition_scan_setup);
+
 /**
  * add_disk - add partitioning information to kernel list
  * @disk: per-device partitioning information
@@ -186,6 +198,8 @@ void add_disk(struct gendisk *disk)
 	int retval;
 
 	disk->flags |= GENHD_FL_UP;
+	if (no_partition_scan)
+		disk->flags |= GENHD_FL_NO_PARTITION_SCAN;
 	blk_register_region(MKDEV(disk->major, disk->first_minor),
 			    disk->minors, NULL, exact_match, exact_lock, disk);
 	register_disk(disk);
@@ -211,10 +225,11 @@ void unlink_gendisk(struct gendisk *disk)
 
 /**
  * get_gendisk - get partitioning information for a given device
- * @dev: device to get partitioning information for
+ * @devt: device to get partitioning information for
+ * @part: returned partition index
  *
  * This function gets the structure containing partitioning
- * information for the given device @dev.
+ * information for the given device @devt.
  */
 struct gendisk *get_gendisk(dev_t devt, int *part)
 {
@@ -428,7 +443,27 @@ static ssize_t disk_range_show(struct device *dev,
 {
 	struct gendisk *disk = dev_to_disk(dev);
 
-	return sprintf(buf, "%d\n", disk->minors);
+	return sprintf(buf, "%d\n",
+		       (disk->flags & GENHD_FL_NO_PARTITION_SCAN ? 0 : disk->minors));
+}
+
+static ssize_t disk_range_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	struct gendisk *disk = dev_to_disk(dev);
+	int i;
+
+	if (count > 0 && sscanf(buf, "%d", &i) > 0) {
+		if (i == 0)
+			disk->flags |= GENHD_FL_NO_PARTITION_SCAN;
+		else if (i <= disk->minors)
+			disk->flags &= ~GENHD_FL_NO_PARTITION_SCAN;
+		else
+			count = -EINVAL;
+	}
+
+	return count;
 }
 
 static ssize_t disk_removable_show(struct device *dev,
@@ -518,7 +553,7 @@ static ssize_t disk_fail_store(struct device *dev,
 
 #endif
 
-static DEVICE_ATTR(range, S_IRUGO, disk_range_show, NULL);
+static DEVICE_ATTR(range, S_IRUGO|S_IWUSR, disk_range_show, disk_range_store);
 static DEVICE_ATTR(removable, S_IRUGO, disk_removable_show, NULL);
 static DEVICE_ATTR(ro, S_IRUGO, disk_ro_show, NULL);
 static DEVICE_ATTR(size, S_IRUGO, disk_size_show, NULL);
@@ -812,6 +847,16 @@ void put_disk(struct gendisk *disk)
 
 EXPORT_SYMBOL(put_disk);
 
+static void set_disk_ro_uevent(struct gendisk *gd, int ro)
+{
+	char event[] = "DISK_RO=1";
+	char *envp[] = { event, NULL };
+
+	if (!ro)
+		event[8] = '0';
+	kobject_uevent_env(&gd->dev.kobj, KOBJ_CHANGE, envp);
+}
+
 void set_device_ro(struct block_device *bdev, int flag)
 {
 	if (bdev->bd_contains != bdev)
@@ -825,6 +870,9 @@ EXPORT_SYMBOL(set_device_ro);
 void set_disk_ro(struct gendisk *disk, int flag)
 {
 	int i;
+	if (disk->policy != flag)
+		set_disk_ro_uevent(disk, flag);
+
 	disk->policy = flag;
 	for (i = 0; i < disk->minors - 1; i++)
 		if (disk->part[i]) disk->part[i]->policy = flag;

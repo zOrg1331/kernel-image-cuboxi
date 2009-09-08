@@ -1016,7 +1016,8 @@ static int megasas_slave_configure(struct scsi_device *sdev)
 	 * The RAID firmware may require extended timeouts.
 	 */
 	if (sdev->channel >= MEGASAS_MAX_PD_CHANNELS)
-		sdev->timeout = MEGASAS_DEFAULT_CMD_TIMEOUT * HZ;
+		blk_queue_rq_timeout(sdev->request_queue,
+				     MEGASAS_DEFAULT_CMD_TIMEOUT * HZ);
 	return 0;
 }
 
@@ -1167,7 +1168,7 @@ static int megasas_generic_reset(struct scsi_cmnd *scmd)
  * cmd has not been completed within the timeout period.
  */
 static enum
-scsi_eh_timer_return megasas_reset_timer(struct scsi_cmnd *scmd)
+blk_eh_timer_return megasas_reset_timer(struct scsi_cmnd *scmd)
 {
 	struct megasas_cmd *cmd = (struct megasas_cmd *)scmd->SCp.ptr;
 	struct megasas_instance *instance;
@@ -1175,7 +1176,7 @@ scsi_eh_timer_return megasas_reset_timer(struct scsi_cmnd *scmd)
 
 	if (time_after(jiffies, scmd->jiffies_at_alloc +
 				(MEGASAS_DEFAULT_CMD_TIMEOUT * 2) * HZ)) {
-		return EH_NOT_HANDLED;
+		return BLK_EH_NOT_HANDLED;
 	}
 
 	instance = cmd->instance;
@@ -1189,7 +1190,7 @@ scsi_eh_timer_return megasas_reset_timer(struct scsi_cmnd *scmd)
 
 		spin_unlock_irqrestore(instance->host->host_lock, flags);
 	}
-	return EH_RESET_TIMER;
+	return BLK_EH_RESET_TIMER;
 }
 
 /**

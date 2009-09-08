@@ -7,6 +7,8 @@
  * Copyright IBM Corporation 2008
  */
 
+#define KMSG_COMPONENT "zfcp"
+
 #include <linux/types.h>
 #include <linux/miscdevice.h>
 #include <asm/ccwdev.h>
@@ -205,6 +207,7 @@ static long zfcp_cfdc_dev_ioctl(struct file *file, unsigned int command,
 		retval = -ENXIO;
 		goto free_buffer;
 	}
+	zfcp_adapter_get(adapter);
 
 	retval = zfcp_cfdc_sg_setup(data->command, fsf_cfdc->sg,
 				    data_user->control_file);

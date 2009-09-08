@@ -4,6 +4,9 @@
  *  Copyright (C) 1991, 1992  Linus Torvalds
  */
 
+#ifdef	CONFIG_KDB
+#include <linux/kdb.h>
+#endif
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
@@ -47,6 +50,7 @@
 #include <linux/blkdev.h>
 #include <linux/task_io_accounting_ops.h>
 #include <linux/tracehook.h>
+#include <trace/sched.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -149,7 +153,10 @@ static void __exit_signal(struct task_struct *tsk)
 
 static void delayed_put_task_struct(struct rcu_head *rhp)
 {
-	put_task_struct(container_of(rhp, struct task_struct, rcu));
+	struct task_struct *tsk = container_of(rhp, struct task_struct, rcu);
+
+	trace_sched_process_free(tsk);
+	put_task_struct(tsk);
 }
 
 
@@ -1073,6 +1080,8 @@ NORET_TYPE void do_exit(long code)
 
 	if (group_dead)
 		acct_process();
+	trace_sched_process_exit(tsk);
+
 	exit_sem(tsk);
 	exit_files(tsk);
 	exit_fs(tsk);
@@ -1675,6 +1684,8 @@ static long do_wait(enum pid_type type, struct pid *pid, int options,
 	DECLARE_WAITQUEUE(wait, current);
 	struct task_struct *tsk;
 	int retval;
+
+	trace_sched_process_wait(pid);
 
 	add_wait_queue(&current->signal->wait_chldexit,&wait);
 repeat:

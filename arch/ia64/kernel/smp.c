@@ -36,6 +36,11 @@
 #include <asm/current.h>
 #include <asm/delay.h>
 #include <asm/machvec.h>
+
+#ifdef	CONFIG_KDB
+#include <linux/kdb.h>
+#endif	/* CONFIG_KDB */
+
 #include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/page.h>
@@ -64,6 +69,9 @@ static DEFINE_PER_CPU(unsigned short, shadow_flush_counts[NR_CPUS]) ____cachelin
 #define IPI_CPU_STOP		1
 #define IPI_CALL_FUNC_SINGLE	2
 #define IPI_KDUMP_CPU_STOP	3
+#ifdef CONFIG_KDB
+#define IPI_KDB_INTERRUPT	4
+#endif /* CONFIG_KDB */
 
 /* This needs to be cacheline aligned because it is written to by *other* CPUs.  */
 static DEFINE_PER_CPU_SHARED_ALIGNED(u64, ipi_operation);
@@ -122,6 +130,12 @@ handle_IPI (int irq, void *dev_id)
 #ifdef CONFIG_KEXEC
 			case IPI_KDUMP_CPU_STOP:
 				unw_init_running(kdump_cpu_freeze, NULL);
+				break;
+#endif
+#ifdef CONFIG_KDB
+			case IPI_KDB_INTERRUPT:
+				if (!kdb_ipi(get_irq_regs(), NULL))
+					printk(KERN_ERR "kdb_ipi() rejected IPI_KDB_INTERRUPT\n");
 				break;
 #endif
 			default:
@@ -300,15 +314,12 @@ smp_flush_tlb_mm (struct mm_struct *mm)
 		return;
 	}
 
+	smp_call_function_mask(mm->cpu_vm_mask,
+		(void (*)(void *))local_finish_flush_tlb_mm, mm, 1);
+	local_irq_disable();
+	local_finish_flush_tlb_mm(mm);
+	local_irq_enable();
 	preempt_enable();
-	/*
-	 * We could optimize this further by using mm->cpu_vm_mask to track which CPUs
-	 * have been running in the address space.  It's not clear that this is worth the
-	 * trouble though: to avoid races, we have to raise the IPI on the target CPU
-	 * anyhow, and once a CPU is interrupted, the cost of local_flush_tlb_all() is
-	 * rather trivial.
-	 */
-	on_each_cpu((void (*)(void *))local_finish_flush_tlb_mm, mm, 1);
 }
 
 void arch_send_call_function_single_ipi(int cpu)
@@ -335,3 +346,12 @@ setup_profiling_timer (unsigned int multiplier)
 {
 	return -EINVAL;
 }
+
+#if defined(CONFIG_KDB)
+void
+smp_kdb_stop(void)
+{
+	if (!KDB_FLAG(NOIPI))
+		send_IPI_allbutself(IPI_KDB_INTERRUPT);
+}
+#endif	/* CONFIG_KDB */

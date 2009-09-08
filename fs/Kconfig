@@ -124,6 +124,13 @@ config EXT3_FS_POSIX_ACL
 
 	  If you don't know what Access Control Lists are, say N
 
+config EXT3_FS_NFS4ACL
+	bool "Native NFSv4 ACLs (EXPERIMENTAL)"
+	depends on EXT3_FS_XATTR && EXPERIMENTAL
+	select FS_NFS4ACL
+	help
+	  Allow to use NFSv4 ACLs instead of POSIX ACLs.
+
 config EXT3_FS_SECURITY
 	bool "Ext3 Security Labels"
 	depends on EXT3_FS_XATTR
@@ -206,17 +213,16 @@ config JBD
 	tristate
 	help
 	  This is a generic journalling layer for block devices.  It is
-	  currently used by the ext3 and OCFS2 file systems, but it could
-	  also be used to add journal support to other file systems or block
+	  currently used by the ext3 file system, but it could also be
+	  used to add journal support to other file systems or block
 	  devices such as RAID or LVM.
 
-	  If you are using the ext3 or OCFS2 file systems, you need to
-	  say Y here. If you are not using ext3 OCFS2 then you will probably
-	  want to say N.
+	  If you are using the ext3 file system, you need to say Y here.
+	  If you are not using ext3 then you will probably want to say N.
 
 	  To compile this device as a module, choose M here: the module will be
-	  called jbd.  If you are compiling ext3 or OCFS2 into the kernel,
-	  you cannot compile this code as a module.
+	  called jbd.  If you are compiling ext3 into the kernel, you
+	  cannot compile this code as a module.
 
 config JBD_DEBUG
 	bool "JBD (ext3) debugging support"
@@ -240,16 +246,17 @@ config JBD2
 	help
 	  This is a generic journaling layer for block devices that support
 	  both 32-bit and 64-bit block numbers.  It is currently used by
-	  the ext4dev/ext4 filesystem, but it could also be used to add
-	  journal support to other file systems or block devices such
-	  as RAID or LVM.
+	  the ext4dev/ext4 and OCFS2 filesystems, but it could also be
+	  used to add journal support to other file systems or block
+	  devices such as RAID or LVM.
 
-	  If you are using ext4dev/ext4, you need to say Y here. If you are not
-	  using ext4dev/ext4 then you will probably want to say N.
+	  If you are using ext4dev/ext4 or OCFS2, you need to say Y here.
+	  If you are not using ext4dev/ext4 or OCFS2 then you will
+	  probably want to say N.
 
 	  To compile this device as a module, choose M here. The module will be
-	  called jbd2.  If you are compiling ext4dev/ext4 into the kernel,
-	  you cannot compile this code as a module.
+	  called jbd2.  If you are compiling ext4dev/ext4 or OCFS2 into the
+	  kernel, you cannot compile this code as a module.
 
 config JBD2_DEBUG
 	bool "JBD2 (ext4dev/ext4) debugging support"
@@ -419,6 +426,10 @@ config FS_POSIX_ACL
 	bool
 	default n
 
+config FS_NFS4ACL
+	bool
+	default n
+
 source "fs/xfs/Kconfig"
 source "fs/gfs2/Kconfig"
 
@@ -426,7 +437,7 @@ config OCFS2_FS
 	tristate "OCFS2 file system support"
 	depends on NET && SYSFS
 	select CONFIGFS_FS
-	select JBD
+	select JBD2
 	select CRC32
 	help
 	  OCFS2 is a general purpose extent based shared disk cluster file
@@ -497,6 +508,16 @@ config OCFS2_DEBUG_FS
 	  this option for debugging only as it is likely to decrease
 	  performance of the filesystem.
 
+config OCFS2_COMPAT_JBD
+	bool "Use JBD for compatibility"
+	depends on OCFS2_FS
+	default n
+	select JBD
+	help
+	  The ocfs2 filesystem now uses JBD2 for its journalling.  JBD2
+	  is backwards compatible with JBD.  It is safe to say N here.
+	  However, if you really want to use the original JBD, say Y here.
+
 endif # BLOCK
 
 config DNOTIFY
@@ -538,6 +559,25 @@ config INOTIFY_USER
 
 	  If unsure, say Y.
 
+config DMAPI
+	tristate "DMAPI support"
+	help
+	  The Data Management API is a system interface used to implement
+	  the interface defined in the X/Open document:
+	  "Systems Management: Data Storage Management (XDSM) API",
+	  dated February 1997.  This interface is used by hierarchical
+	  storage management systems.
+
+	  If any DMAPI-capable filesystem is built into the kernel, then
+	  DMAPI must also be built into the kernel.
+
+config DMAPI_DEBUG
+	bool "DMAPI debugging support"
+	depends on DMAPI
+	help
+	  If you don't know whether you need it, then you don't need it:
+	  answer N.
+
 config QUOTA
 	bool "Quota support"
 	help
@@ -569,6 +609,10 @@ config PRINT_QUOTA_WARNING
 	  Note that this behavior is currently deprecated and may go away in
 	  future. Please use notification via netlink socket instead.
 
+# Generic support for tree structured quota files. Seleted when needed.
+config QUOTA_TREE
+	 tristate
+
 config QFMT_V1
 	tristate "Old quota format support"
 	depends on QUOTA
@@ -580,6 +624,7 @@ config QFMT_V1
 config QFMT_V2
 	tristate "Quota format v2 support"
 	depends on QUOTA
+	select QUOTA_TREE
 	help
 	  This quota format allows using quotas with 32-bit UIDs/GIDs. If you
 	  need this functionality say Y here.
@@ -957,6 +1002,7 @@ config HUGETLBFS
 	bool "HugeTLB file system support"
 	depends on X86 || IA64 || PPC64 || SPARC64 || (SUPERH && MMU) || \
 		   (S390 && 64BIT) || BROKEN
+	depends on !XEN
 	help
 	  hugetlbfs is a filesystem backing for HugeTLB pages, based on
 	  ramfs. For architectures that support it, say Y here and read
@@ -1694,6 +1740,18 @@ config ROOT_NFS
 
 	  Most people say N here.
 
+config NFS_SWAP
+	bool "Provide swap over NFS support"
+	default n
+	depends on NFS_FS
+	select SUNRPC_SWAP
+	help
+	  This option enables swapon to work on files located on NFS mounts.
+
+	  For more details, see Documentation/network-swap.txt
+
+	  If unsure, say N.
+
 config NFSD
 	tristate "NFS server support"
 	depends on INET
@@ -1814,6 +1872,11 @@ config SUNRPC_XPRT_RDMA
 	  choose M here: the module will be called xprtrdma.
 
 	  If unsure, say N.
+
+config SUNRPC_SWAP
+	def_bool n
+	depends on SUNRPC
+	select NETVM
 
 config RPCSEC_GSS_KRB5
 	tristate "Secure RPC: Kerberos V mechanism (EXPERIMENTAL)"
@@ -2127,6 +2190,15 @@ config 9P_FS
 	  Plan 9 resource sharing via the 9P2000 protocol.
 
 	  See <http://v9fs.sf.net> for more information.
+
+	  If unsure, say N.
+
+config NOVFS
+	tristate "Novell Netware Filesystem support (novfs) (EXPERIMENTAL)"
+	depends on INET && EXPERIMENTAL
+	help
+	  If you say Y here, you will get an experimental Novell Netware
+	  filesystem driver.
 
 	  If unsure, say N.
 

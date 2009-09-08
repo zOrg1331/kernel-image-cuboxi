@@ -47,6 +47,7 @@
 #include <linux/blkpg.h>
 #include <linux/delay.h>
 #include <linux/mutex.h>
+#include <linux/string_helpers.h>
 #include <asm/uaccess.h>
 
 #include <scsi/scsi.h>
@@ -107,6 +108,24 @@ static DEFINE_IDA(sd_index_ida);
  * object after last put) */
 static DEFINE_MUTEX(sd_ref_mutex);
 
+#if (defined(CONFIG_SD_IOSTATS) && defined(CONFIG_PROC_FS))
+# include <linux/proc_fs.h>
+# include <linux/seq_file.h>
+struct proc_dir_entry *sd_iostats_procdir = NULL;
+char sd_iostats_procdir_name[] = "sd_iostats";
+static struct file_operations sd_iostats_proc_fops;
+
+extern void sd_iostats_init(void);
+extern void sd_iostats_fini(void);
+void sd_iostats_start_req(struct scsi_cmnd *SCpnt);
+void sd_iostats_finish_req(struct scsi_cmnd *SCpnt);
+#else
+static inline void sd_iostats_init(void) {}
+static inline void sd_iostats_fini(void) {}
+static inline void sd_iostats_start_req(struct scsi_cmnd *SCpnt) {}
+static inline void sd_iostats_finish_req(struct scsi_cmnd *SCpnt) {}
+#endif
+
 static const char *sd_cache_types[] = {
 	"write through", "none", "write back",
 	"write back, no read (daft)"
@@ -160,7 +179,7 @@ sd_store_cache_type(struct device *dev, struct device_attribute *attr,
 			sd_print_sense_hdr(sdkp, &sshdr);
 		return -EINVAL;
 	}
-	sd_revalidate_disk(sdkp->disk);
+	revalidate_disk(sdkp->disk);
 	return count;
 }
 
@@ -378,7 +397,6 @@ static int sd_prep_fn(struct request_queue *q, struct request *rq)
 	sector_t block = rq->sector;
 	sector_t threshold;
 	unsigned int this_count = rq->nr_sectors;
-	unsigned int timeout = sdp->timeout;
 	int ret;
 
 	if (rq->cmd_type == REQ_TYPE_BLOCK_PC) {
@@ -571,6 +589,8 @@ static int sd_prep_fn(struct request_queue *q, struct request *rq)
 	if (sdkp->protection_type || scsi_prot_sg_count(SCpnt))
 		sd_dif_op(SCpnt, sdkp->protection_type, scsi_prot_sg_count(SCpnt));
 
+	sd_iostats_start_req(SCpnt);
+
 	/*
 	 * We shouldn't disconnect in the middle of a sector, so with a dumb
 	 * host adapter, it's safe to assume that we can at least transfer
@@ -579,7 +599,6 @@ static int sd_prep_fn(struct request_queue *q, struct request *rq)
 	SCpnt->transfersize = sdp->sector_size;
 	SCpnt->underflow = this_count << 9;
 	SCpnt->allowed = SD_MAX_RETRIES;
-	SCpnt->timeout_per_command = timeout;
 
 	/*
 	 * This indicates that the command is ready from our end to be
@@ -911,7 +930,7 @@ static void sd_rescan(struct device *dev)
 	struct scsi_disk *sdkp = scsi_disk_get_from_dev(dev);
 
 	if (sdkp) {
-		sd_revalidate_disk(sdkp->disk);
+		revalidate_disk(sdkp->disk);
 		scsi_disk_put(sdkp);
 	}
 }
@@ -1092,6 +1111,7 @@ static int sd_done(struct scsi_cmnd *SCpnt)
 		break;
 	}
  out:
+	sd_iostats_finish_req(SCpnt);
 	if (rq_data_dir(SCpnt->request) == READ && scsi_prot_sg_count(SCpnt))
 		sd_dif_complete(SCpnt, good_bytes);
 
@@ -1173,23 +1193,19 @@ sd_spinup_disk(struct scsi_disk *sdkp)
 		/*
 		 * The device does not want the automatic start to be issued.
 		 */
-		if (sdkp->device->no_start_on_add) {
+		if (sdkp->device->no_start_on_add)
 			break;
-		}
 
-		/*
-		 * If manual intervention is required, or this is an
-		 * absent USB storage device, a spinup is meaningless.
-		 */
-		if (sense_valid &&
-		    sshdr.sense_key == NOT_READY &&
-		    sshdr.asc == 4 && sshdr.ascq == 3) {
-			break;		/* manual intervention required */
-
-		/*
-		 * Issue command to spin up drive when not ready
-		 */
-		} else if (sense_valid && sshdr.sense_key == NOT_READY) {
+		if (sense_valid && sshdr.sense_key == NOT_READY) {
+			if (sshdr.asc == 4 && sshdr.ascq == 3)
+				break;	/* manual intervention required */
+			if (sshdr.asc == 4 && sshdr.ascq == 0xb)
+				break;	/* standby */
+			if (sshdr.asc == 4 && sshdr.ascq == 0xc)
+				break;	/* unavailable */
+			/*
+			 * Issue command to spin up drive when not ready
+			 */
 			if (!spintime) {
 				sd_printk(KERN_NOTICE, sdkp, "Spinning up disk...");
 				cmd[0] = START_STOP;
@@ -1213,8 +1229,7 @@ sd_spinup_disk(struct scsi_disk *sdkp)
 		 * Yes, this sense key/ASC combination shouldn't
 		 * occur here.  It's characteristic of these devices.
 		 */
-		} else if (sense_valid &&
-				sshdr.sense_key == UNIT_ATTENTION &&
+		} else if (sshdr.sense_key == UNIT_ATTENTION &&
 				sshdr.asc == 0x28) {
 			if (!spintime) {
 				spintime_expire = jiffies + 5 * HZ;
@@ -1438,27 +1453,21 @@ got_data:
 		 */
 		sector_size = 512;
 	}
-	{
-		/*
-		 * The msdos fs needs to know the hardware sector size
-		 * So I have created this table. See ll_rw_blk.c
-		 * Jacques Gelinas (Jacques@solucorp.qc.ca)
-		 */
-		int hard_sector = sector_size;
-		sector_t sz = (sdkp->capacity/2) * (hard_sector/256);
-		struct request_queue *queue = sdp->request_queue;
-		sector_t mb = sz;
+	blk_queue_hardsect_size(sdp->request_queue, sector_size);
 
-		blk_queue_hardsect_size(queue, hard_sector);
-		/* avoid 64-bit division on 32-bit platforms */
-		sector_div(sz, 625);
-		mb -= sz - 974;
-		sector_div(mb, 1950);
+	{
+		char cap_str_2[10], cap_str_10[10];
+		u64 sz = sdkp->capacity << ffz(~sector_size);
+
+		string_get_size(sz, STRING_UNITS_2, cap_str_2,
+				sizeof(cap_str_2));
+		string_get_size(sz, STRING_UNITS_10, cap_str_10,
+				sizeof(cap_str_10));
 
 		sd_printk(KERN_NOTICE, sdkp,
-			  "%llu %d-byte hardware sectors (%llu MB)\n",
+			  "%llu %d-byte hardware sectors: (%s/%s)\n",
 			  (unsigned long long)sdkp->capacity,
-			  hard_sector, (unsigned long long)mb);
+			  sector_size, cap_str_10, cap_str_2);
 	}
 
 	/* Rescale capacity to 512-byte units */
@@ -1837,11 +1846,12 @@ static int sd_probe(struct device *dev)
 	sdkp->openers = 0;
 	sdkp->previous_state = 1;
 
-	if (!sdp->timeout) {
+	if (!sdp->request_queue->rq_timeout) {
 		if (sdp->type != TYPE_MOD)
-			sdp->timeout = SD_TIMEOUT;
+			blk_queue_rq_timeout(sdp->request_queue, SD_TIMEOUT);
 		else
-			sdp->timeout = SD_MOD_TIMEOUT;
+			blk_queue_rq_timeout(sdp->request_queue,
+					     SD_MOD_TIMEOUT);
 	}
 
 	device_initialize(&sdkp->dev);
@@ -1884,6 +1894,36 @@ static int sd_probe(struct device *dev)
 	if (sdp->removable)
 		gd->flags |= GENHD_FL_REMOVABLE;
 
+#if (defined(CONFIG_SD_IOSTATS) && defined(CONFIG_PROC_FS))
+	sdkp->stats = kzalloc(sizeof(iostat_stats_t), GFP_KERNEL);
+	if (!sdkp->stats) {
+		printk(KERN_WARNING "cannot allocate iostat structure for"
+				    "%s\n", gd->disk_name);
+	} else {
+		do_gettimeofday(&sdkp->stats->iostat_timeval);
+		sdkp->stats->iostat_queue_stamp = jiffies;
+		spin_lock_init(&sdkp->stats->iostat_lock);
+		if (sd_iostats_procdir) {
+			struct proc_dir_entry *pde;
+			pde = create_proc_entry(gd->disk_name, S_IRUGO | S_IWUSR,
+					        sd_iostats_procdir);
+			if (!pde) {
+				printk(KERN_WARNING "Can't create /proc/scsi/"
+						    "%s/%s\n",
+						    sd_iostats_procdir_name,
+						    gd->disk_name);
+				kfree(sdkp->stats);
+				sdkp->stats = NULL;
+			} else {
+				pde->proc_fops = &sd_iostats_proc_fops;
+				pde->data = gd;
+			}
+		} else {
+			kfree(sdkp->stats);
+			sdkp->stats = NULL;
+		}
+	}
+#endif
 	dev_set_drvdata(dev, sdkp);
 	add_disk(gd);
 	sd_dif_config_host(sdkp);
@@ -1920,6 +1960,8 @@ static int sd_remove(struct device *dev)
 {
 	struct scsi_disk *sdkp = dev_get_drvdata(dev);
 
+	blk_queue_prep_rq(sdkp->device->request_queue, scsi_prep_fn);
+
 	device_del(&sdkp->dev);
 	del_gendisk(sdkp->disk);
 	sd_shutdown(dev);
@@ -1931,6 +1973,366 @@ static int sd_remove(struct device *dev)
 
 	return 0;
 }
+
+#if (defined(CONFIG_SD_IOSTATS) && defined(CONFIG_PROC_FS))
+static int
+sd_iostats_seq_show(struct seq_file *seq, void *v)
+{
+	struct timeval     now;
+	struct gendisk *disk = seq->private;
+	iostat_stats_t    *stats;
+	unsigned long long read_len;
+	unsigned long long read_len_tot;
+	unsigned long      read_num;
+	unsigned long      read_num_tot;
+	unsigned long long write_len;
+	unsigned long long write_len_tot;
+	unsigned long      write_num;
+	unsigned long      write_num_tot;
+	int                i;
+	int                maxi;
+
+	stats = scsi_disk(disk)->stats;
+	if (stats == NULL) {
+		printk(KERN_ERR "sd_iostats_seq_show: NULL stats entry\n");
+		BUG();
+	}
+
+	do_gettimeofday(&now);
+	now.tv_sec -= stats->iostat_timeval.tv_sec;
+	now.tv_usec -= stats->iostat_timeval.tv_usec;
+	if (now.tv_usec < 0) {
+		now.tv_usec += 1000000;
+		now.tv_sec--;
+	}
+
+	/* this sampling races with updates */
+	seq_printf(seq, "index:        %lu   snapshot_time:         %lu.%06lu\n",
+			(unsigned long) scsi_disk(disk)->index,
+			now.tv_sec, now.tv_usec);
+
+	for (i = IOSTAT_NCOUNTERS - 1; i > 0; i--)
+		if (stats->iostat_read_histogram[i].iostat_count != 0 ||
+				stats->iostat_write_histogram[i].iostat_count != 0)
+			break;
+	maxi = i;
+
+	seq_printf(seq, "%8s %8s %12s %8s %12s\n", "size", 
+			"reads", "total", "writes", "total");
+
+	read_len_tot = write_len_tot = 0;
+	read_num_tot = write_num_tot = 0;
+	for (i = 0; i <= maxi; i++) {
+		read_len = stats->iostat_read_histogram[i].iostat_size;
+		read_len_tot += read_len;
+		read_num = stats->iostat_read_histogram[i].iostat_count;
+		read_num_tot += read_num;
+
+		write_len = stats->iostat_write_histogram[i].iostat_size;
+		write_len_tot += write_len;
+		write_num = stats->iostat_write_histogram[i].iostat_count;
+		write_num_tot += write_num;
+
+		seq_printf (seq, "%8d %8lu %12llu %8lu %12llu\n", 
+				512<<i, read_num, read_len, write_num, write_len);
+	}
+
+	seq_printf(seq, "%8s %8lu %12llu %8lu %12llu\n\n", "total",
+			read_num_tot, read_len_tot, 
+			write_num_tot, write_len_tot);
+
+	seq_printf(seq, "%8s %8s %8s\n", "qdepth", "ticks", "%");
+	for (i = 0; i < IOSTAT_NCOUNTERS; i++) {
+		unsigned long long ticks, percent;
+		ticks = stats->iostat_queue_ticks[i];
+		if (ticks == 0)
+			continue;
+		percent = stats->iostat_queue_ticks[i] * 100;
+		do_div(percent, stats->iostat_queue_ticks_sum);
+		seq_printf(seq, "%8d %8llu %8llu\n", i, ticks, percent);
+	}
+
+	if (stats->iostat_reqs != 0) {
+		unsigned long long aveseek = 0, percent = 0;
+
+		if (stats->iostat_seeks) {
+			aveseek = stats->iostat_seek_sectors;
+			do_div(aveseek, stats->iostat_seeks);
+			percent = stats->iostat_seeks * 100;
+			do_div(percent, stats->iostat_reqs);
+		}
+
+		seq_printf(seq, "\n%llu sectors in %llu reqs: %llu seek(s) over "
+				"%llu sectors in ave, %llu%% of all reqs\n",
+				stats->iostat_sectors, stats->iostat_reqs,
+				stats->iostat_seeks, aveseek, percent);
+	}
+
+	seq_printf(seq, "\n%16s %8s %8s %8s %8s\n", "process time", "reads",
+			"%%", "writes", "%%");
+	for (i = 0; i < IOSTAT_NCOUNTERS; i++) {
+		unsigned long read_percent = 0, write_percent = 0;
+		if (stats->iostat_wtime[i] == 0 &&
+				stats->iostat_rtime[i] == 0)
+			continue;
+		if (stats->iostat_read_reqs)
+			read_percent = stats->iostat_rtime[i] * 100 / 
+				stats->iostat_read_reqs;
+		if (stats->iostat_write_reqs)
+			write_percent = stats->iostat_wtime[i] * 100 / 
+				stats->iostat_write_reqs;
+		seq_printf(seq, "%16u %8lu %8lu %8lu %8lu\n",
+				jiffies_to_msecs(((1UL << i) >> 1) << 1),
+				stats->iostat_rtime[i], read_percent,
+				stats->iostat_wtime[i], write_percent);
+	}
+
+	seq_printf(seq, "\n%16s %8s %8s %8s %8s\n", "time in queue", "reads",
+			"%%", "writes", "%%");
+	for (i = 0; i < IOSTAT_NCOUNTERS; i++) {
+		unsigned long read_percent = 0, write_percent = 0;
+		if (stats->iostat_wtime_in_queue[i] == 0 &&
+				stats->iostat_rtime_in_queue[i] == 0)
+			continue;
+		if (stats->iostat_read_reqs)
+			read_percent = stats->iostat_rtime_in_queue[i] * 100 / 
+				stats->iostat_read_reqs;
+		if (stats->iostat_write_reqs)
+			write_percent = stats->iostat_wtime_in_queue[i] * 100 / 
+				stats->iostat_write_reqs;
+		seq_printf(seq, "%16u %8lu %8lu %8lu %8lu\n",
+				jiffies_to_msecs(((1UL << i) >> 1) << 1),
+				stats->iostat_rtime_in_queue[i],
+				read_percent,
+				stats->iostat_wtime_in_queue[i],
+				write_percent);
+	}
+
+	return 0;
+}
+
+static void *
+sd_iostats_seq_start(struct seq_file *p, loff_t *pos)
+{
+	return (*pos == 0) ? (void *)1 : NULL;
+}
+
+static void *
+sd_iostats_seq_next(struct seq_file *p, void *v, loff_t *pos)
+{
+	++*pos;
+	return NULL;
+}
+
+static void
+sd_iostats_seq_stop(struct seq_file *p, void *v)
+{
+}
+
+static struct seq_operations sd_iostats_seqops = {
+	.start = sd_iostats_seq_start,
+	.stop  = sd_iostats_seq_stop,
+	.next  = sd_iostats_seq_next,
+	.show  = sd_iostats_seq_show,
+};
+
+static int
+sd_iostats_seq_open (struct inode *inode, struct file *file)
+{
+	int rc;
+
+	rc = seq_open(file, &sd_iostats_seqops);
+	if (rc != 0)
+		return rc;
+
+	((struct seq_file *)file->private_data)->private = PDE(inode)->data;
+	return 0;
+}
+
+static ssize_t
+sd_iostats_seq_write(struct file *file, const char *buffer,
+		     size_t len, loff_t *off)
+{
+	struct seq_file   *seq = file->private_data;
+	struct gendisk *disk = seq->private;
+	iostat_stats_t    *stats = scsi_disk(disk)->stats;
+	unsigned long      flags;
+	unsigned long      qdepth;
+
+
+	spin_lock_irqsave (&stats->iostat_lock, flags);
+	qdepth = stats->iostat_queue_depth;
+	memset (stats, 0, offsetof(iostat_stats_t, iostat_lock));
+	do_gettimeofday(&stats->iostat_timeval);
+	stats->iostat_queue_stamp = jiffies;
+	stats->iostat_queue_depth = qdepth;
+	spin_unlock_irqrestore (&stats->iostat_lock, flags);
+
+	return len;
+}
+
+static struct file_operations sd_iostats_proc_fops = {
+	.owner   = THIS_MODULE,
+	.open    = sd_iostats_seq_open,
+	.read    = seq_read,
+	.write   = sd_iostats_seq_write,
+	.llseek  = seq_lseek,
+	.release = seq_release,
+};
+
+extern struct proc_dir_entry *proc_scsi;
+
+void
+sd_iostats_init(void)
+{
+	if (proc_scsi == NULL) {
+		printk(KERN_WARNING "No access to sd iostats: "
+			"proc_scsi is NULL\n");
+		return;
+	}
+
+	sd_iostats_procdir = create_proc_entry(sd_iostats_procdir_name,
+					       S_IFDIR | S_IRUGO | S_IXUGO,
+					        proc_scsi);
+	if (sd_iostats_procdir == NULL) {
+		printk(KERN_WARNING "No access to sd iostats: "
+			"can't create /proc/scsi/%s\n", sd_iostats_procdir_name);
+		return;
+	}
+}
+
+void sd_iostats_fini(void)
+{
+	if (proc_scsi != NULL && sd_iostats_procdir != NULL)
+		remove_proc_entry(sd_iostats_procdir_name, proc_scsi);
+
+	sd_iostats_procdir = NULL;
+}
+
+void sd_iostats_finish_req(struct scsi_cmnd *SCpnt)
+{
+	struct request		*rq = SCpnt->request;
+	iostat_stats_t		*stats;
+	unsigned long		*tcounter;
+	int			tbucket;
+	int			tmp;
+	unsigned long		irqflags;
+	unsigned long		i;
+
+	stats = scsi_disk(rq->rq_disk)->stats;
+	if (stats == NULL)
+		return;
+
+	tmp = jiffies - rq->start_time;
+	for (tbucket = 0; tmp > 1; tbucket++)
+		tmp >>= 1;
+	if (tbucket >= IOSTAT_NCOUNTERS)
+		tbucket = IOSTAT_NCOUNTERS - 1;
+	//printk("%u ticks in D to %u\n", jiffies - rq->start_time, tbucket);
+
+	tcounter = rq_data_dir(rq) == WRITE ?
+		&stats->iostat_wtime[tbucket] : &stats->iostat_rtime[tbucket];
+
+	spin_lock_irqsave(&stats->iostat_lock, irqflags);
+
+	/* update delay stats */
+	(*tcounter)++;
+
+	/* update queue depth stats */
+	i = stats->iostat_queue_depth;
+	if (i >= IOSTAT_NCOUNTERS)
+		i = IOSTAT_NCOUNTERS - 1;
+	stats->iostat_queue_ticks[i] += jiffies - stats->iostat_queue_stamp;
+	stats->iostat_queue_ticks_sum += jiffies - stats->iostat_queue_stamp;
+	BUG_ON(stats->iostat_queue_depth == 0);
+	stats->iostat_queue_depth--;
+
+	/* update seek stats. XXX: not sure about nr_sectors */
+	stats->iostat_sectors += rq->nr_sectors;
+	stats->iostat_reqs++;
+	if (rq->sector != stats->iostat_next_sector) {
+		stats->iostat_seek_sectors +=
+			rq->sector > stats->iostat_next_sector ?
+			rq->sector - stats->iostat_next_sector :
+			stats->iostat_next_sector - rq->sector;
+		stats->iostat_seeks++;
+	}
+	stats->iostat_next_sector = rq->sector + rq->nr_sectors;
+
+	stats->iostat_queue_stamp = jiffies;
+
+	spin_unlock_irqrestore(&stats->iostat_lock, irqflags);
+}
+
+void sd_iostats_start_req(struct scsi_cmnd *SCpnt)
+{
+	struct request		*rq = SCpnt->request;
+	iostat_stats_t		*stats;
+	iostat_counter_t	*counter;
+	int			bucket;
+	int			tbucket;
+	int			tmp;
+	unsigned long		irqflags;
+	unsigned long		i;
+	int			nsect;
+
+	stats = scsi_disk(rq->rq_disk)->stats;
+	if (stats == NULL)
+		return;
+
+	nsect = scsi_bufflen(SCpnt) >> 9;
+	for (bucket = 0, tmp = nsect; tmp > 1; bucket++)
+		tmp >>= 1;
+
+	if (bucket >= IOSTAT_NCOUNTERS) {
+		printk (KERN_ERR "sd_iostats_bump: nsect %d too big\n", nsect);
+		BUG();
+	}
+
+	counter = rq_data_dir(rq) == WRITE ?
+		&stats->iostat_write_histogram[bucket] :
+		&stats->iostat_read_histogram[bucket];
+
+	tmp = jiffies - rq->start_time;
+	for (tbucket = 0; tmp > 1; tbucket++)
+		tmp >>= 1;
+	if (tbucket >= IOSTAT_NCOUNTERS)
+		tbucket = IOSTAT_NCOUNTERS - 1;
+	//printk("%u ticks in Q to %u\n", jiffies - rq->start_time, tbucket);
+
+	/* an ugly hack to know exact processing time. the right
+	 * solution is to add one more field to struct request
+	 * hopefully it will break nothing ... */
+	rq->start_time = jiffies;
+
+	spin_lock_irqsave(&stats->iostat_lock, irqflags);
+
+	/* update queue depth stats */
+	i = stats->iostat_queue_depth;
+	if (i >= IOSTAT_NCOUNTERS)
+		i = IOSTAT_NCOUNTERS - 1;
+	stats->iostat_queue_ticks[i] += jiffies - stats->iostat_queue_stamp;
+	stats->iostat_queue_ticks_sum += jiffies - stats->iostat_queue_stamp;
+	stats->iostat_queue_depth++;
+
+	/* update delay stats */
+	if (rq_data_dir(rq) == WRITE) {
+		stats->iostat_wtime_in_queue[tbucket]++;
+		stats->iostat_write_reqs++;
+	} else {
+		stats->iostat_rtime_in_queue[tbucket]++;
+		stats->iostat_read_reqs++;
+	}
+
+	/* update size stats */
+	counter->iostat_size += nsect;
+	counter->iostat_count++;
+
+	stats->iostat_queue_stamp = jiffies;
+
+	spin_unlock_irqrestore(&stats->iostat_lock, irqflags);
+}
+#endif
 
 /**
  *	scsi_disk_release - Called to free the scsi_disk structure
@@ -1950,10 +2352,16 @@ static void scsi_disk_release(struct device *dev)
 	ida_remove(&sd_index_ida, sdkp->index);
 	spin_unlock(&sd_index_lock);
 
+#if (defined(CONFIG_SD_IOSTATS) && defined(CONFIG_PROC_FS))
+	if (sdkp->stats) {
+		remove_proc_entry(disk->disk_name, sd_iostats_procdir);
+		kfree(sdkp->stats);
+		sdkp->stats = NULL;
+	}
+#endif
 	disk->private_data = NULL;
 	put_disk(disk);
 	put_device(&sdkp->device->sdev_gendev);
-
 	kfree(sdkp);
 }
 
@@ -2070,6 +2478,8 @@ static int __init init_sd(void)
 	if (!majors)
 		return -ENODEV;
 
+	sd_iostats_init();
+
 	err = class_register(&sd_disk_class);
 	if (err)
 		goto err_out;
@@ -2085,6 +2495,7 @@ err_out_class:
 err_out:
 	for (i = 0; i < SD_MAJORS; i++)
 		unregister_blkdev(sd_major(i), "sd");
+	sd_iostats_fini();
 	return err;
 }
 

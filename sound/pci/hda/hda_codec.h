@@ -536,15 +536,14 @@ typedef u16 hda_nid_t;
 /* bus operators */
 struct hda_bus_ops {
 	/* send a single command */
-	int (*command)(struct hda_codec *codec, hda_nid_t nid, int direct,
-		       unsigned int verb, unsigned int parm);
+	int (*command)(struct hda_bus *bus, unsigned int cmd);
 	/* get a response from the last command */
-	unsigned int (*get_response)(struct hda_codec *codec);
+	unsigned int (*get_response)(struct hda_bus *bus);
 	/* free the private data */
 	void (*private_free)(struct hda_bus *);
 #ifdef CONFIG_SND_HDA_POWER_SAVE
 	/* notify power-up/down from codec to controller */
-	void (*pm_notify)(struct hda_codec *codec);
+	void (*pm_notify)(struct hda_bus *bus);
 #endif
 };
 
@@ -580,11 +579,14 @@ struct hda_bus {
 
 	/* unsolicited event queue */
 	struct hda_bus_unsolicited *unsol;
+	char workq_name[16];
+	struct workqueue_struct *workq;	/* common workqueue for codecs */
 
 	struct snd_info_entry *proc;
 
 	/* misc op flags */
 	unsigned int needs_damn_long_delay :1;
+	unsigned int rirb_error:1;	/* error in codec communication */
 };
 
 /*

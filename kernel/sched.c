@@ -71,6 +71,8 @@
 #include <linux/debugfs.h>
 #include <linux/ctype.h>
 #include <linux/ftrace.h>
+#include <trace/sched.h>
+#include <linux/perfmon_kern.h>
 
 #include <asm/tlb.h>
 #include <asm/irq_regs.h>
@@ -263,12 +265,10 @@ struct task_group {
 	unsigned long shares;
 #endif
 
-#ifdef CONFIG_RT_GROUP_SCHED
 	struct sched_rt_entity **rt_se;
 	struct rt_rq **rt_rq;
 
 	struct rt_bandwidth rt_bandwidth;
-#endif
 
 	struct rcu_head rcu;
 	struct list_head list;
@@ -454,14 +454,12 @@ struct rt_rq {
 	/* Nests inside the rq lock: */
 	spinlock_t rt_runtime_lock;
 
-#ifdef CONFIG_RT_GROUP_SCHED
 	unsigned long rt_nr_boosted;
 
 	struct rq *rq;
 	struct list_head leaf_rt_rq_list;
 	struct task_group *tg;
 	struct sched_rt_entity *rt_se;
-#endif
 };
 
 #ifdef CONFIG_SMP
@@ -533,9 +531,8 @@ struct rq {
 	/* list of leaf cfs_rq on this cpu: */
 	struct list_head leaf_cfs_rq_list;
 #endif
-#ifdef CONFIG_RT_GROUP_SCHED
+
 	struct list_head leaf_rt_rq_list;
-#endif
 
 	/*
 	 * This is part of a global counter where only the total sum
@@ -1918,6 +1915,7 @@ unsigned long wait_task_inactive(struct task_struct *p, long match_state)
 		 * just go back and repeat.
 		 */
 		rq = task_rq_lock(p, &flags);
+		trace_sched_wait_task(rq, p);
 		running = task_running(rq, p);
 		on_rq = p->se.on_rq;
 		ncsw = 0;
@@ -2107,6 +2105,28 @@ find_idlest_cpu(struct sched_group *group, struct task_struct *p, int this_cpu,
 	return idlest;
 }
 
+static int
+find_idlest_cpu_nodomain(struct task_struct *p, int this_cpu)
+{
+	cpumask_t tmp;
+	unsigned long load, min_load = ULONG_MAX;
+	int idlest = -1;
+	int i;
+
+	/* Traverse only the allowed CPUs */
+	cpus_and(tmp, cpu_online_map, p->cpus_allowed);
+
+	for_each_cpu_mask(i, tmp) {
+		load = target_load(i, 1);
+
+		if (load < min_load) {
+			min_load = load;
+			idlest = i;
+		}
+	}
+	return idlest;
+}
+
 /*
  * sched_balance_self: balance the current task (running on cpu) in domains
  * that have the 'flag' flag set. In practice, this is SD_BALANCE_FORK and
@@ -2118,10 +2138,16 @@ find_idlest_cpu(struct sched_group *group, struct task_struct *p, int this_cpu,
  *
  * preempt must be disabled.
  */
+
+int affinity_load_balancing = 0;
+
 static int sched_balance_self(int cpu, int flag)
 {
 	struct task_struct *t = current;
 	struct sched_domain *tmp, *sd = NULL;
+
+	if (affinity_load_balancing && !cpus_full(t->cpus_allowed))
+		return find_idlest_cpu_nodomain(t, cpu);
 
 	for_each_domain(cpu, tmp) {
 		/*
@@ -2282,9 +2308,7 @@ out_activate:
 	success = 1;
 
 out_running:
-	trace_mark(kernel_sched_wakeup,
-		"pid %d state %ld ## rq %p task %p rq->curr %p",
-		p->pid, p->state, rq, p, rq->curr);
+	trace_sched_wakeup(rq, p);
 	check_preempt_curr(rq, p);
 
 	p->state = TASK_RUNNING;
@@ -2417,9 +2441,7 @@ void wake_up_new_task(struct task_struct *p, unsigned long clone_flags)
 		p->sched_class->task_new(rq, p);
 		inc_nr_running(rq);
 	}
-	trace_mark(kernel_sched_wakeup_new,
-		"pid %d state %ld ## rq %p task %p rq->curr %p",
-		p->pid, p->state, rq, p, rq->curr);
+	trace_sched_wakeup_new(rq, p);
 	check_preempt_curr(rq, p);
 #ifdef CONFIG_SMP
 	if (p->sched_class->task_wake_up)
@@ -2592,11 +2614,7 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	struct mm_struct *mm, *oldmm;
 
 	prepare_task_switch(rq, prev, next);
-	trace_mark(kernel_sched_schedule,
-		"prev_pid %d next_pid %d prev_state %ld "
-		"## rq %p prev %p next %p",
-		prev->pid, next->pid, prev->state,
-		rq, prev, next);
+	trace_sched_switch(rq, prev, next);
 	mm = next->mm;
 	oldmm = prev->active_mm;
 	/*
@@ -2836,6 +2854,7 @@ static void sched_migrate_task(struct task_struct *p, int dest_cpu)
 	    || unlikely(!cpu_active(dest_cpu)))
 		goto out;
 
+	trace_sched_migrate_task(rq, p, dest_cpu);
 	/* force the process onto the specified CPU */
 	if (migrate_task(p, dest_cpu, &req)) {
 		/* Need to wait for migration thread (might exit: take ref). */
@@ -4426,12 +4445,9 @@ need_resched_nonpreemptible:
 	if (sched_feat(HRTICK))
 		hrtick_clear(rq);
 
-	/*
-	 * Do the rq-clock update outside the rq lock:
-	 */
 	local_irq_disable();
-	update_rq_clock(rq);
 	spin_lock(&rq->lock);
+	update_rq_clock(rq);
 	clear_tsk_need_resched(prev);
 
 	if (prev->state && !(preempt_count() & PREEMPT_ACTIVE)) {
@@ -5733,6 +5749,7 @@ void sched_show_task(struct task_struct *p)
 
 	show_stack(p, NULL);
 }
+EXPORT_SYMBOL(sched_show_task);
 
 void show_state_filter(unsigned long state_filter)
 {
@@ -6052,8 +6069,9 @@ static void move_task_off_dead_cpu(int dead_cpu, struct task_struct *p)
 
 	do {
 		/* On same node? */
-		mask = node_to_cpumask(cpu_to_node(dead_cpu));
-		cpus_and(mask, mask, p->cpus_allowed);
+		node_to_cpumask_ptr(pnodemask, cpu_to_node(dead_cpu));
+
+		cpus_and(mask, *pnodemask, p->cpus_allowed);
 		dest_cpu = any_online_cpu(mask);
 
 		/* On any allowed CPU? */
@@ -7063,9 +7081,9 @@ static int cpu_to_allnodes_group(int cpu, const cpumask_t *cpu_map,
 				 struct sched_group **sg, cpumask_t *nodemask)
 {
 	int group;
+	node_to_cpumask_ptr(pnodemask, cpu_to_node(cpu));
 
-	*nodemask = node_to_cpumask(cpu_to_node(cpu));
-	cpus_and(*nodemask, *nodemask, *cpu_map);
+	cpus_and(*nodemask, *pnodemask, *cpu_map);
 	group = first_cpu(*nodemask);
 
 	if (sg)
@@ -7115,9 +7133,9 @@ static void free_sched_groups(const cpumask_t *cpu_map, cpumask_t *nodemask)
 
 		for (i = 0; i < nr_node_ids; i++) {
 			struct sched_group *oldsg, *sg = sched_group_nodes[i];
+			node_to_cpumask_ptr(pnodemask, i);
 
-			*nodemask = node_to_cpumask(i);
-			cpus_and(*nodemask, *nodemask, *cpu_map);
+			cpus_and(*nodemask, *pnodemask, *cpu_map);
 			if (cpus_empty(*nodemask))
 				continue;
 
@@ -7616,8 +7634,14 @@ static struct sched_domain_attr *dattr_cur;
  */
 static cpumask_t fallback_doms;
 
-void __attribute__((weak)) arch_update_cpu_topology(void)
+/*
+ * arch_update_cpu_topology lets virtualized architectures update the
+ * cpu core maps. It is supposed to return 1 if the topology changed
+ * or 0 if it stayed the same.
+ */
+int __attribute__((weak)) arch_update_cpu_topology(void)
 {
+	return 0;
 }
 
 /*
@@ -7711,17 +7735,21 @@ void partition_sched_domains(int ndoms_new, cpumask_t *doms_new,
 			     struct sched_domain_attr *dattr_new)
 {
 	int i, j, n;
+	int top_changed;
 
 	mutex_lock(&sched_domains_mutex);
 
 	/* always unregister in case we don't destroy any domains */
 	unregister_sched_domain_sysctl();
 
+	/* Let architecture update cpu core mappings. */
+	top_changed = arch_update_cpu_topology();
+
 	n = doms_new ? ndoms_new : 0;
 
 	/* Destroy deleted domains */
 	for (i = 0; i < ndoms_cur; i++) {
-		for (j = 0; j < n; j++) {
+		for (j = 0; j < n && !top_changed; j++) {
 			if (cpus_equal(doms_cur[i], doms_new[j])
 			    && dattrs_equal(dattr_cur, i, dattr_new, j))
 				goto match1;
@@ -7741,7 +7769,7 @@ match1:
 
 	/* Build new domains */
 	for (i = 0; i < ndoms_new; i++) {
-		for (j = 0; j < ndoms_cur; j++) {
+		for (j = 0; j < ndoms_cur && !top_changed; j++) {
 			if (cpus_equal(doms_new[i], doms_cur[j])
 			    && dattrs_equal(dattr_new, i, dattr_cur, j))
 				goto match2;
@@ -8327,7 +8355,7 @@ void normalize_rt_tasks(void)
 
 #endif /* CONFIG_MAGIC_SYSRQ */
 
-#ifdef CONFIG_IA64
+#if	defined(CONFIG_IA64) || defined(CONFIG_KDB)
 /*
  * These functions are only useful for the IA64 MCA handling.
  *
@@ -9268,3 +9296,94 @@ struct cgroup_subsys cpuacct_subsys = {
 	.subsys_id = cpuacct_subsys_id,
 };
 #endif	/* CONFIG_CGROUP_CPUACCT */
+
+#ifdef	CONFIG_KDB
+
+#include <linux/kdb.h>
+
+static void
+kdb_prio(char *name, struct rt_prio_array *array, kdb_printf_t xxx_printf,
+	unsigned int cpu)
+{
+	int pri, printed_header = 0;
+	struct task_struct *p;
+
+	xxx_printf("  %s rt bitmap: 0x%lx 0x%lx 0x%lx\n",
+		name,
+		array->bitmap[0], array->bitmap[1], array->bitmap[2]);
+
+	pri = sched_find_first_bit(array->bitmap);
+	if (pri < MAX_RT_PRIO) {
+		xxx_printf("   rt bitmap priorities:");
+		while (pri < MAX_RT_PRIO) {
+			xxx_printf(" %d", pri);
+			pri++;
+			pri = find_next_bit(array->bitmap, MAX_RT_PRIO, pri);
+		}
+		xxx_printf("\n");
+	}
+
+	for (pri = 0; pri < MAX_RT_PRIO; pri++) {
+		int printed_hdr = 0;
+		struct list_head *head, *curr;
+
+		head = array->queue + pri;
+		curr = head->next;
+		while(curr != head) {
+			struct task_struct *task;
+			if (!printed_hdr) {
+				xxx_printf("   queue at priority=%d\n", pri);
+				printed_hdr = 1;
+			}
+			task = list_entry(curr, struct task_struct, rt.run_list);
+			if (task)
+				xxx_printf("    0x%p %d %s  time_slice:%d\n",
+				   task, task->pid, task->comm,
+				   task->rt.time_slice);
+			curr = curr->next;
+		}
+	}
+	for_each_process(p) {
+		if (p->se.on_rq && (task_cpu(p) == cpu) &&
+		   (p->policy == SCHED_NORMAL)) {
+			if (!printed_header) {
+				xxx_printf("  sched_normal queue:\n");
+				printed_header = 1;
+			}
+			xxx_printf("    0x%p %d %s pri:%d spri:%d npri:%d\n",
+				p, p->pid, p->comm, p->prio,
+				p->static_prio, p->normal_prio);
+		}
+	}
+}
+
+/* This code must be in sched.c because struct rq is only defined in this
+ * source.  To allow most of kdb to be modular, this code cannot call any kdb
+ * functions directly, any external functions that it needs must be passed in
+ * as parameters.
+ */
+
+void
+kdb_runqueue(unsigned long cpu, kdb_printf_t xxx_printf)
+{
+	struct rq *rq;
+
+	rq = cpu_rq(cpu);
+
+	xxx_printf("CPU%ld lock:%s curr:0x%p(%d)(%s)",
+		   cpu, (spin_is_locked(&rq->lock))?"LOCKED":"free",
+		   rq->curr, rq->curr->pid, rq->curr->comm);
+	if (rq->curr == rq->idle)
+		xxx_printf(" is idle");
+	xxx_printf("\n ");
+#ifdef CONFIG_SMP
+	xxx_printf(" cpu_load:%lu %lu %lu",
+			rq->cpu_load[0], rq->cpu_load[1], rq->cpu_load[2]);
+#endif
+	xxx_printf(" nr_running:%lu nr_switches:%llu\n",
+		   rq->nr_running, (long long)rq->nr_switches);
+	kdb_prio("active", &rq->rt.active, xxx_printf, (unsigned int)cpu);
+}
+EXPORT_SYMBOL(kdb_runqueue);
+
+#endif	/* CONFIG_KDB */

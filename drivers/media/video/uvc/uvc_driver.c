@@ -1711,12 +1711,10 @@ static int uvc_resume(struct usb_interface *intf)
 	return __uvc_resume(intf, 0);
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 23)
 static int uvc_reset_resume(struct usb_interface *intf)
 {
 	return __uvc_resume(intf, 1);
 }
-#endif
 
 /* ------------------------------------------------------------------------
  * Driver initialization and cleanup

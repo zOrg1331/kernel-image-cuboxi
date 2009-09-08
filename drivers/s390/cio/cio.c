@@ -9,6 +9,8 @@
  *		 Martin Schwidefsky (schwidefsky@de.ibm.com)
  */
 
+#define KMSG_COMPONENT "cio"
+
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -462,25 +464,16 @@ int cio_disable_subchannel(struct subchannel *sch)
 	if (ccode == 3)		/* Not operational. */
 		return -ENODEV;
 
-	if (scsw_actl(&sch->schib.scsw) != 0)
-		/*
-		 * the disable function must not be called while there are
-		 *  requests pending for completion !
-		 */
-		return -EBUSY;
-
 	for (retry = 5, ret = 0; retry > 0; retry--) {
 		sch->schib.pmcw.ena = 0;
 		ret = cio_modify(sch);
 		if (ret == -ENODEV)
 			break;
-		if (ret == -EBUSY)
-			/*
-			 * The subchannel is busy or status pending.
-			 * We'll disable when the next interrupt was delivered
-			 * via the state machine.
-			 */
-			break;
+		if (ret == -EBUSY) {
+			struct irb irb;
+			if (tsch(sch->schid, &irb) != 0)
+				break;
+		}
 		if (ret == 0) {
 			stsch (sch->schid, &sch->schib);
 			if (!sch->schib.pmcw.ena)
@@ -773,7 +766,7 @@ cio_probe_console(void)
 	sch_no = cio_get_console_sch_no();
 	if (sch_no == -1) {
 		console_subchannel_in_use = 0;
-		printk(KERN_WARNING "cio: No ccw console found!\n");
+		pr_warning("No CCW console was found\n");
 		return ERR_PTR(-ENODEV);
 	}
 	memset(&console_subchannel, 0, sizeof(struct subchannel));

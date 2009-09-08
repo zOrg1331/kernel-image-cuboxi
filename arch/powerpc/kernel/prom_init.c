@@ -172,6 +172,7 @@ static unsigned long __initdata dt_string_start, dt_string_end;
 
 static unsigned long __initdata prom_initrd_start, prom_initrd_end;
 
+static int __initdata prom_no_display;
 #ifdef CONFIG_PPC64
 static int __initdata prom_iommu_force_on;
 static int __initdata prom_iommu_off;
@@ -555,9 +556,7 @@ unsigned long prom_memparse(const char *ptr, const char **retptr)
 static void __init early_cmdline_parse(void)
 {
 	struct prom_t *_prom = &RELOC(prom);
-#ifdef CONFIG_PPC64
 	const char *opt;
-#endif
 	char *p;
 	int l = 0;
 
@@ -572,6 +571,14 @@ static void __init early_cmdline_parse(void)
 #endif /* CONFIG_CMDLINE */
 	prom_printf("command line: %s\n", RELOC(prom_cmd_line));
 
+	opt = strstr(RELOC(prom_cmd_line), RELOC("prom="));
+	if (opt) {
+		opt += 5;
+		while (*opt && *opt == ' ')
+			opt++;
+		if (!strncmp(opt, RELOC("nodisplay"), 9))
+			RELOC(prom_no_display) = 1;
+	}
 #ifdef CONFIG_PPC64
 	opt = strstr(RELOC(prom_cmd_line), RELOC("iommu="));
 	if (opt) {
@@ -2189,6 +2196,7 @@ static void __init fixup_device_tree_efika_add_phy(void)
 
 static void __init fixup_device_tree_efika(void)
 {
+	int sound_cell[1] = { 1 };
 	int sound_irq[3] = { 2, 2, 0 };
 	int bcomm_irq[3*16] = { 3,0,0, 3,1,0, 3,2,0, 3,3,0,
 				3,4,0, 3,5,0, 3,6,0, 3,7,0,
@@ -2244,6 +2252,8 @@ static void __init fixup_device_tree_efika(void)
 			prom_printf("Adding sound interrupts property\n");
 			prom_setprop(node, "/builtin/sound", "interrupts",
 				     sound_irq, sizeof(sound_irq));
+			prom_setprop(node, "/builtin/sound", "cell-index",
+				     sound_cell, sizeof(sound_cell));
 		}
 	}
 
@@ -2397,6 +2407,7 @@ unsigned long __init prom_init(unsigned long r3, unsigned long r4,
 	/* 
 	 * Initialize display devices
 	 */
+	if (RELOC(prom_no_display) == 0)
 	prom_check_displays();
 
 #ifdef CONFIG_PPC64

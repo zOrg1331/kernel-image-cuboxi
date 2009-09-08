@@ -548,6 +548,24 @@ config FRAME_POINTER
 	  some architectures or if you use external debuggers.
 	  If you don't debug the kernel, you can say N.
 
+config UNWIND_INFO
+	bool "Compile the kernel with frame unwind information"
+	depends on !IA64 && !PARISC && !ARM
+	depends on !MODULES || !(MIPS || PPC || SUPERH || V850)
+	help
+	  If you say Y here the resulting kernel image will be slightly larger
+	  but not slower, and it will give very useful debugging information.
+	  If you don't debug the kernel, you can say N, but we may not be able
+	  to solve problems without frame unwind information or frame pointers.
+
+config STACK_UNWIND
+	bool "Stack unwind support"
+	depends on UNWIND_INFO
+	depends on X86
+	help
+	  This enables more precise stack traces, omitting all unrelated
+	  occurrences of pointers into kernel code from the dump.
+
 config BOOT_PRINTK_DELAY
 	bool "Delay each boot printk message by N milliseconds"
 	depends on DEBUG_KERNEL && PRINTK && GENERIC_CALIBRATE_DELAY
@@ -676,13 +694,15 @@ config FAULT_INJECTION_STACKTRACE_FILTER
 	depends on FAULT_INJECTION_DEBUG_FS && STACKTRACE_SUPPORT
 	depends on !X86_64
 	select STACKTRACE
-	select FRAME_POINTER if !PPC
+	select FRAME_POINTER if !PPC && !X86
+	select UNWIND_INFO if X86 && !FRAME_POINTER
 	help
 	  Provide stacktrace filter for fault-injection capabilities
 
 config LATENCYTOP
 	bool "Latency measuring infrastructure"
-	select FRAME_POINTER if !MIPS && !PPC
+	select FRAME_POINTER if !MIPS && !PPC && !X86
+	select UNWIND_INFO if X86 && !FRAME_POINTER
 	select KALLSYMS
 	select KALLSYMS_ALL
 	select STACKTRACE
@@ -751,6 +771,61 @@ menuconfig BUILD_DOCSRC
 	  kernel Documentation/ tree.
 
 	  Say N if you are unsure.
+
+config DYNAMIC_PRINTK_DEBUG
+	bool "Enable dynamic printk() call support"
+	default n
+	depends on PRINTK
+	select PRINTK_DEBUG
+	help
+
+	  Compiles debug level messages into the kernel, which would not
+	  otherwise be available at runtime. These messages can then be
+	  enabled/disabled on a per module basis. This mechanism implicitly
+	  enables all pr_debug() and dev_dbg() calls. The impact of this
+	  compile option is a larger kernel text size of about 2%.
+
+	  Usage:
+
+	  Dynamic debugging is controlled by the debugfs file,
+	  dynamic_printk/modules. This file contains a list of the modules that
+	  can be enabled. The format of the file is the module name, followed
+	  by a set of flags that can be enabled. The first flag is always the
+	  'enabled' flag. For example:
+
+		<module_name> <enabled=0/1>
+				.
+				.
+				.
+
+	  <module_name> : Name of the module in which the debug call resides
+	  <enabled=0/1> : whether the messages are enabled or not
+
+	  From a live system:
+
+		snd_hda_intel enabled=0
+		fixup enabled=0
+		driver enabled=0
+
+	  Enable a module:
+
+	  	$echo "set enabled=1 <module_name>" > dynamic_printk/modules
+
+	  Disable a module:
+
+	  	$echo "set enabled=0 <module_name>" > dynamic_printk/modules
+
+	  Enable all modules:
+
+		$echo "set enabled=1 all" > dynamic_printk/modules
+
+	  Disable all modules:
+
+		$echo "set enabled=0 all" > dynamic_printk/modules
+
+	  Finally, passing "dynamic_printk" at the command line enables
+	  debugging for all modules. This mode can be turned off via the above
+	  disable command.
 
 source "samples/Kconfig"
 

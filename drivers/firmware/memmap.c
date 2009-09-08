@@ -177,14 +177,12 @@ int __init firmware_map_add_early(u64 start, u64 end, const char *type)
 
 static ssize_t start_show(struct firmware_map_entry *entry, char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "0x%llx\n",
-		(unsigned long long)entry->start);
+	return snprintf(buf, PAGE_SIZE, "0x%llx\n", entry->start);
 }
 
 static ssize_t end_show(struct firmware_map_entry *entry, char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "0x%llx\n",
-		(unsigned long long)entry->end);
+	return snprintf(buf, PAGE_SIZE, "0x%llx\n", entry->end);
 }
 
 static ssize_t type_show(struct firmware_map_entry *entry, char *buf)

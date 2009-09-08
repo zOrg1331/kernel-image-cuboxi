@@ -89,13 +89,20 @@ static int max_id = 64;
 static int max_channel = 3;
 static int init_timeout = 5;
 static int max_requests = IBMVSCSI_MAX_REQUESTS_DEFAULT;
+static int max_events = IBMVSCSI_MAX_REQUESTS_DEFAULT + 2;
+
+/*host data buffer size*/
+#define buff_size 4096
 
 static struct scsi_transport_template *ibmvscsi_transport_template;
 
-#define IBMVSCSI_VERSION "1.5.8"
+#define IBMVSCSI_VERSION "1.5.9"
 
 static struct ibmvscsi_ops *ibmvscsi_ops;
 
+#define IBMVSCSI_PROC_NAME "ibmvscsi"
+/* The driver is named ibmvscsic, map ibmvscsi to module name */
+MODULE_ALIAS(IBMVSCSI_PROC_NAME);
 MODULE_DESCRIPTION("IBM Virtual SCSI");
 MODULE_AUTHOR("Dave Boutcher");
 MODULE_LICENSE("GPL");
@@ -431,6 +438,7 @@ static int map_sg_data(struct scsi_cmnd *cmd,
 				sdev_printk(KERN_ERR, cmd->device,
 				            "Can't allocate memory "
 				            "for indirect table\n");
+			scsi_dma_unmap(cmd);
 			return 0;
 		}
 	}
@@ -756,7 +764,7 @@ static int ibmvscsi_queuecommand(struct scsi_cmnd *cmnd,
 	init_event_struct(evt_struct,
 			  handle_cmd_rsp,
 			  VIOSRP_SRP_FORMAT,
-			  cmnd->timeout_per_command/HZ);
+			  cmnd->request->timeout/HZ);
 
 	evt_struct->cmnd = cmnd;
 	evt_struct->cmnd_done = done;
@@ -1442,7 +1450,7 @@ static int ibmvscsi_slave_configure(struct scsi_device *sdev)
 	spin_lock_irqsave(shost->host_lock, lock_flags);
 	if (sdev->type == TYPE_DISK) {
 		sdev->allow_restart = 1;
-		sdev->timeout = 60 * HZ;
+		blk_queue_rq_timeout(sdev->request_queue, 60 * HZ);
 	}
 	scsi_adjust_queue_depth(sdev, 0, shost->cmd_per_lun);
 	spin_unlock_irqrestore(shost->host_lock, lock_flags);
@@ -1476,7 +1484,7 @@ static ssize_t show_host_srp_version(struct device *dev,
 	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
 	int len;
 
-	len = snprintf(buf, PAGE_SIZE, "%s\n",
+       len = snprintf(buf, buff_size, "%s\n",
 		       hostdata->madapter_info.srp_version);
 	return len;
 }
@@ -1497,7 +1505,7 @@ static ssize_t show_host_partition_name(struct device *dev,
 	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
 	int len;
 
-	len = snprintf(buf, PAGE_SIZE, "%s\n",
+       len = snprintf(buf, buff_size, "%s\n",
 		       hostdata->madapter_info.partition_name);
 	return len;
 }
@@ -1518,7 +1526,7 @@ static ssize_t show_host_partition_number(struct device *dev,
 	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
 	int len;
 
-	len = snprintf(buf, PAGE_SIZE, "%d\n",
+       len = snprintf(buf, buff_size, "%d\n",
 		       hostdata->madapter_info.partition_number);
 	return len;
 }
@@ -1538,7 +1546,7 @@ static ssize_t show_host_mad_version(struct device *dev,
 	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
 	int len;
 
-	len = snprintf(buf, PAGE_SIZE, "%d\n",
+       len = snprintf(buf, buff_size, "%d\n",
 		       hostdata->madapter_info.mad_version);
 	return len;
 }
@@ -1558,7 +1566,7 @@ static ssize_t show_host_os_type(struct device *dev,
 	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
 	int len;
 
-	len = snprintf(buf, PAGE_SIZE, "%d\n", hostdata->madapter_info.os_type);
+       len = snprintf(buf, buff_size, "%d\n", hostdata->madapter_info.os_type);
 	return len;
 }
 
@@ -1577,7 +1585,7 @@ static ssize_t show_host_config(struct device *dev,
 	struct ibmvscsi_host_data *hostdata = shost_priv(shost);
 
 	/* returns null-terminated host config data */
-	if (ibmvscsi_do_host_config(hostdata, buf, PAGE_SIZE) == 0)
+       if (ibmvscsi_do_host_config(hostdata, buf, buff_size) == 0)
 		return strlen(buf);
 	else
 		return 0;
@@ -1607,7 +1615,7 @@ static struct device_attribute *ibmvscsi_attrs[] = {
 static struct scsi_host_template driver_template = {
 	.module = THIS_MODULE,
 	.name = "IBM POWER Virtual SCSI Adapter " IBMVSCSI_VERSION,
-	.proc_name = "ibmvscsi",
+	.proc_name = IBMVSCSI_PROC_NAME,
 	.queuecommand = ibmvscsi_queuecommand,
 	.eh_abort_handler = ibmvscsi_eh_abort_handler,
 	.eh_device_reset_handler = ibmvscsi_eh_device_reset_handler,
@@ -1633,7 +1641,7 @@ static struct scsi_host_template driver_template = {
 static unsigned long ibmvscsi_get_desired_dma(struct vio_dev *vdev)
 {
 	/* iu_storage data allocated in initialize_event_pool */
-	unsigned long desired_io = max_requests * sizeof(union viosrp_iu);
+	unsigned long desired_io = max_events * sizeof(union viosrp_iu);
 
 	/* add io space for sg data */
 	desired_io += (IBMVSCSI_MAX_SECTORS_DEFAULT * 512 *
@@ -1657,7 +1665,6 @@ static int ibmvscsi_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 
 	vdev->dev.driver_data = NULL;
 
-	driver_template.can_queue = max_requests;
 	host = scsi_host_alloc(&driver_template, sizeof(*hostdata));
 	if (!host) {
 		dev_err(&vdev->dev, "couldn't allocate host data\n");
@@ -1673,12 +1680,12 @@ static int ibmvscsi_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 	atomic_set(&hostdata->request_limit, -1);
 	hostdata->host->max_sectors = IBMVSCSI_MAX_SECTORS_DEFAULT;
 
-	rc = ibmvscsi_ops->init_crq_queue(&hostdata->queue, hostdata, max_requests);
+	rc = ibmvscsi_ops->init_crq_queue(&hostdata->queue, hostdata, max_events);
 	if (rc != 0 && rc != H_RESOURCE) {
 		dev_err(&vdev->dev, "couldn't initialize crq. rc=%d\n", rc);
 		goto init_crq_failed;
 	}
-	if (initialize_event_pool(&hostdata->pool, max_requests, hostdata) != 0) {
+	if (initialize_event_pool(&hostdata->pool, max_events, hostdata) != 0) {
 		dev_err(&vdev->dev, "couldn't initialize event pool\n");
 		goto init_pool_failed;
 	}
@@ -1730,7 +1737,7 @@ static int ibmvscsi_probe(struct vio_dev *vdev, const struct vio_device_id *id)
       add_host_failed:
 	release_event_pool(&hostdata->pool, hostdata);
       init_pool_failed:
-	ibmvscsi_ops->release_crq_queue(&hostdata->queue, hostdata, max_requests);
+	ibmvscsi_ops->release_crq_queue(&hostdata->queue, hostdata, max_events);
       init_crq_failed:
 	scsi_host_put(host);
       scsi_host_alloc_failed:
@@ -1742,7 +1749,7 @@ static int ibmvscsi_remove(struct vio_dev *vdev)
 	struct ibmvscsi_host_data *hostdata = vdev->dev.driver_data;
 	release_event_pool(&hostdata->pool, hostdata);
 	ibmvscsi_ops->release_crq_queue(&hostdata->queue, hostdata,
-					max_requests);
+					max_events);
 
 	srp_remove_host(hostdata->host);
 	scsi_remove_host(hostdata->host);
@@ -1767,7 +1774,7 @@ static struct vio_driver ibmvscsi_driver = {
 	.remove = ibmvscsi_remove,
 	.get_desired_dma = ibmvscsi_get_desired_dma,
 	.driver = {
-		.name = "ibmvscsi",
+		.name = IBMVSCSI_PROC_NAME,
 		.owner = THIS_MODULE,
 	}
 };
@@ -1778,6 +1785,10 @@ static struct srp_function_template ibmvscsi_transport_functions = {
 int __init ibmvscsi_module_init(void)
 {
 	int ret;
+
+	/* Ensure we have two requests to do error recovery */
+	driver_template.can_queue = max_requests;
+	max_events = max_requests + 2;
 
 	if (firmware_has_feature(FW_FEATURE_ISERIES))
 		ibmvscsi_ops = &iseriesvscsi_ops;

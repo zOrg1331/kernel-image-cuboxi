@@ -34,8 +34,6 @@
 
 #include "qeth_core_mpc.h"
 
-#define KMSG_COMPONENT "qeth"
-
 /**
  * Debug Facility stuff
  */
@@ -73,11 +71,6 @@ struct qeth_dbf_info {
 
 #define QETH_DBF_TEXT_(name, level, text...) \
 	qeth_dbf_longtext(QETH_DBF_##name, level, text)
-
-/**
- * some more debug stuff
- */
-#define PRINTK_HEADER	"qeth: "
 
 #define SENSE_COMMAND_REJECT_BYTE 0
 #define SENSE_COMMAND_REJECT_FLAG 0x80
@@ -649,7 +642,6 @@ struct qeth_card_options {
 	int macaddr_mode;
 	int fake_broadcast;
 	int add_hhlen;
-	int fake_ll;
 	int layer2;
 	enum qeth_large_send_types large_send;
 	int performance_stats;

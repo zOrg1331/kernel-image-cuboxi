@@ -161,7 +161,7 @@ static inline int page_cache_add_speculative(struct page *page, int count)
 	if (unlikely(!atomic_add_unless(&page->_count, count, 0)))
 		return 0;
 #endif
-	VM_BUG_ON(PageCompound(page) && page != compound_head(page));
+	VM_BUG_ON(PageTail(page));
 
 	return 1;
 }
@@ -259,6 +259,11 @@ static inline loff_t page_offset(struct page *page)
 	return ((loff_t)page->index) << PAGE_CACHE_SHIFT;
 }
 
+static inline loff_t page_file_offset(struct page *page)
+{
+	return ((loff_t)page_file_index(page)) << PAGE_CACHE_SHIFT;
+}
+
 static inline pgoff_t linear_page_index(struct vm_area_struct *vma,
 					unsigned long address)
 {
@@ -326,6 +331,7 @@ static inline void lock_page_nosync(struct page *page)
  * Never use this directly!
  */
 extern void wait_on_page_bit(struct page *page, int bit_nr);
+extern void __wait_on_page_locked(struct page *page);
 
 /* 
  * Wait for a page to be unlocked.
@@ -336,8 +342,9 @@ extern void wait_on_page_bit(struct page *page, int bit_nr);
  */
 static inline void wait_on_page_locked(struct page *page)
 {
+	might_sleep();
 	if (PageLocked(page))
-		wait_on_page_bit(page, PG_locked);
+		__wait_on_page_locked(page);
 }
 
 /* 
@@ -345,6 +352,7 @@ static inline void wait_on_page_locked(struct page *page)
  */
 static inline void wait_on_page_writeback(struct page *page)
 {
+	might_sleep();
 	if (PageWriteback(page))
 		wait_on_page_bit(page, PG_writeback);
 }

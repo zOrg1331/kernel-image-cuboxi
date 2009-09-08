@@ -463,9 +463,11 @@ static int ti_startup(struct usb_serial *serial)
 		goto free_tdev;
 	}
 
-	/* the second configuration must be set (in sysfs by hotplug script) */
+	/* the second configuration must be set */
+	printk(KERN_DEBUG"%s: bConfigurationValue: %x\n", __FUNCTION__, dev->actconfig->desc.bConfigurationValue);
 	if (dev->actconfig->desc.bConfigurationValue == TI_BOOT_CONFIG) {
-		status = -ENODEV;
+		status = usb_driver_set_configuration(dev, TI_ACTIVE_CONFIG);
+		status = status ? status : -ENODEV;
 		goto free_tdev;
 	}
 

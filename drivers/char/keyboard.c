@@ -43,6 +43,9 @@
 #include <linux/reboot.h>
 #include <linux/notifier.h>
 #include <linux/jiffies.h>
+#ifdef CONFIG_KDB
+#include <linux/kdb.h>
+#endif /* CONFIG_KDB */
 
 extern void ctrl_alt_del(void);
 
@@ -1188,6 +1191,13 @@ static void kbd_keycode(unsigned int keycode, int down, int hw_raw)
 			return;
 	}
 #endif
+
+#ifdef	CONFIG_KDB
+	if (down && !rep && keycode == KEY_PAUSE && kdb_on == 1) {
+		kdb(KDB_REASON_KEYBOARD, 0, get_irq_regs());
+		return;
+	}
+#endif	/* CONFIG_KDB */
 
 #ifdef CONFIG_MAGIC_SYSRQ	       /* Handle the SysRq Hack */
 	if (keycode == KEY_SYSRQ && (sysrq_down || (down == 1 && sysrq_alt))) {

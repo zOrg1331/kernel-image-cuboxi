@@ -1,6 +1,8 @@
 #ifndef __ASM_IPI_H
 #define __ASM_IPI_H
 
+#ifndef CONFIG_XEN
+
 /*
  * Copyright 2004 James Cleverdon, IBM.
  * Subject to the GNU Public License, v.2
@@ -49,6 +51,12 @@ static inline int __prepare_ICR2(unsigned int mask)
 	return SET_APIC_DEST_FIELD(mask);
 }
 
+static inline void __xapic_wait_icr_idle(void)
+{
+	while (native_apic_mem_read(APIC_ICR) & APIC_ICR_BUSY)
+		cpu_relax();
+}
+
 static inline void __send_IPI_shortcut(unsigned int shortcut, int vector,
 				       unsigned int dest)
 {
@@ -64,7 +72,7 @@ static inline void __send_IPI_shortcut(unsigned int shortcut, int vector,
 	/*
 	 * Wait for idle.
 	 */
-	apic_wait_icr_idle();
+	__xapic_wait_icr_idle();
 
 	/*
 	 * No need to touch the target chip field
@@ -74,7 +82,7 @@ static inline void __send_IPI_shortcut(unsigned int shortcut, int vector,
 	/*
 	 * Send the IPI. The write to APIC_ICR fires this off.
 	 */
-	apic_write(APIC_ICR, cfg);
+	native_apic_mem_write(APIC_ICR, cfg);
 }
 
 /*
@@ -92,13 +100,13 @@ static inline void __send_IPI_dest_field(unsigned int mask, int vector,
 	if (unlikely(vector == NMI_VECTOR))
 		safe_apic_wait_icr_idle();
 	else
-		apic_wait_icr_idle();
+		__xapic_wait_icr_idle();
 
 	/*
 	 * prepare target chip field
 	 */
 	cfg = __prepare_ICR2(mask);
-	apic_write(APIC_ICR2, cfg);
+	native_apic_mem_write(APIC_ICR2, cfg);
 
 	/*
 	 * program the ICR
@@ -108,10 +116,10 @@ static inline void __send_IPI_dest_field(unsigned int mask, int vector,
 	/*
 	 * Send the IPI. The write to APIC_ICR fires this off.
 	 */
-	apic_write(APIC_ICR, cfg);
+	native_apic_mem_write(APIC_ICR, cfg);
 }
 
-static inline void send_IPI_mask_sequence(cpumask_t mask, int vector)
+static inline void send_IPI_mask_sequence(const cpumask_t *mask, int vector)
 {
 	unsigned long flags;
 	unsigned long query_cpu;
@@ -122,11 +130,29 @@ static inline void send_IPI_mask_sequence(cpumask_t mask, int vector)
 	 * - mbligh
 	 */
 	local_irq_save(flags);
-	for_each_cpu_mask_nr(query_cpu, mask) {
+	for_each_cpu_mask_and(query_cpu, *mask, cpu_online_map)
 		__send_IPI_dest_field(per_cpu(x86_cpu_to_apicid, query_cpu),
 				      vector, APIC_DEST_PHYSICAL);
-	}
 	local_irq_restore(flags);
 }
+
+static inline void send_IPI_mask_allbutself(const cpumask_t *mask, int vector)
+{
+	unsigned long flags;
+	unsigned int query_cpu;
+	unsigned int this_cpu = smp_processor_id();
+
+	/* See Hack comment above */
+
+	local_irq_save(flags);
+	for_each_cpu_mask_and(query_cpu, *mask, cpu_online_map)
+		if (query_cpu != this_cpu)
+			__send_IPI_dest_field(
+				per_cpu(x86_cpu_to_apicid, query_cpu),
+				vector, APIC_DEST_PHYSICAL);
+	local_irq_restore(flags);
+}
+
+#endif /* CONFIG_XEN */
 
 #endif /* __ASM_IPI_H */

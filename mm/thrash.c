@@ -31,6 +31,9 @@ void grab_swap_token(void)
 	int current_interval;
 
 	global_faults++;
+	if (current->mm == NULL)
+		return;
+
 
 	current_interval = global_faults - current->mm->faultstamp;
 

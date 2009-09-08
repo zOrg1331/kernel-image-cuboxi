@@ -275,12 +275,13 @@ ENTRY(native_usergs_sysret64)
 ENTRY(ret_from_fork)
 	CFI_DEFAULT_STACK
 	push kernel_eflags(%rip)
-	CFI_ADJUST_CFA_OFFSET 4
+	CFI_ADJUST_CFA_OFFSET 8
 	popf				# reset kernel eflags
-	CFI_ADJUST_CFA_OFFSET -4
+	CFI_ADJUST_CFA_OFFSET -8
 	call schedule_tail
 	GET_THREAD_INFO(%rcx)
 	testl $(_TIF_SYSCALL_TRACE|_TIF_SYSCALL_AUDIT),TI_flags(%rcx)
+	CFI_REMEMBER_STATE
 	jnz rff_trace
 rff_action:	
 	RESTORE_REST
@@ -290,6 +291,7 @@ rff_action:
 	jnz  int_ret_from_sys_call
 	RESTORE_TOP_OF_STACK %rdi,ARGOFFSET
 	jmp ret_from_sys_call
+	CFI_RESTORE_STATE
 rff_trace:
 	movq %rsp,%rdi
 	call syscall_trace_leave
@@ -888,7 +890,13 @@ END(error_interrupt)
 ENTRY(spurious_interrupt)
 	apicinterrupt SPURIOUS_APIC_VECTOR,smp_spurious_interrupt
 END(spurious_interrupt)
-				
+
+#ifdef CONFIG_PERFMON
+ENTRY(pmu_interrupt)
+	apicinterrupt LOCAL_PERFMON_VECTOR,smp_pmu_interrupt
+END(pmu_interrupt)
+#endif
+
 /*
  * Exception entry points.
  */ 		
@@ -1080,7 +1088,6 @@ error_exit:
 	andl  %edi,%edx
 	jnz  retint_careful
 	jmp retint_swapgs
-	CFI_ENDPROC
 
 error_kernelspace:
 	incl %ebx
@@ -1098,6 +1105,7 @@ error_kernelspace:
 	cmpq $gs_change,RIP(%rsp)
         je   error_swapgs
 	jmp  error_sti
+	CFI_ENDPROC
 KPROBE_END(error_entry)
 	
        /* Reload gs selector with exception handling */
@@ -1368,7 +1376,40 @@ KPROBE_ENTRY(ignore_sysret)
 	CFI_ENDPROC
 ENDPROC(ignore_sysret)
 
-#ifdef CONFIG_XEN
+#ifdef CONFIG_STACK_UNWIND
+ENTRY(arch_unwind_init_running)
+	CFI_STARTPROC
+	movq	%r15, R15(%rdi)
+	movq	%r14, R14(%rdi)
+	xchgq	%rsi, %rdx
+	movq	%r13, R13(%rdi)
+	movq	%r12, R12(%rdi)
+	xorl	%eax, %eax
+	movq	%rbp, RBP(%rdi)
+	movq	%rbx, RBX(%rdi)
+	movq	(%rsp), %rcx
+	movq	%rax, R11(%rdi)
+	movq	%rax, R10(%rdi)
+	movq	%rax, R9(%rdi)
+	movq	%rax, R8(%rdi)
+	movq	%rax, RAX(%rdi)
+	movq	%rax, RCX(%rdi)
+	movq	%rax, RDX(%rdi)
+	movq	%rax, RSI(%rdi)
+	movq	%rax, RDI(%rdi)
+	movq	%rax, ORIG_RAX(%rdi)
+	movq	%rcx, RIP(%rdi)
+	leaq	8(%rsp), %rcx
+	movq	$__KERNEL_CS, CS(%rdi)
+	movq	%rax, EFLAGS(%rdi)
+	movq	%rcx, RSP(%rdi)
+	movq	$__KERNEL_DS, SS(%rdi)
+	jmpq	*%rdx
+	CFI_ENDPROC
+ENDPROC(arch_unwind_init_running)
+#endif
+
+#ifdef CONFIG_PARAVIRT_XEN
 ENTRY(xen_hypervisor_callback)
 	zeroentry xen_do_hypervisor_callback
 END(xen_hypervisor_callback)
@@ -1466,4 +1507,31 @@ ENTRY(xen_failsafe_callback)
 	CFI_ENDPROC
 END(xen_failsafe_callback)
 
-#endif /* CONFIG_XEN */
+#endif /* CONFIG_PARAVIRT_XEN */
+
+#ifdef	CONFIG_KDB
+
+#ifdef CONFIG_SMP
+ENTRY(kdb_interrupt)
+	apicinterrupt KDB_VECTOR,smp_kdb_interrupt
+END(kdb_interrupt)
+#endif	/* CONFIG_SMP */
+
+ENTRY(kdb_call)
+	INTR_FRAME
+	cld
+	pushq $-1			# orig_eax
+	CFI_ADJUST_CFA_OFFSET 8
+	SAVE_ALL
+	movq $1,%rdi			# KDB_REASON_ENTER
+	movq $0,%rsi			# error_code
+	movq %rsp,%rdx			# struct pt_regs
+	call kdb
+	RESTORE_ALL
+	addq $8,%rsp			# forget orig_eax
+	CFI_ADJUST_CFA_OFFSET -8
+	iretq
+	CFI_ENDPROC
+END(kdb_call)
+
+#endif	/* CONFIG_KDB */

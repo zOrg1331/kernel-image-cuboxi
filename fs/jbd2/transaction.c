@@ -50,11 +50,13 @@ jbd2_get_transaction(journal_t *journal, transaction_t *transaction)
 	transaction->t_state = T_RUNNING;
 	transaction->t_tid = journal->j_transaction_sequence++;
 	transaction->t_expires = jiffies + journal->j_commit_interval;
+	INIT_LIST_HEAD(&transaction->t_jcb);
 	spin_lock_init(&transaction->t_handle_lock);
+	spin_lock_init(&transaction->t_jcb_lock);
 	INIT_LIST_HEAD(&transaction->t_inode_list);
 
 	/* Set up the commit timer for the new transaction. */
-	journal->j_commit_timer.expires = round_jiffies(transaction->t_expires);
+	journal->j_commit_timer.expires = transaction->t_expires;
 	add_timer(&journal->j_commit_timer);
 
 	J_ASSERT(journal->j_running_transaction == NULL);
@@ -252,6 +254,7 @@ static handle_t *new_handle(int nblocks)
 	memset(handle, 0, sizeof(*handle));
 	handle->h_buffer_credits = nblocks;
 	handle->h_ref = 1;
+	INIT_LIST_HEAD(&handle->h_jcb);
 
 	lockdep_init_map(&handle->h_lockdep_map, "jbd2_handle",
 						&jbd2_handle_key, 0);
@@ -1173,6 +1176,36 @@ drop:
 }
 
 /**
+ * void jbd2_journal_callback_set() -  Register a callback function for this handle.
+ * @handle: handle to attach the callback to.
+ * @func: function to callback.
+ * @jcb:  structure with additional information required by func() , and
+ *	some space for jbd2 internal information.
+ *
+ * The function will be
+ * called when the transaction that this handle is part of has been
+ * committed to disk with the original callback data struct and the
+ * error status of the journal as parameters.  There is no guarantee of
+ * ordering between handles within a single transaction, nor between
+ * callbacks registered on the same handle.
+ *
+ * The caller is responsible for allocating the journal_callback struct.
+ * This is to allow the caller to add as much extra data to the callback
+ * as needed, but reduce the overhead of multiple allocations.  The caller
+ * allocated struct must start with a struct journal_callback at offset 0,
+ * and has the caller-specific data afterwards.
+ */
+void jbd2_journal_callback_set(handle_t *handle,
+		      void (*func)(struct journal_callback *jcb, int error),
+		      struct journal_callback *jcb)
+{
+	spin_lock(&handle->h_transaction->t_jcb_lock);
+	list_add_tail(&jcb->jcb_list, &handle->h_jcb);
+	spin_unlock(&handle->h_transaction->t_jcb_lock);
+	jcb->jcb_func = func;
+}
+
+/**
  * int jbd2_journal_stop() - complete a transaction
  * @handle: tranaction to complete.
  *
@@ -1245,6 +1278,11 @@ int jbd2_journal_stop(handle_t *handle)
 		if (journal->j_barrier_count)
 			wake_up(&journal->j_wait_transaction_locked);
 	}
+
+	/* Move callbacks from the handle to the transaction. */
+	spin_lock(&transaction->t_jcb_lock);
+	list_splice(&handle->h_jcb, &transaction->t_jcb);
+	spin_unlock(&transaction->t_jcb_lock);
 
 	/*
 	 * If the handle is marked SYNC, we need to set another commit
@@ -2049,46 +2087,26 @@ done:
 }
 
 /*
- * File truncate and transaction commit interact with each other in a
- * non-trivial way.  If a transaction writing data block A is
- * committing, we cannot discard the data by truncate until we have
- * written them.  Otherwise if we crashed after the transaction with
- * write has committed but before the transaction with truncate has
- * committed, we could see stale data in block A.  This function is a
- * helper to solve this problem.  It starts writeout of the truncated
- * part in case it is in the committing transaction.
- *
- * Filesystem code must call this function when inode is journaled in
- * ordered mode before truncation happens and after the inode has been
- * placed on orphan list with the new inode size. The second condition
- * avoids the race that someone writes new data and we start
- * committing the transaction after this function has been called but
- * before a transaction for truncate is started (and furthermore it
- * allows us to optimize the case where the addition to orphan list
- * happens in the same transaction as write --- we don't have to write
- * any data in such case).
+ * This function must be called when inode is journaled in ordered mode
+ * before truncation happens. It starts writeout of truncated part in
+ * case it is in the committing transaction so that we stand to ordered
+ * mode consistency guarantees.
  */
-int jbd2_journal_begin_ordered_truncate(journal_t *journal,
-					struct jbd2_inode *jinode,
+int jbd2_journal_begin_ordered_truncate(struct jbd2_inode *inode,
 					loff_t new_size)
 {
-	transaction_t *inode_trans, *commit_trans;
+	journal_t *journal;
+	transaction_t *commit_trans;
 	int ret = 0;
 
-	/* This is a quick check to avoid locking if not necessary */
-	if (!jinode->i_transaction)
+	if (!inode->i_transaction && !inode->i_next_transaction)
 		goto out;
-	/* Locks are here just to force reading of recent values, it is
-	 * enough that the transaction was not committing before we started
-	 * a transaction adding the inode to orphan list */
+	journal = inode->i_transaction->t_journal;
 	spin_lock(&journal->j_state_lock);
 	commit_trans = journal->j_committing_transaction;
 	spin_unlock(&journal->j_state_lock);
-	spin_lock(&journal->j_list_lock);
-	inode_trans = jinode->i_transaction;
-	spin_unlock(&journal->j_list_lock);
-	if (inode_trans == commit_trans) {
-		ret = filemap_fdatawrite_range(jinode->i_vfs_inode->i_mapping,
+	if (inode->i_transaction == commit_trans) {
+		ret = filemap_fdatawrite_range(inode->i_vfs_inode->i_mapping,
 			new_size, LLONG_MAX);
 		if (ret)
 			jbd2_journal_abort(journal, ret);

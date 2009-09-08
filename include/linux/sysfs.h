@@ -121,6 +121,8 @@ void sysfs_notify(struct kobject *kobj, char *dir, char *attr);
 
 extern int __must_check sysfs_init(void);
 
+void sysfs_printk_last_file(void);
+
 #else /* CONFIG_SYSFS */
 
 static inline int sysfs_schedule_callback(struct kobject *kobj,
@@ -229,6 +231,11 @@ static inline void sysfs_notify(struct kobject *kobj, char *dir, char *attr)
 static inline int __must_check sysfs_init(void)
 {
 	return 0;
+}
+
+static inline void sysfs_printk_last_file(void)
+{
+	;
 }
 
 #endif /* CONFIG_SYSFS */

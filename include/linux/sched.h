@@ -96,6 +96,7 @@ struct exec_domain;
 struct futex_pi_state;
 struct robust_list_head;
 struct bio;
+struct pfm_context;
 
 /*
  * List of flags we want to share for kernel threads,
@@ -408,8 +409,9 @@ extern int get_dumpable(struct mm_struct *mm);
 #define MMF_DUMP_FILTER_BITS	5
 #define MMF_DUMP_FILTER_MASK \
 	(((1 << MMF_DUMP_FILTER_BITS) - 1) << MMF_DUMP_FILTER_SHIFT)
-#define MMF_DUMP_FILTER_DEFAULT \
-	((1 << MMF_DUMP_ANON_PRIVATE) |	(1 << MMF_DUMP_ANON_SHARED))
+#define MMF_DUMP_FILTER_DEFAULT						\
+	((1 << MMF_DUMP_ANON_PRIVATE) |	(1 << MMF_DUMP_ANON_SHARED) |	\
+	 (1 << MMF_DUMP_ELF_HEADERS))
 
 struct sighand_struct {
 	atomic_t		count;
@@ -589,6 +591,7 @@ struct user_struct {
 	atomic_t inotify_devs;	/* How many inotify devs does this user have opened? */
 #endif
 #ifdef CONFIG_EPOLL
+	atomic_t epoll_devs;	/* DO NOT USE, ONLY HERE TO KEEP ABI STABLE */
 	atomic_t epoll_watches;	/* The number of file descriptors currently watched */
 #endif
 #ifdef CONFIG_POSIX_MQUEUE
@@ -1019,13 +1022,12 @@ struct sched_rt_entity {
 	int nr_cpus_allowed;
 
 	struct sched_rt_entity *back;
-#ifdef CONFIG_RT_GROUP_SCHED
+
 	struct sched_rt_entity	*parent;
 	/* rq on which this entity is (to be) queued: */
 	struct rt_rq		*rt_rq;
 	/* rq "owned" by this entity/group: */
 	struct rt_rq		*my_q;
-#endif
 };
 
 struct task_struct {
@@ -1200,6 +1202,11 @@ struct task_struct {
 #endif
 	seccomp_t seccomp;
 
+#ifdef CONFIG_UTRACE
+	struct utrace *utrace;
+	unsigned long utrace_flags;
+#endif
+
 /* Thread group tracking */
    	u32 parent_exec_id;
    	u32 self_exec_id;
@@ -1306,6 +1313,10 @@ struct task_struct {
 #ifdef CONFIG_LATENCYTOP
 	int latency_record_count;
 	struct latency_record latency_record[LT_SAVECOUNT];
+#endif
+	u64	instrumentation;
+#ifdef CONFIG_PERFMON
+	struct pfm_context *pfm_context;
 #endif
 };
 
@@ -1542,6 +1553,13 @@ extern cputime_t task_gtime(struct task_struct *p);
 /* NOTE: this will return 0 or PF_USED_MATH, it will never return 1 */
 #define tsk_used_math(p) ((p)->flags & PF_USED_MATH)
 #define used_math() tsk_used_math(current)
+
+static inline void tsk_restore_flags(struct task_struct *p,
+				     unsigned long pflags, unsigned long mask)
+{
+	p->flags &= ~mask;
+	p->flags |= pflags & mask;
+}
 
 #ifdef CONFIG_SMP
 extern int set_cpus_allowed_ptr(struct task_struct *p,

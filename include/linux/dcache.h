@@ -174,6 +174,7 @@ d_iput:		no		no		no       yes
 
 #define DCACHE_REFERENCED	0x0008  /* Recently used, don't discard. */
 #define DCACHE_UNHASHED		0x0010	
+#define DCACHE_LUSTRE_INVALID	0x0040  /* Lustre invalidated */
 
 #define DCACHE_INOTIFY_PARENT_WATCHED	0x0020 /* Parent inode is watched */
 
@@ -252,6 +253,7 @@ extern int have_submounts(struct dentry *);
  * This adds the entry to the hash queues.
  */
 extern void d_rehash(struct dentry *);
+extern void d_rehash_cond(struct dentry *, int lock);
 
 /**
  * d_add - add dentry to hash queues
@@ -287,6 +289,7 @@ static inline struct dentry *d_add_unique(struct dentry *entry, struct inode *in
 
 /* used for rename() and baskets */
 extern void d_move(struct dentry *, struct dentry *);
+extern void d_move_locked(struct dentry *, struct dentry *);
 
 /* appendix may either be NULL or be used for transname suffixes */
 extern struct dentry * d_lookup(struct dentry *, struct qstr *);
@@ -299,9 +302,12 @@ extern int d_validate(struct dentry *, struct dentry *);
 /*
  * helper function for dentry_operations.d_dname() members
  */
+#define D_PATH_FAIL_DELETED 1
+#define D_PATH_DISCONNECT   2
 extern char *dynamic_dname(struct dentry *, char *, int, const char *, ...);
 
-extern char *__d_path(const struct path *path, struct path *root, char *, int);
+extern char *__d_path(const struct path *path, struct path *root, char *, int,
+		      int);
 extern char *d_path(const struct path *, char *, int);
 extern char *dentry_path(struct dentry *, char *, int);
 

@@ -293,7 +293,7 @@ ENTRY(ia32_sysenter_target)
 	CFI_SIGNAL_FRAME
 	CFI_DEF_CFA esp, 0
 	CFI_REGISTER esp, ebp
-	movl TSS_sysenter_sp0(%esp),%esp
+	movl SYSENTER_stack_sp0(%esp),%esp
 sysenter_past_esp:
 	/*
 	 * Interrupts are disabled here, but we can't trace it until
@@ -513,7 +513,7 @@ ENDPROC(system_call)
 	ALIGN
 	RING0_PTREGS_FRAME		# can't unwind into user space anyway
 work_pending:
-	testb $_TIF_NEED_RESCHED, %cl
+	testw $(_TIF_NEED_RESCHED|_TIF_PERFMON_WORK), %cx
 	jz work_notifysig
 work_resched:
 	call schedule
@@ -782,7 +782,7 @@ END(device_not_available)
  * that sets up the real kernel stack. Check here, since we can't
  * allow the wrong stack to be used.
  *
- * "TSS_sysenter_sp0+12" is because the NMI/debug handler will have
+ * "SYSENTER_stack_sp0+12" is because the NMI/debug handler will have
  * already pushed 3 words if it hits on the sysenter instruction:
  * eflags, cs and eip.
  *
@@ -794,7 +794,7 @@ END(device_not_available)
 	cmpw $__KERNEL_CS,4(%esp);		\
 	jne ok;					\
 label:						\
-	movl TSS_sysenter_sp0+offset(%esp),%esp;	\
+	movl SYSENTER_stack_sp0+offset(%esp),%esp;	\
 	CFI_DEF_CFA esp, 0;			\
 	CFI_UNDEFINED eip;			\
 	pushfl;					\
@@ -1015,6 +1015,26 @@ ENTRY(alignment_check)
 	CFI_ENDPROC
 END(alignment_check)
 
+#ifdef	CONFIG_KDB
+
+ENTRY(kdb_call)
+	RING0_INT_FRAME
+	pushl %eax              # save orig EAX
+	CFI_ADJUST_CFA_OFFSET 4
+	SAVE_ALL
+	movl %esp,%ecx          # struct pt_regs
+	movl $0,%edx            # error_code
+	movl $1,%eax            # KDB_REASON_ENTER
+	call  kdb
+	jmp restore_all
+	CFI_ENDPROC
+
+#ifdef	CONFIG_SMP
+BUILD_INTERRUPT(kdb_interrupt,KDB_VECTOR)
+#endif	/* CONFIG_SMP */
+
+#endif	/* CONFIG_KDB */
+
 ENTRY(divide_error)
 	RING0_INT_FRAME
 	pushl $0			# no error code
@@ -1047,6 +1067,38 @@ ENTRY(spurious_interrupt_bug)
 	CFI_ENDPROC
 END(spurious_interrupt_bug)
 
+#ifdef CONFIG_STACK_UNWIND
+ENTRY(arch_unwind_init_running)
+	CFI_STARTPROC
+	movl	4(%esp), %edx
+	movl	(%esp), %ecx
+	leal	4(%esp), %eax
+	movl	%ebx, PT_EBX(%edx)
+	xorl	%ebx, %ebx
+	movl	%ebx, PT_ECX(%edx)
+	movl	%ebx, PT_EDX(%edx)
+	movl	%esi, PT_ESI(%edx)
+	movl	%edi, PT_EDI(%edx)
+	movl	%ebp, PT_EBP(%edx)
+	movl	%ebx, PT_EAX(%edx)
+	movl	$__USER_DS, PT_DS(%edx)
+	movl	$__USER_DS, PT_ES(%edx)
+	movl	$__KERNEL_PERCPU, PT_FS(%edx)
+	movl	%ebx, PT_ORIG_EAX(%edx)
+	movl	%ecx, PT_EIP(%edx)
+	movl	12(%esp), %ecx
+	movl	$__KERNEL_CS, PT_CS(%edx)
+	movl	%ebx, PT_EFLAGS(%edx)
+	movl	%eax, PT_OLDESP(%edx)
+	movl	8(%esp), %eax
+	movl	%ecx, 8(%esp)
+	movl	PT_EBX(%edx), %ebx
+	movl	$__KERNEL_DS, PT_OLDSS(%edx)
+	jmpl	*%eax
+	CFI_ENDPROC
+ENDPROC(arch_unwind_init_running)
+#endif
+
 ENTRY(kernel_thread_helper)
 	pushl $0		# fake return address for unwinder
 	CFI_STARTPROC
@@ -1060,7 +1112,7 @@ ENTRY(kernel_thread_helper)
 	CFI_ENDPROC
 ENDPROC(kernel_thread_helper)
 
-#ifdef CONFIG_XEN
+#ifdef CONFIG_PARAVIRT_XEN
 /* Xen doesn't set %esp to be precisely what the normal sysenter
    entrypoint expects, so fix it up before using the normal path. */
 ENTRY(xen_sysenter_target)
@@ -1153,7 +1205,7 @@ ENTRY(xen_failsafe_callback)
 .previous
 ENDPROC(xen_failsafe_callback)
 
-#endif	/* CONFIG_XEN */
+#endif	/* CONFIG_PARAVIRT_XEN */
 
 #ifdef CONFIG_FTRACE
 #ifdef CONFIG_DYNAMIC_FTRACE

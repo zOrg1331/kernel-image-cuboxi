@@ -6,7 +6,7 @@
 #include <linux/delay.h>
 #include <linux/string.h>
 #include <linux/syscalls.h>
-#ifdef ACPI_CONFIG
+#ifdef CONFIG_ACPI_CUSTOM_DSDT_INITRD
 #include <acpi/acpi.h>
 #endif
 
@@ -348,6 +348,40 @@ static int __init do_name(void)
 	}
 	return 0;
 }
+
+#ifdef CONFIG_ACPI_CUSTOM_DSDT_INITRD
+static int __init do_copy_mem(void)
+{
+	static void *file_current; /* current position in the memory */
+	if (file_mem == NULL) {
+		if (body_len < 4) { /* check especially against empty files */
+			error("file is less than 4 bytes");
+			return 1;
+		}
+		file_mem = kmalloc(body_len, GFP_ATOMIC);
+		if (!file_mem) {
+			error("failed to allocate enough memory");
+			return 1;
+		}
+		file_current = file_mem;
+	}
+	if (count >= body_len) {
+		memcpy(file_current, victim, body_len);
+		eat(body_len);
+		file_looked_for = NULL; /* don't find files with same name */
+		state = SkipIt;
+		return 0;
+	} else {
+		memcpy(file_current, victim, count);
+		file_current += count;
+		body_len -= count;
+		eat(count);
+		return 1;
+	}
+}
+#else
+#define do_copy_mem NULL
+#endif
 
 static int __init do_copy(void)
 {

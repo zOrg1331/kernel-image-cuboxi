@@ -38,6 +38,7 @@
 #include <linux/bio.h>
 #include "xattr.h"
 #include "acl.h"
+#include "nfs4acl.h"
 
 static int ext3_writepage_trans_blocks(struct inode *inode);
 
@@ -1195,6 +1196,18 @@ int ext3_journal_dirty_data(handle_t *handle, struct buffer_head *bh)
 	return err;
 }
 
+/* For ordered writepage and write_end functions */
+static int journal_dirty_data_fn(handle_t *handle, struct buffer_head *bh)
+{
+	/*
+	 * Write could have mapped the buffer but it didn't copy the data in
+	 * yet. So avoid filing such buffer into a transaction.
+	 */
+	if (buffer_mapped(bh) && buffer_uptodate(bh))
+		return ext3_journal_dirty_data(handle, bh);
+	return 0;
+}
+
 /* For write_end() in data=journal mode */
 static int write_end_fn(handle_t *handle, struct buffer_head *bh)
 {
@@ -1205,26 +1218,29 @@ static int write_end_fn(handle_t *handle, struct buffer_head *bh)
 }
 
 /*
- * Generic write_end handler for ordered and writeback ext3 journal modes.
- * We can't use generic_write_end, because that unlocks the page and we need to
- * unlock the page after ext3_journal_stop, but ext3_journal_stop must run
- * after block_write_end.
+ * This is nasty and subtle: ext3_write_begin() could have allocated blocks
+ * for the whole page but later we failed to copy the data in. So the disk
+ * size we really have allocated is pos + len (block_write_end() has zeroed
+ * the freshly allocated buffers so we aren't going to write garbage). But we
+ * want to keep i_size at the place where data copying finished so that we
+ * don't confuse readers. The worst what can happen is that we expose a page
+ * of zeros at the end of file after a crash...
  */
-static int ext3_generic_write_end(struct file *file,
-				struct address_space *mapping,
-				loff_t pos, unsigned len, unsigned copied,
-				struct page *page, void *fsdata)
+static void update_file_sizes(struct inode *inode, loff_t pos, unsigned len,
+			      unsigned copied)
 {
-	struct inode *inode = file->f_mapping->host;
+	int mark_dirty = 0;
 
-	copied = block_write_end(file, mapping, pos, len, copied, page, fsdata);
-
-	if (pos+copied > inode->i_size) {
-		i_size_write(inode, pos+copied);
-		mark_inode_dirty(inode);
+	if (pos + len > EXT3_I(inode)->i_disksize) {
+		mark_dirty = 1;
+		EXT3_I(inode)->i_disksize = pos + len;
 	}
-
-	return copied;
+	if (pos + copied > inode->i_size) {
+		i_size_write(inode, pos + copied);
+		mark_dirty = 1;
+	}
+	if (mark_dirty)
+		mark_inode_dirty(inode);
 }
 
 /*
@@ -1244,29 +1260,17 @@ static int ext3_ordered_write_end(struct file *file,
 	unsigned from, to;
 	int ret = 0, ret2;
 
+	copied = block_write_end(file, mapping, pos, len, copied, page, fsdata);
+
+	/* See comment at update_file_sizes() for why we check buffers upto
+	 * from + len */
 	from = pos & (PAGE_CACHE_SIZE - 1);
 	to = from + len;
-
 	ret = walk_page_buffers(handle, page_buffers(page),
-		from, to, NULL, ext3_journal_dirty_data);
+		from, to, NULL, journal_dirty_data_fn);
 
-	if (ret == 0) {
-		/*
-		 * generic_write_end() will run mark_inode_dirty() if i_size
-		 * changes.  So let's piggyback the i_disksize mark_inode_dirty
-		 * into that.
-		 */
-		loff_t new_i_size;
-
-		new_i_size = pos + copied;
-		if (new_i_size > EXT3_I(inode)->i_disksize)
-			EXT3_I(inode)->i_disksize = new_i_size;
-		ret2 = ext3_generic_write_end(file, mapping, pos, len, copied,
-							page, fsdata);
-		copied = ret2;
-		if (ret2 < 0)
-			ret = ret2;
-	}
+	if (ret == 0)
+		update_file_sizes(inode, pos, len, copied);
 	ret2 = ext3_journal_stop(handle);
 	if (!ret)
 		ret = ret2;
@@ -1283,22 +1287,11 @@ static int ext3_writeback_write_end(struct file *file,
 {
 	handle_t *handle = ext3_journal_current_handle();
 	struct inode *inode = file->f_mapping->host;
-	int ret = 0, ret2;
-	loff_t new_i_size;
+	int ret;
 
-	new_i_size = pos + copied;
-	if (new_i_size > EXT3_I(inode)->i_disksize)
-		EXT3_I(inode)->i_disksize = new_i_size;
-
-	ret2 = ext3_generic_write_end(file, mapping, pos, len, copied,
-							page, fsdata);
-	copied = ret2;
-	if (ret2 < 0)
-		ret = ret2;
-
-	ret2 = ext3_journal_stop(handle);
-	if (!ret)
-		ret = ret2;
+	copied = block_write_end(file, mapping, pos, len, copied, page, fsdata);
+	update_file_sizes(inode, pos, len, copied);
+	ret = ext3_journal_stop(handle);
 	unlock_page(page);
 	page_cache_release(page);
 
@@ -1409,13 +1402,6 @@ static int bget_one(handle_t *handle, struct buffer_head *bh)
 static int bput_one(handle_t *handle, struct buffer_head *bh)
 {
 	put_bh(bh);
-	return 0;
-}
-
-static int journal_dirty_data_fn(handle_t *handle, struct buffer_head *bh)
-{
-	if (buffer_mapped(bh))
-		return ext3_journal_dirty_data(handle, bh);
 	return 0;
 }
 
@@ -2699,6 +2685,9 @@ struct inode *ext3_iget(struct super_block *sb, unsigned long ino)
 	ei->i_acl = EXT3_ACL_NOT_CACHED;
 	ei->i_default_acl = EXT3_ACL_NOT_CACHED;
 #endif
+#ifdef CONFIG_EXT3_FS_NFS4ACL
+	ei->i_nfs4acl = EXT3_NFS4ACL_NOT_CACHED;
+#endif
 	ei->i_block_alloc_info = NULL;
 
 	ret = __ext3_get_inode_loc(inode, &iloc, 0);
@@ -2998,6 +2987,65 @@ int ext3_write_inode(struct inode *inode, int wait)
 	return ext3_force_commit(inode->i_sb);
 }
 
+#ifdef CONFIG_EXT3_FS_NFS4ACL
+static int ext3_inode_change_ok(struct inode *inode, struct iattr *attr)
+{
+	unsigned int ia_valid = attr->ia_valid;
+
+	if (!test_opt(inode->i_sb, NFS4ACL))
+		return inode_change_ok(inode, attr);
+
+	/* If force is set do it anyway. */
+	if (ia_valid & ATTR_FORCE)
+		return 0;
+
+	/* Make sure a caller can chown. */
+	if ((ia_valid & ATTR_UID) &&
+	    (current->fsuid != inode->i_uid ||
+	     attr->ia_uid != inode->i_uid) &&
+	    (current->fsuid != attr->ia_uid ||
+	     ext3_nfs4acl_permission(inode, ACE4_WRITE_OWNER)) &&
+	    !capable(CAP_CHOWN))
+		goto error;
+
+	/* Make sure caller can chgrp. */
+	if ((ia_valid & ATTR_GID)) {
+		int in_group = in_group_p(attr->ia_gid);
+		if ((current->fsuid != inode->i_uid ||
+		    (!in_group && attr->ia_gid != inode->i_gid)) &&
+		    (!in_group ||
+		     ext3_nfs4acl_permission(inode, ACE4_WRITE_OWNER)) &&
+		    !capable(CAP_CHOWN))
+			goto error;
+	}
+
+	/* Make sure a caller can chmod. */
+	if (ia_valid & ATTR_MODE) {
+		if (current->fsuid != inode->i_uid &&
+		    ext3_nfs4acl_permission(inode, ACE4_WRITE_ACL) &&
+		    !capable(CAP_FOWNER))
+			goto error;
+		/* Also check the setgid bit! */
+		if (!in_group_p((ia_valid & ATTR_GID) ? attr->ia_gid :
+				inode->i_gid) && !capable(CAP_FSETID))
+			attr->ia_mode &= ~S_ISGID;
+	}
+
+	/* Check for setting the inode time. */
+	if (ia_valid & (ATTR_MTIME_SET | ATTR_ATIME_SET)) {
+		if (current->fsuid != inode->i_uid &&
+		    ext3_nfs4acl_permission(inode, ACE4_WRITE_ATTRIBUTES) &&
+		    !capable(CAP_FOWNER))
+			goto error;
+	}
+	return 0;
+error:
+	return -EPERM;
+}
+#else
+# define ext3_inode_change_ok inode_change_ok
+#endif
+
 /*
  * ext3_setattr()
  *
@@ -3021,7 +3069,7 @@ int ext3_setattr(struct dentry *dentry, struct iattr *attr)
 	int error, rc = 0;
 	const unsigned int ia_valid = attr->ia_valid;
 
-	error = inode_change_ok(inode, attr);
+	error = ext3_inode_change_ok(inode, attr);
 	if (error)
 		return error;
 
@@ -3078,8 +3126,12 @@ int ext3_setattr(struct dentry *dentry, struct iattr *attr)
 	if (inode->i_nlink)
 		ext3_orphan_del(NULL, inode);
 
-	if (!rc && (ia_valid & ATTR_MODE))
-		rc = ext3_acl_chmod(inode);
+	if (!rc && (ia_valid & ATTR_MODE)) {
+		if (test_opt(inode->i_sb, NFS4ACL))
+			rc = ext3_nfs4acl_chmod(inode);
+		else
+			rc = ext3_acl_chmod(inode);
+	}
 
 err_out:
 	ext3_std_error(inode->i_sb, error);

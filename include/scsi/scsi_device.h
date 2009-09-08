@@ -42,9 +42,11 @@ enum scsi_device_state {
 				 * originate in the mid-layer) */
 	SDEV_OFFLINE,		/* Device offlined (by error handling or
 				 * user request */
-	SDEV_BLOCK,		/* Device blocked by scsi lld.  No scsi 
-				 * commands from user or midlayer should be issued
-				 * to the scsi lld. */
+	SDEV_BLOCK,		/* Device blocked by scsi lld.  No
+				 * scsi commands from user or midlayer
+				 * should be issued to the scsi
+				 * lld. */
+	SDEV_CREATED_BLOCK,	/* same as above but for created devices */
 };
 
 enum scsi_device_event {
@@ -94,7 +96,8 @@ struct scsi_device {
 	void *hostdata;		/* available to low-level driver */
 	char type;
 	char scsi_level;
-	char inq_periph_qual;	/* PQ from INQUIRY data */	
+	char inq_periph_qual;	/* PQ from INQUIRY data */
+	char tgps;		/* Target port group support */
 	unsigned char inquiry_len;	/* valid bytes in 'inquiry' */
 	unsigned char * inquiry;	/* INQUIRY response data */
 	const char * vendor;		/* [back_compat] point into 'inquiry' ... */
@@ -157,8 +160,6 @@ struct scsi_device {
 	atomic_t iodone_cnt;
 	atomic_t ioerr_cnt;
 
-	int timeout;
-
 	struct device		sdev_gendev,
 				sdev_dev;
 
@@ -172,6 +173,7 @@ struct scsi_device {
 struct scsi_dh_devlist {
 	char *vendor;
 	char *model;
+	char tgps;
 };
 
 struct scsi_device_handler {
@@ -236,6 +238,16 @@ struct scsi_target {
 						 * for the device at a time. */
 	unsigned int		pdt_1f_for_no_lun;	/* PDT = 0x1f */
 						/* means no lun present */
+	/* commands actually active on LLD. protected by host lock. */
+	unsigned int		target_busy;
+	/*
+	 * LLDs should set this in the slave_alloc host template callout.
+	 * If set to zero then there is not limit.
+	 */
+	unsigned int		can_queue;
+	unsigned int		target_blocked;
+	unsigned int		max_target_blocked;
+#define SCSI_DEFAULT_TARGET_BLOCKED	3
 
 	char			scsi_level;
 	struct execute_work	ew;
@@ -279,6 +291,7 @@ extern void starget_for_each_device(struct scsi_target *, void *,
 extern void __starget_for_each_device(struct scsi_target *, void *,
 				      void (*fn)(struct scsi_device *,
 						 void *));
+extern struct scsi_device *scsi_device_from_queue(struct request_queue *);
 
 /* only exposed to implement shost_for_each_device */
 extern struct scsi_device *__scsi_iterate_devices(struct Scsi_Host *,
@@ -384,9 +397,23 @@ static inline unsigned int sdev_id(struct scsi_device *sdev)
 #define scmd_id(scmd) sdev_id((scmd)->device)
 #define scmd_channel(scmd) sdev_channel((scmd)->device)
 
+/*
+ * checks for positions of the SCSI state machine
+ */
 static inline int scsi_device_online(struct scsi_device *sdev)
 {
-	return sdev->sdev_state != SDEV_OFFLINE;
+	return (sdev->sdev_state != SDEV_OFFLINE &&
+		sdev->sdev_state != SDEV_DEL);
+}
+static inline int scsi_device_blocked(struct scsi_device *sdev)
+{
+	return sdev->sdev_state == SDEV_BLOCK ||
+		sdev->sdev_state == SDEV_CREATED_BLOCK;
+}
+static inline int scsi_device_created(struct scsi_device *sdev)
+{
+	return sdev->sdev_state == SDEV_CREATED ||
+		sdev->sdev_state == SDEV_CREATED_BLOCK;
 }
 
 /* accessor functions for the SCSI parameters */

@@ -1,0 +1,40 @@
+lnxmaj="2.6.16"
+lnxmin=".60"
+# when we fix up this lnxmaj/lnxmin/lnxrel business...
+#lnxrel="0.37_f594963d"
+# and note that this means we get rid of the EXTRA_VERSION_DELIMITER crap!!
+lnxrel="60-0.39.3"
+
+# this is the delimeter that goes between $lnxmaj and $lnxrel
+# defaults to "-"
+EXTRA_VERSION_DELIMITER="."
+
+# this is the delimeter that goes before the "smp" at the end of the version
+# defaults to empty
+TARGET_DELIMITER="-"
+
+KERNEL_SRPM=kernel-source-$lnxmaj.$lnxrel.src.rpm
+SERIES=2.6-sles10.series
+VERSION=$lnxmaj
+EXTRA_VERSION="${lnxrel}_lustre.1.8.1"
+LUSTRE_VERSION=1.8.1
+
+OFED_VERSION=1.4.1
+
+BASE_ARCHS="i686 ppc x86_64 ia64 ppc64"
+BIGMEM_ARCHS=""
+BOOT_ARCHS=""
+JENSEN_ARCHS=""
+SMP_ARCHS="x86_64 ia64 ppc64"
+BIGSMP_ARCHS="i686"
+PSERIES64_ARCHS="ppc"
+UP_ARCHS=""
+SRC_ARCHS=""
+#RPMSMPTYPE="smp"
+
+for cc in gcc ; do
+    if which $cc >/dev/null 2>/dev/null ; then
+        export CC=$cc
+        break
+    fi
+done
