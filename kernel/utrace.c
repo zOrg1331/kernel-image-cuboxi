@@ -148,14 +148,11 @@ static int utrace_add_engine(struct task_struct *target,
 	     unlikely(matching_engine(utrace, flags, ops, data)))
 		goto unlock;
 
-	ret = -ESRCH;
-	/* can't attach after utrace_release_task() */
-	if (utrace->reap)
-		goto unlock;
 	/*
 	 * In case we had no engines before, make sure that
 	 * utrace_flags is not zero.
 	 */
+	ret = -ESRCH;
 	if (!target->utrace_flags) {
 		target->utrace_flags = UTRACE_EVENT(REAP);
 		/*
@@ -414,8 +411,8 @@ static void utrace_reap(struct task_struct *target, struct utrace *utrace)
 {
 	struct utrace_engine *engine, *next;
 
-	BUG_ON(!utrace->reap);
-
+	/* utrace_add_engine() checks ->utrace_flags != 0 */
+	target->utrace_flags = 0;
 	splice_attaching(utrace);
 
 	/*
