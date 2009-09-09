@@ -21,7 +21,7 @@ Release: alt1
 %define kgcc_version	4.3
 
 # Enable/disable SGML docs formatting
-%def_enable docs
+%def_disable docs
 
 #Remove oss
 %def_enable oss
@@ -86,91 +86,6 @@ these drivers are built separately from the kernel; they are available
 in separate packages (kernel-modules-*-%flavour).
 
 This is kernel with lustre cluster filesystem support. 
-%package -n kernel-modules-oss-%flavour
-Summary: OSS sound driver modules (obsolete)
-Group: System/Kernel and hardware
-Provides:  kernel-modules-oss-%kversion-%flavour-%krelease = %version-%release
-Conflicts: kernel-modules-oss-%kversion-%flavour-%krelease < %version-%release
-Conflicts: kernel-modules-oss-%kversion-%flavour-%krelease > %version-%release
-Prereq: coreutils
-Prereq: module-init-tools >= 3.1
-Prereq: %name = %version-%release
-Requires(postun): %name = %version-%release
-
-%description -n kernel-modules-oss-%flavour
-This package contains OSS sound driver modules for the Linux kernel
-package %name-%version-%release.
-
-These drivers are declared obsolete by the kernel maintainers; ALSA
-drivers should be used instead.  However, the older OSS drivers may be
-still useful for some hardware, if the corresponding ALSA drivers do
-not work well.
-
-Install this package only if you really need it.
-
-%package -n kernel-modules-alsa-%flavour
-Summary: The Advanced Linux Sound Architecture modules
-Group: System/Kernel and hardware
-Provides:  kernel-modules-alsa-%kversion-%flavour-%krelease = %version-%release
-Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease < %version-%release
-Conflicts: kernel-modules-alsa-%kversion-%flavour-%krelease > %version-%release
-Prereq: coreutils
-Prereq: module-init-tools >= 3.1
-Prereq: %name = %version-%release
-Requires(postun): %name = %version-%release
-
-%description -n kernel-modules-alsa-%flavour
-The Advanced Linux Sound Architecture (ALSA) provides audio and MIDI
-functionality to the Linux operating system. ALSA has the following
-significant features:
-1. Efficient support for all types of audio interfaces, from consumer
-soundcards to professional multichannel audio interfaces.
-2. Fully modularized sound drivers.
-3. SMP and thread-safe design.
-4. User space library (alsa-lib) to simplify application programming
-and provide higher level functionality.
-5. Support for the older OSS API, providing binary compatibility for
-most OSS programs.
-
-These are sound drivers for your ALT Linux system.
-
-
-%package -n kernel-modules-drm-%flavour
-Summary: The Direct Rendering Infrastructure modules
-Group: System/Kernel and hardware
-Provides:  kernel-modules-drm-%kversion-%flavour-%krelease = %version-%release
-Conflicts: kernel-modules-drm-%kversion-%flavour-%krelease < %version-%release
-Conflicts: kernel-modules-drm-%kversion-%flavour-%krelease > %version-%release
-Prereq: coreutils
-Prereq: module-init-tools >= 3.1
-Prereq: %name = %version-%release
-Requires(postun): %name = %version-%release
-
-%description -n kernel-modules-drm-%flavour
-The Direct Rendering Infrastructure, also known as the DRI, is a framework
-for allowing direct access to graphics hardware in a safe and efficient
-manner.  It includes changes to the X server, to several client libraries,
-and to the kernel.  The first major use for the DRI is to create fast
-OpenGL implementations.
-
-These are modules for your ALT Linux system
-
-
-%package -n kernel-modules-v4l-%flavour
-Summary: Video4Linux driver modules (obsolete)
-Group: System/Kernel and hardware
-Provides:  kernel-modules-v4l-%kversion-%flavour-%krelease = %version-%release
-Conflicts: kernel-modules-v4l-%kversion-%flavour-%krelease < %version-%release
-Conflicts: kernel-modules-v4l-%kversion-%flavour-%krelease > %version-%release
-Provides:  kernel-modules-uvcvideo-%kversion-%flavour-%krelease = %version-%release
-Provides:  kernel-modules-gspca-%kversion-%flavour-%krelease = %version-%release
-Prereq: coreutils
-Prereq: module-init-tools >= 3.1
-Prereq: %name = %version-%release
-Requires(postun): %name = %version-%release
-
-%description -n kernel-modules-v4l-%flavour
-Video for linux drivers
 
 %package -n kernel-headers-%flavour
 Summary: Header files for the Linux kernel
@@ -198,7 +113,6 @@ If possible, try to use glibc-kernheaders instead of this package.
 Summary: Headers and other files needed for building kernel modules
 Group: Development/Kernel 
 Requires: gcc%kgcc_version
-#Requires: kernel-headers-alsa
 
 %description -n kernel-headers-modules-%flavour
 This package contains header files, Makefiles and other parts of the
@@ -393,29 +307,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %preun
 %preun_kernel_image %kversion-%flavour-%krelease
 
-%post -n kernel-modules-oss-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-oss-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
-%post -n kernel-modules-drm-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-drm-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
-%post -n kernel-modules-v4l-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-v4l-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
-%post -n kernel-modules-alsa-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-alsa-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
 %post -n kernel-headers-%flavour
 %post_kernel_headers %kversion-%flavour-%krelease
 
@@ -431,14 +322,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/sound
 %exclude %modules_dir/kernel/drivers/media/
 %exclude %modules_dir/kernel/drivers/gpu/drm
-%if_enabled oss
-# OSS drivers
-%exclude %modules_dir/kernel/sound/oss
 /lib/firmware/*
 
-%files -n kernel-modules-oss-%flavour
-%modules_dir/kernel/sound/oss
-%endif #oss
 %files -n kernel-headers-%flavour
 %kheaders_dir
 
@@ -452,15 +337,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %files -n kernel-doc-%base_flavour
 %doc %_docdir/kernel-doc-%base_flavour-%version
 %endif
-%files -n kernel-modules-alsa-%flavour
-%modules_dir/kernel/sound/
-%exclude %modules_dir/kernel/sound/oss
-
-%files -n kernel-modules-drm-%flavour
-%modules_dir/kernel/drivers/gpu/drm
-
-%files -n kernel-modules-v4l-%flavour
-%modules_dir/kernel/drivers/media/
 
 %changelog
 * Tue Sep 08 2009 Michail Yakushin <silicium@altlinux.ru> 2.6.27-alt1
