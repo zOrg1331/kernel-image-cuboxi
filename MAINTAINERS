@@ -234,13 +234,6 @@ F:	drivers/acpi/
 F:	drivers/pnp/pnpacpi/
 F:	include/linux/acpi.h
 
-ACPI AMBIENT LIGHT SENSOR DRIVER
-M:	Zhang Rui <rui.zhang@intel.com>
-L:	linux-acpi@vger.kernel.org
-W:	http://www.lesswatts.org/projects/acpi/
-S:	Supported
-F:	drivers/acpi/als.c
-
 ACPI BATTERY DRIVERS
 M:	Alexey Starikovskiy <astarikovskiy@suse.de>
 L:	linux-acpi@vger.kernel.org

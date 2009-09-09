@@ -56,7 +56,6 @@ obj-$(CONFIG_ACPI_HOTPLUG_MEMORY) += acpi_memhotplug.o
 obj-$(CONFIG_ACPI_BATTERY)	+= battery.o
 obj-$(CONFIG_ACPI_SBS)		+= sbshc.o
 obj-$(CONFIG_ACPI_SBS)		+= sbs.o
-obj-$(CONFIG_ACPI_ALS)		+= als.o
 
 # processor has its own "processor." module_param namespace
 processor-y			:= processor_core.o processor_throttling.o

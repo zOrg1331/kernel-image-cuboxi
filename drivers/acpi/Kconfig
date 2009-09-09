@@ -348,13 +348,4 @@ config ACPI_SBS
 	  To compile this driver as a module, choose M here:
 	  the modules will be called sbs and sbshc.
 
-config ACPI_ALS
-	tristate "Ambient Light Sensor driver"
-	select ALS
-	help
-	  This driver supports the ACPI Ambient Light Sensor.
-
-	  To compile this driver as a module, choose M here:
-	  the module will be called als.
-
 endif	# ACPI
