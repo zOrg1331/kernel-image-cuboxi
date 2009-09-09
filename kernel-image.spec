@@ -22,9 +22,6 @@ Release: alt1
 
 # Enable/disable SGML docs formatting
 %def_disable docs
-
-#Remove oss
-%def_enable oss
 ## Don't edit below this line ##################################
 
 %define kversion	%kernel_base_version%kernel_extra_version
@@ -319,9 +316,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 /boot/config-%kversion-%flavour-%krelease
 %modules_dir
 %exclude %modules_dir/build
-%exclude %modules_dir/kernel/sound
 %exclude %modules_dir/kernel/drivers/media/
-%exclude %modules_dir/kernel/drivers/gpu/drm
 /lib/firmware/*
 
 %files -n kernel-headers-%flavour
