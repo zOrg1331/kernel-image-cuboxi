@@ -1508,7 +1508,7 @@ static int e_show(struct seq_file *m, void *p)
 	struct svc_export *exp = container_of(cp, struct svc_export, h);
 
 	if (p == SEQ_START_TOKEN) {
-		seq_puts(m, "# Version 1.1\n");
+		seq_puts(m, "# Version 1.2\n");
 		seq_puts(m, "# Path Client(Flags) # IPs\n");
 		return 0;
 	}
