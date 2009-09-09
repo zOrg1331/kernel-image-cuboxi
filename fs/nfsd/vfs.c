@@ -56,6 +56,7 @@
 #endif /* CONFIG_NFSD_V4 */
 #include <linux/jhash.h>
 #include <linux/ima.h>
+#include "nfsd.h"
 #include "vfs.h"
 
 #include <asm/uaccess.h>
@@ -89,12 +90,6 @@ struct raparm_hbucket {
 #define RAPARM_HASH_SIZE	(1<<RAPARM_HASH_BITS)
 #define RAPARM_HASH_MASK	(RAPARM_HASH_SIZE-1)
 static struct raparm_hbucket	raparm_hash[RAPARM_HASH_SIZE];
-
-static inline int
-nfsd_v4client(struct svc_rqst *rq)
-{
-    return rq->rq_prog == NFS_PROGRAM && rq->rq_vers == 4;
-}
 
 /* 
  * Called from nfsd_lookup and encode_dirent. Check if we have crossed 
