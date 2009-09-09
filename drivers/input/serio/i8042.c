@@ -83,6 +83,8 @@ module_param_named(debug, i8042_debug, bool, 0600);
 MODULE_PARM_DESC(debug, "Turn i8042 debugging mode on and off");
 #endif
 
+static bool i8042_bypass_aux_irq_test;
+
 #include "i8042.h"
 
 static DEFINE_SPINLOCK(i8042_lock);
@@ -641,7 +643,7 @@ static int __devinit i8042_check_aux(void)
  * used it for a PCI card or somethig else.
  */
 
-	if (i8042_noloop || aux_loop_broken) {
+	if (i8042_noloop || i8042_bypass_aux_irq_test || aux_loop_broken) {
 /*
  * Without LOOP command we can't test AUX IRQ delivery. Assume the port
  * is working and hope we are right.
@@ -923,40 +925,26 @@ static void i8042_dritek_enable(void)
 
 #ifdef CONFIG_PM
 
-static bool i8042_suspended;
-
 /*
- * Here we try to restore the original BIOS settings. We only want to
- * do that once, when we really suspend, not when we taking memory
- * snapshot for swsusp (in this case we'll perform required cleanup
- * as part of shutdown process).
+ * Here we try to restore the original BIOS settings to avoid
+ * upsetting it.
  */
 
-static int i8042_suspend(struct platform_device *dev, pm_message_t state)
+static int i8042_pm_reset(struct device *dev)
 {
-	if (!i8042_suspended && state.event == PM_EVENT_SUSPEND)
-		i8042_controller_reset();
-
-	i8042_suspended = state.event == PM_EVENT_SUSPEND ||
-			  state.event == PM_EVENT_FREEZE;
+	i8042_controller_reset();
 
 	return 0;
 }
 
-
 /*
- * Here we try to reset everything back to a state in which suspended
+ * Here we try to reset everything back to a state we had
+ * before suspending.
  */
 
-static int i8042_resume(struct platform_device *dev)
+static int i8042_pm_restore(struct device *dev)
 {
 	int error;
-
-/*
- * Do not bother with restoring state if we haven't suspened yet
- */
-	if (!i8042_suspended)
-		return 0;
 
 	error = i8042_controller_check();
 	if (error)
@@ -1001,11 +989,18 @@ static int i8042_resume(struct platform_device *dev)
 	if (i8042_ports[I8042_KBD_PORT_NO].serio)
 		i8042_enable_kbd_port();
 
-	i8042_suspended = false;
 	i8042_interrupt(0, NULL);
 
 	return 0;
 }
+
+static const struct dev_pm_ops i8042_pm_ops = {
+	.suspend	= i8042_pm_reset,
+	.resume		= i8042_pm_restore,
+	.poweroff	= i8042_pm_reset,
+	.restore	= i8042_pm_restore,
+};
+
 #endif /* CONFIG_PM */
 
 /*
@@ -1251,14 +1246,13 @@ static struct platform_driver i8042_driver = {
 	.driver		= {
 		.name	= "i8042",
 		.owner	= THIS_MODULE,
+#ifdef CONFIG_PM
+		.pm	= &i8042_pm_ops,
+#endif
 	},
 	.probe		= i8042_probe,
 	.remove		= __devexit_p(i8042_remove),
 	.shutdown	= i8042_shutdown,
-#ifdef CONFIG_PM
-	.suspend	= i8042_suspend,
-	.resume		= i8042_resume,
-#endif
 };
 
 static int __init i8042_init(void)
