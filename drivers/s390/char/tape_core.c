@@ -214,13 +214,15 @@ tape_med_state_set(struct tape_device *device, enum tape_medium_state newstate)
 	switch(newstate){
 	case MS_UNLOADED:
 		device->tape_generic_status |= GMT_DR_OPEN(~0);
-		dev_info(&device->cdev->dev, "The tape cartridge has been "
-			"successfully unloaded\n");
+		if (device->medium_state == MS_LOADED)
+			dev_info(&device->cdev->dev, "The tape cartridge has "
+				 "been successfully unloaded\n");
 		break;
 	case MS_LOADED:
 		device->tape_generic_status &= ~GMT_DR_OPEN(~0);
-		dev_info(&device->cdev->dev, "A tape cartridge has been "
-			"mounted\n");
+		if (device->medium_state == MS_UNLOADED)
+			dev_info(&device->cdev->dev, "A tape cartridge has "
+				 "been mounted\n");
 		break;
 	default:
 		// print nothing
@@ -358,11 +360,11 @@ tape_generic_online(struct tape_device *device,
 
 out_char:
 	tapechar_cleanup_device(device);
+out_minor:
+	tape_remove_minor(device);
 out_discipline:
 	device->discipline->cleanup_device(device);
 	device->discipline = NULL;
-out_minor:
-	tape_remove_minor(device);
 out:
 	module_put(discipline->owner);
 	return rc;
