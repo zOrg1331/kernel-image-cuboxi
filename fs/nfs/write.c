@@ -91,7 +91,7 @@ void nfs_writedata_free(struct nfs_write_data *p)
 	mempool_free(p, nfs_wdata_mempool);
 }
 
-static void nfs_writedata_release(struct nfs_write_data *wdata)
+void nfs_writedata_release(struct nfs_write_data *wdata)
 {
 	put_nfs_open_context(wdata->args.context);
 	nfs_writedata_free(wdata);

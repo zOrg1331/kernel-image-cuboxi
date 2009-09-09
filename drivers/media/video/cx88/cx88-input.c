@@ -147,11 +147,10 @@ static void ir_timer(unsigned long data)
 {
 	struct cx88_IR *ir = (struct cx88_IR *)data;
 
-	schedule_work(&ir->work);
+	schedule_delayed_work(&ir->work,msecs_to_jiffies(ir->polling));
 }
 
 static void cx88_ir_work(struct work_struct *work)
-#endif
 {
 
 	struct cx88_IR *ir = container_of(work, struct cx88_IR, work.work);
