@@ -3181,8 +3181,9 @@ static int receive_sync_uuid(struct drbd_conf *mdev, struct p_header *h)
 	struct p_rs_uuid *p = (struct p_rs_uuid *)h;
 
 	wait_event(mdev->misc_wait,
+		   mdev->state.conn == C_WF_SYNC_UUID ||
 		   mdev->state.conn < C_CONNECTED ||
-		   mdev->state.conn == C_WF_SYNC_UUID);
+		   mdev->state.disk < D_NEGOTIATING);
 
 	/* D_ASSERT( mdev->state.conn == C_WF_SYNC_UUID ); */
 
