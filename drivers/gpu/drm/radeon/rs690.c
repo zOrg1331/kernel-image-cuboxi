@@ -652,4 +652,3 @@ void rs690_mc_wreg(struct radeon_device *rdev, uint32_t reg, uint32_t v)
 	WREG32(RS690_MC_DATA, v);
 	WREG32(RS690_MC_INDEX, RS690_MC_INDEX_WR_ACK);
 }
-
