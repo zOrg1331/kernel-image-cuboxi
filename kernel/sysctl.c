@@ -92,6 +92,7 @@ extern int sysctl_nr_trim_pages;
 #ifdef CONFIG_RCU_TORTURE_TEST
 extern int rcutorture_runnable;
 #endif /* #ifdef CONFIG_RCU_TORTURE_TEST */
+extern int blk_iopoll_enabled;
 
 /* Constants used for minimum and  maximum */
 #ifdef CONFIG_DETECT_SOFTLOCKUP
@@ -990,7 +991,14 @@ static struct ctl_table kern_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 #endif
-
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "blk_iopoll",
+		.data		= &blk_iopoll_enabled,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
 /*
  * NOTE: do not add new entries to this table unless you have read
  * Documentation/sysctl/ctl_unnumbered.txt
@@ -1100,6 +1108,14 @@ static struct ctl_table vm_table[] = {
 		.procname	= "dirty_expire_centisecs",
 		.data		= &dirty_expire_interval,
 		.maxlen		= sizeof(dirty_expire_interval),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "max_writeback_mb",
+		.data		= &max_writeback_mb,
+		.maxlen		= sizeof(max_writeback_mb),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},
