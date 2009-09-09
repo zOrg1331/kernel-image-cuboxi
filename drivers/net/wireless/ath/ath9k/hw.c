@@ -16,6 +16,7 @@
 
 #include <linux/io.h>
 #include <asm/unaligned.h>
+#include <linux/pci.h>
 
 #include "ath9k.h"
 #include "initvals.h"
@@ -3967,7 +3968,8 @@ void ath9k_hw_setrxfilter(struct ath_hw *ah, u32 bits)
 {
 	u32 phybits;
 
-	REG_WRITE(ah, AR_RX_FILTER, (bits & 0xffff) | AR_RX_COMPR_BAR);
+	REG_WRITE(ah, AR_RX_FILTER, bits);
+
 	phybits = 0;
 	if (bits & ATH9K_RX_FILTER_PHYRADAR)
 		phybits |= AR_PHY_ERR_RADAR;
@@ -4296,4 +4298,17 @@ void ath_gen_timer_isr(struct ath_hw *ah)
 			"Gen timer[%d] trigger\n", index);
 		timer->trigger(timer->arg);
 	}
+}
+
+/*
+ * Primitive to disable ASPM
+ */
+void ath_pcie_aspm_disable(struct ath_softc *sc)
+{
+	struct pci_dev *pdev = to_pci_dev(sc->dev);
+	u8 aspm;
+
+	pci_read_config_byte(pdev, ATH_PCIE_CAP_LINK_CTRL, &aspm);
+	aspm &= ~(ATH_PCIE_CAP_LINK_L0S | ATH_PCIE_CAP_LINK_L1);
+	pci_write_config_byte(pdev, ATH_PCIE_CAP_LINK_CTRL, aspm);
 }
