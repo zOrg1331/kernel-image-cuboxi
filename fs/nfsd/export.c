@@ -1439,6 +1439,7 @@ static struct flags {
 	{ NFSEXP_CROSSMOUNT, {"crossmnt", ""}},
 	{ NFSEXP_NOSUBTREECHECK, {"no_subtree_check", ""}},
 	{ NFSEXP_NOAUTHNLM, {"insecure_locks", ""}},
+	{ NFSEXP_V4ROOT, {"v4root", ""}},
 #ifdef MSNFS
 	{ NFSEXP_MSNFS, {"msnfs", ""}},
 #endif
