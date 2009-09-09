@@ -1006,7 +1006,7 @@ static int mach64_do_dma_init(struct drm_device * dev, drm_mach64_init_t * init)
 
 	DRM_DEBUG("\n");
 
-	dev_priv = drm_alloc(sizeof(drm_mach64_private_t), DRM_MEM_DRIVER);
+	dev_priv = kmalloc(sizeof(drm_mach64_private_t), GFP_KERNEL);
 	if (dev_priv == NULL)
 		return -ENOMEM;
 
@@ -1386,8 +1386,7 @@ int mach64_do_cleanup_dma(struct drm_device * dev)
 
 		mach64_destroy_freelist(dev);
 
-		drm_free(dev_priv, sizeof(drm_mach64_private_t),
-			 DRM_MEM_DRIVER);
+		kfree(dev_priv);
 		dev->dev_private = NULL;
 	}
 
@@ -1476,8 +1475,8 @@ int mach64_init_freelist(struct drm_device * dev)
 	for (i = 0; i < dma->buf_count; i++) {
 		if ((entry =
 		     (drm_mach64_freelist_t *)
-		     drm_alloc(sizeof(drm_mach64_freelist_t),
-			       DRM_MEM_BUFLISTS)) == NULL)
+		     kmalloc(sizeof(drm_mach64_freelist_t),
+			       GFP_KERNEL)) == NULL)
 			return -ENOMEM;
 		memset(entry, 0, sizeof(drm_mach64_freelist_t));
 		entry->buf = dma->buflist[i];
@@ -1500,18 +1499,18 @@ void mach64_destroy_freelist(struct drm_device * dev)
 	list_for_each_safe(ptr, tmp, &dev_priv->pending) {
 		list_del(ptr);
 		entry = list_entry(ptr, drm_mach64_freelist_t, list);
-		drm_free(entry, sizeof(*entry), DRM_MEM_BUFLISTS);
+		kfree(entry);
 	}
 	list_for_each_safe(ptr, tmp, &dev_priv->placeholders) {
 		list_del(ptr);
 		entry = list_entry(ptr, drm_mach64_freelist_t, list);
-		drm_free(entry, sizeof(*entry), DRM_MEM_BUFLISTS);
+		kfree(entry);
 	}
 
 	list_for_each_safe(ptr, tmp, &dev_priv->free_list) {
 		list_del(ptr);
 		entry = list_entry(ptr, drm_mach64_freelist_t, list);
-		drm_free(entry, sizeof(*entry), DRM_MEM_BUFLISTS);
+		kfree(entry);
 	}
 }
 
