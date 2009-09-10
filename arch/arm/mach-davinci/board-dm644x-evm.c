@@ -225,6 +225,8 @@ static struct platform_device ide_dev = {
 	},
 };
 
+static struct snd_platform_data dm644x_evm_snd_data;
+
 /*----------------------------------------------------------------------*/
 
 /*
@@ -557,8 +559,10 @@ static struct i2c_board_info __initdata i2c_info[] =  {
 		I2C_BOARD_INFO("24c256", 0x50),
 		.platform_data	= &eeprom_info,
 	},
+	{
+		I2C_BOARD_INFO("tlv320aic33", 0x1b),
+	},
 	/* ALSO:
-	 * - tvl320aic33 audio codec (0x1b)
 	 * - tvp5146 video decoder (0x5d)
 	 */
 };
@@ -666,6 +670,7 @@ static __init void davinci_evm_init(void)
 	davinci_setup_mmc(0, &dm6446evm_mmc_config);
 
 	davinci_serial_init(&uart_config);
+	dm644x_init_asp(&dm644x_evm_snd_data);
 
 	soc_info->emac_pdata->phy_mask = DM644X_EVM_PHY_MASK;
 	soc_info->emac_pdata->mdio_max_freq = DM644X_EVM_MDIO_FREQUENCY;
