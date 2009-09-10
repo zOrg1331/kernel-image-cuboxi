@@ -33,5 +33,6 @@ int kthread_should_stop(void);
 
 int kthreadd(void *unused);
 extern struct task_struct *kthreadd_task;
+extern struct completion kthreadd_task_init_done;
 
 #endif /* _LINUX_KTHREAD_H */
