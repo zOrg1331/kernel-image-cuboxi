@@ -132,9 +132,7 @@ static int journal_submit_commit_record(journal_t *journal,
 	set_buffer_uptodate(bh);
 	bh->b_end_io = journal_end_buffer_io_sync;
 
-	if (journal->j_flags & JBD2_BARRIER &&
-		!JBD2_HAS_INCOMPAT_FEATURE(journal,
-					 JBD2_FEATURE_INCOMPAT_ASYNC_COMMIT)) {
+	if (journal->j_flags & JBD2_BARRIER) {
 		set_buffer_ordered(bh);
 		barrier_done = 1;
 	}
