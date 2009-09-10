@@ -329,10 +329,24 @@ static ssize_t ahci_activity_store(struct ata_device *dev,
 				   enum sw_activity val);
 static void ahci_init_sw_activity(struct ata_link *link);
 
+static ssize_t ahci_show_host_caps(struct device *dev,
+				   struct device_attribute *attr, char *buf);
+static ssize_t ahci_show_host_version(struct device *dev,
+				      struct device_attribute *attr, char *buf);
+static ssize_t ahci_show_port_cmd(struct device *dev,
+				  struct device_attribute *attr, char *buf);
+
+DEVICE_ATTR(ahci_host_caps, S_IRUGO, ahci_show_host_caps, NULL);
+DEVICE_ATTR(ahci_host_version, S_IRUGO, ahci_show_host_version, NULL);
+DEVICE_ATTR(ahci_port_cmd, S_IRUGO, ahci_show_port_cmd, NULL);
+
 static struct device_attribute *ahci_shost_attrs[] = {
 	&dev_attr_link_power_management_policy,
 	&dev_attr_em_message_type,
 	&dev_attr_em_message,
+	&dev_attr_ahci_host_caps,
+	&dev_attr_ahci_host_version,
+	&dev_attr_ahci_port_cmd,
 	NULL
 };
 
@@ -700,6 +714,36 @@ static void ahci_enable_ahci(void __iomem *mmio)
 	}
 
 	WARN_ON(1);
+}
+
+static ssize_t ahci_show_host_caps(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct Scsi_Host *shost = class_to_shost(dev);
+	struct ata_port *ap = ata_shost_to_port(shost);
+	struct ahci_host_priv *hpriv = ap->host->private_data;
+
+	return sprintf(buf, "%x\n", hpriv->cap);
+}
+
+static ssize_t ahci_show_host_version(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct Scsi_Host *shost = class_to_shost(dev);
+	struct ata_port *ap = ata_shost_to_port(shost);
+	void __iomem *mmio = ap->host->iomap[AHCI_PCI_BAR];
+
+	return sprintf(buf, "%x\n", readl(mmio + HOST_VERSION));
+}
+
+static ssize_t ahci_show_port_cmd(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	struct Scsi_Host *shost = class_to_shost(dev);
+	struct ata_port *ap = ata_shost_to_port(shost);
+	void __iomem *port_mmio = ahci_port_base(ap);
+
+	return sprintf(buf, "%x\n", readl(port_mmio + PORT_CMD));
 }
 
 /**
@@ -2603,14 +2647,18 @@ static void ahci_p5wdh_workaround(struct ata_host *host)
 }
 
 /*
- * SB600 ahci controller on ASUS M2A-VM can't do 64bit DMA with older
- * BIOS.  The oldest version known to be broken is 0901 and working is
- * 1501 which was released on 2007-10-26.  Force 32bit DMA on anything
- * older than 1501.  Please read bko#9412 for more info.
+ * SB600 ahci controller on certain boards can't do 64bit DMA with
+ * older BIOS.
  */
-static bool ahci_asus_m2a_vm_32bit_only(struct pci_dev *pdev)
+static bool ahci_sb600_32bit_only(struct pci_dev *pdev)
 {
 	static const struct dmi_system_id sysids[] = {
+		/*
+		 * The oldest version known to be broken is 0901 and
+		 * working is 1501 which was released on 2007-10-26.
+		 * Force 32bit DMA on anything older than 1501.
+		 * Please read bko#9412 for more info.
+		 */
 		{
 			.ident = "ASUS M2A-VM",
 			.matches = {
@@ -2618,31 +2666,48 @@ static bool ahci_asus_m2a_vm_32bit_only(struct pci_dev *pdev)
 					  "ASUSTeK Computer INC."),
 				DMI_MATCH(DMI_BOARD_NAME, "M2A-VM"),
 			},
+			.driver_data = "20071026",	/* yyyymmdd */
+		},
+		/*
+		 * It's yet unknown whether more recent BIOS fixes the
+		 * problem.  Blacklist the whole board for the time
+		 * being.  Please read the following thread for more
+		 * info.
+		 *
+		 * http://thread.gmane.org/gmane.linux.ide/42326
+		 */
+		{
+			.ident = "Gigabyte GA-MA69VM-S2",
+			.matches = {
+				DMI_MATCH(DMI_BOARD_VENDOR,
+					  "Gigabyte Technology Co., Ltd."),
+				DMI_MATCH(DMI_BOARD_NAME, "GA-MA69VM-S2"),
+			},
 		},
 		{ }
 	};
-	const char *cutoff_mmdd = "10/26";
-	const char *date;
-	int year;
+	const struct dmi_system_id *match;
 
+	match = dmi_first_match(sysids);
 	if (pdev->bus->number != 0 || pdev->devfn != PCI_DEVFN(0x12, 0) ||
-	    !dmi_check_system(sysids))
+	    !match)
 		return false;
 
-	/*
-	 * Argh.... both version and date are free form strings.
-	 * Let's hope they're using the same date format across
-	 * different versions.
-	 */
-	date = dmi_get_system_info(DMI_BIOS_DATE);
-	year = dmi_get_year(DMI_BIOS_DATE);
-	if (date && strlen(date) >= 10 && date[2] == '/' && date[5] == '/' &&
-	    (year > 2007 ||
-	     (year == 2007 && strncmp(date, cutoff_mmdd, 5) >= 0)))
-		return false;
+	if (match->driver_data) {
+		int year, month, date;
+		char buf[9];
 
-	dev_printk(KERN_WARNING, &pdev->dev, "ASUS M2A-VM: BIOS too old, "
-		   "forcing 32bit DMA, update BIOS\n");
+		dmi_get_date(DMI_BIOS_DATE, &year, &month, &date);
+		snprintf(buf, sizeof(buf), "%04d%02d%02d", year, month, date);
+
+		if (strcmp(buf, match->driver_data) >= 0)
+			return false;
+
+		dev_printk(KERN_WARNING, &pdev->dev, "%s: BIOS too old, "
+			   "forcing 32bit DMA, update BIOS\n", match->ident);
+	} else
+		dev_printk(KERN_WARNING, &pdev->dev, "%s: this board can't "
+			   "do 64bit DMA, forcing 32bit\n", match->ident);
 
 	return true;
 }
@@ -2857,8 +2922,8 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (board_id == board_ahci_sb700 && pdev->revision >= 0x40)
 		hpriv->flags &= ~AHCI_HFLAG_IGN_SERR_INTERNAL;
 
-	/* apply ASUS M2A_VM quirk */
-	if (ahci_asus_m2a_vm_32bit_only(pdev))
+	/* apply sb600 32bit only quirk */
+	if (ahci_sb600_32bit_only(pdev))
 		hpriv->flags |= AHCI_HFLAG_32BIT_ONLY;
 
 	if (!(hpriv->flags & AHCI_HFLAG_NO_MSI))
@@ -2869,7 +2934,7 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	/* prepare host */
 	if (hpriv->cap & HOST_CAP_NCQ)
-		pi.flags |= ATA_FLAG_NCQ;
+		pi.flags |= ATA_FLAG_NCQ | ATA_FLAG_FPDMA_AA;
 
 	if (hpriv->cap & HOST_CAP_PMP)
 		pi.flags |= ATA_FLAG_PMP;
