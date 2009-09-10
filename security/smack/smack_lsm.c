@@ -91,7 +91,7 @@ struct inode_smack *new_inode_smack(char *smack)
  */
 
 /**
- * smack_ptrace_may_access - Smack approval on PTRACE_ATTACH
+ * smack_ptrace_access_check - Smack approval on PTRACE_ATTACH
  * @ctp: child task pointer
  * @mode: ptrace attachment mode
  *
@@ -99,13 +99,13 @@ struct inode_smack *new_inode_smack(char *smack)
  *
  * Do the capability checks, and require read and write.
  */
-static int smack_ptrace_may_access(struct task_struct *ctp, unsigned int mode)
+static int smack_ptrace_access_check(struct task_struct *ctp, unsigned int mode)
 {
 	int rc;
 	struct smk_audit_info ad;
 	char *sp, *tsp;
 
-	rc = cap_ptrace_may_access(ctp, mode);
+	rc = cap_ptrace_access_check(ctp, mode);
 	if (rc != 0)
 		return rc;
 
@@ -1080,6 +1080,22 @@ static int smack_file_receive(struct file *file)
  */
 
 /**
+ * smack_cred_alloc_blank - "allocate" blank task-level security credentials
+ * @new: the new credentials
+ * @gfp: the atomicity of any memory allocations
+ *
+ * Prepare a blank set of credentials for modification.  This must allocate all
+ * the memory the LSM module might require such that cred_transfer() can
+ * complete without error.
+ */
+static int smack_cred_alloc_blank(struct cred *cred, gfp_t gfp)
+{
+	cred->security = NULL;
+	return 0;
+}
+
+
+/**
  * smack_cred_free - "free" task-level security credentials
  * @cred: the credentials in question
  *
@@ -1114,6 +1130,18 @@ static int smack_cred_prepare(struct cred *new, const struct cred *old,
  */
 static void smack_cred_commit(struct cred *new, const struct cred *old)
 {
+}
+
+/**
+ * smack_cred_transfer - Transfer the old credentials to the new credentials
+ * @new: the new credentials
+ * @old: the original credentials
+ *
+ * Fill in a set of blank credentials from another set of credentials.
+ */
+static void smack_cred_transfer(struct cred *new, const struct cred *old)
+{
+	new->security = old->security;
 }
 
 /**
@@ -2464,7 +2492,7 @@ static int smack_socket_sendmsg(struct socket *sock, struct msghdr *msg,
 	/*
 	 * Perfectly reasonable for this to be NULL
 	 */
-	if (sip == NULL || sip->sin_family != PF_INET)
+	if (sip == NULL || sip->sin_family != AF_INET)
 		return 0;
 
 	return smack_netlabel_send(sock->sk, sip);
@@ -3032,7 +3060,7 @@ static void smack_release_secctx(char *secdata, u32 seclen)
 struct security_operations smack_ops = {
 	.name =				"smack",
 
-	.ptrace_may_access =		smack_ptrace_may_access,
+	.ptrace_access_check =		smack_ptrace_access_check,
 	.ptrace_traceme =		smack_ptrace_traceme,
 	.syslog = 			smack_syslog,
 
@@ -3073,9 +3101,11 @@ struct security_operations smack_ops = {
 	.file_send_sigiotask = 		smack_file_send_sigiotask,
 	.file_receive = 		smack_file_receive,
 
+	.cred_alloc_blank =		smack_cred_alloc_blank,
 	.cred_free =			smack_cred_free,
 	.cred_prepare =			smack_cred_prepare,
 	.cred_commit =			smack_cred_commit,
+	.cred_transfer =		smack_cred_transfer,
 	.kernel_act_as =		smack_kernel_act_as,
 	.kernel_create_files_as =	smack_kernel_create_files_as,
 	.task_setpgid = 		smack_task_setpgid,
