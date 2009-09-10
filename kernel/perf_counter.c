@@ -46,11 +46,17 @@ static atomic_t nr_task_counters __read_mostly;
 
 /*
  * perf counter paranoia level:
- *  0 - not paranoid
- *  1 - disallow cpu counters to unpriv
- *  2 - disallow kernel profiling to unpriv
+ *  -1 - not paranoid at all
+ *   0 - disallow raw tracepoint access for unpriv
+ *   1 - disallow cpu counters for unpriv
+ *   2 - disallow kernel profiling for unpriv
  */
 int sysctl_perf_counter_paranoid __read_mostly = 1;
+
+static inline bool perf_paranoid_tracepoint_raw(void)
+{
+	return sysctl_perf_counter_paranoid > -1;
+}
 
 static inline bool perf_paranoid_cpu(void)
 {
@@ -3971,6 +3977,7 @@ static const struct pmu *tp_perf_counter_init(struct perf_counter *counter)
 	 * have these.
 	 */
 	if ((counter->attr.sample_type & PERF_SAMPLE_RAW) &&
+			perf_paranoid_tracepoint_raw() &&
 			!capable(CAP_SYS_ADMIN))
 		return ERR_PTR(-EPERM);
 
@@ -4309,15 +4316,15 @@ SYSCALL_DEFINE5(perf_counter_open,
 	struct file *group_file = NULL;
 	int fput_needed = 0;
 	int fput_needed2 = 0;
-	int ret;
+	int err;
 
 	/* for future expandability... */
 	if (flags & ~(PERF_FLAG_FD_NO_GROUP | PERF_FLAG_FD_OUTPUT))
 		return -EINVAL;
 
-	ret = perf_copy_attr(attr_uptr, &attr);
-	if (ret)
-		return ret;
+	err = perf_copy_attr(attr_uptr, &attr);
+	if (err)
+		return err;
 
 	if (!attr.exclude_kernel) {
 		if (perf_paranoid_kernel() && !capable(CAP_SYS_ADMIN))
@@ -4341,7 +4348,7 @@ SYSCALL_DEFINE5(perf_counter_open,
 	 */
 	group_leader = NULL;
 	if (group_fd != -1 && !(flags & PERF_FLAG_FD_NO_GROUP)) {
-		ret = -EINVAL;
+		err = -EINVAL;
 		group_file = fget_light(group_fd, &fput_needed);
 		if (!group_file)
 			goto err_put_context;
@@ -4370,22 +4377,22 @@ SYSCALL_DEFINE5(perf_counter_open,
 
 	counter = perf_counter_alloc(&attr, cpu, ctx, group_leader,
 				     NULL, GFP_KERNEL);
-	ret = PTR_ERR(counter);
+	err = PTR_ERR(counter);
 	if (IS_ERR(counter))
 		goto err_put_context;
 
-	ret = anon_inode_getfd("[perf_counter]", &perf_fops, counter, 0);
-	if (ret < 0)
+	err = anon_inode_getfd("[perf_counter]", &perf_fops, counter, 0);
+	if (err < 0)
 		goto err_free_put_context;
 
-	counter_file = fget_light(ret, &fput_needed2);
+	counter_file = fget_light(err, &fput_needed2);
 	if (!counter_file)
 		goto err_free_put_context;
 
 	if (flags & PERF_FLAG_FD_OUTPUT) {
-		ret = perf_counter_set_output(counter, group_fd);
-		if (ret)
-			goto err_free_put_context;
+		err = perf_counter_set_output(counter, group_fd);
+		if (err)
+			goto err_fput_free_put_context;
 	}
 
 	counter->filp = counter_file;
@@ -4401,20 +4408,20 @@ SYSCALL_DEFINE5(perf_counter_open,
 	list_add_tail(&counter->owner_entry, &current->perf_counter_list);
 	mutex_unlock(&current->perf_counter_mutex);
 
+err_fput_free_put_context:
 	fput_light(counter_file, fput_needed2);
 
-out_fput:
-	fput_light(group_file, fput_needed);
-
-	return ret;
-
 err_free_put_context:
-	kfree(counter);
+	if (err < 0)
+		kfree(counter);
 
 err_put_context:
-	put_ctx(ctx);
+	if (err < 0)
+		put_ctx(ctx);
 
-	goto out_fput;
+	fput_light(group_file, fput_needed);
+
+	return err;
 }
 
 /*

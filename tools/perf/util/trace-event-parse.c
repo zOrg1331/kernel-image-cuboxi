@@ -90,7 +90,7 @@ void parse_cmdlines(char *file, int size __unused)
 	while (line) {
 		item = malloc_or_die(sizeof(*item));
 		sscanf(line, "%d %as", &item->pid,
-		       (float *)&item->comm); /* workaround gcc warning */
+		       (float *)(void *)&item->comm); /* workaround gcc warning */
 		item->next = list;
 		list = item;
 		line = strtok_r(NULL, "\n", &next);
@@ -152,10 +152,10 @@ void parse_proc_kallsyms(char *file, unsigned int size __unused)
 		item = malloc_or_die(sizeof(*item));
 		item->mod = NULL;
 		ret = sscanf(line, "%as %c %as\t[%as",
-			     (float *)&addr_str, /* workaround gcc warning */
+			     (float *)(void *)&addr_str, /* workaround gcc warning */
 			     &ch,
-			     (float *)&item->func,
-			     (float *)&item->mod);
+			     (float *)(void *)&item->func,
+			     (float *)(void *)&item->mod);
 		item->addr = strtoull(addr_str, NULL, 16);
 		free(addr_str);
 
@@ -291,8 +291,8 @@ void parse_ftrace_printk(char *file, unsigned int size __unused)
 	while (line) {
 		item = malloc_or_die(sizeof(*item));
 		ret = sscanf(line, "%as : %as",
-			     (float *)&addr_str, /* workaround gcc warning */
-			     (float *)&item->printk);
+			     (float *)(void *)&addr_str, /* workaround gcc warning */
+			     (float *)(void *)&item->printk);
 		item->addr = strtoull(addr_str, NULL, 16);
 		free(addr_str);
 
@@ -2708,9 +2708,9 @@ void print_event(int cpu, void *data, int size, unsigned long long nsecs,
 		return pretty_print_func_graph(data, size, event, cpu,
 					       pid, comm, secs, usecs);
 
-	printf("%16s-%-5d [%03d] %5lu.%06lu: %s: ",
+	printf("%16s-%-5d [%03d] %5lu.%09Lu: %s: ",
 	       comm, pid,  cpu,
-	       secs, usecs, event->name);
+	       secs, nsecs, event->name);
 
 	pretty_print(data, size, event);
 	printf("\n");

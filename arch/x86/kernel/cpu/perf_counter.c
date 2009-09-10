@@ -726,7 +726,8 @@ static inline void init_debug_store_on_cpu(int cpu)
 		return;
 
 	wrmsr_on_cpu(cpu, MSR_IA32_DS_AREA,
-		     (u32)((u64)(long)ds), (u32)((u64)(long)ds >> 32));
+		     (u32)((u64)(unsigned long)ds),
+		     (u32)((u64)(unsigned long)ds >> 32));
 }
 
 static inline void fini_debug_store_on_cpu(int cpu)
@@ -757,7 +758,7 @@ static void release_bts_hardware(void)
 
 		per_cpu(cpu_hw_counters, cpu).ds = NULL;
 
-		kfree((void *)(long)ds->bts_buffer_base);
+		kfree((void *)(unsigned long)ds->bts_buffer_base);
 		kfree(ds);
 	}
 
@@ -769,7 +770,7 @@ static int reserve_bts_hardware(void)
 	int cpu, err = 0;
 
 	if (!bts_available())
-		return -EOPNOTSUPP;
+		return 0;
 
 	get_online_cpus();
 
@@ -788,7 +789,7 @@ static int reserve_bts_hardware(void)
 			break;
 		}
 
-		ds->bts_buffer_base = (u64)(long)buffer;
+		ds->bts_buffer_base = (u64)(unsigned long)buffer;
 		ds->bts_index = ds->bts_buffer_base;
 		ds->bts_absolute_maximum =
 			ds->bts_buffer_base + BTS_BUFFER_SIZE;
@@ -914,7 +915,7 @@ static int __hw_perf_counter_init(struct perf_counter *counter)
 			if (!reserve_pmc_hardware())
 				err = -EBUSY;
 			else
-				reserve_bts_hardware();
+				err = reserve_bts_hardware();
 		}
 		if (!err)
 			atomic_inc(&active_counters);
@@ -978,6 +979,20 @@ static int __hw_perf_counter_init(struct perf_counter *counter)
 
 	if (config == -1LL)
 		return -EINVAL;
+
+	/*
+	 * Branch tracing:
+	 */
+	if ((attr->config == PERF_COUNT_HW_BRANCH_INSTRUCTIONS) &&
+	    (hwc->sample_period == 1)) {
+		/* BTS is not supported by this architecture. */
+		if (!bts_available())
+			return -EOPNOTSUPP;
+
+		/* BTS is currently only allowed for user-mode. */
+		if (hwc->config & ARCH_PERFMON_EVENTSEL_OS)
+			return -EOPNOTSUPP;
+	}
 
 	hwc->config |= config;
 
@@ -1355,19 +1370,9 @@ static int x86_pmu_enable(struct perf_counter *counter)
 
 	idx = fixed_mode_idx(counter, hwc);
 	if (idx == X86_PMC_IDX_FIXED_BTS) {
-		/*
-		 * Try to use BTS for branch tracing. If that is not
-		 * available, try to get a generic counter.
-		 */
-		if (unlikely(!cpuc->ds))
-			goto try_generic;
-
-		/*
-		 * Try to get the fixed counter, if that is already taken
-		 * then try to get a generic counter:
-		 */
+		/* BTS is already occupied. */
 		if (test_and_set_bit(idx, cpuc->used_mask))
-			goto try_generic;
+			return -EAGAIN;
 
 		hwc->config_base	= 0;
 		hwc->counter_base	= 0;
@@ -1494,7 +1499,7 @@ static void intel_pmu_drain_bts_buffer(struct cpu_hw_counters *cpuc,
 	};
 	struct perf_counter *counter = cpuc->counters[X86_PMC_IDX_FIXED_BTS];
 	unsigned long orig_ip = data->regs->ip;
-	u64 at;
+	struct bts_record *at, *top;
 
 	if (!counter)
 		return;
@@ -1502,18 +1507,17 @@ static void intel_pmu_drain_bts_buffer(struct cpu_hw_counters *cpuc,
 	if (!ds)
 		return;
 
-	for (at = ds->bts_buffer_base;
-	     at < ds->bts_index;
-	     at += sizeof(struct bts_record)) {
-		struct bts_record *rec = (struct bts_record *)(long)at;
+	at  = (struct bts_record *)(unsigned long)ds->bts_buffer_base;
+	top = (struct bts_record *)(unsigned long)ds->bts_index;
 
-		data->regs->ip	= rec->from;
-		data->addr	= rec->to;
+	ds->bts_index = ds->bts_buffer_base;
+
+	for (; at < top; at++) {
+		data->regs->ip	= at->from;
+		data->addr	= at->to;
 
 		perf_counter_output(counter, 1, data);
 	}
-
-	ds->bts_index = ds->bts_buffer_base;
 
 	data->regs->ip	= orig_ip;
 	data->addr	= 0;
