@@ -39,7 +39,7 @@ struct utrace {
 	unsigned int vfork_stop:1; /* need utrace_stop() before vfork wait */
 	unsigned int death:1;	/* in utrace_report_death() now */
 	unsigned int reap:1;	/* release_task() has run */
-	unsigned int slow_path:1; /* need slow path in start_report() */
+	unsigned int pending_attach:1; /* need splice_attaching() */
 };
 
 # define INIT_UTRACE(tsk)						      \

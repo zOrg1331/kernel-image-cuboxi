@@ -362,7 +362,10 @@ static inline void tracehook_report_vfork_done(struct task_struct *child,
  */
 static inline void tracehook_prepare_release_task(struct task_struct *task)
 {
-	utrace_release_task(task);
+	/* see utrace_add_engine() about this barrier */
+	smp_mb();
+	if (task_utrace_flags(task))
+		utrace_release_task(task);
 }
 
 /**

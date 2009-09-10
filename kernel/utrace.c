@@ -69,7 +69,7 @@ module_init(utrace_init);
 static void splice_attaching(struct utrace *utrace)
 {
 	list_splice_tail_init(&utrace->attaching, &utrace->attached);
-	utrace->slow_path = 0;
+	utrace->pending_attach = 0;
 }
 
 /*
@@ -143,33 +143,47 @@ static int utrace_add_engine(struct task_struct *target,
 
 	spin_lock(&utrace->lock);
 
-	if (utrace->reap) {
+	ret = -EEXIST;
+	if ((flags & UTRACE_ATTACH_EXCLUSIVE) &&
+	     unlikely(matching_engine(utrace, flags, ops, data)))
+		goto unlock;
+
+	/*
+	 * In case we had no engines before, make sure that
+	 * utrace_flags is not zero.
+	 */
+	ret = -ESRCH;
+	if (!target->utrace_flags) {
+		target->utrace_flags = UTRACE_EVENT(REAP);
 		/*
-		 * Already entered utrace_release_task(), cannot attach now.
+		 * If we race with tracehook_prepare_release_task()
+		 * make sure that either it sees utrace_flags != 0
+		 * or we see exit_state == EXIT_DEAD.
 		 */
-		ret = -ESRCH;
-	} else if ((flags & UTRACE_ATTACH_EXCLUSIVE) &&
-	    unlikely(matching_engine(utrace, flags, ops, data))) {
-		ret = -EEXIST;
-	} else {
-		/*
-		 * Put the new engine on the pending ->attaching list.
-		 * Make sure it gets onto the ->attached list by the
-		 * next time it's examined.  Setting ->slow_path ensures
-		 * that start_report() takes the lock and splices the
-		 * lists before the next new reporting pass.
-		 *
-		 * When target == current, it would be safe just to call
-		 * splice_attaching() right here.  But if we're inside a
-		 * callback, that would mean the new engine also gets
-		 * notified about the event that precipitated its own
-		 * creation.  This is not what the user wants.
-		 */
-		list_add_tail(&engine->entry, &utrace->attaching);
-		utrace->slow_path = 1;
-		ret = 0;
+		smp_mb();
+		if (unlikely(target->exit_state == EXIT_DEAD)) {
+			target->utrace_flags = 0;
+			goto unlock;
+		}
 	}
 
+	/*
+	 * Put the new engine on the pending ->attaching list.
+	 * Make sure it gets onto the ->attached list by the next
+	 * time it's examined.  Setting ->pending_attach ensures
+	 * that start_report() takes the lock and splices the lists
+	 * before the next new reporting pass.
+	 *
+	 * When target == current, it would be safe just to call
+	 * splice_attaching() right here.  But if we're inside a
+	 * callback, that would mean the new engine also gets
+	 * notified about the event that precipitated its own
+	 * creation.  This is not what the user wants.
+	 */
+	list_add_tail(&engine->entry, &utrace->attaching);
+	utrace->pending_attach = 1;
+	ret = 0;
+unlock:
 	spin_unlock(&utrace->lock);
 
 	return ret;
@@ -206,22 +220,9 @@ struct utrace_engine *utrace_attach_task(
 	struct task_struct *target, int flags,
 	const struct utrace_engine_ops *ops, void *data)
 {
-	struct utrace *utrace;
+	struct utrace *utrace = task_utrace_struct(target);
 	struct utrace_engine *engine;
 	int ret;
-
-	utrace = &target->utrace;
-
-	if (unlikely(target->exit_state == EXIT_DEAD)) {
-		/*
-		 * The target has already been reaped.
-		 * Check this early, though it's not synchronized.
-		 * utrace_add_engine() will do the final check.
-		 */
-		if (!(flags & UTRACE_ATTACH_CREATE))
-			return ERR_PTR(-ENOENT);
-		return ERR_PTR(-ESRCH);
-	}
 
 	if (!(flags & UTRACE_ATTACH_CREATE)) {
 		spin_lock(&utrace->lock);
@@ -402,54 +403,37 @@ static void put_detached_list(struct list_head *list)
 }
 
 /*
- * Called with utrace->lock held.
+ * Called with utrace->lock held and utrace->reap set.
  * Notify and clean up all engines, then free utrace.
  */
 static void utrace_reap(struct task_struct *target, struct utrace *utrace)
 	__releases(utrace->lock)
 {
 	struct utrace_engine *engine, *next;
-	LIST_HEAD(detached);
 
-restart:
+	/* utrace_add_engine() checks ->utrace_flags != 0 */
+	target->utrace_flags = 0;
 	splice_attaching(utrace);
+
+	/*
+	 * Since we were called with @utrace->reap set, nobody can
+	 * set/clear UTRACE_EVENT(REAP) in @engine->flags or change
+	 * @engine->ops, and nobody can change @utrace->attached.
+	 */
+	spin_unlock(&utrace->lock);
+
 	list_for_each_entry_safe(engine, next, &utrace->attached, entry) {
-		const struct utrace_engine_ops *ops = engine->ops;
-		unsigned long flags = engine->flags;
+		if (engine->flags & UTRACE_EVENT(REAP))
+			engine->ops->report_reap(engine, target);
 
 		engine->ops = NULL;
 		engine->flags = 0;
-		list_move(&engine->entry, &detached);
+		list_del_init(&engine->entry);
 
-		/*
-		 * If it didn't need a callback, we don't need to drop
-		 * the lock.  Now nothing else refers to this engine.
-		 */
-		if (flags & UTRACE_EVENT(REAP)) {
-			/*
-			 * This synchronizes with utrace_barrier().  Since
-			 * we need the utrace->lock here anyway (unlike the
-			 * other reporting loops), we don't need any memory
-			 * barrier as utrace_barrier() holds the lock.
-			 */
-			utrace->reporting = engine;
-			spin_unlock(&utrace->lock);
-
-			(*ops->report_reap)(engine, target);
-
-			utrace->reporting = NULL;
-
-			put_detached_list(&detached);
-
-			spin_lock(&utrace->lock);
-			goto restart;
-		}
+		utrace_engine_put(engine);
 	}
-
-	spin_unlock(&utrace->lock);
-
-	put_detached_list(&detached);
 }
+
 
 /*
  * Called by release_task.  After this, target->utrace must be cleared.
@@ -464,21 +448,19 @@ void utrace_release_task(struct task_struct *target)
 
 	utrace->reap = 1;
 
-	if (!(target->utrace_flags & _UTRACE_DEATH_EVENTS)) {
-		utrace_reap(target, utrace); /* Unlocks and frees.  */
-		return;
-	}
-
 	/*
-	 * The target will do some final callbacks but hasn't
-	 * finished them yet.  We know because it clears these
-	 * event bits after it's done.  Instead of cleaning up here
-	 * and requiring utrace_report_death to cope with it, we
-	 * delay the REAP report and the teardown until after the
-	 * target finishes its death reports.
+	 * If the target will do some final callbacks but hasn't
+	 * finished them yet, we know because it clears these event
+	 * bits after it's done.  Instead of cleaning up here and
+	 * requiring utrace_report_death() to cope with it, we delay
+	 * the REAP report and the teardown until after the target
+	 * finishes its death reports.
 	 */
 
-	spin_unlock(&utrace->lock);
+	if (target->utrace_flags & _UTRACE_DEATH_EVENTS)
+		spin_unlock(&utrace->lock);
+	else
+		utrace_reap(target, utrace); /* Unlocks.  */
 }
 
 /*
@@ -660,7 +642,7 @@ static bool utrace_do_stop(struct task_struct *target, struct utrace *utrace)
 		}
 		spin_unlock_irq(&target->sighand->siglock);
 	} else if (!utrace->report && !utrace->interrupt) {
-		utrace->report = utrace->slow_path = 1;
+		utrace->report = 1;
 		set_notify_resume(target);
 	}
 
@@ -675,22 +657,16 @@ static bool utrace_do_stop(struct task_struct *target, struct utrace *utrace)
  */
 static void utrace_wakeup(struct task_struct *target, struct utrace *utrace)
 {
-	unsigned long irqflags;
-
 	utrace->stopped = 0;
 
-	if (!lock_task_sighand(target, &irqflags))
-		return;
-
-	if (likely(task_is_stopped_or_traced(target))) {
-		if (target->signal->flags & SIGNAL_STOP_STOPPED ||
-		    target->signal->group_stop_count)
-			target->state = TASK_STOPPED;
-		else
-			wake_up_state(target, __TASK_STOPPED | __TASK_TRACED);
-	}
-
-	unlock_task_sighand(target, &irqflags);
+	/* The task must be either TASK_TRACED or killed */
+	spin_lock_irq(&target->sighand->siglock);
+	if (target->signal->flags & SIGNAL_STOP_STOPPED ||
+	    target->signal->group_stop_count)
+		target->state = TASK_STOPPED;
+	else
+		wake_up_state(target, __TASK_TRACED);
+	spin_unlock_irq(&target->sighand->siglock);
 }
 
 /*
@@ -740,8 +716,6 @@ static bool utrace_reset(struct task_struct *task, struct utrace *utrace)
 		clear_tsk_thread_flag(task, TIF_SYSCALL_TRACE);
 	}
 
-	task->utrace_flags = flags;
-
 	if (!flags)
 		/*
 		 * No more engines, cleared out the utrace.
@@ -754,7 +728,16 @@ static bool utrace_reset(struct task_struct *task, struct utrace *utrace)
 		 */
 		utrace_wakeup(task, utrace);
 
+	/*
+	 * In theory spin_lock() doesn't imply rcu_read_lock().
+	 * Once we clear ->utrace_flags this task_struct can go away
+	 * because tracehook_prepare_release_task() path does not take
+	 * utrace->lock when ->utrace_flags == 0.
+	 */
+	rcu_read_lock();
+	task->utrace_flags = flags;
 	spin_unlock(&utrace->lock);
+	rcu_read_unlock();
 
 	put_detached_list(&detached);
 
@@ -789,7 +772,7 @@ relock:
 		/*
 		 * Ensure a reporting pass when we're resumed.
 		 */
-		utrace->report = utrace->slow_path = 1;
+		utrace->report = 1;
 		set_thread_flag(TIF_NOTIFY_RESUME);
 	}
 
@@ -1113,7 +1096,7 @@ int utrace_control(struct task_struct *target,
 		 */
 		clear_engine_wants_stop(engine);
 		if (!utrace->report && !utrace->interrupt) {
-			utrace->report = utrace->slow_path = 1;
+			utrace->report = 1;
 			set_notify_resume(target);
 		}
 		break;
@@ -1283,14 +1266,13 @@ struct utrace_report {
 
 /*
  * We are now making the report, so clear the flag saying we need one.
- * When ->report is set, ->slow_path is always set too.  When there is a
- * new attach, ->slow_path is set even without ->report, just so we will
+ * When there is a new attach, ->pending_attach is set just so we will
  * know to do splice_attaching() here before the callback loop.
  */
 static void start_report(struct utrace *utrace)
 {
 	BUG_ON(utrace->stopped);
-	if (utrace->slow_path) {
+	if (utrace->report || utrace->pending_attach) {
 		spin_lock(&utrace->lock);
 		splice_attaching(utrace);
 		utrace->report = 0;
@@ -1327,7 +1309,7 @@ static void finish_report(struct utrace_report *report,
 			utrace->interrupt = 1;
 			set_tsk_thread_flag(task, TIF_SIGPENDING);
 		} else {
-			utrace->report = utrace->slow_path = 1;
+			utrace->report = 1;
 			set_tsk_thread_flag(task, TIF_NOTIFY_RESUME);
 		}
 		spin_unlock(&utrace->lock);
