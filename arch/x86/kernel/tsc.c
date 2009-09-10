@@ -763,14 +763,12 @@ void mark_tsc_unstable(char *reason)
 {
 	if (!tsc_unstable) {
 		tsc_unstable = 1;
-		printk(KERN_INFO "Marking TSC unstable due to %s\n", reason);
+		printk("Marking TSC unstable due to %s\n", reason);
 		/* Change only the rating, when not registered */
 		if (clocksource_tsc.mult)
-			clocksource_mark_unstable(&clocksource_tsc);
-		else {
-			clocksource_tsc.flags |= CLOCK_SOURCE_UNSTABLE;
+			clocksource_change_rating(&clocksource_tsc, 0);
+		else
 			clocksource_tsc.rating = 0;
-		}
 	}
 }
 
