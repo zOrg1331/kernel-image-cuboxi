@@ -34,6 +34,7 @@
 #include <linux/nfsd/syscall.h>
 #include <linux/lockd/bind.h>
 #include <linux/nfsacl.h>
+#include <linux/seq_file.h>
 
 #define NFSDDBG_FACILITY	NFSDDBG_SVC
 
@@ -576,10 +577,6 @@ nfsd_dispatch(struct svc_rqst *rqstp, __be32 *statp)
 		+ rqstp->rq_res.head[0].iov_len;
 	rqstp->rq_res.head[0].iov_len += sizeof(__be32);
 
-	/* NFSv4.1 DRC requires statp */
-	if (rqstp->rq_vers == 4)
-		nfsd4_set_statp(rqstp, statp);
-
 	/* Now call the procedure handler, and encode NFS status. */
 	nfserr = proc->pc_func(rqstp, rqstp->rq_argp, rqstp->rq_resp);
 	nfserr = map_new_errors(rqstp->rq_vers, nfserr);
@@ -614,7 +611,25 @@ nfsd_dispatch(struct svc_rqst *rqstp, __be32 *statp)
 
 int nfsd_pool_stats_open(struct inode *inode, struct file *file)
 {
-	if (nfsd_serv == NULL)
+	int ret;
+	mutex_lock(&nfsd_mutex);
+	if (nfsd_serv == NULL) {
+		mutex_unlock(&nfsd_mutex);
 		return -ENODEV;
-	return svc_pool_stats_open(nfsd_serv, file);
+	}
+	/* bump up the psudo refcount while traversing */
+	svc_get(nfsd_serv);
+	ret = svc_pool_stats_open(nfsd_serv, file);
+	mutex_unlock(&nfsd_mutex);
+	return ret;
+}
+
+int nfsd_pool_stats_release(struct inode *inode, struct file *file)
+{
+	int ret = seq_release(inode, file);
+	mutex_lock(&nfsd_mutex);
+	/* this function really, really should have been called svc_put() */
+	svc_destroy(nfsd_serv);
+	mutex_unlock(&nfsd_mutex);
+	return ret;
 }
