@@ -446,10 +446,13 @@ static noinline void __init_refok rest_init(void)
 {
 	int pid;
 
+	rcu_scheduler_starting();
 	kernel_thread(kernel_init, NULL, CLONE_FS | CLONE_SIGHAND);
 	numa_default_policy();
 	pid = kernel_thread(kthreadd, NULL, CLONE_FS | CLONE_FILES);
 	kthreadd_task = find_task_by_pid_ns(pid, &init_pid_ns);
+	complete(&kthreadd_task_init_done);
+
 	unlock_kernel();
 
 	/*
@@ -457,7 +460,6 @@ static noinline void __init_refok rest_init(void)
 	 * at least once to get things moving:
 	 */
 	init_idle_bootup_task(current);
-	rcu_scheduler_starting();
 	preempt_enable_no_resched();
 	schedule();
 	preempt_disable();
@@ -626,7 +628,6 @@ asmlinkage void __init start_kernel(void)
 	softirq_init();
 	timekeeping_init();
 	time_init();
-	sched_clock_init();
 	profile_init();
 	if (!irqs_disabled())
 		printk(KERN_CRIT "start_kernel(): bug: interrupts were "
@@ -677,6 +678,7 @@ asmlinkage void __init start_kernel(void)
 	numa_policy_init();
 	if (late_time_init)
 		late_time_init();
+	sched_clock_init();
 	calibrate_delay();
 	pidmap_init();
 	anon_vma_init();

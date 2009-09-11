@@ -16,11 +16,11 @@
 #include <linux/mutex.h>
 #include <trace/events/sched.h>
 
-#define KTHREAD_NICE_LEVEL (-5)
-
 static DEFINE_SPINLOCK(kthread_create_lock);
 static LIST_HEAD(kthread_create_list);
+
 struct task_struct *kthreadd_task;
+DECLARE_COMPLETION(kthreadd_task_init_done);
 
 struct kthread_create_info
 {
@@ -129,6 +129,9 @@ struct task_struct *kthread_create(int (*threadfn)(void *data),
 	list_add_tail(&create.list, &kthread_create_list);
 	spin_unlock(&kthread_create_lock);
 
+	if (unlikely(!kthreadd_task))
+		wait_for_completion(&kthreadd_task_init_done);
+
 	wake_up_process(kthreadd_task);
 	wait_for_completion(&create.done);
 
@@ -145,7 +148,6 @@ struct task_struct *kthread_create(int (*threadfn)(void *data),
 		 * The kernel thread should not inherit these properties.
 		 */
 		sched_setscheduler_nocheck(create.result, SCHED_NORMAL, &param);
-		set_user_nice(create.result, KTHREAD_NICE_LEVEL);
 		set_cpus_allowed_ptr(create.result, cpu_all_mask);
 	}
 	return create.result;
@@ -221,7 +223,6 @@ int kthreadd(void *unused)
 	/* Setup a clean context for our children to inherit. */
 	set_task_comm(tsk, "kthreadd");
 	ignore_signals(tsk);
-	set_user_nice(tsk, KTHREAD_NICE_LEVEL);
 	set_cpus_allowed_ptr(tsk, cpu_all_mask);
 	set_mems_allowed(node_possible_map);
 
