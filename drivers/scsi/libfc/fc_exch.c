@@ -519,7 +519,6 @@ static int fc_seq_exch_abort(const struct fc_seq *req_sp,
 		error = -ENOBUFS;
 	return error;
 }
-EXPORT_SYMBOL(fc_seq_exch_abort);
 
 /*
  * Exchange timeout - handle exchange timer expiration.
