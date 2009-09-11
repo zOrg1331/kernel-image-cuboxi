@@ -40,13 +40,19 @@
 
 int fw_compute_block_crc(u32 *block)
 {
-	__be32 be32_block[256];
+	static DEFINE_SPINLOCK(buffer_lock);
+	static __be32 buffer[256];
+	unsigned long flags;
 	int i, length;
+
+	spin_lock_irqsave(&buffer_lock, flags);
 
 	length = (*block >> 16) & 0xff;
 	for (i = 0; i < length; i++)
-		be32_block[i] = cpu_to_be32(block[i + 1]);
-	*block |= crc_itu_t(0, (u8 *) be32_block, length * 4);
+		buffer[i] = cpu_to_be32(block[i + 1]);
+	*block |= crc_itu_t(0, (u8 *)buffer, length * 4);
+
+	spin_unlock_irqrestore(&buffer_lock, flags);
 
 	return length;
 }
