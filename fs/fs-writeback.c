@@ -849,7 +849,7 @@ static void bdi_writeback_all(struct writeback_control *wbc)
 
 	WARN_ON(wbc->sync_mode == WB_SYNC_ALL);
 
-	spin_lock(&bdi_lock);
+	rcu_read_lock();
 
 	list_for_each_entry(bdi, &bdi_list, bdi_list) {
 		if (!bdi_has_dirty_io(bdi))
@@ -858,7 +858,7 @@ static void bdi_writeback_all(struct writeback_control *wbc)
 		bdi_alloc_queue_work(bdi, wbc);
 	}
 
-	spin_unlock(&bdi_lock);
+	rcu_read_unlock();
 }
 
 /*
