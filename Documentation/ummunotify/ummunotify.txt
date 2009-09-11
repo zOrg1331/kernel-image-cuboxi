@@ -1,0 +1,150 @@
+UMMUNOTIFY
+
+  Ummunotify relays MMU notifier events to userspace.  This is useful
+  for libraries that need to track the memory mapping of applications;
+  for example, MPI implementations using RDMA want to cache memory
+  registrations for performance, but tracking all possible crazy cases
+  such as when, say, the FORTRAN runtime frees memory is impossible
+  without kernel help.
+
+Basic Model
+
+  A userspace process uses it by opening /dev/ummunotify, which
+  returns a file descriptor.  Interest in address ranges is registered
+  using ioctl() and MMU notifier events are retrieved using read(), as
+  described in more detail below.  Userspace can register multiple
+  address ranges to watch, and can unregister individual ranges.
+
+  Userspace can also mmap() a single read-only page at offset 0 on
+  this file descriptor.  This page contains (at offest 0) a single
+  64-bit generation counter that the kernel increments each time an
+  MMU notifier event occurs.  Userspace can use this to very quickly
+  check if there are any events to retrieve without needing to do a
+  system call.
+
+Control
+
+  To start using ummunotify, a process opens /dev/ummunotify in
+  read-only mode.  Control from userspace is done via ioctl(); the
+  defined ioctls are:
+
+    UMMUNOTIFY_EXCHANGE_FEATURES: This ioctl takes a single 32-bit
+      word of feature flags as input, and the kernel updates the
+      features flags word to contain only features requested by
+      userspace and also supported by the kernel.
+
+      This ioctl is only included for forward compatibility; no
+      feature flags are currently defined, and the kernel will simply
+      update any requested feature mask to 0.  The kernel will always
+      default to a feature mask of 0 if this ioctl is not used, so
+      current userspace does not need to perform this ioctl.
+
+    UMMUNOTIFY_REGISTER_REGION: Userspace uses this ioctl to tell the
+      kernel to start delivering events for an address range.  The
+      range is described using struct ummunotify_register_ioctl:
+
+	struct ummunotify_register_ioctl {
+		__u64	start;
+		__u64	end;
+		__u64	user_cookie;
+		__u32	flags;
+		__u32	reserved;
+	};
+
+      start and end give the range of userspace virtual addresses;
+      start is included in the range and end is not, so an example of
+      a 4 KB range would be start=0x1000, end=0x2000.
+
+      user_cookie is an opaque 64-bit quantity that is returned by the
+      kernel in events involving the range, and used by userspace to
+      stop watching the range.  Each registered address range must
+      have a distinct user_cookie.
+
+      It is fine with the kernel if userspace registers multiple
+      overlapping or even duplicate address ranges, as long as a
+      different cookie is used for each registration.
+
+      flags and reserved are included for forward compatibility;
+      userspace should simply set them to 0 for the current interface.
+
+    UMMUNOTIFY_UNREGISTER_REGION: Userspace passes in the 64-bit
+      user_cookie used to register a range to tell the kernel to stop
+      watching an address range.  Once this ioctl completes, the
+      kernel will not deliver any further events for the range that is
+      unregistered.
+
+Events
+
+  When an event occurs that invalidates some of a process's memory
+  mapping in an address range being watched, ummunotify queues an
+  event report for that address range.  If more than one event
+  invalidates parts of the same address range before userspace
+  retrieves the queued report, then further reports for the same range
+  will not be queued -- when userspace does read the queue, only a
+  single report for a given range will be returned.
+
+  If multiple ranges being watched are invalidated by a single event
+  (which is especially likely if userspace registers overlapping
+  ranges), then an event report structure will be queued for each
+  address range registration.
+
+  Userspace retrieves queued events via read() on the ummunotify file
+  descriptor; a buffer that is at least as big as struct
+  ummunotify_event should be used to retrieve event reports, and if a
+  larger buffer is passed to read(), multiple reports will be returned
+  (if available).
+
+  If the ummunotify file descriptor is in blocking mode, a read() call
+  will wait for an event report to be available.  Userspace may also
+  set the ummunotify file descriptor to non-blocking mode and use all
+  standard ways of waiting for data to be available on the ummunotify
+  file descriptor, including epoll/poll()/select() and SIGIO.
+
+  The format of event reports is:
+
+	struct ummunotify_event {
+		__u32	type;
+		__u32	flags;
+		__u64	hint_start;
+		__u64	hint_end;
+		__u64	user_cookie_counter;
+	};
+
+  where the type field is either UMMUNOTIFY_EVENT_TYPE_INVAL or
+  UMMUNOTIFY_EVENT_TYPE_LAST.  Events of type INVAL describe
+  invalidation events as follows: user_cookie_counter contains the
+  cookie passed in when userspace registered the range that the event
+  is for.  hint_start and hint_end contain the start address and end
+  address that were invalidated.
+
+  The flags word contains bit flags, with only UMMUNOTIFY_EVENT_FLAG_HINT
+  defined at the moment.  If HINT is set, then the invalidation event
+  invalidated less than the full address range and the kernel returns
+  the exact range invalidated; if HINT is not sent then hint_start and
+  hint_end are set to the original range registered by userspace.
+  (HINT will not be set if, for example, multiple events invalidated
+  disjoint parts of the range and so a single start/end pair cannot
+  represent the parts of the range that were invalidated)
+
+  If the event type is LAST, then the read operation has emptied the
+  list of invalidated regions, and the flags, hint_start and hint_end
+  fields are not used.  user_cookie_counter holds the value of the
+  kernel's generation counter (see below of more details) when the
+  empty list occurred.
+
+Generation Count
+
+  Userspace may mmap() a page on a ummunotify file descriptor via
+
+	mmap(NULL, sizeof (__u64), PROT_READ, MAP_SHARED, ummunotify_fd, 0);
+
+  to get a read-only mapping of the kernel's 64-bit generation
+  counter.  The kernel will increment this generation counter each
+  time an event report is queued.
+
+  Userspace can use the generation counter as a quick check to avoid
+  system calls; if the value read from the mapped kernel counter is
+  still equal to the value returned in user_cookie_counter for the
+  most recent LAST event retrieved, then no further events have been
+  queued and there is no need to try a read() on the ummunotify file
+  descriptor.
