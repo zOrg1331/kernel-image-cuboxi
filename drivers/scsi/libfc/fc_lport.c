@@ -1317,7 +1317,7 @@ static void fc_lport_timeout(struct work_struct *work)
  * held, but it will lock, call an _enter_* function or fc_lport_error
  * and then unlock the lport.
  */
-static void fc_lport_logo_resp(struct fc_seq *sp, struct fc_frame *fp,
+void fc_lport_logo_resp(struct fc_seq *sp, struct fc_frame *fp,
 			       void *lp_arg)
 {
 	struct fc_lport *lport = lp_arg;
@@ -1354,6 +1354,7 @@ out:
 err:
 	mutex_unlock(&lport->lp_mutex);
 }
+EXPORT_SYMBOL(fc_lport_logo_resp);
 
 /**
  * fc_rport_enter_logo() - Logout of the fabric
@@ -1394,7 +1395,7 @@ static void fc_lport_enter_logo(struct fc_lport *lport)
  * held, but it will lock, call an _enter_* function or fc_lport_error
  * and then unlock the lport.
  */
-static void fc_lport_flogi_resp(struct fc_seq *sp, struct fc_frame *fp,
+void fc_lport_flogi_resp(struct fc_seq *sp, struct fc_frame *fp,
 				void *lp_arg)
 {
 	struct fc_lport *lport = lp_arg;
@@ -1477,6 +1478,7 @@ out:
 err:
 	mutex_unlock(&lport->lp_mutex);
 }
+EXPORT_SYMBOL(fc_lport_flogi_resp);
 
 /**
  * fc_rport_enter_flogi() - Send a FLOGI request to the fabric manager
