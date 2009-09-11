@@ -1417,6 +1417,7 @@ extern int vfs_link(struct dentry *, struct inode *, struct dentry *);
 extern int vfs_rmdir(struct inode *, struct dentry *);
 extern int vfs_unlink(struct inode *, struct dentry *);
 extern int vfs_rename(struct inode *, struct dentry *, struct inode *, struct dentry *);
+extern int vfs_reflink(struct dentry *, struct inode *, struct dentry *, bool);
 
 /*
  * VFS dentry helper functions.
@@ -1535,6 +1536,7 @@ struct inode_operations {
 			  loff_t len);
 	int (*fiemap)(struct inode *, struct fiemap_extent_info *, u64 start,
 		      u64 len);
+	int (*reflink) (struct dentry *,struct inode *,struct dentry *,bool);
 };
 
 struct seq_file;
