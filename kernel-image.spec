@@ -1,6 +1,6 @@
 Name: kernel-image-std-pae
 Version: 2.6.30
-Release: alt10
+Release: alt11
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -481,6 +481,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Fri Sep 11 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt11
+- 2.6.30.6 
+- Echo canceler module moved to zaptel package
+- Add CUSE support
+
 * Mon Aug 17 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt10
 - 2.6.30.5 
 
