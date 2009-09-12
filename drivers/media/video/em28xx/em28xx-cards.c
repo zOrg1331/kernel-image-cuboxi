@@ -299,6 +299,7 @@ struct em28xx_board em28xx_boards[] = {
 	[EM2820_BOARD_TERRATEC_CINERGY_250] = {
 		.name         = "Terratec Cinergy 250 USB",
 		.tuner_type   = TUNER_LG_PAL_NEW_TAPC,
+		.has_ir_i2c   = 1,
 		.tda9887_conf = TDA9887_PRESENT,
 		.decoder      = EM28XX_SAA711X,
 		.input        = { {
@@ -318,6 +319,7 @@ struct em28xx_board em28xx_boards[] = {
 	[EM2820_BOARD_PINNACLE_USB_2] = {
 		.name         = "Pinnacle PCTV USB 2",
 		.tuner_type   = TUNER_LG_PAL_NEW_TAPC,
+		.has_ir_i2c   = 1,
 		.tda9887_conf = TDA9887_PRESENT,
 		.decoder      = EM28XX_SAA711X,
 		.input        = { {
@@ -342,6 +344,7 @@ struct em28xx_board em28xx_boards[] = {
 				TDA9887_PORT2_ACTIVE,
 		.decoder      = EM28XX_TVP5150,
 		.has_msp34xx  = 1,
+		.has_ir_i2c   = 1,
 		.input        = { {
 			.type     = EM28XX_VMUX_TELEVISION,
 			.vmux     = TVP5150_COMPOSITE0,
@@ -960,6 +963,7 @@ struct em28xx_board em28xx_boards[] = {
 	[EM2800_BOARD_TERRATEC_CINERGY_200] = {
 		.name         = "Terratec Cinergy 200 USB",
 		.is_em2800    = 1,
+		.has_ir_i2c   = 1,
 		.tuner_type   = TUNER_LG_PAL_NEW_TAPC,
 		.tda9887_conf = TDA9887_PRESENT,
 		.decoder      = EM28XX_SAA711X,
@@ -2209,33 +2213,21 @@ void em28xx_register_i2c_ir(struct em28xx *dev)
 
 	/* detect & configure */
 	switch (dev->model) {
-	case (EM2800_BOARD_UNKNOWN):
-		break;
-	case (EM2820_BOARD_UNKNOWN):
-		break;
-	case (EM2800_BOARD_TERRATEC_CINERGY_200):
-	case (EM2820_BOARD_TERRATEC_CINERGY_250):
+	case EM2800_BOARD_TERRATEC_CINERGY_200:
+	case EM2820_BOARD_TERRATEC_CINERGY_250:
 		dev->init_data.ir_codes = &ir_codes_em_terratec_table;
 		dev->init_data.get_key = em28xx_get_key_terratec;
 		dev->init_data.name = "i2c IR (EM28XX Terratec)";
 		break;
-	case (EM2820_BOARD_PINNACLE_USB_2):
+	case EM2820_BOARD_PINNACLE_USB_2:
 		dev->init_data.ir_codes = &ir_codes_pinnacle_grey_table;
 		dev->init_data.get_key = em28xx_get_key_pinnacle_usb_grey;
 		dev->init_data.name = "i2c IR (EM28XX Pinnacle PCTV)";
 		break;
-	case (EM2820_BOARD_HAUPPAUGE_WINTV_USB_2):
+	case EM2820_BOARD_HAUPPAUGE_WINTV_USB_2:
 		dev->init_data.ir_codes = &ir_codes_hauppauge_new_table;
 		dev->init_data.get_key = em28xx_get_key_em_haup;
 		dev->init_data.name = "i2c IR (EM2840 Hauppauge)";
-		break;
-	case (EM2820_BOARD_MSI_VOX_USB_2):
-		break;
-	case (EM2800_BOARD_LEADTEK_WINFAST_USBII):
-		break;
-	case (EM2800_BOARD_KWORLD_USB2800):
-		break;
-	case (EM2800_BOARD_GRABBEEX_USB2800):
 		break;
 	}
 
@@ -2277,7 +2269,7 @@ void em28xx_card_setup(struct em28xx *dev)
 	case EM2883_BOARD_HAUPPAUGE_WINTV_HVR_950:
 	{
 		struct tveeprom tv;
-#ifdef CONFIG_MODULES
+#if defined(CONFIG_MODULES) && defined(MODULE)
 		request_module("tveeprom");
 #endif
 		/* Call first TVeeprom */
@@ -2291,10 +2283,6 @@ void em28xx_card_setup(struct em28xx *dev)
 			dev->i2s_speed = 2048000;
 			dev->board.has_msp34xx = 1;
 		}
-#ifdef CONFIG_MODULES
-		if (tv.has_ir)
-			request_module("ir-kbd-i2c");
-#endif
 		break;
 	}
 	case EM2882_BOARD_KWORLD_ATSC_315U:
@@ -2335,6 +2323,10 @@ void em28xx_card_setup(struct em28xx *dev)
 		break;
 	}
 
+#if defined(CONFIG_MODULES) && defined(MODULE)
+	if (dev->board.has_ir_i2c && !disable_ir)
+		request_module("ir-kbd-i2c");
+#endif
 	if (dev->board.has_snapshot_button)
 		em28xx_register_snapshot_button(dev);
 
