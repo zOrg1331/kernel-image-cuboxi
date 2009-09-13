@@ -204,24 +204,42 @@ static void bdi_alloc_queue_work(struct backing_dev_info *bdi,
 	}
 }
 
+/**
+ * bdi_sync_writeback - start and wait for writeback
+ * @wbc: writeback parameters
+ *
+ * Description:
+ *   This does WB_SYNC_ALL data integrity writeback and waits for the
+ *   IO to complete. Callers must hold the sb s_umount semaphore for
+ *   reading, to avoid having the super disappear before we are done.
+ */
+static void bdi_sync_writeback(struct writeback_control *wbc)
+{
+	struct bdi_work work;
+
+	wbc->sync_mode = WB_SYNC_ALL;
+
+	bdi_work_init(&work, wbc);
+	work.state |= WS_ONSTACK;
+
+	bdi_queue_work(wbc->bdi, &work);
+	bdi_wait_on_work_clear(&work);
+}
+
+/**
+ * bdi_start_writeback - start writeback
+ * @wbc: writeback parameters
+ *
+ * Description:
+ *   This does WB_SYNC_NONE opportunistic writeback. The IO is only
+ *   started when this function returns, we make no guarentees on
+ *   completion. Caller need not hold sb s_umount semaphore.
+ *
+ */
 void bdi_start_writeback(struct writeback_control *wbc)
 {
-	/*
-	 * WB_SYNC_NONE is opportunistic writeback. If this allocation fails,
-	 * bdi_queue_work() will wake up the thread and flush old data. This
-	 * should ensure some amount of progress in freeing memory.
-	 */
-	if (wbc->sync_mode != WB_SYNC_ALL)
-		bdi_alloc_queue_work(wbc->bdi, wbc);
-	else {
-		struct bdi_work work;
-
-		bdi_work_init(&work, wbc);
-		work.state |= WS_ONSTACK;
-
-		bdi_queue_work(wbc->bdi, &work);
-		bdi_wait_on_work_clear(&work);
-	}
+	wbc->sync_mode = WB_SYNC_NONE;
+	bdi_alloc_queue_work(wbc->bdi, wbc);
 }
 
 /*
@@ -1119,14 +1137,13 @@ long sync_inodes_sb(struct super_block *sb)
 	struct writeback_control wbc = {
 		.sb		= sb,
 		.bdi		= sb->s_bdi,
-		.sync_mode	= WB_SYNC_ALL,
 		.range_start	= 0,
 		.range_end	= LLONG_MAX,
 	};
 	long nr_to_write = LONG_MAX; /* doesn't actually matter */
 
 	wbc.nr_to_write = nr_to_write;
-	bdi_start_writeback(&wbc);
+	bdi_sync_writeback(&wbc);
 	wait_sb_inodes(&wbc);
 	return nr_to_write - wbc.nr_to_write;
 }

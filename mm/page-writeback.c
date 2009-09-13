@@ -585,7 +585,6 @@ static void balance_dirty_pages(struct address_space *mapping)
 					  > background_thresh))) {
 		struct writeback_control wbc = {
 			.bdi		= bdi,
-			.sync_mode	= WB_SYNC_NONE,
 			.nr_to_write	= nr_writeback,
 		};
 
