@@ -90,8 +90,8 @@ static int _drbd_md_sync_page_io(struct drbd_conf *mdev,
 	init_completion(&md_io.event);
 	md_io.error = 0;
 
-	if (rw == WRITE && !test_bit(MD_NO_BARRIER, &mdev->flags))
-		rw |= (1<<BIO_RW_BARRIER);
+	if ((rw & WRITE) && !test_bit(MD_NO_BARRIER, &mdev->flags))
+		rw |= (1 << BIO_RW_BARRIER);
 	rw |= ((1<<BIO_RW_UNPLUG) | (1<<BIO_RW_SYNCIO));
 
  retry:
