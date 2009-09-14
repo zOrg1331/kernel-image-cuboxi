@@ -2347,6 +2347,10 @@ int drbd_send_dblock(struct drbd_conf *mdev, struct drbd_request *req)
 	}
 	if (bio_rw_flagged(req->master_bio, BIO_RW_SYNCIO))
 		dp_flags |= DP_RW_SYNC;
+	/* for now handle SYNCIO and UNPLUG
+	 * as if they still were one and the same flag */
+	if (bio_rw_flagged(req->master_bio, BIO_RW_UNPLUG))
+		dp_flags |= DP_RW_SYNC;
 	if (mdev->state.conn >= C_SYNC_SOURCE &&
 	    mdev->state.conn <= C_PAUSED_SYNC_T)
 		dp_flags |= DP_MAY_SET_IN_SYNC;

@@ -144,7 +144,7 @@ void drbd_endio_write_sec(struct bio *bio, int error) __releases(local)
 	int is_syncer_req;
 	int do_al_complete_io;
 	int uptodate = bio_flagged(bio, BIO_UPTODATE);
-	int is_barrier = bio_flagged(bio, BIO_RW_BARRIER);
+	int is_barrier = bio_rw_flagged(bio, BIO_RW_BARRIER);
 
 	e = bio->bi_private;
 	mdev = e->mdev;
