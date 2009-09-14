@@ -174,6 +174,11 @@ echo "Kernel built $KernelVer"
 %make_build htmldocs
 %endif
 
+echo "Builing lustre"
+BuildDir=`pwd`
+pushd lustre
+sh configure --with-linux=$BuildDir --disable-tests --disable-utils
+popd
 %install
 export ARCH=%base_arch
 KernelVer=%kversion-%flavour-%krelease
@@ -285,7 +290,6 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 
 # Provide kernel headers for userspace
 make headers_install INSTALL_HDR_PATH=%buildroot%kheaders_dir
-
 # install documentation
 %if_enabled docs
 install -d %buildroot%_docdir/kernel-doc-%base_flavour-%version/
