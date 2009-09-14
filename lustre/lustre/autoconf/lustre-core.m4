@@ -195,7 +195,6 @@ LB_LINUX_TRY_COMPILE([
 		AC_DEFINE(HAVE_REGISTER_CACHE, 1, [register_cache found])
 		AC_MSG_CHECKING([if kernel expects return from cache shrink ])
 		tmp_flags="$EXTRA_KCFLAGS"
-		EXTRA_KCFLAGS="-Werror"
 		LB_LINUX_TRY_COMPILE([
 			#include <linux/list.h>
 			#include <linux/cache_def.h>
@@ -888,7 +887,6 @@ LB_LINUX_TRY_COMPILE([
 AC_DEFUN([LC_UMOUNTBEGIN_HAS_VFSMOUNT],
 [AC_MSG_CHECKING([if umount_begin needs vfsmount parameter instead of super_block])
 tmp_flags="$EXTRA_KCFLAGS"
-EXTRA_KCFLAGS="-Werror"
 LB_LINUX_TRY_COMPILE([
 	#include <linux/fs.h>
 
@@ -953,7 +951,6 @@ LB_LINUX_TRY_COMPILE([
 AC_DEFUN([LC_VFS_READDIR_U64_INO],
 [AC_MSG_CHECKING([check vfs_readdir need 64bit inode number])
 tmp_flags="$EXTRA_KCFLAGS"
-EXTRA_KCFLAGS="-Werror"
 LB_LINUX_TRY_COMPILE([
 #include <linux/fs.h>
 	int fillonedir(void * __buf, const char * name, int namlen, loff_t offset,
@@ -1293,7 +1290,6 @@ LB_LINUX_TRY_COMPILE([
 AC_DEFUN([LC_RW_TREE_LOCK],
 [AC_MSG_CHECKING([if kernel has tree_lock as rwlock])
 tmp_flags="$EXTRA_KCFLAGS"
-EXTRA_KCFLAGS="-Werror"
 LB_LINUX_TRY_COMPILE([
         #include <linux/fs.h>
 ],[
@@ -1588,7 +1584,6 @@ LB_LINUX_TRY_COMPILE([
 AC_DEFUN([LC_RW_TREE_LOCK],
 [AC_MSG_CHECKING([mapping->tree_lock is rw_lock])
 tmp_flags="$EXTRA_KCFLAGS"
-EXTRA_KCFLAGS="-Werror"
 LB_LINUX_TRY_COMPILE([
 	#include <linux/fs.h>
 ],[
@@ -2302,9 +2297,6 @@ LB_LINUX_TRY_COMPILE([
 AC_DEFUN([LC_CONFIGURE],
 [LC_CONFIG_OBD_BUFFER_SIZE
 
-if test $target_cpu == "i686" -o $target_cpu == "x86_64"; then
-        CFLAGS="$CFLAGS -Werror"
-fi
 
 # include/liblustre.h
 AC_CHECK_HEADERS([asm/page.h sys/user.h sys/vfs.h stdint.h blkid/blkid.h])

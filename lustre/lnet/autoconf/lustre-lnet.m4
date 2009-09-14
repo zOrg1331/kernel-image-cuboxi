@@ -1073,7 +1073,6 @@ AC_DEFINE(HAVE_SHOW_TASK, 1, [show_task is exported])
 AC_DEFUN([LN_KERN__U64_LONG_LONG],
 [AC_MSG_CHECKING([kernel __u64 is long long type])
 tmp_flags="$EXTRA_KCFLAGS"
-EXTRA_KCFLAGS="$EXTRA_KCFLAGS -Werror"
 LB_LINUX_TRY_COMPILE([
 	#include <linux/types.h>
 	#include <linux/stddef.h>
@@ -1096,7 +1095,6 @@ EXTRA_KCFLAGS="$tmp_flags"
 AC_DEFUN([LN_USER__U64_LONG_LONG],
 [AC_MSG_CHECKING([userspace __u64 is long long type])
 tmp_flags="$CFLAGS"
-CFLAGS="$CFLAGS -Werror"
 AC_COMPILE_IFELSE([
 	#include <linux/types.h>
 	#include <linux/stddef.h>
@@ -1121,7 +1119,6 @@ CFLAGS="$tmp_flags"
 AC_DEFUN([LN_SIZE_T_LONG],
 [AC_MSG_CHECKING([size_t is unsigned long type])
 tmp_flags="$CFLAGS"
-CFLAGS="$CFLAGS -Werror"
 AC_COMPILE_IFELSE([
 	#include <linux/types.h>
 	#include <linux/stddef.h>
@@ -1145,7 +1142,6 @@ CFLAGS="$tmp_flags"
 AC_DEFUN([LN_SSIZE_T_LONG],
 [AC_MSG_CHECKING([ssize_t is signed long type])
 tmp_flags="$CFLAGS"
-CFLAGS="$CFLAGS -Werror"
 AC_COMPILE_IFELSE([
 	#include <linux/types.h>
 	#include <linux/stddef.h>
@@ -1292,7 +1288,6 @@ LB_LINUX_TRY_COMPILE([
 AC_DEFUN([LN_KMEM_CACHE],
 [AC_MSG_CHECKING([check kernel has struct kmem_cache])
 tmp_flags="$EXTRA_KCFLAGS"
-EXTRA_KCFLAGS="-Werror"
 LB_LINUX_TRY_COMPILE([
         #include <linux/slab.h>
         typedef struct kmem_cache cache_t;
@@ -1336,7 +1331,6 @@ AC_DEFUN([LN_FUNC_DUMP_TRACE],
 [LB_CHECK_SYMBOL_EXPORT([dump_trace],
 [kernel/ksyms.c arch/${LINUX_ARCH%_64}/kernel/traps_64.c],[
 	tmp_flags="$EXTRA_KCFLAGS"
-	EXTRA_KCFLAGS="-Werror"
 	AC_MSG_CHECKING([whether we can really use dump_stack])
 	LB_LINUX_TRY_COMPILE([
 		struct task_struct;

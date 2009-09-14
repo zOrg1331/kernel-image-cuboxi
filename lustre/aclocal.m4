@@ -1173,7 +1173,6 @@ LB_LINUX_TRY_COMPILE([
 		AC_DEFINE(HAVE_REGISTER_CACHE, 1, [register_cache found])
 		AC_MSG_CHECKING([if kernel expects return from cache shrink ])
 		tmp_flags="$EXTRA_KCFLAGS"
-		EXTRA_KCFLAGS="-Werror"
 		LB_LINUX_TRY_COMPILE([
 			#include <linux/list.h>
 			#include <linux/cache_def.h>
@@ -1866,7 +1865,6 @@ LB_LINUX_TRY_COMPILE([
 AC_DEFUN([LC_UMOUNTBEGIN_HAS_VFSMOUNT],
 [AC_MSG_CHECKING([if umount_begin needs vfsmount parameter instead of super_block])
 tmp_flags="$EXTRA_KCFLAGS"
-EXTRA_KCFLAGS="-Werror"
 LB_LINUX_TRY_COMPILE([
 	#include <linux/fs.h>
 
@@ -1931,7 +1929,6 @@ LB_LINUX_TRY_COMPILE([
 AC_DEFUN([LC_VFS_READDIR_U64_INO],
 [AC_MSG_CHECKING([check vfs_readdir need 64bit inode number])
 tmp_flags="$EXTRA_KCFLAGS"
-EXTRA_KCFLAGS="-Werror"
 LB_LINUX_TRY_COMPILE([
 #include <linux/fs.h>
 	int fillonedir(void * __buf, const char * name, int namlen, loff_t offset,
@@ -2271,7 +2268,6 @@ LB_LINUX_TRY_COMPILE([
 AC_DEFUN([LC_RW_TREE_LOCK],
 [AC_MSG_CHECKING([if kernel has tree_lock as rwlock])
 tmp_flags="$EXTRA_KCFLAGS"
-EXTRA_KCFLAGS="-Werror"
 LB_LINUX_TRY_COMPILE([
         #include <linux/fs.h>
 ],[
@@ -2566,7 +2562,6 @@ LB_LINUX_TRY_COMPILE([
 AC_DEFUN([LC_RW_TREE_LOCK],
 [AC_MSG_CHECKING([mapping->tree_lock is rw_lock])
 tmp_flags="$EXTRA_KCFLAGS"
-EXTRA_KCFLAGS="-Werror"
 LB_LINUX_TRY_COMPILE([
 	#include <linux/fs.h>
 ],[
@@ -3281,7 +3276,7 @@ AC_DEFUN([LC_CONFIGURE],
 [LC_CONFIG_OBD_BUFFER_SIZE
 
 if test $target_cpu == "i686" -o $target_cpu == "x86_64"; then
-        CFLAGS="$CFLAGS -Werror"
+        CFLAGS="$CFLAGS"
 fi
 
 # include/liblustre.h
@@ -5127,7 +5122,7 @@ AC_DEFINE(HAVE_SHOW_TASK, 1, [show_task is exported])
 AC_DEFUN([LN_KERN__U64_LONG_LONG],
 [AC_MSG_CHECKING([kernel __u64 is long long type])
 tmp_flags="$EXTRA_KCFLAGS"
-EXTRA_KCFLAGS="$EXTRA_KCFLAGS -Werror"
+EXTRA_KCFLAGS="$EXTRA_KCFLAGS"
 LB_LINUX_TRY_COMPILE([
 	#include <linux/types.h>
 	#include <linux/stddef.h>
@@ -5150,7 +5145,7 @@ EXTRA_KCFLAGS="$tmp_flags"
 AC_DEFUN([LN_USER__U64_LONG_LONG],
 [AC_MSG_CHECKING([userspace __u64 is long long type])
 tmp_flags="$CFLAGS"
-CFLAGS="$CFLAGS -Werror"
+CFLAGS="$CFLAGS"
 AC_COMPILE_IFELSE([
 	#include <linux/types.h>
 	#include <linux/stddef.h>
@@ -5175,7 +5170,7 @@ CFLAGS="$tmp_flags"
 AC_DEFUN([LN_SIZE_T_LONG],
 [AC_MSG_CHECKING([size_t is unsigned long type])
 tmp_flags="$CFLAGS"
-CFLAGS="$CFLAGS -Werror"
+CFLAGS="$CFLAGS"
 AC_COMPILE_IFELSE([
 	#include <linux/types.h>
 	#include <linux/stddef.h>
@@ -5199,7 +5194,7 @@ CFLAGS="$tmp_flags"
 AC_DEFUN([LN_SSIZE_T_LONG],
 [AC_MSG_CHECKING([ssize_t is signed long type])
 tmp_flags="$CFLAGS"
-CFLAGS="$CFLAGS -Werror"
+CFLAGS="$CFLAGS"
 AC_COMPILE_IFELSE([
 	#include <linux/types.h>
 	#include <linux/stddef.h>
@@ -5346,7 +5341,6 @@ LB_LINUX_TRY_COMPILE([
 AC_DEFUN([LN_KMEM_CACHE],
 [AC_MSG_CHECKING([check kernel has struct kmem_cache])
 tmp_flags="$EXTRA_KCFLAGS"
-EXTRA_KCFLAGS="-Werror"
 LB_LINUX_TRY_COMPILE([
         #include <linux/slab.h>
         typedef struct kmem_cache cache_t;
@@ -5390,7 +5384,6 @@ AC_DEFUN([LN_FUNC_DUMP_TRACE],
 [LB_CHECK_SYMBOL_EXPORT([dump_trace],
 [kernel/ksyms.c arch/${LINUX_ARCH%_64}/kernel/traps_64.c],[
 	tmp_flags="$EXTRA_KCFLAGS"
-	EXTRA_KCFLAGS="-Werror"
 	AC_MSG_CHECKING([whether we can really use dump_stack])
 	LB_LINUX_TRY_COMPILE([
 		struct task_struct;
