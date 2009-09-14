@@ -248,7 +248,7 @@ static int serial_open (struct tty_struct *tty, struct file *filp)
 		if (port->console) {
 			tty_encode_baud_rate(tty, port->console_init_baud, port->console_init_baud);
 		} else {
-			retval = serial->type->open(tty, port, filp);
+			retval = serial->type->open(tty, port);
 			if (retval)
 				goto bailout_interface_put;
 		}
