@@ -2,7 +2,6 @@
 # -*- Mode: perl; indent-tabs-mode: nil; cperl-indent-level: 4 -*-
 
 use strict;
-use diagnostics;
 use IO::File;
 use Time::Local;
 
