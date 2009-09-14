@@ -25,8 +25,7 @@
 
 
 /*
- * Rules for 'struct utrace', defined in <linux/utrace_struct.h>
- * but used entirely privately in this file.
+ * Per-thread structure private to utrace implementation.
  *
  * The common event reporting loops are done by the task making the
  * report without ever taking any locks.  To facilitate this, the two
@@ -49,16 +48,57 @@
  * engines attached asynchronously go on the stable @attached list
  * in time to have their callbacks seen.
  */
+struct utrace {
+	struct task_struct *cloning;
 
+	struct list_head attached, attaching;
+	spinlock_t lock;
+
+	struct utrace_engine *reporting;
+
+	unsigned int stopped:1;
+	unsigned int report:1;
+	unsigned int interrupt:1;
+	unsigned int signal_handler:1;
+	unsigned int vfork_stop:1; /* need utrace_stop() before vfork wait */
+	unsigned int death:1;	/* in utrace_report_death() now */
+	unsigned int reap:1;	/* release_task() has run */
+	unsigned int pending_attach:1; /* need splice_attaching() */
+};
+
+static struct kmem_cache *utrace_cachep;
 static struct kmem_cache *utrace_engine_cachep;
 static const struct utrace_engine_ops utrace_detached_ops; /* forward decl */
 
 static int __init utrace_init(void)
 {
+	utrace_cachep = KMEM_CACHE(utrace, SLAB_PANIC);
 	utrace_engine_cachep = KMEM_CACHE(utrace_engine, SLAB_PANIC);
 	return 0;
 }
 module_init(utrace_init);
+
+static inline bool utrace_task_alloc(struct task_struct *task)
+{
+	struct utrace *utrace = kmem_cache_zalloc(utrace_cachep, GFP_KERNEL);
+	if (unlikely(!utrace))
+		return true;
+	INIT_LIST_HEAD(&utrace->attached);
+	INIT_LIST_HEAD(&utrace->attaching);
+	spin_lock_init(&utrace->lock);
+	task_lock(task);
+	if (likely(!task->utrace))
+		task->utrace = utrace;
+	task_unlock(task);
+	if (unlikely(task->utrace != utrace))
+		kmem_cache_free(utrace_cachep, utrace);
+	return false;
+}
+
+void utrace_free_task(struct task_struct *task)
+{
+	kmem_cache_free(utrace_cachep, task->utrace);
+}
 
 /*
  * This is called with @utrace->lock held when the task is safely
@@ -119,7 +159,8 @@ static struct utrace_engine *matching_engine(
 static inline int utrace_attach_delay(struct task_struct *target)
 {
 	if ((target->flags & PF_STARTING) &&
-	    current->utrace.cloning != target)
+	    task_utrace_struct(current) &&
+	    task_utrace_struct(current)->cloning != target)
 		do {
 			schedule_timeout_interruptible(1);
 			if (signal_pending(current))
@@ -225,6 +266,8 @@ struct utrace_engine *utrace_attach_task(
 	int ret;
 
 	if (!(flags & UTRACE_ATTACH_CREATE)) {
+		if (unlikely(!utrace))
+			ERR_PTR(-ENOENT);
 		spin_lock(&utrace->lock);
 		engine = matching_engine(utrace, flags, ops, data);
 		if (engine)
@@ -241,6 +284,12 @@ struct utrace_engine *utrace_attach_task(
 		 * Silly kernel, utrace is for users!
 		 */
 		return ERR_PTR(-EPERM);
+
+	if (!utrace) {
+		if (unlikely(utrace_task_alloc(target)))
+			return ERR_PTR(-ENOMEM);
+		utrace = target->utrace;
+	}
 
 	engine = kmem_cache_alloc(utrace_engine_cachep, GFP_KERNEL);
 	if (unlikely(!engine))
@@ -370,7 +419,7 @@ static struct utrace *get_utrace_lock(struct task_struct *target,
 		return attached ? ERR_PTR(-ESRCH) : ERR_PTR(-ERESTARTSYS);
 	}
 
-	utrace = &target->utrace;
+	utrace = task_utrace_struct(target);
 	spin_lock(&utrace->lock);
 	if (unlikely(!engine->ops) ||
 	    unlikely(engine->ops == &utrace_detached_ops)) {
@@ -440,9 +489,7 @@ static void utrace_reap(struct task_struct *target, struct utrace *utrace)
  */
 void utrace_release_task(struct task_struct *target)
 {
-	struct utrace *utrace;
-
-	utrace = &target->utrace;
+	struct utrace *utrace = task_utrace_struct(target);
 
 	spin_lock(&utrace->lock);
 
@@ -1887,7 +1934,7 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 	u32 ret;
 	int signr;
 
-	utrace = &task->utrace;
+	utrace = task_utrace_struct(task);
 	if (utrace->interrupt || utrace->report || utrace->signal_handler) {
 		/*
 		 * We've been asked for an explicit report before we
@@ -2324,7 +2371,7 @@ EXPORT_SYMBOL_GPL(task_user_regset_view);
  */
 void task_utrace_proc_status(struct seq_file *m, struct task_struct *p)
 {
-	struct utrace *utrace = &p->utrace;
+	struct utrace *utrace = task_utrace_struct(p);
 	seq_printf(m, "Utrace:\t%lx%s%s%s\n",
 		   p->utrace_flags,
 		   utrace->stopped ? " (stopped)" : "",

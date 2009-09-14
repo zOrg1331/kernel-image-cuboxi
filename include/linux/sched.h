@@ -59,7 +59,6 @@ struct sched_param {
 #include <linux/errno.h>
 #include <linux/nodemask.h>
 #include <linux/mm_types.h>
-#include <linux/utrace_struct.h>
 
 #include <asm/system.h>
 #include <asm/page.h>
@@ -1337,7 +1336,7 @@ struct task_struct {
 	seccomp_t seccomp;
 
 #ifdef CONFIG_UTRACE
-	struct utrace utrace;
+	struct utrace *utrace;
 	unsigned long utrace_flags;
 #endif
 

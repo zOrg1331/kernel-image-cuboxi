@@ -609,6 +609,18 @@ static inline void tracehook_report_death(struct task_struct *task,
 		utrace_report_death(task, death_cookie, group_dead, signal);
 }
 
+/**
+ * tracehook_free_task - task_struct is being freed
+ * @task:		dead &struct task_struct being freed
+ *
+ * Called from free_task() when @task is no longer in use.
+ */
+static inline void tracehook_free_task(struct task_struct *task)
+{
+	if (task_utrace_struct(task))
+		utrace_free_task(task);
+}
+
 #ifdef TIF_NOTIFY_RESUME
 /**
  * set_notify_resume - cause tracehook_notify_resume() to be called
