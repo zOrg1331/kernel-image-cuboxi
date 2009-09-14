@@ -178,6 +178,7 @@ echo "Builing lustre"
 BuildDir=`pwd`
 pushd lustre
 sh configure --with-linux=$BuildDir --disable-tests --disable-utils
+make
 popd
 %install
 export ARCH=%base_arch
