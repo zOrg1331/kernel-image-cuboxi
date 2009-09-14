@@ -20,14 +20,14 @@
 #include <linux/regulator/machine.h>
 #include <linux/gpio.h>
 
-#include <asm/mach/mmc.h>
+#include <linux/amba/mmci.h>
 #include "mmc.h"
 
 struct mmci_card_event {
 	struct input_dev *mmc_input;
 	int mmc_inserted;
 	struct work_struct workq;
-	struct mmc_platform_data mmc0_plat_data;
+	struct mmci_platform_data mmc0_plat_data;
 };
 
 static unsigned int mmc_status(struct device *dev)
