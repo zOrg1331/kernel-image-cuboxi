@@ -134,13 +134,6 @@ extern ioid_t SYSIO_INTERFACE_NAME(ipread64)(int fd,
 					     off64_t offset);
 #endif
 
-/*
- * Read into buffers mapped by an iovec from file at given offset.
- */
-extern ssize_t SYSIO_INTERFACE_NAME(preadv)(int fd,
-					    const struct iovec *iov,
-					    size_t count,
-					    off_t offset);
 
 #ifdef _LARGEFILE64_SOURCE
 /*
@@ -253,13 +246,6 @@ extern ioid_t SYSIO_INTERFACE_NAME(ipwrite64)(int fd,
 					      off64_t offset);
 #endif
 
-/*
- * Write from buffers mapped by an iovec to file at given offset.
- */
-extern ssize_t SYSIO_INTERFACE_NAME(pwritev)(int fd,
-					     const struct iovec *iov,
-					     size_t count,
-					     off_t offset);
 
 #ifdef _LARGEFILE64_SOURCE
 /*

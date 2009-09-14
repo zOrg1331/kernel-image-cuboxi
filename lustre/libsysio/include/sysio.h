@@ -276,7 +276,6 @@ extern int SYSIO_INTERFACE_NAME(mount)(const char *source, const char *target,
 				       const void *data);
 extern int SYSIO_INTERFACE_NAME(umount)(const char *target);
 #if _DECLARE_DIR_ACCESS
-extern DIR *SYSIO_INTERFACE_NAME(opendir)(const char *name);
 extern int SYSIO_INTERFACE_NAME(closedir)(DIR *dir);
 extern struct dirent *SYSIO_INTERFACE_NAME(readdir)(DIR *dir);
 extern int SYSIO_INTERFACE_NAME(scandir)(const char *dir,
