@@ -467,6 +467,14 @@ int security_inode_symlink(struct inode *dir, struct dentry *dentry,
 	return security_ops->inode_symlink(dir, dentry, old_name);
 }
 
+int security_inode_reflink(struct dentry *old_dentry, struct inode *dir,
+			   bool preserve)
+{
+	if (unlikely(IS_PRIVATE(old_dentry->d_inode)))
+		return 0;
+	return security_ops->inode_reflink(old_dentry, dir, preserve);
+}
+
 int security_inode_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 {
 	if (unlikely(IS_PRIVATE(dir)))
