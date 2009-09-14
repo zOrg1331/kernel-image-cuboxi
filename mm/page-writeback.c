@@ -55,6 +55,12 @@ static inline long sync_writeback_pages(void)
 /* The following parameters are exported via /proc/sys/vm */
 
 /*
+ * The maximum amount of memory (in megabytes) to write out in a
+ * single bdflush/kupdate operation.
+ */
+unsigned int max_writeback_mb = 128;
+
+/*
  * Start background writeback (via pdflush) at this percentage
  */
 int dirty_background_ratio = 10;
