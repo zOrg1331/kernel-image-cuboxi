@@ -26,6 +26,9 @@
 
 /*
  * Per-thread structure private to utrace implementation.
+ * If task_struct.utrace_flags is nonzero, task_struct.utrace
+ * has always been allocated first.  Once allocated, it is
+ * never freed until free_task().
  *
  * The common event reporting loops are done by the task making the
  * report without ever taking any locks.  To facilitate this, the two
@@ -78,6 +81,14 @@ static int __init utrace_init(void)
 }
 module_init(utrace_init);
 
+/*
+ * Set up @task.utrace for the first time.  We can have races
+ * between two utrace_attach_task() calls here.  The task_lock()
+ * governs installing the new pointer.  If another one got in first,
+ * we just punt the new one we allocated.
+ *
+ * This returns true only in case of a memory allocation failure.
+ */
 static inline bool utrace_task_alloc(struct task_struct *task)
 {
 	struct utrace *utrace = kmem_cache_zalloc(utrace_cachep, GFP_KERNEL);
@@ -95,6 +106,10 @@ static inline bool utrace_task_alloc(struct task_struct *task)
 	return false;
 }
 
+/*
+ * This is called via tracehook_free_task() from free_task()
+ * when @task is being deallocated.
+ */
 void utrace_free_task(struct task_struct *task)
 {
 	kmem_cache_free(utrace_cachep, task->utrace);
