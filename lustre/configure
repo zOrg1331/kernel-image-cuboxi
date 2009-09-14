@@ -16555,9 +16555,6 @@ _ACEOF
 
 
 
-if test $target_cpu == "i686" -o $target_cpu == "x86_64"; then
-        CFLAGS="$CFLAGS -Werror"
-fi
 
 # include/liblustre.h
 
