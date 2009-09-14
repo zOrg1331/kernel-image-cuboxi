@@ -101,11 +101,15 @@ void drbd_endio_read_sec(struct bio *bio, int error) __releases(local)
 	e = bio->bi_private;
 	mdev = e->mdev;
 
+	if (error)
+		dev_warn(DEV, "read: error=%d s=%llus\n", error,
+				(unsigned long long)e->sector);
 	if (!error && !uptodate) {
+		dev_warn(DEV, "read: setting error to -EIO s=%llus\n",
+				(unsigned long long)e->sector);
 		/* strange behavior of some lower level drivers...
 		 * fail the request by clearing the uptodate flag,
-		 * but do not return any error?!
-		 * do we want to dev_warn(DEV, ) on this? */
+		 * but do not return any error?! */
 		error = -EIO;
 	}
 
@@ -145,11 +149,15 @@ void drbd_endio_write_sec(struct bio *bio, int error) __releases(local)
 	e = bio->bi_private;
 	mdev = e->mdev;
 
+	if (error)
+		dev_warn(DEV, "write: error=%d s=%llus\n", error,
+				(unsigned long long)e->sector);
 	if (!error && !uptodate) {
+		dev_warn(DEV, "write: setting error to -EIO s=%llus\n",
+				(unsigned long long)e->sector);
 		/* strange behavior of some lower level drivers...
 		 * fail the request by clearing the uptodate flag,
-		 * but do not return any error?!
-		 * do we want to dev_warn(DEV, ) on this? */
+		 * but do not return any error?! */
 		error = -EIO;
 	}
 
@@ -225,11 +233,15 @@ void drbd_endio_pri(struct bio *bio, int error)
 	enum drbd_req_event what;
 	int uptodate = bio_flagged(bio, BIO_UPTODATE);
 
+	if (error)
+		dev_warn(DEV, "p %s: error=%d\n",
+			 bio_data_dir(bio) == WRITE ? "write" : "read", error);
 	if (!error && !uptodate) {
+		dev_warn(DEV, "p %s: setting error to -EIO\n",
+			 bio_data_dir(bio) == WRITE ? "write" : "read");
 		/* strange behavior of some lower level drivers...
 		 * fail the request by clearing the uptodate flag,
-		 * but do not return any error?!
-		 * do we want to dev_warn(DEV, ) on this? */
+		 * but do not return any error?! */
 		error = -EIO;
 	}
 

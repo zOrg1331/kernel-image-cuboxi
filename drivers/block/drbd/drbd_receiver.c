@@ -1740,8 +1740,10 @@ static int receive_Data(struct drbd_conf *mdev, struct p_header *h)
 	spin_unlock(&mdev->epoch_lock);
 
 	dp_flags = be32_to_cpu(p->dp_flags);
-	if (dp_flags & DP_HARDBARRIER)
-		rw |= (1<<BIO_RW_BARRIER);
+	if (dp_flags & DP_HARDBARRIER) {
+		dev_err(DEV, "ASSERT FAILED would have submitted barrier request\n");
+		/* rw |= (1<<BIO_RW_BARRIER); */
+	}
 	if (dp_flags & DP_RW_SYNC)
 		rw |= (1<<BIO_RW_SYNCIO) | (1<<BIO_RW_UNPLUG);
 	if (dp_flags & DP_MAY_SET_IN_SYNC)

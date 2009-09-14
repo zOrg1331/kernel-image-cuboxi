@@ -2341,8 +2341,10 @@ int drbd_send_dblock(struct drbd_conf *mdev, struct drbd_request *req)
 	/* NOTE: no need to check if barriers supported here as we would
 	 *       not pass the test in make_request_common in that case
 	 */
-	if (bio_rw_flagged(req->master_bio, BIO_RW_BARRIER))
-		dp_flags |= DP_HARDBARRIER;
+	if (bio_rw_flagged(req->master_bio, BIO_RW_BARRIER)) {
+		dev_err(DEV, "ASSERT FAILED would have set DP_HARDBARRIER\n");
+		/* dp_flags |= DP_HARDBARRIER; */
+	}
 	if (bio_rw_flagged(req->master_bio, BIO_RW_SYNCIO))
 		dp_flags |= DP_RW_SYNC;
 	if (mdev->state.conn >= C_SYNC_SOURCE &&
