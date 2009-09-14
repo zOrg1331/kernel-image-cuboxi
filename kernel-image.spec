@@ -293,11 +293,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 	-maxdepth 1 -type f -not -name '*.html' -delete
 %endif # if_enabled docs
 
-#remove video headers
-#rm -rf %buildroot%kbuild_dir/include/media
-#rm -rf %buildroot%kbuild_dir/drivers/media
-#rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
-
 %post
 %post_kernel_image %kversion-%flavour-%krelease
 
@@ -316,7 +311,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 /boot/config-%kversion-%flavour-%krelease
 %modules_dir
 %exclude %modules_dir/build
-%exclude %modules_dir/kernel/drivers/media/
 /lib/firmware/*
 
 %files -n kernel-headers-%flavour
