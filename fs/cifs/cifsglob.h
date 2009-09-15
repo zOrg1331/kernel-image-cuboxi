@@ -365,8 +365,10 @@ static inline void cifsFileInfo_get(struct cifsFileInfo *cifs_file)
 /* Release a reference on the file private data */
 static inline void cifsFileInfo_put(struct cifsFileInfo *cifs_file)
 {
-	if (atomic_dec_and_test(&cifs_file->count))
+	if (atomic_dec_and_test(&cifs_file->count)) {
+		iput(cifs_file->pInode);
 		kfree(cifs_file);
+	}
 }
 
 /*
@@ -382,7 +384,6 @@ struct cifsInodeInfo {
 	unsigned long time;	/* jiffies of last update/check of inode */
 	bool clientCanCacheRead:1;	/* read oplock */
 	bool clientCanCacheAll:1;	/* read and writebehind oplock */
-	bool oplockPending:1;
 	bool delete_pending:1;		/* DELETE_ON_CLOSE is set */
 	u64  server_eof;		/* current file size on server */
 	u64  uniqueid;			/* server inode number */
@@ -585,9 +586,9 @@ require use of the stronger protocol */
 #define   CIFSSEC_MUST_LANMAN	0x10010
 #define   CIFSSEC_MUST_PLNTXT	0x20020
 #ifdef CONFIG_CIFS_UPCALL
-#define   CIFSSEC_MASK          0xAF0AF /* allows weak security but also krb5 */
+#define   CIFSSEC_MASK          0xBF0BF /* allows weak security but also krb5 */
 #else
-#define   CIFSSEC_MASK          0xA70A7 /* current flags supported if weak */
+#define   CIFSSEC_MASK          0xB70B7 /* current flags supported if weak */
 #endif /* UPCALL */
 #else /* do not allow weak pw hash */
 #ifdef CONFIG_CIFS_UPCALL
