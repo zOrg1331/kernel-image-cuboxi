@@ -298,7 +298,9 @@ cp -a Documentation/* %buildroot%_docdir/kernel-doc-%base_flavour-%version/
 find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 	-maxdepth 1 -type f -not -name '*.html' -delete
 %endif # if_enabled docs
-
+pushd lustre
+%make_install DESTDIR=%buildroot install
+popd
 %post
 %post_kernel_image %kversion-%flavour-%krelease
 
