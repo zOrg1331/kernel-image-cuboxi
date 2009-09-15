@@ -107,6 +107,7 @@ struct usb_serial_port {
 	char			throttled;
 	char			throttle_req;
 	char			console;
+	int			console_init_baud;
 	unsigned long		sysrq; /* sysrq timeout */
 	struct device		dev;
 	enum port_dev_state	dev_state;
