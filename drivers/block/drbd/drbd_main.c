@@ -1438,6 +1438,7 @@ int drbd_thread_start(struct drbd_thread *thi)
 			return FALSE;
 		}
 
+		init_completion(&thi->stop);
 		D_ASSERT(thi->task == NULL);
 		thi->reset_cpu_mask = 1;
 		thi->t_state = Running;
