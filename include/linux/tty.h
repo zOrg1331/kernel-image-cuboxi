@@ -23,7 +23,7 @@
  */
 #define NR_UNIX98_PTY_DEFAULT	4096      /* Default maximum for Unix98 ptys */
 #define NR_UNIX98_PTY_MAX	(1 << MINORBITS) /* Absolute limit */
-#define NR_LDISCS		19
+#define NR_LDISCS		20
 
 /* line disciplines */
 #define N_TTY		0
@@ -46,6 +46,8 @@
 #define N_GIGASET_M101	16	/* Siemens Gigaset M101 serial DECT adapter */
 #define N_SLCAN		17	/* Serial / USB serial CAN Adaptors */
 #define N_PPS		18	/* Pulse per Second */
+
+#define N_V253		19	/* Codec control over voice modem */
 
 /*
  * This character is the same as _POSIX_VDISABLE: it cannot be used as
@@ -394,6 +396,7 @@ extern void __do_SAK(struct tty_struct *tty);
 extern void disassociate_ctty(int priv);
 extern void no_tty(void);
 extern void tty_flip_buffer_push(struct tty_struct *tty);
+extern void tty_flush_to_ldisc(struct tty_struct *tty);
 extern void tty_buffer_free_all(struct tty_struct *tty);
 extern void tty_buffer_flush(struct tty_struct *tty);
 extern void tty_buffer_init(struct tty_struct *tty);
@@ -515,10 +518,6 @@ extern void serial_console_init(void);
 /* pcxx.c */
 
 extern int pcxe_open(struct tty_struct *tty, struct file *filp);
-
-/* printk.c */
-
-extern void console_print(const char *);
 
 /* vt.c */
 

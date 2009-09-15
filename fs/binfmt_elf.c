@@ -501,22 +501,22 @@ static unsigned long load_elf_interp(struct elfhdr *interp_elf_ex,
 		}
 	}
 
-	/*
-	 * Now fill out the bss section.  First pad the last page up
-	 * to the page boundary, and then perform a mmap to make sure
-	 * that there are zero-mapped pages up to and including the 
-	 * last bss page.
-	 */
-	if (padzero(elf_bss)) {
-		error = -EFAULT;
-		goto out_close;
-	}
-
-	/* What we have mapped so far */
-	elf_bss = ELF_PAGESTART(elf_bss + ELF_MIN_ALIGN - 1);
-
-	/* Map the last of the bss segment */
 	if (last_bss > elf_bss) {
+		/*
+		 * Now fill out the bss section.  First pad the last page up
+		 * to the page boundary, and then perform a mmap to make sure
+		 * that there are zero-mapped pages up to and including the
+		 * last bss page.
+		 */
+		if (padzero(elf_bss)) {
+			error = -EFAULT;
+			goto out_close;
+		}
+
+		/* What we have mapped so far */
+		elf_bss = ELF_PAGESTART(elf_bss + ELF_MIN_ALIGN - 1);
+
+		/* Map the last of the bss segment */
 		down_write(&current->mm->mmap_sem);
 		error = do_brk(elf_bss, last_bss - elf_bss);
 		up_write(&current->mm->mmap_sem);
@@ -1522,10 +1522,10 @@ static int fill_note_info(struct elfhdr *elf, int phdrs,
 	info->thread = NULL;
 
 	psinfo = kmalloc(sizeof(*psinfo), GFP_KERNEL);
-	fill_note(&info->psinfo, "CORE", NT_PRPSINFO, sizeof(*psinfo), psinfo);
-
 	if (psinfo == NULL)
 		return 0;
+
+	fill_note(&info->psinfo, "CORE", NT_PRPSINFO, sizeof(*psinfo), psinfo);
 
 	/*
 	 * Figure out how many notes we're going to need for each thread.
@@ -1929,7 +1929,10 @@ static int elf_core_dump(long signr, struct pt_regs *regs, struct file *file, un
 	elf = kmalloc(sizeof(*elf), GFP_KERNEL);
 	if (!elf)
 		goto out;
-	
+	/*
+	 * The number of segs are recored into ELF header as 16bit value.
+	 * Please check DEFAULT_MAX_MAP_COUNT definition when you modify here.
+	 */
 	segs = current->mm->map_count;
 #ifdef ELF_CORE_EXTRA_PHDRS
 	segs += ELF_CORE_EXTRA_PHDRS;

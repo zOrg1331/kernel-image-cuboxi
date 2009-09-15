@@ -14,8 +14,6 @@
  *      2 of the License, or (at your option) any later version.
  */
 
-#undef DEBUG
-
 #include <asm/pgtable.h>
 #include <asm/mmu.h>
 #include <asm/mmu_context.h>
@@ -27,11 +25,6 @@
 #include <linux/compiler.h>
 #include <asm/udbg.h>
 
-#ifdef DEBUG
-#define DBG(fmt...) printk(fmt)
-#else
-#define DBG pr_debug
-#endif
 
 extern void slb_allocate_realmode(unsigned long ea);
 extern void slb_allocate_user(unsigned long ea);
@@ -99,14 +92,12 @@ static inline void create_shadowed_slbe(unsigned long ea, int ssize,
 		     : "memory" );
 }
 
-void slb_flush_and_rebolt(void)
+static void __slb_flush_and_rebolt(void)
 {
 	/* If you change this make sure you change SLB_NUM_BOLTED
 	 * appropriately too. */
 	unsigned long linear_llp, vmalloc_llp, lflags, vflags;
 	unsigned long ksp_esid_data, ksp_vsid_data;
-
-	WARN_ON(!irqs_disabled());
 
 	linear_llp = mmu_psize_defs[mmu_linear_psize].sllp;
 	vmalloc_llp = mmu_psize_defs[mmu_vmalloc_psize].sllp;
@@ -124,12 +115,6 @@ void slb_flush_and_rebolt(void)
 		ksp_vsid_data = get_slb_shadow()->save_area[2].vsid;
 	}
 
-	/*
-	 * We can't take a PMU exception in the following code, so hard
-	 * disable interrupts.
-	 */
-	hard_irq_disable();
-
 	/* We need to do this all in asm, so we're sure we don't touch
 	 * the stack between the slbia and rebolting it. */
 	asm volatile("isync\n"
@@ -144,6 +129,21 @@ void slb_flush_and_rebolt(void)
 		        "r"(ksp_vsid_data),
 		        "r"(ksp_esid_data)
 		     : "memory");
+}
+
+void slb_flush_and_rebolt(void)
+{
+
+	WARN_ON(!irqs_disabled());
+
+	/*
+	 * We can't take a PMU exception in the following code, so hard
+	 * disable interrupts.
+	 */
+	hard_irq_disable();
+
+	__slb_flush_and_rebolt();
+	get_paca()->slb_cache_ptr = 0;
 }
 
 void slb_vmalloc_update(void)
@@ -187,12 +187,20 @@ static inline int esids_match(unsigned long addr1, unsigned long addr2)
 /* Flush all user entries from the segment table of the current processor. */
 void switch_slb(struct task_struct *tsk, struct mm_struct *mm)
 {
-	unsigned long offset = get_paca()->slb_cache_ptr;
+	unsigned long offset;
 	unsigned long slbie_data = 0;
 	unsigned long pc = KSTK_EIP(tsk);
 	unsigned long stack = KSTK_ESP(tsk);
 	unsigned long unmapped_base;
 
+	/*
+	 * We need interrupts hard-disabled here, not just soft-disabled,
+	 * so that a PMU interrupt can't occur, which might try to access
+	 * user memory (to get a stack trace) and possible cause an SLB miss
+	 * which would update the slb_cache/slb_cache_ptr fields in the PACA.
+	 */
+	hard_irq_disable();
+	offset = get_paca()->slb_cache_ptr;
 	if (!cpu_has_feature(CPU_FTR_NO_SLBIE_B) &&
 	    offset <= SLB_CACHE_ENTRIES) {
 		int i;
@@ -207,7 +215,7 @@ void switch_slb(struct task_struct *tsk, struct mm_struct *mm)
 		}
 		asm volatile("isync" : : : "memory");
 	} else {
-		slb_flush_and_rebolt();
+		__slb_flush_and_rebolt();
 	}
 
 	/* Workaround POWER5 < DD2.1 issue */
@@ -285,13 +293,13 @@ void slb_initialize(void)
 		patch_slb_encoding(slb_compare_rr_to_size,
 				   mmu_slb_size);
 
-		DBG("SLB: linear  LLP = %04lx\n", linear_llp);
-		DBG("SLB: io      LLP = %04lx\n", io_llp);
+		pr_devel("SLB: linear  LLP = %04lx\n", linear_llp);
+		pr_devel("SLB: io      LLP = %04lx\n", io_llp);
 
 #ifdef CONFIG_SPARSEMEM_VMEMMAP
 		patch_slb_encoding(slb_miss_kernel_load_vmemmap,
 				   SLB_VSID_KERNEL | vmemmap_llp);
-		DBG("SLB: vmemmap LLP = %04lx\n", vmemmap_llp);
+		pr_devel("SLB: vmemmap LLP = %04lx\n", vmemmap_llp);
 #endif
 	}
 

@@ -26,7 +26,6 @@
 #include <linux/time.h>
 #include <linux/init.h>
 #include <linux/string.h>
-#include <linux/smp_lock.h>
 #include <linux/backing-dev.h>
 #include <linux/mpage.h>
 #include <linux/swap.h>
@@ -2604,8 +2603,8 @@ noinline int btrfs_truncate_inode_items(struct btrfs_trans_handle *trans,
 	if (root->ref_cows)
 		btrfs_drop_extent_cache(inode, new_size & (~mask), (u64)-1, 0);
 	path = btrfs_alloc_path();
-	path->reada = -1;
 	BUG_ON(!path);
+	path->reada = -1;
 
 	/* FIXME, add redo link to tree so we don't leak on crash */
 	key.objectid = inode->i_ino;
@@ -3100,8 +3099,12 @@ static void inode_tree_add(struct inode *inode)
 {
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 	struct btrfs_inode *entry;
-	struct rb_node **p = &root->inode_tree.rb_node;
-	struct rb_node *parent = NULL;
+	struct rb_node **p;
+	struct rb_node *parent;
+
+again:
+	p = &root->inode_tree.rb_node;
+	parent = NULL;
 
 	spin_lock(&root->inode_lock);
 	while (*p) {
@@ -3109,13 +3112,16 @@ static void inode_tree_add(struct inode *inode)
 		entry = rb_entry(parent, struct btrfs_inode, rb_node);
 
 		if (inode->i_ino < entry->vfs_inode.i_ino)
-			p = &(*p)->rb_left;
+			p = &parent->rb_left;
 		else if (inode->i_ino > entry->vfs_inode.i_ino)
-			p = &(*p)->rb_right;
+			p = &parent->rb_right;
 		else {
 			WARN_ON(!(entry->vfs_inode.i_state &
 				  (I_WILL_FREE | I_FREEING | I_CLEAR)));
-			break;
+			rb_erase(parent, &root->inode_tree);
+			RB_CLEAR_NODE(parent);
+			spin_unlock(&root->inode_lock);
+			goto again;
 		}
 	}
 	rb_link_node(&BTRFS_I(inode)->rb_node, parent, p);
@@ -3127,12 +3133,12 @@ static void inode_tree_del(struct inode *inode)
 {
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 
+	spin_lock(&root->inode_lock);
 	if (!RB_EMPTY_NODE(&BTRFS_I(inode)->rb_node)) {
-		spin_lock(&root->inode_lock);
 		rb_erase(&BTRFS_I(inode)->rb_node, &root->inode_tree);
-		spin_unlock(&root->inode_lock);
 		RB_CLEAR_NODE(&BTRFS_I(inode)->rb_node);
 	}
+	spin_unlock(&root->inode_lock);
 }
 
 static noinline void init_btrfs_i(struct inode *inode)
@@ -3580,12 +3586,6 @@ static struct inode *btrfs_new_inode(struct btrfs_trans_handle *trans,
 		owner = 1;
 	BTRFS_I(inode)->block_group =
 			btrfs_find_block_group(root, 0, alloc_hint, owner);
-	if ((mode & S_IFREG)) {
-		if (btrfs_test_opt(root, NODATASUM))
-			BTRFS_I(inode)->flags |= BTRFS_INODE_NODATASUM;
-		if (btrfs_test_opt(root, NODATACOW))
-			BTRFS_I(inode)->flags |= BTRFS_INODE_NODATACOW;
-	}
 
 	key[0].objectid = objectid;
 	btrfs_set_key_type(&key[0], BTRFS_INODE_ITEM_KEY);
@@ -3639,6 +3639,13 @@ static struct inode *btrfs_new_inode(struct btrfs_trans_handle *trans,
 	btrfs_set_key_type(location, BTRFS_INODE_ITEM_KEY);
 
 	btrfs_inherit_iflags(inode, dir);
+
+	if ((mode & S_IFREG)) {
+		if (btrfs_test_opt(root, NODATASUM))
+			BTRFS_I(inode)->flags |= BTRFS_INODE_NODATASUM;
+		if (btrfs_test_opt(root, NODATACOW))
+			BTRFS_I(inode)->flags |= BTRFS_INODE_NODATACOW;
+	}
 
 	insert_inode_hash(inode);
 	inode_tree_add(inode);
@@ -4785,8 +4792,7 @@ static int btrfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	 * and the replacement file is large.  Start IO on it now so
 	 * we don't add too much work to the end of the transaction
 	 */
-	if (new_inode && old_inode && S_ISREG(old_inode->i_mode) &&
-	    new_inode->i_size &&
+	if (new_inode && S_ISREG(old_inode->i_mode) && new_inode->i_size &&
 	    old_inode->i_size > BTRFS_ORDERED_OPERATIONS_FLUSH_LIMIT)
 		filemap_flush(old_inode->i_mapping);
 
@@ -5082,6 +5088,7 @@ static long btrfs_fallocate(struct inode *inode, int mode,
 	u64 mask = BTRFS_I(inode)->root->sectorsize - 1;
 	struct extent_map *em;
 	struct btrfs_trans_handle *trans;
+	struct btrfs_root *root;
 	int ret;
 
 	alloc_start = offset & ~mask;
@@ -5100,6 +5107,13 @@ static long btrfs_fallocate(struct inode *inode, int mode,
 			goto out;
 	}
 
+	root = BTRFS_I(inode)->root;
+
+	ret = btrfs_check_data_free_space(root, inode,
+					  alloc_end - alloc_start);
+	if (ret)
+		goto out;
+
 	locked_end = alloc_end - 1;
 	while (1) {
 		struct btrfs_ordered_extent *ordered;
@@ -5107,7 +5121,7 @@ static long btrfs_fallocate(struct inode *inode, int mode,
 		trans = btrfs_start_transaction(BTRFS_I(inode)->root, 1);
 		if (!trans) {
 			ret = -EIO;
-			goto out;
+			goto out_free;
 		}
 
 		/* the extent lock is ordered inside the running
@@ -5168,6 +5182,8 @@ static long btrfs_fallocate(struct inode *inode, int mode,
 		      GFP_NOFS);
 
 	btrfs_end_transaction(trans, BTRFS_I(inode)->root);
+out_free:
+	btrfs_free_reserved_data_space(root, inode, alloc_end - alloc_start);
 out:
 	mutex_unlock(&inode->i_mutex);
 	return ret;

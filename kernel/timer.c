@@ -380,6 +380,8 @@ static void timer_stats_account_timer(struct timer_list *timer)
 {
 	unsigned int flag = 0;
 
+	if (likely(!timer->start_site))
+		return;
 	if (unlikely(tbase_get_deferrable(timer->base)))
 		flag |= TIMER_STATS_FLAG_DEFERRABLE;
 
@@ -712,7 +714,7 @@ int mod_timer(struct timer_list *timer, unsigned long expires)
 	 * networking code - if the timer is re-modified
 	 * to be the same thing then just return:
 	 */
-	if (timer->expires == expires && timer_pending(timer))
+	if (timer_pending(timer) && timer->expires == expires)
 		return 1;
 
 	return __mod_timer(timer, expires, false, TIMER_NOT_PINNED);
@@ -1154,8 +1156,7 @@ void update_process_times(int user_tick)
 	/* Note: this timer irq context must be accounted for as well. */
 	account_process_tick(p, user_tick);
 	run_local_timers();
-	if (rcu_pending(cpu))
-		rcu_check_callbacks(cpu, user_tick);
+	rcu_check_callbacks(cpu, user_tick);
 	printk_tick();
 	scheduler_tick();
 	run_posix_cpu_timers(p);

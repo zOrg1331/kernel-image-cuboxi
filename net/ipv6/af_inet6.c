@@ -306,8 +306,10 @@ int inet6_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 		    v4addr != htonl(INADDR_ANY) &&
 		    chk_addr_ret != RTN_LOCAL &&
 		    chk_addr_ret != RTN_MULTICAST &&
-		    chk_addr_ret != RTN_BROADCAST)
+		    chk_addr_ret != RTN_BROADCAST) {
+			err = -EADDRNOTAVAIL;
 			goto out;
+		}
 	} else {
 		if (addr_type != IPV6_ADDR_ANY) {
 			struct net_device *dev = NULL;
@@ -772,6 +774,11 @@ static struct sk_buff *ipv6_gso_segment(struct sk_buff *skb, int features)
 	struct sk_buff *segs = ERR_PTR(-EINVAL);
 	struct ipv6hdr *ipv6h;
 	struct inet6_protocol *ops;
+	int proto;
+	struct frag_hdr *fptr;
+	unsigned int unfrag_ip6hlen;
+	u8 *prevhdr;
+	int offset = 0;
 
 	if (!(features & NETIF_F_V6_CSUM))
 		features &= ~NETIF_F_SG;
@@ -791,10 +798,9 @@ static struct sk_buff *ipv6_gso_segment(struct sk_buff *skb, int features)
 	__skb_pull(skb, sizeof(*ipv6h));
 	segs = ERR_PTR(-EPROTONOSUPPORT);
 
+	proto = ipv6_gso_pull_exthdrs(skb, ipv6h->nexthdr);
 	rcu_read_lock();
-	ops = rcu_dereference(inet6_protos[
-		ipv6_gso_pull_exthdrs(skb, ipv6h->nexthdr)]);
-
+	ops = rcu_dereference(inet6_protos[proto]);
 	if (likely(ops && ops->gso_segment)) {
 		skb_reset_transport_header(skb);
 		segs = ops->gso_segment(skb, features);
@@ -808,6 +814,16 @@ static struct sk_buff *ipv6_gso_segment(struct sk_buff *skb, int features)
 		ipv6h = ipv6_hdr(skb);
 		ipv6h->payload_len = htons(skb->len - skb->mac_len -
 					   sizeof(*ipv6h));
+		if (proto == IPPROTO_UDP) {
+			unfrag_ip6hlen = ip6_find_1stfragopt(skb, &prevhdr);
+			fptr = (struct frag_hdr *)(skb_network_header(skb) +
+				unfrag_ip6hlen);
+			fptr->frag_off = htons(offset);
+			if (skb->next != NULL)
+				fptr->frag_off |= htons(IP6_MF);
+			offset += (ntohs(ipv6h->payload_len) -
+				   sizeof(struct frag_hdr));
+		}
 	}
 
 out:
@@ -1284,6 +1300,8 @@ static void __exit inet6_exit(void)
 	proto_unregister(&udplitev6_prot);
 	proto_unregister(&udpv6_prot);
 	proto_unregister(&tcpv6_prot);
+
+	rcu_barrier(); /* Wait for completion of call_rcu()'s */
 }
 module_exit(inet6_exit);
 

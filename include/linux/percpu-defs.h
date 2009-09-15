@@ -24,7 +24,8 @@
 
 #define DEFINE_PER_CPU_SECTION(type, name, section)			\
 	__attribute__((__section__(PER_CPU_BASE_SECTION section)))	\
-	PER_CPU_ATTRIBUTES __typeof__(type) per_cpu__##name
+	PER_CPU_ATTRIBUTES PER_CPU_DEF_ATTRIBUTES			\
+	__typeof__(type) per_cpu__##name
 
 /*
  * Variant on the per-CPU variable declaration/definition theme used for
@@ -65,14 +66,24 @@
 	DEFINE_PER_CPU_SECTION(type, name, PER_CPU_SHARED_ALIGNED_SECTION) \
 	____cacheline_aligned_in_smp
 
+#define DECLARE_PER_CPU_ALIGNED(type, name)				\
+	DECLARE_PER_CPU_SECTION(type, name, PER_CPU_ALIGNED_SECTION)	\
+	____cacheline_aligned
+
+#define DEFINE_PER_CPU_ALIGNED(type, name)				\
+	DEFINE_PER_CPU_SECTION(type, name, PER_CPU_ALIGNED_SECTION)	\
+	____cacheline_aligned
+
 /*
  * Declaration/definition used for per-CPU variables that must be page aligned.
  */
-#define DECLARE_PER_CPU_PAGE_ALIGNED(type, name)				\
-	DECLARE_PER_CPU_SECTION(type, name, ".page_aligned")
+#define DECLARE_PER_CPU_PAGE_ALIGNED(type, name)			\
+	DECLARE_PER_CPU_SECTION(type, name, ".page_aligned")		\
+	__aligned(PAGE_SIZE)
 
 #define DEFINE_PER_CPU_PAGE_ALIGNED(type, name)				\
-	DEFINE_PER_CPU_SECTION(type, name, ".page_aligned")
+	DEFINE_PER_CPU_SECTION(type, name, ".page_aligned")		\
+	__aligned(PAGE_SIZE)
 
 /*
  * Intermodule exports for per-CPU variables.

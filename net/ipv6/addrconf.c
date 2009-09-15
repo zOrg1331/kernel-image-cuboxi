@@ -1371,12 +1371,14 @@ struct inet6_ifaddr *ipv6_get_ifaddr(struct net *net, const struct in6_addr *add
 
 /* Gets referenced address, destroys ifaddr */
 
-static void addrconf_dad_stop(struct inet6_ifaddr *ifp)
+static void addrconf_dad_stop(struct inet6_ifaddr *ifp, int dad_failed)
 {
 	if (ifp->flags&IFA_F_PERMANENT) {
 		spin_lock_bh(&ifp->lock);
 		addrconf_del_timer(ifp);
 		ifp->flags |= IFA_F_TENTATIVE;
+		if (dad_failed)
+			ifp->flags |= IFA_F_DADFAILED;
 		spin_unlock_bh(&ifp->lock);
 		in6_ifa_put(ifp);
 #ifdef CONFIG_IPV6_PRIVACY
@@ -1422,7 +1424,7 @@ void addrconf_dad_failure(struct inet6_ifaddr *ifp)
 		}
 	}
 
-	addrconf_dad_stop(ifp);
+	addrconf_dad_stop(ifp, 1);
 }
 
 /* Join to solicited addr multicast group. */
@@ -1916,8 +1918,32 @@ ok:
 					update_lft = 1;
 				else if (stored_lft <= MIN_VALID_LIFETIME) {
 					/* valid_lft <= stored_lft is always true */
-					/* XXX: IPsec */
-					update_lft = 0;
+					/*
+					 * RFC 4862 Section 5.5.3e:
+					 * "Note that the preferred lifetime of
+					 *  the corresponding address is always
+					 *  reset to the Preferred Lifetime in
+					 *  the received Prefix Information
+					 *  option, regardless of whether the
+					 *  valid lifetime is also reset or
+					 *  ignored."
+					 *
+					 *  So if the preferred lifetime in
+					 *  this advertisement is different
+					 *  than what we have stored, but the
+					 *  valid lifetime is invalid, just
+					 *  reset prefered_lft.
+					 *
+					 *  We must set the valid lifetime
+					 *  to the stored lifetime since we'll
+					 *  be updating the timestamp below,
+					 *  else we'll set it back to the
+					 *  minumum.
+					 */
+					if (prefered_lft != ifp->prefered_lft) {
+						valid_lft = stored_lft;
+						update_lft = 1;
+					}
 				} else {
 					valid_lft = MIN_VALID_LIFETIME;
 					if (valid_lft < prefered_lft)
@@ -2754,7 +2780,7 @@ static void addrconf_dad_start(struct inet6_ifaddr *ifp, u32 flags)
 	    idev->cnf.accept_dad < 1 ||
 	    !(ifp->flags&IFA_F_TENTATIVE) ||
 	    ifp->flags & IFA_F_NODAD) {
-		ifp->flags &= ~(IFA_F_TENTATIVE|IFA_F_OPTIMISTIC);
+		ifp->flags &= ~(IFA_F_TENTATIVE|IFA_F_OPTIMISTIC|IFA_F_DADFAILED);
 		spin_unlock_bh(&ifp->lock);
 		read_unlock_bh(&idev->lock);
 
@@ -2771,7 +2797,7 @@ static void addrconf_dad_start(struct inet6_ifaddr *ifp, u32 flags)
 		 * - otherwise, kill it.
 		 */
 		in6_ifa_hold(ifp);
-		addrconf_dad_stop(ifp);
+		addrconf_dad_stop(ifp, 0);
 		return;
 	}
 
@@ -2805,7 +2831,7 @@ static void addrconf_dad_timer(unsigned long data)
 		 * DAD was successful
 		 */
 
-		ifp->flags &= ~(IFA_F_TENTATIVE|IFA_F_OPTIMISTIC);
+		ifp->flags &= ~(IFA_F_TENTATIVE|IFA_F_OPTIMISTIC|IFA_F_DADFAILED);
 		spin_unlock_bh(&ifp->lock);
 		read_unlock_bh(&idev->lock);
 
@@ -3085,7 +3111,7 @@ restart:
 				spin_unlock(&ifp->lock);
 				continue;
 			} else if (age >= ifp->prefered_lft) {
-				/* jiffies - ifp->tsamp > age >= ifp->prefered_lft */
+				/* jiffies - ifp->tstamp > age >= ifp->prefered_lft */
 				int deprecate = 0;
 
 				if (!(ifp->flags&IFA_F_DEPRECATED)) {
@@ -3362,7 +3388,10 @@ static int inet6_fill_ifaddr(struct sk_buff *skb, struct inet6_ifaddr *ifa,
 		valid = ifa->valid_lft;
 		if (preferred != INFINITY_LIFE_TIME) {
 			long tval = (jiffies - ifa->tstamp)/HZ;
-			preferred -= tval;
+			if (preferred > tval)
+				preferred -= tval;
+			else
+				preferred = 0;
 			if (valid != INFINITY_LIFE_TIME)
 				valid -= tval;
 		}

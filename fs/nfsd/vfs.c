@@ -678,12 +678,13 @@ __be32
 nfsd_open(struct svc_rqst *rqstp, struct svc_fh *fhp, int type,
 			int access, struct file **filp)
 {
-	const struct cred *cred = current_cred();
 	struct dentry	*dentry;
 	struct inode	*inode;
 	int		flags = O_RDONLY|O_LARGEFILE;
 	__be32		err;
 	int		host_err;
+
+	validate_process_creds();
 
 	/*
 	 * If we get here, then the client has already done an "open",
@@ -733,7 +734,7 @@ nfsd_open(struct svc_rqst *rqstp, struct svc_fh *fhp, int type,
 		vfs_dq_init(inode);
 	}
 	*filp = dentry_open(dget(dentry), mntget(fhp->fh_export->ex_path.mnt),
-			    flags, cred);
+			    flags, current_cred());
 	if (IS_ERR(*filp))
 		host_err = PTR_ERR(*filp);
 	else
@@ -741,6 +742,7 @@ nfsd_open(struct svc_rqst *rqstp, struct svc_fh *fhp, int type,
 out_nfserr:
 	err = nfserrno(host_err);
 out:
+	validate_process_creds();
 	return err;
 }
 

@@ -18,7 +18,6 @@
 #include <linux/unistd.h>
 #include <linux/slab.h>
 #include <linux/smp.h>
-#include <linux/smp_lock.h>
 #include <linux/freezer.h>
 #include <linux/fs_struct.h>
 #include <linux/kthread.h>
@@ -497,7 +496,9 @@ nfsd(void *vrqstp)
 		/* Lock the export hash tables for reading. */
 		exp_readlock();
 
+		validate_process_creds();
 		svc_process(rqstp);
+		validate_process_creds();
 
 		/* Unlock export hash tables */
 		exp_readunlock();

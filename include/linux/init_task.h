@@ -94,6 +94,16 @@ extern struct group_info init_groups;
 # define CAP_INIT_BSET  CAP_INIT_EFF_SET
 #endif
 
+#ifdef CONFIG_TREE_PREEMPT_RCU
+#define INIT_TASK_RCU_PREEMPT(tsk)					\
+	.rcu_read_lock_nesting = 0,					\
+	.rcu_read_unlock_special = 0,					\
+	.rcu_blocked_node = NULL,					\
+	.rcu_node_entry = LIST_HEAD_INIT(tsk.rcu_node_entry),
+#else
+#define INIT_TASK_RCU_PREEMPT(tsk)
+#endif
+
 extern struct cred init_cred;
 
 #ifdef CONFIG_PERF_COUNTERS
@@ -173,6 +183,7 @@ extern struct cred init_cred;
 	INIT_LOCKDEP							\
 	INIT_FTRACE_GRAPH						\
 	INIT_TRACE_RECURSION						\
+	INIT_TASK_RCU_PREEMPT(tsk)					\
 }
 
 
@@ -182,6 +193,9 @@ extern struct cred init_cred;
 	LIST_HEAD_INIT(cpu_timers[1]),					\
 	LIST_HEAD_INIT(cpu_timers[2]),					\
 }
+
+/* Attach to the init_task data structure for proper alignment */
+#define __init_task_data __attribute__((__section__(".data.init_task")))
 
 
 #endif
