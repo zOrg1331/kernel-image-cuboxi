@@ -29,7 +29,6 @@
 #include <drm/drmP.h>
 #include "radeon_reg.h"
 #include "radeon.h"
-#include "radeon_share.h"
 
 /* rs400,rs480 depends on : */
 void r100_hdp_reset(struct radeon_device *rdev);
@@ -63,7 +62,7 @@ void rs400_gart_adjust_size(struct radeon_device *rdev)
 		break;
 	default:
 		DRM_ERROR("Unable to use IGP GART size %uM\n",
-			  rdev->mc.gtt_size >> 20);
+			  (unsigned)(rdev->mc.gtt_size >> 20));
 		DRM_ERROR("Valid GART size for IGP are 32M,64M,128M,256M,512M,1G,2G\n");
 		DRM_ERROR("Forcing to 32M GART size\n");
 		rdev->mc.gtt_size = 32 * 1024 * 1024;
