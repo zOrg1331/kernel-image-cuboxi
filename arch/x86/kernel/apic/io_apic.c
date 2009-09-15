@@ -96,6 +96,11 @@ struct mpc_intsrc mp_irqs[MAX_IRQ_SOURCES];
 /* # of MP IRQ source entries */
 int mp_irq_entries;
 
+/* Number of legacy interrupts */
+static int nr_legacy_irqs __read_mostly = NR_IRQS_LEGACY;
+/* GSI interrupts */
+static int nr_irqs_gsi = NR_IRQS_LEGACY;
+
 #if defined (CONFIG_MCA) || defined (CONFIG_EISA)
 int mp_bus_id_to_type[MAX_MP_BUSSES];
 #endif
@@ -173,6 +178,12 @@ static struct irq_cfg irq_cfgx[NR_IRQS] = {
 	[15] = { .vector = IRQ15_VECTOR, },
 };
 
+void __init io_apic_disable_legacy(void)
+{
+	nr_legacy_irqs = 0;
+	nr_irqs_gsi = 0;
+}
+
 int __init arch_early_irq_init(void)
 {
 	struct irq_cfg *cfg;
@@ -190,7 +201,7 @@ int __init arch_early_irq_init(void)
 		desc->chip_data = &cfg[i];
 		zalloc_cpumask_var_node(&cfg[i].domain, GFP_NOWAIT, node);
 		zalloc_cpumask_var_node(&cfg[i].old_domain, GFP_NOWAIT, node);
-		if (i < NR_IRQS_LEGACY)
+		if (i < nr_legacy_irqs)
 			cpumask_setall(cfg[i].domain);
 	}
 
@@ -864,7 +875,7 @@ static int __init find_isa_irq_apic(int irq, int type)
  */
 static int EISA_ELCR(unsigned int irq)
 {
-	if (irq < NR_IRQS_LEGACY) {
+	if (irq < nr_legacy_irqs) {
 		unsigned int port = 0x4d0 + (irq >> 3);
 		return (inb(port) >> (irq & 7)) & 1;
 	}
@@ -1461,7 +1472,7 @@ static void setup_IO_APIC_irq(int apic_id, int pin, unsigned int irq, struct irq
 	}
 
 	ioapic_register_intr(irq, desc, trigger);
-	if (irq < NR_IRQS_LEGACY)
+	if (irq < nr_legacy_irqs)
 		disable_8259A_irq(irq);
 
 	ioapic_write_entry(apic_id, pin, entry);
@@ -1828,7 +1839,7 @@ __apicdebuginit(void) print_PIC(void)
 	unsigned int v;
 	unsigned long flags;
 
-	if (apic_verbosity == APIC_QUIET)
+	if (apic_verbosity == APIC_QUIET || !nr_legacy_irqs)
 		return;
 
 	printk(KERN_DEBUG "\nprinting PIC contents\n");
@@ -1891,6 +1902,10 @@ void __init enable_IO_APIC(void)
 		spin_unlock_irqrestore(&ioapic_lock, flags);
 		nr_ioapic_registers[apic] = reg_01.bits.entries+1;
 	}
+
+	if (!nr_legacy_irqs)
+		return;
+
 	for(apic = 0; apic < nr_ioapics; apic++) {
 		int pin;
 		/* See if any of the pins is in ExtINT mode */
@@ -1945,6 +1960,9 @@ void disable_IO_APIC(void)
 	 */
 	clear_IO_APIC();
 
+	if (!nr_legacy_irqs)
+		return;
+
 	/*
 	 * If the i8259 is routed through an IOAPIC
 	 * Put that IOAPIC in virtual wire mode
@@ -1991,7 +2009,7 @@ void disable_IO_APIC(void)
  * by Matt Domsch <Matt_Domsch@dell.com>  Tue Dec 21 12:25:05 CST 1999
  */
 
-static void __init setup_ioapic_ids_from_mpc(void)
+void __init setup_ioapic_ids_from_mpc(void)
 {
 	union IO_APIC_reg_00 reg_00;
 	physid_mask_t phys_id_present_map;
@@ -2000,9 +2018,8 @@ static void __init setup_ioapic_ids_from_mpc(void)
 	unsigned char old_id;
 	unsigned long flags;
 
-	if (x86_quirks->setup_ioapic_ids && x86_quirks->setup_ioapic_ids())
+	if (acpi_ioapic)
 		return;
-
 	/*
 	 * Don't check I/O APIC IDs for xAPIC systems.  They have
 	 * no meaning without the serial APIC bus.
@@ -2176,7 +2193,7 @@ static unsigned int startup_ioapic_irq(unsigned int irq)
 	struct irq_cfg *cfg;
 
 	spin_lock_irqsave(&ioapic_lock, flags);
-	if (irq < NR_IRQS_LEGACY) {
+	if (irq < nr_legacy_irqs) {
 		disable_8259A_irq(irq);
 		if (i8259A_irq_pending(irq))
 			was_pending = 1;
@@ -2654,7 +2671,7 @@ static inline void init_IO_APIC_traps(void)
 			 * so default to an old-fashioned 8259
 			 * interrupt if we can..
 			 */
-			if (irq < NR_IRQS_LEGACY)
+			if (irq < nr_legacy_irqs)
 				make_8259A_irq(irq);
 			else
 				/* Strange. Oh, well.. */
@@ -2990,7 +3007,7 @@ out:
  * the I/O APIC in all cases now.  No actual device should request
  * it anyway.  --macro
  */
-#define PIC_IRQS	(1 << PIC_CASCADE_IR)
+#define PIC_IRQS	(1UL << PIC_CASCADE_IR)
 
 void __init setup_IO_APIC(void)
 {
@@ -2998,21 +3015,19 @@ void __init setup_IO_APIC(void)
 	/*
 	 * calling enable_IO_APIC() is moved to setup_local_APIC for BP
 	 */
-
-	io_apic_irqs = ~PIC_IRQS;
+	io_apic_irqs = nr_legacy_irqs ? ~PIC_IRQS : ~0UL;
 
 	apic_printk(APIC_VERBOSE, "ENABLING IO-APIC IRQs\n");
 	/*
          * Set up IO-APIC IRQ routing.
          */
-#ifdef CONFIG_X86_32
-	if (!acpi_ioapic)
-		setup_ioapic_ids_from_mpc();
-#endif
+	x86_init.mpparse.setup_ioapic_ids();
+
 	sync_Arb_IDs();
 	setup_IO_APIC_irqs();
 	init_IO_APIC_traps();
-	check_timer();
+	if (nr_legacy_irqs)
+		check_timer();
 }
 
 /*
@@ -3113,7 +3128,6 @@ static int __init ioapic_init_sysfs(void)
 
 device_initcall(ioapic_init_sysfs);
 
-static int nr_irqs_gsi = NR_IRQS_LEGACY;
 /*
  * Dynamic irq allocate and deallocation
  */
@@ -3197,7 +3211,8 @@ void destroy_irq(unsigned int irq)
  * MSI message composition
  */
 #ifdef CONFIG_PCI_MSI
-static int msi_compose_msg(struct pci_dev *pdev, unsigned int irq, struct msi_msg *msg)
+static int msi_compose_msg(struct pci_dev *pdev, unsigned int irq,
+			   struct msi_msg *msg, u8 hpet_id)
 {
 	struct irq_cfg *cfg;
 	int err;
@@ -3231,7 +3246,10 @@ static int msi_compose_msg(struct pci_dev *pdev, unsigned int irq, struct msi_ms
 		irte.dest_id = IRTE_DEST(dest);
 
 		/* Set source-id of interrupt request */
-		set_msi_sid(&irte, pdev);
+		if (pdev)
+			set_msi_sid(&irte, pdev);
+		else
+			set_hpet_sid(&irte, hpet_id);
 
 		modify_irte(irq, &irte);
 
@@ -3396,7 +3414,7 @@ static int setup_msi_irq(struct pci_dev *dev, struct msi_desc *msidesc, int irq)
 	int ret;
 	struct msi_msg msg;
 
-	ret = msi_compose_msg(dev, irq, &msg);
+	ret = msi_compose_msg(dev, irq, &msg, -1);
 	if (ret < 0)
 		return ret;
 
@@ -3529,7 +3547,7 @@ int arch_setup_dmar_msi(unsigned int irq)
 	int ret;
 	struct msi_msg msg;
 
-	ret = msi_compose_msg(NULL, irq, &msg);
+	ret = msi_compose_msg(NULL, irq, &msg, -1);
 	if (ret < 0)
 		return ret;
 	dmar_msi_write(irq, &msg);
@@ -3569,6 +3587,19 @@ static int hpet_msi_set_affinity(unsigned int irq, const struct cpumask *mask)
 
 #endif /* CONFIG_SMP */
 
+static struct irq_chip ir_hpet_msi_type = {
+	.name = "IR-HPET_MSI",
+	.unmask = hpet_msi_unmask,
+	.mask = hpet_msi_mask,
+#ifdef CONFIG_INTR_REMAP
+	.ack = ir_ack_apic_edge,
+#ifdef CONFIG_SMP
+	.set_affinity = ir_set_msi_irq_affinity,
+#endif
+#endif
+	.retrigger = ioapic_retrigger_irq,
+};
+
 static struct irq_chip hpet_msi_type = {
 	.name = "HPET_MSI",
 	.unmask = hpet_msi_unmask,
@@ -3580,20 +3611,36 @@ static struct irq_chip hpet_msi_type = {
 	.retrigger = ioapic_retrigger_irq,
 };
 
-int arch_setup_hpet_msi(unsigned int irq)
+int arch_setup_hpet_msi(unsigned int irq, unsigned int id)
 {
 	int ret;
 	struct msi_msg msg;
 	struct irq_desc *desc = irq_to_desc(irq);
 
-	ret = msi_compose_msg(NULL, irq, &msg);
+	if (intr_remapping_enabled) {
+		struct intel_iommu *iommu = map_hpet_to_ir(id);
+		int index;
+
+		if (!iommu)
+			return -1;
+
+		index = alloc_irte(iommu, irq, 1);
+		if (index < 0)
+			return -1;
+	}
+
+	ret = msi_compose_msg(NULL, irq, &msg, id);
 	if (ret < 0)
 		return ret;
 
 	hpet_msi_write(irq, &msg);
 	desc->status |= IRQ_MOVE_PCNTXT;
-	set_irq_chip_and_handler_name(irq, &hpet_msi_type, handle_edge_irq,
-		"edge");
+	if (irq_remapped(irq))
+		set_irq_chip_and_handler_name(irq, &ir_hpet_msi_type,
+					      handle_edge_irq, "edge");
+	else
+		set_irq_chip_and_handler_name(irq, &hpet_msi_type,
+					      handle_edge_irq, "edge");
 
 	return 0;
 }
@@ -3853,7 +3900,7 @@ static int __io_apic_set_pci_routing(struct device *dev, int irq,
 	/*
 	 * IRQs < 16 are already in the irq_2_pin[] map
 	 */
-	if (irq >= NR_IRQS_LEGACY) {
+	if (irq >= nr_legacy_irqs) {
 		cfg = desc->chip_data;
 		if (add_pin_to_irq_node_nopanic(cfg, node, ioapic, pin)) {
 			printk(KERN_INFO "can not add pin %d for irq %d\n",
