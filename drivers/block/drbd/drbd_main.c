@@ -1454,10 +1454,10 @@ int drbd_thread_start(struct drbd_thread *thi)
 			module_put(THIS_MODULE);
 			return FALSE;
 		}
-		spin_lock(&thi->t_lock);
+		spin_lock_irqsave(&thi->t_lock, flags);
 		thi->task = nt;
 		thi->t_state = Running;
-		spin_unlock(&thi->t_lock);
+		spin_unlock_irqrestore(&thi->t_lock, flags);
 		wake_up_process(nt);
 		break;
 	case Exiting:
