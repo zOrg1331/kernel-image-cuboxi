@@ -278,11 +278,6 @@ extern int SYSIO_INTERFACE_NAME(umount)(const char *target);
 #if _DECLARE_DIR_ACCESS
 extern int SYSIO_INTERFACE_NAME(closedir)(DIR *dir);
 extern struct dirent *SYSIO_INTERFACE_NAME(readdir)(DIR *dir);
-extern int SYSIO_INTERFACE_NAME(scandir)(const char *dir,
-					 struct dirent ***namelist,
-					 int(*filter)(const struct dirent *),
-					 int(*compar)(const void *,
-						      const void *));
 #if defined(_BSD_SOURCE) || defined(_SVID_SOURCE)
 extern ssize_t SYSIO_INTERFACE_NAME(getdirentries)(int fd,
 						   char *buf,
