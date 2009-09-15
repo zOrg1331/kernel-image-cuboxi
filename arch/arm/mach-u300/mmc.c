@@ -20,14 +20,14 @@
 #include <linux/regulator/machine.h>
 #include <linux/gpio.h>
 
-#include <asm/mach/mmc.h>
+#include <linux/amba/mmci.h>
 #include "mmc.h"
 
 struct mmci_card_event {
 	struct input_dev *mmc_input;
 	int mmc_inserted;
 	struct work_struct workq;
-	struct mmc_platform_data mmc0_plat_data;
+	struct mmci_platform_data mmc0_plat_data;
 };
 
 static unsigned int mmc_status(struct device *dev)
@@ -158,6 +158,8 @@ int __devinit mmc_init(struct amba_device *adev)
 	mmci_card->mmc0_plat_data.status = mmc_status;
 	mmci_card->mmc0_plat_data.gpio_wp = -1;
 	mmci_card->mmc0_plat_data.gpio_cd = -1;
+	mmci_card->mmc0_plat_data.capabilities = MMC_CAP_MMC_HIGHSPEED |
+		MMC_CAP_SD_HIGHSPEED | MMC_CAP_4_BIT_DATA;
 
 	mmcsd_device->platform_data = (void *) &mmci_card->mmc0_plat_data;
 
