@@ -326,12 +326,6 @@ static ssize_t lkfirst_show(struct gfs2_sbd *sdp, char *buf)
 	return sprintf(buf, "%d\n", ls->ls_first);
 }
 
-static ssize_t first_done_show(struct gfs2_sbd *sdp, char *buf)
-{
-	struct lm_lockstruct *ls = &sdp->sd_lockstruct;
-	return sprintf(buf, "%d\n", ls->ls_first_done);
-}
-
 static ssize_t recover_store(struct gfs2_sbd *sdp, const char *buf, size_t len)
 {
 	unsigned jid;
@@ -361,18 +355,6 @@ out:
 	return rv ? rv : len;
 }
 
-static ssize_t recover_done_show(struct gfs2_sbd *sdp, char *buf)
-{
-	struct lm_lockstruct *ls = &sdp->sd_lockstruct;
-	return sprintf(buf, "%d\n", ls->ls_recover_jid_done);
-}
-
-static ssize_t recover_status_show(struct gfs2_sbd *sdp, char *buf)
-{
-	struct lm_lockstruct *ls = &sdp->sd_lockstruct;
-	return sprintf(buf, "%d\n", ls->ls_recover_jid_status);
-}
-
 static ssize_t jid_show(struct gfs2_sbd *sdp, char *buf)
 {
 	return sprintf(buf, "%u\n", sdp->sd_lockstruct.ls_jid);
@@ -386,10 +368,7 @@ GDLM_ATTR(block,		0644, block_show,		block_store);
 GDLM_ATTR(withdraw,		0644, withdraw_show,		withdraw_store);
 GDLM_ATTR(jid,			0444, jid_show,			NULL);
 GDLM_ATTR(first,		0444, lkfirst_show,		NULL);
-GDLM_ATTR(first_done,		0444, first_done_show,		NULL);
 GDLM_ATTR(recover,		0600, NULL,			recover_store);
-GDLM_ATTR(recover_done,		0444, recover_done_show,	NULL);
-GDLM_ATTR(recover_status,	0444, recover_status_show,	NULL);
 
 static struct attribute *lock_module_attrs[] = {
 	&gdlm_attr_proto_name.attr,
@@ -397,10 +376,7 @@ static struct attribute *lock_module_attrs[] = {
 	&gdlm_attr_withdraw.attr,
 	&gdlm_attr_jid.attr,
 	&gdlm_attr_first.attr,
-	&gdlm_attr_first_done.attr,
 	&gdlm_attr_recover.attr,
-	&gdlm_attr_recover_done.attr,
-	&gdlm_attr_recover_status.attr,
 	NULL,
 };
 
