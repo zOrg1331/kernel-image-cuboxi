@@ -817,12 +817,10 @@ static void dump_invalid_creds(const struct cred *cred, const char *label,
  */
 void __invalid_creds(const struct cred *cred, const char *file, unsigned line)
 {
-#if 0
 	printk(KERN_ERR "CRED: Invalid credentials\n");
 	printk(KERN_ERR "CRED: At %s:%u\n", file, line);
 	dump_invalid_creds(cred, "Specified", current);
 	BUG();
-#endif
 }
 EXPORT_SYMBOL(__invalid_creds);
 
@@ -846,7 +844,6 @@ void __validate_process_creds(struct task_struct *tsk,
 	return;
 
 invalid_creds:
-#if 0
 	printk(KERN_ERR "CRED: Invalid process credentials\n");
 	printk(KERN_ERR "CRED: At %s:%u\n", file, line);
 
@@ -856,8 +853,6 @@ invalid_creds:
 	else
 		printk(KERN_ERR "CRED: Effective creds == Real creds\n");
 	BUG();
-#endif
-	;
 }
 EXPORT_SYMBOL(__validate_process_creds);
 
