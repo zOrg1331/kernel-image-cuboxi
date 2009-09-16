@@ -75,13 +75,6 @@ static inline void bdi_work_init(struct bdi_work *work,
 	work->state = WS_USED;
 }
 
-static inline void bdi_work_init_on_stack(struct bdi_work *work,
-					  struct writeback_control *wbc)
-{
-	bdi_work_init(work, wbc);
-	work->state |= WS_ONSTACK;
-}
-
 /**
  * writeback_in_progress - determine whether there is writeback in progress
  * @bdi: the device's backing_dev_info structure.
@@ -146,21 +139,19 @@ static void wb_clear_pending(struct bdi_writeback *wb, struct bdi_work *work)
 
 static void bdi_queue_work(struct backing_dev_info *bdi, struct bdi_work *work)
 {
-	if (work) {
-		work->seen = bdi->wb_mask;
-		BUG_ON(!work->seen);
-		atomic_set(&work->pending, bdi->wb_cnt);
-		BUG_ON(!bdi->wb_cnt);
+	work->seen = bdi->wb_mask;
+	BUG_ON(!work->seen);
+	atomic_set(&work->pending, bdi->wb_cnt);
+	BUG_ON(!bdi->wb_cnt);
 
-		/*
-		 * Make sure stores are seen before it appears on the list
-		 */
-		smp_mb();
+	/*
+	 * Make sure stores are seen before it appears on the list
+	 */
+	smp_mb();
 
-		spin_lock(&bdi->wb_lock);
-		list_add_tail_rcu(&work->list, &bdi->work_list);
-		spin_unlock(&bdi->wb_lock);
-	}
+	spin_lock(&bdi->wb_lock);
+	list_add_tail_rcu(&work->list, &bdi->work_list);
+	spin_unlock(&bdi->wb_lock);
 
 	/*
 	 * If the default thread isn't there, make sure we add it. When
@@ -172,14 +163,12 @@ static void bdi_queue_work(struct backing_dev_info *bdi, struct bdi_work *work)
 		struct bdi_writeback *wb = &bdi->wb;
 
 		/*
-		 * If we failed allocating the bdi work item, wake up the wb
-		 * thread always. As a safety precaution, it'll flush out
-		 * everything
+		 * End work now if this wb has no dirty IO pending. Otherwise
+		 * wakeup the handling thread
 		 */
-		if (!wb_has_dirty_io(wb)) {
-			if (work)
-				wb_clear_pending(wb, work);
-		} else if (wb->task)
+		if (!wb_has_dirty_io(wb))
+			wb_clear_pending(wb, work);
+		else if (wb->task)
 			wake_up_process(wb->task);
 	}
 }
@@ -194,48 +183,63 @@ static void bdi_wait_on_work_clear(struct bdi_work *work)
 		    TASK_UNINTERRUPTIBLE);
 }
 
-static struct bdi_work *bdi_alloc_work(struct writeback_control *wbc)
+static void bdi_alloc_queue_work(struct backing_dev_info *bdi,
+				 struct writeback_control *wbc)
 {
 	struct bdi_work *work;
 
+	/*
+	 * This is WB_SYNC_NONE writeback, so if allocation fails just
+	 * wakeup the thread for old dirty data writeback
+	 */
 	work = kmalloc(sizeof(*work), GFP_ATOMIC);
-	if (work)
+	if (work) {
 		bdi_work_init(work, wbc);
+		bdi_queue_work(bdi, work);
+	} else {
+		struct bdi_writeback *wb = &bdi->wb;
 
-	return work;
+		if (wb->task)
+			wake_up_process(wb->task);
+	}
 }
 
+/**
+ * bdi_sync_writeback - start and wait for writeback
+ * @wbc: writeback parameters
+ *
+ * Description:
+ *   This does WB_SYNC_ALL data integrity writeback and waits for the
+ *   IO to complete. Callers must hold the sb s_umount semaphore for
+ *   reading, to avoid having the super disappear before we are done.
+ */
+static void bdi_sync_writeback(struct writeback_control *wbc)
+{
+	struct bdi_work work;
+
+	wbc->sync_mode = WB_SYNC_ALL;
+
+	bdi_work_init(&work, wbc);
+	work.state |= WS_ONSTACK;
+
+	bdi_queue_work(wbc->bdi, &work);
+	bdi_wait_on_work_clear(&work);
+}
+
+/**
+ * bdi_start_writeback - start writeback
+ * @wbc: writeback parameters
+ *
+ * Description:
+ *   This does WB_SYNC_NONE opportunistic writeback. The IO is only
+ *   started when this function returns, we make no guarentees on
+ *   completion. Caller need not hold sb s_umount semaphore.
+ *
+ */
 void bdi_start_writeback(struct writeback_control *wbc)
 {
-	const bool must_wait = wbc->sync_mode == WB_SYNC_ALL;
-	struct bdi_work work_stack, *work = NULL;
-
-	if (!must_wait)
-		work = bdi_alloc_work(wbc);
-
-	if (!work) {
-		work = &work_stack;
-		bdi_work_init_on_stack(work, wbc);
-	}
-
-	bdi_queue_work(wbc->bdi, work);
-
-	/*
-	 * If the sync mode is WB_SYNC_ALL, block waiting for the work to
-	 * complete. If not, we only need to wait for the work to be started,
-	 * if we allocated it on-stack. We use the same mechanism, if the
-	 * wait bit is set in the bdi_work struct, then threads will not
-	 * clear pending until after they are done.
-	 *
-	 * Note that work == &work_stack if must_wait is true, so we don't
-	 * need to do call_rcu() here ever, since the completion path will
-	 * have done that for us.
-	 */
-	if (must_wait || work == &work_stack) {
-		bdi_wait_on_work_clear(work);
-		if (work != &work_stack)
-			call_rcu(&work->rcu_head, bdi_work_free);
-	}
+	wbc->sync_mode = WB_SYNC_NONE;
+	bdi_alloc_queue_work(wbc->bdi, wbc);
 }
 
 /*
@@ -858,67 +862,24 @@ int bdi_writeback_task(struct bdi_writeback *wb)
 }
 
 /*
- * Schedule writeback for all backing devices. Expensive! If this is a data
- * integrity operation, writeback will be complete when this returns. If
- * we are simply called for WB_SYNC_NONE, then writeback will merely be
- * scheduled to run.
+ * Schedule writeback for all backing devices. Can only be used for
+ * WB_SYNC_NONE writeback, WB_SYNC_ALL should use bdi_start_writeback()
+ * and pass in the superblock.
  */
 static void bdi_writeback_all(struct writeback_control *wbc)
 {
-	const bool must_wait = wbc->sync_mode == WB_SYNC_ALL;
 	struct backing_dev_info *bdi;
-	struct bdi_work *work;
-	LIST_HEAD(list);
 
-restart:
-	spin_lock(&bdi_lock);
+	WARN_ON(wbc->sync_mode == WB_SYNC_ALL);
+
+	rcu_read_lock();
 
 	list_for_each_entry(bdi, &bdi_list, bdi_list) {
-		struct bdi_work *work;
-
-		if (!bdi_has_dirty_io(bdi))
-			continue;
-
-		/*
-		 * If work allocation fails, do the writes inline. We drop
-		 * the lock and restart the list writeout. This should be OK,
-		 * since this happens rarely and because the writeout should
-		 * eventually make more free memory available.
-		 */
-		work = bdi_alloc_work(wbc);
-		if (!work) {
-			struct writeback_control __wbc;
-
-			/*
-			 * Not a data integrity writeout, just continue
-			 */
-			if (!must_wait)
-				continue;
-
-			spin_unlock(&bdi_lock);
-			__wbc = *wbc;
-			__wbc.bdi = bdi;
-			writeback_inodes_wbc(&__wbc);
-			goto restart;
-		}
-		if (must_wait)
-			list_add_tail(&work->wait_list, &list);
-
-		bdi_queue_work(bdi, work);
+		if (bdi_has_dirty_io(bdi))
+			bdi_alloc_queue_work(bdi, wbc);
 	}
 
-	spin_unlock(&bdi_lock);
-
-	/*
-	 * If this is for WB_SYNC_ALL, wait for pending work to complete
-	 * before returning.
-	 */
-	while (!list_empty(&list)) {
-		work = list_entry(list.next, struct bdi_work, wait_list);
-		list_del(&work->wait_list);
-		bdi_wait_on_work_clear(work);
-		call_rcu(&work->rcu_head, bdi_work_free);
-	}
+	rcu_read_unlock();
 }
 
 /*
@@ -1175,14 +1136,14 @@ long sync_inodes_sb(struct super_block *sb)
 {
 	struct writeback_control wbc = {
 		.sb		= sb,
-		.sync_mode	= WB_SYNC_ALL,
+		.bdi		= sb->s_bdi,
 		.range_start	= 0,
 		.range_end	= LLONG_MAX,
 	};
 	long nr_to_write = LONG_MAX; /* doesn't actually matter */
 
 	wbc.nr_to_write = nr_to_write;
-	bdi_writeback_all(&wbc);
+	bdi_sync_writeback(&wbc);
 	wait_sb_inodes(&wbc);
 	return nr_to_write - wbc.nr_to_write;
 }
