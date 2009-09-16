@@ -9,7 +9,7 @@ config BLK_DEV_DRBD
 	tristate "DRBD Distributed Replicated Block Device support"
 	depends on PROC_FS && INET && CONNECTOR
 	select LRU_CACHE
-	default m
+	default n
 	help
 
 	  NOTE: In order to authenticate connections you have to select
@@ -36,18 +36,18 @@ config BLK_DEV_DRBD
 	  For automatic failover you need a cluster manager (e.g. heartbeat).
 	  See also: http://www.drbd.org/, http://www.linux-ha.org
 
-	  If unsure, say M.
+	  If unsure, say N.
 
 config DRBD_TRACE
 	tristate "DRBD tracing"
 	depends on BLK_DEV_DRBD
 	select TRACEPOINTS
-	default m
+	default n
 	help
 
 	  Say Y here if you want to be able to trace various events in DRBD.
 
-	  If unsure, say M.
+	  If unsure, say N.
 
 config DRBD_FAULT_INJECTION
 	bool "DRBD fault injection"
