@@ -207,6 +207,7 @@ menu "Network testing"
 
 config NET_PKTGEN
 	tristate "Packet Generator (USE WITH CAUTION)"
+	depends on 0
 	depends on PROC_FS
 	---help---
 	  This module will inject preconfigured packets, at a configurable
