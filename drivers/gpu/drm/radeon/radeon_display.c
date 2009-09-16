@@ -158,9 +158,6 @@ static void radeon_crtc_destroy(struct drm_crtc *crtc)
 {
 	struct radeon_crtc *radeon_crtc = to_radeon_crtc(crtc);
 
-	if (radeon_crtc->mode_set.mode) {
-		drm_mode_destroy(crtc->dev, radeon_crtc->mode_set.mode);
-	}
 	drm_crtc_cleanup(crtc);
 	kfree(radeon_crtc);
 }
@@ -189,9 +186,11 @@ static void radeon_crtc_init(struct drm_device *dev, int index)
 	radeon_crtc->crtc_id = index;
 	rdev->mode_info.crtcs[index] = radeon_crtc;
 
+#if 0
 	radeon_crtc->mode_set.crtc = &radeon_crtc->base;
 	radeon_crtc->mode_set.connectors = (struct drm_connector **)(radeon_crtc + 1);
 	radeon_crtc->mode_set.num_connectors = 0;
+#endif
 
 	for (i = 0; i < 256; i++) {
 		radeon_crtc->lut_r[i] = i << 2;
@@ -313,7 +312,7 @@ static void radeon_print_display_setup(struct drm_device *dev)
 	}
 }
 
-bool radeon_setup_enc_conn(struct drm_device *dev)
+static bool radeon_setup_enc_conn(struct drm_device *dev)
 {
 	struct radeon_device *rdev = dev->dev_private;
 	struct drm_connector *drm_connector;
@@ -347,9 +346,13 @@ int radeon_ddc_get_modes(struct radeon_connector *radeon_connector)
 
 	if (!radeon_connector->ddc_bus)
 		return -1;
-	radeon_i2c_do_lock(radeon_connector, 1);
-	edid = drm_get_edid(&radeon_connector->base, &radeon_connector->ddc_bus->adapter);
-	radeon_i2c_do_lock(radeon_connector, 0);
+	if (!radeon_connector->edid) {
+		radeon_i2c_do_lock(radeon_connector, 1);
+		edid = drm_get_edid(&radeon_connector->base, &radeon_connector->ddc_bus->adapter);
+		radeon_i2c_do_lock(radeon_connector, 0);
+	} else
+		edid = radeon_connector->edid;
+
 	if (edid) {
 		/* update digital bits here */
 		if (edid->input & DRM_EDID_INPUT_DIGITAL)
@@ -678,7 +681,6 @@ bool radeon_crtc_scaling_mode_fixup(struct drm_crtc *crtc,
 			continue;
 		if (first) {
 			radeon_crtc->rmx_type = radeon_encoder->rmx_type;
-			radeon_crtc->devices = radeon_encoder->devices;
 			memcpy(&radeon_crtc->native_mode,
 				&radeon_encoder->native_mode,
 				sizeof(struct radeon_native_mode));
