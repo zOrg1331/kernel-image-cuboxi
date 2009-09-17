@@ -646,9 +646,7 @@ int get_mp_bus_to_node(int busnum)
 
 #else /* CONFIG_X86_32 */
 
-static unsigned char mp_bus_to_node[BUS_NR] = {
-	[0 ... BUS_NR - 1] = -1
-};
+static unsigned char mp_bus_to_node[BUS_NR];
 
 void set_mp_bus_to_node(int busnum, int node)
 {
