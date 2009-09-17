@@ -121,6 +121,7 @@ static struct clocksource *curr_clocksource;
 static LIST_HEAD(clocksource_list);
 static DEFINE_MUTEX(clocksource_mutex);
 static char override_name[32];
+static int finished_booting;
 
 #ifdef CONFIG_CLOCKSOURCE_WATCHDOG
 static void clocksource_watchdog_work(struct work_struct *work);
@@ -151,13 +152,41 @@ static void clocksource_watchdog_work(struct work_struct *work)
 	kthread_run(clocksource_watchdog_kthread, NULL, "kwatchdog");
 }
 
+static void __clocksource_unstable(struct clocksource *cs)
+{
+	cs->flags &= ~(CLOCK_SOURCE_VALID_FOR_HRES | CLOCK_SOURCE_WATCHDOG);
+	cs->flags |= CLOCK_SOURCE_UNSTABLE;
+	if (finished_booting)
+		schedule_work(&watchdog_work);
+}
+
 static void clocksource_unstable(struct clocksource *cs, int64_t delta)
 {
 	printk(KERN_WARNING "Clocksource %s unstable (delta = %Ld ns)\n",
 	       cs->name, delta);
-	cs->flags &= ~(CLOCK_SOURCE_VALID_FOR_HRES | CLOCK_SOURCE_WATCHDOG);
-	cs->flags |= CLOCK_SOURCE_UNSTABLE;
-	schedule_work(&watchdog_work);
+	__clocksource_unstable(cs);
+}
+
+/**
+ * clocksource_mark_unstable - mark clocksource unstable via watchdog
+ * @cs:		clocksource to be marked unstable
+ *
+ * This function is called instead of clocksource_change_rating from
+ * cpu hotplug code to avoid a deadlock between the clocksource mutex
+ * and the cpu hotplug mutex. It defers the update of the clocksource
+ * to the watchdog thread.
+ */
+void clocksource_mark_unstable(struct clocksource *cs)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&watchdog_lock, flags);
+	if (!(cs->flags & CLOCK_SOURCE_UNSTABLE)) {
+		if (list_empty(&cs->wd_list))
+			list_add(&cs->wd_list, &watchdog_list);
+		__clocksource_unstable(cs);
+	}
+	spin_unlock_irqrestore(&watchdog_lock, flags);
 }
 
 static void clocksource_watchdog(unsigned long data)
@@ -180,7 +209,8 @@ static void clocksource_watchdog(unsigned long data)
 
 		/* Clocksource already marked unstable? */
 		if (cs->flags & CLOCK_SOURCE_UNSTABLE) {
-			schedule_work(&watchdog_work);
+			if (finished_booting)
+				schedule_work(&watchdog_work);
 			continue;
 		}
 
@@ -353,6 +383,7 @@ static void clocksource_enqueue_watchdog(struct clocksource *cs)
 
 static inline void clocksource_dequeue_watchdog(struct clocksource *cs) { }
 static inline void clocksource_resume_watchdog(void) { }
+static inline int clocksource_watchdog_kthread(void *data) { return 0; }
 
 #endif /* CONFIG_CLOCKSOURCE_WATCHDOG */
 
@@ -387,8 +418,6 @@ void clocksource_touch_watchdog(void)
 }
 
 #ifdef CONFIG_GENERIC_TIME
-
-static int finished_booting;
 
 /**
  * clocksource_select - Select the best clocksource available
@@ -434,6 +463,12 @@ static void clocksource_select(void)
 	}
 }
 
+#else /* CONFIG_GENERIC_TIME */
+
+static inline void clocksource_select(void) { }
+
+#endif
+
 /*
  * clocksource_done_booting - Called near the end of core bootup
  *
@@ -444,16 +479,18 @@ static void clocksource_select(void)
 static int __init clocksource_done_booting(void)
 {
 	finished_booting = 1;
+
+	/*
+	 * Run the watchdog first to eliminate unstable clock sources
+	 */
+	clocksource_watchdog_kthread(NULL);
+
+	mutex_lock(&clocksource_mutex);
 	clocksource_select();
+	mutex_unlock(&clocksource_mutex);
 	return 0;
 }
 fs_initcall(clocksource_done_booting);
-
-#else /* CONFIG_GENERIC_TIME */
-
-static inline void clocksource_select(void) { }
-
-#endif
 
 /*
  * Enqueue the clocksource sorted by rating
