@@ -740,7 +740,7 @@ out:
  * on success, or a negative error value on failure.
  */
 static int
-move_extent_par_page(struct file *o_filp, struct inode *donor_inode,
+move_extent_per_page(struct file *o_filp, struct inode *donor_inode,
 		  pgoff_t orig_page_offset, int data_offset_in_page,
 		  int block_len_in_page, int uninit)
 {
@@ -871,6 +871,7 @@ out:
 		if (PageLocked(page))
 			unlock_page(page);
 		page_cache_release(page);
+		ext4_journal_stop(handle);
 	}
 out2:
 	ext4_journal_stop(handle);
@@ -971,43 +972,52 @@ mext_check_arguments(struct inode *orig_inode,
 	}
 
 	if (orig_inode->i_size > donor_inode->i_size) {
-		if (orig_start >= donor_inode->i_size) {
+		if (orig_start << orig_inode->i_blkbits >=
+						donor_inode->i_size) {
 			ext4_debug("ext4 move extent: orig start offset "
 			"[%llu] should be less than donor file size "
 			"[%lld] [ino:orig %lu, donor_inode %lu]\n",
-			orig_start, donor_inode->i_size,
-			orig_inode->i_ino, donor_inode->i_ino);
+			orig_start << orig_inode->i_blkbits,
+			donor_inode->i_size, orig_inode->i_ino,
+			donor_inode->i_ino);
 			return -EINVAL;
 		}
-
-		if (orig_start + *len > donor_inode->i_size) {
+		if ((orig_start + *len) << orig_inode->i_blkbits >
+						donor_inode->i_size) {
 			ext4_debug("ext4 move extent: End offset [%llu] should "
 				"be less than donor file size [%lld]."
 				"So adjust length from %llu to %lld "
 				"[ino:orig %lu, donor %lu]\n",
-				orig_start + *len, donor_inode->i_size,
-				*len, donor_inode->i_size - orig_start,
+				(orig_start + *len) << orig_inode->i_blkbits,
+				donor_inode->i_size,
+				*len, (donor_inode->i_size >>
+				orig_inode->i_blkbits) - orig_start,
 				orig_inode->i_ino, donor_inode->i_ino);
-			*len = donor_inode->i_size - orig_start;
+			*len = (donor_inode->i_size >> orig_inode->i_blkbits) -
+				orig_start;
 		}
 	} else {
-		if (orig_start >= orig_inode->i_size) {
+		if (orig_start << orig_inode->i_blkbits >=
+						orig_inode->i_size) {
 			ext4_debug("ext4 move extent: start offset [%llu] "
 				"should be less than original file size "
 				"[%lld] [inode:orig %lu, donor %lu]\n",
-				 orig_start, orig_inode->i_size,
-				orig_inode->i_ino, donor_inode->i_ino);
+				orig_start << orig_inode->i_blkbits,
+				orig_inode->i_size, orig_inode->i_ino,
+				donor_inode->i_ino);
 			return -EINVAL;
 		}
-
-		if (orig_start + *len > orig_inode->i_size) {
+		if ((orig_start + *len) << orig_inode->i_blkbits >
+						orig_inode->i_size) {
 			ext4_debug("ext4 move extent: Adjust length "
 				"from %llu to %lld. Because it should be "
 				"less than original file size "
 				"[ino:orig %lu, donor %lu]\n",
-				*len, orig_inode->i_size - orig_start,
+				*len, (orig_inode->i_size >>
+				orig_inode->i_blkbits) - orig_start,
 				orig_inode->i_ino, donor_inode->i_ino);
-			*len = orig_inode->i_size - orig_start;
+			*len = (orig_inode->i_size >> orig_inode->i_blkbits) -
+				orig_start;
 		}
 	}
 
@@ -1258,7 +1268,7 @@ ext4_move_extents(struct file *o_filp, struct file *d_filp,
 		while (orig_page_offset <= seq_end_page) {
 
 			/* Swap original branches with new branches */
-			ret = move_extent_par_page(o_filp, donor_inode,
+			ret = move_extent_per_page(o_filp, donor_inode,
 						orig_page_offset,
 						data_offset_in_page,
 						block_len_in_page, uninit);
@@ -1312,9 +1322,6 @@ out2:
 
 	if (ret)
 		return ret;
-
-	/* All of the specified blocks must be exchanged in succeed */
-	BUG_ON(*moved_len != len);
 
 	return 0;
 }
