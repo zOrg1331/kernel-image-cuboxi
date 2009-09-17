@@ -22,12 +22,12 @@
 #include <linux/clk.h>
 #include <linux/scatterlist.h>
 #include <linux/gpio.h>
+#include <linux/amba/mmci.h>
 
 #include <asm/cacheflush.h>
 #include <asm/div64.h>
 #include <asm/io.h>
 #include <asm/sizes.h>
-#include <asm/mach/mmc.h>
 
 #include "mmci.h"
 
@@ -37,6 +37,36 @@
 	pr_debug("%s: %s: " fmt, mmc_hostname(host->mmc), __func__ , args)
 
 static unsigned int fmax = 515633;
+
+/*
+ * This must be called with host->lock held
+ */
+static void mmci_set_clkreg(struct mmci_host *host, unsigned int desired)
+{
+	u32 clk = 0;
+
+	if (desired) {
+		if (desired >= host->mclk) {
+			clk = MCI_CLK_BYPASS;
+			host->cclk = host->mclk;
+		} else {
+			clk = host->mclk / (2 * desired) - 1;
+			if (clk >= 256)
+				clk = 255;
+			host->cclk = host->mclk / (2 * (clk + 1));
+		}
+		if (host->hw_designer == 0x80)
+			clk |= MCI_FCEN; /* Bug fix in ST IP block */
+		clk |= MCI_CLK_ENABLE;
+		/* This hasn't proven to be worthwhile */
+		/* clk |= MCI_CLK_PWRSAVE; */
+	}
+
+	if (host->mmc->ios.bus_width == MMC_BUS_WIDTH_4)
+		clk |= MCI_WIDE_BUS;
+
+	writel(clk, host->base + MMCICLOCK);
+}
 
 static void
 mmci_request_end(struct mmci_host *host, struct mmc_request *mrq)
@@ -419,22 +449,8 @@ static void mmci_request(struct mmc_host *mmc, struct mmc_request *mrq)
 static void mmci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 {
 	struct mmci_host *host = mmc_priv(mmc);
-	u32 clk = 0, pwr = 0;
-
-	if (ios->clock) {
-		if (ios->clock >= host->mclk) {
-			clk = MCI_CLK_BYPASS;
-			host->cclk = host->mclk;
-		} else {
-			clk = host->mclk / (2 * ios->clock) - 1;
-			if (clk >= 256)
-				clk = 255;
-			host->cclk = host->mclk / (2 * (clk + 1));
-		}
-		if (host->hw_designer == AMBA_VENDOR_ST)
-			clk |= MCI_FCEN; /* Bug fix in ST IP block */
-		clk |= MCI_CLK_ENABLE;
-	}
+	u32 pwr = 0;
+	unsigned long flags;
 
 	if (host->plat->translate_vdd)
 		pwr |= host->plat->translate_vdd(mmc_dev(mmc), ios->vdd);
@@ -465,12 +481,16 @@ static void mmci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 		}
 	}
 
-	writel(clk, host->base + MMCICLOCK);
+	spin_lock_irqsave(&host->lock, flags);
+
+	mmci_set_clkreg(host, ios->clock);
 
 	if (host->pwr != pwr) {
 		host->pwr = pwr;
 		writel(pwr, host->base + MMCIPOWER);
 	}
+
+	spin_unlock_irqrestore(&host->lock, flags);
 }
 
 static int mmci_get_ro(struct mmc_host *mmc)
@@ -517,7 +537,7 @@ static void mmci_check_status(unsigned long data)
 
 static int __devinit mmci_probe(struct amba_device *dev, struct amba_id *id)
 {
-	struct mmc_platform_data *plat = dev->dev.platform_data;
+	struct mmci_platform_data *plat = dev->dev.platform_data;
 	struct mmci_host *host;
 	struct mmc_host *mmc;
 	int ret;
@@ -584,6 +604,7 @@ static int __devinit mmci_probe(struct amba_device *dev, struct amba_id *id)
 	mmc->f_min = (host->mclk + 511) / 512;
 	mmc->f_max = min(host->mclk, fmax);
 	mmc->ocr_avail = plat->ocr_mask;
+	mmc->caps = plat->capabilities;
 
 	/*
 	 * We can do SGIO
