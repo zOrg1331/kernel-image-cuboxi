@@ -496,8 +496,8 @@ struct class_compat {
  * class_compat_register - register a compatibility class
  * @name: the name of the class
  *
- * Compatibility class are meant as a temporary user-space compatibility
- * workaround when converting a family of class devices to a bus devices.
+ * Compatibility classes are meant as a temporary user-space compatibility
+ * workaround when converting a family of class devices to bus devices.
  */
 struct class_compat *class_compat_register(const char *name)
 {
