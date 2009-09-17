@@ -2176,6 +2176,13 @@ static int perf_mmap_data_alloc(struct perf_counter *counter, int nr_pages)
 	data->nr_pages = nr_pages;
 	atomic_set(&data->lock, -1);
 
+	if (counter->attr.watermark) {
+		data->watermark = min_t(long, PAGE_SIZE * nr_pages,
+				      counter->attr.wakeup_watermark);
+	}
+	if (!data->watermark)
+		data->watermark = max(PAGE_SIZE, PAGE_SIZE * nr_pages / 4);
+
 	rcu_assign_pointer(counter->data, data);
 
 	return 0;
@@ -2315,7 +2322,8 @@ static int perf_mmap(struct file *file, struct vm_area_struct *vma)
 	lock_limit >>= PAGE_SHIFT;
 	locked = vma->vm_mm->locked_vm + extra;
 
-	if ((locked > lock_limit) && !capable(CAP_IPC_LOCK)) {
+	if ((locked > lock_limit) && perf_paranoid_tracepoint_raw() &&
+		!capable(CAP_IPC_LOCK)) {
 		ret = -EPERM;
 		goto unlock;
 	}
@@ -2516,23 +2524,15 @@ struct perf_output_handle {
 	unsigned long		flags;
 };
 
-static bool perf_output_space(struct perf_mmap_data *data,
-			      unsigned int offset, unsigned int head)
+static bool perf_output_space(struct perf_mmap_data *data, unsigned long tail,
+			      unsigned long offset, unsigned long head)
 {
-	unsigned long tail;
 	unsigned long mask;
 
 	if (!data->writable)
 		return true;
 
 	mask = (data->nr_pages << PAGE_SHIFT) - 1;
-	/*
-	 * Userspace could choose to issue a mb() before updating the tail
-	 * pointer. So that all reads will be completed before the write is
-	 * issued.
-	 */
-	tail = ACCESS_ONCE(data->user_page->data_tail);
-	smp_rmb();
 
 	offset = (offset - tail) & mask;
 	head   = (head   - tail) & mask;
@@ -2678,7 +2678,7 @@ static int perf_output_begin(struct perf_output_handle *handle,
 {
 	struct perf_counter *output_counter;
 	struct perf_mmap_data *data;
-	unsigned int offset, head;
+	unsigned long tail, offset, head;
 	int have_lost;
 	struct {
 		struct perf_event_header header;
@@ -2716,16 +2716,23 @@ static int perf_output_begin(struct perf_output_handle *handle,
 	perf_output_lock(handle);
 
 	do {
+		/*
+		 * Userspace could choose to issue a mb() before updating the
+		 * tail pointer. So that all reads will be completed before the
+		 * write is issued.
+		 */
+		tail = ACCESS_ONCE(data->user_page->data_tail);
+		smp_rmb();
 		offset = head = atomic_long_read(&data->head);
 		head += size;
-		if (unlikely(!perf_output_space(data, offset, head)))
+		if (unlikely(!perf_output_space(data, tail, offset, head)))
 			goto fail;
 	} while (atomic_long_cmpxchg(&data->head, offset, head) != offset);
 
 	handle->offset	= offset;
 	handle->head	= head;
 
-	if ((offset >> PAGE_SHIFT) != (head >> PAGE_SHIFT))
+	if (head - tail > data->watermark)
 		atomic_set(&data->wakeup, 1);
 
 	if (have_lost) {
@@ -3493,13 +3500,14 @@ static void perf_log_throttle(struct perf_counter *counter, int enable)
  * Generic counter overflow handling, sampling.
  */
 
-int perf_counter_overflow(struct perf_counter *counter, int nmi,
-			  struct perf_sample_data *data)
+static int __perf_counter_overflow(struct perf_counter *counter, int nmi,
+				   int throttle, struct perf_sample_data *data)
 {
 	int events = atomic_read(&counter->event_limit);
-	int throttle = counter->pmu->unthrottle != NULL;
 	struct hw_perf_counter *hwc = &counter->hw;
 	int ret = 0;
+
+	throttle = (throttle && counter->pmu->unthrottle != NULL);
 
 	if (!throttle) {
 		hwc->interrupts++;
@@ -3553,6 +3561,12 @@ int perf_counter_overflow(struct perf_counter *counter, int nmi,
 	return ret;
 }
 
+int perf_counter_overflow(struct perf_counter *counter, int nmi,
+			  struct perf_sample_data *data)
+{
+	return __perf_counter_overflow(counter, nmi, 1, data);
+}
+
 /*
  * Generic software counter infrastructure
  */
@@ -3591,6 +3605,7 @@ static void perf_swcounter_overflow(struct perf_counter *counter,
 				    int nmi, struct perf_sample_data *data)
 {
 	struct hw_perf_counter *hwc = &counter->hw;
+	int throttle = 0;
 	u64 overflow;
 
 	data->period = counter->hw.last_period;
@@ -3600,13 +3615,14 @@ static void perf_swcounter_overflow(struct perf_counter *counter,
 		return;
 
 	for (; overflow; overflow--) {
-		if (perf_counter_overflow(counter, nmi, data)) {
+		if (__perf_counter_overflow(counter, nmi, throttle, data)) {
 			/*
 			 * We inhibit the overflow from happening when
 			 * hwc->interrupts == MAX_INTERRUPTS.
 			 */
 			break;
 		}
+		throttle = 0;
 	}
 }
 
