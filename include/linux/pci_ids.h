@@ -2,6 +2,9 @@
  *	PCI Class, Vendor and Device IDs
  *
  *	Please keep sorted.
+ *
+ *	Do not add new entries to this file unless the definitions
+ *	are shared between multiple drivers.
  */
 
 /* Device classes and subclasses */
@@ -881,6 +884,7 @@
 #define PCI_DEVICE_ID_APPLE_SH_SUNGEM   0x0051
 #define PCI_DEVICE_ID_APPLE_U3L_AGP	0x0058
 #define PCI_DEVICE_ID_APPLE_U3H_AGP	0x0059
+#define PCI_DEVICE_ID_APPLE_U4_PCIE	0x005b
 #define PCI_DEVICE_ID_APPLE_IPID2_AGP	0x0066
 #define PCI_DEVICE_ID_APPLE_IPID2_ATA	0x0069
 #define PCI_DEVICE_ID_APPLE_IPID2_FW	0x006a
@@ -1988,6 +1992,8 @@
 
 #define PCI_VENDOR_ID_SAMSUNG		0x144d
 
+#define PCI_VENDOR_ID_GIGABYTE		0x1458
+
 #define PCI_VENDOR_ID_AMBIT		0x1468
 
 #define PCI_VENDOR_ID_MYRICOM		0x14c1
@@ -2066,7 +2072,6 @@
 #define PCI_DEVICE_ID_TIGON3_5787M	0x1693
 #define PCI_DEVICE_ID_TIGON3_5782	0x1696
 #define PCI_DEVICE_ID_TIGON3_5784	0x1698
-#define PCI_DEVICE_ID_TIGON3_5785	0x1699
 #define PCI_DEVICE_ID_TIGON3_5786	0x169a
 #define PCI_DEVICE_ID_TIGON3_5787	0x169b
 #define PCI_DEVICE_ID_TIGON3_5788	0x169c
