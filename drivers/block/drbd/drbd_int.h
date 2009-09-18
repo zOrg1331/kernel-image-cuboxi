@@ -62,7 +62,7 @@ extern int disable_sendpage;
 extern int allow_oos;
 extern unsigned int cn_idx;
 
-#ifdef DRBD_ENABLE_FAULTS
+#ifdef CONFIG_DRBD_FAULT_INJECTION
 extern int enable_faults;
 extern int fault_rate;
 extern int fault_devs;
@@ -137,7 +137,7 @@ enum {
 
 extern void trace_drbd_resync(struct drbd_conf *mdev, int level, const char *fmt, ...);
 
-#ifdef DRBD_ENABLE_FAULTS
+#ifdef CONFIG_DRBD_FAULT_INJECTION
 extern unsigned int
 _drbd_insert_fault(struct drbd_conf *mdev, unsigned int type);
 static inline int
