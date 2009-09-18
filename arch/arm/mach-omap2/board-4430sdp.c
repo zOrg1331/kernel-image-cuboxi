@@ -39,7 +39,7 @@ static struct platform_device *sdp4430_devices[] __initdata = {
 };
 
 static struct omap_uart_config sdp4430_uart_config __initdata = {
-	.enabled_uarts	= (1 << 0) | (1 << 1) | (1 << 2),
+	.enabled_uarts	= (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3),
 };
 
 static struct omap_lcd_config sdp4430_lcd_config __initdata = {
@@ -59,7 +59,7 @@ static void __init gic_init_irq(void)
 
 static void __init omap_4430sdp_init_irq(void)
 {
-	omap2_init_common_hw(NULL);
+	omap2_init_common_hw(NULL, NULL);
 #ifdef CONFIG_OMAP_32K_TIMER
 	omap2_gp_clockevent_set_gptimer(1);
 #endif
