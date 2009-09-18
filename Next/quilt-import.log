@@ -1,0 +1,135 @@
+Importing driver-core.current based on 2.6.31-git5
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing i2c based on 2.6.31-git6
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard ab86e5765d41a5eb4239a1c04d613db87bea5ed8
+HEAD is now at ab86e57 Merge git://git.kernel.org/pub/scm/linux/kernel/git/gregkh/driver-core-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-drop-i2c_driver-id.patch
+i2c-taos-evm-switch-echo-off.patch
+i2c-tsl2550-simpify-IO.patch
+i2c-core-01-client-as-device-type.patch
+i2c-core-02-adapters-as-bus-devices.patch
+i2c-core-03-i2c-adapter-compatibility-class-2.patch
+i2c-scx200_acb-provide-more-information-on-bus-errors.patch
+gpio-pcf857x-copy-i2c_device_id-from-old-pcf8574-driver.patch
+i2c-chips-remove-deprecated-pcf8575-driver.patch
+i2c-chips-remove-deprecated-pca9539-driver.patch
+i2c-chips-remove-deprecated-pcf8574-driver.patch
+i2c-piix4-add-amd-SB900-smbus-device-id.patch
+maintainers-add-maintainer-for-at24-and-pca9564-pca9665.patch
+i2c-pnx-correct-use-of-request_mem_region.patch
+i2c-add-driver-for-smbus-control-method-interface.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + cfc6c3f...ba27803 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.31-git6
+$ cd ../quilt-tmp
+$ git reset --hard ab86e5765d41a5eb4239a1c04d613db87bea5ed8
+HEAD is now at ab86e57 Merge git://git.kernel.org/pub/scm/linux/kernel/git/gregkh/driver-core-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-abituguru3-support-multiple-dmi-strings-per-chip-id-3.patch
+hwmon-asus_atk0110-maintainer.patch
+hwmon-vid-limit-AMD-0Fh-6-bit-VID.patch
+hwmon-driver-for-TI-TMP421-TMP422-TMP423-chips.patch
+hwmon-tmp421-add-documentation.patch
+hwmon-include-linux-io.h-instead-of-asm-io.h.patch
+hwmon-use-resource_size.patch
+hwmon-list-acpi-drivers-as-such.patch
+hwmon-pcf8591-clean-up-documentation.patch
+hwmon-lm85-detect-WPCD377I.patch
+hwmon-adm1031-add-sysfs-files-for-temperature-offsets.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 006609c...528e175 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.31-rc7
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.31-rc9-12-g3ff323f
+$ cd ../quilt-tmp
+$ git reset --hard 3ff323f89075624b6891e7c428edb8e8a35be13c
+HEAD is now at 3ff323f Merge branch 'drm-fixes' of git://git.kernel.org/pub/scm/linux/kernel/git/airlied/drm-2.6
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+cpumask:use_zalloc_cpumask_var_where_possible.patch
+cpumask:remove-pcibus_to_cpumask-alpha.patch
+cpumask:remove-pcibus_to_cpumask-mips.patch
+cpumask:remove-pcibus_to_cpumask-powerpc.patch
+cpumask:remove-node_to_cpumask.patch
+cpumask:remove-CPU_MASK_ALL_PTR.patch
+cpumask:remove-address-of-CPU_MASK_ALL-mips.patch
+cpumask:remove-cpu_mask_all.patch
+cpumask:remove-last-remaining-irqaction-mask.patch
+cpumask:irqaction-remove-mask.patch
+cpumask:remove_mask_field_from_comments.patch
+cpumask:set_cpus_allowed-acpi-removal.patch
+cpumask:remove-set_cpus_allowed.patch
+cpumask:ia64-smp_call_function_many.patch
+cpumask:remove-smp_call_function_mask.patch
+cpumask:remove-topology_core_siblings-and-topology_thread_siblings-core.patch
+cpumask:remove-topology_core_siblings-and-topology_thread_siblings-sparc.patch
+cpumask:remove-topology_core_siblings-and-topology_thread_siblings-s390.patch
+cpumask:remove-topology_core_siblings-and-topology_thread_siblings-powerpc.patch
+cpumask:remove-topology_core_siblings-and-topology_thread_siblings-ia64.patch
+cpumask:arch_send_call_function_ipi_mask-alpha.patch
+cpumask:arch_send_call_function_ipi_mask-m32r.patch
+cpumask:arch_send_call_function_ipi_mask-mips.patch
+cpumask:arch_send_call_function_ipi_mask-powerpc.patch
+cpumask:arch_send_call_function_ipi_mask-s390.patch
+cpumask:remove-arch_send_call_function_ipi.patch
+cpumask:use-cpumap-accessors-m32r.patch
+cpumask:use-cpumap-accessors-mips.patch
+cpumask:use-cpumap-accessors-powerpc.patch
+cpumask:use-cpumap-accessors-um.patch
+cpumask:use-mm_cpumask-arm.patch
+cpumask:use-mm_cpumask-m32r.patch
+cpumask:use-mm_cpumask-mn10300.patch
+cpumask:use-mm_cpumask-mips.patch
+cpumask:use-mm_cpumask-um.patch
+cpumask:use-mm_cpumask-x86.patch
+cpumask:mm_quicklist-new-cpumask-ops.patch
+cpumask:remove-unused-deprecated-functions.patch
+cpumask:move-obsolete-functions-to-end-of-header.patch
+virtio:pci-minor-cleanups.patch
+virtio:pci-minor-cleanups-fix.patch
+lguest:remove-wake-on-empty.patch
+virtio:net-skb_orphan-and-nf_reset.patch
+virtio:net-return-NETDEV_TX_BUSY.patch
+virtio:net-no-xmit-free-timer.patch
+virtio:net-struct-skb_vnet_hdr.patch
+virtio:add_buf-return-capacity.patch
+virtio:net-stop_queue-before-full.patch
+virtio:net_check_for_room_in_the_vq_before_adding_buffer.patch
+lguest:panic_notifier-cleanup.patch
+lguest:avoid-native_set_pmd.patch
+lguest:next_20090730_build_breaks_with_pfn_pmd.patch
+lguest:PAE-dont-assume-PAGE_OFFSET.patch
+lguest:cleanup_for_map_switcher.patch
+virtio:9p_get_rid_of_redundant_id_9p_definition.patch
+virtio:add_ids_file.patch
+virtio:blk_set_queue_ordered_drain_by_default.patch
+module:reduce_symbol_table_for_loaded_s_v2.patch
+module:reduce_string_table_for_loaded_s_v2.patch
+param:allow_whitespace_as_kernel_parameter_separator.patch
+module:ro-nx-protection.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + 5518f08...4d4bce0 master     -> quilt/rr  (forced update)
+Importing device-mapper based on block/for-next
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/usb.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
