@@ -1,3 +1,13 @@
+commit aae5520ee1f62f52e2d4cfb4d253f7e90f68453e
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Sep 20 01:26:17 2009 +0900
+
+    aufs: temp ci for lockdep
+    
+    As previous commit, Disable most of lockdep_off/on().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 2e975b2d80914f18f3df0f1525d56189a43384fa
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Fri Sep 18 15:00:26 2009 +0900
