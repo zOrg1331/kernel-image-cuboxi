@@ -162,7 +162,7 @@ static int labpc_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 #ifdef PCMCIA_DEBUG
 static int pc_debug = PCMCIA_DEBUG;
 module_param(pc_debug, int, 0644);
-#define DEBUG(n, args...) if (pc_debug>(n)) printk(KERN_DEBUG args)
+#define DEBUG(n, args...) if (pc_debug > (n)) printk(KERN_DEBUG args)
 static const char *version =
     "ni_labpc.c, based on dummy_cs.c 1.31 2001/08/24 12:13:13";
 #else
