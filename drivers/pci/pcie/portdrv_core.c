@@ -225,7 +225,9 @@ static int get_port_device_capability(struct pci_dev *dev)
 	int services = 0, pos;
 	u16 reg16;
 	u32 reg32;
+	struct pcie_port_data *port_data;
 
+	port_data = pci_get_drvdata(dev);
 	pos = pci_find_capability(dev, PCI_CAP_ID_EXP);
 	pci_read_config_word(dev, pos + PCIE_CAPABILITIES_REG, &reg16);
 	/* Hot-Plug Capable */
@@ -236,7 +238,8 @@ static int get_port_device_capability(struct pci_dev *dev)
 			services |= PCIE_PORT_SERVICE_HP;
 	}
 	/* AER capable */
-	if (pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ERR))
+	if (pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ERR) &&
+		port_data->port_type == PCIE_RC_PORT)
 		services |= PCIE_PORT_SERVICE_AER;
 	/* VC support */
 	if (pci_find_ext_capability(dev, PCI_EXT_CAP_ID_VC))
