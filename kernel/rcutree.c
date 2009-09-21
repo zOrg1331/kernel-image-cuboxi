@@ -25,7 +25,7 @@
  * and inputs from Rusty Russell, Andrea Arcangeli and Andi Kleen.
  *
  * For detailed explanation of Read-Copy Update mechanism see -
- * 	Documentation/RCU
+ *	Documentation/RCU
  */
 #include <linux/types.h>
 #include <linux/kernel.h>
@@ -601,8 +601,6 @@ rcu_start_gp(struct rcu_state *rsp, unsigned long flags)
 {
 	struct rcu_data *rdp = rsp->rda[smp_processor_id()];
 	struct rcu_node *rnp = rcu_get_root(rsp);
-	struct rcu_node *rnp_cur;
-	struct rcu_node *rnp_end;
 
 	if (!cpu_needs_another_gp(rsp, rdp)) {
 		spin_unlock_irqrestore(&rnp->lock, flags);
@@ -628,8 +626,8 @@ rcu_start_gp(struct rcu_state *rsp, unsigned long flags)
 
 	/* Special-case the common single-level case. */
 	if (NUM_RCU_NODES == 1) {
-		rnp->qsmask = rnp->qsmaskinit;
 		rcu_preempt_check_blocked_tasks(rnp);
+		rnp->qsmask = rnp->qsmaskinit;
 		rnp->gpnum = rsp->gpnum;
 		rsp->signaled = RCU_SIGNAL_INIT; /* force_quiescent_state OK. */
 		spin_unlock_irqrestore(&rnp->lock, flags);
@@ -659,13 +657,12 @@ rcu_start_gp(struct rcu_state *rsp, unsigned long flags)
 	 * one corresponding to this CPU, due to the fact that we have
 	 * irqs disabled.
 	 */
-	rnp_end = &rsp->node[NUM_RCU_NODES];
-	for (rnp_cur = &rsp->node[0]; rnp_cur < rnp_end; rnp_cur++) {
-		spin_lock(&rnp_cur->lock);	/* irqs already disabled. */
-		rnp_cur->qsmask = rnp_cur->qsmaskinit;
+	for (rnp = &rsp->node[0]; rnp < &rsp->node[NUM_RCU_NODES]; rnp++) {
+		spin_lock(&rnp->lock);	/* irqs already disabled. */
 		rcu_preempt_check_blocked_tasks(rnp);
+		rnp->qsmask = rnp->qsmaskinit;
 		rnp->gpnum = rsp->gpnum;
-		spin_unlock(&rnp_cur->lock);	/* irqs already disabled. */
+		spin_unlock(&rnp->lock);	/* irqs already disabled. */
 	}
 
 	rsp->signaled = RCU_SIGNAL_INIT; /* force_quiescent_state now OK. */
@@ -708,6 +705,7 @@ rcu_process_gp_end(struct rcu_state *rsp, struct rcu_data *rdp)
 static void cpu_quiet_msk_finish(struct rcu_state *rsp, unsigned long flags)
 	__releases(rnp->lock)
 {
+	WARN_ON_ONCE(rsp->completed == rsp->gpnum);
 	rsp->completed = rsp->gpnum;
 	rcu_process_gp_end(rsp, rsp->rda[smp_processor_id()]);
 	rcu_start_gp(rsp, flags);  /* releases root node's rnp->lock. */
@@ -725,6 +723,8 @@ cpu_quiet_msk(unsigned long mask, struct rcu_state *rsp, struct rcu_node *rnp,
 	      unsigned long flags)
 	__releases(rnp->lock)
 {
+	struct rcu_node *rnp_c;
+
 	/* Walk up the rcu_node hierarchy. */
 	for (;;) {
 		if (!(rnp->qsmask & mask)) {
@@ -748,8 +748,10 @@ cpu_quiet_msk(unsigned long mask, struct rcu_state *rsp, struct rcu_node *rnp,
 			break;
 		}
 		spin_unlock_irqrestore(&rnp->lock, flags);
+		rnp_c = rnp;
 		rnp = rnp->parent;
 		spin_lock_irqsave(&rnp->lock, flags);
+		WARN_ON_ONCE(rnp_c->qsmask);
 	}
 
 	/*
@@ -762,10 +764,10 @@ cpu_quiet_msk(unsigned long mask, struct rcu_state *rsp, struct rcu_node *rnp,
 
 /*
  * Record a quiescent state for the specified CPU, which must either be
- * the current CPU or an offline CPU.  The lastcomp argument is used to
- * make sure we are still in the grace period of interest.  We don't want
- * to end the current grace period based on quiescent states detected in
- * an earlier grace period!
+ * the current CPU.  The lastcomp argument is used to make sure we are
+ * still in the grace period of interest.  We don't want to end the current
+ * grace period based on quiescent states detected in an earlier grace
+ * period!
  */
 static void
 cpu_quiet(int cpu, struct rcu_state *rsp, struct rcu_data *rdp, long lastcomp)
@@ -800,7 +802,6 @@ cpu_quiet(int cpu, struct rcu_state *rsp, struct rcu_data *rdp, long lastcomp)
 		 * This GP can't end until cpu checks in, so all of our
 		 * callbacks can be processed during the next GP.
 		 */
-		rdp = rsp->rda[smp_processor_id()];
 		rdp->nxttail[RCU_NEXT_READY_TAIL] = rdp->nxttail[RCU_NEXT_TAIL];
 
 		cpu_quiet_msk(mask, rsp, rnp, flags); /* releases rnp->lock */
@@ -858,7 +859,7 @@ static void __rcu_offline_cpu(int cpu, struct rcu_state *rsp)
 	spin_lock_irqsave(&rsp->onofflock, flags);
 
 	/* Remove the outgoing CPU from the masks in the rcu_node hierarchy. */
-	rnp = rdp->mynode;
+	rnp = rdp->mynode;	/* this is the outgoing CPU's rnp. */
 	mask = rdp->grpmask;	/* rnp->grplo is constant. */
 	do {
 		spin_lock(&rnp->lock);		/* irqs already disabled. */
@@ -867,7 +868,7 @@ static void __rcu_offline_cpu(int cpu, struct rcu_state *rsp)
 			spin_unlock(&rnp->lock); /* irqs remain disabled. */
 			break;
 		}
-		rcu_preempt_offline_tasks(rsp, rnp);
+		rcu_preempt_offline_tasks(rsp, rnp, rdp);
 		mask = rnp->grpmask;
 		spin_unlock(&rnp->lock);	/* irqs remain disabled. */
 		rnp = rnp->parent;
@@ -875,9 +876,6 @@ static void __rcu_offline_cpu(int cpu, struct rcu_state *rsp)
 	lastcomp = rsp->completed;
 
 	spin_unlock(&rsp->onofflock);		/* irqs remain disabled. */
-
-	/* Being offline is a quiescent state, so go record it. */
-	cpu_quiet(cpu, rsp, rdp, lastcomp);
 
 	/*
 	 * Move callbacks from the outgoing CPU to the running CPU.
@@ -1443,20 +1441,7 @@ rcu_init_percpu_data(int cpu, struct rcu_state *rsp, int preemptable)
 		rnp = rnp->parent;
 	} while (rnp != NULL && !(rnp->qsmaskinit & mask));
 
-	spin_unlock(&rsp->onofflock);		/* irqs remain disabled. */
-
-	/*
-	 * A new grace period might start here.  If so, we will be part of
-	 * it, and its gpnum will be greater than ours, so we will
-	 * participate.  It is also possible for the gpnum to have been
-	 * incremented before this function was called, and the bitmasks
-	 * to not be filled out until now, in which case we will also
-	 * participate due to our gpnum being behind.
-	 */
-
-	/* Since it is coming online, the CPU is in a quiescent state. */
-	cpu_quiet(cpu, rsp, rdp, lastcomp);
-	local_irq_restore(flags);
+	spin_unlock_irqrestore(&rsp->onofflock, flags);
 }
 
 static void __cpuinit rcu_online_cpu(int cpu)
