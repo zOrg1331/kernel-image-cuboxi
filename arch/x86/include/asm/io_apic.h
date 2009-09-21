@@ -190,12 +190,14 @@ int mp_find_ioapic_pin(int ioapic, int gsi);
 void __init mp_register_ioapic(int id, u32 address, u32 gsi_base);
 
 #else  /* !CONFIG_X86_IO_APIC */
+
 #define io_apic_assign_pci_irqs 0
 #define setup_ioapic_ids_from_mpc x86_init_noop
 static const int timer_through_8259 = 0;
 static inline void ioapic_init_mappings(void)	{ }
 static inline void ioapic_insert_resources(void) { }
 static inline void probe_nr_irqs_gsi(void)	{ }
+
 #endif
 
 #endif /* _ASM_X86_IO_APIC_H */

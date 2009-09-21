@@ -6,6 +6,7 @@
 #include "exec_cmd.h"
 #include "string.h"
 #include "cache.h"
+#include "header.h"
 
 int					nr_counters;
 
@@ -145,7 +146,7 @@ static int tp_event_has_id(struct dirent *sys_dir, struct dirent *evt_dir)
 	   (strcmp(evt_dirent.d_name, "..")) &&				       \
 	   (!tp_event_has_id(&sys_dirent, &evt_dirent)))
 
-#define MAX_EVENT_LENGTH 30
+#define MAX_EVENT_LENGTH 512
 
 int valid_debugfs_mount(const char *debugfs)
 {
@@ -425,8 +426,11 @@ parse_single_tracepoint_event(char *sys_name,
 	int fd;
 
 	if (flags) {
-		if (!strncmp(flags, "record", strlen(flags)))
+		if (!strncmp(flags, "record", strlen(flags))) {
 			attr->sample_type |= PERF_SAMPLE_RAW;
+			attr->sample_type |= PERF_SAMPLE_TIME;
+			attr->sample_type |= PERF_SAMPLE_CPU;
+		}
 	}
 
 	snprintf(evt_path, MAXPATHLEN, "%s/%s/%s/id", debugfs_path,
@@ -684,10 +688,34 @@ modifier:
 	return ret;
 }
 
+static void store_event_type(const char *orgname)
+{
+	char filename[PATH_MAX], *c;
+	FILE *file;
+	int id;
+
+	sprintf(filename, "/sys/kernel/debug/tracing/events/%s/id", orgname);
+	c = strchr(filename, ':');
+	if (c)
+		*c = '/';
+
+	file = fopen(filename, "r");
+	if (!file)
+		return;
+	if (fscanf(file, "%i", &id) < 1)
+		die("cannot store event ID");
+	fclose(file);
+	perf_header__push_event(id, orgname);
+}
+
+
 int parse_events(const struct option *opt __used, const char *str, int unset __used)
 {
 	struct perf_counter_attr attr;
 	enum event_result ret;
+
+	if (strchr(str, ':'))
+		store_event_type(str);
 
 	for (;;) {
 		if (nr_counters == MAX_COUNTERS)
