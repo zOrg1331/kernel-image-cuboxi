@@ -4548,8 +4548,10 @@ static int decode_sequence(struct xdr_stream *xdr,
 	status = decode_op_hdr(xdr, OP_SEQUENCE);
 	if (!status)
 		status = decode_sessionid(xdr, &id);
-	if (unlikely(status))
+	if (unlikely(status)) {
+		printk("decode_op_hdr!\n");
 		goto out_err;
+	}
 
 	/*
 	 * If the server returns different values for sessionID, slotID or
@@ -4559,25 +4561,27 @@ static int decode_sequence(struct xdr_stream *xdr,
 
 	if (memcmp(id.data, res->sr_session->sess_id.data,
 		   NFS4_MAX_SESSIONID_LEN)) {
-		dprintk("%s Invalid session id\n", __func__);
+		printk("%s Invalid session id\n", __func__);
 		goto out_err;
 	}
 
 	p = xdr_inline_decode(xdr, 20);
-	if (unlikely(!p))
+	if (unlikely(!p)) {
+		printk("overflow!!!!\n");
 		goto out_overflow;
+	}
 
 	/* seqid */
 	slot = &res->sr_session->fc_slot_table.slots[res->sr_slotid];
 	dummy = be32_to_cpup(p++);
 	if (dummy != slot->seq_nr) {
-		dprintk("%s Invalid sequence number\n", __func__);
+		printk("%s Invalid sequence number\n", __func__);
 		goto out_err;
 	}
 	/* slot id */
 	dummy = be32_to_cpup(p++);
 	if (dummy != res->sr_slotid) {
-		dprintk("%s Invalid slot id\n", __func__);
+		printk("%s Invalid slot id\n", __func__);
 		goto out_err;
 	}
 	/* highest slot id - currently not processed */
@@ -4588,6 +4592,8 @@ static int decode_sequence(struct xdr_stream *xdr,
 	dummy = be32_to_cpup(p);
 	status = 0;
 out_err:
+	if (status)
+		printk("XXXJBF: returning %d from decode_sequence\n", status);
 	res->sr_status = status;
 	return status;
 out_overflow:
@@ -5701,12 +5707,17 @@ static int
 nfs4_stat_to_errno(int stat)
 {
 	int i;
+	if (stat == NFS4ERR_SERVERFAULT) {
+		printk("server returned SERVERFAULT\n");
+		dump_stack();
+	}
 	for (i = 0; nfs_errtbl[i].stat != -1; i++) {
 		if (nfs_errtbl[i].stat == stat)
 			return nfs_errtbl[i].errno;
 	}
 	if (stat <= 10000 || stat > 10100) {
-		/* The server is looney tunes. */
+		printk("The server is looney tunes. stat=%d\n", stat);
+		dump_stack();
 		return -ESERVERFAULT;
 	}
 	/* If we cannot translate the error, the recovery routines should
