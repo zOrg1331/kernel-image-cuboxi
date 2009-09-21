@@ -83,7 +83,8 @@ static int labpc_attach(struct comedi_device *dev, struct comedi_devconfig *it);
 static const struct labpc_board_struct labpc_cs_boards[] = {
 	{
 	 .name = "daqcard-1200",
-	 .device_id = 0x103,	/*  0x10b is manufacturer id, 0x103 is device id */
+	 .device_id = 0x103,	/* 0x10b is manufacturer id,
+				   0x103 is device id */
 	 .ai_speed = 10000,
 	 .bustype = pcmcia_bustype,
 	 .register_layout = labpc_1200_layout,
@@ -400,7 +401,8 @@ static void labpc_config(struct pcmcia_device *link)
 				link->io.BasePort2 = io->win[1].base;
 				link->io.NumPorts2 = io->win[1].len;
 			}
-			/* This reserves IO space but doesn't actually enable it */
+			/* This reserves IO space but doesn't
+			   actually enable it */
 			if (pcmcia_request_io(link, &link->io))
 				goto next_entry;
 		}
