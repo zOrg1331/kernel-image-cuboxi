@@ -47,6 +47,19 @@ unsigned long pci_cardbus_mem_size = DEFAULT_CARDBUS_MEM_SIZE;
 unsigned long pci_hotplug_io_size  = DEFAULT_HOTPLUG_IO_SIZE;
 unsigned long pci_hotplug_mem_size = DEFAULT_HOTPLUG_MEM_SIZE;
 
+#ifndef PCI_CACHE_LINE_BYTES
+#define PCI_CACHE_LINE_BYTES L1_CACHE_BYTES
+#endif
+
+/*
+ * The default CLS is used if arch didn't set CLS explicitly and not
+ * all pci devices agree on the same value.  Arch can override either
+ * the dfl or actual value as it sees fit.  Don't forget this is
+ * measured in 32-bit words, not bytes.
+ */
+u8 pci_dfl_cache_line_size __initdata = PCI_CACHE_LINE_BYTES >> 2;
+u8 pci_cache_line_size;
+
 /**
  * pci_bus_max_busnr - returns maximum PCI bus number of given bus' children
  * @bus: pointer to PCI bus structure to search
@@ -1883,14 +1896,6 @@ void pci_clear_mwi(struct pci_dev *dev)
 
 #else
 
-#ifndef PCI_CACHE_LINE_BYTES
-#define PCI_CACHE_LINE_BYTES L1_CACHE_BYTES
-#endif
-
-/* This can be overridden by arch code. */
-/* Don't forget this is measured in 32-bit words, not bytes */
-u8 pci_cache_line_size = PCI_CACHE_LINE_BYTES / 4;
-
 /**
  * pci_set_cacheline_size - ensure the CACHE_LINE_SIZE register is programmed
  * @dev: the PCI device for which MWI is to be enabled
@@ -2726,9 +2731,37 @@ int __attribute__ ((weak)) pci_ext_cfg_avail(struct pci_dev *dev)
 static int __devinit pci_init(void)
 {
 	struct pci_dev *dev = NULL;
+	u8 cls = 0;
+	u8 tmp;
+
+	if (pci_cache_line_size)
+		printk(KERN_DEBUG "PCI: CLS %u bytes\n",
+		       pci_cache_line_size << 2);
 
 	while ((dev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, dev)) != NULL) {
 		pci_fixup_device(pci_fixup_final, dev);
+		/*
+		 * If arch hasn't set it explicitly yet, use the CLS
+		 * value shared by all PCI devices.  If there's a
+		 * mismatch, fall back to the default value.
+		 */
+		if (!pci_cache_line_size) {
+			pci_read_config_byte(dev, PCI_CACHE_LINE_SIZE, &tmp);
+			if (!cls)
+				cls = tmp;
+			if (!tmp || cls == tmp)
+				continue;
+
+			printk(KERN_DEBUG "PCI: CLS mismatch (%u != %u), "
+			       "using %u bytes\n", cls << 2, tmp << 2,
+			       pci_dfl_cache_line_size << 2);
+			pci_cache_line_size = pci_dfl_cache_line_size;
+		}
+	}
+	if (!pci_cache_line_size) {
+		printk(KERN_DEBUG "PCI: CLS %u bytes, default %u\n",
+		       cls << 2, pci_dfl_cache_line_size << 2);
+		pci_cache_line_size = cls;
 	}
 
 	return 0;
