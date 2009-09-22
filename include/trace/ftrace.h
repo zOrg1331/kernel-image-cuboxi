@@ -755,7 +755,7 @@ static void ftrace_profile_##call(proto)				\
 									\
 	{ assign; }							\
 									\
-	perf_tp_event(event_call->id, __addr, __count, entry,	\
+	perf_tp_event(event_call->id, __addr, __count, entry,		\
 			     __entry_size);				\
 									\
 end:									\
