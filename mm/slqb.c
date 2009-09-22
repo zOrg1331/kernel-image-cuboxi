@@ -1944,16 +1944,16 @@ static void init_kmem_cache_node(struct kmem_cache *s,
 static DEFINE_PER_CPU(struct kmem_cache_cpu, kmem_cache_cpus);
 #endif
 #ifdef CONFIG_NUMA
-/* XXX: really need a DEFINE_PER_NODE for per-node data, but this is better than
- * a static array */
-static DEFINE_PER_CPU(struct kmem_cache_node, kmem_cache_nodes);
+/* XXX: really need a DEFINE_PER_NODE for per-node data because a static
+ *      array is wasteful */
+static struct kmem_cache_node kmem_cache_nodes[MAX_NUMNODES];
 #endif
 
 #ifdef CONFIG_SMP
 static struct kmem_cache kmem_cpu_cache;
 static DEFINE_PER_CPU(struct kmem_cache_cpu, kmem_cpu_cpus);
 #ifdef CONFIG_NUMA
-static DEFINE_PER_CPU(struct kmem_cache_node, kmem_cpu_nodes); /* XXX per-nid */
+static struct kmem_cache_node kmem_cpu_nodes[MAX_NUMNODES]; /* XXX per-nid */
 #endif
 #endif
 
@@ -1962,7 +1962,7 @@ static struct kmem_cache kmem_node_cache;
 #ifdef CONFIG_SMP
 static DEFINE_PER_CPU(struct kmem_cache_cpu, kmem_node_cpus);
 #endif
-static DEFINE_PER_CPU(struct kmem_cache_node, kmem_node_nodes); /*XXX per-nid */
+static struct kmem_cache_node kmem_node_nodes[MAX_NUMNODES]; /*XXX per-nid */
 #endif
 
 #ifdef CONFIG_SMP
@@ -2918,15 +2918,15 @@ void __init kmem_cache_init(void)
 	for_each_node_state(i, N_NORMAL_MEMORY) {
 		struct kmem_cache_node *n;
 
-		n = &per_cpu(kmem_cache_nodes, i);
+		n = &kmem_cache_nodes[i];
 		init_kmem_cache_node(&kmem_cache_cache, n);
 		kmem_cache_cache.node_slab[i] = n;
 #ifdef CONFIG_SMP
-		n = &per_cpu(kmem_cpu_nodes, i);
+		n = &kmem_cpu_nodes[i];
 		init_kmem_cache_node(&kmem_cpu_cache, n);
 		kmem_cpu_cache.node_slab[i] = n;
 #endif
-		n = &per_cpu(kmem_node_nodes, i);
+		n = &kmem_node_nodes[i];
 		init_kmem_cache_node(&kmem_node_cache, n);
 		kmem_node_cache.node_slab[i] = n;
 	}
