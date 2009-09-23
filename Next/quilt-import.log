@@ -1,0 +1,391 @@
+Importing driver-core.current based on 2.6.31-git8
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core.current df58bee21ed218cb7dfb561a590b1bd2a99531cf
+Importing tty.current based on quilt/driver-core.current
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard df58bee21ed218cb7dfb561a590b1bd2a99531cf
+HEAD is now at df58bee Merge branch 'x86-mce-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/tip/linux-2.6-tip
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty.current
+tty-gigaset-really-fix-chars_in_buffer.patch
+serial-bfin_5xx-fix-building-as-module-when-early-printk-is-enabled.patch
+tty-serial-pcmcia-add-id-for-advantech-card.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty.current
+From ../quilt-tmp
+ + 5cea4a4...87cd454 master     -> quilt/tty.current  (forced update)
+Importing usb.current based on quilt/tty.current
+$ cd ../quilt-tmp
+$ git reset --hard 87cd45422ae6283c1aeedcd983c9c3acaefdd42e
+HEAD is now at 87cd454 tty: serial/pcmcia: add ID for Advantech card
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-storage-fix-a-resume-path-gfp_noio-must-be-used.patch
+usb-serial-ftdi_sio-new-hardware-support-hameg-power-supply.patch
+usb-serial-pl2303-new-hardware-support-sanwa-multimeter.patch
+usb-option.c-add-support-for-zte-ac2726-evdo-modem.patch
+usb-option-telit-uc864g-support.patch
+usb-cdc-wdm-driver-doesn-t-support-non-blocking-reads.patch
+usb-fix-cdc-acm-regression-in-open.patch
+usb-add-pids-for-ftdi-based-opendcc-hardware.patch
+usb-sl811-hcd-fix-device-disconnect.patch
+usb-serial-ftdi-handle-gnice-jtag-adaptors.patch
+usb-xhci-work-around-for-chain-bit-in-link-trbs.patch
+usb-xhci-fix-slot-and-endpoint-context-debugging.patch
+usb-xhci-configure-endpoint-code-refactoring.patch
+usb-xhci-set-correct-max-packet-size-for-hs-fs-control-endpoints.patch
+usb-xhci-support-full-speed-devices.patch
+usb-xhci-handle-stalled-control-endpoints.patch
+usb-xhci-add-quirk-for-fresco-logic-xhci-hardware.patch
+usb-xhci-make-trb-completion-code-comparison-readable.patch
+usb-xhci-handle-babbling-endpoints-correctly.patch
+usb-xhci-don-t-touch-xhci_td-after-it-s-freed.patch
+usb-xhci-check-urb-s-actual-transfer-buffer-size.patch
+usb-xhci-check-urb_short_not_ok-before-setting-short-packet-status.patch
+usb-xhci-set-eremoteio-when-xhc-gives-bad-transfer-length.patch
+usb-xhci-support-interrupt-transfers.patch
+usb-fix-ss-endpoint-companion-descriptor-parsing.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+ + 9db7ee9...c700413 master     -> quilt/usb.current  (forced update)
+Importing i2c based on 2.6.31-git11
+$ cd ../quilt-tmp
+$ git reset --hard 43c1266ce4dc06bfd236cec31e11e9ecd69c0bef
+HEAD is now at 43c1266 Merge branch 'perfcounters-rename-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/tip/linux-2.6-tip
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-drop-i2c_driver-id.patch
+i2c-taos-evm-switch-echo-off.patch
+i2c-tsl2550-simpify-IO.patch
+i2c-core-01-client-as-device-type.patch
+i2c-core-02-adapters-as-bus-devices.patch
+i2c-core-03-i2c-adapter-compatibility-class-2.patch
+i2c-scx200_acb-provide-more-information-on-bus-errors.patch
+gpio-pcf857x-copy-i2c_device_id-from-old-pcf8574-driver.patch
+i2c-chips-remove-deprecated-pcf8575-driver.patch
+i2c-chips-remove-deprecated-pca9539-driver.patch
+i2c-chips-remove-deprecated-pcf8574-driver.patch
+i2c-piix4-add-amd-SB900-smbus-device-id.patch
+maintainers-add-maintainer-for-at24-and-pca9564-pca9665.patch
+i2c-pnx-correct-use-of-request_mem_region.patch
+i2c-add-driver-for-smbus-control-method-interface.patch
+i2c-list-acpi-drivers-as-such.patch
+i2c-move-legacy-documentation.patch
+i2c-voodoo3-delete.patch
+misc-eeprom-max6875-no-detect.patch
+w1-ds2482-no-detect.patch
+hwmon-ltc4215-ltc4245-no-detect.patch
+i2c-prevent-priority-inversion-on-top-of-bus-lock.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + ba27803...3d3db2c master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.31-git9
+$ cd ../quilt-tmp
+$ git reset --hard 78f28b7c555359c67c2a0d23f7436e915329421e
+HEAD is now at 78f28b7 Merge branch 'x86-platform-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/tip/linux-2.6-tip
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-adm1031-add-sysfs-files-for-temperature-offsets.patch
+hwmon-remove-deprecated-fsc-drivers.patch
+hwmon-coretemp-add-atom-support.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 528e175...af663ff master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on origin/master
+	quilt series is empty
+$ git update-ref refs/heads/quilt/kernel-doc 7fa07729e439a6184bd824746d06a49cca553f15
+Importing rr based on v2.6.31-6618-gebc79c4
+$ cd ../quilt-tmp
+$ git reset --hard ebc79c4f8da0f92efa968e0328f32334a2ce80cf
+HEAD is now at ebc79c4 Merge git://git.kernel.org/pub/scm/linux/kernel/git/jaswinder/linux-2.6
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+virtio:pci-minor-cleanups.patch
+virtio:add_buf-return-capacity.patch
+virtio:9p_get_rid_of_redundant_id_9p_definition.patch
+virtio:add_ids_file.patch
+virtio:blk_set_queue_ordered_drain_by_default.patch
+virtio:blk_revert_queue_flag_virt_addition.patch
+lguest:panic_notifier-cleanup.patch
+lguest:avoid-native_set_pmd.patch
+lguest:PAE-dont-assume-PAGE_OFFSET.patch
+lguest:cleanup_for_map_switcher.patch
+lguest:remove-wake-on-empty.patch
+cpumask:use_zalloc_cpumask_var_where_possible.patch
+cpumask:remove-pcibus_to_cpumask-alpha.patch
+cpumask:remove-pcibus_to_cpumask-mips.patch
+cpumask:remove-pcibus_to_cpumask-powerpc.patch
+cpumask:remove-node_to_cpumask.patch
+cpumask:remove-CPU_MASK_ALL_PTR.patch
+cpumask:remove-address-of-CPU_MASK_ALL-mips.patch
+cpumask:remove-cpu_mask_all.patch
+cpumask:remove-last-remaining-irqaction-mask.patch
+cpumask:irqaction-remove-mask.patch
+cpumask:remove_mask_field_from_comments.patch
+cpumask:set_cpus_allowed-acpi-removal.patch
+cpumask:remove-set_cpus_allowed.patch
+cpumask:ia64-smp_call_function_many.patch
+cpumask:remove-smp_call_function_mask.patch
+cpumask:remove-topology_core_siblings-and-topology_thread_siblings-core.patch
+cpumask:remove-topology_core_siblings-and-topology_thread_siblings-sparc.patch
+cpumask:remove-topology_core_siblings-and-topology_thread_siblings-s390.patch
+cpumask:remove-topology_core_siblings-and-topology_thread_siblings-powerpc.patch
+cpumask:remove-topology_core_siblings-and-topology_thread_siblings-ia64.patch
+cpumask:arch_send_call_function_ipi_mask-alpha.patch
+cpumask:arch_send_call_function_ipi_mask-m32r.patch
+cpumask:arch_send_call_function_ipi_mask-mips.patch
+cpumask:arch_send_call_function_ipi_mask-powerpc.patch
+cpumask:arch_send_call_function_ipi_mask-s390.patch
+cpumask:remove-arch_send_call_function_ipi.patch
+cpumask:use-cpumap-accessors-m32r.patch
+cpumask:use-cpumap-accessors-mips.patch
+cpumask:use-cpumap-accessors-powerpc.patch
+cpumask:use-cpumap-accessors-um.patch
+cpumask:use-mm_cpumask-arm.patch
+cpumask:use-mm_cpumask-m32r.patch
+cpumask:use-mm_cpumask-mn10300.patch
+cpumask:use-mm_cpumask-mips.patch
+cpumask:use-mm_cpumask-um.patch
+cpumask:use-mm_cpumask-x86.patch
+cpumask:mm_quicklist-new-cpumask-ops.patch
+cpumask:remove-unused-deprecated-functions.patch
+cpumask:move-obsolete-functions-to-end-of-header.patch
+virtio:net-skb_orphan-and-nf_reset.patch
+virtio:net-return-NETDEV_TX_BUSY.patch
+virtio:net-no-xmit-free-timer.patch
+virtio:net-struct-skb_vnet_hdr.patch
+virtio:net-stop_queue-before-full.patch
+virtio:net_check_for_room_in_the_vq_before_adding_buffer.patch
+module:reduce_symbol_table_for_loaded_s_v2.patch
+module:reduce_string_table_for_loaded_s_v2.patch
+param:allow_whitespace_as_kernel_parameter_separator.patch
+module:preferred_way_to_use_MODULE_AUTHOR.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + 25306e2...d3eae8d master     -> quilt/rr  (forced update)
+Importing device-mapper based on block/for-next
+	quilt series is empty
+$ git update-ref refs/heads/quilt/device-mapper 38cffa817734b85cbc8701ba874bdb3dbc16dd13
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/usb.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core c700413d9b0fcf19675d16e6b261756593c5095a
+Importing tty based on quilt/driver-core
+$ cd ../quilt-tmp
+$ git reset --hard c700413d9b0fcf19675d16e6b261756593c5095a
+HEAD is now at c700413 USB: Fix SS endpoint companion descriptor parsing.
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty
+tty-ldisc-make-proc-tty-ldiscs-use-ldisc_ops-instead-of-ldiscs.patch
+tty-ldisc-get-rid-of-tty_ldisc_try_get-helper-function.patch
+tty-includecheck-fix-drivers-char-vt.c.patch
+tty-icom-bit-and-or-confusion.patch
+tty-cyclades-refcount
+tty-cyclades-use-port-block-helper
+tty-cyclades-precompute
+tty-cyclades-use-port-hangup
+tty-cyclades-use-port-close
+tty-cyclades-cleanup
+tty-cyclades-sleep-not-busy
+tty-cyclades-use-dtr-helpers
+tty-cyclades-merge-startup-common
+tty-cyclades-ioctl-cleanup
+tty-cyclades-modem-cleanup
+tty-cyclades-add-io-helpers
+tty-cyclades-remove-set-line-dups
+net-slip-ttyfix
+kfifo-const
+tty-usb-mos7720-modem
+tty-usb-mos7720-lsr
+tty-io-typo
+tty-usb-mos7840-modem
+serial-add-irqflags-support
+serial-8250-amstrad-e3
+serial-8250-minbaud
+tty-port-close-fn
+tty-riscom8-split-close
+tty-mxser-split-close
+tty-isicom-split-close
+tty-riscom8-close-kref
+tty-cyclades-port-close
+tty-kref-put-async
+tty-usb-cdc-fix-speed
+tty-usb-vhangup
+tty-usb-clean-dtr-rts
+tty-usb-shutdown
+vt-events
+vt-pm-extract
+vt-incfix
+vt-lockactive
+tty-usb-drop-filp-argp
+tty-isicom-split-open
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:47: trailing whitespace.
+	
+warning: 1 line adds whitespace errors.
+serial-kill-info
+serial-fold-closing-port
+serial-port-portptr
+serial-move-counts
+serial-move-flags
+serial-kill-uif
+serial-move-mutex
+serial-msr-move
+serial-move-users
+serial-kill-USF_CLOSING
+serial-port-kref
+serial-console-set-resume
+tty-usb-serial-termiosbits
+n_tty-honor-opost-flag-for-echoes.patch
+n_tty-move-echoctl-check-and-clean-up-logic.patch
+tty-handle-vt-specific-compat-ioctls-in-vt-driver.patch
+tty-vt-use-printk_once.patch
+tty-power-fix-suspend-vt-regression.patch
+tty-fix-typos.patch
+tty-riscom8-fix-shutdown-declaration.patch
+tty-riscom8-fix-tty-refcnt.patch
+tty-usb-serial-mct_u232-fix-tty-refcnt.patch
+uartlite-support-shared-interrupt-lines.patch
+tty-char-mxser-add-support-for-cp112ul.patch
+tty-char-mxser-use-thre-for-aspp_oqueue-ioctl.patch
+usb-serial-change-referencing-of-port-and-serial-structures.patch
+usb-serial-put-subroutines-in-logical-order.patch
+usb-serial-change-logic-of-serial-lookups.patch
+usb-serial-acquire-references-when-a-new-tty-is-installed.patch
+usb-serial-fix-termios-initialization-logic.patch
+usb-serial-rename-subroutines.patch
+usb-serial-add-missing-tests-and-debug-lines.patch
+usb-serial-straighten-out-serial_open.patch
+usb-serial-update-the-console-driver.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty
+From ../quilt-tmp
+ + a991e94...495ba24 master     -> quilt/tty  (forced update)
+Importing usb based on quilt/tty
+$ cd ../quilt-tmp
+$ git reset --hard 495ba2447ec1580814b64f0ed91d1a35b2a475f8
+HEAD is now at 495ba24 USB serial: update the console driver
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb
+usb-ehci-dbg.c-no-need-for-checking-it-before-call-vfree.patch
+usb-sisusbvga-drop-usb_buffer_alloc.patch
+usb-usbmon-drop-kconfig-defaults.patch
+usb-usbmon-touch-up-the-documentation.patch
+usb-usbmon-end-ugly-tricks-with-dma-peeking.patch
+usb-let-usb_sg_init-to-set-transfer_buffer-more-often.patch
+usb-move-endpoint-sync-type-definitions-from-usb-audio.h-to-usb-ch9.h.patch
+usb-move-vendor-subclass-definition-from-usb-audio.h-to-usb-ch9.h.patch
+usb-audio-gadget-prefix-all-macro-definitions-with-uac_-in-linux-usb-audio.h.patch
+usb-audio-gadget-un-inline-generic_et_cmd.patch
+usb-add-nuvoton-ehci-driver-for-w90p910-platform.patch
+usb-whci-hcd-make-endpoint_reset-method-async.patch
+usb-add-api-for-userspace-drivers-to-claim-ports.patch
+usb-make-intf.pm_usage-an-atomic_t.patch
+usb-make-the-usbfs_snoop-log-more-pertinent.patch
+usb-gadget-pxa25x-basic-transceiver-support.patch
+usb-serial-full-autosuspend-support-for-the-option-driver.patch
+usb-usb-serial-remove-unused-variables.patch
+usb-usbtmc-can-do-io-to-device-after-disconnect.patch
+usb-suspend-resume-support-for-usbtmc.patch
+usb-legousbtower-make-poll-notice-disconnect.patch
+usb-ldusb-should-signal-an-error-in-poll-if-the-device-is-disconnected.patch
+usb-gadget-drop-null-test-on-list_entry-result.patch
+usb-gadget-s3c-hsotg-missing-parentheses.patch
+usb-full-power-management-support-for-the-idmouse-driver.patch
+usb-full-autosuspend-and-power-management-support-for-usbsevseg.patch
+usb-ehci-add-need_io_watchdog-flag-to-ehci_hcd.patch
+usb-ehci-split-ehci_qh-into-hw-and-sw-parts.patch
+usb-ehci-add-intel-moorestown-ehci-controller-hostpcx-extensions-and-support-phy-low-power-mode.patch
+usb-isp1760-allow-platform-devices-to-customize-devflags.patch
+usb-serial-spelling-correction-in-motorola-usb-phone-driver.patch
+usb-storage-drop-an-unneeded-a-null-test.patch
+usb-au1xxx-add-dev_pm_ops.patch
+usb-fix-wrong-order-of-events-in-usb-serial-suspension.patch
+usb-check-for-hub-driver-not-bound-to-root-hub-device.patch
+usb-don-t-lose-mode-switch-events-on-suspended-devices.patch
+usb-dummy-hcd-accept-mismatch-between-wlength-and-transfer-length.patch
+usb-nxp-isp1362-usb-host-driver.patch
+usb-usbtmc-sanity-checks-for-dev_dep_msg_in-urbs.patch
+usb-usbtmc-fix-printk-format-warnings.patch
+usb-uhci-rm-repeatedly-evaluation-for-urbp-qh.patch
+usb-at91-add-usb-ehci-driver-for-at91sam9g45-series.patch
+usb-at91-add-usb-gadget-driver-selection-for-at91sam9g45-series.patch
+usb-at91-modify-ohci-driver-to-allow-shared-interrupts.patch
+usb-audio-guard-kernel-only-code-with-__kernel__.patch
+usb-ehci-ohci-remove-unnecessary-includes-of-reboot.h.patch
+usb-ohci-pxa27x-allow-nocp-and-ocpm-to-be-cleared.patch
+usb-ark3116-add-irda-support-for-gembird-uir-22.patch
+usb-usb-storage-fails-to-attach-to-huawei-datacard-cdrom-device.patch
+usb-gadget-read-buffer-overflow.patch
+usb-gadget-audio-driver-seg-fault-fix.patch
+usb-isp1362-fix-pulldown-register-defines-and-conf-logic.patch
+usb-increase-usbdevfs-max-isoc-buffer-size.patch
+usb-work-around-bios-bugs-by-quiescing-usb-controllers-earlier.patch
+usb-musb-fix-put_device-call-sequence.patch
+usb-otg-twl4030-usb.c-mark-.init-as-subsys_initcall_sync.patch
+usb-ehci-ensure-all-watchdog-timer-events-are-deleted-when-suspending-usb.patch
+usb-isp1362-correct-use-of-and.patch
+usb-gadget-update-freescale-udc-entry-in-maintainers.patch
+usb-fix-cdc-eem-host-driver-sentinel-crc-validation.patch
+usb-otg-fix-twl4030-usb-build.patch
+usb-ohci-ep93xx.c-remove-unused-variable.patch
+usb-use-kfifo-to-buffer-usb-generic-serial-writes.patch
+usb-remove-unneeded-printks-from-microtek-driver.patch
+usb-gadget-add-eem-gadget-driver.patch
+usb-s3c2410-unregister-should-call-unbind-not-disconnect.patch
+usb-break-support-for-winchiphead-ch341-340-usb-serial-chip.patch
+usb-usbtmc-fix-short-reads-in-usbtmc_read.patch
+usb-usbtmc-inhibit-corruption.patch
+usb-usbtmc-correct-termination-condition-for-reads.patch
+usb-iuu_phoenix-don-t-reset-the-device-at-close.patch
+usb-iuu_phoenix-clean-up-parameter-s-descriptions.patch
+usb-iuu_phoenix-add-support-for-changing-vcc.patch
+usb-iuu_phoenix-increment-version-number.patch
+usb-iuu_phoenix-add-a-way-to-select-the-default-vcc.patch
+usb-serial-pl2303-fix-baud-rate-handling-in-case-of-unsupported-values.patch
+usb-serial-pl2303-add-space-mark-parity.patch
+usb-serial-pl2303-use-1.5-instead-of-2-stop-bits-with-5-data-bits.patch
+usb-fsl_qe_udc-add-fsl-mpc8323-qe-usb-compatible-entry.patch
+usb-ehci-rescan-the-queue-after-an-unlink.patch
+usb-ehci-change-deschedule-logic-for-interrupt-qhs.patch
+usb-make-usb_buffer_map_sg-consistent-with-doc.patch
+usb-double-put_tty_driver-in-gserial_setup.patch
+usb-clean-up-root-hub-string-descriptors.patch
+usb-gadget-double-free_irq-in-at91udc_probe.patch
+usb-omap-isp1301-compile-fix.patch
+usb-fix-paths-in-usbmon-documentation.patch
+usb-unusual_devs.h-drop-some-unneeded-floppy-entries.patch
+usb-ehci-dbgp-early_printk-split-ehci-debug-driver-from-early_printk.c.patch
+usb-dbgp-insert-cr-prior-to-nl-as-needed.patch
+usb-ehci-dbgp-execute-early-bios-hand-off.patch
+usb-dbgp-ehci-debug-controller-initialization-delays.patch
+early_printk-allow-more-than-one-early-console.patch
+usb-ehci-dbgp-stability-improvements-and-external-re-init.patch
+usb-ehci-dbgp-ehci-allow-early-or-late-use-of-the-dbgp-device.patch
+usb-ehci-dbgp-errata-for-ehci-debug-controller-initialization.patch
+usb-ehci-dbgp-errata-for-ehci-debug-host-controller-synchronization.patch
+usb-ehci-dbgp-documentation-documentation-updates-for-ehci-dbgp.patch
+usb-ehci-dbgp-ehci-allow-dbpg-to-work-with-suspend-resume.patch
+usb-support-for-autosuspend-in-sierra-while-online.patch
+usb-usbfs-add-usbdevfs_urb_bulk_continuation-flag.patch
+usb-fix-missing-error-check-in-probing.patch
+usb-fix-usbtmc-get_capabilities-success-handling.patch
+usb-gadget-ether-needs-to-select-crc32.patch
+usb-xhci-endpoint-representation-refactoring.patch
+usb-xhci-refactor-input-device-context-setup.patch
+usb-xhci-change-how-xhci-commands-are-handled.patch
+usb-xhci-fix-command-wait-list-handling.patch
+usb-xhci-set-route-string-for-all-devices.patch
+usb-xhci-set-multi-tt-field-for-ls-fs-devices-under-hubs.patch
+usb-xhci-support-usb-hubs.patch
+usb-add-hub-descriptor-update-hook-for-xhci.patch
+usb-skel_read-really-sucks-royally.patch
+usb-make-usb-skeleton-honor-o_nonblock-in-write-path.patch
+usb-o_nonblock-in-read-path-of-skeleton.patch
+usb-skeleton-fix-coding-style-issues.patch
+usb-fix-sysfs-paths-in-documentation.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb
+From ../quilt-tmp
+ + fe7f73d...3f5a8f6 master     -> quilt/usb  (forced update)
+Importing staging based on quilt/usb
+	quilt series is empty
+$ git update-ref refs/heads/quilt/staging 3f5a8f6527276fa6ee0368e4fd30a47fedf8a5b2
