@@ -772,7 +772,7 @@ static void btree_invalidatepage(struct page *page, unsigned long offset)
 	}
 }
 
-static struct address_space_operations btree_aops = {
+static const struct address_space_operations btree_aops = {
 	.readpage	= btree_readpage,
 	.writepage	= btree_writepage,
 	.writepages	= btree_writepages,
@@ -1600,6 +1600,7 @@ struct btrfs_root *open_ctree(struct super_block *sb,
 
 	sb->s_blocksize = 4096;
 	sb->s_blocksize_bits = blksize_bits(4096);
+	sb->s_bdi = &fs_info->bdi;
 
 	/*
 	 * we set the i_size on the btree inode to the max possible int.

@@ -205,7 +205,7 @@ static int cciss_compat_ioctl(struct block_device *, fmode_t,
 			      unsigned, unsigned long);
 #endif
 
-static struct block_device_operations cciss_fops = {
+static const struct block_device_operations cciss_fops = {
 	.owner = THIS_MODULE,
 	.open = cciss_open,
 	.release = cciss_release,
@@ -572,7 +572,7 @@ static struct attribute_group cciss_dev_attr_group = {
 	.attrs = cciss_dev_attrs,
 };
 
-static struct attribute_group *cciss_dev_attr_groups[] = {
+static const struct attribute_group *cciss_dev_attr_groups[] = {
 	&cciss_dev_attr_group,
 	NULL
 };

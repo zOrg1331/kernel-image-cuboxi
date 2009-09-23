@@ -420,7 +420,6 @@ static void bdev_destroy_inode(struct inode *inode)
 {
 	struct bdev_inode *bdi = BDEV_I(inode);
 
-	bdi->bdev.bd_inode_backing_dev_info = NULL;
 	kmem_cache_free(bdev_cachep, bdi);
 }
 
@@ -1115,7 +1114,7 @@ EXPORT_SYMBOL(revalidate_disk);
 int check_disk_change(struct block_device *bdev)
 {
 	struct gendisk *disk = bdev->bd_disk;
-	struct block_device_operations * bdops = disk->fops;
+	const struct block_device_operations *bdops = disk->fops;
 
 	if (!bdops->media_changed)
 		return 0;

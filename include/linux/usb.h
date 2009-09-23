@@ -922,7 +922,7 @@ extern struct bus_type usb_bus_type;
 /**
  * struct usb_class_driver - identifies a USB driver that wants to use the USB major number
  * @name: the usb class device name for this driver.  Will show up in sysfs.
- * @nodename: Callback to provide a naming hint for a possible
+ * @devnode: Callback to provide a naming hint for a possible
  *	device node to create.
  * @fops: pointer to the struct file_operations of this driver.
  * @minor_base: the start of the minor range for this driver.
@@ -933,7 +933,7 @@ extern struct bus_type usb_bus_type;
  */
 struct usb_class_driver {
 	char *name;
-	char *(*nodename)(struct device *dev);
+	char *(*devnode)(struct device *dev, mode_t *mode);
 	const struct file_operations *fops;
 	int minor_base;
 };
@@ -1071,7 +1071,7 @@ typedef void (*usb_complete_t)(struct urb *);
  * @start_frame: Returns the initial frame for isochronous transfers.
  * @number_of_packets: Lists the number of ISO transfer buffers.
  * @interval: Specifies the polling interval for interrupt or isochronous
- *	transfers.  The units are frames (milliseconds) for for full and low
+ *	transfers.  The units are frames (milliseconds) for full and low
  *	speed devices, and microframes (1/8 millisecond) for highspeed ones.
  * @error_count: Returns the number of ISO transfers that reported errors.
  * @context: For use in completion functions.  This normally points to

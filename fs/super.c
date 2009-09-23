@@ -54,7 +54,7 @@ DEFINE_SPINLOCK(sb_lock);
 static struct super_block *alloc_super(struct file_system_type *type)
 {
 	struct super_block *s = kzalloc(sizeof(struct super_block),  GFP_USER);
-	static struct super_operations default_op;
+	static const struct super_operations default_op;
 
 	if (s) {
 		if (security_sb_alloc(s)) {
@@ -707,6 +707,12 @@ static int set_bdev_super(struct super_block *s, void *data)
 {
 	s->s_bdev = data;
 	s->s_dev = s->s_bdev->bd_dev;
+
+	/*
+	 * We set the bdi here to the queue backing, file systems can
+	 * overwrite this in ->fill_super()
+	 */
+	s->s_bdi = &bdev_get_queue(s->s_bdev)->backing_dev_info;
 	return 0;
 }
 

@@ -285,7 +285,7 @@ static int init_inodecache(void)
 	return 0;
 }
 
-static struct super_operations sockfs_ops = {
+static const struct super_operations sockfs_ops = {
 	.alloc_inode =	sock_alloc_inode,
 	.destroy_inode =sock_destroy_inode,
 	.statfs =	simple_statfs,
@@ -489,6 +489,7 @@ static struct socket *sock_alloc(void)
 
 	sock = SOCKET_I(inode);
 
+	kmemcheck_annotate_bitfield(sock, type);
 	inode->i_mode = S_IFSOCK | S_IRWXUGO;
 	inode->i_uid = current_fsuid();
 	inode->i_gid = current_fsgid();

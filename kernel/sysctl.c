@@ -50,7 +50,7 @@
 #include <linux/reboot.h>
 #include <linux/ftrace.h>
 #include <linux/slow-work.h>
-#include <linux/perf_counter.h>
+#include <linux/perf_event.h>
 
 #include <asm/uaccess.h>
 #include <asm/processor.h>
@@ -91,7 +91,9 @@ extern int sysctl_nr_trim_pages;
 #ifdef CONFIG_RCU_TORTURE_TEST
 extern int rcutorture_runnable;
 #endif /* #ifdef CONFIG_RCU_TORTURE_TEST */
+#ifdef CONFIG_BLOCK
 extern int blk_iopoll_enabled;
+#endif
 
 /* Constants used for minimum and  maximum */
 #ifdef CONFIG_DETECT_SOFTLOCKUP
@@ -962,28 +964,28 @@ static struct ctl_table kern_table[] = {
 		.child		= slow_work_sysctls,
 	},
 #endif
-#ifdef CONFIG_PERF_COUNTERS
+#ifdef CONFIG_PERF_EVENTS
 	{
 		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "perf_counter_paranoid",
-		.data		= &sysctl_perf_counter_paranoid,
-		.maxlen		= sizeof(sysctl_perf_counter_paranoid),
+		.procname	= "perf_event_paranoid",
+		.data		= &sysctl_perf_event_paranoid,
+		.maxlen		= sizeof(sysctl_perf_event_paranoid),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},
 	{
 		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "perf_counter_mlock_kb",
-		.data		= &sysctl_perf_counter_mlock,
-		.maxlen		= sizeof(sysctl_perf_counter_mlock),
+		.procname	= "perf_event_mlock_kb",
+		.data		= &sysctl_perf_event_mlock,
+		.maxlen		= sizeof(sysctl_perf_event_mlock),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},
 	{
 		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "perf_counter_max_sample_rate",
-		.data		= &sysctl_perf_counter_sample_rate,
-		.maxlen		= sizeof(sysctl_perf_counter_sample_rate),
+		.procname	= "perf_event_max_sample_rate",
+		.data		= &sysctl_perf_event_sample_rate,
+		.maxlen		= sizeof(sysctl_perf_event_sample_rate),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},
@@ -998,6 +1000,7 @@ static struct ctl_table kern_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 #endif
+#ifdef CONFIG_BLOCK
 	{
 		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "blk_iopoll",
@@ -1006,6 +1009,7 @@ static struct ctl_table kern_table[] = {
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},
+#endif
 /*
  * NOTE: do not add new entries to this table unless you have read
  * Documentation/sysctl/ctl_unnumbered.txt
