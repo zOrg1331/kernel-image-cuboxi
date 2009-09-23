@@ -394,6 +394,7 @@ writeback_single_inode(struct inode *inode, struct writeback_control *wbc)
 {
 	struct address_space *mapping = inode->i_mapping;
 	int wait = wbc->sync_mode == WB_SYNC_ALL;
+	pgoff_t start_index;
 	unsigned dirty;
 	int ret;
 
@@ -431,6 +432,7 @@ writeback_single_inode(struct inode *inode, struct writeback_control *wbc)
 
 	spin_unlock(&inode_lock);
 
+	start_index = mapping->writeback_index;
 	ret = do_writepages(mapping, wbc);
 
 	/* Don't write the inode if only I_DIRTY_PAGES was set */
@@ -482,7 +484,9 @@ writeback_single_inode(struct inode *inode, struct writeback_control *wbc)
 				 * soon as the queue becomes uncongested.
 				 */
 				inode->i_state |= I_DIRTY_PAGES;
-				if (wbc->nr_to_write <= 0) {
+select_queue:
+				if (wbc->nr_to_write <= 0 &&
+				    start_index < mapping->writeback_index) {
 					/*
 					 * slice used up: queue for next turn
 					 */
