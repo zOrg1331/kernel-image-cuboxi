@@ -214,7 +214,6 @@ int exofs_sync_fs(struct super_block *sb, int wait)
 	}
 
 	lock_super(sb);
-	lock_kernel();
 	sbi = sb->s_fs_info;
 	fscb->s_nextid = cpu_to_le64(sbi->s_nextid);
 	fscb->s_numfiles = cpu_to_le32(sbi->s_numfiles);
@@ -245,7 +244,6 @@ int exofs_sync_fs(struct super_block *sb, int wait)
 out:
 	if (or)
 		osd_end_request(or);
-	unlock_kernel();
 	unlock_super(sb);
 	kfree(fscb);
 	return ret;
@@ -259,6 +257,15 @@ static void exofs_write_super(struct super_block *sb)
 		sb->s_dirt = 0;
 }
 
+static void _exofs_print_device(const char *msg, const char *dev_path,
+				struct osd_dev *od, u64 pid)
+{
+	const struct osd_dev_info *odi = osduld_device_info(od);
+
+	printk(KERN_NOTICE "exofs: %s %s osd_name-%s pid-0x%llx\n",
+		msg, dev_path ?: "", odi->osdname, _LLU(pid));
+}
+
 /*
  * This function is called when the vfs is freeing the superblock.  We just
  * need to free our own part.
@@ -267,8 +274,6 @@ static void exofs_put_super(struct super_block *sb)
 {
 	int num_pend;
 	struct exofs_sb_info *sbi = sb->s_fs_info;
-
-	lock_kernel();
 
 	if (sb->s_dirt)
 		exofs_write_super(sb);
@@ -283,11 +288,10 @@ static void exofs_put_super(struct super_block *sb)
 				  msecs_to_jiffies(100));
 	}
 
+	_exofs_print_device("Unmounting", NULL, sbi->s_dev, sbi->s_pid);
 	osduld_put_device(sbi->s_dev);
 	kfree(sb->s_fs_info);
 	sb->s_fs_info = NULL;
-
-	unlock_kernel();
 }
 
 /*
@@ -401,6 +405,7 @@ static int exofs_fill_super(struct super_block *sb, void *data, int silent)
 		goto free_sbi;
 	}
 
+	_exofs_print_device("Mounting", opts->dev_name, sbi->s_dev, sbi->s_pid);
 	ret = 0;
 out:
 	if (or)
