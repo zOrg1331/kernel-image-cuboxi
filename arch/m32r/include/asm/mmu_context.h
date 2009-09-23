@@ -135,7 +135,7 @@ static inline void switch_mm(struct mm_struct *prev,
 	}
 #ifdef CONFIG_SMP
 	else
-		if (!cpumask_test_and_set_cpu(cpu, mm_cpumask(next))
+		if (!cpumask_test_and_set_cpu(cpu, mm_cpumask(next)))
 			activate_context(next);
 #endif /* CONFIG_SMP */
 }

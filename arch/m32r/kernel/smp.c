@@ -469,7 +469,7 @@ void smp_invalidate_interrupt(void)
 		if (flush_mm == current->active_mm)
 			activate_context(flush_mm);
 		else
-			cpumask_clear(cpu_id, mm_cpumask(flush_mm));
+			cpumask_clear_cpu(cpu_id, mm_cpumask(flush_mm));
 	} else {
 		unsigned long va = flush_va;
 
