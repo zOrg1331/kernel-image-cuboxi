@@ -912,6 +912,8 @@ static void sierra_release(struct usb_serial *serial)
 	}
 }
 
+#ifdef CONFIG_PM
+
 static void stop_read_write_urbs(struct usb_serial *serial)
 {
 	int i, j;
@@ -989,6 +991,8 @@ static int sierra_resume(struct usb_serial *serial)
 	return ec ? -EIO : 0;
 }
 
+#endif /* CONFIG_PM */
+
 static struct usb_serial_driver sierra_device = {
 	.driver = {
 		.owner =	THIS_MODULE,
@@ -1009,8 +1013,10 @@ static struct usb_serial_driver sierra_device = {
 	.tiocmset          = sierra_tiocmset,
 	.attach            = sierra_startup,
 	.release           = sierra_release,
+#ifdef CONFIG_PM
 	.suspend	   = sierra_suspend,
 	.resume		   = sierra_resume,
+#endif
 	.read_int_callback = sierra_instat_callback,
 };
 
