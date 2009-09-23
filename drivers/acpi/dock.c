@@ -233,16 +233,18 @@ static int is_ata(acpi_handle handle)
 static int is_battery(acpi_handle handle)
 {
 	struct acpi_device_info *info;
+	struct acpi_buffer buffer = {ACPI_ALLOCATE_BUFFER, NULL};
 	int ret = 1;
 
-	if (!ACPI_SUCCESS(acpi_get_object_info(handle, &info)))
+	if (!ACPI_SUCCESS(acpi_get_object_info(handle, &buffer)))
 		return 0;
+	info = buffer.pointer;
 	if (!(info->valid & ACPI_VALID_HID))
 		ret = 0;
 	else
-		ret = !strcmp("PNP0C0A", info->hardware_id.string);
+		ret = !strcmp("PNP0C0A", info->hardware_id.value);
 
-	kfree(info);
+	kfree(buffer.pointer);
 	return ret;
 }
 

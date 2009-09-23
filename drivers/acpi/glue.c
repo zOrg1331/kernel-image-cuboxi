@@ -95,13 +95,15 @@ do_acpi_find_child(acpi_handle handle, u32 lvl, void *context, void **rv)
 {
 	acpi_status status;
 	struct acpi_device_info *info;
+	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
 	struct acpi_find_child *find = context;
 
-	status = acpi_get_object_info(handle, &info);
+	status = acpi_get_object_info(handle, &buffer);
 	if (ACPI_SUCCESS(status)) {
+		info = buffer.pointer;
 		if (info->address == find->address)
 			find->handle = handle;
-		kfree(info);
+		kfree(buffer.pointer);
 	}
 	return AE_OK;
 }

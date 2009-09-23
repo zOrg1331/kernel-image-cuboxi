@@ -202,17 +202,20 @@ container_walk_namespace_cb(acpi_handle handle,
 			    u32 lvl, void *context, void **rv)
 {
 	char *hid = NULL;
+	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
 	struct acpi_device_info *info;
 	acpi_status status;
 	int *action = context;
 
-	status = acpi_get_object_info(handle, &info);
-	if (ACPI_FAILURE(status)) {
+
+	status = acpi_get_object_info(handle, &buffer);
+	if (ACPI_FAILURE(status) || !buffer.pointer) {
 		return AE_OK;
 	}
 
+	info = buffer.pointer;
 	if (info->valid & ACPI_VALID_HID)
-		hid = info->hardware_id.string;
+		hid = info->hardware_id.value;
 
 	if (hid == NULL) {
 		goto end;
@@ -239,7 +242,7 @@ container_walk_namespace_cb(acpi_handle handle,
 	}
 
       end:
-	kfree(info);
+	kfree(buffer.pointer);
 
 	return AE_OK;
 }

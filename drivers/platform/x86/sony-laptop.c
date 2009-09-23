@@ -976,12 +976,15 @@ static acpi_status sony_walk_callback(acpi_handle handle, u32 level,
 				      void *context, void **return_value)
 {
 	struct acpi_device_info *info;
+	struct acpi_buffer buffer = {ACPI_ALLOCATE_BUFFER, NULL};
 
-	if (ACPI_SUCCESS(acpi_get_object_info(handle, &info))) {
+	if (ACPI_SUCCESS(acpi_get_object_info(handle, &buffer))) {
+		info = buffer.pointer;
+
 		printk(KERN_WARNING DRV_PFX "method: name: %4.4s, args %X\n",
 			(char *)&info->name, info->param_count);
 
-		kfree(info);
+		kfree(buffer.pointer);
 	}
 
 	return AE_OK;
