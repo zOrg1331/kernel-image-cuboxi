@@ -3,6 +3,7 @@
 #include <linux/blkdev.h>
 #include <linux/hdreg.h>
 #include <linux/virtio.h>
+#include <linux/virtio_ids.h>
 #include <linux/virtio_blk.h>
 #include <linux/scatterlist.h>
 
@@ -139,7 +140,7 @@ static bool do_req(struct request_queue *q, struct virtio_blk *vblk,
 		}
 	}
 
-	if (vblk->vq->vq_ops->add_buf(vblk->vq, vblk->sg, out, in, vbr)) {
+	if (vblk->vq->vq_ops->add_buf(vblk->vq, vblk->sg, out, in, vbr) < 0) {
 		mempool_free(vbr, vblk->pool);
 		return false;
 	}
@@ -314,7 +315,6 @@ static int __devinit virtblk_probe(struct virtio_device *vdev)
 	}
 
 	vblk->disk->queue->queuedata = vblk;
-	queue_flag_set_unlocked(QUEUE_FLAG_VIRT, vblk->disk->queue);
 
 	if (index < 26) {
 		sprintf(vblk->disk->disk_name, "vd%c", 'a' + index % 26);
@@ -336,9 +336,16 @@ static int __devinit virtblk_probe(struct virtio_device *vdev)
 	vblk->disk->driverfs_dev = &vdev->dev;
 	index++;
 
-	/* If barriers are supported, tell block layer that queue is ordered */
+	/*
+	 * If barriers are supported, tell block layer that queue is ordered.
+	 *
+	 * If no barriers are supported assume the host uses synchronous
+	 * writes and just drain the the queue before and after the barrier.
+	 */
 	if (virtio_has_feature(vdev, VIRTIO_BLK_F_BARRIER))
 		blk_queue_ordered(vblk->disk->queue, QUEUE_ORDERED_TAG, NULL);
+	else
+		blk_queue_ordered(vblk->disk->queue, QUEUE_ORDERED_DRAIN, NULL);
 
 	/* If disk is read-only in the host, the guest should obey */
 	if (virtio_has_feature(vdev, VIRTIO_BLK_F_RO))
