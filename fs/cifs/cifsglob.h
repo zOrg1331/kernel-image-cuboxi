@@ -18,7 +18,6 @@
  */
 #include <linux/in.h>
 #include <linux/in6.h>
-#include <linux/slow-work.h>
 #include "cifs_fs_sb.h"
 #include "cifsacl.h"
 /*
@@ -347,16 +346,14 @@ struct cifsFileInfo {
 	/* lock scope id (0 if none) */
 	struct file *pfile; /* needed for writepage */
 	struct inode *pInode; /* needed for oplock break */
-	struct vfsmount *mnt;
 	struct mutex lock_mutex;
 	struct list_head llist; /* list of byte range locks we have. */
 	bool closePend:1;	/* file is marked to close */
 	bool invalidHandle:1;	/* file closed via session abend */
-	bool oplock_break_cancelled:1;
+	bool messageMode:1;	/* for pipes: message vs byte mode */
 	atomic_t count;		/* reference count */
 	struct mutex fh_mutex; /* prevents reopen race after dead ses*/
 	struct cifs_search_info srch_inf;
-	struct slow_work oplock_break; /* slow_work job for oplock breaks */
 };
 
 /* Take a reference on the file private data */
@@ -673,6 +670,12 @@ GLOBAL_EXTERN rwlock_t		cifs_tcp_ses_lock;
  */
 GLOBAL_EXTERN rwlock_t GlobalSMBSeslock;
 
+/* Global list of oplocks */
+GLOBAL_EXTERN struct list_head cifs_oplock_list;
+
+/* Protects the cifs_oplock_list */
+GLOBAL_EXTERN spinlock_t cifs_oplock_lock;
+
 /* Outstanding dir notify requests */
 GLOBAL_EXTERN struct list_head GlobalDnotifyReqList;
 /* DirNotify response queue */
@@ -723,4 +726,3 @@ GLOBAL_EXTERN unsigned int cifs_min_rcv;    /* min size of big ntwrk buf pool */
 GLOBAL_EXTERN unsigned int cifs_min_small;  /* min size of small buf pool */
 GLOBAL_EXTERN unsigned int cifs_max_pending; /* MAX requests at once to server*/
 
-extern const struct slow_work_ops cifs_oplock_break_ops;
