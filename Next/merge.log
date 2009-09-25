@@ -1,0 +1,2569 @@
+$ git checkout master
+Already on 'master'
+$ git reset --hard stable
+HEAD is now at 0dd52d0 Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/dtor/input
+Merging origin/master
+$ git merge origin/master
+Updating 0dd52d0..94e0fb0
+Fast forward
+ Documentation/auxdisplay/cfag12864b-example.c      |    1 -
+ Documentation/cgroups/cgroups.txt                  |   32 +-
+ Documentation/cgroups/memory.txt                   |   41 +-
+ Documentation/crypto/async-tx-api.txt              |   75 +-
+ Documentation/filesystems/sharedsubtree.txt        |  220 +--
+ Documentation/filesystems/vfs.txt                  |    7 +
+ Documentation/ioctl/ioctl-number.txt               |    1 +
+ Documentation/sysctl/fs.txt                        |   17 +-
+ Documentation/sysctl/kernel.txt                    |   22 +
+ Documentation/sysctl/vm.txt                        |   41 +-
+ Documentation/vm/.gitignore                        |    1 +
+ Documentation/vm/locking                           |    2 +-
+ Documentation/vm/page-types.c                      |  200 ++-
+ MAINTAINERS                                        |   23 +-
+ arch/alpha/include/asm/fcntl.h                     |    2 +
+ arch/alpha/include/asm/smp.h                       |    2 +-
+ arch/alpha/include/asm/topology.h                  |   18 -
+ arch/alpha/kernel/core_marvel.c                    |    2 +-
+ arch/alpha/kernel/core_titan.c                     |    2 +-
+ arch/alpha/kernel/pci_impl.h                       |    2 +-
+ arch/alpha/kernel/pci_iommu.c                      |    4 +-
+ arch/alpha/kernel/process.c                        |    1 -
+ arch/alpha/kernel/smp.c                            |   14 +-
+ arch/arm/include/asm/cacheflush.h                  |    8 +-
+ arch/arm/include/asm/hardware/iop3xx-adma.h        |   81 +-
+ arch/arm/include/asm/hardware/iop_adma.h           |    3 +
+ arch/arm/include/asm/mmu_context.h                 |    7 +-
+ arch/arm/include/asm/smp.h                         |    1 -
+ arch/arm/include/asm/tlbflush.h                    |    4 +-
+ arch/arm/kernel/smp.c                              |   10 +-
+ arch/arm/kernel/sys_arm.c                          |    1 -
+ arch/arm/mach-iop13xx/include/mach/adma.h          |  119 ++-
+ arch/arm/mach-iop13xx/setup.c                      |   17 +-
+ arch/arm/mm/context.c                              |    2 +-
+ arch/arm/mm/flush.c                                |   10 +-
+ arch/arm/plat-iop/adma.c                           |    4 +-
+ arch/frv/kernel/pm.c                               |   14 +-
+ arch/frv/kernel/sys_frv.c                          |    1 -
+ arch/h8300/kernel/sys_h8300.c                      |    1 -
+ arch/ia64/include/asm/smp.h                        |    1 -
+ arch/ia64/include/asm/topology.h                   |    3 -
+ arch/ia64/kernel/smp.c                             |    2 +-
+ arch/m32r/include/asm/mmu_context.h                |    4 +-
+ arch/m32r/include/asm/smp.h                        |    2 +-
+ arch/m32r/kernel/smp.c                             |   30 +-
+ arch/m32r/kernel/smpboot.c                         |    2 +-
+ arch/m68k/kernel/sys_m68k.c                        |    1 -
+ arch/m68knommu/kernel/sys_m68k.c                   |    1 -
+ arch/microblaze/Kconfig                            |    1 +
+ arch/microblaze/Makefile                           |   31 +-
+ arch/microblaze/boot/Makefile                      |   41 +-
+ arch/microblaze/boot/dts/system.dts                |    1 +
+ arch/microblaze/boot/linked_dtb.S                  |    3 +
+ arch/microblaze/configs/mmu_defconfig              |   30 +-
+ arch/microblaze/configs/nommu_defconfig            |   35 +-
+ arch/microblaze/include/asm/asm-compat.h           |   17 +
+ arch/microblaze/include/asm/io.h                   |    3 +
+ arch/microblaze/include/asm/ipc.h                  |    1 -
+ arch/microblaze/include/asm/page.h                 |    3 +
+ arch/microblaze/include/asm/setup.h                |    2 +-
+ arch/microblaze/include/asm/syscall.h              |   99 ++
+ arch/microblaze/kernel/cpu/cpuinfo.c               |    3 +
+ arch/microblaze/kernel/entry.S                     |   72 +-
+ arch/microblaze/kernel/exceptions.c                |   33 +-
+ arch/microblaze/kernel/head.S                      |   14 +-
+ arch/microblaze/kernel/hw_exception_handler.S      |   10 +-
+ arch/microblaze/kernel/process.c                   |    1 +
+ arch/microblaze/kernel/ptrace.c                    |   62 +
+ arch/microblaze/kernel/setup.c                     |   12 +-
+ arch/microblaze/kernel/sys_microblaze.c            |    1 -
+ arch/microblaze/kernel/vmlinux.lds.S               |   72 +-
+ arch/microblaze/mm/init.c                          |    3 +-
+ arch/mips/alchemy/common/time.c                    |    2 +-
+ arch/mips/include/asm/mach-ip27/topology.h         |    2 -
+ arch/mips/include/asm/mmu_context.h                |   10 +-
+ arch/mips/include/asm/smp-ops.h                    |    2 +-
+ arch/mips/include/asm/smp.h                        |    2 +-
+ arch/mips/kernel/smp-cmp.c                         |    6 +-
+ arch/mips/kernel/smp-mt.c                          |    6 +-
+ arch/mips/kernel/smp-up.c                          |    3 +-
+ arch/mips/kernel/smp.c                             |    8 +-
+ arch/mips/kernel/smtc.c                            |    6 +-
+ arch/mips/lasat/sysctl.c                           |   18 +-
+ arch/mips/mipssim/sim_smtc.c                       |    5 +-
+ arch/mips/mm/c-octeon.c                            |    2 +-
+ arch/mips/mti-malta/malta-smtc.c                   |    4 +-
+ arch/mips/pmc-sierra/yosemite/smp.c                |    4 +-
+ arch/mips/sgi-ip27/ip27-memory.c                   |    2 +-
+ arch/mips/sgi-ip27/ip27-smp.c                      |    4 +-
+ arch/mips/sibyte/bcm1480/smp.c                     |    5 +-
+ arch/mips/sibyte/sb1250/smp.c                      |    5 +-
+ arch/mn10300/include/asm/mmu_context.h             |   12 +-
+ arch/mn10300/kernel/sys_mn10300.c                  |    1 -
+ arch/parisc/include/asm/fcntl.h                    |    2 +
+ arch/parisc/include/asm/smp.h                      |    1 -
+ arch/parisc/kernel/sys_parisc32.c                  |    1 -
+ arch/powerpc/include/asm/fsldma.h                  |  136 ++
+ arch/powerpc/include/asm/smp.h                     |    2 +-
+ arch/powerpc/include/asm/topology.h                |   12 -
+ arch/powerpc/kernel/setup-common.c                 |    7 +-
+ arch/powerpc/kernel/smp.c                          |   12 +-
+ arch/powerpc/kernel/sys_ppc32.c                    |    1 -
+ arch/powerpc/platforms/powermac/smp.c              |    6 +-
+ arch/powerpc/platforms/pseries/hotplug-cpu.c       |    6 +-
+ arch/s390/appldata/appldata_base.c                 |    9 +-
+ arch/s390/include/asm/smp.h                        |    2 +-
+ arch/s390/include/asm/topology.h                   |    1 -
+ arch/s390/kernel/compat_linux.c                    |    1 -
+ arch/s390/kernel/debug.c                           |    4 +-
+ arch/s390/kernel/process.c                         |    1 -
+ arch/s390/kernel/smp.c                             |    4 +-
+ arch/s390/mm/cmm.c                                 |    4 +-
+ arch/sh/drivers/dma/Kconfig                        |   12 +-
+ arch/sh/drivers/dma/Makefile                       |    3 +-
+ arch/sh/include/asm/dma-sh.h                       |   13 +
+ arch/sh/include/asm/smp.h                          |    1 -
+ arch/sh/include/asm/topology.h                     |    1 -
+ arch/sh/kernel/sys_sh32.c                          |    1 -
+ arch/sh/kernel/sys_sh64.c                          |    1 -
+ arch/sparc/include/asm/smp_64.h                    |    1 -
+ arch/sparc/include/asm/topology_64.h               |   16 -
+ arch/sparc/kernel/sys_sparc32.c                    |    1 -
+ arch/sparc/kernel/systbls.h                        |    3 +-
+ arch/um/include/asm/mmu_context.h                  |    4 +-
+ arch/um/kernel/smp.c                               |    2 +-
+ arch/x86/include/asm/mmu_context.h                 |    6 +-
+ arch/x86/include/asm/nmi.h                         |    3 +-
+ arch/x86/include/asm/pci.h                         |    6 +-
+ arch/x86/include/asm/smp.h                         |    1 -
+ arch/x86/kernel/apic/io_apic.c                     |    7 +-
+ arch/x86/kernel/apic/nmi.c                         |    4 +-
+ arch/x86/kernel/dumpstack_32.c                     |    1 -
+ arch/x86/kernel/dumpstack_64.c                     |    1 -
+ arch/x86/kernel/ldt.c                              |    4 +-
+ arch/x86/kernel/process.c                          |    6 +-
+ arch/x86/kernel/smpboot.c                          |    9 +-
+ arch/x86/kernel/time.c                             |    1 -
+ arch/x86/kernel/traps.c                            |    1 -
+ arch/x86/kernel/vsyscall_64.c                      |   10 +-
+ arch/x86/mm/fault.c                                |   19 +-
+ arch/x86/mm/pageattr.c                             |    1 +
+ arch/x86/mm/tlb.c                                  |   15 +-
+ arch/x86/pci/common.c                              |    2 +-
+ arch/x86/xen/mmu.c                                 |    4 +-
+ crypto/async_tx/Kconfig                            |    9 +
+ crypto/async_tx/Makefile                           |    3 +
+ crypto/async_tx/async_memcpy.c                     |   44 +-
+ crypto/async_tx/async_memset.c                     |   43 +-
+ crypto/async_tx/async_pq.c                         |  395 +++++
+ crypto/async_tx/async_raid6_recov.c                |  468 ++++++
+ crypto/async_tx/async_tx.c                         |   87 +-
+ crypto/async_tx/async_xor.c                        |  207 ++--
+ crypto/async_tx/raid6test.c                        |  240 +++
+ drivers/acpi/button.c                              |   45 +-
+ drivers/acpi/osl.c                                 |    2 +-
+ drivers/acpi/processor_perflib.c                   |    3 +-
+ drivers/acpi/processor_throttling.c                |    3 +-
+ drivers/cdrom/cdrom.c                              |    8 +-
+ drivers/char/Kconfig                               |    8 +
+ drivers/char/Makefile                              |    1 +
+ drivers/char/agp/intel-agp.c                       |   37 +-
+ drivers/char/bfin-otp.c                            |  173 ++-
+ drivers/char/hpet.c                                |   21 +-
+ drivers/char/mem.c                                 |    2 +-
+ drivers/char/mwave/mwavedd.c                       |   22 +-
+ drivers/char/random.c                              |    4 +-
+ drivers/char/rio/rioctrl.c                         |    2 +-
+ drivers/char/uv_mmtimer.c                          |  216 +++
+ drivers/dca/dca-core.c                             |  124 ++-
+ drivers/dma/Kconfig                                |   14 +-
+ drivers/dma/Makefile                               |    4 +-
+ drivers/dma/at_hdmac.c                             |   60 +-
+ drivers/dma/at_hdmac_regs.h                        |    1 +
+ drivers/dma/dmaengine.c                            |   94 +-
+ drivers/dma/dmatest.c                              |   40 +
+ drivers/dma/dw_dmac.c                              |   50 +-
+ drivers/dma/dw_dmac_regs.h                         |    1 +
+ drivers/dma/fsldma.c                               |  288 +++-
+ drivers/dma/fsldma.h                               |    4 +-
+ drivers/dma/ioat.c                                 |  202 ---
+ drivers/dma/ioat/Makefile                          |    2 +
+ drivers/dma/{ioat_dca.c => ioat/dca.c}             |   13 +-
+ drivers/dma/ioat/dma.c                             | 1238 ++++++++++++++
+ drivers/dma/ioat/dma.h                             |  337 ++++
+ drivers/dma/ioat/dma_v2.c                          |  871 ++++++++++
+ drivers/dma/ioat/dma_v2.h                          |  190 +++
+ drivers/dma/ioat/dma_v3.c                          | 1223 ++++++++++++++
+ drivers/dma/ioat/hw.h                              |  215 +++
+ drivers/dma/ioat/pci.c                             |  210 +++
+ .../dma/{ioatdma_registers.h => ioat/registers.h}  |   54 +-
+ drivers/dma/ioat_dma.c                             | 1741 --------------------
+ drivers/dma/ioatdma.h                              |  165 --
+ drivers/dma/ioatdma_hw.h                           |   70 -
+ drivers/dma/iop-adma.c                             |  491 +++++-
+ drivers/dma/iovlock.c                              |   10 +
+ drivers/dma/mv_xor.c                               |    7 +-
+ drivers/dma/mv_xor.h                               |    4 +-
+ drivers/dma/shdma.c                                |  786 +++++++++
+ drivers/dma/shdma.h                                |   64 +
+ drivers/dma/txx9dmac.c                             |   24 +-
+ drivers/dma/txx9dmac.h                             |    1 +
+ drivers/edac/Kconfig                               |   13 +-
+ drivers/edac/Makefile                              |    2 +
+ drivers/edac/cpc925_edac.c                         |    6 +-
+ drivers/edac/edac_device.c                         |    5 +-
+ drivers/edac/edac_mc.c                             |    4 +-
+ drivers/edac/edac_pci.c                            |    4 +-
+ drivers/edac/i3200_edac.c                          |  527 ++++++
+ drivers/edac/mpc85xx_edac.c                        |   30 +-
+ drivers/edac/mv64x60_edac.c                        |   22 +-
+ drivers/gpu/drm/Kconfig                            |    1 +
+ drivers/gpu/drm/drm_gem.c                          |   13 +
+ drivers/gpu/drm/i915/Makefile                      |    1 +
+ drivers/gpu/drm/i915/i915_debugfs.c                |    6 +-
+ drivers/gpu/drm/i915/i915_dma.c                    |  194 +++-
+ drivers/gpu/drm/i915/i915_drv.c                    |  133 ++-
+ drivers/gpu/drm/i915/i915_drv.h                    |   77 +-
+ drivers/gpu/drm/i915/i915_gem.c                    |  876 ++++++++---
+ drivers/gpu/drm/i915/i915_irq.c                    |   92 +-
+ drivers/gpu/drm/i915/i915_opregion.c               |   22 +-
+ drivers/gpu/drm/i915/i915_reg.h                    |   34 +
+ drivers/gpu/drm/i915/i915_suspend.c                |  170 ++-
+ drivers/gpu/drm/i915/i915_trace.h                  |  315 ++++
+ drivers/gpu/drm/i915/i915_trace_points.c           |   11 +
+ drivers/gpu/drm/i915/intel_bios.c                  |    3 +
+ drivers/gpu/drm/i915/intel_crt.c                   |    9 +-
+ drivers/gpu/drm/i915/intel_display.c               |  616 ++++++--
+ drivers/gpu/drm/i915/intel_drv.h                   |    5 +-
+ drivers/gpu/drm/i915/intel_lvds.c                  |   63 +-
+ drivers/gpu/drm/i915/intel_sdvo.c                  |  502 ++++++-
+ drivers/idle/i7300_idle.c                          |   20 +-
+ drivers/input/misc/Kconfig                         |    1 +
+ drivers/md/Kconfig                                 |   26 +
+ drivers/md/bitmap.c                                |    5 +-
+ drivers/md/linear.c                                |    3 +
+ drivers/md/md.c                                    |   25 +-
+ drivers/md/md.h                                    |    1 +
+ drivers/md/multipath.c                             |    6 +-
+ drivers/md/raid0.c                                 |    8 +-
+ drivers/md/raid1.c                                 |   15 +-
+ drivers/md/raid10.c                                |   12 +-
+ drivers/md/raid5.c                                 | 1493 +++++++++++-------
+ drivers/md/raid5.h                                 |   28 +-
+ drivers/media/dvb/dvb-core/dvbdev.h                |    5 +-
+ drivers/media/dvb/dvb-usb/Kconfig                  |    2 +-
+ drivers/media/video/saa7164/saa7164-api.c          |    8 +-
+ drivers/media/video/saa7164/saa7164-cmd.c          |    2 +-
+ drivers/media/video/saa7164/saa7164-core.c         |    6 +-
+ drivers/media/video/saa7164/saa7164.h              |    4 +-
+ drivers/media/video/usbvision/usbvision-core.c     |    1 -
+ drivers/media/video/usbvision/usbvision-i2c.c      |    1 -
+ drivers/media/video/usbvision/usbvision-video.c    |    1 -
+ drivers/memstick/core/memstick.c                   |    2 +-
+ drivers/misc/sgi-gru/grukservices.c                |    2 +
+ drivers/misc/sgi-gru/gruprocfs.c                   |    3 +-
+ drivers/mmc/host/atmel-mci.c                       |    9 +-
+ drivers/mtd/Kconfig                                |    2 +-
+ drivers/mtd/maps/Kconfig                           |    2 +-
+ drivers/net/sfc/efx.c                              |    3 +-
+ drivers/net/wireless/arlan-proc.c                  |   28 +-
+ drivers/oprofile/buffer_sync.c                     |    3 +-
+ drivers/parport/procfs.c                           |   12 +-
+ drivers/pci/hotplug/pciehp.h                       |  107 +-
+ drivers/pci/hotplug/pciehp_acpi.c                  |   17 +-
+ drivers/pci/hotplug/pciehp_core.c                  |  136 +-
+ drivers/pci/hotplug/pciehp_ctrl.c                  |  109 +-
+ drivers/pci/hotplug/pciehp_hpc.c                   |  109 +-
+ drivers/pci/hotplug/pciehp_pci.c                   |   23 +-
+ drivers/pci/pcie/aer/aerdrv.c                      |    2 +
+ drivers/pci/pcie/aspm.c                            |    3 -
+ drivers/s390/char/zcore.c                          |    1 -
+ drivers/staging/go7007/Makefile                    |    5 -
+ drivers/usb/Kconfig                                |    1 -
+ drivers/usb/gadget/f_loopback.c                    |    1 -
+ drivers/usb/gadget/f_obex.c                        |    1 -
+ drivers/usb/gadget/f_sourcesink.c                  |    1 -
+ drivers/usb/gadget/u_audio.c                       |    1 -
+ drivers/usb/gadget/u_ether.c                       |    1 -
+ drivers/usb/serial/sierra.c                        |    5 +
+ drivers/vlynq/vlynq.c                              |    2 +-
+ fs/adfs/inode.c                                    |    7 -
+ fs/attr.c                                          |   46 +-
+ fs/befs/linuxvfs.c                                 |    7 +-
+ fs/binfmt_elf.c                                    |   52 +-
+ fs/binfmt_elf_fdpic.c                              |   17 +-
+ fs/binfmt_flat.c                                   |   22 +-
+ fs/block_dev.c                                     |  140 +-
+ fs/btrfs/async-thread.c                            |  254 +++-
+ fs/btrfs/async-thread.h                            |   12 +
+ fs/btrfs/btrfs_inode.h                             |    1 +
+ fs/btrfs/compression.c                             |    8 +-
+ fs/btrfs/ctree.c                                   |    6 +
+ fs/btrfs/ctree.h                                   |   78 +-
+ fs/btrfs/dir-item.c                                |   47 +
+ fs/btrfs/disk-io.c                                 |  235 ++-
+ fs/btrfs/export.c                                  |  133 +-
+ fs/btrfs/extent-tree.c                             | 1662 ++++++++-----------
+ fs/btrfs/extent_io.c                               |  330 +++--
+ fs/btrfs/extent_io.h                               |   16 +-
+ fs/btrfs/extent_map.c                              |  103 ++-
+ fs/btrfs/extent_map.h                              |    5 +-
+ fs/btrfs/file.c                                    |   35 +-
+ fs/btrfs/free-space-cache.c                        |   36 +-
+ fs/btrfs/inode-item.c                              |    4 +-
+ fs/btrfs/inode-map.c                               |   93 +-
+ fs/btrfs/inode.c                                   |  664 ++++++--
+ fs/btrfs/ioctl.c                                   |  339 +++--
+ fs/btrfs/ioctl.h                                   |    3 +-
+ fs/btrfs/ordered-data.c                            |   33 +-
+ fs/btrfs/ordered-data.h                            |    3 +
+ fs/btrfs/orphan.c                                  |   20 +
+ fs/btrfs/relocation.c                              |  280 ++--
+ fs/btrfs/root-tree.c                               |  138 ++-
+ fs/btrfs/super.c                                   |    1 +
+ fs/btrfs/transaction.c                             |   38 +-
+ fs/btrfs/tree-log.c                                |   25 +-
+ fs/btrfs/volumes.c                                 |  117 +-
+ fs/btrfs/volumes.h                                 |    3 +
+ fs/buffer.c                                        |   10 +-
+ fs/char_dev.c                                      |    3 -
+ fs/cifs/cifsfs.c                                   |    3 +-
+ fs/cifs/inode.c                                    |   53 +-
+ fs/coda/coda_int.h                                 |    1 +
+ fs/compat.c                                        |   24 +-
+ fs/drop_caches.c                                   |    4 +-
+ fs/exec.c                                          |  114 +-
+ fs/exofs/super.c                                   |    6 -
+ fs/ext2/inode.c                                    |    2 +
+ fs/ext3/inode.c                                    |    3 +
+ fs/ext4/inode.c                                    |    4 +
+ fs/fat/inode.c                                     |   16 +-
+ fs/fcntl.c                                         |  108 ++-
+ fs/file_table.c                                    |    6 +-
+ fs/fuse/dir.c                                      |   14 +-
+ fs/fuse/fuse_i.h                                   |    2 -
+ fs/fuse/inode.c                                    |   11 +-
+ fs/gfs2/aops.c                                     |    3 +
+ fs/gfs2/ops_inode.c                                |    1 -
+ fs/hfs/mdb.c                                       |    6 +-
+ fs/hfsplus/super.c                                 |    6 +-
+ fs/hugetlbfs/inode.c                               |   45 +-
+ fs/inode.c                                         |   89 +-
+ fs/internal.h                                      |    1 +
+ fs/ioctl.c                                         |    9 +-
+ fs/isofs/inode.c                                   |    8 +-
+ fs/jfs/super.c                                     |    9 +-
+ fs/libfs.c                                         |   13 +-
+ fs/lockd/xdr.c                                     |    1 -
+ fs/lockd/xdr4.c                                    |    1 -
+ fs/namespace.c                                     |   77 +-
+ fs/ncpfs/inode.c                                   |   12 +-
+ fs/ncpfs/ioctl.c                                   |    6 +-
+ fs/nfs/file.c                                      |    1 +
+ fs/nfs/inode.c                                     |   54 +-
+ fs/nfs/nfs2xdr.c                                   |    1 -
+ fs/nfs/nfs3proc.c                                  |    1 -
+ fs/nfs/nfs3xdr.c                                   |    1 -
+ fs/nfs/nfs4proc.c                                  |    1 -
+ fs/nfs/nfs4xdr.c                                   |    1 -
+ fs/nfs/proc.c                                      |    1 -
+ fs/nfsd/nfs4idmap.c                                |    1 -
+ fs/nls/nls_base.c                                  |    3 +-
+ fs/ntfs/aops.c                                     |    2 +
+ fs/ntfs/super.c                                    |   10 +-
+ fs/ocfs2/aops.c                                    |    1 +
+ fs/ocfs2/dlm/dlmast.c                              |    1 -
+ fs/ocfs2/dlm/dlmconvert.c                          |    1 -
+ fs/ocfs2/dlm/dlmdebug.c                            |    1 -
+ fs/ocfs2/dlm/dlmdomain.c                           |    1 -
+ fs/ocfs2/dlm/dlmlock.c                             |    1 -
+ fs/ocfs2/dlm/dlmmaster.c                           |    1 -
+ fs/ocfs2/dlm/dlmrecovery.c                         |    1 -
+ fs/ocfs2/dlm/dlmthread.c                           |    1 -
+ fs/ocfs2/dlm/dlmunlock.c                           |    1 -
+ fs/ocfs2/super.c                                   |    1 -
+ fs/ocfs2/symlink.c                                 |    1 -
+ fs/proc/meminfo.c                                  |    9 +-
+ fs/proc/proc_sysctl.c                              |    2 +-
+ fs/proc/uptime.c                                   |    7 +-
+ fs/ramfs/file-nommu.c                              |   18 +-
+ fs/read_write.c                                    |    3 -
+ fs/romfs/super.c                                   |    2 +-
+ fs/seq_file.c                                      |   74 +-
+ fs/smbfs/inode.c                                   |   10 +-
+ fs/super.c                                         |   67 +-
+ fs/xfs/linux-2.6/xfs_aops.c                        |    1 +
+ fs/xfs/linux-2.6/xfs_sysctl.c                      |    3 +-
+ include/acpi/button.h                              |   25 +
+ include/asm-generic/fcntl.h                        |   13 +
+ include/asm-generic/mman-common.h                  |    1 +
+ include/asm-generic/siginfo.h                      |    8 +-
+ include/asm-generic/topology.h                     |   17 -
+ include/drm/drm_pciids.h                           |    1 +
+ include/drm/i915_drm.h                             |   19 +
+ include/linux/async_tx.h                           |  129 ++-
+ include/linux/binfmts.h                            |    2 +-
+ include/linux/cgroup.h                             |   53 +-
+ include/linux/configfs.h                           |    4 +-
+ include/linux/cpumask.h                            |  709 +++-----
+ include/linux/dca.h                                |   11 +-
+ include/linux/debugfs.h                            |    2 +-
+ include/linux/dmaengine.h                          |  179 ++-
+ include/linux/fs.h                                 |   11 +-
+ include/linux/ftrace.h                             |    4 +-
+ include/linux/futex.h                              |   10 +-
+ include/linux/hugetlb.h                            |    6 +-
+ include/linux/interrupt.h                          |    2 -
+ include/linux/memcontrol.h                         |   10 +
+ include/linux/mm.h                                 |   22 +-
+ include/linux/mm_types.h                           |    7 +-
+ include/linux/mmzone.h                             |   13 +-
+ include/linux/module.h                             |   17 +-
+ include/linux/page-flags.h                         |   17 +-
+ include/linux/page_cgroup.h                        |   13 +
+ include/linux/pci_ids.h                            |   10 +
+ include/linux/prctl.h                              |    2 +
+ include/linux/relay.h                              |    2 +-
+ include/linux/res_counter.h                        |   64 +-
+ include/linux/rmap.h                               |   21 +-
+ include/linux/sched.h                              |   20 +-
+ include/linux/security.h                           |    2 +-
+ include/linux/seq_file.h                           |   38 +
+ include/linux/signal.h                             |    2 +
+ include/linux/smp.h                                |   11 -
+ include/linux/swap.h                               |   41 +-
+ include/linux/swapops.h                            |   38 +
+ include/linux/sysctl.h                             |   19 +-
+ include/linux/time.h                               |   28 +
+ include/linux/topology.h                           |    6 -
+ include/linux/tracehook.h                          |   34 +-
+ include/linux/tracepoint.h                         |    2 +-
+ include/linux/unaligned/be_byteshift.h             |    2 +-
+ include/linux/unaligned/le_byteshift.h             |    2 +-
+ include/linux/utsname.h                            |    1 -
+ include/linux/vgaarb.h                             |    3 +-
+ include/linux/writeback.h                          |   11 +-
+ include/net/ip.h                                   |    2 +-
+ include/net/ndisc.h                                |    2 -
+ init/main.c                                        |    6 -
+ ipc/ipc_sysctl.c                                   |   16 +-
+ ipc/mq_sysctl.c                                    |    8 +-
+ kernel/Makefile                                    |    1 -
+ kernel/audit.c                                     |   18 +-
+ kernel/audit_watch.c                               |    2 +-
+ kernel/auditsc.c                                   |    6 +-
+ kernel/cgroup.c                                    | 1107 +++++++++----
+ kernel/cgroup_debug.c                              |  105 --
+ kernel/cgroup_freezer.c                            |   15 +-
+ kernel/cpuset.c                                    |   66 +-
+ kernel/exit.c                                      |  146 +-
+ kernel/fork.c                                      |   34 +-
+ kernel/gcov/Kconfig                                |    2 +-
+ kernel/hung_task.c                                 |    4 +-
+ kernel/kmod.c                                      |   13 +-
+ kernel/module.c                                    |  159 ++-
+ kernel/ns_cgroup.c                                 |   16 +-
+ kernel/params.c                                    |    7 +-
+ kernel/pid_namespace.c                             |    2 +-
+ kernel/power/swap.c                                |    1 -
+ kernel/ptrace.c                                    |   11 +-
+ kernel/res_counter.c                               |   21 +-
+ kernel/sched.c                                     |   39 +-
+ kernel/sched_fair.c                                |    4 +-
+ kernel/signal.c                                    |  168 +--
+ kernel/slow-work.c                                 |   12 +-
+ kernel/smp.c                                       |    7 -
+ kernel/softlockup.c                                |    4 +-
+ kernel/sys.c                                       |   22 +
+ kernel/sysctl.c                                    |  113 +-
+ kernel/time/Makefile                               |    2 +-
+ kernel/time/timeconv.c                             |  127 ++
+ kernel/trace/ftrace.c                              |    4 +-
+ kernel/trace/trace.c                               |    7 +-
+ kernel/trace/trace_stack.c                         |    4 +-
+ kernel/uid16.c                                     |    1 -
+ kernel/utsname_sysctl.c                            |    4 +-
+ lib/decompress_inflate.c                           |    8 +
+ lib/decompress_unlzma.c                            |   10 +-
+ mm/Kconfig                                         |   14 +
+ mm/Makefile                                        |    2 +
+ mm/filemap.c                                       |    6 +-
+ mm/hugetlb.c                                       |   12 +-
+ mm/hwpoison-inject.c                               |   41 +
+ mm/ksm.c                                           |   14 +-
+ mm/madvise.c                                       |   30 +
+ mm/memcontrol.c                                    |  737 ++++++++-
+ mm/memory-failure.c                                |  832 ++++++++++
+ mm/memory.c                                        |   86 +-
+ mm/migrate.c                                       |    2 +-
+ mm/mremap.c                                        |    4 +-
+ mm/nommu.c                                         |   40 -
+ mm/page-writeback.c                                |   27 +-
+ mm/page_alloc.c                                    |   44 +-
+ mm/quicklist.c                                     |    3 +-
+ mm/rmap.c                                          |   60 +-
+ mm/shmem.c                                         |    5 +-
+ mm/swapfile.c                                      |    4 +-
+ mm/truncate.c                                      |  136 ++-
+ mm/vmscan.c                                        |   51 +-
+ net/bridge/br_netfilter.c                          |    4 +-
+ net/decnet/dn_dev.c                                |    5 +-
+ net/decnet/sysctl_net_decnet.c                     |    2 -
+ net/ipv4/devinet.c                                 |   12 +-
+ net/ipv4/route.c                                   |    7 +-
+ net/ipv4/sysctl_net_ipv4.c                         |   16 +-
+ net/ipv6/addrconf.c                                |    8 +-
+ net/ipv6/ndisc.c                                   |    8 +-
+ net/ipv6/route.c                                   |    4 +-
+ net/irda/irsysctl.c                                |    8 +-
+ net/netfilter/ipvs/ip_vs_ctl.c                     |    8 +-
+ net/netfilter/nf_log.c                             |    4 +-
+ net/phonet/sysctl.c                                |    4 +-
+ net/sunrpc/auth_null.c                             |    1 -
+ net/sunrpc/sysctl.c                                |    4 +-
+ net/sunrpc/xprtrdma/svc_rdma.c                     |    2 +-
+ security/device_cgroup.c                           |    3 +-
+ security/lsm_audit.c                               |    2 +-
+ security/min_addr.c                                |    4 +-
+ security/selinux/hooks.c                           |    2 +-
+ virt/kvm/kvm_main.c                                |    3 +-
+ 520 files changed, 21854 insertions(+), 9097 deletions(-)
+ create mode 120000 arch/microblaze/boot/dts/system.dts
+ create mode 100644 arch/microblaze/boot/linked_dtb.S
+ create mode 100644 arch/microblaze/include/asm/asm-compat.h
+ delete mode 100644 arch/microblaze/include/asm/ipc.h
+ create mode 100644 arch/microblaze/include/asm/syscall.h
+ create mode 100644 arch/powerpc/include/asm/fsldma.h
+ create mode 100644 crypto/async_tx/async_pq.c
+ create mode 100644 crypto/async_tx/async_raid6_recov.c
+ create mode 100644 crypto/async_tx/raid6test.c
+ create mode 100644 drivers/char/uv_mmtimer.c
+ delete mode 100644 drivers/dma/ioat.c
+ create mode 100644 drivers/dma/ioat/Makefile
+ rename drivers/dma/{ioat_dca.c => ioat/dca.c} (98%)
+ create mode 100644 drivers/dma/ioat/dma.c
+ create mode 100644 drivers/dma/ioat/dma.h
+ create mode 100644 drivers/dma/ioat/dma_v2.c
+ create mode 100644 drivers/dma/ioat/dma_v2.h
+ create mode 100644 drivers/dma/ioat/dma_v3.c
+ create mode 100644 drivers/dma/ioat/hw.h
+ create mode 100644 drivers/dma/ioat/pci.c
+ rename drivers/dma/{ioatdma_registers.h => ioat/registers.h} (84%)
+ delete mode 100644 drivers/dma/ioat_dma.c
+ delete mode 100644 drivers/dma/ioatdma.h
+ delete mode 100644 drivers/dma/ioatdma_hw.h
+ create mode 100644 drivers/dma/shdma.c
+ create mode 100644 drivers/dma/shdma.h
+ create mode 100644 drivers/edac/i3200_edac.c
+ create mode 100644 drivers/gpu/drm/i915/i915_trace.h
+ create mode 100644 drivers/gpu/drm/i915/i915_trace_points.c
+ create mode 100644 include/acpi/button.h
+ delete mode 100644 kernel/cgroup_debug.c
+ create mode 100644 kernel/time/timeconv.c
+ create mode 100644 mm/hwpoison-inject.c
+ create mode 100644 mm/memory-failure.c
+Merging fixes/fixes
+$ git merge fixes/fixes
+Updating 94e0fb0..0049a32
+Fast forward
+ arch/powerpc/kvm/timing.h |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+Merging arm-current/master
+$ git merge arm-current/master
+Recorded preimage for 'MAINTAINERS'
+Auto-merging MAINTAINERS
+CONFLICT (content): Merge conflict in MAINTAINERS
+Auto-merging arch/arm/mach-at91/board-neocore926.c
+Automatic merge failed; fix conflicts and then commit the result.
+$ git commit -v -a
+Recorded resolution for 'MAINTAINERS'.
+[master a4d2da8] Merge remote branch 'arm-current/master'
+$ git diff -M --stat --summary HEAD^..
+ arch/arm/common/vic.c                         |    1 +
+ arch/arm/include/asm/atomic.h                 |   26 ++----
+ arch/arm/include/asm/cache.h                  |    2 +-
+ arch/arm/include/asm/unified.h                |    4 +
+ arch/arm/kernel/entry-armv.S                  |   19 +++--
+ arch/arm/kernel/entry-header.S                |   14 +++
+ arch/arm/kernel/kprobes.c                     |   19 ++++-
+ arch/arm/lib/copy_page.S                      |   16 ++--
+ arch/arm/mach-at91/at91cap9_devices.c         |   10 +-
+ arch/arm/mach-at91/board-cap9adk.c            |    2 +-
+ arch/arm/mach-at91/board-neocore926.c         |    2 +-
+ arch/arm/mach-pxa/spitz.c                     |    1 +
+ arch/arm/mach-s3c2410/Kconfig                 |    5 +
+ arch/arm/mach-s3c2412/Kconfig                 |    3 +
+ arch/arm/mach-s3c2440/Kconfig                 |    6 ++
+ arch/arm/mach-s3c6400/Kconfig                 |    1 +
+ arch/arm/mach-s3c6410/Kconfig                 |    1 +
+ arch/arm/mach-sa1100/dma.c                    |    2 +-
+ arch/arm/mm/Kconfig                           |    5 +
+ arch/arm/mm/fault.c                           |  110 ++++++++++++++-----------
+ arch/arm/plat-s3c/gpio.c                      |    2 +-
+ arch/arm/plat-s3c64xx/dma.c                   |    6 +-
+ arch/arm/plat-s3c64xx/include/plat/dma-plat.h |    2 +-
+ arch/arm/plat-s3c64xx/include/plat/irqs.h     |   10 ++-
+ arch/arm/plat-s3c64xx/s3c6400-clock.c         |    8 +-
+ arch/arm/plat-stmp3xxx/dma.c                  |    2 +-
+ arch/arm/tools/mach-types                     |   20 ++++-
+ 27 files changed, 191 insertions(+), 108 deletions(-)
+Merging m68k-current/for-linus
+$ git merge m68k-current/for-linus
+Already up-to-date.
+Merging powerpc-merge/merge
+$ git merge powerpc-merge/merge
+Merge made by recursive.
+ arch/powerpc/Kconfig                     |    6 +++
+ arch/powerpc/Makefile                    |   11 +++++
+ arch/powerpc/include/asm/device.h        |   11 ++++-
+ arch/powerpc/include/asm/dma-mapping.h   |   27 ++++++++++-
+ arch/powerpc/include/asm/iommu.h         |   10 ++++
+ arch/powerpc/include/asm/pmc.h           |    2 +-
+ arch/powerpc/include/asm/pte-40x.h       |    1 +
+ arch/powerpc/include/asm/pte-8xx.h       |    1 +
+ arch/powerpc/include/asm/pte-common.h    |    5 --
+ arch/powerpc/kernel/dma-iommu.c          |   16 +++---
+ arch/powerpc/kernel/dma.c                |   15 ++-----
+ arch/powerpc/kernel/exceptions-64e.S     |    1 -
+ arch/powerpc/kernel/pci-common.c         |    2 +-
+ arch/powerpc/kernel/process.c            |   17 +++++++-
+ arch/powerpc/kernel/prom_init.c          |    3 +-
+ arch/powerpc/kernel/vdso.c               |   14 ++++--
+ arch/powerpc/kernel/vio.c                |    4 +-
+ arch/powerpc/kernel/vmlinux.lds.S        |   69 ++++++-----------------------
+ arch/powerpc/mm/pgtable.c                |   19 +++++++-
+ arch/powerpc/mm/tlb_low_64e.S            |    1 -
+ arch/powerpc/platforms/cell/beat_iommu.c |    2 +-
+ arch/powerpc/platforms/cell/iommu.c      |    9 +---
+ arch/powerpc/platforms/iseries/iommu.c   |    2 +-
+ arch/powerpc/platforms/pasemi/iommu.c    |    2 +-
+ arch/powerpc/platforms/pseries/iommu.c   |    8 ++--
+ arch/powerpc/relocs_check.pl             |   56 ++++++++++++++++++++++++
+ arch/powerpc/sysdev/dart_iommu.c         |    2 +-
+ arch/powerpc/xmon/xmon.c                 |   16 ++++++-
+ drivers/char/hvc_console.c               |    6 +-
+ drivers/char/hvc_console.h               |   12 +++++-
+ drivers/char/hvc_iucv.c                  |    4 +-
+ drivers/serial/cpm_uart/cpm_uart_core.c  |    2 +-
+ 32 files changed, 237 insertions(+), 119 deletions(-)
+ create mode 100755 arch/powerpc/relocs_check.pl
+Merging sparc-current/master
+$ git merge sparc-current/master
+Already up-to-date.
+Merging scsi-rc-fixes/master
+$ git merge scsi-rc-fixes/master
+Already up-to-date.
+Merging net-current/master
+$ git merge net-current/master
+Resolved 'drivers/staging/Kconfig' using previous resolution.
+Resolved 'drivers/staging/Makefile' using previous resolution.
+Auto-merging arch/arm/mach-at91/at91sam9263_devices.c
+Auto-merging arch/arm/mach-at91/board-sam9263ek.c
+Auto-merging arch/arm/mach-at91/include/mach/board.h
+Auto-merging drivers/net/Kconfig
+Auto-merging drivers/net/sky2.c
+Auto-merging drivers/net/tun.c
+Auto-merging drivers/staging/Kconfig
+CONFLICT (content): Merge conflict in drivers/staging/Kconfig
+Auto-merging drivers/staging/Makefile
+CONFLICT (content): Merge conflict in drivers/staging/Makefile
+Removing drivers/staging/cpc-usb/Kconfig
+Removing drivers/staging/cpc-usb/Makefile
+CONFLICT (delete/modify): drivers/staging/cpc-usb/TODO deleted in net-current/master and modified in HEAD. Version HEAD of drivers/staging/cpc-usb/TODO left in tree.
+CONFLICT (delete/modify): drivers/staging/cpc-usb/cpc-usb_drv.c deleted in net-current/master and modified in HEAD. Version HEAD of drivers/staging/cpc-usb/cpc-usb_drv.c left in tree.
+CONFLICT (delete/modify): drivers/staging/cpc-usb/cpc.h deleted in net-current/master and modified in HEAD. Version HEAD of drivers/staging/cpc-usb/cpc.h left in tree.
+CONFLICT (delete/modify): drivers/staging/cpc-usb/cpc_int.h deleted in net-current/master and modified in HEAD. Version HEAD of drivers/staging/cpc-usb/cpc_int.h left in tree.
+CONFLICT (delete/modify): drivers/staging/cpc-usb/cpcusb.h deleted in net-current/master and modified in HEAD. Version HEAD of drivers/staging/cpc-usb/cpcusb.h left in tree.
+Removing drivers/staging/cpc-usb/sja2m16c.h
+Removing drivers/staging/cpc-usb/sja2m16c_2.c
+Auto-merging kernel/sys_ni.c
+Auto-merging lib/vsprintf.c
+Automatic merge failed; fix conflicts and then commit the result.
+$ git rm -f drivers/staging/cpc-usb/TODO drivers/staging/cpc-usb/cpc-usb_drv.c drivers/staging/cpc-usb/cpc.h drivers/staging/cpc-usb/cpc_int.h drivers/staging/cpc-usb/cpcusb.h
+drivers/staging/Kconfig: needs merge
+drivers/staging/Makefile: needs merge
+drivers/staging/cpc-usb/TODO: needs merge
+drivers/staging/cpc-usb/cpc-usb_drv.c: needs merge
+drivers/staging/cpc-usb/cpc.h: needs merge
+drivers/staging/cpc-usb/cpc_int.h: needs merge
+drivers/staging/cpc-usb/cpcusb.h: needs merge
+rm 'drivers/staging/cpc-usb/TODO'
+rm 'drivers/staging/cpc-usb/cpc-usb_drv.c'
+rm 'drivers/staging/cpc-usb/cpc.h'
+rm 'drivers/staging/cpc-usb/cpc_int.h'
+rm 'drivers/staging/cpc-usb/cpcusb.h'
+$ git commit -v -a
+[master 1d4a13c] Merge remote branch 'net-current/master'
+$ git diff -M --stat --summary HEAD^..
+ arch/arm/mach-at91/at91sam9263_devices.c    |   36 +
+ arch/arm/mach-at91/board-sam9263ek.c        |   19 +
+ arch/arm/mach-at91/include/mach/board.h     |    6 +
+ drivers/atm/he.c                            |   59 ++-
+ drivers/atm/solos-attrlist.c                |   11 +
+ drivers/atm/solos-pci.c                     |   75 ++-
+ drivers/net/8139cp.c                        |    2 +-
+ drivers/net/Kconfig                         |    2 +-
+ drivers/net/atl1c/atl1c_main.c              |    2 +-
+ drivers/net/can/Kconfig                     |   13 +
+ drivers/net/can/Makefile                    |    3 +
+ drivers/net/can/usb/Makefile                |    5 +
+ drivers/net/can/usb/ems_usb.c               | 1155 ++++++++++++++++++++++++++
+ drivers/net/cnic.c                          |    4 +-
+ drivers/net/cpmac.c                         |    8 +-
+ drivers/net/ehea/ehea_main.c                |    1 -
+ drivers/net/igb/e1000_mac.c                 |   72 +-
+ drivers/net/igb/e1000_mac.h                 |    1 -
+ drivers/net/ixgbe/ixgbe.h                   |    6 +-
+ drivers/net/ixgbe/ixgbe_ethtool.c           |   75 ++-
+ drivers/net/ixgbe/ixgbe_main.c              |  111 ++-
+ drivers/net/netxen/netxen_nic_main.c        |    8 +-
+ drivers/net/pcmcia/pcnet_cs.c               |   11 +-
+ drivers/net/sky2.c                          |    4 +-
+ drivers/net/sunvnet.c                       |    1 -
+ drivers/net/tun.c                           |    4 +-
+ drivers/net/usb/kaweth.c                    |   18 +-
+ drivers/net/usb/smsc95xx.c                  |   67 ++-
+ drivers/net/usb/usbnet.c                    |    2 +-
+ drivers/net/wireless/ath/ar9170/usb.c       |    2 +
+ drivers/net/wireless/ath/ath9k/calib.c      |   23 +-
+ drivers/net/wireless/ath/ath9k/calib.h      |    1 +
+ drivers/net/wireless/ath/ath9k/eeprom_def.c |    4 +-
+ drivers/net/wireless/ath/ath9k/hw.c         |  202 +++--
+ drivers/net/wireless/ath/ath9k/hw.h         |    4 +-
+ drivers/net/wireless/ath/ath9k/main.c       |   16 +-
+ drivers/net/wireless/ath/ath9k/reg.h        |    3 +-
+ drivers/net/wireless/b43/Kconfig            |   21 +-
+ drivers/net/wireless/b43/Makefile           |    1 +
+ drivers/net/wireless/b43/b43.h              |   23 +-
+ drivers/net/wireless/b43/debugfs.c          |    1 +
+ drivers/net/wireless/b43/debugfs.h          |    1 +
+ drivers/net/wireless/b43/dma.c              |    4 +-
+ drivers/net/wireless/b43/leds.c             |  266 +++++--
+ drivers/net/wireless/b43/leds.h             |   33 +-
+ drivers/net/wireless/b43/main.c             |  224 +++---
+ drivers/net/wireless/b43/phy_lp.c           |   12 +-
+ drivers/net/wireless/b43/pio.c              |    2 +-
+ drivers/net/wireless/b43/rfkill.c           |    2 +-
+ drivers/net/wireless/b43/sdio.c             |  202 +++++
+ drivers/net/wireless/b43/sdio.h             |   45 +
+ drivers/net/wireless/b43/xmit.c             |    5 +-
+ drivers/net/wireless/iwlwifi/iwl-4965.c     |    6 +
+ drivers/net/wireless/iwlwifi/iwl-5000.c     |    6 +
+ drivers/net/wireless/iwlwifi/iwl-rx.c       |   10 +-
+ drivers/net/wireless/iwlwifi/iwl-sta.c      |    2 +-
+ drivers/net/wireless/iwlwifi/iwl3945-base.c |    9 +-
+ drivers/net/wireless/rt2x00/rt2x00lib.h     |    2 +-
+ drivers/net/wireless/wl12xx/Kconfig         |    2 +-
+ drivers/net/wireless/zd1211rw/zd_usb.c      |    2 +-
+ drivers/net/xilinx_emaclite.c               |    7 +-
+ drivers/staging/Kconfig                     |    2 -
+ drivers/staging/Makefile                    |    1 -
+ drivers/staging/cpc-usb/Kconfig             |    4 -
+ drivers/staging/cpc-usb/Makefile            |    3 -
+ drivers/staging/cpc-usb/TODO                |   10 -
+ drivers/staging/cpc-usb/cpc-usb_drv.c       | 1184 ---------------------------
+ drivers/staging/cpc-usb/cpc.h               |  417 ----------
+ drivers/staging/cpc-usb/cpc_int.h           |   83 --
+ drivers/staging/cpc-usb/cpcusb.h            |   86 --
+ drivers/staging/cpc-usb/sja2m16c.h          |   41 -
+ drivers/staging/cpc-usb/sja2m16c_2.c        |  452 ----------
+ include/linux/usb/usbnet.h                  |    1 +
+ kernel/sys_ni.c                             |    1 +
+ lib/vsprintf.c                              |   25 +-
+ net/ax25/af_ax25.c                          |    4 +-
+ net/mac80211/scan.c                         |    4 +-
+ net/wireless/wext-sme.c                     |    2 +-
+ 78 files changed, 2488 insertions(+), 2756 deletions(-)
+ create mode 100644 drivers/net/can/usb/Makefile
+ create mode 100644 drivers/net/can/usb/ems_usb.c
+ create mode 100644 drivers/net/wireless/b43/sdio.c
+ create mode 100644 drivers/net/wireless/b43/sdio.h
+ delete mode 100644 drivers/staging/cpc-usb/Kconfig
+ delete mode 100644 drivers/staging/cpc-usb/Makefile
+ delete mode 100644 drivers/staging/cpc-usb/TODO
+ delete mode 100644 drivers/staging/cpc-usb/cpc-usb_drv.c
+ delete mode 100644 drivers/staging/cpc-usb/cpc.h
+ delete mode 100644 drivers/staging/cpc-usb/cpc_int.h
+ delete mode 100644 drivers/staging/cpc-usb/cpcusb.h
+ delete mode 100644 drivers/staging/cpc-usb/sja2m16c.h
+ delete mode 100644 drivers/staging/cpc-usb/sja2m16c_2.c
+Merging sound-current/for-linus
+$ git merge sound-current/for-linus
+Already up-to-date.
+Merging pci-current/for-linus
+$ git merge pci-current/for-linus
+Already up-to-date.
+Merging wireless-current/master
+$ git merge wireless-current/master
+Already up-to-date.
+Merging kbuild-current/master
+$ git merge kbuild-current/master
+Already up-to-date.
+Merging quilt/driver-core.current
+$ git merge quilt/driver-core.current
+Already up-to-date.
+Merging quilt/tty.current
+$ git merge quilt/tty.current
+Already up-to-date.
+Merging quilt/usb.current
+$ git merge quilt/usb.current
+Resolved 'drivers/usb/host/xhci-hcd.c' using previous resolution.
+Resolved 'drivers/usb/host/xhci-mem.c' using previous resolution.
+Resolved 'drivers/usb/host/xhci-ring.c' using previous resolution.
+Resolved 'drivers/usb/host/xhci.h' using previous resolution.
+Auto-merging drivers/usb/host/xhci-hcd.c
+CONFLICT (content): Merge conflict in drivers/usb/host/xhci-hcd.c
+Auto-merging drivers/usb/host/xhci-mem.c
+CONFLICT (content): Merge conflict in drivers/usb/host/xhci-mem.c
+Auto-merging drivers/usb/host/xhci-pci.c
+Auto-merging drivers/usb/host/xhci-ring.c
+CONFLICT (content): Merge conflict in drivers/usb/host/xhci-ring.c
+Auto-merging drivers/usb/host/xhci.h
+CONFLICT (content): Merge conflict in drivers/usb/host/xhci.h
+Auto-merging drivers/usb/serial/option.c
+Auto-merging drivers/usb/serial/pl2303.c
+Automatic merge failed; fix conflicts and then commit the result.
+$ git commit -v -a
+[master c19e97c] Merge branch 'quilt/usb.current'
+$ git diff -M --stat --summary HEAD^..
+Merging cpufreq-current/fixes
+$ git merge cpufreq-current/fixes
+Already up-to-date.
+Merging input-current/for-linus
+$ git merge input-current/for-linus
+Already up-to-date.
+Merging md-current/for-linus
+$ git merge md-current/for-linus
+Already up-to-date.
+Merging audit-current/for-linus
+$ git merge audit-current/for-linus
+Already up-to-date.
+Merging crypto-current/master
+$ git merge crypto-current/master
+Merge made by recursive.
+ drivers/crypto/padlock-sha.c |   14 ++++++++++++--
+ 1 files changed, 12 insertions(+), 2 deletions(-)
+Merging ide-curent/master
+$ git merge ide-curent/master
+Already up-to-date.
+Merging dwmw2/master
+$ git merge dwmw2/master
+Already up-to-date.
+Merging arm/devel
+$ git merge arm/devel
+Auto-merging MAINTAINERS
+Removing arch/arm/configs/littleton_defconfig
+Removing arch/arm/configs/zylonite_defconfig
+Auto-merging arch/arm/kernel/Makefile
+Auto-merging arch/arm/kernel/vmlinux.lds.S
+Auto-merging arch/arm/mach-at91/board-sam9rlek.c
+Auto-merging arch/arm/mach-pxa/spitz.c
+Auto-merging arch/arm/mm/init.c
+Auto-merging drivers/i2c/busses/Kconfig
+Auto-merging drivers/rtc/rtc-sa1100.c
+Auto-merging drivers/serial/pxa.c
+Auto-merging drivers/spi/pxa2xx_spi.c
+Auto-merging drivers/usb/host/ohci-pxa27x.c
+Merge made by recursive.
+ Documentation/arm/tcm.txt                          |  145 +++
+ MAINTAINERS                                        |    8 +-
+ arch/arm/Kconfig                                   |    5 +
+ arch/arm/common/locomo.c                           |   17 +-
+ arch/arm/configs/littleton_defconfig               |  783 ------------
+ arch/arm/configs/pxa3xx_defconfig                  | 1332 ++++++++++++++++++++
+ arch/arm/configs/xcep_defconfig                    | 1129 +++++++++++++++++
+ arch/arm/configs/zylonite_defconfig                |  736 -----------
+ arch/arm/include/asm/cputype.h                     |   10 +-
+ arch/arm/include/asm/tcm.h                         |   31 +
+ arch/arm/kernel/Makefile                           |    1 +
+ arch/arm/kernel/setup.c                            |    2 +
+ arch/arm/kernel/tcm.c                              |  246 ++++
+ arch/arm/kernel/tcm.h                              |   17 +
+ arch/arm/kernel/vmlinux.lds.S                      |   57 +
+ arch/arm/mach-at91/at91sam9g45_devices.c           |  104 ++
+ arch/arm/mach-at91/at91sam9rl_devices.c            |  102 ++
+ arch/arm/mach-at91/board-sam9m10g45ek.c            |   10 +
+ arch/arm/mach-at91/board-sam9rlek.c                |   10 +
+ arch/arm/mach-integrator/integrator_cp.c           |    4 +-
+ arch/arm/mach-pxa/Kconfig                          |   36 +
+ arch/arm/mach-pxa/Makefile                         |    4 +
+ arch/arm/mach-pxa/balloon3.c                       |  361 ++++++
+ arch/arm/mach-pxa/clock.h                          |    1 -
+ arch/arm/mach-pxa/cm-x270.c                        |  146 ++-
+ arch/arm/mach-pxa/cm-x300.c                        |   71 +-
+ arch/arm/mach-pxa/colibri-pxa300.c                 |    1 +
+ arch/arm/mach-pxa/colibri-pxa320.c                 |   33 +
+ arch/arm/mach-pxa/colibri-pxa3xx.c                 |   52 +-
+ arch/arm/mach-pxa/corgi.c                          |  233 ++--
+ arch/arm/mach-pxa/csb726.c                         |   54 +-
+ arch/arm/mach-pxa/devices.c                        |   27 +
+ arch/arm/mach-pxa/devices.h                        |    2 +
+ arch/arm/mach-pxa/e740.c                           |    1 -
+ arch/arm/mach-pxa/e750.c                           |    1 -
+ arch/arm/mach-pxa/em-x270.c                        |   45 +-
+ arch/arm/mach-pxa/eseries.c                        |   39 +-
+ arch/arm/mach-pxa/gumstix.c                        |    5 +-
+ arch/arm/mach-pxa/hx4700.c                         |   65 +-
+ arch/arm/mach-pxa/idp.c                            |    5 +-
+ arch/arm/mach-pxa/imote2.c                         |    3 +
+ arch/arm/mach-pxa/include/mach/balloon3.h          |  134 ++
+ arch/arm/mach-pxa/include/mach/colibri.h           |    6 +
+ arch/arm/mach-pxa/include/mach/entry-macro.S       |   25 +-
+ arch/arm/mach-pxa/include/mach/hardware.h          |   17 +
+ arch/arm/mach-pxa/include/mach/irda.h              |    2 +
+ arch/arm/mach-pxa/include/mach/irqs.h              |   42 +-
+ arch/arm/mach-pxa/include/mach/mfp.h               |  301 +-----
+ arch/arm/mach-pxa/include/mach/mmc.h               |    5 +
+ arch/arm/mach-pxa/include/mach/palmtc.h            |   86 ++
+ arch/arm/mach-pxa/include/mach/palmtx.h            |    5 +
+ arch/arm/mach-pxa/include/mach/pxa3xx-regs.h       |    4 +-
+ arch/arm/mach-pxa/include/mach/pxafb.h             |    3 +-
+ arch/arm/mach-pxa/include/mach/regs-intc.h         |   11 +
+ arch/arm/mach-pxa/include/mach/uncompress.h        |    2 +-
+ arch/arm/mach-pxa/irq.c                            |    8 +-
+ arch/arm/mach-pxa/littleton.c                      |   43 +-
+ arch/arm/mach-pxa/lubbock.c                        |   18 +-
+ arch/arm/mach-pxa/magician.c                       |   59 +-
+ arch/arm/mach-pxa/mainstone.c                      |   16 +-
+ arch/arm/mach-pxa/mioa701.c                        |   84 +-
+ arch/arm/mach-pxa/palmld.c                         |  143 +--
+ arch/arm/mach-pxa/palmt5.c                         |  111 +--
+ arch/arm/mach-pxa/palmtc.c                         |  436 +++++++
+ arch/arm/mach-pxa/palmte2.c                        |  110 +--
+ arch/arm/mach-pxa/palmtx.c                         |  225 ++--
+ arch/arm/mach-pxa/palmz72.c                        |  116 +--
+ arch/arm/mach-pxa/pcm990-baseboard.c               |   67 +-
+ arch/arm/mach-pxa/poodle.c                         |   80 +-
+ arch/arm/mach-pxa/pxa2xx.c                         |    1 +
+ arch/arm/mach-pxa/pxa300.c                         |    2 +
+ arch/arm/mach-pxa/pxa320.c                         |    2 +
+ arch/arm/mach-pxa/pxa930.c                         |   19 +-
+ arch/arm/mach-pxa/spitz.c                          |  237 ++--
+ arch/arm/mach-pxa/tosa.c                           |   91 +--
+ arch/arm/mach-pxa/treo680.c                        |  159 +--
+ arch/arm/mach-pxa/trizeps4.c                       |    4 +
+ arch/arm/mach-pxa/xcep.c                           |  187 +++
+ arch/arm/mach-pxa/zylonite.c                       |    3 +
+ arch/arm/mach-realview/core.c                      |   24 +-
+ arch/arm/mach-realview/core.h                      |    4 +-
+ arch/arm/mach-realview/realview_eb.c               |   40 +-
+ arch/arm/mach-realview/realview_pb1176.c           |   40 +-
+ arch/arm/mach-realview/realview_pb11mp.c           |   40 +-
+ arch/arm/mach-realview/realview_pba8.c             |   40 +-
+ arch/arm/mach-realview/realview_pbx.c              |   40 +-
+ arch/arm/mach-u300/Kconfig                         |   12 +
+ arch/arm/mach-u300/Makefile                        |    3 +
+ arch/arm/mach-u300/core.c                          |   14 +-
+ arch/arm/mach-u300/dummyspichip.c                  |  290 +++++
+ arch/arm/mach-u300/gpio.c                          |   13 -
+ arch/arm/mach-u300/i2c.c                           |   43 +
+ arch/arm/mach-u300/i2c.h                           |   23 +
+ arch/arm/mach-u300/include/mach/memory.h           |    8 +
+ arch/arm/mach-u300/include/mach/syscon.h           |  120 ++-
+ arch/arm/mach-u300/mmc.c                           |   22 +-
+ arch/arm/mach-u300/padmux.c                        |  395 ++++++-
+ arch/arm/mach-u300/padmux.h                        |   28 +-
+ arch/arm/mach-u300/spi.c                           |  124 ++
+ arch/arm/mach-u300/spi.h                           |   26 +
+ arch/arm/mach-u300/timer.c                         |   15 +
+ arch/arm/mach-versatile/core.c                     |    4 +-
+ arch/arm/mach-versatile/versatile_pb.c             |    4 +-
+ arch/arm/mm/init.c                                 |    8 +
+ arch/arm/plat-pxa/dma.c                            |  281 ++++-
+ arch/arm/plat-pxa/include/plat/mfp.h               |   73 +-
+ arch/arm/plat-pxa/mfp.c                            |    3 +
+ drivers/i2c/busses/Kconfig                         |    4 +-
+ drivers/mmc/host/mmci.c                            |  109 ++-
+ drivers/mmc/host/mmci.h                            |    3 +-
+ drivers/mmc/host/pxamci.c                          |  104 ++-
+ drivers/net/irda/pxaficp_ir.c                      |   47 +-
+ drivers/pcmcia/Makefile                            |    1 +
+ drivers/pcmcia/pxa2xx_base.c                       |   18 +-
+ drivers/pcmcia/pxa2xx_palmtc.c                     |  230 ++++
+ drivers/rtc/rtc-pxa.c                              |   27 +-
+ drivers/rtc/rtc-sa1100.c                           |   23 +-
+ drivers/serial/pxa.c                               |   20 +-
+ drivers/spi/amba-pl022.c                           |    8 +-
+ drivers/spi/pxa2xx_spi.c                           |   30 +-
+ drivers/usb/host/ohci-pxa27x.c                     |   30 +-
+ drivers/video/backlight/da903x_bl.c                |   20 +-
+ drivers/video/pxafb.c                              |   32 +-
+ .../asm/mach/mmc.h => include/linux/amba/mmci.h    |    9 +-
+ include/linux/amba/pl022.h                         |    8 +-
+ include/linux/fb.h                                 |    1 +
+ sound/arm/pxa2xx-ac97.c                            |   20 +-
+ 127 files changed, 7642 insertions(+), 3637 deletions(-)
+ create mode 100644 Documentation/arm/tcm.txt
+ delete mode 100644 arch/arm/configs/littleton_defconfig
+ create mode 100644 arch/arm/configs/pxa3xx_defconfig
+ create mode 100644 arch/arm/configs/xcep_defconfig
+ delete mode 100644 arch/arm/configs/zylonite_defconfig
+ create mode 100644 arch/arm/include/asm/tcm.h
+ create mode 100644 arch/arm/kernel/tcm.c
+ create mode 100644 arch/arm/kernel/tcm.h
+ create mode 100644 arch/arm/mach-pxa/balloon3.c
+ create mode 100644 arch/arm/mach-pxa/include/mach/balloon3.h
+ create mode 100644 arch/arm/mach-pxa/include/mach/palmtc.h
+ create mode 100644 arch/arm/mach-pxa/palmtc.c
+ create mode 100644 arch/arm/mach-pxa/xcep.c
+ create mode 100644 arch/arm/mach-u300/dummyspichip.c
+ create mode 100644 arch/arm/mach-u300/i2c.c
+ create mode 100644 arch/arm/mach-u300/i2c.h
+ create mode 100644 arch/arm/mach-u300/spi.c
+ create mode 100644 arch/arm/mach-u300/spi.h
+ create mode 100644 drivers/pcmcia/pxa2xx_palmtc.c
+ rename arch/arm/include/asm/mach/mmc.h => include/linux/amba/mmci.h (63%)
+Merging davinci/for-next
+$ git merge davinci/for-next
+Already up-to-date.
+Merging pxa/for-next
+$ git merge pxa/for-next
+Already up-to-date.
+Merging thumb-2/thumb-2
+$ git merge thumb-2/thumb-2
+Merge made by recursive.
+Merging avr32/avr32-arch
+$ git merge avr32/avr32-arch
+Merge made by recursive.
+ arch/avr32/boards/atngw100/mrmt.c           |    1 +
+ arch/avr32/boards/atngw100/setup.c          |    5 ----
+ arch/avr32/mach-at32ap/at32ap700x.c         |   35 ++++++++++++++------------
+ arch/avr32/mach-at32ap/include/mach/board.h |    1 +
+ arch/avr32/mach-at32ap/include/mach/cpu.h   |    2 +
+ 5 files changed, 23 insertions(+), 21 deletions(-)
+Merging blackfin/for-linus
+$ git merge blackfin/for-linus
+Merge made by recursive.
+ arch/blackfin/Kconfig                   |   10 +++--
+ arch/blackfin/kernel/time.c             |   63 +------------------------------
+ arch/blackfin/mach-bf548/boards/ezkit.c |    1 -
+ 3 files changed, 8 insertions(+), 66 deletions(-)
+Merging cris/for-next
+$ git merge cris/for-next
+Auto-merging arch/cris/kernel/vmlinux.lds.S
+Auto-merging drivers/net/cris/eth_v10.c
+Merge made by recursive.
+ arch/cris/arch-v10/kernel/time.c      |    1 -
+ arch/cris/arch-v32/kernel/smp.c       |    2 -
+ arch/cris/arch-v32/kernel/time.c      |    1 -
+ arch/cris/arch-v32/mach-a3/io.c       |    2 +-
+ arch/cris/arch-v32/mach-fs/io.c       |    2 +-
+ arch/cris/include/arch-v10/arch/mmu.h |    9 ++++---
+ arch/cris/include/arch-v32/arch/mmu.h |   10 +++++---
+ arch/cris/include/asm/hardirq.h       |   12 +---------
+ arch/cris/include/asm/pgtable.h       |    2 +
+ arch/cris/kernel/irq.c                |    5 ----
+ arch/cris/kernel/vmlinux.lds.S        |   37 +++++++-------------------------
+ drivers/net/cris/eth_v10.c            |   20 +++++++++++++++--
+ drivers/serial/crisv10.c              |    1 +
+ 13 files changed, 43 insertions(+), 61 deletions(-)
+Merging ia64/test
+$ git merge ia64/test
+Already up-to-date.
+Merging m68k/for-next
+$ git merge m68k/for-next
+Resolved 'drivers/rtc/Kconfig' using previous resolution.
+Auto-merging drivers/rtc/Kconfig
+CONFLICT (content): Merge conflict in drivers/rtc/Kconfig
+Auto-merging drivers/rtc/Makefile
+Automatic merge failed; fix conflicts and then commit the result.
+$ git commit -v -a
+[master 04e24bf] Merge remote branch 'm68k/for-next'
+$ git diff -M --stat --summary HEAD^..
+ drivers/rtc/Kconfig       |   19 +++
+ drivers/rtc/Makefile      |    2 +
+ drivers/rtc/rtc-msm6242.c |  268 +++++++++++++++++++++++++++++++++++++++++++++
+ drivers/rtc/rtc-rp5c01.c  |  222 +++++++++++++++++++++++++++++++++++++
+ 4 files changed, 511 insertions(+), 0 deletions(-)
+ create mode 100644 drivers/rtc/rtc-msm6242.c
+ create mode 100644 drivers/rtc/rtc-rp5c01.c
+Merging m68knommu/for-next
+$ git merge m68knommu/for-next
+Merge made by recursive.
+ arch/m68k/include/asm/processor.h |    2 ++
+ arch/m68k/include/asm/ptrace.h    |   12 ++++++++++++
+ arch/m68knommu/kernel/ptrace.c    |   18 +++++++++++++++---
+ 3 files changed, 29 insertions(+), 3 deletions(-)
+Merging microblaze/next
+$ git merge microblaze/next
+Already up-to-date.
+Merging mips/mips-for-linux-next
+$ git merge mips/mips-for-linux-next
+Resolved 'arch/mips/Kconfig' using previous resolution.
+Resolved 'arch/mips/bcm63xx/Makefile' using previous resolution.
+Resolved 'arch/mips/bcm63xx/boards/board_bcm963xx.c' using previous resolution.
+Renaming arch/mips/configs/fulong_defconfig->arch/mips/configs/fuloong2e_defconfig
+Auto-merging arch/mips/configs/fuloong2e_defconfig
+Auto-merging arch/mips/Kconfig
+CONFLICT (content): Merge conflict in arch/mips/Kconfig
+Auto-merging arch/mips/Makefile
+Auto-merging arch/mips/alchemy/common/time.c
+Auto-merging arch/mips/bcm63xx/Makefile
+CONFLICT (add/add): Merge conflict in arch/mips/bcm63xx/Makefile
+Auto-merging arch/mips/bcm63xx/boards/board_bcm963xx.c
+CONFLICT (add/add): Merge conflict in arch/mips/bcm63xx/boards/board_bcm963xx.c
+Auto-merging arch/mips/kernel/scall32-o32.S
+Auto-merging arch/mips/kernel/scall64-64.S
+Auto-merging arch/mips/kernel/smtc.c
+Auto-merging arch/mips/kernel/vmlinux.lds.S
+CONFLICT (delete/modify): arch/mips/lemote/lm2e/Makefile deleted in HEAD and modified in mips/mips-for-linux-next. Version mips/mips-for-linux-next of arch/mips/lemote/lm2e/Makefile left in tree.
+CONFLICT (delete/modify): arch/mips/lemote/lm2e/pci.c deleted in HEAD and modified in mips/mips-for-linux-next. Version mips/mips-for-linux-next of arch/mips/lemote/lm2e/pci.c left in tree.
+CONFLICT (delete/modify): arch/mips/lemote/lm2e/prom.c deleted in HEAD and modified in mips/mips-for-linux-next. Version mips/mips-for-linux-next of arch/mips/lemote/lm2e/prom.c left in tree.
+Auto-merging arch/mips/mm/init.c
+Auto-merging arch/mips/pci/Makefile
+Automatic merge failed; fix conflicts and then commit the result.
+$ git rm -f arch/mips/lemote/lm2e/Makefile arch/mips/lemote/lm2e/pci.c arch/mips/lemote/lm2e/prom.c
+arch/mips/Kconfig: needs merge
+arch/mips/bcm63xx/Makefile: needs merge
+arch/mips/bcm63xx/boards/board_bcm963xx.c: needs merge
+arch/mips/lemote/lm2e/Makefile: needs merge
+arch/mips/lemote/lm2e/pci.c: needs merge
+arch/mips/lemote/lm2e/prom.c: needs merge
+rm 'arch/mips/lemote/lm2e/Makefile'
+rm 'arch/mips/lemote/lm2e/pci.c'
+rm 'arch/mips/lemote/lm2e/prom.c'
+$ git commit -v -a
+[master 38f5aeb] Merge remote branch 'mips/mips-for-linux-next'
+$ git diff -M --stat --summary HEAD^..
+ arch/mips/lemote/lm2e/early_printk.c |   41 ++++++++++++++++++++++++++++++++++
+ 1 files changed, 41 insertions(+), 0 deletions(-)
+ create mode 100644 arch/mips/lemote/lm2e/early_printk.c
+Merging parisc/next
+$ git merge parisc/next
+Resolved 'arch/parisc/include/asm/thread_info.h' using previous resolution.
+Resolved 'arch/parisc/kernel/entry.S' using previous resolution.
+Resolved 'arch/parisc/kernel/signal.c' using previous resolution.
+Auto-merging MAINTAINERS
+Auto-merging arch/parisc/Kconfig
+Auto-merging arch/parisc/include/asm/thread_info.h
+CONFLICT (content): Merge conflict in arch/parisc/include/asm/thread_info.h
+Auto-merging arch/parisc/kernel/entry.S
+CONFLICT (content): Merge conflict in arch/parisc/kernel/entry.S
+Auto-merging arch/parisc/kernel/module.c
+Auto-merging arch/parisc/kernel/signal.c
+CONFLICT (content): Merge conflict in arch/parisc/kernel/signal.c
+Automatic merge failed; fix conflicts and then commit the result.
+$ git commit -v -a
+[master 1a8d6a4] Merge remote branch 'parisc/next'
+$ git diff -M --stat --summary HEAD^..
+ MAINTAINERS                           |    1 +
+ arch/parisc/Kconfig                   |    1 +
+ arch/parisc/include/asm/elf.h         |    1 +
+ arch/parisc/include/asm/hardirq.h     |   20 +--
+ arch/parisc/include/asm/ptrace.h      |   38 +++-
+ arch/parisc/include/asm/syscall.h     |   40 +++
+ arch/parisc/include/asm/thread_info.h |   10 +-
+ arch/parisc/kernel/asm-offsets.c      |    4 +-
+ arch/parisc/kernel/entry.S            |   29 +-
+ arch/parisc/kernel/irq.c              |    5 -
+ arch/parisc/kernel/module.c           |    2 +-
+ arch/parisc/kernel/ptrace.c           |  457 +++++++++++++++++++++++++++++++--
+ arch/parisc/kernel/signal.c           |    4 +
+ arch/parisc/kernel/syscall.S          |   22 +-
+ 14 files changed, 560 insertions(+), 74 deletions(-)
+ create mode 100644 arch/parisc/include/asm/syscall.h
+Merging powerpc/next
+$ git merge powerpc/next
+Already up-to-date.
+Merging 4xx/next
+$ git merge 4xx/next
+Already up-to-date.
+Merging galak/next
+$ git merge galak/next
+Already up-to-date.
+Merging s390/features
+$ git merge s390/features
+Merge made by recursive.
+ arch/s390/include/asm/delay.h     |    7 ++++---
+ arch/s390/kernel/compat_wrapper.S |    2 +-
+ arch/s390/kernel/ftrace.c         |    3 ---
+ arch/s390/lib/delay.c             |   27 ++++++++++++++++-----------
+ drivers/s390/cio/device.c         |    4 ++--
+ drivers/s390/cio/device.h         |    1 +
+ drivers/s390/cio/device_fsm.c     |   31 +++++++++++++++++++++++--------
+ 7 files changed, 47 insertions(+), 28 deletions(-)
+Merging sh/master
+$ git merge sh/master
+Merge made by recursive.
+ arch/sh/boards/mach-ecovec24/setup.c |    1 +
+ arch/sh/kernel/dwarf.c               |    1 -
+ arch/sh/kernel/traps_32.c            |   23 ++++++++++++++---------
+ 3 files changed, 15 insertions(+), 10 deletions(-)
+Merging sparc/master
+$ git merge sparc/master
+Already up-to-date.
+Merging xtensa/master
+$ git merge xtensa/master
+Auto-merging arch/xtensa/Kconfig
+Merge made by recursive.
+Merging cifs/master
+$ git merge cifs/master
+Auto-merging fs/cifs/cifsfs.c
+Merge made by recursive.
+ fs/cifs/Kconfig     |    1 +
+ fs/cifs/cifsfs.c    |   95 ++----------------------------------------
+ fs/cifs/cifsglob.h  |   21 ++++-----
+ fs/cifs/cifsproto.h |   11 ++---
+ fs/cifs/cifssmb.c   |    1 +
+ fs/cifs/connect.c   |    1 -
+ fs/cifs/dir.c       |   64 +++++++++++++---------------
+ fs/cifs/file.c      |  115 ++++++++++++++++++++++++++++++++++++---------------
+ fs/cifs/misc.c      |   34 ++++++++++-----
+ fs/cifs/transport.c |   50 ----------------------
+ 10 files changed, 155 insertions(+), 238 deletions(-)
+Merging configfs/linux-next
+$ git merge configfs/linux-next
+Already up-to-date.
+Merging ecryptfs/next
+$ git merge ecryptfs/next
+Auto-merging fs/ecryptfs/mmap.c
+Merge made by recursive.
+ fs/ecryptfs/Kconfig      |    4 +++-
+ fs/ecryptfs/crypto.c     |   39 ++++++++++++++++++++++-----------------
+ fs/ecryptfs/inode.c      |    2 ++
+ fs/ecryptfs/keystore.c   |   39 ++++++++++++++++++++++++++-------------
+ fs/ecryptfs/kthread.c    |   24 ++++++++----------------
+ fs/ecryptfs/main.c       |    3 +--
+ fs/ecryptfs/mmap.c       |    4 +++-
+ fs/ecryptfs/read_write.c |   32 ++++++++++++--------------------
+ fs/ecryptfs/super.c      |    2 --
+ 9 files changed, 77 insertions(+), 72 deletions(-)
+Merging ext3/for_next
+$ git merge ext3/for_next
+Auto-merging fs/ext3/super.c
+Merge made by recursive.
+ Documentation/filesystems/ext3.txt |   16 ++++++++++++----
+ fs/ext3/super.c                    |   13 ++++++++++++-
+ 2 files changed, 24 insertions(+), 5 deletions(-)
+Merging ext4/next
+$ git merge ext4/next
+Auto-merging fs/ext4/inode.c
+Auto-merging fs/ext4/super.c
+Merge made by recursive.
+Merging fatfs/master
+$ git merge fatfs/master
+Auto-merging fs/fat/inode.c
+Auto-merging fs/fat/misc.c
+Auto-merging fs/nls/nls_base.c
+Merge made by recursive.
+ Documentation/filesystems/vfat.txt |    2 +-
+ fs/fat/fat.h                       |    2 +-
+ fs/fat/inode.c                     |   18 +++++++++++-------
+ fs/fat/misc.c                      |    8 +++++---
+ fs/fat/namei_vfat.c                |   15 ++++-----------
+ fs/nls/nls_base.c                  |    8 ++++----
+ 6 files changed, 26 insertions(+), 27 deletions(-)
+Merging fuse/for-next
+$ git merge fuse/for-next
+Already up-to-date.
+Merging gfs2/master
+$ git merge gfs2/master
+Merge made by recursive.
+ fs/gfs2/glock.c      |   10 ++++++++--
+ fs/gfs2/incore.h     |    4 ----
+ fs/gfs2/ops_fstype.c |    3 +--
+ fs/gfs2/recovery.c   |    4 +---
+ fs/gfs2/sys.c        |   24 ------------------------
+ 5 files changed, 10 insertions(+), 35 deletions(-)
+Merging jfs/next
+$ git merge jfs/next
+Already up-to-date.
+Merging nfs/linux-next
+$ git merge nfs/linux-next
+Already up-to-date.
+Merging nfsd/nfsd-next
+$ git merge nfsd/nfsd-next
+Already up-to-date.
+Merging nilfs2/for-next
+$ git merge nilfs2/for-next
+Already up-to-date.
+Merging ocfs2/linux-next
+$ git merge ocfs2/linux-next
+Already up-to-date.
+Merging squashfs/master
+$ git merge squashfs/master
+Already up-to-date.
+Merging udf/for_next
+$ git merge udf/for_next
+Already up-to-date.
+Merging v9fs/for-next
+$ git merge v9fs/for-next
+Merge made by recursive.
+Merging ubifs/linux-next
+$ git merge ubifs/linux-next
+Already up-to-date.
+Merging xfs/master
+$ git merge xfs/master
+Already up-to-date.
+Merging vfs/for-next
+$ git merge vfs/for-next
+Already up-to-date.
+$ git revert 086f68bd97126618ecb2dcff5f766f3a21722df7
+Finished one revert.
+[master f0488c2] Revert "cifs: eliminate cifs_init_private"
+ 3 files changed, 50 insertions(+), 20 deletions(-)
+$ git revert 3bc303c254335dbd7c7012cc1760b12f1d5514d3
+Finished one revert.
+[master 39e619d] Revert "cifs: convert oplock breaks to use slow_work facility (try #4)"
+ 10 files changed, 175 insertions(+), 119 deletions(-)
+Merging pci/linux-next
+$ git merge pci/linux-next
+Already up-to-date.
+Merging hid/for-next
+$ git merge hid/for-next
+Already up-to-date.
+Merging quilt/i2c
+$ git merge quilt/i2c
+Removing Documentation/i2c/busses/i2c-voodoo3
+Auto-merging drivers/i2c/busses/Kconfig
+Removing drivers/i2c/busses/i2c-voodoo3.c
+Merge made by recursive.
+ Documentation/feature-removal-schedule.txt        |    9 -
+ Documentation/hwmon/ltc4215                       |    7 +-
+ Documentation/hwmon/ltc4245                       |    7 +-
+ Documentation/i2c/busses/i2c-voodoo3              |   62 -----
+ Documentation/{i2c/chips => misc-devices}/eeprom  |    0
+ Documentation/{i2c/chips => misc-devices}/max6875 |    6 +-
+ Documentation/w1/masters/ds2482                   |    6 +-
+ drivers/hwmon/ltc4215.c                           |   47 +----
+ drivers/hwmon/ltc4245.c                           |  131 +-----------
+ drivers/i2c/busses/Kconfig                        |   16 --
+ drivers/i2c/busses/Makefile                       |    3 -
+ drivers/i2c/busses/i2c-voodoo3.c                  |  248 ---------------------
+ drivers/i2c/i2c-core.c                            |   12 +-
+ drivers/misc/eeprom/max6875.c                     |   29 +--
+ drivers/net/sfc/sfe4001.c                         |    4 +-
+ drivers/w1/masters/ds2482.c                       |   35 +---
+ include/linux/i2c.h                               |    3 +-
+ 17 files changed, 44 insertions(+), 581 deletions(-)
+ delete mode 100644 Documentation/i2c/busses/i2c-voodoo3
+ rename Documentation/{i2c/chips => misc-devices}/eeprom (100%)
+ rename Documentation/{i2c/chips => misc-devices}/max6875 (94%)
+ delete mode 100644 drivers/i2c/busses/i2c-voodoo3.c
+Merging quilt/jdelvare-hwmon
+$ git merge quilt/jdelvare-hwmon
+Already up-to-date.
+Merging quilt/kernel-doc
+$ git merge quilt/kernel-doc
+Already up-to-date.
+Merging v4l-dvb/master
+$ git merge v4l-dvb/master
+Merge made by recursive.
+ drivers/media/common/tuners/tuner-xc2028.c |   20 +-
+ drivers/media/common/tuners/tuner-xc2028.h |    2 +
+ drivers/staging/tm6000/Kconfig             |   32 +
+ drivers/staging/tm6000/Makefile            |   15 +
+ drivers/staging/tm6000/README              |   11 +
+ drivers/staging/tm6000/hack.c              |  252 +++++
+ drivers/staging/tm6000/hack.h              |   45 +
+ drivers/staging/tm6000/tm6000-alsa.c       |  413 ++++++++
+ drivers/staging/tm6000/tm6000-cards.c      |  630 +++++++++++
+ drivers/staging/tm6000/tm6000-core.c       |  511 +++++++++
+ drivers/staging/tm6000/tm6000-dvb.c        |  322 ++++++
+ drivers/staging/tm6000/tm6000-i2c.c        |  245 +++++
+ drivers/staging/tm6000/tm6000-regs.h       |   86 ++
+ drivers/staging/tm6000/tm6000-stds.c       |  873 +++++++++++++++
+ drivers/staging/tm6000/tm6000-usb-isoc.h   |   53 +
+ drivers/staging/tm6000/tm6000-video.c      | 1573 ++++++++++++++++++++++++++++
+ drivers/staging/tm6000/tm6000.h            |  279 +++++
+ include/linux/videodev2.h                  |    1 +
+ 18 files changed, 5360 insertions(+), 3 deletions(-)
+ create mode 100644 drivers/staging/tm6000/Kconfig
+ create mode 100644 drivers/staging/tm6000/Makefile
+ create mode 100644 drivers/staging/tm6000/README
+ create mode 100644 drivers/staging/tm6000/hack.c
+ create mode 100644 drivers/staging/tm6000/hack.h
+ create mode 100644 drivers/staging/tm6000/tm6000-alsa.c
+ create mode 100644 drivers/staging/tm6000/tm6000-cards.c
+ create mode 100644 drivers/staging/tm6000/tm6000-core.c
+ create mode 100644 drivers/staging/tm6000/tm6000-dvb.c
+ create mode 100644 drivers/staging/tm6000/tm6000-i2c.c
+ create mode 100644 drivers/staging/tm6000/tm6000-regs.h
+ create mode 100644 drivers/staging/tm6000/tm6000-stds.c
+ create mode 100644 drivers/staging/tm6000/tm6000-usb-isoc.h
+ create mode 100644 drivers/staging/tm6000/tm6000-video.c
+ create mode 100644 drivers/staging/tm6000/tm6000.h
+Merging quota/for_next
+$ git merge quota/for_next
+Already up-to-date.
+Merging kbuild/master
+$ git merge kbuild/master
+Already up-to-date.
+Merging kconfig/for-next
+$ git merge kconfig/for-next
+Already up-to-date.
+Merging ide/master
+$ git merge ide/master
+Already up-to-date.
+Merging libata/NEXT
+$ git merge libata/NEXT
+Already up-to-date.
+Merging infiniband/for-next
+$ git merge infiniband/for-next
+Auto-merging drivers/char/Kconfig
+Auto-merging drivers/char/Makefile
+Auto-merging drivers/infiniband/hw/nes/nes_nic.c
+Auto-merging include/linux/Kbuild
+Merge made by recursive.
+ Documentation/Makefile                         |    3 +-
+ Documentation/ummunotify/Makefile              |    7 +
+ Documentation/ummunotify/ummunotify.txt        |  150 +++++++
+ Documentation/ummunotify/umn-test.c            |  200 +++++++++
+ drivers/char/Kconfig                           |   12 +
+ drivers/char/Makefile                          |    1 +
+ drivers/char/ummunotify.c                      |  566 ++++++++++++++++++++++++
+ drivers/infiniband/core/mad_rmpp.c             |   17 +-
+ drivers/infiniband/hw/mthca/mthca_catas.c      |   11 +-
+ drivers/infiniband/hw/nes/nes_nic.c            |    1 -
+ drivers/infiniband/ulp/ipoib/ipoib_multicast.c |    7 +
+ drivers/net/mlx4/fw.c                          |    5 +
+ include/linux/Kbuild                           |    1 +
+ include/linux/ummunotify.h                     |  121 +++++
+ 14 files changed, 1093 insertions(+), 9 deletions(-)
+ create mode 100644 Documentation/ummunotify/Makefile
+ create mode 100644 Documentation/ummunotify/ummunotify.txt
+ create mode 100644 Documentation/ummunotify/umn-test.c
+ create mode 100644 drivers/char/ummunotify.c
+ create mode 100644 include/linux/ummunotify.h
+Merging acpi/test
+$ git merge acpi/test
+Merge made by recursive.
+ Documentation/laptops/thinkpad-acpi.txt |   48 ++-
+ drivers/acpi/bus.c                      |   49 +--
+ drivers/acpi/scan.c                     |  427 ++++++++++------------
+ drivers/pci/hotplug/acpiphp_ibm.c       |    1 -
+ drivers/platform/x86/thinkpad_acpi.c    |  632 +++++++++++++++++++++----------
+ include/acpi/acpi_bus.h                 |    6 +-
+ 6 files changed, 670 insertions(+), 493 deletions(-)
+Merging ieee1394/for-next
+$ git merge ieee1394/for-next
+Already up-to-date.
+Merging ubi/linux-next
+$ git merge ubi/linux-next
+Already up-to-date.
+Merging kvm/linux-next
+$ git merge kvm/linux-next
+Auto-merging arch/x86/kvm/x86.c
+Auto-merging include/linux/kvm_host.h
+Auto-merging virt/kvm/kvm_main.c
+Merge made by recursive.
+ arch/ia64/include/asm/kvm.h      |    1 +
+ arch/ia64/include/asm/kvm_host.h |    1 -
+ arch/ia64/kvm/Makefile           |    2 +-
+ arch/ia64/kvm/kvm-ia64.c         |   11 +-
+ arch/powerpc/kvm/powerpc.c       |    2 +-
+ arch/s390/kvm/kvm-s390.c         |    2 +-
+ arch/x86/include/asm/kvm.h       |    1 +
+ arch/x86/include/asm/kvm_host.h  |   12 +-
+ arch/x86/kvm/Makefile            |    3 +-
+ arch/x86/kvm/emulate.c           |  154 +++++++-
+ arch/x86/kvm/i8254.c             |    2 -
+ arch/x86/kvm/i8259.c             |   44 ++-
+ arch/x86/kvm/irq.h               |    1 +
+ arch/x86/kvm/lapic.c             |    7 +-
+ arch/x86/kvm/mmu.c               |    2 +-
+ arch/x86/kvm/svm.c               |  105 +++---
+ arch/x86/kvm/vmx.c               |  153 ++++----
+ arch/x86/kvm/x86.c               |   64 ++--
+ include/linux/kvm_host.h         |   50 +++-
+ virt/kvm/assigned-dev.c          |  818 ++++++++++++++++++++++++++++++++++++++
+ virt/kvm/eventfd.c               |    2 -
+ virt/kvm/ioapic.c                |   80 +++-
+ virt/kvm/ioapic.h                |    5 +
+ virt/kvm/irq_comm.c              |  214 ++++++----
+ virt/kvm/kvm_main.c              |  804 +-------------------------------------
+ 25 files changed, 1395 insertions(+), 1145 deletions(-)
+ create mode 100644 virt/kvm/assigned-dev.c
+Merging dlm/next
+$ git merge dlm/next
+Already up-to-date.
+Merging scsi/master
+$ git merge scsi/master
+Auto-merging MAINTAINERS
+Auto-merging drivers/scsi/bnx2i/bnx2i_hwi.c
+Auto-merging drivers/scsi/fcoe/libfcoe.c
+Auto-merging drivers/scsi/sd.c
+Auto-merging drivers/scsi/sg.c
+Auto-merging drivers/scsi/sr.c
+Merge made by recursive.
+ Documentation/scsi/hptiop.txt                      |   21 +-
+ MAINTAINERS                                        |    7 +
+ drivers/scsi/Kconfig                               |   10 +
+ drivers/scsi/Makefile                              |    1 +
+ drivers/scsi/bfa/Makefile                          |   15 +
+ drivers/scsi/bfa/bfa_callback_priv.h               |   57 +
+ drivers/scsi/bfa/bfa_cb_ioim_macros.h              |  205 ++
+ drivers/scsi/bfa/bfa_cee.c                         |  492 ++++
+ drivers/scsi/bfa/bfa_core.c                        |  402 +++
+ drivers/scsi/bfa/bfa_csdebug.c                     |   58 +
+ drivers/scsi/bfa/bfa_fcpim.c                       |  175 ++
+ drivers/scsi/bfa/bfa_fcpim_priv.h                  |  188 ++
+ drivers/scsi/bfa/bfa_fcport.c                      | 1671 +++++++++++++
+ drivers/scsi/bfa/bfa_fcs.c                         |  182 ++
+ drivers/scsi/bfa/bfa_fcs_lport.c                   |  940 +++++++
+ drivers/scsi/bfa/bfa_fcs_port.c                    |   68 +
+ drivers/scsi/bfa/bfa_fcs_uf.c                      |  105 +
+ drivers/scsi/bfa/bfa_fcxp.c                        |  782 ++++++
+ drivers/scsi/bfa/bfa_fcxp_priv.h                   |  138 +
+ drivers/scsi/bfa/bfa_fwimg_priv.h                  |   31 +
+ drivers/scsi/bfa/bfa_hw_cb.c                       |  142 ++
+ drivers/scsi/bfa/bfa_hw_ct.c                       |  162 ++
+ drivers/scsi/bfa/bfa_intr.c                        |  218 ++
+ drivers/scsi/bfa/bfa_intr_priv.h                   |  115 +
+ drivers/scsi/bfa/bfa_ioc.c                         | 2382 ++++++++++++++++++
+ drivers/scsi/bfa/bfa_ioc.h                         |  259 ++
+ drivers/scsi/bfa/bfa_iocfc.c                       |  872 +++++++
+ drivers/scsi/bfa/bfa_iocfc.h                       |  168 ++
+ drivers/scsi/bfa/bfa_iocfc_q.c                     |   44 +
+ drivers/scsi/bfa/bfa_ioim.c                        | 1311 ++++++++++
+ drivers/scsi/bfa/bfa_itnim.c                       | 1088 ++++++++
+ drivers/scsi/bfa/bfa_log.c                         |  346 +++
+ drivers/scsi/bfa/bfa_log_module.c                  |  451 ++++
+ drivers/scsi/bfa/bfa_lps.c                         |  782 ++++++
+ drivers/scsi/bfa/bfa_lps_priv.h                    |   38 +
+ drivers/scsi/bfa/bfa_module.c                      |   90 +
+ drivers/scsi/bfa/bfa_modules_priv.h                |   43 +
+ drivers/scsi/bfa/bfa_os_inc.h                      |  222 ++
+ drivers/scsi/bfa/bfa_port.c                        |  460 ++++
+ drivers/scsi/bfa/bfa_port_priv.h                   |   90 +
+ drivers/scsi/bfa/bfa_priv.h                        |  113 +
+ drivers/scsi/bfa/bfa_rport.c                       |  911 +++++++
+ drivers/scsi/bfa/bfa_rport_priv.h                  |   45 +
+ drivers/scsi/bfa/bfa_sgpg.c                        |  231 ++
+ drivers/scsi/bfa/bfa_sgpg_priv.h                   |   79 +
+ drivers/scsi/bfa/bfa_sm.c                          |   38 +
+ drivers/scsi/bfa/bfa_timer.c                       |   90 +
+ drivers/scsi/bfa/bfa_trcmod_priv.h                 |   66 +
+ drivers/scsi/bfa/bfa_tskim.c                       |  689 +++++
+ drivers/scsi/bfa/bfa_uf.c                          |  345 +++
+ drivers/scsi/bfa/bfa_uf_priv.h                     |   47 +
+ drivers/scsi/bfa/bfad.c                            | 1182 +++++++++
+ drivers/scsi/bfa/bfad_attr.c                       |  649 +++++
+ drivers/scsi/bfa/bfad_attr.h                       |   65 +
+ drivers/scsi/bfa/bfad_drv.h                        |  295 +++
+ drivers/scsi/bfa/bfad_fwimg.c                      |   95 +
+ drivers/scsi/bfa/bfad_im.c                         | 1230 +++++++++
+ drivers/scsi/bfa/bfad_im.h                         |  150 ++
+ drivers/scsi/bfa/bfad_im_compat.h                  |   46 +
+ drivers/scsi/bfa/bfad_intr.c                       |  214 ++
+ drivers/scsi/bfa/bfad_ipfc.h                       |   42 +
+ drivers/scsi/bfa/bfad_os.c                         |   50 +
+ drivers/scsi/bfa/bfad_tm.h                         |   59 +
+ drivers/scsi/bfa/bfad_trcmod.h                     |   52 +
+ drivers/scsi/bfa/fab.c                             |   62 +
+ drivers/scsi/bfa/fabric.c                          | 1278 ++++++++++
+ drivers/scsi/bfa/fcbuild.c                         | 1449 +++++++++++
+ drivers/scsi/bfa/fcbuild.h                         |  273 ++
+ drivers/scsi/bfa/fcpim.c                           |  844 +++++++
+ drivers/scsi/bfa/fcptm.c                           |   68 +
+ drivers/scsi/bfa/fcs.h                             |   30 +
+ drivers/scsi/bfa/fcs_auth.h                        |   37 +
+ drivers/scsi/bfa/fcs_fabric.h                      |   61 +
+ drivers/scsi/bfa/fcs_fcpim.h                       |   44 +
+ drivers/scsi/bfa/fcs_fcptm.h                       |   45 +
+ drivers/scsi/bfa/fcs_fcxp.h                        |   29 +
+ drivers/scsi/bfa/fcs_lport.h                       |  117 +
+ drivers/scsi/bfa/fcs_ms.h                          |   35 +
+ drivers/scsi/bfa/fcs_port.h                        |   32 +
+ drivers/scsi/bfa/fcs_rport.h                       |   61 +
+ drivers/scsi/bfa/fcs_trcmod.h                      |   56 +
+ drivers/scsi/bfa/fcs_uf.h                          |   32 +
+ drivers/scsi/bfa/fcs_vport.h                       |   39 +
+ drivers/scsi/bfa/fdmi.c                            | 1223 +++++++++
+ drivers/scsi/bfa/include/aen/bfa_aen.h             |   92 +
+ drivers/scsi/bfa/include/aen/bfa_aen_adapter.h     |   31 +
+ drivers/scsi/bfa/include/aen/bfa_aen_audit.h       |   31 +
+ drivers/scsi/bfa/include/aen/bfa_aen_ethport.h     |   35 +
+ drivers/scsi/bfa/include/aen/bfa_aen_ioc.h         |   37 +
+ drivers/scsi/bfa/include/aen/bfa_aen_itnim.h       |   33 +
+ drivers/scsi/bfa/include/aen/bfa_aen_lport.h       |   51 +
+ drivers/scsi/bfa/include/aen/bfa_aen_port.h        |   57 +
+ drivers/scsi/bfa/include/aen/bfa_aen_rport.h       |   37 +
+ drivers/scsi/bfa/include/bfa.h                     |  177 ++
+ drivers/scsi/bfa/include/bfa_fcpim.h               |  159 ++
+ drivers/scsi/bfa/include/bfa_fcptm.h               |   47 +
+ drivers/scsi/bfa/include/bfa_svc.h                 |  324 +++
+ drivers/scsi/bfa/include/bfa_timer.h               |   53 +
+ drivers/scsi/bfa/include/bfi/bfi.h                 |  174 ++
+ drivers/scsi/bfa/include/bfi/bfi_boot.h            |   34 +
+ drivers/scsi/bfa/include/bfi/bfi_cbreg.h           |  305 +++
+ drivers/scsi/bfa/include/bfi/bfi_cee.h             |  119 +
+ drivers/scsi/bfa/include/bfi/bfi_ctreg.h           |  611 +++++
+ drivers/scsi/bfa/include/bfi/bfi_fabric.h          |   92 +
+ drivers/scsi/bfa/include/bfi/bfi_fcpim.h           |  301 +++
+ drivers/scsi/bfa/include/bfi/bfi_fcxp.h            |   71 +
+ drivers/scsi/bfa/include/bfi/bfi_ioc.h             |  202 ++
+ drivers/scsi/bfa/include/bfi/bfi_iocfc.h           |  177 ++
+ drivers/scsi/bfa/include/bfi/bfi_lport.h           |   89 +
+ drivers/scsi/bfa/include/bfi/bfi_lps.h             |   96 +
+ drivers/scsi/bfa/include/bfi/bfi_port.h            |  115 +
+ drivers/scsi/bfa/include/bfi/bfi_pport.h           |  184 ++
+ drivers/scsi/bfa/include/bfi/bfi_rport.h           |  104 +
+ drivers/scsi/bfa/include/bfi/bfi_uf.h              |   52 +
+ drivers/scsi/bfa/include/cna/bfa_cna_trcmod.h      |   36 +
+ drivers/scsi/bfa/include/cna/cee/bfa_cee.h         |   77 +
+ drivers/scsi/bfa/include/cna/port/bfa_port.h       |   69 +
+ drivers/scsi/bfa/include/cna/pstats/ethport_defs.h |   36 +
+ drivers/scsi/bfa/include/cna/pstats/phyport_defs.h |  218 ++
+ drivers/scsi/bfa/include/cs/bfa_checksum.h         |   60 +
+ drivers/scsi/bfa/include/cs/bfa_debug.h            |   44 +
+ drivers/scsi/bfa/include/cs/bfa_log.h              |  184 ++
+ drivers/scsi/bfa/include/cs/bfa_perf.h             |   34 +
+ drivers/scsi/bfa/include/cs/bfa_plog.h             |  162 ++
+ drivers/scsi/bfa/include/cs/bfa_q.h                |   81 +
+ drivers/scsi/bfa/include/cs/bfa_sm.h               |   69 +
+ drivers/scsi/bfa/include/cs/bfa_trc.h              |  176 ++
+ drivers/scsi/bfa/include/cs/bfa_wc.h               |   68 +
+ drivers/scsi/bfa/include/defs/bfa_defs_adapter.h   |   82 +
+ drivers/scsi/bfa/include/defs/bfa_defs_aen.h       |   73 +
+ drivers/scsi/bfa/include/defs/bfa_defs_audit.h     |   38 +
+ drivers/scsi/bfa/include/defs/bfa_defs_auth.h      |  112 +
+ drivers/scsi/bfa/include/defs/bfa_defs_boot.h      |   71 +
+ drivers/scsi/bfa/include/defs/bfa_defs_cee.h       |  159 ++
+ drivers/scsi/bfa/include/defs/bfa_defs_driver.h    |   40 +
+ drivers/scsi/bfa/include/defs/bfa_defs_ethport.h   |   98 +
+ drivers/scsi/bfa/include/defs/bfa_defs_fcpim.h     |   45 +
+ drivers/scsi/bfa/include/defs/bfa_defs_im_common.h |   32 +
+ drivers/scsi/bfa/include/defs/bfa_defs_im_team.h   |   72 +
+ drivers/scsi/bfa/include/defs/bfa_defs_ioc.h       |  152 ++
+ drivers/scsi/bfa/include/defs/bfa_defs_iocfc.h     |  310 +++
+ drivers/scsi/bfa/include/defs/bfa_defs_ipfc.h      |   70 +
+ drivers/scsi/bfa/include/defs/bfa_defs_itnim.h     |  126 +
+ drivers/scsi/bfa/include/defs/bfa_defs_led.h       |   35 +
+ drivers/scsi/bfa/include/defs/bfa_defs_lport.h     |   68 +
+ drivers/scsi/bfa/include/defs/bfa_defs_mfg.h       |   58 +
+ drivers/scsi/bfa/include/defs/bfa_defs_pci.h       |   41 +
+ drivers/scsi/bfa/include/defs/bfa_defs_pm.h        |   33 +
+ drivers/scsi/bfa/include/defs/bfa_defs_pom.h       |   56 +
+ drivers/scsi/bfa/include/defs/bfa_defs_port.h      |  245 ++
+ drivers/scsi/bfa/include/defs/bfa_defs_pport.h     |  383 +++
+ drivers/scsi/bfa/include/defs/bfa_defs_qos.h       |   99 +
+ drivers/scsi/bfa/include/defs/bfa_defs_rport.h     |  199 ++
+ drivers/scsi/bfa/include/defs/bfa_defs_status.h    |  255 ++
+ drivers/scsi/bfa/include/defs/bfa_defs_tin.h       |  118 +
+ drivers/scsi/bfa/include/defs/bfa_defs_tsensor.h   |   43 +
+ drivers/scsi/bfa/include/defs/bfa_defs_types.h     |   30 +
+ drivers/scsi/bfa/include/defs/bfa_defs_version.h   |   22 +
+ drivers/scsi/bfa/include/defs/bfa_defs_vf.h        |   74 +
+ drivers/scsi/bfa/include/defs/bfa_defs_vport.h     |   91 +
+ drivers/scsi/bfa/include/fcb/bfa_fcb.h             |   33 +
+ drivers/scsi/bfa/include/fcb/bfa_fcb_fcpim.h       |   76 +
+ drivers/scsi/bfa/include/fcb/bfa_fcb_port.h        |  113 +
+ drivers/scsi/bfa/include/fcb/bfa_fcb_rport.h       |   80 +
+ drivers/scsi/bfa/include/fcb/bfa_fcb_vf.h          |   47 +
+ drivers/scsi/bfa/include/fcb/bfa_fcb_vport.h       |   47 +
+ drivers/scsi/bfa/include/fcs/bfa_fcs.h             |   73 +
+ drivers/scsi/bfa/include/fcs/bfa_fcs_auth.h        |   82 +
+ drivers/scsi/bfa/include/fcs/bfa_fcs_fabric.h      |  112 +
+ drivers/scsi/bfa/include/fcs/bfa_fcs_fcpim.h       |  131 +
+ drivers/scsi/bfa/include/fcs/bfa_fcs_fdmi.h        |   63 +
+ drivers/scsi/bfa/include/fcs/bfa_fcs_lport.h       |  226 ++
+ drivers/scsi/bfa/include/fcs/bfa_fcs_rport.h       |  104 +
+ drivers/scsi/bfa/include/fcs/bfa_fcs_vport.h       |   63 +
+ drivers/scsi/bfa/include/log/bfa_log_fcs.h         |   28 +
+ drivers/scsi/bfa/include/log/bfa_log_hal.h         |   30 +
+ drivers/scsi/bfa/include/log/bfa_log_linux.h       |   44 +
+ drivers/scsi/bfa/include/log/bfa_log_wdrv.h        |   36 +
+ drivers/scsi/bfa/include/protocol/ct.h             |  492 ++++
+ drivers/scsi/bfa/include/protocol/fc.h             | 1105 +++++++++
+ drivers/scsi/bfa/include/protocol/fc_sp.h          |  224 ++
+ drivers/scsi/bfa/include/protocol/fcp.h            |  186 ++
+ drivers/scsi/bfa/include/protocol/fdmi.h           |  163 ++
+ drivers/scsi/bfa/include/protocol/pcifw.h          |   75 +
+ drivers/scsi/bfa/include/protocol/scsi.h           | 1648 ++++++++++++
+ drivers/scsi/bfa/include/protocol/types.h          |   42 +
+ drivers/scsi/bfa/loop.c                            |  422 ++++
+ drivers/scsi/bfa/lport_api.c                       |  291 +++
+ drivers/scsi/bfa/lport_priv.h                      |   82 +
+ drivers/scsi/bfa/ms.c                              |  759 ++++++
+ drivers/scsi/bfa/n2n.c                             |  105 +
+ drivers/scsi/bfa/ns.c                              | 1243 ++++++++++
+ drivers/scsi/bfa/plog.c                            |  184 ++
+ drivers/scsi/bfa/rport.c                           | 2618 ++++++++++++++++++++
+ drivers/scsi/bfa/rport_api.c                       |  180 ++
+ drivers/scsi/bfa/rport_ftrs.c                      |  375 +++
+ drivers/scsi/bfa/scn.c                             |  482 ++++
+ drivers/scsi/bfa/vfapi.c                           |  292 +++
+ drivers/scsi/bfa/vport.c                           |  891 +++++++
+ drivers/scsi/bnx2i/bnx2i.h                         |    2 +
+ drivers/scsi/bnx2i/bnx2i_hwi.c                     |    2 +-
+ drivers/scsi/device_handler/scsi_dh_rdac.c         |    2 -
+ drivers/scsi/fcoe/fcoe.c                           | 1073 ++++++---
+ drivers/scsi/fcoe/fcoe.h                           |   76 +-
+ drivers/scsi/fcoe/libfcoe.c                        |  288 ++-
+ drivers/scsi/fnic/fnic_main.c                      |   10 +-
+ drivers/scsi/hptiop.c                              |   37 +-
+ drivers/scsi/hptiop.h                              |    3 +-
+ drivers/scsi/libfc/Makefile                        |    4 +-
+ drivers/scsi/libfc/fc_disc.c                       |    2 +
+ drivers/scsi/libfc/fc_elsct.c                      |    3 +-
+ drivers/scsi/libfc/fc_exch.c                       |  361 ++--
+ drivers/scsi/libfc/fc_fcp.c                        |  180 +-
+ drivers/scsi/libfc/fc_frame.c                      |    7 +-
+ drivers/scsi/libfc/fc_libfc.c                      |  134 +
+ drivers/scsi/libfc/fc_libfc.h                      |  112 +
+ drivers/scsi/libfc/fc_lport.c                      |  550 +++--
+ drivers/scsi/libfc/fc_npiv.c                       |  161 ++
+ drivers/scsi/libfc/fc_rport.c                      |    6 +-
+ drivers/scsi/lpfc/lpfc_scsi.c                      |   15 +-
+ drivers/scsi/mvsas/mv_defs.h                       |    4 +
+ drivers/scsi/mvsas/mv_init.c                       |    4 +
+ drivers/scsi/pmcraid.c                             |   58 +-
+ drivers/scsi/scsi.c                                |   11 +-
+ drivers/scsi/scsi_debug.c                          |  139 +-
+ drivers/scsi/scsi_error.c                          |    3 +
+ drivers/scsi/scsi_transport_fc.c                   |    2 +
+ drivers/scsi/sd.c                                  |  140 +-
+ drivers/scsi/sd.h                                  |    9 +-
+ drivers/scsi/sd_dif.c                              |   65 -
+ drivers/scsi/sg.c                                  |   10 +-
+ drivers/scsi/sr.c                                  |   22 +-
+ include/scsi/Kbuild                                |    1 +
+ include/scsi/fc/Kbuild                             |    4 +
+ include/scsi/fc/fc_els.h                           |    6 +-
+ include/scsi/fc/fc_fs.h                            |    2 +
+ include/scsi/fc/fc_gs.h                            |    2 +
+ include/scsi/fc/fc_ns.h                            |   22 +
+ include/scsi/fc_encode.h                           |   54 +-
+ include/scsi/fc_frame.h                            |    3 +
+ include/scsi/libfc.h                               |  200 +--
+ include/scsi/libfcoe.h                             |   89 +-
+ include/scsi/scsi.h                                |    3 +
+ include/scsi/scsi_cmnd.h                           |    4 -
+ include/scsi/scsi_host.h                           |   15 +-
+ 245 files changed, 51778 insertions(+), 1332 deletions(-)
+ create mode 100644 drivers/scsi/bfa/Makefile
+ create mode 100644 drivers/scsi/bfa/bfa_callback_priv.h
+ create mode 100644 drivers/scsi/bfa/bfa_cb_ioim_macros.h
+ create mode 100644 drivers/scsi/bfa/bfa_cee.c
+ create mode 100644 drivers/scsi/bfa/bfa_core.c
+ create mode 100644 drivers/scsi/bfa/bfa_csdebug.c
+ create mode 100644 drivers/scsi/bfa/bfa_fcpim.c
+ create mode 100644 drivers/scsi/bfa/bfa_fcpim_priv.h
+ create mode 100644 drivers/scsi/bfa/bfa_fcport.c
+ create mode 100644 drivers/scsi/bfa/bfa_fcs.c
+ create mode 100644 drivers/scsi/bfa/bfa_fcs_lport.c
+ create mode 100644 drivers/scsi/bfa/bfa_fcs_port.c
+ create mode 100644 drivers/scsi/bfa/bfa_fcs_uf.c
+ create mode 100644 drivers/scsi/bfa/bfa_fcxp.c
+ create mode 100644 drivers/scsi/bfa/bfa_fcxp_priv.h
+ create mode 100644 drivers/scsi/bfa/bfa_fwimg_priv.h
+ create mode 100644 drivers/scsi/bfa/bfa_hw_cb.c
+ create mode 100644 drivers/scsi/bfa/bfa_hw_ct.c
+ create mode 100644 drivers/scsi/bfa/bfa_intr.c
+ create mode 100644 drivers/scsi/bfa/bfa_intr_priv.h
+ create mode 100644 drivers/scsi/bfa/bfa_ioc.c
+ create mode 100644 drivers/scsi/bfa/bfa_ioc.h
+ create mode 100644 drivers/scsi/bfa/bfa_iocfc.c
+ create mode 100644 drivers/scsi/bfa/bfa_iocfc.h
+ create mode 100644 drivers/scsi/bfa/bfa_iocfc_q.c
+ create mode 100644 drivers/scsi/bfa/bfa_ioim.c
+ create mode 100644 drivers/scsi/bfa/bfa_itnim.c
+ create mode 100644 drivers/scsi/bfa/bfa_log.c
+ create mode 100644 drivers/scsi/bfa/bfa_log_module.c
+ create mode 100644 drivers/scsi/bfa/bfa_lps.c
+ create mode 100644 drivers/scsi/bfa/bfa_lps_priv.h
+ create mode 100644 drivers/scsi/bfa/bfa_module.c
+ create mode 100644 drivers/scsi/bfa/bfa_modules_priv.h
+ create mode 100644 drivers/scsi/bfa/bfa_os_inc.h
+ create mode 100644 drivers/scsi/bfa/bfa_port.c
+ create mode 100644 drivers/scsi/bfa/bfa_port_priv.h
+ create mode 100644 drivers/scsi/bfa/bfa_priv.h
+ create mode 100644 drivers/scsi/bfa/bfa_rport.c
+ create mode 100644 drivers/scsi/bfa/bfa_rport_priv.h
+ create mode 100644 drivers/scsi/bfa/bfa_sgpg.c
+ create mode 100644 drivers/scsi/bfa/bfa_sgpg_priv.h
+ create mode 100644 drivers/scsi/bfa/bfa_sm.c
+ create mode 100644 drivers/scsi/bfa/bfa_timer.c
+ create mode 100644 drivers/scsi/bfa/bfa_trcmod_priv.h
+ create mode 100644 drivers/scsi/bfa/bfa_tskim.c
+ create mode 100644 drivers/scsi/bfa/bfa_uf.c
+ create mode 100644 drivers/scsi/bfa/bfa_uf_priv.h
+ create mode 100644 drivers/scsi/bfa/bfad.c
+ create mode 100644 drivers/scsi/bfa/bfad_attr.c
+ create mode 100644 drivers/scsi/bfa/bfad_attr.h
+ create mode 100644 drivers/scsi/bfa/bfad_drv.h
+ create mode 100644 drivers/scsi/bfa/bfad_fwimg.c
+ create mode 100644 drivers/scsi/bfa/bfad_im.c
+ create mode 100644 drivers/scsi/bfa/bfad_im.h
+ create mode 100644 drivers/scsi/bfa/bfad_im_compat.h
+ create mode 100644 drivers/scsi/bfa/bfad_intr.c
+ create mode 100644 drivers/scsi/bfa/bfad_ipfc.h
+ create mode 100644 drivers/scsi/bfa/bfad_os.c
+ create mode 100644 drivers/scsi/bfa/bfad_tm.h
+ create mode 100644 drivers/scsi/bfa/bfad_trcmod.h
+ create mode 100644 drivers/scsi/bfa/fab.c
+ create mode 100644 drivers/scsi/bfa/fabric.c
+ create mode 100644 drivers/scsi/bfa/fcbuild.c
+ create mode 100644 drivers/scsi/bfa/fcbuild.h
+ create mode 100644 drivers/scsi/bfa/fcpim.c
+ create mode 100644 drivers/scsi/bfa/fcptm.c
+ create mode 100644 drivers/scsi/bfa/fcs.h
+ create mode 100644 drivers/scsi/bfa/fcs_auth.h
+ create mode 100644 drivers/scsi/bfa/fcs_fabric.h
+ create mode 100644 drivers/scsi/bfa/fcs_fcpim.h
+ create mode 100644 drivers/scsi/bfa/fcs_fcptm.h
+ create mode 100644 drivers/scsi/bfa/fcs_fcxp.h
+ create mode 100644 drivers/scsi/bfa/fcs_lport.h
+ create mode 100644 drivers/scsi/bfa/fcs_ms.h
+ create mode 100644 drivers/scsi/bfa/fcs_port.h
+ create mode 100644 drivers/scsi/bfa/fcs_rport.h
+ create mode 100644 drivers/scsi/bfa/fcs_trcmod.h
+ create mode 100644 drivers/scsi/bfa/fcs_uf.h
+ create mode 100644 drivers/scsi/bfa/fcs_vport.h
+ create mode 100644 drivers/scsi/bfa/fdmi.c
+ create mode 100644 drivers/scsi/bfa/include/aen/bfa_aen.h
+ create mode 100644 drivers/scsi/bfa/include/aen/bfa_aen_adapter.h
+ create mode 100644 drivers/scsi/bfa/include/aen/bfa_aen_audit.h
+ create mode 100644 drivers/scsi/bfa/include/aen/bfa_aen_ethport.h
+ create mode 100644 drivers/scsi/bfa/include/aen/bfa_aen_ioc.h
+ create mode 100644 drivers/scsi/bfa/include/aen/bfa_aen_itnim.h
+ create mode 100644 drivers/scsi/bfa/include/aen/bfa_aen_lport.h
+ create mode 100644 drivers/scsi/bfa/include/aen/bfa_aen_port.h
+ create mode 100644 drivers/scsi/bfa/include/aen/bfa_aen_rport.h
+ create mode 100644 drivers/scsi/bfa/include/bfa.h
+ create mode 100644 drivers/scsi/bfa/include/bfa_fcpim.h
+ create mode 100644 drivers/scsi/bfa/include/bfa_fcptm.h
+ create mode 100644 drivers/scsi/bfa/include/bfa_svc.h
+ create mode 100644 drivers/scsi/bfa/include/bfa_timer.h
+ create mode 100644 drivers/scsi/bfa/include/bfi/bfi.h
+ create mode 100644 drivers/scsi/bfa/include/bfi/bfi_boot.h
+ create mode 100644 drivers/scsi/bfa/include/bfi/bfi_cbreg.h
+ create mode 100644 drivers/scsi/bfa/include/bfi/bfi_cee.h
+ create mode 100644 drivers/scsi/bfa/include/bfi/bfi_ctreg.h
+ create mode 100644 drivers/scsi/bfa/include/bfi/bfi_fabric.h
+ create mode 100644 drivers/scsi/bfa/include/bfi/bfi_fcpim.h
+ create mode 100644 drivers/scsi/bfa/include/bfi/bfi_fcxp.h
+ create mode 100644 drivers/scsi/bfa/include/bfi/bfi_ioc.h
+ create mode 100644 drivers/scsi/bfa/include/bfi/bfi_iocfc.h
+ create mode 100644 drivers/scsi/bfa/include/bfi/bfi_lport.h
+ create mode 100644 drivers/scsi/bfa/include/bfi/bfi_lps.h
+ create mode 100644 drivers/scsi/bfa/include/bfi/bfi_port.h
+ create mode 100644 drivers/scsi/bfa/include/bfi/bfi_pport.h
+ create mode 100644 drivers/scsi/bfa/include/bfi/bfi_rport.h
+ create mode 100644 drivers/scsi/bfa/include/bfi/bfi_uf.h
+ create mode 100644 drivers/scsi/bfa/include/cna/bfa_cna_trcmod.h
+ create mode 100644 drivers/scsi/bfa/include/cna/cee/bfa_cee.h
+ create mode 100644 drivers/scsi/bfa/include/cna/port/bfa_port.h
+ create mode 100644 drivers/scsi/bfa/include/cna/pstats/ethport_defs.h
+ create mode 100644 drivers/scsi/bfa/include/cna/pstats/phyport_defs.h
+ create mode 100644 drivers/scsi/bfa/include/cs/bfa_checksum.h
+ create mode 100644 drivers/scsi/bfa/include/cs/bfa_debug.h
+ create mode 100644 drivers/scsi/bfa/include/cs/bfa_log.h
+ create mode 100644 drivers/scsi/bfa/include/cs/bfa_perf.h
+ create mode 100644 drivers/scsi/bfa/include/cs/bfa_plog.h
+ create mode 100644 drivers/scsi/bfa/include/cs/bfa_q.h
+ create mode 100644 drivers/scsi/bfa/include/cs/bfa_sm.h
+ create mode 100644 drivers/scsi/bfa/include/cs/bfa_trc.h
+ create mode 100644 drivers/scsi/bfa/include/cs/bfa_wc.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_adapter.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_aen.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_audit.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_auth.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_boot.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_cee.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_driver.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_ethport.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_fcpim.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_im_common.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_im_team.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_ioc.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_iocfc.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_ipfc.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_itnim.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_led.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_lport.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_mfg.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_pci.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_pm.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_pom.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_port.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_pport.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_qos.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_rport.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_status.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_tin.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_tsensor.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_types.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_version.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_vf.h
+ create mode 100644 drivers/scsi/bfa/include/defs/bfa_defs_vport.h
+ create mode 100644 drivers/scsi/bfa/include/fcb/bfa_fcb.h
+ create mode 100644 drivers/scsi/bfa/include/fcb/bfa_fcb_fcpim.h
+ create mode 100644 drivers/scsi/bfa/include/fcb/bfa_fcb_port.h
+ create mode 100644 drivers/scsi/bfa/include/fcb/bfa_fcb_rport.h
+ create mode 100644 drivers/scsi/bfa/include/fcb/bfa_fcb_vf.h
+ create mode 100644 drivers/scsi/bfa/include/fcb/bfa_fcb_vport.h
+ create mode 100644 drivers/scsi/bfa/include/fcs/bfa_fcs.h
+ create mode 100644 drivers/scsi/bfa/include/fcs/bfa_fcs_auth.h
+ create mode 100644 drivers/scsi/bfa/include/fcs/bfa_fcs_fabric.h
+ create mode 100644 drivers/scsi/bfa/include/fcs/bfa_fcs_fcpim.h
+ create mode 100644 drivers/scsi/bfa/include/fcs/bfa_fcs_fdmi.h
+ create mode 100644 drivers/scsi/bfa/include/fcs/bfa_fcs_lport.h
+ create mode 100644 drivers/scsi/bfa/include/fcs/bfa_fcs_rport.h
+ create mode 100644 drivers/scsi/bfa/include/fcs/bfa_fcs_vport.h
+ create mode 100644 drivers/scsi/bfa/include/log/bfa_log_fcs.h
+ create mode 100644 drivers/scsi/bfa/include/log/bfa_log_hal.h
+ create mode 100644 drivers/scsi/bfa/include/log/bfa_log_linux.h
+ create mode 100644 drivers/scsi/bfa/include/log/bfa_log_wdrv.h
+ create mode 100644 drivers/scsi/bfa/include/protocol/ct.h
+ create mode 100644 drivers/scsi/bfa/include/protocol/fc.h
+ create mode 100644 drivers/scsi/bfa/include/protocol/fc_sp.h
+ create mode 100644 drivers/scsi/bfa/include/protocol/fcp.h
+ create mode 100644 drivers/scsi/bfa/include/protocol/fdmi.h
+ create mode 100644 drivers/scsi/bfa/include/protocol/pcifw.h
+ create mode 100644 drivers/scsi/bfa/include/protocol/scsi.h
+ create mode 100644 drivers/scsi/bfa/include/protocol/types.h
+ create mode 100644 drivers/scsi/bfa/loop.c
+ create mode 100644 drivers/scsi/bfa/lport_api.c
+ create mode 100644 drivers/scsi/bfa/lport_priv.h
+ create mode 100644 drivers/scsi/bfa/ms.c
+ create mode 100644 drivers/scsi/bfa/n2n.c
+ create mode 100644 drivers/scsi/bfa/ns.c
+ create mode 100644 drivers/scsi/bfa/plog.c
+ create mode 100644 drivers/scsi/bfa/rport.c
+ create mode 100644 drivers/scsi/bfa/rport_api.c
+ create mode 100644 drivers/scsi/bfa/rport_ftrs.c
+ create mode 100644 drivers/scsi/bfa/scn.c
+ create mode 100644 drivers/scsi/bfa/vfapi.c
+ create mode 100644 drivers/scsi/bfa/vport.c
+ create mode 100644 drivers/scsi/libfc/fc_libfc.c
+ create mode 100644 drivers/scsi/libfc/fc_libfc.h
+ create mode 100644 drivers/scsi/libfc/fc_npiv.c
+ create mode 100644 include/scsi/fc/Kbuild
+Merging async_tx/next
+$ git merge async_tx/next
+Already up-to-date.
+Merging net/master
+$ git merge net/master
+Already up-to-date.
+Merging wireless/master
+$ git merge wireless/master
+Already up-to-date.
+Merging mtd/master
+$ git merge mtd/master
+Auto-merging drivers/mtd/maps/Kconfig
+Merge made by recursive.
+ arch/arm/mach-nomadik/board-nhk8815.c |   11 ++--
+ drivers/mtd/devices/m25p80.c          |    7 ++-
+ drivers/mtd/maps/Kconfig              |    1 +
+ drivers/mtd/maps/gpio-addr-flash.c    |    5 +-
+ drivers/mtd/nand/nand_base.c          |    6 ++
+ include/linux/mtd/bbm.h               |   35 ++++++------
+ include/linux/mtd/flashchip.h         |    7 +++
+ include/linux/mtd/nand.h              |   93 +-------------------------------
+ include/linux/mtd/onenand.h           |   19 +------
+ 9 files changed, 49 insertions(+), 135 deletions(-)
+Merging crypto/master
+$ git merge crypto/master
+Already up-to-date.
+Merging sound/for-next
+$ git merge sound/for-next
+Merge made by recursive.
+ sound/pci/hda/hda_intel.c         |    1 +
+ sound/pci/hda/patch_conexant.c    |   12 +++++-
+ sound/soc/blackfin/bf5xx-i2s.c    |    8 ++--
+ sound/soc/blackfin/bf5xx-tdm.c    |    8 ++--
+ sound/soc/davinci/davinci-i2s.c   |   37 ++++++-----------
+ sound/soc/davinci/davinci-mcasp.c |   80 +++++++++++++------------------------
+ sound/soc/davinci/davinci-mcasp.h |    7 +++-
+ sound/soc/davinci/davinci-pcm.c   |   13 +++---
+ sound/soc/davinci/davinci-pcm.h   |    1 -
+ 9 files changed, 72 insertions(+), 95 deletions(-)
+Merging cpufreq/next
+$ git merge cpufreq/next
+Already up-to-date.
+Merging quilt/rr
+$ git merge quilt/rr
+Auto-merging arch/powerpc/kernel/setup-common.c
+Auto-merging include/linux/sched.h
+Auto-merging init/main.c
+Auto-merging virt/kvm/kvm_main.c
+Merge made by recursive.
+ drivers/net/virtio_net.c |  229 ++++++++++++++++++----------------------------
+ 1 files changed, 88 insertions(+), 141 deletions(-)
+Merging mmc/next
+$ git merge mmc/next
+Already up-to-date.
+Merging input/next
+$ git merge input/next
+Already up-to-date.
+Merging lsm/for-next
+$ git merge lsm/for-next
+Already up-to-date.
+Merging block/for-next
+$ git merge block/for-next
+Auto-merging fs/buffer.c
+Auto-merging mm/page-writeback.c
+Auto-merging mm/shmem.c
+Auto-merging mm/vmscan.c
+Merge made by recursive.
+ .../ABI/testing/sysfs-bus-pci-devices-cciss        |   28 +
+ block/blk-core.c                                   |    1 +
+ block/blk-settings.c                               |    4 +-
+ drivers/block/DAC960.c                             |  156 ++---
+ drivers/block/cciss.c                              |  753 ++++++++++++++------
+ drivers/block/cciss.h                              |   12 +-
+ drivers/block/cpqarray.c                           |   63 +-
+ fs/buffer.c                                        |   10 +-
+ fs/fs-writeback.c                                  |  153 +++--
+ include/trace/events/block.h                       |   33 +
+ kernel/trace/blktrace.c                            |   34 +
+ mm/page-writeback.c                                |   30 +-
+ mm/shmem.c                                         |    5 +-
+ mm/vmscan.c                                        |    8 +-
+ 14 files changed, 889 insertions(+), 401 deletions(-)
+Merging quilt/device-mapper
+$ git merge quilt/device-mapper
+Merge made by recursive.
+ drivers/md/dm-exception-store.c        |   16 -----------
+ drivers/md/dm-exception-store.h        |    2 +-
+ drivers/md/dm-ioctl.c                  |    4 +-
+ drivers/md/dm-log-userspace-base.c     |    2 +-
+ drivers/md/dm-log-userspace-transfer.c |    3 +-
+ drivers/md/dm-snap-persistent.c        |   46 ++++++++++++++-----------------
+ drivers/md/dm-snap.c                   |   10 ++++++-
+ drivers/md/dm.c                        |   11 ++++++-
+ 8 files changed, 44 insertions(+), 50 deletions(-)
+Merging embedded/master
+$ git merge embedded/master
+Already up-to-date.
+Merging firmware/master
+$ git merge firmware/master
+Already up-to-date.
+Merging pcmcia/master
+$ git merge pcmcia/master
+Already up-to-date.
+Merging battery/master
+$ git merge battery/master
+Already up-to-date.
+Merging leds/for-mm
+$ git merge leds/for-mm
+Auto-merging drivers/leds/leds-clevo-mail.c
+Merge made by recursive.
+ drivers/leds/Kconfig              |   22 ++-
+ drivers/leds/Makefile             |    2 +
+ drivers/leds/leds-clevo-mail.c    |    2 +-
+ drivers/leds/leds-cobalt-qube.c   |    2 +-
+ drivers/leds/leds-cobalt-raq.c    |    4 +-
+ drivers/leds/leds-gpio.c          |    2 +-
+ drivers/leds/leds-pca9532.c       |   12 +-
+ drivers/leds/leds-ss4200.c        |  551 +++++++++++++++++++++++++++++++++++++
+ drivers/leds/leds-wm831x-status.c |  341 +++++++++++++++++++++++
+ drivers/leds/ledtrig-gpio.c       |   28 +-
+ drivers/macintosh/via-pmu-led.c   |    2 +-
+ include/linux/mfd/wm831x/status.h |   34 +++
+ 12 files changed, 973 insertions(+), 29 deletions(-)
+ create mode 100644 drivers/leds/leds-ss4200.c
+ create mode 100644 drivers/leds/leds-wm831x-status.c
+ create mode 100644 include/linux/mfd/wm831x/status.h
+Merging backlight/for-mm
+$ git merge backlight/for-mm
+Recorded preimage for 'drivers/video/backlight/da903x_bl.c'
+Auto-merging drivers/acpi/video.c
+Auto-merging drivers/platform/x86/eeepc-laptop.c
+Auto-merging drivers/video/backlight/Kconfig
+Auto-merging drivers/video/backlight/da903x_bl.c
+CONFLICT (content): Merge conflict in drivers/video/backlight/da903x_bl.c
+Automatic merge failed; fix conflicts and then commit the result.
+$ git commit -v -a
+Recorded resolution for 'drivers/video/backlight/da903x_bl.c'.
+[master e5178f3] Merge remote branch 'backlight/for-mm'
+$ git diff -M --stat --summary HEAD^..
+ drivers/acpi/video.c                    |    4 +
+ drivers/platform/x86/eeepc-laptop.c     |    2 +-
+ drivers/video/backlight/Kconfig         |   33 +++
+ drivers/video/backlight/Makefile        |    4 +
+ drivers/video/backlight/adp5520_bl.c    |  377 +++++++++++++++++++++++++++++++
+ drivers/video/backlight/adx_bl.c        |  178 +++++++++++++++
+ drivers/video/backlight/backlight.c     |   42 ++++
+ drivers/video/backlight/hp680_bl.c      |    2 +-
+ drivers/video/backlight/lms283gf05.c    |  242 ++++++++++++++++++++
+ drivers/video/backlight/mbp_nvidia_bl.c |   36 +++
+ drivers/video/backlight/wm831x_bl.c     |  250 ++++++++++++++++++++
+ include/linux/backlight.h               |    7 +
+ include/linux/spi/lms283gf05.h          |   28 +++
+ 13 files changed, 1203 insertions(+), 2 deletions(-)
+ create mode 100644 drivers/video/backlight/adp5520_bl.c
+ create mode 100644 drivers/video/backlight/adx_bl.c
+ create mode 100644 drivers/video/backlight/lms283gf05.c
+ create mode 100644 drivers/video/backlight/wm831x_bl.c
+ create mode 100644 include/linux/spi/lms283gf05.h
+Merging kgdb/kgdb-next
+$ git merge kgdb/kgdb-next
+Auto-merging include/linux/sched.h
+Auto-merging kernel/softlockup.c
+Merge made by recursive.
+ arch/x86/kernel/kgdb.c |   12 ++++++++----
+ include/linux/sched.h  |    4 ++++
+ kernel/kgdb.c          |   31 +++++++++++++++++++++++--------
+ kernel/softlockup.c    |   16 ++++++++++++++++
+ 4 files changed, 51 insertions(+), 12 deletions(-)
+Merging slab/for-next
+$ git merge slab/for-next
+Auto-merging include/linux/rcupdate.h
+Auto-merging init/Kconfig
+Auto-merging lib/Kconfig.debug
+Auto-merging mm/Makefile
+Merge made by recursive.
+ Documentation/vm/slqbinfo.c | 1047 ++++++++++++
+ include/linux/rcu_types.h   |   18 +
+ include/linux/rcupdate.h    |   11 +-
+ include/linux/slab.h        |   10 +-
+ include/linux/slqb_def.h    |  301 ++++
+ init/Kconfig                |    8 +-
+ lib/Kconfig.debug           |   20 +
+ mm/Makefile                 |    1 +
+ mm/slqb.c                   | 3775 +++++++++++++++++++++++++++++++++++++++++++
+ 9 files changed, 5178 insertions(+), 13 deletions(-)
+ create mode 100644 Documentation/vm/slqbinfo.c
+ create mode 100644 include/linux/rcu_types.h
+ create mode 100644 include/linux/slqb_def.h
+ create mode 100644 mm/slqb.c
+Merging uclinux/for-next
+$ git merge uclinux/for-next
+Already up-to-date.
+Merging md/for-next
+$ git merge md/for-next
+Already up-to-date.
+Merging mfd/for-next
+$ git merge mfd/for-next
+Already up-to-date.
+Merging hdlc/hdlc-next
+$ git merge hdlc/hdlc-next
+Already up-to-date.
+Merging drm/drm-next
+$ git merge drm/drm-next
+Merge made by recursive.
+ drivers/gpu/drm/drm_edid.c |   40 ++++++++++++++++++++++++++++++++--------
+ 1 files changed, 32 insertions(+), 8 deletions(-)
+Merging voltage/for-next
+$ git merge voltage/for-next
+Already up-to-date.
+Merging security-testing/next
+$ git merge security-testing/next
+Auto-merging drivers/char/tpm/tpm.c
+Merge made by recursive.
+ drivers/char/tpm/tpm.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+Merging lblnet/master
+$ git merge lblnet/master
+Already up-to-date.
+Merging agp/agp-next
+$ git merge agp/agp-next
+Already up-to-date.
+Merging uwb/for-upstream
+$ git merge uwb/for-upstream
+Already up-to-date.
+Merging watchdog/master
+$ git merge watchdog/master
+Merge made by recursive.
+ drivers/watchdog/Kconfig   |    7 +
+ drivers/watchdog/Makefile  |    1 +
+ drivers/watchdog/adx_wdt.c |  354 ++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 362 insertions(+), 0 deletions(-)
+ create mode 100644 drivers/watchdog/adx_wdt.c
+Merging bdev/master
+$ git merge bdev/master
+Already up-to-date.
+Merging dwmw2-iommu/master
+$ git merge dwmw2-iommu/master
+Merge made by recursive.
+ drivers/pci/dmar.c |   13 ++++++++++++-
+ 1 files changed, 12 insertions(+), 1 deletions(-)
+Merging cputime/cputime
+$ git merge cputime/cputime
+Already up-to-date.
+Merging osd/linux-next
+$ git merge osd/linux-next
+Auto-merging fs/exofs/super.c
+Merge made by recursive.
+ Documentation/filesystems/00-INDEX  |    2 +
+ Documentation/filesystems/exofs.txt |   23 ++++++++-------
+ drivers/scsi/osd/osd_initiator.c    |   22 ++++++++++----
+ drivers/scsi/osd/osd_uld.c          |   53 ++++++++++++++++++++++++++++++++++-
+ fs/exofs/inode.c                    |   13 ++++++--
+ fs/exofs/super.c                    |   11 +++++++
+ include/scsi/osd_initiator.h        |   53 ++++++++++++++++++++++++++++------
+ include/scsi/osd_sense.h            |    3 ++
+ 8 files changed, 148 insertions(+), 32 deletions(-)
+Merging jc_docs/docs-next
+$ git merge jc_docs/docs-next
+Already up-to-date.
+Merging nommu/master
+$ git merge nommu/master
+Already up-to-date.
+Merging trivial/for-next
+$ git merge trivial/for-next
+Merge made by recursive.
+ Documentation/timers/hpet.txt |    2 +-
+ drivers/rtc/rtc-ds1511.c      |    4 ++--
+ drivers/watchdog/sb_wdog.c    |    4 ++--
+ 3 files changed, 5 insertions(+), 5 deletions(-)
+Merging audit/for-next
+$ git merge audit/for-next
+Already up-to-date.
+Merging omap/for-next
+$ git merge omap/for-next
+Already up-to-date.
+Merging quilt/aoe
+$ git merge quilt/aoe
+Merge made by recursive.
+ drivers/block/aoe/aoecmd.c |    8 ++++++--
+ 1 files changed, 6 insertions(+), 2 deletions(-)
+Merging suspend/linux-next
+$ git merge suspend/linux-next
+Already up-to-date.
+Merging bluetooth/master
+$ git merge bluetooth/master
+Already up-to-date.
+Merging fsnotify/for-next
+$ git merge fsnotify/for-next
+Auto-merging Documentation/feature-removal-schedule.txt
+Auto-merging fs/compat.c
+Auto-merging fs/exec.c
+Auto-merging fs/nfsd/vfs.c
+Auto-merging fs/open.c
+Auto-merging fs/read_write.c
+Auto-merging init/Kconfig
+Auto-merging kernel/Makefile
+Auto-merging kernel/audit.c
+Auto-merging kernel/audit_watch.c
+Auto-merging kernel/auditsc.c
+Merge made by recursive.
+ Documentation/feature-removal-schedule.txt |    7 +
+ fs/compat.c                                |    5 +-
+ fs/exec.c                                  |    4 +-
+ fs/nfsd/vfs.c                              |    4 +-
+ fs/notify/dnotify/dnotify.c                |    8 +-
+ fs/notify/fsnotify.c                       |   16 ++-
+ fs/notify/group.c                          |   50 +-----
+ fs/notify/inode_mark.c                     |   24 ++-
+ fs/notify/inotify/inotify_fsnotify.c       |   59 ++++++-
+ fs/notify/inotify/inotify_user.c           |  219 ++++++++++++++-------
+ fs/notify/notification.c                   |  161 +++++++++-------
+ fs/open.c                                  |    2 +-
+ fs/read_write.c                            |    8 +-
+ include/linux/fsnotify.h                   |   44 +++--
+ include/linux/fsnotify_backend.h           |   30 ++--
+ init/Kconfig                               |   10 +-
+ kernel/Makefile                            |    5 +-
+ kernel/audit.c                             |    1 -
+ kernel/audit.h                             |   26 ++-
+ kernel/audit_tree.c                        |  223 ++++++++++++----------
+ kernel/audit_watch.c                       |  294 ++++++++++++++++------------
+ kernel/auditfilter.c                       |   39 ++---
+ kernel/auditsc.c                           |    9 +-
+ 23 files changed, 726 insertions(+), 522 deletions(-)
+Merging irda/for-next
+$ git merge irda/for-next
+Auto-merging drivers/net/irda/irda-usb.c
+Merge made by recursive.
+ drivers/net/irda/irda-usb.c |    9 +++++----
+ 1 files changed, 5 insertions(+), 4 deletions(-)
+Merging hwlat/for-linus
+$ git merge hwlat/for-linus
+Auto-merging MAINTAINERS
+Auto-merging drivers/misc/Kconfig
+Auto-merging drivers/misc/Makefile
+Merge made by recursive.
+ Documentation/hwlat_detector.txt |   64 ++
+ MAINTAINERS                      |    9 +
+ drivers/misc/Kconfig             |   29 +
+ drivers/misc/Makefile            |    1 +
+ drivers/misc/hwlat_detector.c    | 1208 ++++++++++++++++++++++++++++++++++++++
+ 5 files changed, 1311 insertions(+), 0 deletions(-)
+ create mode 100644 Documentation/hwlat_detector.txt
+ create mode 100644 drivers/misc/hwlat_detector.c
+Merging drbd/drbd
+$ git merge drbd/drbd
+Auto-merging MAINTAINERS
+Merge made by recursive.
+ .../blockdev/drbd/DRBD-8.3-data-packets.svg        |  588 +++
+ Documentation/blockdev/drbd/DRBD-data-packets.svg  |  459 ++
+ Documentation/blockdev/drbd/README.txt             |   16 +
+ Documentation/blockdev/drbd/conn-states-8.dot      |   18 +
+ Documentation/blockdev/drbd/disk-states-8.dot      |   16 +
+ .../drbd/drbd-connection-state-overview.dot        |   85 +
+ Documentation/blockdev/drbd/node-states-8.dot      |   14 +
+ MAINTAINERS                                        |   13 +
+ drivers/block/Kconfig                              |    2 +
+ drivers/block/Makefile                             |    1 +
+ drivers/block/drbd/Kconfig                         |   82 +
+ drivers/block/drbd/Makefile                        |    8 +
+ drivers/block/drbd/drbd_actlog.c                   | 1484 +++++++
+ drivers/block/drbd/drbd_bitmap.c                   | 1327 ++++++
+ drivers/block/drbd/drbd_int.h                      | 2258 ++++++++++
+ drivers/block/drbd/drbd_main.c                     | 3735 ++++++++++++++++
+ drivers/block/drbd/drbd_nl.c                       | 2365 +++++++++++
+ drivers/block/drbd/drbd_proc.c                     |  266 ++
+ drivers/block/drbd/drbd_receiver.c                 | 4456 ++++++++++++++++++++
+ drivers/block/drbd/drbd_req.c                      | 1132 +++++
+ drivers/block/drbd/drbd_req.h                      |  327 ++
+ drivers/block/drbd/drbd_strings.c                  |  113 +
+ drivers/block/drbd/drbd_tracing.c                  |  752 ++++
+ drivers/block/drbd/drbd_tracing.h                  |   87 +
+ drivers/block/drbd/drbd_vli.h                      |  351 ++
+ drivers/block/drbd/drbd_worker.c                   | 1529 +++++++
+ drivers/block/drbd/drbd_wrappers.h                 |   91 +
+ include/linux/drbd.h                               |  349 ++
+ include/linux/drbd_limits.h                        |  137 +
+ include/linux/drbd_nl.h                            |  137 +
+ include/linux/drbd_tag_magic.h                     |   83 +
+ include/linux/lru_cache.h                          |  294 ++
+ lib/Kconfig                                        |    3 +
+ lib/Makefile                                       |    2 +
+ lib/lru_cache.c                                    |  560 +++
+ 35 files changed, 23140 insertions(+), 0 deletions(-)
+ create mode 100644 Documentation/blockdev/drbd/DRBD-8.3-data-packets.svg
+ create mode 100644 Documentation/blockdev/drbd/DRBD-data-packets.svg
+ create mode 100644 Documentation/blockdev/drbd/README.txt
+ create mode 100644 Documentation/blockdev/drbd/conn-states-8.dot
+ create mode 100644 Documentation/blockdev/drbd/disk-states-8.dot
+ create mode 100644 Documentation/blockdev/drbd/drbd-connection-state-overview.dot
+ create mode 100644 Documentation/blockdev/drbd/node-states-8.dot
+ create mode 100644 drivers/block/drbd/Kconfig
+ create mode 100644 drivers/block/drbd/Makefile
+ create mode 100644 drivers/block/drbd/drbd_actlog.c
+ create mode 100644 drivers/block/drbd/drbd_bitmap.c
+ create mode 100644 drivers/block/drbd/drbd_int.h
+ create mode 100644 drivers/block/drbd/drbd_main.c
+ create mode 100644 drivers/block/drbd/drbd_nl.c
+ create mode 100644 drivers/block/drbd/drbd_proc.c
+ create mode 100644 drivers/block/drbd/drbd_receiver.c
+ create mode 100644 drivers/block/drbd/drbd_req.c
+ create mode 100644 drivers/block/drbd/drbd_req.h
+ create mode 100644 drivers/block/drbd/drbd_strings.c
+ create mode 100644 drivers/block/drbd/drbd_tracing.c
+ create mode 100644 drivers/block/drbd/drbd_tracing.h
+ create mode 100644 drivers/block/drbd/drbd_vli.h
+ create mode 100644 drivers/block/drbd/drbd_worker.c
+ create mode 100644 drivers/block/drbd/drbd_wrappers.h
+ create mode 100644 include/linux/drbd.h
+ create mode 100644 include/linux/drbd_limits.h
+ create mode 100644 include/linux/drbd_nl.h
+ create mode 100644 include/linux/drbd_tag_magic.h
+ create mode 100644 include/linux/lru_cache.h
+ create mode 100644 lib/lru_cache.c
+Merging kmemleak/kmemleak
+$ git merge kmemleak/kmemleak
+Already up-to-date.
+Merging tip/auto-latest
+$ git merge tip/auto-latest
+Auto-merging arch/x86/kernel/apic/io_apic.c
+Auto-merging arch/x86/kernel/head_32.S
+Auto-merging arch/x86/kernel/head_64.S
+Auto-merging arch/x86/kernel/traps.c
+Auto-merging kernel/cpuset.c
+Merge made by recursive.
+ arch/x86/Kconfig                       |    5 ++
+ arch/x86/boot/compressed/head_32.S     |    3 +-
+ arch/x86/boot/compressed/head_64.S     |    3 +-
+ arch/x86/boot/compressed/vmlinux.lds.S |    6 ++-
+ arch/x86/include/asm/hpet.h            |    7 ++-
+ arch/x86/include/asm/msr.h             |    4 +-
+ arch/x86/kernel/acpi/boot.c            |    1 +
+ arch/x86/kernel/apic/io_apic.c         |   49 +++++++++++++++---
+ arch/x86/kernel/head_32.S              |    2 +-
+ arch/x86/kernel/head_64.S              |    2 +-
+ arch/x86/kernel/hpet.c                 |   60 ++++++++++++---------
+ arch/x86/kernel/traps.c                |    6 +--
+ arch/x86/kernel/tsc.c                  |    8 +--
+ arch/x86/kernel/vmlinux.lds.S          |   79 +++++-----------------------
+ arch/x86/lib/msr.c                     |   46 +++++++----------
+ drivers/pci/intr_remapping.c           |   89 ++++++++++++++++++++++++++++++--
+ drivers/pci/intr_remapping.h           |    7 +++
+ fs/proc/array.c                        |   11 ++++
+ include/linux/clocksource.h            |    1 -
+ include/linux/dmar.h                   |   10 ++++
+ include/linux/hpet.h                   |    2 +
+ include/linux/poison.h                 |   16 +++++-
+ include/linux/timex.h                  |    5 ++-
+ kernel/cpuset.c                        |    8 +---
+ kernel/hrtimer.c                       |   53 ++++++++++++------
+ kernel/irq/manage.c                    |    2 +-
+ 26 files changed, 305 insertions(+), 180 deletions(-)
+Merging oprofile/for-next
+$ git merge oprofile/for-next
+Auto-merging kernel/trace/ring_buffer.c
+Merge made by recursive.
+Merging percpu/for-next
+$ git merge percpu/for-next
+Already up-to-date.
+Merging sfi/sfi-test
+$ git merge sfi/sfi-test
+Already up-to-date.
+Merging asm-generic/next
+$ git merge asm-generic/next
+Merge made by recursive.
+ lib/checksum.c |   14 ++++++++------
+ 1 files changed, 8 insertions(+), 6 deletions(-)
+Merging hwpoison/hwpoison
+$ git merge hwpoison/hwpoison
+Already up-to-date.
+Merging quilt/driver-core
+$ git merge quilt/driver-core
+Already up-to-date.
+Merging quilt/tty
+$ git merge quilt/tty
+Already up-to-date.
+Merging quilt/usb
+$ git merge quilt/usb
+Recorded preimage for 'drivers/usb/serial/sierra.c'
+Auto-merging MAINTAINERS
+Auto-merging drivers/usb/Kconfig
+Auto-merging drivers/usb/gadget/u_audio.c
+Auto-merging drivers/usb/gadget/u_ether.c
+Auto-merging drivers/usb/host/ohci-pxa27x.c
+Auto-merging drivers/usb/serial/sierra.c
+CONFLICT (content): Merge conflict in drivers/usb/serial/sierra.c
+Automatic merge failed; fix conflicts and then commit the result.
+$ git commit -v -a
+Recorded resolution for 'drivers/usb/serial/sierra.c'.
+[master a5a3357] Merge branch 'quilt/usb'
+$ git diff -M --stat --summary HEAD^..
+Merging quilt/staging
+$ git merge quilt/staging
+Auto-merging drivers/staging/Kconfig
+Auto-merging drivers/staging/Makefile
+Removing drivers/staging/agnx/Kconfig
+Removing drivers/staging/agnx/Makefile
+Removing drivers/staging/agnx/TODO
+Removing drivers/staging/agnx/agnx.h
+Removing drivers/staging/agnx/debug.h
+Removing drivers/staging/agnx/pci.c
+Removing drivers/staging/agnx/phy.c
+Removing drivers/staging/agnx/phy.h
+Removing drivers/staging/agnx/rf.c
+Removing drivers/staging/agnx/sta.c
+Removing drivers/staging/agnx/sta.h
+Removing drivers/staging/agnx/table.c
+Removing drivers/staging/agnx/table.h
+Removing drivers/staging/agnx/xmit.c
+Removing drivers/staging/agnx/xmit.h
+Merge made by recursive.
+ drivers/staging/Kconfig         |    2 -
+ drivers/staging/Makefile        |    1 -
+ drivers/staging/agnx/Kconfig    |    5 -
+ drivers/staging/agnx/Makefile   |    8 -
+ drivers/staging/agnx/TODO       |   22 -
+ drivers/staging/agnx/agnx.h     |  156 -------
+ drivers/staging/agnx/debug.h    |  416 -----------------
+ drivers/staging/agnx/pci.c      |  635 --------------------------
+ drivers/staging/agnx/phy.c      |  960 ---------------------------------------
+ drivers/staging/agnx/phy.h      |  409 -----------------
+ drivers/staging/agnx/rf.c       |  893 ------------------------------------
+ drivers/staging/agnx/sta.c      |  218 ---------
+ drivers/staging/agnx/sta.h      |  222 ---------
+ drivers/staging/agnx/table.c    |  168 -------
+ drivers/staging/agnx/table.h    |   10 -
+ drivers/staging/agnx/xmit.c     |  836 ----------------------------------
+ drivers/staging/agnx/xmit.h     |  250 ----------
+ drivers/staging/winbond/wbusb.c |   33 +-
+ 18 files changed, 17 insertions(+), 5227 deletions(-)
+ delete mode 100644 drivers/staging/agnx/Kconfig
+ delete mode 100644 drivers/staging/agnx/Makefile
+ delete mode 100644 drivers/staging/agnx/TODO
+ delete mode 100644 drivers/staging/agnx/agnx.h
+ delete mode 100644 drivers/staging/agnx/debug.h
+ delete mode 100644 drivers/staging/agnx/pci.c
+ delete mode 100644 drivers/staging/agnx/phy.c
+ delete mode 100644 drivers/staging/agnx/phy.h
+ delete mode 100644 drivers/staging/agnx/rf.c
+ delete mode 100644 drivers/staging/agnx/sta.c
+ delete mode 100644 drivers/staging/agnx/sta.h
+ delete mode 100644 drivers/staging/agnx/table.c
+ delete mode 100644 drivers/staging/agnx/table.h
+ delete mode 100644 drivers/staging/agnx/xmit.c
+ delete mode 100644 drivers/staging/agnx/xmit.h
+Merging scsi-post-merge/master
+$ git merge scsi-post-merge/master
+Recorded preimage for 'drivers/scsi/fcoe/fcoe.c'
+Recorded preimage for 'drivers/scsi/fcoe/fcoe.h'
+Recorded preimage for 'drivers/scsi/libfc/fc_elsct.c'
+Recorded preimage for 'drivers/scsi/libfc/fc_lport.c'
+Recorded preimage for 'include/scsi/fc_encode.h'
+Recorded preimage for 'include/scsi/libfc.h'
+Resolved 'MAINTAINERS' using previous resolution.
+Resolved 'drivers/scsi/Makefile' using previous resolution.
+Resolved 'drivers/scsi/pmcraid.c' using previous resolution.
+Resolved 'kernel/sysctl.c' using previous resolution.
+Auto-merging MAINTAINERS
+CONFLICT (content): Merge conflict in MAINTAINERS
+Auto-merging drivers/ata/ahci.c
+Auto-merging drivers/message/fusion/mptbase.c
+Auto-merging drivers/message/fusion/mptbase.h
+Auto-merging drivers/scsi/Kconfig
+Auto-merging drivers/scsi/Makefile
+CONFLICT (content): Merge conflict in drivers/scsi/Makefile
+Auto-merging drivers/scsi/device_handler/scsi_dh_rdac.c
+Auto-merging drivers/scsi/fcoe/fcoe.c
+CONFLICT (content): Merge conflict in drivers/scsi/fcoe/fcoe.c
+Auto-merging drivers/scsi/fcoe/fcoe.h
+CONFLICT (content): Merge conflict in drivers/scsi/fcoe/fcoe.h
+Auto-merging drivers/scsi/fcoe/libfcoe.c
+Auto-merging drivers/scsi/libfc/fc_disc.c
+Auto-merging drivers/scsi/libfc/fc_elsct.c
+CONFLICT (content): Merge conflict in drivers/scsi/libfc/fc_elsct.c
+Auto-merging drivers/scsi/libfc/fc_exch.c
+Auto-merging drivers/scsi/libfc/fc_fcp.c
+Auto-merging drivers/scsi/libfc/fc_lport.c
+CONFLICT (content): Merge conflict in drivers/scsi/libfc/fc_lport.c
+Auto-merging drivers/scsi/libfc/fc_rport.c
+Auto-merging drivers/scsi/pmcraid.c
+CONFLICT (add/add): Merge conflict in drivers/scsi/pmcraid.c
+Auto-merging drivers/scsi/qla2xxx/qla_def.h
+Auto-merging drivers/scsi/qla2xxx/qla_os.c
+Auto-merging drivers/scsi/sg.c
+Auto-merging include/linux/interrupt.h
+Auto-merging include/linux/libata.h
+Auto-merging include/scsi/fc/fc_gs.h
+Auto-merging include/scsi/fc_encode.h
+CONFLICT (content): Merge conflict in include/scsi/fc_encode.h
+Auto-merging include/scsi/libfc.h
+CONFLICT (content): Merge conflict in include/scsi/libfc.h
+Auto-merging kernel/sysctl.c
+CONFLICT (content): Merge conflict in kernel/sysctl.c
+Automatic merge failed; fix conflicts and then commit the result.
+$ git commit -v -a
+Recorded resolution for 'drivers/scsi/fcoe/fcoe.c'.
+Recorded resolution for 'drivers/scsi/fcoe/fcoe.h'.
+Recorded resolution for 'drivers/scsi/libfc/fc_elsct.c'.
+Recorded resolution for 'drivers/scsi/libfc/fc_lport.c'.
+Recorded resolution for 'include/scsi/fc_encode.h'.
+Recorded resolution for 'include/scsi/libfc.h'.
+[master 876d54c] Merge remote branch 'scsi-post-merge/master'
+$ git diff -M --stat --summary HEAD^..
+ MAINTAINERS                      |    8 +
+ drivers/ata/ahci.c               |   54 +-
+ drivers/message/fusion/mptbase.c |   99 +-
+ drivers/message/fusion/mptbase.h |    3 +
+ drivers/scsi/Kconfig             |    1 +
+ drivers/scsi/Makefile            |    1 +
+ drivers/scsi/be2iscsi/Kconfig    |    8 +
+ drivers/scsi/be2iscsi/Makefile   |    8 +
+ drivers/scsi/be2iscsi/be.h       |  183 ++
+ drivers/scsi/be2iscsi/be_cmds.c  |  523 ++++++
+ drivers/scsi/be2iscsi/be_cmds.h  |  877 ++++++++++
+ drivers/scsi/be2iscsi/be_iscsi.c |  646 ++++++++
+ drivers/scsi/be2iscsi/be_iscsi.h |   75 +
+ drivers/scsi/be2iscsi/be_main.c  | 3393 ++++++++++++++++++++++++++++++++++++++
+ drivers/scsi/be2iscsi/be_main.h  |  833 ++++++++++
+ drivers/scsi/be2iscsi/be_mgmt.c  |  321 ++++
+ drivers/scsi/be2iscsi/be_mgmt.h  |  249 +++
+ drivers/scsi/qla2xxx/qla_dbg.c   |   78 +-
+ drivers/scsi/qla2xxx/qla_def.h   |    5 +
+ drivers/scsi/qla2xxx/qla_gbl.h   |    1 +
+ drivers/scsi/qla2xxx/qla_os.c    |   36 +
+ include/linux/libata.h           |    2 +
+ 22 files changed, 7332 insertions(+), 72 deletions(-)
+ create mode 100644 drivers/scsi/be2iscsi/Kconfig
+ create mode 100644 drivers/scsi/be2iscsi/Makefile
+ create mode 100644 drivers/scsi/be2iscsi/be.h
+ create mode 100644 drivers/scsi/be2iscsi/be_cmds.c
+ create mode 100644 drivers/scsi/be2iscsi/be_cmds.h
+ create mode 100644 drivers/scsi/be2iscsi/be_iscsi.c
+ create mode 100644 drivers/scsi/be2iscsi/be_iscsi.h
+ create mode 100644 drivers/scsi/be2iscsi/be_main.c
+ create mode 100644 drivers/scsi/be2iscsi/be_main.h
+ create mode 100644 drivers/scsi/be2iscsi/be_mgmt.c
+ create mode 100644 drivers/scsi/be2iscsi/be_mgmt.h

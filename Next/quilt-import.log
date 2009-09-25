@@ -1,0 +1,59 @@
+Importing driver-core.current based on 2.6.31-git12
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing i2c based on 2.6.31-git13
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 0dd52d0df02733dfc2d5f3824e41b96492305384
+HEAD is now at 0dd52d0 Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/dtor/input
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-move-legacy-documentation.patch
+i2c-voodoo3-delete.patch
+misc-eeprom-max6875-no-detect.patch
+w1-ds2482-no-detect.patch
+hwmon-ltc4215-ltc4245-no-detect.patch
+i2c-prevent-priority-inversion-on-top-of-bus-lock.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 5e9f18d...66d155e master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.31-git13
+	quilt series is empty
+$ git update-ref refs/heads/quilt/jdelvare-hwmon 0dd52d0df02733dfc2d5f3824e41b96492305384
+Importing kernel-doc based on origin/master
+	quilt series is empty
+$ git update-ref refs/heads/quilt/kernel-doc 94e0fb086fc5663c38bbc0fe86d698be8314f82f
+Importing rr based on v2.6.31-8246-ga724ead
+Unchanged quilt series rr
+Importing device-mapper based on block/for-next
+$ cd ../quilt-tmp
+$ git reset --hard 1e6697c4add13b3818be445b8e4406947d4824cc
+HEAD is now at 1e6697c Merge branch 'writeback' into for-next
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-log-fix-cn_ulog_callback-declaration.patch
+dm-log-userspace-fix-incorrect-luid-cast-in-userspace_ctr.patch
+dm-snapshot-free-exception-store-on-init-failure.patch
+dm-add-missing-del_gendisk-to-alloc_dev-error-path.patch
+dm-dec_pending-needs-locking-to-save-error-value.patch
+dm-snapshot-require-non-zero-chunk-size-by-end-of-ctr.patch
+dm-ioctl-prefer-strlcpy-over-strncpy.patch
+dm-snapshot-avoid-else-clause-in-persistent_read_metadata.patch
+dm-snapshot-allow-chunk-size-to-be-less-than-page-size.patch
+dm-snapshot-simplify-sector_to_chunk-expression.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + eb12874...48b17e1 master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/usb.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
