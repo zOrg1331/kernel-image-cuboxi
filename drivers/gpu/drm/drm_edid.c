@@ -109,7 +109,9 @@ static struct edid_quirk {
 
 
 /* Valid EDID header has these bytes */
-static u8 edid_header[] = { 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00 };
+static const u8 edid_header[] = {
+	0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00
+};
 
 /**
  * edid_is_valid - sanity check EDID data
@@ -500,6 +502,19 @@ static struct drm_display_mode *drm_find_dmt(struct drm_device *dev,
 	}
 	return mode;
 }
+
+/*
+ * 0 is reserved.  The spec says 0x01 fill for unused timings.  Some old
+ * monitors fill with ascii space (0x20) instead.
+ */
+static int
+bad_std_timing(u8 a, u8 b)
+{
+	return (a == 0x00 && b == 0x00) ||
+	       (a == 0x01 && b == 0x01) ||
+	       (a == 0x20 && b == 0x20);
+}
+
 /**
  * drm_mode_std - convert standard mode info (width, height, refresh) into mode
  * @t: standard timing params
@@ -513,6 +528,7 @@ static struct drm_display_mode *drm_find_dmt(struct drm_device *dev,
  */
 struct drm_display_mode *drm_mode_std(struct drm_device *dev,
 				      struct std_timing *t,
+				      int revision,
 				      int timing_level)
 {
 	struct drm_display_mode *mode;
@@ -523,14 +539,20 @@ struct drm_display_mode *drm_mode_std(struct drm_device *dev,
 	unsigned vfreq = (t->vfreq_aspect & EDID_TIMING_VFREQ_MASK)
 		>> EDID_TIMING_VFREQ_SHIFT;
 
+	if (bad_std_timing(t->hsize, t->vfreq_aspect))
+		return NULL;
+
 	/* According to the EDID spec, the hdisplay = hsize * 8 + 248 */
 	hsize = t->hsize * 8 + 248;
 	/* vrefresh_rate = vfreq + 60 */
 	vrefresh_rate = vfreq + 60;
 	/* the vdisplay is calculated based on the aspect ratio */
-	if (aspect_ratio == 0)
-		vsize = (hsize * 10) / 16;
-	else if (aspect_ratio == 1)
+	if (aspect_ratio == 0) {
+		if (revision < 3)
+			vsize = hsize;
+		else
+			vsize = (hsize * 10) / 16;
+	} else if (aspect_ratio == 1)
 		vsize = (hsize * 3) / 4;
 	else if (aspect_ratio == 2)
 		vsize = (hsize * 4) / 5;
@@ -779,7 +801,7 @@ static int add_standard_modes(struct drm_connector *connector, struct edid *edid
 			continue;
 
 		newmode = drm_mode_std(dev, &edid->standard_timings[i],
-					timing_level);
+				       edid->revision, timing_level);
 		if (newmode) {
 			drm_mode_probed_add(connector, newmode);
 			modes++;
@@ -829,13 +851,13 @@ static int add_detailed_info(struct drm_connector *connector,
 			case EDID_DETAIL_MONITOR_CPDATA:
 				break;
 			case EDID_DETAIL_STD_MODES:
-				/* Five modes per detailed section */
-				for (j = 0; j < 5; i++) {
+				for (j = 0; j < 6; i++) {
 					struct std_timing *std;
 					struct drm_display_mode *newmode;
 
 					std = &data->data.timings[j];
 					newmode = drm_mode_std(dev, std,
+							       edid->revision,
 							       timing_level);
 					if (newmode) {
 						drm_mode_probed_add(connector, newmode);
@@ -964,7 +986,9 @@ static int add_detailed_info_eedid(struct drm_connector *connector,
 				struct drm_display_mode *newmode;
 
 				std = &data->data.timings[j];
-				newmode = drm_mode_std(dev, std, timing_level);
+				newmode = drm_mode_std(dev, std,
+						       edid->revision,
+						       timing_level);
 				if (newmode) {
 					drm_mode_probed_add(connector, newmode);
 					modes++;
