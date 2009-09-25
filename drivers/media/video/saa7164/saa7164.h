@@ -375,9 +375,9 @@ extern int saa7164_buffer_dealloc(struct saa7164_tsport *port,
 
 /* ----------------------------------------------------------- */
 
-extern unsigned int saa_debug;
+extern unsigned int debug;
 #define dprintk(level, fmt, arg...)\
-	do { if (saa_debug & level)\
+	do { if (debug & level)\
 		printk(KERN_DEBUG "%s: " fmt, dev->name, ## arg);\
 	} while (0)
 
