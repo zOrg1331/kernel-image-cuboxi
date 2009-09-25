@@ -70,7 +70,6 @@ enum acpi_bus_device_type {
 	ACPI_BUS_TYPE_POWER,
 	ACPI_BUS_TYPE_PROCESSOR,
 	ACPI_BUS_TYPE_THERMAL,
-	ACPI_BUS_TYPE_SYSTEM,
 	ACPI_BUS_TYPE_POWER_BUTTON,
 	ACPI_BUS_TYPE_SLEEP_BUTTON,
 	ACPI_BUS_DEVICE_TYPE_COUNT
@@ -262,7 +261,8 @@ struct acpi_device_wakeup {
 /* Device */
 
 struct acpi_device {
-	acpi_handle handle;
+	int device_type;
+	acpi_handle handle;		/* no handle for fixed hardware */
 	struct acpi_device *parent;
 	struct list_head children;
 	struct list_head node;
@@ -322,6 +322,8 @@ extern void unregister_acpi_bus_notifier(struct notifier_block *nb);
 
 int acpi_bus_get_device(acpi_handle handle, struct acpi_device **device);
 void acpi_bus_data_handler(acpi_handle handle, void *context);
+acpi_status acpi_bus_get_status_handle(acpi_handle handle,
+				       unsigned long long *sta);
 int acpi_bus_get_status(struct acpi_device *device);
 int acpi_bus_get_power(acpi_handle handle, int *state);
 int acpi_bus_set_power(acpi_handle handle, int state);
