@@ -376,7 +376,7 @@ static void tc6393xb_mmc_clk_div(struct platform_device *mmc, int state)
 }
 
 static struct tmio_mmc_data tc6393xb_mmc_data = {
-	.hclk = 24000000,
+	.hclk = 33000000,
 	.set_pwr = tc6393xb_mmc_pwr,
 	.set_no_clk_div = tc6393xb_mmc_clk_div,
 };
