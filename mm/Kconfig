@@ -247,7 +247,7 @@ config DEFAULT_MMAP_MIN_ADDR
 
 config MEMORY_FAILURE
 	depends on MMU
-	depends on X86_MCE && (X86_64 || !NUMA)
+	depends on X86_MCE
 	bool "Enable recovery from hardware memory errors"
 	help
 	  Enables code to recover from some memory failures on systems
