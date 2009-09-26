@@ -55,6 +55,8 @@
 #include <scsi/libfc.h>
 #include <scsi/fc_encode.h>
 
+#include "fc_libfc.h"
+
 struct workqueue_struct *rport_event_queue;
 
 static void fc_rport_enter_plogi(struct fc_rport_priv *);
@@ -1402,7 +1404,7 @@ static void fc_rport_recv_prli_req(struct fc_rport_priv *rdata,
 				break;
 			case FC_TYPE_FCP:
 				fcp_parm = ntohl(rspp->spp_params);
-				if (fcp_parm * FCP_SPPF_RETRY)
+				if (fcp_parm & FCP_SPPF_RETRY)
 					rdata->flags |= FC_RP_FLAGS_RETRY;
 				rdata->supported_classes = FC_COS_CLASS3;
 				if (fcp_parm & FCP_SPPF_INIT_FCN)
@@ -1565,13 +1567,11 @@ int fc_setup_rport(void)
 		return -ENOMEM;
 	return 0;
 }
-EXPORT_SYMBOL(fc_setup_rport);
 
 void fc_destroy_rport(void)
 {
 	destroy_workqueue(rport_event_queue);
 }
-EXPORT_SYMBOL(fc_destroy_rport);
 
 void fc_rport_terminate_io(struct fc_rport *rport)
 {
