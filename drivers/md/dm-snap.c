@@ -668,6 +668,11 @@ static int snapshot_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	bio_list_init(&s->queued_bios);
 	INIT_WORK(&s->queued_bios_work, flush_queued_bios);
 
+	if (!s->store->chunk_size) {
+		ti->error = "Chunk size not set";
+		goto bad_load_and_register;
+	}
+
 	/* Add snapshot to the list of snapshots for this origin */
 	/* Exceptions aren't triggered till snapshot_resume() is called */
 	if (register_snapshot(s)) {
@@ -1465,7 +1470,7 @@ static int __init dm_snapshot_init(void)
 	r = dm_register_target(&snapshot_target);
 	if (r) {
 		DMERR("snapshot target register failed %d", r);
-		return r;
+		goto bad_register_snapshot_target;
 	}
 
 	r = dm_register_target(&origin_target);
@@ -1522,6 +1527,9 @@ bad2:
 	dm_unregister_target(&origin_target);
 bad1:
 	dm_unregister_target(&snapshot_target);
+
+bad_register_snapshot_target:
+	dm_exception_store_exit();
 	return r;
 }
 
