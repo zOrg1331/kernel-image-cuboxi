@@ -1,0 +1,54 @@
+Importing driver-core.current based on 2.6.31-git12
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing i2c based on 2.6.31-git15
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 94e0fb086fc5663c38bbc0fe86d698be8314f82f
+HEAD is now at 94e0fb0 Merge branch 'drm-intel-next' of git://git.kernel.org/pub/scm/linux/kernel/git/anholt/drm-intel
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-move-legacy-documentation.patch
+i2c-voodoo3-delete.patch
+misc-eeprom-max6875-no-detect.patch
+w1-ds2482-no-detect.patch
+hwmon-ltc4215-ltc4245-no-detect.patch
+i2c-prevent-priority-inversion-on-top-of-bus-lock.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 66d155e...721fae2 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.31-git13
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on origin/master
+	quilt series is empty
+$ git update-ref refs/heads/quilt/kernel-doc 6d7f18f6ea3a13af95bdf507fc54d42b165e1712
+Importing rr based on v2.6.31-8756-g94e0fb0
+$ cd ../quilt-tmp
+$ git reset --hard 94e0fb086fc5663c38bbc0fe86d698be8314f82f
+HEAD is now at 94e0fb0 Merge branch 'drm-intel-next' of git://git.kernel.org/pub/scm/linux/kernel/git/anholt/drm-intel
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+virtio:net-skb_orphan-and-nf_reset.patch
+virtio:net-return-NETDEV_TX_BUSY.patch
+virtio:net-no-xmit-free-timer.patch
+virtio:net-struct-skb_vnet_hdr.patch
+virtio:net-stop_queue-before-full.patch
+virtio:net_check_for_room_in_the_vq_before_adding_buffer.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + bb10e83...1297916 master     -> quilt/rr  (forced update)
+Importing device-mapper based on block/for-next
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/usb.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
