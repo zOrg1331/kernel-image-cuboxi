@@ -237,10 +237,6 @@ char revision[] = "$Revision: 3.1 $"; /* cowlo_init_module() has
 #endif
 
 #include <linux/types.h>
-#include <linux/autoconf.h>
-#ifndef AUTOCONF_INCLUDED
-#include <linux/config.h>
-#endif
 #include <linux/module.h>
 #include <linux/version.h>
 #include <linux/moduleparam.h>
