@@ -204,6 +204,11 @@
 #define ACPI_SMBUS_BUFFER_SIZE          34
 #define ACPI_IPMI_BUFFER_SIZE           66
 
+/* _sx_d and _sx_w control methods */
+
+#define ACPI_NUM_sx_d_METHODS           4
+#define ACPI_NUM_sx_w_METHODS           5
+
 /******************************************************************************
  *
  * ACPI AML Debugger
