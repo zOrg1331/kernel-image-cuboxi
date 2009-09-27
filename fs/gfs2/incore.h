@@ -498,14 +498,10 @@ struct gfs2_sb_host {
 struct lm_lockstruct {
 	unsigned int ls_jid;
 	unsigned int ls_first;
-	unsigned int ls_first_done;
 	unsigned int ls_nodir;
 	const struct lm_lockops *ls_ops;
 	unsigned long ls_flags;
 	dlm_lockspace_t *ls_dlm;
-
-	int ls_recover_jid_done;
-	int ls_recover_jid_status;
 };
 
 struct gfs2_sbd {
