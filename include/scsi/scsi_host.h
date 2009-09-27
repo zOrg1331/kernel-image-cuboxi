@@ -698,6 +698,10 @@ static inline void *shost_priv(struct Scsi_Host *shost)
 
 int scsi_is_host_device(const struct device *);
 
+/*
+ * walks object list backward, to find the first shost object.
+ * Skips over transport objects that may not be stargets, etc
+ */
 static inline struct Scsi_Host *dev_to_shost(struct device *dev)
 {
 	while (!scsi_is_host_device(dev)) {
@@ -706,6 +710,17 @@ static inline struct Scsi_Host *dev_to_shost(struct device *dev)
 		dev = dev->parent;
 	}
 	return container_of(dev, struct Scsi_Host, shost_gendev);
+}
+
+/*
+ * walks object list backward, to find the first non-scsi object
+ * Skips over transport objects that may be vports, shosts under vports, etc
+ */
+static inline struct device *dev_to_nonscsi_dev(struct device *dev)
+{
+	while (dev->type == NULL || scsi_is_host_device(dev))
+		dev = dev->parent;
+	return dev;
 }
 
 static inline int scsi_host_in_recovery(struct Scsi_Host *shost)
@@ -798,9 +813,15 @@ static inline unsigned int scsi_host_get_prot(struct Scsi_Host *shost)
 static inline unsigned int scsi_host_dif_capable(struct Scsi_Host *shost, unsigned int target_type)
 {
 	switch (target_type) {
-	case 1: return shost->prot_capabilities & SHOST_DIF_TYPE1_PROTECTION;
-	case 2: return shost->prot_capabilities & SHOST_DIF_TYPE2_PROTECTION;
-	case 3: return shost->prot_capabilities & SHOST_DIF_TYPE3_PROTECTION;
+	case 1:
+		if (shost->prot_capabilities & SHOST_DIF_TYPE1_PROTECTION)
+			return target_type;
+	case 2:
+		if (shost->prot_capabilities & SHOST_DIF_TYPE2_PROTECTION)
+			return target_type;
+	case 3:
+		if (shost->prot_capabilities & SHOST_DIF_TYPE3_PROTECTION)
+			return target_type;
 	}
 
 	return 0;
@@ -808,13 +829,14 @@ static inline unsigned int scsi_host_dif_capable(struct Scsi_Host *shost, unsign
 
 static inline unsigned int scsi_host_dix_capable(struct Scsi_Host *shost, unsigned int target_type)
 {
+#if defined(CONFIG_BLK_DEV_INTEGRITY)
 	switch (target_type) {
 	case 0: return shost->prot_capabilities & SHOST_DIX_TYPE0_PROTECTION;
 	case 1: return shost->prot_capabilities & SHOST_DIX_TYPE1_PROTECTION;
 	case 2: return shost->prot_capabilities & SHOST_DIX_TYPE2_PROTECTION;
 	case 3: return shost->prot_capabilities & SHOST_DIX_TYPE3_PROTECTION;
 	}
-
+#endif
 	return 0;
 }
 
