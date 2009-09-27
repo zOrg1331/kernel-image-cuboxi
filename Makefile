@@ -194,10 +194,9 @@ saved_cross := $(shell cat include/generated/kernel.cross 2> /dev/null)
 ifneq ($(CROSS_COMPILE),)
         ifneq ($(saved_cross),)
                 ifneq ($(CROSS_COMPILE),$(saved_cross))
-                        $(error CROSS_COMPILE changed from \
-                                "$(saved_cross)" to \
-                                 to "$(CROSS_COMPILE)". \
-                                 Use "make mrproper" to fix it up)
+                        $(info CROSS_COMPILE changed from "$(saved_cross)" \
+                               to "$(CROSS_COMPILE)")
+                        $(error Use "make mrproper" to fix it up ***)
                 endif
         endif
 else
@@ -207,9 +206,9 @@ endif
 ifneq ($(ARCH),)
         ifneq ($(saved_arch),)
                 ifneq ($(saved_arch),$(ARCH))
-                        $(error ARCH changed from \
-                                "$(saved_arch)" to "$(ARCH)". \
-                                 Use "make mrproper" to fix it up)
+                       $(info ARCH changed from "$(saved_arch)" to "$(ARCH)")
+                       $(error Use "make mrproper ARCH=$(saved_arch)" \
+                               to fix it up ***)
                 endif
         endif
 else
