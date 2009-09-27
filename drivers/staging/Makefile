@@ -44,3 +44,5 @@ obj-$(CONFIG_RAR_REGISTER)	+= rar/
 obj-$(CONFIG_DX_SEP)		+= sep/
 obj-$(CONFIG_IIO)		+= iio/
 obj-$(CONFIG_RAMZSWAP)		+= ramzswap/
+obj-$(CONFIG_WLAGS49_H2)	+= wlags49_h2/
+obj-$(CONFIG_WLAGS49_H25)	+= wlags49_h25/
