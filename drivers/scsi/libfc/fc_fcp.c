@@ -39,15 +39,9 @@
 #include <scsi/libfc.h>
 #include <scsi/fc_encode.h>
 
-MODULE_AUTHOR("Open-FCoE.org");
-MODULE_DESCRIPTION("libfc");
-MODULE_LICENSE("GPL v2");
+#include "fc_libfc.h"
 
-unsigned int fc_debug_logging;
-module_param_named(debug_logging, fc_debug_logging, int, S_IRUGO|S_IWUSR);
-MODULE_PARM_DESC(debug_logging, "a bit mask of logging levels");
-
-static struct kmem_cache *scsi_pkt_cachep;
+struct kmem_cache *scsi_pkt_cachep;
 
 /* SRB state definitions */
 #define FC_SRB_FREE		0		/* cmd is free */
@@ -285,7 +279,6 @@ void fc_fcp_ddp_setup(struct fc_fcp_pkt *fsp, u16 xid)
 			fsp->xfer_ddp = xid;
 	}
 }
-EXPORT_SYMBOL(fc_fcp_ddp_setup);
 
 /*
  * fc_fcp_ddp_done - calls to LLD's ddp_done to release any
@@ -302,10 +295,13 @@ static void fc_fcp_ddp_done(struct fc_fcp_pkt *fsp)
 	if (!fsp)
 		return;
 
+	if (fsp->xfer_ddp == FC_XID_UNKNOWN)
+		return;
+
 	lp = fsp->lp;
-	if (fsp->xfer_ddp && lp->tt.ddp_done) {
+	if (lp->tt.ddp_done) {
 		fsp->xfer_len = lp->tt.ddp_done(lp, fsp->xfer_ddp);
-		fsp->xfer_ddp = 0;
+		fsp->xfer_ddp = FC_XID_UNKNOWN;
 	}
 }
 
@@ -327,7 +323,7 @@ static void fc_fcp_recv_data(struct fc_fcp_pkt *fsp, struct fc_frame *fp)
 	size_t len;
 	void *buf;
 	struct scatterlist *sg;
-	size_t remaining;
+	u32 nents;
 
 	fh = fc_frame_header_get(fp);
 	offset = ntohl(fh->fh_parm_offset);
@@ -351,55 +347,19 @@ static void fc_fcp_recv_data(struct fc_fcp_pkt *fsp, struct fc_frame *fp)
 	if (offset != fsp->xfer_len)
 		fsp->state |= FC_SRB_DISCONTIG;
 
-	crc = 0;
-	if (fr_flags(fp) & FCPHF_CRC_UNCHECKED)
-		crc = crc32(~0, (u8 *) fh, sizeof(*fh));
-
 	sg = scsi_sglist(sc);
-	remaining = len;
+	nents = scsi_sg_count(sc);
 
-	while (remaining > 0 && sg) {
-		size_t off;
-		void *page_addr;
-		size_t sg_bytes;
-
-		if (offset >= sg->length) {
-			offset -= sg->length;
-			sg = sg_next(sg);
-			continue;
-		}
-		sg_bytes = min(remaining, sg->length - offset);
-
-		/*
-		 * The scatterlist item may be bigger than PAGE_SIZE,
-		 * but we are limited to mapping PAGE_SIZE at a time.
-		 */
-		off = offset + sg->offset;
-		sg_bytes = min(sg_bytes, (size_t)
-			       (PAGE_SIZE - (off & ~PAGE_MASK)));
-		page_addr = kmap_atomic(sg_page(sg) + (off >> PAGE_SHIFT),
-					KM_SOFTIRQ0);
-		if (!page_addr)
-			break;		/* XXX panic? */
-
-		if (fr_flags(fp) & FCPHF_CRC_UNCHECKED)
-			crc = crc32(crc, buf, sg_bytes);
-		memcpy((char *)page_addr + (off & ~PAGE_MASK), buf,
-		       sg_bytes);
-
-		kunmap_atomic(page_addr, KM_SOFTIRQ0);
-		buf += sg_bytes;
-		offset += sg_bytes;
-		remaining -= sg_bytes;
-		copy_len += sg_bytes;
-	}
-
-	if (fr_flags(fp) & FCPHF_CRC_UNCHECKED) {
+	if (!(fr_flags(fp) & FCPHF_CRC_UNCHECKED)) {
+		copy_len = fc_copy_buffer_to_sglist(buf, len, sg, &nents,
+						    &offset, KM_SOFTIRQ0, NULL);
+	} else {
+		crc = crc32(~0, (u8 *) fh, sizeof(*fh));
+		copy_len = fc_copy_buffer_to_sglist(buf, len, sg, &nents,
+						    &offset, KM_SOFTIRQ0, &crc);
 		buf = fc_frame_payload_get(fp, 0);
-		if (len % 4) {
+		if (len % 4)
 			crc = crc32(crc, buf + len, 4 - (len % 4));
-			len += 4 - (len % 4);
-		}
 
 		if (~crc != le32_to_cpu(fr_crc(fp))) {
 crc_err:
@@ -458,11 +418,13 @@ static int fc_fcp_send_data(struct fc_fcp_pkt *fsp, struct fc_seq *seq,
 	struct scatterlist *sg;
 	struct fc_frame *fp = NULL;
 	struct fc_lport *lp = fsp->lp;
+	struct page *page;
 	size_t remaining;
 	size_t t_blen;
 	size_t tlen;
 	size_t sg_bytes;
 	size_t frame_offset, fh_parm_offset;
+	size_t off;
 	int error;
 	void *data = NULL;
 	void *page_addr;
@@ -540,28 +502,26 @@ static int fc_fcp_send_data(struct fc_fcp_pkt *fsp, struct fc_seq *seq,
 			fh_parm_offset = frame_offset;
 			fr_max_payload(fp) = fsp->max_payload;
 		}
+
+		off = offset + sg->offset;
 		sg_bytes = min(tlen, sg->length - offset);
+		sg_bytes = min(sg_bytes,
+			       (size_t) (PAGE_SIZE - (off & ~PAGE_MASK)));
+		page = sg_page(sg) + (off >> PAGE_SHIFT);
 		if (using_sg) {
-			get_page(sg_page(sg));
+			get_page(page);
 			skb_fill_page_desc(fp_skb(fp),
 					   skb_shinfo(fp_skb(fp))->nr_frags,
-					   sg_page(sg), sg->offset + offset,
-					   sg_bytes);
+					   page, off & ~PAGE_MASK, sg_bytes);
 			fp_skb(fp)->data_len += sg_bytes;
 			fr_len(fp) += sg_bytes;
 			fp_skb(fp)->truesize += PAGE_SIZE;
 		} else {
-			size_t off = offset + sg->offset;
-
 			/*
 			 * The scatterlist item may be bigger than PAGE_SIZE,
 			 * but we must not cross pages inside the kmap.
 			 */
-			sg_bytes = min(sg_bytes, (size_t) (PAGE_SIZE -
-							   (off & ~PAGE_MASK)));
-			page_addr = kmap_atomic(sg_page(sg) +
-						(off >> PAGE_SHIFT),
-						KM_SOFTIRQ0);
+			page_addr = kmap_atomic(page, KM_SOFTIRQ0);
 			memcpy(data, (char *)page_addr + (off & ~PAGE_MASK),
 			       sg_bytes);
 			kunmap_atomic(page_addr, KM_SOFTIRQ0);
@@ -1095,7 +1055,7 @@ unlock:
  * Scsi abort handler- calls to send an abort
  * and then wait for abort completion
  */
-static int fc_fcp_pkt_abort(struct fc_lport *lp, struct fc_fcp_pkt *fsp)
+static int fc_fcp_pkt_abort(struct fc_fcp_pkt *fsp)
 {
 	int rc = FAILED;
 
@@ -1708,6 +1668,7 @@ int fc_queuecommand(struct scsi_cmnd *sc_cmd, void (*done)(struct scsi_cmnd *))
 	fsp->cmd = sc_cmd;	/* save the cmd */
 	fsp->lp = lp;		/* save the softc ptr */
 	fsp->rport = rport;	/* set the remote port ptr */
+	fsp->xfer_ddp = FC_XID_UNKNOWN;
 	sc_cmd->scsi_done = done;
 
 	/*
@@ -1846,7 +1807,8 @@ static void fc_io_compl(struct fc_fcp_pkt *fsp)
 			 * scsi status is good but transport level
 			 * underrun.
 			 */
-			sc_cmd->result = DID_OK << 16;
+			sc_cmd->result = (fsp->state & FC_SRB_RCV_STATUS ?
+					  DID_OK : DID_ERROR) << 16;
 		} else {
 			/*
 			 * scsi got underrun, this is an error
@@ -1888,23 +1850,6 @@ static void fc_io_compl(struct fc_fcp_pkt *fsp)
 }
 
 /**
- * fc_fcp_complete() - complete processing of a fcp packet
- * @fsp:	fcp packet
- *
- * This function may sleep if a fsp timer is pending.
- * The host lock must not be held by caller.
- */
-void fc_fcp_complete(struct fc_fcp_pkt *fsp)
-{
-	if (fc_fcp_lock_pkt(fsp))
-		return;
-
-	fc_fcp_complete_locked(fsp);
-	fc_fcp_unlock_pkt(fsp);
-}
-EXPORT_SYMBOL(fc_fcp_complete);
-
-/**
  * fc_eh_abort() - Abort a command
  * @sc_cmd:	scsi command to abort
  *
@@ -1942,7 +1887,7 @@ int fc_eh_abort(struct scsi_cmnd *sc_cmd)
 		goto release_pkt;
 	}
 
-	rc = fc_fcp_pkt_abort(lp, fsp);
+	rc = fc_fcp_pkt_abort(fsp);
 	fc_fcp_unlock_pkt(fsp);
 
 release_pkt:
@@ -2098,6 +2043,28 @@ void fc_fcp_destroy(struct fc_lport *lp)
 }
 EXPORT_SYMBOL(fc_fcp_destroy);
 
+int fc_setup_fcp()
+{
+	int rc = 0;
+
+	scsi_pkt_cachep = kmem_cache_create("libfc_fcp_pkt",
+					    sizeof(struct fc_fcp_pkt),
+					    0, SLAB_HWCACHE_ALIGN, NULL);
+	if (!scsi_pkt_cachep) {
+		printk(KERN_ERR "libfc: Unable to allocate SRB cache, "
+		       "module load failed!");
+		rc = -ENOMEM;
+	}
+
+	return rc;
+}
+
+void fc_destroy_fcp()
+{
+	if (scsi_pkt_cachep)
+		kmem_cache_destroy(scsi_pkt_cachep);
+}
+
 int fc_fcp_init(struct fc_lport *lp)
 {
 	int rc;
@@ -2130,42 +2097,3 @@ free_internal:
 	return rc;
 }
 EXPORT_SYMBOL(fc_fcp_init);
-
-static int __init libfc_init(void)
-{
-	int rc;
-
-	scsi_pkt_cachep = kmem_cache_create("libfc_fcp_pkt",
-					    sizeof(struct fc_fcp_pkt),
-					    0, SLAB_HWCACHE_ALIGN, NULL);
-	if (scsi_pkt_cachep == NULL) {
-		printk(KERN_ERR "libfc: Unable to allocate SRB cache, "
-		       "module load failed!");
-		return -ENOMEM;
-	}
-
-	rc = fc_setup_exch_mgr();
-	if (rc)
-		goto destroy_pkt_cache;
-
-	rc = fc_setup_rport();
-	if (rc)
-		goto destroy_em;
-
-	return rc;
-destroy_em:
-	fc_destroy_exch_mgr();
-destroy_pkt_cache:
-	kmem_cache_destroy(scsi_pkt_cachep);
-	return rc;
-}
-
-static void __exit libfc_exit(void)
-{
-	kmem_cache_destroy(scsi_pkt_cachep);
-	fc_destroy_exch_mgr();
-	fc_destroy_rport();
-}
-
-module_init(libfc_init);
-module_exit(libfc_exit);
