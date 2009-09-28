@@ -625,8 +625,7 @@ static void gfs2_others_may_mount(struct gfs2_sbd *sdp)
 {
 	char *message = "FIRSTMOUNT=Done";
 	char *envp[] = { message, NULL };
-	struct lm_lockstruct *ls = &sdp->sd_lockstruct;
-	ls->ls_first_done = 1;
+
 	kobject_uevent_env(&sdp->sd_kobj, KOBJ_CHANGE, envp);
 }
 
