@@ -51,7 +51,7 @@ index 7394e9e..77184f0 100644
  	ssize_t (*splice_read)(struct file *, loff_t *,
  			       struct pipe_inode_info *, size_t, unsigned int);
 diff --git a/include/linux/namei.h b/include/linux/namei.h
-index d870ae2..a49900e 100644
+index ec0f607..1438153 100644
 --- a/include/linux/namei.h
 +++ b/include/linux/namei.h
 @@ -75,6 +75,9 @@ extern struct file *lookup_instantiate_filp(struct nameidata *nd, struct dentry

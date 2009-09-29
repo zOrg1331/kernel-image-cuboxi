@@ -29,7 +29,7 @@ index 7d28f56..0f6117c 100644
  /**
   * lookup_one_len - filesystem helper to lookup single pathname component
 diff --git a/fs/namespace.c b/fs/namespace.c
-index 7230787..8269b66 100644
+index bdc3cb4..a2cadcf 100644
 --- a/fs/namespace.c
 +++ b/fs/namespace.c
 @@ -39,6 +39,7 @@
@@ -41,7 +41,7 @@ index 7230787..8269b66 100644
  static int event;
  static DEFINE_IDA(mnt_id_ida);
 diff --git a/fs/open.c b/fs/open.c
-index 31191bf..ebabe88 100644
+index 4f01e06..ef09031 100644
 --- a/fs/open.c
 +++ b/fs/open.c
 @@ -223,6 +223,7 @@ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
@@ -73,10 +73,10 @@ index 77184f0..8479d95 100644
  /**
   * splice_direct_to_actor - splices data directly between two non-pipes
 diff --git a/security/device_cgroup.c b/security/device_cgroup.c
-index b8186ba..42208d8 100644
+index 6cf8fd2..008e0d8 100644
 --- a/security/device_cgroup.c
 +++ b/security/device_cgroup.c
-@@ -513,6 +513,7 @@ found:
+@@ -514,6 +514,7 @@ found:
  
  	return -EPERM;
  }
