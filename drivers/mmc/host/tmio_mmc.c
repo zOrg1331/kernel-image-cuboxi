@@ -43,6 +43,15 @@ static void tmio_mmc_set_clock(struct tmio_mmc_host *host, int new_clock)
 		for (clock = host->mmc->f_min, clk = 0x80000080;
 			new_clock >= (clock<<1); clk >>= 1)
 			clock <<= 1;
+
+	/* Round the clock to the closest available. This is required
+	 * for some fussy cards that dont like to initialise below 400kHz
+	 */
+		if (new_clock - clock >= (clock << 1) - new_clock) {
+			clk >>= 1; clock <<= 1;
+		}
+
+	/* Clock enable */
 		clk |= 0x100;
 	}
 
