@@ -2228,11 +2228,43 @@ static int acpi_video_resume(struct acpi_device *device)
 	return AE_OK;
 }
 
+static acpi_status
+acpi_video_bus_match(acpi_handle handle, u32 level, void *context,
+			void **return_value)
+{
+	struct acpi_device *device = context;
+	struct acpi_device *sibling;
+	int result;
+
+	if (handle == device->handle)
+		return AE_CTRL_TERMINATE;
+
+	result = acpi_bus_get_device(handle, &sibling);
+	if (result)
+		return AE_OK;
+
+	/* only one ACPI bus video device under a PCI device */
+	if (!strcmp(acpi_device_name(sibling), ACPI_VIDEO_BUS_NAME))
+		return AE_ALREADY_EXISTS;
+
+	return AE_OK;
+}
+
 static int acpi_video_bus_add(struct acpi_device *device)
 {
 	struct acpi_video_bus *video;
 	struct input_dev *input;
 	int error;
+	acpi_status status;
+
+	status = acpi_walk_namespace(ACPI_TYPE_DEVICE,
+				device->parent->handle, 1,
+				acpi_video_bus_match, device, NULL);
+	if (status == AE_ALREADY_EXISTS) {
+		printk(KERN_WARNING PREFIX "Duplicate ACPI video bus "
+				"devices for the same VGA controller\n");
+		return -ENODEV;
+	}
 
 	video = kzalloc(sizeof(struct acpi_video_bus), GFP_KERNEL);
 	if (!video)
