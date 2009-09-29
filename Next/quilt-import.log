@@ -1,0 +1,60 @@
+Importing driver-core.current based on 2.6.31-git12
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing i2c based on 2.6.32-rc1
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 17d857be649a21ca90008c6dc425d849fa83db5c
+HEAD is now at 17d857b Linux 2.6.32-rc1
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-move-legacy-documentation.patch
+misc-eeprom-max6875-no-detect.patch
+w1-ds2482-no-detect.patch
+hwmon-ltc4215-ltc4245-no-detect.patch
+leds-pca9532-no-i2c-insmod.patch
+iio-tsl2561-no-i2c-insmod.patch
+mfd-ab3100-no-i2c-insmod.patch
+i2c-update-sysfs-path-to-adapter.patch
+i2c-voodoo3-delete.patch
+i2c-prevent-priority-inversion-on-top-of-bus-lock.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 75dec5e...526bf1e master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.32-rc1
+$ cd ../quilt-tmp
+$ git reset --hard 17d857be649a21ca90008c6dc425d849fa83db5c
+HEAD is now at 17d857b Linux 2.6.32-rc1
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-sht15-fix-spurious-section-mismatch-warning.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+   0dd52d0..1ac37c6  master     -> quilt/jdelvare-hwmon
+Importing kernel-doc based on origin/master
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.32-rc1
+$ cd ../quilt-tmp
+$ git reset --hard 17d857be649a21ca90008c6dc425d849fa83db5c
+HEAD is now at 17d857b Linux 2.6.32-rc1
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+virtio:blk_revert_queue_flag_virt_addition.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + 1297916...ee1bf14 master     -> quilt/rr  (forced update)
+Importing device-mapper based on block/for-next
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/usb.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
