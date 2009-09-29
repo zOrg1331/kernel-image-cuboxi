@@ -1116,6 +1116,18 @@ config DEVPORT
 	depends on ISA || PCI
 	default y
 
+config UMMUNOTIFY
+       tristate "Userspace MMU notifications"
+       select MMU_NOTIFIER
+       help
+         The ummunotify (userspace MMU notification) driver creates a
+         character device that can be used by userspace libraries to
+         get notifications when an application's memory mapping
+         changed.  This is used, for example, by RDMA libraries to
+         improve the reliability of memory registration caching, since
+         the kernel's MMU notifications can be used to know precisely
+         when to shoot down a cached registration.
+
 source "drivers/s390/char/Kconfig"
 
 endmenu
