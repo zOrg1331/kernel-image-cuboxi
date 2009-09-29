@@ -24,7 +24,7 @@ virtualbox-addition
 kvm
 
 #other drivers
-#lirc
+lirc
 subfs
 #svgalib_helper
 #etercifs
