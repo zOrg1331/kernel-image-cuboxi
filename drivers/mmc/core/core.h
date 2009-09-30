@@ -15,6 +15,16 @@
 
 #define MMC_CMD_RETRIES        3
 
+/* Spec says initialisation must happen at or below 400kHz.
+ * Some MMC cards fail to initialise at 400kHz (even as low as 200kHz) and
+ * Some host controllers (eg. tmio_mmc) cannot garantee to set the clock below
+ * 400kHz (it rounds to the closest clock freq available).
+ *
+ * 64 kHz seems like a good speed/reliability compromise.
+ */
+
+#define MMC_INIT_FREQ      64000
+
 struct mmc_bus_ops {
 	void (*remove)(struct mmc_host *);
 	void (*detect)(struct mmc_host *);
