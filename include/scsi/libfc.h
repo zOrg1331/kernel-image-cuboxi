@@ -26,6 +26,7 @@
 
 #include <scsi/scsi_transport.h>
 #include <scsi/scsi_transport_fc.h>
+#include <scsi/scsi_bsg_fc.h>
 
 #include <scsi/fc/fc_fcp.h>
 #include <scsi/fc/fc_ns.h>
@@ -33,67 +34,6 @@
 #include <scsi/fc/fc_gs.h>
 
 #include <scsi/fc_frame.h>
-
-#define FC_LIBFC_LOGGING 0x01 /* General logging, not categorized */
-#define FC_LPORT_LOGGING 0x02 /* lport layer logging */
-#define FC_DISC_LOGGING  0x04 /* discovery layer logging */
-#define FC_RPORT_LOGGING 0x08 /* rport layer logging */
-#define FC_FCP_LOGGING   0x10 /* I/O path logging */
-#define FC_EM_LOGGING    0x20 /* Exchange Manager logging */
-#define FC_EXCH_LOGGING  0x40 /* Exchange/Sequence logging */
-#define FC_SCSI_LOGGING  0x80 /* SCSI logging (mostly error handling) */
-
-extern unsigned int fc_debug_logging;
-
-#define FC_CHECK_LOGGING(LEVEL, CMD)				\
-do {								\
-	if (unlikely(fc_debug_logging & LEVEL))			\
-		do {						\
-			CMD;					\
-		} while (0);					\
-} while (0)
-
-#define FC_LIBFC_DBG(fmt, args...)					\
-	FC_CHECK_LOGGING(FC_LIBFC_LOGGING,				\
-			 printk(KERN_INFO "libfc: " fmt, ##args))
-
-#define FC_LPORT_DBG(lport, fmt, args...)				\
-	FC_CHECK_LOGGING(FC_LPORT_LOGGING,				\
-			 printk(KERN_INFO "host%u: lport %6x: " fmt,	\
-				(lport)->host->host_no,			\
-				fc_host_port_id((lport)->host), ##args))
-
-#define FC_DISC_DBG(disc, fmt, args...)					\
-	FC_CHECK_LOGGING(FC_DISC_LOGGING,				\
-			 printk(KERN_INFO "host%u: disc: " fmt,		\
-				(disc)->lport->host->host_no,		\
-				##args))
-
-#define FC_RPORT_ID_DBG(lport, port_id, fmt, args...)			\
-	FC_CHECK_LOGGING(FC_RPORT_LOGGING,				\
-			 printk(KERN_INFO "host%u: rport %6x: " fmt,	\
-				(lport)->host->host_no,			\
-				(port_id), ##args))
-
-#define FC_RPORT_DBG(rdata, fmt, args...)				\
-	FC_RPORT_ID_DBG((rdata)->local_port, (rdata)->ids.port_id, fmt, ##args)
-
-#define FC_FCP_DBG(pkt, fmt, args...)					\
-	FC_CHECK_LOGGING(FC_FCP_LOGGING,				\
-			 printk(KERN_INFO "host%u: fcp: %6x: " fmt,	\
-				(pkt)->lp->host->host_no,		\
-				pkt->rport->port_id, ##args))
-
-#define FC_EXCH_DBG(exch, fmt, args...)					\
-	FC_CHECK_LOGGING(FC_EXCH_LOGGING,				\
-			 printk(KERN_INFO "host%u: xid %4x: " fmt,	\
-				(exch)->lp->host->host_no,		\
-				exch->xid, ##args))
-
-#define FC_SCSI_DBG(lport, fmt, args...)				\
-	FC_CHECK_LOGGING(FC_SCSI_LOGGING,                               \
-			 printk(KERN_INFO "host%u: scsi: " fmt,		\
-				(lport)->host->host_no,	##args))
 
 /*
  * libfc error codes
@@ -122,7 +62,9 @@ enum fc_lport_state {
 	LPORT_ST_DISABLED = 0,
 	LPORT_ST_FLOGI,
 	LPORT_ST_DNS,
-	LPORT_ST_RPN_ID,
+	LPORT_ST_RNN_ID,
+	LPORT_ST_RSNN_NN,
+	LPORT_ST_RSPN_ID,
 	LPORT_ST_RFT_ID,
 	LPORT_ST_SCR,
 	LPORT_ST_READY,
@@ -700,6 +642,8 @@ struct fc_lport {
 	/* Associations */
 	struct Scsi_Host	*host;
 	struct list_head	ema_list;
+	struct list_head	vports;		/* child vports if N_Port */
+	struct fc_vport		*vport;		/* parent vport if VN_Port */
 	struct fc_rport_priv	*dns_rp;
 	struct fc_rport_priv	*ptp_rp;
 	void			*scsi_priv;
@@ -724,6 +668,8 @@ struct fc_lport {
 	u32			seq_offload:1;	/* seq offload supported */
 	u32			crc_offload:1;	/* crc offload supported */
 	u32			lro_enabled:1;	/* large receive offload */
+	u32			does_npiv:1;	/* supports multiple vports */
+	u32			npiv_enabled:1;	/* switch/fabric allows NPIV */
 	u32			mfs;	        /* max FC payload size */
 	unsigned int		service_params;
 	unsigned int		e_d_tov;
@@ -800,12 +746,22 @@ static inline void *lport_priv(const struct fc_lport *lp)
  * @sht: ptr to the scsi host templ
  * @priv_size: size of private data after fc_lport
  *
- * Returns: ptr to Scsi_Host
+ * Returns: libfc lport
  */
-static inline struct Scsi_Host *
+static inline struct fc_lport *
 libfc_host_alloc(struct scsi_host_template *sht, int priv_size)
 {
-	return scsi_host_alloc(sht, sizeof(struct fc_lport) + priv_size);
+	struct fc_lport *lport;
+	struct Scsi_Host *shost;
+
+	shost = scsi_host_alloc(sht, sizeof(*lport) + priv_size);
+	if (!shost)
+		return NULL;
+	lport = shost_priv(shost);
+	lport->host = shost;
+	INIT_LIST_HEAD(&lport->ema_list);
+	INIT_LIST_HEAD(&lport->vports);
+	return lport;
 }
 
 /*
@@ -835,11 +791,13 @@ int fc_fabric_login(struct fc_lport *lp);
 /*
  * The link is up for the given local port.
  */
+void __fc_linkup(struct fc_lport *);
 void fc_linkup(struct fc_lport *);
 
 /*
  * Link is down for the given local port.
  */
+void __fc_linkdown(struct fc_lport *);
 void fc_linkdown(struct fc_lport *);
 
 /*
@@ -856,6 +814,27 @@ int fc_lport_reset(struct fc_lport *);
  * Set the mfs or reset
  */
 int fc_set_mfs(struct fc_lport *lp, u32 mfs);
+
+/*
+ * Allocate a new lport struct for an NPIV VN_Port
+ */
+struct fc_lport *libfc_vport_create(struct fc_vport *vport, int privsize);
+
+/*
+ * Find an NPIV VN_Port by port ID
+ */
+struct fc_lport *fc_vport_id_lookup(struct fc_lport *n_port, u32 port_id);
+
+/*
+ * NPIV VN_Port link state management
+ */
+void fc_vport_setlink(struct fc_lport *vn_port);
+void fc_vports_linkchange(struct fc_lport *n_port);
+
+/*
+ * Issue fc pass-thru request via bsg interface
+ */
+int fc_lport_bsg_request(struct fc_bsg_job *job);
 
 
 /*
@@ -886,14 +865,6 @@ int fc_fcp_init(struct fc_lport *);
  */
 int fc_queuecommand(struct scsi_cmnd *sc_cmd,
 		    void (*done)(struct scsi_cmnd *));
-
-/*
- * complete processing of a fcp packet
- *
- * This function may sleep if a fsp timer is pending.
- * The host lock must not be held by caller.
- */
-void fc_fcp_complete(struct fc_fcp_pkt *fsp);
 
 /*
  * Send an ABTS frame to the target device. The sc_cmd argument
@@ -932,17 +903,22 @@ int fc_change_queue_type(struct scsi_device *sdev, int tag_type);
 void fc_fcp_destroy(struct fc_lport *);
 
 /*
- * Set up direct-data placement for this I/O request
- */
-void fc_fcp_ddp_setup(struct fc_fcp_pkt *fsp, u16 xid);
-
-/*
  * ELS/CT interface
  *****************************/
 /*
  * Initializes ELS/CT interface
  */
 int fc_elsct_init(struct fc_lport *lp);
+struct fc_seq *fc_elsct_send(struct fc_lport *lport,
+				    u32 did,
+				    struct fc_frame *fp,
+				    unsigned int op,
+				    void (*resp)(struct fc_seq *,
+						 struct fc_frame *fp,
+						 void *arg),
+				    void *arg, u32 timer_msec);
+void fc_lport_flogi_resp(struct fc_seq *, struct fc_frame *, void *);
+void fc_lport_logo_resp(struct fc_seq *, struct fc_frame *, void *);
 
 
 /*
@@ -975,6 +951,12 @@ struct fc_exch_mgr_anchor *fc_exch_mgr_add(struct fc_lport *lport,
  * then also destroys associated EM.
  */
 void fc_exch_mgr_del(struct fc_exch_mgr_anchor *ema);
+
+/*
+ * Clone an exchange manager list, getting reference holds for each EM.
+ * This is for use with NPIV and sharing the X_ID space between VN_Ports.
+ */
+int fc_exch_mgr_list_clone(struct fc_lport *src, struct fc_lport *dst);
 
 /*
  * Allocates an Exchange Manager (EM).
@@ -1012,55 +994,6 @@ void fc_exch_mgr_free(struct fc_lport *lport);
 void fc_exch_recv(struct fc_lport *lp, struct fc_frame *fp);
 
 /*
- * This function is for exch_seq_send function pointer in
- * struct libfc_function_template, see comment block on
- * exch_seq_send for description of this function.
- */
-struct fc_seq *fc_exch_seq_send(struct fc_lport *lp,
-				struct fc_frame *fp,
-				void (*resp)(struct fc_seq *sp,
-					     struct fc_frame *fp,
-					     void *arg),
-				void (*destructor)(struct fc_seq *sp,
-						   void *arg),
-				void *arg, u32 timer_msec);
-
-/*
- * send a frame using existing sequence and exchange.
- */
-int fc_seq_send(struct fc_lport *lp, struct fc_seq *sp, struct fc_frame *fp);
-
-/*
- * Send ELS response using mainly infomation
- * in exchange and sequence in EM layer.
- */
-void fc_seq_els_rsp_send(struct fc_seq *sp, enum fc_els_cmd els_cmd,
-			 struct fc_seq_els_data *els_data);
-
-/*
- * This function is for seq_exch_abort function pointer in
- * struct libfc_function_template, see comment block on
- * seq_exch_abort for description of this function.
- */
-int fc_seq_exch_abort(const struct fc_seq *req_sp, unsigned int timer_msec);
-
-/*
- * Indicate that an exchange/sequence tuple is complete and the memory
- * allocated for the related objects may be freed.
- */
-void fc_exch_done(struct fc_seq *sp);
-
-/*
- * Allocate a new exchange and sequence pair.
- */
-struct fc_exch *fc_exch_alloc(struct fc_lport *lport, struct fc_frame *fp);
-/*
- * Start a new sequence on the same exchange as the supplied sequence.
- */
-struct fc_seq *fc_seq_start_next(struct fc_seq *sp);
-
-
-/*
  * Reset all EMs of a lport, releasing its all sequences and
  * exchanges. If sid is non-zero, then reset only exchanges
  * we sourced from that FID. If did is non-zero, reset only
@@ -1076,18 +1009,5 @@ void fc_get_host_port_type(struct Scsi_Host *shost);
 void fc_get_host_port_state(struct Scsi_Host *shost);
 void fc_set_rport_loss_tmo(struct fc_rport *rport, u32 timeout);
 struct fc_host_statistics *fc_get_host_stats(struct Scsi_Host *);
-
-/*
- * module setup functions.
- */
-int fc_setup_exch_mgr(void);
-void fc_destroy_exch_mgr(void);
-int fc_setup_rport(void);
-void fc_destroy_rport(void);
-
-/*
- * Internal libfc functions.
- */
-const char *fc_els_resp_type(struct fc_frame *);
 
 #endif /* _LIBFC_H_ */
