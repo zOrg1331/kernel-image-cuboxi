@@ -1,0 +1,60 @@
+Importing driver-core.current based on 2.6.32-rc1
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core.current 17d857be649a21ca90008c6dc425d849fa83db5c
+Importing tty.current based on quilt/driver-core.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty.current 17d857be649a21ca90008c6dc425d849fa83db5c
+Importing usb.current based on quilt/tty.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/usb.current 17d857be649a21ca90008c6dc425d849fa83db5c
+Importing i2c based on 2.6.32-rc1
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.32-rc1
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on origin/master
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.32-rc1
+Unchanged quilt series rr
+Importing device-mapper based on block/for-next
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 1e6697c4add13b3818be445b8e4406947d4824cc
+HEAD is now at 1e6697c Merge branch 'writeback' into for-next
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-log-fix-cn_ulog_callback-declaration.patch
+dm-log-userspace-fix-incorrect-luid-cast-in-userspace_ctr.patch
+dm-snapshot-free-exception-store-on-init-failure.patch
+dm-add-missing-del_gendisk-to-alloc_dev-error-path.patch
+dm-dec_pending-needs-locking-to-save-error-value.patch
+dm-snapshot-require-non-zero-chunk-size-by-end-of-ctr.patch
+dm-ioctl-prefer-strlcpy-over-strncpy.patch
+dm-snapshot-avoid-else-clause-in-persistent_read_metadata.patch
+dm-snapshot-allow-chunk-size-to-be-less-than-page-size.patch
+dm-snapshot-simplify-sector_to_chunk-expression.patch
+dm-snapshot-abstract-minimum_chunk_size-fn.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + 48b17e1...2a62b1f master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/usb.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core 17d857be649a21ca90008c6dc425d849fa83db5c
+Importing tty based on quilt/driver-core
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty 17d857be649a21ca90008c6dc425d849fa83db5c
+Importing usb based on quilt/tty
+	quilt series is empty
+$ git update-ref refs/heads/quilt/usb 17d857be649a21ca90008c6dc425d849fa83db5c
+Importing staging based on quilt/usb
+$ cd ../quilt-tmp
+$ git reset --hard 17d857be649a21ca90008c6dc425d849fa83db5c
+HEAD is now at 17d857b Linux 2.6.32-rc1
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging
+staging-remove-agnx-driver.patch
+staging-w35und-fix-beacon_int-breakage.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging
+From ../quilt-tmp
+ + 586f9ab...c93ed50 master     -> quilt/staging  (forced update)
