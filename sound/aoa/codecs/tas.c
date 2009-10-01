@@ -882,6 +882,8 @@ static void tas_exit_codec(struct aoa_codec *codec)
 }
 
 
+static struct i2c_driver tas_driver;
+
 static int tas_create(struct i2c_adapter *adapter,
 		       struct device_node *node,
 		       int addr)
@@ -902,7 +904,7 @@ static int tas_create(struct i2c_adapter *adapter,
 	 * Let i2c-core delete that device on driver removal.
 	 * This is safe because i2c-core holds the core_lock mutex for us.
 	 */
-	list_add_tail(&client->detected, &client->driver->clients);
+	list_add_tail(&client->detected, &tas_driver.clients);
 	return 0;
 }
 

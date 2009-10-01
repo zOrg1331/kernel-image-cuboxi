@@ -40,6 +40,8 @@ static int keywest_probe(struct i2c_client *client,
 	return 0;
 }
 
+struct i2c_driver keywest_driver;
+
 /*
  * This is kind of a hack, best would be to turn powermac to fixed i2c
  * bus numbers and declare the sound device as part of platform
@@ -65,7 +67,7 @@ static int keywest_attach_adapter(struct i2c_adapter *adapter)
 	 * This is safe because i2c-core holds the core_lock mutex for us.
 	 */
 	list_add_tail(&keywest_ctx->client->detected,
-		      &keywest_ctx->client->driver->clients);
+		      &keywest_driver.clients);
 	return 0;
 }
 
