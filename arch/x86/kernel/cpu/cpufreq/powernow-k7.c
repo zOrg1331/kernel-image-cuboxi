@@ -714,14 +714,15 @@ static struct freq_attr *powernow_table_attr[] = {
 };
 
 static struct cpufreq_driver powernow_driver = {
-	.verify	= powernow_verify,
-	.target	= powernow_target,
-	.get	= powernow_get,
-	.init	= powernow_cpu_init,
-	.exit	= powernow_cpu_exit,
-	.name	= "powernow-k7",
-	.owner	= THIS_MODULE,
-	.attr	= powernow_table_attr,
+	.verify		= powernow_verify,
+	.target		= powernow_target,
+	.get		= powernow_get,
+	.bios_limit	= acpi_processor_get_bios_limit,
+	.init		= powernow_cpu_init,
+	.exit		= powernow_cpu_exit,
+	.name		= "powernow-k7",
+	.owner		= THIS_MODULE,
+	.attr		= powernow_table_attr,
 };
 
 static int __init powernow_init(void)
