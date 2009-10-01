@@ -851,8 +851,7 @@ static int kvm_vm_ioctl_get_irqchip(struct kvm *kvm,
 	r = 0;
 	switch (chip->chip_id) {
 	case KVM_IRQCHIP_IOAPIC:
-		memcpy(&chip->chip.ioapic, ioapic_irqchip(kvm),
-				sizeof(struct kvm_ioapic_state));
+		r = kvm_get_ioapic(kvm, &chip->chip.ioapic);
 		break;
 	default:
 		r = -EINVAL;
@@ -868,9 +867,7 @@ static int kvm_vm_ioctl_set_irqchip(struct kvm *kvm, struct kvm_irqchip *chip)
 	r = 0;
 	switch (chip->chip_id) {
 	case KVM_IRQCHIP_IOAPIC:
-		memcpy(ioapic_irqchip(kvm),
-				&chip->chip.ioapic,
-				sizeof(struct kvm_ioapic_state));
+		r = kvm_set_ioapic(kvm, &chip->chip.ioapic);
 		break;
 	default:
 		r = -EINVAL;
@@ -944,7 +941,7 @@ long kvm_arch_vm_ioctl(struct file *filp,
 {
 	struct kvm *kvm = filp->private_data;
 	void __user *argp = (void __user *)arg;
-	int r = -EINVAL;
+	int r = -ENOTTY;
 
 	switch (ioctl) {
 	case KVM_SET_MEMORY_REGION: {
@@ -985,10 +982,8 @@ long kvm_arch_vm_ioctl(struct file *filp,
 			goto out;
 		if (irqchip_in_kernel(kvm)) {
 			__s32 status;
-			mutex_lock(&kvm->irq_lock);
 			status = kvm_set_irq(kvm, KVM_USERSPACE_IRQ_SOURCE_ID,
 				    irq_event.irq, irq_event.level);
-			mutex_unlock(&kvm->irq_lock);
 			if (ioctl == KVM_IRQ_LINE_STATUS) {
 				irq_event.status = status;
 				if (copy_to_user(argp, &irq_event,
