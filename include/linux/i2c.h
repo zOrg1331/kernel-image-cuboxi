@@ -338,8 +338,7 @@ struct i2c_adapter {
 	void *algo_data;
 
 	/* data fields that are valid for all devices	*/
-	u8 level; 			/* nesting level for lockdep */
-	struct mutex bus_lock;
+	struct rt_mutex bus_lock;
 
 	int timeout;			/* in jiffies */
 	int retries;
