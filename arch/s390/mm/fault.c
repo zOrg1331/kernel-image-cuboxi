@@ -204,10 +204,6 @@ static void do_sigbus(struct pt_regs *regs, unsigned long error_code,
 	tsk->thread.prot_addr = address;
 	tsk->thread.trap_no = error_code;
 	force_sig(SIGBUS, tsk);
-
-	/* Kernel mode? Handle exceptions or die */
-	if (!(regs->psw.mask & PSW_MASK_PSTATE))
-		do_no_context(regs, error_code, address, space);
 }
 
 #ifdef CONFIG_S390_EXEC_PROTECT
@@ -260,25 +256,21 @@ static int signal_return(struct mm_struct *mm, struct pt_regs *regs,
  *   11       Page translation     ->  Not present       (nullification)
  *   3b       Region third trans.  ->  Not present       (nullification)
  */
-static inline void
+static inline int
 do_exception(struct pt_regs *regs, unsigned long error_code, int write,
-	     int space)
+	     unsigned long address, int space)
 {
 	struct task_struct *tsk;
 	struct mm_struct *mm;
 	struct vm_area_struct *vma;
-	unsigned long address;
 	int si_code;
 	int fault;
 
 	if (notify_page_fault(regs, error_code))
-		return;
+		return 0;
 
 	tsk = current;
 	mm = tsk->mm;
-
-	/* get the failing address and the affected space */
-	address = S390_lowcore.trans_exc_code & __FAIL_ADDR_MASK;
 
 	/*
 	 * Verify that the fault happened in user space, that
@@ -309,7 +301,7 @@ do_exception(struct pt_regs *regs, unsigned long error_code, int write,
 			 * signal_return() has done an up_read(&mm->mmap_sem)
 			 * if it returns 0.
 			 */
-			return;
+			return 0;
 #endif
 
 	if (vma->vm_start <= address)
@@ -345,10 +337,13 @@ good_area:
 		if (fault & VM_FAULT_OOM) {
 			up_read(&mm->mmap_sem);
 			pagefault_out_of_memory();
-			return;
+			return 0;
 		} else if (fault & VM_FAULT_SIGBUS) {
 			do_sigbus(regs, error_code, address, space);
-			return;
+			/* Kernel mode? Handle exceptions or die */
+			if (!(regs->psw.mask & PSW_MASK_PSTATE))
+				return 1;
+			return 0;
 		}
 		BUG();
 	}
@@ -367,7 +362,7 @@ good_area:
 	 * be repeated. Don't signal single step via SIGTRAP.
 	 */
 	clear_tsk_thread_flag(tsk, TIF_SINGLE_STEP);
-        return;
+	return 0;
 
 /*
  * Something tried to access memory that isn't in our memory map..
@@ -381,19 +376,22 @@ bad_area:
 		tsk->thread.prot_addr = address;
 		tsk->thread.trap_no = error_code;
 		do_sigsegv(regs, error_code, si_code, address);
-		return;
+		return 0;
 	}
 
 no_context:
-	do_no_context(regs, error_code, address, space);
+	return 1;
 }
 
 void __kprobes do_protection_exception(struct pt_regs *regs,
 				       long error_code)
 {
+	unsigned long address;
 	int space;
 
+	address = S390_lowcore.trans_exc_code & __FAIL_ADDR_MASK;
 	space = check_space();
+
 	/* Protection exception is supressing, decrement psw address. */
 	regs->psw.addr -= (error_code >> 16);
 	/*
@@ -405,15 +403,20 @@ void __kprobes do_protection_exception(struct pt_regs *regs,
 		do_low_address(regs, error_code, space);
 		return;
 	}
-	do_exception(regs, 4, 1, space);
+	if (do_exception(regs, 4, 1, address, space))
+		do_no_context(regs, 4, address, space);
 }
 
 void __kprobes do_dat_exception(struct pt_regs *regs, long error_code)
 {
+	unsigned long address;
 	int space;
 
+	address = S390_lowcore.trans_exc_code & __FAIL_ADDR_MASK;
 	space = check_space();
-	do_exception(regs, error_code & 0xff, 0, space);
+
+	if (do_exception(regs, error_code & 0xff, 0, address, space))
+		do_no_context(regs, error_code, address, space);
 }
 
 #ifdef CONFIG_64BIT
@@ -454,6 +457,23 @@ no_context:
 	do_no_context(regs, error_code, address, space);
 }
 #endif
+
+int __handle_fault(unsigned long uaddr, unsigned long error_code,
+		   int write_user)
+{
+	struct pt_regs regs;
+
+	regs.psw.mask = psw_kernel_bits;
+	if (!irqs_disabled())
+		regs.psw.mask |= PSW_MASK_IO | PSW_MASK_EXT;
+	regs.psw.addr = (unsigned long) __builtin_return_address(0);
+	regs.psw.addr |= PSW_ADDR_AMODE;
+	uaddr &= PAGE_MASK;
+	if (do_exception(&regs, error_code, write_user, uaddr, 1))
+		return -EFAULT;
+	else
+		return 0;
+}
 
 #ifdef CONFIG_PFAULT 
 /*
