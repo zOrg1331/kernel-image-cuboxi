@@ -239,9 +239,9 @@ ftrace_format_##call(struct ftrace_event_call *unused,			\
 #undef __print_flags
 #define __print_flags(flag, delim, flag_array...)			\
 	({								\
-		static const struct trace_print_flags flags[] =		\
+		static const struct trace_print_flags __flags[] =	\
 			{ flag_array, { -1, NULL }};			\
-		ftrace_print_flags_seq(p, delim, flag, flags);		\
+		ftrace_print_flags_seq(p, delim, flag, __flags);	\
 	})
 
 #undef __print_symbolic
@@ -254,7 +254,7 @@ ftrace_format_##call(struct ftrace_event_call *unused,			\
 
 #undef TRACE_EVENT
 #define TRACE_EVENT(call, proto, args, tstruct, assign, print)		\
-enum print_line_t							\
+static enum print_line_t						\
 ftrace_raw_output_##call(struct trace_iterator *iter, int flags)	\
 {									\
 	struct trace_seq *s = &iter->seq;				\
@@ -317,7 +317,7 @@ ftrace_raw_output_##call(struct trace_iterator *iter, int flags)	\
 
 #undef TRACE_EVENT
 #define TRACE_EVENT(call, proto, args, tstruct, func, print)		\
-int									\
+static int								\
 ftrace_define_fields_##call(struct ftrace_event_call *event_call)	\
 {									\
 	struct ftrace_raw_##call field;					\
@@ -378,24 +378,18 @@ static inline int ftrace_get_offsets_##call(				\
 #ifdef CONFIG_EVENT_PROFILE
 
 /*
- * Generate the functions needed for tracepoint perf_counter support.
+ * Generate the functions needed for tracepoint perf_event support.
  *
  * NOTE: The insertion profile callback (ftrace_profile_<call>) is defined later
  *
- * static int ftrace_profile_enable_<call>(struct ftrace_event_call *event_call)
+ * static int ftrace_profile_enable_<call>(void)
  * {
- * 	int ret = 0;
- *
- * 	if (!atomic_inc_return(&event_call->profile_count))
- * 		ret = register_trace_<call>(ftrace_profile_<call>);
- *
- * 	return ret;
+ * 	return register_trace_<call>(ftrace_profile_<call>);
  * }
  *
- * static void ftrace_profile_disable_<call>(struct ftrace_event_call *event_call)
+ * static void ftrace_profile_disable_<call>(void)
  * {
- * 	if (atomic_add_negative(-1, &event->call->profile_count))
- * 		unregister_trace_<call>(ftrace_profile_<call>);
+ * 	unregister_trace_<call>(ftrace_profile_<call>);
  * }
  *
  */
@@ -405,20 +399,14 @@ static inline int ftrace_get_offsets_##call(				\
 									\
 static void ftrace_profile_##call(proto);				\
 									\
-static int ftrace_profile_enable_##call(struct ftrace_event_call *event_call) \
+static int ftrace_profile_enable_##call(void)				\
 {									\
-	int ret = 0;							\
-									\
-	if (!atomic_inc_return(&event_call->profile_count))		\
-		ret = register_trace_##call(ftrace_profile_##call);	\
-									\
-	return ret;							\
+	return register_trace_##call(ftrace_profile_##call);		\
 }									\
 									\
-static void ftrace_profile_disable_##call(struct ftrace_event_call *event_call)\
+static void ftrace_profile_disable_##call(void)				\
 {									\
-	if (atomic_add_negative(-1, &event_call->profile_count))	\
-		unregister_trace_##call(ftrace_profile_##call);		\
+	unregister_trace_##call(ftrace_profile_##call);			\
 }
 
 #include TRACE_INCLUDE(TRACE_INCLUDE_FILE)
@@ -460,13 +448,15 @@ static void ftrace_profile_disable_##call(struct ftrace_event_call *event_call)\
  * {
  *	struct ring_buffer_event *event;
  *	struct ftrace_raw_<call> *entry; <-- defined in stage 1
+ *	struct ring_buffer *buffer;
  *	unsigned long irq_flags;
  *	int pc;
  *
  *	local_save_flags(irq_flags);
  *	pc = preempt_count();
  *
- *	event = trace_current_buffer_lock_reserve(event_<call>.id,
+ *	event = trace_current_buffer_lock_reserve(&buffer,
+ *				  event_<call>.id,
  *				  sizeof(struct ftrace_raw_<call>),
  *				  irq_flags, pc);
  *	if (!event)
@@ -476,7 +466,7 @@ static void ftrace_profile_disable_##call(struct ftrace_event_call *event_call)\
  *	<assign>;  <-- Here we assign the entries by the __field and
  *			__array macros.
  *
- *	trace_current_buffer_unlock_commit(event, irq_flags, pc);
+ *	trace_current_buffer_unlock_commit(buffer, event, irq_flags, pc);
  * }
  *
  * static int ftrace_raw_reg_event_<call>(void)
@@ -568,6 +558,7 @@ static void ftrace_raw_event_##call(proto)				\
 	struct ftrace_event_call *event_call = &event_##call;		\
 	struct ring_buffer_event *event;				\
 	struct ftrace_raw_##call *entry;				\
+	struct ring_buffer *buffer;					\
 	unsigned long irq_flags;					\
 	int __data_size;						\
 	int pc;								\
@@ -577,7 +568,8 @@ static void ftrace_raw_event_##call(proto)				\
 									\
 	__data_size = ftrace_get_offsets_##call(&__data_offsets, args); \
 									\
-	event = trace_current_buffer_lock_reserve(event_##call.id,	\
+	event = trace_current_buffer_lock_reserve(&buffer,		\
+				 event_##call.id,			\
 				 sizeof(*entry) + __data_size,		\
 				 irq_flags, pc);			\
 	if (!event)							\
@@ -589,8 +581,9 @@ static void ftrace_raw_event_##call(proto)				\
 									\
 	{ assign; }							\
 									\
-	if (!filter_current_check_discard(event_call, entry, event))	\
-		trace_nowake_buffer_unlock_commit(event, irq_flags, pc); \
+	if (!filter_current_check_discard(buffer, event_call, entry, event)) \
+		trace_nowake_buffer_unlock_commit(buffer,		\
+						  event, irq_flags, pc); \
 }									\
 									\
 static int ftrace_raw_reg_event_##call(void *ptr)			\
@@ -651,15 +644,16 @@ __attribute__((section("_ftrace_events"))) event_##call = {		\
  * {
  *	struct ftrace_data_offsets_<call> __maybe_unused __data_offsets;
  *	struct ftrace_event_call *event_call = &event_<call>;
- *	extern void perf_tpcounter_event(int, u64, u64, void *, int);
+ *	extern void perf_tp_event(int, u64, u64, void *, int);
  *	struct ftrace_raw_##call *entry;
  *	u64 __addr = 0, __count = 1;
  *	unsigned long irq_flags;
+ *	struct trace_entry *ent;
  *	int __entry_size;
  *	int __data_size;
+ *	int __cpu
  *	int pc;
  *
- *	local_save_flags(irq_flags);
  *	pc = preempt_count();
  *
  *	__data_size = ftrace_get_offsets_<call>(&__data_offsets, args);
@@ -670,25 +664,34 @@ __attribute__((section("_ftrace_events"))) event_##call = {		\
  *			     sizeof(u64));
  *	__entry_size -= sizeof(u32);
  *
- *	do {
- *		char raw_data[__entry_size]; <- allocate our sample in the stack
- *		struct trace_entry *ent;
+ *	// Protect the non nmi buffer
+ *	// This also protects the rcu read side
+ *	local_irq_save(irq_flags);
+ *	__cpu = smp_processor_id();
  *
- *		zero dead bytes from alignment to avoid stack leak to userspace:
+ *	if (in_nmi())
+ *		raw_data = rcu_dereference(trace_profile_buf_nmi);
+ *	else
+ *		raw_data = rcu_dereference(trace_profile_buf);
  *
- *		*(u64 *)(&raw_data[__entry_size - sizeof(u64)]) = 0ULL;
- *		entry = (struct ftrace_raw_<call> *)raw_data;
- *		ent = &entry->ent;
- *		tracing_generic_entry_update(ent, irq_flags, pc);
- *		ent->type = event_call->id;
+ *	if (!raw_data)
+ *		goto end;
  *
- *		<tstruct> <- do some jobs with dynamic arrays
+ *	raw_data = per_cpu_ptr(raw_data, __cpu);
  *
- *		<assign>  <- affect our values
+ *	//zero dead bytes from alignment to avoid stack leak to userspace:
+ *	*(u64 *)(&raw_data[__entry_size - sizeof(u64)]) = 0ULL;
+ *	entry = (struct ftrace_raw_<call> *)raw_data;
+ *	ent = &entry->ent;
+ *	tracing_generic_entry_update(ent, irq_flags, pc);
+ *	ent->type = event_call->id;
  *
- *		perf_tpcounter_event(event_call->id, __addr, __count, entry,
- *			     __entry_size);  <- submit them to perf counter
- *	} while (0);
+ *	<tstruct> <- do some jobs with dynamic arrays
+ *
+ *	<assign>  <- affect our values
+ *
+ *	perf_tp_event(event_call->id, __addr, __count, entry,
+ *		     __entry_size);  <- submit them to perf counter
  *
  * }
  */
@@ -707,15 +710,17 @@ static void ftrace_profile_##call(proto)				\
 {									\
 	struct ftrace_data_offsets_##call __maybe_unused __data_offsets;\
 	struct ftrace_event_call *event_call = &event_##call;		\
-	extern void perf_tpcounter_event(int, u64, u64, void *, int);	\
+	extern void perf_tp_event(int, u64, u64, void *, int);	\
 	struct ftrace_raw_##call *entry;				\
 	u64 __addr = 0, __count = 1;					\
 	unsigned long irq_flags;					\
+	struct trace_entry *ent;					\
 	int __entry_size;						\
 	int __data_size;						\
+	char *raw_data;							\
+	int __cpu;							\
 	int pc;								\
 									\
-	local_save_flags(irq_flags);					\
 	pc = preempt_count();						\
 									\
 	__data_size = ftrace_get_offsets_##call(&__data_offsets, args); \
@@ -723,23 +728,38 @@ static void ftrace_profile_##call(proto)				\
 			     sizeof(u64));				\
 	__entry_size -= sizeof(u32);					\
 									\
-	do {								\
-		char raw_data[__entry_size];				\
-		struct trace_entry *ent;				\
+	if (WARN_ONCE(__entry_size > FTRACE_MAX_PROFILE_SIZE,		\
+		      "profile buffer not large enough"))		\
+		return;							\
 									\
-		*(u64 *)(&raw_data[__entry_size - sizeof(u64)]) = 0ULL;	\
-		entry = (struct ftrace_raw_##call *)raw_data;		\
-		ent = &entry->ent;					\
-		tracing_generic_entry_update(ent, irq_flags, pc);	\
-		ent->type = event_call->id;				\
+	local_irq_save(irq_flags);					\
+	__cpu = smp_processor_id();					\
 									\
-		tstruct							\
+	if (in_nmi())							\
+		raw_data = rcu_dereference(trace_profile_buf_nmi);		\
+	else								\
+		raw_data = rcu_dereference(trace_profile_buf);		\
 									\
-		{ assign; }						\
+	if (!raw_data)							\
+		goto end;						\
 									\
-		perf_tpcounter_event(event_call->id, __addr, __count, entry,\
+	raw_data = per_cpu_ptr(raw_data, __cpu);			\
+									\
+	*(u64 *)(&raw_data[__entry_size - sizeof(u64)]) = 0ULL;		\
+	entry = (struct ftrace_raw_##call *)raw_data;			\
+	ent = &entry->ent;						\
+	tracing_generic_entry_update(ent, irq_flags, pc);		\
+	ent->type = event_call->id;					\
+									\
+	tstruct								\
+									\
+	{ assign; }							\
+									\
+	perf_tp_event(event_call->id, __addr, __count, entry,		\
 			     __entry_size);				\
-	} while (0);							\
+									\
+end:									\
+	local_irq_restore(irq_flags);					\
 									\
 }
 

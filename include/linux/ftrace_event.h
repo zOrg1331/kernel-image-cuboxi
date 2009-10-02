@@ -1,9 +1,10 @@
 #ifndef _LINUX_FTRACE_EVENT_H
 #define _LINUX_FTRACE_EVENT_H
 
-#include <linux/trace_seq.h>
 #include <linux/ring_buffer.h>
+#include <linux/trace_seq.h>
 #include <linux/percpu.h>
+#include <linux/hardirq.h>
 
 struct trace_array;
 struct tracer;
@@ -34,7 +35,7 @@ struct trace_entry {
 	unsigned char		flags;
 	unsigned char		preempt_count;
 	int			pid;
-	int			tgid;
+	int			lock_depth;
 };
 
 #define FTRACE_MAX_EVENT						\
@@ -93,13 +94,17 @@ void tracing_generic_entry_update(struct trace_entry *entry,
 				  unsigned long flags,
 				  int pc);
 struct ring_buffer_event *
-trace_current_buffer_lock_reserve(int type, unsigned long len,
+trace_current_buffer_lock_reserve(struct ring_buffer **current_buffer,
+				  int type, unsigned long len,
 				  unsigned long flags, int pc);
-void trace_current_buffer_unlock_commit(struct ring_buffer_event *event,
+void trace_current_buffer_unlock_commit(struct ring_buffer *buffer,
+					struct ring_buffer_event *event,
 					unsigned long flags, int pc);
-void trace_nowake_buffer_unlock_commit(struct ring_buffer_event *event,
+void trace_nowake_buffer_unlock_commit(struct ring_buffer *buffer,
+				       struct ring_buffer_event *event,
 					unsigned long flags, int pc);
-void trace_current_buffer_discard_commit(struct ring_buffer_event *event);
+void trace_current_buffer_discard_commit(struct ring_buffer *buffer,
+					 struct ring_buffer_event *event);
 
 void tracing_record_cmdline(struct task_struct *tsk);
 
@@ -126,16 +131,22 @@ struct ftrace_event_call {
 	void			*data;
 
 	atomic_t		profile_count;
-	int			(*profile_enable)(struct ftrace_event_call *);
-	void			(*profile_disable)(struct ftrace_event_call *);
+	int			(*profile_enable)(void);
+	void			(*profile_disable)(void);
 };
 
+#define FTRACE_MAX_PROFILE_SIZE	2048
+
+extern char			*trace_profile_buf;
+extern char			*trace_profile_buf_nmi;
+
 #define MAX_FILTER_PRED		32
-#define MAX_FILTER_STR_VAL	128
+#define MAX_FILTER_STR_VAL	256	/* Should handle KSYM_SYMBOL_LEN */
 
 extern void destroy_preds(struct ftrace_event_call *call);
 extern int filter_match_preds(struct ftrace_event_call *call, void *rec);
-extern int filter_current_check_discard(struct ftrace_event_call *call,
+extern int filter_current_check_discard(struct ring_buffer *buffer,
+					struct ftrace_event_call *call,
 					void *rec,
 					struct ring_buffer_event *event);
 
