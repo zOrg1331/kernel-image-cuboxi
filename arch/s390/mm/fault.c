@@ -103,34 +103,22 @@ void bust_spinlocks(int yes)
  * Returns 0 for kernel space, 1 for user space and
  * 2 for code execution in user space with noexec=on.
  */
-static inline int check_space(struct task_struct *tsk)
+static inline int check_space(void)
 {
 	/*
 	 * The lowest two bits of S390_lowcore.trans_exc_code
 	 * indicate which paging table was used.
 	 */
-	int desc = S390_lowcore.trans_exc_code & 3;
-
-	if (desc == 3)	/* Home Segment Table Descriptor */
+	if ((S390_lowcore.trans_exc_code & 3) == 3)
+		/* Home Segment Table Descriptor */
 		return switch_amode == 0;
-	if (desc == 2)	/* Secondary Segment Table Descriptor */
-		return tsk->thread.mm_segment.ar4;
-#ifdef CONFIG_S390_SWITCH_AMODE
-	if (unlikely(desc == 1)) { /* STD determined via access register */
-		/* %a0 always indicates primary space. */
-		if (S390_lowcore.exc_access_id != 0) {
-			save_access_regs(tsk->thread.acrs);
-			/*
-			 * An alet of 0 indicates primary space.
-			 * An alet of 1 indicates secondary space.
-			 * Any other alet values generate an
-			 * alen-translation exception.
-			 */
-			if (tsk->thread.acrs[S390_lowcore.exc_access_id])
-				return tsk->thread.mm_segment.ar4;
-		}
-	}
-#endif
+	if ((S390_lowcore.trans_exc_code & 3) == 2)
+		/* Secondary Segment Table Descriptor */
+		return current->thread.mm_segment.ar4;
+	if ((S390_lowcore.trans_exc_code & 3) == 1)
+		/* Table descriptor determined via access register */
+		/* AR-mode always is a data access from user space */
+		return 1;
 	/* Primary Segment Table Descriptor */
 	return switch_amode << s390_noexec;
 }
@@ -162,7 +150,7 @@ static void do_sigsegv(struct pt_regs *regs, unsigned long error_code,
 }
 
 static void do_no_context(struct pt_regs *regs, unsigned long error_code,
-			  unsigned long address)
+			  unsigned long address, int space)
 {
 	const struct exception_table_entry *fixup;
 
@@ -177,7 +165,7 @@ static void do_no_context(struct pt_regs *regs, unsigned long error_code,
 	 * Oops. The kernel tried to access some bad page. We'll have to
 	 * terminate things with extreme prejudice.
 	 */
-	if (check_space(current) == 0)
+	if (space == 0)
 		printk(KERN_ALERT "Unable to handle kernel pointer dereference"
 		       " at virtual kernel address %p\n", (void *)address);
 	else
@@ -188,7 +176,8 @@ static void do_no_context(struct pt_regs *regs, unsigned long error_code,
 	do_exit(SIGKILL);
 }
 
-static void do_low_address(struct pt_regs *regs, unsigned long error_code)
+static void do_low_address(struct pt_regs *regs, unsigned long error_code,
+			   int space)
 {
 	/* Low-address protection hit in kernel mode means
 	   NULL pointer write access in kernel mode.  */
@@ -198,11 +187,11 @@ static void do_low_address(struct pt_regs *regs, unsigned long error_code)
 		do_exit(SIGKILL);
 	}
 
-	do_no_context(regs, error_code, 0);
+	do_no_context(regs, error_code, 0, space);
 }
 
 static void do_sigbus(struct pt_regs *regs, unsigned long error_code,
-		      unsigned long address)
+		      unsigned long address, int space)
 {
 	struct task_struct *tsk = current;
 	struct mm_struct *mm = tsk->mm;
@@ -218,7 +207,7 @@ static void do_sigbus(struct pt_regs *regs, unsigned long error_code,
 
 	/* Kernel mode? Handle exceptions or die */
 	if (!(regs->psw.mask & PSW_MASK_PSTATE))
-		do_no_context(regs, error_code, address);
+		do_no_context(regs, error_code, address, space);
 }
 
 #ifdef CONFIG_S390_EXEC_PROTECT
@@ -272,13 +261,13 @@ static int signal_return(struct mm_struct *mm, struct pt_regs *regs,
  *   3b       Region third trans.  ->  Not present       (nullification)
  */
 static inline void
-do_exception(struct pt_regs *regs, unsigned long error_code, int write)
+do_exception(struct pt_regs *regs, unsigned long error_code, int write,
+	     int space)
 {
 	struct task_struct *tsk;
 	struct mm_struct *mm;
 	struct vm_area_struct *vma;
 	unsigned long address;
-	int space;
 	int si_code;
 	int fault;
 
@@ -290,7 +279,6 @@ do_exception(struct pt_regs *regs, unsigned long error_code, int write)
 
 	/* get the failing address and the affected space */
 	address = S390_lowcore.trans_exc_code & __FAIL_ADDR_MASK;
-	space = check_space(tsk);
 
 	/*
 	 * Verify that the fault happened in user space, that
@@ -359,7 +347,7 @@ good_area:
 			pagefault_out_of_memory();
 			return;
 		} else if (fault & VM_FAULT_SIGBUS) {
-			do_sigbus(regs, error_code, address);
+			do_sigbus(regs, error_code, address, space);
 			return;
 		}
 		BUG();
@@ -397,12 +385,15 @@ bad_area:
 	}
 
 no_context:
-	do_no_context(regs, error_code, address);
+	do_no_context(regs, error_code, address, space);
 }
 
 void __kprobes do_protection_exception(struct pt_regs *regs,
 				       long error_code)
 {
+	int space;
+
+	space = check_space();
 	/* Protection exception is supressing, decrement psw address. */
 	regs->psw.addr -= (error_code >> 16);
 	/*
@@ -411,15 +402,18 @@ void __kprobes do_protection_exception(struct pt_regs *regs,
 	 * field is not guaranteed to contain valid data in this case.
 	 */
 	if (unlikely(!(S390_lowcore.trans_exc_code & 4))) {
-		do_low_address(regs, error_code);
+		do_low_address(regs, error_code, space);
 		return;
 	}
-	do_exception(regs, 4, 1);
+	do_exception(regs, 4, 1, space);
 }
 
 void __kprobes do_dat_exception(struct pt_regs *regs, long error_code)
 {
-	do_exception(regs, error_code & 0xff, 0);
+	int space;
+
+	space = check_space();
+	do_exception(regs, error_code & 0xff, 0, space);
 }
 
 #ifdef CONFIG_64BIT
@@ -432,7 +426,7 @@ void __kprobes do_asce_exception(struct pt_regs *regs, unsigned long error_code)
 
 	mm = current->mm;
 	address = S390_lowcore.trans_exc_code & __FAIL_ADDR_MASK;
-	space = check_space(current);
+	space = check_space();
 
 	if (unlikely(space == 0 || in_atomic() || !mm))
 		goto no_context;
@@ -457,7 +451,7 @@ void __kprobes do_asce_exception(struct pt_regs *regs, unsigned long error_code)
 	}
 
 no_context:
-	do_no_context(regs, error_code, address);
+	do_no_context(regs, error_code, address, space);
 }
 #endif
 
