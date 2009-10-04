@@ -1513,16 +1513,32 @@ try_remote:
 	l = &c->list;
 	object = __cache_list_get_object(s, l);
 	if (unlikely(!object)) {
-		object = cache_list_get_page(s, l);
-		if (unlikely(!object)) {
-			object = __slab_alloc_page(s, gfpflags, node);
 #ifdef CONFIG_NUMA
-			if (unlikely(!object)) {
-				node = numa_node_id();
-				goto try_remote;
-			}
+		int thisnode = numa_node_id();
+
+		/*
+		 * If the local node is memoryless, try remote alloc before
+		 * trying the page allocator. Otherwise, what happens is
+		 * objects are always freed to remote lists but the allocation
+		 * side always allocates a new page with only one object
+		 * used in each page
+		 */
+		if (unlikely(!node_state(thisnode, N_HIGH_MEMORY)))
+			object = __remote_slab_alloc(s, gfpflags, thisnode);
 #endif
-			return object;
+
+		if (!object) {
+			object = cache_list_get_page(s, l);
+			if (unlikely(!object)) {
+				object = __slab_alloc_page(s, gfpflags, node);
+#ifdef CONFIG_NUMA
+				if (unlikely(!object)) {
+					node = numa_node_id();
+					goto try_remote;
+				}
+#endif
+				return object;
+			}
 		}
 	}
 	if (likely(object))
