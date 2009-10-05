@@ -21,6 +21,7 @@
 #include <linux/kallsyms.h>
 #include <linux/mutex.h>
 #include <linux/pm.h>
+#include <linux/pm_link.h>
 #include <linux/pm_runtime.h>
 #include <linux/resume-trace.h>
 #include <linux/rwsem.h>
@@ -50,16 +51,6 @@ static DEFINE_MUTEX(dpm_list_mtx);
 static bool transition_started;
 
 /**
- * device_pm_init - Initialize the PM-related part of a device object.
- * @dev: Device object being initialized.
- */
-void device_pm_init(struct device *dev)
-{
-	dev->power.status = DPM_ON;
-	pm_runtime_init(dev);
-}
-
-/**
  * device_pm_lock - Lock the list of active devices used by the PM core.
  */
 void device_pm_lock(void)
@@ -76,14 +67,11 @@ void device_pm_unlock(void)
 }
 
 /**
- * device_pm_add - Add a device to the PM core's list of active devices.
+ * device_pm_list_add - Add a device to the PM core's list of active devices.
  * @dev: Device to add to the list.
  */
-void device_pm_add(struct device *dev)
+void device_pm_list_add(struct device *dev)
 {
-	pr_debug("PM: Adding info for %s:%s\n",
-		 dev->bus ? dev->bus->name : "No Bus",
-		 kobject_name(&dev->kobj));
 	mutex_lock(&dpm_list_mtx);
 	if (dev->parent) {
 		if (dev->parent->power.status >= DPM_SUSPENDING)
@@ -97,24 +85,19 @@ void device_pm_add(struct device *dev)
 		 */
 		dev_WARN(dev, "Parentless device registered during a PM transaction\n");
 	}
-
 	list_add_tail(&dev->power.entry, &dpm_list);
 	mutex_unlock(&dpm_list_mtx);
 }
 
 /**
- * device_pm_remove - Remove a device from the PM core's list of active devices.
+ * device_pm_list_remove - Remove a device from the PM core's list of devices.
  * @dev: Device to be removed from the list.
  */
-void device_pm_remove(struct device *dev)
+void device_pm_list_remove(struct device *dev)
 {
-	pr_debug("PM: Removing info for %s:%s\n",
-		 dev->bus ? dev->bus->name : "No Bus",
-		 kobject_name(&dev->kobj));
 	mutex_lock(&dpm_list_mtx);
 	list_del_init(&dev->power.entry);
 	mutex_unlock(&dpm_list_mtx);
-	pm_runtime_remove(dev);
 }
 
 /**
