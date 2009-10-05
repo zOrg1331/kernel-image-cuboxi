@@ -19,10 +19,11 @@
  */
 void device_pm_init(struct device *dev)
 {
-	dev->power.status = DPM_ON;
 	spin_lock_init(&dev->power.lock);
+	init_waitqueue_head(&dev->power.wait_queue);
 	INIT_LIST_HEAD(&dev->power.master_links);
 	INIT_LIST_HEAD(&dev->power.slave_links);
+	dev->power.status = DPM_ON;
 	pm_runtime_init(dev);
 }
 
@@ -117,6 +118,8 @@ int pm_link_add(struct device *slave, struct device *master)
 	return 0;
 
  err_link:
+	master->power.async_suspend = false;
+	slave->power.async_suspend = false;
 	error = -ENOMEM;
 	put_device(slave);
 
