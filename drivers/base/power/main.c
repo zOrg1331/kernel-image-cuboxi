@@ -240,6 +240,15 @@ static void device_pm_wait_for_masters(struct device *slave)
 }
 
 /**
+ * device_pm_wait_for_slaves - Wait for all slaves of given device.
+ * @slave: Device to wait for the slaves of.
+ */
+static void device_pm_wait_for_slaves(struct device *master)
+{
+	device_for_each_slave(master, master, device_pm_wait_fn);
+}
+
+/**
  * device_pm_check - Check the power.op_complete flag of given device.
  * @dev: Device to check.
  */
@@ -270,6 +279,15 @@ static int device_pm_check_fn(struct device *dev, void *data)
 static int device_pm_check_masters(struct device *slave)
 {
 	return device_for_each_master(slave, NULL, device_pm_check_fn);
+}
+
+/**
+ * device_pm_check_slaves - Check power.op_complete for slaves of a device.
+ * @slave: Device to check the slaves of.
+ */
+static int device_pm_check_slaves(struct device *master)
+{
+	return device_for_each_slave(master, NULL, device_pm_check_fn);
 }
 
 /**
@@ -832,6 +850,8 @@ EXPORT_SYMBOL_GPL(dpm_resume_end);
 
 /*------------------------- Suspend routines -------------------------*/
 
+static atomic_t async_error;
+
 /**
  * resume_event - Return a "resume" message for given "suspend" sleep state.
  * @sleep_state: PM message representing a sleep state.
@@ -861,18 +881,97 @@ static pm_message_t resume_event(pm_message_t sleep_state)
  * The driver of @dev will not receive interrupts while this function is being
  * executed.
  */
-static int device_suspend_noirq(struct device *dev, pm_message_t state)
+static int __device_suspend_noirq(struct device *dev, pm_message_t state)
 {
 	int error = 0;
 
-	if (!dev->bus)
-		return 0;
-
-	if (dev->bus->pm) {
+	if (dev->bus && dev->bus->pm) {
 		pm_dev_dbg(dev, state, "LATE ");
 		error = pm_noirq_op(dev, dev->bus->pm, state);
 	}
+
+	dev->power.op_complete = true;
+	wake_up_all(&dev->power.wait_queue);
+
 	return error;
+}
+
+/**
+ * async_device_suspend_noirq - Wrapper of __device_suspend_noirq().
+ * @dev: Device to suspend.
+ *
+ * Execute __device_suspend_noirq() for given device unless async_error is
+ * set and if that returns error code, copy it to async_error and change the
+ * PM status of @dev to DPM_OFF.
+ */
+static void async_device_suspend_noirq(struct device *dev)
+{
+	int error = atomic_read(&async_error);
+
+	if (error)
+		return;
+	pm_dev_dbg(dev, pm_transition, "async LATE ");
+	error = __device_suspend_noirq(dev, pm_transition);
+	if (!error)
+		return;
+	pm_dev_err(dev, pm_transition, " async LATE", error);
+	dev->power.status = DPM_OFF;
+	atomic_set(&async_error, error);
+}
+
+/**
+ * async_suspend_noirq - Execute "late" suspend callbacks asynchronously.
+ * @data: Pointer to the first device to suspend.
+ * @cookie: Ignored.
+ *
+ * The execution of this function is scheduled with async_schedule(), so it runs
+ * in its own kernel thread.  It first calls the "late" suspend callback for the
+ * device passed to it as @data.  Next, it walks dpm_list looking for devices
+ * that can be suspended without waiting for their "slaves".  If such a device
+ * is found, its "late" suspend callback is run.
+ */
+static void async_suspend_noirq(void *data, async_cookie_t cookie)
+{
+	struct device *dev = (struct device *)data;
+
+	device_pm_wait_for_slaves(dev);
+	async_device_suspend_noirq(dev);
+
+	list_for_each_entry_continue_reverse(dev, &dpm_list, power.entry) {
+		if (!dev->power.async_suspend)
+			continue;
+
+		if (device_pm_check_slaves(dev))
+			continue;
+
+		if (pm_op_started(dev))
+			continue;
+
+		pm_dev_dbg(dev, pm_transition, "out of order LATE ");
+		async_device_suspend_noirq(dev);
+	}
+}
+
+/**
+ * device_suspend_noirq - Execute or schedule "late" suspend callback.
+ * @dev: Device to suspend.
+ *
+ * If @dev can be resumed asynchronously, schedule the execution of
+ * async_suspend_noirq() for it.  Otherwise, execute its "late" suspend callback
+ * directly.
+ */
+static int device_suspend_noirq(struct device *dev)
+{
+	if (pm_op_started(dev))
+		return 0;
+
+	if (dev->power.async_suspend) {
+		async_schedule(async_suspend_noirq, dev);
+		return 0;
+	}
+
+	device_pm_wait_for_slaves(dev);
+	return __device_suspend_noirq(dev, pm_transition);
 }
 
 /**
@@ -889,14 +988,20 @@ int dpm_suspend_noirq(pm_message_t state)
 
 	suspend_device_irqs();
 	mutex_lock(&dpm_list_mtx);
+	pm_transition = state;
 	list_for_each_entry_reverse(dev, &dpm_list, power.entry) {
-		error = device_suspend_noirq(dev, state);
+		dev->power.status = DPM_OFF_IRQ;
+		error = device_suspend_noirq(dev);
 		if (error) {
-			pm_dev_err(dev, state, " late", error);
+			pm_dev_err(dev, state, " LATE", error);
+			dev->power.status = DPM_OFF;
 			break;
 		}
-		dev->power.status = DPM_OFF_IRQ;
+		error = atomic_read(&async_error);
+		if (error)
+			break;
 	}
+	dpm_synchronize_noirq();
 	mutex_unlock(&dpm_list_mtx);
 	if (error)
 		dpm_resume_noirq(resume_event(state));
@@ -909,7 +1014,7 @@ EXPORT_SYMBOL_GPL(dpm_suspend_noirq);
  * @dev: Device to handle.
  * @state: PM transition of the system being carried out.
  */
-static int device_suspend(struct device *dev, pm_message_t state)
+static int __device_suspend(struct device *dev, pm_message_t state)
 {
 	int error = 0;
 
@@ -949,8 +1054,99 @@ static int device_suspend(struct device *dev, pm_message_t state)
 	}
  End:
 	up(&dev->sem);
+	dev->power.op_complete = true;
+	wake_up_all(&dev->power.wait_queue);
 
 	return error;
+}
+
+/**
+ * async_device_suspend - Wrapper of __device_suspend().
+ * @dev: Device to suspend.
+ *
+ * Execute __device_suspend() for given device unless async_error is set and if
+ * that returns error code, copy it to async_error and change the PM status of
+ * @dev to DPM_SUSPENDING.
+ */
+static void async_device_suspend(struct device *dev)
+{
+	int error = atomic_read(&async_error);
+
+	if (error)
+		return;
+	pm_dev_dbg(dev, pm_transition, "async ");
+	error = __device_suspend(dev, pm_transition);
+	if (!error)
+		return;
+	pm_dev_err(dev, pm_transition, " async", error);
+	mutex_lock(&dpm_list_mtx);
+	dev->power.status = DPM_SUSPENDING;
+	atomic_set(&async_error, error);
+	mutex_unlock(&dpm_list_mtx);
+}
+
+/**
+ * async_suspend - Execute suspend callbacks asynchronously.
+ * @data: Pointer to the first device to resume.
+ * @cookie: Ignored.
+ *
+ * The execution of this function is scheduled with async_schedule(), so it runs
+ * in its own kernel thread.  It first calls the suspend callbacks for the
+ * device passed to it as @data.  Next, it walks dpm_list looking for devices
+ * that can be suspended without waiting for their "slaves".  If such a device
+ * is found, its suspend callbacks are run.
+ */
+static void async_suspend(void *data, async_cookie_t cookie)
+{
+	struct device *dev = (struct device *)data;
+
+	device_pm_wait_for_slaves(dev);
+
+ repeat:
+	async_device_suspend(dev);
+	put_device(dev);
+
+	mutex_lock(&dpm_list_mtx);
+	if (dev->power.status >= DPM_OFF)
+		dev = to_device(dpm_list.prev);
+	list_for_each_entry_continue_reverse(dev, &dpm_list, power.entry) {
+		if (!dev->power.async_suspend)
+			continue;
+
+		if (device_pm_check_slaves(dev))
+			continue;
+
+		if (pm_op_started(dev))
+			continue;
+
+		get_device(dev);
+		mutex_unlock(&dpm_list_mtx);
+		pm_dev_dbg(dev, pm_transition, "out of order ");
+		goto repeat;
+	}
+	mutex_unlock(&dpm_list_mtx);
+}
+
+/**
+ * device_suspend - Execute or schedule suspend callbacks for given device.
+ * @dev: Device to suspend.
+ *
+ * If @dev can be suspended asynchronously, schedule the execution of
+ * async_suspend() for it.  Otherwise, execute its suspend callbacks directly.
+ */
+static int device_suspend(struct device *dev)
+{
+	if (pm_op_started(dev))
+		return 0;
+
+	if (dev->power.async_suspend) {
+		get_device(dev);
+		async_schedule(async_suspend, dev);
+		return 0;
+	}
+
+	device_pm_wait_for_slaves(dev);
+	return __device_suspend(dev, pm_transition);
 }
 
 /**
@@ -964,27 +1160,33 @@ static int dpm_suspend(pm_message_t state)
 
 	INIT_LIST_HEAD(&list);
 	mutex_lock(&dpm_list_mtx);
+	pm_transition = state;
 	while (!list_empty(&dpm_list)) {
 		struct device *dev = to_device(dpm_list.prev);
 
 		get_device(dev);
+		dev->power.status = DPM_OFF;
 		mutex_unlock(&dpm_list_mtx);
 
-		error = device_suspend(dev, state);
+		error = device_suspend(dev);
 
 		mutex_lock(&dpm_list_mtx);
 		if (error) {
 			pm_dev_err(dev, state, "", error);
+			dev->power.status = DPM_SUSPENDING;
 			put_device(dev);
 			break;
 		}
-		dev->power.status = DPM_OFF;
 		if (!list_empty(&dev->power.entry))
 			list_move(&dev->power.entry, &list);
 		put_device(dev);
+		error = atomic_read(&async_error);
+		if (error)
+			break;
 	}
 	list_splice(&list, dpm_list.prev);
 	mutex_unlock(&dpm_list_mtx);
+	dpm_synchronize();
 	return error;
 }
 
@@ -1043,6 +1245,7 @@ static int dpm_prepare(pm_message_t state)
 	INIT_LIST_HEAD(&list);
 	mutex_lock(&dpm_list_mtx);
 	transition_started = true;
+	atomic_set(&async_error, 0);
 	while (!list_empty(&dpm_list)) {
 		struct device *dev = to_device(dpm_list.next);
 
