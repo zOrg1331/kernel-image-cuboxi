@@ -235,7 +235,7 @@ static int device_pm_wait_fn(struct device *dev, void *data)
  */
 static void device_pm_wait_for_masters(struct device *slave)
 {
-	if (!pm_trace_is_enabled())
+	if (pm_async_enabled && !pm_trace_is_enabled())
 		device_for_each_master(slave, slave, device_pm_wait_fn);
 }
 
@@ -245,7 +245,8 @@ static void device_pm_wait_for_masters(struct device *slave)
  */
 static void device_pm_wait_for_slaves(struct device *master)
 {
-	device_for_each_slave(master, master, device_pm_wait_fn);
+	if (pm_async_enabled)
+		device_for_each_slave(master, master, device_pm_wait_fn);
 }
 
 /**
@@ -560,7 +561,8 @@ static int device_resume_noirq(struct device *dev)
 	if (pm_op_started(dev))
 		return 0;
 
-	if (dev->power.async_suspend && !pm_trace_is_enabled()) {
+	if (pm_async_enabled && dev->power.async_suspend
+	    && !pm_trace_is_enabled()) {
 		async_schedule(async_resume_noirq, dev);
 		return 0;
 	}
@@ -719,7 +721,8 @@ static int device_resume(struct device *dev)
 	if (pm_op_started(dev))
 		return 0;
 
-	if (dev->power.async_suspend && !pm_trace_is_enabled()) {
+	if (pm_async_enabled && dev->power.async_suspend
+	    && !pm_trace_is_enabled()) {
 		get_device(dev);
 		async_schedule(async_resume, dev);
 		return 0;
@@ -965,7 +968,7 @@ static int device_suspend_noirq(struct device *dev)
 	if (pm_op_started(dev))
 		return 0;
 
-	if (dev->power.async_suspend) {
+	if (pm_async_enabled && dev->power.async_suspend) {
 		async_schedule(async_suspend_noirq, dev);
 		return 0;
 	}
@@ -1139,7 +1142,7 @@ static int device_suspend(struct device *dev)
 	if (pm_op_started(dev))
 		return 0;
 
-	if (dev->power.async_suspend) {
+	if (pm_async_enabled && dev->power.async_suspend) {
 		get_device(dev);
 		async_schedule(async_suspend, dev);
 		return 0;
