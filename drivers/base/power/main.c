@@ -28,6 +28,7 @@
 #include <linux/interrupt.h>
 #include <linux/async.h>
 #include <linux/completion.h>
+#include <linux/time.h>
 
 #include "../base.h"
 #include "power.h"
@@ -434,6 +435,20 @@ static bool pm_op_started(struct device *dev)
 	return ret;
 }
 
+/**
+ * pm_time_elapsed - Compute time elapsed between two timestamps.
+ * @start: First timestamp.
+ * @stop: Second timestamp.
+ */
+int pm_time_elapsed(struct timeval *start, struct timeval *stop)
+{
+	s64 elapsed_centisecs64;
+
+	elapsed_centisecs64 = timeval_to_ns(stop) - timeval_to_ns(start);
+	do_div(elapsed_centisecs64, NSEC_PER_SEC / 100);
+	return elapsed_centisecs64;
+}
+
 static char *pm_verb(int event)
 {
 	switch (event) {
@@ -456,6 +471,16 @@ static char *pm_verb(int event)
 	default:
 		return "(unknown PM event)";
 	}
+}
+
+static void dpm_show_time(struct timeval *start, struct timeval *stop,
+			  pm_message_t state, const char *info)
+{
+	int centisecs = pm_time_elapsed(start, stop);
+
+	printk(KERN_INFO "PM: %s%s%s of devices complete in %d.%02d seconds\n",
+		info ? info : "", info ? " " : "", pm_verb(state.event),
+		centisecs / 100, centisecs % 100);
 }
 
 static void pm_dev_dbg(struct device *dev, pm_message_t state, char *info)
@@ -581,6 +606,9 @@ static int device_resume_noirq(struct device *dev)
 void dpm_resume_noirq(pm_message_t state)
 {
 	struct device *dev;
+	struct timeval start, stop;
+
+	do_gettimeofday(&start);
 
 	mutex_lock(&dpm_list_mtx);
 	transition_started = false;
@@ -596,6 +624,10 @@ void dpm_resume_noirq(pm_message_t state)
 		}
 	dpm_synchronize_noirq();
 	mutex_unlock(&dpm_list_mtx);
+
+	do_gettimeofday(&stop);
+	dpm_show_time(&start, &stop, state, "EARLY");
+
 	resume_device_irqs();
 }
 EXPORT_SYMBOL_GPL(dpm_resume_noirq);
@@ -742,6 +774,9 @@ static int device_resume(struct device *dev)
 static void dpm_resume(pm_message_t state)
 {
 	struct list_head list;
+	struct timeval start, stop;
+
+	do_gettimeofday(&start);
 
 	INIT_LIST_HEAD(&list);
 	mutex_lock(&dpm_list_mtx);
@@ -772,6 +807,9 @@ static void dpm_resume(pm_message_t state)
 	list_splice(&list, &dpm_list);
 	mutex_unlock(&dpm_list_mtx);
 	dpm_synchronize();
+
+	do_gettimeofday(&stop);
+	dpm_show_time(&start, &stop, state, NULL);
 }
 
 /**
@@ -987,7 +1025,10 @@ static int device_suspend_noirq(struct device *dev)
 int dpm_suspend_noirq(pm_message_t state)
 {
 	struct device *dev;
+	struct timeval start, stop;
 	int error = 0;
+
+	do_gettimeofday(&start);
 
 	suspend_device_irqs();
 	mutex_lock(&dpm_list_mtx);
@@ -1006,8 +1047,12 @@ int dpm_suspend_noirq(pm_message_t state)
 	}
 	dpm_synchronize_noirq();
 	mutex_unlock(&dpm_list_mtx);
-	if (error)
+	if (error) {
 		dpm_resume_noirq(resume_event(state));
+	} else {
+		do_gettimeofday(&stop);
+		dpm_show_time(&start, &stop, state, "LATE");
+	}
 	return error;
 }
 EXPORT_SYMBOL_GPL(dpm_suspend_noirq);
@@ -1159,7 +1204,10 @@ static int device_suspend(struct device *dev)
 static int dpm_suspend(pm_message_t state)
 {
 	struct list_head list;
+	struct timeval start, stop;
 	int error = 0;
+
+	do_gettimeofday(&start);
 
 	INIT_LIST_HEAD(&list);
 	mutex_lock(&dpm_list_mtx);
@@ -1190,6 +1238,12 @@ static int dpm_suspend(pm_message_t state)
 	list_splice(&list, dpm_list.prev);
 	mutex_unlock(&dpm_list_mtx);
 	dpm_synchronize();
+
+	if (!error) {
+		do_gettimeofday(&stop);
+		dpm_show_time(&start, &stop, state, NULL);
+	}
+
 	return error;
 }
 
