@@ -476,6 +476,11 @@ static inline void device_enable_async_suspend(struct device *dev, bool enable)
 		dev->power.async_suspend = enable;
 }
 
+static inline bool device_async_suspend_enabled(struct device *dev)
+{
+	return !!dev->power.async_suspend;
+}
+
 void driver_init(void);
 
 /*
