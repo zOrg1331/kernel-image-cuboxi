@@ -408,6 +408,9 @@ enum rpm_request {
 };
 
 struct dev_pm_info {
+	spinlock_t		lock;
+	struct list_head	master_links;
+	struct list_head	slave_links;
 	pm_message_t		power_state;
 	unsigned int		can_wakeup:1;
 	unsigned int		should_wakeup:1;
@@ -420,7 +423,6 @@ struct dev_pm_info {
 	unsigned long		timer_expires;
 	struct work_struct	work;
 	wait_queue_head_t	wait_queue;
-	spinlock_t		lock;
 	atomic_t		usage_count;
 	atomic_t		child_count;
 	unsigned int		disable_depth:3;
