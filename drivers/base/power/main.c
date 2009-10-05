@@ -442,11 +442,11 @@ static bool pm_op_started(struct device *dev)
  */
 int pm_time_elapsed(struct timeval *start, struct timeval *stop)
 {
-	s64 elapsed_centisecs64;
+	s64 elapsed_msecs64;
 
-	elapsed_centisecs64 = timeval_to_ns(stop) - timeval_to_ns(start);
-	do_div(elapsed_centisecs64, NSEC_PER_SEC / 100);
-	return elapsed_centisecs64;
+	elapsed_msecs64 = timeval_to_ns(stop) - timeval_to_ns(start);
+	do_div(elapsed_msecs64, NSEC_PER_SEC / MSEC_PER_SEC);
+	return elapsed_msecs64;
 }
 
 static char *pm_verb(int event)
@@ -476,7 +476,7 @@ static char *pm_verb(int event)
 static void dpm_show_time(struct timeval *start, struct timeval *stop,
 			  pm_message_t state, const char *info)
 {
-	int centisecs = pm_time_elapsed(start, stop);
+	int centisecs = pm_time_elapsed(start, stop) / 10;
 
 	printk(KERN_INFO "PM: %s%s%s of devices complete in %d.%02d seconds\n",
 		info ? info : "", info ? " " : "", pm_verb(state.event),
@@ -497,6 +497,32 @@ static void pm_dev_err(struct device *dev, pm_message_t state, char *info,
 		kobject_name(&dev->kobj), pm_verb(state.event), info, error);
 }
 
+#ifdef DEBUG
+static inline void dbg_get_time(struct timeval *start)
+{
+	do_gettimeofday(start);
+}
+
+static void dbg_show_time(struct timeval *start, struct device *dev,
+			  pm_message_t state, char *info)
+{
+	struct timeval stop;
+	int msecs;
+
+	do_gettimeofday(&stop);
+	msecs = pm_time_elapsed(start, &stop);
+	dev_dbg(dev, "PID %d: %s%s%s complete in %d.%03d seconds\n",
+		task_pid_nr(current), info ? info : "", info ? " " : "",
+		pm_verb(state.event), msecs / 1000, msecs % 1000);
+}
+
+#else /* !DEBUG */
+static void dbg_get_time(struct timeval *start) {}
+static void dbg_show_time(struct timeval *start, struct device *dev,
+			  pm_message_t state, char *info) {}
+
+#endif /* !DEBUG */
+
 /*------------------------- Resume routines -------------------------*/
 
 /**
@@ -510,7 +536,9 @@ static void pm_dev_err(struct device *dev, pm_message_t state, char *info,
 static int __device_resume_noirq(struct device *dev, pm_message_t state)
 {
 	int error = 0;
+	struct timeval start;
 
+	dbg_get_time(&start);
 	TRACE_DEVICE(dev);
 	TRACE_RESUME(0);
 
@@ -523,6 +551,7 @@ static int __device_resume_noirq(struct device *dev, pm_message_t state)
 	wake_up_all(&dev->power.wait_queue);
 
 	TRACE_RESUME(error);
+	dbg_show_time(&start, dev, state, "EARLY");
 	return error;
 }
 
@@ -640,7 +669,9 @@ EXPORT_SYMBOL_GPL(dpm_resume_noirq);
 static int __device_resume(struct device *dev, pm_message_t state)
 {
 	int error = 0;
+	struct timeval start;
 
+	dbg_get_time(&start);
 	TRACE_DEVICE(dev);
 	TRACE_RESUME(0);
 
@@ -682,6 +713,7 @@ static int __device_resume(struct device *dev, pm_message_t state)
 	wake_up_all(&dev->power.wait_queue);
 
 	TRACE_RESUME(error);
+	dbg_show_time(&start, dev, state, NULL);
 	return error;
 }
 
@@ -925,6 +957,9 @@ static pm_message_t resume_event(pm_message_t sleep_state)
 static int __device_suspend_noirq(struct device *dev, pm_message_t state)
 {
 	int error = 0;
+	struct timeval start;
+
+	dbg_get_time(&start);
 
 	if (dev->bus && dev->bus->pm) {
 		pm_dev_dbg(dev, state, "LATE ");
@@ -934,6 +969,7 @@ static int __device_suspend_noirq(struct device *dev, pm_message_t state)
 	dev->power.op_complete = true;
 	wake_up_all(&dev->power.wait_queue);
 
+	dbg_show_time(&start, dev, state, "LATE");
 	return error;
 }
 
@@ -1065,6 +1101,9 @@ EXPORT_SYMBOL_GPL(dpm_suspend_noirq);
 static int __device_suspend(struct device *dev, pm_message_t state)
 {
 	int error = 0;
+	struct timeval start;
+
+	dbg_get_time(&start);
 
 	down(&dev->sem);
 
@@ -1105,6 +1144,7 @@ static int __device_suspend(struct device *dev, pm_message_t state)
 	dev->power.op_complete = true;
 	wake_up_all(&dev->power.wait_queue);
 
+	dbg_show_time(&start, dev, state, NULL);
 	return error;
 }
 
