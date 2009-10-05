@@ -505,6 +505,9 @@ extern int sysdev_suspend(pm_message_t state);
 extern int dpm_suspend_noirq(pm_message_t state);
 extern int dpm_suspend_start(pm_message_t state);
 
+struct timeval;
+extern int pm_time_elapsed(struct timeval *start, struct timeval *stop);
+
 extern void __suspend_report_result(const char *function, void *fn, int ret);
 
 #define suspend_report_result(fn, ret)					\
