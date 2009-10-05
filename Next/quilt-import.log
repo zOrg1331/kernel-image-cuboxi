@@ -1,0 +1,105 @@
+Importing driver-core.current based on 2.6.32-rc1
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing i2c based on 2.6.32-rc1-git6
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 8a0382f6fceaf0c6479e582e1054f36333ea3d24
+HEAD is now at 8a0382f Merge branch 'for-linus' of git://www.linux-m32r.org/git/takata/linux-2.6_dev
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-move-legacy-documentation.patch
+misc-eeprom-max6875-no-detect.patch
+w1-ds2482-no-detect.patch
+hwmon-ltc4215-ltc4245-no-detect.patch
+leds-pca9532-no-i2c-insmod.patch
+iio-tsl2561-no-i2c-insmod.patch
+mfd-ab3100-no-i2c-insmod.patch
+i2c-update-sysfs-path-to-adapter.patch
+i2c-hide-acpi-error-on-probe.patch
+i2c-macintosh-probe-can-fail.patch
+i2c-powermac-multiple-msg-not-supported.patch
+i2c-voodoo3-delete.patch
+i2c-prevent-priority-inversion-on-top-of-bus-lock.patch
+i2c-no-I2C_M_REV_DIR_ADDR.patch
+i2c-add-missing-devinit.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 49fced8...073ca0d master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.32-rc1-git1
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on origin/master
+	quilt series is empty
+$ git update-ref refs/heads/quilt/kernel-doc 374576a8b6f865022c0fd1ca62396889b23d66dd
+Importing rr based on v2.6.32-rc1
+Unchanged quilt series rr
+Importing device-mapper based on block/for-next
+$ cd ../quilt-tmp
+$ git reset --hard 6a0afdf58d40200abd0c717261d1bc4c49195c2f
+HEAD is now at 6a0afdf drbd: remove tracing bits
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-log-fix-cn_ulog_callback-declaration.patch
+dm-log-userspace-fix-incorrect-luid-cast-in-userspace_ctr.patch
+dm-snapshot-free-exception-store-on-init-failure.patch
+dm-add-missing-del_gendisk-to-alloc_dev-error-path.patch
+dm-dec_pending-needs-locking-to-save-error-value.patch
+dm-snapshot-require-non-zero-chunk-size-by-end-of-ctr.patch
+dm-snapshot-allow-chunk-size-to-be-less-than-page-size.patch
+dm-snapshot-use-unsigned-integer-chunk-size.patch
+dm-ioctl-prefer-strlcpy-over-strncpy.patch
+dm-snapshot-avoid-else-clause-in-persistent_read_metadata.patch
+dm-snapshot-simplify-sector_to_chunk-expression.patch
+dm-snapshot-abstract-minimum_chunk_size-fn.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + bb93666...a9df52d master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/usb.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+$ cd ../quilt-tmp
+$ git reset --hard 17d857be649a21ca90008c6dc425d849fa83db5c
+HEAD is now at 17d857b Linux 2.6.32-rc1
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging
+staging-remove-agnx-driver.patch
+staging-w35und-fix-beacon_int-breakage.patch
+staging-comedi-8253-fix-coding-style-error.patch
+staging-comedi-8255-fix-coding-style-error.patch
+staging-comedi-drivers.c-checkpatch-fix.patch
+staging-comedi-adl_pci6208-code-styling-fix.patch
+staging-comedi-ni_labpc.h-fixed-line-lengths-of-some-trailing-comments.patch
+staging-comedi-ni_labbc_cs-cleaned-up-debug-define-a-bit.patch
+staging-comedi-ni_labpc_cs-removed-null-initialization-of-static.patch
+staging-comedi-ni_labpc_cs-added-mandatory-whitespace-to-comparison.patch
+staging-comedi-ni_labpc_cs-removed-null-check-from-kfree.patch
+staging-comedi-ni_labpc_cs-wrapped-long-comments.patch
+staging-comedi-comedi_compat32-fixed-checkpatch.pl-issues.patch
+staging-comedi-comedidev.h-fixed-checkpatch.pl-issues.patch
+staging-comedi-ni_at_ao.c-fix-coding-style-error.patch
+staging-comedi-mite.c-fix-coding-style.patch
+staging-comedi-mite.h-deletion-of-unused-functions.patch
+staging-comedi-ni_atmio16d-fix-formating-errors.patch
+staging-comedi-ni_atmio16d-brace-fixes.patch
+staging-comedi-nt_atmio16d-space-and-tab-fixes.patch
+staging-comedi-ni_atmio16d-printk-fixups.patch
+staging-comedi-vmk80xx-cleanup-formatting.patch
+staging-comedi-comedi_compat32.h-fixed-checkpatch.pl-issues.patch
+staging-comedi-acl7225b.c-codingstyle-printk-fixups.patch
+staging-comedi-adl_pci7296-codingstyle-cleanup.patch
+staging-comedi-adl_pci7432-coding-style-cleanup.patch
+staging-comedi-amplc_pc263.c-fix-coding-style-issues.patch
+staging-comedi-amplc_pc263.c-more-coding-style-fixes.patch
+staging-comedi-trivial-fix-of-a-very-frequent-spelling-mistake.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging
+From ../quilt-tmp
+ + c93ed50...e941387 master     -> quilt/staging  (forced update)
