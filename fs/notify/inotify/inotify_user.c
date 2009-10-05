@@ -55,12 +55,6 @@ int inotify_max_user_watches __read_mostly;
 static struct kmem_cache *inotify_inode_mark_cachep __read_mostly;
 struct kmem_cache *event_priv_cachep __read_mostly;
 
-/*
- * When inotify registers a new group it increments this and uses that
- * value as an offset to set the fsnotify group "name" and priority.
- */
-static atomic_t inotify_grp_num;
-
 #ifdef CONFIG_SYSCTL
 
 #include <linux/sysctl.h>
@@ -367,6 +361,77 @@ static int inotify_find_inode(const char __user *dirname, struct path *path, uns
 	return error;
 }
 
+static int inotify_add_to_idr(struct idr *idr, spinlock_t *idr_lock,
+			      int last_wd,
+			      struct inotify_inode_mark_entry *ientry)
+{
+	int ret;
+
+	do {
+		if (unlikely(!idr_pre_get(idr, GFP_KERNEL)))
+			return -ENOMEM;
+
+		spin_lock(idr_lock);
+		ret = idr_get_new_above(idr, ientry, last_wd + 1,
+					&ientry->wd);
+		/* we added the mark to the idr, take a reference */
+		if (!ret)
+			fsnotify_get_mark(&ientry->fsn_entry);
+		spin_unlock(idr_lock);
+	} while (ret == -EAGAIN);
+
+	return ret;
+}
+
+static struct inotify_inode_mark_entry *inotify_idr_find_locked(struct fsnotify_group *group,
+								int wd)
+{
+	struct idr *idr = &group->inotify_data.idr;
+	spinlock_t *idr_lock = &group->inotify_data.idr_lock;
+	struct inotify_inode_mark_entry *ientry;
+
+	assert_spin_locked(idr_lock);
+
+	ientry = idr_find(idr, wd);
+	if (ientry) {
+		struct fsnotify_mark_entry *fsn_entry = &ientry->fsn_entry;
+
+		fsnotify_get_mark(fsn_entry);
+		/* One ref for being in the idr, one ref we just took */
+		BUG_ON(atomic_read(&fsn_entry->refcnt) < 2);
+	}
+
+	return ientry;
+}
+
+static struct inotify_inode_mark_entry *inotify_idr_find(struct fsnotify_group *group,
+							 int wd)
+{
+	struct inotify_inode_mark_entry *ientry;
+	spinlock_t *idr_lock = &group->inotify_data.idr_lock;
+
+	spin_lock(idr_lock);
+	ientry = inotify_idr_find_locked(group, wd);
+	spin_unlock(idr_lock);
+
+	return ientry;
+}
+
+static void do_inotify_remove_from_idr(struct fsnotify_group *group,
+				       struct inotify_inode_mark_entry *ientry)
+{
+	struct idr *idr = &group->inotify_data.idr;
+	spinlock_t *idr_lock = &group->inotify_data.idr_lock;
+	int wd = ientry->wd;
+
+	assert_spin_locked(idr_lock);
+
+	idr_remove(idr, wd);
+
+	/* removed from the idr, drop that ref */
+	fsnotify_put_mark(&ientry->fsn_entry);
+}
+
 /*
  * Remove the mark from the idr (if present) and drop the reference
  * on the mark because it was in the idr.
@@ -374,42 +439,72 @@ static int inotify_find_inode(const char __user *dirname, struct path *path, uns
 static void inotify_remove_from_idr(struct fsnotify_group *group,
 				    struct inotify_inode_mark_entry *ientry)
 {
-	struct idr *idr;
-	struct fsnotify_mark_entry *entry;
-	struct inotify_inode_mark_entry *found_ientry;
+	spinlock_t *idr_lock = &group->inotify_data.idr_lock;
+	struct inotify_inode_mark_entry *found_ientry = NULL;
 	int wd;
 
-	spin_lock(&group->inotify_data.idr_lock);
-	idr = &group->inotify_data.idr;
+	spin_lock(idr_lock);
 	wd = ientry->wd;
 
-	if (wd == -1)
-		goto out;
-
-	entry = idr_find(&group->inotify_data.idr, wd);
-	if (unlikely(!entry))
-		goto out;
-
-	found_ientry = container_of(entry, struct inotify_inode_mark_entry, fsn_entry);
-	if (unlikely(found_ientry != ientry)) {
-		/* We found an entry in the idr with the right wd, but it's
-		 * not the entry we were told to remove.  eparis seriously
-		 * fucked up somewhere. */
+	/*
+	 * does this ientry think it is in the idr?  we shouldn't get called
+	 * if it wasn't....
+	 */
+	if (wd == -1) {
+		printk(KERN_WARNING "%s: ientry=%p ientry->wd=%d ientry->group=%p"
+			" ientry->inode=%p\n", __func__, ientry, ientry->wd,
+			ientry->fsn_entry.group, ientry->fsn_entry.inode);
 		WARN_ON(1);
-		ientry->wd = -1;
 		goto out;
 	}
 
-	/* One ref for being in the idr, one ref held by the caller */
-	BUG_ON(atomic_read(&entry->refcnt) < 2);
+	/* Lets look in the idr to see if we find it */
+	found_ientry = inotify_idr_find_locked(group, wd);
+	if (unlikely(!found_ientry)) {
+		printk(KERN_WARNING "%s: ientry=%p ientry->wd=%d ientry->group=%p"
+			" ientry->inode=%p\n", __func__, ientry, ientry->wd,
+			ientry->fsn_entry.group, ientry->fsn_entry.inode);
+		WARN_ON(1);
+		goto out;
+	}
 
-	idr_remove(idr, wd);
-	ientry->wd = -1;
+	/*
+	 * We found an entry in the idr at the right wd, but it's
+	 * not the entry we were told to remove.  eparis seriously
+	 * fucked up somewhere.
+	 */
+	if (unlikely(found_ientry != ientry)) {
+		WARN_ON(1);
+		printk(KERN_WARNING "%s: ientry=%p ientry->wd=%d ientry->group=%p "
+			"entry->inode=%p found_ientry=%p found_ientry->wd=%d "
+			"found_ientry->group=%p found_ientry->inode=%p\n",
+			__func__, ientry, ientry->wd, ientry->fsn_entry.group,
+			ientry->fsn_entry.inode, found_ientry, found_ientry->wd,
+			found_ientry->fsn_entry.group,
+			found_ientry->fsn_entry.inode);
+		goto out;
+	}
 
-	/* removed from the idr, drop that ref */
-	fsnotify_put_mark(entry);
+	/*
+	 * One ref for being in the idr
+	 * one ref held by the caller trying to kill us
+	 * one ref grabbed by inotify_idr_find
+	 */
+	if (unlikely(atomic_read(&ientry->fsn_entry.refcnt) < 3)) {
+		printk(KERN_WARNING "%s: ientry=%p ientry->wd=%d ientry->group=%p"
+			" ientry->inode=%p\n", __func__, ientry, ientry->wd,
+			ientry->fsn_entry.group, ientry->fsn_entry.inode);
+		/* we can't really recover with bad ref cnting.. */
+		BUG();
+	}
+
+	do_inotify_remove_from_idr(group, ientry);
 out:
-	spin_unlock(&group->inotify_data.idr_lock);
+	/* match the ref taken by inotify_idr_find_locked() */
+	if (found_ientry)
+		fsnotify_put_mark(&found_ientry->fsn_entry);
+	ientry->wd = -1;
+	spin_unlock(idr_lock);
 }
 
 /*
@@ -441,7 +536,7 @@ void inotify_ignored_and_remove_idr(struct fsnotify_mark_entry *entry,
 	fsn_event_priv->group = group;
 	event_priv->wd = ientry->wd;
 
-	ret = fsnotify_add_notify_event(group, ignored_event, fsn_event_priv);
+	ret = fsnotify_add_notify_event(group, ignored_event, fsn_event_priv, NULL);
 	if (ret)
 		inotify_free_event_priv(fsn_event_priv);
 
@@ -459,7 +554,9 @@ skip_send_ignore:
 /* ding dong the mark is dead */
 static void inotify_free_mark(struct fsnotify_mark_entry *entry)
 {
-	struct inotify_inode_mark_entry *ientry = (struct inotify_inode_mark_entry *)entry;
+	struct inotify_inode_mark_entry *ientry;
+
+	ientry = container_of(entry, struct inotify_inode_mark_entry, fsn_entry);
 
 	kmem_cache_free(inotify_inode_mark_cachep, ientry);
 }
@@ -534,6 +631,8 @@ static int inotify_new_watch(struct fsnotify_group *group,
 	struct inotify_inode_mark_entry *tmp_ientry;
 	__u32 mask;
 	int ret;
+	struct idr *idr = &group->inotify_data.idr;
+	spinlock_t *idr_lock = &group->inotify_data.idr_lock;
 
 	/* don't allow invalid bits: we don't want flags set */
 	mask = inotify_arg_to_mask(arg);
@@ -551,28 +650,14 @@ static int inotify_new_watch(struct fsnotify_group *group,
 	ret = -ENOSPC;
 	if (atomic_read(&group->inotify_data.user->inotify_watches) >= inotify_max_user_watches)
 		goto out_err;
-retry:
-	ret = -ENOMEM;
-	if (unlikely(!idr_pre_get(&group->inotify_data.idr, GFP_KERNEL)))
-		goto out_err;
 
-	spin_lock(&group->inotify_data.idr_lock);
-	ret = idr_get_new_above(&group->inotify_data.idr, &tmp_ientry->fsn_entry,
-				group->inotify_data.last_wd,
-				&tmp_ientry->wd);
-	spin_unlock(&group->inotify_data.idr_lock);
-	if (ret) {
-		/* idr was out of memory allocate and try again */
-		if (ret == -EAGAIN)
-			goto retry;
+	ret = inotify_add_to_idr(idr, idr_lock, group->inotify_data.last_wd,
+				 tmp_ientry);
+	if (ret)
 		goto out_err;
-	}
-
-	/* we put the mark on the idr, take a reference */
-	fsnotify_get_mark(&tmp_ientry->fsn_entry);
 
 	/* we are on the idr, now get on the inode */
-	ret = fsnotify_add_mark(&tmp_ientry->fsn_entry, group, inode);
+	ret = fsnotify_add_mark(&tmp_ientry->fsn_entry, group, inode, 0);
 	if (ret) {
 		/* we failed to get on the inode, get off the idr */
 		inotify_remove_from_idr(group, tmp_ientry);
@@ -588,16 +673,13 @@ retry:
 	/* return the watch descriptor for this new entry */
 	ret = tmp_ientry->wd;
 
-	/* match the ref from fsnotify_init_markentry() */
-	fsnotify_put_mark(&tmp_ientry->fsn_entry);
-
 	/* if this mark added a new event update the group mask */
 	if (mask & ~group->mask)
 		fsnotify_recalc_group_mask(group);
 
 out_err:
-	if (ret < 0)
-		kmem_cache_free(inotify_inode_mark_cachep, tmp_ientry);
+	/* match the ref from fsnotify_init_markentry() */
+	fsnotify_put_mark(&tmp_ientry->fsn_entry);
 
 	return ret;
 }
@@ -626,11 +708,8 @@ retry:
 static struct fsnotify_group *inotify_new_group(struct user_struct *user, unsigned int max_events)
 {
 	struct fsnotify_group *group;
-	unsigned int grp_num;
 
-	/* fsnotify_obtain_group took a reference to group, we put this when we kill the file in the end */
-	grp_num = (INOTIFY_GROUP_NUM - atomic_inc_return(&inotify_grp_num));
-	group = fsnotify_obtain_group(grp_num, 0, &inotify_fsnotify_ops);
+	group = fsnotify_obtain_group(0, &inotify_fsnotify_ops);
 	if (IS_ERR(group))
 		return group;
 
@@ -638,7 +717,7 @@ static struct fsnotify_group *inotify_new_group(struct user_struct *user, unsign
 
 	spin_lock_init(&group->inotify_data.idr_lock);
 	idr_init(&group->inotify_data.idr);
-	group->inotify_data.last_wd = 1;
+	group->inotify_data.last_wd = 0;
 	group->inotify_data.user = user;
 	group->inotify_data.fa = NULL;
 
@@ -760,7 +839,7 @@ fput_and_out:
 SYSCALL_DEFINE2(inotify_rm_watch, int, fd, __s32, wd)
 {
 	struct fsnotify_group *group;
-	struct fsnotify_mark_entry *entry;
+	struct inotify_inode_mark_entry *ientry;
 	struct file *filp;
 	int ret = 0, fput_needed;
 
@@ -769,25 +848,23 @@ SYSCALL_DEFINE2(inotify_rm_watch, int, fd, __s32, wd)
 		return -EBADF;
 
 	/* verify that this is indeed an inotify instance */
-	if (unlikely(filp->f_op != &inotify_fops)) {
-		ret = -EINVAL;
+	ret = -EINVAL;
+	if (unlikely(filp->f_op != &inotify_fops))
 		goto out;
-	}
 
 	group = filp->private_data;
 
-	spin_lock(&group->inotify_data.idr_lock);
-	entry = idr_find(&group->inotify_data.idr, wd);
-	if (unlikely(!entry)) {
-		spin_unlock(&group->inotify_data.idr_lock);
-		ret = -EINVAL;
+	ret = -EINVAL;
+	ientry = inotify_idr_find(group, wd);
+	if (unlikely(!ientry))
 		goto out;
-	}
-	fsnotify_get_mark(entry);
-	spin_unlock(&group->inotify_data.idr_lock);
 
-	fsnotify_destroy_mark_by_entry(entry);
-	fsnotify_put_mark(entry);
+	ret = 0;
+
+	fsnotify_destroy_mark_by_entry(&ientry->fsn_entry);
+
+	/* match ref taken by inotify_idr_find */
+	fsnotify_put_mark(&ientry->fsn_entry);
 
 out:
 	fput_light(filp, fput_needed);
