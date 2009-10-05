@@ -23,6 +23,7 @@
 
  */
 
+#include <linux/autoconf.h>
 #include <linux/module.h>
 #include <linux/drbd.h>
 #include <linux/in.h>
