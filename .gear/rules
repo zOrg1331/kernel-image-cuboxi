@@ -1,4 +1,4 @@
 copy: config-*
-diff: v2.6.27:. v2.6.27.31:. name=linux-2.6.27.31.patch
-diff: v2.6.27.31:. fix-vm_deadlock:. name=fix-vm_deadlock.patch
-diff: v2.6.27.31:. feat-fs-squashfs:. name=feat-fs-squashfs.patch
+diff: v2.6.27:. v2.6.27.36:. name=linux-2.6.27.36.patch
+diff: v2.6.27.36:. fix-vm_deadlock:. name=fix-vm_deadlock.patch
+diff: v2.6.27.36:. feat-fs-squashfs:. name=feat-fs-squashfs.patch
