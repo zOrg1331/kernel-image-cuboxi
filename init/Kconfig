@@ -1033,7 +1033,6 @@ config SLUB
 
 config SLQB
 	bool "SLQB (Queued allocator)"
-	depends on !PPC && !S390
 	help
 	  SLQB is a proposed new slab allocator.
 
