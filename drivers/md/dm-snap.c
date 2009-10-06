@@ -518,6 +518,25 @@ static int dm_add_exception(void *context, chunk_t old, chunk_t new)
 	return 0;
 }
 
+#define min_not_zero(l, r) (((l) == 0) ? (r) : (((r) == 0) ? (l) : min(l, r)))
+
+/*
+ * Return a minimum chunk size of all snapshots that have the specified origin.
+ * Return zero if the origin has no snapshots.
+ */
+static sector_t __minimum_chunk_size(struct origin *o)
+{
+	struct dm_snapshot *snap;
+	unsigned chunk_size = 0;
+
+	if (o)
+		list_for_each_entry(snap, &o->snapshots, list)
+			chunk_size = min_not_zero(chunk_size,
+						  snap->store->chunk_size);
+
+	return chunk_size;
+}
+
 /*
  * Hard coded magic.
  */
@@ -667,6 +686,11 @@ static int snapshot_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 
 	bio_list_init(&s->queued_bios);
 	INIT_WORK(&s->queued_bios_work, flush_queued_bios);
+
+	if (!s->store->chunk_size) {
+		ti->error = "Chunk size not set";
+		goto bad_load_and_register;
+	}
 
 	/* Add snapshot to the list of snapshots for this origin */
 	/* Exceptions aren't triggered till snapshot_resume() is called */
@@ -951,7 +975,7 @@ static void start_copy(struct dm_snap_pending_exception *pe)
 
 	src.bdev = bdev;
 	src.sector = chunk_to_sector(s->store, pe->e.old_chunk);
-	src.count = min(s->store->chunk_size, dev_size - src.sector);
+	src.count = min((sector_t)s->store->chunk_size, dev_size - src.sector);
 
 	dest.bdev = s->store->cow->bdev;
 	dest.sector = chunk_to_sector(s->store, pe->e.new_chunk);
@@ -1377,8 +1401,6 @@ static int origin_map(struct dm_target *ti, struct bio *bio,
 	return (bio_rw(bio) == WRITE) ? do_origin(dev, bio) : DM_MAPIO_REMAPPED;
 }
 
-#define min_not_zero(l, r) (l == 0) ? r : ((r == 0) ? l : min(l, r))
-
 /*
  * Set the target "split_io" field to the minimum of all the snapshots'
  * chunk sizes.
@@ -1386,19 +1408,12 @@ static int origin_map(struct dm_target *ti, struct bio *bio,
 static void origin_resume(struct dm_target *ti)
 {
 	struct dm_dev *dev = ti->private;
-	struct dm_snapshot *snap;
-	struct origin *o;
-	chunk_t chunk_size = 0;
 
 	down_read(&_origins_lock);
-	o = __lookup_origin(dev->bdev);
-	if (o)
-		list_for_each_entry (snap, &o->snapshots, list)
-			chunk_size = min_not_zero(chunk_size,
-						  snap->store->chunk_size);
-	up_read(&_origins_lock);
 
-	ti->split_io = chunk_size;
+	ti->split_io = __minimum_chunk_size(__lookup_origin(dev->bdev));
+
+	up_read(&_origins_lock);
 }
 
 static int origin_status(struct dm_target *ti, status_type_t type, char *result,
@@ -1465,7 +1480,7 @@ static int __init dm_snapshot_init(void)
 	r = dm_register_target(&snapshot_target);
 	if (r) {
 		DMERR("snapshot target register failed %d", r);
-		return r;
+		goto bad_register_snapshot_target;
 	}
 
 	r = dm_register_target(&origin_target);
@@ -1522,6 +1537,9 @@ bad2:
 	dm_unregister_target(&origin_target);
 bad1:
 	dm_unregister_target(&snapshot_target);
+
+bad_register_snapshot_target:
+	dm_exception_store_exit();
 	return r;
 }
 
