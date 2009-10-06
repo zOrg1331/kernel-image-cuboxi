@@ -1,8 +1,10 @@
 #ifndef __PERF_RECORD_H
 #define __PERF_RECORD_H
+
 #include "../perf.h"
 #include "util.h"
 #include <linux/list.h>
+#include <linux/rbtree.h>
 
 enum {
 	SHOW_KERNEL	= 1,
@@ -78,7 +80,10 @@ typedef union event_union {
 } event_t;
 
 struct map {
-	struct list_head	node;
+	union {
+		struct rb_node	rb_node;
+		struct list_head node;
+	};
 	u64			start;
 	u64			end;
 	u64			pgoff;
@@ -101,4 +106,4 @@ struct map *map__clone(struct map *self);
 int map__overlap(struct map *l, struct map *r);
 size_t map__fprintf(struct map *self, FILE *fp);
 
-#endif
+#endif /* __PERF_RECORD_H */
