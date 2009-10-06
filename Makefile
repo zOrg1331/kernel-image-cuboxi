@@ -1009,7 +1009,7 @@ endif
 # prepare2 creates a makefile if using a separate output directory
 prepare2: prepare3 outputmakefile
 
-prepare1: prepare2 include/linux/version.h include/generated/utsrelease.h \
+prepare1: prepare2 include/linux/version.h include/linux/utsrelease.h \
                    include/config/auto.conf
 	$(cmd_crmodverdir)
 
@@ -1046,7 +1046,7 @@ endef
 include/linux/version.h: $(srctree)/Makefile FORCE
 	$(call filechk,version.h)
 
-include/generated/utsrelease.h: include/config/kernel.release FORCE
+include/linux/utsrelease.h: include/config/kernel.release FORCE
 	$(call filechk,utsrelease.h)
 
 PHONY += headerdep
@@ -1197,6 +1197,7 @@ CLEAN_FILES +=	vmlinux System.map \
 MRPROPER_DIRS  += include/config usr/include include/generated
 MRPROPER_FILES += .config .config.old .version .old_version             \
                   include/linux/version.h                               \
+                  include/linux/utsrelease.h                            \
 		  Module.symvers Module.markers tags TAGS cscope*
 
 # clean - Delete most, but leave enough to build external modules
