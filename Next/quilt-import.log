@@ -1,0 +1,68 @@
+Importing driver-core.current based on 2.6.32-rc1
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing i2c based on 2.6.32-rc3
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 374576a8b6f865022c0fd1ca62396889b23d66dd
+HEAD is now at 374576a Linux 2.6.32-rc3
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-powermac-multiple-msg-not-supported.patch
+i2c-voodoo3-delete.patch
+i2c-prevent-priority-inversion-on-top-of-bus-lock.patch
+i2c-no-I2C_M_REV_DIR_ADDR.patch
+i2c-add-missing-devinit.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 073ca0d...2600fb1 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.32-rc3
+$ cd ../quilt-tmp
+$ git reset --hard 374576a8b6f865022c0fd1ca62396889b23d66dd
+HEAD is now at 374576a Linux 2.6.32-rc3
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-sht15-fix-spurious-section-mismatch-warning.patch
+hwmon-w83627hf-drop-force_addr.patch
+hwmon-w83627hf-no-sio-globals.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + f730807...89b4a1f master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on origin/master
+	quilt series is empty
+$ git update-ref refs/heads/quilt/kernel-doc 0eca52a92735f43462165efe00a7e394345fb38e
+Importing rr based on v2.6.32-rc1
+Unchanged quilt series rr
+Importing device-mapper based on block/for-next
+$ cd ../quilt-tmp
+$ git reset --hard 869c899e2677c8b23c33cab3ecf948317ee5add9
+HEAD is now at 869c899 Merge branch 'for-linus' into for-next
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-log-userspace-fix-incorrect-luid-cast-in-userspace_ctr.patch
+dm-snapshot-free-exception-store-on-init-failure.patch
+dm-add-missing-del_gendisk-to-alloc_dev-error-path.patch
+dm-dec_pending-needs-locking-to-save-error-value.patch
+dm-snapshot-require-non-zero-chunk-size-by-end-of-ctr.patch
+dm-snapshot-allow-chunk-size-to-be-less-than-page-size.patch
+dm-snapshot-use-unsigned-integer-chunk-size.patch
+dm-ioctl-prefer-strlcpy-over-strncpy.patch
+dm-snapshot-avoid-else-clause-in-persistent_read_metadata.patch
+dm-snapshot-simplify-sector_to_chunk-expression.patch
+dm-snapshot-abstract-minimum_chunk_size-fn.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + a9df52d...c5b168b master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/usb.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
