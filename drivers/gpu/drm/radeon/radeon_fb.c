@@ -55,6 +55,7 @@ static struct fb_ops radeonfb_ops = {
 	.fb_imageblit = cfb_imageblit,
 	.fb_pan_display = drm_fb_helper_pan_display,
 	.fb_blank = drm_fb_helper_blank,
+	.fb_setcmap = drm_fb_helper_setcmap,
 };
 
 /**
@@ -146,6 +147,7 @@ int radeonfb_create(struct drm_device *dev,
 	unsigned long tmp;
 	bool fb_tiled = false; /* useful for testing */
 	u32 tiling_flags = 0;
+	int crtc_count;
 
 	mode_cmd.width = surface_width;
 	mode_cmd.height = surface_height;
@@ -217,7 +219,11 @@ int radeonfb_create(struct drm_device *dev,
 	rfbdev = info->par;
 	rfbdev->helper.funcs = &radeon_fb_helper_funcs;
 	rfbdev->helper.dev = dev;
-	ret = drm_fb_helper_init_crtc_count(&rfbdev->helper, 2,
+	if (rdev->flags & RADEON_SINGLE_CRTC)
+		crtc_count = 1;
+	else
+		crtc_count = 2;
+	ret = drm_fb_helper_init_crtc_count(&rfbdev->helper, crtc_count,
 					    RADEONFB_CONN_LIMIT);
 	if (ret)
 		goto out_unref;
@@ -234,7 +240,7 @@ int radeonfb_create(struct drm_device *dev,
 
 	strcpy(info->fix.id, "radeondrmfb");
 
-	drm_fb_helper_fill_fix(info, fb->pitch);
+	drm_fb_helper_fill_fix(info, fb->pitch, fb->depth);
 
 	info->flags = FBINFO_DEFAULT;
 	info->fbops = &radeonfb_ops;
