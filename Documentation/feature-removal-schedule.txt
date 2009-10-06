@@ -409,6 +409,13 @@ When:	2.6.33
 Why:	Should be implemented in userspace, policy daemon.
 Who:	Johannes Berg <johannes@sipsolutions.net>
 
+---------------------------
+
+What:	CONFIG_INOTIFY
+When:	2.6.33
+Why:	No known users, fsnotify more generic and more easily maintained.
+Who:	Eric Paris <eparis@redhat.com>
+
 ----------------------------
 
 What:	lock_policy_rwsem_* and unlock_policy_rwsem_* will not be
