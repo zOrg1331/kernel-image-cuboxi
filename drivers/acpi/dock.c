@@ -968,11 +968,10 @@ static int dock_add(acpi_handle handle)
 		platform_device_register_simple(dock_device_name,
 			dock_station_count, NULL, 0);
 	dock_device = ds->dock_device;
-	if (IS_ERR(dock_device)) {
-		kfree(ds);
-		ds = NULL;
-		return PTR_ERR(dock_device);
-	}
+	ret = IS_ERR(dock_device) ? PTR_ERR(dock_device) : 0;
+	if (ret)
+		goto err_free;
+
 	platform_device_add_data(dock_device, &ds,
 		sizeof(struct dock_station *));
 
@@ -1036,6 +1035,7 @@ err_unregister1:
 err_unregister:
 	printk(KERN_ERR "%s encountered error %d\n", __func__, ret);
 	platform_device_unregister(dock_device);
+err_free:
 	kfree(ds);
 	ds = NULL;
 	return ret;
