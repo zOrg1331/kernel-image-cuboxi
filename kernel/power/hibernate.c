@@ -32,6 +32,7 @@ static int noresume = 0;
 static char resume_file[256] = CONFIG_PM_STD_PARTITION;
 dev_t swsusp_resume_device;
 sector_t swsusp_resume_block;
+int in_suspend __nosavedata = 0;
 
 enum {
 	HIBERNATION_INVALID,
@@ -199,6 +200,31 @@ static void platform_recover(int platform_mode)
 {
 	if (platform_mode && hibernation_ops && hibernation_ops->recover)
 		hibernation_ops->recover();
+}
+
+/**
+ *	swsusp_show_speed - print the time elapsed between two events represented by
+ *	@start and @stop
+ *
+ *	@nr_pages -	number of pages processed between @start and @stop
+ *	@msg -		introductory message to print
+ */
+
+void swsusp_show_speed(struct timeval *start, struct timeval *stop,
+			unsigned nr_pages, char *msg)
+{
+	int centisecs = pm_time_elapsed(start, stop) / 10;
+	int k;
+	int kps;
+
+	if (centisecs == 0)
+		centisecs = 1;	/* avoid div-by-zero */
+	k = nr_pages * (PAGE_SIZE / 1024);
+	kps = (k * 100) / centisecs;
+	printk(KERN_INFO "PM: %s %d kbytes in %d.%02d seconds (%d.%02d MB/s)\n",
+			msg, k,
+			centisecs / 100, centisecs % 100,
+			kps / 1000, (kps % 1000) / 10);
 }
 
 /**
