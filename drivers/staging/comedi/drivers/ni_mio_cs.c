@@ -250,9 +250,8 @@ static int mio_cs_detach(struct comedi_device *dev)
 
 	/* PCMCIA layer frees the IO region */
 
-	if (dev->irq) {
+	if (dev->irq)
 		free_irq(dev->irq, dev);
-	}
 
 	return 0;
 }
@@ -294,9 +293,8 @@ static void cs_detach(struct pcmcia_device *link)
 {
 	DPRINTK("cs_detach(link=%p)\n", link);
 
-	if (link->dev_node) {
+	if (link->dev_node)
 		cs_release(link);
-	}
 }
 
 static int mio_cs_suspend(struct pcmcia_device *link)
@@ -393,9 +391,8 @@ static void mio_cs_config(struct pcmcia_device *link)
 	link->irq.IRQInfo1 = parse.cftable_entry.irq.IRQInfo1;
 	link->irq.IRQInfo2 = parse.cftable_entry.irq.IRQInfo2;
 	ret = pcmcia_request_irq(link, &link->irq);
-	if (ret) {
+	if (ret)
 		printk("pcmcia_request_irq() returned error: %i\n", ret);
-	}
 	/* printk("RequestIRQ 0x%02x\n",ret); */
 
 	link->conf.ConfigIndex = 1;
@@ -437,9 +434,8 @@ static int mio_cs_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 		}
 		printk("\n");
 		printk(" board fingerprint (windowed):");
-		for (i = 0; i < 10; i++) {
+		for (i = 0; i < 10; i++)
 			printk(" 0x%04x", win_in(i));
-		}
 		printk("\n");
 	}
 #endif
@@ -503,9 +499,8 @@ static int ni_getboardtype(struct comedi_device *dev,
 	id = get_prodid(dev, link);
 
 	for (i = 0; i < n_ni_boards; i++) {
-		if (ni_boards[i].device_id == id) {
+		if (ni_boards[i].device_id == id)
 			return i;
-		}
 	}
 
 	printk("unknown board 0x%04x -- pretend it is a ", id);
