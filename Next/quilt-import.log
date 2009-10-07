@@ -1,0 +1,143 @@
+Importing driver-core.current based on 2.6.32-rc3
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core.current 374576a8b6f865022c0fd1ca62396889b23d66dd
+Importing tty.current based on quilt/driver-core.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty.current 374576a8b6f865022c0fd1ca62396889b23d66dd
+Importing usb.current based on quilt/tty.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/usb.current 374576a8b6f865022c0fd1ca62396889b23d66dd
+Importing i2c based on 2.6.32-rc3-git1
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 0eca52a92735f43462165efe00a7e394345fb38e
+HEAD is now at 0eca52a Merge git://git.kernel.org/pub/scm/linux/kernel/git/davem/ide-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-powermac-multiple-msg-not-supported.patch
+i2c-voodoo3-delete.patch
+i2c-prevent-priority-inversion-on-top-of-bus-lock.patch
+i2c-no-I2C_M_REV_DIR_ADDR.patch
+i2c-add-missing-devinit.patch
+i2c-core-01-drop-obsolete-force-module-parameters.patch
+i2c-core-02-detect-drop-kind-parameter.patch
+misc-ics932s401-cleanup-detect.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 2600fb1...efb094e master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.32-rc3-git1
+$ cd ../quilt-tmp
+$ git reset --hard 0eca52a92735f43462165efe00a7e394345fb38e
+HEAD is now at 0eca52a Merge git://git.kernel.org/pub/scm/linux/kernel/git/davem/ide-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-sht15-fix-spurious-section-mismatch-warning.patch
+hwmon-asus_atk0110-01-refactor.patch
+hwmon-asus_atk0110-02-ec-enable.patch
+hwmon-w83627hf-drop-force_addr.patch
+hwmon-w83627hf-no-sio-globals.patch
+hwmon-lm73-new-driver.patch
+hwmon-adm1021-cleanup-detect.patch
+hwmon-adm1025-cleanup-detect.patch
+hwmon-lm77-cleanup-detect.patch
+hwmon-lm83-cleanup-detect.patch
+hwmon-lm85-cleanup-detect.patch
+hwmon-lm90-cleanup-detect.patch
+hwmon-tmp401-tmp421-cleanup-detect.patch
+hwmon-w83781d-cleanup-detect.patch
+hwmon-w83791d-cleanup-detect.patch
+hwmon-w83792d-cleanup-detect.patch
+hwmon-w83l785ts-cleanup-detect.patch
+hwmon-cleanup-detect-functions.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 89b4a1f...8d7b507 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on origin/master
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.32-rc3-52-g0eca52a
+$ cd ../quilt-tmp
+$ git reset --hard 0eca52a92735f43462165efe00a7e394345fb38e
+HEAD is now at 0eca52a Merge git://git.kernel.org/pub/scm/linux/kernel/git/davem/ide-2.6
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+virtio:blk_revert_queue_flag_virt_addition.patch
+virtio:ids_let_header_files_include_ids_h.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + ee1bf14...764eedb master     -> quilt/rr  (forced update)
+Importing device-mapper based on block/for-next
+$ cd ../quilt-tmp
+$ git reset --hard 764dd7af4e7c244f1b2c9ccb02f4aaa420433eb7
+HEAD is now at 764dd7a Merge branch 'for-linus' into for-next
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-log-userspace-fix-incorrect-luid-cast-in-userspace_ctr.patch
+dm-snapshot-free-exception-store-on-init-failure.patch
+dm-add-missing-del_gendisk-to-alloc_dev-error-path.patch
+dm-dec_pending-needs-locking-to-save-error-value.patch
+dm-snapshot-require-non-zero-chunk-size-by-end-of-ctr.patch
+dm-snapshot-allow-chunk-size-to-be-less-than-page-size.patch
+dm-exception-store-fix-failed-set_chunk_size-error-path.patch
+dm-snapshot-use-unsigned-integer-chunk-size.patch
+dm-ioctl-prefer-strlcpy-over-strncpy.patch
+dm-snapshot-avoid-else-clause-in-persistent_read_metadata.patch
+dm-snapshot-simplify-sector_to_chunk-expression.patch
+dm-snapshot-abstract-minimum_chunk_size-fn.patch
+dm-snapshot-consolidate-insert-exception-functions.patch
+dm-snapshot-rename-dm_snap_exception-to-dm_exception.patch
+rename-exception_table-to-dm_exception_table.patch
+dm-snapshot-rename-exception-functions.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + c5b168b...cb8a644 master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/usb.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core 374576a8b6f865022c0fd1ca62396889b23d66dd
+Importing tty based on quilt/driver-core
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty 374576a8b6f865022c0fd1ca62396889b23d66dd
+Importing usb based on quilt/tty
+	quilt series is empty
+$ git update-ref refs/heads/quilt/usb 374576a8b6f865022c0fd1ca62396889b23d66dd
+Importing staging based on quilt/usb
+$ cd ../quilt-tmp
+$ git reset --hard 374576a8b6f865022c0fd1ca62396889b23d66dd
+HEAD is now at 374576a Linux 2.6.32-rc3
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging
+staging-comedi-serial2002-fix-include-build-issue.patch
+staging-remove-agnx-driver.patch
+staging-w35und-fix-beacon_int-breakage.patch
+staging-comedi-8253-fix-coding-style-error.patch
+staging-comedi-8255-fix-coding-style-error.patch
+staging-comedi-drivers.c-checkpatch-fix.patch
+staging-comedi-adl_pci6208-code-styling-fix.patch
+staging-comedi-ni_labpc.h-fixed-line-lengths-of-some-trailing-comments.patch
+staging-comedi-ni_labbc_cs-cleaned-up-debug-define-a-bit.patch
+staging-comedi-ni_labpc_cs-removed-null-initialization-of-static.patch
+staging-comedi-ni_labpc_cs-added-mandatory-whitespace-to-comparison.patch
+staging-comedi-ni_labpc_cs-removed-null-check-from-kfree.patch
+staging-comedi-ni_labpc_cs-wrapped-long-comments.patch
+staging-comedi-comedi_compat32-fixed-checkpatch.pl-issues.patch
+staging-comedi-comedidev.h-fixed-checkpatch.pl-issues.patch
+staging-comedi-ni_at_ao.c-fix-coding-style-error.patch
+staging-comedi-mite.c-fix-coding-style.patch
+staging-comedi-mite.h-deletion-of-unused-functions.patch
+staging-comedi-ni_atmio16d-fix-formating-errors.patch
+staging-comedi-ni_atmio16d-brace-fixes.patch
+staging-comedi-nt_atmio16d-space-and-tab-fixes.patch
+staging-comedi-ni_atmio16d-printk-fixups.patch
+staging-comedi-vmk80xx-cleanup-formatting.patch
+staging-comedi-comedi_compat32.h-fixed-checkpatch.pl-issues.patch
+staging-comedi-acl7225b.c-codingstyle-printk-fixups.patch
+staging-comedi-adl_pci7296-codingstyle-cleanup.patch
+staging-comedi-adl_pci7432-coding-style-cleanup.patch
+staging-comedi-amplc_pc263.c-fix-coding-style-issues.patch
+staging-comedi-amplc_pc263.c-more-coding-style-fixes.patch
+staging-comedi-trivial-fix-of-a-very-frequent-spelling-mistake.patch
+staging-android-delete-android-drivers.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging
+From ../quilt-tmp
+ + e941387...f59c277 master     -> quilt/staging  (forced update)
