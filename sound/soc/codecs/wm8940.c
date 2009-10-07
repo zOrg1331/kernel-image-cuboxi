@@ -536,8 +536,8 @@ static void pll_factors(unsigned int target, unsigned int source)
 }
 
 /* Untested at the moment */
-static int wm8940_set_dai_pll(struct snd_soc_dai *codec_dai,
-		int pll_id, unsigned int freq_in, unsigned int freq_out)
+static int wm8940_set_dai_pll(struct snd_soc_dai *codec_dai, int pll_id,
+		int source, unsigned int freq_in, unsigned int freq_out)
 {
 	struct snd_soc_codec *codec = codec_dai->codec;
 	u16 reg;
@@ -790,7 +790,7 @@ static int wm8940_register(struct wm8940_priv *wm8940,
 	codec->reg_cache = &wm8940->reg_cache;
 
 	ret = snd_soc_codec_set_cache_io(codec, 8, 16, control);
-	if (ret == 0) {
+	if (ret < 0) {
 		dev_err(codec->dev, "Failed to set cache I/O: %d\n", ret);
 		return ret;
 	}

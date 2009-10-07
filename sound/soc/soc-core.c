@@ -1254,21 +1254,39 @@ static const struct file_operations codec_reg_fops = {
 
 static void soc_init_codec_debugfs(struct snd_soc_codec *codec)
 {
+	char codec_root[128];
+
+	if (codec->dev)
+		snprintf(codec_root, sizeof(codec_root),
+			"%s.%s", codec->name, dev_name(codec->dev));
+	else
+		snprintf(codec_root, sizeof(codec_root),
+			"%s", codec->name);
+
+	codec->debugfs_codec_root = debugfs_create_dir(codec_root,
+						       debugfs_root);
+	if (!codec->debugfs_codec_root) {
+		printk(KERN_WARNING
+		       "ASoC: Failed to create codec debugfs directory\n");
+		return;
+	}
+
 	codec->debugfs_reg = debugfs_create_file("codec_reg", 0644,
-						 debugfs_root, codec,
-						 &codec_reg_fops);
+						 codec->debugfs_codec_root,
+						 codec, &codec_reg_fops);
 	if (!codec->debugfs_reg)
 		printk(KERN_WARNING
 		       "ASoC: Failed to create codec register debugfs file\n");
 
 	codec->debugfs_pop_time = debugfs_create_u32("dapm_pop_time", 0744,
-						     debugfs_root,
+						     codec->debugfs_codec_root,
 						     &codec->pop_time);
 	if (!codec->debugfs_pop_time)
 		printk(KERN_WARNING
 		       "Failed to create pop time debugfs file\n");
 
-	codec->debugfs_dapm = debugfs_create_dir("dapm", debugfs_root);
+	codec->debugfs_dapm = debugfs_create_dir("dapm",
+						 codec->debugfs_codec_root);
 	if (!codec->debugfs_dapm)
 		printk(KERN_WARNING
 		       "Failed to create DAPM debugfs directory\n");
@@ -1278,9 +1296,7 @@ static void soc_init_codec_debugfs(struct snd_soc_codec *codec)
 
 static void soc_cleanup_codec_debugfs(struct snd_soc_codec *codec)
 {
-	debugfs_remove_recursive(codec->debugfs_dapm);
-	debugfs_remove(codec->debugfs_pop_time);
-	debugfs_remove(codec->debugfs_reg);
+	debugfs_remove_recursive(codec->debugfs_codec_root);
 }
 
 #else
@@ -2197,16 +2213,18 @@ EXPORT_SYMBOL_GPL(snd_soc_dai_set_clkdiv);
  * snd_soc_dai_set_pll - configure DAI PLL.
  * @dai: DAI
  * @pll_id: DAI specific PLL ID
+ * @source: DAI specific source for the PLL
  * @freq_in: PLL input clock frequency in Hz
  * @freq_out: requested PLL output clock frequency in Hz
  *
  * Configures and enables PLL to generate output clock based on input clock.
  */
-int snd_soc_dai_set_pll(struct snd_soc_dai *dai,
-	int pll_id, unsigned int freq_in, unsigned int freq_out)
+int snd_soc_dai_set_pll(struct snd_soc_dai *dai, int pll_id, int source,
+	unsigned int freq_in, unsigned int freq_out)
 {
 	if (dai->ops && dai->ops->set_pll)
-		return dai->ops->set_pll(dai, pll_id, freq_in, freq_out);
+		return dai->ops->set_pll(dai, pll_id, source,
+					 freq_in, freq_out);
 	else
 		return -EINVAL;
 }
@@ -2249,6 +2267,30 @@ int snd_soc_dai_set_tdm_slot(struct snd_soc_dai *dai,
 		return -EINVAL;
 }
 EXPORT_SYMBOL_GPL(snd_soc_dai_set_tdm_slot);
+
+/**
+ * snd_soc_dai_set_channel_map - configure DAI audio channel map
+ * @dai: DAI
+ * @tx_num: how many TX channels
+ * @tx_slot: pointer to an array which imply the TX slot number channel
+ *           0~num-1 uses
+ * @rx_num: how many RX channels
+ * @rx_slot: pointer to an array which imply the RX slot number channel
+ *           0~num-1 uses
+ *
+ * configure the relationship between channel number and TDM slot number.
+ */
+int snd_soc_dai_set_channel_map(struct snd_soc_dai *dai,
+	unsigned int tx_num, unsigned int *tx_slot,
+	unsigned int rx_num, unsigned int *rx_slot)
+{
+	if (dai->ops && dai->ops->set_channel_map)
+		return dai->ops->set_channel_map(dai, tx_num, tx_slot,
+			rx_num, rx_slot);
+	else
+		return -EINVAL;
+}
+EXPORT_SYMBOL_GPL(snd_soc_dai_set_channel_map);
 
 /**
  * snd_soc_dai_set_tristate - configure DAI system or master clock.
