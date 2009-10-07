@@ -59,8 +59,6 @@ source "drivers/staging/echo/Kconfig"
 
 source "drivers/staging/poch/Kconfig"
 
-source "drivers/staging/agnx/Kconfig"
-
 source "drivers/staging/otus/Kconfig"
 
 source "drivers/staging/rt2860/Kconfig"
@@ -86,8 +84,6 @@ source "drivers/staging/rtl8192e/Kconfig"
 source "drivers/staging/mimio/Kconfig"
 
 source "drivers/staging/frontier/Kconfig"
-
-source "drivers/staging/android/Kconfig"
 
 source "drivers/staging/dream/Kconfig"
 
