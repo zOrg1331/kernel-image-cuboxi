@@ -1,0 +1,78 @@
+Importing driver-core.current based on 2.6.32-rc3
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing i2c based on 2.6.32-rc3-git1
+	quilt series is empty
+$ git update-ref refs/heads/quilt/i2c 0eca52a92735f43462165efe00a7e394345fb38e
+Importing jdelvare-hwmon based on 2.6.32-rc3-git1
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 0eca52a92735f43462165efe00a7e394345fb38e
+HEAD is now at 0eca52a Merge git://git.kernel.org/pub/scm/linux/kernel/git/davem/ide-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-sht15-fix-spurious-section-mismatch-warning.patch
+hwmon-asus_atk0110-01-refactor.patch
+hwmon-asus_atk0110-02-ec-enable.patch
+maintainers-fix-riku-voipio-address.patch
+hwmon-s3c-hwmon-disable-build-for-s3c64xx.patch
+hwmon-w83627hf-drop-force_addr.patch
+hwmon-w83627hf-no-sio-globals.patch
+hwmon-lm73-new-driver.patch
+hwmon-adm1021-cleanup-detect.patch
+hwmon-adm1025-cleanup-detect.patch
+hwmon-lm77-cleanup-detect.patch
+hwmon-lm83-cleanup-detect.patch
+hwmon-lm85-cleanup-detect.patch
+hwmon-lm90-cleanup-detect.patch
+hwmon-tmp401-tmp421-cleanup-detect.patch
+hwmon-w83781d-cleanup-detect.patch
+hwmon-w83791d-cleanup-detect.patch
+hwmon-w83792d-cleanup-detect.patch
+hwmon-w83l785ts-cleanup-detect.patch
+hwmon-cleanup-detect-functions.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 8d7b507...d3f6971 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on origin/master
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.32-rc3-52-g0eca52a
+Unchanged quilt series rr
+Importing device-mapper based on block/for-next
+$ cd ../quilt-tmp
+$ git reset --hard b6e018d536bc4301f29c4f5ba1df2d1eeaaace7a
+HEAD is now at b6e018d Merge branch 'for-linus' into for-next
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-log-userspace-fix-incorrect-luid-cast-in-userspace_ctr.patch
+dm-snapshot-free-exception-store-on-init-failure.patch
+dm-add-missing-del_gendisk-to-alloc_dev-error-path.patch
+dm-dec_pending-needs-locking-to-save-error-value.patch
+dm-snapshot-require-non-zero-chunk-size-by-end-of-ctr.patch
+dm-snapshot-allow-chunk-size-to-be-less-than-page-size.patch
+dm-exception-store-fix-failed-set_chunk_size-error-path.patch
+dm-snapshot-use-unsigned-integer-chunk-size.patch
+dm-ioctl-prefer-strlcpy-over-strncpy.patch
+dm-snapshot-avoid-else-clause-in-persistent_read_metadata.patch
+dm-snapshot-simplify-sector_to_chunk-expression.patch
+dm-snapshot-abstract-minimum_chunk_size-fn.patch
+dm-snapshot-consolidate-insert-exception-functions.patch
+dm-snapshot-rename-dm_snap_exception-to-dm_exception.patch
+rename-exception_table-to-dm_exception_table.patch
+dm-snapshot-rename-exception-functions.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + cb8a644...e7b57c9 master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/usb.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
