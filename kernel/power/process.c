@@ -41,7 +41,7 @@ static int try_to_freeze_tasks(bool sig_only)
 	do_gettimeofday(&start);
 
 	end_time = jiffies + TIMEOUT;
-	while (true) {
+	do {
 		todo = 0;
 		read_lock(&tasklist_lock);
 		do_each_thread(g, p) {
@@ -62,15 +62,10 @@ static int try_to_freeze_tasks(bool sig_only)
 				todo++;
 		} while_each_thread(g, p);
 		read_unlock(&tasklist_lock);
-		if (!todo || time_after(jiffies, end_time))
+		yield();			/* Yield is okay here */
+		if (time_after(jiffies, end_time))
 			break;
-
-		/*
-		 * We need to retry, but first give the freezing tasks some
-		 * time to enter the regrigerator.
-		 */
-		msleep(10);
-	}
+	} while (todo);
 
 	do_gettimeofday(&end);
 	elapsed_csecs64 = timeval_to_ns(&end) - timeval_to_ns(&start);
