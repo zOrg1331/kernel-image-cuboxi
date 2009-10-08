@@ -18,7 +18,7 @@ epoch:1
 
 # Build options
 # You can change compiler version by editing this line:
-%define kgcc_version	4.4
+%define kgcc_version	4.1
 
 # Enable/disable SGML docs formatting
 %def_disable docs
