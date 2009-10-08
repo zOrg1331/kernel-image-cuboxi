@@ -442,6 +442,15 @@ config SENSORS_LM70
 	  This driver can also be built as a module.  If so, the module
 	  will be called lm70.
 
+config SENSORS_LM73
+	tristate "National Semiconductor LM73"
+	depends on I2C
+	help
+	  If you say yes here you get support for National Semiconductor LM73
+	  sensor chips.
+	  This driver can also be built as a module.  If so, the module
+	  will be called lm73.
+
 config SENSORS_LM75
 	tristate "National Semiconductor LM75 and compatibles"
 	depends on I2C
@@ -675,7 +684,7 @@ config SENSORS_SHT15
 
 config SENSORS_S3C
 	tristate "S3C24XX/S3C64XX Inbuilt ADC"
-	depends on ARCH_S3C2410 || ARCH_S3C64XX
+	depends on ARCH_S3C2410
 	help
 	  If you say yes here you get support for the on-board ADCs of
 	  the Samsung S3C24XX or S3C64XX series of SoC
