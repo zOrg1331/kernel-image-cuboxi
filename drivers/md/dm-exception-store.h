@@ -26,7 +26,7 @@ typedef sector_t chunk_t;
  * of chunks that follow contiguously.  Remaining bits hold the number of the
  * chunk within the device.
  */
-struct dm_snap_exception {
+struct dm_exception {
 	struct list_head hash_list;
 
 	chunk_t old_chunk;
@@ -64,13 +64,13 @@ struct dm_exception_store_type {
 	 * Find somewhere to store the next exception.
 	 */
 	int (*prepare_exception) (struct dm_exception_store *store,
-				  struct dm_snap_exception *e);
+				  struct dm_exception *e);
 
 	/*
 	 * Update the metadata with this exception.
 	 */
 	void (*commit_exception) (struct dm_exception_store *store,
-				  struct dm_snap_exception *e,
+				  struct dm_exception *e,
 				  void (*callback) (void *, int success),
 				  void *callback_context);
 
@@ -101,9 +101,9 @@ struct dm_exception_store {
 	struct dm_dev *cow;
 
 	/* Size of data blocks saved - must be a power of 2 */
-	chunk_t chunk_size;
-	chunk_t chunk_mask;
-	chunk_t chunk_shift;
+	unsigned chunk_size;
+	unsigned chunk_mask;
+	unsigned chunk_shift;
 
 	void *context;
 };
@@ -120,12 +120,12 @@ static inline chunk_t dm_chunk_number(chunk_t chunk)
 	return chunk & (chunk_t)((1ULL << DM_CHUNK_NUMBER_BITS) - 1ULL);
 }
 
-static inline unsigned dm_consecutive_chunk_count(struct dm_snap_exception *e)
+static inline unsigned dm_consecutive_chunk_count(struct dm_exception *e)
 {
 	return e->new_chunk >> DM_CHUNK_NUMBER_BITS;
 }
 
-static inline void dm_consecutive_chunk_count_inc(struct dm_snap_exception *e)
+static inline void dm_consecutive_chunk_count_inc(struct dm_exception *e)
 {
 	e->new_chunk += (1ULL << DM_CHUNK_NUMBER_BITS);
 
@@ -140,12 +140,12 @@ static inline chunk_t dm_chunk_number(chunk_t chunk)
 	return chunk;
 }
 
-static inline unsigned dm_consecutive_chunk_count(struct dm_snap_exception *e)
+static inline unsigned dm_consecutive_chunk_count(struct dm_exception *e)
 {
 	return 0;
 }
 
-static inline void dm_consecutive_chunk_count_inc(struct dm_snap_exception *e)
+static inline void dm_consecutive_chunk_count_inc(struct dm_exception *e)
 {
 }
 
@@ -162,14 +162,14 @@ static inline sector_t get_dev_size(struct block_device *bdev)
 static inline chunk_t sector_to_chunk(struct dm_exception_store *store,
 				      sector_t sector)
 {
-	return (sector & ~store->chunk_mask) >> store->chunk_shift;
+	return sector >> store->chunk_shift;
 }
 
 int dm_exception_store_type_register(struct dm_exception_store_type *type);
 int dm_exception_store_type_unregister(struct dm_exception_store_type *type);
 
 int dm_exception_store_set_chunk_size(struct dm_exception_store *store,
-				      unsigned long chunk_size_ulong,
+				      unsigned chunk_size,
 				      char **error);
 
 int dm_exception_store_create(struct dm_target *ti, int argc, char **argv,
