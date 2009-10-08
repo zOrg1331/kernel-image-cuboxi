@@ -1,6 +1,6 @@
-Name: kernel-image-std-def
+Name: kernel-image-hpc-def
 Version: 2.6.27
-Release: alt17
+Release: alt1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -21,10 +21,10 @@ epoch:1
 %define kgcc_version	4.3
 
 # Enable/disable SGML docs formatting
-%def_enable docs
+%def_disable docs
 
 #Remove oss
-%def_enable oss
+%def_disable oss
 ## Don't edit below this line ##################################
 
 %define kversion	%kernel_base_version%kernel_extra_version
