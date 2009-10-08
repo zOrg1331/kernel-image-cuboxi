@@ -3644,10 +3644,10 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 	kvm_x86_ops->run(vcpu, kvm_run);
 
 	if (unlikely(vcpu->arch.switch_db_regs || test_thread_flag(TIF_DEBUG))) {
-		set_debugreg(current->thread.debugreg0, 0);
-		set_debugreg(current->thread.debugreg1, 1);
-		set_debugreg(current->thread.debugreg2, 2);
-		set_debugreg(current->thread.debugreg3, 3);
+		set_debugreg(current->thread.debugreg[0], 0);
+		set_debugreg(current->thread.debugreg[1], 1);
+		set_debugreg(current->thread.debugreg[2], 2);
+		set_debugreg(current->thread.debugreg[3], 3);
 		set_debugreg(current->thread.debugreg6, 6);
 		set_debugreg(current->thread.debugreg7, 7);
 	}
