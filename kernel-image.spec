@@ -18,7 +18,7 @@ epoch:1
 
 # Build options
 # You can change compiler version by editing this line:
-%define kgcc_version	4.3
+%define kgcc_version	4.4
 
 # Enable/disable SGML docs formatting
 %def_disable docs
@@ -468,6 +468,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Thu Oct 08 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt1
+- 2.6.27.36
+- fixes for hpc-std 
+
 * Fri May 08 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt17
 - 2.6.27.22
 - fix build in new environment

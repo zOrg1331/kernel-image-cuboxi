@@ -240,22 +240,19 @@ static int check_mem_permission(struct task_struct *task)
 struct mm_struct *mm_for_maps(struct task_struct *task)
 {
 	struct mm_struct *mm = get_task_mm(task);
-	if (!mm)
-		return NULL;
-	down_read(&mm->mmap_sem);
-	task_lock(task);
-	if (task->mm != mm)
-		goto out;
-	if (task->mm != current->mm &&
-	    __ptrace_may_access(task, PTRACE_MODE_READ) < 0)
-		goto out;
-	task_unlock(task);
+
+	if (mm && mm != current->mm) {
+		/*
+		 * task->mm can be changed before security check,
+		 * in that case we must notice the change after.
+		 */
+		if (!ptrace_may_access(task, PTRACE_MODE_READ) ||
+		    mm != task->mm) {
+			mmput(mm);
+			mm = NULL;
+		}
+	}
 	return mm;
-out:
-	task_unlock(task);
-	up_read(&mm->mmap_sem);
-	mmput(mm);
-	return NULL;
 }
 
 static int proc_pid_cmdline(struct task_struct *task, char * buffer)
@@ -327,7 +324,10 @@ static int proc_pid_wchan(struct task_struct *task, char *buffer)
 	wchan = get_wchan(task);
 
 	if (lookup_symbol_name(wchan, symname) < 0)
-		return sprintf(buffer, "%lu", wchan);
+		if (!ptrace_may_access(task, PTRACE_MODE_READ))
+			return 0;
+		else
+			return sprintf(buffer, "%lu", wchan);
 	else
 		return sprintf(buffer, "%s", symname);
 }

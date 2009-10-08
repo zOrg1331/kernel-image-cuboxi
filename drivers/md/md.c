@@ -2772,11 +2772,8 @@ array_state_store(mddev_t *mddev, const char *buf, size_t len)
 			} else
 				err = -EBUSY;
 			spin_unlock_irq(&mddev->write_lock);
-		} else {
-			mddev->ro = 0;
-			mddev->recovery_cp = MaxSector;
-			err = do_md_run(mddev);
-		}
+		} else
+			err = -EINVAL;
 		break;
 	case active:
 		if (mddev->pers) {
@@ -3284,7 +3281,8 @@ suspend_lo_store(mddev_t *mddev, const char *buf, size_t len)
 	char *e;
 	unsigned long long new = simple_strtoull(buf, &e, 10);
 
-	if (mddev->pers->quiesce == NULL)
+	if (mddev->pers == NULL ||
+	    mddev->pers->quiesce == NULL)
 		return -EINVAL;
 	if (buf == e || (*e && *e != '\n'))
 		return -EINVAL;
@@ -3312,7 +3310,8 @@ suspend_hi_store(mddev_t *mddev, const char *buf, size_t len)
 	char *e;
 	unsigned long long new = simple_strtoull(buf, &e, 10);
 
-	if (mddev->pers->quiesce == NULL)
+	if (mddev->pers == NULL ||
+	    mddev->pers->quiesce == NULL)
 		return -EINVAL;
 	if (buf == e || (*e && *e != '\n'))
 		return -EINVAL;
