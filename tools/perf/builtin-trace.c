@@ -53,16 +53,12 @@ process_comm_event(event_t *event, unsigned long offset, unsigned long head)
 static int
 process_sample_event(event_t *event, unsigned long offset, unsigned long head)
 {
-	char level;
-	int show = 0;
-	struct dso *dso = NULL;
 	struct thread *thread;
 	u64 ip = event->ip.ip;
 	u64 timestamp = -1;
 	u32 cpu = -1;
 	u64 period = 1;
 	void *more_data = event->ip.__more_data;
-	int cpumode;
 
 	thread = threads__findnew(event->ip.pid, &threads, &last_match);
 
@@ -96,30 +92,6 @@ process_sample_event(event_t *event, unsigned long offset, unsigned long head)
 		eprintf("problem processing %d event, skipping it.\n",
 			event->header.type);
 		return -1;
-	}
-
-	cpumode = event->header.misc & PERF_RECORD_MISC_CPUMODE_MASK;
-
-	if (cpumode == PERF_RECORD_MISC_KERNEL) {
-		show = SHOW_KERNEL;
-		level = 'k';
-
-		dso = kernel_dso;
-
-		dump_printf(" ...... dso: %s\n", dso->name);
-
-	} else if (cpumode == PERF_RECORD_MISC_USER) {
-
-		show = SHOW_USER;
-		level = '.';
-
-	} else {
-		show = SHOW_HV;
-		level = 'H';
-
-		dso = hypervisor_dso;
-
-		dump_printf(" ...... dso: [hypervisor]\n");
 	}
 
 	if (sample_type & PERF_SAMPLE_RAW) {
@@ -171,12 +143,12 @@ static int __cmd_trace(void)
 	int ret, rc = EXIT_FAILURE;
 	unsigned long offset = 0;
 	unsigned long head = 0;
+	unsigned long shift;
 	struct stat perf_stat;
 	event_t *event;
 	uint32_t size;
 	char *buf;
 
-	trace_report();
 	register_idle_thread(&threads, &last_match);
 
 	input = open(input_name, O_RDONLY);
@@ -208,6 +180,10 @@ static int __cmd_trace(void)
 		return EXIT_FAILURE;
 	}
 
+	shift = page_size * (head / page_size);
+	offset += shift;
+	head -= shift;
+
 remap:
 	buf = (char *)mmap(NULL, page_size * mmap_window, PROT_READ,
 			   MAP_SHARED, input, offset);
@@ -220,9 +196,9 @@ more:
 	event = (event_t *)(buf + head);
 
 	if (head + event->header.size >= page_size * mmap_window) {
-		unsigned long shift = page_size * (head / page_size);
 		int res;
 
+		shift = page_size * (head / page_size);
 		res = munmap(buf, page_size * mmap_window);
 		assert(res == 0);
 
