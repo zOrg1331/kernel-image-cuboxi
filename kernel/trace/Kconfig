@@ -308,6 +308,19 @@ config PROFILE_ALL_BRANCHES
 	  is to be analyzed
 endchoice
 
+config PROFILE_BRANCHES_PER_CPU
+	bool "Profile branches on a per cpu basis"
+	depends on PROFILE_ALL_BRANCHES && SMP
+	help
+	  When profiling all branches, the system can take a big cache line
+	  bouncing hit. On boxes with lots of CPUs, this can slow the system
+	  down so much that it can live lock.
+
+	  This option solves the issue by making the profiler data per CPU.
+	  This avoids the cache line bouncing, but at the cost of having the
+	  branch table copied for every CPU. This table is quite large and
+	  this option will duplicate it for every CPU.
+
 config TRACING_BRANCHES
 	bool
 	help

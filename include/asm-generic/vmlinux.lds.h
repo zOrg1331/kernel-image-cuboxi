@@ -105,11 +105,19 @@
 #endif
 
 #ifdef CONFIG_PROFILE_ALL_BRANCHES
-#define BRANCH_PROFILE()	VMLINUX_SYMBOL(__start_branch_profile) = .;   \
+#define _BRANCH_PROFILE()	VMLINUX_SYMBOL(__start_branch_profile) = .;   \
 				*(_ftrace_branch)			      \
 				VMLINUX_SYMBOL(__stop_branch_profile) = .;
 #else
-#define BRANCH_PROFILE()
+#define _BRANCH_PROFILE()
+#endif
+
+#ifdef CONFIG_PROFILE_BRANCHES_PER_CPU
+# define BRANCH_PROFILE()
+# define BRANCH_PER_CPU_PROFILE()	_BRANCH_PROFILE()
+#else
+# define BRANCH_PROFILE()		_BRANCH_PROFILE()
+# define BRANCH_PER_CPU_PROFILE()
 #endif
 
 #ifdef CONFIG_EVENT_TRACING
@@ -160,7 +168,7 @@
 	*(__verbose)                                                    \
 	VMLINUX_SYMBOL(__stop___verbose) = .;				\
 	LIKELY_PROFILE()		       				\
-	BRANCH_PROFILE()						\
+	BRANCH_PROFILE()		       				\
 	TRACE_PRINTKS()							\
 	FTRACE_EVENTS()							\
 	TRACE_SYSCALLS()
@@ -669,6 +677,7 @@
 		*(.data.percpu.page_aligned)				\
 		*(.data.percpu)						\
 		*(.data.percpu.shared_aligned)				\
+		BRANCH_PER_CPU_PROFILE()				\
 		VMLINUX_SYMBOL(__per_cpu_end) = .;			\
 	} phdr								\
 	. = VMLINUX_SYMBOL(__per_cpu_load) + SIZEOF(.data.percpu);
@@ -695,6 +704,7 @@
 		*(.data.percpu.page_aligned)				\
 		*(.data.percpu)						\
 		*(.data.percpu.shared_aligned)				\
+		BRANCH_PER_CPU_PROFILE()				\
 		VMLINUX_SYMBOL(__per_cpu_end) = .;			\
 	}
 
