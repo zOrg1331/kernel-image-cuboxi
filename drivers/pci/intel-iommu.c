@@ -48,6 +48,7 @@
 
 #define IS_GFX_DEVICE(pdev) ((pdev->class >> 16) == PCI_BASE_CLASS_DISPLAY)
 #define IS_ISA_DEVICE(pdev) ((pdev->class >> 8) == PCI_CLASS_BRIDGE_ISA)
+#define IS_AZALIA(pdev) ((pdev)->vendor == 0x8086 && (pdev)->device == 0x3a3e)
 
 #define IOAPIC_RANGE_START	(0xfee00000)
 #define IOAPIC_RANGE_END	(0xfeefffff)
@@ -94,6 +95,7 @@ static inline unsigned long virt_to_dma_pfn(void *p)
 /* global iommu list, set NULL for ignored DMAR units */
 static struct intel_iommu **g_iommus;
 
+static void __init check_tylersburg_isoch(void);
 static int rwbf_quirk;
 
 /*
@@ -275,6 +277,7 @@ static int hw_pass_through = 1;
 
 struct dmar_domain {
 	int	id;			/* domain id */
+	int	nid;			/* node id */
 	unsigned long iommu_bmp;	/* bitmap of iommus this domain uses*/
 
 	struct list_head devices; 	/* all devices' list */
@@ -398,15 +401,18 @@ static inline void *iommu_kmem_cache_alloc(struct kmem_cache *cachep)
 }
 
 
-static inline void *alloc_pgtable_page(void)
+static inline void *alloc_pgtable_page(int node)
 {
 	unsigned int flags;
-	void *vaddr;
+	struct page *page;
+	void *vaddr = NULL;
 
 	/* trying to avoid low memory issues */
 	flags = current->flags & PF_MEMALLOC;
 	current->flags |= PF_MEMALLOC;
-	vaddr = (void *)get_zeroed_page(GFP_ATOMIC);
+	page = alloc_pages_node(node, GFP_ATOMIC | __GFP_ZERO, 0);
+	if (page)
+		vaddr = page_address(page);
 	current->flags &= (~PF_MEMALLOC | flags);
 	return vaddr;
 }
@@ -587,7 +593,8 @@ static struct context_entry * device_to_context_entry(struct intel_iommu *iommu,
 	root = &iommu->root_entry[bus];
 	context = get_context_addr_from_root(root);
 	if (!context) {
-		context = (struct context_entry *)alloc_pgtable_page();
+		context = (struct context_entry *)
+				alloc_pgtable_page(iommu->node);
 		if (!context) {
 			spin_unlock_irqrestore(&iommu->lock, flags);
 			return NULL;
@@ -730,7 +737,7 @@ static struct dma_pte *pfn_to_dma_pte(struct dmar_domain *domain,
 		if (!dma_pte_present(pte)) {
 			uint64_t pteval;
 
-			tmp_page = alloc_pgtable_page();
+			tmp_page = alloc_pgtable_page(domain->nid);
 
 			if (!tmp_page)
 				return NULL;
@@ -866,7 +873,7 @@ static int iommu_alloc_root_entry(struct intel_iommu *iommu)
 	struct root_entry *root;
 	unsigned long flags;
 
-	root = (struct root_entry *)alloc_pgtable_page();
+	root = (struct root_entry *)alloc_pgtable_page(iommu->node);
 	if (!root)
 		return -ENOMEM;
 
@@ -1261,6 +1268,7 @@ static struct dmar_domain *alloc_domain(void)
 	if (!domain)
 		return NULL;
 
+	domain->nid = -1;
 	memset(&domain->iommu_bmp, 0, sizeof(unsigned long));
 	domain->flags = 0;
 
@@ -1418,9 +1426,10 @@ static int domain_init(struct dmar_domain *domain, int guest_width)
 		domain->iommu_snooping = 0;
 
 	domain->iommu_count = 1;
+	domain->nid = iommu->node;
 
 	/* always allocate the top pgd */
-	domain->pgd = (struct dma_pte *)alloc_pgtable_page();
+	domain->pgd = (struct dma_pte *)alloc_pgtable_page(domain->nid);
 	if (!domain->pgd)
 		return -ENOMEM;
 	__iommu_flush_cache(iommu, domain->pgd, PAGE_SIZE);
@@ -1575,6 +1584,8 @@ static int domain_context_mapping_one(struct dmar_domain *domain, int segment,
 	spin_lock_irqsave(&domain->iommu_lock, flags);
 	if (!test_and_set_bit(iommu->seq_id, &domain->iommu_bmp)) {
 		domain->iommu_count++;
+		if (domain->iommu_count == 1)
+			domain->nid = iommu->node;
 		domain_update_iommu_cap(domain);
 	}
 	spin_unlock_irqrestore(&domain->iommu_lock, flags);
@@ -1934,6 +1945,9 @@ error:
 }
 
 static int iommu_identity_mapping;
+#define IDENTMAP_ALL		1
+#define IDENTMAP_GFX		2
+#define IDENTMAP_AZALIA		4
 
 static int iommu_domain_identity_map(struct dmar_domain *domain,
 				     unsigned long long start,
@@ -2151,8 +2165,14 @@ static int domain_add_dev_info(struct dmar_domain *domain,
 
 static int iommu_should_identity_map(struct pci_dev *pdev, int startup)
 {
-	if (iommu_identity_mapping == 2)
-		return IS_GFX_DEVICE(pdev);
+	if ((iommu_identity_mapping & IDENTMAP_AZALIA) && IS_AZALIA(pdev))
+		return 1;
+
+	if ((iommu_identity_mapping & IDENTMAP_GFX) && IS_GFX_DEVICE(pdev))
+		return 1;
+
+	if (!(iommu_identity_mapping & IDENTMAP_ALL))
+		return 0;
 
 	/*
 	 * We want to start off with all devices in the 1:1 domain, and
@@ -2332,11 +2352,14 @@ int __init init_dmars(void)
 	}
 
 	if (iommu_pass_through)
-		iommu_identity_mapping = 1;
+		iommu_identity_mapping |= IDENTMAP_ALL;
+
 #ifdef CONFIG_DMAR_BROKEN_GFX_WA
-	else
-		iommu_identity_mapping = 2;
+	iommu_identity_mapping |= IDENTMAP_GFX;
 #endif
+
+	check_tylersburg_isoch();
+
 	/*
 	 * If pass through is not set or not enabled, setup context entries for
 	 * identity mappings for rmrr, gfx, and isa and may fall back to static
@@ -3402,6 +3425,7 @@ static struct dmar_domain *iommu_alloc_vm_domain(void)
 		return NULL;
 
 	domain->id = vm_domid++;
+	domain->nid = -1;
 	memset(&domain->iommu_bmp, 0, sizeof(unsigned long));
 	domain->flags = DOMAIN_FLAG_VIRTUAL_MACHINE;
 
@@ -3428,9 +3452,10 @@ static int md_domain_init(struct dmar_domain *domain, int guest_width)
 	domain->iommu_coherency = 0;
 	domain->iommu_snooping = 0;
 	domain->max_addr = 0;
+	domain->nid = -1;
 
 	/* always allocate the top pgd */
-	domain->pgd = (struct dma_pte *)alloc_pgtable_page();
+	domain->pgd = (struct dma_pte *)alloc_pgtable_page(domain->nid);
 	if (!domain->pgd)
 		return -ENOMEM;
 	domain_flush_cache(domain, domain->pgd, PAGE_SIZE);
@@ -3670,3 +3695,61 @@ static void __devinit quirk_iommu_rwbf(struct pci_dev *dev)
 }
 
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL, 0x2a40, quirk_iommu_rwbf);
+
+/* On Tylersburg chipsets, some BIOSes have been known to enable the
+   ISOCH DMAR unit for the Azalia sound device, but not give it any
+   TLB entries, which causes it to deadlock. Check for that.  We do
+   this in a function called from init_dmars(), instead of in a PCI
+   quirk, because we don't want to print the obnoxious "BIOS broken"
+   message if VT-d is actually disabled.
+*/
+static void __init check_tylersburg_isoch(void)
+{
+	struct pci_dev *pdev;
+	uint32_t vtisochctrl;
+
+	/* If there's no Azalia in the system anyway, forget it. */
+	pdev = pci_get_device(PCI_VENDOR_ID_INTEL, 0x3a3e, NULL);
+	if (!pdev)
+		return;
+	pci_dev_put(pdev);
+
+	/* System Management Registers. Might be hidden, in which case
+	   we can't do the sanity check. But that's OK, because the
+	   known-broken BIOSes _don't_ actually hide it, so far. */
+	pdev = pci_get_device(PCI_VENDOR_ID_INTEL, 0x342e, NULL);
+	if (!pdev)
+		return;
+
+	if (pci_read_config_dword(pdev, 0x188, &vtisochctrl)) {
+		pci_dev_put(pdev);
+		return;
+	}
+
+	pci_dev_put(pdev);
+
+	/* If Azalia DMA is routed to the non-isoch DMAR unit, fine. */
+	if (vtisochctrl & 1)
+		return;
+
+	/* Drop all bits other than the number of TLB entries */
+	vtisochctrl &= 0x1c;
+
+	/* If we have the recommended number of TLB entries (16), fine. */
+	if (vtisochctrl == 0x10)
+		return;
+
+	/* Zero TLB entries? You get to ride the short bus to school. */
+	if (!vtisochctrl) {
+		WARN(1, "Your BIOS is broken; DMA routed to ISOCH DMAR unit but no TLB space.\n"
+		     "BIOS vendor: %s; Ver: %s; Product Version: %s\n",
+		     dmi_get_system_info(DMI_BIOS_VENDOR),
+		     dmi_get_system_info(DMI_BIOS_VERSION),
+		     dmi_get_system_info(DMI_PRODUCT_VERSION));
+		iommu_identity_mapping |= IDENTMAP_AZALIA;
+		return;
+	}
+	
+	printk(KERN_WARNING "DMAR: Recommended TLB entries for ISOCH unit is 16; your BIOS set %d\n",
+	       vtisochctrl);
+}
