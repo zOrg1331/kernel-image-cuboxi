@@ -1992,7 +1992,7 @@ fc_user_scan(struct Scsi_Host *shost, uint channel, uint id, uint lun)
 
 	if (((channel != SCAN_WILD_CARD) && (channel > shost->max_channel)) ||
 	    ((id != SCAN_WILD_CARD) && (id >= shost->max_id)) ||
-	    ((lun != SCAN_WILD_CARD) && (lun > shost->max_lun)))
+	    ((lun != SCAN_WILD_CARD) && (lun >= shost->max_lun)))
 		return -EINVAL;
 
 	if (channel == SCAN_WILD_CARD) {
