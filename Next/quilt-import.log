@@ -1,0 +1,186 @@
+Importing driver-core.current based on 2.6.32-rc3
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 374576a8b6f865022c0fd1ca62396889b23d66dd
+HEAD is now at 374576a Linux 2.6.32-rc3
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core.current
+sysfs-allow-sysfs_move_dir-again.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core.current
+From ../quilt-tmp
+   374576a..afa72ac  master     -> quilt/driver-core.current
+Importing tty.current based on quilt/driver-core.current
+$ cd ../quilt-tmp
+$ git reset --hard afa72ac3227f416bb6c4da260387092f508fcbe6
+HEAD is now at afa72ac sysfs: Allow sysfs_move_dir(..., NULL) again.
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty.current
+tty-fix-vt_compat_ioctl.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty.current
+From ../quilt-tmp
+   374576a..ccaf465  master     -> quilt/tty.current
+Importing usb.current based on quilt/tty.current
+$ cd ../quilt-tmp
+$ git reset --hard ccaf465ac48b1490c2f9ad69335dc1aa43791b58
+HEAD is now at ccaf465 tty: fix vt_compat_ioctl
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-ftdi_sio-remove-tty-low_latency.patch
+usb-ftdi_sio-remove-unused-rx_byte-counter.patch
+usb-ftdi_sio-clean-up-read-completion-handler.patch
+usb-ftdi_sio-re-implement-read-processing.patch
+usb-pl2303-fix-error-characters-not-being-reported-to-ldisc.patch
+usb-digi_acceleport-fix-broken-unthrottle.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+   374576a..af15258  master     -> quilt/usb.current
+Importing staging.current based on quilt/usb.current
+$ git branch quilt/staging.current af1525844577d9ed411b6e35883f275875ffea14
+$ cd ../quilt-tmp
+$ git reset --hard af1525844577d9ed411b6e35883f275875ffea14
+HEAD is now at af15258 USB: digi_acceleport: Fix broken unthrottle.
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+staging-comedi-serial2002-fix-include-build-issue.patch
+staging-remove-agnx-driver.patch
+staging-remove-cowloop-driver.patch
+staging-w35und-fix-beacon_int-breakage.patch
+staging-winbond-implement-prepare_multicast-and-fix-api-usage.patch
+staging-iio-don-t-build-on-s390.patch
+staging-rtl8192e-add-include-linux-vmalloc.h.patch
+staging-comedi-8253-fix-coding-style-error.patch
+staging-comedi-8255-fix-coding-style-error.patch
+staging-comedi-drivers.c-checkpatch-fix.patch
+staging-comedi-adl_pci6208-code-styling-fix.patch
+staging-comedi-ni_labpc.h-fixed-line-lengths-of-some-trailing-comments.patch
+staging-comedi-ni_labbc_cs-cleaned-up-debug-define-a-bit.patch
+staging-comedi-ni_labpc_cs-removed-null-initialization-of-static.patch
+staging-comedi-ni_labpc_cs-added-mandatory-whitespace-to-comparison.patch
+staging-comedi-ni_labpc_cs-removed-null-check-from-kfree.patch
+staging-comedi-ni_labpc_cs-wrapped-long-comments.patch
+staging-comedi-comedi_compat32-fixed-checkpatch.pl-issues.patch
+staging-comedi-comedidev.h-fixed-checkpatch.pl-issues.patch
+staging-comedi-ni_at_ao.c-fix-coding-style-error.patch
+staging-comedi-mite.c-fix-coding-style.patch
+staging-comedi-mite.h-deletion-of-unused-functions.patch
+staging-comedi-ni_atmio16d-fix-formating-errors.patch
+staging-comedi-ni_atmio16d-brace-fixes.patch
+staging-comedi-nt_atmio16d-space-and-tab-fixes.patch
+staging-comedi-ni_atmio16d-printk-fixups.patch
+staging-comedi-vmk80xx-cleanup-formatting.patch
+staging-comedi-comedi_compat32.h-fixed-checkpatch.pl-issues.patch
+staging-comedi-acl7225b.c-codingstyle-printk-fixups.patch
+staging-comedi-adl_pci7296-codingstyle-cleanup.patch
+staging-comedi-adl_pci7432-coding-style-cleanup.patch
+staging-comedi-amplc_pc263.c-fix-coding-style-issues.patch
+staging-comedi-amplc_pc263.c-more-coding-style-fixes.patch
+staging-comedi-trivial-fix-of-a-very-frequent-spelling-mistake.patch
+staging-comedi-ni_mio_cs.c-coding-style-cleanup.patch
+staging-comedi-corrected-type-of-a-printk-argument-in-resize_async_buffer.patch
+staging-comedi-jr3_pci-initialize-transf-variable-fully-in-jr3_pci_poll_subdevice.patch
+staging-comedi-cb_pcidio-fix-section-mismatch-error.patch
+staging-comedi-s526-fix-number-of-channels-on-dio-subdevice.patch
+staging-comedi-s526-get-rid-of-global-variable-cmreg.patch
+staging-comedi-s526-take-account-of-arch-s-byte-order.patch
+staging-comedi-s526-fixes-for-pulse-generator.patch
+staging-comedi-ni_65xx.c-fix-insn_bits-shift-calculation.patch
+staging-comedi-ni_65xx.c-fix-output-inversion-problem.patch
+staging-comedi-ni_pcimio-added-device-id-for-pxi-6225.patch
+staging-comedi-pcmcia-irq-fixes.patch
+staging-comedi-fix-build-on-arches-that-don-t-want-comedi-drivers.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+   af15258..5189337  master     -> quilt/staging.current
+Importing i2c based on 2.6.32-rc3-git1
+$ cd ../quilt-tmp
+$ git reset --hard 0eca52a92735f43462165efe00a7e394345fb38e
+HEAD is now at 0eca52a Merge git://git.kernel.org/pub/scm/linux/kernel/git/davem/ide-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-chips-move-ds1682-to-drivers-misc.patch
+i2c-powermac-multiple-msg-not-supported.patch
+i2c-voodoo3-delete.patch
+i2c-prevent-priority-inversion-on-top-of-bus-lock.patch
+i2c-no-I2C_M_REV_DIR_ADDR.patch
+i2c-add-missing-devinit.patch
+i2c-core-01-drop-obsolete-force-module-parameters.patch
+i2c-core-02-detect-drop-kind-parameter.patch
+misc-ics932s401-cleanup-detect.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+   0eca52a..db320d9  master     -> quilt/i2c
+Importing jdelvare-hwmon based on 2.6.32-rc3-git1
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on origin/master
+	quilt series is empty
+$ git update-ref refs/heads/quilt/kernel-doc 36a07902c2134649c4af7f07980413ffb1a56085
+Importing rr based on v2.6.32-rc3-52-g0eca52a
+Unchanged quilt series rr
+Importing device-mapper based on block/for-next
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core 5189337b772bbce15f02e7fd4fe27c5224d1b480
+Importing tty based on quilt/driver-core
+$ cd ../quilt-tmp
+$ git reset --hard 5189337b772bbce15f02e7fd4fe27c5224d1b480
+HEAD is now at 5189337 Staging: comedi: fix build on arches that don't want comedi drivers
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty
+jsm-irq-handlers-doesn-t-need-to-have-irq_disabled-enabled.patch
+jsm-rewriting-a-bad-log-message.patch
+jsm-remove-the-ch_custom_speed-field.patch
+jsm-removing-ch_old_baud-field.patch
+jsm-remove-ch_cpstime-field.patch
+jsm-removing-unused-jsm_channel-ch_wopen-field.patch
+jsm-removing-the-field-jsm_board-intr_count.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty
+From ../quilt-tmp
+   374576a..1b76d95  master     -> quilt/tty
+Importing usb based on quilt/tty
+$ cd ../quilt-tmp
+$ git reset --hard 1b76d9500ba813c23a46367b24b2946edb9c2dc8
+HEAD is now at 1b76d95 jsm: removing the field jsm_board->intr_count
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb
+usb-serial-ftdi_sio-add-space-mark-parity.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb
+From ../quilt-tmp
+   374576a..15290dc  master     -> quilt/usb
+Importing staging based on quilt/usb
+$ cd ../quilt-tmp
+$ git reset --hard 15290dcf0ca08a13e93489cc623a727a836f8e42
+HEAD is now at 15290dc USB: serial: ftdi_sio: add space/mark parity
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging
+staging-rt3090-disable-has_ate-option.patch
+staging-rt3090-disable-has_antenna_diversity_support-option.patch
+staging-rt3090-remove-private-debugging-ioctls.patch
+staging-rt3090-remove-private-ioctls.patch
+staging-rt28x0-updates-from-vendor-s-v2.1.0.0-drivers.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:36021: space before tab in indent.
+    		if (pAd->CommonCfg.bAPSDCapable && pAd->CommonCfg.APEdcaParm.bAPSDCapable)
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:36022: space before tab in indent.
+    		{
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:36023: space before tab in indent.
+    		    // When APSD is enabled, the period changes as 20 sec
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:36024: space before tab in indent.
+    			if ((pAd->Mlme.OneSecPeriodicRound % 20) == 8)
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:36025: space before tab in indent.
+    				RTMPSendNullFrame(pAd, pAd->CommonCfg.TxRate, TRUE);
+warning: squelched 5 whitespace errors
+warning: 10 lines add whitespace errors.
+staging-rt28x0-remove-unused-code-from-common-dfs.c.patch
+staging-rt2860-add-rt3090-chipset-support.patch
+staging-remove-no-longer-needed-rt3090-driver.patch
+staging-b3dfg-remove-check-for-pci-bus-master.patch
+staging-xvmalloc-memory-allocator.patch
+staging-virtual-block-device-driver.patch
+staging-ramzswap-documentation.patch
+staging-ramzswap-add-todo-file.patch
+staging-android-delete-android-drivers.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging
+From ../quilt-tmp
+ + f59c277...5b813e9 master     -> quilt/staging  (forced update)
