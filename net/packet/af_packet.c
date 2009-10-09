@@ -490,6 +490,7 @@ static int packet_sendmsg_spkt(struct kiocb *iocb, struct socket *sock,
 	skb->protocol = proto;
 	skb->dev = dev;
 	skb->priority = sk->sk_priority;
+	skb->mark = sk->sk_mark;
 	if (err)
 		goto out_free;
 
@@ -521,6 +522,31 @@ static inline unsigned int run_filter(struct sk_buff *skb, struct sock *sk,
 	rcu_read_unlock_bh();
 
 	return res;
+}
+
+/*
+ * If we've lost frames since the last time we queued one to the
+ * sk_receive_queue, we need to record it here.
+ * This must be called under the protection of the socket lock
+ * to prevent racing with other softirqs and user space
+ */
+static inline void record_packet_gap(struct sk_buff *skb,
+					struct packet_sock *po)
+{
+	/*
+	 * We overload the mark field here, since we're about
+	 * to enqueue to a receive queue and no body else will
+	 * use this field at this point
+	 */
+	skb->mark = po->stats.tp_gap;
+	po->stats.tp_gap = 0;
+	return;
+
+}
+
+static inline __u32 check_packet_gap(struct sk_buff *skb)
+{
+	return skb->mark;
 }
 
 /*
@@ -626,6 +652,7 @@ static int packet_rcv(struct sk_buff *skb, struct net_device *dev,
 
 	spin_lock(&sk->sk_receive_queue.lock);
 	po->stats.tp_packets++;
+	record_packet_gap(skb, po);
 	__skb_queue_tail(&sk->sk_receive_queue, skb);
 	spin_unlock(&sk->sk_receive_queue.lock);
 	sk->sk_data_ready(sk, skb->len);
@@ -634,6 +661,7 @@ static int packet_rcv(struct sk_buff *skb, struct net_device *dev,
 drop_n_acct:
 	spin_lock(&sk->sk_receive_queue.lock);
 	po->stats.tp_drops++;
+	po->stats.tp_gap++;
 	spin_unlock(&sk->sk_receive_queue.lock);
 
 drop_n_restore:
@@ -811,6 +839,7 @@ drop:
 
 ring_is_full:
 	po->stats.tp_drops++;
+	po->stats.tp_gap++;
 	spin_unlock(&sk->sk_receive_queue.lock);
 
 	sk->sk_data_ready(sk, 0);
@@ -856,6 +885,7 @@ static int tpacket_fill_skb(struct packet_sock *po, struct sk_buff *skb,
 	skb->protocol = proto;
 	skb->dev = dev;
 	skb->priority = po->sk.sk_priority;
+	skb->mark = po->sk.sk_mark;
 	skb_shinfo(skb)->destructor_arg = ph.raw;
 
 	switch (po->tp_version) {
@@ -1125,6 +1155,7 @@ static int packet_snd(struct socket *sock,
 	skb->protocol = proto;
 	skb->dev = dev;
 	skb->priority = sk->sk_priority;
+	skb->mark = sk->sk_mark;
 
 	/*
 	 *	Now send it
@@ -1418,6 +1449,7 @@ static int packet_recvmsg(struct kiocb *iocb, struct socket *sock,
 	struct sk_buff *skb;
 	int copied, err;
 	struct sockaddr_ll *sll;
+	__u32 gap;
 
 	err = -EINVAL;
 	if (flags & ~(MSG_PEEK|MSG_DONTWAIT|MSG_TRUNC|MSG_CMSG_COMPAT))
@@ -1495,6 +1527,10 @@ static int packet_recvmsg(struct kiocb *iocb, struct socket *sock,
 
 		put_cmsg(msg, SOL_PACKET, PACKET_AUXDATA, sizeof(aux), &aux);
 	}
+
+	gap = check_packet_gap(skb);
+	if (gap)
+		put_cmsg(msg, SOL_PACKET, PACKET_GAPDATA, sizeof(__u32), &gap);
 
 	/*
 	 *	Free or return the buffer as appropriate. Again this
@@ -2363,7 +2399,7 @@ static const struct proto_ops packet_ops = {
 	.sendpage =	sock_no_sendpage,
 };
 
-static struct net_proto_family packet_family_ops = {
+static const struct net_proto_family packet_family_ops = {
 	.family =	PF_PACKET,
 	.create =	packet_create,
 	.owner	=	THIS_MODULE,
