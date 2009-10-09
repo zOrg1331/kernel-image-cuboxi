@@ -36,6 +36,7 @@
 #include <linux/sysrq.h>
 #include <linux/highuid.h>
 #include <linux/writeback.h>
+#include <linux/ratelimit.h>
 #include <linux/hugetlb.h>
 #include <linux/initrd.h>
 #include <linux/key.h>
@@ -157,6 +158,8 @@ extern int acct_parm[];
 extern int no_unaligned_warning;
 extern int unaligned_dump_stack;
 #endif
+
+extern struct ratelimit_state printk_ratelimit_state;
 
 #ifdef CONFIG_RT_MUTEXES
 extern int max_lock_depth;
@@ -986,6 +989,16 @@ static struct ctl_table kern_table[] = {
 		.child		= slow_work_sysctls,
 	},
 #endif
+#ifdef CONFIG_PROFILE_ALL_BRANCHES
+	{
+		.ctl_name       = CTL_UNNUMBERED,
+		.procname       = "branch_profiling_enabled",
+		.data           = &sysctl_branch_profiling_enabled,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = &proc_dointvec,
+	},
+#endif
 #ifdef CONFIG_PERF_EVENTS
 	{
 		.ctl_name	= CTL_UNNUMBERED,
@@ -1023,14 +1036,6 @@ static struct ctl_table kern_table[] = {
 	},
 #endif
 #ifdef CONFIG_BLOCK
-	{
-		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "blk_iopoll",
-		.data		= &blk_iopoll_enabled,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
-	},
 #endif
 /*
  * NOTE: do not add new entries to this table unless you have read
