@@ -39,8 +39,9 @@
 #include "super.h"
 #include "util.h"
 #include "bmap.h"
+
 #define CREATE_TRACE_POINTS
-#include "trace_gfs2.h"
+#include <trace/events/gfs2.h>
 
 struct gfs2_gl_hash_bucket {
         struct hlist_head hb_list;

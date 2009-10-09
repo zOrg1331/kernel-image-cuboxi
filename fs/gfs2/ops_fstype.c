@@ -19,6 +19,7 @@
 #include <linux/gfs2_ondisk.h>
 #include <linux/slow-work.h>
 #include <linux/quotaops.h>
+#include <trace/events/gfs2.h>
 
 #include "gfs2.h"
 #include "incore.h"
@@ -34,7 +35,6 @@
 #include "log.h"
 #include "quota.h"
 #include "dir.h"
-#include "trace_gfs2.h"
 
 #define DO 0
 #define UNDO 1
