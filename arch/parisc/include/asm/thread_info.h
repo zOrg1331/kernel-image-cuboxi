@@ -74,8 +74,8 @@ struct thread_info {
 #define _TIF_SINGLESTEP		(1 << TIF_SINGLESTEP)
 #define _TIF_BLOCKSTEP		(1 << TIF_BLOCKSTEP)
 
-#define _TIF_USER_WORK_MASK     (_TIF_SIGPENDING | _TIF_NOTIFY_RESUME | \
-                                 _TIF_NEED_RESCHED | _TIF_RESTORE_SIGMASK)
+#define _TIF_DO_NOTIFY_RESUME_MASK	(_TIF_SIGPENDING | _TIF_RESTORE_SIGMASK | \
+						_TIF_NOTIFY_RESUME)
 
 #endif /* __KERNEL__ */
 
