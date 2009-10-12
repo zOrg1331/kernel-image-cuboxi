@@ -1,6 +1,5 @@
 config SCSI_BNX2_ISCSI
 	tristate "Broadcom NetXtreme II iSCSI support"
-	depends on 0
 	select SCSI_ISCSI_ATTRS
 	select NETDEVICES
 	select NETDEV_1000

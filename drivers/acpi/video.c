@@ -1218,9 +1218,7 @@ acpi_video_device_write_state(struct file *file,
 	u32 state = 0;
 
 
-	if (!dev)
-		return -EINVAL;
-	if (count >= sizeof(str))
+	if (!dev || count + 1 > sizeof str)
 		return -EINVAL;
 
 	if (copy_from_user(str, buffer, count))
@@ -1277,10 +1275,7 @@ acpi_video_device_write_brightness(struct file *file,
 	int i;
 
 
-	if (!dev || !dev->brightness)
-		return -EINVAL;
-
-	if (count >= sizeof(str))
+	if (!dev || !dev->brightness || count + 1 > sizeof str)
 		return -EINVAL;
 
 	if (copy_from_user(str, buffer, count))
@@ -1562,10 +1557,7 @@ acpi_video_bus_write_POST(struct file *file,
 	unsigned long long opt, options;
 
 
-	if (!video)
-		return -EINVAL;
-
-	if (count >= sizeof(str))
+	if (!video || count + 1 > sizeof str)
 		return -EINVAL;
 
 	status = acpi_video_bus_POST_options(video, &options);
@@ -1605,9 +1597,7 @@ acpi_video_bus_write_DOS(struct file *file,
 	unsigned long opt;
 
 
-	if (!video)
-		return -EINVAL;
-	if (count >= sizeof(str))
+	if (!video || count + 1 > sizeof str)
 		return -EINVAL;
 
 	if (copy_from_user(str, buffer, count))

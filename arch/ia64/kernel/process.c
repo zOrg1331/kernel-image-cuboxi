@@ -640,11 +640,6 @@ do_copy_regs (struct unw_frame_info *info, void *arg)
 }
 
 void
-__ia64_save_stack_nonlocal(void)
-{
-}
-
-void
 do_dump_fpu (struct unw_frame_info *info, void *arg)
 {
 	do_dump_task_fpu(current, info, arg);
