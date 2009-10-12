@@ -184,10 +184,12 @@ static int ieee80211_open(struct net_device *dev)
 		 * No need to check netif_running since we do not allow
 		 * it to start up with this invalid address.
 		 */
-		if (compare_ether_addr(null_addr, ndev->dev_addr) == 0)
+		if (compare_ether_addr(null_addr, ndev->dev_addr) == 0) {
 			memcpy(ndev->dev_addr,
 			       local->hw.wiphy->perm_addr,
 			       ETH_ALEN);
+			memcpy(ndev->perm_addr, ndev->dev_addr, ETH_ALEN);
+		}
 	}
 
 	/*
@@ -754,10 +756,6 @@ int ieee80211_if_change_type(struct ieee80211_sub_if_data *sdata,
 	return 0;
 }
 
-static struct device_type wiphy_type = {
-	.name	= "wlan",
-};
-
 int ieee80211_if_add(struct ieee80211_local *local, const char *name,
 		     struct net_device **new_dev, enum nl80211_iftype type,
 		     struct vif_params *params)
@@ -788,8 +786,8 @@ int ieee80211_if_add(struct ieee80211_local *local, const char *name,
 		goto fail;
 
 	memcpy(ndev->dev_addr, local->hw.wiphy->perm_addr, ETH_ALEN);
+	memcpy(ndev->perm_addr, ndev->dev_addr, ETH_ALEN);
 	SET_NETDEV_DEV(ndev, wiphy_dev(local->hw.wiphy));
-	SET_NETDEV_DEVTYPE(ndev, &wiphy_type);
 
 	/* don't use IEEE80211_DEV_TO_SUB_IF because it checks too much */
 	sdata = netdev_priv(ndev);

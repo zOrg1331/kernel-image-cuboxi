@@ -132,7 +132,7 @@ static struct sock *__udp6_lib_lookup(struct net *net,
 	struct sock *sk, *result;
 	struct hlist_nulls_node *node;
 	unsigned short hnum = ntohs(dport);
-	unsigned int hash = udp_hashfn(net, hnum);
+	unsigned int hash = udp_hashfn(net, hnum, udptable->mask);
 	struct udp_hslot *hslot = &udptable->hash[hash];
 	int score, badness;
 
@@ -265,8 +265,8 @@ try_again:
 		sin6->sin6_scope_id = 0;
 
 		if (is_udp4)
-			ipv6_addr_set(&sin6->sin6_addr, 0, 0,
-				      htonl(0xffff), ip_hdr(skb)->saddr);
+			ipv6_addr_set_v4mapped(ip_hdr(skb)->saddr,
+					       &sin6->sin6_addr);
 		else {
 			ipv6_addr_copy(&sin6->sin6_addr,
 				       &ipv6_hdr(skb)->saddr);
@@ -452,7 +452,7 @@ static int __udp6_lib_mcast_deliver(struct net *net, struct sk_buff *skb,
 {
 	struct sock *sk, *sk2;
 	const struct udphdr *uh = udp_hdr(skb);
-	struct udp_hslot *hslot = &udptable->hash[udp_hashfn(net, ntohs(uh->dest))];
+	struct udp_hslot *hslot = udp_hashslot(udptable, net, ntohs(uh->dest));
 	int dif;
 
 	spin_lock(&hslot->lock);
@@ -879,6 +879,8 @@ do_udp_sendmsg:
 	if (!fl.oif)
 		fl.oif = np->sticky_pktinfo.ipi6_ifindex;
 
+	fl.mark = sk->sk_mark;
+
 	if (msg->msg_controllen) {
 		opt = &opt_space;
 		memset(opt, 0, sizeof(struct ipv6_txoptions));
@@ -1195,7 +1197,7 @@ static void udp6_sock_seq_show(struct seq_file *seq, struct sock *sp, int bucket
 	destp = ntohs(inet->dport);
 	srcp  = ntohs(inet->sport);
 	seq_printf(seq,
-		   "%4d: %08X%08X%08X%08X:%04X %08X%08X%08X%08X:%04X "
+		   "%5d: %08X%08X%08X%08X:%04X %08X%08X%08X%08X:%04X "
 		   "%02X %08X:%08X %02X:%08lX %08X %5d %8d %lu %d %p %d\n",
 		   bucket,
 		   src->s6_addr32[0], src->s6_addr32[1],
