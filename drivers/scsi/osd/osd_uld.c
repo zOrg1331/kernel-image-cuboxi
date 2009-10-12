@@ -80,6 +80,8 @@ MODULE_LICENSE("GPL");
 MODULE_ALIAS_CHARDEV_MAJOR(SCSI_OSD_MAJOR);
 MODULE_ALIAS_SCSI_DEVICE(TYPE_OSD);
 
+#define OSD_FMT_d "osd%d"
+
 struct osd_uld_device {
 	int minor;
 	struct kref kref;
@@ -87,6 +89,7 @@ struct osd_uld_device {
 	struct osd_dev od;
 	struct gendisk *disk;
 	struct device *class_member;
+	struct osd_dev_info odi;
 };
 
 static void __uld_get(struct osd_uld_device *oud);
@@ -216,6 +219,56 @@ free_od:
 }
 EXPORT_SYMBOL(osduld_path_lookup);
 
+static inline bool _the_same_or_null(const u8 *a1, unsigned a1_len,
+				     const u8 *a2, unsigned a2_len)
+{
+	if (!a2_len) /* User string is Empty means don't care */
+		return true;
+
+	if (a1_len != a2_len)
+		return false;
+
+	return 0 == memcmp(a1, a2, a1_len);
+}
+
+/* osduld_info_lookup - Loop through all devices, return the requested osd_dev.
+ *
+ * if @odi->systemid_len and/or @odi->osdname_len are zero, they act as a don't
+ * care. .e.g if they're both zero /dev/osd0 is returned.
+ * We are searching for /dev/osd%d in the name-space, so user-mode who would
+ * like to remove a device from the search can "mv /dev/osdX /my_devs/osdX" and
+ * the device will not be found.
+ */
+struct osd_dev *osduld_info_lookup(const struct osd_dev_info *odi)
+{
+	unsigned i;
+
+	for (i = 0; i < SCSI_OSD_MAX_MINOR; i++) {
+		char dev_str[16];
+		struct osd_uld_device *oud;
+		struct osd_dev *od;
+
+		sprintf(dev_str, "/dev/" OSD_FMT_d, i);
+		od = osduld_path_lookup(dev_str);
+		if (IS_ERR(od))
+			continue;
+
+		oud = od->file->private_data;
+		if (_the_same_or_null(oud->odi.systemid, oud->odi.systemid_len,
+				      odi->systemid, odi->systemid_len) &&
+		    _the_same_or_null(oud->odi.osdname, oud->odi.osdname_len,
+				      odi->osdname, odi->osdname_len)) {
+			OSD_DEBUG("found device sysid_len=%d osdname=%d\n",
+				  odi->systemid_len, odi->osdname_len);
+			return od;
+		}
+		osduld_put_device(od);
+	}
+
+	return ERR_PTR(-ENODEV);
+}
+EXPORT_SYMBOL(osduld_info_lookup);
+
 void osduld_put_device(struct osd_dev *od)
 {
 
@@ -229,6 +282,13 @@ void osduld_put_device(struct osd_dev *od)
 	}
 }
 EXPORT_SYMBOL(osduld_put_device);
+
+const struct osd_dev_info *osduld_device_info(struct osd_dev *od)
+{
+	struct osd_uld_device *oud = od->file->private_data;
+	return &oud->odi;
+}
+EXPORT_SYMBOL(osduld_device_info);
 
 /*
  * Scsi Device operations
@@ -250,7 +310,7 @@ static int __detect_osd(struct osd_uld_device *oud)
 		OSD_ERR("warning: scsi_test_unit_ready failed\n");
 
 	osd_sec_init_nosec_doall_caps(caps, &osd_root_object, false, true);
-	if (osd_auto_detect_ver(&oud->od, caps))
+	if (osd_auto_detect_ver(&oud->od, caps, &oud->odi))
 		return -ENODEV;
 
 	return 0;
@@ -302,7 +362,7 @@ static int osd_probe(struct device *dev)
 	}
 	disk->major = SCSI_OSD_MAJOR;
 	disk->first_minor = oud->minor;
-	sprintf(disk->disk_name, "osd%d", oud->minor);
+	sprintf(disk->disk_name, OSD_FMT_d, oud->minor);
 	oud->disk = disk;
 
 	/* hold one more reference to the scsi_device that will get released
@@ -402,6 +462,7 @@ static void __remove(struct kref *kref)
 		put_disk(oud->disk);
 
 	ida_remove(&osd_minor_ida, oud->minor);
+	kfree(oud->odi.osdname);
 	kfree(oud);
 }
 
