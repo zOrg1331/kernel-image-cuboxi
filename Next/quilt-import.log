@@ -1,0 +1,283 @@
+Importing driver-core.current based on 2.6.32-rc3
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 374576a8b6f865022c0fd1ca62396889b23d66dd
+HEAD is now at 374576a Linux 2.6.32-rc3
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core.current
+sysfs-allow-sysfs_move_dir-again.patch
+sysfs-allow-sysfs_notify_dirent-to-be-called-from-interrupt-context.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core.current
+From ../quilt-tmp
+ + afa72ac...2c7e153 master     -> quilt/driver-core.current  (forced update)
+Importing tty.current based on quilt/driver-core.current
+$ cd ../quilt-tmp
+$ git reset --hard 2c7e153a0459a1d728ac7e4e0af27734ccf3275a
+HEAD is now at 2c7e153 sysfs: Allow sysfs_notify_dirent to be called from interrupt context.
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty.current
+tty-fix-vt_compat_ioctl.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty.current
+From ../quilt-tmp
+ + ccaf465...6645b80 master     -> quilt/tty.current  (forced update)
+Importing usb.current based on quilt/tty.current
+$ cd ../quilt-tmp
+$ git reset --hard 6645b807b45d6d5db8c3c40cb53d550dfb700a29
+HEAD is now at 6645b80 tty: fix vt_compat_ioctl
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-ftdi_sio-remove-tty-low_latency.patch
+usb-ftdi_sio-remove-unused-rx_byte-counter.patch
+usb-ftdi_sio-clean-up-read-completion-handler.patch
+usb-ftdi_sio-re-implement-read-processing.patch
+usb-pl2303-fix-error-characters-not-being-reported-to-ldisc.patch
+usb-digi_acceleport-fix-broken-unthrottle.patch
+usb-serial-don-t-call-release-without-attach.patch
+usb-serial-sierra-driver-version-change-to-1.3.8.patch
+usb-usblcd-fix-memory-leak.patch
+usb-option-toshiba-g450-device-id.patch
+usb-option-patch-for-huawei-mobile-broadband-e270-modem.patch
+usb-usbtmc-fix-timeout-increase.patch
+usb-xhci-stop-debugging-polling-loop-when-hc-dies.patch
+usb-xhci-handle-canceled-urbs-when-hc-dies.patch
+usb-xhci-don-t-wait-for-a-disable-slot-cmd-when-hc-dies.patch
+usb-xhci-fix-dropping-endpoints-from-the-xhc-schedule.patch
+usb-musb-make-have_clk-support-optional.patch
+usb-storage-iriver-p7-unusual_dev-patch.patch
+usb-gadget-imx_udc-use-resource-size.patch
+usb-isp1362-fix-build-warnings-on-64-bit-systems.patch
+usb-ipaq-fix-oops-when-device-is-plugged-in.patch
+usb-cp210x-add-support-for-the-dw700-uart.patch
+usb-fix-throttling-in-generic-usbserial-driver.patch
+usb-visor-fix-trivial-accounting-bug-in-visor-driver.patch
+usb-small-fix-in-error-case-of-suspend-in-generic-usbserial-code.patch
+usb-storage-when-a-device-returns-no-sense-data-call-it-a-hardware-error.patch
+usb-ehci-fix-isoc-scheduling-boundary-checking.patch
+usb-serial-fix-race-between-unthrottle-and-completion-handler-in-opticon.patch
+usb-serial-fix-race-between-unthrottle-and-completion-handler-in-symbolserial.patch
+usb-serial-fix-assumption-that-throttle-unthrottle-cannot-sleep.patch
+usb-serial-fix-race-between-unthrottle-and-completion-handler-in-visor.patch
+usb-serial-no-unnecessary-gfp_atomic-in-oti6858.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+ + af15258...f483895 master     -> quilt/usb.current  (forced update)
+Importing staging.current based on quilt/usb.current
+$ cd ../quilt-tmp
+$ git reset --hard f483895c17dbb2744c0346a42c4ec5576408921c
+HEAD is now at f483895 USB: serial: no unnecessary GFP_ATOMIC in oti6858
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+staging-comedi-serial2002-fix-include-build-issue.patch
+staging-remove-agnx-driver.patch
+staging-remove-cowloop-driver.patch
+staging-w35und-fix-beacon_int-breakage.patch
+staging-winbond-implement-prepare_multicast-and-fix-api-usage.patch
+staging-iio-don-t-build-on-s390.patch
+staging-rtl8192e-add-include-linux-vmalloc.h.patch
+staging-p9auth-a-few-fixes.patch
+staging-comedi-corrected-type-of-a-printk-argument-in-resize_async_buffer.patch
+staging-comedi-jr3_pci-initialize-transf-variable-fully-in-jr3_pci_poll_subdevice.patch
+staging-comedi-cb_pcidio-fix-section-mismatch-error.patch
+staging-comedi-s526-fix-number-of-channels-on-dio-subdevice.patch
+staging-comedi-s526-get-rid-of-global-variable-cmreg.patch
+staging-comedi-s526-take-account-of-arch-s-byte-order.patch
+staging-comedi-s526-fixes-for-pulse-generator.patch
+staging-comedi-ni_65xx.c-fix-insn_bits-shift-calculation.patch
+staging-comedi-ni_65xx.c-fix-output-inversion-problem.patch
+staging-comedi-ni_pcimio-added-device-id-for-pxi-6225.patch
+staging-comedi-pcmcia-irq-fixes.patch
+staging-comedi-fix-build-on-arches-that-don-t-want-comedi-drivers.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+ + 5189337...b8b0c24 master     -> quilt/staging.current  (forced update)
+Importing i2c based on 2.6.32-rc3-git3
+$ cd ../quilt-tmp
+$ git reset --hard bd381934bf13ccb1af2813ae26c6fe00ec85d254
+HEAD is now at bd38193 Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/roland/infiniband
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-chips-move-ds1682-to-drivers-misc.patch
+i2c-powermac-01-multiple-msg-not-supported.patch
+i2c-powermac-02-refactor-xfer.patch
+i2c-powermac-03-report-errors.patch
+i2c-voodoo3-delete.patch
+i2c-prevent-priority-inversion-on-top-of-bus-lock.patch
+i2c-no-I2C_M_REV_DIR_ADDR.patch
+i2c-add-missing-devinit.patch
+i2c-core-01-drop-obsolete-force-module-parameters.patch
+i2c-core-02-detect-drop-kind-parameter.patch
+misc-ics932s401-cleanup-detect.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + db320d9...48f833d master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.32-rc3-git3
+$ cd ../quilt-tmp
+$ git reset --hard bd381934bf13ccb1af2813ae26c6fe00ec85d254
+HEAD is now at bd38193 Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/roland/infiniband
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-sht15-fix-spurious-section-mismatch-warning.patch
+hwmon-asus_atk0110-01-refactor.patch
+hwmon-asus_atk0110-02-ec-enable.patch
+maintainers-fix-riku-voipio-address.patch
+hwmon-s3c-hwmon-disable-build-for-s3c64xx.patch
+hwmon-w83627hf-drop-force_addr.patch
+hwmon-w83627hf-no-sio-globals.patch
+hwmon-lm73-new-driver.patch
+hwmon-adm1021-cleanup-detect.patch
+hwmon-adm1025-cleanup-detect.patch
+hwmon-lm77-cleanup-detect.patch
+hwmon-lm83-cleanup-detect.patch
+hwmon-lm85-cleanup-detect.patch
+hwmon-lm90-cleanup-detect.patch
+hwmon-tmp401-tmp421-cleanup-detect.patch
+hwmon-w83781d-cleanup-detect.patch
+hwmon-w83791d-cleanup-detect.patch
+hwmon-w83792d-cleanup-detect.patch
+hwmon-w83l785ts-cleanup-detect.patch
+hwmon-cleanup-detect-functions.patch
+hwmon-w83791d-remove-experimental-dependency.patch
+hwmon-add-freescale-mc13783-adc-driver.patch
+hwmon-thmc50-stop-using-I2C_CLIENT_MODULE_PARM.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + d3f6971...bb72859 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on origin/master
+	quilt series is empty
+$ git update-ref refs/heads/quilt/kernel-doc d93a8f829fe1d2f3002f2c6ddb553d12db420412
+Importing rr based on v2.6.32-rc3-52-g0eca52a
+Unchanged quilt series rr
+Importing device-mapper based on block/for-next
+$ cd ../quilt-tmp
+$ git reset --hard e5a76f77b4f765dc49f2bcdc0dc84c17dce7deae
+HEAD is now at e5a76f7 Merge branch 'for-linus' into for-next
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-log-userspace-fix-incorrect-luid-cast-in-userspace_ctr.patch
+dm-snapshot-free-exception-store-on-init-failure.patch
+dm-add-missing-del_gendisk-to-alloc_dev-error-path.patch
+dm-dec_pending-needs-locking-to-save-error-value.patch
+dm-snapshot-require-non-zero-chunk-size-by-end-of-ctr.patch
+dm-snapshot-allow-chunk-size-to-be-less-than-page-size.patch
+dm-exception-store-fix-failed-set_chunk_size-error-path.patch
+dm-snapshot-lock-snapshot-while-supplying-status.patch
+dm-snapshot-use-unsigned-integer-chunk-size.patch
+dm-ioctl-prefer-strlcpy-over-strncpy.patch
+dm-snapshot-avoid-else-clause-in-persistent_read_metadata.patch
+dm-snapshot-simplify-sector_to_chunk-expression.patch
+dm-snapshot-abstract-minimum_chunk_size-fn.patch
+dm-snapshot-consolidate-insert-exception-functions.patch
+dm-snapshot-rename-dm_snap_exception-to-dm_exception.patch
+dn-snapshot-rename-exception_table-to-dm_exception_table.patch
+dm-snapshot-rename-exception-functions.patch
+dm-snapshot-add-allocated-metadata-to-snapshot-status.patch
+dm-snapshot-move-cow-ref-from-exception-store-to-snap-core.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + e7b57c9...d8fd37b master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core b8b0c24c85ae4ad895d82cc4a6264b1aba4327f5
+Importing tty based on quilt/driver-core
+$ cd ../quilt-tmp
+$ git reset --hard b8b0c24c85ae4ad895d82cc4a6264b1aba4327f5
+HEAD is now at b8b0c24 Staging: comedi: fix build on arches that don't want comedi drivers
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty
+jsm-irq-handlers-doesn-t-need-to-have-irq_disabled-enabled.patch
+jsm-rewriting-a-bad-log-message.patch
+jsm-remove-the-ch_custom_speed-field.patch
+jsm-removing-ch_old_baud-field.patch
+jsm-remove-ch_cpstime-field.patch
+jsm-removing-unused-jsm_channel-ch_wopen-field.patch
+jsm-removing-the-field-jsm_board-intr_count.patch
+tty-const-constify-remaining-tty_operations.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty
+From ../quilt-tmp
+ + 1b76d95...64288c8 master     -> quilt/tty  (forced update)
+Importing usb based on quilt/tty
+$ cd ../quilt-tmp
+$ git reset --hard 64288c823aadfc6d9ff0f0824dd5c34bffe3f454
+HEAD is now at 64288c8 tty: const: constify remaining tty_operations
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb
+usb-serial-ftdi_sio-add-space-mark-parity.patch
+usb-ehci-hub-remove-redundant-ehci-debug-check.patch
+usb-convert-a-dev_info-to-a-dev_dbg.patch
+usb-usb-storage-associate-the-name-of-the-interface-with-the-scsi-host.patch
+usb-storage-make-driver-less-chatty-when-it-finds-a-new-device.patch
+usb-add-support-for-xilinx-usb-host-controller.patch
+usb-add-missing-static-markers-to-ohci-pnx4008.patch
+usb-make-urb-scatter-gather-support-more-generic.patch
+usb-whci-hcd-support-urbs-with-scatter-gather-lists.patch
+usb-allow-interrupt-transfers-to-wusb-devices.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb
+From ../quilt-tmp
+ + 15290dc...3cbd4f4 master     -> quilt/usb  (forced update)
+Importing staging based on quilt/usb
+$ cd ../quilt-tmp
+$ git reset --hard 3cbd4f4ddea42096ba854c2f66ff129e5e84ee9e
+HEAD is now at 3cbd4f4 USB: allow interrupt transfers to WUSB devices
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging
+staging-rt3090-disable-has_ate-option.patch
+staging-rt3090-disable-has_antenna_diversity_support-option.patch
+staging-rt3090-remove-private-debugging-ioctls.patch
+staging-rt3090-remove-private-ioctls.patch
+staging-rt28x0-updates-from-vendor-s-v2.1.0.0-drivers.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:36021: space before tab in indent.
+    		if (pAd->CommonCfg.bAPSDCapable && pAd->CommonCfg.APEdcaParm.bAPSDCapable)
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:36022: space before tab in indent.
+    		{
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:36023: space before tab in indent.
+    		    // When APSD is enabled, the period changes as 20 sec
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:36024: space before tab in indent.
+    			if ((pAd->Mlme.OneSecPeriodicRound % 20) == 8)
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:36025: space before tab in indent.
+    				RTMPSendNullFrame(pAd, pAd->CommonCfg.TxRate, TRUE);
+warning: squelched 5 whitespace errors
+warning: 10 lines add whitespace errors.
+staging-rt28x0-remove-unused-code-from-common-dfs.c.patch
+staging-rt2860-add-rt3090-chipset-support.patch
+staging-remove-no-longer-needed-rt3090-driver.patch
+staging-b3dfg-remove-check-for-pci-bus-master.patch
+staging-line6-driver.c-factorize-code-and-cleanups.patch
+staging-comedi-8253-fix-coding-style-error.patch
+staging-comedi-8255-fix-coding-style-error.patch
+staging-comedi-drivers.c-checkpatch-fix.patch
+staging-comedi-adl_pci6208-code-styling-fix.patch
+staging-comedi-ni_labpc.h-fixed-line-lengths-of-some-trailing-comments.patch
+staging-comedi-ni_labbc_cs-cleaned-up-debug-define-a-bit.patch
+staging-comedi-ni_labpc_cs-removed-null-initialization-of-static.patch
+staging-comedi-ni_labpc_cs-added-mandatory-whitespace-to-comparison.patch
+staging-comedi-ni_labpc_cs-removed-null-check-from-kfree.patch
+staging-comedi-ni_labpc_cs-wrapped-long-comments.patch
+staging-comedi-comedi_compat32-fixed-checkpatch.pl-issues.patch
+staging-comedi-comedidev.h-fixed-checkpatch.pl-issues.patch
+staging-comedi-ni_at_ao.c-fix-coding-style-error.patch
+staging-comedi-mite.c-fix-coding-style.patch
+staging-comedi-mite.h-deletion-of-unused-functions.patch
+staging-comedi-ni_atmio16d-fix-formating-errors.patch
+staging-comedi-ni_atmio16d-brace-fixes.patch
+staging-comedi-nt_atmio16d-space-and-tab-fixes.patch
+staging-comedi-ni_atmio16d-printk-fixups.patch
+staging-comedi-vmk80xx-cleanup-formatting.patch
+staging-comedi-comedi_compat32.h-fixed-checkpatch.pl-issues.patch
+staging-comedi-acl7225b.c-codingstyle-printk-fixups.patch
+staging-comedi-adl_pci7296-codingstyle-cleanup.patch
+staging-comedi-adl_pci7432-coding-style-cleanup.patch
+staging-comedi-amplc_pc263.c-fix-coding-style-issues.patch
+staging-comedi-amplc_pc263.c-more-coding-style-fixes.patch
+staging-comedi-trivial-fix-of-a-very-frequent-spelling-mistake.patch
+staging-comedi-ni_mio_cs.c-coding-style-cleanup.patch
+staging-xvmalloc-memory-allocator.patch
+staging-virtual-block-device-driver.patch
+staging-ramzswap-documentation.patch
+staging-ramzswap-add-todo-file.patch
+staging-hv-todo-patches.patch
+staging-android-delete-android-drivers.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging
+From ../quilt-tmp
+ + 5b813e9...459d4a2 master     -> quilt/staging  (forced update)
