@@ -308,6 +308,19 @@ config PROFILE_ALL_BRANCHES
 	  is to be analyzed
 endchoice
 
+config PROFILE_BRANCHES_PER_CPU
+	bool "Profile branches on a per cpu basis"
+	depends on PROFILE_ALL_BRANCHES && SMP
+	help
+	  When profiling all branches, the system can take a big cache line
+	  bouncing hit. On boxes with lots of CPUs, this can slow the system
+	  down so much that it can live lock.
+
+	  This option solves the issue by making the profiler data per CPU.
+	  This avoids the cache line bouncing, but at the cost of having the
+	  branch table copied for every CPU. This table is quite large and
+	  this option will duplicate it for every CPU.
+
 config TRACING_BRANCHES
 	bool
 	help
@@ -339,6 +352,27 @@ config POWER_TRACER
 	  power management decisions, specifically the C-state and P-state
 	  behavior.
 
+config KSYM_TRACER
+	bool "Trace read and write access on kernel memory locations"
+	depends on HAVE_HW_BREAKPOINT
+	select TRACING
+	help
+	  This tracer helps find read and write operations on any given kernel
+	  symbol i.e. /proc/kallsyms.
+
+config PROFILE_KSYM_TRACER
+	bool "Profile all kernel memory accesses on 'watched' variables"
+	depends on KSYM_TRACER
+	help
+	  This tracer profiles kernel accesses on variables watched through the
+	  ksym tracer ftrace plugin. Depending upon the hardware, all read
+	  and write operations on kernel variables can be monitored for
+	  accesses.
+
+	  The results will be displayed in:
+	  /debugfs/tracing/profile_ksym
+
+	  Say N if unsure.
 
 config STACK_TRACER
 	bool "Trace max stack"

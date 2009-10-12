@@ -9,6 +9,7 @@
 #include <linux/irqflags.h>
 #include <linux/debugfs.h>
 #include <linux/uaccess.h>
+#include <linux/percpu.h>
 #include <linux/module.h>
 #include <linux/ftrace.h>
 #include <linux/hash.h>
@@ -336,6 +337,47 @@ fs_initcall(init_annotated_branch_stats);
 
 #ifdef CONFIG_PROFILE_ALL_BRANCHES
 
+int sysctl_branch_profiling_enabled __read_mostly;
+
+static int __init set_enable_branch_profiler(char *str)
+{
+	sysctl_branch_profiling_enabled = 1;
+	return 1;
+}
+__setup("enable_branch_profiler", set_enable_branch_profiler);
+
+static unsigned long branch_count;
+
+#ifdef CONFIG_PROFILE_BRANCHES_PER_CPU
+#define branch_percpu(p, cpu)	SHIFT_PERCPU_PTR(p, per_cpu_offset(cpu))
+void branch_profiler(struct ftrace_branch_data *data, int cond)
+{
+	branch_percpu(data, raw_smp_processor_id())->miss_hit[cond]++;
+}
+static void calculate_stat(struct ftrace_branch_data *stat,
+			   struct ftrace_branch_data *p)
+{
+	int rec = 0;
+	int cpu;
+
+	for_each_online_cpu(cpu) {
+		if (!rec) {
+			rec++;
+			*stat = *branch_percpu(p, cpu);
+		} else {
+			stat->miss_hit[0] += branch_percpu(p, cpu)->miss_hit[0];
+			stat->miss_hit[1] += branch_percpu(p, cpu)->miss_hit[1];
+		}
+	}
+}
+#else
+static void calculate_stat(struct ftrace_branch_data *stat,
+			   struct ftrace_branch_data *p)
+{
+	*stat = *p;
+}
+#endif
+
 extern unsigned long __start_branch_profile[];
 extern unsigned long __stop_branch_profile[];
 
@@ -350,6 +392,11 @@ static int all_branch_stat_headers(struct seq_file *m)
 	return 0;
 }
 
+struct ftrace_branch_stat {
+	struct tracer_stat		stat;
+	int				cpu;
+};
+
 static void *all_branch_stat_start(struct tracer_stat *trace)
 {
 	return __start_branch_profile;
@@ -362,10 +409,20 @@ all_branch_stat_next(void *v, int idx)
 
 	++p;
 
-	if ((void *)p >= (void *)__stop_branch_profile)
+	if (idx >= branch_count)
 		return NULL;
 
 	return p;
+}
+
+static int all_branch_stat_show(struct seq_file *m, void *v)
+{
+	struct ftrace_branch_data *p = v;
+	struct ftrace_branch_data stat;
+
+	calculate_stat(&stat, p);
+
+	return branch_stat_show(m, &stat);
 }
 
 static struct tracer_stat all_branch_stats = {
@@ -373,20 +430,30 @@ static struct tracer_stat all_branch_stats = {
 	.stat_start = all_branch_stat_start,
 	.stat_next = all_branch_stat_next,
 	.stat_headers = all_branch_stat_headers,
-	.stat_show = branch_stat_show
+	.stat_show = all_branch_stat_show
 };
 
+static void calculate_branch_count(void)
+{
+	branch_count = ((unsigned long)&__stop_branch_profile -
+			(unsigned long)&__start_branch_profile) /
+		sizeof(struct ftrace_branch_stat);
+}
 __init static int all_annotated_branch_stats(void)
 {
 	int ret;
 
 	ret = register_stat_tracer(&all_branch_stats);
-	if (!ret) {
+	if (ret) {
 		printk(KERN_WARNING "Warning: could not register "
 				    "all branches stats\n");
 		return 1;
 	}
+
+	calculate_branch_count();
+
 	return 0;
 }
+
 fs_initcall(all_annotated_branch_stats);
 #endif /* CONFIG_PROFILE_ALL_BRANCHES */

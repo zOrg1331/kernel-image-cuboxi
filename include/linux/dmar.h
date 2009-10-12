@@ -47,11 +47,11 @@ extern struct list_head dmar_drhd_units;
 
 #define for_each_active_iommu(i, drhd)					\
 	list_for_each_entry(drhd, &dmar_drhd_units, list)		\
-		if (i=drhd->iommu, drhd->ignored) {} else
+		if (({i=drhd->iommu, drhd->ignored;})) {} else
 
 #define for_each_iommu(i, drhd)						\
 	list_for_each_entry(drhd, &dmar_drhd_units, list)		\
-		if (i=drhd->iommu, 0) {} else 
+		if (({ i=drhd->iommu, 0;})) {} else
 
 extern int dmar_table_init(void);
 extern int dmar_dev_scope_init(void);
@@ -126,7 +126,9 @@ extern int free_irte(int irq);
 extern int irq_remapped(int irq);
 extern struct intel_iommu *map_dev_to_ir(struct pci_dev *dev);
 extern struct intel_iommu *map_ioapic_to_ir(int apic);
+extern struct intel_iommu *map_hpet_to_ir(u8 id);
 extern int set_ioapic_sid(struct irte *irte, int apic);
+extern int set_hpet_sid(struct irte *irte, u8 id);
 extern int set_msi_sid(struct irte *irte, struct pci_dev *dev);
 #else
 static inline int alloc_irte(struct intel_iommu *iommu, int irq, u16 count)
@@ -158,9 +160,17 @@ static inline struct intel_iommu *map_ioapic_to_ir(int apic)
 {
 	return NULL;
 }
+static inline struct intel_iommu *map_hpet_to_ir(unsigned int hpet_id)
+{
+	return NULL;
+}
 static inline int set_ioapic_sid(struct irte *irte, int apic)
 {
 	return 0;
+}
+static inline int set_hpet_sid(struct irte *irte, u8 id)
+{
+	return -1;
 }
 static inline int set_msi_sid(struct irte *irte, struct pci_dev *dev)
 {
