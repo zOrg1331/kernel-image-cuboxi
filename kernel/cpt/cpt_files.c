@@ -620,19 +620,23 @@ static int dump_content_regular(struct file *file, struct cpt_context *ctx)
 		return -EINVAL;
 
 	do_read = file->f_op->read;
-	if (file->f_op == &shm_file_operations) {
-		struct shm_file_data *sfd = file->private_data;
 
-		cpt_dump_content_sysvshm(sfd->file, ctx);
+	if (file->f_op == &shm_file_operations ||
+	    file->f_op == &shmem_file_operations) {
+		struct file *shm_file = file;
 
-		return 0;
-	}
-	if (file->f_op == &shmem_file_operations) {
-		do_read = file->f_dentry->d_inode->i_fop->read;
-		cpt_dump_content_sysvshm(file, ctx);
+		/* shmget uses shm ops  */
+		if (file->f_op == &shm_file_operations) {
+			struct shm_file_data *sfd = file->private_data;
+			shm_file = sfd->file;
+		}
+
+		cpt_dump_content_sysvshm(shm_file, ctx);
+
+		do_read = shm_file->f_dentry->d_inode->i_fop->read;
 		if (!do_read) {
 			wprintk_ctx("TMPFS is not configured?\n");
-			return dump_content_shm(file, ctx);
+			return dump_content_shm(shm_file, ctx);
 		}
 	}
 
