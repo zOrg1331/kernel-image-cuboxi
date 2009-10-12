@@ -29,6 +29,7 @@
 #include <linux/async.h>
 #include <linux/completion.h>
 #include <linux/time.h>
+#include <linux/sched.h>
 
 #include "../base.h"
 #include "power.h"
