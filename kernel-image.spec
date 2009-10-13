@@ -1,6 +1,6 @@
 Name: kernel-image-hpc-def
 Version: 2.6.27
-Release: alt1
+Release: alt0.M41.1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -374,7 +374,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %doc %_docdir/kernel-doc-%base_flavour-%version
 %endif
 %changelog
-* Thu Oct 08 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt1
+* Thu Oct 08 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.27-alt0.M41.1
 - 2.6.27.36
 - fixes for hpc-std 
 
