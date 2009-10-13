@@ -389,18 +389,6 @@ struct pci_dev *acpi_get_pci_dev(acpi_handle handle)
 
 		pbus = pdev->subordinate;
 		pci_dev_put(pdev);
-
-		/*
-		 * During resume from a sleep state we can get a dock
-		 * notification for a device that is present in ACPI tables,
-		 * but not physically accessible at the moment, so tell the
-		 * caller it's not present in that case.
-		 */
-		if (!pbus) {
-			dev_info(&pdev->dev, "Secondary bus not present\n");
-			pdev = NULL;
-			break;
-		}
 	}
 out:
 	list_for_each_entry_safe(node, tmp, &device_list, node)
