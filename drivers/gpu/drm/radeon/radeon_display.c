@@ -137,9 +137,6 @@ static void radeon_crtc_gamma_set(struct drm_crtc *crtc, u16 *red, u16 *green,
 	if (size != 256) {
 		return;
 	}
-	if (crtc->fb == NULL) {
-		return;
-	}
 
 	/* userspace palettes are always correct as is */
 	for (i = 0; i < 256; i++) {
@@ -147,7 +144,6 @@ static void radeon_crtc_gamma_set(struct drm_crtc *crtc, u16 *red, u16 *green,
 		radeon_crtc->lut_g[i] = green[i] >> 6;
 		radeon_crtc->lut_b[i] = blue[i] >> 6;
 	}
-
 	radeon_crtc_load_lut(crtc);
 }
 
@@ -765,7 +761,7 @@ bool radeon_crtc_scaling_mode_fixup(struct drm_crtc *crtc,
 			radeon_crtc->rmx_type = radeon_encoder->rmx_type;
 			memcpy(&radeon_crtc->native_mode,
 				&radeon_encoder->native_mode,
-				sizeof(struct radeon_native_mode));
+				sizeof(struct drm_display_mode));
 			first = false;
 		} else {
 			if (radeon_crtc->rmx_type != radeon_encoder->rmx_type) {
@@ -783,10 +779,10 @@ bool radeon_crtc_scaling_mode_fixup(struct drm_crtc *crtc,
 	if (radeon_crtc->rmx_type != RMX_OFF) {
 		fixed20_12 a, b;
 		a.full = rfixed_const(crtc->mode.vdisplay);
-		b.full = rfixed_const(radeon_crtc->native_mode.panel_xres);
+		b.full = rfixed_const(radeon_crtc->native_mode.hdisplay);
 		radeon_crtc->vsc.full = rfixed_div(a, b);
 		a.full = rfixed_const(crtc->mode.hdisplay);
-		b.full = rfixed_const(radeon_crtc->native_mode.panel_yres);
+		b.full = rfixed_const(radeon_crtc->native_mode.vdisplay);
 		radeon_crtc->hsc.full = rfixed_div(a, b);
 	} else {
 		radeon_crtc->vsc.full = rfixed_const(1);
