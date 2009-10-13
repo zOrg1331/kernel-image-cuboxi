@@ -2828,6 +2828,12 @@ L:	linux-mips@linux-mips.org
 S:	Maintained
 F:	drivers/serial/ioc3_serial.c
 
+IOQ LIBRARY
+M:	Gregory Haskins <ghaskins@novell.com>
+S:	Maintained
+F:	include/linux/ioq.h
+F:	lib/ioq.c
+
 IP MASQUERADING
 M:	Juanjo Ciarlante <jjciarla@raiz.uncu.edu.ar>
 S:	Maintained
@@ -4740,6 +4746,12 @@ F:	drivers/serial/serial_lh7a40x.c
 F:	drivers/usb/gadget/lh7a40*
 F:	drivers/usb/host/ohci-lh7a40*
 
+SHM-SIGNAL LIBRARY
+M:	Gregory Haskins <ghaskins@novell.com>
+S:	Maintained
+F:	include/linux/shm_signal.h
+F:	lib/shm_signal.c
+
 SIMPLE FIRMWARE INTERFACE (SFI)
 P:	Len Brown
 M:	lenb@kernel.org
@@ -5625,6 +5637,12 @@ W:	http://dev.gentoo.org/~spock/projects/uvesafb/
 S:	Maintained
 F:	Documentation/fb/uvesafb.txt
 F:	drivers/video/uvesafb.*
+
+VBUS
+M:	Gregory Haskins <ghaskins@novell.com>
+S:	Maintained
+F:	include/linux/vbus*
+F:	drivers/vbus/*
 
 VFAT/FAT/MSDOS FILESYSTEM
 M:	OGAWA Hirofumi <hirofumi@mail.parknet.co.jp>
