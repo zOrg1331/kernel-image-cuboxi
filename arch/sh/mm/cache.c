@@ -128,7 +128,7 @@ void __update_cache(struct vm_area_struct *vma,
 		return;
 
 	page = pfn_to_page(pfn);
-	if (pfn_valid(pfn) && page_mapping(page)) {
+	if (pfn_valid(pfn)) {
 		int dirty = test_and_clear_bit(PG_dcache_dirty, &page->flags);
 		if (dirty) {
 			unsigned long addr = (unsigned long)page_address(page);
@@ -164,11 +164,17 @@ void flush_cache_all(void)
 
 void flush_cache_mm(struct mm_struct *mm)
 {
+	if (boot_cpu_data.dcache.n_aliases == 0)
+		return;
+
 	cacheop_on_each_cpu(local_flush_cache_mm, mm, 1);
 }
 
 void flush_cache_dup_mm(struct mm_struct *mm)
 {
+	if (boot_cpu_data.dcache.n_aliases == 0)
+		return;
+
 	cacheop_on_each_cpu(local_flush_cache_dup_mm, mm, 1);
 }
 
