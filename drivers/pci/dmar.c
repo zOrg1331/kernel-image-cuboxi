@@ -348,12 +348,42 @@ found:
 }
 #endif
 
+#ifdef CONFIG_ACPI_NUMA
+static int __init
+dmar_parse_one_rhsa(struct acpi_dmar_header *header)
+{
+	struct acpi_dmar_rhsa *rhsa;
+	struct dmar_drhd_unit *drhd;
+
+	rhsa = (struct acpi_dmar_rhsa *)header;
+	for_each_drhd_unit(drhd) {
+		if (drhd->reg_base_addr == rhsa->base_address) {
+			int node = acpi_map_pxm_to_node(rhsa->proximity_domain);
+
+			if (!node_online(node))
+				node = -1;
+			drhd->iommu->node = node;
+			return 0;
+		}
+	}
+	WARN(1, "Your BIOS is broken; RHSA refers to non-existent DMAR unit at %llx\n"
+	     "BIOS vendor: %s; Ver: %s; Product Version: %s\n",
+	     drhd->reg_base_addr,
+	     dmi_get_system_info(DMI_BIOS_VENDOR),
+	     dmi_get_system_info(DMI_BIOS_VERSION),
+	     dmi_get_system_info(DMI_PRODUCT_VERSION));
+
+	return 0;
+}
+#endif
+
 static void __init
 dmar_table_print_dmar_entry(struct acpi_dmar_header *header)
 {
 	struct acpi_dmar_hardware_unit *drhd;
 	struct acpi_dmar_reserved_memory *rmrr;
 	struct acpi_dmar_atsr *atsr;
+	struct acpi_dmar_rhsa *rhsa;
 
 	switch (header->type) {
 	case ACPI_DMAR_TYPE_HARDWARE_UNIT:
@@ -374,6 +404,12 @@ dmar_table_print_dmar_entry(struct acpi_dmar_header *header)
 	case ACPI_DMAR_TYPE_ATSR:
 		atsr = container_of(header, struct acpi_dmar_atsr, header);
 		printk(KERN_INFO PREFIX "ATSR flags: %#x\n", atsr->flags);
+		break;
+	case ACPI_DMAR_HARDWARE_AFFINITY:
+		rhsa = container_of(header, struct acpi_dmar_rhsa, header);
+		printk(KERN_INFO PREFIX "RHSA base: %#016Lx proximity domain: %#x\n",
+		       (unsigned long long)rhsa->base_address,
+		       rhsa->proximity_domain);
 		break;
 	}
 }
@@ -459,9 +495,15 @@ parse_dmar_table(void)
 			ret = dmar_parse_one_atsr(entry_header);
 #endif
 			break;
+		case ACPI_DMAR_HARDWARE_AFFINITY:
+#ifdef CONFIG_ACPI_NUMA
+			ret = dmar_parse_one_rhsa(entry_header);
+#endif
+			break;
 		default:
 			printk(KERN_WARNING PREFIX
-				"Unknown DMAR structure type\n");
+				"Unknown DMAR structure type %d\n",
+				entry_header->type);
 			ret = 0; /* for forward compatibility */
 			break;
 		}
@@ -665,6 +707,8 @@ int alloc_iommu(struct dmar_drhd_unit *drhd)
 #endif
 	iommu->agaw = agaw;
 	iommu->msagaw = msagaw;
+
+	iommu->node = -1;
 
 	/* the registers might be more than one page */
 	map_size = max_t(int, ecap_max_iotlb_offset(iommu->ecap),
@@ -1007,6 +1051,7 @@ static void __dmar_enable_qi(struct intel_iommu *iommu)
 int dmar_enable_qi(struct intel_iommu *iommu)
 {
 	struct q_inval *qi;
+	struct page *desc_page;
 
 	if (!ecap_qis(iommu->ecap))
 		return -ENOENT;
@@ -1023,12 +1068,15 @@ int dmar_enable_qi(struct intel_iommu *iommu)
 
 	qi = iommu->qi;
 
-	qi->desc = (void *)(get_zeroed_page(GFP_ATOMIC));
-	if (!qi->desc) {
+
+	desc_page = alloc_pages_node(iommu->node, GFP_ATOMIC | __GFP_ZERO, 0);
+	if (!desc_page) {
 		kfree(qi);
 		iommu->qi = 0;
 		return -ENOMEM;
 	}
+
+	qi->desc = page_address(desc_page);
 
 	qi->desc_status = kmalloc(QI_LENGTH * sizeof(int), GFP_ATOMIC);
 	if (!qi->desc_status) {
