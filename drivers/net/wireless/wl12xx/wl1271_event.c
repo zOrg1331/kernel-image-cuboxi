@@ -26,6 +26,7 @@
 #include "wl1271_spi.h"
 #include "wl1271_event.h"
 #include "wl1271_ps.h"
+#include "wl12xx_80211.h"
 
 static int wl1271_event_scan_complete(struct wl1271 *wl,
 				      struct event_mailbox *mbox)
@@ -34,6 +35,9 @@ static int wl1271_event_scan_complete(struct wl1271 *wl,
 		     mbox->scheduled_scan_status);
 
 	if (wl->scanning) {
+		int size = sizeof(struct wl12xx_probe_req_template);
+		wl1271_cmd_template_set(wl, CMD_TEMPL_CFG_PROBE_REQ_2_4, NULL,
+					size);
 		mutex_unlock(&wl->mutex);
 		ieee80211_scan_completed(wl->hw, false);
 		mutex_lock(&wl->mutex);
@@ -66,14 +70,16 @@ static int wl1271_event_process(struct wl1271 *wl, struct event_mailbox *mbox)
 			return ret;
 	}
 
-	if (vector & BSS_LOSE_EVENT_ID) {
+	/*
+	 * The BSS_LOSE_EVENT_ID is only needed while psm (and hence beacon
+	 * filtering) is enabled. Without PSM, the stack will receive all
+	 * beacons and can detect beacon loss by itself.
+	 */
+	if (vector & BSS_LOSE_EVENT_ID && wl->psm) {
 		wl1271_debug(DEBUG_EVENT, "BSS_LOSE_EVENT");
 
-		if (wl->psm_requested && wl->psm) {
-			ret = wl1271_ps_set_mode(wl, STATION_ACTIVE_MODE);
-			if (ret < 0)
-				return ret;
-		}
+		/* indicate to the stack, that beacons have been lost */
+		ieee80211_beacon_loss(wl->vif);
 	}
 
 	return 0;
@@ -92,7 +98,7 @@ int wl1271_event_unmask(struct wl1271 *wl)
 
 void wl1271_event_mbox_config(struct wl1271 *wl)
 {
-	wl->mbox_ptr[0] = wl1271_reg_read32(wl, REG_EVENT_MAILBOX_PTR);
+	wl->mbox_ptr[0] = wl1271_spi_read32(wl, REG_EVENT_MAILBOX_PTR);
 	wl->mbox_ptr[1] = wl->mbox_ptr[0] + sizeof(struct event_mailbox);
 
 	wl1271_debug(DEBUG_EVENT, "MBOX ptrs: 0x%x 0x%x",
@@ -110,8 +116,8 @@ int wl1271_event_handle(struct wl1271 *wl, u8 mbox_num)
 		return -EINVAL;
 
 	/* first we read the mbox descriptor */
-	wl1271_spi_mem_read(wl, wl->mbox_ptr[mbox_num], &mbox,
-			    sizeof(struct event_mailbox));
+	wl1271_spi_read(wl, wl->mbox_ptr[mbox_num], &mbox,
+			sizeof(struct event_mailbox), false);
 
 	/* process the descriptor */
 	ret = wl1271_event_process(wl, &mbox);
@@ -119,7 +125,7 @@ int wl1271_event_handle(struct wl1271 *wl, u8 mbox_num)
 		return ret;
 
 	/* then we let the firmware know it can go on...*/
-	wl1271_reg_write32(wl, ACX_REG_INTERRUPT_TRIG, INTR_TRIG_EVENT_ACK);
+	wl1271_spi_write32(wl, ACX_REG_INTERRUPT_TRIG, INTR_TRIG_EVENT_ACK);
 
 	return 0;
 }

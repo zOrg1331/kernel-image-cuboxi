@@ -137,7 +137,12 @@ int wl1271_acx_tx_power(struct wl1271 *wl, int power)
 		goto out;
 	}
 
-	acx->current_tx_power = power * 10;
+	/*
+	 * FIXME: This is a workaround needed while we don't the correct
+	 * calibration, to avoid distortions
+	 */
+	/* acx->current_tx_power = power * 10; */
+	acx->current_tx_power = 70;
 
 	ret = wl1271_cmd_configure(wl, DOT11_CUR_TX_PWR, acx, sizeof(*acx));
 	if (ret < 0) {
@@ -300,7 +305,8 @@ out:
 	return ret;
 }
 
-int wl1271_acx_group_address_tbl(struct wl1271 *wl)
+int wl1271_acx_group_address_tbl(struct wl1271 *wl, bool enable,
+				 void *mc_list, u32 mc_list_len)
 {
 	struct acx_dot11_grp_addr_tbl *acx;
 	int ret;
@@ -314,9 +320,9 @@ int wl1271_acx_group_address_tbl(struct wl1271 *wl)
 	}
 
 	/* MAC filtering */
-	acx->enabled = 0;
-	acx->num_groups = 0;
-	memset(acx->mac_table, 0, ADDRESS_GROUP_MAX_LEN);
+	acx->enabled = enable;
+	acx->num_groups = mc_list_len;
+	memcpy(acx->mac_table, mc_list, mc_list_len * ETH_ALEN);
 
 	ret = wl1271_cmd_configure(wl, DOT11_GROUP_ADDRESS_TBL,
 				   acx, sizeof(*acx));
@@ -385,7 +391,7 @@ out:
 	return ret;
 }
 
-int wl1271_acx_beacon_filter_opt(struct wl1271 *wl)
+int wl1271_acx_beacon_filter_opt(struct wl1271 *wl, bool enable_filter)
 {
 	struct acx_beacon_filter_option *beacon_filter;
 	int ret;
@@ -398,7 +404,7 @@ int wl1271_acx_beacon_filter_opt(struct wl1271 *wl)
 		goto out;
 	}
 
-	beacon_filter->enable = 0;
+	beacon_filter->enable = enable_filter;
 	beacon_filter->max_num_beacons = 0;
 
 	ret = wl1271_cmd_configure(wl, ACX_BEACON_FILTER_OPT,
@@ -416,6 +422,7 @@ out:
 int wl1271_acx_beacon_filter_table(struct wl1271 *wl)
 {
 	struct acx_beacon_filter_ie_table *ie_table;
+	int idx = 0;
 	int ret;
 
 	wl1271_debug(DEBUG_ACX, "acx beacon filter table");
@@ -426,8 +433,10 @@ int wl1271_acx_beacon_filter_table(struct wl1271 *wl)
 		goto out;
 	}
 
-	ie_table->num_ie = 0;
-	memset(ie_table->table, 0, BEACON_FILTER_TABLE_MAX_SIZE);
+	/* configure default beacon pass-through rules */
+	ie_table->num_ie = 1;
+	ie_table->table[idx++] = BEACON_FILTER_IE_ID_CHANNEL_SWITCH_ANN;
+	ie_table->table[idx++] = BEACON_RULE_PASS_ON_APPEARANCE;
 
 	ret = wl1271_cmd_configure(wl, ACX_BEACON_FILTER_TABLE,
 				   ie_table, sizeof(*ie_table));
@@ -440,6 +449,36 @@ out:
 	kfree(ie_table);
 	return ret;
 }
+
+int wl1271_acx_conn_monit_params(struct wl1271 *wl)
+{
+	struct acx_conn_monit_params *acx;
+	int ret;
+
+	wl1271_debug(DEBUG_ACX, "acx connection monitor parameters");
+
+	acx = kzalloc(sizeof(*acx), GFP_KERNEL);
+	if (!acx) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	acx->synch_fail_thold = SYNCH_FAIL_DEFAULT_THRESHOLD;
+	acx->bss_lose_timeout = NO_BEACON_DEFAULT_TIMEOUT;
+
+	ret = wl1271_cmd_configure(wl, ACX_CONN_MONIT_PARAMS,
+				   acx, sizeof(*acx));
+	if (ret < 0) {
+		wl1271_warning("failed to set connection monitor "
+			       "parameters: %d", ret);
+		goto out;
+	}
+
+out:
+	kfree(acx);
+	return ret;
+}
+
 
 int wl1271_acx_sg_enable(struct wl1271 *wl)
 {
@@ -703,7 +742,7 @@ int wl1271_acx_statistics(struct wl1271 *wl, struct acx_statistics *stats)
 	return 0;
 }
 
-int wl1271_acx_rate_policies(struct wl1271 *wl)
+int wl1271_acx_rate_policies(struct wl1271 *wl, u32 enabled_rates)
 {
 	struct acx_rate_policy *acx;
 	int ret = 0;
@@ -719,7 +758,7 @@ int wl1271_acx_rate_policies(struct wl1271 *wl)
 
 	/* configure one default (one-size-fits-all) rate class */
 	acx->rate_class_cnt = 1;
-	acx->rate_class[0].enabled_rates = ACX_RATE_MASK_ALL;
+	acx->rate_class[0].enabled_rates = enabled_rates;
 	acx->rate_class[0].short_retry_limit = ACX_RATE_RETRY_LIMIT;
 	acx->rate_class[0].long_retry_limit = ACX_RATE_RETRY_LIMIT;
 	acx->rate_class[0].aflags = 0;
@@ -958,4 +997,76 @@ int wl1271_acx_init_rx_interrupt(struct wl1271 *wl)
 out:
 	kfree(rx_conf);
 	return ret;
+}
+
+int wl1271_acx_smart_reflex(struct wl1271 *wl)
+{
+	struct acx_smart_reflex_state *sr_state = NULL;
+	struct acx_smart_reflex_config_params *sr_param = NULL;
+	int ret;
+
+	wl1271_debug(DEBUG_ACX, "acx smart reflex");
+
+	sr_param = kzalloc(sizeof(*sr_param), GFP_KERNEL);
+	if (!sr_param) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	/* set cryptic smart reflex parameters - source TI reference code */
+	sr_param->error_table[0].len = 0x07;
+	sr_param->error_table[0].upper_limit = 0x03;
+	sr_param->error_table[0].values[0] = 0x18;
+	sr_param->error_table[0].values[1] = 0x10;
+	sr_param->error_table[0].values[2] = 0x05;
+	sr_param->error_table[0].values[3] = 0xfb;
+	sr_param->error_table[0].values[4] = 0xf0;
+	sr_param->error_table[0].values[5] = 0xe8;
+
+	sr_param->error_table[1].len = 0x07;
+	sr_param->error_table[1].upper_limit = 0x03;
+	sr_param->error_table[1].values[0] = 0x18;
+	sr_param->error_table[1].values[1] = 0x10;
+	sr_param->error_table[1].values[2] = 0x05;
+	sr_param->error_table[1].values[3] = 0xf6;
+	sr_param->error_table[1].values[4] = 0xf0;
+	sr_param->error_table[1].values[5] = 0xe8;
+
+	sr_param->error_table[2].len = 0x07;
+	sr_param->error_table[2].upper_limit = 0x03;
+	sr_param->error_table[2].values[0] = 0x18;
+	sr_param->error_table[2].values[1] = 0x10;
+	sr_param->error_table[2].values[2] = 0x05;
+	sr_param->error_table[2].values[3] = 0xfb;
+	sr_param->error_table[2].values[4] = 0xf0;
+	sr_param->error_table[2].values[5] = 0xe8;
+
+	ret = wl1271_cmd_configure(wl, ACX_SET_SMART_REFLEX_PARAMS,
+				   sr_param, sizeof(*sr_param));
+	if (ret < 0) {
+		wl1271_warning("failed to set smart reflex params: %d", ret);
+		goto out;
+	}
+
+	sr_state = kzalloc(sizeof(*sr_state), GFP_KERNEL);
+	if (!sr_state) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	/* enable smart reflex */
+	sr_state->enable = 1;
+
+	ret = wl1271_cmd_configure(wl, ACX_SET_SMART_REFLEX_STATE,
+				   sr_state, sizeof(*sr_state));
+	if (ret < 0) {
+		wl1271_warning("failed to set smart reflex params: %d", ret);
+		goto out;
+	}
+
+out:
+	kfree(sr_state);
+	kfree(sr_param);
+	return ret;
+
 }

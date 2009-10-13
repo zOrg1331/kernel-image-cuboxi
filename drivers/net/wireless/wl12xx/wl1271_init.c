@@ -117,7 +117,7 @@ static int wl1271_init_phy_config(struct wl1271 *wl)
 	if (ret < 0)
 		return ret;
 
-	ret = wl1271_acx_group_address_tbl(wl);
+	ret = wl1271_acx_group_address_tbl(wl, true, NULL, 0);
 	if (ret < 0)
 		return ret;
 
@@ -136,7 +136,8 @@ static int wl1271_init_beacon_filter(struct wl1271 *wl)
 {
 	int ret;
 
-	ret = wl1271_acx_beacon_filter_opt(wl);
+	/* disable beacon filtering at this stage */
+	ret = wl1271_acx_beacon_filter_opt(wl, false);
 	if (ret < 0)
 		return ret;
 
@@ -201,7 +202,7 @@ static int wl1271_init_general_parms(struct wl1271 *wl)
 	gen_parms->clk_valid_on_wakeup = 0;
 	gen_parms->dc2dcmode = 0;
 	gen_parms->single_dual_band = 0;
-	gen_parms->tx_bip_fem_autodetect = 1;
+	gen_parms->tx_bip_fem_autodetect = 0;
 	gen_parms->tx_bip_fem_manufacturer = 1;
 	gen_parms->settings = 1;
 
@@ -323,6 +324,11 @@ int wl1271_hw_init(struct wl1271 *wl)
 	if (ret < 0)
 		goto out_free_memmap;
 
+	/* Initialize connection monitoring thresholds */
+	ret = wl1271_acx_conn_monit_params(wl);
+	if (ret < 0)
+		goto out_free_memmap;
+
 	/* Beacon filtering */
 	ret = wl1271_init_beacon_filter(wl);
 	if (ret < 0)
@@ -369,7 +375,7 @@ int wl1271_hw_init(struct wl1271 *wl)
 		goto out_free_memmap;
 
 	/* Configure TX rate classes */
-	ret = wl1271_acx_rate_policies(wl);
+	ret = wl1271_acx_rate_policies(wl, ACX_RATE_MASK_ALL);
 	if (ret < 0)
 		goto out_free_memmap;
 
@@ -388,10 +394,16 @@ int wl1271_hw_init(struct wl1271 *wl)
 	if (ret < 0)
 		goto out_free_memmap;
 
+	/* Configure smart reflex */
+	ret = wl1271_acx_smart_reflex(wl);
+	if (ret < 0)
+		goto out_free_memmap;
+
 	return 0;
 
  out_free_memmap:
 	kfree(wl->target_mem_map);
+	wl->target_mem_map = NULL;
 
 	return ret;
 }
