@@ -37,15 +37,86 @@
 #include <linux/zlib.h>
 #include <linux/magic.h>
 
+#include <crypto/compress.h>
+
+#include <net/netlink.h>
+
 #include "squashfs_fs.h"
 #include "squashfs_fs_sb.h"
 #include "squashfs_fs_i.h"
 #include "squashfs.h"
 
+
+static int squashfs_setup_zlib(struct squashfs_sb_info *msblk)
+{
+	int err = -EOPNOTSUPP;
+
+#ifdef CONFIG_SQUASHFS_SUPPORT_ZLIB
+	struct {
+		struct nlattr nla;
+		int val;
+	} params = {
+		.nla = {
+			.nla_len	= nla_attr_size(sizeof(int)),
+			.nla_type	= ZLIB_DECOMP_WINDOWBITS,
+		},
+		.val			= DEF_WBITS,
+	};
+
+	msblk->tfm = crypto_alloc_pcomp("zlib", 0,
+					CRYPTO_ALG_ASYNC);
+	if (IS_ERR(msblk->tfm)) {
+		ERROR("Failed to load zlib crypto module\n");
+		return PTR_ERR(msblk->tfm);
+	}
+
+	err = crypto_decompress_setup(msblk->tfm, &params, sizeof(params));
+	if (err) {
+		ERROR("Failed to set up decompression parameters\n");
+		crypto_free_pcomp(msblk->tfm);
+	}
+#endif
+
+	return err;
+}
+
+static int squashfs_setup_lzma(struct squashfs_sb_info *msblk)
+{
+	int err = -EOPNOTSUPP;
+
+#ifdef CONFIG_SQUASHFS_SUPPORT_LZMA
+	struct {
+		struct nlattr nla;
+		int val;
+	} params = {
+		.nla = {
+			.nla_len	= nla_attr_size(sizeof(int)),
+			.nla_type	= UNLZMA_DECOMP_OUT_BUFFERS,
+		},
+		.val = (msblk->block_size / PAGE_CACHE_SIZE) + 1
+	};
+
+	msblk->tfm = crypto_alloc_pcomp("lzma", 0,
+					CRYPTO_ALG_ASYNC);
+	if (IS_ERR(msblk->tfm)) {
+		ERROR("Failed to load lzma crypto module\n");
+		return PTR_ERR(msblk->tfm);
+	}
+
+	err = crypto_decompress_setup(msblk->tfm, &params, sizeof(params));
+	if (err) {
+		ERROR("Failed to set up decompression parameters\n");
+		crypto_free_pcomp(msblk->tfm);
+	}
+#endif
+
+	return err;
+}
+
 static struct file_system_type squashfs_fs_type;
 static struct super_operations squashfs_super_ops;
 
-static int supported_squashfs_filesystem(short major, short minor, short comp)
+static int supported_squashfs_filesystem(short major, short minor)
 {
 	if (major < SQUASHFS_MAJOR) {
 		ERROR("Major/Minor mismatch, older Squashfs %d.%d "
@@ -57,9 +128,6 @@ static int supported_squashfs_filesystem(short major, short minor, short comp)
 		ERROR("Please update your kernel\n");
 		return -EINVAL;
 	}
-
-	if (comp != ZLIB_COMPRESSION)
-		return -EINVAL;
 
 	return 0;
 }
@@ -86,16 +154,10 @@ static int squashfs_fill_super(struct super_block *sb, void *data, int silent)
 	}
 	msblk = sb->s_fs_info;
 
-	msblk->stream.workspace = kmalloc(zlib_inflate_workspacesize(),
-		GFP_KERNEL);
-	if (msblk->stream.workspace == NULL) {
-		ERROR("Failed to allocate zlib workspace\n");
-		goto failure;
-	}
-
 	sblk = kzalloc(sizeof(*sblk), GFP_KERNEL);
 	if (sblk == NULL) {
 		ERROR("Failed to allocate squashfs_super_block\n");
+		err = -ENOMEM;
 		goto failure;
 	}
 
@@ -129,10 +191,28 @@ static int squashfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto failed_mount;
 	}
 
+	/* Check block size for sanity */
+	msblk->block_size = le32_to_cpu(sblk->block_size);
+	if (msblk->block_size > SQUASHFS_FILE_MAX_SIZE)
+		goto failed_mount;
+
 	/* Check the MAJOR & MINOR versions and compression type */
 	err = supported_squashfs_filesystem(le16_to_cpu(sblk->s_major),
-			le16_to_cpu(sblk->s_minor),
-			le16_to_cpu(sblk->compression));
+			le16_to_cpu(sblk->s_minor));
+	if (err < 0)
+		goto failed_mount;
+
+	switch(le16_to_cpu(sblk->compression)) {
+	case ZLIB_COMPRESSION:
+		err = squashfs_setup_zlib(msblk);
+		break;
+	case LZMA_COMPRESSION:
+		err = squashfs_setup_lzma(msblk);
+		break;
+	default:
+		err = -EINVAL;
+		break;
+	}
 	if (err < 0)
 		goto failed_mount;
 
@@ -150,11 +230,6 @@ static int squashfs_fill_super(struct super_block *sb, void *data, int silent)
 	msblk->bytes_used = le64_to_cpu(sblk->bytes_used);
 	if (msblk->bytes_used < 0 || msblk->bytes_used >
 			i_size_read(sb->s_bdev->bd_inode))
-		goto failed_mount;
-
-	/* Check block size for sanity */
-	msblk->block_size = le32_to_cpu(sblk->block_size);
-	if (msblk->block_size > SQUASHFS_FILE_MAX_SIZE)
 		goto failed_mount;
 
 	/*
@@ -288,23 +363,19 @@ allocate_root:
 	return 0;
 
 failed_mount:
+	if (msblk->tfm)
+		crypto_free_pcomp(msblk->tfm);
 	squashfs_cache_delete(msblk->block_cache);
 	squashfs_cache_delete(msblk->fragment_cache);
 	squashfs_cache_delete(msblk->read_page);
 	kfree(msblk->inode_lookup_table);
 	kfree(msblk->fragment_index);
 	kfree(msblk->id_table);
-	kfree(msblk->stream.workspace);
-	kfree(sb->s_fs_info);
-	sb->s_fs_info = NULL;
 	kfree(sblk);
-	return err;
-
 failure:
-	kfree(msblk->stream.workspace);
 	kfree(sb->s_fs_info);
 	sb->s_fs_info = NULL;
-	return -ENOMEM;
+	return err;
 }
 
 
@@ -346,7 +417,7 @@ static void squashfs_put_super(struct super_block *sb)
 		kfree(sbi->id_table);
 		kfree(sbi->fragment_index);
 		kfree(sbi->meta_index);
-		kfree(sbi->stream.workspace);
+		crypto_free_pcomp(sbi->tfm);
 		kfree(sb->s_fs_info);
 		sb->s_fs_info = NULL;
 	}
