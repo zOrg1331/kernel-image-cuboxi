@@ -1,5 +1,5 @@
-#ifndef _TRACE_EVENTS_H
-#define _TRACE_EVENTS_H
+#ifndef __PERF_TRACE_EVENTS_H
+#define __PERF_TRACE_EVENTS_H
 
 #include "parse-events.h"
 
@@ -26,6 +26,9 @@ enum {
 enum format_flags {
 	FIELD_IS_ARRAY		= 1,
 	FIELD_IS_POINTER	= 2,
+	FIELD_IS_SIGNED		= 4,
+	FIELD_IS_STRING		= 8,
+	FIELD_IS_DYNAMIC	= 16,
 };
 
 struct format_field {
@@ -132,6 +135,7 @@ struct event {
 	int			flags;
 	struct format		format;
 	struct print_fmt	print_fmt;
+	char			*system;
 };
 
 enum {
@@ -154,7 +158,7 @@ struct record *trace_read_data(int cpu);
 
 void parse_set_info(int nr_cpus, int long_sz);
 
-void trace_report(void);
+void trace_report(int fd);
 
 void *malloc_or_die(unsigned int size);
 
@@ -166,7 +170,7 @@ void print_funcs(void);
 void print_printk(void);
 
 int parse_ftrace_file(char *buf, unsigned long size);
-int parse_event_file(char *buf, unsigned long size, char *system);
+int parse_event_file(char *buf, unsigned long size, char *sys);
 void print_event(int cpu, void *data, int size, unsigned long long nsecs,
 		  char *comm);
 
@@ -240,6 +244,6 @@ unsigned long long
 raw_field_value(struct event *event, const char *name, void *data);
 void *raw_field_ptr(struct event *event, const char *name, void *data);
 
-void read_tracing_data(struct perf_event_attr *pattrs, int nb_events);
+void read_tracing_data(int fd, struct perf_event_attr *pattrs, int nb_events);
 
-#endif /* _TRACE_EVENTS_H */
+#endif /* __PERF_TRACE_EVENTS_H */
