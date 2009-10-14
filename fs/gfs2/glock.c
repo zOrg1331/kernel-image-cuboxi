@@ -39,8 +39,9 @@
 #include "super.h"
 #include "util.h"
 #include "bmap.h"
+
 #define CREATE_TRACE_POINTS
-#include "trace_gfs2.h"
+#include <trace/events/gfs2.h>
 
 struct gfs2_gl_hash_bucket {
         struct hlist_head hb_list;
@@ -672,12 +673,17 @@ out:
 	return;
 
 out_sched:
+	clear_bit(GLF_LOCK, &gl->gl_flags);
+	smp_mb__after_clear_bit();
 	gfs2_glock_hold(gl);
 	if (queue_delayed_work(glock_workqueue, &gl->gl_work, 0) == 0)
 		gfs2_glock_put_nolock(gl);
+	return;
+
 out_unlock:
 	clear_bit(GLF_LOCK, &gl->gl_flags);
-	goto out;
+	smp_mb__after_clear_bit();
+	return;
 }
 
 static void delete_work_func(struct work_struct *work)
@@ -1375,10 +1381,11 @@ static int gfs2_shrink_glock_memory(int nr, gfp_t gfp_mask)
 				handle_callback(gl, LM_ST_UNLOCKED, 0);
 				nr--;
 			}
+			clear_bit(GLF_LOCK, &gl->gl_flags);
+			smp_mb__after_clear_bit();
 			if (queue_delayed_work(glock_workqueue, &gl->gl_work, 0) == 0)
 				gfs2_glock_put_nolock(gl);
 			spin_unlock(&gl->gl_spin);
-			clear_bit(GLF_LOCK, &gl->gl_flags);
 			spin_lock(&lru_lock);
 			continue;
 		}

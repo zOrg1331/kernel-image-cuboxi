@@ -10,8 +10,8 @@
 #include <linux/buffer_head.h>
 #include <linux/dlmconstants.h>
 #include <linux/gfs2_ondisk.h>
-#include "incore.h"
-#include "glock.h"
+#include "../../../fs/gfs2/incore.h"
+#include "../../../fs/gfs2/glock.h"
 
 #define dlm_state_name(nn) { DLM_LOCK_##nn, #nn }
 #define glock_trace_name(x) __print_symbolic(x,		\
@@ -400,8 +400,5 @@ TRACE_EVENT(gfs2_block_alloc,
 #endif /* _TRACE_GFS2_H */
 
 /* This part must be outside protection */
-#undef TRACE_INCLUDE_PATH
-#define TRACE_INCLUDE_PATH .
-#define TRACE_INCLUDE_FILE trace_gfs2
 #include <trace/define_trace.h>
 
