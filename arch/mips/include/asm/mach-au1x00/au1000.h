@@ -130,6 +130,36 @@ static inline int au1xxx_cpu_needs_config_od(void)
 	return 0;
 }
 
+#define ALCHEMY_CPU_UNKNOWN	-1
+#define ALCHEMY_CPU_AU1000	0
+#define ALCHEMY_CPU_AU1500	1
+#define ALCHEMY_CPU_AU1100	2
+#define ALCHEMY_CPU_AU1550	3
+#define ALCHEMY_CPU_AU1200	4
+
+static inline int alchemy_get_cputype(void)
+{
+	switch (read_c0_prid() & 0xffff0000) {
+	case 0x00030000:
+		return ALCHEMY_CPU_AU1000;
+		break;
+	case 0x01030000:
+		return ALCHEMY_CPU_AU1500;
+		break;
+	case 0x02030000:
+		return ALCHEMY_CPU_AU1100;
+		break;
+	case 0x03030000:
+		return ALCHEMY_CPU_AU1550;
+		break;
+	case 0x04030000:
+		return ALCHEMY_CPU_AU1200;
+		break;
+	}
+
+	return ALCHEMY_CPU_UNKNOWN;
+}
+
 /* arch/mips/au1000/common/clocks.c */
 extern void set_au1x00_speed(unsigned int new_freq);
 extern unsigned int get_au1x00_speed(void);
@@ -142,21 +172,6 @@ void au1xxx_save_and_sleep(void);
 void au_sleep(void);
 void save_au1xxx_intctl(void);
 void restore_au1xxx_intctl(void);
-
-/*
- * Every board describes its IRQ mapping with this table.
- */
-struct au1xxx_irqmap {
-	int	im_irq;
-	int	im_type;
-	int	im_request;
-};
-
-/* core calls this function to let boards initialize other IRQ sources */
-void board_init_irq(void);
-
-/* boards call this to register additional (GPIO) interrupts */
-void au1xxx_setup_irqmap(struct au1xxx_irqmap *map, int count);
 
 #endif /* !defined (_LANGUAGE_ASSEMBLY) */
 
@@ -1738,6 +1753,20 @@ enum soc_au1200_ints {
 #define PCI_LAST_DEVFN	0
 
 #endif
+
+/*
+ * All Au1xx0 SOCs have a PCMCIA controller.
+ * We setup our 32-bit pseudo addresses to be equal to the
+ * 36-bit addr >> 4, to make it easier to check the address
+ * and fix it.
+ * The PCMCIA socket 0 physical attribute address is 0xF 4000 0000.
+ * The pseudo address we use is 0xF400 0000. Any address over
+ * 0xF400 0000 is a PCMCIA pseudo address.
+ */
+#define PCMCIA_IO_PSEUDO_PHYS	(PCMCIA_IO_PHYS_ADDR >> 4)
+#define PCMCIA_ATTR_PSEUDO_PHYS	(PCMCIA_ATTR_PHYS_ADDR >> 4)
+#define PCMCIA_MEM_PSEUDO_PHYS	(PCMCIA_MEM_PHYS_ADDR >> 4)
+#define PCMCIA_PSEUDO_END	(0xffffffff)
 
 #ifndef _LANGUAGE_ASSEMBLY
 typedef volatile struct {
