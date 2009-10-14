@@ -1,0 +1,87 @@
+Importing driver-core.current based on 2.6.32-rc4
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.32-rc4-git2
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 2caa731819a633bec5a56736e64c562b7e193666
+HEAD is now at 2caa731 Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/jbarnes/pci-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-chips-move-ds1682-to-drivers-misc.patch
+i2c-piix4-modify-code-name-sb900-to-hudson-2.patch
+i2c-powermac-01-multiple-msg-not-supported.patch
+i2c-powermac-02-refactor-xfer.patch
+i2c-powermac-03-report-errors.patch
+i2c-voodoo3-delete.patch
+i2c-prevent-priority-inversion-on-top-of-bus-lock.patch
+i2c-no-I2C_M_REV_DIR_ADDR.patch
+i2c-add-missing-devinit.patch
+i2c-core-01-drop-obsolete-force-module-parameters.patch
+i2c-core-02-detect-drop-kind-parameter.patch
+misc-ics932s401-cleanup-detect.patch
+i2c-remove-big-kernel-lock-from-i2cdev_open.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 22ef4d3...3226570 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.32-rc4-git2
+$ cd ../quilt-tmp
+$ git reset --hard 2caa731819a633bec5a56736e64c562b7e193666
+HEAD is now at 2caa731 Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/jbarnes/pci-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-w83627hf-drop-force_addr.patch
+hwmon-w83627hf-no-sio-globals.patch
+hwmon-lm73-new-driver.patch
+hwmon-adm1021-cleanup-detect.patch
+hwmon-adm1025-cleanup-detect.patch
+hwmon-lm77-cleanup-detect.patch
+hwmon-lm83-cleanup-detect.patch
+hwmon-lm85-cleanup-detect.patch
+hwmon-lm90-cleanup-detect.patch
+hwmon-tmp401-tmp421-cleanup-detect.patch
+hwmon-w83781d-cleanup-detect.patch
+hwmon-w83791d-cleanup-detect.patch
+hwmon-w83792d-cleanup-detect.patch
+hwmon-w83l785ts-cleanup-detect.patch
+hwmon-cleanup-detect-functions.patch
+hwmon-w83791d-remove-experimental-dependency.patch
+hwmon-add-freescale-mc13783-adc-driver.patch
+hwmon-thmc50-stop-using-I2C_CLIENT_MODULE_PARM.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 996b5f5...f811272 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on origin/master
+	quilt series is empty
+$ git update-ref refs/heads/quilt/kernel-doc 80f506918fdaaca6b574ba931536a58ce015c7be
+Importing rr based on v2.6.32-rc3-52-g0eca52a
+$ cd ../quilt-tmp
+$ git reset --hard 0eca52a92735f43462165efe00a7e394345fb38e
+HEAD is now at 0eca52a Merge git://git.kernel.org/pub/scm/linux/kernel/git/davem/ide-2.6
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+virtio:blk_revert_queue_flag_virt_addition.patch
+virtio:ids_let_header_files_include_ids_h.patch
+virtio:blk-revert-VIRTIO_BLK_F_IDENTIFY.patch
+virtio:move_virtballoon_remove_to_devexit_text.patch
+virtio:move_virtrng_remove_to_devexit_text.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + 764eedb...1cb0126 master     -> quilt/rr  (forced update)
+Importing device-mapper based on block/for-next
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
