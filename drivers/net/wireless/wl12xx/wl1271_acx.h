@@ -61,8 +61,9 @@
 					    WL1271_ACX_INTR_HW_AVAILABLE  | \
 					    WL1271_ACX_INTR_DATA)
 
-#define WL1271_INTR_MASK                   (WL1271_ACX_INTR_EVENT_A |	\
-					    WL1271_ACX_INTR_EVENT_B | \
+#define WL1271_INTR_MASK                   (WL1271_ACX_INTR_EVENT_A      | \
+					    WL1271_ACX_INTR_EVENT_B      | \
+					    WL1271_ACX_INTR_HW_AVAILABLE | \
 					    WL1271_ACX_INTR_DATA)
 
 /* Target's information element */
@@ -170,7 +171,6 @@ enum {
 #define  DP_RX_PACKET_RING_CHUNK_NUM 2
 #define  DP_TX_PACKET_RING_CHUNK_NUM 2
 #define  DP_TX_COMPLETE_TIME_OUT 20
-#define  FW_TX_CMPLT_BLOCK_SIZE 16
 
 #define TX_MSDU_LIFETIME_MIN       0
 #define TX_MSDU_LIFETIME_MAX       3000
@@ -302,8 +302,8 @@ struct acx_slot {
 } __attribute__ ((packed));
 
 
-#define ADDRESS_GROUP_MAX	(8)
-#define ADDRESS_GROUP_MAX_LEN	(ETH_ALEN * ADDRESS_GROUP_MAX)
+#define ACX_MC_ADDRESS_GROUP_MAX	(8)
+#define ADDRESS_GROUP_MAX_LEN	        (ETH_ALEN * ACX_MC_ADDRESS_GROUP_MAX)
 
 struct acx_dot11_grp_addr_tbl {
 	struct acx_header header;
@@ -313,7 +313,6 @@ struct acx_dot11_grp_addr_tbl {
 	u8 pad[2];
 	u8 mac_table[ADDRESS_GROUP_MAX_LEN];
 } __attribute__ ((packed));
-
 
 #define  RX_TIMEOUT_PS_POLL_MIN    0
 #define  RX_TIMEOUT_PS_POLL_MAX    (200000)
@@ -400,6 +399,11 @@ struct acx_beacon_filter_option {
 			   (BEACON_FILTER_TABLE_MAX_VENDOR_SPECIFIC_IE_NUM * \
 			    BEACON_FILTER_TABLE_EXTRA_VENDOR_SPECIFIC_IE_SIZE))
 
+#define BEACON_RULE_PASS_ON_CHANGE                     BIT(0)
+#define BEACON_RULE_PASS_ON_APPEARANCE                 BIT(1)
+
+#define BEACON_FILTER_IE_ID_CHANNEL_SWITCH_ANN         (37)
+
 struct acx_beacon_filter_ie_table {
 	struct acx_header header;
 
@@ -407,6 +411,16 @@ struct acx_beacon_filter_ie_table {
 	u8 table[BEACON_FILTER_TABLE_MAX_SIZE];
 	u8 pad[3];
 } __attribute__ ((packed));
+
+#define SYNCH_FAIL_DEFAULT_THRESHOLD    5     /* number of beacons */
+#define NO_BEACON_DEFAULT_TIMEOUT       (100) /* TU */
+
+struct acx_conn_monit_params {
+       struct acx_header header;
+
+       u32 synch_fail_thold; /* number of beacons missed */
+       u32 bss_lose_timeout; /* number of TU's from synch fail */
+};
 
 enum {
 	SG_ENABLE = 0,
@@ -430,6 +444,25 @@ struct acx_bt_wlan_coex {
 	u8 enable;
 	u8 pad[3];
 } __attribute__ ((packed));
+
+struct acx_smart_reflex_state {
+	struct acx_header header;
+
+	u8 enable;
+	u8 padding[3];
+};
+
+struct smart_reflex_err_table {
+	u8 len;
+	s8 upper_limit;
+	s8 values[14];
+};
+
+struct acx_smart_reflex_config_params {
+	struct acx_header header;
+
+	struct smart_reflex_err_table error_table[3];
+};
 
 #define PTA_ANTENNA_TYPE_DEF		  (0)
 #define PTA_BT_HP_MAXTIME_DEF		  (2000)
@@ -1170,6 +1203,9 @@ enum {
 	ACX_PEER_HT_CAP             = 0x0057,
 	ACX_HT_BSS_OPERATION        = 0x0058,
 	ACX_COEX_ACTIVITY           = 0x0059,
+	ACX_SET_SMART_REFLEX_DEBUG  = 0x005A,
+	ACX_SET_SMART_REFLEX_STATE  = 0x005B,
+	ACX_SET_SMART_REFLEX_PARAMS = 0x005F,
 	DOT11_RX_MSDU_LIFE_TIME     = 0x1004,
 	DOT11_CUR_TX_PWR            = 0x100D,
 	DOT11_RX_DOT11_MODE         = 0x1012,
@@ -1194,11 +1230,13 @@ int wl1271_acx_rx_msdu_life_time(struct wl1271 *wl, u32 life_time);
 int wl1271_acx_rx_config(struct wl1271 *wl, u32 config, u32 filter);
 int wl1271_acx_pd_threshold(struct wl1271 *wl);
 int wl1271_acx_slot(struct wl1271 *wl, enum acx_slot_type slot_time);
-int wl1271_acx_group_address_tbl(struct wl1271 *wl);
+int wl1271_acx_group_address_tbl(struct wl1271 *wl, bool enable,
+				 void *mc_list, u32 mc_list_len);
 int wl1271_acx_service_period_timeout(struct wl1271 *wl);
 int wl1271_acx_rts_threshold(struct wl1271 *wl, u16 rts_threshold);
-int wl1271_acx_beacon_filter_opt(struct wl1271 *wl);
+int wl1271_acx_beacon_filter_opt(struct wl1271 *wl, bool enable_filter);
 int wl1271_acx_beacon_filter_table(struct wl1271 *wl);
+int wl1271_acx_conn_monit_params(struct wl1271 *wl);
 int wl1271_acx_sg_enable(struct wl1271 *wl);
 int wl1271_acx_sg_cfg(struct wl1271 *wl);
 int wl1271_acx_cca_threshold(struct wl1271 *wl);
@@ -1209,7 +1247,7 @@ int wl1271_acx_set_preamble(struct wl1271 *wl, enum acx_preamble_type preamble);
 int wl1271_acx_cts_protect(struct wl1271 *wl,
 			    enum acx_ctsprotect_type ctsprotect);
 int wl1271_acx_statistics(struct wl1271 *wl, struct acx_statistics *stats);
-int wl1271_acx_rate_policies(struct wl1271 *wl);
+int wl1271_acx_rate_policies(struct wl1271 *wl, u32 enabled_rates);
 int wl1271_acx_ac_cfg(struct wl1271 *wl);
 int wl1271_acx_tid_cfg(struct wl1271 *wl);
 int wl1271_acx_frag_threshold(struct wl1271 *wl);
@@ -1217,5 +1255,6 @@ int wl1271_acx_tx_config_options(struct wl1271 *wl);
 int wl1271_acx_mem_cfg(struct wl1271 *wl);
 int wl1271_acx_init_mem_config(struct wl1271 *wl);
 int wl1271_acx_init_rx_interrupt(struct wl1271 *wl);
+int wl1271_acx_smart_reflex(struct wl1271 *wl);
 
 #endif /* __WL1271_ACX_H__ */
