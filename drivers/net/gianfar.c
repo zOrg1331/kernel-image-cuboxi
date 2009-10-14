@@ -147,6 +147,208 @@ MODULE_AUTHOR("Freescale Semiconductor, Inc");
 MODULE_DESCRIPTION("Gianfar Ethernet Driver");
 MODULE_LICENSE("GPL");
 
+static void gfar_init_rxbdp(struct net_device *dev, struct rxbd8 *bdp,
+			    dma_addr_t buf)
+{
+	struct gfar_private *priv = netdev_priv(dev);
+	u32 lstatus;
+
+	bdp->bufPtr = buf;
+
+	lstatus = BD_LFLAG(RXBD_EMPTY | RXBD_INTERRUPT);
+	if (bdp == priv->rx_bd_base + priv->rx_ring_size - 1)
+		lstatus |= BD_LFLAG(RXBD_WRAP);
+
+	eieio();
+
+	bdp->lstatus = lstatus;
+}
+
+static int gfar_init_bds(struct net_device *ndev)
+{
+	struct gfar_private *priv = netdev_priv(ndev);
+	struct txbd8 *txbdp;
+	struct rxbd8 *rxbdp;
+	int i;
+
+	/* Initialize some variables in our dev structure */
+	priv->num_txbdfree = priv->tx_ring_size;
+	priv->dirty_tx = priv->cur_tx = priv->tx_bd_base;
+	priv->cur_rx = priv->rx_bd_base;
+	priv->skb_curtx = priv->skb_dirtytx = 0;
+	priv->skb_currx = 0;
+
+	/* Initialize Transmit Descriptor Ring */
+	txbdp = priv->tx_bd_base;
+	for (i = 0; i < priv->tx_ring_size; i++) {
+		txbdp->lstatus = 0;
+		txbdp->bufPtr = 0;
+		txbdp++;
+	}
+
+	/* Set the last descriptor in the ring to indicate wrap */
+	txbdp--;
+	txbdp->status |= TXBD_WRAP;
+
+	rxbdp = priv->rx_bd_base;
+	for (i = 0; i < priv->rx_ring_size; i++) {
+		struct sk_buff *skb = priv->rx_skbuff[i];
+
+		if (skb) {
+			gfar_init_rxbdp(ndev, rxbdp, rxbdp->bufPtr);
+		} else {
+			skb = gfar_new_skb(ndev);
+			if (!skb) {
+				pr_err("%s: Can't allocate RX buffers\n",
+				       ndev->name);
+				return -ENOMEM;
+			}
+			priv->rx_skbuff[i] = skb;
+
+			gfar_new_rxbdp(ndev, rxbdp, skb);
+		}
+
+		rxbdp++;
+	}
+
+	return 0;
+}
+
+static int gfar_alloc_skb_resources(struct net_device *ndev)
+{
+	void *vaddr;
+	int i;
+	struct gfar_private *priv = netdev_priv(ndev);
+	struct device *dev = &priv->ofdev->dev;
+
+	/* Allocate memory for the buffer descriptors */
+	vaddr = dma_alloc_coherent(dev,
+			sizeof(*priv->tx_bd_base) * priv->tx_ring_size +
+			sizeof(*priv->rx_bd_base) * priv->rx_ring_size,
+			&priv->tx_bd_dma_base, GFP_KERNEL);
+	if (!vaddr) {
+		if (netif_msg_ifup(priv))
+			pr_err("%s: Could not allocate buffer descriptors!\n",
+			       ndev->name);
+		return -ENOMEM;
+	}
+
+	priv->tx_bd_base = vaddr;
+
+	/* Start the rx descriptor ring where the tx ring leaves off */
+	vaddr = vaddr + sizeof(*priv->tx_bd_base) * priv->tx_ring_size;
+	priv->rx_bd_base = vaddr;
+
+	/* Setup the skbuff rings */
+	priv->tx_skbuff = kmalloc(sizeof(*priv->tx_skbuff) *
+				  priv->tx_ring_size, GFP_KERNEL);
+	if (!priv->tx_skbuff) {
+		if (netif_msg_ifup(priv))
+			pr_err("%s: Could not allocate tx_skbuff\n",
+			       ndev->name);
+		goto cleanup;
+	}
+
+	for (i = 0; i < priv->tx_ring_size; i++)
+		priv->tx_skbuff[i] = NULL;
+
+	priv->rx_skbuff = kmalloc(sizeof(*priv->rx_skbuff) *
+				  priv->rx_ring_size, GFP_KERNEL);
+	if (!priv->rx_skbuff) {
+		if (netif_msg_ifup(priv))
+			pr_err("%s: Could not allocate rx_skbuff\n",
+			       ndev->name);
+		goto cleanup;
+	}
+
+	for (i = 0; i < priv->rx_ring_size; i++)
+		priv->rx_skbuff[i] = NULL;
+
+	if (gfar_init_bds(ndev))
+		goto cleanup;
+
+	return 0;
+
+cleanup:
+	free_skb_resources(priv);
+	return -ENOMEM;
+}
+
+static void gfar_init_mac(struct net_device *ndev)
+{
+	struct gfar_private *priv = netdev_priv(ndev);
+	struct gfar __iomem *regs = priv->regs;
+	u32 rctrl = 0;
+	u32 tctrl = 0;
+	u32 attrs = 0;
+
+	/* enet DMA only understands physical addresses */
+	gfar_write(&regs->tbase0, priv->tx_bd_dma_base);
+	gfar_write(&regs->rbase0, priv->tx_bd_dma_base +
+				  sizeof(*priv->tx_bd_base) *
+				  priv->tx_ring_size);
+
+	/* Configure the coalescing support */
+	gfar_write(&regs->txic, 0);
+	if (priv->txcoalescing)
+		gfar_write(&regs->txic, priv->txic);
+
+	gfar_write(&regs->rxic, 0);
+	if (priv->rxcoalescing)
+		gfar_write(&regs->rxic, priv->rxic);
+
+	if (priv->rx_csum_enable)
+		rctrl |= RCTRL_CHECKSUMMING;
+
+	if (priv->extended_hash) {
+		rctrl |= RCTRL_EXTHASH;
+
+		gfar_clear_exact_match(ndev);
+		rctrl |= RCTRL_EMEN;
+	}
+
+	if (priv->padding) {
+		rctrl &= ~RCTRL_PAL_MASK;
+		rctrl |= RCTRL_PADDING(priv->padding);
+	}
+
+	/* keep vlan related bits if it's enabled */
+	if (priv->vlgrp) {
+		rctrl |= RCTRL_VLEX | RCTRL_PRSDEP_INIT;
+		tctrl |= TCTRL_VLINS;
+	}
+
+	/* Init rctrl based on our settings */
+	gfar_write(&regs->rctrl, rctrl);
+
+	if (ndev->features & NETIF_F_IP_CSUM)
+		tctrl |= TCTRL_INIT_CSUM;
+
+	gfar_write(&regs->tctrl, tctrl);
+
+	/* Set the extraction length and index */
+	attrs = ATTRELI_EL(priv->rx_stash_size) |
+		ATTRELI_EI(priv->rx_stash_index);
+
+	gfar_write(&regs->attreli, attrs);
+
+	/* Start with defaults, and add stashing or locking
+	 * depending on the approprate variables */
+	attrs = ATTR_INIT_SETTINGS;
+
+	if (priv->bd_stash_en)
+		attrs |= ATTR_BDSTASH;
+
+	if (priv->rx_stash_size != 0)
+		attrs |= ATTR_BUFSTASH;
+
+	gfar_write(&regs->attr, attrs);
+
+	gfar_write(&regs->fifo_tx_thr, priv->fifo_threshold);
+	gfar_write(&regs->fifo_tx_starve, priv->fifo_starve);
+	gfar_write(&regs->fifo_tx_starve_shutoff, priv->fifo_starve_off);
+}
+
 static const struct net_device_ops gfar_netdev_ops = {
 	.ndo_open = gfar_enet_open,
 	.ndo_start_xmit = gfar_start_xmit,
@@ -498,23 +700,24 @@ static int gfar_remove(struct of_device *ofdev)
 }
 
 #ifdef CONFIG_PM
-static int gfar_suspend(struct of_device *ofdev, pm_message_t state)
+
+static int gfar_suspend(struct device *dev)
 {
-	struct gfar_private *priv = dev_get_drvdata(&ofdev->dev);
-	struct net_device *dev = priv->ndev;
+	struct gfar_private *priv = dev_get_drvdata(dev);
+	struct net_device *ndev = priv->ndev;
 	unsigned long flags;
 	u32 tempval;
 
 	int magic_packet = priv->wol_en &&
 		(priv->device_flags & FSL_GIANFAR_DEV_HAS_MAGIC_PACKET);
 
-	netif_device_detach(dev);
+	netif_device_detach(ndev);
 
-	if (netif_running(dev)) {
+	if (netif_running(ndev)) {
 		spin_lock_irqsave(&priv->txlock, flags);
 		spin_lock(&priv->rxlock);
 
-		gfar_halt_nodisable(dev);
+		gfar_halt_nodisable(ndev);
 
 		/* Disable Tx, and Rx if wake-on-LAN is disabled. */
 		tempval = gfar_read(&priv->regs->maccfg1);
@@ -547,17 +750,17 @@ static int gfar_suspend(struct of_device *ofdev, pm_message_t state)
 	return 0;
 }
 
-static int gfar_resume(struct of_device *ofdev)
+static int gfar_resume(struct device *dev)
 {
-	struct gfar_private *priv = dev_get_drvdata(&ofdev->dev);
-	struct net_device *dev = priv->ndev;
+	struct gfar_private *priv = dev_get_drvdata(dev);
+	struct net_device *ndev = priv->ndev;
 	unsigned long flags;
 	u32 tempval;
 	int magic_packet = priv->wol_en &&
 		(priv->device_flags & FSL_GIANFAR_DEV_HAS_MAGIC_PACKET);
 
-	if (!netif_running(dev)) {
-		netif_device_attach(dev);
+	if (!netif_running(ndev)) {
+		netif_device_attach(ndev);
 		return 0;
 	}
 
@@ -575,20 +778,71 @@ static int gfar_resume(struct of_device *ofdev)
 	tempval &= ~MACCFG2_MPEN;
 	gfar_write(&priv->regs->maccfg2, tempval);
 
-	gfar_start(dev);
+	gfar_start(ndev);
 
 	spin_unlock(&priv->rxlock);
 	spin_unlock_irqrestore(&priv->txlock, flags);
 
-	netif_device_attach(dev);
+	netif_device_attach(ndev);
 
 	napi_enable(&priv->napi);
 
 	return 0;
 }
+
+static int gfar_restore(struct device *dev)
+{
+	struct gfar_private *priv = dev_get_drvdata(dev);
+	struct net_device *ndev = priv->ndev;
+
+	if (!netif_running(ndev))
+		return 0;
+
+	gfar_init_bds(ndev);
+	init_registers(ndev);
+	gfar_set_mac_address(ndev);
+	gfar_init_mac(ndev);
+	gfar_start(ndev);
+
+	priv->oldlink = 0;
+	priv->oldspeed = 0;
+	priv->oldduplex = -1;
+
+	if (priv->phydev)
+		phy_start(priv->phydev);
+
+	netif_device_attach(ndev);
+	napi_enable(&priv->napi);
+
+	return 0;
+}
+
+static struct dev_pm_ops gfar_pm_ops = {
+	.suspend = gfar_suspend,
+	.resume = gfar_resume,
+	.freeze = gfar_suspend,
+	.thaw = gfar_resume,
+	.restore = gfar_restore,
+};
+
+#define GFAR_PM_OPS (&gfar_pm_ops)
+
+static int gfar_legacy_suspend(struct of_device *ofdev, pm_message_t state)
+{
+	return gfar_suspend(&ofdev->dev);
+}
+
+static int gfar_legacy_resume(struct of_device *ofdev)
+{
+	return gfar_resume(&ofdev->dev);
+}
+
 #else
-#define gfar_suspend NULL
-#define gfar_resume NULL
+
+#define GFAR_PM_OPS NULL
+#define gfar_legacy_suspend NULL
+#define gfar_legacy_resume NULL
+
 #endif
 
 /* Reads the controller's registers to determine what interface
@@ -806,7 +1060,6 @@ void gfar_halt(struct net_device *dev)
 void stop_gfar(struct net_device *dev)
 {
 	struct gfar_private *priv = netdev_priv(dev);
-	struct gfar __iomem *regs = priv->regs;
 	unsigned long flags;
 
 	phy_stop(priv->phydev);
@@ -830,24 +1083,22 @@ void stop_gfar(struct net_device *dev)
 	}
 
 	free_skb_resources(priv);
-
-	dma_free_coherent(&priv->ofdev->dev,
-			sizeof(struct txbd8)*priv->tx_ring_size
-			+ sizeof(struct rxbd8)*priv->rx_ring_size,
-			priv->tx_bd_base,
-			gfar_read(&regs->tbase0));
 }
 
 /* If there are any tx skbs or rx skbs still around, free them.
  * Then free tx_skbuff and rx_skbuff */
 static void free_skb_resources(struct gfar_private *priv)
 {
+	struct device *dev = &priv->ofdev->dev;
 	struct rxbd8 *rxbdp;
 	struct txbd8 *txbdp;
 	int i, j;
 
 	/* Go through all the buffer descriptors and free their data buffers */
 	txbdp = priv->tx_bd_base;
+
+	if (!priv->tx_skbuff)
+		goto skip_tx_skbuff;
 
 	for (i = 0; i < priv->tx_ring_size; i++) {
 		if (!priv->tx_skbuff[i])
@@ -867,30 +1118,33 @@ static void free_skb_resources(struct gfar_private *priv)
 	}
 
 	kfree(priv->tx_skbuff);
+skip_tx_skbuff:
 
 	rxbdp = priv->rx_bd_base;
 
-	/* rx_skbuff is not guaranteed to be allocated, so only
-	 * free it and its contents if it is allocated */
-	if(priv->rx_skbuff != NULL) {
-		for (i = 0; i < priv->rx_ring_size; i++) {
-			if (priv->rx_skbuff[i]) {
-				dma_unmap_single(&priv->ofdev->dev, rxbdp->bufPtr,
-						priv->rx_buffer_size,
-						DMA_FROM_DEVICE);
+	if (!priv->rx_skbuff)
+		goto skip_rx_skbuff;
 
-				dev_kfree_skb_any(priv->rx_skbuff[i]);
-				priv->rx_skbuff[i] = NULL;
-			}
-
-			rxbdp->lstatus = 0;
-			rxbdp->bufPtr = 0;
-
-			rxbdp++;
+	for (i = 0; i < priv->rx_ring_size; i++) {
+		if (priv->rx_skbuff[i]) {
+			dma_unmap_single(&priv->ofdev->dev, rxbdp->bufPtr,
+					 priv->rx_buffer_size,
+					DMA_FROM_DEVICE);
+			dev_kfree_skb_any(priv->rx_skbuff[i]);
+			priv->rx_skbuff[i] = NULL;
 		}
 
-		kfree(priv->rx_skbuff);
+		rxbdp->lstatus = 0;
+		rxbdp->bufPtr = 0;
+		rxbdp++;
 	}
+
+	kfree(priv->rx_skbuff);
+skip_rx_skbuff:
+
+	dma_free_coherent(dev, sizeof(*txbdp) * priv->tx_ring_size +
+			       sizeof(*rxbdp) * priv->rx_ring_size,
+			  priv->tx_bd_base, priv->tx_bd_dma_base);
 }
 
 void gfar_start(struct net_device *dev)
@@ -925,249 +1179,75 @@ void gfar_start(struct net_device *dev)
 }
 
 /* Bring the controller up and running */
-int startup_gfar(struct net_device *dev)
+int startup_gfar(struct net_device *ndev)
 {
-	struct txbd8 *txbdp;
-	struct rxbd8 *rxbdp;
-	dma_addr_t addr = 0;
-	unsigned long vaddr;
-	int i;
-	struct gfar_private *priv = netdev_priv(dev);
+	struct gfar_private *priv = netdev_priv(ndev);
 	struct gfar __iomem *regs = priv->regs;
-	int err = 0;
-	u32 rctrl = 0;
-	u32 tctrl = 0;
-	u32 attrs = 0;
+	int err;
 
 	gfar_write(&regs->imask, IMASK_INIT_CLEAR);
 
-	/* Allocate memory for the buffer descriptors */
-	vaddr = (unsigned long) dma_alloc_coherent(&priv->ofdev->dev,
-			sizeof (struct txbd8) * priv->tx_ring_size +
-			sizeof (struct rxbd8) * priv->rx_ring_size,
-			&addr, GFP_KERNEL);
+	err = gfar_alloc_skb_resources(ndev);
+	if (err)
+		return err;
 
-	if (vaddr == 0) {
-		if (netif_msg_ifup(priv))
-			printk(KERN_ERR "%s: Could not allocate buffer descriptors!\n",
-					dev->name);
-		return -ENOMEM;
-	}
-
-	priv->tx_bd_base = (struct txbd8 *) vaddr;
-
-	/* enet DMA only understands physical addresses */
-	gfar_write(&regs->tbase0, addr);
-
-	/* Start the rx descriptor ring where the tx ring leaves off */
-	addr = addr + sizeof (struct txbd8) * priv->tx_ring_size;
-	vaddr = vaddr + sizeof (struct txbd8) * priv->tx_ring_size;
-	priv->rx_bd_base = (struct rxbd8 *) vaddr;
-	gfar_write(&regs->rbase0, addr);
-
-	/* Setup the skbuff rings */
-	priv->tx_skbuff =
-	    (struct sk_buff **) kmalloc(sizeof (struct sk_buff *) *
-					priv->tx_ring_size, GFP_KERNEL);
-
-	if (NULL == priv->tx_skbuff) {
-		if (netif_msg_ifup(priv))
-			printk(KERN_ERR "%s: Could not allocate tx_skbuff\n",
-					dev->name);
-		err = -ENOMEM;
-		goto tx_skb_fail;
-	}
-
-	for (i = 0; i < priv->tx_ring_size; i++)
-		priv->tx_skbuff[i] = NULL;
-
-	priv->rx_skbuff =
-	    (struct sk_buff **) kmalloc(sizeof (struct sk_buff *) *
-					priv->rx_ring_size, GFP_KERNEL);
-
-	if (NULL == priv->rx_skbuff) {
-		if (netif_msg_ifup(priv))
-			printk(KERN_ERR "%s: Could not allocate rx_skbuff\n",
-					dev->name);
-		err = -ENOMEM;
-		goto rx_skb_fail;
-	}
-
-	for (i = 0; i < priv->rx_ring_size; i++)
-		priv->rx_skbuff[i] = NULL;
-
-	/* Initialize some variables in our dev structure */
-	priv->num_txbdfree = priv->tx_ring_size;
-	priv->dirty_tx = priv->cur_tx = priv->tx_bd_base;
-	priv->cur_rx = priv->rx_bd_base;
-	priv->skb_curtx = priv->skb_dirtytx = 0;
-	priv->skb_currx = 0;
-
-	/* Initialize Transmit Descriptor Ring */
-	txbdp = priv->tx_bd_base;
-	for (i = 0; i < priv->tx_ring_size; i++) {
-		txbdp->lstatus = 0;
-		txbdp->bufPtr = 0;
-		txbdp++;
-	}
-
-	/* Set the last descriptor in the ring to indicate wrap */
-	txbdp--;
-	txbdp->status |= TXBD_WRAP;
-
-	rxbdp = priv->rx_bd_base;
-	for (i = 0; i < priv->rx_ring_size; i++) {
-		struct sk_buff *skb;
-
-		skb = gfar_new_skb(dev);
-
-		if (!skb) {
-			printk(KERN_ERR "%s: Can't allocate RX buffers\n",
-					dev->name);
-
-			goto err_rxalloc_fail;
-		}
-
-		priv->rx_skbuff[i] = skb;
-
-		gfar_new_rxbdp(dev, rxbdp, skb);
-
-		rxbdp++;
-	}
-
-	/* Set the last descriptor in the ring to wrap */
-	rxbdp--;
-	rxbdp->status |= RXBD_WRAP;
+	gfar_init_mac(ndev);
 
 	/* If the device has multiple interrupts, register for
 	 * them.  Otherwise, only register for the one */
 	if (priv->device_flags & FSL_GIANFAR_DEV_HAS_MULTI_INTR) {
 		/* Install our interrupt handlers for Error,
 		 * Transmit, and Receive */
-		if (request_irq(priv->interruptError, gfar_error,
-				0, priv->int_name_er, dev) < 0) {
+		err = request_irq(priv->interruptError, gfar_error, 0,
+				  priv->int_name_er, ndev);
+		if (err) {
 			if (netif_msg_intr(priv))
-				printk(KERN_ERR "%s: Can't get IRQ %d\n",
-					dev->name, priv->interruptError);
-
-			err = -1;
+				pr_err("%s: Can't get IRQ %d\n", ndev->name,
+				       priv->interruptError);
 			goto err_irq_fail;
 		}
 
-		if (request_irq(priv->interruptTransmit, gfar_transmit,
-				0, priv->int_name_tx, dev) < 0) {
+		err = request_irq(priv->interruptTransmit, gfar_transmit, 0,
+				  priv->int_name_tx, ndev);
+		if (err) {
 			if (netif_msg_intr(priv))
-				printk(KERN_ERR "%s: Can't get IRQ %d\n",
-					dev->name, priv->interruptTransmit);
-
-			err = -1;
-
+				pr_err("%s: Can't get IRQ %d\n", ndev->name,
+				       priv->interruptTransmit);
 			goto tx_irq_fail;
 		}
 
-		if (request_irq(priv->interruptReceive, gfar_receive,
-				0, priv->int_name_rx, dev) < 0) {
+		err = request_irq(priv->interruptReceive, gfar_receive, 0,
+				  priv->int_name_rx, ndev);
+		if (err) {
 			if (netif_msg_intr(priv))
-				printk(KERN_ERR "%s: Can't get IRQ %d (receive0)\n",
-						dev->name, priv->interruptReceive);
-
-			err = -1;
+				pr_err("%s: Can't get IRQ %d (receive0)\n",
+				       ndev->name, priv->interruptReceive);
 			goto rx_irq_fail;
 		}
 	} else {
-		if (request_irq(priv->interruptTransmit, gfar_interrupt,
-				0, priv->int_name_tx, dev) < 0) {
+		err = request_irq(priv->interruptTransmit, gfar_interrupt,
+				0, priv->int_name_tx, ndev);
+		if (err) {
 			if (netif_msg_intr(priv))
-				printk(KERN_ERR "%s: Can't get IRQ %d\n",
-					dev->name, priv->interruptTransmit);
-
-			err = -1;
+				pr_err("%s: Can't get IRQ %d\n", ndev->name,
+				       priv->interruptTransmit);
 			goto err_irq_fail;
 		}
 	}
 
-	phy_start(priv->phydev);
-
-	/* Configure the coalescing support */
-	gfar_write(&regs->txic, 0);
-	if (priv->txcoalescing)
-		gfar_write(&regs->txic, priv->txic);
-
-	gfar_write(&regs->rxic, 0);
-	if (priv->rxcoalescing)
-		gfar_write(&regs->rxic, priv->rxic);
-
-	if (priv->rx_csum_enable)
-		rctrl |= RCTRL_CHECKSUMMING;
-
-	if (priv->extended_hash) {
-		rctrl |= RCTRL_EXTHASH;
-
-		gfar_clear_exact_match(dev);
-		rctrl |= RCTRL_EMEN;
-	}
-
-	if (priv->padding) {
-		rctrl &= ~RCTRL_PAL_MASK;
-		rctrl |= RCTRL_PADDING(priv->padding);
-	}
-
-	/* keep vlan related bits if it's enabled */
-	if (priv->vlgrp) {
-		rctrl |= RCTRL_VLEX | RCTRL_PRSDEP_INIT;
-		tctrl |= TCTRL_VLINS;
-	}
-
-	/* Init rctrl based on our settings */
-	gfar_write(&priv->regs->rctrl, rctrl);
-
-	if (dev->features & NETIF_F_IP_CSUM)
-		tctrl |= TCTRL_INIT_CSUM;
-
-	gfar_write(&priv->regs->tctrl, tctrl);
-
-	/* Set the extraction length and index */
-	attrs = ATTRELI_EL(priv->rx_stash_size) |
-		ATTRELI_EI(priv->rx_stash_index);
-
-	gfar_write(&priv->regs->attreli, attrs);
-
-	/* Start with defaults, and add stashing or locking
-	 * depending on the approprate variables */
-	attrs = ATTR_INIT_SETTINGS;
-
-	if (priv->bd_stash_en)
-		attrs |= ATTR_BDSTASH;
-
-	if (priv->rx_stash_size != 0)
-		attrs |= ATTR_BUFSTASH;
-
-	gfar_write(&priv->regs->attr, attrs);
-
-	gfar_write(&priv->regs->fifo_tx_thr, priv->fifo_threshold);
-	gfar_write(&priv->regs->fifo_tx_starve, priv->fifo_starve);
-	gfar_write(&priv->regs->fifo_tx_starve_shutoff, priv->fifo_starve_off);
-
 	/* Start the controller */
-	gfar_start(dev);
+	gfar_start(ndev);
+
+	phy_start(priv->phydev);
 
 	return 0;
 
 rx_irq_fail:
-	free_irq(priv->interruptTransmit, dev);
+	free_irq(priv->interruptTransmit, ndev);
 tx_irq_fail:
-	free_irq(priv->interruptError, dev);
+	free_irq(priv->interruptError, ndev);
 err_irq_fail:
-err_rxalloc_fail:
-rx_skb_fail:
 	free_skb_resources(priv);
-tx_skb_fail:
-	dma_free_coherent(&priv->ofdev->dev,
-			sizeof(struct txbd8)*priv->tx_ring_size
-			+ sizeof(struct rxbd8)*priv->rx_ring_size,
-			priv->tx_bd_base,
-			gfar_read(&regs->tbase0));
-
 	return err;
 }
 
@@ -1681,19 +1761,11 @@ static void gfar_new_rxbdp(struct net_device *dev, struct rxbd8 *bdp,
 		struct sk_buff *skb)
 {
 	struct gfar_private *priv = netdev_priv(dev);
-	u32 lstatus;
+	dma_addr_t buf;
 
-	bdp->bufPtr = dma_map_single(&priv->ofdev->dev, skb->data,
-			priv->rx_buffer_size, DMA_FROM_DEVICE);
-
-	lstatus = BD_LFLAG(RXBD_EMPTY | RXBD_INTERRUPT);
-
-	if (bdp == priv->rx_bd_base + priv->rx_ring_size - 1)
-		lstatus |= BD_LFLAG(RXBD_WRAP);
-
-	eieio();
-
-	bdp->lstatus = lstatus;
+	buf = dma_map_single(&priv->ofdev->dev, skb->data,
+			     priv->rx_buffer_size, DMA_FROM_DEVICE);
+	gfar_init_rxbdp(dev, bdp, buf);
 }
 
 
@@ -2344,8 +2416,9 @@ static struct of_platform_driver gfar_driver = {
 
 	.probe = gfar_probe,
 	.remove = gfar_remove,
-	.suspend = gfar_suspend,
-	.resume = gfar_resume,
+	.suspend = gfar_legacy_suspend,
+	.resume = gfar_legacy_resume,
+	.driver.pm = GFAR_PM_OPS,
 };
 
 static int __init gfar_init(void)

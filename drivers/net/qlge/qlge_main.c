@@ -1147,7 +1147,7 @@ static void ql_update_sbq(struct ql_adapter *qdev, struct rx_ring *rx_ring)
 					sbq_desc->index);
 				sbq_desc->p.skb =
 				    netdev_alloc_skb(qdev->ndev,
-						     rx_ring->sbq_buf_size);
+						     SMALL_BUFFER_SIZE);
 				if (sbq_desc->p.skb == NULL) {
 					QPRINTK(qdev, PROBE, ERR,
 						"Couldn't get an skb.\n");
@@ -1157,8 +1157,8 @@ static void ql_update_sbq(struct ql_adapter *qdev, struct rx_ring *rx_ring)
 				skb_reserve(sbq_desc->p.skb, QLGE_SB_PAD);
 				map = pci_map_single(qdev->pdev,
 						     sbq_desc->p.skb->data,
-						     rx_ring->sbq_buf_size /
-						     2, PCI_DMA_FROMDEVICE);
+						     rx_ring->sbq_buf_size,
+						     PCI_DMA_FROMDEVICE);
 				if (pci_dma_mapping_error(qdev->pdev, map)) {
 					QPRINTK(qdev, IFUP, ERR, "PCI mapping failed.\n");
 					rx_ring->sbq_clean_idx = clean_idx;
@@ -1168,7 +1168,7 @@ static void ql_update_sbq(struct ql_adapter *qdev, struct rx_ring *rx_ring)
 				}
 				pci_unmap_addr_set(sbq_desc, mapaddr, map);
 				pci_unmap_len_set(sbq_desc, maplen,
-						  rx_ring->sbq_buf_size / 2);
+						  rx_ring->sbq_buf_size);
 				*sbq_desc->addr = cpu_to_le64(map);
 			}
 
@@ -1673,8 +1673,8 @@ static void ql_process_mac_rx_intr(struct ql_adapter *qdev,
 		}
 	}
 
-	qdev->stats.rx_packets++;
-	qdev->stats.rx_bytes += skb->len;
+	ndev->stats.rx_packets++;
+	ndev->stats.rx_bytes += skb->len;
 	skb_record_rx_queue(skb, rx_ring->cq_id);
 	if (skb->ip_summed == CHECKSUM_UNNECESSARY) {
 		if (qdev->vlgrp &&
@@ -1698,6 +1698,7 @@ static void ql_process_mac_rx_intr(struct ql_adapter *qdev,
 static void ql_process_mac_tx_intr(struct ql_adapter *qdev,
 				   struct ob_mac_iocb_rsp *mac_rsp)
 {
+	struct net_device *ndev = qdev->ndev;
 	struct tx_ring *tx_ring;
 	struct tx_ring_desc *tx_ring_desc;
 
@@ -1705,8 +1706,8 @@ static void ql_process_mac_tx_intr(struct ql_adapter *qdev,
 	tx_ring = &qdev->tx_ring[mac_rsp->txq_idx];
 	tx_ring_desc = &tx_ring->q[mac_rsp->tid];
 	ql_unmap_send(qdev, tx_ring_desc, tx_ring_desc->map_cnt);
-	qdev->stats.tx_bytes += (tx_ring_desc->skb)->len;
-	qdev->stats.tx_packets++;
+	ndev->stats.tx_bytes += (tx_ring_desc->skb)->len;
+	ndev->stats.tx_packets++;
 	dev_kfree_skb(tx_ring_desc->skb);
 	tx_ring_desc->skb = NULL;
 
@@ -2692,7 +2693,7 @@ static int ql_start_rx_ring(struct ql_adapter *qdev, struct rx_ring *rx_ring)
 		cqicb->sbq_addr =
 		    cpu_to_le64(rx_ring->sbq_base_indirect_dma);
 		cqicb->sbq_buf_size =
-		    cpu_to_le16((u16)(rx_ring->sbq_buf_size/2));
+		    cpu_to_le16((u16)(rx_ring->sbq_buf_size));
 		bq_len = (rx_ring->sbq_len == 65536) ? 0 :
 			(u16) rx_ring->sbq_len;
 		cqicb->sbq_len = cpu_to_le16(bq_len);
@@ -3268,7 +3269,7 @@ static int ql_adapter_initialize(struct ql_adapter *qdev)
 	ql_write32(qdev, FSC, mask | value);
 
 	ql_write32(qdev, SPLT_HDR, SPLT_HDR_EP |
-		min(SMALL_BUFFER_SIZE, MAX_SPLIT_SIZE));
+		min(SMALL_BUF_MAP_SIZE, MAX_SPLIT_SIZE));
 
 	/* Set RX packet routing to use port/pci function on which the
 	 * packet arrived on in addition to usual frame routing.
@@ -3310,10 +3311,8 @@ static int ql_adapter_initialize(struct ql_adapter *qdev)
 
 	/* Initialize the port and set the max framesize. */
 	status = qdev->nic_ops->port_initialize(qdev);
-       if (status) {
-              QPRINTK(qdev, IFUP, ERR, "Failed to start port.\n");
-              return status;
-       }
+	if (status)
+		QPRINTK(qdev, IFUP, ERR, "Failed to start port.\n");
 
 	/* Set up the MAC address and frame routing filter. */
 	status = ql_cam_route_initialize(qdev);
@@ -3548,7 +3547,7 @@ static int ql_configure_rings(struct ql_adapter *qdev)
 			rx_ring->sbq_len = NUM_SMALL_BUFFERS;
 			rx_ring->sbq_size =
 			    rx_ring->sbq_len * sizeof(__le64);
-			rx_ring->sbq_buf_size = SMALL_BUFFER_SIZE * 2;
+			rx_ring->sbq_buf_size = SMALL_BUF_MAP_SIZE;
 			rx_ring->type = RX_Q;
 		} else {
 			/*
@@ -3616,8 +3615,7 @@ static int qlge_change_mtu(struct net_device *ndev, int new_mtu)
 static struct net_device_stats *qlge_get_stats(struct net_device
 					       *ndev)
 {
-	struct ql_adapter *qdev = netdev_priv(ndev);
-	return &qdev->stats;
+	return &ndev->stats;
 }
 
 static void qlge_set_multicast_list(struct net_device *ndev)
@@ -3868,8 +3866,7 @@ static int __devinit ql_init_device(struct pci_dev *pdev,
 				    struct net_device *ndev, int cards_found)
 {
 	struct ql_adapter *qdev = netdev_priv(ndev);
-	int pos, err = 0;
-	u16 val16;
+	int err = 0;
 
 	memset((void *)qdev, 0, sizeof(*qdev));
 	err = pci_enable_device(pdev);
@@ -3881,18 +3878,12 @@ static int __devinit ql_init_device(struct pci_dev *pdev,
 	qdev->ndev = ndev;
 	qdev->pdev = pdev;
 	pci_set_drvdata(pdev, ndev);
-	pos = pci_find_capability(pdev, PCI_CAP_ID_EXP);
-	if (pos <= 0) {
-		dev_err(&pdev->dev, PFX "Cannot find PCI Express capability, "
-			"aborting.\n");
-		return pos;
-	} else {
-		pci_read_config_word(pdev, pos + PCI_EXP_DEVCTL, &val16);
-		val16 &= ~PCI_EXP_DEVCTL_NOSNOOP_EN;
-		val16 |= (PCI_EXP_DEVCTL_CERE |
-			  PCI_EXP_DEVCTL_NFERE |
-			  PCI_EXP_DEVCTL_FERE | PCI_EXP_DEVCTL_URRE);
-		pci_write_config_word(pdev, pos + PCI_EXP_DEVCTL, val16);
+
+	/* Set PCIe read request size */
+	err = pcie_set_readrq(pdev, 4096);
+	if (err) {
+		dev_err(&pdev->dev, "Set readrq failed.\n");
+		goto err_out;
 	}
 
 	err = pci_request_regions(pdev, DRV_NAME);
