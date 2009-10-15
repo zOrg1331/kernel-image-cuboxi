@@ -11,6 +11,7 @@
 #include <linux/device.h>
 #include <linux/rwsem.h>
 #include <linux/acpi.h>
+#include <linux/pm_link.h>
 
 #include "internal.h"
 
@@ -170,6 +171,7 @@ static int acpi_bind_one(struct device *dev, acpi_handle handle)
 			device_set_wakeup_enable(dev,
 						acpi_dev->wakeup.state.enabled);
 		}
+		pm_link_add(dev, &acpi_dev->dev);
 	}
 
 	return 0;
@@ -189,6 +191,7 @@ static int acpi_unbind_one(struct device *dev)
 					&acpi_dev)) {
 			sysfs_remove_link(&dev->kobj, "firmware_node");
 			sysfs_remove_link(&acpi_dev->dev.kobj, "physical_node");
+			pm_link_remove(dev, &acpi_dev->dev);
 		}
 
 		acpi_detach_data(dev->archdata.acpi_handle,
