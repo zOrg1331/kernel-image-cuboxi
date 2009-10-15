@@ -1,0 +1,160 @@
+Importing driver-core.current based on 2.6.32-rc4
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard d31dd1f4d29a6b231b965c9c4af1fc5877d80cf1
+HEAD is now at d31dd1f tty: fix vt_compat_ioctl
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-rename-documentation-abi-...-sysfs-class-usb_host.patch
+usb-wusb-don-t-use-the-stack-to-read-security-descriptor.patch
+usb-whci-hcd-handle-early-deletion-of-endpoints.patch
+usb-whci-hcd-always-do-an-update-after-processing-a-halted-qtd.patch
+usb-option-support-for-airplus-mcd650-datacard.patch
+usb-ehci-fix-ist-boundary-checking-interval-math.patch
+usb-storage-workaround-devices-with-bogus-sense-size.patch
+usb-gadget-fix-eem-driver-comments-and-vid-pid.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+ + 06de39b...a30f963 master     -> quilt/usb.current  (forced update)
+Importing staging.current based on quilt/usb.current
+$ cd ../quilt-tmp
+$ git reset --hard a30f9631809ffc7f28cde337934119a96af4ddd1
+HEAD is now at a30f963 USB: gadget: Fix EEM driver comments and VID/PID
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+staging-iio-fix-missing-include-linux-sched.h.patch
+staging-comedi-fix-sched.h-build-breakage.patch
+staging-b3dfg-fix-sched.h-build-breakage.patch
+staging-poch-fix-sched.h-build-breakage.patch
+staging-vme-fix-sched.h-build-breakage.patch
+staging-complete-sched.h-removal-from-interrupt.h.patch
+staging-et131x-correct-wrap-bit-handling.patch
+staging-et131x-fix-the-add_10bit-macro.patch
+staging-more-sched.h-fixes.patch
+staging-rt2860sta-prevent-a-panic-when-disabling-when-associated.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+ + 194608a...976909b master     -> quilt/staging.current  (forced update)
+Importing i2c based on 2.6.32-rc4-git2
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.32-rc4-git2
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on origin/master
+	quilt series is empty
+$ git update-ref refs/heads/quilt/kernel-doc a3ccf63ee643ef243cbf8918da8b3f9238f10029
+Importing rr based on v2.6.32-rc3-52-g0eca52a
+Unchanged quilt series rr
+Importing device-mapper based on block/for-next
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core 976909b74f5fa579a97003ea0f0348958e7e1d9a
+Importing tty based on quilt/driver-core
+$ cd ../quilt-tmp
+$ git reset --hard 976909b74f5fa579a97003ea0f0348958e7e1d9a
+HEAD is now at 976909b Staging: rt2860sta: prevent a panic when disabling when associated
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty
+jsm-irq-handlers-doesn-t-need-to-have-irq_disabled-enabled.patch
+jsm-rewriting-a-bad-log-message.patch
+jsm-remove-the-ch_custom_speed-field.patch
+jsm-removing-ch_old_baud-field.patch
+jsm-remove-ch_cpstime-field.patch
+jsm-removing-unused-jsm_channel-ch_wopen-field.patch
+jsm-removing-the-field-jsm_board-intr_count.patch
+tty-const-constify-remaining-tty_operations.patch
+tty-esp-remove-broken-driver.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty
+From ../quilt-tmp
+ + a724aa0...36f7316 master     -> quilt/tty  (forced update)
+Importing usb based on quilt/tty
+$ cd ../quilt-tmp
+$ git reset --hard 36f73164bd1631470e28034b876407d3545d4d36
+HEAD is now at 36f7316 tty: esp: remove broken driver
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb
+usb-serial-ftdi_sio-add-space-mark-parity.patch
+usb-ehci-hub-remove-redundant-ehci-debug-check.patch
+usb-convert-a-dev_info-to-a-dev_dbg.patch
+usb-usb-storage-associate-the-name-of-the-interface-with-the-scsi-host.patch
+usb-storage-make-driver-less-chatty-when-it-finds-a-new-device.patch
+usb-add-support-for-xilinx-usb-host-controller.patch
+usb-add-missing-static-markers-to-ohci-pnx4008.patch
+usb-make-urb-scatter-gather-support-more-generic.patch
+usb-whci-hcd-support-urbs-with-scatter-gather-lists.patch
+usb-allow-interrupt-transfers-to-wusb-devices.patch
+usb-whci-hcd-fix-type-and-format-warnings-in-sg-code.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb
+From ../quilt-tmp
+ + 79d997b...f1e9c6f master     -> quilt/usb  (forced update)
+Importing staging based on quilt/usb
+$ cd ../quilt-tmp
+$ git reset --hard f1e9c6f2546cd833b29550cbc47f5dab92536f4b
+HEAD is now at f1e9c6f USB: whci-hcd: fix type and format warnings in sg code
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging
+staging-rt3090-disable-has_ate-option.patch
+staging-rt3090-disable-has_antenna_diversity_support-option.patch
+staging-rt3090-remove-private-debugging-ioctls.patch
+staging-rt3090-remove-private-ioctls.patch
+staging-rt28x0-updates-from-vendor-s-v2.1.0.0-drivers.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:34819: space before tab in indent.
+    		if (pAd->CommonCfg.bAPSDCapable && pAd->CommonCfg.APEdcaParm.bAPSDCapable)
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:34820: space before tab in indent.
+    		{
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:34821: space before tab in indent.
+    		    // When APSD is enabled, the period changes as 20 sec
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:34822: space before tab in indent.
+    			if ((pAd->Mlme.OneSecPeriodicRound % 20) == 8)
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:34823: space before tab in indent.
+    				RTMPSendNullFrame(pAd, pAd->CommonCfg.TxRate, TRUE);
+warning: squelched 5 whitespace errors
+warning: 10 lines add whitespace errors.
+staging-rt28x0-remove-unused-code-from-common-dfs.c.patch
+staging-rt2860-add-rt3090-chipset-support.patch
+staging-remove-no-longer-needed-rt3090-driver.patch
+staging-b3dfg-remove-check-for-pci-bus-master.patch
+staging-line6-driver.c-factorize-code-and-cleanups.patch
+staging-comedi-8253-fix-coding-style-error.patch
+staging-comedi-8255-fix-coding-style-error.patch
+staging-comedi-drivers.c-checkpatch-fix.patch
+staging-comedi-adl_pci6208-code-styling-fix.patch
+staging-comedi-ni_labpc.h-fixed-line-lengths-of-some-trailing-comments.patch
+staging-comedi-ni_labbc_cs-cleaned-up-debug-define-a-bit.patch
+staging-comedi-ni_labpc_cs-removed-null-initialization-of-static.patch
+staging-comedi-ni_labpc_cs-added-mandatory-whitespace-to-comparison.patch
+staging-comedi-ni_labpc_cs-removed-null-check-from-kfree.patch
+staging-comedi-ni_labpc_cs-wrapped-long-comments.patch
+staging-comedi-comedi_compat32-fixed-checkpatch.pl-issues.patch
+staging-comedi-comedidev.h-fixed-checkpatch.pl-issues.patch
+staging-comedi-ni_at_ao.c-fix-coding-style-error.patch
+staging-comedi-mite.c-fix-coding-style.patch
+staging-comedi-mite.h-deletion-of-unused-functions.patch
+staging-comedi-ni_atmio16d-fix-formating-errors.patch
+staging-comedi-ni_atmio16d-brace-fixes.patch
+staging-comedi-nt_atmio16d-space-and-tab-fixes.patch
+staging-comedi-ni_atmio16d-printk-fixups.patch
+staging-comedi-vmk80xx-cleanup-formatting.patch
+staging-comedi-comedi_compat32.h-fixed-checkpatch.pl-issues.patch
+staging-comedi-acl7225b.c-codingstyle-printk-fixups.patch
+staging-comedi-adl_pci7296-codingstyle-cleanup.patch
+staging-comedi-adl_pci7432-coding-style-cleanup.patch
+staging-comedi-amplc_pc263.c-fix-coding-style-issues.patch
+staging-comedi-amplc_pc263.c-more-coding-style-fixes.patch
+staging-comedi-trivial-fix-of-a-very-frequent-spelling-mistake.patch
+staging-comedi-ni_mio_cs.c-coding-style-cleanup.patch
+staging-xvmalloc-memory-allocator.patch
+staging-virtual-block-device-driver.patch
+staging-ramzswap-documentation.patch
+staging-ramzswap-add-todo-file.patch
+staging-hv-todo-patches.patch
+staging-android-delete-android-drivers.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging
+From ../quilt-tmp
+ + e8684a4...02f05c0 master     -> quilt/staging  (forced update)
