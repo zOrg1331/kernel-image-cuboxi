@@ -519,7 +519,7 @@ void ext4_free_blocks(handle_t *handle, struct inode *inode,
 		metadata = 1;
 
 	/* We need to make sure we don't reuse
-	 * block released untill the transaction commit.
+	 * block released until the transaction commit.
 	 * writeback mode have weak data consistency so
 	 * don't force data as metadata when freeing block
 	 * for writeback mode.
