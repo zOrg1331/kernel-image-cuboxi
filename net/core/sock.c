@@ -274,25 +274,27 @@ static void sock_disable_timestamp(struct sock *sk, int flag)
 
 int sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
 {
-	int err = 0;
+	int err;
 	int skb_len;
+	unsigned long flags;
+	struct sk_buff_head *list = &sk->sk_receive_queue;
 
 	/* Cast sk->rcvbuf to unsigned... It's pointless, but reduces
 	   number of warnings when compiling with -W --ANK
 	 */
 	if (atomic_read(&sk->sk_rmem_alloc) + skb->truesize >=
 	    (unsigned)sk->sk_rcvbuf) {
-		err = -ENOMEM;
-		goto out;
+		atomic_inc(&sk->sk_drops);
+		return -ENOMEM;
 	}
 
 	err = sk_filter(sk, skb);
 	if (err)
-		goto out;
+		return err;
 
 	if (!sk_rmem_schedule(sk, skb->truesize)) {
-		err = -ENOBUFS;
-		goto out;
+		atomic_inc(&sk->sk_drops);
+		return -ENOBUFS;
 	}
 
 	skb->dev = NULL;
@@ -305,12 +307,14 @@ int sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
 	 */
 	skb_len = skb->len;
 
-	skb_queue_tail(&sk->sk_receive_queue, skb);
+	spin_lock_irqsave(&list->lock, flags);
+	skb->dropcount = atomic_read(&sk->sk_drops);
+	__skb_queue_tail(list, skb);
+	spin_unlock_irqrestore(&list->lock, flags);
 
 	if (!sock_flag(sk, SOCK_DEAD))
 		sk->sk_data_ready(sk, skb_len);
-out:
-	return err;
+	return 0;
 }
 EXPORT_SYMBOL(sock_queue_rcv_skb);
 
@@ -702,6 +706,12 @@ set_rcvbuf:
 
 		/* We implement the SO_SNDLOWAT etc to
 		   not be settable (1003.1g 5.3) */
+	case SO_RXQ_OVFL:
+		if (valbool)
+			sock_set_flag(sk, SOCK_RXQ_OVFL);
+		else
+			sock_reset_flag(sk, SOCK_RXQ_OVFL);
+		break;
 	default:
 		ret = -ENOPROTOOPT;
 		break;
@@ -899,6 +909,10 @@ int sock_getsockopt(struct socket *sock, int level, int optname,
 
 	case SO_MARK:
 		v.val = sk->sk_mark;
+		break;
+
+	case SO_RXQ_OVFL:
+		v.val = !!sock_flag(sk, SOCK_RXQ_OVFL);
 		break;
 
 	default:

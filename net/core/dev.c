@@ -2604,20 +2604,13 @@ EXPORT_SYMBOL(napi_reuse_skb);
 
 struct sk_buff *napi_get_frags(struct napi_struct *napi)
 {
-	struct net_device *dev = napi->dev;
 	struct sk_buff *skb = napi->skb;
 
 	if (!skb) {
-		skb = netdev_alloc_skb(dev, GRO_MAX_HEAD + NET_IP_ALIGN);
-		if (!skb)
-			goto out;
-
-		skb_reserve(skb, NET_IP_ALIGN);
-
-		napi->skb = skb;
+		skb = netdev_alloc_skb_ip_align(napi->dev, GRO_MAX_HEAD);
+		if (skb)
+			napi->skb = skb;
 	}
-
-out:
 	return skb;
 }
 EXPORT_SYMBOL(napi_get_frags);
@@ -4836,6 +4829,12 @@ int register_netdevice(struct net_device *dev)
 		dev->features |= NETIF_F_GSO;
 
 	netdev_initialize_kobject(dev);
+
+	ret = call_netdevice_notifiers(NETDEV_POST_INIT, dev);
+	ret = notifier_to_errno(ret);
+	if (ret)
+		goto err_uninit;
+
 	ret = netdev_register_kobject(dev);
 	if (ret)
 		goto err_uninit;
@@ -5483,7 +5482,7 @@ unsigned long netdev_increment_features(unsigned long all, unsigned long one,
 	one |= NETIF_F_ALL_CSUM;
 
 	one |= all & NETIF_F_ONE_FOR_ALL;
-	all &= one | NETIF_F_LLTX | NETIF_F_GSO;
+	all &= one | NETIF_F_LLTX | NETIF_F_GSO | NETIF_F_UFO;
 	all |= one & mask & NETIF_F_ONE_FOR_ALL;
 
 	return all;
