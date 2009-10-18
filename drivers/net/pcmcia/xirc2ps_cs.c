@@ -371,28 +371,6 @@ static void do_powerdown(struct net_device *dev);
 static int do_stop(struct net_device *dev);
 
 /*=============== Helper functions =========================*/
-static int
-first_tuple(struct pcmcia_device *handle, tuple_t *tuple, cisparse_t *parse)
-{
-	int err;
-
-	if ((err = pcmcia_get_first_tuple(handle, tuple)) == 0 &&
-			(err = pcmcia_get_tuple_data(handle, tuple)) == 0)
-		err = pcmcia_parse_tuple(tuple, parse);
-	return err;
-}
-
-static int
-next_tuple(struct pcmcia_device *handle, tuple_t *tuple, cisparse_t *parse)
-{
-	int err;
-
-	if ((err = pcmcia_get_next_tuple(handle, tuple)) == 0 &&
-			(err = pcmcia_get_tuple_data(handle, tuple)) == 0)
-		err = pcmcia_parse_tuple(tuple, parse);
-	return err;
-}
-
 #define SelectPage(pgnr)   outb((pgnr), ioaddr + XIRCREG_PR)
 #define GetByte(reg)	   ((unsigned)inb(ioaddr + (reg)))
 #define GetWord(reg)	   ((unsigned)inw(ioaddr + (reg)))
@@ -761,6 +739,26 @@ xirc2ps_config_check(struct pcmcia_device *p_dev,
 
 }
 
+
+static int pcmcia_get_mac_ce(struct pcmcia_device *p_dev,
+			     tuple_t *tuple,
+			     void *priv)
+{
+	struct net_device *dev = priv;
+	int i;
+
+	if (tuple->TupleDataLen != 13)
+		return -EINVAL;
+	if ((tuple->TupleData[0] != 2) || (tuple->TupleData[1] != 1) ||
+		(tuple->TupleData[2] != 6))
+		return -EINVAL;
+	/* another try	(James Lehmer's CE2 version 4.1)*/
+	for (i = 2; i < 6; i++)
+		dev->dev_addr[i] = tuple->TupleData[i+2];
+	return 0;
+};
+
+
 /****************
  * xirc2ps_config() is scheduled to run after a CARD_INSERTION event
  * is received, to configure the PCMCIA socket, and to make the
@@ -774,9 +772,9 @@ xirc2ps_config(struct pcmcia_device * link)
     unsigned int ioaddr;
     tuple_t tuple;
     cisparse_t parse;
-    int err, i;
-    u_char buf[64];
-    cistpl_lan_node_id_t *node_id = (cistpl_lan_node_id_t*)parse.funce.data;
+    int err;
+    u8 *buf;
+    size_t len;
 
     local->dingo_ccr = NULL;
 
@@ -827,49 +825,28 @@ xirc2ps_config(struct pcmcia_device * link)
     }
 
     /* get the ethernet address from the CIS */
-    tuple.DesiredTuple = CISTPL_FUNCE;
-    for (err = first_tuple(link, &tuple, &parse); !err;
-			     err = next_tuple(link, &tuple, &parse)) {
-	/* Once I saw two CISTPL_FUNCE_LAN_NODE_ID entries:
-	 * the first one with a length of zero the second correct -
-	 * so I skip all entries with length 0 */
-	if (parse.funce.type == CISTPL_FUNCE_LAN_NODE_ID
-	    && ((cistpl_lan_node_id_t *)parse.funce.data)->nb)
-	    break;
-    }
-    if (err) { /* not found: try to get the node-id from tuple 0x89 */
-	tuple.DesiredTuple = 0x89;  /* data layout looks like tuple 0x22 */
-	if ((err = pcmcia_get_first_tuple(link, &tuple)) == 0 &&
-		(err = pcmcia_get_tuple_data(link, &tuple)) == 0) {
-	    if (tuple.TupleDataLen == 8 && *buf == CISTPL_FUNCE_LAN_NODE_ID)
-		memcpy(&parse, buf, 8);
-	    else
-		err = -1;
-	}
-    }
-    if (err) { /* another try	(James Lehmer's CE2 version 4.1)*/
-	tuple.DesiredTuple = CISTPL_FUNCE;
-	for (err = first_tuple(link, &tuple, &parse); !err;
-				 err = next_tuple(link, &tuple, &parse)) {
-	    if (parse.funce.type == 0x02 && parse.funce.data[0] == 1
-		&& parse.funce.data[1] == 6 && tuple.TupleDataLen == 13) {
-		buf[1] = 4;
-		memcpy(&parse, buf+1, 8);
-		break;
+    err = pcmcia_get_mac_from_cis(link, dev);
+
+    /* not found: try to get the node-id from tuple 0x89 */
+    if (err) {
+	    len = pcmcia_get_tuple(link, 0x89, &buf);
+	    /* data layout looks like tuple 0x22 */
+	    if (buf && len == 8) {
+		    if (*buf == CISTPL_FUNCE_LAN_NODE_ID)
+			    memcpy(&parse, buf, 8);
+		    else
+			    err = -1;
 	    }
-	}
+	    kfree(buf);
     }
+
+    if (err)
+	err = pcmcia_loop_tuple(link, CISTPL_FUNCE, pcmcia_get_mac_ce, dev);
+
     if (err) {
 	printk(KNOT_XIRC "node-id not found in CIS\n");
 	goto failure;
     }
-    node_id = (cistpl_lan_node_id_t *)parse.funce.data;
-    if (node_id->nb != 6) {
-	printk(KNOT_XIRC "malformed node-id in CIS\n");
-	goto failure;
-    }
-    for (i=0; i < 6; i++)
-	dev->dev_addr[i] = node_id->id[i];
 
     link->io.IOAddrLines =10;
     link->io.Attributes1 = IO_DATA_PATH_WIDTH_16;
