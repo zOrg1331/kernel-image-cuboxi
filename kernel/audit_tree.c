@@ -976,7 +976,7 @@ static int __init audit_tree_init(void)
 {
 	int i;
 
-	audit_tree_group = fsnotify_alloc_group(0, &audit_tree_ops);
+	audit_tree_group = fsnotify_alloc_group(&audit_tree_ops);
 	if (IS_ERR(audit_tree_group))
 		audit_panic("cannot initialize inotify handle for rectree watches");
 
