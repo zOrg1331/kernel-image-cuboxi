@@ -22,27 +22,27 @@
  *		New byte stuffing (2+6 run-length encoding)
  *		New watchdog timer task
  *		New Protocol key (SIP0)
- *		
+ *
  *		v0.9.1 3rd March 1996 (SC)
  *		Changed to dynamic device allocation -- no more compile
  *		time (or boot time) limit on the number of STRIP devices.
- *		
+ *
  *		v0.9.2 13th March 1996 (SC)
  *		Uses arp cache lookups (but doesn't send arp packets yet)
- *		
+ *
  *		v0.9.3 17th April 1996 (SC)
  *		Fixed bug where STR_ERROR flag was getting set unneccessarily
  *		(causing otherwise good packets to be unneccessarily dropped)
- *		
+ *
  *		v0.9.4 27th April 1996 (SC)
  *		First attempt at using "&COMMAND" Starmode AT commands
- *		
+ *
  *		v0.9.5 29th May 1996 (SC)
  *		First attempt at sending (unicast) ARP packets
- *		
+ *
  *		v0.9.6 5th June 1996 (Elliot)
  *		Put "message level" tags in every "printk" statement
- *		
+ *
  *		v0.9.7 13th June 1996 (laik)
  *		Added support for the /proc fs
  *
@@ -298,7 +298,7 @@ struct strip {
 
 /*
  * Note: manual_dev_addr hack
- * 
+ *
  * It is not possible to change the hardware address of a Metricom radio,
  * or to send packets with a user-specified hardware source address, thus
  * trying to manually set a hardware source address is a questionable
@@ -315,22 +315,22 @@ struct strip {
  * machine. This allows you to connect a pair of radios to one machine,
  * and to use one exclusively for inbound traffic, and the other
  * exclusively for outbound traffic. Pretty neat, huh?
- * 
+ *
  * Here's the full procedure to set this up:
- * 
+ *
  * 1. "slattach" two interfaces, e.g. st0 for outgoing packets,
  *    and st1 for incoming packets
- * 
+ *
  * 2. "ifconfig" st0 (outbound radio) to have the hardware address
  *    which is the real hardware address of st1 (inbound radio).
  *    Now when it sends out packets, it will masquerade as st1, and
  *    replies will be sent to that radio, which is exactly what we want.
- * 
+ *
  * 3. Set the route table entry ("route add default ..." or
  *    "route add -net ...", as appropriate) to send packets via the st0
  *    interface (outbound radio). Do not add any route which sends packets
  *    out via the st1 interface -- that radio is for inbound traffic only.
- * 
+ *
  * 4. "ifconfig" st1 (inbound radio) to have hardware address zero.
  *    This tells the STRIP driver to "shut down" that interface and not
  *    send any packets through it. In particular, it stops sending the
@@ -345,17 +345,17 @@ struct strip {
  *    st0, and if it sees the reply come from st1 then it will ignore
  *    it (to be accurate, it puts the entry in the ARP table, but
  *    labelled in such a way that st0 can't use it).
- * 
+ *
  * Thanks to Petros Maniatis for coming up with the idea of splitting
  * inbound and outbound traffic between two interfaces, which turned
  * out to be really easy to implement, even if it is a bit of a hack.
- * 
+ *
  * Having set a manual address on an interface, you can restore it
  * to automatic operation (where the address is automatically kept
  * consistent with the real address of the radio) by setting a manual
  * address of all ones, e.g. "ifconfig st0 hw strip FFFFFFFFFFFF"
  * This 'turns off' manual override mode for the device address.
- * 
+ *
  * Note: The IEEE 802 headers reported in tcpdump will show the *real*
  * radio addresses the packets were sent and received from, so that you
  * can see what is really going on with packets, and which interfaces
@@ -369,7 +369,7 @@ struct strip {
 /*
  * CommandString1 works on all radios
  * Other CommandStrings are only used with firmware that provides structured responses.
- * 
+ *
  * ats319=1 Enables Info message for node additions and deletions
  * ats319=2 Enables Info message for a new best node
  * ats319=4 Enables checksums
@@ -620,7 +620,7 @@ static __u8 *StuffData(__u8 * src, __u32 length, __u8 * dst,
 			/* else, we only have one so far, so switch to Stuff_Diff code */
 			code = Stuff_Diff;
 			/* and fall through to Stuff_Diff case below
-			 * Note cunning cleverness here: case Stuff_Diff compares 
+			 * Note cunning cleverness here: case Stuff_Diff compares
 			 * the current character with the previous two to see if it
 			 * has a run of three the same. Won't this be an error if
 			 * there aren't two previous characters stored to compare with?
@@ -677,7 +677,7 @@ static __u8 *StuffData(__u8 * src, __u32 length, __u8 * dst,
  * It writes the decoded data into the buffer pointed to by "dst", up to a
  * maximum of "dst_length", and returns the new value of "src" so that a
  * follow-on call can read more data, continuing from where the first left off.
- * 
+ *
  * There are three types of results:
  * 1. The source data runs out before extracting "dst_length" bytes:
  *    UnStuffData returns NULL to indicate failure.
@@ -686,7 +686,7 @@ static __u8 *StuffData(__u8 * src, __u32 length, __u8 * dst,
  * 3. "dst_length" bytes are extracted, with more remaining.
  *    UnStuffData returns new_src < end to indicate that there are more bytes
  *    to be read.
- * 
+ *
  * Note: The decoding may be destructive, in that it may alter the source
  * data in the process of decoding it (this is necessary to allow a follow-on
  * call to resume correctly).
@@ -845,7 +845,7 @@ static int allocate_buffers(struct strip *strip_info, int mtu)
 }
 
 /*
- * MTU has been changed by the IP layer. 
+ * MTU has been changed by the IP layer.
  * We could be in
  * an upcall from the tty driver, or in an ip packet queue.
  */
@@ -936,7 +936,7 @@ static char *time_delta(char buffer[], long time)
 }
 
 /* get Nth element of the linked list */
-static struct strip *strip_get_idx(loff_t pos) 
+static struct strip *strip_get_idx(loff_t pos)
 {
 	struct strip *str;
 	int i = 0;
@@ -1007,14 +1007,14 @@ static void strip_seq_neighbours(struct seq_file *seq,
 /*
  * This function prints radio status information via the seq_file
  * interface.  The interface takes care of buffer size and over
- * run issues. 
+ * run issues.
  *
- * The buffer in seq_file is PAGESIZE (4K) 
+ * The buffer in seq_file is PAGESIZE (4K)
  * so this routine should never print more or it will get truncated.
  * With the maximum of 32 portables and 32 poletops
  * reported, the routine outputs 3107 bytes into the buffer.
  */
-static void strip_seq_status_info(struct seq_file *seq, 
+static void strip_seq_status_info(struct seq_file *seq,
 				  const struct strip *strip_info)
 {
 	char temp[32];
@@ -1159,7 +1159,7 @@ static void ResetRadio(struct strip *strip_info)
 	static const char init[] = "ate0q1dt**starmode\r**";
 	StringDescriptor s = { init, sizeof(init) - 1 };
 
-	/* 
+	/*
 	 * If the radio isn't working anymore,
 	 * we should clear the old status information.
 	 */
@@ -2755,7 +2755,7 @@ static int __init strip_init_driver(void)
 
 	printk(signon, StripVersion);
 
-	
+
 	/*
 	 * Fill in our line protocol discipline, and register it
 	 */
