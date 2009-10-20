@@ -509,20 +509,23 @@ static bool engine_wants_stop(struct utrace_engine *engine)
  *
  * If @target was stopped before the call, then after a successful call,
  * no event callbacks not requested in @events will be made; if
- * %UTRACE_EVENT(%QUIESCE) is included in @events, then a @report_quiesce
- * callback will be made when @target resumes.  If @target was not stopped,
- * and was about to make a callback to @engine, this returns -%EINPROGRESS.
- * In this case, the callback in progress might be one excluded from the
- * new @events setting.  When this returns zero, you can be sure that no
- * event callbacks you've disabled in @events can be made.
+ * %UTRACE_EVENT(%QUIESCE) is included in @events, then a
+ * @report_quiesce callback will be made when @target resumes.
+ *
+ * If @target was not stopped and @events excludes some bits that were
+ * set before, this can return -%EINPROGRESS to indicate that @target
+ * may have been making some callback to @engine.  When this returns
+ * zero, you can be sure that no event callbacks you've disabled in
+ * @events can be made.  If @events only sets new bits that were not set
+ * before on @engine, then -%EINPROGRESS will never be returned.
  *
  * To synchronize after an -%EINPROGRESS return, see utrace_barrier().
  *
- * When @target is @current, -%EINPROGRESS is not returned.  But
- * note that a newly-created engine will not receive any callbacks
- * related to an event notification already in progress.  This call
- * enables @events callbacks to be made as soon as @engine becomes
- * eligible for any callbacks, see utrace_attach_task().
+ * When @target is @current, -%EINPROGRESS is not returned.  But note
+ * that a newly-created engine will not receive any callbacks related to
+ * an event notification already in progress.  This call enables @events
+ * callbacks to be made as soon as @engine becomes eligible for any
+ * callbacks, see utrace_attach_task().
  *
  * These rules provide for coherent synchronization based on %UTRACE_STOP,
  * even when %SIGKILL is breaking its normal simple rules.
@@ -541,7 +544,7 @@ int utrace_set_events(struct task_struct *target,
 
 	old_utrace_flags = target->utrace_flags;
 	set_utrace_flags = events;
-	old_flags = engine->flags;
+	old_flags = engine->flags & ~ENGINE_STOP;
 
 	if (target->exit_state &&
 	    (((events & ~old_flags) & _UTRACE_DEATH_EVENTS) ||
@@ -581,7 +584,8 @@ int utrace_set_events(struct task_struct *target,
 		set_tsk_thread_flag(target, TIF_SYSCALL_TRACE);
 
 	ret = 0;
-	if (!utrace->stopped && target != current && !target->exit_state) {
+	if ((old_flags & ~events) &&
+	    !utrace->stopped && target != current && !target->exit_state) {
 		/*
 		 * This barrier ensures that our engine->flags changes
 		 * have hit before we examine utrace->reporting,
