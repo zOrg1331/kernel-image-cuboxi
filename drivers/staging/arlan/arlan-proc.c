@@ -233,7 +233,7 @@ static void arlan_print_diagnostic_info(struct net_device *dev)
 
 	printk("arlan: name= ");
 	IFDEBUG(1)
-	
+
 	for (i = 0; i < 16; i++)
 	{
 		char c;
@@ -364,7 +364,7 @@ static int arlan_setup_card_by_book(struct net_device *dev)
 	IFDEBUG(50) printk("2nd Noop successfully executed !!\n");
 
 	READSHM(irqLevel, arlan->irqLevel, u_char)
-	
+
 	if (irqLevel != dev->irq)
 	{
 		IFDEBUG(1) printk(KERN_WARNING "arlan dip switches set irq to %d\n", irqLevel);
@@ -602,11 +602,11 @@ static int arlan_sysctl_info(ctl_table * ctl, int write,
 	SARLUCN(dumpPtr, 4);
 	SARLUC(dumpVal);
 	SARLUC(wireTest);
-	
+
 	/* next 4 seems too long for procfs, over single page ?
 	SARLUCN( _17, 0x86);
 	SARLUCN( txBuffer, 0x800);
-	SARLUCN( rxBuffer,  0x800); 
+	SARLUCN( rxBuffer,  0x800);
 	SARLUCN( _18, 0x0bff);
 	 */
 
@@ -829,7 +829,7 @@ static int arlan_sysctl_reset(ctl_table * ctl, int write,
           .maxlen = sizeof(int), .mode = 0600, .proc_handler = &proc_dointvec},\
 	{ .ctl_name = 49, .procname = "debug", .data = &arlan_debug,\
           .maxlen = sizeof(int), .mode = 0600, .proc_handler = &proc_dointvec},
-#else 
+#else
 #define ARLAN_PROC_DEBUG_ENTRIES
 #endif
 

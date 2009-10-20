@@ -131,5 +131,7 @@ source "drivers/staging/wlags49_h25/Kconfig"
 
 source "drivers/staging/strip/Kconfig"
 
+source "drivers/staging/arlan/Kconfig"
+
 endif # !STAGING_EXCLUDE_BUILD
 endif # STAGING
