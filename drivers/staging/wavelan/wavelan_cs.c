@@ -19,7 +19,7 @@
  *
  *	-- Yunzhou Li (scip4166@nus.sg)
  *
-#ifdef WAVELAN_ROAMING	
+#ifdef WAVELAN_ROAMING
  * Roaming support added 07/22/98 by Justin Seger (jseger@media.mit.edu)
  * based on patch by Joe Finney from Lancaster University.
 #endif
@@ -51,7 +51,7 @@
  *   in supporting documentation that copying and distribution is
  *   by permission of M.I.T.  M.I.T. makes no representations about
  *   the suitability of this software for any purpose.  It is pro-
- *   vided "as is" without express or implied warranty.         
+ *   vided "as is" without express or implied warranty.
  ****************************************************************************
  *
  */
@@ -483,7 +483,7 @@ fee_write(u_long	base,	/* i/o port of the card */
 #ifdef WAVELAN_ROAMING	/* Conditional compile, see wavelan_cs.h */
 
 static unsigned char WAVELAN_BEACON_ADDRESS[] = {0x09,0x00,0x0e,0x20,0x03,0x00};
-  
+
 static void wv_roam_init(struct net_device *dev)
 {
   net_local  *lp= netdev_priv(dev);
@@ -501,33 +501,33 @@ static void wv_roam_init(struct net_device *dev)
   lp->wavepoint_table.locked=0;
   lp->curr_point=NULL;                        /* No default WavePoint */
   lp->cell_search=0;
-  
+
   lp->cell_timer.data=(long)lp;               /* Start cell expiry timer */
   lp->cell_timer.function=wl_cell_expiry;
   lp->cell_timer.expires=jiffies+CELL_TIMEOUT;
   add_timer(&lp->cell_timer);
-  
+
   wv_nwid_filter(NWID_PROMISC,lp) ;    /* Enter NWID promiscuous mode */
   /* to build up a good WavePoint */
                                            /* table... */
   printk(KERN_DEBUG "WaveLAN: Roaming enabled on device %s\n",dev->name);
 }
- 
+
 static void wv_roam_cleanup(struct net_device *dev)
 {
   wavepoint_history *ptr,*old_ptr;
   net_local *lp= netdev_priv(dev);
-  
+
   printk(KERN_DEBUG "WaveLAN: Roaming Disabled on device %s\n",dev->name);
-  
+
   /* Fixme : maybe we should check that the timer exist before deleting it */
   del_timer(&lp->cell_timer);          /* Remove cell expiry timer       */
   ptr=lp->wavepoint_table.head;        /* Clear device's WavePoint table */
   while(ptr!=NULL)
     {
       old_ptr=ptr;
-      ptr=ptr->next;	
-      wl_del_wavepoint(old_ptr,lp);	
+      ptr=ptr->next;
+      wl_del_wavepoint(old_ptr,lp);
     }
 }
 
@@ -536,17 +536,17 @@ static void wv_nwid_filter(unsigned char mode, net_local *lp)
 {
   mm_t                  m;
   unsigned long         flags;
-  
+
 #ifdef WAVELAN_ROAMING_DEBUG
   printk(KERN_DEBUG "WaveLAN: NWID promisc %s, device %s\n",(mode==NWID_PROMISC) ? "on" : "off", lp->dev->name);
 #endif
-  
+
   /* Disable interrupts & save flags */
   spin_lock_irqsave(&lp->spinlock, flags);
-  
+
   m.w.mmw_loopt_sel = (mode==NWID_PROMISC) ? MMW_LOOPT_SEL_DIS_NWID : 0x00;
   mmc_write(lp->dev->base_addr, (char *)&m.w.mmw_loopt_sel - (char *)&m, (unsigned char *)&m.w.mmw_loopt_sel, 1);
-  
+
   if(mode==NWID_PROMISC)
     lp->cell_search=1;
   else
@@ -560,10 +560,10 @@ static void wv_nwid_filter(unsigned char mode, net_local *lp)
 static wavepoint_history *wl_roam_check(unsigned short nwid, net_local *lp)
 {
   wavepoint_history	*ptr=lp->wavepoint_table.head;
-  
+
   while(ptr!=NULL){
     if(ptr->nwid==nwid)
-      return ptr;	
+      return ptr;
     ptr=ptr->next;
   }
   return NULL;
@@ -574,34 +574,34 @@ static wavepoint_history *wl_new_wavepoint(unsigned short nwid, unsigned char se
 {
   wavepoint_history *new_wavepoint;
 
-#ifdef WAVELAN_ROAMING_DEBUG	
+#ifdef WAVELAN_ROAMING_DEBUG
   printk(KERN_DEBUG "WaveLAN: New Wavepoint, NWID:%.4X\n",nwid);
 #endif
-  
+
   if(lp->wavepoint_table.num_wavepoints==MAX_WAVEPOINTS)
     return NULL;
-  
+
   new_wavepoint = kmalloc(sizeof(wavepoint_history),GFP_ATOMIC);
   if(new_wavepoint==NULL)
     return NULL;
-  
+
   new_wavepoint->nwid=nwid;                       /* New WavePoints NWID */
   new_wavepoint->average_fast=0;                    /* Running Averages..*/
   new_wavepoint->average_slow=0;
   new_wavepoint->qualptr=0;                       /* Start of ringbuffer */
   new_wavepoint->last_seq=seq-1;                /* Last sequence no.seen */
   memset(new_wavepoint->sigqual,0,WAVEPOINT_HISTORY);/* Empty ringbuffer */
-  
+
   new_wavepoint->next=lp->wavepoint_table.head;/* Add to wavepoint table */
   new_wavepoint->prev=NULL;
-  
+
   if(lp->wavepoint_table.head!=NULL)
     lp->wavepoint_table.head->prev=new_wavepoint;
-  
+
   lp->wavepoint_table.head=new_wavepoint;
-  
+
   lp->wavepoint_table.num_wavepoints++;     /* no. of visible wavepoints */
-  
+
   return new_wavepoint;
 }
 
@@ -610,44 +610,44 @@ static void wl_del_wavepoint(wavepoint_history *wavepoint, struct net_local *lp)
 {
   if(wavepoint==NULL)
     return;
-  
+
   if(lp->curr_point==wavepoint)
     lp->curr_point=NULL;
-  
+
   if(wavepoint->prev!=NULL)
     wavepoint->prev->next=wavepoint->next;
-  
+
   if(wavepoint->next!=NULL)
     wavepoint->next->prev=wavepoint->prev;
-  
+
   if(lp->wavepoint_table.head==wavepoint)
     lp->wavepoint_table.head=wavepoint->next;
-  
+
   lp->wavepoint_table.num_wavepoints--;
   kfree(wavepoint);
 }
 
-/* Timer callback function - checks WavePoint table for stale entries */ 
+/* Timer callback function - checks WavePoint table for stale entries */
 static void wl_cell_expiry(unsigned long data)
 {
   net_local *lp=(net_local *)data;
   wavepoint_history *wavepoint=lp->wavepoint_table.head,*old_point;
-  
+
 #if WAVELAN_ROAMING_DEBUG > 1
   printk(KERN_DEBUG "WaveLAN: Wavepoint timeout, dev %s\n",lp->dev->name);
 #endif
-  
+
   if(lp->wavepoint_table.locked)
     {
 #if WAVELAN_ROAMING_DEBUG > 1
       printk(KERN_DEBUG "WaveLAN: Wavepoint table locked...\n");
 #endif
-      
+
       lp->cell_timer.expires=jiffies+1; /* If table in use, come back later */
       add_timer(&lp->cell_timer);
       return;
     }
-  
+
   while(wavepoint!=NULL)
     {
       if(time_after(jiffies, wavepoint->last_seen + CELL_TIMEOUT))
@@ -655,7 +655,7 @@ static void wl_cell_expiry(unsigned long data)
 #ifdef WAVELAN_ROAMING_DEBUG
 	  printk(KERN_DEBUG "WaveLAN: Bye bye %.4X\n",wavepoint->nwid);
 #endif
-	  
+
 	  old_point=wavepoint;
 	  wavepoint=wavepoint->next;
 	  wl_del_wavepoint(old_point,lp);
@@ -668,11 +668,11 @@ static void wl_cell_expiry(unsigned long data)
 }
 
 /* Update SNR history of a wavepoint */
-static void wl_update_history(wavepoint_history *wavepoint, unsigned char sigqual, unsigned char seq)	
+static void wl_update_history(wavepoint_history *wavepoint, unsigned char sigqual, unsigned char seq)
 {
   int i=0,num_missed=0,ptr=0;
   int average_fast=0,average_slow=0;
-  
+
   num_missed=(seq-wavepoint->last_seq)%WAVEPOINT_HISTORY;/* Have we missed
 							    any beacons? */
   if(num_missed)
@@ -682,26 +682,26 @@ static void wl_update_history(wavepoint_history *wavepoint, unsigned char sigqua
 	wavepoint->qualptr %=WAVEPOINT_HISTORY;    /* in the ringbuffer. */
       }
   wavepoint->last_seen=jiffies;                 /* Add beacon to history */
-  wavepoint->last_seq=seq;	
-  wavepoint->sigqual[wavepoint->qualptr++]=sigqual;          
+  wavepoint->last_seq=seq;
+  wavepoint->sigqual[wavepoint->qualptr++]=sigqual;
   wavepoint->qualptr %=WAVEPOINT_HISTORY;
   ptr=(wavepoint->qualptr-WAVEPOINT_FAST_HISTORY+WAVEPOINT_HISTORY)%WAVEPOINT_HISTORY;
-  
+
   for(i=0;i<WAVEPOINT_FAST_HISTORY;i++)       /* Update running averages */
     {
       average_fast+=wavepoint->sigqual[ptr++];
       ptr %=WAVEPOINT_HISTORY;
     }
-  
+
   average_slow=average_fast;
   for(i=WAVEPOINT_FAST_HISTORY;i<WAVEPOINT_HISTORY;i++)
     {
       average_slow+=wavepoint->sigqual[ptr++];
       ptr %=WAVEPOINT_HISTORY;
     }
-  
+
   wavepoint->average_fast=average_fast/WAVEPOINT_FAST_HISTORY;
-  wavepoint->average_slow=average_slow/WAVEPOINT_HISTORY;	
+  wavepoint->average_slow=average_slow/WAVEPOINT_HISTORY;
 }
 
 /* Perform a handover to a new WavePoint */
@@ -716,19 +716,19 @@ static void wv_roam_handover(wavepoint_history *wavepoint, net_local *lp)
       wv_nwid_filter(!NWID_PROMISC,lp);
       return;
     }
-  
+
 #ifdef WAVELAN_ROAMING_DEBUG
   printk(KERN_DEBUG "WaveLAN: Doing handover to %.4X, dev %s\n",wavepoint->nwid,lp->dev->name);
 #endif
- 	
+
   /* Disable interrupts & save flags */
   spin_lock_irqsave(&lp->spinlock, flags);
 
   m.w.mmw_netw_id_l = wavepoint->nwid & 0xFF;
   m.w.mmw_netw_id_h = (wavepoint->nwid & 0xFF00) >> 8;
-  
+
   mmc_write(base, (char *)&m.w.mmw_netw_id_l - (char *)&m, (unsigned char *)&m.w.mmw_netw_id_l, 2);
-  
+
   /* ReEnable interrupts & restore flags */
   spin_unlock_irqrestore(&lp->spinlock, flags);
 
@@ -743,7 +743,7 @@ static void wl_roam_gather(struct net_device *  dev,
 						      of packet */
 {
   wavepoint_beacon *beacon= (wavepoint_beacon *)hdr; /* Rcvd. Beacon */
-  unsigned short nwid=ntohs(beacon->nwid);  
+  unsigned short nwid=ntohs(beacon->nwid);
   unsigned short sigqual=stats[2] & MMR_SGNL_QUAL;   /* SNR of beacon */
   wavepoint_history *wavepoint=NULL;                /* WavePoint table entry */
   net_local *lp = netdev_priv(dev);              /* Device info */
@@ -757,9 +757,9 @@ static void wl_roam_gather(struct net_device *  dev,
   printk(KERN_DEBUG "WaveLAN: beacon, dev %s:\n",dev->name);
   printk(KERN_DEBUG "Domain: %.4X NWID: %.4X SigQual=%d\n",ntohs(beacon->domain_id),nwid,sigqual);
 #endif
-  
+
   lp->wavepoint_table.locked=1;                            /* <Mutex> */
-  
+
   wavepoint=wl_roam_check(nwid,lp);            /* Find WavePoint table entry */
   if(wavepoint==NULL)                    /* If no entry, Create a new one... */
     {
@@ -769,22 +769,22 @@ static void wl_roam_gather(struct net_device *  dev,
     }
   if(lp->curr_point==NULL)             /* If this is the only WavePoint, */
     wv_roam_handover(wavepoint, lp);	         /* Jump on it! */
-  
+
   wl_update_history(wavepoint, sigqual, beacon->seq); /* Update SNR history
 							 stats. */
-  
+
   if(lp->curr_point->average_slow < SEARCH_THRESH_LOW) /* If our current */
     if(!lp->cell_search)                  /* WavePoint is getting faint, */
       wv_nwid_filter(NWID_PROMISC,lp);    /* start looking for a new one */
-  
-  if(wavepoint->average_slow > 
+
+  if(wavepoint->average_slow >
      lp->curr_point->average_slow + WAVELAN_ROAMING_DELTA)
     wv_roam_handover(wavepoint, lp);   /* Handover to a better WavePoint */
-  
+
   if(lp->curr_point->average_slow > SEARCH_THRESH_HIGH) /* If our SNR is */
     if(lp->cell_search)  /* getting better, drop out of cell search mode */
       wv_nwid_filter(!NWID_PROMISC,lp);
-  
+
 out:
   lp->wavepoint_table.locked=0;                        /* </MUTEX>   :-) */
 }
@@ -794,7 +794,7 @@ static inline int WAVELAN_BEACON(unsigned char *data)
 {
   wavepoint_beacon *beacon= (wavepoint_beacon *)data;
   static const wavepoint_beacon beacon_template={0xaa,0xaa,0x03,0x08,0x00,0x0e,0x20,0x03,0x00};
-  
+
   if(memcmp(beacon,&beacon_template,9)==0)
     return 1;
   else
@@ -809,7 +809,7 @@ static inline int WAVELAN_BEACON(unsigned char *data)
 
 /*------------------------------------------------------------------*/
 /*
- * Routine to synchronously send a command to the i82593 chip. 
+ * Routine to synchronously send a command to the i82593 chip.
  * Should be called with interrupts disabled.
  * (called by wv_packet_write(), wv_ru_stop(), wv_ru_start(),
  *  wv_82593_config() & wv_diag())
@@ -1431,7 +1431,7 @@ wavelan_set_multicast_list(struct net_device *	dev)
       else
 	{
 	  /*
-	   * Switch to normal mode: disable promiscuous mode and 
+	   * Switch to normal mode: disable promiscuous mode and
 	   * clear the multicast list.
 	   */
 	  if(lp->promiscuous || lp->mc_count == 0)
@@ -1804,7 +1804,7 @@ static int wavelan_set_nwid(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	/* Set NWID in WaveLAN. */
 	if (!wrqu->nwid.disabled) {
 		/* Set NWID in psa */
@@ -1847,7 +1847,7 @@ static int wavelan_set_nwid(struct net_device *dev,
 
 /*------------------------------------------------------------------*/
 /*
- * Wireless Handler : get NWID 
+ * Wireless Handler : get NWID
  */
 static int wavelan_get_nwid(struct net_device *dev,
 			    struct iw_request_info *info,
@@ -1861,7 +1861,7 @@ static int wavelan_get_nwid(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	/* Read the NWID. */
 	psa_read(dev,
 		 (char *) psa.psa_nwid - (char *) &psa,
@@ -1892,7 +1892,7 @@ static int wavelan_set_freq(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	/* Attempt to recognise 2.00 cards (2.4 GHz frequency selectable). */
 	if (!(mmc_in(base, mmroff(0, mmr_fee_status)) &
 	      (MMR_FEE_STATUS_DWLD | MMR_FEE_STATUS_BUSY)))
@@ -1923,7 +1923,7 @@ static int wavelan_get_freq(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	/* Attempt to recognise 2.00 cards (2.4 GHz frequency selectable).
 	 * Does it work for everybody, especially old cards? */
 	if (!(mmc_in(base, mmroff(0, mmr_fee_status)) &
@@ -1969,7 +1969,7 @@ static int wavelan_set_sens(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	/* Set the level threshold. */
 	/* We should complain loudly if wrqu->sens.fixed = 0, because we
 	 * can't set auto mode... */
@@ -2004,7 +2004,7 @@ static int wavelan_get_sens(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	/* Read the level threshold. */
 	psa_read(dev,
 		 (char *) &psa.psa_thr_pre_set - (char *) &psa,
@@ -2105,7 +2105,7 @@ static int wavelan_get_encode(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	/* Check if encryption is available */
 	if (!mmc_encr(base)) {
 		ret = -EOPNOTSUPP;
@@ -2151,7 +2151,7 @@ static int wavelan_set_essid(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	/* Check if disable */
 	if(wrqu->data.flags == 0)
 		lp->filter_domains = 0;
@@ -2351,7 +2351,7 @@ static int wavelan_get_range(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	/* Attempt to recognise 2.00 cards (2.4 GHz frequency selectable). */
 	if (!(mmc_in(base, mmroff(0, mmr_fee_status)) &
 	      (MMR_FEE_STATUS_DWLD | MMR_FEE_STATUS_BUSY))) {
@@ -2393,7 +2393,7 @@ static int wavelan_set_qthr(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	psa.psa_quality_thr = *(extra) & 0x0F;
 	psa_write(dev,
 		  (char *) &psa.psa_quality_thr - (char *) &psa,
@@ -2424,7 +2424,7 @@ static int wavelan_get_qthr(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	psa_read(dev,
 		 (char *) &psa.psa_quality_thr - (char *) &psa,
 		 (unsigned char *) &psa.psa_quality_thr, 1);
@@ -2451,7 +2451,7 @@ static int wavelan_set_roam(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	/* Note : should check if user == root */
 	if(do_roaming && (*extra)==0)
 		wv_roam_cleanup(dev);
@@ -2745,7 +2745,7 @@ wv_start_of_frame(struct net_device *	dev,
 #endif
       return(-1);
     }
-  
+
   /* Frame too short */
   if(len < 7)
     {
@@ -2755,7 +2755,7 @@ wv_start_of_frame(struct net_device *	dev,
 #endif
       return(-1);
     }
-  
+
   /* Wrap around buffer */
   if(len > ((wrap - (rfp - len) + RX_SIZE) % RX_SIZE))	/* magic formula ! */
     {
@@ -2817,7 +2817,7 @@ wv_packet_read(struct net_device *		dev,
 #ifdef DEBUG_RX_INFO
   wv_packet_info(skb_mac_header(skb), sksize, dev->name, "wv_packet_read");
 #endif	/* DEBUG_RX_INFO */
-     
+
   /* Statistics gathering & stuff associated.
    * It seem a bit messy with all the define, but it's really simple... */
   if(
@@ -2847,7 +2847,7 @@ wv_packet_read(struct net_device *		dev,
 	if(WAVELAN_BEACON(skb->data))
 	  wl_roam_gather(dev, skb->data, stats);
 #endif	/* WAVELAN_ROAMING */
-	  
+
 #ifdef WIRELESS_SPY
       wl_spy_gather(dev, skb_mac_header(skb) + WAVELAN_ADDR_SIZE, stats);
 #endif	/* WIRELESS_SPY */
@@ -3231,13 +3231,13 @@ wv_mmc_init(struct net_device *	dev)
   /* Copy PSA info to the mmc */
   m.mmw_netw_id_l = psa.psa_nwid[1];
   m.mmw_netw_id_h = psa.psa_nwid[0];
-  
+
   if(psa.psa_nwid_select & 1)
     m.mmw_loopt_sel = 0x00;
   else
     m.mmw_loopt_sel = MMW_LOOPT_SEL_DIS_NWID;
 
-  memcpy(&m.mmw_encr_key, &psa.psa_encryption_key, 
+  memcpy(&m.mmw_encr_key, &psa.psa_encryption_key,
 	 sizeof(m.mmw_encr_key));
 
   if(psa.psa_encryption_select)
@@ -3518,7 +3518,7 @@ wv_82593_config(struct net_device *	dev)
   cfblk.prmisc = ((lp->promiscuous) ? TRUE: FALSE);	/* Promiscuous mode */
   cfblk.bc_dis = FALSE;         /* Enable broadcast reception */
   cfblk.crs_1 = TRUE;		/* Transmit without carrier sense */
-  cfblk.nocrc_ins = FALSE;	/* i82593 generates CRC */	
+  cfblk.nocrc_ins = FALSE;	/* i82593 generates CRC */
   cfblk.crc_1632 = FALSE;	/* 32-bit Autodin-II CRC */
   cfblk.crs_cdt = FALSE;	/* CD not to be interpreted as CS */
   cfblk.cs_filter = 0;  	/* CS is recognized immediately */
@@ -3660,7 +3660,7 @@ wv_pcmcia_reset(struct net_device *	dev)
       cs_error(link, AccessConfigurationRegister, i);
       return FALSE;
     }
-      
+
 #ifdef DEBUG_CONFIG_INFO
   printk(KERN_DEBUG "%s: wavelan_pcmcia_reset(): Config reg is 0x%x\n",
 	 dev->name, (u_int) reg.Value);
@@ -3674,7 +3674,7 @@ wv_pcmcia_reset(struct net_device *	dev)
       cs_error(link, AccessConfigurationRegister, i);
       return FALSE;
     }
-      
+
   reg.Action = CS_WRITE;
   reg.Value = COR_LEVEL_IRQ | COR_CONFIG;
   i = pcmcia_access_configuration_register(link, &reg);
@@ -3781,7 +3781,7 @@ wv_hw_config(struct net_device *	dev)
 	  break;
 	}
 
-      /* 
+      /*
        * insert code for loopback test here
        */
 
@@ -3819,7 +3819,7 @@ wv_hw_reset(struct net_device *	dev)
 
   lp->nresets++;
   lp->configured = 0;
-  
+
   /* Call wv_hw_config() for most of the reset & init stuff */
   if(wv_hw_config(dev) == FALSE)
     return;
@@ -3979,7 +3979,7 @@ wv_pcmcia_release(struct pcmcia_device *link)
 
 /*
  * This function is the interrupt handler for the WaveLAN card. This
- * routine will be called whenever: 
+ * routine will be called whenever:
  *	1. A packet is received.
  *	2. A packet has successfully been transferred and the unit is
  *	   ready to transmit another packet.
@@ -4027,7 +4027,7 @@ wavelan_interrupt(int		irq,
       status0 = inb(LCSR(base));
 
 #ifdef DEBUG_INTERRUPT_INFO
-      printk(KERN_DEBUG "status0 0x%x [%s => 0x%x]", status0, 
+      printk(KERN_DEBUG "status0 0x%x [%s => 0x%x]", status0,
 	     (status0&SR0_INTERRUPT)?"int":"no int",status0&~SR0_INTERRUPT);
       if(status0&SR0_INTERRUPT)
 	{
@@ -4198,7 +4198,7 @@ wavelan_interrupt(int		irq,
 
 	  netif_wake_queue(dev);
 	  outb(CR0_INT_ACK | OP0_NOP, LCCR(base));	/* Acknowledge the interrupt */
-    	} 
+    	}
       else	/* if interrupt = transmit done or retransmit done */
 	{
 #ifdef DEBUG_INTERRUPT_ERROR

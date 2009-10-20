@@ -18,7 +18,7 @@
  */
 
 /*
- * Definitions for the AT&T GIS (formerly NCR) WaveLAN PCMCIA card: 
+ * Definitions for the AT&T GIS (formerly NCR) WaveLAN PCMCIA card:
  *   An Ethernet-like radio transceiver controlled by an Intel 82593
  *   coprocessor.
  *
@@ -37,7 +37,7 @@
  *   in supporting documentation that copying and distribution is
  *   by permission of M.I.T.  M.I.T. makes no representations about
  *   the suitability of this software for any purpose.  It is pro-
- *   vided "as is" without express or implied warranty.         
+ *   vided "as is" without express or implied warranty.
  ****************************************************************************
  *
  *
