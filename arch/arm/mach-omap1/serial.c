@@ -120,7 +120,7 @@ void __init omap_serial_init(void)
 		serial_platform_data[2].uartclk = OMAP1510_BASE_BAUD * 16;
 	}
 
-	for (i = 0; i < OMAP_MAX_NR_PORTS; i++) {
+	for (i = 0; i < ARRAY_SIZE(serial_platform_data) - 1; i++) {
 		unsigned char reg;
 
 		/* Static mapping, never released */
