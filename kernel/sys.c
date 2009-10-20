@@ -1211,6 +1211,61 @@ SYSCALL_DEFINE2(getrlimit, unsigned int, resource, struct rlimit __user *, rlim)
 	}
 }
 
+static int check_prlimit_permission(struct task_struct *task)
+{
+	const struct cred *cred = current_cred(), *tcred;
+	int ret = 0;
+
+	rcu_read_lock();
+	tcred = __task_cred(task);
+	if ((cred->uid != tcred->euid ||
+	     cred->uid != tcred->suid ||
+	     cred->uid != tcred->uid  ||
+	     cred->gid != tcred->egid ||
+	     cred->gid != tcred->sgid ||
+	     cred->gid != tcred->gid) &&
+	     !capable(CAP_SYS_RESOURCE)) {
+		ret = -EPERM;
+	}
+	rcu_read_unlock();
+	return ret;
+}
+
+SYSCALL_DEFINE3(getprlimit, pid_t, pid, unsigned int, resource,
+		struct rlimit __user *, rlim)
+{
+	struct rlimit val;
+	struct task_struct *tsk;
+	int ret;
+
+	if (resource >= RLIM_NLIMITS)
+		return -EINVAL;
+
+	read_lock(&tasklist_lock);
+
+	tsk = find_task_by_vpid(pid);
+	if (!tsk || !tsk->sighand) {
+		ret = -ESRCH;
+		goto err_unlock;
+	}
+
+	ret = check_prlimit_permission(tsk);
+	if (ret)
+		goto err_unlock;
+
+	task_lock(tsk->group_leader);
+	val = tsk->signal->rlim[resource];
+	task_unlock(tsk->group_leader);
+
+	read_unlock(&tasklist_lock);
+
+	return copy_to_user(rlim, &val, sizeof(*rlim)) ? -EFAULT : 0;
+err_unlock:
+	read_unlock(&tasklist_lock);
+	return ret;
+}
+
+
 #ifdef __ARCH_WANT_SYS_OLD_GETRLIMIT
 
 /*
@@ -1307,6 +1362,37 @@ SYSCALL_DEFINE2(setrlimit, unsigned int, resource, struct rlimit __user *, rlim)
 	if (copy_from_user(&new_rlim, rlim, sizeof(*rlim)))
 		return -EFAULT;
 	return do_setrlimit(current, resource, &new_rlim);
+}
+
+SYSCALL_DEFINE3(setprlimit, pid_t, pid, unsigned int, resource,
+		struct rlimit __user *, rlim)
+{
+	struct task_struct *tsk;
+	struct rlimit new_rlim;
+	int ret;
+
+	if (resource >= RLIM_NLIMITS)
+		return -EINVAL;
+
+	if (copy_from_user(&new_rlim, rlim, sizeof(*rlim)))
+		return -EFAULT;
+
+	rcu_read_lock();
+	tsk = find_task_by_vpid(pid);
+	if (!tsk) {
+		rcu_read_unlock();
+		return -ESRCH;
+	}
+	get_task_struct(tsk);
+	rcu_read_unlock();
+
+	ret = check_prlimit_permission(tsk);
+	if (!ret)
+		ret = do_setrlimit(tsk, resource, &new_rlim);
+
+	put_task_struct(tsk);
+
+	return ret;
 }
 
 /*
