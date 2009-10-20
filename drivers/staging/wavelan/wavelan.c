@@ -36,7 +36,7 @@ static u8 wv_irq_to_psa(int irq)
 
 /*------------------------------------------------------------------*/
 /*
- * Translate PSA irq parameter to irq number 
+ * Translate PSA irq parameter to irq number
  */
 static int __init wv_psa_to_irq(u8 irqval)
 {
@@ -136,7 +136,7 @@ static inline void wv_ints_off(struct net_device * dev)
 {
 	net_local *lp = netdev_priv(dev);
 	unsigned long ioaddr = dev->base_addr;
-	
+
 	lp->hacr &= ~HACR_INTRON;
 	hacr_write(ioaddr, lp->hacr);
 }				/* wv_ints_off */
@@ -1403,7 +1403,7 @@ static void wavelan_set_multicast_list(struct net_device * dev)
 		}
 	} else {
 		/*
-		 * Switch to normal mode: disable promiscuous mode and 
+		 * Switch to normal mode: disable promiscuous mode and
 		 * clear the multicast list.
 		 */
 		if (lp->promiscuous || lp->mc_count == 0) {
@@ -1640,7 +1640,7 @@ static int wv_frequency_list(unsigned long ioaddr,	/* I/O port of the card */
 		if (table[9 - (freq / 16)] & (1 << (freq % 16))) {
 			/* Compute approximate channel number */
 			while ((c < ARRAY_SIZE(channel_bands)) &&
-				(((channel_bands[c] >> 1) - 24) < freq)) 
+				(((channel_bands[c] >> 1) - 24) < freq))
 				c++;
 			list[i].i = c;	/* Set the list index */
 
@@ -1736,7 +1736,7 @@ static int wavelan_set_nwid(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	/* Set NWID in WaveLAN. */
 	if (!wrqu->nwid.disabled) {
 		/* Set NWID in psa */
@@ -1779,7 +1779,7 @@ static int wavelan_set_nwid(struct net_device *dev,
 
 /*------------------------------------------------------------------*/
 /*
- * Wireless Handler : get NWID 
+ * Wireless Handler : get NWID
  */
 static int wavelan_get_nwid(struct net_device *dev,
 			    struct iw_request_info *info,
@@ -1794,7 +1794,7 @@ static int wavelan_get_nwid(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	/* Read the NWID. */
 	psa_read(ioaddr, lp->hacr,
 		 (char *) psa.psa_nwid - (char *) &psa,
@@ -1825,7 +1825,7 @@ static int wavelan_set_freq(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	/* Attempt to recognise 2.00 cards (2.4 GHz frequency selectable). */
 	if (!(mmc_in(ioaddr, mmroff(0, mmr_fee_status)) &
 	      (MMR_FEE_STATUS_DWLD | MMR_FEE_STATUS_BUSY)))
@@ -1856,7 +1856,7 @@ static int wavelan_get_freq(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	/* Attempt to recognise 2.00 cards (2.4 GHz frequency selectable).
 	 * Does it work for everybody, especially old cards? */
 	if (!(mmc_in(ioaddr, mmroff(0, mmr_fee_status)) &
@@ -1902,7 +1902,7 @@ static int wavelan_set_sens(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	/* Set the level threshold. */
 	/* We should complain loudly if wrqu->sens.fixed = 0, because we
 	 * can't set auto mode... */
@@ -1938,7 +1938,7 @@ static int wavelan_get_sens(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	/* Read the level threshold. */
 	psa_read(ioaddr, lp->hacr,
 		 (char *) &psa.psa_thr_pre_set - (char *) &psa,
@@ -2039,7 +2039,7 @@ static int wavelan_get_encode(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	/* Check if encryption is available */
 	if (!mmc_encr(ioaddr)) {
 		ret = -EOPNOTSUPP;
@@ -2118,7 +2118,7 @@ static int wavelan_get_range(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	/* Attempt to recognise 2.00 cards (2.4 GHz frequency selectable). */
 	if (!(mmc_in(ioaddr, mmroff(0, mmr_fee_status)) &
 	      (MMR_FEE_STATUS_DWLD | MMR_FEE_STATUS_BUSY))) {
@@ -2160,7 +2160,7 @@ static int wavelan_set_qthr(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	psa.psa_quality_thr = *(extra) & 0x0F;
 	psa_write(ioaddr, lp->hacr,
 		  (char *) &psa.psa_quality_thr - (char *) &psa,
@@ -2192,7 +2192,7 @@ static int wavelan_get_qthr(struct net_device *dev,
 
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	psa_read(ioaddr, lp->hacr,
 		 (char *) &psa.psa_quality_thr - (char *) &psa,
 		 (unsigned char *) &psa.psa_quality_thr, 1);
@@ -2374,10 +2374,10 @@ static iw_stats *wavelan_get_wireless_stats(struct net_device * dev)
 	/* Check */
 	if (lp == (net_local *) NULL)
 		return (iw_stats *) NULL;
-	
+
 	/* Disable interrupts and save flags. */
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	wstats = &lp->wstats;
 
 	/* Get data from the mmc. */
@@ -2396,8 +2396,8 @@ static iw_stats *wavelan_get_wireless_stats(struct net_device * dev)
 	wstats->qual.qual = m.mmr_sgnl_qual & MMR_SGNL_QUAL;
 	wstats->qual.level = m.mmr_signal_lvl & MMR_SIGNAL_LVL;
 	wstats->qual.noise = m.mmr_silence_lvl & MMR_SILENCE_LVL;
-	wstats->qual.updated = (((m. mmr_signal_lvl & MMR_SIGNAL_LVL_VALID) >> 7) 
-			| ((m.mmr_signal_lvl & MMR_SIGNAL_LVL_VALID) >> 6) 
+	wstats->qual.updated = (((m. mmr_signal_lvl & MMR_SIGNAL_LVL_VALID) >> 7)
+			| ((m.mmr_signal_lvl & MMR_SIGNAL_LVL_VALID) >> 6)
 			| ((m.mmr_silence_lvl & MMR_SILENCE_LVL_VALID) >> 5));
 	wstats->discard.nwid += (m.mmr_wrong_nwid_h << 8) | m.mmr_wrong_nwid_l;
 	wstats->discard.code = 0L;
@@ -2821,7 +2821,7 @@ static int wv_packet_write(struct net_device * dev, void *buf, short length)
 		netif_wake_queue(dev);
 
 	spin_unlock_irqrestore(&lp->spinlock, flags);
-	
+
 #ifdef DEBUG_TX_INFO
 	wv_packet_info((u8 *) buf, length, dev->name,
 		       "wv_packet_write");
@@ -2859,7 +2859,7 @@ static netdev_tx_t wavelan_packet_xmit(struct sk_buff *skb,
 	 */
 	netif_stop_queue(dev);
 
-	/* If somebody has asked to reconfigure the controller, 
+	/* If somebody has asked to reconfigure the controller,
 	 * we can do it now.
 	 */
 	if (lp->reconfig_82586) {
@@ -3260,7 +3260,7 @@ static int wv_cu_start(struct net_device * dev)
 
 /*------------------------------------------------------------------*/
 /*
- * This routine does a standard configuration of the WaveLAN 
+ * This routine does a standard configuration of the WaveLAN
  * controller (i82586).
  *
  * It initialises the scp, iscp and scb structure
@@ -3574,7 +3574,7 @@ static void wv_82586_config(struct net_device * dev)
 
 /*------------------------------------------------------------------*/
 /*
- * This routine, called by wavelan_close(), gracefully stops the 
+ * This routine, called by wavelan_close(), gracefully stops the
  * WaveLAN controller (i82586).
  * (called by wavelan_close())
  */
@@ -3701,7 +3701,7 @@ static int wv_check_ioaddr(unsigned long ioaddr, u8 * mac)
 
 /*
  * This function is the interrupt handler for the WaveLAN card. This
- * routine will be called whenever: 
+ * routine will be called whenever:
  */
 static irqreturn_t wavelan_interrupt(int irq, void *dev_id)
 {
@@ -3921,7 +3921,7 @@ static void wavelan_watchdog(struct net_device *	dev)
 		netif_wake_queue(dev);
 
 	spin_unlock_irqrestore(&lp->spinlock, flags);
-	
+
 #ifdef DEBUG_INTERRUPT_TRACE
 	printk(KERN_DEBUG "%s: <-wavelan_watchdog()\n", dev->name);
 #endif
@@ -3930,7 +3930,7 @@ static void wavelan_watchdog(struct net_device *	dev)
 /********************* CONFIGURATION CALLBACKS *********************/
 /*
  * Here are the functions called by the Linux networking code (NET3)
- * for initialization, configuration and deinstallations of the 
+ * for initialization, configuration and deinstallations of the
  * WaveLAN ISA hardware.
  */
 
@@ -3958,7 +3958,7 @@ static int wavelan_open(struct net_device * dev)
 		return -ENXIO;
 	}
 
-	if (request_irq(dev->irq, &wavelan_interrupt, 0, "WaveLAN", dev) != 0) 
+	if (request_irq(dev->irq, &wavelan_interrupt, 0, "WaveLAN", dev) != 0)
 	{
 #ifdef DEBUG_CONFIG_ERROR
 		printk(KERN_WARNING "%s: wavelan_open(): invalid IRQ\n",
@@ -3968,7 +3968,7 @@ static int wavelan_open(struct net_device * dev)
 	}
 
 	spin_lock_irqsave(&lp->spinlock, flags);
-	
+
 	if (wv_hw_reset(dev) != -1) {
 		netif_start_queue(dev);
 	} else {
@@ -3982,7 +3982,7 @@ static int wavelan_open(struct net_device * dev)
 		return -EAGAIN;
 	}
 	spin_unlock_irqrestore(&lp->spinlock, flags);
-	
+
 #ifdef DEBUG_CALLBACK_TRACE
 	printk(KERN_DEBUG "%s: <-wavelan_open()\n", dev->name);
 #endif
@@ -4151,7 +4151,7 @@ out:
 
 /*------------------------------------------------------------------*/
 /*
- * Check for a network adaptor of this type.  Return '0' iff one 
+ * Check for a network adaptor of this type.  Return '0' iff one
  * exists.  There seem to be different interpretations of
  * the initial value of dev->base_addr.
  * We follow the example in drivers/net/ne.c.
@@ -4221,7 +4221,7 @@ struct net_device * __init wavelan_probe(int unit)
 		if (i == ARRAY_SIZE(iobase))
 			r = -ENODEV;
 	}
-	if (r) 
+	if (r)
 		goto out;
 	r = register_netdev(dev);
 	if (r)

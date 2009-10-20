@@ -123,7 +123,7 @@
  * writing a Wavelan ISA driver for the MACH microkernel. Girish
  * Welling <welling@paul.rutgers.edu> had also worked on it.
  * Keith Moore modify this for the Pcmcia hardware.
- * 
+ *
  * Robert Morris <rtm@das.harvard.edu> port these two drivers to BSDI
  * and add specific Pcmcia support (there is currently no equivalent
  * of the PCMCIA package under BSD...).
@@ -283,7 +283,7 @@
  * Changes made in sixth release (2.9.1a) :
  * --------------------------------------
  *	- Change the detection code for multi manufacturer code support
- *	- Correct bug (hang kernel) in init when we were "rejecting" a card 
+ *	- Correct bug (hang kernel) in init when we were "rejecting" a card
  *
  * Changes made in seventh release (2.9.1b) :
  * ----------------------------------------
@@ -673,7 +673,7 @@ static void
 		 int);		/* number of registers */
 /* ---------------------- I82593 SUBROUTINES ----------------------- */
 static int
-	wv_82593_cmd(struct net_device *,	/* synchronously send a command to i82593 */ 
+	wv_82593_cmd(struct net_device *,	/* synchronously send a command to i82593 */
 		     char *,
 		     int,
 		     int);

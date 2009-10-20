@@ -125,7 +125,7 @@
  * writing a WaveLAN ISA driver for the Mach microkernel.  Girish
  * Welling <welling@paul.rutgers.edu> had also worked on it.
  * Keith Moore modified this for the PCMCIA hardware.
- * 
+ *
  * Robert Morris <rtm@das.harvard.edu> ported these two drivers to BSDI
  * and added specific PCMCIA support (there is currently no equivalent
  * of the PCMCIA package under BSD).
