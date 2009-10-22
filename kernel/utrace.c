@@ -1944,10 +1944,12 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 		event = 0;
 		ka = NULL;
 		memset(return_ka, 0, sizeof *return_ka);
-	} else if ((task->utrace_flags & UTRACE_EVENT_SIGNAL_ALL) == 0) {
+	} else if (!(task->utrace_flags & UTRACE_EVENT_SIGNAL_ALL) ||
+			unlikely(task->signal->group_stop_count)) {
 		/*
-		 * If no engine is interested in intercepting signals,
-		 * let the caller just dequeue them normally.
+		 * If no engine is interested in intercepting signals or
+		 * we must stop, let the caller just dequeue them normally
+		 * or participate in group-stop.
 		 */
 		return 0;
 	} else {
