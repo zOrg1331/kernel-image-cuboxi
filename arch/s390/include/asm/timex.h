@@ -65,17 +65,20 @@ static inline unsigned long long get_clock (void)
 	return clk;
 }
 
+static inline void get_clock_ext(char *clk)
+{
+#if __GNUC__ > 3 || (__GNUC__ == 3 && __GNUC_MINOR__ > 2)
+	asm volatile("stcke %0" : "=Q" (*clk) : : "cc");
+#else /* __GNUC__ */
+	asm volatile("stcke 0(%1)" : "=m" (*clk)
+				   : "a" (clk) : "cc");
+#endif /* __GNUC__ */
+}
+
 static inline unsigned long long get_clock_xt(void)
 {
 	unsigned char clk[16];
-
-#if __GNUC__ > 3 || (__GNUC__ == 3 && __GNUC_MINOR__ > 2)
-	asm volatile("stcke %0" : "=Q" (clk) : : "cc");
-#else /* __GNUC__ */
-	asm volatile("stcke 0(%1)" : "=m" (clk)
-				   : "a" (clk) : "cc");
-#endif /* __GNUC__ */
-
+	get_clock_ext(clk);
 	return *((unsigned long long *)&clk[1]);
 }
 
