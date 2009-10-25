@@ -15,14 +15,20 @@
 #include <linux/dma-mapping.h>
 #include <linux/dma-debug.h>
 #include <linux/io.h>
+#include <linux/module.h>
 #include <asm/cacheflush.h>
 #include <asm/addrspace.h>
 
 #define PREALLOC_DMA_DEBUG_ENTRIES	4096
 
+struct dma_map_ops *dma_ops;
+EXPORT_SYMBOL(dma_ops);
+
 static int __init dma_init(void)
 {
 	dma_debug_init(PREALLOC_DMA_DEBUG_ENTRIES);
+
+	no_iommu_init();
 	return 0;
 }
 fs_initcall(dma_init);
@@ -85,7 +91,7 @@ EXPORT_SYMBOL(dma_free_coherent);
 void dma_cache_sync(struct device *dev, void *vaddr, size_t size,
 		    enum dma_data_direction direction)
 {
-#ifdef CONFIG_CPU_SH5
+#if defined(CONFIG_CPU_SH5) || defined(CONFIG_PMB)
 	void *p1addr = vaddr;
 #else
 	void *p1addr = (void*) P1SEGADDR((unsigned long)vaddr);
