@@ -132,7 +132,7 @@ async_mult(struct page *dest, struct page *src, u8 coef, size_t len,
 
 static struct dma_async_tx_descriptor *
 __2data_recov_4(size_t bytes, int faila, int failb, struct page **blocks,
-	      struct async_submit_ctl *submit)
+		bool is_ddf, struct async_submit_ctl *submit)
 {
 	struct dma_async_tx_descriptor *tx = NULL;
 	struct page *p, *q, *a, *b;
@@ -143,8 +143,13 @@ __2data_recov_4(size_t bytes, int faila, int failb, struct page **blocks,
 	void *cb_param = submit->cb_param;
 	void *scribble = submit->scribble;
 
-	p = blocks[4-2];
-	q = blocks[4-1];
+	if (is_ddf) {
+		p = blocks[6-2];
+		q = blocks[6-1];
+	} else {
+		p = blocks[4-2];
+		q = blocks[4-1];
+	}
 
 	a = blocks[faila];
 	b = blocks[failb];
@@ -171,7 +176,7 @@ __2data_recov_4(size_t bytes, int faila, int failb, struct page **blocks,
 
 static struct dma_async_tx_descriptor *
 __2data_recov_5(size_t bytes, int faila, int failb, struct page **blocks,
-	      struct async_submit_ctl *submit)
+		bool is_ddf, struct async_submit_ctl *submit)
 {
 	struct dma_async_tx_descriptor *tx = NULL;
 	struct page *p, *q, *g, *dp, *dq;
@@ -181,21 +186,34 @@ __2data_recov_5(size_t bytes, int faila, int failb, struct page **blocks,
 	dma_async_tx_callback cb_fn = submit->cb_fn;
 	void *cb_param = submit->cb_param;
 	void *scribble = submit->scribble;
-	int uninitialized_var(good);
+	int good = -1;
 	int i;
 
-	for (i = 0; i < 3; i++) {
-		if (i == faila || i == failb)
-			continue;
-		else {
+	if (is_ddf) {
+		/* a 7-disk ddf operation devolves to the 5-disk native
+		 * layout case modulo these fixups
+		 */
+		for (i = 0; i < 7-2; i++) {
+			if (blocks[i] == NULL)
+				continue;
+			if (i == faila || i == failb)
+				continue;
+			BUG_ON(good != -1);
 			good = i;
-			break;
 		}
+		p = blocks[7-2];
+		q = blocks[7-1];
+	} else {
+		for (i = 0; i < 5-2; i++) {
+			if (i == faila || i == failb)
+				continue;
+			BUG_ON(good != -1);
+			good = i;
+		}
+		p = blocks[5-2];
+		q = blocks[5-1];
 	}
-	BUG_ON(i >= 3);
-
-	p = blocks[5-2];
-	q = blocks[5-1];
+	BUG_ON(good == -1);
 	g = blocks[good];
 
 	/* Compute syndrome with zero for the missing data pages
@@ -263,10 +281,10 @@ __2data_recov_n(int disks, size_t bytes, int faila, int failb,
 	 * delta p and delta q
 	 */
 	dp = blocks[faila];
-	blocks[faila] = (void *)raid6_empty_zero_page;
+	blocks[faila] = NULL;
 	blocks[disks-2] = dp;
 	dq = blocks[failb];
-	blocks[failb] = (void *)raid6_empty_zero_page;
+	blocks[failb] = NULL;
 	blocks[disks-1] = dq;
 
 	init_async_submit(submit, ASYNC_TX_FENCE, tx, NULL, NULL, scribble);
@@ -317,11 +335,13 @@ __2data_recov_n(int disks, size_t bytes, int faila, int failb,
  * @faila: first failed drive index
  * @failb: second failed drive index
  * @blocks: array of source pointers where the last two entries are p and q
+ * @is_ddf: flag to indicate whether 'blocks' is in the ddf layout
  * @submit: submission/completion modifiers
  */
 struct dma_async_tx_descriptor *
 async_raid6_2data_recov(int disks, size_t bytes, int faila, int failb,
-			struct page **blocks, struct async_submit_ctl *submit)
+			struct page **blocks, bool is_ddf,
+			struct async_submit_ctl *submit)
 {
 	BUG_ON(faila == failb);
 	if (failb < faila)
@@ -338,7 +358,10 @@ async_raid6_2data_recov(int disks, size_t bytes, int faila, int failb,
 
 		async_tx_quiesce(&submit->depend_tx);
 		for (i = 0; i < disks; i++)
-			ptrs[i] = page_address(blocks[i]);
+			if (blocks[i] == NULL)
+				ptrs[i] = (void*)raid6_empty_zero_page;
+			else
+				ptrs[i] = page_address(blocks[i]);
 
 		raid6_2data_recov(disks, bytes, faila, failb, ptrs);
 
@@ -353,13 +376,23 @@ async_raid6_2data_recov(int disks, size_t bytes, int faila, int failb,
 		 * operation (in contrast to the synchronous case), so
 		 * explicitly handle the 4 disk special case
 		 */
-		return __2data_recov_4(bytes, faila, failb, blocks, submit);
+		return __2data_recov_4(bytes, faila, failb, blocks, false, submit);
 	case 5:
 		/* dma devices do not uniformly understand a single
 		 * source pq operation (in contrast to the synchronous
 		 * case), so explicitly handle the 5 disk special case
 		 */
-		return __2data_recov_5(bytes, faila, failb, blocks, submit);
+		return __2data_recov_5(bytes, faila, failb, blocks, false, submit);
+	case 6:
+		if (is_ddf)
+			return __2data_recov_4(bytes, faila, failb, blocks,
+					       true, submit);
+		/* fall through */
+	case 7:
+		if (is_ddf)
+			return __2data_recov_5(bytes, faila, failb, blocks,
+					       true, submit);
+		/* fall through */
 	default:
 		return __2data_recov_n(disks, bytes, faila, failb, blocks, submit);
 	}
@@ -372,11 +405,13 @@ EXPORT_SYMBOL_GPL(async_raid6_2data_recov);
  * @bytes: block size
  * @faila: failed drive index
  * @blocks: array of source pointers where the last two entries are p and q
+ * @is_ddf: flag to indicate whether 'blocks' is in the ddf layout
  * @submit: submission/completion modifiers
  */
 struct dma_async_tx_descriptor *
 async_raid6_datap_recov(int disks, size_t bytes, int faila,
-			struct page **blocks, struct async_submit_ctl *submit)
+			struct page **blocks, bool is_ddf,
+			struct async_submit_ctl *submit)
 {
 	struct dma_async_tx_descriptor *tx = NULL;
 	struct page *p, *q, *dq;
@@ -398,7 +433,10 @@ async_raid6_datap_recov(int disks, size_t bytes, int faila,
 
 		async_tx_quiesce(&submit->depend_tx);
 		for (i = 0; i < disks; i++)
-			ptrs[i] = page_address(blocks[i]);
+			if (blocks[i] == NULL)
+				ptrs[i] = (void*)raid6_empty_zero_page;
+			else
+				ptrs[i] = page_address(blocks[i]);
 
 		raid6_datap_recov(disks, bytes, faila, ptrs);
 
@@ -414,15 +452,39 @@ async_raid6_datap_recov(int disks, size_t bytes, int faila,
 	 * Use the dead data page as temporary storage for delta q
 	 */
 	dq = blocks[faila];
-	blocks[faila] = (void *)raid6_empty_zero_page;
+	blocks[faila] = NULL;
 	blocks[disks-1] = dq;
 
-	/* in the 4 disk case we only need to perform a single source
-	 * multiplication
+	/* in the 4-disk (or 6-disk ddf layout) case we only need to
+	 * perform a single source multiplication with the one good data
+	 * block.
 	 */
-	if (disks == 4) {
+	if (disks == 4 && !is_ddf) {
 		int good = faila == 0 ? 1 : 0;
 		struct page *g = blocks[good];
+
+		init_async_submit(submit, ASYNC_TX_FENCE, tx, NULL, NULL,
+				  scribble);
+		tx = async_memcpy(p, g, 0, 0, bytes, submit);
+
+		init_async_submit(submit, ASYNC_TX_FENCE, tx, NULL, NULL,
+				  scribble);
+		tx = async_mult(dq, g, raid6_gfexp[good], bytes, submit);
+	} else if (disks == 6 && is_ddf) {
+		struct page *g;
+		int good = -1;
+		int i;
+
+		for (i = 0; i < 6-2; i++) {
+			if (blocks[i] == NULL)
+				continue;
+			if (i == faila)
+				continue;
+			BUG_ON(good != -1);
+			good = i;
+		}
+		BUG_ON(good == -1);
+		g = blocks[good];
 
 		init_async_submit(submit, ASYNC_TX_FENCE, tx, NULL, NULL,
 				  scribble);
