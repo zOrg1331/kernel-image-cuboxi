@@ -15,6 +15,7 @@
 #include <linux/gfs2_ondisk.h>
 #include <linux/bio.h>
 #include <linux/fs.h>
+#include <trace/events/gfs2.h>
 
 #include "gfs2.h"
 #include "incore.h"
@@ -27,7 +28,6 @@
 #include "rgrp.h"
 #include "trans.h"
 #include "util.h"
-#include "trace_gfs2.h"
 
 /**
  * gfs2_pin - Pin a buffer in memory
