@@ -46,6 +46,8 @@ static const struct super_operations hypfs_s_ops;
 /* start of list of all dentries, which have to be deleted on update */
 static struct dentry *hypfs_last_dentry;
 
+struct dentry *hypfs_dbfs_dir;
+
 static void hypfs_update_update(struct super_block *sb)
 {
 	struct hypfs_sb_info *sb_info = sb->s_fs_info;
@@ -484,14 +486,20 @@ static int __init hypfs_init(void)
 {
 	int rc;
 
+	hypfs_dbfs_dir = debugfs_create_dir("s390_hypfs", NULL);
+	if (IS_ERR(hypfs_dbfs_dir))
+		return PTR_ERR(hypfs_dbfs_dir);
+
 	if (MACHINE_IS_VM) {
-		if (hypfs_vm_init())
+		if (hypfs_vm_init()) {
 			/* no diag 2fc, just exit */
+			debugfs_remove(hypfs_dbfs_dir);
 			return -ENODATA;
+		}
 	} else {
 		if (hypfs_diag_init()) {
 			rc = -ENODATA;
-			goto fail_diag;
+			goto fail_debugfs_remove;
 		}
 	}
 	s390_kobj = kobject_create_and_add("s390", hypervisor_kobj);
@@ -509,7 +517,9 @@ fail_filesystem:
 fail_sysfs:
 	if (!MACHINE_IS_VM)
 		hypfs_diag_exit();
-fail_diag:
+fail_debugfs_remove:
+	debugfs_remove(hypfs_dbfs_dir);
+
 	pr_err("Initialization of hypfs failed with rc=%i\n", rc);
 	return rc;
 }
@@ -518,6 +528,8 @@ static void __exit hypfs_exit(void)
 {
 	if (!MACHINE_IS_VM)
 		hypfs_diag_exit();
+	else
+		hypfs_vm_exit();
 	unregister_filesystem(&hypfs_type);
 	kobject_put(s390_kobj);
 }
