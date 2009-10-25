@@ -29,14 +29,44 @@
 
 #include <linux/gpio.h>
 #include <linux/init.h>
+#include <linux/interrupt.h>
 
 #include <asm/mach-au1x00/au1000.h>
 #include <asm/mach-db1x00/db1x00.h>
+#include <asm/mach-db1x00/bcsr.h>
 
 #include <prom.h>
 
+#ifdef CONFIG_MIPS_DB1500
+char irq_tab_alchemy[][5] __initdata = {
+	[12] = { -1, INTA, INTX, INTX, INTX }, /* IDSEL 12 - HPT371   */
+	[13] = { -1, INTA, INTB, INTC, INTD }, /* IDSEL 13 - PCI slot */
+};
+#endif
 
-static BCSR * const bcsr = (BCSR *)BCSR_KSEG1_ADDR;
+#ifdef CONFIG_MIPS_BOSPORUS
+char irq_tab_alchemy[][5] __initdata = {
+	[11] = { -1, INTA, INTB, INTX, INTX }, /* IDSEL 11 - miniPCI  */
+	[12] = { -1, INTA, INTX, INTX, INTX }, /* IDSEL 12 - SN1741   */
+	[13] = { -1, INTA, INTB, INTC, INTD }, /* IDSEL 13 - PCI slot */
+};
+#endif
+
+#ifdef CONFIG_MIPS_MIRAGE
+char irq_tab_alchemy[][5] __initdata = {
+	[11] = { -1, INTD, INTX, INTX, INTX }, /* IDSEL 11 - SMI VGX */
+	[12] = { -1, INTX, INTX, INTC, INTX }, /* IDSEL 12 - PNX1300 */
+	[13] = { -1, INTA, INTB, INTX, INTX }, /* IDSEL 13 - miniPCI */
+};
+#endif
+
+#ifdef CONFIG_MIPS_DB1550
+char irq_tab_alchemy[][5] __initdata = {
+	[11] = { -1, INTC, INTX, INTX, INTX }, /* IDSEL 11 - on-board HPT371 */
+	[12] = { -1, INTB, INTC, INTD, INTA }, /* IDSEL 12 - PCI slot 2 (left) */
+	[13] = { -1, INTA, INTB, INTC, INTD }, /* IDSEL 13 - PCI slot 1 (right) */
+};
+#endif
 
 const char *get_system_type(void)
 {
@@ -49,14 +79,42 @@ const char *get_system_type(void)
 
 void board_reset(void)
 {
-	/* Hit BCSR.SW_RESET[RESET] */
-	bcsr->swreset = 0x0000;
+	bcsr_write(BCSR_SYSTEM, 0);
 }
 
 void __init board_setup(void)
 {
+	unsigned long bcsr1, bcsr2;
 	u32 pin_func = 0;
 	char *argptr;
+
+	bcsr1 = DB1000_BCSR_PHYS_ADDR;
+	bcsr2 = DB1000_BCSR_PHYS_ADDR + DB1000_BCSR_HEXLED_OFS;
+
+#ifdef CONFIG_MIPS_DB1000
+	printk(KERN_INFO "AMD Alchemy Au1000/Db1000 Board\n");
+#endif
+#ifdef CONFIG_MIPS_DB1500
+	printk(KERN_INFO "AMD Alchemy Au1500/Db1500 Board\n");
+#endif
+#ifdef CONFIG_MIPS_DB1100
+	printk(KERN_INFO "AMD Alchemy Au1100/Db1100 Board\n");
+#endif
+#ifdef CONFIG_MIPS_BOSPORUS
+	printk(KERN_INFO "AMD Alchemy Bosporus Board\n");
+#endif
+#ifdef CONFIG_MIPS_MIRAGE
+	printk(KERN_INFO "AMD Alchemy Mirage Board\n");
+#endif
+#ifdef CONFIG_MIPS_DB1550
+	printk(KERN_INFO "AMD Alchemy Au1550/Db1550 Board\n");
+
+	bcsr1 = DB1550_BCSR_PHYS_ADDR;
+	bcsr2 = DB1550_BCSR_PHYS_ADDR + DB1550_BCSR_HEXLED_OFS;
+#endif
+
+	/* initialize board register space */
+	bcsr_init(bcsr1, bcsr2);
 
 	argptr = prom_getcmdline();
 #ifdef CONFIG_SERIAL_8250_CONSOLE
@@ -89,11 +147,10 @@ void __init board_setup(void)
 	pin_func = au_readl(SYS_PINFUNC) | SYS_PF_IRF;
 	au_writel(pin_func, SYS_PINFUNC);
 	/* Power off until the driver is in use */
-	bcsr->resets &= ~BCSR_RESETS_IRDA_MODE_MASK;
-	bcsr->resets |=  BCSR_RESETS_IRDA_MODE_OFF;
-	au_sync();
+	bcsr_mod(BCSR_RESETS, BCSR_RESETS_IRDA_MODE_MASK,
+				BCSR_RESETS_IRDA_MODE_OFF);
 #endif
-	bcsr->pcmcia = 0x0000; /* turn off PCMCIA power */
+	bcsr_write(BCSR_PCMCIA, 0);	/* turn off PCMCIA power */
 
 	/* Enable GPIO[31:0] inputs */
 	alchemy_gpio1_input_enable();
@@ -123,23 +180,27 @@ void __init board_setup(void)
 #endif
 
 	au_sync();
-
-#ifdef CONFIG_MIPS_DB1000
-	printk(KERN_INFO "AMD Alchemy Au1000/Db1000 Board\n");
-#endif
-#ifdef CONFIG_MIPS_DB1500
-	printk(KERN_INFO "AMD Alchemy Au1500/Db1500 Board\n");
-#endif
-#ifdef CONFIG_MIPS_DB1100
-	printk(KERN_INFO "AMD Alchemy Au1100/Db1100 Board\n");
-#endif
-#ifdef CONFIG_MIPS_BOSPORUS
-	printk(KERN_INFO "AMD Alchemy Bosporus Board\n");
-#endif
-#ifdef CONFIG_MIPS_MIRAGE
-	printk(KERN_INFO "AMD Alchemy Mirage Board\n");
-#endif
-#ifdef CONFIG_MIPS_DB1550
-	printk(KERN_INFO "AMD Alchemy Au1550/Db1550 Board\n");
-#endif
 }
+
+static int __init db1x00_init_irq(void)
+{
+#if defined(CONFIG_MIPS_MIRAGE)
+	set_irq_type(AU1000_GPIO_7, IRQF_TRIGGER_RISING); /* TS pendown */
+#elif defined(CONFIG_MIPS_DB1550)
+	set_irq_type(AU1000_GPIO_0, IRQF_TRIGGER_LOW);	/* CD0# */
+	set_irq_type(AU1000_GPIO_1, IRQF_TRIGGER_LOW);	/* CD1# */
+	set_irq_type(AU1000_GPIO_3, IRQF_TRIGGER_LOW);	/* CARD0# */
+	set_irq_type(AU1000_GPIO_5, IRQF_TRIGGER_LOW);	/* CARD1# */
+	set_irq_type(AU1000_GPIO_21, IRQF_TRIGGER_LOW);	/* STSCHG0# */
+	set_irq_type(AU1000_GPIO_22, IRQF_TRIGGER_LOW);	/* STSCHG1# */
+#else
+	set_irq_type(AU1000_GPIO_0, IRQF_TRIGGER_LOW);	/* CD0# */
+	set_irq_type(AU1000_GPIO_3, IRQF_TRIGGER_LOW);	/* CD1# */
+	set_irq_type(AU1000_GPIO_2, IRQF_TRIGGER_LOW);	/* CARD0# */
+	set_irq_type(AU1000_GPIO_5, IRQF_TRIGGER_LOW);	/* CARD1# */
+	set_irq_type(AU1000_GPIO_1, IRQF_TRIGGER_LOW);	/* STSCHG0# */
+	set_irq_type(AU1000_GPIO_4, IRQF_TRIGGER_LOW);	/* STSCHG1# */
+#endif
+	return 0;
+}
+arch_initcall(db1x00_init_irq);

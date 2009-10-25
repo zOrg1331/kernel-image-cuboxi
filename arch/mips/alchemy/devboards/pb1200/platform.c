@@ -26,27 +26,30 @@
 
 #include <asm/mach-au1x00/au1xxx.h>
 #include <asm/mach-au1x00/au1100_mmc.h>
+#include <asm/mach-db1x00/bcsr.h>
+
+#include "../platform.h"
 
 static int mmc_activity;
 
 static void pb1200mmc0_set_power(void *mmc_host, int state)
 {
 	if (state)
-		bcsr->board |= BCSR_BOARD_SD0PWR;
+		bcsr_mod(BCSR_BOARD, 0, BCSR_BOARD_SD0PWR);
 	else
-		bcsr->board &= ~BCSR_BOARD_SD0PWR;
+		bcsr_mod(BCSR_BOARD, BCSR_BOARD_SD0PWR, 0);
 
-	au_sync_delay(1);
+	msleep(1);
 }
 
 static int pb1200mmc0_card_readonly(void *mmc_host)
 {
-	return (bcsr->status & BCSR_STATUS_SD0WP) ? 1 : 0;
+	return (bcsr_read(BCSR_STATUS) & BCSR_STATUS_SD0WP) ? 1 : 0;
 }
 
 static int pb1200mmc0_card_inserted(void *mmc_host)
 {
-	return (bcsr->sig_status & BCSR_INT_SD0INSERT) ? 1 : 0;
+	return (bcsr_read(BCSR_SIGSTAT) & BCSR_INT_SD0INSERT) ? 1 : 0;
 }
 
 static void pb1200_mmcled_set(struct led_classdev *led,
@@ -54,10 +57,10 @@ static void pb1200_mmcled_set(struct led_classdev *led,
 {
 	if (brightness != LED_OFF) {
 		if (++mmc_activity == 1)
-			bcsr->disk_leds &= ~(1 << 8);
+			bcsr_mod(BCSR_LEDS, BCSR_LEDS_LED0, 0);
 	} else {
 		if (--mmc_activity == 0)
-			bcsr->disk_leds |= (1 << 8);
+			bcsr_mod(BCSR_LEDS, 0, BCSR_LEDS_LED0);
 	}
 }
 
@@ -69,21 +72,21 @@ static struct led_classdev pb1200mmc_led = {
 static void pb1200mmc1_set_power(void *mmc_host, int state)
 {
 	if (state)
-		bcsr->board |= BCSR_BOARD_SD1PWR;
+		bcsr_mod(BCSR_BOARD, 0, BCSR_BOARD_SD1PWR);
 	else
-		bcsr->board &= ~BCSR_BOARD_SD1PWR;
+		bcsr_mod(BCSR_BOARD, BCSR_BOARD_SD1PWR, 0);
 
-	au_sync_delay(1);
+	msleep(1);
 }
 
 static int pb1200mmc1_card_readonly(void *mmc_host)
 {
-	return (bcsr->status & BCSR_STATUS_SD1WP) ? 1 : 0;
+	return (bcsr_read(BCSR_STATUS) & BCSR_STATUS_SD1WP) ? 1 : 0;
 }
 
 static int pb1200mmc1_card_inserted(void *mmc_host)
 {
-	return (bcsr->sig_status & BCSR_INT_SD1INSERT) ? 1 : 0;
+	return (bcsr_read(BCSR_SIGSTAT) & BCSR_INT_SD1INSERT) ? 1 : 0;
 }
 #endif
 
@@ -169,8 +172,57 @@ static struct platform_device *board_platform_devices[] __initdata = {
 
 static int __init board_register_devices(void)
 {
+#ifdef CONFIG_MIPS_PB1200
+	db1x_register_pcmcia_socket(PCMCIA_ATTR_PSEUDO_PHYS,
+				    PCMCIA_ATTR_PSEUDO_PHYS + 0x00040000 - 1,
+				    PCMCIA_MEM_PSEUDO_PHYS,
+				    PCMCIA_MEM_PSEUDO_PHYS  + 0x00040000 - 1,
+				    PCMCIA_IO_PSEUDO_PHYS,
+				    PCMCIA_IO_PSEUDO_PHYS   + 0x00001000 - 1,
+				    PB1200_PC0_INT,
+				    PB1200_PC0_INSERT_INT,
+				    /*PB1200_PC0_STSCHG_INT*/0,
+				    PB1200_PC0_EJECT_INT,
+				    0);
+
+	db1x_register_pcmcia_socket(PCMCIA_ATTR_PSEUDO_PHYS + 0x00800000,
+				    PCMCIA_ATTR_PSEUDO_PHYS + 0x00840000 - 1,
+				    PCMCIA_MEM_PSEUDO_PHYS  + 0x00800000,
+				    PCMCIA_MEM_PSEUDO_PHYS  + 0x00840000 - 1,
+				    PCMCIA_IO_PSEUDO_PHYS   + 0x00800000,
+				    PCMCIA_IO_PSEUDO_PHYS   + 0x00801000 - 1,
+				    PB1200_PC1_INT,
+				    PB1200_PC1_INSERT_INT,
+				    /*PB1200_PC1_STSCHG_INT*/0,
+				    PB1200_PC1_EJECT_INT,
+				    1);
+#else
+	db1x_register_pcmcia_socket(PCMCIA_ATTR_PSEUDO_PHYS,
+				    PCMCIA_ATTR_PSEUDO_PHYS + 0x00040000 - 1,
+				    PCMCIA_MEM_PSEUDO_PHYS,
+				    PCMCIA_MEM_PSEUDO_PHYS  + 0x00040000 - 1,
+				    PCMCIA_IO_PSEUDO_PHYS,
+				    PCMCIA_IO_PSEUDO_PHYS   + 0x00001000 - 1,
+				    DB1200_PC0_INT,
+				    DB1200_PC0_INSERT_INT,
+				    /*DB1200_PC0_STSCHG_INT*/0,
+				    DB1200_PC0_EJECT_INT,
+				    0);
+
+	db1x_register_pcmcia_socket(PCMCIA_ATTR_PSEUDO_PHYS + 0x00400000,
+				    PCMCIA_ATTR_PSEUDO_PHYS + 0x00440000 - 1,
+				    PCMCIA_MEM_PSEUDO_PHYS  + 0x00400000,
+				    PCMCIA_MEM_PSEUDO_PHYS  + 0x00440000 - 1,
+				    PCMCIA_IO_PSEUDO_PHYS   + 0x00400000,
+				    PCMCIA_IO_PSEUDO_PHYS   + 0x00401000 - 1,
+				    DB1200_PC1_INT,
+				    DB1200_PC1_INSERT_INT,
+				    /*DB1200_PC1_STSCHG_INT*/0,
+				    DB1200_PC1_EJECT_INT,
+				    1);
+#endif
+
 	return platform_add_devices(board_platform_devices,
 				    ARRAY_SIZE(board_platform_devices));
 }
-
-arch_initcall(board_register_devices);
+device_initcall(board_register_devices);
