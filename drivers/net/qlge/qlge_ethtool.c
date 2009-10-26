@@ -132,6 +132,41 @@ static void ql_update_stats(struct ql_adapter *qdev)
 		iter++;
 	}
 
+	/*
+	 * Get Per-priority TX pause frame counter statistics.
+	 */
+	for (i = 0x500; i < 0x540; i += 8) {
+		if (ql_read_xgmac_reg64(qdev, i, &data)) {
+			QPRINTK(qdev, DRV, ERR,
+				"Error reading status register 0x%.04x.\n", i);
+			goto end;
+		} else
+			*iter = data;
+		iter++;
+	}
+
+	/*
+	 * Get Per-priority RX pause frame counter statistics.
+	 */
+	for (i = 0x568; i < 0x5a8; i += 8) {
+		if (ql_read_xgmac_reg64(qdev, i, &data)) {
+			QPRINTK(qdev, DRV, ERR,
+				"Error reading status register 0x%.04x.\n", i);
+			goto end;
+		} else
+			*iter = data;
+		iter++;
+	}
+
+	/*
+	 * Get RX NIC FIFO DROP statistics.
+	 */
+	if (ql_read_xgmac_reg64(qdev, 0x5b8, &data)) {
+		QPRINTK(qdev, DRV, ERR,
+			"Error reading status register 0x%.04x.\n", i);
+		goto end;
+	} else
+		*iter = data;
 end:
 	ql_sem_unlock(qdev, qdev->xg_sem_mask);
 quit:
@@ -185,6 +220,23 @@ static char ql_stats_str_arr[][ETH_GSTRING_LEN] = {
 	{"rx_1024_to_1518_pkts"},
 	{"rx_1519_to_max_pkts"},
 	{"rx_len_err_pkts"},
+	{"tx_cbfc_pause_frames0"},
+	{"tx_cbfc_pause_frames1"},
+	{"tx_cbfc_pause_frames2"},
+	{"tx_cbfc_pause_frames3"},
+	{"tx_cbfc_pause_frames4"},
+	{"tx_cbfc_pause_frames5"},
+	{"tx_cbfc_pause_frames6"},
+	{"tx_cbfc_pause_frames7"},
+	{"rx_cbfc_pause_frames0"},
+	{"rx_cbfc_pause_frames1"},
+	{"rx_cbfc_pause_frames2"},
+	{"rx_cbfc_pause_frames3"},
+	{"rx_cbfc_pause_frames4"},
+	{"rx_cbfc_pause_frames5"},
+	{"rx_cbfc_pause_frames6"},
+	{"rx_cbfc_pause_frames7"},
+	{"rx_nic_fifo_drop"},
 };
 
 static void ql_get_strings(struct net_device *dev, u32 stringset, u8 *buf)
@@ -257,6 +309,23 @@ ql_get_ethtool_stats(struct net_device *ndev,
 	*data++ = s->rx_1024_to_1518_pkts;
 	*data++ = s->rx_1519_to_max_pkts;
 	*data++ = s->rx_len_err_pkts;
+	*data++ = s->tx_cbfc_pause_frames0;
+	*data++ = s->tx_cbfc_pause_frames1;
+	*data++ = s->tx_cbfc_pause_frames2;
+	*data++ = s->tx_cbfc_pause_frames3;
+	*data++ = s->tx_cbfc_pause_frames4;
+	*data++ = s->tx_cbfc_pause_frames5;
+	*data++ = s->tx_cbfc_pause_frames6;
+	*data++ = s->tx_cbfc_pause_frames7;
+	*data++ = s->rx_cbfc_pause_frames0;
+	*data++ = s->rx_cbfc_pause_frames1;
+	*data++ = s->rx_cbfc_pause_frames2;
+	*data++ = s->rx_cbfc_pause_frames3;
+	*data++ = s->rx_cbfc_pause_frames4;
+	*data++ = s->rx_cbfc_pause_frames5;
+	*data++ = s->rx_cbfc_pause_frames6;
+	*data++ = s->rx_cbfc_pause_frames7;
+	*data++ = s->rx_nic_fifo_drop;
 }
 
 static int ql_get_settings(struct net_device *ndev,
@@ -300,6 +369,77 @@ static void ql_get_drvinfo(struct net_device *ndev,
 	drvinfo->testinfo_len = 0;
 	drvinfo->regdump_len = 0;
 	drvinfo->eedump_len = 0;
+}
+
+static void ql_get_wol(struct net_device *ndev, struct ethtool_wolinfo *wol)
+{
+	struct ql_adapter *qdev = netdev_priv(ndev);
+	/* What we support. */
+	wol->supported = WAKE_MAGIC;
+	/* What we've currently got set. */
+	wol->wolopts = qdev->wol;
+}
+
+static int ql_set_wol(struct net_device *ndev, struct ethtool_wolinfo *wol)
+{
+	struct ql_adapter *qdev = netdev_priv(ndev);
+	int status;
+
+	if (wol->wolopts & ~WAKE_MAGIC)
+		return -EINVAL;
+	qdev->wol = wol->wolopts;
+
+	QPRINTK(qdev, DRV, INFO, "Set wol option 0x%x on %s\n",
+			 qdev->wol, ndev->name);
+	if (!qdev->wol) {
+		u32 wol = 0;
+		status = ql_mb_wol_mode(qdev, wol);
+		QPRINTK(qdev, DRV, ERR, "WOL %s (wol code 0x%x) on %s\n",
+			(status == 0) ? "cleared sucessfully" : "clear failed",
+			wol, qdev->ndev->name);
+	}
+
+	return 0;
+}
+
+static int ql_phys_id(struct net_device *ndev, u32 data)
+{
+	struct ql_adapter *qdev = netdev_priv(ndev);
+	u32 led_reg, i;
+	int status;
+
+	/* Save the current LED settings */
+	status = ql_mb_get_led_cfg(qdev);
+	if (status)
+		return status;
+	led_reg = qdev->led_config;
+
+	/* Start blinking the led */
+	if (!data || data > 300)
+		data = 300;
+
+	for (i = 0; i < (data * 10); i++)
+		ql_mb_set_led_cfg(qdev, QL_LED_BLINK);
+
+	/* Restore LED settings */
+	status = ql_mb_set_led_cfg(qdev, led_reg);
+	if (status)
+		return status;
+
+	return 0;
+}
+
+static int ql_get_regs_len(struct net_device *ndev)
+{
+	return sizeof(struct ql_reg_dump);
+}
+
+static void ql_get_regs(struct net_device *ndev,
+			struct ethtool_regs *regs, void *p)
+{
+	struct ql_adapter *qdev = netdev_priv(ndev);
+
+	ql_gen_reg_dump(qdev, p);
 }
 
 static int ql_get_coalesce(struct net_device *dev, struct ethtool_coalesce *c)
@@ -355,6 +495,37 @@ static int ql_set_coalesce(struct net_device *ndev, struct ethtool_coalesce *c)
 	return ql_update_ring_coalescing(qdev);
 }
 
+static void ql_get_pauseparam(struct net_device *netdev,
+			struct ethtool_pauseparam *pause)
+{
+	struct ql_adapter *qdev = netdev_priv(netdev);
+
+	ql_mb_get_port_cfg(qdev);
+	if (qdev->link_config & CFG_PAUSE_STD) {
+		pause->rx_pause = 1;
+		pause->tx_pause = 1;
+	}
+}
+
+static int ql_set_pauseparam(struct net_device *netdev,
+			struct ethtool_pauseparam *pause)
+{
+	struct ql_adapter *qdev = netdev_priv(netdev);
+	int status = 0;
+
+	if ((pause->rx_pause) && (pause->tx_pause))
+		qdev->link_config |= CFG_PAUSE_STD;
+	else if (!pause->rx_pause && !pause->tx_pause)
+		qdev->link_config &= ~CFG_PAUSE_STD;
+	else
+		return -EINVAL;
+
+	status = ql_mb_set_port_cfg(qdev);
+	if (status)
+		return status;
+	return status;
+}
+
 static u32 ql_get_rx_csum(struct net_device *netdev)
 {
 	struct ql_adapter *qdev = netdev_priv(netdev);
@@ -396,9 +567,16 @@ static void ql_set_msglevel(struct net_device *ndev, u32 value)
 const struct ethtool_ops qlge_ethtool_ops = {
 	.get_settings = ql_get_settings,
 	.get_drvinfo = ql_get_drvinfo,
+	.get_wol = ql_get_wol,
+	.set_wol = ql_set_wol,
+	.get_regs_len	= ql_get_regs_len,
+	.get_regs = ql_get_regs,
 	.get_msglevel = ql_get_msglevel,
 	.set_msglevel = ql_set_msglevel,
 	.get_link = ethtool_op_get_link,
+	.phys_id		 = ql_phys_id,
+	.get_pauseparam		 = ql_get_pauseparam,
+	.set_pauseparam		 = ql_set_pauseparam,
 	.get_rx_csum = ql_get_rx_csum,
 	.set_rx_csum = ql_set_rx_csum,
 	.get_tx_csum = ethtool_op_get_tx_csum,
