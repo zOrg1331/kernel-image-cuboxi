@@ -1283,7 +1283,8 @@ static int _regulator_disable(struct regulator_dev *rdev)
 		return -EIO;
 
 	/* are we the last user and permitted to disable ? */
-	if (rdev->use_count == 1 && !rdev->constraints->always_on) {
+	if (rdev->use_count == 1 &&
+	    (rdev->constraints && !rdev->constraints->always_on)) {
 
 		/* we are last user */
 		if (_regulator_can_change_status(rdev) &&
@@ -1884,9 +1885,9 @@ int regulator_bulk_get(struct device *dev, int num_consumers,
 		consumers[i].consumer = regulator_get(dev,
 						      consumers[i].supply);
 		if (IS_ERR(consumers[i].consumer)) {
-			dev_err(dev, "Failed to get supply '%s'\n",
-				consumers[i].supply);
 			ret = PTR_ERR(consumers[i].consumer);
+			dev_err(dev, "Failed to get supply '%s': %d\n",
+				consumers[i].supply, ret);
 			consumers[i].consumer = NULL;
 			goto err;
 		}
@@ -1929,7 +1930,7 @@ int regulator_bulk_enable(int num_consumers,
 	return 0;
 
 err:
-	printk(KERN_ERR "Failed to enable %s\n", consumers[i].supply);
+	printk(KERN_ERR "Failed to enable %s: %d\n", consumers[i].supply, ret);
 	for (i = 0; i < num_consumers; i++)
 		regulator_disable(consumers[i].consumer);
 
@@ -1964,7 +1965,8 @@ int regulator_bulk_disable(int num_consumers,
 	return 0;
 
 err:
-	printk(KERN_ERR "Failed to disable %s\n", consumers[i].supply);
+	printk(KERN_ERR "Failed to disable %s: %d\n", consumers[i].supply,
+	       ret);
 	for (i = 0; i < num_consumers; i++)
 		regulator_enable(consumers[i].consumer);
 
