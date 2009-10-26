@@ -2321,7 +2321,7 @@ static int __devinit tw_probe(struct pci_dev *pdev, const struct pci_device_id *
 	host->max_cmd_len = TW_MAX_CDB_LEN;
 
 	/* Luns and channels aren't supported by adapter */
-	host->max_lun = 0;
+	host->max_lun = 1;
 	host->max_channel = 0;
 
 	/* Register the card with the kernel SCSI layer */
