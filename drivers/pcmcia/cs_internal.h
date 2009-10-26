@@ -197,8 +197,23 @@ int pccard_read_tuple(struct pcmcia_socket *s, unsigned int function,
 		      cisdata_t code, void *parse);
 int pcmcia_replace_cis(struct pcmcia_socket *s,
 		       const u8 *data, const size_t len);
-int pccard_validate_cis(struct pcmcia_socket *s, unsigned int function,
-			unsigned int *count);
+int pccard_validate_cis(struct pcmcia_socket *s, unsigned int *count);
+
+/* loop over CIS entries */
+int pccard_loop_tuple(struct pcmcia_socket *s, unsigned int function,
+		      cisdata_t code, cisparse_t *parse, void *priv_data,
+		      int (*loop_tuple) (tuple_t *tuple,
+					 cisparse_t *parse,
+					 void *priv_data));
+
+int pccard_get_first_tuple(struct pcmcia_socket *s, unsigned int function,
+			tuple_t *tuple);
+
+int pccard_get_next_tuple(struct pcmcia_socket *s, unsigned int function,
+			tuple_t *tuple);
+
+int pccard_get_tuple_data(struct pcmcia_socket *s, tuple_t *tuple);
+
 
 /* rsrc_mgr.c */
 int pcmcia_validate_mem(struct pcmcia_socket *s);

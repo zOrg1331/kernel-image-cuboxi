@@ -1463,7 +1463,9 @@ int pccard_read_tuple(struct pcmcia_socket *s, unsigned int function, cisdata_t 
 	    return -ENOMEM;
     }
     tuple.DesiredTuple = code;
-    tuple.Attributes = TUPLE_RETURN_COMMON;
+    tuple.Attributes = 0;
+    if (function == BIND_FN_ALL)
+	    tuple.Attributes = TUPLE_RETURN_COMMON;
     ret = pccard_get_first_tuple(s, function, &tuple);
     if (ret != 0)
 	    goto done;
@@ -1480,6 +1482,67 @@ done:
 }
 EXPORT_SYMBOL(pccard_read_tuple);
 
+
+/**
+ * pccard_loop_tuple() - loop over tuples in the CIS
+ * @s:		the struct pcmcia_socket where the card is inserted
+ * @function:	the device function we loop for
+ * @code:	which CIS code shall we look for?
+ * @parse:	buffer where the tuple shall be parsed (or NULL, if no parse)
+ * @priv_data:	private data to be passed to the loop_tuple function.
+ * @loop_tuple:	function to call for each CIS entry of type @function. IT
+ *		gets passed the raw tuple, the paresed tuple (if @parse is
+ *		set) and @priv_data.
+ *
+ * pccard_loop_tuple() loops over all CIS entries of type @function, and
+ * calls the @loop_tuple function for each entry. If the call to @loop_tuple
+ * returns 0, the loop exits. Returns 0 on success or errorcode otherwise.
+ */
+int pccard_loop_tuple(struct pcmcia_socket *s, unsigned int function,
+		      cisdata_t code, cisparse_t *parse, void *priv_data,
+		      int (*loop_tuple) (tuple_t *tuple,
+					 cisparse_t *parse,
+					 void *priv_data))
+{
+	tuple_t tuple;
+	cisdata_t *buf;
+	int ret;
+
+	buf = kzalloc(256, GFP_KERNEL);
+	if (buf == NULL) {
+		dev_printk(KERN_WARNING, &s->dev, "no memory to read tuple\n");
+		return -ENOMEM;
+	}
+
+	tuple.TupleData = buf;
+	tuple.TupleDataMax = 255;
+	tuple.TupleOffset = 0;
+	tuple.DesiredTuple = code;
+	tuple.Attributes = 0;
+
+	ret = pccard_get_first_tuple(s, function, &tuple);
+	while (!ret) {
+		if (pccard_get_tuple_data(s, &tuple))
+			goto next_entry;
+
+		if (parse)
+			if (pcmcia_parse_tuple(&tuple, parse))
+				goto next_entry;
+
+		ret = loop_tuple(&tuple, parse, priv_data);
+		if (!ret)
+			break;
+
+next_entry:
+		ret = pccard_get_next_tuple(s, function, &tuple);
+	}
+
+	kfree(buf);
+	return ret;
+}
+EXPORT_SYMBOL(pccard_loop_tuple);
+
+
 /*======================================================================
 
     This tries to determine if a card has a sensible CIS.  It returns
@@ -1490,7 +1553,7 @@ EXPORT_SYMBOL(pccard_read_tuple);
     
 ======================================================================*/
 
-int pccard_validate_cis(struct pcmcia_socket *s, unsigned int function, unsigned int *info)
+int pccard_validate_cis(struct pcmcia_socket *s, unsigned int *info)
 {
     tuple_t *tuple;
     cisparse_t *p;
@@ -1515,30 +1578,30 @@ int pccard_validate_cis(struct pcmcia_socket *s, unsigned int function, unsigned
     count = reserved = 0;
     tuple->DesiredTuple = RETURN_FIRST_TUPLE;
     tuple->Attributes = TUPLE_RETURN_COMMON;
-    ret = pccard_get_first_tuple(s, function, tuple);
+    ret = pccard_get_first_tuple(s, BIND_FN_ALL, tuple);
     if (ret != 0)
 	goto done;
 
     /* First tuple should be DEVICE; we should really have either that
        or a CFTABLE_ENTRY of some sort */
     if ((tuple->TupleCode == CISTPL_DEVICE) ||
-	(pccard_read_tuple(s, function, CISTPL_CFTABLE_ENTRY, p) == 0) ||
-	(pccard_read_tuple(s, function, CISTPL_CFTABLE_ENTRY_CB, p) == 0))
+	(pccard_read_tuple(s, BIND_FN_ALL, CISTPL_CFTABLE_ENTRY, p) == 0) ||
+	(pccard_read_tuple(s, BIND_FN_ALL, CISTPL_CFTABLE_ENTRY_CB, p) == 0))
 	dev_ok++;
 
     /* All cards should have a MANFID tuple, and/or a VERS_1 or VERS_2
        tuple, for card identification.  Certain old D-Link and Linksys
        cards have only a broken VERS_2 tuple; hence the bogus test. */
-    if ((pccard_read_tuple(s, function, CISTPL_MANFID, p) == 0) ||
-	(pccard_read_tuple(s, function, CISTPL_VERS_1, p) == 0) ||
-	(pccard_read_tuple(s, function, CISTPL_VERS_2, p) != -ENOSPC))
+    if ((pccard_read_tuple(s, BIND_FN_ALL, CISTPL_MANFID, p) == 0) ||
+	(pccard_read_tuple(s, BIND_FN_ALL, CISTPL_VERS_1, p) == 0) ||
+	(pccard_read_tuple(s, BIND_FN_ALL, CISTPL_VERS_2, p) != -ENOSPC))
 	ident_ok++;
 
     if (!dev_ok && !ident_ok)
 	goto done;
 
     for (count = 1; count < MAX_TUPLES; count++) {
-	ret = pccard_get_next_tuple(s, function, tuple);
+	ret = pccard_get_next_tuple(s, BIND_FN_ALL, tuple);
 	if (ret != 0)
 		break;
 	if (((tuple->TupleCode > 0x23) && (tuple->TupleCode < 0x40)) ||
