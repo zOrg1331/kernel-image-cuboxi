@@ -147,6 +147,9 @@ static struct platform_device sh_eth_device = {
 	},
 	.num_resources = ARRAY_SIZE(sh_eth_resources),
 	.resource = sh_eth_resources,
+	.archdata = {
+		.hwblk_id = HWBLK_ETHER,
+	},
 };
 
 /* USB0 host */
@@ -428,6 +431,54 @@ static struct i2c_board_info ts_i2c_clients = {
 	.irq		= IRQ0,
 };
 
+/* SHDI0 */
+static struct resource sdhi0_resources[] = {
+	[0] = {
+		.name	= "SDHI0",
+		.start  = 0x04ce0000,
+		.end    = 0x04ce01ff,
+		.flags  = IORESOURCE_MEM,
+	},
+	[1] = {
+		.start  = 101,
+		.flags  = IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device sdhi0_device = {
+	.name           = "sh_mobile_sdhi",
+	.num_resources  = ARRAY_SIZE(sdhi0_resources),
+	.resource       = sdhi0_resources,
+	.id             = 0,
+	.archdata = {
+		.hwblk_id = HWBLK_SDHI0,
+	},
+};
+
+/* SHDI1 */
+static struct resource sdhi1_resources[] = {
+	[0] = {
+		.name	= "SDHI1",
+		.start  = 0x04cf0000,
+		.end    = 0x04cf01ff,
+		.flags  = IORESOURCE_MEM,
+	},
+	[1] = {
+		.start  = 24,
+		.flags  = IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device sdhi1_device = {
+	.name           = "sh_mobile_sdhi",
+	.num_resources  = ARRAY_SIZE(sdhi1_resources),
+	.resource       = sdhi1_resources,
+	.id             = 1,
+	.archdata = {
+		.hwblk_id = HWBLK_SDHI1,
+	},
+};
+
 static struct platform_device *ecovec_devices[] __initdata = {
 	&heartbeat_device,
 	&nor_flash_device,
@@ -438,6 +489,8 @@ static struct platform_device *ecovec_devices[] __initdata = {
 	&ceu0_device,
 	&ceu1_device,
 	&keysc_device,
+	&sdhi0_device,
+	&sdhi1_device,
 };
 
 #define EEPROM_ADDR 0x50
@@ -466,12 +519,9 @@ static u8 mac_read(struct i2c_adapter *a, u8 command)
 	return buf;
 }
 
-#define MAC_LEN 6
-static void __init sh_eth_init(void)
+static void __init sh_eth_init(struct sh_eth_plat_data *pd)
 {
 	struct i2c_adapter *a = i2c_get_adapter(1);
-	struct clk *eth_clk;
-	u8 mac[MAC_LEN];
 	int i;
 
 	if (!a) {
@@ -479,33 +529,11 @@ static void __init sh_eth_init(void)
 		return;
 	}
 
-	eth_clk = clk_get(NULL, "eth0");
-	if (!eth_clk) {
-		pr_err("can not get eth0 clk\n");
-		return;
-	}
-
 	/* read MAC address frome EEPROM */
-	for (i = 0; i < MAC_LEN; i++) {
-		mac[i] = mac_read(a, 0x10 + i);
+	for (i = 0; i < sizeof(pd->mac_addr); i++) {
+		pd->mac_addr[i] = mac_read(a, 0x10 + i);
 		msleep(10);
 	}
-
-	/* clock enable */
-	clk_enable(eth_clk);
-
-	/* reset sh-eth */
-	ctrl_outl(0x1, SH_ETH_ADDR + 0x0);
-
-	/* set MAC addr */
-	ctrl_outl((mac[0] << 24) |
-		  (mac[1] << 16) |
-		  (mac[2] <<  8) |
-		  (mac[3] <<  0), SH_ETH_MAHR);
-	ctrl_outl((mac[4] <<  8) |
-		  (mac[5] <<  0), SH_ETH_MALR);
-
-	clk_put(eth_clk);
 }
 
 #define PORT_HIZA 0xA4050158
@@ -710,6 +738,34 @@ static int __init arch_setup(void)
 	gpio_direction_input(GPIO_PTR5);
 	gpio_direction_input(GPIO_PTR6);
 
+	/* enable SDHI0 */
+	gpio_request(GPIO_FN_SDHI0CD,  NULL);
+	gpio_request(GPIO_FN_SDHI0WP,  NULL);
+	gpio_request(GPIO_FN_SDHI0CMD, NULL);
+	gpio_request(GPIO_FN_SDHI0CLK, NULL);
+	gpio_request(GPIO_FN_SDHI0D3,  NULL);
+	gpio_request(GPIO_FN_SDHI0D2,  NULL);
+	gpio_request(GPIO_FN_SDHI0D1,  NULL);
+	gpio_request(GPIO_FN_SDHI0D0,  NULL);
+
+	/* enable SDHI1 */
+	gpio_request(GPIO_FN_SDHI1CD,  NULL);
+	gpio_request(GPIO_FN_SDHI1WP,  NULL);
+	gpio_request(GPIO_FN_SDHI1CMD, NULL);
+	gpio_request(GPIO_FN_SDHI1CLK, NULL);
+	gpio_request(GPIO_FN_SDHI1D3,  NULL);
+	gpio_request(GPIO_FN_SDHI1D2,  NULL);
+	gpio_request(GPIO_FN_SDHI1D1,  NULL);
+	gpio_request(GPIO_FN_SDHI1D0,  NULL);
+
+	gpio_request(GPIO_PTB6, NULL);
+	gpio_request(GPIO_PTB7, NULL);
+	gpio_direction_output(GPIO_PTB6, 1);
+	gpio_direction_output(GPIO_PTB7, 1);
+
+	/* I/O buffer drive ability is high for SDHI1 */
+	ctrl_outw((ctrl_inw(IODRIVEA) & ~0x3000) | 0x2000 , IODRIVEA);
+
 	/* enable I2C device */
 	i2c_register_board_info(1, i2c1_devices,
 				ARRAY_SIZE(i2c1_devices));
@@ -721,11 +777,10 @@ arch_initcall(arch_setup);
 
 static int __init devices_setup(void)
 {
-	sh_eth_init();
+	sh_eth_init(&sh_eth_plat);
 	return 0;
 }
 device_initcall(devices_setup);
-
 
 static struct sh_machine_vector mv_ecovec __initmv = {
 	.mv_name	= "R0P7724 (EcoVec)",

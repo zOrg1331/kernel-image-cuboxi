@@ -85,6 +85,20 @@ DECLARE_EXPORT(__movstr_i4_even);
 DECLARE_EXPORT(__movstr_i4_odd);
 DECLARE_EXPORT(__movstrSI12_i4);
 DECLARE_EXPORT(__movmem);
+DECLARE_EXPORT(__movmemSI8);
+DECLARE_EXPORT(__movmemSI12);
+DECLARE_EXPORT(__movmemSI16);
+DECLARE_EXPORT(__movmemSI20);
+DECLARE_EXPORT(__movmemSI24);
+DECLARE_EXPORT(__movmemSI28);
+DECLARE_EXPORT(__movmemSI32);
+DECLARE_EXPORT(__movmemSI36);
+DECLARE_EXPORT(__movmemSI40);
+DECLARE_EXPORT(__movmemSI44);
+DECLARE_EXPORT(__movmemSI48);
+DECLARE_EXPORT(__movmemSI52);
+DECLARE_EXPORT(__movmemSI56);
+DECLARE_EXPORT(__movmemSI60);
 DECLARE_EXPORT(__movmem_i4_even);
 DECLARE_EXPORT(__movmem_i4_odd);
 DECLARE_EXPORT(__movmemSI12_i4);
@@ -94,13 +108,10 @@ DECLARE_EXPORT(__udivsi3_i4);
 DECLARE_EXPORT(__sdivsi3_i4i);
 DECLARE_EXPORT(__udivsi3_i4i);
 
-#if !defined(CONFIG_CACHE_OFF) && (defined(CONFIG_CPU_SH4) || \
-	defined(CONFIG_SH7705_CACHE_32KB))
 /* needed by some modules */
 EXPORT_SYMBOL(flush_cache_all);
 EXPORT_SYMBOL(flush_cache_range);
 EXPORT_SYMBOL(flush_dcache_page);
-#endif
 
 #ifdef CONFIG_MCOUNT
 DECLARE_EXPORT(mcount);
