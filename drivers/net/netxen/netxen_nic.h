@@ -53,8 +53,8 @@
 
 #define _NETXEN_NIC_LINUX_MAJOR 4
 #define _NETXEN_NIC_LINUX_MINOR 0
-#define _NETXEN_NIC_LINUX_SUBVERSION 50
-#define NETXEN_NIC_LINUX_VERSIONID  "4.0.50"
+#define _NETXEN_NIC_LINUX_SUBVERSION 62
+#define NETXEN_NIC_LINUX_VERSIONID  "4.0.62"
 
 #define NETXEN_VERSION_CODE(a, b, c)	(((a) << 24) + ((b) << 16) + (c))
 #define _major(v)	(((v) >> 24) & 0xff)
@@ -117,9 +117,11 @@
 #define NX_P3_B0		0x40
 #define NX_P3_B1		0x41
 #define NX_P3_B2		0x42
+#define NX_P3P_A0		0x50
 
 #define NX_IS_REVISION_P2(REVISION)     (REVISION <= NX_P2_C1)
 #define NX_IS_REVISION_P3(REVISION)     (REVISION >= NX_P3_A0)
+#define NX_IS_REVISION_P3P(REVISION)     (REVISION >= NX_P3P_A0)
 
 #define FIRST_PAGE_GROUP_START	0
 #define FIRST_PAGE_GROUP_END	0x100000
@@ -543,13 +545,16 @@ struct netxen_hardware_context {
 	void __iomem *pci_base1;
 	void __iomem *pci_base2;
 	void __iomem *db_base;
+	void __iomem *ocm_win_crb;
+
 	unsigned long db_len;
 	unsigned long pci_len0;
 
-	int qdr_sn_window;
-	int ddr_mn_window;
-	u32 mn_win_crb;
-	u32 ms_win_crb;
+	u32 ocm_win;
+	u32 crb_win;
+
+	rwlock_t crb_lock;
+	spinlock_t mem_lock;
 
 	u8 cut_through;
 	u8 revision_id;
@@ -1039,6 +1044,9 @@ typedef struct {
 #define LINKEVENT_LINKSPEED_MBPS	0
 #define LINKEVENT_LINKSPEED_ENCODED	1
 
+#define AUTO_FW_RESET_ENABLED	0xEF10AF12
+#define AUTO_FW_RESET_DISABLED	0xDCBAAF12
+
 /* firmware response header:
  *	63:58 - message type
  *	57:56 - owner
@@ -1086,6 +1094,7 @@ typedef struct {
 #define NETXEN_NIC_MSIX_ENABLED		0x04
 #define NETXEN_NIC_LRO_ENABLED		0x08
 #define NETXEN_NIC_BRIDGE_ENABLED       0X10
+#define NETXEN_NIC_DIAG_ENABLED		0x20
 #define NETXEN_IS_MSI_FAMILY(adapter) \
 	((adapter)->flags & (NETXEN_NIC_MSI_ENABLED | NETXEN_NIC_MSIX_ENABLED))
 
@@ -1114,10 +1123,6 @@ struct netxen_adapter {
 	struct net_device *netdev;
 	struct pci_dev *pdev;
 	struct list_head mac_list;
-
-	u32 curr_window;
-	u32 crb_win;
-	rwlock_t adapter_lock;
 
 	spinlock_t tx_clean_lock;
 
@@ -1180,11 +1185,10 @@ struct netxen_adapter {
 	u32 (*crb_read)(struct netxen_adapter *, ulong);
 	int (*crb_write)(struct netxen_adapter *, ulong, u32);
 
-	int (*pci_mem_read)(struct netxen_adapter *, u64, void *, int);
-	int (*pci_mem_write)(struct netxen_adapter *, u64, void *, int);
+	int (*pci_mem_read)(struct netxen_adapter *, u64, u64 *);
+	int (*pci_mem_write)(struct netxen_adapter *, u64, u64);
 
-	unsigned long (*pci_set_window)(struct netxen_adapter *,
-			unsigned long long);
+	int (*pci_set_window)(struct netxen_adapter *, u64, u32 *);
 
 	u32 (*io_read)(struct netxen_adapter *, void __iomem *);
 	void (*io_write)(struct netxen_adapter *, void __iomem *, u32);
@@ -1202,8 +1206,6 @@ struct netxen_adapter {
 	struct delayed_work fw_work;
 
 	struct work_struct  tx_timeout_task;
-
-	struct net_device_stats net_stats;
 
 	nx_nic_intr_coalesce_t coal;
 
@@ -1271,7 +1273,7 @@ int netxen_load_firmware(struct netxen_adapter *adapter);
 int netxen_need_fw_reset(struct netxen_adapter *adapter);
 void netxen_request_firmware(struct netxen_adapter *adapter);
 void netxen_release_firmware(struct netxen_adapter *adapter);
-int netxen_pinit_from_rom(struct netxen_adapter *adapter, int verbose);
+int netxen_pinit_from_rom(struct netxen_adapter *adapter);
 
 int netxen_rom_fast_read(struct netxen_adapter *adapter, int addr, int *valp);
 int netxen_rom_fast_read_words(struct netxen_adapter *adapter, int addr,

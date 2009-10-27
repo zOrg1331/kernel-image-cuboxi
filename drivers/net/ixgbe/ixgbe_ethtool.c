@@ -40,19 +40,27 @@
 
 #define IXGBE_ALL_RAR_ENTRIES 16
 
+enum {NETDEV_STATS, IXGBE_STATS};
+
 struct ixgbe_stats {
 	char stat_string[ETH_GSTRING_LEN];
+	int type;
 	int sizeof_stat;
 	int stat_offset;
 };
 
-#define IXGBE_STAT(m) sizeof(((struct ixgbe_adapter *)0)->m), \
-                             offsetof(struct ixgbe_adapter, m)
+#define IXGBE_STAT(m)		IXGBE_STATS, \
+				sizeof(((struct ixgbe_adapter *)0)->m), \
+				offsetof(struct ixgbe_adapter, m)
+#define IXGBE_NETDEV_STAT(m)	NETDEV_STATS, \
+				sizeof(((struct net_device *)0)->m), \
+				offsetof(struct net_device, m)
+
 static struct ixgbe_stats ixgbe_gstrings_stats[] = {
-	{"rx_packets", IXGBE_STAT(net_stats.rx_packets)},
-	{"tx_packets", IXGBE_STAT(net_stats.tx_packets)},
-	{"rx_bytes", IXGBE_STAT(net_stats.rx_bytes)},
-	{"tx_bytes", IXGBE_STAT(net_stats.tx_bytes)},
+	{"rx_packets", IXGBE_NETDEV_STAT(stats.rx_packets)},
+	{"tx_packets", IXGBE_NETDEV_STAT(stats.tx_packets)},
+	{"rx_bytes", IXGBE_NETDEV_STAT(stats.rx_bytes)},
+	{"tx_bytes", IXGBE_NETDEV_STAT(stats.tx_bytes)},
 	{"rx_pkts_nic", IXGBE_STAT(stats.gprc)},
 	{"tx_pkts_nic", IXGBE_STAT(stats.gptc)},
 	{"rx_bytes_nic", IXGBE_STAT(stats.gorc)},
@@ -60,26 +68,26 @@ static struct ixgbe_stats ixgbe_gstrings_stats[] = {
 	{"lsc_int", IXGBE_STAT(lsc_int)},
 	{"tx_busy", IXGBE_STAT(tx_busy)},
 	{"non_eop_descs", IXGBE_STAT(non_eop_descs)},
-	{"rx_errors", IXGBE_STAT(net_stats.rx_errors)},
-	{"tx_errors", IXGBE_STAT(net_stats.tx_errors)},
-	{"rx_dropped", IXGBE_STAT(net_stats.rx_dropped)},
-	{"tx_dropped", IXGBE_STAT(net_stats.tx_dropped)},
-	{"multicast", IXGBE_STAT(net_stats.multicast)},
+	{"rx_errors", IXGBE_NETDEV_STAT(stats.rx_errors)},
+	{"tx_errors", IXGBE_NETDEV_STAT(stats.tx_errors)},
+	{"rx_dropped", IXGBE_NETDEV_STAT(stats.rx_dropped)},
+	{"tx_dropped", IXGBE_NETDEV_STAT(stats.tx_dropped)},
+	{"multicast", IXGBE_NETDEV_STAT(stats.multicast)},
 	{"broadcast", IXGBE_STAT(stats.bprc)},
 	{"rx_no_buffer_count", IXGBE_STAT(stats.rnbc[0]) },
-	{"collisions", IXGBE_STAT(net_stats.collisions)},
-	{"rx_over_errors", IXGBE_STAT(net_stats.rx_over_errors)},
-	{"rx_crc_errors", IXGBE_STAT(net_stats.rx_crc_errors)},
-	{"rx_frame_errors", IXGBE_STAT(net_stats.rx_frame_errors)},
+	{"collisions", IXGBE_NETDEV_STAT(stats.collisions)},
+	{"rx_over_errors", IXGBE_NETDEV_STAT(stats.rx_over_errors)},
+	{"rx_crc_errors", IXGBE_NETDEV_STAT(stats.rx_crc_errors)},
+	{"rx_frame_errors", IXGBE_NETDEV_STAT(stats.rx_frame_errors)},
 	{"hw_rsc_count", IXGBE_STAT(rsc_count)},
 	{"fdir_match", IXGBE_STAT(stats.fdirmatch)},
 	{"fdir_miss", IXGBE_STAT(stats.fdirmiss)},
-	{"rx_fifo_errors", IXGBE_STAT(net_stats.rx_fifo_errors)},
-	{"rx_missed_errors", IXGBE_STAT(net_stats.rx_missed_errors)},
-	{"tx_aborted_errors", IXGBE_STAT(net_stats.tx_aborted_errors)},
-	{"tx_carrier_errors", IXGBE_STAT(net_stats.tx_carrier_errors)},
-	{"tx_fifo_errors", IXGBE_STAT(net_stats.tx_fifo_errors)},
-	{"tx_heartbeat_errors", IXGBE_STAT(net_stats.tx_heartbeat_errors)},
+	{"rx_fifo_errors", IXGBE_NETDEV_STAT(stats.rx_fifo_errors)},
+	{"rx_missed_errors", IXGBE_NETDEV_STAT(stats.rx_missed_errors)},
+	{"tx_aborted_errors", IXGBE_NETDEV_STAT(stats.tx_aborted_errors)},
+	{"tx_carrier_errors", IXGBE_NETDEV_STAT(stats.tx_carrier_errors)},
+	{"tx_fifo_errors", IXGBE_NETDEV_STAT(stats.tx_fifo_errors)},
+	{"tx_heartbeat_errors", IXGBE_NETDEV_STAT(stats.tx_heartbeat_errors)},
 	{"tx_timeout_count", IXGBE_STAT(tx_timeout_count)},
 	{"tx_restart_queue", IXGBE_STAT(restart_queue)},
 	{"rx_long_length_errors", IXGBE_STAT(stats.roc)},
@@ -929,10 +937,21 @@ static void ixgbe_get_ethtool_stats(struct net_device *netdev,
 	int stat_count = sizeof(struct ixgbe_queue_stats) / sizeof(u64);
 	int j, k;
 	int i;
+	char *p = NULL;
 
 	ixgbe_update_stats(adapter);
 	for (i = 0; i < IXGBE_GLOBAL_STATS_LEN; i++) {
-		char *p = (char *)adapter + ixgbe_gstrings_stats[i].stat_offset;
+		switch (ixgbe_gstrings_stats[i].type) {
+		case NETDEV_STATS:
+			p = (char *) netdev +
+					ixgbe_gstrings_stats[i].stat_offset;
+			break;
+		case IXGBE_STATS:
+			p = (char *) adapter +
+					ixgbe_gstrings_stats[i].stat_offset;
+			break;
+		}
+
 		data[i] = (ixgbe_gstrings_stats[i].sizeof_stat ==
 		           sizeof(u64)) ? *(u64 *)p : *(u32 *)p;
 	}
