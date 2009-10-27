@@ -17,7 +17,6 @@
 #include "util/header.h"
 #include "util/event.h"
 #include "util/debug.h"
-#include "util/trace-event.h"
 
 #include <unistd.h>
 #include <sched.h>
@@ -27,45 +26,45 @@
 
 static int			fd[MAX_NR_CPUS][MAX_COUNTERS];
 
-static long			default_interval		= 100000;
+static long			default_interval		=      0;
 
-static int			nr_cpus				= 0;
+static int			nr_cpus				=      0;
 static unsigned int		page_size;
-static unsigned int		mmap_pages			= 128;
-static int			freq				= 0;
+static unsigned int		mmap_pages			=    128;
+static int			freq				=   1000;
 static int			output;
 static const char		*output_name			= "perf.data";
-static int			group				= 0;
-static unsigned int		realtime_prio			= 0;
-static int			raw_samples			= 0;
-static int			system_wide			= 0;
-static int			profile_cpu			= -1;
-static pid_t			target_pid			= -1;
-static pid_t			child_pid			= -1;
-static int			inherit				= 1;
-static int			force				= 0;
-static int			append_file			= 0;
-static int			call_graph			= 0;
-static int			inherit_stat			= 0;
-static int			no_samples			= 0;
-static int			sample_address			= 0;
-static int			multiplex			= 0;
-static int			multiplex_fd			= -1;
+static int			group				=      0;
+static unsigned int		realtime_prio			=      0;
+static int			raw_samples			=      0;
+static int			system_wide			=      0;
+static int			profile_cpu			=     -1;
+static pid_t			target_pid			=     -1;
+static pid_t			child_pid			=     -1;
+static int			inherit				=      1;
+static int			force				=      0;
+static int			append_file			=      0;
+static int			call_graph			=      0;
+static int			inherit_stat			=      0;
+static int			no_samples			=      0;
+static int			sample_address			=      0;
+static int			multiplex			=      0;
+static int			multiplex_fd			=     -1;
 
-static long			samples;
+static long			samples				=      0;
 static struct timeval		last_read;
 static struct timeval		this_read;
 
-static u64			bytes_written;
+static u64			bytes_written			=      0;
 
 static struct pollfd		event_array[MAX_NR_CPUS * MAX_COUNTERS];
 
-static int			nr_poll;
-static int			nr_cpu;
+static int			nr_poll				=      0;
+static int			nr_cpu				=      0;
 
-static int			file_new = 1;
+static int			file_new			=      1;
 
-struct perf_header		*header;
+struct perf_header		*header				=   NULL;
 
 struct mmap_data {
 	int			counter;
@@ -566,17 +565,17 @@ static int __cmd_record(int argc, const char **argv)
 	else
 		header = perf_header__new();
 
-
 	if (raw_samples) {
-		read_tracing_data(attrs, nr_counters);
+		perf_header__set_trace_info();
 	} else {
 		for (i = 0; i < nr_counters; i++) {
 			if (attrs[i].sample_type & PERF_SAMPLE_RAW) {
-				read_tracing_data(attrs, nr_counters);
+				perf_header__set_trace_info();
 				break;
 			}
 		}
 	}
+
 	atexit(atexit_header);
 
 	if (!system_wide) {
@@ -729,6 +728,18 @@ int cmd_record(int argc, const char **argv, const char *prefix __used)
 		nr_counters	= 1;
 		attrs[0].type	= PERF_TYPE_HARDWARE;
 		attrs[0].config = PERF_COUNT_HW_CPU_CYCLES;
+	}
+
+	/*
+	 * User specified count overrides default frequency.
+	 */
+	if (default_interval)
+		freq = 0;
+	else if (freq) {
+		default_interval = freq;
+	} else {
+		fprintf(stderr, "frequency and count are zero, aborting\n");
+		exit(EXIT_FAILURE);
 	}
 
 	for (counter = 0; counter < nr_counters; counter++) {
