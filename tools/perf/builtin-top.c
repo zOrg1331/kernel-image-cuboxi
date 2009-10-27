@@ -141,7 +141,8 @@ static void parse_source(struct sym_entry *syme)
 	sprintf(command,
 		"objdump --start-address=0x%016Lx "
 			 "--stop-address=0x%016Lx -dS %s",
-		sym->start, sym->end, path);
+		map->unmap_ip(map, sym->start),
+		map->unmap_ip(map, sym->end), path);
 
 	file = popen(command, "r");
 	if (!file)
@@ -173,11 +174,11 @@ static void parse_source(struct sym_entry *syme)
 
 		if (strlen(src->line)>8 && src->line[8] == ':') {
 			src->eip = strtoull(src->line, NULL, 16);
-			src->eip += map->start;
+			src->eip = map->unmap_ip(map, src->eip);
 		}
 		if (strlen(src->line)>8 && src->line[16] == ':') {
 			src->eip = strtoull(src->line, NULL, 16);
-			src->eip += map->start;
+			src->eip = map->unmap_ip(map, src->eip);
 		}
 	}
 	pclose(file);
@@ -317,7 +318,7 @@ static void show_details(struct sym_entry *syme)
 }
 
 /*
- * Symbols will be added here in record_ip and will get out
+ * Symbols will be added here in event__process_sample and will get out
  * after decayed.
  */
 static LIST_HEAD(active_symbols);
@@ -458,18 +459,18 @@ static void print_sym_table(void)
 	}
 
 	if (nr_counters == 1)
-		printf("             samples    pcnt");
+		printf("             samples  pcnt");
 	else
-		printf("   weight    samples    pcnt");
+		printf("   weight    samples  pcnt");
 
 	if (verbose)
 		printf("         RIP       ");
-	printf("   kernel function\n");
-	printf("   %s    _______   _____",
+	printf(" function                                 DSO\n");
+	printf("   %s    _______ _____",
 	       nr_counters == 1 ? "      " : "______");
 	if (verbose)
-		printf("   ________________");
-	printf("   _______________\n\n");
+		printf(" ________________");
+	printf(" ________________________________ ________________\n\n");
 
 	for (nd = rb_first(&tmp); nd; nd = rb_next(nd)) {
 		struct symbol *sym;
@@ -485,16 +486,15 @@ static void print_sym_table(void)
 					 sum_ksamples));
 
 		if (nr_counters == 1 || !display_weighted)
-			printf("%20.2f - ", syme->weight);
+			printf("%20.2f ", syme->weight);
 		else
-			printf("%9.1f %10ld - ", syme->weight, syme->snap_count);
+			printf("%9.1f %10ld ", syme->weight, syme->snap_count);
 
 		percent_color_fprintf(stdout, "%4.1f%%", pcnt);
 		if (verbose)
-			printf(" - %016llx", sym->start);
-		printf(" : %s", sym->name);
-		if (syme->map->dso->name[0] == '[')
-			printf(" \t%s", syme->map->dso->name);
+			printf(" %016llx", sym->start);
+		printf(" %-32s", sym->name);
+		printf(" %s", syme->map->dso->short_name);
 		printf("\n");
 	}
 }
@@ -663,6 +663,8 @@ static void handle_keypress(int c)
 	switch (c) {
 		case 'd':
 			prompt_integer(&delay_secs, "Enter display delay");
+			if (delay_secs < 1)
+				delay_secs = 1;
 			break;
 		case 'e':
 			prompt_integer(&print_entries, "Enter display entries (lines)");
@@ -806,7 +808,7 @@ static int symbol_filter(struct map *map, struct symbol *sym)
 static int parse_symbols(void)
 {
 	if (dsos__load_kernel(vmlinux_name, sizeof(struct sym_entry),
-			      symbol_filter, verbose, 1) <= 0)
+			      symbol_filter, 1) <= 0)
 		return -1;
 
 	if (dump_symtab)
@@ -815,41 +817,97 @@ static int parse_symbols(void)
 	return 0;
 }
 
-/*
- * Binary search in the histogram table and record the hit:
- */
-static void record_ip(u64 ip, int counter)
+static void event__process_sample(const event_t *self, int counter)
 {
+	u64 ip = self->ip.ip;
 	struct map *map;
-	struct symbol *sym = kernel_maps__find_symbol(ip, &map);
+	struct sym_entry *syme;
+	struct symbol *sym;
 
-	if (sym != NULL) {
-		struct sym_entry *syme = dso__sym_priv(map->dso, sym);
+	switch (self->header.misc & PERF_RECORD_MISC_CPUMODE_MASK) {
+	case PERF_RECORD_MISC_USER: {
+		struct thread *thread = threads__findnew(self->ip.pid);
 
-		if (!syme->skip) {
-			syme->count[counter]++;
-			record_precise_ip(syme, counter, ip);
-			pthread_mutex_lock(&active_symbols_lock);
-			if (list_empty(&syme->node) || !syme->node.next)
-				__list_insert_active_sym(syme);
-			pthread_mutex_unlock(&active_symbols_lock);
+		if (thread == NULL)
 			return;
+
+		map = thread__find_map(thread, ip);
+		if (map != NULL) {
+			ip = map->map_ip(map, ip);
+			sym = map->dso->find_symbol(map->dso, ip);
+			if (sym == NULL)
+				return;
+			userspace_samples++;
+			break;
 		}
 	}
-
-	samples--;
-}
-
-static void process_event(u64 ip, int counter, int user)
-{
-	samples++;
-
-	if (user) {
-		userspace_samples++;
+		/*
+		 * If this is outside of all known maps,
+		 * and is a negative address, try to look it
+		 * up in the kernel dso, as it might be a
+		 * vsyscall or vdso (which executes in user-mode).
+		 */
+		if ((long long)ip >= 0)
+			return;
+		/* Fall thru */
+	case PERF_RECORD_MISC_KERNEL:
+		sym = kernel_maps__find_symbol(ip, &map);
+		if (sym == NULL)
+			return;
+		break;
+	default:
 		return;
 	}
 
-	record_ip(ip, counter);
+	syme = dso__sym_priv(map->dso, sym);
+
+	if (!syme->skip) {
+		syme->count[counter]++;
+		record_precise_ip(syme, counter, ip);
+		pthread_mutex_lock(&active_symbols_lock);
+		if (list_empty(&syme->node) || !syme->node.next)
+			__list_insert_active_sym(syme);
+		pthread_mutex_unlock(&active_symbols_lock);
+		++samples;
+		return;
+	}
+}
+
+static void event__process_mmap(event_t *self)
+{
+	struct thread *thread = threads__findnew(self->mmap.pid);
+
+	if (thread != NULL) {
+		struct map *map = map__new(&self->mmap, NULL, 0,
+					   sizeof(struct sym_entry),
+					   symbol_filter);
+		if (map != NULL)
+			thread__insert_map(thread, map);
+	}
+}
+
+static void event__process_comm(event_t *self)
+{
+	struct thread *thread = threads__findnew(self->comm.pid);
+
+	if (thread != NULL)
+		thread__set_comm(thread, self->comm.comm);
+}
+
+static int event__process(event_t *event)
+{
+	switch (event->header.type) {
+	case PERF_RECORD_COMM:
+		event__process_comm(event);
+		break;
+	case PERF_RECORD_MMAP:
+		event__process_mmap(event);
+		break;
+	default:
+		break;
+	}
+
+	return 0;
 }
 
 struct mmap_data {
@@ -870,16 +928,12 @@ static unsigned int mmap_read_head(struct mmap_data *md)
 	return head;
 }
 
-struct timeval last_read, this_read;
-
 static void mmap_read_counter(struct mmap_data *md)
 {
 	unsigned int head = mmap_read_head(md);
 	unsigned int old = md->prev;
 	unsigned char *data = md->base + page_size;
 	int diff;
-
-	gettimeofday(&this_read, NULL);
 
 	/*
 	 * If we're further behind than half the buffer, there's a chance
@@ -891,22 +945,13 @@ static void mmap_read_counter(struct mmap_data *md)
 	 */
 	diff = head - old;
 	if (diff > md->mask / 2 || diff < 0) {
-		struct timeval iv;
-		unsigned long msecs;
-
-		timersub(&this_read, &last_read, &iv);
-		msecs = iv.tv_sec*1000 + iv.tv_usec/1000;
-
-		fprintf(stderr, "WARNING: failed to keep up with mmap data."
-				"  Last read %lu msecs ago.\n", msecs);
+		fprintf(stderr, "WARNING: failed to keep up with mmap data.\n");
 
 		/*
 		 * head points to a known good entry, start there.
 		 */
 		old = head;
 	}
-
-	last_read = this_read;
 
 	for (; old != head;) {
 		event_t *event = (event_t *)&data[old & md->mask];
@@ -935,13 +980,11 @@ static void mmap_read_counter(struct mmap_data *md)
 			event = &event_copy;
 		}
 
+		if (event->header.type == PERF_RECORD_SAMPLE)
+			event__process_sample(event, md->counter);
+		else
+			event__process(event);
 		old += size;
-
-		if (event->header.type == PERF_RECORD_SAMPLE) {
-			int user =
-	(event->header.misc & PERF_RECORD_MISC_CPUMODE_MASK) == PERF_RECORD_MISC_USER;
-			process_event(event->ip.ip, md->counter, user);
-		}
 	}
 
 	md->prev = old;
@@ -983,6 +1026,7 @@ static void start_counter(int i, int counter)
 	}
 
 	attr->inherit		= (cpu < 0) && inherit;
+	attr->mmap		= 1;
 
 try_again:
 	fd[i][counter] = sys_perf_event_open(attr, target_pid, cpu, group_fd, 0);
@@ -1040,6 +1084,11 @@ static int __cmd_top(void)
 	pthread_t thread;
 	int i, counter;
 	int ret;
+
+	if (target_pid != -1)
+		event__synthesize_thread(target_pid, event__process);
+	else
+		event__synthesize_threads(event__process);
 
 	for (i = 0; i < nr_cpus; i++) {
 		group_fd = -1;

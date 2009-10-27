@@ -483,10 +483,6 @@ static inline int ftrace_graph_addr(unsigned long addr)
 	return 0;
 }
 #else
-static inline int ftrace_trace_addr(unsigned long addr)
-{
-	return 1;
-}
 static inline int ftrace_graph_addr(unsigned long addr)
 {
 	return 1;
@@ -500,12 +496,12 @@ print_graph_function(struct trace_iterator *iter)
 }
 #endif /* CONFIG_FUNCTION_GRAPH_TRACER */
 
-extern struct pid *ftrace_pid_trace;
+extern struct list_head ftrace_pids;
 
 #ifdef CONFIG_FUNCTION_TRACER
 static inline int ftrace_trace_task(struct task_struct *task)
 {
-	if (!ftrace_pid_trace)
+	if (list_empty(&ftrace_pids))
 		return 1;
 
 	return test_tsk_trace_trace(task);
@@ -687,7 +683,6 @@ struct event_filter {
 	int			n_preds;
 	struct filter_pred	**preds;
 	char			*filter_string;
-	bool			no_reset;
 };
 
 struct event_subsystem {
@@ -707,7 +702,7 @@ typedef int (*filter_pred_fn_t) (struct filter_pred *pred, void *event,
 typedef int (*regex_match_func)(char *str, struct regex *r, int len);
 
 enum regex_type {
-	MATCH_FULL,
+	MATCH_FULL = 0,
 	MATCH_FRONT_ONLY,
 	MATCH_MIDDLE_ONLY,
 	MATCH_END_ONLY,
@@ -748,7 +743,8 @@ filter_check_discard(struct ftrace_event_call *call, void *rec,
 		     struct ring_buffer *buffer,
 		     struct ring_buffer_event *event)
 {
-	if (unlikely(call->filter_active) && !filter_match_preds(call, rec)) {
+	if (unlikely(call->filter_active) &&
+	    !filter_match_preds(call->filter, rec)) {
 		ring_buffer_discard_commit(buffer, event);
 		return 1;
 	}

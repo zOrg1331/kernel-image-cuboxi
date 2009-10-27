@@ -37,9 +37,10 @@ static int		print_line;
 static unsigned long	page_size;
 static unsigned long	mmap_window = 32;
 
-static struct rb_root	threads;
-static struct thread	*last_match;
-
+struct sym_hist {
+	u64		sum;
+	u64		ip[0];
+};
 
 struct sym_ext {
 	struct rb_node	node;
@@ -47,6 +48,34 @@ struct sym_ext {
 	char		*path;
 };
 
+struct sym_priv {
+	struct sym_hist	*hist;
+	struct sym_ext	*ext;
+};
+
+static const char *sym_hist_filter;
+
+static int symbol_filter(struct map *map, struct symbol *sym)
+{
+	if (sym_hist_filter == NULL ||
+	    strcmp(sym->name, sym_hist_filter) == 0) {
+		struct sym_priv *priv = dso__sym_priv(map->dso, sym);
+		const int size = (sizeof(*priv->hist) +
+				  (sym->end - sym->start) * sizeof(u64));
+
+		priv->hist = malloc(size);
+		if (priv->hist)
+			memset(priv->hist, 0, size);
+		return 0;
+	}
+	/*
+	 * FIXME: We should really filter it out, as we don't want to go thru symbols
+	 * we're not interested, and if a DSO ends up with no symbols, delete it too,
+	 * but right now the kernel loading routines in symbol.c bail out if no symbols
+	 * are found, fix it later.
+	 */
+	return 0;
+}
 
 /*
  * collect histogram counts
@@ -55,28 +84,38 @@ static void hist_hit(struct hist_entry *he, u64 ip)
 {
 	unsigned int sym_size, offset;
 	struct symbol *sym = he->sym;
+	struct sym_priv *priv;
+	struct sym_hist *h;
 
 	he->count++;
 
-	if (!sym || !sym->hist)
+	if (!sym || !he->map)
+		return;
+
+	priv = dso__sym_priv(he->map->dso, sym);
+	if (!priv->hist)
 		return;
 
 	sym_size = sym->end - sym->start;
-	ip = he->map->map_ip(he->map, ip);
 	offset = ip - sym->start;
+
+	if (verbose)
+		fprintf(stderr, "%s: ip=%Lx\n", __func__,
+			he->map->unmap_ip(he->map, ip));
 
 	if (offset >= sym_size)
 		return;
 
-	sym->hist_sum++;
-	sym->hist[offset]++;
+	h = priv->hist;
+	h->sum++;
+	h->ip[offset]++;
 
 	if (verbose >= 3)
 		printf("%p %s: count++ [ip: %p, %08Lx] => %Ld\n",
 			(void *)(unsigned long)he->sym->start,
 			he->sym->name,
 			(void *)(unsigned long)ip, ip - he->sym->start,
-			sym->hist[offset]);
+			h->ip[offset]);
 }
 
 static int hist_entry__add(struct thread *thread, struct map *map,
@@ -87,8 +126,7 @@ static int hist_entry__add(struct thread *thread, struct map *map,
 						  count, level, &hit);
 	if (he == NULL)
 		return -ENOMEM;
-	if (hit)
-		hist_hit(he, ip);
+	hist_hit(he, ip);
 	return 0;
 }
 
@@ -96,12 +134,10 @@ static int
 process_sample_event(event_t *event, unsigned long offset, unsigned long head)
 {
 	char level;
-	struct thread *thread;
 	u64 ip = event->ip.ip;
 	struct map *map = NULL;
 	struct symbol *sym = NULL;
-
-	thread = threads__findnew(event->ip.pid, &threads, &last_match);
+	struct thread *thread = threads__findnew(event->ip.pid);
 
 	dump_printf("%p [%p]: PERF_EVENT (IP, %d): %d: %p\n",
 		(void *)(offset + head),
@@ -110,13 +146,13 @@ process_sample_event(event_t *event, unsigned long offset, unsigned long head)
 		event->ip.pid,
 		(void *)(long)ip);
 
-	dump_printf(" ... thread: %s:%d\n", thread->comm, thread->pid);
-
 	if (thread == NULL) {
 		fprintf(stderr, "problem processing %d event, skipping it.\n",
 			event->header.type);
 		return -1;
 	}
+
+	dump_printf(" ... thread: %s:%d\n", thread->comm, thread->pid);
 
 	if (event->header.misc & PERF_RECORD_MISC_KERNEL) {
 		level = 'k';
@@ -166,10 +202,9 @@ got_map:
 static int
 process_mmap_event(event_t *event, unsigned long offset, unsigned long head)
 {
-	struct thread *thread;
-	struct map *map = map__new(&event->mmap, NULL, 0);
-
-	thread = threads__findnew(event->mmap.pid, &threads, &last_match);
+	struct map *map = map__new(&event->mmap, NULL, 0,
+				   sizeof(struct sym_priv), symbol_filter);
+	struct thread *thread = threads__findnew(event->mmap.pid);
 
 	dump_printf("%p [%p]: PERF_RECORD_MMAP %d: [%p(%p) @ %p]: %s\n",
 		(void *)(offset + head),
@@ -194,9 +229,8 @@ process_mmap_event(event_t *event, unsigned long offset, unsigned long head)
 static int
 process_comm_event(event_t *event, unsigned long offset, unsigned long head)
 {
-	struct thread *thread;
+	struct thread *thread = threads__findnew(event->comm.pid);
 
-	thread = threads__findnew(event->comm.pid, &threads, &last_match);
 	dump_printf("%p [%p]: PERF_RECORD_COMM: %s:%d\n",
 		(void *)(offset + head),
 		(void *)(long)(event->header.size),
@@ -215,11 +249,9 @@ process_comm_event(event_t *event, unsigned long offset, unsigned long head)
 static int
 process_fork_event(event_t *event, unsigned long offset, unsigned long head)
 {
-	struct thread *thread;
-	struct thread *parent;
+	struct thread *thread = threads__findnew(event->fork.pid);
+	struct thread *parent = threads__findnew(event->fork.ppid);
 
-	thread = threads__findnew(event->fork.pid, &threads, &last_match);
-	parent = threads__findnew(event->fork.ppid, &threads, &last_match);
 	dump_printf("%p [%p]: PERF_RECORD_FORK: %d:%d\n",
 		(void *)(offset + head),
 		(void *)(long)(event->header.size),
@@ -271,14 +303,15 @@ process_event(event_t *event, unsigned long offset, unsigned long head)
 	return 0;
 }
 
-static int
-parse_line(FILE *file, struct symbol *sym, u64 len)
+static int parse_line(FILE *file, struct hist_entry *he, u64 len)
 {
+	struct symbol *sym = he->sym;
 	char *line = NULL, *tmp, *tmp2;
 	static const char *prev_line;
 	static const char *prev_color;
 	unsigned int offset;
 	size_t line_len;
+	u64 start;
 	s64 line_ip;
 	int ret;
 	char *c;
@@ -315,22 +348,26 @@ parse_line(FILE *file, struct symbol *sym, u64 len)
 			line_ip = -1;
 	}
 
+	start = he->map->unmap_ip(he->map, sym->start);
+
 	if (line_ip != -1) {
 		const char *path = NULL;
 		unsigned int hits = 0;
 		double percent = 0.0;
 		const char *color;
-		struct sym_ext *sym_ext = sym->priv;
+		struct sym_priv *priv = dso__sym_priv(he->map->dso, sym);
+		struct sym_ext *sym_ext = priv->ext;
+		struct sym_hist *h = priv->hist;
 
-		offset = line_ip - sym->start;
+		offset = line_ip - start;
 		if (offset < len)
-			hits = sym->hist[offset];
+			hits = h->ip[offset];
 
 		if (offset < len && sym_ext) {
 			path = sym_ext[offset].path;
 			percent = sym_ext[offset].percent;
-		} else if (sym->hist_sum)
-			percent = 100.0 * hits / sym->hist_sum;
+		} else if (h->sum)
+			percent = 100.0 * hits / h->sum;
 
 		color = get_percent_color(percent);
 
@@ -383,9 +420,10 @@ static void insert_source_line(struct sym_ext *sym_ext)
 	rb_insert_color(&sym_ext->node, &root_sym_ext);
 }
 
-static void free_source_line(struct symbol *sym, int len)
+static void free_source_line(struct hist_entry *he, int len)
 {
-	struct sym_ext *sym_ext = sym->priv;
+	struct sym_priv *priv = dso__sym_priv(he->map->dso, he->sym);
+	struct sym_ext *sym_ext = priv->ext;
 	int i;
 
 	if (!sym_ext)
@@ -395,26 +433,30 @@ static void free_source_line(struct symbol *sym, int len)
 		free(sym_ext[i].path);
 	free(sym_ext);
 
-	sym->priv = NULL;
+	priv->ext = NULL;
 	root_sym_ext = RB_ROOT;
 }
 
 /* Get the filename:line for the colored entries */
 static void
-get_source_line(struct symbol *sym, int len, const char *filename)
+get_source_line(struct hist_entry *he, int len, const char *filename)
 {
+	struct symbol *sym = he->sym;
+	u64 start;
 	int i;
 	char cmd[PATH_MAX * 2];
 	struct sym_ext *sym_ext;
+	struct sym_priv *priv = dso__sym_priv(he->map->dso, sym);
+	struct sym_hist *h = priv->hist;
 
-	if (!sym->hist_sum)
+	if (!h->sum)
 		return;
 
-	sym->priv = calloc(len, sizeof(struct sym_ext));
-	if (!sym->priv)
+	sym_ext = priv->ext = calloc(len, sizeof(struct sym_ext));
+	if (!priv->ext)
 		return;
 
-	sym_ext = sym->priv;
+	start = he->map->unmap_ip(he->map, sym->start);
 
 	for (i = 0; i < len; i++) {
 		char *path = NULL;
@@ -422,11 +464,11 @@ get_source_line(struct symbol *sym, int len, const char *filename)
 		u64 offset;
 		FILE *fp;
 
-		sym_ext[i].percent = 100.0 * sym->hist[i] / sym->hist_sum;
+		sym_ext[i].percent = 100.0 * h->ip[i] / h->sum;
 		if (sym_ext[i].percent <= 0.5)
 			continue;
 
-		offset = sym->start + i;
+		offset = start + i;
 		sprintf(cmd, "addr2line -e %s %016llx", filename, offset);
 		fp = popen(cmd, "r");
 		if (!fp)
@@ -476,8 +518,11 @@ static void print_summary(const char *filename)
 	}
 }
 
-static void annotate_sym(struct dso *dso, struct symbol *sym)
+static void annotate_sym(struct hist_entry *he)
 {
+	struct map *map = he->map;
+	struct dso *dso = map->dso;
+	struct symbol *sym = he->sym;
 	const char *filename = dso->long_name, *d_filename;
 	u64 len;
 	char command[PATH_MAX*2];
@@ -485,6 +530,12 @@ static void annotate_sym(struct dso *dso, struct symbol *sym)
 
 	if (!filename)
 		return;
+
+	if (verbose)
+		fprintf(stderr, "%s: filename=%s, sym=%s, start=%Lx, end=%Lx\n",
+			__func__, filename, sym->name,
+			map->unmap_ip(map, sym->start),
+			map->unmap_ip(map, sym->end));
 
 	if (full_paths)
 		d_filename = filename;
@@ -494,7 +545,7 @@ static void annotate_sym(struct dso *dso, struct symbol *sym)
 	len = sym->end - sym->start;
 
 	if (print_line) {
-		get_source_line(sym, len, filename);
+		get_source_line(he, len, filename);
 		print_summary(filename);
 	}
 
@@ -507,7 +558,8 @@ static void annotate_sym(struct dso *dso, struct symbol *sym)
 		       dso, dso->long_name, sym, sym->name);
 
 	sprintf(command, "objdump --start-address=0x%016Lx --stop-address=0x%016Lx -dS %s|grep -v %s",
-		sym->start, sym->end, filename, filename);
+		map->unmap_ip(map, sym->start), map->unmap_ip(map, sym->end),
+		filename, filename);
 
 	if (verbose >= 3)
 		printf("doing: %s\n", command);
@@ -517,35 +569,38 @@ static void annotate_sym(struct dso *dso, struct symbol *sym)
 		return;
 
 	while (!feof(file)) {
-		if (parse_line(file, sym, len) < 0)
+		if (parse_line(file, he, len) < 0)
 			break;
 	}
 
 	pclose(file);
 	if (print_line)
-		free_source_line(sym, len);
+		free_source_line(he, len);
 }
 
 static void find_annotations(void)
 {
 	struct rb_node *nd;
-	struct dso *dso;
-	int count = 0;
 
-	list_for_each_entry(dso, &dsos, node) {
+	for (nd = rb_first(&output_hists); nd; nd = rb_next(nd)) {
+		struct hist_entry *he = rb_entry(nd, struct hist_entry, rb_node);
+		struct sym_priv *priv;
 
-		for (nd = rb_first(&dso->syms); nd; nd = rb_next(nd)) {
-			struct symbol *sym = rb_entry(nd, struct symbol, rb_node);
+		if (he->sym == NULL)
+			continue;
 
-			if (sym->hist) {
-				annotate_sym(dso, sym);
-				count++;
-			}
-		}
+		priv = dso__sym_priv(he->map->dso, he->sym);
+		if (priv->hist == NULL)
+			continue;
+
+		annotate_sym(he);
+		/*
+		 * Since we have a hist_entry per IP for the same symbol, free
+		 * he->sym->hist to signal we already processed this symbol.
+		 */
+		free(priv->hist);
+		priv->hist = NULL;
 	}
-
-	if (!count)
-		printf(" Error: symbol '%s' not present amongst the samples.\n", sym_hist_filter);
 }
 
 static int __cmd_annotate(void)
@@ -558,7 +613,7 @@ static int __cmd_annotate(void)
 	uint32_t size;
 	char *buf;
 
-	register_idle_thread(&threads, &last_match);
+	register_idle_thread();
 
 	input = open(input_name, O_RDONLY);
 	if (input < 0) {
@@ -582,7 +637,7 @@ static int __cmd_annotate(void)
 		exit(0);
 	}
 
-	if (load_kernel() < 0) {
+	if (load_kernel(sizeof(struct sym_priv), symbol_filter) < 0) {
 		perror("failed to load kernel symbols");
 		return EXIT_FAILURE;
 	}
@@ -659,7 +714,7 @@ more:
 		return 0;
 
 	if (verbose > 3)
-		threads__fprintf(stdout, &threads);
+		threads__fprintf(stdout);
 
 	if (verbose > 2)
 		dsos__fprintf(stdout);
@@ -732,9 +787,6 @@ int cmd_annotate(int argc, const char **argv, const char *prefix __used)
 
 		sym_hist_filter = argv[0];
 	}
-
-	if (!sym_hist_filter)
-		usage_with_options(annotate_usage, options);
 
 	setup_pager();
 

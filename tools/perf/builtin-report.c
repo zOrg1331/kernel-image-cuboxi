@@ -55,19 +55,32 @@ static char		callchain_default_opt[] = "fractal,0.5";
 static char		*cwd;
 static int		cwdlen;
 
-static struct rb_root	threads;
-static struct thread	*last_match;
-
 static struct perf_header *header;
 
 static u64		sample_type;
 
-static size_t ipchain__fprintf_graph_line(FILE *fp, int depth, int depth_mask)
+
+static size_t
+callchain__fprintf_left_margin(FILE *fp, int left_margin)
+{
+	int i;
+	int ret;
+
+	ret = fprintf(fp, "            ");
+
+	for (i = 0; i < left_margin; i++)
+		ret += fprintf(fp, " ");
+
+	return ret;
+}
+
+static size_t ipchain__fprintf_graph_line(FILE *fp, int depth, int depth_mask,
+					  int left_margin)
 {
 	int i;
 	size_t ret = 0;
 
-	ret += fprintf(fp, "%s", "                ");
+	ret += callchain__fprintf_left_margin(fp, left_margin);
 
 	for (i = 0; i < depth; i++)
 		if (depth_mask & (1 << i))
@@ -82,12 +95,12 @@ static size_t ipchain__fprintf_graph_line(FILE *fp, int depth, int depth_mask)
 static size_t
 ipchain__fprintf_graph(FILE *fp, struct callchain_list *chain, int depth,
 		       int depth_mask, int count, u64 total_samples,
-		       int hits)
+		       int hits, int left_margin)
 {
 	int i;
 	size_t ret = 0;
 
-	ret += fprintf(fp, "%s", "                ");
+	ret += callchain__fprintf_left_margin(fp, left_margin);
 	for (i = 0; i < depth; i++) {
 		if (depth_mask & (1 << i))
 			ret += fprintf(fp, "|");
@@ -125,8 +138,9 @@ static void init_rem_hits(void)
 }
 
 static size_t
-callchain__fprintf_graph(FILE *fp, struct callchain_node *self,
-			u64 total_samples, int depth, int depth_mask)
+__callchain__fprintf_graph(FILE *fp, struct callchain_node *self,
+			   u64 total_samples, int depth, int depth_mask,
+			   int left_margin)
 {
 	struct rb_node *node, *next;
 	struct callchain_node *child;
@@ -167,7 +181,8 @@ callchain__fprintf_graph(FILE *fp, struct callchain_node *self,
 		 * But we keep the older depth mask for the line seperator
 		 * to keep the level link until we reach the last child
 		 */
-		ret += ipchain__fprintf_graph_line(fp, depth, depth_mask);
+		ret += ipchain__fprintf_graph_line(fp, depth, depth_mask,
+						   left_margin);
 		i = 0;
 		list_for_each_entry(chain, &child->val, list) {
 			if (chain->ip >= PERF_CONTEXT_MAX)
@@ -175,11 +190,13 @@ callchain__fprintf_graph(FILE *fp, struct callchain_node *self,
 			ret += ipchain__fprintf_graph(fp, chain, depth,
 						      new_depth_mask, i++,
 						      new_total,
-						      cumul);
+						      cumul,
+						      left_margin);
 		}
-		ret += callchain__fprintf_graph(fp, child, new_total,
-						depth + 1,
-						new_depth_mask | (1 << depth));
+		ret += __callchain__fprintf_graph(fp, child, new_total,
+						  depth + 1,
+						  new_depth_mask | (1 << depth),
+						  left_margin);
 		node = next;
 	}
 
@@ -193,8 +210,47 @@ callchain__fprintf_graph(FILE *fp, struct callchain_node *self,
 
 		ret += ipchain__fprintf_graph(fp, &rem_hits, depth,
 					      new_depth_mask, 0, new_total,
-					      remaining);
+					      remaining, left_margin);
 	}
+
+	return ret;
+}
+
+
+static size_t
+callchain__fprintf_graph(FILE *fp, struct callchain_node *self,
+			 u64 total_samples, int left_margin)
+{
+	struct callchain_list *chain;
+	bool printed = false;
+	int i = 0;
+	int ret = 0;
+
+	list_for_each_entry(chain, &self->val, list) {
+		if (chain->ip >= PERF_CONTEXT_MAX)
+			continue;
+
+		if (!i++ && sort__first_dimension == SORT_SYM)
+			continue;
+
+		if (!printed) {
+			ret += callchain__fprintf_left_margin(fp, left_margin);
+			ret += fprintf(fp, "|\n");
+			ret += callchain__fprintf_left_margin(fp, left_margin);
+			ret += fprintf(fp, "---");
+
+			left_margin += 3;
+			printed = true;
+		} else
+			ret += callchain__fprintf_left_margin(fp, left_margin);
+
+		if (chain->sym)
+			ret += fprintf(fp, " %s\n", chain->sym->name);
+		else
+			ret += fprintf(fp, " %p\n", (void *)(long)chain->ip);
+	}
+
+	ret += __callchain__fprintf_graph(fp, self, total_samples, 1, 1, left_margin);
 
 	return ret;
 }
@@ -227,7 +283,7 @@ callchain__fprintf_flat(FILE *fp, struct callchain_node *self,
 
 static size_t
 hist_entry_callchain__fprintf(FILE *fp, struct hist_entry *self,
-			      u64 total_samples)
+			      u64 total_samples, int left_margin)
 {
 	struct rb_node *rb_node;
 	struct callchain_node *chain;
@@ -247,8 +303,8 @@ hist_entry_callchain__fprintf(FILE *fp, struct hist_entry *self,
 			break;
 		case CHAIN_GRAPH_ABS: /* Falldown */
 		case CHAIN_GRAPH_REL:
-			ret += callchain__fprintf_graph(fp, chain,
-							total_samples, 1, 1);
+			ret += callchain__fprintf_graph(fp, chain, total_samples,
+							left_margin);
 		case CHAIN_NONE:
 		default:
 			break;
@@ -293,8 +349,19 @@ hist_entry__fprintf(FILE *fp, struct hist_entry *self, u64 total_samples)
 
 	ret += fprintf(fp, "\n");
 
-	if (callchain)
-		hist_entry_callchain__fprintf(fp, self, total_samples);
+	if (callchain) {
+		int left_margin = 0;
+
+		if (sort__first_dimension == SORT_COMM) {
+			se = list_first_entry(&hist_entry__sort_list, typeof(*se),
+						list);
+			left_margin = se->width ? *se->width : 0;
+			left_margin -= thread__comm_len(self->thread);
+		}
+
+		hist_entry_callchain__fprintf(fp, self, total_samples,
+					      left_margin);
+	}
 
 	return ret;
 }
@@ -593,15 +660,13 @@ process_sample_event(event_t *event, unsigned long offset, unsigned long head)
 {
 	char level;
 	struct symbol *sym = NULL;
-	struct thread *thread;
 	u64 ip = event->ip.ip;
 	u64 period = 1;
 	struct map *map = NULL;
 	void *more_data = event->ip.__more_data;
 	struct ip_callchain *chain = NULL;
 	int cpumode;
-
-	thread = threads__findnew(event->ip.pid, &threads, &last_match);
+	struct thread *thread = threads__findnew(event->ip.pid);
 
 	if (sample_type & PERF_SAMPLE_PERIOD) {
 		period = *(u64 *)more_data;
@@ -624,7 +689,8 @@ process_sample_event(event_t *event, unsigned long offset, unsigned long head)
 		dump_printf("... chain: nr:%Lu\n", chain->nr);
 
 		if (validate_chain(chain, event) < 0) {
-			eprintf("call-chain problem with event, skipping it.\n");
+			pr_debug("call-chain problem with event, "
+				 "skipping it.\n");
 			return 0;
 		}
 
@@ -634,13 +700,13 @@ process_sample_event(event_t *event, unsigned long offset, unsigned long head)
 		}
 	}
 
-	dump_printf(" ... thread: %s:%d\n", thread->comm, thread->pid);
-
 	if (thread == NULL) {
-		eprintf("problem processing %d event, skipping it.\n",
+		pr_debug("problem processing %d event, skipping it.\n",
 			event->header.type);
 		return -1;
 	}
+
+	dump_printf(" ... thread: %s:%d\n", thread->comm, thread->pid);
 
 	if (comm_list && !strlist__has_entry(comm_list, thread->comm))
 		return 0;
@@ -673,7 +739,7 @@ process_sample_event(event_t *event, unsigned long offset, unsigned long head)
 
 	if (hist_entry__add(thread, map, sym, ip,
 			    chain, level, period)) {
-		eprintf("problem incrementing symbol count, skipping event\n");
+		pr_debug("problem incrementing symbol count, skipping event\n");
 		return -1;
 	}
 
@@ -685,10 +751,8 @@ process_sample_event(event_t *event, unsigned long offset, unsigned long head)
 static int
 process_mmap_event(event_t *event, unsigned long offset, unsigned long head)
 {
-	struct thread *thread;
-	struct map *map = map__new(&event->mmap, cwd, cwdlen);
-
-	thread = threads__findnew(event->mmap.pid, &threads, &last_match);
+	struct map *map = map__new(&event->mmap, cwd, cwdlen, 0, NULL);
+	struct thread *thread = threads__findnew(event->mmap.pid);
 
 	dump_printf("%p [%p]: PERF_RECORD_MMAP %d/%d: [%p(%p) @ %p]: %s\n",
 		(void *)(offset + head),
@@ -714,9 +778,7 @@ process_mmap_event(event_t *event, unsigned long offset, unsigned long head)
 static int
 process_comm_event(event_t *event, unsigned long offset, unsigned long head)
 {
-	struct thread *thread;
-
-	thread = threads__findnew(event->comm.pid, &threads, &last_match);
+	struct thread *thread = threads__findnew(event->comm.pid);
 
 	dump_printf("%p [%p]: PERF_RECORD_COMM: %s:%d\n",
 		(void *)(offset + head),
@@ -736,11 +798,8 @@ process_comm_event(event_t *event, unsigned long offset, unsigned long head)
 static int
 process_task_event(event_t *event, unsigned long offset, unsigned long head)
 {
-	struct thread *thread;
-	struct thread *parent;
-
-	thread = threads__findnew(event->fork.pid, &threads, &last_match);
-	parent = threads__findnew(event->fork.ppid, &threads, &last_match);
+	struct thread *thread = threads__findnew(event->fork.pid);
+	struct thread *parent = threads__findnew(event->fork.ppid);
 
 	dump_printf("%p [%p]: PERF_RECORD_%s: (%d:%d):(%d:%d)\n",
 		(void *)(offset + head),
@@ -857,7 +916,7 @@ static int __cmd_report(void)
 	struct thread *idle;
 	int ret;
 
-	idle = register_idle_thread(&threads, &last_match);
+	idle = register_idle_thread();
 	thread__comm_adjust(idle);
 
 	if (show_threads)
@@ -881,7 +940,7 @@ static int __cmd_report(void)
 		return 0;
 
 	if (verbose > 3)
-		threads__fprintf(stdout, &threads);
+		threads__fprintf(stdout);
 
 	if (verbose > 2)
 		dsos__fprintf(stdout);
