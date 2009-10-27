@@ -101,6 +101,29 @@ struct syscall_trace_exit {
 	unsigned long		ret;
 };
 
+struct kprobe_trace_entry {
+	struct trace_entry	ent;
+	unsigned long		ip;
+	int			nargs;
+	unsigned long		args[];
+};
+
+#define SIZEOF_KPROBE_TRACE_ENTRY(n)			\
+	(offsetof(struct kprobe_trace_entry, args) +	\
+	(sizeof(unsigned long) * (n)))
+
+struct kretprobe_trace_entry {
+	struct trace_entry	ent;
+	unsigned long		func;
+	unsigned long		ret_ip;
+	int			nargs;
+	unsigned long		args[];
+};
+
+#define SIZEOF_KRETPROBE_TRACE_ENTRY(n)			\
+	(offsetof(struct kretprobe_trace_entry, args) +	\
+	(sizeof(unsigned long) * (n)))
+
 /*
  * trace_flag_type is an enumeration that holds different
  * states when a trace occurs. These are:
