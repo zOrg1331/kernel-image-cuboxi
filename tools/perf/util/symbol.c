@@ -552,7 +552,7 @@ static int dso__synthesize_plt_symbols(struct  dso *self)
 	if (fd < 0)
 		goto out;
 
-	elf = elf_begin(fd, ELF_C_READ_MMAP, NULL);
+	elf = elf_begin(fd, PERF_ELF_C_READ_MMAP, NULL);
 	if (elf == NULL)
 		goto out_close;
 
@@ -676,7 +676,7 @@ static int dso__load_sym(struct dso *self, struct map *map, const char *name,
 	Elf *elf;
 	int nr = 0;
 
-	elf = elf_begin(fd, ELF_C_READ_MMAP, NULL);
+	elf = elf_begin(fd, PERF_ELF_C_READ_MMAP, NULL);
 	if (elf == NULL) {
 		pr_err("%s: cannot read %s ELF file.\n", __func__, name);
 		goto out_close;
@@ -846,7 +846,7 @@ static char *dso__read_build_id(struct dso *self)
 	if (fd < 0)
 		goto out;
 
-	elf = elf_begin(fd, ELF_C_READ_MMAP, NULL);
+	elf = elf_begin(fd, PERF_ELF_C_READ_MMAP, NULL);
 	if (elf == NULL) {
 		pr_err("%s: cannot read %s ELF file.\n", __func__,
 		       self->long_name);
