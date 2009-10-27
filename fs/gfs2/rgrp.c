@@ -15,6 +15,7 @@
 #include <linux/gfs2_ondisk.h>
 #include <linux/prefetch.h>
 #include <linux/blkdev.h>
+#include <trace/events/gfs2.h>
 
 #include "gfs2.h"
 #include "incore.h"
@@ -29,7 +30,6 @@
 #include "util.h"
 #include "log.h"
 #include "inode.h"
-#include "trace_gfs2.h"
 
 #define BFITNOENT ((u32)~0)
 #define NO_BLOCK ((u64)~0)
