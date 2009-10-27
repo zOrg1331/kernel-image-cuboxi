@@ -972,8 +972,6 @@ EXPORT_SYMBOL_GPL(pm_runtime_enable);
  */
 void pm_runtime_init(struct device *dev)
 {
-	spin_lock_init(&dev->power.lock);
-
 	dev->power.runtime_status = RPM_SUSPENDED;
 	dev->power.idle_notification = false;
 
@@ -993,8 +991,6 @@ void pm_runtime_init(struct device *dev)
 	dev->power.timer_expires = 0;
 	setup_timer(&dev->power.suspend_timer, pm_suspend_timer_fn,
 			(unsigned long)dev);
-
-	init_waitqueue_head(&dev->power.wait_queue);
 }
 
 /**
