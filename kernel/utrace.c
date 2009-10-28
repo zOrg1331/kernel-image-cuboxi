@@ -535,15 +535,20 @@ int utrace_set_events(struct task_struct *target,
 		      unsigned long events)
 {
 	struct utrace *utrace;
-	unsigned long old_flags, old_utrace_flags, set_utrace_flags;
+	unsigned long old_flags, old_utrace_flags;
 	int ret;
+
+	/*
+	 * We just ignore the internal bit, so callers can use
+	 * engine->flags to seed bitwise ops for our argument.
+	 */
+	events &= ~ENGINE_STOP;
 
 	utrace = get_utrace_lock(target, engine, true);
 	if (unlikely(IS_ERR(utrace)))
 		return PTR_ERR(utrace);
 
 	old_utrace_flags = target->utrace_flags;
-	set_utrace_flags = events;
 	old_flags = engine->flags & ~ENGINE_STOP;
 
 	if (target->exit_state &&
@@ -565,21 +570,21 @@ int utrace_set_events(struct task_struct *target,
 	 * knows positively that utrace_report_death() will be called or
 	 * that it won't.
 	 */
-	if ((set_utrace_flags & ~old_utrace_flags) & _UTRACE_DEATH_EVENTS) {
+	if ((events & ~old_utrace_flags) & _UTRACE_DEATH_EVENTS) {
 		read_lock(&tasklist_lock);
 		if (unlikely(target->exit_state)) {
 			read_unlock(&tasklist_lock);
 			spin_unlock(&utrace->lock);
 			return -EALREADY;
 		}
-		target->utrace_flags |= set_utrace_flags;
+		target->utrace_flags |= events;
 		read_unlock(&tasklist_lock);
 	}
 
 	engine->flags = events | (engine->flags & ENGINE_STOP);
-	target->utrace_flags |= set_utrace_flags;
+	target->utrace_flags |= events;
 
-	if ((set_utrace_flags & UTRACE_EVENT_SYSCALL) &&
+	if ((events & UTRACE_EVENT_SYSCALL) &&
 	    !(old_utrace_flags & UTRACE_EVENT_SYSCALL))
 		set_tsk_thread_flag(target, TIF_SYSCALL_TRACE);
 
