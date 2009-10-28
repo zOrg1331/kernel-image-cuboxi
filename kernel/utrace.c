@@ -87,13 +87,13 @@ module_init(utrace_init);
  * governs installing the new pointer.  If another one got in first,
  * we just punt the new one we allocated.
  *
- * This returns true only in case of a memory allocation failure.
+ * This returns false only in case of a memory allocation failure.
  */
-static inline bool utrace_task_alloc(struct task_struct *task)
+static bool utrace_task_alloc(struct task_struct *task)
 {
 	struct utrace *utrace = kmem_cache_zalloc(utrace_cachep, GFP_KERNEL);
 	if (unlikely(!utrace))
-		return true;
+		return false;
 	INIT_LIST_HEAD(&utrace->attached);
 	INIT_LIST_HEAD(&utrace->attaching);
 	spin_lock_init(&utrace->lock);
@@ -103,7 +103,7 @@ static inline bool utrace_task_alloc(struct task_struct *task)
 	task_unlock(task);
 	if (unlikely(task->utrace != utrace))
 		kmem_cache_free(utrace_cachep, utrace);
-	return false;
+	return true;
 }
 
 /*
@@ -301,7 +301,7 @@ struct utrace_engine *utrace_attach_task(
 		return ERR_PTR(-EPERM);
 
 	if (!utrace) {
-		if (unlikely(utrace_task_alloc(target)))
+		if (unlikely(!utrace_task_alloc(target)))
 			return ERR_PTR(-ENOMEM);
 		utrace = target->utrace;
 	}
