@@ -1,0 +1,439 @@
+Importing driver-core.current based on 2.6.32-rc5
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 68e4c95628871d6ea7f98e5d880d397f277cbd9c
+HEAD is now at 68e4c95 Driver core: allow certain drivers prohibit bind/unbind via sysfs
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-rndis_host-debug-info-clobbered-before-it-is-logged.patch
+usb-serial-sierra-driver-send_setup-autopm-fix.patch
+usb-r8a66597-hcd-fix-cannot-detect-a-device-when-uses_new_polling-is-set.patch
+usb-option-tlaytech-tue800-support.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+ + bef8621...8ea99c0 master     -> quilt/usb.current  (forced update)
+Importing staging.current based on quilt/usb.current
+$ cd ../quilt-tmp
+$ git reset --hard 8ea99c0bd53f030f1e04671abad31d656047817a
+HEAD is now at 8ea99c0 USB: option: TLAYTECH TUE800 support
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+staging-hv-todo-patches.patch
+staging-hv-fix-null-pointer-error-after-vmbus-loading.patch
+staging-hv-fix-vmbus-load-hang-caused-by-faulty-data-packing.patch
+staging-panel-prevent-driver-from-calling-misc_deregister-twice-on-same-ressource.patch
+staging-vt6656-fix-the-memory-free-bug-in-vntwusb_disconnect.patch
+staging-rtl8187se-rtl8192e-rtl8192su-allow-module-unload.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+ + 6eec8b7...fc2318f master     -> quilt/staging.current  (forced update)
+Importing i2c based on 2.6.32-rc5-git3
+$ cd ../quilt-tmp
+$ git reset --hard 964fe080d94db82a3268443e9b9ece4c60246414
+HEAD is now at 964fe08 Merge git://git.kernel.org/pub/scm/linux/kernel/git/rusty/linux-2.6-for-linus
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-piix4-modify-code-name-sb900-to-hudson-2.patch
+i2c-chips-move-ds1682-to-drivers-misc.patch
+i2c-powermac-01-multiple-msg-not-supported.patch
+i2c-powermac-02-refactor-xfer.patch
+i2c-powermac-03-report-errors.patch
+i2c-voodoo3-delete.patch
+i2c-prevent-priority-inversion-on-top-of-bus-lock.patch
+i2c-no-I2C_M_REV_DIR_ADDR.patch
+i2c-add-missing-devinit.patch
+i2c-core-01-drop-obsolete-force-module-parameters.patch
+i2c-core-02-detect-drop-kind-parameter.patch
+misc-ics932s401-cleanup-detect.patch
+i2c-remove-big-kernel-lock-from-i2cdev_open.patch
+i2c-scmi-support-ibm-smbus-cmi-devices.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 1610bda...75e0c05 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.32-rc5-git3
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on origin/master
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.32-rc5-81-g964fe08
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.32-rc5-81-g964fe08
+$ cd ../quilt-tmp
+$ git reset --hard 964fe080d94db82a3268443e9b9ece4c60246414
+HEAD is now at 964fe08 Merge git://git.kernel.org/pub/scm/linux/kernel/git/rusty/linux-2.6-for-linus
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+trailing garbage found in series file: 38657
+
+Importing driver-core.current based on 2.6.32-rc5
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 68e4c95628871d6ea7f98e5d880d397f277cbd9c
+HEAD is now at 68e4c95 Driver core: allow certain drivers prohibit bind/unbind via sysfs
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-rndis_host-debug-info-clobbered-before-it-is-logged.patch
+usb-serial-sierra-driver-send_setup-autopm-fix.patch
+usb-r8a66597-hcd-fix-cannot-detect-a-device-when-uses_new_polling-is-set.patch
+usb-option-tlaytech-tue800-support.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+ + 8ea99c0...950f2f0 master     -> quilt/usb.current  (forced update)
+Importing staging.current based on quilt/usb.current
+$ cd ../quilt-tmp
+$ git reset --hard 950f2f06f8de19e2bcac8917638fec58917cf527
+HEAD is now at 950f2f0 USB: option: TLAYTECH TUE800 support
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+staging-hv-todo-patches.patch
+staging-hv-fix-null-pointer-error-after-vmbus-loading.patch
+staging-hv-fix-vmbus-load-hang-caused-by-faulty-data-packing.patch
+staging-panel-prevent-driver-from-calling-misc_deregister-twice-on-same-ressource.patch
+staging-vt6656-fix-the-memory-free-bug-in-vntwusb_disconnect.patch
+staging-rtl8187se-rtl8192e-rtl8192su-allow-module-unload.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+ + fc2318f...eded2d7 master     -> quilt/staging.current  (forced update)
+Importing i2c based on 2.6.32-rc5-git3
+$ cd ../quilt-tmp
+$ git reset --hard 964fe080d94db82a3268443e9b9ece4c60246414
+HEAD is now at 964fe08 Merge git://git.kernel.org/pub/scm/linux/kernel/git/rusty/linux-2.6-for-linus
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-piix4-modify-code-name-sb900-to-hudson-2.patch
+i2c-chips-move-ds1682-to-drivers-misc.patch
+i2c-powermac-01-multiple-msg-not-supported.patch
+i2c-powermac-02-refactor-xfer.patch
+i2c-powermac-03-report-errors.patch
+i2c-voodoo3-delete.patch
+i2c-prevent-priority-inversion-on-top-of-bus-lock.patch
+i2c-no-I2C_M_REV_DIR_ADDR.patch
+i2c-add-missing-devinit.patch
+i2c-core-01-drop-obsolete-force-module-parameters.patch
+i2c-core-02-detect-drop-kind-parameter.patch
+misc-ics932s401-cleanup-detect.patch
+i2c-remove-big-kernel-lock-from-i2cdev_open.patch
+i2c-scmi-support-ibm-smbus-cmi-devices.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 75e0c05...a5f5f1c master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.32-rc5-git3
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on origin/master
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.32-rc5-81-g964fe08
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.32-rc5-81-g964fe08
+$ cd ../quilt-tmp
+$ git reset --hard 964fe080d94db82a3268443e9b9ece4c60246414
+HEAD is now at 964fe08 Merge git://git.kernel.org/pub/scm/linux/kernel/git/rusty/linux-2.6-for-linus
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-exception-store-free-tmp_store-on-persistent-flag-error.patch
+dm-ioctl-prefer-strlcpy-over-strncpy.patch
+dm-snapshot-avoid-else-clause-in-persistent_read_metadata.patch
+dm-snapshot-simplify-sector_to_chunk-expression.patch
+dm-snapshot-abstract-minimum_chunk_size-fn.patch
+dm-snapshot-consolidate-insert-exception-functions.patch
+dm-snapshot-rename-dm_snap_exception-to-dm_exception.patch
+dm-snapshot-rename-exception_table-to-dm_exception_table.patch
+dm-snapshot-rename-exception-functions.patch
+dm-snapshot-add-allocated-metadata-to-snapshot-status.patch
+dm-snapshot-move-cow-ref-from-exception-store-to-snap-core.patch
+dm-abstract-dm_in_flight-function.patch
+dm-use-clone-in-map_request-function.patch
+dm-pass-gfp_mask-to-alloc_rq_tio.patch
+dm-abstract-clone_rq.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + 9ea77c6...ca489ab master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+$ cd ../quilt-tmp
+$ git reset --hard eded2d7522b6eb619b2f09a0710a0b6482269f5d
+HEAD is now at eded2d7 Staging: rtl8187se/rtl8192e/rtl8192su: allow module unload
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core
+hpilo-add-locking-comment.patch
+sysfs-mark-a-locally-only-used-function-static.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core
+From ../quilt-tmp
+ + d04b2d5...59935c9 master     -> quilt/driver-core  (forced update)
+Importing tty based on quilt/driver-core
+$ cd ../quilt-tmp
+$ git reset --hard 59935c964e65bd71249970e7c73f7aed0fdfcc16
+HEAD is now at 59935c9 sysfs: mark a locally-only used function static
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty
+jsm-irq-handlers-doesn-t-need-to-have-irq_disabled-enabled.patch
+jsm-rewriting-a-bad-log-message.patch
+jsm-remove-the-ch_custom_speed-field.patch
+jsm-removing-ch_old_baud-field.patch
+jsm-remove-ch_cpstime-field.patch
+jsm-removing-unused-jsm_channel-ch_wopen-field.patch
+jsm-removing-the-field-jsm_board-intr_count.patch
+jsm-adding-eeh-handlers.patch
+tty-const-constify-remaining-tty_operations.patch
+tty-esp-remove-broken-driver.patch
+tty-istallion-kill-off-the-bkl-ioctl.patch
+tty-stallion-kill-bkl-ioctl.patch
+tty_port-add-tty_port_open-helper.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:48: space before tab in indent.
+        		        mutex_unlock(&port->mutex);
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:49: space before tab in indent.
+        			return retval;
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:50: space before tab in indent.
+        		}
+warning: 3 lines add whitespace errors.
+tty_port-coding-style-cleaning-pass.patch
+usb_serial-use-the-shutdown-operation.patch
+usb_serial-kill-port-mutex.patch
+opticon-fix-resume-logic.patch
+serial-fix-null-pointer-dereference.patch
+serial-cascade-needless-conditionals.patch
+serial-8250-calculate-irqflags-bitmask-before-loop.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty
+From ../quilt-tmp
+ + 8de3703...ae1c5df master     -> quilt/tty  (forced update)
+Importing usb based on quilt/tty
+$ cd ../quilt-tmp
+$ git reset --hard ae1c5dfc014bf08dd597d5185ea0d250de89efd4
+HEAD is now at ae1c5df serial, 8250: calculate irqflags bitmask before loop
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb
+usb-serial-ftdi_sio-add-space-mark-parity.patch
+usb-ehci-hub-remove-redundant-ehci-debug-check.patch
+usb-convert-a-dev_info-to-a-dev_dbg.patch
+usb-usb-storage-associate-the-name-of-the-interface-with-the-scsi-host.patch
+usb-storage-make-driver-less-chatty-when-it-finds-a-new-device.patch
+usb-add-support-for-xilinx-usb-host-controller.patch
+usb-add-missing-static-markers-to-ohci-pnx4008.patch
+usb-make-urb-scatter-gather-support-more-generic.patch
+usb-whci-hcd-support-urbs-with-scatter-gather-lists.patch
+usb-allow-interrupt-transfers-to-wusb-devices.patch
+usb-whci-hcd-fix-type-and-format-warnings-in-sg-code.patch
+usb-skeleton-correct-use-of-and.patch
+usb-gadget-handle-endpoint-requests-at-the-function-level.patch
+usb-audio-gadget-handle-endpoint-control-requests-at-the-function-level.patch
+usb-modifications-for-at91sam9g10.patch
+usb-usbtmc-minor-formatting-cleanups.patch
+usb-whci-hcd-decode-more-qhead-fields-in-the-debug-files.patch
+usb-wusb-add-wusb_phy_rate-sysfs-file-to-host-controllers.patch
+usb-otg-add-support-for-ulpi-connected-external-transceivers.patch
+usb-otg-add-generic-driver-for-ulpi-otg-transceiver.patch
+usb-host-ehci-introduce-omap-ehci-hcd-driver.patch
+usb-improved-error-handling-in-usb_port_suspend.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb
+From ../quilt-tmp
+ + 204e3c0...8bc7dd0 master     -> quilt/usb  (forced update)
+Importing staging based on quilt/usb
+$ cd ../quilt-tmp
+$ git reset --hard 8bc7dd0c63b93d1890afaa4bfe851e10bd15d1c1
+HEAD is now at 8bc7dd0 USB: improved error handling in usb_port_suspend()
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging
+staging-rt3090-disable-has_ate-option.patch
+staging-rt3090-disable-has_antenna_diversity_support-option.patch
+staging-rt3090-remove-private-debugging-ioctls.patch
+staging-rt3090-remove-private-ioctls.patch
+staging-rt28x0-updates-from-vendor-s-v2.1.0.0-drivers.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:34819: space before tab in indent.
+    		if (pAd->CommonCfg.bAPSDCapable && pAd->CommonCfg.APEdcaParm.bAPSDCapable)
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:34820: space before tab in indent.
+    		{
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:34821: space before tab in indent.
+    		    // When APSD is enabled, the period changes as 20 sec
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:34822: space before tab in indent.
+    			if ((pAd->Mlme.OneSecPeriodicRound % 20) == 8)
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:34823: space before tab in indent.
+    				RTMPSendNullFrame(pAd, pAd->CommonCfg.TxRate, TRUE);
+warning: squelched 5 whitespace errors
+warning: 10 lines add whitespace errors.
+staging-rt28x0-remove-unused-code-from-common-dfs.c.patch
+staging-rt2860-add-rt3090-chipset-support.patch
+staging-remove-no-longer-needed-rt3090-driver.patch
+staging-b3dfg-remove-check-for-pci-bus-master.patch
+staging-line6-driver.c-factorize-code-and-cleanups.patch
+staging-comedi-8253-fix-coding-style-error.patch
+staging-comedi-8255-fix-coding-style-error.patch
+staging-comedi-drivers.c-checkpatch-fix.patch
+staging-comedi-adl_pci6208-code-styling-fix.patch
+staging-comedi-ni_labpc.h-fixed-line-lengths-of-some-trailing-comments.patch
+staging-comedi-ni_labbc_cs-cleaned-up-debug-define-a-bit.patch
+staging-comedi-ni_labpc_cs-removed-null-initialization-of-static.patch
+staging-comedi-ni_labpc_cs-added-mandatory-whitespace-to-comparison.patch
+staging-comedi-ni_labpc_cs-removed-null-check-from-kfree.patch
+staging-comedi-ni_labpc_cs-wrapped-long-comments.patch
+staging-comedi-comedi_compat32-fixed-checkpatch.pl-issues.patch
+staging-comedi-comedidev.h-fixed-checkpatch.pl-issues.patch
+staging-comedi-ni_at_ao.c-fix-coding-style-error.patch
+staging-comedi-mite.c-fix-coding-style.patch
+staging-comedi-mite.h-deletion-of-unused-functions.patch
+staging-comedi-ni_atmio16d-fix-formating-errors.patch
+staging-comedi-ni_atmio16d-brace-fixes.patch
+staging-comedi-nt_atmio16d-space-and-tab-fixes.patch
+staging-comedi-ni_atmio16d-printk-fixups.patch
+staging-comedi-vmk80xx-cleanup-formatting.patch
+staging-comedi-comedi_compat32.h-fixed-checkpatch.pl-issues.patch
+staging-comedi-acl7225b.c-codingstyle-printk-fixups.patch
+staging-comedi-adl_pci7296-codingstyle-cleanup.patch
+staging-comedi-adl_pci7432-coding-style-cleanup.patch
+staging-comedi-amplc_pc263.c-fix-coding-style-issues.patch
+staging-comedi-amplc_pc263.c-more-coding-style-fixes.patch
+staging-comedi-trivial-fix-of-a-very-frequent-spelling-mistake.patch
+staging-comedi-ni_mio_cs.c-coding-style-cleanup.patch
+staging-comedi-pcm_common-fixed-all-checkpatch-issues.patch
+staging-comedi-pcmmio-coding-style-cleanup.patch
+staging-comedi-pcmmio-more-coding-style-cleanup.patch
+staging-comedi-remove-check-for-have_unlocked_ioctl.patch
+staging-comedi-remove-check-for-have_compat_ioctl.patch
+staging-comedi-don-t-check-for-enoioctlcmd.patch
+staging-comedi-remove-__cplusplus-check.patch
+staging-comedi-remove-extern-macro-since-it-is-not-used.patch
+staging-comedi-adl_pci8164-coding-style-fixes.patch
+staging-comedi-multiq3-remove-warning-on-braces.patch
+staging-comedi-multiq3-add-kern_.patch
+staging-comedi-addi-data-cleanup-redundant-tests-on-unsigned.patch
+staging-comedi-pcl726-fix-coding-style-issues.patch
+staging-xvmalloc-memory-allocator.patch
+staging-virtual-block-device-driver.patch
+staging-ramzswap-documentation.patch
+staging-ramzswap-add-todo-file.patch
+staging-et131x-adding-__init-__exit-macros.patch
+staging-cx25821-adding-__init-__exit-macros.patch
+staging-p9auth-adding-__init-__exit-macros.patch
+staging-phison-adding-__init-__exit-macros.patch
+staging-iio-kconfig-and-make-edits.patch
+staging-iio-lots-of-doc-fixes.patch
+staging-slicoss-remove-duplicate-structure-field-initialization.patch
+staging-et131x-kill-success-and-failure-defines.patch
+staging-et131x-tidy-eeprom-code-up.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:451: space before tab in indent.
+ 	/*
+warning: 1 line adds whitespace errors.
+staging-et131x-extract-the-eeprom-setup-logic-from-initpci.patch
+staging-et131x-kill-the-nophyaccess-variable.patch
+staging-et131x-tidy-up-initpci-code.patch
+staging-et131x-kill-nmi-hacks.patch
+staging-et131x-phy-loopback-cannot-be-set-and-isn-t-useful-for-us-anyway.patch
+staging-et131x-rxstat-is-not-used.patch
+staging-et131x-clean-up-word-3-definition.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:13: space before tab in indent.
+		    	/* Last element & Interrupt flag */
+warning: 1 line adds whitespace errors.
+staging-et131x-clean-up-word2-usage.patch
+staging-et131x-tidy-up-names-for-the-tx-structures.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:563: space before tab in indent.
+	     	etdev->tx_ring.txDmaReadyToSend &= ~ET_DMA10_MASK;
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:564: space before tab in indent.
+	     	etdev->tx_ring.txDmaReadyToSend ^= ET_DMA10_WRAP;
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:664: space before tab in indent.
+					    	INDEX10(tcb->WrIndexStart));
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:679: space before tab in indent.
+			    	tcb->WrIndexStart &= ~ET_DMA10_MASK;
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:680: space before tab in indent.
+			    	tcb->WrIndexStart ^= ET_DMA10_WRAP;
+warning: 5 lines add whitespace errors.
+staging-et131x-the-stuck-descriptor-copy-is-never-used.patch
+staging-et131x-pci_alloc_consistent-dma-alignment-is-guaranteed.patch
+staging-et131x-first-pass-rx-cleanup.patch
+staging-et131x-clean-up-the-receive-arrays.patch
+staging-et131x-fold-up-simple-wrapper-functions.patch
+staging-et131x-remove-old-sendwaitqueue-code.patch
+staging-et131x-tidy-up-a-bit-further.patch
+staging-et131x-clean-up-the-tx-ring-init.patch
+staging-et131x-clean-up-tx-naming.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:278: space before tab in indent.
+	     	etdev->tx_ring.send_idx &= ~ET_DMA10_MASK;
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:279: space before tab in indent.
+	     	etdev->tx_ring.send_idx ^= ET_DMA10_WRAP;
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:356: space before tab in indent.
+					    	INDEX10(tcb->index_start));
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:369: space before tab in indent.
+			    	tcb->index_start &= ~ET_DMA10_MASK;
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:370: space before tab in indent.
+			    	tcb->index_start ^= ET_DMA10_WRAP;
+warning: 5 lines add whitespace errors.
+staging-et131x-kill-unused-tcb-fields.patch
+staging-et131x-bring-tx-into-coding-style.patch
+staging-et131x-tx-ring-mac-error-is-only-used-as-a-local.patch
+staging-et131x-kill-the-rx-pending-list.patch
+staging-et131x-kill-the-rx-skb-list-element-it-isn-t-used.patch
+staging-et131x-clean-the-ipg-types-up.patch
+staging-et131x-clean-up-the-half-duplex-control-reg-types.patch
+staging-et131x-clean-up-the-mii_mgmt-type.patch
+staging-et131x-clean-up-mac_cfg-types.patch
+staging-et131x-clean-up-max_fm-type.patch
+staging-et131x-kill-off-mac_test_t.patch
+staging-et131x-clean-up-mii-control.patch
+staging-et131x-phy-clean-up.patch
+staging-et131x-clean-up-the-phy-code-especially-dup-stuff.patch
+staging-poch-parameter-to-enable-synthetic-counter.patch
+staging-poch-fetch-flush-ioctl-interface.patch
+staging-poch-increase-groups-per-interrupt.patch
+staging-poch-parameter-to-enable-loopback.patch
+staging-poch-remove-circular-buffer-header.patch
+staging-poch-include-linux-types.h.patch
+staging-poch-add-sample-rx-code.patch
+staging-vme-remove-unused-include-linux-version.h.patch
+staging-rtl8187se-remove-unused-include-linux-version.h.patch
+staging-rtl8187su-remove-unused-include-linux-version.h.patch
+staging-wlags49_h2-add-agere-driver-for-hermes-ii-and-hermes-ii.5-chipsets.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:4458: space before tab in indent.
+ 	0x000F2101,					// Start execution address
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:7797: space before tab in indent.
+ 	0x000F1297,					// Start execution address
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:9650: space before tab in indent.
+            	OPW( HREG_INT_EN, i | HREG_EV_TICK );
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:9655: space before tab in indent.
+            	OPW( HREG_INT_EN, i | HREG_EV_SLEEP_REQ );
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:10209: space before tab in indent.
+ 		if ( head->next_desc_addr == NULL ) {
+warning: squelched 185 whitespace errors
+warning: 190 lines add whitespace errors.
+staging-dream-make-it-independant-from-config_android.patch
+staging-dream-mark-as-broken.patch
+staging-dream-synaptics-touchscreen-for-htc-dream-check-that-smbus-is-available.patch
+staging-dream-remove-wakelock-support.patch
+staging-dream-remove-wakelock-support-from-smd_rpcrouter.h.patch
+staging-android-mark-subsystem-as-broken.patch
+staging-android-delete-android-drivers.patch
+staging-strip-move-driver-to-staging.patch
+staging-strip-add-todo-file.patch
+staging-arlan-move-driver-to-staging.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:4199: space before tab in indent.
+ 	READSHMB(((struct arlan_private *)netdev_priv(dev))->card->cntrlRegImage)
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:5271: space before tab in indent.
+ 		release_mem_region(paddr, ARLAN_SHMEM_SIZE);
+warning: 2 lines add whitespace errors.
+staging-arlan-add-todo-file.patch
+staging-wavelan-move-driver-to-staging.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:11744: space before tab in indent.
+  	 forgnesi   : 1,
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:11745: space before tab in indent.
+  	 fifo_32    : 1,
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:11746: space before tab in indent.
+  	 d6mod      : 1,
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:11747: space before tab in indent.
+  	 throttle_enb : 1;
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:11752: space before tab in indent.
+  	 acloc 	    : 1,
+warning: squelched 18 whitespace errors
+warning: 23 lines add whitespace errors.
+staging-wavelan-add-todo-file.patch
+staging-netwave-move-driver-to-staging.patch
+staging-netwave-add-todo-file.patch
+staging-octeon-don-t-ignore-request_irq-return-code.patch
+staging-vt6656-use-lowercase-for-via-usb-vendor-id.patch
+staging-vt6655-correct-unsigned-bound-issue.patch
+staging-remove-stlc45xx-driver.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging
+From ../quilt-tmp
+ + 1f0f7a7...910415f master     -> quilt/staging  (forced update)
