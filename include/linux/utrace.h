@@ -111,8 +111,6 @@ void utrace_report_death(struct task_struct *, struct utrace *, bool, int)
 	__attribute__((weak));
 void utrace_report_jctl(int notify, int type)
 	__attribute__((weak));
-void utrace_finish_jctl(void)
-	__attribute__((weak));
 void utrace_report_exec(struct linux_binfmt *, struct linux_binprm *,
 			struct pt_regs *regs)
 	__attribute__((weak));
@@ -205,7 +203,7 @@ enum utrace_resume_action {
 	UTRACE_RESUME,
 	UTRACE_DETACH
 };
-#define	UTRACE_RESUME_MASK	0x0f
+#define	UTRACE_RESUME_MASK	0x07
 
 /**
  * utrace_resume_action - &enum utrace_resume_action from callback action

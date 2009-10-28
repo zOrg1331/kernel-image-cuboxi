@@ -59,7 +59,6 @@ struct utrace {
 
 	struct utrace_engine *reporting;
 
-	unsigned int stopped:1;
 	unsigned int report:1;
 	unsigned int interrupt:1;
 	unsigned int signal_handler:1;
@@ -646,8 +645,8 @@ int utrace_set_events(struct task_struct *target,
 		set_tsk_thread_flag(target, TIF_SYSCALL_TRACE);
 
 	ret = 0;
-	if ((old_flags & ~events) &&
-	    !utrace->stopped && target != current && !target->exit_state) {
+	if ((old_flags & ~events) && target != current &&
+	    !task_is_stopped_or_traced(target) && !target->exit_state) {
 		/*
 		 * This barrier ensures that our engine->flags changes
 		 * have hit before we examine utrace->reporting,
@@ -694,38 +693,31 @@ static void mark_engine_detached(struct utrace_engine *engine)
  */
 static bool utrace_do_stop(struct task_struct *target, struct utrace *utrace)
 {
-	bool stopped = false;
-
 	if (task_is_stopped(target)) {
 		/*
 		 * Stopped is considered quiescent; when it wakes up, it will
 		 * go through utrace_finish_jctl() before doing anything else.
 		 */
 		spin_lock_irq(&target->sighand->siglock);
-		if (likely(task_is_stopped(target))) {
+		if (likely(task_is_stopped(target)))
 			__set_task_state(target, TASK_TRACED);
-			utrace->stopped = stopped = true;
-		}
 		spin_unlock_irq(&target->sighand->siglock);
 	} else if (!utrace->report && !utrace->interrupt) {
 		utrace->report = 1;
 		set_notify_resume(target);
 	}
 
-	return stopped;
+	return task_is_traced(target);
 }
 
 /*
  * If the target is not dead it should not be in tracing
  * stop any more.  Wake it unless it's in job control stop.
  *
- * Called with @utrace->lock held and @utrace->stopped set.
+ * Called with @utrace->lock held and @target in either TASK_TRACED or dead.
  */
 static void utrace_wakeup(struct task_struct *target, struct utrace *utrace)
 {
-	utrace->stopped = 0;
-
-	/* The task must be either TASK_TRACED or killed */
 	spin_lock_irq(&target->sighand->siglock);
 	if (target->signal->flags & SIGNAL_STOP_STOPPED ||
 	    target->signal->group_stop_count)
@@ -788,7 +780,7 @@ static bool utrace_reset(struct task_struct *task, struct utrace *utrace)
 		 */
 		utrace->interrupt = utrace->report = utrace->signal_handler = 0;
 
-	if (!(flags & ENGINE_STOP) && utrace->stopped)
+	if (task_is_traced(task) && !(flags & ENGINE_STOP))
 		/*
 		 * No more engines want it stopped.  Wake it up.
 		 */
@@ -819,11 +811,6 @@ static bool utrace_reset(struct task_struct *task, struct utrace *utrace)
 static void utrace_stop(struct task_struct *task, struct utrace *utrace,
 			enum utrace_resume_action action)
 {
-	/*
-	 * @utrace->stopped is the flag that says we are safely
-	 * inside this function.  It should never be set on entry.
-	 */
-	BUG_ON(utrace->stopped);
 relock:
 	spin_lock(&utrace->lock);
 
@@ -870,7 +857,6 @@ relock:
 		return;
 	}
 
-	utrace->stopped = 1;
 	__set_current_state(TASK_TRACED);
 
 	/*
@@ -892,21 +878,6 @@ relock:
 	 * frozen that we freeze now before running anything substantial.
 	 */
 	try_to_freeze();
-
-	/*
-	 * utrace_wakeup() clears @utrace->stopped before waking us up.
-	 * We're officially awake if it's clear.
-	 */
-	if (unlikely(utrace->stopped)) {
-		/*
-		 * If we're here with it still set, it must have been
-		 * signal_wake_up() instead, waking us up for a SIGKILL.
-		 */
-		WARN_ON(!__fatal_signal_pending(task));
-		spin_lock(&utrace->lock);
-		utrace->stopped = 0;
-		spin_unlock(&utrace->lock);
-	}
 
 	/*
 	 * While we were in TASK_TRACED, complete_signal() considered
@@ -1096,7 +1067,7 @@ int utrace_control(struct task_struct *target,
 	if (unlikely(IS_ERR(utrace)))
 		return PTR_ERR(utrace);
 
-	reset = utrace->stopped;
+	reset = task_is_traced(target);
 	ret = 0;
 
 	/*
@@ -1336,7 +1307,6 @@ struct utrace_report {
  */
 static void start_report(struct utrace *utrace)
 {
-	BUG_ON(utrace->stopped);
 	if (utrace->report || utrace->pending_attach) {
 		spin_lock(&utrace->lock);
 		splice_attaching(utrace);
@@ -1687,23 +1657,6 @@ void utrace_report_jctl(int notify, int what)
 	       report_jctl, what, notify);
 
 	spin_lock_irq(&task->sighand->siglock);
-}
-
-/*
- * Called without locks.
- */
-void utrace_finish_jctl(void)
-{
-	struct utrace *utrace = task_utrace_struct(current);
-	/*
-	 * While in TASK_STOPPED, we can be considered safely stopped by
-	 * utrace_do_stop(). Clear ->stopped if we were woken by SIGKILL.
-	 */
-	if (utrace->stopped) {
-		spin_lock(&utrace->lock);
-		utrace->stopped = false;
-		spin_unlock(&utrace->lock);
-	}
 }
 
 /*
@@ -2393,9 +2346,8 @@ EXPORT_SYMBOL_GPL(task_user_regset_view);
 void task_utrace_proc_status(struct seq_file *m, struct task_struct *p)
 {
 	struct utrace *utrace = task_utrace_struct(p);
-	seq_printf(m, "Utrace:\t%lx%s%s%s\n",
+	seq_printf(m, "Utrace:\t%lx%s%s\n",
 		   p->utrace_flags,
-		   utrace->stopped ? " (stopped)" : "",
 		   utrace->report ? " (report)" : "",
 		   utrace->interrupt ? " (interrupt)" : "");
 }
