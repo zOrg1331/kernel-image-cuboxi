@@ -1493,11 +1493,10 @@ static int dm_prep_fn(struct request_queue *q, struct request *rq)
 	return BLKPREP_OK;
 }
 
-static void map_request(struct dm_target *ti, struct request *rq,
+static void map_request(struct dm_target *ti, struct request *clone,
 			struct mapped_device *md)
 {
 	int r;
-	struct request *clone = rq->special;
 	struct dm_rq_target_io *tio = clone->end_io_data;
 
 	/*
@@ -1574,7 +1573,7 @@ static void dm_request_fn(struct request_queue *q)
 
 		blk_start_request(rq);
 		spin_unlock(q->queue_lock);
-		map_request(ti, rq, md);
+		map_request(ti, rq->special, md);
 		spin_lock_irq(q->queue_lock);
 	}
 
