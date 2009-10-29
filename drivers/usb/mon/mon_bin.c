@@ -350,10 +350,13 @@ static unsigned int mon_buff_area_alloc_contiguous(struct mon_reader_bin *rp,
  * Return a few (kilo-)bytes to the head of the buffer.
  * This is used if a DMA fetch fails.
  */
-static void mon_buff_area_shrink(struct mon_reader_bin *rp, unsigned int size)
+static void mon_buff_area_shrink(struct mon_reader_bin *rp, unsigned int num,
+		unsigned int oldsize)
 {
+	unsigned int size;
 
-	size = (size + PKT_ALIGN-1) & ~(PKT_ALIGN-1);
+	size = ((oldsize + PKT_ALIGN-1) & ~(PKT_ALIGN-1)) -
+			((oldsize - num + PKT_ALIGN-1) & ~(PKT_ALIGN-1));
 	rp->b_cnt -= size;
 	if (rp->b_in < size)
 		rp->b_in += rp->b_size;
@@ -537,8 +540,9 @@ static void mon_bin_event(struct mon_reader_bin *rp, struct urb *urb,
 	if (length != 0) {
 		ep->flag_data = mon_bin_get_data(rp, offset, urb, length);
 		if (ep->flag_data != 0) {	/* Yes, it's 0x00, not '0' */
-			ep->len_cap = 0;
-			mon_buff_area_shrink(rp, length);
+			ep->len_cap = lendesc;
+			mon_buff_area_shrink(rp, length,
+					length + PKT_SIZE + lendesc);
 		}
 	} else {
 		ep->flag_data = data_tag;
