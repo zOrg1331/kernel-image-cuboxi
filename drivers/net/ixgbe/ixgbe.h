@@ -340,7 +340,6 @@ struct ixgbe_adapter {
 	/* OS defined structs */
 	struct net_device *netdev;
 	struct pci_dev *pdev;
-	struct net_device_stats net_stats;
 
 	u32 test_icr;
 	struct ixgbe_ring test_tx_ring;
@@ -397,7 +396,7 @@ enum ixgbe_boards {
 extern struct ixgbe_info ixgbe_82598_info;
 extern struct ixgbe_info ixgbe_82599_info;
 #ifdef CONFIG_IXGBE_DCB
-extern struct dcbnl_rtnl_ops dcbnl_ops;
+extern const struct dcbnl_rtnl_ops dcbnl_ops;
 extern int ixgbe_copy_dcb_cfg(struct ixgbe_dcb_config *src_dcb_cfg,
                               struct ixgbe_dcb_config *dst_dcb_cfg,
                               int tc_max);

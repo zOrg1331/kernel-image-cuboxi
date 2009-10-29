@@ -683,6 +683,7 @@ struct net_device
 
 	struct list_head	dev_list;
 	struct list_head	napi_list;
+	struct list_head	unreg_list;
 
 	/* Net device features */
 	unsigned long		features;
@@ -909,7 +910,7 @@ struct net_device
 
 #ifdef CONFIG_DCB
 	/* Data Center Bridging netlink ops */
-	struct dcbnl_rtnl_ops *dcbnl_ops;
+	const struct dcbnl_rtnl_ops *dcbnl_ops;
 #endif
 
 #if defined(CONFIG_FCOE) || defined(CONFIG_FCOE_MODULE)
@@ -1116,7 +1117,14 @@ extern int		dev_close(struct net_device *dev);
 extern void		dev_disable_lro(struct net_device *dev);
 extern int		dev_queue_xmit(struct sk_buff *skb);
 extern int		register_netdevice(struct net_device *dev);
-extern void		unregister_netdevice(struct net_device *dev);
+extern void		unregister_netdevice_queue(struct net_device *dev,
+						   struct list_head *head);
+extern void		unregister_netdevice_many(struct list_head *head);
+static inline void unregister_netdevice(struct net_device *dev)
+{
+	unregister_netdevice_queue(dev, NULL);
+}
+
 extern void		free_netdev(struct net_device *dev);
 extern void		synchronize_net(void);
 extern int 		register_netdevice_notifier(struct notifier_block *nb);

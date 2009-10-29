@@ -52,6 +52,7 @@
 #define IXGBE_DEV_ID_82599_KX4_MEZZ      0x1514
 #define IXGBE_DEV_ID_82599_CX4           0x10F9
 #define IXGBE_DEV_ID_82599_SFP           0x10FB
+#define IXGBE_DEV_ID_82599_SFP_EM        0x1507
 #define IXGBE_DEV_ID_82599_XAUI_LOM      0x10FC
 #define IXGBE_DEV_ID_82599_COMBO_BACKPLANE 0x10F8
 
@@ -2171,6 +2172,14 @@ enum ixgbe_fc_mode {
 	ixgbe_fc_default
 };
 
+/* Smart Speed Settings */
+#define IXGBE_SMARTSPEED_MAX_RETRIES	3
+enum ixgbe_smart_speed {
+	ixgbe_smart_speed_auto = 0,
+	ixgbe_smart_speed_on,
+	ixgbe_smart_speed_off
+};
+
 /* PCI bus types */
 enum ixgbe_bus_type {
 	ixgbe_bus_type_unknown = 0,
@@ -2431,6 +2440,8 @@ struct ixgbe_phy_info {
 	enum ixgbe_media_type           media_type;
 	bool                            reset_disable;
 	ixgbe_autoneg_advertised        autoneg_advertised;
+	enum ixgbe_smart_speed          smart_speed;
+	bool                            smart_speed_active;
 	bool                            multispeed_fiber;
 };
 
