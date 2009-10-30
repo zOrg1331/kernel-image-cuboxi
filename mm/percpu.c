@@ -46,8 +46,6 @@
  *
  * To use this allocator, arch code should do the followings.
  *
- * - drop CONFIG_HAVE_LEGACY_PER_CPU_AREA
- *
  * - define __addr_to_pcpu_ptr() and __pcpu_ptr_to_addr() to translate
  *   regular address to percpu pointer and back if they need to be
  *   different from the default
@@ -370,6 +368,7 @@ static struct pcpu_chunk *pcpu_chunk_addr_search(void *addr)
  * 0 if noop, 1 if successfully extended, -errno on failure.
  */
 static int pcpu_extend_area_map(struct pcpu_chunk *chunk, unsigned long *flags)
+	__releases(lock) __acquires(lock)
 {
 	int new_alloc;
 	int *new;
