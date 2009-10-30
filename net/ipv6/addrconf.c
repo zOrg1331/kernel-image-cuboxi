@@ -3708,6 +3708,7 @@ static inline void ipv6_store_devconf(struct ipv6_devconf *cnf,
 #endif
 	array[DEVCONF_DISABLE_IPV6] = cnf->disable_ipv6;
 	array[DEVCONF_ACCEPT_DAD] = cnf->accept_dad;
+	array[DEVCONF_FORCE_TLLAO] = cnf->force_tllao;
 }
 
 static inline size_t inet6_if_nlmsg_size(void)
@@ -4351,6 +4352,14 @@ static struct addrconf_sysctl_table
 			.maxlen		=	sizeof(int),
 			.mode		=	0644,
 			.proc_handler	=	proc_dointvec,
+		},
+		{
+			.ctl_name       = CTL_UNNUMBERED,
+			.procname       = "force_tllao",
+			.data           = &ipv6_devconf.force_tllao,
+			.maxlen         = sizeof(int),
+			.mode           = 0644,
+			.proc_handler   = proc_dointvec
 		},
 		{
 			.ctl_name	=	0,	/* sentinel */
