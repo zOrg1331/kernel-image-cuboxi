@@ -41,6 +41,8 @@
 #  define EXOFS_DEBUG_OBJ_ISIZE 1
 #endif
 
+#define EXOFS_DBGMSG2(M...) do{}while(0)
+
 struct page_collect {
 	struct exofs_sb_info *sbi;
 	struct request_queue *req_q;
@@ -198,7 +200,7 @@ static int __readpages_done(struct osd_request *or, struct page_collect *pcol,
 		else
 			page_stat = ret;
 
-		EXOFS_DBGMSG("    readpages_done(0x%lx, 0x%lx) %s\n",
+		EXOFS_DBGMSG2("    readpages_done(0x%lx, 0x%lx) %s\n",
 			  inode->i_ino, page->index,
 			  page_stat ? "bad_bytes" : "good_bytes");
 
@@ -370,7 +372,7 @@ try_again:
 	if (len != PAGE_CACHE_SIZE)
 		zero_user(page, len, PAGE_CACHE_SIZE - len);
 
-	EXOFS_DBGMSG("    readpage_strip(0x%lx, 0x%lx) len=0x%zx\n",
+	EXOFS_DBGMSG2("    readpage_strip(0x%lx, 0x%lx) len=0x%zx\n",
 		     inode->i_ino, page->index, len);
 
 	ret = pcol_add_page(pcol, page, len);
@@ -482,7 +484,7 @@ static void writepages_done(struct osd_request *or, void *p)
 
 		update_write_page(page, page_stat);
 		unlock_page(page);
-		EXOFS_DBGMSG("    writepages_done(0x%lx, 0x%lx) status=%d\n",
+		EXOFS_DBGMSG2("    writepages_done(0x%lx, 0x%lx) status=%d\n",
 			     inode->i_ino, page->index, page_stat);
 
 		length += bvec->bv_len;
@@ -609,7 +611,7 @@ try_again:
 			goto fail;
 	}
 
-	EXOFS_DBGMSG("    writepage_strip(0x%lx, 0x%lx) len=0x%zx\n",
+	EXOFS_DBGMSG2("    writepage_strip(0x%lx, 0x%lx) len=0x%zx\n",
 		     inode->i_ino, page->index, len);
 
 	ret = pcol_add_page(pcol, page, len);
@@ -906,6 +908,12 @@ out:
 	return ret;
 }
 
+
+static void __oi_init(struct exofs_i_info *oi)
+{
+	init_waitqueue_head(&oi->i_wq);
+	oi->i_flags = 0;
+}
 /*
  * Fill in an inode read from the OSD and set it up for use
  */
@@ -923,13 +931,13 @@ struct inode *exofs_iget(struct super_block *sb, unsigned long ino)
 	if (!(inode->i_state & I_NEW))
 		return inode;
 	oi = exofs_i(inode);
+	__oi_init(oi);
 
 	/* read the inode from the osd */
 	ret = exofs_get_inode(sb, oi, &fcb, &sanity);
 	if (ret)
 		goto bad_inode;
 
-	init_waitqueue_head(&oi->i_wq);
 	set_obj_created(oi);
 
 	/* copy stuff from on-disk struct to in-memory struct */
@@ -950,8 +958,7 @@ struct inode *exofs_iget(struct super_block *sb, unsigned long ino)
 #ifdef EXOFS_DEBUG_OBJ_ISIZE
 	if ((inode->i_size != sanity) &&
 		(!exofs_inode_is_fast_symlink(inode))) {
-		EXOFS_ERR("WARNING: Size of object from inode and "
-			  "attributes differ (%lld != %llu)\n",
+		EXOFS_ERR("WARNING: Size of inode=%llu != object=%llu\n",
 			  inode->i_size, _LLU(sanity));
 	}
 #endif
@@ -1061,8 +1068,8 @@ struct inode *exofs_new_inode(struct inode *dir, int mode)
 		return ERR_PTR(-ENOMEM);
 
 	oi = exofs_i(inode);
+	__oi_init(oi);
 
-	init_waitqueue_head(&oi->i_wq);
 	set_obj_2bcreated(oi);
 
 	sbi = sb->s_fs_info;
