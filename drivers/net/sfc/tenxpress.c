@@ -14,8 +14,7 @@
 #include "mdio_10g.h"
 #include "falcon.h"
 #include "phy.h"
-#include "falcon_hwdefs.h"
-#include "boards.h"
+#include "regs.h"
 #include "workarounds.h"
 #include "selftest.h"
 
@@ -301,6 +300,7 @@ static int tenxpress_init(struct efx_nic *efx)
 static int tenxpress_phy_init(struct efx_nic *efx)
 {
 	struct tenxpress_phy_data *phy_data;
+	u16 old_adv, adv;
 	int rc = 0;
 
 	phy_data = kzalloc(sizeof(*phy_data), GFP_KERNEL);
@@ -332,6 +332,15 @@ static int tenxpress_phy_init(struct efx_nic *efx)
 	rc = tenxpress_init(efx);
 	if (rc < 0)
 		goto fail;
+
+	/* Set pause advertising */
+	old_adv = efx_mdio_read(efx, MDIO_MMD_AN, MDIO_AN_ADVERTISE);
+	adv = ((old_adv & ~(ADVERTISE_PAUSE_CAP | ADVERTISE_PAUSE_ASYM)) |
+	       mii_advertise_flowctrl(efx->wanted_fc));
+	if (adv != old_adv) {
+		efx_mdio_write(efx, MDIO_MMD_AN, MDIO_AN_ADVERTISE, adv);
+		mdio45_nway_restart(&efx->mdio);
+	}
 
 	if (efx->phy_type == PHY_TYPE_SFT9001B) {
 		rc = device_create_file(&efx->pci_dev->dev,
@@ -742,6 +751,7 @@ tenxpress_get_settings(struct efx_nic *efx, struct ethtool_cmd *ecmd)
 
 	mdio45_ethtool_gset_npage(&efx->mdio, ecmd, adv, lpa);
 
+	ecmd->supported |= SUPPORTED_Pause | SUPPORTED_Asym_Pause;
 	if (efx->phy_type != PHY_TYPE_SFX7101) {
 		ecmd->supported |= (SUPPORTED_100baseT_Full |
 				    SUPPORTED_1000baseT_Full);
