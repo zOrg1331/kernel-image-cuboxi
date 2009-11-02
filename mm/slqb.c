@@ -2766,11 +2766,12 @@ out:
 	schedule_delayed_work(work, round_jiffies_relative(3*HZ));
 }
 
-static DEFINE_PER_CPU(struct delayed_work, cache_trim_work);
+static DEFINE_PER_CPU(struct delayed_work, slqb_cache_trim_work);
 
 static void __cpuinit start_cpu_timer(int cpu)
 {
-	struct delayed_work *cache_trim_work = &per_cpu(cache_trim_work, cpu);
+	struct delayed_work *cache_trim_work = &per_cpu(slqb_cache_trim_work,
+			cpu);
 
 	/*
 	 * When this gets called from do_initcalls via cpucache_init(),
@@ -3136,8 +3137,9 @@ static int __cpuinit slab_cpuup_callback(struct notifier_block *nfb,
 
 	case CPU_DOWN_PREPARE:
 	case CPU_DOWN_PREPARE_FROZEN:
-		cancel_rearming_delayed_work(&per_cpu(cache_trim_work, cpu));
-		per_cpu(cache_trim_work, cpu).work.func = NULL;
+		cancel_rearming_delayed_work(&per_cpu(slqb_cache_trim_work,
+					cpu));
+		per_cpu(slqb_cache_trim_work, cpu).work.func = NULL;
 		break;
 
 	case CPU_UP_CANCELED:
