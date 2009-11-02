@@ -22,6 +22,7 @@
 
 #include "util/symbol.h"
 #include "util/color.h"
+#include "util/thread.h"
 #include "util/util.h"
 #include <linux/rbtree.h>
 #include "util/parse-options.h"
@@ -54,26 +55,26 @@
 
 static int			fd[MAX_NR_CPUS][MAX_COUNTERS];
 
-static int			system_wide			=  0;
+static int			system_wide			=      0;
 
-static int			default_interval		= 100000;
+static int			default_interval		=      0;
 
-static int			count_filter			=  5;
-static int			print_entries			= 15;
+static int			count_filter			=      5;
+static int			print_entries			=     15;
 
-static int			target_pid			= -1;
-static int			inherit				=  0;
-static int			profile_cpu			= -1;
-static int			nr_cpus				=  0;
-static unsigned int		realtime_prio			=  0;
-static int			group				=  0;
+static int			target_pid			=     -1;
+static int			inherit				=      0;
+static int			profile_cpu			=     -1;
+static int			nr_cpus				=      0;
+static unsigned int		realtime_prio			=      0;
+static int			group				=      0;
 static unsigned int		page_size;
-static unsigned int		mmap_pages			= 16;
-static int			freq				=  0;
+static unsigned int		mmap_pages			=     16;
+static int			freq				=   1000; /* 1 KHz */
 
-static int			delay_secs			=  2;
-static int			zero;
-static int			dump_symtab;
+static int			delay_secs			=      2;
+static int			zero                            =      0;
+static int			dump_symtab                     =      0;
 
 /*
  * Source
@@ -86,18 +87,15 @@ struct source_line {
 	struct source_line	*next;
 };
 
-static char			*sym_filter			=  NULL;
-struct sym_entry		*sym_filter_entry		=  NULL;
-static int			sym_pcnt_filter			=  5;
-static int			sym_counter			=  0;
-static int			display_weighted		= -1;
+static char			*sym_filter			=   NULL;
+struct sym_entry		*sym_filter_entry		=   NULL;
+static int			sym_pcnt_filter			=      5;
+static int			sym_counter			=      0;
+static int			display_weighted		=     -1;
 
 /*
  * Symbols
  */
-
-static u64			min_ip;
-static u64			max_ip = -1ll;
 
 struct sym_entry {
 	struct rb_node		rb_node;
@@ -106,6 +104,7 @@ struct sym_entry {
 	unsigned long		snap_count;
 	double			weight;
 	int			skip;
+	struct map		*map;
 	struct source_line	*source;
 	struct source_line	*lines;
 	struct source_line	**lines_tail;
@@ -119,12 +118,11 @@ struct sym_entry {
 static void parse_source(struct sym_entry *syme)
 {
 	struct symbol *sym;
-	struct module *module;
-	struct section *section = NULL;
+	struct map *map;
 	FILE *file;
 	char command[PATH_MAX*2];
-	const char *path = vmlinux_name;
-	u64 start, end, len;
+	const char *path;
+	u64 len;
 
 	if (!syme)
 		return;
@@ -135,27 +133,16 @@ static void parse_source(struct sym_entry *syme)
 	}
 
 	sym = (struct symbol *)(syme + 1);
-	module = sym->module;
+	map = syme->map;
+	path = map->dso->long_name;
 
-	if (module)
-		path = module->path;
-	if (!path)
-		return;
-
-	start = sym->obj_start;
-	if (!start)
-		start = sym->start;
-
-	if (module) {
-		section = module->sections->find_section(module->sections, ".text");
-		if (section)
-			start -= section->vma;
-	}
-
-	end = start + sym->end - sym->start + 1;
 	len = sym->end - sym->start;
 
-	sprintf(command, "objdump --start-address=0x%016Lx --stop-address=0x%016Lx -dS %s", start, end, path);
+	sprintf(command,
+		"objdump --start-address=0x%016Lx "
+			 "--stop-address=0x%016Lx -dS %s",
+		map->unmap_ip(map, sym->start),
+		map->unmap_ip(map, sym->end), path);
 
 	file = popen(command, "r");
 	if (!file)
@@ -187,13 +174,11 @@ static void parse_source(struct sym_entry *syme)
 
 		if (strlen(src->line)>8 && src->line[8] == ':') {
 			src->eip = strtoull(src->line, NULL, 16);
-			if (section)
-				src->eip += section->vma;
+			src->eip = map->unmap_ip(map, src->eip);
 		}
 		if (strlen(src->line)>8 && src->line[16] == ':') {
 			src->eip = strtoull(src->line, NULL, 16);
-			if (section)
-				src->eip += section->vma;
+			src->eip = map->unmap_ip(map, src->eip);
 		}
 	}
 	pclose(file);
@@ -245,15 +230,8 @@ static void lookup_sym_source(struct sym_entry *syme)
 	struct symbol *symbol = (struct symbol *)(syme + 1);
 	struct source_line *line;
 	char pattern[PATH_MAX];
-	char *idx;
 
 	sprintf(pattern, "<%s>:", symbol->name);
-
-	if (symbol->module) {
-		idx = strstr(pattern, "\t");
-		if (idx)
-			*idx = 0;
-	}
 
 	pthread_mutex_lock(&syme->source_lock);
 	for (line = syme->lines; line; line = line->next) {
@@ -340,7 +318,7 @@ static void show_details(struct sym_entry *syme)
 }
 
 /*
- * Symbols will be added here in record_ip and will get out
+ * Symbols will be added here in event__process_sample and will get out
  * after decayed.
  */
 static LIST_HEAD(active_symbols);
@@ -481,18 +459,18 @@ static void print_sym_table(void)
 	}
 
 	if (nr_counters == 1)
-		printf("             samples    pcnt");
+		printf("             samples  pcnt");
 	else
-		printf("   weight    samples    pcnt");
+		printf("   weight    samples  pcnt");
 
 	if (verbose)
 		printf("         RIP       ");
-	printf("   kernel function\n");
-	printf("   %s    _______   _____",
+	printf(" function                                 DSO\n");
+	printf("   %s    _______ _____",
 	       nr_counters == 1 ? "      " : "______");
 	if (verbose)
-		printf("   ________________");
-	printf("   _______________\n\n");
+		printf(" ________________");
+	printf(" ________________________________ ________________\n\n");
 
 	for (nd = rb_first(&tmp); nd; nd = rb_next(nd)) {
 		struct symbol *sym;
@@ -508,16 +486,15 @@ static void print_sym_table(void)
 					 sum_ksamples));
 
 		if (nr_counters == 1 || !display_weighted)
-			printf("%20.2f - ", syme->weight);
+			printf("%20.2f ", syme->weight);
 		else
-			printf("%9.1f %10ld - ", syme->weight, syme->snap_count);
+			printf("%9.1f %10ld ", syme->weight, syme->snap_count);
 
 		percent_color_fprintf(stdout, "%4.1f%%", pcnt);
 		if (verbose)
-			printf(" - %016llx", sym->start);
-		printf(" : %s", sym->name);
-		if (sym->module)
-			printf("\t[%s]", sym->module->name);
+			printf(" %016llx", sym->start);
+		printf(" %-32s", sym->name);
+		printf(" %s", syme->map->dso->short_name);
 		printf("\n");
 	}
 }
@@ -790,7 +767,7 @@ static const char *skip_symbols[] = {
 	NULL
 };
 
-static int symbol_filter(struct dso *self, struct symbol *sym)
+static int symbol_filter(struct map *map, struct symbol *sym)
 {
 	struct sym_entry *syme;
 	const char *name = sym->name;
@@ -812,7 +789,8 @@ static int symbol_filter(struct dso *self, struct symbol *sym)
 	    strstr(name, "_text_end"))
 		return 1;
 
-	syme = dso__sym_priv(self, sym);
+	syme = dso__sym_priv(map->dso, sym);
+	syme->map = map;
 	pthread_mutex_init(&syme->source_lock, NULL);
 	if (!sym_filter_entry && sym_filter && !strcmp(name, sym_filter))
 		sym_filter_entry = syme;
@@ -829,70 +807,107 @@ static int symbol_filter(struct dso *self, struct symbol *sym)
 
 static int parse_symbols(void)
 {
-	struct rb_node *node;
-	struct symbol  *sym;
-	int use_modules = vmlinux_name ? 1 : 0;
-
-	kernel_dso = dso__new("[kernel]", sizeof(struct sym_entry));
-	if (kernel_dso == NULL)
+	if (dsos__load_kernel(vmlinux_name, sizeof(struct sym_entry),
+			      symbol_filter, 1) <= 0)
 		return -1;
 
-	if (dso__load_kernel(kernel_dso, vmlinux_name, symbol_filter, verbose, use_modules) <= 0)
-		goto out_delete_dso;
-
-	node = rb_first(&kernel_dso->syms);
-	sym = rb_entry(node, struct symbol, rb_node);
-	min_ip = sym->start;
-
-	node = rb_last(&kernel_dso->syms);
-	sym = rb_entry(node, struct symbol, rb_node);
-	max_ip = sym->end;
-
 	if (dump_symtab)
-		dso__fprintf(kernel_dso, stderr);
+		dsos__fprintf(stderr);
 
 	return 0;
-
-out_delete_dso:
-	dso__delete(kernel_dso);
-	kernel_dso = NULL;
-	return -1;
 }
 
-/*
- * Binary search in the histogram table and record the hit:
- */
-static void record_ip(u64 ip, int counter)
+static void event__process_sample(const event_t *self, int counter)
 {
-	struct symbol *sym = dso__find_symbol(kernel_dso, ip);
+	u64 ip = self->ip.ip;
+	struct map *map;
+	struct sym_entry *syme;
+	struct symbol *sym;
 
-	if (sym != NULL) {
-		struct sym_entry *syme = dso__sym_priv(kernel_dso, sym);
+	switch (self->header.misc & PERF_RECORD_MISC_CPUMODE_MASK) {
+	case PERF_RECORD_MISC_USER: {
+		struct thread *thread = threads__findnew(self->ip.pid);
 
-		if (!syme->skip) {
-			syme->count[counter]++;
-			record_precise_ip(syme, counter, ip);
-			pthread_mutex_lock(&active_symbols_lock);
-			if (list_empty(&syme->node) || !syme->node.next)
-				__list_insert_active_sym(syme);
-			pthread_mutex_unlock(&active_symbols_lock);
+		if (thread == NULL)
 			return;
+
+		map = thread__find_map(thread, ip);
+		if (map != NULL) {
+			ip = map->map_ip(map, ip);
+			sym = map->dso->find_symbol(map->dso, ip);
+			if (sym == NULL)
+				return;
+			userspace_samples++;
+			break;
 		}
 	}
-
-	samples--;
-}
-
-static void process_event(u64 ip, int counter, int user)
-{
-	samples++;
-
-	if (user) {
-		userspace_samples++;
+		/*
+		 * If this is outside of all known maps,
+		 * and is a negative address, try to look it
+		 * up in the kernel dso, as it might be a
+		 * vsyscall or vdso (which executes in user-mode).
+		 */
+		if ((long long)ip >= 0)
+			return;
+		/* Fall thru */
+	case PERF_RECORD_MISC_KERNEL:
+		sym = kernel_maps__find_symbol(ip, &map);
+		if (sym == NULL)
+			return;
+		break;
+	default:
 		return;
 	}
 
-	record_ip(ip, counter);
+	syme = dso__sym_priv(map->dso, sym);
+
+	if (!syme->skip) {
+		syme->count[counter]++;
+		record_precise_ip(syme, counter, ip);
+		pthread_mutex_lock(&active_symbols_lock);
+		if (list_empty(&syme->node) || !syme->node.next)
+			__list_insert_active_sym(syme);
+		pthread_mutex_unlock(&active_symbols_lock);
+		++samples;
+		return;
+	}
+}
+
+static void event__process_mmap(event_t *self)
+{
+	struct thread *thread = threads__findnew(self->mmap.pid);
+
+	if (thread != NULL) {
+		struct map *map = map__new(&self->mmap, NULL, 0,
+					   sizeof(struct sym_entry),
+					   symbol_filter);
+		if (map != NULL)
+			thread__insert_map(thread, map);
+	}
+}
+
+static void event__process_comm(event_t *self)
+{
+	struct thread *thread = threads__findnew(self->comm.pid);
+
+	if (thread != NULL)
+		thread__set_comm(thread, self->comm.comm);
+}
+
+static int event__process(event_t *event)
+{
+	switch (event->header.type) {
+	case PERF_RECORD_COMM:
+		event__process_comm(event);
+		break;
+	case PERF_RECORD_MMAP:
+		event__process_mmap(event);
+		break;
+	default:
+		break;
+	}
+
+	return 0;
 }
 
 struct mmap_data {
@@ -913,16 +928,12 @@ static unsigned int mmap_read_head(struct mmap_data *md)
 	return head;
 }
 
-struct timeval last_read, this_read;
-
 static void mmap_read_counter(struct mmap_data *md)
 {
 	unsigned int head = mmap_read_head(md);
 	unsigned int old = md->prev;
 	unsigned char *data = md->base + page_size;
 	int diff;
-
-	gettimeofday(&this_read, NULL);
 
 	/*
 	 * If we're further behind than half the buffer, there's a chance
@@ -934,22 +945,13 @@ static void mmap_read_counter(struct mmap_data *md)
 	 */
 	diff = head - old;
 	if (diff > md->mask / 2 || diff < 0) {
-		struct timeval iv;
-		unsigned long msecs;
-
-		timersub(&this_read, &last_read, &iv);
-		msecs = iv.tv_sec*1000 + iv.tv_usec/1000;
-
-		fprintf(stderr, "WARNING: failed to keep up with mmap data."
-				"  Last read %lu msecs ago.\n", msecs);
+		fprintf(stderr, "WARNING: failed to keep up with mmap data.\n");
 
 		/*
 		 * head points to a known good entry, start there.
 		 */
 		old = head;
 	}
-
-	last_read = this_read;
 
 	for (; old != head;) {
 		event_t *event = (event_t *)&data[old & md->mask];
@@ -978,13 +980,11 @@ static void mmap_read_counter(struct mmap_data *md)
 			event = &event_copy;
 		}
 
+		if (event->header.type == PERF_RECORD_SAMPLE)
+			event__process_sample(event, md->counter);
+		else
+			event__process(event);
 		old += size;
-
-		if (event->header.type == PERF_RECORD_SAMPLE) {
-			int user =
-	(event->header.misc & PERF_RECORD_MISC_CPUMODE_MASK) == PERF_RECORD_MISC_USER;
-			process_event(event->ip.ip, md->counter, user);
-		}
 	}
 
 	md->prev = old;
@@ -1018,8 +1018,15 @@ static void start_counter(int i, int counter)
 	attr = attrs + counter;
 
 	attr->sample_type	= PERF_SAMPLE_IP | PERF_SAMPLE_TID;
-	attr->freq		= freq;
+
+	if (freq) {
+		attr->sample_type	|= PERF_SAMPLE_PERIOD;
+		attr->freq		= 1;
+		attr->sample_freq	= freq;
+	}
+
 	attr->inherit		= (cpu < 0) && inherit;
+	attr->mmap		= 1;
 
 try_again:
 	fd[i][counter] = sys_perf_event_open(attr, target_pid, cpu, group_fd, 0);
@@ -1077,6 +1084,11 @@ static int __cmd_top(void)
 	pthread_t thread;
 	int i, counter;
 	int ret;
+
+	if (target_pid != -1)
+		event__synthesize_thread(target_pid, event__process);
+	else
+		event__synthesize_threads(event__process);
 
 	for (i = 0; i < nr_cpus; i++) {
 		group_fd = -1;
@@ -1173,11 +1185,6 @@ int cmd_top(int argc, const char **argv, const char *prefix __used)
 	if (argc)
 		usage_with_options(top_usage, options);
 
-	if (freq) {
-		default_interval = freq;
-		freq = 1;
-	}
-
 	/* CPU and PID are mutually exclusive */
 	if (target_pid != -1 && profile_cpu != -1) {
 		printf("WARNING: PID switch overriding CPU\n");
@@ -1193,6 +1200,19 @@ int cmd_top(int argc, const char **argv, const char *prefix __used)
 
 	parse_symbols();
 	parse_source(sym_filter_entry);
+
+
+	/*
+	 * User specified count overrides default frequency.
+	 */
+	if (default_interval)
+		freq = 0;
+	else if (freq) {
+		default_interval = freq;
+	} else {
+		fprintf(stderr, "frequency and count are zero, aborting\n");
+		exit(EXIT_FAILURE);
+	}
 
 	/*
 	 * Fill in the ones not specifically initialized via -c:
