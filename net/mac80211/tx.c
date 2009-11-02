@@ -317,12 +317,11 @@ ieee80211_tx_h_multicast_ps_buf(struct ieee80211_tx_data *tx)
 	if (!atomic_read(&tx->sdata->bss->num_sta_ps))
 		return TX_CONTINUE;
 
-	/* buffered in hardware */
-	if (!(tx->local->hw.flags & IEEE80211_HW_HOST_BROADCAST_PS_BUFFERING)) {
-		info->flags |= IEEE80211_TX_CTL_SEND_AFTER_DTIM;
+	info->flags |= IEEE80211_TX_CTL_SEND_AFTER_DTIM;
 
+	/* device releases frame after DTIM beacon */
+	if (!(tx->local->hw.flags & IEEE80211_HW_HOST_BROADCAST_PS_BUFFERING))
 		return TX_CONTINUE;
-	}
 
 	/* buffered in mac80211 */
 	if (tx->local->total_ps_buffered >= TOTAL_MAX_TX_BUFFER)
@@ -1387,6 +1386,30 @@ static int ieee80211_skb_resize(struct ieee80211_local *local,
 	return 0;
 }
 
+static bool need_dynamic_ps(struct ieee80211_local *local)
+{
+	/* driver doesn't support power save */
+	if (!(local->hw.flags & IEEE80211_HW_SUPPORTS_PS))
+		return false;
+
+	/* hardware does dynamic power save */
+	if (local->hw.flags & IEEE80211_HW_SUPPORTS_DYNAMIC_PS)
+		return false;
+
+	/* dynamic power save disabled */
+	if (local->hw.conf.dynamic_ps_timeout <= 0)
+		return false;
+
+	/* we are scanning, don't enable power save */
+	if (local->scanning)
+		return false;
+
+	if (!local->ps_sdata)
+		return false;
+
+	return true;
+}
+
 static void ieee80211_xmit(struct ieee80211_sub_if_data *sdata,
 			   struct sk_buff *skb)
 {
@@ -1399,9 +1422,7 @@ static void ieee80211_xmit(struct ieee80211_sub_if_data *sdata,
 
 	dev_hold(sdata->dev);
 
-	if ((local->hw.flags & IEEE80211_HW_PS_NULLFUNC_STACK) &&
-	    local->hw.conf.dynamic_ps_timeout > 0 &&
-	    !(local->scanning) && local->ps_sdata) {
+	if (need_dynamic_ps(local)) {
 		if (local->hw.conf.flags & IEEE80211_CONF_PS) {
 			ieee80211_stop_queues_by_reason(&local->hw,
 					IEEE80211_QUEUE_STOP_REASON_PS);
@@ -1990,8 +2011,9 @@ static void ieee80211_beacon_add_tim(struct ieee80211_if_ap *bss,
 	}
 }
 
-struct sk_buff *ieee80211_beacon_get(struct ieee80211_hw *hw,
-				     struct ieee80211_vif *vif)
+struct sk_buff *ieee80211_beacon_get_tim(struct ieee80211_hw *hw,
+					 struct ieee80211_vif *vif,
+					 u16 *tim_offset, u16 *tim_length)
 {
 	struct ieee80211_local *local = hw_to_local(hw);
 	struct sk_buff *skb = NULL;
@@ -2007,6 +2029,11 @@ struct sk_buff *ieee80211_beacon_get(struct ieee80211_hw *hw,
 	rcu_read_lock();
 
 	sdata = vif_to_sdata(vif);
+
+	if (tim_offset)
+		*tim_offset = 0;
+	if (tim_length)
+		*tim_length = 0;
 
 	if (sdata->vif.type == NL80211_IFTYPE_AP) {
 		ap = &sdata->u.ap;
@@ -2042,6 +2069,11 @@ struct sk_buff *ieee80211_beacon_get(struct ieee80211_hw *hw,
 				ieee80211_beacon_add_tim(ap, skb, beacon);
 				spin_unlock_irqrestore(&local->sta_lock, flags);
 			}
+
+			if (tim_offset)
+				*tim_offset = beacon->head_len;
+			if (tim_length)
+				*tim_length = skb->len - beacon->head_len;
 
 			if (beacon->tail)
 				memcpy(skb_put(skb, beacon->tail_len),
@@ -2119,7 +2151,7 @@ struct sk_buff *ieee80211_beacon_get(struct ieee80211_hw *hw,
 	rcu_read_unlock();
 	return skb;
 }
-EXPORT_SYMBOL(ieee80211_beacon_get);
+EXPORT_SYMBOL(ieee80211_beacon_get_tim);
 
 void ieee80211_rts_get(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 		       const void *frame, size_t frame_len,
