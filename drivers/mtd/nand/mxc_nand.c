@@ -857,17 +857,6 @@ static void mxc_nand_command(struct mtd_info *mtd, unsigned command,
 	}
 }
 
-/* Define some generic bad / good block scan pattern which are used
- * while scanning a device for factory marked good / bad blocks. */
-static uint8_t scan_ff_pattern[] = { 0xff, 0xff };
-
-static struct nand_bbt_descr smallpage_memorybased = {
-	.options = NAND_BBT_SCAN2NDPAGE,
-	.offs = 5,
-	.len = 1,
-	.pattern = scan_ff_pattern
-};
-
 static int __init mxcnd_probe(struct platform_device *pdev)
 {
 	struct nand_chip *this;
@@ -984,10 +973,7 @@ static int __init mxcnd_probe(struct platform_device *pdev)
 		goto escan;
 	}
 
-	if (mtd->writesize == 2048) {
-		host->pagesize_2k = 1;
-		this->badblock_pattern = &smallpage_memorybased;
-	}
+	host->pagesize_2k = (mtd->writesize == 2048) ? 1 : 0;
 
 	if (this->ecc.mode == NAND_ECC_HW) {
 		switch (mtd->oobsize) {
@@ -1052,7 +1038,7 @@ eclk:
 	return err;
 }
 
-static int __devexit mxcnd_remove(struct platform_device *pdev)
+static int __exit mxcnd_remove(struct platform_device *pdev)
 {
 	struct mxc_nand_host *host = platform_get_drvdata(pdev);
 
