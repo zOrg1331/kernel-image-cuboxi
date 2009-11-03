@@ -531,6 +531,8 @@ static inline int tracehook_notify_jctl(int notify, int why)
  */
 static inline void tracehook_finish_jctl(void)
 {
+	if (task_utrace_flags(current))
+		utrace_finish_stop();
 }
 
 #define DEATH_REAP			-1

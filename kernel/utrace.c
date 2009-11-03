@@ -701,7 +701,7 @@ static bool utrace_do_stop(struct task_struct *target, struct utrace *utrace)
 	if (task_is_stopped(target)) {
 		/*
 		 * Stopped is considered quiescent; when it wakes up, it will
-		 * go through utrace_finish_jctl() before doing anything else.
+		 * go through utrace_finish_stop() before doing anything else.
 		 */
 		spin_lock_irq(&target->sighand->siglock);
 		if (likely(task_is_stopped(target)))
@@ -809,6 +809,18 @@ static bool utrace_reset(struct task_struct *task, struct utrace *utrace)
 	return !flags;
 }
 
+void utrace_finish_stop(void)
+{
+	/*
+	 * If we were task_is_traced() and then SIGKILL'ed, make
+	 * sure we do nothing until the tracer drops utrace->lock.
+	 */
+	if (unlikely(__fatal_signal_pending(current))) {
+		struct utrace *utrace = task_utrace_struct(current);
+		spin_unlock_wait(&utrace->lock);
+	}
+}
+
 /*
  * Perform %UTRACE_STOP, i.e. block in TASK_TRACED until woken up.
  * @task == current, @utrace == current->utrace, which is not locked.
@@ -874,6 +886,8 @@ relock:
 	spin_unlock(&utrace->lock);
 
 	schedule();
+
+	utrace_finish_stop();
 
 	/*
 	 * While in TASK_TRACED, we were considered "frozen enough".

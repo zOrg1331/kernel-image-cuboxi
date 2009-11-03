@@ -98,6 +98,8 @@ bool utrace_interrupt_pending(void)
 	__attribute__((weak));
 void utrace_resume(struct task_struct *, struct pt_regs *)
 	__attribute__((weak));
+void utrace_finish_stop(void)
+	__attribute__((weak));
 int utrace_get_signal(struct task_struct *, struct pt_regs *,
 		      siginfo_t *, struct k_sigaction *)
 	__attribute__((weak));
