@@ -26,7 +26,6 @@
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
 #include <linux/miscdevice.h>
-#include <linux/smp_lock.h>
 
 #include "excite_iodev.h"
 
