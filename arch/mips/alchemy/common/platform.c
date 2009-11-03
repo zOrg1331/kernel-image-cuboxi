@@ -20,38 +20,38 @@
 #include <asm/mach-au1x00/au1xxx_dbdma.h>
 #include <asm/mach-au1x00/au1100_mmc.h>
 
-#define PORT(_base, _irq)				\
-	{						\
-		.iobase		= _base,		\
-		.membase	= (void __iomem *)_base,\
-		.mapbase	= CPHYSADDR(_base),	\
-		.irq		= _irq,			\
-		.regshift	= 2,			\
-		.iotype		= UPIO_AU,		\
-		.flags		= UPF_SKIP_TEST 	\
+#define PORT(_base, _irq)					\
+	{							\
+		.mapbase	= _base,			\
+		.irq		= _irq,				\
+		.regshift	= 2,				\
+		.iotype		= UPIO_AU,			\
+		.flags		= UPF_SKIP_TEST | UPF_IOREMAP |	\
+				  UPF_FIXED_TYPE,		\
+		.type		= PORT_16550A,			\
 	}
 
 static struct plat_serial8250_port au1x00_uart_data[] = {
 #if defined(CONFIG_SERIAL_8250_AU1X00)
 #if defined(CONFIG_SOC_AU1000)
-	PORT(UART0_ADDR, AU1000_UART0_INT),
-	PORT(UART1_ADDR, AU1000_UART1_INT),
-	PORT(UART2_ADDR, AU1000_UART2_INT),
-	PORT(UART3_ADDR, AU1000_UART3_INT),
+	PORT(UART0_PHYS_ADDR, AU1000_UART0_INT),
+	PORT(UART1_PHYS_ADDR, AU1000_UART1_INT),
+	PORT(UART2_PHYS_ADDR, AU1000_UART2_INT),
+	PORT(UART3_PHYS_ADDR, AU1000_UART3_INT),
 #elif defined(CONFIG_SOC_AU1500)
-	PORT(UART0_ADDR, AU1500_UART0_INT),
-	PORT(UART3_ADDR, AU1500_UART3_INT),
+	PORT(UART0_PHYS_ADDR, AU1500_UART0_INT),
+	PORT(UART3_PHYS_ADDR, AU1500_UART3_INT),
 #elif defined(CONFIG_SOC_AU1100)
-	PORT(UART0_ADDR, AU1100_UART0_INT),
-	PORT(UART1_ADDR, AU1100_UART1_INT),
-	PORT(UART3_ADDR, AU1100_UART3_INT),
+	PORT(UART0_PHYS_ADDR, AU1100_UART0_INT),
+	PORT(UART1_PHYS_ADDR, AU1100_UART1_INT),
+	PORT(UART3_PHYS_ADDR, AU1100_UART3_INT),
 #elif defined(CONFIG_SOC_AU1550)
-	PORT(UART0_ADDR, AU1550_UART0_INT),
-	PORT(UART1_ADDR, AU1550_UART1_INT),
-	PORT(UART3_ADDR, AU1550_UART3_INT),
+	PORT(UART0_PHYS_ADDR, AU1550_UART0_INT),
+	PORT(UART1_PHYS_ADDR, AU1550_UART1_INT),
+	PORT(UART3_PHYS_ADDR, AU1550_UART3_INT),
 #elif defined(CONFIG_SOC_AU1200)
-	PORT(UART0_ADDR, AU1200_UART0_INT),
-	PORT(UART1_ADDR, AU1200_UART1_INT),
+	PORT(UART0_PHYS_ADDR, AU1200_UART0_INT),
+	PORT(UART1_PHYS_ADDR, AU1200_UART1_INT),
 #endif
 #endif	/* CONFIG_SERIAL_8250_AU1X00 */
 	{ },
@@ -73,8 +73,8 @@ static struct resource au1xxx_usb_ohci_resources[] = {
 		.flags		= IORESOURCE_MEM,
 	},
 	[1] = {
-		.start		= AU1000_USB_HOST_INT,
-		.end		= AU1000_USB_HOST_INT,
+		.start		= FOR_PLATFORM_C_USB_HOST_INT,
+		.end		= FOR_PLATFORM_C_USB_HOST_INT,
 		.flags		= IORESOURCE_IRQ,
 	},
 };
@@ -132,8 +132,8 @@ static struct resource au1xxx_usb_ehci_resources[] = {
 		.flags		= IORESOURCE_MEM,
 	},
 	[1] = {
-		.start		= AU1000_USB_HOST_INT,
-		.end		= AU1000_USB_HOST_INT,
+		.start		= AU1200_USB_INT,
+		.end		= AU1200_USB_INT,
 		.flags		= IORESOURCE_IRQ,
 	},
 };
@@ -308,11 +308,6 @@ static struct platform_device au1200_mmc1_device = {
 #endif /* #ifndef CONFIG_MIPS_DB1200 */
 #endif /* #ifdef CONFIG_SOC_AU1200 */
 
-static struct platform_device au1x00_pcmcia_device = {
-	.name 		= "au1x00-pcmcia",
-	.id 		= 0,
-};
-
 /* All Alchemy demoboards with I2C have this #define in their headers */
 #ifdef SMBUS_PSC_BASE
 static struct resource pbdb_smbus_resources[] = {
@@ -334,7 +329,6 @@ static struct platform_device pbdb_smbus_device = {
 static struct platform_device *au1xxx_platform_devices[] __initdata = {
 	&au1xx0_uart_device,
 	&au1xxx_usb_ohci_device,
-	&au1x00_pcmcia_device,
 #ifdef CONFIG_FB_AU1100
 	&au1100_lcd_device,
 #endif
