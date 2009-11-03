@@ -801,12 +801,15 @@ static inline unsigned int scsi_host_dif_capable(struct Scsi_Host *shost, unsign
 	case 1:
 		if (shost->prot_capabilities & SHOST_DIF_TYPE1_PROTECTION)
 			return target_type;
+		break;
 	case 2:
 		if (shost->prot_capabilities & SHOST_DIF_TYPE2_PROTECTION)
 			return target_type;
+		break;
 	case 3:
 		if (shost->prot_capabilities & SHOST_DIF_TYPE3_PROTECTION)
 			return target_type;
+		break;
 	}
 
 	return 0;
