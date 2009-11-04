@@ -442,7 +442,7 @@ err_register_peer:
 	return err;
 }
 
-static void veth_dellink(struct net_device *dev)
+static void veth_dellink(struct net_device *dev, struct list_head *head)
 {
 	struct veth_priv *priv;
 	struct net_device *peer;
@@ -450,8 +450,8 @@ static void veth_dellink(struct net_device *dev)
 	priv = netdev_priv(dev);
 	peer = priv->peer;
 
-	unregister_netdevice(dev);
-	unregister_netdevice(peer);
+	unregister_netdevice_queue(dev, head);
+	unregister_netdevice_queue(peer, head);
 }
 
 static const struct nla_policy veth_policy[VETH_INFO_MAX + 1];
