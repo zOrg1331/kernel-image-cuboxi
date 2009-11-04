@@ -250,6 +250,7 @@ int twl4030_i2c_read(u8 mod_no, u8 *value, u8 reg, unsigned num_bytes);
 
 #define RES_TYPE_ALL		0x7
 
+/* Resource states */
 #define RES_STATE_WRST		0xF
 #define RES_STATE_ACTIVE	0xE
 #define RES_STATE_SLEEP		0x8
@@ -311,6 +312,10 @@ int twl4030_i2c_read(u8 mod_no, u8 *value, u8 reg, unsigned num_bytes);
 	((devgrp) << 13 | 0 << 12 | (id) << 4 | (state))
 
 /*----------------------------------------------------------------------*/
+
+struct twl4030_clock_init_data {
+	bool ck32k_lowpwr_enable;
+};
 
 struct twl4030_bci_platform_data {
 	int *battery_tmp_tbl;
@@ -391,12 +396,15 @@ struct twl4030_resconfig {
 	u8 devgroup;	/* Processor group that Power resource belongs to */
 	u8 type;	/* Power resource addressed, 6 / broadcast message */
 	u8 type2;	/* Power resource addressed, 3 / broadcast message */
+	u8 remap_off;	/* off state remapping */
+	u8 remap_sleep;	/* sleep state remapping */
 };
 
 struct twl4030_power_data {
 	struct twl4030_script **scripts;
 	unsigned num;
 	struct twl4030_resconfig *resource_config;
+#define TWL4030_RESCONFIG_UNDEF	((u8)-1)
 };
 
 extern void twl4030_power_init(struct twl4030_power_data *triton2_scripts);
@@ -420,6 +428,7 @@ struct twl4030_codec_data {
 
 struct twl4030_platform_data {
 	unsigned				irq_base, irq_end;
+	struct twl4030_clock_init_data		*clock;
 	struct twl4030_bci_platform_data	*bci;
 	struct twl4030_gpio_platform_data	*gpio;
 	struct twl4030_madc_platform_data	*madc;
