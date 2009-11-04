@@ -137,7 +137,7 @@ static struct scsi_host_template fcoe_shost_template = {
 	.change_queue_depth = fc_change_queue_depth,
 	.change_queue_type = fc_change_queue_type,
 	.this_id = -1,
-	.cmd_per_lun = 32,
+	.cmd_per_lun = 3,
 	.can_queue = FCOE_MAX_OUTSTANDING_COMMANDS,
 	.use_clustering = ENABLE_CLUSTERING,
 	.sg_tablesize = SG_ALL,
@@ -161,8 +161,17 @@ static int fcoe_interface_setup(struct fcoe_interface *fcoe,
 	struct fcoe_ctlr *fip = &fcoe->ctlr;
 	struct netdev_hw_addr *ha;
 	u8 flogi_maddr[ETH_ALEN];
+	const struct net_device_ops *ops;
 
 	fcoe->netdev = netdev;
+
+	/* Let LLD initialize for FCoE */
+	ops = netdev->netdev_ops;
+	if (ops->ndo_fcoe_enable) {
+		if (ops->ndo_fcoe_enable(netdev))
+			FCOE_NETDEV_DBG(netdev, "Failed to enable FCoE"
+					" specific feature for LLD.\n");
+	}
 
 	/* Do not support for bonding device */
 	if ((netdev->priv_flags & IFF_MASTER_ALB) ||
@@ -262,6 +271,7 @@ void fcoe_interface_cleanup(struct fcoe_interface *fcoe)
 	struct net_device *netdev = fcoe->netdev;
 	struct fcoe_ctlr *fip = &fcoe->ctlr;
 	u8 flogi_maddr[ETH_ALEN];
+	const struct net_device_ops *ops;
 
 	/*
 	 * Don't listen for Ethernet packets anymore.
@@ -281,6 +291,14 @@ void fcoe_interface_cleanup(struct fcoe_interface *fcoe)
 	if (fip->spma)
 		dev_unicast_delete(netdev, fip->ctl_src_addr);
 	dev_mc_delete(netdev, FIP_ALL_ENODE_MACS, ETH_ALEN, 0);
+
+	/* Tell the LLD we are done w/ FCoE */
+	ops = netdev->netdev_ops;
+	if (ops->ndo_fcoe_disable) {
+		if (ops->ndo_fcoe_disable(netdev))
+			FCOE_NETDEV_DBG(netdev, "Failed to disable FCoE"
+					" specific feature for LLD.\n");
+	}
 }
 
 /**
@@ -439,8 +457,12 @@ static int fcoe_netdev_config(struct fc_lport *lp, struct net_device *netdev)
 	 * user-configured limit.  If the MFS is too low, fcoe_link_ok()
 	 * will return 0, so do this first.
 	 */
-	mfs = netdev->mtu - (sizeof(struct fcoe_hdr) +
-			     sizeof(struct fcoe_crc_eof));
+	mfs = netdev->mtu;
+	if (netdev->features & NETIF_F_FCOE_MTU) {
+		mfs = FCOE_MTU;
+		FCOE_NETDEV_DBG(netdev, "Supports FCOE_MTU of %d bytes\n", mfs);
+	}
+	mfs -= (sizeof(struct fcoe_hdr) + sizeof(struct fcoe_crc_eof));
 	if (fc_set_mfs(lp, mfs))
 		return -EINVAL;
 
@@ -664,7 +686,7 @@ static int fcoe_ddp_setup(struct fc_lport *lp, u16 xid,
 {
 	struct net_device *n = fcoe_netdev(lp);
 
-	if (n->netdev_ops && n->netdev_ops->ndo_fcoe_ddp_setup)
+	if (n->netdev_ops->ndo_fcoe_ddp_setup)
 		return n->netdev_ops->ndo_fcoe_ddp_setup(n, xid, sgl, sgc);
 
 	return 0;
@@ -681,7 +703,7 @@ static int fcoe_ddp_done(struct fc_lport *lp, u16 xid)
 {
 	struct net_device *n = fcoe_netdev(lp);
 
-	if (n->netdev_ops && n->netdev_ops->ndo_fcoe_ddp_done)
+	if (n->netdev_ops->ndo_fcoe_ddp_done)
 		return n->netdev_ops->ndo_fcoe_ddp_done(n, xid);
 	return 0;
 }
@@ -1570,6 +1592,8 @@ static int fcoe_device_notification(struct notifier_block *notifier,
 	case NETDEV_CHANGE:
 		break;
 	case NETDEV_CHANGEMTU:
+		if (netdev->features & NETIF_F_FCOE_MTU)
+			break;
 		mfs = netdev->mtu - (sizeof(struct fcoe_hdr) +
 				     sizeof(struct fcoe_crc_eof));
 		if (mfs >= FC_MIN_MAX_FRAME)
@@ -1631,7 +1655,7 @@ static int fcoe_destroy(const char *buffer, struct kernel_param *kp)
 {
 	struct fcoe_interface *fcoe;
 	struct net_device *netdev;
-	int rc;
+	int rc = 0;
 
 	mutex_lock(&fcoe_config_mutex);
 #ifdef CONFIG_FCOE_MODULE
