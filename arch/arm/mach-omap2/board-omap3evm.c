@@ -238,6 +238,14 @@ static struct twl4030_madc_platform_data omap3evm_madc_data = {
 	.irq_line	= 1,
 };
 
+static struct twl4030_codec_audio_data omap3evm_audio_data = {
+	.audio_mclk = 26000000,
+};
+
+static struct twl4030_codec_data omap3evm_codec_data = {
+	.audio = &omap3evm_audio_data,
+};
+
 static struct twl4030_platform_data omap3evm_twldata = {
 	.irq_base	= TWL4030_IRQ_BASE,
 	.irq_end	= TWL4030_IRQ_END,
@@ -249,6 +257,7 @@ static struct twl4030_platform_data omap3evm_twldata = {
 	.gpio		= &omap3evm_gpio_data,
 	.vmmc1		= &omap3evm_vmmc1,
 	.vsim		= &omap3evm_vsim,
+	.codec		= &omap3evm_codec_data,
 };
 
 static struct i2c_board_info __initdata omap3evm_i2c_boardinfo[] = {
