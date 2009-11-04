@@ -1,0 +1,114 @@
+Importing driver-core.current based on 2.6.32-rc5
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.32-rc5-git6
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 1836d95928a0f41ada0cbb2a6c4e46b027db9491
+HEAD is now at 1836d95 Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/ericvh/v9fs
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-piix4-modify-code-name-sb900-to-hudson-2.patch
+i2c-chips-move-ds1682-to-drivers-misc.patch
+i2c-powermac-01-multiple-msg-not-supported.patch
+i2c-powermac-02-refactor-xfer.patch
+i2c-powermac-03-report-errors.patch
+i2c-voodoo3-delete.patch
+i2c-prevent-priority-inversion-on-top-of-bus-lock.patch
+i2c-no-I2C_M_REV_DIR_ADDR.patch
+i2c-add-missing-devinit.patch
+i2c-core-01-drop-obsolete-force-module-parameters.patch
+i2c-core-02-detect-drop-kind-parameter.patch
+misc-ics932s401-cleanup-detect.patch
+i2c-remove-big-kernel-lock-from-i2cdev_open.patch
+i2c-scmi-support-ibm-smbus-cmi-devices.patch
+i2c-i801-retry-on-lost-arbitration.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + e2212e4...28d110a master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.32-rc5-git6
+$ cd ../quilt-tmp
+$ git reset --hard 1836d95928a0f41ada0cbb2a6c4e46b027db9491
+HEAD is now at 1836d95 Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/ericvh/v9fs
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-s3c-hwmon-ignore-invalid-divider-settings.patch
+hwmon-it87-02-check-VID-pins-availability.patch
+hwmon-it87-03-fan2-fan3-may-be-missing.patch
+hwmon-w83627hf-drop-force_addr.patch
+hwmon-w83627hf-no-sio-globals.patch
+hwmon-lm73-new-driver.patch
+hwmon-adm1021-cleanup-detect.patch
+hwmon-adm1025-cleanup-detect.patch
+hwmon-lm77-cleanup-detect.patch
+hwmon-lm83-cleanup-detect.patch
+hwmon-lm85-cleanup-detect.patch
+hwmon-lm90-cleanup-detect.patch
+hwmon-tmp401-tmp421-cleanup-detect.patch
+hwmon-w83781d-cleanup-detect.patch
+hwmon-w83791d-cleanup-detect.patch
+hwmon-w83792d-cleanup-detect.patch
+hwmon-w83l785ts-cleanup-detect.patch
+hwmon-cleanup-detect-functions.patch
+hwmon-w83791d-remove-experimental-dependency.patch
+hwmon-add-freescale-mc13783-adc-driver.patch
+hwmon-thmc50-stop-using-I2C_CLIENT_MODULE_PARM.patch
+hwmon-f71882fg-01-sysfs-create-cleanup1.patch
+hwmon-f71882fg-02-sysfs-create-cleanup2.patch
+hwmon-f71882fg-03-fix-sysfs-file-removal.patch
+hwmon-f71882fg-04-add-f71889fg-support.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 38c8d17...9f0330a master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on origin/master
+	quilt series is empty
+$ git update-ref refs/heads/quilt/kernel-doc b419148e567728f6af0c3b01965c1cc141e3e13a
+Importing rr based on v2.6.32-rc5-81-g964fe08
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.32-rc5-81-g964fe08
+$ cd ../quilt-tmp
+$ git reset --hard 964fe080d94db82a3268443e9b9ece4c60246414
+HEAD is now at 964fe08 Merge git://git.kernel.org/pub/scm/linux/kernel/git/rusty/linux-2.6-for-linus
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-exception-store-free-tmp_store-on-persistent-flag-error.patch
+dm-sysfs-add-empty-release-function-to-avoid-debug-warning.patch
+dm-ioctl-prefer-strlcpy-over-strncpy.patch
+dm-snapshot-avoid-else-clause-in-persistent_read_metadata.patch
+dm-snapshot-simplify-sector_to_chunk-expression.patch
+dm-snapshot-abstract-minimum_chunk_size-fn.patch
+dm-snapshot-consolidate-insert-exception-functions.patch
+dm-snapshot-rename-dm_snap_exception-to-dm_exception.patch
+dm-snapshot-rename-exception_table-to-dm_exception_table.patch
+dm-snapshot-rename-exception-functions.patch
+dm-snapshot-add-allocated-metadata-to-snapshot-status.patch
+dm-snapshot-move-cow-ref-from-exception-store-to-snap-core.patch
+dm-kcopyd-accept-zero-size-jobs.patch
+dm-abstract-dm_in_flight-function.patch
+dm-use-clone-in-map_request-function.patch
+dm-pass-gfp_mask-to-alloc_rq_tio.patch
+dm-abstract-clone_rq.patch
+dm-simplify-request-based-suspend.patch
+dm-use-md-pending-for-in-flight-IO-counting.patch
+dm-refactor-request-based-completion-functions.patch
+dm-move-dm_end_request.patch
+dm-add-request-based-barrier-support.patch
+dm-rename-dm_get_table-to-dm_get_live_table.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + dcef681...ef5ddb7 master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
