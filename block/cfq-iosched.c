@@ -2409,7 +2409,7 @@ cfq_should_preempt(struct cfq_data *cfqd, struct cfq_queue *new_cfqq,
 	 * it's a metadata request and the current queue is doing regular IO.
 	 */
 	if (rq_is_meta(rq) && !cfqq->meta_pending)
-		return false;
+		return true;
 
 	/*
 	 * Allow an RT request to pre-empt an ongoing non-RT cfqq timeslice.
@@ -2625,12 +2625,10 @@ static void cfq_prio_boost(struct cfq_queue *cfqq)
 			cfqq->ioprio = IOPRIO_NORM;
 	} else {
 		/*
-		 * check if we need to unboost the queue
+		 * unboost the queue (if needed)
 		 */
-		if (cfqq->ioprio_class != cfqq->org_ioprio_class)
-			cfqq->ioprio_class = cfqq->org_ioprio_class;
-		if (cfqq->ioprio != cfqq->org_ioprio)
-			cfqq->ioprio = cfqq->org_ioprio;
+		cfqq->ioprio_class = cfqq->org_ioprio_class;
+		cfqq->ioprio = cfqq->org_ioprio;
 	}
 }
 
