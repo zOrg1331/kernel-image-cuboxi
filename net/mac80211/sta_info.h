@@ -193,7 +193,6 @@ struct sta_ampdu_mlme {
  * @rx_fragments: number of received MPDUs
  * @rx_dropped: number of dropped MPDUs from this STA
  * @last_signal: signal of last received frame from this STA
- * @last_qual: qual of last received frame from this STA
  * @last_noise: noise of last received frame from this STA
  * @last_seq_ctrl: last received seq/frag number from this STA (per RX queue)
  * @tx_filtered_count: number of frames the hardware filtered for this STA
@@ -259,7 +258,6 @@ struct sta_info {
 	unsigned long rx_fragments;
 	unsigned long rx_dropped;
 	int last_signal;
-	int last_qual;
 	int last_noise;
 	__le16 last_seq_ctrl[NUM_RX_DATA_QUEUES];
 
@@ -301,28 +299,6 @@ struct sta_info {
 #ifdef CONFIG_MAC80211_DEBUGFS
 	struct sta_info_debugfsdentries {
 		struct dentry *dir;
-		struct dentry *flags;
-		struct dentry *num_ps_buf_frames;
-		struct dentry *inactive_ms;
-		struct dentry *last_seq_ctrl;
-		struct dentry *agg_status;
-		struct dentry *aid;
-		struct dentry *dev;
-		struct dentry *rx_packets;
-		struct dentry *tx_packets;
-		struct dentry *rx_bytes;
-		struct dentry *tx_bytes;
-		struct dentry *rx_duplicates;
-		struct dentry *rx_fragments;
-		struct dentry *rx_dropped;
-		struct dentry *tx_fragments;
-		struct dentry *tx_filtered;
-		struct dentry *tx_retry_failed;
-		struct dentry *tx_retry_count;
-		struct dentry *last_signal;
-		struct dentry *last_qual;
-		struct dentry *last_noise;
-		struct dentry *wep_weak_iv_count;
 		bool add_has_run;
 	} debugfs;
 #endif
