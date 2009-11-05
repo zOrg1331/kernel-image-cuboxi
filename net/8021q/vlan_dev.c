@@ -393,7 +393,7 @@ int vlan_dev_set_egress_priority(const struct net_device *dev,
 	struct vlan_dev_info *vlan = vlan_dev_info(dev);
 	struct vlan_priority_tci_mapping *mp = NULL;
 	struct vlan_priority_tci_mapping *np;
-	u32 vlan_qos = (vlan_prio << 13) & 0xE000;
+	u32 vlan_qos = (vlan_prio << VLAN_PRIO_SHIFT) & VLAN_PRIO_MASK;
 
 	/* See if a priority mapping exists.. */
 	mp = vlan->egress_priority_map[skb_prio & 0xF];
@@ -626,6 +626,17 @@ static int vlan_dev_fcoe_disable(struct net_device *dev)
 		rc = ops->ndo_fcoe_disable(real_dev);
 	return rc;
 }
+
+static int vlan_dev_fcoe_get_wwn(struct net_device *dev, u64 *wwn, int type)
+{
+	struct net_device *real_dev = vlan_dev_info(dev)->real_dev;
+	const struct net_device_ops *ops = real_dev->netdev_ops;
+	int rc = -EINVAL;
+
+	if (ops->ndo_fcoe_get_wwn)
+		rc = ops->ndo_fcoe_get_wwn(real_dev, wwn, type);
+	return rc;
+}
 #endif
 
 static void vlan_dev_change_rx_flags(struct net_device *dev, int change)
@@ -791,6 +802,7 @@ static const struct net_device_ops vlan_netdev_ops = {
 	.ndo_fcoe_ddp_done	= vlan_dev_fcoe_ddp_done,
 	.ndo_fcoe_enable	= vlan_dev_fcoe_enable,
 	.ndo_fcoe_disable	= vlan_dev_fcoe_disable,
+	.ndo_fcoe_get_wwn	= vlan_dev_fcoe_get_wwn,
 #endif
 };
 
@@ -813,6 +825,7 @@ static const struct net_device_ops vlan_netdev_accel_ops = {
 	.ndo_fcoe_ddp_done	= vlan_dev_fcoe_ddp_done,
 	.ndo_fcoe_enable	= vlan_dev_fcoe_enable,
 	.ndo_fcoe_disable	= vlan_dev_fcoe_disable,
+	.ndo_fcoe_get_wwn	= vlan_dev_fcoe_get_wwn,
 #endif
 };
 

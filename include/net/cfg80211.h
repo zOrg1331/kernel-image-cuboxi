@@ -1142,6 +1142,9 @@ struct wiphy {
 	u32 frag_threshold;
 	u32 rts_threshold;
 
+	char fw_version[ETHTOOL_BUSINFO_LEN];
+	u32 hw_version;
+
 	/* If multiple wiphys are registered and you're handed e.g.
 	 * a regular netdev with assigned ieee80211_ptr, you won't
 	 * know whether it points to a wiphy your driver has registered
@@ -1169,6 +1172,10 @@ struct wiphy {
 #ifdef CONFIG_NET_NS
 	/* the network namespace this phy lives in currently */
 	struct net *_net;
+#endif
+
+#ifdef CONFIG_CFG80211_WEXT
+	const struct iw_handler_def *wext;
 #endif
 
 	char priv[0] __attribute__((__aligned__(NETDEV_ALIGN)));
@@ -1345,7 +1352,7 @@ struct wireless_dev {
 	struct cfg80211_internal_bss *auth_bsses[MAX_AUTH_BSSES];
 	struct cfg80211_internal_bss *current_bss; /* associated / joined */
 
-#ifdef CONFIG_WIRELESS_EXT
+#ifdef CONFIG_CFG80211_WEXT
 	/* wext data */
 	struct {
 		struct cfg80211_ibss_params ibss;
@@ -1802,30 +1809,45 @@ void cfg80211_send_assoc_timeout(struct net_device *dev, const u8 *addr);
  * @dev: network device
  * @buf: deauthentication frame (header + body)
  * @len: length of the frame data
- * @cookie: cookie from ->deauth if called within that callback,
- *	%NULL otherwise
  *
  * This function is called whenever deauthentication has been processed in
  * station mode. This includes both received deauthentication frames and
  * locally generated ones. This function may sleep.
  */
-void cfg80211_send_deauth(struct net_device *dev, const u8 *buf, size_t len,
-			  void *cookie);
+void cfg80211_send_deauth(struct net_device *dev, const u8 *buf, size_t len);
+
+/**
+ * __cfg80211_send_deauth - notification of processed deauthentication
+ * @dev: network device
+ * @buf: deauthentication frame (header + body)
+ * @len: length of the frame data
+ *
+ * Like cfg80211_send_deauth(), but doesn't take the wdev lock.
+ */
+void __cfg80211_send_deauth(struct net_device *dev, const u8 *buf, size_t len);
 
 /**
  * cfg80211_send_disassoc - notification of processed disassociation
  * @dev: network device
  * @buf: disassociation response frame (header + body)
  * @len: length of the frame data
- * @cookie: cookie from ->disassoc if called within that callback,
- *	%NULL otherwise
  *
  * This function is called whenever disassociation has been processed in
  * station mode. This includes both received disassociation frames and locally
  * generated ones. This function may sleep.
  */
-void cfg80211_send_disassoc(struct net_device *dev, const u8 *buf, size_t len,
-			    void *cookie);
+void cfg80211_send_disassoc(struct net_device *dev, const u8 *buf, size_t len);
+
+/**
+ * __cfg80211_send_disassoc - notification of processed disassociation
+ * @dev: network device
+ * @buf: disassociation response frame (header + body)
+ * @len: length of the frame data
+ *
+ * Like cfg80211_send_disassoc(), but doesn't take the wdev lock.
+ */
+void __cfg80211_send_disassoc(struct net_device *dev, const u8 *buf,
+	size_t len);
 
 /**
  * cfg80211_michael_mic_failure - notification of Michael MIC failure (TKIP)

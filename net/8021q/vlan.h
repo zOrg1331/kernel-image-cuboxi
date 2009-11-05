@@ -82,14 +82,14 @@ void vlan_dev_get_realdev_name(const struct net_device *dev, char *result);
 int vlan_check_real_dev(struct net_device *real_dev, u16 vlan_id);
 void vlan_setup(struct net_device *dev);
 int register_vlan_dev(struct net_device *dev);
-void unregister_vlan_dev(struct net_device *dev);
+void unregister_vlan_dev(struct net_device *dev, struct list_head *head);
 
 static inline u32 vlan_get_ingress_priority(struct net_device *dev,
 					    u16 vlan_tci)
 {
 	struct vlan_dev_info *vip = vlan_dev_info(dev);
 
-	return vip->ingress_priority_map[(vlan_tci >> 13) & 0x7];
+	return vip->ingress_priority_map[(vlan_tci >> VLAN_PRIO_SHIFT) & 0x7];
 }
 
 #ifdef CONFIG_VLAN_8021Q_GVRP
