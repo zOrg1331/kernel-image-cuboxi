@@ -274,6 +274,7 @@ static void pcie_device_init(struct pci_dev *parent, struct pcie_device *dev,
 	dev_set_name(device, "%s:pcie%02x",
 		 pci_name(parent), get_descriptor_id(port_type, service_type));
 	device->parent = &parent->dev;
+	device_enable_async_suspend(device, true);
 }
 
 /**
