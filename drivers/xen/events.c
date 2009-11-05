@@ -370,7 +370,11 @@ static int find_unbound_irq(void)
 	struct irq_desc *desc;
 	int start = get_nr_hw_irqs();
 
-	for (irq = start; irq < nr_irqs; irq++) {
+	if (start == nr_irqs)
+		goto no_irqs;
+
+	/* nr_irqs is a magic value. Must not use it.*/
+	for (irq = nr_irqs-1; irq > start; irq--) {
 		desc = irq_to_desc(irq);
 		/* only 0->15 have init'd desc; handle irq > 16 */
 		if (desc == NULL)
@@ -383,8 +387,8 @@ static int find_unbound_irq(void)
 			break;
 	}
 
-	if (irq == nr_irqs)
-		panic("No available IRQ to bind to: increase nr_irqs!\n");
+	if (irq == start)
+		goto no_irqs;
 
 	desc = irq_to_desc_alloc_node(irq, 0);
 	if (WARN_ON(desc == NULL))
@@ -393,6 +397,9 @@ static int find_unbound_irq(void)
 	dynamic_irq_init_keep_chip_data(irq);
 
 	return irq;
+
+no_irqs:
+	panic("No available IRQ to bind to: increase nr_irqs!\n");
 }
 
 static bool identity_mapped_irq(unsigned irq)
@@ -546,8 +553,15 @@ static int find_irq_by_gsi(unsigned gsi)
 	return -1;
 }
 
-/*
- * Allocate a physical irq, along with a vector.  We don't assign an
+/* xen_allocate_irq might allocate irqs from the top down, as a
+ * consequence don't assume that the irq number returned has a low value
+ * or can be used as a pirq number unless you know otherwise.
+ *
+ * One notable exception is when xen_allocate_irq is called passing an
+ * hardware gsi as argument, in that case the irq number returned
+ * matches the gsi number passed as first argument.
+
+ * Note: We don't assign an
  * event channel until the irq actually started up.  Return an
  * existing irq if we've already got one for the gsi.
  */
