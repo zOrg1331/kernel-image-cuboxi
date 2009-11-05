@@ -13,6 +13,7 @@
 #include <linux/buffer_head.h>
 #include <linux/gfs2_ondisk.h>
 #include <linux/crc32.h>
+#include <trace/events/gfs2.h>
 
 #include "gfs2.h"
 #include "incore.h"
@@ -25,7 +26,6 @@
 #include "trans.h"
 #include "dir.h"
 #include "util.h"
-#include "trace_gfs2.h"
 
 /* This doesn't need to be that large as max 64 bit pointers in a 4k
  * block is 512, so __u16 is fine for that. It saves stack space to

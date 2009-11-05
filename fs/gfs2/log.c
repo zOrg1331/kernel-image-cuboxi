@@ -18,6 +18,7 @@
 #include <linux/kthread.h>
 #include <linux/freezer.h>
 #include <linux/bio.h>
+#include <trace/events/gfs2.h>
 
 #include "gfs2.h"
 #include "incore.h"
@@ -28,7 +29,6 @@
 #include "meta_io.h"
 #include "util.h"
 #include "dir.h"
-#include "trace_gfs2.h"
 
 #define PULL 1
 
