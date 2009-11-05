@@ -37,7 +37,6 @@
 #include <sound/initval.h>
 
 static DEFINE_MUTEX(pcm_mutex);
-static DEFINE_MUTEX(io_mutex);
 static DECLARE_WAIT_QUEUE_HEAD(soc_pm_waitq);
 
 #ifdef CONFIG_DEBUG_FS
@@ -790,45 +789,6 @@ static int soc_resume(struct device *dev)
 
 	return 0;
 }
-
-/**
- * snd_soc_suspend_device: Notify core of device suspend
- *
- * @dev: Device being suspended.
- *
- * In order to ensure that the entire audio subsystem is suspended in a
- * coordinated fashion ASoC devices should suspend themselves when
- * called by ASoC.  When the standard kernel suspend process asks the
- * device to suspend it should call this function to initiate a suspend
- * of the entire ASoC card.
- *
- * \note Currently this function is stubbed out.
- */
-int snd_soc_suspend_device(struct device *dev)
-{
-	return 0;
-}
-EXPORT_SYMBOL_GPL(snd_soc_suspend_device);
-
-/**
- * snd_soc_resume_device: Notify core of device resume
- *
- * @dev: Device being resumed.
- *
- * In order to ensure that the entire audio subsystem is resumed in a
- * coordinated fashion ASoC devices should resume themselves when called
- * by ASoC.  When the standard kernel resume process asks the device
- * to resume it should call this function.  Once all the components of
- * the card have notified that they are ready to be resumed the card
- * will be resumed.
- *
- * \note Currently this function is stubbed out.
- */
-int snd_soc_resume_device(struct device *dev)
-{
-	return 0;
-}
-EXPORT_SYMBOL_GPL(snd_soc_resume_device);
 #else
 #define soc_suspend	NULL
 #define soc_resume	NULL
@@ -1262,21 +1222,39 @@ static const struct file_operations codec_reg_fops = {
 
 static void soc_init_codec_debugfs(struct snd_soc_codec *codec)
 {
+	char codec_root[128];
+
+	if (codec->dev)
+		snprintf(codec_root, sizeof(codec_root),
+			"%s.%s", codec->name, dev_name(codec->dev));
+	else
+		snprintf(codec_root, sizeof(codec_root),
+			"%s", codec->name);
+
+	codec->debugfs_codec_root = debugfs_create_dir(codec_root,
+						       debugfs_root);
+	if (!codec->debugfs_codec_root) {
+		printk(KERN_WARNING
+		       "ASoC: Failed to create codec debugfs directory\n");
+		return;
+	}
+
 	codec->debugfs_reg = debugfs_create_file("codec_reg", 0644,
-						 debugfs_root, codec,
-						 &codec_reg_fops);
+						 codec->debugfs_codec_root,
+						 codec, &codec_reg_fops);
 	if (!codec->debugfs_reg)
 		printk(KERN_WARNING
 		       "ASoC: Failed to create codec register debugfs file\n");
 
 	codec->debugfs_pop_time = debugfs_create_u32("dapm_pop_time", 0744,
-						     debugfs_root,
+						     codec->debugfs_codec_root,
 						     &codec->pop_time);
 	if (!codec->debugfs_pop_time)
 		printk(KERN_WARNING
 		       "Failed to create pop time debugfs file\n");
 
-	codec->debugfs_dapm = debugfs_create_dir("dapm", debugfs_root);
+	codec->debugfs_dapm = debugfs_create_dir("dapm",
+						 codec->debugfs_codec_root);
 	if (!codec->debugfs_dapm)
 		printk(KERN_WARNING
 		       "Failed to create DAPM debugfs directory\n");
@@ -1286,9 +1264,7 @@ static void soc_init_codec_debugfs(struct snd_soc_codec *codec)
 
 static void soc_cleanup_codec_debugfs(struct snd_soc_codec *codec)
 {
-	debugfs_remove_recursive(codec->debugfs_dapm);
-	debugfs_remove(codec->debugfs_pop_time);
-	debugfs_remove(codec->debugfs_reg);
+	debugfs_remove_recursive(codec->debugfs_codec_root);
 }
 
 #else
@@ -1369,17 +1345,39 @@ int snd_soc_update_bits(struct snd_soc_codec *codec, unsigned short reg,
 	int change;
 	unsigned int old, new;
 
-	mutex_lock(&io_mutex);
 	old = snd_soc_read(codec, reg);
 	new = (old & ~mask) | value;
 	change = old != new;
 	if (change)
 		snd_soc_write(codec, reg, new);
 
-	mutex_unlock(&io_mutex);
 	return change;
 }
 EXPORT_SYMBOL_GPL(snd_soc_update_bits);
+
+/**
+ * snd_soc_update_bits_locked - update codec register bits
+ * @codec: audio codec
+ * @reg: codec register
+ * @mask: register mask
+ * @value: new value
+ *
+ * Writes new register value, and takes the codec mutex.
+ *
+ * Returns 1 for change else 0.
+ */
+static int snd_soc_update_bits_locked(struct snd_soc_codec *codec,
+				unsigned short reg, unsigned int mask,
+				unsigned int value)
+{
+	int change;
+
+	mutex_lock(&codec->mutex);
+	change = snd_soc_update_bits(codec, reg, mask, value);
+	mutex_unlock(&codec->mutex);
+
+	return change;
+}
 
 /**
  * snd_soc_test_bits - test register for change
@@ -1399,11 +1397,9 @@ int snd_soc_test_bits(struct snd_soc_codec *codec, unsigned short reg,
 	int change;
 	unsigned int old, new;
 
-	mutex_lock(&io_mutex);
 	old = snd_soc_read(codec, reg);
 	new = (old & ~mask) | value;
 	change = old != new;
-	mutex_unlock(&io_mutex);
 
 	return change;
 }
@@ -1734,7 +1730,7 @@ int snd_soc_put_enum_double(struct snd_kcontrol *kcontrol,
 		mask |= (bitmask - 1) << e->shift_r;
 	}
 
-	return snd_soc_update_bits(codec, e->reg, mask, val);
+	return snd_soc_update_bits_locked(codec, e->reg, mask, val);
 }
 EXPORT_SYMBOL_GPL(snd_soc_put_enum_double);
 
@@ -1808,7 +1804,7 @@ int snd_soc_put_value_enum_double(struct snd_kcontrol *kcontrol,
 		mask |= e->mask << e->shift_r;
 	}
 
-	return snd_soc_update_bits(codec, e->reg, mask, val);
+	return snd_soc_update_bits_locked(codec, e->reg, mask, val);
 }
 EXPORT_SYMBOL_GPL(snd_soc_put_value_enum_double);
 
@@ -1969,7 +1965,7 @@ int snd_soc_put_volsw(struct snd_kcontrol *kcontrol,
 		val_mask |= mask << rshift;
 		val |= val2 << rshift;
 	}
-	return snd_soc_update_bits(codec, reg, val_mask, val);
+	return snd_soc_update_bits_locked(codec, reg, val_mask, val);
 }
 EXPORT_SYMBOL_GPL(snd_soc_put_volsw);
 
@@ -2075,11 +2071,11 @@ int snd_soc_put_volsw_2r(struct snd_kcontrol *kcontrol,
 	val = val << shift;
 	val2 = val2 << shift;
 
-	err = snd_soc_update_bits(codec, reg, val_mask, val);
+	err = snd_soc_update_bits_locked(codec, reg, val_mask, val);
 	if (err < 0)
 		return err;
 
-	err = snd_soc_update_bits(codec, reg2, val_mask, val2);
+	err = snd_soc_update_bits_locked(codec, reg2, val_mask, val2);
 	return err;
 }
 EXPORT_SYMBOL_GPL(snd_soc_put_volsw_2r);
@@ -2158,7 +2154,7 @@ int snd_soc_put_volsw_s8(struct snd_kcontrol *kcontrol,
 	val = (ucontrol->value.integer.value[0]+min) & 0xff;
 	val |= ((ucontrol->value.integer.value[1]+min) & 0xff) << 8;
 
-	return snd_soc_update_bits(codec, reg, 0xffff, val);
+	return snd_soc_update_bits_locked(codec, reg, 0xffff, val);
 }
 EXPORT_SYMBOL_GPL(snd_soc_put_volsw_s8);
 
@@ -2205,16 +2201,18 @@ EXPORT_SYMBOL_GPL(snd_soc_dai_set_clkdiv);
  * snd_soc_dai_set_pll - configure DAI PLL.
  * @dai: DAI
  * @pll_id: DAI specific PLL ID
+ * @source: DAI specific source for the PLL
  * @freq_in: PLL input clock frequency in Hz
  * @freq_out: requested PLL output clock frequency in Hz
  *
  * Configures and enables PLL to generate output clock based on input clock.
  */
-int snd_soc_dai_set_pll(struct snd_soc_dai *dai,
-	int pll_id, unsigned int freq_in, unsigned int freq_out)
+int snd_soc_dai_set_pll(struct snd_soc_dai *dai, int pll_id, int source,
+	unsigned int freq_in, unsigned int freq_out)
 {
 	if (dai->ops && dai->ops->set_pll)
-		return dai->ops->set_pll(dai, pll_id, freq_in, freq_out);
+		return dai->ops->set_pll(dai, pll_id, source,
+					 freq_in, freq_out);
 	else
 		return -EINVAL;
 }
@@ -2257,6 +2255,30 @@ int snd_soc_dai_set_tdm_slot(struct snd_soc_dai *dai,
 		return -EINVAL;
 }
 EXPORT_SYMBOL_GPL(snd_soc_dai_set_tdm_slot);
+
+/**
+ * snd_soc_dai_set_channel_map - configure DAI audio channel map
+ * @dai: DAI
+ * @tx_num: how many TX channels
+ * @tx_slot: pointer to an array which imply the TX slot number channel
+ *           0~num-1 uses
+ * @rx_num: how many RX channels
+ * @rx_slot: pointer to an array which imply the RX slot number channel
+ *           0~num-1 uses
+ *
+ * configure the relationship between channel number and TDM slot number.
+ */
+int snd_soc_dai_set_channel_map(struct snd_soc_dai *dai,
+	unsigned int tx_num, unsigned int *tx_slot,
+	unsigned int rx_num, unsigned int *rx_slot)
+{
+	if (dai->ops && dai->ops->set_channel_map)
+		return dai->ops->set_channel_map(dai, tx_num, tx_slot,
+			rx_num, rx_slot);
+	else
+		return -EINVAL;
+}
+EXPORT_SYMBOL_GPL(snd_soc_dai_set_channel_map);
 
 /**
  * snd_soc_dai_set_tristate - configure DAI system or master clock.
