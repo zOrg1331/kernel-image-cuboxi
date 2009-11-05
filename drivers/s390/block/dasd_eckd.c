@@ -24,7 +24,6 @@
 #include <asm/idals.h>
 #include <asm/ebcdic.h>
 #include <asm/io.h>
-#include <asm/todclk.h>
 #include <asm/uaccess.h>
 #include <asm/cio.h>
 #include <asm/ccwdev.h>
@@ -86,7 +85,8 @@ dasd_eckd_probe (struct ccw_device *cdev)
 	int ret;
 
 	/* set ECKD specific ccw-device options */
-	ret = ccw_device_set_options(cdev, CCWDEV_ALLOW_FORCE);
+	ret = ccw_device_set_options(cdev, CCWDEV_ALLOW_FORCE |
+				     CCWDEV_DO_PATHGROUP | CCWDEV_DO_MULTIPATH);
 	if (ret) {
 		DBF_EVENT(DBF_WARNING,
 		       "dasd_eckd_probe: could not set ccw-device options "
@@ -1012,9 +1012,9 @@ static struct dasd_ccw_req *dasd_eckd_build_psf_ssc(struct dasd_device *device,
 	}
 	psf_ssc_data = (struct dasd_psf_ssc_data *)cqr->data;
 	psf_ssc_data->order = PSF_ORDER_SSC;
-	psf_ssc_data->suborder = 0x40;
+	psf_ssc_data->suborder = 0xc0;
 	if (enable_pav) {
-		psf_ssc_data->suborder |= 0x88;
+		psf_ssc_data->suborder |= 0x08;
 		psf_ssc_data->reserved[0] = 0x88;
 	}
 	ccw = cqr->cpaddr;
@@ -1090,6 +1090,15 @@ dasd_eckd_check_characteristics(struct dasd_device *device)
 	struct dasd_block *block;
 	int is_known, rc;
 
+	if (!ccw_device_is_pathgroup(device->cdev)) {
+		dev_warn(&device->cdev->dev,
+			 "A channel path group could not be established\n");
+		return -EIO;
+	}
+	if (!ccw_device_is_multipath(device->cdev)) {
+		dev_info(&device->cdev->dev,
+			 "The DASD is not operating in multipath mode\n");
+	}
 	private = (struct dasd_eckd_private *) device->private;
 	if (!private) {
 		private = kzalloc(sizeof(*private), GFP_KERNEL | GFP_DMA);
