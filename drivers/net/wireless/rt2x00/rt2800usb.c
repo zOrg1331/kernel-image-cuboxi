@@ -1257,7 +1257,7 @@ static int rt2800usb_init_registers(struct rt2x00_dev *rt2x00dev)
 	unsigned int i;
 
 	/*
-	 * Wait untill BBP and RF are ready.
+	 * Wait until BBP and RF are ready.
 	 */
 	for (i = 0; i < REGISTER_BUSY_COUNT; i++) {
 		rt2x00usb_register_read(rt2x00dev, MAC_CSR0, &reg);
