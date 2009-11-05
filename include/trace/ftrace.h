@@ -120,9 +120,10 @@
 #undef __field
 #define __field(type, item)					\
 	ret = trace_seq_printf(s, "\tfield:" #type " " #item ";\t"	\
-			       "offset:%u;\tsize:%u;\n",		\
+			       "offset:%u;\tsize:%u;\tsigned:%u;\n",	\
 			       (unsigned int)offsetof(typeof(field), item), \
-			       (unsigned int)sizeof(field.item));	\
+			       (unsigned int)sizeof(field.item),	\
+			       (unsigned int)is_signed_type(type));	\
 	if (!ret)							\
 		return 0;
 
@@ -132,19 +133,21 @@
 #undef __array
 #define __array(type, item, len)						\
 	ret = trace_seq_printf(s, "\tfield:" #type " " #item "[" #len "];\t"	\
-			       "offset:%u;\tsize:%u;\n",		\
+			       "offset:%u;\tsize:%u;\tsigned:%u;\n",	\
 			       (unsigned int)offsetof(typeof(field), item), \
-			       (unsigned int)sizeof(field.item));	\
+			       (unsigned int)sizeof(field.item),	\
+			       (unsigned int)is_signed_type(type));	\
 	if (!ret)							\
 		return 0;
 
 #undef __dynamic_array
 #define __dynamic_array(type, item, len)				       \
 	ret = trace_seq_printf(s, "\tfield:__data_loc " #type "[] " #item ";\t"\
-			       "offset:%u;\tsize:%u;\n",		       \
+			       "offset:%u;\tsize:%u;\tsigned:%u;\n",	       \
 			       (unsigned int)offsetof(typeof(field),	       \
 					__data_loc_##item),		       \
-			       (unsigned int)sizeof(field.__data_loc_##item)); \
+			       (unsigned int)sizeof(field.__data_loc_##item), \
+			       (unsigned int)is_signed_type(type));	\
 	if (!ret)							       \
 		return 0;
 
@@ -399,12 +402,12 @@ static inline int ftrace_get_offsets_##call(				\
 									\
 static void ftrace_profile_##call(proto);				\
 									\
-static int ftrace_profile_enable_##call(void)				\
+static int ftrace_profile_enable_##call(struct ftrace_event_call *unused)\
 {									\
 	return register_trace_##call(ftrace_profile_##call);		\
 }									\
 									\
-static void ftrace_profile_disable_##call(void)				\
+static void ftrace_profile_disable_##call(struct ftrace_event_call *unused)\
 {									\
 	unregister_trace_##call(ftrace_profile_##call);			\
 }
@@ -423,7 +426,7 @@ static void ftrace_profile_disable_##call(void)				\
  *	event_trace_printk(_RET_IP_, "<call>: " <fmt>);
  * }
  *
- * static int ftrace_reg_event_<call>(void)
+ * static int ftrace_reg_event_<call>(struct ftrace_event_call *unused)
  * {
  *	int ret;
  *
@@ -434,7 +437,7 @@ static void ftrace_profile_disable_##call(void)				\
  *	return ret;
  * }
  *
- * static void ftrace_unreg_event_<call>(void)
+ * static void ftrace_unreg_event_<call>(struct ftrace_event_call *unused)
  * {
  *	unregister_trace_<call>(ftrace_event_<call>);
  * }
@@ -469,7 +472,7 @@ static void ftrace_profile_disable_##call(void)				\
  *	trace_current_buffer_unlock_commit(buffer, event, irq_flags, pc);
  * }
  *
- * static int ftrace_raw_reg_event_<call>(void)
+ * static int ftrace_raw_reg_event_<call>(struct ftrace_event_call *unused)
  * {
  *	int ret;
  *
@@ -480,7 +483,7 @@ static void ftrace_profile_disable_##call(void)				\
  *	return ret;
  * }
  *
- * static void ftrace_unreg_event_<call>(void)
+ * static void ftrace_unreg_event_<call>(struct ftrace_event_call *unused)
  * {
  *	unregister_trace_<call>(ftrace_raw_event_<call>);
  * }
@@ -489,7 +492,7 @@ static void ftrace_profile_disable_##call(void)				\
  *	.trace			= ftrace_raw_output_<call>, <-- stage 2
  * };
  *
- * static int ftrace_raw_init_event_<call>(void)
+ * static int ftrace_raw_init_event_<call>(struct ftrace_event_call *unused)
  * {
  *	int id;
  *
@@ -586,7 +589,7 @@ static void ftrace_raw_event_##call(proto)				\
 						  event, irq_flags, pc); \
 }									\
 									\
-static int ftrace_raw_reg_event_##call(void *ptr)			\
+static int ftrace_raw_reg_event_##call(struct ftrace_event_call *unused)\
 {									\
 	int ret;							\
 									\
@@ -597,7 +600,7 @@ static int ftrace_raw_reg_event_##call(void *ptr)			\
 	return ret;							\
 }									\
 									\
-static void ftrace_raw_unreg_event_##call(void *ptr)			\
+static void ftrace_raw_unreg_event_##call(struct ftrace_event_call *unused)\
 {									\
 	unregister_trace_##call(ftrace_raw_event_##call);		\
 }									\
@@ -606,7 +609,7 @@ static struct trace_event ftrace_event_type_##call = {			\
 	.trace			= ftrace_raw_output_##call,		\
 };									\
 									\
-static int ftrace_raw_init_event_##call(void)				\
+static int ftrace_raw_init_event_##call(struct ftrace_event_call *unused)\
 {									\
 	int id;								\
 									\
