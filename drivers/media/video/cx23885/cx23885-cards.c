@@ -28,6 +28,7 @@
 #include "cx23885.h"
 #include "tuner-xc2028.h"
 #include "netup-init.h"
+#include "cx23888-ir.h"
 
 /* ------------------------------------------------------------------ */
 /* board config info                                                  */
@@ -199,11 +200,61 @@ struct cx23885_board cx23885_boards[] = {
 	},
 	[CX23885_BOARD_MYGICA_X8506] = {
 		.name		= "Mygica X8506 DMB-TH",
+		.tuner_type = TUNER_XC5000,
+		.tuner_addr = 0x61,
+		.porta		= CX23885_ANALOG_VIDEO,
 		.portb		= CX23885_MPEG_DVB,
+		.input		= {
+			{
+				.type   = CX23885_VMUX_TELEVISION,
+				.vmux   = CX25840_COMPOSITE2,
+			},
+			{
+				.type   = CX23885_VMUX_COMPOSITE1,
+				.vmux   = CX25840_COMPOSITE8,
+			},
+			{
+				.type   = CX23885_VMUX_SVIDEO,
+				.vmux   = CX25840_SVIDEO_LUMA3 |
+						CX25840_SVIDEO_CHROMA4,
+			},
+			{
+				.type   = CX23885_VMUX_COMPONENT,
+				.vmux   = CX25840_COMPONENT_ON |
+					CX25840_VIN1_CH1 |
+					CX25840_VIN6_CH2 |
+					CX25840_VIN7_CH3,
+			},
+		},
 	},
 	[CX23885_BOARD_MAGICPRO_PROHDTVE2] = {
 		.name		= "Magic-Pro ProHDTV Extreme 2",
+		.tuner_type = TUNER_XC5000,
+		.tuner_addr = 0x61,
+		.porta		= CX23885_ANALOG_VIDEO,
 		.portb		= CX23885_MPEG_DVB,
+		.input		= {
+			{
+				.type   = CX23885_VMUX_TELEVISION,
+				.vmux   = CX25840_COMPOSITE2,
+			},
+			{
+				.type   = CX23885_VMUX_COMPOSITE1,
+				.vmux   = CX25840_COMPOSITE8,
+			},
+			{
+				.type   = CX23885_VMUX_SVIDEO,
+				.vmux   = CX25840_SVIDEO_LUMA3 |
+						CX25840_SVIDEO_CHROMA4,
+			},
+			{
+				.type   = CX23885_VMUX_COMPONENT,
+				.vmux   = CX25840_COMPONENT_ON |
+					CX25840_VIN1_CH1 |
+					CX25840_VIN6_CH2 |
+					CX25840_VIN7_CH3,
+			},
+		},
 	},
 	[CX23885_BOARD_HAUPPAUGE_HVR1850] = {
 		.name		= "Hauppauge WinTV-HVR1850",
@@ -758,12 +809,13 @@ void cx23885_gpio_setup(struct cx23885_dev *dev)
 		break;
 	case CX23885_BOARD_MYGICA_X8506:
 	case CX23885_BOARD_MAGICPRO_PROHDTVE2:
+		/* GPIO-0 (0)Analog / (1)Digital TV */
 		/* GPIO-1 reset XC5000 */
 		/* GPIO-2 reset LGS8GL5 / LGS8G75 */
-		cx_set(GP0_IO, 0x00060000);
-		cx_clear(GP0_IO, 0x00000006);
+		cx23885_gpio_enable(dev, GPIO_0 | GPIO_1 | GPIO_2, 1);
+		cx23885_gpio_clear(dev, GPIO_1 | GPIO_2);
 		mdelay(100);
-		cx_set(GP0_IO, 0x00060006);
+		cx23885_gpio_set(dev, GPIO_0 | GPIO_1 | GPIO_2);
 		mdelay(100);
 		break;
 	case CX23885_BOARD_HAUPPAUGE_HVR1850:
@@ -801,6 +853,7 @@ void cx23885_gpio_setup(struct cx23885_dev *dev)
 
 int cx23885_ir_init(struct cx23885_dev *dev)
 {
+	int ret = 0;
 	switch (dev->board) {
 	case CX23885_BOARD_HAUPPAUGE_HVR1250:
 	case CX23885_BOARD_HAUPPAUGE_HVR1500:
@@ -812,15 +865,43 @@ int cx23885_ir_init(struct cx23885_dev *dev)
 	case CX23885_BOARD_HAUPPAUGE_HVR1275:
 	case CX23885_BOARD_HAUPPAUGE_HVR1255:
 	case CX23885_BOARD_HAUPPAUGE_HVR1210:
-	case CX23885_BOARD_HAUPPAUGE_HVR1850:
 		/* FIXME: Implement me */
+		break;
+	case CX23885_BOARD_HAUPPAUGE_HVR1850:
+		ret = cx23888_ir_probe(dev);
+		if (ret)
+			break;
+		dev->sd_ir = cx23885_find_hw(dev, CX23885_HW_888_IR);
+		dev->pci_irqmask |= PCI_MSK_IR;
 		break;
 	case CX23885_BOARD_DVICO_FUSIONHDTV_DVB_T_DUAL_EXP:
 		request_module("ir-kbd-i2c");
 		break;
 	}
 
-	return 0;
+	return ret;
+}
+
+void cx23885_ir_fini(struct cx23885_dev *dev)
+{
+	switch (dev->board) {
+	case CX23885_BOARD_HAUPPAUGE_HVR1850:
+		dev->pci_irqmask &= ~PCI_MSK_IR;
+		cx_clear(PCI_INT_MSK, PCI_MSK_IR);
+		cx23888_ir_remove(dev);
+		dev->sd_ir = NULL;
+		break;
+	}
+}
+
+void cx23885_ir_pci_int_enable(struct cx23885_dev *dev)
+{
+	switch (dev->board) {
+	case CX23885_BOARD_HAUPPAUGE_HVR1850:
+		if (dev->sd_ir && (dev->pci_irqmask & PCI_MSK_IR))
+			cx_set(PCI_INT_MSK, PCI_MSK_IR);
+		break;
+	}
 }
 
 void cx23885_card_setup(struct cx23885_dev *dev)
@@ -939,6 +1020,9 @@ void cx23885_card_setup(struct cx23885_dev *dev)
 	case CX23885_BOARD_COMPRO_VIDEOMATE_E650F:
 	case CX23885_BOARD_NETUP_DUAL_DVBS2_CI:
 	case CX23885_BOARD_COMPRO_VIDEOMATE_E800:
+	case CX23885_BOARD_HAUPPAUGE_HVR1850:
+	case CX23885_BOARD_MYGICA_X8506:
+	case CX23885_BOARD_MAGICPRO_PROHDTVE2:
 		dev->sd_cx25840 = v4l2_i2c_new_subdev(&dev->v4l2_dev,
 				&dev->i2c_bus[2].i2c_adap,
 				"cx25840", "cx25840", 0x88 >> 1, NULL);
