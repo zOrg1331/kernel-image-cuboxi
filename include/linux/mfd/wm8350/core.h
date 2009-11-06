@@ -646,10 +646,12 @@ struct wm8350 {
  * @init: Function called during driver initialisation.  Should be
  *        used by the platform to configure GPIO functions and similar.
  * @irq_high: Set if WM8350 IRQ is active high.
+ * @irq_base: Base IRQ for genirq (not currently used).
  */
 struct wm8350_platform_data {
 	int (*init)(struct wm8350 *wm8350);
 	int irq_high;
+	int irq_base;
 };
 
 
@@ -681,6 +683,8 @@ int wm8350_register_irq(struct wm8350 *wm8350, int irq,
 int wm8350_free_irq(struct wm8350 *wm8350, int irq);
 int wm8350_mask_irq(struct wm8350 *wm8350, int irq);
 int wm8350_unmask_irq(struct wm8350 *wm8350, int irq);
-
+int wm8350_irq_init(struct wm8350 *wm8350, int irq,
+		    struct wm8350_platform_data *pdata);
+int wm8350_irq_exit(struct wm8350 *wm8350);
 
 #endif
