@@ -51,7 +51,10 @@ copy: diff-ms-fno-delete-null-check-in-makefile
 copy: diff-ms-mmap-min-addr
 copy: diff-ms-nfssync-20081118
 copy: diff-ms-personality-fix-PER_CLEAR_ON_SETID
+copy: diff-ms-pipe-open-check-20091104
 copy: diff-ms-splice-access-20080211
+copy: diff-ms-udp-MSG_PROBE-queue-sync-check-20090826
+copy: diff-ms-use-kernel_sendpage-in-sock_sendpage
 copy: diff-nbd-compile-fixes
 copy: diff-nbd-forbid-socket-clear-without-disconnect-20090529
 copy: diff-nbd-from-current
@@ -71,6 +74,7 @@ copy: diff-scsi-add-modalias-mainstream
 copy: diff-show-task-running-20081117
 copy: diff-snd-hda-intel
 copy: diff-tossing-headers-around
+copy: diff-ve-flock-fail-oops-fix
 copy: diff-ve-hook-in-daemonize-20090723
 copy: diff-ve-moreleaks-20090829
 copy: diff-ve-nfs-xprt-owner_env-save-20090724
