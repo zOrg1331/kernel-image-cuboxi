@@ -1118,6 +1118,11 @@ config BASE_SMALL
 	default 0 if BASE_FULL
 	default 1 if !BASE_FULL
 
+config HAVE_SYMBOL_PREFIX
+	bool
+	help
+	  Some arch toolchains use a `_' prefix for all user symbols.
+
 menuconfig MODULES
 	bool "Enable loadable module support"
 	help
