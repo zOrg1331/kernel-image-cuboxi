@@ -1,8 +1,20 @@
 #ifndef LINUX_MOD_EXPORT_H
 #define LINUX_MOD_EXPORT_H
+/*
+ * Define EXPORT_SYMBOL() and friends for kernel modules.
+ *
+ * Under __GENKSYMS__ these definitions are skipped, making it possible to
+ * scan for EXPORT_SYMBOL() in preprocessed C files.
+ *
+ * Under __MODPOST_EXPORTS__ we skip C definitions and define __EXPORT_SYMBOL()
+ * in arch-independent assembly code.  This makes it possible to construct
+ * sorted symbol tables.
+ */
+
+#ifndef __GENKSYMS__
+#ifndef __MODPOST_EXPORTS__
 
 #include <linux/compiler.h>
-#include <asm/module.h>
 
 /* Some toolchains use a `_' prefix for all user symbols. */
 #ifdef CONFIG_SYMBOL_PREFIX
@@ -11,13 +23,13 @@
 #define MODULE_SYMBOL_PREFIX ""
 #endif
 
+#ifdef CONFIG_MODULES
+
 struct kernel_symbol {
 	unsigned long value;
 	const char *name;
 };
 
-#ifdef CONFIG_MODULES
-#ifndef __GENKSYMS__
 #ifdef CONFIG_MODVERSIONS
 /* Mark the CRC weak since genksyms apparently decides not to
  * generate a checksums for some symbols */
@@ -60,8 +72,6 @@ struct kernel_symbol {
 #define EXPORT_UNUSED_SYMBOL_GPL(sym)
 #endif
 
-#endif /* __GENKSYMS__ */
-
 #else /* !CONFIG_MODULES */
 
 #define EXPORT_SYMBOL(sym)
@@ -71,5 +81,69 @@ struct kernel_symbol {
 #define EXPORT_UNUSED_SYMBOL_GPL(sym)
 
 #endif /* CONFIG_MODULES */
+
+#else /* __MODPOST_EXPORTS__ */
+/*
+ * Here is the arch-independent assembly version, used in .tmp_exports-asm.S.
+ *
+ * We use CPP macros since they are more familiar than assembly macros.
+ * Note that CPP macros eat newlines, so each pseudo-instruction must be
+ * terminated by a semicolon.
+ */
+
+#include <asm/bitsperlong.h>
+#include <linux/stringify.h>
+
+#if BITS_PER_LONG == 64
+#define PTR .quad
+#define ALGN .balign 8
+#else
+#define PTR .long
+#define ALGN .balign 4
+#endif
+
+/* build system gives us an unstringified version of CONFIG_SYMBOL_PREFIX */
+#ifndef SYMBOL_PREFIX
+#define SYM(sym) sym
+#else
+#define PASTE2(x,y) x##y
+#define PASTE(x,y) PASTE2(x,y)
+#define SYM(sym) PASTE(SYMBOL_PREFIX, sym)
+#endif
+
+
+#ifdef CONFIG_MODVERSIONS
+#define __CRC_SYMBOL(sym, crcsec)				\
+	.globl SYM(__crc_##sym);				\
+	.weak SYM(__crc_##sym);					\
+	.pushsection crcsec, "a";				\
+	ALGN;							\
+	SYM(__kcrctab_##sym):					\
+	PTR SYM(__crc_##sym);					\
+	.popsection;
+#else
+#define __CRC_SYMBOL(sym, section)
+#endif
+
+#define __EXPORT_SYMBOL(sym, sec, strsec, crcsec)		\
+	.globl SYM(sym);					\
+								\
+	__CRC_SYMBOL(sym, crcsec)				\
+								\
+	.pushsection strsec, "a";				\
+	SYM(__kstrtab_##sym):					\
+	.asciz __stringify(SYM(sym));				\
+	.popsection;						\
+								\
+	.pushsection sec, "a";					\
+	ALGN;							\
+	SYM(__ksymtab_##sym):					\
+	PTR SYM(sym);						\
+	PTR SYM(__kstrtab_##sym);				\
+	.popsection;
+
+#endif /* __MODPOST_EXPORTS__ */
+
+#endif /* __GENKSYMS__ */
 
 #endif /* LINUX_MOD_EXPORT_H */
