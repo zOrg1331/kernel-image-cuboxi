@@ -168,6 +168,62 @@ void *__symbol_get(const char *symbol);
 void *__symbol_get_gpl(const char *symbol);
 #define symbol_get(x) ((typeof(&x))(__symbol_get(MODULE_SYMBOL_PREFIX #x)))
 
+#ifdef CONFIG_UNUSED_SYMBOLS
+enum export_type {
+	/* GPL-only exported symbols. */
+	__EXPORT_FLAG_GPL_ONLY =	0x1,
+
+	/* unused exported symbols. */
+	__EXPORT_FLAG_UNUSED =		0x2,
+
+	/* exports that will be GPL-only in the near future. */
+	__EXPORT_FLAG_GPL_FUTURE =	0x4,
+
+	EXPORT_TYPE_PLAIN =		0x0,
+	EXPORT_TYPE_GPL =		0x1,
+	EXPORT_TYPE_UNUSED =		0x2,
+	EXPORT_TYPE_UNUSED_GPL =	0x3,
+	EXPORT_TYPE_GPL_FUTURE = 	0x4,
+
+	EXPORT_TYPE_MAX
+};
+
+#else /* !CONFIG_UNUSED_EXPORTS */
+enum export_type {
+	__EXPORT_FLAG_UNUSED =		0x0,
+	__EXPORT_FLAG_GPL_ONLY =	0x1,
+	__EXPORT_FLAG_GPL_FUTURE =	0x2,
+
+	EXPORT_TYPE_PLAIN =		0x0,
+	EXPORT_TYPE_GPL =		0x1,
+	EXPORT_TYPE_GPL_FUTURE = 	0x2,
+	EXPORT_TYPE_MAX
+};
+#endif
+
+static inline bool export_is_gpl_only(enum export_type type)
+{
+	return (type & __EXPORT_FLAG_GPL_ONLY);
+}
+
+static inline bool export_is_unused(enum export_type type)
+{
+	return (type & __EXPORT_FLAG_UNUSED);
+}
+
+static inline bool export_is_gpl_future(enum export_type type)
+{
+	return (type & __EXPORT_FLAG_GPL_FUTURE);
+}
+
+struct ksymtab {
+	const struct kernel_symbol *syms;
+#ifdef CONFIG_MODVERSIONS
+	const unsigned long *crcs;
+#endif
+	unsigned int num_syms;
+};
+
 enum module_state
 {
 	MODULE_STATE_LIVE,
@@ -193,35 +249,11 @@ struct module
 	struct kobject *holders_dir;
 
 	/* Exported symbols */
-	const struct kernel_symbol *syms;
-	const unsigned long *crcs;
-	unsigned int num_syms;
+	struct ksymtab syms[EXPORT_TYPE_MAX];
 
 	/* Kernel parameters. */
 	struct kernel_param *kp;
 	unsigned int num_kp;
-
-	/* GPL-only exported symbols. */
-	unsigned int num_gpl_syms;
-	const struct kernel_symbol *gpl_syms;
-	const unsigned long *gpl_crcs;
-
-#ifdef CONFIG_UNUSED_SYMBOLS
-	/* unused exported symbols. */
-	const struct kernel_symbol *unused_syms;
-	const unsigned long *unused_crcs;
-	unsigned int num_unused_syms;
-
-	/* GPL-only, unused exported symbols. */
-	unsigned int num_unused_gpl_syms;
-	const struct kernel_symbol *unused_gpl_syms;
-	const unsigned long *unused_gpl_crcs;
-#endif
-
-	/* symbols that will be GPL-only in the near future. */
-	const struct kernel_symbol *gpl_future_syms;
-	const unsigned long *gpl_future_crcs;
-	unsigned int num_gpl_future_syms;
 
 	/* Exception table */
 	unsigned int num_exentries;
@@ -352,17 +384,6 @@ static inline int within_module_init(unsigned long addr, struct module *mod)
 /* Search for module by name: must hold module_mutex. */
 struct module *find_module(const char *name);
 
-struct symsearch {
-	const struct kernel_symbol *start, *stop;
-	const unsigned long *crcs;
-	enum {
-		NOT_GPL_ONLY,
-		GPL_ONLY,
-		WILL_BE_GPL_ONLY,
-	} licence;
-	bool unused;
-};
-
 /* Search for an exported symbol by name. */
 const struct kernel_symbol *find_symbol(const char *name,
 					struct module **owner,
@@ -370,9 +391,14 @@ const struct kernel_symbol *find_symbol(const char *name,
 					bool gplok,
 					bool warn);
 
+typedef bool each_symbol_fn_t (enum export_type type,
+			       const struct kernel_symbol *sym,
+			       const unsigned long *crc,
+			       struct module *owner,
+			       void *data);
+
 /* Walk the exported symbol table */
-bool each_symbol(bool (*fn)(const struct symsearch *arr, struct module *owner,
-			    unsigned int symnum, void *data), void *data);
+bool each_symbol(each_symbol_fn_t *fn, void *data);
 
 /* Returns 0 and fills in value, defined and namebuf, or -ERANGE if
    symnum out of range. */
