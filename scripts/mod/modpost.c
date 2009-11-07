@@ -163,6 +163,7 @@ struct symbol {
 };
 
 static struct symbol *symbolhash[SYMBOL_HASH_SIZE];
+unsigned int symbolcount;
 
 /* This is based on the hash agorithm from gdbm, via tdb */
 static inline unsigned int tdb_hash(const char *name)
@@ -200,6 +201,7 @@ static struct symbol *new_symbol(const char *name, struct module *module,
 	unsigned int hash;
 	struct symbol *new;
 
+	symbolcount++;
 	hash = tdb_hash(name) % SYMBOL_HASH_SIZE;
 	new = symbolhash[hash] = alloc_symbol(name, 0, symbolhash[hash]);
 	new->module = module;
@@ -1998,6 +2000,58 @@ static void write_dump(const char *fname)
 	write_if_changed(&buf, fname);
 }
 
+static const char *section_names[] = {
+	[export_plain] 		= "",
+	[export_unused]		= "_unused",
+	[export_gpl]		= "_gpl",
+	[export_unused_gpl]	= "_unused_gpl",
+	[export_gpl_future]	= "_gpl_future",
+};
+
+static int compare_symbol_names(const void *a, const void *b)
+{
+	struct symbol *const *syma = a;
+	struct symbol *const *symb = b;
+
+	return strcmp((*syma)->name, (*symb)->name);
+}
+
+/* sort exported symbols and output using arch-independent assembly macros */
+static void write_exports(const char *fname)
+{
+	struct buffer buf = { };
+	struct symbol *sym, **symbols;
+	int i, n;
+
+	symbols = NOFAIL(malloc(sizeof(struct symbol *) * symbolcount));
+	n = 0;
+
+	for (i = 0; i < SYMBOL_HASH_SIZE; i++) {
+		for (sym = symbolhash[i]; sym; sym = sym->next)
+			symbols[n++] = sym;
+	}
+
+	qsort(symbols, n, sizeof(struct symbol *), compare_symbol_names);
+
+	buf_printf(&buf, "#define __MODPOST_EXPORTS__\n");
+	buf_printf(&buf, "#include <linux/mod_export.h>\n");
+	buf_printf(&buf, "\n");
+
+	for (i = 0; i < n; i++) {
+		sym = symbols[i];
+
+		buf_printf(&buf, "__EXPORT_SYMBOL(%s,"
+					" __ksymtab%s_sorted,"
+					" __ksymtab_strings_sorted,"
+					" __kcrctab%s_sorted)\n",
+					sym->name,
+					section_names[sym->export],
+					section_names[sym->export]);
+	}
+
+	write_if_changed(&buf, fname);
+}
+
 static void add_marker(struct module *mod, const char *name, const char *fmt)
 {
 	char *line = NULL;
@@ -2099,6 +2153,7 @@ int main(int argc, char **argv)
 	struct buffer buf = { };
 	char *kernel_read = NULL, *module_read = NULL;
 	char *dump_write = NULL;
+	char *exports_write = NULL;
 	char *markers_read = NULL;
 	char *markers_write = NULL;
 	int opt;
@@ -2106,7 +2161,7 @@ int main(int argc, char **argv)
 	struct ext_sym_list *extsym_iter;
 	struct ext_sym_list *extsym_start = NULL;
 
-	while ((opt = getopt(argc, argv, "i:I:e:cmsSo:awM:K:")) != -1) {
+	while ((opt = getopt(argc, argv, "i:I:e:cmsSo:awM:K:x:")) != -1) {
 		switch (opt) {
 		case 'i':
 			kernel_read = optarg;
@@ -2143,6 +2198,9 @@ int main(int argc, char **argv)
 			break;
 		case 'w':
 			warn_unresolved = 1;
+			break;
+		case 'x':
+			exports_write = optarg;
 			break;
 			case 'M':
 				markers_write = optarg;
@@ -2203,6 +2261,9 @@ int main(int argc, char **argv)
 		     "To see full details build your kernel with:\n"
 		     "'make CONFIG_DEBUG_SECTION_MISMATCH=y'\n",
 		     sec_mismatch_count);
+
+	if (exports_write)
+		write_exports(exports_write);
 
 	if (markers_read)
 		read_markers(markers_read);
