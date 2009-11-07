@@ -1855,33 +1855,19 @@ static void free_modinfo(struct module *mod)
 
 #ifdef CONFIG_KALLSYMS
 
-/* lookup symbol in given range of kernel_symbols */
-static const struct kernel_symbol *lookup_symbol(const char *name,
-	const struct kernel_symbol *syms,
-	unsigned int count)
-{
-	unsigned int i;
-
-	for (i = 0; i < count; i++)
-		if (strcmp(syms[i].name, name) == 0)
-			return &syms[i];
-	return NULL;
-}
-
 static int is_exported(const char *name, unsigned long value,
-		       const struct module *mod)
+		       struct module *mod)
 {
-	const struct ksymtab *symtab;
-	const struct kernel_symbol *ks;
+	const struct kernel_symbol *sym;
+	enum export_type type;
+	const unsigned long *crc;
 
-	if (!mod)
-		symtab = &ksymtab[EXPORT_TYPE_PLAIN];
+	if (mod)
+		sym = find_symbol_in_module(mod, name, &type, &crc);
 	else
-		symtab = &mod->syms[EXPORT_TYPE_PLAIN];
+		sym = find_symbol_in_kernel(name, &type, &crc);
 
-	ks = lookup_symbol(name, symtab->syms, symtab->num_syms);
-
-	return ks != NULL && ks->value == value;
+	return (sym && sym->value == value);
 }
 
 /* As per nm */
