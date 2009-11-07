@@ -55,6 +55,7 @@
 #include <linux/async.h>
 #include <linux/percpu.h>
 #include <linux/kmemleak.h>
+#include <linux/bsearch.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/module.h>
@@ -279,60 +280,62 @@ bool each_symbol(each_symbol_fn_t *fn, void *data)
 }
 EXPORT_SYMBOL_GPL(each_symbol);
 
-struct find_symbol_arg {
-	/* Input */
-	const char *name;
-	bool gplok;
-	bool warn;
-
-	/* Output */
-	struct module *owner;
-	const unsigned long *crc;
-	const struct kernel_symbol *sym;
-};
-
-static bool find_symbol_in_section(enum export_type type,
-				   const struct kernel_symbol *sym,
-				   const unsigned long *crc,
-				   struct module *owner,
-				   void *data)
+static int symbol_compare(const void *key, const void *elt)
 {
-	struct find_symbol_arg *fsa = data;
+	const char *str = key;
+	const struct kernel_symbol *sym = elt;
+	return strcmp(str, sym->name);
+}
 
-	if (strcmp(sym->name, fsa->name) != 0)
-		return false;
+/* binary search on sorted symbols */
+static const struct kernel_symbol *find_symbol_in_kernel(
+	const char *name,
+	enum export_type *t,
+	const unsigned long **crc)
+{
+	struct kernel_symbol *sym;
+	enum export_type type;
+	unsigned int i;
 
-	if (!fsa->gplok) {
-		if (export_is_gpl_only(type))
-			return false;
-		if (export_is_gpl_future(type) && fsa->warn) {
-			printk(KERN_WARNING "Symbol %s is being used "
-			       "by a non-GPL module, which will not "
-			       "be allowed in the future\n", fsa->name);
-			printk(KERN_WARNING "Please see the file "
-			       "Documentation/feature-removal-schedule.txt "
-			       "in the kernel source tree for more details.\n");
+	for (type = 0; type < ARRAY_SIZE(ksymtab); type++) {
+		sym = bsearch(name, ksymtab[type].syms, ksymtab[type].num_syms,
+			      sizeof(struct kernel_symbol), symbol_compare);
+		if (sym) {
+			i = sym - ksymtab[type].syms;
+			*crc = symversion(ksymtab[type].crcs, i);
+			*t = type;
+			return sym;
 		}
 	}
 
-#ifdef CONFIG_UNUSED_SYMBOLS
-	if (export_is_unused(type) && fsa->warn) {
-		printk(KERN_WARNING "Symbol %s is marked as UNUSED, "
-		       "however this module is using it.\n", fsa->name);
-		printk(KERN_WARNING
-		       "This symbol will go away in the future.\n");
-		printk(KERN_WARNING
-		       "Please evalute if this is the right api to use and if "
-		       "it really is, submit a report the linux kernel "
-		       "mailinglist together with submitting your code for "
-		       "inclusion.\n");
-	}
-#endif
+	return NULL;
+}
 
-	fsa->owner = owner;
-	fsa->crc = crc;
-	fsa->sym = sym;
-	return true;
+/* linear search on unsorted symbols */
+static const struct kernel_symbol *find_symbol_in_module(
+	struct module *mod,
+	const char *name,
+	enum export_type *t,
+	const unsigned long **crc)
+{
+	struct ksymtab *symtab = mod->syms;
+	const struct kernel_symbol *sym;
+	enum export_type type;
+	unsigned int i;
+
+	for (type = 0; type < EXPORT_TYPE_MAX; type++) {
+		for (i = 0; i < symtab[type].num_syms; i++) {
+			sym = &symtab[type].syms[i];
+
+			if (strcmp(sym->name, name) == 0) {
+				*crc = symversion(symtab[type].crcs, i);
+				*t = type;
+				return sym;
+			}
+		}
+	}
+
+	return NULL;
 }
 
 /* Find a symbol and return it, along with, (optional) crc and
@@ -343,22 +346,57 @@ const struct kernel_symbol *find_symbol(const char *name,
 					bool gplok,
 					bool warn)
 {
-	struct find_symbol_arg fsa;
+	struct module *mod = NULL;
+	const struct kernel_symbol *sym;
+	enum export_type type;
+	const unsigned long *crc_value;
 
-	fsa.name = name;
-	fsa.gplok = gplok;
-	fsa.warn = warn;
+	sym = find_symbol_in_kernel(name, &type, &crc_value);
+	if (sym)
+		goto found;
 
-	if (each_symbol(find_symbol_in_section, &fsa)) {
-		if (owner)
-			*owner = fsa.owner;
-		if (crc)
-			*crc = fsa.crc;
-		return fsa.sym;
+	list_for_each_entry_rcu(mod, &modules, list) {
+		sym = find_symbol_in_module(mod, name, &type, &crc_value);
+		if (sym)
+			goto found;
 	}
 
 	DEBUGP("Failed to find symbol %s\n", name);
 	return NULL;
+
+found:
+	if (!gplok) {
+		if (export_is_gpl_only(type))
+			return NULL;
+		if (export_is_gpl_future(type) && warn) {
+			printk(KERN_WARNING "Symbol %s is being used "
+			       "by a non-GPL module, which will not "
+			       "be allowed in the future\n", name);
+			printk(KERN_WARNING "Please see the file "
+			       "Documentation/feature-removal-schedule.txt "
+			       "in the kernel source tree for more details.\n");
+		}
+	}
+
+#ifdef CONFIG_UNUSED_SYMBOLS
+	if (export_is_unused(type) && warn) {
+		printk(KERN_WARNING "Symbol %s is marked as UNUSED, "
+		       "however this module is using it.\n", name);
+		printk(KERN_WARNING
+		       "This symbol will go away in the future.\n");
+		printk(KERN_WARNING
+		       "Please evalute if this is the right api to use and if "
+		       "it really is, submit a report the linux kernel "
+		       "mailinglist together with submitting your code for "
+		       "inclusion.\n");
+	}
+#endif
+
+	if (owner)
+		*owner = mod;
+	if (crc)
+		*crc = crc_value;
+	return sym;
 }
 EXPORT_SYMBOL_GPL(find_symbol);
 
