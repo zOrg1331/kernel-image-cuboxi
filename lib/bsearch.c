@@ -34,8 +34,6 @@ void *bsearch(const void *key, const void *base, size_t num, size_t size,
 	      int (*cmp)(const void *key, const void *elt))
 {
 	int start = 0, end = num - 1, mid, result;
-	if (num == 0)
-		return NULL;
 
 	while (start <= end) {
 		mid = (start + end) / 2;
