@@ -3234,6 +3234,10 @@ Patch100021: diff-ms-fno-delete-null-check-in-makefile
 Patch100022: diff-ms-personality-fix-PER_CLEAR_ON_SETID
 Patch100023: diff-ve-hook-in-daemonize-20090723
 Patch100024: diff-ve-nfs-xprt-owner_env-save-20090724
+Patch100025: diff-ve-flock-fail-oops-fix
+Patch100026: diff-ms-use-kernel_sendpage-in-sock_sendpage
+Patch100027: diff-ms-udp-MSG_PROBE-queue-sync-check-20090826
+Patch100028: diff-ms-pipe-open-check-20091104
 
 # NBD
 Patch110001: diff-nbd-from-current
@@ -6436,6 +6440,10 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100022 -p1
 %patch100023 -p1
 %patch100024 -p1
+%patch100025 -p1
+%patch100026 -p1
+%patch100027 -p1
+%patch100028 -p1
 
 %patch110001 -p1
 %patch110002 -p1
