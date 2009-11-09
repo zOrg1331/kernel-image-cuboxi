@@ -130,7 +130,7 @@ void cfg80211_send_rx_assoc(struct net_device *dev, const u8 *buf, size_t len)
 }
 EXPORT_SYMBOL(cfg80211_send_rx_assoc);
 
-static void __cfg80211_send_deauth(struct net_device *dev,
+void __cfg80211_send_deauth(struct net_device *dev,
 				   const u8 *buf, size_t len)
 {
 	struct wireless_dev *wdev = dev->ieee80211_ptr;
@@ -139,7 +139,6 @@ static void __cfg80211_send_deauth(struct net_device *dev,
 	struct ieee80211_mgmt *mgmt = (struct ieee80211_mgmt *)buf;
 	const u8 *bssid = mgmt->bssid;
 	int i;
-	bool done = false;
 
 	ASSERT_WDEV_LOCK(wdev);
 
@@ -147,7 +146,6 @@ static void __cfg80211_send_deauth(struct net_device *dev,
 
 	if (wdev->current_bss &&
 	    memcmp(wdev->current_bss->pub.bssid, bssid, ETH_ALEN) == 0) {
-		done = true;
 		cfg80211_unhold_bss(wdev->current_bss);
 		cfg80211_put_bss(&wdev->current_bss->pub);
 		wdev->current_bss = NULL;
@@ -157,7 +155,6 @@ static void __cfg80211_send_deauth(struct net_device *dev,
 			cfg80211_unhold_bss(wdev->auth_bsses[i]);
 			cfg80211_put_bss(&wdev->auth_bsses[i]->pub);
 			wdev->auth_bsses[i] = NULL;
-			done = true;
 			break;
 		}
 		if (wdev->authtry_bsses[i] &&
@@ -165,12 +162,9 @@ static void __cfg80211_send_deauth(struct net_device *dev,
 			cfg80211_unhold_bss(wdev->authtry_bsses[i]);
 			cfg80211_put_bss(&wdev->authtry_bsses[i]->pub);
 			wdev->authtry_bsses[i] = NULL;
-			done = true;
 			break;
 		}
 	}
-
-	WARN_ON(!done);
 
 	if (wdev->sme_state == CFG80211_SME_CONNECTED) {
 		u16 reason_code;
@@ -186,27 +180,19 @@ static void __cfg80211_send_deauth(struct net_device *dev,
 					  false, NULL);
 	}
 }
+EXPORT_SYMBOL(__cfg80211_send_deauth);
 
-
-void cfg80211_send_deauth(struct net_device *dev, const u8 *buf, size_t len,
-			  void *cookie)
+void cfg80211_send_deauth(struct net_device *dev, const u8 *buf, size_t len)
 {
 	struct wireless_dev *wdev = dev->ieee80211_ptr;
 
-	BUG_ON(cookie && wdev != cookie);
-
-	if (cookie) {
-		/* called within callback */
-		__cfg80211_send_deauth(dev, buf, len);
-	} else {
-		wdev_lock(wdev);
-		__cfg80211_send_deauth(dev, buf, len);
-		wdev_unlock(wdev);
-	}
+	wdev_lock(wdev);
+	__cfg80211_send_deauth(dev, buf, len);
+	wdev_unlock(wdev);
 }
 EXPORT_SYMBOL(cfg80211_send_deauth);
 
-static void __cfg80211_send_disassoc(struct net_device *dev,
+void __cfg80211_send_disassoc(struct net_device *dev,
 				     const u8 *buf, size_t len)
 {
 	struct wireless_dev *wdev = dev->ieee80211_ptr;
@@ -247,22 +233,15 @@ static void __cfg80211_send_disassoc(struct net_device *dev,
 	from_ap = memcmp(mgmt->sa, dev->dev_addr, ETH_ALEN) != 0;
 	__cfg80211_disconnected(dev, NULL, 0, reason_code, from_ap);
 }
+EXPORT_SYMBOL(__cfg80211_send_disassoc);
 
-void cfg80211_send_disassoc(struct net_device *dev, const u8 *buf, size_t len,
-			    void *cookie)
+void cfg80211_send_disassoc(struct net_device *dev, const u8 *buf, size_t len)
 {
 	struct wireless_dev *wdev = dev->ieee80211_ptr;
 
-	BUG_ON(cookie && wdev != cookie);
-
-	if (cookie) {
-		/* called within callback */
-		__cfg80211_send_disassoc(dev, buf, len);
-	} else {
-		wdev_lock(wdev);
-		__cfg80211_send_disassoc(dev, buf, len);
-		wdev_unlock(wdev);
-	}
+	wdev_lock(wdev);
+	__cfg80211_send_disassoc(dev, buf, len);
+	wdev_unlock(wdev);
 }
 EXPORT_SYMBOL(cfg80211_send_disassoc);
 
@@ -340,7 +319,7 @@ void cfg80211_michael_mic_failure(struct net_device *dev, const u8 *addr,
 {
 	struct wiphy *wiphy = dev->ieee80211_ptr->wiphy;
 	struct cfg80211_registered_device *rdev = wiphy_to_dev(wiphy);
-#ifdef CONFIG_WIRELESS_EXT
+#ifdef CONFIG_CFG80211_WEXT
 	union iwreq_data wrqu;
 	char *buf = kmalloc(128, gfp);
 

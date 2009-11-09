@@ -234,7 +234,7 @@ static const struct proto_ops ieee802154_dgram_ops = {
  * set the state.
  */
 static int ieee802154_create(struct net *net, struct socket *sock,
-		int protocol)
+			     int protocol, int kern)
 {
 	struct sock *sk;
 	int rc;
@@ -285,7 +285,7 @@ out:
 	return rc;
 }
 
-static struct net_proto_family ieee802154_family_ops = {
+static const struct net_proto_family ieee802154_family_ops = {
 	.family		= PF_IEEE802154,
 	.create		= ieee802154_create,
 	.owner		= THIS_MODULE,

@@ -1210,6 +1210,14 @@ static const struct net_device_ops usbnet_netdev_ops = {
 
 // precondition: never called in_interrupt
 
+static struct device_type wlan_type = {
+	.name	= "wlan",
+};
+
+static struct device_type wwan_type = {
+	.name	= "wwan",
+};
+
 int
 usbnet_probe (struct usb_interface *udev, const struct usb_device_id *prod)
 {
@@ -1295,6 +1303,9 @@ usbnet_probe (struct usb_interface *udev, const struct usb_device_id *prod)
 		/* WLAN devices should always be named "wlan%d" */
 		if ((dev->driver_info->flags & FLAG_WLAN) != 0)
 			strcpy(net->name, "wlan%d");
+		/* WWAN devices should always be named "wwan%d" */
+		if ((dev->driver_info->flags & FLAG_WWAN) != 0)
+			strcpy(net->name, "wwan%d");
 
 		/* maybe the remote can't receive an Ethernet MTU */
 		if (net->mtu > (dev->hard_mtu - net->hard_header_len))
@@ -1322,6 +1333,12 @@ usbnet_probe (struct usb_interface *udev, const struct usb_device_id *prod)
 	dev->maxpacket = usb_maxpacket (dev->udev, dev->out, 1);
 
 	SET_NETDEV_DEV(net, &udev->dev);
+
+	if ((dev->driver_info->flags & FLAG_WLAN) != 0)
+		SET_NETDEV_DEVTYPE(net, &wlan_type);
+	if ((dev->driver_info->flags & FLAG_WWAN) != 0)
+		SET_NETDEV_DEVTYPE(net, &wwan_type);
+
 	status = register_netdev (net);
 	if (status)
 		goto out3;

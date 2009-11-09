@@ -46,7 +46,7 @@ extern struct pci_device_id iwl3945_hw_card_ids[];
 #include "iwl-debug.h"
 #include "iwl-power.h"
 #include "iwl-dev.h"
-#include "iwl-3945-led.h"
+#include "iwl-led.h"
 
 /* Highest firmware API version supported */
 #define IWL3945_UCODE_API_MAX 2
@@ -129,12 +129,6 @@ struct iwl3945_frame {
 #define SEQ_TO_SN(seq) (((seq) & IEEE80211_SCTL_SEQ) >> 4)
 #define SN_TO_SEQ(ssn) (((ssn) << 4) & IEEE80211_SCTL_SEQ)
 #define MAX_SN ((IEEE80211_SCTL_SEQ) >> 4)
-
-/*
- * RX related structures and functions
- */
-#define RX_FREE_BUFFERS 64
-#define RX_LOW_WATERMARK 8
 
 #define SUP_RATE_11A_MAX_NUM_CHANNELS  8
 #define SUP_RATE_11B_MAX_NUM_CHANNELS  4
@@ -279,8 +273,6 @@ extern void iwl3945_config_ap(struct iwl_priv *priv);
  * station tables.
  */
 extern u8 iwl3945_hw_find_station(struct iwl_priv *priv, const u8 *bssid);
-
-extern int iwl3945_hw_channel_switch(struct iwl_priv *priv, u16 channel);
 
 /*
  * Forward declare iwl-3945.c functions for iwl-base.c
