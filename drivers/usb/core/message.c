@@ -393,13 +393,7 @@ int usb_sg_init(struct usb_sg_request *io, struct usb_device *dev,
 	if (io->entries <= 0)
 		return io->entries;
 
-	/* If we're running on an xHCI host controller, queue the whole scatter
-	 * gather list with one call to urb_enqueue().  This is only for bulk,
-	 * as that endpoint type does not care how the data gets broken up
-	 * across frames.
-	 */
-	if (usb_pipebulk(pipe) &&
-			bus_to_hcd(dev->bus)->driver->flags & HCD_USB3) {
+	if (dev->bus->sg_tablesize > 0) {
 		io->urbs = kmalloc(sizeof *io->urbs, mem_flags);
 		use_sg = true;
 	} else {
@@ -409,7 +403,7 @@ int usb_sg_init(struct usb_sg_request *io, struct usb_device *dev,
 	if (!io->urbs)
 		goto nomem;
 
-	urb_flags = URB_NO_INTERRUPT;
+	urb_flags = 0;
 	if (dma)
 		urb_flags |= URB_NO_TRANSFER_DMA_MAP;
 	if (usb_pipein(pipe))
@@ -441,6 +435,7 @@ int usb_sg_init(struct usb_sg_request *io, struct usb_device *dev,
 		io->urbs[0]->num_sgs = io->entries;
 		io->entries = 1;
 	} else {
+		urb_flags |= URB_NO_INTERRUPT;
 		for_each_sg(sg, sg, io->entries, i) {
 			unsigned len;
 
