@@ -54,7 +54,7 @@ static struct prom_pmemblock * __init prom_getmdesc(void)
 {
 	char *memsize_str;
 	unsigned int memsize;
-	char cmdline[CL_SIZE], *ptr;
+	char cmdline[COMMAND_LINE_SIZE], *ptr;
 
 	/* otherwise look in the environment */
 	memsize_str = prom_getenv("memsize");
