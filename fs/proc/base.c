@@ -589,7 +589,7 @@ static ssize_t limits_write(struct file *file, const char __user *buf,
 		goto put_task;
 	}
 
-	ret = setrlimit(task, i, &new_rlimit);
+	ret = do_setrlimit(task, i, &new_rlimit);
 	if (ret)
 		count = ret;
 

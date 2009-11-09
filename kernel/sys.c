@@ -1238,7 +1238,7 @@ SYSCALL_DEFINE2(old_getrlimit, unsigned int, resource,
 #endif
 
 /* make sure you are allowed to change @tsk limits before calling this */
-int setrlimit(struct task_struct *tsk, unsigned int resource,
+int do_setrlimit(struct task_struct *tsk, unsigned int resource,
 		struct rlimit *new_rlim)
 {
 	struct rlimit *old_rlim;
@@ -1307,7 +1307,7 @@ SYSCALL_DEFINE2(setrlimit, unsigned int, resource, struct rlimit __user *, rlim)
 		return -EINVAL;
 	if (copy_from_user(&new_rlim, rlim, sizeof(*rlim)))
 		return -EFAULT;
-	return setrlimit(current, resource, &new_rlim);
+	return do_setrlimit(current, resource, &new_rlim);
 }
 
 /*
