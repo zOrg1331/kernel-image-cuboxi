@@ -117,6 +117,7 @@
 #define WM831X_DC3_SLEEP_CONTROL                0x4063
 #define WM831X_DC4_CONTROL                      0x4064
 #define WM831X_DC4_SLEEP_CONTROL                0x4065
+#define WM832X_DC4_SLEEP_CONTROL                0x4067
 #define WM831X_EPE1_CONTROL                     0x4066
 #define WM831X_EPE2_CONTROL                     0x4067
 #define WM831X_LDO1_CONTROL                     0x4068
@@ -252,6 +253,8 @@ struct wm831x {
 	struct work_struct irq_work;
 	unsigned int irq_base;
 	int irq_masks[5];
+
+	int num_gpio;
 
 	struct mutex auxadc_lock;
 
