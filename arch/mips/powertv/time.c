@@ -1,5 +1,7 @@
 /*
- * Copyright (C) 2005 MIPS Technologies, Inc.  All rights reserved.
+ * Carsten Langgaard, carstenl@mips.com
+ * Copyright (C) 1999,2000 MIPS Technologies, Inc.  All rights reserved.
+ * Portions copyright (C) 2009 Cisco Systems, Inc.
  *
  *  This program is free software; you can distribute it and/or modify it
  *  under the terms of the GNU General Public License (Version 2) as
@@ -14,19 +16,22 @@
  *  with this program; if not, write to the Free Software Foundation, Inc.,
  *  59 Temple Place - Suite 330, Boston MA 02111-1307, USA.
  *
+ * Setting up the clock on the MIPS boards.
  */
+
 #include <linux/init.h>
-#include <linux/string.h>
-#include <asm/bootinfo.h>
+#include <asm/mach-powertv/interrupts.h>
+#include <asm/time.h>
 
-extern char arcs_cmdline[];
+#include "powertv-clock.h"
 
-char * __init prom_getcmdline(void)
+unsigned int __cpuinit get_c0_compare_int(void)
 {
-	return arcs_cmdline;
+	return irq_mips_timer;
 }
 
-void  __init prom_init_cmdline(void)
+void __init plat_time_init(void)
 {
-	/* XXX: Get boot line from environment? */
+	powertv_clocksource_init();
+	r4k_clockevent_init();
 }
