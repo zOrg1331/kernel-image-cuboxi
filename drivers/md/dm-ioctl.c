@@ -56,6 +56,11 @@ static void dm_hash_remove_all(int keep_open_devices);
  */
 static DECLARE_RWSEM(_hash_lock);
 
+/*
+ * Protects use of mdptr to obtain hash cell name and uuid from mapped device.
+ */
+static DEFINE_MUTEX(dm_hash_cells_mutex);
+
 static void init_buckets(struct list_head *buckets)
 {
 	unsigned int i;
@@ -206,7 +211,9 @@ static int dm_hash_insert(const char *name, const char *uuid, struct mapped_devi
 		list_add(&cell->uuid_list, _uuid_buckets + hash_str(uuid));
 	}
 	dm_get(md);
+	mutex_lock(&dm_hash_cells_mutex);
 	dm_set_mdptr(md, cell);
+	mutex_unlock(&dm_hash_cells_mutex);
 	up_write(&_hash_lock);
 
 	return 0;
@@ -224,9 +231,11 @@ static void __hash_remove(struct hash_cell *hc)
 	/* remove from the dev hash */
 	list_del(&hc->uuid_list);
 	list_del(&hc->name_list);
+	mutex_lock(&dm_hash_cells_mutex);
 	dm_set_mdptr(hc->md, NULL);
+	mutex_unlock(&dm_hash_cells_mutex);
 
-	table = dm_get_table(hc->md);
+	table = dm_get_live_table(hc->md);
 	if (table) {
 		dm_table_event(table);
 		dm_table_put(table);
@@ -321,13 +330,15 @@ static int dm_hash_rename(uint32_t cookie, const char *old, const char *new)
 	 */
 	list_del(&hc->name_list);
 	old_name = hc->name;
+	mutex_lock(&dm_hash_cells_mutex);
 	hc->name = new_name;
+	mutex_unlock(&dm_hash_cells_mutex);
 	list_add(&hc->name_list, _name_buckets + hash_str(new_name));
 
 	/*
 	 * Wake up any dm event waiters.
 	 */
-	table = dm_get_table(hc->md);
+	table = dm_get_live_table(hc->md);
 	if (table) {
 		dm_table_event(table);
 		dm_table_put(table);
@@ -553,7 +564,7 @@ static int __dev_status(struct mapped_device *md, struct dm_ioctl *param)
 
 	param->event_nr = dm_get_event_nr(md);
 
-	table = dm_get_table(md);
+	table = dm_get_live_table(md);
 	if (table) {
 		param->flags |= DM_ACTIVE_PRESENT_FLAG;
 		param->target_count = dm_table_get_num_targets(table);
@@ -634,9 +645,9 @@ static struct mapped_device *find_device(struct dm_ioctl *param)
 		 * Sneakily write in both the name and the uuid
 		 * while we have the cell.
 		 */
-		strncpy(param->name, hc->name, sizeof(param->name));
+		strlcpy(param->name, hc->name, sizeof(param->name));
 		if (hc->uuid)
-			strncpy(param->uuid, hc->uuid, sizeof(param->uuid)-1);
+			strlcpy(param->uuid, hc->uuid, sizeof(param->uuid));
 		else
 			param->uuid[0] = '\0';
 
@@ -982,7 +993,7 @@ static int dev_wait(struct dm_ioctl *param, size_t param_size)
 	if (r)
 		goto out;
 
-	table = dm_get_table(md);
+	table = dm_get_live_table(md);
 	if (table) {
 		retrieve_status(table, param, param_size);
 		dm_table_put(table);
@@ -1215,7 +1226,7 @@ static int table_deps(struct dm_ioctl *param, size_t param_size)
 	if (r)
 		goto out;
 
-	table = dm_get_table(md);
+	table = dm_get_live_table(md);
 	if (table) {
 		retrieve_deps(table, param, param_size);
 		dm_table_put(table);
@@ -1244,7 +1255,7 @@ static int table_status(struct dm_ioctl *param, size_t param_size)
 	if (r)
 		goto out;
 
-	table = dm_get_table(md);
+	table = dm_get_live_table(md);
 	if (table) {
 		retrieve_status(table, param, param_size);
 		dm_table_put(table);
@@ -1288,7 +1299,7 @@ static int target_message(struct dm_ioctl *param, size_t param_size)
 		goto out;
 	}
 
-	table = dm_get_table(md);
+	table = dm_get_live_table(md);
 	if (!table)
 		goto out_argv;
 
@@ -1583,7 +1594,7 @@ int dm_copy_name_and_uuid(struct mapped_device *md, char *name, char *uuid)
 		return -ENXIO;
 
 	dm_get(md);
-	down_read(&_hash_lock);
+	mutex_lock(&dm_hash_cells_mutex);
 	hc = dm_get_mdptr(md);
 	if (!hc || hc->md != md) {
 		r = -ENXIO;
@@ -1596,7 +1607,7 @@ int dm_copy_name_and_uuid(struct mapped_device *md, char *name, char *uuid)
 		strcpy(uuid, hc->uuid ? : "");
 
 out:
-	up_read(&_hash_lock);
+	mutex_unlock(&dm_hash_cells_mutex);
 	dm_put(md);
 
 	return r;
