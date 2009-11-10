@@ -1,0 +1,88 @@
+Importing driver-core.current based on 2.6.32-rc6
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.32-rc6-git3
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 7c9abfb884b8737f0afdc8a88bcea77526f0da87
+HEAD is now at 7c9abfb Merge branch 'kvm-updates/2.6.32' of git://git.kernel.org/pub/scm/virt/kvm/kvm
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-piix4-modify-code-name-sb900-to-hudson-2.patch
+i2c-add-api-to-lock-bus.patch
+i2c-tsl2550-extended-mode-bugfix.patch
+i2c-chips-move-ds1682-to-drivers-misc.patch
+i2c-powermac-01-multiple-msg-not-supported.patch
+i2c-powermac-02-refactor-xfer.patch
+i2c-powermac-03-report-errors.patch
+i2c-powermac-04-include-adapter-in-bus.patch
+i2c-powermac-06-no-temp-buffer-for-name.patch
+i2c-voodoo3-delete.patch
+i2c-prevent-priority-inversion-on-top-of-bus-lock.patch
+i2c-no-I2C_M_REV_DIR_ADDR.patch
+i2c-add-missing-devinit.patch
+i2c-core-01-drop-obsolete-force-module-parameters.patch
+i2c-core-02-detect-drop-kind-parameter.patch
+misc-ics932s401-cleanup-detect.patch
+i2c-remove-big-kernel-lock-from-i2cdev_open.patch
+i2c-scmi-support-ibm-smbus-cmi-devices.patch
+i2c-i801-retry-on-lost-arbitration.patch
+i2c-core-refactor-for_each-callbacks.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 4f53bfc...3fa54f9 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.32-rc6-git3
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.32-rc6
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.32-rc6-75-g7c9abfb
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.32-rc5-81-g964fe08
+$ cd ../quilt-tmp
+$ git reset --hard 964fe080d94db82a3268443e9b9ece4c60246414
+HEAD is now at 964fe08 Merge git://git.kernel.org/pub/scm/linux/kernel/git/rusty/linux-2.6-for-linus
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-avoid-_hash_lock-deadlock.patch
+dm-exception-store-free-tmp_store-on-persistent-flag-error.patch
+dm-sysfs-add-empty-release-function-to-avoid-debug-warning.patch
+dm-ioctl-prefer-strlcpy-over-strncpy.patch
+dm-snapshot-avoid-else-clause-in-persistent_read_metadata.patch
+dm-snapshot-simplify-sector_to_chunk-expression.patch
+dm-snapshot-abstract-minimum_chunk_size-fn.patch
+dm-snapshot-consolidate-insert-exception-functions.patch
+dm-snapshot-rename-dm_snap_exception-to-dm_exception.patch
+dm-snapshot-rename-exception_table-to-dm_exception_table.patch
+dm-snapshot-rename-exception-functions.patch
+dm-snapshot-add-allocated-metadata-to-snapshot-status.patch
+dm-snapshot-move-cow-ref-from-exception-store-to-snap-core.patch
+dm-snapshot-track-suspended-state-in-target.patch
+dm-kcopyd-accept-zero-size-jobs.patch
+dm-abstract-dm_in_flight-function.patch
+dm-use-clone-in-map_request-function.patch
+dm-pass-gfp_mask-to-alloc_rq_tio.patch
+dm-abstract-clone_rq.patch
+dm-simplify-request-based-suspend.patch
+dm-use-md-pending-for-in-flight-IO-counting.patch
+dm-refactor-request-based-completion-functions.patch
+dm-move-dm_end_request.patch
+dm-add-request-based-barrier-support.patch
+dm-rename-dm_get_table-to-dm_get_live_table.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + a4638c6...d7f5b62 master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
