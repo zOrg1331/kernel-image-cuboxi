@@ -417,6 +417,13 @@ LIB_OBJS += util/hist.o
 LIB_OBJS += util/data_map.o
 
 BUILTIN_OBJS += builtin-annotate.o
+
+BUILTIN_OBJS += builtin-bench.o
+
+# Benchmark modules
+BUILTIN_OBJS += bench/sched-messaging.o
+BUILTIN_OBJS += bench/sched-pipe.o
+
 BUILTIN_OBJS += builtin-help.o
 BUILTIN_OBJS += builtin-sched.o
 BUILTIN_OBJS += builtin-list.o
@@ -466,7 +473,7 @@ endif
 		BASIC_CFLAGS += -DLIBELF_NO_MMAP
 	endif
 else
-	msg := $(error No libelf.h/libelf found, please install libelf-dev/elfutils-libelf-devel);
+	msg := $(error No libelf.h/libelf found, please install libelf-dev/elfutils-libelf-devel and glibc-dev[el]);
 endif
 
 ifneq ($(shell sh -c "(echo '\#include <libdwarf/dwarf.h>'; echo '\#include <libdwarf/libdwarf.h>'; echo 'int main(void) { Dwarf_Debug dbg; Dwarf_Error err; Dwarf_Ranges *rng; dwarf_init(0, DW_DLC_READ, 0, 0, &dbg, &err); dwarf_get_ranges(dbg, 0, &rng, 0, 0, &err); return (long)dbg; }') | $(CC) -x c - $(ALL_CFLAGS) -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64 -ldwarf -lelf -o /dev/null $(ALL_LDFLAGS) > /dev/null 2>&1 && echo y"), y)
