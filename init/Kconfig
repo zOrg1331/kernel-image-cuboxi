@@ -338,6 +338,15 @@ config TREE_PREEMPT_RCU
 	  is also required.  It also scales down nicely to
 	  smaller systems.
 
+config TINY_RCU
+	bool "UP-only small-memory-footprint RCU"
+	depends on !SMP
+	help
+	  This option selects the RCU implementation that is
+	  designed for UP systems from which real-time response
+	  is not required.  This option greatly reduces the
+	  memory footprint of RCU.
+
 endchoice
 
 config RCU_TRACE
@@ -941,7 +950,7 @@ config PERF_EVENTS
 	  Enable kernel support for various performance events provided
 	  by software and hardware.
 
-	  Software events are supported either build-in or via the
+	  Software events are supported either built-in or via the
 	  use of generic tracepoints.
 
 	  Most modern CPUs support performance events via performance
@@ -953,7 +962,7 @@ config PERF_EVENTS
 	  used to profile the code that runs on that CPU.
 
 	  The Linux Performance Event subsystem provides an abstraction of
-	  these software and hardware cevent apabilities, available via a
+	  these software and hardware event capabilities, available via a
 	  system call and used by the "perf" utility in tools/perf/. It
 	  provides per task and per CPU counters, and it provides event
 	  capabilities on top of those.
