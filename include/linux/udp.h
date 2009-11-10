@@ -45,16 +45,19 @@ static inline struct udphdr *udp_hdr(const struct sk_buff *skb)
 	return (struct udphdr *)skb_transport_header(skb);
 }
 
-#define UDP_HTABLE_SIZE		128
+#define UDP_HTABLE_SIZE_MIN		(CONFIG_BASE_SMALL ? 128 : 256)
 
-static inline int udp_hashfn(struct net *net, const unsigned num)
+static inline int udp_hashfn(struct net *net, unsigned num, unsigned mask)
 {
-	return (num + net_hash_mix(net)) & (UDP_HTABLE_SIZE - 1);
+	return (num + net_hash_mix(net)) & mask;
 }
 
 struct udp_sock {
 	/* inet_sock has to be the first member */
 	struct inet_sock inet;
+#define udp_port_hash		inet.sk.__sk_common.skc_u16hashes[0]
+#define udp_portaddr_hash	inet.sk.__sk_common.skc_u16hashes[1]
+#define udp_portaddr_node	inet.sk.__sk_common.skc_portaddr_node
 	int		 pending;	/* Any pending frames ? */
 	unsigned int	 corkflag;	/* Cork is required */
   	__u16		 encap_type;	/* Is this an Encapsulation socket? */
