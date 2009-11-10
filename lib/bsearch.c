@@ -33,10 +33,12 @@
 void *bsearch(const void *key, const void *base, size_t num, size_t size,
 	      int (*cmp)(const void *key, const void *elt))
 {
-	int start = 0, end = num, mid, result;
+	size_t start = 0, end = num;
+	int result;
 
 	while (start < end) {
-		mid = (start + end) / 2;
+		size_t mid = start + (end - start) / 2;
+
 		result = cmp(key, base + mid * size);
 		if (result < 0)
 			end = mid;
