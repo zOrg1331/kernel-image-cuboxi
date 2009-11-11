@@ -371,6 +371,38 @@ asmlinkage long compat_sys_getrlimit (unsigned int resource,
 	return ret;
 }
 
+asmlinkage long compat_sys_setprlimit(pid_t pid, unsigned int resource,
+		struct compat_rlimit __user *rlim)
+{
+	mm_segment_t old_fs = get_fs();
+	struct rlimit r;
+	int ret;
+
+	ret = get_compat_rlimit(&r, rlim);
+	if (ret)
+		return ret;
+
+	set_fs(KERNEL_DS);
+	ret = sys_setprlimit(pid, resource, (struct rlimit __force __user *)&r);
+	set_fs(old_fs);
+	return ret;
+}
+
+asmlinkage long compat_sys_getprlimit(pid_t pid, unsigned int resource,
+		struct compat_rlimit __user *rlim)
+{
+	mm_segment_t old_fs = get_fs();
+	struct rlimit r;
+	int ret;
+
+	set_fs(KERNEL_DS);
+	ret = sys_getprlimit(pid, resource, (struct rlimit __force __user *)&r);
+	set_fs(old_fs);
+	if (!ret)
+		ret = put_compat_rlimit(&r, rlim);
+	return ret;
+}
+
 int put_compat_rusage(const struct rusage *r, struct compat_rusage __user *ru)
 {
 	if (!access_ok(VERIFY_WRITE, ru, sizeof(*ru)) ||
