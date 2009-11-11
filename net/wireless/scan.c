@@ -22,7 +22,7 @@ void ___cfg80211_scan_done(struct cfg80211_registered_device *rdev, bool leak)
 {
 	struct cfg80211_scan_request *request;
 	struct net_device *dev;
-#ifdef CONFIG_WIRELESS_EXT
+#ifdef CONFIG_CFG80211_WEXT
 	union iwreq_data wrqu;
 #endif
 
@@ -47,7 +47,7 @@ void ___cfg80211_scan_done(struct cfg80211_registered_device *rdev, bool leak)
 	else
 		nl80211_send_scan_done(rdev, dev);
 
-#ifdef CONFIG_WIRELESS_EXT
+#ifdef CONFIG_CFG80211_WEXT
 	if (!request->aborted) {
 		memset(&wrqu, 0, sizeof(wrqu));
 
@@ -592,7 +592,7 @@ void cfg80211_unlink_bss(struct wiphy *wiphy, struct cfg80211_bss *pub)
 }
 EXPORT_SYMBOL(cfg80211_unlink_bss);
 
-#ifdef CONFIG_WIRELESS_EXT
+#ifdef CONFIG_CFG80211_WEXT
 int cfg80211_wext_siwscan(struct net_device *dev,
 			  struct iw_request_info *info,
 			  union iwreq_data *wrqu, char *extra)
@@ -650,9 +650,15 @@ int cfg80211_wext_siwscan(struct net_device *dev,
 	i = 0;
 	for (band = 0; band < IEEE80211_NUM_BANDS; band++) {
 		int j;
+
 		if (!wiphy->bands[band])
 			continue;
+
 		for (j = 0; j < wiphy->bands[band]->n_channels; j++) {
+			/* ignore disabled channels */
+			if (wiphy->bands[band]->channels[j].flags &
+						IEEE80211_CHAN_DISABLED)
+				continue;
 
 			/* If we have a wireless request structure and the
 			 * wireless request specifies frequencies, then search

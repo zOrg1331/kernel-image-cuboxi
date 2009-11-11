@@ -428,7 +428,8 @@ static int __netlink_create(struct net *net, struct socket *sock,
 	return 0;
 }
 
-static int netlink_create(struct net *net, struct socket *sock, int protocol)
+static int netlink_create(struct net *net, struct socket *sock, int protocol,
+			  int kern)
 {
 	struct module *module = NULL;
 	struct mutex *cb_mutex;
@@ -2050,7 +2051,7 @@ static const struct proto_ops netlink_ops = {
 	.sendpage =	sock_no_sendpage,
 };
 
-static struct net_proto_family netlink_family_ops = {
+static const struct net_proto_family netlink_family_ops = {
 	.family = PF_NETLINK,
 	.create = netlink_create,
 	.owner	= THIS_MODULE,	/* for consistency 8) */

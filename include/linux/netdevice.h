@@ -125,8 +125,7 @@ typedef enum netdev_tx netdev_tx_t;
  *	with byte counters.
  */
 
-struct net_device_stats
-{
+struct net_device_stats {
 	unsigned long	rx_packets;		/* total packets received	*/
 	unsigned long	tx_packets;		/* total packets transmitted	*/
 	unsigned long	rx_bytes;		/* total bytes received 	*/
@@ -179,8 +178,7 @@ struct neighbour;
 struct neigh_parms;
 struct sk_buff;
 
-struct netif_rx_stats
-{
+struct netif_rx_stats {
 	unsigned total;
 	unsigned dropped;
 	unsigned time_squeeze;
@@ -189,8 +187,7 @@ struct netif_rx_stats
 
 DECLARE_PER_CPU(struct netif_rx_stats, netdev_rx_stat);
 
-struct dev_addr_list
-{
+struct dev_addr_list {
 	struct dev_addr_list	*next;
 	u8			da_addr[MAX_ADDR_LEN];
 	u8			da_addrlen;
@@ -227,8 +224,7 @@ struct netdev_hw_addr_list {
 	int			count;
 };
 
-struct hh_cache
-{
+struct hh_cache {
 	struct hh_cache *hh_next;	/* Next entry			     */
 	atomic_t	hh_refcnt;	/* number of users                   */
 /*
@@ -291,8 +287,7 @@ struct header_ops {
  * code.
  */
 
-enum netdev_state_t
-{
+enum netdev_state_t {
 	__LINK_STATE_START,
 	__LINK_STATE_PRESENT,
 	__LINK_STATE_NOCARRIER,
@@ -341,20 +336,20 @@ struct napi_struct {
 	struct sk_buff		*skb;
 };
 
-enum
-{
+enum {
 	NAPI_STATE_SCHED,	/* Poll is scheduled */
 	NAPI_STATE_DISABLE,	/* Disable pending */
 	NAPI_STATE_NPSVC,	/* Netpoll - don't dequeue from poll_list */
 };
 
-enum {
+enum gro_result {
 	GRO_MERGED,
 	GRO_MERGED_FREE,
 	GRO_HELD,
 	GRO_NORMAL,
 	GRO_DROP,
 };
+typedef enum gro_result gro_result_t;
 
 extern void __napi_schedule(struct napi_struct *n);
 
@@ -457,8 +452,7 @@ static inline void napi_synchronize(const struct napi_struct *n)
 # define napi_synchronize(n)	barrier()
 #endif
 
-enum netdev_queue_state_t
-{
+enum netdev_queue_state_t {
 	__QUEUE_STATE_XOFF,
 	__QUEUE_STATE_FROZEN,
 };
@@ -635,6 +629,10 @@ struct net_device_ops {
 						      unsigned int sgc);
 	int			(*ndo_fcoe_ddp_done)(struct net_device *dev,
 						     u16 xid);
+#define NETDEV_FCOE_WWNN 0
+#define NETDEV_FCOE_WWPN 1
+	int			(*ndo_fcoe_get_wwn)(struct net_device *dev,
+						    u64 *wwn, int type);
 #endif
 };
 
@@ -648,8 +646,7 @@ struct net_device_ops {
  *	moves out.
  */
 
-struct net_device
-{
+struct net_device {
 
 	/*
 	 * This is the first field of the "visible" part of this structure
@@ -683,6 +680,7 @@ struct net_device
 
 	struct list_head	dev_list;
 	struct list_head	napi_list;
+	struct list_head	unreg_list;
 
 	/* Net device features */
 	unsigned long		features;
@@ -894,8 +892,8 @@ struct net_device
 
 	/* class/net/name entry */
 	struct device		dev;
-	/* space for optional statistics and wireless sysfs groups */
-	const struct attribute_group *sysfs_groups[3];
+	/* space for optional device, statistics, and wireless sysfs groups */
+	const struct attribute_group *sysfs_groups[4];
 
 	/* rtnetlink link ops */
 	const struct rtnl_link_ops *rtnl_link_ops;
@@ -909,7 +907,7 @@ struct net_device
 
 #ifdef CONFIG_DCB
 	/* Data Center Bridging netlink ops */
-	struct dcbnl_rtnl_ops *dcbnl_ops;
+	const struct dcbnl_rtnl_ops *dcbnl_ops;
 #endif
 
 #if defined(CONFIG_FCOE) || defined(CONFIG_FCOE_MODULE)
@@ -1075,6 +1073,8 @@ extern rwlock_t				dev_base_lock;		/* Device list lock */
 
 #define for_each_netdev(net, d)		\
 		list_for_each_entry(d, &(net)->dev_base_head, dev_list)
+#define for_each_netdev_rcu(net, d)		\
+		list_for_each_entry_rcu(d, &(net)->dev_base_head, dev_list)
 #define for_each_netdev_safe(net, d, n)	\
 		list_for_each_entry_safe(d, n, &(net)->dev_base_head, dev_list)
 #define for_each_netdev_continue(net, d)		\
@@ -1109,6 +1109,7 @@ extern void		__dev_remove_pack(struct packet_type *pt);
 extern struct net_device	*dev_get_by_flags(struct net *net, unsigned short flags,
 						  unsigned short mask);
 extern struct net_device	*dev_get_by_name(struct net *net, const char *name);
+extern struct net_device	*dev_get_by_name_rcu(struct net *net, const char *name);
 extern struct net_device	*__dev_get_by_name(struct net *net, const char *name);
 extern int		dev_alloc_name(struct net_device *dev, const char *name);
 extern int		dev_open(struct net_device *dev);
@@ -1116,7 +1117,14 @@ extern int		dev_close(struct net_device *dev);
 extern void		dev_disable_lro(struct net_device *dev);
 extern int		dev_queue_xmit(struct sk_buff *skb);
 extern int		register_netdevice(struct net_device *dev);
-extern void		unregister_netdevice(struct net_device *dev);
+extern void		unregister_netdevice_queue(struct net_device *dev,
+						   struct list_head *head);
+extern void		unregister_netdevice_many(struct list_head *head);
+static inline void unregister_netdevice(struct net_device *dev)
+{
+	unregister_netdevice_queue(dev, NULL);
+}
+
 extern void		free_netdev(struct net_device *dev);
 extern void		synchronize_net(void);
 extern int 		register_netdevice_notifier(struct notifier_block *nb);
@@ -1127,6 +1135,7 @@ extern void		netdev_resync_ops(struct net_device *dev);
 extern int call_netdevice_notifiers(unsigned long val, struct net_device *dev);
 extern struct net_device	*dev_get_by_index(struct net *net, int ifindex);
 extern struct net_device	*__dev_get_by_index(struct net *net, int ifindex);
+extern struct net_device	*dev_get_by_index_rcu(struct net *net, int ifindex);
 extern int		dev_restart(struct net_device *dev);
 #ifdef CONFIG_NETPOLL_TRAP
 extern int		netpoll_trap(void);
@@ -1212,8 +1221,7 @@ static inline int unregister_gifconf(unsigned int family)
  * Incoming packets are placed on per-cpu queues so that
  * no locking is needed.
  */
-struct softnet_data
-{
+struct softnet_data {
 	struct Qdisc		*output_queue;
 	struct sk_buff_head	input_pkt_queue;
 	struct list_head	poll_list;
@@ -1467,18 +1475,19 @@ extern int		netif_rx_ni(struct sk_buff *skb);
 #define HAVE_NETIF_RECEIVE_SKB 1
 extern int		netif_receive_skb(struct sk_buff *skb);
 extern void		napi_gro_flush(struct napi_struct *napi);
-extern int		dev_gro_receive(struct napi_struct *napi,
+extern gro_result_t	dev_gro_receive(struct napi_struct *napi,
 					struct sk_buff *skb);
-extern int		napi_skb_finish(int ret, struct sk_buff *skb);
-extern int		napi_gro_receive(struct napi_struct *napi,
+extern gro_result_t	napi_skb_finish(gro_result_t ret, struct sk_buff *skb);
+extern gro_result_t	napi_gro_receive(struct napi_struct *napi,
 					 struct sk_buff *skb);
 extern void		napi_reuse_skb(struct napi_struct *napi,
 				       struct sk_buff *skb);
 extern struct sk_buff *	napi_get_frags(struct napi_struct *napi);
-extern int		napi_frags_finish(struct napi_struct *napi,
-					  struct sk_buff *skb, int ret);
+extern gro_result_t	napi_frags_finish(struct napi_struct *napi,
+					  struct sk_buff *skb,
+					  gro_result_t ret);
 extern struct sk_buff *	napi_frags_skb(struct napi_struct *napi);
-extern int		napi_gro_frags(struct napi_struct *napi);
+extern gro_result_t	napi_gro_frags(struct napi_struct *napi);
 
 static inline void napi_free_frags(struct napi_struct *napi)
 {
@@ -1609,7 +1618,8 @@ static inline int netif_dormant(const struct net_device *dev)
  *
  * Check if carrier is operational
  */
-static inline int netif_oper_up(const struct net_device *dev) {
+static inline int netif_oper_up(const struct net_device *dev)
+{
 	return (dev->operstate == IF_OPER_UP ||
 		dev->operstate == IF_OPER_UNKNOWN /* backward compat */);
 }

@@ -621,7 +621,8 @@ static struct proto hci_sk_proto = {
 	.obj_size	= sizeof(struct hci_pinfo)
 };
 
-static int hci_sock_create(struct net *net, struct socket *sock, int protocol)
+static int hci_sock_create(struct net *net, struct socket *sock, int protocol,
+			   int kern)
 {
 	struct sock *sk;
 
@@ -687,7 +688,7 @@ static int hci_sock_dev_event(struct notifier_block *this, unsigned long event, 
 	return NOTIFY_DONE;
 }
 
-static struct net_proto_family hci_sock_family_ops = {
+static const struct net_proto_family hci_sock_family_ops = {
 	.family	= PF_BLUETOOTH,
 	.owner	= THIS_MODULE,
 	.create	= hci_sock_create,
