@@ -177,7 +177,7 @@ void task_utrace_proc_status(struct seq_file *m, struct task_struct *p);
  * that is developed concurrently with utrace API improvements before they
  * are merged into the kernel, making LINUX_VERSION_CODE checks unwieldy.
  */
-#define UTRACE_API_VERSION	20090416
+#define UTRACE_API_VERSION	20090421
 
 /**
  * enum utrace_resume_action - engine's choice of action for a traced task
@@ -281,6 +281,7 @@ enum utrace_syscall_action {
 	UTRACE_SYSCALL_ABORT	= 0x10
 };
 #define	UTRACE_SYSCALL_MASK	0xf0
+#define	UTRACE_SYSCALL_RESUMED	0x100 /* Flag, report_syscall_entry() repeats */
 
 /**
  * utrace_syscall_action - &enum utrace_syscall_action from callback action
@@ -383,15 +384,22 @@ static inline void utrace_engine_put(struct utrace_engine *engine)
  * See utrace_control() for more information on the actions.
  *
  * When %UTRACE_STOP is used in @report_syscall_entry, then @task
- * stops before attempting the system call.  In other cases, the
- * resume action does not take effect until @task is ready to check
- * for signals and return to user mode.  If there are more callbacks
- * to be made, the last round of calls determines the final action.
- * A @report_quiesce callback with @event zero, or a @report_signal
- * callback, will always be the last one made before @task resumes.
- * Only %UTRACE_STOP is "sticky"--if @engine returned %UTRACE_STOP
- * then @task stays stopped unless @engine returns different from a
- * following callback.
+ * stops before attempting the system call.  In this case, another
+ * @report_syscall_entry callback follows after @task resumes; in a
+ * second or later callback, %UTRACE_SYSCALL_RESUMED is set in the
+ * @action argument to indicate a repeat callback still waiting to
+ * attempt the same system call invocation.  This repeat callback
+ * gives each engine an opportunity to reexamine registers another
+ * engine might have changed while @task was held in %UTRACE_STOP.
+ *
+ * In other cases, the resume action does not take effect until @task
+ * is ready to check for signals and return to user mode.  If there
+ * are more callbacks to be made, the last round of calls determines
+ * the final action.  A @report_quiesce callback with @event zero, or
+ * a @report_signal callback, will always be the last one made before
+ * @task resumes.  Only %UTRACE_STOP is "sticky"--if @engine returned
+ * %UTRACE_STOP then @task stays stopped unless @engine returns
+ * different from a following callback.
  *
  * The report_death() and report_reap() callbacks do not take @action
  * arguments, and only %UTRACE_DETACH is meaningful in the return value
@@ -495,6 +503,10 @@ static inline void utrace_engine_put(struct utrace_engine *engine)
  *	is made.  The details of the system call being attempted can
  *	be fetched here with syscall_get_nr() and syscall_get_arguments().
  *	The parameter registers can be changed with syscall_set_arguments().
+ *	See above about the %UTRACE_SYSCALL_RESUMED flag in @action.
+ *	Use %UTRACE_REPORT in the return value to guarantee you get
+ *	another callback (with %UTRACE_SYSCALL_RESUMED flag) in case
+ *	@task stops with %UTRACE_STOP before attempting the system call.
  *
  * @report_syscall_exit:
  *	Requested by %UTRACE_EVENT(%SYSCALL_EXIT).
