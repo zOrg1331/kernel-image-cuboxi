@@ -15,6 +15,7 @@
 #include <mach/audio.h>
 #include <plat/i2c.h>
 #include <plat/pxa3xx_nand.h>
+#include <mach/hardware.h>
 
 #include "devices.h"
 #include "generic.h"
