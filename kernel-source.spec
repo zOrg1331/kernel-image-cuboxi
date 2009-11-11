@@ -18,7 +18,7 @@
 
 Name: kernel-source-%kernel_version
 Version: %patch_level_numeric
-Release: alt1
+Release: alt0.M41.1
 
 Summary: Linux kernel %kernel_fullversion sources
 License: GPL
@@ -50,6 +50,9 @@ tar --owner=root --group=root --mode=u+w,go-w,go+rX -cjf \
 %kernel_src/kernel-source-%kernel_version.tar.bz2
 
 %changelog
+* Wed Nov 11 2009 Michail Yakushin <silicium@altlinux.ru> 1.0.0-alt0.M41.1
+- build for M41 
+
 * Fri Oct 10 2008 Dmitry V. Levin <ldv@altlinux.org> 1.0.0-alt1
 - 2.6.27
 
