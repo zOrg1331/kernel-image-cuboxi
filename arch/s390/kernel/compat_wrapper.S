@@ -1862,3 +1862,13 @@ sys_fanotify_init_wrapper:
 	llgfr	%r3,%r3			# unsigned int
 	llgfr	%r4,%r4			# int
 	jg	sys_fanotify_init	# branch to system call
+
+	.globl	sys32_fanotify_mark_wrapper
+sys32_fanotify_mark_wrapper:
+	llgfr	%r2,%r2			# int
+	llgfr	%r3,%r3			# unsigned int
+	llgfr	%r4,%r4			# int
+	llgtr	%r5,%r5			# char *
+	sllg	%r6,%r6,32		# get high word of 64bit mask
+	or	%r6,164(%r15)		# get low word of 64bit mask
+	jg	sys_fanotify_mark

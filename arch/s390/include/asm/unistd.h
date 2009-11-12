@@ -270,7 +270,8 @@
 #define __NR_rt_tgsigqueueinfo	330
 #define __NR_perf_event_open	331
 #define __NR_fanotify_init	332
-#define NR_syscalls 333
+#define __NR_fanotify_mark	333
+#define NR_syscalls 334
 
 /* 
  * There are some system calls that are not present on 64 bit, some
