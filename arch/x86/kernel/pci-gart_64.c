@@ -39,6 +39,7 @@
 #include <asm/swiotlb.h>
 #include <asm/dma.h>
 #include <asm/k8.h>
+#include <asm/x86_init.h>
 
 static unsigned long iommu_bus_base;	/* GART remapping area (physical) */
 static unsigned long iommu_size;	/* size of remapping area bytes */
@@ -688,12 +689,12 @@ static struct dma_map_ops gart_dma_ops = {
 	.free_coherent			= gart_free_coherent,
 };
 
-void gart_iommu_shutdown(void)
+static void gart_iommu_shutdown(void)
 {
 	struct pci_dev *dev;
 	int i;
 
-	if (no_agp && (dma_ops != &gart_dma_ops))
+	if (no_agp)
 		return;
 
 	for (i = 0; i < num_k8_northbridges; i++) {
@@ -708,7 +709,7 @@ void gart_iommu_shutdown(void)
 	}
 }
 
-void __init gart_iommu_init(void)
+int __init gart_iommu_init(void)
 {
 	struct agp_kern_info info;
 	unsigned long iommu_start;
@@ -718,7 +719,7 @@ void __init gart_iommu_init(void)
 	long i;
 
 	if (cache_k8_northbridges() < 0 || num_k8_northbridges == 0)
-		return;
+		return 0;
 
 #ifndef CONFIG_AGP_AMD64
 	no_agp = 1;
@@ -730,13 +731,6 @@ void __init gart_iommu_init(void)
 		(agp_copy_info(agp_bridge, &info) < 0);
 #endif
 
-	if (swiotlb)
-		return;
-
-	/* Did we detect a different HW IOMMU? */
-	if (iommu_detected && !gart_iommu_aperture)
-		return;
-
 	if (no_iommu ||
 	    (!force_iommu && max_pfn <= MAX_DMA32_PFN) ||
 	    !gart_iommu_aperture ||
@@ -746,7 +740,7 @@ void __init gart_iommu_init(void)
 			       "but GART IOMMU not available.\n");
 			printk(KERN_WARNING "falling back to iommu=soft.\n");
 		}
-		return;
+		return 0;
 	}
 
 	/* need to map that range */
@@ -838,6 +832,10 @@ void __init gart_iommu_init(void)
 
 	flush_gart();
 	dma_ops = &gart_dma_ops;
+	x86_platform.iommu_shutdown = gart_iommu_shutdown;
+	swiotlb = 0;
+
+	return 0;
 }
 
 void __init gart_parse_options(char *p)
@@ -856,7 +854,7 @@ void __init gart_parse_options(char *p)
 #endif
 	if (isdigit(*p) && get_option(&p, &arg))
 		iommu_size = arg;
-	if (!strncmp(p, "fullflush", 8))
+	if (!strncmp(p, "fullflush", 9))
 		iommu_fullflush = 1;
 	if (!strncmp(p, "nofullflush", 11))
 		iommu_fullflush = 0;
