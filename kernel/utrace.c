@@ -707,7 +707,7 @@ static bool utrace_do_stop(struct task_struct *target, struct utrace *utrace)
 		if (likely(task_is_stopped(target)))
 			__set_task_state(target, TASK_TRACED);
 		spin_unlock_irq(&target->sighand->siglock);
-	} else if (utrace->resume == UTRACE_RESUME) {
+	} else if (utrace->resume > UTRACE_REPORT) {
 		utrace->resume = UTRACE_REPORT;
 		set_notify_resume(target);
 	}
@@ -835,12 +835,12 @@ relock:
 
 	if (action < utrace->resume) {
 		/*
-		 * Ensure a reporting pass when we're resumed.  If action
-		 * is UTRACE_INTERRUPT, the recalc_sigpending() call below
-		 * will see this and set TIF_SIGPENDING.
+		 * Ensure a reporting pass when we're resumed.
 		 */
 		utrace->resume = action;
-		if (action > UTRACE_INTERRUPT)
+		if (action == UTRACE_INTERRUPT)
+			set_thread_flag(TIF_SIGPENDING);
+		else
 			set_thread_flag(TIF_NOTIFY_RESUME);
 	}
 
@@ -1293,13 +1293,14 @@ struct utrace_report {
 	enum utrace_resume_action action;
 	enum utrace_resume_action resume_action;
 	bool detaches;
-	bool takers;
+	bool spurious;
 };
 
 #define INIT_REPORT(var)			\
 	struct utrace_report var = {		\
 		.action = UTRACE_RESUME,	\
-		.resume_action = UTRACE_RESUME	\
+		.resume_action = UTRACE_RESUME,	\
+		.spurious = true 		\
 	}
 
 /*
@@ -1307,22 +1308,26 @@ struct utrace_report {
  * When there is a new attach, ->pending_attach is set just so we will
  * know to do splice_attaching() here before the callback loop.
  */
-static void start_report(struct utrace *utrace)
+static enum utrace_resume_action start_report(struct utrace *utrace)
 {
-	if (utrace->resume < UTRACE_RESUME || utrace->pending_attach) {
+	enum utrace_resume_action resume = utrace->resume;
+	if (utrace->pending_attach ||
+	    (resume > UTRACE_INTERRUPT && resume < UTRACE_RESUME)) {
 		spin_lock(&utrace->lock);
 		splice_attaching(utrace);
-		if (utrace->resume > UTRACE_INTERRUPT)
+		resume = utrace->resume;
+		if (resume > UTRACE_INTERRUPT)
 			utrace->resume = UTRACE_RESUME;
 		spin_unlock(&utrace->lock);
 	}
+	return resume;
 }
 
 static inline void finish_report_reset(struct task_struct *task,
 				       struct utrace *utrace,
 				       struct utrace_report *report)
 {
-	if (unlikely(!report->takers || report->detaches)) {
+	if (unlikely(report->spurious || report->detaches)) {
 		spin_lock(&utrace->lock);
 		if (utrace_reset(task, utrace))
 			report->action = UTRACE_RESUME;
@@ -1332,16 +1337,16 @@ static inline void finish_report_reset(struct task_struct *task,
 /*
  * Complete a normal reporting pass, pairing with a start_report() call.
  * This handles any UTRACE_DETACH or UTRACE_REPORT or UTRACE_INTERRUPT
- * returns from engine callbacks.  If any engine's last callback used
- * UTRACE_STOP, we do UTRACE_REPORT here to ensure we stop before user
- * mode.  If there were no callbacks made, it will recompute
- * @task->utrace_flags to avoid another false-positive.
+ * returns from engine callbacks.  If @will_not_stop is true and any
+ * engine's last callback used UTRACE_STOP, we do UTRACE_REPORT here to
+ * ensure we stop before user mode.  If there were no callbacks made, it
+ * will recompute @task->utrace_flags to avoid another false-positive.
  */
-static void finish_report(struct utrace_report *report,
-			  struct task_struct *task, struct utrace *utrace)
+static void finish_report(struct task_struct *task, struct utrace *utrace,
+			  struct utrace_report *report, bool will_not_stop)
 {
 	enum utrace_resume_action resume = report->action;
-	if (resume == UTRACE_STOP)
+	if (will_not_stop && resume == UTRACE_STOP)
 		resume = UTRACE_REPORT;
 
 	if (resume < utrace->resume) {
@@ -1495,7 +1500,7 @@ static const struct utrace_engine_ops *start_callback(
 		report->action = UTRACE_STOP;
 
 	if (want & event) {
-		report->takers = true;
+		report->spurious = false;
 		return ops;
 	}
 
@@ -1514,7 +1519,7 @@ static const struct utrace_engine_ops *start_callback(
 		REPORT_CALLBACKS(, task, utrace, report, event, callback,     \
 				 (report)->action, engine, current,	      \
 				 ## __VA_ARGS__);  	   		      \
-		finish_report(report, task, utrace);			      \
+		finish_report(task, utrace, report, true);		      \
 	} while (0)
 #define REPORT_CALLBACKS(rev, task, utrace, report, event, callback, ...)     \
 	do {								      \
@@ -1555,7 +1560,7 @@ static inline u32 do_report_syscall_entry(struct pt_regs *regs,
 			 UTRACE_EVENT(SYSCALL_ENTRY), report_syscall_entry,
 			 resume_report | report->result | report->action,
 			 engine, current, regs);
-	finish_report(report, task, utrace);
+	finish_report(task, utrace, report, false);
 
 	if (report->action != UTRACE_STOP)
 		return 0;
@@ -1579,7 +1584,8 @@ static inline u32 do_report_syscall_entry(struct pt_regs *regs,
 		 * registers anew after they might have been changed
 		 * while we were stopped.
 		 */
-		report->detaches = report->takers = false;
+		report->detaches = false;
+		report->spurious = true;
 		return UTRACE_SYSCALL_RESUMED;
 	}
 
@@ -1644,7 +1650,7 @@ void utrace_report_clone(unsigned long clone_flags, struct task_struct *child)
 			 report.action, engine, task, clone_flags, child);
 
 	utrace->cloning = NULL;
-	finish_report(&report, task, utrace);
+	finish_report(task, utrace, &report, !(clone_flags & CLONE_VFORK));
 
 	/*
 	 * For a vfork, we will go into an uninterruptible block waiting
@@ -1769,9 +1775,9 @@ void utrace_report_death(struct task_struct *task, struct utrace *utrace,
 /*
  * Finish the last reporting pass before returning to user mode.
  */
-static void finish_resume_report(struct utrace_report *report,
-				 struct task_struct *task,
-				 struct utrace *utrace)
+static void finish_resume_report(struct task_struct *task,
+				 struct utrace *utrace,
+				 struct utrace_report *report)
 {
 	finish_report_reset(task, utrace, report);
 
@@ -1850,8 +1856,7 @@ void utrace_resume(struct task_struct *task, struct pt_regs *regs)
 	/*
 	 * Update our bookkeeping even if there are no callbacks made here.
 	 */
-	report.action = utrace->resume;
-	start_report(utrace);
+	report.action = start_report(utrace);
 
 	if (report.action == UTRACE_REPORT &&
 	    likely(task->utrace_flags & UTRACE_EVENT(QUIESCE))) {
@@ -1862,6 +1867,13 @@ void utrace_resume(struct task_struct *task, struct pt_regs *regs)
 		report.action = UTRACE_RESUME;
 		list_for_each_entry(engine, &utrace->attached, entry)
 			start_callback(utrace, &report, engine, task, 0);
+	} else {
+		/*
+		 * Even if this report was truly spurious, there is no need
+		 * for utrace_reset() now.  TIF_NOTIFY_RESUME was already
+		 * cleared--it doesn't stay spuriously set.
+		 */
+		report.spurious = false;
 	}
 
 	/*
@@ -1869,7 +1881,7 @@ void utrace_resume(struct task_struct *task, struct pt_regs *regs)
 	 * If utrace->resume was not UTRACE_REPORT, this applies its
 	 * effect now (i.e. step or interrupt).
 	 */
-	finish_resume_report(&report, task, utrace);
+	finish_resume_report(task, utrace, &report);
 }
 
 /*
@@ -1968,9 +1980,11 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 		if (resume > UTRACE_REPORT) {
 			/*
 			 * We only got here to process utrace->resume.
+			 * Despite no callbacks, this report is not spurious.
 			 */
 			report.action = resume;
-			finish_resume_report(&report, task, utrace);
+			report.spurious = false;
+			finish_resume_report(task, utrace, &report);
 			return -1;
 		} else if (!(task->utrace_flags & UTRACE_EVENT(QUIESCE))) {
 			/*
@@ -1989,7 +2003,7 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 		ka = NULL;
 		memset(return_ka, 0, sizeof *return_ka);
 	} else if (!(task->utrace_flags & UTRACE_EVENT_SIGNAL_ALL) ||
-			unlikely(task->signal->group_stop_count)) {
+		   unlikely(task->signal->group_stop_count)) {
 		/*
 		 * If no engine is interested in intercepting signals or
 		 * we must stop, let the caller just dequeue them normally
@@ -2147,7 +2161,7 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 			 */
 			if (report.action != UTRACE_RESUME)
 				report.action = UTRACE_INTERRUPT;
-			finish_report(&report, task, utrace);
+			finish_report(task, utrace, &report, true);
 
 			if (unlikely(report.result & UTRACE_SIGNAL_HOLD))
 				push_back_signal(task, info);
@@ -2180,7 +2194,7 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 		 * as in utrace_resume(), above.  After we've dealt with that,
 		 * our caller will relock and come back through here.
 		 */
-		finish_resume_report(&report, task, utrace);
+		finish_resume_report(task, utrace, &report);
 
 		if (unlikely(fatal_signal_pending(task))) {
 			/*
@@ -2214,7 +2228,7 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 	 * Complete the bookkeeping after the report.
 	 * This sets utrace->resume if UTRACE_STOP was used.
 	 */
-	finish_report(&report, task, utrace);
+	finish_report(task, utrace, &report, true);
 
 	return_ka->sa.sa_handler = SIG_DFL;
 
