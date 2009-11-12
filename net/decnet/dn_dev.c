@@ -600,15 +600,17 @@ static void dn_dev_check_default(struct net_device *dev)
 		dev_put(dev);
 }
 
+/*
+ * Called with RTNL
+ */
 static struct dn_dev *dn_dev_by_index(int ifindex)
 {
 	struct net_device *dev;
 	struct dn_dev *dn_dev = NULL;
-	dev = dev_get_by_index(&init_net, ifindex);
-	if (dev) {
+
+	dev = __dev_get_by_index(&init_net, ifindex);
+	if (dev)
 		dn_dev = dev->dn_ptr;
-		dev_put(dev);
-	}
 
 	return dn_dev;
 }
@@ -854,9 +856,7 @@ int dn_dev_bind_default(__le16 *addr)
 	dev = dn_dev_get_default();
 last_chance:
 	if (dev) {
-		read_lock(&dev_base_lock);
 		rv = dn_dev_get_first(dev, addr);
-		read_unlock(&dev_base_lock);
 		dev_put(dev);
 		if (rv == 0 || dev == init_net.loopback_dev)
 			return rv;
@@ -1321,18 +1321,18 @@ static inline int is_dn_dev(struct net_device *dev)
 }
 
 static void *dn_dev_seq_start(struct seq_file *seq, loff_t *pos)
-	__acquires(&dev_base_lock)
+	__acquires(rcu)
 {
 	int i;
 	struct net_device *dev;
 
-	read_lock(&dev_base_lock);
+	rcu_read_lock();
 
 	if (*pos == 0)
 		return SEQ_START_TOKEN;
 
 	i = 1;
-	for_each_netdev(&init_net, dev) {
+	for_each_netdev_rcu(&init_net, dev) {
 		if (!is_dn_dev(dev))
 			continue;
 
@@ -1353,7 +1353,7 @@ static void *dn_dev_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 	if (v == SEQ_START_TOKEN)
 		dev = net_device_entry(&init_net.dev_base_head);
 
-	for_each_netdev_continue(&init_net, dev) {
+	for_each_netdev_continue_rcu(&init_net, dev) {
 		if (!is_dn_dev(dev))
 			continue;
 
@@ -1364,9 +1364,9 @@ static void *dn_dev_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 }
 
 static void dn_dev_seq_stop(struct seq_file *seq, void *v)
-	__releases(&dev_base_lock)
+	__releases(rcu)
 {
-	read_unlock(&dev_base_lock);
+	rcu_read_unlock();
 }
 
 static char *dn_type2asc(char type)
