@@ -1270,6 +1270,7 @@ repeat:
 		if (ctl_name == table->ctl_name)
 			procname = table->procname;
 
+#ifdef CONFIG_NET
 		/*
 		 * For a wild card entry map from ifindex to network
 		 * device name.
@@ -1279,6 +1280,7 @@ repeat:
 			if (dev)
 				procname = dev->name;
 		}
+#endif
 		if (procname) {
 			int len;
 
