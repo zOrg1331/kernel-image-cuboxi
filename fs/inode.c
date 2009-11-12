@@ -270,7 +270,7 @@ void inode_init_once(struct inode *inode)
 	mutex_init(&inode->inotify_mutex);
 #endif
 #ifdef CONFIG_FSNOTIFY
-	INIT_HLIST_HEAD(&inode->i_fsnotify_mark_entries);
+	INIT_HLIST_HEAD(&inode->i_fsnotify_marks);
 #endif
 }
 EXPORT_SYMBOL(inode_init_once);
