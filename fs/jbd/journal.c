@@ -461,6 +461,7 @@ int log_start_commit(journal_t *journal, tid_t tid)
 	spin_unlock(&journal->j_state_lock);
 	return ret;
 }
+EXPORT_SYMBOL(log_start_commit);
 
 /*
  * Force and wait upon a commit if the calling process is not within
