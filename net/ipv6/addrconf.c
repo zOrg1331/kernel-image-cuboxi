@@ -481,9 +481,8 @@ static void addrconf_forward_change(struct net *net, __s32 newf)
 	struct net_device *dev;
 	struct inet6_dev *idev;
 
-	read_lock(&dev_base_lock);
-	for_each_netdev(net, dev) {
-		rcu_read_lock();
+	rcu_read_lock();
+	for_each_netdev_rcu(net, dev) {
 		idev = __in6_dev_get(dev);
 		if (idev) {
 			int changed = (!idev->cnf.forwarding) ^ (!newf);
@@ -491,9 +490,8 @@ static void addrconf_forward_change(struct net *net, __s32 newf)
 			if (changed)
 				dev_forward_change(idev);
 		}
-		rcu_read_unlock();
 	}
-	read_unlock(&dev_base_lock);
+	rcu_read_unlock();
 }
 
 static int addrconf_fixup_forwarding(struct ctl_table *table, int *p, int old)
@@ -1137,10 +1135,9 @@ int ipv6_dev_get_saddr(struct net *net, struct net_device *dst_dev,
 	hiscore->rule = -1;
 	hiscore->ifa = NULL;
 
-	read_lock(&dev_base_lock);
 	rcu_read_lock();
 
-	for_each_netdev(net, dev) {
+	for_each_netdev_rcu(net, dev) {
 		struct inet6_dev *idev;
 
 		/* Candidate Source Address (section 4)
@@ -1235,7 +1232,6 @@ try_nextdev:
 		read_unlock_bh(&idev->lock);
 	}
 	rcu_read_unlock();
-	read_unlock(&dev_base_lock);
 
 	if (!hiscore->ifa)
 		return -EADDRNOTAVAIL;
@@ -3523,6 +3519,8 @@ static int inet6_dump_addr(struct sk_buff *skb, struct netlink_callback *cb,
 							cb->nlh->nlmsg_seq,
 							RTM_NEWADDR,
 							NLM_F_MULTI);
+				if (err <= 0)
+					break;
 			}
 			break;
 		case MULTICAST_ADDR:
@@ -3536,6 +3534,8 @@ static int inet6_dump_addr(struct sk_buff *skb, struct netlink_callback *cb,
 							  cb->nlh->nlmsg_seq,
 							  RTM_GETMULTICAST,
 							  NLM_F_MULTI);
+				if (err <= 0)
+					break;
 			}
 			break;
 		case ANYCAST_ADDR:
@@ -3549,6 +3549,8 @@ static int inet6_dump_addr(struct sk_buff *skb, struct netlink_callback *cb,
 							  cb->nlh->nlmsg_seq,
 							  RTM_GETANYCAST,
 							  NLM_F_MULTI);
+				if (err <= 0)
+					break;
 			}
 			break;
 		default:
@@ -3708,6 +3710,7 @@ static inline void ipv6_store_devconf(struct ipv6_devconf *cnf,
 #endif
 	array[DEVCONF_DISABLE_IPV6] = cnf->disable_ipv6;
 	array[DEVCONF_ACCEPT_DAD] = cnf->accept_dad;
+	array[DEVCONF_FORCE_TLLAO] = cnf->force_tllao;
 }
 
 static inline size_t inet6_if_nlmsg_size(void)
@@ -3826,28 +3829,39 @@ nla_put_failure:
 static int inet6_dump_ifinfo(struct sk_buff *skb, struct netlink_callback *cb)
 {
 	struct net *net = sock_net(skb->sk);
-	int idx, err;
-	int s_idx = cb->args[0];
+	int h, s_h;
+	int idx = 0, s_idx;
 	struct net_device *dev;
 	struct inet6_dev *idev;
+	struct hlist_head *head;
+	struct hlist_node *node;
 
-	read_lock(&dev_base_lock);
-	idx = 0;
-	for_each_netdev(net, dev) {
-		if (idx < s_idx)
-			goto cont;
-		if ((idev = in6_dev_get(dev)) == NULL)
-			goto cont;
-		err = inet6_fill_ifinfo(skb, idev, NETLINK_CB(cb->skb).pid,
-				cb->nlh->nlmsg_seq, RTM_NEWLINK, NLM_F_MULTI);
-		in6_dev_put(idev);
-		if (err <= 0)
-			break;
+	s_h = cb->args[0];
+	s_idx = cb->args[1];
+
+	rcu_read_lock();
+	for (h = s_h; h < NETDEV_HASHENTRIES; h++, s_idx = 0) {
+		idx = 0;
+		head = &net->dev_index_head[h];
+		hlist_for_each_entry_rcu(dev, node, head, index_hlist) {
+			if (idx < s_idx)
+				goto cont;
+			idev = __in6_dev_get(dev);
+			if (!idev)
+				goto cont;
+			if (inet6_fill_ifinfo(skb, idev,
+					      NETLINK_CB(cb->skb).pid,
+					      cb->nlh->nlmsg_seq,
+					      RTM_NEWLINK, NLM_F_MULTI) <= 0)
+				goto out;
 cont:
-		idx++;
+			idx++;
+		}
 	}
-	read_unlock(&dev_base_lock);
-	cb->args[0] = idx;
+out:
+	rcu_read_unlock();
+	cb->args[1] = idx;
+	cb->args[0] = h;
 
 	return skb->len;
 }
@@ -4051,9 +4065,8 @@ static void addrconf_disable_change(struct net *net, __s32 newf)
 	struct net_device *dev;
 	struct inet6_dev *idev;
 
-	read_lock(&dev_base_lock);
-	for_each_netdev(net, dev) {
-		rcu_read_lock();
+	rcu_read_lock();
+	for_each_netdev_rcu(net, dev) {
 		idev = __in6_dev_get(dev);
 		if (idev) {
 			int changed = (!idev->cnf.disable_ipv6) ^ (!newf);
@@ -4061,9 +4074,8 @@ static void addrconf_disable_change(struct net *net, __s32 newf)
 			if (changed)
 				dev_disable_change(idev);
 		}
-		rcu_read_unlock();
 	}
-	read_unlock(&dev_base_lock);
+	rcu_read_unlock();
 }
 
 static int addrconf_disable_ipv6(struct ctl_table *table, int *p, int old)
@@ -4351,6 +4363,14 @@ static struct addrconf_sysctl_table
 			.maxlen		=	sizeof(int),
 			.mode		=	0644,
 			.proc_handler	=	proc_dointvec,
+		},
+		{
+			.ctl_name       = CTL_UNNUMBERED,
+			.procname       = "force_tllao",
+			.data           = &ipv6_devconf.force_tllao,
+			.maxlen         = sizeof(int),
+			.mode           = 0644,
+			.proc_handler   = proc_dointvec
 		},
 		{
 			.ctl_name	=	0,	/* sentinel */

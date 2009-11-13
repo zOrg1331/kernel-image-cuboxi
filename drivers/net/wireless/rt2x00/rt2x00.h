@@ -144,6 +144,11 @@ struct avg_val {
 	int avg_weight;
 };
 
+enum rt2x00_chip_intf {
+	RT2X00_CHIP_INTF_PCI,
+	RT2X00_CHIP_INTF_USB,
+};
+
 /*
  * Chipset identification
  * The chipset on the device is composed of a RT and RF chip.
@@ -158,10 +163,19 @@ struct rt2x00_chip {
 #define RT2561		0x0302
 #define RT2661		0x0401
 #define RT2571		0x1300
+#define RT2860		0x0601	/* 2.4GHz PCI/CB */
+#define RT2860D		0x0681	/* 2.4GHz, 5GHz PCI/CB */
+#define RT2890		0x0701	/* 2.4GHz PCIe */
+#define RT2890D		0x0781	/* 2.4GHz, 5GHz PCIe */
+#define RT2880		0x2880	/* WSOC */
+#define RT3052		0x3052	/* WSOC */
+#define RT3090		0x3090	/* 2.4GHz PCIe */
 #define RT2870		0x1600
 
 	u16 rf;
 	u32 rev;
+
+	enum rt2x00_chip_intf intf;
 };
 
 /*
@@ -835,7 +849,21 @@ struct rt2x00_dev {
 	 * Firmware image.
 	 */
 	const struct firmware *fw;
+
+	/*
+	 * Driver specific data.
+	 */
+	void *priv;
 };
+
+/*
+ * Register defines.
+ * Some registers require multiple attempts before success,
+ * in those cases REGISTER_BUSY_COUNT attempts should be
+ * taken with a REGISTER_BUSY_DELAY interval.
+ */
+#define REGISTER_BUSY_COUNT	5
+#define REGISTER_BUSY_DELAY	100
 
 /*
  * Generic RF access.
@@ -923,6 +951,28 @@ static inline bool rt2x00_check_rev(const struct rt2x00_chip *chipset,
 				    const u32 mask, const u32 rev)
 {
 	return ((chipset->rev & mask) == rev);
+}
+
+static inline void rt2x00_set_chip_intf(struct rt2x00_dev *rt2x00dev,
+					enum rt2x00_chip_intf intf)
+{
+	rt2x00dev->chip.intf = intf;
+}
+
+static inline bool rt2x00_intf(const struct rt2x00_chip *chipset,
+			       enum rt2x00_chip_intf intf)
+{
+	return (chipset->intf == intf);
+}
+
+static inline bool rt2x00_intf_is_pci(struct rt2x00_dev *rt2x00dev)
+{
+	return rt2x00_intf(&rt2x00dev->chip, RT2X00_CHIP_INTF_PCI);
+}
+
+static inline bool rt2x00_intf_is_usb(struct rt2x00_dev *rt2x00dev)
+{
+	return rt2x00_intf(&rt2x00dev->chip, RT2X00_CHIP_INTF_USB);
 }
 
 /**
