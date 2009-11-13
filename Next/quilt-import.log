@@ -1,0 +1,112 @@
+Importing driver-core.current based on 2.6.32-rc6
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.32-rc6-git4
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.32-rc6-git4
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.32-rc6
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.32-rc6-166-g799dd75
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 799dd75b1a8380a967c929a4551895788c374b31
+HEAD is now at 799dd75 Merge branch 'i2c-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/jdelvare/staging
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+param:neaten-param.c-exports.patch
+param:param_ops.patch
+param:param_ops-modpost-complaint-silence.patch
+param:add-free-hook.patch
+param:use-free-hook-for-charp.patch
+param:params-are-const.patch
+param:kernel_param_lock.patch
+param:documentation.patch
+param:cleanup-ide.patch
+param:cleanup-mptbase.patch
+param:remove-useless-writable-charp.patch
+param:lock-charp-simple.patch
+param:lock-charp-myri10ge.patch
+param:lock-charp-if_sdio.patch
+param:ipmi_watchdog.patch
+param:acpi-use-ops.patch
+misc:enhance-BUILD_BUG_ON.patch
+misc:remove-MAYBE_BUILD_BUG_ON.patch
+net:tun_export_underlying_socket.patch
+mm:export_use_mm_unuse_mm.patch
+virtio:vhost_net_a_kernel_level_server.patch
+virtio:vhost_net_a_kernel_level_server-fix.patch
+lguest:remove-unneeded-zlib-include.patch
+sparc:no-inline-export.patch
+ppc:no-inline-export.patch
+arm:use_unified_discard_definition_in_linker_script.patch
+arm:unexport_symbols_used_to_implement_floating_point_emulation.patch
+x86:dont-export-inline.patch
+module:make_symbol_prefix_into_a_config_option.patch
+module:extract_export_symbol_from_h_into_mod_export_h.patch
+kbuild:sort_the_list_of_symbols_exported_by_the_kernel_ksymtab.patch
+module:refactor_symbol_tables_and_try_to_reduce_code_size_of_each_symbol.patch
+module:refactor_symbol_tables_and_try_to_reduce_code_size_of_each_symbol-fix.patch
+module:refactor_symbol_tables_and_try_to_reduce_code_size_of_each_symbol-fix2.patch
+lib:add_generic_binary_search_function_to_the_kernel.patch
+lib:bsearch_remove_redundant_special_case_for_arrays_of_size_0.patch
+misc:bsearch_avoid_unneeded_decrement_arithmetic.patch
+misc:bsearch_prevent_overflow_when_computing_middle_comparison_element.patch
+module:speed_up_find_symbol_using_binary_search_on_the_builtin_symbol_tables.patch
+module:fix_is_exported_to_return_true_for_all_types_of_exports.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + 740d65e...a2b3b20 master     -> quilt/rr  (forced update)
+Importing device-mapper based on v2.6.32-rc6-346-gaa021ba
+$ cd ../quilt-tmp
+$ git reset --hard aa021baa3295fa6e3f367d80f8955dd5176656eb
+HEAD is now at aa021ba Merge git://git.kernel.org/pub/scm/linux/kernel/git/mason/btrfs-unstable
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-avoid-_hash_lock-deadlock.patch
+dm-exception-store-free-tmp_store-on-persistent-flag-error.patch
+dm-sysfs-add-empty-release-function-to-avoid-debug-warning.patch
+dm-io-use-slab-for-struct-io.patch
+dm-io-remove-extra-bi_io_vec-region-hack.patch
+dm-ioctl-prefer-strlcpy-over-strncpy.patch
+dm-snapshot-avoid-else-clause-in-persistent_read_metadata.patch
+dm-snapshot-simplify-sector_to_chunk-expression.patch
+dm-snapshot-abstract-minimum_chunk_size-fn.patch
+dm-snapshot-consolidate-insert-exception-functions.patch
+dm-snapshot-rename-dm_snap_exception-to-dm_exception.patch
+dm-snapshot-rename-exception_table-to-dm_exception_table.patch
+dm-snapshot-rename-exception-functions.patch
+dm-snapshot-add-allocated-metadata-to-snapshot-status.patch
+dm-snapshot-move-cow-ref-from-exception-store-to-snap-core.patch
+dm-snapshot-track-suspended-state-in-target.patch
+dm-kcopyd-accept-zero-size-jobs.patch
+dm-abstract-dm_in_flight-function.patch
+dm-use-clone-in-map_request-function.patch
+dm-pass-gfp_mask-to-alloc_rq_tio.patch
+dm-abstract-clone_rq.patch
+dm-simplify-request-based-suspend.patch
+dm-use-md-pending-for-in-flight-IO-counting.patch
+dm-refactor-request-based-completion-functions.patch
+dm-move-dm_end_request.patch
+dm-add-request-based-barrier-support.patch
+dm-rename-dm_get_table-to-dm_get_live_table.patch
+dm-mpath-flush-workqueues-before-suspend-completes.patch
+dm-io-handle-empty-barriers.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + f2f6bd9...af75ccc master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
