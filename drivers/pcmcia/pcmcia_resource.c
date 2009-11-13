@@ -20,6 +20,7 @@
 #include <linux/delay.h>
 #include <linux/pci.h>
 #include <linux/device.h>
+#include <linux/netdevice.h>
 
 #include <pcmcia/cs_types.h>
 #include <pcmcia/ss.h>
@@ -43,21 +44,6 @@ static u8 pcmcia_used_irq[NR_IRQS];
 #endif
 
 
-#ifdef CONFIG_PCMCIA_DEBUG
-extern int ds_pc_debug;
-
-#define ds_dbg(skt, lvl, fmt, arg...) do {			\
-	if (ds_pc_debug >= lvl)					\
-		dev_printk(KERN_DEBUG, &skt->dev,		\
-			   "pcmcia_resource: " fmt,		\
-			   ## arg);				\
-} while (0)
-#else
-#define ds_dbg(skt, lvl, fmt, arg...) do { } while (0)
-#endif
-
-
-
 /** alloc_io_space
  *
  * Special stuff for managing IO windows, because they are scarce
@@ -72,14 +58,14 @@ static int alloc_io_space(struct pcmcia_socket *s, u_int attr,
 	align = (*base) ? (lines ? 1<<lines : 0) : 1;
 	if (align && (align < num)) {
 		if (*base) {
-			ds_dbg(s, 0, "odd IO request: num %#x align %#x\n",
+			dev_dbg(&s->dev, "odd IO request: num %#x align %#x\n",
 			       num, align);
 			align = 0;
 		} else
 			while (align && (align < num)) align <<= 1;
 	}
 	if (*base & ~(align-1)) {
-		ds_dbg(s, 0, "odd IO request: base %#x align %#x\n",
+		dev_dbg(&s->dev, "odd IO request: base %#x align %#x\n",
 		       *base, align);
 		align = 0;
 	}
@@ -173,8 +159,10 @@ int pcmcia_access_configuration_register(struct pcmcia_device *p_dev,
 	s = p_dev->socket;
 	c = p_dev->function_config;
 
-	if (!(c->state & CONFIG_LOCKED))
+	if (!(c->state & CONFIG_LOCKED)) {
+		dev_dbg(&s->dev, "Configuration isnt't locked\n");
 		return -EACCES;
+	}
 
 	addr = (c->ConfigBase + reg->Offset) >> 1;
 
@@ -188,6 +176,7 @@ int pcmcia_access_configuration_register(struct pcmcia_device *p_dev,
 		pcmcia_write_cis_mem(s, 1, addr, 1, &val);
 		break;
 	default:
+		dev_dbg(&s->dev, "Invalid conf register request\n");
 		return -EINVAL;
 		break;
 	}
@@ -252,12 +241,12 @@ int pcmcia_map_mem_page(window_handle_t win, memreq_t *req)
 		return -EINVAL;
 	s = win->sock;
 	if (req->Page != 0) {
-		ds_dbg(s, 0, "failure: requested page is zero\n");
+		dev_dbg(&s->dev, "failure: requested page is zero\n");
 		return -EINVAL;
 	}
 	win->ctl.card_start = req->CardOffset;
 	if (s->ops->set_mem_map(s, &win->ctl) != 0) {
-		ds_dbg(s, 0, "failed to set_mem_map\n");
+		dev_dbg(&s->dev, "failed to set_mem_map\n");
 		return -EIO;
 	}
 	return 0;
@@ -278,10 +267,14 @@ int pcmcia_modify_configuration(struct pcmcia_device *p_dev,
 	s = p_dev->socket;
 	c = p_dev->function_config;
 
-	if (!(s->state & SOCKET_PRESENT))
+	if (!(s->state & SOCKET_PRESENT)) {
+		dev_dbg(&s->dev, "No card present\n");
 		return -ENODEV;
-	if (!(c->state & CONFIG_LOCKED))
+	}
+	if (!(c->state & CONFIG_LOCKED)) {
+		dev_dbg(&s->dev, "Configuration isnt't locked\n");
 		return -EACCES;
+	}
 
 	if (mod->Attributes & CONF_IRQ_CHANGE_VALID) {
 		if (mod->Attributes & CONF_ENABLE_IRQ) {
@@ -295,7 +288,7 @@ int pcmcia_modify_configuration(struct pcmcia_device *p_dev,
 	}
 
 	if (mod->Attributes & CONF_VCC_CHANGE_VALID) {
-		ds_dbg(s, 0, "changing Vcc is not allowed at this time\n");
+		dev_dbg(&s->dev, "changing Vcc is not allowed at this time\n");
 		return -EINVAL;
 	}
 
@@ -303,7 +296,7 @@ int pcmcia_modify_configuration(struct pcmcia_device *p_dev,
 	if ((mod->Attributes & CONF_VPP1_CHANGE_VALID) &&
 	    (mod->Attributes & CONF_VPP2_CHANGE_VALID)) {
 		if (mod->Vpp1 != mod->Vpp2) {
-			ds_dbg(s, 0, "Vpp1 and Vpp2 must be the same\n");
+			dev_dbg(&s->dev, "Vpp1 and Vpp2 must be the same\n");
 			return -EINVAL;
 		}
 		s->socket.Vpp = mod->Vpp1;
@@ -314,7 +307,7 @@ int pcmcia_modify_configuration(struct pcmcia_device *p_dev,
 		}
 	} else if ((mod->Attributes & CONF_VPP1_CHANGE_VALID) ||
 		   (mod->Attributes & CONF_VPP2_CHANGE_VALID)) {
-		ds_dbg(s, 0, "changing Vcc is not allowed at this time\n");
+		dev_dbg(&s->dev, "changing Vcc is not allowed at this time\n");
 		return -EINVAL;
 	}
 
@@ -425,11 +418,11 @@ static int pcmcia_release_irq(struct pcmcia_device *p_dev, irq_req_t *req)
 	if (c->state & CONFIG_LOCKED)
 		return -EACCES;
 	if (c->irq.Attributes != req->Attributes) {
-		ds_dbg(s, 0, "IRQ attributes must match assigned ones\n");
+		dev_dbg(&s->dev, "IRQ attributes must match assigned ones\n");
 		return -EINVAL;
 	}
 	if (s->irq.AssignedIRQ != req->AssignedIRQ) {
-		ds_dbg(s, 0, "IRQ must match assigned one\n");
+		dev_dbg(&s->dev, "IRQ must match assigned one\n");
 		return -EINVAL;
 	}
 	if (--s->irq.Config == 0) {
@@ -456,8 +449,10 @@ int pcmcia_release_window(window_handle_t win)
 	if ((win == NULL) || (win->magic != WINDOW_MAGIC))
 		return -EINVAL;
 	s = win->sock;
-	if (!(win->handle->_win & CLIENT_WIN_REQ(win->index)))
+	if (!(win->handle->_win & CLIENT_WIN_REQ(win->index))) {
+		dev_dbg(&s->dev, "not releasing unknown window\n");
 		return -EINVAL;
+	}
 
 	/* Shut down memory window */
 	win->ctl.flags &= ~MAP_ACTIVE;
@@ -492,12 +487,14 @@ int pcmcia_request_configuration(struct pcmcia_device *p_dev,
 		return -ENODEV;
 
 	if (req->IntType & INT_CARDBUS) {
-		ds_dbg(p_dev->socket, 0, "IntType may not be INT_CARDBUS\n");
+		dev_dbg(&s->dev, "IntType may not be INT_CARDBUS\n");
 		return -EINVAL;
 	}
 	c = p_dev->function_config;
-	if (c->state & CONFIG_LOCKED)
+	if (c->state & CONFIG_LOCKED) {
+		dev_dbg(&s->dev, "Configuration is locked\n");
 		return -EACCES;
+	}
 
 	/* Do power control.  We don't allow changes in Vcc. */
 	s->socket.Vpp = req->Vpp;
@@ -609,40 +606,44 @@ int pcmcia_request_io(struct pcmcia_device *p_dev, io_req_t *req)
 	struct pcmcia_socket *s = p_dev->socket;
 	config_t *c;
 
-	if (!(s->state & SOCKET_PRESENT))
+	if (!(s->state & SOCKET_PRESENT)) {
+		dev_dbg(&s->dev, "No card present\n");
 		return -ENODEV;
+	}
 
 	if (!req)
 		return -EINVAL;
 	c = p_dev->function_config;
-	if (c->state & CONFIG_LOCKED)
+	if (c->state & CONFIG_LOCKED) {
+		dev_dbg(&s->dev, "Configuration is locked\n");
 		return -EACCES;
+	}
 	if (c->state & CONFIG_IO_REQ) {
-		ds_dbg(s, 0, "IO already configured\n");
+		dev_dbg(&s->dev, "IO already configured\n");
 		return -EBUSY;
 	}
 	if (req->Attributes1 & (IO_SHARED | IO_FORCE_ALIAS_ACCESS)) {
-		ds_dbg(s, 0, "bad attribute setting for IO region 1\n");
+		dev_dbg(&s->dev, "bad attribute setting for IO region 1\n");
 		return -EINVAL;
 	}
 	if ((req->NumPorts2 > 0) &&
 	    (req->Attributes2 & (IO_SHARED | IO_FORCE_ALIAS_ACCESS))) {
-		ds_dbg(s, 0, "bad attribute setting for IO region 2\n");
+		dev_dbg(&s->dev, "bad attribute setting for IO region 2\n");
 		return -EINVAL;
 	}
 
-	ds_dbg(s, 1, "trying to allocate resource 1\n");
+	dev_dbg(&s->dev, "trying to allocate resource 1\n");
 	if (alloc_io_space(s, req->Attributes1, &req->BasePort1,
 			   req->NumPorts1, req->IOAddrLines)) {
-		ds_dbg(s, 0, "allocation of resource 1 failed\n");
+		dev_dbg(&s->dev, "allocation of resource 1 failed\n");
 		return -EBUSY;
 	}
 
 	if (req->NumPorts2) {
-		ds_dbg(s, 1, "trying to allocate resource 2\n");
+		dev_dbg(&s->dev, "trying to allocate resource 2\n");
 		if (alloc_io_space(s, req->Attributes2, &req->BasePort2,
 				   req->NumPorts2, req->IOAddrLines)) {
-			ds_dbg(s, 0, "allocation of resource 2 failed\n");
+			dev_dbg(&s->dev, "allocation of resource 2 failed\n");
 			release_io_space(s, req->BasePort1, req->NumPorts1);
 			return -EBUSY;
 		}
@@ -680,13 +681,17 @@ int pcmcia_request_irq(struct pcmcia_device *p_dev, irq_req_t *req)
 	int ret = -EINVAL, irq = 0;
 	int type;
 
-	if (!(s->state & SOCKET_PRESENT))
+	if (!(s->state & SOCKET_PRESENT)) {
+		dev_dbg(&s->dev, "No card present\n");
 		return -ENODEV;
+	}
 	c = p_dev->function_config;
-	if (c->state & CONFIG_LOCKED)
+	if (c->state & CONFIG_LOCKED) {
+		dev_dbg(&s->dev, "Configuration is locked\n");
 		return -EACCES;
+	}
 	if (c->state & CONFIG_IRQ_REQ) {
-		ds_dbg(s, 0, "IRQ already configured\n");
+		dev_dbg(&s->dev, "IRQ already configured\n");
 		return -EBUSY;
 	}
 
@@ -745,8 +750,10 @@ int pcmcia_request_irq(struct pcmcia_device *p_dev, irq_req_t *req)
 #endif
 	/* only assign PCI irq if no IRQ already assigned */
 	if (ret && !s->irq.AssignedIRQ) {
-		if (!s->pci_irq)
+		if (!s->pci_irq) {
+			dev_printk(KERN_INFO, &s->dev, "no IRQ found\n");
 			return ret;
+		}
 		type = IRQF_SHARED;
 		irq = s->pci_irq;
 	}
@@ -754,8 +761,11 @@ int pcmcia_request_irq(struct pcmcia_device *p_dev, irq_req_t *req)
 	if (ret && (req->Attributes & IRQ_HANDLE_PRESENT)) {
 		ret = request_irq(irq, req->Handler, type,
 				  p_dev->devname, req->Instance);
-		if (ret)
+		if (ret) {
+			dev_printk(KERN_INFO, &s->dev,
+				"request_irq() failed\n");
 			return ret;
+		}
 	}
 
 	/* Make sure the fact the request type was overridden is passed back */
@@ -794,10 +804,12 @@ int pcmcia_request_window(struct pcmcia_device **p_dev, win_req_t *req, window_h
 	u_long align;
 	int w;
 
-	if (!(s->state & SOCKET_PRESENT))
+	if (!(s->state & SOCKET_PRESENT)) {
+		dev_dbg(&s->dev, "No card present\n");
 		return -ENODEV;
+	}
 	if (req->Attributes & (WIN_PAGED | WIN_SHARED)) {
-		ds_dbg(s, 0, "bad attribute setting for iomem region\n");
+		dev_dbg(&s->dev, "bad attribute setting for iomem region\n");
 		return -EINVAL;
 	}
 
@@ -808,12 +820,12 @@ int pcmcia_request_window(struct pcmcia_device **p_dev, win_req_t *req, window_h
 		  (req->Attributes & WIN_STRICT_ALIGN)) ?
 		 req->Size : s->map_size);
 	if (req->Size & (s->map_size-1)) {
-		ds_dbg(s, 0, "invalid map size\n");
+		dev_dbg(&s->dev, "invalid map size\n");
 		return -EINVAL;
 	}
 	if ((req->Base && (s->features & SS_CAP_STATIC_MAP)) ||
 	    (req->Base & (align-1))) {
-		ds_dbg(s, 0, "invalid base address\n");
+		dev_dbg(&s->dev, "invalid base address\n");
 		return -EINVAL;
 	}
 	if (req->Base)
@@ -823,7 +835,7 @@ int pcmcia_request_window(struct pcmcia_device **p_dev, win_req_t *req, window_h
 	for (w = 0; w < MAX_WIN; w++)
 		if (!(s->state & SOCKET_WIN_REQ(w))) break;
 	if (w == MAX_WIN) {
-		ds_dbg(s, 0, "all windows are used already\n");
+		dev_dbg(&s->dev, "all windows are used already\n");
 		return -EINVAL;
 	}
 
@@ -837,7 +849,7 @@ int pcmcia_request_window(struct pcmcia_device **p_dev, win_req_t *req, window_h
 		win->ctl.res = pcmcia_find_mem_region(req->Base, req->Size, align,
 						      (req->Attributes & WIN_MAP_BELOW_1MB), s);
 		if (!win->ctl.res) {
-			ds_dbg(s, 0, "allocating mem region failed\n");
+			dev_dbg(&s->dev, "allocating mem region failed\n");
 			return -EINVAL;
 		}
 	}
@@ -857,7 +869,7 @@ int pcmcia_request_window(struct pcmcia_device **p_dev, win_req_t *req, window_h
 		win->ctl.flags |= MAP_USE_WAIT;
 	win->ctl.card_start = 0;
 	if (s->ops->set_mem_map(s, &win->ctl) != 0) {
-		ds_dbg(s, 0, "failed to set memory mapping\n");
+		dev_dbg(&s->dev, "failed to set memory mapping\n");
 		return -EIO;
 	}
 	s->state |= SOCKET_WIN_REQ(w);
@@ -885,11 +897,38 @@ EXPORT_SYMBOL(pcmcia_disable_device);
 
 
 struct pcmcia_cfg_mem {
-	tuple_t tuple;
+	struct pcmcia_device *p_dev;
+	void *priv_data;
+	int (*conf_check) (struct pcmcia_device *p_dev,
+			   cistpl_cftable_entry_t *cfg,
+			   cistpl_cftable_entry_t *dflt,
+			   unsigned int vcc,
+			   void *priv_data);
 	cisparse_t parse;
-	u8 buf[256];
 	cistpl_cftable_entry_t dflt;
 };
+
+/**
+ * pcmcia_do_loop_config() - internal helper for pcmcia_loop_config()
+ *
+ * pcmcia_do_loop_config() is the internal callback for the call from
+ * pcmcia_loop_config() to pccard_loop_tuple(). Data is transferred
+ * by a struct pcmcia_cfg_mem.
+ */
+static int pcmcia_do_loop_config(tuple_t *tuple, cisparse_t *parse, void *priv)
+{
+	cistpl_cftable_entry_t *cfg = &parse->cftable_entry;
+	struct pcmcia_cfg_mem *cfg_mem = priv;
+
+	/* default values */
+	cfg_mem->p_dev->conf.ConfigIndex = cfg->index;
+	if (cfg->flags & CISTPL_CFTABLE_DEFAULT)
+		cfg_mem->dflt = *cfg;
+
+	return cfg_mem->conf_check(cfg_mem->p_dev, cfg, &cfg_mem->dflt,
+				   cfg_mem->p_dev->socket->socket.Vcc,
+				   cfg_mem->priv_data);
+}
 
 /**
  * pcmcia_loop_config() - loop over configuration options
@@ -913,48 +952,174 @@ int pcmcia_loop_config(struct pcmcia_device *p_dev,
 		       void *priv_data)
 {
 	struct pcmcia_cfg_mem *cfg_mem;
-
-	tuple_t *tuple;
 	int ret;
-	unsigned int vcc;
 
 	cfg_mem = kzalloc(sizeof(struct pcmcia_cfg_mem), GFP_KERNEL);
 	if (cfg_mem == NULL)
 		return -ENOMEM;
 
-	/* get the current Vcc setting */
-	vcc = p_dev->socket->socket.Vcc;
+	cfg_mem->p_dev = p_dev;
+	cfg_mem->conf_check = conf_check;
+	cfg_mem->priv_data = priv_data;
 
-	tuple = &cfg_mem->tuple;
-	tuple->TupleData = cfg_mem->buf;
-	tuple->TupleDataMax = 255;
-	tuple->TupleOffset = 0;
-	tuple->DesiredTuple = CISTPL_CFTABLE_ENTRY;
-	tuple->Attributes = 0;
+	ret = pccard_loop_tuple(p_dev->socket, p_dev->func,
+				CISTPL_CFTABLE_ENTRY, &cfg_mem->parse,
+				cfg_mem, pcmcia_do_loop_config);
 
-	ret = pcmcia_get_first_tuple(p_dev, tuple);
-	while (!ret) {
-		cistpl_cftable_entry_t *cfg = &cfg_mem->parse.cftable_entry;
-
-		if (pcmcia_get_tuple_data(p_dev, tuple))
-			goto next_entry;
-
-		if (pcmcia_parse_tuple(tuple, &cfg_mem->parse))
-			goto next_entry;
-
-		/* default values */
-		p_dev->conf.ConfigIndex = cfg->index;
-		if (cfg->flags & CISTPL_CFTABLE_DEFAULT)
-			cfg_mem->dflt = *cfg;
-
-		ret = conf_check(p_dev, cfg, &cfg_mem->dflt, vcc, priv_data);
-		if (!ret)
-			break;
-
-next_entry:
-		ret = pcmcia_get_next_tuple(p_dev, tuple);
-	}
-
+	kfree(cfg_mem);
 	return ret;
 }
 EXPORT_SYMBOL(pcmcia_loop_config);
+
+
+struct pcmcia_loop_mem {
+	struct pcmcia_device *p_dev;
+	void *priv_data;
+	int (*loop_tuple) (struct pcmcia_device *p_dev,
+			   tuple_t *tuple,
+			   void *priv_data);
+};
+
+/**
+ * pcmcia_do_loop_tuple() - internal helper for pcmcia_loop_config()
+ *
+ * pcmcia_do_loop_tuple() is the internal callback for the call from
+ * pcmcia_loop_tuple() to pccard_loop_tuple(). Data is transferred
+ * by a struct pcmcia_cfg_mem.
+ */
+static int pcmcia_do_loop_tuple(tuple_t *tuple, cisparse_t *parse, void *priv)
+{
+	struct pcmcia_loop_mem *loop = priv;
+
+	return loop->loop_tuple(loop->p_dev, tuple, loop->priv_data);
+};
+
+/**
+ * pcmcia_loop_tuple() - loop over tuples in the CIS
+ * @p_dev:	the struct pcmcia_device which we need to loop for.
+ * @code:	which CIS code shall we look for?
+ * @priv_data:	private data to be passed to the loop_tuple function.
+ * @loop_tuple:	function to call for each CIS entry of type @function. IT
+ *		gets passed the raw tuple and @priv_data.
+ *
+ * pcmcia_loop_tuple() loops over all CIS entries of type @function, and
+ * calls the @loop_tuple function for each entry. If the call to @loop_tuple
+ * returns 0, the loop exits. Returns 0 on success or errorcode otherwise.
+ */
+int pcmcia_loop_tuple(struct pcmcia_device *p_dev, cisdata_t code,
+		      int (*loop_tuple) (struct pcmcia_device *p_dev,
+					 tuple_t *tuple,
+					 void *priv_data),
+		      void *priv_data)
+{
+	struct pcmcia_loop_mem loop = {
+		.p_dev = p_dev,
+		.loop_tuple = loop_tuple,
+		.priv_data = priv_data};
+
+	return pccard_loop_tuple(p_dev->socket, p_dev->func, code, NULL,
+				 &loop, pcmcia_do_loop_tuple);
+};
+EXPORT_SYMBOL(pcmcia_loop_tuple);
+
+
+struct pcmcia_loop_get {
+	size_t len;
+	cisdata_t **buf;
+};
+
+/**
+ * pcmcia_do_get_tuple() - internal helper for pcmcia_get_tuple()
+ *
+ * pcmcia_do_get_tuple() is the internal callback for the call from
+ * pcmcia_get_tuple() to pcmcia_loop_tuple(). As we're only interested in
+ * the first tuple, return 0 unconditionally. Create a memory buffer large
+ * enough to hold the content of the tuple, and fill it with the tuple data.
+ * The caller is responsible to free the buffer.
+ */
+static int pcmcia_do_get_tuple(struct pcmcia_device *p_dev, tuple_t *tuple,
+			       void *priv)
+{
+	struct pcmcia_loop_get *get = priv;
+
+	*get->buf = kzalloc(tuple->TupleDataLen, GFP_KERNEL);
+	if (*get->buf) {
+		get->len = tuple->TupleDataLen;
+		memcpy(*get->buf, tuple->TupleData, tuple->TupleDataLen);
+	} else
+		dev_dbg(&p_dev->dev, "do_get_tuple: out of memory\n");
+	return 0;
+};
+
+/**
+ * pcmcia_get_tuple() - get first tuple from CIS
+ * @p_dev:	the struct pcmcia_device which we need to loop for.
+ * @code:	which CIS code shall we look for?
+ * @buf:        pointer to store the buffer to.
+ *
+ * pcmcia_get_tuple() gets the content of the first CIS entry of type @code.
+ * It returns the buffer length (or zero). The caller is responsible to free
+ * the buffer passed in @buf.
+ */
+size_t pcmcia_get_tuple(struct pcmcia_device *p_dev, cisdata_t code,
+			unsigned char **buf)
+{
+	struct pcmcia_loop_get get = {
+		.len = 0,
+		.buf = buf,
+	};
+
+	*get.buf = NULL;
+	pcmcia_loop_tuple(p_dev, code, pcmcia_do_get_tuple, &get);
+
+	return get.len;
+};
+EXPORT_SYMBOL(pcmcia_get_tuple);
+
+
+/**
+ * pcmcia_do_get_mac() - internal helper for pcmcia_get_mac_from_cis()
+ *
+ * pcmcia_do_get_mac() is the internal callback for the call from
+ * pcmcia_get_mac_from_cis() to pcmcia_loop_tuple(). We check whether the
+ * tuple contains a proper LAN_NODE_ID of length 6, and copy the data
+ * to struct net_device->dev_addr[i].
+ */
+static int pcmcia_do_get_mac(struct pcmcia_device *p_dev, tuple_t *tuple,
+			     void *priv)
+{
+	struct net_device *dev = priv;
+	int i;
+
+	if (tuple->TupleData[0] != CISTPL_FUNCE_LAN_NODE_ID)
+		return -EINVAL;
+	if (tuple->TupleDataLen < ETH_ALEN + 2) {
+		dev_warn(&p_dev->dev, "Invalid CIS tuple length for "
+			"LAN_NODE_ID\n");
+		return -EINVAL;
+	}
+
+	if (tuple->TupleData[1] != ETH_ALEN) {
+		dev_warn(&p_dev->dev, "Invalid header for LAN_NODE_ID\n");
+		return -EINVAL;
+	}
+	for (i = 0; i < 6; i++)
+		dev->dev_addr[i] = tuple->TupleData[i+2];
+	return 0;
+};
+
+/**
+ * pcmcia_get_mac_from_cis() - read out MAC address from CISTPL_FUNCE
+ * @p_dev:	the struct pcmcia_device for which we want the address.
+ * @dev:	a properly prepared struct net_device to store the info to.
+ *
+ * pcmcia_get_mac_from_cis() reads out the hardware MAC address from
+ * CISTPL_FUNCE and stores it into struct net_device *dev->dev_addr which
+ * must be set up properly by the driver (see examples!).
+ */
+int pcmcia_get_mac_from_cis(struct pcmcia_device *p_dev, struct net_device *dev)
+{
+	return pcmcia_loop_tuple(p_dev, CISTPL_FUNCE, pcmcia_do_get_mac, dev);
+};
+EXPORT_SYMBOL(pcmcia_get_mac_from_cis);
+
