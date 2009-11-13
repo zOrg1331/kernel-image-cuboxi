@@ -117,6 +117,13 @@ static void __init early_cachepolicy(char **p)
 	}
 	if (i == ARRAY_SIZE(cache_policies))
 		printk(KERN_ERR "ERROR: unknown or unsupported cache policy\n");
+	/*
+	 * This restriction is partly to do with the way we boot; it is
+	 * unpredictable to have memory mapped using two different sets of
+	 * memory attributes (shared, type, and cache attribs).  We can not
+	 * change these attributes once the initial assembly has setup the
+	 * page tables.
+	 */
 	if (cpu_architecture() >= CPU_ARCH_ARMv6) {
 		printk(KERN_WARNING "Only cachepolicy=writeback supported on ARMv6 and later\n");
 		cachepolicy = CPOLICY_WRITEBACK;
@@ -1012,8 +1019,6 @@ static void __init kmap_init(void)
  */
 void __init paging_init(struct machine_desc *mdesc)
 {
-	void *zero_page;
-
 	build_mem_type_table();
 	sanity_check_meminfo();
 	prepare_page_table();
@@ -1022,14 +1027,6 @@ void __init paging_init(struct machine_desc *mdesc)
 	kmap_init();
 
 	top_pmd = pmd_off_k(0xffff0000);
-
-	/*
-	 * allocate the zero page.  Note that this always succeeds and
-	 * returns a zeroed result.
-	 */
-	zero_page = alloc_bootmem_low_pages(PAGE_SIZE);
-	empty_zero_page = virt_to_page(zero_page);
-	flush_dcache_page(empty_zero_page);
 }
 
 /*
