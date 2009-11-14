@@ -19,7 +19,7 @@
 
 /*
  * sub bus (transparent) will use entres from 3 to store extra from root,
- * so need to make sure have enought slot there, increase PCI_BUS_NUM_RESOURCES?
+ * so need to make sure have enough slot there, increase PCI_BUS_NUM_RESOURCES?
  */
 #define RES_NUM 16
 struct pci_root_info {
