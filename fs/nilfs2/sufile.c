@@ -31,6 +31,16 @@
 #include "sufile.h"
 
 
+struct nilfs_sufile_info {
+	struct nilfs_mdt_info mi;
+	unsigned long ncleansegs;
+};
+
+static inline struct nilfs_sufile_info *NILFS_SUI(struct inode *sufile)
+{
+	return (struct nilfs_sufile_info *)NILFS_MDT(sufile);
+}
+
 static inline unsigned long
 nilfs_sufile_segment_usages_per_block(const struct inode *sufile)
 {
@@ -60,14 +70,6 @@ nilfs_sufile_segment_usages_in_block(const struct inode *sufile, __u64 curr,
 		     nilfs_sufile_segment_usages_per_block(sufile) -
 		     nilfs_sufile_get_offset(sufile, curr),
 		     max - curr + 1);
-}
-
-static inline struct nilfs_sufile_header *
-nilfs_sufile_block_get_header(const struct inode *sufile,
-			      struct buffer_head *bh,
-			      void *kaddr)
-{
-	return kaddr + bh_offset(bh);
 }
 
 static struct nilfs_segment_usage *
@@ -107,6 +109,15 @@ static void nilfs_sufile_mod_counter(struct buffer_head *header_bh,
 	kunmap_atomic(kaddr, KM_USER0);
 
 	nilfs_mdt_mark_buffer_dirty(header_bh);
+}
+
+/**
+ * nilfs_sufile_get_ncleansegs - return the number of clean segments
+ * @sufile: inode of segment usage file
+ */
+unsigned long nilfs_sufile_get_ncleansegs(struct inode *sufile)
+{
+	return NILFS_SUI(sufile)->ncleansegs;
 }
 
 /**
@@ -270,7 +281,7 @@ int nilfs_sufile_alloc(struct inode *sufile, __u64 *segnump)
 	if (ret < 0)
 		goto out_sem;
 	kaddr = kmap_atomic(header_bh->b_page, KM_USER0);
-	header = nilfs_sufile_block_get_header(sufile, header_bh, kaddr);
+	header = kaddr + bh_offset(header_bh);
 	ncleansegs = le64_to_cpu(header->sh_ncleansegs);
 	last_alloc = le64_to_cpu(header->sh_last_alloc);
 	kunmap_atomic(kaddr, KM_USER0);
@@ -302,13 +313,13 @@ int nilfs_sufile_alloc(struct inode *sufile, __u64 *segnump)
 			kunmap_atomic(kaddr, KM_USER0);
 
 			kaddr = kmap_atomic(header_bh->b_page, KM_USER0);
-			header = nilfs_sufile_block_get_header(
-				sufile, header_bh, kaddr);
+			header = kaddr + bh_offset(header_bh);
 			le64_add_cpu(&header->sh_ncleansegs, -1);
 			le64_add_cpu(&header->sh_ndirtysegs, 1);
 			header->sh_last_alloc = cpu_to_le64(segnum);
 			kunmap_atomic(kaddr, KM_USER0);
 
+			NILFS_SUI(sufile)->ncleansegs--;
 			nilfs_mdt_mark_buffer_dirty(header_bh);
 			nilfs_mdt_mark_buffer_dirty(su_bh);
 			nilfs_mdt_mark_dirty(sufile);
@@ -351,6 +362,8 @@ void nilfs_sufile_do_cancel_free(struct inode *sufile, __u64 segnum,
 	kunmap_atomic(kaddr, KM_USER0);
 
 	nilfs_sufile_mod_counter(header_bh, -1, 1);
+	NILFS_SUI(sufile)->ncleansegs--;
+
 	nilfs_mdt_mark_buffer_dirty(su_bh);
 	nilfs_mdt_mark_dirty(sufile);
 }
@@ -380,6 +393,8 @@ void nilfs_sufile_do_scrap(struct inode *sufile, __u64 segnum,
 	kunmap_atomic(kaddr, KM_USER0);
 
 	nilfs_sufile_mod_counter(header_bh, clean ? (u64)-1 : 0, dirty ? 0 : 1);
+	NILFS_SUI(sufile)->ncleansegs -= clean;
+
 	nilfs_mdt_mark_buffer_dirty(su_bh);
 	nilfs_mdt_mark_dirty(sufile);
 }
@@ -409,6 +424,8 @@ void nilfs_sufile_do_free(struct inode *sufile, __u64 segnum,
 	nilfs_mdt_mark_buffer_dirty(su_bh);
 
 	nilfs_sufile_mod_counter(header_bh, 1, sudirty ? (u64)-1 : 0);
+	NILFS_SUI(sufile)->ncleansegs++;
+
 	nilfs_mdt_mark_dirty(sufile);
 }
 
@@ -515,7 +532,7 @@ int nilfs_sufile_get_stat(struct inode *sufile, struct nilfs_sustat *sustat)
 		goto out_sem;
 
 	kaddr = kmap_atomic(header_bh->b_page, KM_USER0);
-	header = nilfs_sufile_block_get_header(sufile, header_bh, kaddr);
+	header = kaddr + bh_offset(header_bh);
 	sustat->ss_nsegs = nilfs_sufile_get_nsegments(sufile);
 	sustat->ss_ncleansegs = le64_to_cpu(header->sh_ncleansegs);
 	sustat->ss_ndirtysegs = le64_to_cpu(header->sh_ndirtysegs);
@@ -529,33 +546,6 @@ int nilfs_sufile_get_stat(struct inode *sufile, struct nilfs_sustat *sustat)
 
  out_sem:
 	up_read(&NILFS_MDT(sufile)->mi_sem);
-	return ret;
-}
-
-/**
- * nilfs_sufile_get_ncleansegs - get the number of clean segments
- * @sufile: inode of segment usage file
- * @nsegsp: pointer to the number of clean segments
- *
- * Description: nilfs_sufile_get_ncleansegs() acquires the number of clean
- * segments.
- *
- * Return Value: On success, 0 is returned and the number of clean segments is
- * stored in the place pointed by @nsegsp. On error, one of the following
- * negative error codes is returned.
- *
- * %-EIO - I/O error.
- *
- * %-ENOMEM - Insufficient amount of memory available.
- */
-int nilfs_sufile_get_ncleansegs(struct inode *sufile, unsigned long *nsegsp)
-{
-	struct nilfs_sustat sustat;
-	int ret;
-
-	ret = nilfs_sufile_get_stat(sufile, &sustat);
-	if (ret == 0)
-		*nsegsp = sustat.ss_ncleansegs;
 	return ret;
 }
 
@@ -577,8 +567,10 @@ void nilfs_sufile_do_set_error(struct inode *sufile, __u64 segnum,
 	nilfs_segment_usage_set_error(su);
 	kunmap_atomic(kaddr, KM_USER0);
 
-	if (suclean)
+	if (suclean) {
 		nilfs_sufile_mod_counter(header_bh, -1, 0);
+		NILFS_SUI(sufile)->ncleansegs--;
+	}
 	nilfs_mdt_mark_buffer_dirty(su_bh);
 	nilfs_mdt_mark_dirty(sufile);
 }
@@ -656,4 +648,49 @@ ssize_t nilfs_sufile_get_suinfo(struct inode *sufile, __u64 segnum, void *buf,
  out:
 	up_read(&NILFS_MDT(sufile)->mi_sem);
 	return ret;
+}
+
+/**
+ * nilfs_sufile_read - read sufile inode
+ * @sufile: sufile inode
+ * @raw_inode: on-disk sufile inode
+ */
+int nilfs_sufile_read(struct inode *sufile, struct nilfs_inode *raw_inode)
+{
+	struct nilfs_sufile_info *sui = NILFS_SUI(sufile);
+	struct buffer_head *header_bh;
+	struct nilfs_sufile_header *header;
+	void *kaddr;
+	int ret;
+
+	ret = nilfs_read_inode_common(sufile, raw_inode);
+	if (ret < 0)
+		return ret;
+
+	ret = nilfs_sufile_get_header_block(sufile, &header_bh);
+	if (!ret) {
+		kaddr = kmap_atomic(header_bh->b_page, KM_USER0);
+		header = kaddr + bh_offset(header_bh);
+		sui->ncleansegs = le64_to_cpu(header->sh_ncleansegs);
+		kunmap_atomic(kaddr, KM_USER0);
+		brelse(header_bh);
+	}
+	return ret;
+}
+
+/**
+ * nilfs_sufile_new - create sufile
+ * @nilfs: nilfs object
+ * @susize: size of a segment usage entry
+ */
+struct inode *nilfs_sufile_new(struct the_nilfs *nilfs, size_t susize)
+{
+	struct inode *sufile;
+
+	sufile = nilfs_mdt_new(nilfs, NULL, NILFS_SUFILE_INO,
+			       sizeof(struct nilfs_sufile_info));
+	if (sufile)
+		nilfs_mdt_set_entry_size(sufile, susize,
+					 sizeof(struct nilfs_sufile_header));
+	return sufile;
 }
