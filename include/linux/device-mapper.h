@@ -290,6 +290,11 @@ fmode_t dm_table_get_mode(struct dm_table *t);
 struct mapped_device *dm_table_get_md(struct dm_table *t);
 
 /*
+ * Is the device that owns this table in the process of being deleted?
+ */
+int dm_table_deleting_md(struct dm_table *t);
+
+/*
  * Trigger an event.
  */
 void dm_table_event(struct dm_table *t);

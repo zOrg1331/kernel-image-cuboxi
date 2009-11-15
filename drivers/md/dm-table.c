@@ -1245,6 +1245,12 @@ struct mapped_device *dm_table_get_md(struct dm_table *t)
 	return t->md;
 }
 
+int dm_table_deleting_md(struct dm_table *t)
+{
+	return dm_deleting_md(t->md);
+}
+EXPORT_SYMBOL(dm_table_deleting_md);
+
 EXPORT_SYMBOL(dm_vcalloc);
 EXPORT_SYMBOL(dm_get_device);
 EXPORT_SYMBOL(dm_put_device);
