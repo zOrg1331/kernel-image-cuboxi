@@ -1346,8 +1346,9 @@ static void finish_report(struct task_struct *task, struct utrace *utrace,
 			  struct utrace_report *report, bool will_not_stop)
 {
 	enum utrace_resume_action resume = report->action;
-	if (will_not_stop && resume == UTRACE_STOP)
-		resume = UTRACE_REPORT;
+
+	if (resume == UTRACE_STOP)
+		resume = will_not_stop ? UTRACE_REPORT : UTRACE_RESUME;
 
 	if (resume < utrace->resume) {
 		spin_lock(&utrace->lock);
