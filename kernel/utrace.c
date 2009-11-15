@@ -281,7 +281,7 @@ struct utrace_engine *utrace_attach_task(
 
 	if (!(flags & UTRACE_ATTACH_CREATE)) {
 		if (unlikely(!utrace))
-			ERR_PTR(-ENOENT);
+			return ERR_PTR(-ENOENT);
 		spin_lock(&utrace->lock);
 		engine = matching_engine(utrace, flags, ops, data);
 		if (engine)
