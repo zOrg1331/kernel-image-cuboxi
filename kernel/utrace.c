@@ -1944,7 +1944,8 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 	int signr;
 
 	utrace = task_utrace_struct(task);
-	if (utrace->resume < UTRACE_RESUME || utrace->signal_handler) {
+	if (utrace->resume < UTRACE_RESUME ||
+	    utrace->pending_attach || utrace->signal_handler) {
 		enum utrace_resume_action resume;
 
 		/*
