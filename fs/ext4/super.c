@@ -1300,9 +1300,11 @@ static int parse_options(char *options, struct super_block *sb,
 			*journal_devnum = option;
 			break;
 		case Opt_journal_checksum:
-			break;	/* Kept for backwards compatibility */
+			set_opt(sbi->s_mount_opt, JOURNAL_CHECKSUM);
+			break;
 		case Opt_journal_async_commit:
 			set_opt(sbi->s_mount_opt, JOURNAL_ASYNC_COMMIT);
+			set_opt(sbi->s_mount_opt, JOURNAL_CHECKSUM);
 			break;
 		case Opt_noload:
 			set_opt(sbi->s_mount_opt, NOLOAD);
@@ -2759,14 +2761,20 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 		goto failed_mount4;
 	}
 
-	jbd2_journal_set_features(sbi->s_journal,
-				  JBD2_FEATURE_COMPAT_CHECKSUM, 0, 0);
-	if (test_opt(sb, JOURNAL_ASYNC_COMMIT))
-		jbd2_journal_set_features(sbi->s_journal, 0, 0,
+	if (test_opt(sb, JOURNAL_ASYNC_COMMIT)) {
+		jbd2_journal_set_features(sbi->s_journal,
+				JBD2_FEATURE_COMPAT_CHECKSUM, 0,
 				JBD2_FEATURE_INCOMPAT_ASYNC_COMMIT);
-	else
+	} else if (test_opt(sb, JOURNAL_CHECKSUM)) {
+		jbd2_journal_set_features(sbi->s_journal,
+				JBD2_FEATURE_COMPAT_CHECKSUM, 0, 0);
 		jbd2_journal_clear_features(sbi->s_journal, 0, 0,
 				JBD2_FEATURE_INCOMPAT_ASYNC_COMMIT);
+	} else {
+		jbd2_journal_clear_features(sbi->s_journal,
+				JBD2_FEATURE_COMPAT_CHECKSUM, 0,
+				JBD2_FEATURE_INCOMPAT_ASYNC_COMMIT);
+	}
 
 	/* We have now updated the journal if required, so we can
 	 * validate the data journaling mode. */
@@ -3966,27 +3974,6 @@ static struct file_system_type ext4_fs_type = {
 	.fs_flags	= FS_REQUIRES_DEV,
 };
 
-#ifdef CONFIG_EXT4DEV_COMPAT
-static int ext4dev_get_sb(struct file_system_type *fs_type, int flags,
-			  const char *dev_name, void *data,struct vfsmount *mnt)
-{
-	printk(KERN_WARNING "EXT4-fs (%s): Update your userspace programs "
-	       "to mount using ext4\n", dev_name);
-	printk(KERN_WARNING "EXT4-fs (%s): ext4dev backwards compatibility "
-	       "will go away by 2.6.31\n", dev_name);
-	return get_sb_bdev(fs_type, flags, dev_name, data, ext4_fill_super,mnt);
-}
-
-static struct file_system_type ext4dev_fs_type = {
-	.owner		= THIS_MODULE,
-	.name		= "ext4dev",
-	.get_sb		= ext4dev_get_sb,
-	.kill_sb	= kill_block_super,
-	.fs_flags	= FS_REQUIRES_DEV,
-};
-MODULE_ALIAS("ext4dev");
-#endif
-
 static int __init init_ext4_fs(void)
 {
 	int err;
@@ -4011,13 +3998,6 @@ static int __init init_ext4_fs(void)
 	err = register_filesystem(&ext4_fs_type);
 	if (err)
 		goto out;
-#ifdef CONFIG_EXT4DEV_COMPAT
-	err = register_filesystem(&ext4dev_fs_type);
-	if (err) {
-		unregister_filesystem(&ext4_fs_type);
-		goto out;
-	}
-#endif
 	return 0;
 out:
 	destroy_inodecache();
@@ -4036,9 +4016,6 @@ out4:
 static void __exit exit_ext4_fs(void)
 {
 	unregister_filesystem(&ext4_fs_type);
-#ifdef CONFIG_EXT4DEV_COMPAT
-	unregister_filesystem(&ext4dev_fs_type);
-#endif
 	destroy_inodecache();
 	exit_ext4_xattr();
 	exit_ext4_mballoc();

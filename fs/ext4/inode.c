@@ -193,7 +193,7 @@ static int try_to_extend_transaction(handle_t *handle, struct inode *inode)
  * so before we call here everything must be consistently dirtied against
  * this transaction.
  */
- int ext4_truncate_restart_trans(handle_t *handle, struct inode *inode,
+int ext4_truncate_restart_trans(handle_t *handle, struct inode *inode,
 				 int nblocks)
 {
 	int ret;
@@ -209,6 +209,7 @@ static int try_to_extend_transaction(handle_t *handle, struct inode *inode)
 	up_write(&EXT4_I(inode)->i_data_sem);
 	ret = ext4_journal_restart(handle, blocks_for_truncate(inode));
 	down_write(&EXT4_I(inode)->i_data_sem);
+	ext4_discard_preallocations(inode);
 
 	return ret;
 }
@@ -1146,8 +1147,8 @@ static int check_block_validity(struct inode *inode, const char *msg,
 }
 
 /*
- * Return the number of dirty pages in the given inode starting at
- * page frame idx.
+ * Return the number of contiguous dirty pages in a given inode
+ * starting at page frame idx.
  */
 static pgoff_t ext4_num_dirty_pages(struct inode *inode, pgoff_t idx,
 				    unsigned int max_pages)
@@ -1181,15 +1182,15 @@ static pgoff_t ext4_num_dirty_pages(struct inode *inode, pgoff_t idx,
 				unlock_page(page);
 				break;
 			}
-			head = page_buffers(page);
-			bh = head;
-			do {
-				if (!buffer_delay(bh) &&
-				    !buffer_unwritten(bh)) {
-					done = 1;
-					break;
-				}
-			} while ((bh = bh->b_this_page) != head);
+			if (page_has_buffers(page)) {
+				bh = head = page_buffers(page);
+				do {
+					if (!buffer_delay(bh) &&
+					    !buffer_unwritten(bh))
+						done = 1;
+					bh = bh->b_this_page;
+				} while (!done && (bh != head));
+			}
 			unlock_page(page);
 			if (done)
 				break;
@@ -3378,6 +3379,7 @@ static ssize_t ext4_ind_direct_IO(int rw, struct kiocb *iocb,
 	ssize_t ret;
 	int orphan = 0;
 	size_t count = iov_length(iov, nr_segs);
+	int retries = 0;
 
 	if (rw == WRITE) {
 		loff_t final_size = offset + count;
@@ -3400,9 +3402,12 @@ static ssize_t ext4_ind_direct_IO(int rw, struct kiocb *iocb,
 		}
 	}
 
+retry:
 	ret = blockdev_direct_IO(rw, iocb, inode, inode->i_sb->s_bdev, iov,
 				 offset, nr_segs,
 				 ext4_get_block, NULL);
+	if (ret == -ENOSPC && ext4_should_retry_alloc(inode->i_sb, &retries))
+		goto retry;
 
 	if (orphan) {
 		int err;
@@ -3440,8 +3445,6 @@ static ssize_t ext4_ind_direct_IO(int rw, struct kiocb *iocb,
 out:
 	return ret;
 }
-
-/* Maximum number of blocks we map for direct IO at once. */
 
 static int ext4_get_block_dio_write(struct inode *inode, sector_t iblock,
 		   struct buffer_head *bh_result, int create)
@@ -3650,13 +3653,14 @@ static void ext4_end_io_dio(struct kiocb *iocb, loff_t offset,
         ext4_io_end_t *io_end = iocb->private;
 	struct workqueue_struct *wq;
 
+	/* if not async direct IO or dio with 0 bytes write, just return */
+	if (!io_end || !size)
+		return;
+
 	ext_debug("ext4_end_io_dio(): io_end 0x%p"
 		  "for inode %lu, iocb 0x%p, offset %llu, size %llu\n",
  		  iocb->private, io_end->inode->i_ino, iocb, offset,
 		  size);
-	/* if not async direct IO or dio with 0 bytes write, just return */
-	if (!io_end || !size)
-		return;
 
 	/* if not aio dio with unwritten extents, just free io and return */
 	if (io_end->flag != DIO_AIO_UNWRITTEN){
@@ -3767,13 +3771,19 @@ static ssize_t ext4_ext_direct_IO(int rw, struct kiocb *iocb,
 		if (ret != -EIOCBQUEUED && ret <= 0 && iocb->private) {
 			ext4_free_io_end(iocb->private);
 			iocb->private = NULL;
-		} else if (ret > 0)
+		} else if (ret > 0 && (EXT4_I(inode)->i_state &
+				       EXT4_STATE_DIO_UNWRITTEN)) {
+			int err;
 			/*
 			 * for non AIO case, since the IO is already
 			 * completed, we could do the convertion right here
 			 */
-			ret = ext4_convert_unwritten_extents(inode,
-								offset, ret);
+			err = ext4_convert_unwritten_extents(inode,
+							     offset, ret);
+			if (err < 0)
+				ret = err;
+			EXT4_I(inode)->i_state &= ~EXT4_STATE_DIO_UNWRITTEN;
+		}
 		return ret;
 	}
 
@@ -5612,14 +5622,12 @@ int ext4_mark_inode_dirty(handle_t *handle, struct inode *inode)
  */
 void ext4_dirty_inode(struct inode *inode)
 {
-	handle_t *current_handle = ext4_journal_current_handle();
 	handle_t *handle;
 
 	handle = ext4_journal_start(inode, 2);
 	if (IS_ERR(handle))
 		goto out;
 
-	jbd_debug(5, "marking dirty.  outer handle=%p\n", current_handle);
 	ext4_mark_inode_dirty(handle, inode);
 
 	ext4_journal_stop(handle);
