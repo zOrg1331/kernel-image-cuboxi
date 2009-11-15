@@ -208,6 +208,7 @@ void tick_nohz_stop_sched_tick(int inidle)
 	struct tick_sched *ts;
 	ktime_t last_update, expires, now;
 	struct clock_event_device *dev = __get_cpu_var(tick_cpu_device).evtdev;
+	u64 time_delta;
 	int cpu;
 
 	local_irq_save(flags);
@@ -255,7 +256,7 @@ void tick_nohz_stop_sched_tick(int inidle)
 
 		if (ratelimit < 10) {
 			printk(KERN_ERR "NOHZ: local_softirq_pending %02x\n",
-			       local_softirq_pending());
+			       (unsigned int) local_softirq_pending());
 			ratelimit++;
 		}
 		goto end;
@@ -267,6 +268,7 @@ void tick_nohz_stop_sched_tick(int inidle)
 		seq = read_seqbegin(&xtime_lock);
 		last_update = last_jiffies_update;
 		last_jiffies = jiffies;
+		time_delta = timekeeping_max_deferment();
 	} while (read_seqretry(&xtime_lock, seq));
 
 	if (rcu_needs_cpu(cpu) || printk_needs_cpu(cpu) ||
@@ -289,22 +291,51 @@ void tick_nohz_stop_sched_tick(int inidle)
 	if ((long)delta_jiffies >= 1) {
 
 		/*
-		* calculate the expiry time for the next timer wheel
-		* timer
-		*/
-		expires = ktime_add_ns(last_update, tick_period.tv64 *
-				   delta_jiffies);
-
-		/*
 		 * If this cpu is the one which updates jiffies, then
 		 * give up the assignment and let it be taken by the
 		 * cpu which runs the tick timer next, which might be
 		 * this cpu as well. If we don't drop this here the
 		 * jiffies might be stale and do_timer() never
-		 * invoked.
+		 * invoked. Keep track of the fact that it was the one
+		 * which had the do_timer() duty last. If this cpu is
+		 * the one which had the do_timer() duty last, we
+		 * limit the sleep time to the timekeeping
+		 * max_deferement value which we retrieved
+		 * above. Otherwise we can sleep as long as we want.
 		 */
-		if (cpu == tick_do_timer_cpu)
+		if (cpu == tick_do_timer_cpu) {
 			tick_do_timer_cpu = TICK_DO_TIMER_NONE;
+			ts->do_timer_last = 1;
+		} else if (tick_do_timer_cpu != TICK_DO_TIMER_NONE) {
+			time_delta = KTIME_MAX;
+			ts->do_timer_last = 0;
+		} else if (!ts->do_timer_last) {
+			time_delta = KTIME_MAX;
+		}
+
+		/*
+		 * calculate the expiry time for the next timer wheel
+		 * timer. delta_jiffies >= NEXT_TIMER_MAX_DELTA signals
+		 * that there is no timer pending or at least extremely
+		 * far into the future (12 days for HZ=1000). In this
+		 * case we set the expiry to the end of time.
+		 */
+		if (likely(delta_jiffies < NEXT_TIMER_MAX_DELTA)) {
+			/*
+			 * Calculate the time delta for the next timer event.
+			 * If the time delta exceeds the maximum time delta
+			 * permitted by the current clocksource then adjust
+			 * the time delta accordingly to ensure the
+			 * clocksource does not wrap.
+			 */
+			time_delta = min_t(u64, time_delta,
+					   tick_period.tv64 * delta_jiffies);
+		}
+
+		if (time_delta < KTIME_MAX)
+			expires = ktime_add_ns(last_update, time_delta);
+		else
+			expires.tv64 = KTIME_MAX;
 
 		if (delta_jiffies > 1)
 			cpumask_set_cpu(cpu, nohz_cpu_mask);
@@ -337,21 +368,18 @@ void tick_nohz_stop_sched_tick(int inidle)
 
 		ts->idle_sleeps++;
 
+		/* Mark expires */
+		ts->idle_expires = expires;
+
 		/*
-		 * delta_jiffies >= NEXT_TIMER_MAX_DELTA signals that
-		 * there is no timer pending or at least extremly far
-		 * into the future (12 days for HZ=1000). In this case
-		 * we simply stop the tick timer:
+		 * If the expiration time == KTIME_MAX, then
+		 * in this case we simply stop the tick timer.
 		 */
-		if (unlikely(delta_jiffies >= NEXT_TIMER_MAX_DELTA)) {
-			ts->idle_expires.tv64 = KTIME_MAX;
+		 if (unlikely(expires.tv64 == KTIME_MAX)) {
 			if (ts->nohz_mode == NOHZ_MODE_HIGHRES)
 				hrtimer_cancel(&ts->sched_timer);
 			goto out;
 		}
-
-		/* Mark expiries */
-		ts->idle_expires = expires;
 
 		if (ts->nohz_mode == NOHZ_MODE_HIGHRES) {
 			hrtimer_start(&ts->sched_timer, expires,
