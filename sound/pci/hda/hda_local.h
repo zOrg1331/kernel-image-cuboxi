@@ -437,6 +437,15 @@ int snd_hda_create_hwdep(struct hda_codec *codec);
 static inline int snd_hda_create_hwdep(struct hda_codec *codec) { return 0; }
 #endif
 
+#if defined(CONFIG_SND_HDA_POWER_SAVE) && defined(CONFIG_SND_HDA_HWDEP)
+int snd_hda_hwdep_add_power_sysfs(struct hda_codec *codec);
+#else
+static inline int snd_hda_hwdep_add_power_sysfs(struct hda_codec *codec)
+{
+	return 0;
+}
+#endif
+
 #ifdef CONFIG_SND_HDA_RECONFIG
 int snd_hda_hwdep_add_sysfs(struct hda_codec *codec);
 #else
@@ -541,11 +550,13 @@ int snd_hdmi_get_eld(struct hdmi_eld *, struct hda_codec *, hda_nid_t);
 void snd_hdmi_show_eld(struct hdmi_eld *eld);
 
 #ifdef CONFIG_PROC_FS
-int snd_hda_eld_proc_new(struct hda_codec *codec, struct hdmi_eld *eld);
+int snd_hda_eld_proc_new(struct hda_codec *codec, struct hdmi_eld *eld,
+			 int index);
 void snd_hda_eld_proc_free(struct hda_codec *codec, struct hdmi_eld *eld);
 #else
 static inline int snd_hda_eld_proc_new(struct hda_codec *codec,
-				       struct hdmi_eld *eld)
+				       struct hdmi_eld *eld,
+				       int index)
 {
 	return 0;
 }
