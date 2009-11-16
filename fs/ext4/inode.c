@@ -97,6 +97,10 @@ int ext4_forget(handle_t *handle, int is_metadata, struct inode *inode,
 		  bh, is_metadata, inode->i_mode,
 		  test_opt(inode->i_sb, DATA_FLAGS));
 
+	/* Directory or symlink blocks must be treated as metadata */
+	if (S_ISDIR(inode->i_mode) || S_ISLNK(inode->i_mode))
+		is_metadata = 1;
+
 	/* Never use the revoke function if we are doing full data
 	 * journaling: there is no need to, and a V1 superblock won't
 	 * support it.  Otherwise, only skip the revoke on un-journaled
