@@ -157,7 +157,9 @@ static inline unsigned long task_utrace_flags(struct task_struct *task)
 
 static inline struct utrace *task_utrace_struct(struct task_struct *task)
 {
-	return task->utrace;
+	struct utrace *utrace = task->utrace;
+	read_barrier_depends();	/* See utrace_task_alloc().  */
+	return utrace;
 }
 
 static inline void utrace_init_task(struct task_struct *task)

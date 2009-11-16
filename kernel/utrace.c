@@ -97,8 +97,15 @@ static bool utrace_task_alloc(struct task_struct *task)
 	INIT_LIST_HEAD(&utrace->attaching);
 	utrace->resume = UTRACE_RESUME;
 	task_lock(task);
-	if (likely(!task->utrace))
+	if (likely(!task->utrace)) {
+		/*
+		 * This barrier makes sure the initialization of the struct
+		 * precedes the installation of the pointer.  This pairs
+		 * with read_barrier_depends() in task_utrace_struct().
+		 */
+		wmb();
 		task->utrace = utrace;
+	}
 	task_unlock(task);
 	if (unlikely(task->utrace != utrace))
 		kmem_cache_free(utrace_cachep, utrace);
@@ -302,7 +309,7 @@ struct utrace_engine *utrace_attach_task(
 	if (!utrace) {
 		if (unlikely(!utrace_task_alloc(target)))
 			return ERR_PTR(-ENOMEM);
-		utrace = target->utrace;
+		utrace = task_utrace_struct(target);
 	}
 
 	engine = kmem_cache_alloc(utrace_engine_cachep, GFP_KERNEL);
@@ -499,7 +506,7 @@ static void utrace_reap(struct task_struct *target, struct utrace *utrace)
 
 
 /*
- * Called by release_task.  After this, target->utrace must be cleared.
+ * Called by release_task.
  */
 void utrace_release_task(struct task_struct *target)
 {
