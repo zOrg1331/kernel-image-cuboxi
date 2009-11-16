@@ -236,6 +236,7 @@ const char *dm_device_name(struct mapped_device *md);
 int dm_copy_name_and_uuid(struct mapped_device *md, char *name, char *uuid);
 struct gendisk *dm_disk(struct mapped_device *md);
 int dm_suspended(struct mapped_device *md);
+int dm_deleting_md(struct mapped_device *md);
 int dm_noflush_suspending(struct dm_target *ti);
 union map_info *dm_get_mapinfo(struct bio *bio);
 union map_info *dm_get_rq_mapinfo(struct request *rq);
@@ -276,7 +277,7 @@ void dm_table_unplug_all(struct dm_table *t);
 /*
  * Table reference counting.
  */
-struct dm_table *dm_get_table(struct mapped_device *md);
+struct dm_table *dm_get_live_table(struct mapped_device *md);
 void dm_table_get(struct dm_table *t);
 void dm_table_put(struct dm_table *t);
 
@@ -287,6 +288,11 @@ sector_t dm_table_get_size(struct dm_table *t);
 unsigned int dm_table_get_num_targets(struct dm_table *t);
 fmode_t dm_table_get_mode(struct dm_table *t);
 struct mapped_device *dm_table_get_md(struct dm_table *t);
+
+/*
+ * Is the device that owns this table in the process of being deleted?
+ */
+int dm_table_deleting_md(struct dm_table *t);
 
 /*
  * Trigger an event.
