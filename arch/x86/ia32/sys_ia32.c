@@ -712,3 +712,11 @@ asmlinkage long sys32_fallocate(int fd, int mode, unsigned offset_lo,
 	return sys_fallocate(fd, mode, ((u64)offset_hi << 32) | offset_lo,
 			     ((u64)len_hi << 32) | len_lo);
 }
+
+asmlinkage long sys32_fanotify_mark(int fanotify_fd, unsigned int flags,
+				    int fd, const char  __user *pathname,
+				    u32 mask_lo, u32 mask_hi)
+{
+	return sys_fanotify_mark(fanotify_fd, flags, fd, pathname,
+				 ((u64)mask_hi << 32) | mask_lo);
+}
