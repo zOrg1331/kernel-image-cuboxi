@@ -679,6 +679,8 @@ libs-y		:= $(libs-y1) $(libs-y2)
 #   +--< $(vmlinux-main)
 #   |    +--< driver/built-in.o mm/built-in.o + more
 #   |
+#   +-< .tmp_exports-asm.o (see comments regarding modpost of vmlinux.o)
+#   |
 #   +-< kallsyms.o (see description in CONFIG_KALLSYMS section)
 #
 # vmlinux version (uname -v) cannot be updated during normal
@@ -742,7 +744,6 @@ define rule_vmlinux__
 	$(verify_kallsyms)
 endef
 
-
 ifdef CONFIG_KALLSYMS
 # Generate section listing all symbols and add it into vmlinux $(kallsyms.o)
 # It's a three stage process:
@@ -802,13 +803,13 @@ quiet_cmd_kallsyms = KSYM    $@
 	$(call cmd,kallsyms)
 
 # .tmp_vmlinux1 must be complete except kallsyms, so update vmlinux version
-.tmp_vmlinux1: $(vmlinux-lds) $(vmlinux-all) FORCE
+.tmp_vmlinux1: $(vmlinux-lds) $(vmlinux-all) .tmp_exports-asm.o FORCE
 	$(call if_changed_rule,ksym_ld)
 
-.tmp_vmlinux2: $(vmlinux-lds) $(vmlinux-all) .tmp_kallsyms1.o FORCE
+.tmp_vmlinux2: $(vmlinux-lds) $(vmlinux-all) .tmp_exports-asm.o .tmp_kallsyms1.o FORCE
 	$(call if_changed,vmlinux__)
 
-.tmp_vmlinux3: $(vmlinux-lds) $(vmlinux-all) .tmp_kallsyms2.o FORCE
+.tmp_vmlinux3: $(vmlinux-lds) $(vmlinux-all) .tmp_exports-asm.o .tmp_kallsyms2.o FORCE
 	$(call if_changed,vmlinux__)
 
 # Needs to visit scripts/ before $(KALLSYMS) can be used.
@@ -839,8 +840,18 @@ define rule_vmlinux-modpost
 	$(Q)echo 'cmd_$@ := $(cmd_vmlinux-modpost)' > $(dot-target).cmd
 endef
 
+# The modpost of vmlinux.o above creates .tmp_exports-asm.S, a list of exported
+# symbols sorted by name.  This list is linked into vmlinux to replace the
+# original unsorted exports.  It allows symbols to be resolved efficiently
+# when loading modules.
+.tmp_exports-asm.S: vmlinux.o
+
+ifneq ($(CONFIG_SYMBOL_PREFIX),)
+export AFLAGS_.tmp_exports-asm.o += -DSYMBOL_PREFIX=$(patsubst "%",%,$(CONFIG_SYMBOL_PREFIX))
+endif
+
 # vmlinux image - including updated kernel symbols
-vmlinux: $(vmlinux-lds) $(vmlinux-init) $(vmlinux-main) vmlinux.o $(kallsyms.o) FORCE
+vmlinux: $(vmlinux-lds) $(vmlinux-init) $(vmlinux-main) vmlinux.o .tmp_exports-asm.o $(kallsyms.o) FORCE
 ifdef CONFIG_HEADERS_CHECK
 	$(Q)$(MAKE) -f $(srctree)/Makefile headers_check
 endif
@@ -1144,7 +1155,8 @@ endif # CONFIG_MODULES
 # Directories & files removed with 'make clean'
 CLEAN_DIRS  += $(MODVERDIR)
 CLEAN_FILES +=	vmlinux System.map \
-                .tmp_kallsyms* .tmp_version .tmp_vmlinux* .tmp_System.map
+                .tmp_kallsyms* .tmp_version .tmp_vmlinux* .tmp_System.map \
+                .tmp_exports-asm*
 
 # Directories & files removed with 'make mrproper'
 MRPROPER_DIRS  += include/config usr/include include/generated
