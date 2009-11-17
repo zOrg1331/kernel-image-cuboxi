@@ -17,6 +17,8 @@
 #ifndef REG_H
 #define REG_H
 
+#include "../reg.h"
+
 #define AR_CR                0x0008
 #define AR_CR_RXE            0x00000004
 #define AR_CR_RXD            0x00000020
@@ -1421,9 +1423,6 @@ enum {
 #define AR_SLEEP2_BEACON_TIMEOUT    0xFFE00000
 #define AR_SLEEP2_BEACON_TIMEOUT_S  21
 
-#define AR_BSSMSKL            0x80e0
-#define AR_BSSMSKU            0x80e4
-
 #define AR_TPC                 0x80e8
 #define AR_TPC_ACK             0x0000003f
 #define AR_TPC_ACK_S           0x00
@@ -1704,5 +1703,8 @@ enum {
 #define AR_KEYTABLE_TYPE(_n)    (AR_KEYTABLE(_n) + 20)
 #define AR_KEYTABLE_MAC0(_n)    (AR_KEYTABLE(_n) + 24)
 #define AR_KEYTABLE_MAC1(_n)    (AR_KEYTABLE(_n) + 28)
+
+#define AR9271_CORE_CLOCK	117   /* clock to 117Mhz */
+#define AR9271_TARGET_BAUD_RATE	19200 /* 115200 */
 
 #endif

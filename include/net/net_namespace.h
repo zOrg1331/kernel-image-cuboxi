@@ -28,6 +28,10 @@ struct ctl_table_header;
 struct net_generic;
 struct sock;
 
+
+#define NETDEV_HASHBITS    8
+#define NETDEV_HASHENTRIES (1 << NETDEV_HASHBITS)
+
 struct net {
 	atomic_t		count;		/* To decided when the network
 						 *  namespace should be freed.
@@ -80,7 +84,7 @@ struct net {
 #ifdef CONFIG_XFRM
 	struct netns_xfrm	xfrm;
 #endif
-#ifdef CONFIG_WIRELESS_EXT
+#ifdef CONFIG_WEXT_CORE
 	struct sk_buff_head	wext_nlevents;
 #endif
 	struct net_generic	*gen;
