@@ -246,7 +246,8 @@ struct find_oud_t {
 
 int _mach_odi(struct device *dev, void *find_data)
 {
-	struct osd_uld_device *oud = dev_get_drvdata(dev);
+	struct osd_uld_device *oud = container_of(dev, struct osd_uld_device,
+						  class_dev);
 	struct find_oud_t *fot = find_data;
 	const struct osd_dev_info *odi = fot->odi;
 
@@ -367,7 +368,8 @@ static int __detect_osd(struct osd_uld_device *oud)
 
 static void __remove(struct device *dev)
 {
-	struct osd_uld_device *oud = dev_get_drvdata(dev);
+	struct osd_uld_device *oud = container_of(dev, struct osd_uld_device,
+						  class_dev);
 	struct scsi_device *scsi_device = oud->od.scsi_device;
 
 	kfree(oud->odi.osdname);
@@ -461,7 +463,6 @@ static int osd_probe(struct device *dev)
 	oud->class_dev.class = &osd_uld_class;
 	oud->class_dev.parent = dev;
 	oud->class_dev.release = __remove;
-	dev_set_drvdata(&oud->class_dev, oud);
 	error = dev_set_name(&oud->class_dev, disk->disk_name);
 	if (error) {
 		OSD_ERR("dev_set_name failed => %d\n", error);
