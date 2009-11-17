@@ -107,6 +107,11 @@ static bool utrace_task_alloc(struct task_struct *task)
 		task->utrace = utrace;
 	}
 	task_unlock(task);
+	/*
+	 * That unlock after storing task->utrace acts as a memory barrier
+	 * ordering any subsequent task->utrace_flags store afterwards.
+	 * This pairs with smp_rmb() in task_utrace_struct().
+	 */
 	if (unlikely(task->utrace != utrace))
 		kmem_cache_free(utrace_cachep, utrace);
 	return true;

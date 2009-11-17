@@ -157,7 +157,19 @@ static inline unsigned long task_utrace_flags(struct task_struct *task)
 
 static inline struct utrace *task_utrace_struct(struct task_struct *task)
 {
-	struct utrace *utrace = task->utrace;
+	struct utrace *utrace;
+
+	/*
+	 * This barrier ensures that any prior load of task->utrace_flags
+	 * is ordered before this load of task->utrace.  We use those
+	 * utrace_flags checks in the hot path to decide to call into
+	 * the utrace code.  The first attach installs task->utrace before
+	 * setting task->utrace_flags nonzero, with a barrier between.
+	 * See utrace_task_alloc().
+	 */
+	smp_rmb();
+	utrace = task->utrace;
+
 	read_barrier_depends();	/* See utrace_task_alloc().  */
 	return utrace;
 }
