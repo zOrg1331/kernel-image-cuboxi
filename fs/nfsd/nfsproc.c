@@ -24,6 +24,7 @@
 #include <linux/nfsd/nfsd.h>
 #include <linux/nfsd/cache.h>
 #include <linux/nfsd/xdr.h>
+#include "vfs.h"
 
 typedef struct svc_rqst	svc_rqst;
 typedef struct svc_buf	svc_buf;
@@ -758,6 +759,7 @@ nfserrno (int errno)
 		{ nfserr_io, -ETXTBSY },
 		{ nfserr_notsupp, -EOPNOTSUPP },
 		{ nfserr_toosmall, -ETOOSMALL },
+		{ nfserr_serverfault, -ESERVERFAULT },
 	};
 	int	i;
 
