@@ -138,6 +138,9 @@ struct be_mcc_mailbox {
 #define OPCODE_COMMON_NTWK_PMAC_ADD			59
 #define OPCODE_COMMON_NTWK_PMAC_DEL			60
 #define OPCODE_COMMON_FUNCTION_RESET			61
+#define OPCODE_COMMON_ENABLE_DISABLE_BEACON		69
+#define OPCODE_COMMON_GET_BEACON_STATE			70
+#define OPCODE_COMMON_READ_TRANSRECV_DATA		73
 
 #define OPCODE_ETH_ACPI_CONFIG				2
 #define OPCODE_ETH_PROMISCUOUS				3
@@ -633,8 +636,46 @@ struct be_cmd_resp_link_status {
 	u8 mac_fault;
 	u8 mgmt_mac_duplex;
 	u8 mgmt_mac_speed;
-	u16 rsvd0;
+	u16 link_speed;
+	u32 rsvd0;
 } __packed;
+
+/******************** Port Identification ***************************/
+/*    Identifies the type of port attached to NIC     */
+struct be_cmd_req_port_type {
+	struct be_cmd_req_hdr hdr;
+	u32 page_num;
+	u32 port;
+};
+
+enum {
+	TR_PAGE_A0 = 0xa0,
+	TR_PAGE_A2 = 0xa2
+};
+
+struct be_cmd_resp_port_type {
+	struct be_cmd_resp_hdr hdr;
+	u32 page_num;
+	u32 port;
+	struct data {
+		u8 identifier;
+		u8 identifier_ext;
+		u8 connector;
+		u8 transceiver[8];
+		u8 rsvd0[3];
+		u8 length_km;
+		u8 length_hm;
+		u8 length_om1;
+		u8 length_om2;
+		u8 length_cu;
+		u8 length_cu_m;
+		u8 vendor_name[16];
+		u8 rsvd;
+		u8 vendor_oui[3];
+		u8 vendor_pn[16];
+		u8 vendor_rev[4];
+	} data;
+};
 
 /******************** Get FW Version *******************/
 struct be_cmd_req_get_fw_version {
@@ -699,6 +740,37 @@ struct be_cmd_resp_query_fw_cfg {
 	u32 rsvd[26];
 };
 
+/******************** Port Beacon ***************************/
+
+#define BEACON_STATE_ENABLED		0x1
+#define BEACON_STATE_DISABLED		0x0
+
+struct be_cmd_req_enable_disable_beacon {
+	struct be_cmd_req_hdr hdr;
+	u8  port_num;
+	u8  beacon_state;
+	u8  beacon_duration;
+	u8  status_duration;
+} __packed;
+
+struct be_cmd_resp_enable_disable_beacon {
+	struct be_cmd_resp_hdr resp_hdr;
+	u32 rsvd0;
+} __packed;
+
+struct be_cmd_req_get_beacon_state {
+	struct be_cmd_req_hdr hdr;
+	u8  port_num;
+	u8  rsvd0;
+	u16 rsvd1;
+} __packed;
+
+struct be_cmd_resp_get_beacon_state {
+	struct be_cmd_resp_hdr resp_hdr;
+	u8 beacon_state;
+	u8 rsvd0[3];
+} __packed;
+
 /****************** Firmware Flash ******************/
 struct flashrom_params {
 	u32 op_code;
@@ -743,7 +815,7 @@ extern int be_cmd_rxq_create(struct be_adapter *adapter,
 extern int be_cmd_q_destroy(struct be_adapter *adapter, struct be_queue_info *q,
 			int type);
 extern int be_cmd_link_status_query(struct be_adapter *adapter,
-			bool *link_up);
+			bool *link_up, u8 *mac_speed, u16 *link_speed);
 extern int be_cmd_reset(struct be_adapter *adapter);
 extern int be_cmd_get_stats(struct be_adapter *adapter,
 			struct be_dma_mem *nonemb_cmd);
@@ -765,6 +837,12 @@ extern int be_cmd_query_fw_cfg(struct be_adapter *adapter,
 			u32 *port_num, u32 *cap);
 extern int be_cmd_reset_function(struct be_adapter *adapter);
 extern int be_process_mcc(struct be_adapter *adapter);
+extern int be_cmd_set_beacon_state(struct be_adapter *adapter,
+			u8 port_num, u8 beacon, u8 status, u8 state);
+extern int be_cmd_get_beacon_state(struct be_adapter *adapter,
+			u8 port_num, u32 *state);
+extern int be_cmd_read_port_type(struct be_adapter *adapter, u32 port,
+					u8 *connector);
 extern int be_cmd_write_flashrom(struct be_adapter *adapter,
 			struct be_dma_mem *cmd, u32 flash_oper,
 			u32 flash_opcode, u32 buf_size);

@@ -1628,9 +1628,6 @@ unsigned short ip_rt_frag_needed(struct net *net, struct iphdr *iph,
 	__be32  daddr = iph->daddr;
 	unsigned short est_mtu = 0;
 
-	if (ipv4_config.no_pmtu_disc)
-		return 0;
-
 	for (k = 0; k < 2; k++) {
 		for (i = 0; i < 2; i++) {
 			unsigned hash = rt_hash(daddr, skeys[i], ikeys[k],
@@ -2855,7 +2852,7 @@ static int rt_fill_info(struct net *net,
 	error = rt->u.dst.error;
 	expires = rt->u.dst.expires ? rt->u.dst.expires - jiffies : 0;
 	if (rt->peer) {
-		id = rt->peer->ip_id_count;
+		id = atomic_read(&rt->peer->ip_id_count) & 0xffff;
 		if (rt->peer->tcp_ts_stamp) {
 			ts = rt->peer->tcp_ts;
 			tsage = get_seconds() - rt->peer->tcp_ts_stamp;
