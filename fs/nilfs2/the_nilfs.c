@@ -146,13 +146,9 @@ void put_nilfs(struct the_nilfs *nilfs)
 
 	might_sleep();
 	if (nilfs_loaded(nilfs)) {
-		nilfs_mdt_clear(nilfs->ns_sufile);
 		nilfs_mdt_destroy(nilfs->ns_sufile);
-		nilfs_mdt_clear(nilfs->ns_cpfile);
 		nilfs_mdt_destroy(nilfs->ns_cpfile);
-		nilfs_mdt_clear(nilfs->ns_dat);
 		nilfs_mdt_destroy(nilfs->ns_dat);
-		/* XXX: how and when to clear nilfs->ns_gc_dat? */
 		nilfs_mdt_destroy(nilfs->ns_gc_dat);
 	}
 	if (nilfs_init(nilfs)) {
@@ -166,7 +162,6 @@ void put_nilfs(struct the_nilfs *nilfs)
 static int nilfs_load_super_root(struct the_nilfs *nilfs,
 				 struct nilfs_sb_info *sbi, sector_t sr_block)
 {
-	static struct lock_class_key dat_lock_key;
 	struct buffer_head *bh_sr;
 	struct nilfs_super_root *raw_sr;
 	struct nilfs_super_block **sbp = nilfs->ns_sbp;
@@ -187,51 +182,36 @@ static int nilfs_load_super_root(struct the_nilfs *nilfs,
 	inode_size = nilfs->ns_inode_size;
 
 	err = -ENOMEM;
-	nilfs->ns_dat = nilfs_mdt_new(nilfs, NULL, NILFS_DAT_INO);
+	nilfs->ns_dat = nilfs_dat_new(nilfs, dat_entry_size);
 	if (unlikely(!nilfs->ns_dat))
 		goto failed;
 
-	nilfs->ns_gc_dat = nilfs_mdt_new(nilfs, NULL, NILFS_DAT_INO);
+	nilfs->ns_gc_dat = nilfs_dat_new(nilfs, dat_entry_size);
 	if (unlikely(!nilfs->ns_gc_dat))
 		goto failed_dat;
 
-	nilfs->ns_cpfile = nilfs_mdt_new(nilfs, NULL, NILFS_CPFILE_INO);
+	nilfs->ns_cpfile = nilfs_cpfile_new(nilfs, checkpoint_size);
 	if (unlikely(!nilfs->ns_cpfile))
 		goto failed_gc_dat;
 
-	nilfs->ns_sufile = nilfs_mdt_new(nilfs, NULL, NILFS_SUFILE_INO);
+	nilfs->ns_sufile = nilfs_sufile_new(nilfs, segment_usage_size);
 	if (unlikely(!nilfs->ns_sufile))
 		goto failed_cpfile;
 
-	err = nilfs_palloc_init_blockgroup(nilfs->ns_dat, dat_entry_size);
-	if (unlikely(err))
-		goto failed_sufile;
-
-	err = nilfs_palloc_init_blockgroup(nilfs->ns_gc_dat, dat_entry_size);
-	if (unlikely(err))
-		goto failed_sufile;
-
-	lockdep_set_class(&NILFS_MDT(nilfs->ns_dat)->mi_sem, &dat_lock_key);
-	lockdep_set_class(&NILFS_MDT(nilfs->ns_gc_dat)->mi_sem, &dat_lock_key);
-
 	nilfs_mdt_set_shadow(nilfs->ns_dat, nilfs->ns_gc_dat);
-	nilfs_mdt_set_entry_size(nilfs->ns_cpfile, checkpoint_size,
-				 sizeof(struct nilfs_cpfile_header));
-	nilfs_mdt_set_entry_size(nilfs->ns_sufile, segment_usage_size,
-				 sizeof(struct nilfs_sufile_header));
 
-	err = nilfs_mdt_read_inode_direct(
-		nilfs->ns_dat, bh_sr, NILFS_SR_DAT_OFFSET(inode_size));
+	err = nilfs_dat_read(nilfs->ns_dat, (void *)bh_sr->b_data +
+			     NILFS_SR_DAT_OFFSET(inode_size));
 	if (unlikely(err))
 		goto failed_sufile;
 
-	err = nilfs_mdt_read_inode_direct(
-		nilfs->ns_cpfile, bh_sr, NILFS_SR_CPFILE_OFFSET(inode_size));
+	err = nilfs_cpfile_read(nilfs->ns_cpfile, (void *)bh_sr->b_data +
+				NILFS_SR_CPFILE_OFFSET(inode_size));
 	if (unlikely(err))
 		goto failed_sufile;
 
-	err = nilfs_mdt_read_inode_direct(
-		nilfs->ns_sufile, bh_sr, NILFS_SR_SUFILE_OFFSET(inode_size));
+	err = nilfs_sufile_read(nilfs->ns_sufile, (void *)bh_sr->b_data +
+				NILFS_SR_SUFILE_OFFSET(inode_size));
 	if (unlikely(err))
 		goto failed_sufile;
 
@@ -632,30 +612,23 @@ int nilfs_count_free_blocks(struct the_nilfs *nilfs, sector_t *nblocks)
 {
 	struct inode *dat = nilfs_dat_inode(nilfs);
 	unsigned long ncleansegs;
-	int err;
 
 	down_read(&NILFS_MDT(dat)->mi_sem);	/* XXX */
-	err = nilfs_sufile_get_ncleansegs(nilfs->ns_sufile, &ncleansegs);
+	ncleansegs = nilfs_sufile_get_ncleansegs(nilfs->ns_sufile);
 	up_read(&NILFS_MDT(dat)->mi_sem);	/* XXX */
-	if (likely(!err))
-		*nblocks = (sector_t)ncleansegs * nilfs->ns_blocks_per_segment;
-	return err;
+	*nblocks = (sector_t)ncleansegs * nilfs->ns_blocks_per_segment;
+	return 0;
 }
 
 int nilfs_near_disk_full(struct the_nilfs *nilfs)
 {
-	struct inode *sufile = nilfs->ns_sufile;
 	unsigned long ncleansegs, nincsegs;
-	int ret;
 
-	ret = nilfs_sufile_get_ncleansegs(sufile, &ncleansegs);
-	if (likely(!ret)) {
-		nincsegs = atomic_read(&nilfs->ns_ndirtyblks) /
-			nilfs->ns_blocks_per_segment + 1;
-		if (ncleansegs <= nilfs->ns_nrsvsegs + nincsegs)
-			ret++;
-	}
-	return ret;
+	ncleansegs = nilfs_sufile_get_ncleansegs(nilfs->ns_sufile);
+	nincsegs = atomic_read(&nilfs->ns_ndirtyblks) /
+		nilfs->ns_blocks_per_segment + 1;
+
+	return ncleansegs <= nilfs->ns_nrsvsegs + nincsegs;
 }
 
 /**
