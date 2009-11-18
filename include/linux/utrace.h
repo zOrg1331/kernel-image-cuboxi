@@ -170,7 +170,7 @@ static inline struct utrace *task_utrace_struct(struct task_struct *task)
 	smp_rmb();
 	utrace = task->utrace;
 
-	read_barrier_depends();	/* See utrace_task_alloc().  */
+	smp_read_barrier_depends(); /* See utrace_task_alloc().  */
 	return utrace;
 }
 

@@ -101,9 +101,9 @@ static bool utrace_task_alloc(struct task_struct *task)
 		/*
 		 * This barrier makes sure the initialization of the struct
 		 * precedes the installation of the pointer.  This pairs
-		 * with read_barrier_depends() in task_utrace_struct().
+		 * with smp_read_barrier_depends() in task_utrace_struct().
 		 */
-		wmb();
+		smp_wmb();
 		task->utrace = utrace;
 	}
 	task_unlock(task);
