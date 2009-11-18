@@ -667,3 +667,11 @@ asmlinkage long compat_sys_sync_file_range2(int fd, unsigned int flags,
 
 	return sys_sync_file_range(fd, offset, nbytes, flags);
 }
+
+asmlinkage long ppc32_fanotify_mark(int fanotify_fd, unsigned int flags,
+				    int fd, const char  __user *pathname,
+				    u32 mask_hi, u32 mask_lo)
+{
+	return sys_fanotify_mark(fanotify_fd, flags, fd, pathname,
+				 ((u64)mask_hi << 32) | mask_lo);
+}
