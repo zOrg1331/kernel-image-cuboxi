@@ -194,30 +194,45 @@ extern const unsigned long __start___kcrctab_unused_gpl[];
 
 static struct ksymtab ksymtab[EXPORT_TYPE_MAX];
 
+#ifdef CONFIG_MODVERSIONS
+#define init_one_ksymtab(ksymt, start, stop, crc_start)	\
+	do {						\
+		struct ksymtab *ks = (ksymt);		\
+		ks->syms = (start);			\
+		ks->num_syms = (stop) - ks->syms;	\
+		ks->crcs = (crc_start);			\
+	} while (0)
+#else
+#define init_one_ksymtab(ksymt, start, stop, crc_start)	\
+	do {						\
+		struct ksymtab *ks = (ksymt);		\
+		ks->syms = (start);			\
+		ks->num_syms = (stop) - ks->syms;	\
+	} while (0)
+#endif
+
 static int __init init_ksymtab(void)
 {
-	ksymtab[EXPORT_TYPE_PLAIN] = (struct ksymtab) {
-		__start___ksymtab, __start___kcrctab,
-		__stop___ksymtab - __start___ksymtab,
-	};
-	ksymtab[EXPORT_TYPE_GPL] = (struct ksymtab) {
-		__start___ksymtab_gpl, __start___kcrctab_gpl,
-		__stop___ksymtab_gpl - __start___ksymtab_gpl,
-	};
+	init_one_ksymtab(&ksymtab[EXPORT_TYPE_PLAIN],
+			 __start___ksymtab, __stop___ksymtab,
+			 __start___kcrctab);
+	init_one_ksymtab(&ksymtab[EXPORT_TYPE_GPL],
+			 __start___ksymtab_gpl, __stop___ksymtab_gpl,
+			 __start___kcrctab_gpl);
 #ifdef CONFIG_UNUSED_EXPORTS
-	ksymtab[EXPORT_TYPE_UNUSED] = (struct ksymtab) {
-		__start___ksymtab_unused, __start___kcrctab_unused,
-		__stop___ksymtab_unused - __start___ksymtab_unused,
-	};
-	ksymtab[EXPORT_TYPE_UNUSED_GPL] = (struct ksymtab) {
-		__start___ksymtab_unused_gpl, __start___kcrctab_unused_gpl,
-		__stop___ksymtab_unused_gpl - __start___ksymtab_unused_gpl,
-	};
+	init_one_ksymtab(&ksymtab[EXPORT_TYPE_UNUSED],
+			 __start___ksymtab_unused,
+			 __stop___ksymtab_unused,
+			 __start___kcrctab_unused);
+	init_one_ksymtab(&ksymtab[EXPORT_TYPE_UNUSED_GPL],
+			 __start___ksymtab_unused_gpl,
+			 __stop___ksymtab_unused_gpl,
+			 __start___kcrctab_unused_gpl);
 #endif
-	ksymtab[EXPORT_TYPE_GPL_FUTURE] = (struct ksymtab) {
-		__start___ksymtab_gpl_future, __start___kcrctab_gpl_future,
-		__stop___ksymtab_gpl_future - __start___ksymtab_gpl_future,
-	};
+	init_one_ksymtab(&ksymtab[EXPORT_TYPE_GPL_FUTURE],
+			 __start___ksymtab_gpl_future,
+			 __stop___ksymtab_gpl_future,
+			 __start___kcrctab_gpl_future);
 
 	return 0;
 }
