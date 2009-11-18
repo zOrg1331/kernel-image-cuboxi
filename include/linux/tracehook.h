@@ -235,6 +235,31 @@ static inline void tracehook_report_exit(long *exit_code)
 }
 
 /**
+ * tracehook_init_task - task_struct has just been copied
+ * @task:		new &struct task_struct just copied from parent
+ *
+ * Called from do_fork() when @task has just been duplicated.
+ * After this, @task will be passed to tracehook_free_task()
+ * even if the rest of its setup fails before it is fully created.
+ */
+static inline void tracehook_init_task(struct task_struct *task)
+{
+	utrace_init_task(task);
+}
+
+/**
+ * tracehook_free_task - task_struct is being freed
+ * @task:		dead &struct task_struct being freed
+ *
+ * Called from free_task() when @task is no longer in use.
+ */
+static inline void tracehook_free_task(struct task_struct *task)
+{
+	if (task_utrace_struct(task))
+		utrace_free_task(task);
+}
+
+/**
  * tracehook_prepare_clone - prepare for new child to be cloned
  * @clone_flags:	%CLONE_* flags from clone/fork/vfork system call
  *
@@ -274,7 +299,6 @@ static inline int tracehook_prepare_clone(unsigned clone_flags)
 static inline void tracehook_finish_clone(struct task_struct *child,
 					  unsigned long clone_flags, int trace)
 {
-	utrace_init_task(child);
 	ptrace_init_task(child, (clone_flags & CLONE_PTRACE) || trace);
 }
 
@@ -615,18 +639,6 @@ static inline void tracehook_report_death(struct task_struct *task,
 	smp_mb();
 	if (task_utrace_flags(task) & _UTRACE_DEATH_EVENTS)
 		utrace_report_death(task, death_cookie, group_dead, signal);
-}
-
-/**
- * tracehook_free_task - task_struct is being freed
- * @task:		dead &struct task_struct being freed
- *
- * Called from free_task() when @task is no longer in use.
- */
-static inline void tracehook_free_task(struct task_struct *task)
-{
-	if (task_utrace_struct(task))
-		utrace_free_task(task);
 }
 
 #ifdef TIF_NOTIFY_RESUME
