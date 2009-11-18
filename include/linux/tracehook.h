@@ -140,8 +140,8 @@ static inline __must_check int tracehook_report_syscall_entry(
  */
 static inline void tracehook_report_syscall_exit(struct pt_regs *regs, int step)
 {
-	if (step || (task_utrace_flags(current) & UTRACE_EVENT(SYSCALL_EXIT)))
-		utrace_report_syscall_exit(regs, step);
+	if (task_utrace_flags(current) & UTRACE_EVENT(SYSCALL_EXIT))
+		utrace_report_syscall_exit(regs);
 
 	if (step && (task_ptrace(current) & PT_PTRACED)) {
 		siginfo_t info;

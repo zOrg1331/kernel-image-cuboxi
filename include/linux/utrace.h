@@ -118,7 +118,7 @@ void utrace_report_exec(struct linux_binfmt *, struct linux_binprm *,
 	__attribute__((weak));
 bool utrace_report_syscall_entry(struct pt_regs *)
 	__attribute__((weak));
-void utrace_report_syscall_exit(struct pt_regs *, bool)
+void utrace_report_syscall_exit(struct pt_regs *)
 	__attribute__((weak));
 void utrace_signal_handler(struct task_struct *, int)
 	__attribute__((weak));

@@ -1625,30 +1625,16 @@ bool utrace_report_syscall_entry(struct pt_regs *regs)
 }
 
 /*
- * Called if UTRACE_EVENT(SYSCALL_EXIT) flag is set or if arch code
- * reports we were single-stepping on entry to the system call.
+ * Called iff UTRACE_EVENT(SYSCALL_EXIT) flag is set.
  */
-void utrace_report_syscall_exit(struct pt_regs *regs, bool stepping)
+void utrace_report_syscall_exit(struct pt_regs *regs)
 {
 	struct task_struct *task = current;
 	struct utrace *utrace = task_utrace_struct(task);
 	INIT_REPORT(report);
 
-	if (task->utrace_flags & UTRACE_EVENT(SYSCALL_EXIT))
-		REPORT(task, utrace, &report, UTRACE_EVENT(SYSCALL_EXIT),
-		       report_syscall_exit, regs);
-
-	/*
-	 * If some engine is expecting to catch a single-step SIGTRAP,
-	 * then generate one.  This simulates the normal hardware trap
-	 * following the system call instruction as if it were any
-	 * other normal user instruction.
-	 */
-	if (stepping && (task->utrace_flags & UTRACE_EVENT(SIGNAL_CORE))) {
-		siginfo_t info;
-		user_single_step_siginfo(task, regs, &info);
-		force_sig_info(SIGTRAP, &info, task);
-	}
+	REPORT(task, utrace, &report, UTRACE_EVENT(SYSCALL_EXIT),
+	       report_syscall_exit, regs);
 }
 
 /*
