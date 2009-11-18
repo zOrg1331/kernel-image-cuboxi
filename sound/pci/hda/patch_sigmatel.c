@@ -1085,7 +1085,7 @@ static int stac92xx_build_controls(struct hda_codec *codec)
 	if (!spec->auto_mic && spec->num_dmuxes > 0 &&
 	    snd_hda_get_bool_hint(codec, "separate_dmux") == 1) {
 		stac_dmux_mixer.count = spec->num_dmuxes;
-		err = snd_hda_ctl_add(codec,
+		err = snd_hda_ctl_add(codec, 0,
 				  snd_ctl_new1(&stac_dmux_mixer, codec));
 		if (err < 0)
 			return err;
@@ -1101,7 +1101,7 @@ static int stac92xx_build_controls(struct hda_codec *codec)
 			spec->spdif_mute = 1;
 		}
 		stac_smux_mixer.count = spec->num_smuxes;
-		err = snd_hda_ctl_add(codec,
+		err = snd_hda_ctl_add(codec, 0,
 				  snd_ctl_new1(&stac_smux_mixer, codec));
 		if (err < 0)
 			return err;
@@ -2648,6 +2648,7 @@ static int stac92xx_clfe_switch_put(struct snd_kcontrol *kcontrol,
 enum {
 	STAC_CTL_WIDGET_VOL,
 	STAC_CTL_WIDGET_MUTE,
+	STAC_CTL_WIDGET_MUTE_BEEP,
 	STAC_CTL_WIDGET_MONO_MUX,
 	STAC_CTL_WIDGET_HP_SWITCH,
 	STAC_CTL_WIDGET_IO_SWITCH,
@@ -2658,6 +2659,7 @@ enum {
 static struct snd_kcontrol_new stac92xx_control_templates[] = {
 	HDA_CODEC_VOLUME(NULL, 0, 0, 0),
 	HDA_CODEC_MUTE(NULL, 0, 0, 0),
+	HDA_CODEC_MUTE_BEEP(NULL, 0, 0, 0),
 	STAC_MONO_MUX,
 	STAC_CODEC_HP_SWITCH(NULL),
 	STAC_CODEC_IO_SWITCH(NULL, 0),
@@ -2669,7 +2671,8 @@ static struct snd_kcontrol_new stac92xx_control_templates[] = {
 static struct snd_kcontrol_new *
 stac_control_new(struct sigmatel_spec *spec,
 		 struct snd_kcontrol_new *ktemp,
-		 const char *name)
+		 const char *name,
+		 hda_nid_t nid)
 {
 	struct snd_kcontrol_new *knew;
 
@@ -2685,6 +2688,8 @@ stac_control_new(struct sigmatel_spec *spec,
 		spec->kctls.alloced--;
 		return NULL;
 	}
+	if (nid)
+		knew->subdevice = HDA_SUBDEV_NID_FLAG | nid;
 	return knew;
 }
 
@@ -2693,7 +2698,8 @@ static int stac92xx_add_control_temp(struct sigmatel_spec *spec,
 				     int idx, const char *name,
 				     unsigned long val)
 {
-	struct snd_kcontrol_new *knew = stac_control_new(spec, ktemp, name);
+	struct snd_kcontrol_new *knew = stac_control_new(spec, ktemp, name,
+							 get_amp_nid_(val));
 	if (!knew)
 		return -ENOMEM;
 	knew->index = idx;
@@ -2764,7 +2770,7 @@ static int stac92xx_add_input_source(struct sigmatel_spec *spec)
 	if (!spec->num_adcs || imux->num_items <= 1)
 		return 0; /* no need for input source control */
 	knew = stac_control_new(spec, &stac_input_src_temp,
-				stac_input_src_temp.name);
+				stac_input_src_temp.name, 0);
 	if (!knew)
 		return -ENOMEM;
 	knew->count = spec->num_adcs;
@@ -3221,12 +3227,15 @@ static int stac92xx_auto_create_beep_ctls(struct hda_codec *codec,
 {
 	struct sigmatel_spec *spec = codec->spec;
 	u32 caps = query_amp_caps(codec, nid, HDA_OUTPUT);
-	int err;
+	int err, type = STAC_CTL_WIDGET_MUTE_BEEP;
+
+	if (spec->anabeep_nid == nid)
+		type = STAC_CTL_WIDGET_MUTE;
 
 	/* check for mute support for the the amp */
 	if ((caps & AC_AMPCAP_MUTE) >> AC_AMPCAP_MUTE_SHIFT) {
-		err = stac92xx_add_control(spec, STAC_CTL_WIDGET_MUTE,
-			"PC Beep Playback Switch",
+		err = stac92xx_add_control(spec, type,
+			"Beep Playback Switch",
 			HDA_COMPOSE_AMP_VAL(nid, 1, 0, HDA_OUTPUT));
 			if (err < 0)
 				return err;
@@ -3235,7 +3244,7 @@ static int stac92xx_auto_create_beep_ctls(struct hda_codec *codec,
 	/* check to see if there is volume support for the amp */
 	if ((caps & AC_AMPCAP_NUM_STEPS) >> AC_AMPCAP_NUM_STEPS_SHIFT) {
 		err = stac92xx_add_control(spec, STAC_CTL_WIDGET_VOL,
-			"PC Beep Playback Volume",
+			"Beep Playback Volume",
 			HDA_COMPOSE_AMP_VAL(nid, 1, 0, HDA_OUTPUT));
 			if (err < 0)
 				return err;
@@ -3258,12 +3267,7 @@ static int stac92xx_dig_beep_switch_put(struct snd_kcontrol *kcontrol,
 					struct snd_ctl_elem_value *ucontrol)
 {
 	struct hda_codec *codec = snd_kcontrol_chip(kcontrol);
-	int enabled = !!ucontrol->value.integer.value[0];
-	if (codec->beep->enabled != enabled) {
-		codec->beep->enabled = enabled;
-		return 1;
-	}
-	return 0;
+	return snd_hda_enable_beep_device(codec, ucontrol->value.integer.value[0]);
 }
 
 static struct snd_kcontrol_new stac92xx_dig_beep_ctrl = {
@@ -3276,7 +3280,7 @@ static struct snd_kcontrol_new stac92xx_dig_beep_ctrl = {
 static int stac92xx_beep_switch_ctl(struct hda_codec *codec)
 {
 	return stac92xx_add_control_temp(codec->spec, &stac92xx_dig_beep_ctrl,
-					 0, "PC Beep Playback Switch", 0);
+					 0, "Beep Playback Switch", 0);
 }
 #endif
 
@@ -4329,6 +4333,28 @@ static void stac92xx_free_kctls(struct hda_codec *codec)
 	snd_array_free(&spec->kctls);
 }
 
+static void stac92xx_shutup(struct hda_codec *codec)
+{
+	struct sigmatel_spec *spec = codec->spec;
+	int i;
+	hda_nid_t nid;
+
+	/* reset each pin before powering down DAC/ADC to avoid click noise */
+	nid = codec->start_nid;
+	for (i = 0; i < codec->num_nodes; i++, nid++) {
+		unsigned int wcaps = get_wcaps(codec, nid);
+		unsigned int wid_type = get_wcaps_type(wcaps);
+		if (wid_type == AC_WID_PIN)
+			snd_hda_codec_read(codec, nid, 0,
+				AC_VERB_SET_PIN_WIDGET_CONTROL, 0);
+	}
+
+	if (spec->eapd_mask)
+		stac_gpio_set(codec, spec->gpio_mask,
+				spec->gpio_dir, spec->gpio_data &
+				~spec->eapd_mask);
+}
+
 static void stac92xx_free(struct hda_codec *codec)
 {
 	struct sigmatel_spec *spec = codec->spec;
@@ -4336,6 +4362,7 @@ static void stac92xx_free(struct hda_codec *codec)
 	if (! spec)
 		return;
 
+	stac92xx_shutup(codec);
 	stac92xx_free_jacks(codec);
 	snd_array_free(&spec->events);
 
@@ -4795,24 +4822,7 @@ static int stac92xx_hp_check_power_status(struct hda_codec *codec,
 
 static int stac92xx_suspend(struct hda_codec *codec, pm_message_t state)
 {
-	struct sigmatel_spec *spec = codec->spec;
-	int i;
-	hda_nid_t nid;
-
-	/* reset each pin before powering down DAC/ADC to avoid click noise */
-	nid = codec->start_nid;
-	for (i = 0; i < codec->num_nodes; i++, nid++) {
-		unsigned int wcaps = get_wcaps(codec, nid);
-		unsigned int wid_type = get_wcaps_type(wcaps);
-		if (wid_type == AC_WID_PIN)
-			snd_hda_codec_read(codec, nid, 0,
-				AC_VERB_SET_PIN_WIDGET_CONTROL, 0);
-	}
-
-	if (spec->eapd_mask)
-		stac_gpio_set(codec, spec->gpio_mask,
-				spec->gpio_dir, spec->gpio_data &
-				~spec->eapd_mask);
+	stac92xx_shutup(codec);
 	return 0;
 }
 #endif
@@ -4827,6 +4837,7 @@ static struct hda_codec_ops stac92xx_patch_ops = {
 	.suspend = stac92xx_suspend,
 	.resume = stac92xx_resume,
 #endif
+	.reboot_notify = stac92xx_shutup,
 };
 
 static int patch_stac9200(struct hda_codec *codec)
