@@ -101,23 +101,23 @@ struct perf_event_attr;
 
 #ifdef CONFIG_EVENT_PROFILE
 #define TRACE_SYS_ENTER_PROFILE(sname)					       \
-static int prof_sysenter_enable_##sname(void)				       \
+static int prof_sysenter_enable_##sname(struct ftrace_event_call *unused)      \
 {									       \
 	return reg_prof_syscall_enter("sys"#sname);			       \
 }									       \
 									       \
-static void prof_sysenter_disable_##sname(void)				       \
+static void prof_sysenter_disable_##sname(struct ftrace_event_call *unused)    \
 {									       \
 	unreg_prof_syscall_enter("sys"#sname);				       \
 }
 
 #define TRACE_SYS_EXIT_PROFILE(sname)					       \
-static int prof_sysexit_enable_##sname(void)				       \
+static int prof_sysexit_enable_##sname(struct ftrace_event_call *unused)       \
 {									       \
 	return reg_prof_syscall_exit("sys"#sname);			       \
 }									       \
 									       \
-static void prof_sysexit_disable_##sname(void)				       \
+static void prof_sysexit_disable_##sname(struct ftrace_event_call *unused)     \
 {                                                                              \
 	unreg_prof_syscall_exit("sys"#sname);				       \
 }
@@ -158,7 +158,7 @@ static void prof_sysexit_disable_##sname(void)				       \
 	struct trace_event enter_syscall_print_##sname = {		\
 		.trace                  = print_syscall_enter,		\
 	};								\
-	static int init_enter_##sname(void)				\
+	static int init_enter_##sname(struct ftrace_event_call *call)	\
 	{								\
 		int num, id;						\
 		num = syscall_name_to_nr("sys"#sname);			\
@@ -194,7 +194,7 @@ static void prof_sysexit_disable_##sname(void)				       \
 	struct trace_event exit_syscall_print_##sname = {		\
 		.trace                  = print_syscall_exit,		\
 	};								\
-	static int init_exit_##sname(void)				\
+	static int init_exit_##sname(struct ftrace_event_call *call)	\
 	{								\
 		int num, id;						\
 		num = syscall_name_to_nr("sys"#sname);			\
