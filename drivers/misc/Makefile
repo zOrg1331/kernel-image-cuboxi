@@ -23,5 +23,6 @@ obj-$(CONFIG_EP93XX_PWM)	+= ep93xx_pwm.o
 obj-$(CONFIG_DS1682)		+= ds1682.o
 obj-$(CONFIG_C2PORT)		+= c2port/
 obj-$(CONFIG_IWMC3200TOP)      += iwmc3200top/
+obj-$(CONFIG_HWLAT_DETECTOR)	+= hwlat_detector.o
 obj-y				+= eeprom/
 obj-y				+= cb710/
