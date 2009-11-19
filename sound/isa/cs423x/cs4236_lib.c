@@ -87,6 +87,7 @@
 #include <sound/core.h>
 #include <sound/wss.h>
 #include <sound/asoundef.h>
+#include <sound/initval.h>
 
 /*
  *
@@ -264,7 +265,10 @@ static void snd_cs4236_resume(struct snd_wss *chip)
 }
 
 #endif /* CONFIG_PM */
-
+/*
+ * This function does no fail if the chip is not CS4236B or compatible.
+ * It just an equivalent to the snd_wss_create() then.
+ */
 int snd_cs4236_create(struct snd_card *card,
 		      unsigned long port,
 		      unsigned long cport,
@@ -281,21 +285,17 @@ int snd_cs4236_create(struct snd_card *card,
 	*rchip = NULL;
 	if (hardware == WSS_HW_DETECT)
 		hardware = WSS_HW_DETECT3;
-	if (cport < 0x100) {
-		snd_printk(KERN_ERR "please, specify control port "
-			   "for CS4236+ chips\n");
-		return -ENODEV;
-	}
+
 	err = snd_wss_create(card, port, cport,
 			     irq, dma1, dma2, hardware, hwshare, &chip);
 	if (err < 0)
 		return err;
 
-	if (!(chip->hardware & WSS_HW_CS4236B_MASK)) {
-		snd_printk(KERN_ERR "CS4236+: MODE3 and extended registers "
-			   "not available, hardware=0x%x\n", chip->hardware);
-		snd_device_free(card, chip);
-		return -ENODEV;
+	if ((chip->hardware & WSS_HW_CS4236B_MASK) == 0) {
+		snd_printd("chip is not CS4236+, hardware=0x%x\n",
+			   chip->hardware);
+		*rchip = chip;
+		return 0;
 	}
 #if 0
 	{
@@ -308,9 +308,16 @@ int snd_cs4236_create(struct snd_card *card,
 				   idx, snd_cs4236_ctrl_in(chip, idx));
 	}
 #endif
+	if (cport < 0x100 || cport == SNDRV_AUTO_PORT) {
+		snd_printk(KERN_ERR "please, specify control port "
+			   "for CS4236+ chips\n");
+		snd_device_free(card, chip);
+		return -ENODEV;
+	}
 	ver1 = snd_cs4236_ctrl_in(chip, 1);
 	ver2 = snd_cs4236_ext_in(chip, CS4236_VERSION);
-	snd_printdd("CS4236: [0x%lx] C1 (version) = 0x%x, ext = 0x%x\n", cport, ver1, ver2);
+	snd_printdd("CS4236: [0x%lx] C1 (version) = 0x%x, ext = 0x%x\n",
+			cport, ver1, ver2);
 	if (ver1 != ver2) {
 		snd_printk(KERN_ERR "CS4236+ chip detected, but "
 			   "control port 0x%lx is not valid\n", cport);
@@ -321,13 +328,17 @@ int snd_cs4236_create(struct snd_card *card,
 	snd_cs4236_ctrl_out(chip, 2, 0xff);
 	snd_cs4236_ctrl_out(chip, 3, 0x00);
 	snd_cs4236_ctrl_out(chip, 4, 0x80);
-	snd_cs4236_ctrl_out(chip, 5, ((IEC958_AES1_CON_PCM_CODER & 3) << 6) | IEC958_AES0_CON_EMPHASIS_NONE);
+	reg = ((IEC958_AES1_CON_PCM_CODER & 3) << 6) |
+	      IEC958_AES0_CON_EMPHASIS_NONE;
+	snd_cs4236_ctrl_out(chip, 5, reg);
 	snd_cs4236_ctrl_out(chip, 6, IEC958_AES1_CON_PCM_CODER >> 2);
 	snd_cs4236_ctrl_out(chip, 7, 0x00);
-	/* 0x8c for C8 is valid for Turtle Beach Malibu - the IEC-958 output */
-	/* is working with this setup, other hardware should have */
-	/* different signal paths and this value should be selectable */
-	/* in the future */
+	/*
+	 * 0x8c for C8 is valid for Turtle Beach Malibu - the IEC-958
+	 * output is working with this setup, other hardware should
+	 * have different signal paths and this value should be
+	 * selectable in the future
+	 */
 	snd_cs4236_ctrl_out(chip, 8, 0x8c);
 	chip->rate_constraint = snd_cs4236_xrate;
 	chip->set_playback_format = snd_cs4236_playback_format;
@@ -339,9 +350,10 @@ int snd_cs4236_create(struct snd_card *card,
 
 	/* initialize extended registers */
 	for (reg = 0; reg < sizeof(snd_cs4236_ext_map); reg++)
-		snd_cs4236_ext_out(chip, CS4236_I23VAL(reg), snd_cs4236_ext_map[reg]);
+		snd_cs4236_ext_out(chip, CS4236_I23VAL(reg),
+				   snd_cs4236_ext_map[reg]);
 
-        /* initialize compatible but more featured registers */
+	/* initialize compatible but more featured registers */
 	snd_wss_out(chip, CS4231_LEFT_INPUT, 0x40);
 	snd_wss_out(chip, CS4231_RIGHT_INPUT, 0x40);
 	snd_wss_out(chip, CS4231_AUX1_LEFT_INPUT, 0xff);
@@ -765,7 +777,7 @@ CS4236_DOUBLE("Mic Playback Switch", 0,
 CS4236_DOUBLE("Mic Capture Switch", 0,
 		CS4236_LEFT_MIC, CS4236_RIGHT_MIC, 7, 7, 1, 1),
 CS4236_DOUBLE("Mic Volume", 0, CS4236_LEFT_MIC, CS4236_RIGHT_MIC, 0, 0, 31, 1),
-CS4236_DOUBLE("Mic Playback Boost", 0,
+CS4236_DOUBLE("Mic Playback Boost (+20dB)", 0,
 		CS4236_LEFT_MIC, CS4236_RIGHT_MIC, 5, 5, 1, 0),
 
 WSS_DOUBLE("Line Playback Switch", 0,
@@ -786,10 +798,10 @@ WSS_DOUBLE("CD Capture Switch", 0,
 
 CS4236_DOUBLE1("Mono Output Playback Switch", 0,
 		CS4231_MONO_CTRL, CS4236_RIGHT_MIX_CTRL, 6, 7, 1, 1),
-CS4236_DOUBLE1("Mono Playback Switch", 0,
+CS4236_DOUBLE1("Beep Playback Switch", 0,
 		CS4231_MONO_CTRL, CS4236_LEFT_MIX_CTRL, 7, 7, 1, 1),
-WSS_SINGLE("Mono Playback Volume", 0, CS4231_MONO_CTRL, 0, 15, 1),
-WSS_SINGLE("Mono Playback Bypass", 0, CS4231_MONO_CTRL, 5, 1, 0),
+WSS_SINGLE("Beep Playback Volume", 0, CS4231_MONO_CTRL, 0, 15, 1),
+WSS_SINGLE("Beep Bypass Playback Switch", 0, CS4231_MONO_CTRL, 5, 1, 0),
 
 WSS_DOUBLE("Capture Volume", 0,
 		CS4231_LEFT_INPUT, CS4231_RIGHT_INPUT, 0, 0, 15, 0),
@@ -803,31 +815,27 @@ CS4236_DOUBLE1("Digital Loopback Playback Volume", 0,
 
 static struct snd_kcontrol_new snd_cs4235_controls[] = {
 
-WSS_DOUBLE("Master Switch", 0,
+WSS_DOUBLE("Master Playback Switch", 0,
 		CS4235_LEFT_MASTER, CS4235_RIGHT_MASTER, 7, 7, 1, 1),
-WSS_DOUBLE("Master Volume", 0,
+WSS_DOUBLE("Master Playback Volume", 0,
 		CS4235_LEFT_MASTER, CS4235_RIGHT_MASTER, 0, 0, 31, 1),
 
 CS4235_OUTPUT_ACCU("Playback Volume", 0),
 
-CS4236_DOUBLE("Master Digital Playback Switch", 0,
-		CS4236_LEFT_MASTER, CS4236_RIGHT_MASTER, 7, 7, 1, 1),
-CS4236_DOUBLE("Master Digital Capture Switch", 0,
-		CS4236_DAC_MUTE, CS4236_DAC_MUTE, 7, 6, 1, 1),
-CS4236_MASTER_DIGITAL("Master Digital Volume", 0),
-
-WSS_DOUBLE("Master Digital Playback Switch", 1,
+WSS_DOUBLE("Synth Playback Switch", 1,
 		CS4231_LEFT_LINE_IN, CS4231_RIGHT_LINE_IN, 7, 7, 1, 1),
-WSS_DOUBLE("Master Digital Capture Switch", 1,
+WSS_DOUBLE("Synth Capture Switch", 1,
 		CS4231_LEFT_LINE_IN, CS4231_RIGHT_LINE_IN, 6, 6, 1, 1),
-WSS_DOUBLE("Master Digital Volume", 1,
+WSS_DOUBLE("Synth Volume", 1,
 		CS4231_LEFT_LINE_IN, CS4231_RIGHT_LINE_IN, 0, 0, 31, 1),
 
 CS4236_DOUBLE("Capture Volume", 0,
 		CS4236_LEFT_MIX_CTRL, CS4236_RIGHT_MIX_CTRL, 5, 5, 3, 1),
 
-WSS_DOUBLE("PCM Switch", 0,
+WSS_DOUBLE("PCM Playback Switch", 0,
 		CS4231_LEFT_OUTPUT, CS4231_RIGHT_OUTPUT, 7, 7, 1, 1),
+WSS_DOUBLE("PCM Capture Switch", 0,
+		CS4236_DAC_MUTE, CS4236_DAC_MUTE, 7, 6, 1, 1),
 WSS_DOUBLE("PCM Volume", 0,
 		CS4231_LEFT_OUTPUT, CS4231_RIGHT_OUTPUT, 0, 0, 63, 1),
 
@@ -843,28 +851,25 @@ CS4236_DOUBLE("Mic Capture Switch", 0,
 CS4236_DOUBLE("Mic Playback Switch", 0,
 		CS4236_LEFT_MIC, CS4236_RIGHT_MIC, 6, 6, 1, 1),
 CS4236_SINGLE("Mic Volume", 0, CS4236_LEFT_MIC, 0, 31, 1),
-CS4236_SINGLE("Mic Playback Boost", 0, CS4236_LEFT_MIC, 5, 1, 0),
+CS4236_SINGLE("Mic Boost (+20dB)", 0, CS4236_LEFT_MIC, 5, 1, 0),
 
-WSS_DOUBLE("Aux Playback Switch", 0,
+WSS_DOUBLE("Line Playback Switch", 0,
 		CS4231_AUX1_LEFT_INPUT, CS4231_AUX1_RIGHT_INPUT, 7, 7, 1, 1),
-WSS_DOUBLE("Aux Capture Switch", 0,
+WSS_DOUBLE("Line Capture Switch", 0,
 		CS4231_AUX1_LEFT_INPUT, CS4231_AUX1_RIGHT_INPUT, 6, 6, 1, 1),
-WSS_DOUBLE("Aux Volume", 0,
+WSS_DOUBLE("Line Volume", 0,
 		CS4231_AUX1_LEFT_INPUT, CS4231_AUX1_RIGHT_INPUT, 0, 0, 31, 1),
 
-WSS_DOUBLE("Aux Playback Switch", 1,
+WSS_DOUBLE("CD Playback Switch", 1,
 		CS4231_AUX2_LEFT_INPUT, CS4231_AUX2_RIGHT_INPUT, 7, 7, 1, 1),
-WSS_DOUBLE("Aux Capture Switch", 1,
+WSS_DOUBLE("CD Capture Switch", 1,
 		CS4231_AUX2_LEFT_INPUT, CS4231_AUX2_RIGHT_INPUT, 6, 6, 1, 1),
-WSS_DOUBLE("Aux Volume", 1,
+WSS_DOUBLE("CD Volume", 1,
 		CS4231_AUX2_LEFT_INPUT, CS4231_AUX2_RIGHT_INPUT, 0, 0, 31, 1),
 
-CS4236_DOUBLE1("Master Mono Switch", 0,
-		CS4231_MONO_CTRL, CS4236_RIGHT_MIX_CTRL, 6, 7, 1, 1),
-
-CS4236_DOUBLE1("Mono Switch", 0,
+CS4236_DOUBLE1("Beep Playback Switch", 0,
 		CS4231_MONO_CTRL, CS4236_LEFT_MIX_CTRL, 7, 7, 1, 1),
-WSS_SINGLE("Mono Volume", 0, CS4231_MONO_CTRL, 0, 15, 1),
+WSS_SINGLE("Beep Playback Volume", 0, CS4231_MONO_CTRL, 0, 15, 1),
 
 WSS_DOUBLE("Analog Loopback Switch", 0,
 		CS4231_LEFT_INPUT, CS4231_RIGHT_INPUT, 7, 7, 1, 0),
