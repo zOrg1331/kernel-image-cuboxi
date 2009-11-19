@@ -1871,8 +1871,18 @@ void utrace_resume(struct task_struct *task, struct pt_regs *regs)
 	 */
 	report.action = start_report(utrace);
 
-	if (report.action == UTRACE_REPORT &&
-	    likely(task->utrace_flags & UTRACE_EVENT(QUIESCE))) {
+	switch (report.action) {
+	case UTRACE_RESUME:
+		/*
+		 * Anything we might have done was already handled by
+		 * utrace_get_signal(), or this is an entirely spurious
+		 * call.  (The arch might use TIF_NOTIFY_RESUME for other
+		 * purposes as well as calling us.)
+		 */
+		return;
+	case UTRACE_REPORT:
+		if (unlikely(!(task->utrace_flags & UTRACE_EVENT(QUIESCE))))
+			break;
 		/*
 		 * Do a simple reporting pass, with no specific
 		 * callback after report_quiesce.
@@ -1880,13 +1890,15 @@ void utrace_resume(struct task_struct *task, struct pt_regs *regs)
 		report.action = UTRACE_RESUME;
 		list_for_each_entry(engine, &utrace->attached, entry)
 			start_callback(utrace, &report, engine, task, 0);
-	} else {
+		break;
+	default:
 		/*
 		 * Even if this report was truly spurious, there is no need
 		 * for utrace_reset() now.  TIF_NOTIFY_RESUME was already
 		 * cleared--it doesn't stay spuriously set.
 		 */
 		report.spurious = false;
+		break;
 	}
 
 	/*
