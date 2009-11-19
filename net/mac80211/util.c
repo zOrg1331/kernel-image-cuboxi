@@ -685,6 +685,10 @@ u32 ieee802_11_parse_elems_crc(u8 *start, size_t len,
 			elems->perr = pos;
 			elems->perr_len = elen;
 			break;
+		case WLAN_EID_RANN:
+			if (elen >= sizeof(struct ieee80211_rann_ie))
+				elems->rann = (void *)pos;
+			break;
 		case WLAN_EID_CHANNEL_SWITCH:
 			elems->ch_switch_elem = pos;
 			elems->ch_switch_elem_len = elen;
@@ -872,13 +876,14 @@ void ieee80211_send_auth(struct ieee80211_sub_if_data *sdata,
 }
 
 int ieee80211_build_preq_ies(struct ieee80211_local *local, u8 *buffer,
-			     const u8 *ie, size_t ie_len)
+			     const u8 *ie, size_t ie_len,
+			     enum ieee80211_band band)
 {
 	struct ieee80211_supported_band *sband;
 	u8 *pos, *supp_rates_len, *esupp_rates_len = NULL;
 	int i;
 
-	sband = local->hw.wiphy->bands[local->hw.conf.channel->band];
+	sband = local->hw.wiphy->bands[band];
 
 	pos = buffer;
 
@@ -966,7 +971,8 @@ void ieee80211_send_probe_req(struct ieee80211_sub_if_data *sdata, u8 *dst,
 	memcpy(pos, ssid, ssid_len);
 	pos += ssid_len;
 
-	skb_put(skb, ieee80211_build_preq_ies(local, pos, ie, ie_len));
+	skb_put(skb, ieee80211_build_preq_ies(local, pos, ie, ie_len,
+					      local->hw.conf.channel->band));
 
 	ieee80211_tx_skb(sdata, skb, 0);
 }
