@@ -55,6 +55,7 @@
 #include <linux/async.h>
 #include <linux/percpu.h>
 #include <linux/kmemleak.h>
+#include <linux/bsearch.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/module.h>
@@ -192,25 +193,71 @@ extern const unsigned long __start___kcrctab_unused[];
 extern const unsigned long __start___kcrctab_unused_gpl[];
 #endif
 
+static struct ksymtab ksymtab[EXPORT_TYPE_MAX];
+
+#ifdef CONFIG_MODVERSIONS
+#define init_one_ksymtab(ksymt, start, stop, crc_start)	\
+	do {						\
+		struct ksymtab *ks = (ksymt);		\
+		ks->syms = (start);			\
+		ks->num_syms = (stop) - ks->syms;	\
+		ks->crcs = (crc_start);			\
+	} while (0)
+#else
+#define init_one_ksymtab(ksymt, start, stop, crc_start)	\
+	do {						\
+		struct ksymtab *ks = (ksymt);		\
+		ks->syms = (start);			\
+		ks->num_syms = (stop) - ks->syms;	\
+	} while (0)
+#endif
+
+static int __init init_ksymtab(void)
+{
+	init_one_ksymtab(&ksymtab[EXPORT_TYPE_PLAIN],
+			 __start___ksymtab, __stop___ksymtab,
+			 __start___kcrctab);
+	init_one_ksymtab(&ksymtab[EXPORT_TYPE_GPL],
+			 __start___ksymtab_gpl, __stop___ksymtab_gpl,
+			 __start___kcrctab_gpl);
+#ifdef CONFIG_UNUSED_EXPORTS
+	init_one_ksymtab(&ksymtab[EXPORT_TYPE_UNUSED],
+			 __start___ksymtab_unused,
+			 __stop___ksymtab_unused,
+			 __start___kcrctab_unused);
+	init_one_ksymtab(&ksymtab[EXPORT_TYPE_UNUSED_GPL],
+			 __start___ksymtab_unused_gpl,
+			 __stop___ksymtab_unused_gpl,
+			 __start___kcrctab_unused_gpl);
+#endif
+	init_one_ksymtab(&ksymtab[EXPORT_TYPE_GPL_FUTURE],
+			 __start___ksymtab_gpl_future,
+			 __stop___ksymtab_gpl_future,
+			 __start___kcrctab_gpl_future);
+
+	return 0;
+}
+pure_initcall(init_ksymtab);
+
 #ifndef CONFIG_MODVERSIONS
 #define symversion(base, idx) NULL
 #else
 #define symversion(base, idx) ((base != NULL) ? ((base) + (idx)) : NULL)
 #endif
 
-static bool each_symbol_in_section(const struct symsearch *arr,
-				   unsigned int arrsize,
+static bool each_symbol_in_section(const struct ksymtab syms[EXPORT_TYPE_MAX],
 				   struct module *owner,
-				   bool (*fn)(const struct symsearch *syms,
-					      struct module *owner,
-					      unsigned int symnum, void *data),
+				   each_symbol_fn_t *fn,
 				   void *data)
 {
-	unsigned int i, j;
+	enum export_type type;
+	unsigned int i;
 
-	for (j = 0; j < arrsize; j++) {
-		for (i = 0; i < arr[j].stop - arr[j].start; i++)
-			if (fn(&arr[j], owner, i, data))
+	for (type = 0; type < EXPORT_TYPE_MAX; type++) {
+		for (i = 0; i < syms[type].num_syms; i++)
+			if (fn(type, &syms[type].syms[i],
+			       symversion(syms[type].crcs, i),
+			       owner, data))
 				return true;
 	}
 
@@ -218,114 +265,77 @@ static bool each_symbol_in_section(const struct symsearch *arr,
 }
 
 /* Returns true as soon as fn returns true, otherwise false. */
-bool each_symbol(bool (*fn)(const struct symsearch *arr, struct module *owner,
-			    unsigned int symnum, void *data), void *data)
+bool each_symbol(each_symbol_fn_t *fn, void *data)
 {
 	struct module *mod;
-	const struct symsearch arr[] = {
-		{ __start___ksymtab, __stop___ksymtab, __start___kcrctab,
-		  NOT_GPL_ONLY, false },
-		{ __start___ksymtab_gpl, __stop___ksymtab_gpl,
-		  __start___kcrctab_gpl,
-		  GPL_ONLY, false },
-		{ __start___ksymtab_gpl_future, __stop___ksymtab_gpl_future,
-		  __start___kcrctab_gpl_future,
-		  WILL_BE_GPL_ONLY, false },
-#ifdef CONFIG_UNUSED_SYMBOLS
-		{ __start___ksymtab_unused, __stop___ksymtab_unused,
-		  __start___kcrctab_unused,
-		  NOT_GPL_ONLY, true },
-		{ __start___ksymtab_unused_gpl, __stop___ksymtab_unused_gpl,
-		  __start___kcrctab_unused_gpl,
-		  GPL_ONLY, true },
-#endif
-	};
 
-	if (each_symbol_in_section(arr, ARRAY_SIZE(arr), NULL, fn, data))
+	if (each_symbol_in_section(ksymtab, NULL, fn, data))
 		return true;
 
 	list_for_each_entry_rcu(mod, &modules, list) {
-		struct symsearch arr[] = {
-			{ mod->syms, mod->syms + mod->num_syms, mod->crcs,
-			  NOT_GPL_ONLY, false },
-			{ mod->gpl_syms, mod->gpl_syms + mod->num_gpl_syms,
-			  mod->gpl_crcs,
-			  GPL_ONLY, false },
-			{ mod->gpl_future_syms,
-			  mod->gpl_future_syms + mod->num_gpl_future_syms,
-			  mod->gpl_future_crcs,
-			  WILL_BE_GPL_ONLY, false },
-#ifdef CONFIG_UNUSED_SYMBOLS
-			{ mod->unused_syms,
-			  mod->unused_syms + mod->num_unused_syms,
-			  mod->unused_crcs,
-			  NOT_GPL_ONLY, true },
-			{ mod->unused_gpl_syms,
-			  mod->unused_gpl_syms + mod->num_unused_gpl_syms,
-			  mod->unused_gpl_crcs,
-			  GPL_ONLY, true },
-#endif
-		};
-
-		if (each_symbol_in_section(arr, ARRAY_SIZE(arr), mod, fn, data))
+		if (each_symbol_in_section(mod->syms, mod, fn, data))
 			return true;
 	}
 	return false;
 }
 EXPORT_SYMBOL_GPL(each_symbol);
 
-struct find_symbol_arg {
-	/* Input */
-	const char *name;
-	bool gplok;
-	bool warn;
-
-	/* Output */
-	struct module *owner;
-	const unsigned long *crc;
-	const struct kernel_symbol *sym;
-};
-
-static bool find_symbol_in_section(const struct symsearch *syms,
-				   struct module *owner,
-				   unsigned int symnum, void *data)
+static int symbol_compare(const void *key, const void *elt)
 {
-	struct find_symbol_arg *fsa = data;
+	const char *str = key;
+	const struct kernel_symbol *sym = elt;
+	return strcmp(str, sym->name);
+}
 
-	if (strcmp(syms->start[symnum].name, fsa->name) != 0)
-		return false;
+/* binary search on sorted symbols */
+static const struct kernel_symbol *find_symbol_in_kernel(
+	const char *name,
+	enum export_type *t,
+	const unsigned long **crc)
+{
+	struct kernel_symbol *sym;
+	enum export_type type;
+	unsigned int i;
 
-	if (!fsa->gplok) {
-		if (syms->licence == GPL_ONLY)
-			return false;
-		if (syms->licence == WILL_BE_GPL_ONLY && fsa->warn) {
-			printk(KERN_WARNING "Symbol %s is being used "
-			       "by a non-GPL module, which will not "
-			       "be allowed in the future\n", fsa->name);
-			printk(KERN_WARNING "Please see the file "
-			       "Documentation/feature-removal-schedule.txt "
-			       "in the kernel source tree for more details.\n");
+	for (type = 0; type < ARRAY_SIZE(ksymtab); type++) {
+		sym = bsearch(name, ksymtab[type].syms, ksymtab[type].num_syms,
+			      sizeof(struct kernel_symbol), symbol_compare);
+		if (sym) {
+			i = sym - ksymtab[type].syms;
+			*crc = symversion(ksymtab[type].crcs, i);
+			*t = type;
+			return sym;
 		}
 	}
 
-#ifdef CONFIG_UNUSED_SYMBOLS
-	if (syms->unused && fsa->warn) {
-		printk(KERN_WARNING "Symbol %s is marked as UNUSED, "
-		       "however this module is using it.\n", fsa->name);
-		printk(KERN_WARNING
-		       "This symbol will go away in the future.\n");
-		printk(KERN_WARNING
-		       "Please evalute if this is the right api to use and if "
-		       "it really is, submit a report the linux kernel "
-		       "mailinglist together with submitting your code for "
-		       "inclusion.\n");
-	}
-#endif
+	return NULL;
+}
 
-	fsa->owner = owner;
-	fsa->crc = symversion(syms->crcs, symnum);
-	fsa->sym = &syms->start[symnum];
-	return true;
+/* linear search on unsorted symbols */
+static const struct kernel_symbol *find_symbol_in_module(
+	struct module *mod,
+	const char *name,
+	enum export_type *t,
+	const unsigned long **crc)
+{
+	struct ksymtab *symtab = mod->syms;
+	const struct kernel_symbol *sym;
+	enum export_type type;
+	unsigned int i;
+
+	for (type = 0; type < EXPORT_TYPE_MAX; type++) {
+		for (i = 0; i < symtab[type].num_syms; i++) {
+			sym = &symtab[type].syms[i];
+
+			if (strcmp(sym->name, name) == 0) {
+				*crc = symversion(symtab[type].crcs, i);
+				*t = type;
+				return sym;
+			}
+		}
+	}
+
+	return NULL;
 }
 
 /* Find a symbol and return it, along with, (optional) crc and
@@ -336,22 +346,57 @@ const struct kernel_symbol *find_symbol(const char *name,
 					bool gplok,
 					bool warn)
 {
-	struct find_symbol_arg fsa;
+	struct module *mod = NULL;
+	const struct kernel_symbol *sym;
+	enum export_type type;
+	const unsigned long *crc_value;
 
-	fsa.name = name;
-	fsa.gplok = gplok;
-	fsa.warn = warn;
+	sym = find_symbol_in_kernel(name, &type, &crc_value);
+	if (sym)
+		goto found;
 
-	if (each_symbol(find_symbol_in_section, &fsa)) {
-		if (owner)
-			*owner = fsa.owner;
-		if (crc)
-			*crc = fsa.crc;
-		return fsa.sym;
+	list_for_each_entry_rcu(mod, &modules, list) {
+		sym = find_symbol_in_module(mod, name, &type, &crc_value);
+		if (sym)
+			goto found;
 	}
 
 	DEBUGP("Failed to find symbol %s\n", name);
 	return NULL;
+
+found:
+	if (!gplok) {
+		if (export_is_gpl_only(type))
+			return NULL;
+		if (export_is_gpl_future(type) && warn) {
+			printk(KERN_WARNING "Symbol %s is being used "
+			       "by a non-GPL module, which will not "
+			       "be allowed in the future\n", name);
+			printk(KERN_WARNING "Please see the file "
+			       "Documentation/feature-removal-schedule.txt "
+			       "in the kernel source tree for more details.\n");
+		}
+	}
+
+#ifdef CONFIG_UNUSED_SYMBOLS
+	if (export_is_unused(type) && warn) {
+		printk(KERN_WARNING "Symbol %s is marked as UNUSED, "
+		       "however this module is using it.\n", name);
+		printk(KERN_WARNING
+		       "This symbol will go away in the future.\n");
+		printk(KERN_WARNING
+		       "Please evalute if this is the right api to use and if "
+		       "it really is, submit a report the linux kernel "
+		       "mailinglist together with submitting your code for "
+		       "inclusion.\n");
+	}
+#endif
+
+	if (owner)
+		*owner = mod;
+	if (crc)
+		*crc = crc_value;
+	return sym;
 }
 EXPORT_SYMBOL_GPL(find_symbol);
 
@@ -1030,6 +1075,16 @@ static int try_to_force_load(struct module *mod, const char *reason)
 }
 
 #ifdef CONFIG_MODVERSIONS
+static const char *crc_section_names[] = {
+	[EXPORT_TYPE_PLAIN] = "__kcrctab",
+	[EXPORT_TYPE_GPL] = "__kcrctab_gpl",
+#ifdef CONFIG_UNUSED_SYMBOLS
+	[EXPORT_TYPE_UNUSED] = "__kcrctab_unused",
+	[EXPORT_TYPE_UNUSED_GPL] = "__kcrctab_unused_gpl",
+#endif
+	[EXPORT_TYPE_GPL_FUTURE] = "__kcrctab_gpl_future",
+};
+
 static int check_version(Elf_Shdr *sechdrs,
 			 unsigned int versindex,
 			 const char *symname,
@@ -1564,23 +1619,13 @@ EXPORT_SYMBOL_GPL(__symbol_get);
 static int verify_export_symbols(struct module *mod)
 {
 	unsigned int i;
-	struct module *owner;
+	enum export_type type;
 	const struct kernel_symbol *s;
-	struct {
-		const struct kernel_symbol *sym;
-		unsigned int num;
-	} arr[] = {
-		{ mod->syms, mod->num_syms },
-		{ mod->gpl_syms, mod->num_gpl_syms },
-		{ mod->gpl_future_syms, mod->num_gpl_future_syms },
-#ifdef CONFIG_UNUSED_SYMBOLS
-		{ mod->unused_syms, mod->num_unused_syms },
-		{ mod->unused_gpl_syms, mod->num_unused_gpl_syms },
-#endif
-	};
+	struct module *owner;
 
-	for (i = 0; i < ARRAY_SIZE(arr); i++) {
-		for (s = arr[i].sym; s < arr[i].sym + arr[i].num; s++) {
+	for (type = 0; type < EXPORT_TYPE_MAX; type++) {
+		for (i = 0; i < mod->syms[type].num_syms; i++) {
+			s = &mod->syms[type].syms[i];
 			if (find_symbol(s->name, &owner, NULL, true, false)) {
 				printk(KERN_ERR
 				       "%s: exports duplicate symbol %s"
@@ -1810,27 +1855,19 @@ static void free_modinfo(struct module *mod)
 
 #ifdef CONFIG_KALLSYMS
 
-/* lookup symbol in given range of kernel_symbols */
-static const struct kernel_symbol *lookup_symbol(const char *name,
-	const struct kernel_symbol *start,
-	const struct kernel_symbol *stop)
-{
-	const struct kernel_symbol *ks = start;
-	for (; ks < stop; ks++)
-		if (strcmp(ks->name, name) == 0)
-			return ks;
-	return NULL;
-}
-
 static int is_exported(const char *name, unsigned long value,
-		       const struct module *mod)
+		       struct module *mod)
 {
-	const struct kernel_symbol *ks;
-	if (!mod)
-		ks = lookup_symbol(name, __start___ksymtab, __stop___ksymtab);
+	const struct kernel_symbol *sym;
+	enum export_type type;
+	const unsigned long *crc;
+
+	if (mod)
+		sym = find_symbol_in_module(mod, name, &type, &crc);
 	else
-		ks = lookup_symbol(name, mod->syms, mod->syms + mod->num_syms);
-	return ks != NULL && ks->value == value;
+		sym = find_symbol_in_kernel(name, &type, &crc);
+
+	return (sym && sym->value == value);
 }
 
 /* As per nm */
@@ -2066,6 +2103,16 @@ static inline void kmemleak_load_module(struct module *mod, Elf_Ehdr *hdr,
 }
 #endif
 
+static const char *export_section_names[] = {
+	[EXPORT_TYPE_PLAIN] = "__ksymtab",
+	[EXPORT_TYPE_GPL] = "__ksymtab_gpl",
+#ifdef CONFIG_UNUSED_SYMBOLS
+	[EXPORT_TYPE_UNUSED] = "__ksymtab_unused",
+	[EXPORT_TYPE_UNUSED_GPL] = "__ksymtab_unused_gpl",
+#endif
+	[EXPORT_TYPE_GPL_FUTURE] = "__ksymtab_gpl_future",
+};
+
 /* Allocate and load the module: note that size of section 0 is always
    zero, and we rely on this for optional sections. */
 static noinline struct module *load_module(void __user *umod,
@@ -2080,6 +2127,7 @@ static noinline struct module *load_module(void __user *umod,
 	unsigned int symindex = 0;
 	unsigned int strindex = 0;
 	unsigned int modindex, versindex, infoindex, pcpuindex;
+	enum export_type export_type;
 	struct module *mod;
 	long err = 0;
 	void *percpu = NULL, *ptr = NULL; /* Stops spurious gcc warning */
@@ -2339,34 +2387,21 @@ static noinline struct module *load_module(void __user *umod,
 	 * find optional sections. */
 	mod->kp = section_objs(hdr, sechdrs, secstrings, "__param",
 			       sizeof(*mod->kp), &mod->num_kp);
-	mod->syms = section_objs(hdr, sechdrs, secstrings, "__ksymtab",
-				 sizeof(*mod->syms), &mod->num_syms);
-	mod->crcs = section_addr(hdr, sechdrs, secstrings, "__kcrctab");
-	mod->gpl_syms = section_objs(hdr, sechdrs, secstrings, "__ksymtab_gpl",
-				     sizeof(*mod->gpl_syms),
-				     &mod->num_gpl_syms);
-	mod->gpl_crcs = section_addr(hdr, sechdrs, secstrings, "__kcrctab_gpl");
-	mod->gpl_future_syms = section_objs(hdr, sechdrs, secstrings,
-					    "__ksymtab_gpl_future",
-					    sizeof(*mod->gpl_future_syms),
-					    &mod->num_gpl_future_syms);
-	mod->gpl_future_crcs = section_addr(hdr, sechdrs, secstrings,
-					    "__kcrctab_gpl_future");
 
-#ifdef CONFIG_UNUSED_SYMBOLS
-	mod->unused_syms = section_objs(hdr, sechdrs, secstrings,
-					"__ksymtab_unused",
-					sizeof(*mod->unused_syms),
-					&mod->num_unused_syms);
-	mod->unused_crcs = section_addr(hdr, sechdrs, secstrings,
-					"__kcrctab_unused");
-	mod->unused_gpl_syms = section_objs(hdr, sechdrs, secstrings,
-					    "__ksymtab_unused_gpl",
-					    sizeof(*mod->unused_gpl_syms),
-					    &mod->num_unused_gpl_syms);
-	mod->unused_gpl_crcs = section_addr(hdr, sechdrs, secstrings,
-					    "__kcrctab_unused_gpl");
+	export_type = 0;
+	for (; export_type < ARRAY_SIZE(export_section_names); export_type++) {
+		mod->syms[export_type].syms =
+				section_objs(hdr, sechdrs, secstrings,
+					     export_section_names[export_type],
+					     sizeof(struct kernel_symbol),
+					     &mod->syms[export_type].num_syms);
+#ifdef CONFIG_MODVERSIONS
+		mod->syms[export_type].crcs =
+				section_addr(hdr, sechdrs, secstrings,
+					     crc_section_names[export_type]);
 #endif
+	}
+
 #ifdef CONFIG_CONSTRUCTORS
 	mod->ctors = section_objs(hdr, sechdrs, secstrings, ".ctors",
 				  sizeof(*mod->ctors), &mod->num_ctors);
@@ -2391,19 +2426,20 @@ static noinline struct module *load_module(void __user *umod,
 					     sizeof(*mod->ftrace_callsites),
 					     &mod->num_ftrace_callsites);
 #endif
+
 #ifdef CONFIG_MODVERSIONS
-	if ((mod->num_syms && !mod->crcs)
-	    || (mod->num_gpl_syms && !mod->gpl_crcs)
-	    || (mod->num_gpl_future_syms && !mod->gpl_future_crcs)
-#ifdef CONFIG_UNUSED_SYMBOLS
-	    || (mod->num_unused_syms && !mod->unused_crcs)
-	    || (mod->num_unused_gpl_syms && !mod->unused_gpl_crcs)
-#endif
-		) {
-		err = try_to_force_load(mod,
-					"no versions for exported symbols");
-		if (err)
-			goto cleanup;
+	export_type = 0;
+	for (; export_type < ARRAY_SIZE(mod->syms); export_type++) {
+		if (mod->syms[export_type].syms &&
+		    !mod->syms[export_type].crcs) {
+			err = try_to_force_load(mod,
+				"no versions for exported symbols");
+			if (err)
+				goto cleanup;
+
+			/* force load approved, don't check other sections */
+			break;
+		}
 	}
 #endif
 
