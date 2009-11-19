@@ -399,12 +399,14 @@ static inline void utrace_engine_put(struct utrace_engine *engine)
  *
  * When %UTRACE_STOP is used in @report_syscall_entry, then @task
  * stops before attempting the system call.  In this case, another
- * @report_syscall_entry callback follows after @task resumes; in a
- * second or later callback, %UTRACE_SYSCALL_RESUMED is set in the
- * @action argument to indicate a repeat callback still waiting to
- * attempt the same system call invocation.  This repeat callback
- * gives each engine an opportunity to reexamine registers another
- * engine might have changed while @task was held in %UTRACE_STOP.
+ * @report_syscall_entry callback will follow after @task resumes if
+ * %UTRACE_REPORT or %UTRACE_INTERRUPT was returned by some callback
+ * or passed to utrace_control().  In a second or later callback,
+ * %UTRACE_SYSCALL_RESUMED is set in the @action argument to indicate
+ * a repeat callback still waiting to attempt the same system call
+ * invocation.  This repeat callback gives each engine an opportunity
+ * to reexamine registers another engine might have changed while
+ * @task was held in %UTRACE_STOP.
  *
  * In other cases, the resume action does not take effect until @task
  * is ready to check for signals and return to user mode.  If there

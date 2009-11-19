@@ -1586,7 +1586,7 @@ static inline u32 do_report_syscall_entry(struct pt_regs *regs,
 		 * SIGKILL.  Don't let the system call actually proceed.
 		 */
 		report->result = UTRACE_SYSCALL_ABORT;
-	} else if (utrace->resume == UTRACE_REPORT) {
+	} else if (utrace->resume <= UTRACE_REPORT) {
 		/*
 		 * If we've been asked for another report after our stop,
 		 * go back to report (and maybe stop) again before we run
