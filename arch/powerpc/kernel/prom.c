@@ -1413,6 +1413,21 @@ void of_node_put(struct device_node *node)
 EXPORT_SYMBOL(of_node_put);
 
 /*
+ * Plug a device node into the tree and global list.
+ */
+void of_attach_node(struct device_node *np)
+{
+	unsigned long flags;
+
+	write_lock_irqsave(&devtree_lock, flags);
+	np->sibling = np->parent->child;
+	np->allnext = allnodes;
+	np->parent->child = np;
+	allnodes = np;
+	write_unlock_irqrestore(&devtree_lock, flags);
+}
+
+/*
  * "Unplug" a node from the device tree.  The caller must hold
  * a reference to the node.  The memory associated with the node
  * is not freed until its refcount goes to zero.
