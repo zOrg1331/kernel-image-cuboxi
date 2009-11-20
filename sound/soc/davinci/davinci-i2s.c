@@ -98,11 +98,6 @@ enum {
 };
 
 struct davinci_mcbsp_dev {
-	/*
-	 * dma_params must be first because rtd->dai->cpu_dai->private_data
-	 * is cast to a pointer of an array of struct davinci_pcm_dma_params in
-	 * davinci_pcm_open.
-	 */
 	struct davinci_pcm_dma_params	dma_params[2];
 	void __iomem			*base;
 #define MOD_DSP_A	0
@@ -397,6 +392,8 @@ static int davinci_i2s_hw_params(struct snd_pcm_substream *substream,
 	}
 
 	dma_params->acnt  = dma_params->data_type;
+	dma_params->fifo_level = 0;
+
 	rcr |= DAVINCI_MCBSP_RCR_RFRLEN1(1);
 	xcr |= DAVINCI_MCBSP_XCR_XFRLEN1(1);
 
@@ -547,6 +544,7 @@ static int davinci_i2s_probe(struct platform_device *pdev)
 	dev->dma_params[SNDRV_PCM_STREAM_CAPTURE].channel = res->start;
 
 	davinci_i2s_dai.private_data = dev;
+	davinci_i2s_dai.dma_data = dev->dma_params;
 	ret = snd_soc_register_dai(&davinci_i2s_dai);
 	if (ret != 0)
 		goto err_free_mem;
