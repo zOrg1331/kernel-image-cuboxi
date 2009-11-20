@@ -46,7 +46,7 @@ extern struct pci_device_id iwl3945_hw_card_ids[];
 #include "iwl-debug.h"
 #include "iwl-power.h"
 #include "iwl-dev.h"
-#include "iwl-3945-led.h"
+#include "iwl-led.h"
 
 /* Highest firmware API version supported */
 #define IWL3945_UCODE_API_MAX 2
@@ -74,8 +74,41 @@ extern struct pci_device_id iwl3945_hw_card_ids[];
 /* Module parameters accessible from iwl-*.c */
 extern struct iwl_mod_params iwl3945_mod_params;
 
+struct iwl3945_rate_scale_data {
+	u64 data;
+	s32 success_counter;
+	s32 success_ratio;
+	s32 counter;
+	s32 average_tpt;
+	unsigned long stamp;
+};
+
+struct iwl3945_rs_sta {
+	spinlock_t lock;
+	struct iwl_priv *priv;
+	s32 *expected_tpt;
+	unsigned long last_partial_flush;
+	unsigned long last_flush;
+	u32 flush_time;
+	u32 last_tx_packets;
+	u32 tx_packets;
+	u8 tgg;
+	u8 flush_pending;
+	u8 start_rate;
+	u8 ibss_sta_added;
+	struct timer_list rate_scale_flush;
+	struct iwl3945_rate_scale_data win[IWL_RATE_COUNT_3945];
+#ifdef CONFIG_MAC80211_DEBUGFS
+	struct dentry *rs_sta_dbgfs_stats_table_file;
+#endif
+
+	/* used to be in sta_info */
+	int last_txrate_idx;
+};
+
+
 struct iwl3945_sta_priv {
-	struct iwl3945_rs_sta *rs_sta;
+	struct iwl3945_rs_sta rs_sta;
 };
 
 enum iwl3945_antenna {
@@ -129,12 +162,6 @@ struct iwl3945_frame {
 #define SEQ_TO_SN(seq) (((seq) & IEEE80211_SCTL_SEQ) >> 4)
 #define SN_TO_SEQ(ssn) (((ssn) << 4) & IEEE80211_SCTL_SEQ)
 #define MAX_SN ((IEEE80211_SCTL_SEQ) >> 4)
-
-/*
- * RX related structures and functions
- */
-#define RX_FREE_BUFFERS 64
-#define RX_LOW_WATERMARK 8
 
 #define SUP_RATE_11A_MAX_NUM_CHANNELS  8
 #define SUP_RATE_11B_MAX_NUM_CHANNELS  4
@@ -279,8 +306,6 @@ extern void iwl3945_config_ap(struct iwl_priv *priv);
  * station tables.
  */
 extern u8 iwl3945_hw_find_station(struct iwl_priv *priv, const u8 *bssid);
-
-extern int iwl3945_hw_channel_switch(struct iwl_priv *priv, u16 channel);
 
 /*
  * Forward declare iwl-3945.c functions for iwl-base.c
