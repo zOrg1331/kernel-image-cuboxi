@@ -155,6 +155,7 @@ static int twlreg_disable(struct regulator_dev *rdev)
 	else
 		grp &= ~P1_GRP_6030;
 
+	grp &= ~(P1_GRP | P2_GRP | P3_GRP);
 	return twlreg_write(info, TWL_MODULE_PM_RECEIVER, VREG_GRP, grp);
 }
 
