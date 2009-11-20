@@ -7,10 +7,12 @@
 #include "string.h"
 #include "cache.h"
 #include "header.h"
+#include "debugfs.h"
 
-int					nr_counters;
+int				nr_counters;
 
 struct perf_event_attr		attrs[MAX_COUNTERS];
+char				*filters[MAX_COUNTERS];
 
 struct event_symbol {
 	u8		type;
@@ -46,6 +48,8 @@ static struct event_symbol event_symbols[] = {
   { CSW(PAGE_FAULTS_MAJ),	"major-faults",		""		},
   { CSW(CONTEXT_SWITCHES),	"context-switches",	"cs"		},
   { CSW(CPU_MIGRATIONS),	"cpu-migrations",	"migrations"	},
+  { CSW(ALIGNMENT_FAULTS),	"alignment-faults",	""		},
+  { CSW(EMULATION_FAULTS),	"emulation-faults",	""		},
 };
 
 #define __PERF_EVENT_FIELD(config, name) \
@@ -74,6 +78,8 @@ static const char *sw_event_names[] = {
 	"CPU-migrations",
 	"minor-faults",
 	"major-faults",
+	"alignment-faults",
+	"emulation-faults",
 };
 
 #define MAX_ALIASES 8
@@ -148,16 +154,6 @@ static int tp_event_has_id(struct dirent *sys_dir, struct dirent *evt_dir)
 
 #define MAX_EVENT_LENGTH 512
 
-int valid_debugfs_mount(const char *debugfs)
-{
-	struct statfs st_fs;
-
-	if (statfs(debugfs, &st_fs) < 0)
-		return -ENOENT;
-	else if (st_fs.f_type != (long) DEBUGFS_MAGIC)
-		return -ENOENT;
-	return 0;
-}
 
 struct tracepoint_path *tracepoint_id_to_path(u64 config)
 {
@@ -170,7 +166,7 @@ struct tracepoint_path *tracepoint_id_to_path(u64 config)
 	char evt_path[MAXPATHLEN];
 	char dir_path[MAXPATHLEN];
 
-	if (valid_debugfs_mount(debugfs_path))
+	if (debugfs_valid_mountpoint(debugfs_path))
 		return NULL;
 
 	sys_dir = opendir(debugfs_path);
@@ -509,7 +505,7 @@ static enum event_result parse_tracepoint_event(const char **strp,
 	char sys_name[MAX_EVENT_LENGTH];
 	unsigned int sys_length, evt_length;
 
-	if (valid_debugfs_mount(debugfs_path))
+	if (debugfs_valid_mountpoint(debugfs_path))
 		return 0;
 
 	evt_name = strchr(*strp, ':');
@@ -677,6 +673,8 @@ parse_event_symbols(const char **str, struct perf_event_attr *attr)
 	if (ret != EVT_FAILED)
 		goto modifier;
 
+	fprintf(stderr, "invalid or unsupported event: '%s'\n", *str);
+	fprintf(stderr, "Run 'perf list' for a list of valid events\n");
 	return EVT_FAILED;
 
 modifier:
@@ -707,7 +705,6 @@ static void store_event_type(const char *orgname)
 	fclose(file);
 	perf_header__push_event(id, orgname);
 }
-
 
 int parse_events(const struct option *opt __used, const char *str, int unset __used)
 {
@@ -745,6 +742,28 @@ int parse_events(const struct option *opt __used, const char *str, int unset __u
 	return 0;
 }
 
+int parse_filter(const struct option *opt __used, const char *str,
+		 int unset __used)
+{
+	int i = nr_counters - 1;
+	int len = strlen(str);
+
+	if (i < 0 || attrs[i].type != PERF_TYPE_TRACEPOINT) {
+		fprintf(stderr,
+			"-F option should follow a -e tracepoint option\n");
+		return -1;
+	}
+
+	filters[i] = malloc(len + 1);
+	if (!filters[i]) {
+		fprintf(stderr, "not enough memory to hold filter string\n");
+		return -1;
+	}
+	strcpy(filters[i], str);
+
+	return 0;
+}
+
 static const char * const event_type_descriptors[] = {
 	"",
 	"Hardware event",
@@ -764,7 +783,7 @@ static void print_tracepoint_events(void)
 	char evt_path[MAXPATHLEN];
 	char dir_path[MAXPATHLEN];
 
-	if (valid_debugfs_mount(debugfs_path))
+	if (debugfs_valid_mountpoint(debugfs_path))
 		return;
 
 	sys_dir = opendir(debugfs_path);
@@ -782,7 +801,7 @@ static void print_tracepoint_events(void)
 		for_each_event(sys_dirent, evt_dir, evt_dirent, evt_next) {
 			snprintf(evt_path, MAXPATHLEN, "%s:%s",
 				 sys_dirent.d_name, evt_dirent.d_name);
-			fprintf(stderr, "  %-42s [%s]\n", evt_path,
+			printf("  %-42s [%s]\n", evt_path,
 				event_type_descriptors[PERF_TYPE_TRACEPOINT+1]);
 		}
 		closedir(evt_dir);
@@ -799,8 +818,8 @@ void print_events(void)
 	unsigned int i, type, op, prev_type = -1;
 	char name[40];
 
-	fprintf(stderr, "\n");
-	fprintf(stderr, "List of pre-defined events (to be used in -e):\n");
+	printf("\n");
+	printf("List of pre-defined events (to be used in -e):\n");
 
 	for (i = 0; i < ARRAY_SIZE(event_symbols); i++, syms++) {
 		type = syms->type + 1;
@@ -808,19 +827,19 @@ void print_events(void)
 			type = 0;
 
 		if (type != prev_type)
-			fprintf(stderr, "\n");
+			printf("\n");
 
 		if (strlen(syms->alias))
 			sprintf(name, "%s OR %s", syms->symbol, syms->alias);
 		else
 			strcpy(name, syms->symbol);
-		fprintf(stderr, "  %-42s [%s]\n", name,
+		printf("  %-42s [%s]\n", name,
 			event_type_descriptors[type]);
 
 		prev_type = type;
 	}
 
-	fprintf(stderr, "\n");
+	printf("\n");
 	for (type = 0; type < PERF_COUNT_HW_CACHE_MAX; type++) {
 		for (op = 0; op < PERF_COUNT_HW_CACHE_OP_MAX; op++) {
 			/* skip invalid cache type */
@@ -828,17 +847,17 @@ void print_events(void)
 				continue;
 
 			for (i = 0; i < PERF_COUNT_HW_CACHE_RESULT_MAX; i++) {
-				fprintf(stderr, "  %-42s [%s]\n",
+				printf("  %-42s [%s]\n",
 					event_cache_name(type, op, i),
 					event_type_descriptors[4]);
 			}
 		}
 	}
 
-	fprintf(stderr, "\n");
-	fprintf(stderr, "  %-42s [raw hardware event descriptor]\n",
+	printf("\n");
+	printf("  %-42s [raw hardware event descriptor]\n",
 		"rNNN");
-	fprintf(stderr, "\n");
+	printf("\n");
 
 	print_tracepoint_events();
 
