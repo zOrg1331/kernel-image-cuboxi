@@ -126,7 +126,7 @@ static int twl4030reg_disable(struct regulator_dev *rdev)
 	if (grp < 0)
 		return grp;
 
-	grp &= ~P1_GRP;
+	grp &= ~(P1_GRP & P2_GRP | P3_GRP);
 	return twl4030reg_write(info, VREG_GRP, grp);
 }
 
