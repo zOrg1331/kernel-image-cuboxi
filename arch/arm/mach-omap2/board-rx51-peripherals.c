@@ -119,7 +119,7 @@ static void __init rx51_add_gpio_keys(void)
 static void __init rx51_add_gpio_keys(void)
 {
 }
-+#endif /* CONFIG_KEYBOARD_GPIO || CONFIG_KEYBOARD_GPIO_MODULE */
+#endif /* CONFIG_KEYBOARD_GPIO || CONFIG_KEYBOARD_GPIO_MODULE */
 
 static void rx51_wl1251_set_power(bool enable);
 
