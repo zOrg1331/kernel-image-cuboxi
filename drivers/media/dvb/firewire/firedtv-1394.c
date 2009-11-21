@@ -90,20 +90,21 @@ static inline struct node_entry *node_of(struct firedtv *fdtv)
 	return container_of(fdtv->device, struct unit_directory, device)->ne;
 }
 
-static int node_lock(struct firedtv *fdtv, u64 addr, __be32 data[])
+static int node_lock(struct firedtv *fdtv, u64 addr, void *data)
 {
+	quadlet_t *d = data;
 	int ret;
 
-	ret = hpsb_node_lock(node_of(fdtv), addr, EXTCODE_COMPARE_SWAP,
-		(__force quadlet_t *)&data[1], (__force quadlet_t)data[0]);
-	data[0] = data[1];
+	ret = hpsb_node_lock(node_of(fdtv), addr,
+			     EXTCODE_COMPARE_SWAP, &d[1], d[0]);
+	d[0] = d[1];
 
 	return ret;
 }
 
-static int node_read(struct firedtv *fdtv, u64 addr, void *data, size_t len)
+static int node_read(struct firedtv *fdtv, u64 addr, void *data)
 {
-	return hpsb_node_read(node_of(fdtv), addr, data, len);
+	return hpsb_node_read(node_of(fdtv), addr, data, 4);
 }
 
 static int node_write(struct firedtv *fdtv, u64 addr, void *data, size_t len)
