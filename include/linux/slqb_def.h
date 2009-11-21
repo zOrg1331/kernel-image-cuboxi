@@ -13,7 +13,6 @@
 #include <linux/rcu_types.h>
 #include <linux/mm_types.h>
 #include <linux/kernel.h>
-#include <linux/kobject.h>
 
 #define SLAB_NUMA		0x00000001UL    /* shortcut */
 
