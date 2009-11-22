@@ -322,6 +322,8 @@ static long vhost_set_vring(struct vhost_dev *d, int ioctl, void __user *argp)
 			r = -EOPNOTSUPP;
 			break;
 		}
+		/* For 32bit, verify that the top 32bits of the user
+		   data are set to zero. */
 		if ((u64)(unsigned long)a.desc_user_addr != a.desc_user_addr ||
 		    (u64)(unsigned long)a.used_user_addr != a.used_user_addr ||
 		    (u64)(unsigned long)a.avail_user_addr != a.avail_user_addr) {
@@ -334,7 +336,8 @@ static long vhost_set_vring(struct vhost_dev *d, int ioctl, void __user *argp)
 			r = -EINVAL;
 			break;
 		}
-		r = init_used(vq, (struct vring_used __user *)a.used_user_addr);
+		r = init_used(vq, (struct vring_used __user *)(unsigned long)
+			      a.used_user_addr);
 		if (r)
 			break;
 		vq->log_used = !!(a.flags & (0x1 << VHOST_VRING_F_LOG));
