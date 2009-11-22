@@ -135,10 +135,11 @@ static void fill_frame(struct gspca_dev *gspca_dev,
 		if (urb->status == -ESHUTDOWN)
 			return;		/* disconnection */
 #ifdef CONFIG_PM
-		if (!gspca_dev->frozen)
+		if (gspca_dev->frozen)
+			return;
 #endif
-			PDEBUG(D_ERR|D_PACK, "urb status: %d", urb->status);
-		return;
+		PDEBUG(D_ERR|D_PACK, "urb status: %d", urb->status);
+		goto resubmit;
 	}
 	pkt_scan = gspca_dev->sd_desc->pkt_scan;
 	for (i = 0; i < urb->number_of_packets; i++) {
@@ -174,6 +175,7 @@ static void fill_frame(struct gspca_dev *gspca_dev,
 		pkt_scan(gspca_dev, frame, data, len);
 	}
 
+resubmit:
 	/* resubmit the URB */
 	st = usb_submit_urb(urb, GFP_ATOMIC);
 	if (st < 0)
@@ -217,10 +219,11 @@ static void bulk_irq(struct urb *urb)
 		break;
 	default:
 #ifdef CONFIG_PM
-		if (!gspca_dev->frozen)
+		if (gspca_dev->frozen)
+			return;
 #endif
-			PDEBUG(D_ERR|D_PACK, "urb status: %d", urb->status);
-		return;
+		PDEBUG(D_ERR|D_PACK, "urb status: %d", urb->status);
+		goto resubmit;
 	}
 
 	/* check the availability of the frame buffer */
@@ -235,6 +238,7 @@ static void bulk_irq(struct urb *urb)
 					urb->actual_length);
 	}
 
+resubmit:
 	/* resubmit the URB */
 	if (gspca_dev->cam.bulk_nurbs != 0) {
 		st = usb_submit_urb(urb, GFP_ATOMIC);
@@ -475,10 +479,18 @@ static struct usb_host_endpoint *get_ep(struct gspca_dev *gspca_dev)
 	xfer = gspca_dev->cam.bulk ? USB_ENDPOINT_XFER_BULK
 				   : USB_ENDPOINT_XFER_ISOC;
 	i = gspca_dev->alt;			/* previous alt setting */
-	while (--i >= 0) {
-		ep = alt_xfer(&intf->altsetting[i], xfer);
-		if (ep)
-			break;
+	if (gspca_dev->cam.reverse_alts) {
+		while (++i < gspca_dev->nbalt) {
+			ep = alt_xfer(&intf->altsetting[i], xfer);
+			if (ep)
+				break;
+		}
+	} else {
+		while (--i >= 0) {
+			ep = alt_xfer(&intf->altsetting[i], xfer);
+			if (ep)
+				break;
+		}
 	}
 	if (ep == NULL) {
 		err("no transfer endpoint found");
@@ -599,7 +611,11 @@ static int gspca_init_transfer(struct gspca_dev *gspca_dev)
 
 	/* set the higher alternate setting and
 	 * loop until urb submit succeeds */
-	gspca_dev->alt = gspca_dev->nbalt;
+	if (gspca_dev->cam.reverse_alts)
+		gspca_dev->alt = 0;
+	else
+		gspca_dev->alt = gspca_dev->nbalt;
+
 	if (gspca_dev->sd_desc->isoc_init) {
 		ret = gspca_dev->sd_desc->isoc_init(gspca_dev);
 		if (ret < 0)
@@ -980,7 +996,7 @@ static void gspca_release(struct video_device *vfd)
 {
 	struct gspca_dev *gspca_dev = container_of(vfd, struct gspca_dev, vdev);
 
-	PDEBUG(D_STREAM, "device released");
+	PDEBUG(D_PROBE, "/dev/video%d released", gspca_dev->vdev.num);
 
 	kfree(gspca_dev->usb_buf);
 	kfree(gspca_dev);
@@ -991,7 +1007,7 @@ static int dev_open(struct file *file)
 	struct gspca_dev *gspca_dev;
 	int ret;
 
-	PDEBUG(D_STREAM, "%s open", current->comm);
+	PDEBUG(D_STREAM, "[%s] open", current->comm);
 	gspca_dev = (struct gspca_dev *) video_devdata(file);
 	if (mutex_lock_interruptible(&gspca_dev->queue_lock))
 		return -ERESTARTSYS;
@@ -1037,7 +1053,7 @@ static int dev_close(struct file *file)
 {
 	struct gspca_dev *gspca_dev = file->private_data;
 
-	PDEBUG(D_STREAM, "%s close", current->comm);
+	PDEBUG(D_STREAM, "[%s] close", current->comm);
 	if (mutex_lock_interruptible(&gspca_dev->queue_lock))
 		return -ERESTARTSYS;
 	gspca_dev->users--;
@@ -2001,11 +2017,15 @@ int gspca_dev_probe(struct usb_interface *intf,
 	PDEBUG(D_PROBE, "probing %04x:%04x", id->idVendor, id->idProduct);
 
 	/* we don't handle multi-config cameras */
-	if (dev->descriptor.bNumConfigurations != 1)
+	if (dev->descriptor.bNumConfigurations != 1) {
+		PDEBUG(D_ERR, "Too many config");
 		return -ENODEV;
+	}
 	interface = &intf->cur_altsetting->desc;
-	if (interface->bInterfaceNumber > 0)
+	if (interface->bInterfaceNumber > 0) {
+		PDEBUG(D_ERR, "intf != 0");
 		return -ENODEV;
+	}
 
 	/* create the device */
 	if (dev_size < sizeof *gspca_dev)
@@ -2059,7 +2079,7 @@ int gspca_dev_probe(struct usb_interface *intf,
 	}
 
 	usb_set_intfdata(intf, gspca_dev);
-	PDEBUG(D_PROBE, "probe ok");
+	PDEBUG(D_PROBE, "/dev/video%d created", gspca_dev->vdev.num);
 	return 0;
 out:
 	kfree(gspca_dev->usb_buf);
@@ -2078,6 +2098,7 @@ void gspca_disconnect(struct usb_interface *intf)
 {
 	struct gspca_dev *gspca_dev = usb_get_intfdata(intf);
 
+	PDEBUG(D_PROBE, "/dev/video%d disconnect", gspca_dev->vdev.num);
 	mutex_lock(&gspca_dev->usb_lock);
 	gspca_dev->present = 0;
 
@@ -2096,7 +2117,7 @@ void gspca_disconnect(struct usb_interface *intf)
 	/* (this will call gspca_release() immediatly or on last close) */
 	video_unregister_device(&gspca_dev->vdev);
 
-	PDEBUG(D_PROBE, "disconnect complete");
+/*	PDEBUG(D_PROBE, "disconnect complete"); */
 }
 EXPORT_SYMBOL(gspca_disconnect);
 
