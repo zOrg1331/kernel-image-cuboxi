@@ -19,7 +19,10 @@
 #include <mach/map.h>
 #include <plat/sdhci.h>
 #include <plat/devs.h>
+<<<<<<< HEAD
 #include <plat/cpu.h>
+=======
+>>>>>>> next-s5pc1xx
 
 #define S3C_SZ_HSMMC	(0x1000)
 
