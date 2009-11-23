@@ -92,7 +92,7 @@ void pt_regs_to_gdb_regs(unsigned long *gdb_regs, struct pt_regs *regs)
 		gdb_regs[GDB_SP] = regs->sp;
 	} else {
 		gdb_regs[GDB_SS] = __KERNEL_DS;
-		gdb_regs[GDB_SP] = (unsigned long)&regs->sp;
+		gdb_regs[GDB_SP] = kernel_stack_pointer(regs);
 	}
 #else
 	gdb_regs[GDB_R8]	= regs->r8;
@@ -106,7 +106,7 @@ void pt_regs_to_gdb_regs(unsigned long *gdb_regs, struct pt_regs *regs)
 	gdb_regs32[GDB_PS]	= regs->flags;
 	gdb_regs32[GDB_CS]	= regs->cs;
 	gdb_regs32[GDB_SS]	= regs->ss;
-	gdb_regs[GDB_SP]	= regs->sp;
+	gdb_regs[GDB_SP]	= kernel_stack_pointer(regs);
 #endif
 }
 

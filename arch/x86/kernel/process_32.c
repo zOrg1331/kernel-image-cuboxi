@@ -134,7 +134,7 @@ void __show_regs(struct pt_regs *regs, int all)
 		ss = regs->ss & 0xffff;
 		gs = get_user_gs(regs);
 	} else {
-		sp = (unsigned long) (&regs->sp);
+		sp = kernel_stack_pointer(regs);
 		savesegment(ss, ss);
 		savesegment(gs, gs);
 	}
@@ -187,7 +187,7 @@ void __show_regs(struct pt_regs *regs, int all)
 
 void show_regs(struct pt_regs *regs)
 {
-	__show_regs(regs, 1);
+	show_registers(regs);
 	show_trace(NULL, regs, &regs->sp, regs->bp);
 }
 
