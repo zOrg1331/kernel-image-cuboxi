@@ -64,8 +64,10 @@ struct dso {
 	u8		 slen_calculated:1;
 	u8		 loaded:1;
 	u8		 has_build_id:1;
+	u8		 kernel:1;
 	unsigned char	 origin;
 	u8		 build_id[BUILD_ID_SIZE];
+	u16		 long_name_len;
 	const char	 *short_name;
 	char	 	 *long_name;
 	char		 name[0];
@@ -76,20 +78,23 @@ void dso__delete(struct dso *self);
 
 struct symbol *dso__find_symbol(struct dso *self, u64 ip);
 
-int dsos__load_kernel(const char *vmlinux, symbol_filter_t filter, int modules);
 struct dso *dsos__findnew(const char *name);
 int dso__load(struct dso *self, struct map *map, symbol_filter_t filter);
 void dsos__fprintf(FILE *fp);
+size_t dsos__fprintf_buildid(FILE *fp);
 
+size_t dso__fprintf_buildid(struct dso *self, FILE *fp);
 size_t dso__fprintf(struct dso *self, FILE *fp);
 char dso__symtab_origin(const struct dso *self);
 void dso__set_build_id(struct dso *self, void *build_id);
 
 int filename__read_build_id(const char *filename, void *bf, size_t size);
-bool fetch_build_id_table(struct list_head *head);
+int sysfs__read_build_id(const char *filename, void *bf, size_t size);
+bool dsos__read_build_ids(void);
 int build_id__sprintf(u8 *self, int len, char *bf);
 
-int load_kernel(symbol_filter_t filter);
+int kernel_maps__init(bool use_modules);
+size_t kernel_maps__fprintf(FILE *fp);
 
 void symbol__init(unsigned int priv_size);
 
@@ -97,5 +102,4 @@ extern struct list_head dsos;
 extern struct map *kernel_map;
 extern struct dso *vdso;
 extern const char *vmlinux_name;
-extern int   modules;
 #endif /* __PERF_SYMBOL */

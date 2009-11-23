@@ -69,13 +69,6 @@ struct build_id_event {
 	char			 filename[];
 };
 
-struct build_id_list {
-	struct build_id_event	event;
-	struct list_head	list;
-	const char		*dso_name;
-	int			len;
-};
-
 typedef union event_union {
 	struct perf_event_header	header;
 	struct ip_event			ip;
@@ -122,10 +115,13 @@ typedef int (*symbol_filter_t)(struct map *map, struct symbol *sym);
 void map__init(struct map *self, u64 start, u64 end, u64 pgoff,
 	       struct dso *dso);
 struct map *map__new(struct mmap_event *event, char *cwd, int cwdlen);
+void map__delete(struct map *self);
 struct map *map__clone(struct map *self);
 int map__overlap(struct map *l, struct map *r);
 size_t map__fprintf(struct map *self, FILE *fp);
 struct symbol *map__find_symbol(struct map *self, u64 ip, symbol_filter_t filter);
+void map__fixup_start(struct map *self);
+void map__fixup_end(struct map *self);
 
 int event__synthesize_thread(pid_t pid, int (*process)(event_t *event));
 void event__synthesize_threads(int (*process)(event_t *event));

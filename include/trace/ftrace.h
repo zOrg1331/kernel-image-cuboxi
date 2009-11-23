@@ -724,17 +724,20 @@ __attribute__((section("_ftrace_events"))) event_##call = {		\
 static void ftrace_profile_##call(proto)				\
 {									\
 	struct ftrace_data_offsets_##call __maybe_unused __data_offsets;\
+	extern int perf_swevent_get_recursion_context(void);		\
+	extern void perf_swevent_put_recursion_context(int rctx);	\
 	struct ftrace_event_call *event_call = &event_##call;		\
 	extern void perf_tp_event(int, u64, u64, void *, int);		\
 	struct ftrace_raw_##call *entry;				\
-	struct perf_trace_buf *trace_buf;				\
 	u64 __addr = 0, __count = 1;					\
 	unsigned long irq_flags;					\
 	struct trace_entry *ent;					\
 	int __entry_size;						\
 	int __data_size;						\
+	char *trace_buf;						\
 	char *raw_data;							\
 	int __cpu;							\
+	int rctx;							\
 	int pc;								\
 									\
 	pc = preempt_count();						\
@@ -749,6 +752,11 @@ static void ftrace_profile_##call(proto)				\
 		return;							\
 									\
 	local_irq_save(irq_flags);					\
+									\
+	rctx = perf_swevent_get_recursion_context();			\
+	if (rctx < 0)							\
+		goto end_recursion;					\
+									\
 	__cpu = smp_processor_id();					\
 									\
 	if (in_nmi())							\
@@ -759,13 +767,7 @@ static void ftrace_profile_##call(proto)				\
 	if (!trace_buf)							\
 		goto end;						\
 									\
-	trace_buf = per_cpu_ptr(trace_buf, __cpu);			\
-	if (trace_buf->recursion++)					\
-		goto end_recursion;					\
-									\
-	barrier();							\
-									\
-	raw_data = trace_buf->buf;					\
+	raw_data = per_cpu_ptr(trace_buf, __cpu);			\
 									\
 	*(u64 *)(&raw_data[__entry_size - sizeof(u64)]) = 0ULL;		\
 	entry = (struct ftrace_raw_##call *)raw_data;			\
@@ -780,9 +782,9 @@ static void ftrace_profile_##call(proto)				\
 	perf_tp_event(event_call->id, __addr, __count, entry,		\
 			     __entry_size);				\
 									\
-end_recursion:								\
-	trace_buf->recursion--;						\
 end:									\
+	perf_swevent_put_recursion_context(rctx);			\
+end_recursion:								\
 	local_irq_restore(irq_flags);					\
 									\
 }

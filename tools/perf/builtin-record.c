@@ -220,7 +220,11 @@ static struct perf_header_attr *get_header_attr(struct perf_event_attr *a, int n
 		h_attr = header->attr[nr];
 	} else {
 		h_attr = perf_header_attr__new(a);
-		perf_header__add_attr(header, h_attr);
+		if (h_attr != NULL)
+			if (perf_header__add_attr(header, h_attr) < 0) {
+				perf_header_attr__delete(h_attr);
+				h_attr = NULL;
+			}
 	}
 
 	return h_attr;
@@ -303,11 +307,19 @@ try_again:
 		printf("\n");
 		error("perfcounter syscall returned with %d (%s)\n",
 			fd[nr_cpu][counter], strerror(err));
+
+#if defined(__i386__) || defined(__x86_64__)
+		if (attr->type == PERF_TYPE_HARDWARE && err == EOPNOTSUPP)
+			die("No hardware sampling interrupt available. No APIC? If so then you can boot the kernel with the \"lapic\" boot parameter to force-enable it.\n");
+#endif
+
 		die("No CONFIG_PERF_EVENTS=y kernel support configured?\n");
 		exit(-1);
 	}
 
 	h_attr = get_header_attr(attr, counter);
+	if (h_attr == NULL)
+		die("nomem\n");
 
 	if (!file_new) {
 		if (memcmp(&h_attr->attr, attr, sizeof(*attr))) {
@@ -321,7 +333,10 @@ try_again:
 		exit(-1);
 	}
 
-	perf_header_attr__add_id(h_attr, read_data.id);
+	if (perf_header_attr__add_id(h_attr, read_data.id) < 0) {
+		pr_warning("Not enough memory to add id\n");
+		exit(-1);
+	}
 
 	assert(fd[nr_cpu][counter] >= 0);
 	fcntl(fd[nr_cpu][counter], F_SETFL, O_NONBLOCK);
@@ -391,7 +406,7 @@ static int __cmd_record(int argc, const char **argv)
 	struct stat st;
 	pid_t pid = 0;
 	int flags;
-	int ret;
+	int err;
 	unsigned long waking = 0;
 
 	page_size = sysconf(_SC_PAGE_SIZE);
@@ -425,10 +440,17 @@ static int __cmd_record(int argc, const char **argv)
 		exit(-1);
 	}
 
-	if (!file_new)
-		header = perf_header__read(output);
-	else
-		header = perf_header__new();
+	header = perf_header__new();
+	if (header == NULL) {
+		pr_err("Not enough memory for reading perf file header\n");
+		return -1;
+	}
+
+	if (!file_new) {
+		err = perf_header__read(header, output);
+		if (err < 0)
+			return err;
+	}
 
 	if (raw_samples) {
 		perf_header__set_feat(header, HEADER_TRACE_INFO);
@@ -458,8 +480,11 @@ static int __cmd_record(int argc, const char **argv)
 		}
 	}
 
-	if (file_new)
-		perf_header__write(header, output, false);
+	if (file_new) {
+		err = perf_header__write(header, output, false);
+		if (err < 0)
+			return err;
+	}
 
 	if (!system_wide)
 		event__synthesize_thread(pid, process_synthesized_event);
@@ -513,7 +538,7 @@ static int __cmd_record(int argc, const char **argv)
 		if (hits == samples) {
 			if (done)
 				break;
-			ret = poll(event_array, nr_poll, -1);
+			err = poll(event_array, nr_poll, -1);
 			waking++;
 		}
 
