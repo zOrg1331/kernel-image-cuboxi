@@ -834,7 +834,7 @@ int be_cmd_get_stats(struct be_adapter *adapter, struct be_dma_mem *nonemb_cmd)
 
 /* Uses synchronous mcc */
 int be_cmd_link_status_query(struct be_adapter *adapter,
-			bool *link_up)
+			bool *link_up, u8 *mac_speed, u16 *link_speed)
 {
 	struct be_mcc_wrb *wrb;
 	struct be_cmd_req_link_status *req;
@@ -855,8 +855,11 @@ int be_cmd_link_status_query(struct be_adapter *adapter,
 	status = be_mcc_notify_wait(adapter);
 	if (!status) {
 		struct be_cmd_resp_link_status *resp = embedded_payload(wrb);
-		if (resp->mac_speed != PHY_LINK_SPEED_ZERO)
+		if (resp->mac_speed != PHY_LINK_SPEED_ZERO) {
 			*link_up = true;
+			*link_speed = le16_to_cpu(resp->link_speed);
+			*mac_speed = resp->mac_speed;
+		}
 	}
 
 	spin_unlock_bh(&adapter->mcc_lock);
@@ -1129,6 +1132,95 @@ int be_cmd_reset_function(struct be_adapter *adapter)
 	return status;
 }
 
+/* Uses sync mcc */
+int be_cmd_set_beacon_state(struct be_adapter *adapter, u8 port_num,
+			u8 bcn, u8 sts, u8 state)
+{
+	struct be_mcc_wrb *wrb;
+	struct be_cmd_req_enable_disable_beacon *req;
+	int status;
+
+	spin_lock_bh(&adapter->mcc_lock);
+
+	wrb = wrb_from_mccq(adapter);
+	req = embedded_payload(wrb);
+
+	be_wrb_hdr_prepare(wrb, sizeof(*req), true, 0);
+
+	be_cmd_hdr_prepare(&req->hdr, CMD_SUBSYSTEM_COMMON,
+		OPCODE_COMMON_ENABLE_DISABLE_BEACON, sizeof(*req));
+
+	req->port_num = port_num;
+	req->beacon_state = state;
+	req->beacon_duration = bcn;
+	req->status_duration = sts;
+
+	status = be_mcc_notify_wait(adapter);
+
+	spin_unlock_bh(&adapter->mcc_lock);
+	return status;
+}
+
+/* Uses sync mcc */
+int be_cmd_get_beacon_state(struct be_adapter *adapter, u8 port_num, u32 *state)
+{
+	struct be_mcc_wrb *wrb;
+	struct be_cmd_req_get_beacon_state *req;
+	int status;
+
+	spin_lock_bh(&adapter->mcc_lock);
+
+	wrb = wrb_from_mccq(adapter);
+	req = embedded_payload(wrb);
+
+	be_wrb_hdr_prepare(wrb, sizeof(*req), true, 0);
+
+	be_cmd_hdr_prepare(&req->hdr, CMD_SUBSYSTEM_COMMON,
+		OPCODE_COMMON_GET_BEACON_STATE, sizeof(*req));
+
+	req->port_num = port_num;
+
+	status = be_mcc_notify_wait(adapter);
+	if (!status) {
+		struct be_cmd_resp_get_beacon_state *resp =
+						embedded_payload(wrb);
+		*state = resp->beacon_state;
+	}
+
+	spin_unlock_bh(&adapter->mcc_lock);
+	return status;
+}
+
+/* Uses sync mcc */
+int be_cmd_read_port_type(struct be_adapter *adapter, u32 port,
+				u8 *connector)
+{
+	struct be_mcc_wrb *wrb;
+	struct be_cmd_req_port_type *req;
+	int status;
+
+	spin_lock_bh(&adapter->mcc_lock);
+
+	wrb = wrb_from_mccq(adapter);
+	req = embedded_payload(wrb);
+
+	be_wrb_hdr_prepare(wrb, sizeof(struct be_cmd_resp_port_type), true, 0);
+
+	be_cmd_hdr_prepare(&req->hdr, CMD_SUBSYSTEM_COMMON,
+		OPCODE_COMMON_READ_TRANSRECV_DATA, sizeof(*req));
+
+	req->port = cpu_to_le32(port);
+	req->page_num = cpu_to_le32(TR_PAGE_A0);
+	status = be_mcc_notify_wait(adapter);
+	if (!status) {
+		struct be_cmd_resp_port_type *resp = embedded_payload(wrb);
+			*connector = resp->data.connector;
+	}
+
+	spin_unlock_bh(&adapter->mcc_lock);
+	return status;
+}
+
 int be_cmd_write_flashrom(struct be_adapter *adapter, struct be_dma_mem *cmd,
 			u32 flash_type, u32 flash_opcode, u32 buf_size)
 {
@@ -1155,6 +1247,35 @@ int be_cmd_write_flashrom(struct be_adapter *adapter, struct be_dma_mem *cmd,
 	req->params.data_buf_size = cpu_to_le32(buf_size);
 
 	status = be_mcc_notify_wait(adapter);
+
+	spin_unlock_bh(&adapter->mcc_lock);
+	return status;
+}
+
+int be_cmd_get_flash_crc(struct be_adapter *adapter, u8 *flashed_crc)
+{
+	struct be_mcc_wrb *wrb;
+	struct be_cmd_write_flashrom *req;
+	int status;
+
+	spin_lock_bh(&adapter->mcc_lock);
+
+	wrb = wrb_from_mccq(adapter);
+	req = embedded_payload(wrb);
+
+	be_wrb_hdr_prepare(wrb, sizeof(*req)+4, true, 0);
+
+	be_cmd_hdr_prepare(&req->hdr, CMD_SUBSYSTEM_COMMON,
+		OPCODE_COMMON_READ_FLASHROM, sizeof(*req)+4);
+
+	req->params.op_type = cpu_to_le32(FLASHROM_TYPE_REDBOOT);
+	req->params.op_code = cpu_to_le32(FLASHROM_OPER_REPORT);
+	req->params.offset = 0x3FFFC;
+	req->params.data_buf_size = 0x4;
+
+	status = be_mcc_notify_wait(adapter);
+	if (!status)
+		memcpy(flashed_crc, req->params.data_buf, 4);
 
 	spin_unlock_bh(&adapter->mcc_lock);
 	return status;

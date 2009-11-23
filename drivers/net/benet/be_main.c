@@ -31,8 +31,10 @@ MODULE_PARM_DESC(rx_frag_size, "Size of a fragment that holds rcvd data.");
 
 static DEFINE_PCI_DEVICE_TABLE(be_dev_ids) = {
 	{ PCI_DEVICE(BE_VENDOR_ID, BE_DEVICE_ID1) },
+	{ PCI_DEVICE(BE_VENDOR_ID, BE_DEVICE_ID2) },
 	{ PCI_DEVICE(BE_VENDOR_ID, OC_DEVICE_ID1) },
 	{ PCI_DEVICE(BE_VENDOR_ID, OC_DEVICE_ID2) },
+	{ PCI_DEVICE(BE_VENDOR_ID, OC_DEVICE_ID3) },
 	{ 0 }
 };
 MODULE_DEVICE_TABLE(pci, be_dev_ids);
@@ -141,7 +143,7 @@ void netdev_stats_update(struct be_adapter *adapter)
 	struct be_rxf_stats *rxf_stats = &hw_stats->rxf;
 	struct be_port_rxf_stats *port_stats =
 			&rxf_stats->port[adapter->port_num];
-	struct net_device_stats *dev_stats = &adapter->stats.net_stats;
+	struct net_device_stats *dev_stats = &adapter->netdev->stats;
 	struct be_erx_stats *erx_stats = &hw_stats->erx;
 
 	dev_stats->rx_packets = port_stats->rx_total_frames;
@@ -269,9 +271,7 @@ static void be_rx_eqd_update(struct be_adapter *adapter)
 
 static struct net_device_stats *be_get_stats(struct net_device *dev)
 {
-	struct be_adapter *adapter = netdev_priv(dev);
-
-	return &adapter->stats.net_stats;
+	return &dev->stats;
 }
 
 static u32 be_calc_rate(u64 bytes, unsigned long ticks)
@@ -758,15 +758,13 @@ static void be_rx_compl_process(struct be_adapter *adapter,
 	if ((adapter->cap == 0x400) && !vtm)
 		vlanf = 0;
 
-	skb = netdev_alloc_skb(adapter->netdev, BE_HDR_LEN + NET_IP_ALIGN);
+	skb = netdev_alloc_skb_ip_align(adapter->netdev, BE_HDR_LEN);
 	if (!skb) {
 		if (net_ratelimit())
 			dev_warn(&adapter->pdev->dev, "skb alloc failed\n");
 		be_rx_compl_discard(adapter, rxcp);
 		return;
 	}
-
-	skb_reserve(skb, NET_IP_ALIGN);
 
 	skb_fill_rx_data(adapter, skb, rxcp);
 
@@ -1590,6 +1588,8 @@ static int be_open(struct net_device *netdev)
 	struct be_eq_obj *tx_eq = &adapter->tx_eq;
 	bool link_up;
 	int status;
+	u8 mac_speed;
+	u16 link_speed;
 
 	/* First time posting */
 	be_post_rx_frags(adapter);
@@ -1608,7 +1608,8 @@ static int be_open(struct net_device *netdev)
 	/* Rx compl queue may be in unarmed state; rearm it */
 	be_cq_notify(adapter, adapter->rx_obj.cq.id, true, 0);
 
-	status = be_cmd_link_status_query(adapter, &link_up);
+	status = be_cmd_link_status_query(adapter, &link_up, &mac_speed,
+			&link_speed);
 	if (status)
 		goto ret_sts;
 	be_link_status_update(adapter, link_up);
@@ -1720,6 +1721,31 @@ static int be_close(struct net_device *netdev)
 #define FW_FILE_HDR_SIGN 	"ServerEngines Corp. "
 char flash_cookie[2][16] =	{"*** SE FLAS",
 				"H DIRECTORY *** "};
+
+static bool be_flash_redboot(struct be_adapter *adapter,
+			const u8 *p)
+{
+	u32 crc_offset;
+	u8 flashed_crc[4];
+	int status;
+	crc_offset = FLASH_REDBOOT_START + FLASH_REDBOOT_IMAGE_MAX_SIZE - 4
+			+ sizeof(struct flash_file_hdr) - 32*1024;
+	p += crc_offset;
+	status = be_cmd_get_flash_crc(adapter, flashed_crc);
+	if (status) {
+		dev_err(&adapter->pdev->dev,
+		"could not get crc from flash, not flashing redboot\n");
+		return false;
+	}
+
+	/*update redboot only if crc does not match*/
+	if (!memcmp(flashed_crc, p, 4))
+		return false;
+	else
+		return true;
+
+}
+
 static int be_flash_image(struct be_adapter *adapter,
 			const struct firmware *fw,
 			struct be_dma_mem *flash_cmd, u32 flash_type)
@@ -1758,6 +1784,12 @@ static int be_flash_image(struct be_adapter *adapter,
 	case FLASHROM_TYPE_PXE_BIOS:
 		image_offset = FLASH_PXE_BIOS_START;
 		image_size = FLASH_BIOS_IMAGE_MAX_SIZE;
+		break;
+	case FLASHROM_TYPE_REDBOOT:
+		if (!be_flash_redboot(adapter, fw->data))
+			return 0;
+		image_offset = FLASH_REDBOOT_ISM_START;
+		image_size = FLASH_REDBOOT_IMAGE_MAX_SIZE;
 		break;
 	default:
 		return 0;

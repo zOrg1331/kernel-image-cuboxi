@@ -184,10 +184,12 @@ static int ieee80211_open(struct net_device *dev)
 		 * No need to check netif_running since we do not allow
 		 * it to start up with this invalid address.
 		 */
-		if (compare_ether_addr(null_addr, ndev->dev_addr) == 0)
+		if (compare_ether_addr(null_addr, ndev->dev_addr) == 0) {
 			memcpy(ndev->dev_addr,
 			       local->hw.wiphy->perm_addr,
 			       ETH_ALEN);
+			memcpy(ndev->perm_addr, ndev->dev_addr, ETH_ALEN);
+		}
 	}
 
 	/*
@@ -212,8 +214,8 @@ static int ieee80211_open(struct net_device *dev)
 		/* must be before the call to ieee80211_configure_filter */
 		local->monitors++;
 		if (local->monitors == 1) {
-			local->hw.conf.flags |= IEEE80211_CONF_RADIOTAP;
-			hw_reconf_flags |= IEEE80211_CONF_CHANGE_RADIOTAP;
+			local->hw.conf.flags |= IEEE80211_CONF_MONITOR;
+			hw_reconf_flags |= IEEE80211_CONF_CHANGE_MONITOR;
 		}
 
 		if (sdata->u.mntr_flags & MONITOR_FLAG_FCSFAIL)
@@ -312,7 +314,7 @@ static int ieee80211_open(struct net_device *dev)
 	if (sdata->vif.type == NL80211_IFTYPE_STATION)
 		ieee80211_queue_work(&local->hw, &sdata->u.mgd.work);
 
-	netif_tx_start_all_queues(dev);
+	netif_start_queue(dev);
 
 	return 0;
  err_del_interface:
@@ -341,7 +343,7 @@ static int ieee80211_stop(struct net_device *dev)
 	/*
 	 * Stop TX on this interface first.
 	 */
-	netif_tx_stop_all_queues(dev);
+	netif_stop_queue(dev);
 
 	/*
 	 * Now delete all active aggregation sessions.
@@ -433,8 +435,8 @@ static int ieee80211_stop(struct net_device *dev)
 
 		local->monitors--;
 		if (local->monitors == 0) {
-			local->hw.conf.flags &= ~IEEE80211_CONF_RADIOTAP;
-			hw_reconf_flags |= IEEE80211_CONF_CHANGE_RADIOTAP;
+			local->hw.conf.flags &= ~IEEE80211_CONF_MONITOR;
+			hw_reconf_flags |= IEEE80211_CONF_CHANGE_MONITOR;
 		}
 
 		if (sdata->u.mntr_flags & MONITOR_FLAG_FCSFAIL)
@@ -750,13 +752,10 @@ int ieee80211_if_change_type(struct ieee80211_sub_if_data *sdata,
 		ieee80211_mandatory_rates(sdata->local,
 			sdata->local->hw.conf.channel->band);
 	sdata->drop_unencrypted = 0;
+	sdata->use_4addr = 0;
 
 	return 0;
 }
-
-static struct device_type wiphy_type = {
-	.name	= "wlan",
-};
 
 int ieee80211_if_add(struct ieee80211_local *local, const char *name,
 		     struct net_device **new_dev, enum nl80211_iftype type,
@@ -788,8 +787,8 @@ int ieee80211_if_add(struct ieee80211_local *local, const char *name,
 		goto fail;
 
 	memcpy(ndev->dev_addr, local->hw.wiphy->perm_addr, ETH_ALEN);
+	memcpy(ndev->perm_addr, ndev->dev_addr, ETH_ALEN);
 	SET_NETDEV_DEV(ndev, wiphy_dev(local->hw.wiphy));
-	SET_NETDEV_DEVTYPE(ndev, &wiphy_type);
 
 	/* don't use IEEE80211_DEV_TO_SUB_IF because it checks too much */
 	sdata = netdev_priv(ndev);
@@ -820,6 +819,9 @@ int ieee80211_if_add(struct ieee80211_local *local, const char *name,
 		ieee80211_sdata_set_mesh_id(sdata,
 					    params->mesh_id_len,
 					    params->mesh_id);
+
+	if (params && params->use_4addr >= 0)
+		sdata->use_4addr = !!params->use_4addr;
 
 	mutex_lock(&local->iflist_mtx);
 	list_add_tail_rcu(&sdata->list, &local->interfaces);

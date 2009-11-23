@@ -32,6 +32,7 @@
 #include <linux/io.h>
 
 #include "iwl-debug.h"
+#include "iwl-devtrace.h"
 
 /*
  * IO, register, and NIC memory access functions
@@ -61,7 +62,12 @@
  *
  */
 
-#define _iwl_write32(priv, ofs, val) iowrite32((val), (priv)->hw_base + (ofs))
+static inline void _iwl_write32(struct iwl_priv *priv, u32 ofs, u32 val)
+{
+	trace_iwlwifi_dev_iowrite32(priv, ofs, val);
+	iowrite32(val, priv->hw_base + ofs);
+}
+
 #ifdef CONFIG_IWLWIFI_DEBUG
 static inline void __iwl_write32(const char *f, u32 l, struct iwl_priv *priv,
 				 u32 ofs, u32 val)
@@ -75,7 +81,13 @@ static inline void __iwl_write32(const char *f, u32 l, struct iwl_priv *priv,
 #define iwl_write32(priv, ofs, val) _iwl_write32(priv, ofs, val)
 #endif
 
-#define _iwl_read32(priv, ofs) ioread32((priv)->hw_base + (ofs))
+static inline u32 _iwl_read32(struct iwl_priv *priv, u32 ofs)
+{
+	u32 val = ioread32(priv->hw_base + ofs);
+	trace_iwlwifi_dev_ioread32(priv, ofs, val);
+	return val;
+}
+
 #ifdef CONFIG_IWLWIFI_DEBUG
 static inline u32 __iwl_read32(char *f, u32 l, struct iwl_priv *priv, u32 ofs)
 {
@@ -188,6 +200,26 @@ static inline int _iwl_grab_nic_access(struct iwl_priv *priv)
 
 	/* this bit wakes up the NIC */
 	_iwl_set_bit(priv, CSR_GP_CNTRL, CSR_GP_CNTRL_REG_FLAG_MAC_ACCESS_REQ);
+
+	/*
+	 * These bits say the device is running, and should keep running for
+	 * at least a short while (at least as long as MAC_ACCESS_REQ stays 1),
+	 * but they do not indicate that embedded SRAM is restored yet;
+	 * 3945 and 4965 have volatile SRAM, and must save/restore contents
+	 * to/from host DRAM when sleeping/waking for power-saving.
+	 * Each direction takes approximately 1/4 millisecond; with this
+	 * overhead, it's a good idea to grab and hold MAC_ACCESS_REQUEST if a
+	 * series of register accesses are expected (e.g. reading Event Log),
+	 * to keep device from sleeping.
+	 *
+	 * CSR_UCODE_DRV_GP1 register bit MAC_SLEEP == 0 indicates that
+	 * SRAM is okay/restored.  We don't check that here because this call
+	 * is just for hardware register access; but GP1 MAC_SLEEP check is a
+	 * good idea before accessing 3945/4965 SRAM (e.g. reading Event Log).
+	 *
+	 * 5000 series and later (including 1000 series) have non-volatile SRAM,
+	 * and do not save/restore SRAM when power cycling.
+	 */
 	ret = _iwl_poll_bit(priv, CSR_GP_CNTRL,
 			   CSR_GP_CNTRL_REG_VAL_MAC_ACCESS_EN,
 			   (CSR_GP_CNTRL_REG_FLAG_MAC_CLOCK_READY |
