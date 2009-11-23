@@ -158,6 +158,7 @@ struct symbol {
 	unsigned int kernel:1;     /* 1 if symbol is from kernel
 				    *  (only for external modules) **/
 	unsigned int preloaded:1;  /* 1 if symbol from Module.symvers */
+	unsigned int function:1;   /* 1 if symbol refers to a function */
 	enum export  export;       /* Type of export */
 	char name[0];
 };
@@ -580,6 +581,17 @@ static void handle_modversions(struct module *mod, struct elf_info *info,
 			mod->has_cleanup = 1;
 		break;
 	}
+}
+
+static void mark_function_symbols(Elf_Sym *sym, const char *symname)
+{
+	struct symbol *export_symbol;
+
+	export_symbol = find_symbol(symname);
+	if (!export_symbol)
+		return;
+
+	export_symbol->function = (ELF_ST_TYPE(sym->st_info) == STT_FUNC);
 }
 
 /**
@@ -1632,6 +1644,13 @@ static void read_symbols(char *modname)
 		handle_modversions(mod, &info, sym, symname);
 		handle_moddevtable(mod, &info, sym, symname);
 	}
+
+	for (sym = info.symtab_start; sym < info.symtab_stop; sym++) {
+		symname = info.strtab + sym->st_name;
+
+		mark_function_symbols(sym, symname);
+	}
+
 	if (!is_vmlinux(modname) ||
 	     (is_vmlinux(modname) && vmlinux_section_warnings))
 		check_sec_ref(mod, modname, &info);
@@ -2040,10 +2059,11 @@ static void write_exports(const char *fname)
 	for (i = 0; i < n; i++) {
 		sym = symbols[i];
 
-		buf_printf(&buf, "__EXPORT_SYMBOL(%s,"
+		buf_printf(&buf, "__EXPORT_%s_SYMBOL(%s,"
 					" __ksymtab%s_sorted,"
 					" __ksymtab_strings_sorted,"
 					" __kcrctab%s_sorted)\n",
+					sym->function ? "FUNCTION" : "DATA",
 					sym->name,
 					section_names[sym->export],
 					section_names[sym->export]);

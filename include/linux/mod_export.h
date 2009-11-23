@@ -111,6 +111,12 @@ struct kernel_symbol {
 #define SYM(sym) PASTE(SYMBOL_PREFIX, sym)
 #endif
 
+#ifdef __ia64__
+#define FSYM(x) @fptr(SYM(x))
+#else
+#define FSYM(x) SYM(x)
+#endif
+
 
 #ifdef CONFIG_MODVERSIONS
 #define __CRC_SYMBOL(sym, crcsec)				\
@@ -125,7 +131,7 @@ struct kernel_symbol {
 #define __CRC_SYMBOL(sym, section)
 #endif
 
-#define __EXPORT_SYMBOL(sym, sec, strsec, crcsec)		\
+#define __EXPORT_SYMBOL_VALUE(sym, symvalue, sec, strsec, crcsec) \
 	.globl SYM(sym);					\
 								\
 	__CRC_SYMBOL(sym, crcsec)				\
@@ -138,9 +144,16 @@ struct kernel_symbol {
 	.pushsection sec, "a";					\
 	ALGN;							\
 	SYM(__ksymtab_##sym):					\
-	PTR SYM(sym);						\
+	PTR symvalue;						\
 	PTR SYM(__kstrtab_##sym);				\
 	.popsection;
+
+#define __EXPORT_DATA_SYMBOL(sym, sec, strsec, crcsec)		\
+	__EXPORT_SYMBOL_VALUE(sym, SYM(sym), sec, strsec, crcsec)
+
+#define __EXPORT_FUNCTION_SYMBOL(sym, sec, strsec, crcsec)	\
+	__EXPORT_SYMBOL_VALUE(sym, FSYM(sym), sec, strsec, crcsec)
+
 
 #endif /* __MODPOST_EXPORTS__ */
 
