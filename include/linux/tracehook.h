@@ -165,7 +165,7 @@ static inline int tracehook_unsafe_exec(struct task_struct *task)
 {
 	int unsafe = 0;
 	int ptrace = task_ptrace(task);
-	if (ptrace & PT_PTRACED) {
+	if (ptrace) {
 		if (ptrace & PT_PTRACE_CAP)
 			unsafe |= LSM_UNSAFE_PTRACE_CAP;
 		else
@@ -187,7 +187,7 @@ static inline int tracehook_unsafe_exec(struct task_struct *task)
  */
 static inline struct task_struct *tracehook_tracer_task(struct task_struct *tsk)
 {
-	if (task_ptrace(tsk) & PT_PTRACED)
+	if (task_ptrace(tsk))
 		return rcu_dereference(tsk->parent);
 	return NULL;
 }
@@ -436,7 +436,7 @@ static inline void tracehook_signal_handler(int sig, siginfo_t *info,
 {
 	if (task_utrace_flags(current))
 		utrace_signal_handler(current, stepping);
-	if (stepping)
+	if (stepping && (task_ptrace(current) & PT_PTRACED))
 		ptrace_notify(SIGTRAP);
 }
 
@@ -553,7 +553,7 @@ static inline int tracehook_notify_jctl(int notify, int why)
 {
 	if (task_utrace_flags(current) & UTRACE_EVENT(JCTL))
 		utrace_report_jctl(notify, why);
-	return notify ?: (current->ptrace & PT_PTRACED) ? why : 0;
+	return notify ?: task_ptrace(current) ? why : 0;
 }
 
 /**
