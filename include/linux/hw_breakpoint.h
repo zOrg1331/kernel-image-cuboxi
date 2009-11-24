@@ -1,8 +1,6 @@
 #ifndef _LINUX_HW_BREAKPOINT_H
 #define _LINUX_HW_BREAKPOINT_H
 
-#include <linux/perf_event.h>
-
 enum {
 	HW_BREAKPOINT_LEN_1 = 1,
 	HW_BREAKPOINT_LEN_2 = 2,
@@ -17,6 +15,9 @@ enum {
 };
 
 #ifdef __KERNEL__
+
+#include <linux/perf_event.h>
+
 #ifdef CONFIG_HAVE_HW_BREAKPOINT
 
 static inline unsigned long hw_breakpoint_addr(struct perf_event *bp)
