@@ -1,8 +1,8 @@
 Name: kernel-image-tmc-tc
 Version: 2.6.27
-Release: alt6
+Release: alt7
 
-%define kernel_stable_version 36
+%define kernel_stable_version 39
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -487,6 +487,9 @@ rm -rf %buildroot%kbuild_dir/include/media
 #     if anyone would need -alt3, please fix yourself, sorry
 
 %changelog
+* Tue Nov 24 2009 Michael Shigorin <mike@altlinux.org> 2.6.27-alt7
+- 2.6.27.39
+
 * Tue Oct 06 2009 Michael Shigorin <mike@altlinux.org> 2.6.27-alt6
 - 2.6.27.36
   + added CONFIG_SQUASHFS=m (closes: #21846)
