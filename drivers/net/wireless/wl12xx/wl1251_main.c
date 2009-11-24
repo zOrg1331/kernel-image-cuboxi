@@ -183,8 +183,11 @@ static int wl1251_chip_wakeup(struct wl1251 *wl)
 		wl1251_debug(DEBUG_BOOT, "chip id 0x%x (1251 PG12)",
 			     wl->chip_id);
 		break;
-	case CHIP_ID_1251_PG10:
 	case CHIP_ID_1251_PG11:
+		wl1251_debug(DEBUG_BOOT, "chip id 0x%x (1251 PG11)",
+			     wl->chip_id);
+		break;
+	case CHIP_ID_1251_PG10:
 	default:
 		wl1251_error("unsupported chip id: 0x%x", wl->chip_id);
 		ret = -ENODEV;
@@ -1308,7 +1311,8 @@ int wl1251_init_ieee80211(struct wl1251 *wl)
 	wl->hw->channel_change_time = 10000;
 
 	wl->hw->flags = IEEE80211_HW_SIGNAL_DBM |
-		IEEE80211_HW_NOISE_DBM;
+		IEEE80211_HW_NOISE_DBM |
+		IEEE80211_HW_SUPPORTS_PS;
 
 	wl->hw->wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION);
 	wl->hw->wiphy->max_scan_ssids = 1;
@@ -1426,4 +1430,5 @@ EXPORT_SYMBOL_GPL(wl1251_free_hw);
 MODULE_DESCRIPTION("TI wl1251 Wireles LAN Driver Core");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Kalle Valo <kalle.valo@nokia.com>");
-MODULE_ALIAS("spi:wl12xx");
+MODULE_ALIAS("spi:wl1251");
+MODULE_FIRMWARE(WL1251_FW_NAME);
