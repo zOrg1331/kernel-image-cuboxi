@@ -598,8 +598,7 @@ tape_3590_work_handler(struct work_struct *work)
 	kfree(p);
 }
 
-static int
-tape_3590_schedule_work(struct tape_device *device, enum tape_op op)
+static int tape_3590_schedule_work(struct tape_device *device, enum tape_op op)
 {
 	struct work_handler_data *p;
 
@@ -608,7 +607,8 @@ tape_3590_schedule_work(struct tape_device *device, enum tape_op op)
 
 	INIT_WORK(&p->work, tape_3590_work_handler);
 
-	p->device = tape_get_device_reference(device);
+	tape_get_device(device);
+	p->device = device;
 	p->op = op;
 
 	schedule_work(&p->work);
