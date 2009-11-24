@@ -117,6 +117,7 @@ static int hpyfs_vm_create_guest(struct super_block *sb,
 	char guest_name[NAME_LEN + 1] = {};
 	struct dentry *guest_dir, *cpus_dir, *samples_dir, *mem_dir;
 	int dedicated_flag, capped_value;
+	char *ignore;
 
 	capped_value = (data->flags & 0x00000006) >> 1;
 	dedicated_flag = (data->flags & 0x00000008) >> 3;
@@ -124,7 +125,7 @@ static int hpyfs_vm_create_guest(struct super_block *sb,
 	/* guest dir */
 	memcpy(guest_name, data->guest_name, NAME_LEN);
 	EBCASC(guest_name, NAME_LEN);
-	strstrip(guest_name);
+	ignore = strstrip(guest_name);
 	guest_dir = hypfs_mkdir(sb, systems_dir, guest_name);
 	if (IS_ERR(guest_dir))
 		return PTR_ERR(guest_dir);
