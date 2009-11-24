@@ -1599,6 +1599,7 @@ static inline u32 do_report_syscall_entry(struct pt_regs *regs,
 		 */
 		report->detaches = false;
 		report->spurious = true;
+		report->action = report->resume_action = UTRACE_RESUME;
 		return UTRACE_SYSCALL_RESUMED;
 	}
 
