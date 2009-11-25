@@ -48,7 +48,9 @@
 
 /*
  * The per-CPU workqueue (if single thread, we always use the first
- * possible cpu).
+ * possible cpu).  The lower WORK_STRUCT_FLAG_BITS of
+ * work_struct->data are used for flags and thus cwqs need to be
+ * aligned at two's power of the number of flag bits.
  */
 struct cpu_workqueue_struct {
 
@@ -60,7 +62,7 @@ struct cpu_workqueue_struct {
 
 	struct workqueue_struct *wq;		/* I: the owning workqueue */
 	struct task_struct	*thread;
-} ____cacheline_aligned;
+} __attribute__((aligned(1 << WORK_STRUCT_FLAG_BITS)));
 
 /*
  * The externally visible workqueue abstraction is an array of
@@ -1200,6 +1202,15 @@ EXPORT_SYMBOL_GPL(work_on_cpu);
 
 void __init init_workqueues(void)
 {
+	/*
+	 * cwqs are forced aligned according to WORK_STRUCT_FLAG_BITS.
+	 * Make sure that the alignment isn't lower than that of
+	 * unsigned long long in case this code survives for longer
+	 * than twenty years.  :-P
+	 */
+	BUILD_BUG_ON(__alignof__(struct cpu_workqueue_struct) <
+		     __alignof__(unsigned long long));
+
 	alloc_cpumask_var(&cpu_populated_map, GFP_KERNEL);
 
 	cpumask_copy(cpu_populated_map, cpu_online_mask);
