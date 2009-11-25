@@ -156,6 +156,8 @@ static inline __u8 part_hdr__rcpus(enum diag204_format type, void *hdr)
 static inline void part_hdr__part_name(enum diag204_format type, void *hdr,
 				       char *name)
 {
+	char *ignore;
+
 	if (type == INFO_SIMPLE)
 		memcpy(name, ((struct part_hdr *)hdr)->part_name,
 		       LPAR_NAME_LEN);
@@ -164,7 +166,7 @@ static inline void part_hdr__part_name(enum diag204_format type, void *hdr,
 		       LPAR_NAME_LEN);
 	EBCASC(name, LPAR_NAME_LEN);
 	name[LPAR_NAME_LEN] = 0;
-	strstrip(name);
+	ignore = strstrip(name);
 }
 
 struct cpu_info {
@@ -520,10 +522,12 @@ static void diag224_delete_name_table(void)
 
 static int diag224_idx2name(int index, char *name)
 {
+	char *ignore;
+
 	memcpy(name, diag224_cpu_names + ((index + 1) * CPU_NAME_LEN),
 		CPU_NAME_LEN);
 	name[CPU_NAME_LEN] = 0;
-	strstrip(name);
+	ignore = strstrip(name);
 	return 0;
 }
 
