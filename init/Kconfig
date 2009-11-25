@@ -295,6 +295,15 @@ config AUDIT
 	  logging of avc messages output).  Does not do system-call
 	  auditing without CONFIG_AUDITSYSCALL.
 
+config UTRACE
+	bool "Infrastructure for tracing and debugging user processes"
+	depends on EXPERIMENTAL
+	depends on HAVE_ARCH_TRACEHOOK
+	help
+	  Enable the utrace process tracing interface.  This is an internal
+	  kernel interface exported to kernel modules, to track events in
+	  user threads, extract and change user thread state.
+
 config AUDITSYSCALL
 	bool "Enable system-call auditing support"
 	depends on AUDIT && (X86 || PPC || S390 || IA64 || UML || SPARC64 || SUPERH)
@@ -1204,15 +1213,6 @@ config STOP_MACHINE
 	depends on (SMP && MODULE_UNLOAD) || HOTPLUG_CPU
 	help
 	  Need stop_machine() primitive.
-
-menuconfig UTRACE
-	bool "Infrastructure for tracing and debugging user processes"
-	depends on EXPERIMENTAL
-	depends on HAVE_ARCH_TRACEHOOK
-	help
-	  Enable the utrace process tracing interface.  This is an internal
-	  kernel interface exported to kernel modules, to track events in
-	  user threads, extract and change user thread state.
 
 source "block/Kconfig"
 
