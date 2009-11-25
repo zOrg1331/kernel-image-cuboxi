@@ -243,7 +243,7 @@ static void device_pm_wait_for_masters(struct device *slave)
 
 /**
  * device_pm_wait_for_slaves - Wait for all slaves of given device.
- * @slave: Device to wait for the slaves of.
+ * @master: Device to wait for the slaves of.
  */
 static void device_pm_wait_for_slaves(struct device *master)
 {
@@ -286,7 +286,7 @@ static int device_pm_check_masters(struct device *slave)
 
 /**
  * device_pm_check_slaves - Check power.op_complete for slaves of a device.
- * @slave: Device to check the slaves of.
+ * @master: Device to check the slaves of.
  */
 static int device_pm_check_slaves(struct device *master)
 {
