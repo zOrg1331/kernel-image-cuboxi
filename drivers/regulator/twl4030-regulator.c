@@ -401,6 +401,10 @@ static struct regulator_ops twl4030fixed_ops = {
  * software control over them after boot.
  */
 static struct twlreg_info twl4030_regs[] = {
+	TWL_ADJUSTABLE_LDO(VAUX1, 0x17, 1),
+	TWL_ADJUSTABLE_LDO(VAUX2_4030, 0x1b, 2),
+	TWL_ADJUSTABLE_LDO(VAUX2, 0x1b, 2),
+	TWL_ADJUSTABLE_LDO(VAUX3, 0x1f, 3),
 	TWL_ADJUSTABLE_LDO(VAUX4, 0x23, 4),
 	TWL_ADJUSTABLE_LDO(VMMC1, 0x27, 5),
 	TWL_ADJUSTABLE_LDO(VMMC2, 0x2b, 6),
