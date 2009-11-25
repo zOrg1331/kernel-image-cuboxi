@@ -420,6 +420,13 @@ static struct twlreg_info twl4030_regs[] = {
 	/* VUSBCP is managed *only* by the USB subchip */
 };
 
+static const u8 REG_REMAP_table[] = {
+	0x08, 0x08, 0x08, 0x08, 0x00, 0x08, 0x08,
+	0x08, 0x00, 0x08, 0x08, 0x08, 0x08, 0x08,
+	0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08,
+	0x08,
+};
+
 static int twl4030reg_probe(struct platform_device *pdev)
 {
 	int				i;
@@ -470,6 +477,8 @@ static int twl4030reg_probe(struct platform_device *pdev)
 		return PTR_ERR(rdev);
 	}
 	platform_set_drvdata(pdev, rdev);
+
+       twl4030reg_write(info, VREG_REMAP, REG_REMAP_table[pdev->id]);
 
 	/* NOTE:  many regulators support short-circuit IRQs (presentable
 	 * as REGULATOR_OVER_CURRENT notifications?) configured via:
