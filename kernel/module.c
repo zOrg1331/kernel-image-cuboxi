@@ -1037,6 +1037,16 @@ static int try_to_force_load(struct module *mod, const char *reason)
 }
 
 #ifdef CONFIG_MODVERSIONS
+static const char *crc_section_names[] = {
+	[EXPORT_TYPE_PLAIN] = "__kcrctab",
+	[EXPORT_TYPE_GPL] = "__kcrctab_gpl",
+#ifdef CONFIG_UNUSED_SYMBOLS
+	[EXPORT_TYPE_UNUSED] = "__kcrctab_unused",
+	[EXPORT_TYPE_UNUSED_GPL] = "__kcrctab_unused_gpl",
+#endif
+	[EXPORT_TYPE_GPL_FUTURE] = "__kcrctab_gpl_future",
+};
+
 static int check_version(Elf_Shdr *sechdrs,
 			 unsigned int versindex,
 			 const char *symname,
@@ -2077,16 +2087,6 @@ static const char *export_section_names[] = {
 	[EXPORT_TYPE_UNUSED_GPL] = "__ksymtab_unused_gpl",
 #endif
 	[EXPORT_TYPE_GPL_FUTURE] = "__ksymtab_gpl_future",
-};
-
-static const char *crc_section_names[] = {
-	[EXPORT_TYPE_PLAIN] = "__kcrctab",
-	[EXPORT_TYPE_GPL] = "__kcrctab_gpl",
-#ifdef CONFIG_UNUSED_SYMBOLS
-	[EXPORT_TYPE_UNUSED] = "__kcrctab_unused",
-	[EXPORT_TYPE_UNUSED_GPL] = "__kcrctab_unused_gpl",
-#endif
-	[EXPORT_TYPE_GPL_FUTURE] = "__kcrctab_gpl_future",
 };
 
 /* Allocate and load the module: note that size of section 0 is always
