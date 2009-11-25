@@ -2017,6 +2017,7 @@ void kthread_bind(struct task_struct *p, unsigned int cpu)
 	}
 
 	spin_lock_irqsave(&rq->lock, flags);
+	update_rq_clock(rq);
 	set_task_cpu(p, cpu);
 	p->cpus_allowed = cpumask_of_cpu(cpu);
 	p->rt.nr_cpus_allowed = 1;
@@ -2115,6 +2116,7 @@ migrate_task(struct task_struct *p, int dest_cpu, struct migration_req *req)
 	 * it is sufficient to simply update the task's cpu field.
 	 */
 	if (!p->se.on_rq && !task_running(rq, p)) {
+		update_rq_clock(rq);
 		set_task_cpu(p, dest_cpu);
 		return 0;
 	}
@@ -2376,13 +2378,14 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 	task_rq_unlock(rq, &flags);
 
 	cpu = p->sched_class->select_task_rq(p, SD_BALANCE_WAKE, wake_flags);
-	if (cpu != orig_cpu)
-		set_task_cpu(p, cpu);
-
-	rq = task_rq_lock(p, &flags);
-
-	if (rq != orig_rq)
+	if (cpu != orig_cpu) {
+		local_irq_save(flags);
+		rq = cpu_rq(cpu);
 		update_rq_clock(rq);
+		set_task_cpu(p, cpu);
+		local_irq_restore(flags);
+	}
+	rq = task_rq_lock(p, &flags);
 
 	WARN_ON(p->state != TASK_WAKING);
 	cpu = task_cpu(p);
@@ -2545,6 +2548,7 @@ static void __sched_fork(struct task_struct *p)
 void sched_fork(struct task_struct *p, int clone_flags)
 {
 	int cpu = get_cpu();
+	unsigned long flags;
 
 	__sched_fork(p);
 
@@ -2581,7 +2585,10 @@ void sched_fork(struct task_struct *p, int clone_flags)
 #ifdef CONFIG_SMP
 	cpu = p->sched_class->select_task_rq(p, SD_BALANCE_FORK, 0);
 #endif
+	local_irq_save(flags);
+	update_rq_clock(cpu_rq(cpu));
 	set_task_cpu(p, cpu);
+	local_irq_restore(flags);
 
 #if defined(CONFIG_SCHEDSTATS) || defined(CONFIG_TASK_DELAY_ACCT)
 	if (likely(sched_info_on()))
@@ -2751,9 +2758,9 @@ static void finish_task_switch(struct rq *rq, struct task_struct *prev)
 	prev_state = prev->state;
 	finish_arch_switch(prev);
 	perf_event_task_sched_in(current, cpu_of(rq));
+	fire_sched_in_preempt_notifiers(current);
 	finish_lock_switch(rq, prev);
 
-	fire_sched_in_preempt_notifiers(current);
 	if (mm)
 		mmdrop(mm);
 	if (unlikely(prev_state == TASK_DEAD)) {
@@ -7905,6 +7912,8 @@ sd_parent_degenerate(struct sched_domain *sd, struct sched_domain *parent)
 
 static void free_rootdomain(struct root_domain *rd)
 {
+	synchronize_sched();
+
 	cpupri_cleanup(&rd->cpupri);
 
 	free_cpumask_var(rd->rto_mask);
