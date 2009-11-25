@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-smp
 Version: 2.6.27
-Release: alt9.1
+Release: alt10
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -468,6 +468,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Wed Nov 25 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.27-alt10
+- Remove gfs from modules.build: kernel-source-gfs removed
+
 * Tue Oct 20 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.27-alt9.1
 - Backport drivers/net/r8169.c from 2.6.27.37
 
