@@ -137,7 +137,6 @@ extern int __init pcpu_page_first_chunk(size_t reserved_size,
 extern void __percpu *__alloc_reserved_percpu(size_t size, size_t align);
 extern void __percpu *__alloc_percpu(size_t size, size_t align);
 extern void free_percpu(void __percpu *__pdata);
-extern phys_addr_t per_cpu_ptr_to_phys(void *addr);
 
 #ifndef CONFIG_HAVE_SETUP_PER_CPU_AREA
 extern void __init setup_per_cpu_areas(void);
