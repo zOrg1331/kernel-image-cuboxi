@@ -260,7 +260,18 @@ static const u16 VSIM_VSEL_table[] = {
 static const u16 VDAC_VSEL_table[] = {
 	1200, 1300, 1800, 1800,
 };
-
+static const u16 VDD1_VSEL_table[] = {
+	800, 1450,
+};
+static const u16 VDD2_VSEL_table[] = {
+	800, 1450, 1500,
+};
+static const u16 VIO_VSEL_table[] = {
+	1800, 1850,
+};
+static const u16 VINTANA2_VSEL_table[] = {
+	2500, 2750,
+};
 
 static int twl4030ldo_list_voltage(struct regulator_dev *rdev, unsigned index)
 {
@@ -390,27 +401,19 @@ static struct regulator_ops twl4030fixed_ops = {
  * software control over them after boot.
  */
 static struct twlreg_info twl4030_regs[] = {
-	TWL_ADJUSTABLE_LDO(VAUX1, 0x17, 1),
-	TWL_ADJUSTABLE_LDO(VAUX2_4030, 0x1b, 2),
-	TWL_ADJUSTABLE_LDO(VAUX2, 0x1b, 2),
-	TWL_ADJUSTABLE_LDO(VAUX3, 0x1f, 3),
 	TWL_ADJUSTABLE_LDO(VAUX4, 0x23, 4),
 	TWL_ADJUSTABLE_LDO(VMMC1, 0x27, 5),
 	TWL_ADJUSTABLE_LDO(VMMC2, 0x2b, 6),
-	/*
 	TWL_ADJUSTABLE_LDO(VPLL1, 0x2f, 7),
-	*/
 	TWL_ADJUSTABLE_LDO(VPLL2, 0x33, 8),
 	TWL_ADJUSTABLE_LDO(VSIM, 0x37, 9),
 	TWL_ADJUSTABLE_LDO(VDAC, 0x3b, 10),
-	/*
-	TWL_ADJUSTABLE_LDO(VINTANA1, 0x3f, 11),
+	TWL_FIXED_LDO(VINTANA1, 0x3f, 1500, 11),
 	TWL_ADJUSTABLE_LDO(VINTANA2, 0x43, 12),
-	TWL_ADJUSTABLE_LDO(VINTDIG, 0x47, 13),
-	TWL_SMPS(VIO, 0x4b, 14),
-	TWL_SMPS(VDD1, 0x55, 15),
-	TWL_SMPS(VDD2, 0x63, 16),
-	 */
+	TWL_FIXED_LDO(VINTDIG, 0x47, 1500, 13),
+	TWL_ADJUSTABLE_LDO(VIO, 0x4b, 14),
+	TWL_ADJUSTABLE_LDO(VDD1, 0x55, 15),
+	TWL_ADJUSTABLE_LDO(VDD2, 0x63, 16),
 	TWL_FIXED_LDO(VUSB1V5, 0x71, 1500, 17),
 	TWL_FIXED_LDO(VUSB1V8, 0x74, 1800, 18),
 	TWL_FIXED_LDO(VUSB3V1, 0x77, 3100, 19),
