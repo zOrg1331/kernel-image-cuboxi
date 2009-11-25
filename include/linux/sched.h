@@ -1214,15 +1214,21 @@ struct sched_notifier;
 
 /**
  * sched_notifier_ops - notifiers called for scheduling events
- * @in: we're about to be rescheduled:
- *    notifier: struct sched_notifier for the task being scheduled
- *    cpu:  cpu we're scheduled on
- * @out: we've just been preempted
- *    notifier: struct sched_notifier for the task being preempted
- *    next: the task that's kicking us out
+ * @wakeup: we're waking up
+ *    notifier: struct sched_notifier for the task being woken up
+ * @sleep: we're going to bed
+ *    notifier: struct sched_notifier for the task sleeping
+ * @in: we're now running on the cpu
+ *    notifier: struct sched_notifier for the task being scheduled in
+ *    prev: the task which ran before us
+ * @out: we're leaving the cpu
+ *    notifier: struct sched_notifier for the task being scheduled out
+ *    next: the task which will run after us
  */
 struct sched_notifier_ops {
-	void (*in)(struct sched_notifier *notifier, int cpu);
+	void (*wakeup)(struct sched_notifier *notifier);
+	void (*sleep)(struct sched_notifier *notifier);
+	void (*in)(struct sched_notifier *notifier, struct task_struct *prev);
 	void (*out)(struct sched_notifier *notifier, struct task_struct *next);
 };
 

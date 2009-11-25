@@ -1389,6 +1389,16 @@ static const u32 prio_to_wmult[40] = {
  /*  15 */ 119304647, 148102320, 186737708, 238609294, 286331153,
 };
 
+#define fire_sched_notifier(p, callback, args...) do {			\
+	struct task_struct *__p = (p);					\
+	struct sched_notifier *__sn;					\
+	struct hlist_node *__pos;					\
+									\
+	hlist_for_each_entry(__sn, __pos, &__p->sched_notifiers, link)	\
+		if (__sn->ops->callback)				\
+			__sn->ops->callback(__sn , ##args);		\
+} while (0)
+
 static void activate_task(struct rq *rq, struct task_struct *p, int wakeup);
 
 /*
@@ -2444,6 +2454,8 @@ out_running:
 	if (p->sched_class->task_wake_up)
 		p->sched_class->task_wake_up(rq, p);
 #endif
+	if (success)
+		fire_sched_notifier(p, wakeup);
 out:
 	task_rq_unlock(rq, &flags);
 	put_cpu();
@@ -2660,25 +2672,6 @@ void sched_notifier_unregister(struct sched_notifier *notifier)
 }
 EXPORT_SYMBOL_GPL(sched_notifier_unregister);
 
-static void fire_sched_in_notifiers(struct task_struct *curr)
-{
-	struct sched_notifier *notifier;
-	struct hlist_node *node;
-
-	hlist_for_each_entry(notifier, node, &curr->sched_notifiers, link)
-		notifier->ops->in(notifier, raw_smp_processor_id());
-}
-
-static void fire_sched_out_notifiers(struct task_struct *curr,
-				     struct task_struct *next)
-{
-	struct sched_notifier *notifier;
-	struct hlist_node *node;
-
-	hlist_for_each_entry(notifier, node, &curr->sched_notifiers, link)
-		notifier->ops->out(notifier, next);
-}
-
 /**
  * prepare_task_switch - prepare to switch tasks
  * @rq: the runqueue preparing to switch
@@ -2696,7 +2689,7 @@ static inline void
 prepare_task_switch(struct rq *rq, struct task_struct *prev,
 		    struct task_struct *next)
 {
-	fire_sched_out_notifiers(prev, next);
+	fire_sched_notifier(current, out, next);
 	prepare_lock_switch(rq, next);
 	prepare_arch_switch(next);
 }
@@ -2738,7 +2731,7 @@ static void finish_task_switch(struct rq *rq, struct task_struct *prev)
 	prev_state = prev->state;
 	finish_arch_switch(prev);
 	perf_event_task_sched_in(current, cpu_of(rq));
-	fire_sched_in_notifiers(current);
+	fire_sched_notifier(current, in, prev);
 	finish_lock_switch(rq, prev);
 
 	if (mm)
@@ -5424,10 +5417,12 @@ need_resched_nonpreemptible:
 	clear_tsk_need_resched(prev);
 
 	if (prev->state && !(preempt_count() & PREEMPT_ACTIVE)) {
-		if (unlikely(signal_pending_state(prev->state, prev)))
+		if (unlikely(signal_pending_state(prev->state, prev))) {
 			prev->state = TASK_RUNNING;
-		else
+		} else {
+			fire_sched_notifier(prev, sleep);
 			deactivate_task(rq, prev, 1);
+		}
 		switch_count = &prev->nvcsw;
 	}
 

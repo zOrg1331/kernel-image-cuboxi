@@ -2695,11 +2695,11 @@ static inline struct kvm_vcpu *sched_notifier_to_vcpu(struct sched_notifier *sn)
 	return container_of(sn, struct kvm_vcpu, sched_notifier);
 }
 
-static void kvm_sched_in(struct sched_notifier *sn, int cpu)
+static void kvm_sched_in(struct sched_notifier *sn, struct task_struct *prev)
 {
 	struct kvm_vcpu *vcpu = sched_notifier_to_vcpu(sn);
 
-	kvm_arch_vcpu_load(vcpu, cpu);
+	kvm_arch_vcpu_load(vcpu, smp_processor_id());
 }
 
 static void kvm_sched_out(struct sched_notifier *sn, struct task_struct *next)
