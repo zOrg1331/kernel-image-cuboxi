@@ -19,6 +19,9 @@
 #include <net/route.h>
 #include <net/ipv6.h>
 #include <net/ip6_fib.h>
+
+#include <linux/interrupt.h>
+
 #ifdef CONFIG_XFRM_STATISTICS
 #include <net/snmp.h>
 #endif
@@ -121,8 +124,7 @@ struct xfrm_state_walk {
 };
 
 /* Full description of state of transformer. */
-struct xfrm_state
-{
+struct xfrm_state {
 #ifdef CONFIG_NET_NS
 	struct net		*xs_net;
 #endif
@@ -199,7 +201,7 @@ struct xfrm_state
 	struct xfrm_stats	stats;
 
 	struct xfrm_lifetime_cur curlft;
-	struct timer_list	timer;
+	struct tasklet_hrtimer	mtimer;
 
 	/* Last used time */
 	unsigned long		lastused;
@@ -237,8 +239,7 @@ enum {
 };
 
 /* callback structure passed from either netlink or pfkey */
-struct km_event
-{
+struct km_event {
 	union {
 		u32 hard;
 		u32 proto;
@@ -313,8 +314,7 @@ extern int xfrm_state_unregister_afinfo(struct xfrm_state_afinfo *afinfo);
 
 extern void xfrm_state_delete_tunnel(struct xfrm_state *x);
 
-struct xfrm_type
-{
+struct xfrm_type {
 	char			*description;
 	struct module		*owner;
 	__u8			proto;
@@ -420,8 +420,7 @@ static inline struct xfrm_mode *xfrm_ip2inner_mode(struct xfrm_state *x, int ipp
 		return x->inner_mode_iaf;
 }
 
-struct xfrm_tmpl
-{
+struct xfrm_tmpl {
 /* id in template is interpreted as:
  * daddr - destination of tunnel, may be zero for transport mode.
  * spi   - zero to acquire spi. Not zero if spi is static, then
@@ -468,8 +467,7 @@ struct xfrm_policy_walk {
 	u32 seq;
 };
 
-struct xfrm_policy
-{
+struct xfrm_policy {
 #ifdef CONFIG_NET_NS
 	struct net		*xp_net;
 #endif
@@ -538,8 +536,7 @@ struct xfrm_migrate {
 /* default seq threshold size */
 #define XFRM_AE_SEQT_SIZE		2
 
-struct xfrm_mgr
-{
+struct xfrm_mgr {
 	struct list_head	list;
 	char			*id;
 	int			(*notify)(struct xfrm_state *x, struct km_event *c);
@@ -626,8 +623,7 @@ struct xfrm_spi_skb_cb {
 #define XFRM_SPI_SKB_CB(__skb) ((struct xfrm_spi_skb_cb *)&((__skb)->cb[0]))
 
 /* Audit Information */
-struct xfrm_audit
-{
+struct xfrm_audit {
 	u32	secid;
 	uid_t	loginuid;
 	u32	sessionid;
@@ -871,8 +867,7 @@ static inline int xfrm_sec_ctx_match(struct xfrm_sec_ctx *s1, struct xfrm_sec_ct
  * bundles differing by session id. All the bundles grow from a parent
  * policy rule.
  */
-struct xfrm_dst
-{
+struct xfrm_dst {
 	union {
 		struct dst_entry	dst;
 		struct rtable		rt;
@@ -907,8 +902,7 @@ static inline void xfrm_dst_destroy(struct xfrm_dst *xdst)
 
 extern void xfrm_dst_ifdown(struct dst_entry *dst, struct net_device *dev);
 
-struct sec_path
-{
+struct sec_path {
 	atomic_t		refcnt;
 	int			len;
 	struct xfrm_state	*xvec[XFRM_MAX_DEPTH];
@@ -1499,9 +1493,6 @@ struct hash_desc;
 struct scatterlist;
 typedef int (icv_update_fn_t)(struct hash_desc *, struct scatterlist *,
 			      unsigned int);
-
-extern int skb_icv_walk(const struct sk_buff *skb, struct hash_desc *tfm,
-			int offset, int len, icv_update_fn_t icv_update);
 
 static inline int xfrm_addr_cmp(xfrm_address_t *a, xfrm_address_t *b,
 				int family)
