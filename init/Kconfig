@@ -1206,7 +1206,3 @@ config STOP_MACHINE
 	  Need stop_machine() primitive.
 
 source "block/Kconfig"
-
-config PREEMPT_NOTIFIERS
-	bool
-

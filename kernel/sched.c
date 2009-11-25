@@ -2528,10 +2528,7 @@ static void __sched_fork(struct task_struct *p)
 	INIT_LIST_HEAD(&p->rt.run_list);
 	p->se.on_rq = 0;
 	INIT_LIST_HEAD(&p->se.group_node);
-
-#ifdef CONFIG_PREEMPT_NOTIFIERS
-	INIT_HLIST_HEAD(&p->preempt_notifiers);
-#endif
+	INIT_HLIST_HEAD(&p->sched_notifiers);
 
 	/*
 	 * We mark the process as running here, but have not actually
@@ -2641,63 +2638,46 @@ void wake_up_new_task(struct task_struct *p, unsigned long clone_flags)
 	task_rq_unlock(rq, &flags);
 }
 
-#ifdef CONFIG_PREEMPT_NOTIFIERS
-
 /**
- * preempt_notifier_register - tell me when current is being preempted & rescheduled
+ * sched_notifier_register - register scheduler notifier
  * @notifier: notifier struct to register
  */
-void preempt_notifier_register(struct preempt_notifier *notifier)
+void sched_notifier_register(struct sched_notifier *notifier)
 {
-	hlist_add_head(&notifier->link, &current->preempt_notifiers);
+	hlist_add_head(&notifier->link, &current->sched_notifiers);
 }
-EXPORT_SYMBOL_GPL(preempt_notifier_register);
+EXPORT_SYMBOL_GPL(sched_notifier_register);
 
 /**
- * preempt_notifier_unregister - no longer interested in preemption notifications
+ * sched_notifier_unregister - unregister scheduler notifier
  * @notifier: notifier struct to unregister
  *
- * This is safe to call from within a preemption notifier.
+ * This is safe to call from within a scheduler notifier.
  */
-void preempt_notifier_unregister(struct preempt_notifier *notifier)
+void sched_notifier_unregister(struct sched_notifier *notifier)
 {
 	hlist_del(&notifier->link);
 }
-EXPORT_SYMBOL_GPL(preempt_notifier_unregister);
+EXPORT_SYMBOL_GPL(sched_notifier_unregister);
 
-static void fire_sched_in_preempt_notifiers(struct task_struct *curr)
+static void fire_sched_in_notifiers(struct task_struct *curr)
 {
-	struct preempt_notifier *notifier;
+	struct sched_notifier *notifier;
 	struct hlist_node *node;
 
-	hlist_for_each_entry(notifier, node, &curr->preempt_notifiers, link)
-		notifier->ops->sched_in(notifier, raw_smp_processor_id());
+	hlist_for_each_entry(notifier, node, &curr->sched_notifiers, link)
+		notifier->ops->in(notifier, raw_smp_processor_id());
 }
 
-static void
-fire_sched_out_preempt_notifiers(struct task_struct *curr,
-				 struct task_struct *next)
+static void fire_sched_out_notifiers(struct task_struct *curr,
+				     struct task_struct *next)
 {
-	struct preempt_notifier *notifier;
+	struct sched_notifier *notifier;
 	struct hlist_node *node;
 
-	hlist_for_each_entry(notifier, node, &curr->preempt_notifiers, link)
-		notifier->ops->sched_out(notifier, next);
+	hlist_for_each_entry(notifier, node, &curr->sched_notifiers, link)
+		notifier->ops->out(notifier, next);
 }
-
-#else /* !CONFIG_PREEMPT_NOTIFIERS */
-
-static void fire_sched_in_preempt_notifiers(struct task_struct *curr)
-{
-}
-
-static void
-fire_sched_out_preempt_notifiers(struct task_struct *curr,
-				 struct task_struct *next)
-{
-}
-
-#endif /* CONFIG_PREEMPT_NOTIFIERS */
 
 /**
  * prepare_task_switch - prepare to switch tasks
@@ -2716,7 +2696,7 @@ static inline void
 prepare_task_switch(struct rq *rq, struct task_struct *prev,
 		    struct task_struct *next)
 {
-	fire_sched_out_preempt_notifiers(prev, next);
+	fire_sched_out_notifiers(prev, next);
 	prepare_lock_switch(rq, next);
 	prepare_arch_switch(next);
 }
@@ -2758,7 +2738,7 @@ static void finish_task_switch(struct rq *rq, struct task_struct *prev)
 	prev_state = prev->state;
 	finish_arch_switch(prev);
 	perf_event_task_sched_in(current, cpu_of(rq));
-	fire_sched_in_preempt_notifiers(current);
+	fire_sched_in_notifiers(current);
 	finish_lock_switch(rq, prev);
 
 	if (mm)
@@ -9540,9 +9520,7 @@ void __init sched_init(void)
 
 	set_load_weight(&init_task);
 
-#ifdef CONFIG_PREEMPT_NOTIFIERS
-	INIT_HLIST_HEAD(&init_task.preempt_notifiers);
-#endif
+	INIT_HLIST_HEAD(&init_task.sched_notifiers);
 
 #ifdef CONFIG_SMP
 	open_softirq(SCHED_SOFTIRQ, run_rebalance_domains);
