@@ -120,9 +120,10 @@
 #undef __field
 #define __field(type, item)					\
 	ret = trace_seq_printf(s, "\tfield:" #type " " #item ";\t"	\
-			       "offset:%u;\tsize:%u;\n",		\
+			       "offset:%u;\tsize:%u;\tsigned:%u;\n",	\
 			       (unsigned int)offsetof(typeof(field), item), \
-			       (unsigned int)sizeof(field.item));	\
+			       (unsigned int)sizeof(field.item),	\
+			       (unsigned int)is_signed_type(type));	\
 	if (!ret)							\
 		return 0;
 
@@ -132,19 +133,21 @@
 #undef __array
 #define __array(type, item, len)						\
 	ret = trace_seq_printf(s, "\tfield:" #type " " #item "[" #len "];\t"	\
-			       "offset:%u;\tsize:%u;\n",		\
+			       "offset:%u;\tsize:%u;\tsigned:%u;\n",	\
 			       (unsigned int)offsetof(typeof(field), item), \
-			       (unsigned int)sizeof(field.item));	\
+			       (unsigned int)sizeof(field.item),	\
+			       (unsigned int)is_signed_type(type));	\
 	if (!ret)							\
 		return 0;
 
 #undef __dynamic_array
 #define __dynamic_array(type, item, len)				       \
 	ret = trace_seq_printf(s, "\tfield:__data_loc " #type "[] " #item ";\t"\
-			       "offset:%u;\tsize:%u;\n",		       \
+			       "offset:%u;\tsize:%u;\tsigned:%u;\n",	       \
 			       (unsigned int)offsetof(typeof(field),	       \
 					__data_loc_##item),		       \
-			       (unsigned int)sizeof(field.__data_loc_##item)); \
+			       (unsigned int)sizeof(field.__data_loc_##item), \
+			       (unsigned int)is_signed_type(type));	\
 	if (!ret)							       \
 		return 0;
 
@@ -159,7 +162,7 @@
 #undef __get_str
 
 #undef TP_printk
-#define TP_printk(fmt, args...) "%s, %s\n", #fmt, __stringify(args)
+#define TP_printk(fmt, args...) "\"%s\", %s\n", fmt, __stringify(args)
 
 #undef TP_fast_assign
 #define TP_fast_assign(args...) args
@@ -399,12 +402,12 @@ static inline int ftrace_get_offsets_##call(				\
 									\
 static void ftrace_profile_##call(proto);				\
 									\
-static int ftrace_profile_enable_##call(void)				\
+static int ftrace_profile_enable_##call(struct ftrace_event_call *unused)\
 {									\
 	return register_trace_##call(ftrace_profile_##call);		\
 }									\
 									\
-static void ftrace_profile_disable_##call(void)				\
+static void ftrace_profile_disable_##call(struct ftrace_event_call *unused)\
 {									\
 	unregister_trace_##call(ftrace_profile_##call);			\
 }
@@ -423,7 +426,7 @@ static void ftrace_profile_disable_##call(void)				\
  *	event_trace_printk(_RET_IP_, "<call>: " <fmt>);
  * }
  *
- * static int ftrace_reg_event_<call>(void)
+ * static int ftrace_reg_event_<call>(struct ftrace_event_call *unused)
  * {
  *	int ret;
  *
@@ -434,7 +437,7 @@ static void ftrace_profile_disable_##call(void)				\
  *	return ret;
  * }
  *
- * static void ftrace_unreg_event_<call>(void)
+ * static void ftrace_unreg_event_<call>(struct ftrace_event_call *unused)
  * {
  *	unregister_trace_<call>(ftrace_event_<call>);
  * }
@@ -469,7 +472,7 @@ static void ftrace_profile_disable_##call(void)				\
  *	trace_current_buffer_unlock_commit(buffer, event, irq_flags, pc);
  * }
  *
- * static int ftrace_raw_reg_event_<call>(void)
+ * static int ftrace_raw_reg_event_<call>(struct ftrace_event_call *unused)
  * {
  *	int ret;
  *
@@ -480,7 +483,7 @@ static void ftrace_profile_disable_##call(void)				\
  *	return ret;
  * }
  *
- * static void ftrace_unreg_event_<call>(void)
+ * static void ftrace_unreg_event_<call>(struct ftrace_event_call *unused)
  * {
  *	unregister_trace_<call>(ftrace_raw_event_<call>);
  * }
@@ -489,7 +492,7 @@ static void ftrace_profile_disable_##call(void)				\
  *	.trace			= ftrace_raw_output_<call>, <-- stage 2
  * };
  *
- * static int ftrace_raw_init_event_<call>(void)
+ * static int ftrace_raw_init_event_<call>(struct ftrace_event_call *unused)
  * {
  *	int id;
  *
@@ -586,7 +589,7 @@ static void ftrace_raw_event_##call(proto)				\
 						  event, irq_flags, pc); \
 }									\
 									\
-static int ftrace_raw_reg_event_##call(void *ptr)			\
+static int ftrace_raw_reg_event_##call(struct ftrace_event_call *unused)\
 {									\
 	int ret;							\
 									\
@@ -597,7 +600,7 @@ static int ftrace_raw_reg_event_##call(void *ptr)			\
 	return ret;							\
 }									\
 									\
-static void ftrace_raw_unreg_event_##call(void *ptr)			\
+static void ftrace_raw_unreg_event_##call(struct ftrace_event_call *unused)\
 {									\
 	unregister_trace_##call(ftrace_raw_event_##call);		\
 }									\
@@ -606,7 +609,7 @@ static struct trace_event ftrace_event_type_##call = {			\
 	.trace			= ftrace_raw_output_##call,		\
 };									\
 									\
-static int ftrace_raw_init_event_##call(void)				\
+static int ftrace_raw_init_event_##call(struct ftrace_event_call *unused)\
 {									\
 	int id;								\
 									\
@@ -646,6 +649,7 @@ __attribute__((section("_ftrace_events"))) event_##call = {		\
  *	struct ftrace_event_call *event_call = &event_<call>;
  *	extern void perf_tp_event(int, u64, u64, void *, int);
  *	struct ftrace_raw_##call *entry;
+ *	struct perf_trace_buf *trace_buf;
  *	u64 __addr = 0, __count = 1;
  *	unsigned long irq_flags;
  *	struct trace_entry *ent;
@@ -670,14 +674,25 @@ __attribute__((section("_ftrace_events"))) event_##call = {		\
  *	__cpu = smp_processor_id();
  *
  *	if (in_nmi())
- *		raw_data = rcu_dereference(trace_profile_buf_nmi);
+ *		trace_buf = rcu_dereference(perf_trace_buf_nmi);
  *	else
- *		raw_data = rcu_dereference(trace_profile_buf);
+ *		trace_buf = rcu_dereference(perf_trace_buf);
  *
- *	if (!raw_data)
+ *	if (!trace_buf)
  *		goto end;
  *
- *	raw_data = per_cpu_ptr(raw_data, __cpu);
+ *	trace_buf = per_cpu_ptr(trace_buf, __cpu);
+ *
+ * 	// Avoid recursion from perf that could mess up the buffer
+ * 	if (trace_buf->recursion++)
+ *		goto end_recursion;
+ *
+ * 	raw_data = trace_buf->buf;
+ *
+ *	// Make recursion update visible before entering perf_tp_event
+ *	// so that we protect from perf recursions.
+ *
+ *	barrier();
  *
  *	//zero dead bytes from alignment to avoid stack leak to userspace:
  *	*(u64 *)(&raw_data[__entry_size - sizeof(u64)]) = 0ULL;
@@ -709,16 +724,20 @@ __attribute__((section("_ftrace_events"))) event_##call = {		\
 static void ftrace_profile_##call(proto)				\
 {									\
 	struct ftrace_data_offsets_##call __maybe_unused __data_offsets;\
+	extern int perf_swevent_get_recursion_context(void);		\
+	extern void perf_swevent_put_recursion_context(int rctx);	\
 	struct ftrace_event_call *event_call = &event_##call;		\
-	extern void perf_tp_event(int, u64, u64, void *, int);	\
+	extern void perf_tp_event(int, u64, u64, void *, int);		\
 	struct ftrace_raw_##call *entry;				\
 	u64 __addr = 0, __count = 1;					\
 	unsigned long irq_flags;					\
 	struct trace_entry *ent;					\
 	int __entry_size;						\
 	int __data_size;						\
+	char *trace_buf;						\
 	char *raw_data;							\
 	int __cpu;							\
+	int rctx;							\
 	int pc;								\
 									\
 	pc = preempt_count();						\
@@ -733,17 +752,22 @@ static void ftrace_profile_##call(proto)				\
 		return;							\
 									\
 	local_irq_save(irq_flags);					\
+									\
+	rctx = perf_swevent_get_recursion_context();			\
+	if (rctx < 0)							\
+		goto end_recursion;					\
+									\
 	__cpu = smp_processor_id();					\
 									\
 	if (in_nmi())							\
-		raw_data = rcu_dereference(trace_profile_buf_nmi);		\
+		trace_buf = rcu_dereference(perf_trace_buf_nmi);	\
 	else								\
-		raw_data = rcu_dereference(trace_profile_buf);		\
+		trace_buf = rcu_dereference(perf_trace_buf);		\
 									\
-	if (!raw_data)							\
+	if (!trace_buf)							\
 		goto end;						\
 									\
-	raw_data = per_cpu_ptr(raw_data, __cpu);			\
+	raw_data = per_cpu_ptr(trace_buf, __cpu);			\
 									\
 	*(u64 *)(&raw_data[__entry_size - sizeof(u64)]) = 0ULL;		\
 	entry = (struct ftrace_raw_##call *)raw_data;			\
@@ -759,6 +783,8 @@ static void ftrace_profile_##call(proto)				\
 			     __entry_size);				\
 									\
 end:									\
+	perf_swevent_put_recursion_context(rctx);			\
+end_recursion:								\
 	local_irq_restore(irq_flags);					\
 									\
 }

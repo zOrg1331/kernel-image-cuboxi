@@ -43,6 +43,7 @@
 #include <linux/smp.h>
 #include <linux/nmi.h>
 
+#include <asm/debugreg.h>
 #include <asm/apicdef.h>
 #include <asm/system.h>
 
@@ -92,7 +93,7 @@ void pt_regs_to_gdb_regs(unsigned long *gdb_regs, struct pt_regs *regs)
 		gdb_regs[GDB_SP] = regs->sp;
 	} else {
 		gdb_regs[GDB_SS] = __KERNEL_DS;
-		gdb_regs[GDB_SP] = (unsigned long)&regs->sp;
+		gdb_regs[GDB_SP] = kernel_stack_pointer(regs);
 	}
 #else
 	gdb_regs[GDB_R8]	= regs->r8;
@@ -106,7 +107,7 @@ void pt_regs_to_gdb_regs(unsigned long *gdb_regs, struct pt_regs *regs)
 	gdb_regs32[GDB_PS]	= regs->flags;
 	gdb_regs32[GDB_CS]	= regs->cs;
 	gdb_regs32[GDB_SS]	= regs->ss;
-	gdb_regs[GDB_SP]	= regs->sp;
+	gdb_regs[GDB_SP]	= kernel_stack_pointer(regs);
 #endif
 }
 
@@ -438,6 +439,11 @@ single_step_cont(struct pt_regs *regs, struct die_args *args)
 			"resuming...\n");
 	kgdb_arch_handle_exception(args->trapnr, args->signr,
 				   args->err, "c", "", regs);
+	/*
+	 * Reset the BS bit in dr6 (pointed by args->err) to
+	 * denote completion of processing
+	 */
+	(*(unsigned long *)ERR_PTR(args->err)) &= ~DR_STEP;
 
 	return NOTIFY_STOP;
 }
