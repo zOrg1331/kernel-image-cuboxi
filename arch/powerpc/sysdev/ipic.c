@@ -605,7 +605,7 @@ static int ipic_set_irq_type(unsigned int virq, unsigned int flow_type)
 {
 	struct ipic *ipic = ipic_from_irq(virq);
 	unsigned int src = ipic_irq_to_hw(virq);
-	struct irq_desc *desc = get_irq_desc(virq);
+	struct irq_desc *desc = irq_to_desc(virq);
 	unsigned int vold, vnew, edibit;
 
 	if (flow_type == IRQ_TYPE_NONE)
@@ -660,7 +660,7 @@ static int ipic_set_irq_type(unsigned int virq, unsigned int flow_type)
 
 /* level interrupts and edge interrupts have different ack operations */
 static struct irq_chip ipic_level_irq_chip = {
-	.typename	= " IPIC  ",
+	.name		= " IPIC  ",
 	.unmask		= ipic_unmask_irq,
 	.mask		= ipic_mask_irq,
 	.mask_ack	= ipic_mask_irq,
@@ -668,7 +668,7 @@ static struct irq_chip ipic_level_irq_chip = {
 };
 
 static struct irq_chip ipic_edge_irq_chip = {
-	.typename	= " IPIC  ",
+	.name		= " IPIC  ",
 	.unmask		= ipic_unmask_irq,
 	.mask		= ipic_mask_irq,
 	.mask_ack	= ipic_mask_irq_and_ack,
