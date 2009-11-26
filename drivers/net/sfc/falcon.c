@@ -1237,7 +1237,7 @@ int falcon_flush_queues(struct efx_nic *efx)
 		msleep(FALCON_FLUSH_INTERVAL);
 		falcon_poll_flush_events(efx);
 
-		/* Check if every queue has been succesfully flushed */
+		/* Check if every queue has been successfully flushed */
 		outstanding = false;
 		efx_for_each_tx_queue(tx_queue, efx)
 			outstanding |= !tx_queue->flushed;
