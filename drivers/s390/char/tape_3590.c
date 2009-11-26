@@ -125,6 +125,8 @@ static void ext_to_int_kekl(struct tape390_kekl *in,
 static void int_to_ext_kekl(struct tape3592_kekl *in,
 			    struct tape390_kekl *out)
 {
+	char *ignore;
+
 	memset(out, 0, sizeof(*out));
 	if(in->flags & 0x40)
 		out->type = TAPE390_KEKL_TYPE_HASH;
@@ -136,7 +138,7 @@ static void int_to_ext_kekl(struct tape3592_kekl *in,
 		out->type_on_tape = TAPE390_KEKL_TYPE_LABEL;
 	memcpy(out->label, in->label, sizeof(in->label));
 	EBCASC(out->label, sizeof(in->label));
-	strstrip(out->label);
+	ignore = strstrip(out->label);
 }
 
 static void int_to_ext_kekl_pair(struct tape3592_kekl_pair *in,
@@ -598,8 +600,7 @@ tape_3590_work_handler(struct work_struct *work)
 	kfree(p);
 }
 
-static int
-tape_3590_schedule_work(struct tape_device *device, enum tape_op op)
+static int tape_3590_schedule_work(struct tape_device *device, enum tape_op op)
 {
 	struct work_handler_data *p;
 
@@ -608,7 +609,8 @@ tape_3590_schedule_work(struct tape_device *device, enum tape_op op)
 
 	INIT_WORK(&p->work, tape_3590_work_handler);
 
-	p->device = tape_get_device_reference(device);
+	tape_get_device(device);
+	p->device = device;
 	p->op = op;
 
 	schedule_work(&p->work);
