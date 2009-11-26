@@ -199,8 +199,7 @@ tapeblock_request_fn(struct request_queue *queue)
 /*
  * This function is called for every new tapedevice
  */
-int
-tapeblock_setup_device(struct tape_device * device)
+int tapeblock_setup_device(struct tape_device * device)
 {
 	struct tape_blk_data *	blkdat;
 	struct gendisk *	disk;
@@ -239,7 +238,8 @@ tapeblock_setup_device(struct tape_device * device)
 	disk->major = tapeblock_major;
 	disk->first_minor = device->first_minor;
 	disk->fops = &tapeblock_fops;
-	disk->private_data = tape_get_device_reference(device);
+	tape_get_device(device);
+	disk->private_data = device;
 	disk->queue = blkdat->request_queue;
 	set_capacity(disk, 0);
 	sprintf(disk->disk_name, "btibm%d",
@@ -247,11 +247,12 @@ tapeblock_setup_device(struct tape_device * device)
 
 	blkdat->disk = disk;
 	blkdat->medium_changed = 1;
-	blkdat->request_queue->queuedata = tape_get_device_reference(device);
+	tape_get_device(device);
+	blkdat->request_queue->queuedata = device;
 
 	add_disk(disk);
 
-	tape_get_device_reference(device);
+	tape_get_device(device);
 	INIT_WORK(&blkdat->requeue_task, tapeblock_requeue);
 
 	return 0;
@@ -263,8 +264,7 @@ cleanup_queue:
 	return rc;
 }
 
-void
-tapeblock_cleanup_device(struct tape_device *device)
+void tapeblock_cleanup_device(struct tape_device *device)
 {
 	flush_scheduled_work();
 	tape_put_device(device);
@@ -274,13 +274,14 @@ tapeblock_cleanup_device(struct tape_device *device)
 	}
 
 	del_gendisk(device->blk_data.disk);
-	device->blk_data.disk->private_data =
-		tape_put_device(device->blk_data.disk->private_data);
+	device->blk_data.disk->private_data = NULL;
+	tape_put_device(device);
 	put_disk(device->blk_data.disk);
 
 	device->blk_data.disk = NULL;
 cleanup_queue:
-	device->blk_data.request_queue->queuedata = tape_put_device(device);
+	device->blk_data.request_queue->queuedata = NULL;
+	tape_put_device(device);
 
 	blk_cleanup_queue(device->blk_data.request_queue);
 	device->blk_data.request_queue = NULL;
@@ -356,14 +357,13 @@ tapeblock_medium_changed(struct gendisk *disk)
 /*
  * Block frontend tape device open function.
  */
-static int
-tapeblock_open(struct block_device *bdev, fmode_t mode)
+static int tapeblock_open(struct block_device *bdev, fmode_t mode)
 {
 	struct gendisk *	disk = bdev->bd_disk;
-	struct tape_device *	device;
+	struct tape_device *	device = disk->private_data;
 	int			rc;
 
-	device = tape_get_device_reference(disk->private_data);
+	tape_get_device(device);
 
 	if (device->required_tapemarks) {
 		DBF_EVENT(2, "TBLOCK: missing tapemarks\n");
