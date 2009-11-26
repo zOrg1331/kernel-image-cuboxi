@@ -15,7 +15,16 @@
 #include <stdio.h>
 #include <ctype.h>
 #include "modpost.h"
+#include "../../include/generated/autoconf.h"
 #include "../../include/linux/license.h"
+
+/* Some toolchains use a `_' prefix for all user symbols. */
+#ifdef CONFIG_SYMBOL_PREFIX
+#define MODULE_SYMBOL_PREFIX CONFIG_SYMBOL_PREFIX
+#else
+#define MODULE_SYMBOL_PREFIX ""
+#endif
+
 
 /* Are we using CONFIG_MODVERSIONS? */
 int modversions = 0;
@@ -149,11 +158,13 @@ struct symbol {
 	unsigned int kernel:1;     /* 1 if symbol is from kernel
 				    *  (only for external modules) **/
 	unsigned int preloaded:1;  /* 1 if symbol from Module.symvers */
+	unsigned int function:1;   /* 1 if symbol refers to a function */
 	enum export  export;       /* Type of export */
 	char name[0];
 };
 
 static struct symbol *symbolhash[SYMBOL_HASH_SIZE];
+unsigned int symbolcount;
 
 /* This is based on the hash agorithm from gdbm, via tdb */
 static inline unsigned int tdb_hash(const char *name)
@@ -191,6 +202,7 @@ static struct symbol *new_symbol(const char *name, struct module *module,
 	unsigned int hash;
 	struct symbol *new;
 
+	symbolcount++;
 	hash = tdb_hash(name) % SYMBOL_HASH_SIZE;
 	new = symbolhash[hash] = alloc_symbol(name, 0, symbolhash[hash]);
 	new->module = module;
@@ -569,6 +581,17 @@ static void handle_modversions(struct module *mod, struct elf_info *info,
 			mod->has_cleanup = 1;
 		break;
 	}
+}
+
+static void mark_function_symbols(Elf_Sym *sym, const char *symname)
+{
+	struct symbol *export_symbol;
+
+	export_symbol = find_symbol(symname);
+	if (!export_symbol)
+		return;
+
+	export_symbol->function = (ELF_ST_TYPE(sym->st_info) == STT_FUNC);
 }
 
 /**
@@ -951,6 +974,13 @@ static int section_mismatch(const char *fromsec, const char *tosec)
  *   fromsec = .data*
  *   atsym   =__param*
  *
+ * Pattern 1a:
+ *   module_param_call() ops can refer to __init set function if permissions=0
+ *   The pattern is identified by:
+ *   tosec   = .init.text
+ *   fromsec = .data*
+ *   atsym   = __param_ops_*
+ *
  * Pattern 2:
  *   Many drivers utilise a *driver container with references to
  *   add, remove, probe functions etc.
@@ -982,6 +1012,12 @@ static int secref_whitelist(const char *fromsec, const char *fromsym,
 	if (match(tosec, init_data_sections) &&
 	    match(fromsec, data_sections) &&
 	    (strncmp(fromsym, "__param", strlen("__param")) == 0))
+		return 0;
+
+	/* Check for pattern 1a */
+	if (strcmp(tosec, ".init.text") == 0 &&
+	    match(fromsec, data_sections) &&
+	    (strncmp(fromsym, "__param_ops_", strlen("__param_ops_")) == 0))
 		return 0;
 
 	/* Check for pattern 2 */
@@ -1608,6 +1644,13 @@ static void read_symbols(char *modname)
 		handle_modversions(mod, &info, sym, symname);
 		handle_moddevtable(mod, &info, sym, symname);
 	}
+
+	for (sym = info.symtab_start; sym < info.symtab_stop; sym++) {
+		symname = info.strtab + sym->st_name;
+
+		mark_function_symbols(sym, symname);
+	}
+
 	if (!is_vmlinux(modname) ||
 	     (is_vmlinux(modname) && vmlinux_section_warnings))
 		check_sec_ref(mod, modname, &info);
@@ -1976,6 +2019,59 @@ static void write_dump(const char *fname)
 	write_if_changed(&buf, fname);
 }
 
+static const char *section_names[] = {
+	[export_plain] 		= "",
+	[export_unused]		= "_unused",
+	[export_gpl]		= "_gpl",
+	[export_unused_gpl]	= "_unused_gpl",
+	[export_gpl_future]	= "_gpl_future",
+};
+
+static int compare_symbol_names(const void *a, const void *b)
+{
+	struct symbol *const *syma = a;
+	struct symbol *const *symb = b;
+
+	return strcmp((*syma)->name, (*symb)->name);
+}
+
+/* sort exported symbols and output using arch-independent assembly macros */
+static void write_exports(const char *fname)
+{
+	struct buffer buf = { };
+	struct symbol *sym, **symbols;
+	int i, n;
+
+	symbols = NOFAIL(malloc(sizeof(struct symbol *) * symbolcount));
+	n = 0;
+
+	for (i = 0; i < SYMBOL_HASH_SIZE; i++) {
+		for (sym = symbolhash[i]; sym; sym = sym->next)
+			symbols[n++] = sym;
+	}
+
+	qsort(symbols, n, sizeof(struct symbol *), compare_symbol_names);
+
+	buf_printf(&buf, "#define __MODPOST_EXPORTS__\n");
+	buf_printf(&buf, "#include <linux/mod_export.h>\n");
+	buf_printf(&buf, "\n");
+
+	for (i = 0; i < n; i++) {
+		sym = symbols[i];
+
+		buf_printf(&buf, "__EXPORT_%s_SYMBOL(%s,"
+					" __ksymtab%s_sorted,"
+					" __ksymtab_strings_sorted,"
+					" __kcrctab%s_sorted)\n",
+					sym->function ? "FUNCTION" : "DATA",
+					sym->name,
+					section_names[sym->export],
+					section_names[sym->export]);
+	}
+
+	write_if_changed(&buf, fname);
+}
+
 static void add_marker(struct module *mod, const char *name, const char *fmt)
 {
 	char *line = NULL;
@@ -2077,6 +2173,7 @@ int main(int argc, char **argv)
 	struct buffer buf = { };
 	char *kernel_read = NULL, *module_read = NULL;
 	char *dump_write = NULL;
+	char *exports_write = NULL;
 	char *markers_read = NULL;
 	char *markers_write = NULL;
 	int opt;
@@ -2084,7 +2181,7 @@ int main(int argc, char **argv)
 	struct ext_sym_list *extsym_iter;
 	struct ext_sym_list *extsym_start = NULL;
 
-	while ((opt = getopt(argc, argv, "i:I:e:cmsSo:awM:K:")) != -1) {
+	while ((opt = getopt(argc, argv, "i:I:e:cmsSo:awM:K:x:")) != -1) {
 		switch (opt) {
 		case 'i':
 			kernel_read = optarg;
@@ -2121,6 +2218,9 @@ int main(int argc, char **argv)
 			break;
 		case 'w':
 			warn_unresolved = 1;
+			break;
+		case 'x':
+			exports_write = optarg;
 			break;
 			case 'M':
 				markers_write = optarg;
@@ -2181,6 +2281,9 @@ int main(int argc, char **argv)
 		     "To see full details build your kernel with:\n"
 		     "'make CONFIG_DEBUG_SECTION_MISMATCH=y'\n",
 		     sec_mismatch_count);
+
+	if (exports_write)
+		write_exports(exports_write);
 
 	if (markers_read)
 		read_markers(markers_read);
