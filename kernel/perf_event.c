@@ -338,7 +338,16 @@ list_del_event(struct perf_event *event, struct perf_event_context *ctx)
 		event->group_leader->nr_siblings--;
 
 	update_event_times(event);
-	event->state = PERF_EVENT_STATE_OFF;
+
+	/*
+	 * If event was in error state, then keep it
+	 * that way, otherwise bogus counts will be
+	 * returned on read(). The only way to get out
+	 * of error state is by explicit re-enabling
+	 * of the event
+	 */
+	if (event->state > PERF_EVENT_STATE_OFF)
+		event->state = PERF_EVENT_STATE_OFF;
 
 	/*
 	 * If this was a group event with sibling events then
@@ -4303,10 +4312,6 @@ void perf_bp_event(struct perf_event *bp, void *data)
 		perf_swevent_add(bp, 1, 1, &sample, regs);
 }
 #else
-static void bp_perf_event_destroy(struct perf_event *event)
-{
-}
-
 static const struct pmu *bp_perf_event_init(struct perf_event *bp)
 {
 	return NULL;
@@ -4780,14 +4785,17 @@ perf_event_create_kernel_counter(struct perf_event_attr *attr, int cpu,
 	 */
 
 	ctx = find_get_context(pid, cpu);
-	if (IS_ERR(ctx))
-		return NULL;
+	if (IS_ERR(ctx)) {
+		err = PTR_ERR(ctx);
+		goto err_exit;
+	}
 
 	event = perf_event_alloc(attr, cpu, ctx, NULL,
 				     NULL, callback, GFP_KERNEL);
-	err = PTR_ERR(event);
-	if (IS_ERR(event))
+	if (IS_ERR(event)) {
+		err = PTR_ERR(event);
 		goto err_put_context;
+	}
 
 	event->filp = NULL;
 	WARN_ON_ONCE(ctx->parent_ctx);
@@ -4804,11 +4812,10 @@ perf_event_create_kernel_counter(struct perf_event_attr *attr, int cpu,
 
 	return event;
 
-err_put_context:
-	if (err < 0)
-		put_ctx(ctx);
-
-	return NULL;
+ err_put_context:
+	put_ctx(ctx);
+ err_exit:
+	return ERR_PTR(err);
 }
 EXPORT_SYMBOL_GPL(perf_event_create_kernel_counter);
 

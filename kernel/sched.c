@@ -5182,64 +5182,49 @@ void account_idle_ticks(unsigned long ticks)
  * Use precise platform statistics if available:
  */
 #ifdef CONFIG_VIRT_CPU_ACCOUNTING
-cputime_t task_utime(struct task_struct *p)
+void task_times(struct task_struct *p, cputime_t *ut, cputime_t *st)
 {
-	return p->utime;
-}
-
-cputime_t task_stime(struct task_struct *p)
-{
-	return p->stime;
+	if (ut)
+		*ut = p->utime;
+	if (st)
+		*st = p->stime;
 }
 #else
 
 #ifndef nsecs_to_cputime
-# define nsecs_to_cputime(__nsecs) \
-	msecs_to_cputime(div_u64((__nsecs), NSEC_PER_MSEC))
+# define nsecs_to_cputime(__nsecs)	nsecs_to_jiffies(__nsecs)
 #endif
 
-cputime_t task_utime(struct task_struct *p)
+void task_times(struct task_struct *p, cputime_t *ut, cputime_t *st)
 {
-	cputime_t utime = p->utime, total = utime + p->stime;
-	u64 temp;
+	cputime_t rtime, utime = p->utime, total = utime + p->stime;
 
 	/*
 	 * Use CFS's precise accounting:
 	 */
-	temp = (u64)nsecs_to_cputime(p->se.sum_exec_runtime);
+	rtime = nsecs_to_cputime(p->se.sum_exec_runtime);
 
 	if (total) {
-		temp *= utime;
+		u64 temp;
+
+		temp = (u64)(rtime * utime);
 		do_div(temp, total);
-	}
-	utime = (cputime_t)temp;
-
-	p->prev_utime = max(p->prev_utime, utime);
-	return p->prev_utime;
-}
-
-cputime_t task_stime(struct task_struct *p)
-{
-	cputime_t stime;
+		utime = (cputime_t)temp;
+	} else
+		utime = rtime;
 
 	/*
-	 * Use CFS's precise accounting. (we subtract utime from
-	 * the total, to make sure the total observed by userspace
-	 * grows monotonically - apps rely on that):
+	 * Compare with previous values, to keep monotonicity:
 	 */
-	stime = nsecs_to_cputime(p->se.sum_exec_runtime) - task_utime(p);
+	p->prev_utime = max(p->prev_utime, utime);
+	p->prev_stime = max(p->prev_stime, rtime - p->prev_utime);
 
-	if (stime >= 0)
-		p->prev_stime = max(p->prev_stime, stime);
-
-	return p->prev_stime;
+	if (ut)
+		*ut = p->prev_utime;
+	if (st)
+		*st = p->prev_stime;
 }
 #endif
-
-inline cputime_t task_gtime(struct task_struct *p)
-{
-	return p->gtime;
-}
 
 /*
  * This function gets called by the timer code, with HZ frequency.
@@ -7756,6 +7741,16 @@ early_initcall(migration_init);
 
 #ifdef CONFIG_SCHED_DEBUG
 
+static __read_mostly int sched_domain_debug_enabled;
+
+static int __init sched_domain_debug_setup(char *str)
+{
+	sched_domain_debug_enabled = 1;
+
+	return 0;
+}
+early_param("sched_debug", sched_domain_debug_setup);
+
 static int sched_domain_debug_one(struct sched_domain *sd, int cpu, int level,
 				  struct cpumask *groupmask)
 {
@@ -7841,6 +7836,9 @@ static void sched_domain_debug(struct sched_domain *sd, int cpu)
 {
 	cpumask_var_t groupmask;
 	int level = 0;
+
+	if (!sched_domain_debug_enabled)
+		return;
 
 	if (!sd) {
 		printk(KERN_DEBUG "CPU%d attaching NULL sched-domain.\n", cpu);
