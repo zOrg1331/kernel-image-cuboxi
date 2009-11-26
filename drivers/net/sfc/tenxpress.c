@@ -14,8 +14,7 @@
 #include "mdio_10g.h"
 #include "falcon.h"
 #include "phy.h"
-#include "falcon_hwdefs.h"
-#include "boards.h"
+#include "regs.h"
 #include "workarounds.h"
 #include "selftest.h"
 
@@ -84,9 +83,9 @@
 #define PMA_PMD_LED_FLASH	(3)
 #define PMA_PMD_LED_MASK	3
 /* All LEDs under hardware control */
-#define PMA_PMD_LED_FULL_AUTO	(0)
+#define SFT9001_PMA_PMD_LED_DEFAULT 0
 /* Green and Amber under hardware control, Red off */
-#define PMA_PMD_LED_DEFAULT	(PMA_PMD_LED_OFF << PMA_PMD_LED_RX_LBN)
+#define SFX7101_PMA_PMD_LED_DEFAULT (PMA_PMD_LED_OFF << PMA_PMD_LED_RX_LBN)
 
 #define PMA_PMD_SPEED_ENABLE_REG 49192
 #define PMA_PMD_100TX_ADV_LBN    1
@@ -292,7 +291,7 @@ static int tenxpress_init(struct efx_nic *efx)
 		efx_mdio_set_flag(efx, MDIO_MMD_PMAPMD, PMA_PMD_LED_CTRL_REG,
 				  1 << PMA_PMA_LED_ACTIVITY_LBN, true);
 		efx_mdio_write(efx, MDIO_MMD_PMAPMD, PMA_PMD_LED_OVERR_REG,
-			       PMA_PMD_LED_DEFAULT);
+			       SFX7101_PMA_PMD_LED_DEFAULT);
 	}
 
 	return 0;
@@ -301,7 +300,10 @@ static int tenxpress_init(struct efx_nic *efx)
 static int tenxpress_phy_init(struct efx_nic *efx)
 {
 	struct tenxpress_phy_data *phy_data;
+	u16 old_adv, adv;
 	int rc = 0;
+
+	falcon_board(efx)->init_phy(efx);
 
 	phy_data = kzalloc(sizeof(*phy_data), GFP_KERNEL);
 	if (!phy_data)
@@ -332,6 +334,15 @@ static int tenxpress_phy_init(struct efx_nic *efx)
 	rc = tenxpress_init(efx);
 	if (rc < 0)
 		goto fail;
+
+	/* Set pause advertising */
+	old_adv = efx_mdio_read(efx, MDIO_MMD_AN, MDIO_AN_ADVERTISE);
+	adv = ((old_adv & ~(ADVERTISE_PAUSE_CAP | ADVERTISE_PAUSE_ASYM)) |
+	       mii_advertise_flowctrl(efx->wanted_fc));
+	if (adv != old_adv) {
+		efx_mdio_write(efx, MDIO_MMD_AN, MDIO_AN_ADVERTISE, adv);
+		mdio45_nway_restart(&efx->mdio);
+	}
 
 	if (efx->phy_type == PHY_TYPE_SFT9001B) {
 		rc = device_create_file(&efx->pci_dev->dev,
@@ -492,6 +503,7 @@ static void tenxpress_low_power(struct efx_nic *efx)
 static void tenxpress_phy_reconfigure(struct efx_nic *efx)
 {
 	struct tenxpress_phy_data *phy_data = efx->phy_data;
+	struct efx_link_state *link_state = &efx->link_state;
 	struct ethtool_cmd ecmd;
 	bool phy_mode_change, loop_reset;
 
@@ -534,37 +546,38 @@ static void tenxpress_phy_reconfigure(struct efx_nic *efx)
 	phy_data->phy_mode = efx->phy_mode;
 
 	if (efx->phy_type == PHY_TYPE_SFX7101) {
-		efx->link_speed = 10000;
-		efx->link_fd = true;
-		efx->link_up = sfx7101_link_ok(efx);
+		link_state->speed = 10000;
+		link_state->fd = true;
+		link_state->up = sfx7101_link_ok(efx);
 	} else {
 		efx->phy_op->get_settings(efx, &ecmd);
-		efx->link_speed = ecmd.speed;
-		efx->link_fd = ecmd.duplex == DUPLEX_FULL;
-		efx->link_up = sft9001_link_ok(efx, &ecmd);
+		link_state->speed = ecmd.speed;
+		link_state->fd = ecmd.duplex == DUPLEX_FULL;
+		link_state->up = sft9001_link_ok(efx, &ecmd);
 	}
-	efx->link_fc = efx_mdio_get_pause(efx);
+	link_state->fc = efx_mdio_get_pause(efx);
 }
 
 /* Poll PHY for interrupt */
 static void tenxpress_phy_poll(struct efx_nic *efx)
 {
 	struct tenxpress_phy_data *phy_data = efx->phy_data;
+	struct efx_link_state *link_state = &efx->link_state;
 	bool change = false;
 
 	if (efx->phy_type == PHY_TYPE_SFX7101) {
 		bool link_ok = sfx7101_link_ok(efx);
-		if (link_ok != efx->link_up) {
+		if (link_ok != link_state->up) {
 			change = true;
 		} else {
 			unsigned int link_fc = efx_mdio_get_pause(efx);
-			if (link_fc != efx->link_fc)
+			if (link_fc != link_state->fc)
 				change = true;
 		}
 		sfx7101_check_bad_lp(efx, link_ok);
 	} else if (efx->loopback_mode) {
 		bool link_ok = sft9001_link_ok(efx, NULL);
-		if (link_ok != efx->link_up)
+		if (link_ok != link_state->up)
 			change = true;
 	} else {
 		int status = efx_mdio_read(efx, MDIO_MMD_PMAPMD,
@@ -604,18 +617,29 @@ static void tenxpress_phy_fini(struct efx_nic *efx)
 }
 
 
-/* Set the RX and TX LEDs and Link LED flashing. The other LEDs
- * (which probably aren't wired anyway) are left in AUTO mode */
-void tenxpress_phy_blink(struct efx_nic *efx, bool blink)
+/* Override the RX, TX and link LEDs */
+void tenxpress_set_id_led(struct efx_nic *efx, enum efx_led_mode mode)
 {
 	int reg;
 
-	if (blink)
-		reg = (PMA_PMD_LED_FLASH << PMA_PMD_LED_TX_LBN) |
-			(PMA_PMD_LED_FLASH << PMA_PMD_LED_RX_LBN) |
-			(PMA_PMD_LED_FLASH << PMA_PMD_LED_LINK_LBN);
-	else
-		reg = PMA_PMD_LED_DEFAULT;
+	switch (mode) {
+	case EFX_LED_OFF:
+		reg = (PMA_PMD_LED_OFF << PMA_PMD_LED_TX_LBN) |
+			(PMA_PMD_LED_OFF << PMA_PMD_LED_RX_LBN) |
+			(PMA_PMD_LED_OFF << PMA_PMD_LED_LINK_LBN);
+		break;
+	case EFX_LED_ON:
+		reg = (PMA_PMD_LED_ON << PMA_PMD_LED_TX_LBN) |
+			(PMA_PMD_LED_ON << PMA_PMD_LED_RX_LBN) |
+			(PMA_PMD_LED_ON << PMA_PMD_LED_LINK_LBN);
+		break;
+	default:
+		if (efx->phy_type == PHY_TYPE_SFX7101)
+			reg = SFX7101_PMA_PMD_LED_DEFAULT;
+		else
+			reg = SFT9001_PMA_PMD_LED_DEFAULT;
+		break;
+	}
 
 	efx_mdio_write(efx, MDIO_MMD_PMAPMD, PMA_PMD_LED_OVERR_REG, reg);
 }
@@ -742,6 +766,7 @@ tenxpress_get_settings(struct efx_nic *efx, struct ethtool_cmd *ecmd)
 
 	mdio45_ethtool_gset_npage(&efx->mdio, ecmd, adv, lpa);
 
+	ecmd->supported |= SUPPORTED_Pause | SUPPORTED_Asym_Pause;
 	if (efx->phy_type != PHY_TYPE_SFX7101) {
 		ecmd->supported |= (SUPPORTED_100baseT_Full |
 				    SUPPORTED_1000baseT_Full);
