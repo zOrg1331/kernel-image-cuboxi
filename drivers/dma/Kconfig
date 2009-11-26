@@ -26,6 +26,8 @@ config INTEL_IOATDMA
 	select DMA_ENGINE
 	select DCA
 	select ASYNC_TX_DISABLE_CHANNEL_SWITCH
+	select ASYNC_TX_DISABLE_PQ_VAL_DMA
+	select ASYNC_TX_DISABLE_XOR_VAL_DMA
 	help
 	  Enable support for the Intel(R) I/OAT DMA engine present
 	  in recent Intel Xeon chipsets.
@@ -108,6 +110,13 @@ config SH_DMAE
 	select DMA_ENGINE
 	help
 	  Enable support for the Renesas SuperH DMA controllers.
+
+config COH901318
+	bool "ST-Ericsson COH901318 DMA support"
+	select DMA_ENGINE
+	depends on ARCH_U300
+	help
+	  Enable support for ST-Ericsson COH 901 318 DMA.
 
 config DMA_ENGINE
 	bool
