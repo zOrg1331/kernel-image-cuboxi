@@ -1,0 +1,110 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Mon, 16 Feb 2009 14:04:59 -0600
+Subject: [fs] ext3: handle collisions in htree dirs
+Message-id: 4999C6EB.4070808@redhat.com
+O-Subject: [RHEL 5.4 PATCH] - handle collisions in ext3 htree dirs
+Bugzilla: 465626
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+This is for bug
+
+465626 - [RHEL-5.1] Readdir(3) and readdir64(3) return one (but not the same) dirent struct twice.
+
+It's a combination of 2 upstream patches, see commit headers below.
+
+Built & tested with the testcase in the bug.
+
+Thanks,
+-Eric
+
+-------------
+
+From: Eugene Dashevsky <eugene@ibrix.com>
+Date: Sun, 19 Oct 2008 03:27:59 +0000 (-0700)
+Subject: ext3: fix ext3_dx_readdir hash collision handling
+X-Git-Tag: v2.6.28-rc1~159
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=6a897cf4
+
+ext3: fix ext3_dx_readdir hash collision handling
+
+This fixes a bug where readdir() would return a directory entry twice
+if there was a hash collision in an hash tree indexed directory.
+
+[akpm@linux-foundation.org: coding-style fixes]
+Signed-off-by: Eugene Dashevsky <eugene@ibrix.com>
+Signed-off-by: Mike Snitzer <msnitzer@ibrix.com>
+Signed-off-by: "Theodore Ts'o" <tytso@mit.edu>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+From: Theodore Ts'o <tytso@mit.edu>
+Date: Sat, 25 Oct 2008 15:38:37 +0000 (-0400)
+Subject: ext3: Fix duplicate entries returned from getdents() system call
+X-Git-Tag: v2.6.28-rc2~102~1
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=8c9fa93d51123c5540762b1a9e1919d6f9c4af7c
+
+ext3: Fix duplicate entries returned from getdents() system call
+
+Fix a regression caused by commit 6a897cf4, "ext3: fix ext3_dx_readdir
+hash collision handling", where deleting files in a large directory
+(requiring more than one getdents system call), results in some
+filenames being returned twice.  This was caused by a failure to
+update info->curr_hash and info->curr_minor_hash, so that if the
+directory had gotten modified since the last getdents() system call
+(as would be the case if the user is running "rm -r" or "git clean"),
+a directory entry would get returned twice to the userspace.
+
+This patch fixes the bug reported by Markus Trippelsdorf at:
+http://bugzilla.kernel.org/show_bug.cgi?id=11844
+
+Signed-off-by: "Theodore Ts'o" <tytso@mit.edu>
+Tested-by: Markus Trippelsdorf <markus@trippelsdorf.de>
+
+diff --git a/fs/ext3/dir.c b/fs/ext3/dir.c
+index 505dbfe..f116eda 100644
+--- a/fs/ext3/dir.c
++++ b/fs/ext3/dir.c
+@@ -422,7 +422,7 @@ static int call_filldir(struct file * filp, void * dirent,
+ 				get_dtype(sb, fname->file_type));
+ 		if (error) {
+ 			filp->f_pos = curr_pos;
+-			info->extra_fname = fname->next;
++			info->extra_fname = fname;
+ 			return error;
+ 		}
+ 		fname = fname->next;
+@@ -461,11 +461,12 @@ static int ext3_dx_readdir(struct file * filp,
+ 	 * If there are any leftover names on the hash collision
+ 	 * chain, return them first.
+ 	 */
+-	if (info->extra_fname &&
+-	    call_filldir(filp, dirent, filldir, info->extra_fname))
+-		goto finished;
+-
+-	if (!info->curr_node)
++	if (info->extra_fname) {
++		if (call_filldir(filp, dirent, filldir, info->extra_fname))
++			goto finished;
++		info->extra_fname = NULL;
++		goto next_node;
++	} else if (!info->curr_node)
+ 		info->curr_node = rb_first(&info->root);
+ 
+ 	while (1) {
+@@ -496,9 +497,14 @@ static int ext3_dx_readdir(struct file * filp,
+ 		info->curr_minor_hash = fname->minor_hash;
+ 		if (call_filldir(filp, dirent, filldir, fname))
+ 			break;
+-
++	next_node:
+ 		info->curr_node = rb_next(info->curr_node);
+-		if (!info->curr_node) {
++		if (info->curr_node) {
++			fname = rb_entry(info->curr_node, struct fname,
++					 rb_hash);
++			info->curr_hash = fname->hash;
++			info->curr_minor_hash = fname->minor_hash;
++		} else {
+ 			if (info->next_hash == ~0) {
+ 				filp->f_pos = EXT3_HTREE_EOF;
+ 				break;

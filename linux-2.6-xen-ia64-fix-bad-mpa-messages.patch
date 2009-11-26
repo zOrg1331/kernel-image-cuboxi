@@ -1,0 +1,225 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Thu, 5 Mar 2009 14:09:57 +0100
+Subject: [xen] ia64: fix bad mpa messages
+Message-id: 49AFCF25.1010303@redhat.com
+O-Subject: [RHEL5.4 PATCH]: Fix Xen ia64 bad mpa messages
+Bugzilla: 288511
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+All,
+         After restoring a saved ia64 PV guest, or after migration, there is a
+flood of "bad mpa" messages from the hypervisor. These messages occur when you
+execute something in the guest (e.g. a kernel build). The messages go away if
+you reboot or shutdown/create the guest.
+
+This patch is a backport of xen-3.1-testing.hg c/s 15081, 15082, and 15084,
+which, combined with the rest of the patches in 5.3, fixes the issue.
+
+The patch was tested by the reporter, and it seemed to fix the issue.
+
+This patch should resolve BZ 288511.
+
+Please review and ACK.
+
+--
+Chris Lalancette
+
+diff --git a/arch/ia64/kernel/irq_ia64.c b/arch/ia64/kernel/irq_ia64.c
+index 4056dd6..c775676 100644
+--- a/arch/ia64/kernel/irq_ia64.c
++++ b/arch/ia64/kernel/irq_ia64.c
+@@ -337,9 +337,9 @@ static struct irqaction resched_irqaction = {
+  * required.
+  */
+ static void
+-xen_register_percpu_irq (unsigned int vec, struct irqaction *action, int save)
++xen_register_percpu_irq(unsigned int cpu, unsigned int vec,
++			 struct irqaction *action, int save)
+ {
+-	unsigned int cpu = smp_processor_id();
+ 	irq_desc_t *desc;
+ 	int irq = 0;
+ 
+@@ -441,7 +441,8 @@ xen_bind_early_percpu_irq (void)
+ 	 * BSP will face with such step shortly
+ 	 */
+ 	for (i = 0; i < late_irq_cnt; i++)
+-		xen_register_percpu_irq(saved_percpu_irqs[i].irq,
++		xen_register_percpu_irq(smp_processor_id(),
++					saved_percpu_irqs[i].irq,
+ 		                        saved_percpu_irqs[i].action, 0);
+ }
+ 
+@@ -497,11 +498,21 @@ static struct notifier_block unbind_evtchn_notifier = {
+ #endif
+ 
+ DECLARE_PER_CPU(int, ipi_to_irq[NR_IPIS]);
++void xen_smp_intr_init_early(unsigned int cpu)
++{
++#ifdef CONFIG_SMP
++	unsigned int i;
++
++	for (i = 0; i < saved_irq_cnt; i++)
++		xen_register_percpu_irq(cpu, saved_percpu_irqs[i].irq,
++		                        saved_percpu_irqs[i].action, 0);
++#endif
++}
++
+ void xen_smp_intr_init(void)
+ {
+ #ifdef CONFIG_SMP
+ 	unsigned int cpu = smp_processor_id();
+-	unsigned int i = 0;
+ 	struct callback_register event = {
+ 		.type = CALLBACKTYPE_event,
+ 		.address = (unsigned long)&xen_event_callback,
+@@ -518,12 +529,9 @@ void xen_smp_intr_init(void)
+ 
+ 	/* This should be piggyback when setup vcpu guest context */
+ 	BUG_ON(HYPERVISOR_callback_op(CALLBACKOP_register, &event));
+-
+-	for (i = 0; i < saved_irq_cnt; i++)
+-		xen_register_percpu_irq(saved_percpu_irqs[i].irq,
+-		                        saved_percpu_irqs[i].action, 0);
+ #endif /* CONFIG_SMP */
+ }
++
+ #endif /* CONFIG_XEN */
+ 
+ void
+@@ -534,15 +542,12 @@ register_percpu_irq (ia64_vector vec, struct irqaction *action)
+ 
+ #ifdef CONFIG_XEN
+ 	if (is_running_on_xen())
+-		return xen_register_percpu_irq(vec, action, 1);
++		return xen_register_percpu_irq(smp_processor_id(), 
++					       vec, action, 1);
+ #endif
+ 
+ 	for (irq = 0; irq < NR_IRQS; ++irq)
+ 		if (irq_to_vector(irq) == vec) {
+-#ifdef CONFIG_XEN
+-			if (is_running_on_xen())
+-				return xen_register_percpu_irq(vec, action, 1);
+-#endif
+ 			desc = irq_desc + irq;
+ 			desc->status |= IRQ_PER_CPU;
+ 			desc->chip = &irq_type_ia64_lsapic;
+@@ -595,6 +600,14 @@ ia64_send_ipi (int cpu, int vector, int delivery_mode, int redirect)
+ #ifdef CONFIG_SMP
+ 		/* TODO: we need to call vcpu_up here */
+ 		if (unlikely(vector == ap_wakeup_vector)) {
++
++			/* XXX
++			 * This should be in __cpu_up(cpu) in ia64 smpboot.c
++			 * like x86. But don't want to modify it,
++			 * keep it untouched.
++			 */
++			xen_smp_intr_init_early(cpu);
++
+ 			xen_send_ipi (cpu, vector);
+ 			//vcpu_prepare_and_up(cpu);
+ 			return;
+diff --git a/arch/ia64/kernel/time.c b/arch/ia64/kernel/time.c
+index 429e1a9..b3fa6c8 100644
+--- a/arch/ia64/kernel/time.c
++++ b/arch/ia64/kernel/time.c
+@@ -269,6 +269,64 @@ static void init_missing_ticks_accounting(int cpu)
+ 	per_cpu(processed_stolen_time, cpu) = runstate->time[RUNSTATE_runnable]
+ 					    + runstate->time[RUNSTATE_offline];
+ }
++
++static int xen_ia64_settimefoday_after_resume;
++
++static int __init __xen_ia64_settimeofday_after_resume(char *str)
++{
++	xen_ia64_settimefoday_after_resume = 1;
++	return 1;
++}
++
++__setup("xen_ia64_settimefoday_after_resume",
++	 __xen_ia64_settimeofday_after_resume);
++
++/* Called after suspend, to resume time.  */
++void
++time_resume(void)
++{
++	unsigned int cpu;
++	
++	/* Just trigger a tick.  */
++	ia64_cpu_local_tick();
++
++	if (xen_ia64_settimefoday_after_resume) {
++		/* do_settimeofday() resets timer interplator */
++		struct timespec xen_time;
++		int ret;
++		efi_gettimeofday(&xen_time);
++
++		ret = do_settimeofday(&xen_time);
++		WARN_ON(ret);
++	} else {
++#if 0
++		/* adjust EFI time */
++		struct timespec my_time = CURRENT_TIME;
++		struct timespec xen_time;
++		static timespec diff;
++		struct xen_domctl domctl;
++		int ret;
++
++		efi_gettimeofday(&xen_time);
++		diff = timespec_sub(&xen_time, &my_time);
++		domctl.cmd = XEN_DOMCTL_settimeoffset;
++		domctl.domain = DOMID_SELF;
++		domctl.u.settimeoffset.timeoffset_seconds = diff.tv_sec;
++		ret = HYPERVISOR_domctl_op(&domctl);
++		WARN_ON(ret);
++#endif
++		/* Time interpolator remembers the last timer status.
++		   Forget it */
++		write_seqlock_irq(&xtime_lock);
++		time_interpolator_reset();
++		write_sequnlock_irq(&xtime_lock);
++	}
++
++	for_each_online_cpu(cpu)
++		init_missing_ticks_accounting(cpu);
++
++	touch_softlockup_watchdog();
++}
+ #else
+ #define init_missing_ticks_accounting(cpu) do {} while (0)
+ #endif
+@@ -358,6 +416,9 @@ ia64_init_itm (void)
+ 	if (is_running_on_xen())
+ 		init_missing_ticks_accounting(smp_processor_id());
+ 
++	/* avoid softlock up message when cpu is unplug and plugged again. */
++	touch_softlockup_watchdog();
++
+ 	/* Setup the CPU local timer tick */
+ 	ia64_cpu_local_tick();
+ }
+diff --git a/arch/ia64/xen/hypervisor.c b/arch/ia64/xen/hypervisor.c
+index 7c22682..481311e 100644
+--- a/arch/ia64/xen/hypervisor.c
++++ b/arch/ia64/xen/hypervisor.c
+@@ -699,19 +699,6 @@ direct_remap_pfn_range(struct vm_area_struct *vma,
+ }
+ 
+ 
+-/* Called after suspend, to resume time.  */
+-void
+-time_resume(void)
+-{
+-	extern void ia64_cpu_local_tick(void);
+-
+-	/* Just trigger a tick.  */
+-	ia64_cpu_local_tick();
+-
+-	/* Time interpolator remembers the last timer status.  Forget it */
+-	time_interpolator_reset();
+-}
+-
+ ///////////////////////////////////////////////////////////////////////////
+ // expose p2m table
+ #ifdef CONFIG_XEN_IA64_EXPOSE_P2M

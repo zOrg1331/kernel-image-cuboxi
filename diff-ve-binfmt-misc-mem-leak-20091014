@@ -1,0 +1,13 @@
+diff --git a/fs/binfmt_misc.c b/fs/binfmt_misc.c
+index ebdea11..6d9b061 100644
+--- a/fs/binfmt_misc.c
++++ b/fs/binfmt_misc.c
+@@ -825,6 +825,8 @@ static void ve_binfmt_fini(void *x)
+ 		return;
+ 	dm_genocide(ve);
+ 	unregister_ve_fs_type(ve->bm_fs_type, NULL);
++	kfree(ve->bm_fs_type);
++	ve->bm_fs_type = NULL;
+ }
+ 
+ static struct ve_hook ve_binfmt_hook = {

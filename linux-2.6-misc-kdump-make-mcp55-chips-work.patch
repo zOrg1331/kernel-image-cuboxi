@@ -1,0 +1,164 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Fri, 22 May 2009 14:28:58 -0400
+Subject: [misc] kdump: make mcp55 chips work
+Message-id: 20090522182858.GB1390@hmsreliant.think-freely.org
+O-Subject: [RHEL 5.5 PATCH] kdump: make mcp55 chips work like everything else in the known universe (bz 462519)
+Bugzilla: 462519
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+Ok, deep breath, go to my happy place....
+
+I'm not normally one to be too long winded in my rhkl posts, but this one
+deserves some explination.  For those with somewhat limited patience, feel free
+to skip to the end.  For those with severely limited patience, plase hit your
+reply-all button, type A-C-K [enter] and press send.  Thank you :)
+
+So, several months and a few releases ago, I worked on a problem for someone.
+They had a cluster full of systems that hung sometimes when they crashed during
+kdump bootup.  Investigation showed that we hung in calibrate_delay, and all
+indicators said we weren't getting interrupts to the cpu, when we
+crashed/rebooted on a cpu other than cpu0.  So we dug....And eventually found a
+hypertransport bus config register that, if misprogrammed, would limit the set
+of cpus which would be elligible to recieve interrupts.  We wrote a pci quirk to
+check, and fix that register if was mis-set.  They came back, gave it a thumbs
+up, and we all went on our way.
+
+Unfortunately they came back weeks later indicating that the testing wasn't
+right, since they tested the above change with a workaround patch that always
+had kdump boot on cpu0.  The problem was still there.
+
+So over the past few months I've been continuing to dig.  In that time a few
+other customers came forward complaining of simmilar problems with kdump, and we
+noticed that all the complaining customers had systems with:
+
+1) AMD opteron processors with hypertransport busses between the cpus
+2) A second MCP55 chipset to bridge to legacy pci devices
+
+As we looked, we found that the 8132 ht bridge didn't contain any legacy devices
+(not suprising), and it was the MCP55 complex that housed the timer, and
+provided those services  to the rest of the system.
+
+I finally managed to get through to Nvidia, who steadfastly refused to provide
+me with any documentation for the MCP55, but after some coaxing, did put me
+in touch with an engineer there who admitted to me that they had an undisclosed
+register which controlled legacy device interrupt routing.  They created it
+specifically because they claim they had problems with the MCP55 broadcasting
+interrupts in legacy mode (i.e. apic off).  So they created this register and
+recommended all system designer set it so that all legacy interrupts be guided
+only to the bsp.  This is of course a problem for kdump, as its entirely
+possible that we'll crash and reboot on any cpu, not just the bsp.
+
+So the obvious fix is to adjust the kernel so that we go into apic mode before
+we do much else.  While that makes sense, thats a huge undertaking and something
+that I think is far too invasive for RHEL5.  So I cooked up this patch instead.
+It adds a pci quirk to detect the affected chipsets and marks them for
+rewriting.  Normally I'd just do the re-write in the quirk itself, but since the
+Nvidia engineer claimed that causes various other problems, I didn't want to
+create regressions if someone tried to boot with noapic, so instead I flag the
+chip, and rewrite the register on machine_crash_shutdown, so we only change
+things when kdump runs.
+
+This patch has been tested by a few of the reporters and is confirmed to solve
+the problem.  The upstream fix is going to be looking at moving apic
+initialization earlier in the boot process, but this should be the fix for RHEL,
+IMHO.
+
+Thanks
+Neil
+
+diff --git a/arch/i386/kernel/quirks.c b/arch/i386/kernel/quirks.c
+index 30b4f9f..be75374 100644
+--- a/arch/i386/kernel/quirks.c
++++ b/arch/i386/kernel/quirks.c
+@@ -66,8 +66,43 @@ static void __devinit fix_hypertransport_config(struct pci_dev *dev)
+ 	}
+ }
+ 
++struct pci_dev *mcp55_rewrite = NULL;
++
++static void __devinit check_mcp55_legacy_irq_routing(struct pci_dev *dev)
++{
++	u32 cfg;
++	printk(KERN_CRIT "FOUND MCP55 CHIP\n");
++	/*
++	 *Some MCP55 chips have a legacy irq routing config register, and most BIOS
++	 *engineers have set it so that legacy interrupts are only routed to the BSP.
++	 *While this makes sense in most cases, it doesn't work for kexec, since we might 
++	 *wind up booting on a processor other than the BSP.  The right fix for this is 
++	 *to move to symmetric io mode, and enable the ioapics very early in the boot process.
++	 *That seems like far to invasive a fix in RHEL5, so here, we're just going to check
++	 *for the appropriate configuration, and tell kexec to rewrite the config register 
++	 *if we find that we need to broadcast legacy interrupts
++	 */
++	pci_read_config_dword(dev, 0x74, &cfg);
++	printk(KERN_CRIT "cfg value is %x\n",cfg);	
++	/*
++	 * We expect legacy interrupts to be routed to INTIN0 on the lapics of all processors
++	 * (not just the BSP).  To ensure this, bit 2 must be clear, and bit 15 must be clear
++	 * if either of these conditions is not met, we have fixups we need to preform
++	 */
++	if (cfg & ((1 << 2) | (1 << 15))) {
++		/*
++		 * Either bit 2 or 15 wasn't clear, so we need to rewrite this cfg register 
++		 * when starting kexec
++		 */
++		printk(KERN_CRIT "DETECTED RESTRICTED ROUTING ON MCP55!  FLAGGING\n");
++		mcp55_rewrite = dev;
++	}
++}
++
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_E7320_MCH,	quirk_intel_irqbalance);
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_E7525_MCH,	quirk_intel_irqbalance);
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_E7520_MCH,	quirk_intel_irqbalance);
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_AMD,	PCI_DEVICE_ID_AMD_K8_NB, fix_hypertransport_config);
++DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_NVIDIA,	0x0360			, check_mcp55_legacy_irq_routing);
++DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_NVIDIA,	0x0364			, check_mcp55_legacy_irq_routing);
+ #endif
+diff --git a/arch/x86_64/kernel/crash.c b/arch/x86_64/kernel/crash.c
+index 178fb47..7f7792b 100644
+--- a/arch/x86_64/kernel/crash.c
++++ b/arch/x86_64/kernel/crash.c
+@@ -17,6 +17,7 @@
+ #include <linux/delay.h>
+ #include <linux/elf.h>
+ #include <linux/elfcore.h>
++#include <linux/pci.h>
+ 
+ #include <asm/processor.h>
+ #include <asm/hardirq.h>
+@@ -159,6 +160,7 @@ static void nmi_shootdown_cpus(void)
+ #endif
+ #endif /* CONFIG_XEN */
+ 
++extern struct pci_dev *mcp55_rewrite;
+ void machine_crash_shutdown(struct pt_regs *regs)
+ {
+ 	/*
+@@ -185,6 +187,25 @@ void machine_crash_shutdown(struct pt_regs *regs)
+ #if defined(CONFIG_X86_IO_APIC)
+ 	disable_IO_APIC();
+ #endif
++	if (crashing_cpu && mcp55_rewrite) {
++		u32 cfg;
++		printk(KERN_CRIT "REWRITING MCP55 CFG REG\n");
++		/*
++		 * We have a mcp55 chip on board which has been 
++		 * flagged as only sending legacy interrupts
++		 * to the BSP, and we are crashing on an AP
++		 * This is obviously bad, and we need to 
++		 * fix it up.  To do this we write to the 
++		 * flagged device, to the register at offset 0x74
++		 * and we make sure that bit 2 and bit 15 are clear
++		 * This forces legacy interrupts to be broadcast
++		 * to all cpus
++		 */
++		pci_read_config_dword(mcp55_rewrite, 0x74, &cfg);
++		cfg &= ~((1 << 2) | (1 << 15));
++		printk(KERN_CRIT "CFG = %x\n", cfg);
++		pci_write_config_dword(mcp55_rewrite, 0x74, cfg);
++	}
+ #endif /* CONFIG_XEN */
+ 	crash_save_self(regs);
+ }

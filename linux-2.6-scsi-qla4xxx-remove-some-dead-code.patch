@@ -1,0 +1,251 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Wed, 29 Apr 2009 22:45:26 -0400
+Subject: [scsi] qla4xxx: remove some dead code
+Message-id: 20090430024526.27420.77408.sendpatchset@file.bos.redhat.com
+O-Subject: [rhel 5.4 patch] qla4xxx - remove some dead code.
+Bugzilla: 459449
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+BZ 314505 qla4xxx: Remove Dead/Unused code from driver
+
+This code is no longer used in the driver and should be removed.
+
+Applies and builds cleanly with 2.6.18-137.el5
+
+Tested at QLogic.
+
+Removed dead code related to PDU usage.
+
+Removed pdu_entry data structures since iSNS is not supported
+and was never implemented in this driver.  Space in ha structure
+formerly used for pdu_entry array will be used for future driver
+expansion. Since struct pdu_entry was not 64-bit aligned,
+included the padded space in #if BITS_PER_LONG==64.
+
+diff --git a/drivers/scsi/qla4xxx/ql4_def.h b/drivers/scsi/qla4xxx/ql4_def.h
+index eb35076..659452b 100644
+--- a/drivers/scsi/qla4xxx/ql4_def.h
++++ b/drivers/scsi/qla4xxx/ql4_def.h
+@@ -373,7 +373,7 @@ struct scsi_qla_host {
+ 	uint8_t alias[32];
+ 	uint8_t name_string[256];
+ 	uint8_t heartbeat_interval;
+-	uint8_t rsvd;
++	uint8_t rsvd2;
+ 
+ 	/* --- From FlashSysInfo --- */
+ 	uint8_t my_mac[MAC_ADDR_LEN];
+@@ -436,14 +436,12 @@ struct scsi_qla_host {
+ 	uint16_t aen_out;
+ 	struct aen aen_q[MAX_AEN_ENTRIES];
+ 
+-	/* pdu variables */
+-	uint16_t pdu_count;	/* Number of available aen_q entries */
+-	uint16_t pdu_in;	/* Current indexes */
+-	uint16_t pdu_out;
+-	uint16_t pdu_active;
+-	struct pdu_entry *free_pdu_top;
+-	struct pdu_entry *free_pdu_bottom;
+-	struct pdu_entry pdu_queue[MAX_PDU_ENTRIES];
++        /* reserved fields */
++        uint8_t rsvd3[392];
++        void *rsvd4[98];
++#if (BITS_PER_LONG==64)
++        uint32_t rsvd5[32];
++#endif
+ 
+ 	/* This mutex protects several threads to do mailbox commands
+ 	 * concurrently.
+diff --git a/drivers/scsi/qla4xxx/ql4_fw.h b/drivers/scsi/qla4xxx/ql4_fw.h
+index 8c6f9b6..9bb3d1d 100644
+--- a/drivers/scsi/qla4xxx/ql4_fw.h
++++ b/drivers/scsi/qla4xxx/ql4_fw.h
+@@ -731,15 +731,6 @@ struct status_entry {
+ 
+ };
+ 
+-struct pdu_entry {
+-	uint8_t *Buff;
+-	uint32_t BuffLen;
+-	uint32_t SendBuffLen;
+-	uint32_t RecvBuffLen;
+-	struct pdu_entry *Next;
+-	dma_addr_t DmaBuff;
+-};
+-
+ struct passthru0 {
+ 	struct qla4_header hdr;		       /* 00-03 */
+ 	uint32_t handle;	/* 04-07 */
+diff --git a/drivers/scsi/qla4xxx/ql4_glbl.h b/drivers/scsi/qla4xxx/ql4_glbl.h
+index 9e22ac7..3d2f2a5 100644
+--- a/drivers/scsi/qla4xxx/ql4_glbl.h
++++ b/drivers/scsi/qla4xxx/ql4_glbl.h
+@@ -77,7 +77,6 @@ int qla4xxx_reinitialize_ddb_list(struct scsi_qla_host * ha);
+ int qla4xxx_process_ddb_changed(struct scsi_qla_host * ha,
+ 				uint32_t fw_ddb_index, uint32_t state);
+ 
+-void qla4xxx_free_pdu(struct scsi_qla_host * ha, struct pdu_entry * pdu);
+ int qla4xxx_mailbox_command(struct scsi_qla_host *ha, uint8_t inCount,
+                             uint8_t outCount, uint32_t *mbx_cmd, uint32_t *mbx_sts);
+ int qla4xxx_send_marker_iocb(struct scsi_qla_host *ha,
+diff --git a/drivers/scsi/qla4xxx/ql4_init.c b/drivers/scsi/qla4xxx/ql4_init.c
+index f22a9ba..8a510a8 100644
+--- a/drivers/scsi/qla4xxx/ql4_init.c
++++ b/drivers/scsi/qla4xxx/ql4_init.c
+@@ -188,16 +188,6 @@ static int qla4xxx_validate_mac_address(struct scsi_qla_host *ha)
+  **/
+ static int qla4xxx_init_local_data(struct scsi_qla_host *ha)
+ {
+-	int i;
+-
+-	/* Initialize passthru PDU list */
+-	for (i = 0; i < (MAX_PDU_ENTRIES - 1); i++)
+-		ha->pdu_queue[i].Next = &ha->pdu_queue[i + 1];
+-	ha->free_pdu_top = &ha->pdu_queue[0];
+-	ha->free_pdu_bottom = &ha->pdu_queue[MAX_PDU_ENTRIES - 1];
+-	ha->free_pdu_bottom->Next = NULL;
+-	ha->pdu_active = 0;
+-
+ 	/* Initilize aen queue */
+ 	ha->aen_q_count = MAX_AEN_ENTRIES;
+ 
+diff --git a/drivers/scsi/qla4xxx/ql4_iocb.c b/drivers/scsi/qla4xxx/ql4_iocb.c
+index 02ff3a8..f50e9f8 100644
+--- a/drivers/scsi/qla4xxx/ql4_iocb.c
++++ b/drivers/scsi/qla4xxx/ql4_iocb.c
+@@ -101,135 +101,6 @@ exit_send_marker:
+ 	return status;
+ }
+ 
+-struct pdu_entry * qla4xxx_get_pdu(struct scsi_qla_host * ha, uint32_t length)
+-{
+-	struct pdu_entry *pdu;
+-	struct pdu_entry *free_pdu_top;
+-	struct pdu_entry *free_pdu_bottom;
+-	uint16_t pdu_active;
+-
+-	if (ha->free_pdu_top == NULL)
+-		return NULL;
+-
+-	/* Save current state */
+-	free_pdu_top = ha->free_pdu_top;
+-	free_pdu_bottom = ha->free_pdu_bottom;
+-	pdu_active = ha->pdu_active + 1;
+-
+-	/* get next available pdu */
+-	pdu = free_pdu_top;
+-	free_pdu_top = pdu->Next;
+-	if (free_pdu_top == NULL)
+-		free_pdu_bottom = NULL;
+-
+-	/* round up to nearest page */
+-	length = (length + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1);
+-
+-	/* Allocate pdu buffer PDU */
+-	pdu->Buff = dma_alloc_coherent(&ha->pdev->dev, length, &pdu->DmaBuff,
+-				       GFP_KERNEL);
+-	if (pdu->Buff == NULL)
+-		return NULL;
+-
+-	memset(pdu->Buff, 0, length);
+-
+-	/* Fill in remainder of PDU */
+-	pdu->BuffLen = length;
+-	pdu->SendBuffLen = 0;
+-	pdu->RecvBuffLen = 0;
+-	pdu->Next = NULL;
+-	ha->free_pdu_top = free_pdu_top;
+-	ha->free_pdu_bottom = free_pdu_bottom;
+-	ha->pdu_active = pdu_active;
+-	return pdu;
+-}
+-
+-void qla4xxx_free_pdu(struct scsi_qla_host * ha, struct pdu_entry * pdu)
+-{
+-	if (ha->free_pdu_bottom == NULL) {
+-		ha->free_pdu_top = pdu;
+-		ha->free_pdu_bottom = pdu;
+-	} else {
+-		ha->free_pdu_bottom->Next = pdu;
+-		ha->free_pdu_bottom = pdu;
+-	}
+-	dma_free_coherent(&ha->pdev->dev, pdu->BuffLen, pdu->Buff,
+-			  pdu->DmaBuff);
+-	ha->pdu_active--;
+-
+-	/* Clear PDU */
+-	pdu->Buff = NULL;
+-	pdu->BuffLen = 0;
+-	pdu->SendBuffLen = 0;
+-	pdu->RecvBuffLen = 0;
+-	pdu->Next = NULL;
+-	pdu->DmaBuff = 0;
+-}
+-
+-/**
+- * qla4xxx_send_passthru0_iocb - issues pass-thru iocb to HBA
+- * @ha: Pointer to host adapter structure.
+- * @fw_ddb_index: firmware ddb index
+- * @connection_id: firmware connection id
+- * @pdu_dma_data: dma base address of pdu
+- * @send_len: send length
+- * @recv_len: receive length
+- * @control_flags: iocb control flags
+- * @handle: iocb handle
+- *
+- * This routine issues a passthru0 IOCB.
+- * hardware_lock acquired upon entry, interrupt context
+- **/
+-int qla4_spt0_iocb(struct scsi_qla_host * ha,
+-		   uint16_t fw_ddb_index,
+-		   uint16_t connection_id,
+-		   dma_addr_t pdu_dma_data, uint32_t send_len,
+-		   uint32_t recv_len, uint16_t control_flags,
+-		   uint32_t handle)
+-{
+-	struct passthru0 *passthru_entry;
+-	uint8_t status = QLA_SUCCESS;
+-
+-	/* Get pointer to the queue entry for the marker */
+-	if (qla4xxx_get_req_pkt(ha, (struct queue_entry **) &passthru_entry) !=
+-	    QLA_SUCCESS) {
+-		status = QLA_ERROR;
+-		goto exit_send_pt0;
+-	}
+-
+-	/* Fill in the request queue */
+-	passthru_entry->hdr.entryType = ET_PASSTHRU0;
+-	passthru_entry->hdr.entryCount = 1;
+-	passthru_entry->handle = cpu_to_le32(handle);
+-	passthru_entry->target = cpu_to_le16(fw_ddb_index);
+-	passthru_entry->connectionID = cpu_to_le16(connection_id);
+-	passthru_entry->timeout = __constant_cpu_to_le16(PT_DEFAULT_TIMEOUT);
+-	if (send_len) {
+-		control_flags |= PT_FLAG_SEND_BUFFER;
+-		passthru_entry->outDataSeg64.base.addrHigh =
+-			cpu_to_le32(MSDW(pdu_dma_data));
+-		passthru_entry->outDataSeg64.base.addrLow =
+-			cpu_to_le32(LSDW(pdu_dma_data));
+-		passthru_entry->outDataSeg64.count = cpu_to_le32(send_len);
+-	}
+-	if (recv_len) {
+-		passthru_entry->inDataSeg64.base.addrHigh =
+-			cpu_to_le32(MSDW(pdu_dma_data));
+-		passthru_entry->inDataSeg64.base.addrLow =
+-			cpu_to_le32(LSDW(pdu_dma_data));
+-		passthru_entry->inDataSeg64.count = cpu_to_le32(recv_len);
+-	}
+-	passthru_entry->controlFlags = cpu_to_le16(control_flags);
+-	wmb();
+-
+-	/* Tell ISP it's got a new I/O request */
+-	writel(ha->request_in, &ha->reg->req_q_in);
+-	readl(&ha->reg->req_q_in);
+-
+-exit_send_pt0:
+-	return status;
+-}
+-
+ struct continuation_t1_entry* qla4xxx_alloc_cont_entry(
+ 	struct scsi_qla_host *ha)
+ {

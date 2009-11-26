@@ -1,6 +1,6 @@
-copy: *.1
-copy: *.1-cfix
-bzip2: *.4
+copy: *.2
+bzip2: patch-2.6.18.4
+copy: patch-linux-2.6.18-rhel5-drbd-8.3.4
 copy: *.diff
 copy: *.el5
 copy: *.kabi_i686
@@ -20,7 +20,11 @@ copy: *.pl
 copy: *.sh
 copy: check-kabi
 copy: diff-backport-dm-delay-20070716
+copy: diff-cpt-ignore-deleted-linked-chr-blk-fifo-nodes-20091105
+copy: diff-cpt-inotify-dump-fake-links
+copy: diff-cpt-ptrace-state-init-atomics-20091112
 copy: diff-dm-limits-bounce_pfn-20071029
+copy: diff-drbd-compilation
 copy: diff-drv-e1000-depends-e1000e-20080718
 copy: diff-drv-e1000-select-e1000e
 copy: diff-fs-fsync-enable-rh5-20080131
@@ -44,17 +48,20 @@ copy: diff-i2o-proc-perms-20060304
 copy: diff-i2o-procread-20070509
 copy: diff-ipv4-dumpbaddst-20080929
 copy: diff-ipv4-reliable-dst-garbage-20080929
+copy: diff-mac-acpi-scan-rsdp-bit-lower-20090811
+copy: diff-mac-cpufreq-bug-on-apple-xserve-20090811
+copy: diff-make-sysrq-mask-affect-proc-sysrq-trigger-20090826
 copy: diff-ms-32bitHW-kernel-panic-string
+copy: diff-ms-alow-ve0-exceed-threads-max
 copy: diff-ms-devleak-dstdebug-20080504
 copy: diff-ms-devleaktime-20081111
-copy: diff-ms-fno-delete-null-check-in-makefile
+copy: diff-ms-ext4-nodelalloc-by-default
+copy: diff-ms-ext4-use-get-host
 copy: diff-ms-mmap-min-addr
 copy: diff-ms-nfssync-20081118
-copy: diff-ms-personality-fix-PER_CLEAR_ON_SETID
 copy: diff-ms-pipe-open-check-20091104
+copy: diff-ms-reboot-via-pci-port-cf9-20090922
 copy: diff-ms-splice-access-20080211
-copy: diff-ms-udp-MSG_PROBE-queue-sync-check-20090826
-copy: diff-ms-use-kernel_sendpage-in-sock_sendpage
 copy: diff-nbd-compile-fixes
 copy: diff-nbd-forbid-socket-clear-without-disconnect-20090529
 copy: diff-nbd-from-current
@@ -68,16 +75,16 @@ copy: diff-openafs-configure-no-mod-check
 copy: diff-openafs-exec-context
 copy: diff-openafs-find_task_by_pid
 copy: diff-openafs-for_each_process
-copy: diff-pb-relink-in-fork_pre_cow-20090703
+copy: diff-revert-fairsched-fancy-vcpu-skipping-20091112
+copy: diff-revert-fairsched-vcpu-timeslice-change-20091112
 copy: diff-rh-cifs-disable-posix-extensons-by-default-20090304
 copy: diff-scsi-add-modalias-mainstream
-copy: diff-show-task-running-20081117
 copy: diff-snd-hda-intel
 copy: diff-tossing-headers-around
-copy: diff-ve-flock-fail-oops-fix
-copy: diff-ve-hook-in-daemonize-20090723
+copy: diff-ve-binfmt-misc-mem-leak-20091014
+copy: diff-ve-compat-ustat-missed-devperms
 copy: diff-ve-moreleaks-20090829
-copy: diff-ve-nfs-xprt-owner_env-save-20090724
+copy: diff-ve-ptys-idr-mem-leak-20091109
 copy: diff-xen-smpboot-ifdef-hotplug-20090306
 copy: find-provides
 copy: genkey
@@ -93,5 +100,5 @@ copy: kabi_whitelist_x86_64
 copy: kabi_whitelist_x86_64xen
 copy: kabitool
 tar.bz2: linux name=linux-2.6.18
-copy: patch-028stab064-core
+copy: patch-028stab066-core
 tar.gz: xen name=xen-15502 base= suffix=.tar.bz2

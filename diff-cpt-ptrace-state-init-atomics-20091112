@@ -1,0 +1,15 @@
+diff --git a/kernel/cpt/rst_process.c b/kernel/cpt/rst_process.c
+index 88b72e5..3c69e0b 100644
+--- a/kernel/cpt/rst_process.c
++++ b/kernel/cpt/rst_process.c
+@@ -1388,6 +1388,10 @@ static int rst_ptrace(struct task_struct *tsk, struct cpt_task_image *ti,
+ 	state->task = tsk;
+ 	state->parent = parent;
+ 	state->options = 0;
++	atomic_set(&state->refcnt, 1);
++#ifdef PTRACE_DEBUG
++	atomic_set(&state->check_dead, 1);
++#endif
+ 	if (ti->cpt_ptrace & CPT_PT_TRACESYSGOOD)
+ 		state->options |= PTRACE_O_TRACESYSGOOD;
+ 	if (ti->cpt_ptrace & CPT_PT_TRACE_FORK)

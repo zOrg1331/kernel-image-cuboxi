@@ -1,0 +1,42 @@
+From: Rik van Riel <riel@redhat.com>
+Date: Mon, 26 Jan 2009 18:39:47 -0500
+Subject: [xen] guest crash when host has >= 64G RAM
+Message-id: 20090126183947.433359da@bree.surriel.com
+O-Subject: [RHEL 5.4 PATCH] guest crash when host has >= 64G RAM bz 448115
+Bugzilla: 448115
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+
+Fixes bug 448115
+
+Going any higher than 40 makes little sense, since the Xen hypervisor
+has a 1TB physical memory limit.
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1169481439 0
+# Node ID f3670081945342a91aabd9c5198b0ec9161653fe
+# Parent  cc819d81be2a887fbed1ef48731747b45d8faa11
+linux/i386: widen physical address range
+
+32on64 supports 168Gb for 32-bit guests, hence at least 38 bits must
+be specified here. The foreign frame bit is MFN bit 31, so the maximum
+valid value here would be 43.
+
+Signed-off-by: Jan Beulich <jbeulich@novell.com>
+
+diff --git a/include/asm-i386/mach-xen/asm/page.h b/include/asm-i386/mach-xen/asm/page.h
+index 5300c86..a142ce2 100644
+--- a/include/asm-i386/mach-xen/asm/page.h
++++ b/include/asm-i386/mach-xen/asm/page.h
+@@ -7,7 +7,7 @@
+ #define PAGE_MASK	(~(PAGE_SIZE-1))
+ 
+ #ifdef CONFIG_X86_PAE
+-#define __PHYSICAL_MASK_SHIFT	36
++#define __PHYSICAL_MASK_SHIFT	40
+ #define __PHYSICAL_MASK		((1ULL << __PHYSICAL_MASK_SHIFT) - 1)
+ #define PHYSICAL_PAGE_MASK	(~((1ULL << PAGE_SHIFT) - 1) & __PHYSICAL_MASK)
+ #else

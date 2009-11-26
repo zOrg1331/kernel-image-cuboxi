@@ -1,0 +1,115 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Tue, 28 Apr 2009 15:11:38 -0400
+Subject: [mm] allow tuning of MAX_WRITEBACK_PAGES
+Message-id: 1240945898.16032.19.camel@dhcp-100-19-198.bos.redhat.com
+O-Subject: [RHEL5-U4 patch] Allow tuning of MAX_WRITEBACK_PAGES.
+Bugzilla: 479079
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+
+On April 15(tax day!!!) I posted a patch to mpage_writepages() and
+wb_kupdate() to prevent kupdate from not writing all modified pagecache
+pages if you continuously extend a file fast enough.
+
+In addition to that patch the same customers are asking to be able to
+tune MAX_WRITEBACK_PAGES.  It is #defined to 1024 and controls the
+maximum number of pages that pdflush writes out during each iteration of
+background_writeout() and wb_kupdate().  The upstream status is
+MAX_WRITEBACK_PAGES is still #defined to 1024 but that kernel is much
+smarter about write-backs on a per-device basis.   On large systems with
+lots of RAM and fast IO devices you can clearly see that increasing it
+will allow more pages to be written during each iteration before
+blocking due to IO WRITE congestion and therefore more work gets done
+faster.
+
+I left the default at 1024 and just made it tunable
+vi /proc/sys/vm/max_writeback_pages.
+
+This patch is needed in conjunction with the kupdate patch to fix BZ
+479079.
+
+diff --git a/include/linux/sysctl.h b/include/linux/sysctl.h
+index d4b00d4..65bb74a 100644
+--- a/include/linux/sysctl.h
++++ b/include/linux/sysctl.h
+@@ -206,6 +206,7 @@ enum
+ 	VM_PAGECACHE=37,        /* favor reclaiming unmapped pagecache pages */
+ 	VM_MMAP_MIN_ADDR=38, 	/* amount of memory to protect from mmap */
+ 	VM_FLUSH_MMAP=39,       /* flush mmap()d pagecache pages */
++	VM_MAX_WRITEBACK_PAGES=40, /*maximum pages written per writeback loop */
+ };
+ 
+ 
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index e181616..c70404f 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -78,6 +78,7 @@ extern int sysctl_drop_caches;
+ extern int percpu_pagelist_fraction;
+ extern int compat_log;
+ extern int flush_mmap_pages;
++extern int max_writeback_pages;
+ 
+ #if defined(CONFIG_X86_LOCAL_APIC) && defined(CONFIG_X86)
+ extern int proc_unknown_nmi_panic(ctl_table *, int, struct file *,
+@@ -1130,6 +1131,16 @@ static ctl_table vm_table[] = {
+ 		.strategy	= &sysctl_intvec,
+ 		.extra1		= &zero,
+ 	},
++	{
++		.ctl_name	= VM_MAX_WRITEBACK_PAGES,
++		.procname	= "max_writeback_pages",
++		.data		= &max_writeback_pages,
++		.maxlen		= sizeof(max_writeback_pages),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++		.strategy	= &sysctl_intvec,
++		.extra1		= &zero,
++	},
+ 	{ .ctl_name = 0 }
+ };
+ 
+diff --git a/mm/page-writeback.c b/mm/page-writeback.c
+index 4edf8e9..6b3a818 100644
+--- a/mm/page-writeback.c
++++ b/mm/page-writeback.c
+@@ -40,6 +40,7 @@
+  * the dirty each time it has written this many pages.
+  */
+ #define MAX_WRITEBACK_PAGES	1024
++int max_writeback_pages = MAX_WRITEBACK_PAGES;
+ 
+ /*
+  * After a CPU has dirtied this many pages, balance_dirty_pages_ratelimited
+@@ -347,10 +348,10 @@ static void background_writeout(unsigned long _min_pages)
+ 				&& min_pages <= 0)
+ 			break;
+ 		wbc.encountered_congestion = 0;
+-		wbc.nr_to_write = MAX_WRITEBACK_PAGES;
++		wbc.nr_to_write = max_writeback_pages;
+ 		wbc.pages_skipped = 0;
+ 		writeback_inodes(&wbc);
+-		min_pages -= MAX_WRITEBACK_PAGES - wbc.nr_to_write;
++		min_pages -= max_writeback_pages - wbc.nr_to_write;
+ 		if (wbc.nr_to_write > 0 || wbc.pages_skipped > 0) {
+ 			/* Wrote less than expected */
+ 			blk_congestion_wait(WRITE, HZ/10);
+@@ -422,7 +423,7 @@ static void wb_kupdate(unsigned long arg)
+ 			(inodes_stat.nr_inodes - inodes_stat.nr_unused);
+ 	while (nr_to_write > 0) {
+ 		wbc.encountered_congestion = 0;
+-		wbc.nr_to_write = MAX_WRITEBACK_PAGES;
++		wbc.nr_to_write = max_writeback_pages;
+ 		writeback_inodes(&wbc);
+ 		if (wbc.nr_to_write > 0) {
+ 			if (wbc.encountered_congestion)
+@@ -430,7 +431,7 @@ static void wb_kupdate(unsigned long arg)
+ 			else
+ 				break;	/* All the old data is written */
+ 		}
+-		nr_to_write -= MAX_WRITEBACK_PAGES - wbc.nr_to_write;
++		nr_to_write -= max_writeback_pages - wbc.nr_to_write;
+ 	}
+ 	if (time_before(next_jif, jiffies + HZ))
+ 		next_jif = jiffies + HZ;

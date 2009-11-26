@@ -1,0 +1,5107 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Tue, 14 Apr 2009 15:23:36 -0400
+Subject: [openib] cxgb3: update driver to OFED 1.4.1-rc3
+Message-id: 1239737023-31222-10-git-send-email-dledford@redhat.com
+O-Subject: [Patch RHEL5.4 09/16] [cxgb3] Update driver to OFED 1.4.1-rc3 version
+Bugzilla: 476301
+
+Signed-off-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/drivers/infiniband/hw/cxgb3/Makefile b/drivers/infiniband/hw/cxgb3/Makefile
+index 36b9898..7e7b5a6 100644
+--- a/drivers/infiniband/hw/cxgb3/Makefile
++++ b/drivers/infiniband/hw/cxgb3/Makefile
+@@ -1,5 +1,4 @@
+-EXTRA_CFLAGS += -I$(TOPDIR)/drivers/net/cxgb3 \
+-		-I$(TOPDIR)/drivers/infiniband/hw/cxgb3/core
++EXTRA_CFLAGS += -Idrivers/net/cxgb3
+ 
+ obj-$(CONFIG_INFINIBAND_CXGB3) += iw_cxgb3.o
+ 
+diff --git a/drivers/infiniband/hw/cxgb3/cxio_dbg.c b/drivers/infiniband/hw/cxgb3/cxio_dbg.c
+index 75f7b16..a8d24d5 100644
+--- a/drivers/infiniband/hw/cxgb3/cxio_dbg.c
++++ b/drivers/infiniband/hw/cxgb3/cxio_dbg.c
+@@ -45,16 +45,16 @@ void cxio_dump_tpt(struct cxio_rdev *rdev, u32 stag)
+ 
+ 	m = kmalloc(sizeof(*m) + size, GFP_ATOMIC);
+ 	if (!m) {
+-		PDBG("%s couldn't allocate memory.\n", __FUNCTION__);
++		PDBG("%s couldn't allocate memory.\n", __func__);
+ 		return;
+ 	}
+ 	m->mem_id = MEM_PMRX;
+ 	m->addr = (stag>>8) * 32 + rdev->rnic_info.tpt_base;
+ 	m->len = size;
+-	PDBG("%s TPT addr 0x%x len %d\n", __FUNCTION__, m->addr, m->len);
++	PDBG("%s TPT addr 0x%x len %d\n", __func__, m->addr, m->len);
+ 	rc = rdev->t3cdev_p->ctl(rdev->t3cdev_p, RDMA_GET_MEM, m);
+ 	if (rc) {
+-		PDBG("%s toectl returned error %d\n", __FUNCTION__, rc);
++		PDBG("%s toectl returned error %d\n", __func__, rc);
+ 		kfree(m);
+ 		return;
+ 	}
+@@ -82,17 +82,17 @@ void cxio_dump_pbl(struct cxio_rdev *rdev, u32 pbl_addr, uint len, u8 shift)
+ 
+ 	m = kmalloc(sizeof(*m) + size, GFP_ATOMIC);
+ 	if (!m) {
+-		PDBG("%s couldn't allocate memory.\n", __FUNCTION__);
++		PDBG("%s couldn't allocate memory.\n", __func__);
+ 		return;
+ 	}
+ 	m->mem_id = MEM_PMRX;
+ 	m->addr = pbl_addr;
+ 	m->len = size;
+ 	PDBG("%s PBL addr 0x%x len %d depth %d\n",
+-		__FUNCTION__, m->addr, m->len, npages);
++		__func__, m->addr, m->len, npages);
+ 	rc = rdev->t3cdev_p->ctl(rdev->t3cdev_p, RDMA_GET_MEM, m);
+ 	if (rc) {
+-		PDBG("%s toectl returned error %d\n", __FUNCTION__, rc);
++		PDBG("%s toectl returned error %d\n", __func__, rc);
+ 		kfree(m);
+ 		return;
+ 	}
+@@ -144,16 +144,16 @@ void cxio_dump_rqt(struct cxio_rdev *rdev, u32 hwtid, int nents)
+ 
+ 	m = kmalloc(sizeof(*m) + size, GFP_ATOMIC);
+ 	if (!m) {
+-		PDBG("%s couldn't allocate memory.\n", __FUNCTION__);
++		PDBG("%s couldn't allocate memory.\n", __func__);
+ 		return;
+ 	}
+ 	m->mem_id = MEM_PMRX;
+ 	m->addr = ((hwtid)<<10) + rdev->rnic_info.rqt_base;
+ 	m->len = size;
+-	PDBG("%s RQT addr 0x%x len %d\n", __FUNCTION__, m->addr, m->len);
++	PDBG("%s RQT addr 0x%x len %d\n", __func__, m->addr, m->len);
+ 	rc = rdev->t3cdev_p->ctl(rdev->t3cdev_p, RDMA_GET_MEM, m);
+ 	if (rc) {
+-		PDBG("%s toectl returned error %d\n", __FUNCTION__, rc);
++		PDBG("%s toectl returned error %d\n", __func__, rc);
+ 		kfree(m);
+ 		return;
+ 	}
+@@ -177,16 +177,16 @@ void cxio_dump_tcb(struct cxio_rdev *rdev, u32 hwtid)
+ 
+ 	m = kmalloc(sizeof(*m) + size, GFP_ATOMIC);
+ 	if (!m) {
+-		PDBG("%s couldn't allocate memory.\n", __FUNCTION__);
++		PDBG("%s couldn't allocate memory.\n", __func__);
+ 		return;
+ 	}
+ 	m->mem_id = MEM_CM;
+ 	m->addr = hwtid * size;
+ 	m->len = size;
+-	PDBG("%s TCB %d len %d\n", __FUNCTION__, m->addr, m->len);
++	PDBG("%s TCB %d len %d\n", __func__, m->addr, m->len);
+ 	rc = rdev->t3cdev_p->ctl(rdev->t3cdev_p, RDMA_GET_MEM, m);
+ 	if (rc) {
+-		PDBG("%s toectl returned error %d\n", __FUNCTION__, rc);
++		PDBG("%s toectl returned error %d\n", __func__, rc);
+ 		kfree(m);
+ 		return;
+ 	}
+diff --git a/drivers/infiniband/hw/cxgb3/cxio_hal.c b/drivers/infiniband/hw/cxgb3/cxio_hal.c
+index a0fa586..c2740e7 100644
+--- a/drivers/infiniband/hw/cxgb3/cxio_hal.c
++++ b/drivers/infiniband/hw/cxgb3/cxio_hal.c
+@@ -37,6 +37,7 @@
+ #include <linux/spinlock.h>
+ #include <linux/pci.h>
+ #include <linux/dma-mapping.h>
++#include <net/net_namespace.h>
+ 
+ #include "cxio_resource.h"
+ #include "cxio_hal.h"
+@@ -139,12 +140,14 @@ static int cxio_hal_clear_qp_ctx(struct cxio_rdev *rdev_p, u32 qpid)
+ 	struct t3_modify_qp_wr *wqe;
+ 	struct sk_buff *skb = alloc_skb(sizeof(*wqe), GFP_KERNEL);
+ 	if (!skb) {
+-		PDBG("%s alloc_skb failed\n", __FUNCTION__);
++		PDBG("%s alloc_skb failed\n", __func__);
+ 		return -ENOMEM;
+ 	}
+ 	wqe = (struct t3_modify_qp_wr *) skb_put(skb, sizeof(*wqe));
+ 	memset(wqe, 0, sizeof(*wqe));
+-	build_fw_riwrh((struct fw_riwrh *) wqe, T3_WR_QP_MOD, 3, 0, qpid, 7);
++	build_fw_riwrh((struct fw_riwrh *) wqe, T3_WR_QP_MOD,
++		       T3_COMPLETION_FLAG | T3_NOTIFY_FLAG, 0, qpid, 7,
++		       T3_SOPEOP);
+ 	wqe->flags = cpu_to_be32(MODQP_WRITE_EC);
+ 	sge_cmd = qpid << 8 | 3;
+ 	wqe->sge_cmd = cpu_to_be64(sge_cmd);
+@@ -224,7 +227,7 @@ static u32 get_qpid(struct cxio_rdev *rdev_p, struct cxio_ucontext *uctx)
+ 	}
+ out:
+ 	mutex_unlock(&uctx->lock);
+-	PDBG("%s qpid 0x%x\n", __FUNCTION__, qpid);
++	PDBG("%s qpid 0x%x\n", __func__, qpid);
+ 	return qpid;
+ }
+ 
+@@ -236,7 +239,7 @@ static void put_qpid(struct cxio_rdev *rdev_p, u32 qpid,
+ 	entry = kmalloc(sizeof *entry, GFP_KERNEL);
+ 	if (!entry)
+ 		return;
+-	PDBG("%s qpid 0x%x\n", __FUNCTION__, qpid);
++	PDBG("%s qpid 0x%x\n", __func__, qpid);
+ 	entry->qpid = qpid;
+ 	mutex_lock(&uctx->lock);
+ 	list_add_tail(&entry->entry, &uctx->qpids);
+@@ -275,7 +278,7 @@ int cxio_create_qp(struct cxio_rdev *rdev_p, u32 kernel_domain,
+ 	if (!wq->qpid)
+ 		return -ENOMEM;
+ 
+-	wq->rq = kzalloc(depth * sizeof(u64), GFP_KERNEL);
++	wq->rq = kzalloc(depth * sizeof(struct t3_swrq), GFP_KERNEL);
+ 	if (!wq->rq)
+ 		goto err1;
+ 
+@@ -299,7 +302,8 @@ int cxio_create_qp(struct cxio_rdev *rdev_p, u32 kernel_domain,
+ 	if (!kernel_domain)
+ 		wq->udb = (u64)rdev_p->rnic_info.udbell_physbase +
+ 					(wq->qpid << rdev_p->qpshift);
+-	PDBG("%s qpid 0x%x doorbell 0x%p udb 0x%llx\n", __FUNCTION__,
++	wq->rdev = rdev_p;
++	PDBG("%s qpid 0x%x doorbell 0x%p udb 0x%llx\n", __func__,
+ 	     wq->qpid, wq->doorbell, (unsigned long long) wq->udb);
+ 	return 0;
+ err4:
+@@ -344,7 +348,7 @@ static void insert_recv_cqe(struct t3_wq *wq, struct t3_cq *cq)
+ {
+ 	struct t3_cqe cqe;
+ 
+-	PDBG("%s wq %p cq %p sw_rptr 0x%x sw_wptr 0x%x\n", __FUNCTION__,
++	PDBG("%s wq %p cq %p sw_rptr 0x%x sw_wptr 0x%x\n", __func__,
+ 	     wq, cq, cq->sw_rptr, cq->sw_wptr);
+ 	memset(&cqe, 0, sizeof(cqe));
+ 	cqe.header = cpu_to_be32(V_CQE_STATUS(TPT_ERR_SWFLUSH) |
+@@ -363,10 +367,10 @@ int cxio_flush_rq(struct t3_wq *wq, struct t3_cq *cq, int count)
+ 	u32 ptr;
+ 	int flushed = 0;
+ 
+-	PDBG("%s wq %p cq %p\n", __FUNCTION__, wq, cq);
++	PDBG("%s wq %p cq %p\n", __func__, wq, cq);
+ 
+ 	/* flush RQ */
+-	PDBG("%s rq_rptr %u rq_wptr %u skip count %u\n", __FUNCTION__,
++	PDBG("%s rq_rptr %u rq_wptr %u skip count %u\n", __func__,
+ 	    wq->rq_rptr, wq->rq_wptr, count);
+ 	ptr = wq->rq_rptr + count;
+ 	while (ptr++ != wq->rq_wptr) {
+@@ -381,7 +385,7 @@ static void insert_sq_cqe(struct t3_wq *wq, struct t3_cq *cq,
+ {
+ 	struct t3_cqe cqe;
+ 
+-	PDBG("%s wq %p cq %p sw_rptr 0x%x sw_wptr 0x%x\n", __FUNCTION__,
++	PDBG("%s wq %p cq %p sw_rptr 0x%x sw_wptr 0x%x\n", __func__,
+ 	     wq, cq, cq->sw_rptr, cq->sw_wptr);
+ 	memset(&cqe, 0, sizeof(cqe));
+ 	cqe.header = cpu_to_be32(V_CQE_STATUS(TPT_ERR_SWFLUSH) |
+@@ -421,11 +425,11 @@ void cxio_flush_hw_cq(struct t3_cq *cq)
+ {
+ 	struct t3_cqe *cqe, *swcqe;
+ 
+-	PDBG("%s cq %p cqid 0x%x\n", __FUNCTION__, cq, cq->cqid);
++	PDBG("%s cq %p cqid 0x%x\n", __func__, cq, cq->cqid);
+ 	cqe = cxio_next_hw_cqe(cq);
+ 	while (cqe) {
+ 		PDBG("%s flushing hwcq rptr 0x%x to swcq wptr 0x%x\n",
+-		     __FUNCTION__, cq->rptr, cq->sw_wptr);
++		     __func__, cq->rptr, cq->sw_wptr);
+ 		swcqe = cq->sw_queue + Q_PTR2IDX(cq->sw_wptr, cq->size_log2);
+ 		*swcqe = *cqe;
+ 		swcqe->header |= cpu_to_be32(V_CQE_SWCQE(1));
+@@ -446,7 +450,7 @@ static int cqe_completes_wr(struct t3_cqe *cqe, struct t3_wq *wq)
+ 	if ((CQE_OPCODE(*cqe) == T3_READ_RESP) && SQ_TYPE(*cqe))
+ 		return 0;
+ 
+-	if ((CQE_OPCODE(*cqe) == T3_SEND) && RQ_TYPE(*cqe) &&
++	if (CQE_SEND_OPCODE(*cqe) && RQ_TYPE(*cqe) &&
+ 	    Q_EMPTY(wq->rq_rptr, wq->rq_wptr))
+ 		return 0;
+ 
+@@ -468,7 +472,7 @@ void cxio_count_scqes(struct t3_cq *cq, struct t3_wq *wq, int *count)
+ 			(*count)++;
+ 		ptr++;
+ 	}
+-	PDBG("%s cq %p count %d\n", __FUNCTION__, cq, *count);
++	PDBG("%s cq %p count %d\n", __func__, cq, *count);
+ }
+ 
+ void cxio_count_rcqes(struct t3_cq *cq, struct t3_wq *wq, int *count)
+@@ -477,7 +481,7 @@ void cxio_count_rcqes(struct t3_cq *cq, struct t3_wq *wq, int *count)
+ 	u32 ptr;
+ 
+ 	*count = 0;
+-	PDBG("%s count zero %d\n", __FUNCTION__, *count);
++	PDBG("%s count zero %d\n", __func__, *count);
+ 	ptr = cq->sw_rptr;
+ 	while (!Q_EMPTY(ptr, cq->sw_wptr)) {
+ 		cqe = cq->sw_queue + (Q_PTR2IDX(ptr, cq->size_log2));
+@@ -486,7 +490,7 @@ void cxio_count_rcqes(struct t3_cq *cq, struct t3_wq *wq, int *count)
+ 			(*count)++;
+ 		ptr++;
+ 	}
+-	PDBG("%s cq %p count %d\n", __FUNCTION__, cq, *count);
++	PDBG("%s cq %p count %d\n", __func__, cq, *count);
+ }
+ 
+ static int cxio_hal_init_ctrl_cq(struct cxio_rdev *rdev_p)
+@@ -513,12 +517,12 @@ static int cxio_hal_init_ctrl_qp(struct cxio_rdev *rdev_p)
+ 
+ 	skb = alloc_skb(sizeof(*wqe), GFP_KERNEL);
+ 	if (!skb) {
+-		PDBG("%s alloc_skb failed\n", __FUNCTION__);
++		PDBG("%s alloc_skb failed\n", __func__);
+ 		return -ENOMEM;
+ 	}
+ 	err = cxio_hal_init_ctrl_cq(rdev_p);
+ 	if (err) {
+-		PDBG("%s err %d initializing ctrl_cq\n", __FUNCTION__, err);
++		PDBG("%s err %d initializing ctrl_cq\n", __func__, err);
+ 		goto err;
+ 	}
+ 	rdev_p->ctrl_qp.workq = dma_alloc_coherent(
+@@ -528,7 +532,7 @@ static int cxio_hal_init_ctrl_qp(struct cxio_rdev *rdev_p)
+ 					&(rdev_p->ctrl_qp.dma_addr),
+ 					GFP_KERNEL);
+ 	if (!rdev_p->ctrl_qp.workq) {
+-		PDBG("%s dma_alloc_coherent failed\n", __FUNCTION__);
++		PDBG("%s dma_alloc_coherent failed\n", __func__);
+ 		err = -ENOMEM;
+ 		goto err;
+ 	}
+@@ -557,7 +561,7 @@ static int cxio_hal_init_ctrl_qp(struct cxio_rdev *rdev_p)
+ 	wqe = (struct t3_modify_qp_wr *) skb_put(skb, sizeof(*wqe));
+ 	memset(wqe, 0, sizeof(*wqe));
+ 	build_fw_riwrh((struct fw_riwrh *) wqe, T3_WR_QP_MOD, 0, 0,
+-		       T3_CTL_QP_TID, 7);
++		       T3_CTL_QP_TID, 7, T3_SOPEOP);
+ 	wqe->flags = cpu_to_be32(MODQP_WRITE_EC);
+ 	sge_cmd = (3ULL << 56) | FW_RI_SGEEC_START << 8 | 3;
+ 	wqe->sge_cmd = cpu_to_be64(sge_cmd);
+@@ -591,32 +595,32 @@ static int cxio_hal_ctrl_qp_write_mem(struct cxio_rdev *rdev_p, u32 addr,
+ {
+ 	u32 i, nr_wqe, copy_len;
+ 	u8 *copy_data;
+-	u8 wr_len, utx_len;	/* lenght in 8 byte flit */
++	u8 wr_len, utx_len;	/* length in 8 byte flit */
+ 	enum t3_wr_flags flag;
+ 	__be64 *wqe;
+ 	u64 utx_cmd;
+ 	addr &= 0x7FFFFFF;
+ 	nr_wqe = len % 96 ? len / 96 + 1 : len / 96;	/* 96B max per WQE */
+ 	PDBG("%s wptr 0x%x rptr 0x%x len %d, nr_wqe %d data %p addr 0x%0x\n",
+-	     __FUNCTION__, rdev_p->ctrl_qp.wptr, rdev_p->ctrl_qp.rptr, len,
++	     __func__, rdev_p->ctrl_qp.wptr, rdev_p->ctrl_qp.rptr, len,
+ 	     nr_wqe, data, addr);
+ 	utx_len = 3;		/* in 32B unit */
+ 	for (i = 0; i < nr_wqe; i++) {
+ 		if (Q_FULL(rdev_p->ctrl_qp.rptr, rdev_p->ctrl_qp.wptr,
+ 		           T3_CTRL_QP_SIZE_LOG2)) {
+ 			PDBG("%s ctrl_qp full wtpr 0x%0x rptr 0x%0x, "
+-			     "wait for more space i %d\n", __FUNCTION__,
++			     "wait for more space i %d\n", __func__,
+ 			     rdev_p->ctrl_qp.wptr, rdev_p->ctrl_qp.rptr, i);
+ 			if (wait_event_interruptible(rdev_p->ctrl_qp.waitq,
+ 					     !Q_FULL(rdev_p->ctrl_qp.rptr,
+ 						     rdev_p->ctrl_qp.wptr,
+ 						     T3_CTRL_QP_SIZE_LOG2))) {
+ 				PDBG("%s ctrl_qp workq interrupted\n",
+-				     __FUNCTION__);
++				     __func__);
+ 				return -ERESTARTSYS;
+ 			}
+ 			PDBG("%s ctrl_qp wakeup, continue posting work request "
+-			     "i %d\n", __FUNCTION__, i);
++			     "i %d\n", __func__, i);
+ 		}
+ 		wqe = (__be64 *)(rdev_p->ctrl_qp.workq + (rdev_p->ctrl_qp.wptr %
+ 						(1 << T3_CTRL_QP_SIZE_LOG2)));
+@@ -637,7 +641,7 @@ static int cxio_hal_ctrl_qp_write_mem(struct cxio_rdev *rdev_p, u32 addr,
+ 		if ((i != 0) &&
+ 		    (i % (((1 << T3_CTRL_QP_SIZE_LOG2)) >> 1) == 0)) {
+ 			flag = T3_COMPLETION_FLAG;
+-			PDBG("%s force completion at i %d\n", __FUNCTION__, i);
++			PDBG("%s force completion at i %d\n", __func__, i);
+ 		}
+ 
+ 		/* build the utx mem command */
+@@ -673,7 +677,7 @@ static int cxio_hal_ctrl_qp_write_mem(struct cxio_rdev *rdev_p, u32 addr,
+ 		build_fw_riwrh((struct fw_riwrh *) wqe, T3_WR_BP, flag,
+ 			       Q_GENBIT(rdev_p->ctrl_qp.wptr,
+ 					T3_CTRL_QP_SIZE_LOG2), T3_CTRL_QP_ID,
+-			       wr_len);
++			       wr_len, T3_SOPEOP);
+ 		if (flag == T3_COMPLETION_FLAG)
+ 			ring_doorbell(rdev_p->ctrl_qp.doorbell, T3_CTRL_QP_ID);
+ 		len -= 96;
+@@ -707,7 +711,7 @@ static int __cxio_tpt_op(struct cxio_rdev *rdev_p, u32 reset_tpt_entry,
+ 		*stag = (stag_idx << 8) | ((*stag) & 0xFF);
+ 	}
+ 	PDBG("%s stag_state 0x%0x type 0x%0x pdid 0x%0x, stag_idx 0x%x\n",
+-	     __FUNCTION__, stag_state, type, pdid, stag_idx);
++	     __func__, stag_state, type, pdid, stag_idx);
+ 
+ 	mutex_lock(&rdev_p->ctrl_qp.lock);
+ 
+@@ -721,9 +725,9 @@ static int __cxio_tpt_op(struct cxio_rdev *rdev_p, u32 reset_tpt_entry,
+ 				V_TPT_STAG_TYPE(type) | V_TPT_PDID(pdid));
+ 		BUG_ON(page_size >= 28);
+ 		tpt.flags_pagesize_qpid = cpu_to_be32(V_TPT_PERM(perm) |
+-				F_TPT_MW_BIND_ENABLE |
+-				V_TPT_ADDR_TYPE((zbva ? TPT_ZBTO : TPT_VATO)) |
+-				V_TPT_PAGE_SIZE(page_size));
++			((perm & TPT_MW_BIND) ? F_TPT_MW_BIND_ENABLE : 0) |
++			V_TPT_ADDR_TYPE((zbva ? TPT_ZBTO : TPT_VATO)) |
++			V_TPT_PAGE_SIZE(page_size));
+ 		tpt.rsvd_pbl_addr = reset_tpt_entry ? 0 :
+ 				    cpu_to_be32(V_TPT_PBL_ADDR(PBL_OFF(rdev_p, pbl_addr)>>3));
+ 		tpt.len = cpu_to_be32(len);
+@@ -759,7 +763,7 @@ int cxio_write_pbl(struct cxio_rdev *rdev_p, __be64 *pbl,
+ 	int err;
+ 
+ 	PDBG("%s *pdb_addr 0x%x, pbl_base 0x%x, pbl_size %d\n",
+-	     __FUNCTION__, pbl_addr, rdev_p->rnic_info.pbl_base,
++	     __func__, pbl_addr, rdev_p->rnic_info.pbl_base,
+ 	     pbl_size);
+ 
+ 	mutex_lock(&rdev_p->ctrl_qp.lock);
+@@ -815,13 +819,20 @@ int cxio_deallocate_window(struct cxio_rdev *rdev_p, u32 stag)
+ 			     0, 0);
+ }
+ 
++int cxio_allocate_stag(struct cxio_rdev *rdev_p, u32 *stag, u32 pdid, u32 pbl_size, u32 pbl_addr)
++{
++	*stag = T3_STAG_UNSET;
++	return __cxio_tpt_op(rdev_p, 0, stag, 0, pdid, TPT_NON_SHARED_MR,
++			     0, 0, 0ULL, 0, 0, pbl_size, pbl_addr);
++}
++
+ int cxio_rdma_init(struct cxio_rdev *rdev_p, struct t3_rdma_init_attr *attr)
+ {
+ 	struct t3_rdma_init_wr *wqe;
+ 	struct sk_buff *skb = alloc_skb(sizeof(*wqe), GFP_ATOMIC);
+ 	if (!skb)
+ 		return -ENOMEM;
+-	PDBG("%s rdev_p %p\n", __FUNCTION__, rdev_p);
++	PDBG("%s rdev_p %p\n", __func__, rdev_p);
+ 	wqe = (struct t3_rdma_init_wr *) __skb_put(skb, sizeof(*wqe));
+ 	wqe->wrh.op_seop_flags = cpu_to_be32(V_FW_RIWR_OP(T3_WR_INIT));
+ 	wqe->wrh.gen_tid_len = cpu_to_be32(V_FW_RIWR_TID(attr->tid) |
+@@ -864,7 +875,7 @@ static int cxio_hal_ev_handler(struct t3cdev *t3cdev_p, struct sk_buff *skb)
+ 	struct respQ_msg_t *rsp_msg = (struct respQ_msg_t *) skb->data;
+ 	PDBG("%d: %s cq_id 0x%x cq_ptr 0x%x genbit %0x overflow %0x an %0x"
+ 	     " se %0x notify %0x cqbranch %0x creditth %0x\n",
+-	     cnt, __FUNCTION__, RSPQ_CQID(rsp_msg), RSPQ_CQPTR(rsp_msg),
++	     cnt, __func__, RSPQ_CQID(rsp_msg), RSPQ_CQPTR(rsp_msg),
+ 	     RSPQ_GENBIT(rsp_msg), RSPQ_OVERFLOW(rsp_msg), RSPQ_AN(rsp_msg),
+ 	     RSPQ_SE(rsp_msg), RSPQ_NOTIFY(rsp_msg), RSPQ_CQBRANCH(rsp_msg),
+ 	     RSPQ_CREDIT_THRESH(rsp_msg));
+@@ -876,7 +887,7 @@ static int cxio_hal_ev_handler(struct t3cdev *t3cdev_p, struct sk_buff *skb)
+ 	     CQE_WRID_HI(rsp_msg->cqe), CQE_WRID_LOW(rsp_msg->cqe));
+ 	rdev_p = (struct cxio_rdev *)t3cdev_p->ulp;
+ 	if (!rdev_p) {
+-		PDBG("%s called by t3cdev %p with null ulp\n", __FUNCTION__,
++		PDBG("%s called by t3cdev %p with null ulp\n", __func__,
+ 		     t3cdev_p);
+ 		return 0;
+ 	}
+@@ -903,7 +914,7 @@ int cxio_rdev_open(struct cxio_rdev *rdev_p)
+ 		if (cxio_hal_find_rdev_by_name(rdev_p->dev_name)) {
+ 			return -EBUSY;
+ 		}
+-		netdev_p = dev_get_by_name(rdev_p->dev_name);
++		netdev_p = dev_get_by_name(&init_net, rdev_p->dev_name);
+ 		if (!netdev_p) {
+ 			return -EINVAL;
+ 		}
+@@ -916,13 +927,13 @@ int cxio_rdev_open(struct cxio_rdev *rdev_p)
+ 		strncpy(rdev_p->dev_name, rdev_p->t3cdev_p->name,
+ 			T3_MAX_DEV_NAME_LEN);
+ 	} else {
+-		PDBG("%s t3cdev_p or dev_name must be set\n", __FUNCTION__);
++		PDBG("%s t3cdev_p or dev_name must be set\n", __func__);
+ 		return -EINVAL;
+ 	}
+ 
+ 	list_add_tail(&rdev_p->entry, &rdev_list);
+ 
+-	PDBG("%s opening rnic dev %s\n", __FUNCTION__, rdev_p->dev_name);
++	PDBG("%s opening rnic dev %s\n", __func__, rdev_p->dev_name);
+ 	memset(&rdev_p->ctrl_qp, 0, sizeof(rdev_p->ctrl_qp));
+ 	if (!rdev_p->t3cdev_p)
+ 		rdev_p->t3cdev_p = dev2t3cdev(netdev_p);
+@@ -931,14 +942,14 @@ int cxio_rdev_open(struct cxio_rdev *rdev_p)
+ 					 &(rdev_p->rnic_info));
+ 	if (err) {
+ 		printk(KERN_ERR "%s t3cdev_p(%p)->ctl returned error %d.\n",
+-		     __FUNCTION__, rdev_p->t3cdev_p, err);
++		     __func__, rdev_p->t3cdev_p, err);
+ 		goto err1;
+ 	}
+ 	err = rdev_p->t3cdev_p->ctl(rdev_p->t3cdev_p, GET_PORTS,
+ 				    &(rdev_p->port_info));
+ 	if (err) {
+ 		printk(KERN_ERR "%s t3cdev_p(%p)->ctl returned error %d.\n",
+-		     __FUNCTION__, rdev_p->t3cdev_p, err);
++		     __func__, rdev_p->t3cdev_p, err);
+ 		goto err1;
+ 	}
+ 
+@@ -955,7 +966,7 @@ int cxio_rdev_open(struct cxio_rdev *rdev_p)
+ 	rdev_p->qpmask = (65536 >> ilog2(rdev_p->qpnr)) - 1;
+ 	PDBG("%s rnic %s info: tpt_base 0x%0x tpt_top 0x%0x num stags %d "
+ 	     "pbl_base 0x%0x pbl_top 0x%0x rqt_base 0x%0x, rqt_top 0x%0x\n",
+-	     __FUNCTION__, rdev_p->dev_name, rdev_p->rnic_info.tpt_base,
++	     __func__, rdev_p->dev_name, rdev_p->rnic_info.tpt_base,
+ 	     rdev_p->rnic_info.tpt_top, cxio_num_stags(rdev_p),
+ 	     rdev_p->rnic_info.pbl_base,
+ 	     rdev_p->rnic_info.pbl_top, rdev_p->rnic_info.rqt_base,
+@@ -969,7 +980,7 @@ int cxio_rdev_open(struct cxio_rdev *rdev_p)
+ 	err = cxio_hal_init_ctrl_qp(rdev_p);
+ 	if (err) {
+ 		printk(KERN_ERR "%s error %d initializing ctrl_qp.\n",
+-		       __FUNCTION__, err);
++		       __func__, err);
+ 		goto err1;
+ 	}
+ 	err = cxio_hal_init_resource(rdev_p, cxio_num_stags(rdev_p), 0,
+@@ -977,19 +988,19 @@ int cxio_rdev_open(struct cxio_rdev *rdev_p)
+ 				     T3_MAX_NUM_PD);
+ 	if (err) {
+ 		printk(KERN_ERR "%s error %d initializing hal resources.\n",
+-		       __FUNCTION__, err);
++		       __func__, err);
+ 		goto err2;
+ 	}
+ 	err = cxio_hal_pblpool_create(rdev_p);
+ 	if (err) {
+ 		printk(KERN_ERR "%s error %d initializing pbl mem pool.\n",
+-		       __FUNCTION__, err);
++		       __func__, err);
+ 		goto err3;
+ 	}
+ 	err = cxio_hal_rqtpool_create(rdev_p);
+ 	if (err) {
+ 		printk(KERN_ERR "%s error %d initializing rqt mem pool.\n",
+-		       __FUNCTION__, err);
++		       __func__, err);
+ 		goto err4;
+ 	}
+ 	return 0;
+@@ -1051,7 +1062,7 @@ static void flush_completed_wrs(struct t3_wq *wq, struct t3_cq *cq)
+ 			 * Insert this completed cqe into the swcq.
+ 			 */
+ 			PDBG("%s moving cqe into swcq sq idx %ld cq idx %ld\n",
+-			     __FUNCTION__, Q_PTR2IDX(ptr,  wq->sq_size_log2),
++			     __func__, Q_PTR2IDX(ptr,  wq->sq_size_log2),
+ 			     Q_PTR2IDX(cq->sw_wptr, cq->size_log2));
+ 			sqp->cqe.header |= htonl(V_CQE_SWCQE(1));
+ 			*(cq->sw_queue + Q_PTR2IDX(cq->sw_wptr, cq->size_log2))
+@@ -1120,7 +1131,7 @@ int cxio_poll_cq(struct t3_wq *wq, struct t3_cq *cq, struct t3_cqe *cqe,
+ 
+ 	PDBG("%s CQE OOO %d qpid 0x%0x genbit %d type %d status 0x%0x"
+ 	     " opcode 0x%0x len 0x%0x wrid_hi_stag 0x%x wrid_low_msn 0x%x\n",
+-	     __FUNCTION__, CQE_OOO(*hw_cqe), CQE_QPID(*hw_cqe),
++	     __func__, CQE_OOO(*hw_cqe), CQE_QPID(*hw_cqe),
+ 	     CQE_GENBIT(*hw_cqe), CQE_TYPE(*hw_cqe), CQE_STATUS(*hw_cqe),
+ 	     CQE_OPCODE(*hw_cqe), CQE_LEN(*hw_cqe), CQE_WRID_HI(*hw_cqe),
+ 	     CQE_WRID_LOW(*hw_cqe));
+@@ -1193,11 +1204,12 @@ int cxio_poll_cq(struct t3_wq *wq, struct t3_cq *cq, struct t3_cqe *cqe,
+ 		}
+ 
+ 		/* incoming SEND with no receive posted failures */
+-		if ((CQE_OPCODE(*hw_cqe) == T3_SEND) && RQ_TYPE(*hw_cqe) &&
++		if (CQE_SEND_OPCODE(*hw_cqe) && RQ_TYPE(*hw_cqe) &&
+ 		    Q_EMPTY(wq->rq_rptr, wq->rq_wptr)) {
+ 			ret = -1;
+ 			goto skip_cqe;
+ 		}
++		BUG_ON((*cqe_flushed == 0) && !SW_CQE(*hw_cqe));
+ 		goto proc_cqe;
+ 	}
+ 
+@@ -1212,6 +1224,13 @@ int cxio_poll_cq(struct t3_wq *wq, struct t3_cq *cq, struct t3_cqe *cqe,
+ 		 * then we complete this with TPT_ERR_MSN and mark the wq in
+ 		 * error.
+ 		 */
++
++		if (Q_EMPTY(wq->rq_rptr, wq->rq_wptr)) {
++			wq->error = 1;
++			ret = -1;
++			goto skip_cqe;
++		}
++
+ 		if (unlikely((CQE_WRID_MSN(*hw_cqe) != (wq->rq_rptr + 1)))) {
+ 			wq->error = 1;
+ 			hw_cqe->header |= htonl(V_CQE_STATUS(TPT_ERR_MSN));
+@@ -1235,7 +1254,7 @@ int cxio_poll_cq(struct t3_wq *wq, struct t3_cq *cq, struct t3_cqe *cqe,
+ 		struct t3_swsq *sqp;
+ 
+ 		PDBG("%s out of order completion going in swsq at idx %ld\n",
+-		     __FUNCTION__,
++		     __func__,
+ 		     Q_PTR2IDX(CQE_WRID_SQ_WPTR(*hw_cqe), wq->sq_size_log2));
+ 		sqp = wq->sq +
+ 		      Q_PTR2IDX(CQE_WRID_SQ_WPTR(*hw_cqe), wq->sq_size_log2);
+@@ -1254,15 +1273,19 @@ proc_cqe:
+ 	 */
+ 	if (SQ_TYPE(*hw_cqe)) {
+ 		wq->sq_rptr = CQE_WRID_SQ_WPTR(*hw_cqe);
+-		PDBG("%s completing sq idx %ld\n", __FUNCTION__,
++		PDBG("%s completing sq idx %ld\n", __func__,
+ 		     Q_PTR2IDX(wq->sq_rptr, wq->sq_size_log2));
+-		*cookie = (wq->sq +
+-			   Q_PTR2IDX(wq->sq_rptr, wq->sq_size_log2))->wr_id;
++		*cookie = wq->sq[Q_PTR2IDX(wq->sq_rptr, wq->sq_size_log2)].wr_id;
+ 		wq->sq_rptr++;
+ 	} else {
+-		PDBG("%s completing rq idx %ld\n", __FUNCTION__,
++		PDBG("%s completing rq idx %ld\n", __func__,
+ 		     Q_PTR2IDX(wq->rq_rptr, wq->rq_size_log2));
+-		*cookie = *(wq->rq + Q_PTR2IDX(wq->rq_rptr, wq->rq_size_log2));
++		*cookie = wq->rq[Q_PTR2IDX(wq->rq_rptr, wq->rq_size_log2)].wr_id;
++		if (wq->rq[Q_PTR2IDX(wq->rq_rptr, wq->rq_size_log2)].pbl_addr)
++			cxio_hal_pblpool_free(wq->rdev,
++				wq->rq[Q_PTR2IDX(wq->rq_rptr,
++				wq->rq_size_log2)].pbl_addr, T3_STAG0_PBL_SIZE);
++		BUG_ON(Q_EMPTY(wq->rq_rptr, wq->rq_wptr));
+ 		wq->rq_rptr++;
+ 	}
+ 
+@@ -1275,11 +1298,11 @@ flush_wq:
+ skip_cqe:
+ 	if (SW_CQE(*hw_cqe)) {
+ 		PDBG("%s cq %p cqid 0x%x skip sw cqe sw_rptr 0x%x\n",
+-		     __FUNCTION__, cq, cq->cqid, cq->sw_rptr);
++		     __func__, cq, cq->cqid, cq->sw_rptr);
+ 		++cq->sw_rptr;
+ 	} else {
+ 		PDBG("%s cq %p cqid 0x%x skip hw cqe rptr 0x%x\n",
+-		     __FUNCTION__, cq, cq->cqid, cq->rptr);
++		     __func__, cq, cq->cqid, cq->rptr);
+ 		++cq->rptr;
+ 
+ 		/*
+diff --git a/drivers/infiniband/hw/cxgb3/cxio_hal.h b/drivers/infiniband/hw/cxgb3/cxio_hal.h
+index 6e128f6..656fe47 100644
+--- a/drivers/infiniband/hw/cxgb3/cxio_hal.h
++++ b/drivers/infiniband/hw/cxgb3/cxio_hal.h
+@@ -45,15 +45,17 @@
+ #define T3_CTRL_QP_SIZE_LOG2  8
+ #define T3_CTRL_CQ_ID    0
+ 
+-/* TBD */
+ #define T3_MAX_NUM_RI (1<<15)
+ #define T3_MAX_NUM_QP (1<<15)
+ #define T3_MAX_NUM_CQ (1<<15)
+ #define T3_MAX_NUM_PD (1<<15)
+ #define T3_MAX_PBL_SIZE 256
+ #define T3_MAX_RQ_SIZE 1024
++#define T3_MAX_QP_DEPTH (T3_MAX_RQ_SIZE-1)
++#define T3_MAX_CQ_DEPTH 8192
+ #define T3_MAX_NUM_STAG (1<<15)
+ #define T3_MAX_MR_SIZE 0x100000000ULL
++#define T3_PAGESIZE_MASK 0xffff000  /* 4KB-128MB */
+ 
+ #define T3_STAG_UNSET 0xffffffff
+ 
+@@ -165,6 +167,7 @@ int cxio_reregister_phys_mem(struct cxio_rdev *rdev, u32 * stag, u32 pdid,
+ int cxio_dereg_mem(struct cxio_rdev *rdev, u32 stag, u32 pbl_size,
+ 		   u32 pbl_addr);
+ int cxio_allocate_window(struct cxio_rdev *rdev, u32 * stag, u32 pdid);
++int cxio_allocate_stag(struct cxio_rdev *rdev, u32 *stag, u32 pdid, u32 pbl_size, u32 pbl_addr);
+ int cxio_deallocate_window(struct cxio_rdev *rdev, u32 stag);
+ int cxio_rdma_init(struct cxio_rdev *rdev, struct t3_rdma_init_attr *attr);
+ void cxio_register_ev_cb(cxio_hal_ev_callback_func_t ev_cb);
+diff --git a/drivers/infiniband/hw/cxgb3/cxio_resource.c b/drivers/infiniband/hw/cxgb3/cxio_resource.c
+index d0526f0..bd233c0 100644
+--- a/drivers/infiniband/hw/cxgb3/cxio_resource.c
++++ b/drivers/infiniband/hw/cxgb3/cxio_resource.c
+@@ -206,13 +206,13 @@ void cxio_hal_put_stag(struct cxio_hal_resource *rscp, u32 stag)
+ u32 cxio_hal_get_qpid(struct cxio_hal_resource *rscp)
+ {
+ 	u32 qpid = cxio_hal_get_resource(rscp->qpid_fifo);
+-	PDBG("%s qpid 0x%x\n", __FUNCTION__, qpid);
++	PDBG("%s qpid 0x%x\n", __func__, qpid);
+ 	return qpid;
+ }
+ 
+ void cxio_hal_put_qpid(struct cxio_hal_resource *rscp, u32 qpid)
+ {
+-	PDBG("%s qpid 0x%x\n", __FUNCTION__, qpid);
++	PDBG("%s qpid 0x%x\n", __func__, qpid);
+ 	cxio_hal_put_resource(rscp->qpid_fifo, qpid);
+ }
+ 
+@@ -254,13 +254,13 @@ void cxio_hal_destroy_resource(struct cxio_hal_resource *rscp)
+ u32 cxio_hal_pblpool_alloc(struct cxio_rdev *rdev_p, int size)
+ {
+ 	unsigned long addr = gen_pool_alloc(rdev_p->pbl_pool, size);
+-	PDBG("%s addr 0x%x size %d\n", __FUNCTION__, (u32)addr, size);
++	PDBG("%s addr 0x%x size %d\n", __func__, (u32)addr, size);
+ 	return (u32)addr;
+ }
+ 
+ void cxio_hal_pblpool_free(struct cxio_rdev *rdev_p, u32 addr, int size)
+ {
+-	PDBG("%s addr 0x%x size %d\n", __FUNCTION__, addr, size);
++	PDBG("%s addr 0x%x size %d\n", __func__, addr, size);
+ 	gen_pool_free(rdev_p->pbl_pool, (unsigned long)addr, size);
+ }
+ 
+@@ -312,13 +312,13 @@ void cxio_hal_pblpool_destroy(struct cxio_rdev *rdev_p)
+ u32 cxio_hal_rqtpool_alloc(struct cxio_rdev *rdev_p, int size)
+ {
+ 	unsigned long addr = gen_pool_alloc(rdev_p->rqt_pool, size << 6);
+-	PDBG("%s addr 0x%x size %d\n", __FUNCTION__, (u32)addr, size << 6);
++	PDBG("%s addr 0x%x size %d\n", __func__, (u32)addr, size << 6);
+ 	return (u32)addr;
+ }
+ 
+ void cxio_hal_rqtpool_free(struct cxio_rdev *rdev_p, u32 addr, int size)
+ {
+-	PDBG("%s addr 0x%x size %d\n", __FUNCTION__, addr, size << 6);
++	PDBG("%s addr 0x%x size %d\n", __func__, addr, size << 6);
+ 	gen_pool_free(rdev_p->rqt_pool, (unsigned long)addr, size << 6);
+ }
+ 
+diff --git a/drivers/infiniband/hw/cxgb3/cxio_wr.h b/drivers/infiniband/hw/cxgb3/cxio_wr.h
+index c1f0cdd..ff9be1a 100644
+--- a/drivers/infiniband/hw/cxgb3/cxio_wr.h
++++ b/drivers/infiniband/hw/cxgb3/cxio_wr.h
+@@ -39,6 +39,9 @@
+ 
+ #define T3_MAX_SGE      4
+ #define T3_MAX_INLINE	64
++#define T3_STAG0_PBL_SIZE (2 * T3_MAX_SGE << 3)
++#define T3_STAG0_MAX_PBE_LEN (128 * 1024 * 1024)
++#define T3_STAG0_PAGE_SHIFT 15
+ 
+ #define Q_EMPTY(rptr,wptr) ((rptr)==(wptr))
+ #define Q_FULL(rptr,wptr,size_log2)  ( (((wptr)-(rptr))>>(size_log2)) && \
+@@ -72,7 +75,8 @@ enum t3_wr_opcode {
+ 	T3_WR_BIND = FW_WROPCODE_RI_BIND_MW,
+ 	T3_WR_RCV = FW_WROPCODE_RI_RECEIVE,
+ 	T3_WR_INIT = FW_WROPCODE_RI_RDMA_INIT,
+-	T3_WR_QP_MOD = FW_WROPCODE_RI_MODIFY_QP
++	T3_WR_QP_MOD = FW_WROPCODE_RI_MODIFY_QP,
++	T3_WR_FASTREG = FW_WROPCODE_RI_FASTREGISTER_MR
+ } __attribute__ ((packed));
+ 
+ enum t3_rdma_opcode {
+@@ -89,7 +93,8 @@ enum t3_rdma_opcode {
+ 	T3_FAST_REGISTER,
+ 	T3_LOCAL_INV,
+ 	T3_QP_MOD,
+-	T3_BYPASS
++	T3_BYPASS,
++	T3_RDMA_READ_REQ_WITH_INV,
+ } __attribute__ ((packed));
+ 
+ static inline enum t3_rdma_opcode wr2opcode(enum t3_wr_opcode wrop)
+@@ -103,6 +108,7 @@ static inline enum t3_rdma_opcode wr2opcode(enum t3_wr_opcode wrop)
+ 		case T3_WR_BIND: return T3_BIND_MW;
+ 		case T3_WR_INIT: return T3_RDMA_INIT;
+ 		case T3_WR_QP_MOD: return T3_QP_MOD;
++		case T3_WR_FASTREG: return T3_FAST_REGISTER;
+ 		default: break;
+ 	}
+ 	return -1;
+@@ -170,11 +176,54 @@ struct t3_send_wr {
+ 	struct t3_sge sgl[T3_MAX_SGE];	/* 4+ */
+ };
+ 
++#define T3_MAX_FASTREG_DEPTH 24
++#define T3_MAX_FASTREG_FRAG 10
++
++struct t3_fastreg_wr {
++	struct fw_riwrh wrh;	/* 0 */
++	union t3_wrid wrid;	/* 1 */
++	__be32 stag;		/* 2 */
++	__be32 len;
++	__be32 va_base_hi;	/* 3 */
++	__be32 va_base_lo_fbo;
++	__be32 page_type_perms; /* 4 */
++	__be32 reserved1;
++	__be64 pbl_addrs[0];	/* 5+ */
++};
++
++/*
++ * If a fastreg wr spans multiple wqes, then the 2nd fragment look like this.
++ */
++struct t3_pbl_frag {
++	struct fw_riwrh wrh;	/* 0 */
++	__be64 pbl_addrs[14];	/* 1..14 */
++};
++
++#define S_FR_PAGE_COUNT		24
++#define M_FR_PAGE_COUNT		0xff
++#define V_FR_PAGE_COUNT(x)	((x) << S_FR_PAGE_COUNT)
++#define G_FR_PAGE_COUNT(x)	((((x) >> S_FR_PAGE_COUNT)) & M_FR_PAGE_COUNT)
++
++#define S_FR_PAGE_SIZE		16
++#define M_FR_PAGE_SIZE		0x1f
++#define V_FR_PAGE_SIZE(x)	((x) << S_FR_PAGE_SIZE)
++#define G_FR_PAGE_SIZE(x)	((((x) >> S_FR_PAGE_SIZE)) & M_FR_PAGE_SIZE)
++
++#define S_FR_TYPE		8
++#define M_FR_TYPE		0x1
++#define V_FR_TYPE(x)		((x) << S_FR_TYPE)
++#define G_FR_TYPE(x)		((((x) >> S_FR_TYPE)) & M_FR_TYPE)
++
++#define S_FR_PERMS		0
++#define M_FR_PERMS		0xff
++#define V_FR_PERMS(x)		((x) << S_FR_PERMS)
++#define G_FR_PERMS(x)		((((x) >> S_FR_PERMS)) & M_FR_PERMS)
++
+ struct t3_local_inv_wr {
+ 	struct fw_riwrh wrh;	/* 0 */
+ 	union t3_wrid wrid;	/* 1 */
+ 	__be32 stag;		/* 2 */
+-	__be32 reserved3;
++	__be32 reserved;
+ };
+ 
+ struct t3_rdma_write_wr {
+@@ -193,7 +242,8 @@ struct t3_rdma_read_wr {
+ 	struct fw_riwrh wrh;	/* 0 */
+ 	union t3_wrid wrid;	/* 1 */
+ 	u8 rdmaop;		/* 2 */
+-	u8 reserved[3];
++	u8 local_inv;
++	u8 reserved[2];
+ 	__be32 rem_stag;
+ 	__be64 rem_to;		/* 3 */
+ 	__be32 local_stag;	/* 4 */
+@@ -201,18 +251,6 @@ struct t3_rdma_read_wr {
+ 	__be64 local_to;	/* 5 */
+ };
+ 
+-enum t3_addr_type {
+-	T3_VA_BASED_TO = 0x0,
+-	T3_ZERO_BASED_TO = 0x1
+-} __attribute__ ((packed));
+-
+-enum t3_mem_perms {
+-	T3_MEM_ACCESS_LOCAL_READ = 0x1,
+-	T3_MEM_ACCESS_LOCAL_WRITE = 0x2,
+-	T3_MEM_ACCESS_REM_READ = 0x4,
+-	T3_MEM_ACCESS_REM_WRITE = 0x8
+-} __attribute__ ((packed));
+-
+ struct t3_bind_mw_wr {
+ 	struct fw_riwrh wrh;	/* 0 */
+ 	union t3_wrid wrid;	/* 1 */
+@@ -328,7 +366,7 @@ struct t3_rdma_init_wr {
+ 	__be32 ird;
+ 	__be64 qp_dma_addr;	/* 7 */
+ 	__be32 qp_dma_size;	/* 8 */
+-	u32 irs;
++	__be32 irs;
+ };
+ 
+ struct t3_genbit {
+@@ -336,6 +374,11 @@ struct t3_genbit {
+ 	__be64 genbit;
+ };
+ 
++struct t3_wq_in_err {
++	u64 flit[13];
++	u64 err;
++};
++
+ enum rdma_init_wr_flags {
+ 	MPA_INITIATOR = (1<<0),
+ 	PRIV_QP = (1<<1),
+@@ -346,13 +389,16 @@ union t3_wr {
+ 	struct t3_rdma_write_wr write;
+ 	struct t3_rdma_read_wr read;
+ 	struct t3_receive_wr recv;
++	struct t3_fastreg_wr fastreg;
++	struct t3_pbl_frag pbl_frag;
+ 	struct t3_local_inv_wr local_inv;
+ 	struct t3_bind_mw_wr bind;
+ 	struct t3_bypass_wr bypass;
+ 	struct t3_rdma_init_wr init;
+ 	struct t3_modify_qp_wr qp_mod;
+ 	struct t3_genbit genbit;
+-	u64 flit[16];
++	struct t3_wq_in_err wq_in_err;
++	__be64 flit[16];
+ };
+ 
+ #define T3_SQ_CQE_FLIT	  13
+@@ -366,12 +412,18 @@ static inline enum t3_wr_opcode fw_riwrh_opcode(struct fw_riwrh *wqe)
+ 	return G_FW_RIWR_OP(be32_to_cpu(wqe->op_seop_flags));
+ }
+ 
++enum t3_wr_hdr_bits {
++	T3_EOP = 1,
++	T3_SOP = 2,
++	T3_SOPEOP = T3_EOP|T3_SOP,
++};
++
+ static inline void build_fw_riwrh(struct fw_riwrh *wqe, enum t3_wr_opcode op,
+ 				  enum t3_wr_flags flags, u8 genbit, u32 tid,
+-				  u8 len)
++				  u8 len, u8 sopeop)
+ {
+ 	wqe->op_seop_flags = cpu_to_be32(V_FW_RIWR_OP(op) |
+-					 V_FW_RIWR_SOPEOP(M_FW_RIWR_SOPEOP) |
++					 V_FW_RIWR_SOPEOP(sopeop) |
+ 					 V_FW_RIWR_FLAGS(flags));
+ 	wmb();
+ 	wqe->gen_tid_len = cpu_to_be32(V_FW_RIWR_GEN(genbit) |
+@@ -404,6 +456,7 @@ enum tpt_addr_type {
+ };
+ 
+ enum tpt_mem_perm {
++	TPT_MW_BIND = 0x10,
+ 	TPT_LOCAL_READ = 0x8,
+ 	TPT_LOCAL_WRITE = 0x4,
+ 	TPT_REMOTE_READ = 0x2,
+@@ -551,6 +604,12 @@ struct t3_cqe {
+ #define CQE_STATUS(x)     (G_CQE_STATUS(be32_to_cpu((x).header)))
+ #define CQE_OPCODE(x)     (G_CQE_OPCODE(be32_to_cpu((x).header)))
+ 
++#define CQE_SEND_OPCODE(x)( \
++	(G_CQE_OPCODE(be32_to_cpu((x).header)) == T3_SEND) || \
++	(G_CQE_OPCODE(be32_to_cpu((x).header)) == T3_SEND_WITH_SE) || \
++	(G_CQE_OPCODE(be32_to_cpu((x).header)) == T3_SEND_WITH_INV) || \
++	(G_CQE_OPCODE(be32_to_cpu((x).header)) == T3_SEND_WITH_SE_INV))
++
+ #define CQE_LEN(x)        (be32_to_cpu((x).len))
+ 
+ /* used for RQ completion processing */
+@@ -615,6 +674,11 @@ struct t3_swsq {
+ 	int			signaled;
+ };
+ 
++struct t3_swrq {
++	__u64			wr_id;
++	__u32			pbl_addr;
++};
++
+ /*
+  * A T3 WQ implements both the SQ and RQ.
+  */
+@@ -631,14 +695,15 @@ struct t3_wq {
+ 	u32 sq_wptr;			/* sq_wptr - sq_rptr == count of */
+ 	u32 sq_rptr;			/* pending wrs */
+ 	u32 sq_size_log2;		/* sq size */
+-	u64 *rq;			/* SW RQ (holds consumer wr_ids */
++	struct t3_swrq *rq;		/* SW RQ (holds consumer wr_ids */
+ 	u32 rq_wptr;			/* rq_wptr - rq_rptr == count of */
+ 	u32 rq_rptr;			/* pending wrs */
+-	u64 *rq_oldest_wr;		/* oldest wr on the SW RQ */
++	struct t3_swrq *rq_oldest_wr;	/* oldest wr on the SW RQ */
+ 	u32 rq_size_log2;		/* rq size */
+ 	u32 rq_addr;			/* rq adapter address */
+ 	void __iomem *doorbell;		/* kernel db */
+ 	u64 udb;			/* user db if any */
++	struct cxio_rdev *rdev;
+ };
+ 
+ struct t3_cq {
+@@ -659,7 +724,7 @@ struct t3_cq {
+ 
+ static inline void cxio_set_wq_in_error(struct t3_wq *wq)
+ {
+-	wq->queue->flit[13] = 1;
++	wq->queue->wq_in_err.err = 1;
+ }
+ 
+ static inline struct t3_cqe *cxio_next_hw_cqe(struct t3_cq *cq)
+diff --git a/drivers/infiniband/hw/cxgb3/iwch.c b/drivers/infiniband/hw/cxgb3/iwch.c
+index 98a768f..4489c89 100644
+--- a/drivers/infiniband/hw/cxgb3/iwch.c
++++ b/drivers/infiniband/hw/cxgb3/iwch.c
+@@ -65,24 +65,22 @@ static DEFINE_MUTEX(dev_mutex);
+ 
+ static void rnic_init(struct iwch_dev *rnicp)
+ {
+-	PDBG("%s iwch_dev %p\n", __FUNCTION__,  rnicp);
++	PDBG("%s iwch_dev %p\n", __func__,  rnicp);
+ 	idr_init(&rnicp->cqidr);
+ 	idr_init(&rnicp->qpidr);
+ 	idr_init(&rnicp->mmidr);
+ 	spin_lock_init(&rnicp->lock);
+ 
+-	rnicp->attr.vendor_id = 0x168;
+-	rnicp->attr.vendor_part_id = 7;
+ 	rnicp->attr.max_qps = T3_MAX_NUM_QP - 32;
+-	rnicp->attr.max_wrs = (1UL << 24) - 1;
++	rnicp->attr.max_wrs = T3_MAX_QP_DEPTH;
+ 	rnicp->attr.max_sge_per_wr = T3_MAX_SGE;
+ 	rnicp->attr.max_sge_per_rdma_write_wr = T3_MAX_SGE;
+ 	rnicp->attr.max_cqs = T3_MAX_NUM_CQ - 1;
+-	rnicp->attr.max_cqes_per_cq = (1UL << 24) - 1;
++	rnicp->attr.max_cqes_per_cq = T3_MAX_CQ_DEPTH;
+ 	rnicp->attr.max_mem_regs = cxio_num_stags(&rnicp->rdev);
+ 	rnicp->attr.max_phys_buf_entries = T3_MAX_PBL_SIZE;
+ 	rnicp->attr.max_pds = T3_MAX_NUM_PD - 1;
+-	rnicp->attr.mem_pgsizes_bitmask = 0x7FFF;	/* 4KB-128MB */
++	rnicp->attr.mem_pgsizes_bitmask = T3_PAGESIZE_MASK;
+ 	rnicp->attr.max_mr_size = T3_MAX_MR_SIZE;
+ 	rnicp->attr.can_resize_wq = 0;
+ 	rnicp->attr.max_rdma_reads_per_qp = 8;
+@@ -107,7 +105,7 @@ static void open_rnic_dev(struct t3cdev *tdev)
+ 	struct iwch_dev *rnicp;
+ 	static int vers_printed;
+ 
+-	PDBG("%s t3cdev %p\n", __FUNCTION__,  tdev);
++	PDBG("%s t3cdev %p\n", __func__,  tdev);
+ 	if (!vers_printed++)
+ 		printk(KERN_INFO MOD "Chelsio T3 RDMA Driver - version %s\n",
+ 		       DRV_VERSION);
+@@ -145,7 +143,7 @@ static void open_rnic_dev(struct t3cdev *tdev)
+ static void close_rnic_dev(struct t3cdev *tdev)
+ {
+ 	struct iwch_dev *dev, *tmp;
+-	PDBG("%s t3cdev %p\n", __FUNCTION__,  tdev);
++	PDBG("%s t3cdev %p\n", __func__,  tdev);
+ 	mutex_lock(&dev_mutex);
+ 	list_for_each_entry_safe(dev, tmp, &dev_list, entry) {
+ 		if (dev->rdev.t3cdev_p == tdev) {
+diff --git a/drivers/infiniband/hw/cxgb3/iwch.h b/drivers/infiniband/hw/cxgb3/iwch.h
+index 238c103..3773453 100644
+--- a/drivers/infiniband/hw/cxgb3/iwch.h
++++ b/drivers/infiniband/hw/cxgb3/iwch.h
+@@ -48,8 +48,6 @@ struct iwch_qp;
+ struct iwch_mr;
+ 
+ struct iwch_rnic_attributes {
+-	u32 vendor_id;
+-	u32 vendor_part_id;
+ 	u32 max_qps;
+ 	u32 max_wrs;				/* Max for any SQ/RQ */
+ 	u32 max_sge_per_wr;
+@@ -148,7 +146,7 @@ static inline int insert_handle(struct iwch_dev *rhp, struct idr *idr,
+ 				void *handle, u32 id)
+ {
+ 	int ret;
+-	u32 newid;
++	int newid;
+ 
+ 	do {
+ 		if (!idr_pre_get(idr, GFP_KERNEL)) {
+diff --git a/drivers/infiniband/hw/cxgb3/iwch_cm.c b/drivers/infiniband/hw/cxgb3/iwch_cm.c
+index 0c26837..04456c9 100644
+--- a/drivers/infiniband/hw/cxgb3/iwch_cm.c
++++ b/drivers/infiniband/hw/cxgb3/iwch_cm.c
+@@ -116,9 +116,9 @@ static void connect_reply_upcall(struct iwch_ep *ep, int status);
+ 
+ static void start_ep_timer(struct iwch_ep *ep)
+ {
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 	if (timer_pending(&ep->timer)) {
+-		PDBG("%s stopped / restarted timer ep %p\n", __FUNCTION__, ep);
++		PDBG("%s stopped / restarted timer ep %p\n", __func__, ep);
+ 		del_timer_sync(&ep->timer);
+ 	} else
+ 		get_ep(&ep->com);
+@@ -130,10 +130,10 @@ static void start_ep_timer(struct iwch_ep *ep)
+ 
+ static void stop_ep_timer(struct iwch_ep *ep)
+ {
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 	if (!timer_pending(&ep->timer)) {
+ 		printk(KERN_ERR "%s timer stopped when its not running!  ep %p state %u\n",
+-			__FUNCTION__, ep, ep->com.state);
++			__func__, ep, ep->com.state);
+ 		WARN_ON(1);
+ 		return;
+ 	}
+@@ -202,7 +202,7 @@ int iwch_resume_tid(struct iwch_ep *ep)
+ 
+ static void set_emss(struct iwch_ep *ep, u16 opt)
+ {
+-	PDBG("%s ep %p opt %u\n", __FUNCTION__, ep, opt);
++	PDBG("%s ep %p opt %u\n", __func__, ep, opt);
+ 	ep->emss = T3C_DATA(ep->com.tdev)->mtus[G_TCPOPT_MSS(opt)] - 40;
+ 	if (G_TCPOPT_TSTAMP(opt))
+ 		ep->emss -= 12;
+@@ -232,7 +232,7 @@ static void state_set(struct iwch_ep_common *epc, enum iwch_ep_state new)
+ 	unsigned long flags;
+ 
+ 	spin_lock_irqsave(&epc->lock, flags);
+-	PDBG("%s - %s -> %s\n", __FUNCTION__, states[epc->state], states[new]);
++	PDBG("%s - %s -> %s\n", __func__, states[epc->state], states[new]);
+ 	__state_set(epc, new);
+ 	spin_unlock_irqrestore(&epc->lock, flags);
+ 	return;
+@@ -248,24 +248,28 @@ static void *alloc_ep(int size, gfp_t gfp)
+ 		spin_lock_init(&epc->lock);
+ 		init_waitqueue_head(&epc->waitq);
+ 	}
+-	PDBG("%s alloc ep %p\n", __FUNCTION__, epc);
++	PDBG("%s alloc ep %p\n", __func__, epc);
+ 	return epc;
+ }
+ 
+ void __free_ep(struct kref *kref)
+ {
+-	struct iwch_ep_common *epc;
+-	epc = container_of(kref, struct iwch_ep_common, kref);
+-	PDBG("%s ep %p state %s\n", __FUNCTION__, epc, states[state_read(epc)]);
+-	kfree(epc);
++	struct iwch_ep *ep;
++	ep = container_of(container_of(kref, struct iwch_ep_common, kref),
++			  struct iwch_ep, com);
++	PDBG("%s ep %p state %s\n", __func__, ep, states[state_read(&ep->com)]);
++	if (ep->com.flags & RELEASE_RESOURCES) {
++		cxgb3_remove_tid(ep->com.tdev, (void *)ep, ep->hwtid);
++		dst_release(ep->dst);
++		l2t_release(L2DATA(ep->com.tdev), ep->l2t);
++	}
++	kfree(ep);
+ }
+ 
+ static void release_ep_resources(struct iwch_ep *ep)
+ {
+-	PDBG("%s ep %p tid %d\n", __FUNCTION__, ep, ep->hwtid);
+-	cxgb3_remove_tid(ep->com.tdev, (void *)ep, ep->hwtid);
+-	dst_release(ep->dst);
+-	l2t_release(L2DATA(ep->com.tdev), ep->l2t);
++	PDBG("%s ep %p tid %d\n", __func__, ep, ep->hwtid);
++	ep->com.flags |= RELEASE_RESOURCES;
+ 	put_ep(&ep->com);
+ }
+ 
+@@ -345,7 +349,7 @@ static struct rtable *find_route(struct t3cdev *dev, __be32 local_ip,
+ 			  }
+ 	};
+ 
+-	if (ip_route_output_flow(&rt, &fl, NULL, 0))
++	if (ip_route_output_flow(&init_net, &rt, &fl, NULL, 0))
+ 		return NULL;
+ 	return rt;
+ }
+@@ -361,7 +365,7 @@ static unsigned int find_best_mtu(const struct t3c_data *d, unsigned short mtu)
+ 
+ static void arp_failure_discard(struct t3cdev *dev, struct sk_buff *skb)
+ {
+-	PDBG("%s t3cdev %p\n", __FUNCTION__, dev);
++	PDBG("%s t3cdev %p\n", __func__, dev);
+ 	kfree_skb(skb);
+ }
+ 
+@@ -382,7 +386,7 @@ static void abort_arp_failure(struct t3cdev *dev, struct sk_buff *skb)
+ {
+ 	struct cpl_abort_req *req = cplhdr(skb);
+ 
+-	PDBG("%s t3cdev %p\n", __FUNCTION__, dev);
++	PDBG("%s t3cdev %p\n", __func__, dev);
+ 	req->cmd = CPL_ABORT_NO_RST;
+ 	cxgb3_ofld_send(dev, skb);
+ }
+@@ -392,10 +396,10 @@ static int send_halfclose(struct iwch_ep *ep, gfp_t gfp)
+ 	struct cpl_close_con_req *req;
+ 	struct sk_buff *skb;
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 	skb = get_skb(NULL, sizeof(*req), gfp);
+ 	if (!skb) {
+-		printk(KERN_ERR MOD "%s - failed to alloc skb\n", __FUNCTION__);
++		printk(KERN_ERR MOD "%s - failed to alloc skb\n", __func__);
+ 		return -ENOMEM;
+ 	}
+ 	skb->priority = CPL_PRIORITY_DATA;
+@@ -412,11 +416,11 @@ static int send_abort(struct iwch_ep *ep, struct sk_buff *skb, gfp_t gfp)
+ {
+ 	struct cpl_abort_req *req;
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 	skb = get_skb(skb, sizeof(*req), gfp);
+ 	if (!skb) {
+ 		printk(KERN_ERR MOD "%s - failed to alloc skb.\n",
+-		       __FUNCTION__);
++		       __func__);
+ 		return -ENOMEM;
+ 	}
+ 	skb->priority = CPL_PRIORITY_DATA;
+@@ -438,12 +442,12 @@ static int send_connect(struct iwch_ep *ep)
+ 	unsigned int mtu_idx;
+ 	int wscale;
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 
+ 	skb = get_skb(NULL, sizeof(*req), GFP_KERNEL);
+ 	if (!skb) {
+ 		printk(KERN_ERR MOD "%s - failed to alloc skb.\n",
+-		       __FUNCTION__);
++		       __func__);
+ 		return -ENOMEM;
+ 	}
+ 	mtu_idx = find_best_mtu(T3C_DATA(ep->com.tdev), dst_mtu(ep->dst));
+@@ -482,7 +486,7 @@ static void send_mpa_req(struct iwch_ep *ep, struct sk_buff *skb)
+ 	struct mpa_message *mpa;
+ 	int len;
+ 
+-	PDBG("%s ep %p pd_len %d\n", __FUNCTION__, ep, ep->plen);
++	PDBG("%s ep %p pd_len %d\n", __func__, ep, ep->plen);
+ 
+ 	BUG_ON(skb_cloned(skb));
+ 
+@@ -542,13 +546,13 @@ static int send_mpa_reject(struct iwch_ep *ep, const void *pdata, u8 plen)
+ 	struct mpa_message *mpa;
+ 	struct sk_buff *skb;
+ 
+-	PDBG("%s ep %p plen %d\n", __FUNCTION__, ep, plen);
++	PDBG("%s ep %p plen %d\n", __func__, ep, plen);
+ 
+ 	mpalen = sizeof(*mpa) + plen;
+ 
+ 	skb = get_skb(NULL, mpalen + sizeof(*req), GFP_KERNEL);
+ 	if (!skb) {
+-		printk(KERN_ERR MOD "%s - cannot alloc skb!\n", __FUNCTION__);
++		printk(KERN_ERR MOD "%s - cannot alloc skb!\n", __func__);
+ 		return -ENOMEM;
+ 	}
+ 	skb_reserve(skb, sizeof(*req));
+@@ -592,13 +596,13 @@ static int send_mpa_reply(struct iwch_ep *ep, const void *pdata, u8 plen)
+ 	int len;
+ 	struct sk_buff *skb;
+ 
+-	PDBG("%s ep %p plen %d\n", __FUNCTION__, ep, plen);
++	PDBG("%s ep %p plen %d\n", __func__, ep, plen);
+ 
+ 	mpalen = sizeof(*mpa) + plen;
+ 
+ 	skb = get_skb(NULL, mpalen + sizeof(*req), GFP_KERNEL);
+ 	if (!skb) {
+-		printk(KERN_ERR MOD "%s - cannot alloc skb!\n", __FUNCTION__);
++		printk(KERN_ERR MOD "%s - cannot alloc skb!\n", __func__);
+ 		return -ENOMEM;
+ 	}
+ 	skb->priority = CPL_PRIORITY_DATA;
+@@ -642,7 +646,7 @@ static int act_establish(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 	struct cpl_act_establish *req = cplhdr(skb);
+ 	unsigned int tid = GET_TID(req);
+ 
+-	PDBG("%s ep %p tid %d\n", __FUNCTION__, ep, tid);
++	PDBG("%s ep %p tid %d\n", __func__, ep, tid);
+ 
+ 	dst_confirm(ep->dst);
+ 
+@@ -675,7 +679,7 @@ static void close_complete_upcall(struct iwch_ep *ep)
+ {
+ 	struct iw_cm_event event;
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 	memset(&event, 0, sizeof(event));
+ 	event.event = IW_CM_EVENT_CLOSE;
+ 	if (ep->com.cm_id) {
+@@ -692,7 +696,7 @@ static void peer_close_upcall(struct iwch_ep *ep)
+ {
+ 	struct iw_cm_event event;
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 	memset(&event, 0, sizeof(event));
+ 	event.event = IW_CM_EVENT_DISCONNECT;
+ 	if (ep->com.cm_id) {
+@@ -706,7 +710,7 @@ static void peer_abort_upcall(struct iwch_ep *ep)
+ {
+ 	struct iw_cm_event event;
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 	memset(&event, 0, sizeof(event));
+ 	event.event = IW_CM_EVENT_CLOSE;
+ 	event.status = -ECONNRESET;
+@@ -724,7 +728,7 @@ static void connect_reply_upcall(struct iwch_ep *ep, int status)
+ {
+ 	struct iw_cm_event event;
+ 
+-	PDBG("%s ep %p status %d\n", __FUNCTION__, ep, status);
++	PDBG("%s ep %p status %d\n", __func__, ep, status);
+ 	memset(&event, 0, sizeof(event));
+ 	event.event = IW_CM_EVENT_CONNECT_REPLY;
+ 	event.status = status;
+@@ -736,7 +740,7 @@ static void connect_reply_upcall(struct iwch_ep *ep, int status)
+ 		event.private_data = ep->mpa_pkt + sizeof(struct mpa_message);
+ 	}
+ 	if (ep->com.cm_id) {
+-		PDBG("%s ep %p tid %d status %d\n", __FUNCTION__, ep,
++		PDBG("%s ep %p tid %d status %d\n", __func__, ep,
+ 		     ep->hwtid, status);
+ 		ep->com.cm_id->event_handler(ep->com.cm_id, &event);
+ 	}
+@@ -751,7 +755,7 @@ static void connect_request_upcall(struct iwch_ep *ep)
+ {
+ 	struct iw_cm_event event;
+ 
+-	PDBG("%s ep %p tid %d\n", __FUNCTION__, ep, ep->hwtid);
++	PDBG("%s ep %p tid %d\n", __func__, ep, ep->hwtid);
+ 	memset(&event, 0, sizeof(event));
+ 	event.event = IW_CM_EVENT_CONNECT_REQUEST;
+ 	event.local_addr = ep->com.local_addr;
+@@ -771,11 +775,11 @@ static void established_upcall(struct iwch_ep *ep)
+ {
+ 	struct iw_cm_event event;
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 	memset(&event, 0, sizeof(event));
+ 	event.event = IW_CM_EVENT_ESTABLISHED;
+ 	if (ep->com.cm_id) {
+-		PDBG("%s ep %p tid %d\n", __FUNCTION__, ep, ep->hwtid);
++		PDBG("%s ep %p tid %d\n", __func__, ep, ep->hwtid);
+ 		ep->com.cm_id->event_handler(ep->com.cm_id, &event);
+ 	}
+ }
+@@ -785,7 +789,7 @@ static int update_rx_credits(struct iwch_ep *ep, u32 credits)
+ 	struct cpl_rx_data_ack *req;
+ 	struct sk_buff *skb;
+ 
+-	PDBG("%s ep %p credits %u\n", __FUNCTION__, ep, credits);
++	PDBG("%s ep %p credits %u\n", __func__, ep, credits);
+ 	skb = get_skb(NULL, sizeof(*req), GFP_KERNEL);
+ 	if (!skb) {
+ 		printk(KERN_ERR MOD "update_rx_credits - cannot alloc skb!\n");
+@@ -809,7 +813,7 @@ static void process_mpa_reply(struct iwch_ep *ep, struct sk_buff *skb)
+ 	enum iwch_qp_attr_mask mask;
+ 	int err;
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 
+ 	/*
+ 	 * Stop mpa timer.  If it expired, then the state has
+@@ -897,7 +901,7 @@ static void process_mpa_reply(struct iwch_ep *ep, struct sk_buff *skb)
+ 	ep->mpa_attr.xmit_marker_enabled = mpa->flags & MPA_MARKERS ? 1 : 0;
+ 	ep->mpa_attr.version = mpa_rev;
+ 	PDBG("%s - crc_enabled=%d, recv_marker_enabled=%d, "
+-	     "xmit_marker_enabled=%d, version=%d\n", __FUNCTION__,
++	     "xmit_marker_enabled=%d, version=%d\n", __func__,
+ 	     ep->mpa_attr.crc_enabled, ep->mpa_attr.recv_marker_enabled,
+ 	     ep->mpa_attr.xmit_marker_enabled, ep->mpa_attr.version);
+ 
+@@ -934,7 +938,7 @@ static void process_mpa_request(struct iwch_ep *ep, struct sk_buff *skb)
+ 	struct mpa_message *mpa;
+ 	u16 plen;
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 
+ 	/*
+ 	 * Stop mpa timer.  If it expired, then the state has
+@@ -954,7 +958,7 @@ static void process_mpa_request(struct iwch_ep *ep, struct sk_buff *skb)
+ 		return;
+ 	}
+ 
+-	PDBG("%s enter (%s line %u)\n", __FUNCTION__, __FILE__, __LINE__);
++	PDBG("%s enter (%s line %u)\n", __func__, __FILE__, __LINE__);
+ 
+ 	/*
+ 	 * Copy the new data into our accumulation buffer.
+@@ -969,7 +973,7 @@ static void process_mpa_request(struct iwch_ep *ep, struct sk_buff *skb)
+ 	 */
+ 	if (ep->mpa_pkt_len < sizeof(*mpa))
+ 		return;
+-	PDBG("%s enter (%s line %u)\n", __FUNCTION__, __FILE__, __LINE__);
++	PDBG("%s enter (%s line %u)\n", __func__, __FILE__, __LINE__);
+ 	mpa = (struct mpa_message *) ep->mpa_pkt;
+ 
+ 	/*
+@@ -1020,7 +1024,7 @@ static void process_mpa_request(struct iwch_ep *ep, struct sk_buff *skb)
+ 	ep->mpa_attr.xmit_marker_enabled = mpa->flags & MPA_MARKERS ? 1 : 0;
+ 	ep->mpa_attr.version = mpa_rev;
+ 	PDBG("%s - crc_enabled=%d, recv_marker_enabled=%d, "
+-	     "xmit_marker_enabled=%d, version=%d\n", __FUNCTION__,
++	     "xmit_marker_enabled=%d, version=%d\n", __func__,
+ 	     ep->mpa_attr.crc_enabled, ep->mpa_attr.recv_marker_enabled,
+ 	     ep->mpa_attr.xmit_marker_enabled, ep->mpa_attr.version);
+ 
+@@ -1037,7 +1041,7 @@ static int rx_data(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 	struct cpl_rx_data *hdr = cplhdr(skb);
+ 	unsigned int dlen = ntohs(hdr->len);
+ 
+-	PDBG("%s ep %p dlen %u\n", __FUNCTION__, ep, dlen);
++	PDBG("%s ep %p dlen %u\n", __func__, ep, dlen);
+ 
+ 	skb_pull(skb, sizeof(*hdr));
+ 	skb_trim(skb, dlen);
+@@ -1057,7 +1061,7 @@ static int rx_data(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 	default:
+ 		printk(KERN_ERR MOD "%s Unexpected streaming data."
+ 		       " ep %p state %d tid %d\n",
+-		       __FUNCTION__, ep, state_read(&ep->com), ep->hwtid);
++		       __func__, ep, state_read(&ep->com), ep->hwtid);
+ 
+ 		/*
+ 		 * The ep will timeout and inform the ULP of the failure.
+@@ -1083,11 +1087,11 @@ static int tx_ack(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 	struct cpl_wr_ack *hdr = cplhdr(skb);
+ 	unsigned int credits = ntohs(hdr->credits);
+ 
+-	PDBG("%s ep %p credits %u\n", __FUNCTION__, ep, credits);
++	PDBG("%s ep %p credits %u\n", __func__, ep, credits);
+ 
+ 	if (credits == 0) {
+ 		PDBG(KERN_ERR "%s 0 credit ack  ep %p state %u\n",
+-			__FUNCTION__, ep, state_read(&ep->com));
++			__func__, ep, state_read(&ep->com));
+ 		return CPL_RET_BUF_DONE;
+ 	}
+ 
+@@ -1095,21 +1099,21 @@ static int tx_ack(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 	dst_confirm(ep->dst);
+ 	if (!ep->mpa_skb) {
+ 		PDBG("%s rdma_init wr_ack ep %p state %u\n",
+-			__FUNCTION__, ep, state_read(&ep->com));
++			__func__, ep, state_read(&ep->com));
+ 		if (ep->mpa_attr.initiator) {
+ 			PDBG("%s initiator ep %p state %u\n",
+-				__FUNCTION__, ep, state_read(&ep->com));
++				__func__, ep, state_read(&ep->com));
+ 			if (peer2peer)
+ 				iwch_post_zb_read(ep->com.qp);
+ 		} else {
+ 			PDBG("%s responder ep %p state %u\n",
+-				__FUNCTION__, ep, state_read(&ep->com));
++				__func__, ep, state_read(&ep->com));
+ 			ep->com.rpl_done = 1;
+ 			wake_up(&ep->com.waitq);
+ 		}
+ 	} else {
+ 		PDBG("%s lsm ack ep %p state %u freeing skb\n",
+-			__FUNCTION__, ep, state_read(&ep->com));
++			__func__, ep, state_read(&ep->com));
+ 		kfree_skb(ep->mpa_skb);
+ 		ep->mpa_skb = NULL;
+ 	}
+@@ -1122,15 +1126,15 @@ static int abort_rpl(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 	unsigned long flags;
+ 	int release = 0;
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 	BUG_ON(!ep);
+ 
+ 	/*
+ 	 * We get 2 abort replies from the HW.  The first one must
+ 	 * be ignored except for scribbling that we need one more.
+ 	 */
+-	if (!(ep->flags & ABORT_REQ_IN_PROGRESS)) {
+-		ep->flags |= ABORT_REQ_IN_PROGRESS;
++	if (!(ep->com.flags & ABORT_REQ_IN_PROGRESS)) {
++		ep->com.flags |= ABORT_REQ_IN_PROGRESS;
+ 		return CPL_RET_BUF_DONE;
+ 	}
+ 
+@@ -1143,7 +1147,7 @@ static int abort_rpl(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 		break;
+ 	default:
+ 		printk(KERN_ERR "%s ep %p state %d\n",
+-		     __FUNCTION__, ep, ep->com.state);
++		     __func__, ep, ep->com.state);
+ 		break;
+ 	}
+ 	spin_unlock_irqrestore(&ep->com.lock, flags);
+@@ -1167,7 +1171,7 @@ static int act_open_rpl(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 	struct iwch_ep *ep = ctx;
+ 	struct cpl_act_open_rpl *rpl = cplhdr(skb);
+ 
+-	PDBG("%s ep %p status %u errno %d\n", __FUNCTION__, ep, rpl->status,
++	PDBG("%s ep %p status %u errno %d\n", __func__, ep, rpl->status,
+ 	     status2errno(rpl->status));
+ 	connect_reply_upcall(ep, status2errno(rpl->status));
+ 	state_set(&ep->com, DEAD);
+@@ -1185,7 +1189,7 @@ static int listen_start(struct iwch_listen_ep *ep)
+ 	struct sk_buff *skb;
+ 	struct cpl_pass_open_req *req;
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 	skb = get_skb(NULL, sizeof(*req), GFP_KERNEL);
+ 	if (!skb) {
+ 		printk(KERN_ERR MOD "t3c_listen_start failed to alloc skb!\n");
+@@ -1214,7 +1218,7 @@ static int pass_open_rpl(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 	struct iwch_listen_ep *ep = ctx;
+ 	struct cpl_pass_open_rpl *rpl = cplhdr(skb);
+ 
+-	PDBG("%s ep %p status %d error %d\n", __FUNCTION__, ep,
++	PDBG("%s ep %p status %d error %d\n", __func__, ep,
+ 	     rpl->status, status2errno(rpl->status));
+ 	ep->com.rpl_err = status2errno(rpl->status);
+ 	ep->com.rpl_done = 1;
+@@ -1228,10 +1232,10 @@ static int listen_stop(struct iwch_listen_ep *ep)
+ 	struct sk_buff *skb;
+ 	struct cpl_close_listserv_req *req;
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 	skb = get_skb(NULL, sizeof(*req), GFP_KERNEL);
+ 	if (!skb) {
+-		printk(KERN_ERR MOD "%s - failed to alloc skb\n", __FUNCTION__);
++		printk(KERN_ERR MOD "%s - failed to alloc skb\n", __func__);
+ 		return -ENOMEM;
+ 	}
+ 	req = (struct cpl_close_listserv_req *) skb_put(skb, sizeof(*req));
+@@ -1249,7 +1253,7 @@ static int close_listsrv_rpl(struct t3cdev *tdev, struct sk_buff *skb,
+ 	struct iwch_listen_ep *ep = ctx;
+ 	struct cpl_close_listserv_rpl *rpl = cplhdr(skb);
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 	ep->com.rpl_err = status2errno(rpl->status);
+ 	ep->com.rpl_done = 1;
+ 	wake_up(&ep->com.waitq);
+@@ -1263,7 +1267,7 @@ static void accept_cr(struct iwch_ep *ep, __be32 peer_ip, struct sk_buff *skb)
+ 	u32 opt0h, opt0l, opt2;
+ 	int wscale;
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 	BUG_ON(skb_cloned(skb));
+ 	skb_trim(skb, sizeof(*rpl));
+ 	skb_get(skb);
+@@ -1296,7 +1300,7 @@ static void accept_cr(struct iwch_ep *ep, __be32 peer_ip, struct sk_buff *skb)
+ static void reject_cr(struct t3cdev *tdev, u32 hwtid, __be32 peer_ip,
+ 		      struct sk_buff *skb)
+ {
+-	PDBG("%s t3cdev %p tid %u peer_ip %x\n", __FUNCTION__, tdev, hwtid,
++	PDBG("%s t3cdev %p tid %u peer_ip %x\n", __func__, tdev, hwtid,
+ 	     peer_ip);
+ 	BUG_ON(skb_cloned(skb));
+ 	skb_trim(skb, sizeof(struct cpl_tid_release));
+@@ -1331,11 +1335,11 @@ static int pass_accept_req(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 	struct rtable *rt;
+ 	struct iff_mac tim;
+ 
+-	PDBG("%s parent ep %p tid %u\n", __FUNCTION__, parent_ep, hwtid);
++	PDBG("%s parent ep %p tid %u\n", __func__, parent_ep, hwtid);
+ 
+ 	if (state_read(&parent_ep->com) != LISTEN) {
+ 		printk(KERN_ERR "%s - listening ep not in LISTEN\n",
+-		       __FUNCTION__);
++		       __func__);
+ 		goto reject;
+ 	}
+ 
+@@ -1347,7 +1351,7 @@ static int pass_accept_req(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 	if (tdev->ctl(tdev, GET_IFF_FROM_MAC, &tim) < 0 || !tim.dev) {
+ 		printk(KERN_ERR
+ 			"%s bad dst mac %02x %02x %02x %02x %02x %02x\n",
+-			__FUNCTION__,
++			__func__,
+ 			req->dst_mac[0],
+ 			req->dst_mac[1],
+ 			req->dst_mac[2],
+@@ -1365,21 +1369,21 @@ static int pass_accept_req(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 			req->peer_port, G_PASS_OPEN_TOS(ntohl(req->tos_tid)));
+ 	if (!rt) {
+ 		printk(KERN_ERR MOD "%s - failed to find dst entry!\n",
+-		       __FUNCTION__);
++		       __func__);
+ 		goto reject;
+ 	}
+ 	dst = &rt->u.dst;
+ 	l2t = t3_l2t_get(tdev, dst->neighbour, dst->neighbour->dev);
+ 	if (!l2t) {
+ 		printk(KERN_ERR MOD "%s - failed to allocate l2t entry!\n",
+-		       __FUNCTION__);
++		       __func__);
+ 		dst_release(dst);
+ 		goto reject;
+ 	}
+ 	child_ep = alloc_ep(sizeof(*child_ep), GFP_KERNEL);
+ 	if (!child_ep) {
+ 		printk(KERN_ERR MOD "%s - failed to allocate ep entry!\n",
+-		       __FUNCTION__);
++		       __func__);
+ 		l2t_release(L2DATA(tdev), l2t);
+ 		dst_release(dst);
+ 		goto reject;
+@@ -1414,7 +1418,7 @@ static int pass_establish(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 	struct iwch_ep *ep = ctx;
+ 	struct cpl_pass_establish *req = cplhdr(skb);
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 	ep->snd_seq = ntohl(req->snd_isn);
+ 	ep->rcv_seq = ntohl(req->rcv_isn);
+ 
+@@ -1435,7 +1439,7 @@ static int peer_close(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 	int disconnect = 1;
+ 	int release = 0;
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 	dst_confirm(ep->dst);
+ 
+ 	spin_lock_irqsave(&ep->com.lock, flags);
+@@ -1526,7 +1530,7 @@ static int peer_abort(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 	unsigned long flags;
+ 
+ 	if (is_neg_adv_abort(req->status)) {
+-		PDBG("%s neg_adv_abort ep %p tid %d\n", __FUNCTION__, ep,
++		PDBG("%s neg_adv_abort ep %p tid %d\n", __func__, ep,
+ 		     ep->hwtid);
+ 		t3_l2t_send_event(ep->com.tdev, ep->l2t);
+ 		return CPL_RET_BUF_DONE;
+@@ -1536,13 +1540,13 @@ static int peer_abort(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 	 * We get 2 peer aborts from the HW.  The first one must
+ 	 * be ignored except for scribbling that we need one more.
+ 	 */
+-	if (!(ep->flags & PEER_ABORT_IN_PROGRESS)) {
+-		ep->flags |= PEER_ABORT_IN_PROGRESS;
++	if (!(ep->com.flags & PEER_ABORT_IN_PROGRESS)) {
++		ep->com.flags |= PEER_ABORT_IN_PROGRESS;
+ 		return CPL_RET_BUF_DONE;
+ 	}
+ 
+ 	spin_lock_irqsave(&ep->com.lock, flags);
+-	PDBG("%s ep %p state %u\n", __FUNCTION__, ep, ep->com.state);
++	PDBG("%s ep %p state %u\n", __func__, ep, ep->com.state);
+ 	switch (ep->com.state) {
+ 	case CONNECTING:
+ 		break;
+@@ -1581,14 +1585,14 @@ static int peer_abort(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 			if (ret)
+ 				printk(KERN_ERR MOD
+ 				       "%s - qp <- error failed!\n",
+-				       __FUNCTION__);
++				       __func__);
+ 		}
+ 		peer_abort_upcall(ep);
+ 		break;
+ 	case ABORTING:
+ 		break;
+ 	case DEAD:
+-		PDBG("%s PEER_ABORT IN DEAD STATE!!!!\n", __FUNCTION__);
++		PDBG("%s PEER_ABORT IN DEAD STATE!!!!\n", __func__);
+ 		spin_unlock_irqrestore(&ep->com.lock, flags);
+ 		return CPL_RET_BUF_DONE;
+ 	default:
+@@ -1605,7 +1609,7 @@ static int peer_abort(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 	rpl_skb = get_skb(skb, sizeof(*rpl), GFP_KERNEL);
+ 	if (!rpl_skb) {
+ 		printk(KERN_ERR MOD "%s - cannot allocate skb!\n",
+-		       __FUNCTION__);
++		       __func__);
+ 		release = 1;
+ 		goto out;
+ 	}
+@@ -1629,7 +1633,7 @@ static int close_con_rpl(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 	unsigned long flags;
+ 	int release = 0;
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 	BUG_ON(!ep);
+ 
+ 	/* The cm_id may be null if we failed to connect */
+@@ -1680,9 +1684,12 @@ static int terminate(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ {
+ 	struct iwch_ep *ep = ctx;
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	if (state_read(&ep->com) != FPDU_MODE)
++		return CPL_RET_BUF_DONE;
++
++	PDBG("%s ep %p\n", __func__, ep);
+ 	skb_pull(skb, sizeof(struct cpl_rdma_terminate));
+-	PDBG("%s saving %d bytes of term msg\n", __FUNCTION__, skb->len);
++	PDBG("%s saving %d bytes of term msg\n", __func__, skb->len);
+ 	skb_copy_from_linear_data(skb, ep->com.qp->attr.terminate_buffer,
+ 				  skb->len);
+ 	ep->com.qp->attr.terminate_msg_len = skb->len;
+@@ -1695,13 +1702,13 @@ static int ec_status(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
+ 	struct cpl_rdma_ec_status *rep = cplhdr(skb);
+ 	struct iwch_ep *ep = ctx;
+ 
+-	PDBG("%s ep %p tid %u status %d\n", __FUNCTION__, ep, ep->hwtid,
++	PDBG("%s ep %p tid %u status %d\n", __func__, ep, ep->hwtid,
+ 	     rep->status);
+ 	if (rep->status) {
+ 		struct iwch_qp_attributes attrs;
+ 
+ 		printk(KERN_ERR MOD "%s BAD CLOSE - Aborting tid %u\n",
+-		       __FUNCTION__, ep->hwtid);
++		       __func__, ep->hwtid);
+ 		stop_ep_timer(ep);
+ 		attrs.next_state = IWCH_QP_STATE_ERROR;
+ 		iwch_modify_qp(ep->com.qp->rhp,
+@@ -1717,10 +1724,10 @@ static void ep_timeout(unsigned long arg)
+ 	struct iwch_ep *ep = (struct iwch_ep *)arg;
+ 	struct iwch_qp_attributes attrs;
+ 	unsigned long flags;
+-	int abort=1;
++	int abort = 1;
+ 
+ 	spin_lock_irqsave(&ep->com.lock, flags);
+-	PDBG("%s ep %p tid %u state %d\n", __FUNCTION__, ep, ep->hwtid,
++	PDBG("%s ep %p tid %u state %d\n", __func__, ep, ep->hwtid,
+ 	     ep->com.state);
+ 	switch (ep->com.state) {
+ 	case MPA_REQ_SENT:
+@@ -1742,9 +1749,9 @@ static void ep_timeout(unsigned long arg)
+ 		break;
+ 	default:
+ 		printk(KERN_ERR "%s unexpected state ep %p state %u\n",
+-			__FUNCTION__, ep, ep->com.state);
++			__func__, ep, ep->com.state);
+ 		WARN_ON(1);
+-		abort=0;
++		abort = 0;
+ 	}
+ 	spin_unlock_irqrestore(&ep->com.lock, flags);
+ 	if (abort)
+@@ -1756,7 +1763,7 @@ int iwch_reject_cr(struct iw_cm_id *cm_id, const void *pdata, u8 pdata_len)
+ {
+ 	int err;
+ 	struct iwch_ep *ep = to_ep(cm_id);
+-	PDBG("%s ep %p tid %u\n", __FUNCTION__, ep, ep->hwtid);
++	PDBG("%s ep %p tid %u\n", __func__, ep, ep->hwtid);
+ 
+ 	if (state_read(&ep->com) == DEAD) {
+ 		put_ep(&ep->com);
+@@ -1781,7 +1788,7 @@ int iwch_accept_cr(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
+ 	struct iwch_dev *h = to_iwch_dev(cm_id->device);
+ 	struct iwch_qp *qp = get_qhp(h, conn_param->qpn);
+ 
+-	PDBG("%s ep %p tid %u\n", __FUNCTION__, ep, ep->hwtid);
++	PDBG("%s ep %p tid %u\n", __func__, ep, ep->hwtid);
+ 	if (state_read(&ep->com) == DEAD)
+ 		return -ECONNRESET;
+ 
+@@ -1802,7 +1809,7 @@ int iwch_accept_cr(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
+ 	ep->com.rpl_err = 0;
+ 	ep->ird = conn_param->ird;
+ 	ep->ord = conn_param->ord;
+-	PDBG("%s %d ird %d ord %d\n", __FUNCTION__, __LINE__, ep->ird, ep->ord);
++	PDBG("%s %d ird %d ord %d\n", __func__, __LINE__, ep->ird, ep->ord);
+ 
+ 	get_ep(&ep->com);
+ 
+@@ -1855,7 +1862,7 @@ static int is_loopback_dst(struct iw_cm_id *cm_id)
+ {
+ 	struct net_device *dev;
+ 
+-	dev = ip_dev_find(cm_id->remote_addr.sin_addr.s_addr);
++	dev = ip_dev_find(&init_net, cm_id->remote_addr.sin_addr.s_addr);
+ 	if (!dev)
+ 		return 0;
+ 	dev_put(dev);
+@@ -1876,7 +1883,7 @@ int iwch_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
+ 
+ 	ep = alloc_ep(sizeof(*ep), GFP_KERNEL);
+ 	if (!ep) {
+-		printk(KERN_ERR MOD "%s - cannot alloc ep.\n", __FUNCTION__);
++		printk(KERN_ERR MOD "%s - cannot alloc ep.\n", __func__);
+ 		err = -ENOMEM;
+ 		goto out;
+ 	}
+@@ -1893,7 +1900,7 @@ int iwch_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
+ 	ep->com.cm_id = cm_id;
+ 	ep->com.qp = get_qhp(h, conn_param->qpn);
+ 	BUG_ON(!ep->com.qp);
+-	PDBG("%s qpn 0x%x qp %p cm_id %p\n", __FUNCTION__, conn_param->qpn,
++	PDBG("%s qpn 0x%x qp %p cm_id %p\n", __func__, conn_param->qpn,
+ 	     ep->com.qp, cm_id);
+ 
+ 	/*
+@@ -1901,7 +1908,7 @@ int iwch_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
+ 	 */
+ 	ep->atid = cxgb3_alloc_atid(h->rdev.t3cdev_p, &t3c_client, ep);
+ 	if (ep->atid == -1) {
+-		printk(KERN_ERR MOD "%s - cannot alloc atid.\n", __FUNCTION__);
++		printk(KERN_ERR MOD "%s - cannot alloc atid.\n", __func__);
+ 		err = -ENOMEM;
+ 		goto fail2;
+ 	}
+@@ -1913,7 +1920,7 @@ int iwch_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
+ 			cm_id->local_addr.sin_port,
+ 			cm_id->remote_addr.sin_port, IPTOS_LOWDELAY);
+ 	if (!rt) {
+-		printk(KERN_ERR MOD "%s - cannot find route.\n", __FUNCTION__);
++		printk(KERN_ERR MOD "%s - cannot find route.\n", __func__);
+ 		err = -EHOSTUNREACH;
+ 		goto fail3;
+ 	}
+@@ -1923,7 +1930,7 @@ int iwch_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
+ 	ep->l2t = t3_l2t_get(ep->com.tdev, ep->dst->neighbour,
+ 			     ep->dst->neighbour->dev);
+ 	if (!ep->l2t) {
+-		printk(KERN_ERR MOD "%s - cannot alloc l2e.\n", __FUNCTION__);
++		printk(KERN_ERR MOD "%s - cannot alloc l2e.\n", __func__);
+ 		err = -ENOMEM;
+ 		goto fail4;
+ 	}
+@@ -1960,11 +1967,11 @@ int iwch_create_listen(struct iw_cm_id *cm_id, int backlog)
+ 
+ 	ep = alloc_ep(sizeof(*ep), GFP_KERNEL);
+ 	if (!ep) {
+-		printk(KERN_ERR MOD "%s - cannot alloc ep.\n", __FUNCTION__);
++		printk(KERN_ERR MOD "%s - cannot alloc ep.\n", __func__);
+ 		err = -ENOMEM;
+ 		goto fail1;
+ 	}
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 	ep->com.tdev = h->rdev.t3cdev_p;
+ 	cm_id->add_ref(cm_id);
+ 	ep->com.cm_id = cm_id;
+@@ -1976,7 +1983,7 @@ int iwch_create_listen(struct iw_cm_id *cm_id, int backlog)
+ 	 */
+ 	ep->stid = cxgb3_alloc_stid(h->rdev.t3cdev_p, &t3c_client, ep);
+ 	if (ep->stid == -1) {
+-		printk(KERN_ERR MOD "%s - cannot alloc atid.\n", __FUNCTION__);
++		printk(KERN_ERR MOD "%s - cannot alloc atid.\n", __func__);
+ 		err = -ENOMEM;
+ 		goto fail2;
+ 	}
+@@ -2008,7 +2015,7 @@ int iwch_destroy_listen(struct iw_cm_id *cm_id)
+ 	int err;
+ 	struct iwch_listen_ep *ep = to_listen_ep(cm_id);
+ 
+-	PDBG("%s ep %p\n", __FUNCTION__, ep);
++	PDBG("%s ep %p\n", __func__, ep);
+ 
+ 	might_sleep();
+ 	state_set(&ep->com, DEAD);
+@@ -2031,7 +2038,7 @@ int iwch_ep_disconnect(struct iwch_ep *ep, int abrupt, gfp_t gfp)
+ 
+ 	spin_lock_irqsave(&ep->com.lock, flags);
+ 
+-	PDBG("%s ep %p state %s, abrupt %d\n", __FUNCTION__, ep,
++	PDBG("%s ep %p state %s, abrupt %d\n", __func__, ep,
+ 	     states[ep->com.state], abrupt);
+ 
+ 	switch (ep->com.state) {
+@@ -2060,12 +2067,13 @@ int iwch_ep_disconnect(struct iwch_ep *ep, int abrupt, gfp_t gfp)
+ 	case ABORTING:
+ 	case DEAD:
+ 		PDBG("%s ignoring disconnect ep %p state %u\n",
+-		     __FUNCTION__, ep, ep->com.state);
++		     __func__, ep, ep->com.state);
+ 		break;
+ 	default:
+ 		BUG();
+ 		break;
+ 	}
++
+ 	spin_unlock_irqrestore(&ep->com.lock, flags);
+ 	if (close) {
+ 		if (abrupt)
+@@ -2084,7 +2092,7 @@ int iwch_ep_redirect(void *ctx, struct dst_entry *old, struct dst_entry *new,
+ 	if (ep->dst != old)
+ 		return 0;
+ 
+-	PDBG("%s ep %p redirect to dst %p l2t %p\n", __FUNCTION__, ep, new,
++	PDBG("%s ep %p redirect to dst %p l2t %p\n", __func__, ep, new,
+ 	     l2t);
+ 	dst_hold(new);
+ 	l2t_release(L2DATA(ep->com.tdev), ep->l2t);
+diff --git a/drivers/infiniband/hw/cxgb3/iwch_cm.h b/drivers/infiniband/hw/cxgb3/iwch_cm.h
+index c0978a8..43c0aea 100644
+--- a/drivers/infiniband/hw/cxgb3/iwch_cm.h
++++ b/drivers/infiniband/hw/cxgb3/iwch_cm.h
+@@ -54,14 +54,14 @@
+ #define MPA_FLAGS_MASK		0xE0
+ 
+ #define put_ep(ep) { \
+-	PDBG("put_ep (via %s:%u) ep %p refcnt %d\n", __FUNCTION__, __LINE__,  \
++	PDBG("put_ep (via %s:%u) ep %p refcnt %d\n", __func__, __LINE__,  \
+ 	     ep, atomic_read(&((ep)->kref.refcount))); \
+ 	WARN_ON(atomic_read(&((ep)->kref.refcount)) < 1); \
+ 	kref_put(&((ep)->kref), __free_ep); \
+ }
+ 
+ #define get_ep(ep) { \
+-	PDBG("get_ep (via %s:%u) ep %p, refcnt %d\n", __FUNCTION__, __LINE__, \
++	PDBG("get_ep (via %s:%u) ep %p, refcnt %d\n", __func__, __LINE__, \
+ 	     ep, atomic_read(&((ep)->kref.refcount))); \
+ 	kref_get(&((ep)->kref));  \
+ }
+@@ -147,6 +147,7 @@ enum iwch_ep_state {
+ enum iwch_ep_flags {
+ 	PEER_ABORT_IN_PROGRESS	= (1 << 0),
+ 	ABORT_REQ_IN_PROGRESS	= (1 << 1),
++	RELEASE_RESOURCES	= (1 << 2),
+ };
+ 
+ struct iwch_ep_common {
+@@ -161,6 +162,7 @@ struct iwch_ep_common {
+ 	wait_queue_head_t waitq;
+ 	int rpl_done;
+ 	int rpl_err;
++	u32 flags;
+ };
+ 
+ struct iwch_listen_ep {
+@@ -188,7 +190,6 @@ struct iwch_ep {
+ 	u16 plen;
+ 	u32 ird;
+ 	u32 ord;
+-	u32 flags;
+ };
+ 
+ static inline struct iwch_ep *to_ep(struct iw_cm_id *cm_id)
+diff --git a/drivers/infiniband/hw/cxgb3/iwch_cq.c b/drivers/infiniband/hw/cxgb3/iwch_cq.c
+index d7624c1..cf5474a 100644
+--- a/drivers/infiniband/hw/cxgb3/iwch_cq.c
++++ b/drivers/infiniband/hw/cxgb3/iwch_cq.c
+@@ -67,7 +67,7 @@ static int iwch_poll_cq_one(struct iwch_dev *rhp, struct iwch_cq *chp,
+ 	ret = cxio_poll_cq(wq, &(chp->cq), &cqe, &cqe_flushed, &cookie,
+ 				   &credit);
+ 	if (t3a_device(chp->rhp) && credit) {
+-		PDBG("%s updating %d cq credits on id %d\n", __FUNCTION__,
++		PDBG("%s updating %d cq credits on id %d\n", __func__,
+ 		     credit, chp->cq.cqid);
+ 		cxio_hal_cq_op(&rhp->rdev, &chp->cq, CQ_CREDIT_UPDATE, credit);
+ 	}
+@@ -81,9 +81,10 @@ static int iwch_poll_cq_one(struct iwch_dev *rhp, struct iwch_cq *chp,
+ 	wc->wr_id = cookie;
+ 	wc->qp = &qhp->ibqp;
+ 	wc->vendor_err = CQE_STATUS(cqe);
++	wc->wc_flags = 0;
+ 
+ 	PDBG("%s qpid 0x%x type %d opcode %d status 0x%x wrid hi 0x%x "
+-	     "lo 0x%x cookie 0x%llx\n", __FUNCTION__,
++	     "lo 0x%x cookie 0x%llx\n", __func__,
+ 	     CQE_QPID(cqe), CQE_TYPE(cqe),
+ 	     CQE_OPCODE(cqe), CQE_STATUS(cqe), CQE_WRID_HI(cqe),
+ 	     CQE_WRID_LOW(cqe), (unsigned long long) cookie);
+@@ -94,6 +95,11 @@ static int iwch_poll_cq_one(struct iwch_dev *rhp, struct iwch_cq *chp,
+ 		else
+ 			wc->byte_len = 0;
+ 		wc->opcode = IB_WC_RECV;
++		if (CQE_OPCODE(cqe) == T3_SEND_WITH_INV ||
++		    CQE_OPCODE(cqe) == T3_SEND_WITH_SE_INV) {
++			wc->ex.invalidate_rkey = CQE_WRID_STAG(cqe);
++			wc->wc_flags |= IB_WC_WITH_INVALIDATE;
++		}
+ 	} else {
+ 		switch (CQE_OPCODE(cqe)) {
+ 		case T3_RDMA_WRITE:
+@@ -105,17 +111,20 @@ static int iwch_poll_cq_one(struct iwch_dev *rhp, struct iwch_cq *chp,
+ 			break;
+ 		case T3_SEND:
+ 		case T3_SEND_WITH_SE:
++		case T3_SEND_WITH_INV:
++		case T3_SEND_WITH_SE_INV:
+ 			wc->opcode = IB_WC_SEND;
+ 			break;
+ 		case T3_BIND_MW:
+ 			wc->opcode = IB_WC_BIND_MW;
+ 			break;
+ 
+-		/* these aren't supported yet */
+-		case T3_SEND_WITH_INV:
+-		case T3_SEND_WITH_SE_INV:
+ 		case T3_LOCAL_INV:
++			wc->opcode = IB_WC_LOCAL_INV;
++			break;
+ 		case T3_FAST_REGISTER:
++			wc->opcode = IB_WC_FAST_REG_MR;
++			break;
+ 		default:
+ 			printk(KERN_ERR MOD "Unexpected opcode %d "
+ 			       "in the CQE received for QPID=0x%0x\n",
+diff --git a/drivers/infiniband/hw/cxgb3/iwch_ev.c b/drivers/infiniband/hw/cxgb3/iwch_ev.c
+index b406766..743c5d8 100644
+--- a/drivers/infiniband/hw/cxgb3/iwch_ev.c
++++ b/drivers/infiniband/hw/cxgb3/iwch_ev.c
+@@ -52,7 +52,7 @@ static void post_qp_event(struct iwch_dev *rnicp, struct iwch_cq *chp,
+ 
+ 	if (!qhp) {
+ 		printk(KERN_ERR "%s unaffiliated error 0x%x qpid 0x%x\n",
+-		       __FUNCTION__, CQE_STATUS(rsp_msg->cqe),
++		       __func__, CQE_STATUS(rsp_msg->cqe),
+ 		       CQE_QPID(rsp_msg->cqe));
+ 		spin_unlock(&rnicp->lock);
+ 		return;
+@@ -61,14 +61,14 @@ static void post_qp_event(struct iwch_dev *rnicp, struct iwch_cq *chp,
+ 	if ((qhp->attr.state == IWCH_QP_STATE_ERROR) ||
+ 	    (qhp->attr.state == IWCH_QP_STATE_TERMINATE)) {
+ 		PDBG("%s AE received after RTS - "
+-		     "qp state %d qpid 0x%x status 0x%x\n", __FUNCTION__,
++		     "qp state %d qpid 0x%x status 0x%x\n", __func__,
+ 		     qhp->attr.state, qhp->wq.qpid, CQE_STATUS(rsp_msg->cqe));
+ 		spin_unlock(&rnicp->lock);
+ 		return;
+ 	}
+ 
+ 	printk(KERN_ERR "%s - AE qpid 0x%x opcode %d status 0x%x "
+-	       "type %d wrid.hi 0x%x wrid.lo 0x%x \n", __FUNCTION__,
++	       "type %d wrid.hi 0x%x wrid.lo 0x%x \n", __func__,
+ 	       CQE_QPID(rsp_msg->cqe), CQE_OPCODE(rsp_msg->cqe),
+ 	       CQE_STATUS(rsp_msg->cqe), CQE_TYPE(rsp_msg->cqe),
+ 	       CQE_WRID_HI(rsp_msg->cqe), CQE_WRID_LOW(rsp_msg->cqe));
+@@ -132,10 +132,10 @@ void iwch_ev_dispatch(struct cxio_rdev *rdev_p, struct sk_buff *skb)
+ 	    (CQE_STATUS(rsp_msg->cqe) == 0)) {
+ 		if (SQ_TYPE(rsp_msg->cqe)) {
+ 			PDBG("%s QPID 0x%x ep %p disconnecting\n",
+-			     __FUNCTION__, qhp->wq.qpid, qhp->ep);
++			     __func__, qhp->wq.qpid, qhp->ep);
+ 			iwch_ep_disconnect(qhp->ep, 0, GFP_ATOMIC);
+ 		} else {
+-			PDBG("%s post REQ_ERR AE QPID 0x%x\n", __FUNCTION__,
++			PDBG("%s post REQ_ERR AE QPID 0x%x\n", __func__,
+ 			     qhp->wq.qpid);
+ 			post_qp_event(rnicp, chp, rsp_msg,
+ 				      IB_EVENT_QP_REQ_ERR, 0);
+@@ -179,11 +179,6 @@ void iwch_ev_dispatch(struct cxio_rdev *rdev_p, struct sk_buff *skb)
+ 	case TPT_ERR_BOUND:
+ 	case TPT_ERR_INVALIDATE_SHARED_MR:
+ 	case TPT_ERR_INVALIDATE_MR_WITH_MW_BOUND:
+-		printk(KERN_ERR "%s - CQE Err qpid 0x%x opcode %d status 0x%x "
+-		       "type %d wrid.hi 0x%x wrid.lo 0x%x \n", __FUNCTION__,
+-		       CQE_QPID(rsp_msg->cqe), CQE_OPCODE(rsp_msg->cqe),
+-		       CQE_STATUS(rsp_msg->cqe), CQE_TYPE(rsp_msg->cqe),
+-		       CQE_WRID_HI(rsp_msg->cqe), CQE_WRID_LOW(rsp_msg->cqe));
+ 		(*chp->ibcq.comp_handler)(&chp->ibcq, chp->ibcq.cq_context);
+ 		post_qp_event(rnicp, chp, rsp_msg, IB_EVENT_QP_ACCESS_ERR, 1);
+ 		break;
+diff --git a/drivers/infiniband/hw/cxgb3/iwch_mem.c b/drivers/infiniband/hw/cxgb3/iwch_mem.c
+index 2fd8939..ec49a5c 100644
+--- a/drivers/infiniband/hw/cxgb3/iwch_mem.c
++++ b/drivers/infiniband/hw/cxgb3/iwch_mem.c
+@@ -48,7 +48,7 @@ static void iwch_finish_mem_reg(struct iwch_mr *mhp, u32 stag)
+ 	mmid = stag >> 8;
+ 	mhp->ibmr.rkey = mhp->ibmr.lkey = stag;
+ 	insert_handle(mhp->rhp, &mhp->rhp->mmidr, mhp, mmid);
+-	PDBG("%s mmid 0x%x mhp %p\n", __FUNCTION__, mmid, mhp);
++	PDBG("%s mmid 0x%x mhp %p\n", __func__, mmid, mhp);
+ }
+ 
+ int iwch_register_mem(struct iwch_dev *rhp, struct iwch_pd *php,
+@@ -186,7 +186,7 @@ int build_phys_page_list(struct ib_phys_buf *buffer_list,
+ 			    ((u64) j << *shift));
+ 
+ 	PDBG("%s va 0x%llx mask 0x%llx shift %d len %lld pbl_size %d\n",
+-	     __FUNCTION__, (unsigned long long) *iova_start,
++	     __func__, (unsigned long long) *iova_start,
+ 	     (unsigned long long) mask, *shift, (unsigned long long) *total_size,
+ 	     *npages);
+ 
+diff --git a/drivers/infiniband/hw/cxgb3/iwch_provider.c b/drivers/infiniband/hw/cxgb3/iwch_provider.c
+index 974473b..146f903 100644
+--- a/drivers/infiniband/hw/cxgb3/iwch_provider.c
++++ b/drivers/infiniband/hw/cxgb3/iwch_provider.c
+@@ -56,6 +56,7 @@
+ #include "iwch_provider.h"
+ #include "iwch_cm.h"
+ #include "iwch_user.h"
++#include "common.h"
+ 
+ static int iwch_modify_port(struct ib_device *ibdev,
+ 			    u8 port, int port_modify_mask,
+@@ -101,7 +102,7 @@ static int iwch_dealloc_ucontext(struct ib_ucontext *context)
+ 	struct iwch_ucontext *ucontext = to_iwch_ucontext(context);
+ 	struct iwch_mm_entry *mm, *tmp;
+ 
+-	PDBG("%s context %p\n", __FUNCTION__, context);
++	PDBG("%s context %p\n", __func__, context);
+ 	list_for_each_entry_safe(mm, tmp, &ucontext->mmaps, entry)
+ 		kfree(mm);
+ 	cxio_release_ucontext(&rhp->rdev, &ucontext->uctx);
+@@ -115,7 +116,7 @@ static struct ib_ucontext *iwch_alloc_ucontext(struct ib_device *ibdev,
+ 	struct iwch_ucontext *context;
+ 	struct iwch_dev *rhp = to_iwch_dev(ibdev);
+ 
+-	PDBG("%s ibdev %p\n", __FUNCTION__, ibdev);
++	PDBG("%s ibdev %p\n", __func__, ibdev);
+ 	context = kzalloc(sizeof(*context), GFP_KERNEL);
+ 	if (!context)
+ 		return ERR_PTR(-ENOMEM);
+@@ -129,7 +130,7 @@ static int iwch_destroy_cq(struct ib_cq *ib_cq)
+ {
+ 	struct iwch_cq *chp;
+ 
+-	PDBG("%s ib_cq %p\n", __FUNCTION__, ib_cq);
++	PDBG("%s ib_cq %p\n", __func__, ib_cq);
+ 	chp = to_iwch_cq(ib_cq);
+ 
+ 	remove_handle(chp->rhp, &chp->rhp->cqidr, chp->cq.cqid);
+@@ -151,7 +152,7 @@ static struct ib_cq *iwch_create_cq(struct ib_device *ibdev, int entries, int ve
+ 	struct iwch_create_cq_req ureq;
+ 	struct iwch_ucontext *ucontext = NULL;
+ 
+-	PDBG("%s ib_dev %p entries %d\n", __FUNCTION__, ibdev, entries);
++	PDBG("%s ib_dev %p entries %d\n", __func__, ibdev, entries);
+ 	rhp = to_iwch_dev(ibdev);
+ 	chp = kzalloc(sizeof(*chp), GFP_KERNEL);
+ 	if (!chp)
+@@ -233,7 +234,7 @@ static int iwch_resize_cq(struct ib_cq *cq, int cqe, struct ib_udata *udata)
+ 	struct t3_cq oldcq, newcq;
+ 	int ret;
+ 
+-	PDBG("%s ib_cq %p cqe %d\n", __FUNCTION__, cq, cqe);
++	PDBG("%s ib_cq %p cqe %d\n", __func__, cq, cqe);
+ 
+ 	/* We don't downsize... */
+ 	if (cqe <= cq->cqe)
+@@ -281,7 +282,7 @@ static int iwch_resize_cq(struct ib_cq *cq, int cqe, struct ib_udata *udata)
+ 	ret = cxio_destroy_cq(&chp->rhp->rdev, &oldcq);
+ 	if (ret) {
+ 		printk(KERN_ERR MOD "%s - cxio_destroy_cq failed %d\n",
+-			__FUNCTION__, ret);
++			__func__, ret);
+ 	}
+ 
+ 	/* add user hooks here */
+@@ -316,7 +317,7 @@ static int iwch_arm_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags)
+ 		chp->cq.rptr = rptr;
+ 	} else
+ 		spin_lock_irqsave(&chp->lock, flag);
+-	PDBG("%s rptr 0x%x\n", __FUNCTION__, chp->cq.rptr);
++	PDBG("%s rptr 0x%x\n", __func__, chp->cq.rptr);
+ 	err = cxio_hal_cq_op(&rhp->rdev, &chp->cq, cq_op, 0);
+ 	spin_unlock_irqrestore(&chp->lock, flag);
+ 	if (err < 0)
+@@ -337,7 +338,7 @@ static int iwch_mmap(struct ib_ucontext *context, struct vm_area_struct *vma)
+ 	struct iwch_ucontext *ucontext;
+ 	u64 addr;
+ 
+-	PDBG("%s pgoff 0x%lx key 0x%x len %d\n", __FUNCTION__, vma->vm_pgoff,
++	PDBG("%s pgoff 0x%lx key 0x%x len %d\n", __func__, vma->vm_pgoff,
+ 	     key, len);
+ 
+ 	if (vma->vm_start & (PAGE_SIZE-1)) {
+@@ -390,7 +391,7 @@ static int iwch_deallocate_pd(struct ib_pd *pd)
+ 
+ 	php = to_iwch_pd(pd);
+ 	rhp = php->rhp;
+-	PDBG("%s ibpd %p pdid 0x%x\n", __FUNCTION__, pd, php->pdid);
++	PDBG("%s ibpd %p pdid 0x%x\n", __func__, pd, php->pdid);
+ 	cxio_hal_put_pdid(rhp->rdev.rscp, php->pdid);
+ 	kfree(php);
+ 	return 0;
+@@ -404,7 +405,7 @@ static struct ib_pd *iwch_allocate_pd(struct ib_device *ibdev,
+ 	u32 pdid;
+ 	struct iwch_dev *rhp;
+ 
+-	PDBG("%s ibdev %p\n", __FUNCTION__, ibdev);
++	PDBG("%s ibdev %p\n", __func__, ibdev);
+ 	rhp = (struct iwch_dev *) ibdev;
+ 	pdid = cxio_hal_get_pdid(rhp->rdev.rscp);
+ 	if (!pdid)
+@@ -422,7 +423,7 @@ static struct ib_pd *iwch_allocate_pd(struct ib_device *ibdev,
+ 			return ERR_PTR(-EFAULT);
+ 		}
+ 	}
+-	PDBG("%s pdid 0x%0x ptr 0x%p\n", __FUNCTION__, pdid, php);
++	PDBG("%s pdid 0x%0x ptr 0x%p\n", __func__, pdid, php);
+ 	return &php->ibpd;
+ }
+ 
+@@ -432,7 +433,7 @@ static int iwch_dereg_mr(struct ib_mr *ib_mr)
+ 	struct iwch_mr *mhp;
+ 	u32 mmid;
+ 
+-	PDBG("%s ib_mr %p\n", __FUNCTION__, ib_mr);
++	PDBG("%s ib_mr %p\n", __func__, ib_mr);
+ 	/* There can be no memory windows */
+ 	if (atomic_read(&ib_mr->usecnt))
+ 		return -EINVAL;
+@@ -448,7 +449,7 @@ static int iwch_dereg_mr(struct ib_mr *ib_mr)
+ 		kfree((void *) (unsigned long) mhp->kva);
+ 	if (mhp->umem)
+ 		ib_umem_release(mhp->umem);
+-	PDBG("%s mmid 0x%x ptr %p\n", __FUNCTION__, mmid, mhp);
++	PDBG("%s mmid 0x%x ptr %p\n", __func__, mmid, mhp);
+ 	kfree(mhp);
+ 	return 0;
+ }
+@@ -468,7 +469,7 @@ static struct ib_mr *iwch_register_phys_mem(struct ib_pd *pd,
+ 	struct iwch_mr *mhp;
+ 	int ret;
+ 
+-	PDBG("%s ib_pd %p\n", __FUNCTION__, pd);
++	PDBG("%s ib_pd %p\n", __func__, pd);
+ 	php = to_iwch_pd(pd);
+ 	rhp = php->rhp;
+ 
+@@ -547,7 +548,7 @@ static int iwch_reregister_phys_mem(struct ib_mr *mr,
+ 	int npages;
+ 	int ret;
+ 
+-	PDBG("%s ib_mr %p ib_pd %p\n", __FUNCTION__, mr, pd);
++	PDBG("%s ib_mr %p ib_pd %p\n", __func__, mr, pd);
+ 
+ 	/* There can be no memory windows */
+ 	if (atomic_read(&mr->usecnt))
+@@ -610,7 +611,7 @@ static struct ib_mr *iwch_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
+ 	struct iwch_mr *mhp;
+ 	struct iwch_reg_user_mr_resp uresp;
+ 
+-	PDBG("%s ib_pd %p\n", __FUNCTION__, pd);
++	PDBG("%s ib_pd %p\n", __func__, pd);
+ 
+ 	php = to_iwch_pd(pd);
+ 	rhp = php->rhp;
+@@ -620,7 +621,7 @@ static struct ib_mr *iwch_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
+ 
+ 	mhp->rhp = rhp;
+ 
+-	mhp->umem = ib_umem_get(pd->uobject->context, start, length, acc);
++	mhp->umem = ib_umem_get(pd->uobject->context, start, length, acc, 0);
+ 	if (IS_ERR(mhp->umem)) {
+ 		err = PTR_ERR(mhp->umem);
+ 		kfree(mhp);
+@@ -684,7 +685,7 @@ pbl_done:
+ 	if (udata && !t3a_device(rhp)) {
+ 		uresp.pbl_addr = (mhp->attr.pbl_addr -
+ 				 rhp->rdev.rnic_info.pbl_base) >> 3;
+-		PDBG("%s user resp pbl_addr 0x%x\n", __FUNCTION__,
++		PDBG("%s user resp pbl_addr 0x%x\n", __func__,
+ 		     uresp.pbl_addr);
+ 
+ 		if (ib_copy_to_udata(udata, &uresp, sizeof (uresp))) {
+@@ -711,7 +712,7 @@ static struct ib_mr *iwch_get_dma_mr(struct ib_pd *pd, int acc)
+ 	u64 kva;
+ 	struct ib_mr *ibmr;
+ 
+-	PDBG("%s ib_pd %p\n", __FUNCTION__, pd);
++	PDBG("%s ib_pd %p\n", __func__, pd);
+ 
+ 	/*
+ 	 * T3 only supports 32 bits of size.
+@@ -747,8 +748,9 @@ static struct ib_mw *iwch_alloc_mw(struct ib_pd *pd)
+ 	mhp->attr.type = TPT_MW;
+ 	mhp->attr.stag = stag;
+ 	mmid = (stag) >> 8;
++	mhp->ibmw.rkey = stag;
+ 	insert_handle(rhp, &rhp->mmidr, mhp, mmid);
+-	PDBG("%s mmid 0x%x mhp %p stag 0x%x\n", __FUNCTION__, mmid, mhp, stag);
++	PDBG("%s mmid 0x%x mhp %p stag 0x%x\n", __func__, mmid, mhp, stag);
+ 	return &(mhp->ibmw);
+ }
+ 
+@@ -764,10 +766,72 @@ static int iwch_dealloc_mw(struct ib_mw *mw)
+ 	cxio_deallocate_window(&rhp->rdev, mhp->attr.stag);
+ 	remove_handle(rhp, &rhp->mmidr, mmid);
+ 	kfree(mhp);
+-	PDBG("%s ib_mw %p mmid 0x%x ptr %p\n", __FUNCTION__, mw, mmid, mhp);
++	PDBG("%s ib_mw %p mmid 0x%x ptr %p\n", __func__, mw, mmid, mhp);
+ 	return 0;
+ }
+ 
++static struct ib_mr *iwch_alloc_fast_reg_mr(struct ib_pd *pd, int pbl_depth)
++{
++	struct iwch_dev *rhp;
++	struct iwch_pd *php;
++	struct iwch_mr *mhp;
++	u32 mmid;
++	u32 stag = 0;
++	int ret;
++
++	php = to_iwch_pd(pd);
++	rhp = php->rhp;
++	mhp = kzalloc(sizeof(*mhp), GFP_KERNEL);
++	if (!mhp)
++		return ERR_PTR(-ENOMEM);
++
++	mhp->rhp = rhp;
++	ret = iwch_alloc_pbl(mhp, pbl_depth);
++	if (ret) {
++		kfree(mhp);
++		return ERR_PTR(ret);
++	}
++	mhp->attr.pbl_size = pbl_depth;
++	ret = cxio_allocate_stag(&rhp->rdev, &stag, php->pdid,
++				 mhp->attr.pbl_size, mhp->attr.pbl_addr);
++	if (ret) {
++		iwch_free_pbl(mhp);
++		kfree(mhp);
++		return ERR_PTR(ret);
++	}
++	mhp->attr.pdid = php->pdid;
++	mhp->attr.type = TPT_NON_SHARED_MR;
++	mhp->attr.stag = stag;
++	mhp->attr.state = 1;
++	mmid = (stag) >> 8;
++	mhp->ibmr.rkey = mhp->ibmr.lkey = stag;
++	insert_handle(rhp, &rhp->mmidr, mhp, mmid);
++	PDBG("%s mmid 0x%x mhp %p stag 0x%x\n", __func__, mmid, mhp, stag);
++	return &(mhp->ibmr);
++}
++
++static struct ib_fast_reg_page_list *iwch_alloc_fastreg_pbl(
++					struct ib_device *device,
++					int page_list_len)
++{
++	struct ib_fast_reg_page_list *page_list;
++
++	page_list = kmalloc(sizeof *page_list + page_list_len * sizeof(u64),
++			    GFP_KERNEL);
++	if (!page_list)
++		return ERR_PTR(-ENOMEM);
++
++	page_list->page_list = (u64 *)(page_list + 1);
++	page_list->max_page_list_len = page_list_len;
++
++	return page_list;
++}
++
++static void iwch_free_fastreg_pbl(struct ib_fast_reg_page_list *page_list)
++{
++	kfree(page_list);
++}
++
+ static int iwch_destroy_qp(struct ib_qp *ib_qp)
+ {
+ 	struct iwch_dev *rhp;
+@@ -792,7 +856,7 @@ static int iwch_destroy_qp(struct ib_qp *ib_qp)
+ 	cxio_destroy_qp(&rhp->rdev, &qhp->wq,
+ 			ucontext ? &ucontext->uctx : &rhp->rdev.uctx);
+ 
+-	PDBG("%s ib_qp %p qpid 0x%0x qhp %p\n", __FUNCTION__,
++	PDBG("%s ib_qp %p qpid 0x%0x qhp %p\n", __func__,
+ 	     ib_qp, qhp->wq.qpid, qhp);
+ 	kfree(qhp);
+ 	return 0;
+@@ -811,7 +875,7 @@ static struct ib_qp *iwch_create_qp(struct ib_pd *pd,
+ 	int wqsize, sqsize, rqsize;
+ 	struct iwch_ucontext *ucontext;
+ 
+-	PDBG("%s ib_pd %p\n", __FUNCTION__, pd);
++	PDBG("%s ib_pd %p\n", __func__, pd);
+ 	if (attrs->qp_type != IB_QPT_RC)
+ 		return ERR_PTR(-EINVAL);
+ 	php = to_iwch_pd(pd);
+@@ -843,7 +907,16 @@ static struct ib_qp *iwch_create_qp(struct ib_pd *pd,
+ 	 */
+ 	sqsize = roundup_pow_of_two(attrs->cap.max_send_wr);
+ 	wqsize = roundup_pow_of_two(rqsize + sqsize);
+-	PDBG("%s wqsize %d sqsize %d rqsize %d\n", __FUNCTION__,
++
++	/*
++	 * Kernel users need more wq space for fastreg WRs which can take
++	 * 2 WR fragments.
++	 */
++	ucontext = pd->uobject ? to_iwch_ucontext(pd->uobject->context) : NULL;
++	if (!ucontext && wqsize < (rqsize + (2 * sqsize)))
++		wqsize = roundup_pow_of_two(rqsize +
++				roundup_pow_of_two(attrs->cap.max_send_wr * 2));
++	PDBG("%s wqsize %d sqsize %d rqsize %d\n", __func__,
+ 	     wqsize, sqsize, rqsize);
+ 	qhp = kzalloc(sizeof(*qhp), GFP_KERNEL);
+ 	if (!qhp)
+@@ -851,7 +924,6 @@ static struct ib_qp *iwch_create_qp(struct ib_pd *pd,
+ 	qhp->wq.size_log2 = ilog2(wqsize);
+ 	qhp->wq.rq_size_log2 = ilog2(rqsize);
+ 	qhp->wq.sq_size_log2 = ilog2(sqsize);
+-	ucontext = pd->uobject ? to_iwch_ucontext(pd->uobject->context) : NULL;
+ 	if (cxio_create_qp(&rhp->rdev, !udata, &qhp->wq,
+ 			   ucontext ? &ucontext->uctx : &rhp->rdev.uctx)) {
+ 		kfree(qhp);
+@@ -935,10 +1007,10 @@ static struct ib_qp *iwch_create_qp(struct ib_pd *pd,
+ 	qhp->ibqp.qp_num = qhp->wq.qpid;
+ 	init_timer(&(qhp->timer));
+ 	PDBG("%s sq_num_entries %d, rq_num_entries %d "
+-	     "qpid 0x%0x qhp %p dma_addr 0x%llx size %d\n",
+-	     __FUNCTION__, qhp->attr.sq_num_entries, qhp->attr.rq_num_entries,
++	     "qpid 0x%0x qhp %p dma_addr 0x%llx size %d rq_addr 0x%x\n",
++	     __func__, qhp->attr.sq_num_entries, qhp->attr.rq_num_entries,
+ 	     qhp->wq.qpid, qhp, (unsigned long long) qhp->wq.dma_addr,
+-	     1 << qhp->wq.size_log2);
++	     1 << qhp->wq.size_log2, qhp->wq.rq_addr);
+ 	return &qhp->ibqp;
+ }
+ 
+@@ -950,7 +1022,7 @@ static int iwch_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
+ 	enum iwch_qp_attr_mask mask = 0;
+ 	struct iwch_qp_attributes attrs;
+ 
+-	PDBG("%s ib_qp %p\n", __FUNCTION__, ibqp);
++	PDBG("%s ib_qp %p\n", __func__, ibqp);
+ 
+ 	/* iwarp does not support the RTR state */
+ 	if ((attr_mask & IB_QP_STATE) && (attr->qp_state == IB_QPS_RTR))
+@@ -983,20 +1055,20 @@ static int iwch_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
+ 
+ void iwch_qp_add_ref(struct ib_qp *qp)
+ {
+-	PDBG("%s ib_qp %p\n", __FUNCTION__, qp);
++	PDBG("%s ib_qp %p\n", __func__, qp);
+ 	atomic_inc(&(to_iwch_qp(qp)->refcnt));
+ }
+ 
+ void iwch_qp_rem_ref(struct ib_qp *qp)
+ {
+-	PDBG("%s ib_qp %p\n", __FUNCTION__, qp);
++	PDBG("%s ib_qp %p\n", __func__, qp);
+ 	if (atomic_dec_and_test(&(to_iwch_qp(qp)->refcnt)))
+ 	        wake_up(&(to_iwch_qp(qp)->wait));
+ }
+ 
+ static struct ib_qp *iwch_get_qp(struct ib_device *dev, int qpn)
+ {
+-	PDBG("%s ib_dev %p qpn 0x%x\n", __FUNCTION__, dev, qpn);
++	PDBG("%s ib_dev %p qpn 0x%x\n", __func__, dev, qpn);
+ 	return (struct ib_qp *)get_qhp(to_iwch_dev(dev), qpn);
+ }
+ 
+@@ -1004,7 +1076,7 @@ static struct ib_qp *iwch_get_qp(struct ib_device *dev, int qpn)
+ static int iwch_query_pkey(struct ib_device *ibdev,
+ 			   u8 port, u16 index, u16 * pkey)
+ {
+-	PDBG("%s ibdev %p\n", __FUNCTION__, ibdev);
++	PDBG("%s ibdev %p\n", __func__, ibdev);
+ 	*pkey = 0;
+ 	return 0;
+ }
+@@ -1015,7 +1087,7 @@ static int iwch_query_gid(struct ib_device *ibdev, u8 port,
+ 	struct iwch_dev *dev;
+ 
+ 	PDBG("%s ibdev %p, port %d, index %d, gid %p\n",
+-	       __FUNCTION__, ibdev, port, index, gid);
++	       __func__, ibdev, port, index, gid);
+ 	dev = to_iwch_dev(ibdev);
+ 	BUG_ON(port == 0 || port > 2);
+ 	memset(&(gid->raw[0]), 0, sizeof(gid->raw));
+@@ -1023,17 +1095,41 @@ static int iwch_query_gid(struct ib_device *ibdev, u8 port,
+ 	return 0;
+ }
+ 
++static u64 fw_vers_string_to_u64(struct iwch_dev *iwch_dev)
++{
++	struct ethtool_drvinfo info;
++	struct net_device *lldev = iwch_dev->rdev.t3cdev_p->lldev;
++	char *cp, *next;
++	unsigned fw_maj, fw_min, fw_mic;
++
++	lldev->ethtool_ops->get_drvinfo(lldev, &info);
++
++	next = info.fw_version + 1;
++	cp = strsep(&next, ".");
++	sscanf(cp, "%i", &fw_maj);
++	cp = strsep(&next, ".");
++	sscanf(cp, "%i", &fw_min);
++	cp = strsep(&next, ".");
++	sscanf(cp, "%i", &fw_mic);
++
++	return (((u64)fw_maj & 0xffff) << 32) | ((fw_min & 0xffff) << 16) |
++	       (fw_mic & 0xffff);
++}
++
+ static int iwch_query_device(struct ib_device *ibdev,
+ 			     struct ib_device_attr *props)
+ {
+ 
+ 	struct iwch_dev *dev;
+-	PDBG("%s ibdev %p\n", __FUNCTION__, ibdev);
++	PDBG("%s ibdev %p\n", __func__, ibdev);
+ 
+ 	dev = to_iwch_dev(ibdev);
+ 	memset(props, 0, sizeof *props);
+ 	memcpy(&props->sys_image_guid, dev->rdev.t3cdev_p->lldev->dev_addr, 6);
++	props->hw_ver = dev->rdev.t3cdev_p->type;
++	props->fw_ver = fw_vers_string_to_u64(dev);
+ 	props->device_cap_flags = dev->device_cap_flags;
++	props->page_size_cap = dev->attr.mem_pgsizes_bitmask;
+ 	props->vendor_id = (u32)dev->rdev.rnic_info.pdev->vendor;
+ 	props->vendor_part_id = (u32)dev->rdev.rnic_info.pdev->device;
+ 	props->max_mr_size = dev->attr.max_mr_size;
+@@ -1048,6 +1144,7 @@ static int iwch_query_device(struct ib_device *ibdev,
+ 	props->max_mr = dev->attr.max_mem_regs;
+ 	props->max_pd = dev->attr.max_pds;
+ 	props->local_ca_ack_delay = 0;
++	props->max_fast_reg_page_list_len = T3_MAX_FASTREG_DEPTH;
+ 
+ 	return 0;
+ }
+@@ -1055,14 +1152,12 @@ static int iwch_query_device(struct ib_device *ibdev,
+ static int iwch_query_port(struct ib_device *ibdev,
+ 			   u8 port, struct ib_port_attr *props)
+ {
+-	PDBG("%s ibdev %p\n", __FUNCTION__, ibdev);
++	PDBG("%s ibdev %p\n", __func__, ibdev);
++
++	memset(props, 0, sizeof(struct ib_port_attr));
+ 	props->max_mtu = IB_MTU_4096;
+-	props->lid = 0;
+-	props->lmc = 0;
+-	props->sm_lid = 0;
+-	props->sm_sl = 0;
++	props->active_mtu = IB_MTU_2048;
+ 	props->state = IB_PORT_ACTIVE;
+-	props->phys_state = 0;
+ 	props->port_cap_flags =
+ 	    IB_PORT_CM_SUP |
+ 	    IB_PORT_SNMP_TUNNEL_SUP |
+@@ -1071,7 +1166,6 @@ static int iwch_query_port(struct ib_device *ibdev,
+ 	    IB_PORT_VENDOR_CLASS_SUP | IB_PORT_BOOT_MGMT_SUP;
+ 	props->gid_tbl_len = 1;
+ 	props->pkey_tbl_len = 1;
+-	props->qkey_viol_cntr = 0;
+ 	props->active_width = 2;
+ 	props->active_speed = 2;
+ 	props->max_msg_sz = -1;
+@@ -1081,47 +1175,98 @@ static int iwch_query_port(struct ib_device *ibdev,
+ 
+ static ssize_t show_rev(struct class_device *cdev, char *buf)
+ {
+-	struct iwch_dev *dev = container_of(cdev, struct iwch_dev,
+-					    ibdev.class_dev);
+-	PDBG("%s class dev 0x%p\n", __FUNCTION__, cdev);
+-	return sprintf(buf, "%d\n", dev->rdev.t3cdev_p->type);
++	struct iwch_dev *iwch_dev = container_of(cdev, struct iwch_dev,
++						 ibdev.class_dev);
++	PDBG("%s dev 0x%p\n", __func__, cdev);
++	return sprintf(buf, "%d\n", iwch_dev->rdev.t3cdev_p->type);
+ }
+ 
+ static ssize_t show_fw_ver(struct class_device *cdev, char *buf)
+ {
+-	struct iwch_dev *dev = container_of(cdev, struct iwch_dev,
+-					    ibdev.class_dev);
++	struct iwch_dev *iwch_dev = container_of(cdev, struct iwch_dev,
++						 ibdev.class_dev);
+ 	struct ethtool_drvinfo info;
+-	struct net_device *lldev = dev->rdev.t3cdev_p->lldev;
++	struct net_device *lldev = iwch_dev->rdev.t3cdev_p->lldev;
+ 
+-	PDBG("%s class dev 0x%p\n", __FUNCTION__, cdev);
+-	rtnl_lock();
++	PDBG("%s dev 0x%p\n", __func__, cdev);
+ 	lldev->ethtool_ops->get_drvinfo(lldev, &info);
+-	rtnl_unlock();
+ 	return sprintf(buf, "%s\n", info.fw_version);
+ }
+ 
+ static ssize_t show_hca(struct class_device *cdev, char *buf)
+ {
+-	struct iwch_dev *dev = container_of(cdev, struct iwch_dev,
+-					    ibdev.class_dev);
++	struct iwch_dev *iwch_dev = container_of(cdev, struct iwch_dev,
++						 ibdev.class_dev);
+ 	struct ethtool_drvinfo info;
+-	struct net_device *lldev = dev->rdev.t3cdev_p->lldev;
++	struct net_device *lldev = iwch_dev->rdev.t3cdev_p->lldev;
+ 
+-	PDBG("%s class dev 0x%p\n", __FUNCTION__, cdev);
+-	rtnl_lock();
++	PDBG("%s dev 0x%p\n", __func__, cdev);
+ 	lldev->ethtool_ops->get_drvinfo(lldev, &info);
+-	rtnl_unlock();
+ 	return sprintf(buf, "%s\n", info.driver);
+ }
+ 
+ static ssize_t show_board(struct class_device *cdev, char *buf)
+ {
+-	struct iwch_dev *dev = container_of(cdev, struct iwch_dev,
+-					    ibdev.class_dev);
+-	PDBG("%s class dev 0x%p\n", __FUNCTION__, dev);
+-	return sprintf(buf, "%x.%x\n", dev->rdev.rnic_info.pdev->vendor,
+-		                       dev->rdev.rnic_info.pdev->device);
++	struct iwch_dev *iwch_dev = container_of(cdev, struct iwch_dev,
++						 ibdev.class_dev);
++	PDBG("%s dev 0x%p\n", __func__, cdev);
++	return sprintf(buf, "%x.%x\n", iwch_dev->rdev.rnic_info.pdev->vendor,
++		       iwch_dev->rdev.rnic_info.pdev->device);
++}
++
++static int iwch_get_mib(struct ib_device *ibdev,
++			union rdma_protocol_stats *stats)
++{
++	struct iwch_dev *dev;
++	struct tp_mib_stats m;
++	int ret;
++
++	PDBG("%s ibdev %p\n", __func__, ibdev);
++	dev = to_iwch_dev(ibdev);
++	ret = dev->rdev.t3cdev_p->ctl(dev->rdev.t3cdev_p, RDMA_GET_MIB, &m);
++	if (ret)
++		return -ENOSYS;
++
++	memset(stats, 0, sizeof *stats);
++	stats->iw.ipInReceives = ((u64) m.ipInReceive_hi << 32) +
++				m.ipInReceive_lo;
++	stats->iw.ipInHdrErrors = ((u64) m.ipInHdrErrors_hi << 32) +
++				  m.ipInHdrErrors_lo;
++	stats->iw.ipInAddrErrors = ((u64) m.ipInAddrErrors_hi << 32) +
++				   m.ipInAddrErrors_lo;
++	stats->iw.ipInUnknownProtos = ((u64) m.ipInUnknownProtos_hi << 32) +
++				      m.ipInUnknownProtos_lo;
++	stats->iw.ipInDiscards = ((u64) m.ipInDiscards_hi << 32) +
++				 m.ipInDiscards_lo;
++	stats->iw.ipInDelivers = ((u64) m.ipInDelivers_hi << 32) +
++				 m.ipInDelivers_lo;
++	stats->iw.ipOutRequests = ((u64) m.ipOutRequests_hi << 32) +
++				  m.ipOutRequests_lo;
++	stats->iw.ipOutDiscards = ((u64) m.ipOutDiscards_hi << 32) +
++				  m.ipOutDiscards_lo;
++	stats->iw.ipOutNoRoutes = ((u64) m.ipOutNoRoutes_hi << 32) +
++				  m.ipOutNoRoutes_lo;
++	stats->iw.ipReasmTimeout = (u64) m.ipReasmTimeout;
++	stats->iw.ipReasmReqds = (u64) m.ipReasmReqds;
++	stats->iw.ipReasmOKs = (u64) m.ipReasmOKs;
++	stats->iw.ipReasmFails = (u64) m.ipReasmFails;
++	stats->iw.tcpActiveOpens = (u64) m.tcpActiveOpens;
++	stats->iw.tcpPassiveOpens = (u64) m.tcpPassiveOpens;
++	stats->iw.tcpAttemptFails = (u64) m.tcpAttemptFails;
++	stats->iw.tcpEstabResets = (u64) m.tcpEstabResets;
++	stats->iw.tcpOutRsts = (u64) m.tcpOutRsts;
++	stats->iw.tcpCurrEstab = (u64) m.tcpCurrEstab;
++	stats->iw.tcpInSegs = ((u64) m.tcpInSegs_hi << 32) +
++			      m.tcpInSegs_lo;
++	stats->iw.tcpOutSegs = ((u64) m.tcpOutSegs_hi << 32) +
++			       m.tcpOutSegs_lo;
++	stats->iw.tcpRetransSegs = ((u64) m.tcpRetransSeg_hi << 32) +
++				  m.tcpRetransSeg_lo;
++	stats->iw.tcpInErrs = ((u64) m.tcpInErrs_hi << 32) +
++			      m.tcpInErrs_lo;
++	stats->iw.tcpRtoMin = (u64) m.tcpRtoMin;
++	stats->iw.tcpRtoMax = (u64) m.tcpRtoMax;
++	return 0;
+ }
+ 
+ static CLASS_DEVICE_ATTR(hw_rev, S_IRUGO, show_rev, NULL);
+@@ -1133,7 +1278,7 @@ static struct class_device_attribute *iwch_class_attributes[] = {
+ 	&class_device_attr_hw_rev,
+ 	&class_device_attr_fw_ver,
+ 	&class_device_attr_hca_type,
+-	&class_device_attr_board_id
++	&class_device_attr_board_id,
+ };
+ 
+ int iwch_register_device(struct iwch_dev *dev)
+@@ -1141,14 +1286,17 @@ int iwch_register_device(struct iwch_dev *dev)
+ 	int ret;
+ 	int i;
+ 
+-	PDBG("%s iwch_dev %p\n", __FUNCTION__, dev);
++	PDBG("%s iwch_dev %p\n", __func__, dev);
+ 	strlcpy(dev->ibdev.name, "cxgb3_%d", IB_DEVICE_NAME_MAX);
+ 	memset(&dev->ibdev.node_guid, 0, sizeof(dev->ibdev.node_guid));
+ 	memcpy(&dev->ibdev.node_guid, dev->rdev.t3cdev_p->lldev->dev_addr, 6);
+ 	dev->ibdev.owner = THIS_MODULE;
+-	dev->device_cap_flags =
+-	    (IB_DEVICE_ZERO_STAG |
+-	     IB_DEVICE_SEND_W_INV | IB_DEVICE_MEM_WINDOW);
++	dev->device_cap_flags = IB_DEVICE_LOCAL_DMA_LKEY |
++				IB_DEVICE_MEM_WINDOW |
++				IB_DEVICE_MEM_MGT_EXTENSIONS;
++
++	/* cxgb3 supports STag 0. */
++	dev->ibdev.local_dma_lkey = 0;
+ 
+ 	dev->ibdev.uverbs_cmd_mask =
+ 	    (1ull << IB_USER_VERBS_CMD_GET_CONTEXT) |
+@@ -1200,15 +1348,16 @@ int iwch_register_device(struct iwch_dev *dev)
+ 	dev->ibdev.alloc_mw = iwch_alloc_mw;
+ 	dev->ibdev.bind_mw = iwch_bind_mw;
+ 	dev->ibdev.dealloc_mw = iwch_dealloc_mw;
+-
++	dev->ibdev.alloc_fast_reg_mr = iwch_alloc_fast_reg_mr;
++	dev->ibdev.alloc_fast_reg_page_list = iwch_alloc_fastreg_pbl;
++	dev->ibdev.free_fast_reg_page_list = iwch_free_fastreg_pbl;
+ 	dev->ibdev.attach_mcast = iwch_multicast_attach;
+ 	dev->ibdev.detach_mcast = iwch_multicast_detach;
+ 	dev->ibdev.process_mad = iwch_process_mad;
+-
+ 	dev->ibdev.req_notify_cq = iwch_arm_cq;
+ 	dev->ibdev.post_send = iwch_post_send;
+ 	dev->ibdev.post_recv = iwch_post_receive;
+-
++	dev->ibdev.get_protocol_stats = iwch_get_mib;
+ 
+ 	dev->ibdev.iwcm = kmalloc(sizeof(struct iw_cm_verbs), GFP_KERNEL);
+ 	if (!dev->ibdev.iwcm)
+@@ -1229,7 +1378,7 @@ int iwch_register_device(struct iwch_dev *dev)
+ 
+ 	for (i = 0; i < ARRAY_SIZE(iwch_class_attributes); ++i) {
+ 		ret = class_device_create_file(&dev->ibdev.class_dev,
+-					       iwch_class_attributes[i]);
++						iwch_class_attributes[i]);
+ 		if (ret) {
+ 			goto bail2;
+ 		}
+@@ -1245,10 +1394,10 @@ void iwch_unregister_device(struct iwch_dev *dev)
+ {
+ 	int i;
+ 
+-	PDBG("%s iwch_dev %p\n", __FUNCTION__, dev);
++	PDBG("%s iwch_dev %p\n", __func__, dev);
+ 	for (i = 0; i < ARRAY_SIZE(iwch_class_attributes); ++i)
+ 		class_device_remove_file(&dev->ibdev.class_dev,
+-					 iwch_class_attributes[i]);
++					iwch_class_attributes[i]);
+ 	ib_unregister_device(&dev->ibdev);
+ 	return;
+ }
+diff --git a/drivers/infiniband/hw/cxgb3/iwch_provider.h b/drivers/infiniband/hw/cxgb3/iwch_provider.h
+index 8d42a3b..a237d49 100644
+--- a/drivers/infiniband/hw/cxgb3/iwch_provider.h
++++ b/drivers/infiniband/hw/cxgb3/iwch_provider.h
+@@ -214,7 +214,7 @@ static inline struct iwch_mm_entry *remove_mmap(struct iwch_ucontext *ucontext,
+ 		if (mm->key == key && mm->len == len) {
+ 			list_del_init(&mm->entry);
+ 			spin_unlock(&ucontext->mmap_lock);
+-			PDBG("%s key 0x%x addr 0x%llx len %d\n", __FUNCTION__,
++			PDBG("%s key 0x%x addr 0x%llx len %d\n", __func__,
+ 			     key, (unsigned long long) mm->addr, mm->len);
+ 			return mm;
+ 		}
+@@ -227,7 +227,7 @@ static inline void insert_mmap(struct iwch_ucontext *ucontext,
+ 			       struct iwch_mm_entry *mm)
+ {
+ 	spin_lock(&ucontext->mmap_lock);
+-	PDBG("%s key 0x%x addr 0x%llx len %d\n", __FUNCTION__,
++	PDBG("%s key 0x%x addr 0x%llx len %d\n", __func__,
+ 	     mm->key, (unsigned long long) mm->addr, mm->len);
+ 	list_add_tail(&mm->entry, &ucontext->mmaps);
+ 	spin_unlock(&ucontext->mmap_lock);
+@@ -293,15 +293,14 @@ static inline u32 iwch_ib_to_tpt_access(int acc)
+ 	return (acc & IB_ACCESS_REMOTE_WRITE ? TPT_REMOTE_WRITE : 0) |
+ 	       (acc & IB_ACCESS_REMOTE_READ ? TPT_REMOTE_READ : 0) |
+ 	       (acc & IB_ACCESS_LOCAL_WRITE ? TPT_LOCAL_WRITE : 0) |
++	       (acc & IB_ACCESS_MW_BIND ? TPT_MW_BIND : 0) |
+ 	       TPT_LOCAL_READ;
+ }
+ 
+-static inline u32 iwch_ib_to_mwbind_access(int acc)
++static inline u32 iwch_ib_to_tpt_bind_access(int acc)
+ {
+-	return (acc & IB_ACCESS_REMOTE_WRITE ? T3_MEM_ACCESS_REM_WRITE : 0) |
+-	       (acc & IB_ACCESS_REMOTE_READ ? T3_MEM_ACCESS_REM_READ : 0) |
+-	       (acc & IB_ACCESS_LOCAL_WRITE ? T3_MEM_ACCESS_LOCAL_WRITE : 0) |
+-	       T3_MEM_ACCESS_LOCAL_READ;
++	return (acc & IB_ACCESS_REMOTE_WRITE ? TPT_REMOTE_WRITE : 0) |
++	       (acc & IB_ACCESS_REMOTE_READ ? TPT_REMOTE_READ : 0);
+ }
+ 
+ enum iwch_mmid_state {
+diff --git a/drivers/infiniband/hw/cxgb3/iwch_qp.c b/drivers/infiniband/hw/cxgb3/iwch_qp.c
+index 353fbb3..b9bb46e 100644
+--- a/drivers/infiniband/hw/cxgb3/iwch_qp.c
++++ b/drivers/infiniband/hw/cxgb3/iwch_qp.c
+@@ -33,10 +33,11 @@
+ #include "iwch.h"
+ #include "iwch_cm.h"
+ #include "cxio_hal.h"
++#include "cxio_resource.h"
+ 
+ #define NO_SUPPORT -1
+ 
+-static int iwch_build_rdma_send(union t3_wr *wqe, struct ib_send_wr *wr,
++static int build_rdma_send(union t3_wr *wqe, struct ib_send_wr *wr,
+ 				u8 * flit_cnt)
+ {
+ 	int i;
+@@ -44,59 +45,44 @@ static int iwch_build_rdma_send(union t3_wr *wqe, struct ib_send_wr *wr,
+ 
+ 	switch (wr->opcode) {
+ 	case IB_WR_SEND:
+-	case IB_WR_SEND_WITH_IMM:
+ 		if (wr->send_flags & IB_SEND_SOLICITED)
+ 			wqe->send.rdmaop = T3_SEND_WITH_SE;
+ 		else
+ 			wqe->send.rdmaop = T3_SEND;
+ 		wqe->send.rem_stag = 0;
+ 		break;
+-#if 0				/* Not currently supported */
+-	case TYPE_SEND_INVALIDATE:
+-	case TYPE_SEND_INVALIDATE_IMMEDIATE:
+-		wqe->send.rdmaop = T3_SEND_WITH_INV;
+-		wqe->send.rem_stag = cpu_to_be32(wr->wr.rdma.rkey);
+-		break;
+-	case TYPE_SEND_SE_INVALIDATE:
+-		wqe->send.rdmaop = T3_SEND_WITH_SE_INV;
+-		wqe->send.rem_stag = cpu_to_be32(wr->wr.rdma.rkey);
++	case IB_WR_SEND_WITH_INV:
++		if (wr->send_flags & IB_SEND_SOLICITED)
++			wqe->send.rdmaop = T3_SEND_WITH_SE_INV;
++		else
++			wqe->send.rdmaop = T3_SEND_WITH_INV;
++		wqe->send.rem_stag = cpu_to_be32(wr->ex.invalidate_rkey);
+ 		break;
+-#endif
+ 	default:
+-		break;
++		return -EINVAL;
+ 	}
+ 	if (wr->num_sge > T3_MAX_SGE)
+ 		return -EINVAL;
+ 	wqe->send.reserved[0] = 0;
+ 	wqe->send.reserved[1] = 0;
+ 	wqe->send.reserved[2] = 0;
+-	if (wr->opcode == IB_WR_SEND_WITH_IMM) {
+-		plen = 4;
+-		wqe->send.sgl[0].stag = wr->imm_data;
+-		wqe->send.sgl[0].len = __constant_cpu_to_be32(0);
+-		wqe->send.num_sgle = __constant_cpu_to_be32(0);
+-		*flit_cnt = 5;
+-	} else {
+-		plen = 0;
+-		for (i = 0; i < wr->num_sge; i++) {
+-			if ((plen + wr->sg_list[i].length) < plen) {
+-				return -EMSGSIZE;
+-			}
+-			plen += wr->sg_list[i].length;
+-			wqe->send.sgl[i].stag =
+-			    cpu_to_be32(wr->sg_list[i].lkey);
+-			wqe->send.sgl[i].len =
+-			    cpu_to_be32(wr->sg_list[i].length);
+-			wqe->send.sgl[i].to = cpu_to_be64(wr->sg_list[i].addr);
+-		}
+-		wqe->send.num_sgle = cpu_to_be32(wr->num_sge);
+-		*flit_cnt = 4 + ((wr->num_sge) << 1);
++	plen = 0;
++	for (i = 0; i < wr->num_sge; i++) {
++		if ((plen + wr->sg_list[i].length) < plen)
++			return -EMSGSIZE;
++
++		plen += wr->sg_list[i].length;
++		wqe->send.sgl[i].stag = cpu_to_be32(wr->sg_list[i].lkey);
++		wqe->send.sgl[i].len = cpu_to_be32(wr->sg_list[i].length);
++		wqe->send.sgl[i].to = cpu_to_be64(wr->sg_list[i].addr);
+ 	}
++	wqe->send.num_sgle = cpu_to_be32(wr->num_sge);
++	*flit_cnt = 4 + ((wr->num_sge) << 1);
+ 	wqe->send.plen = cpu_to_be32(plen);
+ 	return 0;
+ }
+ 
+-static int iwch_build_rdma_write(union t3_wr *wqe, struct ib_send_wr *wr,
++static int build_rdma_write(union t3_wr *wqe, struct ib_send_wr *wr,
+ 				 u8 *flit_cnt)
+ {
+ 	int i;
+@@ -112,7 +98,7 @@ static int iwch_build_rdma_write(union t3_wr *wqe, struct ib_send_wr *wr,
+ 
+ 	if (wr->opcode == IB_WR_RDMA_WRITE_WITH_IMM) {
+ 		plen = 4;
+-		wqe->write.sgl[0].stag = wr->imm_data;
++		wqe->write.sgl[0].stag = wr->ex.imm_data;
+ 		wqe->write.sgl[0].len = __constant_cpu_to_be32(0);
+ 		wqe->write.num_sgle = __constant_cpu_to_be32(0);
+ 		*flit_cnt = 6;
+@@ -137,15 +123,18 @@ static int iwch_build_rdma_write(union t3_wr *wqe, struct ib_send_wr *wr,
+ 	return 0;
+ }
+ 
+-static int iwch_build_rdma_read(union t3_wr *wqe, struct ib_send_wr *wr,
++static int build_rdma_read(union t3_wr *wqe, struct ib_send_wr *wr,
+ 				u8 *flit_cnt)
+ {
+ 	if (wr->num_sge > 1)
+ 		return -EINVAL;
+ 	wqe->read.rdmaop = T3_READ_REQ;
++	if (wr->opcode == IB_WR_RDMA_READ_WITH_INV)
++		wqe->read.local_inv = 1;
++	else
++		wqe->read.local_inv = 0;
+ 	wqe->read.reserved[0] = 0;
+ 	wqe->read.reserved[1] = 0;
+-	wqe->read.reserved[2] = 0;
+ 	wqe->read.rem_stag = cpu_to_be32(wr->wr.rdma.rkey);
+ 	wqe->read.rem_to = cpu_to_be64(wr->wr.rdma.remote_addr);
+ 	wqe->read.local_stag = cpu_to_be32(wr->sg_list[0].lkey);
+@@ -155,48 +144,96 @@ static int iwch_build_rdma_read(union t3_wr *wqe, struct ib_send_wr *wr,
+ 	return 0;
+ }
+ 
+-/*
+- * TBD: this is going to be moved to firmware. Missing pdid/qpid check for now.
+- */
++static int build_fastreg(union t3_wr *wqe, struct ib_send_wr *wr,
++				u8 *flit_cnt, int *wr_cnt, struct t3_wq *wq)
++{
++	int i;
++	__be64 *p;
++
++	if (wr->wr.fast_reg.page_list_len > T3_MAX_FASTREG_DEPTH)
++		return -EINVAL;
++	*wr_cnt = 1;
++	wqe->fastreg.stag = cpu_to_be32(wr->wr.fast_reg.rkey);
++	wqe->fastreg.len = cpu_to_be32(wr->wr.fast_reg.length);
++	wqe->fastreg.va_base_hi = cpu_to_be32(wr->wr.fast_reg.iova_start >> 32);
++	wqe->fastreg.va_base_lo_fbo =
++				cpu_to_be32(wr->wr.fast_reg.iova_start & 0xffffffff);
++	wqe->fastreg.page_type_perms = cpu_to_be32(
++		V_FR_PAGE_COUNT(wr->wr.fast_reg.page_list_len) |
++		V_FR_PAGE_SIZE(wr->wr.fast_reg.page_shift-12) |
++		V_FR_TYPE(TPT_VATO) |
++		V_FR_PERMS(iwch_ib_to_tpt_access(wr->wr.fast_reg.access_flags)));
++	p = &wqe->fastreg.pbl_addrs[0];
++	for (i = 0; i < wr->wr.fast_reg.page_list_len; i++, p++) {
++
++		/* If we need a 2nd WR, then set it up */
++		if (i == T3_MAX_FASTREG_FRAG) {
++			*wr_cnt = 2;
++			wqe = (union t3_wr *)(wq->queue +
++				Q_PTR2IDX((wq->wptr+1), wq->size_log2));
++			build_fw_riwrh((void *)wqe, T3_WR_FASTREG, 0,
++			       Q_GENBIT(wq->wptr + 1, wq->size_log2),
++			       0, 1 + wr->wr.fast_reg.page_list_len - T3_MAX_FASTREG_FRAG,
++			       T3_EOP);
++
++			p = &wqe->pbl_frag.pbl_addrs[0];
++		}
++		*p = cpu_to_be64((u64)wr->wr.fast_reg.page_list->page_list[i]);
++	}
++	*flit_cnt = 5 + wr->wr.fast_reg.page_list_len;
++	if (*flit_cnt > 15)
++		*flit_cnt = 15;
++	return 0;
++}
++
++static int build_inv_stag(union t3_wr *wqe, struct ib_send_wr *wr,
++				u8 *flit_cnt)
++{
++	wqe->local_inv.stag = cpu_to_be32(wr->ex.invalidate_rkey);
++	wqe->local_inv.reserved = 0;
++	*flit_cnt = sizeof(struct t3_local_inv_wr) >> 3;
++	return 0;
++}
++
+ static int iwch_sgl2pbl_map(struct iwch_dev *rhp, struct ib_sge *sg_list,
+ 			    u32 num_sgle, u32 * pbl_addr, u8 * page_size)
+ {
+ 	int i;
+ 	struct iwch_mr *mhp;
+-	u32 offset;
++	u64 offset;
+ 	for (i = 0; i < num_sgle; i++) {
+ 
+ 		mhp = get_mhp(rhp, (sg_list[i].lkey) >> 8);
+ 		if (!mhp) {
+-			PDBG("%s %d\n", __FUNCTION__, __LINE__);
++			PDBG("%s %d\n", __func__, __LINE__);
+ 			return -EIO;
+ 		}
+ 		if (!mhp->attr.state) {
+-			PDBG("%s %d\n", __FUNCTION__, __LINE__);
++			PDBG("%s %d\n", __func__, __LINE__);
+ 			return -EIO;
+ 		}
+ 		if (mhp->attr.zbva) {
+-			PDBG("%s %d\n", __FUNCTION__, __LINE__);
++			PDBG("%s %d\n", __func__, __LINE__);
+ 			return -EIO;
+ 		}
+ 
+ 		if (sg_list[i].addr < mhp->attr.va_fbo) {
+-			PDBG("%s %d\n", __FUNCTION__, __LINE__);
++			PDBG("%s %d\n", __func__, __LINE__);
+ 			return -EINVAL;
+ 		}
+ 		if (sg_list[i].addr + ((u64) sg_list[i].length) <
+ 		    sg_list[i].addr) {
+-			PDBG("%s %d\n", __FUNCTION__, __LINE__);
++			PDBG("%s %d\n", __func__, __LINE__);
+ 			return -EINVAL;
+ 		}
+ 		if (sg_list[i].addr + ((u64) sg_list[i].length) >
+ 		    mhp->attr.va_fbo + ((u64) mhp->attr.len)) {
+-			PDBG("%s %d\n", __FUNCTION__, __LINE__);
++			PDBG("%s %d\n", __func__, __LINE__);
+ 			return -EINVAL;
+ 		}
+ 		offset = sg_list[i].addr - mhp->attr.va_fbo;
+-		offset += ((u32) mhp->attr.va_fbo) %
+-		          (1UL << (12 + mhp->attr.page_size));
++		offset += mhp->attr.va_fbo &
++			  ((1UL << (12 + mhp->attr.page_size)) - 1);
+ 		pbl_addr[i] = ((mhp->attr.pbl_addr -
+ 			        rhp->rdev.rnic_info.pbl_base) >> 3) +
+ 			      (offset >> (12 + mhp->attr.page_size));
+@@ -205,23 +242,106 @@ static int iwch_sgl2pbl_map(struct iwch_dev *rhp, struct ib_sge *sg_list,
+ 	return 0;
+ }
+ 
+-static int iwch_build_rdma_recv(struct iwch_dev *rhp, union t3_wr *wqe,
++static int build_rdma_recv(struct iwch_qp *qhp, union t3_wr *wqe,
+ 				struct ib_recv_wr *wr)
+ {
+-	int i;
+-	if (wr->num_sge > T3_MAX_SGE)
+-		return -EINVAL;
++	int i, err = 0;
++	u32 pbl_addr[T3_MAX_SGE];
++	u8 page_size[T3_MAX_SGE];
++
++	err = iwch_sgl2pbl_map(qhp->rhp, wr->sg_list, wr->num_sge, pbl_addr,
++			       page_size);
++	if (err)
++		return err;
++	wqe->recv.pagesz[0] = page_size[0];
++	wqe->recv.pagesz[1] = page_size[1];
++	wqe->recv.pagesz[2] = page_size[2];
++	wqe->recv.pagesz[3] = page_size[3];
+ 	wqe->recv.num_sgle = cpu_to_be32(wr->num_sge);
+ 	for (i = 0; i < wr->num_sge; i++) {
+ 		wqe->recv.sgl[i].stag = cpu_to_be32(wr->sg_list[i].lkey);
+ 		wqe->recv.sgl[i].len = cpu_to_be32(wr->sg_list[i].length);
++
++		/* to in the WQE == the offset into the page */
++		wqe->recv.sgl[i].to = cpu_to_be64(((u32)wr->sg_list[i].addr) &
++				((1UL << (12 + page_size[i])) - 1));
++
++		/* pbl_addr is the adapters address in the PBL */
++		wqe->recv.pbl_addr[i] = cpu_to_be32(pbl_addr[i]);
++	}
++	for (; i < T3_MAX_SGE; i++) {
++		wqe->recv.sgl[i].stag = 0;
++		wqe->recv.sgl[i].len = 0;
++		wqe->recv.sgl[i].to = 0;
++		wqe->recv.pbl_addr[i] = 0;
++	}
++	qhp->wq.rq[Q_PTR2IDX(qhp->wq.rq_wptr,
++			     qhp->wq.rq_size_log2)].wr_id = wr->wr_id;
++	qhp->wq.rq[Q_PTR2IDX(qhp->wq.rq_wptr,
++			     qhp->wq.rq_size_log2)].pbl_addr = 0;
++	return 0;
++}
++
++static int build_zero_stag_recv(struct iwch_qp *qhp, union t3_wr *wqe,
++				struct ib_recv_wr *wr)
++{
++	int i;
++	u32 pbl_addr;
++	u32 pbl_offset;
++
++
++	/*
++	 * The T3 HW requires the PBL in the HW recv descriptor to reference
++	 * a PBL entry.  So we allocate the max needed PBL memory here and pass
++	 * it to the uP in the recv WR.  The uP will build the PBL and setup
++	 * the HW recv descriptor.
++	 */
++	pbl_addr = cxio_hal_pblpool_alloc(&qhp->rhp->rdev, T3_STAG0_PBL_SIZE);
++	if (!pbl_addr)
++		return -ENOMEM;
++
++	/*
++	 * Compute the 8B aligned offset.
++	 */
++	pbl_offset = (pbl_addr - qhp->rhp->rdev.rnic_info.pbl_base) >> 3;
++
++	wqe->recv.num_sgle = cpu_to_be32(wr->num_sge);
++
++	for (i = 0; i < wr->num_sge; i++) {
++
++		/*
++		 * Use a 128MB page size. This and an imposed 128MB
++		 * sge length limit allows us to require only a 2-entry HW
++		 * PBL for each SGE.  This restriction is acceptable since
++		 * since it is not possible to allocate 128MB of contiguous
++		 * DMA coherent memory!
++		 */
++		if (wr->sg_list[i].length > T3_STAG0_MAX_PBE_LEN)
++			return -EINVAL;
++		wqe->recv.pagesz[i] = T3_STAG0_PAGE_SHIFT;
++
++		/*
++		 * T3 restricts a recv to all zero-stag or all non-zero-stag.
++		 */
++		if (wr->sg_list[i].lkey != 0)
++			return -EINVAL;
++		wqe->recv.sgl[i].stag = 0;
++		wqe->recv.sgl[i].len = cpu_to_be32(wr->sg_list[i].length);
+ 		wqe->recv.sgl[i].to = cpu_to_be64(wr->sg_list[i].addr);
++		wqe->recv.pbl_addr[i] = cpu_to_be32(pbl_offset);
++		pbl_offset += 2;
+ 	}
+ 	for (; i < T3_MAX_SGE; i++) {
++		wqe->recv.pagesz[i] = 0;
+ 		wqe->recv.sgl[i].stag = 0;
+ 		wqe->recv.sgl[i].len = 0;
+ 		wqe->recv.sgl[i].to = 0;
++		wqe->recv.pbl_addr[i] = 0;
+ 	}
++	qhp->wq.rq[Q_PTR2IDX(qhp->wq.rq_wptr,
++			     qhp->wq.rq_size_log2)].wr_id = wr->wr_id;
++	qhp->wq.rq[Q_PTR2IDX(qhp->wq.rq_wptr,
++			     qhp->wq.rq_size_log2)].pbl_addr = pbl_addr;
+ 	return 0;
+ }
+ 
+@@ -229,7 +349,7 @@ int iwch_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
+ 		      struct ib_send_wr **bad_wr)
+ {
+ 	int err = 0;
+-	u8 t3_wr_flit_cnt;
++	u8 uninitialized_var(t3_wr_flit_cnt);
+ 	enum t3_wr_opcode t3_wr_opcode = 0;
+ 	enum t3_wr_flags t3_wr_flags;
+ 	struct iwch_qp *qhp;
+@@ -238,6 +358,7 @@ int iwch_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
+ 	u32 num_wrs;
+ 	unsigned long flag;
+ 	struct t3_swsq *sqp;
++	int wr_cnt = 1;
+ 
+ 	qhp = to_iwch_qp(ibqp);
+ 	spin_lock_irqsave(&qhp->lock, flag);
+@@ -262,35 +383,47 @@ int iwch_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
+ 		t3_wr_flags = 0;
+ 		if (wr->send_flags & IB_SEND_SOLICITED)
+ 			t3_wr_flags |= T3_SOLICITED_EVENT_FLAG;
+-		if (wr->send_flags & IB_SEND_FENCE)
+-			t3_wr_flags |= T3_READ_FENCE_FLAG;
+ 		if (wr->send_flags & IB_SEND_SIGNALED)
+ 			t3_wr_flags |= T3_COMPLETION_FLAG;
+ 		sqp = qhp->wq.sq +
+ 		      Q_PTR2IDX(qhp->wq.sq_wptr, qhp->wq.sq_size_log2);
+ 		switch (wr->opcode) {
+ 		case IB_WR_SEND:
+-		case IB_WR_SEND_WITH_IMM:
++		case IB_WR_SEND_WITH_INV:
++			if (wr->send_flags & IB_SEND_FENCE)
++				t3_wr_flags |= T3_READ_FENCE_FLAG;
+ 			t3_wr_opcode = T3_WR_SEND;
+-			err = iwch_build_rdma_send(wqe, wr, &t3_wr_flit_cnt);
++			err = build_rdma_send(wqe, wr, &t3_wr_flit_cnt);
+ 			break;
+ 		case IB_WR_RDMA_WRITE:
+ 		case IB_WR_RDMA_WRITE_WITH_IMM:
+ 			t3_wr_opcode = T3_WR_WRITE;
+-			err = iwch_build_rdma_write(wqe, wr, &t3_wr_flit_cnt);
++			err = build_rdma_write(wqe, wr, &t3_wr_flit_cnt);
+ 			break;
+ 		case IB_WR_RDMA_READ:
++		case IB_WR_RDMA_READ_WITH_INV:
+ 			t3_wr_opcode = T3_WR_READ;
+ 			t3_wr_flags = 0; /* T3 reads are always signaled */
+-			err = iwch_build_rdma_read(wqe, wr, &t3_wr_flit_cnt);
++			err = build_rdma_read(wqe, wr, &t3_wr_flit_cnt);
+ 			if (err)
+ 				break;
+ 			sqp->read_len = wqe->read.local_len;
+ 			if (!qhp->wq.oldest_read)
+ 				qhp->wq.oldest_read = sqp;
+ 			break;
++		case IB_WR_FAST_REG_MR:
++			t3_wr_opcode = T3_WR_FASTREG;
++			err = build_fastreg(wqe, wr, &t3_wr_flit_cnt,
++						 &wr_cnt, &qhp->wq);
++			break;
++		case IB_WR_LOCAL_INV:
++			if (wr->send_flags & IB_SEND_FENCE)
++				t3_wr_flags |= T3_LOCAL_FENCE_FLAG;
++			t3_wr_opcode = T3_WR_INV_STAG;
++			err = build_inv_stag(wqe, wr, &t3_wr_flit_cnt);
++			break;
+ 		default:
+-			PDBG("%s post of type=%d TBD!\n", __FUNCTION__,
++			PDBG("%s post of type=%d TBD!\n", __func__,
+ 			     wr->opcode);
+ 			err = -EINVAL;
+ 		}
+@@ -307,14 +440,15 @@ int iwch_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
+ 
+ 		build_fw_riwrh((void *) wqe, t3_wr_opcode, t3_wr_flags,
+ 			       Q_GENBIT(qhp->wq.wptr, qhp->wq.size_log2),
+-			       0, t3_wr_flit_cnt);
++			       0, t3_wr_flit_cnt,
++			       (wr_cnt == 1) ? T3_SOPEOP : T3_SOP);
+ 		PDBG("%s cookie 0x%llx wq idx 0x%x swsq idx %ld opcode %d\n",
+-		     __FUNCTION__, (unsigned long long) wr->wr_id, idx,
++		     __func__, (unsigned long long) wr->wr_id, idx,
+ 		     Q_PTR2IDX(qhp->wq.sq_wptr, qhp->wq.sq_size_log2),
+ 		     sqp->opcode);
+ 		wr = wr->next;
+ 		num_wrs--;
+-		++(qhp->wq.wptr);
++		qhp->wq.wptr += wr_cnt;
+ 		++(qhp->wq.sq_wptr);
+ 	}
+ 	spin_unlock_irqrestore(&qhp->lock, flag);
+@@ -345,23 +479,29 @@ int iwch_post_receive(struct ib_qp *ibqp, struct ib_recv_wr *wr,
+ 		return -EINVAL;
+ 	}
+ 	while (wr) {
++		if (wr->num_sge > T3_MAX_SGE) {
++			err = -EINVAL;
++			*bad_wr = wr;
++			break;
++		}
+ 		idx = Q_PTR2IDX(qhp->wq.wptr, qhp->wq.size_log2);
+ 		wqe = (union t3_wr *) (qhp->wq.queue + idx);
+ 		if (num_wrs)
+-			err = iwch_build_rdma_recv(qhp->rhp, wqe, wr);
++			if (wr->sg_list[0].lkey)
++				err = build_rdma_recv(qhp, wqe, wr);
++			else
++				err = build_zero_stag_recv(qhp, wqe, wr);
+ 		else
+ 			err = -ENOMEM;
+ 		if (err) {
+ 			*bad_wr = wr;
+ 			break;
+ 		}
+-		qhp->wq.rq[Q_PTR2IDX(qhp->wq.rq_wptr, qhp->wq.rq_size_log2)] =
+-			wr->wr_id;
+ 		build_fw_riwrh((void *) wqe, T3_WR_RCV, T3_COMPLETION_FLAG,
+ 			       Q_GENBIT(qhp->wq.wptr, qhp->wq.size_log2),
+-			       0, sizeof(struct t3_receive_wr) >> 3);
++			       0, sizeof(struct t3_receive_wr) >> 3, T3_SOPEOP);
+ 		PDBG("%s cookie 0x%llx idx 0x%x rq_wptr 0x%x rw_rptr 0x%x "
+-		     "wqe %p \n", __FUNCTION__, (unsigned long long) wr->wr_id,
++		     "wqe %p \n", __func__, (unsigned long long) wr->wr_id,
+ 		     idx, qhp->wq.rq_wptr, qhp->wq.rq_rptr, wqe);
+ 		++(qhp->wq.rq_wptr);
+ 		++(qhp->wq.wptr);
+@@ -407,7 +547,7 @@ int iwch_bind_mw(struct ib_qp *qp,
+ 		return -ENOMEM;
+ 	}
+ 	idx = Q_PTR2IDX(qhp->wq.wptr, qhp->wq.size_log2);
+-	PDBG("%s: idx 0x%0x, mw 0x%p, mw_bind 0x%p\n", __FUNCTION__, idx,
++	PDBG("%s: idx 0x%0x, mw 0x%p, mw_bind 0x%p\n", __func__, idx,
+ 	     mw, mw_bind);
+ 	wqe = (union t3_wr *) (qhp->wq.queue + idx);
+ 
+@@ -419,10 +559,10 @@ int iwch_bind_mw(struct ib_qp *qp,
+ 	sgl.lkey = mw_bind->mr->lkey;
+ 	sgl.length = mw_bind->length;
+ 	wqe->bind.reserved = 0;
+-	wqe->bind.type = T3_VA_BASED_TO;
++	wqe->bind.type = TPT_VATO;
+ 
+ 	/* TBD: check perms */
+-	wqe->bind.perms = iwch_ib_to_mwbind_access(mw_bind->mw_access_flags);
++	wqe->bind.perms = iwch_ib_to_tpt_bind_access(mw_bind->mw_access_flags);
+ 	wqe->bind.mr_stag = cpu_to_be32(mw_bind->mr->lkey);
+ 	wqe->bind.mw_stag = cpu_to_be32(mw->rkey);
+ 	wqe->bind.mw_len = cpu_to_be32(mw_bind->length);
+@@ -430,7 +570,7 @@ int iwch_bind_mw(struct ib_qp *qp,
+ 	err = iwch_sgl2pbl_map(rhp, &sgl, 1, &pbl_addr, &page_size);
+ 	if (err) {
+ 		spin_unlock_irqrestore(&qhp->lock, flag);
+-	        return err;
++		return err;
+ 	}
+ 	wqe->send.wrid.id0.hi = qhp->wq.sq_wptr;
+ 	sqp = qhp->wq.sq + Q_PTR2IDX(qhp->wq.sq_wptr, qhp->wq.sq_size_log2);
+@@ -441,10 +581,9 @@ int iwch_bind_mw(struct ib_qp *qp,
+ 	sqp->signaled = (mw_bind->send_flags & IB_SEND_SIGNALED);
+ 	wqe->bind.mr_pbl_addr = cpu_to_be32(pbl_addr);
+ 	wqe->bind.mr_pagesz = page_size;
+-	wqe->flit[T3_SQ_COOKIE_FLIT] = mw_bind->wr_id;
+ 	build_fw_riwrh((void *)wqe, T3_WR_BIND, t3_wr_flags,
+ 		       Q_GENBIT(qhp->wq.wptr, qhp->wq.size_log2), 0,
+-			        sizeof(struct t3_bind_mw_wr) >> 3);
++		       sizeof(struct t3_bind_mw_wr) >> 3, T3_SOPEOP);
+ 	++(qhp->wq.wptr);
+ 	++(qhp->wq.sq_wptr);
+ 	spin_unlock_irqrestore(&qhp->lock, flag);
+@@ -592,10 +731,10 @@ int iwch_post_zb_read(struct iwch_qp *qhp)
+ 	struct sk_buff *skb;
+ 	u8 flit_cnt = sizeof(struct t3_rdma_read_wr) >> 3;
+ 
+-	PDBG("%s enter\n", __FUNCTION__);
++	PDBG("%s enter\n", __func__);
+ 	skb = alloc_skb(40, GFP_KERNEL);
+ 	if (!skb) {
+-		printk(KERN_ERR "%s cannot send zb_read!!\n", __FUNCTION__);
++		printk(KERN_ERR "%s cannot send zb_read!!\n", __func__);
+ 		return -ENOMEM;
+ 	}
+ 	wqe = (union t3_wr *)skb_put(skb, sizeof(struct t3_rdma_read_wr));
+@@ -625,10 +764,10 @@ int iwch_post_terminate(struct iwch_qp *qhp, struct respQ_msg_t *rsp_msg)
+ 	struct terminate_message *term;
+ 	struct sk_buff *skb;
+ 
+-	PDBG("%s %d\n", __FUNCTION__, __LINE__);
++	PDBG("%s %d\n", __func__, __LINE__);
+ 	skb = alloc_skb(40, GFP_ATOMIC);
+ 	if (!skb) {
+-		printk(KERN_ERR "%s cannot send TERMINATE!\n", __FUNCTION__);
++		printk(KERN_ERR "%s cannot send TERMINATE!\n", __func__);
+ 		return -ENOMEM;
+ 	}
+ 	wqe = (union t3_wr *)skb_put(skb, 40);
+@@ -660,7 +799,7 @@ static void __flush_qp(struct iwch_qp *qhp, unsigned long *flag)
+ 	rchp = get_chp(qhp->rhp, qhp->attr.rcq);
+ 	schp = get_chp(qhp->rhp, qhp->attr.scq);
+ 
+-	PDBG("%s qhp %p rchp %p schp %p\n", __FUNCTION__, qhp, rchp, schp);
++	PDBG("%s qhp %p rchp %p schp %p\n", __func__, qhp, rchp, schp);
+ 	/* take a ref on the qhp since we must release the lock */
+ 	atomic_inc(&qhp->refcnt);
+ 	spin_unlock_irqrestore(&qhp->lock, *flag);
+@@ -714,7 +853,7 @@ u16 iwch_rqes_posted(struct iwch_qp *qhp)
+ 		count++;
+ 		wqe++;
+ 	}
+-	PDBG("%s qhp %p count %u\n", __FUNCTION__, qhp, count);
++	PDBG("%s qhp %p count %u\n", __func__, qhp, count);
+ 	return count;
+ }
+ 
+@@ -737,20 +876,13 @@ static int rdma_init(struct iwch_dev *rhp, struct iwch_qp *qhp,
+ 		(qhp->attr.mpa_attr.xmit_marker_enabled << 1) |
+ 		(qhp->attr.mpa_attr.crc_enabled << 2);
+ 
+-	/*
+-	 * XXX - The IWCM doesn't quite handle getting these
+-	 * attrs set before going into RTS.  For now, just turn
+-	 * them on always...
+-	 */
+-#if 0
+-	init_attr.qpcaps = qhp->attr.enableRdmaRead |
+-		(qhp->attr.enableRdmaWrite << 1) |
+-		(qhp->attr.enableBind << 2) |
+-		(qhp->attr.enable_stag0_fastreg << 3) |
+-		(qhp->attr.enable_stag0_fastreg << 4);
+-#else
+-	init_attr.qpcaps = 0x1f;
+-#endif
++	init_attr.qpcaps = uP_RI_QP_RDMA_READ_ENABLE |
++			   uP_RI_QP_RDMA_WRITE_ENABLE |
++			   uP_RI_QP_BIND_ENABLE;
++	if (!qhp->ibqp.uobject)
++		init_attr.qpcaps |= uP_RI_QP_STAG0_ENABLE |
++				    uP_RI_QP_FAST_REGISTER_ENABLE;
++
+ 	init_attr.tcp_emss = qhp->ep->emss;
+ 	init_attr.ord = qhp->attr.max_ord;
+ 	init_attr.ird = qhp->attr.max_ird;
+@@ -758,7 +890,6 @@ static int rdma_init(struct iwch_dev *rhp, struct iwch_qp *qhp,
+ 	init_attr.qp_dma_size = (1UL << qhp->wq.size_log2);
+ 	init_attr.rqe_count = iwch_rqes_posted(qhp);
+ 	init_attr.flags = qhp->attr.mpa_attr.initiator ? MPA_INITIATOR : 0;
+-	init_attr.flags |= capable(CAP_NET_BIND_SERVICE) ? PRIV_QP : 0;
+ 	if (peer2peer) {
+ 		init_attr.rtr_type = RTR_READ;
+ 		if (init_attr.ord == 0 && qhp->attr.mpa_attr.initiator)
+@@ -769,11 +900,11 @@ static int rdma_init(struct iwch_dev *rhp, struct iwch_qp *qhp,
+ 		init_attr.rtr_type = 0;
+ 	init_attr.irs = qhp->ep->rcv_seq;
+ 	PDBG("%s init_attr.rq_addr 0x%x init_attr.rq_size = %d "
+-	     "flags 0x%x qpcaps 0x%x\n", __FUNCTION__,
++	     "flags 0x%x qpcaps 0x%x\n", __func__,
+ 	     init_attr.rq_addr, init_attr.rq_size,
+ 	     init_attr.flags, init_attr.qpcaps);
+ 	ret = cxio_rdma_init(&rhp->rdev, &init_attr);
+-	PDBG("%s ret %d\n", __FUNCTION__, ret);
++	PDBG("%s ret %d\n", __func__, ret);
+ 	return ret;
+ }
+ 
+@@ -791,7 +922,7 @@ int iwch_modify_qp(struct iwch_dev *rhp, struct iwch_qp *qhp,
+ 	int free = 0;
+ 	struct iwch_ep *ep = NULL;
+ 
+-	PDBG("%s qhp %p qpid 0x%x ep %p state %d -> %d\n", __FUNCTION__,
++	PDBG("%s qhp %p qpid 0x%x ep %p state %d -> %d\n", __func__,
+ 	     qhp, qhp->wq.qpid, qhp->ep, qhp->attr.state,
+ 	     (mask & IWCH_QP_ATTR_NEXT_STATE) ? attrs->next_state : -1);
+ 
+@@ -950,14 +1081,14 @@ int iwch_modify_qp(struct iwch_dev *rhp, struct iwch_qp *qhp,
+ 		break;
+ 	default:
+ 		printk(KERN_ERR "%s in a bad state %d\n",
+-		       __FUNCTION__, qhp->attr.state);
++		       __func__, qhp->attr.state);
+ 		ret = -EINVAL;
+ 		goto err;
+ 		break;
+ 	}
+ 	goto out;
+ err:
+-	PDBG("%s disassociating ep %p qpid 0x%x\n", __FUNCTION__, qhp->ep,
++	PDBG("%s disassociating ep %p qpid 0x%x\n", __func__, qhp->ep,
+ 	     qhp->wq.qpid);
+ 
+ 	/* disassociate the LLP connection */
+@@ -992,7 +1123,7 @@ out:
+ 	if (free)
+ 		put_ep(&ep->com);
+ 
+-	PDBG("%s exit state %d\n", __FUNCTION__, qhp->attr.state);
++	PDBG("%s exit state %d\n", __func__, qhp->attr.state);
+ 	return ret;
+ }
+ 
+diff --git a/drivers/net/cxgb3/adapter.h b/drivers/net/cxgb3/adapter.h
+index 3c1b1bb..d1130b8 100644
+--- a/drivers/net/cxgb3/adapter.h
++++ b/drivers/net/cxgb3/adapter.h
+@@ -41,12 +41,10 @@
+ #include <linux/timer.h>
+ #include <linux/cache.h>
+ #include <linux/mutex.h>
+-#include <linux/inet_lro.h>
++#include <linux/bitops.h>
+ #include "t3cdev.h"
+ #include <asm/io.h>
+ 
+-typedef irqreturn_t(*intr_handler_t) (int, void *, struct pt_regs *);
+-
+ struct vlan_group;
+ 
+ struct adapter;
+@@ -71,7 +69,6 @@ enum {				/* adapter flags */
+ 	USING_MSIX = (1 << 2),
+ 	QUEUES_BOUND = (1 << 3),
+ 	TP_PARITY_INIT = (1 << 4),
+-	NAPI_INIT = (1 << 5),
+ };
+ 
+ struct fl_pg_chunk {
+@@ -173,28 +170,14 @@ enum {				/* per port SGE statistics */
+ 	SGE_PSTAT_TX_CSUM,	/* # of TX checksum offloads */
+ 	SGE_PSTAT_VLANEX,	/* # of VLAN tag extractions */
+ 	SGE_PSTAT_VLANINS,	/* # of VLAN tag insertions */
+-	SGE_PSTAT_LRO_AGGR,	/* # of page chunks added to LRO sessions */
+-	SGE_PSTAT_LRO_FLUSHED,	/* # of flushed LRO sessions */
+-	SGE_PSTAT_LRO_NO_DESC,	/* # of overflown LRO sessions */
+ 
+ 	SGE_PSTAT_MAX		/* must be last */
+ };
+ 
+-#define T3_MAX_LRO_SES 8
+-#define T3_MAX_LRO_MAX_PKTS 64
+-
+ struct sge_qset {		/* an SGE queue set */
+-	struct adapter *adap;
+ 	struct sge_rspq rspq;
+ 	struct sge_fl fl[SGE_RXQ_PER_SET];
+ 	struct sge_txq txq[SGE_TXQ_PER_SET];
+-	struct net_lro_mgr lro_mgr;
+-	struct net_lro_desc lro_desc[T3_MAX_LRO_SES];
+-	struct skb_frag_struct *lro_frag_tbl;
+-	int lro_nfrags;
+-	int lro_enabled;
+-	int lro_frag_len;
+-	void *lro_va;
+ 	struct net_device *netdev;	/* associated net device */
+ 	unsigned long txq_stopped;	/* which Tx queues are stopped */
+ 	struct timer_list tx_reclaim_timer;	/* reclaims TX buffers */
+@@ -237,7 +220,7 @@ struct adapter {
+ 
+ 	struct net_device *port[MAX_NPORTS];
+ 	unsigned int check_task_cnt;
+-	struct work_struct adap_check_task;
++	struct delayed_work adap_check_task;
+ 	struct work_struct ext_intr_handler_task;
+ 
+ 	/*
+@@ -295,11 +278,9 @@ void t3_os_link_changed(struct adapter *adapter, int port_id, int link_status,
+ 
+ void t3_sge_start(struct adapter *adap);
+ void t3_sge_stop(struct adapter *adap);
+-void t3_stop_sge_timers(struct adapter *adap);
+ void t3_free_sge_resources(struct adapter *adap);
+ void t3_sge_err_intr_handler(struct adapter *adapter);
+-intr_handler_t t3_intr_handler(struct adapter *adap, int polling, 
+-			       struct pt_regs *ptregs);
++irq_handler_t t3_intr_handler(struct adapter *adap, int polling);
+ int t3_eth_xmit(struct sk_buff *skb, struct net_device *dev);
+ int t3_mgmt_tx(struct adapter *adap, struct sk_buff *skb);
+ void t3_update_qset_coalesce(struct sge_qset *qs, const struct qset_params *p);
+@@ -308,6 +289,6 @@ int t3_sge_alloc_qset(struct adapter *adapter, unsigned int id, int nports,
+ 		      int ntxq, struct net_device *netdev);
+ int t3_get_desc(const struct sge_qset *qs, unsigned int qnum, unsigned int idx,
+ 		unsigned char *data);
+-irqreturn_t t3_sge_intr_msix(int irq, void *cookie, struct pt_regs*);
++irqreturn_t t3_sge_intr_msix(int irq, void *cookie);
+ 
+ #endif				/* __T3_ADAPTER_H__ */
+diff --git a/drivers/net/cxgb3/common.h b/drivers/net/cxgb3/common.h
+index 7c329f8..d7f064c 100644
+--- a/drivers/net/cxgb3/common.h
++++ b/drivers/net/cxgb3/common.h
+@@ -351,14 +351,12 @@ struct tp_params {
+ 
+ struct qset_params {		/* SGE queue set parameters */
+ 	unsigned int polling;	/* polling/interrupt service for rspq */
+-	unsigned int lro;	/* large receive offload */
+ 	unsigned int coalesce_usecs;	/* irq coalescing timer */
+ 	unsigned int rspq_size;	/* # of entries in response queue */
+ 	unsigned int fl_size;	/* # of entries in regular free list */
+ 	unsigned int jumbo_size;	/* # of entries in jumbo free list */
+ 	unsigned int txq_size[SGE_TXQ_PER_SET];	/* Tx queue sizes */
+ 	unsigned int cong_thres;	/* FL congestion threshold */
+-	unsigned int vector;		/* Interrupt (line or vector) number */
+ };
+ 
+ struct sge_params {
+@@ -701,7 +699,6 @@ void mac_prep(struct cmac *mac, struct adapter *adapter, int index);
+ void early_hw_init(struct adapter *adapter, const struct adapter_info *ai);
+ int t3_prep_adapter(struct adapter *adapter, const struct adapter_info *ai,
+ 		    int reset);
+-int t3_replay_prep_adapter(struct adapter *adapter);
+ void t3_led_ready(struct adapter *adapter);
+ void t3_fatal_err(struct adapter *adapter);
+ void t3_set_vlan_accel(struct adapter *adapter, unsigned int ports, int on);
+diff --git a/drivers/net/cxgb3/cxgb3_ioctl.h b/drivers/net/cxgb3/cxgb3_ioctl.h
+index 3e8d5fa..0a82fcd 100644
+--- a/drivers/net/cxgb3/cxgb3_ioctl.h
++++ b/drivers/net/cxgb3/cxgb3_ioctl.h
+@@ -90,10 +90,7 @@ struct ch_qset_params {
+ 	int32_t fl_size[2];
+ 	int32_t intr_lat;
+ 	int32_t polling;
+-	int32_t lro;
+ 	int32_t cong_thres;
+-	int32_t  vector;
+-	int32_t  qnum;
+ };
+ 
+ struct ch_pktsched_params {
+diff --git a/drivers/net/cxgb3/cxgb3_main.c b/drivers/net/cxgb3/cxgb3_main.c
+index 7873d53..219e7ae 100644
+--- a/drivers/net/cxgb3/cxgb3_main.c
++++ b/drivers/net/cxgb3/cxgb3_main.c
+@@ -43,6 +43,7 @@
+ #include <linux/proc_fs.h>
+ #include <linux/rtnetlink.h>
+ #include <linux/firmware.h>
++#include <linux/log2.h>
+ #include <asm/uaccess.h>
+ 
+ #include "common.h"
+@@ -54,7 +55,6 @@
+ #include "cxgb3_ctl_defs.h"
+ #include "t3_cpl.h"
+ #include "firmware_exports.h"
+-#include "t3_firmware.h"
+ 
+ enum {
+ 	MAX_TXQ_ENTRIES = 16384,
+@@ -169,7 +169,6 @@ static void link_report(struct net_device *dev)
+ 		printk(KERN_INFO "%s: link up, %s, %s-duplex\n", dev->name, s,
+ 		       p->link_config.duplex == DUPLEX_FULL ? "full" : "half");
+ 	}
+-
+ }
+ 
+ /**
+@@ -255,7 +254,7 @@ static inline void cxgb_disable_msi(struct adapter *adapter)
+ /*
+  * Interrupt handler for asynchronous events used with MSI-X.
+  */
+-static irqreturn_t t3_async_intr_handler(int irq, void *cookie, struct pt_regs *ptregs)
++static irqreturn_t t3_async_intr_handler(int irq, void *cookie)
+ {
+ 	t3_slow_intr_handler(cookie);
+ 	return IRQ_HANDLED;
+@@ -277,10 +276,10 @@ static void name_msix_vecs(struct adapter *adap)
+ 
+ 		for (i = 0; i < pi->nqsets; i++, msi_idx++) {
+ 			snprintf(adap->msix_info[msi_idx].desc, n,
+-				 "%s-%d", d->name, pi->first_qset + i);
++				 "%s (queue %d)", d->name, i);
+ 			adap->msix_info[msi_idx].desc[n] = 0;
+ 		}
+-	}
++ 	}
+ }
+ 
+ static int request_msix_data_irqs(struct adapter *adap)
+@@ -294,8 +293,8 @@ static int request_msix_data_irqs(struct adapter *adap)
+ 			err = request_irq(adap->msix_info[qidx + 1].vec,
+ 					  t3_intr_handler(adap,
+ 							  adap->sge.qs[qidx].
+-							  rspq.polling,NULL),
+-					  0, adap->msix_info[qidx + 1].desc,
++							  rspq.polling), 0,
++					  adap->msix_info[qidx + 1].desc,
+ 					  &adap->sge.qs[qidx]);
+ 			if (err) {
+ 				while (--qidx >= 0)
+@@ -309,22 +308,6 @@ static int request_msix_data_irqs(struct adapter *adap)
+ 	return 0;
+ }
+ 
+-static void free_irq_resources(struct adapter *adapter)
+-{
+-	if (adapter->flags & USING_MSIX) {
+-		int i, n = 0;
+-
+-		free_irq(adapter->msix_info[0].vec, adapter);
+-		for_each_port(adapter, i)
+-		    n += adap2pinfo(adapter, i)->nqsets;
+-
+-		for (i = 0; i < n; ++i)
+-			free_irq(adapter->msix_info[i + 1].vec,
+-				 &adapter->sge.qs[i]);
+-	} else
+-		free_irq(adapter->pdev->irq, adapter);
+-}
+-
+ static int await_mgmt_replies(struct adapter *adap, unsigned long init_cnt,
+ 			      unsigned long n)
+ {
+@@ -456,7 +439,6 @@ static int init_dummy_netdevs(struct adapter *adap)
+ 
+ 				p = netdev_priv(nd);
+ 				p->adapter = adap;
+-				p->port_id = pi->port_id;
+ 				nd->weight = 64;
+ 				set_bit(__LINK_STATE_START, &nd->state);
+ 				adap->dummy_netdev[dummy_idx] = nd;
+@@ -464,13 +446,7 @@ static int init_dummy_netdevs(struct adapter *adap)
+ 			strcpy(adap->dummy_netdev[dummy_idx]->name, dev->name);
+ 			dummy_idx++;
+ 		}
+-		/* 	
+-		 * Be careful not to call init_dummy_netdevs a second
+-		 * time, e.g., during EEH recovery, by making a note of
+-		 * it here */
+-        	adap->flags |= NAPI_INIT;
+ 	}
+-	
+ 	return 0;
+ 
+ free_all:
+@@ -525,18 +501,14 @@ static int setup_sge_qsets(struct adapter *adap)
+ 		struct net_device *dev = adap->port[i];
+ 		const struct port_info *pi = netdev_priv(dev);
+ 
+-		for (j = pi->first_qset; j < pi->first_qset + pi->nqsets;
+-		     ++j, ++qset_idx) {
+-			if (!pi->rx_csum_offload)
+-				adap->params.sge.qset[qset_idx].lro = 0;
++		for (j = 0; j < pi->nqsets; ++j, ++qset_idx) {
+ 			err = t3_sge_alloc_qset(adap, qset_idx, 1,
+ 				(adap->flags & USING_MSIX) ? qset_idx + 1 :
+ 							     irq_idx,
+ 				&adap->params.sge.qset[qset_idx], ntxq,
+-				j == pi->first_qset ? dev :
++				j == 0 ? dev :
+ 					 adap-> dummy_netdev[dummy_dev_idx++]);
+ 			if (err) {
+-				t3_stop_sge_timers(adap);
+ 				t3_free_sge_resources(adap);
+ 				return err;
+ 			}
+@@ -546,19 +518,20 @@ static int setup_sge_qsets(struct adapter *adap)
+ 	return 0;
+ }
+ 
+-static ssize_t attr_show(struct class_device *c, char *buf,
++static ssize_t attr_show(struct class_device *d, char *buf,
+ 			 ssize_t(*format) (struct net_device *, char *))
+ {
+ 	ssize_t len;
+ 
+ 	/* Synchronize with ioctls that may shut down the device */
+ 	rtnl_lock();
+-	len = (*format) (to_net_dev(c), buf);
++	len = (*format) (to_net_dev(d), buf);
+ 	rtnl_unlock();
+ 	return len;
+ }
+ 
+-static ssize_t attr_store(struct class_device *c, const char *buf, size_t len,
++static ssize_t attr_store(struct class_device *d,
++			  const char *buf, size_t len,
+ 			  ssize_t(*set) (struct net_device *, unsigned int),
+ 			  unsigned int min_val, unsigned int max_val)
+ {
+@@ -574,7 +547,7 @@ static ssize_t attr_store(struct class_device *c, const char *buf, size_t len,
+ 		return -EINVAL;
+ 
+ 	rtnl_lock();
+-	ret = (*set) (to_net_dev(c), val);
++	ret = (*set) (to_net_dev(d), val);
+ 	if (!ret)
+ 		ret = len;
+ 	rtnl_unlock();
+@@ -588,9 +561,9 @@ static ssize_t format_##name(struct net_device *dev, char *buf) \
+ 	struct adapter *adap = pi->adapter; \
+ 	return sprintf(buf, "%u\n", val_expr); \
+ } \
+-static ssize_t show_##name(struct class_device *c, char *buf) \
++static ssize_t show_##name(struct class_device *cd, char *buf) \
+ { \
+-	return attr_show(c, buf, format_##name); \
++	return attr_show(cd, buf, format_##name); \
+ }
+ 
+ static ssize_t set_nfilters(struct net_device *dev, unsigned int val)
+@@ -610,10 +583,10 @@ static ssize_t set_nfilters(struct net_device *dev, unsigned int val)
+ 	return 0;
+ }
+ 
+-static ssize_t store_nfilters(struct class_device *c,
+-			      const char *buf, size_t len)
++static ssize_t store_nfilters(struct class_device *cd, const char *buf,
++			      size_t len)
+ {
+-	return attr_store(c, buf, len, set_nfilters, 0, ~0);
++	return attr_store(cd, buf, len, set_nfilters, 0, ~0);
+ }
+ 
+ static ssize_t set_nservers(struct net_device *dev, unsigned int val)
+@@ -630,10 +603,10 @@ static ssize_t set_nservers(struct net_device *dev, unsigned int val)
+ 	return 0;
+ }
+ 
+-static ssize_t store_nservers(struct class_device *c,
+-			      const char *buf, size_t len)
++static ssize_t store_nservers(struct class_device *cd, const char *buf,
++			      size_t len)
+ {
+-	return attr_store(c, buf, len, set_nservers, 0, ~0);
++	return attr_store(cd, buf, len, set_nservers, 0, ~0);
+ }
+ 
+ #define CXGB3_ATTR_R(name, val_expr) \
+@@ -657,10 +630,9 @@ static struct attribute *cxgb3_attrs[] = {
+ 
+ static struct attribute_group cxgb3_attr_group = {.attrs = cxgb3_attrs };
+ 
+-static ssize_t tm_attr_show(struct class_device *c, char *buf, 
+-			    int sched)
++static ssize_t tm_attr_show(struct class_device *d, char *buf, int sched)
+ {
+-	struct port_info *pi = netdev_priv(to_net_dev(c));
++	struct port_info *pi = netdev_priv(to_net_dev(d));
+ 	struct adapter *adap = pi->adapter;
+ 	unsigned int v, addr, bpt, cpt;
+ 	ssize_t len;
+@@ -683,10 +655,10 @@ static ssize_t tm_attr_show(struct class_device *c, char *buf,
+ 	return len;
+ }
+ 
+-static ssize_t tm_attr_store(struct class_device *c, const char *buf, 
++static ssize_t tm_attr_store(struct class_device *d, const char *buf,
+ 			     size_t len, int sched)
+ {
+-	struct port_info *pi = netdev_priv(to_net_dev(c));
++	struct port_info *pi = netdev_priv(to_net_dev(d));
+ 	struct adapter *adap = pi->adapter;
+ 	unsigned int val;
+ 	char *endp;
+@@ -708,15 +680,13 @@ static ssize_t tm_attr_store(struct class_device *c, const char *buf,
+ }
+ 
+ #define TM_ATTR(name, sched) \
+-static ssize_t show_##name(struct class_device *c, \
+-			   char *buf) \
++static ssize_t show_##name(struct class_device *cd, char *buf) \
+ { \
+-	return tm_attr_show(c, buf, sched); \
++	return tm_attr_show(cd, buf, sched); \
+ } \
+-static ssize_t store_##name(struct class_device *c, \
+-			    const char *buf, size_t len) \
++static ssize_t store_##name(struct class_device *cd, const char *buf, size_t len) \
+ { \
+-	return tm_attr_store(c, buf, len, sched); \
++	return tm_attr_store(cd, buf, len, sched); \
+ } \
+ static CLASS_DEVICE_ATTR(name, S_IRUGO | S_IWUSR, show_##name, store_##name)
+ 
+@@ -795,12 +765,11 @@ static void init_port_mtus(struct adapter *adapter)
+ 	t3_write_reg(adapter, A_TP_MTU_PORT_TABLE, mtus);
+ }
+ 
+-static int send_pktsched_cmd(struct adapter *adap, int sched, int qidx, int lo,
++static void send_pktsched_cmd(struct adapter *adap, int sched, int qidx, int lo,
+ 			      int hi, int port)
+ {
+ 	struct sk_buff *skb;
+ 	struct mngt_pktsched_wr *req;
+-	int ret;
+ 
+ 	skb = alloc_skb(sizeof(*req), GFP_KERNEL | __GFP_NOFAIL);
+ 	req = (struct mngt_pktsched_wr *)skb_put(skb, sizeof(*req));
+@@ -811,49 +780,22 @@ static int send_pktsched_cmd(struct adapter *adap, int sched, int qidx, int lo,
+ 	req->min = lo;
+ 	req->max = hi;
+ 	req->binding = port;
+-	ret = t3_mgmt_tx(adap, skb);
+-
+-	return ret;
++	t3_mgmt_tx(adap, skb);
+ }
+ 
+-static int bind_qsets(struct adapter *adap)
++static void bind_qsets(struct adapter *adap)
+ {
+-	int i, j, err = 0;
++	int i, j;
+ 
+ 	for_each_port(adap, i) {
+ 		const struct port_info *pi = adap2pinfo(adap, i);
+ 
+-		for (j = 0; j < pi->nqsets; ++j) {
+-			int ret = send_pktsched_cmd(adap, 1,
+-						    pi->first_qset + j, -1,
+-						    -1, i);
+-			if (ret)
+-				err = ret;
+-		}
+-	}
+-
+-	return err;
+-}
+-
+-static void t3_release_firmware(const struct firmware *fw)
+-{
+-	if (!t3_local_firmware_free(fw))
+-		return;
+-	release_firmware(fw);
+-}	
+-
+-static int t3_request_firmware(const struct firmware **firmware, const char *name,
+-                 struct device *dev)
+-{
+-	/* first check if there is firmware on the filesystem */
+-	if (!request_firmware(firmware, name, dev)) {
+-		return 0;
++		for (j = 0; j < pi->nqsets; ++j)
++			send_pktsched_cmd(adap, 1, pi->first_qset + j, -1,
++					  -1, i);
+ 	}
+-
+-	return t3_local_firmware_load(firmware, name);
+ }
+ 
+-
+ #define FW_FNAME "t3fw-%d.%d.%d.bin"
+ #define TPSRAM_NAME "t3%c_protocol_sram-%d.%d.%d.bin"
+ 
+@@ -866,14 +808,14 @@ static int upgrade_fw(struct adapter *adap)
+ 
+ 	snprintf(buf, sizeof(buf), FW_FNAME, FW_VERSION_MAJOR,
+ 		 FW_VERSION_MINOR, FW_VERSION_MICRO);
+-	ret = t3_request_firmware(&fw, buf, dev);
++	ret = request_firmware(&fw, buf, dev);
+ 	if (ret < 0) {
+ 		dev_err(dev, "could not upgrade firmware: unable to load %s\n",
+ 			buf);
+ 		return ret;
+ 	}
+ 	ret = t3_load_fw(adap, fw->data, fw->size);
+-	t3_release_firmware(fw);
++	release_firmware(fw);
+ 
+ 	if (ret == 0)
+ 		dev_info(dev, "successful upgrade to firmware %d.%d.%d\n",
+@@ -916,7 +858,7 @@ static int update_tpsram(struct adapter *adap)
+ 	snprintf(buf, sizeof(buf), TPSRAM_NAME, rev,
+ 		 TP_VERSION_MAJOR, TP_VERSION_MINOR, TP_VERSION_MICRO);
+ 
+-	ret = t3_request_firmware(&tpsram, buf, dev);
++	ret = request_firmware(&tpsram, buf, dev);
+ 	if (ret < 0) {
+ 		dev_err(dev, "could not load TP SRAM: unable to load %s\n",
+ 			buf);
+@@ -940,7 +882,7 @@ static int update_tpsram(struct adapter *adap)
+ 		dev_err(dev, "loading protocol SRAM failed\n");
+ 
+ release_tpsram:
+-	t3_release_firmware(tpsram);
++	release_firmware(tpsram);
+ 
+ 	return ret;
+ }
+@@ -975,11 +917,9 @@ static int cxgb_up(struct adapter *adap)
+ 				goto out;
+ 		}
+ 
+-		if (!(adap->flags & NAPI_INIT)) {
+-			err = init_dummy_netdevs(adap);
+-			if (err)
+-				goto out;
+-		}
++ 		err = init_dummy_netdevs(adap);
++ 		if (err)
++ 			goto out;
+ 
+ 		err = t3_init_hw(adap, 0);
+ 		if (err)
+@@ -987,13 +927,12 @@ static int cxgb_up(struct adapter *adap)
+ 
+ 		t3_set_reg_field(adap, A_TP_PARA_REG5, 0, F_RXDDPOFFINIT);
+ 		t3_write_reg(adap, A_ULPRX_TDDP_PSZ, V_HPZ0(PAGE_SHIFT - 12));
+-		
++
+ 		err = setup_sge_qsets(adap);
+ 		if (err)
+ 			goto out;
+ 
+ 		setup_rss(adap);
+-
+ 		adap->flags |= FULL_INIT_DONE;
+ 	}
+ 
+@@ -1015,7 +954,7 @@ static int cxgb_up(struct adapter *adap)
+ 	} else if ((err = request_irq(adap->pdev->irq,
+ 				      t3_intr_handler(adap,
+ 						      adap->sge.qs[0].rspq.
+-						      polling,NULL),
++						      polling),
+ 				      (adap->flags & USING_MSI) ?
+ 				       0 : IRQF_SHARED,
+ 				      adap->name, adap)))
+@@ -1034,16 +973,9 @@ static int cxgb_up(struct adapter *adap)
+ 		t3_write_reg(adap, A_TP_INT_ENABLE, 0x7fbfffff);
+ 	}
+ 
+-	if (!(adap->flags & QUEUES_BOUND)) {
+-		err = bind_qsets(adap);
+-		if (err) {
+-			CH_ERR(adap, "failed to bind qsets, err %d\n", err);
+-			t3_intr_disable(adap);
+-			free_irq_resources(adap);
+-			goto out;
+-		}
+-		adap->flags |= QUEUES_BOUND;
+-	}
++	if ((adap->flags & (USING_MSIX | QUEUES_BOUND)) == USING_MSIX)
++		bind_qsets(adap);
++	adap->flags |= QUEUES_BOUND;
+ 
+ out:
+ 	return err;
+@@ -1062,7 +994,19 @@ static void cxgb_down(struct adapter *adapter)
+ 	t3_intr_disable(adapter);
+ 	spin_unlock_irq(&adapter->work_lock);
+ 
+-	free_irq_resources(adapter);
++	if (adapter->flags & USING_MSIX) {
++		int i, n = 0;
++
++		free_irq(adapter->msix_info[0].vec, adapter);
++		for_each_port(adapter, i)
++		    n += adap2pinfo(adapter, i)->nqsets;
++
++		for (i = 0; i < n; ++i)
++			free_irq(adapter->msix_info[i + 1].vec,
++				 &adapter->sge.qs[i]);
++	} else
++		free_irq(adapter->pdev->irq, adapter);
++
+ 	flush_workqueue(cxgb3_wq);	/* wait for external IRQ handler */
+ 	quiesce_rx(adapter);
+ }
+@@ -1090,7 +1034,7 @@ static int offload_open(struct net_device *dev)
+ 		return 0;
+ 
+ 	if (!adap_up && (err = cxgb_up(adapter)) < 0)
+-		goto out;
++		return err;
+ 
+ 	t3_tp_set_offload_mode(adapter, 1);
+ 	tdev->lldev = adapter->port[0];
+@@ -1105,9 +1049,8 @@ static int offload_open(struct net_device *dev)
+ 		     adapter->port[0]->mtu : 0xffff);
+ 	init_smt(adapter);
+ 
+-	/* Never mind if the next step fails */
+-	if (sysfs_create_group(&tdev->lldev->class_dev.kobj, &offload_attr_group))
+-		dev_dbg(dev, "cannot create sysfs group\n");
++ 	if (sysfs_create_group(&tdev->lldev->class_dev.kobj, &offload_attr_group))
++		dev_dbg(&adapter->pdev->dev, "cannot create sysfs group\n");
+ 
+ 	/* Call back all registered clients */
+ 	cxgb3_add_clients(tdev);
+@@ -1296,9 +1239,6 @@ static char stats_strings[][ETH_GSTRING_LEN] = {
+ 	"VLANinsertions     ",
+ 	"TxCsumOffload      ",
+ 	"RxCsumGood         ",
+-	"LroAggregated      ",
+-	"LroFlushed         ",
+-	"LroNoDesc          ",
+ 	"RxDrops            ",
+ 
+ 	"CheckTXEnToggled   ",
+@@ -1330,8 +1270,10 @@ static void get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
+ 	u32 fw_vers = 0;
+ 	u32 tp_vers = 0;
+ 
++	spin_lock(&adapter->stats_lock);
+ 	t3_get_fw_version(adapter, &fw_vers);
+ 	t3_get_tp_version(adapter, &tp_vers);
++	spin_unlock(&adapter->stats_lock);
+ 
+ 	strcpy(info->driver, DRV_NAME);
+ 	strcpy(info->version, DRV_VERSION);
+@@ -1363,8 +1305,8 @@ static unsigned long collect_sge_port_stats(struct adapter *adapter,
+ 	int i;
+ 	unsigned long tot = 0;
+ 
+-	for (i = p->first_qset; i < p->first_qset + p->nqsets; ++i)
+-		tot += adapter->sge.qs[i].port_stats[idx];
++	for (i = 0; i < p->nqsets; ++i)
++		tot += adapter->sge.qs[i + p->first_qset].port_stats[idx];
+ 	return tot;
+ }
+ 
+@@ -1422,9 +1364,6 @@ static void get_stats(struct net_device *dev, struct ethtool_stats *stats,
+ 	*data++ = collect_sge_port_stats(adapter, pi, SGE_PSTAT_VLANINS);
+ 	*data++ = collect_sge_port_stats(adapter, pi, SGE_PSTAT_TX_CSUM);
+ 	*data++ = collect_sge_port_stats(adapter, pi, SGE_PSTAT_RX_CSUM_GOOD);
+-	*data++ = collect_sge_port_stats(adapter, pi, SGE_PSTAT_LRO_AGGR);
+-	*data++ = collect_sge_port_stats(adapter, pi, SGE_PSTAT_LRO_FLUSHED);
+-	*data++ = collect_sge_port_stats(adapter, pi, SGE_PSTAT_LRO_NO_DESC);
+ 	*data++ = s->rx_cong_drops;
+ 
+ 	*data++ = s->num_toggled;
+@@ -1568,7 +1507,7 @@ static int set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
+ 	struct link_config *lc = &p->link_config;
+ 
+ 	if (!(lc->supported & SUPPORTED_Autoneg))
+-		return -EOPNOTSUPP;     /* can't change speed/duplex */
++		return -EOPNOTSUPP;	/* can't change speed/duplex */
+ 
+ 	if (cmd->autoneg == AUTONEG_DISABLE) {
+ 		int cap = speed_duplex_to_caps(cmd->speed, cmd->duplex);
+@@ -1643,15 +1582,6 @@ static int set_rx_csum(struct net_device *dev, u32 data)
+ 	struct port_info *p = netdev_priv(dev);
+ 
+ 	p->rx_csum_offload = data;
+-	if (!data) {
+-		struct adapter *adap = p->adapter;
+-		int i;
+-
+-		for (i = p->first_qset; i < p->first_qset + p->nqsets; i++) {
+-			adap->params.sge.qset[i].lro = 0;
+-			adap->sge.qs[i].lro_enabled = 0;
+-		}
+-	}
+ 	return 0;
+ }
+ 
+@@ -1805,7 +1735,7 @@ static void get_wol(struct net_device *dev, struct ethtool_wolinfo *wol)
+ 	memset(&wol->sopass, 0, sizeof(wol->sopass));
+ }
+ 
+-static struct ethtool_ops cxgb_ethtool_ops = {
++static const struct ethtool_ops cxgb_ethtool_ops = {
+ 	.get_settings = get_settings,
+ 	.set_settings = set_settings,
+ 	.get_drvinfo = get_drvinfo,
+@@ -1822,9 +1752,7 @@ static struct ethtool_ops cxgb_ethtool_ops = {
+ 	.set_pauseparam = set_pauseparam,
+ 	.get_rx_csum = get_rx_csum,
+ 	.set_rx_csum = set_rx_csum,
+-	.get_tx_csum = ethtool_op_get_tx_csum,
+ 	.set_tx_csum = ethtool_op_set_tx_csum,
+-	.get_sg = ethtool_op_get_sg,
+ 	.set_sg = ethtool_op_set_sg,
+ 	.get_link = ethtool_op_get_link,
+ 	.get_strings = get_strings,
+@@ -1835,9 +1763,7 @@ static struct ethtool_ops cxgb_ethtool_ops = {
+ 	.get_regs_len = get_regs_len,
+ 	.get_regs = get_regs,
+ 	.get_wol = get_wol,
+-	.get_tso = ethtool_op_get_tso,
+ 	.set_tso = ethtool_op_set_tso,
+-	.get_perm_addr = ethtool_op_get_perm_addr
+ };
+ 
+ static int in_range(int val, int lo, int hi)
+@@ -1860,8 +1786,6 @@ static int cxgb_extension_ioctl(struct net_device *dev, void __user *useraddr)
+ 		int i;
+ 		struct qset_params *q;
+ 		struct ch_qset_params t;
+-		int q1 = pi->first_qset;
+-		int nqsets = pi->nqsets;
+ 
+ 		if (!capable(CAP_NET_ADMIN))
+ 			return -EPERM;
+@@ -1884,16 +1808,6 @@ static int cxgb_extension_ioctl(struct net_device *dev, void __user *useraddr)
+ 			|| !in_range(t.rspq_size, MIN_RSPQ_ENTRIES,
+ 					MAX_RSPQ_ENTRIES))
+ 			return -EINVAL;
+-
+-		if ((adapter->flags & FULL_INIT_DONE) && t.lro > 0)
+-			for_each_port(adapter, i) {
+-				pi = adap2pinfo(adapter, i);
+-				if (t.qset_idx >= pi->first_qset &&
+-				    t.qset_idx < pi->first_qset + pi->nqsets &&
+-				    !pi->rx_csum_offload)
+-					return -EINVAL;
+-			}
+-
+ 		if ((adapter->flags & FULL_INIT_DONE) &&
+ 			(t.rspq_size >= 0 || t.fl_size[0] >= 0 ||
+ 			t.fl_size[1] >= 0 || t.txq_size[0] >= 0 ||
+@@ -1901,20 +1815,6 @@ static int cxgb_extension_ioctl(struct net_device *dev, void __user *useraddr)
+ 			t.polling >= 0 || t.cong_thres >= 0))
+ 			return -EBUSY;
+ 
+-		/* Allow setting of any available qset when offload enabled */
+-		if (test_bit(OFFLOAD_DEVMAP_BIT, &adapter->open_device_map)) {
+-			q1 = 0;
+-			for_each_port(adapter, i) {
+-				pi = adap2pinfo(adapter, i);
+-				nqsets += pi->first_qset + pi->nqsets;
+-			}
+-		}
+-
+-		if (t.qset_idx < q1)
+-			return -EINVAL;
+-		if (t.qset_idx > q1 + nqsets - 1)
+-			return -EINVAL;
+-
+ 		q = &adapter->params.sge.qset[t.qset_idx];
+ 
+ 		if (t.rspq_size >= 0)
+@@ -1954,36 +1854,18 @@ static int cxgb_extension_ioctl(struct net_device *dev, void __user *useraddr)
+ 				}
+ 			}
+ 		}
+-		if (t.lro >= 0) {
+-			struct sge_qset *qs = &adapter->sge.qs[t.qset_idx];
+-			q->lro = t.lro;
+-			qs->lro_enabled = t.lro;
+-		}
+ 		break;
+ 	}
+ 	case CHELSIO_GET_QSET_PARAMS:{
+ 		struct qset_params *q;
+ 		struct ch_qset_params t;
+-		int q1 = pi->first_qset;
+-		int nqsets = pi->nqsets;
+-		int i;
+ 
+ 		if (copy_from_user(&t, useraddr, sizeof(t)))
+ 			return -EFAULT;
+-
+-		/* Display qsets for all ports when offload enabled */
+-		if (test_bit(OFFLOAD_DEVMAP_BIT, &adapter->open_device_map)) {
+-			q1 = 0;
+-			for_each_port(adapter, i) {
+-				pi = adap2pinfo(adapter, i);
+-				nqsets = pi->first_qset + pi->nqsets;
+-			}
+-		}
+-
+-		if (t.qset_idx >= nqsets)
++		if (t.qset_idx >= SGE_QSETS)
+ 			return -EINVAL;
+ 
+-		q = &adapter->params.sge.qset[q1 + t.qset_idx];
++		q = &adapter->params.sge.qset[t.qset_idx];
+ 		t.rspq_size = q->rspq_size;
+ 		t.txq_size[0] = q->txq_size[0];
+ 		t.txq_size[1] = q->txq_size[1];
+@@ -1991,15 +1873,8 @@ static int cxgb_extension_ioctl(struct net_device *dev, void __user *useraddr)
+ 		t.fl_size[0] = q->fl_size;
+ 		t.fl_size[1] = q->jumbo_size;
+ 		t.polling = q->polling;
+-		t.lro = q->lro;
+ 		t.intr_lat = q->coalesce_usecs;
+ 		t.cong_thres = q->cong_thres;
+-		t.qnum = q1;
+-
+-		if (adapter->flags & USING_MSIX)
+-			t.vector = adapter->msix_info[q1 + t.qset_idx + 1].vec;
+-		else
+-			t.vector = adapter->pdev->irq;
+ 
+ 		if (copy_to_user(useraddr, &t, sizeof(t)))
+ 			return -EFAULT;
+@@ -2123,8 +1998,8 @@ static int cxgb_extension_ioctl(struct net_device *dev, void __user *useraddr)
+ 			return -EBUSY;
+ 		if (copy_from_user(&m, useraddr, sizeof(m)))
+ 			return -EFAULT;
+-		if (!m.rx_pg_sz || (m.rx_pg_sz & (m.rx_pg_sz - 1)) ||
+-			!m.tx_pg_sz || (m.tx_pg_sz & (m.tx_pg_sz - 1)))
++		if (!is_power_of_2(m.rx_pg_sz) ||
++			!is_power_of_2(m.tx_pg_sz))
+ 			return -EINVAL;	/* not power of 2 */
+ 		if (!(m.rx_pg_sz & 0x14000))
+ 			return -EINVAL;	/* not 16KB or 64KB */
+@@ -2345,8 +2220,8 @@ static void t3_synchronize_rx(struct adapter *adap, const struct port_info *p)
+ {
+ 	int i;
+ 
+-	for (i = p->first_qset; i < p->first_qset + p->nqsets; i++) {
+-		struct sge_rspq *q = &adap->sge.qs[i].rspq;
++	for (i = 0; i < p->nqsets; i++) {
++		struct sge_rspq *q = &adap->sge.qs[i + p->first_qset].rspq;
+ 
+ 		spin_lock_irq(&q->lock);
+ 		spin_unlock_irq(&q->lock);
+@@ -2372,11 +2247,6 @@ static void vlan_rx_register(struct net_device *dev, struct vlan_group *grp)
+ 	t3_synchronize_rx(adapter, pi);
+ }
+ 
+-static void vlan_rx_kill_vid(struct net_device *dev, unsigned short vid)
+-{
+-	/* nothing */
+-}
+-
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+ static void cxgb_netpoll(struct net_device *dev)
+ {
+@@ -2393,7 +2263,7 @@ static void cxgb_netpoll(struct net_device *dev)
+ 		else
+ 			source = adapter;
+ 
+-		t3_intr_handler(adapter, qs->rspq.polling, NULL) (0, source, NULL);
++		t3_intr_handler(adapter, qs->rspq.polling) (0, source);
+ 	}
+ }
+ #endif
+@@ -2465,9 +2335,11 @@ static void check_t3b2_mac(struct adapter *adapter)
+ 	rtnl_unlock();
+ }
+ 
+-static void t3_adap_check_task(void *data)
++
++static void t3_adap_check_task(struct work_struct *work)
+ {
+-	struct adapter *adapter = data;
++	struct adapter *adapter = container_of(work, struct adapter,
++					       adap_check_task.work);
+ 	const struct adapter_params *p = &adapter->params;
+ 
+ 	adapter->check_task_cnt++;
+@@ -2497,9 +2369,10 @@ static void t3_adap_check_task(void *data)
+ /*
+  * Processes external (PHY) interrupts in process context.
+  */
+-static void ext_intr_task(void *data)
++static void ext_intr_task(struct work_struct *work)
+ {
+-	struct adapter *adapter = data;
++	struct adapter *adapter = container_of(work, struct adapter,
++					       ext_intr_handler_task);
+ 
+ 	t3_phy_intr_handler(adapter);
+ 
+@@ -2581,14 +2454,14 @@ static pci_ers_result_t t3_io_error_detected(struct pci_dev *pdev,
+ 	    test_bit(OFFLOAD_DEVMAP_BIT, &adapter->open_device_map))
+ 		offload_close(&adapter->tdev);
+ 
+-	/* Stop SGE timers */
+-	t3_stop_sge_timers(adapter);
++	/* Free sge resources */
++	t3_free_sge_resources(adapter);
+ 
+ 	adapter->flags &= ~FULL_INIT_DONE;
+ 
+ 	pci_disable_device(pdev);
+ 
+-	/* Request a slot reset. */
++	/* Request a slot slot reset. */
+ 	return PCI_ERS_RESULT_NEED_RESET;
+ }
+ 
+@@ -2605,20 +2478,13 @@ static pci_ers_result_t t3_io_slot_reset(struct pci_dev *pdev)
+ 	if (pci_enable_device(pdev)) {
+ 		dev_err(&pdev->dev,
+ 			"Cannot re-enable PCI device after reset.\n");
+-		goto err;
++		return PCI_ERS_RESULT_DISCONNECT;
+ 	}
+ 	pci_set_master(pdev);
+-	pci_restore_state(pdev);
+-
+-	/* Free sge resources */
+-	t3_free_sge_resources(adapter);
+ 
+-	if (t3_replay_prep_adapter(adapter))
+-		goto err;
++	t3_prep_adapter(adapter, adapter->params.info, 1);
+ 
+ 	return PCI_ERS_RESULT_RECOVERED;
+-err:
+-	return PCI_ERS_RESULT_DISCONNECT;
+ }
+ 
+ /**
+@@ -2647,6 +2513,13 @@ static void t3_io_resume(struct pci_dev *pdev)
+ 			netif_device_attach(netdev);
+ 		}
+ 	}
++
++	if (is_offload(adapter)) {
++		__set_bit(OFFLOAD_DEVMAP_BIT, &adapter->registered_device_map);
++		if (offload_open(adapter->port[0]))
++			printk(KERN_WARNING
++			       "Could not bring back offload capabilities\n");
++	}
+ }
+ 
+ static struct pci_error_handlers t3_err_handler = {
+@@ -2655,42 +2528,6 @@ static struct pci_error_handlers t3_err_handler = {
+ 	.resume = t3_io_resume,
+ };
+ 
+-/*
+- * Set the number of qsets based on the number of CPUs and the number of ports,
+- * not to exceed the number of available qsets, assuming there are enough qsets
+- * per port in HW.
+- */
+-static void set_nqsets(struct adapter *adap)
+-{
+-	int i, j = 0;
+-	int num_cpus = num_online_cpus();
+-	int hwports = adap->params.nports;
+-	int nqsets = SGE_QSETS;
+-
+-	if (adap->params.rev > 0 && adap->flags & USING_MSIX) {
+-		if (hwports == 2 &&
+-		    (hwports * nqsets > SGE_QSETS ||
+-		     num_cpus >= nqsets / hwports))
+-			nqsets /= hwports;
+-		if (nqsets > num_cpus)
+-			nqsets = num_cpus;
+-		if (nqsets < 1 || hwports == 4)
+-			nqsets = 1;
+-	} else
+-		nqsets = 1;
+-
+-	for_each_port(adap, i) {
+-		struct port_info *pi = adap2pinfo(adap, i);
+-
+-		pi->first_qset = j;
+-		pi->nqsets = nqsets;
+-		j = pi->first_qset + nqsets;
+-
+-		dev_info(&adap->pdev->dev,
+-			 "Port %d using %d queue sets.\n", i, nqsets);
+-	}
+-}
+-
+ static int __devinit cxgb_enable_msix(struct adapter *adap)
+ {
+ 	struct msix_entry entries[SGE_QSETS + 1];
+@@ -2801,7 +2638,6 @@ static int __devinit init_one(struct pci_dev *pdev,
+ 	}
+ 
+ 	pci_set_master(pdev);
+-	pci_save_state(pdev);
+ 
+ 	mmio_start = pci_resource_start(pdev, 0);
+ 	mmio_len = pci_resource_len(pdev, 0);
+@@ -2830,8 +2666,8 @@ static int __devinit init_one(struct pci_dev *pdev,
+ 	spin_lock_init(&adapter->stats_lock);
+ 
+ 	INIT_LIST_HEAD(&adapter->adapter_list);
+-	INIT_WORK(&adapter->ext_intr_handler_task, ext_intr_task, adapter);
+-	INIT_WORK(&adapter->adap_check_task, t3_adap_check_task, adapter);
++	INIT_WORK(&adapter->ext_intr_handler_task, ext_intr_task);
++	INIT_DELAYED_WORK(&adapter->adap_check_task, t3_adap_check_task);
+ 
+ 	for (i = 0; i < ai->nports; ++i) {
+ 		struct net_device *netdev;
+@@ -2842,13 +2678,15 @@ static int __devinit init_one(struct pci_dev *pdev,
+ 			goto out_free_dev;
+ 		}
+ 
+-		SET_MODULE_OWNER(netdev);
+ 		SET_NETDEV_DEV(netdev, &pdev->dev);
+ 
+ 		adapter->port[i] = netdev;
+ 		pi = netdev_priv(netdev);
+ 		pi->adapter = adapter;
+ 		pi->rx_csum_offload = 1;
++		pi->nqsets = 1;
++		pi->first_qset = i;
++		pi->activity = 0;
+ 		pi->port_id = i;
+ 		netif_carrier_off(netdev);
+ 		netdev->irq = pdev->irq;
+@@ -2861,7 +2699,6 @@ static int __devinit init_one(struct pci_dev *pdev,
+ 
+ 		netdev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
+ 		netdev->vlan_rx_register = vlan_rx_register;
+-		netdev->vlan_rx_kill_vid = vlan_rx_kill_vid;
+ 
+ 		netdev->open = cxgb_open;
+ 		netdev->stop = cxgb_close;
+@@ -2927,8 +2764,6 @@ static int __devinit init_one(struct pci_dev *pdev,
+ 	else if (msi > 0 && pci_enable_msi(pdev) == 0)
+ 		adapter->flags |= USING_MSI;
+ 
+-	set_nqsets(adapter);
+-
+ 	err = sysfs_create_group(&adapter->port[0]->class_dev.kobj,
+ 				 &cxgb3_attr_group);
+ 
+@@ -2974,7 +2809,6 @@ static void __devexit remove_one(struct pci_dev *pdev)
+ 		    if (test_bit(i, &adapter->registered_device_map))
+ 			unregister_netdev(adapter->port[i]);
+ 
+-		t3_stop_sge_timers(adapter);
+ 		t3_free_sge_resources(adapter);
+ 		cxgb_disable_msi(adapter);
+ 
+diff --git a/drivers/net/cxgb3/cxgb3_offload.c b/drivers/net/cxgb3/cxgb3_offload.c
+index b67fdda..c5b3de1 100644
+--- a/drivers/net/cxgb3/cxgb3_offload.c
++++ b/drivers/net/cxgb3/cxgb3_offload.c
+@@ -160,14 +160,16 @@ static struct net_device *get_iff_from_mac(struct adapter *adapter,
+ 	int i;
+ 
+ 	for_each_port(adapter, i) {
+-		const struct vlan_group *grp;
++		struct vlan_group *grp;
+ 		struct net_device *dev = adapter->port[i];
+ 		const struct port_info *p = netdev_priv(dev);
+ 
+ 		if (!memcmp(dev->dev_addr, mac, ETH_ALEN)) {
+ 			if (vlan && vlan != VLAN_VID_MASK) {
+ 				grp = p->vlan_grp;
+-				dev = grp ? grp->vlan_devices[vlan] : NULL;
++				dev = NULL;
++				if (grp)
++					dev = vlan_group_get_device(grp, vlan);
+ 			} else
+ 				while (dev->master)
+ 					dev = dev->master;
+@@ -496,9 +498,10 @@ static inline void mk_tid_release(struct sk_buff *skb, unsigned int tid)
+ 	OPCODE_TID(req) = htonl(MK_OPCODE_TID(CPL_TID_RELEASE, tid));
+ }
+ 
+-static void t3_process_tid_release_list(void *work)
++static void t3_process_tid_release_list(struct work_struct *work)
+ {
+-	struct t3c_data *td = work;
++	struct t3c_data *td = container_of(work, struct t3c_data,
++					   tid_release_task);
+ 	struct sk_buff *skb;
+ 	struct t3cdev *tdev = td->dev;
+ 
+@@ -843,7 +846,7 @@ static int do_trace(struct t3cdev *dev, struct sk_buff *skb)
+ 	skb->protocol = htons(0xffff);
+ 	skb->dev = dev->lldev;
+ 	skb_pull(skb, sizeof(*p));
+-	skb->mac.raw = skb->data;
++	skb_reset_mac_header(skb);
+ 	netif_receive_skb(skb);
+ 	return 0;
+ }
+@@ -1206,7 +1209,7 @@ int cxgb3_offload_activate(struct adapter *adapter)
+ 	t->mtus = mtutab.mtus;
+ 	t->nmtus = mtutab.size;
+ 
+-	INIT_WORK(&t->tid_release_task,t3_process_tid_release_list,t);
++	INIT_WORK(&t->tid_release_task, t3_process_tid_release_list);
+ 	spin_lock_init(&t->tid_release_lock);
+ 	INIT_LIST_HEAD(&t->list_node);
+ 	t->dev = dev;
+diff --git a/drivers/net/cxgb3/l2t.c b/drivers/net/cxgb3/l2t.c
+index 655a4b0..825e510 100644
+--- a/drivers/net/cxgb3/l2t.c
++++ b/drivers/net/cxgb3/l2t.c
+@@ -337,7 +337,7 @@ struct l2t_entry *t3_l2t_get(struct t3cdev *cdev, struct neighbour *neigh,
+ 		atomic_set(&e->refcnt, 1);
+ 		neigh_replace(e, neigh);
+ 		if (neigh->dev->priv_flags & IFF_802_1Q_VLAN)
+-			e->vlan = VLAN_DEV_INFO(neigh->dev)->vlan_id;
++			e->vlan = vlan_dev_vlan_id(neigh->dev);
+ 		else
+ 			e->vlan = VLAN_NONE;
+ 		spin_unlock(&e->lock);
+diff --git a/drivers/net/cxgb3/regs.h b/drivers/net/cxgb3/regs.h
+index 4bda27c..0116aac 100644
+--- a/drivers/net/cxgb3/regs.h
++++ b/drivers/net/cxgb3/regs.h
+@@ -444,14 +444,6 @@
+ 
+ #define A_PCIE_CFG 0x88
+ 
+-#define S_ENABLELINKDWNDRST    21
+-#define V_ENABLELINKDWNDRST(x) ((x) << S_ENABLELINKDWNDRST)
+-#define F_ENABLELINKDWNDRST    V_ENABLELINKDWNDRST(1U)
+-
+-#define S_ENABLELINKDOWNRST    20
+-#define V_ENABLELINKDOWNRST(x) ((x) << S_ENABLELINKDOWNRST)
+-#define F_ENABLELINKDOWNRST    V_ENABLELINKDOWNRST(1U)
+-
+ #define S_PCIE_CLIDECEN    16
+ #define V_PCIE_CLIDECEN(x) ((x) << S_PCIE_CLIDECEN)
+ #define F_PCIE_CLIDECEN    V_PCIE_CLIDECEN(1U)
+diff --git a/drivers/net/cxgb3/sge.c b/drivers/net/cxgb3/sge.c
+index 95d18ac..36fd845 100644
+--- a/drivers/net/cxgb3/sge.c
++++ b/drivers/net/cxgb3/sge.c
+@@ -563,33 +563,6 @@ static void *alloc_ring(struct pci_dev *pdev, size_t nelem, size_t elem_size,
+ }
+ 
+ /**
+- *	t3_reset_qset - reset a sge qset
+- *	@q: the queue set
+- *
+- *	Reset the qset structure.
+- *	the NAPI structure is preserved in the event of
+- *	the qset's reincarnation, for example during EEH recovery.
+- */
+-static void t3_reset_qset(struct sge_qset *q)
+-{
+-	if (q->adap &&
+-	    !(q->adap->flags & NAPI_INIT)) {
+-		memset(q, 0, sizeof(*q));
+-		return;
+-	}
+-
+-	q->adap = NULL;
+-	memset(&q->rspq, 0, sizeof(q->rspq));
+-	memset(q->fl, 0, sizeof(struct sge_fl) * SGE_RXQ_PER_SET);
+-	memset(q->txq, 0, sizeof(struct sge_txq) * SGE_TXQ_PER_SET);
+-	q->txq_stopped = 0;
+-	q->tx_reclaim_timer.function = NULL; /* for t3_stop_sge_timers() */
+-	kfree(q->lro_frag_tbl);
+-	q->lro_nfrags = q->lro_frag_len = 0;
+-}
+-
+-
+-/**
+  *	free_qset - free the resources of an SGE queue set
+  *	@adapter: the adapter owning the queue set
+  *	@q: the queue set
+@@ -648,7 +621,7 @@ static void t3_free_qset(struct adapter *adapter, struct sge_qset *q)
+ 	if (q->netdev)
+ 		q->netdev->atalk_ptr = NULL;
+ 
+-	t3_reset_qset(q);
++	memset(q, 0, sizeof(*q));
+ }
+ 
+ /**
+@@ -847,7 +820,7 @@ static inline struct sk_buff *get_imm_packet(const struct rsp_desc *resp)
+ 
+ 	if (skb) {
+ 		__skb_put(skb, IMMED_PKT_SIZE);
+-		memcpy(skb->data, resp->imm_data, IMMED_PKT_SIZE);
++		skb_copy_to_linear_data(skb, resp->imm_data, IMMED_PKT_SIZE);
+ 	}
+ 	return skb;
+ }
+@@ -1082,23 +1055,24 @@ static void write_tx_pkt_wr(struct adapter *adap, struct sk_buff *skb,
+ 		d->flit[2] = 0;
+ 		cntrl |= V_TXPKT_OPCODE(CPL_TX_PKT_LSO);
+ 		hdr->cntrl = htonl(cntrl);
+-		eth_type = skb->nh.raw - skb->data == ETH_HLEN ?
++		eth_type = skb_network_offset(skb) == ETH_HLEN ?
+ 		    CPL_ETH_II : CPL_ETH_II_VLAN;
+ 		tso_info |= V_LSO_ETH_TYPE(eth_type) |
+-		    V_LSO_IPHDR_WORDS(skb->nh.iph->ihl) |
+-		    V_LSO_TCPHDR_WORDS(skb->h.th->doff);
++		    V_LSO_IPHDR_WORDS(ip_hdr(skb)->ihl) |
++		    V_LSO_TCPHDR_WORDS(tcp_hdr(skb)->doff);
+ 		hdr->lso_info = htonl(tso_info);
+ 		flits = 3;
+ 	} else {
+ 		cntrl |= V_TXPKT_OPCODE(CPL_TX_PKT);
+ 		cntrl |= F_TXPKT_IPCSUM_DIS;	/* SW calculates IP csum */
+-		cntrl |= V_TXPKT_L4CSUM_DIS(skb->ip_summed != CHECKSUM_HW);
++		cntrl |= V_TXPKT_L4CSUM_DIS(skb->ip_summed != CHECKSUM_PARTIAL);
+ 		cpl->cntrl = htonl(cntrl);
+ 
+ 		if (skb->len <= WR_LEN - sizeof(*cpl)) {
+ 			q->sdesc[pidx].skb = NULL;
+ 			if (!skb->data_len)
+-				memcpy(&d->flit[2], skb->data, skb->len);
++				skb_copy_from_linear_data(skb, &d->flit[2],
++							  skb->len);
+ 			else
+ 				skb_copy_bits(skb, 0, &d->flit[2], skb->len);
+ 
+@@ -1195,7 +1169,7 @@ int t3_eth_xmit(struct sk_buff *skb, struct net_device *dev)
+ 	}
+ 
+ 	/* update port statistics */
+-	if (skb->ip_summed == CHECKSUM_HW)
++	if (skb->ip_summed == CHECKSUM_COMPLETE)
+ 		qs->port_stats[SGE_PSTAT_TX_CSUM]++;
+ 	if (skb_shinfo(skb)->gso_size)
+ 		qs->port_stats[SGE_PSTAT_TSO]++;
+@@ -1458,9 +1432,9 @@ static void deferred_unmap_destructor(struct sk_buff *skb)
+ 	dui = (struct deferred_unmap_info *)skb->head;
+ 	p = dui->addr;
+ 
+-	if (skb->tail - skb->h.raw)
++	if (skb->tail - skb->transport_header)
+ 		pci_unmap_single(dui->pdev, *p++,
+-				 skb->tail - skb->h.raw,
++				 skb->tail - skb->transport_header,
+ 				 PCI_DMA_TODEVICE);
+ 
+ 	si = skb_shinfo(skb);
+@@ -1515,11 +1489,13 @@ static void write_ofld_wr(struct adapter *adap, struct sk_buff *skb,
+ 	/* Only TX_DATA builds SGLs */
+ 
+ 	from = (struct work_request_hdr *)skb->data;
+-	memcpy(&d->flit[1], &from[1], skb->h.raw - skb->data - sizeof(*from));
++	memcpy(&d->flit[1], &from[1],
++	       skb_transport_offset(skb) - sizeof(*from));
+ 
+-	flits = (skb->h.raw - skb->data) / 8;
++	flits = skb_transport_offset(skb) / 8;
+ 	sgp = ndesc == 1 ? (struct sg_ent *)&d->flit[flits] : sgl;
+-	sgl_flits = make_sgl(skb, sgp, skb->h.raw, skb->tail - skb->h.raw,
++	sgl_flits = make_sgl(skb, sgp, skb_transport_header(skb),
++			     skb->tail - skb->transport_header,
+ 			     adap->pdev);
+ 	if (need_skb_unmap()) {
+ 		setup_deferred_unmapping(skb, adap->pdev, sgp, sgl_flits);
+@@ -1544,9 +1520,9 @@ static inline unsigned int calc_tx_descs_ofld(const struct sk_buff *skb)
+ 	if (skb->len <= WR_LEN)
+ 		return 1;	/* packet fits as immediate data */
+ 
+-	flits = (skb->h.raw - skb->data) / 8;	/* headers */
++	flits = skb_transport_offset(skb) / 8;	/* headers */
+ 	cnt = skb_shinfo(skb)->nr_frags;
+-	if (skb->tail != skb->h.raw)
++	if (skb->tail != skb->transport_header)
+ 		cnt++;
+ 	return flits_to_desc(flits + sgl_len(cnt));
+ }
+@@ -1818,7 +1794,9 @@ static inline int rx_offload(struct t3cdev *tdev, struct sge_rspq *rq,
+ 			     struct sk_buff *skb, struct sk_buff *rx_gather[],
+ 			     unsigned int gather_idx)
+ {
+-	skb->mac.raw = skb->nh.raw = skb->h.raw = skb->data;
++	skb_reset_mac_header(skb);
++	skb_reset_network_header(skb);
++	skb_reset_transport_header(skb);
+ 
+ 	if (rq->polling) {
+ 		rx_gather[gather_idx++] = skb;
+@@ -1876,15 +1854,13 @@ static void restart_tx(struct sge_qset *qs)
+  *	if it was immediate data in a response.
+  */
+ static void rx_eth(struct adapter *adap, struct sge_rspq *rq,
+-		   struct sk_buff *skb, int pad, int lro)
++		   struct sk_buff *skb, int pad)
+ {
+ 	struct cpl_rx_pkt *p = (struct cpl_rx_pkt *)(skb->data + pad);
+-	struct sge_qset *qs = rspq_to_qset(rq);
+ 	struct port_info *pi;
+ 
+ 	skb_pull(skb, sizeof(*p) + pad);
+-	skb->dev = adap->port[p->iff];
+-	skb->protocol = eth_type_trans(skb, skb->dev);
++	skb->protocol = eth_type_trans(skb, adap->port[p->iff]);
+ 	skb->dev->last_rx = jiffies;
+ 	pi = netdev_priv(skb->dev);
+ 	if (pi->rx_csum_offload && p->csum_valid && p->csum == htons(0xffff) &&
+@@ -1897,171 +1873,18 @@ static void rx_eth(struct adapter *adap, struct sge_rspq *rq,
+ 	if (unlikely(p->vlan_valid)) {
+ 		struct vlan_group *grp = pi->vlan_grp;
+ 
+-		qs->port_stats[SGE_PSTAT_VLANEX]++;
++		rspq_to_qset(rq)->port_stats[SGE_PSTAT_VLANEX]++;
+ 		if (likely(grp))
+-			if (lro)
+-				lro_vlan_hwaccel_receive_skb(&qs->lro_mgr, skb,
+-							     grp,
+-							     ntohs(p->vlan),
+-							     p);
+-			else
+-				__vlan_hwaccel_rx(skb, grp, ntohs(p->vlan),
+-					  	  rq->polling);
++			__vlan_hwaccel_rx(skb, grp, ntohs(p->vlan),
++					  rq->polling);
+ 		else
+ 			dev_kfree_skb_any(skb);
+-	} else if (rq->polling) {
+-		if (lro)
+-			lro_receive_skb(&qs->lro_mgr, skb, p);
+-		else
+-			netif_receive_skb(skb);
+-	} else
++	} else if (rq->polling)
++		netif_receive_skb(skb);
++	else
+ 		netif_rx(skb);
+ }
+ 
+-static inline int is_eth_tcp(u32 rss)
+-{
+-	return G_HASHTYPE(ntohl(rss)) == RSS_HASH_4_TUPLE;
+-}
+-
+-/**
+- *	lro_frame_ok - check if an ingress packet is eligible for LRO
+- *	@p: the CPL header of the packet
+- *
+- *	Returns true if a received packet is eligible for LRO.
+- *	The following conditions must be true:
+- *	- packet is TCP/IP Ethernet II (checked elsewhere)
+- *	- not an IP fragment
+- *	- no IP options
+- *	- TCP/IP checksums are correct
+- *	- the packet is for this host
+- */
+-static inline int lro_frame_ok(const struct cpl_rx_pkt *p)
+-{
+-	const struct ethhdr *eh = (struct ethhdr *)(p + 1);
+-	const struct iphdr *ih = (struct iphdr *)(eh + 1);
+-
+-	return (*((u8 *)p + 1) & 0x90) == 0x10 && p->csum == htons(0xffff) &&
+-		eh->h_proto == htons(ETH_P_IP) && ih->ihl == (sizeof(*ih) >> 2);
+-}
+-
+-static int t3_get_lro_header(void **eh,  void **iph, void **tcph,
+-			     u64 *hdr_flags, void *priv)
+-{
+-	const struct cpl_rx_pkt *cpl = priv;
+-
+-	if (!lro_frame_ok(cpl))
+-		return -1;
+-
+-	*eh = (struct ethhdr *)(cpl + 1);
+-	*iph = (struct iphdr *)((struct ethhdr *)*eh + 1);
+-	*tcph = (struct tcphdr *)((struct iphdr *)*iph + 1);
+-
+-	*hdr_flags = LRO_IPV4 | LRO_TCP;
+-	return 0;
+-}
+-
+-static int t3_get_skb_header(struct sk_buff *skb,
+-			      void **iph, void **tcph, u64 *hdr_flags,
+-			      void *priv)
+-{
+-	void *eh;
+-
+-	return t3_get_lro_header(&eh, iph, tcph, hdr_flags, priv);
+-}
+-
+-static int t3_get_frag_header(struct skb_frag_struct *frag, void **eh,
+-			      void **iph, void **tcph, u64 *hdr_flags,
+-			      void *priv)
+-{
+-	return t3_get_lro_header(eh, iph, tcph, hdr_flags, priv);
+-}
+-
+-/**
+- *	lro_add_page - add a page chunk to an LRO session
+- *	@adap: the adapter
+- *	@qs: the associated queue set
+- *	@fl: the free list containing the page chunk to add
+- *	@len: packet length
+- *	@complete: Indicates the last fragment of a frame
+- *
+- *	Add a received packet contained in a page chunk to an existing LRO
+- *	session.
+- */
+-static void lro_add_page(struct adapter *adap, struct sge_qset *qs,
+-			 struct sge_fl *fl, int len, int complete)
+-{
+-	struct rx_sw_desc *sd = &fl->sdesc[fl->cidx];
+-	struct cpl_rx_pkt *cpl;
+-	struct skb_frag_struct *rx_frag = qs->lro_frag_tbl;
+-	int nr_frags = qs->lro_nfrags, frag_len = qs->lro_frag_len;
+-	int offset = 0;
+-
+-	if (!nr_frags) {
+-		offset = 2 + sizeof(struct cpl_rx_pkt);
+-		qs->lro_va = cpl = sd->pg_chunk.va + 2;
+-	}
+-
+-	fl->credits--;
+-
+-	len -= offset;
+-	pci_unmap_single(adap->pdev, pci_unmap_addr(sd, dma_addr),
+-			 fl->buf_size, PCI_DMA_FROMDEVICE);
+-
+-	rx_frag += nr_frags;
+-	rx_frag->page = sd->pg_chunk.page;
+-	rx_frag->page_offset = sd->pg_chunk.offset + offset;
+-	rx_frag->size = len;
+-	frag_len += len;
+-	qs->lro_nfrags++;
+-	qs->lro_frag_len = frag_len;
+-
+-	if (!complete)
+-		return;
+-
+-	qs->lro_nfrags = qs->lro_frag_len = 0;
+-	cpl = qs->lro_va;
+-
+-	if (unlikely(cpl->vlan_valid)) {
+-		struct net_device *dev = qs->netdev;
+-		struct port_info *pi = netdev_priv(dev);
+-		struct vlan_group *grp = pi->vlan_grp;
+-
+-		if (likely(grp != NULL)) {
+-			lro_vlan_hwaccel_receive_frags(&qs->lro_mgr,
+-						       qs->lro_frag_tbl,
+-						       frag_len, frag_len,
+-						       grp, ntohs(cpl->vlan),
+-						       cpl, 0);
+-			return;
+-		}
+-	}
+-	lro_receive_frags(&qs->lro_mgr, qs->lro_frag_tbl,
+-			  frag_len, frag_len, cpl, 0);
+-}
+-
+-/**
+- *	init_lro_mgr - initialize a LRO manager object
+- *	@lro_mgr: the LRO manager object
+- */
+-static void init_lro_mgr(struct sge_qset *qs, struct net_lro_mgr *lro_mgr)
+-{
+-	struct adapter *adapter = qs->adap;
+-	struct net_device *dev = qs->netdev;
+-	struct port_info *pi = netdev_priv(dev);
+-
+-	lro_mgr->dev = adapter->port[pi->port_id];
+-	lro_mgr->features = LRO_F_NAPI;
+-	lro_mgr->ip_summed = CHECKSUM_UNNECESSARY;
+-	lro_mgr->ip_summed_aggr = CHECKSUM_UNNECESSARY;
+-	lro_mgr->max_desc = T3_MAX_LRO_SES;
+-	lro_mgr->lro_arr = qs->lro_desc;
+-	lro_mgr->get_frag_header = t3_get_frag_header;
+-	lro_mgr->get_skb_header = t3_get_skb_header;
+-	lro_mgr->max_aggr = T3_MAX_LRO_MAX_PKTS;
+-	if (lro_mgr->max_aggr > MAX_SKB_FRAGS)
+-		lro_mgr->max_aggr = MAX_SKB_FRAGS;
+-}
+-
+ /**
+  *	handle_rsp_cntrl_info - handles control information in a response
+  *	@qs: the queue set corresponding to the response
+@@ -2190,7 +2013,7 @@ static int process_responses(struct adapter *adap, struct sge_qset *qs,
+ 	q->next_holdoff = q->holdoff_tmr;
+ 
+ 	while (likely(budget_left && is_new_response(r, q))) {
+-		int packet_complete, eth, ethpad = 2, lro = qs->lro_enabled;
++		int packet_complete, eth, ethpad = 2;
+ 		struct sk_buff *skb = NULL;
+ 		u32 len, flags = ntohl(r->flags);
+ 		__be32 rss_hi = *(const __be32 *)r,
+@@ -2222,9 +2045,6 @@ no_mem:
+ 		} else if ((len = ntohl(r->len_cq)) != 0) {
+ 			struct sge_fl *fl;
+ 
+-			if (eth)
+-				lro = qs->lro_enabled && is_eth_tcp(rss_hi);
+-
+ 			fl = (len & F_RSPD_FLQ) ? &qs->fl[1] : &qs->fl[0];
+ 			if (fl->use_pages) {
+ 				void *addr = fl->sdesc[fl->cidx].pg_chunk.va;
+@@ -2234,12 +2054,6 @@ no_mem:
+ 				prefetch(addr + L1_CACHE_BYTES);
+ #endif
+ 				__refill_fl(adap, fl);
+-				if (lro > 0) {
+-					lro_add_page(adap, qs, fl,
+-						     G_RSPD_LEN(len),
+-						     flags & F_RSPD_EOP);
+-					 goto next_fl;
+-				}
+ 
+ 				skb = get_packet_pg(adap, fl, q,
+ 						    G_RSPD_LEN(len),
+@@ -2255,7 +2069,7 @@ no_mem:
+ 				q->rx_drops++;
+ 			} else if (unlikely(r->rss_hdr.opcode == CPL_TRACE_PKT))
+ 				__skb_pull(skb, 2);
+-next_fl:
++
+ 			if (++fl->cidx == fl->size)
+ 				fl->cidx = 0;
+ 		} else
+@@ -2285,7 +2099,7 @@ next_fl:
+ 
+ 		if (skb != NULL && packet_complete) {
+ 			if (eth)
+-				rx_eth(adap, q, skb, ethpad, lro);
++				rx_eth(adap, q, skb, ethpad);
+ 			else {
+ 				q->offload_pkts++;
+ 				/* Preserve the RSS info in csum & priority */
+@@ -2303,11 +2117,6 @@ next_fl:
+ 	}
+ 
+ 	deliver_partial_bundle(&adap->tdev, q, offload_skbs, ngathered);
+-	lro_flush_all(&qs->lro_mgr);
+-	qs->port_stats[SGE_PSTAT_LRO_AGGR] = qs->lro_mgr.stats.aggregated;
+-	qs->port_stats[SGE_PSTAT_LRO_FLUSHED] = qs->lro_mgr.stats.flushed;
+-	qs->port_stats[SGE_PSTAT_LRO_NO_DESC] = qs->lro_mgr.stats.no_desc;
+-
+ 	if (sleeping)
+ 		check_ring_db(adap, qs, sleeping);
+ 
+@@ -2463,7 +2272,7 @@ static inline int handle_responses(struct adapter *adap, struct sge_rspq *q)
+  * The MSI-X interrupt handler for an SGE response queue for the non-NAPI case
+  * (i.e., response queue serviced in hard interrupt).
+  */
+-irqreturn_t t3_sge_intr_msix(int irq, void *cookie, struct pt_regs *regs)
++irqreturn_t t3_sge_intr_msix(int irq, void *cookie)
+ {
+ 	struct sge_qset *qs = cookie;
+ 	const struct port_info *pi = netdev_priv(qs->netdev);
+@@ -2483,7 +2292,7 @@ irqreturn_t t3_sge_intr_msix(int irq, void *cookie, struct pt_regs *regs)
+  * The MSI-X interrupt handler for an SGE response queue for the NAPI case
+  * (i.e., response queue serviced by NAPI polling).
+  */
+-static irqreturn_t t3_sge_intr_msix_napi(int irq, void *cookie, struct pt_regs *regs)
++static irqreturn_t t3_sge_intr_msix_napi(int irq, void *cookie)
+ {
+ 	struct sge_qset *qs = cookie;
+ 	const struct port_info *pi = netdev_priv(qs->netdev);
+@@ -2504,7 +2313,7 @@ static irqreturn_t t3_sge_intr_msix_napi(int irq, void *cookie, struct pt_regs *
+  * the same MSI vector.  We use one SGE response queue per port in this mode
+  * and protect all response queues with queue 0's lock.
+  */
+-static irqreturn_t t3_intr_msi(int irq, void *cookie, struct pt_regs *regs)
++static irqreturn_t t3_intr_msi(int irq, void *cookie)
+ {
+ 	int new_packets = 0;
+ 	struct adapter *adap = cookie;
+@@ -2552,7 +2361,7 @@ static int rspq_check_napi(struct net_device *dev, struct sge_rspq *q)
+  * one SGE response queue per port in this mode and protect all response
+  * queues with queue 0's lock.
+  */
+-static irqreturn_t t3_intr_msi_napi(int irq, void *cookie, struct pt_regs *regs)
++static irqreturn_t t3_intr_msi_napi(int irq, void *cookie)
+ {
+ 	int new_packets;
+ 	struct adapter *adap = cookie;
+@@ -2591,7 +2400,7 @@ static inline int process_responses_gts(struct adapter *adap,
+  * the same interrupt pin.  We use one SGE response queue per port in this mode
+  * and protect all response queues with queue 0's lock.
+  */
+-static irqreturn_t t3_intr(int irq, void *cookie, struct pt_regs *regs)
++static irqreturn_t t3_intr(int irq, void *cookie)
+ {
+ 	int work_done, w0, w1;
+ 	struct adapter *adap = cookie;
+@@ -2629,7 +2438,7 @@ static irqreturn_t t3_intr(int irq, void *cookie, struct pt_regs *regs)
+  * response queue per port in this mode and protect all response queues with
+  * queue 0's lock.
+  */
+-static irqreturn_t t3b_intr(int irq, void *cookie, struct pt_regs *regs)
++static irqreturn_t t3b_intr(int irq, void *cookie)
+ {
+ 	u32 map;
+ 	struct adapter *adap = cookie;
+@@ -2663,7 +2472,7 @@ static irqreturn_t t3b_intr(int irq, void *cookie, struct pt_regs *regs)
+  * response queue per port in this mode and protect all response queues with
+  * queue 0's lock.
+  */
+-static irqreturn_t t3b_intr_napi(int irq, void *cookie, struct pt_regs *regs)
++static irqreturn_t t3b_intr_napi(int irq, void *cookie)
+ {
+ 	u32 map;
+ 	struct net_device *dev;
+@@ -2707,7 +2516,7 @@ static irqreturn_t t3b_intr_napi(int irq, void *cookie, struct pt_regs *regs)
+  *	(MSI-X, MSI, or legacy) and whether NAPI will be used to service the
+  *	response queues.
+  */
+-intr_handler_t t3_intr_handler(struct adapter *adap, int polling, struct pt_regs *ptregs)
++irq_handler_t t3_intr_handler(struct adapter *adap, int polling)
+ {
+ 	if (adap->flags & USING_MSIX)
+ 		return polling ? t3_sge_intr_msix_napi : t3_sge_intr_msix;
+@@ -2868,7 +2677,6 @@ int t3_sge_alloc_qset(struct adapter *adapter, unsigned int id, int nports,
+ {
+ 	int i, avail, ret = -ENOMEM;
+ 	struct sge_qset *q = &adapter->sge.qs[id];
+-	struct net_lro_mgr *lro_mgr = &q->lro_mgr;
+ 
+ 	init_qset_cntxt(q, id);
+ 	init_timer(&q->tx_reclaim_timer);
+@@ -2949,10 +2757,6 @@ int t3_sge_alloc_qset(struct adapter *adapter, unsigned int id, int nports,
+ 	q->fl[0].order = FL0_PG_ORDER;
+ 	q->fl[1].order = FL1_PG_ORDER;
+ 
+-	q->lro_frag_tbl = kcalloc(MAX_FRAME_SIZE / FL1_PG_CHUNK_SIZE + 1,
+-				  sizeof(struct skb_frag_struct),
+-				  GFP_KERNEL);
+-	q->lro_nfrags = q->lro_frag_len = 0;
+ 	spin_lock_irq(&adapter->sge.reg_lock);
+ 
+ 	/* FL threshold comparison uses < */
+@@ -2998,20 +2802,16 @@ int t3_sge_alloc_qset(struct adapter *adapter, unsigned int id, int nports,
+ 	}
+ 
+ 	spin_unlock_irq(&adapter->sge.reg_lock);
+-
+-	q->adap = adapter;
+ 	q->netdev = netdev;
+ 	t3_update_qset_coalesce(q, p);
+ 
+-	/*
+-	 * We use atalk_ptr as a backpointer to a qset.  In case a device is
+-	 * associated with multiple queue sets only the first one sets
+-	 * atalk_ptr.
+-	 */
+-	if (netdev->atalk_ptr == NULL)
+-		netdev->atalk_ptr = q;
+-
+-	init_lro_mgr(q, lro_mgr);
++ 	/*
++ 	 * We use atalk_ptr as a backpointer to a qset.  In case a device is
++ 	 * associated with multiple queue sets only the first one sets
++ 	 * atalk_ptr.
++ 	 */
++ 	if (netdev->atalk_ptr == NULL)
++ 		netdev->atalk_ptr = q;
+ 
+ 	avail = refill_fl(adapter, &q->fl[0], q->fl[0].size,
+ 			  GFP_KERNEL | __GFP_COMP);
+@@ -3044,24 +2844,6 @@ err:
+ }
+ 
+ /**
+- *	t3_stop_sge_timers - stop SGE timer call backs
+- *	@adap: the adapter
+- *
+- *	Stops each SGE queue set's timer call back
+- */
+-void t3_stop_sge_timers(struct adapter *adap)
+-{
+-	int i;
+-
+-	for (i = 0; i < SGE_QSETS; ++i) {
+-		struct sge_qset *q = &adap->sge.qs[i];
+-
+-		if (q->tx_reclaim_timer.function)
+-			del_timer_sync(&q->tx_reclaim_timer);
+-	}
+-}
+-
+-/**
+  *	t3_free_sge_resources - free SGE resources
+  *	@adap: the adapter
+  *
+diff --git a/drivers/net/cxgb3/t3_cpl.h b/drivers/net/cxgb3/t3_cpl.h
+index 917970e..030a8cb 100644
+--- a/drivers/net/cxgb3/t3_cpl.h
++++ b/drivers/net/cxgb3/t3_cpl.h
+@@ -174,13 +174,6 @@ enum {				/* TCP congestion control algorithms */
+ 	CONG_ALG_HIGHSPEED
+ };
+ 
+-enum {			/* RSS hash type */
+-	RSS_HASH_NONE = 0,
+-	RSS_HASH_2_TUPLE = 1,
+-	RSS_HASH_4_TUPLE = 2,
+-	RSS_HASH_TCPV6 = 3
+-};
+-
+ union opcode_tid {
+ 	__be32 opcode_tid;
+ 	__u8 opcode;
+@@ -194,10 +187,6 @@ union opcode_tid {
+ #define S_QNUM 0
+ #define G_QNUM(x) (((x) >> S_QNUM) & 0xFFFF)
+ 
+-#define S_HASHTYPE 22
+-#define M_HASHTYPE 0x3
+-#define G_HASHTYPE(x) (((x) >> S_HASHTYPE) & M_HASHTYPE)
+-
+ /* tid is assumed to be 24-bits */
+ #define MK_OPCODE_TID(opcode, tid) (V_OPCODE(opcode) | (tid))
+ 
+diff --git a/drivers/net/cxgb3/t3_hw.c b/drivers/net/cxgb3/t3_hw.c
+index 3be0058..c6ce5e0 100644
+--- a/drivers/net/cxgb3/t3_hw.c
++++ b/drivers/net/cxgb3/t3_hw.c
+@@ -683,7 +683,7 @@ enum {
+ 	SF_ERASE_SECTOR = 0xd8,	/* erase sector */
+ 
+ 	FW_FLASH_BOOT_ADDR = 0x70000,	/* start address of FW in flash */
+-	FW_VERS_ADDR = 0x77ffc,    /* flash address holding FW version */
++	FW_VERS_ADDR = 0x7fffc,    /* flash address holding FW version */
+ 	FW_MIN_SIZE = 8            /* at least version and csum */
+ };
+ 
+@@ -3265,7 +3265,6 @@ static void config_pcie(struct adapter *adap)
+ 
+ 	t3_write_reg(adap, A_PCIE_PEX_ERR, 0xffffffff);
+ 	t3_set_reg_field(adap, A_PCIE_CFG, 0,
+-			 F_ENABLELINKDWNDRST | F_ENABLELINKDOWNRST |
+ 			 F_PCIE_DMASTOPEN | F_PCIE_CLIDECEN);
+ }
+ 
+@@ -3284,9 +3283,8 @@ int t3_init_hw(struct adapter *adapter, u32 fw_params)
+ 
+ 	if (adapter->params.rev > 0)
+ 		calibrate_xgm_t3b(adapter);
+-	else if (calibrate_xgm(adapter)) {
++	else if (calibrate_xgm(adapter))
+ 		goto out_err;
+-	}
+ 
+ 	if (vpd->mclk) {
+ 		partition_mem(adapter, &adapter->params.tp);
+@@ -3304,9 +3302,8 @@ int t3_init_hw(struct adapter *adapter, u32 fw_params)
+ 				goto out_err;
+ 	}
+ 
+-	if (tp_init(adapter, &adapter->params.tp)) {
++	if (tp_init(adapter, &adapter->params.tp))
+ 		goto out_err;
+-	}
+ 
+ 	t3_tp_set_coalescing_size(adapter,
+ 				  min(adapter->params.sge.max_pkt_size,
+@@ -3628,12 +3625,12 @@ int t3_prep_adapter(struct adapter *adapter, const struct adapter_info *ai,
+ 			++j;
+ 
+ 		p->port_type = &port_types[adapter->params.vpd.port_type[j]];
+-		if (!p->port_type->phy_prep) {
+-			CH_ALERT(adapter, "Invalid port type index %d\n",
+-				 adapter->params.vpd.port_type[j]);
+-			return -EINVAL;
+-		}
+-
++ 		if (!p->port_type->phy_prep) {
++ 			CH_ALERT(adapter, "Invalid port type index %d\n",
++ 				 adapter->params.vpd.port_type[j]);
++ 			return -EINVAL;
++ 		}
++ 
+ 		p->port_type->phy_prep(&p->phy, adapter, ai->phy_base_addr + j,
+ 				       ai->mdio_ops);
+ 		mac_prep(&p->mac, adapter, j);
+@@ -3665,30 +3662,3 @@ void t3_led_ready(struct adapter *adapter)
+ 	t3_set_reg_field(adapter, A_T3DBG_GPIO_EN, F_GPIO0_OUT_VAL,
+ 			 F_GPIO0_OUT_VAL);
+ }
+-
+-int t3_replay_prep_adapter(struct adapter *adapter)
+-{
+-	const struct adapter_info *ai = adapter->params.info;
+-	unsigned int i, j = 0;
+-	int ret;
+-
+-	early_hw_init(adapter, ai);
+-	ret = init_parity(adapter);
+-	if (ret)
+-		return ret;
+-
+-	for_each_port(adapter, i) {
+-		struct port_info *p = adap2pinfo(adapter, i);
+-		while (!adapter->params.vpd.port_type[j])
+-			++j;
+-
+-		p->port_type->phy_prep(&p->phy, adapter, ai->phy_base_addr + j,
+-					ai->mdio_ops);
+-
+-		p->phy.ops->power_down(&p->phy, 1);
+-		++j;
+-	}
+-
+-	return 0;
+-}
+-
+diff --git a/drivers/net/cxgb3/version.h b/drivers/net/cxgb3/version.h
+index a0177fc..8d38d1c 100644
+--- a/drivers/net/cxgb3/version.h
++++ b/drivers/net/cxgb3/version.h
+@@ -35,10 +35,10 @@
+ #define DRV_DESC "Chelsio T3 Network Driver"
+ #define DRV_NAME "cxgb3"
+ /* Driver version */
+-#define DRV_VERSION "1.0-ko"
++#define DRV_VERSION "1.0-ofed"
+ 
+ /* Firmware version */
+-#define FW_VERSION_MAJOR 6
+-#define FW_VERSION_MINOR 0
++#define FW_VERSION_MAJOR 7
++#define FW_VERSION_MINOR 1
+ #define FW_VERSION_MICRO 0
+ #endif				/* __CHELSIO_VERSION_H */

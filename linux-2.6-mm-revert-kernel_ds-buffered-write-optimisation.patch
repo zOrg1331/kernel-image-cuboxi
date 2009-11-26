@@ -1,0 +1,65 @@
+From: Josef Bacik <jbacik@redhat.com>
+Date: Tue, 10 Feb 2009 13:49:15 -0500
+Subject: [mm] revert KERNEL_DS buffered write optimisation
+Message-id: 1234291777-15344-3-git-send-email-jbacik@redhat.com
+O-Subject: [PATCH 02/24] [RHEL 5.4] mm: revert KERNEL_DS buffered write optimisation
+Bugzilla: 445433
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+This upstream commit
+
+41cb8ac025dbbf6782eae10d231e7e2336ad3724
+
+and is in reference to bz 445433.
+
+This reverts a NFSD writev optimization.  This is in preperation of taking
+the new aops patches.
+
+Signed-off-by: Josef Bacik <jbacik@redhat.com>
+
+diff --git a/mm/filemap.c b/mm/filemap.c
+index 63cdc94..d413c95 100644
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -2167,27 +2167,21 @@ generic_file_buffered_write(struct kiocb *iocb, const struct iovec *iov,
+ 		/* Limit the size of the copy to the caller's write size */
+ 		bytes = min(bytes, count);
+ 
+-		/* We only need to worry about prefaulting when writes are from
+-		 * user-space.  NFSd uses vfs_writev with several non-aligned
+-		 * segments in the vector, and limiting to one segment a time is
+-		 * a noticeable performance for re-write
++		/*
++		 * Limit the size of the copy to that of the current segment,
++		 * because fault_in_pages_readable() doesn't know how to walk
++		 * segments.
+ 		 */
+-		if (!segment_eq(get_fs(), KERNEL_DS)) {
+-			/*
+-			 * Limit the size of the copy to that of the current
+-			 * segment, because fault_in_pages_readable() doesn't
+-			 * know how to walk segments.
+-			 */
+-			bytes = min(bytes, cur_iov->iov_len - iov_base);
++		bytes = min(bytes, cur_iov->iov_len - iov_base);
++
++		/*
++		 * Bring in the user page that we will copy from _first_.
++		 * Otherwise there's a nasty deadlock on copying from the
++		 * same page as we're writing to, without it being marked
++		 * up-to-date.
++		 */
++		fault_in_pages_readable(buf, bytes);
+ 
+-			/*
+-			 * Bring in the user page that we will copy from
+-			 * _first_.  Otherwise there's a nasty deadlock on
+-			 * copying from the same page as we're writing to,
+-			 * without it being marked up-to-date.
+-			 */
+-			fault_in_pages_readable(buf, bytes);
+-		}
+ 		page = __grab_cache_page(mapping,index,&cached_page,&lru_pvec);
+ 		if (!page) {
+ 			status = -ENOMEM;

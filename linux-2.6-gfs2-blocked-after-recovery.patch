@@ -1,0 +1,110 @@
+From: Abhijith Das <adas@redhat.com>
+Date: Thu, 16 Apr 2009 10:07:48 -0500
+Subject: [gfs2] blocked after recovery
+Message-id: 49E749C4.1010809@redhat.com
+O-Subject: [RHEL5.4] [PATCH] GFS2 - bz 483541 - gfs2 blocked after recovery
+Bugzilla: 483541
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: Bob Peterson <rpeterso@redhat.com>
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+The problem is that the glock workqueue is getting stuck
+while trying to get the transaction lock. Its trying to
+get that lock since it needs to start a transaction in
+order to release a glock (due to GFS2's journalling
+implementation). Thats then blocking incoming requests
+from being processed.
+
+This patch changes the log code so that we don't need to
+get a lock at this particular point in time no longer do
+we have to wonder about what to do if the transaction
+cannot be allocated, since we can put that on the stack.
+Also it should be slightly faster, since we don't need to
+grab the transaction glock in this case.
+
+The patch relies on the fact that we cache the transaction
+glock forever, unless:
+a) There is a demotion request (which syncs the filesystem
+as part of its glops code) or
+b) Upon umount
+
+We can thus assume that if there is something in the ail
+list, it must be because we have the transaction glock
+cached. If we didn't hold it, then that would mean that the
+filesystem has been synced and further transactions would
+have been blocked in gfs2_trans_begin() so that the ail
+list must be empty.
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+
+diff --git a/fs/gfs2/glops.c b/fs/gfs2/glops.c
+index 7ce0016..3cf72b3 100644
+--- a/fs/gfs2/glops.c
++++ b/fs/gfs2/glops.c
+@@ -38,20 +38,25 @@
+ static void gfs2_ail_empty_gl(struct gfs2_glock *gl)
+ {
+ 	struct gfs2_sbd *sdp = gl->gl_sbd;
+-	unsigned int blocks;
+ 	struct list_head *head = &gl->gl_ail_list;
+ 	struct gfs2_bufdata *bd;
+ 	struct buffer_head *bh;
+-	int error;
++	struct gfs2_trans tr;
+ 
+-	blocks = atomic_read(&gl->gl_ail_count);
+-	if (!blocks)
+-		return;
++	memset(&tr, 0, sizeof(tr));
++	tr.tr_revokes = atomic_read(&gl->gl_ail_count);
+ 
+-	error = gfs2_trans_begin(sdp, 0, blocks);
+-	if (gfs2_assert_withdraw(sdp, !error))
++	if (!tr.tr_revokes)
+ 		return;
+ 
++	/* A shortened, inline version of gfs2_trans_begin() */
++	tr.tr_reserved = 1 + gfs2_struct2blk(sdp, tr.tr_revokes, sizeof(u64));
++	tr.tr_ip = (unsigned long)__builtin_return_address(0);
++	INIT_LIST_HEAD(&tr.tr_list_buf);
++	gfs2_log_reserve(sdp, tr.tr_reserved, 1);
++	BUG_ON(current->journal_info);
++	current->journal_info = &tr;
++
+ 	gfs2_log_lock(sdp);
+ 	while (!list_empty(head)) {
+ 		bd = list_entry(head->next, struct gfs2_bufdata,
+diff --git a/fs/gfs2/trans.c b/fs/gfs2/trans.c
+index c224ac8..0bcbfc1 100644
+--- a/fs/gfs2/trans.c
++++ b/fs/gfs2/trans.c
+@@ -88,9 +88,11 @@ void gfs2_trans_end(struct gfs2_sbd *sdp)
+ 
+ 	if (!tr->tr_touched) {
+ 		gfs2_log_release(sdp, tr->tr_reserved);
+-		gfs2_glock_dq(&tr->tr_t_gh);
+-		gfs2_holder_uninit(&tr->tr_t_gh);
+-		kfree(tr);
++		if (tr->tr_t_gh.gh_gl) {
++			gfs2_glock_dq(&tr->tr_t_gh);
++			gfs2_holder_uninit(&tr->tr_t_gh);
++			kfree(tr);
++		}
+ 		return;
+ 	}
+ 
+@@ -106,9 +108,11 @@ void gfs2_trans_end(struct gfs2_sbd *sdp)
+ 	}
+ 
+ 	gfs2_log_commit(sdp, tr);
+-        gfs2_glock_dq(&tr->tr_t_gh);
+-        gfs2_holder_uninit(&tr->tr_t_gh);
+-        kfree(tr);
++	if (tr->tr_t_gh.gh_gl) {
++		gfs2_glock_dq(&tr->tr_t_gh);
++		gfs2_holder_uninit(&tr->tr_t_gh);
++		kfree(tr);
++	}
+ 
+ 	if (sdp->sd_vfs->s_flags & MS_SYNCHRONOUS)
+ 		gfs2_log_flush(sdp, NULL);

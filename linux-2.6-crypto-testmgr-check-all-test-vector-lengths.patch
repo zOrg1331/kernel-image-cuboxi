@@ -1,0 +1,118 @@
+From: Jarod Wilson <jarod@redhat.com>
+Date: Mon, 1 Jun 2009 16:35:50 -0400
+Subject: [crypto] testmgr: check all test vector lengths
+Message-id: 200906011635.50410.jarod@redhat.com
+O-Subject: [RHEL5.4 PATCH 2/2] crypto: testmgr - check all test vector lengths
+Bugzilla: 503091
+
+Bug #503091: [RHEL5.4] Testmanager in crypto API directory may cause data corruption
+https://bugzilla.redhat.com/show_bug.cgi?id=503091
+
+Backport of http://www.mail-archive.com/linux-crypto@vger.kernel.org/msg03278.html
+
+(Not yet pushed to a public tree as of this writing)
+
+----
+commit dfddf5dbe683cfdeb84bd218a1f819c09f5ea44a
+Author: Herbert Xu <herb...@gondor.apana.org.au>
+Date:   Fri May 29 16:05:42 2009 +1000
+
+    crypto: testmgr - Check all test vector lengths
+
+    As we cannot guarantee the availability of contiguous pages at
+    run-time, all test vectors must either fit within a page, or use
+    scatter lists.  In some cases vectors were not checked as to
+    whether they fit inside a page.  This patch adds all the missing
+    checks.
+
+    Signed-off-by: Herbert Xu <herb...@gondor.apana.org.au>
+----
+
+RHEL5 backport tested by running 'modprobe tcrypt' (run all self-tests),
+all tests pass w/o a problem.
+
+diff --git a/crypto/testmgr.c b/crypto/testmgr.c
+index 9537adb..7eb47ee 100644
+--- a/crypto/testmgr.c
++++ b/crypto/testmgr.c
+@@ -181,6 +181,12 @@ static int test_nhash(struct crypto_hash *tfm, struct hash_testvec *template,
+ 
+ 		hash_buff = xbuf[0];
+ 
++		ret = -EINVAL;
++		if (unlikely(template[i].psize > PAGE_SIZE)) {
++			WARN_ON(1);
++			goto out;
++		}
++
+ 		memcpy(hash_buff, template[i].plaintext, template[i].psize);
+ 		sg_init_one(&sg[0], hash_buff, template[i].psize);
+ 
+@@ -220,7 +226,13 @@ static int test_nhash(struct crypto_hash *tfm, struct hash_testvec *template,
+ 
+ 			temp = 0;
+ 			sg_init_table(sg, template[i].np);
++			ret = -EINVAL;
+ 			for (k = 0; k < template[i].np; k++) {
++				if (unlikely(offset_in_page(IDX[k]) +
++					     template[i].tap[k] > PAGE_SIZE)) {
++					WARN_ON(1);
++					goto out;
++				}
+ 				sg_set_buf(&sg[k],
+ 					   memcpy(xbuf[IDX[k] >> PAGE_SHIFT] +
+ 						  offset_in_page(IDX[k]),
+@@ -323,6 +335,13 @@ static int test_aead(struct crypto_aead *tfm, int enc,
+ 			input = xbuf[0];
+ 			assoc = axbuf[0];
+ 
++			ret = -EINVAL;
++			if (unlikely(template[i].ilen > PAGE_SIZE ||
++				     template[i].alen > PAGE_SIZE)) {
++				WARN_ON(1);
++				goto out;
++			}
++
+ 			memcpy(input, template[i].input, template[i].ilen);
+ 			memcpy(assoc, template[i].assoc, template[i].alen);
+ 			if (template[i].iv)
+@@ -485,7 +504,13 @@ static int test_aead(struct crypto_aead *tfm, int enc,
+ 			}
+ 
+ 			sg_init_table(asg, template[i].anp);
++			ret = -EINVAL;
+ 			for (k = 0, temp = 0; k < template[i].anp; k++) {
++				if (unlikely(offset_in_page(IDX[k]) +
++					     template[i].atap[k] > PAGE_SIZE)) {
++					WARN_ON(1);
++					goto out;
++				}
+ 				sg_set_buf(&asg[k],
+ 					   memcpy(axbuf[IDX[k] >> PAGE_SHIFT] +
+ 						  offset_in_page(IDX[k]),
+@@ -619,6 +644,12 @@ static int test_cipher(struct crypto_cipher *tfm, int enc,
+ 
+ 		j++;
+ 
++		ret = -EINVAL;
++		if (unlikely(template[i].ilen > PAGE_SIZE)) {
++			WARN_ON(1);
++			goto out;
++		}
++
+ 		data = xbuf[0];
+ 		memcpy(data, template[i].input, template[i].ilen);
+ 
+@@ -710,6 +741,12 @@ static int test_skcipher(struct crypto_ablkcipher *tfm, int enc,
+ 		if (!(template[i].np)) {
+ 			j++;
+ 
++			ret = -EINVAL;
++			if (unlikely(template[i].ilen > PAGE_SIZE)) {
++				WARN_ON(1);
++				goto out;
++			}
++
+ 			data = xbuf[0];
+ 			memcpy(data, template[i].input, template[i].ilen);
+ 

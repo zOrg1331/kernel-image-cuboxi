@@ -1,0 +1,61 @@
+From: Sachin S. Prabhu <sprabhu@redhat.com>
+Date: Tue, 4 Aug 2009 15:52:53 +0100
+Subject: [nfs] nlm_lookup_host: don't return invalidated nlm_host
+Message-id: 4A784B45.2050801@redhat.com
+O-Subject: Re: [RHEL 5.5 PATCH] BZ 507549: nlm_lookup_host should not return invalidated nlm_host.
+Bugzilla: 507549
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+> BZ 507549
+>
+> This is the RHEL 5 version of the patch posted for BZ 505591.
+>
+> nlm_lookup_host() can return a pointer to a nlm_host which has been
+> invalidated by setting nlm_host->h_killed to 1. A lock could be obtained
+> on a file based on this nlm_host. Such locks on invalidated nlm_hosts
+> would then be skipped over when nlmsvc_invalidate_all() is called by
+> sending a SIGKILL to lockd.
+>
+> This bug was first noticed by nfs users sharing filesystems using the
+> Red Hat
+> cluster suite. When a user wanted to reboot a node on a cluster, the nfs
+> services on the node fail to cleanly relocate onto other nodes. This was
+> caused due to locks held on the filesystem by nfs clients which could no
+> longer access the share. These locks were obtained using invalidated
+> nlm_hosts and were not freed when a SIGKILL was sent to lockd using
+> nfslock restart.
+>
+> The proposed patch simply adds a check in nlm_lookup_host so that
+> nlm_host entries which have been killed earlier are not used.
+>
+> This patch does not match any fixes upstream. There have been a number
+> of changes made upstream to nlmsvc_invalidate_all() and nlm_host no
+> longer have the  h_killed component.  Since the number of changes
+> required are quiet high and there is a risk of change involved, I
+> decided to use this approach which is relatively risk free.
+>
+> A test kernel with the patch has been tested successfully using the
+> reproducer.  The test kernels are available at
+> seg.rdu.redhat.com:/export/nfs/sprabhu/bz507549/task_1915772
+>
+> A reproducer along with a more detailed analysis is provided at
+> https://bugzilla.redhat.com/show_bug.cgi?id=505591#c1
+>
+> Sachin Prabhu
+>
+>
+
+diff --git a/fs/lockd/host.c b/fs/lockd/host.c
+index 4810c37..419002e 100644
+--- a/fs/lockd/host.c
++++ b/fs/lockd/host.c
+@@ -78,6 +78,8 @@ nlm_lookup_host(int server, struct sockaddr_in *sin,
+ 		nlm_gc_hosts();
+ 
+ 	for (hp = &nlm_hosts[hash]; (host = *hp) != 0; hp = &host->h_next) {
++		if (host->h_killed)
++			continue;
+ 		if (host->h_proto != proto)
+ 			continue;
+ 		if (host->h_version != version)

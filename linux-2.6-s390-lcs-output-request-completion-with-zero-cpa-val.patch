@@ -1,0 +1,52 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Wed, 22 Oct 2008 14:17:48 +0200
+Subject: [s390] lcs: output request completion with zero cpa val
+Message-id: 20081022121748.GD26181@redhat.com
+O-Subject: [RHEL5 U4 PATCH 4/5] s390 - lcs: Output request completion with zero cpa value.
+Bugzilla: 463165
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+LCS recovery dumps in irq routine when CCW address in
+Subchannel Status Word (SCSW) is zero. This occurs
+when recovery is driven after cable reconnect.
+
+Bugzilla
+=========
+
+BZ 463165
+https://bugzilla.redhat.com/show_bug.cgi?id=463165
+
+Upstream status of the patch:
+=============================
+The patch has been submitted upstream:
+http://kerneltrap.org/mailarchive/linux-netdev/2008/8/21/3026944
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	--Hans
+
+diff --git a/drivers/s390/net/lcs.c b/drivers/s390/net/lcs.c
+index d6b8be3..142feb8 100644
+--- a/drivers/s390/net/lcs.c
++++ b/drivers/s390/net/lcs.c
+@@ -1407,7 +1407,8 @@ lcs_irq(struct ccw_device *cdev, unsigned long intparm, struct irb *irb)
+ 	}
+ 	/* How far in the ccw chain have we processed? */
+ 	if ((channel->state != CH_STATE_INIT) &&
+-	    (irb->scsw.fctl & SCSW_FCTL_START_FUNC)) {
++	    (irb->scsw.fctl & SCSW_FCTL_START_FUNC) &&
++	    (irb->scsw.cpa != 0)) {
+ 		index = (struct ccw1 *) __va((addr_t) irb->scsw.cpa)
+ 			- channel->ccws;
+ 		if ((irb->scsw.actl & SCSW_ACTL_SUSPENDED) ||

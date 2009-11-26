@@ -1,0 +1,52 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Tue, 21 Apr 2009 14:49:27 +0200
+Subject: [net] ipv6: assume loopback address in link-local scope
+Message-id: 20090421124927.GA13494@psychotron.englab.brq.redhat.com
+O-Subject: [RHEL5.4 patch] BZ487233 net: ipv6: Assume the loopback address in link-local scope.
+Bugzilla: 487233
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+BZ487233
+https://bugzilla.redhat.com/show_bug.cgi?id=487233
+
+Description:
+Handle interface property strictly when looking up a route for the loopback
+address (RFC4291 2.5.3):
+
+"An IPv6 packet with a destination address of loopback must never be sent
+outside of a single node and must never be forwarded by an IPv6 router."
+
+This is direct upstream backport. It replaces previously posted patch for
+bz487233 which covered only UDP. DonZ, please remove previous version from
+your tracking.
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=5ce83afaac956238c3c25f60a899c511e9d8cbf4
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1769077
+
+Test:
+Booted on x86_64, tested with the attached reproducer.
+
+Jirka
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+Signed-off-by: YOSHIFUJI Hideaki <yoshfuji@linux-ipv6.org>
+
+diff --git a/net/ipv6/route.c b/net/ipv6/route.c
+index ca3c300..616f682 100644
+--- a/net/ipv6/route.c
++++ b/net/ipv6/route.c
+@@ -239,7 +239,7 @@ static __inline__ int rt6_check_expired(const struct rt6_info *rt)
+ static inline int rt6_need_strict(struct in6_addr *daddr)
+ {
+ 	return (ipv6_addr_type(daddr) &
+-		(IPV6_ADDR_MULTICAST | IPV6_ADDR_LINKLOCAL));
++		(IPV6_ADDR_MULTICAST | IPV6_ADDR_LINKLOCAL | IPV6_ADDR_LOOPBACK));
+ }
+ 
+ /*

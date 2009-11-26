@@ -1,0 +1,209 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Fri, 31 Jul 2009 15:31:24 -0400
+Subject: [net] tg3: fix concurrent migration of VM clients
+Message-id: 4A73468C.8020708@redhat.com
+O-Subject: [RHEL5.4 PATCH] Panic in tg3 during concurrent migration of VM clients
+Bugzilla: 511918
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+bz511918
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=511918
+Panic tg3 driver
+
+Description of problem:
+The concurrent migration of multiple VM clients can cause the tg3
+driver to panic.
+
+Solution:
+Andy Gospodarek provided this RHEL5.4 patch from code that is
+in RHEL4 as well as upstream.
+
+As Andy explains in the bz:
+
+The race conditions we want to avoid are these:
+
+- Do not poll via net_rx_action/napi when the device is not scheduled.  This
+means netpoll has already polled and cleaned out all the needed work.
+
+- Do not poll via netpoll when the device is not scheduled.  This means
+net_rx_action/netpoll has already polled and cleaned out all the needed work.
+
+- Do not allow netpoll to modify the state (scheduled or not) of the interface.
+ This one is less obvious.  In RHEL4 we also add an extra check to make sure
+that netpoll never effects the state of scheduled devices.  If netpoll didn't
+schedule them, it should not take them off the poll-list either.
+
+Upstream status:
+
+commit 65f0b199776ba23bbe3f89bc93db94496a5a707f
+Author: Neil Horman <nhorman@redhat.com <mailto:nhorman@redhat.com>>
+Date:   Wed Dec 10 09:55:04 2008 -0500
+
+    netpoll: fix race condition between net_rx_action and poll_napi that can
+result in garbage device
+
+commit 870727bb6f92ab6b246c0cb8a07e002a68635020
+Author: Neil Horman <nhorman@redhat.com <mailto:nhorman@redhat.com>>
+Date:   Mon Dec 22 11:44:49 2008 -0500
+
+    net: fix double list_del in net_rx_action
+
+commit 741a46c986131fcc7271a6a5b65557c2f4343784
+Author: Andy Gospodarek <gospo@redhat.com <mailto:gospo@redhat.com>>
+Date:   Tue Nov 11 15:59:31 2008 -0500
+
+    net: fix race between poll_napi and net_rx_action
+
+Brew:
+Successfully built in Brew for all architectures (task_1912377)
+
+Testing:
+We are waiting on the final testing from the RHEV QE group
+but RHEL QE has loaded the kernel and successfully ran
+sanity tests.
+
+Acks would be appreciated. Thanks.
+
+diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
+index 942977a..c0a73b4 100644
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -235,6 +235,7 @@ enum netdev_state_t
+ 	__LINK_STATE_LINKWATCH_PENDING,
+ 	__LINK_STATE_DORMANT,
+ 	__LINK_STATE_QDISC_RUNNING,
++	__LINK_STATE_NETPOLL
+ };
+ 
+ 
+@@ -1064,6 +1065,9 @@ static inline void netif_rx_complete(struct net_device *dev)
+ {
+ 	unsigned long flags;
+ 
++	/* do not change poll list if called from netpoll */
++	if (test_bit(__LINK_STATE_NETPOLL, &dev->state))
++		return;
+ 	local_irq_save(flags);
+ 	BUG_ON(!test_bit(__LINK_STATE_RX_SCHED, &dev->state));
+ 	list_del(&dev->poll_list);
+@@ -1095,6 +1099,9 @@ static inline void netif_poll_enable(struct net_device *dev)
+  */
+ static inline void __netif_rx_complete(struct net_device *dev)
+ {
++	/* do not change poll list if called from netpoll */
++	if (test_bit(__LINK_STATE_NETPOLL, &dev->state))
++		return;
+ 	BUG_ON(!test_bit(__LINK_STATE_RX_SCHED, &dev->state));
+ 	list_del(&dev->poll_list);
+ 	smp_mb__before_clear_bit();
+diff --git a/net/core/dev.c b/net/core/dev.c
+index 0813be2..ad4ecb6 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -2338,11 +2338,12 @@ static void net_rx_action(struct softirq_action *h)
+ 	unsigned long start_time = jiffies;
+ 	int budget = netdev_budget;
+ 	void *have;
+-	int called_poll;
+ 	local_irq_disable();
+ 
+ 	while (!list_empty(&queue->poll_list)) {
+ 		struct net_device *dev;
++		int poll_result = 0;
++		int called_poll = 0;
+ 
+ 		if (budget <= 0 || jiffies - start_time > 1)
+ 			goto softnet_break;
+@@ -2352,15 +2353,30 @@ static void net_rx_action(struct softirq_action *h)
+ 		dev = list_entry(queue->poll_list.next,
+ 				 struct net_device, poll_list);
+ 		have = netpoll_poll_lock(dev);
+-		called_poll = (dev->quota <= 0) ? 0:1;
+-		if (dev->quota <= 0 || dev->poll(dev, &budget)) {
++
++		/* Before calling poll we need to make sure the device
++		 * has actually been scheduled.  When using netpoll, all
++		 * the necessary work may have already been done for us
++		 * before we could get the poll_lock, so just skip
++		 * polling on this device if it has. */
++		if (test_bit(__LINK_STATE_RX_SCHED, &dev->state)) {
++			called_poll = 1;
++			poll_result = dev->poll(dev, &budget);
++		}
++
++		/* Reset quota for the device whether we called poll or
++		 * not.  If we don't do this quota may be as small as
++		 * -weight if netpoll already polled the device for us
++		 * and we skipped it based on the conditional above. */
++		if (dev->quota < 0)
++			dev->quota += dev->weight;
++		else
++			dev->quota = dev->weight;
++
++		if (poll_result) {
+ 			netpoll_poll_unlock(have);
+ 			local_irq_disable();
+ 			list_move_tail(&dev->poll_list, &queue->poll_list);
+-			if (dev->quota < 0)
+-				dev->quota += dev->weight;
+-			else
+-				dev->quota = dev->weight;
+ 		} else {
+ 			netpoll_poll_unlock(have);
+ 			dev_put(dev);
+diff --git a/net/core/netpoll.c b/net/core/netpoll.c
+index b2d41e9..2a5a0a3 100644
+--- a/net/core/netpoll.c
++++ b/net/core/netpoll.c
+@@ -136,22 +136,38 @@ static int checksum_udp(struct sk_buff *skb, struct udphdr *uh,
+  * network adapter, forcing superfluous retries and possibly timeouts.
+  * Thus, we set our budget to greater than 1.
+  */
++
++static int poll_one_napi(struct netpoll_info *npinfo,
++			 struct net_device *dev, int budget)
++{
++	/* net_rx_action's ->poll() invocations and our's are
++	 * synchronized by this test which is only made while
++	 * holding the napi->poll_lock.
++	 */
++	if (!test_bit(__LINK_STATE_RX_SCHED, &dev->state))
++		return budget;
++
++	npinfo->rx_flags |= NETPOLL_RX_DROP;
++	atomic_inc(&trapped);
++
++	set_bit(__LINK_STATE_NETPOLL, &dev->state);
++	dev->poll(dev, &budget);
++	clear_bit(__LINK_STATE_NETPOLL, &dev->state);
++
++	atomic_dec(&trapped);
++	npinfo->rx_flags &= ~NETPOLL_RX_DROP;
++
++	return budget;
++}
++
+ static void poll_napi(struct netpoll *np)
+ {
+ 	struct netpoll_info *npinfo = np->dev->npinfo;
+ 	int budget = 16;
+ 
+-	if (test_bit(__LINK_STATE_RX_SCHED, &np->dev->state) &&
+-	    npinfo->poll_owner != smp_processor_id() &&
++	if (npinfo->poll_owner != smp_processor_id() &&
+ 	    spin_trylock(&npinfo->poll_lock)) {
+-		npinfo->rx_flags |= NETPOLL_RX_DROP;
+-		atomic_inc(&trapped);
+-
+-		np->dev->poll(np->dev, &budget);
+-		trace_napi_poll(np->dev);
+-
+-		atomic_dec(&trapped);
+-		npinfo->rx_flags &= ~NETPOLL_RX_DROP;
++		budget = poll_one_napi(npinfo, np->dev, budget);
+ 		spin_unlock(&npinfo->poll_lock);
+ 	}
+ }

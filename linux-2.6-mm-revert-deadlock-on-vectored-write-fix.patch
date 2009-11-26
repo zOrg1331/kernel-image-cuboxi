@@ -1,0 +1,61 @@
+From: Josef Bacik <jbacik@redhat.com>
+Date: Tue, 10 Feb 2009 13:49:17 -0500
+Subject: [mm] revert deadlock on vectored write fix
+Message-id: 1234291777-15344-5-git-send-email-jbacik@redhat.com
+O-Subject: [PATCH 04/24] [RHEL 5.4] mm: revert deadlock on vectored write fix
+Bugzilla: 445433
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+This is a backport of
+
+6814d7a91289ceb143285975e244a8f00fd3a830
+
+And is in reference to bz 445433.
+
+It reverts a fix that Nick had done to handle a deadlock on vectored
+writes.  This is benig backported for the new aops stuff which will fix
+this problem.
+
+Signed-off-by: Josef Bacik <jbacik@redhat.com>
+
+diff --git a/mm/filemap.c b/mm/filemap.c
+index 5b88813..3eabe37 100644
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -2158,21 +2158,14 @@ generic_file_buffered_write(struct kiocb *iocb, const struct iovec *iov,
+ 	do {
+ 		unsigned long index;
+ 		unsigned long offset;
++		unsigned long maxlen;
+ 		size_t copied;
+ 
+ 		offset = (pos & (PAGE_CACHE_SIZE -1)); /* Within page */
+ 		index = pos >> PAGE_CACHE_SHIFT;
+ 		bytes = PAGE_CACHE_SIZE - offset;
+-
+-		/* Limit the size of the copy to the caller's write size */
+-		bytes = min(bytes, count);
+-
+-		/*
+-		 * Limit the size of the copy to that of the current segment,
+-		 * because fault_in_pages_readable() doesn't know how to walk
+-		 * segments.
+-		 */
+-		bytes = min(bytes, cur_iov->iov_len - iov_base);
++		if (bytes > count)
++			bytes = count;
+ 
+ 		/*
+ 		 * Bring in the user page that we will copy from _first_.
+@@ -2180,7 +2173,10 @@ generic_file_buffered_write(struct kiocb *iocb, const struct iovec *iov,
+ 		 * same page as we're writing to, without it being marked
+ 		 * up-to-date.
+ 		 */
+-		fault_in_pages_readable(buf, bytes);
++		maxlen = cur_iov->iov_len - iov_base;
++		if (maxlen > bytes)
++			maxlen = bytes;
++		fault_in_pages_readable(buf, maxlen);
+ 
+ 		page = __grab_cache_page(mapping,index,&cached_page,&lru_pvec);
+ 		if (!page) {

@@ -1,0 +1,46 @@
+From: Jarod Wilson <jarod@redhat.com>
+Date: Mon, 24 Nov 2008 11:40:16 -0500
+Subject: [crypto] ansi_cprng: fix inverted DT increment routine
+Message-id: 200811241140.17111.jarod@redhat.com
+O-Subject: [RHEL5.4 PATCH 2/2] crypto: ansi_cprng: fix inverted DT increment routine
+Bugzilla: 471281
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+The ANSI X9.31 PRNG docs aren't particularly clear on how to increment DT,
+but empirical testing shows we're incrementing from the wrong end. A 10,000
+iteration Monte Carlo RNG test currently winds up not getting the expected
+result.
+
+>From http://csrc.nist.gov/groups/STM/cavp/documents/rng/RNGVS.pdf :
+
+[X9.31]
+[AES 128-Key]
+
+COUNT = 0
+Key = 9f5b51200bf334b5d82be8c37255c848
+DT = 6376bbe52902ba3b67c925fa701f11ac
+V = 572c8e76872647977e74fbddc49501d1
+R = 48e9bd0d06ee18fbe45790d5c3fc9b73
+
+Currently, we get 0dd08496c4f7178bfa70a2161a79459a after 10000 loops.
+
+Inverting the DT increment routine results in us obtaining the expected result
+of 48e9bd0d06ee18fbe45790d5c3fc9b73. Verified on both x86_64 and ppc64.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+Acked-by: Neil Horman <nhorman@tuxdriver.com>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+diff --git a/crypto/ansi_cprng.c b/crypto/ansi_cprng.c
+index c45e7e4..246a1ba 100644
+--- a/crypto/ansi_cprng.c
++++ b/crypto/ansi_cprng.c
+@@ -161,7 +161,7 @@ static int _get_more_prng_bytes(struct prng_context *ctx)
+ 	/*
+ 	 * Now update our DT value
+ 	 */
+-	for (i = 0; i < DEFAULT_BLK_SZ; i++) {
++	for (i = DEFAULT_BLK_SZ - 1; i >= 0; i--) {
+ 		ctx->DT[i] += 1;
+ 		if (ctx->DT[i] != 0)
+ 			break;

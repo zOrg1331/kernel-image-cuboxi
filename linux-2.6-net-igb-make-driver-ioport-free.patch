@@ -1,0 +1,83 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 30 Mar 2009 08:10:11 -0400
+Subject: [net] igb: make driver ioport free
+Message-id: 20090330121009.29177.61973.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5 PATCH 4/5]: igb - make driver ioport free
+Bugzilla: 442007
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+Backport of 42bfd33ab7bce7d2abaa8bd968ae9ad0dc9a4771, which introduces
+ioport checking in the igb driver, and a backport of
+aed5dec370e294233d647251ce1e5f74d70b09c9 which removes much of the ioport
+checking but does update the code to correctly call pci_enable_device_mem()
+and pci_[request|release]_selected_regions().
+
+Successfully tested by me.
+
+Resolves BZ 442007.
+
+diff --git a/drivers/net/igb/igb_main.c b/drivers/net/igb/igb_main.c
+index ce192fc..c292e18 100644
+--- a/drivers/net/igb/igb_main.c
++++ b/drivers/net/igb/igb_main.c
+@@ -952,7 +952,7 @@ static int __devinit igb_probe(struct pci_dev *pdev,
+ 	u16 eeprom_apme_mask = IGB_EEPROM_APME;
+ 	u32 part_num;
+ 
+-	err = pci_enable_device(pdev);
++	err = pci_enable_device_mem(pdev);
+ 	if (err)
+ 		return err;
+ 
+@@ -974,7 +974,9 @@ static int __devinit igb_probe(struct pci_dev *pdev,
+ 		}
+ 	}
+ 
+-	err = pci_request_regions(pdev, igb_driver_name);
++	err = pci_request_selected_regions(pdev, pci_select_bars(pdev,
++	                                   IORESOURCE_MEM),
++	                                   igb_driver_name);
+ 	if (err)
+ 		goto err_pci_reg;
+ 
+@@ -1256,7 +1258,8 @@ err_hw_init:
+ err_ioremap:
+ 	free_netdev(netdev);
+ err_alloc_etherdev:
+-	pci_release_regions(pdev);
++	pci_release_selected_regions(pdev, pci_select_bars(pdev,
++	                             IORESOURCE_MEM));
+ err_pci_reg:
+ err_dma:
+ 	pci_disable_device(pdev);
+@@ -1303,7 +1306,8 @@ static void __devexit igb_remove(struct pci_dev *pdev)
+ 	iounmap(adapter->hw.hw_addr);
+ 	if (adapter->hw.flash_address)
+ 		iounmap(adapter->hw.flash_address);
+-	pci_release_regions(pdev);
++	pci_release_selected_regions(pdev, pci_select_bars(pdev,
++	                             IORESOURCE_MEM));
+ 
+ 	free_netdev(netdev);
+ 
+@@ -4185,7 +4189,8 @@ static int igb_resume(struct pci_dev *pdev)
+ 
+ 	pci_set_power_state(pdev, PCI_D0);
+ 	pci_restore_state(pdev);
+-	err = pci_enable_device(pdev);
++
++	err = pci_enable_device_mem(pdev);
+ 	if (err) {
+ 		dev_err(&pdev->dev,
+ 			"igb: Cannot enable PCI device from suspend\n");
+@@ -4293,7 +4298,7 @@ static pci_ers_result_t igb_io_slot_reset(struct pci_dev *pdev)
+ 	struct igb_adapter *adapter = netdev_priv(netdev);
+ 	struct e1000_hw *hw = &adapter->hw;
+ 
+-	if (pci_enable_device(pdev)) {
++	if (pci_enable_device_mem(pdev)) {
+ 		dev_err(&pdev->dev,
+ 			"Cannot re-enable PCI device after reset.\n");
+ 		return PCI_ERS_RESULT_DISCONNECT;

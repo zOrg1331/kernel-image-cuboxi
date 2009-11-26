@@ -1,0 +1,141 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Fri, 24 Apr 2009 14:40:08 -0400
+Subject: [misc] VT-d: add DMAR ACPI table support
+Message-id: 49F20788.7050907@redhat.com
+O-Subject: [RHEL5.4 PATCH 3/6] VT-d for KVM: Add DMAR (Intel VT-d IOMMU) ACPI table support
+Bugzilla: 480411
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+
+BZ 480411
+
+Add DMAR (Intel VT-d IOMMU) ACPI table support.
+
+Intel VT-d hw support is triggered by the presence of
+the DMAR ACPI table.  The setup of the IOMMU and
+the association of PCI devices to its respective IOMMU
+is also driven by this ACPI table.
+
+Please review & ACK.
+
+- Don
+
+>From c4e90517d07f768366fbbbd93b8681e0ee1782e3 Mon Sep 17 00:00:00 2001
+From: Mark McLoughlin <markmc@redhat.com>
+Date: Mon, 17 Nov 2008 19:42:53 +0000
+Subject: [PATCH 3/6] vt-d: add DMAR ACPI table structure definitions
+
+Taken from upstream commit:
+
+  2502fff ACPICA: Add support for DMAR table
+
+Signed-off-by: Mark McLoughlin <markmc@redhat.com>
+
+diff --git a/include/acpi/actbl1.h b/include/acpi/actbl1.h
+index 745a644..b0e9536 100644
+--- a/include/acpi/actbl1.h
++++ b/include/acpi/actbl1.h
+@@ -61,6 +61,7 @@
+ #define ACPI_SIG_BOOT           "BOOT"	/* Simple Boot Flag Table */
+ #define ACPI_SIG_CPEP           "CPEP"	/* Corrected Platform Error Polling table */
+ #define ACPI_SIG_DBGP           "DBGP"	/* Debug Port table */
++#define ACPI_SIG_DMAR           "DMAR"	/* DMA Remapping table */
+ #define ACPI_SIG_ECDT           "ECDT"	/* Embedded Controller Boot Resources Table */
+ #define ACPI_SIG_HPET           "HPET"	/* High Precision Event Timer table */
+ #define ACPI_SIG_MADT           "APIC"	/* Multiple APIC Description Table */
+@@ -216,6 +217,95 @@ struct acpi_table_dbgp {
+ 
+ /*******************************************************************************
+  *
++ * DMAR - DMA Remapping table
++ *
++ ******************************************************************************/
++
++struct acpi_table_dmar {
++	struct acpi_table_header header;	/* Common ACPI table header */
++	u8 width;		/* Host Address Width */
++	u8 flags;
++	u8 reserved[10];
++};
++
++/* Flags */
++
++#define ACPI_DMAR_INTR_REMAP	    (1)
++
++/* DMAR subtable header */
++
++struct acpi_dmar_header {
++	u16 type;
++	u16 length;
++};
++
++/* Values for subtable type in struct acpi_dmar_header */
++
++enum acpi_dmar_type {
++	ACPI_DMAR_TYPE_HARDWARE_UNIT = 0,
++	ACPI_DMAR_TYPE_RESERVED_MEMORY = 1,
++	ACPI_DMAR_TYPE_ATSR = 2,
++	ACPI_DMAR_TYPE_RESERVED = 3	/* 3 and greater are reserved */
++};
++
++struct acpi_dmar_device_scope {
++	u8 entry_type;
++	u8 length;
++	u16 reserved;
++	u8 enumeration_id;
++	u8 bus;
++};
++
++/* Values for entry_type in struct acpi_dmar_device_scope */
++
++enum acpi_dmar_scope_type {
++	ACPI_DMAR_SCOPE_TYPE_NOT_USED = 0,
++	ACPI_DMAR_SCOPE_TYPE_ENDPOINT = 1,
++	ACPI_DMAR_SCOPE_TYPE_BRIDGE = 2,
++	ACPI_DMAR_SCOPE_TYPE_IOAPIC = 3,
++	ACPI_DMAR_SCOPE_TYPE_HPET = 4,
++	ACPI_DMAR_SCOPE_TYPE_RESERVED = 5	/* 5 and greater are reserved */
++};
++
++struct acpi_dmar_pci_path {
++	u8 dev;
++	u8 fn;
++};
++
++/*
++ * DMAR Sub-tables, correspond to Type in struct acpi_dmar_header
++ */
++
++/* 0: Hardware Unit Definition */
++
++struct acpi_dmar_hardware_unit {
++	struct acpi_dmar_header header;
++	u8 flags;
++	u8 reserved;
++	u16 segment;
++	u64 address;		/* Register Base Address */
++};
++
++/* Flags */
++
++#define ACPI_DMAR_INCLUDE_ALL       (1)
++
++/* 1: Reserved Memory Defininition */
++
++struct acpi_dmar_reserved_memory {
++	struct acpi_dmar_header header;
++	u16 reserved;
++	u16 segment;
++	u64 base_address;		/* 4_k aligned base address */
++	u64 end_address;	/* 4_k aligned limit address */
++};
++
++/* Flags */
++
++#define ACPI_DMAR_ALLOW_ALL         (1)
++
++/*******************************************************************************
++ *
+  * ECDT - Embedded Controller Boot Resources Table
+  *
+  ******************************************************************************/

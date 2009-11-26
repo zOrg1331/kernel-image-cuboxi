@@ -1,0 +1,19 @@
+From: Rob Evers <revers@redhat.com>
+Date: Mon, 27 Jul 2009 14:22:56 -0400
+Subject: [scsi] cciss: call bus_unregister in cciss_remove_one
+Message-id: 20090727181802.12704.65726.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.4 PATCH 2/2 v2] cciss: call bus_unregister in cciss_remove_one
+Bugzilla: 513070
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 090fd2f..5091d7b 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -4291,6 +4291,7 @@ static void __devexit cciss_remove_one(struct pci_dev *pdev)
+ 	pci_release_regions(pdev);
+ 	pci_set_drvdata(pdev, NULL);
+ 	cciss_destroy_hba_sysfs_entry(hba[i]);
++	bus_unregister(&cciss_bus_type);
+ 	free_hba(i);
+ }
+ 

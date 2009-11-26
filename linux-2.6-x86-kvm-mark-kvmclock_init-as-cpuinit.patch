@@ -1,0 +1,35 @@
+From: Glauber Costa <glommer@redhat.com>
+Date: Wed, 16 Sep 2009 16:56:26 -0400
+Subject: [x86] kvm: mark kvmclock_init as cpuinit
+Message-id: 1253134586-12151-1-git-send-email-glommer@redhat.com
+O-Subject: [PATCH] RHEL5 BZ523450 mark kvmclock_init() as cpuinit
+Bugzilla: 523450
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+kvmclock_init comes from upstream marked as __init.
+
+But in RHEL kernels, the code that detects hypervisor is called everytime a cpu
+comes online, at cpu detection (from identify_cpu), and therefore, is marked as
+__cpuinit. It causes a crash for people trying to logically offline and then
+onlining back cpus.
+
+Note that calling that function itself is safe, since the use_kvm_clock variable
+will prevent us from re-registering the clock.
+
+Signed-off-by: Glauber Costa <glommer@redhat.com>
+
+diff --git a/arch/i386/kernel/kvmclock.c b/arch/i386/kernel/kvmclock.c
+index a168db3..053d45f 100644
+--- a/arch/i386/kernel/kvmclock.c
++++ b/arch/i386/kernel/kvmclock.c
+@@ -113,7 +113,7 @@ void kvmclock_disable(void)
+ 	if (use_kvm_time > 0)
+ 		wrmsr(MSR_KVM_SYSTEM_TIME, 0, 0);
+ }
+-void __init kvmclock_init(void)
++void __cpuinit kvmclock_init(void)
+ {
+ 	if (!kvm_para_available())
+ 		return;

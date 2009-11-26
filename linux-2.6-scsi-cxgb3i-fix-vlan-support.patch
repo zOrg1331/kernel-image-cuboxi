@@ -1,0 +1,49 @@
+From: mchristi@redhat.com <mchristi@redhat.com>
+Date: Tue, 7 Jul 2009 13:34:44 -0500
+Subject: [scsi] cxgb3i: fix vlan support
+Message-id: 1246991684-3015-1-git-send-email-mchristi@redhat.com
+O-Subject: [PATCH] RHEL 5.4: cxgb3i: fix vlan support
+Bugzilla: 508409
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+BZ 508409
+
+I have only tested with non vlan setups. The patch was fully tested
+by Chelsio.
+
+>From Karen Xie upstream commit in scsi maintainer's tree:
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-rc-fixes-2.6.git;a=commit;h=a222ad1a4b2e3ca177a538482c99c519c1ce94d1
+
+There is a bug when VLAN is configured on the cxgb3 interface, the iscsi
+con. would be denied with message "cxgb3i: NOT going through cxgbi
+device."
+
+This patch added code to get the real egress net_device when vlan is
+configured.
+
+diff --git a/drivers/scsi/cxgb3i/cxgb3i_iscsi.c b/drivers/scsi/cxgb3i/cxgb3i_iscsi.c
+index ac0b8ab..b32e141 100644
+--- a/drivers/scsi/cxgb3i/cxgb3i_iscsi.c
++++ b/drivers/scsi/cxgb3i/cxgb3i_iscsi.c
+@@ -14,6 +14,7 @@
+ #include <linux/inet.h>
+ #include <linux/err.h>
+ #include <linux/crypto.h>
++#include <linux/if_vlan.h>
+ #include <net/dst.h>
+ #include <scsi/scsi_cmnd.h>
+ #include <scsi/scsi_device.h>
+@@ -184,6 +185,9 @@ static struct cxgb3i_hba *cxgb3i_hba_find_by_netdev(struct net_device *ndev)
+ 	struct cxgb3i_adapter *snic;
+ 	int i;
+ 
++	if (ndev->priv_flags & IFF_802_1Q_VLAN)
++		ndev = vlan_dev_real_dev(ndev);
++
+ 	read_lock(&cxgb3i_snic_rwlock);
+ 	list_for_each_entry(snic, &cxgb3i_snic_list, list_head) {
+ 		for (i = 0; i < snic->hba_cnt; i++) {

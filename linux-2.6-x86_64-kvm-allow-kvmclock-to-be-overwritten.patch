@@ -1,0 +1,47 @@
+From: Glauber Costa <glommer@redhat.com>
+Date: Wed, 16 Sep 2009 16:58:01 -0400
+Subject: [x86_64] kvm: allow kvmclock to be overwritten
+Message-id: 1253134681-12402-1-git-send-email-glommer@redhat.com
+O-Subject: [PATCH] RHEL5 BZ523447 allow kvmclock to be overwritten
+Bugzilla: 523447
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+upstream has an option, no-kvmclock, that disables kvm clock entirely.
+However, it relies on an early_parm. Differently from upstream, we do not
+parse early parameters on setup_arch for x86_64, and so, it does not work.
+
+The proposal here is to leave it that way, but allow clock=<clock> to work
+on kvm guests. Note that I'm not introducing clock=kvm, or anything like that.
+I believe it makes no sense, since kvmclock won't work on baremetal, and is automatically
+picked if we're running kvm.
+
+Signed-off-by: Glauber Costa <glommer@redhat.com>
+
+diff --git a/arch/x86_64/kernel/time.c b/arch/x86_64/kernel/time.c
+index 6b4d2cc..13e002f 100644
+--- a/arch/x86_64/kernel/time.c
++++ b/arch/x86_64/kernel/time.c
+@@ -1569,16 +1569,21 @@ static int __init boot_override_clock(char *str)
+ 	if (!strcmp(str, "hpet")) {
+ 		pmtmr_ioport = 0;
+ 		notsc = 1;
++		use_kvm_time = 0;
+ 	} else if (!strcmp(str, "pmtmr") || !strcmp(str, "pmtimer")) {
+ 		nohpet = 1;
+ 		notsc = 1;
++		use_kvm_time = 0;
+ 	} else if (!strcmp(str, "tsc")) {
+ 		nohpet = 1;
+ 		pmtmr_ioport = 0;
++		use_kvm_time = 0;
+ 	} else if (!strcmp(str, "tsccount")) {
+ 		timekeeping_use_tsc = 1;
++		use_kvm_time = 0;
+ 	} else if (!strcmp(str, "notsccount")) {
+ 		timekeeping_use_tsc = -1;
++		use_kvm_time = 0;
+ 	} else
+ 		printk(KERN_WARNING "%s is unknown clock source\n", str);
+ 

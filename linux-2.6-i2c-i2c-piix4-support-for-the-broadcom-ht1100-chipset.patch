@@ -1,0 +1,87 @@
+From: Flavio Leitner <fbl@redhat.com>
+Date: Tue, 24 Mar 2009 15:49:54 -0300
+Subject: [i2c] i2c-piix4: support for the Broadcom HT1100 chipset
+Message-id: 20090324184954.GA22286@redhat.com
+O-Subject: [RHEL5.4 PATCH] i2c-piix4: Add support for the Broadcom HT1100 chipset
+Bugzilla: 474240
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+RHBZ#:
+https://bugzilla.redhat.com/show_bug.cgi?id=474240
+Support of Broadcom HT1100 chipset - add new PCI ID
+
+Description:
+The module has been enabled in 2.6.18-78.el5, rhbz#424531
+and this patch adds the new PCI ID.
+
+Upstream:
+Patch will be merged in 2.6.30.
+http://thread.gmane.org/gmane.linux.drivers.i2c/3309
+
+Testing:
+Customer has applied the patch manually and reports that it works.
+They are now doing the following below to work around:
+echo "0x1166:0x0408" > /sys/bus/pci/drivers/piix4_smbus/new_id
+
+Flavio Leitner
+
+diff --git a/Documentation/i2c/busses/i2c-piix4 b/Documentation/i2c/busses/i2c-piix4
+index cf6b6cb..84ac81d 100644
+--- a/Documentation/i2c/busses/i2c-piix4
++++ b/Documentation/i2c/busses/i2c-piix4
+@@ -4,7 +4,7 @@ Supported adapters:
+   * Intel 82371AB PIIX4 and PIIX4E
+   * Intel 82443MX (440MX)
+     Datasheet: Publicly available at the Intel website
+-  * ServerWorks OSB4, CSB5, CSB6 and HT-1000 southbridges
++  * ServerWorks OSB4, CSB5, CSB6, HT-1000 and HT-1100 southbridges
+     Datasheet: Only available via NDA from ServerWorks
+   * ATI IXP200, IXP300, IXP400, SB600, SB700 and SB800 southbridges
+     Datasheet: Not publicly available
+diff --git a/drivers/i2c/busses/Kconfig b/drivers/i2c/busses/Kconfig
+index e19b1fa..f1bb8f2 100644
+--- a/drivers/i2c/busses/Kconfig
++++ b/drivers/i2c/busses/Kconfig
+@@ -186,6 +186,7 @@ config I2C_PIIX4
+ 	    Serverworks CSB5
+ 	    Serverworks CSB6
+ 	    Serverworks HT-1000
++	    Serverworks HT-1100
+ 	    SMSC Victory66
+ 
+ 	  This driver can also be built as a module.  If so, the module
+diff --git a/drivers/i2c/busses/i2c-piix4.c b/drivers/i2c/busses/i2c-piix4.c
+index 1907914..dfaab59 100644
+--- a/drivers/i2c/busses/i2c-piix4.c
++++ b/drivers/i2c/busses/i2c-piix4.c
+@@ -22,7 +22,7 @@
+ /*
+    Supports:
+ 	Intel PIIX4, 440MX
+-	Serverworks OSB4, CSB5, CSB6, HT-1000
++	Serverworks OSB4, CSB5, CSB6, HT-1000, HT-1100
+ 	ATI IXP200, IXP300, IXP400, SB600, SB700, SB800
+ 	SMSC Victory66
+ 
+@@ -407,6 +407,8 @@ static struct pci_device_id piix4_ids[] = {
+ 	  .driver_data = 0 },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_SERVERWORKS, PCI_DEVICE_ID_SERVERWORKS_HT1000SB),
+ 	  .driver_data = 0 },
++	{ PCI_DEVICE(PCI_VENDOR_ID_SERVERWORKS, PCI_DEVICE_ID_SERVERWORKS_HT1100LD),
++	  .driver_data = 0 },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82443MX_3),
+ 	  .driver_data = 3 },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_EFAR, PCI_DEVICE_ID_EFAR_SLC90E66_3),
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+index c1fd2aa..af4554e 100644
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -1447,6 +1447,7 @@
+ #define PCI_DEVICE_ID_SERVERWORKS_HT1000IDE 0x0214
+ #define PCI_DEVICE_ID_SERVERWORKS_CSB6IDE2 0x0217
+ #define PCI_DEVICE_ID_SERVERWORKS_CSB6LPC 0x0227
++#define PCI_DEVICE_ID_SERVERWORKS_HT1100LD 0x0408
+ 
+ #define PCI_VENDOR_ID_SBE		0x1176
+ #define PCI_DEVICE_ID_SBE_WANXL100	0x0301

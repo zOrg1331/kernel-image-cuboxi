@@ -1,0 +1,28 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Mon, 8 Jun 2009 15:37:33 -0400
+Subject: [x86_64] iommu: protect against broken IVRS ACPI table
+Message-id: 20090608193837.7837.6766.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.4 PATCH 4/5] [KVM] Protect against broken IVRS ACPI table
+Bugzilla: 501571
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+
+Resolves BZ 501571
+
+The bug never triggered. But it should be fixed to protect against
+broken ACPI tables in the future.
+
+diff --git a/arch/x86_64/kernel/amd_iommu_init.c b/arch/x86_64/kernel/amd_iommu_init.c
+index aa21b95..e74dfb5 100644
+--- a/arch/x86_64/kernel/amd_iommu_init.c
++++ b/arch/x86_64/kernel/amd_iommu_init.c
+@@ -858,6 +858,8 @@ static int __init init_unity_map_range(struct ivmd_header *m)
+ 
+ 	switch (m->type) {
+ 	default:
++		kfree(e);
++		return(0);
+ 	case ACPI_IVMD_TYPE:
+ 		e->devid_start = e->devid_end = m->devid;
+ 		break;

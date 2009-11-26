@@ -1,0 +1,73 @@
+From: Jesse Larrew <jlarrew@redhat.com>
+Date: Fri, 15 May 2009 09:48:59 -0400
+Subject: [scsi] retry for NOT_READY condition
+Message-id: 20090515134859.GA13809@squad5-lp1.lab.bos.redhat.com
+O-Subject: Re: [PATCH RHEL5.4 10/11 BZ489582] Retry for NOT_READY condition
+Bugzilla: 489582
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=489582
+
+Description:
+===========
+This is a bug fix for all archs.
+
+During device discovery, read capacity fails with 0x020401 and sets the
+device size to 0. As a result, any I/O submitted to this path gets
+killed at sd_prep_fn with BLKPREP_KILL.
+
+NEED_RETRY in scsi_decide_disposition does not give sufficient time for the
+device to become ready. This patch implements retry logic for 0x020401.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1800889
+
+Upstream Status:
+================
+This patch has been submitted upstream but is not yet accepted:
+https://www.redhat.com/archives/dm-devel/2009-April/msg00367.html
+
+Test Status:
+============
+This patch has been tested by Babu Moger at LSI (Babu.Moger@lsi.com).
+
+===============================================================
+
+Jesse Larrew
+IBM Onsite Partner
+978-392-3183
+jlarrew@redhat.com
+
+Proposed Patch:
+===============
+This patch is based on 2.6.18-136.el5.
+
+diff --git a/drivers/scsi/device_handler/scsi_dh_rdac.c b/drivers/scsi/device_handler/scsi_dh_rdac.c
+index 9009bae..6f18bcd 100644
+--- a/drivers/scsi/device_handler/scsi_dh_rdac.c
++++ b/drivers/scsi/device_handler/scsi_dh_rdac.c
+@@ -564,6 +564,12 @@ static int rdac_check_sense(struct scsi_device *sdev,
+ 	struct rdac_dh_data *h = get_rdac_data(sdev);
+ 	switch (sense_hdr->sense_key) {
+ 	case NOT_READY:
++		if (sense_hdr->asc == 0x04 && sense_hdr->ascq == 0x01)
++			/* LUN Not Ready - Logical Unit Not Ready and is in
++			* the process of becoming ready
++			* Just retry.
++			*/
++			return SCSI_MLQUEUE_DEVICE_BUSY2;
+ 		if (sense_hdr->asc == 0x04 && sense_hdr->ascq == 0x81)
+ 			/* LUN Not Ready - Storage firmware incompatible
+ 			 * Manual code synchonisation required.

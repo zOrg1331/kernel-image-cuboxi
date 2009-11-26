@@ -1,0 +1,281 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Thu, 25 Jun 2009 15:06:49 -0400
+Subject: [scsi] qla4xxx: extended sense data errors, cleanups
+Message-id: 20090625190649.11544.13561.sendpatchset@file.bos.redhat.com
+O-Subject: [rhel 5.4 patch] [V2] qla4xxx - Testing updates
+Bugzilla: 506981
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+BZ 506981
+
+Version 2 of this patch contains a missing line from the original
+version. The count of items in request queue was not maintained.
+
+This patch provides fixes for four issues found during testing at
+QLogic.
+
+qla4xxx - Testing fixes, update 2.
+
+ - Removed unused hiwat code to free up the number available IOCBs.
+Eliminates unnecessary eh_ escalations due to inability to obtain
+IOCB pkt for marker.
+
+ - Fixed NULL pointer dereference in eh_device_reset.
+eh_device_reset may be called from scsi error handler or sg_reset, etc.
+When called from sg_reset, there will not be an associated srb.
+Also removed DEAD code (marker_needed variable in ha struct)
+
+ - Code Cleanup - Removed residual from overrun debug print as
+residual is only valid for underrun case.
+
+ - RH BZ# 489389 - Extended Sense Data Errors-UPDATE
+Updated algorithm to use srb data variables instead of scsi command
+scratchpad data area, as scratchpad area is already used.
+
+diff --git a/drivers/scsi/qla4xxx/ql4_def.h b/drivers/scsi/qla4xxx/ql4_def.h
+index f5d2919..9a3f370 100644
+--- a/drivers/scsi/qla4xxx/ql4_def.h
++++ b/drivers/scsi/qla4xxx/ql4_def.h
+@@ -100,7 +100,6 @@
+ #define MAX_SRBS		MAX_CMDS_TO_RISC
+ #define MBOX_AEN_REG_COUNT	5
+ #define MAX_INIT_RETRIES	5
+-#define IOCB_HIWAT_CUSHION	16
+ 
+ /*
+  * Buffer sizes
+@@ -186,6 +185,11 @@ struct srb {
+ 	uint16_t cc_stat;
+ 	u_long r_start;		/* Time we recieve a cmd from OS */
+ 	u_long u_start;		/* Time when we handed the cmd to F/W */
++
++	/* Used for extended sense / status continuation */
++	uint8_t *req_sense_ptr;
++	uint16_t req_sense_len;
++	uint16_t reserved2;
+ };
+ 
+ 	/*
+@@ -314,7 +318,7 @@ struct scsi_qla_host {
+ #define DPC_GET_DHCP_IP_ADDR	     15 /* 0x00008000 */
+ 
+ 	uint16_t	iocb_cnt;
+-	uint16_t	iocb_hiwat;
++	uint16_t	rsvd;
+ 
+ 	/* SRB cache. */
+ #define SRB_MIN_REQ	128
+@@ -329,8 +333,7 @@ struct scsi_qla_host {
+ #define MIN_IOBASE_LEN		0x100
+ 
+ 	uint16_t req_q_count;
+-	uint8_t marker_needed;
+-	uint8_t rsvd1;
++	uint8_t rsvd1[2];
+ 
+ 	unsigned long host_no;
+ 
+@@ -436,6 +439,7 @@ struct scsi_qla_host {
+ 	uint16_t aen_out;
+ 	struct aen aen_q[MAX_AEN_ENTRIES];
+ 
++	/* Placeholder for original srb of status continuation */
+         struct srb *status_srb;
+ 
+         /* reserved fields */
+diff --git a/drivers/scsi/qla4xxx/ql4_iocb.c b/drivers/scsi/qla4xxx/ql4_iocb.c
+index f50e9f8..3856fa3 100644
+--- a/drivers/scsi/qla4xxx/ql4_iocb.c
++++ b/drivers/scsi/qla4xxx/ql4_iocb.c
+@@ -27,32 +27,37 @@
+ int qla4xxx_get_req_pkt(struct scsi_qla_host *ha,
+ 			struct queue_entry **queue_entry)
+ {
+-	uint16_t request_in;
+-	uint8_t status = QLA_SUCCESS;
+-
+-	*queue_entry = ha->request_ptr;
+-
+-	/* get the latest request_in and request_out index */
+-	request_in = ha->request_in;
+-	ha->request_out = (uint16_t) le32_to_cpu(ha->shadow_regs->req_q_out);
++	uint8_t	  status = QLA_ERROR;
++	uint16_t  cnt;
++	uint16_t  req_cnt = 1;
+ 
+-	/* Advance request queue pointer and check for queue full */
+-	if (request_in == (REQUEST_QUEUE_DEPTH - 1)) {
+-		request_in = 0;
+-		ha->request_ptr = ha->request_ring;
+-	} else {
+-		request_in++;
+-		ha->request_ptr++;
++	/* Calculate number of free request entries. */
++	if ((req_cnt + 2) >= ha->req_q_count) {
++		cnt = (uint16_t) le32_to_cpu(ha->shadow_regs->req_q_out);
++		if (ha->request_in < cnt) {
++			ha->req_q_count = cnt - ha->request_in;
++		}
++		else {
++			ha->req_q_count = REQUEST_QUEUE_DEPTH -
++				(ha->request_in - cnt);
++		}
+ 	}
+ 
+-	/* request queue is full, try again later */
+-	if ((ha->iocb_cnt + 1) >= ha->iocb_hiwat) {
+-		/* restore request pointer */
+-		ha->request_ptr = *queue_entry;
+-		status = QLA_ERROR;
+-	} else {
+-		ha->request_in = request_in;
++	/* Check if room for request in request ring. */
++	if ((req_cnt + 2) < ha->req_q_count) {
++		*queue_entry = ha->request_ptr;
+ 		memset(*queue_entry, 0, sizeof(**queue_entry));
++
++		/* Advance request queue pointer */
++		ha->request_in++;
++		if (ha->request_in == REQUEST_QUEUE_DEPTH ) {
++			ha->request_in = 0;
++			ha->request_ptr = ha->request_ring;
++		} else {
++			ha->request_ptr++;
++		}
++		ha->req_q_count -= req_cnt;
++		status = QLA_SUCCESS;
+ 	}
+ 
+ 	return status;
+diff --git a/drivers/scsi/qla4xxx/ql4_isr.c b/drivers/scsi/qla4xxx/ql4_isr.c
+index bd776ce..22501d0 100644
+--- a/drivers/scsi/qla4xxx/ql4_isr.c
++++ b/drivers/scsi/qla4xxx/ql4_isr.c
+@@ -32,16 +32,15 @@ static void qla4xxx_copy_sense(struct scsi_qla_host *ha,
+ 	/* Save total available sense length,
+ 	 * not to exceed cmd's sense buffer size */
+ 	sense_len = min(sense_len, (uint16_t) SCSI_SENSE_BUFFERSIZE);
+-	cmd->SCp.ptr = cmd->sense_buffer;
+-	cmd->SCp.this_residual = sense_len;
++	srb->req_sense_ptr = cmd->sense_buffer;
++	srb->req_sense_len = sense_len;
+ 
+ 	/* Copy sense from sts_entry pkt */
+ 	sense_len = min(sense_len, (uint16_t) IOCB_MAX_SENSEDATA_LEN);
+ 	memcpy(cmd->sense_buffer, sts_entry->senseData, sense_len);
+ 
+ 	DEBUG2(printk("scsi%ld:%d:%d:%d: %s: sense key = %x, "
+-		"Addl.SenseLen - %02x, "
+-		"ASC/ASCQ = %02x/%02x\n", ha->host_no,
++		"ASL = %02x, ASC/ASCQ = %02x/%02x\n", ha->host_no,
+ 		cmd->device->channel, cmd->device->id,
+ 		cmd->device->lun, __func__,
+ 		sts_entry->senseData[2] & 0x0f,
+@@ -49,13 +48,13 @@ static void qla4xxx_copy_sense(struct scsi_qla_host *ha,
+ 		sts_entry->senseData[12],
+ 		sts_entry->senseData[13]));
+ 
+-	DEBUG5(qla4xxx_dump_buffer(cmd->SCp.ptr, sense_len));
++	DEBUG5(qla4xxx_dump_buffer(cmd->sense_buffer, sense_len));
+ 	srb->flags |= SRB_GOT_SENSE;
+ 
+ 	/* Update srb, in case a sts_cont pkt follows */
+-	cmd->SCp.ptr += sense_len;
+-	cmd->SCp.this_residual -= sense_len;
+-	if (cmd->SCp.this_residual != 0)
++	srb->req_sense_ptr += sense_len;
++	srb->req_sense_len -= sense_len;
++	if (srb->req_sense_len != 0)
+ 		ha->status_srb = srb;
+ 	else
+ 		ha->status_srb = NULL;
+@@ -75,13 +74,10 @@ qla4xxx_status_cont_entry(struct scsi_qla_host *ha,
+ {
+ 	struct srb *srb = ha->status_srb;
+ 	struct scsi_cmnd *cmd;
+-	uint8_t sense_len;
++	uint16_t sense_len;
+ 
+-	if (srb == NULL) {
+-		DEBUG2(printk("scsi%ld: %s: Throw away extra STATUS CONTINUATION\n",
+-			ha->host_no, __func__));
++	if (srb == NULL)
+ 		return;
+-	}
+ 
+ 	cmd = srb->cmd;
+ 	if (cmd == NULL) {
+@@ -92,15 +88,15 @@ qla4xxx_status_cont_entry(struct scsi_qla_host *ha,
+ 	}
+ 
+ 	/* Copy sense data. */
+-	sense_len = min(cmd->SCp.this_residual, IOCB_MAX_EXT_SENSEDATA_LEN);
+-	memcpy(cmd->SCp.ptr, sts_cont->extSenseData, sense_len);
+-	DEBUG5(qla4xxx_dump_buffer(cmd->SCp.ptr, sense_len));
++	sense_len = min(srb->req_sense_len, (uint16_t) IOCB_MAX_EXT_SENSEDATA_LEN);
++	memcpy(srb->req_sense_ptr, sts_cont->extSenseData, sense_len);
++	DEBUG5(qla4xxx_dump_buffer(srb->req_sense_ptr, sense_len));
+ 
+-	cmd->SCp.ptr += sense_len;
+-	cmd->SCp.this_residual -= sense_len;
++	srb->req_sense_ptr += sense_len;
++	srb->req_sense_len -= sense_len;
+ 
+ 	/* Place command on done queue. */
+-	if (cmd->SCp.this_residual == 0) {
++	if (srb->req_sense_len == 0) {
+ 		qla4xxx_srb_compl(ha, srb);
+ 		ha->status_srb = NULL;
+ 	}
+@@ -212,10 +208,10 @@ static void qla4xxx_status_entry(struct scsi_qla_host *ha,
+ 	case SCS_DATA_OVERRUN:
+ 		if ((sts_entry->iscsiFlags & ISCSI_FLAG_RESIDUAL_OVER) ||
+ 			(sts_entry->completionStatus == SCS_DATA_OVERRUN)) {
+-			DEBUG2(printk("scsi%ld:%d:%d:%d: %s: " "Data overrun, "
+-				      "residual = 0x%x\n", ha->host_no,
++			DEBUG2(printk("scsi%ld:%d:%d:%d: %s: "
++				      "Data overrun\n", ha->host_no,
+ 				      cmd->device->channel, cmd->device->id,
+-				      cmd->device->lun, __func__, residual));
++				      cmd->device->lun, __func__));
+ 
+ 			cmd->result = DID_ERROR << 16;
+ 			break;
+diff --git a/drivers/scsi/qla4xxx/ql4_mbx.c b/drivers/scsi/qla4xxx/ql4_mbx.c
+index 64d9783..71fef48 100644
+--- a/drivers/scsi/qla4xxx/ql4_mbx.c
++++ b/drivers/scsi/qla4xxx/ql4_mbx.c
+@@ -469,15 +469,6 @@ int qla4xxx_get_firmware_status(struct scsi_qla_host * ha)
+ 		return QLA_ERROR;
+ 	}
+ 
+-	/* High-water mark of IOCBs */
+-	ha->iocb_hiwat = mbox_sts[2];
+-	if (ha->iocb_hiwat > IOCB_HIWAT_CUSHION)
+-		ha->iocb_hiwat -= IOCB_HIWAT_CUSHION;
+-	else
+-		dev_info(&ha->pdev->dev, "WARNING!!!  You have less than %d "
+-			   "firmare IOCBs available (%d).\n",
+-			   IOCB_HIWAT_CUSHION, ha->iocb_hiwat);
+-
+ 	return QLA_SUCCESS;
+ }
+ 
+diff --git a/drivers/scsi/qla4xxx/ql4_os.c b/drivers/scsi/qla4xxx/ql4_os.c
+index 45d2d45..843b010 100644
+--- a/drivers/scsi/qla4xxx/ql4_os.c
++++ b/drivers/scsi/qla4xxx/ql4_os.c
+@@ -1546,11 +1546,9 @@ static int qla4xxx_eh_device_reset(struct scsi_cmnd *cmd)
+ {
+ 	struct scsi_qla_host *ha = to_qla_host(cmd->device->host);
+ 	struct ddb_entry *ddb_entry = cmd->device->hostdata;
+-	struct srb *sp;
+ 	int ret = FAILED, stat;
+ 
+-	sp = (struct srb *) cmd->SCp.ptr;
+-	if (!sp || !ddb_entry)
++	if (!ddb_entry)
+ 		return ret;
+ 
+ 	dev_info(&ha->pdev->dev,

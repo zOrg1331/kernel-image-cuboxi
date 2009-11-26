@@ -1,0 +1,34 @@
+From: Glauber Costa <glommer@redhat.com>
+Date: Tue, 11 Aug 2009 13:32:03 -0400
+Subject: [x86] use kvm wallclock
+Message-id: 1250011926-31633-5-git-send-email-glommer@redhat.com
+O-Subject: [PATCH v2 4/7] use kvm wallclock in i386
+Bugzilla: 476075
+
+If kvmclock is enabled, pick wallclock time from it, instead of cmos.
+
+Signed-off-by: Glauber Costa <glommer@redhat.com>
+
+diff --git a/arch/i386/kernel/time.c b/arch/i386/kernel/time.c
+index 82fdd13..55a9ab8 100644
+--- a/arch/i386/kernel/time.c
++++ b/arch/i386/kernel/time.c
+@@ -46,6 +46,7 @@
+ #include <linux/bcd.h>
+ #include <linux/efi.h>
+ #include <linux/mca.h>
++#include <linux/kvm_para.h>
+ 
+ #include <asm/io.h>
+ #include <asm/smp.h>
+@@ -212,7 +213,9 @@ unsigned long get_cmos_time(void)
+ 
+ 	spin_lock_irqsave(&rtc_lock, flags);
+ 
+-	if (efi_enabled)
++	if (use_kvm_time)
++		retval = kvm_get_wallclock();
++	else if (efi_enabled)
+ 		retval = efi_get_time();
+ 	else
+ 		retval = mach_get_cmos_time();

@@ -1,0 +1,38 @@
+From: Ivan Vecera <ivecera@redhat.com>
+Date: Wed, 21 Jan 2009 16:30:54 +0100
+Subject: [net] tcp-lp: prevent chance for oops
+Message-id: 1232551854-30638-1-git-send-email-ivecera@redhat.com
+O-Subject: [RHEL5 PATCH] [net] tcp-lp: prevent chance for oops
+Bugzilla: 478638
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+BZs:
+#478638 - kernel-2.6.18-92.1.22.el5 misses bug fix which has to be backported.
+
+Description:
+This patch addresses the situation when tcp_lp_remote_hz_estimator
+incorrectly sets LP_VALID_RHZ flag and returns 0. This causes 'divide
+error' and the system hangs.
+
+Test status:
+Tested successfully.
+
+Upstream status:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=bfbea8a8869a0e21b97605841d04190d63665d19
+
+Signed-off-by: Ivan Vecera <ivecera@redhat.com>
+
+diff --git a/net/ipv4/tcp_lp.c b/net/ipv4/tcp_lp.c
+index 649ebae..dc44f4d 100644
+--- a/net/ipv4/tcp_lp.c
++++ b/net/ipv4/tcp_lp.c
+@@ -164,7 +164,7 @@ static u32 tcp_lp_remote_hz_estimator(struct sock *sk)
+ 
+  out:
+ 	/* record time for successful remote HZ calc */
+-	if (rhz > 0)
++	if ((rhz >> 6) > 0)
+ 		lp->flag |= LP_VALID_RHZ;
+ 	else
+ 		lp->flag &= ~LP_VALID_RHZ;

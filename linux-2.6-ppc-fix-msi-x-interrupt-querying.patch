@@ -1,0 +1,62 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Tue, 31 Mar 2009 11:05:03 -0400
+Subject: [ppc] fix MSI-X interrupt querying
+Message-id: 20090331150251.14954.55713.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 BZ492580 2/8]
+Bugzilla: 492580
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=492580
+
+Description:
+===========
+We need to increment i in the loop that queries what interrupts firmware
+gave us, otherwise we'll incorrectly use the first value over and over.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1744271
+
+Upstream Status:
+================
+http://git.kernel.org/?p=linux/kernel/git/benh/powerpc.git;a=commit;h=e27ed698b88b3387d326e84c0bbe9f83e19c747b
+
+Test Status:
+============
+There is a testcase provided in the Bugzilla.  A 'cat /proc/interrupts' should
+show the device drivers has two interrupt entries for each port.  Run I/O
+tests.  Then 'lspci -vv' should display the correct pci capabilities for the
+installed adapter and show the adapter is using MSI-X interrupts opposed to MSO
+or LSI interrupts.
+
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/arch/powerpc/kernel/msi-rtas.c b/arch/powerpc/kernel/msi-rtas.c
+index 6229b0e..11408d4 100644
+--- a/arch/powerpc/kernel/msi-rtas.c
++++ b/arch/powerpc/kernel/msi-rtas.c
+@@ -198,7 +198,7 @@ static int rtas_setup_msi_irqs(struct pci_dev *pdev, int nvec, int type)
+ 
+ 	i = 0;
+ 	list_for_each_entry(entry, &pdn->msi_list, list) {
+-		hwirq = rtas_query_irq_number(pdn, i);
++		hwirq = rtas_query_irq_number(pdn, i++);
+ 		if (hwirq < 0) {
+ 			rc = hwirq;
+ 			pr_debug("rtas_msi: error (%d) getting hwirq\n", rc);

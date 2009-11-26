@@ -1,0 +1,65 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Mon, 4 May 2009 17:45:34 -0400
+Subject: [nfs] SELinux can copy off the top of the stack
+Message-id: 1241473534.16650.267.camel@dhcp231-142.rdu.redhat.com
+O-Subject: [RHEL5 PATCH] NFS/SELinux: SELinux can copy off the top of the stack with some NFS mounts
+Bugzilla: 493144
+RH-Acked-by: James Morris <jmorris@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+BZ#493144:
+
+SELinux has some terrible layering violations in which it reads NFS
+binary mount data and tries to use it.  But inside nfs_do_submount the
+mount data is declared on the stack.  Since SELinux assumes (as is the
+case everywhere else in the kernel) that the mount data is actually a
+single allocated patch SELinux wants to copy the page that contains the
+mountdata for it's own use. This fix is to allocated a page in NFS like
+everything else does and build its mountdata on a newly allocated page
+instead.
+
+diff --git a/fs/nfs/namespace.c b/fs/nfs/namespace.c
+index e9dbefd..e70ae2d 100644
+--- a/fs/nfs/namespace.c
++++ b/fs/nfs/namespace.c
+@@ -212,12 +212,7 @@ struct vfsmount *nfs_do_submount(const struct vfsmount *mnt_parent,
+ 		const struct dentry *dentry, struct nfs_fh *fh,
+ 		struct nfs_fattr *fattr)
+ {
+-	struct nfs_clone_mount mountdata = {
+-		.sb = mnt_parent->mnt_sb,
+-		.dentry = dentry,
+-		.fh = fh,
+-		.fattr = fattr,
+-	};
++	struct nfs_clone_mount *mountdata = (struct nfs_clone_mount *) __get_free_page(GFP_USER);
+ 	struct vfsmount *mnt = ERR_PTR(-ENOMEM);
+ 	char *page = (char *) __get_free_page(GFP_USER);
+ 	char *devname;
+@@ -227,13 +222,24 @@ struct vfsmount *nfs_do_submount(const struct vfsmount *mnt_parent,
+ 	dprintk("%s: submounting on %s/%s\n", __FUNCTION__,
+ 			dentry->d_parent->d_name.name,
+ 			dentry->d_name.name);
++
+ 	if (page == NULL)
+ 		goto out;
++	if (mountdata == NULL)
++		goto free_page;
++
++	mountdata->sb = mnt_parent->mnt_sb;
++	mountdata->dentry = dentry;
++	mountdata->fh = fh;
++	mountdata->fattr = fattr;
++
+ 	devname = nfs_devname(mnt_parent, dentry, page, PAGE_SIZE);
+ 	mnt = (struct vfsmount *)devname;
+ 	if (IS_ERR(devname))
+-		goto free_page;
+-	mnt = nfs_do_clone_mount(NFS_SB(mnt_parent->mnt_sb), devname, &mountdata);
++		goto free_mountdata;
++	mnt = nfs_do_clone_mount(NFS_SB(mnt_parent->mnt_sb), devname, mountdata);
++free_mountdata:
++	free_page((unsigned long)mountdata);
+ free_page:
+ 	free_page((unsigned long)page);
+ out:

@@ -1,0 +1,1265 @@
+From: Linda Wang <lwang@redhat.com>
+Date: Wed, 20 May 2009 16:01:52 -0400
+Subject: Revert: [sched] accurate task runtime accounting
+Message-id: 4A1461B0.1020807@redhat.com
+O-Subject: Re: [PATCH 0/5] accurate task runtime accounting
+Bugzilla: 297731
+CVE: CVE-2007-3719
+
+Peter Zijlstra wrote:
+> This patch series implements accurate task runtime accounting for all RHEL
+> platforms (i386, x86_64, ppc64, ia64 and s390).
+>
+> Previously runtime accounting was a statistical endeavour, at the jiffy tick
+> we'd look who was running and account the whole tick to that task. Assuming
+> tasks are well behaved etc.. this would yield a statistically correct answer
+> of cpu utilization.
+>
+> However, when tasks are not well behaved, and are construed such that they'll
+> (nearly) never run on the tick, they can consume heaps of cpu time without it
+> being accounted to them (or anyone else for that matter).
+>
+> These patches change the runtime accounting to be a precise matter, at
+> schedule we take ns resolution (well, as close as possible) timestamps and
+> accumulate the time using those.
+>
+> In order to obtain these ns resolution timestamps, I've back-ported the
+> sched_clock machinery from upstream. This improves upon the raw architecture
+> sched_clock() by coupling cpus at the jiffy level and filtering out weird
+> movement (x86-tsc can basically do any odd random thing).
+>
+> Then there are a few facilitatory patches, one improves the i386/x86_64
+> sched_clock() implementation to respect per-cpu cpufreq scalings, and the
+> others untangles update_process_times() from the xtime_lock. The latter is
+> needed because the sched_clock coupling relies on being able to read the
+> monotinic clock in the scheduler tick.
+>
+Due to complexity of the code, and how intertwine it is with other timer
+sensitive code, security response team has agree that we can pull this
+patchset
+from 5.4 beta, and that allow us to continue work the issue on the side.
+
+diff --git a/arch/i386/kernel/time.c b/arch/i386/kernel/time.c
+index 4c4d79f..82fdd13 100644
+--- a/arch/i386/kernel/time.c
++++ b/arch/i386/kernel/time.c
+@@ -150,8 +150,6 @@ EXPORT_SYMBOL(profile_pc);
+  */
+ irqreturn_t timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+ {
+-	int i;
+-
+ 	/*
+ 	 * Here we are in the timer irq handler. We just have irqs locally
+ 	 * disabled but we don't know if the timer_bh is running on the other
+@@ -196,25 +194,6 @@ irqreturn_t timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+ 
+ 	write_sequnlock(&xtime_lock);
+ 
+-#ifndef CONFIG_SMP
+-	for (i = 0; i < tick_divider; i++)
+-		update_process_times(user_mode_vm(regs), regs);
+-#endif
+-#ifndef CONFIG_X86_VOYAGER
+-/*
+- * In the SMP case we use the local APIC timer interrupt to do the
+- * profiling, except when we simulate SMP mode on a uniprocessor
+- * system, in that case we have to call the local interrupt handler.
+- */
+-#ifndef CONFIG_X86_LOCAL_APIC
+-	for (i = 0; i < tick_divider; i++)
+-		profile_tick(CPU_PROFILING, regs);
+-#else
+-	if (!using_apic_timer)
+-		smp_local_timer_interrupt(regs);
+-#endif
+-#endif /* !VOYAGER */
+-
+ #ifdef CONFIG_X86_LOCAL_APIC
+ 	if (using_apic_timer)
+ 		smp_send_timer_broadcast_ipi(regs);
+diff --git a/arch/i386/kernel/tsc.c b/arch/i386/kernel/tsc.c
+index 05ee347..59af96b 100644
+--- a/arch/i386/kernel/tsc.c
++++ b/arch/i386/kernel/tsc.c
+@@ -12,7 +12,6 @@
+ #include <linux/dmi.h>
+ #include <linux/acpi.h>
+ #include <linux/delay.h>
+-#include <linux/percpu.h>
+ #include <asm/delay.h>
+ #include <asm/tsc.h>
+ #include <asm/delay.h>
+@@ -90,46 +89,18 @@ EXPORT_SYMBOL_GPL(mark_tsc_unstable);
+  *
+  *			-johnstul@us.ibm.com "math is hard, lets go shopping!"
+  */
+-static DEFINE_PER_CPU(unsigned long, cyc2ns);
++static unsigned long cyc2ns_scale __read_mostly;
+ 
+ #define CYC2NS_SCALE_FACTOR 10 /* 2^10, carefully chosen */
+ 
+-static inline unsigned long long __cycles_2_ns(unsigned long long cyc)
++static inline void set_cyc2ns_scale(unsigned long cpu_khz)
+ {
+-	return cyc * __get_cpu_var(cyc2ns) >> CYC2NS_SCALE_FACTOR;
+-}
+-
+-static inline void set_cyc2ns_scale(unsigned long cpu_khz, int cpu)
+-{
+-	unsigned long flags, prev_scale, *scale;
+-	unsigned long long tsc_now, ns_now;
+-
+-	local_irq_save(flags);
+-	sched_clock_idle_sleep_event();
+-
+-	scale = &per_cpu(cyc2ns, cpu);
+-
+-	rdtscll(tsc_now);
+-	ns_now = __cycles_2_ns(tsc_now);
+-
+-	prev_scale = *scale;
+-	if (cpu_khz)
+-		*scale = (1000000 << CYC2NS_SCALE_FACTOR)/cpu_khz;
+-
+-	sched_clock_idle_wakeup_event(0);
+-	local_irq_restore(flags);
++	cyc2ns_scale = (1000000 << CYC2NS_SCALE_FACTOR)/cpu_khz;
+ }
+ 
+ static inline unsigned long long cycles_2_ns(unsigned long long cyc)
+ {
+-	unsigned long long ns;
+-	unsigned long flags;
+-
+-	local_irq_save(flags);
+-	ns = __cycles_2_ns(cyc);
+-	local_irq_restore(flags);
+-
+-	return ns;
++	return (cyc * cyc2ns_scale) >> CYC2NS_SCALE_FACTOR;
+ }
+ 
+ #ifndef CONFIG_XEN
+@@ -138,8 +109,7 @@ static inline unsigned long long cycles_2_ns(unsigned long long cyc)
+  */
+ unsigned long long sched_clock(void)
+ {
+-	unsigned long long clock = 0;
+-	unsigned long flags;
++	unsigned long long this_offset;
+ 
+ 	/*
+ 	 * in the NUMA case we dont use the TSC as they are not
+@@ -151,14 +121,11 @@ unsigned long long sched_clock(void)
+ 		/* no locking but a rare wrong value is not a big deal */
+ 		return (jiffies_64 - INITIAL_JIFFIES) * (1000000000 / HZ);
+ 
+-	local_irq_save(flags);
+ 	/* read the Time Stamp Counter: */
+-	rdtscll(clock);
+-	/* return the value in ns */
+-	clock = __cycles_2_ns(clock);
+-	local_irq_restore(flags);
++	rdtscll(this_offset);
+ 
+-	return clock;
++	/* return the value in ns */
++	return cycles_2_ns(this_offset);
+ }
+ #endif
+ 
+@@ -240,7 +207,6 @@ EXPORT_SYMBOL(recalibrate_cpu_khz);
+ void tsc_init(void)
+ {
+ 	u64 lpj;
+-	int cpu;
+ 
+ 	if (!cpu_has_tsc || tsc_disable)
+ 		return;
+@@ -255,8 +221,7 @@ void tsc_init(void)
+ 				(unsigned long)cpu_khz / 1000,
+ 				(unsigned long)cpu_khz % 1000);
+ 
+-	for_each_possible_cpu(cpu)
+-		set_cyc2ns_scale(cpu_khz, cpu);
++	set_cyc2ns_scale(cpu_khz);
+ 
+ 	lpj = ((u64)tsc_khz * 1000);
+ 	do_div(lpj, HZ);
+@@ -333,8 +298,7 @@ time_cpufreq_notifier(struct notifier_block *nb, unsigned long val, void *data)
+ 						ref_freq, freq->new);
+ 			if (!(freq->flags & CPUFREQ_CONST_LOOPS)) {
+ 				tsc_khz = cpu_khz;
+-				set_cyc2ns_scale(cpu_khz, get_cpu());
+-				put_cpu();
++				set_cyc2ns_scale(cpu_khz);
+ 				/*
+ 				 * TSC based sched_clock turns
+ 				 * to junk w/ cpufreq
+diff --git a/arch/x86_64/kernel/time.c b/arch/x86_64/kernel/time.c
+index 9727728..ed66286 100644
+--- a/arch/x86_64/kernel/time.c
++++ b/arch/x86_64/kernel/time.c
+@@ -296,46 +296,6 @@ static void set_rtc_mmss(unsigned long nowtime)
+ 	spin_unlock(&rtc_lock);
+ }
+ 
+-static DEFINE_PER_CPU(unsigned long, cyc2ns);
+-
+-#define CYC2NS_SCALE_FACTOR 10 /* 2^10, carefully chosen */
+-
+-static inline unsigned long long __cycles_2_ns(unsigned long long cyc)
+-{
+-	return cyc * __get_cpu_var(cyc2ns) >> CYC2NS_SCALE_FACTOR;
+-}
+-
+-static inline void set_cyc2ns_scale(unsigned long cpu_khz, int cpu)
+-{
+-	unsigned long flags, *scale;
+-	unsigned long long tsc_now, ns_now;
+-
+-	local_irq_save(flags);
+-	sched_clock_idle_sleep_event();
+-
+-	scale = &per_cpu(cyc2ns, cpu);
+-
+-	rdtscll(tsc_now);
+-	ns_now = __cycles_2_ns(tsc_now);
+-
+-	if (cpu_khz)
+-		*scale = (1000000 << CYC2NS_SCALE_FACTOR)/cpu_khz;
+-
+-	sched_clock_idle_wakeup_event(0);
+-	local_irq_restore(flags);
+-}
+-
+-static inline unsigned long long cycles_2_ns(unsigned long long cyc)
+-{
+-	unsigned long long ns;
+-	unsigned long flags;
+-
+-	local_irq_save(flags);
+-	ns = __cycles_2_ns(cyc);
+-	local_irq_restore(flags);
+-
+-	return ns;
+-}
+ 
+ /* monotonic_clock(): returns # of nanoseconds passed since time_init()
+  *		Note: This function is required to return accurate
+@@ -365,12 +325,34 @@ unsigned long long monotonic_clock(void)
+ 			base = monotonic_base;
+ 		} while (read_seqretry(&xtime_lock, seq));
+ 		this_offset = get_cycles_sync();
+-		offset = cycles_2_ns(this_offset - last_offset);
++		/* FIXME: 1000 or 1000000? */
++		offset = (this_offset - last_offset)*1000 / cpu_khz;
+ 	}
+ 	return base + offset;
+ }
+ EXPORT_SYMBOL(monotonic_clock);
+ 
++static void do_timer_jiffy(struct pt_regs *regs)
++{
++	do_timer(regs);
++#ifndef CONFIG_SMP
++	update_process_times(user_mode(regs), regs);
++#endif
++
++	/*
++	 * In the SMP case we use the local APIC timer interrupt to do the profiling,
++	 * except when we simulate SMP mode on a uniprocessor system, in that case we
++	 * have to call the local interrupt handler.
++	 */
++
++#ifndef CONFIG_X86_LOCAL_APIC
++	profile_tick(CPU_PROFILING, regs);
++#else
++	if (!using_apic_timer)
++		smp_local_timer_interrupt(regs);
++#endif
++}
++
+ static noinline void handle_lost_ticks(int lost, struct pt_regs *regs)
+ {
+ 	static long lost_count;
+@@ -408,10 +390,10 @@ static noinline void handle_lost_ticks(int lost, struct pt_regs *regs)
+ #endif
+ }
+ 
+-static int do_timer_account_lost_ticks(struct pt_regs *regs)
++static void do_timer_account_lost_ticks(struct pt_regs *regs)
+ {
+ 	unsigned long tsc;
+-	int delay = 0, offset = 0, lost = 0;
++	int delay = 0, offset = 0, lost = 0, i;
+ 
+ 	if (vxtime.hpet_address)
+ 		offset = hpet_readl(HPET_COUNTER);
+@@ -467,7 +449,8 @@ static int do_timer_account_lost_ticks(struct pt_regs *regs)
+ 			offset -= NSEC_PER_REAL_TICK;
+ 		}
+ 
+-		monotonic_base += __cycles_2_ns(tsc - vxtime.last_tsc);
++		/* FIXME: 1000 or 1000000? */
++		monotonic_base += (tsc - vxtime.last_tsc) * 1000000 / cpu_khz;
+ 
+ 		vxtime.last_tsc = tsc - vxtime.quot * delay / vxtime.tsc_quot;
+ 
+@@ -482,24 +465,24 @@ static int do_timer_account_lost_ticks(struct pt_regs *regs)
+ 		jiffies += (u64)lost - (tick_divider - 1);
+ 	}
+ 
+-	/* XXX: should we not account the same number of jiffies we added above? */
+-
+-	return 1;
++	/* Do the timer stuff */
++	for (i = 0; i < tick_divider; i++)
++		do_timer_jiffy(regs);
+ }
+ 
+ /*
+  * Measure time based on the TSC, rather than counting interrupts.
+  */
+-static int do_timer_tsc_timekeeping(struct pt_regs *regs)
++static void do_timer_tsc_timekeeping(struct pt_regs *regs)
+ {
+-	int i, missed_ticks = 0;
++	int i;
+ 	cycles_t tsc, tsc_accounted, tsc_not_accounted;
+ 
+ 	tsc = get_cycles_sync();
+ 	tsc_accounted = vxtime.last_tsc;
+ 
+ 	if (unlikely(tsc < tsc_accounted))
+-		return missed_ticks;
++		return;
+ 
+ 	tsc_not_accounted = tsc - tsc_accounted;
+ 
+@@ -510,21 +493,20 @@ static int do_timer_tsc_timekeeping(struct pt_regs *regs)
+ 	}
+ 
+ 	while (tsc_not_accounted >= cycles_per_tick) {
++		for (i = 0; i < tick_divider; i++)
++			do_timer_jiffy(regs);
+ 		tsc_not_accounted -= cycles_per_tick;
+ 		tsc_accounted += cycles_per_tick;
+-		missed_ticks++;
+ 	}
+ 
+-	monotonic_base += __cycles_2_ns(tsc_accounted - vxtime.last_tsc);
++	monotonic_base += ((tsc_accounted - vxtime.last_tsc) *
++					1000000 / cpu_khz);
+ 	vxtime.last_tsc = tsc_accounted;
+-
+-	return missed_ticks;
+ }
+ 
+ void main_timer_handler(struct pt_regs *regs)
+ {
+ 	static unsigned long rtc_update = 0;
+-	int i, missed_ticks = 0;
+ 
+ /*
+  * Here we are in the timer irq handler. We have irqs locally disabled (so we
+@@ -536,9 +518,9 @@ void main_timer_handler(struct pt_regs *regs)
+ 	write_seqlock(&xtime_lock);
+ 
+ 	if (timekeeping_use_tsc > 0)
+-		missed_ticks = do_timer_tsc_timekeeping(regs);
++		do_timer_tsc_timekeeping(regs);
+ 	else
+-		missed_ticks = do_timer_account_lost_ticks(regs);
++		do_timer_account_lost_ticks(regs);
+ 
+ /*
+  * If we have an externally synchronized Linux clock, then update CMOS clock
+@@ -553,31 +535,9 @@ void main_timer_handler(struct pt_regs *regs)
+ 		set_rtc_mmss(xtime.tv_sec);
+ 		rtc_update = xtime.tv_sec + 660;
+ 	}
+-
+-	for (i = 0; i < missed_ticks * tick_divider; i++)
+-		do_timer(regs);
+  
+ 	write_sequnlock(&xtime_lock);
+ 
+-	for (i = 0; i < missed_ticks * tick_divider; i++) {
+-#ifndef CONFIG_SMP
+-		update_process_times(user_mode(regs), regs);
+-#endif
+-
+-		/*
+-		 * In the SMP case we use the local APIC timer interrupt to do the profiling,
+-		 * except when we simulate SMP mode on a uniprocessor system, in that case we
+-		 * have to call the local interrupt handler.
+-		 */
+-
+-#ifndef CONFIG_X86_LOCAL_APIC
+-		profile_tick(CPU_PROFILING, regs);
+-#else
+-		if (!using_apic_timer)
+-			smp_local_timer_interrupt(regs);
+-#endif
+-	}
+-
+ 	leap_second_message();
+ }
+ 
+@@ -593,9 +553,21 @@ static irqreturn_t timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+ 	return IRQ_HANDLED;
+ }
+ 
++static unsigned int cyc2ns_scale __read_mostly;
++
++static inline void set_cyc2ns_scale(unsigned long cpu_khz)
++{
++	cyc2ns_scale = (NSEC_PER_MSEC << NS_SCALE) / cpu_khz;
++}
++
++static inline unsigned long long cycles_2_ns(unsigned long long cyc)
++{
++	return (cyc * cyc2ns_scale) >> NS_SCALE;
++}
++
+ unsigned long long sched_clock(void)
+ {
+-	unsigned long flags, clock = 0;
++	unsigned long a = 0;
+ 
+ #if 0
+ 	/* Don't do a HPET read here. Using TSC always is much faster
+@@ -611,12 +583,8 @@ unsigned long long sched_clock(void)
+ 	   CPUs. But the errors should be too small to matter for scheduling
+ 	   purposes. */
+ 
+-	local_irq_save(flags);
+-	rdtscll(clock);
+-	clock = __cycles_2_ns(clock);
+-	local_irq_restore(flags);
+-
+-	return clock;
++	rdtscll(a);
++	return cycles_2_ns(a);
+ }
+ 
+ static unsigned long get_cmos_time(void)
+@@ -806,8 +774,7 @@ static int time_cpufreq_notifier(struct notifier_block *nb, unsigned long val,
+ 			vxtime.tsc_quot = (NSEC_PER_MSEC << NS_SCALE) / cpu_khz;
+ 	}
+ 	
+-	set_cyc2ns_scale(tsc_khz_ref, get_cpu());
+-	put_cpu();
++	set_cyc2ns_scale(tsc_khz_ref);
+ 
+ 	return 0;
+ }
+@@ -1071,7 +1038,6 @@ time_cpu_notifier(struct notifier_block *nb, unsigned long action, void *hcpu)
+ void __init time_init(void)
+ {
+ 	unsigned int hypervisor_khz;
+-	int cpu;
+ 
+ 	if (nohpet)
+ 		vxtime.hpet_address = 0;
+@@ -1139,8 +1105,7 @@ void __init time_init(void)
+ 	vxtime.last_tsc = get_cycles_sync();
+ 	setup_irq(0, &irq0);
+ 
+-	for_each_possible_cpu(cpu)
+-		set_cyc2ns_scale(tsc_khz, cpu);
++	set_cyc2ns_scale(tsc_khz);
+ 
+ 	hotcpu_notifier(time_cpu_notifier, 0);
+ 	time_cpu_notifier(NULL, CPU_ONLINE, (void *)(long)smp_processor_id());
+@@ -1187,7 +1152,6 @@ __cpuinit int unsynchronized_tsc(void)
+ void time_init_gtod(void)
+ {
+ 	char *timetype;
+-	int cpu;
+ 
+ 	if (unsynchronized_tsc())
+ 		notsc = 1;
+@@ -1231,8 +1195,7 @@ void time_init_gtod(void)
+ 	vxtime.tsc_quot = (NSEC_PER_MSEC << NS_SCALE) / tsc_khz;
+ 	vxtime.last_tsc = get_cycles_sync();
+ 
+-	for_each_possible_cpu(cpu)
+-		set_cyc2ns_scale(tsc_khz, cpu);
++	set_cyc2ns_scale(tsc_khz);
+ }
+ 
+ __setup("report_lost_ticks", time_setup);
+diff --git a/drivers/acpi/processor_idle.c b/drivers/acpi/processor_idle.c
+index bf74446..afe6d2b 100644
+--- a/drivers/acpi/processor_idle.c
++++ b/drivers/acpi/processor_idle.c
+@@ -52,7 +52,6 @@
+ ACPI_MODULE_NAME("acpi_processor")
+ #define ACPI_PROCESSOR_FILE_POWER	"power"
+ #define US_TO_PM_TIMER_TICKS(t)		((t * (PM_TIMER_FREQUENCY/1000)) / 1000)
+-#define PM_TIMER_TICK_NS                (1000000000ULL/PM_TIMER_FREQUENCY)
+ #define C2_OVERHEAD			4	/* 1us (3.579 ticks per us) */
+ #define C3_OVERHEAD			4	/* 1us (3.579 ticks per us) */
+ static void (*pm_idle_save) (void) __read_mostly;
+@@ -352,8 +351,6 @@ static void acpi_processor_idle(void)
+ 	case ACPI_STATE_C2:
+ 		/* Get start time (ticks) */
+ 		t1 = inl(acpi_fadt.xpm_tmr_blk.address);
+-		/* Tell the scheduler that we are going deep-idle */
+-		sched_clock_idle_sleep_event();
+ 		/* Invoke C2 */
+ 		inb(cx->address);
+ 		/* Dummy wait op - must do something useless after P_LVL2 read
+@@ -368,15 +365,12 @@ static void acpi_processor_idle(void)
+ 		if (!boot_cpu_has(X86_FEATURE_NONSTOP_TSC))
+ 			mark_tsc_unstable();
+ #endif
+-		/* Compute time (ticks) that we were actually asleep */
+-		sleep_ticks = ticks_elapsed(t1, t2);
+-		/* Tell the scheduler how much we idled */
+-		sched_clock_idle_wakeup_event(sleep_ticks*PM_TIMER_TICK_NS);
+ 		/* Re-enable interrupts */
+ 		local_irq_enable();
+ 		current_thread_info()->status |= TS_POLLING;
+-		/* Do not account our idle-switching overhead */
+-		sleep_ticks -= cx->latency_ticks + C2_OVERHEAD;
++		/* Compute time (ticks) that we were actually asleep */
++		sleep_ticks =
++		    ticks_elapsed(t1, t2) - cx->latency_ticks - C2_OVERHEAD;
+ 		break;
+ 
+ 	case ACPI_STATE_C3:
+@@ -408,8 +402,6 @@ static void acpi_processor_idle(void)
+ 
+ 		/* Get start time (ticks) */
+ 		t1 = inl(acpi_fadt.xpm_tmr_blk.address);
+-		/* Tell the scheduler that we are going deep-idle */
+-		sched_clock_idle_sleep_event();
+ 		/* Invoke C3 */
+ 		inb(cx->address);
+ 		/* Dummy wait op (see above) */
+@@ -428,15 +420,12 @@ static void acpi_processor_idle(void)
+ 		if (!boot_cpu_has(X86_FEATURE_NONSTOP_TSC))
+ 			mark_tsc_unstable();
+ #endif
+-		/* Compute time (ticks) that we were actually asleep */
+-		sleep_ticks = ticks_elapsed(t1, t2);
+-		/* Tell the scheduler how much we idled */
+-		sched_clock_idle_wakeup_event(sleep_ticks*PM_TIMER_TICK_NS);
+ 		/* Re-enable interrupts */
+ 		local_irq_enable();
+ 		current_thread_info()->status |= TS_POLLING;
+-		/* Do not account our idle-switching overhead */
+-		sleep_ticks -= cx->latency_ticks + C3_OVERHEAD;
++		/* Compute time (ticks) that we were actually asleep */
++		sleep_ticks =
++		    ticks_elapsed(t1, t2) - cx->latency_ticks - C3_OVERHEAD;
+ 		break;
+ 
+ 	default:
+diff --git a/fs/proc/array.c b/fs/proc/array.c
+index 5632355..fbb1718 100644
+--- a/fs/proc/array.c
++++ b/fs/proc/array.c
+@@ -321,60 +321,6 @@ int proc_pid_status(struct task_struct *task, char * buffer)
+ 	return buffer - orig;
+ }
+ 
+-/*
+- * Use precise platform statistics if available:
+- */
+-#ifdef CONFIG_VIRT_CPU_ACCOUNTING
+-cputime_t task_utime(struct task_struct *p)
+-{
+-	return p->utime;
+-}
+-
+-cputime_t task_stime(struct task_struct *p)
+-{
+-	return p->stime;
+-}
+-#else
+-cputime_t task_utime(struct task_struct *p)
+-{
+-	clock_t utime = cputime_to_clock_t(p->utime),
+-		total = utime + cputime_to_clock_t(p->stime);
+-	u64 temp;
+-
+-	temp = (u64)nsec_to_clock_t(p->sched_time);
+-
+-	if (total) {
+-		temp *= utime;
+-		do_div(temp, total);
+-	}
+-	utime = (clock_t)temp;
+-
+-	task_aux(p)->last_utime = 
+-		max(task_aux(p)->last_utime, clock_t_to_cputime(utime));
+-
+-	return task_aux(p)->last_utime;
+-}
+-
+-cputime_t task_stime(struct task_struct *p)
+-{
+-	clock_t stime;
+-
+-	/*
+-	 * we subtract utime from the total, to make sure the total observed by
+-	 * userspace grows monotonically - apps rely on that:
+-	 */
+-	stime = nsec_to_clock_t(p->sched_time) -
+-			cputime_to_clock_t(task_utime(p));
+-
+-	if (stime >= 0) {
+-		task_aux(p)->last_stime = 
+-			max(task_aux(p)->last_stime, clock_t_to_cputime(stime));
+-	}
+-
+-	return task_aux(p)->last_stime;
+-}
+-#endif
+-
+ static int do_task_stat(struct task_struct *task, char * buffer, int whole)
+ {
+ 	unsigned long vsize, eip, esp, wchan = ~0UL;
+@@ -422,8 +368,8 @@ static int do_task_stat(struct task_struct *task, char * buffer, int whole)
+ 			do {
+ 				min_flt += t->min_flt;
+ 				maj_flt += t->maj_flt;
+-				utime = cputime_add(utime, task_utime(t));
+-				stime = cputime_add(stime, task_stime(t));
++				utime = cputime_add(utime, t->utime);
++				stime = cputime_add(stime, t->stime);
+ 				t = next_thread(t);
+ 			} while (t != task);
+ 		}
+@@ -462,8 +408,8 @@ static int do_task_stat(struct task_struct *task, char * buffer, int whole)
+ 	if (!whole) {
+ 		min_flt = task->min_flt;
+ 		maj_flt = task->maj_flt;
+-		utime = task_utime(task);
+-		stime = task_stime(task);
++		utime = task->utime;
++		stime = task->stime;
+ 	}
+ 
+ 	/* scale priority and nice values from timeslices to -20..20 */
+diff --git a/include/asm-i386/mach-default/do_timer.h b/include/asm-i386/mach-default/do_timer.h
+index e553004..e73f1e4 100644
+--- a/include/asm-i386/mach-default/do_timer.h
++++ b/include/asm-i386/mach-default/do_timer.h
+@@ -17,8 +17,24 @@
+ static inline void do_timer_interrupt_hook(struct pt_regs *regs)
+ {
+ 	int i;
+-	for (i = 0; i < tick_divider; i++)
++	for (i = 0; i < tick_divider; i++) {
+ 		do_timer(regs);
++#ifndef CONFIG_SMP
++		update_process_times(user_mode_vm(regs), regs);
++#endif
++	}
++/*
++ * In the SMP case we use the local APIC timer interrupt to do the
++ * profiling, except when we simulate SMP mode on a uniprocessor
++ * system, in that case we have to call the local interrupt handler.
++ */
++#ifndef CONFIG_X86_LOCAL_APIC
++	for (i = 0; i < tick_divider; i++)
++		profile_tick(CPU_PROFILING, regs);
++#else
++	if (!using_apic_timer)
++		smp_local_timer_interrupt(regs);
++#endif
+ }
+ 
+ 
+diff --git a/include/asm-i386/mach-visws/do_timer.h b/include/asm-i386/mach-visws/do_timer.h
+index 5a3b9ca..4747092 100644
+--- a/include/asm-i386/mach-visws/do_timer.h
++++ b/include/asm-i386/mach-visws/do_timer.h
+@@ -10,8 +10,24 @@ static inline void do_timer_interrupt_hook(struct pt_regs *regs)
+ 	/* Clear the interrupt */
+ 	co_cpu_write(CO_CPU_STAT,co_cpu_read(CO_CPU_STAT) & ~CO_STAT_TIMEINTR);
+ 
+-	for (i = 0; i < tick_divider; i++)
++	for (i = 0; i < tick_divider; i++) {
+ 		do_timer(regs);
++#ifndef CONFIG_SMP
++		update_process_times(user_mode_vm(regs), regs);
++#endif
++	}
++/*
++ * In the SMP case we use the local APIC timer interrupt to do the
++ * profiling, except when we simulate SMP mode on a uniprocessor
++ * system, in that case we have to call the local interrupt handler.
++ */
++#ifndef CONFIG_X86_LOCAL_APIC
++	for (i = 0; i < tick_divider; i++)
++		profile_tick(CPU_PROFILING, regs);
++#else
++	if (!using_apic_timer)
++		smp_local_timer_interrupt(regs);
++#endif
+ }
+ 
+ static inline int do_timer_overflow(int count)
+diff --git a/include/asm-i386/mach-voyager/do_timer.h b/include/asm-i386/mach-voyager/do_timer.h
+index 1a26642..53cfa6f 100644
+--- a/include/asm-i386/mach-voyager/do_timer.h
++++ b/include/asm-i386/mach-voyager/do_timer.h
+@@ -6,6 +6,9 @@ static inline void do_timer_interrupt_hook(struct pt_regs *regs)
+ 	int i;
+ 	for (i = 0; i < tick_divider; i++) {
+ 		do_timer(regs);
++#ifndef CONFIG_SMP
++		update_process_times(user_mode_vm(regs), regs);
++#endif
+ 		voyager_timer_interrupt(regs);
+ 	}
+ }
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 6c2b680..eaabf86 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -855,7 +855,6 @@ struct task_struct_aux {
+ 	struct completion *vfork_done;  /* for vfork() [displaced from task_struct] */
+ 	struct list_head  *scm_work_list; /*displaced from task_struct for abi compat*/
+ 	struct task_io_accounting ioac;
+-	cputime_t last_utime, last_stime;	/* ensure the user sees a monotonous clock */
+ };
+ 
+ #define task_aux(tsk) ((tsk)->auxilliary)
+@@ -1214,8 +1213,6 @@ static inline int set_cpus_allowed(struct task_struct *p, cpumask_t new_mask)
+ extern unsigned long long sched_clock(void);
+ extern unsigned long long
+ current_sched_time(const struct task_struct *current_task);
+-extern void sched_clock_idle_sleep_event(void);
+-extern void sched_clock_idle_wakeup_event(u64 delta_ns);
+ 
+ /* sched_exec is called by processes performing an exec */
+ #ifdef CONFIG_SMP
+diff --git a/init/main.c b/init/main.c
+index e9f6fa5..06349fe 100644
+--- a/init/main.c
++++ b/init/main.c
+@@ -118,8 +118,6 @@ extern void time_init(void);
+ void (*late_time_init)(void);
+ extern void softirq_init(void);
+ 
+-extern void sched_clock_init(void);
+-
+ /* Untouched command line (eg. for /proc) saved by arch-specific code. */
+ char saved_command_line[COMMAND_LINE_SIZE];
+ 
+@@ -545,7 +543,6 @@ asmlinkage void __init start_kernel(void)
+ 	softirq_init();
+ 	timekeeping_init();
+ 	time_init();
+-	sched_clock_init();
+ 	profile_init();
+ 	if (!irqs_disabled())
+ 		printk("start_kernel(): bug: interrupts were enabled early\n");
+diff --git a/kernel/fork.c b/kernel/fork.c
+index 0a34cfa..8ef2897 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -210,8 +210,6 @@ static struct task_struct *dup_task_struct(struct task_struct *orig)
+ 	setup_thread_stack(tsk, orig);
+ 	task_aux(tsk) = aux;
+ 
+-	task_aux(tsk)->last_utime = task_aux(tsk)->last_stime = cputime_zero;
+-
+ 	/* One for us, one for whoever does the "release_task()" (usually parent) */
+ 	atomic_set(&tsk->usage,2);
+ 	atomic_set(&tsk->fs_excl, 0);
+diff --git a/kernel/sched.c b/kernel/sched.c
+index cc67031..9921513 100644
+--- a/kernel/sched.c
++++ b/kernel/sched.c
+@@ -41,7 +41,6 @@
+ #include <linux/smp.h>
+ #include <linux/threads.h>
+ #include <linux/timer.h>
+-#include <linux/time.h>
+ #include <linux/rcupdate.h>
+ #include <linux/cpu.h>
+ #include <linux/cpuset.h>
+@@ -229,7 +228,6 @@ struct rq {
+ 
+ 	unsigned long expired_timestamp;
+ 	unsigned long long timestamp_last_tick;
+-	unsigned long long clock;
+ 	struct task_struct *curr, *idle;
+ 	struct mm_struct *prev_mm;
+ 	struct prio_array *active, *expired, arrays[2];
+@@ -373,237 +371,6 @@ static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
+ }
+ #endif /* __ARCH_WANT_UNLOCKED_CTXSW */
+ 
+-static int sched_clock_running __read_mostly;
+-
+-/*
+- * can be set by an arch if their native sched_clock() is stable and
+- * synchronized between cpus
+- */
+-int sched_clock_stable __read_mostly;
+-
+-struct sched_clock_data {
+-	raw_spinlock_t		lock;
+-
+-	u64			tick_raw;
+-	u64			tick_gtod;
+-	u64			clock;
+-};
+-
+-static DEFINE_PER_CPU(struct sched_clock_data, sched_clock_data);
+-
+-static inline struct sched_clock_data *this_scd(void)
+-{
+-	return &__get_cpu_var(sched_clock_data);
+-}
+-
+-static inline struct sched_clock_data *cpu_sdc(int cpu)
+-{
+-	return &per_cpu(sched_clock_data, cpu);
+-}
+-
+-static u64 get_monotonic_time(void)
+-{
+-	u64 time;
+-	struct timespec tp;
+-
+-	ktime_get_ts(&tp);
+-	time = tp.tv_sec * NSEC_PER_SEC + tp.tv_nsec;
+-
+-	return time;
+-}
+-
+-void sched_clock_init(void)
+-{
+-	u64 ktime_now = get_monotonic_time();
+-	int cpu;
+-
+-	for_each_possible_cpu(cpu) {
+-		struct sched_clock_data *scd = cpu_sdc(cpu);
+-
+-		scd->lock = (raw_spinlock_t)__RAW_SPIN_LOCK_UNLOCKED;
+-		scd->tick_raw = 0;
+-		scd->tick_gtod = ktime_now;
+-		scd->clock = ktime_now;
+-	}
+-
+-	sched_clock_running = 1;
+-}
+-
+-/*
+- * min, max except they take wrapping into account
+- */
+-
+-static inline u64 wrap_min(u64 x, u64 y)
+-{
+-	return (s64)(x - y) < 0 ? x : y;
+-}
+-
+-static inline u64 wrap_max(u64 x, u64 y)
+-{
+-	return (s64)(x - y) > 0 ? x : y;
+-}
+-
+-/*
+- * update the percpu scd from the raw @now value
+- *
+- *  - filter out backward motion
+- *  - use the GTOD tick value to create a window to filter crazy TSC values
+- */
+-static u64 __update_sched_clock(struct sched_clock_data *scd, u64 now)
+-{
+-	s64 delta = now - scd->tick_raw;
+-	u64 clock, min_clock, max_clock;
+-
+-	if (unlikely(delta < 0))
+-		delta = 0;
+-
+-	/*
+-	 * scd->clock = clamp(scd->tick_gtod + delta,
+-	 *		      max(scd->tick_gtod, scd->clock),
+-	 *		      scd->tick_gtod + TICK_NSEC);
+-	 */
+-
+-	clock = scd->tick_gtod + delta;
+-	min_clock = wrap_max(scd->tick_gtod, scd->clock);
+-	max_clock = wrap_max(scd->clock, scd->tick_gtod + TICK_NSEC);
+-
+-	clock = wrap_max(clock, min_clock);
+-	clock = wrap_min(clock, max_clock);
+-
+-	scd->clock = clock;
+-
+-	return scd->clock;
+-}
+-
+-static void lock_double_clock(struct sched_clock_data *data1,
+-			      struct sched_clock_data *data2)
+-{
+-	if (data1 < data2) {
+-		__raw_spin_lock(&data1->lock);
+-		__raw_spin_lock(&data2->lock);
+-	} else {
+-		__raw_spin_lock(&data2->lock);
+-		__raw_spin_lock(&data1->lock);
+-	}
+-}
+-
+-u64 sched_clock_cpu(int cpu)
+-{
+-	u64 now, clock, this_clock, remote_clock;
+-	struct sched_clock_data *scd;
+-
+-	if (sched_clock_stable)
+-		return sched_clock();
+-
+-	scd = cpu_sdc(cpu);
+-
+-	if (unlikely(!sched_clock_running))
+-		return 0ull;
+-
+-	WARN_ON_ONCE(!irqs_disabled());
+-	now = sched_clock();
+-
+-	if (cpu != smp_processor_id()) {
+-		struct sched_clock_data *my_scd = this_scd();
+-
+-		lock_double_clock(scd, my_scd);
+-
+-		this_clock = __update_sched_clock(my_scd, now);
+-		remote_clock = scd->clock;
+-
+-		/*
+-		 * Use the opportunity that we have both locks
+-		 * taken to couple the two clocks: we take the
+-		 * larger time as the latest time for both
+-		 * runqueues. (this creates monotonic movement)
+-		 */
+-		if (likely((s64)(remote_clock - this_clock) < 0)) {
+-			clock = this_clock;
+-			scd->clock = clock;
+-		} else {
+-			/*
+-			 * Should be rare, but possible:
+-			 */
+-			clock = remote_clock;
+-			my_scd->clock = remote_clock;
+-		}
+-
+-		__raw_spin_unlock(&my_scd->lock);
+-	} else {
+-		__raw_spin_lock(&scd->lock);
+-		clock = __update_sched_clock(scd, now);
+-	}
+-
+-	__raw_spin_unlock(&scd->lock);
+-
+-	return clock;
+-}
+-
+-static inline u64 sched_clock_local(void)
+-{
+-	return sched_clock_cpu(smp_processor_id());
+-}
+-
+-static void sched_clock_tick(void)
+-{
+-	struct sched_clock_data *scd;
+-	u64 now, now_gtod;
+-
+-	if (sched_clock_stable)
+-		return;
+-
+-	if (unlikely(!sched_clock_running))
+-		return;
+-
+-	WARN_ON_ONCE(!irqs_disabled());
+-
+-	scd = this_scd();
+-	now_gtod = get_monotonic_time();
+-	now = sched_clock();
+-
+-	__raw_spin_lock(&scd->lock);
+-	scd->tick_raw = now;
+-	scd->tick_gtod = now_gtod;
+-	__update_sched_clock(scd, now);
+-	__raw_spin_unlock(&scd->lock);
+-}
+-
+-/*
+- * We are going deep-idle (irqs are disabled):
+- */
+-void sched_clock_idle_sleep_event(void)
+-{
+-	sched_clock_local();
+-}
+-EXPORT_SYMBOL_GPL(sched_clock_idle_sleep_event);
+-
+-/*
+- * We just idled delta nanoseconds (called with irqs disabled):
+- */
+-void sched_clock_idle_wakeup_event(u64 delta_ns)
+-{
+-	sched_clock_tick();
+-}
+-EXPORT_SYMBOL_GPL(sched_clock_idle_wakeup_event);
+-
+-unsigned long long cpu_clock(int cpu)
+-{
+-	unsigned long long clock;
+-	unsigned long flags;
+-
+-	local_irq_save(flags);
+-	clock = sched_clock_cpu(cpu);
+-	local_irq_restore(flags);
+-
+-	return clock;
+-}
+-EXPORT_SYMBOL_GPL(cpu_clock);
+-
+-static void update_rq_clock(struct rq *rq)
+-{
+-	rq->clock = sched_clock_cpu(cpu_of(rq));
+-}
+-
+ /*
+  * __task_rq_lock - lock the runqueue a given task resides on.
+  * Must be called interrupts disabled.
+@@ -620,7 +387,6 @@ repeat_lock_task:
+ 		spin_unlock(&rq->lock);
+ 		goto repeat_lock_task;
+ 	}
+-	update_rq_clock(rq);
+ 	return rq;
+ }
+ 
+@@ -642,7 +408,6 @@ repeat_lock_task:
+ 		spin_unlock_irqrestore(&rq->lock, *flags);
+ 		goto repeat_lock_task;
+ 	}
+-	update_rq_clock(rq);
+ 	return rq;
+ }
+ 
+@@ -794,7 +559,6 @@ static inline struct rq *this_rq_lock(void)
+ 	local_irq_disable();
+ 	rq = this_rq();
+ 	spin_lock(&rq->lock);
+-	update_rq_clock(rq);
+ 
+ 	return rq;
+ }
+@@ -1177,7 +941,15 @@ static void activate_task(struct task_struct *p, struct rq *rq, int local)
+ {
+ 	unsigned long long now;
+ 
+-	now = rq->clock;
++	now = sched_clock();
++#ifdef CONFIG_SMP
++	if (!local) {
++		/* Compensate for drifting sched_clock */
++		struct rq *this_rq = this_rq();
++		now = (now - this_rq->timestamp_last_tick)
++			+ rq->timestamp_last_tick;
++	}
++#endif
+ 
+ 	if (!rt_task(p))
+ 		p->prio = recalc_task_prio(p, now);
+@@ -1567,7 +1339,6 @@ static int wake_idle(int cpu, struct task_struct *p)
+ 	struct sched_domain *sd;
+ 	int i;
+ 	unsigned long long now;
+-	struct rq *rq = cpu_rq(cpu);
+ 
+ 	/*
+ 	 * If it is idle, then it is the best cpu to run this task.
+@@ -1578,10 +1349,10 @@ static int wake_idle(int cpu, struct task_struct *p)
+ 	 * sibling runqueue info. This will avoid the checks and cache miss
+ 	 * penalities associated with that.
+ 	 */
+-	if (idle_cpu(cpu) || rq->nr_running > 1)
++	if (idle_cpu(cpu) || cpu_rq(cpu)->nr_running > 1)
+ 		return cpu;
+ 
+-	now = rq->clock;
++	now = sched_clock();
+ 	for_each_domain(cpu, sd) {
+ 		if ((sd->flags & SD_WAKE_IDLE)
+ 		    || ((sd->flags & SD_WAKE_IDLE_FAR)
+@@ -1883,8 +1654,7 @@ void fastcall sched_fork(struct task_struct *p, int clone_flags)
+ 	 */
+ 	p->first_time_slice = current->pid;
+ 	current->time_slice >>= 1;
+-
+-	p->timestamp = sched_clock_local();
++	p->timestamp = sched_clock();
+ 	if (unlikely(!current->time_slice)) {
+ 		/*
+ 		 * This case is rare, it happens when the parent has only
+@@ -1959,6 +1729,12 @@ void fastcall wake_up_new_task(struct task_struct *p, unsigned long clone_flags)
+ 	} else {
+ 		this_rq = cpu_rq(this_cpu);
+ 
++		/*
++		 * Not the local CPU - must adjust timestamp. This should
++		 * get optimised away in the !CONFIG_SMP case.
++		 */
++		p->timestamp = (p->timestamp - this_rq->timestamp_last_tick)
++					+ rq->timestamp_last_tick;
+ 		__activate_task(p, rq);
+ 		if (TASK_PREEMPTS_CURR(p, rq))
+ 			resched_task(rq->curr);
+@@ -2385,8 +2161,6 @@ static void double_rq_lock(struct rq *rq1, struct rq *rq2)
+ 			spin_lock_nested(&rq1->lock, SINGLE_DEPTH_NESTING);
+ 		}
+ 	}
+-	update_rq_clock(rq1);
+-	update_rq_clock(rq2);
+ }
+ 
+ /*
+@@ -2422,8 +2196,6 @@ static void double_lock_balance(struct rq *this_rq, struct rq *busiest)
+ 		} else
+ 			spin_lock_nested(&busiest->lock, SINGLE_DEPTH_NESTING);
+ 	}
+-	/* update_rq_clock(this_rq); */
+-	update_rq_clock(busiest);
+ }
+ 
+ static void inline double_unlock_balance(struct rq *this_rq, struct rq *busiest)
+@@ -2493,6 +2265,8 @@ static void pull_task(struct rq *src_rq, struct prio_array *src_array,
+ 	set_task_cpu(p, this_cpu);
+ 	inc_nr_running(p, this_rq);
+ 	enqueue_task(p, this_array);
++	p->timestamp = (p->timestamp - src_rq->timestamp_last_tick)
++				+ this_rq->timestamp_last_tick;
+ 	/*
+ 	 * Note that idle threads have a prio of MAX_PRIO, for this test
+ 	 * to be always true for them.
+@@ -2531,7 +2305,7 @@ int can_migrate_task(struct task_struct *p, struct rq *rq, int this_cpu,
+ 	if (sd->nr_balance_failed > sd->cache_nice_tries)
+ 		return 1;
+ 
+-	if (task_hot(p, rq->clock, sd))
++	if (task_hot(p, rq->timestamp_last_tick, sd))
+ 		return 0;
+ 	return 1;
+ }
+@@ -2630,7 +2404,7 @@ skip_queue:
+ 	}
+ 
+ #ifdef CONFIG_SCHEDSTATS
+-	if (task_hot(tmp, busiest->clock, sd))
++	if (task_hot(tmp, busiest->timestamp_last_tick, sd))
+ 		schedstat_inc(sd, lb_hot_gained[idle]);
+ #endif
+ 
+@@ -3364,7 +3138,7 @@ unsigned long long current_sched_time(const struct task_struct *p)
+ 
+ 	local_irq_save(flags);
+ 	ns = max(p->timestamp, task_rq(p)->timestamp_last_tick);
+-	ns = p->sched_time + sched_clock_local() - ns;
++	ns = p->sched_time + sched_clock() - ns;
+ 	local_irq_restore(flags);
+ 
+ 	return ns;
+@@ -3475,22 +3249,16 @@ void account_steal_time(struct task_struct *p, cputime_t steal)
+  */
+ void scheduler_tick(void)
+ {
+-	unsigned long long now;
++	unsigned long long now = sched_clock();
+ 	struct task_struct *p = current;
+ 	int cpu = smp_processor_id();
+ 	struct rq *rq = cpu_rq(cpu);
+ 
+-	sched_clock_tick();
+-
+-	spin_lock(&rq->lock);
+-	update_rq_clock(rq);
+-	now = rq->clock;
+ 	update_cpu_clock(p, rq, now);
+ 
+ 	rq->timestamp_last_tick = now;
+ 
+ 	if (p == rq->idle) {
+-		spin_unlock(&rq->lock);
+ 		if (wake_priority_sleeper(rq))
+ 			goto out;
+ 		rebalance_tick(cpu, rq, SCHED_IDLE);
+@@ -3500,8 +3268,9 @@ void scheduler_tick(void)
+ 	/* Task might have expired already, but not scheduled off yet */
+ 	if (p->array != rq->active) {
+ 		set_tsk_need_resched(p);
+-		goto out_unlock;
++		goto out;
+ 	}
++	spin_lock(&rq->lock);
+ 	/*
+ 	 * The task was running during this tick - update the
+ 	 * time slice counter. Note: we do not update a thread's
+@@ -3789,8 +3558,7 @@ need_resched_nonpreemptible:
+ 
+ 	schedstat_inc(rq, sched_cnt);
+ 	spin_lock_irq(&rq->lock);
+-	update_rq_clock(rq);
+-	now = rq->clock;
++	now = sched_clock();
+ 	if (likely((long long)(now - prev->timestamp) < NS_MAX_SLEEP_AVG)) {
+ 		run_time = now - prev->timestamp;
+ 		if (unlikely((long long)(now - prev->timestamp) < 0))
+@@ -5335,9 +5103,7 @@ void __cpuinit init_idle(struct task_struct *idle, int cpu)
+ 	struct rq *rq = cpu_rq(cpu);
+ 	unsigned long flags;
+ 
+-	local_irq_save(flags);
+-
+-	idle->timestamp = sched_clock_local();
++	idle->timestamp = sched_clock();
+ 	idle->sleep_avg = 0;
+ 	idle->array = NULL;
+ 	idle->prio = idle->normal_prio = MAX_PRIO;
+@@ -5345,8 +5111,7 @@ void __cpuinit init_idle(struct task_struct *idle, int cpu)
+ 	idle->cpus_allowed = cpumask_of_cpu(cpu);
+ 	set_task_cpu(idle, cpu);
+ 
+-	spin_lock(&rq->lock);
+-
++	spin_lock_irqsave(&rq->lock, flags);
+ 	rq->curr = rq->idle = idle;
+ #if defined(CONFIG_SMP) && defined(__ARCH_WANT_UNLOCKED_CTXSW)
+ 	idle->oncpu = 1;
+@@ -5461,6 +5226,14 @@ static int __migrate_task(struct task_struct *p, int src_cpu, int dest_cpu)
+ 
+ 	set_task_cpu(p, dest_cpu);
+ 	if (p->array) {
++		/*
++		 * Sync timestamp with rq_dest's before activating.
++		 * The same thing could be achieved by doing this step
++		 * afterwards, and pretending it was a local activate.
++		 * This way is cleaner and logically correct.
++		 */
++		p->timestamp = p->timestamp - rq_src->timestamp_last_tick
++				+ rq_dest->timestamp_last_tick;
+ 		deactivate_task(p, rq_src);
+ 		__activate_task(p, rq_dest);
+ 		if (TASK_PREEMPTS_CURR(p, rq_dest))
+@@ -5499,8 +5272,6 @@ static int migration_thread(void *data)
+ 			goto wait_to_die;
+ 		}
+ 
+-		update_rq_clock(rq);
+-
+ 		if (rq->active_balance) {
+ 			active_load_balance(rq, cpu);
+ 			rq->active_balance = 0;

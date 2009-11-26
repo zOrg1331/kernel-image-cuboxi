@@ -1,0 +1,133 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Wed, 27 May 2009 17:25:44 +1000
+Subject: [net] vlan: add GRO interfaces
+Message-id: 20090527072544.GA9896@gondor.apana.org.au
+O-Subject: vlan: Add GRO interfaces
+Bugzilla: 499347
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+RHEL5 bugzilla #499347
+
+I missed this patch in the series.  It can be applied at the end.
+
+vlan: Add GRO interfaces
+
+This patch adds GRO interfaces for hardware-assisted VLAN reception.
+With this in place we're now at parity with LRO as far as the
+interface is concerned.  That is, you can now take any LRO driver
+and convert it over to GRO.
+
+As the CB memory clashes with GRO's use of CB, I've removed it
+entirely by storing dev in skb->dev.  This is OK because VLAN
+gets called first thing in netif_receive_skb and skb->dev is
+not used in between us calling netif_rx and netif_receive_skb
+getting called.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/linux/if_vlan.h b/include/linux/if_vlan.h
+index ab27408..f2f0ba8 100644
+--- a/include/linux/if_vlan.h
++++ b/include/linux/if_vlan.h
+@@ -213,6 +213,26 @@ static inline int vlan_hwaccel_receive_skb(struct sk_buff *skb,
+ 	return __vlan_hwaccel_rx(skb, grp, vlan_tag, 1);
+ }
+ 
++#if defined(CONFIG_VLAN_8021Q) || defined(CONFIG_VLAN_8021Q_MODULE)
++extern int vlan_gro_receive(struct napi_struct *napi, struct vlan_group *grp,
++			    unsigned int vlan_tci, struct sk_buff *skb);
++extern int vlan_gro_frags(struct napi_struct *napi, struct vlan_group *grp,
++			  unsigned int vlan_tci);
++#else
++static inline int vlan_gro_receive(struct napi_struct *napi,
++				   struct vlan_group *grp,
++				   unsigned int vlan_tci, struct sk_buff *skb)
++{
++	return NET_RX_DROP;
++}
++
++static inline int vlan_gro_frags(struct napi_struct *napi,
++				 struct vlan_group *grp, unsigned int vlan_tci)
++{
++	return NET_RX_DROP;
++}
++#endif
++
+ /**
+  * __vlan_put_tag - regular VLAN tag inserting
+  * @skb: skbuff to tag
+diff --git a/net/8021q/vlan_dev.c b/net/8021q/vlan_dev.c
+index da9cfe9..3d0c784 100644
+--- a/net/8021q/vlan_dev.c
++++ b/net/8021q/vlan_dev.c
+@@ -28,6 +28,7 @@
+ #include <linux/skbuff.h>
+ #include <linux/netdevice.h>
+ #include <linux/etherdevice.h>
++#include <linux/netpoll.h>
+ #include <net/datalink.h>
+ #include <net/p8022.h>
+ #include <net/arp.h>
+@@ -889,3 +890,59 @@ void vlan_dev_set_multicast_list(struct net_device *vlan_dev)
+ 		vlan_copy_mc_list(vlan_dev->mc_list, VLAN_DEV_INFO(vlan_dev));
+ 	}
+ }
++
++static int vlan_gro_common(struct napi_struct *napi, struct vlan_group *grp,
++			   unsigned int vlan_tci, struct sk_buff *skb)
++{
++	struct sk_buff *p;
++
++	if (skb_bond_should_drop(skb))
++		goto drop;
++
++	skb->dev = grp->vlan_devices[vlan_tci & VLAN_VID_MASK];
++
++	if (!skb->dev)
++		goto drop;
++
++	for (p = napi->gro_list; p; p = p->next) {
++		NAPI_GRO_CB(p)->same_flow =
++			p->dev == skb->dev && !compare_ether_header(
++				skb_mac_header(p), skb_gro_mac_header(skb));
++		NAPI_GRO_CB(p)->flush = 0;
++	}
++
++	return dev_gro_receive(napi, skb);
++
++drop:
++	return GRO_DROP;
++}
++
++int vlan_gro_receive(struct napi_struct *napi, struct vlan_group *grp,
++		     unsigned int vlan_tci, struct sk_buff *skb)
++{
++	if (netpoll_rx_on(skb))
++		return vlan_hwaccel_receive_skb(skb, grp, vlan_tci);
++
++	skb_gro_reset_offset(skb);
++
++	return napi_skb_finish(vlan_gro_common(napi, grp, vlan_tci, skb), skb);
++}
++EXPORT_SYMBOL(vlan_gro_receive);
++
++int vlan_gro_frags(struct napi_struct *napi, struct vlan_group *grp,
++		   unsigned int vlan_tci)
++{
++	struct sk_buff *skb = napi_frags_skb(napi);
++
++	if (!skb)
++		return NET_RX_DROP;
++
++	if (netpoll_rx_on(skb)) {
++		skb->protocol = eth_type_trans(skb, skb->dev);
++		return vlan_hwaccel_receive_skb(skb, grp, vlan_tci);
++	}
++
++	return napi_frags_finish(napi, skb,
++				 vlan_gro_common(napi, grp, vlan_tci, skb));
++}
++EXPORT_SYMBOL(vlan_gro_frags);

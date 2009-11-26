@@ -1,0 +1,88 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Thu, 16 Apr 2009 07:52:03 -0400
+Subject: [mm] 100% time spent under NUMA when zone_reclaim_mode=1
+Message-id: 1239882723.11848.12.camel@dhcp47-138.lab.bos.redhat.com
+O-Subject: Re: [RHEL5 patch] 100% time spent in EL5 kernel under NUMA when zone_reclaim_mode=1
+Bugzilla: 457264
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+We got a complaint from Intel that *some* of their new NUMA systems
+experience 100% system time when zone_reclaim_mode==1 on RHEL5 but not
+on the upstream kernel.  zone_reclaim_mode gets initialized to zero and
+set to 1 in build_zonelists() if the node distance on a NUMA system is
+higher than some calculated value, indicating that it is significantly
+slower to access remote memory than local memory.  The page allocator
+determines whether it should allocate memory from remote nodes or
+reclaim memory from the exhausted based on whether zone_reclaim_mode is
+zero or not.
+
+I could never reproduce this 100% system time behavior on RHEL5 NUMA
+systems whether zone_reclaim_mode was 0 or 1 so I resorted to code
+inspection and adding artificial delays to zone_reclaim().  I discovered
+that RHEL5 has a window that allows multiple CPUs within a socket to
+enter __zone_reclaim() and therefore shrink_zone() simultaneously where
+the upstream kernel does not.  I tried to backport that change into
+RHEL5-U3 but had to back it out due to kABI and big versus little endian
+architecture issues.
+
+Anyway, with those timing delays I could get the system to burn up 100%
+cpu time reclaiming memory from __zone_reclaim().  With the attached
+patch I can no longer get multiple CPUs in __zone_reclaim() at the same
+time therefore I no longer see the 100% system time on RHEL5.
+
+Fixes BZ457264
+
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 5bd4b7f..11b1925 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -2142,7 +2142,7 @@ static void __meminit free_area_init_core(struct pglist_data *pgdat,
+ 		zone->nr_active = 0;
+ 		zone->nr_inactive = 0;
+ 		zap_zone_vm_stats(zone);
+-		atomic_set(&zone->reclaim_in_progress, 0);
++		atomic_set(&zone->reclaim_in_progress, -1);
+ 		if (!size)
+ 			continue;
+ 
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index de11faa..d374f6c 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -1656,6 +1656,7 @@ int zone_reclaim(struct zone *zone, gfp_t gfp_mask, unsigned int order)
+ {
+ 	cpumask_t mask;
+ 	int node_id;
++	int ret;
+ 
+ 	/*
+ 	 * Zone reclaim reclaims unmapped file backed pages and
+@@ -1678,10 +1679,8 @@ int zone_reclaim(struct zone *zone, gfp_t gfp_mask, unsigned int order)
+ 	 * not have reclaimable pages and if we should not delay the allocation
+ 	 * then do not scan.
+ 	 */
+-	if (!(gfp_mask & __GFP_WAIT) ||
+-		zone->all_unreclaimable ||
+-		atomic_read(&zone->reclaim_in_progress) > 0 ||
+-		(current->flags & PF_MEMALLOC))
++	if (!(gfp_mask & __GFP_WAIT) || zone->all_unreclaimable || 
++					(current->flags & PF_MEMALLOC))
+ 			return 0;
+ 
+ 	/*
+@@ -1694,6 +1693,13 @@ int zone_reclaim(struct zone *zone, gfp_t gfp_mask, unsigned int order)
+ 	mask = node_to_cpumask(node_id);
+ 	if (!cpus_empty(mask) && node_id != numa_node_id())
+ 		return 0;
+-	return __zone_reclaim(zone, gfp_mask, order);
++	if (atomic_inc_and_test(&zone->reclaim_in_progress)) {
++		ret = __zone_reclaim(zone, gfp_mask, order);
++		atomic_dec(&zone->reclaim_in_progress);
++		return ret;
++	} else {
++		atomic_dec(&zone->reclaim_in_progress);
++		return 0;
++	}
+ }
+ #endif

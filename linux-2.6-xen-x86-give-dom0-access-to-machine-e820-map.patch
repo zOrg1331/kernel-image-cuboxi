@@ -1,0 +1,207 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Mon, 8 Jun 2009 16:01:59 -0600
+Subject: [xen] x86: give dom0 access to machine e820 map
+Message-id: 200906082201.n58M1x3U006735@sobek.n0ano.com
+O-Subject: [RHEL5.4 PATCH V5] BZ 503818: give dom0 access to machine e820 map
+Bugzilla: 503818
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+
+In order for a Physical Function driver to create Virtual Function devices
+the PCI subsystem needs to access the extended capabilities for the PF.
+The exteneded capabilities are only accessible through the MMCONFIG PCI
+access method.  Although the RHEL 5.4 kernel tries to use MMCONFIG this
+access method fails for the Dom0 kernel because the Dom0 kernel is using
+a PV E820 map that only maps RAM.  When the PCI subsystem tries to verify
+that the MMCONFIG address is reserved in the E820 map it fails (the
+MMCONFIG address space is not in the PV map).  This patch solves this problem
+by giving Dom0 access to the real E820 map only when the PCI subsystem checks
+to see if the MMCONF access method is available.
+
+Note that this patch has been designed to minimize the chance of a regression
+for non-SR/IOV users.  This patch adds a new kernel boot option,
+`pci_pt_e820_access', and will only enable the MMCONF PCI access
+method if that option is set, otherwise the code will work exactly as it
+currently does.
+
+Also note that the original RHEL 5 Dom0 code was already retrieving the
+platform E820 table.  This works fine for x86_64 but, unfortunately, the
+i386 version retrieved that table after it was needed by the PCI code.
+
+Therefore the i386 code that retrieves the E820 table is now moved to
+earlier in the startup sequence and both architectures are happy.
+
+This has been tested on x86_64 Dom0 running PV (32 bit & 64 bit) and
+HVM (32 bit & 64 bit) guests with no problems.  Also tested on i386
+Dom0 run PV (32 bit) and HVM (32 bit) guest, also with no problems.
+
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=1833288
+
+Upstream status: Accepted (CS 523, 13959)
+
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/arch/i386/kernel/quirks-xen.c b/arch/i386/kernel/quirks-xen.c
+index 26b3534..e190d7f 100644
+--- a/arch/i386/kernel/quirks-xen.c
++++ b/arch/i386/kernel/quirks-xen.c
+@@ -4,6 +4,34 @@
+ #include <linux/pci.h>
+ #include <linux/irq.h>
+ 
++#ifdef PCI_PT_E820_ACCESS_DEFAULT_ON
++int pci_pt_e820_access_enabled = 1;
++#else
++int pci_pt_e820_access_enabled = 0;
++
++static int __init e820_access_setup(char *str)
++{
++
++	if (!str)
++		return -EINVAL;
++	while (*str) {
++		if (!strncmp(str, "on", 2)) {
++			pci_pt_e820_access_enabled = 1;
++			printk(KERN_INFO "pci_pt_e820_access: enabled\n");
++		} else if (!strncmp(str, "off", 3)) {
++			pci_pt_e820_access_enabled = 0;
++			printk(KERN_INFO "pci_pt_e820_access: disabled\n");
++		}
++
++		str += strcspn(str, ",");
++		while (*str == ',')
++			str++;
++	}
++	return 0;
++}	
++__setup("pci_pt_e820_access=", e820_access_setup);
++#endif
++
+ #if defined(CONFIG_X86_IO_APIC) && (defined(CONFIG_SMP) || defined(CONFIG_XEN)) && defined(CONFIG_PCI)
+ 
+ static void __devinit quirk_intel_irqbalance(struct pci_dev *dev)
+diff --git a/arch/i386/kernel/setup-xen.c b/arch/i386/kernel/setup-xen.c
+index ae7a43d..dd676a0 100644
+--- a/arch/i386/kernel/setup-xen.c
++++ b/arch/i386/kernel/setup-xen.c
+@@ -164,6 +164,12 @@ struct e820map e820;
+ static void __init e820_setup_gap(struct e820entry *e820, int nr_map);
+ #ifdef CONFIG_XEN
+ struct e820map machine_e820;
++
++/*
++ * This is controlled by a boot flag processed in file
++ *   `arch/i386/quirks-xen.c'
++ */
++extern int pci_pt_e820_access_enabled;
+ #endif
+ 
+ extern void early_cpu_init(void);
+@@ -755,6 +761,19 @@ int __init copy_e820_map(struct e820entry * biosmap, int nr_map)
+ #endif
+ 		add_memory_region(start, size, type);
+ 	} while (biosmap++,--nr_map);
++#ifdef CONFIG_XEN_PRIVILEGED_GUEST
++	if (is_initial_xendomain()) {
++		struct xen_memory_map memmap;
++		int nr_map = e820.nr_map;
++
++		memmap.nr_entries = E820MAX;
++		set_xen_guest_handle(memmap.buffer, machine_e820.map);
++
++		if(HYPERVISOR_memory_op(XENMEM_machine_memory_map, &memmap))
++			BUG();
++		machine_e820.nr_map = memmap.nr_entries;
++	}
++#endif
+ 	return 0;
+ }
+ 
+@@ -1056,9 +1075,18 @@ e820_all_mapped(unsigned long s, unsigned long e, unsigned type)
+ {
+ 	u64 start = s;
+ 	u64 end = e;
+-	int i;
+-	for (i = 0; i < e820.nr_map; i++) {
+-		struct e820entry *ei = &e820.map[i];
++	int i, nrmap;
++	struct e820entry *ei;
++
++	nrmap = e820.nr_map;
++	ei = &e820.map[0];
++#ifdef	CONFIG_XEN
++	if (pci_pt_e820_access_enabled) {
++		nrmap = machine_e820.nr_map;
++		ei = &machine_e820.map[0];
++	}
++#endif
++	for (i = 0; i < nrmap; i++, ei++) {
+ 		if (type && ei->type != type)
+ 			continue;
+ 		/* is the region (part) in overlap with the current region ?*/
+@@ -1433,18 +1461,10 @@ legacy_init_iomem_resources(struct resource *code_resource, struct resource *dat
+ 	struct e820entry *map = e820.map;
+ 	int nr_map = e820.nr_map;
+ #ifdef CONFIG_XEN_PRIVILEGED_GUEST
+-	struct xen_memory_map memmap;
+ 
++	nr_map = machine_e820.nr_map;
+ 	map = machine_e820.map;
+-	memmap.nr_entries = E820MAX;
+-
+-	set_xen_guest_handle(memmap.buffer, map);
+-
+-	if(HYPERVISOR_memory_op(XENMEM_machine_memory_map, &memmap))
+-		BUG();
+-	machine_e820.nr_map = memmap.nr_entries;
+-	nr_map = memmap.nr_entries;
+-	e820_setup_gap(map, memmap.nr_entries);
++	e820_setup_gap(map, nr_map);
+ #endif
+ 
+ 	probe_roms();
+diff --git a/arch/x86_64/kernel/e820-xen.c b/arch/x86_64/kernel/e820-xen.c
+index 358fafd..799406c 100644
+--- a/arch/x86_64/kernel/e820-xen.c
++++ b/arch/x86_64/kernel/e820-xen.c
+@@ -44,6 +44,16 @@ unsigned long end_pfn_map;
+ unsigned long end_user_pfn = MAXMEM>>PAGE_SHIFT;  
+ 
+ extern struct resource code_resource, data_resource;
++ 
++#ifdef CONFIG_XEN
++extern struct e820map machine_e820;
++
++/*
++ * This is controlled by a boot flag processed in file
++ *   `arch/i386/quirks-xen.c'
++ */
++extern int pci_pt_e820_access_enabled;
++#endif
+ 
+ /* Check for some hardcoded bad areas that early boot is not allowed to touch */ 
+ static inline int bad_addr(unsigned long *addrp, unsigned long size)
+@@ -124,9 +134,18 @@ e820_any_mapped(unsigned long start, unsigned long end, unsigned type)
+  */
+ int __init e820_all_mapped(unsigned long start, unsigned long end, unsigned type)
+ {
+-	int i;
+-	for (i = 0; i < e820.nr_map; i++) {
+-		struct e820entry *ei = &e820.map[i];
++	int i, nrmap;
++	struct e820entry *ei;
++
++	nrmap = e820.nr_map;
++	ei = &e820.map[0];
++#ifdef	CONFIG_XEN
++	if (pci_pt_e820_access_enabled) {
++		nrmap = machine_e820.nr_map;
++		ei = &machine_e820.map[0];
++	}
++#endif
++	for (i = 0; i < nrmap; i++, ei++) {
+ 		if (type && ei->type != type)
+ 			continue;
+ 		/* is the region (part) in overlap with the current region ?*/

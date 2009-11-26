@@ -72,7 +72,7 @@ Signed-off-by: Denis V. Lunev <den@parallels.com>
  
 +	/* wait, before we connect, if there's a user specified src
 +	   addr, honour it */
-+	if (xprt_rpc_src_addr != 0 && ve_is_super(xprt->owner_env)) {
++	if (xprt_rpc_src_addr != 0 && ve_is_super(ve)) {
 +		struct sock *sk = sock->sk;
 +		struct inet_sock *inet = inet_sk(sk);
 +		lock_sock(sk);

@@ -1,0 +1,355 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Mon, 15 Jun 2009 16:27:09 -0400
+Subject: [net] backport net_rx_action tracepoint
+Message-id: 20090615202709.GA11967@hmsreliant.think-freely.org
+O-Subject: [RHEL 5.4 PATCH] backport net_rx_action tracepoint (bz 506138)
+Bugzilla: 506138
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+Hey all-
+	backport of a commit 4ea7e38696c7e798c47ebbecadfd392f23f814f9  from
+net-next.  This lets the dropmon protocol detect frame loss in hardware.
+Satisfies bz 506138
+
+Neil
+
+diff --git a/include/linux/net_dropmon.h b/include/linux/net_dropmon.h
+index 0217fb8..2fd0cc4 100644
+--- a/include/linux/net_dropmon.h
++++ b/include/linux/net_dropmon.h
+@@ -2,6 +2,7 @@
+ #define __NET_DROPMON_H
+ 
+ #include <linux/netlink.h>
++#include <linux/types.h>
+ 
+ struct net_dm_drop_point {
+ 	__u8 pc[8];
+diff --git a/include/trace/napi.h b/include/trace/napi.h
+new file mode 100644
+index 0000000..3510135
+--- /dev/null
++++ b/include/trace/napi.h
+@@ -0,0 +1,11 @@
++#ifndef _TRACE_NAPI_H_
++#define _TRACE_NAPI_H_
++
++#include <linux/netdevice.h>
++#include <linux/tracepoint.h>
++
++DEFINE_TRACE(napi_poll,
++	TPPROTO(struct net_device *napi),
++	TPARGS(napi));
++
++#endif
+diff --git a/net/core/dev.c b/net/core/dev.c
+index f57096e..0813be2 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -117,6 +117,7 @@
+ #include <linux/dmaengine.h>
+ #include <linux/err.h>
+ #include <linux/ctype.h>
++#include <trace/napi.h>
+ 
+ #ifdef CONFIG_XEN
+ #include <net/ip.h>
+@@ -2337,7 +2338,7 @@ static void net_rx_action(struct softirq_action *h)
+ 	unsigned long start_time = jiffies;
+ 	int budget = netdev_budget;
+ 	void *have;
+-
++	int called_poll;
+ 	local_irq_disable();
+ 
+ 	while (!list_empty(&queue->poll_list)) {
+@@ -2351,7 +2352,7 @@ static void net_rx_action(struct softirq_action *h)
+ 		dev = list_entry(queue->poll_list.next,
+ 				 struct net_device, poll_list);
+ 		have = netpoll_poll_lock(dev);
+-
++		called_poll = (dev->quota <= 0) ? 0:1;
+ 		if (dev->quota <= 0 || dev->poll(dev, &budget)) {
+ 			netpoll_poll_unlock(have);
+ 			local_irq_disable();
+@@ -2365,6 +2366,8 @@ static void net_rx_action(struct softirq_action *h)
+ 			dev_put(dev);
+ 			local_irq_disable();
+ 		}
++		if (called_poll)
++			trace_napi_poll(dev);
+ 	}
+ out:
+ #ifdef CONFIG_NET_DMA
+diff --git a/net/core/drop_monitor.c b/net/core/drop_monitor.c
+index 9fe224d..8016ac4 100644
+--- a/net/core/drop_monitor.c
++++ b/net/core/drop_monitor.c
+@@ -22,8 +22,10 @@
+ #include <linux/timer.h>
+ #include <linux/bitops.h>
+ #include <net/genetlink.h>
++#include <net/netevent.h>
+ 
+ #include <trace/skb.h>
++#include <trace/napi.h>
+ 
+ #include <asm/unaligned.h>
+ 
+@@ -38,7 +40,8 @@ static void send_dm_alert(struct work_struct *unused);
+  * and the work handle that will send up
+  * netlink alerts
+  */
+-struct sock *dm_sock;
++static int trace_state = TRACE_OFF;
++static spinlock_t trace_state_lock = SPIN_LOCK_UNLOCKED;
+ 
+ struct per_cpu_dm_data {
+ 	struct work_struct dm_alert_work;
+@@ -47,6 +50,13 @@ struct per_cpu_dm_data {
+ 	struct timer_list send_timer;
+ };
+ 
++struct dm_hw_stat_delta {
++	struct net_device *dev;
++	struct list_head list;
++	struct rcu_head rcu;
++	unsigned long last_drop_val;
++};
++
+ static struct genl_family net_drop_monitor_family = {
+ 	.id             = GENL_ID_GENERATE,
+ 	.hdrsize        = 0,
+@@ -59,7 +69,8 @@ static DEFINE_PER_CPU(struct per_cpu_dm_data, dm_cpu_data);
+ 
+ static int dm_hit_limit = 64;
+ static int dm_delay = 1;
+-
++static unsigned long dm_hw_check_delta = 2*HZ;
++static LIST_HEAD(hw_stats_list);
+ 
+ static void reset_per_cpu_data(struct per_cpu_dm_data *data)
+ {
+@@ -111,7 +122,7 @@ static void sched_send_work(unsigned long unused)
+ 	schedule_work(&data->dm_alert_work);
+ }
+ 
+-static void trace_kfree_skb_hit(struct sk_buff *skb, void *location)
++static void trace_drop_common(struct sk_buff *skb, void *location)
+ {
+ 	struct net_dm_alert_msg *msg;
+ 	struct nlmsghdr *nlh;
+@@ -152,27 +163,88 @@ out:
+ 	return;
+ }
+ 
++
++static void trace_kfree_skb_hit(struct sk_buff *skb, void *location)
++{
++	trace_drop_common(skb, location);
++}
++  
++static void trace_napi_poll_hit(struct net_device *napi)
++{
++	struct dm_hw_stat_delta *new_stat;
++ 	struct net_device_stats *stats;
++ 
++	/*
++	 * Ratelimit our check time to dm_hw_check_delta jiffies
++	 */
++	if (!time_after(jiffies, napi->last_rx + dm_hw_check_delta))
++		return;
++  
++	rcu_read_lock();
++	list_for_each_entry_rcu(new_stat, &hw_stats_list, list) {
++		stats = napi->get_stats(napi);
++		if ((new_stat->dev == napi)  &&
++		    (stats->rx_dropped != new_stat->last_drop_val)) {
++			trace_drop_common(NULL, NULL);
++			new_stat->last_drop_val = stats->rx_dropped;
++			break;
++		}
++	}
++	rcu_read_unlock();
++}
++  
++static void free_dm_hw_stat(struct rcu_head *head)
++{
++	struct dm_hw_stat_delta *n;
++	n = container_of(head, struct dm_hw_stat_delta, rcu);
++	kfree(n);
++}
++
+ static int set_all_monitor_traces(int state)
+ {
++	struct dm_hw_stat_delta *new_stat = NULL;
++	struct dm_hw_stat_delta *temp;
+ 	int rc = 0;
+ 
++	spin_lock(&trace_state_lock);
++
+ 	switch (state) {
+ 	case TRACE_ON:
+ 		rc |= register_trace_kfree_skb(trace_kfree_skb_hit);
++		rc |= register_trace_napi_poll(trace_napi_poll_hit);
+ 		break;
+ 	case TRACE_OFF:
+-		unregister_trace_kfree_skb(trace_kfree_skb_hit);
++		rc = unregister_trace_kfree_skb(trace_kfree_skb_hit);
++		rc |= unregister_trace_napi_poll(trace_napi_poll_hit);
++
++		/*
++		 * Clean the device list
++		 */
++		list_for_each_entry_safe(new_stat, temp, &hw_stats_list, list) {
++			if (new_stat->dev == NULL) {
++				list_del_rcu(&new_stat->list);
++				call_rcu(&new_stat->rcu, free_dm_hw_stat);
++			}
++		}
++
+ 		break;
+ 	default:
+ 		rc = 1;
+ 		break;
+ 	}
+ 
++	if (!rc)
++		trace_state = state;
++
++	spin_unlock(&trace_state_lock);
++
+ 	if (rc)
+ 		return -EINPROGRESS;
+ 	return rc;
+ }
+ 
++  
++
+ 
+ static int net_dm_cmd_config(struct sk_buff *skb,
+ 			struct genl_info *info)
+@@ -195,6 +267,44 @@ static int net_dm_cmd_trace(struct sk_buff *skb,
+ 	return -ENOTSUPP;
+ }
+ 
++static int dropmon_net_event(struct notifier_block *ev_block,
++			unsigned long event, void *ptr)
++{
++	struct net_device *dev = ptr;
++	struct dm_hw_stat_delta *new_stat = NULL;
++	struct dm_hw_stat_delta *tmp;
++
++	switch (event) {
++	case NETDEV_REGISTER:
++		new_stat = kzalloc(sizeof(struct dm_hw_stat_delta), GFP_KERNEL);
++
++		if (!new_stat)
++			goto out;
++
++		new_stat->dev = dev;
++		INIT_RCU_HEAD(&new_stat->rcu);
++		spin_lock(&trace_state_lock);
++		list_add_rcu(&new_stat->list, &hw_stats_list);
++		spin_unlock(&trace_state_lock);
++		break;
++	case NETDEV_UNREGISTER:
++		spin_lock(&trace_state_lock);
++		list_for_each_entry_safe(new_stat, tmp, &hw_stats_list, list) {
++			if (new_stat->dev == dev) {
++				new_stat->dev = NULL;
++				if (trace_state == TRACE_OFF) {
++					list_del_rcu(&new_stat->list);
++					call_rcu(&new_stat->rcu, free_dm_hw_stat);
++					break;
++				}
++			}
++		}
++		spin_unlock(&trace_state_lock);
++		break;
++	}
++out:
++	return NOTIFY_DONE;
++}
+ 
+ static struct genl_ops dropmon_ops[] = {
+ 	{
+@@ -211,6 +321,10 @@ static struct genl_ops dropmon_ops[] = {
+ 	},
+ };
+ 
++static struct notifier_block dropmon_net_notifier = {
++	.notifier_call = dropmon_net_event
++};
++
+ static int __init init_net_drop_monitor(void)
+ {
+ 	int cpu;
+@@ -234,12 +348,18 @@ static int __init init_net_drop_monitor(void)
+ 		ret = genl_register_ops(&net_drop_monitor_family,
+ 					&dropmon_ops[i]);
+ 		if (ret) {
+-			printk(KERN_CRIT "failed to register operation %d\n",
++			printk(KERN_CRIT "Failed to register operation %d\n",
+ 				dropmon_ops[i].cmd);
+ 			goto out_unreg;
+ 		}
+ 	}
+ 
++	rc = register_netdevice_notifier(&dropmon_net_notifier);
++	if (rc < 0) {
++		printk(KERN_CRIT "Failed to register netdevice notifier\n");
++		goto out_unreg;
++	}
++
+ 	rc = 0;
+ 
+ 	for_each_present_cpu(cpu) {
+@@ -250,6 +370,7 @@ static int __init init_net_drop_monitor(void)
+ 		data->send_timer.data = cpu;
+ 		data->send_timer.function = sched_send_work;
+ 	}
++
+ 	goto out;
+ 
+ out_unreg:
+diff --git a/net/core/net-traces.c b/net/core/net-traces.c
+index c8fb456..b07b25b 100644
+--- a/net/core/net-traces.c
++++ b/net/core/net-traces.c
+@@ -20,6 +20,7 @@
+ #include <linux/netlink.h>
+ #include <linux/net_dropmon.h>
+ #include <trace/skb.h>
++#include <trace/napi.h>
+ 
+ #include <asm/unaligned.h>
+ #include <asm/bitops.h>
+@@ -27,3 +28,6 @@
+ 
+ DEFINE_TRACE(kfree_skb);
+ EXPORT_TRACEPOINT_SYMBOL_GPL(kfree_skb);
++
++DEFINE_TRACE(napi_poll);
++EXPORT_TRACEPOINT_SYMBOL_GPL(napi_poll);
+diff --git a/net/core/netpoll.c b/net/core/netpoll.c
+index 5049354..b2d41e9 100644
+--- a/net/core/netpoll.c
++++ b/net/core/netpoll.c
+@@ -25,6 +25,7 @@
+ #include <net/tcp.h>
+ #include <net/udp.h>
+ #include <asm/unaligned.h>
++#include <trace/napi.h>
+ 
+ /*
+  * We maintain a small pool of fully-sized skbs, to make sure the
+@@ -147,6 +148,7 @@ static void poll_napi(struct netpoll *np)
+ 		atomic_inc(&trapped);
+ 
+ 		np->dev->poll(np->dev, &budget);
++		trace_napi_poll(np->dev);
+ 
+ 		atomic_dec(&trapped);
+ 		npinfo->rx_flags &= ~NETPOLL_RX_DROP;

@@ -1,0 +1,181 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Mon, 26 Jan 2009 11:53:55 -0500
+Subject: [xen] fix disappearing PCI devices from PV guests
+Message-id: 497DEAA3.1030507@redhat.com
+O-Subject: Re: [RHEL5.4 PATCH v2] Fix disappearing PCI devices from Xen PV guests
+Bugzilla: 233801
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+
+Version 2, simple whitespace fix.
+
+Bill Burns wrote:
+> Fixes bz 233801
+>
+> Problem description:
+>
+> PCI devices passed through to Xen PV guests can disappear
+> on reboot. This worked on some configurations and was thought
+> to be a race. But incorrect operations in the Xenstore were the
+> reason for the condition. Jiri Denemark troubleshot this from
+> the used mode perspective and initially thought that it was both
+> a kernel and user space issue. Then he found that it was
+> actually a just kernel issue and proved it with a simple
+> patch. We found the same change upstream and this patch
+> is a slight re-work of that. The only re-work was to deal
+> with adjacent code that changed, so the patch is logically
+> identical.
+>
+> Upstream status:
+>
+> http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev/5644f68a7912
+>
+> Brew build:
+>
+> https://brewweb.devel.redhat.com/taskinfo?taskID=1644512
+
+>
+> Testing:
+>
+> Jirka tested with the brew build and verified proper
+> operation.
+>
+> Please review and ACK.
+>
+> Thanks,
+>  Bill
+>
+
+changeset: pcifront/back: Fix handling of device disconnect.
+changeset 604: 	5644f68a7912
+parent 603:	bd4b58143713
+child 605:	2d2436c48e43
+author: 	Keir Fraser <keir.fraser@citrix.com>
+date: 	Wed Jul 16 13:51:36 2008 +0100 (6 months ago)
+files: 	drivers/xen/pciback/xenbus.c drivers/xen/pcifront/xenbus.c
+description: 	pcifront/back: Fix handling of device disconnect.
+
+Signed-off-by: Yosuke Iwamatsu <y-iwamatsu@ab.jp.nec.com>
+
+diff --git a/drivers/xen/pciback/xenbus.c b/drivers/xen/pciback/xenbus.c
+index 0026753..e2a7d1d 100644
+--- a/drivers/xen/pciback/xenbus.c
++++ b/drivers/xen/pciback/xenbus.c
+@@ -42,22 +42,35 @@ static struct pciback_device *alloc_pdev(struct xenbus_device *xdev)
+ 	return pdev;
+ }
+ 
+-static void free_pdev(struct pciback_device *pdev)
++static void pciback_disconnect(struct pciback_device *pdev)
+ {
+-	if (pdev->be_watching)
+-		unregister_xenbus_watch(&pdev->be_watch);
++	spin_lock(&pdev->dev_lock);
+ 
+ 	/* Ensure the guest can't trigger our handler before removing devices */
+-	if (pdev->evtchn_irq != INVALID_EVTCHN_IRQ)
++	if (pdev->evtchn_irq != INVALID_EVTCHN_IRQ) {
+ 		unbind_from_irqhandler(pdev->evtchn_irq, pdev);
++		pdev->evtchn_irq = INVALID_EVTCHN_IRQ;
++	}
+ 
+ 	/* If the driver domain started an op, make sure we complete it or
+ 	 * delete it before releasing the shared memory */
+ 	cancel_delayed_work(&pdev->op_work);
+ 	flush_scheduled_work();
+ 
+-	if (pdev->sh_info)
++	if (pdev->sh_info != NULL) {
+ 		xenbus_unmap_ring_vfree(pdev->xdev, pdev->sh_area);
++		pdev->sh_info = NULL;
++	}
++
++	spin_unlock(&pdev->dev_lock);
++}
++
++static void free_pdev(struct pciback_device *pdev)
++{
++	if (pdev->be_watching)
++		unregister_xenbus_watch(&pdev->be_watch);
++
++	pciback_disconnect(pdev);
+ 
+ 	pciback_release_devices(pdev);
+ 
+@@ -178,11 +191,17 @@ static void pciback_frontend_changed(struct xenbus_device *xdev,
+ 		break;
+ 
+ 	case XenbusStateClosing:
++		pciback_disconnect(pdev);
+ 		xenbus_switch_state(xdev, XenbusStateClosing);
+ 		break;
+ 
+-	case XenbusStateUnknown:
+ 	case XenbusStateClosed:
++		pciback_disconnect(pdev);
++		xenbus_switch_state(xdev, XenbusStateClosed);
++		if (xenbus_dev_is_online(xdev))
++			break;
++		/* fall through if not online */
++	case XenbusStateUnknown:
+ 		dev_dbg(&xdev->dev, "frontend is gone! unregister device\n");
+ 		device_unregister(&xdev->dev);
+ 		break;
+diff --git a/drivers/xen/pcifront/xenbus.c b/drivers/xen/pcifront/xenbus.c
+index 6231c81..bda7df5 100644
+--- a/drivers/xen/pcifront/xenbus.c
++++ b/drivers/xen/pcifront/xenbus.c
+@@ -203,12 +203,17 @@ static int pcifront_try_disconnect(struct pcifront_device *pdev)
+ 
+ 	prev_state = xenbus_read_driver_state(pdev->xdev->nodename);
+ 
+-	if (prev_state < XenbusStateClosing)
+-		err = xenbus_switch_state(pdev->xdev, XenbusStateClosing);
++	if (prev_state >= XenbusStateClosing)
++		goto out;
+ 
+-	if (!err && prev_state == XenbusStateConnected)
++	if(prev_state == XenbusStateConnected) {
++		pcifront_free_roots(pdev);
+ 		pcifront_disconnect(pdev);
++	}
++
++	err = xenbus_switch_state(pdev->xdev, XenbusStateClosed);
+ 
++      out:
+ 	spin_unlock(&pdev->dev_lock);
+ 
+ 	return err;
+@@ -220,24 +225,20 @@ static void pcifront_backend_changed(struct xenbus_device *xdev,
+ 	struct pcifront_device *pdev = xdev->dev.driver_data;
+ 
+ 	switch (be_state) {
+-	case XenbusStateClosing:
+-		dev_warn(&xdev->dev, "backend going away!\n");
+-		pcifront_try_disconnect(pdev);
+-		break;
+-
+ 	case XenbusStateUnknown:
++	case XenbusStateInitialising:
++	case XenbusStateInitWait:
++	case XenbusStateInitialised:
+ 	case XenbusStateClosed:
+-		dev_warn(&xdev->dev, "backend went away!\n");
+-		pcifront_try_disconnect(pdev);
+-
+-		device_unregister(&pdev->xdev->dev);
+ 		break;
+ 
+ 	case XenbusStateConnected:
+ 		pcifront_try_connect(pdev);
+ 		break;
+ 
+-	default:
++ 	case XenbusStateClosing:
++		dev_warn(&xdev->dev, "backend going away!\n");
++		pcifront_try_disconnect(pdev);
+ 		break;
+ 	}
+ }

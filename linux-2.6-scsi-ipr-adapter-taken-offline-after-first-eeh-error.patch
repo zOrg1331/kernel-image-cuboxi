@@ -1,0 +1,82 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Mon, 8 Jun 2009 15:47:44 -0400
+Subject: [scsi] IPR: adapter taken offline after first EEH error
+Message-id: 20090608194430.23832.62609.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 BZ504675] Fix IPR adapter taken offline after the first detected EEH error
+Bugzilla: 504675
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=504675
+
+Description:
+===========
+This problem is not found in mainline code. It's present only in RHEL5 and
+this problem was introduced by the patch:
+
+linux-2.6-scsi-update-for-new-sas-raid.patch
+
+which adds a piece of code that does almost the same thing as another piece of
+code sent to mainline:
+
+linux-2.6-scsi-ipr-add-dual-sas-raid-controller-support.patch
+
+The two patches applied together setup variables incorrectly, so this patch
+removes the edits of linux-2.6-scsi-update-for-new-sas-raid.patch so the code
+is closer to mainline.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1831864
+
+Upstream Status:
+================
+Not a problem in mainline.
+
+Test Status:
+============
+A testcase is provided in the Bugzilla, but essentially, without this patch
+on the first injected EEH error the driver tries to reset the adapter as
+expected, but the reset procedure causes another EEH error to be detected, so
+it enters on a loop of EEH recovers until the driver takes the adapter offline
+after some tries.
+
+With this patch applied this infinite loop of EEH failures does not happen.
+
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/drivers/scsi/ipr.c b/drivers/scsi/ipr.c
+index 803e654..b6fec36 100644
+--- a/drivers/scsi/ipr.c
++++ b/drivers/scsi/ipr.c
+@@ -7611,12 +7611,6 @@ static int __devinit ipr_probe_ioa(struct pci_dev *pdev,
+ 		goto cleanup_nolog;
+ 	}
+ 
+-	if (dev_id->driver_data) {
+-		ioa_cfg->needs_warm_reset = 1;
+-		ioa_cfg->reset = ipr_reset_slot_reset;
+-	} else
+-		ioa_cfg->reset = ipr_reset_start_bist;
+-
+ 	if ((dev_id->driver_data & IPR_USE_PCI_WARM_RESET) ||
+ 	    (dev_id->device == PCI_DEVICE_ID_IBM_OBSIDIAN_E && !ioa_cfg->revid)) {
+ 		ioa_cfg->needs_warm_reset = 1;

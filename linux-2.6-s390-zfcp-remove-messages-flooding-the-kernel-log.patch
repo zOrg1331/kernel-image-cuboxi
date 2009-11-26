@@ -1,0 +1,108 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 7 Aug 2008 13:16:13 +0200
+Subject: [s390] zfcp: remove messages flooding the kernel log
+Message-id: 20080807111613.GA6319@redhat.com
+O-Subject: [RHEL5 U3 PATCH 1/5] s390 - zfcp: Remove messages flooding the kernel log
+Bugzilla: 455260
+RH-Acked-by: Jarod Wilson <jwilson@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+Taking the local link down during high I/O load fills the
+kernel message log with messages like "ELS request
+rejected/timed out...", "reopen needed...", ...
+
+Although the local link is down, the FCP adapter first
+reports problems with the remote ports, triggering the
+link tests in zfcp before reporting "link down". This is
+not a problem, only zfcp has the issue that the checks
+of the remote ports are reported in the kernel message
+log.
+
+Since the port tests via ELS requests is an internal procedure
+in zfcp and the user cannot do anything, remove the messages
+to avoid the confusion. The details are still visible in
+the zfcp traces in case somebody wants to see everything.
+
+Bugzilla
+=========
+
+BZ 455260
+https://bugzilla.redhat.com/show_bug.cgi?id=455260
+
+Upstream status of the patch:
+=============================
+
+Patch is upstream:
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;a=commit;h=abedbacf5804d8cac634b5a7a2d68dfe227449ac
+
+Whereas the upstream version removes all trace and debug messages, the attached
+backport removes only 4 of them.
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	-Hans
+
+diff --git a/drivers/s390/scsi/zfcp_erp.c b/drivers/s390/scsi/zfcp_erp.c
+index 3ea78a6..1599533 100644
+--- a/drivers/s390/scsi/zfcp_erp.c
++++ b/drivers/s390/scsi/zfcp_erp.c
+@@ -351,12 +351,8 @@ zfcp_erp_adisc(struct zfcp_port *port)
+ 		      adisc->nport_id);
+ 
+ 	retval = zfcp_fsf_send_els(send_els);
+-	if (retval != 0) {
+-		ZFCP_LOG_NORMAL("error: initiation of Send ELS failed for port "
+-				"0x%08x on adapter %s\n", send_els->d_id,
+-				zfcp_get_busid_by_adapter(adapter));
++	if (retval != 0)
+ 		goto freemem;
+-	}
+ 
+ 	goto out;
+ 
+@@ -397,15 +393,7 @@ zfcp_erp_adisc_handler(unsigned long data)
+ 
+ 	/* request rejected or timed out */
+ 	if (send_els->status != 0) {
+-		ZFCP_LOG_NORMAL("ELS request rejected/timed out, "
+-				"force physical port reopen "
+-				"(adapter %s, port d_id=0x%08x)\n",
+-				zfcp_get_busid_by_adapter(adapter), d_id);
+-		if (zfcp_erp_port_forced_reopen(port, 0, 63, 0))
+-			ZFCP_LOG_NORMAL("failed reopen of port "
+-					"(adapter %s, wwpn=0x%016Lx)\n",
+-					zfcp_get_busid_by_port(port),
+-					port->wwpn);
++		zfcp_erp_port_forced_reopen(port, 0, 63, 0);
+ 		goto out;
+ 	}
+ 
+@@ -459,16 +447,9 @@ zfcp_test_link(struct zfcp_port *port)
+ 	retval = zfcp_erp_adisc(port);
+ 	if (retval != 0 && retval != -EBUSY) {
+ 		zfcp_port_put(port);
+-		ZFCP_LOG_NORMAL("reopen needed for port 0x%016Lx "
+-				"on adapter %s\n ", port->wwpn,
+-				zfcp_get_busid_by_port(port));
+ 		retval = zfcp_erp_port_forced_reopen(port, 0, 65, 0);
+-		if (retval != 0) {
+-			ZFCP_LOG_NORMAL("reopen of remote port 0x%016Lx "
+-					"on adapter %s failed\n", port->wwpn,
+-					zfcp_get_busid_by_port(port));
++		if (retval != 0)
+ 			retval = -EPERM;
+-		}
+ 	}
+ 
+ 	return retval;

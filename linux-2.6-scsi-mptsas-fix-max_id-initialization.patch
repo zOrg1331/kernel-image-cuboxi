@@ -1,0 +1,48 @@
+From: mchristi@redhat.com <mchristi@redhat.com>
+Date: Fri, 24 Jul 2009 13:39:14 -0500
+Subject: [scsi] mptsas: fix max_id initialization
+Message-id: 1248460754-7139-1-git-send-email-mchristi@redhat.com
+O-Subject: [PATCH 1/1] RHEL5.4: mptsas: fix max_id initialization
+Bugzilla: 455678
+RH-Acked-by: Rob Evers <revers@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for BZ 455678.
+
+The mptsas driver is setting the max_id based on a firmware
+limit. The problem is that for sas in linux, the target id
+is just used as a OS id value. It does not track the number
+of targets in the system and does not match the hardware
+target id. The sas class just increases target id after
+a target is created, so if you pull a cable (which for sas
+deletes the target after X seconds) and plug it in again enough
+times the target id will hit the shost->max_id and the target struct
+will not get scanned.
+
+This fixes the problem by having mptsas set the max_id to
+-1 like is done for other sas drivers.
+
+The patch is not upstream yet. I will be sending it later today.
+I have not tested the patch. LSI did some quick tests on it, but
+did not stress it heavily. We are still waiting for confirmation
+from Intel that it fixes their specific problem in the BZ, but
+we are not sure when they will be done testing. This patch
+will only affect mptsas, LSI thinks it is safe and it fixes a bug
+we know about in that code path, so I wanted to still send it.
+
+diff --git a/drivers/message/fusion/mptsas.c b/drivers/message/fusion/mptsas.c
+index ce0788e..239de23 100644
+--- a/drivers/message/fusion/mptsas.c
++++ b/drivers/message/fusion/mptsas.c
+@@ -3066,7 +3066,7 @@ mptsas_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 	/* set 16 byte cdb's */
+ 	sh->max_cmd_len = 16;
+ 
+-	sh->max_id = ioc->pfacts[0].PortSCSIID;
++	sh->max_id = -1;
+ 	sh->max_lun = max_lun;
+ 
+ 	sh->transportt = mptsas_transport_template;

@@ -4,9 +4,10 @@ Subject: [nfs] v4: client handling of MAY_EXEC in nfs_permission
 Message-id: 4A1C58F2.5070907@redhat.com
 O-Subject: [PATCH RHEL-5.4] BZ500302 CVE-2009-1630 kernel: nfs: fix NFS v4 client handling of MAY_EXEC in nfs_permission [rhel-5.4]
 Bugzilla: 500302
-CVE: CVE-2009-1630
 RH-Acked-by: Jeff Layton <jlayton@redhat.com>
 RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+RH-Acked-by: Chuck Ebbert <cebbert@redhat.com>
+CVE: CVE-2009-1630
 
 Hi.
 

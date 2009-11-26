@@ -1,0 +1,317 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Wed, 25 Mar 2009 15:57:14 -0500
+Subject: [fs] xfs: misc upstream fixes
+Message-id: 49CA9AAA.60404@redhat.com
+O-Subject: [PATCH 10/10] misc upstream fixes
+Bugzilla: 470845
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+Misc upstream fixes not in 2.6.28.x.  Includes:
+
+commit 49739140e57a65114d9e1976c4c158d2145595fb
+Author: Christoph Hellwig <hch@lst.de>
+    xfs: fix bad_features2 fixups for the root filesystem
+
+commit 43f3f057c56d030546145696627f13f95735be95
+Author: Felix Blyakher <felixb@sgi.com>
+    [XFS] Warn on transaction in flight on read-only remount
+
+commit 2e6560929d8ab4b650fecc3a87013852b34f0922
+Author: Dave Chinner <david@fromorbit.com>
+    [XFS] fix error inversion problems with data flushing
+
+diff --git a/fs/xfs/linux-2.6/xfs_fs_subr.c b/fs/xfs/linux-2.6/xfs_fs_subr.c
+index 36caa6d..5aeb777 100644
+--- a/fs/xfs/linux-2.6/xfs_fs_subr.c
++++ b/fs/xfs/linux-2.6/xfs_fs_subr.c
+@@ -24,6 +24,10 @@ int  fs_noerr(void) { return 0; }
+ int  fs_nosys(void) { return ENOSYS; }
+ void fs_noval(void) { return; }
+ 
++/*
++ * note: all filemap functions return negative error codes. These
++ * need to be inverted before returning to the xfs core functions.
++ */
+ void
+ xfs_tosspages(
+ 	xfs_inode_t	*ip,
+@@ -53,7 +57,7 @@ xfs_flushinval_pages(
+ 		if (!ret)
+ 			truncate_inode_pages(mapping, first);
+ 	}
+-	return ret;
++	return -ret;
+ }
+ 
+ int
+@@ -72,10 +76,23 @@ xfs_flush_pages(
+ 		xfs_iflags_clear(ip, XFS_ITRUNCATED);
+ 		ret = filemap_fdatawrite(mapping);
+ 		if (flags & XFS_B_ASYNC)
+-			return ret;
++			return -ret;
+ 		ret2 = filemap_fdatawait(mapping);
+ 		if (!ret)
+ 			ret = ret2;
+ 	}
+-	return ret;
++	return -ret;
++}
++
++int
++xfs_wait_on_pages(
++	xfs_inode_t	*ip,
++	xfs_off_t	first,
++	xfs_off_t	last)
++{
++	struct address_space *mapping = VFS_I(ip)->i_mapping;
++
++	if (mapping_tagged(mapping, PAGECACHE_TAG_WRITEBACK))
++		return -filemap_fdatawait(mapping);
++	return 0;
+ }
+diff --git a/fs/xfs/linux-2.6/xfs_lrw.c b/fs/xfs/linux-2.6/xfs_lrw.c
+index 617788f..2bcb148 100644
+--- a/fs/xfs/linux-2.6/xfs_lrw.c
++++ b/fs/xfs/linux-2.6/xfs_lrw.c
+@@ -243,7 +243,7 @@ xfs_read(
+ 
+ 	if (unlikely(ioflags & IO_ISDIRECT)) {
+ 		if (inode->i_mapping->nrpages)
+-			ret = xfs_flushinval_pages(ip, (*offset & PAGE_CACHE_MASK),
++			ret = -xfs_flushinval_pages(ip, (*offset & PAGE_CACHE_MASK),
+ 						    -1, FI_REMAPF_LOCKED);
+ 		mutex_unlock(&inode->i_mutex);
+ 		if (ret) {
+diff --git a/fs/xfs/linux-2.6/xfs_super.c b/fs/xfs/linux-2.6/xfs_super.c
+index a7b60f2..ca3a593 100644
+--- a/fs/xfs/linux-2.6/xfs_super.c
++++ b/fs/xfs/linux-2.6/xfs_super.c
+@@ -901,21 +901,26 @@ xfs_fs_write_inode(
+ 	struct inode		*inode,
+ 	int			sync)
+ {
++	struct xfs_inode	*ip = XFS_I(inode);
+ 	int			error = 0;
+ 	int			flags = 0;
+ 
+-	xfs_itrace_entry(XFS_I(inode));
++	xfs_itrace_entry(ip);
+ 	if (sync) {
+-		filemap_fdatawait(inode->i_mapping);
++		error = xfs_wait_on_pages(ip, 0, -1);
++		if (error)
++			goto out_error;
+ 		flags |= FLUSH_SYNC;
+ 	}
+-	error = xfs_inode_flush(XFS_I(inode), flags);
++	error = xfs_inode_flush(ip, flags);
++
++out_error:
+ 	/*
+ 	 * if we failed to write out the inode then mark
+ 	 * it dirty again so we'll try again later.
+ 	 */
+ 	if (error)
+-		mark_inode_dirty_sync(inode);
++		xfs_mark_inode_dirty_sync(ip);
+ 
+ 	return -error;
+ }
+@@ -1280,6 +1285,7 @@ xfs_fs_remount(
+ 	struct xfs_mount	*mp = XFS_M(sb);
+ 	substring_t		args[MAX_OPT_ARGS];
+ 	char			*p;
++	int			error;
+ 
+ 	while ((p = strsep(&options, ",")) != NULL) {
+ 		int token;
+@@ -1330,11 +1336,25 @@ xfs_fs_remount(
+ 		}
+ 	}
+ 
+-	/* rw/ro -> rw */
++	/* ro -> rw */
+ 	if ((mp->m_flags & XFS_MOUNT_RDONLY) && !(*flags & MS_RDONLY)) {
+ 		mp->m_flags &= ~XFS_MOUNT_RDONLY;
+ 		if (mp->m_flags & XFS_MOUNT_BARRIER)
+ 			xfs_mountfs_check_barriers(mp);
++
++		/*
++		 * If this is the first remount to writeable state we
++		 * might have some superblock changes to update.
++		 */
++		if (mp->m_update_flags) {
++			error = xfs_mount_log_sb(mp, mp->m_update_flags);
++			if (error) {
++				cmn_err(CE_WARN,
++					"XFS: failed to write sb changes");
++				return error;
++			}
++			mp->m_update_flags = 0;
++		}
+ 	}
+ 
+ 	/* rw -> ro */
+diff --git a/fs/xfs/xfs_mount.c b/fs/xfs/xfs_mount.c
+index 0c1a768..cda71c0 100644
+--- a/fs/xfs/xfs_mount.c
++++ b/fs/xfs/xfs_mount.c
+@@ -45,7 +45,6 @@
+ #include "xfs_fsops.h"
+ #include "xfs_utils.h"
+ 
+-STATIC int	xfs_mount_log_sb(xfs_mount_t *, __int64_t);
+ STATIC int	xfs_uuid_mount(xfs_mount_t *);
+ STATIC void	xfs_unmountfs_wait(xfs_mount_t *);
+ 
+@@ -690,7 +689,7 @@ xfs_initialize_perag_data(xfs_mount_t *mp, xfs_agnumber_t agcount)
+  * Update alignment values based on mount options and sb values
+  */
+ STATIC int
+-xfs_update_alignment(xfs_mount_t *mp, __uint64_t *update_flags)
++xfs_update_alignment(xfs_mount_t *mp)
+ {
+ 	xfs_sb_t	*sbp = &(mp->m_sb);
+ 
+@@ -744,11 +743,11 @@ xfs_update_alignment(xfs_mount_t *mp, __uint64_t *update_flags)
+ 		if (xfs_sb_version_hasdalign(sbp)) {
+ 			if (sbp->sb_unit != mp->m_dalign) {
+ 				sbp->sb_unit = mp->m_dalign;
+-				*update_flags |= XFS_SB_UNIT;
++				mp->m_update_flags |= XFS_SB_UNIT;
+ 			}
+ 			if (sbp->sb_width != mp->m_swidth) {
+ 				sbp->sb_width = mp->m_swidth;
+-				*update_flags |= XFS_SB_WIDTH;
++				mp->m_update_flags |= XFS_SB_WIDTH;
+ 			}
+ 		}
+ 	} else if ((mp->m_flags & XFS_MOUNT_NOALIGN) != XFS_MOUNT_NOALIGN &&
+@@ -913,7 +912,6 @@ xfs_mountfs(
+ 	xfs_sb_t	*sbp = &(mp->m_sb);
+ 	xfs_inode_t	*rip;
+ 	__uint64_t	resblks;
+-	__int64_t	update_flags = 0LL;
+ 	uint		quotamount, quotaflags;
+ 	int		uuid_mounted = 0;
+ 	int		error = 0;
+@@ -941,7 +939,7 @@ xfs_mountfs(
+ 			"XFS: correcting sb_features alignment problem");
+ 		sbp->sb_features2 |= sbp->sb_bad_features2;
+ 		sbp->sb_bad_features2 = sbp->sb_features2;
+-		update_flags |= XFS_SB_FEATURES2 | XFS_SB_BAD_FEATURES2;
++		mp->m_update_flags |= XFS_SB_FEATURES2 | XFS_SB_BAD_FEATURES2;
+ 
+ 		/*
+ 		 * Re-check for ATTR2 in case it was found in bad_features2
+@@ -955,11 +953,11 @@ xfs_mountfs(
+ 	if (xfs_sb_version_hasattr2(&mp->m_sb) &&
+ 	   (mp->m_flags & XFS_MOUNT_NOATTR2)) {
+ 		xfs_sb_version_removeattr2(&mp->m_sb);
+-		update_flags |= XFS_SB_FEATURES2;
++		mp->m_update_flags |= XFS_SB_FEATURES2;
+ 
+ 		/* update sb_versionnum for the clearing of the morebits */
+ 		if (!sbp->sb_features2)
+-			update_flags |= XFS_SB_VERSIONNUM;
++			mp->m_update_flags |= XFS_SB_VERSIONNUM;
+ 	}
+ 
+ 	/*
+@@ -968,7 +966,7 @@ xfs_mountfs(
+ 	 * allocator alignment is within an ag, therefore ag has
+ 	 * to be aligned at stripe boundary.
+ 	 */
+-	error = xfs_update_alignment(mp, &update_flags);
++	error = xfs_update_alignment(mp);
+ 	if (error)
+ 		goto error1;
+ 
+@@ -1145,10 +1143,12 @@ xfs_mountfs(
+ 	}
+ 
+ 	/*
+-	 * If fs is not mounted readonly, then update the superblock changes.
++	 * If this is a read-only mount defer the superblock updates until
++	 * the next remount into writeable mode.  Otherwise we would never
++	 * perform the update e.g. for the root filesystem.
+ 	 */
+-	if (update_flags && !(mp->m_flags & XFS_MOUNT_RDONLY)) {
+-		error = xfs_mount_log_sb(mp, update_flags);
++	if (mp->m_update_flags && !(mp->m_flags & XFS_MOUNT_RDONLY)) {
++		error = xfs_mount_log_sb(mp, mp->m_update_flags);
+ 		if (error) {
+ 			cmn_err(CE_WARN, "XFS: failed to write sb changes");
+ 			goto error4;
+@@ -1849,7 +1849,7 @@ xfs_uuid_mount(
+  * be altered by the mount options, as well as any potential sb_features2
+  * fixup. Only the first superblock is updated.
+  */
+-STATIC int
++int
+ xfs_mount_log_sb(
+ 	xfs_mount_t	*mp,
+ 	__int64_t	fields)
+diff --git a/fs/xfs/xfs_mount.h b/fs/xfs/xfs_mount.h
+index f3c1024..a7e0864 100644
+--- a/fs/xfs/xfs_mount.h
++++ b/fs/xfs/xfs_mount.h
+@@ -341,6 +341,8 @@ typedef struct xfs_mount {
+ 	spinlock_t		m_sync_lock;	/* work item list lock */
+ 	int			m_sync_seq;	/* sync thread generation no. */
+ 	wait_queue_head_t	m_wait_single_sync_task;
++	__int64_t		m_update_flags;	/* sb flags we need to update
++						   on the next remount,rw */
+ } xfs_mount_t;
+ 
+ /*
+@@ -521,6 +523,7 @@ extern int	xfs_mod_incore_sb_unlocked(xfs_mount_t *, xfs_sb_field_t,
+ 			int64_t, int);
+ extern int	xfs_mod_incore_sb_batch(xfs_mount_t *, xfs_mod_sb_t *,
+ 			uint, int);
++extern int	xfs_mount_log_sb(xfs_mount_t *, __int64_t);
+ extern struct xfs_buf *xfs_getsb(xfs_mount_t *, int);
+ extern int	xfs_readsb(xfs_mount_t *, int);
+ extern void	xfs_freesb(xfs_mount_t *);
+diff --git a/fs/xfs/xfs_vfsops.c b/fs/xfs/xfs_vfsops.c
+index 439dd39..4da2583 100644
+--- a/fs/xfs/xfs_vfsops.c
++++ b/fs/xfs/xfs_vfsops.c
+@@ -102,7 +102,11 @@ xfs_attr_quiesce(
+ 	/* flush inodes and push all remaining buffers out to disk */
+ 	xfs_quiesce_fs(mp);
+ 
+-	ASSERT_ALWAYS(atomic_read(&mp->m_active_trans) == 0);
++	/*
++	 * Just warn here till VFS can correctly support
++	 * read-only remount without racing.
++	 */
++	WARN_ON(atomic_read(&mp->m_active_trans) != 0);
+ 
+ 	/* Push the superblock and write an unmount record */
+ 	error = xfs_log_sbcount(mp, 1);
+diff --git a/fs/xfs/xfs_vnodeops.c b/fs/xfs/xfs_vnodeops.c
+index 3bc89c8..2ba3789 100644
+--- a/fs/xfs/xfs_vnodeops.c
++++ b/fs/xfs/xfs_vnodeops.c
+@@ -713,7 +713,7 @@ xfs_fsync(
+ 		return XFS_ERROR(EIO);
+ 
+ 	/* capture size updates in I/O completion before writing the inode. */
+-	error = filemap_fdatawait(VFS_I(ip)->i_mapping);
++	error = xfs_wait_on_pages(ip, 0, -1);
+ 	if (error)
+ 		return XFS_ERROR(error);
+ 
+diff --git a/fs/xfs/xfs_vnodeops.h b/fs/xfs/xfs_vnodeops.h
+index e932a96..f9cd376 100644
+--- a/fs/xfs/xfs_vnodeops.h
++++ b/fs/xfs/xfs_vnodeops.h
+@@ -78,5 +78,6 @@ int xfs_flushinval_pages(struct xfs_inode *ip, xfs_off_t first,
+ 		xfs_off_t last, int fiopt);
+ int xfs_flush_pages(struct xfs_inode *ip, xfs_off_t first,
+ 		xfs_off_t last, uint64_t flags, int fiopt);
++int xfs_wait_on_pages(struct xfs_inode *ip, xfs_off_t first, xfs_off_t last);
+ 
+ #endif /* _XFS_VNODEOPS_H */

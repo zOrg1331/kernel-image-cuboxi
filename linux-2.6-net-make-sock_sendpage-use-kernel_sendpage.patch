@@ -1,0 +1,50 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Fri, 14 Aug 2009 06:35:38 -0400
+Subject: [net] make sock_sendpage use kernel_sendpage
+Message-Id: 20090814103546.24798.58703.sendpatchset@danny
+O-Subject: [PATCH RHEL5.5] CVE-2009-2692 net/socket: make sock_sendpage() use kernel_sendpage()
+Bugzilla: 516955
+Acked-by: Dean Nelson <dnelson@redhat.com>
+Acked-by: Eugene Teo <eugene@redhat.com>
+Acked-by: Stefan Assmann <sassmann@redhat.com>
+Acked-by: Jiri Pirko <jpirko@redhat.com>
+Acked-by: David S. Miller <davem@redhat.com>
+
+
+RHBZ#:
+https://bugzilla.redhat.com/show_bug.cgi?id=516955
+
+Description:
+The SOCKOPS_WRAP macro from include/linux/net.h doesn't initialise the sendpage
+operation in the proto_ops structure correctly. Leading to a kernel NULL pointer
+dereference, and thus a local privilege escalation.
+
+In latest rhel5(2.6.18-162), zero page mmap has been fixed to avoid such a privilege
+escalation(BZ508842). We can still panic the kernel with the reproduce program.
+
+Upstream status:
+http://git.kernel.org/linus/e694958388c50148389b0e9b9e9e8945cf0f1b98
+
+Brew#:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1929089
+
+KABI:
+no harm
+
+Test status:
+Use reproduce program in http://www.securityfocus.com/bid/36038/info, I confirm
+kernel won't panic with the patch.
+---
+diff --git a/net/socket.c b/net/socket.c
+index c1b06da..f82cd96 100644
+--- a/net/socket.c
++++ b/net/socket.c
+@@ -706,7 +706,7 @@ static ssize_t sock_sendpage(struct file *file, struct page *page,
+ 	if (more)
+ 		flags |= MSG_MORE;
+ 
+-	err = sock->ops->sendpage(sock, page, offset, size, flags);
++	err = kernel_sendpage(sock, page, offset, size, flags);
+ 	trace_socket_sendpage(sock, page, offset, size, flags, err);
+ 	return err;
+ }

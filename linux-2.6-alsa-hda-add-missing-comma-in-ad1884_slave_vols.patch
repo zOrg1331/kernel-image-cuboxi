@@ -1,0 +1,43 @@
+From: Jeff Burke <jburke@redhat.com>
+Date: Wed, 20 May 2009 15:43:11 -0400
+Subject: [alsa] hda: add missing comma in ad1884_slave_vols
+Message-id: 4A145D4F.8080108@redhat.com
+O-Subject: [PATCH RHEL5.4 BZ500626] ALSA: hda - add missing comma in ad1884_slave_vols
+Bugzilla: 500626
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+Description:
+This patch fixes [Bug 500626] [RHEL5.4] snd_hda_find
+_mixer_ctl+0x36/0x53, snd_hda_intel driver probe causes panic
+
+Upstream:
+commit	bca68467b59a24396554d8dd5979ee363c174854
+
+Patch created by:
+Signed-off-by: Akinobu Mita <akinobu.mita@gmail.com>
+Cc: <stable@kernel.org>
+Signed-off-by: Takashi Iwai <tiwai@suse.de>
+sound/pci/hda/patch_analog.c
+
+Description:
+The missing comma the strings are concatenated and the result is too
+long to fit in the buffer.
+
+This was built and tested locally. The original report Linda Wang
+verified the fix.
+
+--Jeff
+
+diff --git a/sound/pci/hda/patch_analog.c b/sound/pci/hda/patch_analog.c
+index 7bd6a78..a964ddf 100644
+--- a/sound/pci/hda/patch_analog.c
++++ b/sound/pci/hda/patch_analog.c
+@@ -3257,7 +3257,7 @@ static const char *ad1884_slave_vols[] = {
+ 	"Mic Playback Volume",
+ 	"CD Playback Volume",
+ 	"Internal Mic Playback Volume",
+-	"Docking Mic Playback Volume"
++	"Docking Mic Playback Volume",
+ 	/* "Beep Playback Volume", */
+ 	"IEC958 Playback Volume",
+ 	NULL

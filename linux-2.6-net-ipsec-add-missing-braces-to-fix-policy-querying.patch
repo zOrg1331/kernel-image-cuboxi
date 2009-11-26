@@ -1,0 +1,61 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Thu, 2 Jul 2009 15:49:58 +0800
+Subject: [net] ipsec: add missing braces to fix policy querying
+Message-id: 20090702074958.GA12547@gondor.apana.org.au
+O-Subject: [RHEL5.4 PATCH] ipsec: Add missing braces to fix policy querying
+Bugzilla: 462731
+RH-Acked-by: Danny Feng <dfeng@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Eric Paris <eparis@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+Hi:
+
+RHEL5 Bugzilla #462731
+
+ipsec: Add missing braces to fix policy querying
+
+Due to an error in one of the RHEL5 backports, the IPsec policying
+querying functions will delete the policies that are queried.  This
+patch adds the missing braces as per upstream to fix this problem.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+diff --git a/net/xfrm/xfrm_policy.c b/net/xfrm/xfrm_policy.c
+index c03eb1b..a294167 100644
+--- a/net/xfrm/xfrm_policy.c
++++ b/net/xfrm/xfrm_policy.c
+@@ -508,13 +508,14 @@ struct xfrm_policy *xfrm_policy_bysel_ctx(int dir, struct xfrm_selector *sel,
+ 		if ((memcmp(sel, &pol->selector, sizeof(*sel)) == 0) &&
+ 		    (xfrm_sec_ctx_match(ctx, pol->security))) {
+ 			xfrm_pol_hold(pol);
+-			if (delete)
++			if (delete) {
+ 				*err = security_xfrm_policy_delete(pol);
+ 				if (*err) {
+ 					write_unlock_bh(&xfrm_policy_lock);
+ 					return pol;
+ 				}
+ 				*p = pol->next;
++			}
+ 			break;
+ 		}
+ 	}
+@@ -537,13 +538,14 @@ struct xfrm_policy *xfrm_policy_byid(int dir, u32 id, int delete, int *err)
+ 	for (p = &xfrm_policy_list[dir]; (pol=*p)!=NULL; p = &pol->next) {
+ 		if (pol->index == id) {
+ 			xfrm_pol_hold(pol);
+-			if (delete)
++			if (delete) {
+ 				*err = security_xfrm_policy_delete(pol);
+ 				if (*err) {
+ 					write_unlock_bh(&xfrm_policy_lock);
+ 					return pol;
+ 				}
+ 				*p = pol->next;
++			}
+ 			break;
+ 		}
+ 	}

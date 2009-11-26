@@ -1,0 +1,48 @@
+From: Justin M. Forbes <jforbes@redhat.com>
+Date: Thu, 12 Feb 2009 11:55:02 -0600
+Subject: [xen] disable suspend in kernel
+Message-id: 1234461303.18342.35.camel@localhost.localdomain
+O-Subject: [RHEL5 PATCH] Disable suspend in xen kernel
+Bugzilla: 430928
+RH-Acked-by: Jon Masters <jcm@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+
+BZ#430928
+https://bugzilla.redhat.com/show_bug.cgi?id=430928
+
+Description:
+While technically the xen kernel can suspend, it cannot successfully
+resume.  This patch removes the entries from /sys/power/state which also
+effectively removes the suspend menu options from gnome.
+
+Upstream Status:
+Xen upstream has supported suspend since Xen 3.2, making this patch
+unsuitable for upstream inclusion.
+
+Testing:
+Tested against a RHEL 5.3 dom0.  Entries are no longer present and the
+suspend menu options effectively go away with the patch applied.
+
+Signed-off-by: Justin M. Forbes <jforbes@redhat.com>
+
+diff --git a/kernel/power/main.c b/kernel/power/main.c
+index 4d40332..540c7ea 100644
+--- a/kernel/power/main.c
++++ b/kernel/power/main.c
+@@ -144,11 +144,15 @@ static void suspend_finish(suspend_state_t state)
+ 
+ 
+ static const char * const pm_states[PM_SUSPEND_MAX] = {
++/* Xen cannot resume properly, so it should not report
++ * that it can suspend at all */
++#ifndef CONFIG_XEN
+ 	[PM_SUSPEND_STANDBY]	= "standby",
+ 	[PM_SUSPEND_MEM]	= "mem",
+ #ifdef CONFIG_SOFTWARE_SUSPEND
+ 	[PM_SUSPEND_DISK]	= "disk",
+ #endif
++#endif  /* CONFIG_XEN */
+ };
+ 
+ static inline int valid_state(suspend_state_t state)

@@ -1,0 +1,705 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Fri, 20 Mar 2009 10:23:42 +0100
+Subject: [x86] xen: improve KVM timekeeping
+Message-id: 49C3609E.6090905@redhat.com
+O-Subject: [RHEL5.4 PATCH 11/14]: Improve KVM timekeeping
+Bugzilla: 463573
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+
+Implement preset loops_per_jiffies support for the KVM hypervisor.  This allows
+an accurate lpj to be fetched from the KVM host, instead of calculating it
+(which is error-prone in a virtual machine).
+
+Fixes BZ 463573
+
+diff --git a/arch/i386/kernel/cpu/hypervisor.c b/arch/i386/kernel/cpu/hypervisor.c
+index 9f29f78..7800c71 100644
+--- a/arch/i386/kernel/cpu/hypervisor.c
++++ b/arch/i386/kernel/cpu/hypervisor.c
+@@ -22,15 +22,20 @@
+  */
+ 
+ #include <linux/init.h>
++#include <linux/types.h>
++#include <linux/kvm_para.h>
+ #include <asm/processor.h>
+ #include <asm/vmware.h>
+ #include <asm/generic-hypervisor.h>
++#include <asm/kvm_hypervisor.h>
+ 
+ static inline void __cpuinit
+ detect_hypervisor_vendor(struct cpuinfo_x86 *c)
+ {
+ 	if (vmware_platform()) {
+ 		c->x86_hyper_vendor = X86_HYPER_VENDOR_VMWARE;
++	} else if (kvm_para_available()) {
++		c->x86_hyper_vendor = X86_HYPER_VENDOR_KVM;
+ 	} else {
+ 		c->x86_hyper_vendor = X86_HYPER_VENDOR_NONE;
+ 	}
+@@ -40,6 +45,8 @@ unsigned long get_hypervisor_tsc_freq(void)
+ {
+ 	if (boot_cpu_data.x86_hyper_vendor == X86_HYPER_VENDOR_VMWARE)
+ 		return vmware_get_tsc_khz();
++	if (boot_cpu_data.x86_hyper_vendor == X86_HYPER_VENDOR_KVM)
++		return kvm_get_tsc_khz();
+ 	return 0;
+ }
+ 
+diff --git a/include/asm-i386/kvm_hypervisor.h b/include/asm-i386/kvm_hypervisor.h
+new file mode 100644
+index 0000000..5399e3a
+--- /dev/null
++++ b/include/asm-i386/kvm_hypervisor.h
+@@ -0,0 +1,74 @@
++
++/*  Stripped down version of kvmclock.
++    Copyright (C) 2008 Glauber de Oliveira Costa, Red Hat Inc.
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
++*/
++
++#include <asm/kvm_para.h>
++#include <asm/pvclock-abi.h>
++#include <linux/bootmem.h>
++#include <asm/msr.h>
++#include <asm/apic.h>
++
++static inline unsigned long pvclock_tsc_khz(struct pvclock_vcpu_time_info *src)
++{
++        u64 pv_tsc_khz = 1000000ULL << 32;
++
++        do_div(pv_tsc_khz, src->tsc_to_system_mul);
++        if (src->tsc_shift < 0)
++                pv_tsc_khz <<= -src->tsc_shift;
++        else
++                pv_tsc_khz >>= src->tsc_shift;
++        return pv_tsc_khz;
++}
++
++static inline unsigned long kvm_get_tsc_khz(void)
++{
++	int cpu = smp_processor_id();
++	int low, high;
++	unsigned long kvm_tsc_khz;
++	struct pvclock_vcpu_time_info *hv_clock;
++
++	if (!kvm_para_has_feature(KVM_FEATURE_CLOCKSOURCE))
++		return 0;
++
++	hv_clock = alloc_bootmem_pages(PAGE_SIZE);
++	if (!hv_clock)
++		return 0;
++
++	low = (int)__pa(hv_clock) | 1;
++	high = ((u64)__pa(hv_clock) >> 32);
++	printk(KERN_INFO "%s: cpu %d, msr %x:%x\n", __func__,
++	       cpu, high, low);
++
++	if (wrmsr_safe(MSR_KVM_SYSTEM_TIME, low, high)) {
++		printk(KERN_ERR "%s: MSR_KVM_SYSTEM_TIME init failure\n",
++				__func__);
++		free_bootmem(__pa(hv_clock), PAGE_SIZE);
++		return 0;
++	}
++
++	kvm_tsc_khz = pvclock_tsc_khz(hv_clock);
++
++	if (wrmsr_safe(MSR_KVM_SYSTEM_TIME, 0, 0))
++		printk(KERN_ERR "%s: MSR_KVM_SYSTEM_TIME shutdown failure\n",
++				__func__);
++	else
++		free_bootmem(__pa(hv_clock), PAGE_SIZE);
++
++	return kvm_tsc_khz;
++}
++
+diff --git a/include/asm-i386/kvm_para.h b/include/asm-i386/kvm_para.h
+new file mode 100644
+index 0000000..b8a3305
+--- /dev/null
++++ b/include/asm-i386/kvm_para.h
+@@ -0,0 +1,147 @@
++#ifndef _ASM_X86_KVM_PARA_H
++#define _ASM_X86_KVM_PARA_H
++
++/* This CPUID returns the signature 'KVMKVMKVM' in ebx, ecx, and edx.  It
++ * should be used to determine that a VM is running under KVM.
++ */
++#define KVM_CPUID_SIGNATURE	0x40000000
++
++/* This CPUID returns a feature bitmap in eax.  Before enabling a particular
++ * paravirtualization, the appropriate feature bit should be checked.
++ */
++#define KVM_CPUID_FEATURES	0x40000001
++#define KVM_FEATURE_CLOCKSOURCE		0
++#define KVM_FEATURE_NOP_IO_DELAY	1
++#define KVM_FEATURE_MMU_OP		2
++
++#define MSR_KVM_WALL_CLOCK  0x11
++#define MSR_KVM_SYSTEM_TIME 0x12
++
++#define KVM_MAX_MMU_OP_BATCH           32
++
++/* Operations for KVM_HC_MMU_OP */
++#define KVM_MMU_OP_WRITE_PTE            1
++#define KVM_MMU_OP_FLUSH_TLB	        2
++#define KVM_MMU_OP_RELEASE_PT	        3
++
++/* Payload for KVM_HC_MMU_OP */
++struct kvm_mmu_op_header {
++	__u32 op;
++	__u32 pad;
++};
++
++struct kvm_mmu_op_write_pte {
++	struct kvm_mmu_op_header header;
++	__u64 pte_phys;
++	__u64 pte_val;
++};
++
++struct kvm_mmu_op_flush_tlb {
++	struct kvm_mmu_op_header header;
++};
++
++struct kvm_mmu_op_release_pt {
++	struct kvm_mmu_op_header header;
++	__u64 pt_phys;
++};
++
++#ifdef __KERNEL__
++#include <asm/processor.h>
++
++extern void kvmclock_init(void);
++
++
++/* This instruction is vmcall.  On non-VT architectures, it will generate a
++ * trap that we will then rewrite to the appropriate instruction.
++ */
++#define KVM_HYPERCALL ".byte 0x0f,0x01,0xc1"
++
++/* For KVM hypercalls, a three-byte sequence of either the vmrun or the vmmrun
++ * instruction.  The hypervisor may replace it with something else but only the
++ * instructions are guaranteed to be supported.
++ *
++ * Up to four arguments may be passed in rbx, rcx, rdx, and rsi respectively.
++ * The hypercall number should be placed in rax and the return value will be
++ * placed in rax.  No other registers will be clobbered unless explicited
++ * noted by the particular hypercall.
++ */
++
++static inline long kvm_hypercall0(unsigned int nr)
++{
++	long ret;
++	asm volatile(KVM_HYPERCALL
++		     : "=a"(ret)
++		     : "a"(nr)
++		     : "memory");
++	return ret;
++}
++
++static inline long kvm_hypercall1(unsigned int nr, unsigned long p1)
++{
++	long ret;
++	asm volatile(KVM_HYPERCALL
++		     : "=a"(ret)
++		     : "a"(nr), "b"(p1)
++		     : "memory");
++	return ret;
++}
++
++static inline long kvm_hypercall2(unsigned int nr, unsigned long p1,
++				  unsigned long p2)
++{
++	long ret;
++	asm volatile(KVM_HYPERCALL
++		     : "=a"(ret)
++		     : "a"(nr), "b"(p1), "c"(p2)
++		     : "memory");
++	return ret;
++}
++
++static inline long kvm_hypercall3(unsigned int nr, unsigned long p1,
++				  unsigned long p2, unsigned long p3)
++{
++	long ret;
++	asm volatile(KVM_HYPERCALL
++		     : "=a"(ret)
++		     : "a"(nr), "b"(p1), "c"(p2), "d"(p3)
++		     : "memory");
++	return ret;
++}
++
++static inline long kvm_hypercall4(unsigned int nr, unsigned long p1,
++				  unsigned long p2, unsigned long p3,
++				  unsigned long p4)
++{
++	long ret;
++	asm volatile(KVM_HYPERCALL
++		     : "=a"(ret)
++		     : "a"(nr), "b"(p1), "c"(p2), "d"(p3), "S"(p4)
++		     : "memory");
++	return ret;
++}
++
++static inline int kvm_para_available(void)
++{
++	unsigned int eax, ebx, ecx, edx;
++	char signature[13];
++
++	cpuid(KVM_CPUID_SIGNATURE, &eax, &ebx, &ecx, &edx);
++	memcpy(signature + 0, &ebx, 4);
++	memcpy(signature + 4, &ecx, 4);
++	memcpy(signature + 8, &edx, 4);
++	signature[12] = 0;
++
++	if (strcmp(signature, "KVMKVMKVM") == 0)
++		return 1;
++
++	return 0;
++}
++
++static inline unsigned int kvm_arch_para_features(void)
++{
++	return cpuid_eax(KVM_CPUID_FEATURES);
++}
++
++#endif
++
++#endif /* _ASM_X86_KVM_PARA_H */
+diff --git a/include/asm-i386/mach-xen/asm/processor.h b/include/asm-i386/mach-xen/asm/processor.h
+index 25fe40f..8f1eae3 100644
+--- a/include/asm-i386/mach-xen/asm/processor.h
++++ b/include/asm-i386/mach-xen/asm/processor.h
+@@ -98,6 +98,7 @@ struct cpuinfo_x86 {
+ 
+ #define X86_HYPER_VENDOR_NONE  0
+ #define X86_HYPER_VENDOR_VMWARE 1
++#define X86_HYPER_VENDOR_KVM 2
+ 
+ /*
+  * capabilities of CPUs
+diff --git a/include/asm-i386/processor.h b/include/asm-i386/processor.h
+index 39e1e7c..7d34b26 100644
+--- a/include/asm-i386/processor.h
++++ b/include/asm-i386/processor.h
+@@ -97,6 +97,7 @@ struct cpuinfo_x86 {
+ 
+ #define X86_HYPER_VENDOR_NONE  0
+ #define X86_HYPER_VENDOR_VMWARE 1
++#define X86_HYPER_VENDOR_KVM 2
+ 
+ /*
+  * capabilities of CPUs
+diff --git a/include/asm-i386/pvclock-abi.h b/include/asm-i386/pvclock-abi.h
+new file mode 100644
+index 0000000..6d93508
+--- /dev/null
++++ b/include/asm-i386/pvclock-abi.h
+@@ -0,0 +1,42 @@
++#ifndef _ASM_X86_PVCLOCK_ABI_H
++#define _ASM_X86_PVCLOCK_ABI_H
++#ifndef __ASSEMBLY__
++
++/*
++ * These structs MUST NOT be changed.
++ * They are the ABI between hypervisor and guest OS.
++ * Both Xen and KVM are using this.
++ *
++ * pvclock_vcpu_time_info holds the system time and the tsc timestamp
++ * of the last update. So the guest can use the tsc delta to get a
++ * more precise system time.  There is one per virtual cpu.
++ *
++ * pvclock_wall_clock references the point in time when the system
++ * time was zero (usually boot time), thus the guest calculates the
++ * current wall clock by adding the system time.
++ *
++ * Protocol for the "version" fields is: hypervisor raises it (making
++ * it uneven) before it starts updating the fields and raises it again
++ * (making it even) when it is done.  Thus the guest can make sure the
++ * time values it got are consistent by checking the version before
++ * and after reading them.
++ */
++
++struct pvclock_vcpu_time_info {
++	u32   version;
++	u32   pad0;
++	u64   tsc_timestamp;
++	u64   system_time;
++	u32   tsc_to_system_mul;
++	s8    tsc_shift;
++	u8    pad[3];
++} __attribute__((__packed__)); /* 32 bytes */
++
++struct pvclock_wall_clock {
++	u32   version;
++	u32   sec;
++	u32   nsec;
++} __attribute__((__packed__));
++
++#endif /* __ASSEMBLY__ */
++#endif /* _ASM_X86_PVCLOCK_ABI_H */
+diff --git a/include/asm-x86_64/kvm_hypervisor.h b/include/asm-x86_64/kvm_hypervisor.h
+new file mode 100644
+index 0000000..5399e3a
+--- /dev/null
++++ b/include/asm-x86_64/kvm_hypervisor.h
+@@ -0,0 +1,74 @@
++
++/*  Stripped down version of kvmclock.
++    Copyright (C) 2008 Glauber de Oliveira Costa, Red Hat Inc.
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
++*/
++
++#include <asm/kvm_para.h>
++#include <asm/pvclock-abi.h>
++#include <linux/bootmem.h>
++#include <asm/msr.h>
++#include <asm/apic.h>
++
++static inline unsigned long pvclock_tsc_khz(struct pvclock_vcpu_time_info *src)
++{
++        u64 pv_tsc_khz = 1000000ULL << 32;
++
++        do_div(pv_tsc_khz, src->tsc_to_system_mul);
++        if (src->tsc_shift < 0)
++                pv_tsc_khz <<= -src->tsc_shift;
++        else
++                pv_tsc_khz >>= src->tsc_shift;
++        return pv_tsc_khz;
++}
++
++static inline unsigned long kvm_get_tsc_khz(void)
++{
++	int cpu = smp_processor_id();
++	int low, high;
++	unsigned long kvm_tsc_khz;
++	struct pvclock_vcpu_time_info *hv_clock;
++
++	if (!kvm_para_has_feature(KVM_FEATURE_CLOCKSOURCE))
++		return 0;
++
++	hv_clock = alloc_bootmem_pages(PAGE_SIZE);
++	if (!hv_clock)
++		return 0;
++
++	low = (int)__pa(hv_clock) | 1;
++	high = ((u64)__pa(hv_clock) >> 32);
++	printk(KERN_INFO "%s: cpu %d, msr %x:%x\n", __func__,
++	       cpu, high, low);
++
++	if (wrmsr_safe(MSR_KVM_SYSTEM_TIME, low, high)) {
++		printk(KERN_ERR "%s: MSR_KVM_SYSTEM_TIME init failure\n",
++				__func__);
++		free_bootmem(__pa(hv_clock), PAGE_SIZE);
++		return 0;
++	}
++
++	kvm_tsc_khz = pvclock_tsc_khz(hv_clock);
++
++	if (wrmsr_safe(MSR_KVM_SYSTEM_TIME, 0, 0))
++		printk(KERN_ERR "%s: MSR_KVM_SYSTEM_TIME shutdown failure\n",
++				__func__);
++	else
++		free_bootmem(__pa(hv_clock), PAGE_SIZE);
++
++	return kvm_tsc_khz;
++}
++
+diff --git a/include/asm-x86_64/kvm_para.h b/include/asm-x86_64/kvm_para.h
+new file mode 100644
+index 0000000..b8a3305
+--- /dev/null
++++ b/include/asm-x86_64/kvm_para.h
+@@ -0,0 +1,147 @@
++#ifndef _ASM_X86_KVM_PARA_H
++#define _ASM_X86_KVM_PARA_H
++
++/* This CPUID returns the signature 'KVMKVMKVM' in ebx, ecx, and edx.  It
++ * should be used to determine that a VM is running under KVM.
++ */
++#define KVM_CPUID_SIGNATURE	0x40000000
++
++/* This CPUID returns a feature bitmap in eax.  Before enabling a particular
++ * paravirtualization, the appropriate feature bit should be checked.
++ */
++#define KVM_CPUID_FEATURES	0x40000001
++#define KVM_FEATURE_CLOCKSOURCE		0
++#define KVM_FEATURE_NOP_IO_DELAY	1
++#define KVM_FEATURE_MMU_OP		2
++
++#define MSR_KVM_WALL_CLOCK  0x11
++#define MSR_KVM_SYSTEM_TIME 0x12
++
++#define KVM_MAX_MMU_OP_BATCH           32
++
++/* Operations for KVM_HC_MMU_OP */
++#define KVM_MMU_OP_WRITE_PTE            1
++#define KVM_MMU_OP_FLUSH_TLB	        2
++#define KVM_MMU_OP_RELEASE_PT	        3
++
++/* Payload for KVM_HC_MMU_OP */
++struct kvm_mmu_op_header {
++	__u32 op;
++	__u32 pad;
++};
++
++struct kvm_mmu_op_write_pte {
++	struct kvm_mmu_op_header header;
++	__u64 pte_phys;
++	__u64 pte_val;
++};
++
++struct kvm_mmu_op_flush_tlb {
++	struct kvm_mmu_op_header header;
++};
++
++struct kvm_mmu_op_release_pt {
++	struct kvm_mmu_op_header header;
++	__u64 pt_phys;
++};
++
++#ifdef __KERNEL__
++#include <asm/processor.h>
++
++extern void kvmclock_init(void);
++
++
++/* This instruction is vmcall.  On non-VT architectures, it will generate a
++ * trap that we will then rewrite to the appropriate instruction.
++ */
++#define KVM_HYPERCALL ".byte 0x0f,0x01,0xc1"
++
++/* For KVM hypercalls, a three-byte sequence of either the vmrun or the vmmrun
++ * instruction.  The hypervisor may replace it with something else but only the
++ * instructions are guaranteed to be supported.
++ *
++ * Up to four arguments may be passed in rbx, rcx, rdx, and rsi respectively.
++ * The hypercall number should be placed in rax and the return value will be
++ * placed in rax.  No other registers will be clobbered unless explicited
++ * noted by the particular hypercall.
++ */
++
++static inline long kvm_hypercall0(unsigned int nr)
++{
++	long ret;
++	asm volatile(KVM_HYPERCALL
++		     : "=a"(ret)
++		     : "a"(nr)
++		     : "memory");
++	return ret;
++}
++
++static inline long kvm_hypercall1(unsigned int nr, unsigned long p1)
++{
++	long ret;
++	asm volatile(KVM_HYPERCALL
++		     : "=a"(ret)
++		     : "a"(nr), "b"(p1)
++		     : "memory");
++	return ret;
++}
++
++static inline long kvm_hypercall2(unsigned int nr, unsigned long p1,
++				  unsigned long p2)
++{
++	long ret;
++	asm volatile(KVM_HYPERCALL
++		     : "=a"(ret)
++		     : "a"(nr), "b"(p1), "c"(p2)
++		     : "memory");
++	return ret;
++}
++
++static inline long kvm_hypercall3(unsigned int nr, unsigned long p1,
++				  unsigned long p2, unsigned long p3)
++{
++	long ret;
++	asm volatile(KVM_HYPERCALL
++		     : "=a"(ret)
++		     : "a"(nr), "b"(p1), "c"(p2), "d"(p3)
++		     : "memory");
++	return ret;
++}
++
++static inline long kvm_hypercall4(unsigned int nr, unsigned long p1,
++				  unsigned long p2, unsigned long p3,
++				  unsigned long p4)
++{
++	long ret;
++	asm volatile(KVM_HYPERCALL
++		     : "=a"(ret)
++		     : "a"(nr), "b"(p1), "c"(p2), "d"(p3), "S"(p4)
++		     : "memory");
++	return ret;
++}
++
++static inline int kvm_para_available(void)
++{
++	unsigned int eax, ebx, ecx, edx;
++	char signature[13];
++
++	cpuid(KVM_CPUID_SIGNATURE, &eax, &ebx, &ecx, &edx);
++	memcpy(signature + 0, &ebx, 4);
++	memcpy(signature + 4, &ecx, 4);
++	memcpy(signature + 8, &edx, 4);
++	signature[12] = 0;
++
++	if (strcmp(signature, "KVMKVMKVM") == 0)
++		return 1;
++
++	return 0;
++}
++
++static inline unsigned int kvm_arch_para_features(void)
++{
++	return cpuid_eax(KVM_CPUID_FEATURES);
++}
++
++#endif
++
++#endif /* _ASM_X86_KVM_PARA_H */
+diff --git a/include/asm-x86_64/mach-xen/asm/processor.h b/include/asm-x86_64/mach-xen/asm/processor.h
+index f82dfc6..2e4ef94 100644
+--- a/include/asm-x86_64/mach-xen/asm/processor.h
++++ b/include/asm-x86_64/mach-xen/asm/processor.h
+@@ -92,6 +92,7 @@ struct cpuinfo_x86 {
+ 
+ #define X86_HYPER_VENDOR_NONE  0
+ #define X86_HYPER_VENDOR_VMWARE 1
++#define X86_HYPER_VENDOR_KVM 2
+ 
+ #ifdef CONFIG_SMP
+ extern struct cpuinfo_x86 cpu_data[];
+diff --git a/include/asm-x86_64/processor.h b/include/asm-x86_64/processor.h
+index 8923857..fb2c8c7 100644
+--- a/include/asm-x86_64/processor.h
++++ b/include/asm-x86_64/processor.h
+@@ -92,6 +92,7 @@ struct cpuinfo_x86 {
+ 
+ #define X86_HYPER_VENDOR_NONE  0
+ #define X86_HYPER_VENDOR_VMWARE 1
++#define X86_HYPER_VENDOR_KVM 2
+ 
+ #ifdef CONFIG_SMP
+ extern struct cpuinfo_x86 cpu_data[];
+diff --git a/include/asm-x86_64/pvclock-abi.h b/include/asm-x86_64/pvclock-abi.h
+new file mode 100644
+index 0000000..6d93508
+--- /dev/null
++++ b/include/asm-x86_64/pvclock-abi.h
+@@ -0,0 +1,42 @@
++#ifndef _ASM_X86_PVCLOCK_ABI_H
++#define _ASM_X86_PVCLOCK_ABI_H
++#ifndef __ASSEMBLY__
++
++/*
++ * These structs MUST NOT be changed.
++ * They are the ABI between hypervisor and guest OS.
++ * Both Xen and KVM are using this.
++ *
++ * pvclock_vcpu_time_info holds the system time and the tsc timestamp
++ * of the last update. So the guest can use the tsc delta to get a
++ * more precise system time.  There is one per virtual cpu.
++ *
++ * pvclock_wall_clock references the point in time when the system
++ * time was zero (usually boot time), thus the guest calculates the
++ * current wall clock by adding the system time.
++ *
++ * Protocol for the "version" fields is: hypervisor raises it (making
++ * it uneven) before it starts updating the fields and raises it again
++ * (making it even) when it is done.  Thus the guest can make sure the
++ * time values it got are consistent by checking the version before
++ * and after reading them.
++ */
++
++struct pvclock_vcpu_time_info {
++	u32   version;
++	u32   pad0;
++	u64   tsc_timestamp;
++	u64   system_time;
++	u32   tsc_to_system_mul;
++	s8    tsc_shift;
++	u8    pad[3];
++} __attribute__((__packed__)); /* 32 bytes */
++
++struct pvclock_wall_clock {
++	u32   version;
++	u32   sec;
++	u32   nsec;
++} __attribute__((__packed__));
++
++#endif /* __ASSEMBLY__ */
++#endif /* _ASM_X86_PVCLOCK_ABI_H */
+diff --git a/include/linux/kvm_para.h b/include/linux/kvm_para.h
+new file mode 100644
+index 0000000..3ddce03
+--- /dev/null
++++ b/include/linux/kvm_para.h
+@@ -0,0 +1,40 @@
++#ifndef __LINUX_KVM_PARA_H
++#define __LINUX_KVM_PARA_H
++
++/*
++ * This header file provides a method for making a hypercall to the host
++ * Architectures should define:
++ * - kvm_hypercall0, kvm_hypercall1...
++ * - kvm_arch_para_features
++ * - kvm_para_available
++ */
++
++/* Return values for hypercalls */
++#define KVM_ENOSYS		1000
++#define KVM_EFAULT		EFAULT
++#define KVM_E2BIG		E2BIG
++
++#define KVM_HC_VAPIC_POLL_IRQ		1
++#define KVM_HC_MMU_OP			2
++
++/*
++ * hypercalls use architecture specific
++ */
++#include <asm/kvm_para.h>
++
++#ifdef __KERNEL__
++#ifdef CONFIG_KVM_GUEST
++void __init kvm_guest_init(void);
++#else
++#define kvm_guest_init() do { } while (0)
++#endif
++
++static inline int kvm_para_has_feature(unsigned int feature)
++{
++	if (kvm_arch_para_features() & (1UL << feature))
++		return 1;
++	return 0;
++}
++#endif /* __KERNEL__ */
++#endif /* __LINUX_KVM_PARA_H */
++

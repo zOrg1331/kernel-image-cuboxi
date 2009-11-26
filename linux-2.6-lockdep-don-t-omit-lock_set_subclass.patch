@@ -1,0 +1,153 @@
+From: Aristeu Rozanski <aris@redhat.com>
+Date: Tue, 19 May 2009 08:57:53 -0400
+Subject: [lockdep] don't omit lock_set_subclass
+Message-id: 20090519125753.GW22116@redhat.com
+O-Subject: [RHEL5.4 PATCH] lockdep: don't omit lock_set_subclass() on double_unlock_balance()
+Bugzilla: 462248
+RH-Acked-by: Peter Zijlstra <pzijlstr@redhat.com>
+
+(Peter Zijlstra's comments:)
+> The commit log of 1b12bbc747560ea68bcc132c3d05699e52271da0 explains why
+> you cannot omit that lock_set_subclass() from double_unlock_balance().
+>
+> We need to ensure this_rq ends up with subclass 0, however
+> double_lock_balance() in the busiest < thiq_rq branch can unlock/lock it
+> so that it ends up with subclass 1.
+>
+> That means the:
+>
+>   double_lock_balance(this_rq, busiest)
+>   double_unlock_balance(this_rq, busiest)
+>
+> isn't a NOP on the observable state. If at that point we do another
+> double_lock_balance() which assumes subclass = 0 (the other branch)
+> stuff goes splat -- its rare, but I did see it happen back when.
+Since the old patch is already commited, this one is generated to be applied
+over.
+Test build: 1803284
+RHTS: http://rhts.redhat.com/cgi-bin/rhts/jobs.cgi?id=59443
+
+upstream: 64aa348edc617dea17bbd01ddee4e47886d5ec8c
+
+diff --git a/include/linux/lockdep.h b/include/linux/lockdep.h
+index 3f378da..b0c6368 100644
+--- a/include/linux/lockdep.h
++++ b/include/linux/lockdep.h
+@@ -284,6 +284,9 @@ extern void lock_acquire(struct lockdep_map *lock, unsigned int subclass,
+ extern void lock_release(struct lockdep_map *lock, int nested,
+ 			 unsigned long ip);
+ 
++extern void lock_set_subclass(struct lockdep_map *lock, unsigned int subclass,
++			      unsigned long ip);
++
+ # define INIT_LOCKDEP				.lockdep_recursion = 0,
+ 
+ #else /* !LOCKDEP */
+@@ -303,6 +306,7 @@ static inline int lockdep_internal(void)
+ 
+ # define lock_acquire(l, s, t, r, c, i)		do { } while (0)
+ # define lock_release(l, n, i)			do { } while (0)
++# define lock_set_subclass(l, s, i)		do { } while (0)
+ # define lockdep_init()				do { } while (0)
+ # define lockdep_info()				do { } while (0)
+ # define lockdep_init_map(lock, name, key, sub)	do { (void)(key); } while (0)
+diff --git a/kernel/lockdep.c b/kernel/lockdep.c
+index 0213dd0..b9b014c 100644
+--- a/kernel/lockdep.c
++++ b/kernel/lockdep.c
+@@ -2466,6 +2466,55 @@ static int check_unlock(struct task_struct *curr, struct lockdep_map *lock,
+ 	return 1;
+ }
+ 
++static int
++__lock_set_subclass(struct lockdep_map *lock,
++		    unsigned int subclass, unsigned long ip)
++{
++	struct task_struct *curr = current;
++	struct held_lock *hlock, *prev_hlock;
++	struct lock_class *class;
++	unsigned int depth;
++	int i;
++
++	depth = curr->lockdep_depth;
++	if (DEBUG_LOCKS_WARN_ON(!depth))
++		return 0;
++
++	prev_hlock = NULL;
++	for (i = depth-1; i >= 0; i--) {
++		hlock = curr->held_locks + i;
++		/*
++		 * We must not cross into another context:
++		 */
++		if (prev_hlock && prev_hlock->irq_context != hlock->irq_context)
++			break;
++		if (hlock->instance == lock)
++			goto found_it;
++		prev_hlock = hlock;
++	}
++	return print_unlock_inbalance_bug(curr, lock, ip);
++
++found_it:
++	class = register_lock_class(lock, subclass, 0);
++	hlock->class = class;
++
++	curr->lockdep_depth = i;
++	curr->curr_chain_key = hlock->prev_chain_key;
++
++	for (; i < depth; i++) {
++		hlock = curr->held_locks + i;
++		if (!__lock_acquire(hlock->instance,
++			hlock->class->subclass, hlock->trylock,
++				hlock->read, hlock->check, hlock->hardirqs_off,
++				hlock->acquire_ip))
++			return 0;
++	}
++
++	if (DEBUG_LOCKS_WARN_ON(curr->lockdep_depth != depth))
++		return 0;
++	return 1;
++}
++
+ /*
+  * Remove the lock to the list of currently held locks in a
+  * potentially non-nested (out of order) manner. This is a
+@@ -2629,6 +2678,26 @@ static void check_flags(unsigned long flags)
+ #endif
+ }
+ 
++void
++lock_set_subclass(struct lockdep_map *lock,
++		  unsigned int subclass, unsigned long ip)
++{
++	unsigned long flags;
++
++	if (unlikely(current->lockdep_recursion))
++		return;
++
++	raw_local_irq_save(flags);
++	current->lockdep_recursion = 1;
++	check_flags(flags);
++	if (__lock_set_subclass(lock, subclass, ip))
++		check_chain_key(current);
++	current->lockdep_recursion = 0;
++	raw_local_irq_restore(flags);
++}
++
++EXPORT_SYMBOL_GPL(lock_set_subclass);
++
+ /*
+  * We are not always called with irqs disabled - do that here,
+  * and also avoid lockdep recursion:
+diff --git a/kernel/sched.c b/kernel/sched.c
+index d0bca98..cc67031 100644
+--- a/kernel/sched.c
++++ b/kernel/sched.c
+@@ -2430,7 +2430,7 @@ static void inline double_unlock_balance(struct rq *this_rq, struct rq *busiest)
+ 	__releases(busiest->lock)
+ {
+ 	spin_unlock(&busiest->lock);
+-	/* lock_set_subclass(&this_rq->lock.dep_map, 0, _RET_IP_); */
++	lock_set_subclass(&this_rq->lock.dep_map, 0, _RET_IP_);
+ }
+ 
+ /*

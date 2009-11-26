@@ -1,0 +1,59 @@
+From: Andrea Arcangeli <aarcange@redhat.com>
+Date: Fri, 19 Jun 2009 10:36:33 +0200
+Subject: [mm] fix swap race condition in fork-gup-race patch
+Message-id: 20090619083633.GX12816@random.random
+O-Subject: [PATCH] fix swap race condition in fork-gup-race patch
+Bugzilla: 506684
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+This applies cleanly to both rhel5.3 and rhel5.4/gitmaster versions of
+the fork-o_direct-race patch.
+
+https://bugzilla.redhat.com/show_bug.cgi?id=471613#c164
+https://bugzilla.redhat.com/show_bug.cgi?id=506684#c5
+
+From: Andrea Arcangeli <aarcange@redhat.com>
+
+A set_pte_at() was run after temporarily dropping the src_ptl lock, but without
+checking if the pte was not presented anymore (the src_pte is visible to the VM
+that can unmap ptes as soon as we drop the PT lock, the VM doesn't serialize
+against the mmap_sem at all). So we were setting _PAGE_RW bit 0x2 on the swap
+entry, that leads to swap entry 00001d82 that was unused instead of correct
+number 00001d80. It was an incredibly small race condition and it triggers as
+hard as the -EAGAIN path (which I managed to exericse only once during testing
+with printk on that path).
+
+In the case the pte is not present simply we don't need to mark the pte
+writeable again, marking the pte writeable after fork_pre_cow was only an
+optimization to prevent an noop do_wp_page in the src_mm after fork returns.
+The src_pte itself is only marked wrprotect temporarily during the
+fork_pre_cow, to allow glibc to get an atomic copy of the page in the child.
+
+Signed-off-by: Andrea Arcangeli <aarcange@redhat.com>
+
+diff --git a/mm/memory.c b/mm/memory.c
+index 527b06a..47949f0 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -650,11 +650,16 @@ again:
+ 					&_dst_pte, &_src_pte,
+ 					&dst_ptl, &src_ptl,
+ 					dst_pmd, src_pmd);
++		/*
++		 * After the page copy set the parent pte writeable again
++		 * unless the src pte was unmapped by the VM while we released
++		 * the PT lock in fork_pre_cow. 
++		 */
++		if (likely(pte_present(*_src_pte)))
++			set_pte_at(src_mm, addr-PAGE_SIZE, _src_pte,
++				   pte_mkwrite(*_src_pte));
+ 		src_pte = _src_pte + 1;
+ 		dst_pte = _dst_pte + 1;
+-		/* after the page copy set the parent pte writeable again */
+-		set_pte_at(src_mm, addr-PAGE_SIZE, src_pte-1,
+-			   pte_mkwrite(*(src_pte-1)));
+ 		if (unlikely(forcecow == -EAGAIN)) {
+ 			dst_pte--;
+ 			src_pte--;

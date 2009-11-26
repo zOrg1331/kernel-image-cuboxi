@@ -1,0 +1,43 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Fri, 9 Jan 2009 12:07:41 +0100
+Subject: [xen] allow > 4GB EPT guests on i386
+Message-id: 49672FFD.1040307@redhat.com
+O-Subject: [RHEL5.4 PATCH]: Allow > 4GB EPT guests on i386
+Bugzilla: 478522
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+
+All,
+     When we initially put the HAP (i.e. NPT) patches into RHEL-5, we had a
+piece of code that refused to start guests with > 4GB when NPT was enabled.
+This is due to a hardware limitation in AMD's NPT implementation.  However,
+Intel's EPT implementation does not have this limitation.  The problem is that
+the check to start guests with > 4GB is in generic code.
+     The following simple patch fixes that situation by only refusing to start >
+4GB guests on i386 if the vendor == AMD.  This is a trivial re-diff of upstream
+xen-unstable c/s 18943.
+     Briefly tested by me on both i386 and x86_64.  This should resolve BZ
+478522.  Please review and ACK.
+
+Thanks,
+Chris Lalancette
+
+diff --git a/arch/x86/mm/p2m.c b/arch/x86/mm/p2m.c
+index ad9ea0a..6f9e1d1 100644
+--- a/arch/x86/mm/p2m.c
++++ b/arch/x86/mm/p2m.c
+@@ -806,11 +806,12 @@ guest_physmap_add_entry(struct domain *d, unsigned long gfn,
+ 
+ #if CONFIG_PAGING_LEVELS == 3
+     /*
+-     * 32bit PAE nested paging does not support over 4GB guest due to 
++     * 32bit AMD nested paging does not support over 4GB guest due to 
+      * hardware translation limit. This limitation is checked by comparing
+      * gfn with 0xfffffUL.
+      */
+-    if ( paging_mode_hap(d) && (gfn > 0xfffffUL) )
++    if ( paging_mode_hap(d) && (gfn > 0xfffffUL) &&
++         (boot_cpu_data.x86_vendor == X86_VENDOR_AMD) )
+     {
+         if ( !test_and_set_bool(d->arch.hvm_domain.amd_npt_4gb_warning) )
+             dprintk(XENLOG_WARNING, "Dom%d failed to populate memory beyond"

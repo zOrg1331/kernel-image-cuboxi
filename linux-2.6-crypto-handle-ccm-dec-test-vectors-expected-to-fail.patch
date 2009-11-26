@@ -1,0 +1,88 @@
+From: Jarod Wilson <jarod@redhat.com>
+Date: Thu, 23 Apr 2009 14:39:55 -0400
+Subject: [crypto] handle ccm dec test vectors expected to fail
+Message-id: 49F0B5FB.2080309@redhat.com
+O-Subject: [RHEL5.4 PATCH 2/3 v2] crypto: handle ccm dec test vectors expected to fail verification
+Bugzilla: 472386
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Bugzilla #472386: fips crypto: self-test needed for rfc4309(ccm(aes))
+https://bugzilla.redhat.com/show_bug.cgi?id=472386
+
+Part 2 of 3
+
+Add infrastructure to tcrypt/testmgr to support handling ccm decryption
+test vectors that are expected to fail verification.
+
+diff --git a/crypto/testmgr.c b/crypto/testmgr.c
+index bf3afa3..20ea597 100644
+--- a/crypto/testmgr.c
++++ b/crypto/testmgr.c
+@@ -328,6 +328,16 @@ static int test_aead(struct crypto_aead *tfm, int enc,
+ 
+ 			switch (ret) {
+ 			case 0:
++				if (template[i].novrfy) {
++					/* verification was supposed to fail */
++					printk(KERN_ERR "alg: aead: %s failed "
++					       "on test %d for %s: ret was 0, "
++					       "expected -EBADMSG\n",
++					       e, j, algo);
++					/* so really, we got a bad message */
++					ret = -EBADMSG;
++					goto out;
++				}
+ 				break;
+ 			case -EINPROGRESS:
+ 			case -EBUSY:
+@@ -337,6 +347,10 @@ static int test_aead(struct crypto_aead *tfm, int enc,
+ 					INIT_COMPLETION(result.completion);
+ 					break;
+ 				}
++			case -EBADMSG:
++				if (template[i].novrfy)
++					/* verification failure was expected */
++					continue;
+ 				/* fall through */
+ 			default:
+ 				printk(KERN_ERR "alg: aead: %s failed on test "
+@@ -449,6 +463,16 @@ static int test_aead(struct crypto_aead *tfm, int enc,
+ 
+ 			switch (ret) {
+ 			case 0:
++				if (template[i].novrfy) {
++					/* verification was supposed to fail */
++					printk(KERN_ERR "alg: aead: %s failed "
++					       "on chunk test %d for %s: ret "
++					       "was 0, expected -EBADMSG\n",
++					       e, j, algo);
++					/* so really, we got a bad message */
++					ret = -EBADMSG;
++					goto out;
++				}
+ 				break;
+ 			case -EINPROGRESS:
+ 			case -EBUSY:
+@@ -458,6 +482,10 @@ static int test_aead(struct crypto_aead *tfm, int enc,
+ 					INIT_COMPLETION(result.completion);
+ 					break;
+ 				}
++			case -EBADMSG:
++				if (template[i].novrfy)
++					/* verification failure was expected */
++					continue;
+ 				/* fall through */
+ 			default:
+ 				printk(KERN_ERR "alg: aead: %s failed on "
+diff --git a/crypto/testmgr.h b/crypto/testmgr.h
+index c072794..54d57b5 100644
+--- a/crypto/testmgr.h
++++ b/crypto/testmgr.h
+@@ -61,6 +61,7 @@ struct aead_testvec {
+ 	int np;
+ 	int anp;
+ 	unsigned char fail;
++	unsigned char novrfy;	/* ccm dec verification failure expected */
+ 	unsigned char wk; /* weak key flag */
+ 	unsigned char klen;
+ 	unsigned short ilen;

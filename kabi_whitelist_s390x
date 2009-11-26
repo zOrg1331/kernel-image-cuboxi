@@ -300,6 +300,10 @@
 	tty_vhangup
 	tty_wait_until_sent
 	tty_wakeup
+[rhel5_drivers_connector]
+	cn_netlink_send
+	cn_add_callback
+	cn_del_callback
 [rhel5_drivers_md_ga]
 	dm_create_error_table
 	dm_device_name
@@ -325,6 +329,9 @@
 	kcopyd_client_create
 	kcopyd_client_destroy
 	kcopyd_copy
+[rhel5_drivers_md_u4]
+	dm_dirty_log_type_register
+	dm_dirty_log_type_unregister
 [rhel5_drivers_net_ga]
 	loopback_dev
 [rhel5_drivers_s390_ga]
@@ -890,6 +897,10 @@
 	__set_page_dirty_buffers
 [rhel5_fs_u2]
 	simple_attr_open
+[rhel5_fs_u4]
+	anon_inode_getfd
+	kernel_read
+	nobh_truncate_page
 [rhel5_fs_jbd_ga]
 	journal_abort
 	journal_ack_err
@@ -1225,6 +1236,17 @@
 	__put_task_struct
 	round_jiffies
 	round_jiffies_relative
+[rhel5_kernel_u4]
+	hrtimer_cancel
+	hrtimer_init
+	hrtimer_start
+	ktime_get_ts
+	relay_buf_full
+	relay_close
+	relay_file_operations
+	relay_flush
+	relay_open
+	relay_switch_subbuf
 [rhel5_kernel_module_ga]
 	printk
 	struct_module
@@ -1745,6 +1767,8 @@
 	unregister_netdevice
 	unregister_netdevice_notifier
 	unregister_netevent_notifier
+[rhel5_net_core_u4]
+	consume_skb
 [rhel5_net_ethernet_ga]
 	alloc_etherdev
 	eth_type_trans

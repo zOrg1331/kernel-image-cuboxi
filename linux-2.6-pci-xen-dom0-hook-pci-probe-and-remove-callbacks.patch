@@ -1,0 +1,95 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Mon, 6 Apr 2009 15:51:44 -0600
+Subject: [pci] xen dom0: hook PCI probe and remove callbacks
+Message-id: 200904062151.n36Lpila013514@sobek.n0ano.com
+O-Subject: [RHEL5.4 PATCH 3/3] BZ484227: VTD: dom0: hook Linux's PCI probe and remove callbacks
+Bugzilla: 484227
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+
+Hijack the pci_bus_type probe and remove callbacks.  This option only
+requires modification to the Xen specific part of Linux.
+
+Upstream Status: Accepted (CS 593)
+
+Signed-off-by: Joshua LeVasseur <joshua.levasseur@netronome.com>
+Signed-off-by: Weidong Han <weidong.han@intel.com>
+Signed-off-by: Gerd Hoffmann <kraxel@redhat.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/drivers/xen/core/Makefile b/drivers/xen/core/Makefile
+index 82ec8e7..2992020 100644
+--- a/drivers/xen/core/Makefile
++++ b/drivers/xen/core/Makefile
+@@ -4,6 +4,7 @@
+ 
+ obj-y := evtchn.o gnttab.o features.o
+ 
++obj-$(CONFIG_PCI)		    += pci.o
+ obj-$(CONFIG_PROC_FS)		+= xen_proc.o
+ obj-$(CONFIG_SYSFS)		+= hypervisor_sysfs.o
+ obj-$(CONFIG_HOTPLUG_CPU)	+= cpu_hotplug.o
+diff --git a/drivers/xen/core/pci.c b/drivers/xen/core/pci.c
+new file mode 100644
+index 0000000..57bcf84
+--- /dev/null
++++ b/drivers/xen/core/pci.c
+@@ -0,0 +1,59 @@
++/*
++ * vim:shiftwidth=8:noexpandtab
++ */
++
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/pci.h>
++#include <xen/interface/physdev.h>
++
++static int (*pci_bus_probe)(struct device *dev);
++static int (*pci_bus_remove)(struct device *dev);
++
++static int pci_bus_probe_wrapper(struct device *dev)
++{
++	int r;
++	struct pci_dev *pci_dev = to_pci_dev(dev);
++	struct physdev_manage_pci manage_pci;
++	manage_pci.bus = pci_dev->bus->number;
++	manage_pci.devfn = pci_dev->devfn;
++
++	r = HYPERVISOR_physdev_op(PHYSDEVOP_manage_pci_add, &manage_pci);
++	if (r && r != -ENOSYS)
++		return r;
++
++	r = pci_bus_probe(dev);
++	return r;
++}
++
++static int pci_bus_remove_wrapper(struct device *dev)
++{
++	int r;
++	struct pci_dev *pci_dev = to_pci_dev(dev);
++	struct physdev_manage_pci manage_pci;
++	manage_pci.bus = pci_dev->bus->number;
++	manage_pci.devfn = pci_dev->devfn;
++
++	r = pci_bus_remove(dev);
++	/* dev and pci_dev are no longer valid!! */
++
++	WARN_ON(HYPERVISOR_physdev_op(PHYSDEVOP_manage_pci_remove,
++		&manage_pci));
++	return r;
++}
++
++static int __init hook_pci_bus(void)
++{
++	if (!is_running_on_xen() || !is_initial_xendomain())
++		return 0;
++
++	pci_bus_probe = pci_bus_type.probe;
++	pci_bus_type.probe = pci_bus_probe_wrapper;
++
++	pci_bus_remove = pci_bus_type.remove;
++	pci_bus_type.remove = pci_bus_remove_wrapper;
++
++	return 0;
++}
++
++core_initcall(hook_pci_bus);

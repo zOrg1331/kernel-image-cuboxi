@@ -1,0 +1,233 @@
+From: Rob Evers <revers@redhat.com>
+Date: Tue, 7 Apr 2009 15:24:37 -0400
+Subject: [scsi] lpfc: update to version 8.2.0.41
+Message-id: 20090407192205.14572.89394.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.4 PATCH V3 4/4] Update lpfc to version 8.2.0.41
+Bugzilla: 476738
+
+https://bugzilla.redhat.com/show_bug.cgi?id=476738
+
+Update lpfc from 8.2.0.40 to 8.2.0.41
+
+diff --git a/drivers/scsi/lpfc/lpfc_attr.c b/drivers/scsi/lpfc/lpfc_attr.c
+index 2f6b285..e534b72 100644
+--- a/drivers/scsi/lpfc/lpfc_attr.c
++++ b/drivers/scsi/lpfc/lpfc_attr.c
+@@ -970,6 +970,25 @@ lpfc_##attr##_store(struct class_device *cdev, const char *buf, size_t count) \
+ 		return -EINVAL;\
+ }
+ 
++/*
++# lpfc_exclude_hba: This parameter contain a list of PCI slots with lpfc HBAs
++# 	which need to be excluded from initializing by the driver.
++#  Format: <bus>:<slot>.<func>[|<bus>:<slot>.<func>...]
++*/
++char *lpfc_exclude_hba;
++module_param(lpfc_exclude_hba, charp, S_IRUGO);
++MODULE_PARM_DESC(lpfc_exclude_hba, "list of lpfc HBA PCI locations"
++	" to be excluded from initializing '<bus>:<slot>.<func>' separated by"
++	" | character");
++static ssize_t
++lpfc_exclude_hba_show(struct class_device *cdev, char *buf)
++{
++	return snprintf(buf, PAGE_SIZE, "%s\n",
++		(lpfc_exclude_hba == NULL) ? "" : lpfc_exclude_hba);
++}
++
++static CLASS_DEVICE_ATTR(lpfc_exclude_hba, S_IRUGO, lpfc_exclude_hba_show,
++		NULL);
+ 
+ #define LPFC_ATTR(name, defval, minval, maxval, desc) \
+ static int lpfc_##name = defval;\
+@@ -2606,6 +2625,7 @@ struct class_device_attribute *lpfc_hba_attrs[] = {
+ 	&class_device_attr_lpfc_max_scsicmpl_time,
+ 	&class_device_attr_lpfc_stat_data_ctrl,
+ 	&class_device_attr_lpfc_hostmem_hgp,
++	&class_device_attr_lpfc_exclude_hba,
+ 	NULL,
+ };
+ 
+@@ -2679,6 +2699,7 @@ struct class_device_attribute *lpfc_hba_attrs_no_npiv[] = {
+ 	&class_device_attr_lpfc_hostmem_hgp,
+ 	&class_device_attr_lpfc_enable_hba_heartbeat,
+ 	&class_device_attr_lpfc_enable_hba_reset,
++	&class_device_attr_lpfc_exclude_hba,
+ 	NULL,
+ };
+ 
+diff --git a/drivers/scsi/lpfc/lpfc_crtn.h b/drivers/scsi/lpfc/lpfc_crtn.h
+index 81c0949..4a21161 100644
+--- a/drivers/scsi/lpfc/lpfc_crtn.h
++++ b/drivers/scsi/lpfc/lpfc_crtn.h
+@@ -297,6 +297,7 @@ extern struct fc_function_template lpfc_transport_functions;
+ extern struct fc_function_template lpfc_vport_transport_functions;
+ extern int lpfc_sli_mode;
+ extern int lpfc_enable_npiv;
++extern char *lpfc_exclude_hba;
+ 
+ int  lpfc_vport_symbolic_node_name(struct lpfc_vport *, char *, size_t);
+ int  lpfc_vport_symbolic_port_name(struct lpfc_vport *, char *, size_t);
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index 694e415..1bb4cee 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -2612,14 +2612,13 @@ lpfc_setup_disc_node(struct lpfc_vport *vport, uint32_t did)
+ 			if (ndlp->nlp_flag & NLP_RCV_PLOGI)
+ 				return NULL;
+ 
+-			spin_lock_irq(shost->host_lock);
+-			ndlp->nlp_flag |= NLP_NPR_2B_DISC;
+-			spin_unlock_irq(shost->host_lock);
+-
+ 			/* Since this node is marked for discovery,
+ 			 * delay timeout is not needed.
+ 			 */
+ 			lpfc_cancel_retry_delay_tmo(vport, ndlp);
++			spin_lock_irq(shost->host_lock);
++			ndlp->nlp_flag |= NLP_NPR_2B_DISC;
++			spin_unlock_irq(shost->host_lock);
+ 		} else
+ 			ndlp = NULL;
+ 	} else {
+diff --git a/drivers/scsi/lpfc/lpfc_init.c b/drivers/scsi/lpfc/lpfc_init.c
+index a507695..6a56c2c 100644
+--- a/drivers/scsi/lpfc/lpfc_init.c
++++ b/drivers/scsi/lpfc/lpfc_init.c
+@@ -2197,6 +2197,54 @@ lpfc_disable_msix(struct lpfc_hba *phba)
+ 	pci_disable_msix(phba->pcidev);
+ }
+ 
++/*
++ * lpfc_is_excluded_hba - Check if the PCI device is excluded by user
++ * @pdev: pointer to pci device.
++ *
++ * Return 1 if the pci device is excluded by the lpfc_exclude_hba
++ * parameter else return 0.
++ */
++static uint32_t
++lpfc_is_excluded_hba(struct pci_dev *pdev)
++{
++	u_int	bus, slot, func;
++	char	*cp, pci_buf[9];
++	char	*conf_p = lpfc_exclude_hba;
++
++	if (!conf_p)
++		return 0;
++
++	while (*conf_p) {
++		if (*conf_p == '|' || isspace((int)*conf_p)) {
++			conf_p++;
++			continue;
++		}
++		cp = pci_buf;
++
++		do {
++			*cp = *conf_p;
++			cp++;
++			conf_p++;
++			if (!(*conf_p) || (*conf_p == '-') || (*conf_p == '|')
++				|| isspace((int)*conf_p))
++				break;
++		} while (cp < pci_buf + sizeof(pci_buf));
++
++		*cp = '\0';
++
++		if (sscanf(pci_buf, "%x:%x.%x", &bus, &slot, &func) != 3 ||
++			(bus | slot | func) > 0xff)
++			continue;
++
++		if ((u_char)bus == pdev->bus->number &&
++		    (u_char)slot == PCI_SLOT(pdev->devfn) &&
++		    (u_char)func == PCI_FUNC(pdev->devfn)) {
++			return 1;
++		}
++	}
++	return 0;
++}
++
+ static int __devinit
+ lpfc_pci_probe_one(struct pci_dev *pdev, const struct pci_device_id *pid)
+ {
+@@ -2214,6 +2262,17 @@ lpfc_pci_probe_one(struct pci_dev *pdev, const struct pci_device_id *pid)
+ 	struct lpfc_adapter_event_header adapter_event;
+ 
+ 	unsigned long start;
++	/*
++	 * Check if FC controller is excluded from binding to lpfc driver.
++	 */
++	if (lpfc_is_excluded_hba(pdev)) {
++		dev_printk(KERN_ERR, &pdev->dev, "%s: controller %02x:%02x.%x"
++			" is excluded from binding.\n",
++			LPFC_DRIVER_NAME, pdev->bus->number,
++			PCI_SLOT(pdev->devfn), PCI_FUNC(pdev->devfn));
++		error = -EPERM;
++		goto out;
++	}
+ 
+ 	if (pci_enable_device_bars(pdev, bars))
+ 		goto out;
+@@ -2232,10 +2291,6 @@ lpfc_pci_probe_one(struct pci_dev *pdev, const struct pci_device_id *pid)
+ 
+ 	phba->pcidev = pdev;
+ 
+-	/* Workaround for driver backward compatibility with RHEL5.1 */
+-	if (!pdev->error_state)
+-		pdev->error_state = pci_channel_io_normal;
+-
+ 	/* Assign an unused board number */
+ 	if ((phba->brd_no = lpfc_get_instance()) < 0)
+ 		goto out_free_phba;
+@@ -2273,8 +2328,8 @@ lpfc_pci_probe_one(struct pci_dev *pdev, const struct pci_device_id *pid)
+ 	phba->eratt_poll.function = lpfc_poll_eratt;
+ 	phba->eratt_poll.data = (unsigned long) phba;
+ 
+-
+ 	pci_set_master(pdev);
++	pci_save_state(pdev);
+ 	retval = pci_set_mwi(pdev);
+ 	if (retval)
+ 		dev_printk(KERN_WARNING, &pdev->dev,
+@@ -2692,6 +2747,9 @@ static pci_ers_result_t lpfc_io_error_detected(struct pci_dev *pdev,
+ 	struct lpfc_sli *psli = &phba->sli;
+ 	struct lpfc_sli_ring  *pring;
+ 
++	/* stop all timers */
++	lpfc_stop_phba_timers(phba);
++
+ 	if (state == pci_channel_io_perm_failure) {
+ 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+ 				"0472 PCI channel I/O permanent failure\n");
+@@ -2746,6 +2804,7 @@ static pci_ers_result_t lpfc_io_slot_reset(struct pci_dev *pdev)
+ 	}
+ 
+ 	pci_set_master(pdev);
++	pci_restore_state(pdev);
+ 
+ 	spin_lock_irq(&phba->hbalock);
+ 	psli->sli_flag &= ~LPFC_SLI2_ACTIVE;
+diff --git a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+index 546db87..9fdb2fd 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.c
++++ b/drivers/scsi/lpfc/lpfc_sli.c
+@@ -1242,7 +1242,7 @@ lpfc_sli_process_sol_iocb(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
+ 			 * Ring <ringno> handler: unexpected completion IoTag
+ 			 * <IoTag>
+ 			 */
+-			lpfc_printf_vlog(cmdiocbp->vport, KERN_WARNING, LOG_SLI,
++			lpfc_printf_log(phba, KERN_WARNING, LOG_SLI,
+ 					 "0322 Ring %d handler: "
+ 					 "unexpected completion IoTag x%x "
+ 					 "Data: x%x x%x x%x x%x\n",
+diff --git a/drivers/scsi/lpfc/lpfc_version.h b/drivers/scsi/lpfc/lpfc_version.h
+index f1e501d..e0716dc 100644
+--- a/drivers/scsi/lpfc/lpfc_version.h
++++ b/drivers/scsi/lpfc/lpfc_version.h
+@@ -18,7 +18,7 @@
+  * included with this package.                                     *
+  *******************************************************************/
+ 
+-#define LPFC_DRIVER_VERSION "8.2.0.40"
++#define LPFC_DRIVER_VERSION "8.2.0.41"
+ 
+ #define LPFC_DRIVER_NAME "lpfc"
+ 

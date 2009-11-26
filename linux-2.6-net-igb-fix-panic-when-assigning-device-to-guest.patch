@@ -1,0 +1,44 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Fri, 10 Jul 2009 09:53:21 -0400
+Subject: [net] igb: fix panic when assigning device to guest
+Message-id: 20090710135321.GQ20245@gospo.rdu.redhat.com
+O-Subject: [RHEL5.4 PATCH] igb: fix panic when assigning device to guest
+Bugzilla: 507173
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+Under certain system configurations when using SR-IOV, igb will panic
+during init because dev->bus->self will be NULL for some pci devices.
+This seems to be the case when using the Stoakley platform and is
+expected based on the device layout.
+
+This code was recently removed from the upstream driver and a pci quirk
+was added instead.  That quirk calls pci_disable_link_state (which is
+not available in RHEL5), but this patch emulates some of the work done
+there by checking for NULL.
+
+For the next update we should consider taking the two upstream patches
+that remove this in igb and add the pci-quirk (in addition to
+backporting the full functionality of pci_disable_link_state), but this
+is not the best time to make changes that large.
+
+This patch was verified by Intel.  The igb device can now be assigned to
+the guest and run successfully.
+
+This will resolve RHBZ 507173.
+
+diff --git a/drivers/net/igb/igb_main.c b/drivers/net/igb/igb_main.c
+index 405906d..bfa80a2 100644
+--- a/drivers/net/igb/igb_main.c
++++ b/drivers/net/igb/igb_main.c
+@@ -1100,6 +1100,8 @@ static int __devinit igb_probe(struct pci_dev *pdev,
+ 	case E1000_DEV_ID_82575EB_FIBER_SERDES:
+ 	case E1000_DEV_ID_82575GB_QUAD_COPPER:
+ 		us_dev = pdev->bus->self;
++		if (!us_dev)
++			break;
+ 		pos = pci_find_capability(us_dev, PCI_CAP_ID_EXP);
+ 		if (pos) {
+ 			pci_read_config_word(us_dev, pos + PCI_EXP_LNKCTL,

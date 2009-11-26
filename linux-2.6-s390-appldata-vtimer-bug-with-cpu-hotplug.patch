@@ -1,0 +1,72 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 7 May 2009 12:37:08 +0200
+Subject: [s390] appldata: vtimer bug with cpu hotplug
+Message-id: 20090507103708.GA5241@redhat.com
+O-Subject: [RHEL5 U4 PATCH 1/1] s390 - appldata: vtimer bug with cpu hotplug
+Bugzilla: 497207
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+mod_virt_timer() was used to modify/add cpu timers for cpus that were
+set online. This resulted in a one-shot timer for every cpu that was
+newly added or previously set offline, instead of an interval timer,
+which broke the appldata vtime interval setup.
+
+Solution: Work around by adding a new vtimer for cpus that get online,
+before modifying it.
+
+Bugzilla
+=========
+
+BZ 497207
+https://bugzilla.redhat.com/show_bug.cgi?id=497207
+
+Upstream status of the patch:
+=============================
+
+The patch is upstream as of git commit 43ae8a1b32735c662ba7ebf3509c4f670f75e3d5
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=43ae8a1b32735c662ba7ebf3509c4f670f75e3d5
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	--Hans
+
+diff --git a/arch/s390/appldata/appldata_base.c b/arch/s390/appldata/appldata_base.c
+index 2e1bcba..5027ef3 100644
+--- a/arch/s390/appldata/appldata_base.c
++++ b/arch/s390/appldata/appldata_base.c
+@@ -538,13 +538,22 @@ void appldata_unregister_ops(struct appldata_ops *ops)
+ static void
+ appldata_online_cpu(int cpu)
+ {
++	u64 per_cpu_interval;
++
+ 	init_virt_timer(&per_cpu(appldata_timer, cpu));
+ 	per_cpu(appldata_timer, cpu).function = appldata_timer_function;
+ 	per_cpu(appldata_timer, cpu).data = (unsigned long)
+ 		&appldata_work;
+ 	atomic_inc(&appldata_expire_count);
+ 	spin_lock(&appldata_timer_lock);
+-	__appldata_vtimer_setup(APPLDATA_MOD_TIMER);
++	if (appldata_timer_active) {
++		per_cpu_interval = (u64) (appldata_interval * 1000 /
++					  num_online_cpus()) * TOD_MICRO;
++		per_cpu(appldata_timer, cpu).expires = per_cpu_interval;
++		smp_call_function_on(add_virt_timer_periodic,
++				     &per_cpu(appldata_timer, cpu), 0, 1, cpu);
++		__appldata_vtimer_setup(APPLDATA_MOD_TIMER);
++	}
+ 	spin_unlock(&appldata_timer_lock);
+ }
+ 

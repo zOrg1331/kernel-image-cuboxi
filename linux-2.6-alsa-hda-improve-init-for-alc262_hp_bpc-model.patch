@@ -1,0 +1,88 @@
+From: Jaroslav Kysela <jkysela@redhat.com>
+Date: Mon, 25 May 2009 10:48:32 -0400
+Subject: [alsa] hda: improve init for ALC262_HP_BPC model
+Message-id: 200905251448.n4PEmWeV018200@ns3.rdu.redhat.com
+O-Subject: Subject: [RHEL 5.4 PATCH] ALSA HDA - improve initialization for ALC262_HP_BPC model
+Bugzilla: 473949
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+
+Bugzilla
+========
+BZ#473949
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=473949
+
+Description
+===========
+The modest modifications do the following:
+1. Change the second MIC from device 3 to device 1
+2. Init the "boost" values to "0" by default
+From: John Brown <john.brown3@hp.com>
+
+Upstream Status of the patch
+============================
+Will be applied.
+
+diff --git a/sound/pci/hda/patch_realtek.c b/sound/pci/hda/patch_realtek.c
+index edd8b1d..e885eae 100644
+--- a/sound/pci/hda/patch_realtek.c
++++ b/sound/pci/hda/patch_realtek.c
+@@ -10601,31 +10601,46 @@ static struct hda_verb alc262_HP_BPC_init_verbs[] = {
+ 	{0x1a, AC_VERB_SET_PIN_WIDGET_CONTROL, 0x20},
+ 	{0x1c, AC_VERB_SET_PIN_WIDGET_CONTROL, 0x20},
+ 
+-	{0x14, AC_VERB_SET_AMP_GAIN_MUTE, 0x7023 },
++	{0x14, AC_VERB_SET_AMP_GAIN_MUTE, 0x7000 },
+ 	{0x18, AC_VERB_SET_AMP_GAIN_MUTE, 0x7000 },
+         {0x19, AC_VERB_SET_AMP_GAIN_MUTE, 0x7000 },
+-	{0x1a, AC_VERB_SET_AMP_GAIN_MUTE, 0x7023 },
++	{0x1a, AC_VERB_SET_AMP_GAIN_MUTE, 0x7000 },
+ 	{0x1c, AC_VERB_SET_AMP_GAIN_MUTE, 0x7000 },
+ 	{0x1d, AC_VERB_SET_AMP_GAIN_MUTE, 0x7000 },
+ 
+ 
+ 	/* FIXME: use matrix-type input source selection */
+-	/* Mixer elements: 0x18, 19, 1a, 1b, 1c, 1d, 14, 15, 16, 17, 0b */
+-	/* Input mixer1: unmute Mic, F-Mic, Line, CD inputs */
++	/* Mixer elements: 0x18, 19, 1a, 1b, 1c, 1d, 14, 15, 0b, 12 */
++	/* Input mixer1: only unmute Mic */
+ 	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, (0x7000 | (0x00 << 8))},
+-	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, (0x7000 | (0x03 << 8))},
+-	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, (0x7000 | (0x02 << 8))},
+-	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, (0x7000 | (0x04 << 8))},
++	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x01 << 8))},
++	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x02 << 8))},
++	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x03 << 8))},
++	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x04 << 8))},
++	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x05 << 8))},
++	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x06 << 8))},
++	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x07 << 8))},
++	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x08 << 8))},
+ 	/* Input mixer2 */
+ 	{0x23, AC_VERB_SET_AMP_GAIN_MUTE, (0x7000 | (0x00 << 8))},
+-	{0x23, AC_VERB_SET_AMP_GAIN_MUTE, (0x7000 | (0x03 << 8))},
+-	{0x23, AC_VERB_SET_AMP_GAIN_MUTE, (0x7000 | (0x02 << 8))},
+-	{0x23, AC_VERB_SET_AMP_GAIN_MUTE, (0x7000 | (0x04 << 8))},
++	{0x23, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x01 << 8))},
++	{0x23, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x02 << 8))},
++	{0x23, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x03 << 8))},
++	{0x23, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x04 << 8))},
++	{0x23, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x05 << 8))},
++	{0x23, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x06 << 8))},
++	{0x23, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x07 << 8))},
++	{0x23, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x08 << 8))},
+ 	/* Input mixer3 */
+ 	{0x22, AC_VERB_SET_AMP_GAIN_MUTE, (0x7000 | (0x00 << 8))},
+-	{0x22, AC_VERB_SET_AMP_GAIN_MUTE, (0x7000 | (0x03 << 8))},
+-	{0x22, AC_VERB_SET_AMP_GAIN_MUTE, (0x7000 | (0x02 << 8))},
+-	{0x22, AC_VERB_SET_AMP_GAIN_MUTE, (0x7000 | (0x04 << 8))},
++	{0x22, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x01 << 8))},
++	{0x22, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x02 << 8))},
++	{0x22, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x03 << 8))},
++	{0x22, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x04 << 8))},
++	{0x22, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x05 << 8))},
++	{0x22, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x06 << 8))},
++	{0x22, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x07 << 8))},
++	{0x22, AC_VERB_SET_AMP_GAIN_MUTE, (0x7080 | (0x08 << 8))},
+ 
+ 	{0x1b, AC_VERB_SET_UNSOLICITED_ENABLE, ALC880_HP_EVENT | AC_USRSP_EN},
+ 

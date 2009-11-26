@@ -1,0 +1,78 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Thu, 15 Jan 2009 10:10:32 -0500
+Subject: [powerpc] wait for a panic_timeout > 0 before reboot
+Message-id: 20090115150928.26532.7777.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 BZ446120] Ensure kernel waits for a panic_timeout > 0 before reboot
+Bugzilla: 446120
+RH-Acked-by: Jerome Marchand <jmarchan@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=446120
+
+Description:
+===========
+Patch to ensure a system hangs for a given panic_timeout value > 0.
+
+In this environment Kdump and xmon are disabled while /proc/sys/kernel/panic
+is set to a value >0 before a kernel panic is called. When a kernel panic is
+triggered, the expected behaviour is for the system to wait the expected
+timeout value after the panic and then reboot.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1646426
+
+Upstream Status:
+================
+I could not find the specific GIT ID, but the patch is in the latest 2.6.28 and
+2.6.29-rc1 kernels.
+
+>From 2.6.29-rc1 GIT tree:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=blob;f=arch/powerpc/kernel/rtas.c;h=fdfe14c4bdefc735640745625cb559fc4908a2fa;hb=HEAD
+
+665
+666 void rtas_os_term(char *str)
+667 {
+668         int status;
+669
+670         if (panic_timeout)<--- here
+671                 return;
+
+Test Status:
+============
+A testcase to induce the error is provided in the bug.  Without the patch
+applied the system will panic and reboot immediately, but with the patch the
+system waits the timeout value as expected after the forced panic to reboot.
+
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/arch/powerpc/kernel/rtas.c b/arch/powerpc/kernel/rtas.c
+index 1ab7346..a980907 100644
+--- a/arch/powerpc/kernel/rtas.c
++++ b/arch/powerpc/kernel/rtas.c
+@@ -643,6 +643,9 @@ void rtas_os_term(char *str)
+ {
+ 	int status;
+ 
++	if (panic_timeout)
++		return;
++
+ 	if (RTAS_UNKNOWN_SERVICE == rtas_token("ibm,os-term"))
+ 		return;
+ 
