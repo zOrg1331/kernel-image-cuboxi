@@ -380,7 +380,7 @@ static int acpi_smbus_cmi_add(struct acpi_device *device)
 				(struct smbus_methods_t *) id->driver_data;
 
 	acpi_walk_namespace(ACPI_TYPE_METHOD, smbus_cmi->handle, 1,
-			    acpi_smbus_cmi_query_methods, smbus_cmi, NULL);
+			    acpi_smbus_cmi_query_methods, NULL, smbus_cmi, NULL);
 
 	if (smbus_cmi->cap_info == 0)
 		goto err;
