@@ -62,7 +62,7 @@ diff -urpX nopatch linux-2.6.18-92.1.18.el5.028stab060.2/mm/mmap.c linux-2.6.18-
  int sysctl_max_map_count __read_mostly = DEFAULT_MAX_MAP_COUNT;
  atomic_t vm_committed_space = ATOMIC_INIT(0);
  
-+unsigned long mmap_min_addr = 65536;		/* 0 means no protection */
++unsigned long mmap_min_addr = 4096;		/* 0 means no protection */
 +EXPORT_SYMBOL_GPL(mmap_min_addr);
 +
  /*
@@ -75,7 +75,7 @@ diff -urpX nopatch linux-2.6.18-92.1.18.el5.028stab060.2/security/security.c lin
  extern void security_fixup_ops(struct security_operations *ops);
  
  struct security_operations *security_ops;	/* Initialized to NULL */
--unsigned long mmap_min_addr = 65536;		/* 0 means no protection */
+-unsigned long mmap_min_addr = 4096;		/* 0 means no protection */
  
  static inline int verify(struct security_operations *ops)
  {

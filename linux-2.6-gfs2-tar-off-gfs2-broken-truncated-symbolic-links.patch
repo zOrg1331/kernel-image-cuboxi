@@ -1,0 +1,28 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Date: Tue, 31 Mar 2009 17:32:41 +0100
+Subject: [gfs2] tar off gfs2 broken - truncated symbolic links
+Message-id: 1238517161.29604.9.camel@localhost.localdomain
+O-Subject: [RHEL 5.4] GFS2: tar off gfs2 broken - truncated symbolic links
+Bugzilla: 492911
+RH-Acked-by: Bob Peterson <rpeterso@redhat.com>
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+Hi,
+
+This one-liner fixes a race in creating symlinks on GFS2. It is queued for the upstream
+and fixes bz #492911.
+
+Steve.
+
+diff --git a/fs/gfs2/ops_inode.c b/fs/gfs2/ops_inode.c
+index 7b72c95..f7d1711 100644
+--- a/fs/gfs2/ops_inode.c
++++ b/fs/gfs2/ops_inode.c
+@@ -372,6 +372,7 @@ static int gfs2_symlink(struct inode *dir, struct dentry *dentry,
+ 	ip = ghs[1].gh_gl->gl_object;
+ 
+ 	ip->i_di.di_size = size;
++	i_size_write(inode, size);
+ 
+ 	error = gfs2_meta_inode_buffer(ip, &dibh);
+ 

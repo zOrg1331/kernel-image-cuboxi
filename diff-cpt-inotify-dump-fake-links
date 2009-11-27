@@ -1,0 +1,110 @@
+--- ./kernel/cpt/cpt_files.c.infx	2009-10-28 14:17:18.000000000 +0300
++++ ./kernel/cpt/cpt_files.c	2009-10-28 16:19:56.000000000 +0300
+@@ -1007,8 +1007,8 @@ static struct dentry *find_linkdir(struc
+ 	return NULL;
+ }
+ 
+-static int create_dump_hardlink(struct dentry *d, struct vfsmount *mnt,
+-				struct inode *ino, struct cpt_context *ctx)
++struct dentry *cpt_fake_link(struct dentry *d, struct vfsmount *mnt,
++		struct inode *ino, struct cpt_context *ctx)
+ {
+ 	int err;
+ 	int order = 8;
+@@ -1042,16 +1042,38 @@ static int create_dump_hardlink(struct d
+ 		goto out_put;
+ 	}
+ 
+-	err = vfs_link(d, dirde->d_inode, hardde);
+-	if (err)
+-		eprintk_ctx("error hardlink %s, %d\n", name, err);
++	if (d == NULL)
++		err = vfs_create(dirde->d_inode, hardde, 0600, NULL);
+ 	else
+-		err = cpt_dump_dentry(hardde, mnt, 0, 1, ctx);
+-out_put:
+-	dput(hardde);
++		err = vfs_link(d, dirde->d_inode, hardde);
++	if (err) {
++		eprintk_ctx("error hardlink %s, %d\n", name, err);
++		goto out_put;
++	}
++
+ out_unlock:
+ 	mutex_unlock(&dirde->d_inode->i_mutex);
+ out:
++	return err ? ERR_PTR(err) : hardde;
++
++out_put:
++	dput(hardde);
++	goto out_unlock;
++}
++
++static int create_dump_hardlink(struct dentry *d, struct vfsmount *mnt,
++				struct inode *ino, struct cpt_context *ctx)
++{
++	int err;
++	struct dentry *hardde;
++
++	hardde = cpt_fake_link(d, mnt, ino, ctx);
++	if (IS_ERR(hardde))
++		return PTR_ERR(hardde);
++
++	err = cpt_dump_dentry(hardde, mnt, 0, 1, ctx);
++	dput(hardde);
++
+ 	return err;
+ }
+ 
+--- ./kernel/cpt/cpt_files.h.infx	2009-10-27 19:51:25.000000000 +0300
++++ ./kernel/cpt/cpt_files.h	2009-10-28 16:21:01.000000000 +0300
+@@ -54,6 +54,8 @@ struct file *rst_open_inotify(struct cpt
+ 			      unsigned flags,
+ 			      struct cpt_context *ctx);
+ 
++struct dentry *cpt_fake_link(struct dentry *d, struct vfsmount *mnt,
++		struct inode *ino, struct cpt_context *ctx);
+ 
+ int cpt_verify_overmount(char *path, struct dentry *d, struct vfsmount *mnt,
+ 			 int verify, cpt_context_t *ctx);
+--- ./kernel/cpt/cpt_inotify.c.infx	2009-10-28 14:17:18.000000000 +0300
++++ ./kernel/cpt/cpt_inotify.c	2009-10-28 16:19:49.000000000 +0300
+@@ -41,6 +41,29 @@
+ 
+ extern struct file_operations inotify_fops;
+ 
++static int dump_watch_inode(struct inotify_watch *watch, cpt_context_t *ctx)
++{
++	int err;
++	struct dentry *d;
++
++	d = watch->dentry;
++	if (IS_ROOT(d) || !d_unhashed(d))
++		goto dump_dir;
++
++	d = cpt_fake_link(d->d_inode->i_nlink ? d : NULL,
++			watch->mnt, d->d_inode, ctx);
++
++	if (IS_ERR(d))
++		return PTR_ERR(d);
++
++dump_dir:
++	err = cpt_dump_dir(d, watch->mnt, ctx);
++	if (d != watch->dentry)
++		dput(d);
++
++	return err;
++}
++
+ int cpt_dump_inotify(cpt_object_t *obj, cpt_context_t *ctx)
+ {
+ 	int err = 0;
+@@ -97,7 +120,7 @@ int cpt_dump_inotify(cpt_object_t *obj, 
+ 		ctx->write(&wi, sizeof(wi), ctx);
+ 
+ 		cpt_push_object(&saved_obj2, ctx);
+-		err = cpt_dump_dir(watch->dentry, watch->mnt, ctx);
++		err = dump_watch_inode(watch, ctx);
+ 		cpt_pop_object(&saved_obj2, ctx);
+ 		if (err)
+ 			break;

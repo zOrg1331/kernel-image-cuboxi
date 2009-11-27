@@ -1,0 +1,19 @@
+--- ./fs/ext4/inode.c.ext4mp	2009-10-02 20:21:30.000000000 +0400
++++ ./fs/ext4/inode.c	2009-10-28 20:32:31.000000000 +0300
+@@ -5191,8 +5198,14 @@ int ext4_page_mkwrite(struct vm_area_str
+ 	int ret = -EINVAL;
+ 	void *fsdata;
+ 	struct file *file = vma->vm_file;
+-	struct inode *inode = file->f_dentry->d_inode;
+-	struct address_space *mapping = inode->i_mapping;
++	struct inode *inode;
++	struct address_space *mapping;
++
++	if (file->f_op->get_host)
++		file = file->f_op->get_host(file);
++
++	inode = file->f_dentry->d_inode;
++	mapping = inode->i_mapping;
+ 
+ 	/*
+ 	 * Get i_alloc_sem to stop truncates messing with the inode. We cannot

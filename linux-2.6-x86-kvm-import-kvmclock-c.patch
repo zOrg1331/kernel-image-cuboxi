@@ -1,0 +1,227 @@
+From: Glauber Costa <glommer@redhat.com>
+Date: Tue, 11 Aug 2009 13:32:01 -0400
+Subject: [x86] kvm: import kvmclock.c
+Message-id: 1250011926-31633-3-git-send-email-glommer@redhat.com
+O-Subject: [PATCH v2 2/7] Import kvmclock.c from upstream kernel
+Bugzilla: 476075
+
+This is a copy of kvmclock.c implementation from upstream kernel. The
+relevant differences are:
+ *  use_kvm_time variable to tell whether or not we succeeded in turning our clocksource on.
+    This is needed because upstream hooks functions into structures like smp_ops, machine_ops
+    and pv_ops, which we lack.
+ * Make some functions non-static, as we'll now call them from other object files, instead of
+   dealing with hooks
+ * removal of kvm_set_wallclock(), unused.
+ * removal of kvm_get_tsc_khz() and kvm_get_preset_lpj(), we already provide it in another file,
+   and I decided not to mess with it.
+ * ifdef CONFIG_X86_32 around the clocksource definition, because x86_64 does not have clocksources.
+ * removal of kvm_setup_secondary_clock() kvm_smp_prepare_boot_cpu(). It is hard for us to hook them,
+   so we'll call them directly when needed.
+ * remove initialization of smp_ops, machine_ops and pv_ops in kvmclock_init()
+
+[ v2: fixed a silly typo ]
+
+Signed-off-by: Glauber Costa <glommer@redhat.com>
+
+diff --git a/arch/i386/kernel/Makefile b/arch/i386/kernel/Makefile
+index 1410349..89cacf0 100644
+--- a/arch/i386/kernel/Makefile
++++ b/arch/i386/kernel/Makefile
+@@ -42,6 +42,7 @@ obj-$(CONFIG_HPET_TIMER) 	+= hpet.o
+ obj-$(CONFIG_K8_NB)		+= k8.o
+ ifndef CONFIG_XEN
+ obj-y				+= pvclock.o
++obj-y				+= kvmclock.o
+ endif
+ 
+ EXTRA_AFLAGS   := -traditional
+diff --git a/arch/i386/kernel/kvmclock.c b/arch/i386/kernel/kvmclock.c
+new file mode 100644
+index 0000000..6edd2e2
+--- /dev/null
++++ b/arch/i386/kernel/kvmclock.c
+@@ -0,0 +1,130 @@
++/*  KVM paravirtual clock driver. A clocksource implementation
++    Copyright (C) 2008 Glauber de Oliveira Costa, Red Hat Inc.
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
++*/
++
++#include <linux/clocksource.h>
++#include <linux/kvm_para.h>
++#include <asm/pvclock.h>
++#ifdef CONFIG_X86_32
++#include <asm/arch_hooks.h>
++#endif
++#include <asm/msr.h>
++#include <asm/apic.h>
++#include <linux/percpu.h>
++
++#define KVM_SCALE 22
++
++static int kvmclock = 1;
++
++unsigned int use_kvm_time = 1; /* RHEL specific */
++
++static int parse_no_kvmclock(char *arg)
++{
++	kvmclock = 0;
++	return 0;
++}
++early_param("no-kvmclock", parse_no_kvmclock);
++
++/* The hypervisor will put information about time periodically here */
++static DEFINE_PER_CPU(struct pvclock_vcpu_time_info, hv_clock);
++static struct pvclock_wall_clock wall_clock;
++
++/*
++ * The wallclock is the time of day when we booted. Since then, some time may
++ * have elapsed since the hypervisor wrote the data. So we try to account for
++ * that with system time
++ */
++unsigned long kvm_get_wallclock(void)
++{
++	struct pvclock_vcpu_time_info *vcpu_time;
++	struct timespec ts;
++	int low, high;
++
++	low = (int)__pa(&wall_clock);
++	high = ((u64)__pa(&wall_clock) >> 32);
++	wrmsr(MSR_KVM_WALL_CLOCK, low, high);
++
++	vcpu_time = &get_cpu_var(hv_clock);
++	pvclock_read_wallclock(&wall_clock, vcpu_time, &ts);
++	put_cpu_var(hv_clock);
++
++	return ts.tv_sec;
++}
++
++cycle_t kvm_clock_read(void)
++{
++	struct pvclock_vcpu_time_info *src;
++	cycle_t ret;
++
++	src = &get_cpu_var(hv_clock);
++	ret = pvclock_clocksource_read(src);
++	put_cpu_var(hv_clock);
++	return ret;
++}
++
++#ifdef CONFIG_X86_32
++static struct clocksource kvm_clock = {
++	.name = "kvm-clock",
++	.read = kvm_clock_read,
++	.rating = 400,
++	.mask = CLOCKSOURCE_MASK(64),
++	.mult = 1 << KVM_SCALE,
++	.shift = KVM_SCALE,
++	.is_continuous = 1,
++};
++#endif
++
++int kvm_register_clock(char *txt)
++{
++	int cpu = smp_processor_id();
++	int low, high;
++	/* upstream kernel does not use this, because the smp_ops structure
++	 * guarantees it won't be called at all when disabled
++	 */
++	if (use_kvm_time == 0)
++		return 0;
++	low = (int)__pa(&per_cpu(hv_clock, cpu)) | 1;
++	high = ((u64)__pa(&per_cpu(hv_clock, cpu)) >> 32);
++	printk(KERN_INFO "kvm-clock: cpu %d, msr %x:%x, %s\n",
++	       cpu, high, low, txt);
++	return wrmsr_safe(MSR_KVM_SYSTEM_TIME, low, high);
++}
++
++/* warning: thus function is not upstream. Upstream does it through machine_ops,
++ * which we lack. It exists to avoid exposing kvmclock related structures throughout
++ * the rest of our kernel code - glommer
++ */
++void kvmclock_disable(void)
++{
++	if (use_kvm_time > 0)
++		wrmsr(MSR_KVM_SYSTEM_TIME, 0, 0);
++}
++void __init kvmclock_init(void)
++{
++	if (!kvm_para_available())
++		return;
++
++	if (kvmclock && kvm_para_has_feature(KVM_FEATURE_CLOCKSOURCE)) {
++		if (kvm_register_clock("boot clock")) {
++			use_kvm_time = 0;
++			return;
++		}
++#ifdef CONFIG_X86_32
++		clocksource_register(&kvm_clock);
++#endif
++	}
++}
+diff --git a/arch/x86_64/kernel/Makefile b/arch/x86_64/kernel/Makefile
+index 023aa49..d2b4d62 100644
+--- a/arch/x86_64/kernel/Makefile
++++ b/arch/x86_64/kernel/Makefile
+@@ -52,6 +52,7 @@ ifndef CONFIG_XEN
+ obj-y				+= vmware.o
+ obj-y				+= hypervisor.o
+ obj-y				+= pvclock.o
++obj-y				+= kvmclock.o
+ endif
+ 
+ CFLAGS_vsyscall.o		:= $(PROFILING) -g0
+@@ -65,6 +66,7 @@ intel_cacheinfo-y		+= ../../i386/kernel/cpu/intel_cacheinfo.o
+ addon_cpuid_features-y		+= ../../i386/kernel/cpu/addon_cpuid_features.o
+ vmware-y			+= ../../i386/kernel/cpu/vmware.o
+ pvclock-y			+= ../../i386/kernel/pvclock.o
++kvmclock-y			+= ../../i386/kernel/kvmclock.o
+ hypervisor-y			+= ../../i386/kernel/cpu/hypervisor.o
+ quirks-y			+= ../../i386/kernel/quirks.o
+ i8237-y				+= ../../i386/kernel/i8237.o
+diff --git a/include/asm-i386/kvm_para.h b/include/asm-i386/kvm_para.h
+index b8a3305..9ac2b26 100644
+--- a/include/asm-i386/kvm_para.h
++++ b/include/asm-i386/kvm_para.h
+@@ -49,6 +49,10 @@ struct kvm_mmu_op_release_pt {
+ #include <asm/processor.h>
+ 
+ extern void kvmclock_init(void);
++extern int kvm_register_clock(char *txt);
++extern void kvmclock_disable(void);
++extern unsigned long kvm_get_wallclock(void);
++extern unsigned int use_kvm_time;
+ 
+ 
+ /* This instruction is vmcall.  On non-VT architectures, it will generate a
+diff --git a/include/asm-x86_64/kvm_para.h b/include/asm-x86_64/kvm_para.h
+index b8a3305..82604a7 100644
+--- a/include/asm-x86_64/kvm_para.h
++++ b/include/asm-x86_64/kvm_para.h
+@@ -49,7 +49,12 @@ struct kvm_mmu_op_release_pt {
+ #include <asm/processor.h>
+ 
+ extern void kvmclock_init(void);
+-
++extern int kvm_register_clock(char *txt);
++extern void kvmclock_disable(void);
++extern unsigned long kvm_get_wallclock(void);
++#include <linux/clocksource.h> // for cycle_t
++cycle_t kvm_clock_read(void);
++extern unsigned int use_kvm_time;
+ 
+ /* This instruction is vmcall.  On non-VT architectures, it will generate a
+  * trap that we will then rewrite to the appropriate instruction.

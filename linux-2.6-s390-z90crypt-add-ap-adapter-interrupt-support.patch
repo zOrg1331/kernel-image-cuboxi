@@ -1,0 +1,1234 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 12 Mar 2009 15:23:59 +0100
+Subject: [s390] z90crypt: add ap adapter interrupt support
+Message-id: 20090312142359.GH5103@redhat.com
+O-Subject: [RHEL5 U4 PATCH 7/20] FEAT: s390 - z90crypt: Add ap adapter interrupt support
+Bugzilla: 474700
+
+Description
+============
+
+Support for thin interrupts. Driver will use interrupts instead
+of polling mode if machine supports ap interrupts.
+
+Bugzilla
+=========
+
+BZ 474700
+https://bugzilla.redhat.com/show_bug.cgi?id=474700
+
+Upstream status of the patch:
+=============================
+
+The patch is upstream as of git commit
+cb17a6364a29b4dfe5bbb00696032fb63d780157
+
+Test status:
+============
+
+The patch has been tested by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	--Hans
+
+diff --git a/arch/s390/kernel/setup.c b/arch/s390/kernel/setup.c
+index c7495e5..36ff345 100644
+--- a/arch/s390/kernel/setup.c
++++ b/arch/s390/kernel/setup.c
+@@ -752,32 +752,6 @@ setup_memory(void)
+ #endif
+ }
+ 
+-static unsigned int __init stfl(void)
+-{
+-	asm volatile(
+-		"	.insn	s,0xb2b10000,0(0)\n" /* stfl */
+-		"0:\n"
+-		EX_TABLE(0b,0b));
+-	return S390_lowcore.stfl_fac_list;
+-}
+-
+-static int __init __stfle(unsigned long long *list, int doublewords)
+-{
+-	typedef struct { unsigned long long _[doublewords]; } addrtype;
+-	register unsigned long __nr asm("0") = doublewords - 1;
+-
+-	asm volatile(".insn s,0xb2b00000,%0" /* stfle */
+-		     : "=m" (*(addrtype *) list), "+d" (__nr) : : "cc");
+-	return __nr + 1;
+-}
+-
+-int __init stfle(unsigned long long *list, int doublewords)
+-{
+-	if (!(stfl() & (1UL << 24)))
+-		return -EOPNOTSUPP;
+-	return __stfle(list, doublewords);
+-}
+-
+ /*
+  * Setup hardware capabilities.
+  */
+diff --git a/drivers/s390/cio/Makefile b/drivers/s390/cio/Makefile
+index cfaf77b..e7ace6f 100644
+--- a/drivers/s390/cio/Makefile
++++ b/drivers/s390/cio/Makefile
+@@ -2,7 +2,7 @@
+ # Makefile for the S/390 common i/o drivers
+ #
+ 
+-obj-y += airq.o blacklist.o chsc.o cio.o css.o chp.o idset.o
++obj-y += airq.o blacklist.o chsc.o cio.o css.o chp.o idset.o isc.o
+ ccw_device-objs += device.o device_fsm.o device_ops.o
+ ccw_device-objs += device_id.o device_pgid.o device_status.o
+ obj-y += ccw_device.o cmf.o
+diff --git a/drivers/s390/cio/airq.c b/drivers/s390/cio/airq.c
+index 5287631..b8ed8cb 100644
+--- a/drivers/s390/cio/airq.c
++++ b/drivers/s390/cio/airq.c
+@@ -1,12 +1,12 @@
+ /*
+  *  drivers/s390/cio/airq.c
+- *   S/390 common I/O routines -- support for adapter interruptions
++ *    Support for adapter interruptions
+  *
+- *    Copyright (C) 1999-2002 IBM Deutschland Entwicklung GmbH,
+- *			      IBM Corporation
+- *    Author(s): Ingo Adlung (adlung@de.ibm.com)
+- *		 Cornelia Huck (cornelia.huck@de.ibm.com)
+- *		 Arnd Bergmann (arndb@de.ibm.com)
++ *    Copyright IBM Corp. 1999,2007
++ *    Author(s): Ingo Adlung <adlung@de.ibm.com>
++ *		 Cornelia Huck <cornelia.huck@de.ibm.com>
++ *		 Arnd Bergmann <arndb@de.ibm.com>
++ *		 Peter Oberparleiter <peter.oberparleiter@de.ibm.com>
+  */
+ 
+ #include <linux/init.h>
+@@ -14,72 +14,136 @@
+ #include <linux/slab.h>
+ #include <linux/rcupdate.h>
+ 
++#include <asm/airq.h>
++#include <asm/isc.h>
++
++#include "cio.h"
+ #include "cio_debug.h"
+-#include "airq.h"
+ 
+-static adapter_int_handler_t adapter_handler;
++#define NR_AIRQS		32
++#define NR_AIRQS_PER_WORD	sizeof(unsigned long)
++#define NR_AIRQ_WORDS		(NR_AIRQS / NR_AIRQS_PER_WORD)
+ 
+-/*
+- * register for adapter interrupts
+- *
+- * With HiperSockets the zSeries architecture provides for
+- *  means of adapter interrups, pseudo I/O interrupts that are
+- *  not tied to an I/O subchannel, but to an adapter. However,
+- *  it doesn't disclose the info how to enable/disable them, but
+- *  to recognize them only. Perhaps we should consider them
+- *  being shared interrupts, and thus build a linked list
+- *  of adapter handlers ... to be evaluated ...
+- */
+-int
+-s390_register_adapter_interrupt (adapter_int_handler_t handler)
+-{
+-	int ret;
+-	char dbf_txt[15];
++union indicator_t {
++	unsigned long word[NR_AIRQ_WORDS];
++	unsigned char byte[NR_AIRQS];
++} __attribute__((packed));
+ 
+-	CIO_TRACE_EVENT (4, "rgaint");
++struct airq_t {
++	adapter_int_handler_t handler;
++	void *drv_data;
++};
+ 
+-	if (handler == NULL)
+-		ret = -EINVAL;
+-	else
+-		ret = (cmpxchg(&adapter_handler, NULL, handler) ? -EBUSY : 0);
+-	if (!ret)
+-		synchronize_sched();  /* Allow interrupts to complete. */
++static union indicator_t indicators[MAX_ISC+1];
++static struct airq_t *airqs[MAX_ISC+1][NR_AIRQS];
+ 
+-	sprintf (dbf_txt, "ret:%d", ret);
+-	CIO_TRACE_EVENT (4, dbf_txt);
++static int register_airq(struct airq_t *airq, u8 isc)
++{
++	int i;
+ 
+-	return ret;
++	for (i = 0; i < NR_AIRQS; i++)
++		if (!cmpxchg(&airqs[isc][i], NULL, airq))
++			return i;
++	return -ENOMEM;
+ }
+ 
+-int
+-s390_unregister_adapter_interrupt (adapter_int_handler_t handler)
++/**
++ * s390_register_adapter_interrupt() - register adapter interrupt handler
++ * @handler: adapter handler to be registered
++ * @drv_data: driver data passed with each call to the handler
++ * @isc: isc for which the handler should be called
++ *
++ * Returns:
++ *  Pointer to the indicator to be used on success
++ *  ERR_PTR() if registration failed
++ */
++void *s390_register_adapter_interrupt(adapter_int_handler_t handler,
++				      void *drv_data, u8 isc)
+ {
++	struct airq_t *airq;
++	char dbf_txt[16];
+ 	int ret;
+-	char dbf_txt[15];
+-
+-	CIO_TRACE_EVENT (4, "urgaint");
+ 
+-	if (handler == NULL)
+-		ret = -EINVAL;
+-	else {
+-		adapter_handler = NULL;
+-		synchronize_sched();  /* Allow interrupts to complete. */
+-		ret = 0;
++	if (isc > MAX_ISC)
++		return ERR_PTR(-EINVAL);
++	airq = kmalloc(sizeof(struct airq_t), GFP_KERNEL);
++	if (!airq) {
++		ret = -ENOMEM;
++		goto out;
+ 	}
+-	sprintf (dbf_txt, "ret:%d", ret);
+-	CIO_TRACE_EVENT (4, dbf_txt);
++	airq->handler = handler;
++	airq->drv_data = drv_data;
+ 
+-	return ret;
++	ret = register_airq(airq, isc);
++out:
++	snprintf(dbf_txt, sizeof(dbf_txt), "rairq:%d", ret);
++	CIO_TRACE_EVENT(4, dbf_txt);
++	if (ret < 0) {
++		kfree(airq);
++		return ERR_PTR(ret);
++	} else
++		return &indicators[isc].byte[ret];
+ }
++EXPORT_SYMBOL(s390_register_adapter_interrupt);
+ 
+-void
+-do_adapter_IO (void)
++/**
++ * s390_unregister_adapter_interrupt - unregister adapter interrupt handler
++ * @ind: indicator for which the handler is to be unregistered
++ * @isc: interruption subclass
++ */
++void s390_unregister_adapter_interrupt(void *ind, u8 isc)
+ {
+-	CIO_TRACE_EVENT (6, "doaio");
++	struct airq_t *airq;
++	char dbf_txt[16];
++	int i;
+ 
+-	if (adapter_handler)
+-		(*adapter_handler) ();
++	i = (int) ((addr_t) ind) - ((addr_t) &indicators[isc].byte[0]);
++	snprintf(dbf_txt, sizeof(dbf_txt), "urairq:%d", i);
++	CIO_TRACE_EVENT(4, dbf_txt);
++	indicators[isc].byte[i] = 0;
++	airq = xchg(&airqs[isc][i], NULL);
++	/*
++	 * Allow interrupts to complete. This will ensure that the airq handle
++	 * is no longer referenced by any interrupt handler.
++	 */
++	synchronize_sched();
++	kfree(airq);
+ }
++EXPORT_SYMBOL(s390_unregister_adapter_interrupt);
++
++#define INDICATOR_MASK	(0xffUL << ((NR_AIRQS_PER_WORD - 1) * 8))
+ 
+-EXPORT_SYMBOL (s390_register_adapter_interrupt);
+-EXPORT_SYMBOL (s390_unregister_adapter_interrupt);
++void do_adapter_IO(u8 isc)
++{
++	int w;
++	int i;
++	unsigned long word;
++	struct airq_t *airq;
++
++	/*
++	 * Access indicator array in word-sized chunks to minimize storage
++	 * fetch operations.
++	 */
++	for (w = 0; w < NR_AIRQ_WORDS; w++) {
++		word = indicators[isc].word[w];
++		i = w * NR_AIRQS_PER_WORD;
++		/*
++		 * Check bytes within word for active indicators.
++		 */
++		while (word) {
++			if (word & INDICATOR_MASK) {
++				airq = airqs[isc][i];
++				if (likely(airq))
++					airq->handler(&indicators[isc].byte[i],
++						      airq->drv_data);
++				else
++					/*
++					 * Reset ill-behaved indicator.
++					 */
++					indicators[isc].byte[i] = 0;
++			}
++			word <<= 8;
++			i++;
++		}
++	}
++}
+diff --git a/drivers/s390/cio/airq.h b/drivers/s390/cio/airq.h
+deleted file mode 100644
+index 7d6be3f..0000000
+--- a/drivers/s390/cio/airq.h
++++ /dev/null
+@@ -1,10 +0,0 @@
+-#ifndef S390_AINTERRUPT_H
+-#define S390_AINTERRUPT_H
+-
+-typedef	int (*adapter_int_handler_t)(void);
+-
+-extern int s390_register_adapter_interrupt(adapter_int_handler_t handler);
+-extern int s390_unregister_adapter_interrupt(adapter_int_handler_t handler);
+-extern void do_adapter_IO (void);
+-
+-#endif
+diff --git a/drivers/s390/cio/cio.c b/drivers/s390/cio/cio.c
+index 1042baf..c848ea6 100644
+--- a/drivers/s390/cio/cio.c
++++ b/drivers/s390/cio/cio.c
+@@ -21,10 +21,11 @@
+ #include <asm/delay.h>
+ #include <asm/irq.h>
+ #include <asm/chpid.h>
++#include <asm/airq.h>
++#include <asm/isc.h>
+ #include <asm/setup.h>
+ #include <asm/ipl.h>
+ 
+-#include "airq.h"
+ #include "cio.h"
+ #include "css.h"
+ #include "chsc.h"
+@@ -407,7 +408,7 @@ cio_modify (struct subchannel *sch)
+  * Enable subchannel.
+  */
+ int
+-cio_enable_subchannel (struct subchannel *sch, unsigned int isc)
++cio_enable_subchannel(struct subchannel *sch)
+ {
+ 	char dbf_txt[15];
+ 	int ccode;
+@@ -423,7 +424,7 @@ cio_enable_subchannel (struct subchannel *sch, unsigned int isc)
+ 
+ 	for (retry = 5, ret = 0; retry > 0; retry--) {
+ 		sch->schib.pmcw.ena = 1;
+-		sch->schib.pmcw.isc = isc;
++		sch->schib.pmcw.isc = sch->isc;
+ 		sch->schib.pmcw.intparm = (__u32)(unsigned long)sch;
+ 		ret = cio_modify(sch);
+ 		if (ret == -ENODEV)
+@@ -563,10 +564,13 @@ cio_validate_subchannel (struct subchannel *sch, struct subchannel_id schid)
+ 			      sch->schib.pmcw.dev, sch->schid.ssid);
+ 		return -ENODEV;
+ 	}
+-	if (cio_is_console(sch->schid))
++	if (cio_is_console(sch->schid)) {
+ 		sch->opm = 0xff;
+-	else
++		sch->isc = CONSOLE_ISC;
++	} else {
+ 		sch->opm = chp_get_sch_opm(sch);
++		sch->isc = IO_SCH_ISC;
++	}
+ 	sch->lpm = sch->schib.pmcw.pam & sch->opm;
+ 
+ 	CIO_DEBUG(KERN_INFO, 0,
+@@ -578,13 +582,11 @@ cio_validate_subchannel (struct subchannel *sch, struct subchannel_id schid)
+ 
+ 	/*
+ 	 * We now have to initially ...
+-	 *  ... set "interruption subclass"
+ 	 *  ... enable "concurrent sense"
+ 	 *  ... enable "multipath mode" if more than one
+ 	 *	  CHPID is available. This is done regardless
+ 	 *	  whether multiple paths are available for us.
+ 	 */
+-	sch->schib.pmcw.isc = 3;	/* could be smth. else */
+ 	sch->schib.pmcw.csense = 1;	/* concurrent sense */
+ 	sch->schib.pmcw.ena = 0;
+ 	if ((sch->lpm & (sch->lpm - 1)) != 0)
+@@ -625,7 +627,7 @@ do_IRQ (struct pt_regs *regs)
+ 		 */
+ 		if (tpi_info->adapter_IO == 1 &&
+ 		    tpi_info->int_type == IO_INTERRUPT_TYPE) {
+-			do_adapter_IO();
++			do_adapter_IO(tpi_info->isc);
+ 			continue;
+ 		}
+ 		sch = (struct subchannel *)(unsigned long)tpi_info->intparm;
+@@ -673,9 +675,9 @@ wait_cons_dev (void)
+ 	if (!console_subchannel_in_use)
+ 		return;
+ 
+-	/* disable all but isc 7 (console device) */
++	/* disable all but the console isc */
+ 	__ctl_store (save_cr6, 6, 6);
+-	cr6 = 0x01000000;
++	cr6 = 1UL << (31 - CONSOLE_ISC);
+ 	__ctl_load (cr6, 6, 6);
+ 
+ 	do {
+@@ -756,14 +758,15 @@ cio_probe_console(void)
+ 	}
+ 
+ 	/*
+-	 * enable console I/O-interrupt subclass 7
++	 * enable console I/O-interrupt subclass
+ 	 */
+-	ctl_set_bit(6, 24);
+-	console_subchannel.schib.pmcw.isc = 7;
++	isc_register(CONSOLE_ISC);
++	console_subchannel.schib.pmcw.isc = CONSOLE_ISC;
+ 	console_subchannel.schib.pmcw.intparm =
+ 		(__u32)(unsigned long)&console_subchannel;
+ 	ret = cio_modify(&console_subchannel);
+ 	if (ret) {
++		isc_unregister(CONSOLE_ISC);
+ 		console_subchannel_in_use = 0;
+ 		return ERR_PTR(ret);
+ 	}
+@@ -775,7 +778,7 @@ cio_release_console(void)
+ {
+ 	console_subchannel.schib.pmcw.intparm = 0;
+ 	cio_modify(&console_subchannel);
+-	ctl_clear_bit(6, 24);
++	isc_unregister(CONSOLE_ISC);
+ 	console_subchannel_in_use = 0;
+ }
+ 
+diff --git a/drivers/s390/cio/cio.h b/drivers/s390/cio/cio.h
+index f8c7f50..064dc52 100644
+--- a/drivers/s390/cio/cio.h
++++ b/drivers/s390/cio/cio.h
+@@ -2,6 +2,7 @@
+ #define S390_CIO_H
+ 
+ #include "schid.h"
++#include <asm/cio.h>
+ #include <linux/mutex.h>
+ #include <linux/device.h>
+ 
+@@ -107,6 +108,7 @@ struct subchannel {
+ 	__u8 lpm;		/* logical path mask */
+ 	__u8 opm;               /* operational path mask */
+ 	struct schib schib;	/* subchannel information block */
++	int isc; /* desired interruption subclass */
+ 	struct orb orb;		/* operation request block */
+ 	struct ccw1 sense_ccw;	/* static ccw for sense command */
+ 	struct ssd_info ssd_info;	/* subchannel description */
+@@ -120,7 +122,7 @@ struct subchannel {
+ #define to_subchannel(n) container_of(n, struct subchannel, dev)
+ 
+ extern int cio_validate_subchannel (struct subchannel *, struct subchannel_id);
+-extern int cio_enable_subchannel (struct subchannel *, unsigned int);
++extern int cio_enable_subchannel (struct subchannel *);
+ extern int cio_disable_subchannel (struct subchannel *);
+ extern int cio_cancel (struct subchannel *);
+ extern int cio_clear (struct subchannel *);
+@@ -133,6 +135,8 @@ extern int cio_set_options (struct subchannel *, int);
+ extern int cio_get_options (struct subchannel *);
+ extern int cio_modify (struct subchannel *);
+ 
++void do_adapter_IO(u8 isc);
++
+ /* Use with care. */
+ #ifdef CONFIG_CCW_CONSOLE
+ extern struct subchannel *cio_probe_console(void);
+diff --git a/drivers/s390/cio/css.c b/drivers/s390/cio/css.c
+index 436494e..3dc7b63 100644
+--- a/drivers/s390/cio/css.c
++++ b/drivers/s390/cio/css.c
+@@ -14,6 +14,7 @@
+ #include <linux/errno.h>
+ #include <linux/list.h>
+ #include <linux/reboot.h>
++#include <asm/isc.h>
+ 
+ #include "css.h"
+ #include "cio.h"
+@@ -782,7 +783,8 @@ init_channel_subsystem (void)
+ 		goto out_file;
+ 	css_init_done = 1;
+ 
+-	ctl_set_bit(6, 28);
++	/* Enable default isc for I/O subchannels. */
++	isc_register(IO_SCH_ISC);
+ 
+ 	for_each_subchannel(__init_channel_subsystem, NULL);
+ 	return 0;
+diff --git a/drivers/s390/cio/device_fsm.c b/drivers/s390/cio/device_fsm.c
+index 7a9bac0..4531340 100644
+--- a/drivers/s390/cio/device_fsm.c
++++ b/drivers/s390/cio/device_fsm.c
+@@ -580,7 +580,7 @@ ccw_device_recognition(struct ccw_device *cdev)
+ 	    (cdev->private->state != DEV_STATE_BOXED))
+ 		return -EINVAL;
+ 	sch = to_subchannel(cdev->dev.parent);
+-	ret = cio_enable_subchannel(sch, sch->schib.pmcw.isc);
++	ret = cio_enable_subchannel(sch);
+ 	if (ret != 0)
+ 		/* Couldn't enable the subchannel for i/o. Sick device. */
+ 		return ret;
+@@ -690,7 +690,7 @@ ccw_device_online(struct ccw_device *cdev)
+ 	sch = to_subchannel(cdev->dev.parent);
+ 	if (css_init_done && !get_device(&cdev->dev))
+ 		return -ENODEV;
+-	ret = cio_enable_subchannel(sch, sch->schib.pmcw.isc);
++	ret = cio_enable_subchannel(sch);
+ 	if (ret != 0) {
+ 		/* Couldn't enable the subchannel for i/o. Sick device. */
+ 		if (ret == -ENODEV)
+@@ -1115,7 +1115,7 @@ ccw_device_start_id(struct ccw_device *cdev, enum dev_event dev_event)
+ 	struct subchannel *sch;
+ 
+ 	sch = to_subchannel(cdev->dev.parent);
+-	if (cio_enable_subchannel(sch, sch->schib.pmcw.isc) != 0)
++	if (cio_enable_subchannel(sch) != 0)
+ 		/* Couldn't enable the subchannel for i/o. Sick device. */
+ 		return;
+ 
+@@ -1153,7 +1153,6 @@ device_trigger_reprobe(struct subchannel *sch)
+ 	 */
+ 	sch->lpm = sch->schib.pmcw.pam & sch->opm;
+ 	/* Re-set some bits in the pmcw that were lost. */
+-	sch->schib.pmcw.isc = 3;
+ 	sch->schib.pmcw.csense = 1;
+ 	sch->schib.pmcw.ena = 0;
+ 	if ((sch->lpm & (sch->lpm - 1)) != 0)
+diff --git a/drivers/s390/cio/device_ops.c b/drivers/s390/cio/device_ops.c
+index 61fc5da..626fb59 100644
+--- a/drivers/s390/cio/device_ops.c
++++ b/drivers/s390/cio/device_ops.c
+@@ -542,7 +542,7 @@ ccw_device_stlck(struct ccw_device *cdev)
+ 		return -ENOMEM;
+ 	}
+ 	spin_lock_irqsave(&sch->lock, flags);
+-	ret = cio_enable_subchannel(sch, 3);
++	ret = cio_enable_subchannel(sch);
+ 	if (ret)
+ 		goto out_unlock;
+ 	/*
+diff --git a/drivers/s390/cio/isc.c b/drivers/s390/cio/isc.c
+new file mode 100644
+index 0000000..c592087
+--- /dev/null
++++ b/drivers/s390/cio/isc.c
+@@ -0,0 +1,68 @@
++/*
++ * Functions for registration of I/O interruption subclasses on s390.
++ *
++ * Copyright IBM Corp. 2008
++ * Authors: Sebastian Ott <sebott@linux.vnet.ibm.com>
++ */
++
++#include <linux/spinlock.h>
++#include <linux/module.h>
++#include <asm/isc.h>
++
++static unsigned int isc_refs[MAX_ISC + 1];
++static DEFINE_SPINLOCK(isc_ref_lock);
++
++
++/**
++ * isc_register - register an I/O interruption subclass.
++ * @isc: I/O interruption subclass to register
++ *
++ * The number of users for @isc is increased. If this is the first user to
++ * register @isc, the corresponding I/O interruption subclass mask is enabled.
++ *
++ * Context:
++ *   This function must not be called in interrupt context.
++ */
++void isc_register(unsigned int isc)
++{
++	if (isc > MAX_ISC) {
++		WARN_ON(1);
++		return;
++	}
++
++	spin_lock(&isc_ref_lock);
++	if (isc_refs[isc] == 0)
++		ctl_set_bit(6, 31 - isc);
++	isc_refs[isc]++;
++	spin_unlock(&isc_ref_lock);
++}
++EXPORT_SYMBOL_GPL(isc_register);
++
++/**
++ * isc_unregister - unregister an I/O interruption subclass.
++ * @isc: I/O interruption subclass to unregister
++ *
++ * The number of users for @isc is decreased. If this is the last user to
++ * unregister @isc, the corresponding I/O interruption subclass mask is
++ * disabled.
++ * Note: This function must not be called if isc_register() hasn't been called
++ * before by the driver for @isc.
++ *
++ * Context:
++ *   This function must not be called in interrupt context.
++ */
++void isc_unregister(unsigned int isc)
++{
++	spin_lock(&isc_ref_lock);
++	/* check for misuse */
++	if (isc > MAX_ISC || isc_refs[isc] == 0) {
++		WARN_ON(1);
++		goto out_unlock;
++	}
++	if (isc_refs[isc] == 1)
++		ctl_clear_bit(6, 31 - isc);
++	isc_refs[isc]--;
++out_unlock:
++	spin_unlock(&isc_ref_lock);
++}
++EXPORT_SYMBOL_GPL(isc_unregister);
+diff --git a/drivers/s390/cio/qdio.c b/drivers/s390/cio/qdio.c
+index 6060304..6664038 100644
+--- a/drivers/s390/cio/qdio.c
++++ b/drivers/s390/cio/qdio.c
+@@ -47,11 +47,11 @@
+ 
+ #include <asm/debug.h>
+ #include <asm/qdio.h>
++#include <asm/airq.h>
+ 
+ #include "cio.h"
+ #include "css.h"
+ #include "device.h"
+-#include "airq.h"
+ #include "qdio.h"
+ #include "ioasm.h"
+ #include "chsc.h"
+@@ -95,7 +95,7 @@ static debug_info_t *qdio_dbf_slsb_in;
+ static volatile struct qdio_q *tiq_list=NULL; /* volatile as it could change
+ 						 during a while loop */
+ static DEFINE_SPINLOCK(ttiq_list_lock);
+-static int register_thinint_result;
++static void *tiqdio_ind;
+ static void tiqdio_tl(unsigned long);
+ static DECLARE_TASKLET(tiqdio_tasklet,tiqdio_tl,0);
+ 
+@@ -396,7 +396,7 @@ qdio_get_indicator(void)
+ {
+ 	int i;
+ 
+-	for (i=1;i<INDICATORS_PER_CACHELINE;i++)
++	for (i = 0; i < INDICATORS_PER_CACHELINE; i++)
+ 		if (!indicator_used[i]) {
+ 			indicator_used[i]=1;
+ 			return indicators+i;
+@@ -1936,8 +1936,7 @@ qdio_fill_thresholds(struct qdio_irq *irq_ptr,
+ 	}
+ }
+ 
+-static int
+-tiqdio_thinint_handler(void)
++static void tiqdio_thinint_handler(void *ind, void *drv_data)
+ {
+ 	QDIO_DBF_TEXT4(0,trace,"thin_int");
+ 
+@@ -1950,7 +1949,6 @@ tiqdio_thinint_handler(void)
+ 		tiqdio_clear_global_summary();
+ 
+ 	tiqdio_inbound_checks();
+-	return 0;
+ }
+ 
+ static void
+@@ -2463,7 +2461,7 @@ tiqdio_set_subchannel_ind(struct qdio_irq *irq_ptr, int reset_to_zero)
+ 		real_addr_dev_st_chg_ind=0;
+ 	} else {
+ 		real_addr_local_summary_bit=
+-			virt_to_phys((volatile void *)indicators);
++			virt_to_phys((volatile void *)tiqdio_ind);
+ 		real_addr_dev_st_chg_ind=
+ 			virt_to_phys((volatile void *)irq_ptr->dev_st_chg_ind);
+ 	}
+@@ -3743,23 +3741,27 @@ static void
+ tiqdio_register_thinints(void)
+ {
+ 	char dbf_text[20];
+-	register_thinint_result=
+-		s390_register_adapter_interrupt(&tiqdio_thinint_handler);
+-	if (register_thinint_result) {
+-		sprintf(dbf_text,"regthn%x",(register_thinint_result&0xff));
++
++	tiqdio_ind =
++		s390_register_adapter_interrupt(&tiqdio_thinint_handler, NULL,
++						TIQDIO_THININT_ISC);
++	if (IS_ERR(tiqdio_ind)) {
++		sprintf(dbf_text, "regthn%lx", PTR_ERR(tiqdio_ind));
+ 		QDIO_DBF_TEXT0(0,setup,dbf_text);
+ 		QDIO_PRINT_ERR("failed to register adapter handler " \
+-			       "(rc=%i).\nAdapter interrupts might " \
++			       "(rc=%li).\nAdapter interrupts might " \
+ 			       "not work. Continuing.\n",
+-			       register_thinint_result);
++			       PTR_ERR(tiqdio_ind));
++		tiqdio_ind = NULL;
+ 	}
+ }
+ 
+ static void
+ tiqdio_unregister_thinints(void)
+ {
+-	if (!register_thinint_result)
+-		s390_unregister_adapter_interrupt(&tiqdio_thinint_handler);
++	if (tiqdio_ind)
++		s390_unregister_adapter_interrupt(tiqdio_ind,
++						  TIQDIO_THININT_ISC);
+ }
+ 
+ static int
+@@ -3771,8 +3773,8 @@ qdio_get_qdio_memory(void)
+ 	for (i=1;i<INDICATORS_PER_CACHELINE;i++)
+ 		indicator_used[i]=0;
+ 	indicators = kzalloc(sizeof(__u32)*(INDICATORS_PER_CACHELINE),
+-				   GFP_KERNEL);
+-       	if (!indicators)
++			     GFP_KERNEL);
++	if (!indicators)
+ 		return -ENOMEM;
+ 	return 0;
+ }
+@@ -3910,6 +3912,7 @@ init_QDIO(void)
+ 					    qdio_mempool_alloc,
+ 					    qdio_mempool_free, NULL);
+ 
++	isc_register(QDIO_AIRQ_ISC);
+ 	if (tiqdio_check_chsc_availability())
+ 		QDIO_PRINT_ERR("Not all CHSCs supported. Continuing.\n");
+ 
+@@ -3922,6 +3925,7 @@ static void __exit
+ cleanup_QDIO(void)
+ {
+ 	tiqdio_unregister_thinints();
++	isc_unregister(QDIO_AIRQ_ISC);
+ 	qdio_remove_procfs_entry();
+ 	qdio_release_qdio_memory();
+ 	qdio_unregister_dbf_views();
+diff --git a/drivers/s390/cio/qdio.h b/drivers/s390/cio/qdio.h
+index 94b0ecb..0e14feb 100644
+--- a/drivers/s390/cio/qdio.h
++++ b/drivers/s390/cio/qdio.h
+@@ -2,6 +2,7 @@
+ #define _CIO_QDIO_H
+ 
+ #include <asm/page.h>
++#include <asm/isc.h>
+ 
+ #include "schid.h"
+ #include "chsc.h"
+@@ -27,7 +28,7 @@
+  */
+ #define IQDIO_FILL_LEVEL_TO_POLL 65
+ 
+-#define TIQDIO_THININT_ISC 3
++#define TIQDIO_THININT_ISC QDIO_AIRQ_ISC
+ #define TIQDIO_DELAY_TARGET 0
+ #define QDIO_BUSY_BIT_PATIENCE 100 /* in microsecs */
+ #define QDIO_BUSY_BIT_GIVE_UP 10000000 /* 10 seconds */
+diff --git a/drivers/s390/crypto/ap_bus.c b/drivers/s390/crypto/ap_bus.c
+index 73efe9e..cc7b3db 100644
+--- a/drivers/s390/crypto/ap_bus.c
++++ b/drivers/s390/crypto/ap_bus.c
+@@ -5,6 +5,7 @@
+  * Author(s): Cornelia Huck <cornelia.huck@de.ibm.com>
+  *	      Martin Schwidefsky <schwidefsky@de.ibm.com>
+  *	      Ralph Wuerthner <rwuerthn@de.ibm.com>
++ *	      Felix Beck <felix.beck@de.ibm.com>
+  *
+  * Adjunct processor bus.
+  *
+@@ -33,6 +34,10 @@
+ #include <linux/kthread.h>
+ #include <linux/mutex.h>
+ #include <asm/s390_rdev.h>
++#include <asm/airq.h>
++#include <asm/atomic.h>
++#include <asm/system.h>
++#include <asm/isc.h>
+ 
+ #include "ap_bus.h"
+ 
+@@ -82,6 +87,7 @@ static atomic_t ap_poll_requests = ATOMIC_INIT(0);
+ static DECLARE_WAIT_QUEUE_HEAD(ap_poll_wait);
+ static struct task_struct *ap_poll_kthread = NULL;
+ static DEFINE_MUTEX(ap_poll_thread_mutex);
++static void *ap_interrupt_indicator;
+ 
+ /**
+  * Test if ap instructions are available.
+@@ -114,6 +120,57 @@ static inline int ap_instructions_available(void)
+ }
+ 
+ /**
++ * ap_using_interrupts() - Returns non-zero if interrupt support is
++ * available.
++ */
++static inline int ap_using_interrupts(void)
++{
++	return ap_interrupt_indicator != NULL;
++}
++
++/**
++ * ap_interrupts_available(): Test if AP interrupts are available.
++ *
++ * Returns 1 if AP interrupts are available.
++ */
++static int ap_interrupts_available(void)
++{
++	unsigned long long facility_bits[2];
++
++	if (stfle(facility_bits, 2) <= 1)
++		return 0;
++	if (!(facility_bits[0] & (1ULL << 61)) ||
++	    !(facility_bits[1] & (1ULL << 62)))
++		return 0;
++	return 1;
++}
++
++#ifdef CONFIG_64BIT
++/**
++ * ap_queue_interruption_control(): Enable interruption for a specific AP.
++ * @qid: The AP queue number
++ * @ind: The notification indicator byte
++ *
++ * Returns AP queue status.
++ */
++static inline struct ap_queue_status
++ap_queue_interruption_control(ap_qid_t qid, void *ind)
++{
++	register unsigned long reg0 asm ("0") = qid | 0x03000000UL;
++	register unsigned long reg1_in asm ("1") = 0x0000800000000000UL |
++						   AP_ISC;
++	register struct ap_queue_status reg1_out asm ("1");
++	register void *reg2 asm ("2") = ind;
++	asm volatile(
++		".long 0xb2af0000"	      /* PQAP(RAPQ) */
++		: "+d" (reg0), "+d" (reg1_in), "=d" (reg1_out), "+d" (reg2)
++		:
++		: "cc");
++	return reg1_out;
++}
++#endif
++
++/**
+  * Test adjunct processor queue.
+  * @qid: the ap queue number
+  * @queue_depth: pointer to queue depth value
+@@ -153,6 +210,15 @@ static inline struct ap_queue_status ap_reset_queue(ap_qid_t qid)
+ 	return reg1;
+ }
+ 
++static void ap_reset_domain(void)
++{
++	int i;
++
++	if (ap_domain_index != -1)
++		for (i = 0; i < AP_DEVICES; i++)
++			ap_reset_queue(AP_MKQID(i, ap_domain_index));
++}
++
+ /**
+  * Send message to adjunct processor queue.
+  * @qid: the ap queue number
+@@ -266,6 +332,56 @@ int ap_recv(ap_qid_t qid, unsigned long long *psmid, void *msg, size_t length)
+ EXPORT_SYMBOL(ap_recv);
+ 
+ /**
++ * ap_queue_enable_interruption(): Enable interruption on an AP.
++ * @qid: The AP queue number
++ * @ind: the notification indicator byte
++ *
++ * Enables interruption on AP queue via ap_queue_interruption_control(). Based
++ * on the return value it waits a while and tests the AP queue if interrupts
++ * have been switched on using ap_test_queue().
++ */
++static int ap_queue_enable_interruption(ap_qid_t qid, void *ind)
++{
++#ifdef CONFIG_64BIT
++	struct ap_queue_status status;
++	int t_depth, t_device_type, rc, i;
++
++	rc = -EBUSY;
++	status = ap_queue_interruption_control(qid, ind);
++
++	for (i = 0; i < AP_MAX_RESET; i++) {
++		switch (status.response_code) {
++		case AP_RESPONSE_NORMAL:
++			if (status.int_enabled)
++				return 0;
++			break;
++		case AP_RESPONSE_RESET_IN_PROGRESS:
++		case AP_RESPONSE_BUSY:
++			break;
++		case AP_RESPONSE_Q_NOT_AVAIL:
++		case AP_RESPONSE_DECONFIGURED:
++		case AP_RESPONSE_CHECKSTOPPED:
++		case AP_RESPONSE_INVALID_ADDRESS:
++			return -ENODEV;
++		case AP_RESPONSE_OTHERWISE_CHANGED:
++			if (status.int_enabled)
++				return 0;
++			break;
++		default:
++			break;
++		}
++		if (i < AP_MAX_RESET - 1) {
++			udelay(5);
++			status = ap_test_queue(qid, &t_depth, &t_device_type);
++		}
++	}
++	return rc;
++#else
++	return -EINVAL;
++#endif
++}
++
++/**
+  * Check if an AP queue is available. The test is repeated for
+  * AP_MAX_RESET times.
+  * @qid: the ap queue number
+@@ -297,16 +413,30 @@ static int ap_query_queue(ap_qid_t qid, int *queue_depth, int *device_type)
+ 		case AP_RESPONSE_CHECKSTOPPED:
+ 			rc = -ENODEV;
+ 			break;
++		case AP_RESPONSE_INVALID_ADDRESS:
++			rc = -ENODEV;
++			break;
++		case AP_RESPONSE_OTHERWISE_CHANGED:
+ 		case AP_RESPONSE_BUSY:
+ 			break;
+ 		default:
+ 			BUG();
+ 		}
+-		if (rc != -EBUSY)
++		if (rc != -ENODEV && rc != -EBUSY)
+ 			break;
+ 		if (i < AP_MAX_RESET - 1)
+ 			udelay(5);
+ 	}
++	if (rc == 0 && ap_using_interrupts()) {
++	rc = ap_queue_enable_interruption(qid, ap_interrupt_indicator);
++	/* If interruption mode is supported by the machine,
++	* but an AP can not be enabled for interruption then
++	* the AP will be discarded.    */
++	if (rc)
++		printk(KERN_WARNING "Could not register adapter "
++		       "interrupts for AP %d.\n ", AP_QID_DEVICE(qid));
++	}
++
+ 	return rc;
+ }
+ 
+@@ -562,6 +692,13 @@ static ssize_t ap_config_time_store(struct bus_type *bus,
+ 
+ static BUS_ATTR(config_time, 0644, ap_config_time_show, ap_config_time_store);
+ 
++static ssize_t ap_interrupts_show(struct bus_type *bus, char *buf)
++{
++	return snprintf(buf, PAGE_SIZE, "%d\n", ap_using_interrupts() ? 1 : 0);
++}
++
++static BUS_ATTR(ap_interrupts, 0444, ap_interrupts_show, NULL);
++
+ static ssize_t ap_poll_thread_show(struct bus_type *bus, char *buf)
+ {
+ 	return snprintf(buf, PAGE_SIZE, "%d\n", ap_poll_kthread ? 1 : 0);
+@@ -590,6 +727,7 @@ static struct bus_attribute *const ap_bus_attrs[] = {
+ 	&bus_attr_ap_domain,
+ 	&bus_attr_config_time,
+ 	&bus_attr_poll_thread,
++	&bus_attr_ap_interrupts,
+ 	NULL
+ };
+ 
+@@ -727,6 +865,13 @@ out:
+ 	return rc;
+ }
+ 
++static void ap_interrupt_handler(void *unused1, void *unused2)
++{
++	tasklet_schedule(&ap_tasklet);
++}
++
++
++
+ /**
+  * Scan the ap bus for new devices.
+  */
+@@ -822,6 +967,8 @@ ap_config_timeout(unsigned long ptr)
+  */
+ static inline void ap_schedule_poll_timer(void)
+ {
++	if (ap_using_interrupts())
++		return;
+ 	if (timer_pending(&ap_poll_timer))
+ 		return;
+ 	mod_timer(&ap_poll_timer, jiffies + AP_POLL_TIME);
+@@ -1063,7 +1210,8 @@ static int __ap_poll_all(struct device *dev, void *data)
+ static void ap_poll_all(unsigned long dummy)
+ {
+ 	unsigned long flags;
+-
++	if (ap_using_interrupts())
++		xchg((u8 *)ap_interrupt_indicator, 0);
+ 	do {
+ 		flags = 0;
+ 		bus_for_each_dev(&ap_bus_type, NULL, &flags, __ap_poll_all);
+@@ -1114,7 +1262,8 @@ static int ap_poll_thread(void *data)
+ static int ap_poll_thread_start(void)
+ {
+ 	int rc;
+-
++	if (ap_using_interrupts())
++		return 0;
+ 	mutex_lock(&ap_poll_thread_mutex);
+ 	if (!ap_poll_kthread) {
+ 		ap_poll_kthread = kthread_run(ap_poll_thread, NULL, "appoll");
+@@ -1155,6 +1304,17 @@ int __init ap_module_init(void)
+ 		return -ENODEV;
+ 	}
+ 
++	 if (ap_interrupts_available()) {
++		isc_register(AP_ISC);
++		ap_interrupt_indicator = s390_register_adapter_interrupt(
++			&ap_interrupt_handler, NULL, AP_ISC);
++		if (IS_ERR(ap_interrupt_indicator)) {
++			ap_interrupt_indicator = NULL;
++			isc_unregister(AP_ISC);
++		}
++	}
++
++
+ 	/* Create /sys/bus/ap. */
+ 	rc = bus_register(&ap_bus_type);
+ 	if (rc)
+@@ -1207,6 +1367,11 @@ out_bus:
+ 		bus_remove_file(&ap_bus_type, ap_bus_attrs[i]);
+ 	bus_unregister(&ap_bus_type);
+ out:
++	if (ap_using_interrupts()) {
++		s390_unregister_adapter_interrupt(ap_interrupt_indicator,
++						  AP_ISC);
++		isc_unregister(AP_ISC);
++	}
+ 	return rc;
+ }
+ 
+@@ -1223,10 +1388,12 @@ void ap_module_exit(void)
+ 	int i;
+ 	struct device *dev;
+ 
++	ap_reset_domain();
+ 	ap_poll_thread_stop();
+ 	del_timer_sync(&ap_config_timer);
+ 	del_timer_sync(&ap_poll_timer);
+ 	destroy_workqueue(ap_work_queue);
++	tasklet_kill(&ap_tasklet);
+ 	s390_root_dev_unregister(ap_root_device);
+ 	while ((dev = bus_find_device(&ap_bus_type, NULL, NULL,
+ 		    __ap_match_all)))
+@@ -1237,6 +1404,11 @@ void ap_module_exit(void)
+ 	for (i = 0; ap_bus_attrs[i]; i++)
+ 		bus_remove_file(&ap_bus_type, ap_bus_attrs[i]);
+ 	bus_unregister(&ap_bus_type);
++	if (ap_using_interrupts()) {
++		s390_unregister_adapter_interrupt(ap_interrupt_indicator,
++						  AP_ISC);
++		isc_unregister(AP_ISC);
++	}
+ }
+ 
+ #ifndef CONFIG_ZCRYPT_MONOLITHIC
+diff --git a/drivers/s390/crypto/ap_bus.h b/drivers/s390/crypto/ap_bus.h
+index 83b69c0..4e59707 100644
+--- a/drivers/s390/crypto/ap_bus.h
++++ b/drivers/s390/crypto/ap_bus.h
+@@ -5,6 +5,7 @@
+  * Author(s): Cornelia Huck <cornelia.huck@de.ibm.com>
+  *	      Martin Schwidefsky <schwidefsky@de.ibm.com>
+  *	      Ralph Wuerthner <rwuerthn@de.ibm.com>
++ *	      Felix Beck <felix.beck@de.ibm.com>
+  *
+  * Adjunct processor bus header file.
+  *
+@@ -49,6 +50,15 @@ typedef unsigned int ap_qid_t;
+ #define AP_QID_QUEUE(_qid) ((_qid) & 15)
+ 
+ /**
++ * structy ap_queue_status - Holds the AP queue status.
++ * @queue_empty: Shows if queue is empty
++ * @replies_waiting: Waiting replies
++ * @queue_full: Is 1 if the queue is full
++ * @pad: A 4 bit pad
++ * @int_enabled: Shows if interrupts are enabled for the AP
++ * @response_conde: Holds the 8 bit response code
++ * @pad2: A 16 bit pad
++ *
+  * The ap queue status word is returned by all three AP functions
+  * (PQAP, NQAP and DQAP).  There's a set of flags in the first
+  * byte, followed by a 1 byte response code.
+@@ -57,7 +67,8 @@ struct ap_queue_status {
+ 	unsigned int queue_empty	: 1;
+ 	unsigned int replies_waiting	: 1;
+ 	unsigned int queue_full		: 1;
+-	unsigned int pad1		: 5;
++	unsigned int pad1		: 4;
++	unsigned int int_enabled 	: 1;
+ 	unsigned int response_code	: 8;
+ 	unsigned int pad2		: 16;
+ };
+@@ -68,13 +79,15 @@ struct ap_queue_status {
+ #define AP_RESPONSE_DECONFIGURED	0x03
+ #define AP_RESPONSE_CHECKSTOPPED	0x04
+ #define AP_RESPONSE_BUSY		0x05
++#define AP_RESPONSE_INVALID_ADDRESS	0x06
++#define AP_RESPONSE_OTHERWISE_CHANGED	0x07
+ #define AP_RESPONSE_Q_FULL		0x10
+ #define AP_RESPONSE_NO_PENDING_REPLY	0x10
+ #define AP_RESPONSE_INDEX_TOO_BIG	0x11
+ #define AP_RESPONSE_NO_FIRST_PART	0x13
+ #define AP_RESPONSE_MESSAGE_TOO_BIG	0x15
+ 
+-/**
++/*
+  * Known device types
+  */
+ #define AP_DEVICE_TYPE_PCICC	3
+diff --git a/include/asm-s390/airq.h b/include/asm-s390/airq.h
+new file mode 100644
+index 0000000..1ac80d6
+--- /dev/null
++++ b/include/asm-s390/airq.h
+@@ -0,0 +1,19 @@
++/*
++ *  include/asm-s390/airq.h
++ *
++ *    Copyright IBM Corp. 2002,2007
++ *    Author(s): Ingo Adlung <adlung@de.ibm.com>
++ *		 Cornelia Huck <cornelia.huck@de.ibm.com>
++ *		 Arnd Bergmann <arndb@de.ibm.com>
++ *		 Peter Oberparleiter <peter.oberparleiter@de.ibm.com>
++ */
++
++#ifndef _ASM_S390_AIRQ_H
++#define _ASM_S390_AIRQ_H
++
++typedef void (*adapter_int_handler_t)(void *, void *);
++
++void *s390_register_adapter_interrupt(adapter_int_handler_t, void *, u8);
++void s390_unregister_adapter_interrupt(void *, u8);
++
++#endif /* _ASM_S390_AIRQ_H */
+diff --git a/include/asm-s390/isc.h b/include/asm-s390/isc.h
+new file mode 100644
+index 0000000..9f88282
+--- /dev/null
++++ b/include/asm-s390/isc.h
+@@ -0,0 +1,25 @@
++#ifndef _ASM_S390_ISC_H
++#define _ASM_S390_ISC_H
++
++#include <linux/types.h>
++
++/*
++ * I/O interruption subclasses used by drivers.
++ * Please add all used iscs here so that it is possible to distribute
++ * isc usage between drivers.
++ * Reminder: 0 is highest priority, 7 lowest.
++ */
++#define MAX_ISC 7
++
++/* Regular I/O interrupts. */
++#define IO_SCH_ISC 3		   /* regular I/O subchannels */
++#define CONSOLE_ISC 1		  /* console I/O subchannel */
++/* Adapter interrupts. */
++#define QDIO_AIRQ_ISC IO_SCH_ISC       /* I/O subchannel in qdio mode */
++#define AP_ISC 6
++
++/* Functions for registration of I/O interruption subclasses */
++void isc_register(unsigned int isc);
++void isc_unregister(unsigned int isc);
++
++#endif /* _ASM_S390_ISC_H */
+diff --git a/include/asm-s390/system.h b/include/asm-s390/system.h
+index f31d2d2..e029f17 100644
+--- a/include/asm-s390/system.h
++++ b/include/asm-s390/system.h
+@@ -12,10 +12,12 @@
+ #define __ASM_SYSTEM_H
+ 
+ #include <linux/kernel.h>
++#include <linux/errno.h>
+ #include <asm/types.h>
+ #include <asm/ptrace.h>
+ #include <asm/setup.h>
+ #include <asm/processor.h>
++#include <asm/lowcore.h>
+ 
+ #ifdef __KERNEL__
+ 
+@@ -434,7 +436,33 @@ __set_psw_mask(unsigned long mask)
+ #define local_mcck_enable()  __set_psw_mask(PSW_KERNEL_BITS)
+ #define local_mcck_disable() __set_psw_mask(PSW_KERNEL_BITS & ~PSW_MASK_MCHECK)
+ 
+-int stfle(unsigned long long *list, int doublewords);
++
++static inline unsigned int stfl(void)
++{
++	asm volatile(
++		"	.insn	s,0xb2b10000,0(0)\n" /* stfl */
++		"0:\n"
++		EX_TABLE(0b, 0b));
++	return S390_lowcore.stfl_fac_list;
++}
++
++static inline int __stfle(unsigned long long *list, int doublewords)
++{
++	typedef struct { unsigned long long _[doublewords]; } addrtype;
++	register unsigned long __nr asm("0") = doublewords - 1;
++
++	asm volatile(".insn s,0xb2b00000,%0" /* stfle */
++		     : "=m" (*(addrtype *) list), "+d" (__nr) : : "cc");
++	return __nr + 1;
++}
++
++static inline int stfle(unsigned long long *list, int doublewords)
++{
++	if (!(stfl() & (1UL << 24)))
++		return -EOPNOTSUPP;
++	return __stfle(list, doublewords);
++}
++
+ 
+ #ifdef CONFIG_SMP
+ 

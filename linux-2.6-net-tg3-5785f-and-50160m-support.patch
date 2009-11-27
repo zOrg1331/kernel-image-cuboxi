@@ -1,0 +1,90 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Wed, 1 Jul 2009 22:14:26 -0400
+Subject: [net] tg3: 5785F and 50160M support
+Message-id: 20090702021426.GU20245@gospo.rdu.redhat.com
+O-Subject: [RHEL5.4 PATCH] tg3: 5785F and 50160M support
+Bugzilla: 506205
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: John W. Linville <linville@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+This is a small patch that does three things:
+
+ - add support for a specific 5785 PCI-ID that will only be used for
+   10/100 parts
+ - remove flow control restrictions for 10/100 parts
+ - add support for the BCM50160M PHY ID
+
+Matt Carlson has this support queued up for his push for 2.6.32, so no
+code that enables any of this functionality currently appears upstream.
+
+This patch came from Matt Carlson at Broadcom and it has been verified
+by AMD.
+
+This will resolve RHBZ 506205.
+
+diff --git a/drivers/net/tg3.c b/drivers/net/tg3.c
+index 6310674..f2e71e5 100644
+--- a/drivers/net/tg3.c
++++ b/drivers/net/tg3.c
+@@ -213,6 +213,7 @@ static struct pci_device_id tg3_pci_tbl[] = {
+ 	{PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, TG3PCI_DEVICE_TIGON3_5761S)},
+ 	{PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, TG3PCI_DEVICE_TIGON3_5761SE)},
+ 	{PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, PCI_DEVICE_ID_TIGON3_5785)},
++	{PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, TG3PCI_DEVICE_TIGON3_5785_F)},
+ 	{PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, TG3PCI_DEVICE_TIGON3_57780)},
+ 	{PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, TG3PCI_DEVICE_TIGON3_57760)},
+ 	{PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, TG3PCI_DEVICE_TIGON3_57790)},
+@@ -9082,13 +9083,6 @@ static int tg3_set_pauseparam(struct net_device *dev, struct ethtool_pauseparam
+ 	struct tg3 *tp = netdev_priv(dev);
+ 	int irq_sync = 0, err = 0;
+ 
+-	/* The 5906 only does symmetric flow control */
+-	if ((tp->tg3_flags3 & TG3_FLG3_PHY_IS_FET) &&
+-	    epause->autoneg &&
+-	    ((epause->rx_pause && !epause->tx_pause) ||
+-	     (!epause->rx_pause && epause->tx_pause)))
+-		    return -EINVAL;
+-
+ 	if (netif_running(dev)) {
+ 		tg3_netif_stop(tp);
+ 		irq_sync = 1;
+@@ -13085,6 +13079,7 @@ static char * __devinit tg3_phy_string(struct tg3 *tp)
+ 	case PHY_ID_BCM5761:	return "5761";
+ 	case PHY_ID_BCM57780:   return "57780";
+ 	case PHY_ID_BCM50610:   return "50610";
++	case PHY_ID_BCM50610M:  return "50610M";
+ 	case PHY_ID_BCMAC131:   return "AC131";
+ 	case PHY_ID_BCM8002:	return "8002/serdes";
+ 	case 0:			return "serdes";
+diff --git a/drivers/net/tg3.h b/drivers/net/tg3.h
+index 7ff6dcc..ed4d1bf 100644
+--- a/drivers/net/tg3.h
++++ b/drivers/net/tg3.h
+@@ -44,6 +44,7 @@
+ #define  TG3PCI_DEVICE_TIGON3_57760	 0x1690
+ #define  TG3PCI_DEVICE_TIGON3_57790	 0x1694
+ #define  TG3PCI_DEVICE_TIGON3_57720	 0x168c
++#define  TG3PCI_DEVICE_TIGON3_5785_F	 0x16a0
+ #define TG3PCI_COMMAND			0x00000004
+ #define TG3PCI_STATUS			0x00000006
+ #define TG3PCI_CCREVID			0x00000008
+@@ -2801,6 +2802,7 @@ struct tg3 {
+ #define PHY_REV_BCM5401_C0		0x6
+ #define PHY_REV_BCM5411_X0		0x1 /* Found on Netgear GA302T */
+ #define PHY_ID_BCM50610			0xbc050d60
++#define PHY_ID_BCM50610M		0xbc050d70
+ #define PHY_ID_BCMAC131			0xbc050c70
+ 
+ 
+@@ -2827,7 +2829,8 @@ struct tg3 {
+ 	 (X) == PHY_ID_BCM5780 || (X) == PHY_ID_BCM5787 || \
+ 	 (X) == PHY_ID_BCM5755 || (X) == PHY_ID_BCM5756 || \
+ 	 (X) == PHY_ID_BCM5906 || (X) == PHY_ID_BCM5761 || \
+-	 (X) == PHY_ID_BCM8002)
++	 (X) == PHY_ID_BCM8002 || (X) == PHY_ID_BCMAC131 || \
++	 (X) == PHY_ID_BCM50610 || (X) == PHY_ID_BCM50610M)
+ 
+ 	struct tg3_hw_stats		*hw_stats;
+ 	dma_addr_t			stats_mapping;

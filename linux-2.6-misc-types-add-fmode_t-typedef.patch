@@ -1,0 +1,29 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 13 Apr 2009 10:08:33 -0400
+Subject: [misc] types: add fmode_t typedef
+Message-id: 1239631714-15460-3-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.4 PATCH 2/3] BZ#465143: types: add fmode_t typedef
+Bugzilla: 465143
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+>From upstream commit aeb5d727062a0238a2f96c9c380fbd2be4640c6f
+
+The upstream patch also converted a lot of places to use the new typedef,
+but I've left those out here. I'm only adding this because some CIFS
+patches use the new typedef.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/include/linux/types.h b/include/linux/types.h
+index 406d4ae..c76a4ec 100644
+--- a/include/linux/types.h
++++ b/include/linux/types.h
+@@ -179,6 +179,7 @@ typedef __u64 __bitwise __be64;
+ 
+ #ifdef __KERNEL__
+ typedef unsigned __bitwise__ gfp_t;
++typedef unsigned __bitwise__ fmode_t;
+ 
+ #ifdef CONFIG_RESOURCES_64BIT
+ typedef u64 resource_size_t;

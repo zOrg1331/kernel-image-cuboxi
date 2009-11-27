@@ -1,0 +1,74 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Fri, 24 Apr 2009 14:48:01 -0400
+Subject: [misc] VT-d: add clflush_cache_range function
+Message-id: 49F20961.3060809@redhat.com
+O-Subject: [RHEL5.4 PATCH 5/6] VT-d for KVM: Add clflush_cache_range() function
+Bugzilla: 480411
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+
+BZ 480411
+
+Backported clflush_cache_range() from upstream,
+needed by VT-d after updating a DMA (IOMMU) PTE.
+
+Please review & ACK.
+
+- Don
+
+>From eaf0eb59c0e5213b92a22e67b08670af68036894 Mon Sep 17 00:00:00 2001
+From: Mark McLoughlin <markmc@redhat.com>
+Date: Mon, 17 Nov 2008 19:16:58 +0000
+Subject: [PATCH 5/6] vt-d: add clflush_cache_range()
+
+Used to implement __iommu_flush_cache()
+
+Signed-off-by: Mark McLoughlin <markmc@redhat.com>
+
+diff --git a/arch/x86_64/mm/pageattr.c b/arch/x86_64/mm/pageattr.c
+index 9d6196d..f45f74b 100644
+--- a/arch/x86_64/mm/pageattr.c
++++ b/arch/x86_64/mm/pageattr.c
+@@ -60,6 +60,29 @@ static struct page *split_large_page(unsigned long address, pgprot_t prot,
+ 	return base;
+ } 
+ 
++/**
++ * clflush_cache_range - flush a cache range with clflush
++ * @addr:	virtual start address
++ * @size:	number of bytes to flush
++ *
++ * clflush is an unordered instruction which needs fencing with mfence
++ * to avoid ordering issues.
++ */
++void clflush_cache_range(void *vaddr, unsigned int size)
++{
++	void *vend = vaddr + size - 1;
++
++	mb();
++
++	for (; vaddr < vend; vaddr += boot_cpu_data.x86_clflush_size)
++		asm volatile("clflush (%0)" :: "r" (vaddr));
++	/*
++	 * Flush any possible final partial cacheline:
++	 */
++	asm volatile("clflush (%0)" :: "r" (vend));
++
++	mb();
++}
+ 
+ static void flush_kernel_map(void *address) 
+ {
+diff --git a/include/asm-x86_64/cacheflush.h b/include/asm-x86_64/cacheflush.h
+index d32f7f5..7f73cb1 100644
+--- a/include/asm-x86_64/cacheflush.h
++++ b/include/asm-x86_64/cacheflush.h
+@@ -27,6 +27,8 @@ void global_flush_tlb(void);
+ int change_page_attr(struct page *page, int numpages, pgprot_t prot);
+ int change_page_attr_addr(unsigned long addr, int numpages, pgprot_t prot);
+ 
++void clflush_cache_range(void *addr, unsigned int size);
++
+ #ifdef CONFIG_DEBUG_RODATA
+ void mark_rodata_ro(void);
+ #endif

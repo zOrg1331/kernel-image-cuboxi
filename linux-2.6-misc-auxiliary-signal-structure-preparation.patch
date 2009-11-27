@@ -1,0 +1,335 @@
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Tue, 3 Mar 2009 17:27:23 +0100
+Subject: [misc] auxiliary signal structure: preparation
+Message-id: 20090303162957.014383379@dhcp-0-152.brq.redhat.com
+O-Subject: [RHEL5.4 Patch 01/12] Auxiliary signal structure: preparation
+Bugzilla: 461636
+
+bz461636
+
+Patch from Oleg Nesterov:
+
+Preparation, no changes in compiled code.
+
+Every arch declares init_signals = INIT_SIGNALS, move this line
+into the new file, include/linux/init_signals.h
+
+diff --git a/arch/alpha/kernel/init_task.c b/arch/alpha/kernel/init_task.c
+index 835d09a..47a4a0c 100644
+--- a/arch/alpha/kernel/init_task.c
++++ b/arch/alpha/kernel/init_task.c
+@@ -10,7 +10,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ struct task_struct init_task = INIT_TASK(init_task);
+diff --git a/arch/arm/kernel/init_task.c b/arch/arm/kernel/init_task.c
+index a00cca0..b352453 100644
+--- a/arch/arm/kernel/init_task.c
++++ b/arch/arm/kernel/init_task.c
+@@ -14,7 +14,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ 
+diff --git a/arch/arm26/kernel/init_task.c b/arch/arm26/kernel/init_task.c
+index 4191565..2488e5a 100644
+--- a/arch/arm26/kernel/init_task.c
++++ b/arch/arm26/kernel/init_task.c
+@@ -17,7 +17,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ 
+diff --git a/arch/cris/kernel/process.c b/arch/cris/kernel/process.c
+index 123451c..982416b 100644
+--- a/arch/cris/kernel/process.c
++++ b/arch/cris/kernel/process.c
+@@ -139,7 +139,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ 
+diff --git a/arch/frv/kernel/init_task.c b/arch/frv/kernel/init_task.c
+index 2299393..55441a3 100644
+--- a/arch/frv/kernel/init_task.c
++++ b/arch/frv/kernel/init_task.c
+@@ -12,7 +12,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ 
+diff --git a/arch/h8300/kernel/init_task.c b/arch/h8300/kernel/init_task.c
+index 19272c2..164c576 100644
+--- a/arch/h8300/kernel/init_task.c
++++ b/arch/h8300/kernel/init_task.c
+@@ -14,7 +14,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ 
+diff --git a/arch/i386/kernel/init_task-xen.c b/arch/i386/kernel/init_task-xen.c
+index c4da1cc..d5e7315 100644
+--- a/arch/i386/kernel/init_task-xen.c
++++ b/arch/i386/kernel/init_task-xen.c
+@@ -12,7 +12,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ 
+ #define swapper_pg_dir ((pgd_t *)NULL)
+diff --git a/arch/i386/kernel/init_task.c b/arch/i386/kernel/init_task.c
+index cff95d1..2de743e 100644
+--- a/arch/i386/kernel/init_task.c
++++ b/arch/i386/kernel/init_task.c
+@@ -12,7 +12,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ 
+diff --git a/arch/ia64/kernel/init_task.c b/arch/ia64/kernel/init_task.c
+index b69c397..f76f923 100644
+--- a/arch/ia64/kernel/init_task.c
++++ b/arch/ia64/kernel/init_task.c
+@@ -18,7 +18,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ 
+diff --git a/arch/m32r/kernel/init_task.c b/arch/m32r/kernel/init_task.c
+index 9e508fd..710d18e 100644
+--- a/arch/m32r/kernel/init_task.c
++++ b/arch/m32r/kernel/init_task.c
+@@ -13,7 +13,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ 
+diff --git a/arch/m68k/kernel/process.c b/arch/m68k/kernel/process.c
+index 45a4664..c0a6cab 100644
+--- a/arch/m68k/kernel/process.c
++++ b/arch/m68k/kernel/process.c
+@@ -42,7 +42,7 @@
+  */
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ 
+diff --git a/arch/m68knommu/kernel/init_task.c b/arch/m68knommu/kernel/init_task.c
+index 3897043..8580021 100644
+--- a/arch/m68knommu/kernel/init_task.c
++++ b/arch/m68knommu/kernel/init_task.c
+@@ -14,7 +14,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ 
+diff --git a/arch/mips/kernel/init_task.c b/arch/mips/kernel/init_task.c
+index aeda7f5..03b3a97 100644
+--- a/arch/mips/kernel/init_task.c
++++ b/arch/mips/kernel/init_task.c
+@@ -11,7 +11,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ 
+diff --git a/arch/parisc/kernel/init_task.c b/arch/parisc/kernel/init_task.c
+index 8384bf9..1229d65 100644
+--- a/arch/parisc/kernel/init_task.c
++++ b/arch/parisc/kernel/init_task.c
+@@ -35,7 +35,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ 
+diff --git a/arch/powerpc/kernel/init_task.c b/arch/powerpc/kernel/init_task.c
+index 941043a..a9ea32b 100644
+--- a/arch/powerpc/kernel/init_task.c
++++ b/arch/powerpc/kernel/init_task.c
+@@ -9,7 +9,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ 
+diff --git a/arch/s390/kernel/init_task.c b/arch/s390/kernel/init_task.c
+index d73a740..09ae2a2 100644
+--- a/arch/s390/kernel/init_task.c
++++ b/arch/s390/kernel/init_task.c
+@@ -17,7 +17,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ 
+diff --git a/arch/sh/kernel/init_task.c b/arch/sh/kernel/init_task.c
+index 44053ea..d0edbca 100644
+--- a/arch/sh/kernel/init_task.c
++++ b/arch/sh/kernel/init_task.c
+@@ -9,7 +9,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ 
+diff --git a/arch/sh64/kernel/init_task.c b/arch/sh64/kernel/init_task.c
+index de2d07d..deb5d51 100644
+--- a/arch/sh64/kernel/init_task.c
++++ b/arch/sh64/kernel/init_task.c
+@@ -20,7 +20,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ 
+diff --git a/arch/sparc/kernel/init_task.c b/arch/sparc/kernel/init_task.c
+index fc31de6..3c35f7a 100644
+--- a/arch/sparc/kernel/init_task.c
++++ b/arch/sparc/kernel/init_task.c
+@@ -9,7 +9,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ struct task_struct init_task = INIT_TASK(init_task);
+diff --git a/arch/sparc64/kernel/init_task.c b/arch/sparc64/kernel/init_task.c
+index 329b38f..39b054d 100644
+--- a/arch/sparc64/kernel/init_task.c
++++ b/arch/sparc64/kernel/init_task.c
+@@ -10,7 +10,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ 
+diff --git a/arch/um/kernel/init_task.c b/arch/um/kernel/init_task.c
+index 8cde431..fd27d6c 100644
+--- a/arch/um/kernel/init_task.c
++++ b/arch/um/kernel/init_task.c
+@@ -17,7 +17,7 @@
+ static struct fs_struct init_fs = INIT_FS;
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ EXPORT_SYMBOL(init_mm);
+ 
+diff --git a/arch/v850/kernel/init_task.c b/arch/v850/kernel/init_task.c
+index ed2f93c..c5595e0 100644
+--- a/arch/v850/kernel/init_task.c
++++ b/arch/v850/kernel/init_task.c
+@@ -22,7 +22,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS (init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM (init_mm);
+ 
+diff --git a/arch/x86_64/kernel/init_task.c b/arch/x86_64/kernel/init_task.c
+index 86bc43b..692bc4d 100644
+--- a/arch/x86_64/kernel/init_task.c
++++ b/arch/x86_64/kernel/init_task.c
+@@ -12,7 +12,7 @@
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ 
+diff --git a/arch/xtensa/kernel/process.c b/arch/xtensa/kernel/process.c
+index a7c4178..fd49ebd 100644
+--- a/arch/xtensa/kernel/process.c
++++ b/arch/xtensa/kernel/process.c
+@@ -49,7 +49,7 @@ extern void ret_from_fork(void);
+ 
+ static struct fs_struct init_fs = INIT_FS;
+ static struct files_struct init_files = INIT_FILES;
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++#include <linux/init_signals.h>
+ static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+ struct mm_struct init_mm = INIT_MM(init_mm);
+ EXPORT_SYMBOL(init_mm);
+diff --git a/include/linux/init_signals.h b/include/linux/init_signals.h
+new file mode 100644
+index 0000000..eea0f8b
+--- /dev/null
++++ b/include/linux/init_signals.h
+@@ -0,0 +1 @@
++static struct signal_struct init_signals = INIT_SIGNALS(init_signals);

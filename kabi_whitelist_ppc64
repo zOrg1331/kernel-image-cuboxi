@@ -349,6 +349,10 @@
 [rhel5_drivers_char_hw_random_ga]
 	hwrng_register
 	hwrng_unregister
+[rhel5_drivers_connector]
+	cn_netlink_send
+	cn_add_callback
+	cn_del_callback
 [rhel5_drivers_dma_ga]
 	dma_async_device_register
 	dma_async_device_unregister
@@ -593,6 +597,9 @@
 	kcopyd_client_create
 	kcopyd_client_destroy
 	kcopyd_copy
+[rhel5_drivers_md_u4]
+	dm_dirty_log_type_register
+	dm_dirty_log_type_unregister
 [rhel5_drivers_media_common_ga]
 	ir_codes_apac_viewcomp
 	ir_codes_avermedia
@@ -900,6 +907,8 @@
 	pci_unregister_driver
 	pci_walk_bus
 	pcie_mch_quirk
+[rhel5_drivers_pci_u4]
+	pcie_set_readrq
 [rhel5_drivers_pci_u1]
 	pci_disable_msi
 	pci_disable_msix
@@ -1648,6 +1657,10 @@
 	__set_page_dirty_buffers
 [rhel5_fs_u2]
 	simple_attr_open
+[rhel5_fs_u4]
+	anon_inode_getfd
+	kernel_read
+	nobh_truncate_page
 [rhel5_fs_jbd_ga]
 	journal_abort
 	journal_ack_err
@@ -1986,6 +1999,17 @@
 	round_jiffies_relative
 [rhel5_kernel_u3]
 	down_write_trylock
+[rhel5_kernel_u4]
+	hrtimer_cancel
+	hrtimer_init
+	hrtimer_start
+	ktime_get_ts
+	relay_buf_full
+	relay_close
+	relay_file_operations
+	relay_flush
+	relay_open
+	relay_switch_subbuf
 [rhel5_kernel_irq_ga]
 	disable_irq
 	disable_irq_nosync
@@ -2545,6 +2569,8 @@
 	unregister_netevent_notifier
 	wireless_send_event
 	wireless_spy_update
+[rhel5_net_core_u4]
+	consume_skb
 [rhel5_net_ethernet_ga]
 	alloc_etherdev
 	eth_type_trans

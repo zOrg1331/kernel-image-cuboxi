@@ -1,0 +1,340 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Wed, 1 Apr 2009 12:39:17 -0600
+Subject: [xen] VT-d2: enable interrupt remapping for MSI/MSI-x
+Message-id: 20090401183917.GB11257@sobek.n0ano.com
+O-Subject: [RHEL5.4 PATCH 19/21 V3] VT-d2: enable interrupt remapping for MSI/MSI-x
+Bugzilla: 484227
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+
+[Version 3 - don't do extraneous `if' test]
+
+previous interrupt remapping patch is only remap INTx, due to MSI/MSI-x
+were not ready at that time. This patch enables interrupt remapping for
+MSI/MSI-x.
+
+In order to keep consistent with xen-unstable, add
+iommu_update_ire_from_apic and iommu_update_ire_from_msi in iommu_ops.
+
+Upstream Status: Accepted (CS 17739, 18631)
+
+BZ: 484227
+
+Signed-off-by: Weidong Han <weidong.han@intel.com>
+Signed-off-by: Gerd Hoffman <kraxel@redhat.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/arch/x86/msi.c b/arch/x86/msi.c
+index d968ba6..fdca245 100644
+--- a/arch/x86/msi.c
++++ b/arch/x86/msi.c
+@@ -134,10 +134,8 @@ static void read_msi_msg(struct msi_desc *entry, struct msi_msg *msg)
+         BUG();
+     }
+ 
+-
+-//  TODO: BP: interrupt remapping
+-//    if ( vtd_enabled )
+-//        msi_msg_read_remap_rte(entry, msg);
++    if ( vtd_enabled )
++        msi_msg_read_remap_rte(entry, msg);
+ }
+ 
+ static int set_vector_msi(struct msi_desc *entry)
+@@ -171,9 +169,8 @@ static int unset_vector_msi(int vector)
+ 
+ static void write_msi_msg(struct msi_desc *entry, struct msi_msg *msg)
+ {
+-//  TODO: BP: interrupt remapping
+-//    if ( iommu_enabled )
+-//        iommu_update_ire_from_msi(entry, msg);
++    if ( iommu_enabled )
++        iommu_update_ire_from_msi(entry, msg);
+ 
+     switch ( entry->msi_attrib.type )
+     {
+diff --git a/drivers/passthrough/iommu.c b/drivers/passthrough/iommu.c
+index ea345c7..2661d2b 100644
+--- a/drivers/passthrough/iommu.c
++++ b/drivers/passthrough/iommu.c
+@@ -240,6 +240,18 @@ int iommu_get_device_group(struct domain *d, u8 bus, u8 devfn,
+     return i;
+ }
+ 
++void iommu_update_ire_from_apic(
++    unsigned int apic, unsigned int reg, unsigned int value)
++{
++    struct iommu_ops *ops = iommu_get_ops();
++    ops->update_ire_from_apic(apic, reg, value);
++}
++void iommu_update_ire_from_msi(
++    struct msi_desc *msi_desc, struct msi_msg *msg)
++{
++    struct iommu_ops *ops = iommu_get_ops();
++    ops->update_ire_from_msi(msi_desc, msg);
++}
+ /*
+  * Local variables:
+  * mode: C
+diff --git a/drivers/passthrough/vtd/intremap.c b/drivers/passthrough/vtd/intremap.c
+index 9407600..1ff6905 100644
+--- a/drivers/passthrough/vtd/intremap.c
++++ b/drivers/passthrough/vtd/intremap.c
+@@ -304,6 +304,193 @@ void io_apic_write_remap_rte(
+     *(IO_APIC_BASE(apic)+4) = *(((u32 *)&old_rte)+1);
+ }
+ 
++#if defined(__i386__) || defined(__x86_64__)
++static int remap_entry_to_msi_msg(
++    struct iommu *iommu, struct msi_msg *msg)
++{
++    struct iremap_entry *iremap_entry = NULL, *iremap_entries;
++    struct msi_msg_remap_entry *remap_rte;
++    int index;
++    unsigned long flags;
++    struct ir_ctrl *ir_ctrl = iommu_ir_ctrl(iommu);
++
++    if ( ir_ctrl == NULL )
++    {
++        dprintk(XENLOG_ERR VTDPREFIX,
++                "remap_entry_to_msi_msg: ir_ctl == NULL");
++        return -EFAULT;
++    }
++
++    remap_rte = (struct msi_msg_remap_entry *) msg;
++    index = (remap_rte->address_lo.index_15 << 15) |
++             remap_rte->address_lo.index_0_14;
++
++    if ( index > ir_ctrl->iremap_index )
++    {
++        dprintk(XENLOG_ERR VTDPREFIX,
++                "%s: index (%d) is larger than remap table entry size (%d)\n",
++                __func__, index, ir_ctrl->iremap_index);
++        return -EFAULT;
++    }
++
++    spin_lock_irqsave(&ir_ctrl->iremap_lock, flags);
++
++    iremap_entries =
++        (struct iremap_entry *)map_vtd_domain_page(ir_ctrl->iremap_maddr);
++    iremap_entry = &iremap_entries[index];
++
++    msg->address_hi = MSI_ADDR_BASE_HI;
++    msg->address_lo =
++        MSI_ADDR_BASE_LO |
++        ((iremap_entry->lo.dm == 0) ?
++            MSI_ADDR_DESTMODE_PHYS:
++            MSI_ADDR_DESTMODE_LOGIC) |
++        ((iremap_entry->lo.dlm != dest_LowestPrio) ?
++            MSI_ADDR_REDIRECTION_CPU:
++            MSI_ADDR_REDIRECTION_LOWPRI) |
++        iremap_entry->lo.dst >> 8;
++
++    msg->data =
++        MSI_DATA_TRIGGER_EDGE |
++        MSI_DATA_LEVEL_ASSERT |
++        ((iremap_entry->lo.dlm != dest_LowestPrio) ?
++            MSI_DATA_DELIVERY_FIXED:
++            MSI_DATA_DELIVERY_LOWPRI) |
++        iremap_entry->lo.vector;
++
++    unmap_vtd_domain_page(iremap_entries);
++    spin_unlock_irqrestore(&ir_ctrl->iremap_lock, flags);
++    return 0;
++}
++
++static int msi_msg_to_remap_entry(
++    struct iommu *iommu, struct pci_dev *pdev,
++    struct msi_desc *msi_desc, struct msi_msg *msg)
++{
++    struct iremap_entry *iremap_entry = NULL, *iremap_entries;
++    struct iremap_entry new_ire;
++    struct msi_msg_remap_entry *remap_rte;
++    unsigned int index;
++    unsigned long flags;
++    struct ir_ctrl *ir_ctrl = iommu_ir_ctrl(iommu);
++
++    remap_rte = (struct msi_msg_remap_entry *) msg;
++    spin_lock_irqsave(&ir_ctrl->iremap_lock, flags);
++
++    if ( msi_desc->remap_index < 0 )
++    {
++        ir_ctrl->iremap_index++;
++        index = ir_ctrl->iremap_index;
++        msi_desc->remap_index = index;
++    }
++    else
++        index = msi_desc->remap_index;
++
++    if ( index > IREMAP_ENTRY_NR - 1 )
++    {
++        dprintk(XENLOG_ERR VTDPREFIX,
++                "%s: intremap index (%d) is larger than"
++                " the maximum index (%ld)!\n",
++                __func__, index, IREMAP_ENTRY_NR - 1);
++        msi_desc->remap_index = -1;
++        spin_unlock_irqrestore(&ir_ctrl->iremap_lock, flags);
++        return -EFAULT;
++    }
++
++    iremap_entries =
++        (struct iremap_entry *)map_vtd_domain_page(ir_ctrl->iremap_maddr);
++    iremap_entry = &iremap_entries[index];
++    memcpy(&new_ire, iremap_entry, sizeof(struct iremap_entry));
++
++    /* Set interrupt remapping table entry */
++    new_ire.lo.fpd = 0;
++    new_ire.lo.dm = (msg->address_lo >> MSI_ADDR_DESTMODE_SHIFT) & 0x1;
++    new_ire.lo.rh = 0;
++    new_ire.lo.tm = (msg->data >> MSI_DATA_TRIGGER_SHIFT) & 0x1;
++    new_ire.lo.dlm = (msg->data >> MSI_DATA_DELIVERY_MODE_SHIFT) & 0x1;
++    new_ire.lo.avail = 0;
++    new_ire.lo.res_1 = 0;
++    new_ire.lo.vector = (msg->data >> MSI_DATA_VECTOR_SHIFT) &
++                        MSI_DATA_VECTOR_MASK;
++    new_ire.lo.res_2 = 0;
++    new_ire.lo.dst = ((msg->address_lo >> MSI_ADDR_DEST_ID_SHIFT)
++                      & 0xff) << 8;
++
++    new_ire.hi.sid = (pdev->bus << 8) | pdev->devfn;
++    new_ire.hi.sq = 0;
++    new_ire.hi.svt = 1;
++    new_ire.hi.res_1 = 0;
++    new_ire.lo.p = 1;    /* finally, set present bit */
++
++    /* now construct new MSI/MSI-X rte entry */
++    remap_rte->address_lo.dontcare = 0;
++    remap_rte->address_lo.index_15 = (index >> 15) & 0x1;
++    remap_rte->address_lo.index_0_14 = index & 0x7fff;
++    remap_rte->address_lo.SHV = 1;
++    remap_rte->address_lo.format = 1;
++
++    remap_rte->address_hi = 0;
++    remap_rte->data = 0;
++
++    memcpy(iremap_entry, &new_ire, sizeof(struct iremap_entry));
++    iommu_flush_cache_entry(iremap_entry);
++    iommu_flush_iec_index(iommu, 0, index);
++    invalidate_sync(iommu);
++
++    unmap_vtd_domain_page(iremap_entries);
++    spin_unlock_irqrestore(&ir_ctrl->iremap_lock, flags);
++    return 0;
++}
++
++void msi_msg_read_remap_rte(
++    struct msi_desc *msi_desc, struct msi_msg *msg)
++{
++    struct pci_dev *pdev = msi_desc->dev;
++    struct acpi_drhd_unit *drhd = NULL;
++    struct iommu *iommu = NULL;
++    struct ir_ctrl *ir_ctrl;
++
++    drhd = acpi_find_matched_drhd_unit(pdev->bus, pdev->devfn);
++    iommu = drhd->iommu;
++
++    ir_ctrl = iommu_ir_ctrl(iommu);
++    if ( !iommu || !ir_ctrl || ir_ctrl->iremap_maddr == 0 )
++        return;
++
++    remap_entry_to_msi_msg(iommu, msg);
++}
++
++void msi_msg_write_remap_rte(
++    struct msi_desc *msi_desc, struct msi_msg *msg)
++{
++    struct pci_dev *pdev = msi_desc->dev;
++    struct acpi_drhd_unit *drhd = NULL;
++    struct iommu *iommu = NULL;
++    struct ir_ctrl *ir_ctrl;
++
++    drhd = acpi_find_matched_drhd_unit(pdev->bus, pdev->devfn);
++    iommu = drhd->iommu;
++
++    ir_ctrl = iommu_ir_ctrl(iommu);
++    if ( !iommu || !ir_ctrl || ir_ctrl->iremap_maddr == 0 )
++        return;
++
++    msi_msg_to_remap_entry(iommu, pdev, msi_desc, msg);
++}
++#elif defined(__ia64__)
++void msi_msg_read_remap_rte(
++    struct msi_desc *msi_desc, struct msi_msg *msg)
++{
++    /* TODO. */
++}
++
++void msi_msg_write_remap_rte(
++    struct msi_desc *msi_desc, struct msi_msg *msg)
++{
++    /* TODO. */
++}
++#endif
++
+ int intremap_setup(struct iommu *iommu)
+ {
+     struct ir_ctrl *ir_ctrl;
+diff --git a/drivers/passthrough/vtd/iommu.c b/drivers/passthrough/vtd/iommu.c
+index 1d89c1b..6a44091 100644
+--- a/drivers/passthrough/vtd/iommu.c
++++ b/drivers/passthrough/vtd/iommu.c
+@@ -1905,6 +1905,8 @@ struct iommu_ops intel_iommu_ops = {
+     .unmap_page = intel_iommu_unmap_page,
+     .reassign_device = reassign_device_ownership,
+     .get_device_group_id = intel_iommu_group_id,
++    .update_ire_from_apic = io_apic_write_remap_rte,
++    .update_ire_from_msi = msi_msg_write_remap_rte,
+ };
+ 
+ /*
+diff --git a/include/asm-x86/io_apic.h b/include/asm-x86/io_apic.h
+index 3634912..7481f7f 100644
+--- a/include/asm-x86/io_apic.h
++++ b/include/asm-x86/io_apic.h
+@@ -140,7 +140,7 @@ static inline unsigned int io_apic_read(unsigned int apic, unsigned int reg)
+ static inline void io_apic_write(unsigned int apic, unsigned int reg, unsigned int value)
+ {
+     if (ioapic_reg_remapped(reg))
+-        return io_apic_write_remap_rte(apic, reg, value);
++        return iommu_update_ire_from_apic(apic, reg, value);
+ 
+ 	*IO_APIC_BASE(apic) = reg;
+ 	*(IO_APIC_BASE(apic)+4) = value;
+@@ -160,8 +160,7 @@ extern int sis_apic_bug;
+ static inline void io_apic_modify(unsigned int apic, unsigned int reg, unsigned int value)
+ {
+     if (ioapic_reg_remapped(reg))
+-        return io_apic_write_remap_rte(apic, reg, value);
+-
++        return iommu_update_ire_from_apic(apic, reg, value);
+ 	if (sis_apic_bug)
+ 		*IO_APIC_BASE(apic) = reg;
+ 	*(IO_APIC_BASE(apic)+4) = value;
+diff --git a/include/xen/iommu.h b/include/xen/iommu.h
+index 9edc12c..440d9b6 100644
+--- a/include/xen/iommu.h
++++ b/include/xen/iommu.h
+@@ -78,6 +78,10 @@ unsigned int io_apic_read_remap_rte(unsigned int apic, unsigned int reg);
+ void io_apic_write_remap_rte(unsigned int apic,
+                              unsigned int reg, unsigned int value);
+ 
++struct msi_desc;
++struct msi_msg;
++void msi_msg_read_remap_rte(struct msi_desc *msi_desc, struct msi_msg *msg);
++void msi_msg_write_remap_rte(struct msi_desc *msi_desc, struct msi_msg *msg);
+ struct qi_ctrl *iommu_qi_ctrl(struct iommu *iommu);
+ struct ir_ctrl *iommu_ir_ctrl(struct iommu *iommu);
+ struct iommu_flush *iommu_get_flush(struct iommu *iommu);
+@@ -99,8 +103,13 @@ struct iommu_ops {
+     int (*reassign_device)(struct domain *s, struct domain *t,
+ 			   u8 bus, u8 devfn);
+     int (*get_device_group_id)(u8 bus, u8 devfn);
++    void (*update_ire_from_apic)(unsigned int apic, unsigned int reg, unsigned int value);
++    void (*update_ire_from_msi)(struct msi_desc *msi_desc, struct msi_msg *msg);
+ };
+ 
++void iommu_update_ire_from_apic(unsigned int apic, unsigned int reg, unsigned int value);
++void iommu_update_ire_from_msi(struct msi_desc *msi_desc, struct msi_msg *msg);
++
+ void iommu_suspend(void);
+ void iommu_resume(void);
+ 

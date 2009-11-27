@@ -1,0 +1,55 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Wed, 27 May 2009 15:31:07 +1000
+Subject: [net] gro: Optimise Ethernet header comparison
+Message-id: E1M9BjH-0002AD-KO@gondolin.me.apana.org.au
+O-Subject: [PATCH 3/17] gro: Optimise Ethernet header comparison
+Bugzilla: 499347
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+RHEL5 bugzilla #499347
+
+gro: Optimise Ethernet header comparison
+
+This patch optimises the Ethernet header comparison to use 2-byte
+and 4-byte xors instead of memcmp.  In order to facilitate this,
+the actual comparison is now carried out by the callers of the
+shared dev_gro_receive function.
+
+This has a significant impact when receiving 1500B packets through
+10GbE.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/linux/etherdevice.h b/include/linux/etherdevice.h
+index 745c988..d3c6c94 100644
+--- a/include/linux/etherdevice.h
++++ b/include/linux/etherdevice.h
+@@ -128,4 +128,25 @@ static inline unsigned compare_ether_addr(const u8 *addr1, const u8 *addr2)
+ }
+ #endif	/* __KERNEL__ */
+ 
++/**
++ * compare_ether_header - Compare two Ethernet headers
++ * @a: Pointer to Ethernet header
++ * @b: Pointer to Ethernet header
++ *
++ * Compare two ethernet headers, returns 0 if equal.
++ * This assumes that the network header (i.e., IP header) is 4-byte
++ * aligned OR the platform can handle unaligned access.  This is the
++ * case for all packets coming into netif_receive_skb or similar
++ * entry points.
++ */
++
++static inline int compare_ether_header(const void *a, const void *b)
++{
++	u32 *a32 = (u32 *)((u8 *)a + 2);
++	u32 *b32 = (u32 *)((u8 *)b + 2);
++
++	return (*(u16 *)a ^ *(u16 *)b) | (a32[0] ^ b32[0]) |
++	       (a32[1] ^ b32[1]) | (a32[2] ^ b32[2]);
++}
++
+ #endif	/* _LINUX_ETHERDEVICE_H */

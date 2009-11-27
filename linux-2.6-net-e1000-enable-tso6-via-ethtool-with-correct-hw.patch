@@ -1,0 +1,38 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Thu, 23 Apr 2009 20:59:00 -0400
+Subject: [net] e1000: enable TSO6 via ethtool with correct hw
+Message-id: 20090424005859.GL26634@gospo.rdu.redhat.com
+O-Subject: [RHEL5.4 PATCH] e1000: only enable TSO6 via ethtool when using correct hardware
+Bugzilla: 449175
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+RH-Acked-by: John W. Linville <linville@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+When calling e1000_probe the correct settings for devices that support
+TSO6 are made, but these can be incorrectly overwritten when enabling
+TSO using ethtool.  This patch fixes that.
+
+This is a backport of the following upstream commit:
+
+    commit 581abbc26a7adb693fb8b913f1be18d1c349c1ab
+    Author: Andy Gospodarek <andy@greyhouse.net>
+    Date:   Thu Jun 19 17:19:02 2008 -0400
+
+        e1000: only enable TSO6 via ethtool when using correct hardware
+
+This should fix the bug reported in RHBZ 449175.
+
+diff --git a/drivers/net/e1000/e1000_ethtool.c b/drivers/net/e1000/e1000_ethtool.c
+index e9a8b86..e86255e 100644
+--- a/drivers/net/e1000/e1000_ethtool.c
++++ b/drivers/net/e1000/e1000_ethtool.c
+@@ -347,7 +347,7 @@ e1000_set_tso(struct net_device *netdev, uint32_t data)
+ 	else
+ 		netdev->features &= ~NETIF_F_TSO;
+ 
+-	if (data)
++	if (data && (adapter->hw.mac_type > e1000_82547_rev_2))
+ 		netdev->features |= NETIF_F_TSO6;
+ 	else
+ 		netdev->features &= ~NETIF_F_TSO6;

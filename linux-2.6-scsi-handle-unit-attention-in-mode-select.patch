@@ -1,0 +1,112 @@
+From: Jesse Larrew <jlarrew@redhat.com>
+Date: Thu, 14 May 2009 00:59:50 -0400
+Subject: [scsi] handle unit attention in mode select
+Message-id: 20090514045659.10947.86740.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 3/10 BZ489582] Handle unit attention in mode select
+Bugzilla: 489582
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=489582
+
+Description:
+===========
+This is a bug fix for all archs.
+
+This patch is to add retry logic if the mode select command is returned with
+sense NO_SENSE, UNIT_ATTENTION, ABORTED_COMMAND, or NOT_READY(02/04/01).
+This patch reorganises the sense keys from if-else to switch-case format
+for better maintainability.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1794596
+
+Upstream Status:
+================
+commit: 7687fb9209422d35334995b8ace38de92e595d16
+
+Test Status:
+============
+This patch was tested by Chandra Seetharaman at IBM
+(sekharan@us.ibm.com).
+
+===============================================================
+
+Jesse Larrew
+IBM Onsite Partner
+978-392-3183
+jlarrew@redhat.com
+
+Proposed Patch:
+===============
+This patch is based on 2.6.18-136.el5.
+
+diff --git a/drivers/scsi/device_handler/scsi_dh_rdac.c b/drivers/scsi/device_handler/scsi_dh_rdac.c
+index 89ac8b2..5d4ad1d 100644
+--- a/drivers/scsi/device_handler/scsi_dh_rdac.c
++++ b/drivers/scsi/device_handler/scsi_dh_rdac.c
+@@ -452,28 +452,40 @@ static int mode_select_handle_sense(struct scsi_device *sdev,
+ 				    unsigned char *sensebuf)
+ {
+ 	struct scsi_sense_hdr sense_hdr;
+-	int sense, err = SCSI_DH_IO, ret;
++	int err = SCSI_DH_IO, ret;
+ 
+ 	ret = scsi_normalize_sense(sensebuf, SCSI_SENSE_BUFFERSIZE, &sense_hdr);
+ 	if (!ret)
+ 		goto done;
+ 
+ 	err = SCSI_DH_OK;
+-	sense = (sense_hdr.sense_key << 16) | (sense_hdr.asc << 8) |
+-			sense_hdr.ascq;
+-	/* If it is retryable failure, submit the c9 inquiry again */
+-	if (sense == 0x59136 || sense == 0x68b02 || sense == 0xb8b02 ||
+-			    sense == 0x62900) {
+-		/* 0x59136    - Command lock contention
+-		 * 0x[6b]8b02 - Quiesense in progress or achieved
+-		 * 0x62900    - Power On, Reset, or Bus Device Reset
+-		 */
++
++	switch (sense_hdr.sense_key) {
++	case NO_SENSE:
++	case ABORTED_COMMAND:
++	case UNIT_ATTENTION:
+ 		err = SCSI_DH_RETRY;
++		break;
++	case NOT_READY:
++		if (sense_hdr.asc == 0x04 && sense_hdr.ascq == 0x01)
++			/* LUN Not Ready and is in the Process of Becoming
++			 * Ready
++			 */
++			err = SCSI_DH_RETRY;
++		break;
++	case ILLEGAL_REQUEST:
++		if (sense_hdr.asc == 0x91 && sense_hdr.ascq == 0x36)
++			/*
++			 * Command Lock contention
++			 */
++			err = SCSI_DH_RETRY;
++		break;
++	default:
++		sdev_printk(KERN_INFO, sdev,
++			    "MODE_SELECT failed with sense %02x/%02x/%02x.\n",
++			    sense_hdr.sense_key, sense_hdr.asc, sense_hdr.ascq);
+ 	}
+ 
+-	if (sense)
+-		sdev_printk(KERN_INFO, sdev,
+-			"MODE_SELECT failed with sense 0x%x.\n", sense);
+ done:
+ 	return err;
+ }

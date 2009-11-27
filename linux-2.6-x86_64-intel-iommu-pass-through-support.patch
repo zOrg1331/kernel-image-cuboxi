@@ -1,0 +1,587 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Tue, 4 Aug 2009 15:06:36 -0400
+Subject: [x86_64] Intel IOMMU: Pass Through Support
+Message-id: 4A7886BC.3020606@redhat.com
+O-Subject: Re: [RHEL5.4 PATCH V3] Intel IOMMU Pass Through Support
+Bugzilla: 504363
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+
+Chris Wright wrote:
+> https://bugzilla.redhat.com/show_bug.cgi?id=504363
+>
+> This enables Intel IOMMU Pass Through support.  This is a hardware feature
+> of the Intel IOMMU, which, when available and enabled, allows the kernel
+> to effectively not isolate devices that are owned by the host kernel while
+> still isolating devices that are assigned to KVM guests.
+>
+> The performance impact of isolating a host device such as a 10G NIC can
+> be as high as an 80% reduction in throughput.  This means any device
+> that is not assigned to a guest (one must enable the IOMMU to assign
+> devices to guests) will suffer the overhead.
+>
+> When the IOMMU is operating in Pass Through mode the host kernel will
+> fallback to swiotlb, so this patch does touch core pci-dma code enough
+> to enable a new commandline switch.  Otherwise it is localized to the
+> Intel IOMMU code which is new for RHEL 5.4.
+>
+> This backport of the upstream commit below omits the IA-64 changes,
+> as they are not relevant for the RHEL 5.4 tree.
+>
+>   http://git.kernel.org/linus/4ed0d3e6c64cfd9ba4ceb2099b10d1cf8ece4320
+>
+> Brew build (I tested on x86_64 w/ local builds):
+>
+>   https://brewweb.devel.redhat.com/taskinfo?taskID=1913154
+>
+> Testing (netperf RX) shows what you would expect:
+>
+> intel_iommu=off		(default, no iommu)
+>   9412 Gb/s
+> intel_iommu=on		(iommu enabled, e.g. for device assignment)[1]
+>   6048 Gb/s
+> intel_iommu=on iommu=pt	(this patch, iommu enabled in pt mode)
+>   9412 Gb/s
+>
+> [1] Test done on cache coherent IOMMU.  A cache coherent IOMMU won't
+> show the same large overhead, but non-cache coherent IOMMU will show
+> same improvement w/ iommu=pt
+>
+> Signed-off-by: Chris Wright <chrisw@redhat.com>
+
+This is V3, which simply adds a null pointer check to the get_domain_for_dev()
+invocation in the init_context_pass_through() function, as noted in the
+reviews by Mark McLoughlin & Mark Tsirkin.
+
+The 'feature' that a device that is originally a pass-through in the host,
+then assigned to a guest, then deassigned from a guest will leave that device
+in iommu/non-pass-through mode.
+The decision is to leave it this way until a future update because:
+(a) the change requires significant regression testing and
+    affects common code paths
+(b) upstream *just* posted a solution to this problem, the null ptr problem,
+    and two other related design issues, that may be a long-term solution.
+    Unfortunately, it requires an update to intel-iommu.c to 2.6.31
+    (our version is at 2.6.30), and those changes affect common code paths
+    (non iommu=pass-through, intel_iommu=on code paths).
+(c) The expected use model is that a device that was used for guest pass-through
+    is unlikely to be used for host-based IO, and will be reused for the same
+    or another guest, so leaving it in IOMMU (non-pass-through) mode is
+    a reasonable tradeoff in functionality vs code risk.
+
+Other than the null pointer check, the patch as Chris Wright posted it
+hasn't changed.
+
+Please review & ack.
+
+- Don
+
+diff --git a/Documentation/x86_64/boot-options.txt b/Documentation/x86_64/boot-options.txt
+index 4468c2d..e209257 100644
+--- a/Documentation/x86_64/boot-options.txt
++++ b/Documentation/x86_64/boot-options.txt
+@@ -183,7 +183,7 @@ PCI
+ IOMMU
+ 
+  iommu=[size][,noagp][,off][,force][,noforce][,leak][,memaper[=order]][,merge]
+-         [,forcesac][,fullflush][,nomerge][,noaperture][,calgary]
++         [,forcesac][,fullflush][,nomerge][,noaperture][,calgary][,pt]
+    size  set size of iommu (in bytes)
+    noagp don't initialize the AGP driver and use full aperture.
+    off   don't use the IOMMU
+@@ -200,6 +200,7 @@ IOMMU
+    soft	 Use software bounce buffering (default for Intel machines)
+    noaperture Don't touch the aperture for AGP.
+    calgary Use the Calgary IOMMU if it is available
++   pt Pass Through (useful for assigning devices, no IOMMU protection in host)
+ 
+   swiotlb=pages[,force]
+ 
+diff --git a/arch/x86_64/kernel/pci-dma.c b/arch/x86_64/kernel/pci-dma.c
+index 3c95a46..96d150e 100644
+--- a/arch/x86_64/kernel/pci-dma.c
++++ b/arch/x86_64/kernel/pci-dma.c
+@@ -160,6 +160,8 @@ dma_alloc_coherent(struct device *dev, size_t size, dma_addr_t *dma_handle,
+ }
+ EXPORT_SYMBOL(dma_alloc_coherent);
+ 
++extern int iommu_pass_through;
++
+ /*
+  * Unmap coherent memory.
+  * The caller must ensure that the device has finished accessing the mapping.
+@@ -271,6 +273,10 @@ __init int iommu_setup(char *p)
+ #ifdef CONFIG_SWIOTLB
+ 	    if (!strncmp(p, "soft",4))
+ 		    swiotlb = 1;
++	    if (!strncmp(p, "pt", 2)) {
++		    iommu_pass_through = 1;
++		    return 1;
++	    }
+ #endif
+ 
+ #ifdef CONFIG_IOMMU
+diff --git a/arch/x86_64/kernel/pci-swiotlb.c b/arch/x86_64/kernel/pci-swiotlb.c
+index f430f0b..92fdbf0 100644
+--- a/arch/x86_64/kernel/pci-swiotlb.c
++++ b/arch/x86_64/kernel/pci-swiotlb.c
+@@ -32,7 +32,8 @@ struct dma_mapping_ops swiotlb_dma_ops = {
+ void pci_swiotlb_init(void)
+ {
+ 	/* don't initialize swiotlb if iommu=off (no_iommu=1) */
+-	if (!iommu_detected && !no_iommu && end_pfn > MAX_DMA32_PFN)
++	if ((!iommu_detected && !no_iommu && end_pfn > MAX_DMA32_PFN) ||
++		iommu_pass_through)
+ 	       swiotlb = 1;
+ 	if (swiotlb_force)
+ 		swiotlb = 1;
+diff --git a/drivers/pci/dmar.c b/drivers/pci/dmar.c
+index e87ebbd..0351fe7 100644
+--- a/drivers/pci/dmar.c
++++ b/drivers/pci/dmar.c
+@@ -504,6 +504,7 @@ int alloc_iommu(struct dmar_drhd_unit *drhd)
+ 	u32 ver;
+ 	static int iommu_allocated = 0;
+ 	int agaw = 0;
++	int msagaw = 0;
+ 
+ 	iommu = kzalloc(sizeof(*iommu), GFP_KERNEL);
+ 	if (!iommu)
+@@ -524,12 +525,20 @@ int alloc_iommu(struct dmar_drhd_unit *drhd)
+ 	agaw = iommu_calculate_agaw(iommu);
+ 	if (agaw < 0) {
+ 		printk(KERN_ERR
+-			"Cannot get a valid agaw for iommu (seq_id = %d)\n",
++		       "Cannot get a valid agaw for iommu (seq_id = %d)\n",
++		       iommu->seq_id);
++		goto error;
++	}
++	msagaw = iommu_calculate_max_sagaw(iommu);
++	if (msagaw < 0) {
++		printk(KERN_ERR
++			"Cannot get a valid max agaw for iommu (seq_id = %d)\n",
+ 			iommu->seq_id);
+ 		goto error;
+ 	}
+ #endif
+ 	iommu->agaw = agaw;
++	iommu->msagaw = msagaw;
+ 
+ 	/* the registers might be more than one page */
+ 	map_size = max_t(int, ecap_max_iotlb_offset(iommu->ecap),
+diff --git a/drivers/pci/intel-iommu.c b/drivers/pci/intel-iommu.c
+index b6fbb16..b9894f3 100644
+--- a/drivers/pci/intel-iommu.c
++++ b/drivers/pci/intel-iommu.c
+@@ -53,6 +53,8 @@
+ 
+ #define DEFAULT_DOMAIN_ADDRESS_WIDTH 48
+ 
++#define MAX_AGAW_WIDTH 64
++
+ #define DOMAIN_MAX_ADDR(gaw) ((((u64)1) << gaw) - 1)
+ 
+ #define IOVA_PFN(addr)		((addr) >> PAGE_SHIFT)
+@@ -127,8 +129,6 @@ static inline void context_set_fault_enable(struct context_entry *context)
+ 	context->lo &= (((u64)-1) << 2) | 1;
+ }
+ 
+-#define CONTEXT_TT_MULTI_LEVEL 0
+-
+ static inline void context_set_translation_type(struct context_entry *context,
+ 						unsigned long value)
+ {
+@@ -288,6 +288,7 @@ int dmar_disabled = 1;
+ static int __initdata dmar_map_gfx = 1;
+ static int dmar_forcedac;
+ static int intel_iommu_strict;
++int iommu_pass_through;
+ 
+ #define DUMMY_DEVICE_DOMAIN_INFO ((struct device_domain_info *)(-1))
+ static DEFINE_SPINLOCK(device_domain_lock);
+@@ -397,17 +398,13 @@ void free_iova_mem(struct iova *iova)
+ 
+ static inline int width_to_agaw(int width);
+ 
+-/* calculate agaw for each iommu.
+- * "SAGAW" may be different across iommus, use a default agaw, and
+- * get a supported less agaw for iommus that don't support the default agaw.
+- */
+-int iommu_calculate_agaw(struct intel_iommu *iommu)
++static int __iommu_calculate_agaw(struct intel_iommu *iommu, int max_gaw)
+ {
+ 	unsigned long sagaw;
+ 	int agaw = -1;
+ 
+ 	sagaw = cap_sagaw(iommu->cap);
+-	for (agaw = width_to_agaw(DEFAULT_DOMAIN_ADDRESS_WIDTH);
++	for (agaw = width_to_agaw(max_gaw);
+ 	     agaw >= 0; agaw--) {
+ 		if (test_bit(agaw, &sagaw))
+ 			break;
+@@ -416,6 +413,24 @@ int iommu_calculate_agaw(struct intel_iommu *iommu)
+ 	return agaw;
+ }
+ 
++/*
++ * Calculate max SAGAW for each iommu.
++ */
++int iommu_calculate_max_sagaw(struct intel_iommu *iommu)
++{
++	return __iommu_calculate_agaw(iommu, MAX_AGAW_WIDTH);
++}
++
++/*
++ * calculate agaw for each iommu.
++ * "SAGAW" may be different across iommus, use a default agaw, and
++ * get a supported less agaw for iommus that don't support the default agaw.
++ */
++int iommu_calculate_agaw(struct intel_iommu *iommu)
++{
++	return __iommu_calculate_agaw(iommu, DEFAULT_DOMAIN_ADDRESS_WIDTH);
++}
++
+ /* in native case, each domain is related to only one iommu */
+ static struct intel_iommu *domain_get_iommu(struct dmar_domain *domain)
+ {
+@@ -1322,8 +1337,8 @@ static void domain_exit(struct dmar_domain *domain)
+ 	free_domain_mem(domain);
+ }
+ 
+-static int domain_context_mapping_one(struct dmar_domain *domain,
+-				      int segment, u8 bus, u8 devfn)
++static int domain_context_mapping_one(struct dmar_domain *domain, int segment,
++				 u8 bus, u8 devfn, int translation)
+ {
+ 	struct context_entry *context;
+ 	unsigned long flags;
+@@ -1336,7 +1351,10 @@ static int domain_context_mapping_one(struct dmar_domain *domain,
+ 
+ 	pr_debug("Set context mapping for %02x:%02x.%d\n",
+ 		bus, PCI_SLOT(devfn), PCI_FUNC(devfn));
++
+ 	BUG_ON(!domain->pgd);
++	BUG_ON(translation != CONTEXT_TT_PASS_THROUGH &&
++	       translation != CONTEXT_TT_MULTI_LEVEL);
+ 
+ 	iommu = device_to_iommu(segment, bus, devfn);
+ 	if (!iommu)
+@@ -1396,9 +1414,18 @@ static int domain_context_mapping_one(struct dmar_domain *domain,
+ 	}
+ 
+ 	context_set_domain_id(context, id);
+-	context_set_address_width(context, iommu->agaw);
+-	context_set_address_root(context, virt_to_phys(pgd));
+-	context_set_translation_type(context, CONTEXT_TT_MULTI_LEVEL);
++
++	/*
++	 * In pass through mode, AW must be programmed to indicate the largest
++	 * AGAW value supported by hardware. And ASR is ignored by hardware.
++	 */
++	if (likely(translation == CONTEXT_TT_MULTI_LEVEL)) {
++		context_set_address_width(context, iommu->agaw);
++		context_set_address_root(context, virt_to_phys(pgd));
++	} else
++		context_set_address_width(context, iommu->msagaw);
++
++	context_set_translation_type(context, translation);
+ 	context_set_fault_enable(context);
+ 	context_set_present(context);
+ 	domain_flush_cache(domain, context, sizeof(*context));
+@@ -1423,13 +1450,15 @@ static int domain_context_mapping_one(struct dmar_domain *domain,
+ }
+ 
+ static int
+-domain_context_mapping(struct dmar_domain *domain, struct pci_dev *pdev)
++domain_context_mapping(struct dmar_domain *domain, struct pci_dev *pdev,
++			int translation)
+ {
+ 	int ret;
+ 	struct pci_dev *tmp, *parent;
+ 
+ 	ret = domain_context_mapping_one(domain, pci_domain_nr(pdev->bus),
+-					 pdev->bus->number, pdev->devfn);
++					 pdev->bus->number, pdev->devfn,
++					 translation);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -1443,7 +1472,7 @@ domain_context_mapping(struct dmar_domain *domain, struct pci_dev *pdev)
+ 		ret = domain_context_mapping_one(domain,
+ 						 pci_domain_nr(parent->bus),
+ 						 parent->bus->number,
+-						 parent->devfn);
++						 parent->devfn, translation);
+ 		if (ret)
+ 			return ret;
+ 		parent = parent->bus->self;
+@@ -1451,12 +1480,14 @@ domain_context_mapping(struct dmar_domain *domain, struct pci_dev *pdev)
+ 	if (tmp->is_pcie) /* this is a PCIE-to-PCI bridge */
+ 		return domain_context_mapping_one(domain,
+ 					pci_domain_nr(tmp->subordinate),
+-					tmp->subordinate->number, 0);
++					tmp->subordinate->number, 0,
++					translation);
+ 	else /* this is a legacy PCI bridge */
+ 		return domain_context_mapping_one(domain,
+ 						  pci_domain_nr(tmp->bus),
+ 						  tmp->bus->number,
+-						  tmp->devfn);
++						  tmp->devfn,
++						  translation);
+ }
+ 
+ static int domain_context_mapped(struct pci_dev *pdev)
+@@ -1753,7 +1784,7 @@ static int iommu_prepare_identity_map(struct pci_dev *pdev,
+ 		goto error;
+ 
+ 	/* context entry init */
+-	ret = domain_context_mapping(domain, pdev);
++	ret = domain_context_mapping(domain, pdev, CONTEXT_TT_MULTI_LEVEL);
+ 	if (!ret)
+ 		return 0;
+ error:
+@@ -1859,6 +1890,28 @@ static inline void iommu_prepare_isa(void)
+ }
+ #endif /* !CONFIG_DMAR_FLPY_WA */
+ 
++/* Initialize each context entry as pass through.*/
++static int __init init_context_pass_through(void)
++{
++	struct pci_dev *pdev = NULL;
++	struct dmar_domain *domain;
++	int ret;
++
++	for_each_pci_dev(pdev) {
++		domain = get_domain_for_dev(pdev, DEFAULT_DOMAIN_ADDRESS_WIDTH);
++	        if (!domain) {
++		        printk(KERN_ERR
++			       "Allocating pass-thru domain for %s failed", pci_name(pdev));
++                        return -ENODEV;
++		}
++		ret = domain_context_mapping(domain, pdev,
++					     CONTEXT_TT_PASS_THROUGH);
++		if (ret)
++			return ret;
++	}
++	return 0;
++}
++
+ static int __init init_dmars(void)
+ {
+ 	struct dmar_drhd_unit *drhd;
+@@ -1866,6 +1919,7 @@ static int __init init_dmars(void)
+ 	struct pci_dev *pdev;
+ 	struct intel_iommu *iommu;
+ 	int i, ret;
++	int pass_through = 1;
+ 
+ 	/*
+ 	 * for each drhd
+@@ -1919,7 +1973,15 @@ static int __init init_dmars(void)
+ 			printk(KERN_ERR "IOMMU: allocate root entry failed\n");
+ 			goto error;
+ 		}
++		if (!ecap_pass_through(iommu->ecap))
++			pass_through = 0;
+ 	}
++	if (iommu_pass_through)
++		if (!pass_through) {
++			printk(KERN_INFO
++			       "Pass Through is not supported by hardware.\n");
++			iommu_pass_through = 0;
++		}
+ 
+ 	/*
+ 	 * Start from the sane iommu hardware state.
+@@ -1983,37 +2045,57 @@ static int __init init_dmars(void)
+ 			       "IOMMU: enable interrupt remapping failed\n");
+ 	}
+ #endif
++	/*
++	 * If pass through is set and enabled, context entries of all pci
++	 * devices are intialized by pass through translation type.
++	 */
++	if (iommu_pass_through) {
++		ret = init_context_pass_through();
++		if (ret) {
++			printk(KERN_ERR "IOMMU: Pass through init failed.\n");
++			iommu_pass_through = 0;
++		}
++	}
+ 
+ 	/*
+-	 * For each rmrr
+-	 *   for each dev attached to rmrr
+-	 *   do
+-	 *     locate drhd for dev, alloc domain for dev
+-	 *     allocate free domain
+-	 *     allocate page table entries for rmrr
+-	 *     if context not allocated for bus
+-	 *           allocate and init context
+-	 *           set present in root table for this bus
+-	 *     init context with domain, translation etc
+-	 *    endfor
+-	 * endfor
++	 * If pass through is not set or not enabled, setup context entries for
++	 * identity mappings for rmrr, gfx, and isa.
+ 	 */
+-	for_each_rmrr_units(rmrr) {
+-		for (i = 0; i < rmrr->devices_cnt; i++) {
+-			pdev = rmrr->devices[i];
+-			/* some BIOS lists non-exist devices in DMAR table */
+-			if (!pdev)
+-				continue;
+-			ret = iommu_prepare_rmrr_dev(rmrr, pdev);
+-			if (ret)
+-				printk(KERN_ERR
++	if (!iommu_pass_through) {
++		/*
++		 * For each rmrr
++		 *   for each dev attached to rmrr
++		 *   do
++		 *     locate drhd for dev, alloc domain for dev
++		 *     allocate free domain
++		 *     allocate page table entries for rmrr
++		 *     if context not allocated for bus
++		 *           allocate and init context
++		 *           set present in root table for this bus
++		 *     init context with domain, translation etc
++		 *    endfor
++		 * endfor
++		 */
++		for_each_rmrr_units(rmrr) {
++			for (i = 0; i < rmrr->devices_cnt; i++) {
++				pdev = rmrr->devices[i];
++				/*
++				 * some BIOS lists non-exist devices in DMAR
++				 * table.
++				 */
++				if (!pdev)
++					continue;
++				ret = iommu_prepare_rmrr_dev(rmrr, pdev);
++				if (ret)
++					printk(KERN_ERR
+ 				 "IOMMU: mapping reserved region failed\n");
++			}
+ 		}
+-	}
+ 
+-	iommu_prepare_gfx_mapping();
++		iommu_prepare_gfx_mapping();
+ 
+-	iommu_prepare_isa();
++		iommu_prepare_isa();
++	}
+ 
+ 	/*
+ 	 * for each drhd
+@@ -2124,7 +2206,8 @@ get_valid_domain_for_dev(struct pci_dev *pdev)
+ 
+ 	/* make sure context mapping is ok */
+ 	if (unlikely(!domain_context_mapped(pdev))) {
+-		ret = domain_context_mapping(domain, pdev);
++		ret = domain_context_mapping(domain, pdev,
++					     CONTEXT_TT_MULTI_LEVEL);
+ 		if (ret) {
+ 			printk(KERN_ERR
+ 				"Domain context map for %s failed",
+@@ -2781,7 +2864,7 @@ int __init intel_iommu_init(void)
+ 	 * Check the need for DMA-remapping initialization now.
+ 	 * Above initialization will also be used by Interrupt-remapping.
+ 	 */
+-	if (no_iommu || swiotlb || dmar_disabled)
++	if (no_iommu || (swiotlb && !iommu_pass_through) || dmar_disabled)
+ 		return -ENODEV;
+ 
+ 	iommu_init_mempool();
+@@ -2801,7 +2884,15 @@ int __init intel_iommu_init(void)
+ 
+ 	init_timer(&unmap_timer);
+ 	force_iommu = 1;
+-	dma_ops = &intel_dma_ops;
++
++	if (!iommu_pass_through) {
++		printk(KERN_INFO
++		       "Multi-level page-table translation for DMAR.\n");
++		dma_ops = &intel_dma_ops;
++	} else
++		printk(KERN_INFO
++		       "DMAR: Pass through translation for DMAR.\n");
++
+ 	init_iommu_sysfs();
+ 
+ 	register_iommu(&intel_iommu_ops);
+@@ -3141,7 +3232,7 @@ static int intel_iommu_attach_device(struct iommu_domain *domain,
+ 		return -EFAULT;
+ 	}
+ 
+-	ret = domain_context_mapping(dmar_domain, pdev);
++	ret = domain_context_mapping(dmar_domain, pdev, CONTEXT_TT_MULTI_LEVEL);
+ 	if (ret)
+ 		return ret;
+ 
+diff --git a/include/asm-x86_64/proto.h b/include/asm-x86_64/proto.h
+index e3be7a7..3f4c262 100644
+--- a/include/asm-x86_64/proto.h
++++ b/include/asm-x86_64/proto.h
+@@ -114,6 +114,7 @@ extern void pci_iommu_shutdown(void);
+ extern void no_iommu_init(void);
+ extern int force_iommu, no_iommu;
+ extern int iommu_detected;
++extern int iommu_pass_through;
+ 
+ /* 10 seconds */
+ #define DMAR_OPERATION_TIMEOUT ((cycles_t) tsc_khz*10*1000)
+diff --git a/include/linux/dma_remapping.h b/include/linux/dma_remapping.h
+index 1a455f1..e0a03af 100644
+--- a/include/linux/dma_remapping.h
++++ b/include/linux/dma_remapping.h
+@@ -13,6 +13,9 @@
+ #define DMA_PTE_WRITE (2)
+ #define DMA_PTE_SNP (1 << 11)
+ 
++#define CONTEXT_TT_MULTI_LEVEL	0
++#define CONTEXT_TT_PASS_THROUGH 2
++
+ struct intel_iommu;
+ struct dmar_domain;
+ struct root_entry;
+@@ -21,11 +24,16 @@ extern void free_dmar_iommu(struct intel_iommu *iommu);
+ 
+ #ifdef CONFIG_DMAR
+ extern int iommu_calculate_agaw(struct intel_iommu *iommu);
++extern int iommu_calculate_max_sagaw(struct intel_iommu *iommu);
+ #else
+ static inline int iommu_calculate_agaw(struct intel_iommu *iommu)
+ {
+ 	return 0;
+ }
++static inline int iommu_calculate_max_sagaw(struct intel_iommu *iommu)
++{
++	return 0;
++}
+ #endif
+ 
+ extern int dmar_disabled;
+diff --git a/include/linux/intel-iommu.h b/include/linux/intel-iommu.h
+index ac578e9..90fa94b 100644
+--- a/include/linux/intel-iommu.h
++++ b/include/linux/intel-iommu.h
+@@ -129,6 +129,7 @@ static inline void dmar_writeq(void __iomem *addr, u64 val)
+ 	(ecap_iotlb_offset(e) + ecap_niotlb_iunits(e) * 16)
+ #define ecap_coherent(e)	((e) & 0x1)
+ #define ecap_qis(e)		((e) & 0x2)
++#define ecap_pass_through(e)	((e >> 6) & 0x1)
+ #define ecap_eim_support(e)	((e >> 4) & 0x1)
+ #define ecap_ir_support(e)	((e >> 3) & 0x1)
+ #define ecap_max_handle_mask(e) ((e >> 20) & 0xf)
+@@ -311,6 +312,7 @@ struct intel_iommu {
+ 	spinlock_t	register_lock; /* protect register handling */
+ 	int		seq_id;	/* sequence id of the iommu */
+ 	int		agaw; /* agaw of this iommu */
++	int		msagaw; /* max sagaw of this iommu */
+ 	unsigned int 	irq;
+ 	unsigned char 	name[13];    /* Device Name */
+ 

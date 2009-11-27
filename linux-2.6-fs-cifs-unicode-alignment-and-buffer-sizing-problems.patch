@@ -1,13 +1,14 @@
 From: Jeff Layton <jlayton@redhat.com>
-Date: Fri, 15 May 2009 09:38:28 -0400
+Date: Fri, 17 Apr 2009 06:48:04 -0400
 Subject: [fs] cifs: unicode alignment and buffer sizing problems
-Message-id: 1242394708-23097-1-git-send-email-jlayton@redhat.com
-O-Subject: [RHEL5.3.z PATCH] BZ#494279: cifs: fix unicode alignment and buffer sizing problems
-Bugzilla: 494279
-RH-Acked-by: Josef Bacik <josef@redhat.com>
+Message-id: 1239965284-29229-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.4 PATCH] BZ#494280: cifs: fix unicode alignment and buffer sizing problems
+Bugzilla: 494280
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
 CVE: CVE-2009-1439
 
-This is a backport of the patch for BZ#494280 to RHEL 5.3.z.
+This patch depends on the larger CIFS update for 5.4 that was recently
+posted.
 
 At session setup and tree connect, CIFS will save off some strings that
 it gets from the server during the session setup and tree connect.
@@ -41,20 +42,16 @@ the cFYI switch enabled, and making sure that the resulting strings
 looked correct.
 
 Signed-off-by: Jeff Layton <jlayton@redhat.com>
----
- fs/cifs/connect.c |   11 +++++------
- fs/cifs/sess.c    |   49 ++++++++++++++++++++++++++++---------------------
- 2 files changed, 33 insertions(+), 27 deletions(-)
 
 diff --git a/fs/cifs/connect.c b/fs/cifs/connect.c
-index 7122c35..6ddb3a9 100644
+index ffa57e6..dc4417d 100644
 --- a/fs/cifs/connect.c
 +++ b/fs/cifs/connect.c
-@@ -3628,16 +3628,15 @@ CIFSTCon(unsigned int xid, struct cifsSesInfo *ses,
+@@ -3750,16 +3750,15 @@ CIFSTCon(unsigned int xid, struct cifsSesInfo *ses,
  			    BCC(smb_buffer_response)) {
  				kfree(tcon->nativeFileSystem);
  				tcon->nativeFileSystem =
--				    kzalloc(length + 2, GFP_KERNEL);
+-				    kzalloc(2*(length + 1), GFP_KERNEL);
 -				if (tcon->nativeFileSystem)
 +				    kzalloc((4 * length) + 2, GFP_KERNEL);
 +				if (tcon->nativeFileSystem) {
@@ -73,10 +70,10 @@ index 7122c35..6ddb3a9 100644
  			/* else do not bother copying these information fields*/
  		} else {
 diff --git a/fs/cifs/sess.c b/fs/cifs/sess.c
-index 7606bb4..752ead9 100644
+index 3fd5519..5a4cd21 100644
 --- a/fs/cifs/sess.c
 +++ b/fs/cifs/sess.c
-@@ -211,35 +211,36 @@ static int decode_unicode_ssetup(char **pbcc_area, int bleft,
+@@ -294,35 +294,36 @@ static int decode_unicode_ssetup(char **pbcc_area, int bleft,
  	int words_left, len;
  	char *data = *pbcc_area;
  
@@ -118,9 +115,8 @@ index 7606bb4..752ead9 100644
  
  	kfree(ses->serverOS);
  	/* UTF-8 string will not grow more than four times as big as UCS-16 */
--	ses->serverOS = kzalloc(4 * len, GFP_KERNEL);
+ 	ses->serverOS = kzalloc((4 * len) + 2 /* trailing null */, GFP_KERNEL);
 -	if (ses->serverOS != NULL)
-+	ses->serverOS = kzalloc((4 * len) + 2 /* trailing null */, GFP_KERNEL);
 +	if (ses->serverOS != NULL) {
  		cifs_strfromUCS_le(ses->serverOS, (__le16 *)data, len, nls_cp);
 +		cFYI(1, ("serverOS=%s", ses->serverOS));
@@ -128,7 +124,7 @@ index 7606bb4..752ead9 100644
  	data += 2 * (len + 1);
  	words_left -= len + 1;
  
-@@ -254,6 +255,7 @@ static int decode_unicode_ssetup(char **pbcc_area, int bleft,
+@@ -337,6 +338,7 @@ static int decode_unicode_ssetup(char **pbcc_area, int bleft,
  	if (ses->serverNOS != NULL) {
  		cifs_strfromUCS_le(ses->serverNOS, (__le16 *)data, len,
  				   nls_cp);
@@ -136,7 +132,7 @@ index 7606bb4..752ead9 100644
  		if (strncmp(ses->serverNOS, "NT LAN Manager 4", 16) == 0) {
  			cFYI(1, ("NT4 server"));
  			ses->flags |= CIFS_SES_NT4;
-@@ -269,12 +271,11 @@ static int decode_unicode_ssetup(char **pbcc_area, int bleft,
+@@ -352,12 +354,11 @@ static int decode_unicode_ssetup(char **pbcc_area, int bleft,
  		return rc;
  
  	kfree(ses->serverDomain);
@@ -151,7 +147,7 @@ index 7606bb4..752ead9 100644
  	}
  	data += 2 * (len + 1);
  	words_left -= len + 1;
-@@ -623,12 +624,18 @@ CIFS_SessSetup(unsigned int xid, struct cifsSesInfo *ses, int first_time,
+@@ -711,12 +712,18 @@ CIFS_SessSetup(unsigned int xid, struct cifsSesInfo *ses, int first_time,
  	}
  
  	/* BB check if Unicode and decode strings */
@@ -173,6 +169,3 @@ index 7606bb4..752ead9 100644
  
  ssetup_exit:
  	if (spnego_key) {
--- 
-1.5.5.6
-

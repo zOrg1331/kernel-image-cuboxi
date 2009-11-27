@@ -1,0 +1,58 @@
+From: Mark McLoughlin <markmc@redhat.com>
+Date: Tue, 14 Apr 2009 18:44:02 +0100
+Subject: [pci] use proper call to driver_create_file
+Message-id: 1239731042.8530.95.camel@blaa
+O-Subject: [RHEL5.4 PATCH 3/5] [pci] use proper call to driver_create_file
+Bugzilla: 491842
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+
+https://bugzilla.redhat.com/491842
+
+Don't try to call the "raw" sysfs_create_file when we already have a
+helper function to do this kind of work for us.
+
+This is just a trivial fix backported from upstream to ease the
+backport of remove_id. The original commit is here:
+
+  http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=03d43b19b9
+
+Signed-off-by: Mark McLoughlin <markmc@redhat.com>
+
+diff --git a/drivers/pci/pci-driver.c b/drivers/pci/pci-driver.c
+index 930c1f8..8a985fc 100644
+--- a/drivers/pci/pci-driver.c
++++ b/drivers/pci/pci-driver.c
+@@ -98,17 +98,21 @@ pci_create_newid_file(struct pci_driver *drv)
+ {
+ 	int error = 0;
+ 	if (drv->probe != NULL)
+-		error = sysfs_create_file(&drv->driver.kobj,
+-					  &driver_attr_new_id.attr);
++		error = driver_create_file(&drv->driver, &driver_attr_new_id);
+ 	return error;
+ }
+ 
++static void pci_remove_newid_file(struct pci_driver *drv)
++{
++	driver_remove_file(&drv->driver, &driver_attr_new_id);
++}
+ #else /* !CONFIG_HOTPLUG */
+ static inline void pci_free_dynids(struct pci_driver *drv) {}
+ static inline int pci_create_newid_file(struct pci_driver *drv)
+ {
+ 	return 0;
+ }
++static inline void pci_remove_newid_file(struct pci_driver *drv) {}
+ #endif
+ 
+ /**
+@@ -414,6 +418,7 @@ int __pci_register_driver(struct pci_driver *drv, struct module *owner)
+ void
+ pci_unregister_driver(struct pci_driver *drv)
+ {
++	pci_remove_newid_file(drv);
+ 	driver_unregister(&drv->driver);
+ 	pci_free_dynids(drv);
+ }

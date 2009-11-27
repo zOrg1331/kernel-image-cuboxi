@@ -1,0 +1,248 @@
+From: Abhijith Das <adas@redhat.com>
+Date: Thu, 23 Apr 2009 11:56:49 -0500
+Subject: [gfs2] unaligned access in gfs2_bitfit
+Message-id: 49F09DD1.1000704@redhat.com
+O-Subject: [RHEL5.4 PATCH][GFS2] - bz485226 - GFS2 unaligned access in gfs2_bitfit
+Bugzilla: 485226
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: Bob Peterson <rpeterso@redhat.com>
+
+This patch sets a flag on each bitmap when we have scanned the complete
+bitmap and discovered that it is full. We reset the flag when (a) we get
+a glock on an rgrp and (b) when we have deleted something in that rgrp
+bitmap.
+This patch also fixes a fragmentation issue in the allocation pattern.
+
+Signed-off-by: Steve Whitehouse <swhiteho@redhat.com>
+Signed-off-by: Bob Peterson <rpeterso@redhat.com>
+Signed-off-by: Abhi Das <adas@redhat.com>
+
+diff --git a/fs/gfs2/rgrp.c b/fs/gfs2/rgrp.c
+index 433f590..4a87882 100644
+--- a/fs/gfs2/rgrp.c
++++ b/fs/gfs2/rgrp.c
+@@ -123,81 +123,89 @@ static unsigned char gfs2_testbit(struct gfs2_rgrpd *rgd, unsigned char *buffer,
+ }
+ 
+ /**
++ * gfs2_bit_search
++ * @ptr: Pointer to bitmap data
++ * @mask: Mask to use (normally 0x55555.... but adjusted for search start)
++ * @state: The state we are searching for
++ *
++ * We xor the bitmap data with a patter which is the bitwise opposite
++ * of what we are looking for, this gives rise to a pattern of ones
++ * wherever there is a match. Since we have two bits per entry, we
++ * take this pattern, shift it down by one place and then and it with
++ * the original. All the even bit positions (0,2,4, etc) then represent
++ * successful matches, so we mask with 0x55555..... to remove the unwanted
++ * odd bit positions.
++ *
++ * This allows searching of a whole u64 at once (32 blocks) with a
++ * single test (on 64 bit arches).
++ */
++
++static inline u64 gfs2_bit_search(const __le64 *ptr, u64 mask, u8 state)
++{
++	u64 tmp;
++	static const u64 search[] = {
++		[0] = 0xffffffffffffffffULL,
++		[1] = 0xaaaaaaaaaaaaaaaaULL,
++		[2] = 0x5555555555555555ULL,
++		[3] = 0x0000000000000000ULL,
++	};
++	tmp = le64_to_cpu(*ptr) ^ search[state];
++	tmp &= (tmp >> 1);
++	tmp &= mask;
++	return tmp;
++}
++
++/**
+  * gfs2_bitfit - Search an rgrp's bitmap buffer to find a bit-pair representing
+  *       a block in a given allocation state.
+  * @buffer: the buffer that holds the bitmaps
+- * @buflen: the length (in bytes) of the buffer
++ * @len: the length (in bytes) of the buffer
+  * @goal: start search at this block's bit-pair (within @buffer)
+- * @old_state: GFS2_BLKST_XXX the state of the block we're looking for.
++ * @state: GFS2_BLKST_XXX the state of the block we're looking for.
+  *
+  * Scope of @goal and returned block number is only within this bitmap buffer,
+  * not entire rgrp or filesystem.  @buffer will be offset from the actual
+- * beginning of a bitmap block buffer, skipping any header structures.
++ * beginning of a bitmap block buffer, skipping any header structures, but
++ * headers are always a multiple of 64 bits long so that the buffer is
++ * always aligned to a 64 bit boundary.
++ *
++ * The size of the buffer is in bytes, but is it assumed that it is
++ * always ok to to read a complete multiple of 64 bits at the end
++ * of the block in case the end is no aligned to a natural boundary.
+  *
+  * Return: the block number (bitmap buffer scope) that was found
+  */
+ 
+-static u32 gfs2_bitfit(const u8 *buffer, unsigned int buflen, u32 goal,
+-		       u8 old_state)
++static u32 gfs2_bitfit(const u8 *buf, const unsigned int len,
++		       u32 goal, u8 state)
+ {
+-	const u8 *byte, *start, *end;
+-	int bit, startbit;
+-	u32 g1, g2, misaligned;
+-	unsigned long *plong;
+-	unsigned long lskipval;
+-
+-	lskipval = (old_state & GFS2_BLKST_USED) ? LBITSKIP00 : LBITSKIP55;
+-	g1 = (goal / GFS2_NBBY);
+-	start = buffer + g1;
+-	byte = start;
+-        end = buffer + buflen;
+-	g2 = ALIGN(g1, sizeof(unsigned long));
+-	plong = (unsigned long *)(buffer + g2);
+-	startbit = bit = (goal % GFS2_NBBY) * GFS2_BIT_SIZE;
+-	misaligned = g2 - g1;
+-	if (!misaligned)
+-		goto ulong_aligned;
+-/* parse the bitmap a byte at a time */
+-misaligned:
+-	while (byte < end) {
+-		if (((*byte >> bit) & GFS2_BIT_MASK) == old_state) {
+-			return goal +
+-				(((byte - start) * GFS2_NBBY) +
+-				 ((bit - startbit) >> 1));
+-		}
+-		bit += GFS2_BIT_SIZE;
+-		if (bit >= GFS2_NBBY * GFS2_BIT_SIZE) {
+-			bit = 0;
+-			byte++;
+-			misaligned--;
+-			if (!misaligned) {
+-				plong = (unsigned long *)byte;
+-				goto ulong_aligned;
+-			}
+-		}
+-	}
+-	return BFITNOENT;
+-
+-/* parse the bitmap a unsigned long at a time */
+-ulong_aligned:
+-	/* Stop at "end - 1" or else prefetch can go past the end and segfault.
+-	   We could "if" it but we'd lose some of the performance gained.
+-	   This way will only slow down searching the very last 4/8 bytes
+-	   depending on architecture.  I've experimented with several ways
+-	   of writing this section such as using an else before the goto
+-	   but this one seems to be the fastest. */
+-	while ((unsigned char *)plong < end - sizeof(unsigned long)) {
+-		prefetch(plong + 1);
+-		if (((*plong) & LBITMASK) != lskipval)
+-			break;
+-		plong++;
+-	}
+-	if ((unsigned char *)plong < end) {
+-		byte = (const u8 *)plong;
+-		misaligned += sizeof(unsigned long) - 1;
+-		goto misaligned;
++	u32 spoint = (goal << 1) & ((8*sizeof(u64)) - 1);
++	const __le64 *ptr = ((__le64 *)buf) + (goal >> 5);
++	const __le64 *end = (__le64 *)(buf + ALIGN(len, sizeof(u64)));
++	u64 tmp;
++	u64 mask = 0x5555555555555555ULL;
++	u32 bit;
++
++	BUG_ON(state > 3);
++
++	/* Mask off bits we don't care about at the start of the search */
++	mask <<= spoint;
++	tmp = gfs2_bit_search(ptr, mask, state);
++	ptr++;
++	while(tmp == 0 && ptr < end) {
++		tmp = gfs2_bit_search(ptr, 0x5555555555555555ULL, state);
++		ptr++;
+ 	}
+-	return BFITNOENT;
++	/* Mask off any bits which are more than len bytes from the start */
++	if (ptr == end && (len & (sizeof(u64) - 1)))
++		tmp &= (((u64)~0) >> (64 - 8*(len & (sizeof(u64) - 1))));
++	/* Didn't find anything, so return */
++	if (tmp == 0)
++		return BFITNOENT;
++	ptr--;
++	bit = __ffs64(tmp);
++	bit /= 2;	/* two bits per entry in the bitmap */
++	return (((const unsigned char *)ptr - buf) * GFS2_NBBY) + bit;
+ }
+ 
+ /**
+@@ -1440,10 +1448,12 @@ static struct gfs2_rgrpd *rgblk_free(struct gfs2_sbd *sdp, u64 bstart,
+ u64 gfs2_alloc_data(struct gfs2_inode *ip)
+ {
+ 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
++	struct buffer_head *dibh;
+ 	struct gfs2_alloc *al = ip->i_alloc;
+ 	struct gfs2_rgrpd *rgd = al->al_rgd;
+ 	u32 goal, blk;
+ 	u64 block;
++	int error;
+ 
+ 	if (rgrp_contains_block(rgd, ip->i_goal))
+ 		goal = ip->i_goal - rgd->rd_data0;
+@@ -1457,6 +1467,13 @@ u64 gfs2_alloc_data(struct gfs2_inode *ip)
+ 	block = rgd->rd_data0 + blk;
+ 	ip->i_goal = block;
+ 
++	error = gfs2_meta_inode_buffer(ip, &dibh);
++	if (error == 0) {
++		struct gfs2_dinode *di = (struct gfs2_dinode *)dibh->b_data;
++		gfs2_trans_add_bh(ip->i_gl, dibh, 1);
++		di->di_goal_meta = di->di_goal_data = cpu_to_be64(ip->i_goal);
++		brelse(dibh);
++	}
+ 	gfs2_assert_withdraw(sdp, rgd->rd_free);
+ 	rgd->rd_free--;
+ 
+@@ -1485,10 +1502,12 @@ u64 gfs2_alloc_data(struct gfs2_inode *ip)
+ u64 gfs2_alloc_meta(struct gfs2_inode *ip)
+ {
+ 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
++	struct buffer_head *dibh;
+ 	struct gfs2_alloc *al = ip->i_alloc;
+ 	struct gfs2_rgrpd *rgd = al->al_rgd;
+ 	u32 goal, blk;
+ 	u64 block;
++	int error;
+ 
+ 	if (rgrp_contains_block(rgd, ip->i_goal))
+ 		goal = ip->i_goal - rgd->rd_data0;
+@@ -1502,6 +1521,13 @@ u64 gfs2_alloc_meta(struct gfs2_inode *ip)
+ 	block = rgd->rd_data0 + blk;
+ 	ip->i_goal = block;
+ 
++	error = gfs2_meta_inode_buffer(ip, &dibh);
++	if (error == 0) {
++		struct gfs2_dinode *di = (struct gfs2_dinode *)dibh->b_data;
++		gfs2_trans_add_bh(ip->i_gl, dibh, 1);
++		di->di_goal_meta = di->di_goal_data = cpu_to_be64(ip->i_goal);
++		brelse(dibh);
++	}
+ 	gfs2_assert_withdraw(sdp, rgd->rd_free);
+ 	rgd->rd_free--;
+ 
+diff --git a/include/linux/bitops.h b/include/linux/bitops.h
+index 5d1eabc..f9e5279 100644
+--- a/include/linux/bitops.h
++++ b/include/linux/bitops.h
+@@ -60,4 +60,14 @@ static inline unsigned fls_long(unsigned long l)
+ 	return fls64(l);
+ }
+ 
++static inline int __ffs64(u64 n)
++{
++#if BITS_PER_LONG == 32
++	u32 lsbits = (u32)n;
++	if (lsbits == 0)
++		return __ffs((unsigned long)(n >> 32)) + 32;
++#endif
++	return __ffs((unsigned long)n);
++}
++
+ #endif

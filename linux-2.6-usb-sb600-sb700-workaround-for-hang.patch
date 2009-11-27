@@ -1,0 +1,70 @@
+From: Pete Zaitcev <zaitcev@redhat.com>
+Date: Mon, 23 Feb 2009 23:26:13 -0700
+Subject: [usb] sb600/sb700: workaround for hang
+Message-id: 20090223232613.17545d2c.zaitcev@redhat.com
+O-Subject: [RHEL 5.4 Patch] Workaround for USB hang in SB600/SB700
+Bugzilla: 471972
+RH-Acked-by: Jon Masters <jcm@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Peter Martuccelli <peterm@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+
+This patch addresses bz#471972. AMD requested us to apply a workaround
+for SB600 and early SB700 for an issue that makes EHCI to hang. It is
+upstream, and the backport (by Evan McNabb) is more direct for RHEL 5
+than what I've done for RHEL 4. Basically, a copy-paste of these two
+commits:
+
+b09bc6cbae4dd3a2d35722668ef2c502a7b8b093
+0a99e8ac430a27825bd055719765fd0d65cd797f
+
+I think the patch is quite safe. Why, I have an SB600 laptop and
+it seems to have no ill effects. Other chips should not be affected
+at all.
+
+Please ack.
+
+-- Pete
+
+diff --git a/drivers/usb/host/ehci-pci.c b/drivers/usb/host/ehci-pci.c
+index f1e0315..e7bd8ef 100644
+--- a/drivers/usb/host/ehci-pci.c
++++ b/drivers/usb/host/ehci-pci.c
+@@ -68,6 +68,8 @@ static int ehci_pci_setup(struct usb_hcd *hcd)
+ {
+ 	struct ehci_hcd		*ehci = hcd_to_ehci(hcd);
+ 	struct pci_dev		*pdev = to_pci_dev(hcd->self.controller);
++	struct pci_dev		*p_smbus;
++	u8			rev;
+ 	u32			temp;
+ 	int			retval;
+ 
+@@ -139,6 +141,28 @@ static int ehci_pci_setup(struct usb_hcd *hcd)
+ 			break;
+ 		}
+ 		break;
++	case PCI_VENDOR_ID_ATI:
++		/* SB600 and old version of SB700 have a bug in EHCI controller,
++		 * which causes usb devices lose response in some cases.
++		 */
++		if ((pdev->device == 0x4386) || (pdev->device == 0x4396)) {
++			p_smbus = pci_get_device(PCI_VENDOR_ID_ATI,
++						 PCI_DEVICE_ID_ATI_SBX00_SMBUS,
++						 NULL);
++			if (!p_smbus)
++				break;
++			rev = p_smbus->revision;
++			if ((pdev->device == 0x4386) || (rev == 0x3a)
++			    || (rev == 0x3b)) {
++				u8 tmp;
++				ehci_info(ehci, "applying AMD SB600/SB700 USB "
++					"freeze workaround\n");
++				pci_read_config_byte(pdev, 0x53, &tmp);
++				pci_write_config_byte(pdev, 0x53, tmp | (1<<3));
++			}
++			pci_dev_put(p_smbus);
++		}
++		break;
+ 	}
+ 
+ 	if (ehci_is_TDI(ehci))

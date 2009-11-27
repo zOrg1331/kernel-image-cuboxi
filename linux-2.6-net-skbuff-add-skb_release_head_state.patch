@@ -1,0 +1,77 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Wed, 27 May 2009 15:31:13 +1000
+Subject: [net] skbuff: add skb_release_head_state
+Message-id: E1M9BjN-0002B6-1S@gondolin.me.apana.org.au
+O-Subject: [PATCH 8/17] skbuff: Add skb_release_head_state
+Bugzilla: 499347
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+RHEL5 bugzilla #499347
+
+skbuff: Add skb_release_head_state
+
+This patch adds the function skb_release_head_state, which is
+requird by GRO.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 528115d..e09013f 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -330,7 +330,6 @@ void kfree_skbmem(struct sk_buff *skb)
+ 	struct sk_buff *other;
+ 	atomic_t *fclone_ref;
+ 
+-	skb_release_data(skb);
+ 	switch (skb->fclone) {
+ 	case SKB_FCLONE_UNAVAILABLE:
+ 		kmem_cache_free(skbuff_head_cache, skb);
+@@ -357,16 +356,7 @@ void kfree_skbmem(struct sk_buff *skb)
+ 	};
+ }
+ 
+-/**
+- *	__kfree_skb - private function
+- *	@skb: buffer
+- *
+- *	Free an sk_buff. Release anything attached to the buffer.
+- *	Clean the state. This is an internal helper function. Users should
+- *	always call kfree_skb
+- */
+-
+-void __kfree_skb(struct sk_buff *skb)
++static void skb_release_head_state(struct sk_buff *skb)
+ {
+ 	dst_release(skb->dst);
+ #ifdef CONFIG_XFRM
+@@ -392,7 +382,27 @@ void __kfree_skb(struct sk_buff *skb)
+ 	skb->tc_verd = 0;
+ #endif
+ #endif
++}
+ 
++/* Free everything but the sk_buff shell. */
++static void skb_release_all(struct sk_buff *skb)
++{
++	skb_release_head_state(skb);
++	skb_release_data(skb);
++}
++
++/**
++ *	__kfree_skb - private function
++ *	@skb: buffer
++ *
++ *	Free an sk_buff. Release anything attached to the buffer.
++ *	Clean the state. This is an internal helper function. Users should
++ *	always call kfree_skb
++ */
++
++void __kfree_skb(struct sk_buff *skb)
++{
++	skb_release_all(skb);
+ 	kfree_skbmem(skb);
+ }
+ 

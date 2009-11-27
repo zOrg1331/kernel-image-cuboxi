@@ -1,0 +1,33 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Tue, 31 Mar 2009 09:31:10 +0200
+Subject: [xen] ia64: fix whitespace error in vmx.h
+Message-id: 49D1C6BE.8090802@redhat.com
+O-Subject: [RHEL5.4 PATCH]: Fix whitespace error in vmx.h
+Bugzilla: 477098
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Dor Laor <dlaor@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+
+All,
+     As DonZ pointed out, the patch to fix the fpswa issues in ia64 generated
+some new warnings during the Xen build.  That's because a space was forgotten in
+one of the extern declarations.  The attached patch adds that space back in, and
+fixes the build warnings in a brew build.  This is part of BZ 477098.  Please ACK.
+
+--
+Chris Lalancette
+
+diff --git a/include/asm-ia64/vmx.h b/include/asm-ia64/vmx.h
+index 4b3b1b1..70e7ba0 100644
+--- a/include/asm-ia64/vmx.h
++++ b/include/asm-ia64/vmx.h
+@@ -38,7 +38,7 @@ extern void vmx_load_state(struct vcpu *v);
+ extern void vmx_setup_platform(struct domain *d);
+ extern void vmx_do_launch(struct vcpu *v);
+ extern void vmx_io_assist(struct vcpu *v);
+-extern IA64FAULTia64_hypercall(struct pt_regs *regs);
++extern IA64FAULT ia64_hypercall(struct pt_regs *regs);
+ extern void vmx_save_state(struct vcpu *v);
+ extern void vmx_load_state(struct vcpu *v);
+ extern void show_registers(struct pt_regs *regs);

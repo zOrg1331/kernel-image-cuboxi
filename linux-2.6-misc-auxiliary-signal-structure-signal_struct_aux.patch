@@ -1,0 +1,81 @@
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Tue, 3 Mar 2009 17:27:24 +0100
+Subject: [misc] auxiliary signal structure: signal_struct_aux
+Message-id: 20090303162957.223238567@dhcp-0-152.brq.redhat.com
+O-Subject: [RHEL5.4 Patch 02/12] Auxiliary signal structure: signal_struct_aux
+Bugzilla: 461636
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+
+bz461636
+
+Patch from Oleg Nesterov:
+
+Introduce signal_struct_aux. Since we can't change "struct signal_struct",
+we change the size of the allocated objects. The aux info is placed right
+after the end of the kABI-visible part of the object, and can be accessed
+via the new signal_aux(sig) helper with no overhead.
+
+Currently signal_struct_aux is empty and init_signal_aux(*aux) does nothing,
+further patches will populate it.
+
+diff --git a/include/linux/init_signals.h b/include/linux/init_signals.h
+index eea0f8b..8ab4a09 100644
+--- a/include/linux/init_signals.h
++++ b/include/linux/init_signals.h
+@@ -1 +1,5 @@
+-static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
++static struct signal_with_aux_struct init_signals_aux = {
++	.sig = INIT_SIGNALS(init_signals_aux.sig),
++};
++
++#define init_signals	init_signals_aux.sig
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index d2ec53c..42883af 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -521,6 +521,23 @@ struct signal_struct {
+ #endif
+ };
+ 
++struct signal_struct_aux {
++};
++
++static inline void init_signal_aux(struct signal_struct_aux *aux)
++{
++}
++
++struct signal_with_aux_struct {
++	struct signal_struct		sig;
++	struct signal_struct_aux	aux;
++};
++
++static inline struct signal_struct_aux *signal_aux(struct signal_struct *sig)
++{
++	return &container_of(sig, struct signal_with_aux_struct, sig)->aux;
++}
++
+ /* Context switch must be unlocked if interrupts are to be enabled */
+ #ifdef __ARCH_WANT_INTERRUPTS_ON_CTXSW
+ # define __ARCH_WANT_UNLOCKED_CTXSW
+diff --git a/kernel/fork.c b/kernel/fork.c
+index e747257..b7508e3 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -965,6 +965,8 @@ static inline int copy_signal(unsigned long clone_flags, struct task_struct * ts
+ 	if (!sig)
+ 		return -ENOMEM;
+ 
++	init_signal_aux(signal_aux(sig));
++
+ 	ret = copy_thread_group_keys(tsk);
+ 	if (ret < 0) {
+ 		kmem_cache_free(signal_cachep, sig);
+@@ -1539,7 +1541,7 @@ void __init proc_caches_init(void)
+ 			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_DESTROY_BY_RCU,
+ 			sighand_ctor, NULL);
+ 	signal_cachep = kmem_cache_create("signal_cache",
+-			sizeof(struct signal_struct), 0,
++			sizeof(struct signal_with_aux_struct), 0,
+ 			SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL, NULL);
+ 	files_cachep = kmem_cache_create("files_cache", 
+ 			sizeof(struct files_struct), 0,

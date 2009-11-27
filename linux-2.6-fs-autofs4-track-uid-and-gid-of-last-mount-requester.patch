@@ -1,0 +1,89 @@
+From: Ian Kent <ikent@redhat.com>
+Date: Wed, 18 Mar 2009 16:04:56 +0900
+Subject: [fs] autofs4: track uid and gid of last mount requester
+Message-id: 20090318070456.9081.88327.stgit@zeus.themaw.net
+O-Subject: [RHEL 5.4 PATCH 1/5] autofs4 - track uid and gid of last mount requester
+Bugzilla: 452120
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+From: Ian Kent <raven@themaw.net>
+
+This patch is the first of four patches needed to addresses bug 452120.
+
+Patch to track the uid and gid of the last process to request a mount
+for on an autofs dentry.
+
+Signed-off-by: Ian Kent <raven@themaw.net>
+
+diff --git a/fs/autofs4/autofs_i.h b/fs/autofs4/autofs_i.h
+index d599c69..d39c197 100644
+--- a/fs/autofs4/autofs_i.h
++++ b/fs/autofs4/autofs_i.h
+@@ -65,6 +65,9 @@ struct autofs_info {
+ 	unsigned long last_used;
+ 	atomic_t count;
+ 
++	uid_t uid;
++	gid_t gid;
++
+ 	mode_t	mode;
+ 	size_t	size;
+ 
+diff --git a/fs/autofs4/inode.c b/fs/autofs4/inode.c
+index 1b700d1..7ced5fc 100644
+--- a/fs/autofs4/inode.c
++++ b/fs/autofs4/inode.c
+@@ -53,6 +53,8 @@ struct autofs_info *autofs4_init_ino(struct autofs_info *ino,
+ 		atomic_set(&ino->count, 0);
+ 	}
+ 
++	ino->uid = 0;
++	ino->gid = 0;
+ 	ino->mode = mode;
+ 	ino->last_used = jiffies;
+ 
+diff --git a/fs/autofs4/waitq.c b/fs/autofs4/waitq.c
+index 73ce14b..cc30919 100644
+--- a/fs/autofs4/waitq.c
++++ b/fs/autofs4/waitq.c
+@@ -453,6 +453,40 @@ int autofs4_wait(struct autofs_sb_info *sbi, struct dentry *dentry,
+ 
+ 	status = wq->status;
+ 
++	/*
++	 * For direct and offset mounts we need to track the requester's
++	 * uid and gid in the dentry info struct. This is so it can be
++	 * supplied, on request, by the misc device ioctl interface.
++	 * This is needed during daemon resatart when reconnecting
++	 * to existing, active, autofs mounts. The uid and gid (and
++	 * related string values) may be used for macro substitution
++	 * in autofs mount maps.
++	 */
++	if (!status) {
++		struct autofs_info *ino;
++		struct dentry *de = NULL;
++
++		/* direct mount or browsable map */
++		ino = autofs4_dentry_ino(dentry);
++		if (!ino) {
++			/* If not lookup actual dentry used */
++			de = d_lookup(dentry->d_parent, &dentry->d_name);
++			if (de)
++				ino = autofs4_dentry_ino(de);
++		}
++
++		/* Set mount requester */
++		if (ino) {
++			spin_lock(&sbi->fs_lock);
++			ino->uid = wq->uid;
++			ino->gid = wq->gid;
++			spin_unlock(&sbi->fs_lock);
++		}
++
++		if (de)
++			dput(de);
++	}
++
+ 	/* Are we the last process to need status? */
+ 	mutex_lock(&sbi->wq_mutex);
+ 	if (!--wq->wait_ctr)

@@ -1,0 +1,71 @@
+From: Masami Hiramatsu <mhiramat@redhat.com>
+Date: Wed, 22 Apr 2009 09:32:26 -0400
+Subject: [x86] prevent boosting kprobes on exception address
+Message-id: 49EF1C6A.7010405@redhat.com
+O-Subject: [RHEL 5.4 PATCH] BZ493088 kprobes: x86-64/i386: Prevent boosting kprobes on exception address
+Bugzilla: 493088
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=493088
+
+Description:
+Prevent boosting kprobes on exception address.
+
+Don't boost at the addresses which are listed on exception tables,
+because major page fault can occur on those addresses.  In that case,
+kprobes can not ensure that when instruction buffer can be freed since
+some processes will sleep on the buffer.
+
+kprobes-ia64 already has same check.
+
+Upstream status:
+This fix has been in upstream.
+commit 30390880debce4a68fd23e87a787f27609e4bf4a
+
+Brew:
+Built on all platforms.
+https://brewweb.devel.redhat.com//taskinfo?taskID=1768152
+
+Test status:
+I checked that kprobes put on the address in ex_table were not boosted
+with this patch, on both of x86_64 and i686.
+
+diff --git a/arch/i386/kernel/kprobes.c b/arch/i386/kernel/kprobes.c
+index fbcad23..149e8b9 100644
+--- a/arch/i386/kernel/kprobes.c
++++ b/arch/i386/kernel/kprobes.c
+@@ -31,6 +31,7 @@
+ #include <linux/kprobes.h>
+ #include <linux/ptrace.h>
+ #include <linux/preempt.h>
++#include <linux/module.h>
+ #include <asm/cacheflush.h>
+ #include <asm/kdebug.h>
+ #include <asm/desc.h>
+@@ -100,6 +101,10 @@ static __always_inline int can_boost(kprobe_opcode_t *opcodes)
+ #undef W
+ 	kprobe_opcode_t opcode;
+ 	kprobe_opcode_t *orig_opcodes = opcodes;
++
++	if (search_exception_tables(opcodes))
++		return 0;	/* Page fault may occur on this address. */
++
+ retry:
+ 	if (opcodes - orig_opcodes > MAX_INSN_SIZE - 1)
+ 		return 0;
+diff --git a/arch/x86_64/kernel/kprobes.c b/arch/x86_64/kernel/kprobes.c
+index 8a5b93f..005a0de 100644
+--- a/arch/x86_64/kernel/kprobes.c
++++ b/arch/x86_64/kernel/kprobes.c
+@@ -129,6 +129,9 @@ static __always_inline int can_boost(kprobe_opcode_t *opcodes)
+ 	kprobe_opcode_t opcode;
+ 	kprobe_opcode_t *orig_opcodes = opcodes;
+ 
++	if (search_exception_tables(opcodes))
++		return 0;	/* Page fault may occur on this address. */
++
+ retry:
+ 	if (opcodes - orig_opcodes > __MAX_INSN_SIZE - 1)
+ 		return 0;

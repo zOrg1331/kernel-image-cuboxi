@@ -1,0 +1,73 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 20 Jan 2009 16:59:13 +0100
+Subject: [s390] qeth: print HiperSocket version on z9 and later
+Message-id: 20090120155913.GG21694@redhat.com
+O-Subject: [RHEL5 U4 PATCH 7/8] s390 - qeth: print HiperSocket version on z9 and later
+Bugzilla: 479881
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+The pre z9 machines provide an mcl string in EBCDIC format, z9 or later provide
+string in ASCII format. This results in device startup message which show
+invalid version strings.
+
+Solution: In case an EBCDIC HiperSocket version string is detected the string
+is converted to ASCII before insertion into message.
+
+Bugzilla
+=========
+
+BZ 479881
+https://bugzilla.redhat.com/show_bug.cgi?id=479881
+
+Upstream status of the patch:
+=============================
+
+The patch is upstream as of git commit 906f1f0768c736368244ac8fe6023c2b0c31b9ea
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	--Hans
+
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index 0abc754..1cc3d37 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -7937,15 +7937,18 @@ qeth_print_status_message(struct qeth_card *card)
+ 		}
+ 		/* fallthrough */
+ 	case QETH_CARD_TYPE_IQD:
+-		card->info.mcl_level[0] = (char) _ebcasc[(__u8)
+-			card->info.mcl_level[0]];
+-		card->info.mcl_level[1] = (char) _ebcasc[(__u8)
+-			card->info.mcl_level[1]];
+-		card->info.mcl_level[2] = (char) _ebcasc[(__u8)
+-			card->info.mcl_level[2]];
+-		card->info.mcl_level[3] = (char) _ebcasc[(__u8)
+-			card->info.mcl_level[3]];
+-		card->info.mcl_level[QETH_MCL_LENGTH] = 0;
++		if ((card->info.guestlan) ||
++		    (card->info.mcl_level[0] & 0x80)) {
++			card->info.mcl_level[0] = (char) _ebcasc[(__u8)
++				card->info.mcl_level[0]];
++			card->info.mcl_level[1] = (char) _ebcasc[(__u8)
++				card->info.mcl_level[1]];
++			card->info.mcl_level[2] = (char) _ebcasc[(__u8)
++				card->info.mcl_level[2]];
++			card->info.mcl_level[3] = (char) _ebcasc[(__u8)
++				card->info.mcl_level[3]];
++			card->info.mcl_level[QETH_MCL_LENGTH] = 0;
++		}
+ 		break;
+ 	default:
+ 		memset(&card->info.mcl_level[0], 0, QETH_MCL_LENGTH + 1);

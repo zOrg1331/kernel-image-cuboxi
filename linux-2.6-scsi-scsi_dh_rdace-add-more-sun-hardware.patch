@@ -1,0 +1,31 @@
+From: mchristi@redhat.com <mchristi@redhat.com>
+Date: Tue, 25 Aug 2009 19:37:42 -0500
+Subject: [scsi] scsi_dh_rdace: add more sun hardware
+Message-id: 1251247062-3889-1-git-send-email-mchristi@redhat.com
+O-Subject: [PATCH] RHEL 5.5: add more sun hardware to scsi_dh_rdac
+Bugzilla: 518496
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for BZ 518496.
+
+Sun resells LSI hardware with the vendor SDK and
+product FLEXLINE 380. This adds the box to the modules's
+dev list array which is used to detect which devices
+the module should attach to.
+
+Patch was tested and made by the user, and he us sending
+it upstream now. I have only compile tested the patch.
+
+diff --git a/drivers/scsi/device_handler/scsi_dh_rdac.c b/drivers/scsi/device_handler/scsi_dh_rdac.c
+index 6f18bcd..a85e57b 100644
+--- a/drivers/scsi/device_handler/scsi_dh_rdac.c
++++ b/drivers/scsi/device_handler/scsi_dh_rdac.c
+@@ -630,6 +630,7 @@ const struct scsi_dh_devlist rdac_dev_list[] = {
+ 	{"SGI", "TP9500"},
+ 	{"SGI", "IS"},
+ 	{"STK", "OPENstorage D280"},
++	{"STK", "FLEXLINE 380"},
+ 	{"SUN", "CSM200_R"},
+ 	{"SUN", "LCSM100_F"},
+ 	{"DELL", "MD3000"},

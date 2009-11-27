@@ -1,0 +1,39 @@
+From: Ivan Vecera <ivecera@redhat.com>
+Date: Thu, 28 May 2009 11:36:51 +0200
+Subject: [net] forcedeth: restore power up snippet
+Message-id: 4A1E5B33.4070700@redhat.com
+O-Subject: Re: [RHEL5.4 PATCH] forcedeth: update to upstream version 0.62
+Bugzilla: 479740
+RH-Acked-by: Chuck Ebbert <cebbert@redhat.com>
+
+>> We had some problems in Fedora 11 where if someone had ever run the kernel with
+>> the original patch applied they couldn't bring up a link with it reverted.
+>>
+>> The fix was to leave in the part that powers up the link and only revert the
+>> power-down part, i.e. the revert patch looks like this now:
+>
+Yes, this should help, but in this case every OS should be fixed (forced PHY power-up)
+to be resistant against this issue. I'm not sure if this is necessary for RHEL, because
+the official kernel won't contain this problematic commit (PHY power up/down).
+The problem occurs when you use a second OS that causes PHY power down, but as I wrote
+in this case we should fix all RHEL versions.
+
+The patch below returns back power-up part of the commit.
+
+Ivan
+
+diff --git a/drivers/net/forcedeth.c b/drivers/net/forcedeth.c
+index 964a3c5..f3eb92c 100644
+--- a/drivers/net/forcedeth.c
++++ b/drivers/net/forcedeth.c
+@@ -5227,6 +5227,10 @@ static int nv_open(struct net_device *dev)
+ 
+ 	dprintk(KERN_DEBUG "nv_open: begin\n");
+ 
++	/* power up phy */
++	mii_rw(dev, np->phyaddr, MII_BMCR,
++	       mii_rw(dev, np->phyaddr, MII_BMCR, MII_READ) & ~BMCR_PDOWN);
++
+ 	/* erase previous misconfiguration */
+ 	if (np->driver_data & DEV_HAS_POWER_CNTRL)
+ 		nv_mac_reset(dev);

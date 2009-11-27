@@ -1,0 +1,85 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Thu, 2 Apr 2009 10:54:09 -0400
+Subject: [ppc] spufs: check offset before calculating write size
+Message-id: 20090402145154.2321.8015.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 BZ493426 1/2] powerpc/spufs: Check file offset before calculating write size in fixed-sized files
+Bugzilla: 493426
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=493426
+
+Description:
+===========
+The write size calculated during regs and fpcr writes may currently
+go negative. Because size is unsigned, this will wrap, and our
+check for EFBIG will fail.
+
+Instead, do the check for EFBIG before subtracting from size.
+
+RHEL Version found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1747881
+
+Upstream Status:
+================
+d219889b769a56901c9a916187ee0af95e6ff8a6
+
+Test Status:
+============
+A testcase is provided in the Bugzilla.  Without the patches the testcase fails
+with:
+
+testcase "tests/08-reg-file/03-offset" from spufs-testsuite fails on RHEL 5.3:
+tests/08-reg-file/03-offset                       FAIL    (rc 1, expected 0)
+
+With the patches applied the testcase passes:
+tests/08-reg-file/03-offset                       PASS
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/arch/powerpc/platforms/cell/spufs/file.c b/arch/powerpc/platforms/cell/spufs/file.c
+index 8b1087e..7d50e05 100644
+--- a/arch/powerpc/platforms/cell/spufs/file.c
++++ b/arch/powerpc/platforms/cell/spufs/file.c
+@@ -537,9 +537,10 @@ spufs_regs_write(struct file *file, const char __user *buffer,
+ 	struct spu_lscsa *lscsa = ctx->csa.lscsa;
+ 	int ret;
+ 
+-	size = min_t(ssize_t, sizeof lscsa->gprs - *pos, size);
+-	if (size <= 0)
++	if (*pos >= sizeof(lscsa->gprs))
+ 		return -EFBIG;
++
++	size = min_t(ssize_t, sizeof(lscsa->gprs) - *pos, size);
+ 	*pos += size;
+ 
+ 	ret = spu_acquire_saved(ctx);
+@@ -592,10 +593,11 @@ spufs_fpcr_write(struct file *file, const char __user * buffer,
+ 	struct spu_lscsa *lscsa = ctx->csa.lscsa;
+ 	int ret;
+ 
+-	size = min_t(ssize_t, sizeof(lscsa->fpcr) - *pos, size);
+-	if (size <= 0)
++	if (*pos >= sizeof(lscsa->fpcr))
+ 		return -EFBIG;
+ 
++	size = min_t(ssize_t, sizeof(lscsa->fpcr) - *pos, size);
++
+ 	ret = spu_acquire_saved(ctx);
+ 	if (ret)
+ 		return ret;

@@ -1,0 +1,175 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Wed, 29 Jul 2009 15:59:01 +0300
+Subject: [scsi] megaraid: fix the tape drive issue
+Message-id: 4A704795.2070107@redhat.com
+O-Subject: [RHEL 5.4 PATCH] megaraid: fix the tape drive issue
+Bugzilla: 510665
+
+This resolves bz#510665
+
+The megaraid SAS driver in the RHEL5.4-beta kernel
+fails to identify an HP Ultrium-4 SAS tape drive.
+With this patch the tape is correctly discovered.
+
+Patch for this comes from Bo Yang (LSI) and has
+been tested and verified by the customer (NEC Japan).
+They are also running additional tests to verify
+nothing else has regressed - I'll keep you informed.
+
+Tomas
+
+diff --git a/drivers/scsi/megaraid/megaraid_sas.c b/drivers/scsi/megaraid/megaraid_sas.c
+index 5fb311f..728cc63 100644
+--- a/drivers/scsi/megaraid/megaraid_sas.c
++++ b/drivers/scsi/megaraid/megaraid_sas.c
+@@ -10,7 +10,7 @@
+  *	   2 of the License, or (at your option) any later version.
+  *
+  * FILE		: megaraid_sas.c
+- * Version	: v00.00.04.08-RH1
++ * Version	: v00.00.04.08-RH2
+  *
+  * Authors:
+  *	(email-id : megaraidlinux@lsi.com)
+@@ -467,7 +467,7 @@ megasas_enable_intr_gen2(struct megasas_register_set __iomem *regs)
+  * @regs:			MFI register set
+  */
+ static inline void
+-megasas_disable_intr_gen2(struct megasas_register_set __iomem *regs)
++megasas_disable_intr_gen2(struct megasas_register_set __iomem * regs)
+ {
+ 	u32 mask = 0xFFFFFFFF;
+ 	writel(mask, &regs->outbound_intr_mask);
+@@ -522,8 +522,11 @@ static inline void
+ megasas_fire_cmd_gen2(struct megasas_instance *instance, dma_addr_t frame_phys_addr,
+ 			u32 frame_count, struct megasas_register_set __iomem *regs)
+ {
+-	writel((frame_phys_addr | (frame_count<<1))|1,
++	unsigned long flags;
++	spin_lock_irqsave(&instance->fire_lock, flags);
++	writel((frame_phys_addr | (frame_count<<1))|1, 
+ 			&(regs)->inbound_queue_port);
++	spin_unlock_irqrestore(&instance->fire_lock, flags);
+ }
+ 
+ static struct megasas_instance_template megasas_instance_template_gen2 = {
+@@ -1295,7 +1298,7 @@ static int megasas_slave_alloc(struct scsi_device *sdev)
+ 	struct megasas_instance *instance ;
+ 	instance = megasas_lookup_instance(sdev->host->host_no);
+ 
+-	if (sdev->channel < MEGASAS_MAX_PD_CHANNELS) {
++	if (sdev->channel < MEGASAS_MAX_PD_CHANNELS && sdev->type == TYPE_DISK) {
+ 		/*
+ 		 * Open the OS scan to the SYSTEM PD
+ 		 */
+@@ -1603,8 +1606,7 @@ megasas_service_aen(struct megasas_instance *instance, struct megasas_cmd *cmd)
+ 
+ 	instance->aen_cmd = NULL;
+ 	megasas_return_cmd(instance, cmd);
+-	
+-	if (instance->unload == 0) {
++	if ((!cmd->abort_aen) && (instance->unload == 0 )) {
+ 		struct megasas_aen_event *ev;
+ 		ev = kzalloc(sizeof(*ev), GFP_ATOMIC);
+ 		if (!ev) {
+@@ -1703,12 +1705,20 @@ megasas_unmap_sgbuf(struct megasas_instance *instance, struct megasas_cmd *cmd)
+ 	opcode = cmd->frame->hdr.cmd;
+ 
+ 	if ((opcode == MFI_CMD_LD_READ) || (opcode == MFI_CMD_LD_WRITE)) {
+-		if (IS_DMA64)
++		if ((instance->pdev->device == PCI_DEVICE_ID_LSI_SAS0073SKINNY) ||
++		(instance->pdev->device == PCI_DEVICE_ID_LSI_SAS0071SKINNY)) {
++			buf_h = cmd->frame->io.sgl.sge_skinny[0].phys_addr;
++
++		} else if (IS_DMA64)
+ 			buf_h = cmd->frame->io.sgl.sge64[0].phys_addr;
+ 		else
+ 			buf_h = cmd->frame->io.sgl.sge32[0].phys_addr;
+ 	} else {
+-		if (IS_DMA64)
++		if ((instance->pdev->device == PCI_DEVICE_ID_LSI_SAS0073SKINNY) ||
++		(instance->pdev->device == PCI_DEVICE_ID_LSI_SAS0071SKINNY)) {
++			buf_h = cmd->frame->pthru.sgl.sge_skinny[0].phys_addr;
++
++		} else if (IS_DMA64)
+ 			buf_h = cmd->frame->pthru.sgl.sge64[0].phys_addr;
+ 		else
+ 			buf_h = cmd->frame->pthru.sgl.sge32[0].phys_addr;
+@@ -3604,6 +3614,7 @@ megasas_mgmt_fw_ioctl(struct megasas_instance *instance,
+ 	 */
+ 	memcpy(cmd->frame, ioc->frame.raw, 2 * MEGAMFI_FRAME_SIZE);
+ 	cmd->frame->hdr.context = cmd->index;
++	cmd->frame->hdr.pad_0 = 0;
+ 
+ 	/*
+ 	 * The management interface between applications and the fw uses
+@@ -4034,19 +4045,11 @@ megasas_aen_polling(void *arg)
+ 	}
+ 
+ 	if (instance->evt_detail) {
+-		printk(KERN_INFO "%s[%d]: event code 0x%04x\n", __FUNCTION__,
+-			instance->host->host_no, instance->evt_detail->code);
+ 
+ 		switch (instance->evt_detail->code) {
+ 
+-		case MR_EVT_LD_CREATED:
+ 		case MR_EVT_PD_INSERTED:
+-		case MR_EVT_LD_DELETED:
+-		case MR_EVT_LD_OFFLINE:
+-		case MR_EVT_CFG_CLEARED:
+ 		case MR_EVT_PD_REMOVED:
+-		case MR_EVT_FOREIGN_CFG_IMPORTED:
+-		case MR_EVT_LD_STATE_CHANGE:
+ 		case MR_EVT_CTRL_HOST_BUS_SCAN_REQUESTED:
+ 			doscan = 1;
+ 			break;
+diff --git a/drivers/scsi/megaraid/megaraid_sas.h b/drivers/scsi/megaraid/megaraid_sas.h
+index c68be0f..69b7471 100644
+--- a/drivers/scsi/megaraid/megaraid_sas.h
++++ b/drivers/scsi/megaraid/megaraid_sas.h
+@@ -18,7 +18,7 @@
+ /*
+  * MegaRAID SAS Driver meta data
+  */
+-#define MEGASAS_VERSION				"00.00.04.08-RH1"
++#define MEGASAS_VERSION				"00.00.04.08-RH2"
+ #define MEGASAS_RELDATE				"May 05, 2009"
+ #define MEGASAS_EXT_VERSION			"Tues. May 5, 11:41:51 PST 2009"
+ 
+@@ -1187,18 +1187,6 @@ struct megasas_aen_event {
+ 	struct megasas_instance *instance;
+ };
+ 
+-
+- struct megasas_instance_template {
+-	void (*fire_cmd)(struct megasas_instance *, dma_addr_t ,u32 ,struct megasas_register_set __iomem *);
+-
+-	void (*enable_intr)(struct megasas_register_set __iomem *) ;
+-	void (*disable_intr)(struct megasas_register_set __iomem *);
+-
+-	int (*clear_intr)(struct megasas_register_set __iomem *);
+-
+-	u32 (*read_fw_status_reg)(struct megasas_register_set __iomem *);
+- };
+-
+ struct megasas_instance {
+ 
+ 	u32 *producer;
+@@ -1258,6 +1246,17 @@ struct megasas_instance {
+ 	struct timer_list io_completion_timer;
+ };
+ 
++ struct megasas_instance_template {
++	void (*fire_cmd)(struct megasas_instance *, dma_addr_t ,u32 ,struct megasas_register_set __iomem *);
++
++	void (*enable_intr)(struct megasas_register_set __iomem *) ;
++	void (*disable_intr)(struct megasas_register_set __iomem *);
++
++	int (*clear_intr)(struct megasas_register_set __iomem *);
++
++	u32 (*read_fw_status_reg)(struct megasas_register_set __iomem *);
++ };
++
+ #define MEGASAS_IS_LOGICAL(scp)						\
+ 	(scp->device->channel < MEGASAS_MAX_PD_CHANNELS) ? 0 : 1
+ 

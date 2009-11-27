@@ -1,0 +1,74 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Tue, 11 Nov 2008 14:37:03 -0500
+Subject: [x86] fix calls to pci_scan_bus
+Message-id: 20081111193703.15623.82176.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5.4 PATCH] HP XW 9400: fix calls to pci_scan_bus()
+Bugzilla: 470202
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+Booting the i386 kernel, i386 PAE kernel, i386 xen dom0 with "acpi=off" all
+resulted in the same panic on an xw9400.
+
+There are a few call paths in RHEL5 in which pci_scan_bus is still being
+called with a NULL value.
+
+Fix the ones that are called on the xw9400.
+
+Successfully compiled and tested by me.
+
+Resolves BZ 470202.
+
+Thanks to ddutile for pre-reviewing the Xen changes.
+
+diff --git a/arch/i386/pci/irq-xen.c b/arch/i386/pci/irq-xen.c
+index 1398930..9771540 100644
+--- a/arch/i386/pci/irq-xen.c
++++ b/arch/i386/pci/irq-xen.c
+@@ -141,10 +141,20 @@ static void __init pirq_peer_trick(void)
+ 		busmap[e->bus] = 1;
+ 	}
+ 	for(i = 1; i < 256; i++) {
++		struct pci_sysdata *sd;
+ 		if (!busmap[i] || pci_find_bus(0, i))
+ 			continue;
+-		if (pci_scan_bus(i, &pci_root_ops, NULL))
++		/* Continuation of the gross hack.
++		   sysdata cannot be NULL here because of PCI_DOMAIN support.
++		   Let's assume we're part of the same domain and node */
++		sd = kzalloc(sizeof(*sd), GFP_KERNEL);
++		if (!sd)
++			panic("Cannot allocate PCI domain sysdata");
++		if (pci_scan_bus(i, &pci_root_ops, sd))
+ 			printk(KERN_INFO "PCI: Discovered primary peer bus %02x [IRQ]\n", i);
++		else
++			kfree(sd);
++
+ 	}
+ 	pcibios_last_bus = -1;
+ }
+diff --git a/arch/i386/pci/legacy.c b/arch/i386/pci/legacy.c
+index 149a958..b9e0cdc 100644
+--- a/arch/i386/pci/legacy.c
++++ b/arch/i386/pci/legacy.c
+@@ -19,6 +19,11 @@ static void __devinit pcibios_fixup_peer_bridges(void)
+ 
+ 	for (n=0; n <= pcibios_last_bus; n++) {
+ 		u32 l;
++		struct pci_sysdata *sd;
++
++		sd = kzalloc(sizeof(&sd), GFP_KERNEL);
++		if (!sd)
++			panic("Cannot allocate PCI domain sysdata");
+ 		if (pci_find_bus(0, n))
+ 			continue;
+ 		for (devfn = 0; devfn < 256; devfn += 8) {
+@@ -26,7 +31,8 @@ static void __devinit pcibios_fixup_peer_bridges(void)
+ 			    l != 0x0000 && l != 0xffff) {
+ 				DBG("Found device at %02x:%02x [%04x]\n", n, devfn, l);
+ 				printk(KERN_INFO "PCI: Discovered peer bus %02x\n", n);
+-				pci_scan_bus(n, &pci_root_ops, NULL);
++				if (!pci_scan_bus(n, &pci_root_ops, sd))
++					kfree(sd);
+ 				break;
+ 			}
+ 		}

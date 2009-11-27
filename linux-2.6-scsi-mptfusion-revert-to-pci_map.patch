@@ -1,0 +1,161 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Fri, 31 Jul 2009 17:27:50 +0300
+Subject: [scsi] mptfusion: revert to pci_map
+Message-id: 4A72FF66.2060301@redhat.com
+O-Subject: [RHEL5.4 PATCH] revert to pci_map
+Bugzilla: 514049
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+This resolves bz#514049
+
+Description of problem: a system panics and system doesn't boot when
+ETERNUSmpd is installed. Eternum is closed-source multipath driver.
+http://solutions.us.fujitsu.com/www/content/products/storage/ETERNUS/software.php
+
+----------2.6.18-128.el5
+  /* Map the data portion, if any.
+   * sges_left  = 0 if no data transfer.
+   */
+  if ( (sges_left = scsi_sg_count(SCpnt)) ) {
+          sges_left = pci_map_sg(ioc->pcidev,
+                          scsi_sglist(SCpnt),
+                          scsi_sg_count(SCpnt),
+                          SCpnt->sc_data_direction);
+          if (sges_left == 0)
+                  return FAILED;
+  } else if (SCpnt->request_bufflen) {
+         SCpnt->SCp.dma_handle = pci_map_single(ioc->pcidev,
+                               SCpnt->request_buffer,
+                               SCpnt->request_bufflen,
+                               SCpnt->sc_data_direction);
+         dsgprintk(ioc,printk(MYIOC_s_INFO_FMT "SG: non-SG for %p, len=%d\n",
+                         ioc->name, SCpnt, SCpnt->request_bufflen));
+         ioc->add_sge((char *) &pReq->SGL,
+                0xD1000000|MPT_SGE_FLAGS_ADDRESSING|sgdir|SCpnt->request_bufflen,
+                 SCpnt->SCp.dma_handle);
+
+         return SUCCESS;
+  }
+----------
+
+----------2.6.18-155.el5
+/* Map the data portion, if any.
+  * sges_left  = 0 if no data transfer.
+  */
+sges_left = scsi_dma_map(SCpnt);
+if (sges_left < 0)
+	return FAILED;
+----------
+
+ETERNUSmpd issues a command when a system boots, and the
+command goes through mptscsih_AddSGE() in mptscsih.c.
+This command has no scatter/gather entry, so, in the
+above part, sges_left is set to 0, and a value is setup
+in SCpnt->request_bufflen.
+On kernel 2.6.18-128.el5, fusion returns a response to
+ETERNUSmpd's command ("else if" part).
+However, on kernel 2.6.18-155.el5, fusion continues its
+process without returning a response to ETERNUSmpd's command.
+As a result of it, ETERNUSmpd didn't run normally and the
+system panicked.
+----------
+
+Patch itself reverts calls to scsi_map(unmap) to approximately
+what we used to have in the previous version.
+
+I only compile/boot tested this on i686, PAE, x86_64.
+I can't verify that this resolves the issue, I asked the reporter
+to do this, I'll then post the results.
+
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1912689
+
+Tomas
+
+diff --git a/drivers/message/fusion/mptscsih.c b/drivers/message/fusion/mptscsih.c
+index 6479dc6..fefcaf3 100644
+--- a/drivers/message/fusion/mptscsih.c
++++ b/drivers/message/fusion/mptscsih.c
+@@ -200,9 +200,26 @@ mptscsih_AddSGE(MPT_ADAPTER *ioc, struct scsi_cmnd *SCpnt,
+ 	/* Map the data portion, if any.
+ 	 * sges_left  = 0 if no data transfer.
+ 	 */
+-	sges_left = scsi_dma_map(SCpnt);
+-	if (sges_left < 0)
+-		return FAILED;
++	if ( (sges_left = scsi_sg_count(SCpnt)) ) {
++		sges_left = pci_map_sg(ioc->pcidev,
++				scsi_sglist(SCpnt),
++				scsi_sg_count(SCpnt),
++				SCpnt->sc_data_direction);
++		if (sges_left == 0)
++			return FAILED;
++	} else if (SCpnt->request_bufflen) {
++		SCpnt->SCp.dma_handle = pci_map_single(ioc->pcidev,
++				      SCpnt->request_buffer,
++				      SCpnt->request_bufflen,
++				      SCpnt->sc_data_direction);
++		dsgprintk(ioc,printk(MYIOC_s_INFO_FMT "SG: non-SG for %p, len=%d\n",
++				ioc->name, SCpnt, SCpnt->request_bufflen));
++		ioc->add_sge((char *) &pReq->SGL,
++			0xD1000000|sgdir|SCpnt->request_bufflen,
++			SCpnt->SCp.dma_handle);
++
++		return SUCCESS;
++	}
+ 
+ 	/* Handle the SG case.
+ 	 */
+@@ -883,7 +900,13 @@ mptscsih_io_done(MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf, MPT_FRAME_HDR *mr)
+ 	} /* end of address reply case */
+ 
+ 	/* Unmap the DMA buffers, if any. */
+-	scsi_dma_unmap(sc);
++	if (sc->use_sg) {
++		pci_unmap_sg(ioc->pcidev, scsi_sglist(sc),
++				scsi_sg_count(sc), sc->sc_data_direction);
++	} else if (sc->request_bufflen) {
++		pci_unmap_single(ioc->pcidev, sc->SCp.dma_handle,
++				sc->request_bufflen, sc->sc_data_direction);
++	}
+ 
+ 	sc->scsi_done(sc);		/* Issue the command callback */
+ 
+@@ -924,7 +947,17 @@ mptscsih_flush_running_cmds(MPT_SCSI_HOST *hd)
+ 		mpt_free_msg_frame(ioc, (MPT_FRAME_HDR *)mf);
+ 		if ((unsigned char *)mf != sc->host_scribble)
+ 			continue;
+-		scsi_dma_unmap(sc);
++		if (sc->use_sg) {
++			pci_unmap_sg(ioc->pcidev,
++				scsi_sglist(sc),
++				scsi_sg_count(sc),
++				sc->sc_data_direction);
++		} else if (sc->request_bufflen) {
++			pci_unmap_single(ioc->pcidev,
++				sc->SCp.dma_handle,
++				sc->request_bufflen,
++				sc->sc_data_direction);
++		}
+ 		sc->result = DID_RESET << 16;
+ 		sc->host_scribble = NULL;
+ 		sdev_printk(KERN_INFO, sc->device, MYIOC_s_FMT
+@@ -985,7 +1018,17 @@ mptscsih_search_running_cmds(MPT_SCSI_HOST *hd, VirtDevice *vdevice)
+ 			spin_unlock_irqrestore(&ioc->scsi_lookup_lock, flags);
+ 			mptscsih_freeChainBuffers(ioc, ii);
+ 			mpt_free_msg_frame(ioc, (MPT_FRAME_HDR *)mf);
+-			scsi_dma_unmap(sc);
++			if (sc->use_sg) {
++				pci_unmap_sg(hd->ioc->pcidev,
++				(struct scatterlist *) sc->request_buffer,
++					sc->use_sg,
++					sc->sc_data_direction);
++			} else if (sc->request_bufflen) {
++				pci_unmap_single(hd->ioc->pcidev,
++					sc->SCp.dma_handle,
++					sc->request_bufflen,
++					sc->sc_data_direction);
++			}
+ 			sc->host_scribble = NULL;
+ 			sc->result = DID_NO_CONNECT << 16;
+ 			sdev_printk(KERN_INFO, sc->device, MYIOC_s_FMT "completing cmds: fw_channel %d,"

@@ -1,0 +1,80 @@
+From: Eduardo Habkost <ehabkost@redhat.com>
+Date: Tue, 7 Jul 2009 18:11:22 -0300
+Subject: [x86_64] disable VMX and SVM on machine_crash_shutdown
+Message-id: 1247001082-20497-7-git-send-email-ehabkost@redhat.com
+O-Subject: [RHEL-5.4 PATCH 6/6] x86_64: disable VMX and SVM on machine_crash_shutdown() (v2)
+Bugzilla: 507483
+
+This is done only on x86_64 and not on i386 because that's the only
+architecture where we support KVM.
+
+Backport of upstream commit:
+
+ commit 2340b62f77c782c305e6ae7748675a638436d1ef
+ Author: Eduardo Habkost <ehabkost@redhat.com>
+ Date:   Mon Nov 17 19:03:23 2008 -0200
+
+    kdump: forcibly disable VMX and SVM on machine_crash_shutdown()
+
+    We need to disable virtualization extensions on all CPUs before booting
+    the kdump kernel, otherwise the kdump kernel booting will fail, and
+    rebooting after the kdump kernel did its task may also fail.
+
+    We do it using cpu_emergency_vmxoff() and cpu_emergency_svm_disable(),
+    that should always work, because those functions check if the CPUs
+    support SVM or VMX before doing their tasks.
+
+    Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+    Signed-off-by: Avi Kivity <avi@redhat.com>
+
+Changelog:
+ - v2: include asm/virtext.h only if !CONFIG_XEN
+
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+
+diff --git a/arch/x86_64/kernel/crash.c b/arch/x86_64/kernel/crash.c
+index 7f7792b..d02e355 100644
+--- a/arch/x86_64/kernel/crash.c
++++ b/arch/x86_64/kernel/crash.c
+@@ -25,6 +25,10 @@
+ #include <asm/hw_irq.h>
+ #include <asm/mach_apic.h>
+ 
++#ifndef CONFIG_XEN
++#include <asm/virtext.h>
++#endif
++
+ /* This keeps a track of which one is crashing cpu. */
+ static int crashing_cpu;
+ 
+@@ -109,6 +113,16 @@ static int crash_nmi_callback(struct pt_regs *regs, int cpu)
+ 	local_irq_disable();
+ 
+ 	crash_save_this_cpu(regs, cpu);
++
++	/* Disable VMX or SVM if needed.
++	 *
++	 * We need to disable virtualization on all CPUs.
++	 * Having VMX or SVM enabled on any CPU may break rebooting
++	 * after the kdump kernel has finished its task.
++	 */
++	cpu_emergency_vmxoff();
++	cpu_emergency_svm_disable();
++
+ 	disable_local_APIC();
+ 	atomic_dec(&waiting_for_crash_ipi);
+ 	/* Assume hlt works */
+@@ -181,6 +195,13 @@ void machine_crash_shutdown(struct pt_regs *regs)
+ #ifndef CONFIG_XEN
+ 	nmi_shootdown_cpus();
+ 
++	/* Booting kdump kernel with VMX or SVM enabled won't work,
++	 * because (among other limitations) we can't disable paging
++	 * with the virt flags.
++	 */
++	cpu_emergency_vmxoff();
++	cpu_emergency_svm_disable();
++
+ 	if(cpu_has_apic)
+ 		 disable_local_APIC();
+ 

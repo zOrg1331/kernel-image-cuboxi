@@ -1,0 +1,69 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Mon, 27 Apr 2009 13:57:27 -0400
+Subject: [crypto] fips: panic box when module validation fails
+Message-id: 20090427175727.GA8449@shamino.rdu.redhat.com
+O-Subject: Re: [RHEL 5.4 PATCH] crypto: panic the box when a module signature validation fails in FIPS mode
+Bugzilla: 497228
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+Hey all-
+        One of the FIPS validation requirements is that if anyone tried to load
+a module with an invalid signature during operation in fips approved mode, we
+need to halt all cryptographic operations.  Since we have chosen to panic the
+box under all the other conditions in FIPS for which we need to halt crypto ops,
+do that for module sig failure as well.  Fixes bz 497228
+
+Neil
+
+diff --git a/crypto/internal.h b/crypto/internal.h
+index 205d635..c7c68f4 100644
+--- a/crypto/internal.h
++++ b/crypto/internal.h
+@@ -24,12 +24,6 @@
+ #include <linux/slab.h>
+ #include <asm/kmap_types.h>
+ 
+-#ifdef CONFIG_CRYPTO_FIPS
+-extern int fips_enabled;
+-#else
+-#define fips_enabled 0
+-#endif
+-
+ /* Crypto notification events. */
+ enum {
+ 	CRYPTO_MSG_ALG_REQUEST,
+diff --git a/include/linux/crypto.h b/include/linux/crypto.h
+index 88251bc..0280ec0 100644
+--- a/include/linux/crypto.h
++++ b/include/linux/crypto.h
+@@ -24,6 +24,12 @@
+ #include <linux/string.h>
+ #include <asm/page.h>
+ 
++#ifdef CONFIG_CRYPTO_FIPS
++extern int fips_enabled;
++#else
++#define fips_enabled 0
++#endif
++
+ /*
+  * Algorithm masks and types.
+  */
+diff --git a/kernel/module-verify.c b/kernel/module-verify.c
+index 0c6f8e4..55f5394 100644
+--- a/kernel/module-verify.c
++++ b/kernel/module-verify.c
+@@ -49,6 +49,11 @@ int module_verify(const Elf_Ehdr *hdr, size_t size)
+ 
+ #ifdef CONFIG_MODULE_SIG
+ 	ret = module_verify_signature(&mvdata);
++#ifdef CONFIG_CRYPTO_FIPS
++	if (fips_enabled && (ret < 0))
++		panic("Module verification failed with error %d in FIPS mode\n",
++			ret);
++#endif
+ #endif
+ 
+  error:

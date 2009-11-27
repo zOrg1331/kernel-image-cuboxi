@@ -1,0 +1,73 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Fri, 13 Feb 2009 16:23:46 +0800
+Subject: [net] handle non-linear packets in skb_checksum_setup
+Message-id: 20090213082346.GA25550@gondor.apana.org.au
+O-Subject: [RHEL5.4 PATCH] net: Handle non-linear packets in skb_checksum_setup
+Bugzilla: 477012
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+Hi:
+
+RHEL5.4 BZ #477012
+
+This patch fixes a bug that causes certain packets from guests
+to be dropped by the host.  The bug is triggered when the guest
+gives us a packet with a head that is too small.  In this particular
+instance, it was caused by a guest with slab debugging enabled,
+which results in skb->data crossing a page boundary.
+
+I'm surprised that we still have slab debugging enabled as it
+causes all sorts of untested code paths to be run.
+
+In any case, this patch fixes this particular problem.  Note that
+this function is Xen-specific and not part of the upstream kernel.
+
+commit 746f017bfef6154649fef2b6912560aaad78b184
+Author: Herbert Xu <herbert@gondor.apana.org.au>
+Date:   Fri Feb 13 16:12:03 2009 +0800
+
+    net: Handle non-linear packets in skb_checksum_setup
+
+    Some domUs may send us non-linear packets unwittingly, e.g., because
+    they have slab debugging enabled which causes packets with skb->data
+    that crosses a page boundary to be generated.
+
+    We should handle these cases instead of dropping these packets.
+
+    In fact, dropping these packets can result in hanging TCP connections
+    since TCP will continue to retransmit the same skb that crosses the
+    page boundary until the connection dies.
+
+    Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+diff --git a/net/core/dev.c b/net/core/dev.c
+index c9a36a4..56829cc 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -1403,9 +1403,11 @@ inline int skb_checksum_setup(struct sk_buff *skb)
+ 	if (skb->proto_csum_blank) {
+ 		if (skb->protocol != htons(ETH_P_IP))
+ 			goto out;
+-		skb->h.raw = (unsigned char *)skb->nh.iph + 4*skb->nh.iph->ihl;
+-		if (skb->h.raw >= skb->tail)
++		if (skb->data < skb->nh.raw + sizeof(*skb->nh.iph) &&
++		    !pskb_may_pull(skb, skb->nh.raw + sizeof(*skb->nh.iph) -
++					skb->data))
+ 			goto out;
++		skb->h.raw = (unsigned char *)skb->nh.iph + 4*skb->nh.iph->ihl;
+ 		switch (skb->nh.iph->protocol) {
+ 		case IPPROTO_TCP:
+ 			skb->csum = offsetof(struct tcphdr, check);
+@@ -1420,7 +1422,8 @@ inline int skb_checksum_setup(struct sk_buff *skb)
+ 				       " %d packet", skb->nh.iph->protocol);
+ 			goto out;
+ 		}
+-		if ((skb->h.raw + skb->csum + 2) > skb->tail)
++		if (skb->data < skb->h.raw + skb->csum + 2 &&
++		    !pskb_may_pull(skb, skb->h.raw + skb->csum + 2 - skb->data))
+ 			goto out;
+ 		skb->ip_summed = CHECKSUM_HW;
+ 		skb->proto_csum_blank = 0;

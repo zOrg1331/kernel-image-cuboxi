@@ -1,0 +1,36 @@
+From: Alexander Viro <aviro@redhat.com>
+Date: Mon, 8 Dec 2008 02:38:16 -0500
+Subject: [audit] fix kstrdup error check
+Message-id: 20081208073816.GC9939@shell.devel.redhat.com
+O-Subject: [rhel5.4][bz#475149] fix kstrdup() error check
+Bugzilla: 475149
+RH-Acked-by: Vitaly Mayatskikh <vmayatsk@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Eric Paris <eparis@redhat.com>
+
+[on top of rhel5 git]
+
+kstrdup() returns NULL on error.
+
+backport of mainline 3e1fbd12c958591695f89b11f9c6ec08d002e358
+Author: Akinobu Mita <akinobu.mita@gmail.com>
+Date: Fri, 22 Dec 2006 01:10:02 -0800
+
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+
+diff --git a/kernel/auditfilter.c b/kernel/auditfilter.c
+index ddcdac5..c5a1586 100644
+--- a/kernel/auditfilter.c
++++ b/kernel/auditfilter.c
+@@ -879,8 +879,8 @@ static inline int audit_dupe_selinux_field(struct audit_field *df,
+ 
+ 	/* our own copy of se_str */
+ 	se_str = kstrdup(sf->se_str, GFP_KERNEL);
+-	if (unlikely(IS_ERR(se_str)))
+-	    return -ENOMEM;
++	if (unlikely(!se_str))
++		return -ENOMEM;
+ 	df->se_str = se_str;
+ 
+ 	/* our own (refreshed) copy of se_rule */

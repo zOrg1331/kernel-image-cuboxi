@@ -1,0 +1,75 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Wed, 7 Jan 2009 10:51:03 -0500
+Subject: [ppc64] cell: axon-msi: Retry on missing interrupt
+Message-id: 20090107155006.15465.76014.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 BZ472405 2/2] powerpc/cell/axon-msi: Retry on missing interrupt
+Bugzilla: 472405
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=472405
+
+Description:
+===========
+The problem is that after a kexec, the MSIC hardware still points
+into the middle of the old ring buffer. We set up the ring buffer
+during reboot, but not the offset into it. On older kernels, this
+would cause a storm of thousands of spurious interrupts after a
+kexec, which would most of the time get dropped silently.
+
+With the new code, we time out on each interrupt, waiting for
+it to become valid. If more interrupts come in that we time
+out on, this goes on indefinitely, which eventually leads to
+a hard crash.
+
+The solution in this patch is to read the current offset from
+the MSIC when reinitializing it. This now works correctly, as
+expected.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1639654
+
+Upstream Status:
+================
+commit id is 23e0e8afafd9ac065d81506524adf3339584044b
+
+Test Status:
+============
+the MSIC hardware still points into the middle of the old ring buffer. We set
+up the ring buffer during reboot, but not the offset into it. On older kernels,
+this would cause a storm of thousands of spurious interrupts after a
+kexec, which would most of the time get dropped silently.
+
+With this patch this behavior is not seen.
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/arch/powerpc/platforms/cell/axon_msi.c b/arch/powerpc/platforms/cell/axon_msi.c
+index 9bbb406..a90d726 100644
+--- a/arch/powerpc/platforms/cell/axon_msi.c
++++ b/arch/powerpc/platforms/cell/axon_msi.c
+@@ -420,6 +420,9 @@ static int axon_msi_probe(struct of_device *device,
+ 			MSIC_CTRL_IRQ_ENABLE | MSIC_CTRL_ENABLE |
+ 			MSIC_CTRL_FIFO_SIZE);
+ 
++	msic->read_offset = msic_dcr_read(msic, MSIC_WRITE_OFFSET_REG)
++				& MSIC_FIFO_SIZE_MASK;
++
+ 	device->dev.platform_data = msic;
+ 
+ 	ppc_msi_md.setup_msi_irqs = axon_msi_setup_msi_irqs;

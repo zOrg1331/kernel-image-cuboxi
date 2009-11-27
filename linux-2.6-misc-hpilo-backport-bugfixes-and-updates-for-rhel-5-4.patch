@@ -1,0 +1,136 @@
+From: tcamuso@redhat.com <tcamuso@redhat.com>
+Date: Tue, 24 Mar 2009 11:45:24 -0400
+Subject: [misc] hpilo: backport bugfixes and updates for RHEL-5.4
+Message-id: 20090324154449.30688.972.sendpatchset@dhcp-100-2-186.bos.redhat.com
+O-Subject: [RHEL5.4 PATCH V2]hpilo: backport critical bugfixes and updates
+Bugzilla: 488964
+RH-Acked-by: Aristeu Rozanski <aris@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Bugzilla
+========
+
+https://bugzilla.redhat.com/show_bug.cgi?id=488964
+Bug 488964 - hpilo - backport of bugfixes and updates from upstream
+
+Description
+===========
+
+This is the second version of the patch having the suggested changes
+made.
+
+The fixes in this patch accomplish the following.
+
+. Increase the open/close timeout value and properly perform channel
+  cleanup on a failed open call. This fixes a bug where attempts to
+  open valid channels were timing out.
+
+. Add support for the HP brand. Currently, the driver only supports the
+  COMPAQ brand.
+
+Testing
+=======
+
+The patched hpilo driver was tested for functionality on HP 32 bit and
+64 bit HP systems.
+
+Upstream Status
+===============
+
+The patch was extracted from the following commits in the Linus
+2.6.29 tree.
+
+	c073b2db006ba9370be1eecc36a1be1d9ce31310
+	c189f4ec955e1fe4a2a2742d028aeecc52a5848a
+	31d8b5631f095cb7100cfccc95c801a2547ffe2b
+
+Additionally, the patch includes a patch pending upstream that increases
+the wait time between each open retry. The reason for this is, since it
+can take up to 10 mS to open a channel, a udelay(1) is too short a time
+for the hardware to respond to a retry.
+
+The pending patch and discussion about it can be seen at this link.
+http://lkml.org/lkml/2009/3/9/342
+
+Diff Stat
+=========
+ drivers/misc/hpilo.c |   13 +++++++------
+ drivers/misc/hpilo.h |    6 ++++++
+ 2 files changed, 13 insertions(+), 6 deletions(-)
+
+Signed-off-by: David Altobelli <david.altobelli@hp.com>
+Signed-off-by: Tony Camuso <tcamuso@redhat.com>
+
+diff --git a/drivers/misc/hpilo.c b/drivers/misc/hpilo.c
+index cc72902..f2a6102 100644
+--- a/drivers/misc/hpilo.c
++++ b/drivers/misc/hpilo.c
+@@ -207,9 +207,9 @@ static void ilo_ccb_close(struct pci_dev *pdev, struct ccb_data *data)
+ 		  &device_ccb->recv_ctrl);
+ 
+ 	/* give iLO some time to process stop request */
+-	for (retries = 1000; retries > 0; retries--) {
++	for (retries = MAX_WAIT; retries > 0; retries--) {
+ 		doorbell_set(driver_ccb);
+-		udelay(1);
++		udelay(WAIT_TIME);
+ 		if (!(ioread32(&device_ccb->send_ctrl) & (1 << CTRL_BITPOS_A))
+ 		    &&
+ 		    !(ioread32(&device_ccb->recv_ctrl) & (1 << CTRL_BITPOS_A)))
+@@ -309,10 +309,10 @@ static int ilo_ccb_open(struct ilo_hwinfo *hw, struct ccb_data *data, int slot)
+ 	doorbell_clr(driver_ccb);
+ 
+ 	/* make sure iLO is really handling requests */
+-	for (i = 1000; i > 0; i--) {
++	for (i = MAX_WAIT; i > 0; i--) {
+ 		if (ilo_pkt_dequeue(hw, driver_ccb, SENDQ, &pkt_id, NULL, NULL))
+ 			break;
+-		udelay(1);
++		udelay(WAIT_TIME);
+ 	}
+ 
+ 	if (i) {
+@@ -326,7 +326,7 @@ static int ilo_ccb_open(struct ilo_hwinfo *hw, struct ccb_data *data, int slot)
+ 
+ 	return 0;
+ free:
+-	pci_free_consistent(pdev, data->dma_size, data->dma_va, data->dma_pa);
++	ilo_ccb_close(pdev, data);
+ out:
+ 	return error;
+ }
+@@ -710,6 +710,7 @@ out:
+ 
+ static struct pci_device_id ilo_devices[] = {
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_COMPAQ, 0xB204) },
++	{ PCI_DEVICE(PCI_VENDOR_ID_HP, 0x3307) },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(pci, ilo_devices);
+@@ -758,7 +759,7 @@ static void __exit ilo_exit(void)
+ 	class_destroy(ilo_class);
+ }
+ 
+-MODULE_VERSION("0.05");
++MODULE_VERSION("1.1");
+ MODULE_ALIAS(ILO_NAME);
+ MODULE_DESCRIPTION(ILO_NAME);
+ MODULE_AUTHOR("David Altobelli <david.altobelli@hp.com>");
+diff --git a/drivers/misc/hpilo.h b/drivers/misc/hpilo.h
+index a281207..0054041 100644
+--- a/drivers/misc/hpilo.h
++++ b/drivers/misc/hpilo.h
+@@ -19,6 +19,12 @@
+ #define MAX_ILO_DEV	1
+ /* max number of files */
+ #define MAX_OPEN	(MAX_CCB * MAX_ILO_DEV)
++/* toatal wait time usec */
++#define MAX_WAIT_TIME	10000
++/* per spin wait time in usec */
++#define WAIT_TIME	10
++/* spin counter for open/close delay */
++#define MAX_WAIT	(MAX_WAIT_TIME / WAIT_TIME)
+ 
+ /*
+  * Per device, used to track global memory allocations.

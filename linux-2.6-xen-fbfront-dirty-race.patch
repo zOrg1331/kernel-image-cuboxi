@@ -1,0 +1,135 @@
+From: Markus Armbruster <armbru@redhat.com>
+Date: Fri, 6 Feb 2009 10:17:09 +0100
+Subject: [xen] fbfront dirty race
+Message-id: 87ljsjapre.fsf@pike.pond.sub.org
+O-Subject: [PATCH RHEL-5.4] Xen fbfront dirty race
+Bugzilla: 456893
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+The Xen PV framebuffer frontend contains a race condition that could
+lead to a bogus dirty rectangle.  The code has a WARN_ON() for that.
+Ancient backends can misbehave when they receive bogus rectangles (bug
+443392, fixed in xen 3.0.3-63.el5).
+
+The race was found to trigger occasionally during guest shutdown, at
+least on some machines.
+
+Here's how I think it bites:
+
+xenfb_thread()          check dirty; yes, dirty = 0 (not holding lock)
+|
+| __xenfb_refresh()     extend dirty rect; dirty = 1 (holding lock)
+|
+xenfb_update_screen()   get & clear dirty rect (holding lock)
+xenfb_thread()          loop around
+xenfb_thread()          check dirty; yes, dirty = 0 (not holding lock)
+xenfb_update_screen()   bogus rect
+
+The bug was fixed in http://xenbits.xensource.com/linux-2.6.18-xen.hg
+in the following changesets:
+
+changeset:   789:25cc543a02e8
+user:        Keir Fraser <keir.fraser@citrix.com>
+date:        Tue Feb 03 13:59:17 2009 +0000
+summary:     fbfront: Improve diagnostics when kthread_run() fails
+
+changeset:   788:26ddc59c674d
+user:        Keir Fraser <keir.fraser@citrix.com>
+date:        Fri Jan 30 10:54:10 2009 +0000
+summary:     xenfb: Revert mm_lock changes. They're not needed.
+
+changeset:   783:8197c86e6729
+user:        Keir Fraser <keir.fraser@citrix.com>
+date:        Thu Jan 29 11:28:58 2009 +0000
+summary:     xenfb: eliminate the update_wanted field.
+
+changeset:   781:c9783c08495c
+user:        Keir Fraser <keir.fraser@citrix.com>
+date:        Wed Jan 28 13:41:33 2009 +0000
+summary:     xenfb: fix xenfb_update_screen bogus rect
+
+Pvops upstream is not affected, because it delegates the hairy parts
+to fb_defio.
+
+The appended patch is a backport of upstream's fix, except for
+changeset 783.  That one changes the way the kthread is used, which I
+didn't feel like risking in RHEL just for cleanup.
+
+Note that 788 reverts a part of 781, namely an unnecessary and not
+obviously correct locking change.  Locking is rather subtle there...
+
+Bug 456893.  Please ACK.
+
+diff --git a/drivers/xen/fbfront/xenfb.c b/drivers/xen/fbfront/xenfb.c
+index f9aaf56..a4508ee 100644
+--- a/drivers/xen/fbfront/xenfb.c
++++ b/drivers/xen/fbfront/xenfb.c
+@@ -119,12 +119,19 @@ static void xenfb_update_screen(struct xenfb_info *info)
+ 	mutex_lock(&info->mm_lock);
+ 
+ 	spin_lock_irqsave(&info->dirty_lock, flags);
+-	y1 = info->y1;
+-	y2 = info->y2;
+-	x1 = info->x1;
+-	x2 = info->x2;
+-	info->x1 = info->y1 = INT_MAX;
+-	info->x2 = info->y2 = 0;
++	if (info->dirty){
++		info->dirty = 0;
++		y1 = info->y1;
++		y2 = info->y2;
++		x1 = info->x1;
++		x2 = info->x2;
++		info->x1 = info->y1 = INT_MAX;
++		info->x2 = info->y2 = 0;
++	} else {
++		spin_unlock_irqrestore(&info->dirty_lock, flags);
++		mutex_unlock(&info->mm_lock);
++		return;
++	}
+ 	spin_unlock_irqrestore(&info->dirty_lock, flags);
+ 
+ 	list_for_each_entry(map, &info->mappings, link) {
+@@ -150,10 +157,7 @@ static int xenfb_thread(void *data)
+ 	struct xenfb_info *info = data;
+ 
+ 	while (!kthread_should_stop()) {
+-		if (info->dirty) {
+-			info->dirty = 0;
+-			xenfb_update_screen(info);
+-		}
++		xenfb_update_screen(info);
+ 		wait_event_interruptible(info->wq,
+ 			kthread_should_stop() || info->dirty);
+ 		try_to_freeze();
+@@ -479,15 +483,6 @@ static int __devinit xenfb_probe(struct xenbus_device *dev,
+ 	}
+ 	info->fb_info = fb_info;
+ 
+-	/* FIXME should this be delayed until backend XenbusStateConnected? */
+-	info->kthread = kthread_run(xenfb_thread, info, "xenfb thread");
+-	if (IS_ERR(info->kthread)) {
+-		ret = PTR_ERR(info->kthread);
+-		info->kthread = NULL;
+-		xenbus_dev_fatal(dev, ret, "register_framebuffer");
+-		goto error;
+-	}
+-
+ 	ret = xenfb_connect_backend(dev, info);
+ 	if (ret < 0)
+ 		goto error;
+@@ -649,6 +644,13 @@ static void xenfb_backend_changed(struct xenbus_device *dev,
+ 			val = 0;
+ 		if (val)
+ 			info->update_wanted = 1;
++
++		info->kthread = kthread_run(xenfb_thread, info, "xenfb thread");
++		if (IS_ERR(info->kthread)) {
++			info->kthread = NULL;
++			xenbus_dev_fatal(dev, PTR_ERR(info->kthread),
++					"xenfb_thread");
++		}
+ 		break;
+ 
+ 	case XenbusStateClosing:

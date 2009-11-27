@@ -1,0 +1,62 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Mon, 23 Mar 2009 10:23:12 -0600
+Subject: [xen] x86: fix EPT for VT-d
+Message-id: 200903231623.n2NGNCnZ022078@sobek.n0ano.com
+O-Subject: [RHEL5.4 PATCH 9/21 V2] Fix EPT for VT-d
+Bugzilla: 484227
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+
+hardcode UC for mmio of assigned devices in ept table similarly to what
+was done for p2m.
+
+Upstream Status: Accepted (in a different form)
+
+This patch differs from upstram since it is a simplification, upstream
+uses a more invasive change to allow finer grain control through the
+MTRR/PAT registers, more flexible but not needed for the current use
+cases for VTd.
+
+BZ: 484227
+
+Signed-off-by: Weidong Han <weidong.han@intel.com>
+Signed-off-by: Gerd Hoffman <kraxel@redhat.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/arch/x86/mm/p2m-ept.c b/arch/x86/mm/p2m-ept.c
+index ac9df26..e5420f5 100644
+--- a/arch/x86/mm/p2m-ept.c
++++ b/arch/x86/mm/p2m-ept.c
+@@ -46,7 +46,7 @@ compat_ept_set_entry(struct domain *d, unsigned long gfn,
+   mfn_t mfn, int order, u32 l1e_flags)
+ {
+     p2m_type_t t = ept_flags_to_p2m_type(l1e_flags);
+-    if ( t == p2m_ram_rw &&
++    if ( t == p2m_ram_rw && mfn_x(mfn) != INVALID_MFN &&
+          iomem_access_permitted(d, mfn_x(mfn), mfn_x(mfn)) )
+         t = p2m_mmio_direct;
+ 
+@@ -260,7 +260,10 @@ ept_set_entry(struct domain *d, unsigned long gfn, mfn_t mfn,
+         for ( i = 0; i < 512; i++ )
+         {
+             split_ept_entry = split_table + i;
+-            split_ept_entry->emt = EPT_DEFAULT_MT;
++            if ( p2mt == p2m_mmio_direct )
++                split_ept_entry->emt = 0x8;
++            else
++                split_ept_entry->emt = EPT_DEFAULT_MT;
+             split_ept_entry->sp_avail =  0;
+ 
+             split_ept_entry->mfn = split_mfn+i;
+@@ -275,7 +278,10 @@ ept_set_entry(struct domain *d, unsigned long gfn, mfn_t mfn,
+ 
+         /* Set the destinated 4k page as normal */
+         split_ept_entry = split_table + offset;
+-        split_ept_entry->emt = EPT_DEFAULT_MT;
++        if ( p2mt == p2m_mmio_direct )
++            split_ept_entry->emt = 0x8;
++        else
++            split_ept_entry->emt = EPT_DEFAULT_MT;
+         split_ept_entry->mfn = mfn_x(mfn);
+         split_ept_entry->avail1 = p2mt;
+         ept_p2m_type_to_flags(split_ept_entry, p2mt);

@@ -1,0 +1,103 @@
+From: Mikulas Patocka <mpatocka@redhat.com>
+Date: Thu, 23 Apr 2009 01:05:59 -0400
+Subject: [md] dm-raid1: switch read_record from kmalloc to slab
+Message-id: Pine.LNX.4.64.0904230105090.12945@hs20-bc2-1.build.redhat.com
+O-Subject: [PATCH 2/2 RHEL5.4] bz496101 crash in dm-raid1/dm-mpath with partially completed request
+Bugzilla: 496101
+RH-Acked-by: Jonathan Brassow <jbrassow@redhat.com>
+
+commit 95f8fac8dc6139fedfb87746e0c8fda9b803cb46 (2.6.30-rc1)
+
+dm raid1: switch read_record from kmalloc to slab to save memory
+
+With my previous patch to save bi_io_vec, the size of dm_raid1_read_record
+is significantly increased (the vector list takes 3072 bytes on 32-bit machines and 4096 bytes on 64-bit machines).
+
+The structure dm_raid1_read_record used to be allocated with kmalloc,
+but kmalloc aligns the size on the next power-of-two so an object
+slightly greater than 4096 will allocate 8192 bytes of memory and half of
+that memory will be wasted.
+
+This patch turns kmalloc into a slab cache which doesn't have this
+padding so it will reduce the memory consumed.
+
+Signed-off-by: Mikulas Patocka <mpatocka@redhat.com>
+
+diff --git a/drivers/md/dm-raid1.c b/drivers/md/dm-raid1.c
+index 1725f8e..dfdb4ca 100644
+--- a/drivers/md/dm-raid1.c
++++ b/drivers/md/dm-raid1.c
+@@ -164,6 +164,8 @@ struct mirror_set {
+ 	struct mirror mirror[0];
+ };
+ 
++static struct kmem_cache *_dm_raid1_read_record_cache;
++
+ /*
+  * Conversion fns
+  */
+@@ -683,14 +685,6 @@ struct bio_map_info {
+ 
+ static mempool_t *bio_map_info_pool = NULL;
+ 
+-static void *bio_map_info_alloc(unsigned int gfp_mask, void *pool_data){
+-	return kmalloc(sizeof(struct bio_map_info), gfp_mask);
+-}
+-
+-static void bio_map_info_free(void *element, void *pool_data){
+-	kfree(element);
+-}
+-
+ /*
+  * Every mirror should look like this one.
+  */
+@@ -1888,16 +1882,34 @@ static int __init dm_mirror_init(void)
+ {
+ 	int r;
+ 
+-	bio_map_info_pool = mempool_create(100, bio_map_info_alloc,
+-					   bio_map_info_free, NULL);
+-	if (!bio_map_info_pool)
+-		return -ENOMEM;
++	_dm_raid1_read_record_cache = kmem_cache_create("bio_map_info",
++				sizeof(struct bio_map_info), 0, 0, NULL, NULL);
++	if (!_dm_raid1_read_record_cache) {
++		r = -ENOMEM;
++		goto bad_cache;
++	}
++
++	bio_map_info_pool = mempool_create_slab_pool(100,
++						_dm_raid1_read_record_cache);
++	if (!bio_map_info_pool) {
++		r = -ENOMEM;
++		goto bad_mempool;
++	}
+ 
+ 	r = dm_register_target(&mirror_target);
+-	if (r < 0)
++	if (r < 0) {
+ 		DMERR("%s: Failed to register mirror target",
+ 		      mirror_target.name);
++		goto bad_target;
++	}
+ 
++	return 0;
++
++bad_target:
++	mempool_destroy(bio_map_info_pool);
++bad_mempool:
++	kmem_cache_destroy(_dm_raid1_read_record_cache);
++bad_cache:
+ 	return r;
+ }
+ 
+@@ -1905,6 +1917,9 @@ static void __exit dm_mirror_exit(void)
+ {
+ 	int r;
+ 
++	mempool_destroy(bio_map_info_pool);
++	kmem_cache_destroy(_dm_raid1_read_record_cache);
++
+ 	r = dm_unregister_target(&mirror_target);
+ 	if (r < 0)
+ 		DMERR("%s: unregister failed %d", mirror_target.name, r);

@@ -1,0 +1,67 @@
+From: Jesse Larrew <jlarrew@redhat.com>
+Date: Thu, 14 May 2009 01:00:01 -0400
+Subject: [scsi] handle quiescence in progress
+Message-id: 20090514045710.10947.54601.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 5/10 BZ489582] Handle quiescence in progress
+Bugzilla: 489582
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=489582
+
+Description:
+===========
+This is a bug fix for all archs.
+
+This patch adds retry logic for the NOT_READY check condition
+encountered when there is a quiesce in progress (02/A1/02).
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1794596
+
+Upstream Status:
+================
+commit: af50bb993dfa673cf21ab812efe620d7e0c36319
+
+Test Status:
+============
+This patch was tested by Chandra Seetharaman at IBM (
+===============================================================
+
+Jesse Larrew
+IBM Onsite Partner
+978-392-3183
+jlarrew@redhat.com
+
+Proposed Patch:
+===============
+This patch is based on 2.6.18-136.el5.
+
+diff --git a/drivers/scsi/device_handler/scsi_dh_rdac.c b/drivers/scsi/device_handler/scsi_dh_rdac.c
+index f4ae03f..af1e26a 100644
+--- a/drivers/scsi/device_handler/scsi_dh_rdac.c
++++ b/drivers/scsi/device_handler/scsi_dh_rdac.c
+@@ -577,6 +577,12 @@ static int rdac_check_sense(struct scsi_device *sdev,
+ 			 * Just retry and wait.
+ 			 */
+ 			return SCSI_MLQUEUE_IMM_RETRY;
++		if (sense_hdr->asc == 0xA1  && sense_hdr->ascq == 0x02)
++			/* LUN Not Ready - Quiescense in progress
++			 * or has been achieved
++			 * Just retry.
++			 */
++			return SCSI_MLQUEUE_IMM_RETRY;
+ 		break;
+ 	case ILLEGAL_REQUEST:
+ 		if (sense_hdr->asc == 0x94 && sense_hdr->ascq == 0x01) {

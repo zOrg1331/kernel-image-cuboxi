@@ -1,0 +1,60 @@
+From: Eugene Teo <eteo@redhat.com>
+Date: Tue, 14 Jul 2009 20:26:27 +0800
+Subject: [misc] build with -fno-delete-null-pointer-checks
+Message-id: 20090714122627.GB8526@kernel.sg
+O-Subject: [RHEL5.4 patch] BZ#511181 build with -fno-delete-null-pointer-checks
+Bugzilla: 511181
+RH-Acked-by: Eric Paris <eparis@redhat.com>
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+RH-Acked-by: Don Zickus <dzickus@redhat.com>
+
+This is for bz#511181.
+
+http://gcc.gnu.org/onlinedocs/gcc-4.1.2/gcc/Optimize-Options.html
+
+"-fdelete-null-pointer-checks
+    Use global dataflow analysis to identify and eliminate useless
+checks for null pointers. The compiler assumes that dereferencing a null
+pointer would have halted the program. If a pointer is checked after it has
+already been dereferenced, it cannot be null.
+
+    In some environments, this assumption is not true, and programs
+can safely dereference null pointers. Use -fno-delete-null-pointer-checks
+to disable this optimization for programs which depend on that behavior.
+
+    Enabled at levels -O2, -O3, -Os."
+
+http://osdir.com/ml/gcc.cross-compiling.arm/2007-10/msg00003.html
+
+"The gcc optimization level 2 or higher will delete null-pointer checks
+beyond the first use/test of a pointer."
+
+Enabling this flags could prevent the compiler from optimising away some
+null pointer checks. Such bugs can possibly become exploitable at
+compile time, even though it is unexploitable from the look at the
+source code, because of the -O2 optimisation.
+
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=1886987
+
+Test status:
+INFO: pan reported all tests PASS
+LTP Version: LTP-20090228
+
+Cong tested the patch. An example where a null pointer check is optmised
+away by the compiler is upstream commit 6bf67672. "Revert that patch
+for testing. Without your patch, there's no checking code, and there is
+after your patch applied. I checked its asm code."
+
+diff --git a/Makefile b/Makefile
+index 8411cbe..41f1fb6 100644
+--- a/Makefile
++++ b/Makefile
+@@ -306,7 +306,7 @@ LINUXINCLUDE    := -Iinclude \
+ CPPFLAGS        := -D__KERNEL__ $(LINUXINCLUDE)
+ 
+ CFLAGS          := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
+-                   -fno-strict-aliasing -fno-common -Wstrict-prototypes -Wundef -Werror-implicit-function-declaration
++                   -fno-strict-aliasing -fno-common -Wstrict-prototypes -Wundef -Werror-implicit-function-declaration -fno-delete-null-pointer-checks
+ CFLAGS		+= $(call cc-option,-fwrapv)
+ AFLAGS          := -D__ASSEMBLY__
+ 

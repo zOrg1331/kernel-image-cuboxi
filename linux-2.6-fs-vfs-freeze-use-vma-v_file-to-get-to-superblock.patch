@@ -1,0 +1,49 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Fri, 8 May 2009 22:28:26 -0500
+Subject: [fs] vfs freeze: use vma->v_file to get to superblock
+Message-id: 4A04F85A.8050106@redhat.com
+O-Subject: [PATCH RHEL5.4] fs: vfs freeze - use vma->v_file to get to superblock for freeze check
+Bugzilla: 476148
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+RH-Acked-by: Alexander Viro <aviro@redhat.com>
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+This is still for Bug 476148 - [FEAT] RHEL5.4 File System freeze feature
+
+Chris Wright reported oopses in kvm w/o this patch due to page->mapping
+being null.  We don't have the page locked, so it's probably
+not safe to check page->mapping in general here.
+
+The vma->vm_file->f_dentry->d_inode->i_sb path looks like a better
+choice.
+
+Chris tested this and reported that it fixes his oops, and it does
+still properly stop mmap writers in my testing.
+
+Thanks,
+-Eric
+
+diff --git a/mm/memory.c b/mm/memory.c
+index 85ec79b..30c2ac5 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -1882,7 +1882,8 @@ static int do_wp_page(struct mm_struct *mm, struct vm_area_struct *vma,
+ 		 * read-only shared pages can get COWed by
+ 		 * get_user_pages(.write=1, .force=1).
+ 		 */
+-		vfs_check_frozen(old_page->mapping->host->i_sb, SB_FREEZE_WRITE);
++		vfs_check_frozen(vma->vm_file->f_dentry->d_inode->i_sb,
++				 SB_FREEZE_WRITE);
+ 		if (vma->vm_ops && vma->vm_ops->page_mkwrite) {
+ 			/*
+ 			 * Notify the address space that the page is about to
+@@ -2579,7 +2580,8 @@ retry:
+ 			/* if the page will be shareable, see if the backing
+ 			 * address space wants to know that the page is about
+ 			 * to become writable */
+-			vfs_check_frozen(new_page->mapping->host->i_sb, SB_FREEZE_WRITE);
++			vfs_check_frozen(vma->vm_file->f_dentry->d_inode->i_sb,
++					 SB_FREEZE_WRITE);
+ 			if (vma->vm_ops->page_mkwrite &&
+ 			    vma->vm_ops->page_mkwrite(vma, new_page) < 0
+ 			    ) {

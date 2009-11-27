@@ -1,0 +1,129 @@
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Date: Thu, 7 May 2009 15:59:40 +0200
+Subject: [i386] untangle xtime_lock vs update_process_times
+Message-id: 20090507140138.162279000@chello.nl
+O-Subject: [PATCH 2/5] RHEL-5: i386: untangle xtime_lock vs update_process_times
+Bugzilla: 297731
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+CVE: CVE-2007-3719
+
+Ensure update_process_times() is never called with xtime_lock held.
+
+audited i386, x86_64, ia64, ppc64 and s390 (including all xen flavours).
+
+Signed-off-by: Peter Zijlstra <pzijlstr@redhat.com>
+
+diff --git a/arch/i386/kernel/time.c b/arch/i386/kernel/time.c
+index 82fdd13..4c4d79f 100644
+--- a/arch/i386/kernel/time.c
++++ b/arch/i386/kernel/time.c
+@@ -150,6 +150,8 @@ EXPORT_SYMBOL(profile_pc);
+  */
+ irqreturn_t timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+ {
++	int i;
++
+ 	/*
+ 	 * Here we are in the timer irq handler. We just have irqs locally
+ 	 * disabled but we don't know if the timer_bh is running on the other
+@@ -194,6 +196,25 @@ irqreturn_t timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+ 
+ 	write_sequnlock(&xtime_lock);
+ 
++#ifndef CONFIG_SMP
++	for (i = 0; i < tick_divider; i++)
++		update_process_times(user_mode_vm(regs), regs);
++#endif
++#ifndef CONFIG_X86_VOYAGER
++/*
++ * In the SMP case we use the local APIC timer interrupt to do the
++ * profiling, except when we simulate SMP mode on a uniprocessor
++ * system, in that case we have to call the local interrupt handler.
++ */
++#ifndef CONFIG_X86_LOCAL_APIC
++	for (i = 0; i < tick_divider; i++)
++		profile_tick(CPU_PROFILING, regs);
++#else
++	if (!using_apic_timer)
++		smp_local_timer_interrupt(regs);
++#endif
++#endif /* !VOYAGER */
++
+ #ifdef CONFIG_X86_LOCAL_APIC
+ 	if (using_apic_timer)
+ 		smp_send_timer_broadcast_ipi(regs);
+diff --git a/include/asm-i386/mach-default/do_timer.h b/include/asm-i386/mach-default/do_timer.h
+index e73f1e4..e553004 100644
+--- a/include/asm-i386/mach-default/do_timer.h
++++ b/include/asm-i386/mach-default/do_timer.h
+@@ -17,24 +17,8 @@
+ static inline void do_timer_interrupt_hook(struct pt_regs *regs)
+ {
+ 	int i;
+-	for (i = 0; i < tick_divider; i++) {
+-		do_timer(regs);
+-#ifndef CONFIG_SMP
+-		update_process_times(user_mode_vm(regs), regs);
+-#endif
+-	}
+-/*
+- * In the SMP case we use the local APIC timer interrupt to do the
+- * profiling, except when we simulate SMP mode on a uniprocessor
+- * system, in that case we have to call the local interrupt handler.
+- */
+-#ifndef CONFIG_X86_LOCAL_APIC
+ 	for (i = 0; i < tick_divider; i++)
+-		profile_tick(CPU_PROFILING, regs);
+-#else
+-	if (!using_apic_timer)
+-		smp_local_timer_interrupt(regs);
+-#endif
++		do_timer(regs);
+ }
+ 
+ 
+diff --git a/include/asm-i386/mach-visws/do_timer.h b/include/asm-i386/mach-visws/do_timer.h
+index 4747092..5a3b9ca 100644
+--- a/include/asm-i386/mach-visws/do_timer.h
++++ b/include/asm-i386/mach-visws/do_timer.h
+@@ -10,24 +10,8 @@ static inline void do_timer_interrupt_hook(struct pt_regs *regs)
+ 	/* Clear the interrupt */
+ 	co_cpu_write(CO_CPU_STAT,co_cpu_read(CO_CPU_STAT) & ~CO_STAT_TIMEINTR);
+ 
+-	for (i = 0; i < tick_divider; i++) {
+-		do_timer(regs);
+-#ifndef CONFIG_SMP
+-		update_process_times(user_mode_vm(regs), regs);
+-#endif
+-	}
+-/*
+- * In the SMP case we use the local APIC timer interrupt to do the
+- * profiling, except when we simulate SMP mode on a uniprocessor
+- * system, in that case we have to call the local interrupt handler.
+- */
+-#ifndef CONFIG_X86_LOCAL_APIC
+ 	for (i = 0; i < tick_divider; i++)
+-		profile_tick(CPU_PROFILING, regs);
+-#else
+-	if (!using_apic_timer)
+-		smp_local_timer_interrupt(regs);
+-#endif
++		do_timer(regs);
+ }
+ 
+ static inline int do_timer_overflow(int count)
+diff --git a/include/asm-i386/mach-voyager/do_timer.h b/include/asm-i386/mach-voyager/do_timer.h
+index 53cfa6f..1a26642 100644
+--- a/include/asm-i386/mach-voyager/do_timer.h
++++ b/include/asm-i386/mach-voyager/do_timer.h
+@@ -6,9 +6,6 @@ static inline void do_timer_interrupt_hook(struct pt_regs *regs)
+ 	int i;
+ 	for (i = 0; i < tick_divider; i++) {
+ 		do_timer(regs);
+-#ifndef CONFIG_SMP
+-		update_process_times(user_mode_vm(regs), regs);
+-#endif
+ 		voyager_timer_interrupt(regs);
+ 	}
+ }

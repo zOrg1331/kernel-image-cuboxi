@@ -1,0 +1,368 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Fri, 12 Jun 2009 15:43:18 -0400
+Subject: [net] ixgbe: backport fixups and bugfixes for 82599
+Message-id: 20090612194317.GV8052@gospo.rdu.redhat.com
+O-Subject: [RHEL5.4 PATCH] ixgbe: backport fixups and bugfixes for 82599
+Bugzilla: 505653
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+There were a couple of issues that were noticed while testing the ixgbe
+driver on 5.4 that needed to be fixed.  In order to make sure I get
+everything, I have combined these fixes into one patch.  Here is the
+breakdown of the issues and which upstream fixes were included:
+
+One of the main reasons for the update for 5.4 was 82599 support.  The
+code in RHEL5.4 didn't set the registers correctly because I had
+purposefully skipped some patches that were initially not relevant for
+RHEL5.  Turns out the initial patch morphed into some important code, so
+the following patches were applied to fix that:
+
+        commit cc41ac7c0011703460dd4d4674bb7cbf73bb883d
+        Author: Jesse Brandeburg <jesse.brandeburg@intel.com>
+        Date:   Tue Aug 26 04:27:27 2008 -0700
+
+            ixgbe: fix dca hints going to wrong processor
+
+        commit 3be1adfb912867e244729c3826b457ee76b8f737
+        Author: Alexander Duyck <alexander.h.duyck@intel.com>
+        Date:   Sat Aug 30 00:29:10 2008 -0700
+
+            ixgbe: change config srrctl to only program one register per VMDq/RSS id
+
+        commit 32344a394029baeca5bcc9fa839694b23a82cc64
+        Author: Jesse Brandeburg <jesse.brandeburg@intel.com>
+        Date:   Tue Feb 24 16:37:31 2009 -0800
+
+            ixbge: fix bug when using large pages and jumbo frames
+
+        commit 40dcd79a7bd2e0d6bf4680db4bc0268c9f149a1d
+        Author: PJ Waskiewicz <peter.p.waskiewicz.jr@intel.com>
+        Date:   Fri Mar 13 22:13:08 2009 +0000
+
+            ixgbe: Disable DROP_EN for Rx queues
+
+        commit afafd5b020a60b72d064e89244cb44a975eb2407
+        Author: Alexander Duyck <alexander.h.duyck@intel.com>
+        Date:   Thu May 7 10:38:56 2009 +0000
+
+            ixgbe: always set header length in SRRCTL
+
+        commit 163de42e240623694562656542adedbca369beaf
+        Author: Alexander Duyck <alexander.h.duyck@intel.com>
+        Date:   Thu May 7 10:39:16 2009 +0000
+
+            ixgbe: set queue0 for srrctl configuration correctly for DCB
+
+After getting the 82599 going, we discovered there were some lingering
+PHY issues that needed to be resolved, so these patches were added:
+
+        commit cd7664f69fe1f3f75b664503ae3e11a2971a4865
+        Author: Don Skidmore <donald.c.skidmore@intel.com>
+        Date:   Tue Mar 31 21:33:44 2009 +0000
+
+            ixgbe: feature - driver to default with FC on.
+
+        commit aa5aec888585fedcda7cfffc20f75240ad1cb42d
+        Author: Peter P Waskiewicz Jr <peter.p.waskiewicz.jr@intel.com>
+        Date:   Tue May 19 09:18:34 2009 +0000
+
+            ixgbe: Add semaphore access for PHY initialization for 82599
+
+        commit 1479ad4fbfbc801898dce1ac2d4d44f0c774ecc5
+        Author: Peter P Waskiewicz Jr <peter.p.waskiewicz.jr@intel.com>
+        Date:   Thu Jun 4 11:10:17 2009 +0000
+
+            ixgbe: Change the 82599 PHY DSP restart logic
+
+In addition to those, there were some small backport issues that needed
+to be fixed -- one NAPI issue from RHBZ 504365 and some bits that were
+added incorrectly during the backport process.
+
+I have done verification of these patches, Chris Wright has been kind
+enough to test them, and Intel has signed off on them.  I expect more
+testing to be done on them in the next few days and will report back if
+these tests produce any failures or unexpected results.
+
+This will resolve RHBZ 505653 and 504365.
+
+diff --git a/drivers/net/ixgbe/ixgbe_82599.c b/drivers/net/ixgbe/ixgbe_82599.c
+index 51f51e1..a3792bf 100644
+--- a/drivers/net/ixgbe/ixgbe_82599.c
++++ b/drivers/net/ixgbe/ixgbe_82599.c
+@@ -108,16 +108,27 @@ s32 ixgbe_setup_sfp_modules_82599(struct ixgbe_hw *hw)
+ 		if (ret_val != 0)
+ 			goto setup_sfp_out;
+ 
++		/* PHY config will finish before releasing the semaphore */
++		ret_val = ixgbe_acquire_swfw_sync(hw, IXGBE_GSSR_MAC_CSR_SM);
++		if (ret_val != 0) {
++			ret_val = IXGBE_ERR_SWFW_SYNC;
++			goto setup_sfp_out;
++		}
++
+ 		hw->eeprom.ops.read(hw, ++data_offset, &data_value);
+ 		while (data_value != 0xffff) {
+ 			IXGBE_WRITE_REG(hw, IXGBE_CORECTL, data_value);
+ 			IXGBE_WRITE_FLUSH(hw);
+ 			hw->eeprom.ops.read(hw, ++data_offset, &data_value);
+ 		}
+-		/* Now restart DSP */
+-		IXGBE_WRITE_REG(hw, IXGBE_CORECTL, 0x00000102);
+-		IXGBE_WRITE_REG(hw, IXGBE_CORECTL, 0x00000b1d);
+-		IXGBE_WRITE_FLUSH(hw);
++		/* Now restart DSP by setting Restart_AN */
++		IXGBE_WRITE_REG(hw, IXGBE_AUTOC,
++		    (IXGBE_READ_REG(hw, IXGBE_AUTOC) | IXGBE_AUTOC_AN_RESTART));
++
++		/* Release the semaphore */
++		ixgbe_release_swfw_sync(hw, IXGBE_GSSR_MAC_CSR_SM);
++		/* Delay obtaining semaphore again to allow FW access */
++		msleep(hw->eeprom.semaphore_delay);
+ 	}
+ 
+ setup_sfp_out:
+diff --git a/drivers/net/ixgbe/ixgbe_main.c b/drivers/net/ixgbe/ixgbe_main.c
+index cf0d60b..b073887 100644
+--- a/drivers/net/ixgbe/ixgbe_main.c
++++ b/drivers/net/ixgbe/ixgbe_main.c
+@@ -48,7 +48,7 @@ char ixgbe_driver_name[] = "ixgbe";
+ static const char ixgbe_driver_string[] =
+                               "Intel(R) 10 Gigabit PCI Express Network Driver";
+ 
+-#define DRV_VERSION "2.0.8-k2"
++#define DRV_VERSION "2.0.8-k3"
+ const char ixgbe_driver_version[] = DRV_VERSION;
+ static char ixgbe_copyright[] = "Copyright (c) 1999-2009 Intel Corporation.";
+ 
+@@ -1087,16 +1087,14 @@ static int ixgbe_clean_rxonly_many(struct net_device *netdev, int *budget)
+ 	/* attempt to distribute budget to each queue fairly, but don't allow
+ 	 * the budget to go below 1 because we'll exit polling */
+ 	work_to_do /= (q_vector->rxr_count ?: 1);
+-	work_to_do = max(*budget, 1);
++	work_to_do = max(work_to_do, 1);
+ 	r_idx = find_first_bit(q_vector->rxr_idx, adapter->num_rx_queues);
+ 
+-	/* Keep link state information with original netdev */
+-	if (!netif_carrier_ok(adapter->netdev))
+-		goto quit_polling;
+-
+ 	for (i = 0; i < q_vector->rxr_count; i++) {
+ 		rx_ring = &(adapter->rx_ring[r_idx]);
+-		ixgbe_clean_rx_irq(adapter, rx_ring, &work_done, work_to_do);
++		/* only clean ring if netdev is linked up */
++		if (netif_carrier_ok(adapter->netdev))
++			ixgbe_clean_rx_irq(adapter, rx_ring, &work_done, work_to_do);
+ 		enable_mask |= rx_ring->v_idx;
+ 		r_idx = find_next_bit(q_vector->rxr_idx, adapter->num_rx_queues,
+ 		                      r_idx + 1);
+@@ -1109,7 +1107,6 @@ static int ixgbe_clean_rxonly_many(struct net_device *netdev, int *budget)
+ 	rx_ring = &(adapter->rx_ring[r_idx]);
+ 	/* If all Rx work done, exit the polling mode */
+ 	if ((work_done < work_to_do) || !netif_running(adapter->netdev)) {
+-quit_polling:
+ 		netif_rx_complete(netdev);
+ 		if (adapter->itr_setting & 1)
+ 			ixgbe_set_itr_msix(q_vector);
+@@ -1566,7 +1563,62 @@ static void ixgbe_configure_tx(struct ixgbe_adapter *adapter)
+ 	}
+ }
+ 
+-#define IXGBE_SRRCTL_BSIZEHDRSIZE_SHIFT 2
++#define IXGBE_SRRCTL_BSIZEHDRSIZE_SHIFT	2
++
++static void ixgbe_configure_srrctl(struct ixgbe_adapter *adapter, int index)
++{
++	struct ixgbe_ring *rx_ring;
++	u32 srrctl;
++	int queue0 = 0;
++	unsigned long mask;
++
++	if (adapter->hw.mac.type == ixgbe_mac_82599EB) {
++		if (adapter->flags & IXGBE_FLAG_DCB_ENABLED) {
++			int dcb_i = adapter->ring_feature[RING_F_DCB].indices;
++			if (dcb_i == 8)
++				queue0 = index >> 4;
++			else if (dcb_i == 4)
++				queue0 = index >> 5;
++			else
++				dev_err(&adapter->pdev->dev, "Invalid DCB "
++				        "configuration\n");
++		} else {
++			queue0 = index;
++		}
++	} else {
++		mask = (unsigned long) adapter->ring_feature[RING_F_RSS].mask;
++		queue0 = index & mask;
++		index = index & mask;
++	}
++
++	rx_ring = &adapter->rx_ring[queue0];
++
++	srrctl = IXGBE_READ_REG(&adapter->hw, IXGBE_SRRCTL(index));
++
++	srrctl &= ~IXGBE_SRRCTL_BSIZEHDR_MASK;
++	srrctl &= ~IXGBE_SRRCTL_BSIZEPKT_MASK;
++
++	srrctl |= (IXGBE_RX_HDR_SIZE << IXGBE_SRRCTL_BSIZEHDRSIZE_SHIFT) &
++		  IXGBE_SRRCTL_BSIZEHDR_MASK;
++
++	if (adapter->flags & IXGBE_FLAG_RX_PS_ENABLED) {
++#if (PAGE_SIZE / 2) > IXGBE_MAX_RXBUFFER
++		srrctl |= IXGBE_MAX_RXBUFFER >> IXGBE_SRRCTL_BSIZEPKT_SHIFT;
++#else
++		srrctl |= (PAGE_SIZE / 2) >> IXGBE_SRRCTL_BSIZEPKT_SHIFT;
++#endif
++		srrctl |= IXGBE_SRRCTL_DESCTYPE_HDR_SPLIT_ALWAYS;
++	} else {
++		srrctl |= ALIGN(rx_ring->rx_buf_len, 1024) >>
++			  IXGBE_SRRCTL_BSIZEPKT_SHIFT;
++		srrctl |= IXGBE_SRRCTL_DESCTYPE_ADV_ONEBUF;
++	}
++
++	IXGBE_WRITE_REG(&adapter->hw, IXGBE_SRRCTL(index), srrctl);
++}
++
++#define PAGE_USE_COUNT(S) (((S) >> PAGE_SHIFT) + \
++			(((S) & (PAGE_SIZE - 1)) ? 1 : 0))
+ 
+ /**
+  * ixgbe_configure_rx - Configure 8259x Receive Unit after Reset
+@@ -1586,7 +1638,7 @@ static void ixgbe_configure_rx(struct ixgbe_adapter *adapter)
+ 	                  0xA54F2BEC, 0xEA49AF7C, 0xE214AD3D, 0xB855AABE,
+ 	                  0x6A3E67EA, 0x14364D17, 0x3BED200D};
+ 	u32 fctrl, hlreg0;
+-	u32 reta = 0, mrqc = 0, srrctl = 0;
++	u32 reta = 0, mrqc = 0;
+ 	u32 rdrxctl;
+ 	int rx_buf_len;
+ 
+@@ -1624,34 +1676,6 @@ static void ixgbe_configure_rx(struct ixgbe_adapter *adapter)
+ 		hlreg0 |= IXGBE_HLREG0_JUMBOEN;
+ 	IXGBE_WRITE_REG(hw, IXGBE_HLREG0, hlreg0);
+ 
+-	srrctl = IXGBE_READ_REG(&adapter->hw, IXGBE_SRRCTL(0));
+-	srrctl &= ~IXGBE_SRRCTL_BSIZEHDR_MASK;
+-	srrctl &= ~IXGBE_SRRCTL_BSIZEPKT_MASK;
+-
+-	if (adapter->flags & IXGBE_FLAG_RX_PS_ENABLED) {
+-		u16 bufsz = IXGBE_RXBUFFER_2048;
+-		/* grow the amount we can receive on large page machines */
+-		if (bufsz < (PAGE_SIZE / 2))
+-			bufsz = (PAGE_SIZE / 2);
+-		/* cap the bufsz at our largest descriptor size */
+-		bufsz = min((u16)IXGBE_MAX_RXBUFFER, bufsz);
+-		srrctl |= bufsz >> IXGBE_SRRCTL_BSIZEPKT_SHIFT;
+-		srrctl |= IXGBE_SRRCTL_DESCTYPE_HDR_SPLIT_ALWAYS;
+-		srrctl |= ((IXGBE_RX_HDR_SIZE <<
+-			    IXGBE_SRRCTL_BSIZEHDRSIZE_SHIFT) &
+-			   IXGBE_SRRCTL_BSIZEHDR_MASK);
+-	} else {
+-		srrctl |= IXGBE_SRRCTL_DESCTYPE_ADV_ONEBUF;
+-
+-		if (rx_buf_len == MAXIMUM_ETHERNET_VLAN_SIZE)
+-			srrctl |=
+-			     IXGBE_RXBUFFER_2048 >> IXGBE_SRRCTL_BSIZEPKT_SHIFT;
+-		else
+-			srrctl |= rx_buf_len >> IXGBE_SRRCTL_BSIZEPKT_SHIFT;
+-	}
+-
+-	IXGBE_WRITE_REG(&adapter->hw, IXGBE_SRRCTL(0), srrctl);
+-
+ 	rdlen = adapter->rx_ring[0].count * sizeof(union ixgbe_adv_rx_desc);
+ 	/* disable receives while setting up the descriptors */
+ 	rxctrl = IXGBE_READ_REG(hw, IXGBE_RXCTRL);
+@@ -1670,6 +1694,27 @@ static void ixgbe_configure_rx(struct ixgbe_adapter *adapter)
+ 		adapter->rx_ring[i].head = IXGBE_RDH(j);
+ 		adapter->rx_ring[i].tail = IXGBE_RDT(j);
+ 		adapter->rx_ring[i].rx_buf_len = rx_buf_len;
++
++		ixgbe_configure_srrctl(adapter, j);
++	}
++
++	if (hw->mac.type == ixgbe_mac_82598EB) {
++		/*
++		 * For VMDq support of different descriptor types or
++		 * buffer sizes through the use of multiple SRRCTL
++		 * registers, RDRXCTL.MVMEN must be set to 1
++		 *
++		 * also, the manual doesn't mention it clearly but DCA hints
++		 * will only use queue 0's tags unless this bit is set.  Side
++		 * effects of setting this bit are only that SRRCTL must be
++		 * fully programmed [0..15]
++		 */
++		if (adapter->flags &
++		    (IXGBE_FLAG_RSS_ENABLED | IXGBE_FLAG_VMDQ_ENABLED)) {
++			rdrxctl = IXGBE_READ_REG(hw, IXGBE_RDRXCTL);
++			rdrxctl |= IXGBE_RDRXCTL_MVMEN;
++			IXGBE_WRITE_REG(hw, IXGBE_RDRXCTL, rdrxctl);
++		}
+ 	}
+ 
+ 	/* Program MRQC for the distribution of queues */
+@@ -2848,7 +2893,7 @@ static int __devinit ixgbe_sw_init(struct ixgbe_adapter *adapter)
+ 		adapter->max_msix_q_vectors = MAX_MSIX_Q_VECTORS_82599;
+ 
+ 	/* default flow control settings */
+-	hw->fc.requested_mode = ixgbe_fc_none;
++	hw->fc.requested_mode = ixgbe_fc_full;
+ 	hw->fc.high_water = IXGBE_DEFAULT_FCRTH;
+ 	hw->fc.low_water = IXGBE_DEFAULT_FCRTL;
+ 	hw->fc.pause_time = IXGBE_DEFAULT_FCPAUSE;
+@@ -3098,8 +3143,8 @@ static int ixgbe_change_mtu(struct net_device *netdev, int new_mtu)
+ 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
+ 	int max_frame = new_mtu + ETH_HLEN + ETH_FCS_LEN;
+ 
+-	if ((max_frame < (ETH_ZLEN + ETH_FCS_LEN)) ||
+-	    (max_frame > IXGBE_MAX_JUMBO_FRAME_SIZE))
++	/* MTU < 68 is an error and causes problems on some kernels */
++	if ((new_mtu < 68) || (max_frame > IXGBE_MAX_JUMBO_FRAME_SIZE))
+ 		return -EINVAL;
+ 
+ 	DPRINTK(PROBE, INFO, "changing MTU from %d to %d\n",
+@@ -3247,10 +3292,10 @@ void ixgbe_napi_del_all(struct ixgbe_adapter *adapter)
+ 
+ 	for (q_idx = 0; q_idx < q_vectors; q_idx++) {
+ 		struct ixgbe_q_vector *q_vector = &adapter->q_vector[q_idx];
+-#if 0 /* gospo: consider this */
++
+ 		if (!q_vector->rxr_count)
+ 			continue;
+-#endif
++
+ 		free_netdev(q_vector->dummy_netdev);
+ 		q_vector->dummy_netdev = NULL;
+ 	}
+diff --git a/drivers/net/ixgbe/ixgbe_type.h b/drivers/net/ixgbe/ixgbe_type.h
+index 50a9bdc..8041fc9 100644
+--- a/drivers/net/ixgbe/ixgbe_type.h
++++ b/drivers/net/ixgbe/ixgbe_type.h
+@@ -728,13 +728,11 @@
+ #define IXGBE_BARCTRL_FLSIZE    0x0700
+ #define IXGBE_BARCTRL_CSRSIZE   0x2000
+ 
+-/* RSCCTL Bit Masks */
+-#define IXGBE_RSCCTL_RSCEN          0x01
+-#define IXGBE_RSCCTL_MAXDESC_1      0x00
++/* RDRXCTL Bit Masks */
++#define IXGBE_RDRXCTL_RDMTS_1_2     0x00000000 /* Rx Desc Min Threshold Size */
+ #define IXGBE_RDRXCTL_CRCSTRIP      0x00000002 /* CRC Strip */
+-#define IXGBE_RSCCTL_MAXDESC_4      0x04
+-#define IXGBE_RSCCTL_MAXDESC_8      0x08
+-#define IXGBE_RSCCTL_MAXDESC_16     0x0C
++#define IXGBE_RDRXCTL_DMAIDONE      0x00000008 /* DMA init cycle done */
++#define IXGBE_RDRXCTL_MVMEN         0x00000020
+ #define IXGBE_RDRXCTL_AGGDIS        0x00010000 /* Aggregation disable */
+ 
+ /* RQTC Bit Masks and Shifts */
+@@ -1943,9 +1941,6 @@ enum ixgbe_fc_mode {
+ 	ixgbe_fc_rx_pause,
+ 	ixgbe_fc_tx_pause,
+ 	ixgbe_fc_full,
+-#ifdef CONFIG_DCB
+-	ixgbe_fc_pfc,
+-#endif
+ 	ixgbe_fc_default
+ };
+ 

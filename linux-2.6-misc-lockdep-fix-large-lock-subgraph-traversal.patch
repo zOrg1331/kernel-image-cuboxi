@@ -1,0 +1,306 @@
+From: Aristeu Rozanski <aris@redhat.com>
+Date: Tue, 12 May 2009 17:40:34 -0400
+Subject: [misc] lockdep: fix large lock subgraph traversal
+Message-id: 20090512214034.GD22116@redhat.com
+O-Subject: [RHEL5.4 PATCH] lockdep: fix combinatorial explosion in lock subgraph traversal v2
+Bugzilla: 462248
+RH-Acked-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+RH-Acked-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=462248
+
+Currently RHEL-5 debug kernel will trigger the NMI watchdog on systems with
+large number of CPUs. This is due the fact that lockdep in RHEL-5 can take a
+long time to visit all the possible nodes in the graph and that's because the
+algorithm will revisit nodes when it doesn't need to. This patch adds
+'dep_gen_id' into lock_class that will be checked to avoid a node to be
+revisited.
+
+The patch was tested on the reported machine
+(hp-dl785g5-01.rhts.bos.redhat.com) and I've run a KernelTier1 test (x86_64
+only).
+
+Upstream:
+419ca3f13532793b81aff09f80c60af3eacbb43d
+5e710e37bde120bb069f691bee68e69ef4393173
+1b12bbc747560ea68bcc132c3d05699e52271da0
+cf7f8690e864c6fe11e77202dd847fa60f483418
+
+diff --git a/include/linux/lockdep.h b/include/linux/lockdep.h
+index b25e76a..3f378da 100644
+--- a/include/linux/lockdep.h
++++ b/include/linux/lockdep.h
+@@ -87,6 +87,7 @@ struct lock_class {
+ 
+ 	struct lockdep_subclass_key	*key;
+ 	unsigned int			subclass;
++	unsigned int			dep_gen_id;
+ 
+ 	/*
+ 	 * IRQ/softirq usage tracking bits:
+diff --git a/kernel/lockdep.c b/kernel/lockdep.c
+index 805a249..0213dd0 100644
+--- a/kernel/lockdep.c
++++ b/kernel/lockdep.c
+@@ -387,6 +387,19 @@ unsigned int nr_process_chains;
+ unsigned int max_lockdep_depth;
+ unsigned int max_recursion_depth;
+ 
++static unsigned int lockdep_dependency_gen_id;
++
++static bool lockdep_dependency_visit(struct lock_class *source,
++				     unsigned int depth)
++{
++	if (!depth)
++		lockdep_dependency_gen_id++;
++	if (source->dep_gen_id == lockdep_dependency_gen_id)
++		return true;
++	source->dep_gen_id = lockdep_dependency_gen_id;
++	return false;
++}
++
+ #ifdef CONFIG_DEBUG_LOCKDEP
+ /*
+  * We cannot printk in early bootup code. Not even early_printk()
+@@ -571,6 +584,9 @@ static void print_lock_dependencies(struct lock_class *class, int depth)
+ {
+ 	struct lock_list *entry;
+ 
++	if (lockdep_dependency_visit(class, depth))
++		return;
++
+ 	if (DEBUG_LOCKS_WARN_ON(depth >= 20))
+ 		return;
+ 
+@@ -716,6 +732,67 @@ static int noinline print_infinite_recursion_bug(void)
+ 	return 0;
+ }
+ 
++static unsigned long __lockdep_count_forward_deps(struct lock_class *class,
++					   unsigned int depth)
++{
++	struct lock_list *entry;
++	unsigned long ret = 1;
++
++	if (lockdep_dependency_visit(class, depth))
++		return 0;
++
++	/*
++	 * Recurse this class's dependency list:
++	 */
++	list_for_each_entry(entry, &class->locks_after, entry)
++		ret += __lockdep_count_forward_deps(entry->class, depth + 1);
++
++	return ret;
++}
++
++unsigned long lockdep_count_forward_deps(struct lock_class *class)
++{
++	unsigned long ret, flags;
++
++	local_irq_save(flags);
++	__raw_spin_lock(&hash_lock);
++	ret = __lockdep_count_forward_deps(class, 0);
++	__raw_spin_unlock(&hash_lock);
++	local_irq_restore(flags);
++
++	return ret;
++}
++
++static unsigned long __lockdep_count_backward_deps(struct lock_class *class,
++					    unsigned int depth)
++{
++	struct lock_list *entry;
++	unsigned long ret = 1;
++
++	if (lockdep_dependency_visit(class, depth))
++		return 0;
++	/*
++	 * Recurse this class's dependency list:
++	 */
++	list_for_each_entry(entry, &class->locks_before, entry)
++		ret += __lockdep_count_backward_deps(entry->class, depth + 1);
++
++	return ret;
++}
++
++unsigned long lockdep_count_backward_deps(struct lock_class *class)
++{
++	unsigned long ret, flags;
++
++	local_irq_save(flags);
++	__raw_spin_lock(&hash_lock);
++	ret = __lockdep_count_backward_deps(class, 0);
++	__raw_spin_unlock(&hash_lock);
++	local_irq_restore(flags);
++
++	return ret;
++}
++
+ /*
+  * Prove that the dependency graph starting at <entry> can not
+  * lead to <target>. Print an error and return 0 if it does.
+@@ -725,6 +802,9 @@ check_noncircular(struct lock_class *source, unsigned int depth)
+ {
+ 	struct lock_list *entry;
+ 
++	if (lockdep_dependency_visit(source, depth))
++		return 1;
++
+ 	debug_atomic_inc(&nr_cyclic_check_recursions);
+ 	if (depth > max_recursion_depth)
+ 		max_recursion_depth = depth;
+@@ -777,6 +857,9 @@ find_usage_forwards(struct lock_class *source, unsigned int depth)
+ 	struct lock_list *entry;
+ 	int ret;
+ 
++	if (lockdep_dependency_visit(source, depth))
++		return 1;
++
+ 	if (depth > max_recursion_depth)
+ 		max_recursion_depth = depth;
+ 	if (depth >= RECURSION_LIMIT)
+@@ -816,6 +899,9 @@ find_usage_backwards(struct lock_class *source, unsigned int depth)
+ 	struct lock_list *entry;
+ 	int ret;
+ 
++	if (lockdep_dependency_visit(source, depth))
++		return 1;
++
+ 	if (depth > max_recursion_depth)
+ 		max_recursion_depth = depth;
+ 	if (depth >= RECURSION_LIMIT)
+diff --git a/kernel/lockdep_internals.h b/kernel/lockdep_internals.h
+index eab043c..2093b69 100644
+--- a/kernel/lockdep_internals.h
++++ b/kernel/lockdep_internals.h
+@@ -47,6 +47,9 @@ extern unsigned int nr_process_chains;
+ extern unsigned int max_lockdep_depth;
+ extern unsigned int max_recursion_depth;
+ 
++extern unsigned long lockdep_count_forward_deps(struct lock_class *);
++extern unsigned long lockdep_count_backward_deps(struct lock_class *);
++
+ #ifdef CONFIG_DEBUG_LOCKDEP
+ /*
+  * Various lockdep statistics:
+diff --git a/kernel/lockdep_proc.c b/kernel/lockdep_proc.c
+index c585c46..6b12f97 100644
+--- a/kernel/lockdep_proc.c
++++ b/kernel/lockdep_proc.c
+@@ -64,34 +64,6 @@ static void l_stop(struct seq_file *m, void *v)
+ {
+ }
+ 
+-static unsigned long count_forward_deps(struct lock_class *class)
+-{
+-	struct lock_list *entry;
+-	unsigned long ret = 1;
+-
+-	/*
+-	 * Recurse this class's dependency list:
+-	 */
+-	list_for_each_entry(entry, &class->locks_after, entry)
+-		ret += count_forward_deps(entry->class);
+-
+-	return ret;
+-}
+-
+-static unsigned long count_backward_deps(struct lock_class *class)
+-{
+-	struct lock_list *entry;
+-	unsigned long ret = 1;
+-
+-	/*
+-	 * Recurse this class's dependency list:
+-	 */
+-	list_for_each_entry(entry, &class->locks_before, entry)
+-		ret += count_backward_deps(entry->class);
+-
+-	return ret;
+-}
+-
+ static int l_show(struct seq_file *m, void *v)
+ {
+ 	unsigned long nr_forward_deps, nr_backward_deps;
+@@ -108,10 +80,10 @@ static int l_show(struct seq_file *m, void *v)
+ #ifdef CONFIG_DEBUG_LOCKDEP
+ 	seq_printf(m, " OPS:%8ld", class->ops);
+ #endif
+-	nr_forward_deps = count_forward_deps(class);
++	nr_forward_deps = lockdep_count_forward_deps(class);
+ 	seq_printf(m, " FD:%5ld", nr_forward_deps);
+ 
+-	nr_backward_deps = count_backward_deps(class);
++	nr_backward_deps = lockdep_count_backward_deps(class);
+ 	seq_printf(m, " BD:%5ld", nr_backward_deps);
+ 
+ 	get_usage_chars(class, &c1, &c2, &c3, &c4);
+@@ -245,7 +217,7 @@ static int lockdep_stats_show(struct seq_file *m, void *v)
+ 		if (class->usage_mask & LOCKF_ENABLED_HARDIRQS_READ)
+ 			nr_hardirq_read_unsafe++;
+ 
+-		sum_forward_deps += count_forward_deps(class);
++		sum_forward_deps += lockdep_count_forward_deps(class);
+ 	}
+ #ifdef CONFIG_LOCKDEP_DEBUG
+ 	DEBUG_LOCKS_WARN_ON(debug_atomic_read(&nr_unused_locks) != nr_unused);
+diff --git a/kernel/sched.c b/kernel/sched.c
+index 6b923f1..d0bca98 100644
+--- a/kernel/sched.c
++++ b/kernel/sched.c
+@@ -2379,10 +2379,10 @@ static void double_rq_lock(struct rq *rq1, struct rq *rq2)
+ 	} else {
+ 		if (rq1 < rq2) {
+ 			spin_lock(&rq1->lock);
+-			spin_lock(&rq2->lock);
++			spin_lock_nested(&rq2->lock, SINGLE_DEPTH_NESTING);
+ 		} else {
+ 			spin_lock(&rq2->lock);
+-			spin_lock(&rq1->lock);
++			spin_lock_nested(&rq1->lock, SINGLE_DEPTH_NESTING);
+ 		}
+ 	}
+ 	update_rq_clock(rq1);
+@@ -2418,14 +2418,21 @@ static void double_lock_balance(struct rq *this_rq, struct rq *busiest)
+ 		if (busiest < this_rq) {
+ 			spin_unlock(&this_rq->lock);
+ 			spin_lock(&busiest->lock);
+-			spin_lock(&this_rq->lock);
++			spin_lock_nested(&this_rq->lock, SINGLE_DEPTH_NESTING);
+ 		} else
+-			spin_lock(&busiest->lock);
++			spin_lock_nested(&busiest->lock, SINGLE_DEPTH_NESTING);
+ 	}
+ 	/* update_rq_clock(this_rq); */
+ 	update_rq_clock(busiest);
+ }
+ 
++static void inline double_unlock_balance(struct rq *this_rq, struct rq *busiest)
++	__releases(busiest->lock)
++{
++	spin_unlock(&busiest->lock);
++	/* lock_set_subclass(&this_rq->lock.dep_map, 0, _RET_IP_); */
++}
++
+ /*
+  * If dest_cpu is allowed for this process, migrate the task to it.
+  * This is accomplished by forcing the cpu_allowed mask to only
+@@ -3140,7 +3147,7 @@ redo:
+ 		nr_moved = move_tasks(this_rq, this_cpu, busiest,
+ 					minus_1_or_zero(busiest->nr_running),
+ 					imbalance, sd, NEWLY_IDLE, NULL);
+-		spin_unlock(&busiest->lock);
++		double_unlock_balance(this_rq, busiest);
+ 
+ 		if (!nr_moved) {
+ 			cpu_clear(cpu_of(busiest), cpus);
+@@ -3232,7 +3239,7 @@ static void active_load_balance(struct rq *busiest_rq, int busiest_cpu)
+ 		else
+ 			schedstat_inc(sd, alb_failed);
+ 	}
+-	spin_unlock(&target_rq->lock);
++	double_unlock_balance(busiest_rq, target_rq);
+ }
+ 
+ /*

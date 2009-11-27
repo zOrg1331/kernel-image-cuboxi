@@ -1,0 +1,61 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Fri, 5 Jun 2009 07:34:50 +1000
+Subject: [net] gso: stop fraglists from escaping
+Message-id: 20090604213450.GA4051@gondor.apana.org.au
+O-Subject: [RHEL5.4 PATCH] gso: Stop fraglists from escaping
+Bugzilla: 499347
+
+RHEL5 bugzilla 499347
+
+On Wed, May 27, 2009 at 03:30:31PM +1000, Herbert Xu wrote:
+>
+> This series patches adds the core part of GRO to RHEL5.  Generic
+> Receive Offload aggregates packets before they're processed by
+> the rest of the stack.  This is analagous to GSO which does the
+> reverse for transmission.  It allows TCP performance to be greatly
+> enhanced at high speeds, in particular, it's crucial for good 10GbE
+> performance.
+
+This patch is needed also needed as part of the backport.
+
+gso: Stop fraglists from escaping
+
+As it stands skb fraglists can get past the check in dev_queue_xmit
+if the skb is marked as GSO.  In particular, if the packet doesn't
+have the proper checksums for GSO, but can otherwise be handled by
+the underlying device, we will not perform the fraglist check on it
+at all.
+
+If the underlying device cannot handle fraglists, then this will
+break.
+
+The fix is as simple as moving the fraglist check from the device
+check into skb_gso_ok.
+
+This has caused crashes with Xen when used together with GRO which
+can generate GSO packets with fraglists.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
+index b9f15d6..942977a 100644
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -1201,15 +1201,14 @@ static inline int net_gso_ok(int features, int gso_type)
+ 
+ static inline int skb_gso_ok(struct sk_buff *skb, int features)
+ {
+-	return net_gso_ok(features, skb_shinfo(skb)->gso_type);
++	return net_gso_ok(features, skb_shinfo(skb)->gso_type) &&
++	       (!skb_shinfo(skb)->frag_list || (features & NETIF_F_FRAGLIST));
+ }
+ 
+ static inline int netif_needs_gso(struct net_device *dev, struct sk_buff *skb)
+ {
+ 	return skb_is_gso(skb) &&
+ 	       (!skb_gso_ok(skb, dev->features) ||
+-	        (skb_shinfo(skb)->frag_list &&
+-	         !(dev->features & NETIF_F_FRAGLIST)) ||
+ 		unlikely(skb->ip_summed != CHECKSUM_HW));
+ }
+ 

@@ -1,0 +1,149 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Thu, 12 Mar 2009 11:57:03 +0100
+Subject: [xen] fix blkfront bug with overflowing ring
+Message-id: 49B8EA7F.602@redhat.com
+O-Subject: [RHEL5.4 PATCH]: Xen: fix blkfront bug with overflowing ring
+Bugzilla: 460693
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+
+All,
+     Attached is a patch that *most likely* fixes BZ 460693 (I'll elaborate more
+on the testing below).  The upstream description says it best:
+
+    From: Jens Axboe <jens.axboe@oracle.com>
+
+    On occasion, the request will apparently have more segments than we
+    fit into the ring. Jens says:
+
+    > The second problem is that the block layer then appears to create one
+    > too many segments, but from the dump it has rq->nr_phys_segments ==
+    > BLKIF_MAX_SEGMENTS_PER_REQUEST. I suspect the latter is due to
+    > xen-blkfront not handling the merging on its own. It should check that
+    > the new page doesn't form part of the previous page. The
+    > rq_for_each_segment() iterates all single bits in the request, not dma
+    > segments. The "easiest" way to do this is to call blk_rq_map_sg() and
+    > then iterate the mapped sg list. That will give you what you are
+    > looking for.
+
+    > Here's a test patch, compiles but otherwise untested. I spent more
+    > time figuring out how to enable XEN than to code it up, so YMMV!
+    > Probably the sg list wants to be put inside the ring and only
+    > initialized on allocation, then you can get rid of the sg on stack and
+    > sg_init_table() loop call in the function. I'll leave that, and the
+    > testing, to you.
+
+    [Moved sg array into info structure, and initialize once. -J]
+
+    Signed-off-by: Jens Axboe <jens.axboe@oracle.com>
+    Signed-off-by: Jeremy Fitzhardinge <jeremy.fitzhardinge@citrix.com>
+
+This is now committed in the upstream linux kernel as hash
+9e973e64ac6dc504e6447d52193d4fff1a670156, and is also in the Xen
+linux-2.6.18-xen.hg tree as c/s 805.
+     In terms of testing, this has been in the virttest kernels for quite a
+while, and I haven't had any reports of ill effects from it.  Unfortunately, I
+have not been able to reproduce the original problem in BZ 460693, and neither
+have any of the other reporters.  That being said, the stack trace in the BZ is
+essentially exactly the same as in the upstream discussion that lead to the
+patch, so I'm reasonably confident that this will fix the bug.
+     Please review and ACK.
+
+--
+Chris Lalancette
+
+diff --git a/drivers/xen/blkfront/blkfront.c b/drivers/xen/blkfront/blkfront.c
+index 6b4b0c2..0798ad7 100644
+--- a/drivers/xen/blkfront/blkfront.c
++++ b/drivers/xen/blkfront/blkfront.c
+@@ -537,13 +537,11 @@ static int blkif_queue_request(struct request *req)
+ 	struct blkfront_info *info = req->rq_disk->private_data;
+ 	unsigned long buffer_mfn;
+ 	blkif_request_t *ring_req;
+-	struct bio *bio;
+-	struct bio_vec *bvec;
+-	int idx;
+ 	unsigned long id;
+ 	unsigned int fsect, lsect;
+-	int ref;
++	int i, ref;
+ 	grant_ref_t gref_head;
++	struct scatterlist *sg;
+ 
+ 	if (unlikely(info->connected != BLKIF_STATE_CONNECTED))
+ 		return 1;
+@@ -569,35 +567,29 @@ static int blkif_queue_request(struct request *req)
+ 	ring_req->sector_number = (blkif_sector_t)req->sector;
+ 	ring_req->handle = info->handle;
+ 
+-	ring_req->nr_segments = 0;
+-	rq_for_each_bio (bio, req) {
+-		bio_for_each_segment (bvec, bio, idx) {
+-			BUG_ON(ring_req->nr_segments
+-			       == BLKIF_MAX_SEGMENTS_PER_REQUEST);
+-			buffer_mfn = page_to_phys(bvec->bv_page) >> PAGE_SHIFT;
+-			fsect = bvec->bv_offset >> 9;
+-			lsect = fsect + (bvec->bv_len >> 9) - 1;
+-			/* install a grant reference. */
+-			ref = gnttab_claim_grant_reference(&gref_head);
+-			BUG_ON(ref == -ENOSPC);
+-
+-			gnttab_grant_foreign_access_ref(
+-				ref,
+-				info->xbdev->otherend_id,
+-				buffer_mfn,
+-				rq_data_dir(req) );
+-
+-			info->shadow[id].frame[ring_req->nr_segments] =
+-				mfn_to_pfn(buffer_mfn);
+-
+-			ring_req->seg[ring_req->nr_segments] =
++	ring_req->nr_segments = blk_rq_map_sg(req->q, req, info->sg);
++	BUG_ON(ring_req->nr_segments > BLKIF_MAX_SEGMENTS_PER_REQUEST);
++
++	for (sg = info->sg, i = 0; i < (ring_req->nr_segments); i++, sg++) {
++		buffer_mfn = pfn_to_mfn(page_to_pfn(sg->page));
++		fsect = sg->offset >> 9;
++		lsect = fsect + (sg->length >> 9) - 1;
++		/* install a grant reference. */
++		ref = gnttab_claim_grant_reference(&gref_head);
++		BUG_ON(ref == -ENOSPC);
++
++		gnttab_grant_foreign_access_ref(
++			ref,
++			info->xbdev->otherend_id,
++			buffer_mfn,
++			rq_data_dir(req) );
++
++		info->shadow[id].frame[i] = mfn_to_pfn(buffer_mfn);
++		ring_req->seg[i] =
+ 				(struct blkif_request_segment) {
+ 					.gref       = ref,
+ 					.first_sect = fsect,
+ 					.last_sect  = lsect };
+-
+-			ring_req->nr_segments++;
+-		}
+ 	}
+ 
+ 	info->ring.req_prod_pvt++;
+diff --git a/drivers/xen/blkfront/block.h b/drivers/xen/blkfront/block.h
+index cdc707c..ec2bacd 100644
+--- a/drivers/xen/blkfront/block.h
++++ b/drivers/xen/blkfront/block.h
+@@ -46,6 +46,7 @@
+ #include <linux/hdreg.h>
+ #include <linux/blkdev.h>
+ #include <linux/major.h>
++#include <linux/scatterlist.h>
+ #include <asm/hypervisor.h>
+ #include <xen/xenbus.h>
+ #include <xen/gnttab.h>
+@@ -117,6 +118,7 @@ struct blkfront_info
+ 	int connected;
+ 	int ring_ref;
+ 	blkif_front_ring_t ring;
++	struct scatterlist sg[BLKIF_MAX_SEGMENTS_PER_REQUEST];
+ 	unsigned int evtchn, irq;
+ 	struct xlbd_major_info *mi;
+ 	request_queue_t *rq;

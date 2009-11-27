@@ -1,0 +1,59 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Mon, 15 Jun 2009 09:52:41 -0400
+Subject: [infiniband] iw_cxgb3: update to ofed 1.4.1 final bits
+Message-id: 5b8067a1329238a720fea4cbdcb08d1cb22f3f86.1245072809.git.dledford@redhat.com
+O-Subject: [Patch RHEL5.4 06/16] [iw_cxgb3] update to ofed 1.4.1 final bits
+Bugzilla: 506097
+
+Signed-off-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/drivers/infiniband/hw/cxgb3/cxio_hal.c b/drivers/infiniband/hw/cxgb3/cxio_hal.c
+index c2740e7..70647ae 100644
+--- a/drivers/infiniband/hw/cxgb3/cxio_hal.c
++++ b/drivers/infiniband/hw/cxgb3/cxio_hal.c
+@@ -410,6 +410,7 @@ int cxio_flush_sq(struct t3_wq *wq, struct t3_cq *cq, int count)
+ 	ptr = wq->sq_rptr + count;
+ 	sqp = wq->sq + Q_PTR2IDX(ptr, wq->sq_size_log2);
+ 	while (ptr != wq->sq_wptr) {
++		sqp->signaled = 0;
+ 		insert_sq_cqe(wq, cq, sqp);
+ 		ptr++;
+ 		sqp = wq->sq + Q_PTR2IDX(ptr, wq->sq_size_log2);
+diff --git a/drivers/infiniband/hw/cxgb3/iwch_cm.c b/drivers/infiniband/hw/cxgb3/iwch_cm.c
+index 04456c9..34c60f8 100644
+--- a/drivers/infiniband/hw/cxgb3/iwch_cm.c
++++ b/drivers/infiniband/hw/cxgb3/iwch_cm.c
+@@ -1809,6 +1809,10 @@ int iwch_accept_cr(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
+ 	ep->com.rpl_err = 0;
+ 	ep->ird = conn_param->ird;
+ 	ep->ord = conn_param->ord;
++
++	if (peer2peer && ep->ird == 0)
++		ep->ird = 1;
++
+ 	PDBG("%s %d ird %d ord %d\n", __func__, __LINE__, ep->ird, ep->ord);
+ 
+ 	get_ep(&ep->com);
+@@ -1894,6 +1898,10 @@ int iwch_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
+ 		       conn_param->private_data, ep->plen);
+ 	ep->ird = conn_param->ird;
+ 	ep->ord = conn_param->ord;
++
++	if (peer2peer && ep->ord == 0)
++		ep->ord = 1;
++
+ 	ep->com.tdev = h->rdev.t3cdev_p;
+ 
+ 	cm_id->add_ref(cm_id);
+diff --git a/drivers/infiniband/hw/cxgb3/iwch_qp.c b/drivers/infiniband/hw/cxgb3/iwch_qp.c
+index b9bb46e..681d2ea 100644
+--- a/drivers/infiniband/hw/cxgb3/iwch_qp.c
++++ b/drivers/infiniband/hw/cxgb3/iwch_qp.c
+@@ -1070,7 +1070,6 @@ int iwch_modify_qp(struct iwch_dev *rhp, struct iwch_qp *qhp,
+ 			goto out;
+ 		}
+ 		qhp->attr.state = IWCH_QP_STATE_IDLE;
+-		memset(&qhp->attr, 0, sizeof(qhp->attr));
+ 		break;
+ 	case IWCH_QP_STATE_TERMINATE:
+ 		if (!internal) {

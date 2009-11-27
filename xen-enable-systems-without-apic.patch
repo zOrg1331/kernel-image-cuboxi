@@ -1,0 +1,223 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Tue, 21 Apr 2009 13:01:34 -0600
+Subject: [xen] enable systems without APIC
+Message-id: 200904211901.n3LJ1Y7C028407@sobek.n0ano.com
+O-Subject: [RHEL5.4 PATCH 5/6 V2] BZ496873: xen: enable systems without APIC
+Bugzilla: 496873
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+
+	x86: restore ability to work on systems without APIC
+
+	This got broken with the default-enabling of MSI. Apart from fixing
+	the base issue, the patch also addresses
+	- the 'i' command crashing where there is no IO-APIC,
+	- the 'i' command needlessly printing information for all 256 vectors
+	  when the use of IO-APIC(s) is disabled, and
+	- the need to specify both "nolapic" and "noapic" when "nolapic" alone
+	  should already have the intended effect.
+
+Upstream status: accepted (CS 19038)
+
+Signed-off-by: Jan Beulich <jbeulich@novell.com>
+Signed-off-by: Qing He <qing.he@intel.com>
+Signed-off-by: Gerd Hoffman <kraxel@redhat.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+Yet Another Resend - resolve the conflicting BZs between the Subject line
+(correct) and the message body (incorrect).
+
+diff --git a/arch/x86/apic.c b/arch/x86/apic.c
+index 85f5126..ee531c8 100644
+--- a/arch/x86/apic.c
++++ b/arch/x86/apic.c
+@@ -40,7 +40,7 @@
+ /*
+  * Knob to control our willingness to enable the local APIC.
+  */
+-int enable_local_apic __initdata = 0; /* -1=force-disable, +1=force-enable */
++static int enable_local_apic __initdata = 0; /* -1=force-disable, +1=force-enable */
+ 
+ /*
+  * Debug level
+@@ -704,7 +704,7 @@ static void apic_pm_activate(void)
+ static void __init lapic_disable(char *str)
+ {
+     enable_local_apic = -1;
+-    clear_bit(X86_FEATURE_APIC, boot_cpu_data.x86_capability);
++    setup_clear_cpu_cap(X86_FEATURE_APIC);
+ }
+ custom_param("nolapic", lapic_disable);
+ 
+diff --git a/arch/x86/cpu/common.c b/arch/x86/cpu/common.c
+index 5e02243..9490f59 100644
+--- a/arch/x86/cpu/common.c
++++ b/arch/x86/cpu/common.c
+@@ -29,6 +29,14 @@ struct cpu_dev * cpu_devs[X86_VENDOR_NUM] = {};
+  */
+ u64 host_pat = 0x050100070406;
+ 
++static unsigned int __cpuinitdata cleared_caps[NCAPINTS];
++
++void __init setup_clear_cpu_cap(unsigned int cap)
++{
++	__clear_bit(cap, boot_cpu_data.x86_capability);
++	__set_bit(cap, cleared_caps);
++}
++
+ static void default_init(struct cpuinfo_x86 * c)
+ {
+ 	/* Not much we can do here... */
+@@ -226,6 +234,7 @@ static void __init early_cpu_detect(void)
+ 		if (c->x86 >= 0x6)
+ 			c->x86_model += ((tfms >> 16) & 0xF) << 4;
+ 		c->x86_mask = tfms & 15;
++		cap0 &= ~cleared_caps[0];
+ 		if (cap0 & (1<<19))
+ 			c->x86_cache_alignment = ((misc >> 8) & 0xff) * 8;
+ 		c->x86_capability[0] = cap0; /* Added for Xen bootstrap */
+@@ -384,6 +393,9 @@ void __devinit identify_cpu(struct cpuinfo_x86 *c)
+ 	if (disable_pse)
+ 		clear_bit(X86_FEATURE_PSE, c->x86_capability);
+ 
++	for (i = 0 ; i < NCAPINTS ; ++i)
++		c->x86_capability[i] &= ~cleared_caps[i];
++
+ 	/* If the model name is still unset, do table lookup. */
+ 	if ( !c->x86_model_id[0] ) {
+ 		char *p;
+diff --git a/arch/x86/io_apic.c b/arch/x86/io_apic.c
+index c450b16..87ca431 100644
+--- a/arch/x86/io_apic.c
++++ b/arch/x86/io_apic.c
+@@ -84,7 +84,9 @@ int disable_timer_pin_1 __initdata;
+ 
+ static struct irq_pin_list {
+     int apic, pin, next;
+-} irq_2_pin[PIN_MAP_SIZE];
++} irq_2_pin[PIN_MAP_SIZE] = {
++    [0 ... PIN_MAP_SIZE-1].pin = -1
++};
+ static int irq_2_pin_free_entry = NR_IRQS;
+ 
+ int vector_irq[NR_VECTORS] __read_mostly = {
+@@ -1018,11 +1020,6 @@ static void __init enable_IO_APIC(void)
+     int i, apic;
+     unsigned long flags;
+ 
+-    for (i = 0; i < PIN_MAP_SIZE; i++) {
+-        irq_2_pin[i].pin = -1;
+-        irq_2_pin[i].next = 0;
+-    }
+-
+     /* Initialise dynamic irq_2_pin free list. */
+     for (i = NR_IRQS; i < PIN_MAP_SIZE; i++)
+         irq_2_pin[i].next = i + 1;
+diff --git a/arch/x86/irq.c b/arch/x86/irq.c
+index d1bc8a0..cb40528 100644
+--- a/arch/x86/irq.c
++++ b/arch/x86/irq.c
+@@ -784,8 +784,8 @@ int map_domain_pirq(
+         return -EINVAL;
+     }
+ 
+-    old_vector = d->arch.pirq_vector[pirq];
+-    old_pirq = d->arch.vector_pirq[vector];
++    old_vector = domain_irq_to_vector(d, pirq);
++    old_pirq = domain_vector_to_irq(d, vector);
+ 
+     if ( (old_vector && (old_vector != vector) ) ||
+          (old_pirq && (old_pirq != pirq)) )
+@@ -809,6 +809,10 @@ int map_domain_pirq(
+     {
+         struct msi_info *msi = (struct msi_info *)data;
+ 
++        ret = -ENODEV;
++        if ( !cpu_has_apic )
++            goto done;
++
+         pdev = pci_get_pdev(msi->bus, msi->devfn);
+         ret = pci_enable_msi(msi, &msi_desc);
+         if ( ret )
+@@ -854,7 +858,7 @@ int unmap_domain_pirq(struct domain *d, int pirq)
+     ASSERT(spin_is_locked(&pcidevs_lock));
+     ASSERT(spin_is_locked(&d->event_lock));
+ 
+-    vector = d->arch.pirq_vector[pirq];
++    vector = domain_irq_to_vector(d, pirq);
+     if ( vector <= 0 )
+     {
+         dprintk(XENLOG_G_ERR, "dom%d: pirq %d not mapped\n",
+@@ -875,7 +879,7 @@ int unmap_domain_pirq(struct domain *d, int pirq)
+ 
+     spin_lock_irqsave(&desc->lock, flags);
+ 
+-    BUG_ON(vector != d->arch.pirq_vector[pirq]);
++    BUG_ON(vector != domain_irq_to_vector(d, pirq));
+ 
+     if ( msi_desc )
+         teardown_msi_vector(vector);
+diff --git a/arch/x86/physdev.c b/arch/x86/physdev.c
+index 7872e82..8485cca 100644
+--- a/arch/x86/physdev.c
++++ b/arch/x86/physdev.c
+@@ -101,14 +101,14 @@ static int physdev_map_pirq(struct physdev_map_pirq *map)
+     spin_lock(&pcidevs_lock);
+     /* Verify or get pirq. */
+     spin_lock(&d->event_lock);
++    pirq = domain_vector_to_irq(d, vector);
+     if ( map->pirq < 0 )
+     {
+-        if ( d->arch.vector_pirq[vector] )
++        if ( pirq )
+         {
+             dprintk(XENLOG_G_ERR, "dom%d: %d:%d already mapped to %d\n",
+                     d->domain_id, map->index, map->pirq,
+-                    d->arch.vector_pirq[vector]);
+-            pirq = d->arch.vector_pirq[vector];
++                    pirq);
+             if ( pirq < 0 )
+             {
+                 ret = -EBUSY;
+@@ -128,8 +128,7 @@ static int physdev_map_pirq(struct physdev_map_pirq *map)
+     }
+     else
+     {
+-        if ( d->arch.vector_pirq[vector] &&
+-             d->arch.vector_pirq[vector] != map->pirq )
++        if ( pirq && pirq != map->pirq )
+         {
+             dprintk(XENLOG_G_ERR, "dom%d: vector %d conflicts with irq %d\n",
+                     d->domain_id, map->index, map->pirq);
+diff --git a/include/asm-x86/irq.h b/include/asm-x86/irq.h
+index ac90bbc..5941b33 100644
+--- a/include/asm-x86/irq.h
++++ b/include/asm-x86/irq.h
+@@ -59,8 +59,12 @@ int unmap_domain_pirq(struct domain *d, int pirq);
+ int get_free_pirq(struct domain *d, int type, int index);
+ void free_domain_pirqs(struct domain *d);
+ 
+-#define domain_irq_to_vector(d, irq) ((d)->arch.pirq_vector[(irq)])
+-#define domain_vector_to_irq(d, vec) ((d)->arch.vector_pirq[(vec)])
++#define domain_irq_to_vector(d, irq) ((d)->arch.pirq_vector[irq] ?: \
++                                      IO_APIC_IRQ(irq) ? 0 : LEGACY_VECTOR(irq))
++#define domain_vector_to_irq(d, vec) ((d)->arch.vector_pirq[vec] ?: \
++                                      ((vec) < FIRST_LEGACY_VECTOR || \
++                                       (vec) > LAST_LEGACY_VECTOR) ? \
++                                      0 : LEGACY_IRQ_FROM_VECTOR(vec))
+ 
+ int pirq_guest_force_unbind(struct domain *d, int irq);
+ 
+diff --git a/include/asm-x86/processor.h b/include/asm-x86/processor.h
+index 7e633e2..fad625c 100644
+--- a/include/asm-x86/processor.h
++++ b/include/asm-x86/processor.h
+@@ -196,6 +196,7 @@ extern int phys_proc_id[NR_CPUS];
+ extern int cpu_core_id[NR_CPUS];
+ 
+ extern void identify_cpu(struct cpuinfo_x86 *);
++extern void setup_clear_cpu_cap(unsigned int);
+ extern void print_cpu_info(struct cpuinfo_x86 *);
+ extern unsigned int init_intel_cacheinfo(struct cpuinfo_x86 *c);
+ extern void dodgy_tsc(void);

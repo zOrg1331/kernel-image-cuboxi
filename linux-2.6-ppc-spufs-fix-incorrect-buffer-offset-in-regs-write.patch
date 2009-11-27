@@ -1,0 +1,63 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Thu, 2 Apr 2009 10:54:15 -0400
+Subject: [ppc] spufs: fix incorrect buffer offset in regs write
+Message-id: 20090402145200.2321.26579.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 BZ493426 2/2] powerpc/spufs: Fix incorrect buffer offset in regs write
+Bugzilla: 493426
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=493426
+
+Description:
+===========
+Need to offset by *pos bytes, not *pos words.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1747881
+
+Upstream Status:
+================
+a38b598fa688bbd53a835bb7628c445b
+
+Test Status:
+============
+A testcase is provided in the Bugzilla.  Without the patches the testcase fails
+with:
+
+testcase "tests/08-reg-file/03-offset" from spufs-testsuite fails on RHEL 5.3:
+tests/08-reg-file/03-offset                       FAIL    (rc 1, expected 0)
+
+With the patches applied the testcase passes:
+tests/08-reg-file/03-offset                       PASS
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/arch/powerpc/platforms/cell/spufs/file.c b/arch/powerpc/platforms/cell/spufs/file.c
+index 7d50e05..3133974 100644
+--- a/arch/powerpc/platforms/cell/spufs/file.c
++++ b/arch/powerpc/platforms/cell/spufs/file.c
+@@ -547,7 +547,7 @@ spufs_regs_write(struct file *file, const char __user *buffer,
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = copy_from_user(lscsa->gprs + *pos - size,
++	ret = copy_from_user((char *)lscsa->gprs + *pos - size,
+ 			     buffer, size) ? -EFAULT : size;
+ 
+ 	spu_release_saved(ctx);

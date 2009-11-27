@@ -1,0 +1,46 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Fri, 29 May 2009 08:25:24 -0400
+Subject: [x86] nmi: add Intel cpu 0x6f4 to perfctr1 workaround
+Message-id: 20090529122520.19905.5392.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5.4 PATCH]: NMI: add Intel processor 0x6f4 to NMI perfctr1 workaround
+Bugzilla: 500892
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Aristeu Rozanski <aris@redhat.com>
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+RH-Acked-by: Don Zickus <dzickus@redhat.com>
+
+Expand Intel NMI perfctr1 workaround to include a Core2 processor stepping
+(cpuid family-6, model-f, stepping-4). Resolves a situation where the NMI
+would not enable on these processors.
+
+Upstream submit here:
+
+http://marc.info/?l=linux-kernel&m=124354910010319&w=2
+
+Succesfully tested by me.
+
+Resolves BZ 500892.
+
+diff --git a/arch/x86_64/kernel/perfctr-watchdog.c b/arch/x86_64/kernel/perfctr-watchdog.c
+index d5a65ea..438cd71 100644
+--- a/arch/x86_64/kernel/perfctr-watchdog.c
++++ b/arch/x86_64/kernel/perfctr-watchdog.c
+@@ -686,9 +686,15 @@ static void probe_nmi_watchdog(void)
+ 		wd_ops = &k7_wd_ops;
+ 		break;
+ 	case X86_VENDOR_INTEL:
+-		/* Work around Core Duo (Yonah) errata AE49 where perfctr1
+-		   doesn't have a working enable bit. */
+-		if (boot_cpu_data.x86 == 6 && boot_cpu_data.x86_model == 14) {
++		/* Work around where perfctr1 doesn't have a working enable
++		 * bit as described in the following errata:
++		 * AE49 Core Duo and Intel Core Solo 65 nm
++		 * AN49 Intel Pentium Dual-Core
++		 * AF49 Dual-Core Intel Xeon Processor LV
++		 */
++		if ((boot_cpu_data.x86 == 6 && boot_cpu_data.x86_model == 14) ||
++		    ((boot_cpu_data.x86 == 6 && boot_cpu_data.x86_model == 15 &&
++		     boot_cpu_data.x86_mask == 4))) {
+ 			intel_arch_wd_ops.perfctr = MSR_ARCH_PERFMON_PERFCTR0;
+ 			intel_arch_wd_ops.evntsel = MSR_ARCH_PERFMON_EVENTSEL0;
+ 		}

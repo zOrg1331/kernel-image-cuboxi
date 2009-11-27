@@ -1,0 +1,182 @@
+From: Heinz Mauelshagen <heinzm@redhat.com>
+Date: Tue, 12 May 2009 22:54:34 +0200
+Subject: [md] dm: raid45 target doesn't create parity as expected
+Message-id: 1242161674.28404.57.camel@o
+O-Subject: [RHEL 5.4 PATCH] dm: raid45 target doesn't create parity as expected by dmraid (isw)
+Bugzilla: 499406
+RH-Acked-by: Jonathan Brassow <jbrassow@redhat.com>
+
+RHEL5.4 device mapper: raid45 target regression
+
+When a RAID5 array with a small number of disks (3-4) is being used,
+dmraid doesn't enforce a complete resynchronization of the RAID array
+but expects the dm-raid45 target to always create parity, wheras the new
+raid45 target (introduced with patches for bz#479383 and bz#480733 on
+April 23) expects synchronization to be enforced by userpace for those
+arrays.
+It fixes a potential error message flood with dead arrays as well.
+
+Resolves: BZ 499406
+
+Don,
+this patch adresses the missing ()'s you found with my initial patch
+submission on April 23 as well.
+
+diff --git a/drivers/md/dm-raid45.c b/drivers/md/dm-raid45.c
+index bd32c7a..89374f9 100644
+--- a/drivers/md/dm-raid45.c
++++ b/drivers/md/dm-raid45.c
+@@ -37,7 +37,7 @@
+  * FIXME: recovery bandwidth
+  */ 
+ 
+-static const char *version = "v0.2594b";
++static const char *version = "v0.2594l";
+ 
+ #include "dm.h"
+ #include "dm-bio-list.h"
+@@ -365,8 +365,10 @@ BITOPS(Dev, IoQueued, raid_dev, DEV_IO_QUEUED)
+ enum raid_set_flags {
+ 	RS_CHECK_OVERWRITE,	/* Check for chunk overwrites. */
+ 	RS_DEAD,		/* RAID set inoperational. */
++	RS_DEAD_ENDIO_MESSAGE,	/* RAID set dead endio one-off message. */
+ 	RS_DEGRADED,		/* Io errors on RAID device. */
+ 	RS_DEVEL_STATS,		/* REMOVEME: display status information. */
++	RS_ENFORCE_PARITY_CREATION,/* Enforce parity creation. */
+ 	RS_RECOVER,		/* Do recovery. */
+ 	RS_RECOVERY_BANDWIDTH,	/* Allow recovery bandwidth (delayed bios). */
+ 	RS_SC_BUSY,		/* Stripe cache busy -> send an event. */
+@@ -571,8 +573,10 @@ struct raid_set {
+ BITOPS(RS, Bandwidth, raid_set, RS_RECOVERY_BANDWIDTH)
+ BITOPS(RS, CheckOverwrite, raid_set, RS_CHECK_OVERWRITE)
+ BITOPS(RS, Dead, raid_set, RS_DEAD)
++BITOPS(RS, DeadEndioMessage, raid_set, RS_DEAD_ENDIO_MESSAGE)
+ BITOPS(RS, Degraded, raid_set, RS_DEGRADED)
+ BITOPS(RS, DevelStats, raid_set, RS_DEVEL_STATS)
++BITOPS(RS, EnforceParityCreation, raid_set, RS_ENFORCE_PARITY_CREATION)
+ BITOPS(RS, Recover, raid_set, RS_RECOVER)
+ BITOPS(RS, ScBusy, raid_set, RS_SC_BUSY)
+ BITOPS(RS, Suspend, raid_set, RS_SUSPEND)
+@@ -2310,7 +2314,9 @@ static void stripe_chunk_rw(struct stripe *stripe, unsigned p)
+ 
+ 	BUG_ON(!io.count);
+ 	io.sector += dev->start;	/* Add <offset>. */
+-	recover_io_count(stripe);	/* Recovery io accounting. */
++
++	if (RSRecover(rs))
++		recover_io_count(stripe);	/* Recovery io accounting. */
+ 
+ 	/* REMOVEME: statistics. */
+ 	atomic_inc(rs->stats + (ChunkDirty(chunk) ? S_DM_IO_WRITE :
+@@ -2526,9 +2532,11 @@ static int stripe_check_reconstruct(struct stripe *stripe)
+ 		 * Reconstruction mode (ie. a particular (replaced) device or
+ 		 * some (rotating) parity chunk is being resynchronized) ->
+ 		 *   o make sure all needed chunks are read in
+-		 *   o writes are allowed to go through
+-		 */
+-		if (!sync) {
++		 *   o cope with 3/4 disk array special case where it
++		 *     doesn't make a difference to read in parity
++		 *     to xor data in/out
++                 */
++		if (RSEnforceParityCreation(rs) || !sync) {
+ 			/* REMOVEME: statistics. */
+ 			atomic_inc(rs->stats + S_NOSYNC);
+ 			/* Allow IO on all devs but the one to reconstruct. */
+@@ -2965,7 +2973,7 @@ static int _do_recovery(struct stripe *stripe)
+ 		goto err;
+ 
+ 	/* Recovery end required. */
+-	if (!RSRecover(rs))
++	if (unlikely(RSDegraded(rs)))
+ 		goto err;
+ 
+ 	/* Get a region to recover. */
+@@ -3018,11 +3026,14 @@ err:
+ 	/* Check state of partially recovered array. */
+ 	if (RSDegraded(rs) && !RSDead(rs) &&
+ 	    rs->set.dev_to_init != -1 &&
+-	    rs->set.ei != rs->set.dev_to_init)
++	    rs->set.ei != rs->set.dev_to_init) {
+ 		/* Broken drive != drive to recover -> FATAL. */
+ 		SetRSDead(rs);
++		DMERR("FATAL: failed device != device to initialize -> "
++		      "RAID set broken");
++	}
+ 
+-	if (StripeError(stripe)) {
++	if (StripeError(stripe) || RSDegraded(rs)) {
+ 		char buf[BDEVNAME_SIZE];
+ 
+ 		DMERR("stopping recovery due to "
+@@ -3121,7 +3132,9 @@ static void _do_endios(struct raid_set *rs, struct stripe *stripe,
+ 
+ 	/* If RAID set is dead -> fail any ios to dead drives. */
+ 	if (RSDead(rs)) {
+-		DMERR_LIMIT("RAID set dead: failing ios to dead devices");
++		if (!TestSetRSDeadEndioMessage(rs))
++			DMERR("RAID set dead: failing ios to dead devices");
++
+ 		stripe_fail_io(stripe);
+ 	}
+ 
+@@ -4079,6 +4092,15 @@ static int raid_ctr(struct dm_target *ti, unsigned argc, char **argv)
+ 	}
+ 
+ 	/*
++	 * Enable parity chunk creation enformcement for
++	 * little numbers of array members where it doesn'ti
++	 * gain us performance to xor parity out and back in as
++	 * with larger array member numbers.
++	 */
++	if (rs->set.raid_devs <= rs->set.raid_type->minimal_devs + 1)
++		SetRSEnforceParityCreation(rs);
++
++	/*
+ 	 * Make sure that dm core only hands maximum io size
+ 	 * length down and pays attention to io boundaries.
+ 	 */
+@@ -4224,7 +4246,7 @@ static void raid_devel_stats(struct dm_target *ti, char *result,
+ 	struct recover *rec = &rs->recover;
+ 	struct timespec ts;
+ 
+-	DMEMIT("%s %s %u\n", version, rs->xor.f->name, rs->xor.chunks);
++	DMEMIT("%s %s=%u\n", version, rs->xor.f->name, rs->xor.chunks);
+ 	DMEMIT("act_ios=%d ", io_ref(rs));
+ 	DMEMIT("act_ios_max=%d\n", atomic_read(&rs->io.in_process_max));
+ 	DMEMIT("act_stripes=%d ", sc_active(&rs->sc));
+@@ -4261,6 +4283,7 @@ static int raid_status(struct dm_target *ti, status_type_t type,
+ 	unsigned p, sz = 0;
+ 	char buf[BDEVNAME_SIZE];
+ 	struct raid_set *rs = ti->private;
++	struct dm_dirty_log *dl = rs->recover.dl;
+ 	int raid_parms[] = {
+ 		rs->set.chunk_size_parm,
+ 		rs->sc.stripes_parm,
+@@ -4283,7 +4306,7 @@ static int raid_status(struct dm_target *ti, status_type_t type,
+ 			DMEMIT("%s ",
+ 			       format_dev_t(buf, rs->dev[p].dev->bdev->bd_dev));
+ 
+-		DMEMIT("1 ");
++		DMEMIT("2 ");
+ 		for (p = 0; p < rs->set.raid_devs; p++) {
+ 			DMEMIT("%c", !DevFailed(rs->dev + p) ? 'A' : 'D');
+ 
+@@ -4294,12 +4317,15 @@ static int raid_status(struct dm_target *ti, status_type_t type,
+ 				DMEMIT("i");
+ 		}
+ 
++		DMEMIT(" %llu/%llu ",
++		       (unsigned long long) dl->type->get_sync_count(dl),
++		       (unsigned long long) rs->recover.nr_regions);
++		sz += dl->type->status(dl, type, result+sz, maxlen-sz);
+ 		break;
+ 	case STATUSTYPE_TABLE:
+ 		sz = rs->recover.dl->type->status(rs->recover.dl, type,
+ 						  result, maxlen);
+-		DMEMIT("%s %u ", rs->set.raid_type->name,
+-		       rs->set.raid_parms);
++		DMEMIT("%s %u ", rs->set.raid_type->name, rs->set.raid_parms);
+ 
+ 		for (p = 0; p < rs->set.raid_parms; p++) {
+ 			if (raid_parms[p] > -2)

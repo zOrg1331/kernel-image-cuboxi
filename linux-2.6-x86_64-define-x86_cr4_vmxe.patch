@@ -1,0 +1,41 @@
+From: Eduardo Habkost <ehabkost@redhat.com>
+Date: Tue, 7 Jul 2009 18:11:19 -0300
+Subject: [x86_64] define X86_CR4_VMXE
+Message-id: 1247001082-20497-4-git-send-email-ehabkost@redhat.com
+O-Subject: [RHEL-5.4 PATCH 3/6] asm-x86_64/processor.h: define X86_CR4_VMXE (v2)
+Bugzilla: 507483
+
+The xen processor.h header is updated just for consistency, to avoid
+needing #ifdefs on the headers that use those definitions.
+
+Changelog:
+ - v2: update mach-xen header too
+
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+
+diff --git a/include/asm-x86_64/mach-xen/asm/processor.h b/include/asm-x86_64/mach-xen/asm/processor.h
+index 2e4ef94..9b5b225 100644
+--- a/include/asm-x86_64/mach-xen/asm/processor.h
++++ b/include/asm-x86_64/mach-xen/asm/processor.h
+@@ -144,6 +144,8 @@ extern unsigned short num_cache_leaves;
+ #define X86_CR4_PCE		0x0100	/* enable performance counters at ipl 3 */
+ #define X86_CR4_OSFXSR		0x0200	/* enable fast FPU save and restore */
+ #define X86_CR4_OSXMMEXCPT	0x0400	/* enable unmasked SSE exceptions */
++#define X86_CR4_VMXE		0x2000	/* enable VMX virtualization */
++
+ 
+ /*
+  * Save the cr4 feature set we're using (ie
+diff --git a/include/asm-x86_64/processor.h b/include/asm-x86_64/processor.h
+index fb2c8c7..6ad46d8 100644
+--- a/include/asm-x86_64/processor.h
++++ b/include/asm-x86_64/processor.h
+@@ -145,6 +145,8 @@ extern unsigned short num_cache_leaves;
+ #define X86_CR4_PCE		0x0100	/* enable performance counters at ipl 3 */
+ #define X86_CR4_OSFXSR		0x0200	/* enable fast FPU save and restore */
+ #define X86_CR4_OSXMMEXCPT	0x0400	/* enable unmasked SSE exceptions */
++#define X86_CR4_VMXE		0x2000	/* enable VMX virtualization */
++
+ 
+ /*
+  * Save the cr4 feature set we're using (ie

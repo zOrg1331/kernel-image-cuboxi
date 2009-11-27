@@ -1,0 +1,35 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Thu, 30 Jul 2009 12:40:35 -0400
+Subject: [scsi] qla2xxx: unable to destroy npiv HBA ports
+Message-id: 20090730164035.18570.5539.sendpatchset@file.bos.redhat.com
+O-Subject: [rhel 5.4 patch] qla2xxx - unable to destroy npiv HBA ports on QLogic adapters.
+Bugzilla: 514352
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+BZ 514352 qla2xxx - unable to destroy npiv virtual HBA ports on QLogic adapters
+
+This pach allows the libvirt code to correctly manipulate virtual ports, in
+particular, to remove them.
+
+The problem was that when the virtual port was created we passed the PCI device
+as the parent device, and it should have been the scsi host function.
+
+On inspection, other drivers provided the scsi host function. Changing this
+pointer is a one line change and it has been tested and confirmed to correct
+the behaviour.
+
+diff --git a/drivers/scsi/qla2xxx/qla_attr.c b/drivers/scsi/qla2xxx/qla_attr.c
+index ea2a73d..3e7bf14 100644
+--- a/drivers/scsi/qla2xxx/qla_attr.c
++++ b/drivers/scsi/qla2xxx/qla_attr.c
+@@ -1467,7 +1467,7 @@ qla24xx_vport_create(scsi_qla_host_t *ha, uint64_t fc_wwpn, uint64_t fc_wwnn)
+ 		atomic_set(&vha->loop_state, LOOP_DEAD);
+ 	}
+ 
+-	if (scsi_add_host(vha->host, &ha->pdev->dev)) {
++	if (scsi_add_host(vha->host, &ha->host->shost_gendev)) {
+ 		DEBUG15(printk("scsi(%ld): scsi_add_host failure for VP[%d].\n",
+ 			vha->host_no, vha->vp_idx));
+ 		goto vport_create_failed_2;

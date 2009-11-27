@@ -1,0 +1,28 @@
+From: jolsa@redhat.com <jolsa@redhat.com>
+Date: Fri, 17 Jul 2009 18:43:43 +0200
+Subject: [net] ipv6: fix BUG when disabled module is unloaded
+Message-id: 1247849024-9640-3-git-send-email-jolsa@redhat.com
+O-Subject: [RHEL5 PATCH 2/3] ipv6: Fix BUG when disabled ipv6 module is unloaded
+Bugzilla: 512258
+RH-Acked-by: David Miller <davem@redhat.com>
+
+Do not try to "uninitialize" ipv6 if its initialization had been
+skipped because module parameter disable=1 had been specified.
+
+wbr,
+jirka
+
+diff --git a/net/ipv6/af_inet6.c b/net/ipv6/af_inet6.c
+index 4f4d975..45371b9 100644
+--- a/net/ipv6/af_inet6.c
++++ b/net/ipv6/af_inet6.c
+@@ -926,6 +926,9 @@ module_init(inet6_init);
+ 
+ static void __exit inet6_exit(void)
+ {
++	if (disable_ipv6)
++		return;
++
+ 	/* First of all disallow new sockets creation. */
+ 	sock_unregister(PF_INET6);
+ #ifdef CONFIG_PROC_FS

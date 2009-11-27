@@ -1,0 +1,47 @@
+From: Jason Baron <jbaron@redhat.com>
+Date: Thu, 26 Mar 2009 22:09:48 -0400
+Subject: [trace] remove prototype from tracepoint name
+Message-id: 200903270209.n2R29maB029019@ns3.rdu.redhat.com
+O-Subject: [RHEL 5.4 PATCH 01/10] remove prototype from tracepoint name
+Bugzilla: 465543
+
+    commit 5e43ac74123a8acdcbb6ec0c1e3f51fd6d3f41de
+
+        tracepoint-do-not-put-argument-list-in-name
+
+        Tracepoint do not put arguments in name
+
+        That's overkill, takes space. We have a global tracepoint registery in header
+        files anyway.
+
+        Signed-off-by: Mathieu Desnoyers <mathieu.desnoyers@polymtl.ca>
+
+diff --git a/include/linux/tracepoint.h b/include/linux/tracepoint.h
+index e623a6f..5321efd 100644
+--- a/include/linux/tracepoint.h
++++ b/include/linux/tracepoint.h
+@@ -60,7 +60,7 @@ struct tracepoint {
+ 	{								\
+ 		static const char __tpstrtab_##name[]			\
+ 		__attribute__((section("__tracepoints_strings")))	\
+-		= #name ":" #proto;					\
++		= #name;						\
+ 		static struct tracepoint __tracepoint_##name		\
+ 		__attribute__((section("__tracepoints"), aligned(8))) =	\
+ 		{ __tpstrtab_##name, 0, NULL };				\
+@@ -70,13 +70,11 @@ struct tracepoint {
+ 	}								\
+ 	static inline int register_trace_##name(void (*probe)(proto))	\
+ 	{								\
+-		return tracepoint_probe_register(#name ":" #proto,	\
+-			(void *)probe);					\
++		return tracepoint_probe_register(#name, (void *)probe); \
+ 	}								\
+ 	static inline void unregister_trace_##name(void (*probe)(proto))\
+ 	{								\
+-		tracepoint_probe_unregister(#name ":" #proto,		\
+-			(void *)probe);					\
++		tracepoint_probe_unregister(#name, (void *)probe);      \
+ 	}
+ 
+ extern void tracepoint_update_probe_range(struct tracepoint *begin,

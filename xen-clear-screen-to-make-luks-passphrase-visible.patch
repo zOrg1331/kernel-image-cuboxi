@@ -1,0 +1,109 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Wed, 17 Dec 2008 08:02:53 -0500
+Subject: [xen] clear screen to make LUKS passphrase visible
+Message-id: 20081217130251.4307.67550.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.4 PATCH 2/2] Xen patch to clear screen to make LUKS passphrase visible
+Bugzilla: 475986
+
+Fixes bz 475986
+
+>From the following two upstream changesets, clear the
+console screen of the Hypervisor messages to avoid
+unreadable dom0 kernel or user output.
+
+changeset: vga: Clear the screen when relinquishing VGA to dom0.
+changeset 18872: 	5e066dc410ac
+parent 18871:	b44e244d7bb9
+child 18873:	eed39afde7dd
+author: 	Keir Fraser <keir.fraser@citrix.com>
+date: 	Fri Dec 05 11:37:20 2008 +0000 (6 days ago)
+files: 	xen/drivers/video/vesa.c xen/drivers/video/vga.c
+description: 	vga: Clear the screen when relinquishing VGA to dom0.
+Signed-off-by: Keir Fraser <keir.fraser@citrix.com>
+
+changeset: vga: Fix screen clear at end of Xen bootstrap.
+changeset 18890: 	5535efd8e011
+parent 18889:	cd8c7d963af5
+child 18891:	6595393a3d28
+author: 	Keir Fraser <keir.fraser@citrix.com>
+date: 	Tue Dec 09 13:23:15 2008 +0000 (2 days ago)
+files: 	xen/drivers/video/vga.c
+description: 	vga: Fix screen clear at end of Xen bootstrap.
+Signed-off-by: Keir Fraser <keir.fraser@citrix.com>
+
+diff --git a/drivers/video/vesa.c b/drivers/video/vesa.c
+index 8f5b5c6..bb82647 100644
+--- a/drivers/video/vesa.c
++++ b/drivers/video/vesa.c
+@@ -146,10 +146,20 @@ void __init vesa_init(void)
+     xfree(text_buf);
+ }
+ 
+-void __init vesa_endboot(void)
++void __init vesa_endboot(bool_t keep)
+ {
+-    xpos = 0;
+-    vga_puts = vesa_scroll_puts;
++    if ( keep )
++    {
++        xpos = 0;
++        vga_puts = vesa_scroll_puts;
++    }
++    else
++    {
++        unsigned int i, bpp = (vlfb_info.bits_per_pixel + 7) >> 3;
++        for ( i = 0; i < vlfb_info.height; i++ )
++            memset(lfb + i * vlfb_info.bytes_per_line, 0,
++                   vlfb_info.width * bpp);
++    }
+ }
+ 
+ #if defined(CONFIG_X86)
+diff --git a/drivers/video/vga.c b/drivers/video/vga.c
+index ef21178..7595909 100644
+--- a/drivers/video/vga.c
++++ b/drivers/video/vga.c
+@@ -57,10 +57,10 @@ static unsigned int columns, lines;
+ 
+ #ifdef CONFIG_X86_64
+ void vesa_early_init(void);
+-void vesa_endboot(void);
++void vesa_endboot(bool_t keep);
+ #else
+ #define vesa_early_init() ((void)0)
+-#define vesa_endboot()    ((void)0)
++#define vesa_endboot(x)   ((void)0)
+ #endif
+ 
+ void __init vga_init(void)
+@@ -99,16 +99,27 @@ void __init vga_init(void)
+ 
+ void __init vga_endboot(void)
+ {
+-    if ( vga_puts == vga_noop_puts )
++    if ( !vga_console_info.video_type )
+         return;
+ 
+     printk("Xen is %s VGA console.\n",
+            vgacon_keep ? "keeping" : "relinquishing");
+ 
+-    vesa_endboot();
+-
+     if ( !vgacon_keep )
+         vga_puts = vga_noop_puts;
++
++    switch ( vga_console_info.video_type )
++    {
++    case XEN_VGATYPE_TEXT_MODE_3:
++        if ( !vgacon_keep )
++            memset(video, 0, columns * lines * 2);
++        break;
++    case XEN_VGATYPE_VESA_LFB:
++        vesa_endboot(vgacon_keep);
++        break;
++    default:
++        BUG();
++    }
+ }
+ 
+ static void vga_text_puts(const char *s)

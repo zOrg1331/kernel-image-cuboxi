@@ -1,0 +1,348 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Wed, 29 Apr 2009 23:12:31 -0400
+Subject: [scsi] qla4xxx: extended sense data errors
+Message-id: 20090430031231.29962.75505.sendpatchset@file.bos.redhat.com
+O-Subject: [rhel 5.4 patch] qla4xxx - Extended Sense Data errors.
+Bugzilla: 489389
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+BZ 489389  qla4xxx - Extended Sense Data Errors
+
+This patch applies and builds cleanly with 2.6.18-137.el5
+
+It is tested at QLogic.
+
+If more than 32 bytes of sense data is returned from a target,
+the driver currently returns the first 32 bytes of sense data
+accurately; but the remaining sense data is garbage.
+
+The bug fix is to (1) copy the first 32 bytes of sense data
+(from the original STATUS IOCB pkt), (2) copy the valid
+remaining sense data (from the adjoining STATUS_CONTINUATION
+IOCB pkt/s), and (3) return the command when all valid sense
+data has been copied.
+
+Also, corrected debug print alignment bug in dump_buffer routine.
+
+diff --git a/drivers/scsi/qla4xxx/ql4_dbg.c b/drivers/scsi/qla4xxx/ql4_dbg.c
+index 81fac0f..4c63e07 100644
+--- a/drivers/scsi/qla4xxx/ql4_dbg.c
++++ b/drivers/scsi/qla4xxx/ql4_dbg.c
+@@ -182,21 +182,20 @@ void qla4xxx_dump_registers(struct scsi_qla_host *ha)
+ 
+ void qla4xxx_dump_buffer(void *b, uint32_t size)
+ {
+-	uint32_t cnt;
+-	uint8_t *c = b;
++        uint32_t cnt;
++        uint8_t *c = b;
+ 
+-	printk(" 0   1	 2   3	 4   5	 6   7	 8   9	Ah  Bh	Ch  Dh	Eh  "
+-	       "Fh\n");
+-	printk("------------------------------------------------------------"
+-	       "--\n");
+-	for (cnt = 0; cnt < size; cnt++, c++) {
+-		printk(KERN_DEBUG "%02x", *c);
+-		if (!(cnt % 16))
+-			printk(KERN_DEBUG "\n");
++        printk(" 0   1   2   3   4   5   6   7   8   9  Ah  Bh  Ch  Dh  Eh  "
++               "Fh\n");
++        printk("------------------------------------------------------------"
++               "--\n");
++        for (cnt = 0; cnt < size; c++) {
++                printk("%02x", *c);
++                if (!(++cnt % 16))
++                        printk("\n");
+ 
+-		else
+-			printk(KERN_DEBUG "  ");
+-	}
+-	if (cnt % 16)
+-		printk(KERN_DEBUG "\n");
++                else
++                        printk("  ");
++        }
++        printk("\n");
+ }
+diff --git a/drivers/scsi/qla4xxx/ql4_def.h b/drivers/scsi/qla4xxx/ql4_def.h
+index 659452b..f5d2919 100644
+--- a/drivers/scsi/qla4xxx/ql4_def.h
++++ b/drivers/scsi/qla4xxx/ql4_def.h
+@@ -436,9 +436,11 @@ struct scsi_qla_host {
+ 	uint16_t aen_out;
+ 	struct aen aen_q[MAX_AEN_ENTRIES];
+ 
++        struct srb *status_srb;
++
+         /* reserved fields */
+         uint8_t rsvd3[392];
+-        void *rsvd4[98];
++        void *rsvd4[97];
+ #if (BITS_PER_LONG==64)
+         uint32_t rsvd5[32];
+ #endif
+diff --git a/drivers/scsi/qla4xxx/ql4_fw.h b/drivers/scsi/qla4xxx/ql4_fw.h
+index 9bb3d1d..4c06257 100644
+--- a/drivers/scsi/qla4xxx/ql4_fw.h
++++ b/drivers/scsi/qla4xxx/ql4_fw.h
+@@ -571,6 +571,7 @@ struct conn_event_log_entry {
+  *************************************************************************/
+ #define IOCB_MAX_CDB_LEN	    16	/* Bytes in a CBD */
+ #define IOCB_MAX_SENSEDATA_LEN	    32	/* Bytes of sense data */
++#define IOCB_MAX_EXT_SENSEDATA_LEN  60  /* Bytes of extended sense data */
+ 
+ /* IOCB header structure */
+ struct qla4_header {
+@@ -731,6 +732,12 @@ struct status_entry {
+ 
+ };
+ 
++/* Status Continuation entry */
++struct status_cont_entry {
++       struct qla4_header hdr; /* 00-03 */
++       uint8_t extSenseData[IOCB_MAX_EXT_SENSEDATA_LEN]; /* 04-63 */
++};
++
+ struct passthru0 {
+ 	struct qla4_header hdr;		       /* 00-03 */
+ 	uint32_t handle;	/* 04-07 */
+diff --git a/drivers/scsi/qla4xxx/ql4_isr.c b/drivers/scsi/qla4xxx/ql4_isr.c
+index 458f246..bd776ce 100644
+--- a/drivers/scsi/qla4xxx/ql4_isr.c
++++ b/drivers/scsi/qla4xxx/ql4_isr.c
+@@ -12,6 +12,101 @@
+ #include "ql4_inline.h"
+ 
+ /**
++ * qla4xxx_copy_sense - copy sense data	into cmd sense buffer
++ * @ha: Pointer to host adapter structure.
++ * @sts_entry: Pointer to status entry structure.
++ * @srb: Pointer to srb structure.
++ **/
++static void qla4xxx_copy_sense(struct scsi_qla_host *ha,
++                               struct status_entry *sts_entry,
++                               struct srb *srb)
++{
++	struct scsi_cmnd *cmd = srb->cmd;
++	uint16_t sense_len;
++
++	memset(cmd->sense_buffer, 0, SCSI_SENSE_BUFFERSIZE);
++	sense_len = le16_to_cpu(sts_entry->senseDataByteCnt);
++	if (sense_len == 0)
++		return;
++
++	/* Save total available sense length,
++	 * not to exceed cmd's sense buffer size */
++	sense_len = min(sense_len, (uint16_t) SCSI_SENSE_BUFFERSIZE);
++	cmd->SCp.ptr = cmd->sense_buffer;
++	cmd->SCp.this_residual = sense_len;
++
++	/* Copy sense from sts_entry pkt */
++	sense_len = min(sense_len, (uint16_t) IOCB_MAX_SENSEDATA_LEN);
++	memcpy(cmd->sense_buffer, sts_entry->senseData, sense_len);
++
++	DEBUG2(printk("scsi%ld:%d:%d:%d: %s: sense key = %x, "
++		"Addl.SenseLen - %02x, "
++		"ASC/ASCQ = %02x/%02x\n", ha->host_no,
++		cmd->device->channel, cmd->device->id,
++		cmd->device->lun, __func__,
++		sts_entry->senseData[2] & 0x0f,
++		sts_entry->senseData[7],
++		sts_entry->senseData[12],
++		sts_entry->senseData[13]));
++
++	DEBUG5(qla4xxx_dump_buffer(cmd->SCp.ptr, sense_len));
++	srb->flags |= SRB_GOT_SENSE;
++
++	/* Update srb, in case a sts_cont pkt follows */
++	cmd->SCp.ptr += sense_len;
++	cmd->SCp.this_residual -= sense_len;
++	if (cmd->SCp.this_residual != 0)
++		ha->status_srb = srb;
++	else
++		ha->status_srb = NULL;
++
++}
++
++/**
++ * qla4xxx_status_cont_entry() - Process a Status Continuations entry.
++ * @ha: SCSI driver HA context
++ * @sts_cont: Entry pointer
++ *
++ * Extended sense data.
++ */
++static void
++qla4xxx_status_cont_entry(struct scsi_qla_host *ha,
++			  struct status_cont_entry *sts_cont)
++{
++	struct srb *srb = ha->status_srb;
++	struct scsi_cmnd *cmd;
++	uint8_t sense_len;
++
++	if (srb == NULL) {
++		DEBUG2(printk("scsi%ld: %s: Throw away extra STATUS CONTINUATION\n",
++			ha->host_no, __func__));
++		return;
++	}
++
++	cmd = srb->cmd;
++	if (cmd == NULL) {
++		DEBUG2(printk("scsi%ld: %s: Cmd already returned back to OS "
++			"srb=%p srb->state:%d\n", ha->host_no, __func__, srb, srb->state));
++		ha->status_srb = NULL;
++		return;
++	}
++
++	/* Copy sense data. */
++	sense_len = min(cmd->SCp.this_residual, IOCB_MAX_EXT_SENSEDATA_LEN);
++	memcpy(cmd->SCp.ptr, sts_cont->extSenseData, sense_len);
++	DEBUG5(qla4xxx_dump_buffer(cmd->SCp.ptr, sense_len));
++
++	cmd->SCp.ptr += sense_len;
++	cmd->SCp.this_residual -= sense_len;
++
++	/* Place command on done queue. */
++	if (cmd->SCp.this_residual == 0) {
++		qla4xxx_srb_compl(ha, srb);
++		ha->status_srb = NULL;
++	}
++}
++
++/**
+  * qla4xxx_status_entry - processes status IOCBs
+  * @ha: Pointer to host adapter structure.
+  * @sts_entry: Pointer to status entry structure.
+@@ -24,7 +119,6 @@ static void qla4xxx_status_entry(struct scsi_qla_host *ha,
+ 	struct srb *srb;
+ 	struct ddb_entry *ddb_entry;
+ 	uint32_t residual;
+-	uint16_t sensebytecnt;
+ 
+ 	srb = qla4xxx_del_from_active_array(ha, le32_to_cpu(sts_entry->handle));
+ 	if (!srb) {
+@@ -73,25 +167,7 @@ static void qla4xxx_status_entry(struct scsi_qla_host *ha,
+ 			break;
+ 
+ 		/* Copy Sense Data into sense buffer. */
+-		memset(cmd->sense_buffer, 0, sizeof(cmd->sense_buffer));
+-
+-		sensebytecnt = le16_to_cpu(sts_entry->senseDataByteCnt);
+-		if (sensebytecnt == 0)
+-			break;
+-
+-		memcpy(cmd->sense_buffer, sts_entry->senseData,
+-		       min(sensebytecnt,
+-			   (uint16_t) sizeof(cmd->sense_buffer)));
+-
+-		DEBUG2(printk("scsi%ld:%d:%d:%d: %s: sense key = %x, "
+-			      "ASC/ASCQ = %02x/%02x\n", ha->host_no,
+-			      cmd->device->channel, cmd->device->id,
+-			      cmd->device->lun, __func__,
+-			      sts_entry->senseData[2] & 0x0f,
+-			      sts_entry->senseData[12],
+-			      sts_entry->senseData[13]));
+-
+-		srb->flags |= SRB_GOT_SENSE;
++		qla4xxx_copy_sense(ha, sts_entry, srb);
+ 		break;
+ 
+ 	case SCS_INCOMPLETE:
+@@ -158,17 +234,7 @@ static void qla4xxx_status_entry(struct scsi_qla_host *ha,
+ 				break;
+ 
+ 			/* Copy Sense Data into sense buffer. */
+-			memset(cmd->sense_buffer, 0,
+-			       sizeof(cmd->sense_buffer));
+-
+-			sensebytecnt =
+-				le16_to_cpu(sts_entry->senseDataByteCnt);
+-			if (sensebytecnt == 0)
+-				break;
+-
+-			memcpy(cmd->sense_buffer, sts_entry->senseData,
+-			       min(sensebytecnt,
+-				   (uint16_t) sizeof(cmd->sense_buffer)));
++			qla4xxx_copy_sense(ha, sts_entry, srb);
+ 
+ 			DEBUG2(printk("scsi%ld:%d:%d:%d: %s: sense key = %x, "
+ 				      "ASC/ASCQ = %02x/%02x\n", ha->host_no,
+@@ -224,6 +290,11 @@ static void qla4xxx_status_entry(struct scsi_qla_host *ha,
+ 		 * send I/O to this device.  We should get a ddb
+ 		 * state change AEN soon.
+ 		 */
++		DEBUG2(printk(KERN_INFO "scsi%ld:%d:%d:%d: DEVICE_UNAVAILABLE "
++			      "or DEVICE_LOGGED_OUT\n",
++			      ha->host_no, cmd->device->channel,
++			      cmd->device->id, cmd->device->lun));
++
+ 		if (atomic_read(&ddb_entry->state) == DDB_STATE_ONLINE)
+ 			qla4xxx_mark_device_missing(ha, ddb_entry);
+ 
+@@ -252,9 +323,10 @@ static void qla4xxx_status_entry(struct scsi_qla_host *ha,
+ 
+ status_entry_exit:
+ 
+-	/* complete the request */
++	/* complete the request, if not waiting for status_continuation pkt */
+ 	srb->cc_stat = sts_entry->completionStatus;
+-	qla4xxx_srb_compl(ha, srb);
++	if (ha->status_srb == NULL)
++		qla4xxx_srb_compl(ha, srb);
+ }
+ 
+ /**
+@@ -289,10 +361,6 @@ static void qla4xxx_process_response_queue(struct scsi_qla_host * ha)
+ 		/* process entry */
+ 		switch (sts_entry->hdr.entryType) {
+ 		case ET_STATUS:
+-			/*
+-			 * Common status - Single completion posted in single
+-			 * IOSB.
+-			 */
+ 			qla4xxx_status_entry(ha, sts_entry);
+ 			break;
+ 
+@@ -300,9 +368,8 @@ static void qla4xxx_process_response_queue(struct scsi_qla_host * ha)
+ 			break;
+ 
+ 		case ET_STATUS_CONTINUATION:
+-			/* Just throw away the status continuation entries */
+-			DEBUG2(printk("scsi%ld: %s: Status Continuation entry "
+-				      "- ignoring\n", ha->host_no, __func__));
++			qla4xxx_status_cont_entry(ha,
++				(struct status_cont_entry *) sts_entry);
+ 			break;
+ 
+ 		case ET_COMMAND:
+@@ -464,9 +531,9 @@ static void qla4xxx_isr_decode_mailbox(struct scsi_qla_host * ha,
+ 			mbox_stat2 = readl(&ha->reg->mailbox[2]);
+ 			mbox_stat3 = readl(&ha->reg->mailbox[3]);
+ 
+-			if ((mbox_stat3 == 5) && (mbox_stat2 == 3)) 
++			if ((mbox_stat3 == 5) && (mbox_stat2 == 3))
+ 				set_bit(DPC_GET_DHCP_IP_ADDR, &ha->dpc_flags);
+-			else if ((mbox_stat3 == 2) && (mbox_stat2 == 5)) 
++			else if ((mbox_stat3 == 2) && (mbox_stat2 == 5))
+ 				set_bit(DPC_RESET_HA, &ha->dpc_flags);
+ 			break;
+ 
+@@ -686,7 +753,7 @@ irqreturn_t qla4xxx_intr_handler(int irq, void *dev_id, struct pt_regs *regs)
+  * @ha: pointer to host adapter structure.
+  * @process_aen: type of AENs to process
+  *
+- * Processes specific types of Asynchronous Events generated by firmware. 
++ * Processes specific types of Asynchronous Events generated by firmware.
+  * The type of AENs to process is specified by process_aen and can be
+  *	PROCESS_ALL_AENS	 0
+  *	FLUSH_DDB_CHANGED_AENS	 1
+diff --git a/drivers/scsi/qla4xxx/ql4_version.h b/drivers/scsi/qla4xxx/ql4_version.h
+index d186a18..9d374f4 100644
+--- a/drivers/scsi/qla4xxx/ql4_version.h
++++ b/drivers/scsi/qla4xxx/ql4_version.h
+@@ -5,5 +5,5 @@
+  * See LICENSE.qla4xxx for copyright and licensing details.
+  */
+ 
+-#define QLA4XXX_DRIVER_VERSION	"5.01.00.01.05.03-k9"
++#define QLA4XXX_DRIVER_VERSION	"5.01.00.01.05.04-k9"
+ 

@@ -1,0 +1,73 @@
+From: Rik van Riel <riel@redhat.com>
+Date: Mon, 13 Apr 2009 12:10:35 -0400
+Subject: [xen] x86: fix overflow in the hpet code
+Message-id: 20090413121035.5cb84515@bree.surriel.com
+O-Subject: [RHEL 5.4 PATCH 5/5] fix overflow in the hpet code (bz 449346)
+Bugzilla: 449346
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+hvm: hpet: Fix overflow when converting to nanoseconds.
+
+May not be strictly necessary, but all testing has been done with this
+patch and it is a trivial overflow fix.
+
+Fixes bug 449346
+
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1199809204 0
+# Node ID 9ff64d045e61e7db6844b3db473e660e8c7e0551
+# Parent  9865d5e82802fda2ac842c0c28a0833f2126551f
+hvm: hpet: Fix overflow when converting to nanoseconds.
+
+Currently in hpet_tick_to_ns, the approach is multiplying first, which
+easily causes overflow when tick is quite large. The patch cannot
+handle arbitratry large ticks duo to the precision requirement and
+64bit's value range. But by optimize the equation, a larger ticks than
+current code can be supported. Also an overflow check is added before
+the calculation.
+
+From: Haitao Shan <haitao.shan@intel.com>
+Signed-off-by: Keir Fraser <keir.fraser@citrix.com>
+
+diff --git a/arch/x86/hvm/hpet.c b/arch/x86/hvm/hpet.c
+index 2b8935b..dd05da6 100644
+--- a/arch/x86/hvm/hpet.c
++++ b/arch/x86/hvm/hpet.c
+@@ -71,8 +71,9 @@
+ #define HPET_TN_INT_ROUTE_CAP_MASK (0xffffffffULL \
+                     << HPET_TN_INT_ROUTE_CAP_SHIFT)
+ 
+-#define hpet_tick_to_ns(h, tick) ((s_time_t)(tick)* \
+-                                  (S_TO_NS*TSC_PER_HPET_TICK)/h->tsc_freq)
++#define hpet_tick_to_ns(h, tick)                        \
++    ((s_time_t)((((tick) > (h)->hpet_to_ns_limit) ?     \
++        ~0ULL : (tick) * (h)->hpet_to_ns_scale) >> 10))
+ 
+ #define timer_config(h, n)       (h->hpet.timers[n].config)
+ #define timer_enabled(h, n)      (timer_config(h, n) & HPET_TN_ENABLE)
+@@ -467,6 +468,9 @@ void hpet_init(struct vcpu *v)
+     h->vcpu = v;
+     h->tsc_freq = ticks_per_sec(v);
+ 
++    h->hpet_to_ns_scale = ((S_TO_NS * TSC_PER_HPET_TICK) << 10) / h->tsc_freq;
++    h->hpet_to_ns_limit = (~0ULL >> 1) / h->hpet_to_ns_scale;
++
+     /* 64-bit main counter; 3 timers supported; LegacyReplacementRoute. */
+     h->hpet.capability = 0x8086A201ULL;
+ 
+diff --git a/include/asm-x86/hvm/vpt.h b/include/asm-x86/hvm/vpt.h
+index 38d4aae..1991f3f 100644
+--- a/include/asm-x86/hvm/vpt.h
++++ b/include/asm-x86/hvm/vpt.h
+@@ -41,6 +41,8 @@ typedef struct HPETState {
+     struct hvm_hw_hpet hpet;
+     struct vcpu *vcpu;
+     uint64_t tsc_freq;
++    uint64_t hpet_to_ns_scale; /* hpet ticks to ns (multiplied by 2^10) */
++    uint64_t hpet_to_ns_limit; /* max hpet ticks convertable to ns      */
+     uint64_t mc_offset;
+     struct timer timers[HPET_TIMER_NUM];
+     struct HPET_timer_fn_info timer_fn_info[HPET_TIMER_NUM]; 

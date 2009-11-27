@@ -1,0 +1,107 @@
+From: Glauber Costa <glommer@redhat.com>
+Date: Tue, 11 Aug 2009 13:32:06 -0400
+Subject: [x86] disable kvmclock when shuting the machine down
+Message-id: 1250011926-31633-8-git-send-email-glommer@redhat.com
+O-Subject: [PATCH v2 7/7] disable kvmclock when shuting the machine down
+Bugzilla: 476075
+
+if we don't do this, the clock will be kept running, and if the machine
+does not really go down (kexec, for instance), the new kernel will have
+part of its memory overwritten.
+
+This is explained in commit 1e977aa12dd4f80688b1f243762212e75c6d7fe8
+in upstream kernel
+
+Signed-off-by: Glauber Costa <glommer@redhat.com>
+
+diff --git a/arch/i386/kernel/crash.c b/arch/i386/kernel/crash.c
+index 615878f..26554bf 100644
+--- a/arch/i386/kernel/crash.c
++++ b/arch/i386/kernel/crash.c
+@@ -23,6 +23,7 @@
+ #include <asm/hw_irq.h>
+ #include <asm/apic.h>
+ #include <mach_ipi.h>
++#include <linux/kvm_para.h>
+ 
+ 
+ /* This keeps a track of which one is crashing cpu. */
+@@ -159,6 +160,9 @@ static void nmi_shootdown_cpus(void)
+ 
+ void machine_crash_shutdown(struct pt_regs *regs)
+ {
++#ifndef CONFIG_XEN
++	kvmclock_disable();
++#endif
+ 	/* This function is only called after the system
+ 	 * has panicked or is otherwise in a critical state.
+ 	 * The minimum amount of code to allow a kexec'd kernel
+diff --git a/arch/i386/kernel/reboot.c b/arch/i386/kernel/reboot.c
+index bbd0862..601072f 100644
+--- a/arch/i386/kernel/reboot.c
++++ b/arch/i386/kernel/reboot.c
+@@ -17,6 +17,7 @@
+ #include <asm/desc.h>
+ #include "mach_reboot.h"
+ #include <linux/reboot_fixups.h>
++#include <linux/kvm_para.h>
+ 
+ /*
+  * Power off function, if any
+@@ -312,6 +313,9 @@ void machine_shutdown(void)
+ 	smp_send_stop();
+ #endif /* CONFIG_SMP */
+ 
++#ifndef CONFIG_XEN
++	kvmclock_disable();
++#endif
+ 	lapic_shutdown();
+ 
+ #ifdef CONFIG_X86_IO_APIC
+diff --git a/arch/x86_64/kernel/crash.c b/arch/x86_64/kernel/crash.c
+index d02e355..baebf74 100644
+--- a/arch/x86_64/kernel/crash.c
++++ b/arch/x86_64/kernel/crash.c
+@@ -24,7 +24,7 @@
+ #include <asm/nmi.h>
+ #include <asm/hw_irq.h>
+ #include <asm/mach_apic.h>
+-
++#include <linux/kvm_para.h>
+ #ifndef CONFIG_XEN
+ #include <asm/virtext.h>
+ #endif
+@@ -177,6 +177,10 @@ static void nmi_shootdown_cpus(void)
+ extern struct pci_dev *mcp55_rewrite;
+ void machine_crash_shutdown(struct pt_regs *regs)
+ {
++
++#ifndef CONFIG_XEN
++	kvmclock_disable();
++#endif
+ 	/*
+ 	 * This function is only called after the system
+ 	 * has panicked or is otherwise in a critical state.
+diff --git a/arch/x86_64/kernel/reboot.c b/arch/x86_64/kernel/reboot.c
+index 5b14772..849990a 100644
+--- a/arch/x86_64/kernel/reboot.c
++++ b/arch/x86_64/kernel/reboot.c
+@@ -17,6 +17,7 @@
+ #include <asm/tlbflush.h>
+ #include <asm/apic.h>
+ #include <asm/proto.h>
++#include <linux/kvm_para.h>
+ 
+ /*
+  * Power off function, if any
+@@ -112,6 +113,10 @@ void machine_shutdown(void)
+ 	smp_send_stop();
+ #endif
+ 
++#ifndef CONFIG_XEN
++	kvmclock_disable();
++#endif
++
+ 	local_irq_save(flags);
+ 
+ #ifndef CONFIG_SMP

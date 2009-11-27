@@ -1,0 +1,56 @@
+From: Flavio Leitner <fbl@redhat.com>
+Date: Mon, 27 Apr 2009 15:04:43 -0300
+Subject: [net] provide a generic SIOETHTOOL ETHTOOL_GPERMADDR
+Message-id: 20090427180443.GA7709@redhat.com
+O-Subject: [RHEL-5.4 PATCH] net: provide a generic SIOETHTOOL ETHTOOL_GPERMADDR (try #2)
+Bugzilla: 462352
+RH-Acked-by: Aristeu Rozanski <aris@redhat.com>
+RH-Acked-by: John W. Linville <linville@redhat.com>
+
+Hi,
+
+RHBZ#462352: e1000e module doesn't implement SIOETHTOOL ETHTOOL_GPERMADDR
+
+All drivers implement ethtool get_perm_addr in the same way by calling
+the generic function, so the upstream commit [1] replaced the drivers
+method with the generic function.
+
+[1] http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=313674afa8fdced2fe79f50f38e1c387b63d8790
+
+This patch tries to do the same without changing struct ethtool_ops.
+Tested by me and it fixes the problem.
+
+Signed-off-by: Flavio Leitner <fbl@redhat.com>
+
+diff --git a/net/core/ethtool.c b/net/core/ethtool.c
+index 2797e28..9db6992 100644
+--- a/net/core/ethtool.c
++++ b/net/core/ethtool.c
+@@ -769,9 +769,6 @@ static int ethtool_get_perm_addr(struct net_device *dev, void __user *useraddr)
+ 	u8 *data;
+ 	int ret;
+ 
+-	if (!dev->ethtool_ops->get_perm_addr)
+-		return -EOPNOTSUPP;
+-
+ 	if (copy_from_user(&epaddr,useraddr,sizeof(epaddr)))
+ 		return -EFAULT;
+ 
+@@ -779,9 +776,15 @@ static int ethtool_get_perm_addr(struct net_device *dev, void __user *useraddr)
+ 	if (!data)
+ 		return -ENOMEM;
+ 
+-	ret = dev->ethtool_ops->get_perm_addr(dev,&epaddr,data);
++	if (dev->ethtool_ops->get_perm_addr)
++		ret = dev->ethtool_ops->get_perm_addr(dev,&epaddr,data);
++	else
++		/* keep old behavior for interfaces which have no MACADDR */
++		ret = (dev->addr_len == 0) ?  -EOPNOTSUPP :
++				ethtool_op_get_perm_addr(dev, &epaddr,data);
++
+ 	if (ret)
+-		return ret;
++		goto out;
+ 
+ 	ret = -EFAULT;
+ 	if (copy_to_user(useraddr, &epaddr, sizeof(epaddr)))

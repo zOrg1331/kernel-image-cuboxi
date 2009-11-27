@@ -1,0 +1,85 @@
+From: Steve Dickson <SteveD@redhat.com>
+Date: Wed, 6 May 2009 08:53:14 -0400
+Subject: [trace] sunrpc: adding trace points to status routines
+Message-id: 4A01883A.5090603@RedHat.com
+O-Subject: Re: [PATCH 5.4] sunrpc: Adding trace points to status routines.
+Bugzilla: 499008
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+RH-Acked-by: Jason Baron <jbaron@redhat.com>
+
+And again the bz associated with this patch is:
+     https://bugzilla.redhat.com/show_bug.cgi?id=499008
+
+steved.
+
+commit 74fee6524cec4ac8041ccfc579e7c51e025b51c8
+Author: Steve Dickson <steved@redhat.com>
+Date:   Tue May 5 14:49:29 2009 -0700
+
+    Adds three trace points to the status routines in the
+    sunrpc state machine. The trace points will only execute
+    in error conditions.
+
+    The goal of these trace points it to make it easier to
+    debug process that spin or get hung up in the NFS and
+    related subsystems.
+
+    Signed-off-by: Steve Dickson <steved@redhat.com>
+
+diff --git a/include/trace/sunrpc.h b/include/trace/sunrpc.h
+new file mode 100644
+index 0000000..35b2944
+--- /dev/null
++++ b/include/trace/sunrpc.h
+@@ -0,0 +1,15 @@
++#if !defined(_TRACE_SUNRPC_H) || defined(TRACE_HEADER_MULTI_READ)
++#define _TRACE_SUNRPC_H
++
++#include <linux/tracepoint.h>
++
++DEFINE_TRACE(rpc_call_status,
++	TPPROTO(struct rpc_task *task), TPARGS(task));
++
++DEFINE_TRACE(rpc_bind_status,
++	TPPROTO(struct rpc_task *task), TPARGS(task));
++
++DEFINE_TRACE(rpc_connect_status,
++	TPPROTO(struct rpc_task *task, int status), TPARGS(task, status));
++
++#endif /* __TRACE_SUNRPC_H */
+diff --git a/net/sunrpc/clnt.c b/net/sunrpc/clnt.c
+index 4e9f543..e8e559b 100644
+--- a/net/sunrpc/clnt.c
++++ b/net/sunrpc/clnt.c
+@@ -34,6 +34,7 @@
+ #include <linux/sunrpc/rpc_pipe_fs.h>
+ #include <linux/sunrpc/metrics.h>
+ 
++#include <trace/sunrpc.h>
+ 
+ #define RPC_SLACK_SPACE		(1024)	/* total overkill */
+ 
+@@ -843,6 +844,7 @@ call_bind_status(struct rpc_task *task)
+ 		return;
+ 	}
+ 
++	trace_rpc_bind_status(task);
+ 	switch (task->tk_status) {
+ 	case -EACCES:
+ 		dprintk("RPC: %4d remote rpcbind: RPC program/version unavailable\n",
+@@ -917,6 +919,7 @@ call_connect_status(struct rpc_task *task)
+ 	/* Something failed: remote service port may have changed */
+ 	rpc_force_rebind(clnt);
+ 
++	trace_rpc_connect_status(task, status);
+ 	switch (status) {
+ 	case -ENOTCONN:
+ 	case -EAGAIN:
+@@ -1008,6 +1011,7 @@ call_status(struct rpc_task *task)
+ 		return;
+ 	}
+ 
++	trace_rpc_call_status(task);
+ 	task->tk_status = 0;
+ 	switch(status) {
+ 	case -ETIMEDOUT:

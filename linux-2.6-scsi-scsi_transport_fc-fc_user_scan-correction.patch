@@ -1,0 +1,143 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Wed, 12 Aug 2009 13:26:45 -0500
+Subject: [scsi] scsi_transport_fc: fc_user_scan correction
+Message-id: 20090812182645.GA6115@dhcp-210.hsv.redhat.com
+O-Subject: [RHEL5.5 PATCH] scsi_transport_fc: fc_user_scan correction
+Bugzilla: 515176
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+In RHEL5, locking around the FC remote port list
+is needed when user initiates a re-scan of the
+host.
+
+# echo "- - -" > /sys/class/scsi_host/hostN/scan
+
+Otherwise, fc_user_scan may hang processing the
+list resulting in a soft lockup.
+
+BUG: soft lockup detected on CPU#1!
+ [<c044d21c>] softlockup_tick+0x96/0xa4
+ [<c042ddb0>] update_process_times+0x39/0x5c
+ [<c04196fb>] smp_apic_timer_interrupt+0x5b/0x6c
+ [<c04059bf>] apic_timer_interrupt+0x1f/0x24
+ [<f88aeccd>] fc_user_scan+0x69/0x72 [scsi_transport_fc]
+ [<f88aec64>] fc_user_scan+0x0/0x72 [scsi_transport_fc]
+ [<f88704bb>] store_scan+0x83/0xab [scsi_mod]
+ [<f8870438>] store_scan+0x0/0xab [scsi_mod]
+ [<c054cd24>] class_device_attr_store+0x1b/0x1f
+ [<c04a4a3c>] sysfs_write_file+0x91/0xbb
+ [<c04a49ab>] sysfs_write_file+0x0/0xbb
+ [<c0470254>] vfs_write+0xa1/0x143
+ [<c0470846>] sys_write+0x3c/0x63
+ [<c0404eff>] syscall_call+0x7/0xb
+
+Upstream commit:
+
+commit bda232531f0c117921690ee3c060953c8f12e5a1
+Author: James Smart <James.Smart@Emulex.Com>
+Date:   Thu Apr 24 12:12:46 2008 -0400
+
+    [SCSI] scsi_transport_fc: fc_user_scan correction
+
+    Way back when, when the fc_user_scan routine was created, it kept some
+    of its original logic that walked the rport list and kicked off a scan.
+    Unfortunately, it didn't keep any of the locking around the rport list,
+    nor did it consider the synchronous nature of the scan invoked. The result,
+    there are some scan requests where the rport list changes, thus a subsequen\t
+    scan is called on a bogus rport structure and the system NMI's.
+
+This resolves BZ 515176, Fujitsu has verified a
+-162.el5 kernel built with this patch. Please
+review and ACK.
+
+Thanks,
+David
+
+ drivers/scsi/scsi_transport_fc.c |   60 +++++++++++++++++++++++++++++++++----
+ 1 files changed, 53 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/scsi/scsi_transport_fc.c b/drivers/scsi/scsi_transport_fc.c
+index 3b18179..0534988 100644
+--- a/drivers/scsi/scsi_transport_fc.c
++++ b/drivers/scsi/scsi_transport_fc.c
+@@ -1450,12 +1450,17 @@ fc_timed_out(struct scsi_cmnd *scmd)
+ }
+ 
+ /*
+- * Must be called with shost->host_lock held
++ * Called by fc_user_scan to locate an rport on the shost that
++ * matches the channel and target id, and invoke scsi_scan_target()
++ * on the rport.
+  */
+-static int fc_user_scan(struct Scsi_Host *shost, uint channel,
+-		uint id, uint lun)
++static void
++fc_user_scan_tgt(struct Scsi_Host *shost, uint channel, uint id, uint lun)
+ {
+ 	struct fc_rport *rport;
++	unsigned long flags;
++
++	spin_lock_irqsave(shost->host_lock, flags);
+ 
+ 	list_for_each_entry(rport, &fc_host_rports(shost), peers) {
+ 		if (rport->scsi_target_id == -1)
+@@ -1464,13 +1469,54 @@ static int fc_user_scan(struct Scsi_Host *shost, uint channel,
+ 		if (rport->port_state != FC_PORTSTATE_ONLINE)
+ 			continue;
+ 
+-		if ((channel == SCAN_WILD_CARD || channel == rport->channel) &&
+-		    (id == SCAN_WILD_CARD || id == rport->scsi_target_id)) {
+-			scsi_scan_target(&rport->dev, rport->channel,
+-					 rport->scsi_target_id, lun, 1);
++		if ((channel == rport->channel) &&
++		    (id == rport->scsi_target_id)) {
++			spin_unlock_irqrestore(shost->host_lock, flags);
++			scsi_scan_target(&rport->dev, channel, id, lun, 1);
++			return;
+ 		}
+ 	}
+ 
++	spin_unlock_irqrestore(shost->host_lock, flags);
++}
++
++/*
++ * Called via sysfs scan routines. Necessary, as the FC transport
++ * wants to place all target objects below the rport object. So this
++ * routine must invoke the scsi_scan_target() routine with the rport
++ * object as the parent.
++ */
++static int
++fc_user_scan(struct Scsi_Host *shost, uint channel, uint id, uint lun)
++{
++	uint chlo, chhi;
++	uint tgtlo, tgthi;
++
++	if (((channel != SCAN_WILD_CARD) && (channel > shost->max_channel)) ||
++	    ((id != SCAN_WILD_CARD) && (id >= shost->max_id)) ||
++	    ((lun != SCAN_WILD_CARD) && (lun > shost->max_lun)))
++		return -EINVAL;
++
++	if (channel == SCAN_WILD_CARD) {
++		chlo = 0;
++		chhi = shost->max_channel + 1;
++	} else {
++		chlo = channel;
++		chhi = channel + 1;
++	}
++
++	if (id == SCAN_WILD_CARD) {
++		tgtlo = 0;
++		tgthi = shost->max_id;
++	} else {
++		tgtlo = id;
++		tgthi = id + 1;
++	}
++
++	for ( ; chlo < chhi; chlo++)
++		for ( ; tgtlo < tgthi; tgtlo++)
++			fc_user_scan_tgt(shost, chlo, tgtlo, lun);
++
+ 	return 0;
+ }
+ 
