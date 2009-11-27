@@ -1,0 +1,60 @@
+Importing driver-core.current based on 2.6.32-rc7-git4
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.32-rc8-git1
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard a8a8a669ea13d792296737505adc43ccacf3a648
+HEAD is now at a8a8a66 Merge branch 'i2c-pnx-fixes' of git://git.fluff.org/bjdooks/linux
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-tsl2550-extended-mode-bugfix.patch
+i2c-more-files-in-maintainers.patch
+i2c-core-fix-list-corruption-in-i2c_sysfs_new_device.patch
+misc-eeprom-at24-use-timeout-also-for-read.patch
+i2c-chips-move-ds1682-to-drivers-misc.patch
+i2c-powermac-01-multiple-msg-not-supported.patch
+i2c-powermac-02-refactor-xfer.patch
+i2c-powermac-03-report-errors.patch
+i2c-powermac-04-include-adapter-in-bus.patch
+i2c-powermac-06-no-temp-buffer-for-name.patch
+i2c-voodoo3-delete.patch
+i2c-prevent-priority-inversion-on-top-of-bus-lock.patch
+i2c-no-I2C_M_REV_DIR_ADDR.patch
+i2c-add-missing-devinit.patch
+i2c-core-01-drop-obsolete-force-module-parameters.patch
+i2c-core-02-detect-drop-kind-parameter.patch
+misc-ics932s401-cleanup-detect.patch
+i2c-remove-big-kernel-lock-from-i2cdev_open.patch
+i2c-scmi-support-ibm-smbus-cmi-devices.patch
+i2c-i801-retry-on-lost-arbitration.patch
+i2c-core-refactor-for_each-callbacks.patch
+i2c-stub-01-implement-i2c-block-access.patch
+i2c-stub-02-allow-functionality-override.patch
+i2c-stub-03-update-documentation.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 72bf642...e1275ec master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.32-rc8-git1
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.32-rc6
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.32-rc7-193-g66b00a7
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.32-rc6-346-gaa021ba
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
