@@ -246,7 +246,8 @@ struct find_oud_t {
 
 int _mach_odi(struct device *dev, void *find_data)
 {
-	struct osd_uld_device *oud = dev_get_drvdata(dev);
+	struct osd_uld_device *oud = container_of(dev, struct osd_uld_device,
+						  class_dev);
 	struct find_oud_t *fot = find_data;
 	const struct osd_dev_info *odi = fot->odi;
 
