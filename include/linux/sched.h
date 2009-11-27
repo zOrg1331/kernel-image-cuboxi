@@ -1214,6 +1214,50 @@ struct sched_rt_entity {
 #endif
 };
 
+struct sched_notifier;
+
+/**
+ * sched_notifier_ops - notifiers called for scheduling events
+ * @wakeup: we're waking up
+ *    notifier: struct sched_notifier for the task being woken up
+ * @sleep: we're going to bed
+ *    notifier: struct sched_notifier for the task sleeping
+ * @in: we're now running on the cpu
+ *    notifier: struct sched_notifier for the task being scheduled in
+ *    prev: the task which ran before us
+ * @out: we're leaving the cpu
+ *    notifier: struct sched_notifier for the task being scheduled out
+ *    next: the task which will run after us
+ */
+struct sched_notifier_ops {
+	void (*wakeup)(struct sched_notifier *notifier);
+	void (*sleep)(struct sched_notifier *notifier);
+	void (*in)(struct sched_notifier *notifier, struct task_struct *prev);
+	void (*out)(struct sched_notifier *notifier, struct task_struct *next);
+};
+
+/**
+ * sched_notifier - key for installing scheduler notifiers
+ * @link: internal use
+ * @ops: defines the notifier functions to be called
+ *
+ * Usually used in conjunction with container_of().
+ */
+struct sched_notifier {
+	struct hlist_node link;
+	struct sched_notifier_ops *ops;
+};
+
+void sched_notifier_register(struct sched_notifier *notifier);
+void sched_notifier_unregister(struct sched_notifier *notifier);
+
+static inline void sched_notifier_init(struct sched_notifier *notifier,
+				       struct sched_notifier_ops *ops)
+{
+	INIT_HLIST_NODE(&notifier->link);
+	notifier->ops = ops;
+}
+
 struct rcu_node;
 
 struct task_struct {
@@ -1237,10 +1281,8 @@ struct task_struct {
 	struct sched_entity se;
 	struct sched_rt_entity rt;
 
-#ifdef CONFIG_PREEMPT_NOTIFIERS
-	/* list of struct preempt_notifier: */
-	struct hlist_head preempt_notifiers;
-#endif
+	/* list of struct sched_notifier: */
+	struct hlist_head sched_notifiers;
 
 	/*
 	 * fpu_counter contains the number of consecutive context switches
@@ -1811,6 +1853,8 @@ static inline void rcu_copy_process(struct task_struct *p)
 #ifdef CONFIG_SMP
 extern int set_cpus_allowed_ptr(struct task_struct *p,
 				const struct cpumask *new_mask);
+extern int force_cpus_allowed(struct task_struct *p,
+				  const struct cpumask *new_mask);
 #else
 static inline int set_cpus_allowed_ptr(struct task_struct *p,
 				       const struct cpumask *new_mask)
@@ -1818,6 +1862,11 @@ static inline int set_cpus_allowed_ptr(struct task_struct *p,
 	if (!cpumask_test_cpu(0, new_mask))
 		return -EINVAL;
 	return 0;
+}
+static inline int force_cpus_allowed(struct task_struct *p,
+				     const struct cpumask *new_mask)
+{
+	return set_cpus_allowed_ptr(p, new_mask);
 }
 #endif
 
@@ -2017,6 +2066,8 @@ extern void release_uids(struct user_namespace *ns);
 
 extern void do_timer(unsigned long ticks);
 
+extern bool try_to_wake_up_local(struct task_struct *p, unsigned int state,
+				 int wake_flags);
 extern int wake_up_state(struct task_struct *tsk, unsigned int state);
 extern int wake_up_process(struct task_struct *tsk);
 extern void wake_up_new_task(struct task_struct *tsk,
