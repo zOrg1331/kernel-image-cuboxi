@@ -477,19 +477,30 @@ static const struct limit_names lnames[RLIM_NLIMITS] = {
 };
 
 /* Display limits for a process */
-static int proc_pid_limits(struct task_struct *task, char *buffer)
+static ssize_t limits_read(struct file *file, char __user *buf, size_t rcount,
+		loff_t *ppos)
 {
-	unsigned int i;
-	int count = 0;
-	unsigned long flags;
-	char *bufptr = buffer;
-
 	struct rlimit rlim[RLIM_NLIMITS];
+	struct task_struct *task;
+	unsigned long flags;
+	unsigned int i;
+	ssize_t count = 0;
+	char *bufptr;
 
-	if (!lock_task_sighand(task, &flags))
+	task = get_proc_task(file->f_path.dentry->d_inode);
+	if (!task)
+		return -ESRCH;
+	if (!lock_task_sighand(task, &flags)) {
+		put_task_struct(task);
 		return 0;
+	}
 	memcpy(rlim, task->signal->rlim, sizeof(struct rlimit) * RLIM_NLIMITS);
 	unlock_task_sighand(task, &flags);
+	put_task_struct(task);
+
+	bufptr = (char *)__get_free_page(GFP_TEMPORARY);
+	if (!bufptr)
+		return -ENOMEM;
 
 	/*
 	 * print the file header
@@ -518,8 +529,16 @@ static int proc_pid_limits(struct task_struct *task, char *buffer)
 			count += sprintf(&bufptr[count], "\n");
 	}
 
+	count = simple_read_from_buffer(buf, rcount, ppos, bufptr, count);
+
+	free_page((unsigned long)bufptr);
+
 	return count;
 }
+
+static const struct file_operations proc_pid_limits_operations = {
+	.read	= limits_read,
+};
 
 #ifdef CONFIG_HAVE_ARCH_TRACEHOOK
 static int proc_pid_syscall(struct task_struct *task, char *buffer)
@@ -2500,7 +2519,7 @@ static const struct pid_entry tgid_base_stuff[] = {
 	INF("auxv",       S_IRUSR, proc_pid_auxv),
 	ONE("status",     S_IRUGO, proc_pid_status),
 	ONE("personality", S_IRUSR, proc_pid_personality),
-	INF("limits",	  S_IRUSR, proc_pid_limits),
+	REG("limits",	  S_IRUSR, proc_pid_limits_operations),
 #ifdef CONFIG_SCHED_DEBUG
 	REG("sched",      S_IRUGO|S_IWUSR, proc_pid_sched_operations),
 #endif
@@ -2834,7 +2853,7 @@ static const struct pid_entry tid_base_stuff[] = {
 	INF("auxv",      S_IRUSR, proc_pid_auxv),
 	ONE("status",    S_IRUGO, proc_pid_status),
 	ONE("personality", S_IRUSR, proc_pid_personality),
-	INF("limits",	 S_IRUSR, proc_pid_limits),
+	REG("limits",	  S_IRUSR, proc_pid_limits_operations),
 #ifdef CONFIG_SCHED_DEBUG
 	REG("sched",     S_IRUGO|S_IWUSR, proc_pid_sched_operations),
 #endif
