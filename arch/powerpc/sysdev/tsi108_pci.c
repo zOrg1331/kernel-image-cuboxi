@@ -376,7 +376,7 @@ static void tsi108_pci_irq_end(u_int irq)
  */
 
 static struct irq_chip tsi108_pci_irq = {
-	.typename = "tsi108_PCI_int",
+	.name = "tsi108_PCI_int",
 	.mask = tsi108_pci_irq_disable,
 	.ack = tsi108_pci_irq_ack,
 	.end = tsi108_pci_irq_end,
@@ -398,7 +398,7 @@ static int pci_irq_host_map(struct irq_host *h, unsigned int virq,
 	DBG("%s(%d, 0x%lx)\n", __func__, virq, hw);
 	if ((virq >= 1) && (virq <= 4)){
 		irq = virq + IRQ_PCI_INTAD_BASE - 1;
-		get_irq_desc(irq)->status |= IRQ_LEVEL;
+		irq_to_desc(irq)->status |= IRQ_LEVEL;
 		set_irq_chip(irq, &tsi108_pci_irq);
 	}
 	return 0;
