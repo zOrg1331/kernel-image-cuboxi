@@ -2396,7 +2396,9 @@ HARDWARE MONITORING
 L:	lm-sensors@lm-sensors.org
 W:	http://www.lm-sensors.org/
 S:	Orphan
+F:	Documentation/hwmon/
 F:	drivers/hwmon/
+F:	include/linux/hwmon*.h
 
 HARDWARE RANDOM NUMBER GENERATOR CORE
 M:	Matt Mackall <mpm@selenic.com>
@@ -3285,6 +3287,12 @@ M:	Eric Piel <eric.piel@tremplin-utc.net>
 S:	Maintained
 F:	Documentation/hwmon/lis3lv02d
 F:	drivers/hwmon/lis3lv02d.*
+
+LM73 HARDWARE MONITOR DRIVER
+M:	Guillaume Ligneul <guillaume.ligneul@gmail.com>
+L:	lm-sensors@lm-sensors.org
+S:	Maintained
+F:	drivers/hwmon/lm73.c
 
 LM83 HARDWARE MONITOR DRIVER
 M:	Jean Delvare <khali@linux-fr.org>
