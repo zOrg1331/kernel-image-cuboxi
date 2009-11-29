@@ -3302,7 +3302,6 @@ static void gather_stats(struct kmem_cache *s, struct stats_gather *stats)
  */
 #ifdef CONFIG_SLABINFO
 #include <linux/proc_fs.h>
-#include <linux/seq_file.h>
 ssize_t slabinfo_write(struct file *file, const char __user * buffer,
 		       size_t count, loff_t *ppos)
 {
