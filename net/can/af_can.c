@@ -114,7 +114,8 @@ static void can_sock_destruct(struct sock *sk)
 	skb_queue_purge(&sk->sk_receive_queue);
 }
 
-static int can_create(struct net *net, struct socket *sock, int protocol)
+static int can_create(struct net *net, struct socket *sock, int protocol,
+		      int kern)
 {
 	struct sock *sk;
 	struct can_proto *cp;
@@ -125,7 +126,7 @@ static int can_create(struct net *net, struct socket *sock, int protocol)
 	if (protocol < 0 || protocol >= CAN_NPROTO)
 		return -EINVAL;
 
-	if (net != &init_net)
+	if (!net_eq(net, &init_net))
 		return -EAFNOSUPPORT;
 
 #ifdef CONFIG_MODULES
@@ -157,11 +158,6 @@ static int can_create(struct net *net, struct socket *sock, int protocol)
 
 	if (cp->type != sock->type) {
 		err = -EPROTONOSUPPORT;
-		goto errout;
-	}
-
-	if (cp->capability >= 0 && !capable(cp->capability)) {
-		err = -EPERM;
 		goto errout;
 	}
 
@@ -842,7 +838,7 @@ static struct packet_type can_packet __read_mostly = {
 	.func = can_rcv,
 };
 
-static struct net_proto_family can_family_ops __read_mostly = {
+static const struct net_proto_family can_family_ops = {
 	.family = PF_CAN,
 	.create = can_create,
 	.owner  = THIS_MODULE,

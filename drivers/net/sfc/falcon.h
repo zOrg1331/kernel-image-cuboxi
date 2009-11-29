@@ -11,6 +11,7 @@
 #ifndef EFX_FALCON_H
 #define EFX_FALCON_H
 
+#include <linux/i2c-algo-bit.h>
 #include "net_driver.h"
 #include "efx.h"
 
@@ -18,19 +19,84 @@
  * Falcon hardware control
  */
 
-enum falcon_revision {
-	FALCON_REV_A0 = 0,
-	FALCON_REV_A1 = 1,
-	FALCON_REV_B0 = 2,
+enum {
+	EFX_REV_FALCON_A0 = 0,
+	EFX_REV_FALCON_A1 = 1,
+	EFX_REV_FALCON_B0 = 2,
 };
 
-static inline int falcon_rev(struct efx_nic *efx)
+static inline int efx_nic_rev(struct efx_nic *efx)
 {
-	return efx->pci_dev->revision;
+	return efx->type->revision;
 }
 
-extern struct efx_nic_type falcon_a_nic_type;
-extern struct efx_nic_type falcon_b_nic_type;
+/**
+ * struct falcon_board_type - board operations and type information
+ * @id: Board type id, as found in NVRAM
+ * @ref_model: Model number of Solarflare reference design
+ * @gen_type: Generic board type description
+ * @init: Allocate resources and initialise peripheral hardware
+ * @init_phy: Do board-specific PHY initialisation
+ * @fini: Shut down hardware and free resources
+ * @set_id_led: Set state of identifying LED or revert to automatic function
+ * @monitor: Board-specific health check function
+ */
+struct falcon_board_type {
+	u8 id;
+	const char *ref_model;
+	const char *gen_type;
+	int (*init) (struct efx_nic *nic);
+	void (*init_phy) (struct efx_nic *efx);
+	void (*fini) (struct efx_nic *nic);
+	void (*set_id_led) (struct efx_nic *efx, enum efx_led_mode mode);
+	int (*monitor) (struct efx_nic *nic);
+};
+
+/**
+ * struct falcon_board - board information
+ * @type: Type of board
+ * @major: Major rev. ('A', 'B' ...)
+ * @minor: Minor rev. (0, 1, ...)
+ * @i2c_adap: I2C adapter for on-board peripherals
+ * @i2c_data: Data for bit-banging algorithm
+ * @hwmon_client: I2C client for hardware monitor
+ * @ioexp_client: I2C client for power/port control
+ */
+struct falcon_board {
+	const struct falcon_board_type *type;
+	int major;
+	int minor;
+	struct i2c_adapter i2c_adap;
+	struct i2c_algo_bit_data i2c_data;
+	struct i2c_client *hwmon_client, *ioexp_client;
+};
+
+/**
+ * struct falcon_nic_data - Falcon NIC state
+ * @pci_dev2: Secondary function of Falcon A
+ * @board: Board state and functions
+ * @stats_disable_count: Nest count for disabling statistics fetches
+ * @stats_pending: Is there a pending DMA of MAC statistics.
+ * @stats_timer: A timer for regularly fetching MAC statistics.
+ * @stats_dma_done: Pointer to the flag which indicates DMA completion.
+ */
+struct falcon_nic_data {
+	struct pci_dev *pci_dev2;
+	struct falcon_board board;
+	unsigned int stats_disable_count;
+	bool stats_pending;
+	struct timer_list stats_timer;
+	u32 *stats_dma_done;
+};
+
+static inline struct falcon_board *falcon_board(struct efx_nic *efx)
+{
+	struct falcon_nic_data *data = efx->nic_data;
+	return &data->board;
+}
+
+extern struct efx_nic_type falcon_a1_nic_type;
+extern struct efx_nic_type falcon_b0_nic_type;
 
 /**************************************************************************
  *
@@ -38,6 +104,8 @@ extern struct efx_nic_type falcon_b_nic_type;
  *
  **************************************************************************
  */
+
+extern void falcon_probe_board(struct efx_nic *efx, u16 revision_info);
 
 /* TX data path */
 extern int falcon_probe_tx(struct efx_tx_queue *tx_queue);
@@ -68,8 +136,6 @@ extern void falcon_remove_port(struct efx_nic *efx);
 /* MAC/PHY */
 extern int falcon_switch_mac(struct efx_nic *efx);
 extern bool falcon_xaui_link_ok(struct efx_nic *efx);
-extern int falcon_dma_stats(struct efx_nic *efx,
-			    unsigned int done_offset);
 extern void falcon_drain_tx_fifo(struct efx_nic *efx);
 extern void falcon_deconfigure_mac_wrapper(struct efx_nic *efx);
 extern void falcon_reconfigure_mac_wrapper(struct efx_nic *efx);
@@ -79,7 +145,6 @@ extern int falcon_init_interrupt(struct efx_nic *efx);
 extern void falcon_enable_interrupts(struct efx_nic *efx);
 extern void falcon_generate_test_event(struct efx_channel *channel,
 				       unsigned int magic);
-extern void falcon_sim_phy_event(struct efx_nic *efx);
 extern void falcon_generate_interrupt(struct efx_nic *efx);
 extern void falcon_set_int_moderation(struct efx_channel *channel);
 extern void falcon_disable_interrupts(struct efx_nic *efx);
@@ -89,14 +154,15 @@ extern void falcon_fini_interrupt(struct efx_nic *efx);
 
 /* Global Resources */
 extern int falcon_probe_nic(struct efx_nic *efx);
-extern int falcon_probe_resources(struct efx_nic *efx);
 extern int falcon_init_nic(struct efx_nic *efx);
 extern int falcon_flush_queues(struct efx_nic *efx);
 extern int falcon_reset_hw(struct efx_nic *efx, enum reset_type method);
-extern void falcon_remove_resources(struct efx_nic *efx);
+extern void falcon_monitor(struct efx_nic *efx);
 extern void falcon_remove_nic(struct efx_nic *efx);
 extern void falcon_update_nic_stats(struct efx_nic *efx);
-extern void falcon_set_multicast_hash(struct efx_nic *efx);
+extern void falcon_start_nic_stats(struct efx_nic *efx);
+extern void falcon_stop_nic_stats(struct efx_nic *efx);
+extern void falcon_push_multicast_hash(struct efx_nic *efx);
 extern int falcon_reset_xaui(struct efx_nic *efx);
 
 /* Tests */
@@ -141,5 +207,7 @@ extern int falcon_test_registers(struct efx_nic *efx);
 
 extern void falcon_generate_event(struct efx_channel *channel,
 				  efx_qword_t *event);
+
+extern void falcon_poll_xmac(struct efx_nic *efx);
 
 #endif /* EFX_FALCON_H */

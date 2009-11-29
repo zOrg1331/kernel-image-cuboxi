@@ -103,8 +103,7 @@
 #include <asm/io.h>
 #include <asm/dma.h>
 
-/* This include could be elsewhere, since it is not wireless specific */
-#include "wireless/i82593.h"
+#include <linux/i82593.h>
 
 static char version[] __initdata = "znet.c:v1.02 9/23/94 becker@scyld.com\n";
 
@@ -170,7 +169,7 @@ static int znet_request_resources (struct net_device *dev)
 {
 	struct znet_private *znet = netdev_priv(dev);
 
-	if (request_irq (dev->irq, &znet_interrupt, 0, "ZNet", dev))
+	if (request_irq (dev->irq, znet_interrupt, 0, "ZNet", dev))
 		goto failed;
 	if (request_dma (znet->rx_dma, "ZNet rx"))
 		goto free_irq;

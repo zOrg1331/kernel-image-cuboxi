@@ -20,14 +20,12 @@
 #include <linux/rtnetlink.h>
 #include <asm/io.h>
 #include "net_driver.h"
-#include "ethtool.h"
 #include "efx.h"
 #include "falcon.h"
 #include "selftest.h"
-#include "boards.h"
 #include "workarounds.h"
 #include "spi.h"
-#include "falcon_io.h"
+#include "io.h"
 #include "mdio_10g.h"
 
 /*
@@ -57,6 +55,7 @@ static const char *payload_msg =
  * @flush:		Drop all packets in efx_loopback_rx_packet
  * @packet_count:	Number of packets being used in this test
  * @skbs:		An array of skbs transmitted
+ * @offload_csum:	Checksums are being offloaded
  * @rx_good:		RX good packet count
  * @rx_bad:		RX bad packet count
  * @payload:		Payload used in tests
@@ -65,10 +64,7 @@ struct efx_loopback_state {
 	bool flush;
 	int packet_count;
 	struct sk_buff **skbs;
-
-	/* Checksums are being offloaded */
 	bool offload_csum;
-
 	atomic_t rx_good;
 	atomic_t rx_bad;
 	struct efx_loopback_payload payload;
@@ -129,7 +125,7 @@ static int efx_test_chip(struct efx_nic *efx, struct efx_self_tests *tests)
 	int rc;
 
 	/* Not supported on A-series silicon */
-	if (falcon_rev(efx) < FALCON_REV_B0)
+	if (efx_nic_rev(efx) < EFX_REV_FALCON_B0)
 		return 0;
 
 	rc = falcon_test_registers(efx);
@@ -177,8 +173,8 @@ static int efx_test_interrupts(struct efx_nic *efx,
 	return -ETIMEDOUT;
 
  success:
-	EFX_LOG(efx, "test interrupt (mode %d) seen on CPU%d\n",
-		efx->interrupt_mode, efx->last_irq_cpu);
+	EFX_LOG(efx, "%s test interrupt seen on CPU%d\n", INT_MODE(efx),
+		efx->last_irq_cpu);
 	tests->interrupt = 1;
 	return 0;
 }
@@ -426,7 +422,7 @@ static int efx_begin_loopback(struct efx_tx_queue *tx_queue)
 
 		if (efx_dev_registered(efx))
 			netif_tx_lock_bh(efx->net_dev);
-		rc = efx_xmit(efx, tx_queue, skb);
+		rc = efx_enqueue_skb(tx_queue, skb);
 		if (efx_dev_registered(efx))
 			netif_tx_unlock_bh(efx->net_dev);
 
@@ -439,7 +435,6 @@ static int efx_begin_loopback(struct efx_tx_queue *tx_queue)
 			kfree_skb(skb);
 			return -EPIPE;
 		}
-		efx->net_dev->trans_start = jiffies;
 	}
 
 	return 0;
@@ -527,7 +522,7 @@ efx_test_loopback(struct efx_tx_queue *tx_queue,
 
 	for (i = 0; i < 3; i++) {
 		/* Determine how many packets to send */
-		state->packet_count = (efx->type->txd_ring_mask + 1) / 3;
+		state->packet_count = EFX_TXQ_SIZE / 3;
 		state->packet_count = min(1 << (i << 2), state->packet_count);
 		state->skbs = kzalloc(sizeof(state->skbs[0]) *
 				      state->packet_count, GFP_KERNEL);
@@ -612,13 +607,10 @@ static int efx_test_loopbacks(struct efx_nic *efx, struct efx_self_tests *tests,
 			flush_workqueue(efx->workqueue);
 			rmb();
 
-			/* We need both the phy and xaui links to be ok.
-			 * rather than relying on the falcon_xmac irq/poll
-			 * regime, just poll xaui directly */
-			link_up = efx->link_up;
-			if (link_up && EFX_IS10G(efx) &&
-			    !falcon_xaui_link_ok(efx))
-				link_up = false;
+			/* We need both the PHY and MAC-PHY links to be OK */
+			link_up = efx->link_state.up;
+			if (link_up)
+				link_up = !efx->mac_op->check_fault(efx);
 
 		} while ((++count < 20) && !link_up);
 
