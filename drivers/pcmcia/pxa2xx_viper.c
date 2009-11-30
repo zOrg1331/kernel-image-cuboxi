@@ -49,7 +49,7 @@ static int viper_pcmcia_hw_init(struct soc_pcmcia_socket *skt)
 	struct arcom_pcmcia_pdata *pdata = viper_get_pdata();
 	unsigned long flags;
 
-	skt->irq = gpio_to_irq(pdata->rdy_gpio);
+	skt->socket.pci_irq = gpio_to_irq(pdata->rdy_gpio);
 	irqs[0].irq = gpio_to_irq(pdata->cd_gpio);
 
 	if (gpio_request(pdata->cd_gpio, "CF detect"))
