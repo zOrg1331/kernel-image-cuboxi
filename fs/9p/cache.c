@@ -343,7 +343,18 @@ int __v9fs_fscache_release_page(struct page *page, gfp_t gfp)
 
 	BUG_ON(!vcookie->fscache);
 
-	return fscache_maybe_release_page(vnode->cache, page, gfp);
+	if (PageFsCache(page)) {
+		if (fscache_check_page_write(vcookie->fscache, page)) {
+			if (!(gfp & __GFP_WAIT))
+				return 0;
+			fscache_wait_on_page_write(vcookie->fscache, page);
+		}
+
+		fscache_uncache_page(vcookie->fscache, page);
+		ClearPageFsCache(page);
+	}
+
+	return 1;
 }
 
 void __v9fs_fscache_invalidate_page(struct page *page)
@@ -357,6 +368,7 @@ void __v9fs_fscache_invalidate_page(struct page *page)
 		fscache_wait_on_page_write(vcookie->fscache, page);
 		BUG_ON(!PageLocked(page));
 		fscache_uncache_page(vcookie->fscache, page);
+		ClearPageFsCache(page);
 	}
 }
 
