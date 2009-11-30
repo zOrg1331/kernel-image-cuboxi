@@ -416,6 +416,12 @@ S:	Maintained for 2.4; PCI support for 2.6.
 L:	linux-alpha@vger.kernel.org
 F:	arch/alpha/
 
+AMBIENT LIGHT SENSOR
+M:	Zhang Rui <rui.zhang@intel.com>
+S:	Supported
+F:	include/linux/als_sys.h
+F:	drivers/als/
+
 AMD GEODE CS5536 USB DEVICE CONTROLLER DRIVER
 M:	Thomas Dahlmann <dahlmann.thomas@arcor.de>
 L:	linux-geode@lists.infradead.org (moderated for non-subscribers)
