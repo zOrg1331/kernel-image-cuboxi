@@ -570,7 +570,7 @@ out_oversize:
 			"Oversized IP packet from " NIPQUAD_FMT ".\n",
 			NIPQUAD(qp->saddr));
 out_fail:
-	IP_INC_STATS_BH(dev_net(dev), IPSTATS_MIB_REASMFAILS);
+	IP_INC_STATS_BH(net, IPSTATS_MIB_REASMFAILS);
 	return err;
 }
 
