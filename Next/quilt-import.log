@@ -1,0 +1,136 @@
+Importing driver-core.current based on 2.6.32-rc7-git4
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.32-rc8-git1
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.32-rc8-git1
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.32-rc6
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.32-rc7-193-g66b00a7
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 66b00a7c93ec782d118d2c03bd599cfd041e80a1
+HEAD is now at 66b00a7 Merge branch 'fixes' of git://git.kernel.org/pub/scm/linux/kernel/git/davej/cpufreq
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+param:neaten-param.c-exports.patch
+param:param_ops.patch
+param:param_ops-for-hvc_iucv-driver.patch
+param:param_ops-modpost-complaint-silence.patch
+param:add-free-hook.patch
+param:use-free-hook-for-charp.patch
+param:params-are-const.patch
+param:kernel_param_lock.patch
+param:documentation.patch
+param:cleanup-ide.patch
+param:cleanup-mptbase.patch
+param:remove-useless-writable-charp.patch
+param:lock-charp-simple.patch
+param:lock-charp-myri10ge.patch
+param:lock-charp-if_sdio.patch
+param:ipmi_watchdog.patch
+param:acpi-use-ops.patch
+misc:enhance-BUILD_BUG_ON.patch
+misc:remove-MAYBE_BUILD_BUG_ON.patch
+net:tun_export_underlying_socket.patch
+mm:export_use_mm_unuse_mm.patch
+virtio:vhost_net_a_kernel_level_server.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:64: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+virtio:vhost_net_a_kernel_level_server-fix.patch
+virtio:vhost_fix_warnings_on_32_bit_systems.patch
+lguest:remove-unneeded-zlib-include.patch
+sparc:no-inline-export.patch
+ppc:no-inline-export.patch
+m68k:no-inline-export.patch
+arm:use_unified_discard_definition_in_linker_script.patch
+arm:unexport_symbols_used_to_implement_floating_point_emulation.patch
+x86:dont-export-inline.patch
+module:make_symbol_prefix_into_a_config_option.patch
+modpost:remove-markers.patch
+cpumask:kernel_perf_event-deprecated-function.patch
+cpumask:mm_slab-deprecated-function.patch
+cpumask:scsi-scoe-modernize.patch
+cpumask:i7300_idle-to-cpumask_var_t.patch
+cpumask:avoid-deref-in-timer_list.patch
+cpumask:documentation-fixes.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + 59cc907...36bc844 master     -> quilt/rr  (forced update)
+Importing device-mapper based on v2.6.32-rc8-11-ga8a8a66
+$ cd ../quilt-tmp
+$ git reset --hard a8a8a669ea13d792296737505adc43ccacf3a648
+HEAD is now at a8a8a66 Merge branch 'i2c-pnx-fixes' of git://git.fluff.org/bjdooks/linux
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-avoid-_hash_lock-deadlock.patch
+dm-exception-store-free-tmp_store-on-persistent-flag-error.patch
+dm-sysfs-add-empty-release-function-to-avoid-debug-warning.patch
+dm-io-use-slab-for-struct-io.patch
+dm-io-remove-extra-bi_io_vec-region-hack.patch
+dm-raid1-support-flush.patch
+dm-raid1-split-touched-state-into-two.patch
+dm-log-add-flush_header-function.patch
+dm-log-introduce-flush_failed-variable.patch
+dm-log-add-flush-callback-fn.patch
+dm-log-use-flush-callback-fn.patch
+dm-raid1-implement-mirror_flush.patch
+dm-raid1-report-flush-errors-separately-in-status.patch
+dm-raid1-add-framework-to-hold-bios-during-suspend.patch
+dm-raid1-use-hold-framework-in-do_failures.patch
+dm-raid1-abstract-get_valid_mirror-function.patch
+dm-raid1-remove-bio_endio-from-dm_rh_mark_nosync.patch
+dm-raid1-explicitly-initialise-bio_lists.patch
+dm-ioctl-prefer-strlcpy-over-strncpy.patch
+dm-snapshot-avoid-else-clause-in-persistent_read_metadata.patch
+dm-snapshot-simplify-sector_to_chunk-expression.patch
+dm-snapshot-abstract-minimum_chunk_size-fn.patch
+dm-snapshot-consolidate-insert-exception-functions.patch
+dm-snapshot-rename-dm_snap_exception-to-dm_exception.patch
+dm-snapshot-rename-exception_table-to-dm_exception_table.patch
+dm-snapshot-rename-exception-functions.patch
+dm-snapshot-add-allocated-metadata-to-snapshot-status.patch
+dm-snapshot-move-cow-ref-from-exception-store-to-snap-core.patch
+dm-snapshot-track-suspended-state-in-target.patch
+dm-kcopyd-accept-zero-size-jobs.patch
+dm-abstract-dm_in_flight-function.patch
+dm-use-clone-in-map_request-function.patch
+dm-pass-gfp_mask-to-alloc_rq_tio.patch
+dm-abstract-clone_rq.patch
+dm-simplify-request-based-suspend.patch
+dm-use-md-pending-for-in-flight-IO-counting.patch
+dm-refactor-request-based-completion-functions.patch
+dm-move-dm_end_request.patch
+dm-add-request-based-barrier-support.patch
+dm-rename-dm_get_table-to-dm_get_live_table.patch
+dm-mpath-flush-workqueues-before-suspend-completes.patch
+dm-add-dm_deleting_md-function.patch
+dm-ioctl-forbid-messages-to-devices-being-deleted.patch
+dm-mpath-add-mutex-to-synchronize-adding-and-flushing-work.patch
+dm-mpath-prevent-io-from-work-queue-while-suspended.patch
+dm-io-handle-empty-barriers.patch
+dm-ioctl-retrieve-status-from-inactive-table.patch
+dm-bind-new-table-before-destroying-old.patch
+dm-keep-old-table-until-after-resume-succeeded.patch
+dm-snapshot-allow-live-exception-store-handover-between-tables.patch
+dm-trace-request-based-remapping.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + f89fe98...72724af master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
