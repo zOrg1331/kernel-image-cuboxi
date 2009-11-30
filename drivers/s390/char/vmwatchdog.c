@@ -133,15 +133,11 @@ static int __init vmwdt_probe(void)
 static int vmwdt_open(struct inode *i, struct file *f)
 {
 	int ret;
-	lock_kernel();
-	if (test_and_set_bit(VMWDT_OPEN, &vmwdt_is_open)) {
-		unlock_kernel();
+	if (test_and_set_bit(VMWDT_OPEN, &vmwdt_is_open))
 		return -EBUSY;
-	}
 	ret = vmwdt_keepalive();
 	if (ret)
 		clear_bit(VMWDT_OPEN, &vmwdt_is_open);
-	unlock_kernel();
 	return ret ? ret : nonseekable_open(i, f);
 }
 
@@ -309,6 +305,10 @@ static int __init vmwdt_init(void)
 	ret = register_pm_notifier(&vmwdt_power_notifier);
 	if (ret)
 		return ret;
+	/*
+	 * misc_register() has to be the last action in module_init(), because
+	 * file operations will be available right after this.
+	 */
 	ret = misc_register(&vmwdt_dev);
 	if (ret) {
 		unregister_pm_notifier(&vmwdt_power_notifier);
