@@ -29,7 +29,7 @@
 #define ALS_ILLUMINANCE_MIN 0
 #define ALS_ILLUMINANCE_MAX -1
 
-struct device *als_device_register(struct device *dev, char *name);
+struct device *als_device_register(struct device *dev);
 void als_device_unregister(struct device *dev);
 
 #endif /* __ALS_SYS_H__ */

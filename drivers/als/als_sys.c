@@ -26,12 +26,19 @@
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/kdev_t.h>
+#include <linux/idr.h>
 
 MODULE_AUTHOR("Zhang Rui <rui.zhang@intel.com>");
 MODULE_DESCRIPTION("Ambient Light Sensor sysfs/class support");
 MODULE_LICENSE("GPL");
 
+#define ALS_ID_PREFIX "als"
+#define ALS_ID_FORMAT ALS_ID_PREFIX "%d"
+
 static struct class *als_class;
+
+static DEFINE_IDR(als_idr);
+static DEFINE_SPINLOCK(idr_lock);
 
 /**
  * als_device_register - register a new Ambient Light Sensor class device
@@ -39,9 +46,35 @@ static struct class *als_class;
  *
  * Returns the pointer to the new device
  */
-struct device *als_device_register(struct device *dev, char *name)
+struct device *als_device_register(struct device *dev)
 {
-	return device_create(als_class, dev, MKDEV(0, 0), NULL, name);
+	int id, err;
+	struct device *alsdev;
+
+again:
+	if (unlikely(idr_pre_get(&als_idr, GFP_KERNEL) == 0))
+		return ERR_PTR(-ENOMEM);
+
+	spin_lock(&idr_lock);
+	err = idr_get_new(&als_idr, NULL, &id);
+	spin_unlock(&idr_lock);
+
+	if (unlikely(err == -EAGAIN))
+		goto again;
+	else if (unlikely(err))
+		return ERR_PTR(err);
+
+	id = id & MAX_ID_MASK;
+	alsdev = device_create(als_class, dev, MKDEV(0, 0), NULL,
+			ALS_ID_FORMAT, id);
+
+	if (IS_ERR(alsdev)) {
+		spin_lock(&idr_lock);
+		idr_remove(&als_idr, id);
+		spin_unlock(&idr_lock);
+	}
+
+	return alsdev;
 }
 EXPORT_SYMBOL(als_device_register);
 
@@ -51,7 +84,16 @@ EXPORT_SYMBOL(als_device_register);
  */
 void als_device_unregister(struct device *dev)
 {
-	device_unregister(dev);
+	int id;
+
+	if (likely(sscanf(dev_name(dev), ALS_ID_FORMAT, &id) == 1)) {
+		device_unregister(dev);
+		spin_lock(&idr_lock);
+		idr_remove(&als_idr, id);
+		spin_unlock(&idr_lock);
+	} else
+		dev_dbg(dev->parent,
+			"als_device_unregister() failed: bad class ID!\n");
 }
 EXPORT_SYMBOL(als_device_unregister);
 
