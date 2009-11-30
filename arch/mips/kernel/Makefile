@@ -2,8 +2,6 @@
 # Makefile for the Linux/MIPS kernel.
 #
 
-CPPFLAGS_vmlinux.lds := $(KBUILD_CFLAGS)
-
 extra-y		:= head.o init_task.o vmlinux.lds
 
 obj-y		+= cpu-probe.o branch.o entry.o genex.o irq.o process.o \
@@ -24,6 +22,7 @@ obj-$(CONFIG_CEVT_SB1250)	+= cevt-sb1250.o
 obj-$(CONFIG_CEVT_TXX9)		+= cevt-txx9.o
 obj-$(CONFIG_CSRC_BCM1480)	+= csrc-bcm1480.o
 obj-$(CONFIG_CSRC_IOASIC)	+= csrc-ioasic.o
+obj-$(CONFIG_CSRC_POWERTV)	+= csrc-powertv.o
 obj-$(CONFIG_CSRC_R4K_LIB)	+= csrc-r4k.o
 obj-$(CONFIG_CSRC_SB1250)	+= csrc-sb1250.o
 obj-$(CONFIG_SYNC_R4K)		+= sync-r4k.o
@@ -99,4 +98,8 @@ CFLAGS_cpu-bugs64.o	= $(shell if $(CC) $(KBUILD_CFLAGS) -Wa,-mdaddi -c -o /dev/n
 
 obj-$(CONFIG_HAVE_STD_PC_SERIAL_PORT)	+= 8250-platform.o
 
+obj-$(CONFIG_MIPS_CPUFREQ)	+= cpufreq/
+
 EXTRA_CFLAGS += -Werror
+
+CPPFLAGS_vmlinux.lds		:= $(KBUILD_CFLAGS)
