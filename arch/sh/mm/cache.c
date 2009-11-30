@@ -27,8 +27,11 @@ void (*local_flush_icache_page)(void *args) = cache_noop;
 void (*local_flush_cache_sigtramp)(void *args) = cache_noop;
 
 void (*__flush_wback_region)(void *start, int size);
+EXPORT_SYMBOL(__flush_wback_region);
 void (*__flush_purge_region)(void *start, int size);
+EXPORT_SYMBOL(__flush_purge_region);
 void (*__flush_invalidate_region)(void *start, int size);
+EXPORT_SYMBOL(__flush_invalidate_region);
 
 static inline void noop__flush_region(void *start, int size)
 {
@@ -43,6 +46,18 @@ static inline void cacheop_on_each_cpu(void (*func) (void *info), void *info,
 	preempt_enable();
 }
 
+/*
+ * copy_to_user_page
+ * @vma: vm_area_struct holding the pages
+ * @page: struct page
+ * @vaddr: user space address
+ * @dst: address of page in kernel space (possibly from kmap)
+ * @src: source address in kernel logical memory
+ * @len: length of data in bytes (may be less than PAGE_SIZE)
+ *
+ * Copy data into the address space of a process other than the current
+ * process (eg for ptrace).
+ */
 void copy_to_user_page(struct vm_area_struct *vma, struct page *page,
 		       unsigned long vaddr, void *dst, const void *src,
 		       unsigned long len)
@@ -78,28 +93,49 @@ void copy_from_user_page(struct vm_area_struct *vma, struct page *page,
 	}
 }
 
+/*
+ * copy_user_highpage
+ * @to: destination page
+ * @from: source page
+ * @vaddr: address of pages in user address space
+ * @vma: vm_area_struct holding the pages
+ *
+ * This is used in COW implementation to copy data from page @from to
+ * page @to. @from was previousl mapped at @vaddr, and @to will be.
+ * As this is used only in the COW implementation, this means that the
+ * source is unmodified, and so we don't have to worry about cache
+ * aliasing on that side.
+ */
+#ifdef CONFIG_HIGHMEM
+/*
+ * If we ever have a real highmem system, this code will need fixing
+ * (as will clear_user/clear_user_highmem), because the kmap potentitally
+ * creates another alias risk.
+ */
+#error This code is broken with real HIGHMEM
+#endif
 void copy_user_highpage(struct page *to, struct page *from,
 			unsigned long vaddr, struct vm_area_struct *vma)
 {
 	void *vfrom, *vto;
 
 	vto = kmap_atomic(to, KM_USER1);
+	vfrom = kmap_atomic(from, KM_USER0);
+
+	if (pages_do_alias((unsigned long)vto, vaddr & PAGE_MASK))
+		__flush_invalidate_region(vto, PAGE_SIZE);
 
 	if (boot_cpu_data.dcache.n_aliases && page_mapped(from) &&
 	    !test_bit(PG_dcache_dirty, &from->flags)) {
-		vfrom = kmap_coherent(from, vaddr);
+		void *vto_coloured = kmap_coherent(to, vaddr);
+		copy_page(vto_coloured, vfrom);
+		kunmap_coherent(vto_coloured);
+	} else
 		copy_page(vto, vfrom);
-		kunmap_coherent(vfrom);
-	} else {
-		vfrom = kmap_atomic(from, KM_USER0);
-		copy_page(vto, vfrom);
-		kunmap_atomic(vfrom, KM_USER0);
-	}
 
-	if (pages_do_alias((unsigned long)vto, vaddr & PAGE_MASK))
-		__flush_purge_region(vto, PAGE_SIZE);
-
+	kunmap_atomic(vfrom, KM_USER0);
 	kunmap_atomic(vto, KM_USER1);
+
 	/* Make sure this page is cleared on other CPU's too before using it */
 	smp_wmb();
 }
@@ -109,10 +145,17 @@ void clear_user_highpage(struct page *page, unsigned long vaddr)
 {
 	void *kaddr = kmap_atomic(page, KM_USER0);
 
-	clear_page(kaddr);
+	if (pages_do_alias((unsigned long)kaddr, vaddr & PAGE_MASK)) {
+		void *vto;
 
-	if (pages_do_alias((unsigned long)kaddr, vaddr & PAGE_MASK))
-		__flush_purge_region(kaddr, PAGE_SIZE);
+		/* Kernel alias may have modified data in the cache. */
+		__flush_invalidate_region(kaddr, PAGE_SIZE);
+
+		vto = kmap_coherent(page, vaddr);
+		clear_page(vto);
+		kunmap_coherent(vto);
+	} else
+		clear_page(kaddr);
 
 	kunmap_atomic(kaddr, KM_USER0);
 }
@@ -161,14 +204,21 @@ void flush_cache_all(void)
 {
 	cacheop_on_each_cpu(local_flush_cache_all, NULL, 1);
 }
+EXPORT_SYMBOL(flush_cache_all);
 
 void flush_cache_mm(struct mm_struct *mm)
 {
+	if (boot_cpu_data.dcache.n_aliases == 0)
+		return;
+
 	cacheop_on_each_cpu(local_flush_cache_mm, mm, 1);
 }
 
 void flush_cache_dup_mm(struct mm_struct *mm)
 {
+	if (boot_cpu_data.dcache.n_aliases == 0)
+		return;
+
 	cacheop_on_each_cpu(local_flush_cache_dup_mm, mm, 1);
 }
 
@@ -195,11 +245,13 @@ void flush_cache_range(struct vm_area_struct *vma, unsigned long start,
 
 	cacheop_on_each_cpu(local_flush_cache_range, (void *)&data, 1);
 }
+EXPORT_SYMBOL(flush_cache_range);
 
 void flush_dcache_page(struct page *page)
 {
 	cacheop_on_each_cpu(local_flush_dcache_page, page, 1);
 }
+EXPORT_SYMBOL(flush_dcache_page);
 
 void flush_icache_range(unsigned long start, unsigned long end)
 {
@@ -265,7 +317,11 @@ static void __init emit_cache_params(void)
 
 void __init cpu_cache_init(void)
 {
-	unsigned int cache_disabled = !(__raw_readl(CCR) & CCR_CACHE_ENABLE);
+	unsigned int cache_disabled = 0;
+
+#ifdef CCR
+	cache_disabled = !(__raw_readl(CCR) & CCR_CACHE_ENABLE);
+#endif
 
 	compute_alias(&boot_cpu_data.icache);
 	compute_alias(&boot_cpu_data.dcache);
