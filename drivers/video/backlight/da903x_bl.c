@@ -25,7 +25,6 @@
 
 #define DA9034_WLED_CONTROL1	0x3C
 #define DA9034_WLED_CONTROL2	0x3D
-#define DA9034_WLED_ISET(x)	((x) & 0x1f)
 
 #define DA9034_WLED_BOOST_EN	(1 << 5)
 
@@ -102,7 +101,6 @@ static struct backlight_ops da903x_backlight_ops = {
 
 static int da903x_backlight_probe(struct platform_device *pdev)
 {
-	struct da9034_backlight_pdata *pdata = pdev->dev.platform_data;
 	struct da903x_backlight_data *data;
 	struct backlight_device *bl;
 	int max_brightness;
@@ -128,11 +126,6 @@ static int da903x_backlight_probe(struct platform_device *pdev)
 	data->id = pdev->id;
 	data->da903x_dev = pdev->dev.parent;
 	data->current_brightness = 0;
-
-	/* adjust the WLED output current */
-	if (pdata)
-		da903x_write(dev, DA9034_WLED_CONTROL2,
-				DA9034_WLED_ISET(pdata->output_current));
 
 	bl = backlight_device_register(pdev->name, data->da903x_dev,
 			data, &da903x_backlight_ops);
