@@ -2259,6 +2259,19 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 
 	return_ka->sa.sa_handler = SIG_DFL;
 
+	/*
+	 * If this signal is fatal, si_signo gets through as exit_code.
+	 * We can't allow a completely bogus value there or else core
+	 * kernel code can freak out.  (If an engine wants to control
+	 * the exit_code value exactly, it can do so in report_exit.)
+	 * We'll produce a big complaint in dmesg, but won't crash.
+	 * That's nicer for debugging your utrace engine.
+	 */
+	if (unlikely(info->si_signo & 0x80)) {
+		WARN_ON(1);
+		info->si_signo = SIGTRAP;
+	}
+
 	if (unlikely(report.result & UTRACE_SIGNAL_HOLD))
 		push_back_signal(task, info);
 	else
