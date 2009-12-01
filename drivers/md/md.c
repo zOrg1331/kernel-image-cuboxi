@@ -6384,7 +6384,9 @@ void md_do_sync(mddev_t *mddev)
 		       "md: resuming %s of %s from checkpoint.\n",
 		       desc, mdname(mddev));
 		mddev->curr_resync = j;
-	}
+		mddev->curr_resync_completed = j;
+	} else
+		mddev->curr_resync_completed = 0;
 
 	while (j < max_sectors) {
 		sector_t sectors;
@@ -6536,7 +6538,8 @@ void md_do_sync(mddev_t *mddev)
 	} else if (test_bit(MD_RECOVERY_REQUESTED, &mddev->recovery))
 		mddev->resync_min = mddev->curr_resync_completed;
 	mddev->curr_resync = 0;
-	mddev->curr_resync_completed = 0;
+	if (!test_bit(MD_RECOVERY_INTR, &mddev->recovery))
+		mddev->curr_resync_completed = 0;
 	sysfs_notify(&mddev->kobj, NULL, "sync_completed");
 	wake_up(&resync_wait);
 	set_bit(MD_RECOVERY_DONE, &mddev->recovery);
