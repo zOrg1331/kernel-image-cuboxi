@@ -36,7 +36,7 @@ static int h3600_pcmcia_hw_init(struct soc_pcmcia_socket *skt)
 		err = gpio_direction_input(H3XXX_GPIO_PCMCIA_IRQ0);
 		if (err)
 			goto err01;
-		skt->irq = gpio_to_irq(H3XXX_GPIO_PCMCIA_IRQ0);
+		skt->socket.pci_irq = gpio_to_irq(H3XXX_GPIO_PCMCIA_IRQ0);
 
 		err = gpio_request(H3XXX_GPIO_PCMCIA_CD0, "PCMCIA CD0");
 		if (err)
@@ -81,7 +81,7 @@ static int h3600_pcmcia_hw_init(struct soc_pcmcia_socket *skt)
 		err = gpio_direction_input(H3XXX_GPIO_PCMCIA_IRQ1);
 		if (err)
 			goto err11;
-		skt->irq = gpio_to_irq(H3XXX_GPIO_PCMCIA_IRQ1);
+		skt->socket.pci_irq = gpio_to_irq(H3XXX_GPIO_PCMCIA_IRQ1);
 
 		err = gpio_request(H3XXX_GPIO_PCMCIA_CD1, "PCMCIA CD1");
 		if (err)
