@@ -185,6 +185,7 @@ int __pm_runtime_suspend(struct device *dev, bool from_wq)
 	}
 
 	dev->power.runtime_status = RPM_SUSPENDING;
+	dev->power.deferred_resume = false;
 
 	if (dev->bus && dev->bus->pm && dev->bus->pm->runtime_suspend) {
 		spin_unlock_irq(&dev->power.lock);
@@ -200,7 +201,6 @@ int __pm_runtime_suspend(struct device *dev, bool from_wq)
 	if (retval) {
 		dev->power.runtime_status = RPM_ACTIVE;
 		pm_runtime_cancel_pending(dev);
-		dev->power.deferred_resume = false;
 
 		if (retval == -EAGAIN || retval == -EBUSY) {
 			notify = true;
@@ -217,7 +217,6 @@ int __pm_runtime_suspend(struct device *dev, bool from_wq)
 	wake_up_all(&dev->power.wait_queue);
 
 	if (dev->power.deferred_resume) {
-		dev->power.deferred_resume = false;
 		__pm_runtime_resume(dev, false);
 		retval = -EAGAIN;
 		goto out;
@@ -659,13 +658,17 @@ static int __pm_request_resume(struct device *dev)
 
 	pm_runtime_deactivate_timer(dev);
 
+	if (dev->power.runtime_status == RPM_SUSPENDING) {
+		dev->power.deferred_resume = true;
+		return retval;
+	}
 	if (dev->power.request_pending) {
 		/* If non-resume request is pending, we can overtake it. */
 		dev->power.request = retval ? RPM_REQ_NONE : RPM_REQ_RESUME;
 		return retval;
-	} else if (retval) {
-		return retval;
 	}
+	if (retval)
+		return retval;
 
 	dev->power.request = RPM_REQ_RESUME;
 	dev->power.request_pending = true;
@@ -696,16 +699,22 @@ EXPORT_SYMBOL_GPL(pm_request_resume);
  * @dev: Device to handle.
  * @sync: If set and the device is suspended, resume it synchronously.
  *
- * Increment the usage count of the device and if it was zero previously,
- * resume it or submit a resume request for it, depending on the value of @sync.
+ * Increment the usage count of the device.  If @sync is set, resume the device
+ * and wait for the resume to complete.  Otherwise if the device is currently
+ * suspending or suspended, submit a resume request.
+ *
+ * If @sync is clear, the caller is responsible for synchronization.
  */
 int __pm_runtime_get(struct device *dev, bool sync)
 {
-	int retval = 1;
+	int retval = 0;
 
-	if (atomic_add_return(1, &dev->power.usage_count) == 1)
-		retval = sync ? pm_runtime_resume(dev) : pm_request_resume(dev);
-
+	atomic_inc(&dev->power.usage_count);
+	if (sync)
+		retval = pm_runtime_resume(dev);
+	else if (dev->power.runtime_status == RPM_SUSPENDING ||
+	    dev->power.runtime_status == RPM_SUSPENDED)
+		retval = pm_request_resume(dev);
 	return retval;
 }
 EXPORT_SYMBOL_GPL(__pm_runtime_get);
@@ -968,8 +977,6 @@ EXPORT_SYMBOL_GPL(pm_runtime_enable);
  */
 void pm_runtime_init(struct device *dev)
 {
-	spin_lock_init(&dev->power.lock);
-
 	dev->power.runtime_status = RPM_SUSPENDED;
 	dev->power.idle_notification = false;
 
@@ -989,8 +996,6 @@ void pm_runtime_init(struct device *dev)
 	dev->power.timer_expires = 0;
 	setup_timer(&dev->power.suspend_timer, pm_suspend_timer_fn,
 			(unsigned long)dev);
-
-	init_waitqueue_head(&dev->power.wait_queue);
 }
 
 /**
