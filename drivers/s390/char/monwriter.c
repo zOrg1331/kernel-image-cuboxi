@@ -185,13 +185,11 @@ static int monwrite_open(struct inode *inode, struct file *filp)
 	monpriv = kzalloc(sizeof(struct mon_private), GFP_KERNEL);
 	if (!monpriv)
 		return -ENOMEM;
-	lock_kernel();
 	INIT_LIST_HEAD(&monpriv->list);
 	monpriv->hdr_to_read = sizeof(monpriv->hdr);
 	mutex_init(&monpriv->thread_mutex);
 	filp->private_data = monpriv;
 	list_add_tail(&monpriv->priv_list, &mon_priv_list);
-	unlock_kernel();
 	return nonseekable_open(inode, filp);
 }
 
@@ -364,6 +362,10 @@ static int __init mon_init(void)
 		goto out_driver;
 	}
 
+	/*
+	 * misc_register() has to be the last action in module_init(), because
+	 * file operations will be available right after this.
+	 */
 	rc = misc_register(&mon_dev);
 	if (rc)
 		goto out_device;
