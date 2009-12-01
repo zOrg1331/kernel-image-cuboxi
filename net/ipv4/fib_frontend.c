@@ -125,7 +125,7 @@ void fib_select_default(struct net *net,
 #endif
 	tb = fib_get_table(net, table);
 	if (FIB_RES_GW(*res) && FIB_RES_NH(*res).nh_scope == RT_SCOPE_LINK)
-		tb->tb_select_default(tb, flp, res);
+		fib_table_select_default(tb, flp, res);
 }
 
 static void fib_flush(struct net *net)
@@ -139,7 +139,7 @@ static void fib_flush(struct net *net)
 	for (h = 0; h < FIB_TABLE_HASHSZ; h++) {
 		head = &net->ipv4.fib_table_hash[h];
 		hlist_for_each_entry(tb, node, head, tb_hlist)
-			flushed += tb->tb_flush(tb);
+			flushed += fib_table_flush(tb);
 	}
 
 	if (flushed)
@@ -162,7 +162,7 @@ struct net_device * ip_dev_find(struct net *net, __be32 addr)
 #endif
 
 	local_table = fib_get_table(net, RT_TABLE_LOCAL);
-	if (!local_table || local_table->tb_lookup(local_table, &fl, &res))
+	if (!local_table || fib_table_lookup(local_table, &fl, &res))
 		return NULL;
 	if (res.type != RTN_LOCAL)
 		goto out;
@@ -200,7 +200,7 @@ static inline unsigned __inet_dev_addr_type(struct net *net,
 	local_table = fib_get_table(net, RT_TABLE_LOCAL);
 	if (local_table) {
 		ret = RTN_UNICAST;
-		if (!local_table->tb_lookup(local_table, &fl, &res)) {
+		if (!fib_table_lookup(local_table, &fl, &res)) {
 			if (!dev || dev == res.fi->fib_dev)
 				ret = res.type;
 			fib_res_put(&res);
@@ -476,13 +476,13 @@ int ip_rt_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 			if (cmd == SIOCDELRT) {
 				tb = fib_get_table(net, cfg.fc_table);
 				if (tb)
-					err = tb->tb_delete(tb, &cfg);
+					err = fib_table_delete(tb, &cfg);
 				else
 					err = -ESRCH;
 			} else {
 				tb = fib_new_table(net, cfg.fc_table);
 				if (tb)
-					err = tb->tb_insert(tb, &cfg);
+					err = fib_table_insert(tb, &cfg);
 				else
 					err = -ENOBUFS;
 			}
@@ -597,7 +597,7 @@ static int inet_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh, void *ar
 		goto errout;
 	}
 
-	err = tb->tb_delete(tb, &cfg);
+	err = fib_table_delete(tb, &cfg);
 errout:
 	return err;
 }
@@ -619,7 +619,7 @@ static int inet_rtm_newroute(struct sk_buff *skb, struct nlmsghdr *nlh, void *ar
 		goto errout;
 	}
 
-	err = tb->tb_insert(tb, &cfg);
+	err = fib_table_insert(tb, &cfg);
 errout:
 	return err;
 }
@@ -650,7 +650,7 @@ static int inet_dump_fib(struct sk_buff *skb, struct netlink_callback *cb)
 			if (dumped)
 				memset(&cb->args[2], 0, sizeof(cb->args) -
 						 2 * sizeof(cb->args[0]));
-			if (tb->tb_dump(tb, skb, cb) < 0)
+			if (fib_table_dump(tb, skb, cb) < 0)
 				goto out;
 			dumped = 1;
 next:
@@ -704,9 +704,9 @@ static void fib_magic(int cmd, int type, __be32 dst, int dst_len, struct in_ifad
 		cfg.fc_scope = RT_SCOPE_HOST;
 
 	if (cmd == RTM_NEWROUTE)
-		tb->tb_insert(tb, &cfg);
+		fib_table_insert(tb, &cfg);
 	else
-		tb->tb_delete(tb, &cfg);
+		fib_table_delete(tb, &cfg);
 }
 
 void fib_add_ifaddr(struct in_ifaddr *ifa)
@@ -835,7 +835,7 @@ static void nl_fib_lookup(struct fib_result_nl *frn, struct fib_table *tb )
 		local_bh_disable();
 
 		frn->tb_id = tb->tb_id;
-		frn->err = tb->tb_lookup(tb, &fl, &res);
+		frn->err = fib_table_lookup(tb, &fl, &res);
 
 		if (!frn->err) {
 			frn->prefixlen = res.prefixlen;
@@ -895,11 +895,11 @@ static void nl_fib_lookup_exit(struct net *net)
 	net->ipv4.fibnl = NULL;
 }
 
-static void fib_disable_ip(struct net_device *dev, int force)
+static void fib_disable_ip(struct net_device *dev, int force, int delay)
 {
 	if (fib_sync_down_dev(dev, force))
 		fib_flush(dev_net(dev));
-	rt_cache_flush(dev_net(dev), 0);
+	rt_cache_flush(dev_net(dev), delay);
 	arp_ifdown(dev);
 }
 
@@ -922,7 +922,7 @@ static int fib_inetaddr_event(struct notifier_block *this, unsigned long event, 
 			/* Last address was deleted from this interface.
 			   Disable IP.
 			 */
-			fib_disable_ip(dev, 1);
+			fib_disable_ip(dev, 1, 0);
 		} else {
 			rt_cache_flush(dev_net(dev), -1);
 		}
@@ -937,7 +937,7 @@ static int fib_netdev_event(struct notifier_block *this, unsigned long event, vo
 	struct in_device *in_dev = __in_dev_get_rtnl(dev);
 
 	if (event == NETDEV_UNREGISTER) {
-		fib_disable_ip(dev, 2);
+		fib_disable_ip(dev, 2, -1);
 		return NOTIFY_DONE;
 	}
 
@@ -955,10 +955,11 @@ static int fib_netdev_event(struct notifier_block *this, unsigned long event, vo
 		rt_cache_flush(dev_net(dev), -1);
 		break;
 	case NETDEV_DOWN:
-		fib_disable_ip(dev, 0);
+		fib_disable_ip(dev, 0, 0);
 		break;
 	case NETDEV_CHANGEMTU:
 	case NETDEV_CHANGE:
+	case NETDEV_UNREGISTER_PERNET:
 		rt_cache_flush(dev_net(dev), 0);
 		break;
 	}
@@ -1012,7 +1013,7 @@ static void __net_exit ip_fib_net_exit(struct net *net)
 		head = &net->ipv4.fib_table_hash[i];
 		hlist_for_each_entry_safe(tb, node, tmp, head, tb_hlist) {
 			hlist_del(node);
-			tb->tb_flush(tb);
+			fib_table_flush(tb);
 			kfree(tb);
 		}
 	}

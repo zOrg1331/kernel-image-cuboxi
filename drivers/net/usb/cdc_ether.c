@@ -413,9 +413,17 @@ static int cdc_bind(struct usbnet *dev, struct usb_interface *intf)
 
 static const struct driver_info	cdc_info = {
 	.description =	"CDC Ethernet Device",
-	.flags =	FLAG_ETHER,
+	.flags =	FLAG_ETHER | FLAG_LINK_INTR,
 	// .check_connect = cdc_check_connect,
 	.bind =		cdc_bind,
+	.unbind =	usbnet_cdc_unbind,
+	.status =	cdc_status,
+};
+
+static const struct driver_info mbm_info = {
+	.description =	"Mobile Broadband Network Device",
+	.flags =	FLAG_WWAN,
+	.bind = 	cdc_bind,
 	.unbind =	usbnet_cdc_unbind,
 	.status =	cdc_status,
 };
@@ -532,72 +540,72 @@ static const struct usb_device_id	products [] = {
 	/* Ericsson F3507g */
 	USB_DEVICE_AND_INTERFACE_INFO(0x0bdb, 0x1900, USB_CLASS_COMM,
 			USB_CDC_SUBCLASS_MDLM, USB_CDC_PROTO_NONE),
-	.driver_info = (unsigned long) &cdc_info,
+	.driver_info = (unsigned long) &mbm_info,
 }, {
 	/* Ericsson F3507g ver. 2 */
 	USB_DEVICE_AND_INTERFACE_INFO(0x0bdb, 0x1902, USB_CLASS_COMM,
 			USB_CDC_SUBCLASS_MDLM, USB_CDC_PROTO_NONE),
-	.driver_info = (unsigned long) &cdc_info,
+	.driver_info = (unsigned long) &mbm_info,
 }, {
 	/* Ericsson F3607gw */
 	USB_DEVICE_AND_INTERFACE_INFO(0x0bdb, 0x1904, USB_CLASS_COMM,
 			USB_CDC_SUBCLASS_MDLM, USB_CDC_PROTO_NONE),
-	.driver_info = (unsigned long) &cdc_info,
+	.driver_info = (unsigned long) &mbm_info,
 }, {
 	/* Ericsson F3607gw ver 2 */
 	USB_DEVICE_AND_INTERFACE_INFO(0x0bdb, 0x1905, USB_CLASS_COMM,
 			USB_CDC_SUBCLASS_MDLM, USB_CDC_PROTO_NONE),
-	.driver_info = (unsigned long) &cdc_info,
+	.driver_info = (unsigned long) &mbm_info,
 }, {
 	/* Ericsson F3607gw ver 3 */
 	USB_DEVICE_AND_INTERFACE_INFO(0x0bdb, 0x1906, USB_CLASS_COMM,
 			USB_CDC_SUBCLASS_MDLM, USB_CDC_PROTO_NONE),
-	.driver_info = (unsigned long) &cdc_info,
+	.driver_info = (unsigned long) &mbm_info,
 }, {
 	/* Ericsson F3307 */
 	USB_DEVICE_AND_INTERFACE_INFO(0x0bdb, 0x190a, USB_CLASS_COMM,
 			USB_CDC_SUBCLASS_MDLM, USB_CDC_PROTO_NONE),
-	.driver_info = (unsigned long) &cdc_info,
+	.driver_info = (unsigned long) &mbm_info,
 }, {
 	/* Ericsson F3307 ver 2 */
 	USB_DEVICE_AND_INTERFACE_INFO(0x0bdb, 0x1909, USB_CLASS_COMM,
 			USB_CDC_SUBCLASS_MDLM, USB_CDC_PROTO_NONE),
-	.driver_info = (unsigned long) &cdc_info,
+	.driver_info = (unsigned long) &mbm_info,
 }, {
 	/* Ericsson C3607w */
 	USB_DEVICE_AND_INTERFACE_INFO(0x0bdb, 0x1049, USB_CLASS_COMM,
 			USB_CDC_SUBCLASS_MDLM, USB_CDC_PROTO_NONE),
-	.driver_info = (unsigned long) &cdc_info,
+	.driver_info = (unsigned long) &mbm_info,
 }, {
 	/* Toshiba F3507g */
 	USB_DEVICE_AND_INTERFACE_INFO(0x0930, 0x130b, USB_CLASS_COMM,
 			USB_CDC_SUBCLASS_MDLM, USB_CDC_PROTO_NONE),
-	.driver_info = (unsigned long) &cdc_info,
+	.driver_info = (unsigned long) &mbm_info,
 }, {
 	/* Toshiba F3607gw */
 	USB_DEVICE_AND_INTERFACE_INFO(0x0930, 0x130c, USB_CLASS_COMM,
 			USB_CDC_SUBCLASS_MDLM, USB_CDC_PROTO_NONE),
-	.driver_info = (unsigned long) &cdc_info,
+	.driver_info = (unsigned long) &mbm_info,
 }, {
 	/* Toshiba F3607gw ver 2 */
 	USB_DEVICE_AND_INTERFACE_INFO(0x0930, 0x1311, USB_CLASS_COMM,
 			USB_CDC_SUBCLASS_MDLM, USB_CDC_PROTO_NONE),
-	.driver_info = (unsigned long) &cdc_info,
+	.driver_info = (unsigned long) &mbm_info,
 }, {
 	/* Dell F3507g */
 	USB_DEVICE_AND_INTERFACE_INFO(0x413c, 0x8147, USB_CLASS_COMM,
 			USB_CDC_SUBCLASS_MDLM, USB_CDC_PROTO_NONE),
-	.driver_info = (unsigned long) &cdc_info,
+	.driver_info = (unsigned long) &mbm_info,
 }, {
 	/* Dell F3607gw */
 	USB_DEVICE_AND_INTERFACE_INFO(0x413c, 0x8183, USB_CLASS_COMM,
 			USB_CDC_SUBCLASS_MDLM, USB_CDC_PROTO_NONE),
-	.driver_info = (unsigned long) &cdc_info,
+	.driver_info = (unsigned long) &mbm_info,
 }, {
 	/* Dell F3607gw ver 2 */
 	USB_DEVICE_AND_INTERFACE_INFO(0x413c, 0x8184, USB_CLASS_COMM,
 			USB_CDC_SUBCLASS_MDLM, USB_CDC_PROTO_NONE),
-	.driver_info = (unsigned long) &cdc_info,
+	.driver_info = (unsigned long) &mbm_info,
 },
 	{ },		// END
 };

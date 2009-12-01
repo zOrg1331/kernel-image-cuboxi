@@ -26,13 +26,7 @@
 #include <net/inet_common.h>
 #include <net/xfrm.h>
 
-#ifdef CONFIG_SYSCTL
-#define SYNC_INIT 0 /* let the user enable it */
-#else
-#define SYNC_INIT 1
-#endif
-
-int sysctl_tcp_syncookies __read_mostly = SYNC_INIT;
+int sysctl_tcp_syncookies __read_mostly = 1;
 EXPORT_SYMBOL(sysctl_tcp_syncookies);
 
 int sysctl_tcp_abort_on_overflow __read_mostly;
@@ -100,9 +94,9 @@ tcp_timewait_state_process(struct inet_timewait_sock *tw, struct sk_buff *skb,
 	struct tcp_options_received tmp_opt;
 	int paws_reject = 0;
 
-	tmp_opt.saw_tstamp = 0;
 	if (th->doff > (sizeof(*th) >> 2) && tcptw->tw_ts_recent_stamp) {
-		tcp_parse_options(skb, &tmp_opt, 0);
+		tmp_opt.tstamp_ok = 1;
+		tcp_parse_options(skb, &tmp_opt, 1, NULL);
 
 		if (tmp_opt.saw_tstamp) {
 			tmp_opt.ts_recent	= tcptw->tw_ts_recent;
@@ -476,7 +470,7 @@ struct sock *tcp_create_openreq_child(struct sock *sk, struct request_sock *req,
 		if (newtp->af_specific->md5_lookup(sk, newsk))
 			newtp->tcp_header_len += TCPOLEN_MD5SIG_ALIGNED;
 #endif
-		if (skb->len >= TCP_MIN_RCVMSS+newtp->tcp_header_len)
+		if (skb->len >= TCP_MSS_DEFAULT + newtp->tcp_header_len)
 			newicsk->icsk_ack.last_seg_size = skb->len - newtp->tcp_header_len;
 		newtp->rx_opt.mss_clamp = req->mss;
 		TCP_ECN_openreq_child(newtp, req);
@@ -501,9 +495,9 @@ struct sock *tcp_check_req(struct sock *sk, struct sk_buff *skb,
 	struct tcp_options_received tmp_opt;
 	struct sock *child;
 
-	tmp_opt.saw_tstamp = 0;
-	if (th->doff > (sizeof(struct tcphdr)>>2)) {
-		tcp_parse_options(skb, &tmp_opt, 0);
+	if ((th->doff > (sizeof(struct tcphdr)>>2)) && (req->ts_recent)) {
+		tmp_opt.tstamp_ok = 1;
+		tcp_parse_options(skb, &tmp_opt, 1, NULL);
 
 		if (tmp_opt.saw_tstamp) {
 			tmp_opt.ts_recent = req->ts_recent;

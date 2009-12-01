@@ -1,7 +1,7 @@
 /*******************************************************************************
 
   Intel PRO/1000 Linux driver
-  Copyright(c) 1999 - 2008 Intel Corporation.
+  Copyright(c) 1999 - 2009 Intel Corporation.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms and conditions of the GNU General Public License,
@@ -36,6 +36,7 @@
 #include <linux/workqueue.h>
 #include <linux/io.h>
 #include <linux/netdevice.h>
+#include <linux/pci.h>
 
 #include "hw.h"
 
@@ -47,9 +48,9 @@ struct e1000_info;
 
 #ifdef DEBUG
 #define e_dbg(format, arg...) \
-	e_printk(KERN_DEBUG , adapter, format, ## arg)
+	e_printk(KERN_DEBUG , hw->adapter, format, ## arg)
 #else
-#define e_dbg(format, arg...) do { (void)(adapter); } while (0)
+#define e_dbg(format, arg...) do { (void)(hw); } while (0)
 #endif
 
 #define e_err(format, arg...) \
@@ -331,7 +332,6 @@ struct e1000_adapter {
 	/* OS defined structs */
 	struct net_device *netdev;
 	struct pci_dev *pdev;
-	struct net_device_stats net_stats;
 
 	/* structs defined in e1000_hw.h */
 	struct e1000_hw hw;
@@ -366,6 +366,7 @@ struct e1000_adapter {
 	struct work_struct downshift_task;
 	struct work_struct update_phy_task;
 	struct work_struct led_blink_task;
+	struct work_struct print_hang_task;
 };
 
 struct e1000_info {
@@ -488,6 +489,7 @@ extern void e1000e_set_kmrn_lock_loss_workaround_ich8lan(struct e1000_hw *hw,
 extern void e1000e_igp3_phy_powerdown_workaround_ich8lan(struct e1000_hw *hw);
 extern void e1000e_gig_downshift_workaround_ich8lan(struct e1000_hw *hw);
 extern void e1000e_disable_gig_wol_ich8lan(struct e1000_hw *hw);
+extern s32 e1000_configure_k1_ich8lan(struct e1000_hw *hw, bool k1_enable);
 
 extern s32 e1000e_check_for_copper_link(struct e1000_hw *hw);
 extern s32 e1000e_check_for_fiber_link(struct e1000_hw *hw);
@@ -585,7 +587,7 @@ extern s32 e1000_get_cable_length_82577(struct e1000_hw *hw);
 
 static inline s32 e1000_phy_hw_reset(struct e1000_hw *hw)
 {
-	return hw->phy.ops.reset_phy(hw);
+	return hw->phy.ops.reset(hw);
 }
 
 static inline s32 e1000_check_reset_block(struct e1000_hw *hw)
@@ -595,12 +597,12 @@ static inline s32 e1000_check_reset_block(struct e1000_hw *hw)
 
 static inline s32 e1e_rphy(struct e1000_hw *hw, u32 offset, u16 *data)
 {
-	return hw->phy.ops.read_phy_reg(hw, offset, data);
+	return hw->phy.ops.read_reg(hw, offset, data);
 }
 
 static inline s32 e1e_wphy(struct e1000_hw *hw, u32 offset, u16 data)
 {
-	return hw->phy.ops.write_phy_reg(hw, offset, data);
+	return hw->phy.ops.write_reg(hw, offset, data);
 }
 
 static inline s32 e1000_get_cable_length(struct e1000_hw *hw)
@@ -620,27 +622,27 @@ extern s32 e1000e_read_mac_addr(struct e1000_hw *hw);
 
 static inline s32 e1000_validate_nvm_checksum(struct e1000_hw *hw)
 {
-	return hw->nvm.ops.validate_nvm(hw);
+	return hw->nvm.ops.validate(hw);
 }
 
 static inline s32 e1000e_update_nvm_checksum(struct e1000_hw *hw)
 {
-	return hw->nvm.ops.update_nvm(hw);
+	return hw->nvm.ops.update(hw);
 }
 
 static inline s32 e1000_read_nvm(struct e1000_hw *hw, u16 offset, u16 words, u16 *data)
 {
-	return hw->nvm.ops.read_nvm(hw, offset, words, data);
+	return hw->nvm.ops.read(hw, offset, words, data);
 }
 
 static inline s32 e1000_write_nvm(struct e1000_hw *hw, u16 offset, u16 words, u16 *data)
 {
-	return hw->nvm.ops.write_nvm(hw, offset, words, data);
+	return hw->nvm.ops.write(hw, offset, words, data);
 }
 
 static inline s32 e1000_get_phy_info(struct e1000_hw *hw)
 {
-	return hw->phy.ops.get_phy_info(hw);
+	return hw->phy.ops.get_info(hw);
 }
 
 static inline s32 e1000e_check_mng_mode(struct e1000_hw *hw)
