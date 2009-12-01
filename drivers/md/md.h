@@ -370,7 +370,7 @@ struct md_sysfs_entry {
 	ssize_t (*show)(mddev_t *, char *);
 	ssize_t (*store)(mddev_t *, const char *, size_t);
 };
-
+extern struct attribute_group md_bitmap_group;
 
 static inline char * mdname (mddev_t * mddev)
 {
