@@ -1610,16 +1610,16 @@ int bitmap_create(mddev_t *mddev)
 	sector_t blocks = mddev->resync_max_sectors;
 	unsigned long chunks;
 	unsigned long pages;
-	struct file *file = mddev->bitmap_file;
+	struct file *file = mddev->bitmap_info.file;
 	int err;
 	sector_t start;
 
 	BUILD_BUG_ON(sizeof(bitmap_super_t) != 256);
 
-	if (!file && !mddev->bitmap_offset) /* bitmap disabled, nothing to do */
+	if (!file && !mddev->bitmap_info.offset) /* bitmap disabled, nothing to do */
 		return 0;
 
-	BUG_ON(file && mddev->bitmap_offset);
+	BUG_ON(file && mddev->bitmap_info.offset);
 
 	bitmap = kzalloc(sizeof(*bitmap), GFP_KERNEL);
 	if (!bitmap)
@@ -1633,7 +1633,7 @@ int bitmap_create(mddev_t *mddev)
 	bitmap->mddev = mddev;
 
 	bitmap->file = file;
-	bitmap->offset = mddev->bitmap_offset;
+	bitmap->offset = mddev->bitmap_info.offset;
 	if (file) {
 		get_file(file);
 		/* As future accesses to this file will use bmap,
