@@ -307,7 +307,9 @@ auto_requeue:
 	else
 		list_add_tail(&work->link, &slow_work_queue);
 	spin_unlock_irq(&slow_work_queue_lock);
+#ifdef CONFIG_MODULES
 	slow_work_thread_processing[id] = NULL;
+#endif
 	return true;
 }
 
@@ -940,6 +942,7 @@ EXPORT_SYMBOL(slow_work_register_user);
  */
 static void slow_work_wait_for_items(struct module *module)
 {
+#ifdef CONFIG_MODULES
 	DECLARE_WAITQUEUE(myself, current);
 	struct slow_work *work;
 	int loop;
@@ -986,6 +989,7 @@ static void slow_work_wait_for_items(struct module *module)
 
 	remove_wait_queue(&slow_work_unreg_wq, &myself);
 	mutex_unlock(&slow_work_unreg_sync_lock);
+#endif
 }
 
 /**
