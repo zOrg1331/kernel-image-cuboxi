@@ -290,6 +290,9 @@ struct mddev_s
 							 * hot-adding a bitmap.  It should
 							 * eventually be settable by sysfs.
 							 */
+		unsigned long		chunksize;
+		unsigned long		daemon_sleep; /* how many seconds between updates? */
+		unsigned long		max_write_behind; /* write-behind mode */
 	} bitmap_info;
 	struct list_head		all_mddevs;
 
