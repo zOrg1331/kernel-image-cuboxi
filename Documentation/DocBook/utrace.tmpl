@@ -453,7 +453,7 @@
   <function>utrace_finish_examine</function> surrounding the calls to
   <structname>struct user_regset</structname> functions or direct examination
   of task data structures.  <function>utrace_prepare_examine</function> returns
-  an error if the task is not properly stopped and not dead.  After a
+  an error if the task is not properly stopped, or is dead.  After a
   successful examination, the paired <function>utrace_finish_examine</function>
   call returns an error if the task ever woke up during the examination.  If
   so, any data gathered may be scrambled and should be discarded.  This means
