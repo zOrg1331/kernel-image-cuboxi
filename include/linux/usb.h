@@ -331,6 +331,7 @@ struct usb_bus {
 	u8 otg_port;			/* 0, or number of OTG/HNP port */
 	unsigned is_b_host:1;		/* true during some HNP roleswitches */
 	unsigned b_hnp_enable:1;	/* OTG: did A-Host enable HNP? */
+	unsigned sg_tablesize;		/* 0 or largest number of sg list entries */
 
 	int devnum_next;		/* Next open device number in
 					 * round-robin allocation */
@@ -428,7 +429,6 @@ struct usb_tt;
  * @last_busy: time of last use
  * @autosuspend_delay: in jiffies
  * @connect_time: time device was first connected
- * @auto_pm: autosuspend/resume in progress
  * @do_remote_wakeup:  remote wakeup should be enabled
  * @reset_resume: needs reset instead of resume
  * @autosuspend_disabled: autosuspend disabled by the user
@@ -513,7 +513,6 @@ struct usb_device {
 	int autosuspend_delay;
 	unsigned long connect_time;
 
-	unsigned auto_pm:1;
 	unsigned do_remote_wakeup:1;
 	unsigned reset_resume:1;
 	unsigned autosuspend_disabled:1;
