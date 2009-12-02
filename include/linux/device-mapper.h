@@ -276,7 +276,7 @@ void dm_table_unplug_all(struct dm_table *t);
 /*
  * Table reference counting.
  */
-struct dm_table *dm_get_table(struct mapped_device *md);
+struct dm_table *dm_get_live_table(struct mapped_device *md);
 void dm_table_get(struct dm_table *t);
 void dm_table_put(struct dm_table *t);
 
@@ -295,8 +295,10 @@ void dm_table_event(struct dm_table *t);
 
 /*
  * The device must be suspended before calling this method.
+ * Returns the previous table, which the caller must destroy.
  */
-int dm_swap_table(struct mapped_device *md, struct dm_table *t);
+struct dm_table *dm_swap_table(struct mapped_device *md,
+			       struct dm_table *t);
 
 /*
  * A wrapper around vmalloc.
